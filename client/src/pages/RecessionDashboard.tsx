@@ -111,11 +111,17 @@ export default function RecessionDashboard() {
     mutationFn: async () => {
       try {
         const res = await apiRequest("POST", "/api/analyze-recession", {});
-        return res.json() as Promise<RecessionAnalysis>;
+        const json = await res.json();
+        // Validate it's actual recession data, not HTML parsed as something else
+        if (!json || !json.indicators || !Array.isArray(json.indicators)) {
+          throw new Error("Invalid response format");
+        }
+        return json as RecessionAnalysis;
       } catch {
+        // API unavailable (static deployment) — try pre-built fallback data
         const fallback = await fetch("./recession-data.json");
         if (!fallback.ok) throw new Error("Rezessions-Daten konnten nicht geladen werden");
-        return fallback.json() as Promise<RecessionAnalysis>;
+        return (await fallback.json()) as RecessionAnalysis;
       }
     },
     onSuccess: (result) => {
