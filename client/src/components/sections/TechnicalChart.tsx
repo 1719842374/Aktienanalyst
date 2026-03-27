@@ -237,26 +237,54 @@ export function TechnicalChart({ data }: Props) {
         </button>
       </div>
 
-      {/* Golden Cross / Death Cross Indicator */}
-      <div className={`rounded-lg p-3 mb-3 border flex items-center gap-3 ${cs.ma50AboveMA200
-        ? "bg-emerald-500/10 border-emerald-500/30"
-        : "bg-red-500/10 border-red-500/30"
-      }`}>
-        <div className={`text-2xl font-bold ${cs.ma50AboveMA200 ? "text-emerald-500" : "text-red-500"}`}>
-          {cs.ma50AboveMA200 ? "✦" : "✕"}
-        </div>
-        <div>
-          <div className={`text-sm font-bold ${cs.ma50AboveMA200 ? "text-emerald-500" : "text-red-500"}`}>
-            {cs.ma50AboveMA200 ? "GOLDEN CROSS" : "DEATH CROSS"}
-          </div>
-          <div className="text-[10px] text-muted-foreground">
-            {cs.ma50AboveMA200
-              ? `MA50 ($${cs.ma50Value?.toFixed(2) || '—'}) > MA200 ($${cs.ma200Value?.toFixed(2) || '—'}) — bullisches Trendsignal`
-              : `MA50 ($${cs.ma50Value?.toFixed(2) || '—'}) < MA200 ($${cs.ma200Value?.toFixed(2) || '—'}) — bärisches Trendsignal`
+      {/* Golden Cross / Death Cross — only show if crossover happened within last 30 trading days */}
+      {(() => {
+        // Detect recent crossover by scanning MA data
+        const maData = ti.maData;
+        let recentCrossType: 'golden' | 'death' | null = null;
+        let crossDate = '';
+        if (maData.length >= 2) {
+          // Look at last 30 data points for a crossover
+          const lookback = Math.min(30, maData.length - 1);
+          for (let i = maData.length - 1; i >= maData.length - lookback; i--) {
+            const cur = maData[i];
+            const prev = maData[i - 1];
+            if (cur.ma50 && cur.ma200 && prev.ma50 && prev.ma200) {
+              if (cur.ma50 > cur.ma200 && prev.ma50 <= prev.ma200) {
+                recentCrossType = 'golden';
+                crossDate = cur.date;
+                break;
+              }
+              if (cur.ma50 < cur.ma200 && prev.ma50 >= prev.ma200) {
+                recentCrossType = 'death';
+                crossDate = cur.date;
+                break;
+              }
             }
+          }
+        }
+        if (!recentCrossType) return null;
+        const isGolden = recentCrossType === 'golden';
+        const dateStr = new Date(crossDate + 'T00:00:00').toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' });
+        return (
+          <div className={`rounded-lg p-3 mb-3 border flex items-center gap-3 ${isGolden
+            ? "bg-emerald-500/10 border-emerald-500/30"
+            : "bg-red-500/10 border-red-500/30"
+          }`}>
+            <div className={`text-2xl font-bold ${isGolden ? "text-emerald-500" : "text-red-500"}`}>
+              {isGolden ? "\u2726" : "\u2715"}
+            </div>
+            <div>
+              <div className={`text-sm font-bold ${isGolden ? "text-emerald-500" : "text-red-500"}`}>
+                {isGolden ? "GOLDEN CROSS" : "DEATH CROSS"} <span className="text-xs font-normal text-muted-foreground">({dateStr})</span>
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                MA50 kreuzte MA200 {isGolden ? 'von unten nach oben' : 'von oben nach unten'} am {dateStr} {isGolden ? '\u2014 bullisches Trendsignal' : '\u2014 b\u00e4risches Trendsignal'}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Price Chart with MAs */}
       <div className="h-[320px] sm:h-[380px] w-full" data-testid="chart-price-ma">

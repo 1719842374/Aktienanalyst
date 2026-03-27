@@ -129,7 +129,12 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   // 1. Compute WACC via CAPM, or use manual override
   const rawRe = params.riskFreeRate + params.beta * params.erp;
   const Rd = params.costOfDebt;
-  const dv = params.debtRatio / 100;
+  // Cap debt ratio at 60% — companies with massive financial services debt
+  // (e.g. VW, GM, Toyota) have debt ratios of 80-90% which would pull WACC
+  // down unrealistically. Financial services debt is asset-backed and shouldn't
+  // be treated as traditional corporate leverage.
+  const cappedDebtRatio = Math.min(params.debtRatio, 60);
+  const dv = cappedDebtRatio / 100;
   const ev = 1 - dv;
   const rawWacc = ev * rawRe + dv * Rd * (1 - params.taxRate / 100);
 
@@ -141,8 +146,9 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     // Direct WACC override — no capping, user has full control
     wacc = params.waccOverride!;
   } else {
-    // Sanity bounds: WACC between 3% and 20% (widened from 5-14% to give more user control)
-    const WACC_FLOOR = 3.0;
+    // Sanity bounds: WACC between 5% and 20%
+    // Floor of 5% prevents unrealistic terminal values from Gordon Growth
+    const WACC_FLOOR = 5.0;
     const WACC_CEIL = 20.0;
     wacc = Math.max(WACC_FLOOR, Math.min(WACC_CEIL, rawWacc));
     waccWasCapped = Math.abs(wacc - rawWacc) > 0.01;
