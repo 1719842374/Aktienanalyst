@@ -1167,7 +1167,13 @@ export default function BTCDashboard() {
 
   const analyzeMutation = useMutation({
     mutationFn: async () => {
-      return await analyzeBTC() as BTCAnalysis;
+      try {
+        return await analyzeBTC() as BTCAnalysis;
+      } catch {
+        const fallback = await fetch("./btc-data.json");
+        if (!fallback.ok) throw new Error("BTC-Daten konnten nicht geladen werden");
+        return fallback.json() as Promise<BTCAnalysis>;
+      }
     },
     onSuccess: (result) => {
       setData(result);

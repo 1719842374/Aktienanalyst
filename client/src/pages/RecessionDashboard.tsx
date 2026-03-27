@@ -109,8 +109,14 @@ export default function RecessionDashboard() {
 
   const analyzeMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/analyze-recession", {});
-      return res.json() as Promise<RecessionAnalysis>;
+      try {
+        const res = await apiRequest("POST", "/api/analyze-recession", {});
+        return res.json() as Promise<RecessionAnalysis>;
+      } catch {
+        const fallback = await fetch("./recession-data.json");
+        if (!fallback.ok) throw new Error("Rezessions-Daten konnten nicht geladen werden");
+        return fallback.json() as Promise<RecessionAnalysis>;
+      }
     },
     onSuccess: (result) => {
       setData(result);

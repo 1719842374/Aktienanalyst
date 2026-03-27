@@ -39,8 +39,16 @@ export default function GoldDashboard() {
   const { data, isLoading, isError, error, refetch } = useQuery<GoldAnalysis>({
     queryKey: ["/api/analyze-gold"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/analyze-gold");
-      return res.json();
+      // Try live API first, fallback to pre-computed static JSON
+      try {
+        const res = await apiRequest("GET", "/api/analyze-gold");
+        return res.json();
+      } catch {
+        // Fallback to pre-computed static JSON (same directory as index.html)
+        const fallback = await fetch("./gold-data.json");
+        if (!fallback.ok) throw new Error("Gold-Daten konnten nicht geladen werden");
+        return fallback.json();
+      }
     },
     staleTime: 5 * 60 * 1000,
     retry: 1,
