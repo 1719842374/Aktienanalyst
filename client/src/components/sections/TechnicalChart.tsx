@@ -237,35 +237,37 @@ export function TechnicalChart({ data }: Props) {
         </button>
       </div>
 
-      {/* Golden Cross / Death Cross — only show if crossover happened within last 30 trading days */}
+      {/* Golden Cross / Death Cross — scan last 2 years for structural crossover events */}
       {(() => {
-        // Detect recent crossover by scanning MA data
         const maData = ti.maData;
-        let recentCrossType: 'golden' | 'death' | null = null;
-        let crossDate = '';
+        // Find the MOST RECENT Death Cross or Golden Cross within 2 years (~504 trading days)
+        let lastCrossType: 'golden' | 'death' | null = null;
+        let lastCrossDate = '';
         if (maData.length >= 2) {
-          // Look at last 30 data points for a crossover
-          const lookback = Math.min(30, maData.length - 1);
+          const lookback = Math.min(504, maData.length - 1);
           for (let i = maData.length - 1; i >= maData.length - lookback; i--) {
             const cur = maData[i];
             const prev = maData[i - 1];
             if (cur.ma50 && cur.ma200 && prev.ma50 && prev.ma200) {
               if (cur.ma50 > cur.ma200 && prev.ma50 <= prev.ma200) {
-                recentCrossType = 'golden';
-                crossDate = cur.date;
+                lastCrossType = 'golden';
+                lastCrossDate = cur.date;
                 break;
               }
               if (cur.ma50 < cur.ma200 && prev.ma50 >= prev.ma200) {
-                recentCrossType = 'death';
-                crossDate = cur.date;
+                lastCrossType = 'death';
+                lastCrossDate = cur.date;
                 break;
               }
             }
           }
         }
-        if (!recentCrossType) return null;
-        const isGolden = recentCrossType === 'golden';
-        const dateStr = new Date(crossDate + 'T00:00:00').toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' });
+        if (!lastCrossType) return null;
+        const isGolden = lastCrossType === 'golden';
+        const crossDateObj = new Date(lastCrossDate + 'T00:00:00');
+        const dateStr = crossDateObj.toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' });
+        const daysAgo = Math.round((Date.now() - crossDateObj.getTime()) / (1000 * 60 * 60 * 24));
+        const isRecent = daysAgo <= 60;
         return (
           <div className={`rounded-lg p-3 mb-3 border flex items-center gap-3 ${isGolden
             ? "bg-emerald-500/10 border-emerald-500/30"
@@ -276,10 +278,16 @@ export function TechnicalChart({ data }: Props) {
             </div>
             <div>
               <div className={`text-sm font-bold ${isGolden ? "text-emerald-500" : "text-red-500"}`}>
-                {isGolden ? "GOLDEN CROSS" : "DEATH CROSS"} <span className="text-xs font-normal text-muted-foreground">({dateStr})</span>
+                {isGolden ? "GOLDEN CROSS" : "DEATH CROSS"}
+                <span className="text-xs font-normal text-muted-foreground ml-1.5">
+                  ({dateStr}{isRecent ? ' — k\u00fcrzlich' : ` — vor ${daysAgo} Tagen`})
+                </span>
               </div>
               <div className="text-[10px] text-muted-foreground">
-                MA50 kreuzte MA200 {isGolden ? 'von unten nach oben' : 'von oben nach unten'} am {dateStr} {isGolden ? '\u2014 bullisches Trendsignal' : '\u2014 b\u00e4risches Trendsignal'}
+                {isGolden
+                  ? `MA50 kreuzte MA200 von unten nach oben am ${dateStr} \u2014 bullisches Trendsignal. ${!isRecent ? 'Strukturelles Signal aktiv seit ' + daysAgo + ' Tagen.' : ''}`
+                  : `MA50 kreuzte MA200 von oben nach unten am ${dateStr} \u2014 b\u00e4risches Trendsignal. ${!isRecent ? 'Struktureller Abw\u00e4rtstrend seit ' + daysAgo + ' Tagen.' : ''}`
+                }
               </div>
             </div>
           </div>
