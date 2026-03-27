@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { analyzeBTC } from "@/lib/btcAnalysis";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
@@ -1167,8 +1167,7 @@ export default function BTCDashboard() {
 
   const analyzeMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/analyze-btc", {});
-      return res.json() as Promise<BTCAnalysis>;
+      return await analyzeBTC() as BTCAnalysis;
     },
     onSuccess: (result) => {
       setData(result);
