@@ -2542,5 +2542,461 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+  // ============================================================
+  // BTC Analysis Endpoint
+  // ============================================================
+  app.post("/api/analyze-btc", async (_req, res) => {
+    try {
+      console.log("[BTC] Starting BTC analysis...");
+
+      // --- Box-Muller normal random ---
+      function normalRandom(): number {
+        let u = 0, v = 0;
+        while (u === 0) u = Math.random();
+        while (v === 0) v = Math.random();
+        return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+      }
+
+      // === 1. Fetch BTC price from CoinGecko ===
+      let btcPrice = 0, btcChange24h = 0, btcMarketCap = 0;
+      try {
+        const cgRaw = execSync(
+          `curl -sL "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_market_cap=true"`,
+          { encoding: "utf-8", timeout: 30000 }
+        );
+        const cg = JSON.parse(cgRaw);
+        btcPrice = cg?.bitcoin?.usd ?? 0;
+        btcChange24h = cg?.bitcoin?.usd_24h_change ?? 0;
+        btcMarketCap = cg?.bitcoin?.usd_market_cap ?? 0;
+        console.log(`[BTC] Price: $${btcPrice}, 24h: ${btcChange24h.toFixed(2)}%`);
+      } catch (e: any) {
+        console.error("[BTC] CoinGecko error:", e?.message?.substring(0, 200));
+      }
+
+      // === 2. Fear & Greed Index ===
+      let fearGreedIndex = 50, fearGreedLabel = "Neutral";
+      try {
+        const fngRaw = execSync(
+          `curl -sL "https://api.alternative.me/fng/?limit=1"`,
+          { encoding: "utf-8", timeout: 30000 }
+        );
+        const fng = JSON.parse(fngRaw);
+        fearGreedIndex = parseInt(fng?.data?.[0]?.value ?? "50", 10);
+        fearGreedLabel = fng?.data?.[0]?.value_classification ?? "Neutral";
+        console.log(`[BTC] Fear & Greed: ${fearGreedIndex} (${fearGreedLabel})`);
+      } catch (e: any) {
+        console.error("[BTC] F&G error:", e?.message?.substring(0, 200));
+      }
+
+      // === 3. Fetch DXY ===
+      let dxy = 103;
+      try {
+        const dxyResult = callFinanceTool("get_stock_price", { symbol: "DX-Y.NYB" });
+        if (dxyResult) {
+          const dxyStr = typeof dxyResult === "string" ? dxyResult : JSON.stringify(dxyResult);
+          const dxyMatch = dxyStr.match(/([\d]+\.[\d]+)/);
+          if (dxyMatch) dxy = parseFloat(dxyMatch[1]);
+        }
+        console.log(`[BTC] DXY: ${dxy}`);
+      } catch (e: any) {
+        console.error("[BTC] DXY error:", e?.message?.substring(0, 200));
+      }
+
+      // === 4. Fetch Fed Funds Rate ===
+      let fedFundsRate = 5.33;
+      try {
+        const fredRaw = execSync(
+          `curl -sL "https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"`,
+          { encoding: "utf-8", timeout: 30000 }
+        );
+        const fredLines = fredRaw.trim().split("\n");
+        if (fredLines.length >= 2) {
+          const lastLine = fredLines[fredLines.length - 1];
+          const parts = lastLine.split(",");
+          if (parts.length >= 2) {
+            const val = parseFloat(parts[1]);
+            if (!isNaN(val)) fedFundsRate = val;
+          }
+        }
+        console.log(`[BTC] Fed Funds Rate: ${fedFundsRate}%`);
+      } catch (e: any) {
+        console.error("[BTC] Fed Funds error:", e?.message?.substring(0, 200));
+      }
+
+      // === 5. Halving info ===
+      const lastHalvingDate = new Date("2024-04-20");
+      const now = new Date();
+      const monthsSinceHalving = Math.round(
+        (now.getTime() - lastHalvingDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44)
+      );
+      const cyclePhase = `Mid-Cycle (${monthsSinceHalving}M post-Halving)`;
+      console.log(`[BTC] Months since halving: ${monthsSinceHalving}`);
+
+      // === 6. Power-Law calculations ===
+      const genesisDate = new Date("2009-01-03");
+      const daysSinceGenesis = Math.floor(
+        (now.getTime() - genesisDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
+      const fairValue = 1.0117e-17 * Math.pow(daysSinceGenesis, 5.82);
+      const support = fairValue * 0.4;
+      const resistance = fairValue * 2.5;
+      const deviationPercent = ((btcPrice - fairValue) / fairValue) * 100;
+      const daysSixMonths = daysSinceGenesis + 180;
+      const fairValue6M = 1.0117e-17 * Math.pow(daysSixMonths, 5.82);
+
+      // Power signal
+      let powerSignal: number;
+      if (btcPrice > resistance) powerSignal = -1.0;
+      else if (btcPrice >= fairValue) powerSignal = 0.0;
+      else if (btcPrice >= support) powerSignal = 0.5;
+      else powerSignal = 1.0;
+
+      console.log(`[BTC] Power-Law: fair=$${fairValue.toFixed(0)}, dev=${deviationPercent.toFixed(1)}%, signal=${powerSignal}`);
+
+      // === 7. Indicator Scoring ===
+      // F&G score
+      let fgScore = 0;
+      if (fearGreedIndex < 30) fgScore = 1;
+      else if (fearGreedIndex > 70) fgScore = -1;
+
+      // Macro score (based on fed funds rate + M2 default)
+      let macroScore = 0;
+      if (fedFundsRate > 5.0) macroScore = -1;
+      else if (fedFundsRate < 3.0) macroScore = 1;
+
+      // DXY score
+      let dxyScore = 0;
+      if (dxy < 100) dxyScore = 1;
+      else if (dxy > 105) dxyScore = -1;
+
+      const indicators = [
+        { name: "MVRV Z-Score", value: "N/A (default)", score: 0, weight: 0.20, source: "Default (neutral)" },
+        { name: "RSI (Weekly)", value: "N/A (default)", score: 0, weight: 0.15, source: "Default (neutral)" },
+        { name: "Fear & Greed", value: `${fearGreedIndex} (${fearGreedLabel})`, score: fgScore, weight: 0.10, source: "alternative.me" },
+        { name: "Hashrate Trend", value: "Stable", score: 1, weight: 0.10, source: "Default (stable growth)" },
+        { name: "ETF Net Flows", value: "N/A (default)", score: 0, weight: 0.15, source: "Default (neutral)" },
+        { name: "Macro (Fed/M2)", value: `FFR ${fedFundsRate}%`, score: macroScore, weight: 0.15, source: "FRED" },
+        { name: "DXY", value: `${dxy.toFixed(2)}`, score: dxyScore, weight: 0.15, source: "Yahoo Finance" },
+      ].map(ind => ({ ...ind, weighted: ind.score * ind.weight }));
+
+      const gis = indicators.reduce((sum, ind) => sum + ind.weighted, 0);
+      const gisCalculation = indicators
+        .map(ind => `${ind.name}: ${ind.score} × ${ind.weight} = ${ind.weighted.toFixed(4)}`)
+        .join(" + ") + ` = ${gis.toFixed(4)}`;
+
+      console.log(`[BTC] GIS: ${gis.toFixed(4)}`);
+
+      // === 9. Cycle Signal ===
+      let cycleSignal: number;
+      if (monthsSinceHalving > 24) cycleSignal = -0.5;
+      else if (monthsSinceHalving >= 18) cycleSignal = -0.3;
+      else if (monthsSinceHalving >= 12) cycleSignal = 0.0;
+      else if (monthsSinceHalving >= 6) cycleSignal = 0.3;
+      else cycleSignal = 0.5;
+
+      // === 10. GWS ===
+      const gwsValue = gis * 0.30 + powerSignal * 0.50 + cycleSignal * 0.20;
+
+      // === 11. μ mapping ===
+      let mu: number;
+      if (gwsValue > 0.5) mu = 0.0010;
+      else if (gwsValue >= 0.2) mu = 0.0005;
+      else if (gwsValue >= -0.2) mu = 0.0;
+      else if (gwsValue >= -0.5) mu = -0.0005;
+      else mu = -0.0010;
+
+      let gwsInterpretation: string;
+      if (gwsValue > 0.3) gwsInterpretation = "Bullish – favorable macro, cycle, and valuation signals";
+      else if (gwsValue > 0) gwsInterpretation = "Slightly Bullish – mixed signals with positive tilt";
+      else if (gwsValue > -0.3) gwsInterpretation = "Neutral to Slightly Bearish – caution warranted";
+      else gwsInterpretation = "Bearish – unfavorable conditions across indicators";
+
+      console.log(`[BTC] GWS: ${gwsValue.toFixed(4)}, μ: ${mu}, interpretation: ${gwsInterpretation}`);
+
+      // === 12. Monte Carlo ===
+      const sigma = 0.025;
+      const sigmaAdj = sigma * (monthsSinceHalving > 18 ? 1.2 : 1.0);
+      const S0 = btcPrice;
+
+      function runMonteCarlo(T: number) {
+        const results: number[] = [];
+        const iterations = 10000;
+        for (let i = 0; i < iterations; i++) {
+          const Z = normalRandom();
+          const ST = S0 * Math.exp((mu - (sigmaAdj * sigmaAdj) / 2) * T + sigmaAdj * Math.sqrt(T) * Z);
+          results.push(ST);
+        }
+        results.sort((a, b) => a - b);
+        const p10 = results[Math.floor(iterations * 0.10)];
+        const p50 = results[Math.floor(iterations * 0.50)];
+        const p90 = results[Math.floor(iterations * 0.90)];
+        const mean = results.reduce((s, v) => s + v, 0) / iterations;
+        const probBelow = (results.filter(v => v < S0).length / iterations) * 100;
+        const probAbove120 = (results.filter(v => v > S0 * 1.2).length / iterations) * 100;
+        return { p10, p50, p90, mean, probBelow, probAbove120 };
+      }
+
+      const mc3M = runMonteCarlo(90);
+      const mc6M = runMonteCarlo(180);
+      console.log(`[BTC] MC 3M: P10=$${mc3M.p10.toFixed(0)}, P50=$${mc3M.p50.toFixed(0)}, P90=$${mc3M.p90.toFixed(0)}`);
+
+      // === 13. Categories A-E (3M) ===
+      function computeCategories() {
+        const iterations = 10000;
+        const results: number[] = [];
+        for (let i = 0; i < iterations; i++) {
+          const Z = normalRandom();
+          const ST = S0 * Math.exp((mu - (sigmaAdj * sigmaAdj) / 2) * 90 + sigmaAdj * Math.sqrt(90) * Z);
+          results.push(ST);
+        }
+        let catA = (results.filter(v => v > S0 * 1.30).length / iterations) * 100;
+        let catB = (results.filter(v => v > S0 * 1.10 && v <= S0 * 1.30).length / iterations) * 100;
+        let catC = (results.filter(v => v >= S0 * 0.90 && v <= S0 * 1.10).length / iterations) * 100;
+        let catD = (results.filter(v => v >= S0 * 0.70 && v < S0 * 0.90).length / iterations) * 100;
+        let catE = (results.filter(v => v < S0 * 0.70).length / iterations) * 100;
+
+        // Late-cycle adjustment
+        if (monthsSinceHalving > 18) {
+          const diff = catE * 0.22;
+          catE = catE * 0.78;
+          catB = catB + diff;
+        }
+
+        return [
+          { label: "A", range: `> $${(S0 * 1.30).toLocaleString("en-US", { maximumFractionDigits: 0 })} (>+30%)`, probability: Math.round(catA * 10) / 10 },
+          { label: "B", range: `$${(S0 * 1.10).toLocaleString("en-US", { maximumFractionDigits: 0 })} – $${(S0 * 1.30).toLocaleString("en-US", { maximumFractionDigits: 0 })} (+10% to +30%)`, probability: Math.round(catB * 10) / 10 },
+          { label: "C", range: `$${(S0 * 0.90).toLocaleString("en-US", { maximumFractionDigits: 0 })} – $${(S0 * 1.10).toLocaleString("en-US", { maximumFractionDigits: 0 })} (±10%)`, probability: Math.round(catC * 10) / 10 },
+          { label: "D", range: `$${(S0 * 0.70).toLocaleString("en-US", { maximumFractionDigits: 0 })} – $${(S0 * 0.90).toLocaleString("en-US", { maximumFractionDigits: 0 })} (-10% to -30%)`, probability: Math.round(catD * 10) / 10 },
+          { label: "E", range: `< $${(S0 * 0.70).toLocaleString("en-US", { maximumFractionDigits: 0 })} (>-30%)`, probability: Math.round(catE * 10) / 10 },
+        ];
+      }
+
+      const categories = computeCategories();
+
+      // === 14 & 15. Historical prices ===
+      let historicalPrices: { date: string; price: number }[] = [];
+      let historicalPricesYear: { date: string; price: number }[] = [];
+
+      // Primary: CoinGecko market_chart API (free, no auth)
+      try {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const cg30Raw = execSync(
+          `curl -sL "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${nowSec - 30 * 86400}&to=${nowSec}"`,
+          { encoding: "utf-8", timeout: 30000 }
+        );
+        const cg30 = JSON.parse(cg30Raw);
+        if (cg30?.prices && Array.isArray(cg30.prices)) {
+          // Deduplicate to one entry per day (keep last entry per date)
+          const dayMap = new Map<string, number>();
+          for (const p of cg30.prices as [number, number][]) {
+            const d = new Date(p[0]).toISOString().split("T")[0];
+            dayMap.set(d, p[1]);
+          }
+          historicalPrices = Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
+        }
+        console.log(`[BTC] CoinGecko 1M chart: ${historicalPrices.length} data points`);
+      } catch (e: any) {
+        console.error("[BTC] CoinGecko 1M chart error:", e?.message?.substring(0, 200));
+      }
+
+      // Small delay to avoid CoinGecko rate limit
+      try { execSync("sleep 1.5", { timeout: 5000 }); } catch {}
+
+      try {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const cg365Raw = execSync(
+          `curl -sL "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${nowSec - 365 * 86400}&to=${nowSec}"`,
+          { encoding: "utf-8", timeout: 30000 }
+        );
+        const cg365 = JSON.parse(cg365Raw);
+        if (cg365?.prices && Array.isArray(cg365.prices)) {
+          const dayMap = new Map<string, number>();
+          for (const p of cg365.prices as [number, number][]) {
+            const d = new Date(p[0]).toISOString().split("T")[0];
+            dayMap.set(d, p[1]);
+          }
+          historicalPricesYear = Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
+        }
+        console.log(`[BTC] CoinGecko 1Y chart: ${historicalPricesYear.length} data points`);
+      } catch (e: any) {
+        console.error("[BTC] CoinGecko 1Y chart error:", e?.message?.substring(0, 200));
+      }
+
+      // Fallback: Finance tool if CoinGecko failed
+      if (historicalPrices.length === 0) {
+        try {
+          const chart1M = callFinanceTool("get_stock_chart", { symbol: "BTC-USD", range: "1mo", interval: "1d" });
+          if (chart1M) {
+            const chartStr = typeof chart1M === "string" ? chart1M : JSON.stringify(chart1M);
+            const rows = parseMarkdownTable(chartStr);
+            if (rows.length > 0) {
+              historicalPrices = rows.map(r => ({
+                date: r["Date"] || r["date"] || "",
+                price: parseNumber(r["Close"] || r["close"] || r["Price"] || r["price"] || "0"),
+              })).filter(r => r.date && r.price > 0);
+            }
+            if (historicalPrices.length === 0) {
+              try {
+                const parsed = typeof chart1M === "object" ? chart1M : JSON.parse(chartStr);
+                if (Array.isArray(parsed)) {
+                  historicalPrices = parsed.map((p: any) => ({
+                    date: p.date || p.Date || new Date(p.timestamp * 1000).toISOString().split("T")[0],
+                    price: p.close || p.Close || p.price || p.Price || 0,
+                  })).filter((r: any) => r.date && r.price > 0);
+                }
+              } catch {}
+            }
+          }
+          console.log(`[BTC] Finance fallback 1M: ${historicalPrices.length} data points`);
+        } catch (e: any) {
+          console.error("[BTC] Finance 1M error:", e?.message?.substring(0, 200));
+        }
+      }
+
+      if (historicalPricesYear.length === 0) {
+        try {
+          const chart1Y = callFinanceTool("get_stock_chart", { symbol: "BTC-USD", range: "1y", interval: "1d" });
+          if (chart1Y) {
+            const chartStr = typeof chart1Y === "string" ? chart1Y : JSON.stringify(chart1Y);
+            const rows = parseMarkdownTable(chartStr);
+            if (rows.length > 0) {
+              historicalPricesYear = rows.map(r => ({
+                date: r["Date"] || r["date"] || "",
+                price: parseNumber(r["Close"] || r["close"] || r["Price"] || r["price"] || "0"),
+              })).filter(r => r.date && r.price > 0);
+            }
+            if (historicalPricesYear.length === 0) {
+              try {
+                const parsed = typeof chart1Y === "object" ? chart1Y : JSON.parse(chartStr);
+                if (Array.isArray(parsed)) {
+                  historicalPricesYear = parsed.map((p: any) => ({
+                    date: p.date || p.Date || new Date(p.timestamp * 1000).toISOString().split("T")[0],
+                    price: p.close || p.Close || p.price || p.Price || 0,
+                  })).filter((r: any) => r.date && r.price > 0);
+                }
+              } catch {}
+            }
+          }
+          console.log(`[BTC] Finance fallback 1Y: ${historicalPricesYear.length} data points`);
+        } catch (e: any) {
+          console.error("[BTC] Finance 1Y error:", e?.message?.substring(0, 200));
+        }
+      }
+
+      // === 8. Cycle Assessment (German) ===
+      let positionText: string;
+      if (monthsSinceHalving < 12) {
+        positionText = `Bitcoin befindet sich ${monthsSinceHalving} Monate nach dem Halving in der frühen Expansionsphase. Historisch gesehen beginnen die stärksten Kursanstiege 12–18 Monate nach dem Halving.`;
+      } else if (monthsSinceHalving < 18) {
+        positionText = `Bitcoin befindet sich ${monthsSinceHalving} Monate nach dem Halving in der mittleren Zyklusphase. Dies ist historisch die Phase mit dem stärksten Momentum.`;
+      } else if (monthsSinceHalving < 24) {
+        positionText = `Bitcoin befindet sich ${monthsSinceHalving} Monate nach dem Halving in der späten Expansionsphase. Historisch gesehen nähert sich der Zyklus seinem Höhepunkt.`;
+      } else {
+        positionText = `Bitcoin befindet sich ${monthsSinceHalving} Monate nach dem Halving in der späten Zyklusphase. Vorsicht ist geboten, da historische Zyklen typischerweise 24–30 Monate nach dem Halving ihren Höhepunkt erreichen.`;
+      }
+
+      let entryText: string;
+      if (deviationPercent < -30) {
+        entryText = `Der aktuelle Preis liegt ${Math.abs(deviationPercent).toFixed(1)}% unter dem Power-Law Fair Value – eine historisch attraktive Einstiegszone.`;
+      } else if (deviationPercent < 0) {
+        entryText = `Der aktuelle Preis liegt ${Math.abs(deviationPercent).toFixed(1)}% unter dem Power-Law Fair Value – ein leicht unterbewertetes Niveau.`;
+      } else if (deviationPercent < 50) {
+        entryText = `Der aktuelle Preis liegt ${deviationPercent.toFixed(1)}% über dem Power-Law Fair Value – eine neutrale Bewertungszone.`;
+      } else {
+        entryText = `Der aktuelle Preis liegt ${deviationPercent.toFixed(1)}% über dem Power-Law Fair Value – zunehmend überbewertetes Territorium. Vorsicht bei Neueinstiegen.`;
+      }
+
+      const halvingCatalyst = `Das nächste Halving wird voraussichtlich im April 2028 stattfinden. Die aktuelle Angebotsverknappung durch das letzte Halving (April 2024) wirkt weiterhin als langfristiger Katalysator für den Preis.`;
+
+      // === Build final estimate ===
+      const outlook = gwsValue > 0.2 ? "Bullish" : gwsValue > -0.2 ? "Neutral" : "Bearish";
+      const threeMonthRange = `$${mc3M.p10.toLocaleString("en-US", { maximumFractionDigits: 0 })} – $${mc3M.p90.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+      const sixMonthRange = `$${mc6M.p10.toLocaleString("en-US", { maximumFractionDigits: 0 })} – $${mc6M.p90.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+
+      let summary: string;
+      if (outlook === "Bullish") {
+        summary = `Bitcoin zeigt bullische Signale bei $${btcPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}. Die Kombination aus Zyklusphase (${monthsSinceHalving}M post-Halving), Power-Law-Bewertung und Makro-Indikatoren deutet auf weiteres Aufwärtspotenzial hin.`;
+      } else if (outlook === "Neutral") {
+        summary = `Bitcoin handelt bei $${btcPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })} in einer neutralen Zone. Gemischte Signale aus Zyklusphase, Bewertung und Makro-Umfeld erfordern Geduld.`;
+      } else {
+        summary = `Bitcoin steht bei $${btcPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })} unter Druck. Ungünstige Makro-Bedingungen und späte Zyklusphase mahnen zur Vorsicht.`;
+      }
+
+      // === Assemble response ===
+      const analysis = {
+        timestamp: new Date().toISOString(),
+        btcPrice,
+        btcChange24h,
+        btcMarketCap,
+
+        lastHalvingDate: "2024-04-20",
+        monthsSinceHalving,
+        nextHalvingEstimate: "~April 2028",
+        cyclePhase,
+
+        indicators,
+        gis,
+        gisCalculation,
+
+        powerLaw: {
+          daysSinceGenesis,
+          fairValue,
+          support,
+          resistance,
+          deviationPercent,
+          fairValue6M,
+          powerSignal,
+        },
+
+        gws: {
+          gis,
+          powerSignal,
+          cycleSignal,
+          value: gwsValue,
+          mu,
+          interpretation: gwsInterpretation,
+        },
+
+        monteCarlo: {
+          sigma,
+          sigmaAdj,
+          mu,
+          threeMonth: mc3M,
+          sixMonth: mc6M,
+        },
+
+        categories,
+
+        cycleAssessment: {
+          position: positionText,
+          entryPoint: entryText,
+          halvingCatalyst,
+        },
+
+        finalEstimate: {
+          threeMonthRange,
+          sixMonthRange,
+          outlook,
+          summary,
+        },
+
+        historicalPrices,
+        historicalPricesYear,
+
+        fearGreedIndex,
+        fearGreedLabel,
+
+        dxy,
+        fedFundsRate,
+      };
+
+      console.log(`[BTC] Analysis complete. Price: $${btcPrice}, GWS: ${gwsValue.toFixed(4)}, Outlook: ${outlook}`);
+      res.json(analysis);
+    } catch (error: any) {
+      console.error("[BTC] Error:", error?.message);
+      res.status(500).json({ error: error?.message || "BTC analysis failed" });
+    }
+  });
+
   return server;
 }

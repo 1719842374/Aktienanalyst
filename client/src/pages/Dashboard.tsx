@@ -25,8 +25,9 @@ import { Section17 } from "@/components/sections/Section17";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
-  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe,
+  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin,
 } from "lucide-react";
+import { useLocation } from "wouter";
 
 const SECTIONS = [
   { id: 1, label: "Datenaktualität", icon: BarChart3 },
@@ -115,6 +116,7 @@ export default function Dashboard() {
             onSearch={(ticker) => analyzeMutation.mutate(ticker)}
             isLoading={analyzeMutation.isPending}
           />
+          <NavToBTC />
           <button
             onClick={toggleTheme}
             className="p-1.5 rounded-md hover:bg-muted/50 transition-colors"
@@ -205,7 +207,21 @@ export default function Dashboard() {
   );
 }
 
+function NavToBTC() {
+  const [, setLocation] = useLocation();
+  return (
+    <button
+      onClick={() => setLocation("/btc")}
+      className="h-8 px-3 text-xs font-medium bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-md transition-colors flex items-center gap-1.5"
+    >
+      <Bitcoin className="w-3 h-3" />
+      <span className="hidden sm:inline">BTC</span>
+    </button>
+  );
+}
+
 function WelcomeScreen({ onSearch }: { onSearch: (ticker: string) => void }) {
+  const [, setLocation] = useLocation();
   const tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "TSLA", "AMZN"];
   return (
     <div className="flex items-center justify-center min-h-full p-8">
@@ -239,6 +255,19 @@ function WelcomeScreen({ onSearch }: { onSearch: (ticker: string) => void }) {
             ))}
           </div>
         </div>
+
+        {/* BTC Analysis Card */}
+        <div className="border-t border-border pt-4">
+          <button
+            onClick={() => setLocation("/btc")}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-500 font-medium text-sm transition-colors"
+          >
+            <Bitcoin className="w-4 h-4" />
+            BTC-Analyse
+          </button>
+          <p className="text-[10px] text-muted-foreground mt-2">Power-Law, Monte Carlo, Halving-Zyklus</p>
+        </div>
+
         <div className="flex items-center gap-2 justify-center text-[10px] text-muted-foreground/50">
           <ChevronRight className="w-3 h-3" />
           Enter any ticker symbol in the search bar above
