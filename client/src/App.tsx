@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import Dashboard from "@/pages/Dashboard";
 import BTCDashboard from "@/pages/BTCDashboard";
+import GoldDashboard from "@/pages/GoldDashboard";
 import RecessionDashboard from "@/pages/RecessionDashboard";
 import NotFound from "@/pages/not-found";
 
@@ -15,6 +16,7 @@ function AppRouter() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/btc" component={BTCDashboard} />
+      <Route path="/gold" component={GoldDashboard} />
       <Route path="/recession" component={RecessionDashboard} />
       <Route component={NotFound} />
     </Switch>

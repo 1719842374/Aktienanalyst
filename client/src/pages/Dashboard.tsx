@@ -53,6 +53,7 @@ export default function Dashboard() {
   const { theme, toggleTheme } = useTheme();
   const [data, setData] = useState<StockAnalysis | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [, navigate] = useLocation();
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
@@ -117,6 +118,13 @@ export default function Dashboard() {
             isLoading={analyzeMutation.isPending}
           />
           <NavToBTC />
+          <button
+            onClick={() => navigate("/gold")}
+            className="h-8 px-2.5 text-[11px] font-medium text-amber-500 hover:bg-amber-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-amber-500/20"
+          >
+            <Scale className="w-3 h-3" />
+            <span className="hidden sm:inline">Gold</span>
+          </button>
           <button
             onClick={toggleTheme}
             className="p-1.5 rounded-md hover:bg-muted/50 transition-colors"

@@ -1737,6 +1737,10 @@ function generateMacroCorrelations(
 }
 
 export async function registerRoutes(server: Server, app: Express) {
+  // Register gold analysis routes
+  const { registerGoldRoutes } = await import("./gold-routes");
+  registerGoldRoutes(server, app);
+
   // Register recession analysis routes
   const { registerRecessionRoutes } = await import("./recession");
   registerRecessionRoutes(app);
