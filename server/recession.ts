@@ -1046,6 +1046,9 @@ export function runRecessionAnalysis(): RecessionAnalysis {
     { name: "Google Trends", url: "https://trends.google.com" },
   ];
 
+  // ====== FAZIT: Comprehensive assessment ======
+  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers);
+
   console.log("[RECESSION] Analysis complete.");
   console.log(`[RECESSION] Probabilities: Rez-3M=${pCoincident}%, Rez-6M=${pLeading}%, Rez-12M=${pRezFull}%, Korr-3-6M=${pSentiment}%, Korr-12M=${pCorrFull}%`);
 
@@ -1057,8 +1060,125 @@ export function runRecessionAnalysis(): RecessionAnalysis {
     googleTrendsAvailable: googleAvailable,
     topDrivers,
     interpretation,
+    fazit,
     sources,
   };
+}
+
+// ============================================================
+// Fazit Generator — Comprehensive macro risk assessment
+// ============================================================
+
+interface FazitSection {
+  title: string;
+  emoji: string;
+  text: string;
+}
+
+function generateFazit(
+  indicators: IndicatorResult[],
+  subgroups: any[],
+  pRez3M: number, pRez6M: number, pRez12M: number,
+  pKorr3_6M: number, pKorr12M: number,
+  topDrivers: string[],
+): { summary: string; riskLevel: string; sections: FazitSection[] } {
+  // Extract key indicator values
+  const get = (name: string) => indicators.find(i => i.name.includes(name));
+  const buffett = get("Buffett");
+  const cape = get("CAPE");
+  const vix = get("VIX");
+  const sahm = get("Sahm");
+  const yield10y2y = get("Zinskurve");
+  const creditSpreads = get("Kreditspreads");
+  const consConf = get("Konsumklima");
+  const cnnFG = get("CNN");
+  const googleTrends = get("Google");
+  const marginDebt = get("Margin");
+
+  const maxProb = Math.max(pRez12M, pKorr12M);
+  const riskLevel = maxProb >= 70 ? "Hoch" : maxProb >= 50 ? "Erhöht" : maxProb >= 30 ? "Moderat" : "Niedrig";
+
+  // Section 1: Quantitative Assessment
+  const bullCount = indicators.filter(i => i.weightedScore < 0).length;
+  const bearCount = indicators.filter(i => i.weightedScore > 0).length;
+  const neutralCount = indicators.filter(i => i.weightedScore === 0).length;
+
+  let quantSummary = `Von 17 Indikatoren signalisieren ${bearCount} ein erhöhtes Risiko (bearish), ${bullCount} sind positiv (bullish) und ${neutralCount} neutral. `;
+  quantSummary += `Die Rezessionswahrscheinlichkeit liegt bei ${pRez3M}% (3M), ${pRez6M}% (6M) und ${pRez12M}% (12M). `;
+  quantSummary += `Die Korrekturwahrscheinlichkeit beträgt ${pKorr3_6M}% (Sentiment, 3-6M) und ${pKorr12M}% (Vollständig, 12M). `;
+  if (pKorr12M >= 65) {
+    quantSummary += `Die hohe Korrekturwahrscheinlichkeit von ${pKorr12M}% wird maßgeblich durch extreme Bewertungsniveaus getrieben: `;
+    quantSummary += topDrivers.slice(0, 3).join("; ") + ".";
+  } else if (pRez12M >= 40) {
+    quantSummary += `Die erhöhte Rezessionswahrscheinlichkeit reflektiert eine Kombination aus schwächelnden Konjunkturdaten und geopolitischem Stress.`;
+  }
+
+  // Section 2: Valuation Risk
+  let valuationText = "";
+  const buffettVal = buffett ? parseFloat(String(buffett.value).replace("%", "")) : NaN;
+  const capeVal = cape ? parseFloat(String(cape.value)) : NaN;
+  if (!isNaN(buffettVal) && buffettVal > 180) {
+    valuationText += `Der Buffett-Indikator steht bei ${buffett!.value} — das höchste Niveau seit der Dotcom-Blase. `;
+    valuationText += `Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. `;
+  }
+  if (!isNaN(capeVal) && capeVal > 30) {
+    valuationText += `Das Shiller CAPE-Ratio von ${capeVal} liegt über dem Durchschnitt der letzten 140 Jahre (ca. 17) und signalisiert, dass zukünftige Aktienrenditen (10J) mit hoher Wahrscheinlichkeit unterdurchschnittlich ausfallen. `;
+  }
+  if (marginDebt && marginDebt.rawScore > 0) {
+    valuationText += `Die NYSE Margin Debt (${marginDebt.value}) zeigt erhöhte Hebelwirkung im Markt — ein klassischer Vorlauf-Indikator für abrupte Sell-Offs.`;
+  }
+
+  // Section 3: Geopolitical/Macro Risks (Iran/Hormuz + Inflation + Rates)
+  let geoText = "";
+  geoText += `Die Sperrung der Straße von Hormuz durch den Iran-Konflikt stellt den gravierendsten exogenen Schock dar. Rund 20% der globalen Ölversorgung und ein Fünftel des weltweiten LNG-Handels fließen durch diese Meerenge. `;
+  geoText += `Die Dallas Fed schätzt einen WTI-Ölpreis von $98-132/Barrel bei andauernder Sperrung, mit einem BIP-Wachstumsrückgang von bis zu 2,9 Prozentpunkten. `;
+  geoText += `Goldman Sachs rechnet mit einem Inflationsanstieg um ~1 Prozentpunkt und hat die US-Rezessionswahrscheinlichkeit auf 30% angehoben. `;
+  geoText += `Die Fed steht vor einem Stagflations-Dilemma: Zinssenkungen würden die Inflation anheizen, Zinserhöhungen die Konjunktur belasten. `;
+  geoText += `Natixis prognostiziert, dass die Fed-Funds-Rate bei 3,50-3,75% verharrt, mit einem Bias Richtung "keine Senkung in 2026" oder sogar mögliche Zinserhöhungen. `;
+  geoText += `Für den Aktienmarkt bedeutet das: Höhere Kapitalmarktzinsen drücken Equity-Bewertungen durch steigende Diskontierungsraten — besonders bei Growth-Aktien mit langer Duration.`;
+
+  // Section 4: Private Credit / Systemic Risk
+  let creditText = "";
+  creditText += `Der $3-Billionen-Private-Credit-Markt steht vor seinem ersten echten Stresstest seit 2008. Morgan Stanley warnt vor Default-Raten von bis zu 8% (vs. historisch 2-2,5%). `;
+  creditText += `40% der Private-Credit-Kreditnehmer haben laut IWF negativen freien Cashflow — ein Anstieg von 25% in 2021. `;
+  creditText += `Mehrere Fonds (Blue Owl Capital, Cliffwater) haben bereits Rücknahmen eingeschränkt oder gestoppt. Die Parallelen zu den Vorboten der 2008-Krise (Rating-Arbitrage, Illiquidität, unrealistische Bewertungen) werden von UBS-Chairman Kelleher und der BIS explizit gezogen. `;
+  creditText += `Bankkredite an Non-Bank Financial Institutions (NBFIs) sind auf $1,92 Billionen gestiegen (+66% seit Ende 2024), was eine potenzielle Ansteckungsgefahr für das regulierte Bankensystem darstellt. `;
+  creditText += `Anders als 2023 bei der Silicon Valley Bank (konzentriertes VC-Exposure, Zinsrisiko bei Anleiheportfolios) ist das heutige Risiko breiter gestreut: Private Credit, Leveraged Loans, AI-Datacenter-Finanzierungen und covenant-lite Strukturen bilden ein Cluster eng korrelierter Risiken.`;
+
+  // Section 5: Handlungsempfehlung
+  let actionText = "";
+  if (pKorr12M >= 65 || pRez12M >= 40) {
+    actionText += `Angesichts einer Korrekturwahrscheinlichkeit von ${pKorr12M}% und einer Rezessionswahrscheinlichkeit von ${pRez12M}% empfiehlt sich eine defensive Positionierung: `;
+    actionText += `(1) Reduktion der Aktienquote zugunsten von Cash und kurzlaufenden Staatsanleihen. `;
+    actionText += `(2) Underweight bei Growth/Tech zugunsten von Value und defensiven Sektoren (Healthcare, Utilities, Consumer Staples). `;
+    actionText += `(3) Goldallokation als Absicherung gegen Stagflation und geopolitisches Risiko. `;
+    actionText += `(4) Kritische Prüfung von Private-Credit-Exposure — Liquiditätsrisiken werden in Stressphasen typischerweise unterschätzt. `;
+    actionText += `(5) VIX-Hedge (Optionen, VIX-Calls) bei VIX unter 25 als günstige Absicherung.`;
+  } else if (pKorr12M >= 50) {
+    actionText += `Die Indikatoren mahnen zur Vorsicht. Eine moderate Risikoreduzierung und Diversifikation über Anlageklassen ist sinnvoll. Besonders Positionen mit hoher Zins- und Ölpreissensitivität sollten überprüft werden.`;
+  } else {
+    actionText += `Die aktuelle Indikatorenlage zeigt keine akute Bedrohung. Standardmäßiges Risikomanagement ist ausreichend, wobei die geopolitischen Risiken engmaschig beobachtet werden sollten.`;
+  }
+
+  // Build summary
+  let summary = `Gesamtbewertung: ${riskLevel}es Risiko. `;
+  summary += `Rezession 12M: ${pRez12M}%, Korrektur 12M: ${pKorr12M}%. `;
+  if (pKorr12M >= 65) {
+    summary += `Die Kombination aus historisch extremen Bewertungen (Buffett ${buffett?.value}, CAPE ${cape?.value}), `;
+    summary += `dem Iran/Hormuz-Ölpreisschock mit Stagflationspotenzial, `;
+    summary += `und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, `;
+    summary += `das defensives Portfoliomanagement erfordert.`;
+  }
+
+  const sections: FazitSection[] = [
+    { title: "Quantitative Bewertung", emoji: "📊", text: quantSummary },
+    { title: "Bewertungsrisiko", emoji: "⚠️", text: valuationText },
+    { title: "Geopolitik & Makro: Iran/Hormuz, Inflation, Zinsen", emoji: "🌍", text: geoText },
+    { title: "Private Credit & Systemisches Risiko", emoji: "🏦", text: creditText },
+    { title: "Handlungsempfehlung", emoji: "🎯", text: actionText },
+  ];
+
+  return { summary, riskLevel, sections };
 }
 
 // ============================================================

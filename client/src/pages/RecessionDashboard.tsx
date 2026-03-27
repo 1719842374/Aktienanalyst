@@ -44,6 +44,12 @@ interface SubgroupResult {
   finalProbability?: number;
 }
 
+interface FazitSection {
+  title: string;
+  emoji: string;
+  text: string;
+}
+
 interface RecessionAnalysis {
   date: string;
   indicators: IndicatorResult[];
@@ -52,6 +58,7 @@ interface RecessionAnalysis {
   googleTrendsAvailable: boolean;
   topDrivers: string[];
   interpretation: string;
+  fazit?: { summary: string; riskLevel: string; sections: FazitSection[] };
   sources: { name: string; url: string }[];
 }
 
@@ -216,8 +223,15 @@ export default function RecessionDashboard() {
               <Summary data={data} />
             </SectionCard>
 
-            {/* Section 9: Quellenliste */}
-            <SectionCard number={9} title="Quellenliste">
+            {/* Section 9: Fazit & Makro-Risikobewertung */}
+            {data.fazit && (
+              <SectionCard number={9} title="Fazit & Makro-Risikobewertung">
+                <FazitSection fazit={data.fazit} />
+              </SectionCard>
+            )}
+
+            {/* Section 10: Quellenliste */}
+            <SectionCard number={data.fazit ? 10 : 9} title="Quellenliste">
               <SourcesList sources={data.sources} />
             </SectionCard>
 
@@ -811,7 +825,48 @@ function Summary({ data }: { data: RecessionAnalysis }) {
 }
 
 // ============================================================
-// Section 9: Sources
+// Section 9: Fazit & Makro-Risikobewertung
+// ============================================================
+function FazitSection({ fazit }: { fazit: { summary: string; riskLevel: string; sections: FazitSection[] } }) {
+  const riskColor = fazit.riskLevel === "Hoch" ? "text-red-500 bg-red-500/10 border-red-500/30"
+    : fazit.riskLevel === "Erhöht" ? "text-orange-500 bg-orange-500/10 border-orange-500/30"
+    : fazit.riskLevel === "Moderat" ? "text-yellow-500 bg-yellow-500/10 border-yellow-500/30"
+    : "text-green-500 bg-green-500/10 border-green-500/30";
+
+  return (
+    <div className="space-y-4">
+      {/* Risk Level Badge + Summary */}
+      <div className={`rounded-lg border p-3 ${riskColor}`}>
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-lg font-bold">{fazit.riskLevel}es Risiko</span>
+        </div>
+        <p className="text-xs leading-relaxed opacity-90">{fazit.summary}</p>
+      </div>
+
+      {/* Fazit Sections */}
+      {fazit.sections.map((section, i) => (
+        <div key={i} className="border border-border/50 rounded-lg overflow-hidden">
+          <div className="bg-muted/30 px-3 py-2 border-b border-border/50">
+            <h4 className="text-xs font-semibold flex items-center gap-1.5">
+              <span>{section.emoji}</span>
+              <span>{section.title}</span>
+            </h4>
+          </div>
+          <div className="px-3 py-2.5">
+            <p className="text-[11px] leading-[1.6] text-muted-foreground">{section.text}</p>
+          </div>
+        </div>
+      ))}
+
+      <div className="text-[10px] text-muted-foreground/50 italic pt-1">
+        Quellen: Dallas Fed, Goldman Sachs, Natixis, Morgan Stanley, CNBC, BIS, IWF, Al Jazeera, Fortune, CBS News
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Section 10: Sources
 // ============================================================
 function SourcesList({ sources }: { sources: { name: string; url: string }[] }) {
   return (
