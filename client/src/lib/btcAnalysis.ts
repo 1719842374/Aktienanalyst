@@ -215,17 +215,21 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   // Strategy: Fetch non-CoinGecko APIs in parallel first, then CoinGecko simple/price,
   // then Blockchain.com for full history.
 
-  // === 1. Parallel fetch: F&G, F&G History, FRED, Blockchain.com (all non-CoinGecko) ===
+  // === 1. Parallel fetch: F&G, F&G History, FRED, Blockchain.com, DXY, Hashrate (all non-CoinGecko) ===
   let fearGreedIndex = 50, fearGreedLabel = "Neutral";
   let fearGreedHistory: { date: string; value: number; classification: string }[] = [];
-  let fedFundsRate = 4.33;
-  const dxy = 103;
+  let fedFundsRate = 3.64; // Updated default: Feb 2026 FRED FEDFUNDS
+  let dxy = 103;
+  let hashrateChange = 0; // percent change over 90 days
+  let hashrateValue = "";
 
-  const [fngResult, fngHistResult, fredResult, blockchainResult] = await Promise.allSettled([
+  const [fngResult, fngHistResult, fredResult, blockchainResult, eurusdResult, hashrateResult] = await Promise.allSettled([
     fetchJSON("https://api.alternative.me/fng/?limit=1"),
     fetchJSON("https://api.alternative.me/fng/?limit=2000&format=json"),
     fetchText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"),
     fetchJSON("https://api.blockchain.info/charts/market-price?timespan=all&format=json&cors=true", 60000),
+    fetchJSON("https://data-api.binance.vision/api/v3/ticker/24hr?symbol=EURUSDT"),
+    fetchJSON("https://mempool.space/api/v1/mining/hashrate/3m"),
   ]);
 
   if (fngResult.status === "fulfilled" && fngResult.value?.data?.[0]) {
@@ -248,6 +252,31 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
       if (parts.length >= 2) {
         const val = parseFloat(parts[1]);
         if (!isNaN(val)) fedFundsRate = val;
+      }
+    }
+  }
+
+  // === 1b. Parse DXY from EUR/USDT ===
+  if (eurusdResult.status === "fulfilled" && eurusdResult.value?.lastPrice) {
+    const eurusd = parseFloat(eurusdResult.value.lastPrice);
+    if (eurusd > 0) {
+      // DXY is ~57.6% weighted by EUR. Simplified: DXY ≈ 50.14 + 55.27/EURUSD + 3.7
+      // More accurate empirical approximation:
+      dxy = Math.round((50.14348 + 55.274 * (1 / eurusd) + 3.7) * 100) / 100;
+    }
+  }
+
+  // === 1c. Parse Hashrate trend from mempool.space ===
+  if (hashrateResult.status === "fulfilled") {
+    const hr = hashrateResult.value;
+    const hashrates = hr?.hashrates || [];
+    const currentHR = hr?.currentHashrate || 0;
+    if (hashrates.length >= 2 && currentHR > 0) {
+      const oldHR = hashrates[0]?.avgHashrate || 0;
+      if (oldHR > 0) {
+        hashrateChange = ((currentHR - oldHR) / oldHR) * 100;
+        const hrEH = (currentHR / 1e18).toFixed(0);
+        hashrateValue = `${hrEH} EH/s (${hashrateChange >= 0 ? "+" : ""}${hashrateChange.toFixed(1)}% 90d)`;
       }
     }
   }
@@ -325,6 +354,72 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   const prices5Y = filterByYears(allPriceData, 5);
   const prices10Y = filterByYears(allPriceData, 10);
 
+  // === 2b. Calculate Weekly RSI from daily prices ===
+  let weeklyRSI: number | null = null;
+  let rsiSource = "Berechnet (Blockchain.info)";
+  if (allPriceData.length > 120) { // need at least ~15 weeks of daily data
+    // Resample to weekly closes (every 7th day)
+    const weeklyCloses: number[] = [];
+    for (let i = 6; i < allPriceData.length; i += 7) {
+      weeklyCloses.push(allPriceData[i].price);
+    }
+    // Append last data point if not included
+    if (weeklyCloses.length > 0 && allPriceData.length > 0) {
+      const lastPrice = allPriceData[allPriceData.length - 1].price;
+      if (weeklyCloses[weeklyCloses.length - 1] !== lastPrice) {
+        weeklyCloses.push(lastPrice);
+      }
+    }
+    // Wilder RSI (14 periods)
+    if (weeklyCloses.length >= 15) {
+      const changes: number[] = [];
+      for (let i = 1; i < weeklyCloses.length; i++) {
+        changes.push(weeklyCloses[i] - weeklyCloses[i - 1]);
+      }
+      const period = 14;
+      let avgGain = 0, avgLoss = 0;
+      for (let i = 0; i < period; i++) {
+        if (changes[i] > 0) avgGain += changes[i];
+        else avgLoss += Math.abs(changes[i]);
+      }
+      avgGain /= period;
+      avgLoss /= period;
+      // Smooth with Wilder method
+      for (let i = period; i < changes.length; i++) {
+        const gain = changes[i] > 0 ? changes[i] : 0;
+        const loss = changes[i] < 0 ? Math.abs(changes[i]) : 0;
+        avgGain = (avgGain * (period - 1) + gain) / period;
+        avgLoss = (avgLoss * (period - 1) + loss) / period;
+      }
+      if (avgLoss === 0) weeklyRSI = 100;
+      else {
+        const rs = avgGain / avgLoss;
+        weeklyRSI = 100 - (100 / (1 + rs));
+      }
+      weeklyRSI = Math.round(weeklyRSI * 10) / 10;
+    }
+  }
+
+  // === 2c. MVRV Z-Score approximation via Power-Law Realized Price ===
+  // Realized Price ≈ Power-Law fair value * 0.6 (empirical relationship)
+  // MVRV = Market Price / Realized Price
+  // Z-Score = (Market Cap - Realized Cap) / StdDev(Market Cap)
+  let mvrvZScore: number | null = null;
+  let mvrvSource = "Power-Law Approximation";
+  if (allPriceData.length > 365 && btcPrice > 0) {
+    const genesisD = new Date("2009-01-03");
+    const daysSG = Math.floor((Date.now() - genesisD.getTime()) / 86400000);
+    const plFairValue = 1.0117e-17 * Math.pow(daysSG, 5.82);
+    // Realized price tracks long-term cost basis, roughly 60% of PL fair value
+    const realizedPrice = plFairValue * 0.6;
+    if (realizedPrice > 0) {
+      const mvrv = btcPrice / realizedPrice;
+      // Z-Score: how many standard deviations above the mean MVRV (~1.5)
+      // Historical MVRV mean ≈ 1.5, stddev ≈ 1.2
+      mvrvZScore = Math.round(((mvrv - 1.5) / 1.2) * 100) / 100;
+    }
+  }
+
   // === 4. Halving info ===
   const lastHalvingDate = new Date("2024-04-20");
   const now = new Date();
@@ -352,9 +447,38 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   else powerSignal = 1.0;
 
   // === 6. Indicator Scoring ===
+  // MVRV Z-Score scoring
+  let mvrvScore = 0;
+  if (mvrvZScore !== null) {
+    if (mvrvZScore < -0.5) mvrvScore = 1;       // undervalued → bullish
+    else if (mvrvZScore > 3) mvrvScore = -1;     // overvalued → bearish
+    else if (mvrvZScore > 2) mvrvScore = -0.5;   // getting expensive
+  }
+
+  // RSI scoring
+  let rsiScore = 0;
+  if (weeklyRSI !== null) {
+    if (weeklyRSI < 30) rsiScore = 1;            // oversold → bullish
+    else if (weeklyRSI < 40) rsiScore = 0.5;     // approaching oversold
+    else if (weeklyRSI > 70) rsiScore = -1;      // overbought → bearish
+    else if (weeklyRSI > 60) rsiScore = -0.5;    // approaching overbought
+  }
+
   let fgScore = 0;
   if (fearGreedIndex < 30) fgScore = 1;
   else if (fearGreedIndex > 70) fgScore = -1;
+
+  // Hashrate scoring: growing hashrate = healthy network = bullish
+  let hashrateScore = 0;
+  if (hashrateValue) {
+    if (hashrateChange > 5) hashrateScore = 1;   // strong growth
+    else if (hashrateChange > 0) hashrateScore = 0.5; // moderate growth
+    else if (hashrateChange < -10) hashrateScore = -1; // miner capitulation
+    else if (hashrateChange < 0) hashrateScore = -0.5; // declining
+  } else {
+    hashrateValue = "Stable";
+    hashrateScore = 0;
+  }
 
   let macroScore = 0;
   if (fedFundsRate > 5.0) macroScore = -1;
@@ -364,14 +488,16 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   if (dxy < 100) dxyScore = 1;
   else if (dxy > 105) dxyScore = -1;
 
+  const dxySource = eurusdResult.status === "fulfilled" ? "Binance EUR/USDT" : "Default";
+
   const indicators: BTCIndicator[] = [
-    { name: "MVRV Z-Score", value: "N/A (default)", score: 0, weight: 0.20, source: "Default (neutral)", weighted: 0 },
-    { name: "RSI (Weekly)", value: "N/A (default)", score: 0, weight: 0.15, source: "Default (neutral)", weighted: 0 },
+    { name: "MVRV Z-Score", value: mvrvZScore !== null ? mvrvZScore.toFixed(2) : "N/A", score: mvrvScore, weight: 0.20, source: mvrvZScore !== null ? mvrvSource : "N/A", weighted: 0 },
+    { name: "RSI (Weekly)", value: weeklyRSI !== null ? weeklyRSI.toFixed(1) : "N/A", score: rsiScore, weight: 0.15, source: weeklyRSI !== null ? rsiSource : "N/A", weighted: 0 },
     { name: "Fear & Greed", value: `${fearGreedIndex} (${fearGreedLabel})`, score: fgScore, weight: 0.10, source: "alternative.me", weighted: 0 },
-    { name: "Hashrate Trend", value: "Stable", score: 1, weight: 0.10, source: "Default (stable growth)", weighted: 0 },
-    { name: "ETF Net Flows", value: "N/A (default)", score: 0, weight: 0.15, source: "Default (neutral)", weighted: 0 },
-    { name: "Macro (Fed/M2)", value: `FFR ${fedFundsRate}%`, score: macroScore, weight: 0.15, source: "FRED", weighted: 0 },
-    { name: "DXY", value: `${dxy.toFixed(2)}`, score: dxyScore, weight: 0.15, source: "Default", weighted: 0 },
+    { name: "Hashrate Trend", value: hashrateValue || "Stable", score: hashrateScore, weight: 0.10, source: hashrateValue ? "mempool.space" : "Default", weighted: 0 },
+    { name: "ETF Net Flows", value: "N/A (kein API-Key)", score: 0, weight: 0.15, source: "CoinGlass (Key benötigt)", weighted: 0 },
+    { name: "Macro (Fed/M2)", value: `FFR ${fedFundsRate.toFixed(2)}%`, score: macroScore, weight: 0.15, source: fredResult.status === "fulfilled" ? "FRED (live)" : "FRED (Stand: Feb 2026)", weighted: 0 },
+    { name: "DXY", value: `${dxy.toFixed(2)}`, score: dxyScore, weight: 0.15, source: dxySource, weighted: 0 },
   ].map(ind => ({ ...ind, weighted: ind.score * ind.weight }));
 
   const gis = indicators.reduce((sum, ind) => sum + ind.weighted, 0);
