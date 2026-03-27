@@ -476,14 +476,50 @@ function scoreMarginDebt(): IndicatorResult {
 
 // 11. Google Trends "Recession"
 function scoreGoogleTrends(): IndicatorResult {
-  // Per methodology: if all attempts fail → Score 0, Max adjusts to 61.2
+  let trendValue = NaN;
+  let source = "Google Trends";
+
+  // Primary: pytrends library (Python) — fetches real-time Google Trends data
+  try {
+    // Use the Python helper script (server/fetch-google-trends.py)
+    const scriptPath = require("path").resolve(__dirname, "..", "server", "fetch-google-trends.py");
+    const fallbackPath = require("path").resolve("server/fetch-google-trends.py");
+    const pyPath = require("fs").existsSync(scriptPath) ? scriptPath : fallbackPath;
+    const result = execSync(`python3 "${pyPath}" 2>/dev/null`, {
+      timeout: 45000, encoding: "utf-8",
+    }).trim();
+    if (result) {
+      const parsed = JSON.parse(result);
+      if (parsed.avg && !parsed.error) {
+        trendValue = parsed.avg;
+        source = `Google Trends (7d Ø=${parsed.avg}, Latest=${parsed.latest}, Peak=${parsed.peak})`;
+        console.log(`  Google Trends: avg=${parsed.avg}, latest=${parsed.latest}, peak=${parsed.peak}`);
+      } else if (parsed.error) {
+        console.log(`  Google Trends pytrends error: ${parsed.error}`);
+      }
+    }
+  } catch (err: any) {
+    console.log(`  Google Trends pytrends failed: ${err?.message?.substring(0, 200)}`);
+  }
+
+  // Scoring per methodology: Google(0-100): >75:+7 | 60-75:+4 | 30-60:0 | <30:-4
+  let rawScore = 0;
+  let zone = "N/A (Daten nicht verfügbar)";
+  if (!isNaN(trendValue)) {
+    if (trendValue > 75) { rawScore = 7; zone = `Extrem hoch (${trendValue} >75) → Panik-Suchen`; }
+    else if (trendValue >= 60) { rawScore = 4; zone = `Hoch (${trendValue} 60-75) → Erhöhtes Interesse`; }
+    else if (trendValue >= 30) { rawScore = 0; zone = `Normal (${trendValue} 30-60)`; }
+    else { rawScore = -4; zone = `Niedrig (${trendValue} <30) → Sorglosigkeit`; }
+  }
+
   return {
     name: "Google Trends \"Recession\"",
     group: "correction", subgroup: "sentiment_ext",
-    value: "N/A",
-    rawScore: 0, weight: 1.7, weightedScore: 0, maxWeighted: 11.9,
-    zone: "N/A (Daten nicht verfügbar)",
-    source: "Google Trends (N/A)",
+    value: isNaN(trendValue) ? "N/A" : `${trendValue.toFixed(0)} (7d Ø)`,
+    rawScore, weight: 1.7,
+    weightedScore: Math.round(rawScore * 1.7 * 10) / 10,
+    maxWeighted: 11.9, zone,
+    source: isNaN(trendValue) ? "Google Trends (N/A)" : source,
     description: "Google-Suchinteresse für 'Recession' (0-100 Index)",
   };
 }
