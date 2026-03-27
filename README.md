@@ -4,7 +4,7 @@
 
 > Objektiv · Transparent · Konservativ · Alle Rechenwege ausgewiesen
 
-[![Live Demo](https://img.shields.io/badge/Live-Demo-blue?style=for-the-badge)](https://www.perplexity.ai/computer/a/stock-analyst-pro-rZ4JAR_BTDqcATEm4h888g)
+[![Live Demo](https://img.shields.io/badge/Live-Demo-blue?style=for-the-badge)](https://www.perplexity.ai/computer/a/stock-analyst-pro-H8US06otSA6hhTHNj22ShQ)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/1719842374/Aktienanalyst)
 
 ---
@@ -156,9 +156,65 @@ Fair-Value-Bewertung für Gold basierend auf fundamentalen Makro-Faktoren.
 
 ---
 
-## Rezessions-Dashboard
+## Rezessions- & Korrektur-Dashboard
 
-17 makroökonomische Indikatoren zur Einschätzung der Rezessionswahrscheinlichkeit mit automatischem Scoring und historischem Vergleich.
+Objektive Wahrscheinlichkeitsberechnung basierend auf 17 makroökonomischen Indikatoren für Rezession und Marktkorrektur über 3, 6 und 12 Monate.
+
+### 17 Indikatoren mit Echtzeit-Daten
+
+**Rezessions-Indikatoren (7)**
+
+| Indikator | Datenquelle | Score-Range |
+|-----------|-------------|------------|
+| Sahm-Regel | FRED SAHMREALTIME | +4/-3 |
+| Inv. Zinskurve (10Y-2Y) | FRED T10Y2Y | +4/-3 |
+| PMI (Mfg+Serv Ø) | ISM / Finance Macro API | +3/-3 |
+| Durable Goods (YoY) | FRED DGORDER | +3/-2 |
+| M2 Geldmenge (YoY) | FRED M2SL | +3/-2 |
+| Kreditspreads (BAA-Trs) | FRED BAA10Y | +3/-2 |
+| Konsumklima (CSI) | U of Michigan / Finance API | +3/-3 |
+
+**Korrektur-Indikatoren (10)**
+
+| Indikator | Datenquelle | Gewicht | Score-Range |
+|-----------|-------------|---------|------------|
+| Buffett Indikator (TMC/GDP) | currentmarketvaluation.com | ×2 | +8/-4 |
+| Shiller CAPE | multpl.com | ×1.8 | +7/-5 |
+| Margin Debt | currentmarketvaluation.com | ×1 | +4/-4 |
+| Google Trends "Recession" | pytrends (7d-Ø) | ×1.7 | +7/-4 |
+| VIX | CBOE / Finance API | ×1 | +4/-3 |
+| Advance-Decline-Line | NYSE / Finance API | ×1 | +3/-2 |
+| CNN Fear & Greed | Finance Sentiment Proxy | ×1.6 | +6/-5 |
+| AAII Sentiment | Finance Sentiment Proxy | ×1 | +4/-4 |
+| CBOE Put/Call Ratio | Finance Sentiment Proxy | ×1 | +4/-4 |
+| Investors Intelligence | Finance Sentiment Proxy | ×1 | +4/-4 |
+
+### Wahrscheinlichkeits-Modell
+
+```
+P(Subgruppe) = 50% + (Netto-Score / Max-Score) × 50%
+
+Rezession 12M (mit NY-Fed-Anker):
+  P_final = P_raw × 0.7 + NY_Fed_Probability × 0.3
+
+Anti-Bias-Regel: Formel-Ergebnis ist mathematisch bindend.
+N/A-Indikatoren: Score=0, Max wird reduziert.
+Rundung auf 5%-Schritte.
+```
+
+**5 Wahrscheinlichkeits-Horizonte:** Rez. Coincident (3M), Rez. Leading (6M), Rez. Vollständig (12M), Korrektur Sentiment (3-6M), Korrektur Vollständig (12M)
+
+### Fazit & Makro-Risikobewertung (Sektion 9)
+
+Dynamisch generiertes Fazit mit 5 Sektionen:
+
+1. **Quantitative Bewertung** — Indikator-Zusammenfassung, Bull/Bear/Neutral-Verteilung
+2. **Bewertungsrisiko** — Buffett (230%), Shiller CAPE (37.3), Margin Debt, historische Drawdown-Analyse
+3. **Geopolitik & Makro** — Iran/Hormuz-Sperrung (20% globaler Ölversorgung), Ölpreis $98-132/bbl (Dallas Fed), Stagflationsrisiko, Goldman Sachs Rezessionswahrscheinlichkeit 30%, Fed bei 3,50-3,75% (Natixis), steigende Kapitalmarktzinsen drücken Equity-Bewertungen
+4. **Private Credit & Systemisches Risiko** — $3T-Markt-Stresstest, Morgan Stanley warnt vor 8% Defaults, 40% neg. FCF (IWF), NBFI-Kredite $1,92T (+66%), SVB-Parallelen, covenant-lite Risiken, AI-Datacenter-Finanzierung
+5. **Handlungsempfehlung** — Defensive Positionierung, Sektorallokation, Gold-Hedge, VIX-Optionen
+
+*Quellen: Dallas Fed, Goldman Sachs, Natixis, Morgan Stanley, CNBC, BIS, IWF, Al Jazeera, Fortune, CBS News*
 
 ---
 
