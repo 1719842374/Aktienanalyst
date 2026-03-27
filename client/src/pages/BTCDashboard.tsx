@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { analyzeBTC } from "@/lib/btcAnalysis";
+import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
@@ -1738,9 +1739,7 @@ export default function BTCDashboard() {
       try {
         return await analyzeBTC() as BTCAnalysis;
       } catch {
-        const fallback = await fetch("./btc-data.json");
-        if (!fallback.ok) throw new Error("BTC-Daten konnten nicht geladen werden");
-        return fallback.json() as Promise<BTCAnalysis>;
+        return BTC_FALLBACK_DATA;
       }
     },
     onSuccess: (result) => {

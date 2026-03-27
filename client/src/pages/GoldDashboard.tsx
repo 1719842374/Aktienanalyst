@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { GoldAnalysis } from "../../../shared/gold-schema";
+import { GOLD_FALLBACK_DATA } from "@/lib/goldFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { GoldPriceSection } from "@/components/gold/GoldPriceSection";
@@ -39,15 +40,13 @@ export default function GoldDashboard() {
   const { data, isLoading, isError, error, refetch } = useQuery<GoldAnalysis>({
     queryKey: ["/api/analyze-gold"],
     queryFn: async () => {
-      // Try live API first, fallback to pre-computed static JSON
+      // Try live API first, fallback to bundled static data
       try {
         const res = await apiRequest("GET", "/api/analyze-gold");
         return res.json();
       } catch {
-        // Fallback to pre-computed static JSON (same directory as index.html)
-        const fallback = await fetch("./gold-data.json");
-        if (!fallback.ok) throw new Error("Gold-Daten konnten nicht geladen werden");
-        return fallback.json();
+        // Return pre-computed data bundled at build time
+        return GOLD_FALLBACK_DATA;
       }
     },
     staleTime: 5 * 60 * 1000,

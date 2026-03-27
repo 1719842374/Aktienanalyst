@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { RECESSION_FALLBACK_DATA } from "@/lib/recessionFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
@@ -125,10 +126,7 @@ export default function RecessionDashboard() {
         }
         return json as RecessionAnalysis;
       } catch {
-        // API unavailable (static deployment) — try pre-built fallback data
-        const fallback = await fetch("./recession-data.json");
-        if (!fallback.ok) throw new Error("Rezessions-Daten konnten nicht geladen werden");
-        return (await fallback.json()) as RecessionAnalysis;
+        return RECESSION_FALLBACK_DATA as RecessionAnalysis;
       }
     },
     onSuccess: (result) => {
