@@ -209,6 +209,81 @@ async function fetchText(url: string, timeoutMs = 30000): Promise<string> {
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+// === ETF Flow fetcher (Farside Investors via GitHub) ===
+async function fetchETFFlows(): Promise<{ totalFlow: number; days: number; dailyFlows: { date: string; flow: number }[]; source: string } | null> {
+  try {
+    // fadetocrypto/daily-crypto-reports: folder = report_date, file contains previous trading day
+    const today = new Date();
+    const folders: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      folders.push(d.toISOString().split("T")[0].replace(/-/g, ""));
+    }
+
+    const results = await Promise.allSettled(
+      folders.map(folder =>
+        fetchText(`https://raw.githubusercontent.com/fadetocrypto/daily-crypto-reports/main/${folder}/ETF%20flow%20${folder.slice(4,6)}-${folder.slice(6,8)}-${folder.slice(0,4)}.md`, 10000)
+          .then(text => {
+            // The file in folder YYYYMMDD is named with date (folder-1), but URL uses folder date
+            // Actually the naming is: folder=20260327, file="ETF flow 03-26-2026.md"
+            // Let's just parse whatever we get
+            const match = text.match(/BTC ETF Flows.*?([+-]?\$[\d.]+M)/i);
+            if (match) {
+              const flowStr = match[1].replace("$", "").replace("M", "");
+              return { date: folder, flow: parseFloat(flowStr) };
+            }
+            return null;
+          })
+          .catch(() => null)
+      )
+    );
+
+    // Also try folder+1 pattern (report published day after)
+    const altResults = await Promise.allSettled(
+      folders.slice(0, 5).map(folder => {
+        const d = new Date(`${folder.slice(0,4)}-${folder.slice(4,6)}-${folder.slice(6,8)}`);
+        d.setDate(d.getDate() + 1);
+        const nextFolder = d.toISOString().split("T")[0].replace(/-/g, "");
+        return fetchText(`https://raw.githubusercontent.com/fadetocrypto/daily-crypto-reports/main/${nextFolder}/ETF%20flow%20${folder.slice(4,6)}-${folder.slice(6,8)}-${folder.slice(0,4)}.md`, 10000)
+          .then(text => {
+            const match = text.match(/BTC ETF Flows.*?([+-]?\$[\d.]+M)/i);
+            if (match) {
+              const flowStr = match[1].replace("$", "").replace("M", "");
+              return { date: folder, flow: parseFloat(flowStr) };
+            }
+            return null;
+          })
+          .catch(() => null);
+      })
+    );
+
+    const dailyFlows: { date: string; flow: number }[] = [];
+    const seenDates = new Set<string>();
+
+    for (const r of [...results, ...altResults]) {
+      if (r.status === "fulfilled" && r.value && !seenDates.has(r.value.date)) {
+        dailyFlows.push(r.value);
+        seenDates.add(r.value.date);
+      }
+    }
+
+    if (dailyFlows.length === 0) return null;
+
+    dailyFlows.sort((a, b) => b.date.localeCompare(a.date)); // newest first
+    const totalFlow = dailyFlows.reduce((sum, d) => sum + d.flow, 0);
+
+    return {
+      totalFlow,
+      days: dailyFlows.length,
+      dailyFlows,
+      source: "Farside Investors (GitHub)",
+    };
+  } catch {
+    return null;
+  }
+}
+
 // === Main analysis function ===
 
 export async function analyzeBTC(): Promise<BTCAnalysis> {
@@ -223,13 +298,14 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   let hashrateChange = 0; // percent change over 90 days
   let hashrateValue = "";
 
-  const [fngResult, fngHistResult, fredResult, blockchainResult, eurusdResult, hashrateResult] = await Promise.allSettled([
+  const [fngResult, fngHistResult, fredResult, blockchainResult, eurusdResult, hashrateResult, etfFlowResult] = await Promise.allSettled([
     fetchJSON("https://api.alternative.me/fng/?limit=1"),
     fetchJSON("https://api.alternative.me/fng/?limit=2000&format=json"),
     fetchText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"),
     fetchJSON("https://api.blockchain.info/charts/market-price?timespan=all&format=json&cors=true", 60000),
     fetchJSON("https://data-api.binance.vision/api/v3/ticker/24hr?symbol=EURUSDT"),
     fetchJSON("https://mempool.space/api/v1/mining/hashrate/3m"),
+    fetchETFFlows(),
   ]);
 
   if (fngResult.status === "fulfilled" && fngResult.value?.data?.[0]) {
@@ -279,6 +355,22 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
         hashrateValue = `${hrEH} EH/s (${hashrateChange >= 0 ? "+" : ""}${hashrateChange.toFixed(1)}% 90d)`;
       }
     }
+  }
+
+  // === 1d. Parse ETF Flow data ===
+  let etfFlowValue = "";
+  let etfFlowScore = 0;
+  let etfFlowSource = "N/A";
+  if (etfFlowResult.status === "fulfilled" && etfFlowResult.value) {
+    const etf = etfFlowResult.value;
+    const avgDaily = etf.totalFlow / etf.days;
+    etfFlowValue = `${etf.totalFlow >= 0 ? "+" : ""}$${etf.totalFlow.toFixed(0)}M (${etf.days}d)`;
+    etfFlowSource = etf.source;
+    // Scoring: strong inflows = bullish, strong outflows = bearish
+    if (avgDaily > 50) etfFlowScore = 1;        // strong daily inflows
+    else if (avgDaily > 0) etfFlowScore = 0.5;   // moderate inflows
+    else if (avgDaily > -50) etfFlowScore = -0.5; // moderate outflows
+    else etfFlowScore = -1;                       // strong outflows
   }
 
   // === 2. Parse Blockchain.com historical data ===
@@ -495,7 +587,7 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
     { name: "RSI (Weekly)", value: weeklyRSI !== null ? weeklyRSI.toFixed(1) : "N/A", score: rsiScore, weight: 0.15, source: weeklyRSI !== null ? rsiSource : "N/A", weighted: 0 },
     { name: "Fear & Greed", value: `${fearGreedIndex} (${fearGreedLabel})`, score: fgScore, weight: 0.10, source: "alternative.me", weighted: 0 },
     { name: "Hashrate Trend", value: hashrateValue || "Stable", score: hashrateScore, weight: 0.10, source: hashrateValue ? "mempool.space" : "Default", weighted: 0 },
-    { name: "ETF Net Flows", value: "N/A (kein API-Key)", score: 0, weight: 0.15, source: "CoinGlass (Key benötigt)", weighted: 0 },
+    { name: "ETF Net Flows", value: etfFlowValue || "N/A", score: etfFlowScore, weight: 0.15, source: etfFlowSource, weighted: 0 },
     { name: "Macro (Fed/M2)", value: `FFR ${fedFundsRate.toFixed(2)}%`, score: macroScore, weight: 0.15, source: fredResult.status === "fulfilled" ? "FRED (live)" : "FRED (Stand: Feb 2026)", weighted: 0 },
     { name: "DXY", value: `${dxy.toFixed(2)}`, score: dxyScore, weight: 0.15, source: dxySource, weighted: 0 },
   ].map(ind => ({ ...ind, weighted: ind.score * ind.weight }));
