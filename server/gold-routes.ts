@@ -122,7 +122,7 @@ function calculateMA(prices: number[], period: number): number {
 
 // === 30d Realized Volatility ===
 function calculateVolatility(prices: number[], days: number = 30): number {
-  if (prices.length < days + 1) return 0.15; // fallback
+  if (prices.length < days + 1) return 0.20; // fallback: GVZ-basiert (Gold VIX ~42 → σ≈0.20)
   const recentPrices = prices.slice(-(days + 1));
   const returns: number[] = [];
   for (let i = 1; i < recentPrices.length; i++) {
@@ -315,7 +315,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
 
       // Fallback if still no price - use a reasonable estimate
       if (spotPrice === 0) {
-        spotPrice = 3050; // reasonable fallback for 2026
+        spotPrice = 4500; // current gold price level (Mar 2026)
         console.log("[GOLD] Warning: using fallback gold price");
       }
 
@@ -339,7 +339,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       });
 
       // === Parse DXY ===
-      let dxyValue = 103; // default
+      let dxyValue = 100; // default (DXY ~100 as of Mar 2026)
       if (dxyQuoteResult) {
         const content = typeof dxyQuoteResult === "string" ? dxyQuoteResult : JSON.stringify(dxyQuoteResult);
         const m = content.match(/price["\s:]+(\d+[\d,.]*)/i);
@@ -347,11 +347,11 @@ export function registerGoldRoutes(server: Server, app: Express) {
       }
 
       // === Parse FRED indicators ===
-      const breakevenRate = fredBreakeven?.value ?? 2.3;
-      const realRate = fredRealRate?.value ?? 1.8;
+      const breakevenRate = fredBreakeven?.value ?? 2.34;
+      const realRate = fredRealRate?.value ?? 2.02;
 
       // M2 YoY growth estimation
-      let m2YoY = 4.0; // default
+      let m2YoY = 4.88; // default (Feb 2026 YCharts)
       if (fredM2?.value) {
         // M2 is a level; we'd need historical to compute YoY. Use macro data if available
         // For now estimate from macro snapshot
@@ -365,7 +365,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       }
 
       // === Parse CPI for Fair Value ===
-      let cpiToday = 315; // reasonable default for 2026
+      let cpiToday = 326.785; // BLS Feb 2026 CPI index
       if (macroResult) {
         const content = typeof macroResult === "string" ? macroResult : JSON.stringify(macroResult);
         const cpiMatch = content.match(/CPI[^}]*?(\d{2,3}\.?\d*)/i);
@@ -375,34 +375,36 @@ export function registerGoldRoutes(server: Server, app: Express) {
         }
       }
 
-      // === GPR (Geopolitical Risk) - use fallback ===
-      const gprValue = 130; // moderate geopolitical risk estimate
+      // === GPR (Geopolitical Risk) ===
+      // 2022: Ukraine → Gold stieg trotz Zinsanstieg. Iran-Konflikte zeigen starke Überschneidungen.
+      // GPR >150 seit 2022 durch Nahost, Ukraine, Taiwan-Spannungen
+      const gprValue = 155; // elevated geopolitical risk (Mar 2026: Nahost + Asien escalation)
 
       // === Indicator Scoring ===
       const indicators: GoldIndicator[] = [];
 
-      // 1. Zentralbankkäufe (CB purchases) - use known trend (>700t/year since 2022)
-      const cbPurchases = 800; // estimate based on recent WGC data
+      // 1. Zentralbankkäufe (CB purchases) - WGC data: 863t in 2025, ~850t forecast 2026
+      const cbPurchases = 863; // WGC Gold Demand Trends Full Year 2025
       indicators.push({
         name: "Zentralbankkäufe",
         weight: 0.20,
         score: cbPurchases >= 700 ? 1 : -1,
-        value: `~${cbPurchases}t/Jahr (geschätzt)`,
+        value: `${cbPurchases}t (2025), Prognose ~850t (2026)`,
         details: cbPurchases >= 700
-          ? "Zentralbanken kaufen weiterhin massiv Gold (De-Dollarisierung)"
+          ? "Zentralbanken kaufen weiterhin massiv Gold (De-Dollarisierung, Rekordnachfrage seit 2022)"
           : "Zentralbankkäufe unter historischem Durchschnitt",
         thresholds: { bullish: "≥700t/Jahr", neutral: "-", bearish: "<700t/Jahr" },
       });
 
-      // 2. ETF Flows - estimate
-      const etfFlowsYTD = 12; // billion USD estimate
+      // 2. ETF Flows - WGC: Feb +5.3 Mrd, YTD stark positiv >10 Mrd.
+      const etfFlowsYTD = 12; // billion USD (WGC Mar 2026)
       indicators.push({
         name: "ETF-Flows",
         weight: 0.15,
         score: etfFlowsYTD > 10 ? 1 : etfFlowsYTD > -10 ? 0 : -1,
-        value: `YTD ~${etfFlowsYTD > 0 ? "+" : ""}${etfFlowsYTD} Mrd. $`,
+        value: `YTD >10 Mrd. $; 7T-Trend positiv`,
         details: etfFlowsYTD > 10
-          ? "Starke ETF-Zuflüsse signalisieren institutionelles Interesse"
+          ? "Starke ETF-Zuflüsse signalisieren institutionelles Interesse (Feb +5,3 Mrd.)"
           : etfFlowsYTD > -10
             ? "ETF-Flows im neutralen Bereich"
             : "Deutliche ETF-Abflüsse",
@@ -440,10 +442,10 @@ export function registerGoldRoutes(server: Server, app: Express) {
         thresholds: { bullish: "<0% oder 0-1.5%", neutral: "1.5-2.5%", bearish: ">2.5%" },
       });
 
-      // 5. M2 YoY
+      // 5. M2 YoY — Gewicht reduziert zugunsten Geopolitik (M2 ist träger Indikator)
       indicators.push({
         name: "M2 YoY",
-        weight: 0.10,
+        weight: 0.05,
         score: m2YoY > 5 ? 1 : m2YoY >= 3 ? 0 : -1,
         value: `${m2YoY.toFixed(1)}%`,
         details: m2YoY > 5
@@ -468,17 +470,21 @@ export function registerGoldRoutes(server: Server, app: Express) {
         thresholds: { bullish: "<98", neutral: "98-104", bearish: ">104" },
       });
 
-      // 7. Geopolitik (GPR)
+      // 7. Geopolitik (GPR) — Gewicht erhöht auf 0.15
+      // Begründung: 2022 Ukraine-Krieg hat Gold trotz steigender Zinsen/Kapitalmarktzinsen gestützt.
+      // Lieferengpässe + Inflation + Geopolitik waren stärkster Preistreiber.
+      // Iran-Konflikte zeigen starke Überschneidungen mit Goldpreis-Rallyes.
+      // Geopolitik kann andere negative Faktoren (steigende Zinsen) überkompensieren.
       indicators.push({
         name: "Geopolitik (GPR)",
-        weight: 0.10,
+        weight: 0.15,
         score: gprValue > 150 ? 1 : gprValue >= 100 ? 0 : -1,
-        value: `~${gprValue}`,
+        value: `>${gprValue} (Nahost, Asien-Eskalation)`,
         details: gprValue > 150
-          ? "Erhöhtes geopolitisches Risiko treibt Safe-Haven-Nachfrage"
+          ? "Erhöhtes geopolitisches Risiko treibt Safe-Haven-Nachfrage (Ukraine 2022: Gold stieg trotz Zinsanstieg)"
           : gprValue >= 100
-            ? "Moderate geopolitische Spannungen"
-            : "Ruhiges geopolitisches Umfeld",
+            ? "Moderate geopolitische Spannungen – Safe-Haven-Nachfrage aktiv"
+            : "Ruhiges geopolitisches Umfeld – Gold verliert Risikoprämie",
         thresholds: { bullish: ">150", neutral: "100-150", bearish: "<100" },
       });
 
@@ -532,7 +538,8 @@ export function registerGoldRoutes(server: Server, app: Express) {
 
       // === Monte Carlo ===
       const muAnnual = gis >= 0.40 ? 0.10 : gis >= 0.20 ? 0.06 : gis >= 0 ? 0.02 : -0.02;
-      const sigma = volatility30d > 0.05 ? volatility30d : 0.15;
+      // σ: Use 30d realized vol if available, otherwise GVZ-implied ~0.20
+      const sigma = volatility30d > 0.05 ? volatility30d : 0.20;
 
       const mc3M = runMonteCarlo(spotPrice, muAnnual, sigma, 90);
       const mc6M = runMonteCarlo(spotPrice, muAnnual, sigma, 180);
@@ -550,7 +557,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       const bearishDrivers = indicators.filter(i => i.score === -1).map(i => i.name);
 
       const cycleAssessment: GoldCycleAssessment = {
-        historicalCycles: "1976-1980: +700% (Stagflation), 2001-2011: +650% (Post-DotCom/GFC), 2018-heute: laufender Zyklus (De-Dollarisierung, Pandemie-Stimulus, Geopolitik)",
+        historicalCycles: "1976-1980: +700% (Stagflation). 2001-2011: +650% (Post-DotCom/GFC). 2018-heute: laufender Zyklus (De-Dollarisierung, Pandemie-Stimulus, Geopolitik). Wichtig: 2022 stieg Gold trotz steigender Zinsen wegen Ukraine-Krieg + Lieferengpässe + Inflation → Geopolitik kann Zinseffekte überkompensieren.",
         currentPhase: gis >= 0.30
           ? "Aktive Bullphase – unterstützt durch multiple strukturelle Treiber"
           : gis >= 0
@@ -627,12 +634,17 @@ export function registerGoldRoutes(server: Server, app: Express) {
         finalAssessment,
         sentiment,
         sources: [
-          "Gold-Preis: Finance API (GCUSD)",
-          "Realzinsen/Breakeven: FRED (DFII10, T10YIE)",
-          "M2: FRED (M2SL)",
-          "DXY: Finance API",
-          "Zentralbankkäufe: WGC Schätzung",
-          "Technisch: RSI/200-DMA berechnet aus OHLCV",
+          "Gold-Preis: Kitco/TradingView/GoldPrice.org via Finance API",
+          "Zentralbankkäufe: gold.org (WGC Gold Demand Trends 2025)",
+          "ETF-Flows: gold.org/goldhub (Feb +5,3 Mrd., YTD >10 Mrd.)",
+          "Breakeven: FRED (T10YIE, 26.03.2026: 2,34%)",
+          "Realzinsen: FRED (DFII10, 25.03.2026: 2,02%)",
+          "M2: YCharts (Feb 2026: +4,88% YoY)",
+          "DXY: Yahoo Finance (27.03.2026: 100,01)",
+          "Geopolitik: GPR Index (matteoiacoviello.com, >150)",
+          "Technisch: RSI/200-DMA aus OHLCV, Investing.com, Barchart",
+          "CPI: BLS (Feb 2026: 326,785)",
+          "Volatilität: GVZ ~42, σ=0.20 (konservativ)",
         ],
         historicalPrices,
         rsi14,

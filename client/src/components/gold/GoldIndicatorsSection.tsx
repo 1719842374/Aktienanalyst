@@ -1,5 +1,5 @@
 import type { GoldAnalysis } from "../../../../shared/gold-schema";
-import { ArrowUp, ArrowDown, Minus } from "lucide-react";
+import { ArrowUp, ArrowDown, Minus, ShieldAlert } from "lucide-react";
 
 interface Props { data: GoldAnalysis }
 
@@ -50,10 +50,22 @@ export function GoldIndicatorsSection({ data }: Props) {
               </tr>
             </thead>
             <tbody>
-              {data.indicators.map((ind, i) => (
-                <tr key={i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                  <td className="py-2 font-medium text-foreground">{ind.name}</td>
-                  <td className="py-2 text-center text-muted-foreground font-mono tabular-nums">{(ind.weight * 100).toFixed(0)}%</td>
+              {data.indicators.map((ind, i) => {
+                const isGeopolitik = ind.name.toLowerCase().includes("geopolitik");
+                return (
+                <tr key={i} className={`border-b border-border/50 transition-colors ${
+                  isGeopolitik
+                    ? "bg-orange-500/8 hover:bg-orange-500/15 border-l-2 border-l-orange-500"
+                    : "hover:bg-muted/20"
+                }`}>
+                  <td className="py-2 font-medium text-foreground">
+                    <div className="flex items-center gap-1.5">
+                      {isGeopolitik && <ShieldAlert className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />}
+                      <span className={isGeopolitik ? "text-orange-400 font-semibold" : ""}>{ind.name}</span>
+                      {isGeopolitik && <span className="text-[9px] bg-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wider">Key Driver</span>}
+                    </div>
+                  </td>
+                  <td className={`py-2 text-center font-mono tabular-nums ${isGeopolitik ? "text-orange-400 font-bold" : "text-muted-foreground"}`}>{(ind.weight * 100).toFixed(0)}%</td>
                   <td className="py-2 text-center">
                     <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${getScoreBg(ind.score)}`}>
                       <ScoreIcon score={ind.score} />
@@ -65,9 +77,19 @@ export function GoldIndicatorsSection({ data }: Props) {
                   <td className="py-2 font-mono tabular-nums text-foreground">{ind.value}</td>
                   <td className="py-2 text-muted-foreground hidden sm:table-cell">{ind.details}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
+        </div>
+
+        {/* Geopolitik Insight */}
+        <div className="bg-orange-500/5 rounded-md p-3 border border-orange-500/20 flex gap-2.5 items-start">
+          <ShieldAlert className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <div className="text-[10px] font-semibold text-orange-400 uppercase tracking-wider mb-0.5">Geopolitik — Erhöhte Gewichtung (15%)</div>
+            <div className="text-[11px] text-muted-foreground leading-relaxed">2022 zeigte: Geopolitik (Ukraine, Lieferengpässe) kann steigende Zinsen überkompensieren. Iran-Konflikt zeigt ähnliche Muster. Gewicht von 10% → 15% erhöht, M2 (träge) von 10% → 5% reduziert.</div>
+          </div>
         </div>
 
         {/* GIS Calculation */}
