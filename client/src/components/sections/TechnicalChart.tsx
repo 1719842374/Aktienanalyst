@@ -347,10 +347,10 @@ export function TechnicalChart({ data }: Props) {
                 dataKey={ma.key}
                 name={ma.label}
                 stroke={ma.color}
-                strokeWidth={1}
+                strokeWidth={1.5}
                 dot={false}
                 strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined}
-                connectNulls={false}
+                connectNulls={true}
                 isAnimationActive={false}
               />
             ))}
@@ -438,7 +438,7 @@ export function TechnicalChart({ data }: Props) {
               stroke="#3b82f6"
               strokeWidth={1.5}
               dot={false}
-              connectNulls={false}
+              connectNulls={true}
               isAnimationActive={false}
             />
 
@@ -451,7 +451,7 @@ export function TechnicalChart({ data }: Props) {
               strokeWidth={1}
               strokeDasharray="3 2"
               dot={false}
-              connectNulls={false}
+              connectNulls={true}
               isAnimationActive={false}
             />
           </ComposedChart>
