@@ -487,11 +487,15 @@ export function TechnicalChart({ data }: Props) {
                       </span>
                     </td>
                     <td className="py-1 pr-2">
-                      {s.reason.includes('Cross') ? (
-                        <span className={`font-bold ${s.reason.includes('Death') ? 'text-red-500' : 'text-emerald-500'}`}>
+                      {s.reason.includes('Death Cross') ? (
+                        <span className="font-bold text-red-500">{s.reason}</span>
+                      ) : s.reason.includes('Golden Cross') ? (
+                        <span className="font-bold text-emerald-500">{s.reason}</span>
+                      ) : (
+                        <span className={s.reason.includes('Bearish') ? 'text-red-400' : s.reason.includes('Bullish') ? 'text-emerald-400' : ''}>
                           {s.reason}
                         </span>
-                      ) : s.reason}
+                      )}
                     </td>
                     <td className="py-1 text-right font-mono tabular-nums">${s.price.toFixed(2)}</td>
                   </tr>
