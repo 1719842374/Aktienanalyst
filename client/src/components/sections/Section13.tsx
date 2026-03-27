@@ -369,6 +369,184 @@ export function Section13({ data }: Props) {
         </div>
       </div>
 
+      {/* === FAZIT (Big Picture Conclusion) === */}
+      {(() => {
+        // Synthesize all signals into a coherent conclusion
+        const signals = {
+          dcfUpsideConservative: conservativeUpside,
+          dcfUpsideOptimistic: optimisticUpside,
+          dcfStress: stressDownside,
+          crvCons: crvConservative,
+          crvOpt: crvOptimistic,
+          ptUpside,
+          rslVal: rsl,
+          reverseDCFg: reverseDCF.impliedGrowth,
+          mcDownside: mcResult.downsideProb,
+          mcDownside10: mcResult.downsideProb10,
+          pe: data.peRatio,
+          sectorPE: data.sectorAvgPE,
+          evEbitda: data.evEbitda,
+          sectorEvEbitda: data.sectorAvgEVEBITDA,
+          beta: data.beta5Y,
+          fcfMargin: data.fcfMargin,
+          moat: data.moatRating,
+          govExposure: data.governmentExposure,
+          priceBelowEntry: data.currentPrice <= dcfBeiCRV3,
+          dcfBeiCRV3Val: dcfBeiCRV3,
+        };
+
+        // Count positive vs negative signals
+        const positive: string[] = [];
+        const negative: string[] = [];
+        const neutral: string[] = [];
+
+        // DCF Upside
+        if (signals.dcfUpsideConservative > 30) positive.push(`Kons. DCF deutet auf ${formatNumber(signals.dcfUpsideConservative, 0)}% Upside`);
+        else if (signals.dcfUpsideConservative > 10) positive.push(`Kons. DCF mit ${formatNumber(signals.dcfUpsideConservative, 0)}% moderatem Upside`);
+        else if (signals.dcfUpsideConservative < -10) negative.push(`Kons. DCF zeigt ${formatNumber(signals.dcfUpsideConservative, 0)}% Downside — Überbewertung möglich`);
+        else neutral.push(`DCF nahe am Kurs (${formatNumber(signals.dcfUpsideConservative, 0)}%)`);
+
+        // CRV
+        if (signals.crvCons >= 2.5) positive.push(`CRV Conservative ${formatNumber(signals.crvCons, 1)}:1 — attraktives Chance-Risiko`);
+        else if (signals.crvCons >= 2.0) neutral.push(`CRV Conservative ${formatNumber(signals.crvCons, 1)}:1 — akzeptabel`);
+        else negative.push(`CRV Conservative nur ${formatNumber(signals.crvCons, 1)}:1 — unzureichendes Chance-Risiko`);
+
+        // Entry Price
+        if (signals.priceBelowEntry) positive.push(`Kurs (${formatCurrency(data.currentPrice)}) UNTER Max-Entry (${formatCurrency(signals.dcfBeiCRV3Val)})`);
+        else negative.push(`Kurs (${formatCurrency(data.currentPrice)}) ÜBER Max-Entry (${formatCurrency(signals.dcfBeiCRV3Val)}) bei CRV 3:1`);
+
+        // Analyst PT
+        if (signals.ptUpside > 20) positive.push(`Analysten sehen ${formatNumber(signals.ptUpside, 0)}% Upside zum Median-Kursziel`);
+        else if (signals.ptUpside > 0) neutral.push(`Analysten-Kursziel +${formatNumber(signals.ptUpside, 0)}% über Kurs`);
+        else negative.push(`Analysten-Kursziel ${formatNumber(signals.ptUpside, 0)}% — begrenztes Potenzial`);
+
+        // RSL Momentum
+        if (signals.rslVal > 110) positive.push(`RSL ${formatNumber(signals.rslVal, 0)} — starkes Momentum`);
+        else if (signals.rslVal > 105) neutral.push(`RSL ${formatNumber(signals.rslVal, 0)} — neutrales Momentum`);
+        else negative.push(`RSL ${formatNumber(signals.rslVal, 0)} — schwaches Momentum, Growth-Adj. -5% bis -10%`);
+
+        // Reverse DCF
+        if (signals.reverseDCFg > 8) negative.push(`Reverse-DCF impliziert ${formatNumber(signals.reverseDCFg, 1)}% Wachstum — sportlich eingepreist`);
+        else if (signals.reverseDCFg < 3) positive.push(`Reverse-DCF nur ${formatNumber(signals.reverseDCFg, 1)}% impliziertes Wachstum — konservativ bepreist`);
+
+        // Monte Carlo
+        if (signals.mcDownside > 0.55) negative.push(`MC-Simulation: ${formatNumber(signals.mcDownside * 100, 0)}% Verlustwahrscheinlichkeit (1Y)`);
+        else if (signals.mcDownside < 0.35) positive.push(`MC-Simulation: nur ${formatNumber(signals.mcDownside * 100, 0)}% Verlustwahrscheinlichkeit`);
+
+        // Relative Valuation
+        if (signals.pe > 0 && signals.sectorPE > 0) {
+          const pePremium = ((signals.pe / signals.sectorPE) - 1) * 100;
+          if (pePremium < -20) positive.push(`P/E ${formatNumber(signals.pe, 1)} vs. Sektor ${formatNumber(signals.sectorPE, 1)} — ${formatNumber(Math.abs(pePremium), 0)}% Discount`);
+          else if (pePremium > 30) negative.push(`P/E ${formatNumber(signals.pe, 1)} vs. Sektor ${formatNumber(signals.sectorPE, 1)} — ${formatNumber(pePremium, 0)}% Premium`);
+        }
+
+        // Beta / Risk
+        if (signals.beta > 1.5) negative.push(`Hohe Volatilität (Beta ${formatNumber(signals.beta, 2)}) — überdurchschnittliches Risiko`);
+        else if (signals.beta < 0.8) positive.push(`Niedrige Volatilität (Beta ${formatNumber(signals.beta, 2)}) — defensiver Charakter`);
+
+        // FCF Margin
+        if (signals.fcfMargin > 20) positive.push(`Starke FCF-Marge von ${formatNumber(signals.fcfMargin, 1)}%`);
+        else if (signals.fcfMargin < 5) negative.push(`Schwache FCF-Marge von nur ${formatNumber(signals.fcfMargin, 1)}%`);
+
+        // Moat
+        if (signals.moat === 'Wide') positive.push('Breiter Moat — nachhaltiger Wettbewerbsvorteil');
+        else if (signals.moat === 'None') negative.push('Kein erkennbarer Moat — Wettbewerbsdruck');
+
+        // Gov Exposure
+        if (signals.govExposure > 20) negative.push(`Hohe Staatsabhängigkeit (${formatNumber(signals.govExposure, 0)}%) — FCF-Haircut angewendet`);
+
+        // Macro Stress
+        if (signals.dcfStress < -30) negative.push(`Macro-Stress-Szenario zeigt ${formatNumber(signals.dcfStress, 0)}% Downside`);
+
+        // Generate overall rating
+        const score = positive.length - negative.length;
+        let rating: string;
+        let ratingColor: string;
+        let ratingBg: string;
+        if (score >= 3) {
+          rating = "ATTRAKTIV";
+          ratingColor = "text-emerald-400";
+          ratingBg = "bg-emerald-500/10 border-emerald-500/30";
+        } else if (score >= 1) {
+          rating = "LEICHT ATTRAKTIV";
+          ratingColor = "text-emerald-400";
+          ratingBg = "bg-emerald-500/10 border-emerald-500/20";
+        } else if (score >= -1) {
+          rating = "NEUTRAL";
+          ratingColor = "text-amber-400";
+          ratingBg = "bg-amber-500/10 border-amber-500/20";
+        } else if (score >= -3) {
+          rating = "UNATTRAKTIV";
+          ratingColor = "text-red-400";
+          ratingBg = "bg-red-500/10 border-red-500/20";
+        } else {
+          rating = "STARK UNATTRAKTIV";
+          ratingColor = "text-red-500";
+          ratingBg = "bg-red-500/10 border-red-500/30";
+        }
+
+        return (
+          <div className={`rounded-lg border-2 p-4 ${ratingBg}`}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Fazit</h3>
+              <span className={`text-sm font-bold ${ratingColor}`}>{rating}</span>
+            </div>
+
+            {/* Positive signals */}
+            {positive.length > 0 && (
+              <div className="mb-2">
+                <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider mb-1">Positive Faktoren ({positive.length})</div>
+                <ul className="space-y-0.5">
+                  {positive.map((p, i) => (
+                    <li key={i} className="text-xs text-foreground/80 flex items-start gap-1.5">
+                      <span className="text-emerald-500 flex-shrink-0 mt-0.5">+</span>
+                      <span>{p}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Negative signals */}
+            {negative.length > 0 && (
+              <div className="mb-2">
+                <div className="text-[10px] font-semibold text-red-500 uppercase tracking-wider mb-1">Negative Faktoren ({negative.length})</div>
+                <ul className="space-y-0.5">
+                  {negative.map((n, i) => (
+                    <li key={i} className="text-xs text-foreground/80 flex items-start gap-1.5">
+                      <span className="text-red-500 flex-shrink-0 mt-0.5">−</span>
+                      <span>{n}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Neutral */}
+            {neutral.length > 0 && (
+              <div className="mb-2">
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Neutral ({neutral.length})</div>
+                <ul className="space-y-0.5">
+                  {neutral.map((n, i) => (
+                    <li key={i} className="text-xs text-foreground/60 flex items-start gap-1.5">
+                      <span className="text-muted-foreground flex-shrink-0 mt-0.5">●</span>
+                      <span>{n}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Score summary */}
+            <div className="border-t border-border/30 pt-2 mt-2">
+              <div className="text-[10px] text-muted-foreground">
+                Signal-Score: {positive.length} positiv / {negative.length} negativ / {neutral.length} neutral = <span className={`font-semibold ${ratingColor}`}>{rating}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Sources */}
       <div className="text-[10px] text-muted-foreground space-y-0.5">
         <div className="font-semibold uppercase tracking-wider mb-1">Sources</div>

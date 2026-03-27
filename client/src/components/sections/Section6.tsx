@@ -1,7 +1,10 @@
 import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { worstCaseM1, worstCaseM2, worstCaseM3, calculateCRV, calculateDCF, calculateCatalystUpside } from "../../lib/calculations";
+import {
+  calculateFCFFDCF, type FCFFDCFParams,
+  worstCaseM1, worstCaseM2, worstCaseM3, calculateCRV, calculateCatalystUpside,
+} from "../../lib/calculations";
 import { formatCurrency, formatNumber, getCRVColor, getCRVBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
 
@@ -12,40 +15,75 @@ export function Section6({ data }: Props) {
   const sp = data.sectorProfile;
   const haircut = data.fcfHaircut;
 
-  // Use sector max drawdown for M3, and maxDrawdownHistory for context
+  // === FCFF DCF params (IDENTICAL to Section 5 / Section 13 for consistency) ===
+  const ebitMarginDefault = data.ebitda > 0 && data.revenue > 0
+    ? +((data.ebitda / data.revenue) * 100).toFixed(1) : 15;
+  const capexDefault = data.revenue > 0 && data.fcfTTM > 0
+    ? +Math.max(2, Math.min(15, ((data.ebitda - data.fcfTTM) / data.revenue) * 100)).toFixed(1) : 5;
+  const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
+  const rf = 4.2, erp = 5.5, taxR = 21, rd = 5.0;
+  const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
+  const evFrac = (100 - debtRatioVal) / 100;
+  const dvFrac = debtRatioVal / 100;
+  const targetWACC = sp.waccScenarios.avg;
+  const debtCostPart = dvFrac * rd * (1 - taxR / 100);
+  const impliedBeta = Math.max(0.5, Math.min(1.8,
+    (targetWACC - debtCostPart - evFrac * rf) / (evFrac * erp)
+  ));
+  const dcfBeta = +Math.min(impliedBeta, data.beta5Y + 0.1).toFixed(2);
+
+  const baseParams: FCFFDCFParams = useMemo(() => ({
+    revenueBase: data.revenue,
+    revenueGrowthP1: revenueGrowthDefault,
+    revenueGrowthP2: Math.max(3, +(revenueGrowthDefault * 0.6).toFixed(1)),
+    ebitMargin: ebitMarginDefault,
+    ebitMarginTerminal: +Math.max(8, ebitMarginDefault * 0.9).toFixed(1),
+    capexPct: capexDefault,
+    deltaWCPct: 5,
+    taxRate: taxR,
+    daRatio: +Math.max(2, capexDefault * 0.8).toFixed(1),
+    riskFreeRate: rf,
+    beta: dcfBeta,
+    erp,
+    debtRatio: debtRatioVal,
+    costOfDebt: rd,
+    terminalG: sp.growthAssumptions.terminal || 2.5,
+    sharesOutstanding: data.sharesOutstanding,
+    netDebt,
+    minorityInterests: 0,
+    fcfHaircut: haircut,
+  }), [data, sp, netDebt, haircut, ebitMarginDefault, capexDefault, revenueGrowthDefault, dcfBeta, debtRatioVal]);
+
+  const conservativeDCF = useMemo(() => calculateFCFFDCF(baseParams), [baseParams]);
+
+  const optimisticDCF = useMemo(() => calculateFCFFDCF({
+    ...baseParams,
+    revenueGrowthP1: baseParams.revenueGrowthP1 * 1.5,
+    revenueGrowthP2: baseParams.revenueGrowthP2 * 1.4,
+    ebitMargin: baseParams.ebitMargin * 1.15,
+    ebitMarginTerminal: baseParams.ebitMarginTerminal * 1.1,
+    erp: baseParams.erp - 1,
+  }), [baseParams]);
+
+  // Worst Case methods
   const m1 = worstCaseM1(data.currentPrice, data.beta5Y, 50);
   const m2 = worstCaseM2(data.currentPrice, 35);
   const m3 = worstCaseM3(data.currentPrice, data.sectorMaxDrawdown);
   const worstCase = Math.min(m1, m2, m3);
 
-  const conservativeDCF = useMemo(() => calculateDCF({
-    fcfBase: data.fcfTTM, haircut,
-    wacc: sp.waccScenarios.kons,
-    g1: sp.growthAssumptions.g1,
-    g2: sp.growthAssumptions.g2,
-    terminalG: sp.growthAssumptions.terminal,
-    sharesOutstanding: data.sharesOutstanding, netDebt,
-  }), [data, sp, netDebt, haircut]);
-
-  const optimisticDCF = useMemo(() => calculateDCF({
-    fcfBase: data.fcfTTM, haircut,
-    wacc: sp.waccScenarios.opt,
-    g1: sp.growthAssumptions.g1 * 1.5,
-    g2: sp.growthAssumptions.g2 * 1.5,
-    terminalG: sp.growthAssumptions.terminal + 0.5,
-    sharesOutstanding: data.sharesOutstanding, netDebt,
-  }), [data, sp, netDebt, haircut]);
-
-  // Use backend catalysts
+  // Catalyst-adj target
   const catalysts = data.catalysts;
-  const { adjustedTarget } = calculateCatalystUpside(catalysts, conservativeDCF.perShare);
+  const catalystDCFBase = conservativeDCF.perShare > data.currentPrice * 0.05
+    ? conservativeDCF.perShare
+    : (data.analystPT.median > 0 ? data.analystPT.median : data.currentPrice);
+  const { adjustedTarget } = calculateCatalystUpside(catalysts, catalystDCFBase);
 
-  // CORRECT CRV formula: (Fair Value - Worst Case) / (Kurs - Worst Case)
+  // CRV calculations
   const crvConservative = calculateCRV(conservativeDCF.perShare, worstCase, data.currentPrice);
   const crvOptimistic = calculateCRV(optimisticDCF.perShare, worstCase, data.currentPrice);
   const crvCatalyst = calculateCRV(adjustedTarget, worstCase, data.currentPrice);
 
-  // DCF bei CRV 3:1 = max acceptable entry price for exactly 3:1
+  // DCF bei CRV 3:1
   const dcfBeiCRV3 = (conservativeDCF.perShare + 3 * worstCase) / 4;
 
   const crvs = [
@@ -102,7 +140,6 @@ export function Section6({ data }: Props) {
             </tfoot>
           </table>
         </div>
-        {/* Historical drawdown reference */}
         <div className="mt-2 text-[10px] text-muted-foreground bg-muted/30 rounded-md p-2 border border-border/50">
           <span className="font-semibold">Max Drawdown Reference:</span> {data.maxDrawdownHistory} ({data.maxDrawdownYear})
         </div>
@@ -132,7 +169,7 @@ export function Section6({ data }: Props) {
         </div>
       </div>
 
-      {/* DCF bei CRV 3:1 — Max. Einstiegskurs */}
+      {/* DCF bei CRV 3:1 */}
       <div className={`rounded-lg p-3 border-2 ${data.currentPrice <= dcfBeiCRV3 ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
         <div className="flex items-center justify-between">
           <div>
@@ -153,7 +190,7 @@ export function Section6({ data }: Props) {
         </div>
       </div>
 
-      <RechenWeg title="CRV Rechenweg (korrigierte Formel)" steps={[
+      <RechenWeg title="CRV Rechenweg (FCFF-basiert)" steps={[
         `CRV = (Fair Value - Worst Case) / (Kurs - Worst Case)`,
         `Conservative CRV = (${formatCurrency(conservativeDCF.perShare)} - ${formatCurrency(worstCase)}) / (${formatCurrency(data.currentPrice)} - ${formatCurrency(worstCase)})`,
         `= ${formatCurrency(conservativeDCF.perShare - worstCase)} / ${formatCurrency(data.currentPrice - worstCase)}`,
