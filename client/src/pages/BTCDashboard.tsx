@@ -8,10 +8,10 @@ import { RechenWeg } from "@/components/RechenWeg";
 import { formatCurrency, formatLargeNumber, formatPercent, getChangeColor } from "@/lib/formatters";
 import { useLocation } from "wouter";
 import {
-  Sun, Moon, Bitcoin, TrendingUp, Activity, Calculator,
+  Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
   LineChart as LineChartIcon, Target, Scale, BarChart3, Dice6,
   Menu, X, ChevronRight, Gauge, Layers, ArrowLeft,
-  CheckCircle2, XCircle, AlertTriangle,
+  CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff,
 } from "lucide-react";
 import {
   LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -20,6 +20,16 @@ import {
 } from "recharts";
 
 // === Types ===
+interface TechChartPoint {
+  date: string; price: number;
+  ma20: number | null; ma50: number | null; ma100: number | null; ma200: number | null;
+  ema9: number | null; ema12: number | null; ema26: number | null;
+  macd: number | null; signal: number | null; histogram: number | null;
+  ma730: number | null; ma730x5: number | null;
+  ma111: number | null; ma350x2: number | null; ma350: number | null;
+  ma1400: number | null;
+}
+
 interface BTCAnalysis {
   timestamp: string;
   btcPrice: number;
@@ -56,12 +66,16 @@ interface BTCAnalysis {
     prices10Y: { date: string; price: number; }[];
     allPrices: { date: string; price: number; }[];
   };
-  technicalChart: { date: string; price: number; ma50: number | null; ma200: number | null; macd: number | null; signal: number | null; histogram: number | null; }[];
+  technicalChart: TechChartPoint[];
+  technicalChartFull: TechChartPoint[];
   technicalSignals: { date: string; type: "BUY" | "SELL"; reason: string; price: number; }[];
-  bullConditions: { priceAboveMA200: boolean; ma50AboveMA200: boolean; macdAboveZero: boolean; macdAboveSignal: boolean; };
+  bullConditions: { priceAboveMA200: boolean; ma50AboveMA200: boolean; macdAboveZero: boolean; macdAboveSignal: boolean; macdRising: boolean; };
   isBull: boolean;
+  currentMA20: number | null;
   currentMA50: number | null;
+  currentMA100: number | null;
   currentMA200: number | null;
+  currentEMA9: number | null;
   currentMACD: number | null;
   currentSignal: number | null;
   fearGreedHistory: { date: string; value: number; classification: string; }[];
@@ -607,42 +621,164 @@ function Section9FinalEstimate({ data }: { data: BTCAnalysis }) {
 }
 
 // === NEW Section 10: Technical Analysis Chart ===
-type ChartRange = "1Y" | "3Y" | "5Y" | "10Y" | "MAX";
+
+// MA line configs — standard MAs
+const MA_LINES = [
+  { key: "ma200", label: "MA200 (SMA)", color: "#ef4444", defaultOn: true },
+  { key: "ma100", label: "MA100 (SMA)", color: "#f97316", defaultOn: false },
+  { key: "ma50", label: "MA50 (SMA)", color: "#eab308", defaultOn: true },
+  { key: "ma20", label: "MA20 (SMA)", color: "#84cc16", defaultOn: false },
+  { key: "ema26", label: "EMA26", color: "#06b6d4", defaultOn: false },
+  { key: "ema12", label: "EMA12", color: "#8b5cf6", defaultOn: false },
+  { key: "ema9", label: "EMA9", color: "#ec4899", defaultOn: false },
+] as const;
+
+// BTC-specific overlay configs
+const BTC_OVERLAYS = [
+  { key: "ma730", label: "2Y MA", color: "#10b981", defaultOn: false },
+  { key: "ma730x5", label: "2Y MA ×5", color: "#10b981", defaultOn: false, dashed: true },
+  { key: "ma111", label: "Pi 111d", color: "#f43f5e", defaultOn: false },
+  { key: "ma350x2", label: "Pi 350d×2", color: "#f43f5e", defaultOn: false, dashed: true },
+  { key: "ma350", label: "350d MA", color: "#fb923c", defaultOn: false },
+  { key: "ma1400", label: "200W MA", color: "#a855f7", defaultOn: false },
+] as const;
+
+type MAKey = typeof MA_LINES[number]["key"];
+type BTCOverlayKey = typeof BTC_OVERLAYS[number]["key"];
+type TimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y";
+
+// StatusPill component matching TechnicalChart reference
+function StatusPill({ label, value, detail }: { label: string; value: boolean; detail: string }) {
+  return (
+    <div className={`rounded-lg p-2 border text-center ${
+      value ? "bg-green-500/10 border-green-500/30" : "bg-red-500/10 border-red-500/30"
+    }`}>
+      <div className="flex items-center justify-center gap-1 mb-0.5">
+        {value ? (
+          <CheckCircle2 className="w-3 h-3 text-green-500" />
+        ) : (
+          <XCircle className="w-3 h-3 text-red-500" />
+        )}
+        <span className={`text-[10px] font-semibold ${value ? "text-green-500" : "text-red-500"}`}>
+          {value ? "JA" : "NEIN"}
+        </span>
+      </div>
+      <div className="text-[9px] font-medium">{label}</div>
+      {detail && <div className="text-[8px] text-muted-foreground mt-0.5 font-mono tabular-nums">{detail}</div>}
+    </div>
+  );
+}
 
 function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
-  const [range, setRange] = useState<ChartRange>("1Y");
+  const [visibleMAs, setVisibleMAs] = useState<Set<MAKey>>(() => {
+    const initial = new Set<MAKey>();
+    MA_LINES.forEach(ma => { if (ma.defaultOn) initial.add(ma.key); });
+    return initial;
+  });
+  const [visibleOverlays, setVisibleOverlays] = useState<Set<BTCOverlayKey>>(() => {
+    const initial = new Set<BTCOverlayKey>();
+    BTC_OVERLAYS.forEach(o => { if (o.defaultOn) initial.add(o.key); });
+    return initial;
+  });
+  const [showSignals, setShowSignals] = useState(true);
+  const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
 
+  const fullChart = data.technicalChartFull || data.technicalChart || [];
+
+  // Filter data by time range (using calendar days)
   const filteredData = useMemo(() => {
-    const tc = data.technicalChart;
-    if (!tc || tc.length === 0) return [];
-    if (range === "MAX") return tc;
-
-    const yearsMap: Record<ChartRange, number> = { "1Y": 1, "3Y": 3, "5Y": 5, "10Y": 10, MAX: 999 };
+    if (fullChart.length === 0) return [];
+    const daysCutoff: Record<TimeRange, number> = { "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825 };
     const cutoff = new Date();
-    cutoff.setFullYear(cutoff.getFullYear() - yearsMap[range]);
+    cutoff.setDate(cutoff.getDate() - daysCutoff[timeRange]);
     const cutoffStr = cutoff.toISOString().split("T")[0];
-    return tc.filter(d => d.date >= cutoffStr);
-  }, [data.technicalChart, range]);
-
-  if (!data.technicalChart || data.technicalChart.length === 0) {
-    return (
-      <SectionCard number={10} title="Technische Analyse">
-        <div className="text-xs text-muted-foreground text-center py-8">Keine Chart-Daten verfügbar</div>
-      </SectionCard>
-    );
-  }
+    return fullChart.filter(d => d.date >= cutoffStr);
+  }, [fullChart, timeRange]);
 
   // Downsample for performance: max ~500 points
-  const downsampled = useMemo(() => {
+  const chartData = useMemo(() => {
     if (filteredData.length <= 500) return filteredData;
     const step = Math.ceil(filteredData.length / 500);
     const result = filteredData.filter((_, i) => i % step === 0);
-    // Always include the last data point
     if (result[result.length - 1] !== filteredData[filteredData.length - 1]) {
       result.push(filteredData[filteredData.length - 1]);
     }
     return result;
   }, [filteredData]);
+
+  // Filter signals within the displayed time range
+  const visibleSignals = useMemo(() => {
+    if (!showSignals || chartData.length === 0 || !data.technicalSignals) return [];
+    const startDate = chartData[0].date;
+    return data.technicalSignals.filter(s => s.date >= startDate);
+  }, [data.technicalSignals, chartData, showSignals]);
+
+  const toggleMA = (key: MAKey) => {
+    setVisibleMAs(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleOverlay = (key: BTCOverlayKey) => {
+    setVisibleOverlays(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const bc = data.bullConditions;
+  const isBuySignal = bc.priceAboveMA200 && bc.ma50AboveMA200 && bc.macdAboveZero && bc.macdRising;
+
+  // Y-axis domain — only consider visible/toggled lines with valid positive values
+  const yDomain = useMemo(() => {
+    let minVal = Infinity;
+    let maxVal = -Infinity;
+    for (const d of chartData) {
+      if (d.price > 0) {
+        if (d.price < minVal) minVal = d.price;
+        if (d.price > maxVal) maxVal = d.price;
+      }
+      for (const ma of MA_LINES) {
+        if (!visibleMAs.has(ma.key)) continue;
+        const v = d[ma.key as keyof TechChartPoint] as number | null;
+        if (v && v > 0) {
+          if (v < minVal) minVal = v;
+          if (v > maxVal) maxVal = v;
+        }
+      }
+      for (const o of BTC_OVERLAYS) {
+        if (!visibleOverlays.has(o.key)) continue;
+        const v = d[o.key as keyof TechChartPoint] as number | null;
+        if (v && v > 0) {
+          if (v < minVal) minVal = v;
+          if (v > maxVal) maxVal = v;
+        }
+      }
+    }
+    // Safeguard: never go below 0, ensure valid range
+    if (!isFinite(minVal) || !isFinite(maxVal) || maxVal <= 0) {
+      return [0, 100000] as [number, number];
+    }
+    const padding = (maxVal - minVal) * 0.05;
+    return [Math.max(0, minVal - padding), maxVal + padding] as [number, number];
+  }, [chartData, visibleMAs, visibleOverlays]);
+
+  // Format helpers
+  const formatDate = (date: string) => {
+    const parts = date.split("-");
+    if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y") {
+      return `${parts[1]}/${parts[0].slice(2)}`;
+    }
+    return `${parts[1]}/${parts[2]}`;
+  };
+
+  const formatDateFull = (date: string) => {
+    const d = new Date(date + "T00:00:00");
+    return d.toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
+  };
 
   const formatYAxis = (v: number) => {
     if (v >= 1000000) return `$${(v / 1000000).toFixed(1)}M`;
@@ -650,158 +786,427 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
     return `$${v.toFixed(0)}`;
   };
 
-  const formatDateTick = (d: string) => {
-    const date = new Date(d);
-    if (range === "1Y") return date.toLocaleDateString("de-DE", { month: "short" });
-    return date.toLocaleDateString("de-DE", { month: "short", year: "2-digit" });
-  };
+  // Golden Cross / Death Cross — scan last 2 years of full data
+  const crossInfo = useMemo(() => {
+    if (fullChart.length < 2) return null;
+    const lookback = Math.min(730, fullChart.length - 1);
+    for (let i = fullChart.length - 1; i >= fullChart.length - lookback; i--) {
+      const cur = fullChart[i];
+      const prev = fullChart[i - 1];
+      if (cur.ma50 && cur.ma200 && prev.ma50 && prev.ma200) {
+        if (cur.ma50 > cur.ma200 && prev.ma50 <= prev.ma200) {
+          return { type: "golden" as const, date: cur.date };
+        }
+        if (cur.ma50 < cur.ma200 && prev.ma50 >= prev.ma200) {
+          return { type: "death" as const, date: cur.date };
+        }
+      }
+    }
+    return null;
+  }, [fullChart]);
 
-  const ranges: ChartRange[] = ["1Y", "3Y", "5Y", "10Y", "MAX"];
+  if (fullChart.length === 0) {
+    return (
+      <SectionCard number={10} title="Technische Analyse">
+        <div className="text-xs text-muted-foreground text-center py-8">Keine Chart-Daten verfügbar</div>
+      </SectionCard>
+    );
+  }
 
   return (
     <SectionCard number={10} title="Technische Analyse">
-      <div className="space-y-3">
-        {/* Range buttons */}
-        <div className="flex items-center justify-between">
-          <div className="flex gap-1">
-            {ranges.map((r) => (
-              <button
-                key={r}
-                onClick={() => setRange(r)}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  range === r
-                    ? "bg-amber-500 text-white"
-                    : "bg-muted/50 hover:bg-muted text-muted-foreground"
-                }`}
-              >
-                {r}
-              </button>
+      {/* Status bar — 4 pills */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+        <StatusPill
+          label="Kurs > MA200"
+          value={bc.priceAboveMA200}
+          detail={data.currentMA200 ? `MA200: $${data.currentMA200.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : ""}
+        />
+        <StatusPill
+          label="MA50 > MA200"
+          value={bc.ma50AboveMA200}
+          detail={data.currentMA50 ? `MA50: $${data.currentMA50.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : ""}
+        />
+        <StatusPill
+          label="MACD > 0"
+          value={bc.macdAboveZero}
+          detail={data.currentMACD !== null ? `MACD: ${data.currentMACD.toFixed(2)}` : ""}
+        />
+        <StatusPill
+          label="MACD steigend"
+          value={bc.macdRising}
+          detail={data.currentSignal !== null ? `Signal: ${data.currentSignal.toFixed(2)}` : ""}
+        />
+      </div>
+
+      {/* Buy/Sell verdict */}
+      <div className={`rounded-lg p-3 mb-4 border ${isBuySignal
+        ? "bg-green-500/10 border-green-500/30"
+        : "bg-amber-500/10 border-amber-500/30"
+      }`}>
+        <div className="flex items-center gap-2">
+          {isBuySignal ? (
+            <CheckCircle2 className="w-4 h-4 text-green-500" />
+          ) : (
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+          )}
+          <span className="text-xs font-semibold">
+            {isBuySignal
+              ? "BUY-Bedingungen erfüllt: Kurs > MA200 AND MA50 > MA200 AND MACD > 0 + steigend"
+              : "KEIN Kaufsignal – nicht alle Bedingungen erfüllt"}
+          </span>
+        </div>
+        {!isBuySignal && (
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            Fehlend: {[
+              !bc.priceAboveMA200 && "Kurs < MA200",
+              !bc.ma50AboveMA200 && "MA50 < MA200",
+              !bc.macdAboveZero && "MACD < 0",
+              !bc.macdRising && "MACD fallend",
+            ].filter(Boolean).join(" | ")}
+          </div>
+        )}
+        {!bc.priceAboveMA200 && (
+          <div className="mt-1 text-[10px] text-red-400 font-medium">
+            ⚠ MA200-Break-Warnung: Historischer Max-Drawdown zzgl. 15-20% (defensiv) bzw. 35-50% (Beta &gt;1.5) einkalkulieren
+          </div>
+        )}
+      </div>
+
+      {/* Golden Cross / Death Cross banner */}
+      {crossInfo && (() => {
+        const isGolden = crossInfo.type === "golden";
+        const crossDateObj = new Date(crossInfo.date + "T00:00:00");
+        const dateStr = crossDateObj.toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
+        const daysAgo = Math.round((Date.now() - crossDateObj.getTime()) / (1000 * 60 * 60 * 24));
+        const isRecent = daysAgo <= 60;
+        return (
+          <div className={`rounded-lg p-3 mb-3 border flex items-center gap-3 ${isGolden
+            ? "bg-emerald-500/10 border-emerald-500/30"
+            : "bg-red-500/10 border-red-500/30"
+          }`}>
+            <div className={`text-2xl font-bold ${isGolden ? "text-emerald-500" : "text-red-500"}`}>
+              {isGolden ? "\u2726" : "\u2715"}
+            </div>
+            <div>
+              <div className={`text-sm font-bold ${isGolden ? "text-emerald-500" : "text-red-500"}`}>
+                {isGolden ? "GOLDEN CROSS" : "DEATH CROSS"}
+                <span className="text-xs font-normal text-muted-foreground ml-1.5">
+                  ({dateStr}{isRecent ? " — kürzlich" : ` — vor ${daysAgo} Tagen`})
+                </span>
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                {isGolden
+                  ? `MA50 kreuzte MA200 von unten nach oben am ${dateStr} — bullisches Trendsignal.${!isRecent ? ` Strukturelles Signal aktiv seit ${daysAgo} Tagen.` : ""}`
+                  : `MA50 kreuzte MA200 von oben nach unten am ${dateStr} — bärisches Trendsignal.${!isRecent ? ` Struktureller Abwärtstrend seit ${daysAgo} Tagen.` : ""}`
+                }
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Controls */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        {/* Time range buttons */}
+        <div className="flex rounded-md border border-border overflow-hidden">
+          {(["3M", "6M", "1Y", "2Y", "3Y", "5Y"] as const).map(r => (
+            <button
+              key={r}
+              onClick={() => setTimeRange(r)}
+              className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                timeRange === r ? "bg-primary text-primary-foreground" : "hover:bg-muted/50"
+              }`}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+
+        {/* MA toggles */}
+        <div className="flex flex-wrap gap-1">
+          {MA_LINES.map(ma => (
+            <button
+              key={ma.key}
+              onClick={() => toggleMA(ma.key)}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                visibleMAs.has(ma.key)
+                  ? "border-current opacity-100"
+                  : "border-border opacity-40 hover:opacity-60"
+              }`}
+              style={{ color: ma.color }}
+            >
+              {visibleMAs.has(ma.key) ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              {ma.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Signal toggle */}
+        <button
+          onClick={() => setShowSignals(!showSignals)}
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+            showSignals ? "border-primary text-primary" : "border-border text-muted-foreground opacity-50"
+          }`}
+        >
+          {showSignals ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+          Signale
+        </button>
+      </div>
+
+      {/* BTC-specific overlay toggles */}
+      <div className="flex flex-wrap gap-1 mb-3">
+        <span className="text-[9px] text-muted-foreground self-center mr-1">BTC-Overlays:</span>
+        {BTC_OVERLAYS.map(o => (
+          <button
+            key={o.key}
+            onClick={() => toggleOverlay(o.key)}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+              visibleOverlays.has(o.key)
+                ? "border-current opacity-100"
+                : "border-border opacity-40 hover:opacity-60"
+            }`}
+            style={{ color: o.color }}
+          >
+            {visibleOverlays.has(o.key) ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Price Chart with MAs + BTC overlays */}
+      <div className="h-[320px] sm:h-[380px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+            <XAxis
+              dataKey="date"
+              tickFormatter={formatDate}
+              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+              interval={Math.floor(chartData.length / 8)}
+              axisLine={{ stroke: "var(--border)" }}
+            />
+            <YAxis
+              domain={yDomain}
+              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+              tickFormatter={formatYAxis}
+              width={55}
+              axisLine={{ stroke: "var(--border)" }}
+            />
+            <Tooltip
+              content={({ active, payload, label }) => {
+                if (!active || !payload?.length) return null;
+                return (
+                  <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
+                    <div className="font-semibold mb-1">{formatDateFull(label)}</div>
+                    {payload.map((p: any) => (
+                      <div key={p.dataKey} className="flex justify-between gap-3">
+                        <span style={{ color: p.color }}>{p.name}</span>
+                        <span className="font-mono tabular-nums">${Number(p.value).toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                      </div>
+                    ))}
+                    {visibleSignals.filter(s => s.date === label).map((s, i) => (
+                      <div key={i} className={`mt-1 pt-1 border-t border-border ${s.type === "BUY" ? "text-green-400" : "text-red-400"}`}>
+                        {s.type === "BUY" ? "▲ BUY" : "▼ SELL"}: {s.reason}
+                      </div>
+                    ))}
+                  </div>
+                );
+              }}
+            />
+
+            {/* Price line */}
+            <Line
+              type="monotone"
+              dataKey="price"
+              name="BTC Kurs"
+              stroke="#f59e0b"
+              strokeWidth={1.5}
+              dot={false}
+              isAnimationActive={false}
+            />
+
+            {/* Standard MA lines */}
+            {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
+              <Line
+                key={ma.key}
+                type="monotone"
+                dataKey={ma.key}
+                name={ma.label}
+                stroke={ma.color}
+                strokeWidth={1.5}
+                dot={false}
+                strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined}
+                connectNulls={true}
+                isAnimationActive={false}
+              />
             ))}
-          </div>
-          <div className="text-[10px] text-muted-foreground">
-            {downsampled.length} Datenpunkte
-          </div>
-        </div>
 
-        {/* Price chart with MA lines */}
-        <div className="bg-muted/10 rounded-lg border border-border p-2">
-          <ResponsiveContainer width="100%" height={350}>
-            <ComposedChart data={downsampled} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="btcTechGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 9 }}
-                tickFormatter={formatDateTick}
-                interval="preserveStartEnd"
-                minTickGap={40}
-              />
-              <YAxis
-                tick={{ fontSize: 9 }}
-                tickFormatter={formatYAxis}
-                domain={["auto", "auto"]}
-                width={55}
-              />
-              <Tooltip
-                contentStyle={tooltipStyle}
-                formatter={(v: number | null, name: string) => {
-                  if (v === null || v === undefined) return ["–", name];
-                  return [`$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`, name];
-                }}
-                labelFormatter={(l) => new Date(l).toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" })}
-              />
-              <Legend
-                wrapperStyle={{ fontSize: 10, paddingTop: 8 }}
-                iconType="line"
-              />
-              <Area
-                type="monotone"
-                dataKey="price"
-                name="BTC Preis"
-                stroke="#f59e0b"
-                strokeWidth={1.5}
-                fill="url(#btcTechGrad)"
-                dot={false}
-                connectNulls
-              />
+            {/* BTC-specific overlay lines */}
+            {BTC_OVERLAYS.map(o => visibleOverlays.has(o.key) && (
               <Line
+                key={o.key}
                 type="monotone"
-                dataKey="ma50"
-                name="MA50"
-                stroke="#eab308"
+                dataKey={o.key}
+                name={o.label}
+                stroke={o.color}
                 strokeWidth={1.5}
                 dot={false}
-                strokeDasharray="4 2"
-                connectNulls
+                strokeDasharray={"dashed" in o && o.dashed ? "6 3" : undefined}
+                connectNulls={true}
+                isAnimationActive={false}
               />
-              <Line
-                type="monotone"
-                dataKey="ma200"
-                name="MA200"
-                stroke="#f43f5e"
-                strokeWidth={1.5}
-                dot={false}
-                strokeDasharray="6 3"
-                connectNulls
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
+            ))}
 
-        {/* MACD subplot */}
-        <div className="bg-muted/10 rounded-lg border border-border p-2">
-          <div className="text-[10px] font-medium text-muted-foreground px-2 mb-1">MACD (12, 26, 9)</div>
-          <ResponsiveContainer width="100%" height={130}>
-            <ComposedChart data={downsampled} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.2} />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 9 }}
-                tickFormatter={formatDateTick}
-                interval="preserveStartEnd"
-                minTickGap={40}
+            {/* Buy/Sell signal markers */}
+            {showSignals && visibleSignals.map((s, i) => (
+              <ReferenceLine
+                key={`sig-${i}`}
+                x={s.date}
+                stroke={s.type === "BUY" ? "#22c55e" : "#ef4444"}
+                strokeDasharray="2 2"
+                strokeWidth={0.8}
+                opacity={0.5}
               />
-              <YAxis
-                tick={{ fontSize: 9 }}
-                tickFormatter={(v) => v >= 1000 || v <= -1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0)}
-                width={45}
-              />
-              <Tooltip
-                contentStyle={tooltipStyle}
-                formatter={(v: number | null, name: string) => {
-                  if (v === null || v === undefined) return ["–", name];
-                  return [v.toFixed(2), name];
-                }}
-                labelFormatter={(l) => new Date(l).toLocaleDateString("de-DE")}
-              />
-              <ReferenceLine y={0} stroke="hsl(var(--border))" strokeWidth={1} />
-              <Bar dataKey="histogram" name="Histogram" maxBarSize={3}>
-                {downsampled.map((d, i) => (
-                  <Cell
-                    key={i}
-                    fill={(d.histogram ?? 0) >= 0 ? "#22c55e" : "#ef4444"}
-                    fillOpacity={0.6}
+            ))}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* MACD Chart */}
+      <div className="mt-2 text-[10px] font-medium text-muted-foreground mb-1 flex items-center gap-1.5">
+        MACD(12,26,9)
+        <span className="text-[9px] opacity-60">= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal</span>
+      </div>
+      <div className="h-[140px] sm:h-[160px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+            <XAxis
+              dataKey="date"
+              tickFormatter={formatDate}
+              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+              interval={Math.floor(chartData.length / 8)}
+              axisLine={{ stroke: "var(--border)" }}
+            />
+            <YAxis
+              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+              width={55}
+              axisLine={{ stroke: "var(--border)" }}
+              tickFormatter={(v: number) => v >= 1000 || v <= -1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0)}
+            />
+            <Tooltip
+              content={({ active, payload, label }) => {
+                if (!active || !payload?.length) return null;
+                return (
+                  <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
+                    <div className="font-semibold mb-1">{formatDateFull(label)}</div>
+                    {payload.map((p: any) => (
+                      <div key={p.dataKey} className="flex justify-between gap-3">
+                        <span style={{ color: p.color }}>{p.name}</span>
+                        <span className="font-mono tabular-nums">{Number(p.value).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              }}
+            />
+            <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeWidth={0.5} />
+
+            {/* Histogram with colored bars */}
+            <Bar
+              dataKey="histogram"
+              name="Histogram"
+              isAnimationActive={false}
+              shape={(props: any) => {
+                const { x, y, width, height, payload } = props;
+                const isPositive = (payload?.histogram ?? 0) >= 0;
+                return (
+                  <rect
+                    x={x}
+                    y={isPositive ? y : y}
+                    width={Math.max(width, 1)}
+                    height={Math.abs(height)}
+                    fill={isPositive ? "rgba(34, 197, 94, 0.5)" : "rgba(239, 68, 68, 0.5)"}
                   />
-                ))}
-              </Bar>
-              <Line type="monotone" dataKey="macd" name="MACD" stroke="#3b82f6" strokeWidth={1.5} dot={false} connectNulls />
-              <Line type="monotone" dataKey="signal" name="Signal" stroke="#f97316" strokeWidth={1.5} dot={false} connectNulls />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
+                );
+              }}
+            />
 
-        {/* Current values */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <MetricCard label="MA50" value={data.currentMA50 !== null ? `$${data.currentMA50.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"} />
-          <MetricCard label="MA200" value={data.currentMA200 !== null ? `$${data.currentMA200.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"} />
-          <MetricCard label="MACD" value={data.currentMACD !== null ? data.currentMACD.toFixed(2) : "–"} color={data.currentMACD !== null && data.currentMACD > 0 ? "text-emerald-500" : "text-red-500"} />
-          <MetricCard label="Signal" value={data.currentSignal !== null ? data.currentSignal.toFixed(2) : "–"} />
+            {/* MACD line */}
+            <Line
+              type="monotone"
+              dataKey="macd"
+              name="MACD"
+              stroke="#3b82f6"
+              strokeWidth={1.5}
+              dot={false}
+              connectNulls={true}
+              isAnimationActive={false}
+            />
+
+            {/* Signal line */}
+            <Line
+              type="monotone"
+              dataKey="signal"
+              name="Signal"
+              stroke="#f97316"
+              strokeWidth={1}
+              strokeDasharray="3 2"
+              dot={false}
+              connectNulls={true}
+              isAnimationActive={false}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Recent Signals Table */}
+      {visibleSignals.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[10px] font-medium text-muted-foreground mb-2">
+            Letzte Signale ({visibleSignals.length} im Zeitraum)
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[10px]">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-1 pr-2 font-medium text-muted-foreground">Datum</th>
+                  <th className="text-left py-1 pr-2 font-medium text-muted-foreground">Signal</th>
+                  <th className="text-left py-1 pr-2 font-medium text-muted-foreground">Grund</th>
+                  <th className="text-right py-1 font-medium text-muted-foreground">Kurs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleSignals.slice(-10).reverse().map((s, i) => (
+                  <tr key={i} className="border-b border-border/50">
+                    <td className="py-1 pr-2 font-mono tabular-nums">{s.date}</td>
+                    <td className="py-1 pr-2">
+                      <span className={`inline-flex items-center gap-0.5 font-semibold ${
+                        s.type === "BUY" ? "text-green-500" : "text-red-500"
+                      }`}>
+                        {s.type === "BUY" ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                        {s.type}
+                      </span>
+                    </td>
+                    <td className={`py-1 pr-2 ${s.reason.includes("Death") ? "font-bold text-red-500" : s.reason.includes("Golden Cross") ? "font-bold text-emerald-500" : s.reason.includes("Bearish") ? "text-red-500" : s.reason.includes("Bullish") ? "text-emerald-500" : ""}`}>
+                      {s.reason}
+                    </td>
+                    <td className="py-1 text-right font-mono tabular-nums">${s.price.toLocaleString("en-US", { maximumFractionDigits: 0 })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
+      )}
+
+      {/* Anti-bias disclaimer */}
+      <div className="mt-3 p-2 rounded bg-muted/30 text-[9px] text-muted-foreground leading-relaxed">
+        <span className="font-semibold">Anti-Bias Protokoll:</span> Kauf nur wenn: Kurs &gt; MA200 AND MA50 &gt; MA200 AND MACD &gt; 0 + steigend.
+        Bei MA200-Break: historischen Max-Drawdown +15-20% (defensiv) bzw. +35-50% (Beta &gt;1.5) als Downside einplanen.
+        MACD = EMA₁₂ − EMA₂₆, Signal = EMA₉(MACD), Histogram = MACD − Signal; α = 2/(Period+1).
+        BTC-Overlays: 2Y MA (730d), Pi Cycle (111d vs 350d×2), 200W MA (1400d).
       </div>
     </SectionCard>
   );
@@ -1032,7 +1437,7 @@ function Section12Signals({ data }: { data: BTCAnalysis }) {
     { label: "Kurs > MA200", active: bc.priceAboveMA200 },
     { label: "MA50 > MA200", active: bc.ma50AboveMA200 },
     { label: "MACD > 0", active: bc.macdAboveZero },
-    { label: "MACD > Signal", active: bc.macdAboveSignal },
+    { label: "MACD steigend", active: bc.macdRising },
   ];
 
   return (
@@ -1081,7 +1486,7 @@ function Section12Signals({ data }: { data: BTCAnalysis }) {
             </div>
             <div className="text-xs text-muted-foreground">
               {data.isBull
-                ? "Alle 4 technischen Bedingungen sind bullisch."
+                ? "Alle 4 technischen Bedingungen sind bullisch: Kurs > MA200, MA50 > MA200, MACD > 0, MACD steigend."
                 : `${conditions.filter(c => c.active).length}/4 Bedingungen erfüllt — Vorsicht geboten.`
               }
             </div>
@@ -1091,12 +1496,24 @@ function Section12Signals({ data }: { data: BTCAnalysis }) {
         {/* Current values */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <MetricCard
+            label="MA20"
+            value={data.currentMA20 !== null ? `$${data.currentMA20.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
+          />
+          <MetricCard
             label="MA50"
             value={data.currentMA50 !== null ? `$${data.currentMA50.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
           />
           <MetricCard
+            label="MA100"
+            value={data.currentMA100 !== null ? `$${data.currentMA100.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
+          />
+          <MetricCard
             label="MA200"
             value={data.currentMA200 !== null ? `$${data.currentMA200.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
+          />
+          <MetricCard
+            label="EMA9"
+            value={data.currentEMA9 !== null ? `$${data.currentEMA9.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
           />
           <MetricCard
             label="MACD"

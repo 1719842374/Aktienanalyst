@@ -1,8 +1,8 @@
 // Client-side BTC analysis — runs entirely in the browser using fetch().
-// Ports the server-side logic from routes.ts without any Node.js dependencies.
+// Uses Blockchain.com API for full historical BTC prices (10+ years),
+// CoinGecko simple/price for current price data, and alternative.me for F&G.
 
-// Re-use the BTCAnalysis interface shape from BTCDashboard.tsx
-// (duplicated here to avoid circular imports)
+// === Types ===
 
 interface BTCIndicator {
   name: string;
@@ -22,14 +22,26 @@ interface MonteCarloResult {
   probAbove120: number;
 }
 
-interface TechChartPoint {
+export interface TechChartPoint {
   date: string;
   price: number;
+  ma20: number | null;
   ma50: number | null;
+  ma100: number | null;
   ma200: number | null;
+  ema9: number | null;
+  ema12: number | null;
+  ema26: number | null;
   macd: number | null;
   signal: number | null;
   histogram: number | null;
+  // BTC-specific overlays
+  ma730: number | null;
+  ma730x5: number | null;
+  ma111: number | null;
+  ma350x2: number | null;
+  ma350: number | null;
+  ma1400: number | null;
 }
 
 interface TechSignal {
@@ -99,16 +111,21 @@ export interface BTCAnalysis {
     allPrices: { date: string; price: number }[];
   };
   technicalChart: TechChartPoint[];
+  technicalChartFull: TechChartPoint[];
   technicalSignals: TechSignal[];
   bullConditions: {
     priceAboveMA200: boolean;
     ma50AboveMA200: boolean;
     macdAboveZero: boolean;
     macdAboveSignal: boolean;
+    macdRising: boolean;
   };
   isBull: boolean;
+  currentMA20: number | null;
   currentMA50: number | null;
+  currentMA100: number | null;
   currentMA200: number | null;
+  currentEMA9: number | null;
   currentMACD: number | null;
   currentSignal: number | null;
   fearGreedHistory: { date: string; value: number; classification: string }[];
@@ -195,19 +212,20 @@ const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 // === Main analysis function ===
 
 export async function analyzeBTC(): Promise<BTCAnalysis> {
-  // Strategy: Fetch non-CoinGecko APIs first (no rate limit), then CoinGecko.
-  // Use only ONE CoinGecko call (market_chart) to get both historical + current price.
+  // Strategy: Fetch non-CoinGecko APIs in parallel first, then CoinGecko simple/price,
+  // then Blockchain.com for full history.
 
-  // === 1. Parallel fetch: F&G, F&G History, FRED (all non-CoinGecko) ===
+  // === 1. Parallel fetch: F&G, F&G History, FRED, Blockchain.com (all non-CoinGecko) ===
   let fearGreedIndex = 50, fearGreedLabel = "Neutral";
   let fearGreedHistory: { date: string; value: number; classification: string }[] = [];
   let fedFundsRate = 4.33;
   const dxy = 103;
 
-  const [fngResult, fngHistResult, fredResult] = await Promise.allSettled([
+  const [fngResult, fngHistResult, fredResult, blockchainResult] = await Promise.allSettled([
     fetchJSON("https://api.alternative.me/fng/?limit=1"),
     fetchJSON("https://api.alternative.me/fng/?limit=365&format=json"),
     fetchText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"),
+    fetchJSON("https://api.blockchain.info/charts/market-price?timespan=all&format=json&cors=true", 60000),
   ]);
 
   if (fngResult.status === "fulfilled" && fngResult.value?.data?.[0]) {
@@ -234,9 +252,46 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
     }
   }
 
-  // === 2. CoinGecko: Fetch historical prices (this gives us both chart data AND current price) ===
+  // === 2. Parse Blockchain.com historical data ===
+  let allPriceData: { date: string; price: number }[] = [];
+
+  if (blockchainResult.status === "fulfilled" && blockchainResult.value?.values) {
+    const dayMap = new Map<string, number>();
+    for (const point of blockchainResult.value.values as { x: number; y: number }[]) {
+      const d = new Date(point.x * 1000).toISOString().split("T")[0];
+      dayMap.set(d, point.y);
+    }
+    allPriceData = Array.from(dayMap.entries())
+      .map(([date, price]) => ({ date, price }))
+      .filter(d => d.price > 0);
+  }
+
+  // Fallback: CoinGecko market_chart if Blockchain.com failed
+  if (allPriceData.length === 0) {
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const fiveYearsAgo = nowSec - 5 * 365 * 86400;
+      const parsed = await fetchJSON(
+        `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fiveYearsAgo}&to=${nowSec}`,
+        60000
+      );
+      if (parsed?.prices && Array.isArray(parsed.prices)) {
+        const dayMap = new Map<string, number>();
+        for (const p of parsed.prices as [number, number][]) {
+          const d = new Date(p[0]).toISOString().split("T")[0];
+          dayMap.set(d, p[1]);
+        }
+        allPriceData = Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
+      }
+    } catch {
+      // swallow
+    }
+  }
+
+  allPriceData.sort((a, b) => a.date.localeCompare(b.date));
+
+  // === 3. CoinGecko simple/price for current data ===
   let btcPrice = 0, btcChange24h = 0, btcMarketCap = 0;
-  // Try simple/price first (small request, less likely to fail)
   try {
     const cg = await fetchJSON(
       "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_market_cap=true"
@@ -245,13 +300,32 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
     btcChange24h = cg?.bitcoin?.usd_24h_change ?? 0;
     btcMarketCap = cg?.bitcoin?.usd_market_cap ?? 0;
   } catch {
-    // Will try to get price from historical data
+    // Fall back to last price in historical data
+    if (allPriceData.length > 0) {
+      btcPrice = allPriceData[allPriceData.length - 1].price;
+    }
   }
 
-  // Wait before next CoinGecko call to avoid rate limit
-  await delay(1500);
+  // If historical data doesn't include today, append current price
+  if (allPriceData.length > 0 && btcPrice > 0) {
+    const today = new Date().toISOString().split("T")[0];
+    const lastDate = allPriceData[allPriceData.length - 1].date;
+    if (lastDate < today) {
+      allPriceData.push({ date: today, price: btcPrice });
+    } else if (lastDate === today) {
+      allPriceData[allPriceData.length - 1].price = btcPrice;
+    }
+  } else if (allPriceData.length === 0 && btcPrice > 0) {
+    allPriceData = [{ date: new Date().toISOString().split("T")[0], price: btcPrice }];
+  }
 
-  // === 5. Halving info ===
+  // Slice into timeframes
+  const prices1Y = filterByYears(allPriceData, 1);
+  const prices3Y = filterByYears(allPriceData, 3);
+  const prices5Y = filterByYears(allPriceData, 5);
+  const prices10Y = filterByYears(allPriceData, 10);
+
+  // === 4. Halving info ===
   const lastHalvingDate = new Date("2024-04-20");
   const now = new Date();
   const monthsSinceHalving = Math.round(
@@ -259,7 +333,7 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   );
   const cyclePhase = `Mid-Cycle (${monthsSinceHalving}M post-Halving)`;
 
-  // === 6. Power-Law calculations ===
+  // === 5. Power-Law calculations ===
   const genesisDate = new Date("2009-01-03");
   const daysSinceGenesis = Math.floor(
     (now.getTime() - genesisDate.getTime()) / (1000 * 60 * 60 * 24)
@@ -271,14 +345,13 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   const daysSixMonths = daysSinceGenesis + 180;
   const fairValue6M = 1.0117e-17 * Math.pow(daysSixMonths, 5.82);
 
-  // Power signal
   let powerSignal: number;
   if (btcPrice > resistance) powerSignal = -1.0;
   else if (btcPrice >= fairValue) powerSignal = 0.0;
   else if (btcPrice >= support) powerSignal = 0.5;
   else powerSignal = 1.0;
 
-  // === 7. Indicator Scoring ===
+  // === 6. Indicator Scoring ===
   let fgScore = 0;
   if (fearGreedIndex < 30) fgScore = 1;
   else if (fearGreedIndex > 70) fgScore = -1;
@@ -306,7 +379,7 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
     .map(ind => `${ind.name}: ${ind.score} × ${ind.weight} = ${ind.weighted.toFixed(4)}`)
     .join(" + ") + ` = ${gis.toFixed(4)}`;
 
-  // === 9. Cycle Signal ===
+  // === 7. Cycle Signal ===
   let cycleSignal: number;
   if (monthsSinceHalving > 24) cycleSignal = -0.5;
   else if (monthsSinceHalving >= 18) cycleSignal = -0.3;
@@ -314,10 +387,9 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   else if (monthsSinceHalving >= 6) cycleSignal = 0.3;
   else cycleSignal = 0.5;
 
-  // === 10. GWS ===
+  // === 8. GWS ===
   const gwsValue = gis * 0.30 + powerSignal * 0.50 + cycleSignal * 0.20;
 
-  // === 11. μ mapping ===
   let mu: number;
   if (gwsValue > 0.5) mu = 0.0010;
   else if (gwsValue >= 0.2) mu = 0.0005;
@@ -331,7 +403,7 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   else if (gwsValue > -0.3) gwsInterpretation = "Neutral to Slightly Bearish – caution warranted";
   else gwsInterpretation = "Bearish – unfavorable conditions across indicators";
 
-  // === 12. Monte Carlo ===
+  // === 9. Monte Carlo ===
   const sigma = 0.025;
   const sigmaAdj = sigma * (monthsSinceHalving > 18 ? 1.2 : 1.0);
   const S0 = btcPrice;
@@ -357,7 +429,7 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   const mc3M = runMonteCarlo(90);
   const mc6M = runMonteCarlo(180);
 
-  // === 13. Categories A-E (3M) ===
+  // === 10. Categories A-E (3M) ===
   function computeCategories() {
     const iterations = 10000;
     const results: number[] = [];
@@ -389,70 +461,29 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
 
   const categories = computeCategories();
 
-  // === 14. Extended Historical Prices ===
-  let allPriceData: { date: string; price: number }[] = [];
-
-  async function fetchCGRange(fromSec: number, toSec: number): Promise<{ date: string; price: number }[]> {
-    try {
-      const parsed = await fetchJSON(
-        `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fromSec}&to=${toSec}`,
-        60000
-      );
-      if (parsed?.prices && Array.isArray(parsed.prices)) {
-        const dayMap = new Map<string, number>();
-        for (const p of parsed.prices as [number, number][]) {
-          const d = new Date(p[0]).toISOString().split("T")[0];
-          dayMap.set(d, p[1]);
-        }
-        return Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
-      }
-    } catch {
-      // swallow
-    }
-    return [];
-  }
-
-  const nowSec = Math.floor(Date.now() / 1000);
-
-  // Try 1Y first (smaller request, more likely to succeed with CoinGecko free tier)
-  const oneYearAgo = nowSec - 365 * 86400;
-  allPriceData = await fetchCGRange(oneYearAgo, nowSec);
-
-  // If 1Y succeeded, try to extend to 5Y for more history
-  if (allPriceData.length > 0) {
-    await delay(2000);
-    const fiveYearsAgo = nowSec - 5 * 365 * 86400;
-    const fiveYData = await fetchCGRange(fiveYearsAgo, oneYearAgo);
-    if (fiveYData.length > 0) {
-      allPriceData = [...fiveYData, ...allPriceData];
-    }
-  } else {
-    // 1Y failed too — wait and retry once
-    await delay(3000);
-    allPriceData = await fetchCGRange(oneYearAgo, nowSec);
-  }
-
-  // If CoinGecko completely failed, extract price from simple/price at least
-  if (allPriceData.length === 0 && btcPrice > 0) {
-    const today = new Date().toISOString().split("T")[0];
-    allPriceData = [{ date: today, price: btcPrice }];
-  }
-
-  // Sort by date
-  allPriceData.sort((a, b) => a.date.localeCompare(b.date));
-
-  // Slice into timeframes
-  const prices1Y = filterByYears(allPriceData, 1);
-  const prices3Y = filterByYears(allPriceData, 3);
-  const prices5Y = filterByYears(allPriceData, 5);
-  const prices10Y = filterByYears(allPriceData, 10);
-
-  // === 15. Calculate MA50, MA200, EMA12, EMA26 ===
+  // === 11. Calculate ALL moving averages & indicators ===
   const closePrices = allPriceData.map(d => d.price);
+
+  // Standard MAs
+  const ma20 = calcSMA(closePrices, 20);
   const ma50 = calcSMA(closePrices, 50);
+  const ma100 = calcSMA(closePrices, 100);
   const ma200 = calcSMA(closePrices, 200);
+
+  // EMAs
+  const ema9 = calcEMA(closePrices, 9);
   const ema12 = calcEMA(closePrices, 12);
   const ema26 = calcEMA(closePrices, 26);
+
+  // BTC-specific MAs
+  const ma111 = calcSMA(closePrices, 111);       // Pi Cycle
+  const ma350 = calcSMA(closePrices, 350);        // Golden Ratio base
+  const ma730 = calcSMA(closePrices, 730);        // 2-Year MA
+  const ma1400 = calcSMA(closePrices, 1400);      // 200-Week MA
+
+  // Derived: Pi Cycle top = MA350 × 2, 2-Year MA upper = MA730 × 5
+  const ma350x2: (number | null)[] = ma350.map(v => v !== null ? v * 2 : null);
+  const ma730x5: (number | null)[] = ma730.map(v => v !== null ? v * 5 : null);
 
   // MACD = EMA12 - EMA26
   const macdLine: (number | null)[] = ema12.map((e12, i) => {
@@ -478,18 +509,29 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
     return m - s;
   });
 
-  // Build technical chart data array
+  // Build enhanced technical chart data
   const technicalChartData: TechChartPoint[] = allPriceData.map((d, i) => ({
     date: d.date,
     price: d.price,
+    ma20: ma20[i],
     ma50: ma50[i],
+    ma100: ma100[i],
     ma200: ma200[i],
+    ema9: ema9[i],
+    ema12: ema12[i],
+    ema26: ema26[i],
     macd: macdLine[i],
     signal: signalLine[i],
     histogram: histogram[i],
+    ma730: ma730[i],
+    ma730x5: ma730x5[i],
+    ma111: ma111[i],
+    ma350x2: ma350x2[i],
+    ma350: ma350[i],
+    ma1400: ma1400[i],
   }));
 
-  // === 16. Signal Detection ===
+  // === 12. Signal Detection ===
   const signals: TechSignal[] = [];
 
   for (let i = 1; i < technicalChartData.length; i++) {
@@ -525,19 +567,43 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
         signals.push({ date: curr.date, type: "SELL", reason: "MACD unter Nulllinie", price: curr.price });
       }
     }
+
+    // Pi Cycle Top: MA111 crosses above MA350×2
+    if (prev.ma111 !== null && prev.ma350x2 !== null && curr.ma111 !== null && curr.ma350x2 !== null) {
+      if (prev.ma111 <= prev.ma350x2 && curr.ma111 > curr.ma350x2) {
+        signals.push({ date: curr.date, type: "SELL", reason: "Pi Cycle Top", price: curr.price });
+      }
+    }
+
+    // 2-Year MA crossover
+    if (prev.ma730 !== null && curr.ma730 !== null) {
+      if (prev.price >= prev.ma730 && curr.price < curr.ma730) {
+        signals.push({ date: curr.date, type: "SELL", reason: "Unter 2-Year MA", price: curr.price });
+      }
+      if (prev.price <= prev.ma730 && curr.price > curr.ma730) {
+        signals.push({ date: curr.date, type: "BUY", reason: "Über 2-Year MA", price: curr.price });
+      }
+    }
   }
 
   // Current technical status
   const lastTech = technicalChartData.length > 0 ? technicalChartData[technicalChartData.length - 1] : null;
+  const prevTech = technicalChartData.length > 1 ? technicalChartData[technicalChartData.length - 2] : null;
+
+  const macdRising = (lastTech?.macd !== null && prevTech?.macd !== null)
+    ? (lastTech!.macd! > prevTech!.macd!)
+    : false;
+
   const bullConditions = {
     priceAboveMA200: lastTech && lastTech.ma200 !== null ? lastTech.price > (lastTech.ma200 ?? 0) : false,
     ma50AboveMA200: lastTech && lastTech.ma50 !== null && lastTech.ma200 !== null ? (lastTech.ma50 ?? 0) > (lastTech.ma200 ?? 0) : false,
     macdAboveZero: lastTech && lastTech.macd !== null ? (lastTech.macd ?? 0) > 0 : false,
     macdAboveSignal: lastTech && lastTech.macd !== null && lastTech.signal !== null ? (lastTech.macd ?? 0) > (lastTech.signal ?? 0) : false,
+    macdRising,
   };
   const isBull = bullConditions.priceAboveMA200 && bullConditions.ma50AboveMA200 && bullConditions.macdAboveZero && bullConditions.macdAboveSignal;
 
-  // === 17. F&G Historical stats (data already fetched above in parallel) ===
+  // === 13. F&G Historical stats (data already fetched in parallel) ===
   const fgValues = fearGreedHistory.map(d => d.value);
   const fgAvg30 = fgValues.length >= 30 ? fgValues.slice(-30).reduce((a, b) => a + b, 0) / 30 : null;
   const fgAvg90 = fgValues.length >= 90 ? fgValues.slice(-90).reduce((a, b) => a + b, 0) / 90 : null;
@@ -545,7 +611,7 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   const fgYearHigh = fgValues.length > 0 ? Math.max(...fgValues) : null;
   const fgYearLow = fgValues.length > 0 ? Math.min(...fgValues) : null;
 
-  // === 8. Cycle Assessment (German) ===
+  // === 14. Cycle Assessment (German) ===
   let positionText: string;
   if (monthsSinceHalving < 12) {
     positionText = `Bitcoin befindet sich ${monthsSinceHalving} Monate nach dem Halving in der frühen Expansionsphase. Historisch gesehen beginnen die stärksten Kursanstiege 12–18 Monate nach dem Halving.`;
@@ -570,7 +636,7 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
 
   const halvingCatalyst = `Das nächste Halving wird voraussichtlich im April 2028 stattfinden. Die aktuelle Angebotsverknappung durch das letzte Halving (April 2024) wirkt weiterhin als langfristiger Katalysator für den Preis.`;
 
-  // === Build final estimate ===
+  // === 15. Build final estimate ===
   const outlook = gwsValue > 0.2 ? "Bullish" : gwsValue > -0.2 ? "Neutral" : "Bearish";
   const threeMonthRange = `$${mc3M.p10.toLocaleString("en-US", { maximumFractionDigits: 0 })} – $${mc3M.p90.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
   const sixMonthRange = `$${mc6M.p10.toLocaleString("en-US", { maximumFractionDigits: 0 })} – $${mc6M.p90.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
@@ -657,11 +723,15 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
     },
 
     technicalChart: technicalChartData.slice(-365 * 5),
+    technicalChartFull: technicalChartData,
     technicalSignals: signals.slice(-100),
     bullConditions,
     isBull,
+    currentMA20: lastTech?.ma20 ?? null,
     currentMA50: lastTech?.ma50 ?? null,
+    currentMA100: lastTech?.ma100 ?? null,
     currentMA200: lastTech?.ma200 ?? null,
+    currentEMA9: lastTech?.ema9 ?? null,
     currentMACD: lastTech?.macd ?? null,
     currentSignal: lastTech?.signal ?? null,
 
