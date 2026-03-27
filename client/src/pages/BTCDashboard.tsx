@@ -518,8 +518,8 @@ function Section7Categories({ data }: { data: BTCAnalysis }) {
         </div>
 
         <div className="bg-muted/20 rounded-lg p-3 border border-border">
-          <ResponsiveContainer width="100%" height={200}>
-            <PieChart>
+          <ResponsiveContainer width="100%" height={260}>
+            <PieChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
               <Pie
                 data={data.categories.map(c => ({ name: c.label, value: c.probability }))}
                 cx="50%"
@@ -528,7 +528,18 @@ function Section7Categories({ data }: { data: BTCAnalysis }) {
                 outerRadius={80}
                 paddingAngle={2}
                 dataKey="value"
-                label={({ name, value }) => `${name}: ${value.toFixed(1)}%`}
+                label={({ name, value, cx: cxPx, cy: cyPx, midAngle, outerRadius: or }) => {
+                  const RADIAN = Math.PI / 180;
+                  const radius = (or as number) + 22;
+                  const x = (cxPx as number) + radius * Math.cos(-midAngle * RADIAN);
+                  const y = (cyPx as number) + radius * Math.sin(-midAngle * RADIAN);
+                  return (
+                    <text x={x} y={y} fill={catColors[name] || "#999"} textAnchor={x > (cxPx as number) ? "start" : "end"} dominantBaseline="central" fontSize={12} fontWeight={600}>
+                      {name}: {value.toFixed(1)}%
+                    </text>
+                  );
+                }}
+                labelLine={false}
               >
                 {data.categories.map((c, i) => (
                   <Cell key={i} fill={catColors[c.label]} />
@@ -787,22 +798,58 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
   };
 
   // Golden Cross / Death Cross — scan last 2 years of full data
+  // Also detect IMMINENT Death Cross (MA50 converging toward MA200 from above)
   const crossInfo = useMemo(() => {
     if (fullChart.length < 2) return null;
+
+    // 1. Find most recent actual cross
+    let lastCross: { type: "golden" | "death"; date: string } | null = null;
     const lookback = Math.min(730, fullChart.length - 1);
     for (let i = fullChart.length - 1; i >= fullChart.length - lookback; i--) {
       const cur = fullChart[i];
       const prev = fullChart[i - 1];
       if (cur.ma50 && cur.ma200 && prev.ma50 && prev.ma200) {
         if (cur.ma50 > cur.ma200 && prev.ma50 <= prev.ma200) {
-          return { type: "golden" as const, date: cur.date };
+          lastCross = { type: "golden", date: cur.date };
+          break;
         }
         if (cur.ma50 < cur.ma200 && prev.ma50 >= prev.ma200) {
-          return { type: "death" as const, date: cur.date };
+          lastCross = { type: "death", date: cur.date };
+          break;
         }
       }
     }
-    return null;
+
+    // 2. Detect imminent Death Cross: MA50 still above MA200 but converging + price below both
+    const latest = fullChart[fullChart.length - 1];
+    const prev30 = fullChart.length > 30 ? fullChart[fullChart.length - 31] : null;
+    if (latest?.ma50 && latest?.ma200 && prev30?.ma50 && prev30?.ma200) {
+      const gap = latest.ma50 - latest.ma200;
+      const gapPrev = prev30.ma50 - prev30.ma200;
+      const gapPct = (gap / latest.ma200) * 100;
+      const isConverging = gap > 0 && gap < gapPrev; // MA50 still above but gap shrinking
+      const priceBelowBoth = latest.price < latest.ma50 && latest.price < latest.ma200;
+
+      if (isConverging && gapPct < 15 && priceBelowBoth) {
+        return {
+          type: "imminent_death" as const,
+          date: lastCross?.date || "",
+          lastCross,
+          gapPct,
+        };
+      }
+      // If price below MA200 and MA50 falling toward MA200 (even if gap still moderate)
+      if (priceBelowBoth && isConverging && gapPct < 25) {
+        return {
+          type: "imminent_death" as const,
+          date: lastCross?.date || "",
+          lastCross,
+          gapPct,
+        };
+      }
+    }
+
+    return lastCross ? { ...lastCross, lastCross, gapPct: undefined } : null;
   }, [fullChart]);
 
   if (fullChart.length === 0) {
@@ -873,8 +920,37 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
         )}
       </div>
 
-      {/* Golden Cross / Death Cross banner */}
+      {/* Golden Cross / Death Cross / Imminent Death Cross banner */}
       {crossInfo && (() => {
+        if (crossInfo.type === "imminent_death") {
+          const gapStr = crossInfo.gapPct !== undefined ? crossInfo.gapPct.toFixed(1) : "?";
+          const lastCrossDate = crossInfo.lastCross?.date
+            ? new Date(crossInfo.lastCross.date + "T00:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" })
+            : null;
+          return (
+            <div className="rounded-lg p-3 mb-3 border flex items-center gap-3 bg-red-500/10 border-red-500/30">
+              <div className="text-2xl font-bold text-red-500 animate-pulse">⚠</div>
+              <div>
+                <div className="text-sm font-bold text-red-500">
+                  DROHENDES DEATH CROSS
+                  <span className="text-xs font-normal text-muted-foreground ml-1.5">
+                    (MA50/MA200-Abstand: {gapStr}% — konvergierend)
+                  </span>
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  MA50 fällt Richtung MA200 — Kurs unter beiden MAs. Bei Kreuzung = Death Cross (bärisches Struktursignal).
+                  {lastCrossDate && crossInfo.lastCross?.type === "golden"
+                    ? ` Letztes Golden Cross am ${lastCrossDate} wird zunehmend neutralisiert.`
+                    : ""}
+                </div>
+                <div className="text-[10px] text-amber-400 font-medium mt-0.5">
+                  Post-Halving-Phase: Erhöhte Korrekturwahrscheinlichkeit — Risikomanagement beachten.
+                </div>
+              </div>
+            </div>
+          );
+        }
+
         const isGolden = crossInfo.type === "golden";
         const crossDateObj = new Date(crossInfo.date + "T00:00:00");
         const dateStr = crossDateObj.toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
