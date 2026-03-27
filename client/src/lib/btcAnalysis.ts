@@ -223,7 +223,7 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
 
   const [fngResult, fngHistResult, fredResult, blockchainResult] = await Promise.allSettled([
     fetchJSON("https://api.alternative.me/fng/?limit=1"),
-    fetchJSON("https://api.alternative.me/fng/?limit=365&format=json"),
+    fetchJSON("https://api.alternative.me/fng/?limit=2000&format=json"),
     fetchText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"),
     fetchJSON("https://api.blockchain.info/charts/market-price?timespan=all&format=json&cors=true", 60000),
   ]);

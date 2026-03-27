@@ -1403,12 +1403,23 @@ function Section11FearGreed({ data }: { data: BTCAnalysis }) {
     return "Extreme Greed";
   }
 
-  // Downsample history for chart: max 365 points
+  // F&G chart timeframe state
+  const [fgRange, setFgRange] = useState<"1J" | "3J" | "5J">("1J");
+  const fgRangeDays = fgRange === "5J" ? 1825 : fgRange === "3J" ? 1095 : 365;
+
+  // Filter + downsample history based on selected range
   const chartHistory = useMemo(() => {
-    if (fgh.length <= 365) return fgh;
-    const step = Math.ceil(fgh.length / 365);
-    return fgh.filter((_, i) => i % step === 0);
-  }, [fgh]);
+    const sliced = fgh.length > fgRangeDays ? fgh.slice(-fgRangeDays) : fgh;
+    // Downsample to max ~500 points for performance
+    if (sliced.length <= 500) return sliced;
+    const step = Math.ceil(sliced.length / 500);
+    const sampled = sliced.filter((_, i) => i % step === 0);
+    // Always include the last point
+    if (sampled[sampled.length - 1] !== sliced[sliced.length - 1]) {
+      sampled.push(sliced[sliced.length - 1]);
+    }
+    return sampled;
+  }, [fgh, fgRangeDays]);
 
   return (
     <SectionCard number={11} title="Fear & Greed Index">
@@ -1452,8 +1463,25 @@ function Section11FearGreed({ data }: { data: BTCAnalysis }) {
         {/* Historical F&G chart with colored zones */}
         {chartHistory.length > 0 && (
           <div className="bg-muted/10 rounded-lg border border-border p-2">
-            <div className="text-[10px] font-medium text-muted-foreground px-2 mb-1">Fear & Greed Verlauf (365 Tage)</div>
-            <ResponsiveContainer width="100%" height={200}>
+            <div className="flex items-center justify-between px-2 mb-1">
+              <div className="text-[10px] font-medium text-muted-foreground">Fear & Greed Verlauf ({fgRange === "5J" ? "5 Jahre" : fgRange === "3J" ? "3 Jahre" : "1 Jahr"})</div>
+              <div className="flex gap-1">
+                {(["1J", "3J", "5J"] as const).map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setFgRange(r)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                      fgRange === r
+                        ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                        : "bg-muted/30 text-muted-foreground border border-border hover:bg-muted/50"
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <ResponsiveContainer width="100%" height={fgRange === "1J" ? 200 : 240}>
               <ComposedChart data={chartHistory} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                 <defs>
                   {/* Vertical gradient for line color: maps Y 0-100 to color zones */}
@@ -1488,9 +1516,13 @@ function Section11FearGreed({ data }: { data: BTCAnalysis }) {
                 <XAxis
                   dataKey="date"
                   tick={{ fontSize: 9 }}
-                  tickFormatter={(d) => new Date(d).toLocaleDateString("de-DE", { month: "short" })}
+                  tickFormatter={(d) => {
+                    const dt = new Date(d);
+                    if (fgRange === "1J") return dt.toLocaleDateString("de-DE", { month: "short" });
+                    return dt.toLocaleDateString("de-DE", { month: "short", year: "2-digit" });
+                  }}
                   interval="preserveStartEnd"
-                  minTickGap={50}
+                  minTickGap={60}
                 />
                 <YAxis tick={{ fontSize: 9 }} domain={[0, 100]} width={30} />
                 <Tooltip
