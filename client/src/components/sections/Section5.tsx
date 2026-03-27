@@ -90,6 +90,7 @@ export function Section5({ data }: Props) {
     minorityInterests: 0,
     fcfHaircut: data.fcfHaircut,
     actualEPS: data.epsTTM,
+    forwardEPS: data.epsConsensusNextFY,
     waccOverride: null,
   };
 

@@ -486,7 +486,13 @@ export function TechnicalChart({ data }: Props) {
                         {s.type === "buy" ? "BUY" : "SELL"}
                       </span>
                     </td>
-                    <td className="py-1 pr-2">{s.reason}</td>
+                    <td className="py-1 pr-2">
+                      {s.reason.includes('Cross') ? (
+                        <span className={`font-bold ${s.reason.includes('Death') ? 'text-red-500' : 'text-emerald-500'}`}>
+                          {s.reason}
+                        </span>
+                      ) : s.reason}
+                    </td>
                     <td className="py-1 text-right font-mono tabular-nums">${s.price.toFixed(2)}</td>
                   </tr>
                 ))}

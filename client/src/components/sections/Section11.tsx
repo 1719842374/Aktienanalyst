@@ -52,6 +52,7 @@ export function Section11({ data }: Props) {
     minorityInterests: 0,
     fcfHaircut: data.fcfHaircut,
     actualEPS: data.epsTTM,
+    forwardEPS: data.epsConsensusNextFY,
   }), [data]);
 
   // Total GB — Catalyst-Adj. Target uses conservative DCF as base (per framework)

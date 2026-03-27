@@ -52,6 +52,7 @@ export function Section2({ data }: Props) {
     minorityInterests: 0,
     fcfHaircut: data.fcfHaircut,
     actualEPS: data.epsTTM,
+    forwardEPS: data.epsConsensusNextFY,
   }), [data, sp, netDebt]);
 
   // Catalyst base: use DCF perShare, but if it's unreasonably low, fall back to analyst PT median

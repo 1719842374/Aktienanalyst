@@ -100,6 +100,7 @@ export interface FCFFDCFParams {
   waccOverride?: number | null;  // Direct WACC % (null/undefined = compute via CAPM)
   // Optional: actual EPS for sanity-cap (prevents FS-debt distortion)
   actualEPS?: number;        // EPS TTM for per-share ceiling check
+  forwardEPS?: number;       // Forward EPS consensus for cap calculation
 }
 
 export interface FCFFDCFResult {
@@ -266,19 +267,24 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   const rawMarketCapRatio = params.sharesOutstanding > 0 && params.revenueBase > 0
     ? (equityValue / params.sharesOutstanding) / (params.revenueBase / params.sharesOutstanding)
     : 0; // P/S implied
-  // If actual EPS is provided, cap per-share at 40× EPS (generous P/E ceiling).
-  // This prevents FS-debt distortion from producing absurd values.
-  // Without actual EPS, use NOPAT proxy as fallback.
-  const actualEPS = params.actualEPS && params.actualEPS > 0 ? params.actualEPS : 0;
-  if (actualEPS > 0) {
-    const peCap = actualEPS * 40;
+  // Sanity cap: If per-share DCF vastly exceeds a reasonable earnings-based ceiling,
+  // the FCFF model is likely distorted (Financial Services debt, conglomerate structure).
+  // Use the higher of TTM EPS and Forward EPS, apply a growth-adjusted P/E ceiling.
+  const ttmEPS = params.actualEPS && params.actualEPS > 0 ? params.actualEPS : 0;
+  const fwdEPS = params.forwardEPS && params.forwardEPS > 0 ? params.forwardEPS : 0;
+  const capEPS = Math.max(ttmEPS, fwdEPS);
+  if (capEPS > 0) {
+    // Dynamic P/E cap: PEG-fair PE × 2, bounded [20, 35]
+    const growthRate = Math.max(params.revenueGrowthP1, 5);
+    const peMultiple = Math.min(Math.max(growthRate * 2.5, 20), 35);
+    const peCap = capEPS * peMultiple;
     if (perShare > peCap) {
       const rawVal = perShare;
       perShare = peCap;
       perShareCapped = true;
       steps.push(``);
-      steps.push(`⚠ DCF-Sanity: Per-Share auf 40× EPS ($${actualEPS.toFixed(2)}) gecapped = $${peCap.toFixed(2)}.`);
-      steps.push(`  Rohwert $${rawVal.toFixed(0)} — Financial-Services/Debt-Verzerrung wahrscheinlich.`);
+      steps.push(`⚠ DCF-Sanity: Per-Share auf ${peMultiple.toFixed(0)}× EPS ($${capEPS.toFixed(2)}) gecapped = $${peCap.toFixed(2)}.`);
+      steps.push(`  Rohwert $${rawVal.toFixed(0)} — FCFF-Modell überschätzt (Financial-Services/Debt-Verzerrung).`);
     }
   }
 
