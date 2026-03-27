@@ -1,0 +1,275 @@
+import { useState, useRef, useCallback } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import type { StockAnalysis } from "../../../shared/schema";
+import { TickerSearch } from "@/components/TickerSearch";
+import { useTheme } from "@/components/ThemeProvider";
+import { PerplexityAttribution } from "@/components/PerplexityAttribution";
+import { Section1 } from "@/components/sections/Section1";
+import { Section2 } from "@/components/sections/Section2";
+import { Section3 } from "@/components/sections/Section3";
+import { Section4 } from "@/components/sections/Section4";
+import { Section5 } from "@/components/sections/Section5";
+import { Section6 } from "@/components/sections/Section6";
+import { Section7 } from "@/components/sections/Section7";
+import { Section8 } from "@/components/sections/Section8";
+import { Section9 } from "@/components/sections/Section9";
+import { Section10 } from "@/components/sections/Section10";
+import { Section11 } from "@/components/sections/Section11";
+import { Section12 } from "@/components/sections/Section12";
+import { Section13 } from "@/components/sections/Section13";
+import { TechnicalChart } from "@/components/sections/TechnicalChart";
+import { Section15 } from "@/components/sections/Section15";
+import { Section16 } from "@/components/sections/Section16";
+import { Section17 } from "@/components/sections/Section17";
+import {
+  Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
+  LineChart, Target, Scale, AlertTriangle, Activity,
+  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe,
+} from "lucide-react";
+
+const SECTIONS = [
+  { id: 1, label: "Datenaktualität", icon: BarChart3 },
+  { id: 2, label: "Investmentthese", icon: TrendingUp },
+  { id: 3, label: "Zyklusanalyse", icon: Activity },
+  { id: 4, label: "Bewertung", icon: Calculator },
+  { id: 5, label: "DCF-Modell", icon: LineChart },
+  { id: 6, label: "CRV", icon: Target },
+  { id: 7, label: "Rel. Bewertung", icon: Scale },
+  { id: 8, label: "Risikoinversion", icon: AlertTriangle },
+  { id: 9, label: "RSL-Momentum", icon: Activity },
+  { id: 14, label: "Tech. Analyse", icon: LineChart },
+  { id: 15, label: "Moat / Porter", icon: Landmark },
+  { id: 16, label: "PESTEL", icon: Globe },
+  { id: 17, label: "Makro-Korr.", icon: BarChart3 },
+  { id: 10, label: "Reverse DCF", icon: RotateCcw },
+  { id: 11, label: "Katalysatoren", icon: Zap },
+  { id: 12, label: "Monte Carlo", icon: Dice6 },
+  { id: 13, label: "Zusammenfassung", icon: Table2 },
+];
+
+export default function Dashboard() {
+  const { theme, toggleTheme } = useTheme();
+  const [data, setData] = useState<StockAnalysis | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
+
+  const analyzeMutation = useMutation({
+    mutationFn: async (ticker: string) => {
+      const res = await apiRequest("POST", "/api/analyze", { ticker });
+      return res.json() as Promise<StockAnalysis>;
+    },
+    onSuccess: (result) => {
+      setData(result);
+      // Scroll to top
+      mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    },
+  });
+
+  const scrollToSection = useCallback((id: number) => {
+    const el = sectionRefs.current[id];
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    setSidebarOpen(false);
+  }, []);
+
+  const setSectionRef = useCallback((id: number) => (el: HTMLDivElement | null) => {
+    sectionRefs.current[id] = el;
+  }, []);
+
+  return (
+    <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
+      {/* Header */}
+      <header className="flex-shrink-0 h-12 border-b border-border bg-card flex items-center justify-between px-3 sm:px-4 z-20">
+        <div className="flex items-center gap-3">
+          <button
+            className="lg:hidden p-1.5 rounded-md hover:bg-muted/50"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            data-testid="button-sidebar-toggle"
+          >
+            {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+          </button>
+          {/* Logo */}
+          <div className="flex items-center gap-2">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-label="Stock Analyst Pro logo">
+              <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" strokeWidth="1.5" className="text-primary" />
+              <path d="M6 16L10 10L14 13L18 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary" />
+              <circle cx="18" cy="7" r="1.5" fill="currentColor" className="text-primary" />
+            </svg>
+            <span className="text-sm font-semibold tracking-tight hidden sm:block">Stock Analyst Pro</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {data && (
+            <div className="hidden sm:flex items-center gap-2 text-xs">
+              <span className="font-mono tabular-nums font-bold text-primary">{data.ticker}</span>
+              <span className="text-muted-foreground">{data.companyName}</span>
+              <span className="text-muted-foreground">•</span>
+              <span className="font-mono tabular-nums font-semibold">${data.currentPrice.toFixed(2)}</span>
+            </div>
+          )}
+          <TickerSearch
+            onSearch={(ticker) => analyzeMutation.mutate(ticker)}
+            isLoading={analyzeMutation.isPending}
+          />
+          <button
+            onClick={toggleTheme}
+            className="p-1.5 rounded-md hover:bg-muted/50 transition-colors"
+            data-testid="button-theme-toggle"
+          >
+            {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+        </div>
+      </header>
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
+        <aside
+          className={`
+            fixed lg:relative inset-y-0 left-0 top-12 lg:top-0 z-30 lg:z-0
+            w-52 bg-card border-r border-border
+            transition-transform duration-200 ease-in-out
+            ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
+            overflow-y-auto overscroll-contain custom-scrollbar
+          `}
+        >
+          <nav className="py-2 px-2 space-y-0.5" data-testid="nav-sidebar">
+            {SECTIONS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => scrollToSection(s.id)}
+                disabled={!data}
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-xs hover:bg-muted/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-left group"
+                data-testid={`nav-section-${s.id}`}
+              >
+                <s.icon className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 group-hover:text-primary transition-colors" />
+                <span className="flex-1 truncate">{s.label}</span>
+                <span className="text-[10px] font-mono tabular-nums text-muted-foreground/50">{s.id}</span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="px-3 py-3 border-t border-border mt-2">
+            <PerplexityAttribution />
+          </div>
+        </aside>
+
+        {/* Sidebar overlay on mobile */}
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 bg-black/40 z-20 lg:hidden top-12"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
+        {/* Main Content */}
+        <main
+          ref={mainRef}
+          className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar"
+          data-testid="main-content"
+        >
+          {!data && !analyzeMutation.isPending ? (
+            <WelcomeScreen onSearch={(ticker) => analyzeMutation.mutate(ticker)} />
+          ) : analyzeMutation.isPending ? (
+            <LoadingScreen ticker={analyzeMutation.variables || ""} />
+          ) : analyzeMutation.isError ? (
+            <ErrorScreen error={analyzeMutation.error} />
+          ) : data ? (
+            <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
+              <div ref={setSectionRef(1)}><Section1 data={data} /></div>
+              <div ref={setSectionRef(2)}><Section2 data={data} /></div>
+              <div ref={setSectionRef(3)}><Section3 data={data} /></div>
+              <div ref={setSectionRef(4)}><Section4 data={data} /></div>
+              <div ref={setSectionRef(5)}><Section5 data={data} /></div>
+              <div ref={setSectionRef(6)}><Section6 data={data} /></div>
+              <div ref={setSectionRef(7)}><Section7 data={data} /></div>
+              <div ref={setSectionRef(8)}><Section8 data={data} /></div>
+              <div ref={setSectionRef(9)}><Section9 data={data} /></div>
+              <div ref={setSectionRef(14)}><TechnicalChart data={data} /></div>
+              <div ref={setSectionRef(15)}><Section15 data={data} /></div>
+              <div ref={setSectionRef(16)}><Section16 data={data} /></div>
+              <div ref={setSectionRef(17)}><Section17 data={data} /></div>
+              <div ref={setSectionRef(10)}><Section10 data={data} /></div>
+              <div ref={setSectionRef(11)}><Section11 data={data} /></div>
+              <div ref={setSectionRef(12)}><Section12 data={data} /></div>
+              <div ref={setSectionRef(13)}><Section13 data={data} /></div>
+              <div className="pb-8" />
+            </div>
+          ) : null}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function WelcomeScreen({ onSearch }: { onSearch: (ticker: string) => void }) {
+  const tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "TSLA", "AMZN"];
+  return (
+    <div className="flex items-center justify-center min-h-full p-8">
+      <div className="max-w-lg text-center space-y-6">
+        <div className="flex justify-center">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" className="text-primary opacity-60">
+            <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M6 16L10 10L14 13L18 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="18" cy="7" r="1.5" fill="currentColor" />
+          </svg>
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold">Stock Analyst Pro</h1>
+          <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+            Comprehensive stock analysis with DCF modeling, Monte Carlo simulations,
+            risk assessment, and 13 detailed analysis sections.
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-3">Try a ticker:</p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {tickers.map((t) => (
+              <button
+                key={t}
+                onClick={() => onSearch(t)}
+                className="px-3 py-1.5 rounded-md bg-muted/50 hover:bg-primary/10 hover:text-primary border border-border text-xs font-mono tabular-nums font-medium transition-colors"
+                data-testid={`button-quick-${t}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 justify-center text-[10px] text-muted-foreground/50">
+          <ChevronRight className="w-3 h-3" />
+          Enter any ticker symbol in the search bar above
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoadingScreen({ ticker }: { ticker: string }) {
+  return (
+    <div className="flex items-center justify-center min-h-full p-8">
+      <div className="text-center space-y-4">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+        <div>
+          <div className="text-sm font-medium">Analyzing {ticker}...</div>
+          <div className="text-xs text-muted-foreground mt-1">Running comprehensive analysis</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ErrorScreen({ error }: { error: Error }) {
+  return (
+    <div className="flex items-center justify-center min-h-full p-8">
+      <div className="text-center space-y-3 max-w-sm">
+        <div className="text-red-500 text-xl">⚠</div>
+        <div className="text-sm font-medium">Analysis Failed</div>
+        <div className="text-xs text-muted-foreground">{error.message}</div>
+      </div>
+    </div>
+  );
+}
