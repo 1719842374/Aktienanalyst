@@ -95,7 +95,7 @@ const SECTIONS = [
   { id: 9, label: "Finale Schätzung", icon: Scale },
   { id: 10, label: "Technische Analyse", icon: LineChartIcon },
   { id: 11, label: "Fear & Greed", icon: Gauge },
-  { id: 12, label: "Signale", icon: Activity },
+  { id: 12, label: "Gesamt-Fazit", icon: Scale },
 ];
 
 // === Helper Components ===
@@ -1503,147 +1503,222 @@ function Section11FearGreed({ data }: { data: BTCAnalysis }) {
   );
 }
 
-// === NEW Section 12: Bull/Bear Status & Signal Table ===
-function Section12Signals({ data }: { data: BTCAnalysis }) {
+// === Section 12: Umfassendes Gesamt-Fazit ===
+function Section12Fazit({ data }: { data: BTCAnalysis }) {
   const bc = data.bullConditions;
-  const signals = data.technicalSignals || [];
-  const last20 = signals.slice(-20).reverse(); // newest first
+  const bullCount = [bc.priceAboveMA200, bc.ma50AboveMA200, bc.macdAboveZero, bc.macdRising].filter(Boolean).length;
+  const msh = data.monthsSinceHalving;
+  const plDev = data.powerLaw.deviationPercent;
+  const gwsVal = data.gws.value;
+  const fgi = data.fearGreedIndex;
+  const ffr = data.fedFundsRate;
 
-  const conditions = [
-    { label: "Kurs > MA200", active: bc.priceAboveMA200 },
-    { label: "MA50 > MA200", active: bc.ma50AboveMA200 },
-    { label: "MACD > 0", active: bc.macdAboveZero },
-    { label: "MACD steigend", active: bc.macdRising },
-  ];
+  // Determine overall verdict
+  const isBearMarket = !bc.priceAboveMA200 && !bc.macdAboveZero && fgi < 30;
+  const isCorrection = !bc.priceAboveMA200 && bc.ma50AboveMA200; // Below MA200 but MA50 still above
+  const isStrongBull = bullCount === 4 && fgi > 60;
+
+  // MA50/MA200 convergence
+  const ma50 = data.currentMA50 ?? 0;
+  const ma200 = data.currentMA200 ?? 0;
+  const maGapPct = ma200 > 0 ? ((ma50 - ma200) / ma200) * 100 : 0;
+  const deathCrossImminent = ma50 > ma200 && maGapPct < 15 && !bc.priceAboveMA200;
+
+  // Cycle risk assessment
+  const latePhase = msh >= 18;
+  const peakRisk = msh >= 24;
+
+  // Macro risk
+  const highRateEnv = ffr >= 4.0;
+  const rateRisk = ffr >= 5.0;
+
+  // Build assessment blocks
+  type FazitBlock = { title: string; icon: string; color: string; bgColor: string; borderColor: string; lines: string[] };
+  const blocks: FazitBlock[] = [];
+
+  // 1. Zyklus-Einordnung
+  const cycleLines: string[] = [];
+  if (msh < 12) {
+    cycleLines.push(`Post-Halving Monat ${msh}: Fr\u00fche Akkumulationsphase. Historisch beginnen die st\u00e4rksten Rallys 12\u201318 Monate nach dem Halving.`);
+  } else if (msh < 18) {
+    cycleLines.push(`Post-Halving Monat ${msh}: Mittlere Zyklusphase. Historisch die Phase mit dem h\u00f6chsten Momentum.`);
+  } else if (msh < 24) {
+    cycleLines.push(`Post-Halving Monat ${msh}: Sp\u00e4te Expansionsphase. Historisch n\u00e4hert sich der Zyklus dem H\u00f6hepunkt.`);
+    cycleLines.push(`Typische Zyklus-Tops: 18\u201330 Monate post-Halving. Erh\u00f6hte Volatilit\u00e4t und Korrekturrisiko.`);
+  } else {
+    cycleLines.push(`Post-Halving Monat ${msh}: \u00dcberreife Zyklusphase. Historische Zyklen erreichten ihren Peak typischerweise 24\u201330 Monate nach dem Halving.`);
+    cycleLines.push(`Erh\u00f6htes Risiko einer zyklischen Korrektur. Miner-Profitabilit\u00e4t unter Druck \u2014 schwache Miner kapitulieren, Hash-Rate-Konsolidierung m\u00f6glich.`);
+  }
+  blocks.push({
+    title: "Zyklus-Einordnung",
+    icon: "\u23F3",
+    color: latePhase ? "text-amber-500" : "text-emerald-500",
+    bgColor: latePhase ? "bg-amber-500/5" : "bg-emerald-500/5",
+    borderColor: latePhase ? "border-amber-500/20" : "border-emerald-500/20",
+    lines: cycleLines,
+  });
+
+  // 2. Technische Analyse
+  const techLines: string[] = [];
+  techLines.push(`Technische Bedingungen: ${bullCount}/4 erf\u00fcllt. ${
+    bc.priceAboveMA200 ? "Kurs \u00fcber MA200 \u2714" : "Kurs UNTER MA200 \u2718"
+  }, ${
+    bc.ma50AboveMA200 ? "MA50 > MA200 \u2714" : "MA50 < MA200 \u2718"
+  }, MACD: ${(data.currentMACD ?? 0).toFixed(0)} (${bc.macdAboveZero ? "> 0 \u2714" : "< 0 \u2718"}).`);
+
+  if (deathCrossImminent) {
+    techLines.push(`\u26a0 DROHENDES DEATH CROSS: MA50 konvergiert auf MA200 (Abstand ${maGapPct.toFixed(1)}%). Bei Kreuzung = b\u00e4risches Struktursignal.`);
+  }
+  if (!bc.priceAboveMA200 && data.currentMA200) {
+    const distToMA200 = ((data.btcPrice - data.currentMA200) / data.currentMA200 * 100).toFixed(1);
+    techLines.push(`Kurs ${distToMA200}% unter MA200 ($${data.currentMA200.toLocaleString("en-US", {maximumFractionDigits: 0})}). R\u00fcckkehr \u00fcber MA200 w\u00e4re erstes Erholungssignal.`);
+  }
+  if (bc.macdRising && !bc.macdAboveZero) {
+    techLines.push(`Silberstreif: MACD steigend (von -${Math.abs(data.currentMACD ?? 0).toFixed(0)} Richtung Nulllinie). Fr\u00fches Signal f\u00fcr nachlassenden Verk\u00e4uferdruck.`);
+  }
+  blocks.push({
+    title: "Technische Analyse",
+    icon: "\uD83D\uDCC9",
+    color: bullCount >= 3 ? "text-emerald-500" : bullCount >= 2 ? "text-amber-500" : "text-red-500",
+    bgColor: bullCount >= 3 ? "bg-emerald-500/5" : bullCount >= 2 ? "bg-amber-500/5" : "bg-red-500/5",
+    borderColor: bullCount >= 3 ? "border-emerald-500/20" : bullCount >= 2 ? "border-amber-500/20" : "border-red-500/20",
+    lines: techLines,
+  });
+
+  // 3. Makro-Umfeld & Geopolitik
+  const macroLines: string[] = [];
+  macroLines.push(`Fed Funds Rate: ${ffr.toFixed(2)}%. ${highRateEnv ? "Restriktives Zinsumfeld belastet Risk-Assets." : "Moderates Zinsumfeld \u2014 neutral f\u00fcr BTC."}`);
+  macroLines.push(`BTC ist zinssensitiv: H\u00f6here Realzinsen \u2192 Opportunit\u00e4tskosten steigen \u2192 Kapitalabfluss aus spekulativen Assets. Fed-Pivot w\u00e4re Katalysator.`);
+
+  macroLines.push(`Geopolitisches Risiko (Iran-Konflikt, Handels-Zoll-Eskalation): Kann Inflation befeuern \u2192 steigende Leitzins-Erwartungen \u2192 Kapitalmarktzinsen hoch \u2192 Downside f\u00fcr BTC.`);
+  macroLines.push(`DXY ${data.dxy.toFixed(0)}: ${data.dxy < 100 ? "Schwacher Dollar \u2014 positiv f\u00fcr BTC." : data.dxy > 105 ? "Starker Dollar \u2014 Gegenwind f\u00fcr BTC." : "Neutraler Dollar-Bereich."}`);
+  blocks.push({
+    title: "Makro-Umfeld & Geopolitik",
+    icon: "\uD83C\uDF0D",
+    color: rateRisk ? "text-red-500" : highRateEnv ? "text-amber-500" : "text-emerald-500",
+    bgColor: rateRisk ? "bg-red-500/5" : highRateEnv ? "bg-amber-500/5" : "bg-emerald-500/5",
+    borderColor: rateRisk ? "border-red-500/20" : highRateEnv ? "border-amber-500/20" : "border-emerald-500/20",
+    lines: macroLines,
+  });
+
+  // 4. Miner & Netzwerk
+  const minerLines: string[] = [];
+  if (latePhase) {
+    minerLines.push(`${msh} Monate post-Halving: Block Reward halbiert seit April 2024 (3.125 BTC). Marginale Miner mit hohen Energiekosten stehen unter Druck.`);
+    minerLines.push(`Miner-Kapitulation kann kurzfristig Verkaufsdruck erh\u00f6hen, mittelfristig aber zu Hash-Rate-Konsolidierung und stabileren Netzwerk-Grundlagen f\u00fchren.`);
+  } else {
+    minerLines.push(`Block Reward: 3.125 BTC seit Halving April 2024. Starke Miner akkumulieren, schwache kapitulieren \u2014 gesunde Marktbereinigung.`);
+  }
+  if (data.btcPrice < (data.currentMA200 ?? Infinity)) {
+    minerLines.push(`Kurs unter MA200: F\u00fcr ineffiziente Miner (Break-Even ~$40\u201360k je nach Energiekosten) wird die Lage angespannt. Miner-Selling erh\u00f6ht tempor\u00e4ren Abgabedruck.`);
+  }
+  blocks.push({
+    title: "Miner & Netzwerk-Gesundheit",
+    icon: "\u26CF",
+    color: latePhase ? "text-amber-500" : "text-emerald-500",
+    bgColor: latePhase ? "bg-amber-500/5" : "bg-emerald-500/5",
+    borderColor: latePhase ? "border-amber-500/20" : "border-emerald-500/20",
+    lines: minerLines,
+  });
+
+  // 5. B\u00e4renmarkt-Bewertung
+  const bearLines: string[] = [];
+  if (isBearMarket) {
+    bearLines.push(`\u26a0 B\u00e4renmarkt-Signale aktiv: Kurs unter MA200, MACD < 0, Fear & Greed im Extreme-Fear-Bereich (${fgi}).`);
+    bearLines.push(`Historische B\u00e4renm\u00e4rkte dauerten 12\u201318 Monate mit Drawdowns von -50% bis -80% vom ATH. Defensives Risikomanagement empfohlen.`);
+  } else if (isCorrection) {
+    bearLines.push(`Korrekturphase: Kurs unter MA200, aber MA50 noch \u00fcber MA200 \u2014 struktureller Aufw\u00e4rtstrend technisch intakt, aber gef\u00e4hrdet.`);
+    bearLines.push(`Schl\u00fcssel-Schwelle: R\u00fcckkehr \u00fcber MA200 ($${(data.currentMA200 ?? 0).toLocaleString("en-US", {maximumFractionDigits: 0})}) w\u00fcrde die Korrektur als "gesund" klassifizieren.`);
+    if (deathCrossImminent) {
+      bearLines.push(`Death Cross droht: Sollte MA50 unter MA200 fallen, verschlechtert sich das Bild strukturell. Dann B\u00e4renmarkt-Wahrscheinlichkeit deutlich erh\u00f6ht.`);
+    }
+  } else if (isStrongBull) {
+    bearLines.push(`Kein B\u00e4renmarkt-Signal. Alle technischen Bedingungen bullisch, Sentiment positiv (F&G: ${fgi}).`);
+  } else {
+    bearLines.push(`Gemischte Signale: ${bullCount}/4 technische Bedingungen erf\u00fcllt. Weder klarer Bull- noch B\u00e4renmarkt \u2014 \u00dcbergangsphase.`);
+    bearLines.push(`F&G Index bei ${fgi} (${data.fearGreedLabel}). Hohe Unsicherheit im Markt \u2014 Position-Sizing und Stop-Losses beachten.`);
+  }
+  blocks.push({
+    title: isBearMarket ? "B\u00e4renmarkt-Einsch\u00e4tzung" : isCorrection ? "Korrektur-Einsch\u00e4tzung" : "Marktregime-Einsch\u00e4tzung",
+    icon: isBearMarket ? "\uD83D\uDC3B" : isCorrection ? "\u26a0" : "\u2696",
+    color: isBearMarket ? "text-red-500" : isCorrection ? "text-amber-500" : "text-emerald-500",
+    bgColor: isBearMarket ? "bg-red-500/5" : isCorrection ? "bg-amber-500/5" : "bg-emerald-500/5",
+    borderColor: isBearMarket ? "border-red-500/20" : isCorrection ? "border-amber-500/20" : "border-emerald-500/20",
+    lines: bearLines,
+  });
+
+  // Overall score text
+  const overallScore = bullCount <= 1 ? "Bearish" : bullCount === 2 ? "Neutral-Bearish" : bullCount === 3 ? "Neutral-Bullish" : "Bullish";
+  const overallColor = bullCount <= 1 ? "text-red-500" : bullCount === 2 ? "text-amber-500" : bullCount === 3 ? "text-emerald-400" : "text-emerald-500";
 
   return (
-    <SectionCard number={12} title="Bull/Bear Status & Signale">
+    <SectionCard number={12} title="Umfassendes Gesamt-Fazit">
       <div className="space-y-4">
-        {/* 4 status tiles */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {conditions.map((c) => (
-            <div
-              key={c.label}
-              className={`border rounded-lg p-3 flex items-center gap-2.5 ${
-                c.active
-                  ? "bg-emerald-500/10 border-emerald-500/30"
-                  : "bg-red-500/10 border-red-500/30"
-              }`}
-            >
-              {c.active ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-              ) : (
-                <XCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-              )}
-              <div>
-                <div className="text-xs font-medium">{c.label}</div>
-                <div className={`text-[10px] font-bold ${c.active ? "text-emerald-500" : "text-red-500"}`}>
-                  {c.active ? "Erfüllt" : "Nicht erfüllt"}
-                </div>
+        {/* Overall verdict banner */}
+        <div className={`rounded-lg p-4 border ${
+          bullCount <= 1 ? "bg-red-500/10 border-red-500/30" :
+          bullCount === 2 ? "bg-amber-500/10 border-amber-500/30" :
+          "bg-emerald-500/10 border-emerald-500/30"
+        }`}>
+          <div className="flex items-center gap-3">
+            <div className={`text-3xl font-bold ${overallColor}`}>
+              {bullCount <= 1 ? "\uD83D\uDFE5" : bullCount === 2 ? "\uD83D\uDFE7" : bullCount === 3 ? "\uD83D\uDFE8" : "\uD83D\uDFE9"}
+            </div>
+            <div>
+              <div className={`text-lg font-bold ${overallColor}`}>
+                Gesamtbewertung: {overallScore}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {bullCount}/4 technische Bedingungen | F&G: {fgi} ({data.fearGreedLabel}) | Zyklus: Monat {msh} | Power-Law: {plDev > 0 ? "+" : ""}{plDev.toFixed(0)}%
               </div>
             </div>
-          ))}
-        </div>
-
-        {/* Status banner */}
-        <div className={`rounded-lg p-3 border flex items-center gap-3 ${
-          data.isBull
-            ? "bg-emerald-500/10 border-emerald-500/30"
-            : "bg-red-500/10 border-red-500/30"
-        }`}>
-          {data.isBull ? (
-            <TrendingUp className="w-6 h-6 text-emerald-500 flex-shrink-0" />
-          ) : (
-            <AlertTriangle className="w-6 h-6 text-red-500 flex-shrink-0" />
-          )}
-          <div>
-            <div className={`text-sm font-bold ${data.isBull ? "text-emerald-500" : "text-red-500"}`}>
-              {data.isBull ? "BULL-Bedingungen erfüllt" : "BEAR-Warnung"}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {data.isBull
-                ? "Alle 4 technischen Bedingungen sind bullisch: Kurs > MA200, MA50 > MA200, MACD > 0, MACD steigend."
-                : `${conditions.filter(c => c.active).length}/4 Bedingungen erfüllt — Vorsicht geboten.`
-              }
-            </div>
           </div>
         </div>
 
-        {/* Current values */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <MetricCard
-            label="MA20"
-            value={data.currentMA20 !== null ? `$${data.currentMA20.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
-          />
-          <MetricCard
-            label="MA50"
-            value={data.currentMA50 !== null ? `$${data.currentMA50.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
-          />
-          <MetricCard
-            label="MA100"
-            value={data.currentMA100 !== null ? `$${data.currentMA100.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
-          />
-          <MetricCard
-            label="MA200"
-            value={data.currentMA200 !== null ? `$${data.currentMA200.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
-          />
-          <MetricCard
-            label="EMA9"
-            value={data.currentEMA9 !== null ? `$${data.currentEMA9.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
-          />
-          <MetricCard
-            label="MACD"
-            value={data.currentMACD !== null ? data.currentMACD.toFixed(2) : "–"}
-            color={data.currentMACD !== null && data.currentMACD > 0 ? "text-emerald-500" : "text-red-500"}
-          />
-          <MetricCard
-            label="Signal-Linie"
-            value={data.currentSignal !== null ? data.currentSignal.toFixed(2) : "–"}
-          />
-        </div>
-
-        {/* Signal Table */}
-        {last20.length > 0 && (
-          <div className="bg-muted/10 rounded-lg border border-border overflow-hidden">
-            <div className="px-3 py-2 border-b border-border">
-              <span className="text-xs font-medium">Letzte 20 Signale</span>
+        {/* Detail blocks */}
+        {blocks.map((block, idx) => (
+          <div key={idx} className={`rounded-lg p-3 border ${block.bgColor} ${block.borderColor}`}>
+            <div className={`text-sm font-bold mb-2 flex items-center gap-2 ${block.color}`}>
+              <span className="text-base">{block.icon}</span>
+              {block.title}
             </div>
-            <div className="max-h-[400px] overflow-y-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border bg-muted/20 sticky top-0">
-                    <th className="text-left py-2 px-3 font-medium text-muted-foreground">Datum</th>
-                    <th className="text-center py-2 px-3 font-medium text-muted-foreground">Signal</th>
-                    <th className="text-left py-2 px-3 font-medium text-muted-foreground">Grund</th>
-                    <th className="text-right py-2 px-3 font-medium text-muted-foreground">Preis</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {last20.map((sig, i) => (
-                    <tr key={i} className={`border-b border-border/30 ${i % 2 === 0 ? "bg-muted/5" : ""}`}>
-                      <td className="py-2 px-3 font-mono tabular-nums text-muted-foreground">
-                        {new Date(sig.date).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" })}
-                      </td>
-                      <td className="py-2 px-3 text-center">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
-                          sig.type === "BUY"
-                            ? "bg-emerald-500/15 text-emerald-500 border-emerald-500/30"
-                            : "bg-red-500/15 text-red-500 border-red-500/30"
-                        }`}>
-                          {sig.type}
-                        </span>
-                      </td>
-                      <td className="py-2 px-3">{sig.reason}</td>
-                      <td className="py-2 px-3 text-right font-mono tabular-nums">
-                        ${sig.price.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-1.5">
+              {block.lines.map((line, li) => (
+                <div key={li} className="text-xs text-muted-foreground leading-relaxed">
+                  {line}
+                </div>
+              ))}
             </div>
           </div>
-        )}
+        ))}
+
+        {/* Bottom summary */}
+        <div className="bg-muted/20 rounded-lg p-3 border border-border">
+          <div className="text-xs font-medium mb-1.5">Zusammenfassung</div>
+          <div className="text-xs text-muted-foreground leading-relaxed">
+            {isCorrection || isBearMarket ? (
+              <>
+                Bitcoin bei <span className="text-foreground font-mono">${data.btcPrice.toLocaleString("en-US", {maximumFractionDigits: 0})}</span> befindet sich in einer
+                {isBearMarket ? " bärischen Phase" : " Korrektur"} innerhalb des Post-Halving-Zyklus (Monat {msh}).
+                {" "}Die Kombination aus {!bc.priceAboveMA200 ? "Kurs unter MA200, " : ""}
+                {deathCrossImminent ? "drohendem Death Cross, " : ""}
+                {highRateEnv ? `restriktivem Zinsumfeld (FFR ${ffr.toFixed(2)}%), ` : ""}
+                {"geopolitischen Risiken (Iran-Eskalation \u2192 Inflationsdruck \u2192 steigende Kapitalmarktzinsen) und BTC-Zinssensitivität "}
+                impliziert erhöhtes Downside-Risiko.
+                {" "}Schlüssel-Level: Rückkehr über MA200 (${(data.currentMA200 ?? 0).toLocaleString("en-US", {maximumFractionDigits: 0})}) für Entwarnung,
+                {" "}Verlust von ${((data.currentMA200 ?? data.btcPrice) * 0.75).toLocaleString("en-US", {maximumFractionDigits: 0})} als Eskalationsschwelle.
+              </>
+            ) : (
+              <>
+                Bitcoin bei <span className="text-foreground font-mono">${data.btcPrice.toLocaleString("en-US", {maximumFractionDigits: 0})}</span> zeigt
+                {isStrongBull ? " starke bullische Signale" : " gemischte Signale"} in Monat {msh} des Post-Halving-Zyklus.
+                {highRateEnv ? ` Das restriktive Zinsumfeld (FFR ${ffr.toFixed(2)}%) bleibt ein Gegenwind-Faktor.` : ""}
+                {" "}Geopolitische Risiken (Iran-Eskalation, Inflation, steigende Kapitalmarktzinsen) erhöhen die Unsicherheit.
+                {" "}BTC als zinssensitiver Asset-Klasse droht bei weiteren Zinsanstiegen Abgabedruck.
+              </>
+            )}
+          </div>
+        </div>
       </div>
     </SectionCard>
   );
@@ -1784,7 +1859,7 @@ export default function BTCDashboard() {
               <div ref={setSectionRef(9)}><Section9FinalEstimate data={data} /></div>
               <div ref={setSectionRef(10)}><Section10TechnicalChart data={data} /></div>
               <div ref={setSectionRef(11)}><Section11FearGreed data={data} /></div>
-              <div ref={setSectionRef(12)}><Section12Signals data={data} /></div>
+              <div ref={setSectionRef(12)}><Section12Fazit data={data} /></div>
               <div className="pb-8" />
             </div>
           ) : null}
