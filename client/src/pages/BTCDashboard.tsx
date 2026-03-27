@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useTheme } from "@/components/ThemeProvider";
@@ -9,25 +9,17 @@ import { formatCurrency, formatLargeNumber, formatPercent, getChangeColor } from
 import { useLocation } from "wouter";
 import {
   Sun, Moon, Bitcoin, TrendingUp, Activity, Calculator,
-  LineChart, Target, Scale, BarChart3, Dice6, Table2,
+  LineChart as LineChartIcon, Target, Scale, BarChart3, Dice6,
   Menu, X, ChevronRight, Gauge, Layers, ArrowLeft,
+  CheckCircle2, XCircle, AlertTriangle,
 } from "lucide-react";
 import {
   LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Area, AreaChart, BarChart, Bar,
-  Cell, ReferenceLine, PieChart, Pie,
+  Cell, ReferenceLine, PieChart, Pie, ComposedChart, Legend,
 } from "recharts";
 
 // === Types ===
-interface BTCIndicator {
-  name: string;
-  value: string;
-  score: number;
-  weight: number;
-  weighted: number;
-  source: string;
-}
-
 interface BTCAnalysis {
   timestamp: string;
   btcPrice: number;
@@ -37,57 +29,43 @@ interface BTCAnalysis {
   monthsSinceHalving: number;
   nextHalvingEstimate: string;
   cyclePhase: string;
-  indicators: BTCIndicator[];
+  indicators: { name: string; value: string; score: number; weight: number; weighted: number; source: string; }[];
   gis: number;
   gisCalculation: string;
   powerLaw: {
-    daysSinceGenesis: number;
-    fairValue: number;
-    support: number;
-    resistance: number;
-    deviationPercent: number;
-    fairValue6M: number;
-    powerSignal: number;
+    daysSinceGenesis: number; fairValue: number; support: number; resistance: number;
+    deviationPercent: number; fairValue6M: number; powerSignal: number;
   };
-  gws: {
-    gis: number;
-    powerSignal: number;
-    cycleSignal: number;
-    value: number;
-    mu: number;
-    interpretation: string;
-  };
+  gws: { gis: number; powerSignal: number; cycleSignal: number; value: number; mu: number; interpretation: string; };
   monteCarlo: {
-    sigma: number;
-    sigmaAdj: number;
-    mu: number;
-    threeMonth: {
-      p10: number; p50: number; p90: number; mean: number;
-      probBelow: number; probAbove120: number;
-    };
-    sixMonth: {
-      p10: number; p50: number; p90: number; mean: number;
-      probBelow: number; probAbove120: number;
-    };
+    sigma: number; sigmaAdj: number; mu: number;
+    threeMonth: { p10: number; p50: number; p90: number; mean: number; probBelow: number; probAbove120: number; };
+    sixMonth: { p10: number; p50: number; p90: number; mean: number; probBelow: number; probAbove120: number; };
   };
-  categories: { label: string; range: string; probability: number }[];
-  cycleAssessment: {
-    position: string;
-    entryPoint: string;
-    halvingCatalyst: string;
-  };
-  finalEstimate: {
-    threeMonthRange: string;
-    sixMonthRange: string;
-    outlook: string;
-    summary: string;
-  };
-  historicalPrices: { date: string; price: number }[];
-  historicalPricesYear: { date: string; price: number }[];
+  categories: { label: string; range: string; probability: number; }[];
+  cycleAssessment: { position: string; entryPoint: string; halvingCatalyst: string; };
+  finalEstimate: { threeMonthRange: string; sixMonthRange: string; outlook: string; summary: string; };
   fearGreedIndex: number;
   fearGreedLabel: string;
   dxy: number;
   fedFundsRate: number;
+  chartData: {
+    prices1Y: { date: string; price: number; }[];
+    prices3Y: { date: string; price: number; }[];
+    prices5Y: { date: string; price: number; }[];
+    prices10Y: { date: string; price: number; }[];
+    allPrices: { date: string; price: number; }[];
+  };
+  technicalChart: { date: string; price: number; ma50: number | null; ma200: number | null; macd: number | null; signal: number | null; histogram: number | null; }[];
+  technicalSignals: { date: string; type: "BUY" | "SELL"; reason: string; price: number; }[];
+  bullConditions: { priceAboveMA200: boolean; ma50AboveMA200: boolean; macdAboveZero: boolean; macdAboveSignal: boolean; };
+  isBull: boolean;
+  currentMA50: number | null;
+  currentMA200: number | null;
+  currentMACD: number | null;
+  currentSignal: number | null;
+  fearGreedHistory: { date: string; value: number; classification: string; }[];
+  fearGreedStats: { avg30: number | null; avg90: number | null; avg365: number | null; yearHigh: number | null; yearLow: number | null; };
 }
 
 // === Sidebar Sections ===
@@ -101,8 +79,9 @@ const SECTIONS = [
   { id: 7, label: "Kategorien A-E", icon: Layers },
   { id: 8, label: "Zyklus-Einsch.", icon: TrendingUp },
   { id: 9, label: "Finale Schätzung", icon: Scale },
-  { id: 10, label: "Preis-Chart", icon: LineChart },
+  { id: 10, label: "Technische Analyse", icon: LineChartIcon },
   { id: 11, label: "Fear & Greed", icon: Gauge },
+  { id: 12, label: "Signale", icon: Activity },
 ];
 
 // === Helper Components ===
@@ -138,6 +117,9 @@ function ProgressBar({ value, max, color }: { value: number; max: number; color:
     </div>
   );
 }
+
+// === Shared tooltip style ===
+const tooltipStyle = { fontSize: 11, background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 };
 
 // === Section Components ===
 
@@ -178,7 +160,6 @@ function Section1Status({ data }: { data: BTCAnalysis }) {
 }
 
 function Section2Halving({ data }: { data: BTCAnalysis }) {
-  // Cycle progress bar: 0 to ~48 months
   const cycleLength = 48;
   const progress = Math.min(data.monthsSinceHalving / cycleLength * 100, 100);
 
@@ -192,7 +173,6 @@ function Section2Halving({ data }: { data: BTCAnalysis }) {
           <MetricCard label="Zyklusphase" value={data.cyclePhase} />
         </div>
 
-        {/* Cycle timeline */}
         <div className="bg-muted/20 rounded-lg p-3 border border-border">
           <div className="text-xs font-medium text-muted-foreground mb-2">Zyklus-Fortschritt</div>
           <div className="relative w-full h-4 bg-muted/50 rounded-full overflow-hidden">
@@ -264,7 +244,6 @@ function Section4PowerLaw({ data }: { data: BTCAnalysis }) {
   const pl = data.powerLaw;
   const signalColor = pl.powerSignal > 0 ? "text-emerald-500" : pl.powerSignal < 0 ? "text-red-500" : "text-amber-500";
 
-  // Build power-law visualization data
   const zones = [
     { name: "Support", value: pl.support, color: "#22c55e" },
     { name: "Fair Value", value: pl.fairValue, color: "#3b82f6" },
@@ -289,7 +268,6 @@ function Section4PowerLaw({ data }: { data: BTCAnalysis }) {
           <MetricCard label="Power Signal" value={pl.powerSignal.toFixed(1)} color={signalColor} />
         </div>
 
-        {/* Power-Law Corridor visualization */}
         <div className="bg-muted/20 rounded-lg p-4 border border-border space-y-3">
           <div className="text-xs font-medium text-muted-foreground">Power-Law Korridor</div>
           <div className="space-y-2">
@@ -344,7 +322,6 @@ function Section5GWS({ data }: { data: BTCAnalysis }) {
   const g = data.gws;
   const gwsColor = g.value > 0.2 ? "text-emerald-500" : g.value < -0.2 ? "text-red-500" : "text-amber-500";
 
-  // GWS components bar chart
   const gwsComponents = [
     { name: "GIS×0.30", value: g.gis * 0.30, fill: "#3b82f6" },
     { name: "Power×0.50", value: g.powerSignal * 0.50, fill: "#8b5cf6" },
@@ -361,17 +338,13 @@ function Section5GWS({ data }: { data: BTCAnalysis }) {
           <MetricCard label="GWS" value={g.value.toFixed(4)} color={gwsColor} />
         </div>
 
-        {/* GWS Components Chart */}
         <div className="bg-muted/20 rounded-lg p-3 border border-border">
           <div className="text-xs font-medium text-muted-foreground mb-2">GWS Komponenten</div>
           <ResponsiveContainer width="100%" height={120}>
             <BarChart data={gwsComponents} layout="vertical">
               <XAxis type="number" domain={[-0.6, 0.6]} tick={{ fontSize: 10 }} />
               <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={90} />
-              <Tooltip
-                contentStyle={{ fontSize: 11, background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }}
-                formatter={(v: number) => v.toFixed(4)}
-              />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => v.toFixed(4)} />
               <ReferenceLine x={0} stroke="hsl(var(--border))" />
               <Bar dataKey="value" radius={[0, 4, 4, 0]}>
                 {gwsComponents.map((c, i) => (
@@ -409,7 +382,6 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
   const mc = data.monteCarlo;
   const fmt = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 
-  // Build distribution data for visualization
   const distData3M = [
     { name: "P10", value: mc.threeMonth.p10, fill: "#ef4444" },
     { name: "P50", value: mc.threeMonth.p50, fill: "#3b82f6" },
@@ -427,14 +399,12 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
   return (
     <SectionCard number={6} title="Monte Carlo Simulation">
       <div className="space-y-4">
-        {/* Parameters */}
         <div className="grid grid-cols-3 gap-3">
           <MetricCard label="σ (Basis)" value={mc.sigma.toFixed(4)} />
           <MetricCard label="σ (adjustiert)" value={mc.sigmaAdj.toFixed(4)} />
           <MetricCard label="μ (Drift)" value={mc.mu.toFixed(4)} />
         </div>
 
-        {/* 3-Month Results */}
         <div className="bg-muted/20 rounded-lg p-3 border border-border space-y-3">
           <div className="text-xs font-medium text-foreground">3-Monats-Prognose (T=90)</div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -448,15 +418,11 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
             <MetricCard label="P(> +20%)" value={`${mc.threeMonth.probAbove120.toFixed(1)}%`} />
           </div>
 
-          {/* Bar visualization */}
           <ResponsiveContainer width="100%" height={80}>
             <BarChart data={distData3M}>
               <XAxis dataKey="name" tick={{ fontSize: 10 }} />
               <YAxis hide />
-              <Tooltip
-                contentStyle={{ fontSize: 11, background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }}
-                formatter={(v: number) => fmt(v)}
-              />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => fmt(v)} />
               <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                 {distData3M.map((d, i) => <Cell key={i} fill={d.fill} />)}
               </Bar>
@@ -464,7 +430,6 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
           </ResponsiveContainer>
         </div>
 
-        {/* 6-Month Results */}
         <div className="bg-muted/20 rounded-lg p-3 border border-border space-y-3">
           <div className="text-xs font-medium text-foreground">6-Monats-Prognose (T=180)</div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -482,10 +447,7 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
             <BarChart data={distData6M}>
               <XAxis dataKey="name" tick={{ fontSize: 10 }} />
               <YAxis hide />
-              <Tooltip
-                contentStyle={{ fontSize: 11, background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }}
-                formatter={(v: number) => fmt(v)}
-              />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => fmt(v)} />
               <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                 {distData6M.map((d, i) => <Cell key={i} fill={d.fill} />)}
               </Bar>
@@ -530,8 +492,7 @@ function Section7Categories({ data }: { data: BTCAnalysis }) {
                   <span className="text-xs text-muted-foreground truncate pr-2">{cat.range}</span>
                   <span className="text-xs font-bold font-mono tabular-nums">{cat.probability.toFixed(1)}%</span>
                 </div>
-                <ProgressBar value={cat.probability} max={50} color={`bg-[${catColors[cat.label]}]`} />
-                <div className="w-full h-2 bg-muted/50 rounded-full overflow-hidden -mt-2">
+                <div className="w-full h-2 bg-muted/50 rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full"
                     style={{ width: `${Math.min(cat.probability / 50 * 100, 100)}%`, backgroundColor: catColors[cat.label] }}
@@ -542,7 +503,6 @@ function Section7Categories({ data }: { data: BTCAnalysis }) {
           ))}
         </div>
 
-        {/* Pie chart */}
         <div className="bg-muted/20 rounded-lg p-3 border border-border">
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
@@ -560,10 +520,7 @@ function Section7Categories({ data }: { data: BTCAnalysis }) {
                   <Cell key={i} fill={catColors[c.label]} />
                 ))}
               </Pie>
-              <Tooltip
-                contentStyle={{ fontSize: 11, background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }}
-                formatter={(v: number) => `${v.toFixed(1)}%`}
-              />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => `${v.toFixed(1)}%`} />
             </PieChart>
           </ResponsiveContainer>
         </div>
@@ -649,116 +606,551 @@ function Section9FinalEstimate({ data }: { data: BTCAnalysis }) {
   );
 }
 
-function Section10PriceChart({ data }: { data: BTCAnalysis }) {
-  const [range, setRange] = useState<"1M" | "1Y">("1M");
-  const chartData = range === "1M" ? data.historicalPrices : data.historicalPricesYear;
+// === NEW Section 10: Technical Analysis Chart ===
+type ChartRange = "1Y" | "3Y" | "5Y" | "10Y" | "MAX";
 
-  if (chartData.length === 0) {
+function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
+  const [range, setRange] = useState<ChartRange>("1Y");
+
+  const filteredData = useMemo(() => {
+    const tc = data.technicalChart;
+    if (!tc || tc.length === 0) return [];
+    if (range === "MAX") return tc;
+
+    const yearsMap: Record<ChartRange, number> = { "1Y": 1, "3Y": 3, "5Y": 5, "10Y": 10, MAX: 999 };
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - yearsMap[range]);
+    const cutoffStr = cutoff.toISOString().split("T")[0];
+    return tc.filter(d => d.date >= cutoffStr);
+  }, [data.technicalChart, range]);
+
+  if (!data.technicalChart || data.technicalChart.length === 0) {
     return (
-      <SectionCard number={10} title="Preis-Chart">
+      <SectionCard number={10} title="Technische Analyse">
         <div className="text-xs text-muted-foreground text-center py-8">Keine Chart-Daten verfügbar</div>
       </SectionCard>
     );
   }
 
+  // Downsample for performance: max ~500 points
+  const downsampled = useMemo(() => {
+    if (filteredData.length <= 500) return filteredData;
+    const step = Math.ceil(filteredData.length / 500);
+    const result = filteredData.filter((_, i) => i % step === 0);
+    // Always include the last data point
+    if (result[result.length - 1] !== filteredData[filteredData.length - 1]) {
+      result.push(filteredData[filteredData.length - 1]);
+    }
+    return result;
+  }, [filteredData]);
+
+  const formatYAxis = (v: number) => {
+    if (v >= 1000000) return `$${(v / 1000000).toFixed(1)}M`;
+    if (v >= 1000) return `$${(v / 1000).toFixed(0)}k`;
+    return `$${v.toFixed(0)}`;
+  };
+
+  const formatDateTick = (d: string) => {
+    const date = new Date(d);
+    if (range === "1Y") return date.toLocaleDateString("de-DE", { month: "short" });
+    return date.toLocaleDateString("de-DE", { month: "short", year: "2-digit" });
+  };
+
+  const ranges: ChartRange[] = ["1Y", "3Y", "5Y", "10Y", "MAX"];
+
   return (
-    <SectionCard number={10} title="Preis-Chart">
+    <SectionCard number={10} title="Technische Analyse">
       <div className="space-y-3">
-        <div className="flex gap-1">
-          {(["1M", "1Y"] as const).map((r) => (
-            <button
-              key={r}
-              onClick={() => setRange(r)}
-              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                range === r ? "bg-primary text-primary-foreground" : "bg-muted/50 hover:bg-muted text-muted-foreground"
-              }`}
-            >
-              {r}
-            </button>
-          ))}
+        {/* Range buttons */}
+        <div className="flex items-center justify-between">
+          <div className="flex gap-1">
+            {ranges.map((r) => (
+              <button
+                key={r}
+                onClick={() => setRange(r)}
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                  range === r
+                    ? "bg-amber-500 text-white"
+                    : "bg-muted/50 hover:bg-muted text-muted-foreground"
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            {downsampled.length} Datenpunkte
+          </div>
         </div>
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={chartData}>
-            <defs>
-              <linearGradient id="btcGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-            <XAxis
-              dataKey="date"
-              tick={{ fontSize: 10 }}
-              tickFormatter={(d) => {
-                const date = new Date(d);
-                return date.toLocaleDateString("de-DE", { day: "2-digit", month: "short" });
-              }}
-            />
-            <YAxis
-              tick={{ fontSize: 10 }}
-              tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-              domain={["auto", "auto"]}
-            />
-            <Tooltip
-              contentStyle={{ fontSize: 11, background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }}
-              formatter={(v: number) => [`$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`, "BTC"]}
-              labelFormatter={(l) => new Date(l).toLocaleDateString("de-DE")}
-            />
-            <Area
-              type="monotone"
-              dataKey="price"
-              stroke="#f59e0b"
-              strokeWidth={2}
-              fill="url(#btcGradient)"
-            />
-          </AreaChart>
-        </ResponsiveContainer>
+
+        {/* Price chart with MA lines */}
+        <div className="bg-muted/10 rounded-lg border border-border p-2">
+          <ResponsiveContainer width="100%" height={350}>
+            <ComposedChart data={downsampled} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="btcTechGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.15} />
+                  <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 9 }}
+                tickFormatter={formatDateTick}
+                interval="preserveStartEnd"
+                minTickGap={40}
+              />
+              <YAxis
+                tick={{ fontSize: 9 }}
+                tickFormatter={formatYAxis}
+                domain={["auto", "auto"]}
+                width={55}
+              />
+              <Tooltip
+                contentStyle={tooltipStyle}
+                formatter={(v: number | null, name: string) => {
+                  if (v === null || v === undefined) return ["–", name];
+                  return [`$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`, name];
+                }}
+                labelFormatter={(l) => new Date(l).toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" })}
+              />
+              <Legend
+                wrapperStyle={{ fontSize: 10, paddingTop: 8 }}
+                iconType="line"
+              />
+              <Area
+                type="monotone"
+                dataKey="price"
+                name="BTC Preis"
+                stroke="#f59e0b"
+                strokeWidth={1.5}
+                fill="url(#btcTechGrad)"
+                dot={false}
+                connectNulls
+              />
+              <Line
+                type="monotone"
+                dataKey="ma50"
+                name="MA50"
+                stroke="#eab308"
+                strokeWidth={1.5}
+                dot={false}
+                strokeDasharray="4 2"
+                connectNulls
+              />
+              <Line
+                type="monotone"
+                dataKey="ma200"
+                name="MA200"
+                stroke="#f43f5e"
+                strokeWidth={1.5}
+                dot={false}
+                strokeDasharray="6 3"
+                connectNulls
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* MACD subplot */}
+        <div className="bg-muted/10 rounded-lg border border-border p-2">
+          <div className="text-[10px] font-medium text-muted-foreground px-2 mb-1">MACD (12, 26, 9)</div>
+          <ResponsiveContainer width="100%" height={130}>
+            <ComposedChart data={downsampled} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.2} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 9 }}
+                tickFormatter={formatDateTick}
+                interval="preserveStartEnd"
+                minTickGap={40}
+              />
+              <YAxis
+                tick={{ fontSize: 9 }}
+                tickFormatter={(v) => v >= 1000 || v <= -1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0)}
+                width={45}
+              />
+              <Tooltip
+                contentStyle={tooltipStyle}
+                formatter={(v: number | null, name: string) => {
+                  if (v === null || v === undefined) return ["–", name];
+                  return [v.toFixed(2), name];
+                }}
+                labelFormatter={(l) => new Date(l).toLocaleDateString("de-DE")}
+              />
+              <ReferenceLine y={0} stroke="hsl(var(--border))" strokeWidth={1} />
+              <Bar dataKey="histogram" name="Histogram" maxBarSize={3}>
+                {downsampled.map((d, i) => (
+                  <Cell
+                    key={i}
+                    fill={(d.histogram ?? 0) >= 0 ? "#22c55e" : "#ef4444"}
+                    fillOpacity={0.6}
+                  />
+                ))}
+              </Bar>
+              <Line type="monotone" dataKey="macd" name="MACD" stroke="#3b82f6" strokeWidth={1.5} dot={false} connectNulls />
+              <Line type="monotone" dataKey="signal" name="Signal" stroke="#f97316" strokeWidth={1.5} dot={false} connectNulls />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Current values */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <MetricCard label="MA50" value={data.currentMA50 !== null ? `$${data.currentMA50.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"} />
+          <MetricCard label="MA200" value={data.currentMA200 !== null ? `$${data.currentMA200.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"} />
+          <MetricCard label="MACD" value={data.currentMACD !== null ? data.currentMACD.toFixed(2) : "–"} color={data.currentMACD !== null && data.currentMACD > 0 ? "text-emerald-500" : "text-red-500"} />
+          <MetricCard label="Signal" value={data.currentSignal !== null ? data.currentSignal.toFixed(2) : "–"} />
+        </div>
       </div>
     </SectionCard>
   );
 }
 
+// === NEW Section 11: Fear & Greed Professional ===
+function FearGreedGauge({ value, label }: { value: number; label: string }) {
+  // SVG semicircle gauge like CNN's Fear & Greed
+  const cx = 150, cy = 130, r = 100;
+  const startAngle = Math.PI; // 180 deg (left)
+  const endAngle = 0; // 0 deg (right)
+
+  // Colored arc segments: 0-25 (extreme fear), 25-45 (fear), 45-55 (neutral), 55-75 (greed), 75-100 (extreme greed)
+  const segments = [
+    { start: 0, end: 25, color: "#ef4444" },
+    { start: 25, end: 45, color: "#f97316" },
+    { start: 45, end: 55, color: "#eab308" },
+    { start: 55, end: 75, color: "#84cc16" },
+    { start: 75, end: 100, color: "#22c55e" },
+  ];
+
+  function polarToCartesian(angle: number) {
+    return {
+      x: cx + r * Math.cos(angle),
+      y: cy - r * Math.sin(angle),
+    };
+  }
+
+  function arcPath(startPct: number, endPct: number) {
+    const a1 = startAngle - (startPct / 100) * Math.PI;
+    const a2 = startAngle - (endPct / 100) * Math.PI;
+    const p1 = polarToCartesian(a1);
+    const p2 = polarToCartesian(a2);
+    const largeArc = (endPct - startPct) > 50 ? 1 : 0;
+    return `M ${p1.x} ${p1.y} A ${r} ${r} 0 ${largeArc} 1 ${p2.x} ${p2.y}`;
+  }
+
+  // Needle angle
+  const needleAngle = startAngle - (value / 100) * Math.PI;
+  const needleLen = r - 15;
+  const needleTip = {
+    x: cx + needleLen * Math.cos(needleAngle),
+    y: cy - needleLen * Math.sin(needleAngle),
+  };
+
+  const needleColor = value < 25 ? "#ef4444" : value < 45 ? "#f97316" : value < 55 ? "#eab308" : value < 75 ? "#84cc16" : "#22c55e";
+
+  return (
+    <div className="flex flex-col items-center">
+      <svg viewBox="0 0 300 160" className="w-full max-w-xs h-auto">
+        {/* Colored arc segments */}
+        {segments.map((seg, i) => (
+          <path
+            key={i}
+            d={arcPath(seg.start, seg.end)}
+            fill="none"
+            stroke={seg.color}
+            strokeWidth={18}
+            strokeLinecap="butt"
+          />
+        ))}
+        {/* Tick marks at segment boundaries */}
+        {[0, 25, 45, 55, 75, 100].map((pct, i) => {
+          const a = startAngle - (pct / 100) * Math.PI;
+          const inner = { x: cx + (r - 12) * Math.cos(a), y: cy - (r - 12) * Math.sin(a) };
+          const outer = { x: cx + (r + 12) * Math.cos(a), y: cy - (r + 12) * Math.sin(a) };
+          return (
+            <line key={i} x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y}
+              stroke="hsl(var(--background))" strokeWidth={2}
+            />
+          );
+        })}
+        {/* Needle */}
+        <line x1={cx} y1={cy} x2={needleTip.x} y2={needleTip.y}
+          stroke={needleColor} strokeWidth={3} strokeLinecap="round"
+        />
+        <circle cx={cx} cy={cy} r={6} fill={needleColor} />
+        <circle cx={cx} cy={cy} r={3} fill="hsl(var(--background))" />
+        {/* Value text */}
+        <text x={cx} y={cy + 32} textAnchor="middle" className="text-3xl font-bold font-mono" fill={needleColor} fontSize={36}>
+          {value}
+        </text>
+        <text x={cx} y={cy + 50} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={12}>
+          {label}
+        </text>
+        {/* Labels */}
+        <text x={40} y={cy + 18} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={8}>Extreme Fear</text>
+        <text x={260} y={cy + 18} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={8}>Extreme Greed</text>
+      </svg>
+    </div>
+  );
+}
+
 function Section11FearGreed({ data }: { data: BTCAnalysis }) {
-  const fgi = data.fearGreedIndex;
-  const color = fgi < 25 ? "#ef4444" : fgi < 40 ? "#f97316" : fgi < 60 ? "#f59e0b" : fgi < 75 ? "#84cc16" : "#22c55e";
-  const rotation = (fgi / 100) * 180 - 90; // -90 to 90 degrees
+  const fgh = data.fearGreedHistory || [];
+  const stats = data.fearGreedStats;
+
+  // Historical comparison values
+  const yesterday = fgh.length >= 2 ? fgh[fgh.length - 2] : null;
+  const oneWeek = fgh.length >= 8 ? fgh[fgh.length - 8] : null;
+  const oneMonth = fgh.length >= 31 ? fgh[fgh.length - 31] : null;
+  const oneYear = fgh.length >= 366 ? fgh[fgh.length - 366] : (fgh.length > 0 ? fgh[0] : null);
+
+  function fgBadgeColor(val: number) {
+    if (val < 25) return "bg-red-500/15 text-red-500 border-red-500/30";
+    if (val < 45) return "bg-orange-500/15 text-orange-500 border-orange-500/30";
+    if (val < 55) return "bg-yellow-500/15 text-yellow-500 border-yellow-500/30";
+    if (val < 75) return "bg-lime-500/15 text-lime-500 border-lime-500/30";
+    return "bg-emerald-500/15 text-emerald-500 border-emerald-500/30";
+  }
+
+  function fgLabel(val: number) {
+    if (val < 25) return "Extreme Fear";
+    if (val < 45) return "Fear";
+    if (val < 55) return "Neutral";
+    if (val < 75) return "Greed";
+    return "Extreme Greed";
+  }
+
+  // Downsample history for chart: max 365 points
+  const chartHistory = useMemo(() => {
+    if (fgh.length <= 365) return fgh;
+    const step = Math.ceil(fgh.length / 365);
+    return fgh.filter((_, i) => i % step === 0);
+  }, [fgh]);
 
   return (
     <SectionCard number={11} title="Fear & Greed Index">
-      <div className="flex flex-col items-center space-y-3">
-        {/* Gauge visualization */}
-        <div className="relative w-48 h-28">
-          <svg viewBox="0 0 200 110" className="w-full h-full">
-            {/* Background arc */}
-            <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="hsl(var(--border))" strokeWidth="12" strokeLinecap="round" />
-            {/* Colored segments */}
-            <path d="M 20 100 A 80 80 0 0 1 52 42" fill="none" stroke="#ef4444" strokeWidth="12" strokeLinecap="round" />
-            <path d="M 52 42 A 80 80 0 0 1 100 20" fill="none" stroke="#f97316" strokeWidth="12" strokeLinecap="round" />
-            <path d="M 100 20 A 80 80 0 0 1 148 42" fill="none" stroke="#f59e0b" strokeWidth="12" strokeLinecap="round" />
-            <path d="M 148 42 A 80 80 0 0 1 180 100" fill="none" stroke="#22c55e" strokeWidth="12" strokeLinecap="round" />
-            {/* Needle */}
-            <line
-              x1="100" y1="100"
-              x2={100 + 60 * Math.cos((rotation * Math.PI) / 180)}
-              y2={100 - 60 * Math.sin((rotation * Math.PI) / 180)}
-              stroke={color}
-              strokeWidth="3"
-              strokeLinecap="round"
-            />
-            <circle cx="100" cy="100" r="5" fill={color} />
-          </svg>
+      <div className="space-y-4">
+        {/* Gauge */}
+        <FearGreedGauge value={data.fearGreedIndex} label={data.fearGreedLabel} />
+
+        {/* Historical comparison cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[
+            { label: "Gestern", data: yesterday },
+            { label: "1 Woche", data: oneWeek },
+            { label: "1 Monat", data: oneMonth },
+            { label: "1 Jahr", data: oneYear },
+          ].map((item) => (
+            <div key={item.label} className="bg-muted/30 border border-border rounded-lg p-2.5 text-center">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">{item.label}</div>
+              {item.data ? (
+                <>
+                  <div className="text-lg font-bold font-mono tabular-nums mt-1">{item.data.value}</div>
+                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border mt-1 ${fgBadgeColor(item.data.value)}`}>
+                    {fgLabel(item.data.value)}
+                  </span>
+                </>
+              ) : (
+                <div className="text-sm text-muted-foreground mt-1">–</div>
+              )}
+            </div>
+          ))}
         </div>
-        <div className="text-center">
-          <div className="text-3xl font-bold font-mono" style={{ color }}>{fgi}</div>
-          <div className="text-sm font-medium text-muted-foreground">{data.fearGreedLabel}</div>
+
+        {/* Stats row */}
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+          <MetricCard label="30-Tage-Schnitt" value={stats.avg30 !== null ? stats.avg30.toFixed(0) : "–"} />
+          <MetricCard label="90-Tage-Schnitt" value={stats.avg90 !== null ? stats.avg90.toFixed(0) : "–"} />
+          <MetricCard label="Jahres-Schnitt" value={stats.avg365 !== null ? stats.avg365.toFixed(0) : "–"} />
+          <MetricCard label="Jahreshoch" value={stats.yearHigh !== null ? `${stats.yearHigh}` : "–"} color="text-emerald-500" />
+          <MetricCard label="Jahrestief" value={stats.yearLow !== null ? `${stats.yearLow}` : "–"} color="text-red-500" />
         </div>
-        <div className="flex justify-between w-full text-[10px] text-muted-foreground px-4">
-          <span>Extreme Fear</span>
-          <span>Fear</span>
-          <span>Neutral</span>
-          <span>Greed</span>
-          <span>Extreme Greed</span>
+
+        {/* Historical F&G chart with colored zones */}
+        {chartHistory.length > 0 && (
+          <div className="bg-muted/10 rounded-lg border border-border p-2">
+            <div className="text-[10px] font-medium text-muted-foreground px-2 mb-1">Fear & Greed Verlauf (365 Tage)</div>
+            <ResponsiveContainer width="100%" height={200}>
+              <ComposedChart data={chartHistory} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="fgAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.2} />
+                    <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.2} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 9 }}
+                  tickFormatter={(d) => new Date(d).toLocaleDateString("de-DE", { month: "short" })}
+                  interval="preserveStartEnd"
+                  minTickGap={50}
+                />
+                <YAxis tick={{ fontSize: 9 }} domain={[0, 100]} width={30} />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  formatter={(v: number) => [v, "F&G"]}
+                  labelFormatter={(l) => new Date(l).toLocaleDateString("de-DE")}
+                />
+                {/* Zone reference areas - use ReferenceLine since ReferenceArea may not be imported */}
+                <ReferenceLine y={25} stroke="#ef4444" strokeDasharray="3 3" strokeOpacity={0.4} />
+                <ReferenceLine y={45} stroke="#f97316" strokeDasharray="3 3" strokeOpacity={0.4} />
+                <ReferenceLine y={55} stroke="#eab308" strokeDasharray="3 3" strokeOpacity={0.4} />
+                <ReferenceLine y={75} stroke="#84cc16" strokeDasharray="3 3" strokeOpacity={0.4} />
+                <Area
+                  type="monotone"
+                  dataKey="value"
+                  stroke="#f59e0b"
+                  strokeWidth={1.5}
+                  fill="url(#fgAreaGrad)"
+                  dot={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div className="flex justify-between px-2 mt-1">
+              <span className="text-[9px] text-red-500">Extreme Fear (&lt;25)</span>
+              <span className="text-[9px] text-orange-500">Fear (25-45)</span>
+              <span className="text-[9px] text-yellow-500">Neutral (45-55)</span>
+              <span className="text-[9px] text-lime-500">Greed (55-75)</span>
+              <span className="text-[9px] text-emerald-500">Extreme Greed (&gt;75)</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </SectionCard>
+  );
+}
+
+// === NEW Section 12: Bull/Bear Status & Signal Table ===
+function Section12Signals({ data }: { data: BTCAnalysis }) {
+  const bc = data.bullConditions;
+  const signals = data.technicalSignals || [];
+  const last20 = signals.slice(-20).reverse(); // newest first
+
+  const conditions = [
+    { label: "Kurs > MA200", active: bc.priceAboveMA200 },
+    { label: "MA50 > MA200", active: bc.ma50AboveMA200 },
+    { label: "MACD > 0", active: bc.macdAboveZero },
+    { label: "MACD > Signal", active: bc.macdAboveSignal },
+  ];
+
+  return (
+    <SectionCard number={12} title="Bull/Bear Status & Signale">
+      <div className="space-y-4">
+        {/* 4 status tiles */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {conditions.map((c) => (
+            <div
+              key={c.label}
+              className={`border rounded-lg p-3 flex items-center gap-2.5 ${
+                c.active
+                  ? "bg-emerald-500/10 border-emerald-500/30"
+                  : "bg-red-500/10 border-red-500/30"
+              }`}
+            >
+              {c.active ? (
+                <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+              ) : (
+                <XCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+              )}
+              <div>
+                <div className="text-xs font-medium">{c.label}</div>
+                <div className={`text-[10px] font-bold ${c.active ? "text-emerald-500" : "text-red-500"}`}>
+                  {c.active ? "Erfüllt" : "Nicht erfüllt"}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
+
+        {/* Status banner */}
+        <div className={`rounded-lg p-3 border flex items-center gap-3 ${
+          data.isBull
+            ? "bg-emerald-500/10 border-emerald-500/30"
+            : "bg-red-500/10 border-red-500/30"
+        }`}>
+          {data.isBull ? (
+            <TrendingUp className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+          ) : (
+            <AlertTriangle className="w-6 h-6 text-red-500 flex-shrink-0" />
+          )}
+          <div>
+            <div className={`text-sm font-bold ${data.isBull ? "text-emerald-500" : "text-red-500"}`}>
+              {data.isBull ? "BULL-Bedingungen erfüllt" : "BEAR-Warnung"}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {data.isBull
+                ? "Alle 4 technischen Bedingungen sind bullisch."
+                : `${conditions.filter(c => c.active).length}/4 Bedingungen erfüllt — Vorsicht geboten.`
+              }
+            </div>
+          </div>
+        </div>
+
+        {/* Current values */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <MetricCard
+            label="MA50"
+            value={data.currentMA50 !== null ? `$${data.currentMA50.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
+          />
+          <MetricCard
+            label="MA200"
+            value={data.currentMA200 !== null ? `$${data.currentMA200.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "–"}
+          />
+          <MetricCard
+            label="MACD"
+            value={data.currentMACD !== null ? data.currentMACD.toFixed(2) : "–"}
+            color={data.currentMACD !== null && data.currentMACD > 0 ? "text-emerald-500" : "text-red-500"}
+          />
+          <MetricCard
+            label="Signal-Linie"
+            value={data.currentSignal !== null ? data.currentSignal.toFixed(2) : "–"}
+          />
+        </div>
+
+        {/* Signal Table */}
+        {last20.length > 0 && (
+          <div className="bg-muted/10 rounded-lg border border-border overflow-hidden">
+            <div className="px-3 py-2 border-b border-border">
+              <span className="text-xs font-medium">Letzte 20 Signale</span>
+            </div>
+            <div className="max-h-[400px] overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border bg-muted/20 sticky top-0">
+                    <th className="text-left py-2 px-3 font-medium text-muted-foreground">Datum</th>
+                    <th className="text-center py-2 px-3 font-medium text-muted-foreground">Signal</th>
+                    <th className="text-left py-2 px-3 font-medium text-muted-foreground">Grund</th>
+                    <th className="text-right py-2 px-3 font-medium text-muted-foreground">Preis</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {last20.map((sig, i) => (
+                    <tr key={i} className={`border-b border-border/30 ${i % 2 === 0 ? "bg-muted/5" : ""}`}>
+                      <td className="py-2 px-3 font-mono tabular-nums text-muted-foreground">
+                        {new Date(sig.date).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+                      </td>
+                      <td className="py-2 px-3 text-center">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          sig.type === "BUY"
+                            ? "bg-emerald-500/15 text-emerald-500 border-emerald-500/30"
+                            : "bg-red-500/15 text-red-500 border-red-500/30"
+                        }`}>
+                          {sig.type}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3">{sig.reason}</td>
+                      <td className="py-2 px-3 text-right font-mono tabular-nums">
+                        ${sig.price.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     </SectionCard>
   );
@@ -892,8 +1284,9 @@ export default function BTCDashboard() {
               <div ref={setSectionRef(7)}><Section7Categories data={data} /></div>
               <div ref={setSectionRef(8)}><Section8CycleAssessment data={data} /></div>
               <div ref={setSectionRef(9)}><Section9FinalEstimate data={data} /></div>
-              <div ref={setSectionRef(10)}><Section10PriceChart data={data} /></div>
+              <div ref={setSectionRef(10)}><Section10TechnicalChart data={data} /></div>
               <div ref={setSectionRef(11)}><Section11FearGreed data={data} /></div>
+              <div ref={setSectionRef(12)}><Section12Signals data={data} /></div>
               <div className="pb-8" />
             </div>
           ) : null}

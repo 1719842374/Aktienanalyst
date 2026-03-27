@@ -2781,115 +2781,240 @@ export async function registerRoutes(server: Server, app: Express) {
 
       const categories = computeCategories();
 
-      // === 14 & 15. Historical prices ===
-      let historicalPrices: { date: string; price: number }[] = [];
-      let historicalPricesYear: { date: string; price: number }[] = [];
+      // === 14. Extended Historical Prices (1Y, 3Y, 5Y, 10Y) ===
+      let allPriceData: { date: string; price: number }[] = [];
 
-      // Primary: CoinGecko market_chart API (free, no auth)
-      try {
-        const nowSec = Math.floor(Date.now() / 1000);
-        const cg30Raw = execSync(
-          `curl -sL "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${nowSec - 30 * 86400}&to=${nowSec}"`,
-          { encoding: "utf-8", timeout: 30000 }
-        );
-        const cg30 = JSON.parse(cg30Raw);
-        if (cg30?.prices && Array.isArray(cg30.prices)) {
-          // Deduplicate to one entry per day (keep last entry per date)
-          const dayMap = new Map<string, number>();
-          for (const p of cg30.prices as [number, number][]) {
-            const d = new Date(p[0]).toISOString().split("T")[0];
-            dayMap.set(d, p[1]);
-          }
-          historicalPrices = Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
-        }
-        console.log(`[BTC] CoinGecko 1M chart: ${historicalPrices.length} data points`);
-      } catch (e: any) {
-        console.error("[BTC] CoinGecko 1M chart error:", e?.message?.substring(0, 200));
-      }
-
-      // Small delay to avoid CoinGecko rate limit
-      try { execSync("sleep 1.5", { timeout: 5000 }); } catch {}
-
-      try {
-        const nowSec = Math.floor(Date.now() / 1000);
-        const cg365Raw = execSync(
-          `curl -sL "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${nowSec - 365 * 86400}&to=${nowSec}"`,
-          { encoding: "utf-8", timeout: 30000 }
-        );
-        const cg365 = JSON.parse(cg365Raw);
-        if (cg365?.prices && Array.isArray(cg365.prices)) {
-          const dayMap = new Map<string, number>();
-          for (const p of cg365.prices as [number, number][]) {
-            const d = new Date(p[0]).toISOString().split("T")[0];
-            dayMap.set(d, p[1]);
-          }
-          historicalPricesYear = Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
-        }
-        console.log(`[BTC] CoinGecko 1Y chart: ${historicalPricesYear.length} data points`);
-      } catch (e: any) {
-        console.error("[BTC] CoinGecko 1Y chart error:", e?.message?.substring(0, 200));
-      }
-
-      // Fallback: Finance tool if CoinGecko failed
-      if (historicalPrices.length === 0) {
+      // Helper to fetch CoinGecko range and deduplicate
+      function fetchCGRange(fromSec: number, toSec: number): { date: string; price: number }[] {
         try {
-          const chart1M = callFinanceTool("get_stock_chart", { symbol: "BTC-USD", range: "1mo", interval: "1d" });
-          if (chart1M) {
-            const chartStr = typeof chart1M === "string" ? chart1M : JSON.stringify(chart1M);
+          const raw = execSync(
+            `curl -sL "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fromSec}&to=${toSec}"`,
+            { encoding: "utf-8", timeout: 60000, maxBuffer: 50 * 1024 * 1024 }
+          );
+          const parsed = JSON.parse(raw);
+          if (parsed?.prices && Array.isArray(parsed.prices)) {
+            const dayMap = new Map<string, number>();
+            for (const p of parsed.prices as [number, number][]) {
+              const d = new Date(p[0]).toISOString().split("T")[0];
+              dayMap.set(d, p[1]);
+            }
+            return Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
+          }
+        } catch (e: any) {
+          console.error("[BTC] CoinGecko range error:", e?.message?.substring(0, 200));
+        }
+        return [];
+      }
+
+      // Fetch in chunks to avoid rate limits: 5Y (CoinGecko range gives daily for >90d)
+      const nowSec = Math.floor(Date.now() / 1000);
+      // Try 5Y first, then 1Y fallback
+      const fiveYearsAgo = nowSec - 5 * 365 * 86400;
+      allPriceData = fetchCGRange(fiveYearsAgo, nowSec);
+      console.log(`[BTC] CoinGecko 5Y: ${allPriceData.length} data points`);
+
+      // If 5Y failed (rate limited), try just 1Y after a delay
+      if (allPriceData.length === 0) {
+        try { execSync("sleep 2", { timeout: 5000 }); } catch {}
+        const oneYearAgo = nowSec - 365 * 86400;
+        allPriceData = fetchCGRange(oneYearAgo, nowSec);
+        console.log(`[BTC] CoinGecko 1Y fallback: ${allPriceData.length} data points`);
+      }
+
+      // If still empty, try finance tool
+      if (allPriceData.length === 0) {
+        try {
+          const chart5Y = callFinanceTool("get_stock_chart", { symbol: "BTC-USD", range: "5y", interval: "1d" });
+          if (chart5Y) {
+            const chartStr = typeof chart5Y === "string" ? chart5Y : JSON.stringify(chart5Y);
             const rows = parseMarkdownTable(chartStr);
             if (rows.length > 0) {
-              historicalPrices = rows.map(r => ({
+              allPriceData = rows.map(r => ({
                 date: r["Date"] || r["date"] || "",
                 price: parseNumber(r["Close"] || r["close"] || r["Price"] || r["price"] || "0"),
               })).filter(r => r.date && r.price > 0);
             }
-            if (historicalPrices.length === 0) {
-              try {
-                const parsed = typeof chart1M === "object" ? chart1M : JSON.parse(chartStr);
-                if (Array.isArray(parsed)) {
-                  historicalPrices = parsed.map((p: any) => ({
-                    date: p.date || p.Date || new Date(p.timestamp * 1000).toISOString().split("T")[0],
-                    price: p.close || p.Close || p.price || p.Price || 0,
-                  })).filter((r: any) => r.date && r.price > 0);
-                }
-              } catch {}
-            }
           }
-          console.log(`[BTC] Finance fallback 1M: ${historicalPrices.length} data points`);
+          console.log(`[BTC] Finance fallback: ${allPriceData.length} data points`);
         } catch (e: any) {
-          console.error("[BTC] Finance 1M error:", e?.message?.substring(0, 200));
+          console.error("[BTC] Finance chart error:", e?.message?.substring(0, 200));
         }
       }
 
-      if (historicalPricesYear.length === 0) {
-        try {
-          const chart1Y = callFinanceTool("get_stock_chart", { symbol: "BTC-USD", range: "1y", interval: "1d" });
-          if (chart1Y) {
-            const chartStr = typeof chart1Y === "string" ? chart1Y : JSON.stringify(chart1Y);
-            const rows = parseMarkdownTable(chartStr);
-            if (rows.length > 0) {
-              historicalPricesYear = rows.map(r => ({
-                date: r["Date"] || r["date"] || "",
-                price: parseNumber(r["Close"] || r["close"] || r["Price"] || r["price"] || "0"),
-              })).filter(r => r.date && r.price > 0);
-            }
-            if (historicalPricesYear.length === 0) {
-              try {
-                const parsed = typeof chart1Y === "object" ? chart1Y : JSON.parse(chartStr);
-                if (Array.isArray(parsed)) {
-                  historicalPricesYear = parsed.map((p: any) => ({
-                    date: p.date || p.Date || new Date(p.timestamp * 1000).toISOString().split("T")[0],
-                    price: p.close || p.Close || p.price || p.Price || 0,
-                  })).filter((r: any) => r.date && r.price > 0);
-                }
-              } catch {}
-            }
+      // Sort by date
+      allPriceData.sort((a, b) => a.date.localeCompare(b.date));
+
+      // Slice into timeframes
+      function filterByYears(data: typeof allPriceData, years: number) {
+        const cutoff = new Date();
+        cutoff.setFullYear(cutoff.getFullYear() - years);
+        const cutoffStr = cutoff.toISOString().split("T")[0];
+        return data.filter(d => d.date >= cutoffStr);
+      }
+      const prices1Y = filterByYears(allPriceData, 1);
+      const prices3Y = filterByYears(allPriceData, 3);
+      const prices5Y = filterByYears(allPriceData, 5);
+      const prices10Y = filterByYears(allPriceData, 10);
+
+      // === 15. Calculate MA50, MA200, EMA12, EMA26 on allPriceData ===
+      function calcSMA(data: number[], period: number): (number | null)[] {
+        const result: (number | null)[] = [];
+        for (let i = 0; i < data.length; i++) {
+          if (i < period - 1) { result.push(null); continue; }
+          let sum = 0;
+          for (let j = i - period + 1; j <= i; j++) sum += data[j];
+          result.push(sum / period);
+        }
+        return result;
+      }
+
+      function calcEMA(data: number[], period: number): (number | null)[] {
+        const result: (number | null)[] = [];
+        const k = 2 / (period + 1);
+        let ema: number | null = null;
+        for (let i = 0; i < data.length; i++) {
+          if (i < period - 1) { result.push(null); continue; }
+          if (ema === null) {
+            // Initial EMA = SMA
+            let sum = 0;
+            for (let j = i - period + 1; j <= i; j++) sum += data[j];
+            ema = sum / period;
+          } else {
+            ema = data[i] * k + ema * (1 - k);
           }
-          console.log(`[BTC] Finance fallback 1Y: ${historicalPricesYear.length} data points`);
-        } catch (e: any) {
-          console.error("[BTC] Finance 1Y error:", e?.message?.substring(0, 200));
+          result.push(ema);
+        }
+        return result;
+      }
+
+      const closePrices = allPriceData.map(d => d.price);
+      const ma50 = calcSMA(closePrices, 50);
+      const ma200 = calcSMA(closePrices, 200);
+      const ema12 = calcEMA(closePrices, 12);
+      const ema26 = calcEMA(closePrices, 26);
+
+      // MACD = EMA12 - EMA26
+      const macdLine: (number | null)[] = ema12.map((e12, i) => {
+        const e26 = ema26[i];
+        if (e12 === null || e26 === null) return null;
+        return e12 - e26;
+      });
+
+      // Signal line = EMA9 of MACD
+      const macdValues = macdLine.filter(v => v !== null) as number[];
+      const signalRaw = calcEMA(macdValues, 9);
+      // Map signal back to full array indices
+      let signalIdx = 0;
+      const signalLine: (number | null)[] = macdLine.map(v => {
+        if (v === null) return null;
+        const s = signalRaw[signalIdx++];
+        return s;
+      });
+
+      // Histogram
+      const histogram: (number | null)[] = macdLine.map((m, i) => {
+        const s = signalLine[i];
+        if (m === null || s === null) return null;
+        return m - s;
+      });
+
+      // Build technical chart data array
+      const technicalChartData = allPriceData.map((d, i) => ({
+        date: d.date,
+        price: d.price,
+        ma50: ma50[i],
+        ma200: ma200[i],
+        macd: macdLine[i],
+        signal: signalLine[i],
+        histogram: histogram[i],
+      }));
+
+      // === 16. Signal Detection ===
+      interface TechSignal {
+        date: string;
+        type: "BUY" | "SELL";
+        reason: string;
+        price: number;
+      }
+      const signals: TechSignal[] = [];
+
+      for (let i = 1; i < technicalChartData.length; i++) {
+        const prev = technicalChartData[i - 1];
+        const curr = technicalChartData[i];
+
+        // Golden Cross: MA50 crosses above MA200
+        if (prev.ma50 !== null && prev.ma200 !== null && curr.ma50 !== null && curr.ma200 !== null) {
+          if (prev.ma50 <= prev.ma200 && curr.ma50 > curr.ma200) {
+            signals.push({ date: curr.date, type: "BUY", reason: "Golden Cross (MA50 > MA200)", price: curr.price });
+          }
+          // Death Cross: MA50 crosses below MA200
+          if (prev.ma50 >= prev.ma200 && curr.ma50 < curr.ma200) {
+            signals.push({ date: curr.date, type: "SELL", reason: "Death Cross (MA50 < MA200)", price: curr.price });
+          }
+        }
+
+        // MACD Bullish Crossover: MACD crosses above Signal
+        if (prev.macd !== null && prev.signal !== null && curr.macd !== null && curr.signal !== null) {
+          if (prev.macd <= prev.signal && curr.macd > curr.signal) {
+            signals.push({ date: curr.date, type: "BUY", reason: "MACD Bullish Crossover", price: curr.price });
+          }
+          // MACD Bearish Crossover: MACD crosses below Signal
+          if (prev.macd >= prev.signal && curr.macd < curr.signal) {
+            signals.push({ date: curr.date, type: "SELL", reason: "MACD Bearish Crossover", price: curr.price });
+          }
+        }
+
+        // MACD crosses zero line
+        if (prev.macd !== null && curr.macd !== null) {
+          if (prev.macd <= 0 && curr.macd > 0) {
+            signals.push({ date: curr.date, type: "BUY", reason: "MACD über Nulllinie", price: curr.price });
+          }
+          if (prev.macd >= 0 && curr.macd < 0) {
+            signals.push({ date: curr.date, type: "SELL", reason: "MACD unter Nulllinie", price: curr.price });
+          }
         }
       }
+
+      // Current technical status (guard against empty data)
+      const lastTech = technicalChartData.length > 0 ? technicalChartData[technicalChartData.length - 1] : null;
+      const bullConditions = {
+        priceAboveMA200: lastTech && lastTech.ma200 !== null ? lastTech.price > (lastTech.ma200 ?? 0) : false,
+        ma50AboveMA200: lastTech && lastTech.ma50 !== null && lastTech.ma200 !== null ? (lastTech.ma50 ?? 0) > (lastTech.ma200 ?? 0) : false,
+        macdAboveZero: lastTech && lastTech.macd !== null ? (lastTech.macd ?? 0) > 0 : false,
+        macdAboveSignal: lastTech && lastTech.macd !== null && lastTech.signal !== null ? (lastTech.macd ?? 0) > (lastTech.signal ?? 0) : false,
+      };
+      const isBull = bullConditions.priceAboveMA200 && bullConditions.ma50AboveMA200 && bullConditions.macdAboveZero && bullConditions.macdAboveSignal;
+
+      // === 17. Fear & Greed Historical ===
+      let fearGreedHistory: { date: string; value: number; classification: string }[] = [];
+      try {
+        // Get 365 days of F&G history
+        const fngHistRaw = execSync(
+          `curl -sL "https://api.alternative.me/fng/?limit=365&format=json"`,
+          { encoding: "utf-8", timeout: 30000 }
+        );
+        const fngHist = JSON.parse(fngHistRaw);
+        if (fngHist?.data && Array.isArray(fngHist.data)) {
+          fearGreedHistory = fngHist.data.map((d: any) => ({
+            date: new Date(parseInt(d.timestamp) * 1000).toISOString().split("T")[0],
+            value: parseInt(d.value),
+            classification: d.value_classification,
+          })).reverse(); // oldest first
+        }
+        console.log(`[BTC] F&G History: ${fearGreedHistory.length} days`);
+      } catch (e: any) {
+        console.error("[BTC] F&G history error:", e?.message?.substring(0, 200));
+      }
+
+      // F&G historical stats
+      const fgValues = fearGreedHistory.map(d => d.value);
+      const fgAvg30 = fgValues.length >= 30 ? fgValues.slice(-30).reduce((a, b) => a + b, 0) / 30 : null;
+      const fgAvg90 = fgValues.length >= 90 ? fgValues.slice(-90).reduce((a, b) => a + b, 0) / 90 : null;
+      const fgAvg365 = fgValues.length > 0 ? fgValues.reduce((a, b) => a + b, 0) / fgValues.length : null;
+      const fgYearHigh = fgValues.length > 0 ? Math.max(...fgValues) : null;
+      const fgYearLow = fgValues.length > 0 ? Math.min(...fgValues) : null;
+
+      console.log(`[BTC] Technical: Bull=${isBull}, Signals=${signals.length}, MA50=$${lastTech?.ma50?.toFixed(0) ?? 'N/A'}, MA200=$${lastTech?.ma200?.toFixed(0) ?? 'N/A'}`);
 
       // === 8. Cycle Assessment (German) ===
       let positionText: string;
@@ -2988,14 +3113,40 @@ export async function registerRoutes(server: Server, app: Express) {
           summary,
         },
 
-        historicalPrices,
-        historicalPricesYear,
-
         fearGreedIndex,
         fearGreedLabel,
 
         dxy,
         fedFundsRate,
+
+        // Extended chart data
+        chartData: {
+          prices1Y,
+          prices3Y,
+          prices5Y,
+          prices10Y,
+          allPrices: allPriceData,
+        },
+
+        // Technical analysis
+        technicalChart: technicalChartData.slice(-365 * 5), // last 5 years for chart
+        technicalSignals: signals.slice(-100), // last 100 signals
+        bullConditions,
+        isBull,
+        currentMA50: lastTech?.ma50 ?? null,
+        currentMA200: lastTech?.ma200 ?? null,
+        currentMACD: lastTech?.macd ?? null,
+        currentSignal: lastTech?.signal ?? null,
+
+        // F&G Historical
+        fearGreedHistory,
+        fearGreedStats: {
+          avg30: fgAvg30,
+          avg90: fgAvg90,
+          avg365: fgAvg365,
+          yearHigh: fgYearHigh,
+          yearLow: fgYearLow,
+        },
       };
 
       console.log(`[BTC] Analysis complete. Price: $${btcPrice}, GWS: ${gwsValue.toFixed(4)}, Outlook: ${outlook}`);
