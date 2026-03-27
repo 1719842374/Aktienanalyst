@@ -369,105 +369,150 @@ export function Section13({ data }: Props) {
         </div>
       </div>
 
-      {/* === FAZIT (Big Picture Conclusion) === */}
+      {/* === FAZIT (Big Picture — all 13 sections integrated) === */}
       {(() => {
-        // Synthesize all signals into a coherent conclusion
-        const signals = {
-          dcfUpsideConservative: conservativeUpside,
-          dcfUpsideOptimistic: optimisticUpside,
-          dcfStress: stressDownside,
-          crvCons: crvConservative,
-          crvOpt: crvOptimistic,
-          ptUpside,
-          rslVal: rsl,
-          reverseDCFg: reverseDCF.impliedGrowth,
-          mcDownside: mcResult.downsideProb,
-          mcDownside10: mcResult.downsideProb10,
-          pe: data.peRatio,
-          sectorPE: data.sectorAvgPE,
-          evEbitda: data.evEbitda,
-          sectorEvEbitda: data.sectorAvgEVEBITDA,
-          beta: data.beta5Y,
-          fcfMargin: data.fcfMargin,
-          moat: data.moatRating,
-          govExposure: data.governmentExposure,
-          priceBelowEntry: data.currentPrice <= dcfBeiCRV3,
-          dcfBeiCRV3Val: dcfBeiCRV3,
-        };
+        // === Gather data from ALL sections ===
+        const techStatus = data.technicalIndicators?.currentStatus;
+        const risks = data.risks;
+        const totalExpDmg = risks.reduce((s, r) => s + r.expectedDamage, 0);
+        const riskDiscountFactor = 1 - totalExpDmg / 100;
+        const raCrvCons = calculateCRV(conservativeDCF.perShare * riskDiscountFactor, worstCase, data.currentPrice);
+        const pestel = data.pestelAnalysis;
+        const moatAssess = data.moatAssessment;
+        const macroCorr = data.macroCorrelations;
 
-        // Count positive vs negative signals
+        // === Build signal lists from all 13 sections ===
         const positive: string[] = [];
         const negative: string[] = [];
         const neutral: string[] = [];
 
-        // DCF Upside
-        if (signals.dcfUpsideConservative > 30) positive.push(`Kons. DCF deutet auf ${formatNumber(signals.dcfUpsideConservative, 0)}% Upside`);
-        else if (signals.dcfUpsideConservative > 10) positive.push(`Kons. DCF mit ${formatNumber(signals.dcfUpsideConservative, 0)}% moderatem Upside`);
-        else if (signals.dcfUpsideConservative < -10) negative.push(`Kons. DCF zeigt ${formatNumber(signals.dcfUpsideConservative, 0)}% Downside — Überbewertung möglich`);
-        else neutral.push(`DCF nahe am Kurs (${formatNumber(signals.dcfUpsideConservative, 0)}%)`);
-
-        // CRV
-        if (signals.crvCons >= 2.5) positive.push(`CRV Conservative ${formatNumber(signals.crvCons, 1)}:1 — attraktives Chance-Risiko`);
-        else if (signals.crvCons >= 2.0) neutral.push(`CRV Conservative ${formatNumber(signals.crvCons, 1)}:1 — akzeptabel`);
-        else negative.push(`CRV Conservative nur ${formatNumber(signals.crvCons, 1)}:1 — unzureichendes Chance-Risiko`);
-
-        // Entry Price
-        if (signals.priceBelowEntry) positive.push(`Kurs (${formatCurrency(data.currentPrice)}) UNTER Max-Entry (${formatCurrency(signals.dcfBeiCRV3Val)})`);
-        else negative.push(`Kurs (${formatCurrency(data.currentPrice)}) ÜBER Max-Entry (${formatCurrency(signals.dcfBeiCRV3Val)}) bei CRV 3:1`);
-
-        // Analyst PT
-        if (signals.ptUpside > 20) positive.push(`Analysten sehen ${formatNumber(signals.ptUpside, 0)}% Upside zum Median-Kursziel`);
-        else if (signals.ptUpside > 0) neutral.push(`Analysten-Kursziel +${formatNumber(signals.ptUpside, 0)}% über Kurs`);
-        else negative.push(`Analysten-Kursziel ${formatNumber(signals.ptUpside, 0)}% — begrenztes Potenzial`);
-
-        // RSL Momentum
-        if (signals.rslVal > 110) positive.push(`RSL ${formatNumber(signals.rslVal, 0)} — starkes Momentum`);
-        else if (signals.rslVal > 105) neutral.push(`RSL ${formatNumber(signals.rslVal, 0)} — neutrales Momentum`);
-        else negative.push(`RSL ${formatNumber(signals.rslVal, 0)} — schwaches Momentum, Growth-Adj. -5% bis -10%`);
-
-        // Reverse DCF
-        if (signals.reverseDCFg > 8) negative.push(`Reverse-DCF impliziert ${formatNumber(signals.reverseDCFg, 1)}% Wachstum — sportlich eingepreist`);
-        else if (signals.reverseDCFg < 3) positive.push(`Reverse-DCF nur ${formatNumber(signals.reverseDCFg, 1)}% impliziertes Wachstum — konservativ bepreist`);
-
-        // Monte Carlo
-        if (signals.mcDownside > 0.55) negative.push(`MC-Simulation: ${formatNumber(signals.mcDownside * 100, 0)}% Verlustwahrscheinlichkeit (1Y)`);
-        else if (signals.mcDownside < 0.35) positive.push(`MC-Simulation: nur ${formatNumber(signals.mcDownside * 100, 0)}% Verlustwahrscheinlichkeit`);
-
-        // Relative Valuation
-        if (signals.pe > 0 && signals.sectorPE > 0) {
-          const pePremium = ((signals.pe / signals.sectorPE) - 1) * 100;
-          if (pePremium < -20) positive.push(`P/E ${formatNumber(signals.pe, 1)} vs. Sektor ${formatNumber(signals.sectorPE, 1)} — ${formatNumber(Math.abs(pePremium), 0)}% Discount`);
-          else if (pePremium > 30) negative.push(`P/E ${formatNumber(signals.pe, 1)} vs. Sektor ${formatNumber(signals.sectorPE, 1)} — ${formatNumber(pePremium, 0)}% Premium`);
+        // S1: Datenaktualität — P/E, EV/EBITDA vs sector
+        if (data.peRatio > 0 && data.sectorAvgPE > 0) {
+          const pePrem = ((data.peRatio / data.sectorAvgPE) - 1) * 100;
+          if (pePrem < -20) positive.push(`P/E ${formatNumber(data.peRatio, 1)} vs. Sektor ${formatNumber(data.sectorAvgPE, 1)} \u2014 ${formatNumber(Math.abs(pePrem), 0)}% Discount`);
+          else if (pePrem > 30) negative.push(`P/E ${formatNumber(data.peRatio, 1)} vs. Sektor ${formatNumber(data.sectorAvgPE, 1)} \u2014 ${formatNumber(pePrem, 0)}% Premium`);
         }
 
+        // S2: Investmentthese — catalysts total upside
+        if (totalUpside > 10) positive.push(`Katalysatoren-Upside +${formatNumber(totalUpside, 1)}% (${catalysts.length} Treiber)`);
+        else if (totalUpside < 3) neutral.push(`Begrenzte Katalysatoren (+${formatNumber(totalUpside, 1)}%)`);
+
+        // S3: Zyklusanalyse
+        if (data.cycleClassification) {
+          neutral.push(`Zyklusklassifikation: ${data.cycleClassification}, Politischer Zyklus: ${data.politicalCycle}`);
+        }
+
+        // S4: Bewertung — PEG
+        if (data.pegRatio > 0 && data.pegRatio < 1) positive.push(`PEG ${formatNumber(data.pegRatio, 2)} < 1 \u2014 unterbewertet relativ zum Wachstum`);
+        else if (data.pegRatio > 2) negative.push(`PEG ${formatNumber(data.pegRatio, 2)} > 2 \u2014 hohes Bewertungsniveau`);
+
+        // S5: DCF-Modell
+        if (conservativeUpside > 30) positive.push(`Kons. DCF deutet auf ${formatNumber(conservativeUpside, 0)}% Upside`);
+        else if (conservativeUpside > 10) positive.push(`Kons. DCF mit ${formatNumber(conservativeUpside, 0)}% moderatem Upside`);
+        else if (conservativeUpside < -10) negative.push(`Kons. DCF zeigt ${formatNumber(conservativeUpside, 0)}% Downside \u2014 \u00dcberbewertung`);
+        else neutral.push(`DCF nahe am Kurs (${formatNumber(conservativeUpside, 0)}%)`);
+
+        // S6: CRV (Base + Risk-Adjusted)
+        if (crvConservative >= 2.5) positive.push(`CRV Base ${formatNumber(crvConservative, 1)}:1 \u2014 attraktiv`);
+        else if (crvConservative >= 2.0) neutral.push(`CRV Base ${formatNumber(crvConservative, 1)}:1 \u2014 akzeptabel`);
+        else negative.push(`CRV Base nur ${formatNumber(crvConservative, 1)}:1 \u2014 unzureichend`);
+
+        // CRV Risk-Adjusted
+        if (raCrvCons < 1.5) negative.push(`CRV Risikoadj. nur ${formatNumber(raCrvCons, 1)}:1 \u2014 Risiken nicht eingepreist`);
+        else if (raCrvCons >= 2.5) positive.push(`CRV Risikoadj. ${formatNumber(raCrvCons, 1)}:1 \u2014 auch nach Risikoabschlag attraktiv`);
+
+        // Entry Price
+        if (data.currentPrice <= dcfBeiCRV3) positive.push(`Kurs UNTER Max-Entry (${formatCurrency(dcfBeiCRV3)})`);
+        else negative.push(`Kurs (${formatCurrency(data.currentPrice)}) \u00dcBER Max-Entry (${formatCurrency(dcfBeiCRV3)}) bei CRV 3:1`);
+
+        // S7: Relative Bewertung — already covered in P/E
+
+        // S8: Risikoinversion
+        if (totalExpDmg > 15) negative.push(`Expected Damage ${formatNumber(totalExpDmg, 1)}% \u2014 erhebliche Risiko-Exposition`);
+        else if (totalExpDmg < 8) positive.push(`Expected Damage nur ${formatNumber(totalExpDmg, 1)}% \u2014 moderates Risikoprofil`);
+
+        // S9: RSL-Momentum
+        if (rsl > 110) positive.push(`RSL ${formatNumber(rsl, 0)} \u2014 starkes Momentum`);
+        else if (rsl > 105) neutral.push(`RSL ${formatNumber(rsl, 0)} \u2014 neutrales Momentum`);
+        else negative.push(`RSL ${formatNumber(rsl, 0)} \u2014 schwaches Momentum, Growth-Adj. -5% bis -10%`);
+
+        // S10: Technische Analyse (MA200, MA50, MACD, Buy-Signal)
+        if (techStatus) {
+          const techBull: string[] = [];
+          const techBear: string[] = [];
+          if (techStatus.priceAboveMA200) techBull.push('Kurs > MA200');
+          else techBear.push('Kurs < MA200');
+          if (techStatus.ma50AboveMA200) techBull.push('MA50 > MA200 (Golden Cross)');
+          else techBear.push('MA50 < MA200 (Death Cross)');
+          if (techStatus.macdAboveZero && techStatus.macdRising) techBull.push('MACD > 0 & steigend');
+          else if (!techStatus.macdAboveZero) techBear.push('MACD < 0');
+
+          if (techStatus.buySignal) {
+            positive.push(`Technisch: BUY-Signal (${techBull.join(', ')})`);
+          } else if (techBear.length >= 2) {
+            negative.push(`Technisch: KEIN Buy-Signal (${techBear.join(', ')})`);
+          } else {
+            neutral.push(`Technisch gemischt: ${[...techBull, ...techBear].join(', ')}`);
+          }
+        }
+
+        // S11: Moat / Porter
+        if (moatAssess) {
+          if (moatAssess.overallRating === 'Wide') positive.push(`Breiter Moat \u2014 nachhaltiger Wettbewerbsvorteil`);
+          else if (moatAssess.overallRating === 'None') negative.push(`Kein erkennbarer Moat \u2014 Wettbewerbsdruck`);
+          else neutral.push(`Schmaler Moat \u2014 ${moatAssess.moatSources.slice(0, 2).join(', ')}`);
+        }
+
+        // S12: Monte Carlo
+        if (mcResult.downsideProb > 0.55) negative.push(`MC-Simulation: ${formatNumber(mcResult.downsideProb * 100, 0)}% Verlustwahrscheinlichkeit (1Y)`);
+        else if (mcResult.downsideProb < 0.35) positive.push(`MC-Simulation: nur ${formatNumber(mcResult.downsideProb * 100, 0)}% Verlustwahrscheinlichkeit`);
+
+        // S13-extra: Reverse DCF
+        if (reverseDCF.impliedGrowth > 8) negative.push(`Reverse-DCF impliziert ${formatNumber(reverseDCF.impliedGrowth, 1)}% Wachstum \u2014 sportlich eingepreist`);
+        else if (reverseDCF.impliedGrowth < 3) positive.push(`Reverse-DCF nur ${formatNumber(reverseDCF.impliedGrowth, 1)}% impliziertes Wachstum`);
+
         // Beta / Risk
-        if (signals.beta > 1.5) negative.push(`Hohe Volatilität (Beta ${formatNumber(signals.beta, 2)}) — überdurchschnittliches Risiko`);
-        else if (signals.beta < 0.8) positive.push(`Niedrige Volatilität (Beta ${formatNumber(signals.beta, 2)}) — defensiver Charakter`);
+        if (data.beta5Y > 1.5) negative.push(`Hohe Volatilit\u00e4t (Beta ${formatNumber(data.beta5Y, 2)}) \u2014 \u00fcberdurchschnittliches Risiko`);
+        else if (data.beta5Y < 0.8) positive.push(`Niedrige Volatilit\u00e4t (Beta ${formatNumber(data.beta5Y, 2)}) \u2014 defensiv`);
 
         // FCF Margin
-        if (signals.fcfMargin > 20) positive.push(`Starke FCF-Marge von ${formatNumber(signals.fcfMargin, 1)}%`);
-        else if (signals.fcfMargin < 5) negative.push(`Schwache FCF-Marge von nur ${formatNumber(signals.fcfMargin, 1)}%`);
+        if (data.fcfMargin > 20) positive.push(`Starke FCF-Marge von ${formatNumber(data.fcfMargin, 1)}%`);
+        else if (data.fcfMargin < 5) negative.push(`Schwache FCF-Marge (${formatNumber(data.fcfMargin, 1)}%)`);
 
-        // Moat
-        if (signals.moat === 'Wide') positive.push('Breiter Moat — nachhaltiger Wettbewerbsvorteil');
-        else if (signals.moat === 'None') negative.push('Kein erkennbarer Moat — Wettbewerbsdruck');
+        // PESTEL
+        if (pestel) {
+          if (pestel.overallExposure === 'Hoch') negative.push(`PESTEL: Hohe Makro-Exposition (Geopolitical Score ${pestel.geopoliticalScore}/10)`);
+          else if (pestel.overallExposure === 'Niedrig') positive.push(`PESTEL: Niedrige Makro-Exposition`);
+        }
+
+        // Macro Correlations
+        if (macroCorr) {
+          if (macroCorr.overallMacroSensitivity === 'Hoch') negative.push(`Hohe Makro-Sensitivit\u00e4t \u2014 ${macroCorr.keyInsight.substring(0, 80)}`);
+          else if (macroCorr.overallMacroSensitivity === 'Niedrig') positive.push(`Niedrige Makro-Sensitivit\u00e4t \u2014 resilient gegen\u00fcber Konjunkturschwankungen`);
+        }
 
         // Gov Exposure
-        if (signals.govExposure > 20) negative.push(`Hohe Staatsabhängigkeit (${formatNumber(signals.govExposure, 0)}%) — FCF-Haircut angewendet`);
+        if (data.governmentExposure > 20) negative.push(`Staatsabh\u00e4ngigkeit ${formatNumber(data.governmentExposure, 0)}% \u2014 FCF-Haircut`);
 
         // Macro Stress
-        if (signals.dcfStress < -30) negative.push(`Macro-Stress-Szenario zeigt ${formatNumber(signals.dcfStress, 0)}% Downside`);
+        if (stressDownside < -30) negative.push(`Macro-Stress: ${formatNumber(stressDownside, 0)}% Downside`);
 
-        // Generate overall rating
+        // Analyst PT
+        const ptUps = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
+        if (ptUps > 20) positive.push(`Analysten sehen ${formatNumber(ptUps, 0)}% Upside zum Median-Kursziel`);
+        else if (ptUps > 0) neutral.push(`Analysten-Kursziel +${formatNumber(ptUps, 0)}% \u00fcber Kurs`);
+        else if (ptUps < -5) negative.push(`Analysten-Kursziel ${formatNumber(ptUps, 0)}% unter Kurs`);
+
+        // === Generate overall rating ===
         const score = positive.length - negative.length;
         let rating: string;
         let ratingColor: string;
         let ratingBg: string;
-        if (score >= 3) {
+        if (score >= 4) {
           rating = "ATTRAKTIV";
           ratingColor = "text-emerald-400";
           ratingBg = "bg-emerald-500/10 border-emerald-500/30";
-        } else if (score >= 1) {
+        } else if (score >= 2) {
           rating = "LEICHT ATTRAKTIV";
           ratingColor = "text-emerald-400";
           ratingBg = "bg-emerald-500/10 border-emerald-500/20";
@@ -485,11 +530,36 @@ export function Section13({ data }: Props) {
           ratingBg = "bg-red-500/10 border-red-500/30";
         }
 
+        // === Concluding Fazit sentence (dynamic, generic for any stock) ===
+        const isBuy = score >= 2 && techStatus?.buySignal && data.currentPrice <= dcfBeiCRV3;
+        const isOvervalued = conservativeUpside < -5 || (raCrvCons < 1.5 && rsl < 100);
+        const isTechWeak = !techStatus?.priceAboveMA200 || !techStatus?.ma50AboveMA200;
+        const isHighRisk = totalExpDmg > 15 || data.beta5Y > 1.5;
+        const topRisks = [...risks].sort((a, b) => b.expectedDamage - a.expectedDamage).slice(0, 2).map(r => r.name).join(' und ');
+
+        let fazitSatz = '';
+        if (isBuy) {
+          fazitSatz = `${data.companyName} (${data.ticker}) erscheint auf Basis der Gesamtanalyse attraktiv bewertet. Fundamental unterst\u00fctzt durch ${data.moatRating}-Moat, ein CRV von ${formatNumber(crvConservative, 1)}:1 und technisches Buy-Signal (Kurs > MA200, MA50 > MA200, MACD > 0). Der Einstieg ist bei aktuellem Kurs vertretbar.`;
+        } else if (isOvervalued) {
+          fazitSatz = `${data.companyName} (${data.ticker}) ist auf aktuellem Kursniveau ${rating === 'STARK UNATTRAKTIV' ? 'deutlich ' : ''}\u00fcberbewertet. Das risikoadjustierte CRV von nur ${formatNumber(raCrvCons, 1)}:1 zeigt, dass die Risiken (${topRisks}) nicht ausreichend eingepreist sind.${isTechWeak ? ' Technisch liegt der Kurs unter den gleitenden Durchschnitten \u2014 kein Kaufsignal.' : ''} Abwarten bis ${formatCurrency(dcfBeiCRV3)} oder tiefer.`;
+        } else if (score <= -2) {
+          fazitSatz = `${data.companyName} (${data.ticker}) bietet aktuell ein ung\u00fcnstiges Chance-Risiko-Verh\u00e4ltnis. Die Hauptrisiken (${topRisks}) dr\u00fccken den risikoadjustierten Fair Value auf ${formatCurrency(conservativeDCF.perShare * riskDiscountFactor)}. ${isTechWeak ? 'Technisch fehlt ein Buy-Signal.' : ''} Kurs liegt ${formatNumber(Math.abs(((data.currentPrice / dcfBeiCRV3) - 1) * 100), 0)}% \u00fcber dem Max-Einstiegskurs.`;
+        } else if (score >= 2) {
+          fazitSatz = `${data.companyName} (${data.ticker}) zeigt fundamental solide Kennzahlen mit ${formatNumber(conservativeUpside, 0)}% DCF-Upside und CRV ${formatNumber(crvConservative, 1)}:1. ${!techStatus?.buySignal ? 'Allerdings fehlt ein technisches Buy-Signal \u2014 Timing abwarten.' : 'Technisch ebenfalls positiv.'} ${isHighRisk ? `Erh\u00f6hte Risiken (${topRisks}) beachten.` : ''}`;
+        } else {
+          fazitSatz = `${data.companyName} (${data.ticker}) befindet sich in einer neutralen Zone. Das Base-CRV von ${formatNumber(crvConservative, 1)}:1 wirkt zwar ${crvConservative >= 2.0 ? 'akzeptabel' : 'schwach'}, wird aber durch ${formatNumber(totalExpDmg, 1)}% Expected Damage auf risikoadjustiert ${formatNumber(raCrvCons, 1)}:1 reduziert. ${isTechWeak ? 'Technisch kein Kaufsignal.' : 'Technisch gemischte Signale.'} ${topRisks ? `Hauptrisiken: ${topRisks}.` : ''} Empfehlung: Abwarten.`;
+        }
+
         return (
           <div className={`rounded-lg border-2 p-4 ${ratingBg}`}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Fazit</h3>
               <span className={`text-sm font-bold ${ratingColor}`}>{rating}</span>
+            </div>
+
+            {/* Concluding sentence */}
+            <div className="mb-3 text-xs text-foreground/90 leading-relaxed bg-background/30 rounded-md p-2.5 border border-border/30">
+              {fazitSatz}
             </div>
 
             {/* Positive signals */}
@@ -514,7 +584,7 @@ export function Section13({ data }: Props) {
                 <ul className="space-y-0.5">
                   {negative.map((n, i) => (
                     <li key={i} className="text-xs text-foreground/80 flex items-start gap-1.5">
-                      <span className="text-red-500 flex-shrink-0 mt-0.5">−</span>
+                      <span className="text-red-500 flex-shrink-0 mt-0.5">{"\u2212"}</span>
                       <span>{n}</span>
                     </li>
                   ))}
@@ -529,7 +599,7 @@ export function Section13({ data }: Props) {
                 <ul className="space-y-0.5">
                   {neutral.map((n, i) => (
                     <li key={i} className="text-xs text-foreground/60 flex items-start gap-1.5">
-                      <span className="text-muted-foreground flex-shrink-0 mt-0.5">●</span>
+                      <span className="text-muted-foreground flex-shrink-0 mt-0.5">{"\u25cf"}</span>
                       <span>{n}</span>
                     </li>
                   ))}

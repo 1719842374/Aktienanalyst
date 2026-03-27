@@ -5,7 +5,7 @@ import {
   calculateFCFFDCF, type FCFFDCFParams,
   worstCaseM1, worstCaseM2, worstCaseM3, calculateCRV, calculateCatalystUpside,
 } from "../../lib/calculations";
-import { formatCurrency, formatNumber, getCRVColor, getCRVBgColor } from "../../lib/formatters";
+import { formatCurrency, formatNumber, formatPercentNoSign, getCRVColor, getCRVBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
 
 interface Props { data: StockAnalysis }
@@ -71,25 +71,45 @@ export function Section6({ data }: Props) {
   const m3 = worstCaseM3(data.currentPrice, data.sectorMaxDrawdown);
   const worstCase = Math.min(m1, m2, m3);
 
-  // Catalyst-adj target
+  // === Risk-Adjusted DCF: discount Fair Values by total expected risk damage ===
+  const risks = data.risks;
+  const totalExpectedDamage = risks.reduce((s, r) => s + r.expectedDamage, 0);
+  const riskDiscountFactor = 1 - totalExpectedDamage / 100;
+  const raConservativeFV = conservativeDCF.perShare * riskDiscountFactor;
+  const raOptimisticFV = optimisticDCF.perShare * riskDiscountFactor;
+
+  // Catalyst-adj target (base)
   const catalysts = data.catalysts;
   const catalystDCFBase = conservativeDCF.perShare > data.currentPrice * 0.05
     ? conservativeDCF.perShare
     : (data.analystPT.median > 0 ? data.analystPT.median : data.currentPrice);
   const { adjustedTarget } = calculateCatalystUpside(catalysts, catalystDCFBase);
+  const raAdjustedTarget = adjustedTarget * riskDiscountFactor;
 
-  // CRV calculations
+  // === BASE CRV ===
   const crvConservative = calculateCRV(conservativeDCF.perShare, worstCase, data.currentPrice);
   const crvOptimistic = calculateCRV(optimisticDCF.perShare, worstCase, data.currentPrice);
   const crvCatalyst = calculateCRV(adjustedTarget, worstCase, data.currentPrice);
 
-  // DCF bei CRV 3:1
-  const dcfBeiCRV3 = (conservativeDCF.perShare + 3 * worstCase) / 4;
+  // === RISK-ADJUSTED CRV ===
+  const raCrvConservative = calculateCRV(raConservativeFV, worstCase, data.currentPrice);
+  const raCrvOptimistic = calculateCRV(raOptimisticFV, worstCase, data.currentPrice);
+  const raCrvCatalyst = calculateCRV(raAdjustedTarget, worstCase, data.currentPrice);
 
-  const crvs = [
+  // DCF bei CRV 3:1 (base and risk-adjusted)
+  const dcfBeiCRV3 = (conservativeDCF.perShare + 3 * worstCase) / 4;
+  const raDcfBeiCRV3 = (raConservativeFV + 3 * worstCase) / 4;
+
+  const baseCRVs = [
     { label: "Conservative", value: crvConservative, fairValue: conservativeDCF.perShare },
     { label: "Optimistic", value: crvOptimistic, fairValue: optimisticDCF.perShare },
     { label: "Catalyst-Adjusted", value: crvCatalyst, fairValue: adjustedTarget },
+  ];
+
+  const riskAdjCRVs = [
+    { label: "Conservative", value: raCrvConservative, fairValue: raConservativeFV },
+    { label: "Optimistic", value: raCrvOptimistic, fairValue: raOptimisticFV },
+    { label: "Catalyst-Adjusted", value: raCrvCatalyst, fairValue: raAdjustedTarget },
   ];
 
   return (
@@ -145,61 +165,94 @@ export function Section6({ data }: Props) {
         </div>
       </div>
 
-      {/* CRV Calculations */}
+      {/* === BASE CRV (without risk discount) === */}
       <div>
-        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">CRV (Chance-Risiko-Verhältnis)</h3>
+        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">CRV — Base (ohne Risiko-Abschlag)</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {crvs.map((crv, i) => (
-            <div key={i} className={`rounded-lg p-3 border ${getCRVBgColor(crv.value)}`}>
-              <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">{crv.label}</div>
-              <div className={`text-xl font-bold font-mono tabular-nums mt-1 ${getCRVColor(crv.value)}`}>
-                {formatNumber(crv.value, 1)}:1
-              </div>
-              <div className="text-[10px] text-muted-foreground mt-1">
-                Fair: {formatCurrency(crv.fairValue)} | WC: {formatCurrency(worstCase)}
-              </div>
-              <div className={`text-[10px] mt-1 font-medium ${
-                crv.value >= 2.5 ? "text-emerald-500" :
-                crv.value >= 2.0 ? "text-amber-500" : "text-red-500"
-              }`}>
-                {crv.value >= 2.5 ? "Attractive" : crv.value >= 2.0 ? "Acceptable" : "Unfavorable"}
-              </div>
-            </div>
+          {baseCRVs.map((crv, i) => (
+            <CRVCard key={i} label={crv.label} value={crv.value} fairValue={crv.fairValue} worstCase={worstCase} />
           ))}
         </div>
       </div>
 
-      {/* DCF bei CRV 3:1 */}
-      <div className={`rounded-lg p-3 border-2 ${data.currentPrice <= dcfBeiCRV3 ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">DCF bei CRV 3:1 (Max. Einstiegskurs)</div>
-            <div className="text-lg font-bold font-mono tabular-nums mt-0.5">{formatCurrency(dcfBeiCRV3)}</div>
+      {/* === RISK-ADJUSTED CRV === */}
+      <div>
+        <h3 className="text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wider">
+          CRV — Risikoadjustiert (nach Expected Damage)
+        </h3>
+        <div className="text-[10px] text-muted-foreground mb-2">
+          Fair Values abgeschlagen um Total Expected Damage von <span className="font-semibold text-red-400">{formatNumber(totalExpectedDamage, 1)}%</span> (Σ EW% × Impact% aus Risikoinversion)
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {riskAdjCRVs.map((crv, i) => (
+            <CRVCard key={i} label={crv.label} value={crv.value} fairValue={crv.fairValue} worstCase={worstCase} riskAdj />
+          ))}
+        </div>
+      </div>
+
+      {/* DCF bei CRV 3:1 — both Base and Risk-Adjusted */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* Base */}
+        <div className={`rounded-lg p-3 border-2 ${data.currentPrice <= dcfBeiCRV3 ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
+          <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">DCF bei CRV 3:1 — Base</div>
+          <div className="text-lg font-bold font-mono tabular-nums mt-0.5">{formatCurrency(dcfBeiCRV3)}</div>
+          <div className={`text-xs font-bold mt-0.5 ${data.currentPrice <= dcfBeiCRV3 ? 'text-emerald-500' : 'text-red-500'}`}>
+            {data.currentPrice <= dcfBeiCRV3 ? 'Kurs UNTER Max-Entry ✔' : 'Kurs ÜBER Max-Entry ⚠'}
           </div>
-          <div className="text-right">
-            <div className={`text-sm font-bold ${data.currentPrice <= dcfBeiCRV3 ? 'text-emerald-500' : 'text-red-500'}`}>
-              {data.currentPrice <= dcfBeiCRV3 ? 'Kurs UNTER Max-Entry ✔' : 'Kurs ÜBER Max-Entry ⚠'}
-            </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              Kurs: {formatCurrency(data.currentPrice)} | Differenz: {formatCurrency(dcfBeiCRV3 - data.currentPrice)}
-            </div>
+          <div className="text-[10px] text-muted-foreground mt-1 font-mono">
+            = ({formatCurrency(conservativeDCF.perShare)} + 3 × {formatCurrency(worstCase)}) / 4
           </div>
         </div>
-        <div className="text-[10px] text-muted-foreground mt-2 font-mono">
-          = (Kons. DCF + 3 × WC) / 4 = ({formatCurrency(conservativeDCF.perShare)} + 3 × {formatCurrency(worstCase)}) / 4 = {formatCurrency(dcfBeiCRV3)}
+        {/* Risk-Adjusted */}
+        <div className={`rounded-lg p-3 border-2 ${data.currentPrice <= raDcfBeiCRV3 ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
+          <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">DCF bei CRV 3:1 — Risikoadj.</div>
+          <div className="text-lg font-bold font-mono tabular-nums mt-0.5">{formatCurrency(raDcfBeiCRV3)}</div>
+          <div className={`text-xs font-bold mt-0.5 ${data.currentPrice <= raDcfBeiCRV3 ? 'text-emerald-500' : 'text-red-500'}`}>
+            {data.currentPrice <= raDcfBeiCRV3 ? 'Kurs UNTER Max-Entry ✔' : 'Kurs ÜBER Max-Entry ⚠'}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1 font-mono">
+            = ({formatCurrency(raConservativeFV)} + 3 × {formatCurrency(worstCase)}) / 4
+          </div>
         </div>
       </div>
 
       <RechenWeg title="CRV Rechenweg (FCFF-basiert)" steps={[
+        `=== BASE CRV ===`,
         `CRV = (Fair Value - Worst Case) / (Kurs - Worst Case)`,
-        `Conservative CRV = (${formatCurrency(conservativeDCF.perShare)} - ${formatCurrency(worstCase)}) / (${formatCurrency(data.currentPrice)} - ${formatCurrency(worstCase)})`,
-        `= ${formatCurrency(conservativeDCF.perShare - worstCase)} / ${formatCurrency(data.currentPrice - worstCase)}`,
-        `= ${formatNumber(crvConservative, 2)}:1`,
+        `Conservative CRV = (${formatCurrency(conservativeDCF.perShare)} - ${formatCurrency(worstCase)}) / (${formatCurrency(data.currentPrice)} - ${formatCurrency(worstCase)}) = ${formatNumber(crvConservative, 2)}:1`,
         ``,
-        `DCF bei CRV 3:1 = (Kons. DCF + 3 × Worst Case) / 4`,
-        `= (${formatCurrency(conservativeDCF.perShare)} + 3 × ${formatCurrency(worstCase)}) / 4`,
-        `= ${formatCurrency(dcfBeiCRV3)}`,
+        `=== RISIKOADJUSTIERT ===`,
+        `Total Expected Damage = ${formatNumber(totalExpectedDamage, 2)}%`,
+        `Risk-Adj. Fair Value = ${formatCurrency(conservativeDCF.perShare)} × (1 - ${formatNumber(totalExpectedDamage, 1)}%) = ${formatCurrency(raConservativeFV)}`,
+        `Risk-Adj. CRV = (${formatCurrency(raConservativeFV)} - ${formatCurrency(worstCase)}) / (${formatCurrency(data.currentPrice)} - ${formatCurrency(worstCase)}) = ${formatNumber(raCrvConservative, 2)}:1`,
+        ``,
+        `DCF bei CRV 3:1 (Base) = (${formatCurrency(conservativeDCF.perShare)} + 3 × ${formatCurrency(worstCase)}) / 4 = ${formatCurrency(dcfBeiCRV3)}`,
+        `DCF bei CRV 3:1 (Risk-Adj.) = (${formatCurrency(raConservativeFV)} + 3 × ${formatCurrency(worstCase)}) / 4 = ${formatCurrency(raDcfBeiCRV3)}`,
       ]} />
     </SectionCard>
+  );
+}
+
+function CRVCard({ label, value, fairValue, worstCase, riskAdj }: {
+  label: string; value: number; fairValue: number; worstCase: number; riskAdj?: boolean;
+}) {
+  return (
+    <div className={`rounded-lg p-3 border ${getCRVBgColor(value)}`}>
+      <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
+        {label} {riskAdj && <span className="text-amber-500">(RA)</span>}
+      </div>
+      <div className={`text-xl font-bold font-mono tabular-nums mt-1 ${getCRVColor(value)}`}>
+        {formatNumber(value, 1)}:1
+      </div>
+      <div className="text-[10px] text-muted-foreground mt-1">
+        Fair: {formatCurrency(fairValue)} | WC: {formatCurrency(worstCase)}
+      </div>
+      <div className={`text-[10px] mt-1 font-medium ${
+        value >= 2.5 ? "text-emerald-500" :
+        value >= 2.0 ? "text-amber-500" : "text-red-500"
+      }`}>
+        {value >= 2.5 ? "Attractive" : value >= 2.0 ? "Acceptable" : "Unfavorable"}
+      </div>
+    </div>
   );
 }
