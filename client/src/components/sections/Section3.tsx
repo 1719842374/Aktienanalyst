@@ -36,6 +36,77 @@ export function Section3({ data }: Props) {
         </div>
       </div>
 
+      {/* Cycle Progression Indicator */}
+      {(() => {
+        // Determine cycle phase from data signals
+        const ti = data.technicalIndicators?.currentStatus;
+        const rslPrices = data.historicalPrices.slice(-130).map(p => p.close);
+        const rslAvg = rslPrices.length > 0 ? rslPrices.reduce((a, b) => a + b, 0) / rslPrices.length : 0;
+        const rsl = rslAvg > 0 ? (data.currentPrice / rslAvg) * 100 : 100;
+        const isAboveMA200 = ti?.priceAboveMA200 ?? false;
+        const isGolden = ti?.ma50AboveMA200 ?? false;
+        const macdPos = ti?.macdAboveZero ?? false;
+        const macdRising = ti?.macdRising ?? false;
+        const peVsSector = data.sectorAvgPE > 0 ? data.peRatio / data.sectorAvgPE : 1;
+
+        // Determine phase
+        let phase = '';
+        let phaseColor = '';
+        let phaseIcon = '';
+        let phaseDetail = '';
+
+        if (isAboveMA200 && isGolden && macdPos && rsl > 110) {
+          phase = 'Sp\u00e4tzyklus / \u00dcberhitzung';
+          phaseColor = 'text-red-400 bg-red-500/10 border-red-500/20';
+          phaseIcon = '\u26a0';
+          phaseDetail = 'Starkes Momentum (RSL ' + rsl.toFixed(0) + '), aber Zyklush\u00f6he n\u00e4hert sich. Gewinne absichern, keine neuen Positionen in Zyklikern.';
+        } else if (isAboveMA200 && isGolden && macdPos) {
+          phase = 'Expansion / Mittzyklus';
+          phaseColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+          phaseIcon = '\u25b2';
+          phaseDetail = 'Aufwärtstrend intakt (Golden Cross, MACD > 0). Zyklus schreitet voran \u2014 attraktiv f\u00fcr Wachstumswerte.';
+        } else if (isAboveMA200 && !isGolden) {
+          phase = 'Fr\u00fcher Abschwung';
+          phaseColor = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+          phaseIcon = '\u25bc';
+          phaseDetail = 'Kurs noch \u00fcber MA200, aber MA50 < MA200 (Death Cross). Zyklus dreht \u2014 defensive Ausrichtung.';
+        } else if (!isAboveMA200 && !isGolden && !macdPos && rsl < 95) {
+          phase = 'Rezession / Trough';
+          phaseColor = 'text-red-400 bg-red-500/10 border-red-500/20';
+          phaseIcon = '\u25cf';
+          phaseDetail = 'B\u00e4renmarktbedingungen (RSL ' + rsl.toFixed(0) + ', unter MA200, Death Cross). Zykliker meiden, Qualit\u00e4tswerte akkumulieren.';
+        } else if (!isAboveMA200 && macdRising) {
+          phase = 'Fr\u00fche Erholung';
+          phaseColor = 'text-blue-400 bg-blue-500/10 border-blue-500/20';
+          phaseIcon = '\u21e7';
+          phaseDetail = 'MACD dreht aufw\u00e4rts, aber Kurs noch unter MA200. Erholung k\u00f6nnte beginnen \u2014 Zykliker werden attraktiv.';
+        } else {
+          phase = '\u00dcbergang';
+          phaseColor = 'text-muted-foreground bg-muted/30 border-border/50';
+          phaseIcon = '\u2194';
+          phaseDetail = 'Gemischte Signale \u2014 Zyklusphase unklar. Abwarten bis sich klarer Trend ausbildet.';
+        }
+
+        return (
+          <div>
+            <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Zyklusfortschritt</h3>
+            <div className={`rounded-lg p-3 border ${phaseColor}`}>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-lg">{phaseIcon}</span>
+                <span className="text-sm font-bold">{phase}</span>
+              </div>
+              <p className="text-[10px] text-foreground/70 leading-relaxed">{phaseDetail}</p>
+              <div className="flex flex-wrap gap-3 mt-2 text-[10px]">
+                <span className={isAboveMA200 ? 'text-emerald-500' : 'text-red-500'}>Kurs vs MA200: {isAboveMA200 ? 'Dar\u00fcber' : 'Darunter'}</span>
+                <span className={isGolden ? 'text-emerald-500' : 'text-red-500'}>{isGolden ? 'Golden Cross' : 'Death Cross'}</span>
+                <span className={macdPos ? 'text-emerald-500' : 'text-red-500'}>MACD: {macdPos ? '> 0' : '< 0'}</span>
+                <span className="text-muted-foreground">RSL: {rsl.toFixed(0)}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Macro Sensitivity */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Macro Sensitivity</h3>

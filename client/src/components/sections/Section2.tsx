@@ -73,6 +73,68 @@ export function Section2({ data }: Props) {
           <p className="text-xs text-foreground/80 leading-relaxed max-h-[200px] overflow-y-auto">{data.description}</p>
         </div>
 
+        {/* Peter Lynch Classification */}
+        {(() => {
+          // Classify stock using Peter Lynch's framework
+          const epsGr = data.epsGrowth5Y;
+          const pe = data.peRatio;
+          const rev = data.revenue;
+          const revGrowth = data.sectorProfile.growthAssumptions.g1;
+          const fcfM = data.fcfMargin;
+          const moat = data.moatRating;
+          const beta = data.beta5Y;
+          const cycle = data.cycleClassification?.toLowerCase() || '';
+
+          let lynchType = '';
+          let lynchColor = '';
+          let lynchDesc = '';
+          let lynchBuyTip = '';
+
+          if (cycle.includes('cyclical') || cycle.includes('zyklisch')) {
+            lynchType = 'Zykliker';
+            lynchColor = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+            lynchDesc = 'Gewinne schwanken mit dem Konjunkturzyklus. Typisch f\u00fcr Energie, Rohstoffe, Automobil, Chemie.';
+            lynchBuyTip = 'Attraktiv bei NIEDRIGEM P/E am Gewinnhoch \u2014 Lynch kauft Zykliker wenn Gewinne am Boden sind und P/E HOCH erscheint (da Gewinne bald steigen). Aktuell P/E ' + formatNumber(pe, 1) + (pe < 15 ? ' \u2014 m\u00f6glicherweise Gewinnh\u00f6chststand, VORSICHT' : pe > 40 ? ' \u2014 Gewinntief m\u00f6glich, k\u00f6nnte Einstieg sein' : ' \u2014 Zyklusmitte') + '.';
+          } else if (epsGr > 20 && revGrowth > 15) {
+            lynchType = 'Fast Grower';
+            lynchColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+            lynchDesc = 'Hohes Gewinnwachstum (>' + formatNumber(epsGr, 0) + '% p.a.). Aggressives Wachstum in expandierendem Markt.';
+            lynchBuyTip = 'Attraktiv solange PEG < 1.5 und Wachstum nachhaltig. Aktuell PEG ' + formatNumber(data.pegRatio, 2) + (data.pegRatio < 1 ? ' \u2014 UNTERBEWERTET relativ zum Wachstum' : data.pegRatio < 1.5 ? ' \u2014 fair bewertet' : ' \u2014 bereits eingepreist, Vorsicht') + '.';
+          } else if (epsGr > 8 && epsGr <= 20 && moat !== 'None') {
+            lynchType = 'Stalwart';
+            lynchColor = 'text-blue-400 bg-blue-500/10 border-blue-500/20';
+            lynchDesc = 'Gro\u00dfes, etabliertes Unternehmen mit solidem Wachstum (' + formatNumber(epsGr, 0) + '% p.a.). Defensive Qualit\u00e4t.';
+            const cUp = ((baseDCF.perShare / data.currentPrice - 1) * 100);
+            lynchBuyTip = 'Attraktiv bei 30-50% Discount zum Fair Value. Verkaufen bei +30-50% Gain. Aktuell ' + (cUp > 30 ? formatNumber(cUp, 0) + '% DCF-Upside \u2014 Einstieg m\u00f6glich' : cUp > 0 ? formatNumber(cUp, 0) + '% DCF-Upside \u2014 halten' : 'am/\u00fcber Fair Value \u2014 Gewinne mitnehmen') + '.';
+          } else if (epsGr <= 5 && fcfM > 10) {
+            lynchType = 'Slow Grower';
+            lynchColor = 'text-slate-400 bg-slate-500/10 border-slate-500/20';
+            lynchDesc = 'Geringe Wachstumsdynamik (' + formatNumber(epsGr, 0) + '% p.a.), aber stabile Dividenden/Cash Flows.';
+            lynchBuyTip = 'Nur f\u00fcr Dividendenstrategie. Kaufen bei hoher Dividendenrendite und stabilen FCFs.';
+          } else if (epsGr < 0 || (pe > 0 && pe < 5) || fcfM < 2) {
+            lynchType = 'Turnaround';
+            lynchColor = 'text-red-400 bg-red-500/10 border-red-500/20';
+            lynchDesc = 'Unternehmen in Schwierigkeiten oder Restrukturierung. Hohes Risiko, hohe Chance.';
+            lynchBuyTip = 'Nur bei klarem Restrukturierungsplan und ausreichend Liquidit\u00e4t. Position klein halten.';
+          } else {
+            lynchType = 'Asset Play';
+            lynchColor = 'text-purple-400 bg-purple-500/10 border-purple-500/20';
+            lynchDesc = 'Verborgene Verm\u00f6genswerte nicht im Kurs reflektiert.';
+            lynchBuyTip = 'Attraktiv wenn Summe der Einzelteile > Marktkapitalisierung.';
+          }
+
+          return (
+            <div className={`rounded-md p-3 border ${lynchColor}`}>
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Peter Lynch Klassifikation</h3>
+                <span className="text-xs font-bold">{lynchType}</span>
+              </div>
+              <p className="text-[10px] text-foreground/70 leading-relaxed">{lynchDesc}</p>
+              <p className="text-[10px] text-foreground/80 leading-relaxed mt-1 font-medium">{lynchBuyTip}</p>
+            </div>
+          );
+        })()}
+
         {/* Revenue Segments (Umsatzanteil nach Produkten/Segmenten) */}
         {data.revenueSegments && data.revenueSegments.length > 0 && (
           <div>

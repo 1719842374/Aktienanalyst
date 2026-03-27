@@ -237,6 +237,27 @@ export function TechnicalChart({ data }: Props) {
         </button>
       </div>
 
+      {/* Golden Cross / Death Cross Indicator */}
+      <div className={`rounded-lg p-3 mb-3 border flex items-center gap-3 ${cs.ma50AboveMA200
+        ? "bg-emerald-500/10 border-emerald-500/30"
+        : "bg-red-500/10 border-red-500/30"
+      }`}>
+        <div className={`text-2xl font-bold ${cs.ma50AboveMA200 ? "text-emerald-500" : "text-red-500"}`}>
+          {cs.ma50AboveMA200 ? "✦" : "✕"}
+        </div>
+        <div>
+          <div className={`text-sm font-bold ${cs.ma50AboveMA200 ? "text-emerald-500" : "text-red-500"}`}>
+            {cs.ma50AboveMA200 ? "GOLDEN CROSS" : "DEATH CROSS"}
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            {cs.ma50AboveMA200
+              ? `MA50 ($${cs.ma50Value?.toFixed(2) || '—'}) > MA200 ($${cs.ma200Value?.toFixed(2) || '—'}) — bullisches Trendsignal`
+              : `MA50 ($${cs.ma50Value?.toFixed(2) || '—'}) < MA200 ($${cs.ma200Value?.toFixed(2) || '—'}) — bärisches Trendsignal`
+            }
+          </div>
+        </div>
+      </div>
+
       {/* Price Chart with MAs */}
       <div className="h-[320px] sm:h-[380px] w-full" data-testid="chart-price-ma">
         <ResponsiveContainer width="100%" height="100%">

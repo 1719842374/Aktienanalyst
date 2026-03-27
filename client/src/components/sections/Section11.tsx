@@ -140,13 +140,33 @@ export function Section11({ data }: Props) {
                       {isExpanded ? <ChevronUp className="w-3 h-3 text-muted-foreground flex-shrink-0" /> : <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
                     </div>
                     {isExpanded && (
-                      <div className="mt-1.5 text-[10px] text-muted-foreground leading-relaxed bg-muted/20 rounded p-2 border border-border/30">
-                        <div className="flex items-start gap-1">
-                          <Info className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                          <div>
-                            <div><span className="font-medium">PoS-Herleitung:</span> Historische Erfolgsrate vergleichbarer Katalysatoren ~{c.pos + 10}%, abzüglich 10% Sicherheitsmarge → {c.pos}%</div>
-                            <div className="mt-1"><span className="font-medium">Brutto-Upside:</span> Umsatz-/Margeneffekt bei Eintreten des Katalysators → +{c.bruttoUpside}%</div>
-                            <div className="mt-1"><span className="font-medium">Einpreisung:</span> {c.einpreisungsgrad}% — {c.einpreisungsgrad >= 60 ? "größtenteils" : c.einpreisungsgrad >= 40 ? "teilweise" : "niedrig"} in Konsens/Analyst PTs reflektiert</div>
+                      <div className="mt-1.5 text-[10px] text-muted-foreground leading-relaxed bg-muted/20 rounded p-2.5 border border-border/30 space-y-1.5">
+                        <div className="flex items-start gap-1.5">
+                          <Info className="w-3 h-3 flex-shrink-0 mt-0.5 text-primary" />
+                          <div className="space-y-1.5">
+                            <div>
+                              <span className="font-semibold text-foreground/80">PoS-Herleitung:</span>{' '}
+                              Historische Erfolgsrate vergleichbarer Katalysatoren im {data.sector}-Sektor ~{c.pos + 10}%, abzüglich 10% Sicherheitsmarge → {c.pos}%.
+                              {c.pos >= 70 && ' Hohe Eintrittswahrscheinlichkeit — Katalysator ist strukturell/regulatorisch unterstützt.'}
+                              {c.pos >= 40 && c.pos < 70 && ' Moderate Wahrscheinlichkeit — hängt von Marktkondition und Execution ab.'}
+                              {c.pos < 40 && ' Niedrige Wahrscheinlichkeit — spekulativ, aber hoher Payoff bei Eintreten.'}
+                            </div>
+                            <div>
+                              <span className="font-semibold text-foreground/80">Brutto-Upside:</span>{' '}
+                              Umsatz-/Margeneffekt bei Eintreten des Katalysators → <span className="text-emerald-500 font-medium">+{c.bruttoUpside}%</span>.
+                              {c.bruttoUpside >= 15 ? ` Signifikanter Impact auf ${data.companyName}-Bewertung durch Umsatzexpansion oder Margensteigerung.` :
+                               c.bruttoUpside >= 8 ? ' Moderater positiver Effekt auf Fundamentaldaten.' :
+                               ' Geringer, aber messbarer Beitrag.'}
+                            </div>
+                            <div>
+                              <span className="font-semibold text-foreground/80">Einpreisung:</span>{' '}
+                              <span className="font-mono">{c.einpreisungsgrad}%</span> — {c.einpreisungsgrad >= 60 ? 'größtenteils in Konsens/Analyst PTs und Forward-PE reflektiert' : c.einpreisungsgrad >= 40 ? 'teilweise im Konsens berücksichtigt, Guidance noch nicht voll eingepreist' : 'niedrig eingepreist — Upside-Potenzial noch nicht im Konsens reflektiert'}.
+                              Netto-Upside: {c.bruttoUpside}% × (1 - {c.einpreisungsgrad}/100) = <span className="text-emerald-400 font-medium">{formatNumber(c.nettoUpside, 2)}%</span>.
+                            </div>
+                            <div className="border-t border-border/20 pt-1">
+                              <span className="font-semibold text-foreground/80">Gewichteter Beitrag (GB):</span>{' '}
+                              {c.pos}% × {formatNumber(c.nettoUpside, 2)}% = <span className="text-emerald-500 font-bold">+{formatNumber(c.gb, 2)} Pkt.</span>
+                            </div>
                           </div>
                         </div>
                       </div>
