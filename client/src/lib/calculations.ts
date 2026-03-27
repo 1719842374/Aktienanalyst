@@ -269,22 +269,26 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     : 0; // P/S implied
   // Sanity cap: If per-share DCF vastly exceeds a reasonable earnings-based ceiling,
   // the FCFF model is likely distorted (Financial Services debt, conglomerate structure).
-  // Use the higher of TTM EPS and Forward EPS, apply a growth-adjusted P/E ceiling.
+  // Cap at growth-adjusted P/E × Forward EPS. Bounded [12, 25].
+  // This is CONSERVATIVE by design — better to cap too tight than show 400% upside
+  // for a stock like VW where the market sees 0% upside.
   const ttmEPS = params.actualEPS && params.actualEPS > 0 ? params.actualEPS : 0;
   const fwdEPS = params.forwardEPS && params.forwardEPS > 0 ? params.forwardEPS : 0;
   const capEPS = Math.max(ttmEPS, fwdEPS);
   if (capEPS > 0) {
-    // Dynamic P/E cap: PEG-fair PE × 2, bounded [20, 35]
+    // P/E cap: PEG=1.5 rule → PE = growth × 1.5, bounded [12, 25]
+    // Only trigger if raw perShare > 5× the EPS-based cap (i.e. massively distorted)
     const growthRate = Math.max(params.revenueGrowthP1, 5);
-    const peMultiple = Math.min(Math.max(growthRate * 2.5, 20), 35);
+    const peMultiple = Math.min(Math.max(growthRate * 1.5, 12), 25);
     const peCap = capEPS * peMultiple;
-    if (perShare > peCap) {
+    if (perShare > peCap && perShare > peCap * 3) {
+      // Only cap when raw DCF is >3× the PE-based ceiling (clearly distorted)
       const rawVal = perShare;
       perShare = peCap;
       perShareCapped = true;
       steps.push(``);
       steps.push(`⚠ DCF-Sanity: Per-Share auf ${peMultiple.toFixed(0)}× EPS ($${capEPS.toFixed(2)}) gecapped = $${peCap.toFixed(2)}.`);
-      steps.push(`  Rohwert $${rawVal.toFixed(0)} — FCFF-Modell überschätzt (Financial-Services/Debt-Verzerrung).`);
+      steps.push(`  Rohwert $${rawVal.toFixed(0)} — FCFF-Modell überschätzt (wahrscheinlich FS-Debt-Verzerrung).`);
     }
   }
 
