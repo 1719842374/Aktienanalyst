@@ -1737,6 +1737,10 @@ function generateMacroCorrelations(
 }
 
 export async function registerRoutes(server: Server, app: Express) {
+  // Register recession analysis routes
+  const { registerRecessionRoutes } = await import("./recession");
+  registerRecessionRoutes(app);
+
   app.post("/api/analyze", async (req, res) => {
     try {
       const parsed = analyzeRequestSchema.safeParse(req.body);

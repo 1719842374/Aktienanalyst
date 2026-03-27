@@ -255,17 +255,25 @@ function WelcomeScreen({ onSearch }: { onSearch: (ticker: string) => void }) {
             ))}
           </div>
         </div>
-
-        {/* BTC Analysis Card */}
-        <div className="border-t border-border pt-4">
-          <button
-            onClick={() => setLocation("/btc")}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-500 font-medium text-sm transition-colors"
-          >
-            <Bitcoin className="w-4 h-4" />
-            BTC-Analyse
-          </button>
-          <p className="text-[10px] text-muted-foreground mt-2">Power-Law, Monte Carlo, Halving-Zyklus</p>
+        {/* Dashboard Links */}
+        <div className="pt-2 border-t border-border">
+          <p className="text-xs text-muted-foreground mb-2">Weitere Dashboards:</p>
+          <div className="flex flex-wrap justify-center gap-2">
+            <button
+              onClick={() => setLocation("/btc")}
+              className="px-3 py-1.5 rounded-md bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-xs font-medium text-amber-500 transition-colors flex items-center gap-1.5"
+            >
+              <Bitcoin className="w-3 h-3" />
+              BTC-Analyse
+            </button>
+            <button
+              onClick={() => setLocation("/recession")}
+              className="px-3 py-1.5 rounded-md bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 text-xs font-medium text-orange-600 dark:text-orange-400 transition-colors flex items-center gap-1.5"
+            >
+              <AlertTriangle className="w-3 h-3" />
+              Rezessions-Dashboard
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 justify-center text-[10px] text-muted-foreground/50">
