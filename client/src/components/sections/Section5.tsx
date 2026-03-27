@@ -352,6 +352,60 @@ export function Section5({ data }: Props) {
         </div>
       </div>
 
+      {/* Business Model Integrity Warning */}
+      {(() => {
+        const warnings: string[] = [];
+        const ind = data.industry.toLowerCase();
+        const sect = data.sector.toLowerCase();
+        const desc = data.description.toLowerCase();
+        // Pharma: drug pricing reform, patent cliffs
+        if (ind.includes('drug') || ind.includes('pharma') || ind.includes('biotechnology')) {
+          warnings.push('Preisregulierungsrisiko: IRA/Medicaid-Rabatte, Medicare-Preisverhandlungen können Margen um 10-30% drücken.');
+          if (desc.includes('patent') || desc.includes('biosimilar') || desc.includes('generic')) {
+            warnings.push('Patent-Cliff-Risiko: Generika/Biosimilar-Konkurrenz bei Patentablauf.');
+          }
+        }
+        // SaaS / Software: AI disruption
+        if (ind.includes('software') || ind.includes('saas') || desc.includes('cloud') || desc.includes('subscription')) {
+          warnings.push('KI-Disruption: AI-Agenten können Software-Margen durch Automatisierung und Commoditisierung erodieren.');
+        }
+        // Negative FCF
+        if (data.fcfTTM < 0) {
+          warnings.push('Negativer FCF: Geschäftsmodell generiert aktuell keinen freien Cashflow — DCF-Projektion basiert auf Margenverbesserungs-Annahme.');
+        }
+        // Very high margin assumed but declining revenue
+        if (data.ebitda > 0 && data.revenue > 0) {
+          const ebitMargin = (data.ebitda / data.revenue) * 100;
+          if (ebitMargin > 30 && data.sectorProfile.growthAssumptions.g1 < 8) {
+            warnings.push(`Hohe EBIT-Marge (${ebitMargin.toFixed(0)}%) bei niedrigem Wachstum — Margenerhalt nicht gesichert bei Wettbewerbsdruck.`);
+          }
+        }
+        // Gov exposure / regulation
+        if (data.governmentExposure > 20) {
+          warnings.push(`Staatsabhängigkeit ${data.governmentExposure}%: Regulatorische Preisänderungen können DCF-Annahmen entwerten.`);
+        }
+        if (warnings.length === 0) return null;
+        return (
+          <div className="rounded-lg border-2 border-amber-500/30 bg-amber-500/5 p-3">
+            <div className="flex items-center gap-2 mb-1.5">
+              <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+              <span className="text-xs font-bold text-amber-500 uppercase tracking-wider">Geschäftsmodell-Warnung — DCF-Projektion mit Vorsicht lesen</span>
+            </div>
+            <ul className="space-y-1">
+              {warnings.map((w, i) => (
+                <li key={i} className="text-[10px] text-amber-400/90 flex items-start gap-1.5">
+                  <span className="text-amber-500 flex-shrink-0 mt-0.5">⚠</span>
+                  <span>{w}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="text-[9px] text-muted-foreground mt-1.5">
+              DCF extrapoliert historische Margen in die Zukunft. Bei strukturellen Risiken (Preisregulierung, Disruption, Wettbewerb) können diese Annahmen nicht eintreten.
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Three scenario cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {scenarios.map(({ name, result, color }, i) => (

@@ -467,6 +467,7 @@ function generateRisks(sector: string, beta: number, govExposure: number): Risk[
 function estimateGovExposure(sector: string, industry: string, description: string): { exposure: number; detail: string } {
   const desc = description.toLowerCase();
   const ind = industry.toLowerCase();
+  const sect = sector.toLowerCase();
 
   if (ind.includes("defense") || ind.includes("aerospace")) {
     return { exposure: 60, detail: "Defense/Aerospace – high government contract dependency" };
@@ -474,11 +475,25 @@ function estimateGovExposure(sector: string, industry: string, description: stri
   if (desc.includes("government") && desc.includes("contract")) {
     return { exposure: 35, detail: "Significant government contract exposure noted in description" };
   }
-  if (ind.includes("health") && desc.includes("medicare")) {
-    return { exposure: 30, detail: "Healthcare with Medicare/Medicaid revenue exposure" };
+  // Drug manufacturers: US revenue exposed to Medicare Part D, Medicaid rebates,
+  // IRA drug price negotiation. GLP-1, insulin, oncology all heavily affected.
+  if (ind.includes("drug manufacturers") || ind.includes("pharma")) {
+    return { exposure: 35, detail: "Pharma/Drug Manufacturer – US-Umsatz betroffen von Medicare Part D, Medicaid-Rabatte, IRA-Preisverhandlungen. Regulatorisches Preisrisiko." };
+  }
+  if (ind.includes("health") && (desc.includes("medicare") || desc.includes("medicaid") || desc.includes("insulin") || desc.includes("diabetes") || desc.includes("obesity"))) {
+    return { exposure: 30, detail: "Healthcare mit Medicare/Medicaid-Exposure – Preisregulierungsrisiko (IRA, Medicaid Rebates)" };
+  }
+  if (ind.includes("biotechnology")) {
+    return { exposure: 25, detail: "Biotech – FDA-Abhängigkeit und potenzielle Preisregulierung bei Blockbuster-Medikamenten" };
+  }
+  if (ind.includes("health care plan") || ind.includes("managed health")) {
+    return { exposure: 40, detail: "Managed Healthcare – direkte Abhängigkeit von Medicare/Medicaid-Erstattungssätzen" };
   }
   if (ind.includes("infrastructure") || ind.includes("construction")) {
     return { exposure: 25, detail: "Infrastructure sector – moderate public spending exposure" };
+  }
+  if (sect.includes("utilities")) {
+    return { exposure: 20, detail: "Utilities – regulierte Preisgestaltung, Abhängigkeit von Energiepolitik" };
   }
   return { exposure: 5, detail: "Minimal direct government revenue dependency" };
 }
