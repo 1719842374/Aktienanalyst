@@ -38,7 +38,7 @@ export function TechnicalChart({ data }: Props) {
 
   if (!ti || !ohlcv || ohlcv.length === 0) {
     return (
-      <SectionCard id={14} title="Technische Analyse" subtitle="Chart & Signale">
+      <SectionCard id={10} title="Technische Analyse" subtitle="Chart & Signale">
         <div className="text-center text-muted-foreground text-xs py-8">
           Keine OHLCV-Daten verfügbar
         </div>
@@ -127,7 +127,7 @@ export function TechnicalChart({ data }: Props) {
   };
 
   return (
-    <SectionCard id={14} title="Technische Analyse" subtitle="Interactive Chart – MA & MACD">
+    <SectionCard id={10} title="Technische Analyse" subtitle="Interactive Chart – MA & MACD">
       {/* Status bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
         <StatusPill

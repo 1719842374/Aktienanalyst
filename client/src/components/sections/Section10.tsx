@@ -26,7 +26,7 @@ export function Section10({ data }: Props) {
     result.rating === "sportlich" ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20";
 
   return (
-    <SectionCard number={10} title="REVERSE DCF">
+    <SectionCard number={14} title="REVERSE DCF">
       {/* Automatic Warning for unrealistic implied growth */}
       {result.rating === "unrealistic" && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">

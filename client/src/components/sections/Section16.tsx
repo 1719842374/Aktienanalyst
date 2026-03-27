@@ -47,14 +47,14 @@ export function Section16({ data }: Props) {
 
   if (!pestel) {
     return (
-      <SectionCard number={16} title="PESTEL-ANALYSE & MAKRO-EXPOSURE">
+      <SectionCard number={12} title="PESTEL-ANALYSE & MAKRO-EXPOSURE">
         <div className="text-xs text-muted-foreground">Keine PESTEL-Daten verfügbar.</div>
       </SectionCard>
     );
   }
 
   return (
-    <SectionCard number={16} title="PESTEL-ANALYSE & MAKRO-EXPOSURE">
+    <SectionCard number={12} title="PESTEL-ANALYSE & MAKRO-EXPOSURE">
       {/* Overview KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className={`rounded-lg p-3 border ${

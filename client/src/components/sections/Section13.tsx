@@ -60,6 +60,7 @@ export function Section13({ data }: Props) {
     netDebt,
     minorityInterests: 0,
     fcfHaircut: haircut,
+    actualEPS: data.epsTTM,
   }), [data, sp, netDebt, haircut, ebitMarginDefault, capexDefault, revenueGrowthDefault, dcfBetaS13, debtRatioS13]);
 
   const conservativeDCF = useMemo(() => calculateFCFFDCF(baseParams), [baseParams]);
@@ -141,7 +142,7 @@ export function Section13({ data }: Props) {
   }, [data]);
 
   return (
-    <SectionCard number={13} title="ZUSAMMENFASSUNGSTABELLE">
+    <SectionCard number={17} title="ZUSAMMENFASSUNGSTABELLE">
       {/* DCF Upside/Downside Visual */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">DCF Szenarien — Upside / Downside (FCFF)</h3>

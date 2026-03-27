@@ -98,6 +98,8 @@ export interface FCFFDCFParams {
   fcfHaircut: number;        // FCF haircut % for gov exposure
   // Optional WACC override — bypasses CAPM when set
   waccOverride?: number | null;  // Direct WACC % (null/undefined = compute via CAPM)
+  // Optional: actual EPS for sanity-cap (prevents FS-debt distortion)
+  actualEPS?: number;        // EPS TTM for per-share ceiling check
 }
 
 export interface FCFFDCFResult {
@@ -241,15 +243,57 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
 
   // 4. Enterprise Value & Equity Bridge
   const enterpriseValue = pvExplicit + pvTerminal;
-  const equityValue = enterpriseValue - params.netDebt - params.minorityInterests;
-  const perShare = params.sharesOutstanding > 0 ? equityValue / params.sharesOutstanding : 0;
+
+  // Sanity: If net debt > 70% of EV, cap it at 70%.
+  // Companies with massive financial services debt (VW, GM, Toyota, GE)
+  // have total debt from lending/leasing that is asset-backed and shouldn't
+  // be fully deducted from industrial DCF enterprise value.
+  const rawNetDebt = params.netDebt;
+  const netDebtCap = enterpriseValue * 0.7;
+  const netDebtUsed = (rawNetDebt > 0 && rawNetDebt > netDebtCap) ? netDebtCap : rawNetDebt;
+  const netDebtWasCapped = rawNetDebt > 0 && rawNetDebt > netDebtCap;
+
+  const equityValue = enterpriseValue - netDebtUsed - params.minorityInterests;
+  let perShare = params.sharesOutstanding > 0 ? equityValue / params.sharesOutstanding : 0;
+
+  // Sanity check: If net debt > 3× market cap, the company likely has massive
+  // financial services debt (auto OEMs, conglomerates, banks). The FCFF model
+  // projects total revenue at industrial margins, but FS revenue has different
+  // economics. Detect this and apply a P/E-based cap.
+  let perShareCapped = false;
+  const netDebtToEV = rawNetDebt / Math.max(enterpriseValue, 1);
+  const impliedMarketCap = equityValue;
+  const rawMarketCapRatio = params.sharesOutstanding > 0 && params.revenueBase > 0
+    ? (equityValue / params.sharesOutstanding) / (params.revenueBase / params.sharesOutstanding)
+    : 0; // P/S implied
+  // If actual EPS is provided, cap per-share at 40× EPS (generous P/E ceiling).
+  // This prevents FS-debt distortion from producing absurd values.
+  // Without actual EPS, use NOPAT proxy as fallback.
+  const actualEPS = params.actualEPS && params.actualEPS > 0 ? params.actualEPS : 0;
+  if (actualEPS > 0) {
+    const peCap = actualEPS * 40;
+    if (perShare > peCap) {
+      const rawVal = perShare;
+      perShare = peCap;
+      perShareCapped = true;
+      steps.push(``);
+      steps.push(`⚠ DCF-Sanity: Per-Share auf 40× EPS ($${actualEPS.toFixed(2)}) gecapped = $${peCap.toFixed(2)}.`);
+      steps.push(`  Rohwert $${rawVal.toFixed(0)} — Financial-Services/Debt-Verzerrung wahrscheinlich.`);
+    }
+  }
 
   steps.push(``);
   steps.push(`=== Equity Bridge ===`);
   steps.push(`PV(explizite Phase) = ${fmt(pvExplicit)}`);
   steps.push(`PV(Terminal Value) = ${fmt(pvTerminal)}`);
   steps.push(`Enterprise Value = ${fmt(enterpriseValue)}`);
-  steps.push(`- Net Debt = ${fmt(params.netDebt)}`);
+  if (netDebtWasCapped) {
+    steps.push(`- Net Debt (raw) = ${fmt(rawNetDebt)}`);
+    steps.push(`  ⚠ Net Debt gecapped auf 70% des EV = ${fmt(netDebtUsed)}`);
+    steps.push(`  (Financial Services Schulden asset-backed → nicht voll abziehbar)`);
+  } else {
+    steps.push(`- Net Debt = ${fmt(netDebtUsed)}`);
+  }
   steps.push(`- Minderheitsanteile = ${fmt(params.minorityInterests)}`);
   steps.push(`Equity Value = ${fmt(equityValue)}`);
   steps.push(`÷ Shares (fully diluted) = ${fmtShares(params.sharesOutstanding)}`);

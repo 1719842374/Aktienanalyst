@@ -52,6 +52,7 @@ export function Section6({ data }: Props) {
     netDebt,
     minorityInterests: 0,
     fcfHaircut: haircut,
+    actualEPS: data.epsTTM,
   }), [data, sp, netDebt, haircut, ebitMarginDefault, capexDefault, revenueGrowthDefault, dcfBeta, debtRatioVal]);
 
   const conservativeDCF = useMemo(() => calculateFCFFDCF(baseParams), [baseParams]);

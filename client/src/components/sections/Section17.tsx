@@ -39,7 +39,7 @@ export function Section17({ data }: Props) {
 
   if (!mc) {
     return (
-      <SectionCard number={17} title="MAKRO-KORRELATIONEN">
+      <SectionCard number={13} title="MAKRO-KORRELATIONEN">
         <div className="text-xs text-muted-foreground">Keine Makro-Korrelationsdaten verfügbar.</div>
       </SectionCard>
     );
@@ -63,7 +63,7 @@ export function Section17({ data }: Props) {
   const sensStyle = sensColors[mc.overallMacroSensitivity];
 
   return (
-    <SectionCard number={17} title="MAKRO-KORRELATIONEN & INDEX-SENSITIVITÄT">
+    <SectionCard number={13} title="MAKRO-KORRELATIONEN & INDEX-SENSITIVITÄT">
       {/* Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className={`rounded-lg p-3 border ${sensStyle.bg}`}>

@@ -51,6 +51,7 @@ export function Section11({ data }: Props) {
     netDebt,
     minorityInterests: 0,
     fcfHaircut: data.fcfHaircut,
+    actualEPS: data.epsTTM,
   }), [data]);
 
   // Total GB — Catalyst-Adj. Target uses conservative DCF as base (per framework)
@@ -63,7 +64,7 @@ export function Section11({ data }: Props) {
   const catalystAdjTarget = catalystDCFBase * (1 + totalGB / 100);
 
   return (
-    <SectionCard number={11} title="KURSANSTIEG-KATALYSATOREN (Anti-Bias)">
+    <SectionCard number={15} title="KURSANSTIEG-KATALYSATOREN (Anti-Bias)">
       {/* === WARUM GERADE INTERESSANT === */}
       {reasoning && (
         <div className="rounded-lg border-2 border-primary/20 bg-primary/5 p-4 space-y-3">

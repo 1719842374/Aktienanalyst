@@ -38,14 +38,14 @@ const SECTIONS = [
   { id: 7, label: "Rel. Bewertung", icon: Scale },
   { id: 8, label: "Risikoinversion", icon: AlertTriangle },
   { id: 9, label: "RSL-Momentum", icon: Activity },
-  { id: 14, label: "Tech. Analyse", icon: LineChart },
-  { id: 15, label: "Moat / Porter", icon: Landmark },
-  { id: 16, label: "PESTEL", icon: Globe },
-  { id: 17, label: "Makro-Korr.", icon: BarChart3 },
-  { id: 10, label: "Reverse DCF", icon: RotateCcw },
-  { id: 11, label: "Katalysatoren", icon: Zap },
-  { id: 12, label: "Monte Carlo", icon: Dice6 },
-  { id: 13, label: "Zusammenfassung", icon: Table2 },
+  { id: 10, label: "Tech. Analyse", icon: LineChart },
+  { id: 11, label: "Moat / Porter", icon: Landmark },
+  { id: 12, label: "PESTEL", icon: Globe },
+  { id: 13, label: "Makro-Korr.", icon: BarChart3 },
+  { id: 14, label: "Reverse DCF", icon: RotateCcw },
+  { id: 15, label: "Katalysatoren", icon: Zap },
+  { id: 16, label: "Monte Carlo", icon: Dice6 },
+  { id: 17, label: "Zusammenfassung", icon: Table2 },
 ];
 
 export default function Dashboard() {
@@ -188,14 +188,14 @@ export default function Dashboard() {
               <div ref={setSectionRef(7)}><Section7 data={data} /></div>
               <div ref={setSectionRef(8)}><Section8 data={data} /></div>
               <div ref={setSectionRef(9)}><Section9 data={data} /></div>
-              <div ref={setSectionRef(14)}><TechnicalChart data={data} /></div>
-              <div ref={setSectionRef(15)}><Section15 data={data} /></div>
-              <div ref={setSectionRef(16)}><Section16 data={data} /></div>
-              <div ref={setSectionRef(17)}><Section17 data={data} /></div>
-              <div ref={setSectionRef(10)}><Section10 data={data} /></div>
-              <div ref={setSectionRef(11)}><Section11 data={data} /></div>
-              <div ref={setSectionRef(12)}><Section12 data={data} /></div>
-              <div ref={setSectionRef(13)}><Section13 data={data} /></div>
+              <div ref={setSectionRef(10)}><TechnicalChart data={data} /></div>
+              <div ref={setSectionRef(11)}><Section15 data={data} /></div>
+              <div ref={setSectionRef(12)}><Section16 data={data} /></div>
+              <div ref={setSectionRef(13)}><Section17 data={data} /></div>
+              <div ref={setSectionRef(14)}><Section10 data={data} /></div>
+              <div ref={setSectionRef(15)}><Section11 data={data} /></div>
+              <div ref={setSectionRef(16)}><Section12 data={data} /></div>
+              <div ref={setSectionRef(17)}><Section13 data={data} /></div>
               <div className="pb-8" />
             </div>
           ) : null}

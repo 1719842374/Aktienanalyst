@@ -89,6 +89,7 @@ export function Section5({ data }: Props) {
     netDebt,
     minorityInterests: 0,
     fcfHaircut: data.fcfHaircut,
+    actualEPS: data.epsTTM,
     waccOverride: null,
   };
 
