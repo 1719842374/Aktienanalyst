@@ -312,4 +312,6 @@ export interface StockAnalysis {
 
   // NEW: Revenue segments (Umsatzanteil nach Produkten/Segmenten)
   revenueSegments?: RevenueSegment[];
+  // NEW: Geographic segments (Umsatzanteil nach Regionen)
+  geoSegments?: RevenueSegment[];
 }

@@ -103,6 +103,36 @@ export function Section2({ data }: Props) {
           </div>
         )}
 
+        {/* Geographic Segments (Umsatzanteil nach Regionen) */}
+        {data.geoSegments && data.geoSegments.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatzanteil nach Regionen</h3>
+            <div className="space-y-1.5">
+              {data.geoSegments.map((seg, i) => (
+                <div key={i} className="relative">
+                  <div className="flex items-center justify-between text-xs mb-0.5">
+                    <span className="font-medium truncate mr-2">{seg.name}</span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {seg.growth !== undefined && seg.growth !== null && (
+                        <span className={`text-[10px] font-mono tabular-nums ${seg.growth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                          {seg.growth >= 0 ? '+' : ''}{formatNumber(seg.growth, 1)}%
+                        </span>
+                      )}
+                      <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
+                    </div>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-blue-500/60 transition-all duration-500"
+                      style={{ width: `${Math.min(100, seg.percentage)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Growth Thesis & Catalyst Reasoning (expanded) */}
         <div className="bg-muted/30 rounded-md p-3 border border-border/50">
           <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Investment These & Katalysatoren-Logik</h3>

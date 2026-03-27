@@ -2207,8 +2207,9 @@ export async function registerRoutes(server: Server, app: Express) {
       // === Macro Correlations (PMI, commodities, indices) ===
       const macroCorrelations = generateMacroCorrelations(sector, industry, description, beta5Y, reportedCurrency);
 
-      // === Revenue Segments (Umsatzanteil nach Produkten) ===
+      // === Revenue Segments (Produkte) + Geographic Segments (Regionen) ===
       let revenueSegments: RevenueSegment[] | undefined;
+      let geoSegments: RevenueSegment[] | undefined;
       if (segmentsResult?.content) {
         try {
           const segContent = typeof segmentsResult.content === "string" ? segmentsResult.content : JSON.stringify(segmentsResult.content);
@@ -2216,6 +2217,9 @@ export async function registerRoutes(server: Server, app: Express) {
           // Parse the "Column legend" section to get human-readable names for segment keys
           const legendMap: Record<string, string> = {};
           const legendMatch = segContent.match(/Column legend:[\s\S]*?(?=\n\|)/m);
+          // Detect geographic + aggregate column keys from legend sections
+          const geoKeys = new Set<string>();
+          const otherKeys = new Set<string>(); // "Other:" section = aggregate/rollup columns
           if (legendMatch) {
             // Pattern: key = Human Readable Name (USD)
             const legendPattern = /([a-z_]+)\s*=\s*([^(,]+?)\s*\(/g;
@@ -2223,14 +2227,43 @@ export async function registerRoutes(server: Server, app: Express) {
             while ((lm = legendPattern.exec(legendMatch[0])) !== null) {
               legendMap[lm[1].trim()] = lm[2].trim();
             }
+            // Find keys in the "Revenue by Geography" section of legend
+            const geoSectionMatch = legendMatch[0].match(/Revenue by Geography:[^\n]*(?:\n[^\n]*?)*/i);
+            if (geoSectionMatch) {
+              const geoPattern = /([a-z_]+)\s*=/g;
+              let gm;
+              while ((gm = geoPattern.exec(geoSectionMatch[0])) !== null) {
+                geoKeys.add(gm[1].trim());
+              }
+            }
+            // Find keys in the "Other:" section (aggregate/rollup columns)
+            const otherSectionMatch = legendMatch[0].match(/Other:[^\n]*(?:\n(?!\s*(?:Revenue|EBIT|Other)[^:]*:)[^\n]*)*/i);
+            if (otherSectionMatch) {
+              const otherPattern = /([a-z_]+)\s*=/g;
+              let om;
+              while ((om = otherPattern.exec(otherSectionMatch[0])) !== null) {
+                otherKeys.add(om[1].trim());
+              }
+            }
           }
+
+          // Also detect geo columns by common naming patterns (use ^ or _ prefix to avoid substring false positives like rybelsUS_revenue)
+          const isGeoColumn = (col: string): boolean => {
+            if (geoKeys.has(col)) return true;
+            return /^us_revenue|^eucan|^emea|^apac|^china_revenue|^rest_of_world|^emerging_market|^north_america|^international_revenue|^europe_|^latin_america|^japan_|^asia_|^united_states|^other_countries|geograph|^americas|^japan_revenue|^korea_revenue|^india_revenue|^uk_revenue|^germany_revenue|^middle_east|^africa|^greater_china|^canada_revenue|^australia_revenue/i.test(col);
+          };
+
+          // Also detect aggregate/total columns that shouldn't be product segments
+          const isAggregateColumn = (col: string): boolean => {
+            // Skip rollup/aggregate columns: total_*, and anything from the legend's "Other:" section
+            if (otherKeys.has(col)) return true;
+            return /^total_/i.test(col);
+          };
 
           // Parse the markdown table
           const segTables = parseMarkdownTable(segContent);
           if (segTables.length > 0) {
             const headers = Object.keys(segTables[0]);
-            // The table is wide: each row = a fiscal year, columns = segment metrics
-            // We need to find revenue columns from the MOST RECENT row
             const revenueColumns = headers.filter(h => /revenue/i.test(h) && h !== 'date' && h !== 'period');
 
             // Sort rows by date descending to get latest year first
@@ -2239,12 +2272,9 @@ export async function registerRoutes(server: Server, app: Express) {
             const prevRow = sortedRows.length > 1 ? sortedRows[1] : null;
 
             if (latestRow) {
-              const segments: RevenueSegment[] = [];
-              let totalSegRevenue = 0;
+              const productSegs: RevenueSegment[] = [];
+              const geoSegs: RevenueSegment[] = [];
 
-              // Group revenue columns: prefer "post" columns (newer reporting structure)
-              // and avoid duplicates from pre/post reporting changes
-              const usedNames = new Set<string>();
               // Sort: post_fy columns first, then plain, then pre_fy
               const sortedRevCols = revenueColumns.sort((a, b) => {
                 const aPost = /post_fy/i.test(a) ? 0 : /pre_fy/i.test(a) ? 2 : 1;
@@ -2252,70 +2282,67 @@ export async function registerRoutes(server: Server, app: Express) {
                 return aPost - bPost;
               });
 
+              const usedProductNames = new Set<string>();
+              const usedGeoNames = new Set<string>();
+
               for (const col of sortedRevCols) {
                 const rawVal = parseNumber(latestRow[col]);
                 if (rawVal <= 0) continue;
 
-                // Get human-readable name from legend, or clean up the column key
+                // Clean column key to human-readable name
                 let segName = legendMap[col] || col
                   .replace(/_revenue.*$/i, '')
                   .replace(/_post_fy\d+/i, '')
                   .replace(/_pre_fy\d+/i, '')
                   .replace(/_/g, ' ')
                   .replace(/\b\w/g, c => c.toUpperCase());
-
-                // Remove trailing " Revenue" from legend names
                 segName = segName.replace(/\s*Revenue$/i, '').trim();
 
-                // Skip geographic segments (they'll be caught by "united_states" / "other_countries" keys)
-                if (/united.states|other.countries|geograph/i.test(col)) continue;
-
-                // Skip duplicates (same segment name from pre/post reporting)
-                const normName = segName.toLowerCase().replace(/[^a-z0-9]/g, '');
-                if (usedNames.has(normName)) continue;
-                usedNames.add(normName);
-
-                // Skip if this is a sub-segment (has a parent segment with higher revenue)
-                // We'll filter these out after collecting all
+                // Calculate growth vs previous year
                 let growth: number | undefined;
                 if (prevRow) {
-                  // Try to find matching previous year column
-                  // The pre/post naming may differ between years, so try variants
                   const prevVal = parseNumber(prevRow[col]);
                   if (prevVal > 0) {
                     growth = +((rawVal - prevVal) / prevVal * 100).toFixed(1);
                   } else {
-                    // Try equivalent col with pre_fy swap
                     const altCol = col.replace(/post_fy\d+/i, m => m.replace('post', 'pre'));
                     const altVal = parseNumber(prevRow[altCol]);
                     if (altVal > 0) growth = +((rawVal - altVal) / altVal * 100).toFixed(1);
                   }
                 }
 
-                segments.push({ name: segName, revenue: rawVal, percentage: 0, growth });
-                totalSegRevenue += rawVal;
+                const seg: RevenueSegment = { name: segName, revenue: rawVal, percentage: 0, growth };
+                const normName = segName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+                if (isGeoColumn(col) && !isAggregateColumn(col)) {
+                  // Geographic segment
+                  if (!usedGeoNames.has(normName)) {
+                    usedGeoNames.add(normName);
+                    geoSegs.push(seg);
+                  }
+                } else if (!isAggregateColumn(col)) {
+                  // Product/business segment
+                  if (!usedProductNames.has(normName)) {
+                    usedProductNames.add(normName);
+                    productSegs.push(seg);
+                  }
+                }
               }
 
-              // Filter: find non-overlapping segment set that sums to ~100% of revenue
-              if (segments.length > 0) {
+              // === Process product segments ===
+              const processBestSet = (segments: RevenueSegment[]): RevenueSegment[] | undefined => {
+                if (segments.length === 0) return undefined;
                 segments.sort((a, b) => b.revenue - a.revenue);
                 const segSum = segments.reduce((s, seg) => s + seg.revenue, 0);
-
-                // Find the best non-overlapping subset using brute-force for small N:
-                // Try all subsets of size 2..8 and pick the one whose sum is closest to total revenue
-                // For large segments lists, limit to greedy approach
-                let bestSet: RevenueSegment[] = segments;
-                const targetRev = segSum / 2; // If segments overlap, real total ≈ sum/factor
-                // Actually use real total revenue if available
                 const realTotal = revenue > 0 ? revenue : segSum;
 
-                if (segSum > realTotal * 1.2 && segments.length <= 20) {
-                  // Overlapping segments detected. Find best combination.
+                let bestSet: RevenueSegment[] = segments;
+                // Only apply combo optimization if segment sum is within 3x of revenue
+                // (>3x likely indicates currency mismatch, e.g. segments in DKK but revenue in USD)
+                if (segSum > realTotal * 1.2 && segSum <= realTotal * 3 && segments.length <= 20) {
                   let bestDiff = Infinity;
-                  // Try combinations of 2-6 segments
                   const N = segments.length;
                   for (let size = 2; size <= Math.min(8, N); size++) {
-                    // Generate combinations using iterative approach
                     const indices = Array.from({ length: size }, (_, i) => i);
                     while (true) {
                       const comboSum = indices.reduce((s, idx) => s + segments[idx].revenue, 0);
@@ -2324,7 +2351,6 @@ export async function registerRoutes(server: Server, app: Express) {
                         bestDiff = diff;
                         bestSet = indices.map(idx => segments[idx]);
                       }
-                      // Generate next combination
                       let i = size - 1;
                       while (i >= 0 && indices[i] === N - size + i) i--;
                       if (i < 0) break;
@@ -2333,16 +2359,32 @@ export async function registerRoutes(server: Server, app: Express) {
                     }
                   }
                 }
-
-                // Calculate percentages based on the set's own sum (so they add to ~100%)
                 const setTotal = bestSet.reduce((s, seg) => s + seg.revenue, 0);
                 for (const seg of bestSet) {
                   seg.percentage = +((seg.revenue / setTotal) * 100).toFixed(1);
                 }
                 bestSet.sort((a, b) => b.revenue - a.revenue);
-                // Filter tiny (<2%) and cap at 8
-                revenueSegments = bestSet.filter(s => s.percentage >= 2).slice(0, 8);
-                console.log(`[ANALYZE] Parsed ${revenueSegments.length} revenue segments for ${ticker} (from ${segments.length} raw)`);
+                return bestSet.filter(s => s.percentage >= 2).slice(0, 8);
+              };
+
+              revenueSegments = processBestSet(productSegs);
+
+              // === Process geographic segments ===
+              // NOTE: Geographic segments may be in the reporting currency (e.g. DKK, EUR)
+              // while `revenue` may already be converted to USD. So we do NOT use the combo
+              // optimization here. Instead, compute percentages from their own sum.
+              if (geoSegs.length > 0) {
+                geoSegs.sort((a, b) => b.revenue - a.revenue);
+                const geoTotal = geoSegs.reduce((s, seg) => s + seg.revenue, 0);
+                for (const seg of geoSegs) {
+                  seg.percentage = +((seg.revenue / geoTotal) * 100).toFixed(1);
+                }
+                geoSegments = geoSegs.filter(s => s.percentage >= 1.5).slice(0, 8);
+                console.log(`[ANALYZE] Parsed ${geoSegments.length} geographic segments for ${ticker}`);
+              }
+
+              if (revenueSegments) {
+                console.log(`[ANALYZE] Parsed ${revenueSegments.length} product segments for ${ticker} (from ${productSegs.length} raw)`);
               }
             }
           }
@@ -2471,8 +2513,10 @@ export async function registerRoutes(server: Server, app: Express) {
         // NEW: Macro correlations
         macroCorrelations,
 
-        // NEW: Revenue segments
+        // NEW: Revenue segments (Produkte/Segmente)
         revenueSegments,
+        // NEW: Geographic segments (Regionen)
+        geoSegments,
       };
 
       console.log(`[ANALYZE] Completed analysis for ${ticker}: $${price} (${companyName})`);
