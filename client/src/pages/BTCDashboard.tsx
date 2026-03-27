@@ -1456,9 +1456,32 @@ function Section11FearGreed({ data }: { data: BTCAnalysis }) {
             <ResponsiveContainer width="100%" height={200}>
               <ComposedChart data={chartHistory} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                 <defs>
+                  {/* Vertical gradient for line color: maps Y 0-100 to color zones */}
+                  <linearGradient id="fgLineGrad" x1="0" y1="0" x2="0" y2="1">
+                    {/* Top = 100 (Extreme Greed) → green */}
+                    <stop offset="0%" stopColor="#22c55e" />
+                    <stop offset="25%" stopColor="#22c55e" />
+                    {/* 75 boundary */}
+                    <stop offset="25%" stopColor="#84cc16" />
+                    <stop offset="45%" stopColor="#84cc16" />
+                    {/* 55 boundary */}
+                    <stop offset="45%" stopColor="#eab308" />
+                    <stop offset="55%" stopColor="#eab308" />
+                    {/* 45 boundary */}
+                    <stop offset="55%" stopColor="#f97316" />
+                    <stop offset="75%" stopColor="#f97316" />
+                    {/* 25 boundary */}
+                    <stop offset="75%" stopColor="#ef4444" />
+                    <stop offset="100%" stopColor="#ef4444" />
+                  </linearGradient>
+                  {/* Area fill gradient matching line colors */}
                   <linearGradient id="fgAreaGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.2} />
-                    <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#22c55e" stopOpacity={0.15} />
+                    <stop offset="25%" stopColor="#84cc16" stopOpacity={0.12} />
+                    <stop offset="45%" stopColor="#eab308" stopOpacity={0.10} />
+                    <stop offset="55%" stopColor="#f97316" stopOpacity={0.08} />
+                    <stop offset="75%" stopColor="#ef4444" stopOpacity={0.10} />
+                    <stop offset="100%" stopColor="#ef4444" stopOpacity={0.05} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.2} />
@@ -1483,8 +1506,8 @@ function Section11FearGreed({ data }: { data: BTCAnalysis }) {
                 <Area
                   type="monotone"
                   dataKey="value"
-                  stroke="#f59e0b"
-                  strokeWidth={1.5}
+                  stroke="url(#fgLineGrad)"
+                  strokeWidth={2}
                   fill="url(#fgAreaGrad)"
                   dot={false}
                 />
