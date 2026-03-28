@@ -1045,13 +1045,27 @@ function computeTechnicalIndicators(ohlcvData: OHLCVPoint[]): TechnicalIndicator
   const closes = ohlcvData.map(d => d.close);
   const n = closes.length;
 
-  // SMA calculation
+  // SMA calculation — fills gaps for early data points using partial SMA from available data
+  // When i < period-1, computes SMA from all available data points (i+1 points) if at least
+  // a minimum threshold is met (50% of period, min 10 points). This ensures MA lines render
+  // from early chart data rather than only appearing after 200 days.
   function sma(data: number[], period: number): (number | null)[] {
+    const minRequired = Math.max(10, Math.floor(period * 0.5));
     return data.map((_, i) => {
-      if (i < period - 1) return null;
-      let sum = 0;
-      for (let j = i - period + 1; j <= i; j++) sum += data[j];
-      return sum / period;
+      if (i >= period - 1) {
+        // Full SMA with enough data
+        let sum = 0;
+        for (let j = i - period + 1; j <= i; j++) sum += data[j];
+        return sum / period;
+      }
+      // Partial SMA for early data points — use all available data (i+1 points)
+      const available = i + 1;
+      if (available >= minRequired) {
+        let sum = 0;
+        for (let j = 0; j <= i; j++) sum += data[j];
+        return sum / available;
+      }
+      return null;
     });
   }
 
@@ -1786,10 +1800,10 @@ export async function registerRoutes(server: Server, app: Express) {
           ticker_symbols: [ticker],
           period_type: "annual",
         })),
-        // 6. OHLCV 5+ years daily data (for MA200 we need 200+ days, user wants up to 5Y chart)
+        // 6. OHLCV 10+ years daily data (for MA200 we need 200+ days, user wants up to 10Y chart)
         (async () => {
           const endDate = new Date().toISOString().split('T')[0];
-          const startDate = new Date(Date.now() - 5 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          const startDate = new Date(Date.now() - 11 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
           const ohlcvResult = callFinanceTool("finance_ohlcv_histories", {
             ticker_symbols: [ticker],
             start_date_yyyy_mm_dd: startDate,
@@ -2517,7 +2531,7 @@ export async function registerRoutes(server: Server, app: Express) {
         maxDrawdownHistory: `${maxDrawdown.toFixed(1)}%`,
         maxDrawdownYear,
 
-        // OHLCV data (send all data — up to 5+ years for extended chart timeframes)
+        // OHLCV data (send all data — up to 10+ years for extended chart timeframes)
         ohlcvData: ohlcvData.length > 0 ? ohlcvData : undefined,
         technicalIndicators: technicals,
 

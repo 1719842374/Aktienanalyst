@@ -34,7 +34,7 @@ export function TechnicalChart({ data }: Props) {
     return initial;
   });
   const [showSignals, setShowSignals] = useState(true);
-  const [timeRange, setTimeRange] = useState<"3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y">("1Y");
+  const [timeRange, setTimeRange] = useState<"3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y" | "10Y">("1Y");
 
   if (!ti || !ohlcv || ohlcv.length === 0) {
     return (
@@ -48,7 +48,7 @@ export function TechnicalChart({ data }: Props) {
 
   // Filter MA data to match selected time range
   const filteredData = useMemo(() => {
-    const cutoff = timeRange === "3M" ? 63 : timeRange === "6M" ? 126 : timeRange === "1Y" ? 252 : timeRange === "2Y" ? 504 : timeRange === "3Y" ? 756 : 1260;
+    const cutoff = timeRange === "3M" ? 63 : timeRange === "6M" ? 126 : timeRange === "1Y" ? 252 : timeRange === "2Y" ? 504 : timeRange === "3Y" ? 756 : timeRange === "5Y" ? 1260 : 2520;
     const maSlice = ti.maData.slice(-Math.min(cutoff, ti.maData.length));
     const macdSlice = ti.macdData.slice(-Math.min(cutoff, ti.macdData.length));
     return { ma: maSlice, macd: macdSlice };
@@ -115,7 +115,7 @@ export function TechnicalChart({ data }: Props) {
   // Format date for axis — show year for longer timeframes
   const formatDate = (date: string) => {
     const parts = date.split("-");
-    if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y") {
+    if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y" || timeRange === "10Y") {
       return `${parts[1]}/${parts[0].slice(2)}`; // MM/YY
     }
     return `${parts[1]}/${parts[2]}`; // MM/DD
@@ -190,7 +190,7 @@ export function TechnicalChart({ data }: Props) {
       <div className="flex flex-wrap items-center gap-2 mb-3">
         {/* Time range */}
         <div className="flex rounded-md border border-border overflow-hidden">
-          {(["3M", "6M", "1Y", "2Y", "3Y", "5Y"] as const).map(r => (
+          {(["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y"] as const).map(r => (
             <button
               key={r}
               onClick={() => setTimeRange(r)}
