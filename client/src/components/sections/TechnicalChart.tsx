@@ -54,19 +54,42 @@ export function TechnicalChart({ data }: Props) {
     return { ma: maSlice, macd: macdSlice };
   }, [ti.maData, ti.macdData, timeRange]);
 
-  // Build a lookup of signals by date for embedding into chart data
-  const signalsByDate = useMemo(() => {
-    const map = new Map<string, typeof ti.signals>();
-    for (const s of ti.signals) {
-      const arr = map.get(s.date) || [];
-      arr.push(s);
-      map.set(s.date, arr);
-    }
-    return map;
-  }, [ti.signals]);
-
-  // Merge MA and MACD data for display — embed signals directly into each data point
+  // Merge MA and MACD data for display — embed signals into each data point
+  // Uses nearest-date matching: if a signal date doesn't exactly match a chart
+  // data point (e.g. signal on Jan 21 but chart only has Jan 20 and Jan 22),
+  // attach the signal to the closest data point within ±1 trading day.
   const chartData = useMemo(() => {
+    // Build a Set of all chart dates for quick exact lookup
+    const chartDates = new Set(filteredData.ma.map(d => d.date));
+    
+    // For each signal, find the best matching chart date
+    const signalsByChartDate = new Map<string, typeof ti.signals>();
+    for (const s of ti.signals) {
+      let targetDate = s.date;
+      if (!chartDates.has(targetDate)) {
+        // Signal date not in chart data — find nearest date within ±3 calendar days
+        const sigTime = new Date(s.date + 'T00:00:00').getTime();
+        let bestDate = '';
+        let bestDist = Infinity;
+        for (const d of filteredData.ma) {
+          const dist = Math.abs(new Date(d.date + 'T00:00:00').getTime() - sigTime);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestDate = d.date;
+          }
+        }
+        // Only snap if within 3 calendar days (259200000 ms)
+        if (bestDist <= 3 * 86400000) {
+          targetDate = bestDate;
+        } else {
+          continue; // Skip signals too far from any chart point
+        }
+      }
+      const arr = signalsByChartDate.get(targetDate) || [];
+      arr.push(s);
+      signalsByChartDate.set(targetDate, arr);
+    }
+
     return filteredData.ma.map((d, i) => {
       const macd = filteredData.macd[i] || {};
       return {
@@ -82,10 +105,10 @@ export function TechnicalChart({ data }: Props) {
         macd: macd.macd,
         signal: macd.signal,
         histogram: macd.histogram,
-        _signals: signalsByDate.get(d.date) || null,
+        _signals: signalsByChartDate.get(d.date) || null,
       };
     });
-  }, [filteredData, signalsByDate]);
+  }, [filteredData, ti.signals]);
 
   // Filter signals within the displayed time range
   const visibleSignals = useMemo(() => {
@@ -330,7 +353,24 @@ export function TechnicalChart({ data }: Props) {
                 if (!active || !payload?.length) return null;
                 const dataPoint = payload[0]?.payload;
                 if (!dataPoint) return null;
-                const signals: typeof ti.signals | null = showSignals ? dataPoint._signals : null;
+                // Collect signals: from this data point AND nearby points (±2 indices)
+                let signals: { type: string; reason: string; date: string; price: number }[] = [];
+                if (showSignals) {
+                  const idx = chartData.findIndex(d => d.date === dataPoint.date);
+                  if (idx >= 0) {
+                    for (let offset = -2; offset <= 2; offset++) {
+                      const nearby = chartData[idx + offset];
+                      if (nearby?._signals) {
+                        for (const s of nearby._signals) {
+                          // Avoid duplicates
+                          if (!signals.some(ex => ex.date === s.date && ex.reason === s.reason)) {
+                            signals.push(s);
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
                 return (
                   <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
                     <div className="font-semibold mb-1">{formatDateFull(dataPoint.date)}</div>
@@ -340,8 +380,8 @@ export function TechnicalChart({ data }: Props) {
                         <span className="font-mono tabular-nums">${Number(p.value).toFixed(2)}</span>
                       </div>
                     ))}
-                    {/* Show signals embedded in this data point */}
-                    {signals && signals.map((s, i) => (
+                    {/* Show signals from this point or nearby points */}
+                    {signals.map((s, i) => (
                       <div key={i} className={`mt-1 pt-1 border-t border-border font-semibold ${s.type === "buy" ? "text-green-400" : "text-red-400"}`}>
                         {s.type === "buy" ? "▲ BUY" : "▼ SELL"}: {s.reason}
                       </div>
@@ -358,33 +398,7 @@ export function TechnicalChart({ data }: Props) {
               name="Kurs"
               stroke="hsl(var(--primary))"
               strokeWidth={1.5}
-              dot={(props: any) => {
-                const { cx, cy, payload } = props;
-                if (!showSignals || !payload?._signals) return <circle key={`dot-${cx}`} r={0} />;
-                const sig = payload._signals[0];
-                const color = sig.type === "buy" ? "#22c55e" : "#ef4444";
-                return (
-                  <circle
-                    key={`sig-dot-${cx}-${cy}`}
-                    cx={cx}
-                    cy={cy}
-                    r={4}
-                    fill={color}
-                    stroke="#000"
-                    strokeWidth={1}
-                    style={{ cursor: "pointer" }}
-                  />
-                );
-              }}
-              activeDot={(props: any) => {
-                const { cx, cy, payload } = props;
-                if (payload?._signals) {
-                  const sig = payload._signals[0];
-                  const color = sig.type === "buy" ? "#22c55e" : "#ef4444";
-                  return <circle cx={cx} cy={cy} r={6} fill={color} stroke="#fff" strokeWidth={2} />;
-                }
-                return <circle cx={cx} cy={cy} r={3} fill="hsl(var(--primary))" stroke="#fff" strokeWidth={1} />;
-              }}
+              dot={false}
               isAnimationActive={false}
             />
 
