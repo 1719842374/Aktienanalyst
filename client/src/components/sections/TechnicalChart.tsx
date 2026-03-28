@@ -54,7 +54,18 @@ export function TechnicalChart({ data }: Props) {
     return { ma: maSlice, macd: macdSlice };
   }, [ti.maData, ti.macdData, timeRange]);
 
-  // Merge MA and MACD data for display
+  // Build a lookup of signals by date for embedding into chart data
+  const signalsByDate = useMemo(() => {
+    const map = new Map<string, typeof ti.signals>();
+    for (const s of ti.signals) {
+      const arr = map.get(s.date) || [];
+      arr.push(s);
+      map.set(s.date, arr);
+    }
+    return map;
+  }, [ti.signals]);
+
+  // Merge MA and MACD data for display — embed signals directly into each data point
   const chartData = useMemo(() => {
     return filteredData.ma.map((d, i) => {
       const macd = filteredData.macd[i] || {};
@@ -71,9 +82,10 @@ export function TechnicalChart({ data }: Props) {
         macd: macd.macd,
         signal: macd.signal,
         histogram: macd.histogram,
+        _signals: signalsByDate.get(d.date) || null,
       };
     });
-  }, [filteredData]);
+  }, [filteredData, signalsByDate]);
 
   // Filter signals within the displayed time range
   const visibleSignals = useMemo(() => {
@@ -314,20 +326,23 @@ export function TechnicalChart({ data }: Props) {
               axisLine={{ stroke: "var(--border)" }}
             />
             <Tooltip
-              content={({ active, payload, label }) => {
+              content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;
+                const dataPoint = payload[0]?.payload;
+                if (!dataPoint) return null;
+                const signals: typeof ti.signals | null = showSignals ? dataPoint._signals : null;
                 return (
                   <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
-                    <div className="font-semibold mb-1">{formatDateFull(label)}</div>
-                    {payload.map((p: any) => (
+                    <div className="font-semibold mb-1">{formatDateFull(dataPoint.date)}</div>
+                    {payload.filter((p: any) => !p.dataKey?.startsWith('_')).map((p: any) => (
                       <div key={p.dataKey} className="flex justify-between gap-3">
                         <span style={{ color: p.color }}>{p.name}</span>
                         <span className="font-mono tabular-nums">${Number(p.value).toFixed(2)}</span>
                       </div>
                     ))}
-                    {/* Show signals for this date */}
-                    {visibleSignals.filter(s => s.date === label).map((s, i) => (
-                      <div key={i} className={`mt-1 pt-1 border-t border-border ${s.type === "buy" ? "text-green-400" : "text-red-400"}`}>
+                    {/* Show signals embedded in this data point */}
+                    {signals && signals.map((s, i) => (
+                      <div key={i} className={`mt-1 pt-1 border-t border-border font-semibold ${s.type === "buy" ? "text-green-400" : "text-red-400"}`}>
                         {s.type === "buy" ? "▲ BUY" : "▼ SELL"}: {s.reason}
                       </div>
                     ))}
@@ -343,7 +358,33 @@ export function TechnicalChart({ data }: Props) {
               name="Kurs"
               stroke="hsl(var(--primary))"
               strokeWidth={1.5}
-              dot={false}
+              dot={(props: any) => {
+                const { cx, cy, payload } = props;
+                if (!showSignals || !payload?._signals) return <circle key={`dot-${cx}`} r={0} />;
+                const sig = payload._signals[0];
+                const color = sig.type === "buy" ? "#22c55e" : "#ef4444";
+                return (
+                  <circle
+                    key={`sig-dot-${cx}-${cy}`}
+                    cx={cx}
+                    cy={cy}
+                    r={4}
+                    fill={color}
+                    stroke="#000"
+                    strokeWidth={1}
+                    style={{ cursor: "pointer" }}
+                  />
+                );
+              }}
+              activeDot={(props: any) => {
+                const { cx, cy, payload } = props;
+                if (payload?._signals) {
+                  const sig = payload._signals[0];
+                  const color = sig.type === "buy" ? "#22c55e" : "#ef4444";
+                  return <circle cx={cx} cy={cy} r={6} fill={color} stroke="#fff" strokeWidth={2} />;
+                }
+                return <circle cx={cx} cy={cy} r={3} fill="hsl(var(--primary))" stroke="#fff" strokeWidth={1} />;
+              }}
               isAnimationActive={false}
             />
 
