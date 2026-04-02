@@ -1,11 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import type { StockAnalysis, MADataPoint, MACDDataPoint, TradingSignal } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import {
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis,
-  Tooltip, Legend, ReferenceLine, Area, CartesianGrid,
+  Tooltip, Legend, ReferenceLine, ReferenceArea, Area, CartesianGrid,
 } from "recharts";
-import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X } from "lucide-react";
 
 interface Props {
   data: StockAnalysis;
@@ -35,6 +35,30 @@ export function TechnicalChart({ data }: Props) {
   });
   const [showSignals, setShowSignals] = useState(true);
   const [timeRange, setTimeRange] = useState<"3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y" | "10Y">("1Y");
+
+  // Measurement tool state
+  const [measureMode, setMeasureMode] = useState(false);
+  const [measurePoints, setMeasurePoints] = useState<{ date: string; close: number }[]>([]);
+
+  const handleChartClick = useCallback((e: any) => {
+    if (!measureMode || !e?.activePayload?.[0]) return;
+    const point = e.activePayload[0].payload;
+    if (!point?.date || point.close == null) return;
+    setMeasurePoints(prev => {
+      if (prev.length >= 2) return [{ date: point.date, close: point.close }];
+      return [...prev, { date: point.date, close: point.close }];
+    });
+  }, [measureMode]);
+
+  // Measurement calculation
+  const measurement = useMemo(() => {
+    if (measurePoints.length !== 2) return null;
+    const [a, b] = measurePoints;
+    const diff = b.close - a.close;
+    const pct = (diff / a.close) * 100;
+    const isGain = diff >= 0;
+    return { a, b, diff, pct, isGain };
+  }, [measurePoints]);
 
   if (!ti || !ohlcv || ohlcv.length === 0) {
     return (
@@ -270,7 +294,65 @@ export function TechnicalChart({ data }: Props) {
           {showSignals ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
           Signale
         </button>
+
+        {/* Measure tool toggle */}
+        <button
+          onClick={() => { setMeasureMode(!measureMode); setMeasurePoints([]); }}
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+            measureMode ? "border-amber-500 text-amber-500 bg-amber-500/10" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+          }`}
+          data-testid="toggle-measure"
+        >
+          <Ruler className="w-2.5 h-2.5" />
+          Messen
+        </button>
       </div>
+
+      {/* Measurement instructions / result */}
+      {measureMode && (
+        <div className={`rounded-lg p-2.5 mb-3 border text-[10px] flex items-center justify-between ${
+          measurement
+            ? measurement.isGain ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30"
+            : "bg-amber-500/10 border-amber-500/30"
+        }`}>
+          <div className="flex items-center gap-2">
+            <Ruler className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            {!measurement ? (
+              <span className="text-muted-foreground">
+                {measurePoints.length === 0
+                  ? "Klicke auf den Chart um Punkt A zu setzen"
+                  : "Klicke auf den Chart um Punkt B zu setzen"}
+                {measurePoints.length === 1 && (
+                  <span className="ml-1.5 font-mono text-foreground">
+                    A: {formatDateFull(measurePoints[0].date)} — ${measurePoints[0].close.toFixed(2)}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="font-mono text-muted-foreground">
+                  {formatDateFull(measurement.a.date)} → {formatDateFull(measurement.b.date)}
+                </span>
+                <span className={`font-bold font-mono text-sm ${
+                  measurement.isGain ? "text-emerald-500" : "text-red-500"
+                }`}>
+                  {measurement.isGain ? "+" : ""}{measurement.diff.toFixed(2)} ({measurement.isGain ? "+" : ""}{measurement.pct.toFixed(2)}%)
+                  {measurement.isGain ? " ↑" : " ↓"}
+                </span>
+                <span className="text-muted-foreground font-mono">
+                  ${measurement.a.close.toFixed(2)} → ${measurement.b.close.toFixed(2)}
+                </span>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => { setMeasurePoints([]); setMeasureMode(false); }}
+            className="p-0.5 rounded hover:bg-muted/50 text-muted-foreground shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Golden Cross / Death Cross — scan last 2 years for structural crossover events */}
       {(() => {
@@ -330,9 +412,9 @@ export function TechnicalChart({ data }: Props) {
       })()}
 
       {/* Price Chart with MAs */}
-      <div className="h-[320px] sm:h-[380px] w-full" data-testid="chart-price-ma">
+      <div className={`h-[320px] sm:h-[380px] w-full ${measureMode ? 'cursor-crosshair' : ''}`} data-testid="chart-price-ma">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }} onClick={handleChartClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
             <XAxis
               dataKey="date"
@@ -429,6 +511,44 @@ export function TechnicalChart({ data }: Props) {
                 opacity={0.5}
               />
             ))}
+
+            {/* Measurement overlay */}
+            {measurePoints.length >= 1 && (
+              <ReferenceLine
+                x={measurePoints[0].date}
+                stroke="#f59e0b"
+                strokeDasharray="4 3"
+                strokeWidth={1.5}
+                label={{ value: "A", position: "top", fontSize: 10, fill: "#f59e0b", fontWeight: 700 }}
+              />
+            )}
+            {measurement && (
+              <>
+                <ReferenceArea
+                  x1={measurement.a.date}
+                  x2={measurement.b.date}
+                  fill={measurement.isGain ? "rgba(16, 185, 129, 0.08)" : "rgba(239, 68, 68, 0.08)"}
+                  stroke={measurement.isGain ? "#10b981" : "#ef4444"}
+                  strokeDasharray="4 3"
+                  strokeWidth={1}
+                />
+                <ReferenceLine
+                  x={measurement.b.date}
+                  stroke="#f59e0b"
+                  strokeDasharray="4 3"
+                  strokeWidth={1.5}
+                  label={{ value: "B", position: "top", fontSize: 10, fill: "#f59e0b", fontWeight: 700 }}
+                />
+                <ReferenceLine
+                  y={measurement.a.close}
+                  stroke="#f59e0b"
+                  strokeDasharray="2 4"
+                  strokeWidth={0.5}
+                  opacity={0.4}
+                  segment={[{ x: measurement.a.date, y: measurement.a.close }, { x: measurement.b.date, y: measurement.a.close }]}
+                />
+              </>
+            )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
