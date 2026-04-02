@@ -93,20 +93,34 @@ export const BTC_FALLBACK_DATA: BTCAnalysis = {
     "sigmaAdj": 0.03,
     "mu": 0.0005,
     "threeMonth": {
+      "p5": 40500,
       "p10": 46079.285215408316,
+      "p25": 56000,
       "p50": 66421.5984186999,
+      "p75": 79000,
       "p90": 94772.06568670017,
+      "p95": 105000,
       "mean": 68928.33420674666,
       "probBelow": 48.86,
-      "probAbove120": 26.31
+      "probAbove120": 26.31,
+      "downsideProb10": 22.5,
+      "downsideProb20": 11.3,
+      "histogram": []
     },
     "sixMonth": {
+      "p5": 33000,
       "p10": 39962.826028124204,
+      "p25": 52000,
       "p50": 66697.27120401715,
+      "p75": 86000,
       "p90": 112371.59736018641,
+      "p95": 130000,
       "mean": 72487.6122486988,
       "probBelow": 49,
-      "probAbove120": 33.7
+      "probAbove120": 33.7,
+      "downsideProb10": 28.1,
+      "downsideProb20": 16.4,
+      "histogram": []
     }
   },
   "categories": [

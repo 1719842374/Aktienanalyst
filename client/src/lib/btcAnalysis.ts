@@ -20,6 +20,13 @@ interface MonteCarloResult {
   mean: number;
   probBelow: number;
   probAbove120: number;
+  p5: number;
+  p25: number;
+  p75: number;
+  p95: number;
+  downsideProb10: number;
+  downsideProb20: number;
+  histogram: { bin: string; count: number; midPrice: number }[];
 }
 
 export interface TechChartPoint {
@@ -635,13 +642,32 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
       results.push(ST);
     }
     results.sort((a, b) => a - b);
+    const p5 = results[Math.floor(iterations * 0.05)];
     const p10 = results[Math.floor(iterations * 0.10)];
+    const p25 = results[Math.floor(iterations * 0.25)];
     const p50 = results[Math.floor(iterations * 0.50)];
+    const p75 = results[Math.floor(iterations * 0.75)];
     const p90 = results[Math.floor(iterations * 0.90)];
+    const p95 = results[Math.floor(iterations * 0.95)];
     const mean = results.reduce((s, v) => s + v, 0) / iterations;
     const probBelow = (results.filter(v => v < S0).length / iterations) * 100;
     const probAbove120 = (results.filter(v => v > S0 * 1.2).length / iterations) * 100;
-    return { p10, p50, p90, mean, probBelow, probAbove120 };
+    const downsideProb10 = (results.filter(v => v < S0 * 0.9).length / iterations) * 100;
+    const downsideProb20 = (results.filter(v => v < S0 * 0.8).length / iterations) * 100;
+
+    // Generate histogram bins
+    const binCount = 30;
+    const binMin = results[Math.floor(results.length * 0.02)]; // trim 2% outliers
+    const binMax = results[Math.floor(results.length * 0.98)];
+    const binWidth = (binMax - binMin) / binCount;
+    const histogram = Array.from({ length: binCount }, (_, i) => {
+      const lo = binMin + i * binWidth;
+      const hi = lo + binWidth;
+      const count = results.filter(p => p >= lo && p < (i === binCount - 1 ? Infinity : hi)).length;
+      return { bin: `$${(lo / 1000).toFixed(0)}k`, count, midPrice: lo + binWidth / 2 };
+    });
+
+    return { p5, p10, p25, p50, p75, p90, p95, mean, probBelow, probAbove120, downsideProb10, downsideProb20, histogram };
   }
 
   const mc3M = runMonteCarlo(90);

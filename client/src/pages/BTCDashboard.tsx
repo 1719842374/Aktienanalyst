@@ -17,7 +17,7 @@ import {
 import {
   LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Area, AreaChart, BarChart, Bar,
-  Cell, ReferenceLine, PieChart, Pie, ComposedChart, Legend,
+  Cell, ReferenceLine, ReferenceArea, PieChart, Pie, ComposedChart, Legend,
 } from "recharts";
 
 // === Types ===
@@ -50,8 +50,8 @@ interface BTCAnalysis {
   gws: { gis: number; powerSignal: number; cycleSignal: number; value: number; mu: number; interpretation: string; };
   monteCarlo: {
     sigma: number; sigmaAdj: number; mu: number;
-    threeMonth: { p10: number; p50: number; p90: number; mean: number; probBelow: number; probAbove120: number; };
-    sixMonth: { p10: number; p50: number; p90: number; mean: number; probBelow: number; probAbove120: number; };
+    threeMonth: { p5: number; p10: number; p25: number; p50: number; p75: number; p90: number; p95: number; mean: number; probBelow: number; probAbove120: number; downsideProb10: number; downsideProb20: number; histogram: { bin: string; count: number; midPrice: number; }[]; };
+    sixMonth: { p5: number; p10: number; p25: number; p50: number; p75: number; p90: number; p95: number; mean: number; probBelow: number; probAbove120: number; downsideProb10: number; downsideProb20: number; histogram: { bin: string; count: number; midPrice: number; }[]; };
   };
   categories: { label: string; range: string; probability: number; }[];
   cycleAssessment: { position: string; entryPoint: string; halvingCatalyst: string; };
@@ -396,88 +396,214 @@ function Section5GWS({ data }: { data: BTCAnalysis }) {
 function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
   const mc = data.monteCarlo;
   const fmt = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  const pctChange = (val: number) => {
+    const pct = ((val - data.btcPrice) / data.btcPrice) * 100;
+    return pct >= 0 ? `+${pct.toFixed(1)}%` : `${pct.toFixed(1)}%`;
+  };
 
-  const distData3M = [
-    { name: "P10", value: mc.threeMonth.p10, fill: "#ef4444" },
-    { name: "P50", value: mc.threeMonth.p50, fill: "#3b82f6" },
-    { name: "Mean", value: mc.threeMonth.mean, fill: "#8b5cf6" },
-    { name: "P90", value: mc.threeMonth.p90, fill: "#22c55e" },
-  ];
+  type MCHorizon = "3M" | "6M";
+  const [horizon, setHorizon] = useState<MCHorizon>("3M");
+  const [showParams, setShowParams] = useState(false);
 
-  const distData6M = [
-    { name: "P10", value: mc.sixMonth.p10, fill: "#ef4444" },
-    { name: "P50", value: mc.sixMonth.p50, fill: "#3b82f6" },
-    { name: "Mean", value: mc.sixMonth.mean, fill: "#8b5cf6" },
-    { name: "P90", value: mc.sixMonth.p90, fill: "#22c55e" },
-  ];
+  const active = horizon === "3M" ? mc.threeMonth : mc.sixMonth;
+  const horizonLabel = horizon === "3M" ? "3 Monate (T=90)" : "6 Monate (T=180)";
+  const horizonDays = horizon === "3M" ? 90 : 180;
+
+  // Downside probability visual bar
+  const downsideWidth = Math.min(active.probBelow, 100);
+  const upsideWidth = 100 - downsideWidth;
 
   return (
     <SectionCard number={6} title="Monte Carlo Simulation">
       <div className="space-y-4">
-        <div className="grid grid-cols-3 gap-3">
-          <MetricCard label="σ (Basis)" value={mc.sigma.toFixed(4)} />
-          <MetricCard label="σ (adjustiert)" value={mc.sigmaAdj.toFixed(4)} />
-          <MetricCard label="μ (Drift)" value={mc.mu.toFixed(4)} />
+        {/* GBM Formula reference */}
+        <div className="bg-muted/20 rounded-lg p-2 border border-border text-center">
+          <span className="text-[10px] font-mono text-muted-foreground">
+            S(T) = S₀ × exp((μ − σ²/2) × T + σ × √T × Z) &nbsp;|&nbsp; Z ~ N(0,1) &nbsp;|&nbsp; 10.000 Iterationen
+          </span>
         </div>
 
-        <div className="bg-muted/20 rounded-lg p-3 border border-border space-y-3">
-          <div className="text-xs font-medium text-foreground">3-Monats-Prognose (T=90)</div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <MetricCard label="P10 (pessimist.)" value={fmt(mc.threeMonth.p10)} color="text-red-500" />
-            <MetricCard label="P50 (Median)" value={fmt(mc.threeMonth.p50)} color="text-blue-500" />
-            <MetricCard label="Mean" value={fmt(mc.threeMonth.mean)} color="text-purple-500" />
-            <MetricCard label="P90 (optimist.)" value={fmt(mc.threeMonth.p90)} color="text-emerald-500" />
+        {/* Horizon toggle + Parameter toggle */}
+        <div className="flex items-center justify-between">
+          <div className="flex rounded-md border border-border overflow-hidden">
+            {(["3M", "6M"] as const).map(h => (
+              <button
+                key={h}
+                onClick={() => setHorizon(h)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  horizon === h ? "bg-primary text-primary-foreground" : "hover:bg-muted/50"
+                }`}
+              >
+                {h === "3M" ? "3 Monate" : "6 Monate"}
+              </button>
+            ))}
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <MetricCard label="P(< aktueller Preis)" value={`${mc.threeMonth.probBelow.toFixed(1)}%`} />
-            <MetricCard label="P(> +20%)" value={`${mc.threeMonth.probAbove120.toFixed(1)}%`} />
-          </div>
-
-          <ResponsiveContainer width="100%" height={80}>
-            <BarChart data={distData3M}>
-              <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-              <YAxis hide />
-              <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => fmt(v)} />
-              <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                {distData3M.map((d, i) => <Cell key={i} fill={d.fill} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          <button
+            onClick={() => setShowParams(!showParams)}
+            className={`text-[10px] px-2.5 py-1 rounded border transition-colors ${
+              showParams ? "border-amber-500/50 text-amber-500 bg-amber-500/10" : "border-border text-muted-foreground hover:bg-muted/50"
+            }`}
+          >
+            {showParams ? "Parameter ausblenden" : "Parameter anzeigen"}
+          </button>
         </div>
 
-        <div className="bg-muted/20 rounded-lg p-3 border border-border space-y-3">
-          <div className="text-xs font-medium text-foreground">6-Monats-Prognose (T=180)</div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <MetricCard label="P10 (pessimist.)" value={fmt(mc.sixMonth.p10)} color="text-red-500" />
-            <MetricCard label="P50 (Median)" value={fmt(mc.sixMonth.p50)} color="text-blue-500" />
-            <MetricCard label="Mean" value={fmt(mc.sixMonth.mean)} color="text-purple-500" />
-            <MetricCard label="P90 (optimist.)" value={fmt(mc.sixMonth.p90)} color="text-emerald-500" />
+        {/* Collapsible parameter details */}
+        {showParams && (
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <MetricCard label="Startkurs (S₀)" value={fmt(data.btcPrice)} />
+            <MetricCard label="μ (Drift)" value={mc.mu.toFixed(4)} />
+            <MetricCard label="σ (Basis)" value={mc.sigma.toFixed(4)} />
+            <MetricCard label="σ (adjustiert)" value={mc.sigmaAdj.toFixed(4)} subValue={mc.sigmaAdj > mc.sigma ? "×1.2 late-cycle" : "×1.0"} />
+            <MetricCard label="Horizont" value={`${horizonDays}d`} subValue={horizonLabel} />
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <MetricCard label="P(< aktueller Preis)" value={`${mc.sixMonth.probBelow.toFixed(1)}%`} />
-            <MetricCard label="P(> +20%)" value={`${mc.sixMonth.probAbove120.toFixed(1)}%`} />
-          </div>
+        )}
 
-          <ResponsiveContainer width="100%" height={80}>
-            <BarChart data={distData6M}>
-              <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-              <YAxis hide />
-              <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => fmt(v)} />
-              <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                {distData6M.map((d, i) => <Cell key={i} fill={d.fill} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+        {/* DOWNSIDE-WAHRSCHEINLICHKEIT box */}
+        <div className="bg-muted/20 rounded-lg p-3 border border-border space-y-2.5">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Downside-Wahrscheinlichkeit ({horizon})</div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-muted/30 border border-border rounded-lg p-2.5 text-center">
+              <div className="text-[9px] text-muted-foreground">P(Verlust) S(T) &lt; S(0)</div>
+              <div className="text-lg font-bold font-mono tabular-nums mt-0.5 text-red-500">{active.probBelow.toFixed(1)}%</div>
+            </div>
+            <div className="bg-muted/30 border border-border rounded-lg p-2.5 text-center">
+              <div className="text-[9px] text-muted-foreground">P(≥10% Verlust)</div>
+              <div className="text-lg font-bold font-mono tabular-nums mt-0.5 text-red-500">{active.downsideProb10.toFixed(1)}%</div>
+            </div>
+            <div className="bg-muted/30 border border-border rounded-lg p-2.5 text-center">
+              <div className="text-[9px] text-muted-foreground">P(≥20% Verlust)</div>
+              <div className="text-lg font-bold font-mono tabular-nums mt-0.5 text-red-500">{active.downsideProb20.toFixed(1)}%</div>
+            </div>
+          </div>
+          {/* Probability bar */}
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] text-red-500 font-medium w-16 text-right">Downside</span>
+            <div className="flex-1 h-3 rounded-full overflow-hidden flex">
+              <div className="h-full bg-red-500/60 transition-all" style={{ width: `${downsideWidth}%` }} />
+              <div className="h-full bg-emerald-500/60 transition-all" style={{ width: `${upsideWidth}%` }} />
+            </div>
+            <span className="text-[9px] text-emerald-500 font-medium w-16">Upside</span>
+          </div>
+          <div className="flex justify-between text-[9px] text-muted-foreground font-mono">
+            <span>{active.probBelow.toFixed(1)}% Verlust</span>
+            <span>{(100 - active.probBelow).toFixed(1)}% Gewinn</span>
+          </div>
         </div>
 
+        {/* Results KPIs */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <MetricCard
+            label="Mean (Erwartungswert)"
+            value={fmt(active.mean)}
+            subValue={pctChange(active.mean)}
+            color="text-purple-500"
+          />
+          <MetricCard
+            label="P10 (Bearish)"
+            value={fmt(active.p10)}
+            subValue={pctChange(active.p10)}
+            color="text-red-500"
+          />
+          <MetricCard
+            label="P50 (Median)"
+            value={fmt(active.p50)}
+            subValue={pctChange(active.p50)}
+            color="text-blue-500"
+          />
+          <MetricCard
+            label="P90 (Bullish)"
+            value={fmt(active.p90)}
+            subValue={pctChange(active.p90)}
+            color="text-emerald-500"
+          />
+        </div>
+
+        {/* Extended Percentiles */}
+        <div className="bg-muted/20 rounded-lg p-3 border border-border space-y-2">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Erweiterte Perzentile ({horizon})</div>
+          <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+            {[
+              { label: "P5", value: active.p5, color: "text-red-600" },
+              { label: "P10", value: active.p10, color: "text-red-500" },
+              { label: "P25", value: active.p25, color: "text-orange-500" },
+              { label: "P50", value: active.p50, color: "text-blue-500" },
+              { label: "P75", value: active.p75, color: "text-lime-500" },
+              { label: "P90", value: active.p90, color: "text-emerald-500" },
+              { label: "P95", value: active.p95, color: "text-emerald-600" },
+            ].map(p => (
+              <div key={p.label} className="bg-muted/30 border border-border rounded-lg p-2 text-center">
+                <div className="text-[9px] text-muted-foreground font-medium">{p.label}</div>
+                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${p.color}`}>{fmt(p.value)}</div>
+                <div className="text-[9px] text-muted-foreground font-mono">{pctChange(p.value)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Histogram */}
+        {active.histogram.length > 0 && (
+          <div className="bg-muted/20 rounded-lg p-3 border border-border space-y-2">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+              Preisverteilung — {horizonLabel}
+            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <BarChart data={active.histogram} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
+                <XAxis
+                  dataKey="bin"
+                  tick={{ fontSize: 8 }}
+                  interval={Math.max(0, Math.floor(active.histogram.length / 8) - 1)}
+                  angle={-30}
+                  textAnchor="end"
+                  height={35}
+                />
+                <YAxis hide />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  formatter={(v: number, _: string, props: any) => {
+                    const mid = props?.payload?.midPrice;
+                    return [
+                      `${v.toLocaleString()} Pfade${mid ? ` (≈${fmt(mid)})` : ""}`,
+                      "Häufigkeit"
+                    ];
+                  }}
+                />
+                <Bar dataKey="count" radius={[2, 2, 0, 0]} isAnimationActive={false}>
+                  {active.histogram.map((d, i) => (
+                    <Cell
+                      key={i}
+                      fill={d.midPrice < data.btcPrice ? "rgba(239, 68, 68, 0.6)" : "rgba(34, 197, 94, 0.6)"}
+                    />
+                  ))}
+                </Bar>
+                <ReferenceLine
+                  x={active.histogram.findIndex(h => h.midPrice >= data.btcPrice)}
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  strokeDasharray="4 2"
+                  label={{ value: "Aktuell", position: "top", fontSize: 9, fill: "#f59e0b" }}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+            <div className="flex justify-between text-[9px] text-muted-foreground px-1">
+              <span className="text-red-500">← Verlust-Szenarien</span>
+              <span className="text-amber-500">Aktueller Preis: {fmt(data.btcPrice)}</span>
+              <span className="text-emerald-500">Gewinn-Szenarien →</span>
+            </div>
+          </div>
+        )}
+
+        {/* RechenWeg */}
         <RechenWeg
-          title="Monte Carlo Parameter"
+          title="Monte Carlo GBM — Rechenweg"
           steps={[
-            `10.000 Iterationen (GBM)`,
-            `S(T) = S₀ × exp((μ - σ²/2) × T + σ × √T × Z)`,
-            `σ_basis = ${mc.sigma}, σ_adj = ${mc.sigmaAdj} (×${mc.sigmaAdj > mc.sigma ? "1.2 late-cycle" : "1.0"})`,
-            `μ = ${mc.mu.toFixed(4)}`,
+            `Modell: Geometric Brownian Motion (GBM)`,
+            `S(T) = S₀ × exp((μ - σ²/2) × T + σ × √T × Z), Z ~ N(0,1)`,
             `S₀ = $${data.btcPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}`,
+            `σ_basis = ${mc.sigma.toFixed(4)}, σ_adj = ${mc.sigmaAdj.toFixed(4)} (×${mc.sigmaAdj > mc.sigma ? "1.2 late-cycle Aufschlag" : "1.0 — keine Anpassung"})`,
+            `μ = ${mc.mu.toFixed(4)} (gewichteter Drift aus GWS)`,
+            `10.000 Iterationen, Horizont T = ${horizonDays} Tage`,
+            `Histogramm: 30 Bins, 2% Ausreißer-Trimming`,
           ]}
         />
       </div>
@@ -694,6 +820,11 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
   });
   const [showSignals, setShowSignals] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
+
+  // Measurement tool state
+  const [isMeasuring, setIsMeasuring] = useState(false);
+  const [measureStart, setMeasureStart] = useState<{ date: string; price: number } | null>(null);
+  const [measureEnd, setMeasureEnd] = useState<{ date: string; price: number } | null>(null);
 
   const fullChart = data.technicalChartFull || data.technicalChart || [];
 
@@ -1049,12 +1180,75 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
             {o.label}
           </button>
         ))}
+
+        {/* Measurement tool toggle */}
+        <span className="text-muted-foreground/30 self-center mx-1">|</span>
+        <button
+          onClick={() => {
+            if (isMeasuring) { setIsMeasuring(false); setMeasureStart(null); setMeasureEnd(null); }
+            else { setIsMeasuring(true); setMeasureStart(null); setMeasureEnd(null); }
+          }}
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+            isMeasuring
+              ? "border-amber-500 text-amber-500 bg-amber-500/10"
+              : "border-border text-muted-foreground opacity-60 hover:opacity-80"
+          }`}
+        >
+          📐 Messen
+        </button>
+        {measureStart && measureEnd && (
+          <button
+            onClick={() => { setMeasureStart(null); setMeasureEnd(null); }}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-border text-muted-foreground opacity-60 hover:opacity-80"
+          >
+            ✕ Zurücksetzen
+          </button>
+        )}
       </div>
 
+      {/* Measurement result overlay */}
+      {measureStart && measureEnd && (() => {
+        const priceDiff = measureEnd.price - measureStart.price;
+        const pctChange = ((priceDiff / measureStart.price) * 100);
+        const isGain = priceDiff >= 0;
+        const startDateFmt = new Date(measureStart.date + "T00:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
+        const endDateFmt = new Date(measureEnd.date + "T00:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
+        return (
+          <div className={`rounded-lg px-3 py-2 mb-2 border flex items-center gap-3 text-xs ${
+            isGain ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30"
+          }`}>
+            <div className="text-[10px] text-muted-foreground">{startDateFmt} → {endDateFmt}</div>
+            <div className={`font-bold font-mono tabular-nums ${isGain ? "text-emerald-500" : "text-red-500"}`}>
+              {isGain ? "+" : ""}{pctChange.toFixed(2)}% {isGain ? "↑" : "↓"}
+            </div>
+            <div className={`font-mono tabular-nums text-[10px] ${isGain ? "text-emerald-400" : "text-red-400"}`}>
+              ({isGain ? "+" : ""}${Math.abs(priceDiff).toLocaleString("en-US", { maximumFractionDigits: 0 })})
+            </div>
+            <div className="text-[9px] text-muted-foreground ml-auto">
+              A: ${measureStart.price.toLocaleString("en-US", { maximumFractionDigits: 0 })} → B: ${measureEnd.price.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Price Chart with MAs + BTC overlays */}
-      <div className="h-[320px] sm:h-[380px] w-full">
+      <div className={`h-[320px] sm:h-[380px] w-full ${isMeasuring ? "cursor-crosshair" : ""}`}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <ComposedChart
+            data={chartData}
+            margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+            onClick={(e: any) => {
+              if (!isMeasuring || !e?.activePayload?.[0]?.payload) return;
+              const point = e.activePayload[0].payload;
+              const clicked = { date: point.date, price: point.price };
+              if (!measureStart || (measureStart && measureEnd)) {
+                setMeasureStart(clicked);
+                setMeasureEnd(null);
+              } else {
+                setMeasureEnd(clicked);
+              }
+            }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
             <XAxis
               dataKey="date"
@@ -1146,6 +1340,25 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
                 opacity={0.5}
               />
             ))}
+
+            {/* Measurement markers */}
+            {measureStart && (
+              <ReferenceLine x={measureStart.date} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" />
+            )}
+            {measureEnd && (
+              <ReferenceLine x={measureEnd.date} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" />
+            )}
+            {measureStart && measureEnd && (
+              <ReferenceArea
+                x1={measureStart.date < measureEnd.date ? measureStart.date : measureEnd.date}
+                x2={measureStart.date < measureEnd.date ? measureEnd.date : measureStart.date}
+                fill="#f59e0b"
+                fillOpacity={0.08}
+                stroke="#f59e0b"
+                strokeOpacity={0.3}
+                strokeDasharray="3 3"
+              />
+            )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -1333,7 +1546,7 @@ function FearGreedGauge({ value, label }: { value: number; label: string }) {
 
   return (
     <div className="flex flex-col items-center">
-      <svg viewBox="0 0 300 160" className="w-full max-w-xs h-auto">
+      <svg viewBox="0 0 300 185" className="w-full max-w-xs h-auto">
         {/* Colored arc segments */}
         {segments.map((seg, i) => (
           <path
