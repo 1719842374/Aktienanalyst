@@ -365,9 +365,17 @@ export function Section5({ data }: Props) {
             warnings.push('Patent-Cliff-Risiko: Generika/Biosimilar-Konkurrenz bei Patentablauf.');
           }
         }
-        // SaaS / Software: AI disruption
-        if (ind.includes('software') || ind.includes('saas') || desc.includes('cloud') || desc.includes('subscription')) {
+        // SaaS / Software: AI disruption (use specific phrases to avoid matching brand names like "Cloudy Bay")
+        const hasSoftwareCore = ind.includes('software') || ind.includes('saas') ||
+          desc.includes('cloud computing') || desc.includes('cloud platform') || desc.includes('cloud services') ||
+          desc.includes('software-as-a-service') || (desc.includes('subscription') && sect.includes('tech'));
+        if (hasSoftwareCore) {
           warnings.push('KI-Disruption: AI-Agenten können Software-Margen durch Automatisierung und Commoditisierung erodieren.');
+        }
+        // Consumer Cyclical / Luxury: demand risk
+        if ((sect.includes('consumer') && (sect.includes('cycl') || sect.includes('discr'))) &&
+            (ind.includes('luxury') || ind.includes('fashion') || ind.includes('apparel'))) {
+          warnings.push('Zyklisches Konsumrisiko: Luxusgüter-Nachfrage stark abhängig von China-Konjunktur, Vermögenseffekten und Konsumsentiment.');
         }
         // Negative FCF
         if (data.fcfTTM < 0) {

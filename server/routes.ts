@@ -94,15 +94,30 @@ function parseCSVFromUrl(csvUrl: string): Record<string, string>[] {
 // === Effective Sector Classification ===
 // Some companies are misclassified by data providers (e.g. AMZN = "Consumer Cyclical / Specialty Retail")
 // but have major tech/cloud segments. Detect and reclassify based on description keywords.
+// IMPORTANT: Use word-boundary-aware matching to avoid false positives (e.g. "Cloudy Bay" wine ≠ "cloud computing").
 function getEffectiveSector(sector: string, industry: string, description: string): { sector: string; industry: string; isHybrid: boolean; hybridNote: string } {
   const s = sector.toLowerCase();
   const ind = industry.toLowerCase();
   const desc = description.toLowerCase();
 
+  // Helper: match whole tech-relevant phrases only (not substrings within brand names)
+  const techPhrases = [
+    "cloud computing", "cloud platform", "cloud infrastructure", "cloud services",
+    "amazon web services", "\\baws\\b", "\\bazure\\b",
+    "artificial intelligence", "machine learning",
+    "streaming service", "streaming platform", "video streaming",
+    "software-as-a-service", "\\bsaas\\b",
+    "data center", "digital advertising platform",
+  ];
+  const hasTechCore = techPhrases.some(phrase => {
+    if (phrase.includes("\\")) {
+      return new RegExp(phrase, "i").test(desc);
+    }
+    return desc.includes(phrase);
+  });
+
   // AMZN-like: classified as Consumer Cyclical but has major cloud/tech business
-  if ((s.includes("consumer") && (s.includes("cycl") || s.includes("discr"))) &&
-      (desc.includes("cloud") || desc.includes("aws") || desc.includes("web services") ||
-       desc.includes("artificial intelligence") || desc.includes("streaming"))) {
+  if ((s.includes("consumer") && (s.includes("cycl") || s.includes("discr"))) && hasTechCore) {
     return {
       sector: "Technology",
       industry: industry + " / Cloud & Tech Platform",
@@ -112,8 +127,9 @@ function getEffectiveSector(sector: string, industry: string, description: strin
   }
 
   // META/GOOG: Communication Services but really tech
-  if (s.includes("commun") && (desc.includes("artificial intelligence") || desc.includes("digital advertising") ||
-      desc.includes("social") || desc.includes("search engine") || desc.includes("metaverse"))) {
+  const socialTechPhrases = ["artificial intelligence", "digital advertising", "social network", "search engine", "metaverse"];
+  const hasSocialTech = socialTechPhrases.some(p => desc.includes(p));
+  if (s.includes("commun") && hasSocialTech) {
     return {
       sector: "Technology",
       industry: industry + " / Tech Platform",
@@ -174,6 +190,19 @@ function getSectorDefaults(sector: string, industry: string): {
       sectorAvgPE: 12, sectorAvgEVEBITDA: 6, sectorAvgPEG: 1.0,
     };
   } else if (s.includes("consumer") && (s.includes("discr") || s.includes("cycl"))) {
+    // Sub-classify: Luxury vs general consumer cyclical
+    const i = industry.toLowerCase();
+    const isLuxury = i.includes("luxury") || i.includes("apparel") || i.includes("fashion");
+    if (isLuxury) {
+      return {
+        waccScenarios: { kons: 9.5, avg: 8.0, opt: 6.5 },
+        growthAssumptions: { g1: 8, g2: 6, terminal: 2.5 },
+        cycleClass: "Cyclical – Luxury / Aspirational Spend",
+        politicalCycle: "Moderate – tariffs, China demand, wealth effects",
+        sectorMaxDrawdown: 40,
+        sectorAvgPE: 25, sectorAvgEVEBITDA: 16, sectorAvgPEG: 1.8,
+      };
+    }
     return {
       waccScenarios: { kons: 10.0, avg: 8.5, opt: 7.0 },
       growthAssumptions: { g1: 12, g2: 8, terminal: 3 },
@@ -336,6 +365,43 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       einpreisungsgrad: 20,
       nettoUpside: 0, gb: 0,
     });
+  } else if (s.includes("consumer") && (s.includes("cycl") || s.includes("discr"))) {
+    const isLuxury = ind.includes("luxury") || ind.includes("apparel") || ind.includes("fashion");
+    if (isLuxury) {
+      catalysts.push({
+        name: "China / Asia Demand Recovery",
+        timeline: "6-18M",
+        pos: 40,
+        bruttoUpside: 15,
+        einpreisungsgrad: 30,
+        nettoUpside: 0, gb: 0,
+      });
+      catalysts.push({
+        name: "Pricing Power / Brand Elevation",
+        timeline: "12-24M",
+        pos: 55,
+        bruttoUpside: 10,
+        einpreisungsgrad: 40,
+        nettoUpside: 0, gb: 0,
+      });
+    } else {
+      catalysts.push({
+        name: "Consumer Confidence Recovery",
+        timeline: "6-18M",
+        pos: 45,
+        bruttoUpside: 12,
+        einpreisungsgrad: 35,
+        nettoUpside: 0, gb: 0,
+      });
+      catalysts.push({
+        name: "E-Commerce / DTC Growth",
+        timeline: "12-24M",
+        pos: 50,
+        bruttoUpside: 10,
+        einpreisungsgrad: 30,
+        nettoUpside: 0, gb: 0,
+      });
+    }
   } else {
     catalysts.push({
       name: "Market Share Gains",
@@ -432,6 +498,21 @@ function generateRisks(sector: string, beta: number, govExposure: number): Risk[
       category: "Binary",
       ew: 20,
       impact: 35,
+      expectedDamage: 0,
+    });
+  } else if (s.includes("consumer") && (s.includes("cycl") || s.includes("discr"))) {
+    risks.push({
+      name: "Consumer Spending Slowdown / China Weakness",
+      category: "Gradual",
+      ew: 30,
+      impact: 20,
+      expectedDamage: 0,
+    });
+    risks.push({
+      name: "Brand Dilution / Competitive Shift",
+      category: "Gradual",
+      ew: 15,
+      impact: 15,
       expectedDamage: 0,
     });
   } else {
@@ -1404,6 +1485,7 @@ function generateCatalystReasoning(
   }
 
   // Sector-specific
+  const ind = industry.toLowerCase();
   if (s.includes("tech")) {
     reasons.push("AI-Monetarisierungszyklus bietet strukturellen Rückenwind für Tech-Plattformen");
     drivers.push("AI / Cloud Tailwind");
@@ -1416,6 +1498,17 @@ function generateCatalystReasoning(
   } else if (s.includes("energy")) {
     reasons.push("Energy Security Focus und Transition Investment bieten duales Exposure");
     drivers.push("Energy Transition");
+  } else if (s.includes("consumer") && (s.includes("cycl") || s.includes("discr"))) {
+    if (ind.includes("luxury") || ind.includes("fashion") || ind.includes("apparel")) {
+      reasons.push("Luxusgüter-Nachfrage erholungspotenzial in China/Asien und Premiumisierungs-Trend");
+      drivers.push("Luxury Demand Recovery");
+    } else {
+      reasons.push("Consumer Spending Recovery und E-Commerce-Durchdringung als Wachstumstreiber");
+      drivers.push("Consumer Recovery");
+    }
+  } else if (s.includes("industrial")) {
+    reasons.push("Infrastruktur-Investitionszyklen und Automatisierungstrend bieten säkularen Rückenwind");
+    drivers.push("Capex Cycle");
   }
 
   if (reasons.length === 0) {
@@ -2202,8 +2295,12 @@ export async function registerRoutes(server: Server, app: Express) {
         growthThesis += " Katalysator: Zinsnormalisierung verbessert Net Interest Income. Digitalisierung (FinTech-Integration, KI-gestützte Risikomodelle) senkt Cost-to-Income Ratio. Aktienrückkäufe stützen EPS-Wachstum.";
       } else if (sLower.includes("energy")) {
         growthThesis += " Katalysator: Energy Security-Investments und Transition-Projekte (LNG, Renewables) diversifizieren Umsatz. Hohe FCF-Generierung bei stabilen Commodity-Preisen ermöglicht Schuldenabbau und Dividendenwachstum.";
-      } else if (sLower.includes("consumer") && sLower.includes("discr")) {
-        growthThesis += " Katalysator: E-Commerce-Penetration, Direct-to-Consumer-Ausbau und Pricing Power durch Markenstärke. Internationale Expansion in Emerging Markets bietet Volumenwachstum.";
+      } else if (sLower.includes("consumer") && (sLower.includes("discr") || sLower.includes("cycl"))) {
+        if (indLower.includes("luxury") || indLower.includes("fashion") || indLower.includes("apparel")) {
+          growthThesis += " Katalysator: China/Asia-Nachfrageerholung, Premiumisierung und Pricing Power durch ikonische Markenportfolios. Direct-to-Consumer-Ausbau erhöht Margen. Wealth-Effekt bei steigenden Vermögenspreisen stützt Luxus-Nachfrage.";
+        } else {
+          growthThesis += " Katalysator: E-Commerce-Penetration, Direct-to-Consumer-Ausbau und Pricing Power durch Markenstärke. Internationale Expansion in Emerging Markets bietet Volumenwachstum.";
+        }
       } else if (sLower.includes("industrial")) {
         growthThesis += " Katalysator: Infrastruktur-Investitionsprogramme (IRA, EU Green Deal), Automatisierung/Robotik-Adoption und Reshoring-Trends erhöhen Auftragsvolumen. Operative Effizienzgewinne durch Digitalisierung.";
       } else if (indLower.includes("auto") || indLower.includes("vehicle")) {
@@ -2430,16 +2527,36 @@ export async function registerRoutes(server: Server, app: Express) {
         }
       }
 
-      // === Structural trends ===
+      // === Structural trends (derived from effective sector, not hardcoded) ===
       const structuralTrends = [];
-      if (sector.toLowerCase().includes("tech")) {
+      const sLow = sector.toLowerCase();
+      const indLow = industry.toLowerCase();
+      if (sLow.includes("tech")) {
         structuralTrends.push("AI/ML adoption acceleration", "Cloud migration tailwind", "Digital transformation spend");
-      } else if (sector.toLowerCase().includes("health")) {
+      } else if (sLow.includes("health")) {
         structuralTrends.push("Aging demographics", "Biotech innovation cycle", "Healthcare digitization");
-      } else if (sector.toLowerCase().includes("financ")) {
+      } else if (sLow.includes("financ")) {
         structuralTrends.push("Fintech disruption/adoption", "Rate normalization cycle", "Digital banking shift");
-      } else if (sector.toLowerCase().includes("energy")) {
+      } else if (sLow.includes("energy")) {
         structuralTrends.push("Energy transition", "Electrification trend", "Energy security focus");
+      } else if (sLow.includes("consumer") && (sLow.includes("cycl") || sLow.includes("discr"))) {
+        if (indLow.includes("luxury") || indLow.includes("apparel") || indLow.includes("fashion")) {
+          structuralTrends.push("China/Asia luxury demand recovery", "Premiumization & aspirational spending", "Direct-to-Consumer & digital retail");
+        } else {
+          structuralTrends.push("E-Commerce penetration growth", "Consumer confidence recovery", "DTC channel expansion");
+        }
+      } else if (sLow.includes("consumer") && (sLow.includes("stapl") || sLow.includes("defens"))) {
+        structuralTrends.push("Premiumization in staples", "Emerging market middle class growth", "Health & wellness trend");
+      } else if (sLow.includes("industrial")) {
+        structuralTrends.push("Infrastructure investment cycle", "Automation & reshoring", "Electrification of industry");
+      } else if (sLow.includes("real estate")) {
+        structuralTrends.push("Urbanization trend", "Data center / logistics demand", "Interest rate normalization");
+      } else if (sLow.includes("util")) {
+        structuralTrends.push("Clean energy transition", "Grid modernization", "Regulated returns stability");
+      } else if (sLow.includes("commun")) {
+        structuralTrends.push("Digital content consumption", "Advertising shift to digital", "5G/Connectivity build-out");
+      } else if (sLow.includes("material") || sLow.includes("basic")) {
+        structuralTrends.push("Green metals demand (EV/battery)", "Infrastructure super-cycle", "Supply chain reshoring");
       } else {
         structuralTrends.push("Market consolidation", "Operating efficiency gains", "Geographic expansion");
       }
