@@ -269,7 +269,109 @@ function getSectorDefaults(sector: string, industry: string): {
 }
 
 // === Generate catalysts from real data ===
-function generateCatalysts(sector: string, industry: string, growthRate: number, fcfMargin: number): Catalyst[] {
+// Generate company-specific catalyst context from description and financials
+function generateCatalystContext(
+  catalystName: string, sector: string, industry: string, description: string,
+  growthRate: number, fcfMargin: number, revenue: number
+): string {
+  const s = sector.toLowerCase();
+  const ind = industry.toLowerCase();
+  const desc = description.toLowerCase();
+  const revB = revenue > 0 ? `$${(revenue / 1e9).toFixed(1)}B` : '';
+  const gr = growthRate.toFixed(1);
+
+  // Extract key business keywords from description for context
+  const hasCloud = desc.includes('cloud computing') || desc.includes('cloud platform') || desc.includes('cloud services') || desc.includes('azure') || desc.includes('aws');
+  const hasAI = desc.includes('artificial intelligence') || desc.includes('machine learning') || desc.includes('copilot') || desc.includes('azure') || desc.includes('openai') || desc.includes('generative ai');
+  const hasSaaS = desc.includes('software') || desc.includes('subscription') || desc.includes('saas');
+  const hasPharmaPipeline = desc.includes('clinical') || desc.includes('fda') || desc.includes('pipeline') || desc.includes('drug');
+  const hasLuxury = ind.includes('luxury') || desc.includes('luxury') || desc.includes('fashion') || desc.includes('premium');
+  const hasDefense = desc.includes('defense') || desc.includes('military') || desc.includes('government') || desc.includes('aerospace');
+  const hasRetail = desc.includes('retail') || desc.includes('store') || desc.includes('e-commerce') || desc.includes('online');
+  const hasEV = desc.includes('electric vehicle') || desc.includes('battery') || desc.includes('ev ');
+  const hasStreaming = desc.includes('streaming') || desc.includes('content') || desc.includes('subscriber');
+  const hasBank = ind.includes('bank') || desc.includes('banking') || desc.includes('deposit') || desc.includes('loan');
+  const hasInsurance = ind.includes('insurance') || desc.includes('insurance') || desc.includes('underwriting');
+  const hasOilGas = desc.includes('oil') || desc.includes('gas') || desc.includes('petroleum') || desc.includes('refin');
+  const hasRenewable = desc.includes('renewable') || desc.includes('solar') || desc.includes('wind energy');
+  const hasLaunch = desc.includes('launch') || desc.includes('rocket') || desc.includes('space');
+  const hasSemiconductor = desc.includes('semiconductor') || desc.includes('chip') || desc.includes('wafer') || desc.includes('gpu');
+
+  switch (catalystName) {
+    case 'Revenue Growth Acceleration': {
+      if (hasCloud && hasAI) return `Cloud- & AI-Monetarisierung müssen organisches Wachstum über ${gr}% hinaus beschleunigen. Voraussetzung: Steigende Adoption von AI-Services (Copilot, AI-APIs), wachsende Cloud-Workloads und Expansion in neue Enterprise-Segmente. Revenue-Basis: ${revB}.`;
+      if (hasCloud) return `Cloud-Workload-Migration und Platform-Adoption müssen Wachstum über ${gr}% treiben. Cross-Selling bestehender Enterprise-Kunden und Erschließung neuer Verticals als Hebel. Revenue-Basis: ${revB}.`;
+      if (hasSaaS) return `Subscription-Revenue muss durch Net-Expansion (Upselling, Seat-Growth) und Neukundengewinnung beschleunigt werden. Ziel: NRR >120% und organisches Wachstum über ${gr}%. Revenue-Basis: ${revB}.`;
+      if (hasPharmaPipeline) return `Pipeline-Fortschritte und neue Indikationen müssen Revenue-Wachstum über ${gr}% beschleunigen. Voraussetzung: Erfolgreiche Phase-3-Daten, FDA-Zulassungen und kommerzielle Launches in Schlüsselmärkten.`;
+      if (hasLuxury) return `Organisches Wachstum muss über ${gr}% beschleunigen durch China/Asia-Nachfrageerholung, Preiserhöhungen und Expansion in aufstrebende Luxusmärkte (Indien, Südostasien). Revenue-Basis: ${revB}.`;
+      if (hasDefense || hasLaunch) return `Auftragsvolumen und Backlog-Conversion müssen Revenue-Wachstum über ${gr}% treiben. Voraussetzung: Neue Regierungsaufträge, Programmstarts und internationale Expansion. Revenue-Basis: ${revB}.`;
+      if (hasSemiconductor) return `Chip-Nachfrage muss durch AI-Infrastruktur-Ausbau, Datacenter-Investments und neue Produktgenerationen Wachstum über ${gr}% beschleunigen. Revenue-Basis: ${revB}.`;
+      if (hasRetail) return `Same-Store-Sales und E-Commerce-Penetration müssen organisches Wachstum über ${gr}% treiben. Voraussetzung: Steigende Konsumausgaben und Marktanteilsgewinne. Revenue-Basis: ${revB}.`;
+      if (hasBank) return `Zins- und Provisionserträge müssen Revenue-Wachstum über ${gr}% treiben. Voraussetzung: Kreditwachstum, NIM-Expansion und Cross-Selling von Wealth-Management-Produkten.`;
+      if (hasOilGas) return `Produktionsvolumen und Commodity-Preise müssen Revenue-Wachstum über ${gr}% ermöglichen. Voraussetzung: Stabile/steigende Ölpreise und Effizienzgewinne in der Förderung.`;
+      return `Organisches Revenue-Wachstum muss über ${gr}% beschleunigt werden durch Marktanteilsgewinne, Produktinnovation und geografische Expansion. Revenue-Basis: ${revB}.`;
+    }
+    case 'Margin Expansion / Operating Leverage': {
+      if (hasCloud || hasSaaS) return `FCF-Marge (aktuell ${fcfMargin.toFixed(1)}%) muss durch Operating Leverage steigen: steigende Gross Margins bei Cloud/SaaS-Scale, sinkende S&M/G&A-Ratio und Infrastruktur-Effizienz. Ziel: 200-400bps Margin-Expansion über 2 Jahre.`;
+      if (hasLuxury) return `Operative Marge muss durch Pricing Power (Mid-Single-Digit Preiserhöhungen), DTC-Mix-Shift (höhere Margen als Wholesale) und Kostenoptimierung gesteigert werden. FCF-Marge aktuell ${fcfMargin.toFixed(1)}%.`;
+      if (hasPharmaPipeline) return `Gross Margin muss durch höheren Anteil patentgeschützter Produkte und Pipeline-Commercialization steigen. FCF-Marge aktuell ${fcfMargin.toFixed(1)}%. Ziel: Skaleneffekte bei R&D-zu-Revenue-Ratio.`;
+      if (hasDefense || hasLaunch) return `Margenverbesserung durch Skaleneffekte bei steigender Produktionsrate, höhere Service-/Aftermarket-Anteile und Programm-Reifung (geringere Entwicklungskosten). FCF-Marge aktuell ${fcfMargin.toFixed(1)}%.`;
+      if (hasSemiconductor) return `Margin-Expansion durch Produktmix-Shift zu höherwertigen Chips (AI/Datacenter), Skaleneffekte auf neuen Prozesstechnologien und sinkende Stückkosten. FCF-Marge aktuell ${fcfMargin.toFixed(1)}%.`;
+      return `Operative Effizienz und Skaleneffekte müssen FCF-Marge (aktuell ${fcfMargin.toFixed(1)}%) verbessern. Hebel: Fixkostendegression bei Umsatzwachstum, Automatisierung und Supply-Chain-Optimierung.`;
+    }
+    case 'AI / Cloud Adoption Tailwind': {
+      if (hasAI && hasCloud) return `AI-Produktsuite (Copilot, AI-APIs, ML-Services) muss Enterprise-Adoption beschleunigen und ARPU erhöhen. Cloud-Migration bestehender On-Premise-Kunden zu höhermargigen Recurring-Revenue-Streams. Voraussetzung: Nachweisbarer ROI bei AI-Investitionen der Kunden.`;
+      if (hasCloud) return `Cloud-Plattform muss AI-Workloads als Wachstumstreiber nutzen. Enterprise-Kunden migrieren Legacy-Systeme und adoptieren AI-Services. Voraussetzung: Konkurrenzfähige AI-Modelle und Infrastruktur.`;
+      return `AI/ML-Integration in bestehende Produkte erhöht Wertschöpfung und Kundenbindung. Voraussetzung: Erfolgreiche Monetarisierung von AI-Features und steigende Nutzungsintensität.`;
+    }
+    case 'Product Cycle / Platform Expansion': {
+      if (hasCloud) return `Neue Produktgenerationen und Plattform-Erweiterungen (Datenanalyse, Security, DevOps) müssen TAM erweitern. Cross-Platform-Bundling erhöht Switching Costs und sichert langfristige Kundenbeziehungen.`;
+      if (hasSaaS) return `Produktportfolio-Erweiterung durch neue Module, vertikale Lösungen und Plattform-Ökosystem. Ziel: Höherer Wallet-Share bei Bestandskunden und Erschließung neuer Segmente.`;
+      if (hasSemiconductor) return `Nächste Chip-Generation und Expansion in neue Anwendungsfelder (AI-Inference, Edge Computing, Automotive) müssen TAM signifikant erweitern.`;
+      return `Neue Produktzyklen und Plattform-Erweiterungen müssen zusätzliche Umsatzquellen erschließen und bestehende Kundenbeziehungen vertiefen.`;
+    }
+    case 'Pipeline Approval / FDA Catalyst': {
+      return `Phase-3-Ergebnisse und FDA-Entscheidungen zu Schlüssel-Kandidaten müssen positiv ausfallen. Erfolgreiche Zulassungen können Revenue-Sprung ermöglichen. Risiko: CRL, Partial Hold oder Labeling-Einschränkungen.`;
+    }
+    case 'Demographic Tailwind (Aging Population)': {
+      return `Alternde Bevölkerung in Industrieländern treibt strukturell steigende Gesundheitsausgaben. Voraussetzung: Produktportfolio muss auf chronische Erkrankungen und Prävention ausgerichtet sein.`;
+    }
+    case 'China / Asia Demand Recovery': {
+      return `China-Konsum muss sich von aktueller Schwäche erholen. Voraussetzung: Verbessertes Konsumklima, stabiler Immobilienmarkt und Vermögenseffekte. Aspirational Spending in Tier-2/3-Städten als zusätzlicher Treiber.`;
+    }
+    case 'Pricing Power / Brand Elevation': {
+      return `Mid-Single-Digit Preiserhöhungen müssen ohne Volumen-Verluste durchgesetzt werden. Voraussetzung: Starke Markenbegehrlichkeit, kontrollierte Distribution und Exklusivitätsstrategie.`;
+    }
+    case 'Interest Rate Normalization Benefit': {
+      return `Zinsnormalisierung muss Net Interest Margin verbessern. Voraussetzung: Einlagen-Repricing langsamer als Kredit-Repricing. Kreditnachfrage muss bei moderaten Zinsen anziehen.`;
+    }
+    case 'Capital Return / Buyback Program': {
+      return `Aktienrückkaufprogramm und Dividendenerhöhungen müssen EPS-Wachstum über organischem Niveau treiben. Voraussetzung: Starke FCF-Generierung und konservative Kapitalallokation.`;
+    }
+    case 'Commodity Price Recovery': {
+      return `Commodity-Preise müssen sich stabilisieren oder erholen. Voraussetzung: Globale Nachfrage-Erholung, Angebotsverknappung oder geopolitische Risikopremien. Breakeven-Analyse als Schlüssel.`;
+    }
+    case 'Energy Transition Investment': {
+      return `Investments in Renewables, Carbon Capture oder LNG müssen langfristiges Wachstum jenseits fossiler Brennstoffe sichern. Voraussetzung: Regulatorische Klarheit und wettbewerbsfähige Projektrenditen.`;
+    }
+    case 'Consumer Confidence Recovery': {
+      return `Konsumklima muss sich verbessern und diskretionenäre Ausgaben ansteigen. Voraussetzung: Sinkende Inflation, stabiler Arbeitsmarkt und Wealth-Effekte bei steigenden Asset-Preisen.`;
+    }
+    case 'E-Commerce / DTC Growth': {
+      return `Direct-to-Consumer-Kanal muss überproportional wachsen und höhere Margen liefern. Voraussetzung: Digitale Kundenerfahrung, Fulfillment-Effizienz und personalisiertes Marketing.`;
+    }
+    case 'Market Share Gains': {
+      return `Marktanteile müssen durch Produktinnovation, Pricing und Distribution ausgebaut werden. Voraussetzung: Wettbewerbsvorteile in Qualität, Service oder Kostenstruktur.`;
+    }
+    case 'Strategic M&A / Partnerships': {
+      return `Strategische Akquisitionen oder Partnerschaften müssen Technologie, Marktpräsenz oder Kundenbeziehungen ergänzen. Voraussetzung: Disziplinierte Kapitalallokation und Integrations-Exzellenz.`;
+    }
+    default:
+      return `Katalysator muss sich im Geschäftsmodell-Kontext materialisieren. Voraussetzung: Erfolgreiche Umsetzung der strategischen Prioritäten und günstiges Marktumfeld.`;
+  }
+}
+
+function generateCatalysts(sector: string, industry: string, growthRate: number, fcfMargin: number, description: string = '', revenue: number = 0): Catalyst[] {
   const catalysts: Catalyst[] = [];
   const s = sector.toLowerCase();
   const ind = industry.toLowerCase();
@@ -283,6 +385,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
     bruttoUpside: Math.round(Math.min(25, 5 + growthRate * 0.8)),
     einpreisungsgrad: Math.round(40 + Math.min(30, growthRate)),
     nettoUpside: 0, gb: 0,
+    context: generateCatalystContext("Revenue Growth Acceleration", sector, industry, description, growthRate, fcfMargin, revenue),
   });
 
   // Margin expansion
@@ -294,6 +397,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
     bruttoUpside: Math.round(8 + (30 - fcfMargin) * 0.3),
     einpreisungsgrad: 35,
     nettoUpside: 0, gb: 0,
+    context: generateCatalystContext("Margin Expansion / Operating Leverage", sector, industry, description, growthRate, fcfMargin, revenue),
   });
 
   // Sector-specific catalysts
@@ -305,6 +409,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       bruttoUpside: 15,
       einpreisungsgrad: 50,
       nettoUpside: 0, gb: 0,
+      context: "",
     });
     catalysts.push({
       name: "Product Cycle / Platform Expansion",
@@ -313,6 +418,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       bruttoUpside: 12,
       einpreisungsgrad: 30,
       nettoUpside: 0, gb: 0,
+      context: "",
     });
   } else if (s.includes("health")) {
     catalysts.push({
@@ -322,6 +428,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       bruttoUpside: 25,
       einpreisungsgrad: 20,
       nettoUpside: 0, gb: 0,
+      context: "",
     });
     catalysts.push({
       name: "Demographic Tailwind (Aging Population)",
@@ -330,6 +437,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       bruttoUpside: 8,
       einpreisungsgrad: 55,
       nettoUpside: 0, gb: 0,
+      context: "",
     });
   } else if (s.includes("financ")) {
     catalysts.push({
@@ -339,6 +447,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       bruttoUpside: 12,
       einpreisungsgrad: 40,
       nettoUpside: 0, gb: 0,
+      context: "",
     });
     catalysts.push({
       name: "Capital Return / Buyback Program",
@@ -347,6 +456,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       bruttoUpside: 8,
       einpreisungsgrad: 50,
       nettoUpside: 0, gb: 0,
+      context: "",
     });
   } else if (s.includes("energy")) {
     catalysts.push({
@@ -356,6 +466,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       bruttoUpside: 20,
       einpreisungsgrad: 25,
       nettoUpside: 0, gb: 0,
+      context: "",
     });
     catalysts.push({
       name: "Energy Transition Investment",
@@ -364,6 +475,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       bruttoUpside: 15,
       einpreisungsgrad: 20,
       nettoUpside: 0, gb: 0,
+      context: "",
     });
   } else if (s.includes("consumer") && (s.includes("cycl") || s.includes("discr"))) {
     const isLuxury = ind.includes("luxury") || ind.includes("apparel") || ind.includes("fashion");
@@ -375,6 +487,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         bruttoUpside: 15,
         einpreisungsgrad: 30,
         nettoUpside: 0, gb: 0,
+      context: "",
       });
       catalysts.push({
         name: "Pricing Power / Brand Elevation",
@@ -383,6 +496,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         bruttoUpside: 10,
         einpreisungsgrad: 40,
         nettoUpside: 0, gb: 0,
+      context: "",
       });
     } else {
       catalysts.push({
@@ -392,6 +506,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         bruttoUpside: 12,
         einpreisungsgrad: 35,
         nettoUpside: 0, gb: 0,
+      context: "",
       });
       catalysts.push({
         name: "E-Commerce / DTC Growth",
@@ -400,6 +515,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         bruttoUpside: 10,
         einpreisungsgrad: 30,
         nettoUpside: 0, gb: 0,
+      context: "",
       });
     }
   } else {
@@ -410,6 +526,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       bruttoUpside: 12,
       einpreisungsgrad: 30,
       nettoUpside: 0, gb: 0,
+      context: "",
     });
     catalysts.push({
       name: "Strategic M&A / Partnerships",
@@ -418,13 +535,17 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       bruttoUpside: 15,
       einpreisungsgrad: 15,
       nettoUpside: 0, gb: 0,
+      context: "",
     });
   }
 
-  // Calculate netto and GB
+  // Calculate netto and GB, and fill in context for all catalysts
   for (const c of catalysts) {
     c.nettoUpside = +(c.bruttoUpside * (1 - c.einpreisungsgrad / 100)).toFixed(2);
     c.gb = +(c.pos / 100 * c.nettoUpside).toFixed(2);
+    if (!c.context) {
+      c.context = generateCatalystContext(c.name, sector, industry, description, growthRate, fcfMargin, revenue);
+    }
   }
 
   return catalysts;
@@ -2266,7 +2387,7 @@ export async function registerRoutes(server: Server, app: Express) {
       const rsl = rslAvg > 0 ? (price / rslAvg) * 100 : 100;
 
       // === Catalysts & Risks ===
-      const catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin);
+      const catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
       const risks = generateRisks(sector, beta5Y, govExp.exposure);
 
       // === Growth thesis (enriched with catalyst business model reasoning) ===

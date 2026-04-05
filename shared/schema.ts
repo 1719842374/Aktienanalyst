@@ -34,6 +34,7 @@ export interface Catalyst {
   einpreisungsgrad: number; // Pricing-in degree %
   nettoUpside: number; // Net upside (calculated)
   gb: number; // Weighted contribution (calculated)
+  context?: string; // Business-model-specific context text explaining what needs to happen
 }
 
 export interface Risk {

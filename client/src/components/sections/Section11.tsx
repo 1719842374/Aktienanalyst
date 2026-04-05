@@ -143,6 +143,13 @@ export function Section11({ data }: Props) {
                     </div>
                     {isExpanded && (
                       <div className="mt-1.5 text-[10px] text-muted-foreground leading-relaxed bg-muted/20 rounded p-2.5 border border-border/30 space-y-1.5">
+                        {/* Business-model context: what needs to happen for this catalyst */}
+                        {c.context && (
+                          <div className="text-foreground/90 leading-relaxed pb-1.5 mb-1.5 border-b border-border/20">
+                            <span className="font-semibold text-primary">Geschäftsmodell-Kontext:</span>{' '}
+                            {c.context}
+                          </div>
+                        )}
                         <div className="flex items-start gap-1.5">
                           <Info className="w-3 h-3 flex-shrink-0 mt-0.5 text-primary" />
                           <div className="space-y-1.5">
