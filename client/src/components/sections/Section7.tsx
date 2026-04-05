@@ -90,44 +90,103 @@ export function Section7({ data }: Props) {
             </div>
           </div>
 
-          {/* Growth comparison bar */}
-          <div className="space-y-1.5">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Wachstum: Unternehmen vs. Branche</div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-muted-foreground w-20 flex-shrink-0">{data.ticker}</span>
-              <div className="flex-1 h-4 bg-muted/30 rounded overflow-hidden relative">
-                <div
-                  className={`h-full rounded transition-all ${tam.outperforming ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
-                  style={{ width: `${Math.min(100, Math.max(2, Math.abs(tam.companyGrowth) / Math.max(tam.tamCAGR * 2, 1) * 100))}%` }}
-                />
+          {/* Per-segment TAM breakdown (when segments available) */}
+          {tam.segments && tam.segments.length > 0 ? (
+            <div className="space-y-2">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium flex items-center gap-1.5">
+                <BarChart3 className="w-3 h-3" />
+                Segment-TAM-Analyse
               </div>
-              <span className={`text-[10px] font-mono tabular-nums font-semibold w-14 text-right ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-muted-foreground w-20 flex-shrink-0">Branche</span>
-              <div className="flex-1 h-4 bg-muted/30 rounded overflow-hidden relative">
-                <div
-                  className="h-full bg-primary/40 rounded transition-all"
-                  style={{ width: `${Math.min(100, tam.tamCAGR / Math.max(tam.tamCAGR * 2, 1) * 100)}%` }}
-                />
+              <div className="overflow-x-auto">
+                <table className="w-full text-[10px]">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-1.5 pr-2 text-muted-foreground font-medium">Segment</th>
+                      <th className="text-right py-1.5 px-1.5 text-muted-foreground font-medium">Rev.</th>
+                      <th className="text-right py-1.5 px-1.5 text-muted-foreground font-medium">Anteil</th>
+                      <th className="text-right py-1.5 px-1.5 text-muted-foreground font-medium">Wachstum</th>
+                      <th className="text-right py-1.5 px-1.5 text-muted-foreground font-medium">TAM</th>
+                      <th className="text-right py-1.5 px-1.5 text-muted-foreground font-medium">CAGR</th>
+                      <th className="text-right py-1.5 px-1.5 text-muted-foreground font-medium">Anteil am TAM</th>
+                      <th className="text-center py-1.5 pl-1.5 text-muted-foreground font-medium">vs. TAM</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {tam.segments.map((seg: any, i: number) => (
+                      <tr key={i} className="hover:bg-muted/10">
+                        <td className="py-1.5 pr-2 font-medium">{seg.segmentName}</td>
+                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.segmentRevenue, 1)}B</td>
+                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground">{formatNumber(seg.segmentShare, 1)}%</td>
+                        <td className={`py-1.5 px-1.5 text-right font-mono tabular-nums font-medium ${seg.segmentGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                          {seg.segmentGrowth >= 0 ? '+' : ''}{formatNumber(seg.segmentGrowth, 1)}%
+                        </td>
+                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.tamSize, 0)}B</td>
+                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-primary">{seg.tamCAGR}%</td>
+                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">{formatNumber(seg.marketShare, 1)}%</td>
+                        <td className="py-1.5 pl-1.5 text-center">
+                          {seg.outperforming ? (
+                            <span className="inline-flex items-center gap-0.5 text-emerald-500 font-medium">
+                              <TrendingUp className="w-2.5 h-2.5" /> Über
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-0.5 text-amber-500 font-medium">
+                              <TrendingDown className="w-2.5 h-2.5" /> Unter
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <span className="text-[10px] font-mono tabular-nums font-semibold w-14 text-right text-primary">
-                +{formatNumber(tam.tamCAGR, 1)}%
-              </span>
+              {/* Weighted verdict */}
+              <div className={`flex items-center gap-1.5 text-[10px] ${tam.outperforming ? 'text-emerald-500' : 'text-amber-500'}`}>
+                {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                <span className="font-medium">
+                  Gewichteter Branchen-CAGR: {formatNumber(tam.tamCAGR, 1)}% — Unternehmen {tam.outperforming ? 'outperformed' : 'underperformed'}
+                  {' '}({tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}% vs. {formatNumber(tam.tamCAGR, 1)}%)
+                </span>
+              </div>
             </div>
-            {/* Verdict */}
-            <div className={`flex items-center gap-1.5 text-[10px] mt-1 ${tam.outperforming ? 'text-emerald-500' : 'text-amber-500'}`}>
-              {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-              <span className="font-medium">
-                {tam.outperforming
-                  ? `Wächst ${formatNumber(tam.companyGrowth - tam.tamCAGR, 1)} Pkt. schneller als die Branche — Marktanteil steigt`
-                  : `Wächst ${formatNumber(tam.tamCAGR - tam.companyGrowth, 1)} Pkt. langsamer als die Branche — Marktanteil sinkt`
-                }
-              </span>
+          ) : (
+            /* Fallback: single growth comparison bar */
+            <div className="space-y-1.5">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Wachstum: Unternehmen vs. Branche</div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground w-20 flex-shrink-0">{data.ticker}</span>
+                <div className="flex-1 h-4 bg-muted/30 rounded overflow-hidden relative">
+                  <div
+                    className={`h-full rounded transition-all ${tam.outperforming ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
+                    style={{ width: `${Math.min(100, Math.max(2, Math.abs(tam.companyGrowth) / Math.max(tam.tamCAGR * 2, 1) * 100))}%` }}
+                  />
+                </div>
+                <span className={`text-[10px] font-mono tabular-nums font-semibold w-14 text-right ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground w-20 flex-shrink-0">Branche</span>
+                <div className="flex-1 h-4 bg-muted/30 rounded overflow-hidden relative">
+                  <div
+                    className="h-full bg-primary/40 rounded transition-all"
+                    style={{ width: `${Math.min(100, tam.tamCAGR / Math.max(tam.tamCAGR * 2, 1) * 100)}%` }}
+                  />
+                </div>
+                <span className="text-[10px] font-mono tabular-nums font-semibold w-14 text-right text-primary">
+                  +{formatNumber(tam.tamCAGR, 1)}%
+                </span>
+              </div>
+              <div className={`flex items-center gap-1.5 text-[10px] mt-1 ${tam.outperforming ? 'text-emerald-500' : 'text-amber-500'}`}>
+                {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                <span className="font-medium">
+                  {tam.outperforming
+                    ? `Wächst ${formatNumber(tam.companyGrowth - tam.tamCAGR, 1)} Pkt. schneller als die Branche`
+                    : `Wächst ${formatNumber(tam.tamCAGR - tam.companyGrowth, 1)} Pkt. langsamer als die Branche`
+                  }
+                </span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* TAM source */}
           <div className="text-[9px] text-muted-foreground/50 mt-2 italic">

@@ -26,15 +26,28 @@ export interface HistoricalPrice {
   close: number;
 }
 
-export interface TAMAnalysis {
-  tamTotal: number; // Total Addressable Market in $B
+export interface TAMSegment {
+  segmentName: string; // e.g. "Intelligent Cloud"
+  segmentRevenue: number; // Segment revenue in $B
+  segmentGrowth: number; // Segment YoY growth %
+  segmentShare: number; // % of total company revenue
+  tamSize: number; // TAM for this segment in $B
   tamLabel: string; // e.g. "Global Cloud Computing"
-  tamCAGR: number; // Industry CAGR %
+  tamCAGR: number; // Industry CAGR for this segment
+  marketShare: number; // Segment revenue / TAM %
+  outperforming: boolean; // Segment growing faster than its TAM CAGR?
+}
+
+export interface TAMAnalysis {
+  tamTotal: number; // Weighted total TAM in $B
+  tamLabel: string; // Primary TAM label
+  tamCAGR: number; // Weighted average industry CAGR %
   companyGrowth: number; // Company revenue growth %
   companyRevenue: number; // Company revenue in $B
-  marketShare: number; // Company share of TAM in %
+  marketShare: number; // Company share of weighted TAM in %
   tamSource: string; // Source description
-  outperforming: boolean; // Company growing faster than TAM CAGR?
+  outperforming: boolean; // Company growing faster than weighted TAM CAGR?
+  segments?: TAMSegment[]; // Per-segment TAM breakdown (if revenue segments available)
 }
 
 export interface Catalyst {

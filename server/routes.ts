@@ -552,12 +552,99 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
 }
 
 // === TAM Analysis ===
+// Maps a segment name to a sub-TAM using keyword matching.
+function matchSegmentTAM(segName: string, desc: string): { tamSize: number; tamLabel: string; tamCAGR: number; tamSource: string } {
+  const n = segName.toLowerCase();
+  // Cloud / Infrastructure
+  if (n.includes('cloud') || n.includes('azure') || n.includes('aws') || n.includes('infrastructure')) {
+    return { tamSize: 1500, tamLabel: 'Global Cloud Computing', tamCAGR: 16, tamSource: 'Gartner/IDC Cloud Forecast' };
+  }
+  // Productivity / SaaS / Office
+  if (n.includes('productiv') || n.includes('office') || n.includes('business process') || n.includes('collaboration')) {
+    return { tamSize: 600, tamLabel: 'Global Productivity & Collaboration Software', tamCAGR: 12, tamSource: 'Gartner SaaS/Productivity Forecast' };
+  }
+  // Personal Computing / Hardware / Windows / Gaming
+  if (n.includes('personal comput') || n.includes('windows') || n.includes('gaming') || n.includes('device') || n.includes('hardware') || n.includes('surface')) {
+    return { tamSize: 400, tamLabel: 'Global PC & Gaming Market', tamCAGR: 3, tamSource: 'IDC/Gartner PC & Gaming Forecast' };
+  }
+  // Advertising / Search
+  if (n.includes('advertis') || n.includes('search') || n.includes('google services') || n.includes('youtube')) {
+    return { tamSize: 1000, tamLabel: 'Global Digital Advertising', tamCAGR: 10, tamSource: 'eMarketer / GroupM' };
+  }
+  // E-commerce / Retail
+  if (n.includes('commerce') || n.includes('retail') || n.includes('stores') || n.includes('online store')) {
+    return { tamSize: 6300, tamLabel: 'Global E-Commerce', tamCAGR: 11, tamSource: 'eMarketer / Statista' };
+  }
+  // Subscription / Streaming / Content
+  if (n.includes('subscri') || n.includes('stream') || n.includes('content') || n.includes('media') || n.includes('entertainment')) {
+    return { tamSize: 700, tamLabel: 'Global Streaming & Digital Media', tamCAGR: 9, tamSource: 'PwC Global Entertainment & Media' };
+  }
+  // Automotive
+  if (n.includes('auto') || n.includes('vehicle') || n.includes('mobility')) {
+    return { tamSize: 3000, tamLabel: 'Global Automotive', tamCAGR: 4, tamSource: 'McKinsey Automotive' };
+  }
+  // Financial Services / Payments
+  if (n.includes('financ') || n.includes('payment') || n.includes('banking') || n.includes('fintech')) {
+    return { tamSize: 350, tamLabel: 'Global FinTech', tamCAGR: 18, tamSource: 'BCG/QED FinTech' };
+  }
+  // Pharma / Drug
+  if (n.includes('pharma') || n.includes('drug') || n.includes('oncol') || n.includes('vaccine') || n.includes('therapeutic')) {
+    return { tamSize: 1700, tamLabel: 'Global Pharmaceuticals', tamCAGR: 6, tamSource: 'IQVIA Pharma Forecast' };
+  }
+  // Fashion / Luxury / Apparel
+  if (n.includes('fashion') || n.includes('leather') || n.includes('luxury') || n.includes('couture') || n.includes('apparel')) {
+    return { tamSize: 380, tamLabel: 'Global Personal Luxury Goods', tamCAGR: 6, tamSource: 'Bain / Altagamma' };
+  }
+  // Wines & Spirits
+  if (n.includes('wine') || n.includes('spirit') || n.includes('champagne') || n.includes('cognac')) {
+    return { tamSize: 500, tamLabel: 'Global Premium Wines & Spirits', tamCAGR: 5, tamSource: 'IWSR Drinks Market' };
+  }
+  // Perfumes & Cosmetics
+  if (n.includes('perfum') || n.includes('cosmet') || n.includes('beauty')) {
+    return { tamSize: 430, tamLabel: 'Global Prestige Beauty', tamCAGR: 7, tamSource: 'Euromonitor / NPD Beauty' };
+  }
+  // Watches & Jewelry
+  if (n.includes('watch') || n.includes('jewel') || n.includes('horolog')) {
+    return { tamSize: 100, tamLabel: 'Global Luxury Watches & Jewelry', tamCAGR: 5, tamSource: 'Bain / Deloitte Swiss Watch' };
+  }
+  // Selective Retail / DFS
+  if (n.includes('retail') || n.includes('sephora') || n.includes('selective') || n.includes('dfs')) {
+    return { tamSize: 500, tamLabel: 'Global Selective/Specialty Retail', tamCAGR: 6, tamSource: 'Euromonitor Specialty Retail' };
+  }
+  // Semiconductor / Chips
+  if (n.includes('semicond') || n.includes('chip') || n.includes('wafer') || n.includes('foundry')) {
+    return { tamSize: 850, tamLabel: 'Global Semiconductor', tamCAGR: 12, tamSource: 'WSTS/SIA' };
+  }
+  // Data Center / AI
+  if (n.includes('data center') || n.includes('datacenter') || n.includes('ai ') || n.includes('artificial intelligence')) {
+    return { tamSize: 500, tamLabel: 'Global AI/Data Center', tamCAGR: 25, tamSource: 'Gartner/IDC AI Infrastructure' };
+  }
+  // Energy / Oil / Gas
+  if (n.includes('upstream') || n.includes('downstream') || n.includes('refin') || n.includes('exploration')) {
+    return { tamSize: 4000, tamLabel: 'Global Energy', tamCAGR: 3, tamSource: 'IEA World Energy' };
+  }
+  // Aerospace / Defense / Launch
+  if (n.includes('space') || n.includes('launch') || n.includes('defense') || n.includes('aero')) {
+    return { tamSize: 800, tamLabel: 'Global Aerospace & Defense', tamCAGR: 5, tamSource: 'Deloitte A&D' };
+  }
+  // Fallback: use description context
+  if (desc.includes('cloud') || desc.includes('azure') || desc.includes('aws')) {
+    return { tamSize: 1500, tamLabel: 'Global Cloud Computing', tamCAGR: 16, tamSource: 'Gartner/IDC' };
+  }
+  if (desc.includes('luxury')) {
+    return { tamSize: 380, tamLabel: 'Global Personal Luxury Goods', tamCAGR: 6, tamSource: 'Bain / Altagamma' };
+  }
+  // Generic fallback
+  return { tamSize: 2000, tamLabel: 'Global Industry', tamCAGR: 5, tamSource: 'Industry Estimate' };
+}
+
 // Estimates TAM, industry CAGR, and company market share based on sector/industry.
-// Uses industry-standard TAM estimates from research reports (Gartner, IDC, McKinsey, etc.)
+// When revenue segments are available, computes per-segment TAMs for accurate multi-business analysis.
 function generateTAMAnalysis(
   sector: string, industry: string, description: string,
-  revenue: number, revenueGrowth: number
-): { tamTotal: number; tamLabel: string; tamCAGR: number; companyGrowth: number; companyRevenue: number; marketShare: number; tamSource: string; outperforming: boolean } {
+  revenue: number, revenueGrowth: number,
+  revenueSegments?: any[]
+): { tamTotal: number; tamLabel: string; tamCAGR: number; companyGrowth: number; companyRevenue: number; marketShare: number; tamSource: string; outperforming: boolean; segments?: any[] } {
   const s = sector.toLowerCase();
   const ind = industry.toLowerCase();
   const desc = description.toLowerCase();
@@ -663,6 +750,46 @@ function generateTAMAnalysis(
     tamTotal = 5000; tamLabel = 'Global Market'; tamCAGR = 5; tamSource = 'IMF / World Bank GDP Growth Estimate';
   }
 
+  // If revenue segments available, compute per-segment TAMs and weighted totals
+  if (revenueSegments && revenueSegments.length >= 2) {
+    const segTAMs = revenueSegments.map(seg => {
+      const match = matchSegmentTAM(seg.name, desc);
+      const segRevB = seg.revenue / 1e9;
+      const segShare = match.tamSize > 0 ? (segRevB / match.tamSize) * 100 : 0;
+      return {
+        segmentName: seg.name,
+        segmentRevenue: Math.round(segRevB * 10) / 10,
+        segmentGrowth: seg.growth,
+        segmentShare: seg.percentage,
+        tamSize: match.tamSize,
+        tamLabel: match.tamLabel,
+        tamCAGR: match.tamCAGR,
+        marketShare: Math.round(segShare * 100) / 100,
+        outperforming: seg.growth > match.tamCAGR,
+      };
+    });
+
+    // Weighted TAM and CAGR based on segment revenue shares
+    const weightedTAM = segTAMs.reduce((sum, seg) => sum + seg.tamSize * (seg.segmentShare / 100), 0);
+    const weightedCAGR = segTAMs.reduce((sum, seg) => sum + seg.tamCAGR * (seg.segmentShare / 100), 0);
+    const weightedShare = weightedTAM > 0 ? (revB / weightedTAM) * 100 : 0;
+    const largestSeg = segTAMs.reduce((a, b) => a.segmentShare > b.segmentShare ? a : b);
+    const allSources = [...new Set(segTAMs.map(s => s.tamLabel))].join(' + ');
+
+    return {
+      tamTotal: Math.round(weightedTAM),
+      tamLabel: `Gewichtet: ${allSources}`,
+      tamCAGR: Math.round(weightedCAGR * 10) / 10,
+      companyGrowth: revenueGrowth,
+      companyRevenue: Math.round(revB * 10) / 10,
+      marketShare: Math.round(weightedShare * 100) / 100,
+      tamSource: 'Segment-gewichteter TAM aus ' + segTAMs.map(s => s.tamLabel.replace('Global ', '')).join(', '),
+      outperforming: revenueGrowth > weightedCAGR,
+      segments: segTAMs,
+    };
+  }
+
+  // Fallback: single TAM based on sector
   const marketShare = tamTotal > 0 ? (revB / tamTotal) * 100 : 0;
   const outperforming = revenueGrowth > tamCAGR;
 
@@ -671,7 +798,7 @@ function generateTAMAnalysis(
     tamLabel,
     tamCAGR,
     companyGrowth: revenueGrowth,
-    companyRevenue: revB,
+    companyRevenue: Math.round(revB * 10) / 10,
     marketShare: Math.round(marketShare * 100) / 100,
     tamSource,
     outperforming,
@@ -2516,7 +2643,7 @@ export async function registerRoutes(server: Server, app: Express) {
       // === Catalysts & Risks ===
       const catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
       const risks = generateRisks(sector, beta5Y, govExp.exposure);
-      const tamAnalysis = generateTAMAnalysis(sector, industry, description, revenue, revenueGrowth);
+      // tamAnalysis is computed after revenueSegments are parsed (below)
 
       // === Growth thesis (enriched with catalyst business model reasoning) ===
       const hybridPrefix = sectorHybridNote ? `⚠️ ${sectorHybridNote} ` : "";
@@ -2591,8 +2718,8 @@ export async function registerRoutes(server: Server, app: Express) {
       const macroCorrelations = generateMacroCorrelations(sector, industry, description, beta5Y, reportedCurrency);
 
       // === Revenue Segments (Produkte) + Geographic Segments (Regionen) ===
-      let revenueSegments: RevenueSegment[] | undefined;
-      let geoSegments: RevenueSegment[] | undefined;
+      let revenueSegments: { name: string; revenue: number; percentage: number; growth: number }[] | undefined;
+      let geoSegments: { name: string; revenue: number; percentage: number; growth: number }[] | undefined;
       if (segmentsResult?.content) {
         try {
           const segContent = typeof segmentsResult.content === "string" ? segmentsResult.content : JSON.stringify(segmentsResult.content);
@@ -2655,8 +2782,8 @@ export async function registerRoutes(server: Server, app: Express) {
             const prevRow = sortedRows.length > 1 ? sortedRows[1] : null;
 
             if (latestRow) {
-              const productSegs: RevenueSegment[] = [];
-              const geoSegs: RevenueSegment[] = [];
+              const productSegs: { name: string; revenue: number; percentage: number; growth: number }[] = [];
+              const geoSegs: { name: string; revenue: number; percentage: number; growth: number }[] = [];
 
               // Sort: post_fy columns first, then plain, then pre_fy
               const sortedRevCols = revenueColumns.sort((a, b) => {
@@ -2694,7 +2821,7 @@ export async function registerRoutes(server: Server, app: Express) {
                   }
                 }
 
-                const seg: RevenueSegment = { name: segName, revenue: rawVal, percentage: 0, growth };
+                const seg: { name: string; revenue: number; percentage: number; growth: number } = { name: segName, revenue: rawVal, percentage: 0, growth };
                 const normName = segName.toLowerCase().replace(/[^a-z0-9]/g, '');
 
                 if (isGeoColumn(col) && !isAggregateColumn(col)) {
@@ -2713,13 +2840,13 @@ export async function registerRoutes(server: Server, app: Express) {
               }
 
               // === Process product segments ===
-              const processBestSet = (segments: RevenueSegment[]): RevenueSegment[] | undefined => {
+              const processBestSet = (segments: { name: string; revenue: number; percentage: number; growth: number }[]): { name: string; revenue: number; percentage: number; growth: number }[] | undefined => {
                 if (segments.length === 0) return undefined;
                 segments.sort((a, b) => b.revenue - a.revenue);
                 const segSum = segments.reduce((s, seg) => s + seg.revenue, 0);
                 const realTotal = revenue > 0 ? revenue : segSum;
 
-                let bestSet: RevenueSegment[] = segments;
+                let bestSet: { name: string; revenue: number; percentage: number; growth: number }[] = segments;
                 // Only apply combo optimization if segment sum is within 3x of revenue
                 // (>3x likely indicates currency mismatch, e.g. segments in DKK but revenue in USD)
                 if (segSum > realTotal * 1.2 && segSum <= realTotal * 3 && segments.length <= 20) {
@@ -2775,6 +2902,9 @@ export async function registerRoutes(server: Server, app: Express) {
           console.error(`[ANALYZE] Segment parsing error:`, segErr?.message?.substring(0, 200));
         }
       }
+
+      // === TAM Analysis (must be AFTER revenueSegments parsing) ===
+      const tamAnalysis = generateTAMAnalysis(sector, industry, description, revenue, revenueGrowth, revenueSegments);
 
       // === Structural trends (derived from effective sector, not hardcoded) ===
       const structuralTrends = [];
