@@ -26,6 +26,17 @@ export interface HistoricalPrice {
   close: number;
 }
 
+export interface TAMAnalysis {
+  tamTotal: number; // Total Addressable Market in $B
+  tamLabel: string; // e.g. "Global Cloud Computing"
+  tamCAGR: number; // Industry CAGR %
+  companyGrowth: number; // Company revenue growth %
+  companyRevenue: number; // Company revenue in $B
+  marketShare: number; // Company share of TAM in %
+  tamSource: string; // Source description
+  outperforming: boolean; // Company growing faster than TAM CAGR?
+}
+
 export interface Catalyst {
   name: string;
   timeline: string;
@@ -261,6 +272,9 @@ export interface StockAnalysis {
   sectorAvgPE: number;
   sectorAvgEVEBITDA: number;
   sectorAvgPEG: number;
+
+  // TAM Analysis
+  tamAnalysis?: TAMAnalysis;
 
   // For investment thesis
   moatRating: string;

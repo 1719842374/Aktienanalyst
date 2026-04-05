@@ -1,6 +1,7 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { formatNumber } from "../../lib/formatters";
+import { TrendingUp, TrendingDown, Globe, BarChart3 } from "lucide-react";
 
 interface Props { data: StockAnalysis }
 
@@ -18,6 +19,8 @@ export function Section7({ data }: Props) {
     { label: "EV/EBITDA", stock: data.evEbitda, sector: data.sectorAvgEVEBITDA, premium: evEbitdaPremium },
     { label: "PEG", stock: data.pegRatio, sector: data.sectorAvgPEG, premium: ((data.pegRatio / data.sectorAvgPEG) - 1) * 100 },
   ];
+
+  const tam = data.tamAnalysis;
 
   return (
     <SectionCard number={7} title="RELATIVE BEWERTUNG">
@@ -54,6 +57,84 @@ export function Section7({ data }: Props) {
           <BarRow label="Sector Avg" value={data.sectorAvgPE} max={Math.max(data.forwardPE, data.sectorAvgPE) * 1.3} color="bg-muted-foreground/50" />
         </div>
       </div>
+
+      {/* TAM Analysis */}
+      {tam && tam.tamTotal > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1.5">
+            <Globe className="w-3 h-3" />
+            TAM & Marktposition
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+            <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">TAM</div>
+              <div className="text-sm font-bold font-mono tabular-nums mt-0.5">${formatNumber(tam.tamTotal, 0)}B</div>
+              <div className="text-[9px] text-muted-foreground mt-0.5 leading-tight">{tam.tamLabel}</div>
+            </div>
+            <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Branchen-CAGR</div>
+              <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.tamCAGR}%</div>
+              <div className="text-[9px] text-muted-foreground mt-0.5">p.a. (5Y Prognose)</div>
+            </div>
+            <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Unternehmens-Wachstum</div>
+              <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+              </div>
+              <div className="text-[9px] text-muted-foreground mt-0.5">Revenue YoY</div>
+            </div>
+            <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Marktanteil (TAM)</div>
+              <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.marketShare < 0.01 ? '<0.01' : formatNumber(tam.marketShare, 2)}%</div>
+              <div className="text-[9px] text-muted-foreground mt-0.5">${formatNumber(tam.companyRevenue, 1)}B / ${formatNumber(tam.tamTotal, 0)}B</div>
+            </div>
+          </div>
+
+          {/* Growth comparison bar */}
+          <div className="space-y-1.5">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Wachstum: Unternehmen vs. Branche</div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-muted-foreground w-20 flex-shrink-0">{data.ticker}</span>
+              <div className="flex-1 h-4 bg-muted/30 rounded overflow-hidden relative">
+                <div
+                  className={`h-full rounded transition-all ${tam.outperforming ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
+                  style={{ width: `${Math.min(100, Math.max(2, Math.abs(tam.companyGrowth) / Math.max(tam.tamCAGR * 2, 1) * 100))}%` }}
+                />
+              </div>
+              <span className={`text-[10px] font-mono tabular-nums font-semibold w-14 text-right ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-muted-foreground w-20 flex-shrink-0">Branche</span>
+              <div className="flex-1 h-4 bg-muted/30 rounded overflow-hidden relative">
+                <div
+                  className="h-full bg-primary/40 rounded transition-all"
+                  style={{ width: `${Math.min(100, tam.tamCAGR / Math.max(tam.tamCAGR * 2, 1) * 100)}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-mono tabular-nums font-semibold w-14 text-right text-primary">
+                +{formatNumber(tam.tamCAGR, 1)}%
+              </span>
+            </div>
+            {/* Verdict */}
+            <div className={`flex items-center gap-1.5 text-[10px] mt-1 ${tam.outperforming ? 'text-emerald-500' : 'text-amber-500'}`}>
+              {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+              <span className="font-medium">
+                {tam.outperforming
+                  ? `Wächst ${formatNumber(tam.companyGrowth - tam.tamCAGR, 1)} Pkt. schneller als die Branche — Marktanteil steigt`
+                  : `Wächst ${formatNumber(tam.tamCAGR - tam.companyGrowth, 1)} Pkt. langsamer als die Branche — Marktanteil sinkt`
+                }
+              </span>
+            </div>
+          </div>
+
+          {/* TAM source */}
+          <div className="text-[9px] text-muted-foreground/50 mt-2 italic">
+            TAM-Schätzung: {tam.tamSource}
+          </div>
+        </div>
+      )}
 
       {/* Premium Breakdown */}
       <div>
