@@ -9,9 +9,12 @@ export function Section7({ data }: Props) {
   const fwdPEPremium = ((data.forwardPE / data.sectorAvgPE) - 1) * 100;
   const evEbitdaPremium = ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100;
 
-  // Estimate moat-justified vs speculative premium
-  const moatJustified = data.moatRating === "Wide" ? Math.min(fwdPEPremium, 30) :
-    data.moatRating === "Narrow" ? Math.min(fwdPEPremium, 15) : 0;
+  // Estimate moat-justified vs speculative premium/discount
+  const isDiscount = fwdPEPremium < 0;
+  const moatMaxPremium = data.moatRating === "Wide" ? 30 : data.moatRating === "Narrow-Wide" ? 20 : data.moatRating === "Narrow" ? 15 : 0;
+  // For premium stocks: how much of the premium is moat-justified
+  // For discount stocks: moat-justified is 0 (discount is not from moat)
+  const moatJustified = isDiscount ? 0 : Math.min(fwdPEPremium, moatMaxPremium);
   const speculative = fwdPEPremium - moatJustified;
 
   const metrics = [
@@ -195,23 +198,61 @@ export function Section7({ data }: Props) {
         </div>
       )}
 
-      {/* Premium Breakdown */}
+      {/* Premium / Discount Breakdown */}
       <div>
-        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Premium Breakdown</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-emerald-500/5 rounded-md p-3 border border-emerald-500/20">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Moat-Justified</div>
-            <div className="text-sm font-bold font-mono tabular-nums text-emerald-500 mt-1">+{formatNumber(moatJustified, 1)}%</div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">Moat: {data.moatRating}</div>
-          </div>
-          <div className={`rounded-md p-3 border ${speculative > 15 ? "bg-red-500/5 border-red-500/20" : "bg-amber-500/5 border-amber-500/20"}`}>
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Speculative</div>
-            <div className={`text-sm font-bold font-mono tabular-nums mt-1 ${speculative > 15 ? "text-red-500" : "text-amber-500"}`}>
-              {speculative >= 0 ? "+" : ""}{formatNumber(speculative, 1)}%
+        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
+          {isDiscount ? 'Discount-Analyse' : 'Premium Breakdown'}
+        </h3>
+        {isDiscount ? (
+          /* DISCOUNT: Show discount assessment instead of moat/speculative split */
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-emerald-500/5 rounded-md p-3 border border-emerald-500/20">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Discount zum Sektor</div>
+              <div className="text-sm font-bold font-mono tabular-nums text-emerald-500 mt-1">
+                {formatNumber(fwdPEPremium, 1)}%
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                Fwd P/E {formatNumber(data.forwardPE, 1)} vs. {formatNumber(data.sectorAvgPE, 1)}
+              </div>
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">{speculative > 15 ? "Elevated risk" : "Within range"}</div>
+            <div className={`rounded-md p-3 border ${
+              fwdPEPremium < -50 ? 'bg-amber-500/5 border-amber-500/20' : 'bg-emerald-500/5 border-emerald-500/20'
+            }`}>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Bewertung</div>
+              <div className={`text-sm font-bold mt-1 ${
+                fwdPEPremium < -70 ? 'text-amber-500' : fwdPEPremium < -30 ? 'text-emerald-500' : 'text-emerald-400'
+              }`}>
+                {fwdPEPremium < -70 ? 'Deep Value' : fwdPEPremium < -30 ? 'Unterbewertet' : 'Leicht günstig'}
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                {fwdPEPremium < -70
+                  ? 'Extremer Discount — prüfe Risiken (Value Trap?)'
+                  : fwdPEPremium < -30
+                  ? 'Signifikanter Discount zum Sektor'
+                  : 'Moderater Bewertungsvorteil'
+                }
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          /* PREMIUM: Show moat-justified vs speculative split */
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-emerald-500/5 rounded-md p-3 border border-emerald-500/20">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Moat-Justified</div>
+              <div className="text-sm font-bold font-mono tabular-nums text-emerald-500 mt-1">+{formatNumber(moatJustified, 1)}%</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Moat: {data.moatRating}</div>
+            </div>
+            <div className={`rounded-md p-3 border ${speculative > 15 ? 'bg-red-500/5 border-red-500/20' : 'bg-amber-500/5 border-amber-500/20'}`}>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Spekulativ</div>
+              <div className={`text-sm font-bold font-mono tabular-nums mt-1 ${speculative > 15 ? 'text-red-500' : 'text-amber-500'}`}>
+                {speculative >= 0 ? '+' : ''}{formatNumber(speculative, 1)}%
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                {speculative > 30 ? 'Überbewertungsrisiko' : speculative > 15 ? 'Erhöhtes Risiko' : 'Im Rahmen'}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </SectionCard>
   );
