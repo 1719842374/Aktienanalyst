@@ -6,22 +6,27 @@ import { TrendingUp, TrendingDown, Globe, BarChart3 } from "lucide-react";
 interface Props { data: StockAnalysis }
 
 export function Section7({ data }: Props) {
-  const fwdPEPremium = ((data.forwardPE / data.sectorAvgPE) - 1) * 100;
-  const evEbitdaPremium = ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100;
+  const trailingPEPremium = data.sectorAvgPE > 0 ? ((data.peRatio / data.sectorAvgPE) - 1) * 100 : 0;
+  const fwdPEPremium = data.sectorAvgPE > 0 ? ((data.forwardPE / data.sectorAvgPE) - 1) * 100 : 0;
+  const evEbitdaPremium = data.sectorAvgEVEBITDA > 0 ? ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100 : 0;
 
-  // Estimate moat-justified vs speculative premium/discount
-  const isDiscount = fwdPEPremium < 0;
+  // Revenue growth vs sector (use TAM CAGR as sector growth proxy)
+  const companyGrowth = data.tamAnalysis?.companyGrowth ?? 0;
+  const sectorGrowth = data.tamAnalysis?.tamCAGR ?? 5;
+
+  // Estimate moat-justified vs speculative premium/discount (based on trailing P/E)
+  const isDiscount = trailingPEPremium < 0;
   const moatMaxPremium = data.moatRating === "Wide" ? 30 : data.moatRating === "Narrow-Wide" ? 20 : data.moatRating === "Narrow" ? 15 : 0;
-  // For premium stocks: how much of the premium is moat-justified
-  // For discount stocks: moat-justified is 0 (discount is not from moat)
-  const moatJustified = isDiscount ? 0 : Math.min(fwdPEPremium, moatMaxPremium);
-  const speculative = fwdPEPremium - moatJustified;
+  const moatJustified = isDiscount ? 0 : Math.min(trailingPEPremium, moatMaxPremium);
+  const speculative = trailingPEPremium - moatJustified;
 
   const metrics = [
-    { label: "Forward P/E", stock: data.forwardPE, sector: data.sectorAvgPE, premium: fwdPEPremium },
-    { label: "EV/EBITDA", stock: data.evEbitda, sector: data.sectorAvgEVEBITDA, premium: evEbitdaPremium },
-    { label: "PEG", stock: data.pegRatio, sector: data.sectorAvgPEG, premium: ((data.pegRatio / data.sectorAvgPEG) - 1) * 100 },
-  ];
+    { label: "P/E (TTM)", stock: data.peRatio, sector: data.sectorAvgPE, premium: trailingPEPremium, desc: "Aktuell" },
+    { label: "Forward P/E", stock: data.forwardPE, sector: data.sectorAvgPE, premium: fwdPEPremium, desc: "Erwartet" },
+    { label: "EV/EBITDA", stock: data.evEbitda, sector: data.sectorAvgEVEBITDA, premium: evEbitdaPremium, desc: "" },
+    { label: "PEG", stock: data.pegRatio, sector: data.sectorAvgPEG, premium: ((data.pegRatio / data.sectorAvgPEG) - 1) * 100, desc: "" },
+    { label: "Revenue Growth", stock: companyGrowth, sector: sectorGrowth, premium: companyGrowth - sectorGrowth, desc: "YoY vs. Branche", isGrowth: true },
+  ] as const;
 
   const tam = data.tamAnalysis;
 
@@ -38,26 +43,50 @@ export function Section7({ data }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
-            {metrics.map((m, i) => (
-              <tr key={i}>
-                <td className="py-2 px-2 font-medium">{m.label}</td>
-                <td className="py-2 px-2 text-right font-mono tabular-nums font-semibold">{formatNumber(m.stock, 1)}</td>
-                <td className="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">{formatNumber(m.sector, 1)}</td>
-                <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${m.premium > 0 ? "text-amber-500" : "text-emerald-500"}`}>
-                  {m.premium >= 0 ? "+" : ""}{formatNumber(m.premium, 1)}%
-                </td>
-              </tr>
-            ))}
+            {metrics.map((m, i) => {
+              const isGrowthRow = 'isGrowth' in m && m.isGrowth;
+              // For valuation metrics (P/E, EV/EBITDA, PEG): lower = better (green), higher = worse (amber)
+              // For growth metrics: higher = better (green), lower = worse (amber)
+              const premiumColor = isGrowthRow
+                ? (m.premium >= 0 ? 'text-emerald-500' : 'text-red-500')
+                : (m.premium > 0 ? 'text-amber-500' : 'text-emerald-500');
+              return (
+                <tr key={i} className={i === 0 ? 'bg-muted/10' : ''}>
+                  <td className="py-2 px-2">
+                    <span className="font-medium">{m.label}</span>
+                    {m.desc && <span className="text-[9px] text-muted-foreground ml-1">({m.desc})</span>}
+                  </td>
+                  <td className="py-2 px-2 text-right font-mono tabular-nums font-semibold">
+                    {isGrowthRow ? (m.stock >= 0 ? '+' : '') : ''}{formatNumber(m.stock, 1)}{isGrowthRow ? '%' : ''}
+                  </td>
+                  <td className="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">
+                    {isGrowthRow ? '+' : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}
+                  </td>
+                  <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${premiumColor}`}>
+                    {m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      {/* Visual bar comparing stock vs sector for Forward PE */}
-      <div>
-        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Forward P/E Comparison</h3>
-        <div className="space-y-2">
-          <BarRow label={data.ticker} value={data.forwardPE} max={Math.max(data.forwardPE, data.sectorAvgPE) * 1.3} color="bg-primary" />
-          <BarRow label="Sector Avg" value={data.sectorAvgPE} max={Math.max(data.forwardPE, data.sectorAvgPE) * 1.3} color="bg-muted-foreground/50" />
+      {/* Visual bar comparing stock vs sector for Trailing P/E and Revenue Growth */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">P/E (TTM) vs. Sektor</h3>
+          <div className="space-y-2">
+            <BarRow label={data.ticker} value={data.peRatio} max={Math.max(data.peRatio, data.sectorAvgPE, 1) * 1.3} color="bg-primary" />
+            <BarRow label="Sektor" value={data.sectorAvgPE} max={Math.max(data.peRatio, data.sectorAvgPE, 1) * 1.3} color="bg-muted-foreground/50" />
+          </div>
+        </div>
+        <div>
+          <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Revenue Growth vs. Branche</h3>
+          <div className="space-y-2">
+            <BarRow label={data.ticker} value={companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color={companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500'} suffix="%" />
+            <BarRow label="Branche" value={sectorGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color="bg-muted-foreground/50" suffix="%" />
+          </div>
         </div>
       </div>
 
@@ -258,15 +287,15 @@ export function Section7({ data }: Props) {
   );
 }
 
-function BarRow({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
-  const pct = (value / max) * 100;
+function BarRow({ label, value, max, color, suffix = '' }: { label: string; value: number; max: number; color: string; suffix?: string }) {
+  const pct = Math.max(0, Math.min(100, (Math.abs(value) / max) * 100));
   return (
     <div className="flex items-center gap-3">
       <span className="text-xs text-muted-foreground w-20 flex-shrink-0">{label}</span>
       <div className="flex-1 h-5 bg-muted/30 rounded overflow-hidden">
         <div className={`h-full ${color} rounded transition-all`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs font-mono tabular-nums font-semibold w-12 text-right">{formatNumber(value, 1)}</span>
+      <span className="text-xs font-mono tabular-nums font-semibold w-14 text-right">{value >= 0 && suffix ? '+' : ''}{formatNumber(value, 1)}{suffix}</span>
     </div>
   );
 }
