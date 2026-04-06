@@ -3669,5 +3669,308 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+  // ============================================================
+  // STOCK SCREENER — 13F Star Investor Holdings + Quick Valuation
+  // ============================================================
+
+  // Star investor CIKs (SEC EDGAR Central Index Keys)
+  const STAR_INVESTORS: { name: string; cik: string }[] = [
+    { name: "Berkshire Hathaway (Buffett)", cik: "0001067983" },
+    { name: "Bridgewater Associates (Dalio)", cik: "0001350694" },
+    { name: "Pershing Square (Ackman)", cik: "0001336528" },
+    { name: "Appaloosa Management (Tepper)", cik: "0001656456" },
+    { name: "Greenlight Capital (Einhorn)", cik: "0001079114" },
+    { name: "Third Point (Loeb)", cik: "0001040273" },
+    { name: "Baupost Group (Klarman)", cik: "0001061768" },
+    { name: "Viking Global (Halvorsen)", cik: "0001103804" },
+    { name: "Coatue Management", cik: "0001535392" },
+    { name: "Tiger Global Management", cik: "0001167483" },
+    { name: "Druckenmiller (Duquesne Family Office)", cik: "0001536411" },
+    { name: "Elliott Management", cik: "0001048445" },
+    { name: "ValueAct Capital", cik: "0001345471" },
+    { name: "Icahn Enterprises", cik: "0000813762" },
+  ];
+
+  // Cache for 13F data (persists for 24 hours)
+  let screenerCache: { data: any; timestamp: number } | null = null;
+  const SCREENER_CACHE_TTL = 24 * 60 * 60 * 1000; // 24h
+
+  // Fetch 13F holdings for a single investor from SEC EDGAR (free, no API key)
+  async function fetch13FHoldings(cik: string, investorName: string): Promise<{ ticker: string; name: string; value: number; shares: number; investor: string }[]> {
+    try {
+      // Fetch the investor's recent filings to find latest 13F
+      const submUrl = `https://data.sec.gov/submissions/CIK${cik}.json`;
+      const resp = await fetch(submUrl, {
+        headers: { 'User-Agent': 'StockAnalystPro/1.0 (philip.diaz.rohr@gmail.com)', 'Accept': 'application/json' },
+      });
+      if (!resp.ok) { console.log(`[SCREENER] Failed to fetch submissions for ${investorName}: ${resp.status}`); return []; }
+      const data = await resp.json() as any;
+
+      // Find the most recent 13F-HR filing
+      const filings = data.filings?.recent;
+      if (!filings) return [];
+      let latestIdx = -1;
+      for (let i = 0; i < (filings.form?.length || 0); i++) {
+        if (filings.form[i] === '13F-HR') { latestIdx = i; break; }
+      }
+      if (latestIdx === -1) { console.log(`[SCREENER] No 13F-HR found for ${investorName}`); return []; }
+
+      const accNum = filings.accessionNumber[latestIdx].replace(/-/g, '');
+      const primaryDoc = filings.primaryDocument[latestIdx];
+      const filingDate = filings.filingDate[latestIdx];
+      console.log(`[SCREENER] ${investorName}: Latest 13F from ${filingDate}`);
+
+      // Fetch the 13F XML information table
+      const infoTableUrl = `https://www.sec.gov/Archives/edgar/data/${cik.replace(/^0+/, '')}/${accNum}`;
+      const indexResp = await fetch(infoTableUrl + '/index.json', {
+        headers: { 'User-Agent': 'StockAnalystPro/1.0 (philip.diaz.rohr@gmail.com)' },
+      });
+      if (!indexResp.ok) return [];
+      const indexData = await indexResp.json() as any;
+      const items = indexData?.directory?.item || [];
+      const infoTableFile = items.find((f: any) => f.name?.toLowerCase().includes('infotable') && f.name?.endsWith('.xml'));
+      if (!infoTableFile) {
+        console.log(`[SCREENER] No infotable XML for ${investorName}`);
+        return [];
+      }
+
+      const xmlResp = await fetch(`${infoTableUrl}/${infoTableFile.name}`, {
+        headers: { 'User-Agent': 'StockAnalystPro/1.0 (philip.diaz.rohr@gmail.com)' },
+      });
+      if (!xmlResp.ok) return [];
+      const xmlText = await xmlResp.text();
+
+      // Parse XML — extract holdings (simple regex parsing, no XML lib needed)
+      const holdings: { ticker: string; name: string; value: number; shares: number; investor: string }[] = [];
+      const entries = xmlText.split(/<\/infoTable>/i);
+      for (const entry of entries) {
+        const nameMatch = entry.match(/<nameOfIssuer>([^<]+)/i);
+        const cusipMatch = entry.match(/<cusip>([^<]+)/i);
+        const valueMatch = entry.match(/<value>(\d+)/i);
+        const sharesMatch = entry.match(/<sshPrnamt>(\d+)/i);
+        if (nameMatch && valueMatch) {
+          holdings.push({
+            ticker: '', // Will be resolved later via CUSIP lookup or name
+            name: nameMatch[1].trim(),
+            value: parseInt(valueMatch[1]) * 1000, // 13F values are in thousands
+            shares: sharesMatch ? parseInt(sharesMatch[1]) : 0,
+            investor: investorName,
+          });
+        }
+      }
+      return holdings;
+    } catch (err: any) {
+      console.error(`[SCREENER] Error fetching 13F for ${investorName}:`, err?.message?.substring(0, 100));
+      return [];
+    }
+  }
+
+  // Resolve company names to tickers using the finance tool
+  async function resolveTickersForHoldings(holdings: { name: string; ticker: string }[]): Promise<void> {
+    // Build a lookup of common names → tickers
+    const commonTickers: Record<string, string> = {
+      'APPLE INC': 'AAPL', 'MICROSOFT CORP': 'MSFT', 'AMAZON COM INC': 'AMZN', 'ALPHABET INC': 'GOOGL',
+      'META PLATFORMS INC': 'META', 'NVIDIA CORP': 'NVDA', 'TESLA INC': 'TSLA', 'BERKSHIRE HATHAWAY': 'BRK-B',
+      'JPMORGAN CHASE & CO': 'JPM', 'VISA INC': 'V', 'JOHNSON & JOHNSON': 'JNJ', 'WALMART INC': 'WMT',
+      'UNITEDHEALTH GROUP': 'UNH', 'PROCTER & GAMBLE': 'PG', 'MASTERCARD INC': 'MA', 'HOME DEPOT INC': 'HD',
+      'BANK OF AMERICA': 'BAC', 'CHEVRON CORP': 'CVX', 'ABBVIE INC': 'ABBV', 'PFIZER INC': 'PFE',
+      'BROADCOM INC': 'AVGO', 'COSTCO WHOLESALE': 'COST', 'ELI LILLY & CO': 'LLY', 'COCA-COLA CO': 'KO',
+      'PEPSICO INC': 'PEP', 'THERMO FISHER': 'TMO', 'CISCO SYSTEMS': 'CSCO', 'WALT DISNEY CO': 'DIS',
+      'NETFLIX INC': 'NFLX', 'ADOBE INC': 'ADBE', 'SALESFORCE INC': 'CRM', 'ORACLE CORP': 'ORCL',
+      'INTL BUSINESS MACHINES': 'IBM', 'INTEL CORP': 'INTC', 'ADVANCED MICRO DEVICES': 'AMD',
+      'QUALCOMM INC': 'QCOM', 'TEXAS INSTRUMENTS': 'TXN', 'APPLIED MATERIALS': 'AMAT',
+      'SERVICENOW INC': 'NOW', 'UBER TECHNOLOGIES': 'UBER', 'AIRBNB INC': 'ABNB',
+      'SNOWFLAKE INC': 'SNOW', 'PALANTIR TECHNOLOGIES': 'PLTR', 'CROWDSTRIKE': 'CRWD',
+      'PALO ALTO NETWORKS': 'PANW', 'DATADOG INC': 'DDOG', 'FORTINET INC': 'FTNT',
+      'SHOPIFY INC': 'SHOP', 'BLOCK INC': 'SQ', 'PAYPAL HOLDINGS': 'PYPL',
+      'COINBASE GLOBAL': 'COIN', 'ROBINHOOD MARKETS': 'HOOD', 'SOFI TECHNOLOGIES': 'SOFI',
+      'GENERAL ELECTRIC': 'GE', 'CATERPILLAR INC': 'CAT', 'DEERE & CO': 'DE',
+      'LOCKHEED MARTIN': 'LMT', 'RAYTHEON': 'RTX', 'BOEING CO': 'BA', 'GENERAL MOTORS': 'GM',
+      'FORD MOTOR CO': 'F', 'STARBUCKS CORP': 'SBUX', 'MCDONALDS CORP': 'MCD',
+      'LIBERTY BROADBAND': 'LBRDA', 'T-MOBILE US INC': 'TMUS', 'CHARTER COMMUNICATIONS': 'CHTR',
+      'CITIGROUP INC': 'C', 'WELLS FARGO & CO': 'WFC', 'GOLDMAN SACHS': 'GS', 'MORGAN STANLEY': 'MS',
+    };
+    for (const h of holdings) {
+      if (h.ticker) continue;
+      const nameUp = h.name.toUpperCase();
+      for (const [key, val] of Object.entries(commonTickers)) {
+        if (nameUp.includes(key) || key.includes(nameUp.substring(0, 10))) {
+          h.ticker = val;
+          break;
+        }
+      }
+    }
+  }
+
+  app.get('/api/screener', async (_req, res) => {
+    try {
+      // Check cache
+      if (screenerCache && (Date.now() - screenerCache.timestamp < SCREENER_CACHE_TTL)) {
+        console.log('[SCREENER] Returning cached data');
+        return res.json(screenerCache.data);
+      }
+
+      console.log(`[SCREENER] Fetching 13F holdings from ${STAR_INVESTORS.length} star investors...`);
+
+      // Fetch all 13F holdings in parallel (with rate limiting — SEC allows 10 req/sec)
+      const allHoldings: { ticker: string; name: string; value: number; shares: number; investor: string }[] = [];
+      for (const inv of STAR_INVESTORS) {
+        const holdings = await fetch13FHoldings(inv.cik, inv.name);
+        allHoldings.push(...holdings);
+        await new Promise(r => setTimeout(r, 200)); // Rate limit: 5/sec
+      }
+
+      console.log(`[SCREENER] Total raw holdings: ${allHoldings.length}`);
+
+      // Resolve tickers
+      await resolveTickersForHoldings(allHoldings);
+
+      // Aggregate: group by company name, count unique investors, sum values
+      const agg = new Map<string, {
+        name: string; ticker: string; totalValue: number; totalShares: number;
+        investors: Set<string>; investorList: string[];
+      }>();
+      for (const h of allHoldings) {
+        const key = h.name.toUpperCase().substring(0, 20); // Normalize name
+        const existing = agg.get(key);
+        if (existing) {
+          existing.totalValue += h.value;
+          existing.totalShares += h.shares;
+          existing.investors.add(h.investor);
+          if (!existing.investorList.includes(h.investor)) existing.investorList.push(h.investor);
+          if (h.ticker && !existing.ticker) existing.ticker = h.ticker;
+        } else {
+          agg.set(key, {
+            name: h.name,
+            ticker: h.ticker,
+            totalValue: h.value,
+            totalShares: h.shares,
+            investors: new Set([h.investor]),
+            investorList: [h.investor],
+          });
+        }
+      }
+
+      // Convert to sorted array — top holdings by investor count then value
+      let results = Array.from(agg.values())
+        .filter(h => h.ticker) // Only include stocks with resolved tickers
+        .map(h => ({
+          ticker: h.ticker,
+          name: h.name,
+          investorCount: h.investors.size,
+          investors: h.investorList,
+          totalValue: h.totalValue,
+          totalShares: h.totalShares,
+        }))
+        .sort((a, b) => b.investorCount - a.investorCount || b.totalValue - a.totalValue)
+        .slice(0, 30); // Top 30
+
+      // For each stock, run a quick valuation using the finance API
+      // Batch tickers for efficiency (finance tools accept multiple tickers)
+      console.log(`[SCREENER] Running quick valuation on ${results.length} stocks...`);
+      const allTickers = results.map(r => r.ticker);
+      let quotesMap: Record<string, any> = {};
+      let statsMap: Record<string, any> = {};
+      try {
+        // Fetch quotes with all key fields for all tickers at once
+        const qRes = callFinanceTool('finance_quotes', {
+          ticker_symbols: allTickers,
+          fields: ['price', 'marketCap', 'pe', 'eps', 'yearLow', 'yearHigh', 'previousClose', 'change', 'changesPercentage', 'volume'],
+        });
+        if (qRes?.content) {
+          const rows = parseMarkdownTable(qRes.content);
+          for (const row of rows) {
+            const t = row.ticker || row.symbol || '';
+            if (t) quotesMap[t] = row;
+          }
+        }
+        // Fetch company profiles for sector, beta, target price, forwardPE
+        const pRes = callFinanceTool('finance_company_profile', { ticker_symbols: allTickers });
+        if (pRes?.content) {
+          const rows = parseMarkdownTable(pRes.content);
+          for (const row of rows) {
+            const t = row.ticker || row.symbol || '';
+            if (t) statsMap[t] = row;
+          }
+        }
+      } catch (batchErr: any) {
+        console.error('[SCREENER] Batch fetch error:', batchErr?.message?.substring(0, 100));
+      }
+
+      const screenedStocks = [];
+      for (const stock of results) {
+        try {
+          const quote = quotesMap[stock.ticker] || {};
+          const profile = statsMap[stock.ticker] || {};
+
+          // Quotes give us price, PE, MCap, yearHigh/Low
+          const price = parseNumber(quote.price || quote.previousClose) || 0;
+          const pe = parseNumber(quote.pe || profile.pe || profile.trailingPE) || 0;
+          const fwdPE = parseNumber(profile.forwardPE || profile.fwdPE) || 0;
+          const marketCap = parseNumber(quote.marketCap || profile.marketCap || profile.mktCap) || 0;
+          const beta = parseNumber(profile.beta || profile.beta5Y) || 1.2;
+          const yearHigh = parseNumber(quote.yearHigh || profile.range?.split('-')?.[1]) || price * 1.3;
+          const yearLow = parseNumber(quote.yearLow || profile.range?.split('-')?.[0]) || price * 0.7;
+          const targetPrice = parseNumber(profile.targetMeanPrice || profile.analystTargetPrice || profile.dcfDiff) || 0;
+          const fcfMargin = parseNumber(profile.freeCashFlowMargin) || 0;
+          const sector = profile.sector || profile.industry || 'Unknown';
+
+          // Quick CRV calculation
+          // Upside from analyst target, or if unavailable, distance to 52W high as proxy
+          let upside = targetPrice > 0 ? ((targetPrice - price) / price) * 100 : 0;
+          if (upside === 0 && yearHigh > price) {
+            upside = ((yearHigh - price) / price) * 100; // Use 52W high as recovery target
+          }
+          // Downside from historical drawdown or distance to 52W low
+          const drawdownFromHigh = yearHigh > 0 ? ((yearHigh - price) / yearHigh) * 100 : 20;
+          const distToLow = price > 0 ? ((price - yearLow) / price) * 100 : 25;
+          const worstCase = Math.max(distToLow, beta * 25);
+          const crv = worstCase > 0 ? upside / worstCase : 0;
+
+          screenedStocks.push({
+            ticker: stock.ticker,
+            name: stock.name,
+            price,
+            marketCap,
+            pe,
+            forwardPE: fwdPE,
+            sector,
+            beta,
+            investorCount: stock.investorCount,
+            investors: stock.investors,
+            totalValue: stock.totalValue,
+            targetPrice,
+            upside: Math.round(upside * 10) / 10,
+            downside: Math.round(worstCase * 10) / 10,
+            crv: Math.round(crv * 100) / 100,
+            crvPass: crv >= 3.0,
+            yearHigh,
+            yearLow,
+            fcfMargin,
+          });
+        } catch (err: any) {
+          console.log(`[SCREENER] Failed to value ${stock.ticker}: ${err?.message?.substring(0, 50)}`);
+        }
+      }
+
+      // Sort final results by CRV descending
+      screenedStocks.sort((a, b) => b.crv - a.crv);
+
+      const result = {
+        lastUpdated: new Date().toISOString(),
+        totalInvestors: STAR_INVESTORS.length,
+        totalHoldings: allHoldings.length,
+        screenedStocks,
+      };
+
+      screenerCache = { data: result, timestamp: Date.now() };
+      console.log(`[SCREENER] Complete. ${screenedStocks.length} stocks screened. ${screenedStocks.filter(s => s.crvPass).length} pass CRV 3:1.`);
+      res.json(result);
+    } catch (error: any) {
+      console.error('[SCREENER] Error:', error?.message);
+      res.status(500).json({ error: error?.message || 'Screener failed' });
+    }
+  });
+
   return server;
 }

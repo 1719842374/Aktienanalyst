@@ -25,7 +25,7 @@ import { Section17 } from "@/components/sections/Section17";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
-  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin,
+  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -124,6 +124,13 @@ export default function Dashboard() {
           >
             <Scale className="w-3 h-3" />
             <span className="hidden sm:inline">Gold</span>
+          </button>
+          <button
+            onClick={() => navigate("/screener")}
+            className="h-8 px-2.5 text-[11px] font-medium text-cyan-500 hover:bg-cyan-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-cyan-500/20"
+          >
+            <Search className="w-3 h-3" />
+            <span className="hidden sm:inline">Screener</span>
           </button>
           <button
             onClick={toggleTheme}
