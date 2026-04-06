@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Search, TrendingUp, TrendingDown, Users, DollarSign, ArrowUpDown, Filter, RefreshCw, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import { useLocation } from "wouter";
 
 interface ScreenedStock {
   ticker: string;
@@ -40,6 +41,7 @@ export default function ScreenerDashboard() {
   const [filterCRV, setFilterCRV] = useState(false);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [searchFilter, setSearchFilter] = useState("");
+  const [, navigate] = useLocation();
 
   const { data, isLoading, error, refetch, isFetching } = useQuery<ScreenerData>({
     queryKey: ["/api/screener"],
@@ -92,7 +94,7 @@ export default function ScreenerDashboard() {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <a href="/#/" className="text-xs text-muted-foreground hover:text-foreground transition-colors">&larr; Aktien</a>
+          <button onClick={() => navigate("/")} className="text-xs text-muted-foreground hover:text-foreground transition-colors">&larr; Aktien</button>
         </div>
       </header>
 
