@@ -79,9 +79,9 @@ export default function ScreenerDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-card/95 backdrop-blur-sm border-b border-border px-4 py-2.5 flex items-center justify-between">
+      <header className="flex-shrink-0 bg-card/95 backdrop-blur-sm border-b border-border px-4 py-2.5 flex items-center justify-between z-50">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <Search className="w-5 h-5 text-primary" />
@@ -96,7 +96,8 @@ export default function ScreenerDashboard() {
         </div>
       </header>
 
-      <main className="max-w-[1400px] mx-auto px-4 py-6 space-y-4">
+      <main className="flex-1 overflow-y-auto">
+       <div className="max-w-[1400px] mx-auto px-4 py-6 space-y-4">
         {/* Loading state */}
         {isLoading && (
           <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -214,6 +215,7 @@ export default function ScreenerDashboard() {
             </div>
           </>
         )}
+       </div>
       </main>
     </div>
   );
