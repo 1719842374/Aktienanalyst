@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { RECESSION_FALLBACK_DATA } from "@/lib/recessionFallbackData";
@@ -137,6 +137,11 @@ export default function RecessionDashboard() {
   const startAnalysis = useCallback(() => {
     analyzeMutation.mutate();
   }, [analyzeMutation]);
+
+  // Auto-start analysis on mount
+  useEffect(() => {
+    startAnalysis();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
