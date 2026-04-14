@@ -402,6 +402,30 @@ export function Section2({ data }: Props) {
                         </span>
                       )}
                     </div>
+                    {/* Inline Top-2 linked news preview */}
+                    {(() => {
+                      const linked = (data.newsItems || []).filter(n => n.matchedCatalystIdx === i).slice(0, 2);
+                      if (linked.length === 0) return null;
+                      return (
+                        <div className="mt-1 space-y-0.5 pl-3">
+                          {linked.map((news, ni) => {
+                            const sc = news.sentiment;
+                            const clr = sc === 'bullish' ? 'text-emerald-400/70' : sc === 'bearish' ? 'text-red-400/70' : 'text-foreground/40';
+                            const dot = sc === 'bullish' ? 'bg-emerald-400/60' : sc === 'bearish' ? 'bg-red-400/60' : 'bg-foreground/20';
+                            return (
+                              <a key={ni} href={news.url} target="_blank" rel="noopener noreferrer"
+                                className="group flex items-center gap-1 hover:opacity-80 transition-opacity">
+                                <span className={`shrink-0 w-1 h-1 rounded-full ${dot}`} />
+                                <span className={`text-[9px] leading-tight truncate max-w-[260px] ${clr} group-hover:text-primary`}>
+                                  {news.title}
+                                </span>
+                                <span className="text-[8px] text-foreground/25 shrink-0">{news.relativeTime}</span>
+                              </a>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="py-1.5 px-1 text-muted-foreground">{c.timeline}</td>
                   <td className="py-1.5 px-1 text-right">

@@ -166,6 +166,57 @@ export function Section11({ data }: Props) {
                             {c.context}
                           </div>
                         )}
+                        {/* Linked News Headlines for this catalyst */}
+                        {(() => {
+                          const linked = (data.newsItems || []).filter(n => n.matchedCatalystIdx === i).slice(0, 2);
+                          if (linked.length === 0) return null;
+                          return (
+                            <div className="pb-1.5 mb-1.5 border-b border-border/20">
+                              <div className="flex items-center gap-1 mb-1">
+                                <span className="text-[10px]">📰</span>
+                                <span className="font-semibold text-foreground/70 text-[10px]">Verknüpfte Nachrichten</span>
+                              </div>
+                              <div className="space-y-1">
+                                {linked.map((news, ni) => {
+                                  const sc = news.sentiment;
+                                  const dotCls = sc === 'bullish' ? 'bg-emerald-400' : sc === 'bearish' ? 'bg-red-400' : 'bg-foreground/30';
+                                  const txtCls = sc === 'bullish' ? 'text-emerald-300/90' : sc === 'bearish' ? 'text-red-300/90' : 'text-foreground/60';
+                                  const scoreLabel = news.sentimentScore != null
+                                    ? (news.sentimentScore > 0 ? `+${(news.sentimentScore * 100).toFixed(0)}` : `${(news.sentimentScore * 100).toFixed(0)}`)
+                                    : '';
+                                  return (
+                                    <a
+                                      key={ni}
+                                      href={news.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="group flex items-start gap-1.5 rounded p-1 -mx-1 hover:bg-background/40 transition-colors"
+                                      onClick={e => e.stopPropagation()}
+                                    >
+                                      <span className={`shrink-0 mt-[5px] w-1.5 h-1.5 rounded-full ${dotCls}`} />
+                                      <div className="flex-1 min-w-0">
+                                        <p className={`text-[10px] leading-snug line-clamp-1 group-hover:text-primary transition-colors ${txtCls}`}>
+                                          {news.title}
+                                        </p>
+                                        <div className="flex items-center gap-1 mt-px">
+                                          <span className="text-[9px] text-foreground/35">{news.source}</span>
+                                          <span className="text-[9px] text-foreground/25">·</span>
+                                          <span className="text-[9px] text-foreground/35">{news.relativeTime}</span>
+                                          {scoreLabel && (
+                                            <span className={`text-[8px] px-0.5 rounded font-mono ${sc === 'bullish' ? 'text-emerald-400/80' : sc === 'bearish' ? 'text-red-400/80' : 'text-foreground/30'}`}>
+                                              {scoreLabel}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <span className="shrink-0 text-foreground/15 group-hover:text-primary text-[10px] mt-0.5">↗</span>
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
                         <div className="flex items-start gap-1.5">
                           <Info className="w-3 h-3 flex-shrink-0 mt-0.5 text-primary" />
                           <div className="space-y-1.5">
