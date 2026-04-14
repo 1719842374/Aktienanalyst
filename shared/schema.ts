@@ -74,6 +74,14 @@ export interface PeerComparison {
     epsGrowth1Y: number | null;
     epsGrowth5Y: number | null;
   };
+  sectorMedian: { // Damodaran sector medians
+    pe: number | null;
+    peg: number | null;
+    ps: number | null;
+    pb: number | null;
+    epsGrowth: number | null;
+    sectorName: string;
+  };
 }
 
 export interface NewsItem {
