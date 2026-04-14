@@ -440,7 +440,7 @@ async function fetchPeerComparison(
     }
     console.log(`[PEERS] Found peers for ${ticker}: ${peerTickers.join(', ')}`);
 
-    // Step 2: Fetch ratios for all peers in one call
+    // Step 2: Fetch ratios for all peers in one call (including EPS for growth calc)
     const ratioIds = [
       'ratio_price_to_earnings', 'ratio_price_to_sales', 'ratio_price_to_book',
       'ratio_diluted_eps', 'calculated_market_cap',
@@ -461,21 +461,19 @@ async function fetchPeerComparison(
     const peerData: Map<string, any> = new Map();
     if (ratiosResult?.content) {
       const content = typeof ratiosResult.content === 'string' ? ratiosResult.content : JSON.stringify(ratiosResult.content);
-      // Split by company sections
       const sections = content.split(/##\s+/);
       for (const section of sections) {
         if (!section.trim()) continue;
-        // Extract ticker from section header (e.g. "RIVN Company Ratios")
         const headerMatch = section.match(/^([A-Z]{1,6})(?:\.[A-Z]{1,2})?\s/);
         if (!headerMatch) continue;
         const t = headerMatch[1];
-        if (!peerData.has(t)) peerData.set(t, {});
+        if (!peerData.has(t)) peerData.set(t, { epsHistory: [] as { date: string; eps: number }[] });
         const d = peerData.get(t)!;
+        if (!d.epsHistory) d.epsHistory = [];
 
-        // Parse the markdown table and get the LAST row with data
         const rows = parseMarkdownTable(section);
         for (const row of rows) {
-          // Take each row — later rows override earlier ones (we want the most recent)
+          const date = row['date'] || '';
           for (const [key, val] of Object.entries(row)) {
             const kl = key.toLowerCase();
             const num = parseFloat(String(val).replace(/[,$%]/g, ''));
@@ -484,7 +482,10 @@ async function fetchPeerComparison(
             if (kl.includes('price_to_sales') || kl.includes('p/s')) d.ps = num;
             if (kl.includes('price_to_book') || kl.includes('p/b')) d.pb = num;
             if (kl.includes('market_cap') || kl.includes('marketcap')) d.marketCap = num;
-            if (kl.includes('diluted_eps') || kl.includes('eps')) d.eps = num;
+            if (kl.includes('diluted_eps') || kl.includes('eps')) {
+              d.eps = num;
+              if (date && num !== 0) d.epsHistory.push({ date, eps: num });
+            }
           }
         }
       }
@@ -516,22 +517,50 @@ async function fetchPeerComparison(
       }
     }
 
-    // Step 3: Build peer company objects
+    // Step 3: Build peer company objects with EPS growth calculation
     const peers: any[] = [];
     for (const t of peerTickers) {
       const d = peerData.get(t);
       if (!d) continue;
       const peerPE = d.pe || null;
-      const peerEpsGrowth = null; // Not directly available from single-year ratios
-      const peerPEG = peerPE && epsGrowth5Y > 0 ? +(peerPE / epsGrowth5Y).toFixed(2) : null; // approximate
+
+      // Compute EPS Growth 1Y and 5Y from EPS history
+      let epsGrowth1Y: number | null = null;
+      let epsGrowth5Y_peer: number | null = null;
+      const history: { date: string; eps: number }[] = (d.epsHistory || []).filter((h: any) => h.eps > 0);
+      if (history.length >= 2) {
+        // Sort by date ascending
+        history.sort((a: any, b: any) => a.date.localeCompare(b.date));
+        const latest = history[history.length - 1];
+        const prev = history[history.length - 2];
+        // 1Y growth
+        if (prev.eps > 0 && latest.eps > 0) {
+          epsGrowth1Y = +((latest.eps / prev.eps - 1) * 100).toFixed(1);
+        }
+        // 5Y CAGR: find EPS from ~5 years ago
+        if (history.length >= 3) {
+          const targetIdx = Math.max(0, history.length - 6); // ~5Y back
+          const old = history[targetIdx];
+          const years = Math.max(1, history.length - 1 - targetIdx);
+          if (old.eps > 0 && latest.eps > 0) {
+            epsGrowth5Y_peer = +(((latest.eps / old.eps) ** (1 / years) - 1) * 100).toFixed(1);
+          }
+        }
+      }
+
+      // PEG = P/E / EPS Growth 5Y
+      const growthForPEG = epsGrowth5Y_peer && epsGrowth5Y_peer > 0 ? epsGrowth5Y_peer : (epsGrowth5Y > 0 ? epsGrowth5Y : null);
+      const peerPEG = peerPE && growthForPEG && growthForPEG > 0 ? +(peerPE / growthForPEG).toFixed(2) : null;
+
       peers.push({
         ticker: t,
-        name: t, // We'll enhance with profile data if available
+        name: t,
         pe: peerPE ? +peerPE.toFixed(1) : null,
         peg: peerPEG,
         ps: d.ps ? +d.ps.toFixed(1) : null,
         pb: d.pb ? +d.pb.toFixed(1) : null,
-        epsGrowth: peerEpsGrowth,
+        epsGrowth1Y,
+        epsGrowth5Y: epsGrowth5Y_peer,
         marketCap: d.marketCap || null,
         revenueGrowth: null,
       });
@@ -558,7 +587,8 @@ async function fetchPeerComparison(
       peg: peg > 0 ? +peg.toFixed(2) : null,
       ps,
       pb: null as number | null, // Will be filled if we have book value
-      epsGrowth: epsGrowth5Y > 0 ? +epsGrowth5Y.toFixed(1) : null,
+      epsGrowth1Y: null as number | null, // Will be filled from financial statements
+      epsGrowth5Y: epsGrowth5Y > 0 ? +epsGrowth5Y.toFixed(1) : null,
       marketCap,
       revenueGrowth: +revenueGrowth.toFixed(1),
     };
@@ -572,7 +602,8 @@ async function fetchPeerComparison(
         peg: avg(validPeers.map(p => p.peg)),
         ps: avg(validPeers.map(p => p.ps)),
         pb: avg(validPeers.map(p => p.pb)),
-        epsGrowth: avg(validPeers.map(p => p.epsGrowth)),
+        epsGrowth1Y: avg(validPeers.map(p => p.epsGrowth1Y)),
+        epsGrowth5Y: avg(validPeers.map(p => p.epsGrowth5Y)),
       },
     };
   } catch (err: any) {
@@ -3916,6 +3947,7 @@ export async function registerRoutes(server: Server, app: Express) {
           subject: {
             ...peerComparison.subject,
             pb: totalEquity > 0 ? +(marketCap / totalEquity).toFixed(1) : null,
+            epsGrowth1Y: epsConsensusNextFY > 0 && eps > 0 ? +((epsConsensusNextFY / eps - 1) * 100).toFixed(1) : null,
           },
         } : undefined,
 

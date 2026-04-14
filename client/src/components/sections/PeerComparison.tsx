@@ -1,4 +1,4 @@
-import type { StockAnalysis } from "@shared/schema";
+import type { StockAnalysis, PeerCompany } from "@shared/schema";
 
 function fmt(v: number | null | undefined, decimals = 1): string {
   if (v == null || isNaN(v) || !isFinite(v)) return "—";
@@ -13,22 +13,11 @@ function fmtCap(v: number | null | undefined): string {
   return `$${v.toFixed(0)}`;
 }
 
-// Premium/Discount color: negative = green (cheap), positive = red (expensive)
-function premiumClass(subject: number | null, peerAvg: number | null): string {
-  if (subject == null || peerAvg == null || peerAvg === 0) return "";
-  const diff = ((subject - peerAvg) / peerAvg) * 100;
-  if (diff < -20) return "text-emerald-400 font-semibold";
-  if (diff < -5) return "text-emerald-400/80";
-  if (diff > 20) return "text-red-400 font-semibold";
-  if (diff > 5) return "text-red-400/80";
-  return "text-foreground/60";
-}
-
-function premiumLabel(subject: number | null, peerAvg: number | null): string {
-  if (subject == null || peerAvg == null || peerAvg === 0) return "";
-  const diff = ((subject - peerAvg) / peerAvg) * 100;
-  if (diff > 0) return `+${diff.toFixed(0)}%`;
-  return `${diff.toFixed(0)}%`;
+// Find the "best" value in a column: lowest for valuation metrics, highest for growth
+function findBest(values: (number | null)[], lowerIsBetter: boolean): number | null {
+  const valid = values.filter((v): v is number => v !== null && !isNaN(v) && isFinite(v) && v > 0);
+  if (valid.length === 0) return null;
+  return lowerIsBetter ? Math.min(...valid) : Math.max(...valid);
 }
 
 export default function PeerComparison({ data }: { data: StockAnalysis }) {
@@ -37,67 +26,70 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
 
   const { subject, peers, peerAvg } = pc;
 
-  const metrics: {
-    key: string;
+  // All companies (subject + peers) for best-value calculation
+  const allCompanies: PeerCompany[] = [subject, ...peers];
+
+  // Columns definition with best-value logic
+  const cols: {
+    key: keyof PeerCompany;
     label: string;
-    subjectVal: number | null;
-    avgVal: number | null;
-    peerVals: (number | null)[];
     lowerIsBetter: boolean;
     decimals: number;
+    suffix: string;
   }[] = [
-    {
-      key: "pe",
-      label: "P/E",
-      subjectVal: subject.pe,
-      avgVal: peerAvg.pe,
-      peerVals: peers.map((p) => p.pe),
-      lowerIsBetter: true,
-      decimals: 1,
-    },
-    {
-      key: "peg",
-      label: "PEG",
-      subjectVal: subject.peg,
-      avgVal: peerAvg.peg,
-      peerVals: peers.map((p) => p.peg),
-      lowerIsBetter: true,
-      decimals: 2,
-    },
-    {
-      key: "ps",
-      label: "P/S",
-      subjectVal: subject.ps,
-      avgVal: peerAvg.ps,
-      peerVals: peers.map((p) => p.ps),
-      lowerIsBetter: true,
-      decimals: 1,
-    },
-    {
-      key: "pb",
-      label: "P/B",
-      subjectVal: subject.pb,
-      avgVal: peerAvg.pb,
-      peerVals: peers.map((p) => p.pb),
-      lowerIsBetter: true,
-      decimals: 1,
-    },
-    {
-      key: "epsGrowth",
-      label: "EPS Growth",
-      subjectVal: subject.epsGrowth,
-      avgVal: peerAvg.epsGrowth,
-      peerVals: peers.map((p) => p.epsGrowth),
-      lowerIsBetter: false,
-      decimals: 1,
-    },
+    { key: "pe", label: "P/E", lowerIsBetter: true, decimals: 1, suffix: "" },
+    { key: "peg", label: "PEG", lowerIsBetter: true, decimals: 2, suffix: "" },
+    { key: "ps", label: "P/S", lowerIsBetter: true, decimals: 1, suffix: "" },
+    { key: "pb", label: "P/B", lowerIsBetter: true, decimals: 1, suffix: "" },
+    { key: "epsGrowth1Y", label: "EPS 1Y", lowerIsBetter: false, decimals: 1, suffix: "%" },
+    { key: "epsGrowth5Y", label: "EPS 5Y", lowerIsBetter: false, decimals: 1, suffix: "%" },
   ];
+
+  // Precompute best values per column
+  const bestValues: Map<string, number | null> = new Map();
+  for (const col of cols) {
+    const vals = allCompanies.map(c => (c as any)[col.key] as number | null);
+    bestValues.set(col.key, findBest(vals, col.lowerIsBetter));
+  }
+
+  // Check if a value is the best in its column
+  function isBest(key: string, val: number | null | undefined): boolean {
+    if (val == null || isNaN(val) || !isFinite(val) || val <= 0) return false;
+    const best = bestValues.get(key);
+    if (best == null) return false;
+    return Math.abs(val - best) < 0.01;
+  }
+
+  // Cell className
+  function cellClass(key: string, val: number | null | undefined, isSubject: boolean): string {
+    const base = "py-1.5 px-1.5 text-right font-mono tabular-nums";
+    if (isBest(key, val)) return `${base} text-emerald-400 font-semibold`;
+    if (isSubject) return `${base}`;
+    return `${base} text-foreground/70`;
+  }
+
+  // Premium/discount of subject vs peer avg
+  function premiumPct(subjectVal: number | null, avgVal: number | null): string | null {
+    if (subjectVal == null || avgVal == null || avgVal === 0) return null;
+    const diff = ((subjectVal - avgVal) / avgVal) * 100;
+    return diff > 0 ? `+${diff.toFixed(0)}%` : `${diff.toFixed(0)}%`;
+  }
+
+  function premiumColor(subjectVal: number | null, avgVal: number | null, lowerIsBetter: boolean): string {
+    if (subjectVal == null || avgVal == null || avgVal === 0) return "text-foreground/40";
+    const diff = ((subjectVal - avgVal) / avgVal) * 100;
+    const isCheap = lowerIsBetter ? diff < -5 : diff > 5;
+    const isExpensive = lowerIsBetter ? diff > 5 : diff < -5;
+    if (isCheap) return "text-emerald-400";
+    if (isExpensive) return "text-red-400";
+    return "text-foreground/50";
+  }
 
   return (
     <div className="space-y-3">
       <div className="text-xs text-muted-foreground mb-1">
-        Bewertungsvergleich mit {peers.length} direkten Wettbewerbern — via
-        Perplexity Finance API
+        Bewertungsvergleich mit {peers.length} direkten Wettbewerbern —{" "}
+        <span className="text-emerald-400">■</span> bester Wert je Kennzahl
       </div>
 
       {/* Comparison Table */}
@@ -105,164 +97,92 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border">
-              <th className="text-left py-2 px-2 text-muted-foreground font-medium">
-                Unternehmen
-              </th>
-              <th className="text-right py-2 px-1.5 text-muted-foreground font-medium">
-                Mkt Cap
-              </th>
-              <th className="text-right py-2 px-1.5 text-muted-foreground font-medium">
-                P/E
-              </th>
-              <th className="text-right py-2 px-1.5 text-muted-foreground font-medium">
-                PEG
-              </th>
-              <th className="text-right py-2 px-1.5 text-muted-foreground font-medium">
-                P/S
-              </th>
-              <th className="text-right py-2 px-1.5 text-muted-foreground font-medium">
-                P/B
-              </th>
-              <th className="text-right py-2 px-2 text-muted-foreground font-medium">
-                EPS Gr.
-              </th>
+              <th className="text-left py-2 px-2 text-muted-foreground font-medium">Ticker</th>
+              <th className="text-right py-2 px-1.5 text-muted-foreground font-medium">Mkt Cap</th>
+              {cols.map(c => (
+                <th key={c.key} className="text-right py-2 px-1.5 text-muted-foreground font-medium">{c.label}</th>
+              ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
             {/* Subject row (highlighted) */}
             <tr className="bg-primary/5 font-semibold">
-              <td className="py-2 px-2">
+              <td className="py-1.5 px-2">
                 <div className="flex items-center gap-1.5">
                   <span className="text-primary">{subject.ticker}</span>
-                  <span className="text-[9px] px-1 py-px rounded bg-primary/15 text-primary/80">
-                    Analyse
-                  </span>
+                  <span className="text-[9px] px-1 py-px rounded bg-primary/15 text-primary/80">Analyse</span>
                 </div>
               </td>
-              <td className="py-2 px-1.5 text-right font-mono tabular-nums">
-                {fmtCap(subject.marketCap)}
-              </td>
-              <td
-                className={`py-2 px-1.5 text-right font-mono tabular-nums ${premiumClass(subject.pe, peerAvg.pe)}`}
-              >
-                {fmt(subject.pe)}
-              </td>
-              <td
-                className={`py-2 px-1.5 text-right font-mono tabular-nums ${premiumClass(subject.peg, peerAvg.peg)}`}
-              >
-                {fmt(subject.peg, 2)}
-              </td>
-              <td
-                className={`py-2 px-1.5 text-right font-mono tabular-nums ${premiumClass(subject.ps, peerAvg.ps)}`}
-              >
-                {fmt(subject.ps)}
-              </td>
-              <td
-                className={`py-2 px-1.5 text-right font-mono tabular-nums ${premiumClass(subject.pb, peerAvg.pb)}`}
-              >
-                {fmt(subject.pb)}
-              </td>
-              <td className="py-2 px-2 text-right font-mono tabular-nums">
-                {subject.epsGrowth != null ? `${fmt(subject.epsGrowth)}%` : "—"}
-              </td>
+              <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">{fmtCap(subject.marketCap)}</td>
+              {cols.map(c => {
+                const val = (subject as any)[c.key] as number | null;
+                return (
+                  <td key={c.key} className={cellClass(c.key, val, true)}>
+                    {val != null ? `${fmt(val, c.decimals)}${c.suffix}` : "—"}
+                  </td>
+                );
+              })}
             </tr>
 
             {/* Peer rows */}
             {peers.map((p, i) => (
               <tr key={i} className="hover:bg-muted/20">
                 <td className="py-1.5 px-2 text-foreground/80">{p.ticker}</td>
-                <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-foreground/60">
-                  {fmtCap(p.marketCap)}
-                </td>
-                <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-foreground/70">
-                  {fmt(p.pe)}
-                </td>
-                <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-foreground/70">
-                  {fmt(p.peg, 2)}
-                </td>
-                <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-foreground/70">
-                  {fmt(p.ps)}
-                </td>
-                <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-foreground/70">
-                  {fmt(p.pb)}
-                </td>
-                <td className="py-1.5 px-2 text-right font-mono tabular-nums text-foreground/70">
-                  {p.epsGrowth != null ? `${fmt(p.epsGrowth)}%` : "—"}
-                </td>
+                <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-foreground/60">{fmtCap(p.marketCap)}</td>
+                {cols.map(c => {
+                  const val = (p as any)[c.key] as number | null;
+                  return (
+                    <td key={c.key} className={cellClass(c.key, val, false)}>
+                      {val != null ? `${fmt(val, c.decimals)}${c.suffix}` : "—"}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
 
             {/* Peer Average row */}
             <tr className="border-t-2 border-border bg-muted/10 font-medium">
-              <td className="py-2 px-2 text-muted-foreground">
-                Ø Peers ({peers.length})
-              </td>
-              <td className="py-2 px-1.5 text-right text-muted-foreground">
-                —
-              </td>
-              <td className="py-2 px-1.5 text-right font-mono tabular-nums text-muted-foreground">
-                {fmt(peerAvg.pe)}
-              </td>
-              <td className="py-2 px-1.5 text-right font-mono tabular-nums text-muted-foreground">
-                {fmt(peerAvg.peg, 2)}
-              </td>
-              <td className="py-2 px-1.5 text-right font-mono tabular-nums text-muted-foreground">
-                {fmt(peerAvg.ps)}
-              </td>
-              <td className="py-2 px-1.5 text-right font-mono tabular-nums text-muted-foreground">
-                {fmt(peerAvg.pb)}
-              </td>
-              <td className="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">
-                {peerAvg.epsGrowth != null ? `${fmt(peerAvg.epsGrowth)}%` : "—"}
-              </td>
+              <td className="py-2 px-2 text-muted-foreground">Ø Peers ({peers.length})</td>
+              <td className="py-2 px-1.5 text-right text-muted-foreground">—</td>
+              {cols.map(c => {
+                const avgVal = (peerAvg as any)[c.key] as number | null;
+                return (
+                  <td key={c.key} className="py-2 px-1.5 text-right font-mono tabular-nums text-muted-foreground">
+                    {avgVal != null ? `${fmt(avgVal, c.decimals)}${c.suffix}` : "—"}
+                  </td>
+                );
+              })}
             </tr>
           </tbody>
         </table>
       </div>
 
       {/* Premium/Discount Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {metrics
-          .filter((m) => m.subjectVal != null && m.avgVal != null)
-          .map((m) => {
-            const diff =
-              m.avgVal! !== 0
-                ? ((m.subjectVal! - m.avgVal!) / m.avgVal!) * 100
-                : 0;
-            const isCheap = m.lowerIsBetter ? diff < 0 : diff > 0;
-            const isExpensive = m.lowerIsBetter ? diff > 0 : diff < 0;
-            const bgColor = isCheap
-              ? "bg-emerald-500/8 border-emerald-500/20"
-              : isExpensive
-                ? "bg-red-500/8 border-red-500/20"
-                : "bg-muted/30 border-border/50";
-            const textColor = isCheap
-              ? "text-emerald-400"
-              : isExpensive
-                ? "text-red-400"
-                : "text-foreground/50";
-            const label = isCheap
-              ? "Discount"
-              : isExpensive
-                ? "Premium"
-                : "Fair";
-
-            return (
-              <div
-                key={m.key}
-                className={`rounded-lg border p-2 text-center ${bgColor}`}
-              >
-                <div className="text-[10px] text-muted-foreground mb-0.5">
-                  {m.label}
-                </div>
-                <div className={`text-sm font-mono font-bold ${textColor}`}>
-                  {diff > 0 ? "+" : ""}
-                  {diff.toFixed(0)}%
-                </div>
-                <div className={`text-[9px] ${textColor}`}>{label}</div>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+        {cols.map(c => {
+          const sVal = (subject as any)[c.key] as number | null;
+          const aVal = (peerAvg as any)[c.key] as number | null;
+          const prem = premiumPct(sVal, aVal);
+          const color = premiumColor(sVal, aVal, c.lowerIsBetter);
+          if (!prem) return (
+            <div key={c.key} className="rounded-lg border border-border/30 bg-muted/20 p-1.5 text-center">
+              <div className="text-[10px] text-muted-foreground">{c.label}</div>
+              <div className="text-xs font-mono text-foreground/30">—</div>
+            </div>
+          );
+          const bgColor = color.includes("emerald") ? "bg-emerald-500/8 border-emerald-500/20" :
+            color.includes("red") ? "bg-red-500/8 border-red-500/20" : "bg-muted/20 border-border/30";
+          return (
+            <div key={c.key} className={`rounded-lg border p-1.5 text-center ${bgColor}`}>
+              <div className="text-[10px] text-muted-foreground">{c.label}</div>
+              <div className={`text-sm font-mono font-bold ${color}`}>{prem}</div>
+              <div className={`text-[9px] ${color}`}>
+                {color.includes("emerald") ? (c.lowerIsBetter ? "Discount" : "Stärker") :
+                 color.includes("red") ? (c.lowerIsBetter ? "Premium" : "Schwächer") : "Fair"}
               </div>
-            );
-          })}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -57,7 +57,8 @@ export interface PeerCompany {
   peg: number | null;
   ps: number | null; // Price/Sales
   pb: number | null; // Price/Book
-  epsGrowth: number | null; // EPS Growth %
+  epsGrowth1Y: number | null; // EPS Growth 1Y %
+  epsGrowth5Y: number | null; // EPS Growth 5Y CAGR %
   marketCap: number | null;
   revenueGrowth: number | null;
 }
@@ -70,7 +71,8 @@ export interface PeerComparison {
     peg: number | null;
     ps: number | null;
     pb: number | null;
-    epsGrowth: number | null;
+    epsGrowth1Y: number | null;
+    epsGrowth5Y: number | null;
   };
 }
 
