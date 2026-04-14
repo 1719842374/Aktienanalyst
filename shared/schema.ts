@@ -3,6 +3,7 @@ import { z } from "zod";
 // === Request Schema ===
 export const analyzeRequestSchema = z.object({
   ticker: z.string().min(1).max(10).toUpperCase(),
+  useLLM: z.boolean().optional().default(false), // KI-Katalysatoren toggle
 });
 
 export type AnalyzeRequest = z.infer<typeof analyzeRequestSchema>;
@@ -430,6 +431,7 @@ export interface StockAnalysis {
   // NEW: Structured news items from Google News RSS
   newsItems?: NewsItem[];
   peerComparison?: PeerComparison;
+  llmMode?: boolean; // Whether LLM-powered catalysts were used
   // NEW: Geographic segments (Umsatzanteil nach Regionen)
   geoSegments?: RevenueSegment[];
 }

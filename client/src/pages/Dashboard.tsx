@@ -54,19 +54,23 @@ export default function Dashboard() {
   const { theme, toggleTheme } = useTheme();
   const [data, setData] = useState<StockAnalysis | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [useLLM, setUseLLM] = useState(false);
+  const [currentTicker, setCurrentTicker] = useState('');
   const [, navigate] = useLocation();
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   const analyzeMutation = useMutation({
-    mutationFn: async (ticker: string) => {
-      const res = await apiRequest("POST", "/api/analyze", { ticker });
+    mutationFn: async ({ ticker, llm }: { ticker: string; llm: boolean }) => {
+      const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm });
       return res.json() as Promise<StockAnalysis>;
     },
     onSuccess: (result) => {
       setData(result);
-      // Scroll to top
-      mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      // Scroll to top on new ticker (not on LLM reload)
+      if (!result.llmMode || !data || data.companyName !== result.companyName) {
+        mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      }
     },
   });
 
@@ -115,9 +119,37 @@ export default function Dashboard() {
             </div>
           )}
           <TickerSearch
-            onSearch={(ticker) => analyzeMutation.mutate(ticker)}
+            onSearch={(ticker) => { setCurrentTicker(ticker); analyzeMutation.mutate({ ticker, llm: useLLM }); }}
             isLoading={analyzeMutation.isPending}
           />
+          {/* KI-Katalysatoren Toggle */}
+          <button
+            onClick={() => {
+              const next = !useLLM;
+              setUseLLM(next);
+              // If we have data and switching to LLM, re-analyze with LLM
+              if (next && currentTicker) {
+                analyzeMutation.mutate({ ticker: currentTicker, llm: true });
+              }
+            }}
+            className={`h-8 px-2 text-[11px] font-medium rounded-md transition-all flex items-center gap-1 border ${
+              useLLM
+                ? 'bg-violet-500/15 text-violet-400 border-violet-500/30 hover:bg-violet-500/25'
+                : 'text-foreground/40 border-border/50 hover:bg-muted/50 hover:text-foreground/60'
+            }`}
+            title={useLLM ? 'KI-Katalysatoren aktiv (LLM-Calls pro Analyse)' : 'KI-Katalysatoren aus (Sektor-Templates, keine LLM-Kosten)'}
+            data-testid="button-llm-toggle"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5v1h-4v-1c-1.2-.7-2-2-2-3.5a4 4 0 0 1 4-4z"/>
+              <path d="M10 10.5v2.5h4v-2.5"/>
+              <path d="M10 15h4"/>
+              <path d="M11 15v2"/>
+              <path d="M13 15v2"/>
+            </svg>
+            <span className="hidden sm:inline">KI</span>
+            {useLLM && <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />}
+          </button>
           <NavToBTC />
           <button
             onClick={() => navigate("/gold")}
@@ -190,7 +222,7 @@ export default function Dashboard() {
           data-testid="main-content"
         >
           {!data && !analyzeMutation.isPending ? (
-            <WelcomeScreen onSearch={(ticker) => analyzeMutation.mutate(ticker)} />
+            <WelcomeScreen onSearch={(ticker) => { setCurrentTicker(ticker); analyzeMutation.mutate({ ticker, llm: useLLM }); }} />
           ) : analyzeMutation.isPending ? (
             <LoadingScreen ticker={analyzeMutation.variables || ""} />
           ) : analyzeMutation.isError ? (

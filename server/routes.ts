@@ -3034,7 +3034,8 @@ export async function registerRoutes(server: Server, app: Express) {
         return res.status(400).json({ error: "Invalid ticker" });
       }
       const ticker = parsed.data.ticker;
-      console.log(`[ANALYZE] Starting analysis for ${ticker}...`);
+      const useLLM = parsed.data.useLLM === true;
+      console.log(`[ANALYZE] Starting analysis for ${ticker}${useLLM ? ' [LLM ON]' : ''}...`);
 
       // === Parallel API calls ===
       const [quoteResult, profileResult, financialsResult, analystResult, estimatesResult, ohlcvHistResult, segmentsResult, newsResult] = await Promise.all([
@@ -3600,23 +3601,29 @@ export async function registerRoutes(server: Server, app: Express) {
       newsHeadlines = newsItems.map(n => `[${n.relativeTime}] ${n.title} (${n.source})`);
 
       // === Catalysts & Risks ===
-      // Try LLM-powered company-specific catalysts first, fallback to sector template
       let catalysts: Catalyst[];
-      const llmCatalysts = await generateLLMCatalysts(
-        ticker, companyName, sector, industry, description,
-        revenue, revenueGrowth, fcfMargin, price, pe, marketCap,
-        keyProjects, secFilingExcerpts, newsHeadlines
-      );
-      if (llmCatalysts && llmCatalysts.length >= 3) {
-        catalysts = llmCatalysts;
-        console.log(`[ANALYZE] Using LLM-generated catalysts for ${ticker}`);
+      if (useLLM) {
+        // LLM-powered company-specific catalysts + news-sentiment matching
+        const llmCatalysts = await generateLLMCatalysts(
+          ticker, companyName, sector, industry, description,
+          revenue, revenueGrowth, fcfMargin, price, pe, marketCap,
+          keyProjects, secFilingExcerpts, newsHeadlines
+        );
+        if (llmCatalysts && llmCatalysts.length >= 3) {
+          catalysts = llmCatalysts;
+          console.log(`[ANALYZE] Using LLM-generated catalysts for ${ticker}`);
+        } else {
+          catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
+          console.log(`[ANALYZE] LLM failed, using sector-template catalysts for ${ticker}`);
+        }
+        // News-Sentiment-Catalyst Matching (also LLM)
+        if (newsItems.length > 0 && catalysts.length > 0) {
+          await matchNewsToCatalysts(newsItems, catalysts, ticker, companyName);
+        }
       } else {
+        // Fast path: sector-template catalysts, no LLM
         catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
-        console.log(`[ANALYZE] Using fallback sector-template catalysts for ${ticker}`);
-      }
-      // === News-Sentiment-Catalyst Matching ===
-      if (newsItems.length > 0 && catalysts.length > 0) {
-        await matchNewsToCatalysts(newsItems, catalysts, ticker, companyName);
+        console.log(`[ANALYZE] Using sector-template catalysts for ${ticker} (LLM off)`);
       }
 
       const risks = generateRisks(sector, beta5Y, govExp.exposure);
@@ -3631,8 +3638,8 @@ export async function registerRoutes(server: Server, app: Express) {
       else growthThesis = `Revenue rückläufig bei ${revenueGrowth.toFixed(1)}% – benötigt Restrukturierung oder neuen Wachstumsvektor.`;
       growthThesis = hybridPrefix + growthThesis;
 
-      // Add catalyst reasoning to growth thesis — use LLM catalysts if available
-      if (llmCatalysts && llmCatalysts.length > 0) {
+      // Add catalyst reasoning to growth thesis
+      if (useLLM && catalysts.length > 0 && catalysts[0]?.context) {
         const topCats = catalysts.slice(0, 3).map(c => c.name).join(', ');
         const firstCtx = catalysts[0]?.context ? ' ' + catalysts[0].context.split('.')[0] + '.' : '';
         growthThesis += ` Katalysator: ${topCats}.${firstCtx}`;
@@ -4107,6 +4114,8 @@ export async function registerRoutes(server: Server, app: Express) {
         revenueSegments,
         // NEW: Geographic segments (Regionen)
         geoSegments,
+        // LLM mode flag
+        llmMode: useLLM,
       };
 
       console.log(`[ANALYZE] Completed analysis for ${ticker}: $${price} (${companyName})`);
