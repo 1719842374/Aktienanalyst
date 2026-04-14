@@ -137,10 +137,24 @@ export function Section11({ data }: Props) {
                   onClick={() => setExpandedRow(isExpanded ? null : i)}
                   data-testid={`catalyst-row-${i}`}
                 >
-                  <td className="py-2 pr-2 font-mono text-muted-foreground">K{i + 1}</td>
+                  <td className="py-2 pr-2 font-mono text-muted-foreground">
+                    <div className="flex items-center gap-1">
+                      <span>K{i + 1}</span>
+                      {c.newsSentiment && c.newsSentiment !== 'neutral' && (
+                        <span className={`text-[9px] ${c.newsSentiment === 'bullish' ? 'text-emerald-400' : c.newsSentiment === 'bearish' ? 'text-red-400' : 'text-amber-400'}`}>
+                          {c.newsSentiment === 'bullish' ? '▲' : c.newsSentiment === 'bearish' ? '▼' : '◆'}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="py-2 pr-2">
                     <div className="flex items-center gap-1">
                       <span className="font-medium">{c.name}</span>
+                      {c.newsCount && c.newsCount > 0 && (
+                        <span className={`text-[9px] px-1 py-px rounded ${c.newsSentiment === 'bullish' ? 'bg-emerald-500/15 text-emerald-400' : c.newsSentiment === 'bearish' ? 'bg-red-500/15 text-red-400' : c.newsSentiment === 'mixed' ? 'bg-amber-500/15 text-amber-400' : 'bg-foreground/5 text-foreground/40'}`}>
+                          {c.newsCount}📰
+                        </span>
+                      )}
                       {isExpanded ? <ChevronUp className="w-3 h-3 text-muted-foreground flex-shrink-0" /> : <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
                     </div>
                     {isExpanded && (
@@ -185,13 +199,20 @@ export function Section11({ data }: Props) {
                   </td>
                   <td className="py-2 pr-2 text-center font-mono tabular-nums text-[10px]">{c.timeline}</td>
                   <td className="py-2 pr-2 text-center">
-                    <span className={`font-mono tabular-nums font-medium px-1.5 py-0.5 rounded ${
-                      c.pos >= 70 ? "bg-emerald-500/10 text-emerald-500" :
-                      c.pos >= 50 ? "bg-primary/10 text-primary" :
-                      "bg-amber-500/10 text-amber-500"
-                    }`}>
-                      {c.pos}%
-                    </span>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className={`font-mono tabular-nums font-medium px-1.5 py-0.5 rounded ${
+                        c.pos >= 70 ? "bg-emerald-500/10 text-emerald-500" :
+                        c.pos >= 50 ? "bg-primary/10 text-primary" :
+                        "bg-amber-500/10 text-amber-500"
+                      }`}>
+                        {c.pos}%
+                      </span>
+                      {c.posAdjustment != null && c.posAdjustment !== 0 && (
+                        <span className={`text-[9px] font-mono ${c.posAdjustment > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          ({c.posAdjustment > 0 ? '+' : ''}{c.posAdjustment} News)
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-2 pr-2 text-center font-mono tabular-nums text-emerald-500 font-medium">+{c.bruttoUpside}%</td>
                   <td className="py-2 pr-2 text-center">

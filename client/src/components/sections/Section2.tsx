@@ -83,16 +83,38 @@ export function Section2({ data }: Props) {
           <p className="text-xs text-foreground/80 leading-relaxed max-h-[200px] overflow-y-auto">{data.description}</p>
         </div>
 
-        {/* === Aktuelle Nachrichten === */}
-        {data.newsItems && data.newsItems.length > 0 && (
-          <div className="bg-card/50 rounded-lg border border-border/50 p-3 mb-3">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-sm">📰</span>
-              <span className="text-sm font-semibold text-foreground">Aktuelle Nachrichten</span>
-              <span className="text-xs text-foreground/50">({data.newsItems.length} Meldungen)</span>
+        {/* === Aktuelle Nachrichten mit Sentiment === */}
+        {data.newsItems && data.newsItems.length > 0 && (() => {
+          const bullish = data.newsItems.filter(n => n.sentiment === 'bullish').length;
+          const bearish = data.newsItems.filter(n => n.sentiment === 'bearish').length;
+          const neutral = data.newsItems.length - bullish - bearish;
+          const avgScore = data.newsItems.reduce((s, n) => s + (n.sentimentScore || 0), 0) / data.newsItems.length;
+          const overallSentiment = avgScore > 0.15 ? 'bullish' : avgScore < -0.15 ? 'bearish' : 'neutral';
+          const sentimentColor = overallSentiment === 'bullish' ? 'text-emerald-400' : overallSentiment === 'bearish' ? 'text-red-400' : 'text-foreground/50';
+          const sentimentBg = overallSentiment === 'bullish' ? 'bg-emerald-500/10 border-emerald-500/20' : overallSentiment === 'bearish' ? 'bg-red-500/10 border-red-500/20' : 'bg-card/50 border-border/50';
+
+          return (
+          <div className={`rounded-lg border p-3 mb-3 ${sentimentBg}`}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">📰</span>
+                <span className="text-sm font-semibold text-foreground">Aktuelle Nachrichten</span>
+                <span className="text-xs text-foreground/50">({data.newsItems.length})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {bullish > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">▲ {bullish} bullish</span>}
+                {bearish > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">▼ {bearish} bearish</span>}
+                {neutral > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/5 text-foreground/40">● {neutral} neutral</span>}
+              </div>
             </div>
-            <div className="space-y-1.5">
-              {data.newsItems.map((news, idx) => (
+            <div className="space-y-1">
+              {data.newsItems.map((news, idx) => {
+                const sc = news.sentiment;
+                const dotColor = sc === 'bullish' ? 'bg-emerald-400' : sc === 'bearish' ? 'bg-red-400' : 'bg-foreground/30';
+                const textColor = sc === 'bullish' ? 'text-emerald-300/90' : sc === 'bearish' ? 'text-red-300/90' : 'text-foreground/70';
+                const scoreStr = news.sentimentScore != null ? (news.sentimentScore > 0 ? `+${(news.sentimentScore * 100).toFixed(0)}` : `${(news.sentimentScore * 100).toFixed(0)}`) : '';
+
+                return (
                 <a
                   key={idx}
                   href={news.url}
@@ -100,23 +122,35 @@ export function Section2({ data }: Props) {
                   rel="noopener noreferrer"
                   className="group flex items-start gap-2 rounded-md p-1.5 hover:bg-muted/50 transition-colors cursor-pointer"
                 >
-                  <span className="shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full bg-primary/60 group-hover:bg-primary" />
+                  <span className={`shrink-0 mt-1 w-2 h-2 rounded-full ${dotColor}`} />
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs text-foreground/90 leading-snug line-clamp-2 group-hover:text-primary transition-colors">
+                    <p className={`text-xs leading-snug line-clamp-2 group-hover:text-primary transition-colors ${textColor}`}>
                       {news.title}
                     </p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
+                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                       <span className="text-[10px] text-foreground/40">{news.source}</span>
                       <span className="text-[10px] text-foreground/30">·</span>
                       <span className="text-[10px] text-foreground/40">{news.relativeTime}</span>
+                      {scoreStr && (
+                        <span className={`text-[9px] px-1 py-px rounded font-mono ${sc === 'bullish' ? 'bg-emerald-500/15 text-emerald-400' : sc === 'bearish' ? 'bg-red-500/15 text-red-400' : 'bg-foreground/5 text-foreground/40'}`}>
+                          {scoreStr}
+                        </span>
+                      )}
+                      {news.matchedCatalyst && (
+                        <span className="text-[9px] px-1.5 py-px rounded bg-primary/10 text-primary/70 truncate max-w-[140px]" title={news.matchedCatalyst}>
+                          → K{(news.matchedCatalystIdx ?? 0) + 1}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <span className="shrink-0 text-foreground/20 group-hover:text-primary text-xs mt-0.5">↗</span>
                 </a>
-              ))}
+              );
+              })}
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* Peter Lynch Classification */}
         {(() => {
@@ -335,7 +369,7 @@ export function Section2({ data }: Props) {
 
       {/* Part B: Catalyst table */}
       <div>
-        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Katalysatoren (Sector-Specific)</h3>
+        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Katalysatoren (Company-Specific)</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
@@ -350,17 +384,43 @@ export function Section2({ data }: Props) {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {catalysts.map((c, i) => (
-                <tr key={i} className="hover:bg-muted/20">
-                  <td className="py-1.5 px-2 font-medium">{c.name}</td>
+              {catalysts.map((c, i) => {
+                const hasSentiment = c.newsSentiment && c.newsSentiment !== 'neutral';
+                const sentBg = c.newsSentiment === 'bullish' ? 'bg-emerald-500/5' : c.newsSentiment === 'bearish' ? 'bg-red-500/5' : c.newsSentiment === 'mixed' ? 'bg-amber-500/5' : '';
+                const sentIcon = c.newsSentiment === 'bullish' ? '▲' : c.newsSentiment === 'bearish' ? '▼' : c.newsSentiment === 'mixed' ? '◆' : '';
+                const sentColor = c.newsSentiment === 'bullish' ? 'text-emerald-400' : c.newsSentiment === 'bearish' ? 'text-red-400' : c.newsSentiment === 'mixed' ? 'text-amber-400' : '';
+                const adjStr = c.posAdjustment && c.posAdjustment !== 0 ? (c.posAdjustment > 0 ? `+${c.posAdjustment}` : `${c.posAdjustment}`) : '';
+                return (
+                <tr key={i} className={`hover:bg-muted/20 ${sentBg}`}>
+                  <td className="py-1.5 px-2">
+                    <div className="flex items-center gap-1.5">
+                      {sentIcon && <span className={`text-[10px] ${sentColor}`} title={`News: ${c.newsSentiment} (${c.newsCount} Meldung${(c.newsCount||0) > 1 ? 'en' : ''})`}>{sentIcon}</span>}
+                      <span className="font-medium">{c.name}</span>
+                      {c.newsCount && c.newsCount > 0 && (
+                        <span className={`text-[9px] px-1 py-px rounded ${sentColor} ${c.newsSentiment === 'bullish' ? 'bg-emerald-500/15' : c.newsSentiment === 'bearish' ? 'bg-red-500/15' : c.newsSentiment === 'mixed' ? 'bg-amber-500/15' : 'bg-foreground/5'}`}>
+                          {c.newsCount}📰
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="py-1.5 px-1 text-muted-foreground">{c.timeline}</td>
-                  <td className="py-1.5 px-1 text-right font-mono tabular-nums">{c.pos}%</td>
+                  <td className="py-1.5 px-1 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <span className="font-mono tabular-nums">{c.pos}%</span>
+                      {adjStr && (
+                        <span className={`text-[9px] font-mono ${c.posAdjustment! > 0 ? 'text-emerald-400' : 'text-red-400'}`} title={`News-Adj: ${adjStr} (vorher ${c.posOriginal}%)`}>
+                          ({adjStr})
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="py-1.5 px-1 text-right font-mono tabular-nums text-emerald-500">+{formatNumber(c.bruttoUpside, 1)}%</td>
                   <td className="py-1.5 px-1 text-right font-mono tabular-nums">{c.einpreisungsgrad}%</td>
                   <td className="py-1.5 px-1 text-right font-mono tabular-nums text-emerald-500">+{formatNumber(c.nettoUpside, 2)}%</td>
                   <td className="py-1.5 px-2 text-right font-mono tabular-nums font-semibold">{formatNumber(c.gb, 2)}%</td>
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
             <tfoot>
               <tr className="border-t border-border font-semibold">

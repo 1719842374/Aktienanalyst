@@ -56,6 +56,10 @@ export interface NewsItem {
   pubDate: string; // ISO date string
   url: string;
   relativeTime: string; // e.g. "vor 2 Std.", "vor 3 Tagen"
+  sentiment?: 'bullish' | 'bearish' | 'neutral'; // LLM-scored
+  sentimentScore?: number; // -1.0 (very bearish) to +1.0 (very bullish)
+  matchedCatalyst?: string; // Name of the catalyst this news relates to (K1-K5)
+  matchedCatalystIdx?: number; // Index of matched catalyst (0-4)
 }
 
 export interface Catalyst {
@@ -67,6 +71,11 @@ export interface Catalyst {
   nettoUpside: number; // Net upside (calculated)
   gb: number; // Weighted contribution (calculated)
   context?: string; // Business-model-specific context text explaining what needs to happen
+  // News-Sentiment linkage
+  newsSentiment?: 'bullish' | 'bearish' | 'neutral' | 'mixed'; // Aggregated news sentiment for this catalyst
+  newsCount?: number; // Number of news items linked to this catalyst
+  posAdjustment?: number; // PoS adjustment from news sentiment (e.g. +5 or -5)
+  posOriginal?: number; // Original PoS before news adjustment
 }
 
 export interface Risk {
