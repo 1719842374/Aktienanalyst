@@ -409,6 +409,178 @@ function generateCatalystContext(
   }
 }
 
+// === Peer Comparison Fetcher ===
+async function fetchPeerComparison(
+  ticker: string, companyName: string, pe: number, peg: number, revenue: number,
+  marketCap: number, revenueGrowth: number, epsGrowth5Y: number
+): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
+  try {
+    // Step 1: Get peer tickers via finance API
+    console.log(`[PEERS] Fetching peers for ${ticker}`);
+    const peersResult = callFinanceTool('finance_company_peers', {
+      ticker_symbol: ticker,
+      query: `Competitors of ${companyName}`,
+      action: `Finding peer companies for ${ticker}`,
+    });
+
+    let peerTickers: string[] = [];
+    if (peersResult?.content) {
+      // Parse peer tickers from markdown/text response
+      const content = typeof peersResult.content === 'string' ? peersResult.content : JSON.stringify(peersResult.content);
+      // Match ticker symbols (uppercase letters, 1-5 chars, possibly with dots)
+      const tickerMatches = content.match(/\b[A-Z]{1,5}(?:\.[A-Z]{1,2})?\b/g) || [];
+      // Filter common non-ticker words
+      const skipWords = new Set(['THE', 'AND', 'FOR', 'USD', 'ETF', 'CEO', 'CFO', 'IPO', 'NYSE', 'NASDAQ', 'SEC', 'INC', 'LTD', 'LLC', 'NV', 'SA', 'AG', 'PLC', 'SE', 'CO', 'PEER', 'VS', 'EPS', 'PE', 'PEG', ticker]);
+      peerTickers = [...new Set(tickerMatches.filter(t => t.length >= 2 && !skipWords.has(t)))].slice(0, 8);
+    }
+
+    if (peerTickers.length === 0) {
+      console.log(`[PEERS] No peers found for ${ticker}`);
+      return null;
+    }
+    console.log(`[PEERS] Found peers for ${ticker}: ${peerTickers.join(', ')}`);
+
+    // Step 2: Fetch ratios for all peers in one call
+    const ratioIds = [
+      'ratio_price_to_earnings', 'ratio_price_to_sales', 'ratio_price_to_book',
+      'ratio_diluted_eps', 'calculated_market_cap',
+    ];
+    const ratiosResult = callFinanceTool('finance_company_ratios', {
+      ticker_symbols: peerTickers,
+      ratio_ids: ratioIds,
+    });
+
+    // Also get quotes for live P/E
+    const quotesResult = callFinanceTool('finance_quotes', {
+      ticker_symbols: peerTickers,
+      fields: ['pe', 'marketCap', 'eps', 'price'],
+    });
+
+    // Parse ratios — the API returns per-company sections with time-series tables
+    // Format: "## TICKER Company Ratios\n| date | ratio_pe | ratio_ps | ratio_pb |\n..."
+    const peerData: Map<string, any> = new Map();
+    if (ratiosResult?.content) {
+      const content = typeof ratiosResult.content === 'string' ? ratiosResult.content : JSON.stringify(ratiosResult.content);
+      // Split by company sections
+      const sections = content.split(/##\s+/);
+      for (const section of sections) {
+        if (!section.trim()) continue;
+        // Extract ticker from section header (e.g. "RIVN Company Ratios")
+        const headerMatch = section.match(/^([A-Z]{1,6})(?:\.[A-Z]{1,2})?\s/);
+        if (!headerMatch) continue;
+        const t = headerMatch[1];
+        if (!peerData.has(t)) peerData.set(t, {});
+        const d = peerData.get(t)!;
+
+        // Parse the markdown table and get the LAST row with data
+        const rows = parseMarkdownTable(section);
+        for (const row of rows) {
+          // Take each row — later rows override earlier ones (we want the most recent)
+          for (const [key, val] of Object.entries(row)) {
+            const kl = key.toLowerCase();
+            const num = parseFloat(String(val).replace(/[,$%]/g, ''));
+            if (isNaN(num)) continue;
+            if (kl.includes('price_to_earnings') || kl.includes('p/e')) d.pe = num;
+            if (kl.includes('price_to_sales') || kl.includes('p/s')) d.ps = num;
+            if (kl.includes('price_to_book') || kl.includes('p/b')) d.pb = num;
+            if (kl.includes('market_cap') || kl.includes('marketcap')) d.marketCap = num;
+            if (kl.includes('diluted_eps') || kl.includes('eps')) d.eps = num;
+          }
+        }
+      }
+    }
+
+    // Parse quotes for live data
+    if (quotesResult?.content) {
+      const content = typeof quotesResult.content === 'string' ? quotesResult.content : JSON.stringify(quotesResult.content);
+      const rows = parseMarkdownTable(content);
+      for (const row of rows) {
+        const t = (row['Ticker'] || row['ticker'] || row['Symbol'] || '').replace(/[\*]/g, '').trim();
+        if (!t) continue;
+        if (!peerData.has(t)) peerData.set(t, {});
+        const d = peerData.get(t)!;
+        for (const [key, val] of Object.entries(row)) {
+          const kl = key.toLowerCase();
+          const num = parseFloat(String(val).replace(/[,$%B]/g, ''));
+          if (kl === 'pe' || kl === 'p/e') d.pe = isNaN(num) ? d.pe : num;
+          if (kl.includes('marketcap') || kl.includes('market_cap')) {
+            // Handle B/T suffixes
+            const raw = String(val).trim();
+            if (raw.endsWith('T')) d.marketCap = parseFloat(raw) * 1e12;
+            else if (raw.endsWith('B')) d.marketCap = parseFloat(raw) * 1e9;
+            else if (!isNaN(num)) d.marketCap = num;
+          }
+          if (kl === 'eps') d.eps = isNaN(num) ? d.eps : num;
+          if (kl === 'price') d.price = isNaN(num) ? null : num;
+        }
+      }
+    }
+
+    // Step 3: Build peer company objects
+    const peers: any[] = [];
+    for (const t of peerTickers) {
+      const d = peerData.get(t);
+      if (!d) continue;
+      const peerPE = d.pe || null;
+      const peerEpsGrowth = null; // Not directly available from single-year ratios
+      const peerPEG = peerPE && epsGrowth5Y > 0 ? +(peerPE / epsGrowth5Y).toFixed(2) : null; // approximate
+      peers.push({
+        ticker: t,
+        name: t, // We'll enhance with profile data if available
+        pe: peerPE ? +peerPE.toFixed(1) : null,
+        peg: peerPEG,
+        ps: d.ps ? +d.ps.toFixed(1) : null,
+        pb: d.pb ? +d.pb.toFixed(1) : null,
+        epsGrowth: peerEpsGrowth,
+        marketCap: d.marketCap || null,
+        revenueGrowth: null,
+      });
+    }
+
+    // Filter out peers with no data
+    const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null).slice(0, 6);
+    console.log(`[PEERS] Valid peers with data: ${validPeers.length} of ${peers.length} (${validPeers.map(p => p.ticker).join(', ')})`);
+    if (validPeers.length === 0) {
+      console.log(`[PEERS] All peers had null data. Raw peerData keys: ${[...peerData.keys()].join(', ')}`);
+      return null;
+    }
+
+    // Step 4: Calculate averages
+    const avg = (arr: (number | null)[]): number | null => {
+      const valid = arr.filter((v): v is number => v !== null && !isNaN(v) && isFinite(v) && v > 0 && v < 1000);
+      return valid.length > 0 ? +(valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(2) : null;
+    };
+
+    const ps = revenue > 0 && marketCap > 0 ? +(marketCap / revenue).toFixed(1) : null;
+    const subject = {
+      ticker, name: companyName,
+      pe: pe > 0 ? +pe.toFixed(1) : null,
+      peg: peg > 0 ? +peg.toFixed(2) : null,
+      ps,
+      pb: null as number | null, // Will be filled if we have book value
+      epsGrowth: epsGrowth5Y > 0 ? +epsGrowth5Y.toFixed(1) : null,
+      marketCap,
+      revenueGrowth: +revenueGrowth.toFixed(1),
+    };
+
+    console.log(`[PEERS] Built ${validPeers.length} peer comparisons for ${ticker}`);
+    return {
+      subject,
+      peers: validPeers,
+      peerAvg: {
+        pe: avg(validPeers.map(p => p.pe)),
+        peg: avg(validPeers.map(p => p.peg)),
+        ps: avg(validPeers.map(p => p.ps)),
+        pb: avg(validPeers.map(p => p.pb)),
+        epsGrowth: avg(validPeers.map(p => p.epsGrowth)),
+      },
+    };
+  } catch (err: any) {
+    console.log(`[PEERS] Peer comparison failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
+    return null;
+  }
+}
+
 // === Google News RSS Parser ===
 async function fetchNewsFromGoogleRSS(ticker: string, companyName: string): Promise<{ title: string; source: string; pubDate: string; url: string; relativeTime: string }[]> {
   try {
@@ -3127,6 +3299,11 @@ export async function registerRoutes(server: Server, app: Express) {
       const forwardPE = epsConsensusNextFY > 0 ? price / epsConsensusNextFY : pe;
       const pegRatio = epsGrowth5Y > 0 ? pe / epsGrowth5Y : 2;
       const evEbitda = ebitda > 0 ? (marketCap + totalDebt - cashEquivalents) / ebitda : 15;
+
+      // Start peer comparison fetch (parallel with remaining computation)
+      const peerComparisonPromise = fetchPeerComparison(
+        ticker, companyName, pe, pegRatio, revenue, marketCap, revenueGrowth, epsGrowth5Y
+      );
       const enterpriseValue = marketCap + totalDebt - cashEquivalents;
 
       // Beta estimate: improved approach using sector-aware defaults + vol adjustment
@@ -3291,8 +3468,9 @@ export async function registerRoutes(server: Server, app: Express) {
         console.log(`[ANALYZE] SEC 10-K parsing failed: ${secErr?.message?.substring(0, 150)}`);
       }
 
-      // === Collect News (awaited from parallel fetch) ===
+      // === Collect News + Peers (awaited from parallel fetches) ===
       const newsItems = await newsItemsPromise;
+      const peerComparison = await peerComparisonPromise;
       // Populate newsHeadlines for LLM context
       newsHeadlines = newsItems.map(n => `[${n.relativeTime}] ${n.title} (${n.source})`);
 
@@ -3733,6 +3911,13 @@ export async function registerRoutes(server: Server, app: Express) {
         secFilingExcerpts: secFilingExcerpts.length > 0 ? secFilingExcerpts : undefined,
         newsHeadlines: newsHeadlines.length > 0 ? newsHeadlines.slice(0, 7) : undefined,
         newsItems: newsItems.length > 0 ? newsItems.slice(0, 7) : undefined,
+        peerComparison: peerComparison ? {
+          ...peerComparison,
+          subject: {
+            ...peerComparison.subject,
+            pb: totalEquity > 0 ? +(marketCap / totalEquity).toFixed(1) : null,
+          },
+        } : undefined,
 
         cycleClassification: sectorDefs.cycleClass,
         politicalCycle: sectorDefs.politicalCycle,

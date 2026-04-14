@@ -2,6 +2,7 @@ import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { formatNumber } from "../../lib/formatters";
 import { TrendingUp, TrendingDown, Globe, BarChart3 } from "lucide-react";
+import PeerComparison from "./PeerComparison";
 
 interface Props { data: StockAnalysis }
 
@@ -283,6 +284,14 @@ export function Section7({ data }: Props) {
           </div>
         )}
       </div>
+
+      {/* Peer Comparison Table */}
+      {data.peerComparison && data.peerComparison.peers.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Peer-Vergleich (Wettbewerber)</h3>
+          <PeerComparison data={data} />
+        </div>
+      )}
     </SectionCard>
   );
 }

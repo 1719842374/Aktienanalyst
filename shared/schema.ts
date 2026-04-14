@@ -50,6 +50,30 @@ export interface TAMAnalysis {
   segments?: TAMSegment[]; // Per-segment TAM breakdown (if revenue segments available)
 }
 
+export interface PeerCompany {
+  ticker: string;
+  name: string;
+  pe: number | null;
+  peg: number | null;
+  ps: number | null; // Price/Sales
+  pb: number | null; // Price/Book
+  epsGrowth: number | null; // EPS Growth %
+  marketCap: number | null;
+  revenueGrowth: number | null;
+}
+
+export interface PeerComparison {
+  subject: PeerCompany; // The analyzed stock itself
+  peers: PeerCompany[]; // 4-6 competitor peers
+  peerAvg: {
+    pe: number | null;
+    peg: number | null;
+    ps: number | null;
+    pb: number | null;
+    epsGrowth: number | null;
+  };
+}
+
 export interface NewsItem {
   title: string;
   source: string;
@@ -386,6 +410,7 @@ export interface StockAnalysis {
   newsHeadlines?: string[]; // Recent news headlines (legacy)
   // NEW: Structured news items from Google News RSS
   newsItems?: NewsItem[];
+  peerComparison?: PeerComparison;
   // NEW: Geographic segments (Umsatzanteil nach Regionen)
   geoSegments?: RevenueSegment[];
 }
