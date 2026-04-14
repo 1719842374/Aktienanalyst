@@ -286,6 +286,29 @@ export interface StockAnalysis {
   sectorAvgEVEBITDA: number;
   sectorAvgPEG: number;
 
+  // Financial Statements Summary
+  financialStatements?: {
+    incomeStatement: {
+      revenue: number; revenueGrowth: number;
+      grossProfit: number; grossMargin: number;
+      operatingIncome: number; operatingMargin: number;
+      netIncome: number; netMargin: number;
+      ebitda: number; ebitdaMargin: number;
+      eps: number; epsGrowth: number;
+    };
+    balanceSheet: {
+      totalAssets: number; totalLiabilities: number; totalEquity: number;
+      cashEquivalents: number; totalDebt: number; netDebt: number;
+      debtToEquity: number; currentRatio: number;
+    };
+    cashFlow: {
+      operatingCashFlow: number; capex: number; fcf: number;
+      fcfMargin: number; fcfPerShare: number;
+    };
+    health: 'Excellent' | 'Good' | 'Moderate' | 'Weak' | 'Critical';
+    healthReasons: string[];
+  };
+
   // TAM Analysis
   tamAnalysis?: TAMAnalysis;
 

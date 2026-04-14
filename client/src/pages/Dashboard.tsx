@@ -7,6 +7,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { Section1 } from "@/components/sections/Section1";
 import { Section2 } from "@/components/sections/Section2";
+import { FinancialStatements } from "@/components/sections/FinancialStatements";
 import { Section3 } from "@/components/sections/Section3";
 import { Section4 } from "@/components/sections/Section4";
 import { Section5 } from "@/components/sections/Section5";
@@ -198,6 +199,7 @@ export default function Dashboard() {
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
               <div ref={setSectionRef(1)}><Section1 data={data} /></div>
               <div ref={setSectionRef(2)}><Section2 data={data} /></div>
+              <FinancialStatements data={data} />
               <div ref={setSectionRef(3)}><Section3 data={data} /></div>
               <div ref={setSectionRef(4)}><Section4 data={data} /></div>
               <div ref={setSectionRef(5)}><Section5 data={data} /></div>

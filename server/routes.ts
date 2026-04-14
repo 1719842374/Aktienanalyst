@@ -1684,83 +1684,145 @@ function computeTechnicalIndicators(ohlcvData: OHLCVPoint[]): TechnicalIndicator
 // === Porter's Five Forces & Moat Assessment ===
 function generateMoatAssessment(
   sector: string, industry: string, fcfMargin: number,
-  marketCap: number, revenueGrowth: number, moatRating: string
+  marketCap: number, revenueGrowth: number, moatRating: string,
+  description: string = '', companyName: string = ''
 ): MoatAssessment {
   const s = sector.toLowerCase();
   const ind = industry.toLowerCase();
+  const desc = description.toLowerCase();
   const isLargeCap = marketCap > 50e9;
   const isMegaCap = marketCap > 500e9;
+  // Extract company-specific keywords for Porter reasoning
+  const hasPayments = desc.includes('payment') || desc.includes('transaction');
+  const hasMarketplace = desc.includes('marketplace') || desc.includes('e-commerce');
+  const hasSuperApp = desc.includes('super app') || desc.includes('super-app');
+  const hasNetwork = desc.includes('network') || desc.includes('platform') || hasPayments || hasMarketplace;
+  const hasSubscription = desc.includes('subscription') || desc.includes('recurring');
+  const hasPatents = desc.includes('patent') || desc.includes('fda') || desc.includes('approval');
+  const hasRegulated = desc.includes('regulated') || desc.includes('license') || desc.includes('banking');
+  const hasEM = desc.includes('kazakhstan') || desc.includes('india') || desc.includes('brazil') || desc.includes('nigeria') || desc.includes('indonesia');
+  const name = companyName || 'Das Unternehmen';
 
   const forces: PorterForce[] = [];
 
-  // 1. Threat of New Entrants
-  if (s.includes("tech") && isMegaCap) {
-    forces.push({ name: "Bedrohung durch neue Wettbewerber", rating: "Low", score: 2, reasoning: "Hohe Skaleneffekte, Netzwerkeffekte und Kapitalanforderungen schützen vor Markteintritten. Etablierte Plattformen haben massive switching costs." });
-  } else if (s.includes("tech")) {
-    forces.push({ name: "Bedrohung durch neue Wettbewerber", rating: "Medium", score: 3, reasoning: "Technologische Innovationen können Eintrittsbarrieren senken. Cloud-basierte Lösungen ermöglichen schnellen Markteintritt." });
-  } else if (s.includes("financ")) {
-    forces.push({ name: "Bedrohung durch neue Wettbewerber", rating: "Low", score: 2, reasoning: "Regulatorische Anforderungen, Kapitalanforderungen und Vertrauensbarrieren schützen etablierte Institute." });
-  } else if (s.includes("energy")) {
-    forces.push({ name: "Bedrohung durch neue Wettbewerber", rating: "Low", score: 1, reasoning: "Sehr hohe Kapitalanforderungen, lange Projektlaufzeiten und regulatorische Hürden. Infrastruktur-Moat." });
-  } else if (s.includes("health")) {
-    forces.push({ name: "Bedrohung durch neue Wettbewerber", rating: "Low", score: 2, reasoning: "FDA-Zulassungsprozesse, Patentschutz und hohe F&E-Kosten bilden starke Eintrittsbarrieren." });
-  } else {
-    forces.push({ name: "Bedrohung durch neue Wettbewerber", rating: "Medium", score: 3, reasoning: "Moderate Eintrittsbarrieren. Kapitalanforderungen und Brand-Effekte variieren je nach Subsegment." });
+  // 1. Threat of New Entrants — company-specific
+  {
+    let rating: 'Low' | 'Medium' | 'High' = 'Medium';
+    let score = 3;
+    let reasoning = '';
+    if (hasNetwork || hasSuperApp) {
+      rating = 'Low'; score = 2;
+      reasoning = `${name} profitiert von Netzwerkeffekten (${hasPayments ? 'Payment-Netzwerk' : ''}${hasMarketplace ? ', Marketplace' : ''}${hasSuperApp ? ', Super-App-Ökosystem' : ''}). Hohe Nutzerbasis und Datenvorsprung erschweren Neueintritten die Nutzerakquisition.`;
+    } else if (isMegaCap) {
+      rating = 'Low'; score = 2;
+      reasoning = `${name} hat als Mega-Cap massive Skaleneffekte. Kapitalanforderungen und Brand-Vorsprung bilden hohe Eintrittsbarrieren.`;
+    } else if (hasRegulated || s.includes('financ')) {
+      rating = 'Low'; score = 2;
+      reasoning = `Regulatorische Lizenz- und Kapitalanforderungen${hasEM ? ' (lokal reguliert)' : ''} schützen ${name} vor schnellem Markteintritt neuer Wettbewerber.`;
+    } else if (hasPatents || s.includes('health')) {
+      rating = 'Low'; score = 2;
+      reasoning = `Patent-/Zulassungsschutz bildet hohe Eintrittsbarrieren für ${name}. Neue Wettbewerber müssen langwierige Genehmigungsprozesse durchlaufen.`;
+    } else if (s.includes('energy') || s.includes('industrial')) {
+      rating = 'Low'; score = 1;
+      reasoning = `Sehr hohe Kapitalanforderungen und lange Projektlaufzeiten schützen ${name}. Infrastruktur-Moat.`;
+    } else {
+      reasoning = `Moderate Eintrittsbarrieren für ${name}. ${s.includes('tech') ? 'Technologische Innovationen können Barrieren senken.' : 'Kapital- und Markenanforderungen variieren.'}`;
+    }
+    forces.push({ name: 'Bedrohung durch neue Wettbewerber', rating, score, reasoning });
   }
 
-  // 2. Bargaining Power of Suppliers
-  if (s.includes("tech")) {
-    forces.push({ name: "Verhandlungsmacht der Lieferanten", rating: "Low", score: 2, reasoning: "Software-Unternehmen haben geringe Abhängigkeit von einzelnen Lieferanten. Chip-Engpässe sind zyklisch." });
-  } else if (s.includes("energy")) {
-    forces.push({ name: "Verhandlungsmacht der Lieferanten", rating: "High", score: 4, reasoning: "Hohe Abhängigkeit von Rohstoffen und spezialisierten Zulieferern. OPEC und geopolitische Faktoren erhöhen die Macht." });
-  } else if (ind.includes("auto") || ind.includes("vehicle")) {
-    forces.push({ name: "Verhandlungsmacht der Lieferanten", rating: "Medium", score: 3, reasoning: "Komplexe Lieferketten mit spezialisierten Zulieferern. Batteriehersteller haben zunehmende Verhandlungsmacht." });
-  } else {
-    forces.push({ name: "Verhandlungsmacht der Lieferanten", rating: "Medium", score: 3, reasoning: "Moderate Abhängigkeit von Lieferanten. Diversifizierung der Lieferkette als Schlüsselfaktor." });
+  // 2. Bargaining Power of Suppliers — company-specific
+  {
+    let rating: 'Low' | 'Medium' | 'High' = 'Medium';
+    let score = 3;
+    let reasoning = '';
+    if (hasPayments || hasSuperApp || s.includes('financ')) {
+      rating = 'Low'; score = 2;
+      reasoning = `${name} hat als Plattform geringe Lieferantenabhängigkeit. Primäre Inputs sind Technologie und Regulierung.`;
+    } else if (s.includes('tech') && (desc.includes('software') || desc.includes('saas'))) {
+      rating = 'Low'; score = 2;
+      reasoning = `${name} als Software-Unternehmen hat geringe physische Lieferantenabhängigkeit.`;
+    } else if (s.includes('energy') || desc.includes('commodity')) {
+      rating = 'High'; score = 4;
+      reasoning = `${name} ist stark von Rohstoffpreisen und spezialisierten Zulieferern abhängig.`;
+    } else {
+      reasoning = `Moderate Lieferantenabhängigkeit für ${name}.`;
+    }
+    forces.push({ name: 'Verhandlungsmacht der Lieferanten', rating, score, reasoning });
   }
 
-  // 3. Bargaining Power of Buyers
-  if (s.includes("tech") && isMegaCap) {
-    forces.push({ name: "Verhandlungsmacht der Kunden", rating: "Low", score: 2, reasoning: "Hohe Wechselkosten, Plattform-Lock-in und Netzwerkeffekte limitieren die Verhandlungsposition der Kunden." });
-  } else if (s.includes("consumer")) {
-    forces.push({ name: "Verhandlungsmacht der Kunden", rating: "High", score: 4, reasoning: "Endverbraucher sind preissensitiv. Geringe Wechselkosten bei vielen Produktkategorien. Online-Vergleich stärkt Kunden." });
-  } else {
-    forces.push({ name: "Verhandlungsmacht der Kunden", rating: "Medium", score: 3, reasoning: "Moderate Kundenkonzentration. Enterprise-Kunden haben höhere Verhandlungsmacht als Retail." });
+  // 3. Bargaining Power of Buyers — company-specific
+  {
+    let rating: 'Low' | 'Medium' | 'High' = 'Medium';
+    let score = 3;
+    let reasoning = '';
+    if (hasSuperApp || (hasPayments && hasMarketplace)) {
+      rating = 'Low'; score = 2;
+      reasoning = `${name} bindet Nutzer über integriertes Ökosystem. Hohe Wechselkosten durch Datenbindung und Convenience.`;
+    } else if (hasNetwork || (s.includes('tech') && isMegaCap)) {
+      rating = 'Low'; score = 2;
+      reasoning = `Plattform-Lock-in und Netzwerkeffekte limitieren Kundenverhandlungsmacht bei ${name}.`;
+    } else if (s.includes('consumer') && !ind.includes('luxury')) {
+      rating = 'High'; score = 4;
+      reasoning = `Endverbraucher von ${name} sind preissensitiv. Geringe Wechselkosten.`;
+    } else {
+      reasoning = `Moderate Kundenverhandlungsmacht für ${name}.`;
+    }
+    forces.push({ name: 'Verhandlungsmacht der Kunden', rating, score, reasoning });
   }
 
-  // 4. Threat of Substitutes
-  if (s.includes("tech") && ind.includes("software")) {
-    forces.push({ name: "Bedrohung durch Substitute", rating: "Medium", score: 3, reasoning: "Open-Source und neue SaaS-Lösungen können bestehende Produkte substituieren. AI als potenzieller Disruptor." });
-  } else if (s.includes("energy")) {
-    forces.push({ name: "Bedrohung durch Substitute", rating: "High", score: 4, reasoning: "Erneuerbare Energien substituieren fossile Brennstoffe. Elektrifizierung des Transports. Regulatorischer Druck beschleunigt Transition." });
-  } else if (s.includes("health")) {
-    forces.push({ name: "Bedrohung durch Substitute", rating: "Low", score: 2, reasoning: "Medizinische Produkte haben wenige direkte Substitute. Patentschutz sichert Marktposition temporär." });
-  } else {
-    forces.push({ name: "Bedrohung durch Substitute", rating: "Medium", score: 3, reasoning: "Moderate Substitutionsrisiken. Technologische Disruption kann neue Alternativen schaffen." });
+  // 4. Threat of Substitutes — company-specific
+  {
+    let rating: 'Low' | 'Medium' | 'High' = 'Medium';
+    let score = 3;
+    let reasoning = '';
+    if (hasSuperApp) {
+      rating = 'Low'; score = 2;
+      reasoning = `${name} als Super-App hat geringe Substitutionsgefahr — das Gesamtökosystem ist schwer zu ersetzen.`;
+    } else if (hasPatents || s.includes('health')) {
+      rating = 'Low'; score = 2;
+      reasoning = `Patent-/Zulassungsschutz begrenzt direkte Substitute für ${name}.`;
+    } else if (s.includes('energy')) {
+      rating = 'High'; score = 4;
+      reasoning = `Erneuerbare Energien und Elektrifizierung substituieren zunehmend Produkte von ${name}.`;
+    } else {
+      reasoning = `Moderate Substitutionsrisiken für ${name}. Technologische Disruption als Risikofaktor.`;
+    }
+    forces.push({ name: 'Bedrohung durch Substitute', rating, score, reasoning });
   }
 
-  // 5. Competitive Rivalry
-  if (isMegaCap) {
-    forces.push({ name: "Wettbewerbsintensität", rating: "High", score: 4, reasoning: "Intensiver Wettbewerb zwischen wenigen dominanten Playern. Hohe F&E- und Marketing-Ausgaben. Preiskämpfe in Commoditized-Segmenten." });
-  } else if (s.includes("tech")) {
-    forces.push({ name: "Wettbewerbsintensität", rating: "High", score: 4, reasoning: "Starke Innovation treibt intensiven Wettbewerb. Winner-takes-most Dynamik. Talent War und R&D-Wettrüsten." });
-  } else if (s.includes("util")) {
-    forces.push({ name: "Wettbewerbsintensität", rating: "Low", score: 2, reasoning: "Regulierter Markt mit regionalen Monopolen. Stabiler Wettbewerb durch regulierte Renditen." });
-  } else {
-    forces.push({ name: "Wettbewerbsintensität", rating: "Medium", score: 3, reasoning: "Moderate Wettbewerbsintensität. Marktpositionierung und Brand Equity als Differenzierungsfaktoren." });
+  // 5. Competitive Rivalry — company-specific
+  {
+    let rating: 'Low' | 'Medium' | 'High' = 'Medium';
+    let score = 3;
+    let reasoning = '';
+    if (hasSuperApp && hasEM) {
+      rating = 'Medium'; score = 3;
+      reasoning = `${name} hat im Heimatmarkt eine dominante Position, internationale Expansion bringt Wettbewerb mit globalen Playern.`;
+    } else if (isMegaCap) {
+      rating = 'High'; score = 4;
+      reasoning = `Intensiver Wettbewerb zwischen ${name} und anderen dominanten Playern. Hohe F&E- und Marketing-Ausgaben.`;
+    } else if (s.includes('util')) {
+      rating = 'Low'; score = 2;
+      reasoning = `${name} operiert in einem regulierten Markt mit begrenztem Wettbewerb.`;
+    } else {
+      reasoning = `Moderate Wettbewerbsintensität für ${name}. ${revenueGrowth > 20 ? 'Hohes Wachstum deutet auf Differenzierung.' : 'Marktpositionierung als Differenzierungsfaktor.'}`;
+    }
+    forces.push({ name: 'Wettbewerbsintensität', rating, score, reasoning });
   }
 
-  // Moat sources
+  // Moat sources — company-specific
   const moatSources: string[] = [];
-  if (fcfMargin > 25) moatSources.push("Hohe FCF-Marge → Pricing Power");
-  if (isMegaCap) moatSources.push("Skaleneffekte / Economies of Scale");
-  if (s.includes("tech") && isMegaCap) moatSources.push("Netzwerkeffekte / Platform Lock-in");
-  if (s.includes("tech")) moatSources.push("Technologische Überlegenheit / IP");
-  if (s.includes("health")) moatSources.push("Patentschutz / FDA-Zulassungen");
-  if (s.includes("financ")) moatSources.push("Regulatorische Barrieren / Vertrauen");
-  if (s.includes("energy")) moatSources.push("Infrastruktur / Asset-Heavy Moat");
-  if (isLargeCap) moatSources.push("Brand Equity / Markenbekanntheit");
-  if (revenueGrowth > 15) moatSources.push("Überproportionales Wachstum → Marktanteilsgewinne");
+  if (fcfMargin > 25) moatSources.push(`Hohe FCF-Marge (${fcfMargin.toFixed(0)}%) → Pricing Power`);
+  if (hasSuperApp) moatSources.push('Super-App-Ökosystem / Multi-Service-Lock-in');
+  if (hasNetwork) moatSources.push('Netzwerkeffekte / Plattform-Ökosystem');
+  if (hasPayments && hasMarketplace) moatSources.push('Integrierte Payments + Marketplace → Switching Costs');
+  if (isMegaCap) moatSources.push('Skaleneffekte / Economies of Scale');
+  if (hasPatents || s.includes('health')) moatSources.push('Patentschutz / Zulassungsbarrieren');
+  if (hasRegulated || s.includes('financ')) moatSources.push('Regulatorische Lizenzbarrieren');
+  if (s.includes('energy')) moatSources.push('Infrastruktur / Asset-Heavy Moat');
+  if (isLargeCap && !hasNetwork) moatSources.push('Brand Equity / Markenbekanntheit');
+  if (revenueGrowth > 15) moatSources.push(`Starkes Wachstum (${revenueGrowth.toFixed(0)}%) → Marktanteilsgewinne`);
 
   if (moatSources.length === 0) moatSources.push("Keine eindeutigen Moat-Quellen identifiziert");
 
@@ -2753,7 +2815,7 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       // === Porter's Five Forces & Moat Assessment ===
-      const moatAssessment = generateMoatAssessment(sector, industry, fcfMargin, marketCap, revenueGrowth, moatRating);
+      const moatAssessment = generateMoatAssessment(sector, industry, fcfMargin, marketCap, revenueGrowth, moatRating, description, companyName);
 
       // === Catalyst Reasoning ===
       const catalystReasoning = generateCatalystReasoning(sector, industry, revenueGrowth, fcfMargin, pe, price, analystPTMedian, rsl);
@@ -3037,6 +3099,64 @@ export async function registerRoutes(server: Server, app: Express) {
         sectorAvgPE: sectorDefs.sectorAvgPE,
         sectorAvgEVEBITDA: sectorDefs.sectorAvgEVEBITDA,
         sectorAvgPEG: sectorDefs.sectorAvgPEG,
+
+        // Financial Statements Summary
+        financialStatements: (() => {
+          const rev = revenue || 1;
+          const gm = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+          const om = revenue > 0 ? (operatingIncome / revenue) * 100 : 0;
+          const nm = revenue > 0 ? (netIncome / revenue) * 100 : 0;
+          const em = revenue > 0 ? (ebitda / revenue) * 100 : 0;
+          const dte = totalEquity > 0 ? totalDebt / totalEquity : 0;
+          const totalLiab = totalAssets - totalEquity;
+          const fcfPS = sharesOutstanding > 0 ? fcfTTM / sharesOutstanding : 0;
+          const capex = ebitda > 0 ? Math.abs(ebitda - operatingIncome - fcfTTM) : 0; // approximation
+          const ocf = fcfTTM + capex;
+
+          // Health assessment
+          const healthReasons: string[] = [];
+          let healthScore = 0;
+          if (gm > 40) { healthScore += 2; healthReasons.push(`Hohe Bruttomarge (${gm.toFixed(1)}%) → Pricing Power`); }
+          else if (gm > 20) { healthScore += 1; healthReasons.push(`Moderate Bruttomarge (${gm.toFixed(1)}%)`); }
+          else { healthReasons.push(`Niedrige Bruttomarge (${gm.toFixed(1)}%) → Margendruck`); }
+
+          if (fcfMargin > 20) { healthScore += 2; healthReasons.push(`Starke FCF-Marge (${fcfMargin.toFixed(1)}%) → Cash-Generierung`); }
+          else if (fcfMargin > 10) { healthScore += 1; healthReasons.push(`Solide FCF-Marge (${fcfMargin.toFixed(1)}%)`); }
+          else if (fcfMargin > 0) { healthReasons.push(`Schwache FCF-Marge (${fcfMargin.toFixed(1)}%)`); }
+          else { healthScore -= 1; healthReasons.push(`Negativer FCF → Cash-Burn`); }
+
+          if (dte < 0.5) { healthScore += 2; healthReasons.push(`Sehr niedrige Verschuldung (D/E ${dte.toFixed(2)})`); }
+          else if (dte < 1.5) { healthScore += 1; healthReasons.push(`Moderate Verschuldung (D/E ${dte.toFixed(2)})`); }
+          else if (dte < 3) { healthReasons.push(`Hohe Verschuldung (D/E ${dte.toFixed(2)}) → Zinsrisiko`); }
+          else { healthScore -= 1; healthReasons.push(`Sehr hohe Verschuldung (D/E ${dte.toFixed(2)}) → Insolvenzrisiko`); }
+
+          if (revenueGrowth > 15) { healthScore += 1; healthReasons.push(`Starkes Umsatzwachstum (${revenueGrowth.toFixed(1)}%)`); }
+          else if (revenueGrowth < -5) { healthScore -= 1; healthReasons.push(`Rücklaufiger Umsatz (${revenueGrowth.toFixed(1)}%)`); }
+
+          const health = healthScore >= 5 ? 'Excellent' as const : healthScore >= 3 ? 'Good' as const : healthScore >= 1 ? 'Moderate' as const : healthScore >= -1 ? 'Weak' as const : 'Critical' as const;
+
+          return {
+            incomeStatement: {
+              revenue, revenueGrowth,
+              grossProfit, grossMargin: gm,
+              operatingIncome, operatingMargin: om,
+              netIncome, netMargin: nm,
+              ebitda, ebitdaMargin: em,
+              eps, epsGrowth: epsGrowth5Y,
+            },
+            balanceSheet: {
+              totalAssets, totalLiabilities: totalLiab, totalEquity,
+              cashEquivalents, totalDebt, netDebt,
+              debtToEquity: dte, currentRatio: cashEquivalents > 0 ? cashEquivalents / Math.max(totalDebt * 0.3, 1) : 0,
+            },
+            cashFlow: {
+              operatingCashFlow: ocf, capex, fcf: fcfTTM,
+              fcfMargin, fcfPerShare: fcfPS,
+            },
+            health,
+            healthReasons,
+          };
+        })(),
 
         tamAnalysis,
 
