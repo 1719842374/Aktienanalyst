@@ -363,6 +363,8 @@ export interface StockAnalysis {
 
   // NEW: Revenue segments (Umsatzanteil nach Produkten/Segmenten)
   revenueSegments?: RevenueSegment[];
+  keyProjects?: string[]; // Key projects/expansions extracted from news
+  newsHeadlines?: string[]; // Recent news headlines
   // NEW: Geographic segments (Umsatzanteil nach Regionen)
   geoSegments?: RevenueSegment[];
 }

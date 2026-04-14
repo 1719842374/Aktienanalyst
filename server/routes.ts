@@ -2323,7 +2323,7 @@ export async function registerRoutes(server: Server, app: Express) {
       console.log(`[ANALYZE] Starting analysis for ${ticker}...`);
 
       // === Parallel API calls ===
-      const [quoteResult, profileResult, financialsResult, analystResult, estimatesResult, ohlcvHistResult, segmentsResult] = await Promise.all([
+      const [quoteResult, profileResult, financialsResult, analystResult, estimatesResult, ohlcvHistResult, segmentsResult, newsResult] = await Promise.all([
         // 1. Quote
         Promise.resolve(callFinanceTool("finance_quotes", {
           ticker_symbols: [ticker],
@@ -2374,6 +2374,15 @@ export async function registerRoutes(server: Server, app: Express) {
           period_type: "annual",
           limit: 2,
         })),
+        // 8. News / Key Projects (via Polygon news endpoint)
+        (async () => {
+          try {
+            return callFinanceTool("finance_massive", {
+              pathname: `/v2/reference/news`,
+              params: { ticker, limit: 10, order: "desc" },
+            });
+          } catch { return null; }
+        })(),
       ]);
 
       console.log(`[ANALYZE] All API calls completed for ${ticker}`);
@@ -2748,6 +2757,70 @@ export async function registerRoutes(server: Server, app: Express) {
       const prices26w = closingPrices2Y.slice(-130).map(d => d.close);
       const rslAvg = prices26w.length > 0 ? prices26w.reduce((s, v) => s + v, 0) / prices26w.length : price;
       const rsl = rslAvg > 0 ? (price / rslAvg) * 100 : 100;
+
+      // === Parse News / Key Projects ===
+      let keyProjects: string[] = [];
+      let newsHeadlines: string[] = [];
+
+      // Extract key projects/catalysts from analyst research content
+      if (analystResult?.content) {
+        const analystText = analystResult.content;
+        // Extract project names, mine names, pipeline names, expansion plans
+        const projectRegexes = [
+          /(?:Blue Creek|Neutron|Starship|Phase [IVX]+|Project [A-Z]\w+|\w+ Mine|\w+ Pipeline|\w+ Expansion|\w+ Ramp[- ]?up|\w+ Platform|\w+ Facility)[^\n.,;]{0,50}/gi,
+          /(?:key catalyst|major project|growth driver|transformative|game.changer)[:\s]+([^\n.]{10,80})/gi,
+        ];
+        for (const regex of projectRegexes) {
+          let match;
+          while ((match = regex.exec(analystText)) !== null) {
+            const project = (match[1] || match[0]).trim().substring(0, 60);
+            if (project.length > 5 && !keyProjects.includes(project) && keyProjects.length < 5) {
+              keyProjects.push(project);
+            }
+          }
+        }
+        // Extract recent headlines from analyst content if present
+        const headlineMatches = analystText.match(/(?:headline|news|alert)[:\s]+([^\n]{10,100})/gi);
+        if (headlineMatches) {
+          newsHeadlines.push(...headlineMatches.map((h: string) => h.replace(/^\w+[:\s]+/, '').trim()).slice(0, 3));
+        }
+      }
+
+      if (newsResult?.content) {
+        try {
+          const newsData = typeof newsResult.content === 'string' ? JSON.parse(newsResult.content) : newsResult.content;
+          const articles = newsData?.results || newsData?.articles || [];
+          for (const article of articles) {
+            const title = article.title || article.headline || '';
+            const desc = article.description || article.summary || '';
+            if (title) newsHeadlines.push(title);
+            // Extract project names, expansions, acquisitions from headlines
+            const combined = (title + ' ' + desc).toLowerCase();
+            const projectPatterns = [
+              /(?:mine|project|facility|plant|factory|pipeline|expansion|ramp[- ]?up|launch(?:es|ed|ing)?|acqui(?:sition|re)|merger|partnership|deal|joint venture|rollout|buildout|phase \d|tier \d)\s*(?:of |at |for |with |named |called )?([A-Z][A-Za-z\s\-'.]{2,30})/g,
+              /([A-Z][A-Za-z\s\-'.]{2,25})\s*(?:mine|project|facility|plant|factory|pipeline|expansion|ramp[- ]?up|launch)/g,
+            ];
+            for (const pattern of projectPatterns) {
+              let match;
+              const text = title + ' ' + desc;
+              while ((match = pattern.exec(text)) !== null) {
+                const project = match[1]?.trim();
+                if (project && project.length > 2 && project.length < 40 && !keyProjects.includes(project)) {
+                  keyProjects.push(project);
+                }
+              }
+            }
+          }
+          if (keyProjects.length > 0) {
+            console.log(`[ANALYZE] Key projects from news: ${keyProjects.join(', ')}`);
+          }
+          if (newsHeadlines.length > 0) {
+            console.log(`[ANALYZE] ${newsHeadlines.length} news headlines found for ${ticker}`);
+          }
+        } catch (newsErr: any) {
+          console.log(`[ANALYZE] News parsing failed: ${newsErr?.message?.substring(0, 100)}`);
+        }
+      }
 
       // === Catalysts & Risks ===
       const catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
@@ -3164,6 +3237,8 @@ export async function registerRoutes(server: Server, app: Express) {
         governmentExposure: govExp.exposure,
         growthThesis,
         structuralTrends,
+        keyProjects: keyProjects.length > 0 ? keyProjects : undefined,
+        newsHeadlines: newsHeadlines.length > 0 ? newsHeadlines.slice(0, 5) : undefined,
 
         cycleClassification: sectorDefs.cycleClass,
         politicalCycle: sectorDefs.politicalCycle,

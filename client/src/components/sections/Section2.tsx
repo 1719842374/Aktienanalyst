@@ -242,6 +242,37 @@ export function Section2({ data }: Props) {
             ))}
           </div>
         </div>
+
+        {/* Key Projects from News */}
+        {data.keyProjects && data.keyProjects.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Schlüsselprojekte & News</h3>
+            <div className="flex flex-wrap gap-2">
+              {data.keyProjects.map((project, i) => (
+                <span
+                  key={i}
+                  className="px-2.5 py-1 text-xs font-medium rounded-md bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                >
+                  {project}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Recent News Headlines */}
+        {data.newsHeadlines && data.newsHeadlines.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Aktuelle Nachrichten</h3>
+            <div className="space-y-1">
+              {data.newsHeadlines.map((headline, i) => (
+                <div key={i} className="text-[10px] text-muted-foreground leading-relaxed">
+                  • {headline}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Part B: Catalyst table */}
