@@ -273,6 +273,7 @@ export interface StockAnalysis {
   fcfMargin: number;
   revenue: number;
   ebitda: number;
+  operatingIncome: number;
   netIncome: number;
   totalDebt: number;
   cashEquivalents: number;

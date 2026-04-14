@@ -374,6 +374,30 @@ function generateCatalystContext(
     case 'E-Commerce / DTC Growth': {
       return `Direct-to-Consumer-Kanal muss überproportional wachsen und höhere Margen liefern. Voraussetzung: Digitale Kundenerfahrung, Fulfillment-Effizienz und personalisiertes Marketing.`;
     }
+    case 'iGaming / Online Sports Betting Expansion': {
+      return `iGaming- und Online-Sports-Betting-Legalisierung in neuen US-Bundesstaaten muss zusätzliche Umsatzquellen erschließen. Voraussetzung: Regulatorische Genehmigungen, Technologie-Plattform-Skalierung und Marketing-ROI in neuen Märkten. Revenue-Basis: ${revB}.`;
+    }
+    case 'New Property Openings / Capacity Expansion': {
+      return `Neue Casino-Standorte, Hotel-Erweiterungen oder Renovierungen müssen Gaming-Revenue und Nicht-Gaming-Revenue (F&B, Hotel, Entertainment) steigern. Voraussetzung: Termingerechte Baufertigstellung, Genehmigungen und regionaler Nachfrage-Support.`;
+    }
+    case 'Same-Store Sales Recovery / Menu Pricing': {
+      return `Comparable-Sales müssen durch Traffic-Recovery und strategische Preiserhöhungen steigen. Voraussetzung: Stabile Konsumausgaben, erfolgreiche Menü-Innovation und nicht-inflationsgetriebene Ticket-Steigerung.`;
+    }
+    case 'Unit Growth / Franchise Expansion': {
+      return `Netto-Neueröffnungen müssen System-Revenue-Wachstum treiben. Voraussetzung: Verfügbare Franchise-Nehmer, attraktive Unit Economics und Genehmigungen in Zielmärkten.`;
+    }
+    case 'Travel Demand Recovery / RevPAR Growth': {
+      return `RevPAR (Revenue per Available Room) muss durch höhere Auslastung und ADR steigen. Voraussetzung: Erholung der Reisenachfrage, Corporate-Travel-Normalisierung und Events-Pipeline.`;
+    }
+    case 'Loyalty Program Monetization': {
+      return `Treueprogramm muss höheren Customer Lifetime Value generieren durch Cross-Selling (Kreditkarten, Partner-Deals) und erhöhte Direktbuchungen. Voraussetzung: Wachsende Mitgliederbasis und attraktive Einlöse-Optionen.`;
+    }
+    case 'EV Transition / New Model Cycle': {
+      return `EV-Modellpalette muss Marktanteile im wachsenden Elektro-Segment gewinnen. Voraussetzung: Konkurrenzfähige Reichweite, Preis-Leistung und Ladeinfrastruktur-Verfügbarkeit. Neuer Modellzyklus als Volumenhebel.`;
+    }
+    case 'Supply Chain Normalization / Volume Recovery': {
+      return `Normalisierung der Lieferketten muss Produktionsvolumen steigern und Auftragsrückstände abbauen. Voraussetzung: Chip-Verfügbarkeit, Logistik-Normalisierung und Lagerbestandsoptimierung.`;
+    }
     case 'Market Share Gains': {
       return `Marktanteile müssen durch Produktinnovation, Pricing und Distribution ausgebaut werden. Voraussetzung: Wettbewerbsvorteile in Qualität, Service oder Kostenstruktur.`;
     }
@@ -493,6 +517,10 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
     });
   } else if (s.includes("consumer") && (s.includes("cycl") || s.includes("discr"))) {
     const isLuxury = ind.includes("luxury") || ind.includes("apparel") || ind.includes("fashion");
+    const isCasino = ind.includes("gambling") || ind.includes("casino") || ind.includes("resort") || description.toLowerCase().includes("casino") || description.toLowerCase().includes("gaming entertainment");
+    const isRestaurant = ind.includes("restaurant") || description.toLowerCase().includes("restaurant") || description.toLowerCase().includes("dining");
+    const isTravel = ind.includes("travel") || ind.includes("hotel") || ind.includes("leisure") || description.toLowerCase().includes("hotel") || description.toLowerCase().includes("cruise");
+    const isAuto = ind.includes("auto") || description.toLowerCase().includes("automobile") || description.toLowerCase().includes("vehicle");
     if (isLuxury) {
       catalysts.push({
         name: "China / Asia Demand Recovery",
@@ -501,7 +529,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         bruttoUpside: 15,
         einpreisungsgrad: 30,
         nettoUpside: 0, gb: 0,
-      context: "",
+        context: "",
       });
       catalysts.push({
         name: "Pricing Power / Brand Elevation",
@@ -510,7 +538,83 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         bruttoUpside: 10,
         einpreisungsgrad: 40,
         nettoUpside: 0, gb: 0,
-      context: "",
+        context: "",
+      });
+    } else if (isCasino) {
+      catalysts.push({
+        name: "iGaming / Online Sports Betting Expansion",
+        timeline: "12-24M",
+        pos: 50,
+        bruttoUpside: 15,
+        einpreisungsgrad: 30,
+        nettoUpside: 0, gb: 0,
+        context: "",
+      });
+      catalysts.push({
+        name: "New Property Openings / Capacity Expansion",
+        timeline: "12-36M",
+        pos: 40,
+        bruttoUpside: 12,
+        einpreisungsgrad: 25,
+        nettoUpside: 0, gb: 0,
+        context: "",
+      });
+    } else if (isRestaurant) {
+      catalysts.push({
+        name: "Same-Store Sales Recovery / Menu Pricing",
+        timeline: "6-12M",
+        pos: 50,
+        bruttoUpside: 10,
+        einpreisungsgrad: 40,
+        nettoUpside: 0, gb: 0,
+        context: "",
+      });
+      catalysts.push({
+        name: "Unit Growth / Franchise Expansion",
+        timeline: "12-24M",
+        pos: 45,
+        bruttoUpside: 12,
+        einpreisungsgrad: 30,
+        nettoUpside: 0, gb: 0,
+        context: "",
+      });
+    } else if (isTravel) {
+      catalysts.push({
+        name: "Travel Demand Recovery / RevPAR Growth",
+        timeline: "6-18M",
+        pos: 50,
+        bruttoUpside: 12,
+        einpreisungsgrad: 35,
+        nettoUpside: 0, gb: 0,
+        context: "",
+      });
+      catalysts.push({
+        name: "Loyalty Program Monetization",
+        timeline: "12-24M",
+        pos: 45,
+        bruttoUpside: 10,
+        einpreisungsgrad: 30,
+        nettoUpside: 0, gb: 0,
+        context: "",
+      });
+    } else if (isAuto) {
+      catalysts.push({
+        name: "EV Transition / New Model Cycle",
+        timeline: "12-24M",
+        pos: 45,
+        bruttoUpside: 15,
+        einpreisungsgrad: 35,
+        nettoUpside: 0, gb: 0,
+        context: "",
+      });
+      catalysts.push({
+        name: "Supply Chain Normalization / Volume Recovery",
+        timeline: "6-18M",
+        pos: 50,
+        bruttoUpside: 10,
+        einpreisungsgrad: 40,
+        nettoUpside: 0, gb: 0,
+        context: "",
       });
     } else {
       catalysts.push({
@@ -520,7 +624,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         bruttoUpside: 12,
         einpreisungsgrad: 35,
         nettoUpside: 0, gb: 0,
-      context: "",
+        context: "",
       });
       catalysts.push({
         name: "E-Commerce / DTC Growth",
@@ -529,7 +633,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         bruttoUpside: 10,
         einpreisungsgrad: 30,
         nettoUpside: 0, gb: 0,
-      context: "",
+        context: "",
       });
     }
   } else {
@@ -577,8 +681,12 @@ function matchSegmentTAM(segName: string, desc: string): { tamSize: number; tamL
   if (n.includes('productiv') || n.includes('office') || n.includes('business process') || n.includes('collaboration')) {
     return { tamSize: 600, tamLabel: 'Global Productivity & Collaboration Software', tamCAGR: 12, tamSource: 'Gartner SaaS/Productivity Forecast' };
   }
-  // Personal Computing / Hardware / Windows / Gaming
-  if (n.includes('personal comput') || n.includes('windows') || n.includes('gaming') || n.includes('device') || n.includes('hardware') || n.includes('surface')) {
+  // Casino / Gambling / Resorts (must come BEFORE general 'gaming' match)
+  if (n.includes('casino') || n.includes('gambling') || n.includes('wager') || n.includes('slot') || n.includes('sportsbook') || n.includes('igaming') || n.includes('betting') || (n.includes('gaming') && (desc.includes('casino') || desc.includes('gambling') || desc.includes('gaming entertainment') || desc.includes('resort')))) {
+    return { tamSize: 700, tamLabel: 'Global Casino & Gaming', tamCAGR: 6, tamSource: 'H2 Gambling Capital / Statista iGaming' };
+  }
+  // Personal Computing / Hardware / Windows / Video Gaming
+  if (n.includes('personal comput') || n.includes('windows') || n.includes('device') || n.includes('hardware') || n.includes('surface') || (n.includes('gaming') && !desc.includes('casino') && !desc.includes('gambling'))) {
     return { tamSize: 400, tamLabel: 'Global PC & Gaming Market', tamCAGR: 3, tamSource: 'IDC/Gartner PC & Gaming Forecast' };
   }
   // Advertising / Search
@@ -590,7 +698,11 @@ function matchSegmentTAM(segName: string, desc: string): { tamSize: number; tamL
     return { tamSize: 6300, tamLabel: 'Global E-Commerce', tamCAGR: 11, tamSource: 'eMarketer / Statista' };
   }
   // Subscription / Streaming / Content
+  // For tech/semiconductor companies, "subscription" likely means enterprise software, not streaming
   if (n.includes('subscri') || n.includes('stream') || n.includes('content') || n.includes('media') || n.includes('entertainment')) {
+    if ((n.includes('subscri') || n.includes('service')) && (desc.includes('semiconductor') || desc.includes('infrastructure software') || desc.includes('enterprise'))) {
+      return { tamSize: 600, tamLabel: 'Global Enterprise & Infrastructure Software', tamCAGR: 12, tamSource: 'Gartner Enterprise SW' };
+    }
     return { tamSize: 700, tamLabel: 'Global Streaming & Digital Media', tamCAGR: 9, tamSource: 'PwC Global Entertainment & Media' };
   }
   // Automotive
@@ -629,9 +741,17 @@ function matchSegmentTAM(segName: string, desc: string): { tamSize: number; tamL
   if (n.includes('semicond') || n.includes('chip') || n.includes('wafer') || n.includes('foundry')) {
     return { tamSize: 850, tamLabel: 'Global Semiconductor', tamCAGR: 12, tamSource: 'WSTS/SIA' };
   }
-  // Data Center / AI
-  if (n.includes('data center') || n.includes('datacenter') || n.includes('ai ') || n.includes('artificial intelligence')) {
-    return { tamSize: 500, tamLabel: 'Global AI/Data Center', tamCAGR: 25, tamSource: 'Gartner/IDC AI Infrastructure' };
+  // Data Center / AI / Networking
+  if (n.includes('data center') || n.includes('datacenter') || n.includes('ai ') || n.includes('artificial intelligence') || n.includes('networking') || n.includes('infrastructure software')) {
+    return { tamSize: 500, tamLabel: 'Global AI/Data Center Infrastructure', tamCAGR: 25, tamSource: 'Gartner/IDC AI Infrastructure' };
+  }
+  // Broadband / Connectivity / Wireless
+  if (n.includes('broadband') || n.includes('wireless') || n.includes('connectivity') || n.includes('fiber')) {
+    return { tamSize: 300, tamLabel: 'Global Broadband & Connectivity', tamCAGR: 8, tamSource: 'Dell\'Oro / Omdia' };
+  }
+  // Storage / Enterprise Software
+  if (n.includes('storage') || n.includes('enterprise') || n.includes('mainframe') || n.includes('server')) {
+    return { tamSize: 250, tamLabel: 'Global Enterprise IT Infrastructure', tamCAGR: 6, tamSource: 'IDC Enterprise IT' };
   }
   // Energy / Oil / Gas
   if (n.includes('upstream') || n.includes('downstream') || n.includes('refin') || n.includes('exploration')) {
@@ -641,12 +761,45 @@ function matchSegmentTAM(segName: string, desc: string): { tamSize: number; tamL
   if (n.includes('space') || n.includes('launch') || n.includes('defense') || n.includes('aero')) {
     return { tamSize: 800, tamLabel: 'Global Aerospace & Defense', tamCAGR: 5, tamSource: 'Deloitte A&D' };
   }
+  // Food & Beverage / Restaurant / Hospitality
+  if (n.includes('food') || n.includes('beverage') || n.includes('restaurant') || n.includes('dining') || n.includes('catering')) {
+    return { tamSize: 4000, tamLabel: 'Global Foodservice & Restaurants', tamCAGR: 5, tamSource: 'Euromonitor / NRA' };
+  }
+  // Hotel / Room / Hospitality
+  if (n.includes('hotel') || n.includes('room') || n.includes('lodging') || n.includes('hospitality')) {
+    return { tamSize: 800, tamLabel: 'Global Hotel & Lodging', tamCAGR: 6, tamSource: 'STR / Phocuswright' };
+  }
+  // Management Fee / Services
+  if (n.includes('management fee') || n.includes('management') || n.includes('service fee')) {
+    return { tamSize: 500, tamLabel: 'Global Asset/Property Management', tamCAGR: 5, tamSource: 'Industry Estimate' };
+  }
+  // Online / iGaming / Digital
+  if (n.includes('online') || n.includes('igaming') || n.includes('digital') || n.includes('interactive')) {
+    if (desc.includes('casino') || desc.includes('gambling') || desc.includes('gaming entertainment') || desc.includes('sportsbook')) {
+      return { tamSize: 150, tamLabel: 'Global Online Gambling & iGaming', tamCAGR: 12, tamSource: 'H2 Gambling Capital / Statista' };
+    }
+    return { tamSize: 1000, tamLabel: 'Global Digital Services', tamCAGR: 10, tamSource: 'Industry Estimate' };
+  }
   // Fallback: use description context
   if (desc.includes('cloud') || desc.includes('azure') || desc.includes('aws')) {
     return { tamSize: 1500, tamLabel: 'Global Cloud Computing', tamCAGR: 16, tamSource: 'Gartner/IDC' };
   }
   if (desc.includes('luxury')) {
     return { tamSize: 380, tamLabel: 'Global Personal Luxury Goods', tamCAGR: 6, tamSource: 'Bain / Altagamma' };
+  }
+  if (desc.includes('casino') || desc.includes('gambling') || desc.includes('gaming entertainment')) {
+    return { tamSize: 700, tamLabel: 'Global Casino & Gaming', tamCAGR: 6, tamSource: 'H2 Gambling Capital' };
+  }
+  // Industry-aware fallback: when segment name is generic (e.g. "Products", "Services"),
+  // use the company description to infer the right TAM
+  if (desc.includes('semiconductor') || desc.includes('chip')) {
+    return { tamSize: 850, tamLabel: 'Global Semiconductor', tamCAGR: 12, tamSource: 'WSTS/SIA' };
+  }
+  if (desc.includes('pharmaceutical') || desc.includes('drug') || desc.includes('therapeutic')) {
+    return { tamSize: 1700, tamLabel: 'Global Pharmaceuticals', tamCAGR: 6, tamSource: 'IQVIA' };
+  }
+  if (desc.includes('infrastructure software') || desc.includes('enterprise software')) {
+    return { tamSize: 600, tamLabel: 'Global Enterprise Software', tamCAGR: 12, tamSource: 'Gartner Enterprise SW' };
   }
   // Generic fallback
   return { tamSize: 2000, tamLabel: 'Global Industry', tamCAGR: 5, tamSource: 'Industry Estimate' };
@@ -709,12 +862,18 @@ function generateTAMAnalysis(
   }
   // Consumer Cyclical
   else if (s.includes('consumer') && (s.includes('cycl') || s.includes('discr'))) {
-    if (ind.includes('luxury') || desc.includes('luxury') || desc.includes('fashion')) {
+    if (ind.includes('gambling') || ind.includes('casino') || ind.includes('resort') || desc.includes('casino') || desc.includes('gambling') || desc.includes('gaming entertainment')) {
+      tamTotal = 700; tamLabel = 'Global Casino & Gaming'; tamCAGR = 6; tamSource = 'H2 Gambling Capital / Statista iGaming';
+    } else if (ind.includes('luxury') || desc.includes('luxury') || desc.includes('fashion')) {
       tamTotal = 380; tamLabel = 'Global Personal Luxury Goods'; tamCAGR = 6; tamSource = 'Bain & Company / Altagamma Luxury Report';
     } else if (desc.includes('auto') || desc.includes('vehicle')) {
       tamTotal = 3000; tamLabel = 'Global Automotive'; tamCAGR = 4; tamSource = 'McKinsey Automotive Revenue Pool';
     } else if (desc.includes('e-commerce') || desc.includes('online retail')) {
       tamTotal = 6300; tamLabel = 'Global E-Commerce'; tamCAGR = 11; tamSource = 'eMarketer / Statista E-Commerce';
+    } else if (ind.includes('restaurant') || desc.includes('restaurant') || desc.includes('dining')) {
+      tamTotal = 4000; tamLabel = 'Global Restaurant & Foodservice'; tamCAGR = 5; tamSource = 'Euromonitor / NRA Foodservice';
+    } else if (ind.includes('travel') || ind.includes('hotel') || ind.includes('leisure') || desc.includes('hotel') || desc.includes('cruise')) {
+      tamTotal = 2000; tamLabel = 'Global Travel & Leisure'; tamCAGR = 7; tamSource = 'Phocuswright / Euromonitor Travel';
     } else {
       tamTotal = 15000; tamLabel = 'Global Consumer Discretionary'; tamCAGR = 5; tamSource = 'Euromonitor / McKinsey Consumer';
     }
@@ -2903,8 +3062,17 @@ export async function registerRoutes(server: Server, app: Express) {
       } else if (sLower.includes("energy")) {
         growthThesis += " Katalysator: Energy Security-Investments und Transition-Projekte (LNG, Renewables) diversifizieren Umsatz. Hohe FCF-Generierung bei stabilen Commodity-Preisen ermöglicht Schuldenabbau und Dividendenwachstum.";
       } else if (sLower.includes("consumer") && (sLower.includes("discr") || sLower.includes("cycl"))) {
-        if (indLower.includes("luxury") || indLower.includes("fashion") || indLower.includes("apparel")) {
+        const descL = description.toLowerCase();
+        if (indLower.includes("gambling") || indLower.includes("casino") || descL.includes("casino") || descL.includes("gaming entertainment")) {
+          growthThesis += " Katalysator: iGaming/Online-Sports-Betting-Legalisierung in neuen Jurisdiktionen, Kapazitätserweiterung durch Renovierung/Neubau und Loyalty-Programm-Monetarisierung treiben Revenue-Growth. Database-Marketing ermöglicht höheren Gaming-Revenue pro Besucher.";
+        } else if (indLower.includes("luxury") || indLower.includes("fashion") || indLower.includes("apparel")) {
           growthThesis += " Katalysator: China/Asia-Nachfrageerholung, Premiumisierung und Pricing Power durch ikonische Markenportfolios. Direct-to-Consumer-Ausbau erhöht Margen. Wealth-Effekt bei steigenden Vermögenspreisen stützt Luxus-Nachfrage.";
+        } else if (indLower.includes("auto") || descL.includes("automobile") || descL.includes("vehicle")) {
+          growthThesis += " Katalysator: Elektrifizierungs-Roadmap, Software-Defined Vehicle (SDV) mit wiederkehrenden Einnahmen, und Plattform-Synergien senken Stückkosten bei steigender Skalierung.";
+        } else if (indLower.includes("restaurant") || descL.includes("restaurant")) {
+          growthThesis += " Katalysator: Same-Store-Sales-Recovery, Menü-Pricing-Power und Unit-Growth durch Franchise-Expansion. Digitale Bestell-/Lieferkanäle erhöhen Convenience und durchschnittlichen Bestellwert.";
+        } else if (indLower.includes("hotel") || indLower.includes("travel") || descL.includes("hotel") || descL.includes("cruise")) {
+          growthThesis += " Katalysator: Reise-Nachfrage-Erholung, RevPAR-Wachstum und Loyalty-Programm-Monetarisierung. Asset-Light-Franchise-Modell ermöglicht kapitaleffizientes Wachstum.";
         } else {
           growthThesis += " Katalysator: E-Commerce-Penetration, Direct-to-Consumer-Ausbau und Pricing Power durch Markenstärke. Internationale Expansion in Emerging Markets bietet Volumenwachstum.";
         }
@@ -3150,8 +3318,17 @@ export async function registerRoutes(server: Server, app: Express) {
       } else if (sLow.includes("energy")) {
         structuralTrends.push("Energy transition", "Electrification trend", "Energy security focus");
       } else if (sLow.includes("consumer") && (sLow.includes("cycl") || sLow.includes("discr"))) {
-        if (indLow.includes("luxury") || indLow.includes("apparel") || indLow.includes("fashion")) {
+        const descLow = description.toLowerCase();
+        if (indLow.includes("gambling") || indLow.includes("casino") || descLow.includes("casino") || descLow.includes("gaming entertainment")) {
+          structuralTrends.push("iGaming & online sports betting legalization", "Digital transformation of gaming floor", "Loyalty program & database marketing");
+        } else if (indLow.includes("luxury") || indLow.includes("apparel") || indLow.includes("fashion")) {
           structuralTrends.push("China/Asia luxury demand recovery", "Premiumization & aspirational spending", "Direct-to-Consumer & digital retail");
+        } else if (indLow.includes("auto") || descLow.includes("automobile") || descLow.includes("vehicle")) {
+          structuralTrends.push("EV transition acceleration", "Autonomous driving technology", "Connected car & software-defined vehicle");
+        } else if (indLow.includes("restaurant") || descLow.includes("restaurant")) {
+          structuralTrends.push("Digital ordering & delivery penetration", "Menu price elasticity & value positioning", "Franchise expansion & unit economics");
+        } else if (indLow.includes("travel") || indLow.includes("hotel") || descLow.includes("hotel") || descLow.includes("cruise")) {
+          structuralTrends.push("Revenge travel & experience economy", "Loyalty ecosystem monetization", "Asset-light franchise model shift");
         } else {
           structuralTrends.push("E-Commerce penetration growth", "Consumer confidence recovery", "DTC channel expansion");
         }
@@ -3211,6 +3388,7 @@ export async function registerRoutes(server: Server, app: Express) {
         fcfMargin: +fcfMargin.toFixed(2),
         revenue,
         ebitda,
+        operatingIncome,
         netIncome,
         totalDebt,
         cashEquivalents,

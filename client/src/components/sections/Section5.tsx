@@ -41,12 +41,20 @@ export function Section5({ data }: Props) {
   const [waccOverrideValue, setWaccOverrideValue] = useState(9.0);
 
   // Derive sensible defaults from data
-  const ebitMarginDefault = data.ebitda > 0 && data.revenue > 0
-    ? +((data.ebitda / data.revenue) * 100).toFixed(1) // Use EBITDA as proxy for EBIT margin
-    : 15;
-  const capexDefault = data.revenue > 0 && data.fcfTTM > 0
-    ? +Math.max(2, Math.min(15, ((data.ebitda - data.fcfTTM) / data.revenue) * 100)).toFixed(1)
-    : 5;
+  // Use actual operating income (EBIT) for DCF margin — NOT EBITDA!
+  // EBITDA includes D&A and massively overstates margins for capital-intensive businesses.
+  const ebitMarginDefault = data.operatingIncome > 0 && data.revenue > 0
+    ? +((data.operatingIncome / data.revenue) * 100).toFixed(1)
+    : data.ebitda > 0 && data.revenue > 0
+      ? +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1) // fallback: EBITDA × 0.6 proxy
+      : 15;
+  // Capex estimate: use actual CapEx from financial statements if available, else approximate
+  const fsCapex = data.financialStatements?.cashFlow?.capex;
+  const capexDefault = fsCapex && fsCapex > 0 && data.revenue > 0
+    ? +Math.max(2, Math.min(25, (fsCapex / data.revenue) * 100)).toFixed(1)
+    : data.revenue > 0 && data.ebitda > 0 && data.operatingIncome > 0
+      ? +Math.max(2, Math.min(20, ((data.ebitda - data.operatingIncome) / data.revenue) * 100)).toFixed(1) // D&A proxy
+      : 5;
   const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
 
   // Use sector WACC scenarios to back-derive a reasonable beta for DCF.
