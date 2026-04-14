@@ -409,6 +409,107 @@ function generateCatalystContext(
   }
 }
 
+// === LLM-Powered Company-Specific Catalyst Generation ===
+async function generateLLMCatalysts(
+  ticker: string, companyName: string, sector: string, industry: string, 
+  description: string, revenue: number, revenueGrowth: number, fcfMargin: number,
+  price: number, pe: number, marketCap: number,
+  keyProjects: string[], secFilingExcerpts: string[], newsHeadlines: string[]
+): Promise<Catalyst[] | null> {
+  try {
+    const Anthropic = (await import('@anthropic-ai/sdk')).default;
+    const client = new Anthropic();
+
+    const contextParts: string[] = [];
+    contextParts.push(`Company: ${companyName} (${ticker})`);
+    contextParts.push(`Sector: ${sector} / ${industry}`);
+    contextParts.push(`Description: ${description.substring(0, 800)}`);
+    contextParts.push(`Revenue: $${(revenue / 1e9).toFixed(1)}B | Growth: ${revenueGrowth.toFixed(1)}% | FCF Margin: ${fcfMargin.toFixed(1)}%`);
+    contextParts.push(`Price: $${price.toFixed(2)} | P/E: ${pe.toFixed(1)} | Market Cap: $${(marketCap / 1e9).toFixed(1)}B`);
+
+    if (keyProjects.length > 0) {
+      contextParts.push(`\nKey Projects (from SEC 10-K filing):\n${keyProjects.map(p => `  - ${p}`).join('\n')}`);
+    }
+    if (secFilingExcerpts.length > 0) {
+      contextParts.push(`\nSEC Filing Excerpts:\n${secFilingExcerpts.map(e => `  "${e}"`).join('\n')}`);
+    }
+    if (newsHeadlines.length > 0) {
+      contextParts.push(`\nRecent News:\n${newsHeadlines.map(n => `  - ${n}`).join('\n')}`);
+    }
+
+    const prompt = `You are a senior equity research analyst. Based on the company context below, generate exactly 5 company-specific investment catalysts.
+
+IMPORTANT RULES:
+- Each catalyst MUST be specific to THIS company — reference actual projects, products, initiatives, markets, or strategic moves
+- Do NOT use generic sector catalysts like "Revenue Growth Acceleration" or "Margin Expansion" — those are BANNED
+- For each catalyst, use real company-specific names (e.g. "Blue Creek Mine Ramp-up" for HCC, "FSD/Robotaxi Commercialization" for TSLA, "VMware Integration Synergies" for AVGO)
+- Quantify where possible using the company data provided
+- Think about: What specific projects, product launches, market expansions, regulatory changes, technology deployments, M&A integrations, or business model shifts could move this stock?
+- Include at least one downside-aware catalyst (one with lower PoS reflecting genuine uncertainty)
+
+COMPANY CONTEXT:
+${contextParts.join('\n')}
+
+Respond with ONLY a JSON array of exactly 5 catalysts. Each catalyst object must have:
+{
+  "name": "Short catalyst name (max 50 chars, company-specific)",
+  "context": "Detailed German explanation (2-3 sentences) explaining WHY this catalyst matters for the company, what the preconditions are, and how it connects to the business model. Use German financial analyst language.",
+  "timeline": "e.g. 6-12M, 12-24M, 12-36M",
+  "pos": <number 20-80, probability of success with -10-15% safety margin vs. base estimate>,
+  "bruttoUpside": <number 5-30, gross upside % if catalyst materializes>,
+  "einpreisungsgrad": <number 20-60, how much is already priced in via consensus/forward estimates>
+}
+
+JSON array only, no markdown, no explanation:`;
+
+    console.log(`[ANALYZE] Calling LLM for company-specific catalysts: ${ticker}`);
+    const message = await client.messages.create({
+      model: 'claude_sonnet_4_6',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const responseText = (message.content[0] as any)?.text || '';
+    // Parse JSON — handle potential markdown wrapping
+    let jsonStr = responseText.trim();
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    }
+    const rawCatalysts = JSON.parse(jsonStr);
+
+    if (!Array.isArray(rawCatalysts) || rawCatalysts.length < 3) {
+      console.log(`[ANALYZE] LLM returned invalid catalyst array for ${ticker}`);
+      return null;
+    }
+
+    // Convert to Catalyst format with calculated fields
+    const catalysts: Catalyst[] = rawCatalysts.slice(0, 5).map((c: any) => {
+      const pos = Math.max(20, Math.min(80, Number(c.pos) || 50));
+      const bruttoUpside = Math.max(3, Math.min(35, Number(c.bruttoUpside) || 10));
+      const einpreisungsgrad = Math.max(15, Math.min(65, Number(c.einpreisungsgrad) || 35));
+      const nettoUpside = +(bruttoUpside * (1 - einpreisungsgrad / 100)).toFixed(2);
+      const gb = +(pos / 100 * nettoUpside).toFixed(2);
+      return {
+        name: String(c.name || 'Unknown Catalyst').substring(0, 60),
+        timeline: String(c.timeline || '12-24M'),
+        pos,
+        bruttoUpside,
+        einpreisungsgrad,
+        nettoUpside,
+        gb,
+        context: String(c.context || ''),
+      };
+    });
+
+    console.log(`[ANALYZE] LLM catalysts for ${ticker}: ${catalysts.map(c => c.name).join(', ')}`);
+    return catalysts;
+  } catch (err: any) {
+    console.log(`[ANALYZE] LLM catalyst generation failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
+    return null;
+  }
+}
+
+// === Fallback: Sector-Template Catalysts (used when LLM is unavailable) ===
 function generateCatalysts(sector: string, industry: string, growthRate: number, fcfMargin: number, description: string = '', revenue: number = 0): Catalyst[] {
   const catalysts: Catalyst[] = [];
   const s = sector.toLowerCase();
@@ -3031,7 +3132,20 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       // === Catalysts & Risks ===
-      const catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
+      // Try LLM-powered company-specific catalysts first, fallback to sector template
+      let catalysts: Catalyst[];
+      const llmCatalysts = await generateLLMCatalysts(
+        ticker, companyName, sector, industry, description,
+        revenue, revenueGrowth, fcfMargin, price, pe, marketCap,
+        keyProjects, secFilingExcerpts, newsHeadlines
+      );
+      if (llmCatalysts && llmCatalysts.length >= 3) {
+        catalysts = llmCatalysts;
+        console.log(`[ANALYZE] Using LLM-generated catalysts for ${ticker}`);
+      } else {
+        catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
+        console.log(`[ANALYZE] Using fallback sector-template catalysts for ${ticker}`);
+      }
       const risks = generateRisks(sector, beta5Y, govExp.exposure);
       // tamAnalysis is computed after revenueSegments are parsed (below)
 
@@ -3044,44 +3158,25 @@ export async function registerRoutes(server: Server, app: Express) {
       else growthThesis = `Revenue rückläufig bei ${revenueGrowth.toFixed(1)}% – benötigt Restrukturierung oder neuen Wachstumsvektor.`;
       growthThesis = hybridPrefix + growthThesis;
 
-      // Add catalyst business-model reasoning by sector (generic)
-      const sLower = sector.toLowerCase();
-      const indLower = industry.toLowerCase();
-      if (sLower.includes("tech")) {
-        if (indLower.includes("software") || indLower.includes("cloud") || indLower.includes("saas")) {
-          growthThesis += " Katalysator: Integration von KI-Modulen in bestehende Produktsuite erhöht ARPU und stärkt Kundenbindung (Switching Costs). Cloud-Migration bestehender Enterprise-Kunden → wiederkehrende Umsatzströme mit höheren Bruttomargen (70-85%).";
-        } else if (indLower.includes("semiconductor") || indLower.includes("chip")) {
-          growthThesis += " Katalysator: KI-Inferenz und Data-Center-Nachfrage treiben ASP-Steigerungen. Technologie-Zyklen ermöglichen periodische Margenerholung bei Kapazitätsanpassung.";
-        } else {
-          growthThesis += " Katalysator: KI-Integration, Cloud-Plattform-Expansion und neue Verticals ermöglichen Cross-Selling und höhere Margen. Netzwerkeffekte stärken Wettbewerbsposition und reduzieren Kundenabwanderung.";
-        }
-      } else if (sLower.includes("health")) {
-        growthThesis += " Katalysator: Pipeline-Fortschritte (FDA-Approvals), Biologika-Expansion und demografischer Rückenwind (Aging Population) bieten strukturelles Wachstum. Patentschutz sichert Premium-Pricing.";
-      } else if (sLower.includes("financ")) {
-        growthThesis += " Katalysator: Zinsnormalisierung verbessert Net Interest Income. Digitalisierung (FinTech-Integration, KI-gestützte Risikomodelle) senkt Cost-to-Income Ratio. Aktienrückkäufe stützen EPS-Wachstum.";
-      } else if (sLower.includes("energy")) {
-        growthThesis += " Katalysator: Energy Security-Investments und Transition-Projekte (LNG, Renewables) diversifizieren Umsatz. Hohe FCF-Generierung bei stabilen Commodity-Preisen ermöglicht Schuldenabbau und Dividendenwachstum.";
-      } else if (sLower.includes("consumer") && (sLower.includes("discr") || sLower.includes("cycl"))) {
-        const descL = description.toLowerCase();
-        if (indLower.includes("gambling") || indLower.includes("casino") || descL.includes("casino") || descL.includes("gaming entertainment")) {
-          growthThesis += " Katalysator: iGaming/Online-Sports-Betting-Legalisierung in neuen Jurisdiktionen, Kapazitätserweiterung durch Renovierung/Neubau und Loyalty-Programm-Monetarisierung treiben Revenue-Growth. Database-Marketing ermöglicht höheren Gaming-Revenue pro Besucher.";
-        } else if (indLower.includes("luxury") || indLower.includes("fashion") || indLower.includes("apparel")) {
-          growthThesis += " Katalysator: China/Asia-Nachfrageerholung, Premiumisierung und Pricing Power durch ikonische Markenportfolios. Direct-to-Consumer-Ausbau erhöht Margen. Wealth-Effekt bei steigenden Vermögenspreisen stützt Luxus-Nachfrage.";
-        } else if (indLower.includes("auto") || descL.includes("automobile") || descL.includes("vehicle")) {
-          growthThesis += " Katalysator: Elektrifizierungs-Roadmap, Software-Defined Vehicle (SDV) mit wiederkehrenden Einnahmen, und Plattform-Synergien senken Stückkosten bei steigender Skalierung.";
-        } else if (indLower.includes("restaurant") || descL.includes("restaurant")) {
-          growthThesis += " Katalysator: Same-Store-Sales-Recovery, Menü-Pricing-Power und Unit-Growth durch Franchise-Expansion. Digitale Bestell-/Lieferkanäle erhöhen Convenience und durchschnittlichen Bestellwert.";
-        } else if (indLower.includes("hotel") || indLower.includes("travel") || descL.includes("hotel") || descL.includes("cruise")) {
-          growthThesis += " Katalysator: Reise-Nachfrage-Erholung, RevPAR-Wachstum und Loyalty-Programm-Monetarisierung. Asset-Light-Franchise-Modell ermöglicht kapitaleffizientes Wachstum.";
-        } else {
-          growthThesis += " Katalysator: E-Commerce-Penetration, Direct-to-Consumer-Ausbau und Pricing Power durch Markenstärke. Internationale Expansion in Emerging Markets bietet Volumenwachstum.";
-        }
-      } else if (sLower.includes("industrial")) {
-        growthThesis += " Katalysator: Infrastruktur-Investitionsprogramme (IRA, EU Green Deal), Automatisierung/Robotik-Adoption und Reshoring-Trends erhöhen Auftragsvolumen. Operative Effizienzgewinne durch Digitalisierung.";
-      } else if (indLower.includes("auto") || indLower.includes("vehicle")) {
-        growthThesis += " Katalysator: Elektrifizierungs-Roadmap, Software-Defined Vehicle (SDV) mit wiederkehrenden Einnahmen, und Plattform-Synergien senken Stückkosten bei steigender Skalierung.";
+      // Add catalyst reasoning to growth thesis — use LLM catalysts if available
+      if (llmCatalysts && llmCatalysts.length > 0) {
+        const topCats = catalysts.slice(0, 3).map(c => c.name).join(', ');
+        const firstCtx = catalysts[0]?.context ? ' ' + catalysts[0].context.split('.')[0] + '.' : '';
+        growthThesis += ` Katalysator: ${topCats}.${firstCtx}`;
       } else {
-        growthThesis += " Katalysator: Strategische M&A, operative Effizienzsteigerungen und neue Partnerschaften/Projekte können Margen verbessern und neue Umsatzquellen erschließen.";
+        // Fallback: generic sector reasoning
+        const sLower = sector.toLowerCase();
+        if (sLower.includes("tech")) {
+          growthThesis += " Katalysator: KI-Integration, Cloud-Expansion und neue Verticals ermöglichen Cross-Selling und höhere Margen.";
+        } else if (sLower.includes("health")) {
+          growthThesis += " Katalysator: Pipeline-Fortschritte, Biologika-Expansion und demografischer Rückenwind bieten strukturelles Wachstum.";
+        } else if (sLower.includes("financ")) {
+          growthThesis += " Katalysator: Zinsnormalisierung und Digitalisierung verbessern Net Interest Income.";
+        } else if (sLower.includes("energy")) {
+          growthThesis += " Katalysator: Energy Security-Investments und Transition-Projekte diversifizieren Umsatz.";
+        } else {
+          growthThesis += " Katalysator: Strategische Initiativen und operative Effizienzsteigerungen können Margen verbessern.";
+        }
       }
 
       // === Moat rating ===
