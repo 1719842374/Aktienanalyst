@@ -243,10 +243,10 @@ export function Section2({ data }: Props) {
           </div>
         </div>
 
-        {/* Key Projects from News */}
+        {/* Key Projects from SEC 10-K */}
         {data.keyProjects && data.keyProjects.length > 0 && (
           <div>
-            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Schlüsselprojekte & News</h3>
+            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Schlüsselprojekte & Katalysatoren (SEC 10-K)</h3>
             <div className="flex flex-wrap gap-2">
               {data.keyProjects.map((project, i) => (
                 <span
@@ -256,6 +256,21 @@ export function Section2({ data }: Props) {
                   {project}
                 </span>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* SEC Filing Excerpts */}
+        {data.secFilingExcerpts && data.secFilingExcerpts.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Auszüge aus dem 10-K Filing</h3>
+            <div className="space-y-1.5 bg-muted/10 rounded-lg p-3 border border-border/30">
+              {data.secFilingExcerpts.map((excerpt, i) => (
+                <div key={i} className="text-[10px] text-foreground/80 leading-relaxed">
+                  <span className="text-primary font-semibold">„</span>{excerpt}<span className="text-primary font-semibold">“</span>
+                </div>
+              ))}
+              <div className="text-[9px] text-muted-foreground/50 mt-1 italic">Quelle: SEC EDGAR 10-K Filing</div>
             </div>
           </div>
         )}

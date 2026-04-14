@@ -2758,68 +2758,117 @@ export async function registerRoutes(server: Server, app: Express) {
       const rslAvg = prices26w.length > 0 ? prices26w.reduce((s, v) => s + v, 0) / prices26w.length : price;
       const rsl = rslAvg > 0 ? (price / rslAvg) * 100 : 100;
 
-      // === Parse News / Key Projects ===
+      // === SEC 10-K Filing Analysis + Key Projects ===
       let keyProjects: string[] = [];
       let newsHeadlines: string[] = [];
+      let secFilingExcerpts: string[] = [];
 
-      // Extract key projects/catalysts from analyst research content
-      if (analystResult?.content) {
-        const analystText = analystResult.content;
-        // Extract project names, mine names, pipeline names, expansion plans
-        const projectRegexes = [
-          /(?:Blue Creek|Neutron|Starship|Phase [IVX]+|Project [A-Z]\w+|\w+ Mine|\w+ Pipeline|\w+ Expansion|\w+ Ramp[- ]?up|\w+ Platform|\w+ Facility)[^\n.,;]{0,50}/gi,
-          /(?:key catalyst|major project|growth driver|transformative|game.changer)[:\s]+([^\n.]{10,80})/gi,
-        ];
-        for (const regex of projectRegexes) {
-          let match;
-          while ((match = regex.exec(analystText)) !== null) {
-            const project = (match[1] || match[0]).trim().substring(0, 60);
-            if (project.length > 5 && !keyProjects.includes(project) && keyProjects.length < 5) {
-              keyProjects.push(project);
+      try {
+        // Step 1: Get CIK from SEC company_tickers.json
+        const tickerUpper = ticker.replace(/\..+$/, '').toUpperCase(); // Strip exchange suffix
+        const cikResp = await fetch('https://www.sec.gov/files/company_tickers.json', {
+          headers: { 'User-Agent': 'StockAnalystPro/1.0 (philip.diaz.rohr@gmail.com)' },
+        });
+        let cik = '';
+        if (cikResp.ok) {
+          const cikData = await cikResp.json() as any;
+          for (const entry of Object.values(cikData) as any[]) {
+            if (entry.ticker === tickerUpper) {
+              cik = String(entry.cik_str).padStart(10, '0');
+              break;
             }
           }
         }
-        // Extract recent headlines from analyst content if present
-        const headlineMatches = analystText.match(/(?:headline|news|alert)[:\s]+([^\n]{10,100})/gi);
-        if (headlineMatches) {
-          newsHeadlines.push(...headlineMatches.map((h: string) => h.replace(/^\w+[:\s]+/, '').trim()).slice(0, 3));
-        }
-      }
 
-      if (newsResult?.content) {
-        try {
-          const newsData = typeof newsResult.content === 'string' ? JSON.parse(newsResult.content) : newsResult.content;
-          const articles = newsData?.results || newsData?.articles || [];
-          for (const article of articles) {
-            const title = article.title || article.headline || '';
-            const desc = article.description || article.summary || '';
-            if (title) newsHeadlines.push(title);
-            // Extract project names, expansions, acquisitions from headlines
-            const combined = (title + ' ' + desc).toLowerCase();
-            const projectPatterns = [
-              /(?:mine|project|facility|plant|factory|pipeline|expansion|ramp[- ]?up|launch(?:es|ed|ing)?|acqui(?:sition|re)|merger|partnership|deal|joint venture|rollout|buildout|phase \d|tier \d)\s*(?:of |at |for |with |named |called )?([A-Z][A-Za-z\s\-'.]{2,30})/g,
-              /([A-Z][A-Za-z\s\-'.]{2,25})\s*(?:mine|project|facility|plant|factory|pipeline|expansion|ramp[- ]?up|launch)/g,
-            ];
-            for (const pattern of projectPatterns) {
-              let match;
-              const text = title + ' ' + desc;
-              while ((match = pattern.exec(text)) !== null) {
-                const project = match[1]?.trim();
-                if (project && project.length > 2 && project.length < 40 && !keyProjects.includes(project)) {
-                  keyProjects.push(project);
+        if (cik) {
+          // Step 2: Get latest 10-K filing
+          const submResp = await fetch(`https://data.sec.gov/submissions/CIK${cik}.json`, {
+            headers: { 'User-Agent': 'StockAnalystPro/1.0 (philip.diaz.rohr@gmail.com)' },
+          });
+          if (submResp.ok) {
+            const submData = await submResp.json() as any;
+            const filings = submData?.filings?.recent;
+            if (filings) {
+              let tenKIdx = -1;
+              for (let i = 0; i < (filings.form?.length || 0); i++) {
+                if (filings.form[i] === '10-K' || filings.form[i] === '20-F') { tenKIdx = i; break; }
+              }
+              if (tenKIdx >= 0) {
+                const accNum = filings.accessionNumber[tenKIdx].replace(/-/g, '');
+                const doc = filings.primaryDocument[tenKIdx];
+                const cikNum = cik.replace(/^0+/, '');
+                const filingUrl = `https://www.sec.gov/Archives/edgar/data/${cikNum}/${accNum}/${doc}`;
+                console.log(`[ANALYZE] Fetching 10-K from: ${filingUrl}`);
+
+                // Step 3: Fetch and parse the 10-K
+                const tenKResp = await fetch(filingUrl, {
+                  headers: { 'User-Agent': 'StockAnalystPro/1.0 (philip.diaz.rohr@gmail.com)' },
+                });
+                if (tenKResp.ok) {
+                  const rawHtml = await tenKResp.text();
+                  // Strip HTML tags
+                  let cleanText = rawHtml.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim();
+
+                  // Step 4: Extract Business section (Item 1) — first 5000 chars
+                  const item1Start = cleanText.toLowerCase().indexOf('item 1.');
+                  const item1aStart = cleanText.toLowerCase().indexOf('item 1a.');
+                  let businessText = '';
+                  if (item1Start > 0 && item1aStart > item1Start) {
+                    businessText = cleanText.substring(item1Start, Math.min(item1aStart, item1Start + 8000));
+                  } else if (item1Start > 0) {
+                    businessText = cleanText.substring(item1Start, item1Start + 8000);
+                  }
+
+                  // Step 5: Extract key catalysts via regex patterns
+                  const fullText = cleanText.substring(0, 50000); // First 50K chars covers Business + Risk Factors
+                  const catalystPatterns = [
+                    // Named projects, mines, facilities
+                    /([A-Z][a-z]+(?: [A-Z][a-z]+){0,2})\s+(?:mine|project|facility|plant|pipeline|platform)\b/g,
+                    // Ramp-ups, expansions, launches
+                    /(?:commenced|commencing|ramp[- ]?up|expansion|launched?)\s+(?:operations?|production|longwall)?\s+(?:at|of|for)?\s+(?:the\s+)?([A-Z][a-zA-Z\s]{3,30}?)(?:\s+mine|\s+project|\s+facility|,|\.|in )/g,
+                    // Capacity increases
+                    /(?:increase|expand|grow)\s+(?:annual |our )?(?:production |nameplate )?capacity\s+(?:up to |by |to )?(?:approximately )?([\d,.]+\s*(?:million|percent|%|metric tons|mtpy))/gi,
+                    // Transformational statements
+                    /(?:transformational|game[- ]changing|significant|landmark)\s+(?:investment|project|acquisition|expansion)\s+(?:that |which )?([^.]{10,100})/gi,
+                  ];
+
+                  for (const pattern of catalystPatterns) {
+                    let match;
+                    while ((match = pattern.exec(fullText)) !== null && keyProjects.length < 8) {
+                      const extracted = (match[1] || match[0]).trim();
+                      // Filter: must be meaningful, not generic words
+                      const genericWords = /^(Item|Part|Table|Note|Form|This|The |Our |We |In |Preparation|Surface|Underground|Annual|Report|Financial|General|Management|Company|Corporation|Other|Total|Net)$/i;
+                      if (extracted.length > 4 && extracted.length < 80 &&
+                          !genericWords.test(extracted.trim()) &&
+                          !keyProjects.some(p => p.toLowerCase().includes(extracted.toLowerCase().substring(0, 15)))) {
+                        keyProjects.push(extracted);
+                      }
+                    }
+                  }
+
+                  // Step 6: Extract key sentences about projects for excerpts
+                  const sentences = fullText.split(/\.\s+/);
+                  for (const sentence of sentences) {
+                    if (secFilingExcerpts.length >= 3) break;
+                    const s = sentence.trim();
+                    if (s.length > 50 && s.length < 300 &&
+                        (s.match(/(?:ramp|expan|commenc|capacity|production.*increas|transform|growth.*driver|new.*mine|new.*facility|new.*plant|new.*project)/i)) &&
+                        !s.match(/^(?:Item|Part|Note|Table)/) &&
+                        !secFilingExcerpts.some(e => e.substring(0, 30) === s.substring(0, 30))) {
+                      secFilingExcerpts.push(s.substring(0, 250) + (s.length > 250 ? '...' : ''));
+                    }
+                  }
+
+                  console.log(`[ANALYZE] SEC 10-K: Found ${keyProjects.length} key projects, ${secFilingExcerpts.length} excerpts for ${ticker}`);
                 }
               }
             }
           }
-          if (keyProjects.length > 0) {
-            console.log(`[ANALYZE] Key projects from news: ${keyProjects.join(', ')}`);
-          }
-          if (newsHeadlines.length > 0) {
-            console.log(`[ANALYZE] ${newsHeadlines.length} news headlines found for ${ticker}`);
-          }
-        } catch (newsErr: any) {
-          console.log(`[ANALYZE] News parsing failed: ${newsErr?.message?.substring(0, 100)}`);
+        } else {
+          console.log(`[ANALYZE] CIK not found for ${tickerUpper} (may be non-US stock)`);
         }
+      } catch (secErr: any) {
+        console.log(`[ANALYZE] SEC 10-K parsing failed: ${secErr?.message?.substring(0, 150)}`);
       }
 
       // === Catalysts & Risks ===
@@ -3238,6 +3287,7 @@ export async function registerRoutes(server: Server, app: Express) {
         growthThesis,
         structuralTrends,
         keyProjects: keyProjects.length > 0 ? keyProjects : undefined,
+        secFilingExcerpts: secFilingExcerpts.length > 0 ? secFilingExcerpts : undefined,
         newsHeadlines: newsHeadlines.length > 0 ? newsHeadlines.slice(0, 5) : undefined,
 
         cycleClassification: sectorDefs.cycleClass,
