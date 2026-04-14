@@ -3,6 +3,7 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { formatNumber } from "../../lib/formatters";
 import { TrendingUp, TrendingDown, Globe, BarChart3 } from "lucide-react";
 import PeerComparison from "./PeerComparison";
+import EpsGrowthChart from "./EpsGrowthChart";
 
 interface Props { data: StockAnalysis }
 
@@ -284,6 +285,13 @@ export function Section7({ data }: Props) {
           </div>
         )}
       </div>
+
+      {/* EPS Growth Chart */}
+      {data.peerComparison?.epsHistory && data.peerComparison.epsHistory.length > 3 && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <EpsGrowthChart data={data} />
+        </div>
+      )}
 
       {/* Peer Comparison Table */}
       {data.peerComparison && data.peerComparison.peers.length > 0 && (

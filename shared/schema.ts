@@ -63,6 +63,12 @@ export interface PeerCompany {
   revenueGrowth: number | null;
 }
 
+export interface EpsDataPoint {
+  year: number; // e.g. 2020, 2021, ...
+  eps: number;
+  isEstimate: boolean; // true for forward estimates
+}
+
 export interface PeerComparison {
   subject: PeerCompany; // The analyzed stock itself
   peers: PeerCompany[]; // 4-6 competitor peers
@@ -82,6 +88,9 @@ export interface PeerComparison {
     epsGrowth: number | null;
     sectorName: string;
   };
+  // EPS history for chart
+  epsHistory?: EpsDataPoint[]; // Subject's historical + estimated EPS
+  peerAvgEpsHistory?: EpsDataPoint[]; // Peer average EPS (where available)
 }
 
 export interface NewsItem {

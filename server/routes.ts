@@ -608,6 +608,83 @@ async function fetchPeerComparison(
       revenueGrowth: +revenueGrowth.toFixed(1),
     };
 
+    // Step 5: Fetch subject EPS history + forward estimates for chart
+    let epsHistory: { year: number; eps: number; isEstimate: boolean }[] = [];
+    let peerAvgEpsHistory: { year: number; eps: number; isEstimate: boolean }[] = [];
+    try {
+      // Fetch subject historical EPS
+      const subjectRatiosResult = callFinanceTool('finance_company_ratios', {
+        ticker_symbols: [ticker],
+        ratio_ids: ['ratio_diluted_eps'],
+      });
+      if (subjectRatiosResult?.content) {
+        const content = typeof subjectRatiosResult.content === 'string' ? subjectRatiosResult.content : JSON.stringify(subjectRatiosResult.content);
+        const rows = parseMarkdownTable(content);
+        for (const row of rows) {
+          const date = row['date'] || '';
+          const yearMatch = date.match(/(\d{4})/);
+          if (!yearMatch) continue;
+          const year = parseInt(yearMatch[1]);
+          const epsVal = parseFloat(String(row['ratio_diluted_eps'] || '').replace(/[,$]/g, ''));
+          if (!isNaN(epsVal) && epsVal > 0 && year >= 2015) {
+            epsHistory.push({ year, eps: +epsVal.toFixed(2), isEstimate: false });
+          }
+        }
+      }
+
+      // Fetch subject forward estimates
+      const estimatesResult = callFinanceTool('finance_estimates', {
+        ticker_symbols: [ticker],
+        period_type: 'annual',
+      });
+      if (estimatesResult?.content) {
+        const content = typeof estimatesResult.content === 'string' ? estimatesResult.content : JSON.stringify(estimatesResult.content);
+        const rows = parseMarkdownTable(content);
+        for (const row of rows) {
+          const date = row['date'] || '';
+          const yearMatch = date.match(/(\d{4})/);
+          if (!yearMatch) continue;
+          const year = parseInt(yearMatch[1]);
+          const epsVal = parseFloat(String(row['key_stats_diluted_eps'] || '').replace(/[,$]/g, ''));
+          if (!isNaN(epsVal) && epsVal > 0) {
+            // Only add if not already in history (avoid duplicates)
+            if (!epsHistory.some(h => h.year === year)) {
+              epsHistory.push({ year, eps: +epsVal.toFixed(2), isEstimate: true });
+            }
+          }
+        }
+      }
+      epsHistory.sort((a, b) => a.year - b.year);
+
+      // Build peer average EPS history from peerData epsHistory
+      if (epsHistory.length > 0) {
+        const peerHistories: Map<number, number[]> = new Map();
+        for (const p of validPeers) {
+          const pd = peerData.get(p.ticker);
+          if (!pd?.epsHistory) continue;
+          for (const h of pd.epsHistory as { date: string; eps: number }[]) {
+            const ym = h.date.match(/(\d{4})/);
+            if (!ym) continue;
+            const yr = parseInt(ym[1]);
+            if (yr < 2015 || h.eps <= 0) continue;
+            if (!peerHistories.has(yr)) peerHistories.set(yr, []);
+            peerHistories.get(yr)!.push(h.eps);
+          }
+        }
+        // Only include years where we have at least 2 peers
+        for (const [yr, vals] of peerHistories) {
+          if (vals.length >= 2) {
+            const avgEps = +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2);
+            peerAvgEpsHistory.push({ year: yr, eps: avgEps, isEstimate: false });
+          }
+        }
+        peerAvgEpsHistory.sort((a, b) => a.year - b.year);
+      }
+      console.log(`[PEERS] EPS history: ${epsHistory.length} points (${epsHistory.filter(h => h.isEstimate).length} estimates), peer avg: ${peerAvgEpsHistory.length} points`);
+    } catch (epsErr: any) {
+      console.log(`[PEERS] EPS history fetch failed: ${epsErr?.message?.substring(0, 150)}`);
+    }
+
     console.log(`[PEERS] Built ${validPeers.length} peer comparisons for ${ticker}`);
     return {
       subject,
@@ -620,6 +697,8 @@ async function fetchPeerComparison(
         epsGrowth1Y: avg(validPeers.map(p => p.epsGrowth1Y)),
         epsGrowth5Y: avg(validPeers.map(p => p.epsGrowth5Y)),
       },
+      epsHistory: epsHistory.length > 0 ? epsHistory : undefined,
+      peerAvgEpsHistory: peerAvgEpsHistory.length > 0 ? peerAvgEpsHistory : undefined,
     };
   } catch (err: any) {
     console.log(`[PEERS] Peer comparison failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
