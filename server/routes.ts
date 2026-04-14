@@ -138,6 +138,20 @@ function getEffectiveSector(sector: string, industry: string, description: strin
     };
   }
 
+  // FinTech / Super-App: classified as Tech but core business is payments/finance/marketplace
+  const fintechPhrases = ["payment", "fintech", "buy now pay later", "bnpl", "merchant finance",
+    "banking", "deposit", "lending", "credit", "consumer finance", "super app",
+    "marketplace platform", "peer to peer payment"];
+  const hasFinTechCore = fintechPhrases.some(p => desc.includes(p));
+  if (s.includes("tech") && hasFinTechCore && !hasTechCore) {
+    return {
+      sector: "Financial Services",
+      industry: "FinTech / Digital Payments & Super-App",
+      isHybrid: true,
+      hybridNote: `Reklassifiziert: API meldet "${sector}/${industry}", aber Kerngeschäft ist FinTech/Payments/Marketplace → Financial Services-Defaults.`,
+    };
+  }
+
   return { sector, industry, isHybrid: false, hybridNote: "" };
 }
 
@@ -962,6 +976,9 @@ function detectReportedCurrency(financialsContent: string): string | null {
   // Also try "Currency: EUR" patterns
   const currMatch = financialsContent.match(/[Cc]urrency[:\s]+([A-Z]{3})/);
   if (currMatch) return currMatch[1];
+  // Try detecting from unit labels like "in KZT" or "tenge" or "million KZT"
+  const unitMatch = financialsContent.match(/(?:in|million|thousands?)\s+([A-Z]{3})/i);
+  if (unitMatch) return unitMatch[1].toUpperCase();
   return null;
 }
 
@@ -1014,6 +1031,9 @@ function fetchFXRate(fromCurrency: string, toCurrency: string = "USD"): number |
     HKD: 0.128, KRW: 0.00074, SEK: 0.096, NOK: 0.094, DKK: 0.146,
     AUD: 0.65, CAD: 0.74, SGD: 0.75, INR: 0.012, BRL: 0.18,
     TWD: 0.031, ZAR: 0.055, MXN: 0.058, PLN: 0.26, CZK: 0.043,
+    KZT: 0.00196, TRY: 0.026, ILS: 0.28, THB: 0.029, PHP: 0.017,
+    IDR: 0.000061, VND: 0.000039, NGN: 0.00063, EGP: 0.02, ARS: 0.00089,
+    CLP: 0.0011, COP: 0.00024, PEN: 0.27, RUB: 0.011, UAH: 0.024,
   };
   if (fallbackRates[fromCurrency]) {
     console.log(`[FX] Using fallback rate for ${fromCurrency}: ${fallbackRates[fromCurrency]}`);
@@ -1063,11 +1083,15 @@ function generatePESTELAnalysis(
     INR: "Indien", BRL: "Brasilien", CAD: "Kanada", AUD: "Australien",
     SEK: "Schweden", NOK: "Norwegen", DKK: "Dänemark", SGD: "Singapur",
     ZAR: "Südafrika", MXN: "Mexiko", PLN: "Polen", CZK: "Tschechien",
+    KZT: "Kasachstan/Zentralasien", TRY: "Türkei", RUB: "Russland", ILS: "Israel",
+    IDR: "Indonesien", THB: "Thailand", PHP: "Philippinen", VND: "Vietnam",
+    NGN: "Nigeria", EGP: "Ägypten", ARS: "Argentinien", CLP: "Chile",
+    COP: "Kolumbien", PEN: "Peru", UAH: "Ukraine",
   };
   const region = regionMap[reportedCurrency] || "Global";
   const isEU = ["EUR", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK"].includes(reportedCurrency);
-  const isAsia = ["CNY", "HKD", "JPY", "KRW", "TWD", "SGD", "INR"].includes(reportedCurrency);
-  const isEM = ["CNY", "BRL", "INR", "ZAR", "MXN", "PLN", "CZK"].includes(reportedCurrency);
+  const isAsia = ["CNY", "HKD", "JPY", "KRW", "TWD", "SGD", "INR", "THB", "PHP", "VND", "IDR"].includes(reportedCurrency);
+  const isEM = ["CNY", "BRL", "INR", "ZAR", "MXN", "PLN", "CZK", "KZT", "TRY", "RUB", "IDR", "THB", "PHP", "VND", "NGN", "EGP", "ARS", "COP", "CLP", "PEN", "UAH"].includes(reportedCurrency);
 
   // Sector-specific detection for stock correlation logic
   const isDefense = ind.includes("aerospace") || ind.includes("defense") || desc.includes("defense") || desc.includes("missile") || desc.includes("military") || desc.includes("raytheon") || desc.includes("lockheed") || desc.includes("northrop");
@@ -2436,8 +2460,31 @@ export async function registerRoutes(server: Server, app: Express) {
       let currencyNote = "";
       let fxPair = "";
 
+      // Fallback: detect currency from description (country-based)
+      const descLower = description.toLowerCase();
+      const countryToCurrency: Record<string, string> = {
+        'kazakhstan': 'KZT', 'almaty': 'KZT', 'kasachstan': 'KZT',
+        'türkiye': 'TRY', 'turkey': 'TRY', 'istanbul': 'TRY',
+        'russia': 'RUB', 'moscow': 'RUB', 'india': 'INR', 'mumbai': 'INR',
+        'brazil': 'BRL', 'são paulo': 'BRL', 'south africa': 'ZAR',
+        'mexico': 'MXN', 'nigeria': 'NGN', 'egypt': 'EGP',
+        'israel': 'ILS', 'tel aviv': 'ILS', 'indonesia': 'IDR', 'jakarta': 'IDR',
+        'argentina': 'ARS', 'buenos aires': 'ARS', 'colombia': 'COP',
+        'chile': 'CLP', 'peru': 'PEN', 'philippines': 'PHP', 'manila': 'PHP',
+        'thailand': 'THB', 'bangkok': 'THB', 'vietnam': 'VND',
+      };
+      let descCurrency: string | null = null;
+      for (const [keyword, curr] of Object.entries(countryToCurrency)) {
+        if (descLower.includes(keyword)) { descCurrency = curr; break; }
+      }
+
       if (financialsResult?.content) {
-        const detected = detectReportedCurrency(financialsResult.content);
+        let detected = detectReportedCurrency(financialsResult.content);
+        // Fallback to description-based currency if not detected from financials
+        if (!detected && descCurrency) {
+          detected = descCurrency;
+          console.log(`[ANALYZE] Currency detected from description (country): ${detected}`);
+        }
         if (detected && detected !== "USD") {
           reportedCurrency = detected;
           console.log(`[ANALYZE] Detected reported currency: ${reportedCurrency} (non-USD)`);
