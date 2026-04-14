@@ -224,7 +224,7 @@ export default function Dashboard() {
           {!data && !analyzeMutation.isPending ? (
             <WelcomeScreen onSearch={(ticker) => { setCurrentTicker(ticker); analyzeMutation.mutate({ ticker, llm: useLLM }); }} />
           ) : analyzeMutation.isPending ? (
-            <LoadingScreen ticker={analyzeMutation.variables || ""} />
+            <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTicker || ""} />
           ) : analyzeMutation.isError ? (
             <ErrorScreen error={analyzeMutation.error} />
           ) : data ? (
