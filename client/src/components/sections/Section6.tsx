@@ -16,8 +16,10 @@ export function Section6({ data }: Props) {
   const haircut = data.fcfHaircut;
 
   // === FCFF DCF params (IDENTICAL to Section 5 / Section 13 for consistency) ===
-  const ebitMarginDefault = data.ebitda > 0 && data.revenue > 0
-    ? +((data.ebitda / data.revenue) * 100).toFixed(1) : 15;
+  const ebitMarginDefault = data.operatingIncome > 0 && data.revenue > 0
+    ? +((data.operatingIncome / data.revenue) * 100).toFixed(1)
+    : data.ebitda > 0 && data.revenue > 0
+      ? +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1) : 15;
   const capexDefault = data.revenue > 0 && data.fcfTTM > 0
     ? +Math.max(2, Math.min(15, ((data.ebitda - data.fcfTTM) / data.revenue) * 100)).toFixed(1) : 5;
   const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;

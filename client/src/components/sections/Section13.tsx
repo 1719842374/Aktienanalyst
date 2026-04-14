@@ -18,7 +18,7 @@ export function Section13({ data }: Props) {
 
   // Derive FCFF DCF params from data (same defaults as Section5)
   const ebitMarginDefault = data.ebitda > 0 && data.revenue > 0
-    ? +((data.ebitda / data.revenue) * 100).toFixed(1)
+    ? (data.operatingIncome > 0 ? +((data.operatingIncome / data.revenue) * 100).toFixed(1) : +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1))
     : 15;
   const capexDefault = data.revenue > 0 && data.fcfTTM > 0
     ? +Math.max(2, Math.min(15, ((data.ebitda - data.fcfTTM) / data.revenue) * 100)).toFixed(1)

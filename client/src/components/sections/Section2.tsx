@@ -15,10 +15,18 @@ export function Section2({ data }: Props) {
   const sp = data.sectorProfile;
 
   // Compute conservative FCFF DCF (same defaults as Section5/Section11/Section13)
-  const ebitMarginDefault = data.ebitda > 0 && data.revenue > 0
-    ? +((data.ebitda / data.revenue) * 100).toFixed(1) : 15;
-  const capexDefault = data.revenue > 0 && data.fcfTTM > 0
-    ? +Math.max(2, Math.min(15, ((data.ebitda - data.fcfTTM) / data.revenue) * 100)).toFixed(1) : 5;
+  // Use operatingIncome (EBIT) not EBITDA for DCF margin
+  const ebitMarginDefault = data.operatingIncome > 0 && data.revenue > 0
+    ? +((data.operatingIncome / data.revenue) * 100).toFixed(1)
+    : data.ebitda > 0 && data.revenue > 0
+      ? +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1)
+      : 15;
+  const fsCapex = data.financialStatements?.cashFlow?.capex;
+  const capexDefault = fsCapex && fsCapex > 0 && data.revenue > 0
+    ? +Math.max(2, Math.min(25, (fsCapex / data.revenue) * 100)).toFixed(1)
+    : data.revenue > 0 && data.ebitda > 0 && data.operatingIncome > 0
+      ? +Math.max(2, Math.min(20, ((data.ebitda - data.operatingIncome) / data.revenue) * 100)).toFixed(1)
+      : 5;
   const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
   const rf = 4.2, erp = 5.5, taxR = 21, rd = 5.0;
   const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
@@ -74,6 +82,41 @@ export function Section2({ data }: Props) {
           <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Company Description</h3>
           <p className="text-xs text-foreground/80 leading-relaxed max-h-[200px] overflow-y-auto">{data.description}</p>
         </div>
+
+        {/* === Aktuelle Nachrichten === */}
+        {data.newsItems && data.newsItems.length > 0 && (
+          <div className="bg-card/50 rounded-lg border border-border/50 p-3 mb-3">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm">📰</span>
+              <span className="text-sm font-semibold text-foreground">Aktuelle Nachrichten</span>
+              <span className="text-xs text-foreground/50">({data.newsItems.length} Meldungen)</span>
+            </div>
+            <div className="space-y-1.5">
+              {data.newsItems.map((news, idx) => (
+                <a
+                  key={idx}
+                  href={news.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group flex items-start gap-2 rounded-md p-1.5 hover:bg-muted/50 transition-colors cursor-pointer"
+                >
+                  <span className="shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full bg-primary/60 group-hover:bg-primary" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-foreground/90 leading-snug line-clamp-2 group-hover:text-primary transition-colors">
+                      {news.title}
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="text-[10px] text-foreground/40">{news.source}</span>
+                      <span className="text-[10px] text-foreground/30">·</span>
+                      <span className="text-[10px] text-foreground/40">{news.relativeTime}</span>
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-foreground/20 group-hover:text-primary text-xs mt-0.5">↗</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Peter Lynch Classification */}
         {(() => {

@@ -50,6 +50,14 @@ export interface TAMAnalysis {
   segments?: TAMSegment[]; // Per-segment TAM breakdown (if revenue segments available)
 }
 
+export interface NewsItem {
+  title: string;
+  source: string;
+  pubDate: string; // ISO date string
+  url: string;
+  relativeTime: string; // e.g. "vor 2 Std.", "vor 3 Tagen"
+}
+
 export interface Catalyst {
   name: string;
   timeline: string;
@@ -366,7 +374,9 @@ export interface StockAnalysis {
   revenueSegments?: RevenueSegment[];
   keyProjects?: string[]; // Key projects/expansions from SEC 10-K
   secFilingExcerpts?: string[]; // Key sentences from 10-K about projects
-  newsHeadlines?: string[]; // Recent news headlines
+  newsHeadlines?: string[]; // Recent news headlines (legacy)
+  // NEW: Structured news items from Google News RSS
+  newsItems?: NewsItem[];
   // NEW: Geographic segments (Umsatzanteil nach Regionen)
   geoSegments?: RevenueSegment[];
 }

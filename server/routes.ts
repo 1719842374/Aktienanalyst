@@ -409,6 +409,66 @@ function generateCatalystContext(
   }
 }
 
+// === Google News RSS Parser ===
+async function fetchNewsFromGoogleRSS(ticker: string, companyName: string): Promise<{ title: string; source: string; pubDate: string; url: string; relativeTime: string }[]> {
+  try {
+    // Build search query: ticker + company name for better results
+    const shortName = companyName.replace(/,? (Inc|Corp|Ltd|LLC|plc|SE|NV|SA|AG|Co)\.?.*$/i, '').trim();
+    const query = encodeURIComponent(`${ticker} ${shortName} stock`);
+    const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`;
+
+    console.log(`[NEWS] Fetching Google News RSS for ${ticker}: ${rssUrl}`);
+    const resp = await fetch(rssUrl, { 
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; StockAnalystPro/1.0)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) return [];
+
+    const xml = await resp.text();
+
+    // Parse RSS XML — extract <item> elements
+    const items: { title: string; source: string; pubDate: string; url: string; relativeTime: string }[] = [];
+    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+    let match;
+    while ((match = itemRegex.exec(xml)) !== null && items.length < 7) {
+      const itemXml = match[1];
+      const titleMatch = itemXml.match(/<title>([^<]+)<\/title>/);
+      const linkMatch = itemXml.match(/<link>([^<]+)<\/link>/);
+      const pubDateMatch = itemXml.match(/<pubDate>([^<]+)<\/pubDate>/);
+
+      if (titleMatch) {
+        // Extract source from title (Google News format: "Headline - Source")
+        const fullTitle = titleMatch[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+        const lastDash = fullTitle.lastIndexOf(' - ');
+        const title = lastDash > 0 ? fullTitle.substring(0, lastDash).trim() : fullTitle;
+        const source = lastDash > 0 ? fullTitle.substring(lastDash + 3).trim() : 'Google News';
+        const pubDate = pubDateMatch ? new Date(pubDateMatch[1]).toISOString() : new Date().toISOString();
+        const url = linkMatch ? linkMatch[1] : '';
+
+        // Calculate relative time in German
+        const diffMs = Date.now() - new Date(pubDate).getTime();
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+        let relativeTime = '';
+        if (diffMins < 60) relativeTime = `vor ${diffMins} Min.`;
+        else if (diffHours < 24) relativeTime = `vor ${diffHours} Std.`;
+        else if (diffDays === 1) relativeTime = 'gestern';
+        else if (diffDays < 30) relativeTime = `vor ${diffDays} Tagen`;
+        else relativeTime = `vor ${Math.floor(diffDays / 30)} Mon.`;
+
+        items.push({ title, source, pubDate, url, relativeTime });
+      }
+    }
+
+    console.log(`[NEWS] Found ${items.length} news items for ${ticker}`);
+    return items;
+  } catch (err: any) {
+    console.log(`[NEWS] Google News RSS failed for ${ticker}: ${err?.message?.substring(0, 150)}`);
+    return [];
+  }
+}
+
 // === LLM-Powered Company-Specific Catalyst Generation ===
 async function generateLLMCatalysts(
   ticker: string, companyName: string, sector: string, industry: string, 
@@ -3023,6 +3083,9 @@ export async function registerRoutes(server: Server, app: Express) {
       let newsHeadlines: string[] = [];
       let secFilingExcerpts: string[] = [];
 
+      // === Fetch News (parallel with SEC 10-K) ===
+      const newsItemsPromise = fetchNewsFromGoogleRSS(ticker, companyName);
+
       try {
         // Step 1: Get CIK from SEC company_tickers.json
         const tickerUpper = ticker.replace(/\..+$/, '').toUpperCase(); // Strip exchange suffix
@@ -3130,6 +3193,11 @@ export async function registerRoutes(server: Server, app: Express) {
       } catch (secErr: any) {
         console.log(`[ANALYZE] SEC 10-K parsing failed: ${secErr?.message?.substring(0, 150)}`);
       }
+
+      // === Collect News (awaited from parallel fetch) ===
+      const newsItems = await newsItemsPromise;
+      // Populate newsHeadlines for LLM context
+      newsHeadlines = newsItems.map(n => `[${n.relativeTime}] ${n.title} (${n.source})`);
 
       // === Catalysts & Risks ===
       // Try LLM-powered company-specific catalysts first, fallback to sector template
@@ -3561,7 +3629,8 @@ export async function registerRoutes(server: Server, app: Express) {
         structuralTrends,
         keyProjects: keyProjects.length > 0 ? keyProjects : undefined,
         secFilingExcerpts: secFilingExcerpts.length > 0 ? secFilingExcerpts : undefined,
-        newsHeadlines: newsHeadlines.length > 0 ? newsHeadlines.slice(0, 5) : undefined,
+        newsHeadlines: newsHeadlines.length > 0 ? newsHeadlines.slice(0, 7) : undefined,
+        newsItems: newsItems.length > 0 ? newsItems.slice(0, 7) : undefined,
 
         cycleClassification: sectorDefs.cycleClass,
         politicalCycle: sectorDefs.politicalCycle,
