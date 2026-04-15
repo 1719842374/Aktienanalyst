@@ -402,12 +402,30 @@ function LoadingScreen({ ticker }: { ticker: string }) {
 }
 
 function ErrorScreen({ error }: { error: Error }) {
+  const is404 = error.message.includes('404') || error.message.includes('Failed to fetch');
+  const isTimeout = error.message.includes('timeout') || error.message.includes('Timeout');
   return (
     <div className="flex items-center justify-center min-h-full p-8">
-      <div className="text-center space-y-3 max-w-sm">
-        <div className="text-red-500 text-xl">⚠</div>
-        <div className="text-sm font-medium">Analysis Failed</div>
-        <div className="text-xs text-muted-foreground">{error.message}</div>
+      <div className="text-center space-y-4 max-w-md">
+        <div className="text-red-500 text-2xl">{is404 ? '🔌' : '⚠️'}</div>
+        <div className="text-sm font-semibold">{is404 ? 'Server nicht erreichbar' : isTimeout ? 'Timeout' : 'Analyse fehlgeschlagen'}</div>
+        <div className="text-xs text-muted-foreground leading-relaxed">
+          {is404 ? (
+            <>
+              Der Backend-Server oder Proxy-Token ist abgelaufen. Das passiert wenn die Sandbox-Session endet (~24h).
+              <br /><br />
+              <strong>Lösung:</strong> Schreibe im Chat <code className="bg-muted/50 px-1.5 py-0.5 rounded text-foreground/70">Deploy neu</code> — dann wird der Server mit frischem Token neu gestartet.
+            </>
+          ) : (
+            error.message
+          )}
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 text-xs font-medium transition-colors"
+        >
+          Seite neu laden
+        </button>
       </div>
     </div>
   );
