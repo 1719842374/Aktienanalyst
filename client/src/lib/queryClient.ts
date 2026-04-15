@@ -1,26 +1,21 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-// Compute API base: when deployed via sites.pplx.app proxy, derive the port proxy URL from current location
+// Compute API base: when deployed via sites.pplx.app proxy, derive the port proxy URL
 function computeApiBase(): string {
-  const placeholder = "__PORT_" + "5000__"; // split to avoid self-replacement
-  // If deploy_website replaced the placeholder, use it
+  const placeholder = "__PORT_" + "5000__"; // split to avoid self-replacement by build tools
   if (!placeholder.startsWith("__")) return placeholder;
   
-  // Otherwise, detect deployed proxy environment and build the port proxy URL
   const loc = typeof window !== 'undefined' ? window.location : null;
   if (loc && loc.hostname === 'sites.pplx.app') {
-    // Deployed on sites.pplx.app proxy — extract the base path and append /port/5000
-    // URL format: /sites/proxy/{jwt}/{prefix}/index.html
-    const pathParts = loc.pathname.split('/dist/public');
-    if (pathParts.length > 1) {
-      return pathParts[0] + '/dist/public/port/5000';
+    // Port proxy URL structure: /sites/proxy/{JWT}/port/5000
+    // Current page URL: /sites/proxy/{JWT}/{prefix}/.../index.html
+    // We need: /sites/proxy/{JWT}/port/5000
+    const match = loc.pathname.match(/(\/sites\/proxy\/[^/]+)/);
+    if (match) {
+      return match[1] + '/port/5000';
     }
-    // Fallback: find the last /index.html and replace with /port/5000
-    const base = loc.pathname.replace(/\/index\.html$/, '').replace(/\/[^/]*$/, '');
-    return base + '/port/5000';
   }
   
-  // Local dev: relative path
   return ".";
 }
 
