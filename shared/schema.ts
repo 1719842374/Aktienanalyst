@@ -442,6 +442,7 @@ export interface StockAnalysis {
   peerComparison?: PeerComparison;
   llmMode?: boolean; // Whether LLM-powered catalysts were used
   consistencyWarnings?: ConsistencyWarning[];
+  dataTimestamp?: string; // ISO date when data was fetched
   _cached?: boolean; // True if served from server cache
   _cacheAge?: number; // Cache age in minutes
   _cacheDate?: string; // ISO date when data was cached

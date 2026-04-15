@@ -1,12 +1,20 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
-import { AlertTriangle, AlertCircle, Info } from "lucide-react";
+import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock } from "lucide-react";
 
-interface Props { data: StockAnalysis }
+interface Props { data: StockAnalysis; onRefresh?: () => void }
 
-export function Section1({ data }: Props) {
+export function Section1({ data, onRefresh }: Props) {
   const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
+
+  // Format cache age
+  function fmtAge(mins: number): string {
+    if (mins < 1) return 'gerade eben';
+    if (mins < 60) return `${mins} Min.`;
+    if (mins < 1440) return `${Math.round(mins / 60)} Std.`;
+    return `${Math.round(mins / 1440)} Tage`;
+  }
 
   return (
     <SectionCard number={1} title="DATENAKTUALITÄT & PLAUSIBILITÄT">
@@ -14,14 +22,38 @@ export function Section1({ data }: Props) {
       {data._cached && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
-          <div>
-            <span className="text-xs font-semibold text-amber-400">Offline-Daten (Cache)</span>
+          <div className="flex-1">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-amber-400">Offline-Daten (Cache)</span>
+              {onRefresh && (
+                <button
+                  onClick={onRefresh}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Aktualisieren
+                </button>
+              )}
+            </div>
             <p className="text-[10px] text-foreground/60 mt-0.5">
               API nicht erreichbar — zeige gecachte Analyse vom {data._cacheDate ? new Date(data._cacheDate).toLocaleString('de-DE') : '?'}.
-              {data._cacheAge != null && ` Alter: ${data._cacheAge < 60 ? `${data._cacheAge} Min.` : data._cacheAge < 1440 ? `${Math.round(data._cacheAge / 60)} Std.` : `${Math.round(data._cacheAge / 1440)} Tage`}.`}
+              {data._cacheAge != null && ` Alter: ${fmtAge(data._cacheAge)}.`}
               {' '}Kurse und Kennzahlen könnten veraltet sein.
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Data timestamp (always shown) */}
+      {!data._cached && data.dataTimestamp && (
+        <div className="flex items-center gap-1.5 text-[10px] text-foreground/35 mb-2">
+          <Clock className="w-3 h-3" />
+          <span>Daten vom {new Date(data.dataTimestamp).toLocaleString('de-DE')}</span>
+          {onRefresh && (
+            <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-foreground/30 hover:text-foreground/50 transition-colors" title="Daten neu laden">
+              <RefreshCw className="w-3 h-3" />
+            </button>
+          )}
         </div>
       )}
       {/* Consistency Warnings */}

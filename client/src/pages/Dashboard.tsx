@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { StockAnalysis } from "../../../shared/schema";
 import { TickerSearch } from "@/components/TickerSearch";
@@ -26,7 +26,7 @@ import { Section17 } from "@/components/sections/Section17";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
-  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search,
+  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search, Star,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -252,7 +252,7 @@ export default function Dashboard() {
             <ErrorScreen error={analyzeMutation.error} />
           ) : data ? (
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
-              <div ref={setSectionRef(1)}><Section1 data={data} /></div>
+              <div ref={setSectionRef(1)}><Section1 data={data} onRefresh={() => { if (currentTicker) analyzeMutation.mutate({ ticker: currentTicker, llm: useLLM }); }} /></div>
               <div ref={setSectionRef(2)}><Section2 data={data} /></div>
               <FinancialStatements data={data} />
               <div ref={setSectionRef(3)}><Section3 data={data} /></div>
@@ -295,6 +295,14 @@ function NavToBTC() {
 function WelcomeScreen({ onSearch }: { onSearch: (ticker: string) => void }) {
   const [, setLocation] = useLocation();
   const tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "TSLA", "AMZN"];
+
+  // Fetch watchlist from server
+  const watchlistQuery = useQuery({
+    queryKey: ['/api/watchlist'],
+    staleTime: 0,
+  });
+  const watchlist = (watchlistQuery.data as any)?.tickers || [];
+
   return (
     <div className="flex items-center justify-center min-h-full p-8">
       <div className="max-w-lg text-center space-y-6">
@@ -312,6 +320,28 @@ function WelcomeScreen({ onSearch }: { onSearch: (ticker: string) => void }) {
             risk assessment, and 13 detailed analysis sections.
           </p>
         </div>
+
+        {/* Watchlist (recent tickers) */}
+        {watchlist.length > 0 && (
+          <div>
+            <p className="text-xs text-muted-foreground mb-2 flex items-center justify-center gap-1">
+              <Star className="w-3 h-3 text-amber-400" /> Zuletzt analysiert:
+            </p>
+            <div className="flex flex-wrap justify-center gap-1.5">
+              {watchlist.slice(0, 8).map((w: any) => (
+                <button
+                  key={w.ticker}
+                  onClick={() => onSearch(w.ticker)}
+                  className="group px-2.5 py-1.5 rounded-md bg-primary/5 hover:bg-primary/15 border border-primary/20 hover:border-primary/40 text-xs font-mono transition-all"
+                >
+                  <span className="font-bold text-primary">{w.ticker}</span>
+                  {w.lastPrice ? <span className="text-foreground/40 ml-1.5">${w.lastPrice.toFixed(0)}</span> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div>
           <p className="text-xs text-muted-foreground mb-3">Try a ticker:</p>
           <div className="flex flex-wrap justify-center gap-2">

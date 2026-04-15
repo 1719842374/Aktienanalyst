@@ -3062,7 +3062,7 @@ export async function registerRoutes(server: Server, app: Express) {
   // Cache listing endpoint
   app.get("/api/cache", (_req, res) => {
     try {
-      const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.json'));
+      const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.json') && f !== 'watchlist.json');
       const items = files.map(f => {
         const stat = fs.statSync(path.join(CACHE_DIR, f));
         return {
@@ -3074,6 +3074,49 @@ export async function registerRoutes(server: Server, app: Express) {
       });
       res.json({ cached: items.length, items });
     } catch { res.json({ cached: 0, items: [] }); }
+  });
+
+  // === Watchlist ===
+  const WATCHLIST_FILE = path.join(CACHE_DIR, 'watchlist.json');
+
+  app.get("/api/watchlist", (_req, res) => {
+    try {
+      if (fs.existsSync(WATCHLIST_FILE)) {
+        const data = JSON.parse(fs.readFileSync(WATCHLIST_FILE, 'utf-8'));
+        return res.json(data);
+      }
+    } catch {}
+    res.json({ tickers: [] });
+  });
+
+  app.post("/api/watchlist", (req, res) => {
+    try {
+      const { ticker, action } = req.body; // action: 'add' | 'remove'
+      let list: { tickers: { ticker: string; addedAt: string; lastPrice?: number; companyName?: string }[] } = { tickers: [] };
+      if (fs.existsSync(WATCHLIST_FILE)) {
+        list = JSON.parse(fs.readFileSync(WATCHLIST_FILE, 'utf-8'));
+      }
+      if (action === 'add' && ticker) {
+        if (!list.tickers.some(t => t.ticker === ticker)) {
+          // Get price from cache if available
+          const cached = getCachedAnalysis(ticker);
+          list.tickers.unshift({
+            ticker,
+            addedAt: new Date().toISOString(),
+            lastPrice: cached?.currentPrice || undefined,
+            companyName: cached?.companyName || undefined,
+          });
+          // Keep max 20
+          list.tickers = list.tickers.slice(0, 20);
+        }
+      } else if (action === 'remove' && ticker) {
+        list.tickers = list.tickers.filter(t => t.ticker !== ticker);
+      }
+      fs.writeFileSync(WATCHLIST_FILE, JSON.stringify(list));
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
   });
 
   app.post("/api/analyze", async (req, res) => {
@@ -4171,6 +4214,7 @@ export async function registerRoutes(server: Server, app: Express) {
         geoSegments,
         // LLM mode flag
         llmMode: useLLM,
+        dataTimestamp: new Date().toISOString(),
       };
 
       // === Consistency Check ===
@@ -4241,6 +4285,18 @@ export async function registerRoutes(server: Server, app: Express) {
       console.log(`[ANALYZE] Completed analysis for ${ticker}: $${price} (${companyName})`);
       // Save to cache on success
       saveCachedAnalysis(ticker, analysis);
+      // Auto-add to watchlist
+      try {
+        let wl: any = { tickers: [] };
+        if (fs.existsSync(path.join(CACHE_DIR, 'watchlist.json'))) {
+          wl = JSON.parse(fs.readFileSync(path.join(CACHE_DIR, 'watchlist.json'), 'utf-8'));
+        }
+        const existing = wl.tickers.findIndex((t: any) => t.ticker === ticker);
+        if (existing >= 0) wl.tickers.splice(existing, 1); // move to top
+        wl.tickers.unshift({ ticker, addedAt: new Date().toISOString(), lastPrice: price, companyName });
+        wl.tickers = wl.tickers.slice(0, 20);
+        fs.writeFileSync(path.join(CACHE_DIR, 'watchlist.json'), JSON.stringify(wl));
+      } catch {}
       res.json(analysis);
     } catch (error: any) {
       console.error("[ANALYZE] Error:", error?.message);
