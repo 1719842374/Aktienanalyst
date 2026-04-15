@@ -1,14 +1,6 @@
 import type { StockAnalysis } from "@shared/schema";
 import { jsPDF } from "jspdf";
-import "jspdf-autotable";
-
-// Extend jsPDF type for autotable
-declare module "jspdf" {
-  interface jsPDF {
-    autoTable: (options: any) => jsPDF;
-    lastAutoTable: { finalY: number };
-  }
-}
+import autoTable from "jspdf-autotable";
 
 function fmt(v: number | null | undefined, dec = 1): string {
   if (v == null || isNaN(v) || !isFinite(v)) return "—";
@@ -72,7 +64,7 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
 
   function table(headers: string[], rows: string[][], colWidths?: number[]) {
     checkPage(10 + rows.length * 5);
-    doc.autoTable({
+    autoTable(doc, {
       startY: y,
       head: [headers],
       body: rows,
@@ -82,7 +74,7 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
       alternateRowStyles: { fillColor: [18, 26, 45] },
       columnStyles: colWidths ? Object.fromEntries(colWidths.map((cw, i) => [i, { cellWidth: cw }])) : {},
     });
-    y = doc.lastAutoTable.finalY + 4;
+    y = (doc as any).lastAutoTable.finalY + 4;
   }
 
   // ========== HEADER ==========
@@ -251,6 +243,15 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
   doc.text("Quellen: Yahoo Finance, Polygon API, Damodaran (NYU Stern), SEC EDGAR", margin, y + 5.5);
   doc.text(`Generiert: ${new Date().toLocaleString("de-DE")}`, w - margin, y + 2, { align: "right" });
 
-  // Save
-  doc.save(`${data.ticker}_Analyse_${new Date().toISOString().slice(0, 10)}.pdf`);
+  // Save — use blob URL approach for iframe compatibility
+  const filename = `${data.ticker}_Analyse_${new Date().toISOString().slice(0, 10)}.pdf`;
+  try {
+    // Try standard save first
+    doc.save(filename);
+  } catch {
+    // Fallback: open in new tab
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  }
 }

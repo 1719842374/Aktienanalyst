@@ -60,8 +60,8 @@ export default function Compare() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-4">
-      <div className="max-w-4xl mx-auto">
+    <div className="h-screen overflow-y-auto bg-background text-foreground p-4">
+      <div className="max-w-4xl mx-auto pb-12">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <Link href="/">
