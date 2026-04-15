@@ -1,22 +1,22 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-// Compute API base: when deployed via sites.pplx.app proxy, derive the port proxy URL
+// Compute API base URL based on environment
 function computeApiBase(): string {
-  const placeholder = "__PORT_" + "5000__"; // split to avoid self-replacement by build tools
+  const placeholder = "__PORT_" + "5000__"; // split to avoid self-replacement
   if (!placeholder.startsWith("__")) return placeholder;
   
   const loc = typeof window !== 'undefined' ? window.location : null;
-  if (loc && loc.hostname === 'sites.pplx.app') {
-    // Port proxy URL structure: /sites/proxy/{JWT}/port/5000
-    // Current page URL: /sites/proxy/{JWT}/{prefix}/.../index.html
-    // We need: /sites/proxy/{JWT}/port/5000
+  if (!loc) return ".";
+
+  // Perplexity sandbox proxy
+  if (loc.hostname === 'sites.pplx.app') {
     const match = loc.pathname.match(/(\/sites\/proxy\/[^/]+)/);
-    if (match) {
-      return match[1] + '/port/5000';
-    }
+    if (match) return match[1] + '/port/5000';
   }
   
-  return ".";
+  // Self-hosted (Railway, Vercel, etc.) — same origin
+  // API runs on same host as frontend
+  return "";
 }
 
 const API_BASE = computeApiBase();
