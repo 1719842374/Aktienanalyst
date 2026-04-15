@@ -10,6 +10,20 @@ export function Section1({ data }: Props) {
 
   return (
     <SectionCard number={1} title="DATENAKTUALITÄT & PLAUSIBILITÄT">
+      {/* Cache Banner */}
+      {data._cached && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
+          <div>
+            <span className="text-xs font-semibold text-amber-400">Offline-Daten (Cache)</span>
+            <p className="text-[10px] text-foreground/60 mt-0.5">
+              API nicht erreichbar — zeige gecachte Analyse vom {data._cacheDate ? new Date(data._cacheDate).toLocaleString('de-DE') : '?'}.
+              {data._cacheAge != null && ` Alter: ${data._cacheAge < 60 ? `${data._cacheAge} Min.` : data._cacheAge < 1440 ? `${Math.round(data._cacheAge / 60)} Std.` : `${Math.round(data._cacheAge / 1440)} Tage`}.`}
+              {' '}Kurse und Kennzahlen könnten veraltet sein.
+            </p>
+          </div>
+        </div>
+      )}
       {/* Consistency Warnings */}
       {data.consistencyWarnings && data.consistencyWarnings.length > 0 && (
         <div className="space-y-1.5 mb-3">

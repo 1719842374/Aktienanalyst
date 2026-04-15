@@ -3018,6 +3018,38 @@ function generateMacroCorrelations(
   return { correlations, overallMacroSensitivity, keyInsight };
 }
 
+// === Server-Side Analysis Cache ===
+import * as fs from 'fs';
+import * as path from 'path';
+const CACHE_DIR = path.join(process.cwd(), '.cache');
+if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+
+function getCachedAnalysis(ticker: string): any | null {
+  try {
+    const file = path.join(CACHE_DIR, `${ticker.replace(/[^a-zA-Z0-9.]/g, '_')}.json`);
+    if (!fs.existsSync(file)) return null;
+    const stat = fs.statSync(file);
+    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    data._cached = true;
+    data._cacheAge = Math.round((Date.now() - stat.mtimeMs) / 60000); // minutes
+    data._cacheDate = new Date(stat.mtimeMs).toISOString();
+    return data;
+  } catch { return null; }
+}
+
+function saveCachedAnalysis(ticker: string, data: any) {
+  try {
+    const file = path.join(CACHE_DIR, `${ticker.replace(/[^a-zA-Z0-9.]/g, '_')}.json`);
+    const toCache = { ...data };
+    delete toCache._cached;
+    delete toCache._cacheAge;
+    delete toCache._cacheDate;
+    fs.writeFileSync(file, JSON.stringify(toCache));
+  } catch (err: any) {
+    console.log(`[CACHE] Failed to save ${ticker}: ${err?.message?.substring(0, 100)}`);
+  }
+}
+
 export async function registerRoutes(server: Server, app: Express) {
   // Register gold analysis routes
   const { registerGoldRoutes } = await import("./gold-routes");
@@ -3026,6 +3058,23 @@ export async function registerRoutes(server: Server, app: Express) {
   // Register recession analysis routes
   const { registerRecessionRoutes } = await import("./recession");
   registerRecessionRoutes(app);
+
+  // Cache listing endpoint
+  app.get("/api/cache", (_req, res) => {
+    try {
+      const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.json'));
+      const items = files.map(f => {
+        const stat = fs.statSync(path.join(CACHE_DIR, f));
+        return {
+          ticker: f.replace('.json', ''),
+          cachedAt: new Date(stat.mtimeMs).toISOString(),
+          ageMinutes: Math.round((Date.now() - stat.mtimeMs) / 60000),
+          sizeKB: Math.round(stat.size / 1024),
+        };
+      });
+      res.json({ cached: items.length, items });
+    } catch { res.json({ cached: 0, items: [] }); }
+  });
 
   app.post("/api/analyze", async (req, res) => {
     try {
@@ -3132,6 +3181,12 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       if (price === 0) {
+        // Try cache before returning 404
+        const cached404 = getCachedAnalysis(ticker);
+        if (cached404) {
+          console.log(`[ANALYZE] No live data for ${ticker}, serving cache (age: ${cached404._cacheAge}min)`);
+          return res.json(cached404);
+        }
         return res.status(404).json({ error: `No quote data found for ${ticker}. Please check the ticker symbol.` });
       }
 
@@ -4184,9 +4239,17 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       console.log(`[ANALYZE] Completed analysis for ${ticker}: $${price} (${companyName})`);
+      // Save to cache on success
+      saveCachedAnalysis(ticker, analysis);
       res.json(analysis);
     } catch (error: any) {
       console.error("[ANALYZE] Error:", error?.message);
+      // Try to serve cached data as fallback
+      const cached = getCachedAnalysis(ticker);
+      if (cached) {
+        console.log(`[ANALYZE] Serving cached data for ${ticker} (age: ${cached._cacheAge}min)`);
+        return res.json(cached);
+      }
       res.status(500).json({ error: error?.message || "Analysis failed" });
     }
   });
