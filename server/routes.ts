@@ -424,7 +424,154 @@ function generateCatalystContext(
   }
 }
 
-// === Peer Comparison Fetcher ===
+// === FMP-based Peer Comparison ===
+async function fetchPeerComparisonFMP(
+  ticker: string, companyName: string, pe: number, peg: number, revenue: number,
+  marketCap: number, revenueGrowth: number, epsGrowth5Y: number,
+  fmpPeerTickers: string[]
+): Promise<{ subject: any; peers: any[]; peerAvg: any; epsHistory?: any; peerAvgEpsHistory?: any } | null> {
+  try {
+    const { fmpBatchQuote, fmpRatios, fmpIncomeStatement } = await import('./fmp');
+    let peerTickers = fmpPeerTickers.filter(t => t !== ticker).slice(0, 6);
+    if (peerTickers.length === 0) {
+      console.log(`[PEERS-FMP] No peer tickers for ${ticker}`);
+      return null;
+    }
+    console.log(`[PEERS-FMP] Fetching data for peers: ${peerTickers.join(', ')}`);
+
+    // Fetch profiles for all peers (up to 5 per FMP free-tier call)
+    const peerProfiles = await fmpBatchQuote(peerTickers.slice(0, 5)).catch(() => []);
+    
+    // Fetch ratios for each peer (parallel, limit 1 per peer = latest year)
+    const peerRatioResults = await Promise.all(
+      peerTickers.slice(0, 5).map(t => fmpRatios(t, 5).catch(() => []))
+    );
+
+    // Fetch income statements for EPS history
+    const peerIncomeResults = await Promise.all(
+      peerTickers.slice(0, 5).map(t => fmpIncomeStatement(t, 5).catch(() => []))
+    );
+
+    const peers: any[] = [];
+    for (let i = 0; i < peerTickers.length && i < 5; i++) {
+      const t = peerTickers[i];
+      const profile = (peerProfiles || []).find((p: any) => p.symbol === t) || {} as any;
+      const ratios = peerRatioResults[i] || [];
+      const incomes = peerIncomeResults[i] || [];
+      const latestRatio = ratios[0] || {} as any;
+
+      const peerPE = latestRatio.priceEarningsRatio || (profile.price && incomes[0]?.epsDiluted ? profile.price / incomes[0].epsDiluted : null);
+      const peerPS = latestRatio.priceToSalesRatio || null;
+      const peerPB = latestRatio.priceToBookRatio || null;
+
+      // EPS growth 1Y
+      let epsGrowth1Y: number | null = null;
+      if (incomes.length >= 2 && incomes[0]?.epsDiluted > 0 && incomes[1]?.epsDiluted > 0) {
+        epsGrowth1Y = +((incomes[0].epsDiluted / incomes[1].epsDiluted - 1) * 100).toFixed(1);
+      }
+      // EPS growth 5Y CAGR
+      let epsGrowth5Y_peer: number | null = null;
+      if (incomes.length >= 3) {
+        const latest = incomes[0]?.epsDiluted || 0;
+        const oldIdx = Math.min(4, incomes.length - 1);
+        const old = incomes[oldIdx]?.epsDiluted || 0;
+        if (latest > 0 && old > 0) epsGrowth5Y_peer = +(((latest / old) ** (1 / Math.min(5, oldIdx)) - 1) * 100).toFixed(1);
+      }
+
+      const growthForPEG = epsGrowth5Y_peer && epsGrowth5Y_peer > 0 ? epsGrowth5Y_peer : null;
+      const peerPEG = peerPE && growthForPEG && growthForPEG > 0 ? +(peerPE / growthForPEG).toFixed(2) : null;
+
+      peers.push({
+        ticker: t,
+        name: profile.companyName || t,
+        pe: peerPE ? +peerPE.toFixed(1) : null,
+        peg: peerPEG,
+        ps: peerPS ? +peerPS.toFixed(1) : null,
+        pb: peerPB ? +peerPB.toFixed(1) : null,
+        epsGrowth1Y,
+        epsGrowth5Y: epsGrowth5Y_peer,
+        marketCap: profile.marketCap || null,
+        revenueGrowth: null,
+      });
+    }
+
+    const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null).slice(0, 6);
+    console.log(`[PEERS-FMP] Valid peers: ${validPeers.length} of ${peers.length}`);
+    if (validPeers.length === 0) return null;
+
+    const avg = (arr: (number | null)[]): number | null => {
+      const valid = arr.filter((v): v is number => v !== null && !isNaN(v) && isFinite(v) && v > 0 && v < 1000);
+      return valid.length > 0 ? +(valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(2) : null;
+    };
+
+    const ps = revenue > 0 && marketCap > 0 ? +(marketCap / revenue).toFixed(1) : null;
+    const subject = {
+      ticker, name: companyName,
+      pe: pe > 0 ? +pe.toFixed(1) : null,
+      peg: peg > 0 ? +peg.toFixed(2) : null,
+      ps,
+      pb: null as number | null,
+      epsGrowth1Y: null as number | null,
+      epsGrowth5Y: epsGrowth5Y > 0 ? +epsGrowth5Y.toFixed(1) : null,
+      marketCap,
+      revenueGrowth: +revenueGrowth.toFixed(1),
+    };
+
+    // Build EPS history from FMP income statements
+    let epsHistory: { year: number; eps: number; isEstimate: boolean }[] = [];
+    try {
+      const subjectIncome = await fmpIncomeStatement(ticker, 5).catch(() => []);
+      for (const inc of subjectIncome) {
+        const yearMatch = (inc.date || inc.calendarYear || '').match(/(\d{4})/);
+        if (yearMatch && inc.epsDiluted > 0) {
+          epsHistory.push({ year: parseInt(yearMatch[1]), eps: +inc.epsDiluted.toFixed(2), isEstimate: false });
+        }
+      }
+      epsHistory.sort((a, b) => a.year - b.year);
+    } catch {}
+
+    // Peer avg EPS history
+    let peerAvgEpsHistory: { year: number; eps: number; isEstimate: boolean }[] = [];
+    const peerHistories: Map<number, number[]> = new Map();
+    for (let i = 0; i < peerTickers.length && i < 5; i++) {
+      const incomes = peerIncomeResults[i] || [];
+      for (const inc of incomes) {
+        const ym = (inc.date || inc.calendarYear || '').match(/(\d{4})/);
+        if (!ym || !inc.epsDiluted || inc.epsDiluted <= 0) continue;
+        const yr = parseInt(ym[1]);
+        if (!peerHistories.has(yr)) peerHistories.set(yr, []);
+        peerHistories.get(yr)!.push(inc.epsDiluted);
+      }
+    }
+    for (const [yr, vals] of peerHistories) {
+      if (vals.length >= 2) {
+        peerAvgEpsHistory.push({ year: yr, eps: +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2), isEstimate: false });
+      }
+    }
+    peerAvgEpsHistory.sort((a, b) => a.year - b.year);
+
+    console.log(`[PEERS-FMP] Built ${validPeers.length} peer comparisons, ${epsHistory.length} EPS history points`);
+    return {
+      subject,
+      peers: validPeers,
+      peerAvg: {
+        pe: avg(validPeers.map(p => p.pe)),
+        peg: avg(validPeers.map(p => p.peg)),
+        ps: avg(validPeers.map(p => p.ps)),
+        pb: avg(validPeers.map(p => p.pb)),
+        epsGrowth1Y: avg(validPeers.map(p => p.epsGrowth1Y)),
+        epsGrowth5Y: avg(validPeers.map(p => p.epsGrowth5Y)),
+      },
+      epsHistory: epsHistory.length > 0 ? epsHistory : undefined,
+      peerAvgEpsHistory: peerAvgEpsHistory.length > 0 ? peerAvgEpsHistory : undefined,
+    };
+  } catch (err: any) {
+    console.log(`[PEERS-FMP] Failed: ${err?.message?.substring(0, 200)}`);
+    return null;
+  }
+}
+
+// === Peer Comparison Fetcher (Perplexity fallback) ===
 async function fetchPeerComparison(
   ticker: string, companyName: string, pe: number, peg: number, revenue: number,
   marketCap: number, revenueGrowth: number, epsGrowth5Y: number
@@ -3120,13 +3267,13 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.post("/api/analyze", async (req, res) => {
+    const parsed = analyzeRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid ticker" });
+    }
+    const ticker = parsed.data.ticker;
+    const useLLM = parsed.data.useLLM === true;
     try {
-      const parsed = analyzeRequestSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: "Invalid ticker" });
-      }
-      const ticker = parsed.data.ticker;
-      const useLLM = parsed.data.useLLM === true;
       console.log(`[ANALYZE] Starting analysis for ${ticker}${useLLM ? ' [LLM ON]' : ''}...`);
 
       // === Try FMP API first (self-hosted), fall back to Perplexity external-tool ===
@@ -3219,9 +3366,8 @@ export async function registerRoutes(server: Server, app: Express) {
         console.log(`[ANALYZE] Using FMP data for ${ticker}: $${price} ${companyName}`);
       }
       // Legacy Perplexity parsing (only runs if fmpData is null)
-      if (!fmpData) {
-        price = 0; marketCap = 0; pe = 0; eps = 0; currency = "USD"; companyName = ticker;
-      }
+      let detected = financialsResult?.content ? detectReportedCurrency(financialsResult.content) : null;
+      let sectorBeta = 1.0;
       let change = 0, changePct = 0, volume = 0, avgVolume = 0;
       let dayLow = 0, dayHigh = 0, yearLow = 0, yearHigh = 0, prevClose = 0, divYield = 0;
       let priceTimestamp = new Date().toISOString();
@@ -3251,9 +3397,16 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
 
+      // === Declare profile/financials variables early (needed for FMP injection) ===
+      let sector = "Technology", industry = "General", description = "", exchange = "NASDAQ";
+      let sectorHybridNote = "";
+      let revenue = 0, netIncome = 0, ebitda = 0, fcfTTM = 0, totalDebt = 0, cashEquivalents = 0;
+      let sharesOutstanding = 0, operatingIncome = 0, grossProfit = 0;
+      let totalEquity = 0, totalAssets = 0, netDebt = 0;
+      let revenueGrowth = 0;
+
       // === FMP Data Injection (bypasses Perplexity parsing) ===
       if (fmpData) {
-        // All variables are now declared — inject FMP values
         description = fmpData.description;
         sector = fmpData.sector || sector;
         industry = fmpData.industry || industry;
@@ -3282,9 +3435,7 @@ export async function registerRoutes(server: Server, app: Express) {
         return res.status(404).json({ error: `No quote data found for ${ticker}. Please check the ticker symbol.` });
       }
 
-      // === Parse Company Profile ===
-      let sector = "Technology", industry = "General", description = "", exchange = "NASDAQ";
-      let sectorHybridNote = "";
+      // === Parse Company Profile (Perplexity fallback — only runs when no FMP data) ===
       if (profileResult?.content) {
         const content = profileResult.content;
         const sectorMatch = content.match(/Sector:\*?\*?\s*(.+)/);
@@ -3306,12 +3457,7 @@ export async function registerRoutes(server: Server, app: Express) {
         console.log(`[ANALYZE] Sector reclassified: ${originalSector} -> ${sector} (${sectorHybridNote})`);
       }
 
-      // === Parse Financials ===
-      let revenue = 0, netIncome = 0, ebitda = 0, fcfTTM = 0, totalDebt = 0, cashEquivalents = 0;
-      let sharesOutstanding = 0, operatingIncome = 0, grossProfit = 0;
-      let totalEquity = 0, totalAssets = 0, netDebt = 0;
-      let revenueGrowth = 0;
-
+      // === Parse Financials (Perplexity fallback — only runs when no FMP data) ===
       if (financialsResult?.content) {
         // Parse income statement
         const isSections = financialsResult.content.split("## ");
@@ -3412,7 +3558,6 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       if (financialsResult?.content) {
-        let detected = detectReportedCurrency(financialsResult.content);
         // Fallback to description-based currency if not detected from financials
         if (!detected && descCurrency) {
           detected = descCurrency;
@@ -3555,6 +3700,15 @@ export async function registerRoutes(server: Server, app: Express) {
         }
       }
 
+      // === FMP OHLCV Injection (must be before technical calculations) ===
+      if (fmpData && fmpData.ohlcv.length > 0 && ohlcvData.length === 0) {
+        ohlcvData = fmpData.ohlcv.map(d => ({
+          date: d.date, open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume,
+        }));
+        closingPrices2Y = fmpData.ohlcv.map(d => ({ date: d.date, close: d.close }));
+        console.log(`[ANALYZE] Injected ${ohlcvData.length} OHLCV points from FMP for ${ticker}`);
+      }
+
       // Historical prices for Section 1 display
       const historicalPrices = closingPrices2Y.map(d => ({ date: d.date, close: d.close }));
 
@@ -3574,9 +3728,10 @@ export async function registerRoutes(server: Server, app: Express) {
       const evEbitda = ebitda > 0 ? (marketCap + totalDebt - cashEquivalents) / ebitda : 15;
 
       // Start peer comparison fetch (parallel with remaining computation)
-      const peerComparisonPromise = fetchPeerComparison(
-        ticker, companyName, pe, pegRatio, revenue, marketCap, revenueGrowth, epsGrowth5Y
-      );
+      // Use FMP peer comparison if we have FMP data with peer tickers
+      const peerComparisonPromise = fmpData && fmpData.peerTickers.length > 0
+        ? fetchPeerComparisonFMP(ticker, companyName, pe, pegRatio, revenue, marketCap, revenueGrowth, epsGrowth5Y, fmpData.peerTickers)
+        : fetchPeerComparison(ticker, companyName, pe, pegRatio, revenue, marketCap, revenueGrowth, epsGrowth5Y);
       const enterpriseValue = marketCap + totalDebt - cashEquivalents;
 
       // Beta estimate: improved approach using sector-aware defaults + vol adjustment
@@ -3587,7 +3742,6 @@ export async function registerRoutes(server: Server, app: Express) {
       {
         // Sector default betas (more realistic than pure vol ratio)
         const sLow = sector.toLowerCase();
-        let sectorBeta = 1.0;
         if (sLow.includes("tech")) sectorBeta = 1.15;
         else if (sLow.includes("consumer") && sLow.includes("cycl")) sectorBeta = 1.10;
         else if (sLow.includes("consumer") && sLow.includes("discr")) sectorBeta = 1.15;
@@ -3624,6 +3778,22 @@ export async function registerRoutes(server: Server, app: Express) {
       const prices26w = closingPrices2Y.slice(-130).map(d => d.close);
       const rslAvg = prices26w.length > 0 ? prices26w.reduce((s, v) => s + v, 0) / prices26w.length : price;
       const rsl = rslAvg > 0 ? (price / rslAvg) * 100 : 100;
+
+
+      // === FMP Data Injection (Part 2 — remaining variables) ===
+      if (fmpData) {
+        beta5Y = fmpData.beta || beta5Y;
+        epsConsensusNextFY = fmpData.epsConsensusNextFY || epsConsensusNextFY;
+        epsGrowth5Y = fmpData.epsGrowth5Y || epsGrowth5Y;
+        analystPTMedian = fmpData.ptMedian || analystPTMedian;
+        analystPTHigh = fmpData.ptHigh || analystPTHigh;
+        analystPTLow = fmpData.ptLow || analystPTLow;
+        analystCount = fmpData.numAnalysts || analystCount;
+        ratingsBuy = fmpData.analystBuy || ratingsBuy;
+        ratingsHold = fmpData.analystHold || ratingsHold;
+        ratingsSell = fmpData.analystSell || ratingsSell;
+        // OHLCV already injected earlier (before technical calculations)
+      }
 
       // === SEC 10-K Filing Analysis + Key Projects ===
       let keyProjects: string[] = [];
