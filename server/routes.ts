@@ -3129,8 +3129,20 @@ export async function registerRoutes(server: Server, app: Express) {
       const useLLM = parsed.data.useLLM === true;
       console.log(`[ANALYZE] Starting analysis for ${ticker}${useLLM ? ' [LLM ON]' : ''}...`);
 
-      // === Parallel API calls ===
-      const [quoteResult, profileResult, financialsResult, analystResult, estimatesResult, ohlcvHistResult, segmentsResult, newsResult] = await Promise.all([
+      // === Try FMP API first (self-hosted), fall back to Perplexity external-tool ===
+      let fmpData: import('./fmp-fetcher').FmpAnalysisData | null = null;
+      try {
+        const { fetchFmpAnalysisData, } = await import('./fmp-fetcher');
+        const { isFmpAvailable } = await import('./fmp');
+        if (isFmpAvailable()) {
+          fmpData = await fetchFmpAnalysisData(ticker);
+        }
+      } catch (fmpErr: any) {
+        console.log(`[ANALYZE] FMP import/fetch failed: ${fmpErr?.message?.substring(0, 100)}`);
+      }
+
+      // === Parallel API calls (Perplexity connector — skipped if FMP provided data) ===
+      const [quoteResult, profileResult, financialsResult, analystResult, estimatesResult, ohlcvHistResult, segmentsResult, newsResult] = fmpData ? [null, null, null, null, null, null, null, null] : await Promise.all([
         // 1. Quote
         Promise.resolve(callFinanceTool("finance_quotes", {
           ticker_symbols: [ticker],
@@ -3195,10 +3207,25 @@ export async function registerRoutes(server: Server, app: Express) {
       console.log(`[ANALYZE] All API calls completed for ${ticker}`);
 
       // === Parse Quote ===
-      let price = 0, marketCap = 0, pe = 0, eps = 0, currency = "USD", companyName = ticker;
+      // If FMP data available, pre-populate all variables
+      let price = fmpData?.price || 0;
+      let marketCap = fmpData?.marketCap || 0;
+      let pe = fmpData?.pe || 0;
+      let eps = fmpData?.eps || 0;
+      let currency = fmpData?.currency || "USD";
+      let companyName = fmpData?.companyName || ticker;
+      if (fmpData) {
+        // Skip Perplexity parsing — FMP data already set
+        console.log(`[ANALYZE] Using FMP data for ${ticker}: $${price} ${companyName}`);
+      }
+      // Legacy Perplexity parsing (only runs if fmpData is null)
+      if (!fmpData) {
+        price = 0; marketCap = 0; pe = 0; eps = 0; currency = "USD"; companyName = ticker;
+      }
       let change = 0, changePct = 0, volume = 0, avgVolume = 0;
       let dayLow = 0, dayHigh = 0, yearLow = 0, yearHigh = 0, prevClose = 0, divYield = 0;
       let priceTimestamp = new Date().toISOString();
+
 
       if (quoteResult?.content) {
         const rows = parseMarkdownTable(quoteResult.content);
@@ -3221,6 +3248,28 @@ export async function registerRoutes(server: Server, app: Express) {
           divYield = parseNumber(q.dividendYieldTTM);
           priceTimestamp = q.timestamp || new Date().toISOString();
         }
+      }
+
+
+      // === FMP Data Injection (bypasses Perplexity parsing) ===
+      if (fmpData) {
+        // All variables are now declared — inject FMP values
+        description = fmpData.description;
+        sector = fmpData.sector || sector;
+        industry = fmpData.industry || industry;
+        exchange = fmpData.exchange || exchange;
+        revenue = fmpData.revenue || revenue;
+        operatingIncome = fmpData.operatingIncome || operatingIncome;
+        netIncome = fmpData.netIncome || netIncome;
+        ebitda = fmpData.ebitda || ebitda;
+        grossProfit = fmpData.grossProfit || grossProfit;
+        totalDebt = fmpData.totalDebt || totalDebt;
+        cashEquivalents = fmpData.cashEquivalents || cashEquivalents;
+        totalEquity = fmpData.totalEquity || totalEquity;
+        totalAssets = fmpData.totalAssets || totalAssets;
+        fcfTTM = fmpData.fcfTTM || fcfTTM;
+        revenueGrowth = fmpData.revenueGrowth || revenueGrowth;
+        sharesOutstanding = fmpData.sharesOutstanding || sharesOutstanding;
       }
 
       if (price === 0) {

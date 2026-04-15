@@ -1,79 +1,110 @@
-# Stock Analyst Pro — Self-Hosted Deployment
+# Stock Analyst Pro — Deployment Guide
 
-## Railway (Empfohlen)
+## Automatisches Deployment (Railway + GitHub Actions)
 
-### 1. Repository verbinden
-1. Gehe zu [railway.app](https://railway.app)
-2. "New Project" → "Deploy from GitHub Repo"
-3. Wähle `1719842374/Aktienanalyst`
-4. Railway erkennt automatisch das `Dockerfile` und `railway.toml`
+### Einmalige Einrichtung (10 Minuten)
 
-### 2. Environment Variables setzen
-In Railway → Settings → Variables:
+#### 1. FMP API Key holen (kostenlos)
+1. Registriere dich auf [financialmodelingprep.com](https://site.financialmodelingprep.com/developer/docs)
+2. Free Tier: 250 API-Calls/Tag (reicht für ~25 Aktienanalysen/Tag)
+3. Kopiere deinen API-Key
+
+#### 2. Railway Projekt erstellen
+1. Gehe zu [railway.app](https://railway.app) → "New Project"
+2. "Deploy from GitHub Repo" → wähle `1719842374/Aktienanalyst`
+3. Railway erkennt `Dockerfile` + `railway.toml` automatisch
+4. Unter **Variables** setzen:
+   ```
+   FMP_API_KEY=dein_fmp_key
+   ANTHROPIC_API_KEY=sk-ant-...  (optional, nur für KI-Katalysatoren)
+   NODE_ENV=production
+   PORT=5000
+   ```
+5. Unter **Settings → Networking**: "Generate Domain"
+   → z.B. `stock-analyst-pro.up.railway.app`
+
+#### 3. GitHub Actions einrichten
+1. In Railway: **Settings → Tokens → New Project Token** → kopieren
+2. In GitHub: **Repo → Settings → Secrets → Actions → New Secret**:
+   - Name: `RAILWAY_TOKEN`
+   - Value: dein Railway-Token
+
+#### 4. Fertig!
+Ab jetzt wird bei **jedem Push auf `main`** automatisch:
+- Docker-Image gebaut
+- Auf Railway deployed
+- Dashboard ist in ~2 Minuten live mit neuester Version
+
+---
+
+## Wie die Daten-Pipeline funktioniert
 
 ```
-NODE_ENV=production
-PORT=5000
-ANTHROPIC_API_KEY=sk-ant-...  (für KI-Katalysatoren, optional)
+┌──────────────────────────────────────┐
+│         Nutzer öffnet Dashboard       │
+├──────────────────────────────────────┤
+│  Frontend (React)                     │
+│  → POST /api/analyze { ticker }       │
+├──────────────────────────────────────┤
+│  Backend (Express)                    │
+│  ┌─ FMP_API_KEY gesetzt?             │
+│  │  JA → FMP API (Echte Börsendaten) │
+│  │  NEIN → Perplexity Finance API    │
+│  │         (nur in Sandbox)           │
+│  └─ Ergebnis → .cache/{TICKER}.json  │
+├──────────────────────────────────────┤
+│  + Google News RSS (immer kostenlos)  │
+│  + SEC EDGAR 10-K (immer kostenlos)   │
+│  + Anthropic Claude (optional, $)     │
+└──────────────────────────────────────┘
 ```
-
-### 3. Domain zuweisen
-Railway → Settings → Networking → "Generate Domain"
-→ Du bekommst eine URL wie `stock-analyst-pro-production.up.railway.app`
-
-### 4. Fertig
-Die App läuft permanent. Kein Token-Ablauf, kein Session-Ende.
 
 ---
 
-## Einschränkung: Finance API
+## FMP API Endpoints (was genutzt wird)
 
-Die Aktien-Daten kommen über die **Perplexity Finance API** (`external-tool` CLI).
-Diese funktioniert **nur in der Perplexity Computer Sandbox**.
-
-Auf Railway/Self-Hosted gibt es zwei Optionen:
-
-### Option A: FMP API (Financial Modeling Prep)
-1. Registriere dich auf [financialmodelingprep.com](https://financialmodelingprep.com)
-2. Setze `FMP_API_KEY` in Railway
-3. Die `callFinanceTool` Funktion in `server/routes.ts` muss angepasst werden
-
-### Option B: Perplexity API als Proxy
-Falls Perplexity in Zukunft eine REST-API für Finance-Daten anbietet,
-kann die `callFinanceTool` Funktion auf diese umgestellt werden.
-
-### Option C: Hybrid
-- App auf Railway für permanentes Hosting
-- Finance-Daten über die gecachten Analysen aus der Sandbox
-- Neue Analysen nur wenn die Sandbox aktiv ist
+| Daten | FMP Endpoint | Free Tier |
+|-------|-------------|-----------|
+| Kurse | `/v3/quote/{symbol}` | ✅ |
+| Profil | `/v3/profile/{symbol}` | ✅ |
+| Income Statement | `/v3/income-statement/{symbol}` | ✅ |
+| Balance Sheet | `/v3/balance-sheet-statement/{symbol}` | ✅ |
+| Cash Flow | `/v3/cash-flow-statement/{symbol}` | ✅ |
+| Historische Preise | `/v3/historical-price-full/{symbol}` | ✅ |
+| Analyst Estimates | `/v3/analyst-estimates/{symbol}` | ✅ |
+| Analyst Grades | `/v3/grade/{symbol}` | ✅ |
+| Price Targets | `/v4/price-target-consensus` | ✅ |
+| Revenue Segments | `/v4/revenue-product-segmentation` | ✅ |
+| Peers | `/v4/stock_peers` | ✅ |
+| Ratios | `/v3/ratios/{symbol}` | ✅ |
 
 ---
+
+## Lokales Development
+
+```bash
+# 1. Klone das Repo
+git clone https://github.com/1719842374/Aktienanalyst.git
+cd Aktienanalyst
+
+# 2. Dependencies installieren
+npm install
+
+# 3. .env erstellen
+cp .env.example .env
+# FMP_API_KEY und optional ANTHROPIC_API_KEY eintragen
+
+# 4. Dev Server starten
+npm run dev
+# → http://localhost:5000
+```
 
 ## Docker (lokal)
 
 ```bash
 docker build -t stock-analyst-pro .
-docker run -p 5000:5000 -e NODE_ENV=production stock-analyst-pro
+docker run -p 5000:5000 \
+  -e FMP_API_KEY=dein_key \
+  -e NODE_ENV=production \
+  stock-analyst-pro
 ```
-
-Öffne `http://localhost:5000`
-
----
-
-## Architektur
-
-```
-client/           → React Frontend (Vite, Tailwind, shadcn/ui)
-server/           → Express Backend (TypeScript)
-shared/           → Shared Types (Schema)
-.cache/           → Server-side Analysis Cache (JSON files)
-dist/             → Build Output
-  index.cjs       → Server bundle
-  public/         → Static frontend assets
-```
-
-## Tech Stack
-- **Frontend**: React 18, Recharts, Tailwind CSS, shadcn/ui, wouter
-- **Backend**: Express, Zod, jsPDF
-- **Data**: Perplexity Finance API, SEC EDGAR, Google News RSS
-- **AI**: Anthropic Claude (optional, für KI-Katalysatoren)
