@@ -1,6 +1,7 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
+import { AlertTriangle, AlertCircle, Info } from "lucide-react";
 
 interface Props { data: StockAnalysis }
 
@@ -9,6 +10,27 @@ export function Section1({ data }: Props) {
 
   return (
     <SectionCard number={1} title="DATENAKTUALITÄT & PLAUSIBILITÄT">
+      {/* Consistency Warnings */}
+      {data.consistencyWarnings && data.consistencyWarnings.length > 0 && (
+        <div className="space-y-1.5 mb-3">
+          {data.consistencyWarnings.map((w, i) => {
+            const isCrit = w.severity === 'critical';
+            const isWarn = w.severity === 'warning';
+            const bgCls = isCrit ? 'bg-red-500/10 border-red-500/30' : isWarn ? 'bg-amber-500/10 border-amber-500/30' : 'bg-blue-500/8 border-blue-500/20';
+            const iconCls = isCrit ? 'text-red-400' : isWarn ? 'text-amber-400' : 'text-blue-400';
+            const Icon = isCrit ? AlertCircle : isWarn ? AlertTriangle : Info;
+            return (
+              <div key={i} className={`rounded-lg border p-2.5 flex items-start gap-2 ${bgCls}`}>
+                <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${iconCls}`} />
+                <div>
+                  <span className={`text-xs font-semibold ${iconCls}`}>{w.title}</span>
+                  <p className="text-[10px] text-foreground/60 mt-0.5 leading-relaxed">{w.detail}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {/* Currency Conversion Banner */}
       {data.currencyInfo?.converted && (
         <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 flex items-start gap-2">

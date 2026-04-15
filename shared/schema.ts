@@ -64,6 +64,15 @@ export interface PeerCompany {
   revenueGrowth: number | null;
 }
 
+export type WarningSeverity = 'critical' | 'warning' | 'info';
+
+export interface ConsistencyWarning {
+  id: string; // e.g. 'dcf-implausible', 'margin-mismatch'
+  severity: WarningSeverity;
+  title: string;
+  detail: string;
+}
+
 export interface EpsDataPoint {
   year: number; // e.g. 2020, 2021, ...
   eps: number;
@@ -432,6 +441,7 @@ export interface StockAnalysis {
   newsItems?: NewsItem[];
   peerComparison?: PeerComparison;
   llmMode?: boolean; // Whether LLM-powered catalysts were used
+  consistencyWarnings?: ConsistencyWarning[];
   // NEW: Geographic segments (Umsatzanteil nach Regionen)
   geoSegments?: RevenueSegment[];
 }

@@ -4118,6 +4118,71 @@ export async function registerRoutes(server: Server, app: Express) {
         llmMode: useLLM,
       };
 
+      // === Consistency Check ===
+      const warnings: { id: string; severity: 'critical' | 'warning' | 'info'; title: string; detail: string }[] = [];
+
+      // 1. EBIT vs EBITDA sanity
+      if (operatingIncome > ebitda && operatingIncome > 0 && ebitda > 0) {
+        warnings.push({ id: 'margin-impossible', severity: 'critical', title: 'EBIT > EBITDA', detail: `Operating Income ($${(operatingIncome/1e9).toFixed(1)}B) > EBITDA ($${(ebitda/1e9).toFixed(1)}B) — mathematisch unmöglich. Datenquelle prüfen.` });
+      }
+
+      // 2. Operating Margin sanity
+      const opMarginCheck = revenue > 0 ? (operatingIncome / revenue) * 100 : 0;
+      if (opMarginCheck > 70) {
+        warnings.push({ id: 'margin-extreme', severity: 'warning', title: 'EBIT-Margin > 70%', detail: `EBIT-Margin ${opMarginCheck.toFixed(1)}% ist ungewöhnlich hoch. DCF-Fair-Value könnte überschätzt sein.` });
+      }
+
+      // 3. Negative FCF
+      if (fcfTTM < 0) {
+        warnings.push({ id: 'fcf-negative', severity: 'warning', title: 'Negativer Free Cash Flow', detail: `FCF TTM: $${(fcfTTM/1e6).toFixed(0)}M. DCF-Modell basiert auf positiven Cash Flows — Ergebnisse mit Vorsicht interpretieren.` });
+      }
+
+      // 4. P/E Extreme (too low may signal earnings peak for cyclicals)
+      if (pe > 0 && pe < 5) {
+        warnings.push({ id: 'pe-very-low', severity: 'info', title: 'P/E < 5 — möglicher Gewinnhöchststand', detail: `P/E ${pe.toFixed(1)} sehr niedrig. Bei Zyklikern kann das den Gewinnhöhepunkt signalisieren (Lynch-Regel).` });
+      }
+      if (pe > 100) {
+        warnings.push({ id: 'pe-very-high', severity: 'info', title: 'P/E > 100', detail: `P/E ${pe.toFixed(1)} — hohe Wachstumserwartungen eingepreist. Bei Enttäuschung Rückschlagpotenzial.` });
+      }
+
+      // 5. Market Cap vs Revenue plausibility
+      if (revenue > 0 && marketCap > 0) {
+        const psRatio = marketCap / revenue;
+        if (psRatio > 30) {
+          warnings.push({ id: 'ps-extreme', severity: 'warning', title: `P/S ${psRatio.toFixed(1)} — extrem hoch`, detail: `Market Cap ($${(marketCap/1e9).toFixed(0)}B) / Revenue ($${(revenue/1e9).toFixed(0)}B) = ${psRatio.toFixed(1)}x. Nur gerechtfertigt bei extremem Wachstum.` });
+        }
+      }
+
+      // 6. Shares outstanding plausibility
+      if (sharesOutstanding > 0 && price > 0 && marketCap > 0) {
+        const impliedPrice = marketCap / sharesOutstanding;
+        if (Math.abs(impliedPrice - price) / price > 0.5) {
+          warnings.push({ id: 'shares-mismatch', severity: 'critical', title: 'MarketCap / Shares ≠ Preis', detail: `Implied Price: $${impliedPrice.toFixed(2)} vs. Quoted: $${price.toFixed(2)} — Shares Outstanding oder Market Cap könnten falsch sein.` });
+        }
+      }
+
+      // 7. No EPS data
+      if (eps <= 0) {
+        warnings.push({ id: 'eps-missing', severity: 'warning', title: 'Kein EPS verfügbar', detail: 'EPS ist 0 oder negativ. P/E, PEG und DCF-Growth-Berechnungen unzuverlässig.' });
+      }
+
+      // 8. Currency mismatch for non-US tickers
+      if (ticker.includes('.DE') || ticker.includes('.L') || ticker.includes('.PA') || ticker.includes('.SW')) {
+        if (currency === 'USD') {
+          warnings.push({ id: 'currency-usd-for-eu', severity: 'info', title: 'EUR-Aktie in USD angezeigt', detail: `${ticker} wird in USD gehandelt (ADR) oder API liefert USD-Daten. Alle Werte in USD.` });
+        }
+      }
+
+      // 9. Beta extreme
+      if (beta5Y > 2.5) {
+        warnings.push({ id: 'beta-extreme', severity: 'info', title: `Beta ${beta5Y.toFixed(2)} — sehr volatil`, detail: `Hohe Beta erhöht WACC und drückt DCF-Fair-Value. Monte Carlo Downside-Wahrscheinlichkeit erhöht.` });
+      }
+
+      analysis.consistencyWarnings = warnings.length > 0 ? warnings : undefined;
+      if (warnings.length > 0) {
+        console.log(`[ANALYZE] Consistency warnings for ${ticker}: ${warnings.map(w => w.id).join(', ')}`);
+      }
+
       console.log(`[ANALYZE] Completed analysis for ${ticker}: $${price} (${companyName})`);
       res.json(analysis);
     } catch (error: any) {
