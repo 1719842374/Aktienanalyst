@@ -3156,6 +3156,25 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+  // === PDF Export (LLM-powered HTML → Playwright PDF) ===
+  app.post("/api/export-pdf", async (req, res) => {
+    try {
+      const analysisData = req.body;
+      if (!analysisData?.ticker) return res.status(400).json({ error: 'No analysis data provided' });
+      console.log(`[PDF] Generating PDF for ${analysisData.ticker}...`);
+      const { generateAnalysisHTML, renderHTMLtoPDF } = await import('./pdf-export');
+      const html = generateAnalysisHTML(analysisData);
+      const pdfBuffer = await renderHTMLtoPDF(html);
+      console.log(`[PDF] Generated ${(pdfBuffer.length / 1024).toFixed(0)}KB PDF for ${analysisData.ticker}`);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${analysisData.ticker}_Analyse_${new Date().toISOString().slice(0,10)}.pdf"`);
+      res.send(pdfBuffer);
+    } catch (err: any) {
+      console.error(`[PDF] Error:`, err?.message?.substring(0, 200));
+      res.status(500).json({ error: `PDF generation failed: ${err?.message?.substring(0, 100)}` });
+    }
+  });
+
   app.post("/api/analyze", async (req, res) => {
     try {
       const parsed = analyzeRequestSchema.safeParse(req.body);
