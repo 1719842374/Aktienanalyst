@@ -3795,7 +3795,10 @@ export async function registerRoutes(server: Server, app: Express) {
       // Add catalyst reasoning to growth thesis
       if (useLLM && catalysts.length > 0 && catalysts[0]?.context) {
         const topCats = catalysts.slice(0, 3).map(c => c.name).join(', ');
-        const firstCtx = catalysts[0]?.context ? ' ' + catalysts[0].context.split('.')[0] + '.' : '';
+        // Extract first 1-2 complete sentences from context
+        const ctx = catalysts[0]?.context || '';
+        const sentences = ctx.match(/[^.!?]+[.!?]+/g) || [];
+        const firstCtx = sentences.length > 0 ? ' ' + sentences.slice(0, 2).join('').trim() : '';
         growthThesis += ` Katalysator: ${topCats}.${firstCtx}`;
       } else {
         // Fallback: generic sector reasoning
