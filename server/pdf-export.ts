@@ -355,7 +355,6 @@ ${data.catalysts.map((c: any, i: number) => `<tr><td>K${i+1}</td><td>${esc(c.nam
 ${data.catalysts.map((c: any, i: number) => `
 <div style="margin: 4px 0;">
   <span class="cat-name">K${i+1}: ${esc(c.name)}</span>
-  <span class="cat-meta">PoS ${c.pos}% | Brutto +${f(c.bruttoUpside)}% | Einpr. ${c.einpreisungsgrad}% | GB ${f(c.gb,2)}%</span>
   ${c.context ? `<div class="cat-text">${esc(c.context)}</div>` : ''}
 </div>`).join('')}
 ` : ''}
