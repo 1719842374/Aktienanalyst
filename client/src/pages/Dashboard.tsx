@@ -60,14 +60,34 @@ export default function Dashboard() {
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
+  const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number } | null>(null);
+
   const analyzeMutation = useMutation({
     mutationFn: async ({ ticker, llm }: { ticker: string; llm: boolean }) => {
-      const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm });
-      return res.json() as Promise<StockAnalysis>;
+      const maxRetries = 3;
+      let lastError: Error | null = null;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          setRetryInfo({ attempt, maxRetries });
+          const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm });
+          const result = await res.json() as StockAnalysis;
+          setRetryInfo(null);
+          return result;
+        } catch (err: any) {
+          lastError = err;
+          console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${err?.message?.substring(0, 100)}`);
+          if (attempt < maxRetries) {
+            // Exponential backoff: 2s, 4s
+            await new Promise(r => setTimeout(r, attempt * 2000));
+          }
+        }
+      }
+      setRetryInfo(null);
+      throw lastError || new Error('Analyse fehlgeschlagen nach 3 Versuchen');
     },
     onSuccess: (result) => {
       setData(result);
-      // Scroll to top on new ticker (not on LLM reload)
       if (!result.llmMode || !data || data.companyName !== result.companyName) {
         mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
       }
@@ -247,7 +267,7 @@ export default function Dashboard() {
           {!data && !analyzeMutation.isPending ? (
             <WelcomeScreen onSearch={(ticker) => { setCurrentTicker(ticker); analyzeMutation.mutate({ ticker, llm: useLLM }); }} />
           ) : analyzeMutation.isPending ? (
-            <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTicker || ""} />
+            <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTicker || ""} retryInfo={retryInfo} />
           ) : analyzeMutation.isError ? (
             <ErrorScreen error={analyzeMutation.error} />
           ) : data ? (
@@ -387,14 +407,34 @@ function WelcomeScreen({ onSearch }: { onSearch: (ticker: string) => void }) {
   );
 }
 
-function LoadingScreen({ ticker }: { ticker: string }) {
+function LoadingScreen({ ticker, retryInfo }: { ticker: string; retryInfo?: { attempt: number; maxRetries: number } | null }) {
+  const isRetrying = retryInfo && retryInfo.attempt > 1;
   return (
     <div className="flex items-center justify-center min-h-full p-8">
       <div className="text-center space-y-4">
-        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+        <div className={`w-8 h-8 border-2 ${isRetrying ? 'border-amber-400' : 'border-primary'} border-t-transparent rounded-full animate-spin mx-auto`} />
         <div>
-          <div className="text-sm font-medium">Analyzing {ticker}...</div>
-          <div className="text-xs text-muted-foreground mt-1">Running comprehensive analysis</div>
+          <div className="text-sm font-medium">
+            {isRetrying ? `Retry ${retryInfo!.attempt}/${retryInfo!.maxRetries}` : `Analysiere ${ticker}...`}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            {isRetrying
+              ? `Verbindung fehlgeschlagen — neuer Versuch läuft...`
+              : 'Umfassende Analyse wird erstellt'
+            }
+          </div>
+          {retryInfo && (
+            <div className="flex items-center justify-center gap-1.5 mt-3">
+              {Array.from({ length: retryInfo.maxRetries }).map((_, i) => (
+                <div
+                  key={i}
+                  className={`w-2 h-2 rounded-full transition-colors ${
+                    i < retryInfo.attempt - 1 ? 'bg-red-400/60' : i === retryInfo.attempt - 1 ? 'bg-amber-400 animate-pulse' : 'bg-foreground/15'
+                  }`}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
