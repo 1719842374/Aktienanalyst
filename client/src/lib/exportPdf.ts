@@ -20,8 +20,16 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
   const cW = W - 2 * M;
   let y = 10;
 
-  const bg = () => { doc.setFillColor(12, 18, 35); doc.rect(0, 0, W, H, "F"); };
-  bg();
+  // Track which pages already have bg drawn to avoid double-painting
+  const bgPages = new Set<number>();
+  const bg = () => {
+    const pg = doc.getNumberOfPages();
+    if (!bgPages.has(pg)) {
+      bgPages.add(pg);
+      doc.setFillColor(12, 18, 35); doc.rect(0, 0, W, H, "F");
+    }
+  };
+  bg(); // page 1
 
   function np(needed = 12) { if (y + needed > H - 10) { doc.addPage(); bg(); y = 10; } }
 
@@ -66,11 +74,11 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
     np(6 + Math.min(totalRows, 3) * 4);
     const opts: any = {
       startY: y, head: [headers], body: rows,
-      margin: { left: M, right: M },
+      margin: { left: M, right: M, top: 10 },
       styles: { fontSize: 5.5, textColor: [180,185,200], fillColor: [15,22,40], cellPadding: 1.2, lineColor: [30,40,60], lineWidth: 0.1, overflow: 'linebreak' },
       headStyles: { fillColor: [22,32,52], textColor: [100,145,200], fontStyle: "bold", fontSize: 5.5 },
       alternateRowStyles: { fillColor: [17,25,44] },
-      didDrawPage: () => { bg(); },
+      willDrawPage: () => { bg(); },
     };
     if (colWidths) opts.columnStyles = Object.fromEntries(colWidths.map((w, i) => [i, { cellWidth: w }]));
     autoTable(doc, opts);
