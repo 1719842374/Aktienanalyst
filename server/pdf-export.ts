@@ -290,7 +290,7 @@ export async function generateAnalysisHTML(rawData: any): Promise<string> {
   .row-label { color: #7880a0; font-size: 8.5px; }
   .row-val { color: #d0d5e0; font-weight: 600; font-size: 8.5px; text-align: right; }
   .para { font-size: 8px; color: #9aa0b0; margin: 2px 0 4px 4px; line-height: 1.45; }
-  table { width: 100%; border-collapse: collapse; margin: 3px 0; font-size: 8px; table-layout: fixed; word-wrap: break-word; }
+  table { width: 100%; border-collapse: collapse; margin: 3px 0; font-size: 8px; word-wrap: break-word; }
   th { background: #162034; color: #6495cc; font-weight: 600; padding: 3px 5px; text-align: left; border-bottom: 1px solid #243050; font-size: 7.5px; }
   td { padding: 2.5px 5px; border-bottom: 1px solid #1a2540; color: #b0b5c5; }
   tr:nth-child(even) td { background: #111b2c; }
@@ -335,7 +335,7 @@ ${narrative.execSummary ? `
 
 <!-- S2: INVESTMENTTHESE -->
 <div class="sec-header"><span>2 &nbsp; INVESTMENTTHESE & KATALYSATOREN</span></div>
-${data.description ? `<div class="sub">Unternehmensbeschreibung</div><div class="para">${esc(data.description.substring(0,800))}${data.description.length > 800 ? '…' : ''}</div>` : ''}
+${data.description ? `<div class="sub">Unternehmensbeschreibung</div><div class="para">${esc(data.description)}</div>` : ''}
 <div class="sub">Investmentthese</div>
 <div class="para">${esc(data.growthThesis || '')}</div>
 <div class="row"><span class="row-label">Peter Lynch</span><span class="row-val">${data.catalystReasoning?.lynchClassification || '—'}</span></div>
@@ -557,17 +557,13 @@ ${data.reverseDCF ? `
 <div class="row"><span class="row-label">Bewertung</span><span class="row-val">${data.reverseDCF.assessment||'—'}</span></div>
 ` : '<div class="para">Reverse DCF nicht verfügbar.</div>'}
 
-<!-- S15: KATALYSATOREN (Anti-Bias) -->
-<div class="sec-header"><span>15 &nbsp; KURSANSTIEG-KATALYSATOREN (Anti-Bias)</span></div>
-${data.catalysts?.length ? data.catalysts.map((c: any) => `
-<div style="margin:4px 0">
-  <span class="cat-name">${esc(c.name)}</span>
-  <span class="cat-meta">PoS ${c.pos}% | GB ${f(c.gb,2)}%</span>
-  ${c.context ? `<div class="cat-text">${esc(c.context)}</div>` : ''}
-</div>`).join('') : ''}
-<div class="sub">Downside-Katalysatoren (Anti-Bias)</div>
-<div class="para">Anti-Bias-Protokoll: Kein selektiver Upside ohne symmetrischen Downside.</div>
-${data.risks?.slice(0,3).map((r: any) => `<div class="para neg">· ${esc(r.name)}: EW ${r.ew||r.probability}% × Impact ${r.impact}% = ${f(r.expectedDamage,2)}% Schaden</div>`).join('')}
+<!-- S15: DOWNSIDE-KATALYSATOREN (Anti-Bias) -->
+<div class="sec-header"><span>15 &nbsp; DOWNSIDE-KATALYSATOREN (Anti-Bias)</span></div>
+<div class="para">Anti-Bias-Protokoll: Kein selektiver Upside ohne symmetrischen Downside. Katalysatoren-Details (Upside) siehe Sektion 2.</div>
+${data.risks?.length ? `<table>
+<tr><th>ID</th><th>Risiko</th><th>EW%</th><th>Impact%</th><th>Exp. Damage</th></tr>
+${data.risks.map((r: any, i: number) => `<tr><td>D${i+1}</td><td>${esc(r.name)}</td><td>${r.ew||r.probability}%</td><td>-${r.impact}%</td><td class="neg">${f(r.expectedDamage,2)}%</td></tr>`).join('')}
+</table>` : ''}
 
 <!-- S16: MONTE CARLO -->
 <div class="sec-header"><span>16 &nbsp; MONTE CARLO SIMULATION (GBM)</span></div>
