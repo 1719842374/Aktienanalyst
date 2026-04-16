@@ -497,40 +497,146 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
     ["Analyst PT", `$${data.analystPT?.median?.toFixed(2)||"—"} (${pct(ptUp)})`, "Kat. Upside", data.catalysts?.length ? `+${f(data.catalysts.reduce((s,c)=>s+c.gb,0),2)}%` : "—"],
   ]);
 
-  // ======= FAZIT-BOX =======
+  // ======= COMPREHENSIVE FAZIT (same logic as Section13 frontend) =======
   np(32);
   y += 2;
-  let positives = 0, negatives = 0;
-  const posList: string[] = [], negList: string[] = [];
-  if (data.peRatio && data.sectorAvgPE && data.peRatio < data.sectorAvgPE) { positives++; posList.push(`P/E ${f(data.peRatio)} vs Sektor ${f(data.sectorAvgPE)} — Discount`); }
-  else if (data.peRatio && data.sectorAvgPE && data.peRatio > data.sectorAvgPE * 1.2) { negatives++; negList.push(`P/E ${f(data.peRatio)} vs Sektor ${f(data.sectorAvgPE)} — Premium`); }
-  if (data.pegRatio && data.pegRatio < 1) { positives++; posList.push(`PEG ${f(data.pegRatio,2)} < 1 — unterbewertet`); }
-  else if (data.pegRatio && data.pegRatio > 2) { negatives++; negList.push(`PEG ${f(data.pegRatio,2)} > 2 — teuer`); }
-  if (data.fcfMargin && data.fcfMargin > 15) { positives++; posList.push(`FCF Margin ${f(data.fcfMargin)}% — stark`); }
-  if (data.rsl?.value && data.rsl.value > 110) { positives++; posList.push(`RSL ${f(data.rsl.value)} — starkes Momentum`); }
-  else if (data.rsl?.value && data.rsl.value < 95) { negatives++; negList.push(`RSL ${f(data.rsl.value)} — schwaches Momentum`); }
-  if (data.catalysts?.length) { const gb = data.catalysts.reduce((s,c)=>s+c.gb,0); if (gb > 10) { positives++; posList.push(`Katalysatoren-Upside +${f(gb,2)}%`); } }
-  if (allBuy) { positives++; posList.push("Alle Kaufsignal-Bedingungen erfüllt"); } else { negatives++; negList.push("Kaufsignal nicht erfüllt"); }
+  const posList: string[] = [], negList: string[] = [], neutList: string[] = [];
 
-  const verdict = positives > negatives + 1 ? "ATTRAKTIV" : positives > negatives ? "LEICHT ATTRAKTIV" : positives === negatives ? "NEUTRAL" : "UNATTRAKTIV";
+  // DCF calculations for Fazit
+  const wS = sp?.waccScenarios;
+  const fcfVal = data.fcfTTM || 0;
+  const sharesVal = data.sharesOutstanding || 1;
+  const gVal = data.epsGrowth5Y || 5;
+  const ndVal = (data.totalDebt || 0) - (data.cashEquivalents || 0);
+  const tgVal = 2.5;
+  const dcfCalcF = (wacc: number, gr: number) => {
+    let pv = 0, last = fcfVal;
+    for (let yr = 1; yr <= 5; yr++) { last *= (1 + gr / 100); pv += last / Math.pow(1 + wacc / 100, yr); }
+    pv += (last * (1 + tgVal / 100) / (wacc / 100 - tgVal / 100)) / Math.pow(1 + wacc / 100, 5);
+    return (pv - ndVal) / sharesVal;
+  };
+  const konsDCF = wS ? dcfCalcF(wS.kons, gVal * 0.7) : 0;
+  const optDCF = wS ? dcfCalcF(wS.opt, gVal * 1.2) : 0;
+  const stressDCF = wS ? dcfCalcF(wS.kons * 1.2, gVal * 0.3) : 0;
+  const konsUpside = data.currentPrice ? (konsDCF / data.currentPrice - 1) * 100 : 0;
+  const stressDown = data.currentPrice ? (stressDCF / data.currentPrice - 1) * 100 : 0;
+  const totalGB = data.catalysts?.reduce((s: number, c: any) => s + c.gb, 0) || 0;
+  const totalExpDmg = data.risks?.reduce((s: number, r: any) => s + (r.expectedDamage || 0), 0) || 0;
+  const riskFactor = 1 - totalExpDmg / 100;
+  const ddPct = parseFloat(String(data.maxDrawdownHistory)) || 30;
+  const worstCase = data.currentPrice ? Math.min(
+    data.currentPrice * (1 - Math.min(0.9, (data.beta5Y||1) * 0.5)),
+    data.currentPrice * (1 - 0.35),
+    data.currentPrice * (1 - ddPct / 100)
+  ) : 0;
+  const crvCons = data.currentPrice && (data.currentPrice - worstCase) > 0 ? (konsDCF - worstCase) / (data.currentPrice - worstCase) : 0;
+  const raCrvCons = data.currentPrice && (data.currentPrice - worstCase) > 0 ? (konsDCF * riskFactor - worstCase) / (data.currentPrice - worstCase) : 0;
+  const dcfBeiCRV3 = (konsDCF + 3 * worstCase) / 4;
+  const rsl = data.rsl?.value || 0;
+  const techStatus = data.technicals || {} as any;
+  const pestelD = data.pestelAnalysis;
+  const moatD = data.moatAssessment;
+  const macroD = data.macroCorrelations;
+  const mcD = data.monteCarloResults;
+  const revDCF = data.reverseDCF;
+
+  // S1: P/E vs Sektor
+  if (data.peRatio > 0 && data.sectorAvgPE > 0) {
+    const pePrem = ((data.peRatio / data.sectorAvgPE) - 1) * 100;
+    if (pePrem < -20) posList.push(`P/E ${f(data.peRatio)} vs. Sektor ${f(data.sectorAvgPE)} — ${f(Math.abs(pePrem),0)}% Discount`);
+    else if (pePrem > 30) negList.push(`P/E ${f(data.peRatio)} vs. Sektor ${f(data.sectorAvgPE)} — ${f(pePrem,0)}% Premium`);
+  }
+  // S2: Katalysatoren
+  if (totalGB > 10) posList.push(`Katalysatoren-Upside +${f(totalGB,1)}% (${data.catalysts?.length||0} Treiber)`);
+  // S3: Zyklus
+  if (data.cycleClassification) neutList.push(`Zyklusklassifikation: ${data.cycleClassification}, Politischer Zyklus: ${data.politicalCycle}`);
+  // S4: PEG
+  if (data.pegRatio && data.pegRatio < 1) posList.push(`PEG ${f(data.pegRatio,2)} < 1 — unterbewertet`);
+  else if (data.pegRatio && data.pegRatio > 2) negList.push(`PEG ${f(data.pegRatio,2)} > 2 — teuer`);
+  // S5: DCF
+  if (konsUpside > 30) posList.push(`Kons. DCF +${f(konsUpside,0)}% Upside`);
+  else if (konsUpside > 10) posList.push(`Kons. DCF +${f(konsUpside,0)}% moderates Upside`);
+  else if (konsUpside < -10) negList.push(`Kons. DCF zeigt ${f(konsUpside,0)}% Downside — Überbewertung`);
+  // S6: CRV
+  if (crvCons >= 2.5) posList.push(`CRV Base ${f(crvCons,1)}:1 — attraktiv`);
+  else if (crvCons < 2.0) negList.push(`CRV Base nur ${f(crvCons,1)}:1 — unzureichend`);
+  if (raCrvCons < 1.5) negList.push(`CRV Risikoadj. nur ${f(raCrvCons,1)}:1 — Risiken nicht eingepreist`);
+  // Entry Price
+  if (data.currentPrice && data.currentPrice <= dcfBeiCRV3) posList.push(`Kurs UNTER Max-Entry ($${f(dcfBeiCRV3,2)})`);
+  else if (data.currentPrice) negList.push(`Kurs ($${data.currentPrice.toFixed(2)}) ÜBER Max-Entry ($${f(dcfBeiCRV3,2)}) bei CRV 3:1`);
+  // S8: Risk
+  if (totalExpDmg > 15) negList.push(`Expected Damage ${f(totalExpDmg,1)}% — erhebliche Risiko-Exposition`);
+  else if (totalExpDmg < 8) posList.push(`Expected Damage nur ${f(totalExpDmg,1)}% — moderates Risikoprofil`);
+  // S9: RSL
+  if (rsl > 110) posList.push(`RSL ${f(rsl,0)} — starkes Momentum`);
+  else if (rsl > 105) neutList.push(`RSL ${f(rsl,0)} — neutrales Momentum`);
+  else if (rsl > 0) negList.push(`RSL ${f(rsl,0)} — schwaches Momentum, Growth-Adj. -5% bis -10%`);
+  // S10: Technische Analyse
+  if (allBuy) posList.push(`Technisch: BUY-Signal (Kurs > MA200, MA50 > MA200, MACD > 0)`);
+  else {
+    const bears: string[] = [];
+    if (!techStatus.priceAboveMA200) bears.push('Kurs < MA200');
+    if (!techStatus.ma50AboveMA200) bears.push('MA50 < MA200 (Death Cross)');
+    if (!techStatus.macdAboveZero) bears.push('MACD < 0');
+    if (bears.length >= 2) negList.push(`Technisch: KEIN Buy-Signal (${bears.join(', ')})`);
+  }
+  // S11: Moat
+  if (moatD?.overallRating === 'Wide') posList.push(`Breiter Moat — nachhaltiger Wettbewerbsvorteil`);
+  else if (moatD?.overallRating === 'None') negList.push(`Kein erkennbarer Moat`);
+  // S12: Monte Carlo
+  if (mcD?.probLoss != null) {
+    if (mcD.probLoss > 55) negList.push(`MC-Simulation: ${f(mcD.probLoss,0)}% Verlustwahrscheinlichkeit`);
+    else if (mcD.probLoss < 35) posList.push(`MC-Simulation: nur ${f(mcD.probLoss,0)}% Verlustwahrscheinlichkeit`);
+  }
+  // S13: Reverse DCF
+  if (revDCF?.impliedGrowth && revDCF.impliedGrowth > 8) negList.push(`Reverse-DCF impliziert ${f(revDCF.impliedGrowth,1)}% — sportlich`);
+  // FCF Margin
+  if (data.fcfMargin && data.fcfMargin > 20) posList.push(`Starke FCF-Marge von ${f(data.fcfMargin,1)}%`);
+  // Analyst PT
+  if (ptUp && ptUp > 20) posList.push(`Analysten sehen ${f(ptUp,0)}% Upside zum Median-Kursziel`);
+  else if (ptUp && ptUp < -5) negList.push(`Analysten-Kursziel ${f(ptUp,0)}% unter Kurs`);
+  // Macro Sensitivity
+  if (macroD?.overallMacroSensitivity === 'Hoch') negList.push(`Hohe Makro-Sensitivität — ${(macroD.keyInsight||'').substring(0, 80)}`);
+  // Gov Exposure
+  if (data.governmentExposure && data.governmentExposure > 20) negList.push(`Staatsabhängigkeit ${data.governmentExposure}% — FCF-Haircut`);
+  // Macro Stress
+  if (stressDown < -30) negList.push(`Macro-Stress: ${f(stressDown,0)}% Downside`);
+
+  // Score & Verdict
+  const score = posList.length - negList.length;
+  let verdict: string;
+  if (score >= 4) verdict = "ATTRAKTIV";
+  else if (score >= 2) verdict = "LEICHT ATTRAKTIV";
+  else if (score >= -1) verdict = "NEUTRAL";
+  else if (score >= -3) verdict = "UNATTRAKTIV";
+  else verdict = "STARK UNATTRAKTIV";
   const vC = verdict.includes("ATTRAKTIV") ? [80,200,80] : verdict === "NEUTRAL" ? [150,160,180] : [200,80,80];
 
+  // Verdict box
   doc.setFillColor(vC[0]/10, vC[1]/10, vC[2]/10+10);
   doc.setDrawColor(vC[0], vC[1], vC[2]);
   doc.roundedRect(M, y, cW, 16, 2, 2, "FD");
   doc.setFontSize(12); doc.setFont("helvetica","bold"); doc.setTextColor(vC[0], vC[1], vC[2]);
   doc.text(`FAZIT: ${verdict}`, W / 2, y + 7, { align: "center" });
   doc.setFontSize(6.5); doc.setFont("helvetica","normal"); doc.setTextColor(160,165,180);
-  doc.text(`${data.companyName} (${data.ticker}) — ${positives} positive, ${negatives} negative Faktoren`, W / 2, y + 12.5, { align: "center" });
+  doc.text(`${data.companyName} (${data.ticker}) — ${posList.length} positive, ${negList.length} negative, ${neutList.length} neutrale Faktoren`, W / 2, y + 12.5, { align: "center" });
   y += 20;
 
+  // Signal-Score
+  row("Signal-Score", `${posList.length} positiv / ${negList.length} negativ / ${neutList.length} neutral = ${verdict}`);
+  y += 2;
+
   if (posList.length) {
-    sub("Positive Faktoren");
+    sub(`Positive Faktoren (${posList.length})`);
     for (const p of posList) { np(3.5); doc.setFontSize(6); doc.setTextColor(80,200,80); doc.text(`+ ${p}`, M + 2, y + 2); y += 3.5; }
   }
   if (negList.length) {
-    sub("Negative Faktoren");
-    for (const n of negList) { np(3.5); doc.setFontSize(6); doc.setTextColor(200,80,80); doc.text(`− ${n}`, M + 2, y + 2); y += 3.5; }
+    sub(`Negative Faktoren (${negList.length})`);
+    for (const n of negList) { np(3.5); doc.setFontSize(6); doc.setTextColor(200,80,80); doc.text(`- ${n}`, M + 2, y + 2); y += 3.5; }
+  }
+  if (neutList.length) {
+    sub(`Neutral (${neutList.length})`);
+    for (const n of neutList) { np(3.5); doc.setFontSize(6); doc.setTextColor(140,150,170); doc.text(`• ${n}`, M + 2, y + 2); y += 3.5; }
   }
 
   // ======= FOOTER =======
