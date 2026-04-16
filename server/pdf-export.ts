@@ -118,7 +118,8 @@ export function generateAnalysisHTML(data: any): string {
   const baseFV = wS ? dcfCalc(data, wS.avg, g) : 0;
   const optFV = wS ? dcfCalc(data, wS.opt, g * 1.2) : 0;
 
-  const verdictColor = fazit.verdict.includes('ATTRAKTIV') ? '#22c55e' : fazit.verdict === 'NEUTRAL' ? '#eab308' : '#ef4444';
+  // CRITICAL: 'UNATTRAKTIV' and 'STARK UNATTRAKTIV' must be RED, not green
+  const verdictColor = (fazit.verdict === 'ATTRAKTIV' || fazit.verdict === 'LEICHT ATTRAKTIV') ? '#22c55e' : fazit.verdict === 'NEUTRAL' ? '#eab308' : '#ef4444';
 
   return `<!DOCTYPE html>
 <html lang="de">
@@ -244,7 +245,7 @@ ${wS ? `<div class="sub">DCF-Szenarien (5Y → Gordon Growth Terminal Value)</di
 
 <!-- S6: CRV -->
 <div class="sec-header"><span>6 &nbsp; RISIKOADJUSTIERTES CRV</span></div>
-<div class="row"><span class="row-label">Max Drawdown (hist.)</span><span class="row-val">${data.maxDrawdownHistory||'—'}% (${data.maxDrawdownYear||'?'})</span></div>
+<div class="row"><span class="row-label">Max Drawdown (hist.)</span><span class="row-val">${String(data.maxDrawdownHistory||'—').replace('%','')}% (${data.maxDrawdownYear||'?'})</span></div>
 <div class="row"><span class="row-label">Worst Case = min(M1,M2,M3)</span><span class="row-val">$${f(fazit.worstCase,2)}</span></div>
 <div class="row"><span class="row-label">Fair Value (Kons. DCF)</span><span class="row-val">$${f(fazit.konsDCF,2)}</span></div>
 <div class="row"><span class="row-label">CRV Base</span><span class="row-val">${f(fazit.crvCons,1)}:1</span></div>
@@ -286,6 +287,82 @@ ${data.rsl?.value ? `
 <tr><td>MACD steigend</td><td>${data.technicals?.macdRising ? '<span class="pos">JA ✓</span>' : '<span class="neg">NEIN ✗</span>'}</td><td>${data.technicals?.macdSignal != null ? f(data.technicals.macdSignal,4) : '—'}</td></tr>
 </table>
 <div class="row"><span class="row-label">Kaufsignal</span><span class="row-val">${fazit.allBuy ? '<span class="pos">JA — alle Bedingungen erfüllt ✓</span>' : '<span class="neg">NEIN — nicht alle Bedingungen erfüllt ✗</span>'}</span></div>
+
+${(() => {
+  // Generate 5-Year SVG Chart with MA200 + MA50
+  const prices = data.historicalPrices || [];
+  if (prices.length < 100) return '<div class="para">Chart nicht verf\u00fcgbar (zu wenig Preisdaten).</div>';
+  const chartData = prices.slice(-1260); // 5Y
+  const closes = chartData.map((p: any) => p.close).filter((c: number) => c > 0);
+  if (closes.length < 50) return '';
+  const svgW = 700, svgH = 180, padL = 45, padR = 10, padT = 15, padB = 25;
+  const cW = svgW - padL - padR, cH = svgH - padT - padB;
+  const cMin = Math.min(...closes) * 0.97, cMax = Math.max(...closes) * 1.03;
+  const cRange = cMax - cMin || 1;
+  const toX = (i: number) => padL + (i / (closes.length - 1)) * cW;
+  const toY = (v: number) => padT + cH - ((v - cMin) / cRange) * cH;
+
+  // Build price polyline
+  const pricePts = closes.map((c: number, i: number) => `${toX(i).toFixed(1)},${toY(c).toFixed(1)}`).join(' ');
+
+  // MA200
+  let ma200Pts = '';
+  if (closes.length > 200) {
+    const pts: string[] = [];
+    for (let i = 199; i < closes.length; i++) {
+      const ma = closes.slice(i - 199, i + 1).reduce((a: number, b: number) => a + b, 0) / 200;
+      pts.push(`${toX(i).toFixed(1)},${toY(ma).toFixed(1)}`);
+    }
+    ma200Pts = pts.join(' ');
+  }
+
+  // MA50
+  let ma50Pts = '';
+  if (closes.length > 50) {
+    const pts: string[] = [];
+    for (let i = 49; i < closes.length; i++) {
+      const ma = closes.slice(i - 49, i + 1).reduce((a: number, b: number) => a + b, 0) / 50;
+      pts.push(`${toX(i).toFixed(1)},${toY(ma).toFixed(1)}`);
+    }
+    ma50Pts = pts.join(' ');
+  }
+
+  // X-axis dates
+  const dates = chartData.map((p: any) => p.date || '');
+  const firstDate = dates[0]?.substring(0, 7) || '';
+  const midDate = dates[Math.floor(dates.length / 2)]?.substring(0, 7) || '';
+  const lastDate = dates[dates.length - 1]?.substring(0, 7) || '';
+
+  return `
+<div class="sub">5-Jahres-Chart (Kurs + MA200 + MA50)</div>
+<svg viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;background:#0f1628;border-radius:4px;margin:4px 0;">
+  <!-- Grid lines -->
+  <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT+cH}" stroke="#1e2a42" stroke-width="0.5"/>
+  <line x1="${padL}" y1="${padT+cH}" x2="${padL+cW}" y2="${padT+cH}" stroke="#1e2a42" stroke-width="0.5"/>
+  ${[0,0.25,0.5,0.75,1].map(frac => `<line x1="${padL}" y1="${(padT + cH * (1-frac)).toFixed(1)}" x2="${padL+cW}" y2="${(padT + cH * (1-frac)).toFixed(1)}" stroke="#1a2540" stroke-width="0.3"/>`).join('')}
+  <!-- Y-axis labels -->
+  <text x="${padL-3}" y="${padT+5}" fill="#5a6580" font-size="7" text-anchor="end">$${Math.round(cMax)}</text>
+  <text x="${padL-3}" y="${padT+cH/2+3}" fill="#5a6580" font-size="7" text-anchor="end">$${Math.round((cMax+cMin)/2)}</text>
+  <text x="${padL-3}" y="${padT+cH}" fill="#5a6580" font-size="7" text-anchor="end">$${Math.round(cMin)}</text>
+  <!-- X-axis labels -->
+  <text x="${padL}" y="${svgH-5}" fill="#5a6580" font-size="7">${firstDate}</text>
+  <text x="${padL+cW/2}" y="${svgH-5}" fill="#5a6580" font-size="7" text-anchor="middle">${midDate}</text>
+  <text x="${padL+cW}" y="${svgH-5}" fill="#5a6580" font-size="7" text-anchor="end">${lastDate}</text>
+  <!-- Price line -->
+  <polyline points="${pricePts}" fill="none" stroke="#3c82dc" stroke-width="1" stroke-linejoin="round"/>
+  <!-- MA200 -->
+  ${ma200Pts ? `<polyline points="${ma200Pts}" fill="none" stroke="#dca028" stroke-width="1.2" stroke-linejoin="round"/>` : ''}
+  <!-- MA50 -->
+  ${ma50Pts ? `<polyline points="${ma50Pts}" fill="none" stroke="#dc4646" stroke-width="1" stroke-linejoin="round"/>` : ''}
+  <!-- Legend -->
+  <line x1="${padL+10}" y1="${svgH-15}" x2="${padL+22}" y2="${svgH-15}" stroke="#3c82dc" stroke-width="1.5"/>
+  <text x="${padL+25}" y="${svgH-12}" fill="#7888a8" font-size="6.5">Kurs</text>
+  <line x1="${padL+55}" y1="${svgH-15}" x2="${padL+67}" y2="${svgH-15}" stroke="#dca028" stroke-width="1.5"/>
+  <text x="${padL+70}" y="${svgH-12}" fill="#7888a8" font-size="6.5">MA200</text>
+  <line x1="${padL+105}" y1="${svgH-15}" x2="${padL+117}" y2="${svgH-15}" stroke="#dc4646" stroke-width="1.5"/>
+  <text x="${padL+120}" y="${svgH-12}" fill="#7888a8" font-size="6.5">MA50</text>
+</svg>`;
+})()}
 
 <!-- S11: MOAT & PORTER -->
 <div class="sec-header"><span>11 &nbsp; MOAT & PORTER'S FIVE FORCES</span></div>
