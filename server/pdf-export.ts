@@ -182,8 +182,73 @@ function normalizeData(data: any): any {
   return d;
 }
 
+// ===== Generate Executive Summary via Claude LLM =====
+async function generateNarrativeSummary(data: any, fazit: any): Promise<{ execSummary: string; recommendation: string }> {
+  try {
+    const Anthropic = (await import('@anthropic-ai/sdk')).default;
+    const client = new Anthropic();
+
+    const catalystSummary = (data.catalysts || []).map((c: any, i: number) => 
+      `K${i+1}: ${c.name} (PoS ${c.pos}%, GB ${c.gb?.toFixed(2)}%)${c.context ? ' — ' + c.context.substring(0, 150) : ''}`
+    ).join('\n');
+
+    const prompt = `Du bist ein professioneller Aktienanalyst. Erstelle eine kurze, aber substanzielle Analyse-Zusammenfassung auf Deutsch für die Aktie ${data.ticker} (${data.companyName}).
+
+KERNDATEN:
+- Kurs: $${data.currentPrice?.toFixed(2)} | Market Cap: ${data.marketCap ? '$' + (data.marketCap/1e12).toFixed(2) + 'T' : '?'}
+- P/E: ${data.peRatio?.toFixed(1)} | PEG: ${data.pegRatio?.toFixed(2)} | EV/EBITDA: ${data.evEbitda?.toFixed(1)}
+- FCF-Marge: ${data.fcfMargin?.toFixed(1)}% | FCF: $${data.fcfTTM ? (data.fcfTTM/1e9).toFixed(1) + 'B' : '?'}
+- Revenue: $${data.revenue ? (data.revenue/1e9).toFixed(1) + 'B' : '?'} | Gross Margin: ${data.financialStatements?.incomeStatement?.grossMargin?.toFixed(1)}%
+- Moat: ${data.moatRating} | Beta: ${data.beta5Y?.toFixed(2)} | Gov. Exposure: ${data.governmentExposure}%
+- Sektor: ${data.sector} / ${data.industry}
+- Analysten PT: Median $${data.analystPT?.median} (${fazit.ptUp > 0 ? '+' : ''}${fazit.ptUp?.toFixed(0)}% Upside)
+
+DCF-BEWERTUNG:
+- Konservativ DCF: $${fazit.konsDCF?.toFixed(2)} (${((fazit.konsDCF/data.currentPrice-1)*100).toFixed(0)}% vs. Kurs)
+- CRV Base: ${fazit.crvCons?.toFixed(1)}:1 | CRV Risikoadj.: ${fazit.raCrvCons?.toFixed(1)}:1
+- Max-Entry (CRV 3:1): $${fazit.dcfBeiCRV3?.toFixed(2)}
+- Total Expected Damage: ${fazit.totalExpDmg?.toFixed(1)}%
+- Worst Case: $${fazit.worstCase?.toFixed(2)}
+
+KATALYSATOREN (Total GB: +${fazit.totalGB?.toFixed(1)}%):
+${catalystSummary}
+
+TECHNISCH:
+- Kaufsignal: ${fazit.allBuy ? 'JA' : 'NEIN'} | RSL: ${data.rsl?.value || '?'}
+- MACD: ${data.technicals?.macdAboveZero ? '> 0' : '< 0'} | MA200: $${data.technicals?.ma200?.toFixed(2) || '?'}
+
+MONTE CARLO: ${data.monteCarloResults ? 'Mean $' + data.monteCarloResults.mean + ', P(Verlust) ' + data.monteCarloResults.probLoss + '%' : 'N/A'}
+
+FAZIT: ${fazit.verdict} (${fazit.pos.length} positiv, ${fazit.neg.length} negativ)
+
+Schreibe ZWEI Abschnitte im JSON-Format:
+{
+  "execSummary": "2-3 Sätze Executive Summary: Was ist das Unternehmen, was zeigt die Analyse, was ist das Kernfazit. Nenne konkrete Zahlen.",
+  "recommendation": "2-3 Sätze Handlungsempfehlung: Kaufen/Verkaufen/Abwarten + konkreter Entry-Level ($xxx) + Begründung. Anti-Bias: Nenne sowohl das Upside-Szenario als auch das Downside-Risiko."
+}
+
+Nur JSON, keine Erklärung. Professioneller Ton, keine Floskeln.`;
+
+    const message = await client.messages.create({
+      model: 'claude_sonnet_4_6',
+      max_tokens: 800,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = ((message.content[0] as any)?.text || '').trim();
+    let jsonStr = text;
+    if (jsonStr.startsWith('```')) jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    const result = JSON.parse(jsonStr);
+    console.log(`[PDF] LLM narrative generated for ${data.ticker} (${result.execSummary?.length || 0} + ${result.recommendation?.length || 0} chars)`);
+    return { execSummary: result.execSummary || '', recommendation: result.recommendation || '' };
+  } catch (err: any) {
+    console.log(`[PDF] LLM narrative failed: ${err?.message?.substring(0, 100)}`);
+    return { execSummary: '', recommendation: '' };
+  }
+}
+
 // ===== Generate HTML =====
-export function generateAnalysisHTML(rawData: any): string {
+export async function generateAnalysisHTML(rawData: any): Promise<string> {
   const data = normalizeData(rawData);
   const sp = data.sectorProfile;
   const wS = sp?.waccScenarios;
@@ -195,6 +260,9 @@ export function generateAnalysisHTML(rawData: any): string {
   const fazit = buildFazit(data);
   const nd = (data.totalDebt || 0) - (data.cashEquivalents || 0);
   const ptUp = data.analystPT?.median && data.currentPrice ? ((data.analystPT.median - data.currentPrice) / data.currentPrice * 100) : null;
+
+  // Generate LLM narrative summary (parallel-safe, graceful fallback)
+  const narrative = await generateNarrativeSummary(data, fazit);
 
   // DCF scenarios
   const konsFV = wS ? dcfCalc(data, wS.kons, g * 0.7) : 0;
@@ -247,6 +315,12 @@ export function generateAnalysisHTML(rawData: any): string {
 <div class="subtitle">${esc(data.ticker)} — ${esc(data.companyName)} | ${esc(data.sector)} / ${esc(data.industry)} &nbsp;&nbsp; ${new Date().toLocaleDateString('de-DE')} | Alle Werte in ${data.currency || 'USD'}</div>
 
 ${data.consistencyWarnings?.length ? data.consistencyWarnings.map((w: any) => `<div class="warn">⚠ ${esc(w.title)}: ${esc(w.detail.substring(0,120))}</div>`).join('') : ''}
+
+${narrative.execSummary ? `
+<div style="background:#111b2e;border:1px solid #243050;border-radius:6px;padding:8px 10px;margin:6px 0;">
+  <div style="font-size:9px;font-weight:700;color:#6495cc;margin-bottom:4px;">Executive Summary</div>
+  <div style="font-size:8.5px;color:#c0c5d5;line-height:1.5;">${esc(narrative.execSummary)}</div>
+</div>` : ''}
 
 <!-- S1: DATENAKTUALITÄT -->
 <div class="sec-header"><span>1 &nbsp; DATENAKTUALITÄT & PLAUSIBILITÄT</span></div>
@@ -519,6 +593,12 @@ ${data.monteCarloResults?.mean ? `<table>
 </div>
 
 <div class="row"><span class="row-label">Signal-Score</span><span class="row-val">${fazit.pos.length} positiv / ${fazit.neg.length} negativ / ${fazit.neut.length} neutral = ${fazit.verdict}</span></div>
+
+${narrative.recommendation ? `
+<div style="background:#111b2e;border:1px solid #243050;border-radius:6px;padding:8px 10px;margin:6px 0;">
+  <div style="font-size:9px;font-weight:700;color:#6495cc;margin-bottom:4px;">Handlungsempfehlung</div>
+  <div style="font-size:8.5px;color:#c0c5d5;line-height:1.5;">${esc(narrative.recommendation)}</div>
+</div>` : ''}
 
 ${fazit.pos.length ? `<div class="sub">Positive Faktoren (${fazit.pos.length})</div><ul class="factor-list">${fazit.pos.map(p => `<li class="pos">+ ${esc(p)}</li>`).join('')}</ul>` : ''}
 ${fazit.neg.length ? `<div class="sub">Negative Faktoren (${fazit.neg.length})</div><ul class="factor-list">${fazit.neg.map(n => `<li class="neg">− ${esc(n)}</li>`).join('')}</ul>` : ''}

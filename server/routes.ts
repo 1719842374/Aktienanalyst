@@ -3163,7 +3163,7 @@ export async function registerRoutes(server: Server, app: Express) {
       if (!analysisData?.ticker) return res.status(400).json({ error: 'No analysis data provided' });
       console.log(`[PDF] Generating PDF for ${analysisData.ticker}...`);
       const { generateAnalysisHTML, renderHTMLtoPDF } = await import('./pdf-export');
-      const html = generateAnalysisHTML(analysisData);
+      const html = await generateAnalysisHTML(analysisData);
       const pdfBuffer = await renderHTMLtoPDF(html);
       console.log(`[PDF] Generated ${(pdfBuffer.length / 1024).toFixed(0)}KB PDF for ${analysisData.ticker}`);
       res.setHeader('Content-Type', 'application/pdf');
