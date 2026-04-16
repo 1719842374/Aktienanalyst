@@ -100,8 +100,91 @@ function buildFazit(data: any) {
   return { pos, neg, neut, score, verdict, konsDCF, worstCase, crvCons, raCrvCons, dcfBeiCRV3, totalGB, totalExpDmg, allBuy, ptUp };
 }
 
+// ===== Normalize data (fill computed fields the frontend calculates) =====
+function normalizeData(data: any): any {
+  const d = { ...data };
+
+  // Map technicalIndicators.currentStatus → technicals
+  if (!d.technicals || Object.keys(d.technicals).length === 0) {
+    const cs = d.technicalIndicators?.currentStatus || {};
+    d.technicals = {
+      priceAboveMA200: cs.priceAboveMA200 || false,
+      ma50AboveMA200: cs.ma50AboveMA200 || false,
+      macdAboveZero: cs.macdAboveZero || false,
+      macdRising: cs.macdRising || false,
+      buySignal: cs.buySignal || false,
+      ma200: cs.ma200Value || null,
+      ma50: cs.ma50Value || null,
+      macdValue: cs.macdValue || null,
+      macdSignal: cs.signalValue || null,
+    };
+  }
+
+  // Compute RSL from historicalPrices if missing
+  if (!d.rsl && d.historicalPrices?.length > 130) {
+    const prices = d.historicalPrices;
+    const recent = prices[prices.length - 1]?.close || d.currentPrice;
+    const slice130 = prices.slice(-130).map((p: any) => p.close).filter((c: number) => c > 0);
+    if (slice130.length > 0) {
+      const avg26w = slice130.reduce((a: number, b: number) => a + b, 0) / slice130.length;
+      d.rsl = { value: +(recent / avg26w * 100).toFixed(2), avg26w: +avg26w.toFixed(2) };
+    }
+  }
+
+  // Compute Reverse DCF if missing
+  if (!d.reverseDCF && d.fcfTTM && d.enterpriseValue) {
+    const wacc = d.sectorProfile?.waccScenarios?.avg || 9;
+    const ev = d.enterpriseValue || (d.marketCap + (d.totalDebt || 0) - (d.cashEquivalents || 0));
+    const impliedG = +(wacc - (d.fcfTTM / ev) * 100).toFixed(2);
+    d.reverseDCF = {
+      impliedGrowth: impliedG,
+      assessment: impliedG > 8 ? 'Ambitious (sportlich)' : impliedG > 5 ? 'Moderat' : impliedG > 0 ? 'Konservativ' : 'Negativ',
+    };
+  }
+
+  // Compute Monte Carlo (simplified GBM) if missing
+  if (!d.monteCarloResults && d.historicalPrices?.length > 252) {
+    const prices = d.historicalPrices;
+    const closes = prices.map((p: any) => p.close).filter((c: number) => c > 0);
+    if (closes.length > 252) {
+      const returns: number[] = [];
+      for (let i = 1; i < closes.length; i++) returns.push(Math.log(closes[i] / closes[i-1]));
+      const mu = returns.reduce((a, b) => a + b, 0) / returns.length * 252;
+      const sigma = Math.sqrt(returns.map(r => r ** 2).reduce((a, b) => a + b, 0) / returns.length * 252 - mu ** 2 / 252);
+      const S0 = d.currentPrice;
+      const dt = 1 / 252;
+      const N = 10000;
+      const T = 252;
+      const finals: number[] = [];
+      // Simple seed-based pseudo-random for reproducibility
+      let seed = 42;
+      const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+      const normRand = () => { const u1 = rand(); const u2 = rand(); return Math.sqrt(-2*Math.log(u1||0.001))*Math.cos(2*Math.PI*u2); };
+      for (let sim = 0; sim < N; sim++) {
+        let S = S0;
+        for (let t = 0; t < T; t++) S *= Math.exp((mu - sigma**2/2)*dt + sigma*Math.sqrt(dt)*normRand());
+        finals.push(S);
+      }
+      finals.sort((a, b) => a - b);
+      const mean = finals.reduce((a, b) => a + b, 0) / N;
+      const losses = finals.filter(s => s < S0).length;
+      const loss10 = finals.filter(s => s < S0 * 0.9).length;
+      const loss20 = finals.filter(s => s < S0 * 0.8).length;
+      d.monteCarloResults = {
+        mean: +mean.toFixed(2), median: +finals[Math.floor(N*0.5)].toFixed(2),
+        p10: +finals[Math.floor(N*0.1)].toFixed(2), p90: +finals[Math.floor(N*0.9)].toFixed(2),
+        p5: +finals[Math.floor(N*0.05)].toFixed(2), p95: +finals[Math.floor(N*0.95)].toFixed(2),
+        probLoss: +(losses/N*100).toFixed(1), probLoss10: +(loss10/N*100).toFixed(1), probLoss20: +(loss20/N*100).toFixed(1),
+      };
+    }
+  }
+
+  return d;
+}
+
 // ===== Generate HTML =====
-export function generateAnalysisHTML(data: any): string {
+export function generateAnalysisHTML(rawData: any): string {
+  const data = normalizeData(rawData);
   const sp = data.sectorProfile;
   const wS = sp?.waccScenarios;
   const g = data.epsGrowth5Y || 5;
@@ -139,7 +222,7 @@ export function generateAnalysisHTML(data: any): string {
   .row-label { color: #7880a0; font-size: 8.5px; }
   .row-val { color: #d0d5e0; font-weight: 600; font-size: 8.5px; text-align: right; }
   .para { font-size: 8px; color: #9aa0b0; margin: 2px 0 4px 4px; line-height: 1.45; }
-  table { width: 100%; border-collapse: collapse; margin: 3px 0; font-size: 8px; }
+  table { width: 100%; border-collapse: collapse; margin: 3px 0; font-size: 8px; table-layout: fixed; word-wrap: break-word; }
   th { background: #162034; color: #6495cc; font-weight: 600; padding: 3px 5px; text-align: left; border-bottom: 1px solid #243050; font-size: 7.5px; }
   td { padding: 2.5px 5px; border-bottom: 1px solid #1a2540; color: #b0b5c5; }
   tr:nth-child(even) td { background: #111b2c; }
@@ -178,7 +261,7 @@ ${data.consistencyWarnings?.length ? data.consistencyWarnings.map((w: any) => `<
 
 <!-- S2: INVESTMENTTHESE -->
 <div class="sec-header"><span>2 &nbsp; INVESTMENTTHESE & KATALYSATOREN</span></div>
-${data.description ? `<div class="sub">Unternehmensbeschreibung</div><div class="para">${esc(data.description.substring(0,500))}${data.description.length > 500 ? '…' : ''}</div>` : ''}
+${data.description ? `<div class="sub">Unternehmensbeschreibung</div><div class="para">${esc(data.description.substring(0,800))}${data.description.length > 800 ? '…' : ''}</div>` : ''}
 <div class="sub">Investmentthese</div>
 <div class="para">${esc(data.growthThesis || '')}</div>
 <div class="row"><span class="row-label">Peter Lynch</span><span class="row-val">${data.catalystReasoning?.lynchClassification || '—'}</span></div>
@@ -190,7 +273,7 @@ ${data.catalysts?.length ? `
 <div class="sub">Katalysatoren-Übersicht</div>
 <table>
 <tr><th>#</th><th>Name</th><th>Timeline</th><th>PoS%</th><th>Brutto↑</th><th>Einpr%</th><th>Netto↑</th><th>GB%</th></tr>
-${data.catalysts.map((c: any, i: number) => `<tr><td>K${i+1}</td><td>${esc(c.name.substring(0,40))}</td><td>${c.timeline}</td><td>${c.pos}%</td><td>+${f(c.bruttoUpside)}%</td><td>${c.einpreisungsgrad}%</td><td>+${f(c.nettoUpside,2)}%</td><td>${f(c.gb,2)}%</td></tr>`).join('')}
+${data.catalysts.map((c: any, i: number) => `<tr><td>K${i+1}</td><td>${esc(c.name)}</td><td>${c.timeline}</td><td>${c.pos}%</td><td>+${f(c.bruttoUpside)}%</td><td>${c.einpreisungsgrad}%</td><td>+${f(c.nettoUpside,2)}%</td><td>${f(c.gb,2)}%</td></tr>`).join('')}
 </table>
 <div class="row"><span class="row-label">Total Catalyst Upside (Σ GB)</span><span class="row-val pos">+${f(fazit.totalGB,2)}%</span></div>
 
@@ -207,7 +290,7 @@ ${data.newsItems?.length ? `
 <div class="sub">Aktuelle Nachrichten (EN/DE)</div>
 <table>
 <tr><th>#</th><th>Nachricht</th><th>Quelle</th><th>Alter</th><th>Spr.</th></tr>
-${data.newsItems.slice(0,10).map((n: any, i: number) => `<tr><td>${i+1}</td><td>${esc((n.title||'').substring(0,55))}</td><td>${esc((n.source||'').substring(0,18))}</td><td>${n.relativeTime||''}</td><td>${(n.lang||'en').toUpperCase()}</td></tr>`).join('')}
+${data.newsItems.slice(0,10).map((n: any, i: number) => `<tr><td>${i+1}</td><td>${esc(n.title||'')}</td><td>${esc((n.source||'').substring(0,20))}</td><td>${n.relativeTime||''}</td><td>${(n.lang||'en').toUpperCase()}</td></tr>`).join('')}
 </table>` : ''}
 
 <!-- S3: ZYKLUSANALYSE -->
@@ -265,7 +348,7 @@ ${data.peerComparison.peers.map((p: any) => `<tr><td>${p.ticker}</td><td>${f(p.p
 <div class="sec-header"><span>8 &nbsp; INVERSION — RISIKOEINPREISUNG</span></div>
 ${data.risks?.length ? `<table>
 <tr><th>Risiko</th><th>Kategorie</th><th>EW%</th><th>Impact%</th><th>Exp. Damage</th></tr>
-${data.risks.map((r: any) => `<tr><td>${esc(r.name.substring(0,42))}</td><td>${r.category}</td><td>${r.ew||r.probability}%</td><td>${r.impact}%</td><td>${f(r.expectedDamage,2)}%</td></tr>`).join('')}
+${data.risks.map((r: any) => `<tr><td>${esc(r.name)}</td><td>${r.category}</td><td>${r.ew||r.probability}%</td><td>${r.impact}%</td><td>${f(r.expectedDamage,2)}%</td></tr>`).join('')}
 </table>
 <div class="row"><span class="row-label">Total Expected Damage</span><span class="row-val neg">${f(fazit.totalExpDmg,2)}%</span></div>` : ''}
 
