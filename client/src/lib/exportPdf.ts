@@ -201,6 +201,18 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
   row("P/E vs Sektor", `${f(data.peRatio)} vs ${f(data.sectorAvgPE)}`);
   row("EV/EBITDA vs Sektor", `${f(data.evEbitda)} vs ${f(data.sectorAvgEVEBITDA)}`);
 
+  // === Reusable DCF calculator ===
+  const dcfCalc = (wacc: number, gr: number) => {
+    const _fcf = data.fcfTTM || 0;
+    const _shares = data.sharesOutstanding || 1;
+    const _nd = (data.totalDebt || 0) - (data.cashEquivalents || 0);
+    const _tg = 2.5;
+    let pv = 0, last = _fcf;
+    for (let yr = 1; yr <= 5; yr++) { last *= (1 + gr / 100); pv += last / Math.pow(1 + wacc / 100, yr); }
+    pv += (last * (1 + _tg / 100) / (wacc / 100 - _tg / 100)) / Math.pow(1 + wacc / 100, 5);
+    return (pv - _nd) / _shares;
+  };
+
   // ==================== S5: DCF-MODELL ====================
   sec(5, "DCF-MODELL (FCFF-basiert, WACC via CAPM, Gordon Growth Terminal Value)");
   const fs = data.financialStatements || {} as any;
@@ -217,18 +229,9 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
   // DCF Szenarien berechnen
   if (sp?.waccScenarios && data.fcfTTM && data.sharesOutstanding) {
     const wS = sp.waccScenarios;
-    const fcf = data.fcfTTM;
-    const shares = data.sharesOutstanding;
     const g = data.epsGrowth5Y || 5;
     const nd = (data.totalDebt || 0) - (data.cashEquivalents || 0);
     const tg = 2.5;
-
-    const dcfCalc = (wacc: number, gr: number) => {
-      let pv = 0, lastFCF = fcf;
-      for (let yr = 1; yr <= 5; yr++) { lastFCF *= (1 + gr / 100); pv += lastFCF / Math.pow(1 + wacc / 100, yr); }
-      pv += (lastFCF * (1 + tg / 100) / (wacc / 100 - tg / 100)) / Math.pow(1 + wacc / 100, 5);
-      return (pv - nd) / shares;
-    };
 
     const konsFV = dcfCalc(wS.kons, g * 0.7);
     const baseFV = dcfCalc(wS.avg, g);
@@ -262,17 +265,34 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
   // ==================== S6: CRV ====================
   sec(6, "RISIKOADJUSTIERTES CRV");
   row("Max Drawdown (hist.)", `${data.maxDrawdownHistory || "—"}% (${data.maxDrawdownYear || "?"})`);
-  if (data.currentPrice && data.analystPT?.high) {
-    const ddPct = parseFloat(String(data.maxDrawdownHistory)) || 30;
-    const worstCase = data.currentPrice * (1 - ddPct / 100);
-    const bestCase = data.analystPT.high;
-    const fairValue = data.analystPT.median || data.currentPrice;
-    const crv = (data.currentPrice - worstCase) > 0 ? (bestCase - data.currentPrice) / (data.currentPrice - worstCase) : 0;
-    row("Best Case (PT High)", `$${f(bestCase, 2)}`);
-    row("Fair Value (PT Median)", `$${f(fairValue, 2)}`);
-    row("Worst Case (hist. DD)", `$${f(worstCase, 2)}`);
-    row("CRV (Fair Value - Worst) / (Kurs - Worst)", f(crv, 2));
-    para(`Rechenweg: CRV = ($${f(fairValue,2)} - $${f(worstCase,2)}) / ($${data.currentPrice.toFixed(2)} - $${f(worstCase,2)}) = ${f(crv, 2)}`);
+  if (data.currentPrice && data.analystPT?.high && sp?.waccScenarios) {
+    // Worst Case: same 3-method min() as frontend Section13
+    const ddPctCRV = parseFloat(String(data.maxDrawdownHistory)) || 30;
+    const sectorDD = (data as any).sectorMaxDrawdown || 35;
+    const m1 = data.currentPrice * (1 - Math.min(0.9, (data.beta5Y || 1) * 0.5)); // Beta x 50%
+    const m2 = data.currentPrice * (1 - sectorDD / 100);                           // Sector DD
+    const m3 = data.currentPrice * (1 - ddPctCRV / 100);                            // Hist DD
+    const wcCRV = Math.min(m1, m2, m3);
+
+    // Fair Value = Conservative DCF (same as S5)
+    const konsDCFcrv = sp.waccScenarios ? dcfCalc(sp.waccScenarios.kons, (data.epsGrowth5Y || 5) * 0.7) : data.currentPrice;
+    const optDCFcrv = sp.waccScenarios ? dcfCalc(sp.waccScenarios.opt, (data.epsGrowth5Y || 5) * 1.2) : data.currentPrice * 1.5;
+    const crvBase = (data.currentPrice - wcCRV) > 0 ? (konsDCFcrv - wcCRV) / (data.currentPrice - wcCRV) : 0;
+    const crvOpt = (data.currentPrice - wcCRV) > 0 ? (optDCFcrv - wcCRV) / (data.currentPrice - wcCRV) : 0;
+    const dcfBeiCRV3crv = (konsDCFcrv + 3 * wcCRV) / 4;
+
+    sub("Worst Case Methoden");
+    tbl(["Methode", "Formel", "Ergebnis"], [
+      ["M1: Beta x Max DD", `Kurs x (1 - min(90%, ${f(data.beta5Y||1,2)} x 50%))`, `$${f(m1,2)}`],
+      ["M2: Sektor-Drawdown", `Kurs x (1 - ${sectorDD}%)`, `$${f(m2,2)}`],
+      ["M3: Hist. Drawdown", `Kurs x (1 - ${f(ddPctCRV,1)}%)`, `$${f(m3,2)}`],
+    ]);
+    row("Worst Case = min(M1,M2,M3)", `$${f(wcCRV,2)}`);
+    row("Fair Value (Kons. DCF)", `$${f(konsDCFcrv,2)}`);
+    row("CRV Base (Konservativ)", `${f(crvBase,1)}:1 ${crvBase >= 2.5 ? "(Attraktiv)" : crvBase >= 2 ? "(Akzeptabel)" : "(Unguenstig)"}`);
+    row("CRV Optimistisch", `${f(crvOpt,1)}:1`);
+    row("DCF bei CRV 3:1 (Max-Entry)", `$${f(dcfBeiCRV3crv,2)} ${data.currentPrice > dcfBeiCRV3crv ? "- Kurs UEBER Max-Entry" : "- Kurs UNTER Max-Entry"}`);
+    para(`Rechenweg: CRV = (Fair Value - Worst Case) / (Kurs - Worst Case) = ($${f(konsDCFcrv,2)} - $${f(wcCRV,2)}) / ($${data.currentPrice.toFixed(2)} - $${f(wcCRV,2)}) = ${f(crvBase,2)}:1`);
   }
 
   // ==================== S7: RELATIVE BEWERTUNG ====================
@@ -423,7 +443,9 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
         if (typeof cat === 'object' && cat.category) {
           np(6);
           doc.setFontSize(6); doc.setFont("helvetica","bold"); doc.setTextColor(140,155,180);
-          doc.text(`${cat.icon || ""} ${cat.categoryDE || cat.category}`, M + 1, y + 2.5); y += 4;
+          // Strip emojis (jsPDF can't render Unicode emojis)
+          const catLabel = (cat.categoryDE || cat.category || "").replace(/[^\x20-\x7E\u00C0-\u024F\u00DF]/g, "").trim();
+          doc.text(`[${catLabel.charAt(0)}] ${catLabel}`, M + 1, y + 2.5); y += 4;
           if (cat.factors?.length) {
             for (const ff of cat.factors.slice(0, 3)) {
               para(`${ff.name}: ${ff.description || ff.stockCorrelationNote || ""} [Impact: ${ff.impact}, Severity: ${ff.severity}]`, 250);
@@ -502,22 +524,12 @@ export async function exportAnalysisPdf(data: StockAnalysis) {
   y += 2;
   const posList: string[] = [], negList: string[] = [], neutList: string[] = [];
 
-  // DCF calculations for Fazit
+  // DCF calculations for Fazit (reuse dcfCalc from S5)
   const wS = sp?.waccScenarios;
-  const fcfVal = data.fcfTTM || 0;
-  const sharesVal = data.sharesOutstanding || 1;
   const gVal = data.epsGrowth5Y || 5;
-  const ndVal = (data.totalDebt || 0) - (data.cashEquivalents || 0);
-  const tgVal = 2.5;
-  const dcfCalcF = (wacc: number, gr: number) => {
-    let pv = 0, last = fcfVal;
-    for (let yr = 1; yr <= 5; yr++) { last *= (1 + gr / 100); pv += last / Math.pow(1 + wacc / 100, yr); }
-    pv += (last * (1 + tgVal / 100) / (wacc / 100 - tgVal / 100)) / Math.pow(1 + wacc / 100, 5);
-    return (pv - ndVal) / sharesVal;
-  };
-  const konsDCF = wS ? dcfCalcF(wS.kons, gVal * 0.7) : 0;
-  const optDCF = wS ? dcfCalcF(wS.opt, gVal * 1.2) : 0;
-  const stressDCF = wS ? dcfCalcF(wS.kons * 1.2, gVal * 0.3) : 0;
+  const konsDCF = wS ? dcfCalc(wS.kons, gVal * 0.7) : 0;
+  const optDCF = wS ? dcfCalc(wS.opt, gVal * 1.2) : 0;
+  const stressDCF = wS ? dcfCalc(wS.kons * 1.2, gVal * 0.3) : 0;
   const konsUpside = data.currentPrice ? (konsDCF / data.currentPrice - 1) * 100 : 0;
   const stressDown = data.currentPrice ? (stressDCF / data.currentPrice - 1) * 100 : 0;
   const totalGB = data.catalysts?.reduce((s: number, c: any) => s + c.gb, 0) || 0;
