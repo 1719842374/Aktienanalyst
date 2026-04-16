@@ -129,6 +129,11 @@ export function Section2({ data }: Props) {
                     </p>
                     <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                       <span className="text-[10px] text-foreground/40">{news.source}</span>
+                      {(news as any).lang && (
+                        <span className={`text-[8px] px-1 py-px rounded font-semibold uppercase ${(news as any).lang === 'de' ? 'bg-amber-500/15 text-amber-400' : 'bg-blue-500/15 text-blue-400'}`}>
+                          {(news as any).lang}
+                        </span>
+                      )}
                       <span className="text-[10px] text-foreground/30">·</span>
                       <span className="text-[10px] text-foreground/40">{news.relativeTime}</span>
                       {scoreStr && (
