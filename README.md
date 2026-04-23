@@ -54,31 +54,264 @@ Erstellt für **jede Aktie weltweit** (US, Europa, Asien) eine objektive, konser
 | 16 | **Monte Carlo Simulation** | GBM mit 10.000 Iterationen, Percentil-Verteilung |
 | 17 | **Zusammenfassung & Fazit** | Gesamtbewertung, Signal-Score, dynamischer Fazit-Satz |
 
-### Bewertungs-Framework
+---
+
+## Methodik & Formeln
+
+### DCF-Methodik (FCFF-basiert)
+
+Der DCF-Ansatz bewertet Unternehmen auf Basis der abgezinsten Free Cash Flows to the Firm über 10 Jahre plus Terminal Value. **FCFF** (statt FCFE) wird gewählt, weil er unabhängig von der Kapitalstruktur ist.
+
+#### Free Cash Flow to the Firm
 
 ```
 FCFF = EBIT × (1 - Tax) + D&A - Capex - ΔWC
-Terminal Value = FCFF₁₁ / (WACC - g)
-WACC = E/V × Re + D/V × Rd × (1-t)
-Re = Rf + β × ERP (CAPM)
 ```
+
+**Komponenten:**
+- **EBIT** (Earnings Before Interest and Tax) — nicht EBITDA. Spiegelt echte operative Profitabilität wider
+- **Tax** — effektive Steuerrate (Default: 21% US, 30% DE, 22% DK)
+- **D&A** — Depreciation & Amortization (wird wieder hinzugefügt, da nicht-cash)
+- **Capex** — Capital Expenditures (Investitionen in Sachanlagen)
+- **ΔWC** — Veränderung Working Capital (Forderungen, Vorräte minus Verbindlichkeiten)
+
+#### 10-Jahres-Projektion + Terminal Value
+
+```
+PV(FCFF) = Σₜ₌₁¹⁰ FCFFₜ / (1 + WACC)^t
+
+Terminal Value (Gordon Growth Model):
+TV = FCFF₁₁ / (WACC - g)
+
+Enterprise Value (EV):
+EV = PV(FCFF₁₋₁₀) + PV(TV)
+
+Equity Value:
+Equity = EV - Net Debt - Minority Interests
+Fair Value / Aktie = Equity / Shares Outstanding
+```
+
+**Wachstumsstufen (Fading Growth):**
+- Jahr 1-3: Analysten-Consensus-Growth (oder historischer 5Y-CAGR)
+- Jahr 4-7: Lineares Fading auf nachhaltiges Wachstum
+- Jahr 8-10: Nachhaltiges Wachstum (sektor-spezifisch: 2-4%)
+- Terminal Growth **g**: max(GDP-Wachstum, 2.5%), hart gecapped bei 4%
+
+#### DCF-Szenarien (3 Varianten)
+
+| Szenario | WACC | Growth-Annahme | Anwendung |
+|----------|------|---------------|-----------|
+| **Konservativ** | WACC + 0.5-1.5pp | Growth × 0.7 | Untergrenze — "Was wenn alles schiefgeht?" |
+| **Base Case** | WACC (Damodaran) | Analysten-Consensus | Realistische Mitte |
+| **Optimistisch** | WACC - 0.5-1.5pp | Growth × 1.2 | Obergrenze — Bull Case |
+
+### WACC-Formeln (CAPM + Sektor-Profil)
+
+#### Weighted Average Cost of Capital
+
+```
+WACC = (E/V) × Re + (D/V) × Rd × (1 - t)
+```
+
+**Wo:**
+- **E/V** — Equity / Enterprise Value (gecapped bei 40%-100%)
+- **D/V** — Debt / Enterprise Value (gecapped bei 0%-60%)
+- **Re** — Cost of Equity (via CAPM)
+- **Rd** — Cost of Debt (Risk-free + Credit Spread)
+- **t** — Steuerrate
+
+#### Cost of Equity (CAPM)
+
+```
+Re = Rf + β × ERP
+```
+
+**Parameter:**
+- **Rf** (Risk-Free Rate): 10Y US-Treasury Yield (aktuell ~4.2-4.7%)
+- **β** (Beta): 5Y-Beta aus Kursverlauf vs. S&P 500
+- **ERP** (Equity Risk Premium): Damodaran Implied Equity Risk Premium (aktuell ~5.5%)
+
+#### Cost of Debt
+
+```
+Rd = Rf + Credit Spread
+Credit Spread basiert auf Bonität:
+  AAA/AA: +0.5-1.0%
+  A:      +1.0-1.5%
+  BBB:    +1.5-2.5%
+  BB/B:   +3.0-6.0%
+  CCC:    +8.0%+
+```
+
+#### WACC-Sensitivität zu Zinsveränderungen
+
+| Zinsänderung | WACC-Impact | DCF-Impact |
+|-------------|-------------|------------|
+| -100bp | -0.5 bis -1.0% | +8% bis +15% |
+| +100bp | +0.5 bis +1.0% | -8% bis -15% |
+
+#### Sektor-Profile (Damodaran NYU Stern)
+
+Jeder Sektor hat charakteristische WACC-Niveaus:
+
+| Sektor | WACC-Range | Beta | D/V Typisch |
+|--------|-----------|------|-------------|
+| Technology | 8-12% | 1.2-1.8 | 0-20% |
+| Healthcare (Pharma) | 7-10% | 0.7-1.1 | 15-40% |
+| Financials | 9-13% | 1.1-1.5 | 50-80% |
+| Energy | 8-12% | 1.0-1.5 | 30-50% |
+| Consumer Defensive | 6-9% | 0.5-0.9 | 30-50% |
+| Utilities | 5-8% | 0.4-0.7 | 50-70% |
+
+**Datenquelle:** [Damodaran Online](http://pages.stern.nyu.edu/~adamodar/) — NYU Stern
+
+### Anti-Bias-Protokoll
+
+Das Kernprinzip: **Kein selektiver Upside ohne symmetrischen Downside.** Für jede positive These muss eine gleichwertige negative These formuliert werden.
+
+#### 1. Symmetrie-Pflicht bei Katalysatoren
+
+```
+Für jeden Upside-Katalysator muss ein Downside-Risiko existieren:
+  K1 (+18% Revenue Beat) ↔ D1 (-15% Earnings Miss)
+  K2 (+10% Margin Expansion) ↔ D2 (-12% Kostendruck)
+  K3 (+8% Pipeline Approval) ↔ D3 (-20% Pipeline Failure)
+```
+
+#### 2. PoS-Herleitung mit Sicherheitsmarge
+
+```
+PoS (Probability of Success) = Historische Basis - 10-15% Sicherheitsmarge
+
+Beispiel Revenue Growth Acceleration:
+  Historische Basis: 60% der Unternehmen erreichen
+  Sicherheitsmarge: -15%
+  → PoS = 45%
+```
+
+#### 3. Einpreisungsgrad (Skepsis gegenüber Konsens)
+
+```
+Einpreisungsgrad via Konsens oder Reverse DCF geschätzt:
+  Hoch eingepreist (>50%): Netto-Upside = Brutto × 0.4
+  Moderat eingepreist (25-50%): Netto-Upside = Brutto × 0.6
+  Niedrig eingepreist (<25%): Netto-Upside = Brutto × 0.8
+```
+
+#### 4. Gewichteter Beitrag (GB)
+
+```
+GB = PoS × Netto-Upside
+
+Catalyst-Adjusted Fair Value = Kons. DCF × (1 + Σ GB)
+```
+
+#### 5. Automatische Risiko-Einpreisung
+
+Jede Aktie erhält standardmäßig 5 Downside-Katalysatoren:
+
+| Risiko | EW | Impact | Expected Damage |
+|--------|-----|--------|----------------|
+| Macro Recession / Demand Shock | 20% | 16-22% | 3.2-4.4% |
+| Earnings Miss / Guidance Cut | 25% | 15% | 3.75% |
+| Multiple Compression (Rising Rates) | 30% | 11-14% | 3.3-4.2% |
+| Drug Pricing / Patent Cliff (Pharma) | 25% | 20% | 5.0% |
+| Government Policy Dependency | 30% | 13-18% | 3.9-5.4% |
+
+```
+Total Expected Damage = Σ (EW × Impact)
+Risk-Adjusted Fair Value = Fair Value × (1 - Total Expected Damage)
+```
+
+#### 6. Inverter DCF (Risikoadjustierter DCF)
+
+```
+Bei WACC_adj > WACC_base:
+  WACC_adj = WACC + (Total Expected Damage / 2)
+  Growth_adj = Growth × (1 - Total Expected Damage)
+
+→ Inverted DCF = Fair Value mit adjustierten Parametern
+```
+
+Wenn **Inverted DCF < aktueller Kurs**, triggert die automatische Anti-Bias-Warnung.
+
+### Risiko-Adjusted CRV (Chance-Risiko-Verhältnis)
 
 ```
 CRV = (Fair Value - Worst Case) / (Kurs - Worst Case)
-Monte Carlo: S(t+Δt) = S(t) · exp((μ - σ²/2)·Δt + σ·√Δt·Z)
-RSL = (Kurs / 26-Wochen-Durchschnitt) × 100
-BUY: Kurs > MA200 AND MA50 > MA200 AND MACD > 0 + steigend
 ```
 
-### Sicherheits-Mechanismen
+#### Worst Case (3-Methoden-Minimum)
 
-| Feature | Beschreibung |
-|---------|-------------|
-| **FCF Haircut** | Automatisch bei Gov. Exposure > 20% |
-| **WACC Floor** | Minimum 5%, Debt-Ratio gecapped bei 60% |
-| **DCF Sanity Cap** | Gecapped bei growth-adjusted PE × EPS |
-| **Anti-Bias** | Symmetrische Downside für jeden Upside-Katalysator |
-| **Geschäftsmodell-Warnung** | Automatisch bei Pharma, SaaS, neg. FCF |
+```
+M1: Kurs × (1 - min(90%, β × 50%))      // Beta-basiert
+M2: Kurs × (1 - 35%)                     // Sektor-Drawdown
+M3: Kurs × (1 - Historischer Max-DD)     // Historischer Worst Case
+
+Worst Case = min(M1, M2, M3)              // Konservativste Schätzung
+```
+
+#### CRV-Bewertungs-Schwellen
+
+| CRV | Bewertung | Handlungsempfehlung |
+|-----|-----------|---------------------|
+| > 3.0:1 | Sehr Attraktiv | Starker Kauf möglich |
+| 2.0-3.0:1 | Akzeptabel | Kauf bei Bestätigung |
+| 1.0-2.0:1 | Grenzwertig | Abwarten / Teil-Position |
+| < 1.0:1 | Unfavorable | **Nicht kaufen** — Kurs zu nah am Worst Case |
+
+#### Max-Entry-Preis bei CRV 3:1
+
+```
+Max-Entry = (Fair Value + 3 × Worst Case) / 4
+```
+
+Das ist der höchste Kurs, bei dem noch ein CRV von 3:1 erreichbar ist.
+
+### Weitere Formeln
+
+```
+Monte Carlo (GBM):
+  S(t+Δt) = S(t) · exp((μ - σ²/2) · Δt + σ · √Δt · Z)
+  μ = Drift (historischer Mean Return)
+  σ = Volatilität (Standard Deviation der Log-Returns)
+  Z ~ N(0,1) Normal-Random
+  10.000 Iterationen über 252 Handelstage
+
+RSL (Levy Relative Strength):
+  RSL = (Kurs / 26-Wochen-Durchschnitt) × 100
+  > 110: Strong Momentum
+  105-110: Neutral
+  < 105: Weak — DCF-Growth-Adjustment -5 bis -10%
+
+Reverse DCF (Implied Growth):
+  g* = WACC - (FCF / EV)
+  g* > 8%: Unrealistisch ("sportlich")
+  g* 4-8%: Moderat
+  g* < 4%: Konservativ
+  g* < 0%: Markt preist Schrumpfung ein (⚠)
+
+BUY-Signal (alle Bedingungen müssen erfüllt sein):
+  ✓ Kurs > MA200
+  ✓ MA50 > MA200
+  ✓ MACD > 0
+  ✓ MACD steigend
+```
+
+### Sicherheits-Mechanismen & Sanity Checks
+
+| Feature | Beschreibung | Auto-Trigger |
+|---------|-------------|--------------|
+| **FCF Haircut** | FCF wird um 10-20% reduziert | Gov. Exposure > 20% |
+| **WACC Floor** | Minimum 5% WACC, Debt-Ratio gecapped bei 60% | Immer aktiv |
+| **DCF Sanity Cap** | DCF gecapped bei growth-adjusted PE × EPS | Immer aktiv |
+| **Anti-Bias-Warnung** | Automatische Warnung bei inkonsistenten Signalen | Inverted DCF < Kurs |
+| **Geschäftsmodell-Warnung** | Spezielle Hinweise zu Sektor-Risiken | Pharma, SaaS, neg. FCF |
+| **Consistency Check** | 9 Regeln gegen widersprüchliche Kennzahlen | Immer aktiv |
+| **RSL Growth-Adjustment** | DCF-Growth -5 bis -10% bei RSL < 105 | Auto bei schwachem Momentum |
+| **Reverse DCF Plausibilität** | Warnung wenn implizites Wachstum > 8% | Auto |
+
+---
 
 ### Unterstützte Märkte
 
