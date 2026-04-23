@@ -2,6 +2,12 @@ import type { Express } from "express";
 import { execSync } from "child_process";
 
 // ============================================================
+// Geopolitical Analysis Metadata
+// Update quarterly when reviewing the static geopolitical narrative below.
+// ============================================================
+const GEO_ANALYSIS = { lastUpdated: "April 2026" };
+
+// ============================================================
 // Generic Data Helpers
 // ============================================================
 
@@ -1129,7 +1135,8 @@ function generateFazit(
   }
 
   // Section 3: Geopolitical/Macro Risks (Iran/Hormuz + Inflation + Rates)
-  let geoText = "";
+  // NOTE: Static analysis from GEO_ANALYSIS.lastUpdated. Update this constant quarterly.
+  let geoText = `[Stand: ${GEO_ANALYSIS.lastUpdated}] `;
   geoText += `Die Sperrung der Straße von Hormuz durch den Iran-Konflikt stellt den gravierendsten exogenen Schock dar. Rund 20% der globalen Ölversorgung und ein Fünftel des weltweiten LNG-Handels fließen durch diese Meerenge. `;
   geoText += `Die Dallas Fed schätzt einen WTI-Ölpreis von $98-132/Barrel bei andauernder Sperrung, mit einem BIP-Wachstumsrückgang von bis zu 2,9 Prozentpunkten. `;
   geoText += `Goldman Sachs rechnet mit einem Inflationsanstieg um ~1 Prozentpunkt und hat die US-Rezessionswahrscheinlichkeit auf 30% angehoben. `;

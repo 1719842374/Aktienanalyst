@@ -4634,7 +4634,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
       // If 5Y failed (rate limited), try just 1Y after a delay
       if (allPriceData.length === 0) {
-        try { execSync("sleep 2", { timeout: 5000 }); } catch {}
+        await new Promise(r => setTimeout(r, 2000)); // non-blocking rate-limit backoff
         const oneYearAgo = nowSec - 365 * 86400;
         allPriceData = fetchCGRange(oneYearAgo, nowSec);
         console.log(`[BTC] CoinGecko 1Y fallback: ${allPriceData.length} data points`);
