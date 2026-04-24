@@ -354,6 +354,7 @@ export interface StockAnalysis {
 
   // Sector averages
   sectorAvgPE: number;
+  sectorAvgForwardPE: number;
   sectorAvgEVEBITDA: number;
   sectorAvgPEG: number;
 

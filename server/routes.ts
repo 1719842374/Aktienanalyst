@@ -163,6 +163,7 @@ function getSectorDefaults(sector: string, industry: string): {
   politicalCycle: string;
   sectorMaxDrawdown: number;
   sectorAvgPE: number;
+  sectorAvgForwardPE: number;
   sectorAvgEVEBITDA: number;
   sectorAvgPEG: number;
   sectorAvgPS: number;
@@ -177,7 +178,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Secular Growth",
       politicalCycle: "Low sensitivity – tech regulation risk moderate",
       sectorMaxDrawdown: 35,
-      sectorAvgPE: 28, sectorAvgEVEBITDA: 20, sectorAvgPEG: 1.5,
+      sectorAvgPE: 28, sectorAvgForwardPE: 24, sectorAvgEVEBITDA: 20, sectorAvgPEG: 1.5,
       sectorAvgPS: 6.0, sectorAvgPB: 8.0, sectorEPSGrowth: 15,
     };
   } else if (s.includes("health")) {
@@ -187,7 +188,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Defensive / Non-Cyclical",
       politicalCycle: "High – healthcare policy, drug pricing reform",
       sectorMaxDrawdown: 25,
-      sectorAvgPE: 22, sectorAvgEVEBITDA: 15, sectorAvgPEG: 1.8,
+      sectorAvgPE: 22, sectorAvgForwardPE: 19, sectorAvgEVEBITDA: 15, sectorAvgPEG: 1.8,
       sectorAvgPS: 4.5, sectorAvgPB: 4.0, sectorEPSGrowth: 12,
     };
   } else if (s.includes("financ")) {
@@ -197,7 +198,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Cyclical – Interest Rate Sensitive",
       politicalCycle: "High – banking regulation, monetary policy",
       sectorMaxDrawdown: 45,
-      sectorAvgPE: 14, sectorAvgEVEBITDA: 10, sectorAvgPEG: 1.3,
+      sectorAvgPE: 14, sectorAvgForwardPE: 13, sectorAvgEVEBITDA: 10, sectorAvgPEG: 1.3,
       sectorAvgPS: 3.0, sectorAvgPB: 1.5, sectorEPSGrowth: 8,
     };
   } else if (s.includes("energy")) {
@@ -207,7 +208,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Deep Cyclical – Commodity Linked",
       politicalCycle: "Very High – energy policy, ESG mandates",
       sectorMaxDrawdown: 55,
-      sectorAvgPE: 12, sectorAvgEVEBITDA: 6, sectorAvgPEG: 1.0,
+      sectorAvgPE: 12, sectorAvgForwardPE: 11, sectorAvgEVEBITDA: 6, sectorAvgPEG: 1.0,
       sectorAvgPS: 1.2, sectorAvgPB: 1.8, sectorEPSGrowth: 5,
     };
   } else if (s.includes("consumer") && (s.includes("discr") || s.includes("cycl"))) {
@@ -221,7 +222,7 @@ function getSectorDefaults(sector: string, industry: string): {
         cycleClass: "Cyclical – Luxury / Aspirational Spend",
         politicalCycle: "Moderate – tariffs, China demand, wealth effects",
         sectorMaxDrawdown: 40,
-        sectorAvgPE: 25, sectorAvgEVEBITDA: 16, sectorAvgPEG: 1.8,
+        sectorAvgPE: 25, sectorAvgForwardPE: 22, sectorAvgEVEBITDA: 16, sectorAvgPEG: 1.8,
         sectorAvgPS: 2.5, sectorAvgPB: 5.0, sectorEPSGrowth: 10,
       };
     }
@@ -231,7 +232,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Cyclical – Consumer Spending",
       politicalCycle: "Moderate – tariffs, consumer confidence",
       sectorMaxDrawdown: 40,
-      sectorAvgPE: 24, sectorAvgEVEBITDA: 16, sectorAvgPEG: 1.4,
+      sectorAvgPE: 24, sectorAvgForwardPE: 21, sectorAvgEVEBITDA: 16, sectorAvgPEG: 1.4,
       sectorAvgPS: 1.5, sectorAvgPB: 4.0, sectorEPSGrowth: 10,
     };
   } else if (s.includes("consumer") && (s.includes("stapl") || s.includes("defens"))) {
@@ -241,7 +242,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Defensive – Consumer Staples",
       politicalCycle: "Low – essential goods, moderate regulatory risk",
       sectorMaxDrawdown: 20,
-      sectorAvgPE: 22, sectorAvgEVEBITDA: 15, sectorAvgPEG: 2.2,
+      sectorAvgPE: 22, sectorAvgForwardPE: 20, sectorAvgEVEBITDA: 15, sectorAvgPEG: 2.2,
       sectorAvgPS: 2.0, sectorAvgPB: 5.5, sectorEPSGrowth: 6,
     };
   } else if (s.includes("commun")) {
@@ -251,7 +252,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Secular Growth / Communication",
       politicalCycle: "Moderate – content regulation, antitrust",
       sectorMaxDrawdown: 35,
-      sectorAvgPE: 20, sectorAvgEVEBITDA: 12, sectorAvgPEG: 1.4,
+      sectorAvgPE: 20, sectorAvgForwardPE: 17, sectorAvgEVEBITDA: 12, sectorAvgPEG: 1.4,
       sectorAvgPS: 2.0, sectorAvgPB: 3.5, sectorEPSGrowth: 10,
     };
   } else if (s.includes("industrial")) {
@@ -261,7 +262,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Cyclical – Capex Cycle",
       politicalCycle: "Moderate – infrastructure spending, trade policy",
       sectorMaxDrawdown: 40,
-      sectorAvgPE: 20, sectorAvgEVEBITDA: 13, sectorAvgPEG: 1.5,
+      sectorAvgPE: 20, sectorAvgForwardPE: 18, sectorAvgEVEBITDA: 13, sectorAvgPEG: 1.5,
       sectorAvgPS: 3.0, sectorAvgPB: 2.0, sectorEPSGrowth: 5,
     };
   } else if (s.includes("real estate")) {
@@ -271,7 +272,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Cyclical – Rate Sensitive",
       politicalCycle: "Moderate – housing policy, zoning",
       sectorMaxDrawdown: 45,
-      sectorAvgPE: 35, sectorAvgEVEBITDA: 20, sectorAvgPEG: 2.0,
+      sectorAvgPE: 35, sectorAvgForwardPE: 33, sectorAvgEVEBITDA: 20, sectorAvgPEG: 2.0,
       sectorAvgPS: 8.0, sectorAvgPB: 2.5, sectorEPSGrowth: 4,
     };
   } else if (s.includes("util")) {
@@ -281,7 +282,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Defensive – Regulated",
       politicalCycle: "Moderate – utility regulation, clean energy mandates",
       sectorMaxDrawdown: 20,
-      sectorAvgPE: 18, sectorAvgEVEBITDA: 12, sectorAvgPEG: 2.5,
+      sectorAvgPE: 18, sectorAvgForwardPE: 16.5, sectorAvgEVEBITDA: 12, sectorAvgPEG: 2.5,
       sectorAvgPS: 3.0, sectorAvgPB: 3.0, sectorEPSGrowth: 8,
     };
   } else {
@@ -291,7 +292,7 @@ function getSectorDefaults(sector: string, industry: string): {
       cycleClass: "Mixed Cyclical",
       politicalCycle: "Moderate – general policy exposure",
       sectorMaxDrawdown: 35,
-      sectorAvgPE: 20, sectorAvgEVEBITDA: 14, sectorAvgPEG: 1.5,
+      sectorAvgPE: 20, sectorAvgForwardPE: 18, sectorAvgEVEBITDA: 14, sectorAvgPEG: 1.5,
       sectorAvgPS: 1.5, sectorAvgPB: 2.5, sectorEPSGrowth: 7,
     };
   }
@@ -4129,6 +4130,7 @@ export async function registerRoutes(server: Server, app: Express) {
         historicalPrices,
 
         sectorAvgPE: sectorDefs.sectorAvgPE,
+        sectorAvgForwardPE: sectorDefs.sectorAvgForwardPE,
         sectorAvgEVEBITDA: sectorDefs.sectorAvgEVEBITDA,
         sectorAvgPEG: sectorDefs.sectorAvgPEG,
 

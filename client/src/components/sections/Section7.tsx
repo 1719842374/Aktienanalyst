@@ -8,8 +8,11 @@ import EpsGrowthChart from "./EpsGrowthChart";
 interface Props { data: StockAnalysis }
 
 export function Section7({ data }: Props) {
+  // Use TTM sector avg for TTM stock P/E, and forward sector avg for forward stock P/E
+  // Fallback: if backend didn't ship sectorAvgForwardPE (older cached payloads), fall back to TTM to avoid NaN
+  const sectorFwdPE = data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE;
   const trailingPEPremium = data.sectorAvgPE > 0 ? ((data.peRatio / data.sectorAvgPE) - 1) * 100 : 0;
-  const fwdPEPremium = data.sectorAvgPE > 0 ? ((data.forwardPE / data.sectorAvgPE) - 1) * 100 : 0;
+  const fwdPEPremium = sectorFwdPE > 0 ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
   const evEbitdaPremium = data.sectorAvgEVEBITDA > 0 ? ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100 : 0;
 
   // Revenue growth vs sector (use TAM CAGR as sector growth proxy)
@@ -24,7 +27,7 @@ export function Section7({ data }: Props) {
 
   const metrics = [
     { label: "P/E (TTM)", stock: data.peRatio, sector: data.sectorAvgPE, premium: trailingPEPremium, desc: "Aktuell" },
-    { label: "Forward P/E", stock: data.forwardPE, sector: data.sectorAvgPE, premium: fwdPEPremium, desc: "Erwartet" },
+    { label: "Forward P/E", stock: data.forwardPE, sector: sectorFwdPE, premium: fwdPEPremium, desc: "Erwartet" },
     { label: "EV/EBITDA", stock: data.evEbitda, sector: data.sectorAvgEVEBITDA, premium: evEbitdaPremium, desc: "" },
     { label: "PEG", stock: data.pegRatio, sector: data.sectorAvgPEG, premium: ((data.pegRatio / data.sectorAvgPEG) - 1) * 100, desc: "" },
     { label: "Revenue Growth", stock: companyGrowth, sector: sectorGrowth, premium: companyGrowth - sectorGrowth, desc: "YoY vs. Branche", isGrowth: true },
@@ -243,7 +246,7 @@ export function Section7({ data }: Props) {
                 {formatNumber(fwdPEPremium, 1)}%
               </div>
               <div className="text-[10px] text-muted-foreground mt-0.5">
-                Fwd P/E {formatNumber(data.forwardPE, 1)} vs. {formatNumber(data.sectorAvgPE, 1)}
+                Fwd P/E {formatNumber(data.forwardPE, 1)} vs. {formatNumber(sectorFwdPE, 1)}
               </div>
             </div>
             <div className={`rounded-md p-3 border ${
