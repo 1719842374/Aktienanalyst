@@ -488,47 +488,84 @@ async function fetchPeerComparison(
         if (!d.epsHistory) d.epsHistory = [];
 
         const rows = parseMarkdownTable(section);
+        // Collect (date, value) pairs per metric so we can pick the MOST RECENT non-zero value
+        // (Without this, whichever row iterated last wins, which may be the oldest quarter
+        // depending on API sort order → stale P/E, P/S, P/B, Market Cap.)
+        const metricBuckets: Record<string, { date: string; value: number }[]> = {
+          pe: [], ps: [], pb: [], marketCap: [], eps: [],
+        };
         for (const row of rows) {
           const date = row['date'] || '';
           for (const [key, val] of Object.entries(row)) {
             const kl = key.toLowerCase();
             const num = parseFloat(String(val).replace(/[,$%]/g, ''));
             if (isNaN(num)) continue;
-            if (kl.includes('price_to_earnings') || kl.includes('p/e')) d.pe = num;
-            if (kl.includes('price_to_sales') || kl.includes('p/s')) d.ps = num;
-            if (kl.includes('price_to_book') || kl.includes('p/b')) d.pb = num;
-            if (kl.includes('market_cap') || kl.includes('marketcap')) d.marketCap = num;
-            if (kl.includes('diluted_eps') || kl.includes('eps')) {
-              d.eps = num;
+            if (kl.includes('price_to_earnings') || kl.includes('p/e')) metricBuckets.pe.push({ date, value: num });
+            else if (kl.includes('price_to_sales') || kl.includes('p/s')) metricBuckets.ps.push({ date, value: num });
+            else if (kl.includes('price_to_book') || kl.includes('p/b')) metricBuckets.pb.push({ date, value: num });
+            else if (kl.includes('market_cap') || kl.includes('marketcap')) metricBuckets.marketCap.push({ date, value: num });
+            else if (kl.includes('diluted_eps') || kl.includes('eps')) {
+              metricBuckets.eps.push({ date, value: num });
               if (date && num !== 0) d.epsHistory.push({ date, eps: num });
             }
           }
         }
+        // Pick the most recent non-zero value for each metric (lexicographic date sort works for YYYY-MM-DD)
+        const pickLatest = (bucket: { date: string; value: number }[]): number | undefined => {
+          const valid = bucket.filter(x => x.value !== 0 && x.date);
+          if (!valid.length) {
+            const anyVal = bucket.find(x => x.value !== 0);
+            return anyVal?.value;
+          }
+          valid.sort((a, b) => b.date.localeCompare(a.date));
+          return valid[0].value;
+        };
+        const latestPE = pickLatest(metricBuckets.pe);
+        const latestPS = pickLatest(metricBuckets.ps);
+        const latestPB = pickLatest(metricBuckets.pb);
+        const latestMcap = pickLatest(metricBuckets.marketCap);
+        const latestEPS = pickLatest(metricBuckets.eps);
+        if (latestPE !== undefined) d.pe = latestPE;
+        if (latestPS !== undefined) d.ps = latestPS;
+        if (latestPB !== undefined) d.pb = latestPB;
+        if (latestMcap !== undefined) d.marketCap = latestMcap;
+        if (latestEPS !== undefined) d.eps = latestEPS;
       }
     }
 
-    // Parse quotes for live data
+    // Parse quotes for live data — the API returns one `## TICKER Quote` section per symbol,
+    // each with its own markdown table. Split by section headers (same strategy as ratios),
+    // otherwise parseMarkdownTable would only pick up the first table. Live quotes OVERRIDE
+    // the time-series ratio P/E so peer numbers match the latest market price (MSFT, SAP, etc.).
     if (quotesResult?.content) {
-      const content = typeof quotesResult.content === 'string' ? quotesResult.content : JSON.stringify(quotesResult.content);
-      const rows = parseMarkdownTable(content);
-      for (const row of rows) {
-        const t = (row['Ticker'] || row['ticker'] || row['Symbol'] || '').replace(/[\*]/g, '').trim();
-        if (!t) continue;
-        if (!peerData.has(t)) peerData.set(t, {});
+      const qContent = typeof quotesResult.content === 'string' ? quotesResult.content : JSON.stringify(quotesResult.content);
+      const qSections = qContent.split(/##\s+/);
+      for (const section of qSections) {
+        if (!section.trim()) continue;
+        const qHeader = section.match(/^([A-Z]{1,6})(?:\.[A-Z]{1,2})?\s+Quote/);
+        if (!qHeader) continue;
+        const t = qHeader[1];
+        if (!peerData.has(t)) peerData.set(t, { epsHistory: [] as any[] });
         const d = peerData.get(t)!;
-        for (const [key, val] of Object.entries(row)) {
-          const kl = key.toLowerCase();
-          const num = parseFloat(String(val).replace(/[,$%B]/g, ''));
-          if (kl === 'pe' || kl === 'p/e') d.pe = isNaN(num) ? d.pe : num;
-          if (kl.includes('marketcap') || kl.includes('market_cap')) {
-            // Handle B/T suffixes
-            const raw = String(val).trim();
-            if (raw.endsWith('T')) d.marketCap = parseFloat(raw) * 1e12;
-            else if (raw.endsWith('B')) d.marketCap = parseFloat(raw) * 1e9;
-            else if (!isNaN(num)) d.marketCap = num;
+        const qRows = parseMarkdownTable(section);
+        for (const row of qRows) {
+          for (const [key, val] of Object.entries(row)) {
+            const kl = key.toLowerCase();
+            const rawStr = String(val).trim();
+            const num = parseFloat(rawStr.replace(/[,$%]/g, ''));
+            if (kl === 'pe' || kl === 'p/e') {
+              if (!isNaN(num) && num > 0) d.pe = num; // live quote PE (overrides stale ratios)
+            } else if (kl.includes('marketcap') || kl.includes('market_cap') || kl === 'mktcap') {
+              // Support raw numbers (e.g. "3087205672500") and B/T suffixes
+              if (rawStr.endsWith('T')) d.marketCap = parseFloat(rawStr) * 1e12;
+              else if (rawStr.endsWith('B')) d.marketCap = parseFloat(rawStr) * 1e9;
+              else if (!isNaN(num) && num > 0) d.marketCap = num;
+            } else if (kl === 'eps') {
+              if (!isNaN(num) && num !== 0) d.eps = num; // live EPS
+            } else if (kl === 'price') {
+              if (!isNaN(num) && num > 0) d.price = num;
+            }
           }
-          if (kl === 'eps') d.eps = isNaN(num) ? d.eps : num;
-          if (kl === 'price') d.price = isNaN(num) ? null : num;
         }
       }
     }
@@ -687,6 +724,13 @@ async function fetchPeerComparison(
     }
 
     console.log(`[PEERS] Built ${validPeers.length} peer comparisons for ${ticker}`);
+
+    // Exclude base-effect outliers from peer averages: an EPS 1Y growth > +80% or < -60%
+    // is almost always a recovery from a write-down year and not representative of organic growth.
+    // We still display the raw value per peer in the table, but the aggregate uses only clean observations.
+    const cleanEps1Y = (v: number | null) => v != null && v > -60 && v < 80;
+    const cleanEps5Y = (v: number | null) => v != null && v > -30 && v < 60;
+
     return {
       subject,
       peers: validPeers,
@@ -695,8 +739,8 @@ async function fetchPeerComparison(
         peg: avg(validPeers.map(p => p.peg)),
         ps: avg(validPeers.map(p => p.ps)),
         pb: avg(validPeers.map(p => p.pb)),
-        epsGrowth1Y: avg(validPeers.map(p => p.epsGrowth1Y)),
-        epsGrowth5Y: avg(validPeers.map(p => p.epsGrowth5Y)),
+        epsGrowth1Y: avg(validPeers.filter(p => cleanEps1Y(p.epsGrowth1Y)).map(p => p.epsGrowth1Y)),
+        epsGrowth5Y: avg(validPeers.filter(p => cleanEps5Y(p.epsGrowth5Y)).map(p => p.epsGrowth5Y)),
       },
       epsHistory: epsHistory.length > 0 ? epsHistory : undefined,
       peerAvgEpsHistory: peerAvgEpsHistory.length > 0 ? peerAvgEpsHistory : undefined,
