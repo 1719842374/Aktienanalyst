@@ -3230,11 +3230,13 @@ export async function registerRoutes(server: Server, app: Express) {
       const useLLM = parsed.data.useLLM === true;
       const force = parsed.data.force === true;
 
-      // === Cache-first (TTL 30 min) ===
+      // === Cache-first (TTL 7 days) ===
+      // Reuse the most recent analysis for up to a week, so the user does not
+      // burn credits re-analysing the same ticker every time it is opened.
       // Skip when force=true (user clicked "Aktualisieren") or when the LLM mode
       // of the cached entry doesn't match the current request — LLM-augmented
       // analyses must not be served when LLM is off, and vice-versa.
-      const ANALYZE_TTL_MIN = 30;
+      const ANALYZE_TTL_MIN = 60 * 24 * 7; // 7 days
       if (!force) {
         const cachedFresh = getCachedAnalysis(ticker);
         if (

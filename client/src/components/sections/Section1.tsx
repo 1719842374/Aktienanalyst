@@ -16,9 +16,9 @@ export function Section1({ data, onRefresh }: Props) {
     return `${Math.round(mins / 1440)} Tage`;
   }
 
-  // Differentiate fresh server-cache (TTL hit, intentional credit-saving)
-  // from stale offline-cache (API unreachable, possibly old data).
-  const FRESH_CACHE_LIMIT_MIN = 30;
+  // Differentiate fresh server-cache (TTL hit, intentional credit-saving — up to 7 days)
+  // from stale offline-cache (API unreachable, older than the TTL).
+  const FRESH_CACHE_LIMIT_MIN = 60 * 24 * 7; // 7 days, mirrors server TTL
   const isFreshCache = !!data._cached && (data._cacheAge != null) && data._cacheAge < FRESH_CACHE_LIMIT_MIN;
   const isStaleCache = !!data._cached && !isFreshCache;
 
@@ -55,7 +55,7 @@ export function Section1({ data, onRefresh }: Props) {
         <div className="flex items-center gap-1.5 text-[10px] text-emerald-400/70 mb-2">
           <Clock className="w-3 h-3" />
           <span>
-            Cache-Treffer — Analyse von vor {fmtAge(data._cacheAge!)} (gespart: 0 Credits)
+            Gespeicherte Analyse — vor {fmtAge(data._cacheAge!)} erstellt{data._cachedAt ? ` (${new Date(data._cachedAt).toLocaleString('de-DE')})` : ''} · 0 Credits
           </span>
           {onRefresh && (
             <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-emerald-400/50 hover:text-emerald-400 transition-colors" title="Live-Daten neu laden (verbraucht Credits)">
