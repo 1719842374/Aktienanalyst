@@ -4,6 +4,7 @@ import { z } from "zod";
 export const analyzeRequestSchema = z.object({
   ticker: z.string().min(1).max(10).toUpperCase(),
   useLLM: z.boolean().optional().default(false), // KI-Katalysatoren toggle
+  force: z.boolean().optional().default(false), // Bypass cache and re-fetch live data
 });
 
 export type AnalyzeRequest = z.infer<typeof analyzeRequestSchema>;
@@ -447,6 +448,8 @@ export interface StockAnalysis {
   _cached?: boolean; // True if served from server cache
   _cacheAge?: number; // Cache age in minutes
   _cacheDate?: string; // ISO date when data was cached
+  _cachedAt?: string; // ISO timestamp when this analysis was originally computed (set on save)
+  _useLLM?: boolean; // LLM mode of the cached entry
   // NEW: Geographic segments (Umsatzanteil nach Regionen)
   geoSegments?: RevenueSegment[];
 }

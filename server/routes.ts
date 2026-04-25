@@ -3228,7 +3228,25 @@ export async function registerRoutes(server: Server, app: Express) {
       }
       const ticker = parsed.data.ticker;
       const useLLM = parsed.data.useLLM === true;
-      console.log(`[ANALYZE] Starting analysis for ${ticker}${useLLM ? ' [LLM ON]' : ''}...`);
+      const force = parsed.data.force === true;
+
+      // === Cache-first (TTL 30 min) ===
+      // Skip when force=true (user clicked "Aktualisieren") or when the LLM mode
+      // of the cached entry doesn't match the current request — LLM-augmented
+      // analyses must not be served when LLM is off, and vice-versa.
+      const ANALYZE_TTL_MIN = 30;
+      if (!force) {
+        const cachedFresh = getCachedAnalysis(ticker);
+        if (
+          cachedFresh &&
+          cachedFresh._cacheAge < ANALYZE_TTL_MIN &&
+          (cachedFresh._useLLM === useLLM)
+        ) {
+          console.log(`[ANALYZE] Cache HIT for ${ticker} (age: ${cachedFresh._cacheAge}min, useLLM=${useLLM}) — 0 credits`);
+          return res.json(cachedFresh);
+        }
+      }
+      console.log(`[ANALYZE] Starting analysis for ${ticker}${useLLM ? ' [LLM ON]' : ''}${force ? ' [FORCED]' : ''}...`);
 
       // === Parallel API calls ===
       const [quoteResult, profileResult, financialsResult, analystResult, estimatesResult, ohlcvHistResult, segmentsResult, newsResult] = await Promise.all([
@@ -4388,7 +4406,10 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       console.log(`[ANALYZE] Completed analysis for ${ticker}: $${price} (${companyName})`);
-      // Save to cache on success
+      // Save to cache on success — tag with the LLM mode so cache-first only serves
+      // back to requests with the same useLLM flag
+      (analysis as any)._useLLM = useLLM;
+      (analysis as any)._cachedAt = new Date().toISOString();
       saveCachedAnalysis(ticker, analysis);
       // Auto-add to watchlist
       try {

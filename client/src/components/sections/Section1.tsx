@@ -16,10 +16,16 @@ export function Section1({ data, onRefresh }: Props) {
     return `${Math.round(mins / 1440)} Tage`;
   }
 
+  // Differentiate fresh server-cache (TTL hit, intentional credit-saving)
+  // from stale offline-cache (API unreachable, possibly old data).
+  const FRESH_CACHE_LIMIT_MIN = 30;
+  const isFreshCache = !!data._cached && (data._cacheAge != null) && data._cacheAge < FRESH_CACHE_LIMIT_MIN;
+  const isStaleCache = !!data._cached && !isFreshCache;
+
   return (
     <SectionCard number={1} title="DATENAKTUALITÄT & PLAUSIBILITÄT">
-      {/* Cache Banner */}
-      {data._cached && (
+      {/* Stale Cache Banner — API was unreachable, data may be old */}
+      {isStaleCache && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
           <div className="flex-1">
@@ -44,11 +50,27 @@ export function Section1({ data, onRefresh }: Props) {
         </div>
       )}
 
-      {/* Data timestamp (always shown) */}
+      {/* Fresh Cache Indicator — TTL hit (under 30 min), intentional 0-credit reuse */}
+      {isFreshCache && (
+        <div className="flex items-center gap-1.5 text-[10px] text-emerald-400/70 mb-2">
+          <Clock className="w-3 h-3" />
+          <span>
+            Cache-Treffer — Analyse von vor {fmtAge(data._cacheAge!)} (gespart: 0 Credits)
+          </span>
+          {onRefresh && (
+            <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-emerald-400/50 hover:text-emerald-400 transition-colors" title="Live-Daten neu laden (verbraucht Credits)">
+              <RefreshCw className="w-3 h-3" />
+              <span className="text-[10px]">Aktualisieren</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Live data timestamp — fresh API call */}
       {!data._cached && data.dataTimestamp && (
         <div className="flex items-center gap-1.5 text-[10px] text-foreground/35 mb-2">
           <Clock className="w-3 h-3" />
-          <span>Daten vom {new Date(data.dataTimestamp).toLocaleString('de-DE')}</span>
+          <span>Live-Daten vom {new Date(data.dataTimestamp).toLocaleString('de-DE')}</span>
           {onRefresh && (
             <button onClick={onRefresh} className="ml-auto flex items-center gap-0.5 text-foreground/30 hover:text-foreground/50 transition-colors" title="Daten neu laden">
               <RefreshCw className="w-3 h-3" />

@@ -63,14 +63,14 @@ export default function Dashboard() {
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number } | null>(null);
 
   const analyzeMutation = useMutation({
-    mutationFn: async ({ ticker, llm }: { ticker: string; llm: boolean }) => {
+    mutationFn: async ({ ticker, llm, force }: { ticker: string; llm: boolean; force?: boolean }) => {
       const maxRetries = 3;
       let lastError: Error | null = null;
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           setRetryInfo({ attempt, maxRetries });
-          const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm });
+          const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: force === true });
           const result = await res.json() as StockAnalysis;
           setRetryInfo(null);
           return result;
@@ -272,7 +272,7 @@ export default function Dashboard() {
             <ErrorScreen error={analyzeMutation.error} />
           ) : data ? (
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
-              <div ref={setSectionRef(1)}><Section1 data={data} onRefresh={() => { if (currentTicker) analyzeMutation.mutate({ ticker: currentTicker, llm: useLLM }); }} /></div>
+              <div ref={setSectionRef(1)}><Section1 data={data} onRefresh={() => { if (currentTicker) analyzeMutation.mutate({ ticker: currentTicker, llm: useLLM, force: true }); }} /></div>
               <div ref={setSectionRef(2)}><Section2 data={data} /></div>
               <FinancialStatements data={data} />
               <div ref={setSectionRef(3)}><Section3 data={data} /></div>
