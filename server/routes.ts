@@ -36,6 +36,17 @@ function callFinanceTool(toolName: string, args: Record<string, any>): any {
 // Sleep helper
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+// Cache LLM-mode compatibility check.
+// - cache._useLLM is `undefined` for analyses saved before the flag was added
+//   (legacy caches from mid-April) — we treat those as compatible with BOTH
+//   request types so old caches keep working as a fallback.
+// - When the flag IS set (true/false), we require strict equality so a KI-on
+//   request never gets back a KI-off cache (with sector-template catalysts).
+function cacheLLMModeMatches(cachedUseLLM: boolean | undefined | null, requestedUseLLM: boolean): boolean {
+  if (cachedUseLLM === undefined || cachedUseLLM === null) return true;
+  return cachedUseLLM === requestedUseLLM;
+}
+
 // Throttled wrapper: serializes calls behind a small delay to avoid burst-limits,
 // and on a 429 (or 401-after-429) backs off and retries up to 2 times with
 // exponentially-rising delays. Returns null after exhausting retries so the
@@ -3287,7 +3298,7 @@ export async function registerRoutes(server: Server, app: Express) {
         if (
           cachedFresh &&
           cachedFresh._cacheAge < ANALYZE_TTL_MIN &&
-          (cachedFresh._useLLM === useLLM)
+          cacheLLMModeMatches(cachedFresh._useLLM, useLLM)
         ) {
           console.log(`[ANALYZE] Cache HIT for ${ticker} (age: ${cachedFresh._cacheAge}min, useLLM=${useLLM}) — 0 credits`);
           return res.json(cachedFresh);
@@ -3316,14 +3327,13 @@ export async function registerRoutes(server: Server, app: Express) {
       // burn 12s of retry-backoff. Total saved: ~90 seconds of dead-air.
       if (quoteResult === null) {
         const cachedRL = getCachedAnalysis(ticker);
-        // Only serve fallback cache if it MATCHES the LLM mode of the current
-        // request — otherwise a KI-on request would silently get back a
-        // KI-off cache with sector-template catalysts (and vice versa).
-        if (cachedRL && cachedRL._useLLM === useLLM) {
-          console.log(`[ANALYZE] Quote rate-limited but matching cache available for ${ticker} (useLLM=${useLLM}), serving cache`);
+        // Serve fallback cache if its LLM mode is compatible (legacy caches
+        // without the flag count as compatible to both modes).
+        if (cachedRL && cacheLLMModeMatches(cachedRL._useLLM, useLLM)) {
+          console.log(`[ANALYZE] Quote rate-limited but compatible cache available for ${ticker} (cacheUseLLM=${cachedRL._useLLM}, request=${useLLM}), serving cache`);
           return res.json(cachedRL);
         }
-        if (cachedRL && cachedRL._useLLM !== useLLM) {
+        if (cachedRL) {
           console.log(`[ANALYZE] Quote rate-limited; cache exists for ${ticker} but useLLM mismatch (cache=${cachedRL._useLLM}, request=${useLLM}) — not serving stale narrative`);
         }
         console.log(`[ANALYZE] Circuit-breaker: quote rate-limited, no usable cache, aborting after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
@@ -3410,15 +3420,14 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       if (price === 0) {
-        // Try cache before returning 404 — but only if its LLM mode matches
-        // the current request, otherwise a KI-on request would silently get
-        // a KI-off cache with sector-template catalysts.
+        // Try cache before returning 404 — prefer compatible LLM mode.
+        // Legacy caches without the flag count as compatible to both modes.
         const cached404 = getCachedAnalysis(ticker);
-        if (cached404 && cached404._useLLM === useLLM) {
-          console.log(`[ANALYZE] No live data for ${ticker}, serving matching cache (age: ${cached404._cacheAge}min, useLLM=${useLLM})`);
+        if (cached404 && cacheLLMModeMatches(cached404._useLLM, useLLM)) {
+          console.log(`[ANALYZE] No live data for ${ticker}, serving compatible cache (age: ${cached404._cacheAge}min, cacheUseLLM=${cached404._useLLM}, request=${useLLM})`);
           return res.json(cached404);
         }
-        if (cached404 && cached404._useLLM !== useLLM) {
+        if (cached404) {
           console.log(`[ANALYZE] No live data for ${ticker}; cache exists but useLLM mismatch — not serving stale narrative`);
         }
         // Distinguish: was the quote call rate-limited, or is the ticker actually invalid?
@@ -4506,13 +4515,12 @@ export async function registerRoutes(server: Server, app: Express) {
       res.json(analysis);
     } catch (error: any) {
       console.error("[ANALYZE] Error:", error?.message);
-      // Try to serve cached data as fallback — only if LLM mode matches.
-      // Without this check, errors during LLM-on requests could fall back
-      // to LLM-off caches with generic sector-template catalysts.
+      // Try to serve cached data as fallback — prefer compatible LLM mode.
+      // Legacy caches without the flag count as compatible to both modes.
       const useLLMCatch = (req.body?.useLLM === true);
       const cached = getCachedAnalysis(ticker);
-      if (cached && cached._useLLM === useLLMCatch) {
-        console.log(`[ANALYZE] Serving matching cached data for ${ticker} (age: ${cached._cacheAge}min, useLLM=${useLLMCatch})`);
+      if (cached && cacheLLMModeMatches(cached._useLLM, useLLMCatch)) {
+        console.log(`[ANALYZE] Serving compatible cached data for ${ticker} (age: ${cached._cacheAge}min, cacheUseLLM=${cached._useLLM}, request=${useLLMCatch})`);
         return res.json(cached);
       }
       res.status(500).json({ error: error?.message || "Analysis failed" });
