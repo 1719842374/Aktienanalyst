@@ -69,9 +69,14 @@ function callFinanceTool(toolName: string, args: Record<string, any>): any {
   return result;
 }
 
-function fetchUrl(url: string, timeoutMs = 20000): string {
+function fetchUrl(url: string, timeoutMs = 20000, headers: Record<string, string> = {}): string {
   try {
-    return execSync(`curl -sL --max-time ${Math.floor(timeoutMs / 1000)} "${url}"`, {
+    // No default headers — some servers (FRED) HTTP/2-fail when extra headers
+    // are sent. Callers that need a UA pass it explicitly via the headers arg.
+    const headerArgs = Object.entries(headers)
+      .map(([k, v]) => `-H "${k}: ${v.replace(/"/g, "\\\"")}"`)
+      .join(" ");
+    return execSync(`curl -sL --max-time ${Math.floor(timeoutMs / 1000)} ${headerArgs} "${url}"`, {
       encoding: "utf-8",
       timeout: timeoutMs + 5000,
       maxBuffer: 50 * 1024 * 1024,
@@ -527,15 +532,42 @@ function scoreGoogleTrends(): IndicatorResult {
   let trendValue = NaN;
   let source = "Google Trends";
 
-  // Primary: pytrends library (Python) — fetches real-time Google Trends data
+  // Primary: pytrends library (Python) — inline script via python3 -c so we don't
+  // depend on the .py file being copied alongside the bundled JS. Previously
+  // the code resolved a path relative to __dirname which broke after esbuild
+  // collapsed everything into dist/index.cjs.
   try {
-    // Use the Python helper script (server/fetch-google-trends.py)
-    const scriptPath = require("path").resolve(__dirname, "..", "server", "fetch-google-trends.py");
-    const fallbackPath = require("path").resolve("server/fetch-google-trends.py");
-    const pyPath = require("fs").existsSync(scriptPath) ? scriptPath : fallbackPath;
-    const result = execSync(`python3 "${pyPath}" 2>/dev/null`, {
-      timeout: 45000, encoding: "utf-8",
-    }).trim();
+    const pyScript = [
+      "import json, sys",
+      "try:",
+      "    from pytrends.request import TrendReq",
+      "    pytrends = TrendReq(hl='en-US', tz=360, timeout=(10, 25))",
+      "    pytrends.build_payload(['Recession'], cat=0, timeframe='now 7-d', geo='US')",
+      "    df = pytrends.interest_over_time()",
+      "    if not df.empty:",
+      "        avg = round(float(df['Recession'].mean()), 1)",
+      "        latest = int(df['Recession'].iloc[-1])",
+      "        peak = int(df['Recession'].max())",
+      "        print(json.dumps({'avg': avg, 'latest': latest, 'peak': peak}))",
+      "    else:",
+      "        print(json.dumps({'error': 'empty dataframe'}))",
+      "except Exception as e:",
+      "    print(json.dumps({'error': str(e)[:200]}))",
+    ].join("\n");
+    // Write to temp file then exec — avoids any shell-escaping issues with multiline scripts
+    const fs = require("fs");
+    const os = require("os");
+    const path = require("path");
+    const tmpFile = path.join(os.tmpdir(), `gtrends-${Date.now()}.py`);
+    fs.writeFileSync(tmpFile, pyScript);
+    let result = "";
+    try {
+      result = execSync(`python3 "${tmpFile}" 2>/dev/null`, {
+        timeout: 45000, encoding: "utf-8",
+      }).trim();
+    } finally {
+      try { fs.unlinkSync(tmpFile); } catch {}
+    }
     if (result) {
       const parsed = JSON.parse(result);
       if (parsed.avg && !parsed.error) {
@@ -655,16 +687,44 @@ function scoreCNNFearGreed(): IndicatorResult {
   let fgValue = NaN;
   let source = "CNN Business";
 
-  // Primary: CNN API
+  // Primary: CNN API — needs browser-like headers (Origin/Referer) to bypass bot block
   try {
-    const json = fetchUrl("https://production.dataviz.cnn.io/index/fearandgreed/graphdata");
-    if (json && !json.includes("<html")) {
+    const json = fetchUrl(
+      "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
+      20000,
+      {
+        "Origin": "https://www.cnn.com",
+        "Referer": "https://www.cnn.com/markets/fear-and-greed",
+      }
+    );
+    if (json && !json.includes("<html") && !json.includes("teapot")) {
       const parsed = JSON.parse(json);
       if (parsed?.fear_and_greed?.score) {
         fgValue = parseFloat(parsed.fear_and_greed.score);
+        source = "CNN Fear & Greed (Live)";
+        console.log(`  CNN F&G: ${fgValue}`);
       }
     }
-  } catch {}
+  } catch (err: any) {
+    console.log(`  CNN F&G primary failed: ${err?.message?.substring(0, 100)}`);
+  }
+
+  // Secondary fallback: alternative-me crypto F&G has high correlation in low-VIX environments
+  // (not perfect proxy but better than N/A)
+  if (isNaN(fgValue)) {
+    try {
+      const json = fetchUrl("https://api.alternative.me/fng/?limit=1", 10000);
+      if (json) {
+        const parsed = JSON.parse(json);
+        const v = parsed?.data?.[0]?.value;
+        if (v != null) {
+          fgValue = parseFloat(v);
+          source = `alternative.me Crypto F&G (Proxy: ${parsed.data[0].value_classification})`;
+          console.log(`  CNN F&G fallback (crypto): ${fgValue}`);
+        }
+      }
+    } catch {}
+  }
 
   // Secondary: market sentiment as proxy for fear/greed levels
   if (isNaN(fgValue)) {
@@ -721,6 +781,29 @@ function scoreCNNFearGreed(): IndicatorResult {
   };
 }
 
+// Helper: derive sentiment proxy from VIX level. Used as last-resort fallback
+// for AAII / Put-Call / Investors Intelligence when their direct sources
+// (which all aggressively bot-block) cannot be reached.
+function sentimentProxyFromVix(): { rawScore: number; zone: string; valueStr: string; available: boolean } {
+  // Pull VIX directly via FRED — the same series VIX scoring already uses.
+  const vix = getLatestFredValue("VIXCLS");
+  if (isNaN(vix)) {
+    return { rawScore: 0, zone: "N/A", valueStr: "N/A", available: false };
+  }
+  // VIX > 30  => Panic    => crowd is bearish/fearful (bullish for contrarian)
+  // VIX 20-30 => Elevated  => moderately fearful
+  // VIX 15-20 => Normal    => neutral
+  // VIX < 15  => Calm      => crowd is greedy/complacent (bearish for contrarian)
+  let rawScore = 0;
+  let zone = "";
+  if (vix > 30) { rawScore = -3; zone = `Extreme Angst (VIX ${vix.toFixed(1)} > 30)`; }
+  else if (vix > 22) { rawScore = -1; zone = `Angst (VIX ${vix.toFixed(1)} 22-30)`; }
+  else if (vix >= 15) { rawScore = 0; zone = `Neutral (VIX ${vix.toFixed(1)} 15-22)`; }
+  else if (vix >= 12) { rawScore = 2; zone = `Sorglosigkeit (VIX ${vix.toFixed(1)} 12-15)`; }
+  else { rawScore = 4; zone = `Extreme Sorglosigkeit (VIX ${vix.toFixed(1)} < 12)`; }
+  return { rawScore, zone, valueStr: `VIX-Proxy ${vix.toFixed(1)}`, available: true };
+}
+
 // 15. AAII Sentiment Survey
 function scoreAAII(): IndicatorResult {
   let bullPct = NaN;
@@ -768,12 +851,23 @@ function scoreAAII(): IndicatorResult {
     else { rawScore = 0; zone = `Neutral (Ratio: ${ratio.toFixed(2)})`; }
   }
 
+  // Last-resort: VIX-based proxy if direct sources + LLM sentiment all failed.
+  // AAII has high inverse correlation with VIX (high VIX -> bears overweight).
+  if (valueStr === "N/A") {
+    const proxy = sentimentProxyFromVix();
+    if (proxy.available) {
+      rawScore = proxy.rawScore;
+      zone = proxy.zone;
+      valueStr = proxy.valueStr;
+    }
+  }
   return {
     name: "AAII Sentiment",
     group: "correction", subgroup: "sentiment",
     value: valueStr,
     rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 4, zone,
-    source: valueStr.includes("Proxy") ? "Finance API (Sentiment-Proxy)" : "AAII",
+    source: valueStr.includes("VIX-Proxy") ? "VIX-basierter Proxy (AAII direkt blockiert)"
+          : valueStr.includes("Proxy") ? "Finance API (Sentiment-Proxy)" : "AAII",
     description: "American Association of Individual Investors Sentiment Survey",
   };
 }
@@ -825,6 +919,16 @@ function scorePutCallRatio(): IndicatorResult {
     } catch {}
   }
 
+  // Last-resort: VIX-based proxy. Put/Call ratio rises with VIX (more hedging).
+  if (valueStr === "N/A") {
+    const proxy = sentimentProxyFromVix();
+    if (proxy.available) {
+      rawScore = proxy.rawScore;
+      zone = proxy.zone;
+      valueStr = proxy.valueStr;
+      source = "VIX-basierter Proxy (CBOE direkt blockiert)";
+    }
+  }
   return {
     name: "CBOE Put/Call Ratio",
     group: "correction", subgroup: "sentiment",
@@ -874,12 +978,23 @@ function scoreInvestorsIntelligence(): IndicatorResult {
     zone = ratio > 1.5 ? `Euphorie (Ratio ${ratio.toFixed(2)} >1.5)` : `Vorsichtig (Ratio ${ratio.toFixed(2)} ≤1.5)`;
   }
 
+  // Last-resort: VIX-based proxy. Investor Intelligence newsletters track
+  // crowd sentiment which inversely correlates with VIX.
+  if (valueStr === "N/A") {
+    const proxy = sentimentProxyFromVix();
+    if (proxy.available) {
+      rawScore = proxy.rawScore;
+      zone = proxy.zone;
+      valueStr = proxy.valueStr;
+    }
+  }
   return {
     name: "Investors Intelligence",
     group: "correction", subgroup: "sentiment",
     value: valueStr,
     rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 4, zone,
-    source: valueStr.includes("Proxy") ? "Finance API (Sentiment-Proxy)" : "Advisor Perspectives",
+    source: valueStr.includes("VIX-Proxy") ? "VIX-basierter Proxy (II direkt blockiert)"
+          : valueStr.includes("Proxy") ? "Finance API (Sentiment-Proxy)" : "Advisor Perspectives",
     description: "Newsletter-Berater Bull/Bear Ratio",
   };
 }
