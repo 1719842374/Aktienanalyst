@@ -3305,11 +3305,27 @@ export async function registerRoutes(server: Server, app: Express) {
       const endDate = new Date().toISOString().split('T')[0];
       const startDate = new Date(Date.now() - 11 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-      // 1. Quote (most important — if this fails we 404)
+      // 1. Quote (most important — if this fails the rest is pointless)
       const quoteResult = await callFinanceToolThrottled("finance_quotes", {
         ticker_symbols: [ticker],
         fields: ["price", "currency", "marketCap", "pe", "eps", "change", "changesPercentage", "volume", "avgVolume", "dayLow", "dayHigh", "yearLow", "yearHigh", "previousClose", "dividendYieldTTM"],
       });
+
+      // Circuit-breaker: if Quote returned null after retries (rate-limited),
+      // bail out IMMEDIATELY instead of running 7 more useless calls that each
+      // burn 12s of retry-backoff. Total saved: ~90 seconds of dead-air.
+      if (quoteResult === null) {
+        const cachedRL = getCachedAnalysis(ticker);
+        if (cachedRL) {
+          console.log(`[ANALYZE] Quote rate-limited but cache available for ${ticker}, serving cache`);
+          return res.json(cachedRL);
+        }
+        console.log(`[ANALYZE] Circuit-breaker: quote rate-limited, no cache, aborting after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+        return res.status(429).json({
+          error: `Tagesquota der Finance-API erreicht. Bitte später erneut versuchen (Reset typischerweise nach 12-24 Std.). Bereits analysierte Tickers funktionieren weiterhin aus dem Cache.`,
+          errorCode: "RATE_LIMITED",
+        });
+      }
       // 2. Company Profile
       const profileResult = await callFinanceToolThrottled("finance_company_profile", {
         ticker_symbols: [ticker],
