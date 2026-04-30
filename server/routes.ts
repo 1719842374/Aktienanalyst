@@ -4,6 +4,8 @@ import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, typ
 import { execSync } from "child_process";
 
 // === Finance API Helper ===
+// Returns either the parsed result, or { __rateLimited: true } on 429,
+// or null on any other failure.
 function callFinanceTool(toolName: string, args: Record<string, any>): any {
   try {
     const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
@@ -16,8 +18,51 @@ function callFinanceTool(toolName: string, args: Record<string, any>): any {
     });
     return JSON.parse(result);
   } catch (err: any) {
-    console.error(`Finance API error (${toolName}):`, err?.message?.substring(0, 300));
+    const msg = err?.message || "";
+    if (msg.includes("RATE_LIMITED") || msg.includes("429")) {
+      console.error(`Finance API rate-limited (${toolName})`);
+      return { __rateLimited: true };
+    }
+    if (msg.includes("UNAUTHORIZED") || msg.includes("401")) {
+      // 401 typically follows a rate-limit — treat as same backoff signal so we retry.
+      console.error(`Finance API unauthorized (${toolName}) — likely token-cooldown after rate-limit`);
+      return { __rateLimited: true };
+    }
+    console.error(`Finance API error (${toolName}):`, msg.substring(0, 300));
     return null;
+  }
+}
+
+// Sleep helper
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+// Throttled wrapper: serializes calls behind a small delay to avoid burst-limits,
+// and on a 429 (or 401-after-429) backs off and retries up to 2 times with
+// exponentially-rising delays. Returns null after exhausting retries so the
+// caller's existing null-check still works.
+async function callFinanceToolThrottled(
+  toolName: string,
+  args: Record<string, any>,
+  opts: { spacingMs?: number; maxRetries?: number } = {}
+): Promise<any> {
+  const spacingMs = opts.spacingMs ?? 300;
+  const maxRetries = opts.maxRetries ?? 2;
+  let attempt = 0;
+  while (true) {
+    const result = callFinanceTool(toolName, args);
+    await sleep(spacingMs);
+    if (result && result.__rateLimited) {
+      if (attempt < maxRetries) {
+        const backoffMs = 4000 * Math.pow(2, attempt); // 4s, 8s
+        console.log(`[FINANCE-THROTTLE] ${toolName} rate-limited, backoff ${backoffMs}ms (retry ${attempt + 1}/${maxRetries})`);
+        await sleep(backoffMs);
+        attempt++;
+        continue;
+      }
+      console.log(`[FINANCE-THROTTLE] ${toolName} still rate-limited after ${maxRetries} retries — giving up`);
+      return null;
+    }
+    return result;
   }
 }
 
@@ -3250,70 +3295,68 @@ export async function registerRoutes(server: Server, app: Express) {
       }
       console.log(`[ANALYZE] Starting analysis for ${ticker}${useLLM ? ' [LLM ON]' : ''}${force ? ' [FORCED]' : ''}...`);
 
-      // === Parallel API calls ===
-      const [quoteResult, profileResult, financialsResult, analystResult, estimatesResult, ohlcvHistResult, segmentsResult, newsResult] = await Promise.all([
-        // 1. Quote
-        Promise.resolve(callFinanceTool("finance_quotes", {
-          ticker_symbols: [ticker],
-          fields: ["price", "currency", "marketCap", "pe", "eps", "change", "changesPercentage", "volume", "avgVolume", "dayLow", "dayHigh", "yearLow", "yearHigh", "previousClose", "dividendYieldTTM"],
-        })),
-        // 2. Company Profile
-        Promise.resolve(callFinanceTool("finance_company_profile", {
-          ticker_symbols: [ticker],
-          query: `Company profile for ${ticker}`,
-          action: `Fetching company profile for ${ticker}`,
-        })),
-        // 3. Financials (annual) — use current year minus 1 for latest full year
-        Promise.resolve(callFinanceTool("finance_financials", {
-          ticker_symbols: [ticker],
-          period: "annual",
-          as_of_fiscal_year: new Date().getFullYear() - 1,
-          limit: 3,
-          income_statement_metrics: ["revenue", "netIncome", "ebitda", "eps", "epsDiluted", "weightedAverageSharesOutstanding", "operatingIncome", "grossProfit"],
-          balance_sheet_metrics: ["totalDebt", "cashAndCashEquivalents", "totalStockholdersEquity", "totalAssets", "totalCurrentAssets", "totalCurrentLiabilities", "netDebt"],
-          cash_flow_metrics: ["freeCashFlow", "operatingCashFlow", "capitalExpenditure"],
-        })),
-        // 4. Analyst Research
-        Promise.resolve(callFinanceTool("finance_analyst_research", {
-          ticker_symbols: [ticker],
-        })),
-        // 5. Estimates
-        Promise.resolve(callFinanceTool("finance_estimates", {
-          ticker_symbols: [ticker],
-          period_type: "annual",
-        })),
-        // 6. OHLCV 10+ years daily data (for MA200 we need 200+ days, user wants up to 10Y chart)
-        (async () => {
-          const endDate = new Date().toISOString().split('T')[0];
-          const startDate = new Date(Date.now() - 11 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-          const ohlcvResult = callFinanceTool("finance_ohlcv_histories", {
-            ticker_symbols: [ticker],
-            start_date_yyyy_mm_dd: startDate,
-            end_date_yyyy_mm_dd: endDate,
-            time_interval: "1day",
-            fields: ["open", "high", "low", "close", "volume"],
-          });
-          return ohlcvResult;
-        })(),
-        // 7. Revenue Segments (Umsatzanteil nach Produkten/Segmenten)
-        Promise.resolve(callFinanceTool("finance_segments", {
-          ticker_symbols: [ticker],
-          query: "revenue by business segment and geographic breakdown",
-          period_type: "annual",
-          limit: 2,
-        })),
-        // 8. News / Key Projects (via Polygon news endpoint)
-        (async () => {
-          try {
-            return callFinanceTool("finance_massive", {
-              pathname: `/v2/reference/news`,
-              params: { ticker, limit: 10, order: "desc" },
-            });
-          } catch { return null; }
-        })(),
-      ]);
+      // === Sequential API calls (throttled to avoid burst rate-limits) ===
+      // Previous version fired 8 parallel calls which triggered the
+      // Perplexity finance proxy's burst-rate-limiter (429). We now space
+      // them out by 300ms and retry on 429 with exponential backoff.
+      // Total cold-start time goes from ~2-3s to ~5-7s, but we no longer
+      // get the cascade of 401s after the first 429.
+      const t0 = Date.now();
+      const endDate = new Date().toISOString().split('T')[0];
+      const startDate = new Date(Date.now() - 11 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-      console.log(`[ANALYZE] All API calls completed for ${ticker}`);
+      // 1. Quote (most important — if this fails we 404)
+      const quoteResult = await callFinanceToolThrottled("finance_quotes", {
+        ticker_symbols: [ticker],
+        fields: ["price", "currency", "marketCap", "pe", "eps", "change", "changesPercentage", "volume", "avgVolume", "dayLow", "dayHigh", "yearLow", "yearHigh", "previousClose", "dividendYieldTTM"],
+      });
+      // 2. Company Profile
+      const profileResult = await callFinanceToolThrottled("finance_company_profile", {
+        ticker_symbols: [ticker],
+        query: `Company profile for ${ticker}`,
+        action: `Fetching company profile for ${ticker}`,
+      });
+      // 3. Financials (annual)
+      const financialsResult = await callFinanceToolThrottled("finance_financials", {
+        ticker_symbols: [ticker],
+        period: "annual",
+        as_of_fiscal_year: new Date().getFullYear() - 1,
+        limit: 3,
+        income_statement_metrics: ["revenue", "netIncome", "ebitda", "eps", "epsDiluted", "weightedAverageSharesOutstanding", "operatingIncome", "grossProfit"],
+        balance_sheet_metrics: ["totalDebt", "cashAndCashEquivalents", "totalStockholdersEquity", "totalAssets", "totalCurrentAssets", "totalCurrentLiabilities", "netDebt"],
+        cash_flow_metrics: ["freeCashFlow", "operatingCashFlow", "capitalExpenditure"],
+      });
+      // 4. Analyst Research
+      const analystResult = await callFinanceToolThrottled("finance_analyst_research", {
+        ticker_symbols: [ticker],
+      });
+      // 5. Estimates
+      const estimatesResult = await callFinanceToolThrottled("finance_estimates", {
+        ticker_symbols: [ticker],
+        period_type: "annual",
+      });
+      // 6. OHLCV 10+ years daily data
+      const ohlcvHistResult = await callFinanceToolThrottled("finance_ohlcv_histories", {
+        ticker_symbols: [ticker],
+        start_date_yyyy_mm_dd: startDate,
+        end_date_yyyy_mm_dd: endDate,
+        time_interval: "1day",
+        fields: ["open", "high", "low", "close", "volume"],
+      });
+      // 7. Revenue Segments
+      const segmentsResult = await callFinanceToolThrottled("finance_segments", {
+        ticker_symbols: [ticker],
+        query: "revenue by business segment and geographic breakdown",
+        period_type: "annual",
+        limit: 2,
+      });
+      // 8. News (no retry — nice-to-have, not critical)
+      const newsResult = await callFinanceToolThrottled("finance_massive", {
+        pathname: `/v2/reference/news`,
+        params: { ticker, limit: 10, order: "desc" },
+      }, { maxRetries: 0 });
+
+      console.log(`[ANALYZE] All API calls completed for ${ticker} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
       // === Parse Quote ===
       let price = 0, marketCap = 0, pe = 0, eps = 0, currency = "USD", companyName = ticker;
@@ -3351,7 +3394,15 @@ export async function registerRoutes(server: Server, app: Express) {
           console.log(`[ANALYZE] No live data for ${ticker}, serving cache (age: ${cached404._cacheAge}min)`);
           return res.json(cached404);
         }
-        return res.status(404).json({ error: `No quote data found for ${ticker}. Please check the ticker symbol.` });
+        // Distinguish: was the quote call rate-limited, or is the ticker actually invalid?
+        if (quoteResult === null) {
+          // null = retries exhausted on 429/401 — surface as 429 with a clear message
+          return res.status(429).json({
+            error: `Tagesquota der Finance-API erreicht. Bitte später erneut versuchen (Reset typischerweise nach 12-24 Std.). Bereits analysierte Tickers funktionieren weiterhin aus dem Cache.`,
+            errorCode: "RATE_LIMITED",
+          });
+        }
+        return res.status(404).json({ error: `Keine Quote-Daten für ${ticker} gefunden. Bitte Ticker-Symbol prüfen.` });
       }
 
       // === Parse Company Profile ===

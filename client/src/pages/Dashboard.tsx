@@ -76,7 +76,15 @@ export default function Dashboard() {
           return result;
         } catch (err: any) {
           lastError = err;
-          console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${err?.message?.substring(0, 100)}`);
+          const msg = err?.message || "";
+          // 429 / RATE_LIMITED: don't waste retries — surface immediately so the user
+          // sees a clear quota message instead of 3x "Verbindung fehlgeschlagen"
+          if (msg.includes("RATE_LIMITED") || msg.includes("Tagesquota") || msg.includes("429")) {
+            console.warn(`[Analyze] Rate-limit erkannt — keine Retries`);
+            setRetryInfo(null);
+            throw err;
+          }
+          console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${msg.substring(0, 100)}`);
           if (attempt < maxRetries) {
             // Exponential backoff: 2s, 4s
             await new Promise(r => setTimeout(r, attempt * 2000));
@@ -442,15 +450,26 @@ function LoadingScreen({ ticker, retryInfo }: { ticker: string; retryInfo?: { at
 }
 
 function ErrorScreen({ error }: { error: Error }) {
-  const is404 = error.message.includes('404') || error.message.includes('Failed to fetch');
+  const isRateLimited = error.message.includes('RATE_LIMITED') || error.message.includes('Tagesquota') || error.message.includes('429');
+  const is404 = !isRateLimited && (error.message.includes('404') || error.message.includes('Failed to fetch'));
   const isTimeout = error.message.includes('timeout') || error.message.includes('Timeout');
   return (
     <div className="flex items-center justify-center min-h-full p-8">
       <div className="text-center space-y-4 max-w-md">
-        <div className="text-red-500 text-2xl">{is404 ? '🔌' : '⚠️'}</div>
-        <div className="text-sm font-semibold">{is404 ? 'Server nicht erreichbar' : isTimeout ? 'Timeout' : 'Analyse fehlgeschlagen'}</div>
+        <div className="text-2xl">{isRateLimited ? '⏳' : is404 ? '🔌' : '⚠️'}</div>
+        <div className="text-sm font-semibold">
+          {isRateLimited ? 'Tagesquota erreicht' : is404 ? 'Server nicht erreichbar' : isTimeout ? 'Timeout' : 'Analyse fehlgeschlagen'}
+        </div>
         <div className="text-xs text-muted-foreground leading-relaxed">
-          {is404 ? (
+          {isRateLimited ? (
+            <>
+              Die Finance-API hat das tagesgebündelte Quota dieser Sandbox erreicht.
+              Reset typischerweise nach 12–24 Stunden.
+              <br /><br />
+              <strong>Was jetzt:</strong> Bereits analysierte Tickers (in der Watchlist links) funktionieren weiterhin aus dem Cache — 0 Credits, keine API-Calls.
+              Neue Analysen sind erst nach dem Reset wieder möglich.
+            </>
+          ) : is404 ? (
             <>
               Der Backend-Server oder Proxy-Token ist abgelaufen. Das passiert wenn die Sandbox-Session endet (~24h).
               <br /><br />
