@@ -487,13 +487,13 @@ async function fetchPeerComparison(
   marketCap: number, revenueGrowth: number, epsGrowth5Y: number
 ): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
   try {
-    // Step 1: Get peer tickers via finance API
+    // Step 1: Get peer tickers via finance API (throttled like main calls)
     console.log(`[PEERS] Fetching peers for ${ticker}`);
-    const peersResult = callFinanceTool('finance_company_peers', {
+    const peersResult = await callFinanceToolThrottled('finance_company_peers', {
       ticker_symbol: ticker,
       query: `Competitors of ${companyName}`,
       action: `Finding peer companies for ${ticker}`,
-    });
+    }, { maxRetries: 1 }); // peer fetch is non-critical — fewer retries
 
     let peerTickers: string[] = [];
     if (peersResult?.content) {
@@ -517,16 +517,16 @@ async function fetchPeerComparison(
       'ratio_price_to_earnings', 'ratio_price_to_sales', 'ratio_price_to_book',
       'ratio_diluted_eps', 'calculated_market_cap',
     ];
-    const ratiosResult = callFinanceTool('finance_company_ratios', {
+    const ratiosResult = await callFinanceToolThrottled('finance_company_ratios', {
       ticker_symbols: peerTickers,
       ratio_ids: ratioIds,
-    });
+    }, { maxRetries: 1 });
 
     // Also get quotes for live P/E
-    const quotesResult = callFinanceTool('finance_quotes', {
+    const quotesResult = await callFinanceToolThrottled('finance_quotes', {
       ticker_symbols: peerTickers,
       fields: ['pe', 'marketCap', 'eps', 'price'],
-    });
+    }, { maxRetries: 1 });
 
     // Parse ratios — the API returns per-company sections with time-series tables
     // Format: "## TICKER Company Ratios\n| date | ratio_pe | ratio_ps | ratio_pb |\n..."
@@ -707,7 +707,7 @@ async function fetchPeerComparison(
     let peerAvgEpsHistory: { year: number; eps: number; isEstimate: boolean }[] = [];
     try {
       // Fetch subject historical EPS
-      const subjectRatiosResult = callFinanceTool('finance_company_ratios', {
+      const subjectRatiosResult = await callFinanceToolThrottled('finance_company_ratios', {
         ticker_symbols: [ticker],
         ratio_ids: ['ratio_diluted_eps'],
       });
@@ -727,7 +727,7 @@ async function fetchPeerComparison(
       }
 
       // Fetch subject forward estimates
-      const estimatesResult = callFinanceTool('finance_estimates', {
+      const estimatesResult = await callFinanceToolThrottled('finance_estimates', {
         ticker_symbols: [ticker],
         period_type: 'annual',
       });
@@ -3908,6 +3908,12 @@ export async function registerRoutes(server: Server, app: Express) {
 
       // === Catalysts & Risks ===
       let catalysts: Catalyst[];
+      // Track whether the LLM call actually produced usable catalysts.
+      // Stays false if useLLM=false OR if the LLM call failed/returned <3 items
+      // and we fell back to sector templates. This is what we tag the cache with,
+      // so KI-on requests don't get back stale sector-template caches misbranded
+      // as LLM-generated.
+      let llmActuallyUsed = false;
       if (useLLM) {
         // LLM-powered company-specific catalysts + news-sentiment matching
         const llmCatalysts = await generateLLMCatalysts(
@@ -3917,6 +3923,7 @@ export async function registerRoutes(server: Server, app: Express) {
         );
         if (llmCatalysts && llmCatalysts.length >= 3) {
           catalysts = llmCatalysts;
+          llmActuallyUsed = true;
           console.log(`[ANALYZE] Using LLM-generated catalysts for ${ticker}`);
         } else {
           catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
@@ -4495,9 +4502,13 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       console.log(`[ANALYZE] Completed analysis for ${ticker}: $${price} (${companyName})`);
-      // Save to cache on success — tag with the LLM mode so cache-first only serves
-      // back to requests with the same useLLM flag
-      (analysis as any)._useLLM = useLLM;
+      // Save to cache on success — tag with the LLM mode that ACTUALLY succeeded,
+      // not just what the user requested. If useLLM=true but LLM failed and we
+      // fell back to sector templates, _useLLM is saved as false. That way a
+      // future KI-on request will not pick up this cache via cache-first — it'll
+      // re-try the LLM path with fresh data.
+      (analysis as any)._useLLM = llmActuallyUsed;
+      (analysis as any).llmMode = llmActuallyUsed; // also reflected in client-visible field
       (analysis as any)._cachedAt = new Date().toISOString();
       saveCachedAnalysis(ticker, analysis);
       // Auto-add to watchlist

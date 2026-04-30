@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { StockAnalysis } from "../../../shared/schema";
@@ -62,8 +62,28 @@ export default function Dashboard() {
 
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number } | null>(null);
 
+  // Stale-response guard: every mutate() bumps requestIdRef. onSuccess only
+  // applies the result if its captured request id matches the current one,
+  // so a fast user (rapid ticker clicks, KI-toggle while in-flight) never
+  // sees an out-of-order older response overwrite a newer one.
+  const requestIdRef = useRef(0);
+  // Mirror of `data` to avoid stale closures inside onSuccess (scroll-suppress
+  // logic was previously reading captured-at-render state).
+  const dataRef = useRef<StockAnalysis | null>(null);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
+  // Tagged mutate: assigns a fresh reqId on every kick-off so onSuccess can
+  // reject stale responses. Use this everywhere instead of mutation.mutate().
+  const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean }) => {
+    requestIdRef.current += 1;
+    const reqId = requestIdRef.current;
+    analyzeMutationRef.current.mutate({ ...args, reqId });
+  }, []);
+  // Forward-decl ref so startAnalyze can reference the mutation before it's declared
+  const analyzeMutationRef = useRef<any>(null);
+
   const analyzeMutation = useMutation({
-    mutationFn: async ({ ticker, llm, force }: { ticker: string; llm: boolean; force?: boolean }) => {
+    mutationFn: async ({ ticker, llm, force }: { ticker: string; llm: boolean; force?: boolean; reqId?: number }) => {
       const maxRetries = 3;
       let lastError: Error | null = null;
 
@@ -94,13 +114,27 @@ export default function Dashboard() {
       setRetryInfo(null);
       throw lastError || new Error('Analyse fehlgeschlagen nach 3 Versuchen');
     },
-    onSuccess: (result) => {
+    onSuccess: (result, variables: any) => {
+      // Stale guard: if the user kicked off another request after this one,
+      // ignore this older response. Without this, a fast click sequence
+      // (HCC -> AAPL -> NVDA) could let HCC's response arrive last and
+      // overwrite the NVDA view. Same applies to KI-toggle races.
+      if (variables?.reqId !== undefined && variables.reqId !== requestIdRef.current) {
+        console.log(`[Analyze] Ignoring stale response (reqId ${variables.reqId} ≠ current ${requestIdRef.current})`);
+        return;
+      }
       setData(result);
-      if (!result.llmMode || !data || data.companyName !== result.companyName) {
+      const prev = dataRef.current;
+      if (!result.llmMode || !prev || prev.companyName !== result.companyName) {
         mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
       }
     },
   });
+
+  // Wire the mutation to its ref so startAnalyze() can call it.
+  // Must come AFTER useMutation since mutation isn't defined yet at the
+  // useRef declaration site.
+  analyzeMutationRef.current = analyzeMutation;
 
   const scrollToSection = useCallback((id: number) => {
     const el = sectionRefs.current[id];
@@ -147,7 +181,7 @@ export default function Dashboard() {
             </div>
           )}
           <TickerSearch
-            onSearch={(ticker) => { setCurrentTicker(ticker); analyzeMutation.mutate({ ticker, llm: useLLM }); }}
+            onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLM }); }}
             isLoading={analyzeMutation.isPending}
           />
           {/* PDF Export */}
@@ -172,7 +206,11 @@ export default function Dashboard() {
               setUseLLM(next);
               // If we have data and switching to LLM, re-analyze with LLM
               if (next && currentTicker) {
-                analyzeMutation.mutate({ ticker: currentTicker, llm: true });
+                startAnalyze({ ticker: currentTicker, llm: true });
+              } else if (!next && currentTicker && data?.llmMode) {
+                // Switching KI off after seeing LLM data: re-fetch non-LLM
+                // analysis so the displayed view matches the toggle state.
+                startAnalyze({ ticker: currentTicker, llm: false });
               }
             }}
             className={`h-8 px-2 text-[11px] font-medium rounded-md transition-all flex items-center gap-1 border ${
@@ -273,14 +311,14 @@ export default function Dashboard() {
           data-testid="main-content"
         >
           {!data && !analyzeMutation.isPending ? (
-            <WelcomeScreen onSearch={(ticker) => { setCurrentTicker(ticker); analyzeMutation.mutate({ ticker, llm: useLLM }); }} />
+            <WelcomeScreen onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLM }); }} />
           ) : analyzeMutation.isPending ? (
             <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTicker || ""} retryInfo={retryInfo} />
           ) : analyzeMutation.isError ? (
             <ErrorScreen error={analyzeMutation.error} />
           ) : data ? (
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
-              <div ref={setSectionRef(1)}><Section1 data={data} onRefresh={() => { if (currentTicker) analyzeMutation.mutate({ ticker: currentTicker, llm: useLLM, force: true }); }} /></div>
+              <div ref={setSectionRef(1)}><Section1 data={data} onRefresh={() => { if (currentTicker) startAnalyze({ ticker: currentTicker, llm: useLLM, force: true }); }} /></div>
               <div ref={setSectionRef(2)}><Section2 data={data} /></div>
               <FinancialStatements data={data} />
               <div ref={setSectionRef(3)}><Section3 data={data} /></div>

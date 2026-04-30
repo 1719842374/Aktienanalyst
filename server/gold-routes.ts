@@ -10,21 +10,51 @@ import type {
 } from "../shared/gold-schema";
 import { execSync } from "child_process";
 
-// === Finance API Helper (same as main routes) ===
+// === Finance API Helper (same throttling/retry contract as main routes) ===
+let lastFinanceCallAt = 0;
+const MIN_SPACING_MS = 250;
+
+function sleepSync(ms: number) {
+  const sab = new SharedArrayBuffer(4);
+  const view = new Int32Array(sab);
+  Atomics.wait(view, 0, 0, ms);
+}
+
 function callFinanceTool(toolName: string, args: Record<string, any>): any {
+  const elapsed = Date.now() - lastFinanceCallAt;
+  if (elapsed < MIN_SPACING_MS) sleepSync(MIN_SPACING_MS - elapsed);
+
+  let result: any = null;
   try {
     const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
     const escaped = params.replace(/'/g, "'\\''" );
-    const result = execSync(`external-tool call '${escaped}'`, {
-      timeout: 60000,
-      encoding: "utf-8",
-      maxBuffer: 50 * 1024 * 1024,
+    const raw = execSync(`external-tool call '${escaped}'`, {
+      timeout: 60000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
     });
-    return JSON.parse(result);
+    result = JSON.parse(raw);
   } catch (err: any) {
-    console.error(`Finance API error (${toolName}):`, err?.message?.substring(0, 300));
-    return null;
+    const msg = err?.message || "";
+    if (msg.includes("RATE_LIMITED") || msg.includes("429") || msg.includes("UNAUTHORIZED") || msg.includes("401")) {
+      console.warn(`[GOLD] ${toolName} rate-limited, backing off 4s and retrying once`);
+      sleepSync(4000);
+      try {
+        const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
+        const escaped = params.replace(/'/g, "'\\''" );
+        const raw = execSync(`external-tool call '${escaped}'`, {
+          timeout: 60000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
+        });
+        result = JSON.parse(raw);
+      } catch (e2: any) {
+        console.error(`[GOLD] ${toolName} retry also failed:`, e2?.message?.substring(0, 200));
+        result = null;
+      }
+    } else {
+      console.error(`Finance API error (${toolName}):`, msg.substring(0, 300));
+      result = null;
+    }
   }
+  lastFinanceCallAt = Date.now();
+  return result;
 }
 
 function parseNumber(s: string | undefined | null): number {

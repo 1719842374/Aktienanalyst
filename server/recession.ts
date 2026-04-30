@@ -11,20 +11,62 @@ const GEO_ANALYSIS = { lastUpdated: "April 2026" };
 // Generic Data Helpers
 // ============================================================
 
+// Module-global timestamp of the last finance call — used by the synchronous
+// throttling helper below to enforce a minimum spacing between calls and
+// avoid the burst-rate-limiter that the main /api/analyze path already
+// throttles around. Recession dashboard fires ~17 finance calls so spacing
+// matters here too.
+let lastFinanceCallAt = 0;
+const MIN_SPACING_MS = 250;
+
+function sleepSync(ms: number) {
+  // Synchronous sleep via Atomics — blocks the event loop briefly.
+  // OK here because every caller in this module is itself a sync route
+  // handler (no concurrent awaits to starve).
+  const sab = new SharedArrayBuffer(4);
+  const view = new Int32Array(sab);
+  Atomics.wait(view, 0, 0, ms);
+}
+
 function callFinanceTool(toolName: string, args: Record<string, any>): any {
+  // Enforce minimum spacing since the previous call.
+  const elapsed = Date.now() - lastFinanceCallAt;
+  if (elapsed < MIN_SPACING_MS) sleepSync(MIN_SPACING_MS - elapsed);
+
+  let result: any = null;
   try {
     const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
     const escaped = params.replace(/'/g, "'\\''");
-    const result = execSync(`external-tool call '${escaped}'`, {
+    const raw = execSync(`external-tool call '${escaped}'`, {
       timeout: 60000,
       encoding: "utf-8",
       maxBuffer: 50 * 1024 * 1024,
     });
-    return JSON.parse(result);
+    result = JSON.parse(raw);
   } catch (err: any) {
-    console.error(`Finance API error (${toolName}):`, err?.message?.substring(0, 300));
-    return null;
+    const msg = err?.message || "";
+    if (msg.includes("RATE_LIMITED") || msg.includes("429") || msg.includes("UNAUTHORIZED") || msg.includes("401")) {
+      // Single retry with 4s backoff on rate-limit — mirrors the main module.
+      console.warn(`[RECESSION] ${toolName} rate-limited, backing off 4s and retrying once`);
+      sleepSync(4000);
+      try {
+        const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
+        const escaped = params.replace(/'/g, "'\\''");
+        const raw = execSync(`external-tool call '${escaped}'`, {
+          timeout: 60000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
+        });
+        result = JSON.parse(raw);
+      } catch (e2: any) {
+        console.error(`[RECESSION] ${toolName} retry also failed:`, e2?.message?.substring(0, 200));
+        result = null;
+      }
+    } else {
+      console.error(`Finance API error (${toolName}):`, msg.substring(0, 300));
+      result = null;
+    }
   }
+  lastFinanceCallAt = Date.now();
+  return result;
 }
 
 function fetchUrl(url: string, timeoutMs = 20000): string {
