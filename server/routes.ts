@@ -3316,11 +3316,17 @@ export async function registerRoutes(server: Server, app: Express) {
       // burn 12s of retry-backoff. Total saved: ~90 seconds of dead-air.
       if (quoteResult === null) {
         const cachedRL = getCachedAnalysis(ticker);
-        if (cachedRL) {
-          console.log(`[ANALYZE] Quote rate-limited but cache available for ${ticker}, serving cache`);
+        // Only serve fallback cache if it MATCHES the LLM mode of the current
+        // request — otherwise a KI-on request would silently get back a
+        // KI-off cache with sector-template catalysts (and vice versa).
+        if (cachedRL && cachedRL._useLLM === useLLM) {
+          console.log(`[ANALYZE] Quote rate-limited but matching cache available for ${ticker} (useLLM=${useLLM}), serving cache`);
           return res.json(cachedRL);
         }
-        console.log(`[ANALYZE] Circuit-breaker: quote rate-limited, no cache, aborting after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+        if (cachedRL && cachedRL._useLLM !== useLLM) {
+          console.log(`[ANALYZE] Quote rate-limited; cache exists for ${ticker} but useLLM mismatch (cache=${cachedRL._useLLM}, request=${useLLM}) — not serving stale narrative`);
+        }
+        console.log(`[ANALYZE] Circuit-breaker: quote rate-limited, no usable cache, aborting after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
         return res.status(429).json({
           error: `Tagesquota der Finance-API erreicht. Bitte später erneut versuchen (Reset typischerweise nach 12-24 Std.). Bereits analysierte Tickers funktionieren weiterhin aus dem Cache.`,
           errorCode: "RATE_LIMITED",
@@ -3404,11 +3410,16 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       if (price === 0) {
-        // Try cache before returning 404
+        // Try cache before returning 404 — but only if its LLM mode matches
+        // the current request, otherwise a KI-on request would silently get
+        // a KI-off cache with sector-template catalysts.
         const cached404 = getCachedAnalysis(ticker);
-        if (cached404) {
-          console.log(`[ANALYZE] No live data for ${ticker}, serving cache (age: ${cached404._cacheAge}min)`);
+        if (cached404 && cached404._useLLM === useLLM) {
+          console.log(`[ANALYZE] No live data for ${ticker}, serving matching cache (age: ${cached404._cacheAge}min, useLLM=${useLLM})`);
           return res.json(cached404);
+        }
+        if (cached404 && cached404._useLLM !== useLLM) {
+          console.log(`[ANALYZE] No live data for ${ticker}; cache exists but useLLM mismatch — not serving stale narrative`);
         }
         // Distinguish: was the quote call rate-limited, or is the ticker actually invalid?
         if (quoteResult === null) {
@@ -4495,10 +4506,13 @@ export async function registerRoutes(server: Server, app: Express) {
       res.json(analysis);
     } catch (error: any) {
       console.error("[ANALYZE] Error:", error?.message);
-      // Try to serve cached data as fallback
+      // Try to serve cached data as fallback — only if LLM mode matches.
+      // Without this check, errors during LLM-on requests could fall back
+      // to LLM-off caches with generic sector-template catalysts.
+      const useLLMCatch = (req.body?.useLLM === true);
       const cached = getCachedAnalysis(ticker);
-      if (cached) {
-        console.log(`[ANALYZE] Serving cached data for ${ticker} (age: ${cached._cacheAge}min)`);
+      if (cached && cached._useLLM === useLLMCatch) {
+        console.log(`[ANALYZE] Serving matching cached data for ${ticker} (age: ${cached._cacheAge}min, useLLM=${useLLMCatch})`);
         return res.json(cached);
       }
       res.status(500).json({ error: error?.message || "Analysis failed" });
