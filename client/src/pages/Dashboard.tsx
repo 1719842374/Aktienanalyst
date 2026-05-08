@@ -199,10 +199,23 @@ export default function Dashboard() {
               <span className="hidden sm:inline">PDF</span>
             </button>
           )}
-          {/* KI-Katalysatoren Toggle */}
+          {/* KI-Katalysatoren Toggle (kostet ~3-4 Credits pro Analyse) */}
           <button
             onClick={() => {
               const next = !useLLM;
+              // Confirm before activating LLM mode — it costs significantly more
+              // credits than the standard sector-template flow.
+              if (next) {
+                const ok = window.confirm(
+                  "KI-Modus aktivieren?\n\n" +
+                  "Der KI-Modus erzeugt unternehmensspezifische Katalysatoren\n" +
+                  "+ News-Sentiment-Analyse über OpenRouter (Haiku 3.5).\n\n" +
+                  "Kosten pro Analyse: ~3-4 Credits (statt 0 ohne KI).\n" +
+                  "Wiederholungen werden 7 Tage lang gecacht (0 Credits).\n\n" +
+                  "Aktivieren?"
+                );
+                if (!ok) return;
+              }
               setUseLLM(next);
               // If we have data and switching to LLM, re-analyze with LLM
               if (next && currentTicker) {
@@ -218,7 +231,9 @@ export default function Dashboard() {
                 ? 'bg-violet-500/15 text-violet-400 border-violet-500/30 hover:bg-violet-500/25'
                 : 'text-foreground/40 border-border/50 hover:bg-muted/50 hover:text-foreground/60'
             }`}
-            title={useLLM ? 'KI-Katalysatoren aktiv (LLM-Calls pro Analyse)' : 'KI-Katalysatoren aus (Sektor-Templates, keine LLM-Kosten)'}
+            title={useLLM
+              ? 'KI-Modus aktiv — unternehmensspezifische Katalysatoren via OpenRouter (~3-4 Credits / Analyse, 7-Tage-Cache)'
+              : 'KI aktivieren — erzeugt Aktien-spezifische Katalysatoren + News-Sentiment. Verbraucht ~3-4 Credits pro neuer Analyse (Cache-Hits gratis).'}
             data-testid="button-llm-toggle"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -1,3 +1,6 @@
+// Load .env first so OPENROUTER_API_KEY (and any other secrets) are
+// available to all downstream modules before they read process.env.
+import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";

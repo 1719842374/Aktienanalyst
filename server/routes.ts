@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
+import { generateCatalystsAndMatchNews } from "./llm-openrouter";
 
 // === Finance API Helper ===
 // Returns either the parsed result, or { __rateLimited: true } on 429,
@@ -3915,23 +3916,24 @@ export async function registerRoutes(server: Server, app: Express) {
       // as LLM-generated.
       let llmActuallyUsed = false;
       if (useLLM) {
-        // LLM-powered company-specific catalysts + news-sentiment matching
-        const llmCatalysts = await generateLLMCatalysts(
+        // === Combined LLM call via OpenRouter (Haiku 3.5 by default) ===
+        // Replaces the previous two separate Anthropic Sonnet calls
+        // (generateLLMCatalysts + matchNewsToCatalysts). Returns 5 catalysts
+        // AND news-sentiment matches in ONE round trip. Saves ~80% on credits:
+        //   - Old: 2x Sonnet @ ~5.5k tokens ≈ ~10-15 credits
+        //   - New: 1x Haiku @ ~3.5k tokens ≈ ~3-4 credits (Haiku is ~3x cheaper)
+        const combined = await generateCatalystsAndMatchNews({
           ticker, companyName, sector, industry, description,
           revenue, revenueGrowth, fcfMargin, price, pe, marketCap,
-          keyProjects, secFilingExcerpts, newsHeadlines
-        );
-        if (llmCatalysts && llmCatalysts.length >= 3) {
-          catalysts = llmCatalysts;
+          keyProjects, secFilingExcerpts, newsItems,
+        });
+        if (combined && combined.catalysts.length >= 3) {
+          catalysts = combined.catalysts;
           llmActuallyUsed = true;
-          console.log(`[ANALYZE] Using LLM-generated catalysts for ${ticker}`);
+          console.log(`[ANALYZE] Using OpenRouter LLM catalysts for ${ticker} (model=${combined.modelUsed}, tokens=${combined.promptTokens || '?'}+${combined.completionTokens || '?'})`);
         } else {
           catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
-          console.log(`[ANALYZE] LLM failed, using sector-template catalysts for ${ticker}`);
-        }
-        // News-Sentiment-Catalyst Matching (also LLM)
-        if (newsItems.length > 0 && catalysts.length > 0) {
-          await matchNewsToCatalysts(newsItems, catalysts, ticker, companyName);
+          console.log(`[ANALYZE] LLM failed/unavailable, falling back to sector-template catalysts for ${ticker}`);
         }
       } else {
         // Fast path: sector-template catalysts, no LLM
