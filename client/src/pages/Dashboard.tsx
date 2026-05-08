@@ -203,26 +203,13 @@ export default function Dashboard() {
           <button
             onClick={() => {
               const next = !useLLM;
-              // Confirm before activating LLM mode — it costs significantly more
-              // credits than the standard sector-template flow.
-              if (next) {
-                const ok = window.confirm(
-                  "KI-Modus aktivieren?\n\n" +
-                  "Der KI-Modus erzeugt unternehmensspezifische Katalysatoren\n" +
-                  "+ News-Sentiment-Analyse über OpenRouter (Haiku 3.5).\n\n" +
-                  "Kosten pro Analyse: ~3-4 Credits (statt 0 ohne KI).\n" +
-                  "Wiederholungen werden 7 Tage lang gecacht (0 Credits).\n\n" +
-                  "Aktivieren?"
-                );
-                if (!ok) return;
-              }
+              // No window.confirm() — native browser dialogs are unreliable in
+              // the Perplexity Computer iframe (silently return false). The
+              // tooltip + visible violet badge already make the cost obvious.
               setUseLLM(next);
-              // If we have data and switching to LLM, re-analyze with LLM
               if (next && currentTicker) {
                 startAnalyze({ ticker: currentTicker, llm: true });
               } else if (!next && currentTicker && data?.llmMode) {
-                // Switching KI off after seeing LLM data: re-fetch non-LLM
-                // analysis so the displayed view matches the toggle state.
                 startAnalyze({ ticker: currentTicker, llm: false });
               }
             }}
