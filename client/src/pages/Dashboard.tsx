@@ -219,8 +219,8 @@ export default function Dashboard() {
                 : 'text-foreground/40 border-border/50 hover:bg-muted/50 hover:text-foreground/60'
             }`}
             title={useLLM
-              ? 'KI-Modus aktiv — unternehmensspezifische Katalysatoren via OpenRouter (~3-4 Credits / Analyse, 7-Tage-Cache)'
-              : 'KI aktivieren — erzeugt Aktien-spezifische Katalysatoren + News-Sentiment. Verbraucht ~3-4 Credits pro neuer Analyse (Cache-Hits gratis).'}
+              ? 'KI-Modus aktiv — Grok 4.1 Fast via OpenRouter (~85% günstiger als Haiku, 7-Tage-Cache, ~0.5 Credits / Analyse)'
+              : 'KI aktivieren — erzeugt unternehmensspezifische Katalysatoren + News-Sentiment via Grok 4.1 Fast. Sehr günstig (~0.5 Credits / Analyse, Cache-Hits gratis).'}
             data-testid="button-llm-toggle"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

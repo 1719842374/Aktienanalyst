@@ -41,25 +41,38 @@ function getClient(): OpenAI | null {
 }
 
 // Pick the model based on the current date and OPENROUTER_MODEL override.
+//
+// MODEL STRATEGY (May 2026):
+//   DEFAULT  : x-ai/grok-4.1-fast   — ~85% cheaper than Haiku 3.5, good JSON output
+//   FALLBACK : anthropic/claude-3.5-haiku  (set PREFER_GROK=0 to switch back)
+//
 // IMPORTANT: x-ai/grok-4.1-fast is scheduled for retirement on 2026-05-15.
-// After that date the date-guard auto-switches to grok-4.3.
-// Verified OpenRouter model IDs (queried 2026-05-08):
-//   anthropic/claude-3.5-haiku    — cheap + fast + good JSON (DEFAULT)
+// After that date the date-guard auto-switches to x-ai/grok-4.3.
+//
+// Verified OpenRouter model IDs (queried 2026-05-08, ping confirmed):
+//   x-ai/grok-4.1-fast            — DEFAULT, retires 2026-05-15 (→ grok-4.3)
+//   x-ai/grok-4.3                 — auto-successor after 2026-05-16
+//   x-ai/grok-4-fast              — cheapest grok variant
+//   anthropic/claude-3.5-haiku    — fallback when PREFER_GROK=0
 //   anthropic/claude-haiku-4.5    — newer Haiku, slightly pricier
-//   x-ai/grok-4.1-fast            — retires 2026-05-15
-//   x-ai/grok-4.3                 — successor to grok-4.1
-//   x-ai/grok-4-fast              — cheapest grok
+//
+// Switching guide for the user:
+//   1. Default (no env)     → grok-4.1-fast (cheapest, current default)
+//   2. PREFER_GROK=0        → anthropic/claude-3.5-haiku (more deterministic)
+//   3. OPENROUTER_MODEL=... → hard override (any OpenRouter ID)
 function pickModel(): string {
   const override = process.env.OPENROUTER_MODEL;
   if (override) return override;
-  const GROK_RETIRE_DATE = new Date("2026-05-15T00:00:00Z");
-  const now = new Date();
-  // Opt-in Grok via env flag (otherwise Haiku 3.5 — cheapest reliable model)
-  if (process.env.PREFER_GROK === "1") {
-    // Auto-switch to grok-4.3 after grok-4.1-fast retires
-    return now < GROK_RETIRE_DATE ? "x-ai/grok-4.1-fast" : "x-ai/grok-4.3";
+
+  // Explicit opt-out: PREFER_GROK=0 switches back to Haiku
+  if (process.env.PREFER_GROK === "0") {
+    return "anthropic/claude-3.5-haiku";
   }
-  return "anthropic/claude-3.5-haiku";
+
+  // Default + PREFER_GROK=1 both go to Grok. Auto-switch after retirement.
+  const GROK_RETIRE_DATE = new Date("2026-05-16T00:00:00Z");
+  const now = new Date();
+  return now < GROK_RETIRE_DATE ? "x-ai/grok-4.1-fast" : "x-ai/grok-4.3";
 }
 
 export interface CombinedLLMInput {
@@ -176,6 +189,12 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
   try {
     console.log(`[LLM] Calling ${model} for ${ticker} (combined catalyst+news, news_count=${newsItems.length})`);
     const t0 = Date.now();
+    // Grok 4.1 Fast is a REASONING model — by default it spends a large
+    // fraction of completion_tokens on hidden chain-of-thought, which can
+    // exhaust our 1900-token budget before the JSON is fully emitted.
+    // We disable reasoning for catalyst generation since the task is well
+    // structured and CoT brings no quality lift here.
+    const isGrok = model.startsWith("x-ai/");
     const completion = await client.chat.completions.create({
       model,
       max_tokens: 1900, // hard cap — keeps cost predictable
@@ -183,6 +202,9 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
       messages: [{ role: "user", content: prompt }],
       // OpenRouter passes this through to providers that support it
       response_format: { type: "json_object" } as any,
+      // Disable reasoning when calling reasoning-capable models so the full
+      // 1900-token budget goes to actual JSON output, not hidden CoT.
+      ...(isGrok ? { reasoning: { enabled: false } } as any : {}),
     });
     const elapsedMs = Date.now() - t0;
 
