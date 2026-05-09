@@ -1,0 +1,38 @@
+{
+  "region": "US",
+  "regionLabel": "USA",
+  "asOf": "2026-05-09T21:55:02.068Z",
+  "indicators": [
+    {
+      "country": "United States",
+      "category": "Core Inflation Rate",
+      "latestValue": "2.6",
+      "date": "2026-03-31",
+      "previousValue": "2.5",
+      "unit": "percent",
+      "source": "U.S. Bureau of Labor Statistics"
+    }
+  ],
+  "llmSynthesis": {
+    "summary": "Die US-Core-Inflationsrate ist am 2026-05-09 auf 2.6 Prozent gestiegen, verglichen mit 2.5 Prozent zum 2026-03-31. Dies deutet auf eine leichte Beschleunigung der zugrunde liegenden Preissteigerungen hin, was die Makro-Lage in den USA von Stabilisierung zu moderater Aufwärmung verschiebt. Basierend auf diesen realen Daten bleibt die Inflationsdynamik nah am Ziel, birgt aber Potenzial für Fed-Reaktionen.",
+    "keyDrivers": [
+      "Anstieg der Core-Inflation von 2.5% auf 2.6% in zwei Monaten",
+      "Persistente Inflationsdrucke trotz vorheriger Abkühlung",
+      "Nähe zum Fed-Ziel von 2%, aber aufwärtsgerichteter Trend"
+    ],
+    "riskFreeRateView": "Der Anstieg der Core-Inflation auf 2.6% signalisiert steigende Zinsdrucke, was zu höheren Risk-Free-Rates führen könnte. Dies impliziert komprimierte Equity-Multiples, da real angepasste Renditen attraktiver werden.",
+    "liquidityView": "Die Daten geben keine expliziten Hinweise auf Geldmengenwachstum, deuten aber durch steigende Inflation auf anhaltendes QT oder neutrale Liquidität hin. Kein Signal für QE-Wende, da Inflationsanstieg Liquiditätsentnahme wahrscheinlicher macht.",
+    "fiscalView": "Keine direkten Fiskaldaten vorhanden; der Inflationsanstieg könnte indirekt durch anhaltendes Government Spending getrieben sein, bleibt aber spekulativ ohne Spending-Zahlen.",
+    "investmentImplications": [
+      "Verkürzung von Duration in Fixed Income aufgrund potenzieller Fed-Tightening",
+      "Tilt zu Value- und Financials-Sektoren, die von höheren Raten profitieren",
+      "Underweight Tech und Growth-Equities wegen Multiples-Kompression",
+      "USD-Stärkung als Inflationshedge",
+      "Übergewicht TIPS für realen Inflationsschutz"
+    ],
+    "actionRecommendation": "Watch",
+    "actionRationale": "Der moderate Anstieg der Core-Inflation auf 2.6% erfordert Beobachtung der nächsten Daten, bevor klare Richtungsentscheidungen getroffen werden. Zu frühe Positionierung birgt Risiko einer Überreaktion der Märkte."
+  },
+  "modelUsed": "x-ai/grok-4.1-fast",
+  "_cachedAt": "2026-05-09T21:55:02.068Z"
+}

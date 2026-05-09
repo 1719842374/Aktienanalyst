@@ -1,0 +1,198 @@
+{
+  "region": "US",
+  "regionLabel": "USA",
+  "asOf": "2026-05-09T21:56:12.050Z",
+  "programmes": [
+    {
+      "name": "CHIPS and Science Act",
+      "category": "Capex Programme",
+      "region": "United States",
+      "amountUSD": "$280B",
+      "timeline": "2022-2032",
+      "sectors": [
+        "Semiconductors",
+        "Manufacturing"
+      ],
+      "beneficiaries": [
+        "INTC",
+        "TSM",
+        "MU"
+      ],
+      "status": "In Implementation",
+      "impact": "high",
+      "rationale": "Das Programm fördert massiv den Ausbau der Halbleiterproduktion in den USA, um Abhängigkeiten von Asien zu reduzieren und die Lieferkette zu sichern. Es treibt Reshoring und Investitionen in High-Tech-Fertigung an."
+    },
+    {
+      "name": "Infrastructure Investment and Jobs Act (IIJA)",
+      "category": "Capex Programme",
+      "region": "United States",
+      "amountUSD": "$1.2T",
+      "timeline": "2021-2026",
+      "sectors": [
+        "Infrastructure",
+        "Transport",
+        "Broadband"
+      ],
+      "beneficiaries": [
+        "Caterpillar",
+        "Vulcan Materials",
+        "Utilities"
+      ],
+      "status": "In Implementation",
+      "impact": "medium",
+      "rationale": "Der größte Infrastrukturplan seit Jahrzehnten investiert in Straßen, Brücken und Breitband, um Wachstum zu stimulieren und Resilienz zu stärken. Er generiert langfristige Capex-Chancen in Bau und Materialien."
+    },
+    {
+      "name": "Inflation Reduction Act (IRA)",
+      "category": "Capex Programme",
+      "region": "United States",
+      "amountUSD": "$369B",
+      "timeline": "2022-2032",
+      "sectors": [
+        "Clean Energy",
+        "EV",
+        "Manufacturing"
+      ],
+      "beneficiaries": [
+        "TSLA",
+        "NEE",
+        "Battery Producers"
+      ],
+      "status": "In Implementation",
+      "impact": "medium",
+      "rationale": "IRA bietet Steuergutschriften und Subventionen für erneuerbare Energien und EVs, um den Energiewandel zu beschleunigen. Es zieht Milliarden an privaten Investitionen in Green Tech an."
+    },
+    {
+      "name": "Defense Budget (NDAA)",
+      "category": "Capex Programme",
+      "region": "United States",
+      "amountUSD": "$886B (FY2024)",
+      "timeline": "Ongoing, FY2025+",
+      "sectors": [
+        "Defense",
+        "Aerospace"
+      ],
+      "beneficiaries": [
+        "LMT",
+        "RTX",
+        "NOC"
+      ],
+      "status": "Active",
+      "impact": "high",
+      "rationale": "Hohe Verteidigungsausgaben sichern NATO-2%-Ziel und finanzieren Modernisierung, was stabile Capex-Ströme für Rüstungsunternehmen gewährleistet. Geopolitische Spannungen treiben Ausgaben weiter an."
+    },
+    {
+      "name": "Bipartisan Infrastructure Law - Broadband Equity",
+      "category": "Capex Programme",
+      "region": "United States",
+      "amountUSD": "$65B",
+      "timeline": "2021-2030",
+      "sectors": [
+        "Telecom",
+        "Digital Infrastructure"
+      ],
+      "beneficiaries": [
+        "VZ",
+        "TMUS",
+        "CCI"
+      ],
+      "status": "In Implementation",
+      "impact": "medium",
+      "rationale": "Fördert flächendeckenden Breitbandausbau, insbesondere in ländlichen Gebieten, und schafft Investitionsmöglichkeiten in Digitalisierung. Es unterstützt Reshoring digitaler Infrastruktur."
+    },
+    {
+      "name": "Advanced Manufacturing Tax Credits (Section 45X, IRA)",
+      "category": "Capex Programme",
+      "region": "United States",
+      "amountUSD": "$est. $30B+",
+      "timeline": "2023-2032",
+      "sectors": [
+        "Manufacturing",
+        "Clean Tech"
+      ],
+      "beneficiaries": [
+        "GE",
+        "Honeywell",
+        "Solar Firms"
+      ],
+      "status": "Active",
+      "impact": "high",
+      "rationale": "Produktionssteuergutschriften incentivieren Onshoring von Fertigung, besonders in Batterien und Solar. Sie senken Capex-Kosten und boosten heimische Produktion massiv."
+    },
+    {
+      "name": "BARDA / Operation Warp Speed Extension",
+      "category": "Capex Programme",
+      "region": "United States",
+      "amountUSD": "$10B+ (ongoing)",
+      "timeline": "2020-2028",
+      "sectors": [
+        "Health",
+        "Biotech"
+      ],
+      "beneficiaries": [
+        "PFE",
+        "MRNA",
+        "Biotech"
+      ],
+      "status": "Active",
+      "impact": "medium",
+      "rationale": "BARDA finanziert Biotech-Forschung und Produktion für Pandemie- und Gesundheitsvorsorge, was Resilienz stärkt. Es treibt Investitionen in medizinische Fertigung an."
+    },
+    {
+      "name": "Tax Cuts and Jobs Act Extension (TCJA)",
+      "category": "Capex Programme",
+      "region": "United States",
+      "amountUSD": "$est. $4T (over 10 years)",
+      "timeline": "2017-2025+ (debated extension)",
+      "sectors": [
+        "Corporate",
+        "All Sectors"
+      ],
+      "beneficiaries": [
+        "Broad Market"
+      ],
+      "status": "Active",
+      "impact": "medium",
+      "rationale": "Niedrigere Körperschaftssteuern und Abschreibungen stimulieren Capex und Reshoring. Eine Verlängerung würde Fiskalimpulse verlängern und Wachstum fördern."
+    },
+    {
+      "name": "Electrification and Grid Modernization (DOE Loans)",
+      "category": "Capex Programme",
+      "region": "United States",
+      "amountUSD": "$50B+",
+      "timeline": "2022-2030",
+      "sectors": [
+        "Energy Grid",
+        "Renewables"
+      ],
+      "beneficiaries": [
+        "NextEra",
+        "Utilities"
+      ],
+      "status": "In Implementation",
+      "impact": "high",
+      "rationale": "Kredite und Zuschüsse modernisieren das Stromnetz für EVs und Renewables, was massive Capex in Energieinfrastruktur auslöst. Es ist zentral für Net-Zero-Ziele."
+    },
+    {
+      "name": "Buy American Act Enforcement",
+      "category": "Capex Programme",
+      "region": "United States",
+      "amountUSD": "Embedded in IIJA/IRA",
+      "timeline": "Ongoing",
+      "sectors": [
+        "Manufacturing",
+        "Procurement"
+      ],
+      "beneficiaries": [
+        "Domestic Manufacturers"
+      ],
+      "status": "Active",
+      "impact": "medium",
+      "rationale": "Stärkt heimische Produktion durch Regierungsbeschaffung, fördert Onshoring und schafft Capex-Nachfrage in Stahl, Maschinen und mehr."
+    }
+  ],
+  "totalCapexEstimate": "Über $3T aggregiert (inkl. IIJA $1.2T, IRA $369B, CHIPS $280B, Defense jährlich $800B+, TCJA-Effekte)",
+  "govSpendingTrend": "Government Spending to GDP liegt bei 33.8% (2025), leicht rückläufig von 33.9%, bei steigenden absoluten Ausgaben (Q1 2026: $3999.7B). Defizit bei -5.9% GDP und hoher Schuldenlast (123.3%) signalisieren anhaltend expansive Fiskalpolitik trotz Stabilisierungsversuchen.",
+  "modelUsed": "x-ai/grok-4.1-fast",
+  "_cachedAt": "2026-05-09T21:56:12.050Z"
+}

@@ -10,6 +10,7 @@ import BTCDashboard from "@/pages/BTCDashboard";
 import GoldDashboard from "@/pages/GoldDashboard";
 import RecessionDashboard from "@/pages/RecessionDashboard";
 import ScreenerDashboard from "@/pages/ScreenerDashboard";
+import Researcher from "@/pages/Researcher";
 import Compare from "@/pages/Compare";
 import NotFound from "@/pages/not-found";
 
@@ -21,6 +22,7 @@ function AppRouter() {
       <Route path="/gold" component={GoldDashboard} />
       <Route path="/recession" component={RecessionDashboard} />
       <Route path="/screener" component={ScreenerDashboard} />
+      <Route path="/researcher" component={Researcher} />
       <Route path="/compare" component={Compare} />
       <Route component={NotFound} />
     </Switch>

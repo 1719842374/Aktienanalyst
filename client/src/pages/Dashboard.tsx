@@ -26,7 +26,7 @@ import { Section17 } from "@/components/sections/Section17";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
-  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search, Star,
+  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search, Star, Sparkles,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -247,6 +247,15 @@ export default function Dashboard() {
           >
             <Search className="w-3 h-3" />
             <span className="hidden sm:inline">Screener</span>
+          </button>
+          <button
+            onClick={() => navigate("/researcher")}
+            className="h-8 px-2.5 text-[11px] font-medium text-violet-400 hover:bg-violet-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-violet-400/30"
+            title="Researcher — autonomous macro & sector discovery"
+            data-testid="button-researcher"
+          >
+            <Sparkles className="w-3 h-3" />
+            <span className="hidden sm:inline">Researcher</span>
           </button>
           <button
             onClick={() => navigate("/compare")}

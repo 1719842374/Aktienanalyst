@@ -309,3 +309,46 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
 export function isLLMAvailable(): boolean {
   return !!process.env.OPENROUTER_API_KEY;
 }
+
+// Generic JSON-mode LLM call — reused by the Researcher module so it doesn't
+// have to instantiate its own OpenAI client. Returns parsed JSON or null on
+// any error (network / parse / model-unavailable).
+export async function callLLMJson(opts: {
+  prompt: string;
+  maxTokens?: number;
+  temperature?: number;
+  systemPrompt?: string;
+}): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
+  const client = getClient();
+  if (!client) return null;
+  const model = pickModel();
+  const isGrok = model.startsWith("x-ai/");
+  try {
+    const messages: any[] = [];
+    if (opts.systemPrompt) messages.push({ role: "system", content: opts.systemPrompt });
+    messages.push({ role: "user", content: opts.prompt });
+    const completion = await client.chat.completions.create({
+      model,
+      max_tokens: opts.maxTokens ?? 2400,
+      temperature: opts.temperature ?? 0.4,
+      messages,
+      response_format: { type: "json_object" } as any,
+      ...(isGrok ? { reasoning: { enabled: false } } as any : {}),
+    });
+    const text = completion.choices?.[0]?.message?.content?.trim() || "";
+    if (!text) return null;
+    let jsonStr = text;
+    if (jsonStr.startsWith("```")) {
+      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+    }
+    return {
+      data: JSON.parse(jsonStr),
+      modelUsed: model,
+      promptTokens: completion.usage?.prompt_tokens,
+      completionTokens: completion.usage?.completion_tokens,
+    };
+  } catch (err: any) {
+    console.error(`[LLM-JSON] failed (model=${model}): ${(err?.message || String(err)).substring(0, 300)}`);
+    return null;
+  }
+}

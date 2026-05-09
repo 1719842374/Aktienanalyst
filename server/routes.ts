@@ -3198,6 +3198,10 @@ export async function registerRoutes(server: Server, app: Express) {
   const { registerRecessionRoutes } = await import("./recession");
   registerRecessionRoutes(app);
 
+  // Register Researcher routes (4-tab autonomous research mode)
+  const { registerResearcherRoutes } = await import("./researcher");
+  registerResearcherRoutes(app);
+
   // Cache listing endpoint
   app.get("/api/cache", (_req, res) => {
     try {
