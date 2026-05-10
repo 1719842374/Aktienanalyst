@@ -99,12 +99,6 @@ export function Section5({ data }: Props) {
     fcfHaircut: data.fcfHaircut,
     actualEPS: data.epsTTM,
     forwardEPS: data.epsConsensusNextFY,
-    revenueGrowthYoY: data.revenueGrowth,
-    fcfMargin: data.fcfMargin,
-    psRatio: data.revenue > 0 ? data.marketCap / data.revenue : undefined,
-    epsGrowth5Y: data.epsGrowth5Y,
-    currentPrice: data.currentPrice,
-    sectorEvEbitda: data.sectorAvgEVEBITDA,
     waccOverride: null,
   };
 

@@ -61,12 +61,6 @@ export function Section2({ data }: Props) {
     fcfHaircut: data.fcfHaircut,
     actualEPS: data.epsTTM,
     forwardEPS: data.epsConsensusNextFY,
-    revenueGrowthYoY: data.revenueGrowth,
-    fcfMargin: data.fcfMargin,
-    psRatio: data.revenue > 0 ? data.marketCap / data.revenue : undefined,
-    epsGrowth5Y: data.epsGrowth5Y,
-    currentPrice: data.currentPrice,
-    sectorEvEbitda: data.sectorAvgEVEBITDA,
   }), [data, sp, netDebt]);
 
   // Catalyst base: use DCF perShare, but if it's unreasonably low, fall back to analyst PT median

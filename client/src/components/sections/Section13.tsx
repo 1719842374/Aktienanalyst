@@ -62,13 +62,6 @@ export function Section13({ data }: Props) {
     fcfHaircut: haircut,
     actualEPS: data.epsTTM,
     forwardEPS: data.epsConsensusNextFY,
-    // Growth-Player Detection inputs
-    revenueGrowthYoY: data.revenueGrowth,
-    fcfMargin: data.fcfMargin,
-    psRatio: data.revenue > 0 ? data.marketCap / data.revenue : undefined,
-    epsGrowth5Y: data.epsGrowth5Y,
-    currentPrice: data.currentPrice,
-    sectorEvEbitda: data.sectorAvgEVEBITDA,
   }), [data, sp, netDebt, haircut, ebitMarginDefault, capexDefault, revenueGrowthDefault, dcfBetaS13, debtRatioS13]);
 
   const conservativeDCF = useMemo(() => calculateFCFFDCF(baseParams), [baseParams]);
