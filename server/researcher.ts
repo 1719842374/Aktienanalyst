@@ -780,6 +780,48 @@ function writeBriefingSnapshot(events: EventFingerprint[]) {
   }
 }
 
+// Daily briefing result cache — keyed by Berlin-date (TZ Europe/Berlin),
+// so a Cron-Run um 07:00 morgens und ein User-Klick um 12:00 nachmittags
+// teilen sich den gleichen Cache-Eintrag.
+function getBerlinDateKey(): string {
+  // Europe/Berlin via Intl — robust gegen Sommerzeit-Wechsel
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  });
+  return fmt.format(new Date()); // "2026-05-10"
+}
+
+function readBriefingResultCache(): DailyBriefingResult | null {
+  try {
+    const file = path.join(CACHE_DIR, "briefing-result.json");
+    if (!fs.existsSync(file)) return null;
+    const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
+    if (!raw?.dateKey || raw.dateKey !== getBerlinDateKey()) return null;
+    const cached = raw.result as DailyBriefingResult;
+    // Mark as cached for the client so the UI can show cache age
+    const ageMin = Math.round((Date.now() - new Date(raw.savedAt).getTime()) / 60000);
+    return { ...cached, _cached: true, _cacheAgeMin: ageMin, _cachedAt: raw.savedAt } as any;
+  } catch (e: any) {
+    console.error("[BRIEFING] result cache read failed:", e?.message);
+    return null;
+  }
+}
+
+function writeBriefingResultCache(result: DailyBriefingResult) {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    const file = path.join(CACHE_DIR, "briefing-result.json");
+    fs.writeFileSync(file, JSON.stringify({
+      dateKey: getBerlinDateKey(),
+      savedAt: new Date().toISOString(),
+      result,
+    }, null, 2));
+  } catch (e: any) {
+    console.error("[BRIEFING] result cache write failed:", e?.message);
+  }
+}
+
 function normalizeTitle(t: string): string {
   return String(t || "").toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
@@ -1056,10 +1098,21 @@ export function registerResearcherRoutes(app: Express) {
   });
 
   // Daily Briefing — cross-region net-new event detection (manual + cron)
-  app.post("/api/researcher/daily-briefing", async (_req, res) => {
+  app.post("/api/researcher/daily-briefing", async (req, res) => {
     try {
-      console.log("[BRIEFING] starting daily briefing build...");
+      const force = req.body?.force === true;
+      // Daily cache: 1 run per Berlin day. Cron triggert morgens, User-Klicks
+      // tagsüber bekommen Cache-Hit. force=true überspringt Cache (Cron + Manual-Refresh).
+      if (!force) {
+        const cached = readBriefingResultCache();
+        if (cached) {
+          console.log(`[BRIEFING] cache HIT (Berlin-date) age=${(cached as any)._cacheAgeMin}min`);
+          return res.json(cached);
+        }
+      }
+      console.log(`[BRIEFING] starting daily briefing build (force=${force})...`);
       const result = await buildDailyBriefing();
+      writeBriefingResultCache(result);
       console.log(`[BRIEFING] complete: ${result.diagnostics.netNewEvents} net-new of ${result.diagnostics.eventsScanned} events`);
       res.json(result);
     } catch (err: any) {

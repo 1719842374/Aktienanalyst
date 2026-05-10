@@ -52,21 +52,21 @@ export default function Researcher() {
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingError, setBriefingError] = useState<string | null>(null);
 
-  async function runBriefing() {
+  async function runBriefing(force = false) {
     setBriefingOpen(true);
     setBriefingLoading(true);
     setBriefingError(null);
-    setBriefingData(null);
+    if (force) setBriefingData(null);
     try {
-      const res = await apiRequest("POST", "/api/researcher/daily-briefing", {});
+      const res = await apiRequest("POST", "/api/researcher/daily-briefing", { force });
       setBriefingData(await res.json());
     } catch (err: any) {
       const msg = err?.message || "";
       if (/^(503|504|408|499)/.test(msg) || /timeout/i.test(msg)) {
-        // Likely proxy timeout; result is in cache—retry once
+        // Likely proxy timeout; result is in cache—retry once (without force, hit cache)
         try {
           await new Promise(r => setTimeout(r, 3000));
-          const res2 = await apiRequest("POST", "/api/researcher/daily-briefing", {});
+          const res2 = await apiRequest("POST", "/api/researcher/daily-briefing", { force: false });
           setBriefingData(await res2.json());
           return;
         } catch (e2: any) { /* fall through */ }
@@ -272,7 +272,8 @@ export default function Researcher() {
           data={briefingData}
           error={briefingError}
           onClose={() => setBriefingOpen(false)}
-          onRetry={runBriefing}
+          onRetry={() => runBriefing(false)}
+          onForceRefresh={() => runBriefing(true)}
         />
       )}
     </div>
@@ -283,15 +284,19 @@ export default function Researcher() {
 // Daily Briefing Modal
 // ============================================================
 
-function BriefingModal({ loading, data, error, onClose, onRetry }: {
+function BriefingModal({ loading, data, error, onClose, onRetry, onForceRefresh }: {
   loading: boolean;
   data: any;
   error: string | null;
   onClose: () => void;
   onRetry: () => void;
+  onForceRefresh: () => void;
 }) {
   const briefing = data?.briefing;
   const diag = data?.diagnostics;
+  const isCached = !!data?._cached;
+  const cacheAge = data?._cacheAgeMin;
+  const cachedAt = data?._cachedAt ? new Date(data._cachedAt) : null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8 bg-black/60 backdrop-blur-sm overflow-y-auto">
       <div className="w-full max-w-3xl bg-card border border-border/50 rounded-lg shadow-2xl">
@@ -299,7 +304,24 @@ function BriefingModal({ loading, data, error, onClose, onRetry }: {
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border/40 bg-gradient-to-r from-amber-500/10 to-orange-500/5">
           <Flame className="w-4 h-4 text-amber-400" />
           <h2 className="text-sm font-semibold text-foreground/95">Pre-Market Briefing</h2>
-          <span className="text-[10px] text-foreground/50">Net-new Key Events seit letztem Run</span>
+          {isCached && data && !loading ? (
+            <span className="text-[10px] text-emerald-400/80 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-400/20">
+              ✓ Heute generiert{cacheAge != null ? ` · vor ${cacheAge < 60 ? cacheAge + "min" : Math.round(cacheAge / 60) + "h"}` : ""}
+            </span>
+          ) : (
+            <span className="text-[10px] text-foreground/50">Net-new Key Events seit letztem Run</span>
+          )}
+          {data && !loading && (
+            <button
+              onClick={onForceRefresh}
+              className="text-[10px] text-foreground/50 hover:text-foreground px-1.5 py-0.5 rounded border border-border/40 hover:border-border/60 flex items-center gap-1"
+              title="Briefing neu generieren (kostet 1× LLM-Run)"
+              data-testid="button-refresh-briefing"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Refresh
+            </button>
+          )}
           <button onClick={onClose} className="ml-auto text-foreground/40 hover:text-foreground/80 text-lg leading-none" data-testid="button-close-briefing">×</button>
         </div>
 
