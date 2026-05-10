@@ -177,34 +177,6 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   steps.push(`=== FCFF-Projektion (10 Jahre) ===`);
   steps.push(`Revenue Basis: ${fmt(params.revenueBase)}`);
 
-  // === GROWTH-PLAYER DETECTION ===
-  // Trigger: P1-Wachstum >12% ODER aktuell negative/sehr dünne EBIT-Marge ODER
-  // negative EPS (Heavy-Capex-Cycle / Pre-Profitability Growth Stocks).
-  // Dann: Capex normalisiert sich über 10 Jahre nach unten (Capex-Cycle endet),
-  // Margin-Ramp wird aggressiver, Terminal-Multiple-Fallback aktiviert.
-  const ttmEPSdetect = (params.actualEPS && params.actualEPS > 0) ? params.actualEPS : 0;
-  const fwdEPSdetect = (params.forwardEPS && params.forwardEPS > 0) ? params.forwardEPS : 0;
-  const isGrowthPlayer =
-    params.revenueGrowthP1 > 12 ||
-    params.ebitMargin < 5 ||
-    (ttmEPSdetect === 0 && fwdEPSdetect === 0);
-
-  // Capex-Normalisierung: Hoher initialer Capex sinkt linear auf 60% bis Jahr 10.
-  // Beispiel: Defense/Aerospace mit 15% Capex → endet bei 9% in Jahr 10.
-  // Floor bei 5% damit selbst bei extremen Growth-Stocks Capex realistisch bleibt.
-  const capexFloorPct = 5;
-  const capexEndPctRaw = Math.max(capexFloorPct, params.capexPct * 0.6);
-  // Aggressivere EBIT-Margin-Ramp bei Growth Playern (+200bps over user-set terminal)
-  const ebitMarginTerminalAdj = isGrowthPlayer
-    ? params.ebitMarginTerminal + 2.0
-    : params.ebitMarginTerminal;
-
-  if (isGrowthPlayer) {
-    steps.push(`⚡ Growth-Player erkannt (g=${params.revenueGrowthP1}%, EBIT-M=${params.ebitMargin}%) — Capex-Normalisierung & Margin-Boost aktiv.`);
-    steps.push(`  Capex: ${params.capexPct}% → ${capexEndPctRaw.toFixed(1)}% (linear über 10J)`);
-    steps.push(`  EBIT-M Terminal: ${params.ebitMarginTerminal}% → ${ebitMarginTerminalAdj.toFixed(1)}% (+200bps)`);
-  }
-
   const yearlyProjections: FCFFDCFResult["yearlyProjections"] = [];
   let pvExplicit = 0;
   let prevRevenue = params.revenueBase;
@@ -215,18 +187,12 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
 
     // Margin transitions from current to terminal over 10 years
     const marginProgress = y / 10;
-    const ebitMargin = params.ebitMargin + (ebitMarginTerminalAdj - params.ebitMargin) * marginProgress;
-
-    // Capex transitions from initial to normalized end-rate over 10 years
-    // (only for Growth Players — normal stocks keep flat capexPct)
-    const capexPctY = isGrowthPlayer
-      ? params.capexPct + (capexEndPctRaw - params.capexPct) * marginProgress
-      : params.capexPct;
+    const ebitMargin = params.ebitMargin + (params.ebitMarginTerminal - params.ebitMargin) * marginProgress;
 
     const ebit = revenue * (ebitMargin / 100);
     const nopat = ebit * (1 - params.taxRate / 100);
     const da = revenue * (params.daRatio / 100);
-    const capex = revenue * (capexPctY / 100);
+    const capex = revenue * (params.capexPct / 100);
     const revenueGrowthAbs = revenue - prevRevenue;
     const deltaWC = revenueGrowthAbs * (params.deltaWCPct / 100);
 
@@ -244,7 +210,7 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     yearlyProjections.push({ year: y, revenue, ebit, nopat, da, capex, deltaWC, fcff, pvFCFF });
 
     if (y <= 5 || y === 10) {
-      steps.push(`  Y${y}: Rev ${fmt(revenue)} (g=${growthRate}%), EBIT-M ${ebitMargin.toFixed(1)}%, Capex ${capexPctY.toFixed(1)}%, FCFF ${fmt(fcff)}, PV ${fmt(pvFCFF)}`);
+      steps.push(`  Y${y}: Rev ${fmt(revenue)} (g=${growthRate}%), EBIT-M ${ebitMargin.toFixed(1)}%, FCFF ${fmt(fcff)}, PV ${fmt(pvFCFF)}`);
     } else if (y === 6) {
       steps.push(`  Y6-9: Phase 2 Growth = ${params.revenueGrowthP2}%`);
     }
@@ -252,54 +218,28 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     prevRevenue = revenue;
   }
 
-  // 3. Terminal Value — Hybrid: Gordon Growth ODER EBITDA-Multiple-Fallback
+  // 3. Terminal Value (Gordon Growth)
   const lastFCFF = yearlyProjections[9].fcff;
-  const lastRevenue = yearlyProjections[9].revenue;
-  const lastEBIT = yearlyProjections[9].ebit;
-  const lastDA = yearlyProjections[9].da;
-  const lastEBITDA = lastEBIT + lastDA;
   const terminalFCFF = lastFCFF * (1 + params.terminalG / 100);
 
   // Safety: WACC must be > terminal g
   const waccDecimal = wacc / 100;
   const gDecimal = params.terminalG / 100;
   let terminalValue = 0;
-  let tvMethod: "gordon" | "ebitda-multiple" | "capped" = "gordon";
-
-  // EBITDA-Multiple-Fallback: Bei negativem oder sehr kleinem terminalFCFF
-  // (z.B. Growth-Player im Capex-Cycle) ist Gordon Growth unbrauchbar.
-  // Fallback: 10-12× EBITDA (Industrials/Defense Mid-Cycle Multiple).
-  // Trigger: terminalFCFF ≤ 0 ODER terminalFCFF < 30% von EBITDA*(1-tax) (zeigt FCFF-Verzerrung).
-  const fcffEbitdaRatio = lastEBITDA > 0 ? terminalFCFF / lastEBITDA : 0;
-  const fcffIsDistorted = terminalFCFF <= 0 || (lastEBITDA > 0 && fcffEbitdaRatio < 0.20);
-
-  if (fcffIsDistorted && lastEBITDA > 0) {
-    // EBITDA-Multiple: 10× (default) oder dynamisch höher bei stark wachsenden Stocks
-    const ebitdaMultiple = isGrowthPlayer ? 12 : 10;
-    terminalValue = lastEBITDA * ebitdaMultiple;
-    tvMethod = "ebitda-multiple";
-    steps.push(``);
-    steps.push(`=== Terminal Value (EBITDA-Multiple-Fallback) ===`);
-    steps.push(`  FCFF₁₀ ${fmt(lastFCFF)} ist verzerrt (${(fcffEbitdaRatio * 100).toFixed(0)}% von EBITDA) — Gordon nicht anwendbar.`);
-    steps.push(`  EBITDA₁₀ = ${fmt(lastEBITDA)} × ${ebitdaMultiple}× = ${fmt(terminalValue)}`);
-  } else if (waccDecimal > gDecimal && terminalFCFF > 0) {
+  if (waccDecimal > gDecimal && terminalFCFF > 0) {
     terminalValue = terminalFCFF / (waccDecimal - gDecimal);
-    tvMethod = "gordon";
   } else if (terminalFCFF > 0) {
     // Fallback: cap at 25x terminal FCFF
     terminalValue = terminalFCFF * 25;
-    tvMethod = "capped";
     steps.push(`  ⚠ WACC ≤ Terminal g — TV capped at 25× FCFF₁₁`);
   }
 
   const pvTerminal = terminalValue / Math.pow(1 + wacc / 100, 10);
 
-  if (tvMethod === "gordon") {
-    steps.push(``);
-    steps.push(`=== Terminal Value (Gordon Growth) ===`);
-    steps.push(`FCFF₁₁ = ${fmt(lastFCFF)} × (1 + ${params.terminalG}%) = ${fmt(terminalFCFF)}`);
-    steps.push(`TV = ${fmt(terminalFCFF)} / (${wacc.toFixed(2)}% - ${params.terminalG}%) = ${fmt(terminalValue)}`);
-  }
+  steps.push(``);
+  steps.push(`=== Terminal Value (Gordon Growth) ===`);
+  steps.push(`FCFF₁₁ = ${fmt(lastFCFF)} × (1 + ${params.terminalG}%) = ${fmt(terminalFCFF)}`);
+  steps.push(`TV = ${fmt(terminalFCFF)} / (${wacc.toFixed(2)}% - ${params.terminalG}%) = ${fmt(terminalValue)}`);
   steps.push(`PV(TV) = ${fmt(pvTerminal)}`);
 
   // 4. Enterprise Value & Equity Bridge
