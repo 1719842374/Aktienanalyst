@@ -139,38 +139,53 @@ export default function Researcher() {
     <div className="h-screen overflow-y-auto bg-background text-foreground">
       {/* Header */}
       <header className="border-b border-border/40 bg-background/80 backdrop-blur sticky top-0 z-20">
-        <div className="max-w-6xl mx-auto px-3 sm:px-4 py-3 flex items-center gap-3">
-          <Link href="/" className="flex items-center gap-1.5 text-foreground/60 hover:text-foreground text-sm transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Dashboard</span>
-          </Link>
-          <div className="flex-1 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-violet-400" />
-            <h1 className="text-sm font-semibold tracking-tight">Researcher</h1>
-            <span className="text-[10px] text-foreground/40 hidden sm:inline">Hedge-Fund-Style Macro & Stock Discovery</span>
+        {/* Mobile-friendly two-row header on <sm */}
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 py-2 sm:py-3">
+          {/* Row 1: Back-link + title + Briefing button */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Link href="/" className="flex items-center gap-1.5 text-foreground/60 hover:text-foreground text-sm transition-colors shrink-0">
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Dashboard</span>
+            </Link>
+            <div className="flex-1 flex items-center gap-1.5 sm:gap-2 min-w-0">
+              <Sparkles className="w-4 h-4 text-violet-400 shrink-0" />
+              <h1 className="text-sm font-semibold tracking-tight">Researcher</h1>
+              <span className="text-[10px] text-foreground/40 hidden md:inline truncate">Hedge-Fund-Style Macro &amp; Stock Discovery</span>
+            </div>
+            <button
+              onClick={runBriefing}
+              className="h-8 px-2 sm:px-2.5 text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-amber-400/30 shrink-0"
+              title="Pre-Market Briefing — net-new Events seit gestern"
+              data-testid="button-briefing"
+            >
+              <Flame className="w-3 h-3" />
+              <span className="hidden xs:inline sm:inline">Briefing</span>
+            </button>
+            {/* Region selector — desktop inline */}
+            <div className="hidden sm:flex items-center gap-1 bg-muted/30 rounded-md p-0.5 shrink-0">
+              {REGION_OPTIONS.map(r => (
+                <button
+                  key={r.id}
+                  onClick={() => setRegion(r.id)}
+                  className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                    region === r.id ? "bg-primary/15 text-primary" : "text-foreground/50 hover:text-foreground/80"
+                  }`}
+                  data-testid={`button-region-${r.id}`}
+                >
+                  <span className="mr-1">{r.flag}</span>{r.label}
+                </button>
+              ))}
+            </div>
           </div>
-          {/* Daily Briefing trigger */}
-          <button
-            onClick={runBriefing}
-            className="h-8 px-2.5 text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-amber-400/30"
-            title="Pre-Market Briefing — net-new Events seit gestern"
-            data-testid="button-briefing"
-          >
-            <Flame className="w-3 h-3" />
-            <span className="hidden md:inline">Briefing</span>
-          </button>
-          {/* Region selector */}
-          <div className="flex items-center gap-1 bg-muted/30 rounded-md p-0.5">
+          {/* Row 2 (mobile only): full-width region selector */}
+          <div className="sm:hidden flex items-center gap-1 bg-muted/30 rounded-md p-0.5 mt-2">
             {REGION_OPTIONS.map(r => (
               <button
                 key={r.id}
                 onClick={() => setRegion(r.id)}
-                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
-                  region === r.id
-                    ? "bg-primary/15 text-primary"
-                    : "text-foreground/50 hover:text-foreground/80"
+                className={`flex-1 px-2 py-1.5 rounded text-[11px] font-medium transition-colors ${
+                  region === r.id ? "bg-primary/15 text-primary" : "text-foreground/50"
                 }`}
-                data-testid={`button-region-${r.id}`}
               >
                 <span className="mr-1">{r.flag}</span>{r.label}
               </button>

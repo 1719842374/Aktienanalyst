@@ -1,10 +1,10 @@
 # Stock Analyst Pro
 
-**Umfassende Finanzanalyse-Plattform — Aktien (17 Sektionen), Bitcoin-Bewertung (12 Sektionen), Gold-Analyse und Rezessions-Dashboard.**
+**Umfassende Finanzanalyse-Plattform — Aktien-Tiefenanalyse (17 Sektionen), Bitcoin-Bewertung, Gold-Analyse, Rezessions-Dashboard, autonomer Researcher-Modus mit 4 Tabs, Pre-Market Daily Briefing und Regression-Scan.**
 
 > Objektiv · Transparent · Konservativ · Alle Rechenwege ausgewiesen
 
-[![Live Demo](https://img.shields.io/badge/Live-Demo-blue?style=for-the-badge)](https://www.perplexity.ai/computer/a/stock-analyst-pro-H8US06otSA6hhTHNj22ShQ)
+[![Live Demo](https://img.shields.io/badge/Live-Demo-blue?style=for-the-badge)](https://www.perplexity.ai/computer/a/stock-analyst-pro-VUJ7saGaQJ6IoJV6D1plrQ)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/1719842374/Aktienanalyst)
 
 ---
@@ -16,6 +16,9 @@ Stock Analyst Pro vereint vier spezialisierte Analyse-Dashboards in einer Anwend
 | Dashboard | Route | Beschreibung |
 |-----------|-------|-------------|
 | **Aktien-Analyse** | `/#/` | 17-Sektionen-Analyse für jede Aktie weltweit (DCF, Monte Carlo, Tech. Analyse) |
+| **Researcher** | `/#/researcher` | Hedge-Fund-Style autonomer Macro & Stock Discovery Modus (4 Tabs) |
+| **Screener** | `/#/screener` | 13F-Holdings-Screener (institutional ownership) |
+| **Compare** | `/#/compare` | Side-by-side Ticker-Vergleich (Win/Loss-Highlighting) |
 | **BTC-Analyse** | `/#/btc` | 12-Sektionen Bitcoin-Bewertung mit Power-Law, Halving-Zyklus, 7 Indikatoren |
 | **Gold-Analyse** | `/#/gold` | Fair-Value-Modell, Realzinsen, Zentralbankkäufe |
 | **Rezessions-Dashboard** | `/#/recession` | 17 makroökonomische Indikatoren mit Wahrscheinlichkeits-Scoring |
@@ -451,6 +454,134 @@ Dynamisch generiertes Fazit mit 5 Sektionen:
 
 ---
 
+## Researcher-Modus (Hedge-Fund-Style Autonomous Discovery)
+
+Der Researcher-Tab ist komplett separat vom Aktien-Analyzer und läuft **autonome, breit angelegte Macro- und Sector-Recherche** ohne Hardcoding einzelner Ticker oder Branchen.
+
+### 4 Tabs
+
+| Tab | Endpoint | Inhalt |
+|-----|----------|--------|
+| **Country Macro Pulse** | `POST /api/researcher/macro` | Realdaten (Trading Economics + FRED) für Risk-Free Rate, Leitzins, M2, GDP, Inflation, Government Spending. Plus autonome **Key-Event-Erkennung**: 4–7 aktuelle Events (Geopolitik, Zentralbanken, Lieferketten, Energie etc.) mit Inflation/Rate/Equity-Impact-Ableitung. |
+| **Sector Opportunity Map** | `POST /api/researcher/sectors` | 12 Megatrend-Kategorien gleichberechtigt bewertet (Defense, Renewables, Biotech, Robotics, Cloud, Semis, Consumer, Infrastructure, Financials, Real Estate, Transport, Materials). Anti-Bias-Pflicht: KEIN AI/Capex-Tunnelblick. |
+| **Undervalued Stock Screener** | `POST /api/researcher/screener` | FMP-basierter Filter (Market Cap, P/E, Revenue Growth) + LLM-Analyse von Moat-Stärke und Margin-Risiko. Action-Empfehlung Buy/Watch/Avoid. |
+| **Capex & Fiscal Tracker** | `POST /api/researcher/capex` | 10–15 aktive Fiskalprogramme pro Region: OBBBA ($3-4T, 2025), CHIPS Act ($280B), IRA, IIJA, NDAA, EU NextGen, Sondervermögen Infrastruktur, China Property-Stimulus, India Union Budget Capex etc. Mit Beneficiaries und Sektor-Impact. |
+
+### Region-Selector
+
+- **🇺🇸 USA**: United States (Fokus Trump-Era Tariffs, Fed-Pivot, AI Stargate)
+- **🇪🇺 Europa**: Germany, France, Italy, Spain, Netherlands, UK
+- **🌏 Asien**: China, Japan, South Korea, India, Taiwan
+
+### Caching
+
+Jede Researcher-Analyse wird **7 Tage** in `.cache/researcher/` gecacht (gleicher Standard wie die Haupt-Aktienanalyse). Pro Tab + Region + Parameter-Kombination ein Cache-Eintrag. **Force-Refresh** über den Refresh-Button im UI.
+
+### Anti-Bias-Protokoll im Researcher
+
+- **Country Macro Pulse**: Key Events MUSS über 8 Kategorien gleichverteilen (Geopolitik / Zentralbank / Wahl / Tech-Reg / Energie / Lieferkette / Naturkatastrophe / Finanzmarkt-Stress)
+- **Sector Opportunity Map**: 12 Megatrends-Pflichtbewertung
+- **Capex Tracker**: 5 kritische Prompt-Regeln (Aktualität, Vollständigkeit, Breite, Proaktivität, Mindestmenge 10–15 Programme)
+
+---
+
+## Pre-Market Daily Briefing
+
+Automatischer täglicher Briefing-Service mit Net-New-Event-Erkennung gegen den letzten Snapshot.
+
+### Endpoint & Caching
+
+- **Endpoint**: `POST /api/researcher/daily-briefing`
+- **Daily Cache**: Berlin-Datum-keyed (`briefing-result.json`) — 1× LLM-Run pro Tag, danach <100ms Cache-Hits
+- **Force-Refresh**: `{ force: true }` im Body (z.B. via Cron)
+
+### Diff-Logik
+
+Event gilt als **net-new** wenn:
+1. Title nicht im letzten Snapshot vorhanden UND severity=high
+2. Severity wurde von medium/low auf **high** eskaliert (`ESCALATED`)
+3. Inflation-/Rate-/Equity-Impact-Richtung hat sich gedreht (`DIRECTION_FLIP`)
+
+### LLM-Output (Hedge-Fund-Style)
+
+- **Headline** (max 80 Zeichen)
+- **Summary** (3–4 Sätze Pre-Market State)
+- **Top 3 Changes** mit DCF-Implikationen:
+  - **WACC-Delta** in Basispunkten (`+12 bps`, `-8 bps`, `~0 bps`)
+  - **Betroffene Sektoren** (max 4)
+  - **Exposure-Typ**: long / short / hedge / reduce
+  - **Konkrete Action** (1 Satz, handlungsrelevant)
+- **Key Metrics Shift**: Inflation / Rate / Equity-Outlook 30d
+- **Recommendation**: Pre-Market-Handlung (defensive Rotation, energy-long, duration-cut)
+
+### Cron (Werktags 07:00 Berlin)
+
+Eingebauter Plattform-Cron mit `force=true` überschreibt den Cache jeden Werktag morgens. Output wird per **In-App + Email-Notification** (`finance_digest`-Template) verschickt:
+- Bei 0 net-new Events: nur In-App
+- Bei ≥1 net-new Events: In-App + Email mit kompakten Top-3-Sections
+
+---
+
+## Daily Regression Scan
+
+Täglicher Calc-Anomalie-Detektor für 5 known-edge-case-Tickers, der server-side die DCF-Berechnung verifiziert und vor jeder Coding-Session inkonsistente Werte flaggt.
+
+### Endpoint
+
+```
+POST /api/regression-scan
+```
+
+Führt `/api/analyze` für **IFX.DE, TSLA, VWAGY, MSFT, AMZN** aus, repliziert die Section-13-DCF-Berechnung server-seitig (gleiche `selectCatalystBase`-Logik) und prüft 3 Regeln:
+
+| Regel | Trigger | Bedeutung |
+|-------|---------|-----------|
+| **R1_CATALYST_TARGET_LOW** | Catalyst-Adj. Target < 50% des Kurses | Plausibilitäts-Gate hat versagt oder Catalyst-Sums sind unrealistisch niedrig |
+| **R2_DCF_TOO_LOW** | Conservative DCF < 20% des Kurses **ohne** Fallback-Note im Trace | Stille DCF-Verzerrung (PE-Cap nicht aktiv, FS-Debt-Distortion ungeloggt) |
+| **R3_WACC_TOO_HIGH** | WACC > 18% | CAPM/Beta-Berechnungsfehler |
+
+### Output
+
+JSON mit `anomalies[]` (Ticker / Rule / actualValue / expectedRange / detail) und `perTickerSummary[]` (Price, DCF, Catalyst-Target, WACC, Issues-Count). Persistiert nach `.cache/regression/scan-YYYY-MM-DD.json`.
+
+### Cron (Werktags 08:00 Berlin)
+
+- 0 Anomalien → In-App-Notification "Alle 5 Tickers clean"
+- ≥1 Anomalie → In-App + Email mit Top-3-Anomalien (Severity-Sortiert: R3 > R2 > R1)
+
+---
+
+## Catalyst-Adj. Target — Smart Plausibilitäts-Gate
+
+Die Berechnung des Catalyst-Adjusted Target nutzt einen automatischen Plausibilitäts-Selektor (`selectCatalystBase`), der drei mögliche Basen prüft:
+
+```
+1. Wenn DCF × (1 + ΣGB%) ≥ 70% des Kurses → Conservative DCF nutzen
+2. Sonst, wenn Analyst PT Median > 0  → Analyst PT als Basis (DCF verzerrt erkannt)
+3. Sonst                              → Aktueller Kurs als Basis
+```
+
+**Beispiel Infineon** (Vorher / Nachher):
+- DCF $12.37, Catalyst-Sum +36.30%, Kurs $61.66
+- **Vorher**: $12.37 × 1.363 = $16.86 (-73%, falsche Empfehlung)
+- **Nachher**: $16.86 < $43.16 (70%-Schwelle) → Fallback auf Analyst PT × 1.363 → $79 (+28%, realistisch)
+
+Die Logik ist **rein zahlenbasiert** — keine Hardcoded-Tickers oder Branchen-Listen. Die gleiche Logik läuft im Frontend (Sektionen 2/6/11/13) und im Server-Side Regression-Scan.
+
+---
+
+## Mobile-Support
+
+Alle Hauptseiten sind responsive mit **375px**-Mindestbreite getestet:
+
+- **Dashboard / BTC / Gold / Recession**: `lg:hidden` Sidebar-Toggle (Hamburger-Menu) für Mobile
+- **Researcher**: 2-Reihen-Header auf <sm (Title + Briefing-Button oben, Region-Selector full-width unten); Tab-Bar horizontal-scrollbar
+- **Compare**: Inputs stacken vertikal auf Mobile, Tabelle mit horizontal-scroll-Wrapper
+- **Briefing-Modal**: 1-Spalten-Grid auf Mobile, 3-Spalten auf Desktop (Inflation/Rate/Equity Metrics)
+- **Section-Cards**: alle nutzen `grid-cols-2 sm:grid-cols-3 lg:grid-cols-5` Pattern für KPI-Tiles
+
+---
+
 ## Tech Stack
 
 | Komponente | Technologie |
@@ -522,6 +653,17 @@ NODE_ENV=production node dist/index.cjs
 ---
 
 ## API-Übersicht
+
+### Researcher
+
+| Endpoint | Body | Beschreibung |
+|----------|------|--------------|
+| `POST /api/researcher/macro` | `{ region: "US"\|"EU"\|"ASIA", force?: bool }` | Country Macro Pulse + Key Events |
+| `POST /api/researcher/sectors` | `{ region, force? }` | 12 Megatrends bewertet |
+| `POST /api/researcher/screener` | `{ region, marketCapMin, marketCapMax, peMax, revenueGrowthMin }` | Undervalued Stocks Liste |
+| `POST /api/researcher/capex` | `{ region, force? }` | 10–15 Fiskalprogramme |
+| `POST /api/researcher/daily-briefing` | `{ force?: bool }` | Net-New Events + Top 3 DCF-Implications |
+| `POST /api/regression-scan` | `{}` | DCF-Anomalien-Check (5 Tickers) |
 
 ### Aktien-Analyse
 - Perplexity Finance API (Quotes, Financials, Segments, OHLCV, Earnings)

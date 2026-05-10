@@ -60,36 +60,38 @@ export default function Compare() {
   }
 
   return (
-    <div className="h-screen overflow-y-auto bg-background text-foreground p-4">
+    <div className="h-screen overflow-y-auto bg-background text-foreground p-3 sm:p-4">
       <div className="max-w-4xl mx-auto pb-12">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
           <Link href="/">
-            <button className="p-2 rounded-lg hover:bg-muted/50 transition-colors">
+            <button className="p-1.5 sm:p-2 rounded-lg hover:bg-muted/50 transition-colors">
               <ArrowLeft className="w-5 h-5" />
             </button>
           </Link>
           <ArrowUpDown className="w-5 h-5 text-primary" />
-          <h1 className="text-lg font-bold">Ticker-Vergleich</h1>
+          <h1 className="text-base sm:text-lg font-bold">Ticker-Vergleich</h1>
         </div>
 
-        {/* Input */}
-        <div className="flex items-center gap-2 mb-6">
-          <input
-            value={ticker1} onChange={e => setTicker1(e.target.value.toUpperCase())}
-            placeholder="Ticker 1 (z.B. MSFT)"
-            className="flex-1 h-10 px-3 rounded-lg bg-muted/30 border border-border text-sm font-mono"
-          />
-          <span className="text-foreground/30 font-bold">vs</span>
-          <input
-            value={ticker2} onChange={e => setTicker2(e.target.value.toUpperCase())}
-            placeholder="Ticker 2 (z.B. GOOGL)"
-            className="flex-1 h-10 px-3 rounded-lg bg-muted/30 border border-border text-sm font-mono"
-          />
+        {/* Input — stacks on mobile, inline on sm+ */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-6">
+          <div className="flex items-center gap-2 flex-1">
+            <input
+              value={ticker1} onChange={e => setTicker1(e.target.value.toUpperCase())}
+              placeholder="Ticker 1 (z.B. MSFT)"
+              className="flex-1 h-10 px-3 rounded-lg bg-muted/30 border border-border text-sm font-mono min-w-0"
+            />
+            <span className="text-foreground/30 font-bold text-sm shrink-0">vs</span>
+            <input
+              value={ticker2} onChange={e => setTicker2(e.target.value.toUpperCase())}
+              placeholder="Ticker 2 (z.B. GOOGL)"
+              className="flex-1 h-10 px-3 rounded-lg bg-muted/30 border border-border text-sm font-mono min-w-0"
+            />
+          </div>
           <button
             onClick={() => { if (ticker1 && ticker2) compareMutation.mutate({ t1: ticker1, t2: ticker2 }); }}
             disabled={!ticker1 || !ticker2 || compareMutation.isPending}
-            className="h-10 px-4 rounded-lg bg-primary text-primary-foreground font-medium text-sm disabled:opacity-50"
+            className="h-10 px-4 rounded-lg bg-primary text-primary-foreground font-medium text-sm disabled:opacity-50 sm:w-auto w-full shrink-0"
           >
             {compareMutation.isPending ? "Laden..." : "Vergleichen"}
           </button>
@@ -119,9 +121,9 @@ export default function Compare() {
               ))}
             </div>
 
-            {/* Comparison Table */}
-            <div className="rounded-xl bg-card/30 border border-border overflow-hidden">
-              <table className="w-full">
+            {/* Comparison Table — wraps in horizontal scroll on tiny screens */}
+            <div className="rounded-xl bg-card/30 border border-border overflow-x-auto">
+              <table className="w-full min-w-[320px]">
                 <thead>
                   <tr className="bg-muted/20 border-b border-border">
                     <th className="text-left py-2 px-2 text-[10px] text-muted-foreground font-medium w-1/3">Kennzahl</th>
