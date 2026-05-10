@@ -1,0 +1,218 @@
+{
+  "region": "EU",
+  "regionLabel": "Europa",
+  "asOf": "2026-05-09T22:14:19.120Z",
+  "trends": [
+    {
+      "id": "defense",
+      "label": "Defense / Rüstung / Geopolitik",
+      "growthScore": 8,
+      "moatScore": 9,
+      "marginRisk": "low",
+      "timeline": "12-24M",
+      "reasoning": "Europäische Verteidigungsausgaben steigen aufgrund NATO-Ziel von 2% BIP bis 2026 auf 300 Mrd. EUR jährlich (SIPRI-Daten), getrieben durch Ukraine-Krieg und geopolitische Spannungen. Hohe Einstiegshürden durch Regierungsverträge und Tech-Exportkontrollen schützen Margen (Durchschnitt ROIC 15-20%).",
+      "topPlayers": [
+        "BAESY",
+        "AIR.PA",
+        "RHM.DE",
+        "SMFRY",
+        "KWEIF"
+      ],
+      "actionRecommendation": "Buy"
+    },
+    {
+      "id": "cloud",
+      "label": "Cloud Infrastructure & Software",
+      "growthScore": 8,
+      "moatScore": 9,
+      "marginRisk": "low",
+      "timeline": "6-12M",
+      "reasoning": "Europäischer Cloud-Markt erreicht 100 Mrd. EUR bis 2026 (Gartner, +25% CAGR), getrieben durch DSGVO-Compliance und AI-Adoption. Hyperscaler-Oligopol (AWS, Azure, GCP >70% Share) mit Netzwerkeffekten sichert 30%+ EBIT-Margen.",
+      "topPlayers": [
+        "MSFT",
+        "GOOGL",
+        "SAP.DE",
+        "ORCL",
+        "SNPS"
+      ],
+      "actionRecommendation": "Buy"
+    },
+    {
+      "id": "semiconductors",
+      "label": "Semiconductors (breit, nicht nur AI)",
+      "growthScore": 8,
+      "moatScore": 8,
+      "marginRisk": "medium",
+      "timeline": "6-12M",
+      "reasoning": "EU-Semi-Wachstum bei 15% CAGR (WSTS 2025-2028), boost durch CHIPS-Akt-Äquivalente und Auto/EV-Chips (STMicro +18% Q1 2025). Foundry-Kommoditization (TSMC-Dominanz) drückt Margen, aber Design-IP (ASML) bleibt geschützt (ROIC 20%).",
+      "topPlayers": [
+        "ASML",
+        "STM.PA",
+        "NXPI",
+        "INFN.MI",
+        "SMH"
+      ],
+      "actionRecommendation": "Buy"
+    },
+    {
+      "id": "biotech",
+      "label": "Biotech / Pharma / Genomics",
+      "growthScore": 7,
+      "moatScore": 8,
+      "marginRisk": "low",
+      "timeline": "12-24M",
+      "reasoning": "Europäischer Biotech-Markt expandiert mit 12% CAGR bis 2028 (EvaluatePharma), getrieben durch mRNA-Plattformen und Oncology-Pipelines (z.B. BioNTech Q1 2025 Umsatz +15%). Patentrechte und regulatorische Hürden sichern hohe Margen (Durchschnitt 25-30% bei Commercial-Stage).",
+      "topPlayers": [
+        "BNTX",
+        "NOVO-B.CO",
+        "ROG.SW",
+        "JNJ",
+        "AZN"
+      ],
+      "actionRecommendation": "Buy"
+    },
+    {
+      "id": "robotics",
+      "label": "Robotics / Industrial Automation",
+      "growthScore": 7,
+      "moatScore": 7,
+      "marginRisk": "medium",
+      "timeline": "12-24M",
+      "reasoning": "Industrieautomatisierung in Europa wächst mit 10% CAGR (IFR-Daten), angetrieben durch Labor-Mangel und Reshoring (Deutschland +20% Installationen 2025). Oligopol-Markt (Top-5 >60% Share) mit Software-IP schützt Margen, aber Sensor-Kommoditization drückt Preise.",
+      "topPlayers": [
+        "SIE.DE",
+        "STM.PA",
+        "KUKA.DE",
+        "ABB",
+        "ISRG"
+      ],
+      "actionRecommendation": "Buy"
+    },
+    {
+      "id": "infrastructure",
+      "label": "Infrastructure & Construction (Reshoring/Onshoring)",
+      "growthScore": 7,
+      "moatScore": 6,
+      "marginRisk": "medium",
+      "timeline": "12-24M",
+      "reasoning": "EU-Infrastruktur-Ausgaben auf 750 Mrd. EUR bis 2027 (NextGenEU), fokussiert auf Reshoring-Fabriken und Grid-Upgrades (+15% CAGR). Baukonjunktur zyklisch, Margen volatil (EBIT 5-8%), aber PPP-Verträge bieten Stabilität.",
+      "topPlayers": [
+        "VOW3.DE",
+        "AIR.PA",
+        "HEI.DE",
+        " Vinci.PA",
+        "FLR"
+      ],
+      "actionRecommendation": "Watch"
+    },
+    {
+      "id": "transport",
+      "label": "Transportation & Logistics (EV / Autonomous)",
+      "growthScore": 6,
+      "moatScore": 6,
+      "marginRisk": "medium",
+      "timeline": "12-24M",
+      "reasoning": "EV-Penetration in EU bei 25% bis 2026 (ACEA), Logistics-Automatisierung +12% CAGR (DHL-Volumen). Batterie-Kosten -20% 2025 verbessern Margen, aber Subventionsabhängigkeit und Konkurrenz (BYD) drücken Preise.",
+      "topPlayers": [
+        "VOW3.DE",
+        "STLA",
+        "AIR.PA",
+        "DHL.DE",
+        "UBER"
+      ],
+      "actionRecommendation": "Watch"
+    },
+    {
+      "id": "financials",
+      "label": "Financials / Fintech / Insurance",
+      "growthScore": 5,
+      "moatScore": 7,
+      "marginRisk": "low",
+      "timeline": "12-24M",
+      "reasoning": "Europäische Banken-ROE bei 10-12% stabil (EBA 2025), profitiert von höheren Zinsen (EZB 3%), aber Fintech-Disruption (Adyen +20% Volumen) drückt Fees. Regulatorische Moats (Basel IV) schützen etablierte Player.",
+      "topPlayers": [
+        "DB",
+        "SAN.MC",
+        "UBSG.SW",
+        "ADYEN.AS",
+        "CREL.L"
+      ],
+      "actionRecommendation": "Watch"
+    },
+    {
+      "id": "renewables",
+      "label": "Renewables / Energy Transition / Wasserstoff",
+      "growthScore": 6,
+      "moatScore": 5,
+      "marginRisk": "high",
+      "timeline": "24-36M+",
+      "reasoning": "EU-Renewables-Kapazität wächst auf 1.500 GW bis 2030 (IRENA), aber Modulpreise fielen 2024 um 40% durch chinesische Überkapazitäten. Wasserstoff-Subventionen (1,5 Mrd. EUR IPCEI) bieten Upside, doch Wettbewerb erodiert Margen (EBIT-Margin <5% bei Spot-Playern).",
+      "topPlayers": [
+        "SI",
+        "ENR.MI",
+        "ORSTED.CO",
+        "VWS.CO",
+        "ACCEL"
+      ],
+      "actionRecommendation": "Watch"
+    },
+    {
+      "id": "consumer",
+      "label": "Consumer Electronics & E-Commerce",
+      "growthScore": 5,
+      "moatScore": 6,
+      "marginRisk": "high",
+      "timeline": "24-36M+",
+      "reasoning": "Europäischer E-Commerce-Markt stagniert bei 4% CAGR (Statista 2026), da Amazon-Dominanz (35% Share) Preiskriege fördert und Offline-Retail reboundet. Konsumgüter-Margen unter 10% durch China-Importe und Inflation.",
+      "topPlayers": [
+        "AMZN",
+        "SHOP",
+        "ZAL.DE",
+        "FLNT",
+        "ETSY"
+      ],
+      "actionRecommendation": "Avoid"
+    },
+    {
+      "id": "materials",
+      "label": "Materials & Commodities (Cu / Li / Uran)",
+      "growthScore": 6,
+      "moatScore": 4,
+      "marginRisk": "high",
+      "timeline": "24-36M+",
+      "reasoning": "Cu/Li-Nachfrage +10% CAGR durch EV/Grid (IEA 2026), Uran +15% durch NPP-Renaissance (EU 20 GW neu). Preisschwankungen hoch (Li -50% 2024), Kommoditization zerstört Margen (EBIT <5% Spot).",
+      "topPlayers": [
+        "GLEN.L",
+        "IMI.F",
+        "S32.L",
+        "CCU.DE",
+        "URA"
+      ],
+      "actionRecommendation": "Watch"
+    },
+    {
+      "id": "realestate",
+      "label": "Real Estate & Data Centers",
+      "growthScore": 4,
+      "moatScore": 5,
+      "marginRisk": "high",
+      "timeline": "24-36M+",
+      "reasoning": "EU-Commercial-Real-Estate-Renditen fallen auf 6% (CBRE 2026), Office-Vakanz 15% durch Remote-Work; Data-Center-Boom (+25% Leistung) offsettet nur teilweise. Hohe Zinsen (5%+) erodieren Entwickler-Margen (<3%).",
+      "topPlayers": [
+        "BNP.PA",
+        "DEIF",
+        "SLG",
+        "EQIX",
+        "DLR"
+      ],
+      "actionRecommendation": "Avoid"
+    }
+  ],
+  "topPicks": [
+    "defense",
+    "cloud",
+    "semiconductors"
+  ],
+  "modelUsed": "x-ai/grok-4.1-fast",
+  "_cachedAt": "2026-05-09T22:14:19.120Z"
+}

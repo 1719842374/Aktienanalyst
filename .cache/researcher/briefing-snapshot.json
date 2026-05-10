@@ -1,0 +1,149 @@
+{
+  "savedAt": "2026-05-10T06:15:26.011Z",
+  "events": [
+    {
+      "title": "Trump-Tariff-Eskalation Phase 2",
+      "region": "US",
+      "severity": "high",
+      "inflationImpact": "steigend",
+      "rateImpact": "steigend",
+      "equityImpact": "negativ"
+    },
+    {
+      "title": "Fed-Sitzung: Kein Cut, QT-Verlangsamung",
+      "region": "US",
+      "severity": "high",
+      "inflationImpact": "neutral",
+      "rateImpact": "steigend",
+      "equityImpact": "gemischt"
+    },
+    {
+      "title": "Nahost-Eskalation: Iran blockiert Hormuz",
+      "region": "US",
+      "severity": "high",
+      "inflationImpact": "steigend",
+      "rateImpact": "steigend",
+      "equityImpact": "negativ"
+    },
+    {
+      "title": "US-China Chip-Exportrestriktionen erweitert",
+      "region": "US",
+      "severity": "medium",
+      "inflationImpact": "steigend",
+      "rateImpact": "neutral",
+      "equityImpact": "gemischt"
+    },
+    {
+      "title": "Hurricane Katrina 2.0 trifft Golfküste",
+      "region": "US",
+      "severity": "medium",
+      "inflationImpact": "steigend",
+      "rateImpact": "neutral",
+      "equityImpact": "negativ"
+    },
+    {
+      "title": "OPEC+ verlängert Produktionskürzungen",
+      "region": "US",
+      "severity": "medium",
+      "inflationImpact": "steigend",
+      "rateImpact": "steigend",
+      "equityImpact": "positiv"
+    },
+    {
+      "title": "Ukraine-Russland-Offensive in Donbass",
+      "region": "EU",
+      "severity": "high",
+      "inflationImpact": "steigend",
+      "rateImpact": "steigend",
+      "equityImpact": "negativ"
+    },
+    {
+      "title": "EZB-Sitzung dovish Shift",
+      "region": "EU",
+      "severity": "high",
+      "inflationImpact": "fallend",
+      "rateImpact": "fallend",
+      "equityImpact": "positiv"
+    },
+    {
+      "title": "Trump-Tariff-Eskalation auf EU-Autos",
+      "region": "EU",
+      "severity": "medium",
+      "inflationImpact": "steigend",
+      "rateImpact": "neutral",
+      "equityImpact": "negativ"
+    },
+    {
+      "title": "OPEC+ Quotenreduktion",
+      "region": "EU",
+      "severity": "medium",
+      "inflationImpact": "steigend",
+      "rateImpact": "steigend",
+      "equityImpact": "gemischt"
+    },
+    {
+      "title": "Frankreich Fiskalkrise eskaliert",
+      "region": "EU",
+      "severity": "high",
+      "inflationImpact": "steigend",
+      "rateImpact": "steigend",
+      "equityImpact": "negativ"
+    },
+    {
+      "title": "Houthi-Angriffe Bab-el-Mandeb",
+      "region": "EU",
+      "severity": "medium",
+      "inflationImpact": "steigend",
+      "rateImpact": "neutral",
+      "equityImpact": "negativ"
+    },
+    {
+      "title": "Taiwan-Straßen-Militärmanöver PLA (April 2026)",
+      "region": "ASIA",
+      "severity": "high",
+      "inflationImpact": "steigend",
+      "rateImpact": "steigend",
+      "equityImpact": "negativ"
+    },
+    {
+      "title": "US verschärft Chip-Exportrestriktionen nach China (Mai 2026)",
+      "region": "ASIA",
+      "severity": "high",
+      "inflationImpact": "steigend",
+      "rateImpact": "neutral",
+      "equityImpact": "negativ"
+    },
+    {
+      "title": "BoJ passt Yield-Curve-Control an (BoJ-Sitzung 30. April 2026)",
+      "region": "ASIA",
+      "severity": "medium",
+      "inflationImpact": "neutral",
+      "rateImpact": "steigend",
+      "equityImpact": "gemischt"
+    },
+    {
+      "title": "China Property-Stimulus-Paket angekündigt (1. Mai 2026)",
+      "region": "ASIA",
+      "severity": "medium",
+      "inflationImpact": "fallend",
+      "rateImpact": "fallend",
+      "equityImpact": "positiv"
+    },
+    {
+      "title": "OPEC+ verlängert Ölkürzungen (Mai 2026)",
+      "region": "ASIA",
+      "severity": "medium",
+      "inflationImpact": "steigend",
+      "rateImpact": "steigend",
+      "equityImpact": "gemischt"
+    },
+    {
+      "title": "Yen-Carry-Trade-Unwind nach BoJ-Hike (April 2026)",
+      "region": "ASIA",
+      "severity": "medium",
+      "inflationImpact": "neutral",
+      "rateImpact": "steigend",
+      "equityImpact": "negativ"
+    }
+  ]
+}

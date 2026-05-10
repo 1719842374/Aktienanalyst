@@ -173,6 +173,18 @@ interface MacroPulseResult {
     investmentImplications: string[];
     actionRecommendation: "Buy" | "Watch" | "Avoid";
     actionRationale: string;
+    keyEvents: Array<{
+      title: string;
+      category: "Geopolitik" | "Zentralbank" | "Wahl/Politik" | "Lieferkette" | "Energie/Rohstoffe" | "Naturkatastrophe" | "Tech/Regulierung" | "Sonstiges";
+      severity: "high" | "medium" | "low";
+      timeframe: string;
+      description: string;
+      inflationImpact: "steigend" | "fallend" | "neutral";
+      rateImpact: "steigend" | "fallend" | "neutral";
+      equityImpact: "positiv" | "negativ" | "gemischt";
+      affectedSectors: string[];
+      rationale: string;
+    }>;
   } | null;
   modelUsed?: string;
   _cached?: boolean;
@@ -215,26 +227,73 @@ async function buildMacroPulse(region: string): Promise<MacroPulseResult> {
     .filter(i => ["Interest Rate", "Inflation Rate", "GDP Annual Growth Rate", "Money Supply M2", "Government Spending to GDP", "Government Debt to GDP", "Core Inflation Rate"].includes(i.category))
     .slice(0, 60);
 
-  const prompt = `Du bist Hedge-Fund-Stratege bei einem globalen Macro-Fonds. Analysiere die folgenden REAL-DATEN für die Region ${regionLabel} (Länder: ${countries.join(", ")}).
+  const today = new Date().toISOString().slice(0, 10);
+  const currentYear = new Date().getFullYear();
 
-ECHTE MAKRO-DATEN (aus Trading Economics / FRED, ${new Date().toISOString().slice(0, 10)}):
+  const prompt = `Du bist Hedge-Fund-Stratege bei einem globalen Macro-Fonds (Bridgewater / Brevan Howard Stil). Analysiere die folgenden REAL-DATEN für die Region ${regionLabel} (Länder: ${countries.join(", ")}) — Stand ${today}.
+
+ECHTE MAKRO-DATEN (Trading Economics / FRED):
 ${compactIndicators.map(i => `- ${i.country}: ${i.category} = ${i.latestValue} ${i.unit} (vorher: ${i.previousValue}, ${i.date})`).join("\n") || "(keine Daten verfügbar — bewerte qualitativ)"}
 
-Gib eine professionelle Bewertung als JSON zurück:
+=== KRITISCHE PFLICHT: AUTONOME KEY-EVENT-ERKENNUNG ===
+
+Du MUSST eigenständig die 4-7 wichtigsten AKTUELLEN Key Events identifizieren, die ${currentYear} und in den letzten 30-90 Tagen die Märkte und Makro-Lage in ${regionLabel} prägen. KEINE Hard-Coded-Liste — finde sie selbst aus deinem aktuellen Wissen.
+
+Kategorien (alle gleichberechtigt prüfen):
+- **Geopolitik / Konflikte**: Straße von Hormuz, Nahost (Iran-Israel-Saudi), Ukraine-Russland, Taiwan-Straße, Südchinesisches Meer, NATO-Spannungen
+- **Zentralbank-Entscheidungen**: Fed/EZB/BoJ/PBoC-Sitzungen, Zinsentscheide, QT/QE-Wenden, Forward-Guidance-Shifts
+- **Wahlen / Politik**: US-Präsidentschaftswahl-Folgen 2025+, EU-Wahlen, Regierungswechsel, Ampel-Aus, Trump-Administration-Policies
+- **Tech / Regulierung**: US-China Tech War, Chip-Exportrestriktionen, AI-Regulation, EU AI Act, Antitrust
+- **Energie / Rohstoffe**: Ölpreis-Schocks, OPEC+-Entscheidungen, LNG-Engpässe, Strompreise, Kupfer/Lithium-Verknappung
+- **Lieferketten**: Suez/Bab-el-Mandeb (Houthi), Panama-Kanal, Halbleiter-Allokation, Hafenstreiks
+- **Naturkatastrophen / Pandemie**: Hurricanes, Dürren, neue Virus-Wellen
+- **Finanzmarkt-Stress**: Bond-Sell-Offs, Spread-Blowouts, Carry-Trade-Unwinds, Yen-Carry-Probleme
+
+Für JEDES Event MUSST du explizit ableiten:
+1. Inflation-Impact (steigend / fallend / neutral)
+2. Risk-Free-Rate-Impact (steigend / fallend / neutral)
+3. Equity-Impact (positiv / negativ / gemischt)
+4. Betroffene Sektoren
+5. Mechanismus (1-2 Sätze: WIE wirkt das Event?)
+
+=== AUSGABE ===
+
+JSON, ausschließlich auf Deutsch:
 {
-  "summary": "3-4 Sätze Gesamtbild der Makro-Lage in ${regionLabel}",
-  "keyDrivers": ["3-5 wichtigste Treiber als Bullet-Punkte"],
-  "riskFreeRateView": "1-2 Sätze: Trend Risk-Free Rate, Implikation für Equity-Bewertungen",
+  "summary": "3-4 Sätze Gesamtbild der Makro-Lage in ${regionLabel} — inkl. Erwähnung der wichtigsten 1-2 Key Events",
+  "keyDrivers": ["3-5 wichtigste Treiber als Bullet-Punkte (Mix aus Daten + Events)"],
+  "riskFreeRateView": "1-2 Sätze: Trend Risk-Free Rate, Implikation für Equity-Bewertungen — inkl. Event-Auswirkung",
   "liquidityView": "1-2 Sätze: Geldmengenwachstum / Liquiditätszyklus / QT-vs-QE-Position",
   "fiscalView": "1-2 Sätze: Fiskalprogramme / Government Spending Trend",
-  "investmentImplications": ["3-5 konkrete Implikationen für Anleger (Sektor-Tilts, Duration, Currency, etc.)"],
+  "keyEvents": [
+    {
+      "title": "Kurzer prägnanter Event-Titel (z.B. 'Iran-Israel-Eskalation in der Straße von Hormuz')",
+      "category": "Geopolitik" | "Zentralbank" | "Wahl/Politik" | "Lieferkette" | "Energie/Rohstoffe" | "Naturkatastrophe" | "Tech/Regulierung" | "Sonstiges",
+      "severity": "high" | "medium" | "low",
+      "timeframe": "z.B. 'Akut', 'Letzte 30 Tage', 'Q1 ${currentYear}', 'Anhaltend'",
+      "description": "2-3 Sätze: Was ist passiert? Konkreter Sachverhalt + Datum/Zeitraum.",
+      "inflationImpact": "steigend | fallend | neutral",
+      "rateImpact": "steigend | fallend | neutral",
+      "equityImpact": "positiv | negativ | gemischt",
+      "affectedSectors": ["Sektor1", "Sektor2", "Sektor3"],
+      "rationale": "1-2 Sätze: Mechanismus — WIE wirkt das Event auf Inflation/Rate/Equity? Konkrete Transmissions-Kette."
+    }
+  ],
+  "investmentImplications": ["3-5 konkrete Implikationen für Anleger — müssen die Key Events explizit berücksichtigen (Sektor-Tilts, Duration, Currency-Hedges, Energie-Long, Defensive-Rotation, etc.)"],
   "actionRecommendation": "Buy | Watch | Avoid",
-  "actionRationale": "1-2 Sätze warum diese Empfehlung"
+  "actionRationale": "1-2 Sätze warum diese Empfehlung — muss Daten UND Events berücksichtigen"
 }
 
-Sei DATENGETRIEBEN — leite jede Aussage aus den obigen Zahlen ab. Keine generischen Floskeln. Antwort ausschließlich auf Deutsch.`;
+REGELN:
+- DATENGETRIEBEN: Leite jede Aussage aus den obigen Zahlen UND aus konkreten Events ab. Keine generischen Floskeln.
+- AKTUALITÄT: Events müssen ${currentYear} bzw. in den letzten 30-90 Tagen relevant sein.
+- PROAKTIV: Liste auch Events, die noch nicht jeder kennt — z.B. neue Sanktionen, Zentralbank-Speeches, Pipeline-Vorfälle.
+- 4-7 Events. Lieber zu viele als zu wenige.
+- Wenn USA: erwähne Trump-Era Policies, Tariff-Eskalation, Fed-Pivot-Diskussion. Wenn EU: erwähne EZB-Pfad, Deutschland-Schuldenbremse-Debatte, Sondervermögen, Frankreich-Fiskal-Krise. Wenn Asien: erwähne BoJ-Hike-Pfad, China-Property/Stimulus, Taiwan-Spannungen, Indien-Capex.
 
-  const llm = await callLLMJson({ prompt, maxTokens: 1500 });
+JSON, keine Prosa drumherum. Ausschließlich Deutsch.`;
+
+  const llm = await callLLMJson({ prompt, maxTokens: 3500 });
   return {
     region,
     regionLabel,
@@ -536,38 +595,96 @@ async function buildCapexFiscal(region: string): Promise<CapexFiscalResult> {
     macroSnippet = dataLines.slice(0, 20).join("\n");
   }
 
-  const prompt = `Du bist Fiscal-Policy-Analyst bei einem Macro Hedge-Fund. Liste die wichtigsten AKTIVEN Fiskal-/Capex-Programme und Steueranreize für die Region ${regionLabel} (Länder: ${countries.join(", ")}) — Stand ${new Date().toISOString().slice(0, 10)}.
+  const today = new Date().toISOString().slice(0, 10);
+  const currentYear = new Date().getFullYear();
+
+  // Region-spezifische Pflicht-Programme — verhindern, dass der LLM aktuelle Mega-Pakete
+  // übersieht (z.B. One Big Beautiful Bill Act 2025, EU Sondervermögen 2024, Japan Stimulus 2025)
+  const MUST_INCLUDE: Record<string, string[]> = {
+    US: [
+      "One Big Beautiful Bill Act (OBBBA, July 2025) — TCJA-Verlängerung, Bonus-Depreciation, neue Tax-Breaks, ~$3-4T fiscal package",
+      "CHIPS and Science Act ($280B, 2022-2032)",
+      "Inflation Reduction Act (IRA, $369B+, 2022-2032)",
+      "Infrastructure Investment and Jobs Act (IIJA, $1.2T, 2021-2026)",
+      "Defense Budget / NDAA FY2025-2026 (~$886-895B jährlich)",
+      "Trump Tariffs & Reshoring-Incentives 2025",
+      "AI Action Plan / Stargate $500B (Jan 2025)",
+      "Section 232 / 301 Tariffs auf Stahl/Aluminium/China-Importe",
+    ],
+    EU: [
+      "NextGenerationEU / Recovery and Resilience Facility (€806B, 2021-2026)",
+      "EU Chips Act (€43B, 2023-2030)",
+      "REPowerEU (€300B Energie-Unabhängigkeit)",
+      "Sondervermögen Bundeswehr (€100B, Deutschland)",
+      "Deutsches Sondervermögen Infrastruktur 2025 (€500B, neu beschlossen)",
+      "France 2030 (€54B)",
+      "PNRR Italien (€191B)",
+      "EU Critical Raw Materials Act",
+      "EU Net-Zero Industry Act",
+    ],
+    ASIA: [
+      "China Belt & Road Initiative (>$1T)",
+      "China Made in 2025 / 2030 Industriepläne",
+      "Japan New Capitalism Plan & 2025 Supplementary Budget",
+      "Japan TSMC/Rapidus Semiconductor Subsidies (¥4T+)",
+      "India Production-Linked Incentive (PLI, $26B+)",
+      "South Korea K-Chips Act (₩26T)",
+      "China Stimulus Package Sep 2024 / 2025 Property Rescue",
+      "Indien Union Budget 2025-26 Capex (₹11.2L Cr)",
+    ],
+  };
+  const mustInclude = (MUST_INCLUDE[region] || MUST_INCLUDE.US).map(s => `  - ${s}`).join("\n");
+
+  const prompt = `Du bist Fiscal-Policy-Analyst bei einem Macro Hedge-Fund (Bridgewater-Style). Aufgabe: Erstelle einen AKTUELLEN, BREITEN Überblick über die wichtigsten Fiskal-/Capex-/Subventions-/Tarif-Programme für die Region ${regionLabel} (Länder: ${countries.join(", ")}) — Stand ${today}.
 
 ECHTE GOVERNMENT-SPENDING-DATEN (Trading Economics):
 ${macroSnippet || "(keine — bewerte qualitativ)"}
 
-WICHTIG — Anti-Bias-Regel:
-- Listing soll BREIT sein, nicht nur AI-Capex
-- Berücksichtige: Defense (NATO 2%, BIP-Sondervermögen), Energy Transition (IRA, EU Green Deal, EU Net Zero), Infrastructure (CHIPS Act, US Infrastructure Bill, EU Connecting Europe Facility), Tax Reforms (Steuersenkungen), Health (BARDA, EU4Health), Reshoring/Onshoring, Semiconductor (CHIPS Act, EU Chips Act, Made in China 2025)
+=== KRITISCHE REGELN ===
 
-Liste 8-12 KONKRETE Programme mit JSON:
+1. **AKTUALITÄT**: Du MUSST Programme aus ${currentYear - 1} und ${currentYear} mit aufnehmen — nicht nur 2021-2023er Klassiker. Beispiele für ${currentYear}er Pakete in dieser Region:
+${mustInclude}
+
+2. **VOLLSTÄNDIGKEIT**: Wenn das genannte Programm tatsächlich existiert (selbst wenn nur angekündigt), liste es. Du darfst KEINE der oben genannten Pflicht-Programme weglassen, sofern sie für diese Region relevant sind.
+
+3. **BREITE statt TIEFE**: Anti-Bias-Pflicht — listet alle Kategorien gleichberechtigt:
+   - Defense / Geopolitik / Rüstungsbudgets
+   - Energy Transition / Renewables / Wasserstoff
+   - Semiconductors / Chips / Tech-Sovereignty
+   - Infrastructure / Construction / Transport
+   - Healthcare / Biotech / Pandemie-Vorsorge
+   - Tax Reforms / TCJA-Extensions / Bonus-Depreciation
+   - Tariffs / Trade Policy / Reshoring-Incentives
+   - AI / Compute / Datenzentren
+   - Reshoring / Onshoring / Buy-American-Style
+
+4. **PROAKTIV**: Suche selbst nach bekannten Mega-Paketen, die ${currentYear} aktuell sind (auch falls oben nicht aufgelistet). Beispiele für die Art von Programmen, die du finden solltest: Mega-Steuerpakete, neue Defense Authorization Acts, neue Sondervermögen, Trump-Era Executive Orders zu Tariffs/Energy, China Property Rescue Packages, Japan Supplementary Budgets, Indien Union Budget Capex.
+
+5. **MENGE**: 10-15 Programme. Liste lieber zu viele als zu wenige.
+
+Ausgabe als JSON:
 {
   "programmes": [
     {
-      "name": "CHIPS and Science Act",
-      "category": "Capex Programme",
-      "region": "United States",
-      "amountUSD": "$280B",
-      "timeline": "2022-2032",
-      "sectors": ["Semiconductors", "Manufacturing"],
-      "beneficiaries": ["INTC", "TSM", "MU"],
-      "status": "In Implementation",
-      "impact": "high",
-      "rationale": "1-2 Sätze warum dieses Programm relevant ist (DEUTSCH)"
+      "name": "Programm-Name (mit Jahr falls eindeutig)",
+      "category": "Capex Programme" | "Fiscal Stimulus" | "Tax Cut/Incentive" | "Subsidy" | "Deregulation",
+      "region": "Land oder Region",
+      "amountUSD": "$XXXB oder €XXXB",
+      "timeline": "YYYY-YYYY",
+      "sectors": ["Sektor1", "Sektor2"],
+      "beneficiaries": ["TICKER1", "TICKER2", "Branche"],
+      "status": "Active" | "Announced" | "In Implementation" | "Phasing Out",
+      "impact": "high" | "medium" | "low",
+      "rationale": "1-2 Sätze: WARUM relevant + Marktauswirkung (DEUTSCH)"
     }
   ],
-  "totalCapexEstimate": "Aggregierte Schätzung der Programmsumme über alle gelisteten Programme",
+  "totalCapexEstimate": "Aggregierte Schätzung über alle Programme",
   "govSpendingTrend": "1-2 Sätze: Trend Government Spending to GDP basierend auf den echten Daten oben"
 }
 
-Antwort ausschließlich auf Deutsch.`;
+Antwort ausschließlich auf Deutsch. JSON, keine Prosa drumherum.`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 2400 });
+  const llm = await callLLMJson({ prompt, maxTokens: 3200 });
   if (!llm?.data?.programmes) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
@@ -592,6 +709,239 @@ Antwort ausschließlich auf Deutsch.`;
     totalCapexEstimate: String(llm.data.totalCapexEstimate || ""),
     govSpendingTrend: String(llm.data.govSpendingTrend || ""),
     modelUsed: llm.modelUsed,
+  };
+}
+
+// ============================================================
+// Daily Briefing — Cross-Region Net-New Event Detection
+// ============================================================
+
+interface DailyBriefingResult {
+  asOf: string;
+  generatedAt: string;
+  briefing: {
+    headline: string;
+    summary: string;
+    topChanges: Array<{
+      rank: number;
+      title: string;
+      region: string;
+      severity: "high" | "medium" | "low";
+      changeType: "NEW" | "ESCALATED" | "DIRECTION_FLIP";
+      description: string;
+      dcfImplications: {
+        waccDeltaBps: string; // e.g. "+15 bps" or "-8 bps"
+        affectedSectors: string[];
+        exposureType: "long" | "short" | "hedge" | "reduce";
+      };
+      action: string;
+    }>;
+    keyMetricsShift: {
+      inflationView: string;
+      rateView: string;
+      equityView: string;
+    };
+    recommendation: string;
+  } | null;
+  diagnostics: {
+    eventsScanned: number;
+    netNewEvents: number;
+    regionsAnalyzed: string[];
+  };
+  modelUsed?: string;
+}
+
+// Snapshot stores last-known fingerprints per event-title for diff detection
+type EventFingerprint = {
+  title: string;
+  region: string;
+  severity: string;
+  inflationImpact: string;
+  rateImpact: string;
+  equityImpact: string;
+};
+
+function readBriefingSnapshot(): EventFingerprint[] {
+  try {
+    const file = path.join(CACHE_DIR, "briefing-snapshot.json");
+    if (!fs.existsSync(file)) return [];
+    const data = JSON.parse(fs.readFileSync(file, "utf-8"));
+    return Array.isArray(data?.events) ? data.events : [];
+  } catch { return []; }
+}
+
+function writeBriefingSnapshot(events: EventFingerprint[]) {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    const file = path.join(CACHE_DIR, "briefing-snapshot.json");
+    fs.writeFileSync(file, JSON.stringify({ savedAt: new Date().toISOString(), events }, null, 2));
+  } catch (e: any) {
+    console.error("[BRIEFING] snapshot write failed:", e?.message);
+  }
+}
+
+function normalizeTitle(t: string): string {
+  return String(t || "").toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
+async function buildDailyBriefing(): Promise<DailyBriefingResult> {
+  const regions = ["US", "EU", "ASIA"];
+  const lastSnapshot = readBriefingSnapshot();
+  const lastByKey = new Map<string, EventFingerprint>();
+  for (const fp of lastSnapshot) lastByKey.set(`${fp.region}|${normalizeTitle(fp.title)}`, fp);
+
+  // Force-refresh all 3 macro tabs so we see net-new events vs. yesterday’s snapshot
+  const macroResults: Array<{ region: string; data: MacroPulseResult }> = [];
+  for (const region of regions) {
+    try {
+      const data = await buildMacroPulse(region);
+      writeResearcherCache("macro", region, data);
+      macroResults.push({ region, data });
+    } catch (e: any) {
+      console.error(`[BRIEFING] macro ${region} failed:`, e?.message);
+    }
+  }
+
+  // Diff: net-new = (a) title not in last snapshot, OR (b) severity=high, OR (c) impact direction flipped
+  type DiffedEvent = EventFingerprint & {
+    description: string;
+    rationale: string;
+    affectedSectors: string[];
+    changeType: "NEW" | "ESCALATED" | "DIRECTION_FLIP";
+  };
+  const diffed: DiffedEvent[] = [];
+  const newSnapshot: EventFingerprint[] = [];
+
+  for (const { region, data } of macroResults) {
+    const events = (data?.llmSynthesis?.keyEvents || []) as any[];
+    for (const ev of events) {
+      const fp: EventFingerprint = {
+        title: String(ev.title || ""),
+        region,
+        severity: String(ev.severity || "low"),
+        inflationImpact: String(ev.inflationImpact || "neutral"),
+        rateImpact: String(ev.rateImpact || "neutral"),
+        equityImpact: String(ev.equityImpact || "gemischt"),
+      };
+      newSnapshot.push(fp);
+
+      const key = `${region}|${normalizeTitle(fp.title)}`;
+      const last = lastByKey.get(key);
+      let changeType: "NEW" | "ESCALATED" | "DIRECTION_FLIP" | null = null;
+
+      if (!last) {
+        if (fp.severity === "high") changeType = "NEW";
+        // Skip net-new low/medium events to keep briefing focused
+      } else {
+        const flipped =
+          last.inflationImpact !== fp.inflationImpact ||
+          last.rateImpact !== fp.rateImpact ||
+          last.equityImpact !== fp.equityImpact;
+        const escalated = last.severity !== "high" && fp.severity === "high";
+        if (escalated) changeType = "ESCALATED";
+        else if (flipped) changeType = "DIRECTION_FLIP";
+      }
+
+      if (changeType) {
+        diffed.push({
+          ...fp,
+          description: String(ev.description || ""),
+          rationale: String(ev.rationale || ""),
+          affectedSectors: Array.isArray(ev.affectedSectors) ? ev.affectedSectors : [],
+          changeType,
+        });
+      }
+    }
+  }
+
+  // Persist new snapshot for next diff
+  writeBriefingSnapshot(newSnapshot);
+
+  const totalScanned = newSnapshot.length;
+  const netNew = diffed.length;
+
+  // No material changes — skip LLM, return stub
+  if (netNew === 0) {
+    return {
+      asOf: new Date().toISOString(),
+      generatedAt: new Date().toISOString(),
+      briefing: {
+        headline: "Keine materiellen Veränderungen seit gestern",
+        summary: "Alle erkannten Events bleiben in Severity und Impact-Richtung stabil. Risk-Free Rate, Inflation und Equity-Outlook unverändert. Kein Handlungsbedarf vor Open.",
+        topChanges: [],
+        keyMetricsShift: {
+          inflationView: "unverändert",
+          rateView: "unverändert",
+          equityView: "unverändert",
+        },
+        recommendation: "Beobachten. Bestehende Positionierung beibehalten.",
+      },
+      diagnostics: { eventsScanned: totalScanned, netNewEvents: 0, regionsAnalyzed: regions },
+    };
+  }
+
+  // LLM-Briefing-Prompt — hedge-fund style, < 600 tokens, DCF-focused
+  const today = new Date().toISOString().slice(0, 10);
+  const eventBlock = diffed.map(e =>
+    `- [${e.region}/${e.changeType}/${e.severity}] ${e.title}\n  Inflation: ${e.inflationImpact} | Rate: ${e.rateImpact} | Equity: ${e.equityImpact}\n  Sektoren: ${e.affectedSectors.join(", ") || "—"}\n  ${e.description}\n  Mechanismus: ${e.rationale}`
+  ).join("\n\n");
+
+  const prompt = `Du bist Senior Macro Strategist eines Multi-Strategy Hedge-Fund. Verfasse das Pre-Market-Briefing für ${today}, basierend auf den NET-NEW Key Events seit dem letzten Run (gestern).
+
+NET-NEW EVENTS (${diffed.length} Stk., bereits gefiltert auf Severity=high oder DIRECTION_FLIP oder NEW):
+
+${eventBlock}
+
+Aufgabe: Top 3 Changes ranken (nach DCF-Impact + Severity), pro Change DCF-Implikationen ableiten:
+- WACC-Delta in Basispunkten (z.B. "+15 bps" wenn Risk-Free Rate steigt) — KONKRETE ZAHL
+- Betroffene Sektoren (max 4)
+- Exposure-Typ: long | short | hedge | reduce
+- Konkrete Action (1 Satz, handlungsrelevant)
+
+JSON-Output, ausschließlich Deutsch, hedge-fund-knapp:
+{
+  "headline": "1 Zeile: Was ist die wichtigste Änderung? (max 80 Zeichen)",
+  "summary": "3-4 Sätze: Pre-Market State of the World. Wie haben sich die Bedingungen seit gestern geshiftet?",
+  "topChanges": [
+    {
+      "rank": 1,
+      "title": "Event-Titel",
+      "region": "US|EU|ASIA",
+      "severity": "high|medium|low",
+      "changeType": "NEW|ESCALATED|DIRECTION_FLIP",
+      "description": "1-2 Sätze: Kontext + warum es heute matters",
+      "dcfImplications": {
+        "waccDeltaBps": "+12 bps" | "-8 bps" | "~0 bps",
+        "affectedSectors": ["Sektor1", "Sektor2"],
+        "exposureType": "long|short|hedge|reduce"
+      },
+      "action": "1 Satz, hedge-fund-knapp, handlungsrelevant"
+    }
+  ],
+  "keyMetricsShift": {
+    "inflationView": "1 Satz: Welche Richtung in den nächsten 30 Tagen?",
+    "rateView": "1 Satz: 10Y-Yield-Erwartung / Fed-Pfad",
+    "equityView": "1 Satz: Risk-On/Off, Sektor-Rotation"
+  },
+  "recommendation": "1-2 Sätze: Konkrete Pre-Market-Handlung. Defensive Rotation? Energy-Long? Duration-Cut?"
+}
+
+KEINE Floskeln. Jeder Satz muss handlungsrelevant sein. JSON ohne Prosa drumherum.`;
+
+  const llm = await callLLMJson({ prompt, maxTokens: 2000 });
+  const briefing = llm?.data || null;
+
+  // Limit to top 3 changes
+  if (briefing && Array.isArray(briefing.topChanges)) {
+    briefing.topChanges = briefing.topChanges.slice(0, 3);
+  }
+
+  return {
+    asOf: new Date().toISOString(),
+    generatedAt: new Date().toISOString(),
+    briefing,
+    diagnostics: { eventsScanned: totalScanned, netNewEvents: netNew, regionsAnalyzed: regions },
+    modelUsed: llm?.modelUsed,
   };
 }
 
@@ -702,6 +1052,19 @@ export function registerResearcherRoutes(app: Express) {
     } catch (err: any) {
       console.error("[RESEARCHER/capex] error:", err?.message);
       res.status(500).json({ error: err?.message || "capex analysis failed" });
+    }
+  });
+
+  // Daily Briefing — cross-region net-new event detection (manual + cron)
+  app.post("/api/researcher/daily-briefing", async (_req, res) => {
+    try {
+      console.log("[BRIEFING] starting daily briefing build...");
+      const result = await buildDailyBriefing();
+      console.log(`[BRIEFING] complete: ${result.diagnostics.netNewEvents} net-new of ${result.diagnostics.eventsScanned} events`);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[BRIEFING] error:", err?.message);
+      res.status(500).json({ error: err?.message || "daily briefing failed" });
     }
   });
 }

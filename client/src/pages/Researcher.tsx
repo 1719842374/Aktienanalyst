@@ -4,7 +4,8 @@ import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import {
   ArrowLeft, Globe2, TrendingUp, Search, Landmark, RefreshCw,
-  Loader2, ShieldCheck, AlertTriangle, Sparkles, ChevronRight
+  Loader2, ShieldCheck, AlertTriangle, Sparkles, ChevronRight,
+  Zap, ArrowUp, ArrowDown, Minus, Flame, Activity
 } from "lucide-react";
 
 type Region = "US" | "EU" | "ASIA";
@@ -46,6 +47,35 @@ export default function Researcher() {
   const [region, setRegion] = useState<Region>("US");
   const [data, setData] = useState<Record<string, any>>({});
   const [error, setError] = useState<string | null>(null);
+  const [briefingOpen, setBriefingOpen] = useState(false);
+  const [briefingData, setBriefingData] = useState<any>(null);
+  const [briefingLoading, setBriefingLoading] = useState(false);
+  const [briefingError, setBriefingError] = useState<string | null>(null);
+
+  async function runBriefing() {
+    setBriefingOpen(true);
+    setBriefingLoading(true);
+    setBriefingError(null);
+    setBriefingData(null);
+    try {
+      const res = await apiRequest("POST", "/api/researcher/daily-briefing", {});
+      setBriefingData(await res.json());
+    } catch (err: any) {
+      const msg = err?.message || "";
+      if (/^(503|504|408|499)/.test(msg) || /timeout/i.test(msg)) {
+        // Likely proxy timeout; result is in cache—retry once
+        try {
+          await new Promise(r => setTimeout(r, 3000));
+          const res2 = await apiRequest("POST", "/api/researcher/daily-briefing", {});
+          setBriefingData(await res2.json());
+          return;
+        } catch (e2: any) { /* fall through */ }
+      }
+      setBriefingError(msg || "Briefing fehlgeschlagen");
+    } finally {
+      setBriefingLoading(false);
+    }
+  }
 
   const mutation = useMutation({
     mutationFn: async ({ tab, force }: { tab: Tab; force?: boolean }) => {
@@ -57,14 +87,42 @@ export default function Researcher() {
         body.peMax = 30;
         body.revenueGrowthMin = 5;
       }
-      const res = await apiRequest("POST", `/api/researcher/${tab}`, body);
-      return await res.json();
+      // Retry-on-proxy-timeout (503/504): the analysis runs 20-40s server-side,
+      // but the Perplexity sandbox proxy can return 503 after ~30s while the
+      // backend keeps working. Result lands in cache. Retry hits cache fast.
+      const maxAttempts = 3;
+      let lastErr: any = null;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const res = await apiRequest("POST", `/api/researcher/${tab}`, body);
+          return await res.json();
+        } catch (err: any) {
+          lastErr = err;
+          const msg = err?.message || "";
+          const isProxyTimeout = /^(503|504|408|499)/.test(msg) || /timeout|abort|network/i.test(msg);
+          if (!isProxyTimeout) throw err;
+          // Wait, then retry — backend likely already finished and cached.
+          // Drop force flag on retry so we hit the cache.
+          body.force = false;
+          await new Promise(r => setTimeout(r, 2500 + attempt * 1500));
+        }
+      }
+      throw lastErr || new Error("Analyse-Timeout nach mehreren Versuchen");
     },
     onSuccess: (result, variables) => {
       setData(prev => ({ ...prev, [`${variables.tab}_${region}`]: result }));
       setError(null);
     },
-    onError: (err: any) => setError(err?.message || "Analyse fehlgeschlagen"),
+    onError: (err: any) => {
+      const raw = err?.message || "";
+      let friendly = raw;
+      if (/^(503|504|408|499)/.test(raw) || /timeout|abort/i.test(raw)) {
+        friendly = "Analyse dauert länger als der Proxy erlaubt (≈30s). Das Ergebnis wird im Hintergrund fertiggestellt — bitte in 5–10 Sekunden erneut auf 'Analyse starten' klicken (läuft dann über den 7-Tages-Cache).";
+      } else if (!raw || raw.length < 5) {
+        friendly = "Analyse fehlgeschlagen — unbekannter Fehler";
+      }
+      setError(friendly);
+    },
   });
 
   const cacheKey = `${activeTab}_${region}`;
@@ -78,7 +136,7 @@ export default function Researcher() {
   const isLoading = mutation.isPending;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="h-screen overflow-y-auto bg-background text-foreground">
       {/* Header */}
       <header className="border-b border-border/40 bg-background/80 backdrop-blur sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-3 sm:px-4 py-3 flex items-center gap-3">
@@ -91,6 +149,16 @@ export default function Researcher() {
             <h1 className="text-sm font-semibold tracking-tight">Researcher</h1>
             <span className="text-[10px] text-foreground/40 hidden sm:inline">Hedge-Fund-Style Macro & Stock Discovery</span>
           </div>
+          {/* Daily Briefing trigger */}
+          <button
+            onClick={runBriefing}
+            className="h-8 px-2.5 text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-amber-400/30"
+            title="Pre-Market Briefing — net-new Events seit gestern"
+            data-testid="button-briefing"
+          >
+            <Flame className="w-3 h-3" />
+            <span className="hidden md:inline">Briefing</span>
+          </button>
           {/* Region selector */}
           <div className="flex items-center gap-1 bg-muted/30 rounded-md p-0.5">
             {REGION_OPTIONS.map(r => (
@@ -196,6 +264,163 @@ export default function Researcher() {
         {currentData && activeTab === "screener" && <ScreenerPanel data={currentData} />}
         {currentData && activeTab === "capex" && <CapexPanel data={currentData} />}
       </main>
+
+      {/* Daily Briefing Modal */}
+      {briefingOpen && (
+        <BriefingModal
+          loading={briefingLoading}
+          data={briefingData}
+          error={briefingError}
+          onClose={() => setBriefingOpen(false)}
+          onRetry={runBriefing}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Daily Briefing Modal
+// ============================================================
+
+function BriefingModal({ loading, data, error, onClose, onRetry }: {
+  loading: boolean;
+  data: any;
+  error: string | null;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  const briefing = data?.briefing;
+  const diag = data?.diagnostics;
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8 bg-black/60 backdrop-blur-sm overflow-y-auto">
+      <div className="w-full max-w-3xl bg-card border border-border/50 rounded-lg shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border/40 bg-gradient-to-r from-amber-500/10 to-orange-500/5">
+          <Flame className="w-4 h-4 text-amber-400" />
+          <h2 className="text-sm font-semibold text-foreground/95">Pre-Market Briefing</h2>
+          <span className="text-[10px] text-foreground/50">Net-new Key Events seit letztem Run</span>
+          <button onClick={onClose} className="ml-auto text-foreground/40 hover:text-foreground/80 text-lg leading-none" data-testid="button-close-briefing">×</button>
+        </div>
+
+        {/* Body */}
+        <div className="p-4 space-y-4">
+          {loading && (
+            <div className="flex items-center gap-2 py-12 justify-center text-foreground/60 text-sm">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Briefing wird erstellt — Ö Macro für US/EU/ASIA, Diff vs. gestern, DCF-Implikationen … (~25–60s)</span>
+            </div>
+          )}
+
+          {error && !loading && (
+            <div className="rounded border border-red-500/30 bg-red-500/5 p-3 text-[11px] text-red-300">
+              <div className="font-medium mb-1">Fehler beim Erstellen des Briefings</div>
+              <div className="text-red-300/80">{error}</div>
+              <button onClick={onRetry} className="mt-2 text-[10px] px-2 py-1 rounded bg-red-500/15 hover:bg-red-500/25 border border-red-400/30">Erneut versuchen</button>
+            </div>
+          )}
+
+          {briefing && !loading && (
+            <>
+              {/* Headline */}
+              <div className="rounded-lg bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.04] border border-amber-500/30 p-3">
+                <div className="text-[10px] uppercase tracking-wider text-amber-400/70 mb-1">Headline</div>
+                <div className="text-sm font-semibold text-foreground">{briefing.headline}</div>
+                <p className="text-[12px] text-foreground/80 leading-relaxed mt-2">{briefing.summary}</p>
+              </div>
+
+              {/* Top Changes */}
+              {Array.isArray(briefing.topChanges) && briefing.topChanges.length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Top {briefing.topChanges.length} Changes &mdash; DCF Implications</div>
+                  <div className="space-y-2">
+                    {briefing.topChanges.map((c: any) => (
+                      <BriefingChangeCard key={c.rank} change={c} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Metrics shift */}
+              {briefing.keyMetricsShift && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <MetricShift label="Inflation" value={briefing.keyMetricsShift.inflationView} />
+                  <MetricShift label="Zinsen / 10Y" value={briefing.keyMetricsShift.rateView} />
+                  <MetricShift label="Equities" value={briefing.keyMetricsShift.equityView} />
+                </div>
+              )}
+
+              {/* Recommendation */}
+              {briefing.recommendation && (
+                <div className="rounded border border-violet-400/30 bg-violet-500/[0.06] p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-violet-300/80 mb-1">Pre-Market Action</div>
+                  <p className="text-[12px] text-foreground/85 leading-relaxed">{briefing.recommendation}</p>
+                </div>
+              )}
+
+              {/* Diagnostics */}
+              {diag && (
+                <div className="text-[10px] text-foreground/40 pt-2 border-t border-border/20">
+                  Scanned {diag.eventsScanned} Events &middot; {diag.netNewEvents} net-new &middot; Regions: {diag.regionsAnalyzed.join(", ")}
+                  {data?.modelUsed && <> &middot; Model: {data.modelUsed}</>}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BriefingChangeCard({ change }: { change: any }) {
+  const dcf = change.dcfImplications || {};
+  const exposureColors: Record<string, string> = {
+    long: "bg-emerald-500/15 text-emerald-300 border-emerald-400/30",
+    short: "bg-red-500/15 text-red-300 border-red-400/30",
+    hedge: "bg-blue-500/15 text-blue-300 border-blue-400/30",
+    reduce: "bg-amber-500/15 text-amber-300 border-amber-400/30",
+  };
+  const changeColors: Record<string, string> = {
+    NEW: "bg-violet-500/15 text-violet-300 border-violet-400/30",
+    ESCALATED: "bg-red-500/15 text-red-300 border-red-400/30",
+    DIRECTION_FLIP: "bg-amber-500/15 text-amber-300 border-amber-400/30",
+  };
+  return (
+    <div className="rounded border border-border/40 bg-background/40 p-3">
+      <div className="flex items-start gap-2">
+        <div className="text-[10px] font-mono text-foreground/40 mt-0.5">#{change.rank}</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap mb-1">
+            <span className="text-[12px] font-semibold text-foreground">{change.title}</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-foreground/[0.08] text-foreground/60 border border-border/30">{change.region}</span>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded border ${changeColors[change.changeType] || ""}`}>{change.changeType}</span>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded border ${SEVERITY_DOT[change.severity] || ""} bg-opacity-30`}>{change.severity}</span>
+          </div>
+          <p className="text-[11px] text-foreground/75 leading-relaxed mb-2">{change.description}</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+            <span><span className="text-foreground/40">WACC:</span> <span className="font-mono font-medium text-foreground/90">{dcf.waccDeltaBps || "—0"}</span></span>
+            {dcf.exposureType && (
+              <span className={`px-1.5 py-0.5 rounded border ${exposureColors[dcf.exposureType] || ""}`}>{dcf.exposureType}</span>
+            )}
+            {Array.isArray(dcf.affectedSectors) && dcf.affectedSectors.length > 0 && (
+              <span className="text-foreground/60">{dcf.affectedSectors.slice(0, 4).join(" · ")}</span>
+            )}
+          </div>
+          {change.action && (
+            <div className="mt-2 text-[11px] text-foreground/85 italic border-l-2 border-violet-400/40 pl-2">{change.action}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricShift({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded bg-background/40 border border-border/30 p-2.5">
+      <div className="text-[9px] uppercase tracking-wider text-foreground/40 mb-1">{label}</div>
+      <p className="text-[11px] text-foreground/80 leading-relaxed">{value}</p>
     </div>
   );
 }
@@ -236,6 +461,7 @@ function MacroPanel({ data }: { data: any }) {
             <MacroBlock label="Liquidität" content={llm.liquidityView} />
             <MacroBlock label="Fiskalpolitik" content={llm.fiscalView} />
           </div>
+          {/* anchor for unused prefix — keeps key drivers below */}
           {Array.isArray(llm.keyDrivers) && llm.keyDrivers.length > 0 && (
             <div className="mt-4">
               <div className="text-[10px] text-foreground/40 uppercase tracking-wider mb-1.5">Key Drivers</div>
@@ -268,6 +494,22 @@ function MacroPanel({ data }: { data: any }) {
               <span className="text-[11px] text-foreground/75 flex-1">{llm.actionRationale}</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Key Events & Geopolitik — autonom erkannt */}
+      {llm && Array.isArray(llm.keyEvents) && llm.keyEvents.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.04] to-orange-500/[0.02] p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Flame className="w-3.5 h-3.5 text-amber-400" />
+            <h2 className="text-xs font-semibold text-foreground/90">Aktuelle Key Events &amp; Geopolitik</h2>
+            <span className="text-[10px] text-foreground/40">({llm.keyEvents.length} Events autonom erkannt)</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {llm.keyEvents.map((ev: any, i: number) => (
+              <KeyEventCard key={i} ev={ev} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -310,6 +552,84 @@ function MacroBlock({ label, content }: { label: string; content: string }) {
     <div className="rounded-md bg-background/40 border border-border/30 p-2.5">
       <div className="text-[9px] uppercase tracking-wider text-foreground/40 mb-1">{label}</div>
       <p className="text-[11px] text-foreground/80 leading-relaxed">{content}</p>
+    </div>
+  );
+}
+
+const CATEGORY_BADGES: Record<string, string> = {
+  "Geopolitik": "bg-red-500/15 text-red-300 border-red-400/30",
+  "Zentralbank": "bg-blue-500/15 text-blue-300 border-blue-400/30",
+  "Wahl/Politik": "bg-purple-500/15 text-purple-300 border-purple-400/30",
+  "Lieferkette": "bg-orange-500/15 text-orange-300 border-orange-400/30",
+  "Energie/Rohstoffe": "bg-amber-500/15 text-amber-300 border-amber-400/30",
+  "Naturkatastrophe": "bg-emerald-500/15 text-emerald-300 border-emerald-400/30",
+  "Tech/Regulierung": "bg-cyan-500/15 text-cyan-300 border-cyan-400/30",
+  "Sonstiges": "bg-foreground/10 text-foreground/60 border-border/40",
+};
+
+const SEVERITY_DOT: Record<string, string> = {
+  high: "bg-red-400",
+  medium: "bg-amber-400",
+  low: "bg-emerald-400",
+};
+
+function ImpactBadge({ label, value }: { label: string; value: string }) {
+  const isUp = /steigend|positiv/i.test(value);
+  const isDown = /fallend|negativ/i.test(value);
+  const isMixed = /gemischt/i.test(value);
+  // For inflation+rate: "steigend" = bearish for equity (red), "fallend" = bullish (green)
+  // For equity: "positiv" = green, "negativ" = red
+  const isEquity = label === "Aktien";
+  let color = "text-foreground/50";
+  let Icon = Minus;
+  if (isEquity) {
+    if (isUp) { color = "text-emerald-400"; Icon = ArrowUp; }
+    else if (isDown) { color = "text-red-400"; Icon = ArrowDown; }
+    else if (isMixed) { color = "text-amber-400"; Icon = Activity; }
+  } else {
+    if (isUp) { color = "text-red-300"; Icon = ArrowUp; }
+    else if (isDown) { color = "text-emerald-300"; Icon = ArrowDown; }
+  }
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-[9px] uppercase tracking-wider text-foreground/40">{label}</span>
+      <Icon className={`w-2.5 h-2.5 ${color}`} />
+      <span className={`text-[10px] font-medium ${color}`}>{value}</span>
+    </div>
+  );
+}
+
+function KeyEventCard({ ev }: { ev: any }) {
+  const catClass = CATEGORY_BADGES[ev.category] || CATEGORY_BADGES.Sonstiges;
+  const sevClass = SEVERITY_DOT[ev.severity] || "bg-foreground/30";
+  return (
+    <div className="rounded-md border border-border/40 bg-background/40 p-3 hover:bg-background/60 transition-colors">
+      <div className="flex items-start gap-2 mb-2">
+        <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${sevClass}`} title={`Severity: ${ev.severity}`} />
+        <div className="flex-1 min-w-0">
+          <div className="text-[12px] font-semibold text-foreground/90 leading-tight">{ev.title}</div>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            <span className={`text-[9px] px-1.5 py-0.5 rounded border ${catClass}`}>{ev.category}</span>
+            {ev.timeframe && <span className="text-[9px] text-foreground/50">· {ev.timeframe}</span>}
+          </div>
+        </div>
+      </div>
+      <p className="text-[11px] text-foreground/75 leading-relaxed mb-2">{ev.description}</p>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 mb-2 pb-2 border-b border-border/20">
+        <ImpactBadge label="Inflation" value={ev.inflationImpact} />
+        <ImpactBadge label="Zinsen" value={ev.rateImpact} />
+        <ImpactBadge label="Aktien" value={ev.equityImpact} />
+      </div>
+      {ev.rationale && (
+        <p className="text-[10px] text-foreground/60 italic leading-relaxed mb-2">{ev.rationale}</p>
+      )}
+      {Array.isArray(ev.affectedSectors) && ev.affectedSectors.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1">
+          {ev.affectedSectors.slice(0, 6).map((s: string, i: number) => (
+            <span key={i} className="text-[9px] px-1.5 py-0.5 rounded bg-foreground/[0.06] text-foreground/65 border border-border/30">{s}</span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

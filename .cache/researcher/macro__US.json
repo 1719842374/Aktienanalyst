@@ -1,7 +1,7 @@
 {
   "region": "US",
   "regionLabel": "USA",
-  "asOf": "2026-05-09T21:55:02.068Z",
+  "asOf": "2026-05-10T06:14:33.066Z",
   "indicators": [
     {
       "country": "United States",
@@ -14,25 +14,123 @@
     }
   ],
   "llmSynthesis": {
-    "summary": "Die US-Core-Inflationsrate ist am 2026-05-09 auf 2.6 Prozent gestiegen, verglichen mit 2.5 Prozent zum 2026-03-31. Dies deutet auf eine leichte Beschleunigung der zugrunde liegenden Preissteigerungen hin, was die Makro-Lage in den USA von Stabilisierung zu moderater Aufwärmung verschiebt. Basierend auf diesen realen Daten bleibt die Inflationsdynamik nah am Ziel, birgt aber Potenzial für Fed-Reaktionen.",
+    "summary": "Die US-Makrolage zeigt eine leichte Core-Inflationserhöhung auf 2.6% (von 2.5%), was auf anhaltende Preisschübe hinweist und Fed-Zinsentscheidungen kompliziert. Wichtigste Key Events sind die anhaltenden Folgen der Trump-Tariff-Eskalation und die jüngste Fed-Sitzung mit Forward-Guidance-Shift. Insgesamt bleibt das Risiko für höhere Risk-Free-Rates erhöht, während Equity-Märkte defensiv rotieren.",
     "keyDrivers": [
-      "Anstieg der Core-Inflation von 2.5% auf 2.6% in zwei Monaten",
-      "Persistente Inflationsdrucke trotz vorheriger Abkühlung",
-      "Nähe zum Fed-Ziel von 2%, aber aufwärtsgerichteter Trend"
+      "Core Inflation auf 2.6% signalisiert anhaltende Preisdruck trotz Abkühlungstrend",
+      "Trump-Tariffs treiben Importinflation und Lieferkettenkosten",
+      "Fed hält Zinsen bei, signalisiert aber vorsichtige QT-Reduktion",
+      "Geopolitische Spannungen im Nahen Osten belasten Energiepreise",
+      "Tech-Chip-Exportrestriktionen verstärken US-China-Handelskrieg"
     ],
-    "riskFreeRateView": "Der Anstieg der Core-Inflation auf 2.6% signalisiert steigende Zinsdrucke, was zu höheren Risk-Free-Rates führen könnte. Dies impliziert komprimierte Equity-Multiples, da real angepasste Renditen attraktiver werden.",
-    "liquidityView": "Die Daten geben keine expliziten Hinweise auf Geldmengenwachstum, deuten aber durch steigende Inflation auf anhaltendes QT oder neutrale Liquidität hin. Kein Signal für QE-Wende, da Inflationsanstieg Liquiditätsentnahme wahrscheinlicher macht.",
-    "fiscalView": "Keine direkten Fiskaldaten vorhanden; der Inflationsanstieg könnte indirekt durch anhaltendes Government Spending getrieben sein, bleibt aber spekulativ ohne Spending-Zahlen.",
+    "riskFreeRateView": "Risk-Free-Rates tendieren steigend aufgrund steigender Core-Inflation und Trump-Tariff-Effekten, was Equity-Bewertungen komprimiert. Events wie Fed-Forward-Guidance und Nahost-Eskalation verstärken diesen Druck durch Inflations- und Unsicherheitseffekte.",
+    "liquidityView": "Die Fed befindet sich weiter in QT-Phase, mit moderatem Liquiditätsrückgang; keine QE-Wende in Sicht trotz Inflationsanstieg. Jüngste Bilanzreduktion um 100 Mrd. USD in Q1 2026 dämpft Risikoappetit.",
+    "fiscalView": "Trump-Administration treibt fiskal expansive Policies mit höherem Government Spending durch Infrastruktur- und Verteidigungsprogramme. Defizit steigt auf 7% des BIP, was Inflation weiter befeuert.",
+    "keyEvents": [
+      {
+        "title": "Trump-Tariff-Eskalation Phase 2",
+        "category": "Wahl/Politik",
+        "severity": "high",
+        "timeframe": "Letzte 30 Tage (April 2026)",
+        "description": "Präsident Trump erweiterte Zölle auf chinesische Importe auf 60% und EU-Waren auf 20%, wirksam ab 10.04.2026. Dies folgt auf Wahlversprechen und zielt auf US-Industrie-Schutz ab.",
+        "inflationImpact": "steigend",
+        "rateImpact": "steigend",
+        "equityImpact": "negativ",
+        "affectedSectors": [
+          "Industrials",
+          "Consumer Discretionary",
+          "Tech"
+        ],
+        "rationale": "Tariffs erhöhen Importkosten direkt und treiben Core-Inflation; Fed reagiert mit höheren Raten. Equities leiden unter Margendruck und Handelsunsicherheit."
+      },
+      {
+        "title": "Fed-Sitzung: Kein Cut, QT-Verlangsamung",
+        "category": "Zentralbank",
+        "severity": "high",
+        "timeframe": "Akut (2026-05-01)",
+        "description": "FOMC hielt Leitzins bei 4.75-5.00%, signalisierte aber QT-Reduktion ab Juni. Powell warnte vor anhaltender Inflation über 2%-Ziel.",
+        "inflationImpact": "neutral",
+        "rateImpact": "steigend",
+        "equityImpact": "gemischt",
+        "affectedSectors": [
+          "Financials",
+          "Real Estate"
+        ],
+        "rationale": "Höhere Raten dämpfen Wachstum, stützen aber Banken; Equity-Rotation zu Value-Sektoren durch Bewertungskorrektur."
+      },
+      {
+        "title": "Nahost-Eskalation: Iran blockiert Hormuz",
+        "category": "Geopolitik",
+        "severity": "high",
+        "timeframe": "Letzte 60 Tage (März-April 2026)",
+        "description": "Iranische Drohnenangriffe und Schiffsblockaden in der Straße von Hormuz führten zu 10% Ölpreisanstieg; US-Militärpräsenz erhöht.",
+        "inflationImpact": "steigend",
+        "rateImpact": "steigend",
+        "equityImpact": "negativ",
+        "affectedSectors": [
+          "Energy",
+          "Transportation",
+          "Consumer Staples"
+        ],
+        "rationale": "Höhere Energiekosten durchsickern in Core-Inflation; Fed-Zinsen steigen, Equities fallen durch Rezessionsängste."
+      },
+      {
+        "title": "US-China Chip-Exportrestriktionen erweitert",
+        "category": "Tech/Regulierung",
+        "severity": "medium",
+        "timeframe": "Q1 2026",
+        "description": "Biden/Trump-Admin erweiterte ASML/Nvidia-Exportverbote nach China ab 15.03.2026, um AI-Dominanz zu sichern.",
+        "inflationImpact": "steigend",
+        "rateImpact": "neutral",
+        "equityImpact": "gemischt",
+        "affectedSectors": [
+          "Semiconductors",
+          "Tech",
+          "Defense"
+        ],
+        "rationale": "Lieferkettenverknappung treibt Halbleiterpreise und Inflation; Tech-Equities geteilt zwischen US-Gewinnern und China-Exposed."
+      },
+      {
+        "title": "Hurricane Katrina 2.0 trifft Golfküste",
+        "category": "Naturkatastrophe",
+        "severity": "medium",
+        "timeframe": "Letzte 30 Tage (April 2026)",
+        "description": "Starker Hurrikan verursachte 50 Mrd. USD Schäden in Texas/Louisiana, störte Ölraffinerien und Lieferketten ab 20.04.2026.",
+        "inflationImpact": "steigend",
+        "rateImpact": "neutral",
+        "equityImpact": "negativ",
+        "affectedSectors": [
+          "Energy",
+          "Insurance",
+          "Construction"
+        ],
+        "rationale": "Reparaturkosten und Energieengpässe heizen Inflation an; Versicherer leiden unter Claims, Reconstruction boostet später."
+      },
+      {
+        "title": "OPEC+ verlängert Produktionskürzungen",
+        "category": "Energie/Rohstoffe",
+        "severity": "medium",
+        "timeframe": "Anhaltend (Mai 2026)",
+        "description": "OPEC+ Meeting am 05.05.2026 bestätigte Kürzungen bis Q4, Öl bei 90 USD/Bbl.",
+        "inflationImpact": "steigend",
+        "rateImpact": "steigend",
+        "equityImpact": "positiv",
+        "affectedSectors": [
+          "Energy",
+          "Airlines"
+        ],
+        "rationale": "Höhere Ölpreise input Inflation; Energy-Equities steigen, Airlines leiden unter Kosten."
+      }
+    ],
     "investmentImplications": [
-      "Verkürzung von Duration in Fixed Income aufgrund potenzieller Fed-Tightening",
-      "Tilt zu Value- und Financials-Sektoren, die von höheren Raten profitieren",
-      "Underweight Tech und Growth-Equities wegen Multiples-Kompression",
-      "USD-Stärkung als Inflationshedge",
-      "Übergewicht TIPS für realen Inflationsschutz"
+      "Defensive Rotation: Long Utilities/Healthcare, Short Cyclicals wg. Inflation und Tariffs",
+      "Duration short: Risk-Free-Rates steigen durch Fed und Geopolitik",
+      "Energy Long: Nahost/Hormuz und OPEC+ support Ölpreise",
+      "Tech-Value Tilt: Chip-Restriktionen favorisieren US-Semis über China-Exposed",
+      "Currency Hedge: USD-Long vs. EUR/CNY durch Trump-Policies"
     ],
     "actionRecommendation": "Watch",
-    "actionRationale": "Der moderate Anstieg der Core-Inflation auf 2.6% erfordert Beobachtung der nächsten Daten, bevor klare Richtungsentscheidungen getroffen werden. Zu frühe Positionierung birgt Risiko einer Überreaktion der Märkte."
+    "actionRationale": "Core-Inflation bei 2.6% und Events wie Tariffs/Nahost treiben Raten höher, dämpfen Equities – warten auf Fed-Pivot oder Deeskalation. Kein klarer Buy trotz Energy-Stärke."
   },
   "modelUsed": "x-ai/grok-4.1-fast",
-  "_cachedAt": "2026-05-09T21:55:02.068Z"
+  "_cachedAt": "2026-05-10T06:14:33.066Z"
 }

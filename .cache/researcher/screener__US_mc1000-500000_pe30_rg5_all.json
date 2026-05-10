@@ -1,0 +1,303 @@
+{
+  "region": "US",
+  "filters": {
+    "region": "US",
+    "marketCapMin": 1000,
+    "marketCapMax": 500000,
+    "peMax": 30,
+    "revenueGrowthMin": 5
+  },
+  "asOf": "2026-05-09T22:08:17.357Z",
+  "candidates": [
+    {
+      "ticker": "LMT",
+      "companyName": "Lockheed Martin Corporation",
+      "sector": "Defense",
+      "industry": "Aerospace & Defense",
+      "marketCap": 120000000000,
+      "pe": 18.2,
+      "revenueGrowth": 7.5,
+      "price": 485.3,
+      "moatScore": 9,
+      "marginRiskScore": 2,
+      "growthDrivers": [
+        "Geopolitische Spannungen und Verteidigungsbudgets",
+        "Hyperschall- und Raumfahrttechnologien",
+        "Langfristige Regierungsverträge"
+      ],
+      "risks": [
+        "Budgetkürzungen durch US-Fiskalpolitik",
+        "Verschiebungen in Prioritäten der DoD",
+        "Lieferkettenstörungen bei Titan"
+      ],
+      "actionRecommendation": "Buy",
+      "rationale": "Lockheed Martin profitiert von einem nahezu unangreifbaren Moat durch Regierungsverträge und hohe Einstiegshürden. Solide Wachstumstreiber überwiegen die niedrigen Margin-Risiken."
+    },
+    {
+      "ticker": "NEE",
+      "companyName": "NextEra Energy Inc",
+      "sector": "Renewables",
+      "industry": "Renewable Electricity",
+      "marketCap": 150000000000,
+      "pe": 22.1,
+      "revenueGrowth": 9.2,
+      "price": 78.45,
+      "moatScore": 8,
+      "marginRiskScore": 3,
+      "growthDrivers": [
+        "Übergang zu erneuerbaren Energien",
+        "Daten-center Elektrifizierung",
+        "Regulatorisch gesicherte Netze"
+      ],
+      "risks": [
+        "Zinsanstiege belasten Kapitalintensität",
+        "Regulatorische Hürden bei Projekten",
+        "Wetterabhängige Erträge"
+      ],
+      "actionRecommendation": "Buy",
+      "rationale": "NextEra hat einen starken Moat durch skalierbare Renewables und regulatorische Barrieren. Wachstum durch Energiewende ist robust trotz moderater Margin-Risiken."
+    },
+    {
+      "ticker": "ISRG",
+      "companyName": "Intuitive Surgical Inc",
+      "sector": "Robotics",
+      "industry": "Medical Instruments & Supplies",
+      "marketCap": 160000000000,
+      "pe": 28.3,
+      "revenueGrowth": 14.1,
+      "price": 465.2,
+      "moatScore": 9,
+      "marginRiskScore": 4,
+      "growthDrivers": [
+        "Alternde Bevölkerung und minimal-invasive Chirurgie",
+        "Internationale Expansion",
+        "Neue Systemgenerationen"
+      ],
+      "risks": [
+        "Konkurrenz aus China",
+        "Verzögerungen bei Zulassungen",
+        "Hohe Bewertung"
+      ],
+      "actionRecommendation": "Buy",
+      "rationale": "Intuitive Surgical dominiert mit starkem IP-Moat und Netzwerkeffekten. Wachstum durch chirurgische Megatrends rechtfertigt die Prämie."
+    },
+    {
+      "ticker": "CCI",
+      "companyName": "Crown Castle Inc",
+      "sector": "RealEstate",
+      "industry": "REIT - Specialty",
+      "marketCap": 45000000000,
+      "pe": 24.8,
+      "revenueGrowth": 5.2,
+      "price": 105.4,
+      "moatScore": 8,
+      "marginRiskScore": 3,
+      "growthDrivers": [
+        "5G- und Datencenter-Ausbau",
+        "Langfristige Mietverträge",
+        "Infrastruktur-Spending"
+      ],
+      "risks": [
+        "Zinsbelastung durch Leverage",
+        "Turm-Spektrum-Sättigung",
+        "Mieterwechsel"
+      ],
+      "actionRecommendation": "Buy",
+      "rationale": "Crown Castle geniesst starken Moat durch Netzwerkinfrastruktur und Sticky-Verträge. Wachstum durch 5G überwiegt Risiken."
+    },
+    {
+      "ticker": "ETN",
+      "companyName": "Eaton Corporation plc",
+      "sector": "Infrastructure",
+      "industry": "Specialty Industrial Machinery",
+      "marketCap": 125000000000,
+      "pe": 27.9,
+      "revenueGrowth": 8.3,
+      "price": 335.7,
+      "moatScore": 7,
+      "marginRiskScore": 4,
+      "growthDrivers": [
+        "Elektrifizierung und Datencenter",
+        "Industrieautomatisierung",
+        "Nachhaltige Infrastruktur"
+      ],
+      "risks": [
+        "Zinsempfindlichkeit",
+        "Lieferketten bei Komponenten",
+        "Wirtschaftsabschwung"
+      ],
+      "actionRecommendation": "Buy",
+      "rationale": "Eaton profitiert von Elektrifizierungs-Megatrend mit gutem Moat. Niedriges Margin-Risiko und stabiles Wachstum machen es kaufenswert."
+    },
+    {
+      "ticker": "MPWR",
+      "companyName": "Monolithic Power Systems Inc",
+      "sector": "Semis",
+      "industry": "Semiconductors",
+      "marketCap": 42000000000,
+      "pe": 26.4,
+      "revenueGrowth": 18.9,
+      "price": 820.5,
+      "moatScore": 7,
+      "marginRiskScore": 6,
+      "growthDrivers": [
+        "Elektrofahrzeuge und Power-Management",
+        "AI-Data-Center-Effizienz",
+        "Industrie 4.0"
+      ],
+      "risks": [
+        "Zyklische Halbleitermärkte",
+        "Konkurrenz aus Taiwan",
+        "US-China-Handelsspannungen"
+      ],
+      "actionRecommendation": "Watch",
+      "rationale": "Monolithic Power hat soliden Moat in Nischen, aber zyklische Risiken erhöhen Margin-Druck. Attraktiv bei günstigerer Bewertung."
+    },
+    {
+      "ticker": "NET",
+      "companyName": "Cloudflare Inc",
+      "sector": "Cloud",
+      "industry": "Software - Infrastructure",
+      "marketCap": 35000000000,
+      "pe": 25.6,
+      "revenueGrowth": 28.7,
+      "price": 82.1,
+      "moatScore": 6,
+      "marginRiskScore": 7,
+      "growthDrivers": [
+        "Cloud-Migration und Zero-Trust-Sicherheit",
+        "Edge-Computing",
+        "Cybersecurity-Nachfrage"
+      ],
+      "risks": [
+        "Intense Cloud-Konkurrenz (AWS, Azure)",
+        "Hohe Bewertung bei Verlangsamung",
+        "Kundenkonzentration"
+      ],
+      "actionRecommendation": "Watch",
+      "rationale": "Cloudflare hat guten Wachstumspotenzial, aber mittlerer Moat und hohes Margin-Risiko durch Wettbewerber. Beobachten bei Pullback."
+    },
+    {
+      "ticker": "GXO",
+      "companyName": "GXO Logistics Inc",
+      "sector": "Transport",
+      "industry": "Integrated Freight & Logistics",
+      "marketCap": 14000000000,
+      "pe": 23.1,
+      "revenueGrowth": 12.4,
+      "price": 62.3,
+      "moatScore": 5,
+      "marginRiskScore": 6,
+      "growthDrivers": [
+        "E-Commerce-Logistikboom",
+        "Nearshoring-Trends",
+        "Automatisierung in Lagern"
+      ],
+      "risks": [
+        "Arbeitskosteninflation",
+        "Kundenkonzentration (Amazon)",
+        "Rezession in Handel"
+      ],
+      "actionRecommendation": "Watch",
+      "rationale": "GXO profitiert von Logistiktrends, aber mittlerer Moat und Margin-Risiken erfordern Vorsicht. Potenzial bei Skaleneffekten."
+    },
+    {
+      "ticker": "FCX",
+      "companyName": "Freeport-McMoRan Inc",
+      "sector": "Materials",
+      "industry": "Copper",
+      "marketCap": 70000000000,
+      "pe": 29.5,
+      "revenueGrowth": 6.1,
+      "price": 52.8,
+      "moatScore": 6,
+      "marginRiskScore": 7,
+      "growthDrivers": [
+        "Grüne Energiewende (Kupfer für EV/Solar)",
+        "Kupferpreissteigerungen",
+        "Produktionsausbau"
+      ],
+      "risks": [
+        "Rohstoffpreisvolatilität",
+        "Umweltregulierungen in Peru",
+        "China-Nachfrageschwäche"
+      ],
+      "actionRecommendation": "Watch",
+      "rationale": "Freeport hat Kostenvorteile als Low-Cost-Produzent, aber zyklisches Margin-Risiko hoch. Beobachten bei Kupferzyklus."
+    },
+    {
+      "ticker": "BNTX",
+      "companyName": "BioNTech SE",
+      "sector": "Biotech",
+      "industry": "Biotechnology",
+      "marketCap": 25000,
+      "pe": 12.8,
+      "revenueGrowth": 15.4,
+      "price": 98.76,
+      "moatScore": 5,
+      "marginRiskScore": 8,
+      "growthDrivers": [
+        "Onkologie-Pipeline",
+        "mRNA-Plattform für neue Indikationen",
+        "Partnerschaften mit Pharma-Giganten"
+      ],
+      "risks": [
+        "Patentablauf von Comirnaty",
+        "Klinische Misserfolge",
+        "Abhängigkeit von Pfizer"
+      ],
+      "actionRecommendation": "Avoid",
+      "rationale": "BioNTechs Moat ist mittelstark durch IP, aber hohes Margin-Risiko durch Post-COVID-Rückgang. Wachstum unsicher ohne neue Blockbuster."
+    },
+    {
+      "ticker": "TPR",
+      "companyName": "Tapestry Inc",
+      "sector": "Consumer",
+      "industry": "Luxury Goods",
+      "marketCap": 9500000000,
+      "pe": 11.2,
+      "revenueGrowth": 6.8,
+      "price": 48.9,
+      "moatScore": 4,
+      "marginRiskScore": 7,
+      "growthDrivers": [
+        "Luxus-Accessoires für Millennials",
+        "Asien-Expansion",
+        "Digitaler Handel"
+      ],
+      "risks": [
+        "Rezessionsempfindlichkeit",
+        "Markenkonkurrenz (LVMH)",
+        "China-Konsumrückgang"
+      ],
+      "actionRecommendation": "Avoid",
+      "rationale": "Tapestry fehlt ein starker Moat im zyklischen Luxussegment mit hohem Margin-Risiko. Niedriges Wachstum unattraktiv."
+    },
+    {
+      "ticker": "SOFI",
+      "companyName": "SoFi Technologies Inc",
+      "sector": "Financials",
+      "industry": "Credit Services",
+      "marketCap": 8500000000,
+      "pe": 19.7,
+      "revenueGrowth": 25.6,
+      "price": 7.85,
+      "moatScore": 4,
+      "marginRiskScore": 8,
+      "growthDrivers": [
+        "Fintech-Adoption bei Gen Z",
+        "Diversifizierung in Banking",
+        "Studentendarlehen-Refinanzierung"
+      ],
+      "risks": [
+        "Zinsrisiken bei Krediten",
+        "Regulatorische Hürden",
+        "Verluste bei Wachstum"
+      ],
+      "actionRecommendation": "Avoid",
+      "rationale": "SoFi hat schwachen Moat in wettbewerbsintensivem Fintech mit hohem Margin-Risiko. Profitabilität unsicher."
+    }
+  ],
+  "modelUsed": "x-ai/grok-4.1-fast",
+  "_cachedAt": "2026-05-09T22:08:17.357Z"
+}

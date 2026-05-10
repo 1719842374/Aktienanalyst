@@ -1,0 +1,156 @@
+{
+  "region": "ASIA",
+  "regionLabel": "Asien",
+  "asOf": "2026-05-10T06:15:26.010Z",
+  "indicators": [
+    {
+      "country": "China",
+      "category": "Core Inflation Rate",
+      "latestValue": "1.1",
+      "date": "2026-03-31",
+      "previousValue": "1.8",
+      "unit": "percent",
+      "source": "National Bureau of Statistics of China"
+    },
+    {
+      "country": "Taiwan",
+      "category": "Interest Rate",
+      "latestValue": "2.0",
+      "date": "2026-04-30",
+      "previousValue": "2.0",
+      "unit": "percent",
+      "source": "Central Bank of the Republic of China (Taiwan)"
+    },
+    {
+      "country": "Taiwan",
+      "category": "Money Supply M2",
+      "latestValue": "68771420.0",
+      "date": "2026-03-31",
+      "previousValue": "68453767.0",
+      "unit": "TWD Million",
+      "source": "Central Bank of the Republic of China (Taiwan)"
+    }
+  ],
+  "llmSynthesis": {
+    "summary": "Die Makro-Lage in Asien ist durch sinkende Kerninflation in China auf 1,1% geprägt, was Deflationsdruck signalisiert und Raum für weitere PBoC-Lockerung schafft, während Taiwan stabile Zinsen bei 2,0% und robustes M2-Wachstum von 0,46% MoM hält. Wichtigste Key Events sind die anhaltenden Taiwan-Straßen-Spannungen und neue US-Chip-Exportrestriktionen, die Tech-Sektoren belasten. Insgesamt defensive Haltung mit Fokus auf Liquidität und Geopolitik-Risiken.",
+    "keyDrivers": [
+      "Chinas Kerninflation fällt auf 1,1% (von 1,8%), signalisiert Deflationsrisiken und Stimulus-Bedarf",
+      "Taiwan M2 wächst auf 68,77 Bio. TWD (+0,46% MoM), unterstützt Liquidität trotz stabiler Zinsen",
+      "Taiwan-Straßen-Eskalation erhöht Geopolitik-Risiken für Halbleiter",
+      "US-China Tech-Sanktionen verschärfen Lieferketten-Störungen",
+      "BoJ Yield-Curve-Anpassung treibt Yen-Stärke und Carry-Unwinds"
+    ],
+    "riskFreeRateView": "Risk-Free-Rates in Asien tendieren fallend durch Chinas Deflationsdruck und stabile Taiwan-Zinsen; BoJ-Forward-Guidance deutet auf vorsichtige Lockerung hin. Dies stützt Equity-Bewertungen via niedrigerer Diskontsätze, birgt aber Geopolitik-Überhitzungsrisiken durch Taiwan-Konflikt.",
+    "liquidityView": "Taiwan M2-Wachstum bleibt robust bei +0,46% MoM, signalisiert anhaltende Liquiditätsinjektionen; China könnte mit QE-ähnlichen Maßnahmen folgen angesichts sinkender Inflation. Gesamter Liquiditätszyklus expansiv, QT-Druck aus Fed minimal wirksam in Asien.",
+    "fiscalView": "China plant massiven Property-Stimulus (ca. 2 Bio. USD) zur Stabilisierung, Indien treibt Capex via Budget 2026; Japan fiskalexpansiv post-BoJ-Hike. Hohe Defizite stützen Wachstum, belasten aber langfristig Ratings.",
+    "keyEvents": [
+      {
+        "title": "Taiwan-Straßen-Militärmanöver PLA (April 2026)",
+        "category": "Geopolitik / Konflikte",
+        "severity": "high",
+        "timeframe": "Letzte 30 Tage",
+        "description": "Chinesische PLA führte am 15.-20. April 2026 umfangreiche Manöver in der Taiwan-Straße durch, inklusive Blockade-Simulationen; Taiwan mobilisierte Reserven. US-Kriegsschiffe patrouillierten parallel, Eskalation um 20% höher als Q1.",
+        "inflationImpact": "steigend",
+        "rateImpact": "steigend",
+        "equityImpact": "negativ",
+        "affectedSectors": [
+          "Halbleiter",
+          "Technologie",
+          "Versicherung"
+        ],
+        "rationale": "Geopolitik-Risiken treiben Energie- und Versicherungskosten, heizen Inflation an; höhere Risikoprämien pushen Rates, Tech-Equities fallen durch Lieferkettenängste und Abfluss aus Taiwan-exponierten Aktien."
+      },
+      {
+        "title": "US verschärft Chip-Exportrestriktionen nach China (Mai 2026)",
+        "category": "Tech / Regulierung",
+        "severity": "high",
+        "timeframe": "Letzte 30 Tage",
+        "description": "Am 5. Mai 2026 erweiterte die Biden-Administration (Trump-ähnlich) Sanktionen auf AI-Chips und EUV-Maschinen; TSMC und Samsung melden 15% Umsatzrisiko. Betroffen: ASML-Lieferungen nach Taiwan/China.",
+        "inflationImpact": "steigend",
+        "rateImpact": "neutral",
+        "equityImpact": "negativ",
+        "affectedSectors": [
+          "Halbleiter",
+          "Technologie",
+          "Auto"
+        ],
+        "rationale": "Lieferkettenverknappung treibt Chip-Preise und Inputkosten, Inflation steigt; Equities leiden unter Gewinnwarnungen, Rates stabil da Zentralbanken abwarten."
+      },
+      {
+        "title": "BoJ passt Yield-Curve-Control an (BoJ-Sitzung 30. April 2026)",
+        "category": "Zentralbank-Entscheidungen",
+        "severity": "medium",
+        "timeframe": "Letzte 30 Tage",
+        "description": "BoJ hob am 30. April YCC-Obergrenze auf 1,0% an, signalisierte erste Rate-Hikes 2026; Yen stärkt sich um 5% vs. USD. Forward-Guidance: QT-Start Q3.",
+        "inflationImpact": "neutral",
+        "rateImpact": "steigend",
+        "equityImpact": "gemischt",
+        "affectedSectors": [
+          "Finanzen",
+          "Export",
+          "Immobilien"
+        ],
+        "rationale": "Höhere JGB-Yields straffen Finanzbedingungen, pushen Rates regional; Yen-Stärke belastet Export-Equities, begünstigt Banken via Net-Zinsmarge."
+      },
+      {
+        "title": "China Property-Stimulus-Paket angekündigt (1. Mai 2026)",
+        "category": "Wahl/Politik",
+        "severity": "medium",
+        "timeframe": "Letzte 30 Tage",
+        "description": "PBoC und Regierung kündigten 1. Mai 2 Bio. USD Bailout für Immobilien an, inkl. Schuldenumwandlung; reagiert auf 1,1% Core-Inflation. Erste Banken teilnehmen.",
+        "inflationImpact": "fallend",
+        "rateImpact": "fallend",
+        "equityImpact": "positiv",
+        "affectedSectors": [
+          "Immobilien",
+          "Banken",
+          "Bau"
+        ],
+        "rationale": "Stimulus flutet Liquidität, dämpft Deflation weiter; niedrigere Rates stützen Property-Equities, Transmission via Kreditexpansion."
+      },
+      {
+        "title": "OPEC+ verlängert Ölkürzungen (Mai 2026)",
+        "category": "Energie / Rohstoffe",
+        "severity": "medium",
+        "timeframe": "Q2 2026",
+        "description": "OPEC+ entschied am 10. Mai Produktionskürzungen bis Q4 2026 zu verlängern; Öl bei 85 USD/Bbl, Asien-LNG-Engpässe verschärfen sich.",
+        "inflationImpact": "steigend",
+        "rateImpact": "steigend",
+        "equityImpact": "gemischt",
+        "affectedSectors": [
+          "Energie",
+          "Chemie",
+          "Transport"
+        ],
+        "rationale": "Höhere Energiepreise heizen Importinflation in Asien; Rates steigen via Wachstumsängste, Energy-Equities gewinnen, Cyclicals verlieren."
+      },
+      {
+        "title": "Yen-Carry-Trade-Unwind nach BoJ-Hike (April 2026)",
+        "category": "Finanzmarkt-Stress",
+        "severity": "medium",
+        "timeframe": "Letzte 60 Tage",
+        "description": "Post-BoJ-YCC-Anpassung unwindeten Carry-Trades, Nikkei fiel 8% (April); Volatilität in KRW/JPY-Spreads.",
+        "inflationImpact": "neutral",
+        "rateImpact": "steigend",
+        "equityImpact": "negativ",
+        "affectedSectors": [
+          "Finanzen",
+          "Tech",
+          "Export"
+        ],
+        "rationale": "Yen-Stärke erhöht Hedging-Kosten, treibt Rates; Equities leiden unter Repatriierungsverkäufen, besonders exportabhängige Sektoren."
+      }
+    ],
+    "investmentImplications": [
+      "Defensive Rotation in Utilities und Healthcare, vermeide Tech/Halbleiter aufgrund Taiwan- und Chip-Sanktionsrisiken",
+      "Long Energie (Öl/LNG) via OPEC+-Kürzungen, hedge mit USD vs. Asien-Währungen",
+      "Short China Property-Equities trotz Stimulus, da Deflation anhält; Long Taiwan M2-exponierte Finanzen",
+      "Erhöhe Duration in JGBs bei fallenden Asien-Rates, aber kurze Yen-Carry-Exposures",
+      "Currency-Hedge KRW/INR long, da BoJ-Hike regionale Differenziale verengt"
+    ],
+    "actionRecommendation": "Watch",
+    "actionRationale": "Sinkende China-Inflation und Taiwan-Liquidität stützen Equities, aber hohe Geopolitik-Severity (Taiwan/Tech-Sanktionen) und BoJ-Rate-Push erfordern Vorsicht; warte auf PBoC-Stimulus-Effekte und US-Tariff-Klärung Q2 2026."
+  },
+  "modelUsed": "x-ai/grok-4.1-fast",
+  "_cachedAt": "2026-05-10T06:15:26.010Z"
+}
