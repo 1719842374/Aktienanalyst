@@ -3202,6 +3202,10 @@ export async function registerRoutes(server: Server, app: Express) {
   const { registerResearcherRoutes } = await import("./researcher");
   registerResearcherRoutes(app);
 
+  // Register Daily Regression Scan (5-ticker calc consistency check)
+  const { registerRegressionScanRoutes } = await import("./regression-scan");
+  registerRegressionScanRoutes(app);
+
   // Cache listing endpoint
   app.get("/api/cache", (_req, res) => {
     try {
