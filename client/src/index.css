@@ -260,4 +260,15 @@
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: hsl(var(--muted-foreground));
   }
+
+  /* Hide scrollbar but keep scroll functionality
+     — used in mobile header so all action-buttons (BTC, Gold, Researcher, Compare, etc.)
+        can be reached via horizontal swipe without visible chrome */
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE & Edge */
+    scrollbar-width: none;     /* Firefox */
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;             /* Chrome, Safari, Opera */
+  }
 }

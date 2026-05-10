@@ -151,8 +151,8 @@ export default function Dashboard() {
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       {/* Header */}
-      <header className="flex-shrink-0 h-12 border-b border-border bg-card flex items-center justify-between px-3 sm:px-4 z-20">
-        <div className="flex items-center gap-3">
+      <header className="flex-shrink-0 h-12 border-b border-border bg-card flex items-center px-3 sm:px-4 z-20 gap-2">
+        <div className="flex items-center gap-3 shrink-0">
           <button
             className="lg:hidden p-1.5 rounded-md hover:bg-muted/50"
             onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -171,7 +171,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* Scrollable action-bar on mobile (invisible scrollbar via .scrollbar-hide)
+            — fixes problem where Researcher/Compare buttons were clipped on <640px */}
+        <div className="flex-1 flex items-center justify-end gap-2 sm:gap-3 overflow-x-auto scrollbar-hide ml-auto">
           {data && (
             <div className="hidden sm:flex items-center gap-2 text-xs">
               <span className="font-mono tabular-nums font-bold text-primary">{data.ticker}</span>
@@ -213,7 +215,7 @@ export default function Dashboard() {
                 startAnalyze({ ticker: currentTicker, llm: false });
               }
             }}
-            className={`h-8 px-2 text-[11px] font-medium rounded-md transition-all flex items-center gap-1 border ${
+            className={`h-8 px-2 text-[11px] font-medium rounded-md transition-all flex items-center gap-1 border shrink-0 ${
               useLLM
                 ? 'bg-violet-500/15 text-violet-400 border-violet-500/30 hover:bg-violet-500/25'
                 : 'text-foreground/40 border-border/50 hover:bg-muted/50 hover:text-foreground/60'
@@ -236,21 +238,21 @@ export default function Dashboard() {
           <NavToBTC />
           <button
             onClick={() => navigate("/gold")}
-            className="h-8 px-2.5 text-[11px] font-medium text-amber-500 hover:bg-amber-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-amber-500/20"
+            className="h-8 px-2.5 text-[11px] font-medium text-amber-500 hover:bg-amber-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-amber-500/20 shrink-0"
           >
             <Scale className="w-3 h-3" />
             <span className="hidden sm:inline">Gold</span>
           </button>
           <button
             onClick={() => navigate("/screener")}
-            className="h-8 px-2.5 text-[11px] font-medium text-cyan-500 hover:bg-cyan-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-cyan-500/20"
+            className="h-8 px-2.5 text-[11px] font-medium text-cyan-500 hover:bg-cyan-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-cyan-500/20 shrink-0"
           >
             <Search className="w-3 h-3" />
             <span className="hidden sm:inline">Screener</span>
           </button>
           <button
             onClick={() => navigate("/researcher")}
-            className="h-8 px-2.5 text-[11px] font-medium text-violet-400 hover:bg-violet-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-violet-400/30"
+            className="h-8 px-2.5 text-[11px] font-medium text-violet-400 hover:bg-violet-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-violet-400/30 shrink-0"
             title="Researcher — autonomous macro & sector discovery"
             data-testid="button-researcher"
           >
@@ -259,7 +261,7 @@ export default function Dashboard() {
           </button>
           <button
             onClick={() => navigate("/compare")}
-            className="h-8 px-2.5 text-[11px] font-medium text-foreground/40 hover:bg-muted/50 hover:text-foreground/60 rounded-md transition-colors flex items-center gap-1 border border-border/50"
+            className="h-8 px-2.5 text-[11px] font-medium text-foreground/40 hover:bg-muted/50 hover:text-foreground/60 rounded-md transition-colors flex items-center gap-1 border border-border/50 shrink-0"
             title="Ticker-Vergleich"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
@@ -267,7 +269,7 @@ export default function Dashboard() {
           </button>
           <button
             onClick={toggleTheme}
-            className="p-1.5 rounded-md hover:bg-muted/50 transition-colors"
+            className="p-1.5 rounded-md hover:bg-muted/50 transition-colors shrink-0"
             data-testid="button-theme-toggle"
           >
             {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
