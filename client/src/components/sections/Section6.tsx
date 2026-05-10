@@ -3,7 +3,7 @@ import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
 import {
   calculateFCFFDCF, type FCFFDCFParams,
-  worstCaseM1, worstCaseM2, worstCaseM3, calculateCRV, calculateCatalystUpside,
+  worstCaseM1, worstCaseM2, worstCaseM3, calculateCRV, calculateCatalystUpside, selectCatalystBase,
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign, getCRVColor, getCRVBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
@@ -84,9 +84,10 @@ export function Section6({ data }: Props) {
 
   // Catalyst-adj target (base)
   const catalysts = data.catalysts;
-  const catalystDCFBase = conservativeDCF.perShare > data.currentPrice * 0.05
-    ? conservativeDCF.perShare
-    : (data.analystPT.median > 0 ? data.analystPT.median : data.currentPrice);
+  // Smart Catalyst-Base-Selektor (Plausibilitäts-Gate)
+  const _rawUpsideS6 = (catalysts || []).reduce((s, c) => s + c.gb, 0);
+  const _baseInfoS6 = selectCatalystBase(conservativeDCF.perShare, _rawUpsideS6, data.currentPrice, data.analystPT.median);
+  const catalystDCFBase = _baseInfoS6.base;
   const { adjustedTarget } = calculateCatalystUpside(catalysts, catalystDCFBase);
   const raAdjustedTarget = adjustedTarget * riskDiscountFactor;
 

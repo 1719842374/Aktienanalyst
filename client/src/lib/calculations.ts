@@ -537,9 +537,11 @@ export function calculateWACC(
 }
 
 // === Catalyst Calculations ===
-// Kat.-adj. Zielwert = Kons. DCF × (1 + Σ GB / 100)
-// The base is the conservative DCF perShare, NOT currentPrice.
-// Catalysts are additive adjustments on the fundamental fair value.
+// Kat.-adj. Zielwert = Basis × (1 + Σ GB / 100)
+// Die Basis ist normalerweise der Conservative DCF — aber wenn der DCF
+// offensichtlich verzerrt ist, wird auf Analyst PT Median oder den Kurs
+// zurückgegriffen. Sonst entstehen unsinnige negative Catalyst-Targets bei
+// Growth-Stocks mit niedriger aktueller Profitabilität (Infineon, Bloom Energy etc.).
 export function calculateCatalystUpside(
   catalysts: Catalyst[],
   conservativeDCFPerShare: number
@@ -547,6 +549,56 @@ export function calculateCatalystUpside(
   const totalUpside = catalysts.reduce((sum, c) => sum + c.gb, 0);
   const adjustedTarget = conservativeDCFPerShare * (1 + totalUpside / 100);
   return { totalUpside, adjustedTarget };
+}
+
+/**
+ * Smart Catalyst-Base-Selektor mit Plausibilitäts-Gates.
+ *
+ * Liefert die beste Basis für das Catalyst-Adjusted Target plus Begründung.
+ * Reihenfolge der Prüfung:
+ *   1. Wenn Conservative DCF + Catalyst-Upside >= 70% des Kurses → DCF nutzen (Standard-Pfad)
+ *   2. Sonst, wenn Analyst PT Median > 0 → PT Median als Basis (mehr Kontext, weniger Floskeln)
+ *   3. Sonst Kurs als Basis (letzter Anker)
+ *
+ * Damit ist gewährleistet, dass das Catalyst-Target IMMER realistisch zum
+ * Marktpreis steht — ohne dass eine Aktie sich "qualifizieren" muss
+ * (kein Hardcoding, rein zahlenbasiertes Plausibilitäts-Gate).
+ */
+export function selectCatalystBase(
+  conservativeDCFPerShare: number,
+  totalCatalystUpsidePct: number,
+  currentPrice: number,
+  analystPTMedian: number
+): { base: number; source: "dcf" | "analyst-pt" | "current-price"; reason: string } {
+  // Test 1: Würde DCF + Catalysts realistischen Wert ergeben?
+  // Realistisch = mindestens 70% des Kurses (sonst implizite Negativ-Empfehlung
+  // bei +50% Upside, was unrealistisch ist).
+  const dcfWithCatalysts = conservativeDCFPerShare * (1 + totalCatalystUpsidePct / 100);
+  const realisticThreshold = currentPrice * 0.70;
+
+  if (conservativeDCFPerShare > 0 && dcfWithCatalysts >= realisticThreshold) {
+    return {
+      base: conservativeDCFPerShare,
+      source: "dcf",
+      reason: `DCF + Catalysts ($${dcfWithCatalysts.toFixed(2)}) liegt im plausiblen Bereich (≥70% des Kurses).`,
+    };
+  }
+
+  // Test 2: Analyst PT verfügbar?
+  if (analystPTMedian > 0) {
+    return {
+      base: analystPTMedian,
+      source: "analyst-pt",
+      reason: `DCF $${conservativeDCFPerShare.toFixed(2)} + Catalysts hätte $${dcfWithCatalysts.toFixed(2)} (<70% Kurs) ergeben — Verzerrung wahrscheinlich. Fallback auf Analyst-PT-Median.`,
+    };
+  }
+
+  // Letzter Anker
+  return {
+    base: currentPrice,
+    source: "current-price",
+    reason: `DCF & Analyst-PT nicht verwertbar — Kurs als Basis (Catalysts modifizieren ab Marktpreis).`,
+  };
 }
 
 // === DCF Sensitivity Matrix ===

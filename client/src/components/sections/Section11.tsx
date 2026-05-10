@@ -1,7 +1,7 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { formatNumber, formatCurrency } from "../../lib/formatters";
-import { calculateFCFFDCF, type FCFFDCFParams } from "../../lib/calculations";
+import { calculateFCFFDCF, type FCFFDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
 import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp } from "lucide-react";
 import { useState, useMemo } from "react";
 
@@ -57,13 +57,12 @@ export function Section11({ data }: Props) {
     forwardEPS: data.epsConsensusNextFY,
   }), [data]);
 
-  // Total GB — Catalyst-Adj. Target uses conservative DCF as base (per framework)
-  // Fallback to analyst PT if DCF is unreasonably low (negative-EBIT companies)
+  // Smart Catalyst-Base-Selektor (Plausibilitäts-Gate — verhindert unsinnige
+  // negative Catalyst-Targets bei Aktien mit verzerrt-niedrigem DCF)
   const totalGB = catalysts.reduce((sum, c) => sum + c.gb, 0);
-  const catalystDCFBase = conservativeDCF.perShare > data.currentPrice * 0.05
-    ? conservativeDCF.perShare
-    : (data.analystPT.median > 0 ? data.analystPT.median : data.currentPrice);
-  const catalystBaseFallback = catalystDCFBase !== conservativeDCF.perShare;
+  const _baseInfoS11 = selectCatalystBase(conservativeDCF.perShare, totalGB, data.currentPrice, data.analystPT.median);
+  const catalystDCFBase = _baseInfoS11.base;
+  const catalystBaseFallback = _baseInfoS11.source !== "dcf";
   const catalystAdjTarget = catalystDCFBase * (1 + totalGB / 100);
 
   return (

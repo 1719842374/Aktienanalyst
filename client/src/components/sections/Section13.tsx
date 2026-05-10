@@ -3,7 +3,7 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import {
   calculateFCFFDCF, type FCFFDCFParams,
   calculateCRV, calculateRSL, calculateReverseDCF,
-  worstCaseM1, worstCaseM2, worstCaseM3, calculateCatalystUpside,
+  worstCaseM1, worstCaseM2, worstCaseM3, calculateCatalystUpside, selectCatalystBase,
   gbmMonteCarlo, calculateGBMParams,
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, formatRatio, getCRVColor } from "../../lib/formatters";
@@ -87,12 +87,17 @@ export function Section13({ data }: Props) {
 
   // Use backend catalysts
   const catalysts = data.catalysts;
-  // Catalyst-Adj. Target: use conservative DCF as base, but if DCF perShare is unreasonably low
-  // (e.g. negative equity, negative EBIT companies), fall back to analyst PT median as base
-  const catalystDCFBase = conservativeDCF.perShare > data.currentPrice * 0.05
-    ? conservativeDCF.perShare
-    : (data.analystPT.median > 0 ? data.analystPT.median : data.currentPrice);
-  const catalystBaseFallback = catalystDCFBase !== conservativeDCF.perShare;
+  // Smart Catalyst-Base-Selektor: prüft Plausibilität (DCF + Catalyst-Upside
+  // muss ≥ 70% des Kurses ergeben) bevor DCF als Basis genommen wird.
+  const rawTotalUpside = catalysts.reduce((sum, c) => sum + c.gb, 0);
+  const catalystBaseInfo = selectCatalystBase(
+    conservativeDCF.perShare,
+    rawTotalUpside,
+    data.currentPrice,
+    data.analystPT.median
+  );
+  const catalystDCFBase = catalystBaseInfo.base;
+  const catalystBaseFallback = catalystBaseInfo.source !== "dcf";
   const { totalUpside, adjustedTarget } = calculateCatalystUpside(catalysts, catalystDCFBase);
 
   const m1 = worstCaseM1(data.currentPrice, data.beta5Y, 50);

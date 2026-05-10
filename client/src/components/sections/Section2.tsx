@@ -1,7 +1,7 @@
 import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, RevenueSegment } from "../../../../shared/schema";
-import { calculateFCFFDCF, type FCFFDCFParams, calculateCatalystUpside } from "../../lib/calculations";
+import { calculateFCFFDCF, type FCFFDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
 import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber } from "../../lib/formatters";
 import { useMemo } from "react";
 
@@ -63,11 +63,12 @@ export function Section2({ data }: Props) {
     forwardEPS: data.epsConsensusNextFY,
   }), [data, sp, netDebt]);
 
-  // Catalyst base: use DCF perShare, but if it's unreasonably low, fall back to analyst PT median
-  const catalystDCFBase = baseDCF.perShare > data.currentPrice * 0.05
-    ? baseDCF.perShare
-    : (data.analystPT.median > 0 ? data.analystPT.median : data.currentPrice);
-  const catalystBaseFallback = catalystDCFBase !== baseDCF.perShare;
+  // Smart Catalyst-Base-Selektor (Plausibilitäts-Gate — verhindert unsinnige
+  // negative Catalyst-Targets bei Aktien mit verzerrt-niedrigem DCF)
+  const _rawUpsideS2 = (data.catalysts || []).reduce((s, c) => s + c.gb, 0);
+  const _baseInfoS2 = selectCatalystBase(baseDCF.perShare, _rawUpsideS2, data.currentPrice, data.analystPT.median);
+  const catalystDCFBase = _baseInfoS2.base;
+  const catalystBaseFallback = _baseInfoS2.source !== "dcf";
 
   const { totalUpside, adjustedTarget } = useMemo(
     () => calculateCatalystUpside(catalysts, catalystDCFBase),
