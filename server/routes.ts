@@ -3206,6 +3206,20 @@ export async function registerRoutes(server: Server, app: Express) {
   const { registerRegressionScanRoutes } = await import("./regression-scan");
   registerRegressionScanRoutes(app);
 
+  // === Ticker/Company-Name Search (autocomplete dropdown) ===
+  app.get("/api/search-ticker", async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (!q || q.length < 1) return res.json({ results: [] });
+      const { fmpSearchTicker } = await import("./fmp");
+      const results = await fmpSearchTicker(q, 10);
+      res.json({ results });
+    } catch (err: any) {
+      console.error("[SEARCH-TICKER] error:", err?.message);
+      res.status(500).json({ error: err?.message || "search failed", results: [] });
+    }
+  });
+
   // Cache listing endpoint
   app.get("/api/cache", (_req, res) => {
     try {

@@ -87,3 +87,43 @@ export async function fmpBatchQuote(symbols: string[]) {
 export function isFmpAvailable(): boolean {
   return !!process.env.FMP_API_KEY;
 }
+
+// === Ticker / Company Name Search ===
+// FMP /search-symbol akzeptiert Firmennamen UND Ticker und liefert
+// die passenden Listings (alle Welt-Börsen inkl. .NS, .HK, .DE, .SS etc.)
+export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<{
+  symbol: string;
+  name: string;
+  currency?: string;
+  exchangeFullName?: string;
+  exchange?: string;
+}>> {
+  if (!query || query.length < 1) return [];
+  try {
+    // FMP Stable hat /search-symbol UND /search-name — beide nehmen wir parallel
+    // damit "Bajaj" → BAJAJ-AUTO.NS findet UND "BAJAJ" → ebenso.
+    const [bySymbol, byName] = await Promise.allSettled([
+      fmpFetch(`/search-symbol`, { query, limit: String(limit) }),
+      fmpFetch(`/search-name`, { query, limit: String(limit) }),
+    ]);
+    const merged: any[] = [];
+    const seen = new Set<string>();
+    for (const r of [bySymbol, byName]) {
+      if (r.status === "fulfilled" && Array.isArray(r.value)) {
+        for (const row of r.value) {
+          if (row?.symbol && !seen.has(row.symbol)) {
+            seen.add(row.symbol);
+            merged.push({
+              symbol: row.symbol,
+              name: row.name || row.companyName || row.symbol,
+              currency: row.currency,
+              exchangeFullName: row.exchangeFullName || row.exchange || "",
+              exchange: row.exchange,
+            });
+          }
+        }
+      }
+    }
+    return merged.slice(0, limit);
+  } catch { return []; }
+}
