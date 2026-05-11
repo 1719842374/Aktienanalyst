@@ -679,7 +679,18 @@ NODE_ENV=production node dist/index.cjs
 
 ---
 
+## Community & Mitwirken
+
+- [Contributing Guide](./CONTRIBUTING.md) — Dev-Setup, Anti-Bias-Protokoll, PR-Workflow
+- [Code of Conduct](./CODE_OF_CONDUCT.md) — Contributor Covenant 2.1
+- [Security Policy](./SECURITY.md) — private Meldung von Vulnerabilities
+- [Bug Report](./.github/ISSUE_TEMPLATE/bug_report.md) · [Feature Request](./.github/ISSUE_TEMPLATE/feature_request.md)
+
+---
+
 ## Lizenz
+
+[MIT License](./LICENSE). Siehe auch [Financial Disclaimer](./DISCLAIMER.md) — dieses Tool ist für Bildungszwecke und ersetzt keine Anlageberatung.
 
 Dieses Projekt wurde mit [Perplexity Computer](https://www.perplexity.ai/computer) erstellt.
 
