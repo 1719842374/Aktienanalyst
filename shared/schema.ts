@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // === Request Schema ===
 export const analyzeRequestSchema = z.object({
-  ticker: z.string().min(1).max(10).toUpperCase(),
+  ticker: z.string().min(1).max(32).toUpperCase(),  // 32 deckt internationale Ticker ab: BAJAJ-AUTO.NS, 600519.SS, 0700.HK, etc.
   useLLM: z.boolean().optional().default(false), // KI-Katalysatoren toggle
   force: z.boolean().optional().default(false), // Bypass cache and re-fetch live data
 });
