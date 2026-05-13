@@ -3,7 +3,8 @@ import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { calculateDCF } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign } from "../../lib/formatters";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, AlertTriangle, TrendingDown, Shield, BarChart2 } from "lucide-react";
 
 interface Props { data: StockAnalysis }
 
@@ -11,6 +12,7 @@ export function Section8({ data }: Props) {
   // Use backend risks directly
   const risks = data.risks;
   const sp = data.sectorProfile;
+  const [expandedRisk, setExpandedRisk] = useState<number | null>(null);
 
   const top3 = useMemo(() =>
     [...risks].sort((a, b) => b.expectedDamage - a.expectedDamage).slice(0, 3),
@@ -71,25 +73,112 @@ export function Section8({ data }: Props) {
           <tbody className="divide-y divide-border/50">
             {risks.map((r, i) => {
               const isTop3 = top3.includes(r);
+              const isExpanded = expandedRisk === i;
+              const hasExplanation = !!r.explanation;
               return (
-                <tr key={i} className={isTop3 ? "bg-red-500/5" : ""}>
-                  <td className="py-1.5 px-2 font-medium">
-                    {isTop3 && <span className="text-red-500 mr-1">●</span>}
-                    {r.name}
-                  </td>
-                  <td className="py-1.5 px-1 text-center">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                      r.category === "Binary" ? "bg-red-500/10 text-red-500" :
-                      r.category === "Gradual" ? "bg-amber-500/10 text-amber-500" :
-                      "bg-purple-500/10 text-purple-500"
-                    }`}>
-                      {r.category}
-                    </span>
-                  </td>
-                  <td className="py-1.5 px-1 text-right font-mono tabular-nums">{r.ew}%</td>
-                  <td className="py-1.5 px-1 text-right font-mono tabular-nums">{r.impact}%</td>
-                  <td className="py-1.5 px-2 text-right font-mono tabular-nums font-semibold text-red-500">{formatNumber(r.expectedDamage, 2)}%</td>
-                </tr>
+                <>
+                  <tr
+                    key={i}
+                    className={`${
+                      isTop3 ? "bg-red-500/5" : ""
+                    } ${hasExplanation ? "cursor-pointer hover:bg-muted/20 transition-colors" : ""}`}
+                    onClick={() => hasExplanation && setExpandedRisk(isExpanded ? null : i)}
+                  >
+                    <td className="py-1.5 px-2 font-medium">
+                      <div className="flex items-center gap-1.5">
+                        {isTop3 && <span className="text-red-500">●</span>}
+                        <span>{r.name}</span>
+                        {hasExplanation && (
+                          isExpanded
+                            ? <ChevronUp className="w-3 h-3 text-muted-foreground ml-0.5 flex-shrink-0" />
+                            : <ChevronDown className="w-3 h-3 text-muted-foreground ml-0.5 flex-shrink-0" />
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-1.5 px-1 text-center">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        r.category === "Binary" ? "bg-red-500/10 text-red-500" :
+                        r.category === "Gradual" ? "bg-amber-500/10 text-amber-500" :
+                        "bg-purple-500/10 text-purple-500"
+                      }`}>
+                        {r.category}
+                      </span>
+                    </td>
+                    <td className="py-1.5 px-1 text-right font-mono tabular-nums">{r.ew}%</td>
+                    <td className="py-1.5 px-1 text-right font-mono tabular-nums">{r.impact}%</td>
+                    <td className="py-1.5 px-2 text-right font-mono tabular-nums font-semibold text-red-500">{formatNumber(r.expectedDamage, 2)}%</td>
+                  </tr>
+                  {isExpanded && r.explanation && (
+                    <tr key={`${i}-detail`}>
+                      <td colSpan={5} className="px-2 pb-3 pt-0">
+                        <div className="mt-1.5 rounded-lg bg-muted/20 border border-border/30 p-3 space-y-2.5 text-[11px]">
+                          {/* 1. Risiko-Kontext */}
+                          {r.explanation.kontext && (
+                            <div className="flex items-start gap-2">
+                              <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <span className="font-semibold text-foreground/80">Risiko-Kontext: </span>
+                                <span className="text-foreground/70 leading-relaxed">{r.explanation.kontext}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 2. Gewichtungs-Begründung */}
+                          {r.explanation.gewichtungsBegrundung && (
+                            <div className="flex items-start gap-2 border-t border-border/20 pt-2">
+                              <BarChart2 className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <span className="font-semibold text-foreground/80">Gewichtung (EW {r.ew}% / Impact {r.impact}%): </span>
+                                <span className="text-foreground/70 leading-relaxed">{r.explanation.gewichtungsBegrundung}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 3. Bewertungs-Auswirkung */}
+                          {r.explanation.bewertungsAuswirkung && (
+                            <div className="flex items-start gap-2 border-t border-border/20 pt-2">
+                              <TrendingDown className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <span className="font-semibold text-foreground/80">Bewertungsauswirkung: </span>
+                                <span className="text-foreground/70 leading-relaxed">{r.explanation.bewertungsAuswirkung}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 4. Mitigation */}
+                          {r.explanation.mitigation && (
+                            <div className="flex items-start gap-2 border-t border-border/20 pt-2">
+                              <Shield className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <span className="font-semibold text-foreground/80">Gegenmaßnahmen: </span>
+                                <span className="text-foreground/70 leading-relaxed">{r.explanation.mitigation}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 5. Gesamteinschätzung + Unterschätzt-Flag */}
+                          {r.explanation.gesamtEinschaetzung && (
+                            <div className={`flex items-start gap-2 border-t border-border/20 pt-2 rounded-md p-2 -mx-1 ${
+                              r.explanation.unterschaetzt
+                                ? "bg-red-500/10 border border-red-500/20"
+                                : "bg-muted/20"
+                            }`}>
+                              <div className="flex-1">
+                                <span className="font-semibold text-foreground/80">Gesamteinschätzung: </span>
+                                <span className="text-foreground/70 leading-relaxed">{r.explanation.gesamtEinschaetzung}</span>
+                              </div>
+                              {r.explanation.unterschaetzt && (
+                                <span className="flex-shrink-0 text-[9px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded uppercase tracking-wide">
+                                  Unterschätzt
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
               );
             })}
           </tbody>

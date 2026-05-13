@@ -138,6 +138,16 @@ export interface Risk {
   ew: number; // Expected probability %
   impact: number; // Impact %
   expectedDamage: number; // Expected damage % (calculated)
+  explanation?: RiskExplanation; // Optional LLM-generated deep-dive
+}
+
+export interface RiskExplanation {
+  kontext: string;               // 1. Risiko-Kontext: Warum relevant?
+  gewichtungsBegrundung: string; // 2. Begruendung EW% & Impact%
+  bewertungsAuswirkung: string;  // 3. Auswirkungen auf Bewertung (DCF, Margen, FCF)
+  mitigation: string;            // 4. Gegenmassnahmen / Mitigation
+  gesamtEinschaetzung: string;   // 5. Gesamteinschaetzung Kritikalitaet
+  unterschaetzt: boolean;        // Ist das Risiko im Expected Damage unterschaetzt?
 }
 
 export interface DCFScenario {

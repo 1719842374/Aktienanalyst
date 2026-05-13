@@ -17,7 +17,7 @@
 //   *** OpenRouter will return 404. Use Haiku-3.5 or Grok-4.3 instead.
 
 import OpenAI from "openai";
-import type { Catalyst } from "../shared/schema";
+import type { Catalyst, Risk, RiskExplanation } from "../shared/schema";
 
 // Lazy singleton — created on first call so missing env var doesn't crash boot.
 let openrouterClient: OpenAI | null = null;
@@ -308,6 +308,145 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
 
 export function isLLMAvailable(): boolean {
   return !!process.env.OPENROUTER_API_KEY;
+}
+
+// === Risk Deep-Dive Explanations ===
+//
+// Generates structured, company-specific explanations for each risk in the
+// Risk Inversion table (Section 8). Mirrors the style of catalyst explanations
+// in Section 15 — short, structured, fact-based, in German.
+//
+// Returns risks with .explanation populated, or null on failure.
+// Single LLM call covers all risks to keep cost minimal (~1-2 credits).
+
+export interface RiskExplanationInput {
+  ticker: string;
+  companyName: string;
+  sector: string;
+  industry: string;
+  description: string;
+  revenue: number;
+  revenueGrowth: number;
+  fcfMargin: number;
+  price: number;
+  pe: number;
+  marketCap: number;
+  governmentExposure: number;
+  risks: Risk[];
+}
+
+export async function generateRiskExplanations(
+  input: RiskExplanationInput
+): Promise<Risk[] | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  const model = pickModel();
+  const {
+    ticker, companyName, sector, industry, description, revenue, revenueGrowth,
+    fcfMargin, price, pe, marketCap, governmentExposure, risks,
+  } = input;
+
+  const riskList = risks.map((r, i) =>
+    `R${i + 1}: ${r.name} | Kategorie: ${r.category} | EW: ${r.ew}% | Impact: ${r.impact}% | Exp.Damage: ${r.expectedDamage.toFixed(2)}%`
+  ).join("\n");
+
+  const prompt = `Du bist ein pr\u00e4ziser, evidenzbasierter Aktienresearcher. Erstelle f\u00fcr jedes der folgenden Risiken eine strukturierte Deep-Dive-Erkl\u00e4rung.
+
+UNTERNEHMENSKONTEXT:
+Unternehmen: ${companyName} (${ticker})
+Sektor: ${sector} / ${industry}
+Beschreibung: ${description.substring(0, 500)}
+Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}%
+Kurs: $${price.toFixed(2)} | KGV: ${pe.toFixed(1)} | Marktkapitalisierung: $${(marketCap / 1e9).toFixed(1)}B
+Staatsabh\u00e4ngigkeit: ${governmentExposure.toFixed(0)}%
+
+RISIKEN:
+${riskList}
+
+REGELN:
+- Erkl\u00e4rungen m\u00fcssen UNTERNEHMENSSPEZIFISCH sein (kein generisches Storytelling)
+- Stil: kurze Abs\u00e4tze, faktenbasiert, deutsche Finanzanalysten-Sprache
+- Ca. 100-150 W\u00fcrter pro Risiko
+- unterschaetzt=true wenn das Expected Damage das Risiko untersch\u00e4tzt, sonst false
+
+Return ONLY this JSON (no markdown, no commentary):
+{
+  "explanations": [
+    {
+      "riskIndex": 0,
+      "kontext": "Kurze faktenbasierte Beschreibung warum dieses Risiko f\u00fcr ${companyName} relevant ist.",
+      "gewichtungsBegrundung": "Warum EW% und Impact% so gew\u00e4hlt wurden — unternehmensspezifische Begr\u00fcndung.",
+      "bewertungsAuswirkung": "Konkrete Auswirkungen auf Umsatz, Margen, FCF oder DCF-Bewertung.",
+      "mitigation": "Bestehende oder m\u00f6gliche Ma\u00dfnahmen des Unternehmens zur Risikominderung.",
+      "gesamtEinschaetzung": "Kritikalit\u00e4t im Gesamtkontext der These.",
+      "unterschaetzt": false
+    }
+  ]
+}`;
+
+  try {
+    console.log(`[LLM-RISK] Generating risk explanations for ${ticker} (${risks.length} risks), model=${model}`);
+    const t0 = Date.now();
+    const isGrok = model.startsWith("x-ai/");
+    const completion = await client.chat.completions.create({
+      model,
+      max_tokens: 2800,
+      temperature: 0.3,
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" } as any,
+      ...(isGrok ? { reasoning: { enabled: false } } as any : {}),
+    });
+    const elapsedMs = Date.now() - t0;
+
+    const text = completion.choices?.[0]?.message?.content?.trim() || "";
+    if (!text) {
+      console.warn(`[LLM-RISK] Empty response for ${ticker}`);
+      return null;
+    }
+
+    let jsonStr = text;
+    if (jsonStr.startsWith("```")) {
+      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (parseErr) {
+      console.warn(`[LLM-RISK] JSON parse failed for ${ticker}: ${(parseErr as any)?.message}`);
+      return null;
+    }
+
+    const explanations: any[] = parsed.explanations || [];
+    if (!Array.isArray(explanations) || explanations.length === 0) {
+      console.warn(`[LLM-RISK] No explanations returned for ${ticker}`);
+      return null;
+    }
+
+    // Map explanations back onto risks
+    const enrichedRisks = risks.map((r, i) => {
+      const expl = explanations.find((e: any) => e.riskIndex === i) || explanations[i];
+      if (!expl) return r;
+      const explanation: RiskExplanation = {
+        kontext: String(expl.kontext || ""),
+        gewichtungsBegrundung: String(expl.gewichtungsBegrundung || ""),
+        bewertungsAuswirkung: String(expl.bewertungsAuswirkung || ""),
+        mitigation: String(expl.mitigation || ""),
+        gesamtEinschaetzung: String(expl.gesamtEinschaetzung || ""),
+        unterschaetzt: Boolean(expl.unterschaetzt ?? false),
+      };
+      return { ...r, explanation };
+    });
+
+    console.log(`[LLM-RISK] OK for ${ticker}: ${enrichedRisks.filter(r => r.explanation).length} explanations in ${elapsedMs}ms`);
+    return enrichedRisks;
+  } catch (err: any) {
+    const status = err?.status || err?.response?.status;
+    const msg = err?.message || String(err);
+    console.error(`[LLM-RISK] OpenRouter call failed for ${ticker} (status=${status}): ${msg.substring(0, 300)}`);
+    return null;
+  }
 }
 
 // Generic JSON-mode LLM call — reused by the Researcher module so it doesn't

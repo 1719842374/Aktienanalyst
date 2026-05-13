@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
-import { generateCatalystsAndMatchNews } from "./llm-openrouter";
+import { generateCatalystsAndMatchNews, generateRiskExplanations } from "./llm-openrouter";
 
 // === Finance API Helper ===
 // Returns either the parsed result, or { __rateLimited: true } on 429,
@@ -3963,8 +3963,36 @@ export async function registerRoutes(server: Server, app: Express) {
         console.log(`[ANALYZE] Using sector-template catalysts for ${ticker} (LLM off)`);
       }
 
-      const risks = generateRisks(sector, beta5Y, govExp.exposure);
+      let risks = generateRisks(sector, beta5Y, govExp.exposure);
       // tamAnalysis is computed after revenueSegments are parsed (below)
+
+      // === Risk Explanations (LLM Deep-Dive, same as catalyst reasoning) ===
+      if (useLLM) {
+        try {
+          const enrichedRisks = await generateRiskExplanations({
+            ticker,
+            companyName,
+            sector,
+            industry,
+            description: description || "",
+            revenue,
+            revenueGrowth,
+            fcfMargin,
+            price,
+            pe: pe,
+            marketCap,
+            governmentExposure: govExp.exposure,
+            risks,
+          });
+          if (enrichedRisks) {
+            risks = enrichedRisks;
+            console.log(`[ANALYZE] LLM risk explanations applied for ${ticker}`);
+          }
+        } catch (riskLLMErr: any) {
+          console.warn(`[ANALYZE] Risk LLM failed for ${ticker}: ${riskLLMErr?.message || String(riskLLMErr)}`);
+          // Keep template risks without explanations
+        }
+      }
 
       // === Growth thesis (enriched with catalyst business model reasoning) ===
       const hybridPrefix = sectorHybridNote ? `⚠️ ${sectorHybridNote} ` : "";
