@@ -1,18 +1,35 @@
 import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
-import type { StockAnalysis } from "../../../../shared/schema";
+import type { StockAnalysis, Risk } from "../../../../shared/schema";
 import { calculateDCF } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign } from "../../lib/formatters";
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, AlertTriangle, TrendingDown, Shield, BarChart2 } from "lucide-react";
+import { ChevronDown, ChevronUp, AlertTriangle, TrendingDown, Shield, BarChart2, Sparkles, Search, Loader2 } from "lucide-react";
+import { apiRequest } from "../../lib/queryClient";
 
 interface Props { data: StockAnalysis }
 
 export function Section8({ data }: Props) {
-  // Use backend risks directly
-  const risks = data.risks;
-  const sp = data.sectorProfile;
+  // Use backend risks directly — may be enriched with LLM explanations on demand
+  const [risks, setRisks] = useState<Risk[]>(data.risks);
   const [expandedRisk, setExpandedRisk] = useState<number | null>(null);
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmError, setLlmError] = useState<string | null>(null);
+  const [llmMode, setLlmMode] = useState<"none" | "standard" | "search">(
+    data.risks.some(r => r.explanation) ? "standard" : "none"
+  );
+
+  // Sync risks when data prop changes (new analysis loaded)
+  const [lastTicker, setLastTicker] = useState(data.ticker);
+  if (data.ticker !== lastTicker) {
+    setLastTicker(data.ticker);
+    setRisks(data.risks);
+    setLlmMode(data.risks.some(r => r.explanation) ? "standard" : "none");
+    setLlmError(null);
+    setExpandedRisk(null);
+  }
+
+  const sp = data.sectorProfile;
 
   const top3 = useMemo(() =>
     [...risks].sort((a, b) => b.expectedDamage - a.expectedDamage).slice(0, 3),
@@ -42,6 +59,46 @@ export function Section8({ data }: Props) {
   // AUTOMATIC WARNING if inverted DCF < current price
   const belowPrice = invertedDCF.perShare < data.currentPrice;
 
+  // === LLM Search Handler ===
+  const triggerLLM = async (useSearch: boolean) => {
+    setLlmLoading(true);
+    setLlmError(null);
+    try {
+      const res = await apiRequest("POST", "/api/risk-explanations", {
+        ticker: data.ticker,
+        companyName: data.companyName,
+        sector: data.sector,
+        industry: data.industry,
+        description: data.description,
+        revenue: data.revenue,
+        revenueGrowth: data.financialStatements?.incomeStatement?.revenueGrowth ?? 0,
+        fcfMargin: data.fcfMargin,
+        price: data.currentPrice,
+        pe: data.peRatio,
+        marketCap: data.marketCap,
+        governmentExposure: data.governmentExposure,
+        risks: data.risks, // always use original risks (not already-enriched)
+        useSearch,
+      });
+      const json = await res.json();
+      if (json.risks && Array.isArray(json.risks)) {
+        setRisks(json.risks);
+        setLlmMode(useSearch ? "search" : "standard");
+        // Auto-expand first risk that has explanation
+        const firstWithExpl = json.risks.findIndex((r: Risk) => r.explanation);
+        if (firstWithExpl >= 0) setExpandedRisk(firstWithExpl);
+      } else {
+        setLlmError("Keine Erklärungen erhalten.");
+      }
+    } catch (err: any) {
+      setLlmError(err?.message || "LLM-Anfrage fehlgeschlagen.");
+    } finally {
+      setLlmLoading(false);
+    }
+  };
+
+  const hasExplanations = risks.some(r => r.explanation);
+
   return (
     <SectionCard number={8} title="INVERSION – RISIKOEINPREISUNG">
       {/* Automatic Warning */}
@@ -55,6 +112,84 @@ export function Section8({ data }: Props) {
               Anti-Bias: Erhöhte Vorsicht geboten.
             </div>
           </div>
+        </div>
+      )}
+
+      {/* === LLM Risk Deep-Dive Controls === */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
+          Risiko Deep-Dive:
+        </span>
+
+        {/* Standard LLM Button */}
+        <button
+          onClick={() => !llmLoading && triggerLLM(false)}
+          disabled={llmLoading}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all ${
+            llmMode === "standard" && hasExplanations
+              ? "bg-violet-500/15 text-violet-400 border-violet-500/30"
+              : "text-foreground/50 border-border/50 hover:bg-muted/50 hover:text-foreground/70"
+          } ${llmLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+          title="LLM Standard — unternehmensspezifische Risiko-Erklärungen ohne Web-Suche (~0.5 Credits)"
+          data-testid="button-risk-llm-standard"
+        >
+          {llmLoading && llmMode !== "search" ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <Sparkles className="w-3 h-3" />
+          )}
+          LLM Standard
+          {llmMode === "standard" && hasExplanations && (
+            <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+          )}
+        </button>
+
+        {/* LLM + Search Button */}
+        <button
+          onClick={() => !llmLoading && triggerLLM(true)}
+          disabled={llmLoading}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all ${
+            llmMode === "search" && hasExplanations
+              ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+              : "text-foreground/50 border-border/50 hover:bg-muted/50 hover:text-foreground/70"
+          } ${llmLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+          title="LLM + Perplexity Search — nutzt aktuelle Web-Recherche für faktische Risiko-Belege (~1 Credit)"
+          data-testid="button-risk-llm-search"
+        >
+          {llmLoading && llmMode === "search" ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <Search className="w-3 h-3" />
+          )}
+          LLM Search
+          {llmMode === "search" && hasExplanations && (
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          )}
+        </button>
+
+        {/* Loading indicator */}
+        {llmLoading && (
+          <span className="text-[10px] text-muted-foreground animate-pulse ml-1">
+            Generiere Risiko-Erklärungen…
+          </span>
+        )}
+
+        {/* Mode badge */}
+        {hasExplanations && !llmLoading && (
+          <span className={`ml-auto text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ${
+            llmMode === "search"
+              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+              : "bg-violet-500/10 text-violet-400 border-violet-500/20"
+          }`}>
+            {llmMode === "search" ? "🔍 Search" : "✦ KI"}
+          </span>
+        )}
+      </div>
+
+      {/* Error message */}
+      {llmError && (
+        <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
+          ⚠ {llmError}
         </div>
       )}
 
@@ -112,6 +247,16 @@ export function Section8({ data }: Props) {
                     <tr key={`${i}-detail`}>
                       <td colSpan={5} className="px-2 pb-3 pt-0">
                         <div className="mt-1.5 rounded-lg bg-muted/20 border border-border/30 p-3 space-y-2.5 text-[11px]">
+                          {/* Search-grounded badge */}
+                          {llmMode === "search" && (
+                            <div className="flex items-center gap-1 mb-1">
+                              <Search className="w-3 h-3 text-emerald-400" />
+                              <span className="text-[9px] font-medium text-emerald-400 uppercase tracking-wide">
+                                Perplexity Search-gestützt
+                              </span>
+                            </div>
+                          )}
+
                           {/* 1. Risiko-Kontext */}
                           {r.explanation.kontext && (
                             <div className="flex items-start gap-2">

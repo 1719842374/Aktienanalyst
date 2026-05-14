@@ -4590,6 +4590,99 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+
+  // ============================================================
+  // Risk Deep-Dive Explanations Endpoint (on-demand, Section 8)
+  // ============================================================
+  // Called from Section8 "LLM Search" button without triggering a full
+  // re-analysis. Accepts the current risks + company context, optionally
+  // runs a Perplexity sonar web search for live risk context, then calls
+  // generateRiskExplanations and returns enriched risks.
+  app.post("/api/risk-explanations", async (req, res) => {
+    try {
+      const { ticker, companyName, sector, industry, description,
+              revenue, revenueGrowth, fcfMargin, price, pe, marketCap,
+              governmentExposure, risks, useSearch } = req.body;
+
+      if (!ticker || !Array.isArray(risks) || risks.length === 0) {
+        return res.status(400).json({ error: "ticker and risks array required" });
+      }
+
+      // Optional: Perplexity sonar web search for live risk context
+      let searchContext = "";
+      if (useSearch) {
+        try {
+          const riskNames = risks.slice(0, 4).map((r: any) => r.name).join(", ");
+          const query = `${companyName} (${ticker}) risks 2025: ${riskNames}`;
+          console.log(\`[RISK-SEARCH] Perplexity sonar search: "\${query.substring(0, 120)}"\`);
+          const pplxKey = process.env.PPLX_API_KEY || process.env.PERPLEXITY_API_KEY || "";
+          if (pplxKey) {
+            const pplxRes = await fetch("https://api.perplexity.ai/chat/completions", {
+              method: "POST",
+              headers: {
+                "Authorization": \`Bearer \${pplxKey}\`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: "sonar",
+                messages: [
+                  {
+                    role: "user",
+                    content: \`In 3-4 concise paragraphs, summarize the most current, specific risk factors for \${companyName} (\${ticker}) regarding: \${riskNames}. Include regulatory actions, earnings trends, market conditions, and competitive threats. Use recent facts (2024-2025). Be factual and specific.\`,
+                  },
+                ],
+                max_tokens: 600,
+                temperature: 0.2,
+              }),
+            });
+            if (pplxRes.ok) {
+              const pplxJson = await pplxRes.json();
+              searchContext = pplxJson?.choices?.[0]?.message?.content || "";
+              console.log(\`[RISK-SEARCH] sonar OK, \${searchContext.length} chars\`);
+            } else {
+              console.warn(\`[RISK-SEARCH] sonar HTTP \${pplxRes.status}\`);
+            }
+          } else {
+            console.warn("[RISK-SEARCH] No PPLX_API_KEY — skipping web search");
+          }
+        } catch (searchErr: any) {
+          console.warn(\`[RISK-SEARCH] search failed: \${searchErr?.message?.substring(0, 200)}\`);
+          // Non-fatal — continue without search context
+        }
+      }
+
+      const enrichedRisks = await generateRiskExplanations({
+        ticker: String(ticker),
+        companyName: String(companyName || ticker),
+        sector: String(sector || ""),
+        industry: String(industry || ""),
+        description: String(description || ""),
+        revenue: Number(revenue) || 0,
+        revenueGrowth: Number(revenueGrowth) || 0,
+        fcfMargin: Number(fcfMargin) || 0,
+        price: Number(price) || 0,
+        pe: Number(pe) || 0,
+        marketCap: Number(marketCap) || 0,
+        governmentExposure: Number(governmentExposure) || 0,
+        risks: risks as any[],
+        searchContext: searchContext || undefined,
+      });
+
+      if (!enrichedRisks) {
+        return res.status(503).json({ error: "LLM risk explanation generation failed" });
+      }
+
+      return res.json({
+        risks: enrichedRisks,
+        searchUsed: !!searchContext,
+        searchContextLength: searchContext.length,
+      });
+    } catch (err: any) {
+      console.error(\`[RISK-EXPLANATIONS] \${err?.message || String(err)}\`);
+      return res.status(500).json({ error: "Internal error" });
+    }
+  });
+
   // ============================================================
   // BTC Analysis Endpoint
   // ============================================================

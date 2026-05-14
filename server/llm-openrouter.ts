@@ -359,16 +359,15 @@ Sektor: ${sector} / ${industry}
 Beschreibung: ${description.substring(0, 500)}
 Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}%
 Kurs: $${price.toFixed(2)} | KGV: ${pe.toFixed(1)} | Marktkapitalisierung: $${(marketCap / 1e9).toFixed(1)}B
-Staatsabh\u00e4ngigkeit: ${governmentExposure.toFixed(0)}%
-
+Staatsabh\u00e4ngigkeit: ${governmentExposure.toFixed(0)}%${searchSection}
 RISIKEN:
 ${riskList}
 
 REGELN:
-- Erkl\u00e4rungen m\u00fcssen UNTERNEHMENSSPEZIFISCH sein (kein generisches Storytelling)
+- Erkl\u00e4rungen m\u00fcssen UNTERNEHMENSSPEZIFISCH sein \u2014 nutze Recherche-Ergebnisse f\u00fcr aktuelle, faktische Belege
 - Stil: kurze Abs\u00e4tze, faktenbasiert, deutsche Finanzanalysten-Sprache
-- Ca. 100-150 W\u00fcrter pro Risiko
-- unterschaetzt=true wenn das Expected Damage das Risiko untersch\u00e4tzt, sonst false
+- Ca. 100-150 W\u00f6rter pro Risiko
+- unterschaetzt=true wenn das Expected Damage das Risiko untersch\u00e4tzt (z.B. wegen aktueller Nachrichtenlage), sonst false
 
 Return ONLY this JSON (no markdown, no commentary):
 {
