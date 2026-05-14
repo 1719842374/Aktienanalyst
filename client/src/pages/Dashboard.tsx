@@ -339,7 +339,7 @@ export default function Dashboard() {
               <div ref={setSectionRef(5)}><Section5 data={data} /></div>
               <div ref={setSectionRef(6)}><Section6 data={data} /></div>
               <div ref={setSectionRef(7)}><Section7 data={data} /></div>
-              <div ref={setSectionRef(8)}><Section8 data={data} /></div>
+              <div ref={setSectionRef(8)}><Section8 data={data} useLLM={useLLM} /></div>
               <div ref={setSectionRef(9)}><Section9 data={data} /></div>
               <div ref={setSectionRef(10)}><TechnicalChart data={data} /></div>
               <div ref={setSectionRef(11)}><Section15 data={data} /></div>
