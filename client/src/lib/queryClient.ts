@@ -8,14 +8,18 @@ function computeApiBase(): string {
   const loc = typeof window !== 'undefined' ? window.location : null;
   if (!loc) return ".";
 
-  // Perplexity sandbox proxy
+  // Perplexity sandbox proxy (preview via sites.pplx.app)
   if (loc.hostname === 'sites.pplx.app') {
     const match = loc.pathname.match(/(\/sites\/proxy\/[^/]+)/);
     if (match) return match[1] + '/port/5000';
   }
-  
+
+  // Perplexity published app (*.pplx.app) — backend on /port/5000
+  if (loc.hostname.endsWith('.pplx.app')) {
+    return '/port/5000';
+  }
+
   // Self-hosted (Railway, Vercel, etc.) — same origin
-  // API runs on same host as frontend
   return "";
 }
 
