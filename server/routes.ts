@@ -4614,13 +4614,13 @@ export async function registerRoutes(server: Server, app: Express) {
         try {
           const riskNames = risks.slice(0, 4).map((r: any) => r.name).join(", ");
           const query = `${companyName} (${ticker}) risks 2025: ${riskNames}`;
-          console.log(\`[RISK-SEARCH] Perplexity sonar search: "\${query.substring(0, 120)}"\`);
+          console.log(`[RISK-SEARCH] Perplexity sonar search: "${query.substring(0, 120)}"`);
           const pplxKey = process.env.PPLX_API_KEY || process.env.PERPLEXITY_API_KEY || "";
           if (pplxKey) {
             const pplxRes = await fetch("https://api.perplexity.ai/chat/completions", {
               method: "POST",
               headers: {
-                "Authorization": \`Bearer \${pplxKey}\`,
+                "Authorization": `Bearer ${pplxKey}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
@@ -4628,7 +4628,7 @@ export async function registerRoutes(server: Server, app: Express) {
                 messages: [
                   {
                     role: "user",
-                    content: \`In 3-4 concise paragraphs, summarize the most current, specific risk factors for \${companyName} (\${ticker}) regarding: \${riskNames}. Include regulatory actions, earnings trends, market conditions, and competitive threats. Use recent facts (2024-2025). Be factual and specific.\`,
+                    content: `In 3-4 concise paragraphs, summarize the most current, specific risk factors for ${companyName} (${ticker}) regarding: ${riskNames}. Include regulatory actions, earnings trends, market conditions, and competitive threats. Use recent facts (2024-2025). Be factual and specific.`,
                   },
                 ],
                 max_tokens: 600,
@@ -4638,15 +4638,15 @@ export async function registerRoutes(server: Server, app: Express) {
             if (pplxRes.ok) {
               const pplxJson = await pplxRes.json();
               searchContext = pplxJson?.choices?.[0]?.message?.content || "";
-              console.log(\`[RISK-SEARCH] sonar OK, \${searchContext.length} chars\`);
+              console.log(`[RISK-SEARCH] sonar OK, ${searchContext.length} chars`);
             } else {
-              console.warn(\`[RISK-SEARCH] sonar HTTP \${pplxRes.status}\`);
+              console.warn(`[RISK-SEARCH] sonar HTTP ${pplxRes.status}`);
             }
           } else {
             console.warn("[RISK-SEARCH] No PPLX_API_KEY — skipping web search");
           }
         } catch (searchErr: any) {
-          console.warn(\`[RISK-SEARCH] search failed: \${searchErr?.message?.substring(0, 200)}\`);
+          console.warn(`[RISK-SEARCH] search failed: ${searchErr?.message?.substring(0, 200)}`);
           // Non-fatal — continue without search context
         }
       }
