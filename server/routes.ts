@@ -4678,7 +4678,7 @@ export async function registerRoutes(server: Server, app: Express) {
         searchContextLength: searchContext.length,
       });
     } catch (err: any) {
-      console.error(\`[RISK-EXPLANATIONS] \${err?.message || String(err)}\`);
+      console.error(`[RISK-EXPLANATIONS] ${err?.message || String(err)}`);
       return res.status(500).json({ error: "Internal error" });
     }
   });
