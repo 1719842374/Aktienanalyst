@@ -7,13 +7,13 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import {
   ChevronDown, ChevronUp,
   AlertTriangle, TrendingDown, Shield, BarChart2,
-  Sparkles, Search, Loader2,
+  Sparkles, Loader2,
 } from "lucide-react";
 import { apiRequest } from "../../lib/queryClient";
 
 interface Props {
   data: StockAnalysis;
-  useLLM?: boolean; // Global KI-Toggle aus Dashboard
+  useLLM?: boolean; // Globaler KI-Toggle aus Dashboard
 }
 
 export function Section8({ data, useLLM = false }: Props) {
@@ -21,14 +21,21 @@ export function Section8({ data, useLLM = false }: Props) {
   const [expandedRisk, setExpandedRisk] = useState<number | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmError, setLlmError] = useState<string | null>(null);
-  const [llmMode, setLlmMode] = useState<"none" | "standard" | "search">(
-    data.risks.some(r => r.explanation) ? "standard" : "none"
-  );
+  const [hasKIAnalysis, setHasKIAnalysis] = useState(data.risks.some(r => r.explanation));
 
-  // Track ticker changes → reset local state
   const prevTickerRef = useRef(data.ticker);
   const prevLLMRef = useRef(useLLM);
+  const autoTriggeredRef = useRef(false);
 
+  // Wenn KI beim ersten Mount aktiv ist und noch keine Erklärungen vorhanden
+  useEffect(() => {
+    if (!autoTriggeredRef.current && useLLM && !data.risks.some(r => r.explanation)) {
+      autoTriggeredRef.current = true;
+      triggerKI();
+    }
+  }, []);
+
+  // Reagiere auf Ticker-Wechsel oder KI-Toggle-Änderung
   useEffect(() => {
     const tickerChanged = data.ticker !== prevTickerRef.current;
     const llmTurnedOn = useLLM && !prevLLMRef.current;
@@ -37,33 +44,19 @@ export function Section8({ data, useLLM = false }: Props) {
     prevLLMRef.current = useLLM;
 
     if (tickerChanged) {
-      // New ticker loaded → reset
       setRisks(data.risks);
       setExpandedRisk(null);
       setLlmError(null);
       const hasExpl = data.risks.some(r => r.explanation);
-      setLlmMode(hasExpl ? "standard" : "none");
-      // If KI is active and new ticker has no explanations → auto-trigger
-      if (useLLM && !hasExpl) {
-        triggerLLM(false);
-      }
+      setHasKIAnalysis(hasExpl);
+      if (useLLM && !hasExpl) triggerKI();
       return;
     }
 
-    // KI-Toggle just turned ON and no explanations yet → auto-trigger
     if (llmTurnedOn && !risks.some(r => r.explanation) && !llmLoading) {
-      triggerLLM(false);
+      triggerKI();
     }
   }, [data.ticker, useLLM]);
-
-  // Also auto-trigger on first mount if KI is active and no explanations
-  const autoTriggeredRef = useRef(false);
-  useEffect(() => {
-    if (!autoTriggeredRef.current && useLLM && !data.risks.some(r => r.explanation)) {
-      autoTriggeredRef.current = true;
-      triggerLLM(false);
-    }
-  }, []);
 
   const sp = data.sectorProfile;
 
@@ -73,13 +66,12 @@ export function Section8({ data, useLLM = false }: Props) {
   );
 
   const totalExpectedDamage = risks.reduce((s, r) => s + r.expectedDamage, 0);
-  const baseWACC = sp.waccScenarios.kons;
+  const baseWACC  = sp.waccScenarios.kons;
   const baseGrowth = sp.growthAssumptions.g1;
-  const waccAdj = baseWACC + totalExpectedDamage / 10;
+  const waccAdj   = baseWACC + totalExpectedDamage / 10;
   const growthAdj = baseGrowth - totalExpectedDamage / 5;
-
-  const netDebt = data.totalDebt - data.cashEquivalents;
-  const haircut = data.fcfHaircut;
+  const netDebt   = data.totalDebt - data.cashEquivalents;
+  const haircut   = data.fcfHaircut;
 
   const invertedDCF = useMemo(() => calculateDCF({
     fcfBase: data.fcfTTM,
@@ -94,8 +86,8 @@ export function Section8({ data, useLLM = false }: Props) {
 
   const belowPrice = invertedDCF.perShare < data.currentPrice;
 
-  // === LLM Request Handler ===
-  async function triggerLLM(useSearch: boolean) {
+  // === KI Analyse Trigger (analog Katalysatoren – nur Grok) ===
+  async function triggerKI() {
     setLlmLoading(true);
     setLlmError(null);
     try {
@@ -113,31 +105,27 @@ export function Section8({ data, useLLM = false }: Props) {
         marketCap: data.marketCap,
         governmentExposure: data.governmentExposure,
         risks: data.risks,
-        useSearch,
       });
       const json = await res.json();
       if (json.risks && Array.isArray(json.risks)) {
         setRisks(json.risks);
-        setLlmMode(useSearch ? "search" : "standard");
-        // Auto-expand first risk that has explanation
-        const firstWithExpl = json.risks.findIndex((r: Risk) => r.explanation);
-        if (firstWithExpl >= 0) setExpandedRisk(firstWithExpl);
+        setHasKIAnalysis(true);
+        const first = json.risks.findIndex((r: Risk) => r.explanation);
+        if (first >= 0) setExpandedRisk(first);
       } else {
         setLlmError("Keine Erklärungen erhalten.");
       }
     } catch (err: any) {
-      setLlmError(err?.message || "LLM-Anfrage fehlgeschlagen.");
+      setLlmError(err?.message || "KI-Analyse fehlgeschlagen.");
     } finally {
       setLlmLoading(false);
     }
   }
 
-  const hasExplanations = risks.some(r => r.explanation);
-
   return (
     <SectionCard number={8} title="INVERSION – RISIKOEINPREISUNG">
 
-      {/* Warning */}
+      {/* Warnung */}
       {belowPrice && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">
           <span className="text-red-500 text-lg">⚠</span>
@@ -151,85 +139,50 @@ export function Section8({ data, useLLM = false }: Props) {
         </div>
       )}
 
-      {/* === KI Risk Deep-Dive Controls === */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-          Risiko-Analyse:
-        </span>
-
-        {/* LLM Standard Button */}
+      {/* KI Analyse Button – analog Katalysatoren */}
+      <div className="flex items-center gap-2">
         <button
-          onClick={() => !llmLoading && triggerLLM(false)}
+          onClick={() => !llmLoading && triggerKI()}
           disabled={llmLoading}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all ${
-            llmMode === "standard" && hasExplanations
+            hasKIAnalysis
               ? "bg-violet-500/15 text-violet-400 border-violet-500/30"
               : "text-foreground/50 border-border/50 hover:bg-muted/50 hover:text-foreground/70"
-          } ${llmLoading && llmMode !== "search" ? "opacity-60 cursor-not-allowed" : ""}`}
-          title="KI Standard — unternehmensspezifische Risiko-Erklärungen via Grok (~0.5 Credits)"
-          data-testid="button-risk-llm-standard"
+          } ${llmLoading ? "opacity-60 cursor-not-allowed" : ""}`}
+          title="KI Analyse — unternehmensspezifische Risiko-Erklärungen via Grok"
+          data-testid="button-risk-ki-analyse"
         >
-          {llmLoading && llmMode !== "search" ? (
+          {llmLoading ? (
             <Loader2 className="w-3 h-3 animate-spin" />
           ) : (
             <Sparkles className="w-3 h-3" />
           )}
           KI Analyse
-          {llmMode === "standard" && hasExplanations && (
+          {hasKIAnalysis && !llmLoading && (
             <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
           )}
         </button>
 
-        {/* LLM + Search Button */}
-        <button
-          onClick={() => !llmLoading && triggerLLM(true)}
-          disabled={llmLoading}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all ${
-            llmMode === "search" && hasExplanations
-              ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-              : "text-foreground/50 border-border/50 hover:bg-muted/50 hover:text-foreground/70"
-          } ${llmLoading && llmMode === "search" ? "opacity-60 cursor-not-allowed" : ""}`}
-          title="KI + Search — Perplexity sonar für aktuelle Risiko-Belege (~1 Credit)"
-          data-testid="button-risk-llm-search"
-        >
-          {llmLoading && llmMode === "search" ? (
-            <Loader2 className="w-3 h-3 animate-spin" />
-          ) : (
-            <Search className="w-3 h-3" />
-          )}
-          KI + Search
-          {llmMode === "search" && hasExplanations && (
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          )}
-        </button>
-
-        {/* Loading text */}
         {llmLoading && (
           <span className="text-[10px] text-muted-foreground animate-pulse">
             Generiere Risikoanalyse…
           </span>
         )}
 
-        {/* Active mode badge */}
-        {hasExplanations && !llmLoading && (
-          <span className={`ml-auto text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ${
-            llmMode === "search"
-              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-              : "bg-violet-500/10 text-violet-400 border-violet-500/20"
-          }`}>
-            {llmMode === "search" ? "🔍 Search" : "✦ KI"}
+        {hasKIAnalysis && !llmLoading && (
+          <span className="ml-auto text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border bg-violet-500/10 text-violet-400 border-violet-500/20">
+            ✦ KI
           </span>
         )}
       </div>
 
-      {/* Error */}
       {llmError && (
         <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
           ⚠ {llmError}
         </div>
       )}
 
-      {/* Risk Table */}
+      {/* Risikotabelle */}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -268,9 +221,9 @@ export function Section8({ data, useLLM = false }: Props) {
                     </td>
                     <td className="py-1.5 px-1 text-center">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                        r.category === "Binary"   ? "bg-red-500/10 text-red-500" :
-                        r.category === "Gradual"  ? "bg-amber-500/10 text-amber-500" :
-                        "bg-purple-500/10 text-purple-500"
+                        r.category === "Binary"  ? "bg-red-500/10 text-red-500" :
+                        r.category === "Gradual" ? "bg-amber-500/10 text-amber-500" :
+                                                   "bg-purple-500/10 text-purple-500"
                       }`}>
                         {r.category}
                       </span>
@@ -282,21 +235,11 @@ export function Section8({ data, useLLM = false }: Props) {
                     </td>
                   </tr>
 
-                  {/* Expandable Deep-Dive */}
+                  {/* Expandierbare KI-Erklärung – analog Katalysatoren */}
                   {isExpanded && r.explanation && (
                     <tr key={`${i}-detail`}>
                       <td colSpan={5} className="px-2 pb-3 pt-0">
                         <div className="mt-1.5 rounded-lg bg-muted/20 border border-border/30 p-3 space-y-2.5 text-[11px]">
-
-                          {/* Search badge */}
-                          {llmMode === "search" && (
-                            <div className="flex items-center gap-1 mb-0.5">
-                              <Search className="w-3 h-3 text-emerald-400" />
-                              <span className="text-[9px] font-medium text-emerald-400 uppercase tracking-wide">
-                                Perplexity Search-gestützt
-                              </span>
-                            </div>
-                          )}
 
                           {/* 1. Risiko-Kontext */}
                           {r.explanation.kontext && (
@@ -309,7 +252,7 @@ export function Section8({ data, useLLM = false }: Props) {
                             </div>
                           )}
 
-                          {/* 2. Gewichtung */}
+                          {/* 2. Gewichtungs-Begründung */}
                           {r.explanation.gewichtungsBegrundung && (
                             <div className="flex items-start gap-2 border-t border-border/20 pt-2">
                               <BarChart2 className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
@@ -389,11 +332,9 @@ export function Section8({ data, useLLM = false }: Props) {
         <AdjCard label="Growth Adj." value={formatPercentNoSign(Math.max(growthAdj, 1), 1)} highlight />
       </div>
 
-      {/* Inverted DCF Result */}
+      {/* Inverted DCF */}
       <div className={`rounded-lg p-3 border ${
-        belowPrice
-          ? "bg-red-500/5 border-red-500/20"
-          : "bg-emerald-500/5 border-emerald-500/20"
+        belowPrice ? "bg-red-500/5 border-red-500/20" : "bg-emerald-500/5 border-emerald-500/20"
       }`}>
         <div className="flex items-center justify-between">
           <div>
@@ -401,9 +342,7 @@ export function Section8({ data, useLLM = false }: Props) {
             <div className="text-[10px] text-muted-foreground">Using WACC_adj and Growth_adj</div>
           </div>
           <div className="text-right">
-            <div className="text-lg font-bold font-mono tabular-nums">
-              {formatCurrency(invertedDCF.perShare)}
-            </div>
+            <div className="text-lg font-bold font-mono tabular-nums">{formatCurrency(invertedDCF.perShare)}</div>
             <div className={`text-xs font-mono tabular-nums ${
               invertedDCF.perShare > data.currentPrice ? "text-emerald-500" : "text-red-500"
             }`}>
