@@ -359,7 +359,7 @@ Sektor: ${sector} / ${industry}
 Beschreibung: ${description.substring(0, 500)}
 Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}%
 Kurs: $${price.toFixed(2)} | KGV: ${pe.toFixed(1)} | Marktkapitalisierung: $${(marketCap / 1e9).toFixed(1)}B
-Staatsabh\u00e4ngigkeit: ${governmentExposure.toFixed(0)}%${searchSection}
+Staatsabh\u00e4ngigkeit: ${governmentExposure.toFixed(0)}%
 RISIKEN:
 ${riskList}
 
@@ -390,8 +390,8 @@ Return ONLY this JSON (no markdown, no commentary):
     const isGrok = model.startsWith("x-ai/");
     const completion = await client.chat.completions.create({
       model,
-      max_tokens: 2800,
-      temperature: 0.3,
+      max_tokens: 3500, // raised from 2800 — 6 risks x ~150 words needs headroom
+      temperature: 0.25, // slightly more deterministic
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" } as any,
       ...(isGrok ? { reasoning: { enabled: false } } as any : {}),

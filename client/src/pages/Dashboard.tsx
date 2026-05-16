@@ -65,13 +65,13 @@ export default function Dashboard() {
 
   // Warmup-Ping: fire /api/health on mount to wake up the sandbox before the
   // user triggers an analysis. This eliminates cold-start failures on first analyze.
+  // H2 fix: use apiRequest() so URL routing is handled by the same computeApiBase()
+  // logic as all other API calls — no more duplicate URL logic or localhost bugs.
   useEffect(() => {
     let cancelled = false;
     const ping = async (attempt = 1) => {
       try {
-        const res = await fetch(`${(window as any).__API_BASE__ ?? ''}/port/5000/api/health`.replace('/port/5000/port/5000', '/port/5000'), {
-          signal: AbortSignal.timeout(20000),
-        });
+        const res = await apiRequest("GET", "/api/health");
         if (!cancelled) setServerReady(res.ok || res.status === 503); // 503=degraded but alive
       } catch {
         if (!cancelled && attempt < 4) {
@@ -81,10 +81,6 @@ export default function Dashboard() {
         }
       }
     };
-    // Use apiRequest base URL — replicate computeApiBase logic inline
-    const loc = window.location;
-    (window as any).__API_BASE__ = loc.hostname.endsWith('.pplx.app') ? '/port/5000' :
-      loc.hostname === 'sites.pplx.app' ? (loc.pathname.match(/(\/sites\/proxy\/[^/]+)/)?.[1] ?? '') + '/port/5000' : '';
     ping();
     return () => { cancelled = true; };
   }, []);

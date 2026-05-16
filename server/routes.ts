@@ -13,13 +13,23 @@ function callFinanceTool(toolName: string, args: Record<string, any>): any {
     // Escape single quotes in the JSON string for shell
     const escaped = params.replace(/'/g, "'\\''");
     const result = execSync(`external-tool call '${escaped}'`, {
-      timeout: 60000,
+      timeout: 25000, // 25s: 3 retries fit within 90s client timeout (was 60s)
       encoding: "utf-8",
       maxBuffer: 50 * 1024 * 1024,
     });
+    // H1 fix: guard against empty response before JSON.parse
+    if (!result?.trim()) {
+      console.error(`Finance API empty response (${toolName})`);
+      return null;
+    }
     return JSON.parse(result);
   } catch (err: any) {
     const msg = err?.message || "";
+    // H1 fix: ENOENT = external-tool binary missing — distinct from rate-limit
+    if (msg.includes("ENOENT") || msg.includes("not found") || msg.includes("No such file")) {
+      console.error(`Finance API CRITICAL: external-tool binary missing (${toolName}) — ${msg.substring(0, 200)}`);
+      return { __binaryMissing: true };
+    }
     if (msg.includes("RATE_LIMITED") || msg.includes("429")) {
       console.error(`Finance API rate-limited (${toolName})`);
       return { __rateLimited: true };
@@ -3352,13 +3362,16 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.post("/api/analyze", async (req, res) => {
+    // Declare ticker outside try{} so catch{} can use it for cache-fallback (C2 fix)
+    let ticker = "";
+    let useLLM = false;
     try {
       const parsed = analyzeRequestSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid ticker" });
       }
-      const ticker = parsed.data.ticker;
-      const useLLM = parsed.data.useLLM === true;
+      ticker = parsed.data.ticker;
+      useLLM = parsed.data.useLLM === true;
       const force = parsed.data.force === true;
 
       // === Cache-first (TTL 7 days) ===
@@ -3397,9 +3410,16 @@ export async function registerRoutes(server: Server, app: Express) {
         fields: ["price", "currency", "marketCap", "pe", "eps", "change", "changesPercentage", "volume", "avgVolume", "dayLow", "dayHigh", "yearLow", "yearHigh", "previousClose", "dividendYieldTTM"],
       });
 
-      // Circuit-breaker: if Quote returned null after retries (rate-limited),
-      // bail out IMMEDIATELY instead of running 7 more useless calls that each
-      // burn 12s of retry-backoff. Total saved: ~90 seconds of dead-air.
+      // Circuit-breaker: if Quote returned null after retries OR binary is missing,
+      // bail out IMMEDIATELY instead of running 7 more useless calls.
+      // __binaryMissing = external-tool CLI not found (H1 fix)
+      if (quoteResult?.__binaryMissing) {
+        console.error(`[ANALYZE] CRITICAL: external-tool binary missing — Finance API unavailable for ${ticker}`);
+        return res.status(503).json({
+          error: "Finance-API nicht verf\u00fcgbar: external-tool CLI fehlt in dieser Sandbox. Bitte App neu deployen.",
+          errorCode: "BINARY_MISSING",
+        });
+      }
       if (quoteResult === null) {
         const cachedRL = getCachedAnalysis(ticker);
         // Serve fallback cache if its LLM mode is compatible (legacy caches
