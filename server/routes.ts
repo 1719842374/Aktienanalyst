@@ -5669,15 +5669,50 @@ export async function registerRoutes(server: Server, app: Express) {
       'LIBERTY BROADBAND': 'LBRDA', 'T-MOBILE US INC': 'TMUS', 'CHARTER COMMUNICATIONS': 'CHTR',
       'CITIGROUP INC': 'C', 'WELLS FARGO & CO': 'WFC', 'GOLDMAN SACHS': 'GS', 'MORGAN STANLEY': 'MS',
     };
+    // Phase 1: static map lookup (fast, no API call)
+    const unresolved: typeof holdings = [];
     for (const h of holdings) {
-      if (h.ticker) continue;
+      if (h.ticker) { unresolved; continue; }
       const nameUp = h.name.toUpperCase();
+      let found = false;
       for (const [key, val] of Object.entries(commonTickers)) {
         if (nameUp.includes(key) || key.includes(nameUp.substring(0, 10))) {
           h.ticker = val;
+          found = true;
           break;
         }
       }
+      if (!found) unresolved.push(h);
+    }
+
+    // Phase 2: FMP search-symbol for unresolved holdings (dynamic fallback)
+    // Only runs when FMP_API_KEY is set and there are unresolved holdings
+    if (unresolved.length > 0 && isFmpAvailable()) {
+      console.log(`[13F-RESOLVER] ${unresolved.length} unresolved holdings — trying FMP search`);
+      // Process in batches of 5 with 100ms delay to avoid FMP rate limits
+      for (let i = 0; i < Math.min(unresolved.length, 30); i++) {
+        const h = unresolved[i];
+        try {
+          // Use first 3 words of company name for better match
+          const query = h.name.split(' ').slice(0, 3).join(' ');
+          const results = await fmpSearchTicker(query, 3);
+          if (results && results.length > 0) {
+            // Prefer US exchange results (NYSE, NASDAQ)
+            const usResult = results.find((r: any) =>
+              r.exchange === 'NASDAQ' || r.exchange === 'NYSE' || r.exchange === 'AMEX'
+            ) || results[0];
+            if (usResult?.symbol) {
+              h.ticker = usResult.symbol;
+              console.log(`[13F-RESOLVER] Resolved '${h.name}' → ${h.ticker} via FMP`);
+            }
+          }
+        } catch (_) { /* skip on error */ }
+        if (i < Math.min(unresolved.length, 30) - 1) {
+          await new Promise(r => setTimeout(r, 120)); // 120ms = ~8 req/sec within FMP free limit
+        }
+      }
+      const resolved = unresolved.filter(h => h.ticker).length;
+      console.log(`[13F-RESOLVER] FMP resolved ${resolved}/${Math.min(unresolved.length, 30)} additional tickers`);
     }
   }
 
