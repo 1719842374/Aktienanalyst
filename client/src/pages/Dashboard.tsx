@@ -102,6 +102,7 @@ export default function Dashboard() {
           if (msg.includes("RATE_LIMITED") || msg.includes("Tagesquota") || msg.includes("429")) {
             console.warn(`[Analyze] Rate-limit erkannt — keine Retries`);
             setRetryInfo(null);
+            setData(null); // Clear old data so ErrorScreen is shown instead of stale dashboard
             throw err;
           }
           console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${msg.substring(0, 100)}`);
@@ -502,40 +503,66 @@ function LoadingScreen({ ticker, retryInfo }: { ticker: string; retryInfo?: { at
 
 function ErrorScreen({ error }: { error: Error }) {
   const isRateLimited = error.message.includes('RATE_LIMITED') || error.message.includes('Tagesquota') || error.message.includes('429');
-  const is404 = !isRateLimited && (error.message.includes('404') || error.message.includes('Failed to fetch'));
-  const isTimeout = error.message.includes('timeout') || error.message.includes('Timeout');
+  const is404 = !isRateLimited && (error.message.includes('404') || error.message.includes('Not Found') || error.message.includes('Failed to fetch') || error.message.includes('NetworkError'));
+  const isTimeout = !isRateLimited && !is404 && (error.message.includes('timeout') || error.message.includes('Timeout'));
+
+  // Estimate reset time: next midnight UTC+2 (CEST)
+  const resetTime = (() => {
+    const now = new Date();
+    const nextMidnight = new Date(now);
+    nextMidnight.setHours(24, 0, 0, 0);
+    const diffH = Math.ceil((nextMidnight.getTime() - now.getTime()) / 3600000);
+    return diffH <= 1 ? 'in ca. 1 Stunde' : `in ca. ${diffH} Stunden`;
+  })();
+
   return (
-    <div className="flex items-center justify-center min-h-full p-8">
-      <div className="text-center space-y-4 max-w-md">
-        <div className="text-2xl">{isRateLimited ? '⏳' : is404 ? '🔌' : '⚠️'}</div>
-        <div className="text-sm font-semibold">
-          {isRateLimited ? 'Tagesquota erreicht' : is404 ? 'Server nicht erreichbar' : isTimeout ? 'Timeout' : 'Analyse fehlgeschlagen'}
+    <div className="flex items-center justify-center min-h-[60vh] p-8">
+      <div className="text-center space-y-5 max-w-lg">
+        {/* Icon */}
+        <div className="text-4xl">{isRateLimited ? '⏳' : is404 ? '🔌' : isTimeout ? '⌛' : '⚠️'}</div>
+
+        {/* Title */}
+        <div className="space-y-1">
+          <div className="text-base font-semibold text-foreground">
+            {isRateLimited ? 'Finance-API Tageslimit erreicht' :
+             is404 ? 'Server nicht erreichbar' :
+             isTimeout ? 'Verbindungs-Timeout' :
+             'Analyse fehlgeschlagen'}
+          </div>
+          {isRateLimited && (
+            <div className="text-xs text-amber-500 font-medium">Reset {resetTime}</div>
+          )}
         </div>
-        <div className="text-xs text-muted-foreground leading-relaxed">
+
+        {/* Body */}
+        <div className="text-xs text-muted-foreground leading-relaxed bg-muted/20 rounded-lg p-4 text-left space-y-2">
           {isRateLimited ? (
             <>
-              Die Finance-API hat das tagesgebündelte Quota dieser Sandbox erreicht.
-              Reset typischerweise nach 12–24 Stunden.
-              <br /><br />
-              <strong>Was jetzt:</strong> Bereits analysierte Tickers (in der Watchlist links) funktionieren weiterhin aus dem Cache — 0 Credits, keine API-Calls.
-              Neue Analysen sind erst nach dem Reset wieder möglich.
+              <p>Der Perplexity Finance-Connector hat das tägliche API-Kontingent dieser Sandbox erreicht. Neue Aktienanalysen sind bis zum Reset nicht möglich.</p>
+              <p><span className="text-foreground/80 font-medium">Was jetzt funktioniert:</span> Alle bereits analysierten Tickers in der Watchlist (linke Sidebar) laden aus dem Cache — ohne API-Calls, sofort.</p>
+              <p><span className="text-foreground/80 font-medium">Neue Analysen:</span> Wieder möglich nach dem Reset {resetTime}.</p>
             </>
           ) : is404 ? (
             <>
-              Der Backend-Server oder Proxy-Token ist abgelaufen. Das passiert wenn die Sandbox-Session endet (~24h).
-              <br /><br />
-              <strong>Lösung:</strong> Schreibe im Chat <code className="bg-muted/50 px-1.5 py-0.5 rounded text-foreground/70">Deploy neu</code> — dann wird der Server mit frischem Token neu gestartet.
+              <p>Der Backend-Server antwortet nicht. Die Sandbox-Session ist möglicherweise abgelaufen (~24h Laufzeit).</p>
+              <p><span className="text-foreground/80 font-medium">Lösung:</span> Schreibe im Perplexity-Chat <code className="bg-muted/50 px-1 py-0.5 rounded">Deploy neu</code> — der Server wird mit frischem Token neu gestartet.</p>
             </>
+          ) : isTimeout ? (
+            <p>Die Analyse hat zu lange gedauert. Bitte erneut versuchen — bei komplexen Tickers kann die erste Anfrage länger dauern.</p>
           ) : (
-            error.message
+            <p className="font-mono text-[10px] break-all opacity-70">{error.message.substring(0, 300)}</p>
           )}
         </div>
-        <button
-          onClick={() => window.location.reload()}
-          className="px-4 py-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 text-xs font-medium transition-colors"
-        >
-          Seite neu laden
-        </button>
+
+        {/* Actions */}
+        <div className="flex gap-2 justify-center">
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 text-xs font-medium transition-colors"
+          >
+            Seite neu laden
+          </button>
+        </div>
       </div>
     </div>
   );
