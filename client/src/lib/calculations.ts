@@ -488,11 +488,21 @@ export function calculateReverseDCF(params: {
 }): ReverseDCFResult {
   const { currentPrice, fcfBase, wacc, sharesOutstanding, netDebt } = params;
   const ev = currentPrice * sharesOutstanding + netDebt;
+  // Guard: EV ≤0 (cash-rich firms with strongly negative netDebt) causes division by zero
+  if (!ev || ev <= 0 || !isFinite(ev)) {
+    return { impliedGrowth: 0, rating: "n/a" };
+  }
+  // Guard: currentPrice or sharesOutstanding missing
+  if (!currentPrice || !sharesOutstanding) {
+    return { impliedGrowth: 0, rating: "n/a" };
+  }
   // Simplified: EV = FCF / (WACC - g) => g = WACC - FCF/EV
   const impliedGrowth = (wacc / 100 - fcfBase / ev) * 100;
+  if (!isFinite(impliedGrowth)) return { impliedGrowth: 0, rating: "n/a" };
   let rating = "realistic";
   if (impliedGrowth > 8) rating = "unrealistic";
   else if (impliedGrowth > 5) rating = "sportlich";
+  else if (impliedGrowth < 0) rating = "negativ";
   return { impliedGrowth, rating };
 }
 

@@ -204,7 +204,7 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
       response_format: { type: "json_object" } as any,
       // Disable reasoning when calling reasoning-capable models so the full
       // 1900-token budget goes to actual JSON output, not hidden CoT.
-      ...(isGrok ? { reasoning: { enabled: false } } as any : {}),
+      ...(isGrok ? { reasoning: { effort: "none" } } as any : {}),
     });
     const elapsedMs = Date.now() - t0;
 
@@ -483,7 +483,7 @@ export async function callLLMJson(opts: {
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
-      ...(isGrok ? { reasoning: { enabled: false } } as any : {}),
+      ...(isGrok ? { reasoning: { effort: "none" } } as any : {}),
     });
     const text = completion.choices?.[0]?.message?.content?.trim() || "";
     if (!text) return null;

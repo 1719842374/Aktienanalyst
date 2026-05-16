@@ -1,3 +1,4 @@
+import React from "react";
 import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, Risk } from "../../../../shared/schema";
@@ -200,9 +201,8 @@ export function Section8({ data, useLLM = false }: Props) {
               const isExpanded = expandedRisk === i;
               const hasExplanation = !!r.explanation;
               return (
-                <>
+                <React.Fragment key={i}>
                   <tr
-                    key={i}
                     className={`${isTop3 ? "bg-red-500/5" : ""} ${
                       hasExplanation ? "cursor-pointer hover:bg-muted/20 transition-colors" : ""
                     }`}
@@ -309,7 +309,7 @@ export function Section8({ data, useLLM = false }: Props) {
                       </td>
                     </tr>
                   )}
-                </>
+                </React.Fragment>
               );
             })}
           </tbody>

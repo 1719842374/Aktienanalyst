@@ -1,14 +1,24 @@
+// === Numeric Safety Guard ===
+// Fix 6: all formatters guard against NaN, Infinity, null, undefined
+// so price=0 or division-by-zero never shows "Infinity%" in the UI
+function safeNum(v: number, fallback = 0): number {
+  if (v === null || v === undefined || !isFinite(v) || isNaN(v)) return fallback;
+  return v;
+}
+
 // === Currency Formatters ===
 export function formatCurrency(value: number, decimals: number = 2): string {
-  return `$${value.toLocaleString("en-US", {
+  const v = safeNum(value);
+  return `$${v.toLocaleString("en-US", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   })}`;
 }
 
 export function formatLargeNumber(value: number): string {
-  const abs = Math.abs(value);
-  const sign = value < 0 ? "-" : "";
+  const v = safeNum(value);
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
   if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
   if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
@@ -17,15 +27,16 @@ export function formatLargeNumber(value: number): string {
 }
 
 export function formatPercent(value: number, decimals: number = 2): string {
-  return `${value >= 0 ? "+" : ""}${value.toFixed(decimals)}%`;
+  const v = safeNum(value);
+  return `${v >= 0 ? "+" : ""}${v.toFixed(decimals)}%`;
 }
 
 export function formatPercentNoSign(value: number, decimals: number = 2): string {
-  return `${value.toFixed(decimals)}%`;
+  return `${safeNum(value).toFixed(decimals)}%`;
 }
 
 export function formatNumber(value: number, decimals: number = 2): string {
-  return value.toLocaleString("en-US", {
+  return safeNum(value).toLocaleString("en-US", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });

@@ -97,7 +97,8 @@ function FairValueBar({
   const min = Math.min(support2, support1, spotPrice) * 0.95;
   const max = Math.max(resistance2, resistance1, spotPrice) * 1.05;
   const range = max - min;
-  const pct = (v: number) => ((v - min) / range) * 100;
+  // Fix 4: guard against division by zero when all values are equal
+  const pct = (v: number) => range > 0 ? Math.min(100, Math.max(0, ((v - min) / range) * 100)) : 50;
 
   return (
     <div className="relative h-12 bg-muted/30 rounded-lg border border-border">

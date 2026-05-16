@@ -123,8 +123,9 @@ export function Section3({ data }: Props) {
               {macroSensitivities.map((m, i) => (
                 <tr key={i}>
                   <td className="py-2 px-2 font-medium">{m.factor}</td>
-                  <td className="py-2 px-2 font-mono tabular-nums text-emerald-500 text-[11px]">{m.down}</td>
-                  <td className="py-2 px-2 font-mono tabular-nums text-red-500 text-[11px]">{m.up}</td>
+                  {/* Fix 5: m.up = stimulus/de-escalation = positive; m.down = austerity/escalation = negative */}
+                  <td className="py-2 px-2 font-mono tabular-nums text-emerald-500 text-[11px]">{m.up}</td>
+                  <td className="py-2 px-2 font-mono tabular-nums text-red-500 text-[11px]">{m.down}</td>
                 </tr>
               ))}
             </tbody>

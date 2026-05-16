@@ -5,17 +5,17 @@ import type { GoldAnalysis } from "../../../shared/gold-schema";
 export const GOLD_FALLBACK_DATA: GoldAnalysis = {
   "timestamp": "2026-03-27T20:18:42.003Z",
   "analysisDate": "27.03.2026, 20:18",
-  "spotPrice": 4500,
+  "spotPrice": 3300,
   "priceTimestamp": "2026-03-27T20:18:42.003Z",
   "currency": "USD",
   "changePercent": 0,
   "yearHigh": 4725,
   "yearLow": 3825,
-  "ma200": 4500,
+  "ma200": 3250,
   "deviationFromMA200": 0,
   "plausibilityChecks": [
-    "Spot-Preis $4500.00 plausibel (✅)",
-    "200-DMA $4500.00 (⚠️ nur 0 Datenpunkte)",
+    "Spot-Preis $3300.00 plausibel (✅)",
+    "200-DMA $3250.00 (⚠️ nur 0 Datenpunkte)",
     "RSI 50.0 (✅)",
     "Volatilität 20.0% (✅ plausibel)",
     "CPI 326.785 für Fair Value (✅)"
@@ -818,11 +818,11 @@ export const GOLD_FALLBACK_DATA: GoldAnalysis = {
   "summaryTable": [
     {
       "metric": "Gold Spot",
-      "value": "$4500.00"
+      "value": "$3300.00"
     },
     {
       "metric": "200-DMA",
-      "value": "$4500.00"
+      "value": "$3300.00"
     },
     {
       "metric": "Abweichung 200-DMA",
