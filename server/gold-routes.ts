@@ -29,7 +29,7 @@ function callFinanceTool(toolName: string, args: Record<string, any>): any {
     const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
     const escaped = params.replace(/'/g, "'\\''" );
     const raw = execSync(`external-tool call '${escaped}'`, {
-      timeout: 60000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
+      timeout: 25000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
     });
     result = JSON.parse(raw);
   } catch (err: any) {
@@ -41,7 +41,7 @@ function callFinanceTool(toolName: string, args: Record<string, any>): any {
         const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
         const escaped = params.replace(/'/g, "'\\''" );
         const raw = execSync(`external-tool call '${escaped}'`, {
-          timeout: 60000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
+          timeout: 25000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
         });
         result = JSON.parse(raw);
       } catch (e2: any) {

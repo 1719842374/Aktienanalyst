@@ -563,7 +563,7 @@ function scoreGoogleTrends(): IndicatorResult {
     let result = "";
     try {
       result = execSync(`python3 "${tmpFile}" 2>/dev/null`, {
-        timeout: 45000, encoding: "utf-8",
+        timeout: 12000, // 12s max for pytrends (was 45s — too long for proxy)
       }).trim();
     } finally {
       try { fs.unlinkSync(tmpFile); } catch {}
@@ -1348,14 +1348,50 @@ function generateFazit(
 // ============================================================
 // Express route registration
 // ============================================================
+// In-memory cache for recession analysis (1h TTL)
+// Recession indicators are all macro/weekly data — no need to re-fetch every click
+let recessionCache: { data: RecessionAnalysis; ts: number } | null = null;
+const RECESSION_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
 export function registerRecessionRoutes(app: Express) {
-  app.post("/api/analyze-recession", async (_req, res) => {
+  app.post("/api/analyze-recession", async (req, res) => {
+    const force = req.body?.force === true;
+    // Serve from cache if available and not stale
+    if (!force && recessionCache && Date.now() - recessionCache.ts < RECESSION_CACHE_TTL) {
+      console.log(`[RECESSION] cache HIT (age=${Math.round((Date.now() - recessionCache.ts)/60000)}min)`);
+      return res.json(recessionCache.data);
+    }
+    // runRecessionAnalysis is synchronous + heavy. Wrap in setImmediate so the
+    // event loop can process other requests before we block it.
+    // Proxy guard: if still running after 24s, return 202 and continue in background.
+    let responded = false;
+    const guard = setTimeout(() => {
+      if (!responded) {
+        responded = true;
+        console.warn("[RECESSION] Proxy guard fired — returning 202");
+        res.status(202).json({
+          __building: true,
+          message: "Rezessions-Analyse l\u00e4uft im Hintergrund (>24s). Bitte in 8\u201310 Sekunden erneut klicken.",
+          retryAfterMs: 9000,
+        });
+      }
+    }, 24000);
+    guard.unref();
     try {
       const analysis = runRecessionAnalysis();
-      res.json(analysis);
+      recessionCache = { data: analysis, ts: Date.now() };
+      clearTimeout(guard);
+      if (!responded) {
+        responded = true;
+        res.json(analysis);
+      }
     } catch (error: any) {
+      clearTimeout(guard);
       console.error("[RECESSION] Error:", error?.message);
-      res.status(500).json({ error: error?.message || "Recession analysis failed" });
+      if (!responded) {
+        responded = true;
+        res.status(500).json({ error: error?.message || "Recession analysis failed" });
+      }
     }
   });
 }

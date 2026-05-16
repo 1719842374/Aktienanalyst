@@ -832,17 +832,19 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
   const lastByKey = new Map<string, EventFingerprint>();
   for (const fp of lastSnapshot) lastByKey.set(`${fp.region}|${normalizeTitle(fp.title)}`, fp);
 
-  // Force-refresh all 3 macro tabs so we see net-new events vs. yesterday’s snapshot
+  // Fix: run all 3 regions in PARALLEL (was sequential US→EU→ASIA ~90s)
   const macroResults: Array<{ region: string; data: MacroPulseResult }> = [];
-  for (const region of regions) {
+  const macroSettled = await Promise.all(regions.map(async (region) => {
     try {
       const data = await buildMacroPulse(region);
       writeResearcherCache("macro", region, data);
-      macroResults.push({ region, data });
+      return { region, data } as { region: string; data: MacroPulseResult };
     } catch (e: any) {
       console.error(`[BRIEFING] macro ${region} failed:`, e?.message);
+      return null;
     }
-  }
+  }));
+  for (const r of macroSettled) { if (r) macroResults.push(r); }
 
   // Diff: net-new = (a) title not in last snapshot, OR (b) severity=high, OR (c) impact direction flipped
   type DiffedEvent = EventFingerprint & {
@@ -1002,6 +1004,9 @@ export function registerResearcherRoutes(app: Express) {
   // 4. On second click: cache will already be written -> instant response
   const PROXY_GUARD_MS = 25000; // 25s: safe margin before 30s proxy cut
 
+  // In-flight deduplication map: prevents parallel builds for the same key (FM3 fix)
+  const inFlight = new Map<string, Promise<any>>();
+
   async function withProxyGuard<T>(
     res: any,
     cacheKey: string,
@@ -1010,10 +1015,12 @@ export function registerResearcherRoutes(app: Express) {
     writeFn: (result: T) => void,
   ): Promise<void> {
     let responded = false;
+    const dedupeKey = `${cacheType}:${cacheKey}`;
+
     const guard = setTimeout(() => {
       if (!responded) {
         responded = true;
-        console.warn(`[RESEARCHER] Proxy timeout guard fired for ${cacheType}:${cacheKey} — returning 202`);
+        console.warn(`[RESEARCHER] Proxy timeout guard fired for ${dedupeKey} — returning 202`);
         res.status(202).json({
           __building: true,
           message: "Analyse l\u00e4uft im Hintergrund (>25s). Bitte in 8\u201310 Sekunden erneut klicken — das Ergebnis steht dann sofort aus dem Cache bereit.",
@@ -1021,15 +1028,47 @@ export function registerResearcherRoutes(app: Express) {
         });
       }
     }, PROXY_GUARD_MS);
+    // FM6 fix: .unref() so this timer doesn't block graceful shutdown
+    guard.unref();
+
+    // FM3 fix: deduplicate parallel builds for the same key
+    let buildPromise = inFlight.get(dedupeKey);
+    if (!buildPromise) {
+      // FM3 fix: hard timeout of 90s on the build itself
+      const hardTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`[RESEARCHER] Hard timeout (90s) for ${dedupeKey}`)), 90000).unref()
+      );
+      buildPromise = Promise.race([buildFn(), hardTimeout])
+        .then((result) => {
+          writeFn(result);
+          inFlight.delete(dedupeKey);
+          return result;
+        })
+        .catch((err) => {
+          inFlight.delete(dedupeKey);
+          // FM2 fix: write error marker to cache so frontend doesn't retry forever
+          try {
+            writeFn({ __error: true, errorMessage: err?.message || "build failed" } as any);
+          } catch (_) {}
+          throw err;
+        });
+      inFlight.set(dedupeKey, buildPromise);
+    } else {
+      console.log(`[RESEARCHER] Reusing in-flight build for ${dedupeKey}`);
+    }
+
     try {
-      const result = await buildFn();
-      writeFn(result);
+      const result = await buildPromise;
       clearTimeout(guard);
       if (!responded) {
         responded = true;
-        res.json(result);
+        // FM2 fix: don't respond with error marker
+        if ((result as any)?.__error) {
+          res.status(500).json({ error: (result as any).errorMessage || "analysis failed" });
+        } else {
+          res.json(result);
+        }
       }
-      // result is already cached for the retry click
     } catch (err: any) {
       clearTimeout(guard);
       if (!responded) {
@@ -1128,26 +1167,24 @@ export function registerResearcherRoutes(app: Express) {
   });
 
   // Daily Briefing — cross-region net-new event detection (manual + cron)
+  // Now parallel (3 regions) + withProxyGuard (was ~90s sequential, now ~30s parallel)
   app.post("/api/researcher/daily-briefing", async (req, res) => {
-    try {
-      const force = req.body?.force === true;
-      // Daily cache: 1 run per Berlin day. Cron triggert morgens, User-Klicks
-      // tagsüber bekommen Cache-Hit. force=true überspringt Cache (Cron + Manual-Refresh).
-      if (!force) {
-        const cached = readBriefingResultCache();
-        if (cached) {
-          console.log(`[BRIEFING] cache HIT (Berlin-date) age=${(cached as any)._cacheAgeMin}min`);
-          return res.json(cached);
-        }
+    const force = req.body?.force === true;
+    if (!force) {
+      const cached = readBriefingResultCache();
+      if (cached) {
+        console.log(`[BRIEFING] cache HIT (Berlin-date) age=${(cached as any)._cacheAgeMin}min`);
+        return res.json(cached);
       }
-      console.log(`[BRIEFING] starting daily briefing build (force=${force})...`);
-      const result = await buildDailyBriefing();
-      writeBriefingResultCache(result);
-      console.log(`[BRIEFING] complete: ${result.diagnostics.netNewEvents} net-new of ${result.diagnostics.eventsScanned} events`);
-      res.json(result);
-    } catch (err: any) {
-      console.error("[BRIEFING] error:", err?.message);
-      res.status(500).json({ error: err?.message || "daily briefing failed" });
     }
+    console.log(`[BRIEFING] starting daily briefing build (force=${force})...`);
+    await withProxyGuard(res, "daily", "briefing",
+      async () => {
+        const result = await buildDailyBriefing();
+        console.log(`[BRIEFING] complete: ${result.diagnostics.netNewEvents} net-new of ${result.diagnostics.eventsScanned} events`);
+        return result;
+      },
+      (r) => writeBriefingResultCache(r),
+    );
   });
 }

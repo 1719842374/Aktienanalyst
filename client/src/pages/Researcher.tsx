@@ -105,6 +105,10 @@ export default function Researcher() {
             await new Promise(r => setTimeout(r, waitMs));
             continue;
           }
+          // FM2 fix: backend wrote error marker to cache after crash
+          if (json?.__error) {
+            throw new Error(json.errorMessage || "Analyse fehlgeschlagen (Hintergrund-Fehler)");
+          }
           return json;
         } catch (err: any) {
           lastErr = err;
