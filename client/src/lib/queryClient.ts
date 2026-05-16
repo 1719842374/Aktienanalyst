@@ -36,15 +36,25 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
+  timeoutMs = 90000,
 ): Promise<Response> {
-  const res = await fetch(`${API_BASE}${url}`, {
-    method,
-    headers: data ? { "Content-Type": "application/json" } : {},
-    body: data ? JSON.stringify(data) : undefined,
-  });
-
-  await throwIfResNotOk(res);
-  return res;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_BASE}${url}`, {
+      method,
+      headers: data ? { "Content-Type": "application/json" } : {},
+      body: data ? JSON.stringify(data) : undefined,
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    await throwIfResNotOk(res);
+    return res;
+  } catch (err: any) {
+    clearTimeout(timer);
+    if (err?.name === 'AbortError') throw new Error('Timeout: Server hat nicht innerhalb von 90s geantwortet');
+    throw err;
+  }
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";

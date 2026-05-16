@@ -84,7 +84,7 @@ export default function Dashboard() {
 
   const analyzeMutation = useMutation({
     mutationFn: async ({ ticker, llm, force }: { ticker: string; llm: boolean; force?: boolean; reqId?: number }) => {
-      const maxRetries = 3;
+      const maxRetries = 5;
       let lastError: Error | null = null;
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -97,18 +97,19 @@ export default function Dashboard() {
         } catch (err: any) {
           lastError = err;
           const msg = err?.message || "";
-          // 429 / RATE_LIMITED: don't waste retries — surface immediately so the user
-          // sees a clear quota message instead of 3x "Verbindung fehlgeschlagen"
+          // 429 / RATE_LIMITED: surface immediately, no retries
           if (msg.includes("RATE_LIMITED") || msg.includes("Tagesquota") || msg.includes("429")) {
             console.warn(`[Analyze] Rate-limit erkannt — keine Retries`);
             setRetryInfo(null);
-            setData(null); // Clear old data so ErrorScreen is shown instead of stale dashboard
+            setData(null);
             throw err;
           }
           console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${msg.substring(0, 100)}`);
           if (attempt < maxRetries) {
-            // Exponential backoff: 2s, 4s
-            await new Promise(r => setTimeout(r, attempt * 2000));
+            // Cold-start backoff: 3s, 6s, 10s, 15s
+            // The pplx.app sandbox needs up to 20s on cold start
+            const backoffs = [3000, 6000, 10000, 15000];
+            await new Promise(r => setTimeout(r, backoffs[attempt - 1] ?? 15000));
           }
         }
       }
