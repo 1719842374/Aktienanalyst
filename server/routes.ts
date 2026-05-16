@@ -3,6 +3,11 @@ import { createServer, type Server } from "http";
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
 import { generateCatalystsAndMatchNews, generateRiskExplanations } from "./llm-openrouter";
+import {
+  isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
+  fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
+  fmpSegments, fmpPeers, fmpRatios, fmpKeyMetrics,
+} from "./fmp";
 
 // === Finance API Helper ===
 // Returns either the parsed result, or { __rateLimited: true } on 429,
@@ -85,6 +90,82 @@ async function callFinanceToolThrottled(
       return null;
     }
     return result;
+  }
+}
+
+// === FMP Fallback Data Fetcher ===
+// Fetches all critical data from FMP in parallel when external-tool is unavailable.
+// Returns a normalized object matching the shape expected by the analyze handler.
+// Used as fallback when: BINARY_MISSING, RATE_LIMITED with no cache, or Railway deploy.
+async function getFmpFallbackData(ticker: string): Promise<{
+  quote: any;
+  profile: any;
+  financials: { income: any[]; cashflow: any[]; };
+  analyst: { priceTarget: any; grades: any[]; estimates: any[]; };
+  ohlcv: any[];
+  segments: any[];
+  peers: any[];
+  ratios: any[];
+  source: 'fmp';
+} | null> {
+  if (!isFmpAvailable()) {
+    console.warn(`[FMP-FALLBACK] FMP_API_KEY not set — cannot use FMP fallback for ${ticker}`);
+    return null;
+  }
+  console.log(`[FMP-FALLBACK] Fetching data from FMP for ${ticker}...`);
+  const t0 = Date.now();
+  try {
+    // Fire all FMP calls in parallel — FMP has much higher rate limits than external-tool
+    const [
+      quoteRes, profileRes, incomeRes, cashflowRes,
+      priceTargetRes, gradesRes, estimatesRes, ohlcvRes,
+      segmentsRes, peersRes, ratiosRes,
+    ] = await Promise.allSettled([
+      fmpBatchQuote([ticker]),
+      fmpProfile(ticker),
+      fmpIncomeStatement(ticker, 3),
+      fmpCashFlow(ticker, 3),
+      fmpPriceTarget(ticker),
+      fmpGrades(ticker, 20),
+      fmpAnalystEstimates(ticker, 3),
+      fmpHistoricalPrices(ticker,
+        new Date(Date.now() - 2 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        new Date().toISOString().split('T')[0]
+      ),
+      fmpSegments(ticker),
+      fmpPeers(ticker),
+      fmpRatios(ticker, 3),
+    ]);
+    const get = (res: PromiseSettledResult<any>) =>
+      res.status === 'fulfilled' ? res.value : null;
+    const quoteData = get(quoteRes);
+    const quote = Array.isArray(quoteData) ? quoteData[0] : quoteData;
+    if (!quote?.price) {
+      console.warn(`[FMP-FALLBACK] No quote data for ${ticker} from FMP`);
+      return null;
+    }
+    console.log(`[FMP-FALLBACK] OK for ${ticker} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    return {
+      quote,
+      profile: get(profileRes),
+      financials: {
+        income: get(incomeRes) || [],
+        cashflow: get(cashflowRes) || [],
+      },
+      analyst: {
+        priceTarget: get(priceTargetRes),
+        grades: get(gradesRes) || [],
+        estimates: get(estimatesRes) || [],
+      },
+      ohlcv: get(ohlcvRes) || [],
+      segments: get(segmentsRes) || [],
+      peers: get(peersRes) || [],
+      ratios: get(ratiosRes) || [],
+      source: 'fmp',
+    };
+  } catch (err: any) {
+    console.error(`[FMP-FALLBACK] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
+    return null;
   }
 }
 
@@ -3411,31 +3492,41 @@ export async function registerRoutes(server: Server, app: Express) {
       });
 
       // Circuit-breaker: if Quote returned null after retries OR binary is missing,
-      // bail out IMMEDIATELY instead of running 7 more useless calls.
-      // __binaryMissing = external-tool CLI not found (H1 fix)
-      if (quoteResult?.__binaryMissing) {
-        console.error(`[ANALYZE] CRITICAL: external-tool binary missing — Finance API unavailable for ${ticker}`);
-        return res.status(503).json({
-          error: "Finance-API nicht verf\u00fcgbar: external-tool CLI fehlt in dieser Sandbox. Bitte App neu deployen.",
-          errorCode: "BINARY_MISSING",
-        });
-      }
-      if (quoteResult === null) {
+      // try FMP fallback first, then cache, then error.
+      const needsFmpFallback = quoteResult?.__binaryMissing || quoteResult === null;
+      let fmpData: Awaited<ReturnType<typeof getFmpFallbackData>> = null;
+
+      if (needsFmpFallback) {
+        if (quoteResult?.__binaryMissing) {
+          console.error(`[ANALYZE] CRITICAL: external-tool binary missing — trying FMP fallback for ${ticker}`);
+        } else {
+          console.log(`[ANALYZE] external-tool rate-limited — trying FMP fallback for ${ticker}`);
+        }
+
+        // Try cache first (fastest)
         const cachedRL = getCachedAnalysis(ticker);
-        // Serve fallback cache if its LLM mode is compatible (legacy caches
-        // without the flag count as compatible to both modes).
         if (cachedRL && cacheLLMModeMatches(cachedRL._useLLM, useLLM)) {
-          console.log(`[ANALYZE] Quote rate-limited but compatible cache available for ${ticker} (cacheUseLLM=${cachedRL._useLLM}, request=${useLLM}), serving cache`);
+          console.log(`[ANALYZE] Serving cache for ${ticker} (FMP fallback skipped — fresh cache available)`);
           return res.json(cachedRL);
         }
-        if (cachedRL) {
-          console.log(`[ANALYZE] Quote rate-limited; cache exists for ${ticker} but useLLM mismatch (cache=${cachedRL._useLLM}, request=${useLLM}) — not serving stale narrative`);
+
+        // Try FMP fallback
+        fmpData = await getFmpFallbackData(ticker);
+
+        if (!fmpData) {
+          // No cache, no FMP — surface the right error
+          if (quoteResult?.__binaryMissing) {
+            return res.status(503).json({
+              error: "Finance-API nicht verf\u00fcgbar: external-tool CLI fehlt und FMP_API_KEY nicht gesetzt. Bitte App neu deployen.",
+              errorCode: "BINARY_MISSING",
+            });
+          }
+          return res.status(429).json({
+            error: "Tagesquota der Finance-API erreicht und kein FMP-Fallback konfiguriert. Reset typischerweise nach 12-24 Std.",
+            errorCode: "RATE_LIMITED",
+          });
         }
-        console.log(`[ANALYZE] Circuit-breaker: quote rate-limited, no usable cache, aborting after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-        return res.status(429).json({
-          error: `Tagesquota der Finance-API erreicht. Bitte später erneut versuchen (Reset typischerweise nach 12-24 Std.). Bereits analysierte Tickers funktionieren weiterhin aus dem Cache.`,
-          errorCode: "RATE_LIMITED",
-        });
+        console.log(`[ANALYZE] FMP fallback active for ${ticker} — continuing with FMP data`);
       }
       // 2. Company Profile
       const profileResult = await callFinanceToolThrottled("finance_company_profile", {
@@ -3491,7 +3582,29 @@ export async function registerRoutes(server: Server, app: Express) {
       let dayLow = 0, dayHigh = 0, yearLow = 0, yearHigh = 0, prevClose = 0, divYield = 0;
       let priceTimestamp = new Date().toISOString();
 
-      if (quoteResult?.content) {
+      if (fmpData?.quote) {
+        // === FMP Quote Parsing ===
+        const q = fmpData.quote;
+        price = q.price || 0;
+        marketCap = q.marketCap || 0;
+        pe = q.pe || 0;
+        eps = q.eps || 0;
+        companyName = q.name || q.companyName || ticker;
+        change = q.change || 0;
+        changePct = q.changesPercentage || q.changePercent || 0;
+        volume = q.volume || 0;
+        avgVolume = q.avgVolume || q.averageVolume || 0;
+        dayLow = q.dayLow || q.low || 0;
+        dayHigh = q.dayHigh || q.high || 0;
+        yearLow = q.yearLow || q["52WeekLow"] || 0;
+        yearHigh = q.yearHigh || q["52WeekHigh"] || 0;
+        prevClose = q.previousClose || q.previousClosePrice || 0;
+        divYield = q.dividendYield || q.dividendYieldTTM || 0;
+        currency = q.currency || "USD";
+        priceTimestamp = q.timestamp ? new Date(q.timestamp * 1000).toISOString() : new Date().toISOString();
+        console.log(`[FMP-QUOTE] ${ticker}: price=$${price}, mktcap=$${(marketCap/1e9).toFixed(1)}B`);
+      } else if (quoteResult?.content) {
+        // === external-tool Quote Parsing ===
         const rows = parseMarkdownTable(quoteResult.content);
         if (rows.length > 0) {
           const q = rows[0];
@@ -3539,7 +3652,16 @@ export async function registerRoutes(server: Server, app: Express) {
       // === Parse Company Profile ===
       let sector = "Technology", industry = "General", description = "", exchange = "NASDAQ";
       let sectorHybridNote = "";
-      if (profileResult?.content) {
+      if (fmpData?.profile) {
+        // FMP profile parsing
+        const p = fmpData.profile;
+        sector = p.sector || "Technology";
+        industry = p.industry || "General";
+        description = (p.description || "").substring(0, 2000);
+        exchange = p.exchange || p.exchangeShortName || "NASDAQ";
+        if (!companyName || companyName === ticker) companyName = p.companyName || ticker;
+        console.log(`[FMP-PROFILE] ${ticker}: sector=${sector}, industry=${industry}`);
+      } else if (profileResult?.content) {
         const content = profileResult.content;
         const sectorMatch = content.match(/Sector:\*?\*?\s*(.+)/);
         const industryMatch = content.match(/Industry:\*?\*?\s*(.+)/);
@@ -3566,7 +3688,32 @@ export async function registerRoutes(server: Server, app: Express) {
       let totalEquity = 0, totalAssets = 0, netDebt = 0;
       let revenueGrowth = 0;
 
-      if (financialsResult?.content) {
+      if (fmpData?.financials) {
+        // === FMP Financials Parsing ===
+        const inc = fmpData.financials.income;
+        const cf = fmpData.financials.cashflow;
+        if (Array.isArray(inc) && inc.length > 0) {
+          const i = inc[0];
+          revenue = i.revenue || 0;
+          netIncome = i.netIncome || 0;
+          ebitda = i.ebitda || 0;
+          eps = eps || i.eps || i.epsDiluted || 0;
+          sharesOutstanding = i.weightedAverageShsOutDil || i.weightedAverageShsOut || 0;
+          operatingIncome = i.operatingIncome || 0;
+          grossProfit = i.grossProfit || 0;
+          if (inc.length >= 2 && inc[0].revenue && inc[1].revenue) {
+            revenueGrowth = ((inc[0].revenue - inc[1].revenue) / Math.abs(inc[1].revenue)) * 100;
+          }
+        }
+        if (Array.isArray(cf) && cf.length > 0) {
+          const c = cf[0];
+          fcfTTM = c.freeCashFlow || (c.operatingCashFlow + (c.capitalExpenditure || 0)) || 0;
+          totalDebt = c.totalDebt || 0;
+          cashEquivalents = c.cashAndCashEquivalents || 0;
+          netDebt = totalDebt - cashEquivalents;
+        }
+        console.log(`[FMP-FINANCIALS] ${ticker}: rev=$${(revenue/1e9).toFixed(1)}B, fcf=$${(fcfTTM/1e9).toFixed(1)}B, growth=${revenueGrowth.toFixed(1)}%`);
+      } else if (financialsResult?.content) {
         // Parse income statement
         const isSections = financialsResult.content.split("## ");
         for (const section of isSections) {
@@ -3766,7 +3913,30 @@ export async function registerRoutes(server: Server, app: Express) {
       let ohlcvData: OHLCVPoint[] = [];
       let closingPrices2Y: { date: string; close: number }[] = [];
 
-      if (ohlcvHistResult) {
+      if (fmpData?.ohlcv && fmpData.ohlcv.length > 0) {
+        // === FMP OHLCV Parsing (historical-price-eod/full) ===
+        // FMP returns array of { date, open, high, low, close, volume }
+        const raw = Array.isArray(fmpData.ohlcv) ? fmpData.ohlcv : (fmpData.ohlcv as any)?.historical || [];
+        for (const row of raw) {
+          const date = row.date || '';
+          const close = row.adjClose || row.close || 0;
+          if (date && close > 0) {
+            closingPrices2Y.push({ date, close });
+            ohlcvData.push({
+              date,
+              open: row.open || close,
+              high: row.high || close,
+              low: row.low || close,
+              close,
+              volume: row.volume || 0,
+            });
+          }
+        }
+        // FMP returns newest-first — reverse for chronological order
+        closingPrices2Y.reverse();
+        ohlcvData.reverse();
+        console.log(`[FMP-OHLCV] ${ticker}: ${ohlcvData.length} data points`);
+      } else if (ohlcvHistResult) {
         try {
           // The tool returns csv_files with a URL to the full CSV
           const csvFiles = ohlcvHistResult.csv_files;
