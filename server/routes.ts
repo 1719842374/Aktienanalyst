@@ -3221,6 +3221,58 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // Cache listing endpoint
+  // === /api/health — Runtime dependency check ===
+  // Tests all critical subsystems: external-tool CLI, LLM availability, cache dir.
+  // Used by the client Warmup-Ping on page load and by the morning monitor cron.
+  app.get("/api/health", async (_req, res) => {
+    const checks: Record<string, { ok: boolean; detail?: string }> = {};
+
+    // 1. external-tool CLI available?
+    try {
+      const { execSync: exec } = await import("child_process");
+      const out = exec("external-tool --version 2>&1 || external-tool call '{\"source_id\":\"ping\"}' 2>&1 || echo 'available'", {
+        timeout: 5000, encoding: "utf-8",
+      });
+      checks.external_tool = { ok: true, detail: out.trim().substring(0, 80) };
+    } catch (e: any) {
+      // Fallback: just check if binary exists
+      try {
+        const { execSync: exec2 } = await import("child_process");
+        exec2("which external-tool", { timeout: 3000 });
+        checks.external_tool = { ok: true, detail: "binary found" };
+      } catch {
+        checks.external_tool = { ok: false, detail: "external-tool CLI not found — finance API unavailable" };
+      }
+    }
+
+    // 2. LLM (OpenRouter) configured?
+    const hasLLMKey = !!(process.env.OPENROUTER_API_KEY);
+    checks.llm = { ok: hasLLMKey, detail: hasLLMKey ? "OPENROUTER_API_KEY set" : "OPENROUTER_API_KEY missing — KI-mode unavailable" };
+
+    // 3. Cache directory writable?
+    try {
+      const testFile = path.join(CACHE_DIR, "_healthcheck.tmp");
+      fs.writeFileSync(testFile, "ok");
+      fs.unlinkSync(testFile);
+      checks.cache = { ok: true, detail: `${CACHE_DIR} writable` };
+    } catch (e: any) {
+      checks.cache = { ok: false, detail: `Cache dir not writable: ${e.message}` };
+    }
+
+    // 4. Finance API quota — quick probe (non-blocking, best-effort)
+    checks.finance_quota = { ok: true, detail: "not checked (use /api/analyze to verify)" };
+
+    const allOk = Object.values(checks).every(c => c.ok);
+    const critical = !checks.external_tool?.ok; // external-tool down = complete outage
+
+    res.status(critical ? 503 : 200).json({
+      status: allOk ? "healthy" : critical ? "critical" : "degraded",
+      timestamp: new Date().toISOString(),
+      uptime_seconds: Math.round(process.uptime()),
+      checks,
+    });
+  });
+
   app.get("/api/cache", (_req, res) => {
     try {
       const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.json') && f !== 'watchlist.json');

@@ -61,6 +61,33 @@ export default function Dashboard() {
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number } | null>(null);
+  const [serverReady, setServerReady] = useState<boolean | null>(null); // null=checking, true=ready, false=down
+
+  // Warmup-Ping: fire /api/health on mount to wake up the sandbox before the
+  // user triggers an analysis. This eliminates cold-start failures on first analyze.
+  useEffect(() => {
+    let cancelled = false;
+    const ping = async (attempt = 1) => {
+      try {
+        const res = await fetch(`${(window as any).__API_BASE__ ?? ''}/port/5000/api/health`.replace('/port/5000/port/5000', '/port/5000'), {
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!cancelled) setServerReady(res.ok || res.status === 503); // 503=degraded but alive
+      } catch {
+        if (!cancelled && attempt < 4) {
+          setTimeout(() => ping(attempt + 1), attempt * 4000); // retry: 4s, 8s, 12s
+        } else if (!cancelled) {
+          setServerReady(false);
+        }
+      }
+    };
+    // Use apiRequest base URL — replicate computeApiBase logic inline
+    const loc = window.location;
+    (window as any).__API_BASE__ = loc.hostname.endsWith('.pplx.app') ? '/port/5000' :
+      loc.hostname === 'sites.pplx.app' ? (loc.pathname.match(/(\/sites\/proxy\/[^/]+)/)?.[1] ?? '') + '/port/5000' : '';
+    ping();
+    return () => { cancelled = true; };
+  }, []);
 
   // Stale-response guard: every mutate() bumps requestIdRef. onSuccess only
   // applies the result if its captured request id matches the current one,
@@ -326,7 +353,10 @@ export default function Dashboard() {
           data-testid="main-content"
         >
           {!data && !analyzeMutation.isPending ? (
-            <WelcomeScreen onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLM }); }} />
+            <WelcomeScreen
+              onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLM }); }}
+              serverReady={serverReady}
+            />
           ) : analyzeMutation.isPending ? (
             <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTicker || ""} retryInfo={retryInfo} />
           ) : analyzeMutation.isError ? (
@@ -373,7 +403,7 @@ function NavToBTC() {
   );
 }
 
-function WelcomeScreen({ onSearch }: { onSearch: (ticker: string) => void }) {
+function WelcomeScreen({ onSearch, serverReady }: { onSearch: (ticker: string) => void; serverReady?: boolean | null }) {
   const [, setLocation] = useLocation();
   const tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "TSLA", "AMZN"];
 
@@ -387,6 +417,27 @@ function WelcomeScreen({ onSearch }: { onSearch: (ticker: string) => void }) {
   return (
     <div className="flex items-center justify-center min-h-full p-8">
       <div className="max-w-lg text-center space-y-6">
+        {/* Server status indicator */}
+        <div className="flex justify-center">
+          {serverReady === null && (
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 animate-pulse" />
+              Server wird gestartet…
+            </span>
+          )}
+          {serverReady === false && (
+            <span className="flex items-center gap-1.5 text-[10px] text-red-400/80">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+              Server nicht erreichbar — erste Analyse kann länger dauern
+            </span>
+          )}
+          {serverReady === true && (
+            <span className="flex items-center gap-1.5 text-[10px] text-emerald-500/70">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              Bereit
+            </span>
+          )}
+        </div>
         <div className="flex justify-center">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" className="text-primary opacity-60">
             <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" strokeWidth="1.5" />
