@@ -293,7 +293,7 @@ REGELN:
 
 JSON, keine Prosa drumherum. Ausschließlich Deutsch.`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 3500 });
+  const llm = await callLLMJson({ prompt, maxTokens: 2200 });
   return {
     region,
     regionLabel,
@@ -362,7 +362,7 @@ Antworte mit JSON:
 
 Sortierung egal — wir ranken anschließend nach (growthScore × moatScore).`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 3000 });
+  const llm = await callLLMJson({ prompt, maxTokens: 1800 });
   if (!llm?.data?.trends || !Array.isArray(llm.data.trends)) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
@@ -514,7 +514,7 @@ JSON-Format:
   ]
 }`;
 
-  const llm = await callLLMJson({ prompt: rankPrompt, maxTokens: 2400 });
+  const llm = await callLLMJson({ prompt: rankPrompt, maxTokens: 1500 });
   const rankingsByTicker = new Map<string, any>();
   if (llm?.data?.rankings && Array.isArray(llm.data.rankings)) {
     for (const r of llm.data.rankings) {
@@ -684,7 +684,7 @@ Ausgabe als JSON:
 
 Antwort ausschließlich auf Deutsch. JSON, keine Prosa drumherum.`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 3200 });
+  const llm = await callLLMJson({ prompt, maxTokens: 1800 });
   if (!llm?.data?.programmes) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
@@ -970,7 +970,7 @@ JSON-Output, ausschließlich Deutsch, hedge-fund-knapp:
 
 KEINE Floskeln. Jeder Satz muss handlungsrelevant sein. JSON ohne Prosa drumherum.`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 2000 });
+  const llm = await callLLMJson({ prompt, maxTokens: 1400 });
   const briefing = llm?.data || null;
 
   // Limit to top 3 changes
@@ -993,108 +993,138 @@ KEINE Floskeln. Jeder Satz muss handlungsrelevant sein. JSON ohne Prosa drumheru
 
 export function registerResearcherRoutes(app: Express) {
   // Tab 1: Country Macro Pulse
-  app.post("/api/researcher/macro", async (req, res) => {
+  // === Researcher Route Helper ===
+  // Wraps all heavy researcher endpoints with a proxy-timeout guard.
+  // The pplx.app proxy cuts connections after ~30s. Strategy:
+  // 1. Check cache first (instant)
+  // 2. Start background build (fire & forget)
+  // 3. After PROXY_GUARD_MS: if still building, return 202 "building" signal
+  // 4. On second click: cache will already be written -> instant response
+  const PROXY_GUARD_MS = 25000; // 25s: safe margin before 30s proxy cut
+
+  async function withProxyGuard<T>(
+    res: any,
+    cacheKey: string,
+    cacheType: string,
+    buildFn: () => Promise<T>,
+    writeFn: (result: T) => void,
+  ): Promise<void> {
+    let responded = false;
+    const guard = setTimeout(() => {
+      if (!responded) {
+        responded = true;
+        console.warn(`[RESEARCHER] Proxy timeout guard fired for ${cacheType}:${cacheKey} — returning 202`);
+        res.status(202).json({
+          __building: true,
+          message: "Analyse l\u00e4uft im Hintergrund (>25s). Bitte in 8\u201310 Sekunden erneut klicken — das Ergebnis steht dann sofort aus dem Cache bereit.",
+          retryAfterMs: 8000,
+        });
+      }
+    }, PROXY_GUARD_MS);
     try {
-      const region = String(req.body?.region || "US").toUpperCase();
-      const force = req.body?.force === true;
-      if (!REGION_COUNTRIES[region]) {
-        return res.status(400).json({ error: "Invalid region. Use US, EU, or ASIA." });
+      const result = await buildFn();
+      writeFn(result);
+      clearTimeout(guard);
+      if (!responded) {
+        responded = true;
+        res.json(result);
       }
-      if (!force) {
-        const cached = readResearcherCache("macro", region);
-        if (cached) {
-          console.log(`[RESEARCHER/macro] cache HIT region=${region} age=${cached._cacheAge}min`);
-          return res.json(cached);
-        }
-      }
-      console.log(`[RESEARCHER/macro] building region=${region}`);
-      const result = await buildMacroPulse(region);
-      writeResearcherCache("macro", region, result);
-      res.json(result);
+      // result is already cached for the retry click
     } catch (err: any) {
-      console.error("[RESEARCHER/macro] error:", err?.message);
-      res.status(500).json({ error: err?.message || "macro analysis failed" });
+      clearTimeout(guard);
+      if (!responded) {
+        responded = true;
+        res.status(500).json({ error: err?.message || "analysis failed" });
+      }
     }
+  }
+
+  app.post("/api/researcher/macro", async (req, res) => {
+    const region = String(req.body?.region || "US").toUpperCase();
+    const force = req.body?.force === true;
+    if (!REGION_COUNTRIES[region]) {
+      return res.status(400).json({ error: "Invalid region. Use US, EU, or ASIA." });
+    }
+    if (!force) {
+      const cached = readResearcherCache("macro", region);
+      if (cached) {
+        console.log(`[RESEARCHER/macro] cache HIT region=${region} age=${cached._cacheAge}min`);
+        return res.json(cached);
+      }
+    }
+    console.log(`[RESEARCHER/macro] building region=${region}`);
+    await withProxyGuard(res, region, "macro",
+      () => buildMacroPulse(region),
+      (r) => writeResearcherCache("macro", region, r),
+    );
   });
 
   // Tab 2: Sector Opportunity Map
   app.post("/api/researcher/sectors", async (req, res) => {
-    try {
-      const region = String(req.body?.region || "US").toUpperCase();
-      const force = req.body?.force === true;
-      if (!REGION_COUNTRIES[region]) {
-        return res.status(400).json({ error: "Invalid region. Use US, EU, or ASIA." });
-      }
-      if (!force) {
-        const cached = readResearcherCache("sectors", region);
-        if (cached) {
-          console.log(`[RESEARCHER/sectors] cache HIT region=${region} age=${cached._cacheAge}min`);
-          return res.json(cached);
-        }
-      }
-      console.log(`[RESEARCHER/sectors] building region=${region}`);
-      const result = await buildSectorOpportunity(region);
-      writeResearcherCache("sectors", region, result);
-      res.json(result);
-    } catch (err: any) {
-      console.error("[RESEARCHER/sectors] error:", err?.message);
-      res.status(500).json({ error: err?.message || "sectors analysis failed" });
+    const region = String(req.body?.region || "US").toUpperCase();
+    const force = req.body?.force === true;
+    if (!REGION_COUNTRIES[region]) {
+      return res.status(400).json({ error: "Invalid region. Use US, EU, or ASIA." });
     }
+    if (!force) {
+      const cached = readResearcherCache("sectors", region);
+      if (cached) {
+        console.log(`[RESEARCHER/sectors] cache HIT region=${region} age=${cached._cacheAge}min`);
+        return res.json(cached);
+      }
+    }
+    console.log(`[RESEARCHER/sectors] building region=${region}`);
+    await withProxyGuard(res, region, "sectors",
+      () => buildSectorOpportunity(region),
+      (r) => writeResearcherCache("sectors", region, r),
+    );
   });
 
   // Tab 3: Undervalued Stock Screener
   app.post("/api/researcher/screener", async (req, res) => {
-    try {
-      const filters: ScreenerFilters = {
-        region: String(req.body?.region || "US").toUpperCase(),
-        marketCapMin: req.body?.marketCapMin ? Number(req.body.marketCapMin) : undefined,
-        marketCapMax: req.body?.marketCapMax ? Number(req.body.marketCapMax) : undefined,
-        peMax: req.body?.peMax ? Number(req.body.peMax) : undefined,
-        revenueGrowthMin: req.body?.revenueGrowthMin ? Number(req.body.revenueGrowthMin) : undefined,
-        sector: req.body?.sector ? String(req.body.sector) : undefined,
-      };
-      const force = req.body?.force === true;
-      const cacheKey = `${filters.region}_mc${filters.marketCapMin || 0}-${filters.marketCapMax || 0}_pe${filters.peMax || 0}_rg${filters.revenueGrowthMin || 0}_${filters.sector || "all"}`;
-      if (!force) {
-        const cached = readResearcherCache("screener", cacheKey);
-        if (cached) {
-          console.log(`[RESEARCHER/screener] cache HIT key=${cacheKey} age=${cached._cacheAge}min`);
-          return res.json(cached);
-        }
+    const filters: ScreenerFilters = {
+      region: String(req.body?.region || "US").toUpperCase(),
+      marketCapMin: req.body?.marketCapMin ? Number(req.body.marketCapMin) : undefined,
+      marketCapMax: req.body?.marketCapMax ? Number(req.body.marketCapMax) : undefined,
+      peMax: req.body?.peMax ? Number(req.body.peMax) : undefined,
+      revenueGrowthMin: req.body?.revenueGrowthMin ? Number(req.body.revenueGrowthMin) : undefined,
+      sector: req.body?.sector ? String(req.body.sector) : undefined,
+    };
+    const force = req.body?.force === true;
+    const cacheKey = `${filters.region}_mc${filters.marketCapMin || 0}-${filters.marketCapMax || 0}_pe${filters.peMax || 0}_rg${filters.revenueGrowthMin || 0}_${filters.sector || "all"}`;
+    if (!force) {
+      const cached = readResearcherCache("screener", cacheKey);
+      if (cached) {
+        console.log(`[RESEARCHER/screener] cache HIT key=${cacheKey} age=${cached._cacheAge}min`);
+        return res.json(cached);
       }
-      console.log(`[RESEARCHER/screener] building key=${cacheKey}`);
-      const result = await buildScreener(filters);
-      writeResearcherCache("screener", cacheKey, result);
-      res.json(result);
-    } catch (err: any) {
-      console.error("[RESEARCHER/screener] error:", err?.message);
-      res.status(500).json({ error: err?.message || "screener failed" });
     }
+    console.log(`[RESEARCHER/screener] building key=${cacheKey}`);
+    await withProxyGuard(res, cacheKey, "screener",
+      () => buildScreener(filters),
+      (r) => writeResearcherCache("screener", cacheKey, r),
+    );
   });
 
   // Tab 4: Capex & Fiscal Tracker
   app.post("/api/researcher/capex", async (req, res) => {
-    try {
-      const region = String(req.body?.region || "US").toUpperCase();
-      const force = req.body?.force === true;
-      if (!REGION_COUNTRIES[region]) {
-        return res.status(400).json({ error: "Invalid region. Use US, EU, or ASIA." });
-      }
-      if (!force) {
-        const cached = readResearcherCache("capex", region);
-        if (cached) {
-          console.log(`[RESEARCHER/capex] cache HIT region=${region} age=${cached._cacheAge}min`);
-          return res.json(cached);
-        }
-      }
-      console.log(`[RESEARCHER/capex] building region=${region}`);
-      const result = await buildCapexFiscal(region);
-      writeResearcherCache("capex", region, result);
-      res.json(result);
-    } catch (err: any) {
-      console.error("[RESEARCHER/capex] error:", err?.message);
-      res.status(500).json({ error: err?.message || "capex analysis failed" });
+    const region = String(req.body?.region || "US").toUpperCase();
+    const force = req.body?.force === true;
+    if (!REGION_COUNTRIES[region]) {
+      return res.status(400).json({ error: "Invalid region. Use US, EU, or ASIA." });
     }
+    if (!force) {
+      const cached = readResearcherCache("capex", region);
+      if (cached) {
+        console.log(`[RESEARCHER/capex] cache HIT region=${region} age=${cached._cacheAge}min`);
+        return res.json(cached);
+      }
+    }
+    console.log(`[RESEARCHER/capex] building region=${region}`);
+    await withProxyGuard(res, region, "capex",
+      () => buildCapexFiscal(region),
+      (r) => writeResearcherCache("capex", region, r),
+    );
   });
 
   // Daily Briefing — cross-region net-new event detection (manual + cron)

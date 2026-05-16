@@ -87,24 +87,33 @@ export default function Researcher() {
         body.peMax = 30;
         body.revenueGrowthMin = 5;
       }
-      // Retry-on-proxy-timeout (503/504): the analysis runs 20-40s server-side,
-      // but the Perplexity sandbox proxy can return 503 after ~30s while the
-      // backend keeps working. Result lands in cache. Retry hits cache fast.
-      const maxAttempts = 3;
+      // Proxy-Timeout Guard: backend returns HTTP 202 {__building:true} after 25s
+      // if analysis is still running. We wait retryAfterMs and retry once —
+      // by then the result is cached and the second call returns instantly.
+      const maxAttempts = 4;
       let lastErr: any = null;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
           const res = await apiRequest("POST", `/api/researcher/${tab}`, body);
-          return await res.json();
+          const json = await res.json();
+
+          // HTTP 202 = still building in background
+          if (json?.__building) {
+            const waitMs = json.retryAfterMs || 8000;
+            console.log(`[Researcher] Backend building (attempt ${attempt + 1}), retrying in ${waitMs}ms...`);
+            body.force = false; // next call hits cache
+            await new Promise(r => setTimeout(r, waitMs));
+            continue;
+          }
+          return json;
         } catch (err: any) {
           lastErr = err;
           const msg = err?.message || "";
           const isProxyTimeout = /^(503|504|408|499)/.test(msg) || /timeout|abort|network/i.test(msg);
           if (!isProxyTimeout) throw err;
-          // Wait, then retry — backend likely already finished and cached.
-          // Drop force flag on retry so we hit the cache.
+          // Network-level timeout (rare with 25s guard) — wait and retry
           body.force = false;
-          await new Promise(r => setTimeout(r, 2500 + attempt * 1500));
+          await new Promise(r => setTimeout(r, 5000 + attempt * 2000));
         }
       }
       throw lastErr || new Error("Analyse-Timeout nach mehreren Versuchen");
@@ -117,9 +126,11 @@ export default function Researcher() {
       const raw = err?.message || "";
       let friendly = raw;
       if (/^(503|504|408|499)/.test(raw) || /timeout|abort/i.test(raw)) {
-        friendly = "Analyse dauert länger als der Proxy erlaubt (≈30s). Das Ergebnis wird im Hintergrund fertiggestellt — bitte in 5–10 Sekunden erneut auf 'Analyse starten' klicken (läuft dann über den 7-Tages-Cache).";
+        friendly = "Verbindung zur Analyse unterbrochen. Die Analyse läuft noch im Hintergrund — bitte nochmals auf 'Analyse starten' klicken, das Ergebnis kommt dann sofort aus dem Cache.";
+      } else if (raw.includes("Analyse-Timeout")) {
+        friendly = "Analyse-Timeout: Der Server hat zu lange gebraucht. Bitte 'Analyse starten' nochmals klicken — das Ergebnis ist im Cache.";
       } else if (!raw || raw.length < 5) {
-        friendly = "Analyse fehlgeschlagen — unbekannter Fehler";
+        friendly = "Analyse fehlgeschlagen — unbekannter Fehler. Bitte erneut versuchen.";
       }
       setError(friendly);
     },
