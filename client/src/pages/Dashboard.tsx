@@ -114,7 +114,17 @@ export default function Dashboard() {
         try {
           setRetryInfo({ attempt, maxRetries });
           const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: force === true });
-          const result = await res.json() as StockAnalysis;
+          const json = await res.json();
+          // 202: LLM analysis still running in background — wait and retry (hits cache)
+          if (json?.__building) {
+            const waitMs = json.retryAfterMs || 10000;
+            console.log(`[Analyze] Backend building (${ticker}), polling in ${waitMs}ms...`);
+            await new Promise(r => setTimeout(r, waitMs));
+            // Force=false on retry so we hit the cache that was written in background
+            force = false as any;
+            continue;
+          }
+          const result = json as StockAnalysis;
           setRetryInfo(null);
           return result;
         } catch (err: any) {

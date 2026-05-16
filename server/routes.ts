@@ -3448,6 +3448,23 @@ export async function registerRoutes(server: Server, app: Express) {
     // Declare ticker outside try{} so catch{} can use it for cache-fallback (C2 fix)
     let ticker = "";
     let useLLM = false;
+    // Proxy-guard: /api/analyze with useLLM=true can take 25-45s (finance + LLM).
+    // If still running at 22s, return 202 so the pplx.app proxy doesn't cut us off.
+    // Analysis continues writing to cache; client auto-retries (hits cache instantly).
+    let proxyResponded = false;
+    const analyzeGuard = setTimeout(() => {
+      if (!proxyResponded && useLLM) {
+        proxyResponded = true;
+        console.warn(`[ANALYZE] Proxy guard fired for ${ticker} (useLLM=true) — returning 202`);
+        res.status(202).json({
+          __building: true,
+          ticker,
+          message: "KI-Analyse läuft noch (LLM + Finance-API). Bitte in 10 Sekunden erneut klicken — das Ergebnis kommt sofort aus dem Cache.",
+          retryAfterMs: 10000,
+        });
+      }
+    }, 22000);
+    analyzeGuard.unref();
     try {
       const parsed = analyzeRequestSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -4882,18 +4899,27 @@ export async function registerRoutes(server: Server, app: Express) {
         wl.tickers = wl.tickers.slice(0, 20);
         fs.writeFileSync(path.join(CACHE_DIR, 'watchlist.json'), JSON.stringify(wl));
       } catch {}
-      res.json(analysis);
+      clearTimeout(analyzeGuard);
+      if (!proxyResponded) {
+        proxyResponded = true;
+        res.json(analysis);
+      }
+      // If proxyResponded=true, analysis was already cached above — client will retry and hit cache
     } catch (error: any) {
+      clearTimeout(analyzeGuard);
       console.error("[ANALYZE] Error:", error?.message);
       // Try to serve cached data as fallback — prefer compatible LLM mode.
-      // Legacy caches without the flag count as compatible to both modes.
       const useLLMCatch = (req.body?.useLLM === true);
       const cached = getCachedAnalysis(ticker);
       if (cached && cacheLLMModeMatches(cached._useLLM, useLLMCatch)) {
-        console.log(`[ANALYZE] Serving compatible cached data for ${ticker} (age: ${cached._cacheAge}min, cacheUseLLM=${cached._useLLM}, request=${useLLMCatch})`);
-        return res.json(cached);
+        console.log(`[ANALYZE] Serving compatible cached data for ${ticker} (age: ${cached._cacheAge}min)`);
+        if (!proxyResponded) { proxyResponded = true; return res.json(cached); }
+        return;
       }
-      res.status(500).json({ error: error?.message || "Analysis failed" });
+      if (!proxyResponded) {
+        proxyResponded = true;
+        res.status(500).json({ error: error?.message || "Analysis failed" });
+      }
     }
   });
 

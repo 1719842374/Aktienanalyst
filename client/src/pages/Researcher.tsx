@@ -87,40 +87,42 @@ export default function Researcher() {
         body.peMax = 30;
         body.revenueGrowthMin = 5;
       }
-      // Proxy-Timeout Guard: backend returns HTTP 202 {__building:true} after 25s
-      // if analysis is still running. We wait retryAfterMs and retry once —
-      // by then the result is cached and the second call returns instantly.
-      const maxAttempts = 4;
+      // Real polling: checks every 6s for up to 90s total
+      // Backend returns 202 {__building:true} while still computing.
+      // On completion, result is cached — next poll hits cache instantly.
+      const POLL_INTERVAL_MS = 6000;
+      const MAX_POLLS = 15; // 15 × 6s = 90s max
       let lastErr: any = null;
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      body.force = body.force ?? true; // first call: bypass cache to start fresh
+
+      for (let poll = 0; poll < MAX_POLLS; poll++) {
         try {
           const res = await apiRequest("POST", `/api/researcher/${tab}`, body);
           const json = await res.json();
 
-          // HTTP 202 = still building in background
+          // Still building — poll again after interval
           if (json?.__building) {
-            const waitMs = json.retryAfterMs || 8000;
-            console.log(`[Researcher] Backend building (attempt ${attempt + 1}), retrying in ${waitMs}ms...`);
-            body.force = false; // next call hits cache
-            await new Promise(r => setTimeout(r, waitMs));
+            console.log(`[Researcher] Building... poll ${poll + 1}/${MAX_POLLS}`);
+            body.force = false; // subsequent polls read from cache
+            await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
             continue;
           }
-          // FM2 fix: backend wrote error marker to cache after crash
+          // FM2: backend crash marker in cache — fail fast
           if (json?.__error) {
-            throw new Error(json.errorMessage || "Analyse fehlgeschlagen (Hintergrund-Fehler)");
+            throw new Error(json.errorMessage || "Analyse fehlgeschlagen");
           }
           return json;
         } catch (err: any) {
           lastErr = err;
           const msg = err?.message || "";
-          const isProxyTimeout = /^(503|504|408|499)/.test(msg) || /timeout|abort|network/i.test(msg);
-          if (!isProxyTimeout) throw err;
-          // Network-level timeout (rare with 25s guard) — wait and retry
+          // Don’t retry real errors (rate-limit, auth, user error)
+          if (!/^(503|504|408|499)/.test(msg) && !/timeout|abort|network|fetch/i.test(msg)) throw err;
+          // Network-level glitch — wait and retry
           body.force = false;
-          await new Promise(r => setTimeout(r, 5000 + attempt * 2000));
+          await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
         }
       }
-      throw lastErr || new Error("Analyse-Timeout nach mehreren Versuchen");
+      throw lastErr || new Error("Analyse dauert zu lange (>90s). Bitte später erneut versuchen.");
     },
     onSuccess: (result, variables) => {
       setData(prev => ({ ...prev, [`${variables.tab}_${region}`]: result }));
