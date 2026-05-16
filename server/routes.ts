@@ -4055,6 +4055,9 @@ export async function registerRoutes(server: Server, app: Express) {
             marketCap,
             governmentExposure: govExp.exposure,
             risks,
+            // B3: pass SEC + news context for more specific risk explanations
+            keyProjects: keyProjects.slice(0, 5),
+            recentNewsHeadlines: newsHeadlines.slice(0, 5),
           });
           if (enrichedRisks) {
             risks = enrichedRisks;

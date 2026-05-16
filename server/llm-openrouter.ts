@@ -333,6 +333,9 @@ export interface RiskExplanationInput {
   marketCap: number;
   governmentExposure: number;
   risks: Risk[];
+  // B3: optional context from SEC filings and news for more specific explanations
+  keyProjects?: string[];
+  recentNewsHeadlines?: string[];
 }
 
 export async function generateRiskExplanations(
@@ -345,29 +348,37 @@ export async function generateRiskExplanations(
   const {
     ticker, companyName, sector, industry, description, revenue, revenueGrowth,
     fcfMargin, price, pe, marketCap, governmentExposure, risks,
+    keyProjects = [], recentNewsHeadlines = [],
   } = input;
 
+  // B3: optional SEC + news context for more specific risk explanations
+  const secContext = keyProjects.length > 0
+    ? `\nKey Projects (SEC):\n${keyProjects.slice(0, 5).map((p: string) => `  - ${p}`).join("\n")}`
+    : "";
+  const newsContext = recentNewsHeadlines.length > 0
+    ? `\nAktuelle News:\n${recentNewsHeadlines.slice(0, 5).map((h: string, i: number) => `  N${i + 1}: ${h}`).join("\n")}`
+    : "";
+
+  // riskIndex is 0-based — explicitly labelled to avoid LLM off-by-one (B fix)
   const riskList = risks.map((r, i) =>
-    `R${i + 1}: ${r.name} | Kategorie: ${r.category} | EW: ${r.ew}% | Impact: ${r.impact}% | Exp.Damage: ${r.expectedDamage.toFixed(2)}%`
+    `riskIndex=${i}: ${r.name} | ${r.category} | EW: ${r.ew}% | Impact: ${r.impact}% | Exp.Damage: ${r.expectedDamage.toFixed(2)}%`
   ).join("\n");
 
-  const prompt = `Du bist ein pr\u00e4ziser, evidenzbasierter Aktienresearcher. Erstelle f\u00fcr jedes der folgenden Risiken eine strukturierte Deep-Dive-Erkl\u00e4rung.
+  const prompt = `Du bist ein präziser Aktienresearcher. Erstelle für jedes Risiko eine Erklärung (max 120 Wörter pro Risiko).
 
 UNTERNEHMENSKONTEXT:
-Unternehmen: ${companyName} (${ticker})
-Sektor: ${sector} / ${industry}
-Beschreibung: ${description.substring(0, 500)}
-Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}%
-Kurs: $${price.toFixed(2)} | KGV: ${pe.toFixed(1)} | Marktkapitalisierung: $${(marketCap / 1e9).toFixed(1)}B
-Staatsabh\u00e4ngigkeit: ${governmentExposure.toFixed(0)}%
-RISIKEN:
+${companyName} (${ticker}) | ${sector} / ${industry}
+Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}% | KGV: ${pe.toFixed(1)} | Staatsabh: ${governmentExposure.toFixed(0)}%
+${description.substring(0, 350)}${secContext}${newsContext}
+
+RISIKEN (riskIndex 0-basiert — exakt so zurückgeben):
 ${riskList}
 
 REGELN:
-- Erkl\u00e4rungen m\u00fcssen UNTERNEHMENSSPEZIFISCH sein \u2014 nutze Recherche-Ergebnisse f\u00fcr aktuelle, faktische Belege
-- Stil: kurze Abs\u00e4tze, faktenbasiert, deutsche Finanzanalysten-Sprache
-- Ca. 100-150 W\u00f6rter pro Risiko
-- unterschaetzt=true wenn das Expected Damage das Risiko untersch\u00e4tzt (z.B. wegen aktueller Nachrichtenlage), sonst false
+- Unternehmensspezifisch, faktenbasiert, max 120 Wörter pro Risiko
+- Nutze SEC/News wenn vorhanden für konkrete Belege
+- unterschaetzt=true wenn Expected Damage zu niedrig, sonst false
+- riskIndex MUSS exakt dem Index aus der Liste entsprechen (0-basiert)
 
 Return ONLY this JSON (no markdown, no commentary):
 {
@@ -390,11 +401,12 @@ Return ONLY this JSON (no markdown, no commentary):
     const isGrok = model.startsWith("x-ai/");
     const completion = await client.chat.completions.create({
       model,
-      max_tokens: 3500, // raised from 2800 — 6 risks x ~150 words needs headroom
+      max_tokens: 4500, // B2 fix: 6 risks x 120 words + JSON overhead + CoT buffer
       temperature: 0.25, // slightly more deterministic
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" } as any,
-      ...(isGrok ? { reasoning: { enabled: false } } as any : {}),
+      // B1 fix: grok-4.3 uses { effort: "none" } not { enabled: false }
+      ...(isGrok ? { reasoning: { effort: "none" } } as any : {}),
     });
     const elapsedMs = Date.now() - t0;
 
