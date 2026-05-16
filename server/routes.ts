@@ -5,7 +5,7 @@ import { execSync } from "child_process";
 import { generateCatalystsAndMatchNews, generateRiskExplanations } from "./llm-openrouter";
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
-  fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
+  fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
   fmpSegments, fmpPeers, fmpRatios, fmpKeyMetrics,
 } from "./fmp";
 
@@ -100,7 +100,7 @@ async function callFinanceToolThrottled(
 async function getFmpFallbackData(ticker: string): Promise<{
   quote: any;
   profile: any;
-  financials: { income: any[]; cashflow: any[]; };
+  financials: { income: any[]; cashflow: any[]; balanceSheet: any[]; };
   analyst: { priceTarget: any; grades: any[]; estimates: any[]; };
   ohlcv: any[];
   segments: any[];
@@ -117,7 +117,7 @@ async function getFmpFallbackData(ticker: string): Promise<{
   try {
     // Fire all FMP calls in parallel — FMP has much higher rate limits than external-tool
     const [
-      quoteRes, profileRes, incomeRes, cashflowRes,
+      quoteRes, profileRes, incomeRes, cashflowRes, balanceSheetRes,
       priceTargetRes, gradesRes, estimatesRes, ohlcvRes,
       segmentsRes, peersRes, ratiosRes,
     ] = await Promise.allSettled([
@@ -125,6 +125,7 @@ async function getFmpFallbackData(ticker: string): Promise<{
       fmpProfile(ticker),
       fmpIncomeStatement(ticker, 3),
       fmpCashFlow(ticker, 3),
+      fmpBalanceSheet(ticker, 1), // Bug 1 fix: fetch balance sheet for totalDebt
       fmpPriceTarget(ticker),
       fmpGrades(ticker, 20),
       fmpAnalystEstimates(ticker, 3),
@@ -151,6 +152,7 @@ async function getFmpFallbackData(ticker: string): Promise<{
       financials: {
         income: get(incomeRes) || [],
         cashflow: get(cashflowRes) || [],
+        balanceSheet: get(balanceSheetRes) || [], // Bug 1 fix
       },
       analyst: {
         priceTarget: get(priceTargetRes),
@@ -3708,11 +3710,21 @@ export async function registerRoutes(server: Server, app: Express) {
         if (Array.isArray(cf) && cf.length > 0) {
           const c = cf[0];
           fcfTTM = c.freeCashFlow || (c.operatingCashFlow + (c.capitalExpenditure || 0)) || 0;
-          totalDebt = c.totalDebt || 0;
+          // Bug 1 fix: totalDebt must come from balance sheet, not cash flow statement
+          // cashflow.totalDebt is often null — will be overwritten below by balance sheet
           cashEquivalents = c.cashAndCashEquivalents || 0;
+        }
+        // Bug 1 fix: read totalDebt + totalEquity from balance sheet (correct source)
+        const bs = fmpData.financials.balanceSheet;
+        if (Array.isArray(bs) && bs.length > 0) {
+          const b = bs[0];
+          totalDebt = (b.shortTermDebt || 0) + (b.longTermDebt || 0) || b.totalDebt || 0;
+          cashEquivalents = cashEquivalents || b.cashAndCashEquivalents || 0;
+          totalEquity = b.totalStockholdersEquity || b.totalEquity || 0;
+          totalAssets = b.totalAssets || 0;
           netDebt = totalDebt - cashEquivalents;
         }
-        console.log(`[FMP-FINANCIALS] ${ticker}: rev=$${(revenue/1e9).toFixed(1)}B, fcf=$${(fcfTTM/1e9).toFixed(1)}B, growth=${revenueGrowth.toFixed(1)}%`);
+        console.log(`[FMP-FINANCIALS] ${ticker}: rev=$${(revenue/1e9).toFixed(1)}B, fcf=$${(fcfTTM/1e9).toFixed(1)}B, debt=$${(totalDebt/1e9).toFixed(1)}B, growth=${revenueGrowth.toFixed(1)}%`);
       } else if (financialsResult?.content) {
         // Parse income statement
         const isSections = financialsResult.content.split("## ");
@@ -3869,7 +3881,34 @@ export async function registerRoutes(server: Server, app: Express) {
       let analystPTMedian = price, analystPTHigh = price * 1.3, analystPTLow = price * 0.7, analystCount = 0;
       let ratingsBuy = 0, ratingsHold = 0, ratingsSell = 0;
 
-      if (analystResult?.content) {
+      // Bug 2 fix: parse FMP analyst data when fmpData is active
+      if (fmpData?.analyst) {
+        const pt = fmpData.analyst.priceTarget;
+        if (pt && typeof pt === 'object') {
+          // FMP price-target-consensus: { targetConsensus, targetMedian, targetHigh, targetLow }
+          analystPTMedian = pt.targetMedian || pt.targetConsensus || price;
+          analystPTHigh = pt.targetHigh || price * 1.3;
+          analystPTLow = pt.targetLow || price * 0.7;
+        }
+        const grades = fmpData.analyst.grades || [];
+        for (const g of grades) {
+          const grade = (g.newGrade || g.newRating || '').toLowerCase();
+          if (grade.includes('buy') || grade.includes('overweight') || grade.includes('outperform')) ratingsBuy++;
+          else if (grade.includes('sell') || grade.includes('underweight') || grade.includes('underperform')) ratingsSell++;
+          else ratingsHold++;
+        }
+        analystCount = grades.length;
+        // FMP estimates: forward EPS
+        const estimates = fmpData.analyst.estimates || [];
+        if (estimates.length > 0) {
+          const fwdEps = estimates[0]?.estimatedEpsAvg || estimates[0]?.estimatedEpsDilutedAvg;
+          if (fwdEps && fwdEps > 0) {
+            // will be used below for epsConsensusNextFY
+            (fmpData as any).__fwdEps = fwdEps;
+          }
+        }
+        console.log(`[FMP-ANALYST] ${ticker}: PT median=$${analystPTMedian.toFixed(0)}, buy=${ratingsBuy}, hold=${ratingsHold}, sell=${ratingsSell}`);
+      } else if (analystResult?.content) {
         const sections = analystResult.content.split("## ");
         for (const section of sections) {
           if (section.includes("Consensus")) {
@@ -3891,6 +3930,29 @@ export async function registerRoutes(server: Server, app: Express) {
       // === Parse Estimates (forward EPS) ===
       let epsConsensusNextFY = eps * 1.1;
       let epsGrowth5Y = 10;
+
+      // Bug 2 fix: use FMP forward EPS if available
+      if (fmpData && (fmpData as any).__fwdEps > 0) {
+        epsConsensusNextFY = (fmpData as any).__fwdEps;
+      }
+
+      // Bug 3 fix: EUR/GBP/JPY → USD conversion for FMP international tickers
+      // FMP reports non-USD financials in local currency — DCF must be in USD
+      if (fmpData?.profile) {
+        const curr = (fmpData.quote?.currency || fmpData.profile?.currency || 'USD').toUpperCase();
+        const fxRates: Record<string, number> = { EUR: 1.08, GBP: 1.27, JPY: 0.0067, CHF: 1.12, CAD: 0.74, AUD: 0.65, HKD: 0.13, CNY: 0.14 };
+        const fx = fxRates[curr] ?? 1;
+        if (fx !== 1 && curr !== 'USD') {
+          console.log(`[FMP-FX] ${ticker}: converting ${curr}→USD (fx=${fx})`);
+          revenue *= fx; netIncome *= fx; ebitda *= fx; fcfTTM *= fx;
+          grossProfit *= fx; operatingIncome *= fx; totalDebt *= fx;
+          cashEquivalents *= fx; netDebt *= fx; totalEquity *= fx; totalAssets *= fx;
+          price *= fx; marketCap *= fx; dayLow *= fx; dayHigh *= fx;
+          yearLow *= fx; yearHigh *= fx; prevClose *= fx;
+          analystPTMedian *= fx; analystPTHigh *= fx; analystPTLow *= fx;
+        }
+      }
+
       if (estimatesResult?.content) {
         const rows = parseMarkdownTable(estimatesResult.content);
         if (rows.length > 0) {
