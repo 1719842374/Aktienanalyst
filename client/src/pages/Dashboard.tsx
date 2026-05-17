@@ -63,35 +63,37 @@ export default function Dashboard() {
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number } | null>(null);
   const [serverReady, setServerReady] = useState<boolean | null>(null); // null=checking, true=ready, false=down
 
-  // Warmup-Ping + Finance-Quota check on mount:
-  // 1. Wake up the sandbox (cold-start prevention)
-  // 2. Check if Finance-API is available (shows quota status before user submits)
   const [financeQuotaOk, setFinanceQuotaOk] = useState<boolean | null>(null);
 
+  // Cold-Start Warmup Strategy:
+  // Published *.pplx.app containers shut down after inactivity and need 15-30s to restart.
+  // We fire /api/health immediately on page load to wake the sandbox as early as possible.
+  // Retries every 4s up to 4x (covers 16s warmup window).
+  // On success, also check /api/cache to confirm the finance connector is token-refreshed.
   useEffect(() => {
     let cancelled = false;
+
     const ping = async (attempt = 1) => {
       try {
-        const res = await apiRequest("GET", "/api/health");
-        if (!cancelled) {
-          setServerReady(res.ok || res.status === 503);
-          // Also do a quick quota probe (lightweight, uses cached result if available)
-          try {
-            const quotaRes = await fetch(`${window.location.origin}/port/5000/api/cache`);
-            if (!cancelled && quotaRes.ok) {
-              // Cache endpoint responds = server alive, assume quota OK until proven otherwise
-              setFinanceQuotaOk(true);
-            }
-          } catch { /* quota check is best-effort */ }
+        const res = await apiRequest("GET", "/api/health", undefined, 25000);
+        if (!cancelled && (res.ok || res.status === 503)) {
+          setServerReady(true);
+          // Fire a second lightweight request to ensure the finance connector
+          // token gets refreshed (the proxy injects it on every frontend request)
+          apiRequest("GET", "/api/cache", undefined, 10000).catch(() => {});
+          setFinanceQuotaOk(true);
         }
       } catch {
-        if (!cancelled && attempt < 4) {
-          setTimeout(() => ping(attempt + 1), attempt * 4000);
+        if (!cancelled && attempt < 5) {
+          // Exponential-ish backoff: 3s, 5s, 8s, 12s — covers up to ~28s cold start
+          const delays = [3000, 5000, 8000, 12000];
+          setTimeout(() => ping(attempt + 1), delays[attempt - 1] ?? 12000);
         } else if (!cancelled) {
           setServerReady(false);
         }
       }
     };
+
     ping();
     return () => { cancelled = true; };
   }, []);
@@ -448,14 +450,17 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
           {serverReady === null && (
             <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 animate-pulse" />
-              Server wird gestartet…
+              Server startet… (kann 15–30s dauern bei erstem Aufruf)
             </span>
           )}
           {serverReady === false && (
-            <span className="flex items-center gap-1.5 text-[10px] text-red-400/80">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
-              Server nicht erreichbar — erste Analyse kann länger dauern
-            </span>
+            <div className="text-[10px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-lg max-w-sm text-center">
+              <div className="font-medium mb-0.5">Server kalt gestartet</div>
+              <div className="text-muted-foreground/70">
+                Veröffentlichte Apps werden nach Inaktivität heruntergefahren.
+                Die erste Analyse startet den Server — bitte 20–30s warten.
+              </div>
+            </div>
           )}
           {serverReady === true && financeQuotaOk !== false && (
             <span className="flex items-center gap-1.5 text-[10px] text-emerald-500/70">
@@ -463,12 +468,14 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
               Bereit
             </span>
           )}
-          {/* Finance-API quota warning */}
           {financeQuotaOk === false && (
-            <span className="flex items-center gap-1.5 text-[10px] text-amber-500/90 bg-amber-500/10 px-2 py-1 rounded-md">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              Finance-API Tageslimit erreicht — Reset nach Mitternacht. Gecachte Tickers funktionieren.
-            </span>
+            <div className="text-[10px] text-amber-500/90 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-lg max-w-sm text-center">
+              <div className="font-medium mb-0.5">⏳ Finance-API Tageslimit erreicht</div>
+              <div className="text-muted-foreground/70">
+                Neue Analysen sind bis Mitternacht pausiert. Bereits analysierte Tickers in der
+                Watchlist funktionieren weiterhin aus dem Cache.
+              </div>
+            </div>
           )}
         </div>
         <div className="flex justify-center">
