@@ -63,16 +63,8 @@ function getClient(): OpenAI | null {
 function pickModel(): string {
   const override = process.env.OPENROUTER_MODEL;
   if (override) return override;
-
-  // Explicit opt-out: PREFER_GROK=0 switches back to Haiku
-  if (process.env.PREFER_GROK === "0") {
-    return "anthropic/claude-3.5-haiku";
-  }
-
-  // Default + PREFER_GROK=1 both go to Grok. Auto-switch after retirement.
-  const GROK_RETIRE_DATE = new Date("2026-05-16T00:00:00Z");
-  const now = new Date();
-  return now < GROK_RETIRE_DATE ? "x-ai/grok-4.1-fast" : "x-ai/grok-4.3";
+  // Default: Grok-4.3 with conservative token budgets to stay within free tier
+  return "x-ai/grok-4.3";
 }
 
 export interface CombinedLLMInput {
@@ -197,7 +189,7 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
     const isGrok = model.startsWith("x-ai/");
     const completion = await client.chat.completions.create({
       model,
-      max_tokens: 1900, // hard cap — keeps cost predictable
+      max_tokens: 1200, // free tier limit
       temperature: 0.4, // a bit of creativity for catalyst diversity, but mostly deterministic
       messages: [{ role: "user", content: prompt }],
       // OpenRouter passes this through to providers that support it
@@ -401,7 +393,7 @@ Return ONLY this JSON (no markdown, no commentary):
     const isGrok = model.startsWith("x-ai/");
     const completion = await client.chat.completions.create({
       model,
-      max_tokens: 4500, // B2 fix: 6 risks x 120 words + JSON overhead + CoT buffer
+      max_tokens: 1200, // free tier limit
       temperature: 0.25, // slightly more deterministic
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" } as any,
@@ -479,7 +471,7 @@ export async function callLLMJson(opts: {
     messages.push({ role: "user", content: opts.prompt });
     const completion = await client.chat.completions.create({
       model,
-      max_tokens: opts.maxTokens ?? 2400,
+      max_tokens: Math.min(opts.maxTokens ?? 1200, 1200), // free tier cap
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,

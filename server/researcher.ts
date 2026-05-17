@@ -230,77 +230,63 @@ async function buildMacroPulse(region: string): Promise<MacroPulseResult> {
   const today = new Date().toISOString().slice(0, 10);
   const currentYear = new Date().getFullYear();
 
-  const prompt = `Du bist Hedge-Fund-Stratege bei einem globalen Macro-Fonds (Bridgewater / Brevan Howard Stil). Analysiere die folgenden REAL-DATEN für die Region ${regionLabel} (Länder: ${countries.join(", ")}) — Stand ${today}.
+  // Two-step LLM: Step 1 = Synthesis (summary + views + implications)
+  //               Step 2 = Key Events (structured events array)
+  // Split into two smaller calls to stay within free-tier token budget.
+  const dataContext = compactIndicators.map(i =>
+    `${i.country}: ${i.category}=${i.latestValue} ${i.unit} (prev:${i.previousValue}, ${i.date})`
+  ).join("; ") || "keine Makrodaten verfügbar";
 
-ECHTE MAKRO-DATEN (Trading Economics / FRED):
-${compactIndicators.map(i => `- ${i.country}: ${i.category} = ${i.latestValue} ${i.unit} (vorher: ${i.previousValue}, ${i.date})`).join("\n") || "(keine Daten verfügbar — bewerte qualitativ)"}
+  const regionHints: Record<string, string> = {
+    US: "Trump-Zollpolitik, Fed-Pause, Kerninflation 2.8%, US10Y 4.5%",
+    EU: "EZB-Senkungszyklus, Deutschland-Sonderverm\u00f6gen, Frankreich-Defizit, Nahost-\u00d6lpreisrisiko",
+    ASIA: "BoJ-Hike-Pfad, China-Stimulus, Taiwan-Spannungen, Indien-Capex-Boom",
+  };
+  const hint = regionHints[region] || "";
 
-=== KRITISCHE PFLICHT: AUTONOME KEY-EVENT-ERKENNUNG ===
+  const prompt1 = `Hedge-Fund Macro-Analyst. Region: ${regionLabel} (${today}). Kontext: ${dataContext}. Aktuelle Themen: ${hint}.
+Gib NUR dieses JSON auf Deutsch (keine anderen Felder):
+{"summary":"2 S\u00e4tze Gesamtbild","riskFreeRateView":"1 Satz","liquidityView":"1 Satz","fiscalView":"1 Satz","keyDrivers":["Treiber1","Treiber2","Treiber3"],"investmentImplications":["Impl1","Impl2","Impl3"],"actionRecommendation":"Watch","actionRationale":"1 Satz"}`;
 
-Du MUSST eigenständig die 4-7 wichtigsten AKTUELLEN Key Events identifizieren, die ${currentYear} und in den letzten 30-90 Tagen die Märkte und Makro-Lage in ${regionLabel} prägen. KEINE Hard-Coded-Liste — finde sie selbst aus deinem aktuellen Wissen.
+  const prompt2 = `Hedge-Fund Macro-Analyst. Region: ${regionLabel} (${today}). Kontext: ${hint}.
+Identifiziere genau 3 aktuelle Key Events (${currentYear}, letzte 90 Tage).
+Gib NUR dieses JSON auf Deutsch:
+{"keyEvents":[{"title":"Event-Titel","category":"Geopolitik","severity":"high","timeframe":"Letzte 30 Tage","description":"1-2 S\u00e4tze","inflationImpact":"steigend","rateImpact":"steigend","equityImpact":"negativ","affectedSectors":["Energie"],"rationale":"1 Satz"}]}`;
 
-Kategorien (alle gleichberechtigt prüfen):
-- **Geopolitik / Konflikte**: Straße von Hormuz, Nahost (Iran-Israel-Saudi), Ukraine-Russland, Taiwan-Straße, Südchinesisches Meer, NATO-Spannungen
-- **Zentralbank-Entscheidungen**: Fed/EZB/BoJ/PBoC-Sitzungen, Zinsentscheide, QT/QE-Wenden, Forward-Guidance-Shifts
-- **Wahlen / Politik**: US-Präsidentschaftswahl-Folgen 2025+, EU-Wahlen, Regierungswechsel, Ampel-Aus, Trump-Administration-Policies
-- **Tech / Regulierung**: US-China Tech War, Chip-Exportrestriktionen, AI-Regulation, EU AI Act, Antitrust
-- **Energie / Rohstoffe**: Ölpreis-Schocks, OPEC+-Entscheidungen, LNG-Engpässe, Strompreise, Kupfer/Lithium-Verknappung
-- **Lieferketten**: Suez/Bab-el-Mandeb (Houthi), Panama-Kanal, Halbleiter-Allokation, Hafenstreiks
-- **Naturkatastrophen / Pandemie**: Hurricanes, Dürren, neue Virus-Wellen
-- **Finanzmarkt-Stress**: Bond-Sell-Offs, Spread-Blowouts, Carry-Trade-Unwinds, Yen-Carry-Probleme
+  const [llm1, llm2] = await Promise.all([
+    callLLMJson({ prompt: prompt1, maxTokens: 1000 }),
+    callLLMJson({ prompt: prompt2, maxTokens: 1000 }),
+  ]);
 
-Für JEDES Event MUSST du explizit ableiten:
-1. Inflation-Impact (steigend / fallend / neutral)
-2. Risk-Free-Rate-Impact (steigend / fallend / neutral)
-3. Equity-Impact (positiv / negativ / gemischt)
-4. Betroffene Sektoren
-5. Mechanismus (1-2 Sätze: WIE wirkt das Event?)
+  let synthesis: any = null;
+  if (llm1?.data) {
+    synthesis = { ...llm1.data, keyEvents: llm2?.data?.keyEvents || [] };
+  } else {
+    // Fallback: generate synthesis from indicators when LLM unavailable (e.g. credit limit)
+    console.warn(`[RESEARCHER] LLM unavailable for macro ${region}, using indicator-based fallback`);
+    const inflVal = compactIndicators.find(i => i.category.includes("Inflation"));
+    const rateVal = compactIndicators.find(i => i.category.includes("Interest"));
+    synthesis = {
+      summary: `Makro-Lage ${regionLabel} (${today}): ${inflVal ? `Inflation bei ${inflVal.latestValue} ${inflVal.unit}` : "Inflationsdaten ausstehend"}. ${rateVal ? `Leitzins bei ${rateVal.latestValue} ${rateVal.unit}` : ""} Aktuelle Events aus dem LLM nicht verf\u00fcgbar — bitte Credits aufladen oder Analyse erneut starten.`,
+      riskFreeRateView: rateVal ? `Aktueller Leitzins: ${rateVal.latestValue} ${rateVal.unit} (${rateVal.date})` : "Daten ausstehend",
+      liquidityView: "LLM-Analyse nicht verf\u00fcgbar. Bitte OpenRouter Credits aufladen.",
+      fiscalView: "LLM-Analyse nicht verf\u00fcgbar.",
+      keyDrivers: compactIndicators.slice(0, 3).map(i => `${i.country}: ${i.category} = ${i.latestValue} ${i.unit}`),
+      investmentImplications: ["LLM-basierte Investment Implications nicht verf\u00fcgbar"],
+      actionRecommendation: "Watch",
+      actionRationale: "Keine LLM-Analyse verf\u00fcgbar — Indikator-Basis unzureichend f\u00fcr Empfehlung",
+      keyEvents: [],
+      _fallback: true,
+    };
+  }
 
-=== AUSGABE ===
-
-JSON, ausschließlich auf Deutsch:
-{
-  "summary": "3-4 Sätze Gesamtbild der Makro-Lage in ${regionLabel} — inkl. Erwähnung der wichtigsten 1-2 Key Events",
-  "keyDrivers": ["3-5 wichtigste Treiber als Bullet-Punkte (Mix aus Daten + Events)"],
-  "riskFreeRateView": "1-2 Sätze: Trend Risk-Free Rate, Implikation für Equity-Bewertungen — inkl. Event-Auswirkung",
-  "liquidityView": "1-2 Sätze: Geldmengenwachstum / Liquiditätszyklus / QT-vs-QE-Position",
-  "fiscalView": "1-2 Sätze: Fiskalprogramme / Government Spending Trend",
-  "keyEvents": [
-    {
-      "title": "Kurzer prägnanter Event-Titel (z.B. 'Iran-Israel-Eskalation in der Straße von Hormuz')",
-      "category": "Geopolitik" | "Zentralbank" | "Wahl/Politik" | "Lieferkette" | "Energie/Rohstoffe" | "Naturkatastrophe" | "Tech/Regulierung" | "Sonstiges",
-      "severity": "high" | "medium" | "low",
-      "timeframe": "z.B. 'Akut', 'Letzte 30 Tage', 'Q1 ${currentYear}', 'Anhaltend'",
-      "description": "2-3 Sätze: Was ist passiert? Konkreter Sachverhalt + Datum/Zeitraum.",
-      "inflationImpact": "steigend | fallend | neutral",
-      "rateImpact": "steigend | fallend | neutral",
-      "equityImpact": "positiv | negativ | gemischt",
-      "affectedSectors": ["Sektor1", "Sektor2", "Sektor3"],
-      "rationale": "1-2 Sätze: Mechanismus — WIE wirkt das Event auf Inflation/Rate/Equity? Konkrete Transmissions-Kette."
-    }
-  ],
-  "investmentImplications": ["3-5 konkrete Implikationen für Anleger — müssen die Key Events explizit berücksichtigen (Sektor-Tilts, Duration, Currency-Hedges, Energie-Long, Defensive-Rotation, etc.)"],
-  "actionRecommendation": "Buy | Watch | Avoid",
-  "actionRationale": "1-2 Sätze warum diese Empfehlung — muss Daten UND Events berücksichtigen"
-}
-
-REGELN:
-- DATENGETRIEBEN: Leite jede Aussage aus den obigen Zahlen UND aus konkreten Events ab. Keine generischen Floskeln.
-- AKTUALITÄT: Events müssen ${currentYear} bzw. in den letzten 30-90 Tagen relevant sein.
-- PROAKTIV: Liste auch Events, die noch nicht jeder kennt — z.B. neue Sanktionen, Zentralbank-Speeches, Pipeline-Vorfälle.
-- 4-7 Events. Lieber zu viele als zu wenige.
-- Wenn USA: erwähne Trump-Era Policies, Tariff-Eskalation, Fed-Pivot-Diskussion. Wenn EU: erwähne EZB-Pfad, Deutschland-Schuldenbremse-Debatte, Sondervermögen, Frankreich-Fiskal-Krise. Wenn Asien: erwähne BoJ-Hike-Pfad, China-Property/Stimulus, Taiwan-Spannungen, Indien-Capex.
-
-JSON, keine Prosa drumherum. Ausschließlich Deutsch.`;
-
-  const llm = await callLLMJson({ prompt, maxTokens: 2200 });
   return {
     region,
     regionLabel,
     asOf: new Date().toISOString(),
     indicators: compactIndicators,
-    llmSynthesis: llm?.data || null,
-    modelUsed: llm?.modelUsed,
+    llmSynthesis: synthesis,
+    modelUsed: llm1?.modelUsed || "fallback",
   };
 }
 
@@ -362,7 +348,7 @@ Antworte mit JSON:
 
 Sortierung egal — wir ranken anschließend nach (growthScore × moatScore).`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 1800 });
+  const llm = await callLLMJson({ prompt, maxTokens: 1000 });
   if (!llm?.data?.trends || !Array.isArray(llm.data.trends)) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
@@ -468,7 +454,7 @@ Filter:
 - Revenue Growth min: ${filters.revenueGrowthMin || 5}%
 
 JSON: { "candidates": [{ "ticker": "...", "companyName": "...", "sector": "...", "industry": "...", "marketCap": 50000000000, "pe": 18.5, "revenueGrowth": 12.3, "price": 100 }] }`;
-    const fb = await callLLMJson({ prompt: fallbackPrompt, maxTokens: 1500 });
+    const fb = await callLLMJson({ prompt: fallbackPrompt, maxTokens: 800 });
     if (fb?.data?.candidates && Array.isArray(fb.data.candidates)) {
       candidates = fb.data.candidates.slice(0, 12);
     }
@@ -514,7 +500,7 @@ JSON-Format:
   ]
 }`;
 
-  const llm = await callLLMJson({ prompt: rankPrompt, maxTokens: 1500 });
+  const llm = await callLLMJson({ prompt: rankPrompt, maxTokens: 800 });
   const rankingsByTicker = new Map<string, any>();
   if (llm?.data?.rankings && Array.isArray(llm.data.rankings)) {
     for (const r of llm.data.rankings) {
@@ -684,7 +670,7 @@ Ausgabe als JSON:
 
 Antwort ausschließlich auf Deutsch. JSON, keine Prosa drumherum.`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 1800 });
+  const llm = await callLLMJson({ prompt, maxTokens: 1000 });
   if (!llm?.data?.programmes) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
@@ -972,7 +958,7 @@ JSON-Output, ausschließlich Deutsch, hedge-fund-knapp:
 
 KEINE Floskeln. Jeder Satz muss handlungsrelevant sein. JSON ohne Prosa drumherum.`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 1400 });
+  const llm = await callLLMJson({ prompt, maxTokens: 800 });
   const briefing = llm?.data || null;
 
   // Limit to top 3 changes
