@@ -18,7 +18,7 @@ function callFinanceTool(toolName: string, args: Record<string, any>): any {
     // Escape single quotes in the JSON string for shell
     const escaped = params.replace(/'/g, "'\\''");
     const result = execSync(`external-tool call '${escaped}'`, {
-      timeout: 25000, // 25s: 3 retries fit within 90s client timeout (was 60s)
+      timeout: 55000, // 55s: chat-first, no proxy cut at 30s (was 25s for published URL)
       encoding: "utf-8",
       maxBuffer: 50 * 1024 * 1024,
     });
@@ -3450,23 +3450,9 @@ export async function registerRoutes(server: Server, app: Express) {
     // Declare ticker outside try{} so catch{} can use it for cache-fallback (C2 fix)
     let ticker = "";
     let useLLM = false;
-    // Proxy-guard: /api/analyze with useLLM=true can take 25-45s (finance + LLM).
-    // If still running at 22s, return 202 so the pplx.app proxy doesn't cut us off.
-    // Analysis continues writing to cache; client auto-retries (hits cache instantly).
-    let proxyResponded = false;
-    const analyzeGuard = setTimeout(() => {
-      if (!proxyResponded && useLLM) {
-        proxyResponded = true;
-        console.warn(`[ANALYZE] Proxy guard fired for ${ticker} (useLLM=true) — returning 202`);
-        res.status(202).json({
-          __building: true,
-          ticker,
-          message: "KI-Analyse läuft noch (LLM + Finance-API). Bitte in 10 Sekunden erneut klicken — das Ergebnis kommt sofort aus dem Cache.",
-          retryAfterMs: 10000,
-        });
-      }
-    }, 22000);
-    analyzeGuard.unref();
+    // Chat-First: no proxy guard needed — in-chat requests are not cut off at 30s.
+    // The analysis runs to completion and returns the full result directly.
+    let proxyResponded = false; // kept for compatibility with catch block
     try {
       const parsed = analyzeRequestSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -4901,14 +4887,11 @@ export async function registerRoutes(server: Server, app: Express) {
         wl.tickers = wl.tickers.slice(0, 20);
         fs.writeFileSync(path.join(CACHE_DIR, 'watchlist.json'), JSON.stringify(wl));
       } catch {}
-      clearTimeout(analyzeGuard);
       if (!proxyResponded) {
         proxyResponded = true;
         res.json(analysis);
       }
-      // If proxyResponded=true, analysis was already cached above — client will retry and hit cache
     } catch (error: any) {
-      clearTimeout(analyzeGuard);
       console.error("[ANALYZE] Error:", error?.message);
       // Try to serve cached data as fallback — prefer compatible LLM mode.
       const useLLMCatch = (req.body?.useLLM === true);

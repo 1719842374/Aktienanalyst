@@ -996,15 +996,9 @@ KEINE Floskeln. Jeder Satz muss handlungsrelevant sein. JSON ohne Prosa drumheru
 export function registerResearcherRoutes(app: Express) {
   // Tab 1: Country Macro Pulse
   // === Researcher Route Helper ===
-  // Wraps all heavy researcher endpoints with a proxy-timeout guard.
-  // The pplx.app proxy cuts connections after ~30s. Strategy:
-  // 1. Check cache first (instant)
-  // 2. Start background build (fire & forget)
-  // 3. After PROXY_GUARD_MS: if still building, return 202 "building" signal
-  // 4. On second click: cache will already be written -> instant response
-  const PROXY_GUARD_MS = 25000; // 25s: safe margin before 30s proxy cut
-
-  // In-flight deduplication map: prevents parallel builds for the same key (FM3 fix)
+  // Chat-First mode: no proxy guard (the 30s pplx.app proxy cut doesn't apply in-chat).
+  // Simply run the build, write to cache, return result.
+  // In-flight deduplication prevents parallel builds for the same key.
   const inFlight = new Map<string, Promise<any>>();
 
   async function withProxyGuard<T>(
@@ -1014,31 +1008,12 @@ export function registerResearcherRoutes(app: Express) {
     buildFn: () => Promise<T>,
     writeFn: (result: T) => void,
   ): Promise<void> {
-    let responded = false;
     const dedupeKey = `${cacheType}:${cacheKey}`;
 
-    const guard = setTimeout(() => {
-      if (!responded) {
-        responded = true;
-        console.warn(`[RESEARCHER] Proxy timeout guard fired for ${dedupeKey} — returning 202`);
-        res.status(202).json({
-          __building: true,
-          message: "Analyse l\u00e4uft im Hintergrund (>25s). Bitte in 8\u201310 Sekunden erneut klicken — das Ergebnis steht dann sofort aus dem Cache bereit.",
-          retryAfterMs: 8000,
-        });
-      }
-    }, PROXY_GUARD_MS);
-    // FM6 fix: .unref() so this timer doesn't block graceful shutdown
-    guard.unref();
-
-    // FM3 fix: deduplicate parallel builds for the same key
+    // Deduplicate: if a build is already running for this key, wait for it
     let buildPromise = inFlight.get(dedupeKey);
     if (!buildPromise) {
-      // FM3 fix: hard timeout of 90s on the build itself
-      const hardTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`[RESEARCHER] Hard timeout (90s) for ${dedupeKey}`)), 90000).unref()
-      );
-      buildPromise = Promise.race([buildFn(), hardTimeout])
+      buildPromise = buildFn()
         .then((result) => {
           writeFn(result);
           inFlight.delete(dedupeKey);
@@ -1046,10 +1021,6 @@ export function registerResearcherRoutes(app: Express) {
         })
         .catch((err) => {
           inFlight.delete(dedupeKey);
-          // FM2 fix: write error marker to cache so frontend doesn't retry forever
-          try {
-            writeFn({ __error: true, errorMessage: err?.message || "build failed" } as any);
-          } catch (_) {}
           throw err;
         });
       inFlight.set(dedupeKey, buildPromise);
@@ -1059,22 +1030,10 @@ export function registerResearcherRoutes(app: Express) {
 
     try {
       const result = await buildPromise;
-      clearTimeout(guard);
-      if (!responded) {
-        responded = true;
-        // FM2 fix: don't respond with error marker
-        if ((result as any)?.__error) {
-          res.status(500).json({ error: (result as any).errorMessage || "analysis failed" });
-        } else {
-          res.json(result);
-        }
-      }
+      res.json(result);
     } catch (err: any) {
-      clearTimeout(guard);
-      if (!responded) {
-        responded = true;
-        res.status(500).json({ error: err?.message || "analysis failed" });
-      }
+      console.error(`[RESEARCHER] Build failed for ${dedupeKey}:`, err?.message);
+      res.status(500).json({ error: err?.message || "analysis failed" });
     }
   }
 

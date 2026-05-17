@@ -87,42 +87,26 @@ export default function Researcher() {
         body.peMax = 30;
         body.revenueGrowthMin = 5;
       }
-      // Real polling: checks every 6s for up to 90s total
-      // Backend returns 202 {__building:true} while still computing.
-      // On completion, result is cached — next poll hits cache instantly.
-      const POLL_INTERVAL_MS = 6000;
-      const MAX_POLLS = 15; // 15 × 6s = 90s max
+      // Chat-First: single request, backend returns full result directly (no polling).
+      // Retry only on network-level errors (not on rate-limit or auth errors).
+      const MAX_RETRIES = 3;
       let lastErr: any = null;
-      body.force = body.force ?? true; // first call: bypass cache to start fresh
 
-      for (let poll = 0; poll < MAX_POLLS; poll++) {
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
           const res = await apiRequest("POST", `/api/researcher/${tab}`, body);
           const json = await res.json();
-
-          // Still building — poll again after interval
-          if (json?.__building) {
-            console.log(`[Researcher] Building... poll ${poll + 1}/${MAX_POLLS}`);
-            body.force = false; // subsequent polls read from cache
-            await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-            continue;
-          }
-          // FM2: backend crash marker in cache — fail fast
-          if (json?.__error) {
-            throw new Error(json.errorMessage || "Analyse fehlgeschlagen");
-          }
+          if (json?.__error) throw new Error(json.errorMessage || "Analyse fehlgeschlagen");
           return json;
         } catch (err: any) {
           lastErr = err;
           const msg = err?.message || "";
-          // Don’t retry real errors (rate-limit, auth, user error)
           if (!/^(503|504|408|499)/.test(msg) && !/timeout|abort|network|fetch/i.test(msg)) throw err;
-          // Network-level glitch — wait and retry
           body.force = false;
-          await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+          await new Promise(r => setTimeout(r, 3000));
         }
       }
-      throw lastErr || new Error("Analyse dauert zu lange (>90s). Bitte später erneut versuchen.");
+      throw lastErr || new Error("Analyse fehlgeschlagen. Bitte erneut versuchen.");
     },
     onSuccess: (result, variables) => {
       setData(prev => ({ ...prev, [`${variables.tab}_${region}`]: result }));
