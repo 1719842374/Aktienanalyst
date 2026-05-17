@@ -116,29 +116,31 @@ async function getFmpFallbackData(ticker: string): Promise<{
   const t0 = Date.now();
   try {
     // Fire all FMP calls in parallel — FMP has much higher rate limits than external-tool
-    const [
-      quoteRes, profileRes, incomeRes, cashflowRes, balanceSheetRes,
-      priceTargetRes, gradesRes, estimatesRes, ohlcvRes,
-      segmentsRes, peersRes, ratiosRes,
-    ] = await Promise.allSettled([
-      fmpBatchQuote([ticker]),
-      fmpProfile(ticker),
-      fmpIncomeStatement(ticker, 3),
-      fmpCashFlow(ticker, 3),
-      fmpBalanceSheet(ticker, 1), // Bug 1 fix: fetch balance sheet for totalDebt
-      fmpPriceTarget(ticker),
-      fmpGrades(ticker, 20),
-      fmpAnalystEstimates(ticker, 3),
+    const settledAll = await Promise.allSettled([
+      fmpBatchQuote([ticker]),      // 0: quote
+      fmpProfile(ticker),           // 1: profile
+      fmpIncomeStatement(ticker, 3),// 2: income
+      fmpCashFlow(ticker, 3),       // 3: cashflow
+      fmpBalanceSheet(ticker, 1),   // 4: balanceSheet
+      fmpPriceTarget(ticker),       // 5: priceTarget
+      fmpGrades(ticker, 20),        // 6: grades
+      fmpAnalystEstimates(ticker, 3),// 7: estimates
       fmpHistoricalPrices(ticker,
         new Date(Date.now() - 2 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         new Date().toISOString().split('T')[0]
-      ),
-      fmpSegments(ticker),
-      fmpPeers(ticker),
-      fmpRatios(ticker, 3),
+      ),                            // 8: ohlcv
+      fmpSegments(ticker),          // 9: segments
+      fmpPeers(ticker),             // 10: peers
+      fmpRatios(ticker, 3),         // 11: ratios
+      fmpKeyMetrics(ticker, 3),     // 12: keyMetrics (Layer 4 fix: was imported but never called)
     ]);
     const get = (res: PromiseSettledResult<any>) =>
       res.status === 'fulfilled' ? res.value : null;
+    const [
+      quoteRes, profileRes, incomeRes, cashflowRes, balanceSheetRes,
+      priceTargetRes, gradesRes, estimatesRes, ohlcvRes,
+      segmentsRes, peersRes, ratiosRes, keyMetricsRes
+    ] = settledAll;
     const quoteData = get(quoteRes);
     const quote = Array.isArray(quoteData) ? quoteData[0] : quoteData;
     if (!quote?.price) {
@@ -4996,6 +4998,15 @@ export async function registerRoutes(server: Server, app: Express) {
         console.log(`[BTC] Price: $${btcPrice}, 24h: ${btcChange24h.toFixed(2)}%`);
       } catch (e: any) {
         console.error("[BTC] CoinGecko error:", e?.message?.substring(0, 200));
+      }
+
+      // Layer 5 fix: btcPrice=0 makes all downstream calculations worthless.
+      // Return a clear error instead of serving a broken analysis.
+      if (!btcPrice || btcPrice <= 0) {
+        return res.status(503).json({
+          error: "BTC-Preis konnte nicht abgerufen werden (CoinGecko nicht verf\u00fcgbar oder Rate-Limit). Bitte in 1\u20132 Minuten erneut versuchen.",
+          errorCode: "BTC_PRICE_UNAVAILABLE",
+        });
       }
 
       // === 2. Fear & Greed Index ===

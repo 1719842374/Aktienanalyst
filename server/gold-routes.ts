@@ -376,9 +376,17 @@ export function registerGoldRoutes(server: Server, app: Express) {
         if (m) dxyValue = parseNumber(m[1]);
       }
 
-      // === Parse FRED indicators ===
-      const breakevenRate = fredBreakeven?.value ?? 2.34;
-      const realRate = fredRealRate?.value ?? 2.02;
+      // === Parse FRED indicators with plausibility validation ===
+      // Layer 3 fix: clamp values to realistic ranges to prevent garbage data propagating
+      const clamp = (v: number | undefined, fallback: number, min: number, max: number) => {
+        if (v === undefined || v === null || !isFinite(v) || v < min || v > max) {
+          console.warn(`[GOLD-FRED] Implausible value ${v} for indicator (range ${min}-${max}), using fallback ${fallback}`);
+          return fallback;
+        }
+        return v;
+      };
+      const breakevenRate = clamp(fredBreakeven?.value, 2.34, -2, 15); // Breakeven: -2% to 15%
+      const realRate = clamp(fredRealRate?.value, 2.02, -5, 20);       // Real rate: -5% to 20%
 
       // === M2 YoY growth — computed from FRED M2SL 12-month delta ===
       // FRED M2SL returns level in billions USD. We fetch 13 observations
