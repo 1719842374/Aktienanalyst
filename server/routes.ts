@@ -3533,15 +3533,15 @@ export async function registerRoutes(server: Server, app: Express) {
         fmpData = await getFmpFallbackData(ticker);
 
         if (!fmpData) {
-          // No cache, no FMP — surface the right error
-          if (quoteResult?.__binaryMissing) {
-            return res.status(503).json({
-              error: "Finance-API nicht verf\u00fcgbar: external-tool CLI fehlt und FMP_API_KEY nicht gesetzt. Bitte App neu deployen.",
-              errorCode: "BINARY_MISSING",
-            });
-          }
+          // No cache, no FMP — return RATE_LIMITED in both cases so the
+          // frontend shows the friendly ErrorScreen (not a blank 503).
+          // BINARY_MISSING means the finance connector has no token in this
+          // sandbox context — treated identically to rate-limit from UX perspective.
+          const isBinaryIssue = quoteResult?.__binaryMissing;
           return res.status(429).json({
-            error: "Tagesquota der Finance-API erreicht und kein FMP-Fallback konfiguriert. Reset typischerweise nach 12-24 Std.",
+            error: isBinaryIssue
+              ? "Finance-Connector nicht verf\u00fcgbar. Bitte die Seite im Browser \u00f6ffnen (nicht direkt aufrufen) — der Token wird beim n\u00e4chsten Seitenaufruf refreshed."
+              : "Tagesquota der Finance-API erreicht. Bitte sp\u00e4ter erneut versuchen (Reset nach Mitternacht).",
             errorCode: "RATE_LIMITED",
           });
         }

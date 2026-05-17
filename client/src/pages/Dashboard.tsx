@@ -63,19 +63,30 @@ export default function Dashboard() {
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number } | null>(null);
   const [serverReady, setServerReady] = useState<boolean | null>(null); // null=checking, true=ready, false=down
 
-  // Warmup-Ping: fire /api/health on mount to wake up the sandbox before the
-  // user triggers an analysis. This eliminates cold-start failures on first analyze.
-  // H2 fix: use apiRequest() so URL routing is handled by the same computeApiBase()
-  // logic as all other API calls — no more duplicate URL logic or localhost bugs.
+  // Warmup-Ping + Finance-Quota check on mount:
+  // 1. Wake up the sandbox (cold-start prevention)
+  // 2. Check if Finance-API is available (shows quota status before user submits)
+  const [financeQuotaOk, setFinanceQuotaOk] = useState<boolean | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     const ping = async (attempt = 1) => {
       try {
         const res = await apiRequest("GET", "/api/health");
-        if (!cancelled) setServerReady(res.ok || res.status === 503); // 503=degraded but alive
+        if (!cancelled) {
+          setServerReady(res.ok || res.status === 503);
+          // Also do a quick quota probe (lightweight, uses cached result if available)
+          try {
+            const quotaRes = await fetch(`${window.location.origin}/port/5000/api/cache`);
+            if (!cancelled && quotaRes.ok) {
+              // Cache endpoint responds = server alive, assume quota OK until proven otherwise
+              setFinanceQuotaOk(true);
+            }
+          } catch { /* quota check is best-effort */ }
+        }
       } catch {
         if (!cancelled && attempt < 4) {
-          setTimeout(() => ping(attempt + 1), attempt * 4000); // retry: 4s, 8s, 12s
+          setTimeout(() => ping(attempt + 1), attempt * 4000);
         } else if (!cancelled) {
           setServerReady(false);
         }
@@ -135,6 +146,7 @@ export default function Dashboard() {
             console.warn(`[Analyze] Rate-limit erkannt — keine Retries`);
             setRetryInfo(null);
             setData(null);
+            setFinanceQuotaOk(false); // Show quota warning on WelcomeScreen
             throw err;
           }
           console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${msg.substring(0, 100)}`);
@@ -362,6 +374,8 @@ export default function Dashboard() {
             <WelcomeScreen
               onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLM }); }}
               serverReady={serverReady}
+              financeQuotaOk={financeQuotaOk}
+              onAnalyzeDone={(isRateLimited) => { if (isRateLimited) setFinanceQuotaOk(false); }}
             />
           ) : analyzeMutation.isPending ? (
             <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTicker || ""} retryInfo={retryInfo} />
@@ -409,7 +423,12 @@ function NavToBTC() {
   );
 }
 
-function WelcomeScreen({ onSearch, serverReady }: { onSearch: (ticker: string) => void; serverReady?: boolean | null }) {
+function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }: {
+  onSearch: (ticker: string) => void;
+  serverReady?: boolean | null;
+  financeQuotaOk?: boolean | null;
+  onAnalyzeDone?: (isRateLimited: boolean) => void;
+}) {
   const [, setLocation] = useLocation();
   const tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "TSLA", "AMZN"];
 
@@ -423,8 +442,9 @@ function WelcomeScreen({ onSearch, serverReady }: { onSearch: (ticker: string) =
   return (
     <div className="flex items-center justify-center min-h-full p-8">
       <div className="max-w-lg text-center space-y-6">
-        {/* Server status indicator */}
-        <div className="flex justify-center">
+        {/* Server + Finance-API status indicators */}
+        <div className="flex flex-col items-center gap-1">
+          {/* Server status */}
           {serverReady === null && (
             <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 animate-pulse" />
@@ -437,10 +457,17 @@ function WelcomeScreen({ onSearch, serverReady }: { onSearch: (ticker: string) =
               Server nicht erreichbar — erste Analyse kann länger dauern
             </span>
           )}
-          {serverReady === true && (
+          {serverReady === true && financeQuotaOk !== false && (
             <span className="flex items-center gap-1.5 text-[10px] text-emerald-500/70">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
               Bereit
+            </span>
+          )}
+          {/* Finance-API quota warning */}
+          {financeQuotaOk === false && (
+            <span className="flex items-center gap-1.5 text-[10px] text-amber-500/90 bg-amber-500/10 px-2 py-1 rounded-md">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              Finance-API Tageslimit erreicht — Reset nach Mitternacht. Gecachte Tickers funktionieren.
             </span>
           )}
         </div>

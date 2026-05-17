@@ -1,25 +1,35 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-// Compute API base URL based on environment
-function computeApiBase(): string {
-  const placeholder = "__PORT_" + "5000__"; // split to avoid self-replacement
-  if (!placeholder.startsWith("__")) return placeholder;
-  
-  const loc = typeof window !== 'undefined' ? window.location : null;
-  if (!loc) return ".";
+// Compute API base URL based on environment.
+// IMPORTANT: The string "__PORT_5000__" is a sentinel that publish_website
+// rewrites to the correct proxy path during S3 upload. It must appear as a
+// LITERAL string in the compiled JS bundle — do NOT construct it dynamically.
+// When the sentinel is present (dev/non-published), it starts with "__" and we
+// fall through to the runtime detection logic below.
+const _SENTINEL = "__PORT_" + "5000__"; // split prevents accidental self-replacement
 
-  // Perplexity sandbox proxy (preview via sites.pplx.app)
+function computeApiBase(): string {
+  // If the sentinel was rewritten by publish_website, use it directly
+  const sentinel = "__PORT_5000__";
+  if (!sentinel.startsWith("__")) return sentinel;
+
+  // Dev / local environment
+  const loc = typeof window !== 'undefined' ? window.location : null;
+  if (!loc) return "";
+
+  // Perplexity preview sandbox (sites.pplx.app)
   if (loc.hostname === 'sites.pplx.app') {
     const match = loc.pathname.match(/(\/sites\/proxy\/[^/]+)/);
     if (match) return match[1] + '/port/5000';
   }
 
-  // Perplexity published app (*.pplx.app) — backend on /port/5000
+  // Perplexity published app (*.pplx.app)
+  // Use the sentinel path directly — the proxy handles /port/5000/* routing
   if (loc.hostname.endsWith('.pplx.app')) {
     return '/port/5000';
   }
 
-  // Self-hosted (Railway, Vercel, etc.) — same origin
+  // Self-hosted (Railway, etc.) — same origin, no prefix
   return "";
 }
 
