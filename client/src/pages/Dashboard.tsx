@@ -173,9 +173,19 @@ export default function Dashboard() {
         return;
       }
       setData(result);
+      setFinanceQuotaOk(true); // Clear any quota warning on success
       const prev = dataRef.current;
       if (!result.llmMode || !prev || prev.companyName !== result.companyName) {
         mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    },
+    onError: (err: any, variables: any) => {
+      // Stale-guard: ignore errors from superseded requests
+      // Without this, a stale error from a cancelled request corrupts
+      // isError=true for the current fresh mutation, causing blank screens.
+      if (variables?.reqId !== undefined && variables.reqId !== requestIdRef.current) {
+        console.log(`[Analyze] Ignoring stale error (reqId ${variables.reqId} ≠ current ${requestIdRef.current})`);
+        return;
       }
     },
   });
@@ -405,7 +415,16 @@ export default function Dashboard() {
               <div ref={setSectionRef(17)}><Section13 data={data} /></div>
               <div className="pb-8" />
             </div>
-          ) : null}
+          ) : (
+            // Fallback: data=null + not pending + no error (stale guard race condition)
+            // Always show WelcomeScreen instead of blank white screen
+            <WelcomeScreen
+              onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLM }); }}
+              serverReady={serverReady}
+              financeQuotaOk={financeQuotaOk}
+              onAnalyzeDone={(isRateLimited) => { if (isRateLimited) setFinanceQuotaOk(false); }}
+            />
+          )}
         </main>
       </div>
     </div>
@@ -630,9 +649,10 @@ function ErrorScreen({ error }: { error: Error }) {
         <div className="text-xs text-muted-foreground leading-relaxed bg-muted/20 rounded-lg p-4 text-left space-y-2">
           {isRateLimited ? (
             <>
-              <p>Der Perplexity Finance-Connector hat das tägliche API-Kontingent dieser Sandbox erreicht. Neue Aktienanalysen sind bis zum Reset nicht möglich.</p>
-              <p><span className="text-foreground/80 font-medium">Was jetzt funktioniert:</span> Alle bereits analysierten Tickers in der Watchlist (linke Sidebar) laden aus dem Cache — ohne API-Calls, sofort.</p>
-              <p><span className="text-foreground/80 font-medium">Neue Analysen:</span> Wieder möglich nach dem Reset {resetTime}.</p>
+              <p>Der Finance-Connector ist nicht verfügbar — entweder Tages-Limit erreicht oder der Server-Token ist noch nicht initialisiert.</p>
+              <p><span className="text-foreground/80 font-medium">Lösung 1 (sofort):</span> Seite im Browser neu laden — der Token wird beim nächsten Seitenaufruf automatisch refreshed.</p>
+              <p><span className="text-foreground/80 font-medium">Lösung 2:</span> Bereits analysierte Tickers in der Watchlist (linke Sidebar) laden sofort aus dem Cache.</p>
+              <p><span className="text-foreground/80 font-medium">Falls Tageslimit:</span> Reset {resetTime}.</p>
             </>
           ) : is404 ? (
             <>
