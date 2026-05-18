@@ -2,7 +2,8 @@ import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { formatNumber, formatCurrency } from "../../lib/formatters";
 import { calculateFCFFDCF, type FCFFDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
-import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp } from "lucide-react";
+import React from "react";
+import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, TrendingUp, Globe, AlertTriangle } from "lucide-react";
 import { useState, useMemo } from "react";
 
 interface Props { data: StockAnalysis }
@@ -244,6 +245,47 @@ export function Section11({ data }: Props) {
                             </div>
                           </div>
                         </div>
+
+                        {/* === LLM Deep-Dive Panel === */}
+                        {c.deepDive && (
+                          <div className="mt-2 border-t border-border/20 pt-2 space-y-1.5">
+                            <div className="text-[9px] font-semibold text-primary/70 uppercase tracking-wide">KI-Analyse</div>
+
+                            {c.deepDive.unternehmenskontext && (
+                              <div className="flex items-start gap-1.5">
+                                <Building2 className="w-3 h-3 text-primary flex-shrink-0 mt-0.5" />
+                                <div><span className="font-semibold text-foreground/80">Kontext: </span><span className="text-foreground/70">{c.deepDive.unternehmenskontext}</span></div>
+                              </div>
+                            )}
+                            {c.deepDive.posHerleitung && (
+                              <div className="flex items-start gap-1.5 border-t border-border/10 pt-1">
+                                <Info className="w-3 h-3 text-amber-500 flex-shrink-0 mt-0.5" />
+                                <div><span className="font-semibold text-foreground/80">PoS: </span><span className="text-foreground/70">{c.deepDive.posHerleitung}</span></div>
+                              </div>
+                            )}
+                            {c.deepDive.bewertungsauswirkung && (
+                              <div className="flex items-start gap-1.5 border-t border-border/10 pt-1">
+                                <TrendingUp className="w-3 h-3 text-emerald-500 flex-shrink-0 mt-0.5" />
+                                <div><span className="font-semibold text-foreground/80">Bewertung: </span><span className="text-foreground/70">{c.deepDive.bewertungsauswirkung}</span></div>
+                              </div>
+                            )}
+                            {c.deepDive.marktumfeld && (
+                              <div className="flex items-start gap-1.5 border-t border-border/10 pt-1">
+                                <Globe className="w-3 h-3 text-blue-400 flex-shrink-0 mt-0.5" />
+                                <div><span className="font-semibold text-foreground/80">Markt: </span><span className="text-foreground/70">{c.deepDive.marktumfeld}</span></div>
+                              </div>
+                            )}
+                            {c.deepDive.risiken && (
+                              <div className={`flex items-start gap-1.5 border-t border-border/10 pt-1 rounded p-1 -mx-1 ${c.deepDive.unterschaetzt ? 'bg-emerald-500/8' : ''}`}>
+                                <AlertTriangle className="w-3 h-3 text-red-400 flex-shrink-0 mt-0.5" />
+                                <div className="flex-1"><span className="font-semibold text-foreground/80">Risiken: </span><span className="text-foreground/70">{c.deepDive.risiken}</span></div>
+                                {c.deepDive.unterschaetzt && (
+                                  <span className="flex-shrink-0 text-[8px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1 py-0.5 rounded uppercase">Unterschaetzt</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </td>

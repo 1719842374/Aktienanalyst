@@ -116,6 +116,15 @@ export interface NewsItem {
   matchedCatalystIdx?: number; // Index of matched catalyst (0-4)
 }
 
+export interface CatalystDeepDive {
+  unternehmenskontext: string;   // Warum dieser Katalysator für dieses Unternehmen spezifisch relevant ist
+  posHerleitung: string;         // Begründung der PoS% - unternehmensspezifische Faktoren
+  bewertungsauswirkung: string;  // Konkrete Auswirkung auf Umsatz, Margen, FCF oder DCF
+  marktumfeld: string;           // Externe Treiber: Wettbewerb, Regulation, Macro-Kontext
+  risiken: string;               // Konkrete Risiken die diesen Katalysator verhindern könnten
+  unterschaetzt: boolean;        // Ist Brutto-Upside unterschaetzt gegenueber Konsensus?
+}
+
 export interface Catalyst {
   name: string;
   timeline: string;
@@ -125,6 +134,7 @@ export interface Catalyst {
   nettoUpside: number; // Net upside (calculated)
   gb: number; // Weighted contribution (calculated)
   context?: string; // Business-model-specific context text explaining what needs to happen
+  deepDive?: CatalystDeepDive; // LLM-generated per-catalyst deep dive (Section 15)
   // News-Sentiment linkage
   newsSentiment?: 'bullish' | 'bearish' | 'neutral' | 'mixed'; // Aggregated news sentiment for this catalyst
   newsCount?: number; // Number of news items linked to this catalyst

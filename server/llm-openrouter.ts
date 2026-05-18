@@ -302,6 +302,77 @@ export function isLLMAvailable(): boolean {
   return !!process.env.OPENROUTER_API_KEY;
 }
 
+// === Catalyst Deep-Dive Explanations (Section 15) ===
+// Generates per-catalyst structured deep-dive, mirroring the Risk Deep-Dive in Section 8.
+// Single LLM call for all catalysts to minimize credits.
+export interface CatalystDeepDiveInput {
+  ticker: string;
+  companyName: string;
+  sector: string;
+  description: string;
+  revenue: number;
+  revenueGrowth: number;
+  fcfMargin: number;
+  price: number;
+  analystPT: number;
+  catalysts: Array<{ name: string; pos: number; bruttoUpside: number; einpreisungsgrad: number; context?: string; }>;
+  newsHeadlines?: string[];
+}
+
+export async function generateCatalystDeepDives(
+  input: CatalystDeepDiveInput
+): Promise<Array<{ deepDive: import('../shared/schema').CatalystDeepDive }> | null> {
+  const client = getClient();
+  if (!client) return null;
+  const model = pickModel();
+  const { ticker, companyName, sector, description, revenue, revenueGrowth, fcfMargin, price, analystPT, catalysts, newsHeadlines = [] } = input;
+
+  const newsCtx = newsHeadlines.length > 0 ? `\nAktuelle News: ${newsHeadlines.slice(0, 4).map((h, i) => `N${i + 1}: ${h}`).join(' | ')}` : '';
+  const catList = catalysts.map((c, i) =>
+    `K${i} (idx=${i}): ${c.name} | PoS=${c.pos}% | BruttoUpside=+${c.bruttoUpside}% | Einpreisung=${c.einpreisungsgrad}% | Kontext: ${(c.context || '').substring(0, 100)}`
+  ).join('\n');
+
+  const prompt = `Aktien-Analyst. Unternehmen: ${companyName} (${ticker}), Sektor: ${sector}.
+Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}% | Kurs: $${price.toFixed(2)} | Analyst PT: $${analystPT.toFixed(2)}
+Beschreibung: ${description.substring(0, 300)}${newsCtx}
+
+Katalysatoren:
+${catList}
+
+Erstelle fuer jeden Katalysator ein strukturiertes Deep-Dive-Objekt. Antworte NUR mit JSON:
+{"deepDives":[{"idx":0,"unternehmenskontext":"1-2 Saetze warum spezifisch fuer ${companyName}","posHerleitung":"Begruendung fuer PoS%","bewertungsauswirkung":"Auswirkung auf Umsatz/Margen/DCF","marktumfeld":"Wettbewerb/Regulation/Macro","risiken":"Was koennte diesen Katalysator verhindern","unterschaetzt":false}]}`;
+
+  try {
+    const isGrok = model.startsWith('x-ai/');
+    const completion = await client.chat.completions.create({
+      model,
+      max_tokens: 1100,
+      temperature: 0.25,
+      messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' } as any,
+      ...(isGrok ? { reasoning: { effort: 'none' } } as any : {}),
+    });
+    const text = completion.choices?.[0]?.message?.content?.trim() || '';
+    if (!text) return null;
+    const parsed = JSON.parse(text);
+    const dives = parsed.deepDives || [];
+    if (!Array.isArray(dives) || dives.length === 0) return null;
+    return dives.map((d: any) => ({
+      deepDive: {
+        unternehmenskontext: String(d.unternehmenskontext || ''),
+        posHerleitung: String(d.posHerleitung || ''),
+        bewertungsauswirkung: String(d.bewertungsauswirkung || ''),
+        marktumfeld: String(d.marktumfeld || ''),
+        risiken: String(d.risiken || ''),
+        unterschaetzt: Boolean(d.unterschaetzt ?? false),
+      },
+    }));
+  } catch (err: any) {
+    console.error(`[LLM-CATALYST-DEEPDIVE] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
+    return null;
+  }
+}
+
 // === Risk Deep-Dive Explanations ===
 //
 // Generates structured, company-specific explanations for each risk in the

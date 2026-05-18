@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
-import { generateCatalystsAndMatchNews, generateRiskExplanations } from "./llm-openrouter";
+import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives } from "./llm-openrouter";
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
@@ -4302,7 +4302,26 @@ export async function registerRoutes(server: Server, app: Express) {
           }
         } catch (riskLLMErr: any) {
           console.warn(`[ANALYZE] Risk LLM failed for ${ticker}: ${riskLLMErr?.message || String(riskLLMErr)}`);
-          // Keep template risks without explanations
+        }
+
+        // === Catalyst Deep-Dive Explanations (Section 15) ===
+        // After catalysts are generated, enrich each with a 5-point deep-dive
+        if (catalysts.length > 0) {
+          try {
+            const deepDives = await generateCatalystDeepDives({
+              ticker, companyName, sector, description: description || '',
+              revenue, revenueGrowth, fcfMargin, price,
+              analystPT: analystPTMedian,
+              catalysts: catalysts.map(c => ({ name: c.name, pos: c.pos, bruttoUpside: c.bruttoUpside, einpreisungsgrad: c.einpreisungsgrad, context: c.context })),
+              newsHeadlines: newsHeadlines.slice(0, 4),
+            });
+            if (deepDives && deepDives.length > 0) {
+              catalysts = catalysts.map((c, i) => deepDives[i] ? { ...c, deepDive: deepDives[i].deepDive } : c);
+              console.log(`[ANALYZE] Catalyst deep-dives applied for ${ticker}: ${deepDives.length} catalysts`);
+            }
+          } catch (deepDiveErr: any) {
+            console.warn(`[ANALYZE] Catalyst deep-dive LLM failed for ${ticker}: ${deepDiveErr?.message?.substring(0, 100)}`);
+          }
         }
       }
 

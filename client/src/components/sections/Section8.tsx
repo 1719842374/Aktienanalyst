@@ -332,7 +332,7 @@ export function Section8({ data, useLLM = false }: Props) {
         <AdjCard label="Growth Adj." value={formatPercentNoSign(Math.max(growthAdj, 1), 1)} highlight />
       </div>
 
-      {/* Inverted DCF */}
+      {/* Inverted DCF + Analyst PT Vergleich */}
       <div className={`rounded-lg p-3 border ${
         belowPrice ? "bg-red-500/5 border-red-500/20" : "bg-emerald-500/5 border-emerald-500/20"
       }`}>
@@ -350,6 +350,38 @@ export function Section8({ data, useLLM = false }: Props) {
             </div>
           </div>
         </div>
+
+        {/* Analyst PT Vergleich */}
+        {data.analystPTMedian > 0 && (
+          <div className="mt-2 pt-2 border-t border-border/20 grid grid-cols-2 gap-2 text-[10px]">
+            <div className="space-y-0.5">
+              <div className="text-muted-foreground">Analyst PT (Median)</div>
+              <div className="font-mono font-semibold">{formatCurrency(data.analystPTMedian)}</div>
+              <div className={`font-mono ${
+                data.analystPTMedian > data.currentPrice ? 'text-emerald-500' : 'text-red-500'
+              }`}>
+                {((data.analystPTMedian / data.currentPrice - 1) * 100).toFixed(1)}% vs current
+              </div>
+            </div>
+            <div className="space-y-0.5">
+              <div className="text-muted-foreground">DCF vs. Analyst PT</div>
+              <div className={`font-mono font-semibold ${
+                invertedDCF.perShare >= data.analystPTMedian * 0.7 ? 'text-amber-500' : 'text-red-500'
+              }`}>
+                {invertedDCF.perShare >= data.analystPTMedian * 0.7
+                  ? `⚠️ DCF = ${((invertedDCF.perShare / data.analystPTMedian) * 100).toFixed(0)}% des Analyst PT`
+                  : `🔴 DCF stark unter PT (≤${((invertedDCF.perShare / data.analystPTMedian) * 100).toFixed(0)}%)`
+                }
+              </div>
+              <div className="text-muted-foreground/70">
+                {invertedDCF.perShare < data.analystPTMedian * 0.7
+                  ? 'Analyst PT als Basis empfohlen (Smart Catalyst Selector)'
+                  : 'DCF und Analystenziel konsistent'
+                }
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <RechenWeg title="Risk Adjustment Rechenweg" steps={[
