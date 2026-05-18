@@ -86,6 +86,14 @@ export function Section8({ data, useLLM = false }: Props) {
   }), [data, waccAdj, growthAdj, sp, netDebt, haircut]);
 
   const belowPrice = invertedDCF.perShare < data.currentPrice;
+  // Analyst PT als primäre Referenz wenn verfügbar (realistischer als konservativer DCF)
+  const analystPT = data.analystPT?.median ?? 0;
+  const hasPT = analystPT > 0 && analystPT !== data.currentPrice;
+  // Referenzwert für Abschlag: Analyst PT wenn vorhanden, sonst aktueller Kurs
+  const referenceValue = hasPT ? analystPT : data.currentPrice;
+  const referenceLabel = hasPT ? `Analyst PT (${formatCurrency(analystPT)})` : 'current';
+  const dcfVsReference = (invertedDCF.perShare / referenceValue - 1) * 100;
+  const belowReference = invertedDCF.perShare < referenceValue;
 
   // === KI Analyse Trigger (analog Katalysatoren – nur Grok) ===
   async function triggerKI() {
@@ -139,14 +147,17 @@ export function Section8({ data, useLLM = false }: Props) {
   return (
     <SectionCard number={8} title="INVERSION – RISIKOEINPREISUNG">
 
-      {/* Warnung */}
-      {belowPrice && (
+      {/* Warnung — Referenz ist Analyst PT (nicht current price) */}
+      {belowReference && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">
           <span className="text-red-500 text-lg">⚠</span>
           <div>
-            <div className="text-xs font-bold text-red-500">WARNUNG: Inverted DCF &lt; aktueller Kurs</div>
+            <div className="text-xs font-bold text-red-500">
+              WARNUNG: Inverted DCF {hasPT ? '< Analyst PT' : '< aktueller Kurs'}
+            </div>
             <div className="text-[11px] text-red-400 mt-0.5">
-              Risikoadjustierter Fair Value ({formatCurrency(invertedDCF.perShare)}) unter Kurs ({formatCurrency(data.currentPrice)}).
+              Risikoadjustierter Fair Value ({formatCurrency(invertedDCF.perShare)}) liegt{' '}
+              {Math.abs(dcfVsReference).toFixed(1)}% unter {hasPT ? `Analyst PT (${formatCurrency(analystPT)})` : `Kurs (${formatCurrency(data.currentPrice)})`}.
               Anti-Bias: Erhöhte Vorsicht geboten.
             </div>
           </div>
@@ -347,48 +358,57 @@ export function Section8({ data, useLLM = false }: Props) {
 
       {/* Inverted DCF + Analyst PT Vergleich */}
       <div className={`rounded-lg p-3 border ${
-        belowPrice ? "bg-red-500/5 border-red-500/20" : "bg-emerald-500/5 border-emerald-500/20"
+        belowReference ? "bg-red-500/5 border-red-500/20" : "bg-emerald-500/5 border-emerald-500/20"
       }`}>
         <div className="flex items-center justify-between">
           <div>
             <div className="text-xs font-semibold">Inverted Risk-Adjusted DCF</div>
-            <div className="text-[10px] text-muted-foreground">Using WACC_adj and Growth_adj</div>
+            <div className="text-[10px] text-muted-foreground">
+              {hasPT ? `Abschlag vs. Analyst PT (${formatCurrency(analystPT)})` : 'Using WACC_adj and Growth_adj'}
+            </div>
           </div>
           <div className="text-right">
             <div className="text-lg font-bold font-mono tabular-nums">{formatCurrency(invertedDCF.perShare)}</div>
+            {/* Primär: Abschlag vs Analyst PT. Sekundär: vs aktueller Kurs */}
             <div className={`text-xs font-mono tabular-nums ${
-              invertedDCF.perShare > data.currentPrice ? "text-emerald-500" : "text-red-500"
+              belowReference ? "text-red-500" : "text-emerald-500"
             }`}>
-              {((invertedDCF.perShare / data.currentPrice - 1) * 100).toFixed(1)}% vs current
+              {dcfVsReference.toFixed(1)}% vs {hasPT ? 'Analyst PT' : 'current'}
             </div>
+            {/* Zusätzlich: vs aktueller Kurs als Kontext */}
+            {hasPT && (
+              <div className="text-[10px] text-muted-foreground/60 font-mono">
+                {((invertedDCF.perShare / data.currentPrice - 1) * 100).toFixed(1)}% vs Kurs
+              </div>
+            )}
           </div>
         </div>
 
         {/* Analyst PT Vergleich */}
-        {data.analystPT.median > 0 && (
+        {hasPT && (
           <div className="mt-2 pt-2 border-t border-border/20 grid grid-cols-2 gap-2 text-[10px]">
             <div className="space-y-0.5">
               <div className="text-muted-foreground">Analyst PT (Median)</div>
-              <div className="font-mono font-semibold">{formatCurrency(data.analystPT.median)}</div>
+              <div className="font-mono font-semibold">{formatCurrency(analystPT)}</div>
               <div className={`font-mono ${
-                data.analystPT.median > data.currentPrice ? 'text-emerald-500' : 'text-red-500'
+                analystPT > data.currentPrice ? 'text-emerald-500' : 'text-red-400'
               }`}>
-                {((data.analystPT.median / data.currentPrice - 1) * 100).toFixed(1)}% vs current
+                {((analystPT / data.currentPrice - 1) * 100).toFixed(1)}% vs Kurs
               </div>
             </div>
             <div className="space-y-0.5">
               <div className="text-muted-foreground">DCF vs. Analyst PT</div>
               <div className={`font-mono font-semibold ${
-                invertedDCF.perShare >= data.analystPT.median * 0.7 ? 'text-amber-500' : 'text-red-500'
+                invertedDCF.perShare >= analystPT * 0.7 ? 'text-amber-500' : 'text-red-500'
               }`}>
-                {invertedDCF.perShare >= data.analystPT.median * 0.7
-                  ? `⚠️ DCF = ${((invertedDCF.perShare / data.analystPT.median) * 100).toFixed(0)}% des Analyst PT`
-                  : `🔴 DCF stark unter PT (≤${((invertedDCF.perShare / data.analystPT.median) * 100).toFixed(0)}%)`
+                {invertedDCF.perShare >= analystPT * 0.7
+                  ? `⚠️ DCF = ${((invertedDCF.perShare / analystPT) * 100).toFixed(0)}% des PT`
+                  : `🔴 DCF stark unter PT (≤${((invertedDCF.perShare / analystPT) * 100).toFixed(0)}%)`
                 }
               </div>
               <div className="text-muted-foreground/70">
-                {invertedDCF.perShare < data.analystPT.median * 0.7
-                  ? 'Analyst PT als Basis empfohlen (Smart Catalyst Selector)'
+                {invertedDCF.perShare < analystPT * 0.7
+                  ? 'Analyst PT als Basis empfohlen'
                   : 'DCF und Analystenziel konsistent'
                 }
               </div>
@@ -402,9 +422,13 @@ export function Section8({ data, useLLM = false }: Props) {
         `WACC_adj = Base WACC + Total Damage / 10 = ${formatPercentNoSign(baseWACC)} + ${formatNumber(totalExpectedDamage / 10, 2)}% = ${formatPercentNoSign(waccAdj, 2)}`,
         `Growth_adj = Base Growth - Total Damage / 5 = ${formatPercentNoSign(baseGrowth, 1)} - ${formatNumber(totalExpectedDamage / 5, 2)}% = ${formatPercentNoSign(Math.max(growthAdj, 1), 2)}`,
         `Inverted DCF with adjusted inputs → ${formatCurrency(invertedDCF.perShare)} per share`,
-        belowPrice
-          ? `⚠ WARNUNG: ${formatCurrency(invertedDCF.perShare)} < ${formatCurrency(data.currentPrice)} → Downside dominiert`
-          : `✓ ${formatCurrency(invertedDCF.perShare)} > ${formatCurrency(data.currentPrice)} → Upside-Potenzial vorhanden`,
+        hasPT
+          ? (belowReference
+            ? `⚠ WARNUNG: ${formatCurrency(invertedDCF.perShare)} = ${dcfVsReference.toFixed(1)}% vs Analyst PT (${formatCurrency(analystPT)}) → Abschlag dominiert`
+            : `✓ ${formatCurrency(invertedDCF.perShare)} über Analyst PT (${formatCurrency(analystPT)}) → Risiko eingepreist`)
+          : (belowPrice
+            ? `⚠ WARNUNG: ${formatCurrency(invertedDCF.perShare)} < Kurs (${formatCurrency(data.currentPrice)}) → Downside dominiert`
+            : `✓ ${formatCurrency(invertedDCF.perShare)} > Kurs (${formatCurrency(data.currentPrice)}) → Upside-Potenzial vorhanden`),
       ]} />
     </SectionCard>
   );
