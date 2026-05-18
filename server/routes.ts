@@ -4281,7 +4281,7 @@ export async function registerRoutes(server: Server, app: Express) {
           const enrichedRisks = await generateRiskExplanations({
             ticker,
             companyName,
-            sector,
+            sector: sp?.sector || sector || industry || 'Technology', // use corrected sector
             industry,
             description: description || "",
             revenue,
@@ -4292,7 +4292,6 @@ export async function registerRoutes(server: Server, app: Express) {
             marketCap,
             governmentExposure: govExp.exposure,
             risks,
-            // B3: pass SEC + news context for more specific risk explanations
             keyProjects: keyProjects.slice(0, 5),
             recentNewsHeadlines: newsHeadlines.slice(0, 5),
           });
@@ -4308,10 +4307,17 @@ export async function registerRoutes(server: Server, app: Express) {
         // After catalysts are generated, enrich each with a 5-point deep-dive
         if (catalysts.length > 0) {
           try {
+            // Use sp.sector (sectorProfile-corrected sector) when available
+            // to avoid misclassification (e.g. IFX.DE: FMP returns 'Financial Services',
+            // but sectorProfile correctly identifies it as 'Technology/Semiconductors')
+            const deepDiveSector = sp?.sector || sector || industry || 'Technology';
+            const deepDiveAnalystPT = analystPTMedian > 0 ? analystPTMedian : price; // fallback to price if no PT
             const deepDives = await generateCatalystDeepDives({
-              ticker, companyName, sector, description: description || '',
+              ticker, companyName,
+              sector: deepDiveSector,
+              description: description || '',
               revenue, revenueGrowth, fcfMargin, price,
-              analystPT: analystPTMedian,
+              analystPT: deepDiveAnalystPT,
               catalysts: catalysts.map(c => ({ name: c.name, pos: c.pos, bruttoUpside: c.bruttoUpside, einpreisungsgrad: c.einpreisungsgrad, context: c.context })),
               newsHeadlines: newsHeadlines.slice(0, 4),
             });
