@@ -68,6 +68,28 @@ function writeResearcherCache(tab: string, params: string, data: any) {
   }
 }
 
+function deleteResearcherCache(tab: string, params: string) {
+  try {
+    const file = path.join(CACHE_DIR, `${safeKey(tab)}__${safeKey(params)}.json`);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  } catch (err: any) {
+    console.warn(`[RESEARCHER-CACHE] delete failed: ${err?.message}`);
+  }
+}
+
+// Returns true if a cached result is "stale" — has no real LLM content.
+// Such caches should be invalidated and regenerated.
+function isStaleCache(cached: any): boolean {
+  if (!cached) return false;
+  if (cached.llmSynthesis?._fallback === true) return true;
+  if (cached.modelUsed === "fallback") return true;
+  if (Array.isArray(cached.trends) && cached.trends.length === 0) return true;
+  if (Array.isArray(cached.candidates) && cached.candidates.length === 0) return true;
+  if (Array.isArray(cached.programmes) && cached.programmes.length === 0) return true;
+  if (cached.briefing === null) return true;
+  return false;
+}
+
 // ============================================================
 // Finance API helper (synchronous, throttled — same pattern as recession.ts)
 // ============================================================
@@ -244,18 +266,33 @@ async function buildMacroPulse(region: string): Promise<MacroPulseResult> {
   };
   const hint = regionHints[region] || "";
 
-  const prompt1 = `Hedge-Fund Macro-Analyst. Region: ${regionLabel} (${today}). Kontext: ${dataContext}. Aktuelle Themen: ${hint}.
-Gib NUR dieses JSON auf Deutsch (keine anderen Felder):
-{"summary":"2 S\u00e4tze Gesamtbild","riskFreeRateView":"1 Satz","liquidityView":"1 Satz","fiscalView":"1 Satz","keyDrivers":["Treiber1","Treiber2","Treiber3"],"investmentImplications":["Impl1","Impl2","Impl3"],"actionRecommendation":"Watch","actionRationale":"1 Satz"}`;
+  const prompt1 = `Du bist ein erfahrener Makrostratege bei einem Hedge-Fund.
 
-  const prompt2 = `Hedge-Fund Macro-Analyst. Region: ${regionLabel} (${today}). Kontext: ${hint}.
-Identifiziere genau 3 aktuelle Key Events (${currentYear}, letzte 90 Tage).
-Gib NUR dieses JSON auf Deutsch:
-{"keyEvents":[{"title":"Event-Titel","category":"Geopolitik","severity":"high","timeframe":"Letzte 30 Tage","description":"1-2 S\u00e4tze","inflationImpact":"steigend","rateImpact":"steigend","equityImpact":"negativ","affectedSectors":["Energie"],"rationale":"1 Satz"}]}`;
+Analysiere die Region **${regionLabel}** (Stand: ${today}).
+
+Ber\u00fccksichtige aktiv:
+- Aktuelle Geldpolitik (Zentralbankma\u00dfnahmen, Leitzins, QT/QE)
+- Aktuelle und geplante Fiskalprogramme (Infrastruktur, Subventionen, Verteidigung, Klimaprogramme, Steuerreformen)
+- Staatshaushalt, Schuldenentwicklung und fiskalischer Spielraum
+- Liquidit\u00e4tslage und Geldmengenentwicklung (M2/M3)
+- Relevante geopolitische oder politische Risiken
+
+Makrodaten: ${dataContext}
+Aktuelle Themen: ${hint}
+
+Antworte auf Deutsch NUR mit diesem JSON (keine anderen Felder):
+{"summary":"2 pr\u00e4zise S\u00e4tze Gesamtbild Makrolage","riskFreeRateView":"1 Satz aktuelle Zentralbankpolitik und Leitzins-Ausblick","liquidityView":"1 Satz Liquidit\u00e4tslage M2/M3 und QT/QE-Effekte","fiscalView":"1 Satz aktuelle Fiskalprogramme und Schuldenentwicklung","keyDrivers":["Treiber 1 konkret","Treiber 2 konkret","Treiber 3 konkret"],"investmentImplications":["Implication 1 f\u00fcr Aktien","Implication 2 f\u00fcr Aktien","Implication 3 f\u00fcr Aktien"],"actionRecommendation":"Watch","actionRationale":"1 Satz Begr\u00fcndung der Gesamtempfehlung (Buy/Watch/Avoid)"}`;
+
+  const prompt2 = `Du bist Makrostratege. Region: ${regionLabel} (Stand: ${today}).
+Identifiziere genau 3 aktuelle Key Events der letzten 60-90 Tage mit direktem Markteinfluss.
+Themen: ${hint}
+
+Antworte NUR mit diesem JSON auf Deutsch:
+{"keyEvents":[{"title":"Konkreter Event-Titel mit Datum","category":"Geldpolitik|Fiskalpolitik|Geopolitik|Konjunktur","severity":"high|medium|low","timeframe":"Letzte 30 Tage|Letzte 60 Tage|Letzte 90 Tage","description":"2 konkrete S\u00e4tze mit Zahlen/Fakten","inflationImpact":"steigend|neutral|fallend","rateImpact":"steigend|neutral|fallend","equityImpact":"positiv|neutral|negativ","affectedSectors":["Sektor1","Sektor2"],"rationale":"1 Satz warum marktrelevant"}]}`;
 
   const [llm1, llm2] = await Promise.all([
-    callLLMJson({ prompt: prompt1, maxTokens: 1000 }),
-    callLLMJson({ prompt: prompt2, maxTokens: 1000 }),
+    callLLMJson({ prompt: prompt1, maxTokens: 1200 }),
+    callLLMJson({ prompt: prompt2, maxTokens: 1200 }),
   ]);
 
   let synthesis: any = null;
@@ -319,36 +356,34 @@ interface SectorOpportunityResult {
 async function buildSectorOpportunity(region: string): Promise<SectorOpportunityResult> {
   const regionLabel = REGION_LABELS[region] || region;
 
-  const prompt = `Du bist Sector-Strategist bei einem Hedge-Fund mit Multi-Asset-Mandate. Bewerte für die Region ${regionLabel} (Stand: ${new Date().toISOString().slice(0, 10)}) ALLE 12 fixen Megatrend-Kategorien gleichberechtigt.
+  const today = new Date().toISOString().slice(0, 10);
+  const prompt = `Du bist Sektor- und Themenstratege bei einem Hedge-Fund mit Multi-Asset-Mandate.
 
-WICHTIG — Anti-Bias-Regel:
-- Du MUSST jede der 12 Kategorien einzeln scoren — auch die "langweiligen"
-- Vermeide Hype: Score basiert auf REALEN Wachstumsraten, Margenstabilität, Wettbewerbsdynamik
-- Margin-Risiko-Frage: kann Wettbewerb in dieser Branche die Margen frühzeitig erodieren? (Cloud-SaaS = niedriges Risiko, Solar-Module = hoch)
+Analysiere strukturelle Chancen und Risiken für die Region ${regionLabel} (Stand: ${today}) über ALLE 12 Megatrend-Kategorien gleichberechtigt.
+
+Berücksichtige:
+- Aktuelle und geplante Fiskalprogramme (Subventionen, Infrastruktur, grüne Transformation, Verteidigungsausgaben)
+- Geldpolitische Rahmenbedingungen und deren Sektoreffekte
+- Langfristige Megatrends (AI, Energiewende, Demographie, Nearshoring, De-Globalisierung, Regulierung)
+
+Anti-Bias-Regel: Bewerte JEDE der 12 Kategorien einzeln und gleichberechtigt. Score basiert auf realen Wachstumsraten, Margenstabilität und Wettbewerbsdynamik — kein Hype.
 
 DIE 12 KATEGORIEN:
 ${MEGATRENDS_12.map((m, i) => `${i + 1}. ${m.id}: ${m.label}`).join("\n")}
 
-Gib für jede Kategorie zurück:
+Für jede Kategorie:
 - growthScore (1-10): erwartetes 3-5J Branchenwachstum
-- moatScore (1-10): wie geschützt sind Margen vor Commoditization (10 = Oligopol/IP-Schutz)
-- marginRisk: "low" | "medium" | "high"
-- timeline: wann manifestiert sich der Treiber ("6-12M" / "12-24M" / "24-36M+")
-- reasoning: 2-3 datengetriebene Sätze (DEUTSCH, hedge-fund-style)
-- topPlayers: 3-5 echte Tickers/Firmen aus der Region (US-Tickers, EU-Tickers, Asia-Tickers je nach Region)
-- actionRecommendation: "Buy" | "Watch" | "Avoid"
+- moatScore (1-10): Margenschutz vor Commoditization (10 = Oligopol/IP-Schutz)
+- marginRisk: "low"|"medium"|"high"
+- timeline: "6-12M"|"12-24M"|"24-36M+"
+- reasoning: 2 datengetriebene Sätze auf Deutsch mit konkreten Fiskal-/Trendbezügen
+- topPlayers: 3-5 echte Tickers für die Region ${regionLabel}
+- actionRecommendation: "Buy"|"Watch"|"Avoid"
 
-Antworte mit JSON:
-{
-  "trends": [
-    { "id": "defense", "growthScore": 7, "moatScore": 8, "marginRisk": "low", "timeline": "12-24M", "reasoning": "...", "topPlayers": ["LMT", "RTX", "GD"], "actionRecommendation": "Buy" },
-    ... // alle 12 Kategorien
-  ]
-}
+JSON:
+{"trends":[{"id":"defense","growthScore":8,"moatScore":9,"marginRisk":"low","timeline":"12-24M","reasoning":"...","topPlayers":["LMT","RTX","RHM.DE"],"actionRecommendation":"Buy"}]}`;
 
-Sortierung egal — wir ranken anschließend nach (growthScore × moatScore).`;
-
-  const llm = await callLLMJson({ prompt, maxTokens: 1000 });
+  const llm = await callLLMJson({ prompt, maxTokens: 1400 });
   if (!llm?.data?.trends || !Array.isArray(llm.data.trends)) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
@@ -480,32 +515,35 @@ JSON: { "candidates": [{ "ticker": "...", "companyName": "...", "sector": "...",
     price: Number(c.price || 0),
   })).filter(c => c.ticker);
 
-  const rankPrompt = `Du bist Equity-Analyst bei einem Long-Only Value-Hedge-Fund. Bewerte folgende ${compactList.length} Aktien (Stand: ${new Date().toISOString().slice(0, 10)}) auf Moat-Stärke und Margin-Risiko.
+  const rankPrompt = `Du bist fundamental orientierter Investor bei einem Value-Hedge-Fund.
 
-KANDIDATEN:
-${compactList.map((c, i) => `${i + 1}. ${c.ticker} (${c.companyName}) — ${c.sector}/${c.industry}, MCap $${(c.marketCap / 1e9).toFixed(1)}B, P/E ${c.pe}, RevGrowth ${c.revenueGrowth}%`).join("\n")}
+Analysiere diese ${compactList.length} Unternehmen auf strukturelle Unterbewertung (Stand: ${new Date().toISOString().slice(0,10)}).
 
-Für JEDE Aktie liefere:
-- moatScore (1-10): wie verteidigungsfähig ist die Wettbewerbsposition? (10 = quasi-Monopol mit IP/Switching-Costs)
-- marginRiskScore (1-10): Risiko, dass Wettbewerb die Margen erodiert (10 = sehr hoch)
-- growthDrivers: 2-3 BREITE Wachstumstreiber (NICHT nur AI/Capex — denke an alle Megatrends)
-- risks: 2-3 konkrete Risiken
-- actionRecommendation: "Buy" | "Watch" | "Avoid"
-- rationale: 1-2 Sätze (DEUTSCH)
+Berücksichtige:
+- Bewertungsniveau im historischen und sektoralen Vergleich (P/E, EV/EBITDA, FCF-Yield)
+- Qualität des Geschäftsmodells und Wettbewerbsvorteile (Moat)
+- Bilanzstärke und Cashflow-Qualität
+- Fiskal- und Regulierungseffekte die noch nicht eingepreist sind
+- Potenzielle Katalysatoren oder Risiken
 
-JSON-Format:
-{
-  "rankings": [
-    { "ticker": "AAPL", "moatScore": 9, "marginRiskScore": 3, "growthDrivers": ["Service Subscriptions", "Vision Pro Adoption"], "risks": ["China Slowdown"], "actionRecommendation": "Watch", "rationale": "..." }
-  ]
-}`;
+Kandidaten:
+${compactList.map((c, i) => `${i+1}. ${c.ticker} (${c.companyName}) — ${c.sector}/${c.industry}, MCap $${(c.marketCap/1e9).toFixed(1)}B, P/E ${c.pe || 'n/a'}, RevGrowth ${c.revenueGrowth || 'n/a'}%`).join("\n")}
 
-  const llm = await callLLMJson({ prompt: rankPrompt, maxTokens: 800 });
+Wähle die TOP 8 aus. Für jeden: moatScore (1-10), marginRiskScore (1-10 = höchstes Risiko), rationale (2 Sätze konkret), growthDrivers (2-3 Bullet Points), risks (2-3 Bullet Points), actionRecommendation (Buy/Watch/Avoid).
+
+Bleib konservativ (Anti-Bias: kein Hype, kein Recency Bias).
+
+JSON: {"ranked":[{"ticker":"...","moatScore":7,"marginRiskScore":3,"rationale":"...","growthDrivers":["..."],"risks":["..."],"actionRecommendation":"Watch"}]}`;
+
+  const llm = await callLLMJson({ prompt: rankPrompt, maxTokens: 1200 });
   const rankingsByTicker = new Map<string, any>();
-  if (llm?.data?.rankings && Array.isArray(llm.data.rankings)) {
-    for (const r of llm.data.rankings) {
-      if (r?.ticker) rankingsByTicker.set(String(r.ticker).toUpperCase(), r);
-    }
+  const rankedList = (llm?.data?.ranked && Array.isArray(llm.data.ranked))
+    ? llm.data.ranked
+    : (llm?.data?.rankings && Array.isArray(llm.data.rankings))
+      ? llm.data.rankings
+      : [];
+  for (const r of rankedList) {
+    if (r?.ticker) rankingsByTicker.set(String(r.ticker).toUpperCase(), r);
   }
 
   const enriched = compactList.map(c => {
@@ -543,6 +581,16 @@ interface CapexFiscalResult {
   region: string;
   regionLabel: string;
   asOf: string;
+  headline?: string;
+  summary?: string;
+  sectors?: string[];
+  sectorExposure?: Array<{
+    sector: string;
+    impact: "positiv" | "neutral" | "negativ";
+    reasoning: string;
+    programmes: string[];
+    timeline: string;
+  }>;
   programmes: Array<{
     name: string;
     category: "Fiscal Stimulus" | "Tax Cut/Incentive" | "Capex Programme" | "Deregulation" | "Subsidy";
@@ -621,79 +669,79 @@ async function buildCapexFiscal(region: string): Promise<CapexFiscalResult> {
   };
   const mustInclude = (MUST_INCLUDE[region] || MUST_INCLUDE.US).map(s => `  - ${s}`).join("\n");
 
-  const prompt = `Du bist Fiscal-Policy-Analyst bei einem Macro Hedge-Fund (Bridgewater-Style). Aufgabe: Erstelle einen AKTUELLEN, BREITEN Überblick über die wichtigsten Fiskal-/Capex-/Subventions-/Tarif-Programme für die Region ${regionLabel} (Länder: ${countries.join(", ")}) — Stand ${today}.
+  // Note: `mustInclude` and `currentYear` are intentionally not interpolated into
+  // the new prompt (the prompt spec is concise by design) but we keep them so
+  // they remain available if future iterations want to re-inject them.
+  void mustInclude; void currentYear;
 
-ECHTE GOVERNMENT-SPENDING-DATEN (Trading Economics):
-${macroSnippet || "(keine — bewerte qualitativ)"}
+  const prompt = `Du bist Kapitalmarktstratege mit Fokus auf Investitionszyklen und Fiskalpolitik.
 
-=== KRITISCHE REGELN ===
+Analysiere aktuelle und geplante Capex-Entwicklungen sowie fiskalpolitische Impulse für ${regionLabel} (Stand: ${today}).
 
-1. **AKTUALITÄT**: Du MUSST Programme aus ${currentYear - 1} und ${currentYear} mit aufnehmen — nicht nur 2021-2023er Klassiker. Beispiele für ${currentYear}er Pakete in dieser Region:
-${mustInclude}
+Berücksichtige:
+- Laufende und angekündigte Fiskalprogramme (Infrastruktur, grüne Transformation, Chip-Subventionen, Verteidigung, Industriepolitik)
+- Staatliche und unternehmerische Capex-Trends
+- Auswirkungen der Geldpolitik auf Investitionsbereitschaft
 
-2. **VOLLSTÄNDIGKEIT**: Wenn das genannte Programm tatsächlich existiert (selbst wenn nur angekündigt), liste es. Du darfst KEINE der oben genannten Pflicht-Programme weglassen, sofern sie für diese Region relevant sind.
+Makro-Kontext: ${macroSnippet || "Keine Daten verfügbar — qualitative Einschätzung"}
 
-3. **BREITE statt TIEFE**: Anti-Bias-Pflicht — listet alle Kategorien gleichberechtigt:
-   - Defense / Geopolitik / Rüstungsbudgets
-   - Energy Transition / Renewables / Wasserstoff
-   - Semiconductors / Chips / Tech-Sovereignty
-   - Infrastructure / Construction / Transport
-   - Healthcare / Biotech / Pandemie-Vorsorge
-   - Tax Reforms / TCJA-Extensions / Bonus-Depreciation
-   - Tariffs / Trade Policy / Reshoring-Incentives
-   - AI / Compute / Datenzentren
-   - Reshoring / Onshoring / Buy-American-Style
+Erstelle eine Übersicht der wichtigsten Sektoren die von Capex und Fiskalpolitik profitieren oder leiden.
+Für jeden Sektor: impact ("positiv"|"neutral"|"negativ"), reasoning (2 Sätze konkret mit Programmreferenzen), programmes (2-3 konkrete Programmnamen), timeline ("0-12M"|"12-24M"|"24-36M+").
 
-4. **PROAKTIV**: Suche selbst nach bekannten Mega-Paketen, die ${currentYear} aktuell sind (auch falls oben nicht aufgelistet). Beispiele für die Art von Programmen, die du finden solltest: Mega-Steuerpakete, neue Defense Authorization Acts, neue Sondervermögen, Trump-Era Executive Orders zu Tariffs/Energy, China Property Rescue Packages, Japan Supplementary Budgets, Indien Union Budget Capex.
+Gib auch sectors (5 Sektor-IDs mit höchstem Capex-Exposure), headline (1 Satz Kernaussage), summary (2 Sätze Gesamteinschätzung).
 
-5. **MENGE**: 10-15 Programme. Liste lieber zu viele als zu wenige.
+JSON:
+{"headline":"...","summary":"...","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname","region":"${regionLabel}","budget":"$Xbn","timeline":"2024-2026","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv"}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"...","programmes":["NDAA 2025","EU-Verteidigungsfonds"],"timeline":"12-24M"}]}`;
 
-Ausgabe als JSON:
-{
-  "programmes": [
-    {
-      "name": "Programm-Name (mit Jahr falls eindeutig)",
-      "category": "Capex Programme" | "Fiscal Stimulus" | "Tax Cut/Incentive" | "Subsidy" | "Deregulation",
-      "region": "Land oder Region",
-      "amountUSD": "$XXXB oder €XXXB",
-      "timeline": "YYYY-YYYY",
-      "sectors": ["Sektor1", "Sektor2"],
-      "beneficiaries": ["TICKER1", "TICKER2", "Branche"],
-      "status": "Active" | "Announced" | "In Implementation" | "Phasing Out",
-      "impact": "high" | "medium" | "low",
-      "rationale": "1-2 Sätze: WARUM relevant + Marktauswirkung (DEUTSCH)"
-    }
-  ],
-  "totalCapexEstimate": "Aggregierte Schätzung über alle Programme",
-  "govSpendingTrend": "1-2 Sätze: Trend Government Spending to GDP basierend auf den echten Daten oben"
-}
-
-Antwort ausschließlich auf Deutsch. JSON, keine Prosa drumherum.`;
-
-  const llm = await callLLMJson({ prompt, maxTokens: 1000 });
-  if (!llm?.data?.programmes) {
+  const llm = await callLLMJson({ prompt, maxTokens: 1200 });
+  if (!llm?.data) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
       programmes: [], totalCapexEstimate: "", govSpendingTrend: "",
     };
   }
-  const programmes = (llm.data.programmes as any[]).slice(0, 12).map(p => ({
-    name: String(p.name || "Unknown"),
-    category: (["Fiscal Stimulus", "Tax Cut/Incentive", "Capex Programme", "Deregulation", "Subsidy"].includes(p.category) ? p.category : "Capex Programme") as any,
-    region: String(p.region || regionLabel),
-    amountUSD: p.amountUSD ? String(p.amountUSD) : undefined,
-    timeline: String(p.timeline || ""),
-    sectors: Array.isArray(p.sectors) ? p.sectors.slice(0, 5).map(String) : [],
-    beneficiaries: Array.isArray(p.beneficiaries) ? p.beneficiaries.slice(0, 6).map(String) : [],
-    status: (["Active", "Announced", "In Implementation", "Phasing Out"].includes(p.status) ? p.status : "Active") as any,
-    impact: (["high", "medium", "low"].includes(p.impact) ? p.impact : "medium") as any,
-    rationale: String(p.rationale || ""),
-  }));
+  const d = llm.data;
+  const rawProgrammes = Array.isArray(d.programmes) ? d.programmes : [];
+  // Map new prompt shape (name, region, budget, timeline, beneficiarySectors, description, impact)
+  // onto the existing FE shape (name, category, region, amountUSD, timeline, sectors, beneficiaries, status, impact, rationale).
+  const programmes = rawProgrammes.slice(0, 15).map((p: any) => {
+    const impactStr = String(p.impact || "").toLowerCase();
+    const fiscalImpact: "high" | "medium" | "low" =
+      impactStr === "positiv" ? "high"
+      : impactStr === "negativ" ? "low"
+      : (["high", "medium", "low"].includes(impactStr) ? impactStr as any : "medium");
+    return {
+      name: String(p.name || "Unknown"),
+      category: (["Fiscal Stimulus", "Tax Cut/Incentive", "Capex Programme", "Deregulation", "Subsidy"].includes(p.category) ? p.category : "Capex Programme") as any,
+      region: String(p.region || regionLabel),
+      amountUSD: p.budget ? String(p.budget) : (p.amountUSD ? String(p.amountUSD) : undefined),
+      timeline: String(p.timeline || ""),
+      sectors: Array.isArray(p.beneficiarySectors) ? p.beneficiarySectors.slice(0, 5).map(String)
+        : Array.isArray(p.sectors) ? p.sectors.slice(0, 5).map(String) : [],
+      beneficiaries: Array.isArray(p.beneficiaries) ? p.beneficiaries.slice(0, 6).map(String) : [],
+      status: (["Active", "Announced", "In Implementation", "Phasing Out"].includes(p.status) ? p.status : "Active") as any,
+      impact: fiscalImpact,
+      rationale: String(p.description || p.rationale || ""),
+    };
+  });
+
+  const sectorExposure = Array.isArray(d.sectorExposure) ? d.sectorExposure.map((s: any) => ({
+    sector: String(s.sector || ""),
+    impact: (["positiv", "neutral", "negativ"].includes(s.impact) ? s.impact : "neutral") as any,
+    reasoning: String(s.reasoning || ""),
+    programmes: Array.isArray(s.programmes) ? s.programmes.slice(0, 5).map(String) : [],
+    timeline: String(s.timeline || ""),
+  })) : [];
+
   return {
     region, regionLabel, asOf: new Date().toISOString(),
+    headline: d.headline ? String(d.headline) : undefined,
+    summary: d.summary ? String(d.summary) : undefined,
+    sectors: Array.isArray(d.sectors) ? d.sectors.slice(0, 8).map(String) : undefined,
+    sectorExposure: sectorExposure.length ? sectorExposure : undefined,
     programmes,
-    totalCapexEstimate: String(llm.data.totalCapexEstimate || ""),
-    govSpendingTrend: String(llm.data.govSpendingTrend || ""),
+    totalCapexEstimate: String(d.totalCapexEstimate || d.summary || ""),
+    govSpendingTrend: String(d.govSpendingTrend || d.headline || ""),
     modelUsed: llm.modelUsed,
   };
 }
@@ -916,54 +964,78 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
     `- [${e.region}/${e.changeType}/${e.severity}] ${e.title}\n  Inflation: ${e.inflationImpact} | Rate: ${e.rateImpact} | Equity: ${e.equityImpact}\n  Sektoren: ${e.affectedSectors.join(", ") || "—"}\n  ${e.description}\n  Mechanismus: ${e.rationale}`
   ).join("\n\n");
 
-  const prompt = `Du bist Senior Macro Strategist eines Multi-Strategy Hedge-Fund. Verfasse das Pre-Market-Briefing für ${today}, basierend auf den NET-NEW Key Events seit dem letzten Run (gestern).
+  const contextStr = eventBlock;
 
-NET-NEW EVENTS (${diffed.length} Stk., bereits gefiltert auf Severity=high oder DIRECTION_FLIP oder NEW):
+  const prompt = `Du bist täglicher Marktstratege bei einem Hedge-Fund.
 
-${eventBlock}
+Erstelle ein kompaktes Pre-Market Briefing für heute (${today}).
 
-Aufgabe: Top 3 Changes ranken (nach DCF-Impact + Severity), pro Change DCF-Implikationen ableiten:
-- WACC-Delta in Basispunkten (z.B. "+15 bps" wenn Risk-Free Rate steigt) — KONKRETE ZAHL
-- Betroffene Sektoren (max 4)
-- Exposure-Typ: long | short | hedge | reduce
-- Konkrete Action (1 Satz, handlungsrelevant)
+Berücksichtige:
+- Wichtige geld- und fiskalpolitische Neuigkeiten der letzten 24-48 Stunden
+- Relevante geopolitische oder politische Entwicklungen
+- Bedeutende Unternehmensnachrichten mit Markteinordnung
+- Aktuelle Marktstimmung und mögliche Risiken für die nächsten Handelstage
 
-JSON-Output, ausschließlich Deutsch, hedge-fund-knapp:
-{
-  "headline": "1 Zeile: Was ist die wichtigste Änderung? (max 80 Zeichen)",
-  "summary": "3-4 Sätze: Pre-Market State of the World. Wie haben sich die Bedingungen seit gestern geshiftet?",
-  "topChanges": [
-    {
-      "rank": 1,
-      "title": "Event-Titel",
-      "region": "US|EU|ASIA",
-      "severity": "high|medium|low",
-      "changeType": "NEW|ESCALATED|DIRECTION_FLIP",
-      "description": "1-2 Sätze: Kontext + warum es heute matters",
-      "dcfImplications": {
-        "waccDeltaBps": "+12 bps" | "-8 bps" | "~0 bps",
-        "affectedSectors": ["Sektor1", "Sektor2"],
-        "exposureType": "long|short|hedge|reduce"
-      },
-      "action": "1 Satz, hedge-fund-knapp, handlungsrelevant"
+Kontext der letzten Sessions: ${contextStr || "Keine Vordaten — freie Einschätzung"}
+
+Gib am Ende eine klare taktische Einschätzung: "Vorsichtig" | "Neutral" | "Opportunistisch"
+
+JSON:
+{"headline":"1 prägnanter Satz","summary":"2-3 Sätze Gesamtbild","tacticalStance":"Neutral","stanceRationale":"1 Satz Begründung","topChanges":[{"rank":1,"title":"Event-Titel","category":"Makro|Geopolitik|Earnings|Fed|Regulierung","impact":"positiv|neutral|negativ","severity":"high|medium|low","description":"2 konkrete Sätze","dcfImplication":"1 Satz Auswirkung auf DCF/Bewertung","affectedTickers":["AAPL","MSFT"]}],"riskRadar":["Risiko 1","Risiko 2","Risiko 3"],"watchlist":["Ticker1 — Grund","Ticker2 — Grund"]}`;
+
+  const llm = await callLLMJson({ prompt, maxTokens: 1200 });
+  const briefing: any = llm?.data || null;
+
+  // Adapt new prompt shape to existing FE shape: derive keyMetricsShift +
+  // recommendation from tacticalStance / stanceRationale so the BriefingModal
+  // keeps rendering.
+  if (briefing) {
+    if (Array.isArray(briefing.topChanges)) {
+      briefing.topChanges = briefing.topChanges.slice(0, 3).map((c: any, idx: number) => {
+        // Map dcfImplication (string) → dcfImplications (object) for FE compatibility.
+        const dcfStr = c.dcfImplication ? String(c.dcfImplication) : "";
+        const dcfObj = c.dcfImplications || {};
+        const impactStr = String(c.impact || "").toLowerCase();
+        const exposure = impactStr === "positiv" ? "long"
+          : impactStr === "negativ" ? "short"
+          : (dcfObj.exposureType || "hedge");
+        return {
+          rank: c.rank || idx + 1,
+          title: String(c.title || ""),
+          region: c.region || "",
+          severity: c.severity || "medium",
+          changeType: c.changeType || "NEW",
+          description: String(c.description || ""),
+          category: c.category,
+          impact: c.impact,
+          dcfImplications: {
+            waccDeltaBps: dcfObj.waccDeltaBps || "~0 bps",
+            affectedSectors: Array.isArray(dcfObj.affectedSectors) ? dcfObj.affectedSectors
+              : Array.isArray(c.affectedTickers) ? c.affectedTickers.slice(0, 4) : [],
+            exposureType: exposure,
+          },
+          dcfImplication: dcfStr,
+          affectedTickers: Array.isArray(c.affectedTickers) ? c.affectedTickers : undefined,
+          action: c.action || dcfStr || "",
+        };
+      });
     }
-  ],
-  "keyMetricsShift": {
-    "inflationView": "1 Satz: Welche Richtung in den nächsten 30 Tagen?",
-    "rateView": "1 Satz: 10Y-Yield-Erwartung / Fed-Pfad",
-    "equityView": "1 Satz: Risk-On/Off, Sektor-Rotation"
-  },
-  "recommendation": "1-2 Sätze: Konkrete Pre-Market-Handlung. Defensive Rotation? Energy-Long? Duration-Cut?"
-}
-
-KEINE Floskeln. Jeder Satz muss handlungsrelevant sein. JSON ohne Prosa drumherum.`;
-
-  const llm = await callLLMJson({ prompt, maxTokens: 800 });
-  const briefing = llm?.data || null;
-
-  // Limit to top 3 changes
-  if (briefing && Array.isArray(briefing.topChanges)) {
-    briefing.topChanges = briefing.topChanges.slice(0, 3);
+    // Derive keyMetricsShift if missing — keeps the FE MetricShift cards populated.
+    if (!briefing.keyMetricsShift) {
+      const stance = String(briefing.tacticalStance || "Neutral");
+      briefing.keyMetricsShift = {
+        inflationView: briefing.stanceRationale ? `Stance: ${stance} — ${briefing.stanceRationale}` : `Marktstimmung: ${stance}`,
+        rateView: "Siehe Kontext zu geld-/fiskalpolitischen Entwicklungen oben.",
+        equityView: stance === "Opportunistisch" ? "Risk-On — selektive Long-Exposure"
+          : stance === "Vorsichtig" ? "Risk-Off — defensive Rotation"
+          : "Risk-Neutral — Positionierung beibehalten",
+      };
+    }
+    if (!briefing.recommendation) {
+      briefing.recommendation = briefing.stanceRationale
+        ? `${briefing.tacticalStance || "Neutral"}: ${briefing.stanceRationale}`
+        : `Taktische Einschätzung: ${briefing.tacticalStance || "Neutral"}.`;
+    }
   }
 
   return {
@@ -1031,7 +1103,10 @@ export function registerResearcherRoutes(app: Express) {
     }
     if (!force) {
       const cached = readResearcherCache("macro", region);
-      if (cached) {
+      if (cached && isStaleCache(cached)) {
+        console.log(`[RESEARCHER/macro] cache STALE — invalidating region=${region}`);
+        deleteResearcherCache("macro", region);
+      } else if (cached) {
         console.log(`[RESEARCHER/macro] cache HIT region=${region} age=${cached._cacheAge}min`);
         return res.json(cached);
       }
@@ -1052,7 +1127,10 @@ export function registerResearcherRoutes(app: Express) {
     }
     if (!force) {
       const cached = readResearcherCache("sectors", region);
-      if (cached) {
+      if (cached && isStaleCache(cached)) {
+        console.log(`[RESEARCHER/sectors] cache STALE (empty trends or fallback) — invalidating region=${region}`);
+        deleteResearcherCache("sectors", region);
+      } else if (cached) {
         console.log(`[RESEARCHER/sectors] cache HIT region=${region} age=${cached._cacheAge}min`);
         return res.json(cached);
       }
@@ -1078,7 +1156,10 @@ export function registerResearcherRoutes(app: Express) {
     const cacheKey = `${filters.region}_mc${filters.marketCapMin || 0}-${filters.marketCapMax || 0}_pe${filters.peMax || 0}_rg${filters.revenueGrowthMin || 0}_${filters.sector || "all"}`;
     if (!force) {
       const cached = readResearcherCache("screener", cacheKey);
-      if (cached) {
+      if (cached && isStaleCache(cached)) {
+        console.log(`[RESEARCHER/screener] cache STALE — invalidating key=${cacheKey}`);
+        deleteResearcherCache("screener", cacheKey);
+      } else if (cached) {
         console.log(`[RESEARCHER/screener] cache HIT key=${cacheKey} age=${cached._cacheAge}min`);
         return res.json(cached);
       }
@@ -1099,7 +1180,10 @@ export function registerResearcherRoutes(app: Express) {
     }
     if (!force) {
       const cached = readResearcherCache("capex", region);
-      if (cached) {
+      if (cached && isStaleCache(cached)) {
+        console.log(`[RESEARCHER/capex] cache STALE — invalidating region=${region}`);
+        deleteResearcherCache("capex", region);
+      } else if (cached) {
         console.log(`[RESEARCHER/capex] cache HIT region=${region} age=${cached._cacheAge}min`);
         return res.json(cached);
       }
@@ -1117,7 +1201,10 @@ export function registerResearcherRoutes(app: Express) {
     const force = req.body?.force === true;
     if (!force) {
       const cached = readBriefingResultCache();
-      if (cached) {
+      if (cached && (cached.briefing === null || (cached as any).modelUsed === "fallback")) {
+        console.log(`[BRIEFING] cache STALE (null briefing) — invalidating`);
+        try { fs.unlinkSync(path.join(CACHE_DIR, "briefing-result.json")); } catch {}
+      } else if (cached) {
         console.log(`[BRIEFING] cache HIT (Berlin-date) age=${(cached as any)._cacheAgeMin}min`);
         return res.json(cached);
       }

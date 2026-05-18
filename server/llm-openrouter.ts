@@ -574,7 +574,7 @@ export async function callLLMJson(opts: {
     if (opts.systemPrompt) messages.push({ role: "system", content: opts.systemPrompt });
     messages.push({ role: "user", content: opts.prompt });
     const { text, modelUsed, usage } = await callWithFallback(client, {
-      max_tokens: Math.min(opts.maxTokens ?? 900, 1200),
+      max_tokens: Math.min(opts.maxTokens ?? 900, 1500),
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,

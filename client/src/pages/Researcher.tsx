@@ -136,6 +136,18 @@ export default function Researcher() {
 
   const isLoading = mutation.isPending;
 
+  // Stale cache detection — a cached result that has no real LLM content
+  // (fallback synthesis, empty trends array, or "fallback" model marker).
+  // When stale we show a yellow warning + amber-glow refresh button.
+  const isStale = !!currentData && (
+    currentData._fallback === true ||
+    currentData?.llmSynthesis?._fallback === true ||
+    currentData?.modelUsed === "fallback" ||
+    (Array.isArray(currentData.trends) && currentData.trends.length === 0) ||
+    (Array.isArray(currentData.candidates) && currentData.candidates.length === 0) ||
+    (Array.isArray(currentData.programmes) && currentData.programmes.length === 0)
+  );
+
   return (
     <div className="h-screen overflow-y-auto bg-background text-foreground">
       {/* Header */}
@@ -229,9 +241,15 @@ export default function Researcher() {
             <div className="text-[11px] text-foreground/50 mt-0.5">
               {TABS.find(t => t.id === activeTab)?.description}
             </div>
-            {currentData?._cached && (
+            {currentData?._cached && !isStale && (
               <div className="text-[10px] text-emerald-400/70 mt-1">
                 Gecachte Analyse — vor {currentData._cacheAge < 60 ? `${currentData._cacheAge} Min` : `${Math.round(currentData._cacheAge / 60)} Std`} erstellt · 0 Credits
+              </div>
+            )}
+            {isStale && (
+              <div className="text-[10px] text-amber-300/90 mt-1 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" />
+                Gecachte Analyse ohne KI-Inhalt — bitte "Aktualisieren" klicken
               </div>
             )}
           </div>
@@ -248,11 +266,15 @@ export default function Researcher() {
             {currentData && !isLoading && (
               <button
                 onClick={() => runAnalysis(true)}
-                className="px-2 py-1.5 rounded-md text-foreground/50 hover:text-foreground hover:bg-muted/40 text-[10px] flex items-center gap-1 transition-colors"
-                title="Neue Analyse erzwingen (verbraucht Credits)"
+                className={
+                  isStale
+                    ? "px-3 py-1.5 rounded-md bg-amber-500/15 border border-amber-400/60 text-amber-200 text-[11px] font-semibold flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(251,191,36,0.35)] hover:bg-amber-500/25"
+                    : "px-2 py-1.5 rounded-md text-foreground/50 hover:text-foreground hover:bg-muted/40 text-[10px] flex items-center gap-1 transition-colors"
+                }
+                title={isStale ? "KI-Inhalt fehlt — neu generieren" : "Neue Analyse erzwingen (verbraucht Credits)"}
                 data-testid="button-refresh-analysis"
               >
-                <RefreshCw className="w-3 h-3" /> Aktualisieren
+                <RefreshCw className={isStale ? "w-3.5 h-3.5" : "w-3 h-3"} /> Aktualisieren
               </button>
             )}
             {isLoading && (
@@ -679,8 +701,24 @@ function KeyEventCard({ ev }: { ev: any }) {
 function SectorsPanel({ data }: { data: any }) {
   const trends: any[] = data.trends || [];
   const topPicks: string[] = data.topPicks || [];
+  const sectorsStale = data?.modelUsed === "fallback" || trends.length === 0;
   return (
     <div className="space-y-4">
+      {sectorsStale ? (
+        <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <div>
+            <div className="text-[11px] font-semibold text-rose-200">KI nicht verfügbar — Daten veraltet</div>
+            <div className="text-[10px] text-rose-300/80 mt-0.5">
+              Keine Sector-Trends generiert. Bitte "Aktualisieren" oben klicken.
+            </div>
+          </div>
+        </div>
+      ) : data?._cached ? (
+        <div className="text-[10px] text-emerald-400/70">
+          Gecachte Analyse — vor {data._cacheAge < 60 ? `${data._cacheAge} Min` : `${Math.round(data._cacheAge / 60)} Std`} erstellt · 0 Credits
+        </div>
+      ) : null}
       {topPicks.length > 0 && (
         <div className="rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">
           <div className="text-[10px] text-violet-300 uppercase tracking-wider mb-2 flex items-center gap-1.5">
