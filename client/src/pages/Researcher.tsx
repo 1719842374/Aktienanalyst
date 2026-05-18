@@ -344,10 +344,15 @@ function BriefingModal({ loading, data, error, onClose, onRetry, onForceRefresh 
           <h2 className="text-sm font-semibold text-foreground/95">Pre-Market Briefing</h2>
           {isCached && data && !loading ? (
             <span className="text-[10px] text-emerald-400/80 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-400/20">
-              ✓ Heute generiert{cacheAge != null ? ` · vor ${cacheAge < 60 ? cacheAge + "min" : Math.round(cacheAge / 60) + "h"}` : ""}
+              ✓ {cacheAge != null ? `vor ${cacheAge < 60 ? cacheAge + 'min' : Math.round(cacheAge / 60) + 'h'}` : 'gecacht'}
+              {data?.diagnostics?.netNewEvents > 0
+                ? ` · ${data.diagnostics.netNewEvents} neue Events`
+                : data?.diagnostics?.eventsScanned > 0
+                ? ` · ${data.diagnostics.eventsScanned} Events stabil`
+                : ''}
             </span>
           ) : (
-            <span className="text-[10px] text-foreground/50">Net-new Key Events seit letztem Run</span>
+            <span className="text-[10px] text-foreground/50">Macro-Lage US + EU + ASIA</span>
           )}
           {data && !loading && (
             <button
@@ -421,8 +426,19 @@ function BriefingModal({ loading, data, error, onClose, onRetry, onForceRefresh 
               {/* Diagnostics */}
               {diag && (
                 <div className="text-[10px] text-foreground/40 pt-2 border-t border-border/20">
-                  Scanned {diag.eventsScanned} Events &middot; {diag.netNewEvents} net-new &middot; Regions: {diag.regionsAnalyzed.join(", ")}
-                  {data?.modelUsed && <> &middot; Model: {data.modelUsed}</>}
+                  {diag.eventsScanned > 0 ? (
+                    <>
+                      {diag.eventsScanned} Events analysiert &middot;{' '}
+                      {diag.netNewEvents > 0
+                        ? <span className="text-amber-400">{diag.netNewEvents} neue/geänderte Events</span>
+                        : <span className="text-emerald-400/70">Keine materiellen Änderungen</span>
+                      }{' '}
+                      &middot; Regionen: {diag.regionsAnalyzed.join(", ")}
+                      {data?.modelUsed && data.modelUsed !== 'fallback' && <> &middot; {data.modelUsed.split('/').pop()}</>}
+                    </>
+                  ) : (
+                    <span className="text-amber-400/70">Macro-Daten werden geladen — bitte erneut öffnen</span>
+                  )}
                 </div>
               )}
             </>

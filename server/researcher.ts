@@ -866,15 +866,31 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
   const lastByKey = new Map<string, EventFingerprint>();
   for (const fp of lastSnapshot) lastByKey.set(`${fp.region}|${normalizeTitle(fp.title)}`, fp);
 
-  // Fix: run all 3 regions in PARALLEL (was sequential US→EU→ASIA ~90s)
+  // Load macro data: prefer cache (fast, no LLM cost), fall back to fresh build
+  // Cache TTL for briefing purposes: 6 hours (briefing runs daily, cache is fresh enough)
+  const BRIEFING_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
   const macroResults: Array<{ region: string; data: MacroPulseResult }> = [];
   const macroSettled = await Promise.all(regions.map(async (region) => {
     try {
+      // Try cache first (avoids 3 extra LLM calls on every briefing open)
+      const cached = readResearcherCache("macro", region);
+      if (cached && !cached._fallback && cached.llmSynthesis?.keyEvents?.length > 0) {
+        const age = Date.now() - new Date(cached.asOf || 0).getTime();
+        if (age < BRIEFING_CACHE_MAX_AGE_MS) {
+          console.log(`[BRIEFING] macro ${region}: using cache (age ${Math.round(age/60000)}min)`);
+          return { region, data: cached } as { region: string; data: MacroPulseResult };
+        }
+      }
+      // Cache miss or stale — run fresh
+      console.log(`[BRIEFING] macro ${region}: cache miss, building fresh`);
       const data = await buildMacroPulse(region);
       writeResearcherCache("macro", region, data);
       return { region, data } as { region: string; data: MacroPulseResult };
     } catch (e: any) {
       console.error(`[BRIEFING] macro ${region} failed:`, e?.message);
+      // Last resort: try cache even if stale
+      const stale = readResearcherCache("macro", region);
+      if (stale) return { region, data: stale } as { region: string; data: MacroPulseResult };
       return null;
     }
   }));
@@ -938,21 +954,61 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
   const totalScanned = newSnapshot.length;
   const netNew = diffed.length;
 
-  // No material changes — skip LLM, return stub
+  // No material changes — still show full briefing from cached macro data (don't return empty stub)
+  // Collect key events and macro stance from all regions for display
+  const allEvents = macroResults.flatMap(({ region, data }) =>
+    (data?.llmSynthesis?.keyEvents || []).map((ev: any) => ({ ...ev, region }))
+  );
+  const macroStances = macroResults.map(({ region, data }) => ({
+    region,
+    action: data?.llmSynthesis?.actionRecommendation || 'Watch',
+    summary: data?.llmSynthesis?.summary || '',
+    keyDrivers: data?.llmSynthesis?.keyDrivers || [],
+  }));
+
   if (netNew === 0) {
+    // Build a substantive no-change briefing from the actual macro data
+    const stanceStr = macroStances.map(s => `${s.region}: ${s.action}`).join(' | ');
+    const topEventsForDisplay = allEvents
+      .filter((e: any) => e.severity === 'high' || e.equityImpact !== 'neutral')
+      .slice(0, 3)
+      .map((e: any, idx: number) => ({
+        rank: idx + 1,
+        title: String(e.title || ''),
+        category: String(e.category || 'Makro'),
+        impact: String(e.equityImpact === 'positiv' ? 'positiv' : e.equityImpact === 'negativ' ? 'negativ' : 'neutral'),
+        severity: String(e.severity || 'medium'),
+        description: String(e.description || ''),
+        dcfImplication: e.rateImpact === 'steigend'
+          ? 'Höhere Zinsen erhöhen WACC und belasten DCF-Bewertungen.'
+          : e.equityImpact === 'negativ'
+          ? 'Negatives Equity-Umfeld erhöht Risikoprämien und drückt Multiples.'
+          : 'Stabiles Umfeld — keine akute DCF-Korrektur erforderlich.',
+        affectedTickers: [],
+      }));
+
+    const driverSummary = macroStances
+      .flatMap(s => s.keyDrivers.slice(0, 1))
+      .slice(0, 2)
+      .join(' | ');
+
     return {
       asOf: new Date().toISOString(),
       generatedAt: new Date().toISOString(),
       briefing: {
-        headline: "Keine materiellen Veränderungen seit gestern",
-        summary: "Alle erkannten Events bleiben in Severity und Impact-Richtung stabil. Risk-Free Rate, Inflation und Equity-Outlook unverändert. Kein Handlungsbedarf vor Open.",
-        topChanges: [],
+        headline: `Marktlage stabil — ${stanceStr}`,
+        summary: `Keine materiellen Lageänderungen seit gestern. Aktuelle Makro-Stance: ${stanceStr}.${driverSummary ? ' Treiber: ' + driverSummary + '.' : ''} Bestehende Positionierung kann beibehalten werden.`,
+        topChanges: topEventsForDisplay,
         keyMetricsShift: {
-          inflationView: "unverändert",
-          rateView: "unverändert",
-          equityView: "unverändert",
+          inflationView: allEvents.find((e: any) => e.inflationImpact === 'steigend') ? 'steigend-Tendenz' : 'stabil',
+          rateView: allEvents.find((e: any) => e.rateImpact === 'steigend') ? 'steigend-Tendenz' : 'stabil',
+          equityView: macroStances.some(s => s.action === 'Buy') ? 'konstruktiv' : macroStances.some(s => s.action === 'Avoid') ? 'vorsichtig' : 'neutral',
         },
-        recommendation: "Beobachten. Bestehende Positionierung beibehalten.",
+        recommendation: macroStances.some(s => s.action === 'Buy')
+          ? 'Selektiv opportunistisch. Sektoren mit Fiskal-Rückenwind bevorzugen.'
+          : macroStances.some(s => s.action === 'Avoid')
+          ? 'Vorsichtig. Risikopositionen reduzieren oder hedgen.'
+          : 'Beobachten. Bestehende Positionierung beibehalten.',
       },
       diagnostics: { eventsScanned: totalScanned, netNewEvents: 0, regionsAnalyzed: regions },
     };
