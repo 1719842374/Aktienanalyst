@@ -310,11 +310,16 @@ function getEffectiveSector(sector: string, industry: string, description: strin
   }
 
   // FinTech / Super-App: classified as Tech but core business is payments/finance/marketplace
+  // Excluded: semiconductor companies that happen to mention "payment" in their product descriptions
+  // (e.g. IFX.DE makes chips *for* payment terminals — not a FinTech company)
+  const isSemiConductorCompany = desc.includes('semiconductor') || desc.includes('microcontroller') ||
+    desc.includes('power semiconductor') || desc.includes('microchip') ||
+    ind.includes('semiconductor');
   const fintechPhrases = ["payment", "fintech", "buy now pay later", "bnpl", "merchant finance",
     "banking", "deposit", "lending", "credit", "consumer finance", "super app",
     "marketplace platform", "peer to peer payment"];
   const hasFinTechCore = fintechPhrases.some(p => desc.includes(p));
-  if (s.includes("tech") && hasFinTechCore && !hasTechCore) {
+  if (s.includes("tech") && hasFinTechCore && !hasTechCore && !isSemiConductorCompany) {
     return {
       sector: "Financial Services",
       industry: "FinTech / Digital Payments & Super-App",
@@ -3697,15 +3702,17 @@ export async function registerRoutes(server: Server, app: Express) {
         if (descMatch) description = descMatch[1].trim().substring(0, 2000);
       }
 
-      // Apply effective sector reclassification for hybrid companies (e.g. AMZN, META, GOOG)
+      // Apply effective sector reclassification for hybrid companies AND misclassified companies (e.g. AMZN, META, IFX.DE)
       const effectiveSector = getEffectiveSector(sector, industry, description);
       const originalSector = sector;
       const originalIndustry = industry;
-      if (effectiveSector.isHybrid) {
+      if (effectiveSector.sector !== sector || effectiveSector.industry !== industry) {
         sector = effectiveSector.sector;
         industry = effectiveSector.industry;
         sectorHybridNote = effectiveSector.hybridNote;
-        console.log(`[ANALYZE] Sector reclassified: ${originalSector} -> ${sector} (${sectorHybridNote})`);
+        if (effectiveSector.sector !== originalSector) {
+          console.log(`[ANALYZE] Sector reclassified: ${originalSector}/${originalIndustry} -> ${sector}/${industry} (${sectorHybridNote || 'direct reclassification'})`);
+        }
       }
 
       // === Parse Financials ===
@@ -4304,7 +4311,7 @@ export async function registerRoutes(server: Server, app: Express) {
           const enrichedRisks = await generateRiskExplanations({
             ticker,
             companyName,
-            sector: sp?.sector || sector || industry || 'Technology', // use corrected sector
+            sector: sector || industry || 'Technology', // already corrected by getEffectiveSector()
             industry,
             description: safeDescription,
             revenue,
@@ -4333,7 +4340,7 @@ export async function registerRoutes(server: Server, app: Express) {
             // Use sp.sector (sectorProfile-corrected sector) when available
             // to avoid misclassification (e.g. IFX.DE: FMP returns 'Financial Services',
             // but sectorProfile correctly identifies it as 'Technology/Semiconductors')
-            const deepDiveSector = sp?.sector || sector || industry || 'Technology';
+            const deepDiveSector = sector || industry || 'Technology'; // already corrected by getEffectiveSector()
             const deepDiveAnalystPT = analystPTMedian > 0 ? analystPTMedian : price; // fallback to price if no PT
             const deepDives = await generateCatalystDeepDives({
               ticker, companyName,
@@ -4795,7 +4802,7 @@ export async function registerRoutes(server: Server, app: Express) {
         sectorMaxDrawdown: sectorDefs.sectorMaxDrawdown,
 
         sectorProfile: {
-          sector: sp?.sector || sector,
+          sector: sector,  // already corrected by getEffectiveSector()
           cycleClass: sectorDefs.cycleClass,
           politicalCycle: sectorDefs.politicalCycle,
           waccScenarios: sectorDefs.waccScenarios,
