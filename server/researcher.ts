@@ -1159,12 +1159,18 @@ export function registerResearcherRoutes(app: Express) {
     }
     if (!force) {
       const cached = readResearcherCache("macro", region);
-      if (cached && isStaleCache(cached)) {
-        console.log(`[RESEARCHER/macro] cache STALE — invalidating region=${region}`);
-        deleteResearcherCache("macro", region);
-      } else if (cached) {
+      if (cached && !isStaleCache(cached)) {
         console.log(`[RESEARCHER/macro] cache HIT region=${region} age=${cached._cacheAge}min`);
         return res.json(cached);
+      }
+      // Stale cache: serve it immediately (better than empty), trigger background refresh
+      if (cached && isStaleCache(cached)) {
+        console.log(`[RESEARCHER/macro] cache STALE region=${region} — serving stale while refreshing`);
+        // Fire refresh in background, don't await
+        buildMacroPulse(region)
+          .then(r => { if (!r.llmSynthesis?._fallback) writeResearcherCache("macro", region, r); })
+          .catch(e => console.warn(`[RESEARCHER/macro] bg refresh failed: ${e?.message}`));
+        return res.json({ ...cached, _staleRefreshing: true });
       }
     }
     console.log(`[RESEARCHER/macro] building region=${region}`);
@@ -1183,12 +1189,16 @@ export function registerResearcherRoutes(app: Express) {
     }
     if (!force) {
       const cached = readResearcherCache("sectors", region);
-      if (cached && isStaleCache(cached)) {
-        console.log(`[RESEARCHER/sectors] cache STALE (empty trends or fallback) — invalidating region=${region}`);
-        deleteResearcherCache("sectors", region);
-      } else if (cached) {
+      if (cached && !isStaleCache(cached)) {
         console.log(`[RESEARCHER/sectors] cache HIT region=${region} age=${cached._cacheAge}min`);
         return res.json(cached);
+      }
+      if (cached && isStaleCache(cached)) {
+        console.log(`[RESEARCHER/sectors] cache STALE region=${region} — serving stale while refreshing`);
+        buildSectorOpportunity(region)
+          .then(r => { if (r.trends?.length > 0) writeResearcherCache("sectors", region, r); })
+          .catch(e => console.warn(`[RESEARCHER/sectors] bg refresh failed: ${e?.message}`));
+        return res.json({ ...cached, _staleRefreshing: true });
       }
     }
     console.log(`[RESEARCHER/sectors] building region=${region}`);
@@ -1212,12 +1222,15 @@ export function registerResearcherRoutes(app: Express) {
     const cacheKey = `${filters.region}_mc${filters.marketCapMin || 0}-${filters.marketCapMax || 0}_pe${filters.peMax || 0}_rg${filters.revenueGrowthMin || 0}_${filters.sector || "all"}`;
     if (!force) {
       const cached = readResearcherCache("screener", cacheKey);
-      if (cached && isStaleCache(cached)) {
-        console.log(`[RESEARCHER/screener] cache STALE — invalidating key=${cacheKey}`);
-        deleteResearcherCache("screener", cacheKey);
-      } else if (cached) {
+      if (cached && !isStaleCache(cached)) {
         console.log(`[RESEARCHER/screener] cache HIT key=${cacheKey} age=${cached._cacheAge}min`);
         return res.json(cached);
+      }
+      if (cached && isStaleCache(cached)) {
+        buildScreener(filters)
+          .then(r => { if (r.candidates?.length > 0) writeResearcherCache("screener", cacheKey, r); })
+          .catch(() => {});
+        return res.json({ ...cached, _staleRefreshing: true });
       }
     }
     console.log(`[RESEARCHER/screener] building key=${cacheKey}`);
@@ -1236,12 +1249,15 @@ export function registerResearcherRoutes(app: Express) {
     }
     if (!force) {
       const cached = readResearcherCache("capex", region);
-      if (cached && isStaleCache(cached)) {
-        console.log(`[RESEARCHER/capex] cache STALE — invalidating region=${region}`);
-        deleteResearcherCache("capex", region);
-      } else if (cached) {
+      if (cached && !isStaleCache(cached)) {
         console.log(`[RESEARCHER/capex] cache HIT region=${region} age=${cached._cacheAge}min`);
         return res.json(cached);
+      }
+      if (cached && isStaleCache(cached)) {
+        buildCapexFiscal(region)
+          .then(r => { if (r.headline) writeResearcherCache("capex", region, r); })
+          .catch(() => {});
+        return res.json({ ...cached, _staleRefreshing: true });
       }
     }
     console.log(`[RESEARCHER/capex] building region=${region}`);

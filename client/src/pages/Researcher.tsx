@@ -136,10 +136,10 @@ export default function Researcher() {
 
   const isLoading = mutation.isPending;
 
-  // Stale cache detection — a cached result that has no real LLM content
-  // (fallback synthesis, empty trends array, or "fallback" model marker).
-  // When stale we show a yellow warning + amber-glow refresh button.
-  const isStale = !!currentData && (
+  // Stale cache detection — a cached result that has no real LLM content.
+  // _staleRefreshing = backend is already refreshing in background (show info, not warning)
+  const isStaleRefreshing = !!currentData?._staleRefreshing;
+  const isStale = !!currentData && !isStaleRefreshing && (
     currentData._fallback === true ||
     currentData?.llmSynthesis?._fallback === true ||
     currentData?.modelUsed === "fallback" ||
@@ -166,9 +166,9 @@ export default function Researcher() {
               <span className="text-[10px] text-foreground/40 hidden md:inline truncate">Hedge-Fund-Style Macro &amp; Stock Discovery</span>
             </div>
             <button
-              onClick={runBriefing}
+              onClick={() => runBriefing(false)}
               className="h-8 px-2 sm:px-2.5 text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-amber-400/30 shrink-0"
-              title="Pre-Market Briefing — net-new Events seit gestern"
+              title="Pre-Market Briefing — Macro-Lage US + EU + ASIA"
               data-testid="button-briefing"
             >
               <Flame className="w-3 h-3" />
@@ -246,10 +246,16 @@ export default function Researcher() {
                 Gecachte Analyse — vor {currentData._cacheAge < 60 ? `${currentData._cacheAge} Min` : `${Math.round(currentData._cacheAge / 60)} Std`} erstellt · 0 Credits
               </div>
             )}
+            {isStaleRefreshing && (
+              <div className="text-[10px] text-sky-400/80 mt-1 flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                KI-Analyse wird im Hintergrund aktualisiert — in ~30s neu laden
+              </div>
+            )}
             {isStale && (
               <div className="text-[10px] text-amber-300/90 mt-1 flex items-center gap-1">
                 <AlertTriangle className="w-3 h-3" />
-                Gecachte Analyse ohne KI-Inhalt — bitte "Aktualisieren" klicken
+                Gecachte Analyse ohne KI-Inhalt — bitte „Aktualisieren“ klicken
               </div>
             )}
           </div>
