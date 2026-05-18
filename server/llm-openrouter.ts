@@ -63,8 +63,50 @@ function getClient(): OpenAI | null {
 function pickModel(): string {
   const override = process.env.OPENROUTER_MODEL;
   if (override) return override;
-  // Default: Grok-4.3 with conservative token budgets to stay within free tier
-  return "x-ai/grok-4.3";
+  // Primary: DeepSeek V4 Flash — free tier, 1M context, excellent JSON, fast
+  // Verified available on OpenRouter as of 2026-05-18
+  return "deepseek/deepseek-v4-flash:free";
+}
+
+// Fallback chain — all verified free on OpenRouter 2026-05-18
+// Priority: fastest/best JSON first, paid grok-4.3 only as last resort
+const MODEL_FALLBACK_CHAIN = [
+  "deepseek/deepseek-v4-flash:free",       // primary: free, 1M ctx, best JSON
+  "meta-llama/llama-3.3-70b-instruct:free", // fallback: free, 131K ctx
+  "google/gemma-4-26b-a4b-it:free",        // fallback: free, 262K ctx
+  "meta-llama/llama-3.2-3b-instruct:free", // small fallback: free, fast
+  "x-ai/grok-4.3",                         // paid last resort
+];
+
+// Make one LLM call with automatic model fallback on 429/402.
+// Returns { text, modelUsed } or throws after all fallbacks exhausted.
+async function callWithFallback(client: OpenAI, params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>): Promise<{ text: string; modelUsed: string; usage?: any }> {
+  const override = process.env.OPENROUTER_MODEL;
+  const chain = override ? [override] : MODEL_FALLBACK_CHAIN;
+  let lastErr: any;
+  for (const model of chain) {
+    try {
+      const isGrok = model.startsWith('x-ai/');
+      const completion = await (client.chat.completions.create as any)({
+        ...params,
+        model,
+        ...(isGrok ? { reasoning: { effort: 'none' } } : {}),
+      });
+      const text = completion.choices?.[0]?.message?.content?.trim() || '';
+      if (!text) { lastErr = new Error('Empty response'); continue; }
+      return { text, modelUsed: model, usage: completion.usage };
+    } catch (err: any) {
+      const status = err?.status || err?.response?.status;
+      const msg = (err?.message || String(err)).substring(0, 200);
+      if (status === 429 || status === 402) {
+        console.warn(`[LLM] ${model} rate-limited (${status}) — trying next model`);
+        lastErr = err;
+        continue;
+      }
+      throw err; // non-retryable error
+    }
+  }
+  throw lastErr || new Error('All LLM models exhausted');
 }
 
 export interface CombinedLLMInput {
@@ -179,30 +221,19 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
 }`;
 
   try {
-    console.log(`[LLM] Calling ${model} for ${ticker} (combined catalyst+news, news_count=${newsItems.length})`);
+    console.log(`[LLM] Calling (with fallback) for ${ticker} (combined catalyst+news, news_count=${newsItems.length})`);
     const t0 = Date.now();
-    // Grok 4.1 Fast is a REASONING model — by default it spends a large
-    // fraction of completion_tokens on hidden chain-of-thought, which can
-    // exhaust our 1900-token budget before the JSON is fully emitted.
-    // We disable reasoning for catalyst generation since the task is well
-    // structured and CoT brings no quality lift here.
-    const isGrok = model.startsWith("x-ai/");
-    const completion = await client.chat.completions.create({
-      model,
-      max_tokens: 320, // free tier limit
-      temperature: 0.4, // a bit of creativity for catalyst diversity, but mostly deterministic
+    const result = await callWithFallback(client, {
+      max_tokens: 900,
+      temperature: 0.4,
       messages: [{ role: "user", content: prompt }],
-      // OpenRouter passes this through to providers that support it
       response_format: { type: "json_object" } as any,
-      // Disable reasoning when calling reasoning-capable models so the full
-      // 1900-token budget goes to actual JSON output, not hidden CoT.
-      ...(isGrok ? { reasoning: { effort: "none" } } as any : {}),
     });
+    const { text, modelUsed: usedModel, usage } = result;
     const elapsedMs = Date.now() - t0;
-
-    const text = completion.choices?.[0]?.message?.content?.trim() || "";
+    console.log(`[LLM] Used model: ${usedModel} for ${ticker} (${elapsedMs}ms)`);
     if (!text) {
-      console.warn(`[LLM] Empty response from ${model}`);
+      console.warn(`[LLM] Empty response from ${usedModel}`);
       return null;
     }
 
@@ -283,12 +314,12 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
       }
     }
 
-    console.log(`[LLM] Combined call OK for ${ticker}: ${catalysts.length} catalysts, ${newsMatches.length} news matched, ${elapsedMs}ms, model=${model}`);
+    console.log(`[LLM] Combined call OK for ${ticker}: ${catalysts.length} catalysts, ${newsMatches.length} news matched, ${elapsedMs}ms, model=${usedModel}`);
     return {
       catalysts,
-      modelUsed: model,
-      promptTokens: completion.usage?.prompt_tokens,
-      completionTokens: completion.usage?.completion_tokens,
+      modelUsed: usedModel,
+      promptTokens: usage?.prompt_tokens,
+      completionTokens: usage?.completion_tokens,
     };
   } catch (err: any) {
     const status = err?.status || err?.response?.status;
@@ -347,16 +378,12 @@ Erstelle fuer jeden Katalysator ein strukturiertes Deep-Dive-Objekt. Antworte NU
 {"deepDives":[{"idx":0,"unternehmenskontext":"1 Satz warum spezifisch fuer ${companyName}","posHerleitung":"1 Satz Begruendung fuer PoS%","bewertungsauswirkung":"1 Satz Auswirkung auf Umsatz/Margen/DCF","marktumfeld":"1 Satz Wettbewerb/Regulation/Macro","risiken":"1 Satz Was koennte diesen Katalysator verhindern","unterschaetzt":false}]}`;
 
   try {
-    const isGrok = model.startsWith('x-ai/');
-    const completion = await client.chat.completions.create({
-      model,
-      max_tokens: 300,
+    const { text } = await callWithFallback(client, {
+      max_tokens: 700,
       temperature: 0.25,
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' } as any,
-      ...(isGrok ? { reasoning: { effort: 'none' } } as any : {}),
     });
-    const text = completion.choices?.[0]?.message?.content?.trim() || '';
     if (!text) return null;
     const parsed = JSON.parse(text);
     const dives = parsed.deepDives || [];
@@ -468,21 +495,16 @@ Return ONLY this JSON (no markdown, no commentary):
 }`;
 
   try {
-    console.log(`[LLM-RISK] Generating risk explanations for ${ticker} (${risks.length} risks), model=${model}`);
+    console.log(`[LLM-RISK] Generating risk explanations for ${ticker} (${risks.length} risks) with fallback chain`);
     const t0 = Date.now();
-    const isGrok = model.startsWith("x-ai/");
-    const completion = await client.chat.completions.create({
-      model,
-      max_tokens: 310, // free tier limit
-      temperature: 0.25, // slightly more deterministic
+    const { text, modelUsed: riskModel } = await callWithFallback(client, {
+      max_tokens: 800,
+      temperature: 0.25,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" } as any,
-      // B1 fix: grok-4.3 uses { effort: "none" } not { enabled: false }
-      ...(isGrok ? { reasoning: { effort: "none" } } as any : {}),
     });
     const elapsedMs = Date.now() - t0;
-
-    const text = completion.choices?.[0]?.message?.content?.trim() || "";
+    console.log(`[LLM-RISK] Used model: ${riskModel} for ${ticker} (${elapsedMs}ms)`);
     if (!text) {
       console.warn(`[LLM-RISK] Empty response for ${ticker}`);
       return null;
@@ -547,21 +569,16 @@ export async function callLLMJson(opts: {
 }): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
   const client = getClient();
   if (!client) return null;
-  const model = pickModel();
-  const isGrok = model.startsWith("x-ai/");
   try {
     const messages: any[] = [];
     if (opts.systemPrompt) messages.push({ role: "system", content: opts.systemPrompt });
     messages.push({ role: "user", content: opts.prompt });
-    const completion = await client.chat.completions.create({
-      model,
-      max_tokens: Math.min(opts.maxTokens ?? 320, 320), // free tier cap
+    const { text, modelUsed, usage } = await callWithFallback(client, {
+      max_tokens: Math.min(opts.maxTokens ?? 900, 1200),
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
-      ...(isGrok ? { reasoning: { effort: "none" } } as any : {}),
     });
-    const text = completion.choices?.[0]?.message?.content?.trim() || "";
     if (!text) return null;
     let jsonStr = text;
     if (jsonStr.startsWith("```")) {
@@ -569,17 +586,12 @@ export async function callLLMJson(opts: {
     }
     return {
       data: JSON.parse(jsonStr),
-      modelUsed: model,
-      promptTokens: completion.usage?.prompt_tokens,
-      completionTokens: completion.usage?.completion_tokens,
+      modelUsed,
+      promptTokens: usage?.prompt_tokens,
+      completionTokens: usage?.completion_tokens,
     };
   } catch (err: any) {
-    const status = err?.status || err?.response?.status;
-    if (status === 402) {
-      console.warn('[LLM] 402 token budget exhausted — skipping LLM');
-    } else {
-      console.error(`[LLM-JSON] failed (model=${model}): ${(err?.message || String(err)).substring(0, 300)}`);
-    }
+    console.error(`[LLM-JSON] failed: ${(err?.message || String(err)).substring(0, 300)}`);
     return null;
   }
 }
