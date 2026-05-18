@@ -268,6 +268,25 @@ function getEffectiveSector(sector: string, industry: string, description: strin
     return desc.includes(phrase);
   });
 
+  // Semiconductor companies misclassified as Financial Services by FMP (e.g. IFX.DE, ASML.AS)
+  const descLower = desc;
+  const rawIndustryLower = ind;
+  if (sector === 'Financial Services' && (
+    descLower.includes('semiconductor') ||
+    descLower.includes('power semiconductor') ||
+    descLower.includes('microcontroller') ||
+    descLower.includes('microchip') ||
+    rawIndustryLower.includes('semiconductor') ||
+    (rawIndustryLower.includes('fintech') && descLower.includes('chip'))
+  )) {
+    return {
+      sector: 'Technology',
+      industry: 'Semiconductors',
+      isHybrid: false,
+      hybridNote: '',
+    };
+  }
+
   // AMZN-like: classified as Consumer Cyclical but has major cloud/tech business
   if ((s.includes("consumer") && (s.includes("cycl") || s.includes("discr"))) && hasTechCore) {
     return {
@@ -4246,6 +4265,10 @@ export async function registerRoutes(server: Server, app: Express) {
       // so KI-on requests don't get back stale sector-template caches misbranded
       // as LLM-generated.
       let llmActuallyUsed = false;
+      // Fallback: avoid empty description reaching LLM prompt
+      const safeDescription = (description?.trim() && description.length > 30)
+        ? description
+        : `${companyName} ist ein Unternehmen aus dem ${sector}-Sektor (${industry}).`;
       if (useLLM) {
         // === Combined LLM call via OpenRouter (Haiku 3.5 by default) ===
         // Replaces the previous two separate Anthropic Sonnet calls
@@ -4254,7 +4277,7 @@ export async function registerRoutes(server: Server, app: Express) {
         //   - Old: 2x Sonnet @ ~5.5k tokens ≈ ~10-15 credits
         //   - New: 1x Haiku @ ~3.5k tokens ≈ ~3-4 credits (Haiku is ~3x cheaper)
         const combined = await generateCatalystsAndMatchNews({
-          ticker, companyName, sector, industry, description,
+          ticker, companyName, sector, industry, description: safeDescription,
           revenue, revenueGrowth, fcfMargin, price, pe, marketCap,
           keyProjects, secFilingExcerpts, newsItems,
         });
@@ -4283,7 +4306,7 @@ export async function registerRoutes(server: Server, app: Express) {
             companyName,
             sector: sp?.sector || sector || industry || 'Technology', // use corrected sector
             industry,
-            description: description || "",
+            description: safeDescription,
             revenue,
             revenueGrowth,
             fcfMargin,
@@ -4315,7 +4338,7 @@ export async function registerRoutes(server: Server, app: Express) {
             const deepDives = await generateCatalystDeepDives({
               ticker, companyName,
               sector: deepDiveSector,
-              description: description || '',
+              description: safeDescription,
               revenue, revenueGrowth, fcfMargin, price,
               analystPT: deepDiveAnalystPT,
               catalysts: catalysts.map(c => ({ name: c.name, pos: c.pos, bruttoUpside: c.bruttoUpside, einpreisungsgrad: c.einpreisungsgrad, context: c.context })),
@@ -4772,6 +4795,7 @@ export async function registerRoutes(server: Server, app: Express) {
         sectorMaxDrawdown: sectorDefs.sectorMaxDrawdown,
 
         sectorProfile: {
+          sector: sp?.sector || sector,
           cycleClass: sectorDefs.cycleClass,
           politicalCycle: sectorDefs.politicalCycle,
           waccScenarios: sectorDefs.waccScenarios,
@@ -4950,12 +4974,19 @@ export async function registerRoutes(server: Server, app: Express) {
         return res.status(400).json({ error: "ticker and risks array required" });
       }
 
+      const sectorStr = String(sector || "");
+      const industryStr = String(industry || "");
+      const companyStr = String(companyName || ticker);
+      const rawDesc = String(description || "");
+      const safeDesc = (rawDesc.trim() && rawDesc.length > 30)
+        ? rawDesc
+        : `${companyStr} ist ein Unternehmen aus dem ${sectorStr || 'Technology'}-Sektor (${industryStr || 'General'}).`;
       const enrichedRisks = await generateRiskExplanations({
         ticker: String(ticker),
-        companyName: String(companyName || ticker),
-        sector: String(sector || ""),
-        industry: String(industry || ""),
-        description: String(description || ""),
+        companyName: companyStr,
+        sector: sectorStr,
+        industry: industryStr,
+        description: safeDesc,
         revenue: Number(revenue) || 0,
         revenueGrowth: Number(revenueGrowth) || 0,
         fcfMargin: Number(fcfMargin) || 0,

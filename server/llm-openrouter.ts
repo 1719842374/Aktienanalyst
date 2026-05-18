@@ -129,8 +129,8 @@ export async function generateCatalystsAndMatchNews(
   ctx.push(`Company: ${companyName} (${ticker})`);
   ctx.push(`Sector: ${sector} / ${industry}`);
   ctx.push(`Description: ${description.substring(0, 600)}`);
-  ctx.push(`Revenue: $${(revenue / 1e9).toFixed(1)}B | Growth: ${revenueGrowth.toFixed(1)}% | FCF Margin: ${fcfMargin.toFixed(1)}%`);
-  ctx.push(`Price: $${price.toFixed(2)} | P/E: ${pe.toFixed(1)} | Market Cap: $${(marketCap / 1e9).toFixed(1)}B`);
+  ctx.push(`Revenue: $${revenue > 0 ? (revenue / 1e9).toFixed(1) + 'B' : 'N/A'} | Growth: ${revenueGrowth != null && revenueGrowth !== 0 ? revenueGrowth.toFixed(1) + '%' : 'N/A'} | FCF Margin: ${fcfMargin > 0 ? fcfMargin.toFixed(1) + '%' : 'N/A'}`);
+  ctx.push(`Price: $${price.toFixed(2)} | P/E: ${pe > 0 ? pe.toFixed(1) : 'N/A'} | Market Cap: ${marketCap > 0 ? '$' + (marketCap / 1e9).toFixed(1) + 'B' : 'N/A'}`);
   if (keyProjects.length > 0) {
     ctx.push(`\nKey Projects (SEC 10-K):\n${keyProjects.slice(0, 8).map(p => `  - ${p}`).join("\n")}`);
   }
@@ -431,7 +431,7 @@ export async function generateRiskExplanations(
 
 UNTERNEHMENSKONTEXT:
 ${companyName} (${ticker}) | ${sector} / ${industry}
-Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}% | KGV: ${pe.toFixed(1)} | Staatsabh: ${governmentExposure.toFixed(0)}%
+Umsatz: $${revenue > 0 ? (revenue / 1e9).toFixed(1) + 'B' : 'N/A'} | Wachstum: ${revenueGrowth != null && revenueGrowth !== 0 ? revenueGrowth.toFixed(1) + '%' : 'N/A'} | FCF-Marge: ${fcfMargin > 0 ? fcfMargin.toFixed(1) + '%' : 'N/A'} | KGV: ${pe > 0 ? pe.toFixed(1) : 'N/A'} | Staatsabh: ${governmentExposure.toFixed(0)}%
 ${description.substring(0, 350)}${secContext}${newsContext}
 
 RISIKEN (riskIndex 0-basiert — exakt so zurückgeben):

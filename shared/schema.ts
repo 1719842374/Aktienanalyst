@@ -172,6 +172,7 @@ export interface DCFScenario {
 }
 
 export interface SectorProfile {
+  sector?: string;
   cycleClass: string;
   politicalCycle: string;
   waccScenarios: { kons: number; avg: number; opt: number };
