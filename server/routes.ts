@@ -5005,13 +5005,13 @@ export async function registerRoutes(server: Server, app: Express) {
       });
 
       if (!enrichedRisks) {
-        return res.status(503).json({ error: "LLM risk explanation generation failed" });
+        return res.json({ risks: risks, _llmSkipped: true });
       }
 
       return res.json({ risks: enrichedRisks });
     } catch (err: any) {
       console.error(`[RISK-EXPLANATIONS] ${err?.message || String(err)}`);
-      return res.status(500).json({ error: "Internal error" });
+      return res.json({ risks: req.body?.risks || [], _llmSkipped: true });
     }
   });
 

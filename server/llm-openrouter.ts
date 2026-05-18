@@ -155,7 +155,7 @@ TASK 1 — Generate exactly 5 COMPANY-SPECIFIC investment catalysts. Rules:
 - BANNED generic names: "Revenue Growth Acceleration", "Margin Expansion", "Operating Leverage" — use specific names
 - Examples: "Blue Creek Mine Ramp-up" (HCC), "FSD/Robotaxi Commercialization" (TSLA), "VMware Integration Synergies" (AVGO)
 - At least 1 of the 5 must reflect genuine downside risk (lower PoS)
-- Context written in GERMAN financial-analyst language (2-3 sentences explaining why it matters)
+- Context written in GERMAN financial-analyst language (1-2 Sätze explaining why it matters)
 
 TASK 2 — For each news headline above (if any), assign sentiment + which of the 5 catalysts it relates to.
 
@@ -164,7 +164,7 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
   "catalysts": [
     {
       "name": "Short company-specific name (<= 50 chars)",
-      "context": "Deutsche Erklärung 2-3 Sätze",
+      "context": "Deutsche Erklärung 1-2 Sätze",
       "timeline": "6-12M | 12-18M | 12-24M | 12-36M",
       "pos": 20-80,
       "bruttoUpside": 5-30,
@@ -189,7 +189,7 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
     const isGrok = model.startsWith("x-ai/");
     const completion = await client.chat.completions.create({
       model,
-      max_tokens: 1200, // free tier limit
+      max_tokens: 320, // free tier limit
       temperature: 0.4, // a bit of creativity for catalyst diversity, but mostly deterministic
       messages: [{ role: "user", content: prompt }],
       // OpenRouter passes this through to providers that support it
@@ -293,7 +293,11 @@ Return ONLY this JSON shape — NO markdown, NO commentary:
   } catch (err: any) {
     const status = err?.status || err?.response?.status;
     const msg = err?.message || String(err);
-    console.error(`[LLM] OpenRouter call failed for ${ticker} (status=${status}): ${msg.substring(0, 300)}`);
+    if (status === 402) {
+      console.warn('[LLM] 402 token budget exhausted — skipping LLM');
+    } else {
+      console.error(`[LLM] OpenRouter call failed for ${ticker} (status=${status}): ${msg.substring(0, 300)}`);
+    }
     return null;
   }
 }
@@ -340,13 +344,13 @@ Katalysatoren:
 ${catList}
 
 Erstelle fuer jeden Katalysator ein strukturiertes Deep-Dive-Objekt. Antworte NUR mit JSON:
-{"deepDives":[{"idx":0,"unternehmenskontext":"1-2 Saetze warum spezifisch fuer ${companyName}","posHerleitung":"Begruendung fuer PoS%","bewertungsauswirkung":"Auswirkung auf Umsatz/Margen/DCF","marktumfeld":"Wettbewerb/Regulation/Macro","risiken":"Was koennte diesen Katalysator verhindern","unterschaetzt":false}]}`;
+{"deepDives":[{"idx":0,"unternehmenskontext":"1 Satz warum spezifisch fuer ${companyName}","posHerleitung":"1 Satz Begruendung fuer PoS%","bewertungsauswirkung":"1 Satz Auswirkung auf Umsatz/Margen/DCF","marktumfeld":"1 Satz Wettbewerb/Regulation/Macro","risiken":"1 Satz Was koennte diesen Katalysator verhindern","unterschaetzt":false}]}`;
 
   try {
     const isGrok = model.startsWith('x-ai/');
     const completion = await client.chat.completions.create({
       model,
-      max_tokens: 1100,
+      max_tokens: 300,
       temperature: 0.25,
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' } as any,
@@ -368,7 +372,12 @@ Erstelle fuer jeden Katalysator ein strukturiertes Deep-Dive-Objekt. Antworte NU
       },
     }));
   } catch (err: any) {
-    console.error(`[LLM-CATALYST-DEEPDIVE] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
+    const status = err?.status || err?.response?.status;
+    if (status === 402) {
+      console.warn('[LLM] 402 token budget exhausted — skipping LLM');
+    } else {
+      console.error(`[LLM-CATALYST-DEEPDIVE] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
+    }
     return null;
   }
 }
@@ -427,7 +436,7 @@ export async function generateRiskExplanations(
     `riskIndex=${i}: ${r.name} | ${r.category} | EW: ${r.ew}% | Impact: ${r.impact}% | Exp.Damage: ${r.expectedDamage.toFixed(2)}%`
   ).join("\n");
 
-  const prompt = `Du bist ein präziser Aktienresearcher. Erstelle für jedes Risiko eine Erklärung (max 120 Wörter pro Risiko).
+  const prompt = `Du bist ein präziser Aktienresearcher. Erstelle für jedes Risiko eine Erklärung (max 40 Wörter pro Risiko).
 
 UNTERNEHMENSKONTEXT:
 ${companyName} (${ticker}) | ${sector} / ${industry}
@@ -438,7 +447,7 @@ RISIKEN (riskIndex 0-basiert — exakt so zurückgeben):
 ${riskList}
 
 REGELN:
-- Unternehmensspezifisch, faktenbasiert, max 120 Wörter pro Risiko
+- Unternehmensspezifisch, faktenbasiert, max 40 Wörter pro Risiko
 - Nutze SEC/News wenn vorhanden für konkrete Belege
 - unterschaetzt=true wenn Expected Damage zu niedrig, sonst false
 - riskIndex MUSS exakt dem Index aus der Liste entsprechen (0-basiert)
@@ -464,7 +473,7 @@ Return ONLY this JSON (no markdown, no commentary):
     const isGrok = model.startsWith("x-ai/");
     const completion = await client.chat.completions.create({
       model,
-      max_tokens: 1200, // free tier limit
+      max_tokens: 310, // free tier limit
       temperature: 0.25, // slightly more deterministic
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" } as any,
@@ -518,7 +527,11 @@ Return ONLY this JSON (no markdown, no commentary):
   } catch (err: any) {
     const status = err?.status || err?.response?.status;
     const msg = err?.message || String(err);
-    console.error(`[LLM-RISK] OpenRouter call failed for ${ticker} (status=${status}): ${msg.substring(0, 300)}`);
+    if (status === 402) {
+      console.warn('[LLM] 402 token budget exhausted — skipping LLM');
+    } else {
+      console.error(`[LLM-RISK] OpenRouter call failed for ${ticker} (status=${status}): ${msg.substring(0, 300)}`);
+    }
     return null;
   }
 }
@@ -542,7 +555,7 @@ export async function callLLMJson(opts: {
     messages.push({ role: "user", content: opts.prompt });
     const completion = await client.chat.completions.create({
       model,
-      max_tokens: Math.min(opts.maxTokens ?? 1200, 1200), // free tier cap
+      max_tokens: Math.min(opts.maxTokens ?? 320, 320), // free tier cap
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
@@ -561,7 +574,12 @@ export async function callLLMJson(opts: {
       completionTokens: completion.usage?.completion_tokens,
     };
   } catch (err: any) {
-    console.error(`[LLM-JSON] failed (model=${model}): ${(err?.message || String(err)).substring(0, 300)}`);
+    const status = err?.status || err?.response?.status;
+    if (status === 402) {
+      console.warn('[LLM] 402 token budget exhausted — skipping LLM');
+    } else {
+      console.error(`[LLM-JSON] failed (model=${model}): ${(err?.message || String(err)).substring(0, 300)}`);
+    }
     return null;
   }
 }

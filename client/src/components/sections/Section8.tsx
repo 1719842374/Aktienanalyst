@@ -108,16 +108,29 @@ export function Section8({ data, useLLM = false }: Props) {
         risks: data.risks,
       });
       const json = await res.json();
-      if (json.risks && Array.isArray(json.risks)) {
+      if (json._llmSkipped) {
+        if (json.risks && Array.isArray(json.risks)) setRisks(json.risks);
+        setLlmError("KI-Analyse nicht verfügbar (Token-Budget erschöpft). Basis-Risiken werden angezeigt.");
+      } else if (json.risks && Array.isArray(json.risks)) {
+        const anyExpl = json.risks.some((r: Risk) => r.explanation);
         setRisks(json.risks);
-        setHasKIAnalysis(true);
-        const first = json.risks.findIndex((r: Risk) => r.explanation);
-        if (first >= 0) setExpandedRisk(first);
+        if (anyExpl) {
+          setHasKIAnalysis(true);
+          const first = json.risks.findIndex((r: Risk) => r.explanation);
+          if (first >= 0) setExpandedRisk(first);
+        } else {
+          setLlmError("KI-Analyse nicht verfügbar (Token-Budget erschöpft). Basis-Risiken werden angezeigt.");
+        }
       } else {
         setLlmError("Keine Erklärungen erhalten.");
       }
     } catch (err: any) {
-      setLlmError(err?.message || "KI-Analyse fehlgeschlagen.");
+      const msg = err?.message || "";
+      if (/503|402/.test(msg)) {
+        setLlmError("KI-Analyse nicht verfügbar (Token-Budget erschöpft). Basis-Risiken werden angezeigt.");
+      } else {
+        setLlmError(msg || "KI-Analyse fehlgeschlagen.");
+      }
     } finally {
       setLlmLoading(false);
     }
@@ -352,29 +365,29 @@ export function Section8({ data, useLLM = false }: Props) {
         </div>
 
         {/* Analyst PT Vergleich */}
-        {data.analystPTMedian > 0 && (
+        {data.analystPT.median > 0 && (
           <div className="mt-2 pt-2 border-t border-border/20 grid grid-cols-2 gap-2 text-[10px]">
             <div className="space-y-0.5">
               <div className="text-muted-foreground">Analyst PT (Median)</div>
-              <div className="font-mono font-semibold">{formatCurrency(data.analystPTMedian)}</div>
+              <div className="font-mono font-semibold">{formatCurrency(data.analystPT.median)}</div>
               <div className={`font-mono ${
-                data.analystPTMedian > data.currentPrice ? 'text-emerald-500' : 'text-red-500'
+                data.analystPT.median > data.currentPrice ? 'text-emerald-500' : 'text-red-500'
               }`}>
-                {((data.analystPTMedian / data.currentPrice - 1) * 100).toFixed(1)}% vs current
+                {((data.analystPT.median / data.currentPrice - 1) * 100).toFixed(1)}% vs current
               </div>
             </div>
             <div className="space-y-0.5">
               <div className="text-muted-foreground">DCF vs. Analyst PT</div>
               <div className={`font-mono font-semibold ${
-                invertedDCF.perShare >= data.analystPTMedian * 0.7 ? 'text-amber-500' : 'text-red-500'
+                invertedDCF.perShare >= data.analystPT.median * 0.7 ? 'text-amber-500' : 'text-red-500'
               }`}>
-                {invertedDCF.perShare >= data.analystPTMedian * 0.7
-                  ? `⚠️ DCF = ${((invertedDCF.perShare / data.analystPTMedian) * 100).toFixed(0)}% des Analyst PT`
-                  : `🔴 DCF stark unter PT (≤${((invertedDCF.perShare / data.analystPTMedian) * 100).toFixed(0)}%)`
+                {invertedDCF.perShare >= data.analystPT.median * 0.7
+                  ? `⚠️ DCF = ${((invertedDCF.perShare / data.analystPT.median) * 100).toFixed(0)}% des Analyst PT`
+                  : `🔴 DCF stark unter PT (≤${((invertedDCF.perShare / data.analystPT.median) * 100).toFixed(0)}%)`
                 }
               </div>
               <div className="text-muted-foreground/70">
-                {invertedDCF.perShare < data.analystPTMedian * 0.7
+                {invertedDCF.perShare < data.analystPT.median * 0.7
                   ? 'Analyst PT als Basis empfohlen (Smart Catalyst Selector)'
                   : 'DCF und Analystenziel konsistent'
                 }
