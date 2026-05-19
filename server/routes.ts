@@ -1025,100 +1025,98 @@ async function fetchNewsFromGoogleRSS(ticker: string, companyName: string): Prom
 }
 
 // === LLM-Powered News-Sentiment-Catalyst Matching ===
+// Keyword-based news-to-catalyst matching (no LLM needed, always works)
+// Used in the non-LLM path so news badges appear in Section 15 even without KI-Analyse
 async function matchNewsToCatalysts(
   newsItems: { title: string; source: string; pubDate: string; url: string; relativeTime: string; sentiment?: string; sentimentScore?: number; matchedCatalyst?: string; matchedCatalystIdx?: number }[],
   catalysts: Catalyst[],
-  ticker: string,
-  companyName: string
+  _ticker?: string,
+  _companyName?: string
 ): Promise<void> {
   if (!newsItems.length || !catalysts.length) return;
-  try {
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const client = new Anthropic();
 
-    const catalystList = catalysts.map((c, i) => `K${i + 1}: ${c.name}`).join('\n');
-    const newsList = newsItems.map((n, i) => `N${i + 1}: "${n.title}" (${n.source}, ${n.relativeTime})`).join('\n');
+  // Bullish/bearish keyword scoring
+  const BULLISH_WORDS = ['beat','surpass','record','growth','surge','rally','upgrade','buy','outperform','strong','profit','win','award','launch','expand','positive','exceed'];
+  const BEARISH_WORDS = ['miss','fall','drop','decline','cut','downgrade','sell','underperform','weak','loss','fine','penalty','recall','delay','concern','risk','layoff','warn'];
 
-    const prompt = `You are a financial news analyst. For each news headline below, determine:
-1. Sentiment: Is this news bullish, bearish, or neutral for ${companyName} (${ticker}) stock?
-2. Sentiment score: -1.0 (very bearish) to +1.0 (very bullish), 0 = neutral
-3. Catalyst match: Which catalyst (K1-K${catalysts.length}) does this news relate to? Use "none" if no match.
+  // Catalyst keyword map — maps catalyst name fragments to related news keywords
+  const CATALYST_KEYWORDS: Record<string, string[]> = {
+    'revenue': ['revenue','sales','growth','demand','order','backlog','booking'],
+    'margin': ['margin','cost','efficiency','operating','leverage','ebitda','profit'],
+    'market share': ['market share','competitor','competition','customer','win','contract','displacement'],
+    'acquisition': ['acqui','merger','partner','deal','joint venture','alliance','agreement'],
+    'ai': ['ai','artificial intelligence','machine learning','automation','cloud','azure','copilot','llm'],
+    'product': ['product','launch','platform','cycle','version','upgrade','release','innovation'],
+    'defense': ['defense','military','contract','government','pentagon','nato','army','navy'],
+    'regulatory': ['fda','epa','sec','regulation','approve','approval','clearance','ruling'],
+    'energy': ['energy','solar','wind','battery','ev','electric','renewable','grid','power'],
+    'dividend': ['dividend','buyback','repurchase','shareholder','return','capital'],
+    'interest rate': ['rate','fed','central bank','interest','yield','monetary'],
+    'demographic': ['demographic','aging','population','healthcare','biotech','drug','therapy'],
+  };
 
-CATALYSTS:
-${catalystList}
+  // Build keyword sets per catalyst from CATALYST_KEYWORDS
+  const catKeywords: string[][] = catalysts.map(cat => {
+    const catName = cat.name.toLowerCase();
+    const kws: string[] = catName.split(/[\s/()]+/).filter(w => w.length > 3);
+    for (const [key, words] of Object.entries(CATALYST_KEYWORDS)) {
+      if (catName.includes(key)) kws.push(...words);
+    }
+    return kws;
+  });
 
-NEWS:
-${newsList}
+  for (let i = 0; i < newsItems.length; i++) {
+    const item = newsItems[i];
+    const titleLower = ((item as any).title || (item as any).headline || '').toLowerCase();
+    if (!titleLower) continue;
 
-Respond with ONLY a JSON array, one object per news item:
-[{"idx": 1, "sentiment": "bullish", "score": 0.6, "catalyst": "K1"}, ...]
+    // Sentiment scoring via keywords
+    const bullishHits = BULLISH_WORDS.filter(w => titleLower.includes(w)).length;
+    const bearishHits = BEARISH_WORDS.filter(w => titleLower.includes(w)).length;
+    const total = bullishHits + bearishHits;
+    const rawScore = total > 0 ? (bullishHits - bearishHits) / total : 0;
+    item.sentimentScore = Math.max(-1, Math.min(1, rawScore));
+    item.sentiment = rawScore > 0.1 ? 'bullish' : rawScore < -0.1 ? 'bearish' : 'neutral';
 
-JSON only, no explanation:`;
-
-    const message = await client.messages.create({
-      model: 'claude_sonnet_4_6',
-      max_tokens: 1000,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const text = ((message.content[0] as any)?.text || '').trim();
-    let jsonStr = text;
-    if (jsonStr.startsWith('```')) jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-    const results = JSON.parse(jsonStr);
-
-    if (!Array.isArray(results)) return;
-
-    // Apply sentiment to news items
-    for (const r of results) {
-      const newsIdx = (Number(r.idx) || 0) - 1;
-      if (newsIdx < 0 || newsIdx >= newsItems.length) continue;
-      const item = newsItems[newsIdx];
-      item.sentiment = r.sentiment === 'bearish' ? 'bearish' : r.sentiment === 'bullish' ? 'bullish' : 'neutral';
-      item.sentimentScore = Math.max(-1, Math.min(1, Number(r.score) || 0));
-
-      // Match catalyst
-      const catMatch = String(r.catalyst || 'none').match(/K(\d+)/i);
-      if (catMatch) {
-        const catIdx = parseInt(catMatch[1]) - 1;
-        if (catIdx >= 0 && catIdx < catalysts.length) {
-          item.matchedCatalyst = catalysts[catIdx].name;
-          item.matchedCatalystIdx = catIdx;
-        }
+    // Match to best catalyst by keyword hits
+    let bestCatIdx = -1;
+    let bestScore = 0;
+    for (let ci = 0; ci < catalysts.length; ci++) {
+      const hits = catKeywords[ci].filter(kw => titleLower.includes(kw)).length;
+      if (hits > bestScore) { bestScore = hits; bestCatIdx = ci; }
+    }
+    // Accept match if at least 1 keyword hit (lower threshold for broader coverage)
+    if (bestCatIdx >= 0 && bestScore >= 1) {
+      item.matchedCatalyst = catalysts[bestCatIdx].name;
+      item.matchedCatalystIdx = bestCatIdx;
+    } else {
+      // Fallback: match based on bullish/bearish sentiment alone — assign to K1 (revenue)
+      // This ensures all strong-sentiment news gets linked to at least one catalyst
+      if (Math.abs(rawScore) > 0.3 && catalysts.length > 0) {
+        item.matchedCatalyst = catalysts[0].name;
+        item.matchedCatalystIdx = 0;
       }
     }
-
-    // Aggregate sentiment per catalyst and adjust PoS
-    for (let i = 0; i < catalysts.length; i++) {
-      const matchedNews = newsItems.filter(n => n.matchedCatalystIdx === i);
-      if (matchedNews.length === 0) continue;
-
-      const avgScore = matchedNews.reduce((sum, n) => sum + (n.sentimentScore || 0), 0) / matchedNews.length;
-      const cat = catalysts[i];
-      cat.newsCount = matchedNews.length;
-      cat.posOriginal = cat.pos;
-
-      // Determine aggregated sentiment
-      const bullish = matchedNews.filter(n => n.sentiment === 'bullish').length;
-      const bearish = matchedNews.filter(n => n.sentiment === 'bearish').length;
-      if (bullish > 0 && bearish > 0) cat.newsSentiment = 'mixed';
-      else if (avgScore > 0.2) cat.newsSentiment = 'bullish';
-      else if (avgScore < -0.2) cat.newsSentiment = 'bearish';
-      else cat.newsSentiment = 'neutral';
-
-      // PoS adjustment: ±3 to ±8 based on average sentiment score
-      const adjustment = Math.round(avgScore * 7); // max ±7 points
-      cat.posAdjustment = adjustment;
-      cat.pos = Math.max(10, Math.min(85, cat.pos + adjustment));
-
-      // Recalculate nettoUpside and gb with adjusted PoS
-      cat.nettoUpside = +(cat.bruttoUpside * (1 - cat.einpreisungsgrad / 100)).toFixed(2);
-      cat.gb = +(cat.pos / 100 * cat.nettoUpside).toFixed(2);
-    }
-
-    console.log(`[NEWS-SENTIMENT] Matched ${newsItems.filter(n => n.sentiment).length} news items to catalysts for ${ticker}`);
-  } catch (err: any) {
-    console.log(`[NEWS-SENTIMENT] LLM matching failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
   }
+
+  // Aggregate per catalyst
+  for (let i = 0; i < catalysts.length; i++) {
+    const matched = newsItems.filter(n => n.matchedCatalystIdx === i);
+    if (!matched.length) continue;
+    const cat = catalysts[i];
+    cat.newsCount = matched.length;
+    cat.posOriginal = cat.pos;
+    const avgScore = matched.reduce((s, n) => s + (n.sentimentScore || 0), 0) / matched.length;
+    const bullish = matched.filter(n => n.sentiment === 'bullish').length;
+    const bearish = matched.filter(n => n.sentiment === 'bearish').length;
+    cat.newsSentiment = (bullish > 0 && bearish > 0) ? 'mixed' : avgScore > 0.2 ? 'bullish' : avgScore < -0.2 ? 'bearish' : 'neutral';
+    const adjustment = Math.round(avgScore * 5); // max ±5 points (conservative vs LLM ±7)
+    cat.posAdjustment = adjustment;
+    cat.pos = Math.max(10, Math.min(85, cat.pos + adjustment));
+    cat.nettoUpside = +(cat.bruttoUpside * (1 - cat.einpreisungsgrad / 100)).toFixed(2);
+    cat.gb = +(cat.pos / 100 * cat.nettoUpside).toFixed(2);
+  }
+  console.log(`[NEWS-MATCH] Keyword-matched ${newsItems.filter(n => n.matchedCatalystIdx != null).length}/${newsItems.length} news items to catalysts`);
 }
 
 // === LLM-Powered Company-Specific Catalyst Generation ===
@@ -4289,17 +4287,24 @@ export async function registerRoutes(server: Server, app: Express) {
           keyProjects, secFilingExcerpts, newsItems,
         });
         if (combined && combined.catalysts.length >= 3) {
-          catalysts = combined.catalysts;
+          catalysts = combined.catalysts; // LLM result already has news matching embedded
           llmActuallyUsed = true;
           console.log(`[ANALYZE] Using OpenRouter LLM catalysts for ${ticker} (model=${combined.modelUsed}, tokens=${combined.promptTokens || '?'}+${combined.completionTokens || '?'})`);
         } else {
           catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
           console.log(`[ANALYZE] LLM failed/unavailable, falling back to sector-template catalysts for ${ticker}`);
+          // Still do keyword news matching so badges work in Section 15
+          if (newsItems.length > 0) await matchNewsToCatalysts(newsItems, catalysts);
         }
       } else {
         // Fast path: sector-template catalysts, no LLM
         catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
         console.log(`[ANALYZE] Using sector-template catalysts for ${ticker} (LLM off)`);
+        // Still run keyword-based news matching so newsItems get matchedCatalystIdx
+        // even without LLM — this powers the news badges in Section 15
+        if (newsItems.length > 0) {
+          await matchNewsToCatalysts(newsItems, catalysts);
+        }
       }
 
       let risks = generateRisks(sector, beta5Y, govExp.exposure);
