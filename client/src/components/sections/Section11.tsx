@@ -47,11 +47,12 @@ export function Section11({ data }: Props) {
     setLlmError(null);
     setLlmSkipped(false);
     try {
+      // LLM-Enrich: two sequential model calls (~30s each) → allow 120s
       const res = await apiRequest("POST", "/api/catalyst-enrich", {
         ticker: data.ticker,
         useLLM: true,
         force: true,
-      });
+      }, 120_000);
       const json = await res.json();
       if (json._llmSkipped) {
         setLlmSkipped(true);
@@ -66,7 +67,9 @@ export function Section11({ data }: Props) {
     } catch (err: any) {
       const msg = err?.message || "";
       console.warn(`[Section15] KI-Analyse fehlgeschlagen: ${msg}`);
-      if (/503|402/.test(msg)) {
+      if (/timeout|90s|120s/i.test(msg)) {
+        setLlmError("KI-Analyse: Server zu langsam — bitte erneut versuchen (LLM braucht 40-70s).");
+      } else if (/503|402/.test(msg)) {
         setLlmError("KI-Analyse nicht verfügbar (Token-Budget erschöpft).");
       } else if (/404/.test(msg)) {
         setLlmError("Keine zwischengespeicherte Analyse — bitte zuerst Vollanalyse ausführen.");

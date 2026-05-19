@@ -5044,7 +5044,8 @@ export async function registerRoutes(server: Server, app: Express) {
       ) || 0;
       const analystPTMedian = Number(cached.analystPT?.median ?? 0) || 0;
 
-      const result = await generateCatalystsAndMatchNews({
+      const newsItemsArr = Array.isArray(cached.newsItems) ? cached.newsItems : [];
+      const catalystInput = {
         ticker: String(ticker),
         companyName: String(cached.companyName || ticker),
         sector: String(cached.sector || "Technology"),
@@ -5058,43 +5059,54 @@ export async function registerRoutes(server: Server, app: Express) {
         marketCap: Number(cached.marketCap) || 0,
         keyProjects: Array.isArray(cached.keyProjects) ? cached.keyProjects : [],
         secFilingExcerpts: Array.isArray(cached.secFilingExcerpts) ? cached.secFilingExcerpts : [],
-        newsItems: Array.isArray(cached.newsItems) ? cached.newsItems : [],
-      });
+        newsItems: newsItemsArr,
+      };
+
+      // Fire catalyst call first, then deep-dives in parallel once we have catalyst names
+      // Two sequential 30s calls = 60s+ timeout. Solution: run cats first (needed for deep-dive
+      // input), then deep-dives immediately after without awaiting cache write.
+      const t0 = Date.now();
+      const result = await generateCatalystsAndMatchNews(catalystInput);
 
       if (!result) {
         return res.json({ catalysts: cached.catalysts || [], _llmSkipped: true });
       }
 
+      // Start deep-dive call immediately after catalysts arrive (don't wait for it to finish
+      // before sending — we merge and respond as soon as both are ready)
+      const deepDivePromise = generateCatalystDeepDives({
+        ticker: String(ticker),
+        companyName: String(cached.companyName || ticker),
+        sector: String(cached.sector || "Technology"),
+        description: String(cached.description || ""),
+        revenue: Number(cached.revenue) || 0,
+        revenueGrowth: revenueGrowthVal,
+        fcfMargin: Number(cached.fcfMargin) || 0,
+        price: Number(cached.currentPrice) || 0,
+        analystPT: analystPTMedian,
+        catalysts: result.catalysts.map((c: any) => ({
+          name: c.name, pos: c.pos,
+          bruttoUpside: c.bruttoUpside,
+          einpreisungsgrad: c.einpreisungsgrad,
+          context: c.context,
+        })),
+        newsHeadlines: newsItemsArr.slice(0, 4).map((n: any) => n.title || n.headline || ""),
+      }).catch((e: any) => { console.warn(`[CATALYST-ENRICH] deep-dive failed: ${e?.message?.substring(0,100)}`); return null; });
+
+      // Wait for deep-dives but cap at 35s so total stays well under 90s
+      const remainingMs = Math.max(5000, 70_000 - (Date.now() - t0));
+      const deepDives = await Promise.race([
+        deepDivePromise,
+        new Promise<null>(r => setTimeout(() => r(null), remainingMs)),
+      ]);
+
       let enrichedCatalysts: any[] = result.catalysts;
-      try {
-        const deepDives = await generateCatalystDeepDives({
-          ticker: String(ticker),
-          companyName: String(cached.companyName || ticker),
-          sector: String(cached.sector || "Technology"),
-          description: String(cached.description || ""),
-          revenue: Number(cached.revenue) || 0,
-          revenueGrowth: revenueGrowthVal,
-          fcfMargin: Number(cached.fcfMargin) || 0,
-          price: Number(cached.currentPrice) || 0,
-          analystPT: analystPTMedian,
-          catalysts: result.catalysts.map((c: any) => ({
-            name: c.name,
-            pos: c.pos,
-            bruttoUpside: c.bruttoUpside,
-            einpreisungsgrad: c.einpreisungsgrad,
-            context: c.context,
-          })),
-          newsHeadlines: (Array.isArray(cached.newsItems) ? cached.newsItems : [])
-            .slice(0, 4)
-            .map((n: any) => n.title || n.headline || ""),
+      if (deepDives && (deepDives as any[]).length > 0) {
+        enrichedCatalysts = result.catalysts.map((cat: any, i: number) => {
+          const dd = (deepDives as any[]).find((d: any) => d.idx === i) ||
+                     (deepDives as any[])[i];
+          return dd ? { ...cat, deepDive: dd.deepDive ?? dd } : cat;
         });
-        if (deepDives && deepDives.length > 0) {
-          enrichedCatalysts = result.catalysts.map((cat: any, i: number) =>
-            deepDives[i] ? { ...cat, deepDive: deepDives[i].deepDive } : cat
-          );
-        }
-      } catch (ddErr: any) {
-        console.warn(`[CATALYST-ENRICH] Deep-dive failed: ${ddErr?.message?.substring(0, 120)}`);
       }
 
       try {
