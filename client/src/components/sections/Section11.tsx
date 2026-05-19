@@ -3,15 +3,80 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { formatNumber, formatCurrency } from "../../lib/formatters";
 import { calculateFCFFDCF, type FCFFDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
 import React from "react";
-import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, TrendingUp, Globe, AlertTriangle } from "lucide-react";
+import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, TrendingUp, Globe, AlertTriangle, Sparkles, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
+import { apiRequest } from "../../lib/queryClient";
 
 interface Props { data: StockAnalysis }
 
+const GENERIC_CATALYST_NAMES = new Set<string>([
+  "Revenue Growth Acceleration",
+  "Margin Expansion / Operating Leverage",
+  "Market Share Gains",
+  "Strategic M&A / Partnerships",
+  "AI / Cloud Adoption Tailwind",
+  "Product Cycle / Platform Expansion",
+  "Regulatory Rate Case",
+  "Clean Energy Expansion",
+  "Interest Rate Normalization Benefit",
+  "Capital Return / Buyback Program",
+  "Government Contract / Defense Spending",
+  "Demographic Tailwind",
+]);
+
+function hasGenericCatalysts(cats: { name: string }[]): boolean {
+  if (!cats || cats.length === 0) return false;
+  const generic = cats.filter(c => GENERIC_CATALYST_NAMES.has(c.name)).length;
+  return generic >= cats.length / 2;
+}
+
 export function Section11({ data }: Props) {
-  const catalysts = data.catalysts;
   const reasoning = data.catalystReasoning;
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmDone, setLlmDone] = useState(false);
+  const [llmSkipped, setLlmSkipped] = useState(false);
+  const [llmError, setLlmError] = useState<string | null>(null);
+  const [llmEnrichedCatalysts, setLlmEnrichedCatalysts] = useState<any[] | null>(null);
+
+  const catalysts = (llmEnrichedCatalysts ?? data.catalysts) as typeof data.catalysts;
+  const showGenericBanner = llmEnrichedCatalysts === null && hasGenericCatalysts(data.catalysts as any);
+
+  async function triggerKI() {
+    setLlmLoading(true);
+    setLlmError(null);
+    setLlmSkipped(false);
+    try {
+      const res = await apiRequest("POST", "/api/catalyst-enrich", {
+        ticker: data.ticker,
+        useLLM: true,
+        force: true,
+      });
+      const json = await res.json();
+      if (json._llmSkipped) {
+        setLlmSkipped(true);
+        if (Array.isArray(json.catalysts)) setLlmEnrichedCatalysts(json.catalysts);
+        setLlmError("KI-Analyse nicht verfügbar (Token-Budget erschöpft). Basis-Katalysatoren werden angezeigt.");
+      } else if (Array.isArray(json.catalysts)) {
+        setLlmEnrichedCatalysts(json.catalysts);
+        setLlmDone(true);
+      } else {
+        setLlmError("Keine Katalysatoren erhalten.");
+      }
+    } catch (err: any) {
+      const msg = err?.message || "";
+      console.warn(`[Section15] KI-Analyse fehlgeschlagen: ${msg}`);
+      if (/503|402/.test(msg)) {
+        setLlmError("KI-Analyse nicht verfügbar (Token-Budget erschöpft).");
+      } else if (/404/.test(msg)) {
+        setLlmError("Keine zwischengespeicherte Analyse — bitte zuerst Vollanalyse ausführen.");
+      } else {
+        setLlmError(msg || "KI-Analyse fehlgeschlagen.");
+      }
+    } finally {
+      setLlmLoading(false);
+    }
+  }
 
   // Compute conservative FCFF DCF (same defaults as Section5/Section13)
   const netDebt = data.totalDebt - data.cashEquivalents;
@@ -68,6 +133,58 @@ export function Section11({ data }: Props) {
 
   return (
     <SectionCard number={15} title="KURSANSTIEG-KATALYSATOREN (Anti-Bias)">
+      {/* === KI Analyse Button (analog Section 8) === */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => !llmLoading && triggerKI()}
+          disabled={llmLoading}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all ${
+            llmDone
+              ? "bg-violet-500/15 text-violet-400 border-violet-500/30"
+              : "text-foreground/50 border-border/50 hover:bg-muted/50 hover:text-foreground/70"
+          } ${llmLoading ? "opacity-60 cursor-not-allowed" : ""}`}
+          title="KI Analyse — unternehmensspezifische Katalysatoren via Grok"
+          data-testid="button-catalyst-ki-analyse"
+        >
+          {llmLoading ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <Sparkles className="w-3 h-3" />
+          )}
+          KI Analyse
+          {llmDone && !llmLoading && (
+            <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+          )}
+          {llmSkipped && !llmLoading && (
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+          )}
+        </button>
+
+        {llmLoading && (
+          <span className="text-[10px] text-muted-foreground animate-pulse">
+            Generiere Katalysatoren…
+          </span>
+        )}
+
+        {llmDone && !llmLoading && (
+          <span className="ml-auto text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border bg-violet-500/10 text-violet-400 border-violet-500/20">
+            ✦ KI
+          </span>
+        )}
+      </div>
+
+      {llmError && (
+        <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
+          ⚠ {llmError}
+        </div>
+      )}
+
+      {showGenericBanner && !llmError && (
+        <div className="text-[11px] text-amber-500 bg-amber-500/5 border border-amber-500/20 rounded px-3 py-2">
+          ⚠ Generische Katalysatoren erkannt — KI-Analyse für unternehmensspezifische Analyse empfohlen
+        </div>
+      )}
+
       {/* === WARUM GERADE INTERESSANT === */}
       {reasoning && (
         <div className="rounded-lg border-2 border-primary/20 bg-primary/5 p-4 space-y-3">

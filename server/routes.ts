@@ -5016,6 +5016,100 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ============================================================
+  // Catalyst Enrichment Endpoint (Section 15 — manual KI trigger)
+  // ============================================================
+  // Re-runs only the LLM catalyst generation + deep-dives using cached
+  // analysis data. Lets users trigger company-specific catalysts on demand
+  // when initial analysis used sector templates (LLM off or failed).
+  app.post("/api/catalyst-enrich", async (req, res) => {
+    const { ticker, useLLM = true, force = true } = req.body || {};
+    if (!ticker) return res.status(400).json({ error: "ticker required" });
+    void useLLM; void force;
+
+    try {
+      const cached = getCachedAnalysis(ticker);
+      if (!cached) {
+        return res.status(404).json({
+          error: "No cached analysis for " + ticker + " — run a full analysis first",
+        });
+      }
+
+      const revenueGrowthVal = Number(
+        cached.financialStatements?.incomeStatement?.revenueGrowth ?? 0
+      ) || 0;
+      const analystPTMedian = Number(cached.analystPT?.median ?? 0) || 0;
+
+      const result = await generateCatalystsAndMatchNews({
+        ticker: String(ticker),
+        companyName: String(cached.companyName || ticker),
+        sector: String(cached.sector || "Technology"),
+        industry: String(cached.industry || "General"),
+        description: String(cached.description || ""),
+        revenue: Number(cached.revenue) || 0,
+        revenueGrowth: revenueGrowthVal,
+        fcfMargin: Number(cached.fcfMargin) || 0,
+        price: Number(cached.currentPrice) || 0,
+        pe: Number(cached.peRatio) || 0,
+        marketCap: Number(cached.marketCap) || 0,
+        keyProjects: Array.isArray(cached.keyProjects) ? cached.keyProjects : [],
+        secFilingExcerpts: Array.isArray(cached.secFilingExcerpts) ? cached.secFilingExcerpts : [],
+        newsItems: Array.isArray(cached.newsItems) ? cached.newsItems : [],
+      });
+
+      if (!result) {
+        return res.json({ catalysts: cached.catalysts || [], _llmSkipped: true });
+      }
+
+      let enrichedCatalysts: any[] = result.catalysts;
+      try {
+        const deepDives = await generateCatalystDeepDives({
+          ticker: String(ticker),
+          companyName: String(cached.companyName || ticker),
+          sector: String(cached.sector || "Technology"),
+          description: String(cached.description || ""),
+          revenue: Number(cached.revenue) || 0,
+          revenueGrowth: revenueGrowthVal,
+          fcfMargin: Number(cached.fcfMargin) || 0,
+          price: Number(cached.currentPrice) || 0,
+          analystPT: analystPTMedian,
+          catalysts: result.catalysts.map((c: any) => ({
+            name: c.name,
+            pos: c.pos,
+            bruttoUpside: c.bruttoUpside,
+            einpreisungsgrad: c.einpreisungsgrad,
+            context: c.context,
+          })),
+          newsHeadlines: (Array.isArray(cached.newsItems) ? cached.newsItems : [])
+            .slice(0, 4)
+            .map((n: any) => n.title || n.headline || ""),
+        });
+        if (deepDives && deepDives.length > 0) {
+          enrichedCatalysts = result.catalysts.map((cat: any, i: number) =>
+            deepDives[i] ? { ...cat, deepDive: deepDives[i].deepDive } : cat
+          );
+        }
+      } catch (ddErr: any) {
+        console.warn(`[CATALYST-ENRICH] Deep-dive failed: ${ddErr?.message?.substring(0, 120)}`);
+      }
+
+      try {
+        const updated = { ...cached, catalysts: enrichedCatalysts };
+        delete updated._cached;
+        delete updated._cacheAge;
+        delete updated._cacheDate;
+        (updated as any)._useLLM = true;
+        (updated as any).llmMode = true;
+        saveCachedAnalysis(String(ticker), updated);
+      } catch {}
+
+      return res.json({ catalysts: enrichedCatalysts, modelUsed: result.modelUsed });
+    } catch (err: any) {
+      console.error(`[CATALYST-ENRICH] ${err?.message || String(err)}`);
+      return res.status(500).json({ error: err?.message || String(err) });
+    }
+  });
+
+  // ============================================================
   // BTC Analysis Endpoint
   // ============================================================
   app.post("/api/analyze-btc", async (_req, res) => {
