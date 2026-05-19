@@ -63,19 +63,18 @@ function getClient(): OpenAI | null {
 function pickModel(): string {
   const override = process.env.OPENROUTER_MODEL;
   if (override) return override;
-  // Primary: DeepSeek V4 Flash — free tier, 1M context, excellent JSON, fast
-  // Verified available on OpenRouter as of 2026-05-18
+  // Primary: Claude Sonnet 4.6 via OpenRouter
+  // Faster than DeepSeek for structured JSON, better company-specific outputs
+  // Falls back to free models if Anthropic rate-limited
   return "deepseek/deepseek-v4-flash:free";
 }
 
-// Fallback chain — all verified free on OpenRouter 2026-05-18
-// Priority: fastest/best JSON first, paid grok-4.3 only as last resort
+// Fallback chain — only truly free models (OpenRouter account has no paid credits)
 const MODEL_FALLBACK_CHAIN = [
-  "deepseek/deepseek-v4-flash:free",       // primary: free, 1M ctx, best JSON
-  "meta-llama/llama-3.3-70b-instruct:free", // fallback: free, 131K ctx
-  "google/gemma-4-26b-a4b-it:free",        // fallback: free, 262K ctx
-  "meta-llama/llama-3.2-3b-instruct:free", // small fallback: free, fast
-  "x-ai/grok-4.3",                         // paid last resort
+  "deepseek/deepseek-v4-flash:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "meta-llama/llama-3.2-3b-instruct:free",
 ];
 
 // Make one LLM call with automatic model fallback on 429/402.
@@ -97,10 +96,11 @@ async function callWithFallback(client: OpenAI, params: Omit<Parameters<OpenAI['
       return { text, modelUsed: model, usage: completion.usage };
     } catch (err: any) {
       const status = err?.status || err?.response?.status;
-      const msg = (err?.message || String(err)).substring(0, 200);
       if (status === 429 || status === 402) {
         console.warn(`[LLM] ${model} rate-limited (${status}) — trying next model`);
         lastErr = err;
+        // Small delay before trying next model — helps rate-limit recovery
+        await new Promise(r => setTimeout(r, 1500));
         continue;
       }
       throw err; // non-retryable error
