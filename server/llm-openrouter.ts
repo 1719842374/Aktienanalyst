@@ -121,6 +121,8 @@ export interface CombinedLLMInput {
   price: number;
   pe: number;
   marketCap: number;
+  analystPTMedian?: number;    // optional — used in richer prompt context
+  governmentExposure?: number; // optional — used in richer prompt context
   keyProjects: string[];
   secFilingExcerpts: string[];
   newsItems: {
@@ -164,61 +166,60 @@ export async function generateCatalystsAndMatchNews(
   const {
     ticker, companyName, sector, industry, description, revenue, revenueGrowth,
     fcfMargin, price, pe, marketCap, keyProjects, secFilingExcerpts, newsItems,
+    analystPTMedian = 0, governmentExposure = 0,
   } = input;
 
   // Compact context — keep prompt under ~1500 input tokens to keep cost low.
+  // Build rich company context — more detail = more specific catalysts
   const ctx: string[] = [];
-  ctx.push(`Company: ${companyName} (${ticker})`);
-  ctx.push(`Sector: ${sector} / ${industry}`);
-  ctx.push(`Description: ${description.substring(0, 600)}`);
-  ctx.push(`Revenue: $${revenue > 0 ? (revenue / 1e9).toFixed(1) + 'B' : 'N/A'} | Growth: ${revenueGrowth != null && revenueGrowth !== 0 ? revenueGrowth.toFixed(1) + '%' : 'N/A'} | FCF Margin: ${fcfMargin > 0 ? fcfMargin.toFixed(1) + '%' : 'N/A'}`);
-  ctx.push(`Price: $${price.toFixed(2)} | P/E: ${pe > 0 ? pe.toFixed(1) : 'N/A'} | Market Cap: ${marketCap > 0 ? '$' + (marketCap / 1e9).toFixed(1) + 'B' : 'N/A'}`);
+  ctx.push(`Unternehmen: ${companyName} (${ticker}) | Sektor: ${sector} / ${industry}`);
+  // Full description — key for non-US companies with no SEC filings
+  ctx.push(`Beschreibung: ${description.substring(0, 1000)}`);
+  ctx.push(`Finanzen: Umsatz ${revenue > 0 ? '$' + (revenue / 1e9).toFixed(1) + 'B' : 'N/A'} | Wachstum ${revenueGrowth != null && revenueGrowth !== 0 ? revenueGrowth.toFixed(1) + '%' : 'N/A'} | FCF-Marge ${fcfMargin > 0 ? fcfMargin.toFixed(1) + '%' : 'N/A'} | KGV ${pe > 0 ? pe.toFixed(1) : 'N/A'} | MCap ${marketCap > 0 ? '$' + (marketCap / 1e9).toFixed(1) + 'B' : 'N/A'}`);
+  ctx.push(`Kurs: $${price.toFixed(2)} | Analyst-PT: $${analystPTMedian > 0 ? analystPTMedian.toFixed(2) : 'N/A'} | Gov-Exposure: ${(governmentExposure * 100).toFixed(0)}%`);
   if (keyProjects.length > 0) {
-    ctx.push(`\nKey Projects (SEC 10-K):\n${keyProjects.slice(0, 8).map(p => `  - ${p}`).join("\n")}`);
+    ctx.push(`SEC-Projekte/Verträge (10-K): ${keyProjects.slice(0, 10).join(", ")}`);
   }
   if (secFilingExcerpts.length > 0) {
-    ctx.push(`\nSEC Excerpts:\n${secFilingExcerpts.slice(0, 4).map(e => `  "${e.substring(0, 200)}"`).join("\n")}`);
+    ctx.push(`SEC-Auszüge: ${secFilingExcerpts.slice(0, 3).map(e => e.substring(0, 250)).join(" | ")}`);
   }
 
+  // News list — put most recent first, use full title so deals/numbers are visible
   const newsList = newsItems
-    .slice(0, 10) // cap to top 10 — saves tokens, news beyond top-10 rarely moves catalyst PoS
-    .map((n, i) => `N${i + 1}: "${n.title.substring(0, 130)}" (${n.source}, ${n.relativeTime})`)
+    .slice(0, 8)
+    .map((n, i) => `N${i + 1} [${n.relativeTime}]: "${n.title.substring(0, 160)}" (${n.source})`)
     .join("\n");
 
-  const prompt = `You are a senior equity research analyst. Do TWO tasks in one response and return ONE JSON object.
+  const prompt = `Du bist Senior Equity Analyst mit Spezialisierung auf ${sector}. Analysiere ${companyName} (${ticker}) und generiere 5 konkrete, firmenspezifische Katalysatoren.
 
-CONTEXT:
+UNTERNEHMENSDATEN:
 ${ctx.join("\n")}
 
-${newsList ? `RECENT NEWS:\n${newsList}\n` : ""}
+${newsList ? `AKTUELLE NEWS (wichtig: nutze diese für konkrete Deals/Events):\n${newsList}\n` : ""}
 
-TASK 1 — Generate exactly 5 COMPANY-SPECIFIC investment catalysts. Rules:
-- Reference real company-specific projects, products, markets, or strategic moves (use the SEC/news context above)
-- BANNED generic names: "Revenue Growth Acceleration", "Margin Expansion", "Operating Leverage" — use specific names
-- Examples: "Blue Creek Mine Ramp-up" (HCC), "FSD/Robotaxi Commercialization" (TSLA), "VMware Integration Synergies" (AVGO)
-- At least 1 of the 5 must reflect genuine downside risk (lower PoS)
-- Context written in GERMAN financial-analyst language (1-2 Sätze explaining why it matters)
+PFLICHT-REGELN — strikte Einhaltung:
+1. VERBOTEN sind generische Namen wie "Revenue Growth", "Margin Expansion", "Market Share Gains" — NUR firmenspezifische Namen erlaubt
+2. Jeder Katalysator MUSS eine echte Firmenreferenz enthalten: konkrete Deal-Namen, Kapazitätszahlen (GW, MW), Partner-Namen, Produkte, Verträge oder Geographien aus den News/SEC-Daten oben
+3. Wenn News einen konkreten Deal erwähnen (z.B. "Nvidia-Deal $3.4Bn", "Sweetwater Campus"), muss er als eigener Katalysator erscheinen
+4. Bei fehlenden News: nutze description + sector-knowledge für plausible firmenspezifische Treiber (keine Schablonen)
+5. Anti-Bias: mindestens 1 Katalysator muss echtes Downside-Risiko reflektieren (niedrigere PoS ≤ 40%)
+6. context auf Deutsch, präzise mit Zahlen wenn vorhanden (z.B. "3,4 Mrd. USD Vertrag", "4,5 GW gesicherter Kapazität")
 
-TASK 2 — For each news headline above (if any), assign sentiment + which of the 5 catalysts it relates to.
+GUTE Beispiele (firmenspezifisch):
+- "Nvidia AI-Cloud-Deal Execution" (CoreWeave) — konkreter $3.4Bn Deal
+- "Sweetwater Power Campus Ramp-up" (CoreWeave) — 4,5 GW Kapazität
+- "FSD/Robotaxi Commercialization Q3" (TSLA) — spezifisches Produkt
+- "Blue Creek Mine First Coal" (HCC) — konkretes Projekt
+- "Ozempic EU Zulassung Adipositas" (NVO) — konkretes Medikament/Markt
 
-Return ONLY this JSON shape — NO markdown, NO commentary:
-{
-  "catalysts": [
-    {
-      "name": "Short company-specific name (<= 50 chars)",
-      "context": "Deutsche Erklärung 1-2 Sätze",
-      "timeline": "6-12M | 12-18M | 12-24M | 12-36M",
-      "pos": 20-80,
-      "bruttoUpside": 5-30,
-      "einpreisungsgrad": 20-60
-    }
-    // ... 5 items total
-  ],
-  "newsMatches": [
-    { "idx": 1, "sentiment": "bullish|bearish|neutral", "score": -1.0..1.0, "catalyst": "K1|K2|K3|K4|K5|none" }
-    // ... one per news item
-  ]
-}`;
+SCHLECHTE Beispiele (verboten):
+- "Revenue Growth Acceleration" — zu generisch
+- "Margin Expansion / Operating Leverage" — zu generisch
+- "Market Share Gains" — kein Firmenkontext
+- "AI / Cloud Adoption Tailwind" — Sektor-Template, nicht firmenspezifisch
+
+Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
+{"catalysts":[{"name":"Firmenspezifischer Name ≤50 Zeichen","context":"Deutsche Erklärung mit konkreten Zahlen/Namen, 1-2 Sätze","timeline":"6-12M|12-18M|12-24M|12-36M","pos":20-80,"bruttoUpside":5-35,"einpreisungsgrad":20-65}],"newsMatches":[{"idx":1,"sentiment":"bullish|bearish|neutral","score":-1.0,"catalyst":"K1|K2|K3|K4|K5|none"}]}`;
 
   try {
     console.log(`[LLM] Calling (with fallback) for ${ticker} (combined catalyst+news, news_count=${newsItems.length})`);

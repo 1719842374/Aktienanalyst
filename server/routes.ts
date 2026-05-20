@@ -5057,6 +5057,8 @@ export async function registerRoutes(server: Server, app: Express) {
         price: Number(cached.currentPrice) || 0,
         pe: Number(cached.peRatio) || 0,
         marketCap: Number(cached.marketCap) || 0,
+        analystPTMedian,         // pass through for richer prompt
+        governmentExposure: Number(cached.governmentExposure) || 0,
         keyProjects: Array.isArray(cached.keyProjects) ? cached.keyProjects : [],
         secFilingExcerpts: Array.isArray(cached.secFilingExcerpts) ? cached.secFilingExcerpts : [],
         newsItems: newsItemsArr,
