@@ -126,34 +126,51 @@ export default function Dashboard() {
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           setRetryInfo({ attempt, maxRetries });
-          const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: force === true });
+          // On last attempt: always use force=false to hit cache if available
+          // This prevents blank screen when server is warming up but cache has data
+          const useForce = attempt < maxRetries ? (force === true) : false;
+          const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: useForce });
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            const errMsg = errJson?.error || errJson?.message || `HTTP ${res.status}`;
+            // 429 / RATE_LIMITED: surface immediately, no retries
+            if (res.status === 429 || errJson?.errorCode === 'RATE_LIMITED') {
+              console.warn(`[Analyze] Rate-limit erkannt — keine Retries`);
+              setRetryInfo(null);
+              setData(null);
+              setFinanceQuotaOk(false);
+              throw Object.assign(new Error(errMsg), { errorCode: 'RATE_LIMITED' });
+            }
+            throw new Error(errMsg);
+          }
           const json = await res.json();
-          // No 202 polling needed in chat mode — backend returns full result directly
+          // Surface RATE_LIMITED from a 200 response body too
+          if (json?.errorCode === 'RATE_LIMITED') {
+            setRetryInfo(null);
+            setData(null);
+            setFinanceQuotaOk(false);
+            throw Object.assign(new Error(json.error || 'RATE_LIMITED'), { errorCode: 'RATE_LIMITED' });
+          }
           const result = json as StockAnalysis;
           setRetryInfo(null);
           return result;
         } catch (err: any) {
           lastError = err;
           const msg = err?.message || "";
-          // 429 / RATE_LIMITED: surface immediately, no retries
-          if (msg.includes("RATE_LIMITED") || msg.includes("Tagesquota") || msg.includes("429")) {
-            console.warn(`[Analyze] Rate-limit erkannt — keine Retries`);
-            setRetryInfo(null);
-            setData(null);
-            setFinanceQuotaOk(false); // Show quota warning on WelcomeScreen
+          // RATE_LIMITED already handled above — re-throw immediately
+          if (err?.errorCode === 'RATE_LIMITED' || msg.includes("RATE_LIMITED") || msg.includes("Tagesquota")) {
             throw err;
           }
           console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${msg.substring(0, 100)}`);
           if (attempt < maxRetries) {
             // Cold-start backoff: 3s, 6s, 10s, 15s
-            // The pplx.app sandbox needs up to 20s on cold start
             const backoffs = [3000, 6000, 10000, 15000];
             await new Promise(r => setTimeout(r, backoffs[attempt - 1] ?? 15000));
           }
         }
       }
       setRetryInfo(null);
-      throw lastError || new Error('Analyse fehlgeschlagen nach 3 Versuchen');
+      throw lastError || new Error('Analyse fehlgeschlagen nach 5 Versuchen');
     },
     onSuccess: (result, variables: any) => {
       // Stale guard: if the user kicked off another request after this one,
