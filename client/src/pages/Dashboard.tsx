@@ -158,6 +158,22 @@ export default function Dashboard() {
             setFinanceQuotaOk(false);
             throw Object.assign(new Error(json.error || 'RATE_LIMITED'), { errorCode: 'RATE_LIMITED' });
           }
+          // Guard: if JSON has errorCode despite HTTP 200, handle it
+          if (json?.errorCode) {
+            const ec = json.errorCode;
+            if (ec === 'RATE_LIMITED') {
+              setRetryInfo(null);
+              setData(null);
+              setFinanceQuotaOk(false);
+              throw Object.assign(new Error(json.error || 'RATE_LIMITED'), { errorCode: 'RATE_LIMITED' });
+            }
+            // Other error codes (BINARY_MISSING, TIMEOUT etc.): treat as transient, retry
+            throw new Error(json.error || `API error: ${ec}`);
+          }
+          // Guard: result must have currentPrice to be a valid analysis
+          if (!json?.currentPrice && !json?.companyName) {
+            throw new Error('Ungültige Antwort vom Server — erneut versuchen');
+          }
           const result = json as StockAnalysis;
           setRetryInfo(null);
           return result;
@@ -197,11 +213,23 @@ export default function Dashboard() {
     },
     onError: (err: any, variables: any) => {
       // Stale-guard: ignore errors from superseded requests
-      // Without this, a stale error from a cancelled request corrupts
-      // isError=true for the current fresh mutation, causing blank screens.
       if (variables?.reqId !== undefined && variables.reqId !== requestIdRef.current) {
         console.log(`[Analyze] Ignoring stale error (reqId ${variables.reqId} ≠ current ${requestIdRef.current})`);
         return;
+      }
+      // If we already have data from a previous analysis, keep showing it.
+      // Only clear data for RATE_LIMITED (needs explicit empty state for quota warning UI).
+      // For all other errors: old data > blank screen.
+      const ec = (err as any)?.errorCode;
+      if (ec !== 'RATE_LIMITED' && dataRef.current) {
+        console.log('[Analyze] Error but keeping previous data visible');
+        // Reset mutation state so the overlay disappears — keep old data
+        // We do this by calling reset() which clears isError/isPending
+        // Note: React Query v5 exposes analyzeMutation.reset() but we can't call it here
+        // directly. Instead we set retryInfo=null — the overlay only shows when isPending.
+        setRetryInfo(null);
+        // The isError state will naturally clear on next mutate() call.
+        // For now, the overlay disappears (no longer isPending) and old data shows.
       }
     },
   });
@@ -398,9 +426,9 @@ export default function Dashboard() {
           className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar"
           data-testid="main-content"
         >
-          {analyzeMutation.isError && !data ? (
+          {analyzeMutation.isError && !data && !analyzeMutation.isPending ? (
             <ErrorScreen error={analyzeMutation.error} />
-          ) : !data && !analyzeMutation.isPending ? (
+          ) : !data && !analyzeMutation.isPending && !analyzeMutation.isError ? (
             <WelcomeScreen
               onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
               serverReady={serverReady}
