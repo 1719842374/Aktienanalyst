@@ -6,3 +6,6 @@ vite.config.ts.*
 *.tar.gz
 .env
 .cache/
+data.db
+data.db-wal
+data.db-shm

@@ -3275,35 +3275,68 @@ function generateMacroCorrelations(
 }
 
 // === Server-Side Analysis Cache ===
+// Two-layer cache that must survive container restarts on pplx.app:
+//   1. File JSON in .cache/  (fast, legacy)
+//   2. SQLite via disk-cache.ts (survives restarts more reliably; 7-day TTL)
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  diskCacheGet,
+  diskCacheSet,
+  diskCacheDelete,
+  diskCacheList,
+} from './disk-cache';
 const CACHE_DIR = path.join(process.cwd(), '.cache');
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 
+function tickerKey(ticker: string): string {
+  return ticker.toUpperCase();
+}
+
 function getCachedAnalysis(ticker: string): any | null {
+  // 1. File cache (fastest)
   try {
     const file = path.join(CACHE_DIR, `${ticker.replace(/[^a-zA-Z0-9.]/g, '_')}.json`);
-    if (!fs.existsSync(file)) return null;
-    const stat = fs.statSync(file);
-    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    data._cached = true;
-    data._cacheAge = Math.round((Date.now() - stat.mtimeMs) / 60000); // minutes
-    data._cacheDate = new Date(stat.mtimeMs).toISOString();
-    return data;
-  } catch { return null; }
+    if (fs.existsSync(file)) {
+      const stat = fs.statSync(file);
+      const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      data._cached = true;
+      data._cacheAge = Math.round((Date.now() - stat.mtimeMs) / 60000);
+      data._cacheDate = new Date(stat.mtimeMs).toISOString();
+      return data;
+    }
+  } catch {}
+  // 2. Disk (SQLite) cache — survives restarts even if .cache dir is wiped
+  const fromDisk = diskCacheGet(tickerKey(ticker));
+  if (fromDisk) {
+    // Warm file cache from disk for next read
+    try {
+      const file = path.join(CACHE_DIR, `${ticker.replace(/[^a-zA-Z0-9.]/g, '_')}.json`);
+      const toWrite = { ...fromDisk };
+      delete toWrite._cached;
+      delete toWrite._cacheAge;
+      delete toWrite._cacheDate;
+      delete toWrite._diskCache;
+      fs.writeFileSync(file, JSON.stringify(toWrite));
+    } catch {}
+    return fromDisk;
+  }
+  return null;
 }
 
 function saveCachedAnalysis(ticker: string, data: any) {
+  const toCache = { ...data };
+  delete toCache._cached;
+  delete toCache._cacheAge;
+  delete toCache._cacheDate;
+  delete toCache._diskCache;
   try {
     const file = path.join(CACHE_DIR, `${ticker.replace(/[^a-zA-Z0-9.]/g, '_')}.json`);
-    const toCache = { ...data };
-    delete toCache._cached;
-    delete toCache._cacheAge;
-    delete toCache._cacheDate;
     fs.writeFileSync(file, JSON.stringify(toCache));
   } catch (err: any) {
-    console.log(`[CACHE] Failed to save ${ticker}: ${err?.message?.substring(0, 100)}`);
+    console.log(`[CACHE] File save failed for ${ticker}: ${err?.message?.substring(0, 100)}`);
   }
+  diskCacheSet(tickerKey(ticker), toCache);
 }
 
 export async function registerRoutes(server: Server, app: Express) {
@@ -3392,16 +3425,27 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.get("/api/cache", (_req, res) => {
     try {
-      const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.json') && f !== 'watchlist.json');
-      const items = files.map(f => {
-        const stat = fs.statSync(path.join(CACHE_DIR, f));
-        return {
-          ticker: f.replace('.json', ''),
-          cachedAt: new Date(stat.mtimeMs).toISOString(),
-          ageMinutes: Math.round((Date.now() - stat.mtimeMs) / 60000),
-          sizeKB: Math.round(stat.size / 1024),
-        };
-      });
+      const byTicker = new Map<string, { ticker: string; cachedAt: string; ageMinutes: number; sizeKB: number }>();
+      // File cache (legacy / hot)
+      try {
+        const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.json') && f !== 'watchlist.json');
+        for (const f of files) {
+          const stat = fs.statSync(path.join(CACHE_DIR, f));
+          const ticker = f.replace('.json', '');
+          byTicker.set(ticker.toUpperCase(), {
+            ticker,
+            cachedAt: new Date(stat.mtimeMs).toISOString(),
+            ageMinutes: Math.round((Date.now() - stat.mtimeMs) / 60000),
+            sizeKB: Math.round(stat.size / 1024),
+          });
+        }
+      } catch {}
+      // Disk (SQLite) cache — adds entries that survived a restart even when .cache was wiped
+      for (const entry of diskCacheList()) {
+        const key = entry.ticker.toUpperCase();
+        if (!byTicker.has(key)) byTicker.set(key, entry);
+      }
+      const items = Array.from(byTicker.values()).sort((a, b) => a.ageMinutes - b.ageMinutes);
       res.json({ cached: items.length, items });
     } catch { res.json({ cached: 0, items: [] }); }
   });

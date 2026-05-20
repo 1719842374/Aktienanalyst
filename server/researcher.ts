@@ -28,9 +28,11 @@ import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { callLLMJson } from "./llm-openrouter";
+import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 
 // ============================================================
 // Cache Layer (mirrors main dashboard 7-day TTL)
+// File cache is fast/legacy; SQLite disk cache survives restarts on pplx.app.
 // ============================================================
 
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
@@ -41,31 +43,49 @@ function safeKey(s: string): string {
   return s.replace(/[^a-zA-Z0-9_-]/g, "_").substring(0, 80);
 }
 
+function researcherDiskKey(tab: string, params: string): string {
+  return `${safeKey(tab)}__${safeKey(params)}`;
+}
+
 function readResearcherCache(tab: string, params: string): any | null {
+  // 1. File cache
   try {
     const file = path.join(CACHE_DIR, `${safeKey(tab)}__${safeKey(params)}.json`);
-    if (!fs.existsSync(file)) return null;
-    const raw = fs.readFileSync(file, "utf-8");
-    const parsed = JSON.parse(raw);
-    const cachedAt = parsed?._cachedAt ? new Date(parsed._cachedAt).getTime() : 0;
-    const ageMin = (Date.now() - cachedAt) / 60000;
-    if (ageMin >= RESEARCHER_TTL_MIN) return null;
-    parsed._cached = true;
-    parsed._cacheAge = Math.round(ageMin);
-    return parsed;
-  } catch {
-    return null;
+    if (fs.existsSync(file)) {
+      const raw = fs.readFileSync(file, "utf-8");
+      const parsed = JSON.parse(raw);
+      const cachedAt = parsed?._cachedAt ? new Date(parsed._cachedAt).getTime() : 0;
+      const ageMin = (Date.now() - cachedAt) / 60000;
+      if (ageMin < RESEARCHER_TTL_MIN) {
+        parsed._cached = true;
+        parsed._cacheAge = Math.round(ageMin);
+        return parsed;
+      }
+    }
+  } catch {}
+  // 2. SQLite disk cache — survives restarts
+  const fromDisk = diskResearcherGet(researcherDiskKey(tab, params));
+  if (fromDisk) {
+    // Warm file cache from disk
+    try {
+      const file = path.join(CACHE_DIR, `${safeKey(tab)}__${safeKey(params)}.json`);
+      fs.writeFileSync(file, JSON.stringify(fromDisk, null, 2));
+    } catch {}
+    fromDisk._cached = true;
+    return fromDisk;
   }
+  return null;
 }
 
 function writeResearcherCache(tab: string, params: string, data: any) {
+  const toSave = { ...data, _cachedAt: new Date().toISOString() };
   try {
     const file = path.join(CACHE_DIR, `${safeKey(tab)}__${safeKey(params)}.json`);
-    const toSave = { ...data, _cachedAt: new Date().toISOString() };
     fs.writeFileSync(file, JSON.stringify(toSave, null, 2));
   } catch (err: any) {
-    console.warn(`[RESEARCHER-CACHE] save failed: ${err?.message}`);
+    console.warn(`[RESEARCHER-CACHE] file save failed: ${err?.message}`);
   }
+  diskResearcherSet(researcherDiskKey(tab, params), toSave);
 }
 
 function deleteResearcherCache(tab: string, params: string) {
@@ -75,6 +95,7 @@ function deleteResearcherCache(tab: string, params: string) {
   } catch (err: any) {
     console.warn(`[RESEARCHER-CACHE] delete failed: ${err?.message}`);
   }
+  diskResearcherDelete(researcherDiskKey(tab, params));
 }
 
 // Returns true if a cached result is "stale" — has no real LLM content.
