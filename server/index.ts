@@ -1,6 +1,12 @@
 // Load .env first so OPENROUTER_API_KEY (and any other secrets) are
 // available to all downstream modules before they read process.env.
 import "dotenv/config";
+
+// FMP fallback key — injected at startup if not already set via environment
+if (!process.env.FMP_API_KEY) {
+  process.env.FMP_API_KEY = 'lHc3gAE8V0YuUn48HEnXIHJazR7nI7Cx';
+}
+
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";

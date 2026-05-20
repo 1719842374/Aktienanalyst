@@ -3546,6 +3546,46 @@ export async function registerRoutes(server: Server, app: Express) {
           return res.json(cachedFresh);
         }
       }
+
+      // Quote-only refresh: if cache is fresh (< 48h) but user requested force refresh,
+      // only update the quote field. Saves 7 Finance API calls (uses only 1).
+      const QUOTE_REFRESH_AGE_MS = 48 * 60 * 60 * 1000;
+      const cached = force ? getCachedAnalysis(ticker) : null;
+      const cacheAgeMs = cached ? (cached._cacheAge ?? Infinity) * 60000 : Infinity;
+      if (cached && force && cacheAgeMs < QUOTE_REFRESH_AGE_MS && cacheLLMModeMatches(cached._useLLM, useLLM)) {
+        console.log(`[ANALYZE] Quote-only refresh for ${ticker} (cache ${Math.round(cacheAgeMs / 60000)}min old)`);
+        try {
+          const freshQuote = await callFinanceToolThrottled("finance_quotes", { ticker_symbols: [ticker] });
+          let refreshedPrice = 0;
+          if (freshQuote?.content) {
+            const rows = parseMarkdownTable(freshQuote.content);
+            if (rows.length > 0) {
+              refreshedPrice = parseNumber(rows[0].price);
+            }
+          }
+          if (refreshedPrice > 0) {
+            const refreshed = {
+              ...cached,
+              currentPrice: refreshedPrice,
+              priceTimestamp: new Date().toISOString(),
+              _quoteRefreshed: true,
+              _cached: true,
+            };
+            saveCachedAnalysis(String(ticker).toUpperCase(), refreshed);
+            return res.json(refreshed);
+          }
+          if (freshQuote === null) {
+            // Rate-limited — return stale cache rather than failing
+            return res.json({ ...cached, _quoteStale: true });
+          }
+        } catch (e: any) {
+          if ((e?.message || '').includes('RATE_LIMITED')) {
+            return res.json({ ...cached, _quoteStale: true });
+          }
+          // Other error: fall through to full analysis
+        }
+      }
+
       console.log(`[ANALYZE] Starting analysis for ${ticker}${useLLM ? ' [LLM ON]' : ''}${force ? ' [FORCED]' : ''}...`);
 
       // === Sequential API calls (throttled to avoid burst rate-limits) ===
@@ -3558,11 +3598,18 @@ export async function registerRoutes(server: Server, app: Express) {
       const endDate = new Date().toISOString().split('T')[0];
       const startDate = new Date(Date.now() - 11 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-      // 1. Quote (most important — if this fails the rest is pointless)
-      const quoteResult = await callFinanceToolThrottled("finance_quotes", {
-        ticker_symbols: [ticker],
-        fields: ["price", "currency", "marketCap", "pe", "eps", "change", "changesPercentage", "volume", "avgVolume", "dayLow", "dayHigh", "yearLow", "yearHigh", "previousClose", "dividendYieldTTM"],
-      });
+      // Batch 1 (critical path) — quote + profile in parallel
+      const [quoteResult, profileResult] = await Promise.all([
+        callFinanceToolThrottled("finance_quotes", {
+          ticker_symbols: [ticker],
+          fields: ["price", "currency", "marketCap", "pe", "eps", "change", "changesPercentage", "volume", "avgVolume", "dayLow", "dayHigh", "yearLow", "yearHigh", "previousClose", "dividendYieldTTM"],
+        }),
+        callFinanceToolThrottled("finance_company_profile", {
+          ticker_symbols: [ticker],
+          query: `Company profile for ${ticker}`,
+          action: `Fetching company profile for ${ticker}`,
+        }),
+      ]);
 
       // Circuit-breaker: if Quote returned null after retries OR binary is missing,
       // try FMP fallback first, then cache, then error.
@@ -3601,51 +3648,42 @@ export async function registerRoutes(server: Server, app: Express) {
         }
         console.log(`[ANALYZE] FMP fallback active for ${ticker} — continuing with FMP data`);
       }
-      // 2. Company Profile
-      const profileResult = await callFinanceToolThrottled("finance_company_profile", {
-        ticker_symbols: [ticker],
-        query: `Company profile for ${ticker}`,
-        action: `Fetching company profile for ${ticker}`,
-      });
-      // 3. Financials (annual)
-      const financialsResult = await callFinanceToolThrottled("finance_financials", {
-        ticker_symbols: [ticker],
-        period: "annual",
-        as_of_fiscal_year: new Date().getFullYear() - 1,
-        limit: 3,
-        income_statement_metrics: ["revenue", "netIncome", "ebitda", "eps", "epsDiluted", "weightedAverageSharesOutstanding", "operatingIncome", "grossProfit"],
-        balance_sheet_metrics: ["totalDebt", "cashAndCashEquivalents", "totalStockholdersEquity", "totalAssets", "totalCurrentAssets", "totalCurrentLiabilities", "netDebt"],
-        cash_flow_metrics: ["freeCashFlow", "operatingCashFlow", "capitalExpenditure"],
-      });
-      // 4. Analyst Research
-      const analystResult = await callFinanceToolThrottled("finance_analyst_research", {
-        ticker_symbols: [ticker],
-      });
-      // 5. Estimates
-      const estimatesResult = await callFinanceToolThrottled("finance_estimates", {
-        ticker_symbols: [ticker],
-        period_type: "annual",
-      });
-      // 6. OHLCV 10+ years daily data
-      const ohlcvHistResult = await callFinanceToolThrottled("finance_ohlcv_histories", {
-        ticker_symbols: [ticker],
-        start_date_yyyy_mm_dd: startDate,
-        end_date_yyyy_mm_dd: endDate,
-        time_interval: "1day",
-        fields: ["open", "high", "low", "close", "volume"],
-      });
-      // 7. Revenue Segments
-      const segmentsResult = await callFinanceToolThrottled("finance_segments", {
-        ticker_symbols: [ticker],
-        query: "revenue by business segment and geographic breakdown",
-        period_type: "annual",
-        limit: 2,
-      });
-      // 8. News (no retry — nice-to-have, not critical)
-      const newsResult = await callFinanceToolThrottled("finance_massive", {
-        pathname: `/v2/reference/news`,
-        params: { ticker, limit: 10, order: "desc" },
-      }, { maxRetries: 0 });
+      // Batch 2 (enrichment) — run remaining 6 in parallel
+      const [financialsResult, analystResult, estimatesResult, ohlcvHistResult, segmentsResult, newsResult] = await Promise.all([
+        callFinanceToolThrottled("finance_financials", {
+          ticker_symbols: [ticker],
+          period: "annual",
+          as_of_fiscal_year: new Date().getFullYear() - 1,
+          limit: 3,
+          income_statement_metrics: ["revenue", "netIncome", "ebitda", "eps", "epsDiluted", "weightedAverageSharesOutstanding", "operatingIncome", "grossProfit"],
+          balance_sheet_metrics: ["totalDebt", "cashAndCashEquivalents", "totalStockholdersEquity", "totalAssets", "totalCurrentAssets", "totalCurrentLiabilities", "netDebt"],
+          cash_flow_metrics: ["freeCashFlow", "operatingCashFlow", "capitalExpenditure"],
+        }),
+        callFinanceToolThrottled("finance_analyst_research", {
+          ticker_symbols: [ticker],
+        }),
+        callFinanceToolThrottled("finance_estimates", {
+          ticker_symbols: [ticker],
+          period_type: "annual",
+        }),
+        callFinanceToolThrottled("finance_ohlcv_histories", {
+          ticker_symbols: [ticker],
+          start_date_yyyy_mm_dd: startDate,
+          end_date_yyyy_mm_dd: endDate,
+          time_interval: "1day",
+          fields: ["open", "high", "low", "close", "volume"],
+        }),
+        callFinanceToolThrottled("finance_segments", {
+          ticker_symbols: [ticker],
+          query: "revenue by business segment and geographic breakdown",
+          period_type: "annual",
+          limit: 2,
+        }),
+        callFinanceToolThrottled("finance_massive", {
+          pathname: `/v2/reference/news`,
+          params: { ticker, limit: 10, order: "desc" },
+        }, { maxRetries: 0 }),
+      ]);
 
       console.log(`[ANALYZE] All API calls completed for ${ticker} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
@@ -3713,9 +3751,26 @@ export async function registerRoutes(server: Server, app: Express) {
         }
         // Distinguish: was the quote call rate-limited, or is the ticker actually invalid?
         if (quoteResult === null) {
-          // null = retries exhausted on 429/401 — surface as 429 with a clear message
+          // null = retries exhausted on 429/401 — try FMP fallback before surrendering
+          const fmpKey = process.env.FMP_API_KEY;
+          if (fmpKey && ticker) {
+            try {
+              console.log(`[ANALYZE] RATE_LIMITED — trying FMP fallback for ${ticker}`);
+              const fmpFallbackData = await getFmpFallbackData(String(ticker));
+              if (fmpFallbackData) {
+                return res.json(fmpFallbackData);
+              }
+            } catch (fmpErr: any) {
+              console.warn(`[ANALYZE] FMP fallback failed: ${fmpErr?.message?.substring(0, 100)}`);
+            }
+          }
+          // If FMP also failed, try disk cache
+          const diskFallback = diskCacheGet ? diskCacheGet(String(ticker).toUpperCase()) : null;
+          if (diskFallback) {
+            return res.json({ ...diskFallback, _quoteStale: true });
+          }
           return res.status(429).json({
-            error: `Tagesquota der Finance-API erreicht. Bitte später erneut versuchen (Reset typischerweise nach 12-24 Std.). Bereits analysierte Tickers funktionieren weiterhin aus dem Cache.`,
+            error: `Finance-API Tageslimit und FMP Fallback fehlgeschlagen.`,
             errorCode: "RATE_LIMITED",
           });
         }
