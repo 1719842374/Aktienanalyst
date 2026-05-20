@@ -395,52 +395,92 @@ export default function Dashboard() {
         {/* Main Content */}
         <main
           ref={mainRef}
-          className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar"
+          className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar relative"
           data-testid="main-content"
         >
-          {!data && !analyzeMutation.isPending ? (
-            <WelcomeScreen
-              onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
-              serverReady={serverReady}
-              financeQuotaOk={financeQuotaOk}
-              onAnalyzeDone={(isRateLimited) => { if (isRateLimited) setFinanceQuotaOk(false); }}
-            />
-          ) : analyzeMutation.isPending ? (
-            <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTicker || ""} retryInfo={retryInfo} />
-          ) : analyzeMutation.isError ? (
-            <ErrorScreen error={analyzeMutation.error} />
-          ) : data ? (
-            <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
-              <div ref={setSectionRef(1)}><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} /></div>
-              <div ref={setSectionRef(2)}><Section2 data={data} /></div>
-              <FinancialStatements data={data} />
-              <div ref={setSectionRef(3)}><Section3 data={data} /></div>
-              <div ref={setSectionRef(4)}><Section4 data={data} /></div>
-              <div ref={setSectionRef(5)}><Section5 data={data} /></div>
-              <div ref={setSectionRef(6)}><Section6 data={data} /></div>
-              <div ref={setSectionRef(7)}><Section7 data={data} /></div>
-              <div ref={setSectionRef(8)}><Section8 data={data} useLLM={useLLM} /></div>
-              <div ref={setSectionRef(9)}><Section9 data={data} /></div>
-              <div ref={setSectionRef(10)}><TechnicalChart data={data} /></div>
-              <div ref={setSectionRef(11)}><Section15 data={data} /></div>
-              <div ref={setSectionRef(12)}><Section16 data={data} /></div>
-              <div ref={setSectionRef(13)}><Section17 data={data} /></div>
-              <div ref={setSectionRef(14)}><Section10 data={data} /></div>
-              <div ref={setSectionRef(15)}><Section11 data={data} /></div>
-              <div ref={setSectionRef(16)}><Section12 data={data} /></div>
-              <div ref={setSectionRef(17)}><Section13 data={data} /></div>
-              <div className="pb-8" />
-            </div>
-          ) : (
-            // Fallback: data=null + not pending + no error (stale guard race condition)
-            // Always show WelcomeScreen instead of blank white screen
-            <WelcomeScreen
-              onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
-              serverReady={serverReady}
-              financeQuotaOk={financeQuotaOk}
-              onAnalyzeDone={(isRateLimited) => { if (isRateLimited) setFinanceQuotaOk(false); }}
-            />
-          )}
+          {(() => {
+            // Optimistic UI flags — keep showing stale data during loading whenever
+            // we already have something rendered. This eliminates blank-screen gaps
+            // during re-analysis or ticker switches.
+            const isPending = analyzeMutation.isPending;
+            const pendingTicker = analyzeMutation.variables?.ticker || currentTicker || "";
+            const isReanalyzing = isPending && data !== null && data.ticker === pendingTicker;
+            const showStaleDuringLoad = isPending && data !== null && data.ticker !== pendingTicker;
+
+            // First-time load (no prior data): full LoadingScreen
+            if (isPending && data === null) {
+              return <LoadingScreen ticker={pendingTicker} retryInfo={retryInfo} />;
+            }
+
+            if (analyzeMutation.isError && data === null) {
+              return <ErrorScreen error={analyzeMutation.error} />;
+            }
+
+            if (data === null && !isPending) {
+              return (
+                <WelcomeScreen
+                  onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
+                  serverReady={serverReady}
+                  financeQuotaOk={financeQuotaOk}
+                  onAnalyzeDone={(isRateLimited) => { if (isRateLimited) setFinanceQuotaOk(false); }}
+                />
+              );
+            }
+
+            // We have data (possibly stale). Render sections with optional overlay.
+            return (
+              <>
+                {isReanalyzing && (
+                  <div className="sticky top-0 z-10 h-0.5 bg-gradient-to-r from-primary/0 via-primary to-primary/0 animate-pulse" />
+                )}
+                <div className={`max-w-5xl mx-auto p-3 sm:p-4 space-y-3 transition-opacity duration-200 ${showStaleDuringLoad ? "opacity-40 pointer-events-none" : ""}`}>
+                  {isReanalyzing && (
+                    <div className="flex items-center gap-2 text-[11px] text-primary/80 bg-primary/5 border border-primary/20 rounded-md px-3 py-1.5">
+                      <div className="w-3 h-3 border-2 border-primary/60 border-t-transparent rounded-full animate-spin" />
+                      <span>Aktualisiere {data!.ticker}{retryInfo && retryInfo.attempt > 1 ? ` — Retry ${retryInfo.attempt}/${retryInfo.maxRetries}` : "…"}</span>
+                    </div>
+                  )}
+                  <div ref={setSectionRef(1)}><Section1 data={data!} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} /></div>
+                  <div ref={setSectionRef(2)}><Section2 data={data!} /></div>
+                  <FinancialStatements data={data!} />
+                  <div ref={setSectionRef(3)}><Section3 data={data!} /></div>
+                  <div ref={setSectionRef(4)}><Section4 data={data!} /></div>
+                  <div ref={setSectionRef(5)}><Section5 data={data!} /></div>
+                  <div ref={setSectionRef(6)}><Section6 data={data!} /></div>
+                  <div ref={setSectionRef(7)}><Section7 data={data!} /></div>
+                  <div ref={setSectionRef(8)}><Section8 data={data!} useLLM={useLLM} /></div>
+                  <div ref={setSectionRef(9)}><Section9 data={data!} /></div>
+                  <div ref={setSectionRef(10)}><TechnicalChart data={data!} /></div>
+                  <div ref={setSectionRef(11)}><Section15 data={data!} /></div>
+                  <div ref={setSectionRef(12)}><Section16 data={data!} /></div>
+                  <div ref={setSectionRef(13)}><Section17 data={data!} /></div>
+                  <div ref={setSectionRef(14)}><Section10 data={data!} /></div>
+                  <div ref={setSectionRef(15)}>
+                    <Section11
+                      data={data!}
+                      onCatalystsEnriched={(enriched) => {
+                        setData(prev => prev ? { ...prev, catalysts: enriched as any } : prev);
+                      }}
+                    />
+                  </div>
+                  <div ref={setSectionRef(16)}><Section12 data={data!} /></div>
+                  <div ref={setSectionRef(17)}><Section13 data={data!} /></div>
+                  <div className="pb-8" />
+                </div>
+                {showStaleDuringLoad && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="bg-card/95 backdrop-blur-sm border border-border rounded-lg shadow-xl px-5 py-4 flex flex-col items-center gap-2 pointer-events-auto">
+                      <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                      <div className="text-sm font-medium">
+                        Lade {pendingTicker}{retryInfo && retryInfo.attempt > 1 ? ` — Retry ${retryInfo.attempt}/${retryInfo.maxRetries}` : "…"}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">Vorherige Analyse bleibt sichtbar</div>
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </main>
       </div>
     </div>

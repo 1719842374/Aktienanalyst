@@ -78,8 +78,8 @@ export default function Researcher() {
   }
 
   const mutation = useMutation({
-    mutationFn: async ({ tab, force }: { tab: Tab; force?: boolean }) => {
-      const body: any = { region, force: !!force };
+    mutationFn: async ({ tab, force, region: mutRegion }: { tab: Tab; force?: boolean; region: Region }) => {
+      const body: any = { region: mutRegion, force: !!force };
       // For screener, default-filters; user can extend later
       if (tab === "screener") {
         body.marketCapMin = 1000;     // $1B+
@@ -109,7 +109,10 @@ export default function Researcher() {
       throw lastErr || new Error("Analyse fehlgeschlagen. Bitte erneut versuchen.");
     },
     onSuccess: (result, variables) => {
-      setData(prev => ({ ...prev, [`${variables.tab}_${region}`]: result }));
+      // Use the region captured at mutate-time, not current state — the user
+      // may have switched regions while the request was in flight. Without this,
+      // a slow US response could overwrite the EU cache key.
+      setData(prev => ({ ...prev, [`${variables.tab}_${variables.region}`]: result }));
       setError(null);
     },
     onError: (err: any) => {
@@ -131,10 +134,17 @@ export default function Researcher() {
 
   function runAnalysis(force = false) {
     setError(null);
-    mutation.mutate({ tab: activeTab, force });
+    mutation.mutate({ tab: activeTab, force, region });
   }
 
   const isLoading = mutation.isPending;
+  // The user might switch tabs/regions WHILE a mutation is running. We only
+  // want to show a spinner on the tab+region whose analysis is actually loading
+  // — not draw a misleading spinner on a different view the user has navigated
+  // to. Also lets us keep showing cached data on the *new* view immediately.
+  const loadingForCurrentView = isLoading
+    && mutation.variables?.tab === activeTab
+    && mutation.variables?.region === region;
 
   // Stale cache detection — a cached result that has no real LLM content.
   // _staleRefreshing = backend is already refreshing in background (show info, not warning)
@@ -260,7 +270,7 @@ export default function Researcher() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {!currentData && !isLoading && (
+            {!currentData && !loadingForCurrentView && (
               <button
                 onClick={() => runAnalysis(false)}
                 className="px-3 py-1.5 rounded-md bg-violet-500/15 border border-violet-500/30 text-violet-300 text-[11px] font-medium hover:bg-violet-500/25 transition-colors flex items-center gap-1.5"
@@ -269,7 +279,7 @@ export default function Researcher() {
                 <Sparkles className="w-3 h-3" /> Analyse starten
               </button>
             )}
-            {currentData && !isLoading && (
+            {currentData && !loadingForCurrentView && (
               <button
                 onClick={() => runAnalysis(true)}
                 className={
@@ -283,7 +293,7 @@ export default function Researcher() {
                 <RefreshCw className={isStale ? "w-3.5 h-3.5" : "w-3 h-3"} /> Aktualisieren
               </button>
             )}
-            {isLoading && (
+            {loadingForCurrentView && (
               <div className="px-3 py-1.5 text-[11px] text-foreground/60 flex items-center gap-2">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Analysiere…
               </div>
@@ -298,15 +308,37 @@ export default function Researcher() {
           </div>
         )}
 
-        {/* Tab content */}
-        {!currentData && !isLoading && !error && (
+        {/* Tab content — keep showing currentData even while a refresh is in flight,
+            so the user never sees a blank panel mid-mutation. */}
+        {!currentData && !loadingForCurrentView && !error && (
           <EmptyState />
         )}
+        {!currentData && loadingForCurrentView && (
+          <div className="flex items-center justify-center py-24">
+            <div className="text-center max-w-md">
+              <Loader2 className="w-8 h-8 text-violet-400/70 mx-auto mb-3 animate-spin" />
+              <div className="text-sm font-semibold text-foreground/80">Analyse läuft…</div>
+              <div className="text-[11px] text-foreground/50 mt-1.5 leading-relaxed">
+                Echte Makro-Daten + LLM-Synthese (~25–60s)
+              </div>
+            </div>
+          </div>
+        )}
 
-        {currentData && activeTab === "macro" && <MacroPanel data={currentData} />}
-        {currentData && activeTab === "sectors" && <SectorsPanel data={currentData} />}
-        {currentData && activeTab === "screener" && <ScreenerPanel data={currentData} />}
-        {currentData && activeTab === "capex" && <CapexPanel data={currentData} />}
+        <div className={loadingForCurrentView && currentData ? "relative opacity-60 transition-opacity" : "relative"}>
+          {currentData && activeTab === "macro" && <MacroPanel data={currentData} />}
+          {currentData && activeTab === "sectors" && <SectorsPanel data={currentData} />}
+          {currentData && activeTab === "screener" && <ScreenerPanel data={currentData} />}
+          {currentData && activeTab === "capex" && <CapexPanel data={currentData} />}
+          {loadingForCurrentView && currentData && (
+            <div className="absolute top-0 left-0 right-0 flex justify-center pointer-events-none">
+              <div className="bg-card/95 border border-border rounded-full shadow-lg px-3 py-1 text-[11px] flex items-center gap-2 pointer-events-auto mt-2">
+                <Loader2 className="w-3 h-3 animate-spin text-violet-400" />
+                <span>Aktualisiere…</span>
+              </div>
+            </div>
+          )}
+        </div>
       </main>
 
       {/* Daily Briefing Modal */}

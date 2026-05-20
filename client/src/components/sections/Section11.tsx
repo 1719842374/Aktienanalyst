@@ -7,7 +7,12 @@ import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, Trendin
 import { useState, useMemo } from "react";
 import { apiRequest } from "../../lib/queryClient";
 
-interface Props { data: StockAnalysis }
+interface Props {
+  data: StockAnalysis;
+  // Optional callback so the parent (Dashboard) can persist enriched catalysts
+  // into its own cache and the user sees them again after navigating away.
+  onCatalystsEnriched?: (catalysts: any[]) => void;
+}
 
 const GENERIC_CATALYST_NAMES = new Set<string>([
   "Revenue Growth Acceleration",
@@ -30,7 +35,7 @@ function hasGenericCatalysts(cats: { name: string }[]): boolean {
   return generic >= cats.length / 2;
 }
 
-export function Section11({ data }: Props) {
+export function Section11({ data, onCatalystsEnriched }: Props) {
   const reasoning = data.catalystReasoning;
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
@@ -40,7 +45,14 @@ export function Section11({ data }: Props) {
   const [llmEnrichedCatalysts, setLlmEnrichedCatalysts] = useState<any[] | null>(null);
 
   const catalysts = (llmEnrichedCatalysts ?? data.catalysts) as typeof data.catalysts;
-  const showGenericBanner = llmEnrichedCatalysts === null && hasGenericCatalysts(data.catalysts as any);
+  // Detect enriched-from-parent: parent passes back enriched catalysts via
+  // onCatalystsEnriched, which means data.catalysts already has deepDive entries.
+  // In that case we should treat the section as "KI done" even though local
+  // llmEnrichedCatalysts state was reset on remount.
+  const enrichedFromParent = !llmEnrichedCatalysts && Array.isArray(data.catalysts)
+    && data.catalysts.some((c: any) => c?.deepDive);
+  const effectiveDone = llmDone || enrichedFromParent;
+  const showGenericBanner = !effectiveDone && llmEnrichedCatalysts === null && hasGenericCatalysts(data.catalysts as any);
 
   async function triggerKI() {
     setLlmLoading(true);
@@ -56,11 +68,17 @@ export function Section11({ data }: Props) {
       const json = await res.json();
       if (json._llmSkipped) {
         setLlmSkipped(true);
-        if (Array.isArray(json.catalysts)) setLlmEnrichedCatalysts(json.catalysts);
+        if (Array.isArray(json.catalysts)) {
+          setLlmEnrichedCatalysts(json.catalysts);
+          onCatalystsEnriched?.(json.catalysts);
+        }
         setLlmError("KI-Analyse nicht verfügbar (Token-Budget erschöpft). Basis-Katalysatoren werden angezeigt.");
       } else if (Array.isArray(json.catalysts)) {
         setLlmEnrichedCatalysts(json.catalysts);
         setLlmDone(true);
+        // Persist into parent analysis cache so the enriched catalysts survive
+        // navigation away and back (local state would otherwise reset to null).
+        onCatalystsEnriched?.(json.catalysts);
       } else {
         setLlmError("Keine Katalysatoren erhalten.");
       }
@@ -142,7 +160,7 @@ export function Section11({ data }: Props) {
           onClick={() => !llmLoading && triggerKI()}
           disabled={llmLoading}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all ${
-            llmDone
+            effectiveDone
               ? "bg-violet-500/15 text-violet-400 border-violet-500/30"
               : "text-foreground/50 border-border/50 hover:bg-muted/50 hover:text-foreground/70"
           } ${llmLoading ? "opacity-60 cursor-not-allowed" : ""}`}
@@ -155,7 +173,7 @@ export function Section11({ data }: Props) {
             <Sparkles className="w-3 h-3" />
           )}
           KI Analyse
-          {llmDone && !llmLoading && (
+          {effectiveDone && !llmLoading && (
             <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
           )}
           {llmSkipped && !llmLoading && (
@@ -169,7 +187,7 @@ export function Section11({ data }: Props) {
           </span>
         )}
 
-        {llmDone && !llmLoading && (
+        {effectiveDone && !llmLoading && (
           <span className="ml-auto text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border bg-violet-500/10 text-violet-400 border-violet-500/20">
             ✦ KI
           </span>
