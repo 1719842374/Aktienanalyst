@@ -108,6 +108,13 @@ export default function Dashboard() {
   const dataRef = useRef<StockAnalysis | null>(null);
   useEffect(() => { dataRef.current = data; }, [data]);
 
+  // Refs for values used inside callbacks to avoid stale closures
+  // (currentTicker and useLLM can change between renders, callbacks capture old values)
+  const currentTickerRef = useRef(currentTicker);
+  useEffect(() => { currentTickerRef.current = currentTicker; }, [currentTicker]);
+  const useLLMRef = useRef(useLLM);
+  useEffect(() => { useLLMRef.current = useLLM; }, [useLLM]);
+
   // Tagged mutate: assigns a fresh reqId on every kick-off so onSuccess can
   // reject stale responses. Use this everywhere instead of mutation.mutate().
   const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean }) => {
@@ -251,7 +258,7 @@ export default function Dashboard() {
             </div>
           )}
           <TickerSearch
-            onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLM }); }}
+            onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
             isLoading={analyzeMutation.isPending}
           />
           {/* PDF Export */}
@@ -278,9 +285,9 @@ export default function Dashboard() {
               // tooltip + visible violet badge already make the cost obvious.
               setUseLLM(next);
               if (next && currentTicker) {
-                startAnalyze({ ticker: currentTicker, llm: true });
-              } else if (!next && currentTicker && data?.llmMode) {
-                startAnalyze({ ticker: currentTicker, llm: false });
+                startAnalyze({ ticker: currentTickerRef.current, llm: true });
+              } else if (!next && currentTickerRef.current && data?.llmMode) {
+                startAnalyze({ ticker: currentTickerRef.current, llm: false });
               }
             }}
             className={`h-8 px-2 text-[11px] font-medium rounded-md transition-all flex items-center gap-1 border shrink-0 ${
@@ -393,7 +400,7 @@ export default function Dashboard() {
         >
           {!data && !analyzeMutation.isPending ? (
             <WelcomeScreen
-              onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLM }); }}
+              onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
               serverReady={serverReady}
               financeQuotaOk={financeQuotaOk}
               onAnalyzeDone={(isRateLimited) => { if (isRateLimited) setFinanceQuotaOk(false); }}
@@ -404,7 +411,7 @@ export default function Dashboard() {
             <ErrorScreen error={analyzeMutation.error} />
           ) : data ? (
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
-              <div ref={setSectionRef(1)}><Section1 data={data} onRefresh={() => { if (currentTicker) startAnalyze({ ticker: currentTicker, llm: useLLM, force: true }); }} /></div>
+              <div ref={setSectionRef(1)}><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} /></div>
               <div ref={setSectionRef(2)}><Section2 data={data} /></div>
               <FinancialStatements data={data} />
               <div ref={setSectionRef(3)}><Section3 data={data} /></div>
@@ -428,7 +435,7 @@ export default function Dashboard() {
             // Fallback: data=null + not pending + no error (stale guard race condition)
             // Always show WelcomeScreen instead of blank white screen
             <WelcomeScreen
-              onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLM }); }}
+              onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
               serverReady={serverReady}
               financeQuotaOk={financeQuotaOk}
               onAnalyzeDone={(isRateLimited) => { if (isRateLimited) setFinanceQuotaOk(false); }}
