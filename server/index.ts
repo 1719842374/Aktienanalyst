@@ -2,10 +2,9 @@
 // available to all downstream modules before they read process.env.
 import "dotenv/config";
 
-// FMP fallback key — injected at startup if not already set via environment
-if (!process.env.FMP_API_KEY) {
-  process.env.FMP_API_KEY = 'lHc3gAE8V0YuUn48HEnXIHJazR7nI7Cx';
-}
+// API keys are loaded from .env file (see dotenv/config import above).
+// Required keys: OPENROUTER_API_KEY, FMP_API_KEY
+// Set them in .env (not committed to git) or as environment variables.
 
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";

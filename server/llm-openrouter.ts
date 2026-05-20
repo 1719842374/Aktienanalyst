@@ -63,18 +63,18 @@ function getClient(): OpenAI | null {
 function pickModel(): string {
   const override = process.env.OPENROUTER_MODEL;
   if (override) return override;
-  // Primary: Claude Sonnet 4.6 via OpenRouter
-  // Faster than DeepSeek for structured JSON, better company-specific outputs
-  // Falls back to free models if Anthropic rate-limited
-  return "deepseek/deepseek-v4-flash:free";
+  // Primary: Claude 3.5 Haiku — $0.80/$4.00 per M tokens
+  // Same account (Stock_Analyst) already used this model successfully.
+  // Fast structured JSON, company-specific outputs, 200K context.
+  return "anthropic/claude-3.5-haiku";
 }
 
-// Fallback chain — only truly free models (OpenRouter account has no paid credits)
+// Fallback chain — Stock_Analyst OpenRouter account (has $0.113 credit)
+// Claude 3.5 Haiku → Claude 3 Haiku (cheapest) → Grok 4.3 (was "Grok 4.1 Fast")
 const MODEL_FALLBACK_CHAIN = [
-  "deepseek/deepseek-v4-flash:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "google/gemma-4-26b-a4b-it:free",
-  "meta-llama/llama-3.2-3b-instruct:free",
+  "anthropic/claude-3.5-haiku",  // $0.80/$4.00 per M — primary, best JSON
+  "anthropic/claude-3-haiku",     // $0.25/$1.25 per M — cheapest fallback
+  "x-ai/grok-4.3",               // $1.25/$2.50 per M — Grok fallback
 ];
 
 // Make one LLM call with automatic model fallback on 429/402.
