@@ -398,19 +398,29 @@ export default function Dashboard() {
           className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar"
           data-testid="main-content"
         >
-          {!data && !analyzeMutation.isPending ? (
+          {analyzeMutation.isError && !data ? (
+            <ErrorScreen error={analyzeMutation.error} />
+          ) : !data && !analyzeMutation.isPending ? (
             <WelcomeScreen
               onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
               serverReady={serverReady}
               financeQuotaOk={financeQuotaOk}
               onAnalyzeDone={(isRateLimited) => { if (isRateLimited) setFinanceQuotaOk(false); }}
             />
-          ) : analyzeMutation.isPending ? (
-            <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTicker || ""} retryInfo={retryInfo} />
-          ) : analyzeMutation.isError ? (
-            <ErrorScreen error={analyzeMutation.error} />
+          ) : !data && analyzeMutation.isPending ? (
+            // No previous data — show full loading screen
+            <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTickerRef.current || ""} retryInfo={retryInfo} />
           ) : data ? (
-            <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
+            // data exists — show sections even while re-analyzing (optimistic: keep old content visible)
+            <div className="relative max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
+              {/* Loading overlay when re-analyzing with existing data */}
+              {analyzeMutation.isPending && (
+                <div className="sticky top-0 z-30 -mx-3 sm:-mx-4 px-4 py-2 bg-background/90 backdrop-blur border-b border-border/50 flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="w-3 h-3 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                  Analysiere {analyzeMutation.variables?.ticker || currentTickerRef.current}…
+                  {retryInfo && <span className="text-amber-400">Versuch {retryInfo.attempt}/{retryInfo.maxRetries}</span>}
+                </div>
+              )}
               <div ref={setSectionRef(1)}><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} /></div>
               <div ref={setSectionRef(2)}><Section2 data={data} /></div>
               <FinancialStatements data={data} />
@@ -426,7 +436,14 @@ export default function Dashboard() {
               <div ref={setSectionRef(12)}><Section16 data={data} /></div>
               <div ref={setSectionRef(13)}><Section17 data={data} /></div>
               <div ref={setSectionRef(14)}><Section10 data={data} /></div>
-              <div ref={setSectionRef(15)}><Section11 data={data} /></div>
+              <div ref={setSectionRef(15)}><Section11
+                data={data}
+                onCatalystsEnriched={(enriched) => {
+                  // Persist enriched catalysts into Dashboard state so they
+                  // survive tab switches and don't reset to generic on re-render
+                  setData(prev => prev ? { ...prev, catalysts: enriched } : prev);
+                }}
+              /></div>
               <div ref={setSectionRef(16)}><Section12 data={data} /></div>
               <div ref={setSectionRef(17)}><Section13 data={data} /></div>
               <div className="pb-8" />

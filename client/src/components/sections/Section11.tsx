@@ -7,7 +7,10 @@ import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, Trendin
 import { useState, useMemo } from "react";
 import { apiRequest } from "../../lib/queryClient";
 
-interface Props { data: StockAnalysis }
+interface Props {
+  data: StockAnalysis;
+  onCatalystsEnriched?: (catalysts: StockAnalysis['catalysts']) => void;
+}
 
 const GENERIC_CATALYST_NAMES = new Set<string>([
   "Revenue Growth Acceleration",
@@ -30,7 +33,7 @@ function hasGenericCatalysts(cats: { name: string }[]): boolean {
   return generic >= cats.length / 2;
 }
 
-export function Section11({ data }: Props) {
+export function Section11({ data, onCatalystsEnriched }: Props) {
   const reasoning = data.catalystReasoning;
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
@@ -61,6 +64,9 @@ export function Section11({ data }: Props) {
       } else if (Array.isArray(json.catalysts)) {
         setLlmEnrichedCatalysts(json.catalysts);
         setLlmDone(true);
+        // Persist enriched catalysts into parent Dashboard state
+        // so they survive navigation/re-renders (won't reset to generic)
+        onCatalystsEnriched?.(json.catalysts);
       } else {
         setLlmError("Keine Katalysatoren erhalten.");
       }
