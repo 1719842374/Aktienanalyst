@@ -67,6 +67,39 @@ function cacheLLMModeMatches(cachedUseLLM: boolean | undefined | null, requested
 // and on a 429 (or 401-after-429) backs off and retries up to 2 times with
 // exponentially-rising delays. Returns null after exhausting retries so the
 // caller's existing null-check still works.
+// ── Daily Quota Guard ──────────────────────────────────────────────────────
+// Perplexity Finance Connector has a daily limit (~20 full analyses).
+// We cap at DAILY_FINANCE_LIMIT *full analyses* (8 calls each) = 160 calls max.
+// The guard resets at midnight UTC. Cron jobs do NOT count (they use /api/health).
+const DAILY_FINANCE_LIMIT = 18; // leave 2 as buffer; user gets ~18 real analyses/day
+let _quotaDate = new Date().toDateString();
+let _quotaCount = 0; // counts completed full analyses (not individual tool calls)
+
+function incrementQuota() {
+  const today = new Date().toDateString();
+  if (today !== _quotaDate) { _quotaDate = today; _quotaCount = 0; } // midnight reset
+  _quotaCount++;
+  console.log(`[QUOTA] Finance analyses today: ${_quotaCount}/${DAILY_FINANCE_LIMIT}`);
+}
+
+function isQuotaExceeded(): boolean {
+  const today = new Date().toDateString();
+  if (today !== _quotaDate) { _quotaDate = today; _quotaCount = 0; }
+  if (_quotaCount >= DAILY_FINANCE_LIMIT) {
+    const resetHour = Math.ceil((24 - new Date().getUTCHours()));
+    console.warn(`[QUOTA] Daily limit reached (${_quotaCount}/${DAILY_FINANCE_LIMIT}) — reset in ~${resetHour}h`);
+    return true;
+  }
+  return false;
+}
+
+function getQuotaStatus() {
+  const today = new Date().toDateString();
+  if (today !== _quotaDate) { _quotaDate = today; _quotaCount = 0; }
+  return { today: _quotaCount, limit: DAILY_FINANCE_LIMIT, remaining: Math.max(0, DAILY_FINANCE_LIMIT - _quotaCount) };
+}
+// ───────────────────────────────────────────────────────────────────────────
+
 async function callFinanceToolThrottled(
   toolName: string,
   args: Record<string, any>,
@@ -3409,8 +3442,9 @@ export async function registerRoutes(server: Server, app: Express) {
       checks.cache = { ok: false, detail: `Cache dir not writable: ${e.message}` };
     }
 
-    // 4. Finance API quota — quick probe (non-blocking, best-effort)
-    checks.finance_quota = { ok: true, detail: "not checked (use /api/analyze to verify)" };
+    // 4. Finance API quota — daily counter from soft guard
+    const qs = getQuotaStatus();
+    checks.quota = { ok: qs.remaining > 0, today: qs.today, limit: qs.limit, remaining: qs.remaining };
 
     const allOk = Object.values(checks).every(c => c.ok);
     const critical = !checks.external_tool?.ok; // external-tool down = complete outage
@@ -3594,6 +3628,26 @@ export async function registerRoutes(server: Server, app: Express) {
       // them out by 300ms and retry on 429 with exponential backoff.
       // Total cold-start time goes from ~2-3s to ~5-7s, but we no longer
       // get the cascade of 401s after the first 429.
+
+      // ── Quota Guard: soft-block before making Finance API calls ───────────────
+      if (isQuotaExceeded()) {
+        const fmpKey = process.env.FMP_API_KEY;
+        if (fmpKey) {
+          try {
+            console.log(`[ANALYZE] Soft quota exceeded — using FMP fallback for ${ticker}`);
+            const fmpData = await getFmpFallbackData(String(ticker), fmpKey);
+            if (fmpData) return res.json({ ...fmpData, _quotaFallback: true });
+          } catch {}
+        }
+        // Serve stale cache if available
+        if (cached) return res.json({ ...cached, _cached: true, _quoteStale: true, _quotaExceeded: true });
+        return res.status(429).json({
+          error: `Tägliches Finance-API Kontingent ausgeschöpft (${_quotaCount}/${DAILY_FINANCE_LIMIT} Analysen). Reset nach Mitternacht.`,
+          errorCode: 'RATE_LIMITED'
+        });
+      }
+      // ──────────────────────────────────────────────────────────────────
+
       const t0 = Date.now();
       const endDate = new Date().toISOString().split('T')[0];
       const startDate = new Date(Date.now() - 11 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -5049,6 +5103,7 @@ export async function registerRoutes(server: Server, app: Express) {
       } catch {}
       if (!proxyResponded) {
         proxyResponded = true;
+        incrementQuota(); // Count this as one successful Finance analysis
         res.json(analysis);
       }
     } catch (error: any) {
