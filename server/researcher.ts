@@ -311,10 +311,15 @@ Themen: ${hint}
 Antworte NUR mit diesem JSON auf Deutsch:
 {"keyEvents":[{"title":"Konkreter Event-Titel mit Datum","category":"Geldpolitik|Fiskalpolitik|Geopolitik|Konjunktur","severity":"high|medium|low","timeframe":"Letzte 30 Tage|Letzte 60 Tage|Letzte 90 Tage","description":"2 konkrete S\u00e4tze mit Zahlen/Fakten","inflationImpact":"steigend|neutral|fallend","rateImpact":"steigend|neutral|fallend","equityImpact":"positiv|neutral|negativ","affectedSectors":["Sektor1","Sektor2"],"rationale":"1 Satz warum marktrelevant"}]}`;
 
-  const [llm1, llm2] = await Promise.all([
-    callLLMJson({ prompt: prompt1, maxTokens: 1200 }),
-    callLLMJson({ prompt: prompt2, maxTokens: 1200 }),
-  ]);
+  let llm1: any = null, llm2: any = null;
+  try {
+    [llm1, llm2] = await Promise.all([
+      callLLMJson({ prompt: prompt1, maxTokens: 1200 }),
+      callLLMJson({ prompt: prompt2, maxTokens: 1200 }),
+    ]);
+  } catch (llmErr: any) {
+    console.warn(`[RESEARCHER/macro] LLM call threw for ${region}: ${llmErr?.message?.substring(0, 100)}`);
+  }
 
   let synthesis: any = null;
   if (llm1?.data) {
@@ -715,12 +720,18 @@ Gib auch sectors (5 Sektor-IDs mit höchstem Capex-Exposure), headline (1 Satz K
 Antworte NUR mit diesem JSON, kein Fließtext, keine Erklärungen davor oder danach:
 {"headline":"...","summary":"...","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname","region":"${regionLabel}","budget":"$Xbn","timeline":"2024-2026","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv"}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"...","programmes":["NDAA 2025"],"timeline":"12-24M"}]}`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 1200 });
+  let llm: any = null;
+  try {
+    llm = await callLLMJson({ prompt, maxTokens: 1200 });
+  } catch (llmErr: any) {
+    console.warn(`[RESEARCHER/capex] LLM threw for ${region}: ${llmErr?.message?.substring(0, 100)}`);
+  }
   if (!llm?.data) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
       programmes: [], totalCapexEstimate: "", govSpendingTrend: "",
-    };
+      _fallback: true,
+    } as any;
   }
   const d = llm.data;
   const rawProgrammes = Array.isArray(d.programmes) ? d.programmes : [];
@@ -1061,8 +1072,35 @@ Gib am Ende eine klare taktische Einschätzung: "Vorsichtig" | "Neutral" | "Oppo
 JSON:
 {"headline":"1 prägnanter Satz","summary":"2-3 Sätze Gesamtbild","tacticalStance":"Neutral","stanceRationale":"1 Satz Begründung","topChanges":[{"rank":1,"title":"Event-Titel","category":"Makro|Geopolitik|Earnings|Fed|Regulierung","impact":"positiv|neutral|negativ","severity":"high|medium|low","description":"2 konkrete Sätze","dcfImplication":"1 Satz Auswirkung auf DCF/Bewertung","affectedTickers":["AAPL","MSFT"]}],"riskRadar":["Risiko 1","Risiko 2","Risiko 3"],"watchlist":["Ticker1 — Grund","Ticker2 — Grund"]}`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 1200 });
+  let llm: Awaited<ReturnType<typeof callLLMJson>> = null;
+  try {
+    llm = await callLLMJson({ prompt, maxTokens: 1200 });
+  } catch (llmErr: any) {
+    console.warn(`[RESEARCHER/briefing] LLM threw: ${llmErr?.message?.substring(0, 100)}`);
+  }
   const briefing: any = llm?.data || null;
+
+  if (!briefing) {
+    // LLM failed — return a minimal stub so the frontend doesn't crash
+    const stanceStr = macroStances.map(s => `${s.region}: ${s.action}`).join(' | ');
+    return {
+      asOf: new Date().toISOString(),
+      generatedAt: new Date().toISOString(),
+      briefing: {
+        headline: `Marktlage — ${stanceStr}`,
+        summary: `LLM-Briefing nicht verfügbar (${today}). Macro Stance: ${stanceStr}. Bitte OpenRouter-Guthaben prüfen.`,
+        topChanges: topEventsForDisplay ?? [],
+        keyMetricsShift: {
+          inflationView: allEvents.find((e: any) => e.inflationImpact === 'steigend') ? 'steigend' : 'stabil',
+          rateView: allEvents.find((e: any) => e.rateImpact === 'steigend') ? 'steigend' : 'stabil',
+          equityView: macroStances.some(s => s.action === 'Buy') ? 'konstruktiv' : 'neutral',
+        },
+        recommendation: 'Beobachten — LLM nicht verfügbar.',
+        _llmSkipped: true,
+      },
+      diagnostics: { eventsScanned: totalScanned, netNewEvents: netNew, regionsAnalyzed: regions },
+    };
+  }
 
   // Adapt new prompt shape to existing FE shape: derive keyMetricsShift +
   // recommendation from tacticalStance / stanceRationale so the BriefingModal
