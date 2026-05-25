@@ -238,10 +238,16 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
       return null;
     }
 
-    // Strip optional markdown fences (some models still wrap JSON despite response_format)
-    let jsonStr = text;
+    // Strip markdown fences and preamble text before JSON
+    let jsonStr = text.trim();
     if (jsonStr.startsWith("```")) {
-      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    }
+    const _preambleIdx = jsonStr.search(/[{\[]/);
+    if (_preambleIdx > 0) {
+      jsonStr = jsonStr.substring(_preambleIdx);
+      const _lastClose = Math.max(jsonStr.lastIndexOf('}'), jsonStr.lastIndexOf(']'));
+      if (_lastClose >= 0) jsonStr = jsonStr.substring(0, _lastClose + 1);
     }
 
     let parsed: any;
@@ -581,9 +587,19 @@ export async function callLLMJson(opts: {
       response_format: { type: "json_object" } as any,
     });
     if (!text) return null;
-    let jsonStr = text;
+    let jsonStr = text.trim();
+    // Strip markdown fences
     if (jsonStr.startsWith("```")) {
-      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    }
+    // Strip any preamble text before the JSON (e.g. "Hier ist ein JSON-Objekt:\n{...}")
+    // Find the first { or [ to locate the actual JSON start
+    const jsonStart = jsonStr.search(/[{\[]/);
+    if (jsonStart > 0) {
+      jsonStr = jsonStr.substring(jsonStart);
+      // Also strip anything after the last } or ]
+      const jsonEnd = Math.max(jsonStr.lastIndexOf('}'), jsonStr.lastIndexOf(']'));
+      if (jsonEnd >= 0) jsonStr = jsonStr.substring(0, jsonEnd + 1);
     }
     return {
       data: JSON.parse(jsonStr),

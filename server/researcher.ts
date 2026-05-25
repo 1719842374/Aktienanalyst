@@ -502,15 +502,16 @@ async function buildScreener(filters: ScreenerFilters): Promise<ScreenerResult> 
 
   // Fallback: ask LLM for representative undervalued names per region
   if (!candidates.length) {
-    const fallbackPrompt = `Liste 12 attraktive, potenziell unterbewertete Aktien für die Region ${REGION_LABELS[filters.region] || filters.region} (Stand: ${new Date().toISOString().slice(0, 10)}). Maximale Sektor-Diversifikation aus den 12 Megatrend-Kategorien (Defense, Renewables, Biotech, Robotics, Cloud, Semis, Consumer, Infrastructure, Financials, RealEstate, Transport, Materials).
-
-Filter:
-- Market Cap: ${filters.marketCapMin || 1000}M-${filters.marketCapMax || 500000}M USD
-- P/E max: ${filters.peMax || 30}
-- Revenue Growth min: ${filters.revenueGrowthMin || 5}%
-
-JSON: { "candidates": [{ "ticker": "...", "companyName": "...", "sector": "...", "industry": "...", "marketCap": 50000000000, "pe": 18.5, "revenueGrowth": 12.3, "price": 100 }] }`;
-    const fb = await callLLMJson({ prompt: fallbackPrompt, maxTokens: 800 });
+    const region = filters.region;
+    const regionLabel2 = REGION_LABELS[region] || region;
+    const today2 = new Date().toISOString().slice(0, 10);
+    const fallbackPrompt = `Du bist ein Value-Investor. Region: ${regionLabel2} (${today2}).
+Nenne exakt 12 konkrete, börsennotierte Aktien mit hohem Unterbewertungspotenzial.
+Sektorverteilung: Defense, Renewables, Biotech, Cloud, Semis, Consumer, Infra, Financials, Materials (max 2 pro Sektor).
+Filter: MarketCap ${filters.marketCapMin || 1000}M-${filters.marketCapMax || 500000}M USD, P/E max ${filters.peMax || 30}, RevGrowth min ${filters.revenueGrowthMin || 5}%.
+Antworte NUR mit diesem JSON, kein Text davor oder danach:
+{"candidates":[{"ticker":"AAPL","companyName":"Apple Inc","sector":"Technology","industry":"Consumer Electronics","marketCap":3000000000000,"pe":28,"revenueGrowth":8,"price":195}]}`;
+    const fb = await callLLMJson({ prompt: fallbackPrompt, maxTokens: 1100 }); // 12 candidates need ~900 tokens
     if (fb?.data?.candidates && Array.isArray(fb.data.candidates)) {
       candidates = fb.data.candidates.slice(0, 12);
     }
@@ -711,8 +712,8 @@ Für jeden Sektor: impact ("positiv"|"neutral"|"negativ"), reasoning (2 Sätze k
 
 Gib auch sectors (5 Sektor-IDs mit höchstem Capex-Exposure), headline (1 Satz Kernaussage), summary (2 Sätze Gesamteinschätzung).
 
-JSON:
-{"headline":"...","summary":"...","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname","region":"${regionLabel}","budget":"$Xbn","timeline":"2024-2026","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv"}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"...","programmes":["NDAA 2025","EU-Verteidigungsfonds"],"timeline":"12-24M"}]}`;
+Antworte NUR mit diesem JSON, kein Fließtext, keine Erklärungen davor oder danach:
+{"headline":"...","summary":"...","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname","region":"${regionLabel}","budget":"$Xbn","timeline":"2024-2026","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv"}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"...","programmes":["NDAA 2025"],"timeline":"12-24M"}]}`;
 
   const llm = await callLLMJson({ prompt, maxTokens: 1200 });
   if (!llm?.data) {
