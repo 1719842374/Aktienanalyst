@@ -767,7 +767,7 @@ Beispiel f\u00fcr listedBeneficiaries in Region ${regionLabel}:
 ${exampleBeneficiaries}
 
 JSON-Format (kein Flie\u00dftext, nur JSON):
-{"headline":"1 Satz aktuell 2025","summary":"2 S\u00e4tze","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname (2025)","region":"${regionLabel}","budget":"$Xbn","timeline":"2025-2027","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv"}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"2 S\u00e4tze mit Programmreferenzen 2025","programmes":["Programm A","Programm B"],"timeline":"12-24M","listedBeneficiaries":${exampleBeneficiaries}}]}`;
+{"headline":"1 Satz aktuell 2025","summary":"2 S\u00e4tze","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname (2025)","region":"${regionLabel}","budget":"$Xbn","timeline":"2025-2027","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv","listedBeneficiaries":[{"ticker":"NVDA","name":"NVIDIA","rationale":"Direkte F\\u00f6rderung, Top-Profiteur"},{"ticker":"INTC","name":"Intel","rationale":"Produktionssubventionen"}]}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"2 S\u00e4tze mit Programmreferenzen 2025","programmes":["Programm A","Programm B"],"timeline":"12-24M","listedBeneficiaries":${exampleBeneficiaries}}]}`;
 
   let llm: any = null;
   try {

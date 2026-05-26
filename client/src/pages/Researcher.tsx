@@ -1061,7 +1061,22 @@ function CapexPanel({ data }: { data: any }) {
                 </div>
               </div>
             )}
-            {p.beneficiaries?.length > 0 && (
+            {/* listedBeneficiaries (new format: [{ticker, name, rationale}]) */}
+            {Array.isArray(p.listedBeneficiaries) && p.listedBeneficiaries.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-border/20">
+                <div className="text-[9px] uppercase text-foreground/40 mb-1">📈 Börsennotierte Profiteure</div>
+                <div className="space-y-1">
+                  {p.listedBeneficiaries.map((b: any, i: number) => (
+                    <div key={i} className="flex items-start gap-2 text-[10px]">
+                      <span className="font-mono font-bold text-primary shrink-0 min-w-[48px]">{b.ticker}</span>
+                      <span className="text-muted-foreground">{b.rationale}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Legacy beneficiaries (string array) */}
+            {!p.listedBeneficiaries?.length && p.beneficiaries?.length > 0 && (
               <div className="mt-1.5">
                 <div className="text-[9px] uppercase text-foreground/40 mb-0.5">Beneficiaries</div>
                 <div className="flex flex-wrap gap-1">
