@@ -737,8 +737,8 @@ async function buildCapexFiscal(region: string): Promise<CapexFiscalResult> {
   void mustInclude; void currentYear;
 
   const REGION_CAPEX_FOCUS: Record<string, string> = {
-    US: `Für US: Berücksichtige aktiv — "One Big Beautiful Bill" (OBBBA, Steuerreformen 2025, ~$3-4T), CHIPS Act Disbursements 2025-2026, NDAA 2026 (~$895B), AI Infrastructure Executive Orders & Stargate ($500B), Tariff Revenue Reallocation, IRA, IIJA-Implementation`,
-    EU: `Für EU: Berücksichtige aktiv — EU SAFE Programme (€150bn Verteidigung 2025), Deutsches Sondervermögen (€500bn Verteidigung+Infrastruktur 2025), REPowerEU, European Chips Act Disbursements 2025, NATO 3% BIP Pflicht ab 2025, France 2030, PNRR Italien`,
+    US: `Für US: Berücksichtige aktiv — "One Big Beautiful Bill" (OBBBA, Steuerreformen 2025, ~$3-4T), CHIPS Act Disbursements 2025-2026, NDAA 2026 (~$895B), Stargate Programme ($500bn AI Infrastructure, OpenAI/Oracle/SoftBank 2025-2029), IRA verlängert (Teile bis 2035, OBBBA behält EV/Energy-Credits), IIJA-Implementation, Tariff Revenue Reallocation`,
+    EU: `Für EU: Berücksichtige aktiv — EU SAFE Programme (€150bn Verteidigungsanleihen 2025), Deutsches Sondervermögen (€500bn Verteidigung+Infrastruktur, 2025 beschlossen, läuft 2025-2035), REPowerEU verlängert bis 2030, EU Taxonomy verlängert bis 2030, European Chips Act Disbursements 2025, NATO 3% BIP Pflicht ab 2025, France 2030, PNRR Italien`,
     ASIA: `Für ASIA: Berücksichtige aktiv — Japan Ishiba Stimulus & 2025 Supplementary Budget, China Property Stabilization Fund & Stimulus Sep 2024 / 2025, Korea AI/Semi-Subventionen (K-Chips Act ₩26T), Japan Rapidus/TSMC Semiconductor Subsidies (¥4T+), Indien Union Budget 2025-26 (₹11.2L Cr)`,
   };
   const capexFocus = REGION_CAPEX_FOCUS[region] || REGION_CAPEX_FOCUS.US;
@@ -751,6 +751,10 @@ async function buildCapexFiscal(region: string): Promise<CapexFiscalResult> {
   };
   const exampleBeneficiaries = EXAMPLE_BENEFICIARIES[region] || EXAMPLE_BENEFICIARIES.US;
 
+  // Short shape example — kept minimal so the LLM has plenty of output budget
+  // to produce all 5 sectors with full beneficiary lists.
+  const shortExample = `{"ticker":"EXAMPLE","name":"Example Corp","rationale":"1 Satz Begr\u00fcndung"}`;
+
   const prompt = `Capex-Stratege. Region: ${regionLabel}. Heute: ${today}.
 WICHTIG: Nur Programme und Ereignisse aus 2025-2026. Verwende AUSSCHLIESSLICH b\u00f6rsennotierte Unternehmen aus der Region ${regionLabel}.
 
@@ -758,21 +762,22 @@ ${capexFocus}
 
 Makro-Kontext: ${macroSnippet || "Keine Daten verf\u00fcgbar — qualitative Einsch\u00e4tzung"}
 
-PFLICHT: F\u00fcr JEDEN der 5 Sektoren:
+PFLICHT: Genau 5 Sektoren in sectorExposure (z.B. Defense, Tech/Semi, Energy, Infrastructure, Healthcare). F\u00fcr JEDEN der 5 Sektoren:
 - 5-8 b\u00f6rsennotierte Unternehmen die DIREKT von den Programmen profitieren
 - Verwende echte Ticker-Symbole der Region ${regionLabel} (z.B. f\u00fcr ASIA: .T=Tokyo, .KS=Seoul, .TW=Taiwan, .SS=Shanghai)
 - 1 Satz Begr\u00fcndung pro Ticker warum direkte Verbindung zum Programm
 
-Beispiel f\u00fcr listedBeneficiaries in Region ${regionLabel}:
-${exampleBeneficiaries}
+Beispiel-Ticker f\u00fcr Region ${regionLabel}: ${exampleBeneficiaries}
 
-JSON-Format (kein Flie\u00dftext, nur JSON):
-{"headline":"1 Satz aktuell 2025","summary":"2 S\u00e4tze","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname (2025)","region":"${regionLabel}","budget":"$Xbn","timeline":"2025-2027","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv","listedBeneficiaries":[{"ticker":"NVDA","name":"NVIDIA","rationale":"Direkte F\\u00f6rderung, Top-Profiteur"},{"ticker":"INTC","name":"Intel","rationale":"Produktionssubventionen"}]}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"2 S\u00e4tze mit Programmreferenzen 2025","programmes":["Programm A","Programm B"],"timeline":"12-24M","listedBeneficiaries":${exampleBeneficiaries}}]}`;
+JSON-Format (kein Flie\u00dftext, nur JSON, sectorExposure MUSS GENAU 5 Eintr\u00e4ge haben - keine 2, keine 3, keine 4, sondern 5):
+{"headline":"1 Satz aktuell 2025","summary":"2 S\u00e4tze","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname (2025)","region":"${regionLabel}","budget":"$Xbn","timeline":"2025-2027","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv","listedBeneficiaries":[${shortExample}]}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"2 S\u00e4tze","programmes":["Programm A"],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Tech & Semiconductor","impact":"positiv","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Energy & Decarbonization","impact":"positiv","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Infrastructure","impact":"neutral","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Healthcare & Biotech","impact":"neutral","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]}]}`;
 
   let llm: any = null;
   try {
-    // 2500 tokens needed: 5 sectors × (2 sentences + 4 programmes + 6 beneficiaries) ≈ 2200 tok
-    llm = await callLLMJson({ prompt, maxTokens: 2500 });
+    // 3500 tokens: gives Claude-3.5-haiku headroom to fill all 5 sectors with
+    // 5-8 listed beneficiaries each. Earlier 2500 cap sometimes resulted in
+    // only 2 sectors being generated.
+    llm = await callLLMJson({ prompt, maxTokens: 3500 });
   } catch (llmErr: any) {
     console.warn(`[RESEARCHER/capex] LLM threw for ${region}: ${llmErr?.message?.substring(0, 100)}`);
   }
