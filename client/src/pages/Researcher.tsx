@@ -506,6 +506,7 @@ function BriefingChangeCard({ change }: { change: any }) {
   const affectedSectors = Array.isArray(dcf.affectedSectors) && dcf.affectedSectors.length > 0
     ? dcf.affectedSectors
     : Array.isArray(change.affectedTickers) ? change.affectedTickers : [];
+  const tickers = Array.isArray(change.affectedTickers) ? change.affectedTickers : [];
   const hasWacc = !!dcf.waccDeltaBps;
   const hasDcfInfo = hasWacc || !!dcf.exposureType || affectedSectors.length > 0;
   const actionText = change.action || change.dcfImplication || "";
@@ -540,6 +541,13 @@ function BriefingChangeCard({ change }: { change: any }) {
               {affectedSectors.length > 0 && (
                 <span className="text-foreground/60">{affectedSectors.slice(0, 4).join(" · ")}</span>
               )}
+            </div>
+          )}
+          {tickers.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {tickers.slice(0, 8).map((t: string, i: number) => (
+                <span key={i} className="px-1.5 py-0.5 rounded bg-violet-500/10 text-[10px] font-mono text-violet-300/90 border border-violet-400/20">{t}</span>
+              ))}
             </div>
           )}
           {actionText && (
@@ -1015,8 +1023,12 @@ function CapexPanel({ data }: { data: any }) {
                       <div className="space-y-1">
                         {s.listedBeneficiaries.map((b: any) => (
                           <div key={b.ticker} className="flex items-start gap-2 text-[10px]">
-                            <span className="font-mono font-bold text-primary shrink-0 w-12">{b.ticker}</span>
-                            <span className="text-muted-foreground">{b.rationale}</span>
+                            <span className="font-mono font-bold text-primary shrink-0 w-14">{b.ticker}</span>
+                            <span className="text-muted-foreground">
+                              {b.name && <span className="text-foreground/80 font-medium">{b.name}</span>}
+                              {b.name && b.rationale && <span className="text-foreground/40"> · </span>}
+                              {b.rationale}
+                            </span>
                           </div>
                         ))}
                       </div>
@@ -1068,8 +1080,12 @@ function CapexPanel({ data }: { data: any }) {
                 <div className="space-y-1">
                   {p.listedBeneficiaries.map((b: any, i: number) => (
                     <div key={i} className="flex items-start gap-2 text-[10px]">
-                      <span className="font-mono font-bold text-primary shrink-0 min-w-[48px]">{b.ticker}</span>
-                      <span className="text-muted-foreground">{b.rationale}</span>
+                      <span className="font-mono font-bold text-primary shrink-0 min-w-[56px]">{b.ticker}</span>
+                      <span className="text-muted-foreground">
+                        {b.name && <span className="text-foreground/80 font-medium">{b.name}</span>}
+                        {b.name && b.rationale && <span className="text-foreground/40"> · </span>}
+                        {b.rationale}
+                      </span>
                     </div>
                   ))}
                 </div>
