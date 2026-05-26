@@ -426,9 +426,11 @@ export default function Dashboard() {
           className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar"
           data-testid="main-content"
         >
-          {analyzeMutation.isError && !data && !analyzeMutation.isPending ? (
+          {analyzeMutation.isError && !data && !analyzeMutation.isPending &&
+           (analyzeMutation.error as any)?.errorCode !== 'RATE_LIMITED' ? (
             <ErrorScreen error={analyzeMutation.error} />
-          ) : !data && !analyzeMutation.isPending && !analyzeMutation.isError ? (
+          ) : !data && !analyzeMutation.isPending &&
+            (!analyzeMutation.isError || (analyzeMutation.error as any)?.errorCode === 'RATE_LIMITED') ? (
             <WelcomeScreen
               onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
               serverReady={serverReady}
