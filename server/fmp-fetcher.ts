@@ -92,10 +92,14 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       date: d.date, open: d.open, high: d.high, low: d.low, close: d.close || d.adjClose, volume: d.volume,
     }));
 
-    // Ratios
+    // Ratios — FMP /stable/ratios renamed peRatio → priceToEarningsRatio
+    // evToEbitda removed from /stable/ratios (moved to /stable/key-metrics as enterpriseValueOverEBITDA)
     const parsedRatios = (ratios || []).map((r: any) => ({
-      pe: r.priceEarningsRatio, ps: r.priceToSalesRatio, pb: r.priceToBookRatio,
-      date: r.date, eps: r.netIncomePerShare,
+      pe: r.priceToEarningsRatio ?? r.priceEarningsRatio ?? r.peRatio,
+      ps: r.priceToSalesRatio,
+      pb: r.priceToBookRatio,
+      date: r.date,
+      eps: r.netIncomePerShare,
     }));
 
     // Estimates

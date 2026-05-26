@@ -575,13 +575,34 @@ Bleib konservativ (Anti-Bias: kein Hype, kein Recency Bias).
 
 JSON: {"ranked":[{"ticker":"...","moatScore":7,"marginRiskScore":3,"rationale":"...","growthDrivers":["..."],"risks":["..."],"actionRecommendation":"Watch"}]}`;
 
-  const llm = await callLLMJson({ prompt: rankPrompt, maxTokens: 1500 });
+  const llm = await callLLMJson({ prompt: rankPrompt, maxTokens: 2000 });
   const rankingsByTicker = new Map<string, any>();
-  const rankedList = (llm?.data?.ranked && Array.isArray(llm.data.ranked))
+  let rankedList = (llm?.data?.ranked && Array.isArray(llm.data.ranked))
     ? llm.data.ranked
     : (llm?.data?.rankings && Array.isArray(llm.data.rankings))
       ? llm.data.rankings
       : [];
+
+  // Fallback: if LLM ranking is empty, build a heuristic ranking from candidates
+  // (sort by PE — lower = better value), so the screener UI doesn't show empty results.
+  if (!rankedList.length && compactList.length > 0) {
+    console.log(`[SCREENER] LLM ranking empty — using PE-based fallback ranking`);
+    rankedList = compactList
+      .filter(c => c.pe > 0 && c.pe < 35)
+      .sort((a, b) => (a.pe || 99) - (b.pe || 99))
+      .slice(0, 8)
+      .map(c => ({
+        ticker: c.ticker,
+        moatScore: 6,
+        marginRiskScore: 5,
+        rationale: `${c.companyName} — Value-Screening: PE ${c.pe?.toFixed(1)}, RevGrowth ${c.revenueGrowth?.toFixed(1)}%`,
+        growthDrivers: ["Fundamentale Unterbewertung", "Sektor-Tailwind"],
+        risks: ["Ausführungsrisiko", "Makro-Risiken"],
+        actionRecommendation: "Watch" as const,
+        _fallbackRanking: true,
+      }));
+  }
+
   for (const r of rankedList) {
     if (r?.ticker) rankingsByTicker.set(String(r.ticker).toUpperCase(), r);
   }
