@@ -774,20 +774,19 @@ ${capexFocus}
 
 Makro-Kontext: ${macroSnippet || "Keine Daten verf\u00fcgbar — qualitative Einsch\u00e4tzung"}
 
-PFLICHT \u2014 STRIKT EINHALTEN:
-1. Genau 5 Sektoren in sectorExposure.
+PFLICHT \u2014 STRIKT EINHALTEN (Antwort wird verworfen wenn nicht erf\u00fcllt):
+1. Das Array "sectorExposure" MUSS EXAKT 5 Eintr\u00e4ge enthalten.
 2. Verwende EXAKT diese 5 Sektoren f\u00fcr ${regionLabel}:
 ${sectorListStr}
-
-F\u00fcr JEDEN der 5 Sektoren:
-- 5-8 b\u00f6rsennotierte Unternehmen die DIREKT von den Programmen profitieren
-- Verwende echte Ticker-Symbole der Region ${regionLabel} (z.B. f\u00fcr ASIA: .T=Tokyo, .KS=Seoul, .TW=Taiwan, .SS=Shanghai)
-- 1 Satz Begr\u00fcndung pro Ticker warum direkte Verbindung zum Programm
+3. Das Array "programmes" MUSS MINDESTENS 4 Eintr\u00e4ge enthalten (aktuelle 2025-Programme der Region).
+4. F\u00fcr JEDEN sectorExposure-Eintrag: MINDESTENS 4 listedBeneficiaries mit echten Tickern.
+5. F\u00fcr JEDES programme: MINDESTENS 2 listedBeneficiaries mit echten Tickern.
+6. Verwende echte Ticker-Symbole der Region ${regionLabel} (z.B. f\u00fcr ASIA: .T=Tokyo, .KS=Seoul, .TW=Taiwan, .SS=Shanghai).
 
 Beispiel-Ticker f\u00fcr Region ${regionLabel}: ${exampleBeneficiaries}
 
-JSON-Format (kein Flie\u00dftext, nur JSON, sectorExposure MUSS GENAU 5 Eintr\u00e4ge haben - keine 2, keine 3, keine 4, sondern 5):
-{"headline":"1 Satz aktuell 2025","summary":"2 S\u00e4tze","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname (2025)","region":"${regionLabel}","budget":"$Xbn","timeline":"2025-2027","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv","listedBeneficiaries":[${shortExample}]}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"2 S\u00e4tze","programmes":["Programm A"],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Tech & Semiconductor","impact":"positiv","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Energy & Decarbonization","impact":"positiv","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Infrastructure","impact":"neutral","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Healthcare & Biotech","impact":"neutral","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]}]}`;
+JSON-Format (kein Flie\u00dftext, nur JSON):
+{"headline":"1 Satz aktuell 2025","summary":"2 S\u00e4tze","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programm A (2025)","region":"${regionLabel}","budget":"$Xbn","timeline":"2025-2027","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv","listedBeneficiaries":[${shortExample},${shortExample}]},{"name":"Programm B (2025)","region":"${regionLabel}","budget":"$Ybn","timeline":"2025-2028","beneficiarySectors":["defense"],"description":"1 Satz","impact":"positiv","listedBeneficiaries":[${shortExample},${shortExample}]},{"name":"Programm C (2025)","region":"${regionLabel}","budget":"$Zbn","timeline":"2025-2030","beneficiarySectors":["energy"],"description":"1 Satz","impact":"neutral","listedBeneficiaries":[${shortExample},${shortExample}]},{"name":"Programm D (2025)","region":"${regionLabel}","budget":"$Wbn","timeline":"2025-2027","beneficiarySectors":["infra"],"description":"1 Satz","impact":"positiv","listedBeneficiaries":[${shortExample},${shortExample}]}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"2 S\u00e4tze","programmes":["Programm A"],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Tech & Semiconductor","impact":"positiv","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Energy & Decarbonization","impact":"positiv","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Infrastructure","impact":"neutral","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]},{"sector":"Healthcare & Biotech","impact":"neutral","reasoning":"...","programmes":["..."],"timeline":"12-24M","listedBeneficiaries":[${shortExample}]}]}`;
 
   let llm: any = null;
   try {
