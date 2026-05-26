@@ -37,7 +37,7 @@ import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./di
 
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-const RESEARCHER_TTL_MIN = 60 * 24 * 7; // 7 days
+const RESEARCHER_TTL_MIN = 60 * 6; // 6 hours — keep researcher data fresh (current macro/fiscal context)
 
 function safeKey(s: string): string {
   return s.replace(/[^a-zA-Z0-9_-]/g, "_").substring(0, 80);
@@ -271,7 +271,6 @@ async function buildMacroPulse(region: string): Promise<MacroPulseResult> {
     .slice(0, 60);
 
   const today = new Date().toISOString().slice(0, 10);
-  const currentYear = new Date().getFullYear();
 
   // Two-step LLM: Step 1 = Synthesis (summary + views + implications)
   //               Step 2 = Key Events (structured events array)
@@ -280,36 +279,50 @@ async function buildMacroPulse(region: string): Promise<MacroPulseResult> {
     `${i.country}: ${i.category}=${i.latestValue} ${i.unit} (prev:${i.previousValue}, ${i.date})`
   ).join("; ") || "keine Makrodaten verfügbar";
 
-  const regionHints: Record<string, string> = {
-    US: "Trump-Zollpolitik, Fed-Pause, Kerninflation 2.8%, US10Y 4.5%",
-    EU: "EZB-Senkungszyklus, Deutschland-Sonderverm\u00f6gen, Frankreich-Defizit, Nahost-\u00d6lpreisrisiko",
-    ASIA: "BoJ-Hike-Pfad, China-Stimulus, Taiwan-Spannungen, Indien-Capex-Boom",
+  const REGION_CONTEXT_2025: Record<string, string> = {
+    US: `Aktuelle Rahmenbedingungen 2025-2026:
+- Trump-Administration seit Januar 2025: Z\u00f6lle, Deregulierung, "One Big Beautiful Bill" (OBBBA, Juli 2025, TCJA-Verl\u00e4ngerung + Bonus-Depreciation)
+- Fed: Zinszyklus-Ende, Leitzins ca. 4.25-4.5% (Stand 2025)
+- CHIPS Act Disbursements laufen 2025-2026
+- NDAA 2025/2026: Verteidigungsbudget erh\u00f6ht (~$895B)
+- Tariff-Eskalation: China/EU/Mexiko Z\u00f6lle aktiv
+- AI Infrastructure Capex Boom: Microsoft/Google/Amazon $200bn+, Stargate $500B`,
+    EU: `Aktuelle Rahmenbedingungen 2025-2026:
+- EZB: Zinssenkungszyklus 2024-2025, Leitzins ca. 2.25-2.5% (Stand 2025)
+- Deutschland: Sonderverm\u00f6gen \u20ac500bn f\u00fcr Verteidigung+Infrastruktur (2025 beschlossen)
+- NATO: 3.5% BIP Verteidigungsziel diskutiert, 3% verbindlich ab 2025
+- EU Emergency Defence Fund: \u20ac150bn (SAFE-Programm)
+- REPowerEU: Energieunabh\u00e4ngigkeit l\u00e4uft
+- European Chips Act: Disbursements 2025
+- Frankreich: Haushaltskrise, Premierminister-Wechsel`,
+    ASIA: `Aktuelle Rahmenbedingungen 2025-2026:
+- Japan: Fiskal-Stimulus unter Ishiba, BoJ-Hike-Pfad, 2025 Supplementary Budget
+- China: Property Stabilization Fund, Stimulus-Pakete Sep 2024 / 2025
+- Korea: AI/Semi-Subventionen, K-Chips Act (\u20a926T)
+- Taiwan: Geopolitische Spannungen, TSMC-Expansion
+- Indien: Capex-Boom, Union Budget 2025-26 (\u20b911.2L Cr), PLI-Erweiterung`,
   };
-  const hint = regionHints[region] || "";
+  const regionContext = REGION_CONTEXT_2025[region] || REGION_CONTEXT_2025.US;
 
-  const prompt1 = `Du bist ein erfahrener Makrostratege bei einem Hedge-Fund.
+  const prompt1 = `Makrostratege, Hedge Fund. Heute: ${today}. Region: ${regionLabel}.
+WICHTIG: Verwende NUR Daten und Events aus 2025 oder 2026. Ignoriere alles vor 2025-01-01.
 
-Analysiere die Region **${regionLabel}** (Stand: ${today}).
+${regionContext}
 
-Ber\u00fccksichtige aktiv:
-- Aktuelle Geldpolitik (Zentralbankma\u00dfnahmen, Leitzins, QT/QE)
-- Aktuelle und geplante Fiskalprogramme (Infrastruktur, Subventionen, Verteidigung, Klimaprogramme, Steuerreformen)
-- Staatshaushalt, Schuldenentwicklung und fiskalischer Spielraum
-- Liquidit\u00e4tslage und Geldmengenentwicklung (M2/M3)
-- Relevante geopolitische oder politische Risiken
+Analysiere: Geldpolitik, Fiskalprogramme, M2/M3, geopolitische Risiken.
+Indikatoren: ${dataContext}
 
-Makrodaten: ${dataContext}
-Aktuelle Themen: ${hint}
+JSON (Deutsch, ALLE Daten von 2025-2026):
+{"summary":"2 pr\u00e4zise S\u00e4tze Stand ${today}","riskFreeRateView":"1 Satz aktueller Zentralbank-Zins 2025","liquidityView":"1 Satz aktuelle M2-Lage 2025","fiscalView":"1 Satz aktuelle Fiskalprogramme 2025","keyDrivers":["Treiber1 konkret 2025","Treiber2","Treiber3"],"investmentImplications":["Impl1","Impl2","Impl3"],"actionRecommendation":"Watch","actionRationale":"1 Satz"}`;
 
-Antworte auf Deutsch NUR mit diesem JSON (keine anderen Felder):
-{"summary":"2 pr\u00e4zise S\u00e4tze Gesamtbild Makrolage","riskFreeRateView":"1 Satz aktuelle Zentralbankpolitik und Leitzins-Ausblick","liquidityView":"1 Satz Liquidit\u00e4tslage M2/M3 und QT/QE-Effekte","fiscalView":"1 Satz aktuelle Fiskalprogramme und Schuldenentwicklung","keyDrivers":["Treiber 1 konkret","Treiber 2 konkret","Treiber 3 konkret"],"investmentImplications":["Implication 1 f\u00fcr Aktien","Implication 2 f\u00fcr Aktien","Implication 3 f\u00fcr Aktien"],"actionRecommendation":"Watch","actionRationale":"1 Satz Begr\u00fcndung der Gesamtempfehlung (Buy/Watch/Avoid)"}`;
+  const prompt2 = `Makrostratege. Region: ${regionLabel}. Heute: ${today}.
+PFLICHT: Nenne exakt 3 Key Events aus 2025 oder 2026. Events aus 2024 sind VERBOTEN.
+Falls keine verifizierten 2025-2026 Events: Gib trotzdem 3 plausible Events basierend auf dem aktuellen Kontext an und markiere sie als "estimated".
 
-  const prompt2 = `Du bist Makrostratege. Region: ${regionLabel} (Stand: ${today}).
-Identifiziere genau 3 aktuelle Key Events der letzten 60-90 Tage mit direktem Markteinfluss.
-Themen: ${hint}
+${regionContext}
 
-Antworte NUR mit diesem JSON auf Deutsch:
-{"keyEvents":[{"title":"Konkreter Event-Titel mit Datum","category":"Geldpolitik|Fiskalpolitik|Geopolitik|Konjunktur","severity":"high|medium|low","timeframe":"Letzte 30 Tage|Letzte 60 Tage|Letzte 90 Tage","description":"2 konkrete S\u00e4tze mit Zahlen/Fakten","inflationImpact":"steigend|neutral|fallend","rateImpact":"steigend|neutral|fallend","equityImpact":"positiv|neutral|negativ","affectedSectors":["Sektor1","Sektor2"],"rationale":"1 Satz warum marktrelevant"}]}`;
+JSON:
+{"keyEvents":[{"title":"Konkreter Event mit Monat/Jahr 2025 oder 2026","category":"Geldpolitik|Fiskalpolitik|Geopolitik|Konjunktur","severity":"high|medium|low","timeframe":"2025-Q1|2025-Q2|2025-Q3|2025-Q4|2026","description":"2 konkrete S\u00e4tze","inflationImpact":"steigend|neutral|fallend","rateImpact":"steigend|neutral|fallend","equityImpact":"positiv|neutral|negativ","affectedSectors":["Sektor"],"rationale":"1 Satz"}]}`;
 
   let llm1: any = null, llm2: any = null;
   try {
@@ -617,6 +630,7 @@ interface CapexFiscalResult {
     reasoning: string;
     programmes: string[];
     timeline: string;
+    listedBeneficiaries?: Array<{ ticker: string; name: string; rationale: string }>;
   }>;
   programmes: Array<{
     name: string;
@@ -701,24 +715,26 @@ async function buildCapexFiscal(region: string): Promise<CapexFiscalResult> {
   // they remain available if future iterations want to re-inject them.
   void mustInclude; void currentYear;
 
-  const prompt = `Du bist Kapitalmarktstratege mit Fokus auf Investitionszyklen und Fiskalpolitik.
+  const REGION_CAPEX_FOCUS: Record<string, string> = {
+    US: `Für US: Berücksichtige aktiv — "One Big Beautiful Bill" (OBBBA, Steuerreformen 2025, ~$3-4T), CHIPS Act Disbursements 2025-2026, NDAA 2026 (~$895B), AI Infrastructure Executive Orders & Stargate ($500B), Tariff Revenue Reallocation, IRA, IIJA-Implementation`,
+    EU: `Für EU: Berücksichtige aktiv — EU SAFE Programme (€150bn Verteidigung 2025), Deutsches Sondervermögen (€500bn Verteidigung+Infrastruktur 2025), REPowerEU, European Chips Act Disbursements 2025, NATO 3% BIP Pflicht ab 2025, France 2030, PNRR Italien`,
+    ASIA: `Für ASIA: Berücksichtige aktiv — Japan Ishiba Stimulus & 2025 Supplementary Budget, China Property Stabilization Fund & Stimulus Sep 2024 / 2025, Korea AI/Semi-Subventionen (K-Chips Act ₩26T), Japan Rapidus/TSMC Semiconductor Subsidies (¥4T+), Indien Union Budget 2025-26 (₹11.2L Cr)`,
+  };
+  const capexFocus = REGION_CAPEX_FOCUS[region] || REGION_CAPEX_FOCUS.US;
 
-Analysiere aktuelle und geplante Capex-Entwicklungen sowie fiskalpolitische Impulse für ${regionLabel} (Stand: ${today}).
+  const prompt = `Capex-Stratege. Region: ${regionLabel}. Heute: ${today}.
+WICHTIG: Nur Programme und Ereignisse aus 2025-2026.
 
-Berücksichtige:
-- Laufende und angekündigte Fiskalprogramme (Infrastruktur, grüne Transformation, Chip-Subventionen, Verteidigung, Industriepolitik)
-- Staatliche und unternehmerische Capex-Trends
-- Auswirkungen der Geldpolitik auf Investitionsbereitschaft
+${capexFocus}
 
 Makro-Kontext: ${macroSnippet || "Keine Daten verfügbar — qualitative Einschätzung"}
 
-Erstelle eine Übersicht der wichtigsten Sektoren die von Capex und Fiskalpolitik profitieren oder leiden.
-Für jeden Sektor: impact ("positiv"|"neutral"|"negativ"), reasoning (2 Sätze konkret mit Programmreferenzen), programmes (2-3 konkrete Programmnamen), timeline ("0-12M"|"12-24M"|"24-36M+").
+Für JEDEN Sektor mit Capex-Exposure:
+- Welche börsennotierten Unternehmen profitieren DIREKT? (5-8 Tickers für Region ${regionLabel})
+- Warum profitieren sie konkret? (1 Satz pro Ticker)
 
-Gib auch sectors (5 Sektor-IDs mit höchstem Capex-Exposure), headline (1 Satz Kernaussage), summary (2 Sätze Gesamteinschätzung).
-
-Antworte NUR mit diesem JSON, kein Fließtext, keine Erklärungen davor oder danach:
-{"headline":"...","summary":"...","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname","region":"${regionLabel}","budget":"$Xbn","timeline":"2024-2026","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv"}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"...","programmes":["NDAA 2025"],"timeline":"12-24M"}]}`;
+JSON-Format (kein Fließtext, nur JSON):
+{"headline":"1 Satz aktuell 2025","summary":"2 Sätze","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname (2025)","region":"${regionLabel}","budget":"$Xbn","timeline":"2025-2027","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv"}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"2 Sätze mit Programmreferenzen 2025","programmes":["NDAA 2026","SAFE Programme"],"timeline":"12-24M","listedBeneficiaries":[{"ticker":"LMT","name":"Lockheed Martin","rationale":"F-35 Produktion, NDAA-Mittel direkt"},{"ticker":"RTX","name":"RTX Corp","rationale":"Raytheon Raketen, NATO-Bestellungen"},{"ticker":"RHM.DE","name":"Rheinmetall","rationale":"Sondervermögen, Panzerprogramm"},{"ticker":"AXON","name":"Axon Enterprise","rationale":"DoD Tech-Modernisierung"}]}]}`;
 
   let llm: any = null;
   try {
@@ -764,6 +780,13 @@ Antworte NUR mit diesem JSON, kein Fließtext, keine Erklärungen davor oder dan
     reasoning: String(s.reasoning || ""),
     programmes: Array.isArray(s.programmes) ? s.programmes.slice(0, 5).map(String) : [],
     timeline: String(s.timeline || ""),
+    listedBeneficiaries: Array.isArray(s.listedBeneficiaries)
+      ? s.listedBeneficiaries.slice(0, 8).map((b: any) => ({
+          ticker: String(b?.ticker || "").toUpperCase(),
+          name: String(b?.name || ""),
+          rationale: String(b?.rationale || ""),
+        })).filter((b: any) => b.ticker)
+      : [],
   })) : [];
 
   return {

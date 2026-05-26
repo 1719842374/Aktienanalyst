@@ -8,6 +8,8 @@ import path from "path";
 const DB_PATH = path.resolve(process.cwd(), "data.db");
 const CACHE_TTL_DAYS = 7;
 const CACHE_TTL_MS = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
+// Researcher cache TTL: 1 day (was 7) — keep macro/fiscal/capex data fresh.
+const RESEARCHER_CACHE_TTL_MS = 1 * 24 * 60 * 60 * 1000;
 
 let db: Database.Database | null = null;
 let initFailed = false;
@@ -117,7 +119,7 @@ export function diskResearcherGet(key: string): any | null {
     const row = d.prepare("SELECT data, updated_at FROM researcher_cache WHERE cache_key = ?").get(key) as any;
     if (!row) return null;
     const age = Date.now() - row.updated_at;
-    if (age > CACHE_TTL_MS) {
+    if (age > RESEARCHER_CACHE_TTL_MS) {
       d.prepare("DELETE FROM researcher_cache WHERE cache_key = ?").run(key);
       return null;
     }
