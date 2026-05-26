@@ -103,10 +103,13 @@ function deleteResearcherCache(tab: string, params: string) {
 function isStaleCache(cached: any): boolean {
   if (!cached) return false;
   if (cached.llmSynthesis?._fallback === true) return true;
+  if (cached._fallback === true) return true;
   if (cached.modelUsed === "fallback") return true;
   if (Array.isArray(cached.trends) && cached.trends.length === 0) return true;
   if (Array.isArray(cached.candidates) && cached.candidates.length === 0) return true;
   if (Array.isArray(cached.programmes) && cached.programmes.length === 0) return true;
+  // Capex: must have at least 3 sectorExposure entries (target is 5) — anything less is incomplete.
+  if (Array.isArray(cached.sectorExposure) && cached.sectorExposure.length > 0 && cached.sectorExposure.length < 3) return true;
   if (cached.briefing === null) return true;
   return false;
 }
@@ -661,6 +664,7 @@ interface CapexFiscalResult {
     timeline: string;
     sectors: string[];
     beneficiaries: string[];
+    listedBeneficiaries?: Array<{ ticker: string; name: string; rationale: string }>;
     status: "Active" | "Announced" | "In Implementation" | "Phasing Out";
     impact: "high" | "medium" | "low";
     rationale: string;
@@ -755,6 +759,14 @@ async function buildCapexFiscal(region: string): Promise<CapexFiscalResult> {
   // to produce all 5 sectors with full beneficiary lists.
   const shortExample = `{"ticker":"EXAMPLE","name":"Example Corp","rationale":"1 Satz Begr\u00fcndung"}`;
 
+  const REGION_SECTORS: Record<string, string[]> = {
+    US:   ["Defense & Aerospace", "Semiconductors & AI Infrastructure", "Clean Energy & Grid", "Healthcare & Biotech", "Industrial Reshoring & Infrastructure"],
+    EU:   ["Defense & Aerospace", "Semiconductors (EU Chips Act)", "Energy Transition & REPowerEU", "Healthcare & Pharma", "Infrastructure & Construction"],
+    ASIA: ["Semiconductors & AI", "Defense & Security", "Clean Energy & EV", "Industrial & Automation", "Consumer & Tech Platforms"],
+  };
+  const sectorList = REGION_SECTORS[region] || REGION_SECTORS.US;
+  const sectorListStr = sectorList.map((s, i) => `${i + 1}. ${s}`).join("\n");
+
   const prompt = `Capex-Stratege. Region: ${regionLabel}. Heute: ${today}.
 WICHTIG: Nur Programme und Ereignisse aus 2025-2026. Verwende AUSSCHLIESSLICH b\u00f6rsennotierte Unternehmen aus der Region ${regionLabel}.
 
@@ -762,7 +774,12 @@ ${capexFocus}
 
 Makro-Kontext: ${macroSnippet || "Keine Daten verf\u00fcgbar — qualitative Einsch\u00e4tzung"}
 
-PFLICHT: Genau 5 Sektoren in sectorExposure (z.B. Defense, Tech/Semi, Energy, Infrastructure, Healthcare). F\u00fcr JEDEN der 5 Sektoren:
+PFLICHT \u2014 STRIKT EINHALTEN:
+1. Genau 5 Sektoren in sectorExposure.
+2. Verwende EXAKT diese 5 Sektoren f\u00fcr ${regionLabel}:
+${sectorListStr}
+
+F\u00fcr JEDEN der 5 Sektoren:
 - 5-8 b\u00f6rsennotierte Unternehmen die DIREKT von den Programmen profitieren
 - Verwende echte Ticker-Symbole der Region ${regionLabel} (z.B. f\u00fcr ASIA: .T=Tokyo, .KS=Seoul, .TW=Taiwan, .SS=Shanghai)
 - 1 Satz Begr\u00fcndung pro Ticker warum direkte Verbindung zum Programm
@@ -807,6 +824,13 @@ JSON-Format (kein Flie\u00dftext, nur JSON, sectorExposure MUSS GENAU 5 Eintr\u0
       sectors: Array.isArray(p.beneficiarySectors) ? p.beneficiarySectors.slice(0, 5).map(String)
         : Array.isArray(p.sectors) ? p.sectors.slice(0, 5).map(String) : [],
       beneficiaries: Array.isArray(p.beneficiaries) ? p.beneficiaries.slice(0, 6).map(String) : [],
+      listedBeneficiaries: Array.isArray(p.listedBeneficiaries)
+        ? p.listedBeneficiaries.slice(0, 8).map((b: any) => ({
+            ticker: String(b?.ticker || "").toUpperCase(),
+            name: String(b?.name || ""),
+            rationale: String(b?.rationale || ""),
+          })).filter((b: any) => b.ticker)
+        : undefined,
       status: (["Active", "Announced", "In Implementation", "Phasing Out"].includes(p.status) ? p.status : "Active") as any,
       impact: fiscalImpact,
       rationale: String(p.description || p.rationale || ""),
@@ -1381,6 +1405,12 @@ export function registerResearcherRoutes(app: Express) {
     if (!REGION_COUNTRIES[region]) {
       return res.status(400).json({ error: "Invalid region. Use US, EU, or ASIA." });
     }
+    const writeCapexCacheIfRich = (r: any) => {
+      const hasContent = r?.headline &&
+        ((r?.sectorExposure?.length || 0) >= 2 || (r?.programmes?.length || 0) >= 2);
+      if (hasContent) writeResearcherCache("capex", region, r);
+      else console.warn(`[RESEARCHER/capex] result for ${region} too thin — NOT caching`);
+    };
     if (!force) {
       const cached = readResearcherCache("capex", region);
       if (cached && !isStaleCache(cached)) {
@@ -1389,7 +1419,7 @@ export function registerResearcherRoutes(app: Express) {
       }
       if (cached && isStaleCache(cached)) {
         buildCapexFiscal(region)
-          .then(r => { if (r.headline) writeResearcherCache("capex", region, r); })
+          .then(r => writeCapexCacheIfRich(r))
           .catch(() => {});
         return res.json({ ...cached, _staleRefreshing: true });
       }
@@ -1397,7 +1427,7 @@ export function registerResearcherRoutes(app: Express) {
     console.log(`[RESEARCHER/capex] building region=${region}`);
     await withProxyGuard(res, region, "capex",
       () => buildCapexFiscal(region),
-      (r) => writeResearcherCache("capex", region, r),
+      (r) => writeCapexCacheIfRich(r),
     );
   });
 
