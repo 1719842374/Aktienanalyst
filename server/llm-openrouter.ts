@@ -565,6 +565,29 @@ Return ONLY this JSON (no markdown, no commentary):
   }
 }
 
+// Best-effort recovery of truncated JSON. Walks the string, tracks bracket
+// depth, trims any partially-written trailing item, and closes any still-open
+// brackets/braces. Returns the original string if recovery fails.
+function salvageTruncatedJson(raw: string): string {
+  try { JSON.parse(raw); return raw; } catch {}
+  const lastBrace = raw.lastIndexOf('}');
+  const lastBracket = raw.lastIndexOf(']');
+  const lastClose = Math.max(lastBrace, lastBracket);
+  if (lastClose <= 0) return raw;
+  let s = raw.substring(0, lastClose + 1);
+  let depth = 0, inStr = false, prev = '';
+  for (const c of s) {
+    if (c === '"' && prev !== '\\') inStr = !inStr;
+    else if (!inStr) {
+      if (c === '{' || c === '[') depth++;
+      else if (c === '}' || c === ']') depth--;
+    }
+    prev = c;
+  }
+  while (depth > 0) { s += '}'; depth--; }
+  try { JSON.parse(s); return s; } catch { return raw; }
+}
+
 // Generic JSON-mode LLM call — reused by the Researcher module so it doesn't
 // have to instantiate its own OpenAI client. Returns parsed JSON or null on
 // any error (network / parse / model-unavailable).
@@ -581,7 +604,7 @@ export async function callLLMJson(opts: {
     if (opts.systemPrompt) messages.push({ role: "system", content: opts.systemPrompt });
     messages.push({ role: "user", content: opts.prompt });
     const { text, modelUsed, usage } = await callWithFallback(client, {
-      max_tokens: Math.min(opts.maxTokens ?? 900, 1500),
+      max_tokens: Math.min(opts.maxTokens ?? 900, 4000),
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
@@ -601,8 +624,12 @@ export async function callLLMJson(opts: {
       const jsonEnd = Math.max(jsonStr.lastIndexOf('}'), jsonStr.lastIndexOf(']'));
       if (jsonEnd >= 0) jsonStr = jsonStr.substring(0, jsonEnd + 1);
     }
+    const salvaged = salvageTruncatedJson(jsonStr);
+    if (salvaged !== jsonStr) {
+      console.warn(`[LLM-JSON] salvaged truncated response (orig=${jsonStr.length}b, salvaged=${salvaged.length}b)`);
+    }
     return {
-      data: JSON.parse(jsonStr),
+      data: JSON.parse(salvaged),
       modelUsed,
       promptTokens: usage?.prompt_tokens,
       completionTokens: usage?.completion_tokens,

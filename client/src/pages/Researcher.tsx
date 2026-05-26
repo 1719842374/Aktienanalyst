@@ -471,7 +471,7 @@ function BriefingModal({ loading, data, error, onClose, onRetry, onForceRefresh 
                         ? <span className="text-amber-400">{diag.netNewEvents} neue/geänderte Events</span>
                         : <span className="text-emerald-400/70">Keine materiellen Änderungen</span>
                       }{' '}
-                      &middot; Regionen: {diag.regionsAnalyzed.join(", ")}
+                      &middot; Regionen: {Array.isArray(diag.regionsAnalyzed) ? diag.regionsAnalyzed.join(", ") : "—"}
                       {data?.modelUsed && data.modelUsed !== 'fallback' && <> &middot; {data.modelUsed.split('/').pop()}</>}
                     </>
                   ) : (
@@ -500,6 +500,15 @@ function BriefingChangeCard({ change }: { change: any }) {
     ESCALATED: "bg-red-500/15 text-red-300 border-red-400/30",
     DIRECTION_FLIP: "bg-amber-500/15 text-amber-300 border-amber-400/30",
   };
+  // Fallback handling for the alternative topChanges shape (no-netNew / LLM-failure
+  // branches) which use `category`/`impact`/`dcfImplication` singular instead of
+  // `changeType`/`dcfImplications.{…}`.
+  const affectedSectors = Array.isArray(dcf.affectedSectors) && dcf.affectedSectors.length > 0
+    ? dcf.affectedSectors
+    : Array.isArray(change.affectedTickers) ? change.affectedTickers : [];
+  const hasWacc = !!dcf.waccDeltaBps;
+  const hasDcfInfo = hasWacc || !!dcf.exposureType || affectedSectors.length > 0;
+  const actionText = change.action || change.dcfImplication || "";
   return (
     <div className="rounded border border-border/40 bg-background/40 p-3">
       <div className="flex items-start gap-2">
@@ -507,22 +516,34 @@ function BriefingChangeCard({ change }: { change: any }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap mb-1">
             <span className="text-[12px] font-semibold text-foreground">{change.title}</span>
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-foreground/[0.08] text-foreground/60 border border-border/30">{change.region}</span>
-            <span className={`text-[9px] px-1.5 py-0.5 rounded border ${changeColors[change.changeType] || ""}`}>{change.changeType}</span>
-            <span className={`text-[9px] px-1.5 py-0.5 rounded border ${SEVERITY_DOT[change.severity] || ""} bg-opacity-30`}>{change.severity}</span>
+            {change.region && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-foreground/[0.08] text-foreground/60 border border-border/30">{change.region}</span>
+            )}
+            {change.changeType ? (
+              <span className={`text-[9px] px-1.5 py-0.5 rounded border ${changeColors[change.changeType] || ""}`}>{change.changeType}</span>
+            ) : change.category ? (
+              <span className="text-[9px] px-1.5 py-0.5 rounded border bg-foreground/[0.06] text-foreground/65 border-border/30">{change.category}</span>
+            ) : null}
+            {change.severity && (
+              <span className={`text-[9px] px-1.5 py-0.5 rounded border ${SEVERITY_DOT[change.severity] || ""} bg-opacity-30`}>{change.severity}</span>
+            )}
           </div>
           <p className="text-[11px] text-foreground/75 leading-relaxed mb-2">{change.description}</p>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
-            <span><span className="text-foreground/40">WACC:</span> <span className="font-mono font-medium text-foreground/90">{dcf.waccDeltaBps || "—0"}</span></span>
-            {dcf.exposureType && (
-              <span className={`px-1.5 py-0.5 rounded border ${exposureColors[dcf.exposureType] || ""}`}>{dcf.exposureType}</span>
-            )}
-            {Array.isArray(dcf.affectedSectors) && dcf.affectedSectors.length > 0 && (
-              <span className="text-foreground/60">{dcf.affectedSectors.slice(0, 4).join(" · ")}</span>
-            )}
-          </div>
-          {change.action && (
-            <div className="mt-2 text-[11px] text-foreground/85 italic border-l-2 border-violet-400/40 pl-2">{change.action}</div>
+          {hasDcfInfo && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+              {hasWacc && (
+                <span><span className="text-foreground/40">WACC:</span> <span className="font-mono font-medium text-foreground/90">{dcf.waccDeltaBps}</span></span>
+              )}
+              {dcf.exposureType && (
+                <span className={`px-1.5 py-0.5 rounded border ${exposureColors[dcf.exposureType] || ""}`}>{dcf.exposureType}</span>
+              )}
+              {affectedSectors.length > 0 && (
+                <span className="text-foreground/60">{affectedSectors.slice(0, 4).join(" · ")}</span>
+              )}
+            </div>
+          )}
+          {actionText && (
+            <div className="mt-2 text-[11px] text-foreground/85 italic border-l-2 border-violet-400/40 pl-2">{actionText}</div>
           )}
         </div>
       </div>
@@ -672,6 +693,9 @@ function MacroBlock({ label, content }: { label: string; content: string }) {
 
 const CATEGORY_BADGES: Record<string, string> = {
   "Geopolitik": "bg-red-500/15 text-red-300 border-red-400/30",
+  "Geldpolitik": "bg-blue-500/15 text-blue-300 border-blue-400/30",
+  "Fiskalpolitik": "bg-indigo-500/15 text-indigo-300 border-indigo-400/30",
+  "Konjunktur": "bg-teal-500/15 text-teal-300 border-teal-400/30",
   "Zentralbank": "bg-blue-500/15 text-blue-300 border-blue-400/30",
   "Wahl/Politik": "bg-purple-500/15 text-purple-300 border-purple-400/30",
   "Lieferkette": "bg-orange-500/15 text-orange-300 border-orange-400/30",
@@ -688,9 +712,10 @@ const SEVERITY_DOT: Record<string, string> = {
 };
 
 function ImpactBadge({ label, value }: { label: string; value: string }) {
-  const isUp = /steigend|positiv/i.test(value);
-  const isDown = /fallend|negativ/i.test(value);
-  const isMixed = /gemischt/i.test(value);
+  const safe = value ?? "neutral";
+  const isUp = /steigend|positiv/i.test(safe);
+  const isDown = /fallend|negativ/i.test(safe);
+  const isMixed = /gemischt/i.test(safe);
   // For inflation+rate: "steigend" = bearish for equity (red), "fallend" = bullish (green)
   // For equity: "positiv" = green, "negativ" = red
   const isEquity = label === "Aktien";
@@ -708,7 +733,7 @@ function ImpactBadge({ label, value }: { label: string; value: string }) {
     <div className="flex items-center gap-1">
       <span className="text-[9px] uppercase tracking-wider text-foreground/40">{label}</span>
       <Icon className={`w-2.5 h-2.5 ${color}`} />
-      <span className={`text-[10px] font-medium ${color}`}>{value}</span>
+      <span className={`text-[10px] font-medium ${color}`}>{safe}</span>
     </div>
   );
 }
@@ -913,8 +938,28 @@ function ScreenerPanel({ data }: { data: any }) {
 
 function CapexPanel({ data }: { data: any }) {
   const programmes: any[] = data.programmes || [];
+  const sectorExposure: any[] = Array.isArray(data.sectorExposure) ? data.sectorExposure : [];
+  const isEmpty = programmes.length === 0 && !data.headline && !data.totalCapexEstimate;
+  if (isEmpty) {
+    return (
+      <div className="text-center py-12 text-[11px] text-foreground/50">
+        Keine Capex- oder Fiskalprogramme erfasst. Bitte „Aktualisieren" klicken.
+      </div>
+    );
+  }
   return (
     <div className="space-y-4">
+      {(data.headline || data.summary) && (
+        <div className="rounded-lg border border-violet-400/30 bg-violet-500/[0.06] p-3">
+          {data.headline && (
+            <div className="text-sm font-semibold text-foreground/90">{data.headline}</div>
+          )}
+          {data.summary && (
+            <p className="text-[11px] text-foreground/75 leading-relaxed mt-1.5">{data.summary}</p>
+          )}
+        </div>
+      )}
+
       {(data.totalCapexEstimate || data.govSpendingTrend) && (
         <div className="rounded-lg border border-border/40 bg-card/30 p-3 space-y-2">
           {data.totalCapexEstimate && (
@@ -929,6 +974,43 @@ function CapexPanel({ data }: { data: any }) {
               <div className="text-[11px] text-foreground/75 mt-0.5 leading-relaxed">{data.govSpendingTrend}</div>
             </div>
           )}
+        </div>
+      )}
+
+      {sectorExposure.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Sector Exposure ({sectorExposure.length})</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {sectorExposure.map((s: any, idx: number) => {
+              const impact = String(s.impact || "neutral").toLowerCase();
+              const impactClass = impact === "positiv"
+                ? "bg-emerald-500/15 text-emerald-300 border-emerald-400/30"
+                : impact === "negativ"
+                ? "bg-rose-500/15 text-rose-300 border-rose-400/30"
+                : "bg-foreground/10 text-foreground/60 border-border/40";
+              return (
+                <div key={idx} className="rounded-lg border border-border/40 bg-card/30 p-3">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <div className="text-xs font-semibold text-foreground/90">{s.sector}</div>
+                    <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded border ${impactClass}`}>{s.impact}</span>
+                  </div>
+                  {s.timeline && (
+                    <div className="text-[10px] text-foreground/50 mb-1.5">{s.timeline}</div>
+                  )}
+                  {s.reasoning && (
+                    <p className="text-[11px] text-foreground/75 leading-relaxed">{s.reasoning}</p>
+                  )}
+                  {Array.isArray(s.programmes) && s.programmes.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {s.programmes.map((p: string, i: number) => (
+                        <span key={i} className="px-1.5 py-0.5 rounded bg-violet-500/10 text-[10px] text-violet-300/90">{p}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

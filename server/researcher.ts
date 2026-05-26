@@ -314,8 +314,8 @@ Antworte NUR mit diesem JSON auf Deutsch:
   let llm1: any = null, llm2: any = null;
   try {
     [llm1, llm2] = await Promise.all([
-      callLLMJson({ prompt: prompt1, maxTokens: 1200 }),
-      callLLMJson({ prompt: prompt2, maxTokens: 1200 }),
+      callLLMJson({ prompt: prompt1, maxTokens: 1400 }),
+      callLLMJson({ prompt: prompt2, maxTokens: 1400 }),
     ]);
   } catch (llmErr: any) {
     console.warn(`[RESEARCHER/macro] LLM call threw for ${region}: ${llmErr?.message?.substring(0, 100)}`);
@@ -409,7 +409,7 @@ Für jede Kategorie:
 JSON:
 {"trends":[{"id":"defense","growthScore":8,"moatScore":9,"marginRisk":"low","timeline":"12-24M","reasoning":"...","topPlayers":["LMT","RTX","RHM.DE"],"actionRecommendation":"Buy"}]}`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 1400 });
+  const llm = await callLLMJson({ prompt, maxTokens: 1500 });
   if (!llm?.data?.trends || !Array.isArray(llm.data.trends)) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
@@ -562,7 +562,7 @@ Bleib konservativ (Anti-Bias: kein Hype, kein Recency Bias).
 
 JSON: {"ranked":[{"ticker":"...","moatScore":7,"marginRiskScore":3,"rationale":"...","growthDrivers":["..."],"risks":["..."],"actionRecommendation":"Watch"}]}`;
 
-  const llm = await callLLMJson({ prompt: rankPrompt, maxTokens: 1200 });
+  const llm = await callLLMJson({ prompt: rankPrompt, maxTokens: 1500 });
   const rankingsByTicker = new Map<string, any>();
   const rankedList = (llm?.data?.ranked && Array.isArray(llm.data.ranked))
     ? llm.data.ranked
@@ -722,7 +722,7 @@ Antworte NUR mit diesem JSON, kein Fließtext, keine Erklärungen davor oder dan
 
   let llm: any = null;
   try {
-    llm = await callLLMJson({ prompt, maxTokens: 1200 });
+    llm = await callLLMJson({ prompt, maxTokens: 1500 });
   } catch (llmErr: any) {
     console.warn(`[RESEARCHER/capex] LLM threw for ${region}: ${llmErr?.message?.substring(0, 100)}`);
   }
@@ -1074,7 +1074,7 @@ JSON:
 
   let llm: Awaited<ReturnType<typeof callLLMJson>> = null;
   try {
-    llm = await callLLMJson({ prompt, maxTokens: 1200 });
+    llm = await callLLMJson({ prompt, maxTokens: 1500 });
   } catch (llmErr: any) {
     console.warn(`[RESEARCHER/briefing] LLM threw: ${llmErr?.message?.substring(0, 100)}`);
   }
@@ -1089,7 +1089,19 @@ JSON:
       briefing: {
         headline: `Marktlage — ${stanceStr}`,
         summary: `LLM-Briefing nicht verfügbar (${today}). Macro Stance: ${stanceStr}. Bitte OpenRouter-Guthaben prüfen.`,
-        topChanges: topEventsForDisplay ?? [],
+        topChanges: allEvents
+          .filter((e: any) => e.severity === 'high')
+          .slice(0, 3)
+          .map((e: any, idx: number) => ({
+            rank: idx + 1,
+            title: String(e.title || ''),
+            category: String(e.category || 'Makro'),
+            impact: String(e.equityImpact === 'positiv' ? 'positiv' : e.equityImpact === 'negativ' ? 'negativ' : 'neutral'),
+            severity: String(e.severity || 'medium'),
+            description: String(e.description || ''),
+            dcfImplication: 'Stabiles Umfeld — keine akute DCF-Korrektur erforderlich.',
+            affectedTickers: [],
+          })),
         keyMetricsShift: {
           inflationView: allEvents.find((e: any) => e.inflationImpact === 'steigend') ? 'steigend' : 'stabil',
           rateView: allEvents.find((e: any) => e.rateImpact === 'steigend') ? 'steigend' : 'stabil',
