@@ -743,19 +743,31 @@ async function buildCapexFiscal(region: string): Promise<CapexFiscalResult> {
   };
   const capexFocus = REGION_CAPEX_FOCUS[region] || REGION_CAPEX_FOCUS.US;
 
+  // Region-specific example tickers so LLM gives correct market tickers
+  const EXAMPLE_BENEFICIARIES: Record<string, string> = {
+    US: `[{"ticker":"LMT","name":"Lockheed Martin","rationale":"F-35 Produktion, NDAA-Mittel"},{"ticker":"RTX","name":"RTX Corp","rationale":"Raketen, NATO"},{"ticker":"NVDA","name":"NVIDIA","rationale":"AI-Chips, CHIPS Act"},{"ticker":"VST","name":"Vistra Energy","rationale":"IRA Clean Energy"}]`,
+    EU: `[{"ticker":"RHM.DE","name":"Rheinmetall","rationale":"Sonderverm\u00f6gen, Panzer"},{"ticker":"AIR.PA","name":"Airbus","rationale":"NATO-Auftr\u00e4ge"},{"ticker":"ASML.AS","name":"ASML","rationale":"EU Chips Act"},{"ticker":"ENGI.PA","name":"Engie","rationale":"REPowerEU"}]`,
+    ASIA: `[{"ticker":"2330.TW","name":"TSMC","rationale":"Japan-Subventionen, Rapidus-Partner"},{"ticker":"005930.KS","name":"Samsung","rationale":"K-Chips Act \u20a926T"},{"ticker":"6758.T","name":"Sony","rationale":"Japan New Capitalism"},{"ticker":"BABA","name":"Alibaba","rationale":"China Tech-Stimulus 2025"},{"ticker":"600519.SS","name":"Kweichow Moutai","rationale":"China Property/Konsum-Stimulus"},{"ticker":"6501.T","name":"Hitachi","rationale":"Japan Infrastruktur-Budget"}]`,
+  };
+  const exampleBeneficiaries = EXAMPLE_BENEFICIARIES[region] || EXAMPLE_BENEFICIARIES.US;
+
   const prompt = `Capex-Stratege. Region: ${regionLabel}. Heute: ${today}.
-WICHTIG: Nur Programme und Ereignisse aus 2025-2026.
+WICHTIG: Nur Programme und Ereignisse aus 2025-2026. Verwende AUSSCHLIESSLICH b\u00f6rsennotierte Unternehmen aus der Region ${regionLabel}.
 
 ${capexFocus}
 
-Makro-Kontext: ${macroSnippet || "Keine Daten verfügbar — qualitative Einschätzung"}
+Makro-Kontext: ${macroSnippet || "Keine Daten verf\u00fcgbar — qualitative Einsch\u00e4tzung"}
 
-Für JEDEN Sektor mit Capex-Exposure:
-- Welche börsennotierten Unternehmen profitieren DIREKT? (5-8 Tickers für Region ${regionLabel})
-- Warum profitieren sie konkret? (1 Satz pro Ticker)
+PFLICHT: F\u00fcr JEDEN der 5 Sektoren:
+- 5-8 b\u00f6rsennotierte Unternehmen die DIREKT von den Programmen profitieren
+- Verwende echte Ticker-Symbole der Region ${regionLabel} (z.B. f\u00fcr ASIA: .T=Tokyo, .KS=Seoul, .TW=Taiwan, .SS=Shanghai)
+- 1 Satz Begr\u00fcndung pro Ticker warum direkte Verbindung zum Programm
 
-JSON-Format (kein Fließtext, nur JSON):
-{"headline":"1 Satz aktuell 2025","summary":"2 Sätze","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname (2025)","region":"${regionLabel}","budget":"$Xbn","timeline":"2025-2027","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv"}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"2 Sätze mit Programmreferenzen 2025","programmes":["NDAA 2026","SAFE Programme"],"timeline":"12-24M","listedBeneficiaries":[{"ticker":"LMT","name":"Lockheed Martin","rationale":"F-35 Produktion, NDAA-Mittel direkt"},{"ticker":"RTX","name":"RTX Corp","rationale":"Raytheon Raketen, NATO-Bestellungen"},{"ticker":"RHM.DE","name":"Rheinmetall","rationale":"Sondervermögen, Panzerprogramm"},{"ticker":"AXON","name":"Axon Enterprise","rationale":"DoD Tech-Modernisierung"}]}]}`;
+Beispiel f\u00fcr listedBeneficiaries in Region ${regionLabel}:
+${exampleBeneficiaries}
+
+JSON-Format (kein Flie\u00dftext, nur JSON):
+{"headline":"1 Satz aktuell 2025","summary":"2 S\u00e4tze","sectors":["tech","defense","energy","infra","healthcare"],"programmes":[{"name":"Programmname (2025)","region":"${regionLabel}","budget":"$Xbn","timeline":"2025-2027","beneficiarySectors":["tech"],"description":"1 Satz","impact":"positiv"}],"sectorExposure":[{"sector":"Defense & Aerospace","impact":"positiv","reasoning":"2 S\u00e4tze mit Programmreferenzen 2025","programmes":["Programm A","Programm B"],"timeline":"12-24M","listedBeneficiaries":${exampleBeneficiaries}}]}`;
 
   let llm: any = null;
   try {
