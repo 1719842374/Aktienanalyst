@@ -738,7 +738,8 @@ JSON-Format (kein Fließtext, nur JSON):
 
   let llm: any = null;
   try {
-    llm = await callLLMJson({ prompt, maxTokens: 1500 });
+    // 2500 tokens needed: 5 sectors × (2 sentences + 4 programmes + 6 beneficiaries) ≈ 2200 tok
+    llm = await callLLMJson({ prompt, maxTokens: 2500 });
   } catch (llmErr: any) {
     console.warn(`[RESEARCHER/capex] LLM threw for ${region}: ${llmErr?.message?.substring(0, 100)}`);
   }
