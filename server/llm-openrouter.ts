@@ -109,6 +109,21 @@ async function callWithFallback(client: OpenAI, params: Omit<Parameters<OpenAI['
   throw lastErr || new Error('All LLM models exhausted');
 }
 
+export interface CapexBeneficiary {
+  ticker: string;
+  name: string;
+  rationale: string;
+}
+
+export interface CapexTailwindContext {
+  sector: string;         // e.g. "Defense & Aerospace"
+  impact: string;         // "positiv" | "neutral" | "negativ"
+  timeline: string;       // e.g. "12-24M"
+  reasoning: string;      // sector reasoning
+  programmes: string[];   // programme names
+  beneficiaryEntry: CapexBeneficiary; // the matched entry for this ticker
+}
+
 export interface CombinedLLMInput {
   ticker: string;
   companyName: string;
@@ -123,6 +138,7 @@ export interface CombinedLLMInput {
   marketCap: number;
   analystPTMedian?: number;    // optional — used in richer prompt context
   governmentExposure?: number; // optional — used in richer prompt context
+  capexContext?: CapexTailwindContext | null; // optional — Capex Fiscal Spending tailwind if ticker found in Researcher cache
   keyProjects: string[];
   secFilingExcerpts: string[];
   newsItems: {
@@ -166,7 +182,7 @@ export async function generateCatalystsAndMatchNews(
   const {
     ticker, companyName, sector, industry, description, revenue, revenueGrowth,
     fcfMargin, price, pe, marketCap, keyProjects, secFilingExcerpts, newsItems,
-    analystPTMedian = 0, governmentExposure = 0,
+    analystPTMedian = 0, governmentExposure = 0, capexContext = null,
   } = input;
 
   // Compact context — keep prompt under ~1500 input tokens to keep cost low.
@@ -177,6 +193,9 @@ export async function generateCatalystsAndMatchNews(
   ctx.push(`Beschreibung: ${description.substring(0, 1000)}`);
   ctx.push(`Finanzen: Umsatz ${revenue > 0 ? '$' + (revenue / 1e9).toFixed(1) + 'B' : 'N/A'} | Wachstum ${revenueGrowth != null && revenueGrowth !== 0 ? revenueGrowth.toFixed(1) + '%' : 'N/A'} | FCF-Marge ${fcfMargin > 0 ? fcfMargin.toFixed(1) + '%' : 'N/A'} | KGV ${pe > 0 ? pe.toFixed(1) : 'N/A'} | MCap ${marketCap > 0 ? '$' + (marketCap / 1e9).toFixed(1) + 'B' : 'N/A'}`);
   ctx.push(`Kurs: $${price.toFixed(2)} | Analyst-PT: $${analystPTMedian > 0 ? analystPTMedian.toFixed(2) : 'N/A'} | Gov-Exposure: ${(governmentExposure * 100).toFixed(0)}%`);
+  if (capexContext) {
+    ctx.push(`CAPEX FISCAL TAILWIND: ${ticker} ist börsennotierter Profiteur im Sektor "${capexContext.sector}" (Impact: ${capexContext.impact}, Zeithorizont: ${capexContext.timeline}). Programme: ${capexContext.programmes.join(", ")}. Researcher-Begründung: ${capexContext.beneficiaryEntry.rationale}`);
+  }
   if (keyProjects.length > 0) {
     ctx.push(`SEC-Projekte/Verträge (10-K): ${keyProjects.slice(0, 10).join(", ")}`);
   }
@@ -204,6 +223,7 @@ PFLICHT-REGELN — strikte Einhaltung:
 4. Bei fehlenden News: nutze description + sector-knowledge für plausible firmenspezifische Treiber (keine Schablonen)
 5. Anti-Bias: mindestens 1 Katalysator muss echtes Downside-Risiko reflektieren (niedrigere PoS ≤ 40%)
 6. context auf Deutsch, präzise mit Zahlen wenn vorhanden (z.B. "3,4 Mrd. USD Vertrag", "4,5 GW gesicherter Kapazität")
+${capexContext ? `7. PFLICHT: Da ${ticker} als Capex-Profiteur im Sektor "${capexContext.sector}" identifiziert wurde (Programme: ${capexContext.programmes.join(", ")}), MUSS Katalysator K1 oder K2 einen "Capex Tailwind"-Katalysator enthalten mit dem Programmnamen im Titel (z.B. "${capexContext.sector} Capex Tailwind: ${capexContext.programmes[0] || "Gov Spending"}") und PoS ≥ 55%.` : ""}
 
 GUTE Beispiele (firmenspezifisch):
 - "Nvidia AI-Cloud-Deal Execution" (CoreWeave) — konkreter $3.4Bn Deal

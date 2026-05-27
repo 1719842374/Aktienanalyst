@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
-import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives } from "./llm-openrouter";
+import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext } from "./llm-openrouter";
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
@@ -3318,6 +3318,7 @@ import {
   diskCacheSet,
   diskCacheDelete,
   diskCacheList,
+  diskResearcherGet,
 } from './disk-cache';
 const CACHE_DIR = path.join(process.cwd(), '.cache');
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -5199,6 +5200,39 @@ export async function registerRoutes(server: Server, app: Express) {
       const analystPTMedian = Number(cached.analystPT?.median ?? 0) || 0;
 
       const newsItemsArr = Array.isArray(cached.newsItems) ? cached.newsItems : [];
+
+      // === Capex Fiscal Tailwind Lookup ===
+      // Check if this ticker appears in any Researcher Capex sectorExposure.listedBeneficiaries
+      // across US, EU, ASIA regions. If found, pass tailwind context to LLM.
+      let capexContext: CapexTailwindContext | null = null;
+      try {
+        const CAPEX_REGIONS = ["US", "EU", "ASIA"];
+        outer: for (const region of CAPEX_REGIONS) {
+          const capexData = diskResearcherGet(`capex:${region}`);
+          if (!capexData?.sectorExposure) continue;
+          for (const sectorEntry of capexData.sectorExposure as any[]) {
+            const beneficiaries: any[] = sectorEntry.listedBeneficiaries || [];
+            const match = beneficiaries.find(
+              (b: any) => String(b.ticker || "").toUpperCase() === String(ticker).toUpperCase()
+            );
+            if (match) {
+              capexContext = {
+                sector: sectorEntry.sector || "",
+                impact: sectorEntry.impact || "positiv",
+                timeline: sectorEntry.timeline || "12-24M",
+                reasoning: sectorEntry.reasoning || "",
+                programmes: Array.isArray(sectorEntry.programmes) ? sectorEntry.programmes : [],
+                beneficiaryEntry: { ticker: match.ticker, name: match.name, rationale: match.rationale || "" },
+              };
+              console.log(`[CATALYST-ENRICH] ${ticker} found as Capex beneficiary in ${region}/${sectorEntry.sector}`);
+              break outer;
+            }
+          }
+        }
+      } catch (capexErr: any) {
+        console.warn(`[CATALYST-ENRICH] capex lookup error: ${capexErr?.message}`);
+      }
+
       const catalystInput = {
         ticker: String(ticker),
         companyName: String(cached.companyName || ticker),
@@ -5213,6 +5247,7 @@ export async function registerRoutes(server: Server, app: Express) {
         marketCap: Number(cached.marketCap) || 0,
         analystPTMedian,         // pass through for richer prompt
         governmentExposure: Number(cached.governmentExposure) || 0,
+        capexContext,             // fiscal spending tailwind (null if ticker not in Researcher capex cache)
         keyProjects: Array.isArray(cached.keyProjects) ? cached.keyProjects : [],
         secFilingExcerpts: Array.isArray(cached.secFilingExcerpts) ? cached.secFilingExcerpts : [],
         newsItems: newsItemsArr,
