@@ -4464,6 +4464,33 @@ export async function registerRoutes(server: Server, app: Express) {
       let risks = generateRisks(sector, beta5Y, govExp.exposure);
       // tamAnalysis is computed after revenueSegments are parsed (below)
 
+      // === Capex Fiscal Tailwind Lookup (für growthThesis + risk LLM) ===
+      let analyzeCapexContext: CapexTailwindContext | null = null;
+      try {
+        const CAPEX_REGIONS = ["US", "EU", "ASIA"];
+        outer2: for (const region of CAPEX_REGIONS) {
+          const capexData = diskResearcherGet(`capex:${region}`);
+          if (!capexData?.sectorExposure) continue;
+          for (const sectorEntry of capexData.sectorExposure as any[]) {
+            const beneficiaries: any[] = sectorEntry.listedBeneficiaries || [];
+            const match = beneficiaries.find(
+              (b: any) => String(b.ticker || "").toUpperCase() === String(ticker).toUpperCase()
+            );
+            if (match) {
+              analyzeCapexContext = {
+                sector: sectorEntry.sector || "",
+                impact: sectorEntry.impact || "positiv",
+                timeline: sectorEntry.timeline || "12-24M",
+                reasoning: sectorEntry.reasoning || "",
+                programmes: Array.isArray(sectorEntry.programmes) ? sectorEntry.programmes : [],
+                beneficiaryEntry: { ticker: match.ticker, name: match.name, rationale: match.rationale || "" },
+              };
+              break outer2;
+            }
+          }
+        }
+      } catch (_) {}
+
       // === Risk Explanations (LLM Deep-Dive, same as catalyst reasoning) ===
       if (useLLM) {
         try {
@@ -4481,6 +4508,7 @@ export async function registerRoutes(server: Server, app: Express) {
             marketCap,
             governmentExposure: govExp.exposure,
             risks,
+            capexContext: analyzeCapexContext,
             keyProjects: keyProjects.slice(0, 5),
             recentNewsHeadlines: newsHeadlines.slice(0, 5),
           });
@@ -4551,6 +4579,12 @@ export async function registerRoutes(server: Server, app: Express) {
         } else {
           growthThesis += " Katalysator: Strategische Initiativen und operative Effizienzsteigerungen können Margen verbessern.";
         }
+      }
+
+      // Append Capex Tailwind to growthThesis if ticker is in Researcher cache
+      if (analyzeCapexContext) {
+        const prog = analyzeCapexContext.programmes.slice(0, 2).join(" & ") || analyzeCapexContext.sector;
+        growthThesis += ` Zusätzlicher struktureller Rückenwind: ${analyzeCapexContext.sector} (${prog}) — ${analyzeCapexContext.beneficiaryEntry.rationale.slice(0, 120)}.`;
       }
 
       // === Moat rating ===

@@ -462,6 +462,7 @@ export interface RiskExplanationInput {
   // B3: optional context from SEC filings and news for more specific explanations
   keyProjects?: string[];
   recentNewsHeadlines?: string[];
+  capexContext?: CapexTailwindContext | null; // optional — Capex Fiscal Spending tailwind / policy-reversal risk
 }
 
 export async function generateRiskExplanations(
@@ -485,6 +486,10 @@ export async function generateRiskExplanations(
     ? `\nAktuelle News:\n${recentNewsHeadlines.slice(0, 5).map((h: string, i: number) => `  N${i + 1}: ${h}`).join("\n")}`
     : "";
 
+  const capexRiskContext = input.capexContext
+    ? `\nCAPEX POLICY RISK: ${ticker} ist börsennotierter Profiteur von "${input.capexContext.sector}" (Programme: ${input.capexContext.programmes.join(", ")}). PFLICHT: Prüfe ob ein bestehendes Risiko in der Liste "Policy-Reversal" oder "Budget-Kürzung" abdeckt. Wenn ja, markiere dessen 'unterschaetzt' Feld als true wenn EW < 30% — Capex-Programme haben erhöhtes politisches Kürzungsrisiko. Wenn KEIN Risiko das abdeckt, füge als letzten Eintrag hinzu: riskIndex=${risks.length}, name="Policy-Reversal: ${input.capexContext.programmes[0] || input.capexContext.sector}", category="politisch".`
+    : "";
+
   // riskIndex is 0-based — explicitly labelled to avoid LLM off-by-one (B fix)
   const riskList = risks.map((r, i) =>
     `riskIndex=${i}: ${r.name} | ${r.category} | EW: ${r.ew}% | Impact: ${r.impact}% | Exp.Damage: ${r.expectedDamage.toFixed(2)}%`
@@ -495,7 +500,7 @@ export async function generateRiskExplanations(
 UNTERNEHMENSKONTEXT:
 ${companyName} (${ticker}) | ${sector} / ${industry}
 Umsatz: $${revenue > 0 ? (revenue / 1e9).toFixed(1) + 'B' : 'N/A'} | Wachstum: ${revenueGrowth != null && revenueGrowth !== 0 ? revenueGrowth.toFixed(1) + '%' : 'N/A'} | FCF-Marge: ${fcfMargin > 0 ? fcfMargin.toFixed(1) + '%' : 'N/A'} | KGV: ${pe > 0 ? pe.toFixed(1) : 'N/A'} | Staatsabh: ${governmentExposure.toFixed(0)}%
-${description.substring(0, 350)}${secContext}${newsContext}
+${description.substring(0, 350)}${secContext}${newsContext}${capexRiskContext}
 
 RISIKEN (riskIndex 0-basiert — exakt so zurückgeben):
 ${riskList}
