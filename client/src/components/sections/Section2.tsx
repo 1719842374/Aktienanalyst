@@ -284,6 +284,35 @@ export function Section2({ data }: Props) {
         <div className="bg-muted/30 rounded-md p-3 border border-border/50">
           <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Investment These & Katalysatoren-Logik</h3>
           <p className="text-xs text-foreground/80 leading-relaxed">{data.growthThesis}</p>
+
+          {/* Capex Fiscal Tailwind highlight — shown when ticker is in Researcher capex cache */}
+          {(() => {
+            const capexCat = (data.catalysts || []).find(c => c.tags?.includes("capex-tailwind"));
+            if (!capexCat) return null;
+            // Extract programme name from catalyst name: "Capex Tailwind: Defense & Aerospace" → sector
+            const sector = capexCat.name.replace(/^Capex Tailwind:\s*/i, "").trim();
+            // Extract programme names from context ("Programme: NDAA 2026 & CHIPS Act")
+            const progMatch = capexCat.context?.match(/Programme:\s*([^\.(]+)/i);
+            const programmes = progMatch ? progMatch[1].trim() : sector;
+            // First sentence of context as company-specific rationale
+            const contextSentences = (capexCat.context || "").match(/[^.!?]+[.!?]+/g) || [];
+            const rationale = contextSentences[0]?.trim() || "";
+            return (
+              <div className="mt-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-[9px] font-semibold uppercase tracking-wider text-emerald-400">🏛 Fiskal-Rückenwind</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium">{programmes}</span>
+                  <span className="text-[9px] text-muted-foreground ml-auto">{capexCat.timeline} · PoS {capexCat.pos}%</span>
+                </div>
+                {rationale && (
+                  <p className="text-[11px] text-foreground/80 leading-relaxed">{rationale}</p>
+                )}
+                {contextSentences.length > 1 && (
+                  <p className="text-[11px] text-foreground/70 leading-relaxed mt-0.5">{contextSentences.slice(1, 3).join(" ").trim()}</p>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
