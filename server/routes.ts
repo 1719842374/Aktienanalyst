@@ -4527,7 +4527,7 @@ export async function registerRoutes(server: Server, app: Express) {
       try {
         const CAPEX_REGIONS = ["US", "EU", "ASIA"];
         outerCapex: for (const region of CAPEX_REGIONS) {
-          const capexData = diskResearcherGet(`capex__${region.toLowerCase()}`);
+          const capexData = diskResearcherGet(`capex__${region}`);
           if (!capexData?.sectorExposure) continue;
           for (const sectorEntry of (capexData.sectorExposure as any[])) {
             const beneficiaries: any[] = sectorEntry.listedBeneficiaries || [];
@@ -5258,7 +5258,7 @@ export async function registerRoutes(server: Server, app: Express) {
       try {
         const CAPEX_REGIONS = ["US", "EU", "ASIA"];
         outer: for (const region of CAPEX_REGIONS) {
-          const capexData = diskResearcherGet(`capex__${region.toLowerCase()}`);
+          const capexData = diskResearcherGet(`capex__${region}`);
           if (!capexData?.sectorExposure) continue;
           for (const sectorEntry of capexData.sectorExposure as any[]) {
             const beneficiaries: any[] = sectorEntry.listedBeneficiaries || [];
