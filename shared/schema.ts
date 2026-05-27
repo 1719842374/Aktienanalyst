@@ -138,6 +138,7 @@ export interface Catalyst {
   // News-Sentiment linkage
   newsSentiment?: 'bullish' | 'bearish' | 'neutral' | 'mixed'; // Aggregated news sentiment for this catalyst
   newsCount?: number; // Number of news items linked to this catalyst
+  tags?: string[]; // Optional tags e.g. ["gov-spending", "capex-tailwind"]
   posAdjustment?: number; // PoS adjustment from news sentiment (e.g. +5 or -5)
   posOriginal?: number; // Original PoS before news adjustment
 }

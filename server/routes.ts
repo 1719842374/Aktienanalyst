@@ -4464,33 +4464,6 @@ export async function registerRoutes(server: Server, app: Express) {
       let risks = generateRisks(sector, beta5Y, govExp.exposure);
       // tamAnalysis is computed after revenueSegments are parsed (below)
 
-      // === Capex Fiscal Tailwind Lookup (für growthThesis + risk LLM) ===
-      let analyzeCapexContext: CapexTailwindContext | null = null;
-      try {
-        const CAPEX_REGIONS = ["US", "EU", "ASIA"];
-        outer2: for (const region of CAPEX_REGIONS) {
-          const capexData = diskResearcherGet(`capex:${region}`);
-          if (!capexData?.sectorExposure) continue;
-          for (const sectorEntry of capexData.sectorExposure as any[]) {
-            const beneficiaries: any[] = sectorEntry.listedBeneficiaries || [];
-            const match = beneficiaries.find(
-              (b: any) => String(b.ticker || "").toUpperCase() === String(ticker).toUpperCase()
-            );
-            if (match) {
-              analyzeCapexContext = {
-                sector: sectorEntry.sector || "",
-                impact: sectorEntry.impact || "positiv",
-                timeline: sectorEntry.timeline || "12-24M",
-                reasoning: sectorEntry.reasoning || "",
-                programmes: Array.isArray(sectorEntry.programmes) ? sectorEntry.programmes : [],
-                beneficiaryEntry: { ticker: match.ticker, name: match.name, rationale: match.rationale || "" },
-              };
-              break outer2;
-            }
-          }
-        }
-      } catch (_) {}
-
       // === Risk Explanations (LLM Deep-Dive, same as catalyst reasoning) ===
       if (useLLM) {
         try {
@@ -4508,7 +4481,6 @@ export async function registerRoutes(server: Server, app: Express) {
             marketCap,
             governmentExposure: govExp.exposure,
             risks,
-            capexContext: analyzeCapexContext,
             keyProjects: keyProjects.slice(0, 5),
             recentNewsHeadlines: newsHeadlines.slice(0, 5),
           });
@@ -4550,6 +4522,36 @@ export async function registerRoutes(server: Server, app: Express) {
 
       // === Growth thesis (enriched with catalyst business model reasoning) ===
       const hybridPrefix = sectorHybridNote ? `⚠️ ${sectorHybridNote} ` : "";
+      // === Capex Fiscal Tailwind Lookup (runs before growthThesis) ===
+      let analyzeCapexContext: CapexTailwindContext | null = null;
+      try {
+        const CAPEX_REGIONS = ["US", "EU", "ASIA"];
+        outerCapex: for (const region of CAPEX_REGIONS) {
+          const capexData = diskResearcherGet(`capex:${region}`);
+          if (!capexData?.sectorExposure) continue;
+          for (const sectorEntry of (capexData.sectorExposure as any[])) {
+            const beneficiaries: any[] = sectorEntry.listedBeneficiaries || [];
+            const match = beneficiaries.find(
+              (b: any) => String(b.ticker || "").toUpperCase() === String(ticker).toUpperCase()
+            );
+            if (match) {
+              analyzeCapexContext = {
+                sector: sectorEntry.sector || "",
+                impact: sectorEntry.impact || "positiv",
+                timeline: sectorEntry.timeline || "12-24M",
+                reasoning: sectorEntry.reasoning || "",
+                programmes: Array.isArray(sectorEntry.programmes) ? sectorEntry.programmes : [],
+                beneficiaryEntry: { ticker: match.ticker, name: match.name || companyName, rationale: match.rationale || "" },
+              };
+              console.log(`[ANALYZE] ${ticker} matched Capex cache: ${region}/${sectorEntry.sector} | programmes: ${analyzeCapexContext.programmes.join(", ")}`);
+              break outerCapex;
+            }
+          }
+        }
+      } catch (capexLookupErr: any) {
+        console.warn(`[ANALYZE] capex lookup error for ${ticker}: ${capexLookupErr?.message}`);
+      }
+
       let growthThesis = "";
       if (revenueGrowth > 20) growthThesis = `Starkes Revenue-Wachstum von ${revenueGrowth.toFixed(1)}% getrieben durch säkulare Nachfrage und Marktexpansion.`;
       else if (revenueGrowth > 10) growthThesis = `Solides Revenue-Wachstum von ${revenueGrowth.toFixed(1)}% mit Spielraum für Operating Leverage und Margenexpansion.`;
@@ -4581,10 +4583,24 @@ export async function registerRoutes(server: Server, app: Express) {
         }
       }
 
-      // Append Capex Tailwind to growthThesis if ticker is in Researcher cache
+
+      // === Capex Tailwind — inject catalyst + enrich growthThesis ===
       if (analyzeCapexContext) {
-        const prog = analyzeCapexContext.programmes.slice(0, 2).join(" & ") || analyzeCapexContext.sector;
-        growthThesis += ` Zusätzlicher struktureller Rückenwind: ${analyzeCapexContext.sector} (${prog}) — ${analyzeCapexContext.beneficiaryEntry.rationale.slice(0, 120)}.`;
+        const progNames = analyzeCapexContext.programmes.slice(0, 2).join(" & ") || analyzeCapexContext.sector;
+        const impactLabel = analyzeCapexContext.impact === "positiv" ? "positiv" : analyzeCapexContext.impact;
+        const capexPos = analyzeCapexContext.impact === "positiv" ? 68 : analyzeCapexContext.impact === "neutral" ? 50 : 35;
+        const capexCatalyst: Catalyst = {
+          name: `Capex Tailwind: ${analyzeCapexContext.sector}`,
+          timeline: analyzeCapexContext.timeline,
+          pos: capexPos,
+          bruttoUpside: analyzeCapexContext.impact === "positiv" ? 18 : 8,
+          einpreisungsgrad: analyzeCapexContext.impact === "positiv" ? 45 : 55,
+          nettoUpside: 0, gb: 0,
+          context: `${analyzeCapexContext.beneficiaryEntry.rationale || companyName + " profitiert direkt von staatlichen Ausgabenprogrammen."} Programme: ${progNames} (${analyzeCapexContext.timeline}, Impact: ${impactLabel}). ${analyzeCapexContext.reasoning.slice(0, 180)}`,
+          tags: ["gov-spending", "capex-tailwind"],
+        };
+        catalysts.unshift(capexCatalyst);
+        growthThesis += ` Struktureller Rückenwind durch staatliche Capex-Programme: ${progNames} (${analyzeCapexContext.timeline}, ${analyzeCapexContext.sector}).`;
       }
 
       // === Moat rating ===
