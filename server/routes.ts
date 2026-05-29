@@ -4566,6 +4566,83 @@ export async function registerRoutes(server: Server, app: Express) {
       let risks = generateRisks(sector, beta5Y, govExp.exposure);
       // tamAnalysis is computed after revenueSegments are parsed (below)
 
+      // === growthThesis — LLM-generated, company-specific ===
+      // Try LLM first (cheap: ~120 tokens Haiku), fall back to template if unavailable
+      const realCats = catalysts.filter(c => !c.tags?.includes("capex-tailwind"));
+      const capexCtxForThesis = analyzeCapexContext ? {
+        sector: analyzeCapexContext.sector,
+        programmes: analyzeCapexContext.programmes,
+        rationale: analyzeCapexContext.beneficiaryEntry.rationale,
+      } : null;
+
+      let growthThesis = "";
+      const coName = companyName || ticker;
+
+      // LLM thesis (runs async, but we await it here — max 180 tokens ≈ $0.00004)
+      // Build fingerprint to detect stale cached thesis
+      const thesisFingerprint = growthThesisFingerprint({
+        revenueGrowth,
+        fcfMargin,
+        topCatalysts: realCats.slice(0, 2).map(c => ({ name: c.name, context: c.context || "" })),
+        capexContext: capexCtxForThesis,
+      });
+      const cachedFingerprint = cached?.growthThesisFingerprint as string | undefined;
+      const thesisIsStale = cachedFingerprint && cachedFingerprint !== thesisFingerprint;
+      if (thesisIsStale) {
+        console.log(`[GROWTH-THESIS] Stale thesis detected for ${ticker} — fingerprint changed (${cachedFingerprint} → ${thesisFingerprint})`);
+      }
+
+      const llmThesis = await generateGrowthThesis({
+        ticker,
+        companyName: coName,
+        description: description || "",
+        sector,
+        industry,
+        revenueGrowth,
+        fcfMargin,
+        grossMargin: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
+        operatingMargin: revenue > 0 ? (operatingIncome / revenue) * 100 : 0,
+        forwardPE: Number(forwardPE) || 0,
+        evEbitda: Number(evEbitda) || 0,
+        analystPTMedian: Number(analystPTMedian) || 0,
+        currentPrice: Number(price) || 0,
+        returnOnEquity: totalEquity > 0 ? (netIncome / totalEquity) * 100 : 0,
+        topCatalysts: realCats.slice(0, 2).map(c => ({ name: c.name, context: c.context || "" })),
+        capexContext: capexCtxForThesis,
+      }).catch(() => null);
+
+      if (llmThesis) {
+        growthThesis = llmThesis;
+      } else {
+        // Fallback: template-based (wenn LLM nicht verfügbar)
+        if (revenueGrowth > 20) growthThesis = `${coName} wächst mit ${revenueGrowth.toFixed(1)}% überdurchschnittlich stark.`;
+        else if (revenueGrowth > 10) growthThesis = `${coName} zeigt solides Wachstum von ${revenueGrowth.toFixed(1)}% (FCF-Marge: ${fcfMargin.toFixed(1)}%).`;
+        else if (revenueGrowth > 0) growthThesis = `${coName} wächst moderat mit ${revenueGrowth.toFixed(1)}% — Margenexpansion entscheidend (FCF: ${fcfMargin.toFixed(1)}%).`;
+        else growthThesis = `${coName} kämpft mit ${revenueGrowth.toFixed(1)}% Umsatzrückgang — Turnaround oder neuer Wachstumsvektor nötig.`;
+        if (realCats.length > 0) growthThesis += ` Kurstreiber: ${realCats.slice(0, 2).map(c => c.name).join(", ")}.`;
+      }
+      if (hybridPrefix) growthThesis = hybridPrefix + growthThesis;
+
+
+      // === Capex Tailwind — inject catalyst + enrich growthThesis ===
+      if (analyzeCapexContext) {
+        const progNames = analyzeCapexContext.programmes.slice(0, 2).join(" & ") || analyzeCapexContext.sector;
+        const impactLabel = analyzeCapexContext.impact === "positiv" ? "positiv" : analyzeCapexContext.impact;
+        const capexPos = analyzeCapexContext.impact === "positiv" ? 68 : analyzeCapexContext.impact === "neutral" ? 50 : 35;
+        const capexCatalyst: Catalyst = {
+          name: `Capex Tailwind: ${analyzeCapexContext.sector}`,
+          timeline: analyzeCapexContext.timeline,
+          pos: capexPos,
+          bruttoUpside: analyzeCapexContext.impact === "positiv" ? 18 : 8,
+          einpreisungsgrad: analyzeCapexContext.impact === "positiv" ? 45 : 55,
+          nettoUpside: 0, gb: 0,
+          context: `${analyzeCapexContext.beneficiaryEntry.rationale || companyName + " profitiert direkt von staatlichen Ausgabenprogrammen."} Programme: ${progNames} (${analyzeCapexContext.timeline}, Impact: ${impactLabel}). ${analyzeCapexContext.reasoning.slice(0, 180)}`,
+          tags: ["gov-spending", "capex-tailwind"],
+        };
+        catalysts.unshift(capexCatalyst);
+        growthThesis += ` Struktureller Rückenwind durch staatliche Capex-Programme: ${progNames} (${analyzeCapexContext.timeline}, ${analyzeCapexContext.sector}).`;
+      }
+
       // === Company-specific Risks via LLM (runs HERE after capexCtxForThesis + catalysts are ready) ===
       try {
         const specificRisksResult = await generateCompanySpecificRisks({
@@ -4681,82 +4758,6 @@ export async function registerRoutes(server: Server, app: Express) {
         console.warn(`[ANALYZE] capex lookup error for ${ticker}: ${capexLookupErr?.message}`);
       }
 
-      // === growthThesis — LLM-generated, company-specific ===
-      // Try LLM first (cheap: ~120 tokens Haiku), fall back to template if unavailable
-      const realCats = catalysts.filter(c => !c.tags?.includes("capex-tailwind"));
-      const capexCtxForThesis = analyzeCapexContext ? {
-        sector: analyzeCapexContext.sector,
-        programmes: analyzeCapexContext.programmes,
-        rationale: analyzeCapexContext.beneficiaryEntry.rationale,
-      } : null;
-
-      let growthThesis = "";
-      const coName = companyName || ticker;
-
-      // LLM thesis (runs async, but we await it here — max 180 tokens ≈ $0.00004)
-      // Build fingerprint to detect stale cached thesis
-      const thesisFingerprint = growthThesisFingerprint({
-        revenueGrowth,
-        fcfMargin,
-        topCatalysts: realCats.slice(0, 2).map(c => ({ name: c.name, context: c.context || "" })),
-        capexContext: capexCtxForThesis,
-      });
-      const cachedFingerprint = cached?.growthThesisFingerprint as string | undefined;
-      const thesisIsStale = cachedFingerprint && cachedFingerprint !== thesisFingerprint;
-      if (thesisIsStale) {
-        console.log(`[GROWTH-THESIS] Stale thesis detected for ${ticker} — fingerprint changed (${cachedFingerprint} → ${thesisFingerprint})`);
-      }
-
-      const llmThesis = await generateGrowthThesis({
-        ticker,
-        companyName: coName,
-        description: description || "",
-        sector,
-        industry,
-        revenueGrowth,
-        fcfMargin,
-        grossMargin: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
-        operatingMargin: revenue > 0 ? (operatingIncome / revenue) * 100 : 0,
-        forwardPE: Number(forwardPE) || 0,
-        evEbitda: Number(evEbitda) || 0,
-        analystPTMedian: Number(analystPTMedian) || 0,
-        currentPrice: Number(price) || 0,
-        returnOnEquity: totalEquity > 0 ? (netIncome / totalEquity) * 100 : 0,
-        topCatalysts: realCats.slice(0, 2).map(c => ({ name: c.name, context: c.context || "" })),
-        capexContext: capexCtxForThesis,
-      }).catch(() => null);
-
-      if (llmThesis) {
-        growthThesis = llmThesis;
-      } else {
-        // Fallback: template-based (wenn LLM nicht verfügbar)
-        if (revenueGrowth > 20) growthThesis = `${coName} wächst mit ${revenueGrowth.toFixed(1)}% überdurchschnittlich stark.`;
-        else if (revenueGrowth > 10) growthThesis = `${coName} zeigt solides Wachstum von ${revenueGrowth.toFixed(1)}% (FCF-Marge: ${fcfMargin.toFixed(1)}%).`;
-        else if (revenueGrowth > 0) growthThesis = `${coName} wächst moderat mit ${revenueGrowth.toFixed(1)}% — Margenexpansion entscheidend (FCF: ${fcfMargin.toFixed(1)}%).`;
-        else growthThesis = `${coName} kämpft mit ${revenueGrowth.toFixed(1)}% Umsatzrückgang — Turnaround oder neuer Wachstumsvektor nötig.`;
-        if (realCats.length > 0) growthThesis += ` Kurstreiber: ${realCats.slice(0, 2).map(c => c.name).join(", ")}.`;
-      }
-      if (hybridPrefix) growthThesis = hybridPrefix + growthThesis;
-
-
-      // === Capex Tailwind — inject catalyst + enrich growthThesis ===
-      if (analyzeCapexContext) {
-        const progNames = analyzeCapexContext.programmes.slice(0, 2).join(" & ") || analyzeCapexContext.sector;
-        const impactLabel = analyzeCapexContext.impact === "positiv" ? "positiv" : analyzeCapexContext.impact;
-        const capexPos = analyzeCapexContext.impact === "positiv" ? 68 : analyzeCapexContext.impact === "neutral" ? 50 : 35;
-        const capexCatalyst: Catalyst = {
-          name: `Capex Tailwind: ${analyzeCapexContext.sector}`,
-          timeline: analyzeCapexContext.timeline,
-          pos: capexPos,
-          bruttoUpside: analyzeCapexContext.impact === "positiv" ? 18 : 8,
-          einpreisungsgrad: analyzeCapexContext.impact === "positiv" ? 45 : 55,
-          nettoUpside: 0, gb: 0,
-          context: `${analyzeCapexContext.beneficiaryEntry.rationale || companyName + " profitiert direkt von staatlichen Ausgabenprogrammen."} Programme: ${progNames} (${analyzeCapexContext.timeline}, Impact: ${impactLabel}). ${analyzeCapexContext.reasoning.slice(0, 180)}`,
-          tags: ["gov-spending", "capex-tailwind"],
-        };
-        catalysts.unshift(capexCatalyst);
-        growthThesis += ` Struktureller Rückenwind durch staatliche Capex-Programme: ${progNames} (${analyzeCapexContext.timeline}, ${analyzeCapexContext.sector}).`;
-      }
 
       // === Moat rating ===
       let moatRating = "Narrow";
