@@ -4570,7 +4570,7 @@ export async function registerRoutes(server: Server, app: Express) {
       try {
         const specificRisksResult = await generateCompanySpecificRisks({
           ticker,
-          companyName: coName,
+          companyName: companyName || String(ticker),
           description: description || "",
           sector,
           industry,
