@@ -3666,8 +3666,51 @@ export async function registerRoutes(server: Server, app: Express) {
             if (fmpData) return res.json({ ...fmpData, _quotaFallback: true });
           } catch {}
         }
-        // Serve stale cache if available
-        if (cached) return res.json({ ...cached, _cached: true, _quoteStale: true, _quotaExceeded: true });
+        // Serve stale cache if available — but first refresh generic risks synchronously
+        if (cached) {
+          const GENERIC_RISK_NAMES = new Set([
+            "Macro Recession / Demand Shock", "Earnings Miss / Guidance Cut",
+            "Multiple Compression (Rising Rates)", "Regulatory / Antitrust Action",
+            "Tech Disruption / Competitive Shift", "Government Contract / Policy Dependency",
+            "Competitive Pressure / Margin Erosion", "Drug Pricing Reform / Patent Cliff",
+            "Credit Quality Deterioration", "Commodity Price Collapse",
+            "Consumer Spending Slowdown / China Weakness", "Brand Dilution / Competitive Shift",
+          ]);
+          const cachedRisks: any[] = cached.risks || [];
+          const hasGenericRisks = cachedRisks.length > 0 && cachedRisks.every((r: any) => GENERIC_RISK_NAMES.has(r.name));
+          if (hasGenericRisks && cached.description && cached.catalysts?.length > 0) {
+            try {
+              const refreshCats = (cached.catalysts || []).filter((c: any) => !c.tags?.includes("capex-tailwind")).slice(0, 2);
+              const newRisks = await generateCompanySpecificRisks({
+                ticker: String(ticker),
+                companyName: String(cached.companyName || ticker),
+                description: String(cached.description || ""),
+                sector: String(cached.sectorProfile?.sector || cached.sector || "Technology"),
+                industry: String(cached.industry || ""),
+                revenue: Number(cached.revenue) || 0,
+                revenueGrowth: Number(cached.revenueGrowth) || 0,
+                fcfMargin: Number(cached.fcfMargin) || 0,
+                grossMargin: 0,
+                forwardPE: Number(cached.forwardPE) || 0,
+                beta: Number(cached.beta) || 1.1,
+                governmentExposure: Number(cached.governmentExposure) || 0,
+                topCatalysts: refreshCats.map((c: any) => ({ name: c.name, context: c.context || "" })),
+                capexContext: null,
+                recentNewsHeadlines: (cached.newsItems || []).slice(0, 4).map((n: any) => n.title || ""),
+              });
+              if (newRisks && newRisks.length >= 3) {
+                const freshRisks = newRisks.map((r: any) => ({ ...r, expectedDamage: 0 }));
+                const updated = { ...cached, risks: freshRisks };
+                saveCachedAnalysis(String(ticker), updated);
+                console.log(`[ANALYZE] Quota-path risk refresh for ${ticker}: ${freshRisks.map((r: any) => r.name).join(" | ")}`);
+                return res.json({ ...updated, _cached: true, _quoteStale: true, _quotaExceeded: true });
+              }
+            } catch (e: any) {
+              console.warn(`[ANALYZE] Risk refresh failed (quota path) for ${ticker}: ${e?.message}`);
+            }
+          }
+          return res.json({ ...cached, _cached: true, _quoteStale: true, _quotaExceeded: true });
+        }
         return res.status(429).json({
           error: `Tägliches Finance-API Kontingent ausgeschöpft (${_quotaCount}/${DAILY_FINANCE_LIMIT} Analysen). Reset nach Mitternacht.`,
           errorCode: 'RATE_LIMITED'
