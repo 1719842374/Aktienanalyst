@@ -6489,6 +6489,7 @@ export async function registerRoutes(server: Server, app: Express) {
             fetch(`https://financialmodelingprep.com/stable/quote?symbol=${sym}&apikey=${FMP_KEY}`).catch(() => null),
             fetch(`https://financialmodelingprep.com/stable/profile?symbol=${sym}&apikey=${FMP_KEY}`).catch(() => null),
             fetch(`https://financialmodelingprep.com/stable/price-target-consensus?symbol=${sym}&apikey=${FMP_KEY}`).catch(() => null),
+            fetch(`https://financialmodelingprep.com/stable/ratios?symbol=${sym}&limit=1&apikey=${FMP_KEY}`).catch(() => null),
           ]);
           const qData = qResp?.ok ? await qResp.json().catch(() => null) : null;
           const pData = pResp?.ok ? await pResp.json().catch(() => null) : null;
@@ -6496,8 +6497,9 @@ export async function registerRoutes(server: Server, app: Express) {
           const q = Array.isArray(qData) ? qData[0] : qData;
           const p = Array.isArray(pData) ? pData[0] : pData;
           const pt = Array.isArray(ptData) ? ptData[0] : ptData;
+        const r = Array.isArray(rData) ? rData[0] : rData;
           if (q) quotesMap[sym] = q;
-          statsMap[sym] = { ...(p || {}), ...(pt || {}) };
+        statsMap[sym] = { ...(p || {}), ...(pt || {}), ...(r || {}) };
         } catch { /* ignore */ }
       };
 
@@ -6513,12 +6515,12 @@ export async function registerRoutes(server: Server, app: Express) {
         const parseNum = (v: any) => { const n = parseFloat(String(v ?? '').replace(/[$,%]/g, '')); return isNaN(n) ? 0 : n; };
 
         const price = parseNum(quote.price || quote.previousClose) || 0;
-        const pe = parseNum(quote.pe) || parseNum(profile.priceEarningsRatioTTM) || 0;
+        const pe = parseNum(profile.priceToEarningsRatio) || parseNum(profile.pe) || 0;
         const marketCap = parseNum(quote.marketCap || profile.marketCap || profile.mktCap) || 0;
         const beta = parseNum(profile.beta) || 1.2;
         const yearHigh = parseNum(quote.yearHigh) || price * 1.3;
         const yearLow = parseNum(quote.yearLow) || price * 0.7;
-        const targetPrice = parseNum(profile.targetConsensus || profile.targetMedian || profile.dcf) || 0;
+        const targetPrice = parseNum(profile.targetConsensus) || parseNum(profile.targetMedian) || 0;
         const sector = profile.sector || profile.industry || 'Unknown';
 
         let upside = targetPrice > 0 ? ((targetPrice - price) / price) * 100 : 0;
