@@ -4520,43 +4520,35 @@ export async function registerRoutes(server: Server, app: Express) {
         }
       }
 
-      // === Company-specific Risks (LLM) — with template fallback ===
-      // Run in parallel with downstream computation; await before response build
-      const specificRisksPromise = generateCompanySpecificRisks({
-        ticker,
-        companyName: coName,
-        description: description || "",
-        sector,
-        industry,
-        revenue,
-        revenueGrowth,
-        fcfMargin,
-        grossMargin: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
-        forwardPE: Number(forwardPE) || 0,
-        beta: beta5Y,
-        governmentExposure: govExp.exposure,
-        topCatalysts: (catalysts || []).filter((c: any) => !c.tags?.includes("capex-tailwind")).slice(0, 2).map((c: any) => ({ name: c.name, context: c.context || "" })),
-        capexContext: capexCtxForThesis,
-        recentNewsHeadlines: (newsItems || []).slice(0, 4).map((n: any) => n.title || ""),
-      }).catch(() => null);
-
-      // Template risks as fallback (instant)
+      // Template risks as fallback (instant) — LLM-specific risks started later after capexCtxForThesis is built
       let risks = generateRisks(sector, beta5Y, govExp.exposure);
       // tamAnalysis is computed after revenueSegments are parsed (below)
 
-      // === Await company-specific risks (LLM) — replace template risks if successful ===
-      // specificRisksPromise was started earlier in parallel with catalyst generation
-      const specificRisksResult = await specificRisksPromise;
-      if (specificRisksResult && specificRisksResult.length >= 3) {
-        // Replace template risks with LLM-generated company-specific risks
-        // expectedDamage is computed later — set to 0 for now
-        risks = specificRisksResult.map(r => ({
-          ...r,
-          expectedDamage: 0,
-        }));
-        console.log(`[ANALYZE] Company-specific risks applied for ${ticker}: ${risks.map(r => r.name).join(" | ")}`);
-      } else {
-        console.log(`[ANALYZE] Using template risks for ${ticker} (LLM risk generation unavailable)`);
+      // === Company-specific Risks via LLM (runs HERE after capexCtxForThesis + catalysts are ready) ===
+      try {
+        const specificRisksResult = await generateCompanySpecificRisks({
+          ticker,
+          companyName: coName,
+          description: description || "",
+          sector,
+          industry,
+          revenue,
+          revenueGrowth,
+          fcfMargin,
+          grossMargin: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
+          forwardPE: Number(forwardPE) || 0,
+          beta: beta5Y,
+          governmentExposure: govExp.exposure,
+          topCatalysts: (catalysts || []).filter((c: any) => !c.tags?.includes("capex-tailwind")).slice(0, 2).map((c: any) => ({ name: c.name, context: c.context || "" })),
+          capexContext: capexCtxForThesis,
+          recentNewsHeadlines: (newsItems || []).slice(0, 4).map((n: any) => n.title || ""),
+        });
+        if (specificRisksResult && specificRisksResult.length >= 3) {
+          risks = specificRisksResult.map(r => ({ ...r, expectedDamage: 0 }));
+          console.log(`[ANALYZE] Company-specific risks for ${ticker}: ${risks.map(r => r.name).join(" | ")}`);
+        }
+      } catch (specificRiskErr: any) {
+        console.warn(`[ANALYZE] Specific risk LLM failed for ${ticker}: ${specificRiskErr?.message}`);
       }
 
       // === Risk Explanations (LLM Deep-Dive, same as catalyst reasoning) ===
