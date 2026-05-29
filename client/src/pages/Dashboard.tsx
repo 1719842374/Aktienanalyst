@@ -3,7 +3,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { StockAnalysis } from "../../../shared/schema";
 import { TickerSearch } from "@/components/TickerSearch";
-import { TickerAutocomplete } from "@/components/ui/TickerAutocomplete";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { Section1 } from "@/components/sections/Section1";
@@ -57,7 +56,6 @@ export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [useLLM, setUseLLM] = useState(false);
   const [currentTicker, setCurrentTicker] = useState('');
-  const [tickerInput, setTickerInput] = useState('');
   const [, navigate] = useLocation();
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -287,15 +285,9 @@ export default function Dashboard() {
               <span className="font-mono tabular-nums font-semibold">${data.currentPrice.toFixed(2)}</span>
             </div>
           )}
-          <TickerAutocomplete
-            value={tickerInput}
-            onChange={setTickerInput}
-            onSelect={(ticker) => {
-              setTickerInput(ticker);
-              setCurrentTicker(ticker);
-              startAnalyze({ ticker, llm: useLLMRef.current });
-            }}
-            className="w-40 sm:w-56 shrink-0"
+          <TickerSearch
+            onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
+            isLoading={analyzeMutation.isPending}
           />
           {/* PDF Export */}
           {data && (
