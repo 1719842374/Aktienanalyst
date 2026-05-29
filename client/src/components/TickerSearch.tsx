@@ -8,11 +8,10 @@ interface TickerSearchProps {
 }
 
 interface SearchResult {
-  symbol: string;
+  ticker: string;
   name: string;
-  exchangeFullName?: string;
   exchange?: string;
-  currency?: string;
+  type?: string;
 }
 
 export function TickerSearch({ onSearch, isLoading }: TickerSearchProps) {
@@ -63,10 +62,10 @@ export function TickerSearch({ onSearch, isLoading }: TickerSearchProps) {
   }, []);
 
   function chooseResult(r: SearchResult) {
-    setInput(r.symbol);
+    setInput(r.ticker);
     setOpen(false);
     setResults([]);
-    onSearch(r.symbol);
+    onSearch(r.ticker);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -123,20 +122,19 @@ export function TickerSearch({ onSearch, isLoading }: TickerSearchProps) {
           <div className="absolute top-full left-0 right-0 mt-1 max-h-80 overflow-y-auto bg-card border border-border rounded-md shadow-lg z-50 min-w-[280px] sm:min-w-[360px]">
             {results.map((r, i) => (
               <button
-                key={r.symbol}
+                key={r.ticker}
                 type="button"
                 onClick={() => chooseResult(r)}
                 onMouseEnter={() => setHighlight(i)}
                 className={`w-full text-left px-3 py-2 text-xs border-b border-border/50 last:border-b-0 transition-colors ${
                   i === highlight ? "bg-primary/10" : "hover:bg-muted/40"
                 }`}
-                data-testid={`option-ticker-${r.symbol}`}
+                data-testid={`option-ticker-${r.ticker}`}
               >
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-mono font-semibold text-foreground truncate">{r.symbol}</span>
+                  <span className="font-mono font-semibold text-foreground truncate">{r.ticker}</span>
                   <span className="text-[10px] text-muted-foreground shrink-0">
-                    {r.exchange || r.exchangeFullName?.split(" ")[0] || ""}
-                    {r.currency ? ` · ${r.currency}` : ""}
+                    {r.exchange || ""}
                   </span>
                 </div>
                 <div className="text-foreground/70 truncate mt-0.5">{r.name}</div>

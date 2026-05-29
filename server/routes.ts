@@ -3391,16 +3391,42 @@ export async function registerRoutes(server: Server, app: Express) {
   registerRegressionScanRoutes(app);
 
   // === Ticker/Company-Name Search (autocomplete dropdown) ===
+  // === Ticker Autocomplete Search ===
   app.get("/api/search-ticker", async (req, res) => {
+    const q = String(req.query.q || "").trim();
+    if (q.length < 1) return res.json({ results: [] });
+
     try {
-      const q = String(req.query.q || "").trim();
-      if (!q || q.length < 1) return res.json({ results: [] });
-      const { fmpSearchTicker } = await import("./fmp");
-      const results = await fmpSearchTicker(q, 10);
+      const KEY = process.env.FMP_API_KEY || 'lHc3gAE8V0YuUn48HEnXIHJazR7nI7Cx';
+      // Parallel: search by symbol + search by name
+      const [symbolRes, nameRes] = await Promise.all([
+        fetch(`https://financialmodelingprep.com/stable/search-symbol?query=${encodeURIComponent(q)}&limit=8&apikey=${KEY}`)
+          .then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`https://financialmodelingprep.com/stable/search-name?query=${encodeURIComponent(q)}&limit=8&apikey=${KEY}`)
+          .then(r => r.ok ? r.json() : []).catch(() => []),
+      ]);
+
+      const combined = new Map<string, any>();
+      for (const item of [...(Array.isArray(symbolRes) ? symbolRes : []), ...(Array.isArray(nameRes) ? nameRes : [])]) {
+        const sym = item.symbol || item.ticker || '';
+        if (!sym || sym.length > 20) continue;
+        if (!combined.has(sym)) combined.set(sym, item);
+      }
+
+      const results = Array.from(combined.values())
+        .slice(0, 12)
+        .map(item => ({
+          ticker: item.symbol || item.ticker || '',
+          name: item.name || item.companyName || '',
+          exchange: item.exchangeShortName || item.exchange || '',
+          type: item.type || '',
+        }))
+        .filter(r => r.ticker && r.name);
+
       res.json({ results });
-    } catch (err: any) {
-      console.error("[SEARCH-TICKER] error:", err?.message);
-      res.status(500).json({ error: err?.message || "search failed", results: [] });
+    } catch (e: any) {
+      console.error('[SEARCH-TICKER]', e?.message);
+      res.json({ results: [] });
     }
   });
 
@@ -4221,6 +4247,39 @@ export async function registerRoutes(server: Server, app: Express) {
           }
         } catch (e: any) {
           console.error('[ANALYZE] Error parsing OHLCV data:', e?.message);
+        }
+      }
+
+      // === FMP OHLCV Fallback: wenn Finance-Tool OHLCV leer, direkt FMP abfragen ===
+      if (closingPrices2Y.length < 100) {
+        try {
+          const fmpStart = new Date(Date.now() - 11 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          const fmpEnd = new Date().toISOString().split('T')[0];
+          const fmpOhlcvUrl = `https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=${encodeURIComponent(ticker)}&from=${fmpStart}&to=${fmpEnd}&apikey=${process.env.FMP_API_KEY || 'lHc3gAE8V0YuUn48HEnXIHJazR7nI7Cx'}`;
+          const fmpOhlcvResp = await fetch(fmpOhlcvUrl);
+          if (fmpOhlcvResp.ok) {
+            const raw = await fmpOhlcvResp.json() as any;
+            const rows: any[] = Array.isArray(raw) ? raw : (raw?.historical || []);
+            // FMP returns newest-first
+            for (const row of [...rows].reverse()) {
+              const date = row.date || '';
+              const close = row.close || row.adjClose || 0;
+              if (date && close > 0) {
+                closingPrices2Y.push({ date, close });
+                ohlcvData.push({
+                  date,
+                  open: row.open || close,
+                  high: row.high || close,
+                  low: row.low || close,
+                  close,
+                  volume: row.volume || 0,
+                });
+              }
+            }
+            console.log(`[FMP-OHLCV-FALLBACK] ${ticker}: fetched ${closingPrices2Y.length} data points`);
+          }
+        } catch (fmpOhlcvErr: any) {
+          console.warn(`[FMP-OHLCV-FALLBACK] ${ticker}: ${fmpOhlcvErr?.message}`);
         }
       }
 
