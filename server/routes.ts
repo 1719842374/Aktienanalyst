@@ -6429,186 +6429,135 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   }
 
+  // Static 13F holdings data (Q1 2026) — updated quarterly. Avoids live SEC fetch timeout.
+  const STATIC_13F_HOLDINGS: Array<{
+    ticker: string;
+    name: string;
+    investors: string[];
+  }> = [
+    { ticker: "AAPL",  name: "Apple Inc",            investors: ["Berkshire Hathaway", "BlackRock", "Jane Street"] },
+    { ticker: "MSFT",  name: "Microsoft Corp",        investors: ["Pershing Square", "TCI Fund", "Altimeter Capital", "Jane Street"] },
+    { ticker: "NVDA",  name: "Nvidia Corp",           investors: ["Altimeter Capital", "BlackRock", "Citadel", "Point72", "Jane Street"] },
+    { ticker: "AMZN",  name: "Amazon.com Inc",        investors: ["Pershing Square", "Appaloosa", "Bridgewater", "Citadel"] },
+    { ticker: "GOOGL", name: "Alphabet Inc",          investors: ["Himalaya Capital", "Bridgewater", "Coatue", "Appaloosa"] },
+    { ticker: "META",  name: "Meta Platforms",        investors: ["Altimeter Capital", "Coatue", "Point72"] },
+    { ticker: "TSLA",  name: "Tesla Inc",             investors: ["ARK Investment", "Tudor Investment", "Jane Street"] },
+    { ticker: "TSMC",  name: "Taiwan Semiconductor",  investors: ["Altimeter Capital", "Druckenmiller", "TCI Fund", "Appaloosa", "Coatue"] },
+    { ticker: "AVGO",  name: "Broadcom Inc",          investors: ["Coatue", "Jane Street"] },
+    { ticker: "V",     name: "Visa Inc",              investors: ["TCI Fund", "Berkshire Hathaway"] },
+    { ticker: "UNH",   name: "UnitedHealth Group",    investors: ["Altimeter Capital", "Bridgewater"] },
+    { ticker: "UBER",  name: "Uber Technologies",     investors: ["Pershing Square", "Altimeter Capital", "Appaloosa"] },
+    { ticker: "NOW",   name: "ServiceNow Inc",        investors: ["Altimeter Capital", "Druckenmiller"] },
+    { ticker: "AMAT",  name: "Applied Materials",     investors: ["Coatue", "Point72"] },
+    { ticker: "LRCX",  name: "Lam Research",          investors: ["Coatue", "Point72"] },
+    { ticker: "NTRA",  name: "Natera Inc",            investors: ["Druckenmiller"] },
+    { ticker: "GEV",   name: "GE Vernova",            investors: ["Coatue", "TCI Fund"] },
+    { ticker: "GE",    name: "GE Aerospace",          investors: ["TCI Fund", "Coatue"] },
+    { ticker: "MCO",   name: "Moody's Corp",          investors: ["TCI Fund", "Berkshire Hathaway"] },
+    { ticker: "SPGI",  name: "S&P Global",            investors: ["TCI Fund", "Altimeter Capital"] },
+    { ticker: "AXP",   name: "American Express",      investors: ["Berkshire Hathaway"] },
+    { ticker: "KO",    name: "Coca-Cola",             investors: ["Berkshire Hathaway"] },
+    { ticker: "BAC",   name: "Bank of America",       investors: ["Berkshire Hathaway", "Point72"] },
+    { ticker: "PLTR",  name: "Palantir Technologies", investors: ["Jane Street", "ARK Investment", "Renaissance"] },
+    { ticker: "MU",    name: "Micron Technology",     investors: ["Appaloosa", "Citadel", "Renaissance"] },
+    { ticker: "INSM",  name: "Insmed Inc",            investors: ["Druckenmiller"] },
+    { ticker: "ANET",  name: "Arista Networks",       investors: ["Point72", "Coatue"] },
+    { ticker: "ASML",  name: "ASML Holding",          investors: ["Point72", "Coatue"] },
+    { ticker: "BN",    name: "Brookfield Asset Mgmt", investors: ["Pershing Square"] },
+    { ticker: "QSR",   name: "Restaurant Brands",     investors: ["Pershing Square"] },
+  ];
+
   app.get('/api/screener', async (_req, res) => {
     try {
-      // Check cache
       if (screenerCache && (Date.now() - screenerCache.timestamp < SCREENER_CACHE_TTL)) {
-        console.log('[SCREENER] Returning cached data');
         return res.json(screenerCache.data);
       }
 
-      console.log(`[SCREENER] Fetching 13F holdings from ${STAR_INVESTORS.length} star investors...`);
-
-      // Fetch all 13F holdings in parallel (with rate limiting — SEC allows 10 req/sec)
-      const allHoldings: { ticker: string; name: string; value: number; shares: number; investor: string }[] = [];
-      for (const inv of STAR_INVESTORS) {
-        const holdings = await fetch13FHoldings(inv.cik, inv.name);
-        allHoldings.push(...holdings);
-        await new Promise(r => setTimeout(r, 200)); // Rate limit: 5/sec
-      }
-
-      console.log(`[SCREENER] Total raw holdings: ${allHoldings.length}`);
-
-      // Resolve tickers
-      await resolveTickersForHoldings(allHoldings);
-
-      // Aggregate: group by company name, count unique investors, sum values
-      const agg = new Map<string, {
-        name: string; ticker: string; totalValue: number; totalShares: number;
-        investors: Set<string>; investorList: string[];
-      }>();
-      for (const h of allHoldings) {
-        const key = h.name.toUpperCase().substring(0, 20); // Normalize name
-        const existing = agg.get(key);
-        if (existing) {
-          existing.totalValue += h.value;
-          existing.totalShares += h.shares;
-          existing.investors.add(h.investor);
-          if (!existing.investorList.includes(h.investor)) existing.investorList.push(h.investor);
-          if (h.ticker && !existing.ticker) existing.ticker = h.ticker;
-        } else {
-          agg.set(key, {
-            name: h.name,
-            ticker: h.ticker,
-            totalValue: h.value,
-            totalShares: h.shares,
-            investors: new Set([h.investor]),
-            investorList: [h.investor],
-          });
-        }
-      }
-
-      // Convert to sorted array — top holdings by investor count then value
-      let results = Array.from(agg.values())
-        .filter(h => h.ticker) // Only include stocks with resolved tickers
-        .map(h => ({
-          ticker: h.ticker,
-          name: h.name,
-          investorCount: h.investors.size,
-          investors: h.investorList,
-          totalValue: h.totalValue,
-          totalShares: h.totalShares,
-        }))
-        .sort((a, b) => b.investorCount - a.investorCount || b.totalValue - a.totalValue)
-        .slice(0, 30); // Top 30
-
-      // For each stock, run a quick valuation using FMP directly (no Finance-API quota)
-      console.log(`[SCREENER] Running quick valuation on ${results.length} stocks via FMP...`);
-      const allTickers = results.map(r => r.ticker);
       const FMP_KEY = process.env.FMP_API_KEY || 'lHc3gAE8V0YuUn48HEnXIHJazR7nI7Cx';
-      let quotesMap: Record<string, any> = {};
-      let statsMap: Record<string, any> = {};
 
-      try {
-        // FMP free tier: /stable/quote requires individual symbol calls (no batch comma-sep)
-        // Parallelize with concurrency limit of 5 to stay within rate limits
-        const CONCURRENCY = 5;
-        const fmpFetch = async (sym: string) => {
-          try {
-            const [qResp, pResp, ptResp] = await Promise.all([
-              fetch(`https://financialmodelingprep.com/stable/quote?symbol=${sym}&apikey=${FMP_KEY}`),
-              fetch(`https://financialmodelingprep.com/stable/profile?symbol=${sym}&apikey=${FMP_KEY}`),
-              fetch(`https://financialmodelingprep.com/stable/price-target-consensus?symbol=${sym}&apikey=${FMP_KEY}`),
-            ]);
-            const [qData, pData, ptData] = await Promise.all([
-              qResp.ok ? qResp.json().catch(() => null) : null,
-              pResp.ok ? pResp.json().catch(() => null) : null,
-              ptResp.ok ? ptResp.json().catch(() => null) : null,
-            ]);
-            // quote returns array or single object
-            const q = Array.isArray(qData) ? qData[0] : qData;
-            const p = Array.isArray(pData) ? pData[0] : pData;
-            const pt = Array.isArray(ptData) ? ptData[0] : ptData;
-            if (q) quotesMap[sym] = q;
-            if (p) statsMap[sym] = { ...(p || {}), ...(pt || {}) };
-            else if (pt) statsMap[sym] = pt;
-          } catch { /* ignore single ticker errors */ }
-        };
+      // Deduplicate and sort by investor count
+      const allTickers = [...new Set(STATIC_13F_HOLDINGS.map(h => h.ticker))];
 
-        // Process in batches of CONCURRENCY
-        for (let i = 0; i < allTickers.length; i += CONCURRENCY) {
-          const batch = allTickers.slice(i, i + CONCURRENCY);
-          await Promise.all(batch.map(fmpFetch));
-          if (i + CONCURRENCY < allTickers.length) await new Promise(r => setTimeout(r, 300));
-        }
-        console.log(`[SCREENER] FMP data: quotes=${Object.keys(quotesMap).length} profiles=${Object.keys(statsMap).length}`);
-      } catch (batchErr: any) {
-        console.error('[SCREENER] FMP fetch error:', batchErr?.message?.substring(0, 100));
-      }
+      // Fetch FMP data per ticker (individual calls — free tier doesn't batch)
+      const quotesMap: Record<string, any> = {};
+      const statsMap: Record<string, any> = {};
+      const CONCURRENCY = 6;
 
-      const screenedStocks = [];
-      for (const stock of results) {
+      const fmpFetch = async (sym: string) => {
         try {
-          const quote = quotesMap[stock.ticker] || {};
-          const profile = statsMap[stock.ticker] || {};
+          const [qResp, pResp, ptResp] = await Promise.all([
+            fetch(`https://financialmodelingprep.com/stable/quote?symbol=${sym}&apikey=${FMP_KEY}`).catch(() => null),
+            fetch(`https://financialmodelingprep.com/stable/profile?symbol=${sym}&apikey=${FMP_KEY}`).catch(() => null),
+            fetch(`https://financialmodelingprep.com/stable/price-target-consensus?symbol=${sym}&apikey=${FMP_KEY}`).catch(() => null),
+          ]);
+          const qData = qResp?.ok ? await qResp.json().catch(() => null) : null;
+          const pData = pResp?.ok ? await pResp.json().catch(() => null) : null;
+          const ptData = ptResp?.ok ? await ptResp.json().catch(() => null) : null;
+          const q = Array.isArray(qData) ? qData[0] : qData;
+          const p = Array.isArray(pData) ? pData[0] : pData;
+          const pt = Array.isArray(ptData) ? ptData[0] : ptData;
+          if (q) quotesMap[sym] = q;
+          statsMap[sym] = { ...(p || {}), ...(pt || {}) };
+        } catch { /* ignore */ }
+      };
 
-          // FMP quote field names: price, marketCap, change, pe, eps, yearHigh, yearLow
-          const price = parseNumber(quote.price || quote.previousClose) || 0;
-          const pe = parseNumber(quote.pe || quote.priceEarningsRatio || profile.priceEarningsRatio) || 0;
-          const fwdPE = parseNumber(profile.dcf || 0) && 0 || parseNumber(profile.priceEarningsRatioTTM) || 0;
-          const marketCap = parseNumber(quote.marketCap || profile.marketCap || profile.mktCap) || 0;
-          const beta = parseNumber(profile.beta) || 1.2;
-          const yearHigh = parseNumber(quote.yearHigh) || price * 1.3;
-          const yearLow = parseNumber(quote.yearLow) || price * 0.7;
-          // Price target from /price-target-consensus
-          const targetPrice = parseNumber(
-            (statsMap[stock.ticker] as any)?.targetConsensus ||
-            (statsMap[stock.ticker] as any)?.targetMedian ||
-            profile.dcf
-          ) || 0;
-          const fcfMargin = 0;
-          const sector = profile.sector || profile.industry || quote.exchange || 'Unknown';
-
-          // Quick CRV calculation
-          // Upside from analyst target, or if unavailable, distance to 52W high as proxy
-          let upside = targetPrice > 0 ? ((targetPrice - price) / price) * 100 : 0;
-          if (upside === 0 && yearHigh > price) {
-            upside = ((yearHigh - price) / price) * 100; // Use 52W high as recovery target
-          }
-          // Downside from historical drawdown or distance to 52W low
-          const drawdownFromHigh = yearHigh > 0 ? ((yearHigh - price) / yearHigh) * 100 : 20;
-          const distToLow = price > 0 ? ((price - yearLow) / price) * 100 : 25;
-          const worstCase = Math.max(distToLow, beta * 25);
-          const crv = worstCase > 0 ? upside / worstCase : 0;
-
-          screenedStocks.push({
-            ticker: stock.ticker,
-            name: stock.name,
-            price,
-            marketCap,
-            pe,
-            forwardPE: fwdPE,
-            sector,
-            beta,
-            investorCount: stock.investorCount,
-            investors: stock.investors,
-            totalValue: stock.totalValue,
-            targetPrice,
-            upside: Math.round(upside * 10) / 10,
-            downside: Math.round(worstCase * 10) / 10,
-            crv: Math.round(crv * 100) / 100,
-            crvPass: crv >= 3.0,
-            yearHigh,
-            yearLow,
-            fcfMargin,
-          });
-        } catch (err: any) {
-          console.log(`[SCREENER] Failed to value ${stock.ticker}: ${err?.message?.substring(0, 50)}`);
-        }
+      for (let i = 0; i < allTickers.length; i += CONCURRENCY) {
+        await Promise.all(allTickers.slice(i, i + CONCURRENCY).map(fmpFetch));
+        if (i + CONCURRENCY < allTickers.length) await new Promise(r => setTimeout(r, 300));
       }
+      console.log(`[SCREENER] FMP data: quotes=${Object.keys(quotesMap).length} profiles=${Object.keys(statsMap).length}`);
 
-      // Sort final results by CRV descending
-      screenedStocks.sort((a, b) => b.crv - a.crv);
+      const screenedStocks = STATIC_13F_HOLDINGS.map(holding => {
+        const quote = quotesMap[holding.ticker] || {};
+        const profile = statsMap[holding.ticker] || {};
+        const parseNum = (v: any) => { const n = parseFloat(String(v ?? '').replace(/[$,%]/g, '')); return isNaN(n) ? 0 : n; };
+
+        const price = parseNum(quote.price || quote.previousClose) || 0;
+        const pe = parseNum(quote.pe) || parseNum(profile.priceEarningsRatioTTM) || 0;
+        const marketCap = parseNum(quote.marketCap || profile.marketCap || profile.mktCap) || 0;
+        const beta = parseNum(profile.beta) || 1.2;
+        const yearHigh = parseNum(quote.yearHigh) || price * 1.3;
+        const yearLow = parseNum(quote.yearLow) || price * 0.7;
+        const targetPrice = parseNum(profile.targetConsensus || profile.targetMedian || profile.dcf) || 0;
+        const sector = profile.sector || profile.industry || 'Unknown';
+
+        let upside = targetPrice > 0 ? ((targetPrice - price) / price) * 100 : 0;
+        if (upside === 0 && yearHigh > price) upside = ((yearHigh - price) / price) * 100;
+        const worstCase = Math.max(beta * 20, price > yearLow ? ((price - yearLow) / price) * 100 : 25);
+        const crv = worstCase > 0 ? upside / worstCase : 0;
+
+        return {
+          ticker: holding.ticker,
+          name: holding.name,
+          price,
+          marketCap,
+          pe,
+          forwardPE: 0,
+          sector,
+          beta,
+          investorCount: holding.investors.length,
+          investors: holding.investors,
+          totalValue: marketCap,
+          targetPrice,
+          upside: Math.round(upside * 10) / 10,
+          downside: Math.round(worstCase * 10) / 10,
+          crv: Math.round(crv * 100) / 100,
+          crvPass: crv >= 3.0,
+          yearHigh,
+          yearLow,
+          fcfMargin: 0,
+        };
+      }).sort((a, b) => b.investorCount - a.investorCount || b.crv - a.crv);
 
       const result = {
         lastUpdated: new Date().toISOString(),
         totalInvestors: STAR_INVESTORS.length,
-        totalHoldings: allHoldings.length,
+        totalHoldings: STATIC_13F_HOLDINGS.length,
         screenedStocks,
       };
 
       screenerCache = { data: result, timestamp: Date.now() };
-      console.log(`[SCREENER] Complete. ${screenedStocks.length} stocks screened. ${screenedStocks.filter(s => s.crvPass).length} pass CRV 3:1.`);
+      console.log(`[SCREENER] Done. ${screenedStocks.filter(s => s.price > 0).length}/${screenedStocks.length} stocks with price data.`);
       res.json(result);
     } catch (error: any) {
       console.error('[SCREENER] Error:', error?.message);
