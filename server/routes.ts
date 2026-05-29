@@ -6500,61 +6500,40 @@ export async function registerRoutes(server: Server, app: Express) {
       let statsMap: Record<string, any> = {};
 
       try {
-        // FMP batch quote — up to 50 tickers per call
-        const CHUNK = 30;
-        for (let i = 0; i < allTickers.length; i += CHUNK) {
-          const chunk = allTickers.slice(i, i + CHUNK);
-          const qUrl = `https://financialmodelingprep.com/stable/quote?symbol=${chunk.join(',')}&apikey=${FMP_KEY}`;
-          const qResp = await fetch(qUrl);
-          if (qResp.ok) {
-            const qData = await qResp.json() as any[];
-            for (const q of (Array.isArray(qData) ? qData : [])) {
-              const sym = q.symbol || q.ticker || '';
-              if (sym) quotesMap[sym] = q;
-            }
-          }
-          await new Promise(r => setTimeout(r, 150)); // FMP rate limit
-        }
-        console.log(`[SCREENER] FMP quotes fetched for ${Object.keys(quotesMap).length} tickers`);
+        // FMP free tier: /stable/quote requires individual symbol calls (no batch comma-sep)
+        // Parallelize with concurrency limit of 5 to stay within rate limits
+        const CONCURRENCY = 5;
+        const fmpFetch = async (sym: string) => {
+          try {
+            const [qResp, pResp, ptResp] = await Promise.all([
+              fetch(`https://financialmodelingprep.com/stable/quote?symbol=${sym}&apikey=${FMP_KEY}`),
+              fetch(`https://financialmodelingprep.com/stable/profile?symbol=${sym}&apikey=${FMP_KEY}`),
+              fetch(`https://financialmodelingprep.com/stable/price-target-consensus?symbol=${sym}&apikey=${FMP_KEY}`),
+            ]);
+            const [qData, pData, ptData] = await Promise.all([
+              qResp.ok ? qResp.json().catch(() => null) : null,
+              pResp.ok ? pResp.json().catch(() => null) : null,
+              ptResp.ok ? ptResp.json().catch(() => null) : null,
+            ]);
+            // quote returns array or single object
+            const q = Array.isArray(qData) ? qData[0] : qData;
+            const p = Array.isArray(pData) ? pData[0] : pData;
+            const pt = Array.isArray(ptData) ? ptData[0] : ptData;
+            if (q) quotesMap[sym] = q;
+            if (p) statsMap[sym] = { ...(p || {}), ...(pt || {}) };
+            else if (pt) statsMap[sym] = pt;
+          } catch { /* ignore single ticker errors */ }
+        };
 
-        // FMP profile for sector, beta, analyst target — batch by 20
-        for (let i = 0; i < allTickers.length; i += 20) {
-          const chunk = allTickers.slice(i, i + 20);
-          const pUrl = `https://financialmodelingprep.com/stable/profile?symbol=${chunk.join(',')}&apikey=${FMP_KEY}`;
-          const pResp = await fetch(pUrl);
-          if (pResp.ok) {
-            const pData = await pResp.json() as any[];
-            for (const p of (Array.isArray(pData) ? pData : [])) {
-              const sym = p.symbol || p.ticker || '';
-              if (sym) statsMap[sym] = p;
-            }
-          }
-          await new Promise(r => setTimeout(r, 150));
+        // Process in batches of CONCURRENCY
+        for (let i = 0; i < allTickers.length; i += CONCURRENCY) {
+          const batch = allTickers.slice(i, i + CONCURRENCY);
+          await Promise.all(batch.map(fmpFetch));
+          if (i + CONCURRENCY < allTickers.length) await new Promise(r => setTimeout(r, 300));
         }
-        console.log(`[SCREENER] FMP profiles fetched for ${Object.keys(statsMap).length} tickers`);
-
-        // FMP price target consensus — batch by 10
-        const ptMap: Record<string, any> = {};
-        for (let i = 0; i < allTickers.length; i += 10) {
-          const chunk = allTickers.slice(i, i + 10);
-          for (const sym of chunk) {
-            const ptUrl = `https://financialmodelingprep.com/stable/price-target-consensus?symbol=${sym}&apikey=${FMP_KEY}`;
-            const ptResp = await fetch(ptUrl).catch(() => null);
-            if (ptResp?.ok) {
-              const ptData = await ptResp.json().catch(() => null);
-              if (ptData) ptMap[sym] = Array.isArray(ptData) ? ptData[0] : ptData;
-            }
-          }
-          await new Promise(r => setTimeout(r, 200));
-        }
-        // Merge PT into statsMap
-        for (const [sym, pt] of Object.entries(ptMap)) {
-          if (statsMap[sym]) statsMap[sym] = { ...statsMap[sym], ...pt };
-          else statsMap[sym] = pt;
-        }
-        console.log(`[SCREENER] FMP price targets fetched for ${Object.keys(ptMap).length} tickers`);
+        console.log(`[SCREENER] FMP data: quotes=${Object.keys(quotesMap).length} profiles=${Object.keys(statsMap).length}`);
       } catch (batchErr: any) {
-        console.error('[SCREENER] FMP batch fetch error:', batchErr?.message?.substring(0, 100));
+        console.error('[SCREENER] FMP fetch error:', batchErr?.message?.substring(0, 100));
       }
 
       const screenedStocks = [];
