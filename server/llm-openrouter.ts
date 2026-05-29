@@ -664,3 +664,64 @@ export async function callLLMJson(opts: {
     return null;
   }
 }
+
+export async function generateGrowthThesis(input: {
+  ticker: string;
+  companyName: string;
+  description: string;
+  sector: string;
+  industry: string;
+  revenueGrowth: number;
+  fcfMargin: number;
+  topCatalysts: Array<{ name: string; context: string }>;
+  capexContext?: { sector: string; programmes: string[]; rationale: string } | null;
+}): Promise<string | null> {
+  const { ticker, companyName, description, sector, industry, revenueGrowth, fcfMargin, topCatalysts, capexContext } = input;
+
+  // Extract first meaningful sentence from description
+  const descSentences = (description || "").match(/[^.!?]+[.!?]+/g) || [];
+  const descCore = descSentences.slice(0, 2).join(" ").trim().slice(0, 300);
+
+  // Top 2 catalyst names + first context sentence
+  const catLines = topCatalysts.slice(0, 2).map(c => {
+    const ctxFirst = (c.context.match(/[^.!?]+[.!?]+/) || [""])[0].trim();
+    return `- ${c.name}: ${ctxFirst.slice(0, 120)}`;
+  }).join("\n");
+
+  const capexLine = capexContext
+    ? `Staatliche Förderprogramme: ${capexContext.programmes.slice(0, 2).join(", ")} (${capexContext.sector}). ${capexContext.rationale.slice(0, 100)}`
+    : "";
+
+  const prompt = `Du bist ein erfahrener Aktienanalyst. Schreibe 2-3 präzise deutsche Sätze als Investment-These für ${companyName} (${ticker}).
+
+Fakten:
+- Sektor: ${sector} / ${industry}
+- Revenue-Wachstum: ${revenueGrowth.toFixed(1)}%
+- FCF-Marge: ${fcfMargin.toFixed(1)}%
+- Geschäftsmodell: ${descCore}
+- Wesentliche Katalysatoren:
+${catLines}
+${capexLine ? `- ${capexLine}` : ""}
+
+Regeln:
+- Nenne ${companyName} oder ${ticker} beim Namen in Satz 1
+- Erwähne das spezifische Geschäftsmodell (was genau das Unternehmen tut)
+- Nenne mindestens einen konkreten Katalysator beim Namen
+- Falls Fiskalprogramme vorhanden: 1 Satz dazu am Ende
+- KEIN generisches "strategische Initiativen" oder "operative Effizienz"
+- Maximal 3 Sätze, klar und direkt
+
+Antworte NUR mit JSON: {"thesis": "..."}`;
+
+  try {
+    const result = await callLLMJson({ prompt, maxTokens: 180, temperature: 0.3 });
+    const thesis = result?.data?.thesis;
+    if (typeof thesis === "string" && thesis.trim().length > 20) {
+      return thesis.trim();
+    }
+  } catch (e: any) {
+    console.warn(`[GROWTH-THESIS] LLM call failed for ${ticker}: ${e?.message}`);
+  }
+  return null;
+}
+

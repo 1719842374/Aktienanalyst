@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
-import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext } from "./llm-openrouter";
+import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext, generateGrowthThesis } from "./llm-openrouter";
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
@@ -4611,35 +4611,42 @@ export async function registerRoutes(server: Server, app: Express) {
         console.warn(`[ANALYZE] capex lookup error for ${ticker}: ${capexLookupErr?.message}`);
       }
 
-      // === growthThesis — company-specific, never generic ===
-      // Sentence 1: Revenue trajectory + company name
+      // === growthThesis — LLM-generated, company-specific ===
+      // Try LLM first (cheap: ~120 tokens Haiku), fall back to template if unavailable
+      const realCats = catalysts.filter(c => !c.tags?.includes("capex-tailwind"));
+      const capexCtxForThesis = analyzeCapexContext ? {
+        sector: analyzeCapexContext.sector,
+        programmes: analyzeCapexContext.programmes,
+        rationale: analyzeCapexContext.beneficiaryEntry.rationale,
+      } : null;
+
       let growthThesis = "";
       const coName = companyName || ticker;
-      if (revenueGrowth > 20) growthThesis = `${coName} wächst mit ${revenueGrowth.toFixed(1)}% Revenue-Wachstum überdurchschnittlich stark — säkulare Nachfrage und Marktanteilsgewinne treiben den Umsatz.`;
-      else if (revenueGrowth > 10) growthThesis = `${coName} zeigt solides Revenue-Wachstum von ${revenueGrowth.toFixed(1)}% mit Spielraum für Operating Leverage — FCF-Marge von ${fcfMargin.toFixed(1)}% stützt die Bewertung.`;
-      else if (revenueGrowth > 0) growthThesis = `${coName} wächst moderat mit ${revenueGrowth.toFixed(1)}% Umsatzwachstum — die Investmentthese hängt von Margenexpansion und Kapitalallokation ab (FCF-Marge: ${fcfMargin.toFixed(1)}%).`;
-      else growthThesis = `${coName} kämpft mit ${revenueGrowth.toFixed(1)}% Umsatzrückgang — Turnaround oder neuer Wachstumsvektor entscheidend für Rerating.`;
+
+      // LLM thesis (runs async, but we await it here — max 180 tokens ≈ $0.00004)
+      const llmThesis = await generateGrowthThesis({
+        ticker,
+        companyName: coName,
+        description: description || "",
+        sector,
+        industry,
+        revenueGrowth,
+        fcfMargin,
+        topCatalysts: realCats.slice(0, 2).map(c => ({ name: c.name, context: c.context || "" })),
+        capexContext: capexCtxForThesis,
+      }).catch(() => null);
+
+      if (llmThesis) {
+        growthThesis = llmThesis;
+      } else {
+        // Fallback: template-based (wenn LLM nicht verfügbar)
+        if (revenueGrowth > 20) growthThesis = `${coName} wächst mit ${revenueGrowth.toFixed(1)}% überdurchschnittlich stark.`;
+        else if (revenueGrowth > 10) growthThesis = `${coName} zeigt solides Wachstum von ${revenueGrowth.toFixed(1)}% (FCF-Marge: ${fcfMargin.toFixed(1)}%).`;
+        else if (revenueGrowth > 0) growthThesis = `${coName} wächst moderat mit ${revenueGrowth.toFixed(1)}% — Margenexpansion entscheidend (FCF: ${fcfMargin.toFixed(1)}%).`;
+        else growthThesis = `${coName} kämpft mit ${revenueGrowth.toFixed(1)}% Umsatzrückgang — Turnaround oder neuer Wachstumsvektor nötig.`;
+        if (realCats.length > 0) growthThesis += ` Kurstreiber: ${realCats.slice(0, 2).map(c => c.name).join(", ")}.`;
+      }
       if (hybridPrefix) growthThesis = hybridPrefix + growthThesis;
-
-      // Sentence 2: Top catalysts — always use real catalyst names, never generic text
-      const realCats = catalysts.filter(c => !c.tags?.includes("capex-tailwind"));
-      if (realCats.length > 0) {
-        const catNames = realCats.slice(0, 2).map(c => c.name).join(' sowie ');
-        // Pull first meaningful sentence from the top catalyst's context
-        const topCtx = realCats[0]?.context || '';
-        const ctxSentences = topCtx.match(/[^.!?]+[.!?]+/g) || [];
-        // Use first sentence if it has ≥20 chars and contains company-specific detail
-        const ctxSentence = ctxSentences.find(s => s.trim().length >= 20) || '';
-        growthThesis += ` Wesentliche Kurstreiber: ${catNames}.`;
-        if (ctxSentence) growthThesis += ` ${ctxSentence.trim()}`;
-      }
-
-      // Sentence 3: Business model note from description (first meaningful sentence)
-      if (description && description.trim().length > 40) {
-        const descSentences = description.match(/[^.!?]+[.!?]+/g) || [];
-        const firstDesc = descSentences.find(s => s.trim().length >= 30 && !s.includes("founded") && !s.includes("gegründet"));
-        if (firstDesc) growthThesis += ` Geschäftsmodell: ${firstDesc.trim()}`;
-      }
 
 
       // === Capex Tailwind — inject catalyst + enrich growthThesis ===
