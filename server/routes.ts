@@ -6467,6 +6467,19 @@ export async function registerRoutes(server: Server, app: Express) {
     { ticker: "QSR",   name: "Restaurant Brands",     investors: ["Pershing Square"] },
   ];
 
+
+  // DEBUG: test FMP from server
+  app.get('/api/debug-fmp', async (_req, res) => {
+    const FMP_KEY = process.env.FMP_API_KEY || 'lHc3gAE8V0YuUn48HEnXIHJazR7nI7Cx';
+    try {
+      const resp = await fetch(`https://financialmodelingprep.com/stable/quote?symbol=MSFT&apikey=${FMP_KEY}`);
+      const text = await resp.text();
+      res.json({ status: resp.status, ok: resp.ok, bodyLength: text.length, preview: text.substring(0, 300) });
+    } catch (e: any) {
+      res.json({ error: e.message });
+    }
+  });
+
   app.get('/api/screener', async (_req, res) => {
     try {
       if (screenerCache && (Date.now() - screenerCache.timestamp < SCREENER_CACHE_TTL)) {
