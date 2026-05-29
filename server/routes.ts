@@ -6492,36 +6492,69 @@ export async function registerRoutes(server: Server, app: Express) {
         .sort((a, b) => b.investorCount - a.investorCount || b.totalValue - a.totalValue)
         .slice(0, 30); // Top 30
 
-      // For each stock, run a quick valuation using the finance API
-      // Batch tickers for efficiency (finance tools accept multiple tickers)
-      console.log(`[SCREENER] Running quick valuation on ${results.length} stocks...`);
+      // For each stock, run a quick valuation using FMP directly (no Finance-API quota)
+      console.log(`[SCREENER] Running quick valuation on ${results.length} stocks via FMP...`);
       const allTickers = results.map(r => r.ticker);
+      const FMP_KEY = process.env.FMP_API_KEY || 'lHc3gAE8V0YuUn48HEnXIHJazR7nI7Cx';
       let quotesMap: Record<string, any> = {};
       let statsMap: Record<string, any> = {};
+
       try {
-        // Fetch quotes with all key fields for all tickers at once
-        const qRes = callFinanceTool('finance_quotes', {
-          ticker_symbols: allTickers,
-          fields: ['price', 'marketCap', 'pe', 'eps', 'yearLow', 'yearHigh', 'previousClose', 'change', 'changesPercentage', 'volume'],
-        });
-        if (qRes?.content) {
-          const rows = parseMarkdownTable(qRes.content);
-          for (const row of rows) {
-            const t = row.ticker || row.symbol || '';
-            if (t) quotesMap[t] = row;
+        // FMP batch quote — up to 50 tickers per call
+        const CHUNK = 30;
+        for (let i = 0; i < allTickers.length; i += CHUNK) {
+          const chunk = allTickers.slice(i, i + CHUNK);
+          const qUrl = `https://financialmodelingprep.com/stable/quote?symbol=${chunk.join(',')}&apikey=${FMP_KEY}`;
+          const qResp = await fetch(qUrl);
+          if (qResp.ok) {
+            const qData = await qResp.json() as any[];
+            for (const q of (Array.isArray(qData) ? qData : [])) {
+              const sym = q.symbol || q.ticker || '';
+              if (sym) quotesMap[sym] = q;
+            }
           }
+          await new Promise(r => setTimeout(r, 150)); // FMP rate limit
         }
-        // Fetch company profiles for sector, beta, target price, forwardPE
-        const pRes = callFinanceTool('finance_company_profile', { ticker_symbols: allTickers });
-        if (pRes?.content) {
-          const rows = parseMarkdownTable(pRes.content);
-          for (const row of rows) {
-            const t = row.ticker || row.symbol || '';
-            if (t) statsMap[t] = row;
+        console.log(`[SCREENER] FMP quotes fetched for ${Object.keys(quotesMap).length} tickers`);
+
+        // FMP profile for sector, beta, analyst target — batch by 20
+        for (let i = 0; i < allTickers.length; i += 20) {
+          const chunk = allTickers.slice(i, i + 20);
+          const pUrl = `https://financialmodelingprep.com/stable/profile?symbol=${chunk.join(',')}&apikey=${FMP_KEY}`;
+          const pResp = await fetch(pUrl);
+          if (pResp.ok) {
+            const pData = await pResp.json() as any[];
+            for (const p of (Array.isArray(pData) ? pData : [])) {
+              const sym = p.symbol || p.ticker || '';
+              if (sym) statsMap[sym] = p;
+            }
           }
+          await new Promise(r => setTimeout(r, 150));
         }
+        console.log(`[SCREENER] FMP profiles fetched for ${Object.keys(statsMap).length} tickers`);
+
+        // FMP price target consensus — batch by 10
+        const ptMap: Record<string, any> = {};
+        for (let i = 0; i < allTickers.length; i += 10) {
+          const chunk = allTickers.slice(i, i + 10);
+          for (const sym of chunk) {
+            const ptUrl = `https://financialmodelingprep.com/stable/price-target-consensus?symbol=${sym}&apikey=${FMP_KEY}`;
+            const ptResp = await fetch(ptUrl).catch(() => null);
+            if (ptResp?.ok) {
+              const ptData = await ptResp.json().catch(() => null);
+              if (ptData) ptMap[sym] = Array.isArray(ptData) ? ptData[0] : ptData;
+            }
+          }
+          await new Promise(r => setTimeout(r, 200));
+        }
+        // Merge PT into statsMap
+        for (const [sym, pt] of Object.entries(ptMap)) {
+          if (statsMap[sym]) statsMap[sym] = { ...statsMap[sym], ...pt };
+          else statsMap[sym] = pt;
+        }
+        console.log(`[SCREENER] FMP price targets fetched for ${Object.keys(ptMap).length} tickers`);
       } catch (batchErr: any) {
-        console.error('[SCREENER] Batch fetch error:', batchErr?.message?.substring(0, 100));
+        console.error('[SCREENER] FMP batch fetch error:', batchErr?.message?.substring(0, 100));
       }
 
       const screenedStocks = [];
@@ -6530,17 +6563,22 @@ export async function registerRoutes(server: Server, app: Express) {
           const quote = quotesMap[stock.ticker] || {};
           const profile = statsMap[stock.ticker] || {};
 
-          // Quotes give us price, PE, MCap, yearHigh/Low
+          // FMP quote field names: price, marketCap, change, pe, eps, yearHigh, yearLow
           const price = parseNumber(quote.price || quote.previousClose) || 0;
-          const pe = parseNumber(quote.pe || profile.pe || profile.trailingPE) || 0;
-          const fwdPE = parseNumber(profile.forwardPE || profile.fwdPE) || 0;
+          const pe = parseNumber(quote.pe || quote.priceEarningsRatio || profile.priceEarningsRatio) || 0;
+          const fwdPE = parseNumber(profile.dcf || 0) && 0 || parseNumber(profile.priceEarningsRatioTTM) || 0;
           const marketCap = parseNumber(quote.marketCap || profile.marketCap || profile.mktCap) || 0;
-          const beta = parseNumber(profile.beta || profile.beta5Y) || 1.2;
-          const yearHigh = parseNumber(quote.yearHigh || profile.range?.split('-')?.[1]) || price * 1.3;
-          const yearLow = parseNumber(quote.yearLow || profile.range?.split('-')?.[0]) || price * 0.7;
-          const targetPrice = parseNumber(profile.targetMeanPrice || profile.analystTargetPrice || profile.dcfDiff) || 0;
-          const fcfMargin = parseNumber(profile.freeCashFlowMargin) || 0;
-          const sector = profile.sector || profile.industry || 'Unknown';
+          const beta = parseNumber(profile.beta) || 1.2;
+          const yearHigh = parseNumber(quote.yearHigh) || price * 1.3;
+          const yearLow = parseNumber(quote.yearLow) || price * 0.7;
+          // Price target from /price-target-consensus
+          const targetPrice = parseNumber(
+            (statsMap[stock.ticker] as any)?.targetConsensus ||
+            (statsMap[stock.ticker] as any)?.targetMedian ||
+            profile.dcf
+          ) || 0;
+          const fcfMargin = 0;
+          const sector = profile.sector || profile.industry || quote.exchange || 'Unknown';
 
           // Quick CRV calculation
           // Upside from analyst target, or if unavailable, distance to 52W high as proxy
