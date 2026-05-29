@@ -5350,6 +5350,40 @@ export async function registerRoutes(server: Server, app: Express) {
         });
       }
 
+      // Re-inject Capex Tailwind catalyst after LLM (LLM replaces all catalysts, losing the capex tag)
+      // Look up capex cache again and prepend if not already present
+      if (!enrichedCatalysts.some((c: any) => c.tags?.includes("capex-tailwind"))) {
+        try {
+          const CAPEX_REGIONS = ["US", "EU", "ASIA"];
+          outerCapexEnrich: for (const region of CAPEX_REGIONS) {
+            const capexData = diskResearcherGet(`capex__${region}`);
+            if (!capexData?.sectorExposure) continue;
+            for (const sectorEntry of (capexData.sectorExposure as any[])) {
+              const match = (sectorEntry.listedBeneficiaries || []).find(
+                (b: any) => String(b.ticker || "").toUpperCase() === String(ticker).toUpperCase()
+              );
+              if (match) {
+                const progNames = (Array.isArray(sectorEntry.programmes) ? sectorEntry.programmes : []).slice(0, 2).join(" & ") || sectorEntry.sector;
+                const capexPos = sectorEntry.impact === "positiv" ? 68 : sectorEntry.impact === "neutral" ? 50 : 35;
+                const capexCat = {
+                  name: `Capex Tailwind: ${sectorEntry.sector || ""}`,
+                  timeline: sectorEntry.timeline || "12-24M",
+                  pos: capexPos,
+                  bruttoUpside: sectorEntry.impact === "positiv" ? 18 : 8,
+                  einpreisungsgrad: sectorEntry.impact === "positiv" ? 45 : 55,
+                  nettoUpside: 0, gb: 0,
+                  context: `${match.rationale || match.name || ""} Programme: ${progNames} (${sectorEntry.timeline || "12-24M"}, Impact: ${sectorEntry.impact || "positiv"}). ${(sectorEntry.reasoning || "").slice(0, 180)}`,
+                  tags: ["gov-spending", "capex-tailwind"],
+                };
+                enrichedCatalysts = [capexCat, ...enrichedCatalysts];
+                console.log(`[CATALYST-ENRICH] Re-injected Capex Tailwind for ${ticker}: ${sectorEntry.sector}`);
+                break outerCapexEnrich;
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
       try {
         const updated = { ...cached, catalysts: enrichedCatalysts };
         delete updated._cached;
