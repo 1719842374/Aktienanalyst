@@ -762,3 +762,99 @@ Antworte NUR mit JSON: {"thesis": "..."}`;
   return null;
 }
 
+export async function generateCompanySpecificRisks(input: {
+  ticker: string;
+  companyName: string;
+  description: string;
+  sector: string;
+  industry: string;
+  revenue: number;
+  revenueGrowth: number;
+  fcfMargin: number;
+  grossMargin: number;
+  forwardPE: number;
+  beta: number;
+  governmentExposure: number;
+  topCatalysts: Array<{ name: string; context: string }>;
+  capexContext?: { sector: string; programmes: string[]; rationale: string } | null;
+  recentNewsHeadlines?: string[];
+}): Promise<Array<{ name: string; category: string; ew: number; impact: number }> | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  const {
+    ticker, companyName, description, sector, industry, revenue, revenueGrowth,
+    fcfMargin, grossMargin, forwardPE, beta, governmentExposure,
+    topCatalysts, capexContext, recentNewsHeadlines = [],
+  } = input;
+
+  // First 3 sentences of description for product/segment context
+  const descSentences = (description || "").match(/[^.!?]+[.!?]+/g) || [];
+  const descCore = descSentences.slice(0, 3).join(" ").trim().slice(0, 400);
+
+  const catContext = topCatalysts.slice(0, 2).map(c => `- ${c.name}: ${c.context.slice(0,100)}`).join("\n");
+  const newsCtx = recentNewsHeadlines.slice(0, 4).map((h,i) => `N${i+1}: ${h}`).join("\n");
+  const capexCtx = capexContext
+    ? `Das Unternehmen profitiert von ${capexContext.programmes.slice(0,2).join(" & ")} — dies schafft auch Abhängigkeitsrisiko bei Programmkürzungen.`
+    : "";
+
+  const metrics = [
+    revenue > 0 ? `Umsatz $${(revenue/1e9).toFixed(1)}B` : null,
+    revenueGrowth !== 0 ? `RevWachstum ${revenueGrowth.toFixed(1)}%` : null,
+    fcfMargin !== 0 ? `FCF-Marge ${fcfMargin.toFixed(1)}%` : null,
+    grossMargin > 0 ? `Bruttomarge ${grossMargin.toFixed(1)}%` : null,
+    forwardPE > 0 ? `Fwd-KGV ${forwardPE.toFixed(1)}x` : null,
+    `Beta ${beta.toFixed(2)}`,
+    governmentExposure > 0.1 ? `Gov-Exposure ${(governmentExposure*100).toFixed(0)}%` : null,
+  ].filter(Boolean).join(" | ");
+
+  const prompt = `Du bist ein kritischer Sell-Side-Analyst. Generiere GENAU 5 unternehmensspezifische Inversionsrisiken für ${companyName} (${ticker}).
+
+GESCHÄFTSMODELL:
+${descCore}
+
+KENNZAHLEN: ${metrics}
+
+UPSIDE-KATALYSATOREN (als Inversionskontext — was wenn diese nicht eintreten?):
+${catContext}
+
+${newsCtx ? `AKTUELLE NEWS:\n${newsCtx}\n` : ""}${capexCtx ? `FISKAL-ABHÄNGIGKEIT: ${capexCtx}\n` : ""}
+
+REGELN:
+1. Jedes Risiko MUSS den Firmennamen "${companyName}" oder "${ticker}" oder ein konkretes Produkt/Segment nennen
+2. Kein generisches "Macro Recession" oder "Multiple Compression" — das ist zu wenig spezifisch
+3. EW% (Eintrittswahrscheinlichkeit 12-24M): 10-45%
+4. Impact% (Kursrückgang bei Eintreten): 10-45%
+5. Category: "Binary" (abruptes Event) | "Gradual" (schleichend) | "Correlated" (Makro)
+6. Risikoname: max 6 Wörter, konkret (z.B. "F-35 Exportstop Nahost-Embargo" nicht "Geopolitical Risk")
+7. Pflicht: mind. 1 Risiko das die Inversion des wichtigsten Katalysators darstellt
+8. Pflicht wenn Capex-Kontext: 1 Risiko zu Programmkürzung/Budget-Freeze
+
+Antworte NUR mit JSON:
+{
+  "risks": [
+    { "name": "Konkreter Risikoname (max 6 Wörter)", "category": "Binary|Gradual|Correlated", "ew": 25, "impact": 20 },
+    { "name": "...", "category": "...", "ew": 20, "impact": 30 },
+    { "name": "...", "category": "...", "ew": 15, "impact": 25 },
+    { "name": "...", "category": "...", "ew": 30, "impact": 15 },
+    { "name": "...", "category": "...", "ew": 20, "impact": 20 }
+  ]
+}`;
+
+  try {
+    const result = await callLLMJson({ prompt, maxTokens: 350, temperature: 0.3 });
+    const risks = result?.data?.risks;
+    if (!Array.isArray(risks) || risks.length < 3) return null;
+    // Validate and sanitize
+    return risks.slice(0, 5).map((r: any) => ({
+      name: String(r.name || "Unbekanntes Risiko").slice(0, 80),
+      category: ["Binary", "Gradual", "Correlated"].includes(r.category) ? r.category : "Gradual",
+      ew: Math.min(Math.max(Number(r.ew) || 20, 5), 50),
+      impact: Math.min(Math.max(Number(r.impact) || 15, 5), 50),
+    }));
+  } catch (e: any) {
+    console.warn(`[RISK-SPECIFIC] Failed for ${ticker}: ${e?.message}`);
+    return null;
+  }
+}
+

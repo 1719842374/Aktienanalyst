@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
-import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext, generateGrowthThesis, growthThesisFingerprint } from "./llm-openrouter";
+import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext, generateGrowthThesis, growthThesisFingerprint, generateCompanySpecificRisks } from "./llm-openrouter";
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
@@ -4520,8 +4520,44 @@ export async function registerRoutes(server: Server, app: Express) {
         }
       }
 
+      // === Company-specific Risks (LLM) — with template fallback ===
+      // Run in parallel with downstream computation; await before response build
+      const specificRisksPromise = generateCompanySpecificRisks({
+        ticker,
+        companyName: coName,
+        description: description || "",
+        sector,
+        industry,
+        revenue,
+        revenueGrowth,
+        fcfMargin,
+        grossMargin: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
+        forwardPE: Number(forwardPE) || 0,
+        beta: beta5Y,
+        governmentExposure: govExp.exposure,
+        topCatalysts: (catalysts || []).filter((c: any) => !c.tags?.includes("capex-tailwind")).slice(0, 2).map((c: any) => ({ name: c.name, context: c.context || "" })),
+        capexContext: capexCtxForThesis,
+        recentNewsHeadlines: (newsItems || []).slice(0, 4).map((n: any) => n.title || ""),
+      }).catch(() => null);
+
+      // Template risks as fallback (instant)
       let risks = generateRisks(sector, beta5Y, govExp.exposure);
       // tamAnalysis is computed after revenueSegments are parsed (below)
+
+      // === Await company-specific risks (LLM) — replace template risks if successful ===
+      // specificRisksPromise was started earlier in parallel with catalyst generation
+      const specificRisksResult = await specificRisksPromise;
+      if (specificRisksResult && specificRisksResult.length >= 3) {
+        // Replace template risks with LLM-generated company-specific risks
+        // expectedDamage is computed later — set to 0 for now
+        risks = specificRisksResult.map(r => ({
+          ...r,
+          expectedDamage: 0,
+        }));
+        console.log(`[ANALYZE] Company-specific risks applied for ${ticker}: ${risks.map(r => r.name).join(" | ")}`);
+      } else {
+        console.log(`[ANALYZE] Using template risks for ${ticker} (LLM risk generation unavailable)`);
+      }
 
       // === Risk Explanations (LLM Deep-Dive, same as catalyst reasoning) ===
       if (useLLM) {
