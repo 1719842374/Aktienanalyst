@@ -842,18 +842,28 @@ Antworte NUR mit JSON:
 }`;
 
   try {
+    console.log(`[RISK-SPECIFIC] Calling LLM for ${ticker} (desc=${description.length}chars, cats=${topCatalysts.length})`);
     const result = await callLLMJson({ prompt, maxTokens: 350, temperature: 0.3 });
+    if (!result) {
+      console.warn(`[RISK-SPECIFIC] callLLMJson returned null for ${ticker}`);
+      return null;
+    }
     const risks = result?.data?.risks;
-    if (!Array.isArray(risks) || risks.length < 3) return null;
-    // Validate and sanitize
-    return risks.slice(0, 5).map((r: any) => ({
+    console.log(`[RISK-SPECIFIC] LLM returned risks: ${JSON.stringify(risks)?.substring(0, 200)}`);
+    if (!Array.isArray(risks) || risks.length < 3) {
+      console.warn(`[RISK-SPECIFIC] Invalid risks array for ${ticker}: ${JSON.stringify(risks)?.substring(0, 100)}`);
+      return null;
+    }
+    const validated = risks.slice(0, 5).map((r: any) => ({
       name: String(r.name || "Unbekanntes Risiko").slice(0, 80),
       category: ["Binary", "Gradual", "Correlated"].includes(r.category) ? r.category : "Gradual",
       ew: Math.min(Math.max(Number(r.ew) || 20, 5), 50),
       impact: Math.min(Math.max(Number(r.impact) || 15, 5), 50),
     }));
+    console.log(`[RISK-SPECIFIC] Success for ${ticker}: ${validated.map(r => r.name).join(" | ")}`);
+    return validated;
   } catch (e: any) {
-    console.warn(`[RISK-SPECIFIC] Failed for ${ticker}: ${e?.message}`);
+    console.error(`[RISK-SPECIFIC] Exception for ${ticker}: ${e?.message} status=${e?.status}`);
     return null;
   }
 }
