@@ -410,6 +410,7 @@ export interface StockAnalysis {
   // For investment thesis
   moatRating: string;
   governmentExposure: number;
+  beta?: number; // 5Y beta estimate
   growthThesis: string;
   growthThesisFingerprint?: string; // fingerprint of inputs used — used for stale-thesis detection
   structuralTrends: string[];

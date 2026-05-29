@@ -18,15 +18,66 @@ interface Props {
 }
 
 export function Section8({ data, useLLM = false }: Props) {
+  const GENERIC_RISK_NAMES = new Set([
+    "Macro Recession / Demand Shock", "Earnings Miss / Guidance Cut",
+    "Multiple Compression (Rising Rates)", "Regulatory / Antitrust Action",
+    "Tech Disruption / Competitive Shift", "Government Contract / Policy Dependency",
+    "Competitive Pressure / Margin Erosion", "Drug Pricing Reform / Patent Cliff",
+    "Credit Quality Deterioration", "Commodity Price Collapse",
+    "Consumer Spending Slowdown / China Weakness", "Brand Dilution / Competitive Shift",
+  ]);
+
   const [risks, setRisks] = useState<Risk[]>(data.risks);
   const [expandedRisk, setExpandedRisk] = useState<number | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmError, setLlmError] = useState<string | null>(null);
   const [hasKIAnalysis, setHasKIAnalysis] = useState(data.risks.some(r => r.explanation));
+  const [refreshingRisks, setRefreshingRisks] = useState(false);
 
   const prevTickerRef = useRef(data.ticker);
   const prevLLMRef = useRef(useLLM);
   const autoTriggeredRef = useRef(false);
+  const riskRefreshTriggeredRef = useRef<string | null>(null);
+
+  // Auto-refresh generic template risks with company-specific LLM risks
+  useEffect(() => {
+    const allGeneric = data.risks.length > 0 && data.risks.every(r => GENERIC_RISK_NAMES.has(r.name));
+    const alreadyTriggered = riskRefreshTriggeredRef.current === data.ticker;
+    if (!allGeneric || alreadyTriggered || refreshingRisks) return;
+    if (!data.description || !data.catalysts?.length) return;
+
+    riskRefreshTriggeredRef.current = data.ticker;
+    setRefreshingRisks(true);
+
+    fetch("/api/refresh-risks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ticker: data.ticker,
+        companyName: data.companyName,
+        description: data.description,
+        sector: data.sectorProfile?.sector || "",
+        industry: data.industry || "",
+        revenue: data.revenue || 0,
+        revenueGrowth: data.revenueGrowth || 0,
+        fcfMargin: data.fcfMargin || 0,
+        forwardPE: data.forwardPE || 0,
+        beta: data.beta || 1.1,
+        governmentExposure: data.governmentExposure || 0,
+        catalysts: (data.catalysts || []).filter(c => !c.tags?.includes("capex-tailwind")),
+        newsItems: (data.newsItems || []).slice(0, 4),
+      }),
+    })
+      .then(r => r.json())
+      .then(json => {
+        if (json.risks && Array.isArray(json.risks) && json.risks.length >= 3) {
+          setRisks(json.risks);
+          console.log(`[Section8] Refreshed risks for ${data.ticker}:`, json.risks.map((r: Risk) => r.name));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setRefreshingRisks(false));
+  }, [data.ticker]);
 
   // Wenn KI beim ersten Mount aktiv ist und noch keine Erklärungen vorhanden
   useEffect(() => {

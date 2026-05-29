@@ -5385,6 +5385,46 @@ export async function registerRoutes(server: Server, app: Express) {
   // Analog zu den Katalysatoren: ein einzelner Grok-Aufruf generiert
   // strukturierte, unternehmensspezifische Erklaerungen fuer jedes Risiko.
   // Kein separates Search-Feature — nur Grok mit Unternehmenskontext.
+  // /api/refresh-risks — generate company-specific risks without Finance API
+  app.post("/api/refresh-risks", async (req, res) => {
+    const { ticker, companyName, description, sector, industry, revenue,
+      revenueGrowth, fcfMargin, forwardPE, beta, governmentExposure,
+      catalysts, newsItems } = req.body || {};
+    if (!ticker || !description || !(catalysts?.length > 0))
+      return res.json({ risks: null, reason: "insufficient_data" });
+    try {
+      const refreshCats = (catalysts || [])
+        .filter((c: any) => !c.tags?.includes("capex-tailwind")).slice(0, 2);
+      const newRisks = await generateCompanySpecificRisks({
+        ticker: String(ticker),
+        companyName: String(companyName || ticker),
+        description: String(description || ""),
+        sector: String(sector || "Technology"),
+        industry: String(industry || ""),
+        revenue: Number(revenue) || 0,
+        revenueGrowth: Number(revenueGrowth) || 0,
+        fcfMargin: Number(fcfMargin) || 0,
+        grossMargin: 0,
+        forwardPE: Number(forwardPE) || 0,
+        beta: Number(beta) || 1.1,
+        governmentExposure: Number(governmentExposure) || 0,
+        topCatalysts: refreshCats.map((c: any) => ({ name: c.name, context: c.context || "" })),
+        capexContext: null,
+        recentNewsHeadlines: (newsItems || []).slice(0, 4).map((n: any) => n.title || ""),
+      });
+      if (!newRisks || newRisks.length < 3)
+        return res.json({ risks: null, reason: "llm_unavailable" });
+      const freshRisks = newRisks.map(r => ({ ...r, expectedDamage: 0 }));
+      // Persist to cache
+      const existing = diskCacheGet ? diskCacheGet(String(ticker).toUpperCase()) : null;
+      if (existing && diskCacheSet) diskCacheSet(String(ticker).toUpperCase(), { ...existing, risks: freshRisks });
+      console.log(`[REFRESH-RISKS] ${ticker}: ${freshRisks.map(r => r.name).join(" | ")}`);
+      return res.json({ risks: freshRisks, ticker });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
   app.post("/api/risk-explanations", async (req, res) => {
     try {
       const { ticker, companyName, sector, industry, description,
