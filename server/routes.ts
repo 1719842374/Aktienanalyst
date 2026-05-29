@@ -3848,6 +3848,48 @@ export async function registerRoutes(server: Server, app: Express) {
           // If FMP also failed, try disk cache
           const diskFallback = diskCacheGet ? diskCacheGet(String(ticker).toUpperCase()) : null;
           if (diskFallback) {
+            // Check if risks are still generic templates — if so, refresh them async
+            const GENERIC_RISK_NAMES = new Set([
+              "Macro Recession / Demand Shock", "Earnings Miss / Guidance Cut",
+              "Multiple Compression (Rising Rates)", "Regulatory / Antitrust Action",
+              "Tech Disruption / Competitive Shift", "Government Contract / Policy Dependency",
+              "Competitive Pressure / Margin Erosion", "Drug Pricing Reform / Patent Cliff",
+              "Credit Quality Deterioration", "Commodity Price Collapse",
+              "Consumer Spending Slowdown / China Weakness", "Brand Dilution / Competitive Shift",
+            ]);
+            const cachedRisks: any[] = diskFallback.risks || [];
+            const hasGenericRisks = cachedRisks.length > 0 &&
+              cachedRisks.every((r: any) => GENERIC_RISK_NAMES.has(r.name));
+
+            if (hasGenericRisks && diskFallback.description && diskFallback.catalysts?.length > 0) {
+              // Fire-and-forget: refresh risks in background, return cached for now
+              const refreshDesc = String(diskFallback.description || "");
+              const refreshCats = (diskFallback.catalysts || []).filter((c: any) => !c.tags?.includes("capex-tailwind")).slice(0, 2);
+              generateCompanySpecificRisks({
+                ticker: String(ticker),
+                companyName: String(diskFallback.companyName || ticker),
+                description: refreshDesc,
+                sector: String(diskFallback.sectorProfile?.sector || diskFallback.sector || "Technology"),
+                industry: String(diskFallback.industry || ""),
+                revenue: Number(diskFallback.revenue) || 0,
+                revenueGrowth: Number(diskFallback.revenueGrowth) || 0,
+                fcfMargin: Number(diskFallback.fcfMargin) || 0,
+                grossMargin: 0,
+                forwardPE: Number(diskFallback.forwardPE) || 0,
+                beta: Number(diskFallback.beta) || 1.1,
+                governmentExposure: Number(diskFallback.governmentExposure) || 0,
+                topCatalysts: refreshCats.map((c: any) => ({ name: c.name, context: c.context || "" })),
+                capexContext: null,
+                recentNewsHeadlines: [],
+              }).then(newRisks => {
+                if (newRisks && newRisks.length >= 3) {
+                  const updated = { ...diskFallback, risks: newRisks.map(r => ({ ...r, expectedDamage: 0 })) };
+                  if (diskCacheSet) diskCacheSet(String(ticker).toUpperCase(), updated);
+                  console.log(`[ANALYZE] Background risk refresh for ${ticker}: ${newRisks.map(r => r.name).join(" | ")}`);
+                }
+              }).catch(() => {});
+            }
+
             return res.json({ ...diskFallback, _quoteStale: true });
           }
           return res.status(429).json({
