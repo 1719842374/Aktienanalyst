@@ -6485,7 +6485,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
       const fmpFetch = async (sym: string) => {
         try {
-          const [qResp, pResp, ptResp] = await Promise.all([
+          const [qResp, pResp, ptResp, rResp] = await Promise.all([
             fetch(`https://financialmodelingprep.com/stable/quote?symbol=${sym}&apikey=${FMP_KEY}`).catch(() => null),
             fetch(`https://financialmodelingprep.com/stable/profile?symbol=${sym}&apikey=${FMP_KEY}`).catch(() => null),
             fetch(`https://financialmodelingprep.com/stable/price-target-consensus?symbol=${sym}&apikey=${FMP_KEY}`).catch(() => null),
@@ -6494,12 +6494,13 @@ export async function registerRoutes(server: Server, app: Express) {
           const qData = qResp?.ok ? await qResp.json().catch(() => null) : null;
           const pData = pResp?.ok ? await pResp.json().catch(() => null) : null;
           const ptData = ptResp?.ok ? await ptResp.json().catch(() => null) : null;
+          const rData = rResp?.ok ? await rResp.json().catch(() => null) : null;
           const q = Array.isArray(qData) ? qData[0] : qData;
           const p = Array.isArray(pData) ? pData[0] : pData;
           const pt = Array.isArray(ptData) ? ptData[0] : ptData;
-        const r = Array.isArray(rData) ? rData[0] : rData;
+          const r = Array.isArray(rData) ? rData[0] : rData;
           if (q) quotesMap[sym] = q;
-        statsMap[sym] = { ...(p || {}), ...(pt || {}), ...(r || {}) };
+          statsMap[sym] = { ...(p || {}), ...(pt || {}), ...(r || {}) };
         } catch { /* ignore */ }
       };
 
