@@ -4611,35 +4611,34 @@ export async function registerRoutes(server: Server, app: Express) {
         console.warn(`[ANALYZE] capex lookup error for ${ticker}: ${capexLookupErr?.message}`);
       }
 
+      // === growthThesis — company-specific, never generic ===
+      // Sentence 1: Revenue trajectory + company name
       let growthThesis = "";
-      if (revenueGrowth > 20) growthThesis = `Starkes Revenue-Wachstum von ${revenueGrowth.toFixed(1)}% getrieben durch säkulare Nachfrage und Marktexpansion.`;
-      else if (revenueGrowth > 10) growthThesis = `Solides Revenue-Wachstum von ${revenueGrowth.toFixed(1)}% mit Spielraum für Operating Leverage und Margenexpansion.`;
-      else if (revenueGrowth > 0) growthThesis = `Moderates Revenue-Wachstum von ${revenueGrowth.toFixed(1)}% – Bewertung hängt von Margenverbesserung und Kapitalrückflüssen ab.`;
-      else growthThesis = `Revenue rückläufig bei ${revenueGrowth.toFixed(1)}% – benötigt Restrukturierung oder neuen Wachstumsvektor.`;
-      growthThesis = hybridPrefix + growthThesis;
+      const coName = companyName || ticker;
+      if (revenueGrowth > 20) growthThesis = `${coName} wächst mit ${revenueGrowth.toFixed(1)}% Revenue-Wachstum überdurchschnittlich stark — säkulare Nachfrage und Marktanteilsgewinne treiben den Umsatz.`;
+      else if (revenueGrowth > 10) growthThesis = `${coName} zeigt solides Revenue-Wachstum von ${revenueGrowth.toFixed(1)}% mit Spielraum für Operating Leverage — FCF-Marge von ${fcfMargin.toFixed(1)}% stützt die Bewertung.`;
+      else if (revenueGrowth > 0) growthThesis = `${coName} wächst moderat mit ${revenueGrowth.toFixed(1)}% Umsatzwachstum — die Investmentthese hängt von Margenexpansion und Kapitalallokation ab (FCF-Marge: ${fcfMargin.toFixed(1)}%).`;
+      else growthThesis = `${coName} kämpft mit ${revenueGrowth.toFixed(1)}% Umsatzrückgang — Turnaround oder neuer Wachstumsvektor entscheidend für Rerating.`;
+      if (hybridPrefix) growthThesis = hybridPrefix + growthThesis;
 
-      // Add catalyst reasoning to growth thesis
-      if (useLLM && catalysts.length > 0 && catalysts[0]?.context) {
-        const topCats = catalysts.slice(0, 3).map(c => c.name).join(', ');
-        // Extract first 1-2 complete sentences from context
-        const ctx = catalysts[0]?.context || '';
-        const sentences = ctx.match(/[^.!?]+[.!?]+/g) || [];
-        const firstCtx = sentences.length > 0 ? ' ' + sentences.slice(0, 2).join('').trim() : '';
-        growthThesis += ` Katalysator: ${topCats}.${firstCtx}`;
-      } else {
-        // Fallback: generic sector reasoning
-        const sLower = sector.toLowerCase();
-        if (sLower.includes("tech")) {
-          growthThesis += " Katalysator: KI-Integration, Cloud-Expansion und neue Verticals ermöglichen Cross-Selling und höhere Margen.";
-        } else if (sLower.includes("health")) {
-          growthThesis += " Katalysator: Pipeline-Fortschritte, Biologika-Expansion und demografischer Rückenwind bieten strukturelles Wachstum.";
-        } else if (sLower.includes("financ")) {
-          growthThesis += " Katalysator: Zinsnormalisierung und Digitalisierung verbessern Net Interest Income.";
-        } else if (sLower.includes("energy")) {
-          growthThesis += " Katalysator: Energy Security-Investments und Transition-Projekte diversifizieren Umsatz.";
-        } else {
-          growthThesis += " Katalysator: Strategische Initiativen und operative Effizienzsteigerungen können Margen verbessern.";
-        }
+      // Sentence 2: Top catalysts — always use real catalyst names, never generic text
+      const realCats = catalysts.filter(c => !c.tags?.includes("capex-tailwind"));
+      if (realCats.length > 0) {
+        const catNames = realCats.slice(0, 2).map(c => c.name).join(' sowie ');
+        // Pull first meaningful sentence from the top catalyst's context
+        const topCtx = realCats[0]?.context || '';
+        const ctxSentences = topCtx.match(/[^.!?]+[.!?]+/g) || [];
+        // Use first sentence if it has ≥20 chars and contains company-specific detail
+        const ctxSentence = ctxSentences.find(s => s.trim().length >= 20) || '';
+        growthThesis += ` Wesentliche Kurstreiber: ${catNames}.`;
+        if (ctxSentence) growthThesis += ` ${ctxSentence.trim()}`;
+      }
+
+      // Sentence 3: Business model note from description (first meaningful sentence)
+      if (description && description.trim().length > 40) {
+        const descSentences = description.match(/[^.!?]+[.!?]+/g) || [];
+        const firstDesc = descSentences.find(s => s.trim().length >= 30 && !s.includes("founded") && !s.includes("gegründet"));
+        if (firstDesc) growthThesis += ` Geschäftsmodell: ${firstDesc.trim()}`;
       }
 
 
