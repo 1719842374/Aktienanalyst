@@ -3862,32 +3862,36 @@ export async function registerRoutes(server: Server, app: Express) {
               cachedRisks.every((r: any) => GENERIC_RISK_NAMES.has(r.name));
 
             if (hasGenericRisks && diskFallback.description && diskFallback.catalysts?.length > 0) {
-              // Fire-and-forget: refresh risks in background, return cached for now
-              const refreshDesc = String(diskFallback.description || "");
-              const refreshCats = (diskFallback.catalysts || []).filter((c: any) => !c.tags?.includes("capex-tailwind")).slice(0, 2);
-              generateCompanySpecificRisks({
-                ticker: String(ticker),
-                companyName: String(diskFallback.companyName || ticker),
-                description: refreshDesc,
-                sector: String(diskFallback.sectorProfile?.sector || diskFallback.sector || "Technology"),
-                industry: String(diskFallback.industry || ""),
-                revenue: Number(diskFallback.revenue) || 0,
-                revenueGrowth: Number(diskFallback.revenueGrowth) || 0,
-                fcfMargin: Number(diskFallback.fcfMargin) || 0,
-                grossMargin: 0,
-                forwardPE: Number(diskFallback.forwardPE) || 0,
-                beta: Number(diskFallback.beta) || 1.1,
-                governmentExposure: Number(diskFallback.governmentExposure) || 0,
-                topCatalysts: refreshCats.map((c: any) => ({ name: c.name, context: c.context || "" })),
-                capexContext: null,
-                recentNewsHeadlines: [],
-              }).then(newRisks => {
+              // Synchronous refresh — await so the user gets specific risks on THIS call
+              try {
+                const refreshCats = (diskFallback.catalysts || []).filter((c: any) => !c.tags?.includes("capex-tailwind")).slice(0, 2);
+                const newRisks = await generateCompanySpecificRisks({
+                  ticker: String(ticker),
+                  companyName: String(diskFallback.companyName || ticker),
+                  description: String(diskFallback.description || ""),
+                  sector: String(diskFallback.sectorProfile?.sector || diskFallback.sector || "Technology"),
+                  industry: String(diskFallback.industry || ""),
+                  revenue: Number(diskFallback.revenue) || 0,
+                  revenueGrowth: Number(diskFallback.revenueGrowth) || 0,
+                  fcfMargin: Number(diskFallback.fcfMargin) || 0,
+                  grossMargin: 0,
+                  forwardPE: Number(diskFallback.forwardPE) || 0,
+                  beta: Number(diskFallback.beta) || 1.1,
+                  governmentExposure: Number(diskFallback.governmentExposure) || 0,
+                  topCatalysts: refreshCats.map((c: any) => ({ name: c.name, context: c.context || "" })),
+                  capexContext: null,
+                  recentNewsHeadlines: [],
+                });
                 if (newRisks && newRisks.length >= 3) {
-                  const updated = { ...diskFallback, risks: newRisks.map(r => ({ ...r, expectedDamage: 0 })) };
+                  const freshRisks = newRisks.map(r => ({ ...r, expectedDamage: 0 }));
+                  const updated = { ...diskFallback, risks: freshRisks };
                   if (diskCacheSet) diskCacheSet(String(ticker).toUpperCase(), updated);
-                  console.log(`[ANALYZE] Background risk refresh for ${ticker}: ${newRisks.map(r => r.name).join(" | ")}`);
+                  console.log(`[ANALYZE] Sync risk refresh for ${ticker}: ${freshRisks.map(r => r.name).join(" | ")}`);
+                  return res.json({ ...updated, _quoteStale: true });
                 }
-              }).catch(() => {});
+              } catch (riskRefreshErr: any) {
+                console.warn(`[ANALYZE] Risk refresh failed for ${ticker}: ${riskRefreshErr?.message}`);
+              }
             }
 
             return res.json({ ...diskFallback, _quoteStale: true });
