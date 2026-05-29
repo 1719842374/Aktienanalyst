@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
-import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext, generateGrowthThesis } from "./llm-openrouter";
+import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext, generateGrowthThesis, growthThesisFingerprint } from "./llm-openrouter";
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
@@ -4624,6 +4624,19 @@ export async function registerRoutes(server: Server, app: Express) {
       const coName = companyName || ticker;
 
       // LLM thesis (runs async, but we await it here — max 180 tokens ≈ $0.00004)
+      // Build fingerprint to detect stale cached thesis
+      const thesisFingerprint = growthThesisFingerprint({
+        revenueGrowth,
+        fcfMargin,
+        topCatalysts: realCats.slice(0, 2).map(c => ({ name: c.name, context: c.context || "" })),
+        capexContext: capexCtxForThesis,
+      });
+      const cachedFingerprint = cached?.growthThesisFingerprint as string | undefined;
+      const thesisIsStale = cachedFingerprint && cachedFingerprint !== thesisFingerprint;
+      if (thesisIsStale) {
+        console.log(`[GROWTH-THESIS] Stale thesis detected for ${ticker} — fingerprint changed (${cachedFingerprint} → ${thesisFingerprint})`);
+      }
+
       const llmThesis = await generateGrowthThesis({
         ticker,
         companyName: coName,
@@ -4632,6 +4645,13 @@ export async function registerRoutes(server: Server, app: Express) {
         industry,
         revenueGrowth,
         fcfMargin,
+        grossMargin: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
+        operatingMargin: revenue > 0 ? (operatingIncome / revenue) * 100 : 0,
+        forwardPE: Number(forwardPE) || 0,
+        evEbitda: Number(evEbitda) || 0,
+        analystPTMedian: Number(analystPTMedian) || 0,
+        currentPrice: Number(price) || 0,
+        returnOnEquity: totalEquity > 0 ? (netIncome / totalEquity) * 100 : 0,
         topCatalysts: realCats.slice(0, 2).map(c => ({ name: c.name, context: c.context || "" })),
         capexContext: capexCtxForThesis,
       }).catch(() => null);
@@ -5048,6 +5068,7 @@ export async function registerRoutes(server: Server, app: Express) {
         moatRating,
         governmentExposure: govExp.exposure,
         growthThesis,
+        growthThesisFingerprint: thesisFingerprint,
         structuralTrends,
         keyProjects: keyProjects.length > 0 ? keyProjects : undefined,
         secFilingExcerpts: secFilingExcerpts.length > 0 ? secFilingExcerpts : undefined,

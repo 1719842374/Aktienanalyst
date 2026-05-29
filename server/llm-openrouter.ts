@@ -665,7 +665,7 @@ export async function callLLMJson(opts: {
   }
 }
 
-export async function generateGrowthThesis(input: {
+export interface GrowthThesisInput {
   ticker: string;
   companyName: string;
   description: string;
@@ -673,50 +673,87 @@ export async function generateGrowthThesis(input: {
   industry: string;
   revenueGrowth: number;
   fcfMargin: number;
+  grossMargin?: number;
+  operatingMargin?: number;
+  forwardPE?: number;
+  evEbitda?: number;
+  analystPTMedian?: number;
+  currentPrice?: number;
+  returnOnEquity?: number;
   topCatalysts: Array<{ name: string; context: string }>;
   capexContext?: { sector: string; programmes: string[]; rationale: string } | null;
-}): Promise<string | null> {
-  const { ticker, companyName, description, sector, industry, revenueGrowth, fcfMargin, topCatalysts, capexContext } = input;
+}
 
-  // Extract first meaningful sentence from description
+/** Fingerprint for stale-thesis detection — hash of key inputs */
+export function growthThesisFingerprint(input: Pick<GrowthThesisInput,
+  "revenueGrowth" | "fcfMargin" | "topCatalysts" | "capexContext">): string {
+  const catKey = input.topCatalysts.slice(0, 2).map(c => c.name).join("|");
+  const capexKey = input.capexContext ? input.capexContext.programmes.slice(0,2).join("+") : "none";
+  // Round to 1dp so minor float drift doesn't invalidate
+  return `rv${input.revenueGrowth.toFixed(1)}_fcf${input.fcfMargin.toFixed(1)}_cats${catKey}_capex${capexKey}`;
+}
+
+export async function generateGrowthThesis(input: GrowthThesisInput): Promise<string | null> {
+  const { ticker, companyName, description, sector, industry,
+    revenueGrowth, fcfMargin, grossMargin, operatingMargin,
+    forwardPE, evEbitda, analystPTMedian, currentPrice, returnOnEquity,
+    topCatalysts, capexContext } = input;
+
+  // Extract first 3 sentences from FMP description (contains product-specific details)
   const descSentences = (description || "").match(/[^.!?]+[.!?]+/g) || [];
-  const descCore = descSentences.slice(0, 2).join(" ").trim().slice(0, 300);
+  const descCore = descSentences.slice(0, 3).join(" ").trim().slice(0, 400);
 
-  // Top 2 catalyst names + first context sentence
+  // Build hard metrics block — only include metrics that are non-zero/non-null
+  const metrics: string[] = [];
+  if (revenueGrowth !== 0) metrics.push(`Revenue-Wachstum: ${revenueGrowth.toFixed(1)}%`);
+  if (fcfMargin && fcfMargin !== 0) metrics.push(`FCF-Marge: ${fcfMargin.toFixed(1)}%`);
+  if (grossMargin && grossMargin > 0) metrics.push(`Bruttomarge: ${grossMargin.toFixed(1)}%`);
+  if (operatingMargin && operatingMargin !== 0) metrics.push(`Operating Margin: ${operatingMargin.toFixed(1)}%`);
+  if (forwardPE && forwardPE > 0) metrics.push(`Forward KGV: ${forwardPE.toFixed(1)}x`);
+  if (evEbitda && evEbitda > 0) metrics.push(`EV/EBITDA: ${evEbitda.toFixed(1)}x`);
+  if (returnOnEquity && returnOnEquity > 0) metrics.push(`ROE: ${(returnOnEquity * 100).toFixed(1)}%`);
+  if (analystPTMedian && analystPTMedian > 0 && currentPrice && currentPrice > 0) {
+    const upside = ((analystPTMedian - currentPrice) / currentPrice * 100).toFixed(0);
+    metrics.push(`Analyst-PT: $${analystPTMedian} (+${upside}% Upside)`);
+  }
+
+  // Top 2 catalyst names + first context sentence each
   const catLines = topCatalysts.slice(0, 2).map(c => {
     const ctxFirst = (c.context.match(/[^.!?]+[.!?]+/) || [""])[0].trim();
-    return `- ${c.name}: ${ctxFirst.slice(0, 120)}`;
+    return `- ${c.name}: ${ctxFirst.slice(0, 150)}`;
   }).join("\n");
 
   const capexLine = capexContext
-    ? `Staatliche Förderprogramme: ${capexContext.programmes.slice(0, 2).join(", ")} (${capexContext.sector}). ${capexContext.rationale.slice(0, 100)}`
+    ? `Staatliche Förderprogramme: ${capexContext.programmes.slice(0, 2).join(" & ")} (${capexContext.sector}). ${capexContext.rationale.slice(0, 120)}`
     : "";
 
   const prompt = `Du bist ein erfahrener Aktienanalyst. Schreibe 2-3 präzise deutsche Sätze als Investment-These für ${companyName} (${ticker}).
 
-Fakten:
-- Sektor: ${sector} / ${industry}
-- Revenue-Wachstum: ${revenueGrowth.toFixed(1)}%
-- FCF-Marge: ${fcfMargin.toFixed(1)}%
-- Geschäftsmodell: ${descCore}
-- Wesentliche Katalysatoren:
-${catLines}
-${capexLine ? `- ${capexLine}` : ""}
+GESCHÄFTSMODELL (FMP):
+${descCore}
 
-Regeln:
-- Nenne ${companyName} oder ${ticker} beim Namen in Satz 1
-- Erwähne das spezifische Geschäftsmodell (was genau das Unternehmen tut)
-- Nenne mindestens einen konkreten Katalysator beim Namen
-- Falls Fiskalprogramme vorhanden: 1 Satz dazu am Ende
-- KEIN generisches "strategische Initiativen" oder "operative Effizienz"
-- Maximal 3 Sätze, klar und direkt
+HARTE KENNZAHLEN:
+${metrics.length > 0 ? metrics.join(" | ") : "Keine aktuellen Daten verfügbar"}
+
+WESENTLICHE KATALYSATOREN:
+${catLines || "- Keine spezifischen Katalysatoren verfügbar"}
+${capexLine ? `
+FISKAL-RÜCKENWIND: ${capexLine}` : ""}
+
+REGELN (strikt einhalten):
+1. Nenne "${companyName}" in Satz 1 und erkläre KONKRET womit das Unternehmen Geld verdient (aus Geschäftsmodell)
+2. Erwähne mind. 1 harte Kennzahl (FCF-Marge, Forward KGV, Analystenziel etc.)
+3. Nenne mind. 1 konkreten Katalysator beim EXAKTEN Namen
+4. Falls Fiskal-Rückenwind: letzter Satz nennt das Programm
+5. VERBOTEN: "strategische Initiativen", "operative Effizienz", "Wachstumspotenzial" als leere Phrasen
+6. Maximal 3 Sätze, klar und direkt auf Deutsch
 
 Antworte NUR mit JSON: {"thesis": "..."}`;
 
   try {
-    const result = await callLLMJson({ prompt, maxTokens: 180, temperature: 0.3 });
+    const result = await callLLMJson({ prompt, maxTokens: 200, temperature: 0.25 });
     const thesis = result?.data?.thesis;
-    if (typeof thesis === "string" && thesis.trim().length > 20) {
+    if (typeof thesis === "string" && thesis.trim().length > 30) {
       return thesis.trim();
     }
   } catch (e: any) {

@@ -411,6 +411,7 @@ export interface StockAnalysis {
   moatRating: string;
   governmentExposure: number;
   growthThesis: string;
+  growthThesisFingerprint?: string; // fingerprint of inputs used — used for stale-thesis detection
   structuralTrends: string[];
 
   // Cycle info
