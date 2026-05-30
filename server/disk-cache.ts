@@ -36,6 +36,29 @@ function getDb(): Database.Database | null {
       );
     `);
     console.log(`[DiskCache] SQLite opened at ${DB_PATH}`);
+
+    // Load seed cache if DB is empty (first deploy of fresh sandbox)
+    const rowCount = db.prepare('SELECT COUNT(*) as n FROM analysis_cache').get() as { n: number };
+    if (rowCount.n === 0) {
+      try {
+        const seedPath = path.join(__dirname, 'cache-seed.json');
+        if (require('fs').existsSync(seedPath)) {
+          const seeds = JSON.parse(require('fs').readFileSync(seedPath, 'utf-8')) as Array<{ ticker: string; data: any }>;
+          const insert = db.prepare('INSERT OR IGNORE INTO analysis_cache (ticker, data, created_at, updated_at) VALUES (?, ?, ?, ?)');
+          const now = new Date().toISOString();
+          let loaded = 0;
+          for (const seed of seeds) {
+            try {
+              insert.run(seed.ticker.toUpperCase(), JSON.stringify(seed.data), now, now);
+              loaded++;
+            } catch { /* ignore */ }
+          }
+          console.log(`[DiskCache] Loaded ${loaded} seed analyses from cache-seed.json`);
+        }
+      } catch (seedErr: any) {
+        console.warn(`[DiskCache] Seed load failed: ${seedErr?.message}`);
+      }
+    }
     return db;
   } catch (err: any) {
     initFailed = true;
