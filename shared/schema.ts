@@ -360,6 +360,9 @@ export interface StockAnalysis {
   peRatio: number;
   forwardPE: number;
   pegRatio: number;
+  peg?: number | null;
+  lynchClass?: string;      // 'slow_grower' | 'stalwart' | 'fast_grower' | 'cyclical' | 'turnaround' | 'asset_play'
+  lynchPEGBasis?: string;   // Erklärung welche Methode verwendet wurde
   evEbitda: number;
   beta5Y: number;
   fcfTTM: number;

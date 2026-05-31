@@ -1252,8 +1252,140 @@ JSON array only, no markdown, no explanation:`;
   }
 }
 
+/**
+ * Berechnet den Einpreisungsgrad via Reverse-DCF.
+ * Grundidee: Wie viel % Wachstum ist im aktuellen Kurs bereits eingepreist?
+ * Je höher das implizite Wachstum vs. dem Catalyst-Upside, desto mehr ist schon drin.
+ *
+ * Methode:
+ * 1. Implied Growth Rate = aus Forward P/E vs. Sektor-Median P/E ableiten
+ * 2. Einpreisungsgrad = clamp(impliedGrowth / catalystBruttoUpside, 0.15, 0.70)
+ *
+ * Fallback wenn keine PE-Daten: Heuristik nach Katalysatorklasse
+ */
+function calcEinpreisungsgrad(params: {
+  bruttoUpside: number;        // z.B. 22 für +22%
+  forwardPE: number;           // Forward P/E der Aktie
+  sectorMedianPE: number;      // Sektor-Median Forward P/E
+  revenueGrowth: number;       // Revenue-Wachstum %
+  catalystType?: string;       // "growth"|"margin"|"product"|"ai"|"macro" für Fallback
+}): number {
+  const { bruttoUpside, forwardPE, sectorMedianPE, revenueGrowth, catalystType } = params;
+
+  // Wenn Forward PE vorhanden: Reverse-DCF Methode
+  if (forwardPE > 0 && sectorMedianPE > 0 && bruttoUpside > 0) {
+    // Premium über Sektor-Median = bereits eingepreiste Wachstumserwartung
+    const pePremium = Math.max(0, (forwardPE - sectorMedianPE) / sectorMedianPE); // z.B. 0.30 = 30% Premium
+    // Implied eingepreiste Wachstumserwartung in % (normiert auf catalyst brutto upside)
+    // Ein hohes PE-Premium bedeutet: viel ist schon drin
+    const impliedPriced = Math.min(pePremium * 100, bruttoUpside * 0.8); // max 80% des Upside
+    const einpreisungsgrad = impliedPriced / bruttoUpside; // als Anteil 0-1
+    return Math.round(Math.max(0.15, Math.min(0.70, einpreisungsgrad)) * 100); // als %
+  }
+
+  // Fallback: Revenue-Growth-basiert (wenn PE nicht verfügbar)
+  // Hohes Wachstum → mehr bereits im Kurs eingepreist
+  const growthFactor = Math.min(revenueGrowth / 30, 1.0); // normiert auf 30% als "viel"
+  const baseRate: Record<string, number> = {
+    growth:  35 + Math.round(growthFactor * 20),  // 35-55%
+    margin:  30 + Math.round(growthFactor * 15),  // 30-45%
+    product: 25 + Math.round(growthFactor * 15),  // 25-40%
+    ai:      45 + Math.round(growthFactor * 20),  // 45-65%
+    macro:   35,
+  };
+  return baseRate[catalystType || 'growth'] ?? 35;
+}
+
+type LynchClass = 'slow_grower' | 'stalwart' | 'fast_grower' | 'cyclical' | 'turnaround' | 'asset_play';
+
+function classifyLynch(params: {
+  epsGrowth5Y: number;
+  revenueGrowth: number;
+  sector: string;
+  industry: string;
+  dividendYield: number;
+  fcfMargin: number;
+  pe: number;
+  forwardPE: number;
+}): LynchClass {
+  const { epsGrowth5Y, revenueGrowth, sector, industry, dividendYield, pe, forwardPE } = params;
+
+  const growthRate = epsGrowth5Y > 0 ? epsGrowth5Y : revenueGrowth;
+  const sectorLower = (sector + ' ' + industry).toLowerCase();
+
+  // Cyclicals: Halbleiter, Energie, Rohstoffe, Auto — erkennbar am hohen Trailing PE bei niedrigem Forward PE
+  const isCyclicalSector = ['semiconductor', 'energy', 'oil', 'gas', 'material', 'chemical', 'steel', 'mining', 'auto', 'automotive', 'chip'].some(s => sectorLower.includes(s));
+  const hasCyclicalPEPattern = pe > 0 && forwardPE > 0 && pe / forwardPE > 1.5; // Trailing >> Forward = Recovery-Erwartung
+  if (isCyclicalSector || hasCyclicalPEPattern) return 'cyclical';
+
+  // Turnaround: negative Earnings aber positive Forward-Erwartung
+  if (pe <= 0 && forwardPE > 0) return 'turnaround';
+  if (pe > 0 && pe > 100 && forwardPE > 0 && forwardPE < 30) return 'turnaround'; // extreme PE-Normalisierung erwartet
+
+  // Fast Growers: >20% EPS oder Revenue-Wachstum
+  if (growthRate >= 20) return 'fast_grower';
+
+  // Slow Growers: <5% Wachstum (oft Dividendenzahler)
+  if (growthRate < 5 || (growthRate < 8 && dividendYield > 2)) return 'slow_grower';
+
+  // Stalwarts: 5-20% stabiles Wachstum
+  return 'stalwart';
+}
+
+function calcLynchPEG(params: {
+  lynchClass: LynchClass;
+  pe: number;
+  forwardPE: number;
+  epsGrowth5Y: number;
+  epsGrowthFwd: number;           // Forward 1Y EPS growth
+  revenueGrowth: number;
+  dividendYield: number;
+  epsPeak?: number;               // für Cyclicals
+  epsTrough?: number;             // für Cyclicals
+  price?: number;                 // für Cyclicals mid-cycle PE
+}): { peg: number | null; pegBasis: string } {
+  const { lynchClass, pe, forwardPE, epsGrowth5Y, epsGrowthFwd, revenueGrowth, dividendYield, epsPeak, epsTrough, price } = params;
+
+  switch (lynchClass) {
+    case 'fast_grower':
+    case 'turnaround': {
+      // Forward P/E ÷ Forward EPS Growth (1Y oder 3Y Konsensus)
+      const growth = epsGrowthFwd > 0 ? epsGrowthFwd : (epsGrowth5Y > 0 ? epsGrowth5Y : revenueGrowth);
+      if (forwardPE > 0 && growth > 0) return { peg: +(forwardPE / growth).toFixed(2), pegBasis: 'Forward P/E ÷ Fwd EPS Growth' };
+      return { peg: null, pegBasis: 'Kein posit. Wachstum' };
+    }
+
+    case 'cyclical': {
+      // Mid-Cycle normalisiertes PE ÷ Forward EPS CAGR
+      let normalizedPE = forwardPE > 0 ? forwardPE : pe;
+      if (epsPeak && epsPeak > 0 && epsTrough && epsTrough > 0 && price && price > 0) {
+        const midCycleEPS = (epsPeak + epsTrough) / 2;
+        if (midCycleEPS > 0) normalizedPE = +(price / midCycleEPS).toFixed(1);
+      }
+      const growth = epsGrowthFwd > 0 ? epsGrowthFwd : revenueGrowth;
+      if (normalizedPE > 0 && growth > 0) return { peg: +(normalizedPE / growth).toFixed(2), pegBasis: 'Norm. P/E (Mid-Cycle) ÷ Fwd EPS Growth' };
+      return { peg: null, pegBasis: 'Zykliker — PEG eingeschränkt aussagekräftig' };
+    }
+
+    case 'slow_grower': {
+      // PEGY: P/E ÷ (EPS Growth + Dividend Yield) — Lynch's Erweiterung für Dividendenzahler
+      const totalReturn = (epsGrowth5Y > 0 ? epsGrowth5Y : revenueGrowth) + dividendYield;
+      if (pe > 0 && totalReturn > 0) return { peg: +(pe / totalReturn).toFixed(2), pegBasis: 'PEGY = P/E ÷ (EPS Growth + Dividende)' };
+      return { peg: null, pegBasis: 'PEGY nicht berechenbar' };
+    }
+
+    case 'stalwart':
+    default: {
+      // Standard: P/E ÷ 5Y EPS CAGR (historisch stabil)
+      const growth = epsGrowth5Y > 0 ? epsGrowth5Y : (epsGrowthFwd > 0 ? epsGrowthFwd : revenueGrowth);
+      if (pe > 0 && growth > 0) return { peg: +(pe / growth).toFixed(2), pegBasis: 'P/E ÷ 5Y EPS CAGR' };
+      return { peg: null, pegBasis: 'Nicht berechenbar' };
+    }
+  }
+}
+
 // === Fallback: Sector-Template Catalysts (used when LLM is unavailable) ===
-function generateCatalysts(sector: string, industry: string, growthRate: number, fcfMargin: number, description: string = '', revenue: number = 0): Catalyst[] {
+function generateCatalysts(sector: string, industry: string, growthRate: number, fcfMargin: number, description: string = '', revenue: number = 0, forwardPE: number = 0, sectorMedianPE: number = 0, revenueGrowth: number = 0): Catalyst[] {
   const catalysts: Catalyst[] = [];
   const s = sector.toLowerCase();
   const ind = industry.toLowerCase();
@@ -1265,7 +1397,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
     timeline: growthRate > 15 ? "6-12M" : "12-18M",
     pos: Math.round(revenuePos),
     bruttoUpside: Math.round(Math.min(25, 5 + growthRate * 0.8)),
-    einpreisungsgrad: Math.round(40 + Math.min(30, growthRate)),
+    einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: Math.round(Math.min(25, 5 + growthRate * 0.8)), forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'growth' }),
     nettoUpside: 0, gb: 0,
     context: generateCatalystContext("Revenue Growth Acceleration", sector, industry, description, growthRate, fcfMargin, revenue),
   });
@@ -1277,7 +1409,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
     timeline: "12-24M",
     pos: marginPos,
     bruttoUpside: Math.round(8 + (30 - fcfMargin) * 0.3),
-    einpreisungsgrad: 35,
+    einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: Math.round(8 + (30 - fcfMargin) * 0.3), forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'margin' }),
     nettoUpside: 0, gb: 0,
     context: generateCatalystContext("Margin Expansion / Operating Leverage", sector, industry, description, growthRate, fcfMargin, revenue),
   });
@@ -1289,7 +1421,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "6-18M",
       pos: 60,
       bruttoUpside: 15,
-      einpreisungsgrad: 50,
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'ai' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1298,7 +1430,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "12-24M",
       pos: 45,
       bruttoUpside: 12,
-      einpreisungsgrad: 30,
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1308,7 +1440,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "6-18M",
       pos: 35,
       bruttoUpside: 25,
-      einpreisungsgrad: 20,
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 25, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1317,7 +1449,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "12-36M",
       pos: 70,
       bruttoUpside: 8,
-      einpreisungsgrad: 55,
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 8, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1327,7 +1459,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "6-12M",
       pos: 50,
       bruttoUpside: 12,
-      einpreisungsgrad: 40,
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1336,7 +1468,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "0-12M",
       pos: 65,
       bruttoUpside: 8,
-      einpreisungsgrad: 50,
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 8, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'margin' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1346,7 +1478,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "6-18M",
       pos: 40,
       bruttoUpside: 20,
-      einpreisungsgrad: 25,
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 20, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1355,7 +1487,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "12-36M",
       pos: 45,
       bruttoUpside: 15,
-      einpreisungsgrad: 20,
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1371,7 +1503,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "6-18M",
         pos: 40,
         bruttoUpside: 15,
-        einpreisungsgrad: 30,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1380,7 +1512,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 55,
         bruttoUpside: 10,
-        einpreisungsgrad: 40,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'margin' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1390,7 +1522,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 50,
         bruttoUpside: 15,
-        einpreisungsgrad: 30,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1399,7 +1531,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-36M",
         pos: 40,
         bruttoUpside: 12,
-        einpreisungsgrad: 25,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'growth' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1409,7 +1541,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "6-12M",
         pos: 50,
         bruttoUpside: 10,
-        einpreisungsgrad: 40,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'margin' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1418,7 +1550,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 45,
         bruttoUpside: 12,
-        einpreisungsgrad: 30,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'growth' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1428,7 +1560,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "6-18M",
         pos: 50,
         bruttoUpside: 12,
-        einpreisungsgrad: 35,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1437,7 +1569,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 45,
         bruttoUpside: 10,
-        einpreisungsgrad: 30,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1447,7 +1579,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 45,
         bruttoUpside: 15,
-        einpreisungsgrad: 35,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1456,7 +1588,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "6-18M",
         pos: 50,
         bruttoUpside: 10,
-        einpreisungsgrad: 40,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1466,7 +1598,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "6-18M",
         pos: 45,
         bruttoUpside: 12,
-        einpreisungsgrad: 35,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1475,7 +1607,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 50,
         bruttoUpside: 10,
-        einpreisungsgrad: 30,
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'growth' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1486,7 +1618,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "12-24M",
       pos: 45,
       bruttoUpside: 12,
-      einpreisungsgrad: 30,
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'growth' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1495,7 +1627,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "6-18M",
       pos: 30,
       bruttoUpside: 15,
-      einpreisungsgrad: 15,
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -4433,6 +4565,32 @@ export async function registerRoutes(server: Server, app: Express) {
       // === Sector defaults ===
       const sectorDefs = getSectorDefaults(sector, industry);
 
+      // === Peter Lynch Classification + PEG ===
+      const epsGrowthFwd = Number((fmpData as any)?.epsGrowthFwd) > 0
+        ? Number((fmpData as any).epsGrowthFwd)
+        : (epsConsensusNextFY > 0 && eps > 0 ? (epsConsensusNextFY / eps - 1) * 100 : 0);
+      const lynchClass = classifyLynch({
+        epsGrowth5Y: Number(epsGrowth5Y) || 0,
+        revenueGrowth,
+        sector,
+        industry,
+        dividendYield: Number(divYield) || 0,
+        fcfMargin,
+        pe,
+        forwardPE: Number(forwardPE) || 0,
+      });
+      const { peg: lynchPEG, pegBasis: lynchPEGBasis } = calcLynchPEG({
+        lynchClass,
+        pe,
+        forwardPE: Number(forwardPE) || 0,
+        epsGrowth5Y: Number(epsGrowth5Y) || 0,
+        epsGrowthFwd: Number(epsGrowthFwd) || 0,
+        revenueGrowth,
+        dividendYield: Number(divYield) || 0,
+        price,
+      });
+      console.log(`[ANALYZE] ${ticker} Lynch=${lynchClass} PEG=${lynchPEG} (${lynchPEGBasis})`);
+
       // === Government exposure ===
       const govExp = estimateGovExposure(sector, industry, description);
       const fcfHaircut = govExp.exposure > 20 ? Math.min(20, Math.round(govExp.exposure * 0.4)) : 0;
@@ -4593,14 +4751,14 @@ export async function registerRoutes(server: Server, app: Express) {
           llmActuallyUsed = true;
           console.log(`[ANALYZE] Using OpenRouter LLM catalysts for ${ticker} (model=${combined.modelUsed}, tokens=${combined.promptTokens || '?'}+${combined.completionTokens || '?'})`);
         } else {
-          catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
+          catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue, forwardPE, sectorDefs.sectorAvgForwardPE || sectorDefs.sectorAvgPE || 20, revenueGrowth);
           console.log(`[ANALYZE] LLM failed/unavailable, falling back to sector-template catalysts for ${ticker}`);
           // Still do keyword news matching so badges work in Section 15
           if (newsItems.length > 0) await matchNewsToCatalysts(newsItems, catalysts);
         }
       } else {
         // Fast path: sector-template catalysts, no LLM
-        catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue);
+        catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue, forwardPE, sectorDefs.sectorAvgForwardPE || sectorDefs.sectorAvgPE || 20, revenueGrowth);
         console.log(`[ANALYZE] Using sector-template catalysts for ${ticker} (LLM off)`);
         // Still run keyword-based news matching so newsItems get matchedCatalystIdx
         // even without LLM — this powers the news badges in Section 15
@@ -5103,7 +5261,10 @@ export async function registerRoutes(server: Server, app: Express) {
 
         peRatio: pe,
         forwardPE: +forwardPE.toFixed(2),
-        pegRatio: +pegRatio.toFixed(2),
+        peg: lynchPEG ?? (pegRatio || null),            // Lynch-PEG bevorzugt
+        pegRatio: lynchPEG ?? +pegRatio.toFixed(2),     // alias für Frontend, Lynch bevorzugt
+        lynchClass,                                      // z.B. "cyclical"
+        lynchPEGBasis,                                   // Erklärung der Methode
         evEbitda: +evEbitda.toFixed(2),
         beta5Y,
         fcfTTM,
