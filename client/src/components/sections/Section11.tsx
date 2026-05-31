@@ -488,9 +488,24 @@ export function Section11({ data, onCatalystsEnriched }: Props) {
                 <div className="text-[10px] text-muted-foreground mt-0.5">
                   = {catalystBaseFallback ? 'Analyst PT' : 'Kons. DCF'} × (1 + GB-Summe {formatNumber(totalGB, 2)}%)
                 </div>
-                <div className="text-[10px] text-muted-foreground">
-                  = {formatCurrency(catalystDCFBase)} × (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget)}
-                </div>
+                {/* Analyst PT Upside vs. current price — shown when PT is the basis */}
+                {catalystBaseFallback && data.analystPT?.median > 0 && (() => {
+                  const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
+                  return (
+                    <div className="text-[10px] text-muted-foreground">
+                      = Analyst PT {formatCurrency(data.analystPT.median)}
+                      <span className={`ml-1 font-medium ${ptUpside >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        ({ptUpside >= 0 ? '+' : ''}{formatNumber(ptUpside, 1)}% vs. Kurs)
+                      </span>
+                      {' '}× (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget)}
+                    </div>
+                  );
+                })()}
+                {!catalystBaseFallback && (
+                  <div className="text-[10px] text-muted-foreground">
+                    = {formatCurrency(catalystDCFBase)} × (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget)}
+                  </div>
+                )}
                 <div className={`text-[10px] font-medium mt-0.5 ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>
                   vs. Kurs ({formatCurrency(data.currentPrice)}): {catVsKurs >= 0 ? '+' : ''}{formatNumber(catVsKurs, 1)}%
                   {isBelowKurs && ' — Target UNTER aktuellem Kurs'}
