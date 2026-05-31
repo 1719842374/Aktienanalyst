@@ -1368,17 +1368,28 @@ function calcLynchPEG(params: {
     }
 
     case 'slow_grower': {
-      // PEGY: P/E ÷ (EPS Growth + Dividend Yield) — Lynch's Erweiterung für Dividendenzahler
-      const totalReturn = (epsGrowth5Y > 0 ? epsGrowth5Y : revenueGrowth) + dividendYield;
-      if (pe > 0 && totalReturn > 0) return { peg: +(pe / totalReturn).toFixed(2), pegBasis: 'PEGY = P/E ÷ (EPS Growth + Dividende)' };
+      // PEGY: Forward P/E ÷ (Fwd EPS Growth + Dividend Yield)
+      const basePE = forwardPE > 0 ? forwardPE : pe;
+      const baseGrowth = epsGrowthFwd > 0 ? epsGrowthFwd : (epsGrowth5Y > 0 ? epsGrowth5Y : revenueGrowth);
+      const totalReturn = baseGrowth + dividendYield;
+      if (basePE > 0 && totalReturn > 0) return { peg: +(basePE / totalReturn).toFixed(2), pegBasis: 'PEGY = Fwd P/E ÷ (Fwd EPS Growth + Dividende)' };
       return { peg: null, pegBasis: 'PEGY nicht berechenbar' };
     }
 
     case 'stalwart':
     default: {
-      // Standard: P/E ÷ 5Y EPS CAGR (historisch stabil)
-      const growth = epsGrowth5Y > 0 ? epsGrowth5Y : (epsGrowthFwd > 0 ? epsGrowthFwd : revenueGrowth);
-      if (pe > 0 && growth > 0) return { peg: +(pe / growth).toFixed(2), pegBasis: 'P/E ÷ 5Y EPS CAGR' };
+      // Yahoo Finance Standard: Forward P/E ÷ Forward EPS Growth (bevorzugt)
+      // Fallback: Forward P/E ÷ Revenue Growth, dann P/E ÷ 5Y EPS CAGR
+      const bestPE = forwardPE > 0 ? forwardPE : pe;
+      const bestGrowth =
+        epsGrowthFwd > 0 ? epsGrowthFwd :
+        epsGrowth5Y > 0  ? epsGrowth5Y  :
+        revenueGrowth;
+      const basis =
+        forwardPE > 0 && epsGrowthFwd > 0 ? 'Forward P/E ÷ Fwd EPS Growth' :
+        forwardPE > 0                      ? 'Forward P/E ÷ Revenue Growth' :
+                                             'P/E ÷ 5Y EPS CAGR';
+      if (bestPE > 0 && bestGrowth > 0) return { peg: +(bestPE / bestGrowth).toFixed(2), pegBasis: basis };
       return { peg: null, pegBasis: 'Nicht berechenbar' };
     }
   }
@@ -4519,7 +4530,13 @@ export async function registerRoutes(server: Server, app: Express) {
       // === Derived metrics ===
       const fcfMargin = revenue > 0 ? (fcfTTM / revenue) * 100 : 15;
       const forwardPE = epsConsensusNextFY > 0 ? price / epsConsensusNextFY : pe;
-      const pegRatio = epsGrowth5Y > 0 ? pe / epsGrowth5Y : 2;
+      // PEG = Forward P/E ÷ Forward EPS Growth (Yahoo Finance Standard)
+      // Fallback chain: fwdPE/fwdGrowth → fwdPE/rev → pe/epsGrowth5Y → 2.0
+      const _pegBase   = forwardPE > 0 ? Number(forwardPE) : pe;
+      const _pegGrowth = (epsGrowthFwd > 0)
+        ? epsGrowthFwd
+        : (epsGrowth5Y > 0 ? epsGrowth5Y : revenueGrowth);
+      const pegRatio = _pegBase > 0 && _pegGrowth > 0 ? _pegBase / _pegGrowth : 2;
       const evEbitda = ebitda > 0 ? (marketCap + totalDebt - cashEquivalents) / ebitda : 15;
 
       // Start peer comparison fetch (parallel with remaining computation)
