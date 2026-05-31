@@ -510,6 +510,18 @@ export function Section11({ data, onCatalystsEnriched }: Props) {
                   vs. Kurs ({formatCurrency(data.currentPrice)}): {catVsKurs >= 0 ? '+' : ''}{formatNumber(catVsKurs, 1)}%
                   {isBelowKurs && ' — Target UNTER aktuellem Kurs'}
                 </div>
+                {/* Catalyst Upside auf aktuellen Kurs aufgerechnet — immer sichtbar */}
+                {totalGB > 0 && (() => {
+                  const kursPlus = data.currentPrice * (1 + totalGB / 100);
+                  return (
+                    <div className="text-[10px] text-muted-foreground mt-1 pt-1 border-t border-border/40">
+                      <span className="text-muted-foreground/70">Katalysatoren auf akt. Kurs:</span>
+                      {' '}{formatCurrency(data.currentPrice)} × (1 + {formatNumber(totalGB, 2)}%)
+                      {' '}= <span className="font-medium text-emerald-400">{formatCurrency(kursPlus)}</span>
+                      <span className="ml-1 font-medium text-emerald-400">(+{formatNumber(totalGB, 2)}% nicht eingepreist)</span>
+                    </div>
+                  );
+                })()}
               </div>
               <div className="text-right">
                 <div className={`text-lg font-bold font-mono tabular-nums ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>
