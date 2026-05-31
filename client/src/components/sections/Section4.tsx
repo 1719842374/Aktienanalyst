@@ -30,21 +30,29 @@ export function Section4({ data }: Props) {
   }));
 
   const pegCalc = useMemo(() => {
+    // Prefer Lynch PEG if available, fall back to manual P/E ÷ EPS 5Y
+    const lynchPEG = data.pegRatio && data.lynchClass ? data.pegRatio : null;
     const pe = data.peRatio;
     const growth = data.epsGrowth5Y;
-    const peg = growth !== 0 ? pe / growth : 0;
+    const peg = lynchPEG ?? (growth !== 0 ? pe / growth : 0);
+    const lynchLabel = data.lynchClass === 'cyclical'    ? 'Zykliker (Mid-Cycle PE)' :
+                       data.lynchClass === 'fast_grower' ? 'Fast Grower (Forward PE)' :
+                       data.lynchClass === 'slow_grower' ? 'Slow Grower (PEGY)' :
+                       data.lynchClass === 'turnaround'  ? 'Turnaround (Forward PE)' :
+                       data.lynchClass === 'stalwart'    ? 'Stalwart (5Y CAGR)' : null;
     return {
       pe, growth, peg,
       steps: [
-        `PEG = P/E ÷ EPS Growth Rate`,
-        `PEG = ${formatNumber(pe, 1)} ÷ ${formatNumber(growth, 1)}`,
+        lynchLabel ? `Methode: Peter Lynch — ${lynchLabel}` : `PEG = P/E ÷ EPS Growth Rate`,
+        data.lynchPEGBasis ? data.lynchPEGBasis : `PEG = ${formatNumber(pe, 1)} ÷ ${formatNumber(growth, 1)}`,
         `PEG = ${formatNumber(peg, 2)}`,
-        peg < 1 ? `→ PEG < 1.0: Potentially undervalued relative to growth` :
-        peg < 2 ? `→ PEG 1.0-2.0: Fairly valued` :
-        `→ PEG > 2.0: Premium valuation relative to growth`,
+        peg < 1 ? `→ PEG < 1.0: Unterbewertet relativ zum Wachstum` :
+        peg < 1.5 ? `→ PEG 1.0–1.5: Fair bewertet` :
+        peg < 2 ? `→ PEG 1.5–2.0: Leichte Prämie` :
+        `→ PEG > 2.0: Hohe Bewertungsprämie zum Wachstum`,
       ],
     };
-  }, [data.peRatio, data.epsGrowth5Y]);
+  }, [data.peRatio, data.epsGrowth5Y, data.pegRatio, data.lynchClass, data.lynchPEGBasis]);
 
   return (
     <SectionCard number={4} title="BEWERTUNGSKENNZAHLEN">

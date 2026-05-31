@@ -474,10 +474,27 @@ export function Section8({ data, useLLM = false }: Props) {
                 {dcfVsReference.toFixed(1)}% vs Analyst PT
               </div>
               <div className="text-muted-foreground/40">
-                {Math.abs(dcfVsReference) > 30
-                  ? '⚠ DCF‑Modellannahmen sehr konservativ'
+                {Math.abs(dcfVsReference) > 50
+                  ? '⚠ Reverse-DCF deutlich unter PT — Markt preist starkes Wachstum ein'
+                  : Math.abs(dcfVsReference) > 30
+                  ? '⚠ DCF-Modellannahmen sehr konservativ'
                   : 'DCF und PT konsistent'}
               </div>
+              {/* Divergenz-Erklärung wenn Reverse-DCF stark vom Kurs abweicht */}
+              {Math.abs(dcfVsReference) > 40 && (() => {
+                const einpreisungsGradHoch = (risks || []).some((r: any) => r.einpreisungsgrad >= 55);
+                const dcfBelowKurs = invertedDCF.perShare < data.currentPrice * 0.7;
+                if (!dcfBelowKurs) return null;
+                return (
+                  <div className="mt-2 text-[10px] rounded border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-amber-400/80">
+                    <span className="font-semibold">Reverse-DCF ≠ Marktbewertung:</span>{' '}
+                    Der Kurs impliziert höheres Wachstum als das DCF-Modell annimmt.
+                    {einpreisungsGradHoch
+                      ? ' Katalysatoren bereits stark eingepreist — Upside-Potenzial begrenzt.'
+                      : ' Katalysatoren noch nicht eingepreist — Markt wettet auf Wachstum.'}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}

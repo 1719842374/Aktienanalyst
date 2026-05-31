@@ -171,7 +171,30 @@ export function Section1({ data, onRefresh }: Props) {
             <tbody className="divide-y divide-border/50">
               <Row label="P/E" value={formatNumber(data.peRatio, 1)} />
               <Row label="Forward P/E" value={formatNumber(data.forwardPE, 1)} />
-              <Row label="PEG" value={formatNumber(data.pegRatio)} />
+              <tr className="border-b border-border/50">
+                <td className="py-1.5 px-2 text-muted-foreground">PEG</td>
+                <td className="py-1.5 px-2 text-right font-mono">
+                  <span>{formatNumber(data.pegRatio)}</span>
+                  {data.lynchClass && (
+                    <span
+                      title={data.lynchPEGBasis || data.lynchClass}
+                      className={`ml-2 text-[9px] px-1.5 py-0.5 rounded font-medium cursor-help ${
+                        data.lynchClass === 'cyclical'    ? 'bg-orange-500/15 text-orange-400' :
+                        data.lynchClass === 'fast_grower' ? 'bg-emerald-500/15 text-emerald-400' :
+                        data.lynchClass === 'slow_grower' ? 'bg-blue-500/15 text-blue-400' :
+                        data.lynchClass === 'turnaround'  ? 'bg-purple-500/15 text-purple-400' :
+                        'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      {data.lynchClass === 'cyclical'    ? 'Zykliker' :
+                       data.lynchClass === 'fast_grower' ? 'Fast Grower' :
+                       data.lynchClass === 'slow_grower' ? 'Slow Grower' :
+                       data.lynchClass === 'turnaround'  ? 'Turnaround' :
+                       data.lynchClass === 'stalwart'    ? 'Stalwart' : data.lynchClass}
+                    </span>
+                  )}
+                </td>
+              </tr>
               <Row label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
               <Row label="FCF TTM" value={formatLargeNumber(data.fcfTTM)} />
               <Row label="FCF Margin" value={formatPercentNoSign(data.fcfMargin)} />
