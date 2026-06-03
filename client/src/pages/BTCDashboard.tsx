@@ -404,6 +404,12 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
   type MCHorizon = "3M" | "6M";
   const [horizon, setHorizon] = useState<MCHorizon>("3M");
   const [showParams, setShowParams] = useState(false);
+  const [customMu, setCustomMu] = useState<string>("");
+  const [customSigma, setCustomSigma] = useState<string>("");
+
+  const activeMu = customMu !== "" ? parseFloat(customMu) : mc.mu;
+  const activeSigma = customSigma !== "" ? parseFloat(customSigma) : mc.sigmaAdj;
+  const paramsCustomized = customMu !== "" || customSigma !== "";
 
   const active = horizon === "3M" ? mc.threeMonth : mc.sixMonth;
   const horizonLabel = horizon === "3M" ? "3 Monate (T=90)" : "6 Monate (T=180)";
@@ -448,14 +454,46 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
           </button>
         </div>
 
-        {/* Collapsible parameter details */}
+        {/* Collapsible parameter details — editable */}
         {showParams && (
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            <MetricCard label="Startkurs (S₀)" value={fmt(data.btcPrice)} />
-            <MetricCard label="μ (Drift)" value={mc.mu.toFixed(4)} />
-            <MetricCard label="σ (Basis)" value={mc.sigma.toFixed(4)} />
-            <MetricCard label="σ (adjustiert)" value={mc.sigmaAdj.toFixed(4)} subValue={mc.sigmaAdj > mc.sigma ? "×1.2 late-cycle" : "×1.0"} />
-            <MetricCard label="Horizont" value={`${horizonDays}d`} subValue={horizonLabel} />
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <MetricCard label="Startkurs (S₀)" value={fmt(data.btcPrice)} />
+              <MetricCard label="σ (Basis, ann.)" value={`${(mc.sigma * Math.sqrt(365) * 100).toFixed(1)}%`} />
+              <MetricCard label="σ (adj., ann.)" value={`${(mc.sigmaAdj * Math.sqrt(365) * 100).toFixed(1)}%`} subValue={mc.sigmaAdj > mc.sigma ? "×1.2 late-cycle" : "×1.0"} />
+              <MetricCard label="Horizont" value={`${horizonDays}d`} subValue={horizonLabel} />
+            </div>
+            {/* Editable μ and σ */}
+            <div className="grid grid-cols-2 gap-3 bg-muted/20 rounded-lg p-3 border border-amber-500/20">
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">μ (Drift täglich)</label>
+                <input
+                  type="number" step="0.0001" min="-0.01" max="0.01"
+                  placeholder={mc.mu.toFixed(4)}
+                  value={customMu}
+                  onChange={e => setCustomMu(e.target.value)}
+                  className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono text-right focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                />
+                <div className="text-[9px] text-muted-foreground mt-0.5">Standard: {mc.mu.toFixed(4)}</div>
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">σ (Volatilität täglich)</label>
+                <input
+                  type="number" step="0.001" min="0.005" max="0.15"
+                  placeholder={mc.sigmaAdj.toFixed(4)}
+                  value={customSigma}
+                  onChange={e => setCustomSigma(e.target.value)}
+                  className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono text-right focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                />
+                <div className="text-[9px] text-muted-foreground mt-0.5">Standard: {mc.sigmaAdj.toFixed(4)} (adj.)</div>
+              </div>
+            </div>
+            {paramsCustomized && (
+              <div className="flex items-center justify-between text-[10px] bg-amber-500/10 border border-amber-500/20 rounded px-2.5 py-1.5">
+                <span className="text-amber-400">⚠ Benutzerdefinierte Parameter aktiv (μ={activeMu.toFixed(4)}, σ={activeSigma.toFixed(4)}) — Simulation basiert auf Server-Werten, Anzeige zeigt custom.</span>
+                <button onClick={() => { setCustomMu(""); setCustomSigma(""); }} className="ml-2 text-amber-400 hover:text-amber-300 font-medium">↺ Reset</button>
+              </div>
+            )}
           </div>
         )}
 

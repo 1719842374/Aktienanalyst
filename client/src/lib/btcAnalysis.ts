@@ -309,7 +309,7 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
     fetchJSON("https://api.alternative.me/fng/?limit=1"),
     fetchJSON("https://api.alternative.me/fng/?limit=2000&format=json"),
     fetchText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"),
-    fetchJSON("https://api.blockchain.info/charts/market-price?timespan=all&format=json&cors=true", 60000),
+    fetchJSON("https://api.blockchain.info/charts/market-price?timespan=2000days&format=json&cors=true", 60000),
     fetchJSON("https://data-api.binance.vision/api/v3/ticker/24hr?symbol=EURUSDT"),
     fetchJSON("https://mempool.space/api/v1/mining/hashrate/3m"),
     fetchETFFlows(),
@@ -398,9 +398,8 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
   if (allPriceData.length === 0) {
     try {
       const nowSec = Math.floor(Date.now() / 1000);
-      const fiveYearsAgo = nowSec - 5 * 365 * 86400;
       const parsed = await fetchJSON(
-        `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fiveYearsAgo}&to=${nowSec}`,
+        `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1825&interval=daily`,
         60000
       );
       if (parsed?.prices && Array.isArray(parsed.prices)) {
@@ -539,6 +538,18 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
       const MVRV_STDDEV = 1.15;
       mvrvZScore = Math.round(((mvrv - MVRV_MEAN) / MVRV_STDDEV) * 100) / 100;
     }
+  }
+
+  // ETF flow fallback when GitHub parse fails — use 7d price momentum
+  if (!etfFlowValue && allPriceData.length >= 8) {
+    const p = allPriceData.map(d => typeof d === 'object' ? (d as any).price ?? d[1] : d);
+    const last8 = p.slice(-8);
+    const ret7d = (last8[last8.length - 1] - last8[0]) / last8[0] * 100;
+    if (ret7d > 8)       { etfFlowValue = `+${ret7d.toFixed(1)}% 7d (Starker Inflow-Proxy)`; etfFlowScore = 1;    etfFlowSource = "7d Momentum Proxy"; }
+    else if (ret7d > 3)  { etfFlowValue = `+${ret7d.toFixed(1)}% 7d (Inflow-Signal)`; etfFlowScore = 0.5;  etfFlowSource = "7d Momentum Proxy"; }
+    else if (ret7d < -8) { etfFlowValue = `${ret7d.toFixed(1)}% 7d (Starker Outflow-Proxy)`; etfFlowScore = -1;   etfFlowSource = "7d Momentum Proxy"; }
+    else if (ret7d < -3) { etfFlowValue = `${ret7d.toFixed(1)}% 7d (Outflow-Signal)`; etfFlowScore = -0.5; etfFlowSource = "7d Momentum Proxy"; }
+    else                 { etfFlowValue = `${ret7d.toFixed(1)}% 7d (Neutral)`; etfFlowScore = 0;    etfFlowSource = "7d Momentum Proxy"; }
   }
 
   // === 4. Halving info ===
