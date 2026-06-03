@@ -518,17 +518,20 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
     // Method 1: 200DMA proxy (preferred if we have 200+ days of price data)
     let realizedPrice: number | null = null;
     if (allPriceData.length >= 200) {
-      const last200 = allPriceData.slice(-200).map(p => p[1]);
-      const ma200 = last200.reduce((a, b) => a + b, 0) / 200;
+      // allPriceData can be either [date, price] tuples or {date, price} objects depending on source
+      const last200 = allPriceData.slice(-200).map((p: any) => Array.isArray(p) ? p[1] : p.price);
+      const ma200 = last200.filter(Boolean).reduce((a: number, b: number) => a + b, 0) / last200.filter(Boolean).length;
       realizedPrice = ma200 * 0.92; // calibrated multiplier
       mvrvSource = "200DMA × 0.92 (Realized Price proxy)";
-    } else if (allPriceData.length >= 50) {
-      // Method 2: Power-Law fallback if not enough history
+    } else {
+      // Method 2: Power-Law fallback — always works, no price data needed
       const genesisD = new Date("2009-01-03");
       const daysSG = Math.floor((Date.now() - genesisD.getTime()) / 86400000);
       const plFairValue = 1.0117e-17 * Math.pow(daysSG, 5.82);
-      realizedPrice = plFairValue * 0.62; // slightly adjusted from 0.6
-      mvrvSource = "Power-Law × 0.62 (fallback, <200 data points)";
+      realizedPrice = plFairValue * 0.62;
+      mvrvSource = allPriceData.length >= 50
+        ? "Power-Law × 0.62 (fallback, <200 Datenpunkte)"
+        : "Power-Law × 0.62 (Realized Price Proxy)";
     }
 
     if (realizedPrice && realizedPrice > 0) {
