@@ -7,6 +7,7 @@ import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { RechenWeg } from "@/components/RechenWeg";
 import { formatCurrency, formatLargeNumber, formatPercent, getChangeColor } from "@/lib/formatters";
+import { gbmMonteCarlo, type GBMMonteCarloResult } from "@/lib/calculations";
 import { useLocation } from "wouter";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
@@ -396,216 +397,228 @@ function Section5GWS({ data }: { data: BTCAnalysis }) {
 function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
   const mc = data.monteCarlo;
   const fmt = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
-  const pctChange = (val: number) => {
-    const pct = ((val - data.btcPrice) / data.btcPrice) * 100;
-    return pct >= 0 ? `+${pct.toFixed(1)}%` : `${pct.toFixed(1)}%`;
+  const pct = (val: number) => {
+    const p = ((val - data.btcPrice) / data.btcPrice) * 100;
+    return p >= 0 ? `+${p.toFixed(1)}%` : `${p.toFixed(1)}%`;
   };
 
-  type MCHorizon = "3M" | "6M";
-  const [horizon, setHorizon] = useState<MCHorizon>("3M");
+  // === Editable params — default to server-computed values ===
+  const [mu, setMu] = useState(mc.mu);
+  const [sigma, setSigma] = useState(mc.sigmaAdj);
+  const [horizonDays, setHorizonDays] = useState(90);
+  const [iterations, setIterations] = useState(10000);
   const [showParams, setShowParams] = useState(false);
+  const [result, setResult] = useState<GBMMonteCarloResult | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
 
-  const active = horizon === "3M" ? mc.threeMonth : mc.sixMonth;
-  const horizonLabel = horizon === "3M" ? "3 Monate (T=90)" : "6 Monate (T=180)";
-  const horizonDays = horizon === "3M" ? 90 : 180;
+  // Run simulation with current params
+  const runSim = () => {
+    setIsRunning(true);
+    setTimeout(() => {
+      const r = gbmMonteCarlo(
+        { currentPrice: data.btcPrice, mu, sigma, iterations, tradingDays: horizonDays },
+        0
+      );
+      setResult(r);
+      setIsRunning(false);
+    }, 20);
+  };
 
-  // Downside probability visual bar
-  const downsideWidth = Math.min(active.probBelow, 100);
-  const upsideWidth = 100 - downsideWidth;
+  // Active result: custom simulation or server-precomputed
+  const active = result ?? (horizonDays <= 95 ? mc.threeMonth : mc.sixMonth);
+  const serverActive = horizonDays <= 95 ? mc.threeMonth : mc.sixMonth;
+  const isCustom = result !== null;
+
+  // Map GBMMonteCarloResult fields to BTCMonteCarloHorizon-compatible display
+  const mean    = isCustom ? (result!.mean)  : (serverActive as any).mean ?? data.btcPrice * 1.05;
+  const p10val  = isCustom ? result!.p10     : (serverActive as any).p10 ?? (serverActive as any).p10BearishTarget;
+  const p50val  = isCustom ? result!.p50     : (serverActive as any).p50 ?? (serverActive as any).p50MedianTarget;
+  const p90val  = isCustom ? result!.p90     : (serverActive as any).p90 ?? (serverActive as any).p90BullishTarget;
+  const p5val   = isCustom ? result!.p5      : (serverActive as any).p5  ?? p10val * 0.9;
+  const p25val  = isCustom ? result!.p25     : (serverActive as any).p25 ?? p50val * 0.85;
+  const p75val  = isCustom ? result!.p75     : (serverActive as any).p75 ?? p90val * 0.85;
+  const p95val  = isCustom ? result!.p95     : (serverActive as any).p95 ?? p90val * 1.15;
+  const probBelow   = isCustom ? result!.downsideProb * 100   : (serverActive as any).probBelow ?? 50;
+  const probBelow10 = isCustom ? result!.downsideProb10 * 100 : (serverActive as any).probBelow10 ?? 35;
+  const probBelow20 = isCustom ? result!.downsideProb20 * 100 : (serverActive as any).probBelow20 ?? 20;
+
+  const horizonLabel = horizonDays <= 30 ? `1 Monat (T=${horizonDays})`
+    : horizonDays <= 95 ? `3 Monate (T=${horizonDays})`
+    : horizonDays <= 185 ? `6 Monate (T=${horizonDays})`
+    : horizonDays <= 370 ? `1 Jahr (T=${horizonDays})`
+    : `${Math.round(horizonDays / 365 * 10) / 10} Jahre (T=${horizonDays})`;
 
   return (
     <SectionCard number={6} title="Monte Carlo Simulation">
       <div className="space-y-4">
-        {/* GBM Formula reference */}
+        {/* Formula */}
         <div className="bg-muted/20 rounded-lg p-2 border border-border text-center">
           <span className="text-[10px] font-mono text-muted-foreground">
-            S(T) = S₀ × exp((μ − σ²/2) × T + σ × √T × Z) &nbsp;|&nbsp; Z ~ N(0,1) &nbsp;|&nbsp; 10.000 Iterationen
+            S(T) = S₀ × exp((μ − σ²/2) × T + σ × √T × Z) &nbsp;|&nbsp; Z ~ N(0,1) &nbsp;|&nbsp; {iterations.toLocaleString()} Iterationen
           </span>
         </div>
 
-        {/* Horizon toggle + Parameter toggle */}
-        <div className="flex items-center justify-between">
-          <div className="flex rounded-md border border-border overflow-hidden">
-            {(["3M", "6M"] as const).map(h => (
-              <button
-                key={h}
-                onClick={() => setHorizon(h)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  horizon === h ? "bg-primary text-primary-foreground" : "hover:bg-muted/50"
-                }`}
-              >
-                {h === "3M" ? "3 Monate" : "6 Monate"}
-              </button>
-            ))}
-          </div>
+        {/* Parameter toggle */}
+        <div className="flex justify-end">
           <button
             onClick={() => setShowParams(!showParams)}
-            className={`text-[10px] px-2.5 py-1 rounded border transition-colors ${
-              showParams ? "border-amber-500/50 text-amber-500 bg-amber-500/10" : "border-border text-muted-foreground hover:bg-muted/50"
+            className={`text-[10px] px-3 py-1.5 rounded border transition-colors flex items-center gap-1.5 ${
+              showParams ? "border-primary/50 text-primary bg-primary/10" : "border-border text-muted-foreground hover:bg-muted/50"
             }`}
           >
-            {showParams ? "Parameter ausblenden" : "Parameter anzeigen"}
+            ⚙ Parameter {showParams ? "ausblenden" : "anpassen"}
           </button>
         </div>
 
-        {/* Collapsible parameter details */}
+        {/* Editable param panel */}
         {showParams && (
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            <MetricCard label="Startkurs (S₀)" value={fmt(data.btcPrice)} />
-            <MetricCard label="μ (Drift)" value={mc.mu.toFixed(4)} />
-            <MetricCard label="σ (Basis)" value={mc.sigma.toFixed(4)} />
-            <MetricCard label="σ (adjustiert)" value={mc.sigmaAdj.toFixed(4)} subValue={mc.sigmaAdj > mc.sigma ? "×1.2 late-cycle" : "×1.0"} />
-            <MetricCard label="Horizont" value={`${horizonDays}d`} subValue={horizonLabel} />
+          <div className="bg-muted/20 rounded-lg border border-primary/20 p-4 space-y-4">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-primary mb-2">Drift & Volatilität</div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">μ (Drift p.a.)</label>
+                <input
+                  type="number" step="0.001" min="-0.5" max="2.0"
+                  value={mu}
+                  onChange={e => setMu(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+                <div className="text-[9px] text-muted-foreground mt-0.5">Server: {mc.mu.toFixed(4)} (GWS-basiert)</div>
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">σ (Volatilität p.a.)</label>
+                <input
+                  type="number" step="0.005" min="0.01" max="2.0"
+                  value={sigma}
+                  onChange={e => setSigma(Math.max(0.001, parseFloat(e.target.value) || mc.sigmaAdj))}
+                  className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+                <div className="text-[9px] text-muted-foreground mt-0.5">Server: {mc.sigmaAdj.toFixed(4)} (adj.)</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">Horizont (Tage)</label>
+                <input
+                  type="number" step="1" min="7" max="1825"
+                  value={horizonDays}
+                  onChange={e => setHorizonDays(Math.max(7, parseInt(e.target.value) || 90))}
+                  className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+                <div className="text-[9px] text-muted-foreground mt-0.5">90 = 3M | 180 = 6M | 252 = 1J | 365 = ~1.4J</div>
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">Iterationen</label>
+                <input
+                  type="number" step="1000" min="1000" max="50000"
+                  value={iterations}
+                  onChange={e => setIterations(Math.max(1000, parseInt(e.target.value) || 10000))}
+                  className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={runSim}
+                disabled={isRunning}
+                className="flex-1 bg-primary text-primary-foreground rounded px-4 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isRunning ? "⏳ Simuliert..." : "▶ Simulation starten"}
+              </button>
+              <button
+                onClick={() => { setMu(mc.mu); setSigma(mc.sigmaAdj); setHorizonDays(90); setIterations(10000); setResult(null); }}
+                className="text-[10px] text-muted-foreground hover:text-foreground border border-border rounded px-3 py-2"
+              >
+                ↺ Reset
+              </button>
+            </div>
+            {isCustom && (
+              <div className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-2.5 py-1.5">
+                ⚠ Benutzerdefinierte Simulation aktiv — μ={mu.toFixed(4)}, σ={sigma.toFixed(4)}, T={horizonDays}d, N={iterations.toLocaleString()}
+              </div>
+            )}
           </div>
         )}
 
-        {/* DOWNSIDE-WAHRSCHEINLICHKEIT box */}
+        {/* Summary metrics */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          <MetricCard label="Startkurs (S₀)" value={fmt(data.btcPrice)} />
+          <MetricCard label="μ (Drift)" value={mu.toFixed(4)} />
+          <MetricCard label="σ (adjustiert)" value={sigma.toFixed(4)} subValue={isCustom ? "Benutzerdefiniert" : (mc.sigmaAdj > mc.sigma ? "×1.2 late-cycle" : "×1.0")} />
+          <MetricCard label="Iterationen" value={iterations.toLocaleString()} />
+          <MetricCard label="Horizont" value={`${horizonDays}d`} subValue={horizonLabel} />
+        </div>
+
+        {/* Downside probabilities */}
         <div className="bg-muted/20 rounded-lg p-3 border border-border space-y-2.5">
-          <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Downside-Wahrscheinlichkeit ({horizon})</div>
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+            Downside-Wahrscheinlichkeit ({horizonLabel})
+          </div>
           <div className="grid grid-cols-3 gap-2">
-            <div className="bg-muted/30 border border-border rounded-lg p-2.5 text-center">
-              <div className="text-[9px] text-muted-foreground">P(Verlust) S(T) &lt; S(0)</div>
-              <div className="text-lg font-bold font-mono tabular-nums mt-0.5 text-red-500">{active.probBelow.toFixed(1)}%</div>
-            </div>
-            <div className="bg-muted/30 border border-border rounded-lg p-2.5 text-center">
-              <div className="text-[9px] text-muted-foreground">P(≥10% Verlust)</div>
-              <div className="text-lg font-bold font-mono tabular-nums mt-0.5 text-red-500">{active.downsideProb10.toFixed(1)}%</div>
-            </div>
-            <div className="bg-muted/30 border border-border rounded-lg p-2.5 text-center">
-              <div className="text-[9px] text-muted-foreground">P(≥20% Verlust)</div>
-              <div className="text-lg font-bold font-mono tabular-nums mt-0.5 text-red-500">{active.downsideProb20.toFixed(1)}%</div>
-            </div>
-          </div>
-          {/* Probability bar */}
-          <div className="flex items-center gap-2">
-            <span className="text-[9px] text-red-500 font-medium w-16 text-right">Downside</span>
-            <div className="flex-1 h-3 rounded-full overflow-hidden flex">
-              <div className="h-full bg-red-500/60 transition-all" style={{ width: `${downsideWidth}%` }} />
-              <div className="h-full bg-emerald-500/60 transition-all" style={{ width: `${upsideWidth}%` }} />
-            </div>
-            <span className="text-[9px] text-emerald-500 font-medium w-16">Upside</span>
-          </div>
-          <div className="flex justify-between text-[9px] text-muted-foreground font-mono">
-            <span>{active.probBelow.toFixed(1)}% Verlust</span>
-            <span>{(100 - active.probBelow).toFixed(1)}% Gewinn</span>
-          </div>
-        </div>
-
-        {/* Results KPIs */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <MetricCard
-            label="Mean (Erwartungswert)"
-            value={fmt(active.mean)}
-            subValue={pctChange(active.mean)}
-            color="text-purple-500"
-          />
-          <MetricCard
-            label="P10 (Bearish)"
-            value={fmt(active.p10)}
-            subValue={pctChange(active.p10)}
-            color="text-red-500"
-          />
-          <MetricCard
-            label="P50 (Median)"
-            value={fmt(active.p50)}
-            subValue={pctChange(active.p50)}
-            color="text-blue-500"
-          />
-          <MetricCard
-            label="P90 (Bullish)"
-            value={fmt(active.p90)}
-            subValue={pctChange(active.p90)}
-            color="text-emerald-500"
-          />
-        </div>
-
-        {/* Extended Percentiles */}
-        <div className="bg-muted/20 rounded-lg p-3 border border-border space-y-2">
-          <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Erweiterte Perzentile ({horizon})</div>
-          <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
             {[
-              { label: "P5", value: active.p5, color: "text-red-600" },
-              { label: "P10", value: active.p10, color: "text-red-500" },
-              { label: "P25", value: active.p25, color: "text-orange-500" },
-              { label: "P50", value: active.p50, color: "text-blue-500" },
-              { label: "P75", value: active.p75, color: "text-lime-500" },
-              { label: "P90", value: active.p90, color: "text-emerald-500" },
-              { label: "P95", value: active.p95, color: "text-emerald-600" },
-            ].map(p => (
-              <div key={p.label} className="bg-muted/30 border border-border rounded-lg p-2 text-center">
-                <div className="text-[9px] text-muted-foreground font-medium">{p.label}</div>
-                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${p.color}`}>{fmt(p.value)}</div>
-                <div className="text-[9px] text-muted-foreground font-mono">{pctChange(p.value)}</div>
+              { label: "P(Verlust) S(T) < S(0)", val: probBelow },
+              { label: "P(≥10% Verlust)", val: probBelow10 },
+              { label: "P(≥20% Verlust)", val: probBelow20 },
+            ].map(({ label, val }) => (
+              <div key={label} className="bg-muted/30 border border-border rounded-lg p-2.5 text-center">
+                <div className="text-[9px] text-muted-foreground">{label}</div>
+                <div className="text-lg font-bold font-mono tabular-nums mt-0.5 text-red-500">{val.toFixed(1)}%</div>
               </div>
             ))}
           </div>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-[10px] text-red-400">Downside</span>
+            <div className="flex-1 h-2.5 rounded-full overflow-hidden flex bg-muted/30">
+              <div className="h-full bg-red-500/70 rounded-l-full transition-all" style={{ width: `${Math.min(probBelow, 100)}%` }} />
+              <div className="h-full bg-emerald-500/70 rounded-r-full flex-1" />
+            </div>
+            <span className="text-[10px] text-emerald-400">Upside</span>
+          </div>
+          <div className="flex justify-between text-[9px] text-muted-foreground">
+            <span>{probBelow.toFixed(1)}% Verlust</span>
+            <span>{(100 - probBelow).toFixed(1)}% Gewinn</span>
+          </div>
         </div>
 
-        {/* Histogram */}
-        {active.histogram.length > 0 && (
-          <div className="bg-muted/20 rounded-lg p-3 border border-border space-y-2">
-            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
-              Preisverteilung — {horizonLabel}
+        {/* Percentile results */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[
+            { label: "MEAN (Erwartungswert)", val: mean, color: "text-purple-400" },
+            { label: "P10 (Bearish)",         val: p10val, color: "text-red-400" },
+            { label: "P50 (Median)",          val: p50val, color: "text-blue-400" },
+            { label: "P90 (Bullish)",         val: p90val, color: "text-emerald-400" },
+          ].map(({ label, val, color }) => val != null ? (
+            <div key={label} className="bg-muted/20 border border-border rounded-lg p-3 text-center">
+              <div className="text-[9px] uppercase tracking-wide text-muted-foreground">{label}</div>
+              <div className={`text-xl font-bold font-mono tabular-nums mt-1 ${color}`}>{fmt(val)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">{pct(val)}</div>
             </div>
-            <ResponsiveContainer width="100%" height={160}>
-              <BarChart data={active.histogram} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
-                <XAxis
-                  dataKey="bin"
-                  tick={{ fontSize: 8 }}
-                  interval={Math.max(0, Math.floor(active.histogram.length / 8) - 1)}
-                  angle={-30}
-                  textAnchor="end"
-                  height={35}
-                />
-                <YAxis hide />
-                <Tooltip
-                  contentStyle={tooltipStyle}
-                  formatter={(v: number, _: string, props: any) => {
-                    const mid = props?.payload?.midPrice;
-                    return [
-                      `${v.toLocaleString()} Pfade${mid ? ` (≈${fmt(mid)})` : ""}`,
-                      "Häufigkeit"
-                    ];
-                  }}
-                />
-                <Bar dataKey="count" radius={[2, 2, 0, 0]} isAnimationActive={false}>
-                  {active.histogram.map((d, i) => (
-                    <Cell
-                      key={i}
-                      fill={d.midPrice < data.btcPrice ? "rgba(239, 68, 68, 0.6)" : "rgba(34, 197, 94, 0.6)"}
-                    />
-                  ))}
-                </Bar>
-                <ReferenceLine
-                  x={active.histogram.findIndex(h => h.midPrice >= data.btcPrice)}
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  strokeDasharray="4 2"
-                  label={{ value: "Aktuell", position: "top", fontSize: 9, fill: "#f59e0b" }}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-            <div className="flex justify-between text-[9px] text-muted-foreground px-1">
-              <span className="text-red-500">← Verlust-Szenarien</span>
-              <span className="text-amber-500">Aktueller Preis: {fmt(data.btcPrice)}</span>
-              <span className="text-emerald-500">Gewinn-Szenarien →</span>
-            </div>
-          </div>
-        )}
+          ) : null)}
+        </div>
 
-        {/* RechenWeg */}
-        <RechenWeg
-          title="Monte Carlo GBM — Rechenweg"
-          steps={[
-            `Modell: Geometric Brownian Motion (GBM)`,
-            `S(T) = S₀ × exp((μ - σ²/2) × T + σ × √T × Z), Z ~ N(0,1)`,
-            `S₀ = $${data.btcPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}`,
-            `σ_basis = ${mc.sigma.toFixed(4)}, σ_adj = ${mc.sigmaAdj.toFixed(4)} (×${mc.sigmaAdj > mc.sigma ? "1.2 late-cycle Aufschlag" : "1.0 — keine Anpassung"})`,
-            `μ = ${mc.mu.toFixed(4)} (gewichteter Drift aus GWS)`,
-            `10.000 Iterationen, Horizont T = ${horizonDays} Tage`,
-            `Histogramm: 30 Bins, 2% Ausreißer-Trimming`,
-          ]}
-        />
+        {/* Extended percentiles */}
+        <div className="bg-muted/20 rounded-lg p-3 border border-border">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-2">
+            Erweiterte Perzentile ({horizonLabel})
+          </div>
+          <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+            {[
+              { label: "P5",  val: p5val,  color: "text-red-500" },
+              { label: "P10", val: p10val, color: "text-red-400" },
+              { label: "P25", val: p25val, color: "text-orange-400" },
+              { label: "P50", val: p50val, color: "text-blue-400" },
+              { label: "P75", val: p75val, color: "text-teal-400" },
+              { label: "P90", val: p90val, color: "text-emerald-400" },
+              { label: "P95", val: p95val, color: "text-emerald-300" },
+            ].map(({ label, val, color }) => val != null ? (
+              <div key={label} className="bg-muted/30 rounded p-2 text-center">
+                <div className="text-[9px] text-muted-foreground">{label}</div>
+                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${color}`}>{fmt(val)}</div>
+                <div className="text-[9px] text-muted-foreground">{pct(val)}</div>
+              </div>
+            ) : null)}
+          </div>
+        </div>
       </div>
     </SectionCard>
   );
