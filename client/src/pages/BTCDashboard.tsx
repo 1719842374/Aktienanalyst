@@ -410,7 +410,7 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
   const [mu, setMu] = useState(muAnnDefault);
   const [sigma, setSigma] = useState(sigmaAnnDefault);
   const [horizonDays, setHorizonDays] = useState(90);
-  const [iterations, setIterations] = useState(10000);
+  const [iterations, setIterations] = useState(50000);
   const [showParams, setShowParams] = useState(false);
   const [result, setResult] = useState<GBMMonteCarloResult | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -458,7 +458,7 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
         {/* Formula */}
         <div className="bg-muted/20 rounded-lg p-2 border border-border text-center">
           <span className="text-[10px] font-mono text-muted-foreground">
-            S(T) = S₀ × exp((μ − σ²/2) × T + σ × √T × Z) &nbsp;|&nbsp; Z ~ N(0,1) &nbsp;|&nbsp; {iterations.toLocaleString()} Iterationen
+            S(T) = S₀ × exp((μ − σ²/2) × T + σ × √T × Z) &nbsp;|&nbsp; Z ~ N(0,1) &nbsp;|&nbsp; {iterations.toLocaleString()} Iter. &nbsp;|&nbsp; T={horizonDays}d ({horizonLabel})
           </span>
         </div>
 
@@ -503,42 +503,21 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">Horizont (Tage)</label>
-                {/* Quick presets */}
-                <div className="flex gap-1 mb-1.5 flex-wrap">
-                  {[
-                    { label: "3M", days: 90 },
-                    { label: "6M", days: 180 },
-                    { label: "1J", days: 252 },
-                    { label: "2J", days: 504 },
-                    { label: "3J", days: 756 },
-                    { label: "5J", days: 1260 },
-                  ].map(({ label, days }) => (
-                    <button
-                      key={label}
-                      onClick={() => setHorizonDays(days)}
-                      className={`text-[10px] px-2 py-1 rounded border transition-colors ${
-                        horizonDays === days
-                          ? "border-primary bg-primary/20 text-primary font-semibold"
-                          : "border-border text-muted-foreground hover:bg-muted/50"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {/* Free text input */}
                 <input
-                  type="number" step="1" min="7" max="3650"
+                  type="number" step="1" min="1" max="3650"
                   value={horizonDays}
-                  onChange={e => setHorizonDays(Math.max(7, Math.min(3650, parseInt(e.target.value) || 90)))}
+                  onChange={e => {
+                    const v = parseInt(e.target.value);
+                    if (!isNaN(v) && v >= 1) setHorizonDays(v);
+                  }}
                   className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
                 />
-                <div className="text-[9px] text-muted-foreground mt-0.5">Tage eingeben oder Preset wählen</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">Tage: 90=3M · 180=6M · 252=1J · 504=2J · 1260=5J</div>
               </div>
               <div>
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">Iterationen</label>
                 <input
-                  type="number" step="1000" min="1000" max="50000"
+                  type="number" step="1" min="100" max="100000"
                   value={iterations}
                   onChange={e => setIterations(Math.max(1000, parseInt(e.target.value) || 10000))}
                   className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
