@@ -394,24 +394,29 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
       .filter(d => d.price > 0);
   }
 
-  // Fallback: CoinGecko market_chart if Blockchain.com failed
+  // Fallback: CoinGecko market_chart if Blockchain.com failed.
+  // Try the full 1825d daily history first; if that 429s, retry with 365d
+  // (no interval param) which returns more granular data and a smaller payload.
   if (allPriceData.length === 0) {
-    try {
-      const nowSec = Math.floor(Date.now() / 1000);
-      const parsed = await fetchJSON(
-        `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1825&interval=daily`,
-        60000
-      );
-      if (parsed?.prices && Array.isArray(parsed.prices)) {
-        const dayMap = new Map<string, number>();
-        for (const p of parsed.prices as [number, number][]) {
-          const d = new Date(p[0]).toISOString().split("T")[0];
-          dayMap.set(d, p[1]);
+    const cgUrls = [
+      "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1825&interval=daily",
+      "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=365",
+    ];
+    for (const url of cgUrls) {
+      try {
+        const parsed = await fetchJSON(url, 60000);
+        if (parsed?.prices && Array.isArray(parsed.prices)) {
+          const dayMap = new Map<string, number>();
+          for (const p of parsed.prices as [number, number][]) {
+            const d = new Date(p[0]).toISOString().split("T")[0];
+            dayMap.set(d, p[1]);
+          }
+          allPriceData = Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
+          if (allPriceData.length > 0) break;
         }
-        allPriceData = Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
+      } catch {
+        // try next fallback URL
       }
-    } catch {
-      // swallow
     }
   }
 
@@ -517,12 +522,15 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
     // Method 1: 200DMA proxy (preferred if we have 200+ days of price data)
     let realizedPrice: number | null = null;
     if (allPriceData.length >= 200) {
-      const last200 = allPriceData.slice(-200).map(p => p[1]);
+      const last200 = allPriceData.slice(-200).map(p => p.price);
       const ma200 = last200.reduce((a, b) => a + b, 0) / 200;
       realizedPrice = ma200 * 0.92; // calibrated multiplier
       mvrvSource = "200DMA × 0.92 (Realized Price proxy)";
-    } else if (allPriceData.length >= 50) {
-      // Method 2: Power-Law fallback if not enough history
+    }
+
+    // Method 2: Power-Law fallback — always works (no price history needed),
+    // so MVRV Z-Score is never N/A even when the price feed is rate-limited.
+    if (!realizedPrice || realizedPrice <= 0) {
       const genesisD = new Date("2009-01-03");
       const daysSG = Math.floor((Date.now() - genesisD.getTime()) / 86400000);
       const plFairValue = 1.0117e-17 * Math.pow(daysSG, 5.82);
@@ -542,7 +550,7 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
 
   // ETF flow fallback when GitHub parse fails — use 7d price momentum
   if (!etfFlowValue && allPriceData.length >= 8) {
-    const p = allPriceData.map(d => typeof d === 'object' ? (d as any).price ?? d[1] : d);
+    const p = allPriceData.map(d => d.price);
     const last8 = p.slice(-8);
     const ret7d = (last8[last8.length - 1] - last8[0]) / last8[0] * 100;
     if (ret7d > 8)       { etfFlowValue = `+${ret7d.toFixed(1)}% 7d (Starker Inflow-Proxy)`; etfFlowScore = 1;    etfFlowSource = "7d Momentum Proxy"; }

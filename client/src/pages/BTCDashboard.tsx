@@ -913,39 +913,35 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
   const bc = data.bullConditions;
   const isBuySignal = bc.priceAboveMA200 && bc.ma50AboveMA200 && bc.macdAboveZero && bc.macdRising;
 
-  // Y-axis domain — only consider visible/toggled lines with valid positive values
+  // Y-axis domain — scale to the BTC price series, not the multiplier overlays.
+  // Multiplier overlays (2Y MA ×5, Pi 350d×2) can reach 3-5× the BTC price and
+  // would otherwise stretch the axis, compressing the price line into the bottom.
+  // We cap the top at btcMax × 1.6 so overlays still render but are clipped above
+  // the visible area (which correctly marks "above this = danger zone").
   const yDomain = useMemo(() => {
     let minVal = Infinity;
-    let maxVal = -Infinity;
+    let btcMax = -Infinity;
     for (const d of chartData) {
       if (d.price > 0) {
         if (d.price < minVal) minVal = d.price;
-        if (d.price > maxVal) maxVal = d.price;
+        if (d.price > btcMax) btcMax = d.price;
       }
+      // Standard MAs (ma20/50/100/200) track the price closely, so include them
+      // in the min calculation to keep the lower bound sensible.
       for (const ma of MA_LINES) {
         if (!visibleMAs.has(ma.key)) continue;
         const v = d[ma.key as keyof TechChartPoint] as number | null;
-        if (v && v > 0) {
-          if (v < minVal) minVal = v;
-          if (v > maxVal) maxVal = v;
-        }
-      }
-      for (const o of BTC_OVERLAYS) {
-        if (!visibleOverlays.has(o.key)) continue;
-        const v = d[o.key as keyof TechChartPoint] as number | null;
-        if (v && v > 0) {
-          if (v < minVal) minVal = v;
-          if (v > maxVal) maxVal = v;
-        }
+        if (v && v > 0 && v < minVal) minVal = v;
       }
     }
     // Safeguard: never go below 0, ensure valid range
-    if (!isFinite(minVal) || !isFinite(maxVal) || maxVal <= 0) {
+    if (!isFinite(minVal) || !isFinite(btcMax) || btcMax <= 0) {
       return [0, 100000] as [number, number];
     }
-    const padding = (maxVal - minVal) * 0.05;
-    return [Math.max(0, minVal - padding), maxVal + padding] as [number, number];
-  }, [chartData, visibleMAs, visibleOverlays]);
+    const lower = Math.max(0, minVal * 0.85);
+    const upper = btcMax * 1.6; // 60% headroom above highest BTC price
+    return [lower, upper] as [number, number];
+  }, [chartData, visibleMAs]);
 
   // Format helpers
   const formatDate = (date: string) => {
