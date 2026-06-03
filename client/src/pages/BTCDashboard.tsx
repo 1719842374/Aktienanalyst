@@ -410,7 +410,9 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
   const [mu, setMu] = useState(muAnnDefault);
   const [sigma, setSigma] = useState(sigmaAnnDefault);
   const [horizonDays, setHorizonDays] = useState(90);
+  const [horizonInput, setHorizonInput] = useState('90'); // string for free text editing
   const [iterations, setIterations] = useState(50000);
+  const [iterationsInput, setIterationsInput] = useState('50000'); // string for free text editing
   const [showParams, setShowParams] = useState(false);
   const [result, setResult] = useState<GBMMonteCarloResult | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -507,17 +509,32 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  value={horizonDays}
+                  value={horizonInput}
                   onChange={e => {
+                    // Only allow digits — update display string immediately
                     const raw = e.target.value.replace(/[^0-9]/g, '');
-                    const v = parseInt(raw, 10);
-                    if (!isNaN(v) && v >= 1 && v <= 3650) setHorizonDays(v);
-                    else if (raw === '') setHorizonDays(90);
+                    setHorizonInput(raw);
+                  }}
+                  onBlur={() => {
+                    // Commit to actual value only when leaving field
+                    const v = parseInt(horizonInput, 10);
+                    const valid = !isNaN(v) && v >= 1 && v <= 3650 ? v : horizonDays;
+                    setHorizonDays(valid);
+                    setHorizonInput(String(valid));
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const v = parseInt(horizonInput, 10);
+                      const valid = !isNaN(v) && v >= 1 && v <= 3650 ? v : horizonDays;
+                      setHorizonDays(valid);
+                      setHorizonInput(String(valid));
+                      (e.target as HTMLInputElement).blur();
+                    }
                   }}
                   className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
                   placeholder="z.B. 252"
                 />
-                <div className="text-[9px] text-muted-foreground mt-0.5">Tage eingeben: 90=3M · 180=6M · 252=1J · 504=2J · 1260=5J</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">Tage eingeben (1–3650): 90=3M · 180=6M · 252=1J · 504=2J · 1260=5J</div>
               </div>
               <div>
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">Iterationen</label>
@@ -525,12 +542,25 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  value={iterations}
+                  value={iterationsInput}
                   onChange={e => {
                     const raw = e.target.value.replace(/[^0-9]/g, '');
-                    const v = parseInt(raw, 10);
-                    if (!isNaN(v) && v >= 100 && v <= 200000) setIterations(v);
-                    else if (raw === '') setIterations(50000);
+                    setIterationsInput(raw);
+                  }}
+                  onBlur={() => {
+                    const v = parseInt(iterationsInput, 10);
+                    const valid = !isNaN(v) && v >= 100 && v <= 200000 ? v : iterations;
+                    setIterations(valid);
+                    setIterationsInput(String(valid));
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const v = parseInt(iterationsInput, 10);
+                      const valid = !isNaN(v) && v >= 100 && v <= 200000 ? v : iterations;
+                      setIterations(valid);
+                      setIterationsInput(String(valid));
+                      (e.target as HTMLInputElement).blur();
+                    }
                   }}
                   className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
                   placeholder="z.B. 50000"
@@ -546,7 +576,7 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
                 {isRunning ? "⏳ Simuliert..." : "▶ Simulation starten"}
               </button>
               <button
-                onClick={() => { setMu(muAnnDefault); setSigma(sigmaAnnDefault); setHorizonDays(90); setIterations(10000); setResult(null); }}
+                onClick={() => { setMu(muAnnDefault); setSigma(sigmaAnnDefault); setHorizonDays(90); setHorizonInput('90'); setIterations(50000); setIterationsInput('50000'); setResult(null); }}
                 className="text-[10px] text-muted-foreground hover:text-foreground border border-border rounded px-3 py-2"
               >
                 ↺ Reset
