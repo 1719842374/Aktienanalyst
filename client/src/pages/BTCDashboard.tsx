@@ -503,13 +503,37 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">Horizont (Tage)</label>
+                {/* Quick presets */}
+                <div className="flex gap-1 mb-1.5 flex-wrap">
+                  {[
+                    { label: "3M", days: 90 },
+                    { label: "6M", days: 180 },
+                    { label: "1J", days: 252 },
+                    { label: "2J", days: 504 },
+                    { label: "3J", days: 756 },
+                    { label: "5J", days: 1260 },
+                  ].map(({ label, days }) => (
+                    <button
+                      key={label}
+                      onClick={() => setHorizonDays(days)}
+                      className={`text-[10px] px-2 py-1 rounded border transition-colors ${
+                        horizonDays === days
+                          ? "border-primary bg-primary/20 text-primary font-semibold"
+                          : "border-border text-muted-foreground hover:bg-muted/50"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {/* Free text input */}
                 <input
-                  type="number" step="1" min="7" max="1825"
+                  type="number" step="1" min="7" max="3650"
                   value={horizonDays}
-                  onChange={e => setHorizonDays(Math.max(7, parseInt(e.target.value) || 90))}
+                  onChange={e => setHorizonDays(Math.max(7, Math.min(3650, parseInt(e.target.value) || 90)))}
                   className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
                 />
-                <div className="text-[9px] text-muted-foreground mt-0.5">90 = 3M | 180 = 6M | 252 = 1J | 365 = ~1.4J</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">Tage eingeben oder Preset wählen</div>
               </div>
               <div>
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">Iterationen</label>
