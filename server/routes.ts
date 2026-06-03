@@ -5943,6 +5943,125 @@ export async function registerRoutes(server: Server, app: Express) {
 
       console.log(`[BTC] Power-Law: fair=$${fairValue.toFixed(0)}, dev=${deviationPercent.toFixed(1)}%, signal=${powerSignal}`);
 
+      // === 6b. Fetch BTC price history for MVRV + RSI ===
+      let historicalPrices: number[] = [];
+      try {
+        const bcRaw = execSync(
+          `curl -sL "https://api.blockchain.info/charts/market-price?timespan=400days&sampled=false&format=json&cors=true"`,
+          { encoding: "utf-8", timeout: 30000 }
+        );
+        const bcData = JSON.parse(bcRaw);
+        if (bcData?.values && Array.isArray(bcData.values)) {
+          historicalPrices = bcData.values.map((p: any) => p.y).filter((v: number) => v > 0);
+          console.log(`[BTC] Historical prices: ${historicalPrices.length} days`);
+        }
+      } catch (e: any) {
+        console.warn("[BTC] Historical price fetch failed:", e?.message?.substring(0, 100));
+      }
+
+      // === 6c. MVRV Z-Score (200d MA proxy) ===
+      let mvrvZScore: number | null = null;
+      let mvrvSource = "N/A";
+      let mvrvValue = "N/A";
+      if (historicalPrices.length >= 200) {
+        const last200 = historicalPrices.slice(-200);
+        const ma200 = last200.reduce((a: number, b: number) => a + b, 0) / 200;
+        const realizedPrice = ma200 * 0.92;
+        const mvrv = btcPrice / realizedPrice;
+        const MVRV_MEAN = 1.45, MVRV_STDDEV = 1.15;
+        mvrvZScore = Math.round(((mvrv - MVRV_MEAN) / MVRV_STDDEV) * 100) / 100;
+        mvrvValue = `${mvrvZScore.toFixed(2)} (${mvrv.toFixed(2)}× 200d MA)`;
+        mvrvSource = "200DMA × 0.92 proxy";
+      } else {
+        // Power-Law fallback — always works
+        const plFV = 1.0117e-17 * Math.pow(daysSinceGenesis, 5.82);
+        const realizedPricePL = plFV * 0.62;
+        const mvrv = btcPrice / realizedPricePL;
+        const MVRV_MEAN = 1.45, MVRV_STDDEV = 1.15;
+        mvrvZScore = Math.round(((mvrv - MVRV_MEAN) / MVRV_STDDEV) * 100) / 100;
+        mvrvValue = `${mvrvZScore.toFixed(2)} (Power-Law proxy)`;
+        mvrvSource = "Power-Law × 0.62 proxy";
+      }
+      let mvrvScore = 0;
+      if (mvrvZScore !== null) {
+        if (mvrvZScore < -0.5) mvrvScore = 1;
+        else if (mvrvZScore > 3) mvrvScore = -1;
+        else if (mvrvZScore > 2) mvrvScore = -0.5;
+      }
+
+      // === 6d. RSI (14-period from daily prices) ===
+      let weeklyRSI: number | null = null;
+      let rsiSource = "N/A";
+      if (historicalPrices.length >= 14) {
+        const prices = historicalPrices.slice(-28); // last 28 days
+        let avgGain = 0, avgLoss = 0;
+        for (let i = 1; i < 15; i++) {
+          const change = prices[i] - prices[i - 1];
+          if (change > 0) avgGain += change; else avgLoss += Math.abs(change);
+        }
+        avgGain /= 14; avgLoss /= 14;
+        for (let i = 14; i < prices.length; i++) {
+          const change = prices[i] - prices[i - 1];
+          const gain = change > 0 ? change : 0;
+          const loss = change < 0 ? Math.abs(change) : 0;
+          avgGain = (avgGain * 13 + gain) / 14;
+          avgLoss = (avgLoss * 13 + loss) / 14;
+        }
+        weeklyRSI = avgLoss === 0 ? 100 : Math.round((100 - (100 / (1 + avgGain / avgLoss))) * 10) / 10;
+        rsiSource = "Berechnet (Blockchain.info)";
+        console.log(`[BTC] RSI(14): ${weeklyRSI}`);
+      }
+      let rsiScore = 0;
+      if (weeklyRSI !== null) {
+        if (weeklyRSI < 30) rsiScore = 1;
+        else if (weeklyRSI < 40) rsiScore = 0.5;
+        else if (weeklyRSI > 70) rsiScore = -1;
+        else if (weeklyRSI > 60) rsiScore = -0.5;
+      }
+
+      // === 6e. Hashrate trend ===
+      let hashrateScore = 0;
+      let hashrateDisplayValue = "N/A";
+      let hashrateSource = "Default";
+      try {
+        const hrRaw = execSync(
+          `curl -sL "https://mempool.space/api/v1/mining/hashrate/3m"`,
+          { encoding: "utf-8", timeout: 15000 }
+        );
+        const hrData = JSON.parse(hrRaw);
+        if (hrData?.hashrates && Array.isArray(hrData.hashrates) && hrData.hashrates.length >= 2) {
+          const rates = hrData.hashrates.map((h: any) => h.avgHashrate);
+          const first = rates[0], last = rates[rates.length - 1];
+          const changePercent = ((last - first) / first) * 100;
+          const ehPerSec = (last / 1e18).toFixed(0);
+          hashrateDisplayValue = `${ehPerSec} EH/s (${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(1)}% 90d)`;
+          hashrateSource = "mempool.space";
+          if (changePercent > 5) hashrateScore = 1;
+          else if (changePercent > 0) hashrateScore = 0.5;
+          else if (changePercent < -10) hashrateScore = -1;
+          else if (changePercent < 0) hashrateScore = -0.5;
+          console.log(`[BTC] Hashrate: ${hashrateDisplayValue}`);
+        }
+      } catch (e: any) {
+        console.warn("[BTC] Hashrate fetch failed:", e?.message?.substring(0, 100));
+        hashrateDisplayValue = "Stable"; hashrateScore = 0; hashrateSource = "Default";
+      }
+
+      // === 6f. ETF Net Flows — 7d momentum proxy ===
+      let etfFlowValue = "N/A";
+      let etfFlowScore = 0;
+      let etfFlowSource = "N/A";
+      if (historicalPrices.length >= 8) {
+        const last8 = historicalPrices.slice(-8);
+        const ret7d = (last8[last8.length - 1] - last8[0]) / last8[0] * 100;
+        if (ret7d > 8)       { etfFlowScore = 1;    etfFlowValue = `+${ret7d.toFixed(1)}% 7d (Starker Inflow-Proxy)`;  etfFlowSource = "7d Momentum Proxy"; }
+        else if (ret7d > 3)  { etfFlowScore = 0.5;  etfFlowValue = `+${ret7d.toFixed(1)}% 7d (Inflow-Signal)`;        etfFlowSource = "7d Momentum Proxy"; }
+        else if (ret7d < -8) { etfFlowScore = -1;   etfFlowValue = `${ret7d.toFixed(1)}% 7d (Starker Outflow-Proxy)`; etfFlowSource = "7d Momentum Proxy"; }
+        else if (ret7d < -3) { etfFlowScore = -0.5; etfFlowValue = `${ret7d.toFixed(1)}% 7d (Outflow-Signal)`;        etfFlowSource = "7d Momentum Proxy"; }
+        else                 { etfFlowScore = 0;    etfFlowValue = `${ret7d.toFixed(1)}% 7d (Neutral)`;               etfFlowSource = "7d Momentum Proxy"; }
+        console.log(`[BTC] ETF proxy: ${etfFlowValue}`);
+      }
+
       // === 7. Indicator Scoring ===
       // F&G score
       let fgScore = 0;
@@ -5960,11 +6079,11 @@ export async function registerRoutes(server: Server, app: Express) {
       else if (dxy > 105) dxyScore = -1;
 
       const indicators = [
-        { name: "MVRV Z-Score", value: "N/A (default)", score: 0, weight: 0.20, source: "Default (neutral)" },
-        { name: "RSI (Weekly)", value: "N/A (default)", score: 0, weight: 0.15, source: "Default (neutral)" },
+        { name: "MVRV Z-Score", value: mvrvValue, score: mvrvScore, weight: 0.20, source: mvrvSource },
+        { name: "RSI (Weekly)", value: weeklyRSI !== null ? weeklyRSI.toFixed(1) : "N/A", score: rsiScore, weight: 0.15, source: weeklyRSI !== null ? rsiSource : "N/A" },
         { name: "Fear & Greed", value: `${fearGreedIndex} (${fearGreedLabel})`, score: fgScore, weight: 0.10, source: "alternative.me" },
-        { name: "Hashrate Trend", value: "Stable", score: 1, weight: 0.10, source: "Default (stable growth)" },
-        { name: "ETF Net Flows", value: "N/A (default)", score: 0, weight: 0.15, source: "Default (neutral)" },
+        { name: "Hashrate Trend", value: hashrateDisplayValue, score: hashrateScore, weight: 0.10, source: hashrateSource },
+        { name: "ETF Net Flows", value: etfFlowValue, score: etfFlowScore, weight: 0.15, source: etfFlowSource },
         { name: "Macro (Fed/M2)", value: `FFR ${fedFundsRate}%`, score: macroScore, weight: 0.15, source: "FRED" },
         { name: "DXY", value: `${dxy.toFixed(2)}`, score: dxyScore, weight: 0.15, source: "Yahoo Finance" },
       ].map(ind => ({ ...ind, weighted: ind.score * ind.weight }));
