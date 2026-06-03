@@ -380,6 +380,20 @@ export async function analyzeBTC(): Promise<BTCAnalysis> {
     else etfFlowScore = -1;                       // strong outflows
   }
 
+  // ETF flow fallback: 7-day price momentum when GitHub fetch fails or returns nothing
+  if (!etfFlowValue && allPriceData.length >= 8) {
+    const prices = allPriceData.map((p: any) => Array.isArray(p) ? p[1] : p.price).filter(Boolean) as number[];
+    if (prices.length >= 8) {
+      const last8 = prices.slice(-8);
+      const ret7d = (last8[last8.length - 1] - last8[0]) / last8[0] * 100;
+      if (ret7d > 8)       { etfFlowScore = 1;    etfFlowValue = `+${ret7d.toFixed(1)}% 7d (Starker Inflow-Proxy)`;  etfFlowSource = "7d Momentum Proxy"; }
+      else if (ret7d > 3)  { etfFlowScore = 0.5;  etfFlowValue = `+${ret7d.toFixed(1)}% 7d (Inflow-Signal)`;        etfFlowSource = "7d Momentum Proxy"; }
+      else if (ret7d < -8) { etfFlowScore = -1;   etfFlowValue = `${ret7d.toFixed(1)}% 7d (Starker Outflow-Proxy)`; etfFlowSource = "7d Momentum Proxy"; }
+      else if (ret7d < -3) { etfFlowScore = -0.5; etfFlowValue = `${ret7d.toFixed(1)}% 7d (Outflow-Signal)`;        etfFlowSource = "7d Momentum Proxy"; }
+      else                 { etfFlowScore = 0;    etfFlowValue = `${ret7d.toFixed(1)}% 7d (Neutral)`;               etfFlowSource = "7d Momentum Proxy"; }
+    }
+  }
+
   // === 2. Parse Blockchain.com historical data ===
   let allPriceData: { date: string; price: number }[] = [];
 

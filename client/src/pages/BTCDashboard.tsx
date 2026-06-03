@@ -316,7 +316,7 @@ function Section4PowerLaw({ data }: { data: BTCAnalysis }) {
         <MetricCard
           label="Fair Value in 6 Monaten"
           value={`$${pl.fairValue6M.toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
-          subValue={`+${(((pl.fairValue6M - pl.fairValue) / pl.fairValue) * 100).toFixed(1)}% vs. heute`}
+          subValue={`${(((pl.fairValue6M - data.btcPrice) / data.btcPrice) * 100) >= 0 ? "+" : ""}${(((pl.fairValue6M - data.btcPrice) / data.btcPrice) * 100).toFixed(1)}% vs. BTC-Kurs`}
         />
 
         <RechenWeg
