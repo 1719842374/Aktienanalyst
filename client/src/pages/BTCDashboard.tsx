@@ -14,6 +14,7 @@ import {
   LineChart as LineChartIcon, Target, Scale, BarChart3, Dice6,
   Menu, X, ChevronRight, Gauge, Layers, ArrowLeft,
   CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff,
+  RefreshCw,
 } from "lucide-react";
 import {
   LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -2066,18 +2067,21 @@ export default function BTCDashboard() {
   const [, setLocation] = useLocation();
 
   const analyzeMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts?: { force?: boolean }) => {
       try {
-        return await analyzeBTC() as BTCAnalysis;
+        return await analyzeBTC(opts?.force) as BTCAnalysis;
       } catch {
         return BTC_FALLBACK_DATA;
       }
     },
     onSuccess: (result) => {
       setData(result);
-      mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     },
   });
+
+  const handleRefresh = () => {
+    analyzeMutation.mutate({ force: true });
+  };
 
   const scrollToSection = useCallback((id: number) => {
     const el = sectionRefs.current[id];
@@ -2114,6 +2118,14 @@ export default function BTCDashboard() {
               <span className="font-mono tabular-nums font-semibold">
                 ${data.btcPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
               </span>
+              <button
+                onClick={handleRefresh}
+                disabled={analyzeMutation.isPending}
+                title="Analyse neu laden (Cache leeren)"
+                className="ml-1 p-1 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${analyzeMutation.isPending ? "animate-spin" : ""}`} />
+              </button>
             </div>
           )}
           <button
