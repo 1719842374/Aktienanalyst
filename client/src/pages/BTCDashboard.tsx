@@ -402,9 +402,13 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
     return p >= 0 ? `+${p.toFixed(1)}%` : `${p.toFixed(1)}%`;
   };
 
-  // === Editable params — default to server-computed values ===
-  const [mu, setMu] = useState(mc.mu);
-  const [sigma, setSigma] = useState(mc.sigmaAdj);
+  // === Editable params — ANNUALIZED (gbmMonteCarlo expects annual mu/sigma) ===
+  // Convert daily -> annual: muAnn = muDaily * 252, sigmaAnn = sigmaDaily * sqrt(252)
+  const TRADING_DAYS = 252;
+  const muAnnDefault    = Math.round(mc.mu * TRADING_DAYS * 10000) / 10000;
+  const sigmaAnnDefault = Math.round(mc.sigmaAdj * Math.sqrt(TRADING_DAYS) * 10000) / 10000;
+  const [mu, setMu] = useState(muAnnDefault);
+  const [sigma, setSigma] = useState(sigmaAnnDefault);
   const [horizonDays, setHorizonDays] = useState(90);
   const [iterations, setIterations] = useState(10000);
   const [showParams, setShowParams] = useState(false);
@@ -483,7 +487,7 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
                   onChange={e => setMu(parseFloat(e.target.value) || 0)}
                   className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
                 />
-                <div className="text-[9px] text-muted-foreground mt-0.5">Server: {mc.mu.toFixed(4)} (GWS-basiert)</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">Server: {muAnnDefault.toFixed(4)} p.a. (tgl. {mc.mu.toFixed(4)} × 252)</div>
               </div>
               <div>
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">σ (Volatilität p.a.)</label>
@@ -493,7 +497,7 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
                   onChange={e => setSigma(Math.max(0.001, parseFloat(e.target.value) || mc.sigmaAdj))}
                   className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
                 />
-                <div className="text-[9px] text-muted-foreground mt-0.5">Server: {mc.sigmaAdj.toFixed(4)} (adj.)</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">Server: {sigmaAnnDefault.toFixed(4)} p.a. (tgl. {mc.sigmaAdj.toFixed(4)} × √252)</div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -526,7 +530,7 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
                 {isRunning ? "⏳ Simuliert..." : "▶ Simulation starten"}
               </button>
               <button
-                onClick={() => { setMu(mc.mu); setSigma(mc.sigmaAdj); setHorizonDays(90); setIterations(10000); setResult(null); }}
+                onClick={() => { setMu(muAnnDefault); setSigma(sigmaAnnDefault); setHorizonDays(90); setIterations(10000); setResult(null); }}
                 className="text-[10px] text-muted-foreground hover:text-foreground border border-border rounded px-3 py-2"
               >
                 ↺ Reset
@@ -543,8 +547,8 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
         {/* Summary metrics */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
           <MetricCard label="Startkurs (S₀)" value={fmt(data.btcPrice)} />
-          <MetricCard label="μ (Drift)" value={mu.toFixed(4)} />
-          <MetricCard label="σ (adjustiert)" value={sigma.toFixed(4)} subValue={isCustom ? "Benutzerdefiniert" : (mc.sigmaAdj > mc.sigma ? "×1.2 late-cycle" : "×1.0")} />
+          <MetricCard label="μ (p.a.)" value={mu.toFixed(4)} />
+          <MetricCard label="σ (p.a.)" value={sigma.toFixed(4)} subValue={isCustom ? "Benutzerdefiniert" : "annualisiert"} />
           <MetricCard label="Iterationen" value={iterations.toLocaleString()} />
           <MetricCard label="Horizont" value={`${horizonDays}d`} subValue={horizonLabel} />
         </div>
