@@ -504,23 +504,36 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
               <div>
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">Horizont (Tage)</label>
                 <input
-                  type="number" step="1" min="1" max="3650"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={horizonDays}
                   onChange={e => {
-                    const v = parseInt(e.target.value);
-                    if (!isNaN(v) && v >= 1) setHorizonDays(v);
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    const v = parseInt(raw, 10);
+                    if (!isNaN(v) && v >= 1 && v <= 3650) setHorizonDays(v);
+                    else if (raw === '') setHorizonDays(90);
                   }}
                   className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  placeholder="z.B. 252"
                 />
-                <div className="text-[9px] text-muted-foreground mt-0.5">Tage: 90=3M · 180=6M · 252=1J · 504=2J · 1260=5J</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">Tage eingeben: 90=3M · 180=6M · 252=1J · 504=2J · 1260=5J</div>
               </div>
               <div>
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide block mb-1">Iterationen</label>
                 <input
-                  type="number" step="1" min="100" max="100000"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={iterations}
-                  onChange={e => setIterations(Math.max(1000, parseInt(e.target.value) || 10000))}
+                  onChange={e => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    const v = parseInt(raw, 10);
+                    if (!isNaN(v) && v >= 100 && v <= 200000) setIterations(v);
+                    else if (raw === '') setIterations(50000);
+                  }}
                   className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  placeholder="z.B. 50000"
                 />
               </div>
             </div>
