@@ -87,8 +87,6 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
 
   // Use backend catalysts
   const catalysts = data.catalysts;
-  // Smart Catalyst-Base-Selektor: prüft Plausibilität (DCF + Catalyst-Upside
-  // muss ≥ 70% des Kurses ergeben) bevor DCF als Basis genommen wird.
   const rawTotalUpside = catalysts.reduce((sum, c) => sum + c.gb, 0);
   const catalystBaseInfo = selectCatalystBase(
     conservativeDCF.perShare,
@@ -111,10 +109,16 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
   }, [data.historicalPrices]);
   const rsl = calculateRSL(data.currentPrice, prices26w);
 
+  // === Reverse DCF — identisch mit Section10 (relative Schwellen) ===
   const reverseDCF = calculateReverseDCF({
-    currentPrice: data.currentPrice, fcfBase: data.fcfTTM,
+    currentPrice: data.currentPrice,
+    fcfBase: data.fcfTTM,
     wacc: conservativeDCF.wacc,
-    sharesOutstanding: data.sharesOutstanding, netDebt,
+    sharesOutstanding: data.sharesOutstanding,
+    netDebt,
+    fcfHaircut: sp.fcfHaircut ?? 0,
+    sectorG1: sp.growthAssumptions?.g1 ?? 0,
+    epsGrowthNext5Y: data.epsGrowthNext5Y ?? 0,
   });
 
   // CRVs
@@ -134,9 +138,6 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
   // RSL growth adjustment flag
   const rslGrowthAdj = rsl < 105 ? "-5% to -10%" : "none";
 
-  // Monte Carlo downside probability — reuse the canonical run shared with
-  // Section16 so both sections report identical figures. Fall back to a local
-  // run only if no shared result was provided.
   const localMC = useMemo(() => {
     const prices = data.historicalPrices.map(p => p.close);
     const params = calculateGBMParams(prices);
@@ -187,29 +188,11 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
           Downside-Wahrscheinlichkeit (Monte Carlo GBM, 1Y)
         </h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <ProbCard
-            label="P(Verlust)"
-            value={mcResult.downsideProb}
-            threshold={0.5}
-          />
-          <ProbCard
-            label="P(≥10% Loss)"
-            value={mcResult.downsideProb10}
-            threshold={0.3}
-          />
-          <ProbCard
-            label="P(≥20% Loss)"
-            value={mcResult.downsideProb20}
-            threshold={0.2}
-          />
-          <ProbCard
-            label="P(Analyst PT)"
-            value={mcResult.analystPTProb}
-            threshold={-1}
-            inverted
-          />
+          <ProbCard label="P(Verlust)" value={mcResult.downsideProb} threshold={0.5} />
+          <ProbCard label="P(≥10% Loss)" value={mcResult.downsideProb10} threshold={0.3} />
+          <ProbCard label="P(≥20% Loss)" value={mcResult.downsideProb20} threshold={0.2} />
+          <ProbCard label="P(Analyst PT)" value={mcResult.analystPTProb} threshold={-1} inverted />
         </div>
-        {/* Probability bar */}
         <div className="mt-2">
           <div className="flex justify-between text-[10px] text-muted-foreground mb-0.5">
             <span>Downside {formatPercentNoSign(mcResult.downsideProb * 100, 0)}</span>
@@ -288,7 +271,11 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
               </td>
             </tr>
             <SummaryRow label="RSL (Momentum)" value={formatNumber(rsl, 1)} note={rsl > 110 ? "Strong" : rsl > 105 ? "Neutral" : `Weak → growth adj. ${rslGrowthAdj}`} />
-            <SummaryRow label="Reverse DCF g*" value={formatPercentNoSign(reverseDCF.impliedGrowth)} note={reverseDCF.rating} />
+            <SummaryRow
+              label="Reverse DCF g*"
+              value={formatPercentNoSign(reverseDCF.impliedGrowth)}
+              note={`${reverseDCF.rating} (Ref: ${formatPercentNoSign(reverseDCF.referenceGrowth)})`}
+            />
             <tr className={mcResult.downsideProb > 0.5 ? "bg-red-500/5" : ""}>
               <td className="py-2 px-2 font-semibold">Downside-Wahrscheinlichkeit</td>
               <td className={`py-2 px-2 text-right font-mono tabular-nums font-bold ${mcResult.downsideProb > 0.5 ? 'text-red-500' : mcResult.downsideProb > 0.35 ? 'text-amber-500' : 'text-emerald-500'}`}>
@@ -381,7 +368,6 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
 
       {/* === FAZIT (Big Picture — all 13 sections integrated) === */}
       {(() => {
-        // === Gather data from ALL sections ===
         const techStatus = data.technicalIndicators?.currentStatus;
         const risks = data.risks;
         const totalExpDmg = risks.reduce((s, r) => s + r.expectedDamage, 0);
@@ -391,62 +377,57 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
         const moatAssess = data.moatAssessment;
         const macroCorr = data.macroCorrelations;
 
-        // === Build signal lists from all 13 sections ===
         const positive: string[] = [];
         const negative: string[] = [];
         const neutral: string[] = [];
 
-        // S1: Datenaktualität — P/E, EV/EBITDA vs sector
+        // S1: P/E vs sector
         if (data.peRatio > 0 && data.sectorAvgPE > 0) {
           const pePrem = ((data.peRatio / data.sectorAvgPE) - 1) * 100;
           if (pePrem < -20) positive.push(`P/E ${formatNumber(data.peRatio, 1)} vs. Sektor ${formatNumber(data.sectorAvgPE, 1)} \u2014 ${formatNumber(Math.abs(pePrem), 0)}% Discount`);
           else if (pePrem > 30) negative.push(`P/E ${formatNumber(data.peRatio, 1)} vs. Sektor ${formatNumber(data.sectorAvgPE, 1)} \u2014 ${formatNumber(pePrem, 0)}% Premium`);
         }
 
-        // S2: Investmentthese — catalysts total upside
+        // S2: Catalysts
         if (totalUpside > 10) positive.push(`Katalysatoren-Upside +${formatNumber(totalUpside, 1)}% (${catalysts.length} Treiber)`);
         else if (totalUpside < 3) neutral.push(`Begrenzte Katalysatoren (+${formatNumber(totalUpside, 1)}%)`);
 
-        // S3: Zyklusanalyse
+        // S3: Cycle
         if (data.cycleClassification) {
           neutral.push(`Zyklusklassifikation: ${data.cycleClassification}, Politischer Zyklus: ${data.politicalCycle}`);
         }
 
-        // S4: Bewertung — PEG
+        // S4: PEG
         if (data.pegRatio > 0 && data.pegRatio < 1) positive.push(`PEG ${formatNumber(data.pegRatio, 2)} < 1 \u2014 unterbewertet relativ zum Wachstum`);
         else if (data.pegRatio > 2) negative.push(`PEG ${formatNumber(data.pegRatio, 2)} > 2 \u2014 hohes Bewertungsniveau`);
 
-        // S5: DCF-Modell
+        // S5: DCF
         if (conservativeUpside > 30) positive.push(`Kons. DCF deutet auf ${formatNumber(conservativeUpside, 0)}% Upside`);
         else if (conservativeUpside > 10) positive.push(`Kons. DCF mit ${formatNumber(conservativeUpside, 0)}% moderatem Upside`);
         else if (conservativeUpside < -10) negative.push(`Kons. DCF zeigt ${formatNumber(conservativeUpside, 0)}% Downside \u2014 \u00dcberbewertung`);
         else neutral.push(`DCF nahe am Kurs (${formatNumber(conservativeUpside, 0)}%)`);
 
-        // S6: CRV (Base + Risk-Adjusted)
+        // S6: CRV
         if (crvConservative >= 2.5) positive.push(`CRV Base ${formatNumber(crvConservative, 1)}:1 \u2014 attraktiv`);
         else if (crvConservative >= 2.0) neutral.push(`CRV Base ${formatNumber(crvConservative, 1)}:1 \u2014 akzeptabel`);
         else negative.push(`CRV Base nur ${formatNumber(crvConservative, 1)}:1 \u2014 unzureichend`);
 
-        // CRV Risk-Adjusted
         if (raCrvCons < 1.5) negative.push(`CRV Risikoadj. nur ${formatNumber(raCrvCons, 1)}:1 \u2014 Risiken nicht eingepreist`);
         else if (raCrvCons >= 2.5) positive.push(`CRV Risikoadj. ${formatNumber(raCrvCons, 1)}:1 \u2014 auch nach Risikoabschlag attraktiv`);
 
-        // Entry Price
         if (data.currentPrice <= dcfBeiCRV3) positive.push(`Kurs UNTER Max-Entry (${formatCurrency(dcfBeiCRV3)})`);
         else negative.push(`Kurs (${formatCurrency(data.currentPrice)}) \u00dcBER Max-Entry (${formatCurrency(dcfBeiCRV3)}) bei CRV 3:1`);
 
-        // S7: Relative Bewertung — already covered in P/E
-
-        // S8: Risikoinversion
+        // S8: Risk
         if (totalExpDmg > 15) negative.push(`Expected Damage ${formatNumber(totalExpDmg, 1)}% \u2014 erhebliche Risiko-Exposition`);
         else if (totalExpDmg < 8) positive.push(`Expected Damage nur ${formatNumber(totalExpDmg, 1)}% \u2014 moderates Risikoprofil`);
 
-        // S9: RSL-Momentum
+        // S9: RSL
         if (rsl > 110) positive.push(`RSL ${formatNumber(rsl, 0)} \u2014 starkes Momentum`);
         else if (rsl > 105) neutral.push(`RSL ${formatNumber(rsl, 0)} \u2014 neutrales Momentum`);
         else negative.push(`RSL ${formatNumber(rsl, 0)} \u2014 schwaches Momentum, Growth-Adj. -5% bis -10%`);
 
-        // S10: Technische Analyse (MA200, MA50, MACD, Buy-Signal)
+        // S10: Technical
         if (techStatus) {
           const techBull: string[] = [];
           const techBear: string[] = [];
@@ -466,7 +447,7 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
           }
         }
 
-        // S11: Moat / Porter
+        // S11: Moat
         if (moatAssess) {
           if (moatAssess.overallRating === 'Wide') positive.push(`Breiter Moat \u2014 nachhaltiger Wettbewerbsvorteil`);
           else if (moatAssess.overallRating === 'None') negative.push(`Kein erkennbarer Moat \u2014 Wettbewerbsdruck`);
@@ -477,9 +458,17 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
         if (mcResult.downsideProb > 0.55) negative.push(`MC-Simulation: ${formatNumber(mcResult.downsideProb * 100, 0)}% Verlustwahrscheinlichkeit (1Y)`);
         else if (mcResult.downsideProb < 0.35) positive.push(`MC-Simulation: nur ${formatNumber(mcResult.downsideProb * 100, 0)}% Verlustwahrscheinlichkeit`);
 
-        // S13-extra: Reverse DCF
-        if (reverseDCF.impliedGrowth > 8) negative.push(`Reverse-DCF impliziert ${formatNumber(reverseDCF.impliedGrowth, 1)}% Wachstum \u2014 sportlich eingepreist`);
-        else if (reverseDCF.impliedGrowth < 3) positive.push(`Reverse-DCF nur ${formatNumber(reverseDCF.impliedGrowth, 1)}% impliziertes Wachstum`);
+        // S14: Reverse DCF — relative Schwellen (identisch mit Section10)
+        const rdRef = reverseDCF.referenceGrowth;
+        if (reverseDCF.rating === "unrealistic") {
+          negative.push(`Reverse-DCF g* ${formatNumber(reverseDCF.impliedGrowth, 1)}% \u2014 \u00fcber 1,5\u00d7 Referenz (${formatPercentNoSign(rdRef * 1.5)}), hohes Wachstum eingepreist`);
+        } else if (reverseDCF.rating === "sportlich") {
+          neutral.push(`Reverse-DCF g* ${formatNumber(reverseDCF.impliedGrowth, 1)}% \u2014 sportlich (Ref: ${formatPercentNoSign(rdRef)})`);
+        } else if (reverseDCF.rating === "negativ") {
+          negative.push(`Reverse-DCF g* negativ (${formatNumber(reverseDCF.impliedGrowth, 1)}%) \u2014 FCF-negativ oder EV-Anomalie`);
+        } else {
+          positive.push(`Reverse-DCF g* ${formatNumber(reverseDCF.impliedGrowth, 1)}% \u2014 realistisch eingepreist (Ref: ${formatPercentNoSign(rdRef)})`);
+        }
 
         // Beta / Risk
         if (data.beta5Y > 1.5) negative.push(`Hohe Volatilit\u00e4t (Beta ${formatNumber(data.beta5Y, 2)}) \u2014 \u00fcberdurchschnittliches Risiko`);
@@ -513,34 +502,23 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
         else if (ptUps > 0) neutral.push(`Analysten-Kursziel +${formatNumber(ptUps, 0)}% \u00fcber Kurs`);
         else if (ptUps < -5) negative.push(`Analysten-Kursziel ${formatNumber(ptUps, 0)}% unter Kurs`);
 
-        // === Generate overall rating ===
+        // === Overall rating ===
         const score = positive.length - negative.length;
         let rating: string;
         let ratingColor: string;
         let ratingBg: string;
         if (score >= 4) {
-          rating = "ATTRAKTIV";
-          ratingColor = "text-emerald-400";
-          ratingBg = "bg-emerald-500/10 border-emerald-500/30";
+          rating = "ATTRAKTIV"; ratingColor = "text-emerald-400"; ratingBg = "bg-emerald-500/10 border-emerald-500/30";
         } else if (score >= 2) {
-          rating = "LEICHT ATTRAKTIV";
-          ratingColor = "text-emerald-400";
-          ratingBg = "bg-emerald-500/10 border-emerald-500/20";
+          rating = "LEICHT ATTRAKTIV"; ratingColor = "text-emerald-400"; ratingBg = "bg-emerald-500/10 border-emerald-500/20";
         } else if (score >= -1) {
-          rating = "NEUTRAL";
-          ratingColor = "text-amber-400";
-          ratingBg = "bg-amber-500/10 border-amber-500/20";
+          rating = "NEUTRAL"; ratingColor = "text-amber-400"; ratingBg = "bg-amber-500/10 border-amber-500/20";
         } else if (score >= -3) {
-          rating = "UNATTRAKTIV";
-          ratingColor = "text-red-400";
-          ratingBg = "bg-red-500/10 border-red-500/20";
+          rating = "UNATTRAKTIV"; ratingColor = "text-red-400"; ratingBg = "bg-red-500/10 border-red-500/20";
         } else {
-          rating = "STARK UNATTRAKTIV";
-          ratingColor = "text-red-500";
-          ratingBg = "bg-red-500/10 border-red-500/30";
+          rating = "STARK UNATTRAKTIV"; ratingColor = "text-red-500"; ratingBg = "bg-red-500/10 border-red-500/30";
         }
 
-        // === Concluding Fazit sentence (dynamic, generic for any stock) ===
         const isBuy = score >= 2 && techStatus?.buySignal && data.currentPrice <= dcfBeiCRV3;
         const isOvervalued = conservativeUpside < -5 || (raCrvCons < 1.5 && rsl < 100);
         const isTechWeak = !techStatus?.priceAboveMA200 || !techStatus?.ma50AboveMA200;
@@ -567,12 +545,10 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
               <span className={`text-sm font-bold ${ratingColor}`}>{rating}</span>
             </div>
 
-            {/* Concluding sentence */}
             <div className="mb-3 text-xs text-foreground/90 leading-relaxed bg-background/30 rounded-md p-2.5 border border-border/30">
               {fazitSatz}
             </div>
 
-            {/* Positive signals */}
             {positive.length > 0 && (
               <div className="mb-2">
                 <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider mb-1">Positive Faktoren ({positive.length})</div>
@@ -587,7 +563,6 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
               </div>
             )}
 
-            {/* Negative signals */}
             {negative.length > 0 && (
               <div className="mb-2">
                 <div className="text-[10px] font-semibold text-red-500 uppercase tracking-wider mb-1">Negative Faktoren ({negative.length})</div>
@@ -602,7 +577,6 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
               </div>
             )}
 
-            {/* Neutral */}
             {neutral.length > 0 && (
               <div className="mb-2">
                 <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Neutral ({neutral.length})</div>
@@ -617,7 +591,6 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
               </div>
             )}
 
-            {/* Score summary */}
             <div className="border-t border-border/30 pt-2 mt-2">
               <div className="text-[10px] text-muted-foreground">
                 Signal-Score: {positive.length} positiv / {negative.length} negativ / {neutral.length} neutral = <span className={`font-semibold ${ratingColor}`}>{rating}</span>
