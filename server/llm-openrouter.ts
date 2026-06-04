@@ -737,8 +737,7 @@ ${metrics.length > 0 ? metrics.join(" | ") : "Keine aktuellen Daten verfügbar"}
 
 WESENTLICHE KATALYSATOREN:
 ${catLines || "- Keine spezifischen Katalysatoren verfügbar"}
-${capexLine ? `
-FISKAL-RÜCKENWIND: ${capexLine}` : ""}
+${capexLine ? `\nFISKAL-RÜCKENWIND: ${capexLine}` : ""}
 
 REGELN (strikt einhalten):
 1. Nenne "${companyName}" in Satz 1 und erkläre KONKRET womit das Unternehmen Geld verdient (aus Geschäftsmodell)
@@ -788,26 +787,32 @@ export async function generateCompanySpecificRisks(input: {
     topCatalysts, capexContext, recentNewsHeadlines = [],
   } = input;
 
-  // First 3 sentences of description for product/segment context
+  // Fix 4: 400→600 chars for richer product/segment context
   const descSentences = (description || "").match(/[^.!?]+[.!?]+/g) || [];
-  const descCore = descSentences.slice(0, 3).join(" ").trim().slice(0, 400);
+  const descCore = descSentences.slice(0, 4).join(" ").trim().slice(0, 600);
 
-  const catContext = topCatalysts.slice(0, 2).map(c => `- ${c.name}: ${c.context.slice(0,100)}`).join("\n");
-  const newsCtx = recentNewsHeadlines.slice(0, 4).map((h,i) => `N${i+1}: ${h}`).join("\n");
+  // Fix 4: catContext slice 100→200 chars so inversions can reference full catalyst context
+  const catContext = topCatalysts.slice(0, 3).map(c => `- ${c.name}: ${c.context.slice(0, 200)}`).join("\n");
+
+  // Fix 1: news slice 4→8, same as catalysts prompt
+  const newsCtx = recentNewsHeadlines.slice(0, 8).map((h, i) => `N${i + 1}: ${h}`).join("\n");
+
   const capexCtx = capexContext
-    ? `Das Unternehmen profitiert von ${capexContext.programmes.slice(0,2).join(" & ")} — dies schafft auch Abhängigkeitsrisiko bei Programmkürzungen.`
+    ? `Das Unternehmen profitiert von ${capexContext.programmes.slice(0, 2).join(" & ")} — dies schafft auch Abhängigkeitsrisiko bei Programmkürzungen.`
     : "";
 
   const metrics = [
-    revenue > 0 ? `Umsatz $${(revenue/1e9).toFixed(1)}B` : null,
+    revenue > 0 ? `Umsatz $${(revenue / 1e9).toFixed(1)}B` : null,
     revenueGrowth !== 0 ? `RevWachstum ${revenueGrowth.toFixed(1)}%` : null,
     fcfMargin !== 0 ? `FCF-Marge ${fcfMargin.toFixed(1)}%` : null,
     grossMargin > 0 ? `Bruttomarge ${grossMargin.toFixed(1)}%` : null,
     forwardPE > 0 ? `Fwd-KGV ${forwardPE.toFixed(1)}x` : null,
     `Beta ${beta.toFixed(2)}`,
-    governmentExposure > 0.1 ? `Gov-Exposure ${(governmentExposure*100).toFixed(0)}%` : null,
+    governmentExposure > 0.1 ? `Gov-Exposure ${(governmentExposure * 100).toFixed(0)}%` : null,
   ].filter(Boolean).join(" | ");
 
+  // Fix 2: added GUTE/SCHLECHTE examples, same pattern as catalyst prompt
+  // Fix 1: mandatory news imperative added
   const prompt = `Du bist ein kritischer Sell-Side-Analyst. Generiere GENAU 5 unternehmensspezifische Inversionsrisiken für ${companyName} (${ticker}).
 
 GESCHÄFTSMODELL:
@@ -818,17 +823,30 @@ KENNZAHLEN: ${metrics}
 UPSIDE-KATALYSATOREN (als Inversionskontext — was wenn diese nicht eintreten?):
 ${catContext}
 
-${newsCtx ? `AKTUELLE NEWS:\n${newsCtx}\n` : ""}${capexCtx ? `FISKAL-ABHÄNGIGKEIT: ${capexCtx}\n` : ""}
+${newsCtx ? `AKTUELLE NEWS (Pflicht: nutze konkrete Events/Zahlen als Risikoankerpunkte — falls News einen Kursrückgangs-Trigger nennt, muss er als eigenes Risiko erscheinen):\n${newsCtx}\n` : ""}${capexCtx ? `FISKAL-ABHÄNGIGKEIT: ${capexCtx}\n` : ""}
 
 REGELN:
 1. Jedes Risiko MUSS den Firmennamen "${companyName}" oder "${ticker}" oder ein konkretes Produkt/Segment nennen
-2. Kein generisches "Macro Recession" oder "Multiple Compression" — das ist zu wenig spezifisch
+2. VERBOTEN: generische Namen wie "Macro Recession", "Multiple Compression", "Rising Rates" — NUR firmenspezifische Risiken
 3. EW% (Eintrittswahrscheinlichkeit 12-24M): 10-45%
 4. Impact% (Kursrückgang bei Eintreten): 10-45%
 5. Category: "Binary" (abruptes Event) | "Gradual" (schleichend) | "Correlated" (Makro)
-6. Risikoname: max 6 Wörter, konkret (z.B. "F-35 Exportstop Nahost-Embargo" nicht "Geopolitical Risk")
+6. Risikoname: max 6 Wörter, konkret
 7. Pflicht: mind. 1 Risiko das die Inversion des wichtigsten Katalysators darstellt
 8. Pflicht wenn Capex-Kontext: 1 Risiko zu Programmkürzung/Budget-Freeze
+
+GUTE Beispiele (firmenspezifisch — so soll es aussehen):
+- "Azure Gov-Cloud FedRAMP Revocation" (MSFT) — konkretes Produkt + regulatorisches Event
+- "Copilot+ Adoption Stagnation" (MSFT) — konkretes Produkt, gradual
+- "F-35 Exportstop Nahost-Embargo" (LMT) — konkretes Programm + geopolitischer Trigger
+- "GLP-1 Ozempic Patent-Herausforderung" (NVO) — konkretes Medikament
+- "CoreWeave Nvidia-Vertrag Nicht-Verlängerung" (CRWV) — konkreter Gegenpartei-Risk
+
+SCHLECHTE Beispiele (verboten — zu generisch):
+- "Macro Recession / Demand Shock" — kein Firmenbezug
+- "Multiple Compression (Rising Rates)" — generisches Makro
+- "Geopolitical Risk" — kein Produkt, kein Event
+- "Competition Intensifies" — kein konkreter Wettbewerber
 
 Antworte NUR mit JSON:
 {
@@ -843,7 +861,8 @@ Antworte NUR mit JSON:
 
   try {
     console.log(`[RISK-SPECIFIC] Calling LLM for ${ticker} (desc=${description.length}chars, cats=${topCatalysts.length})`);
-    const result = await callLLMJson({ prompt, maxTokens: 350, temperature: 0.3 });
+    // Fix 3: maxTokens 350→600 so specific risk names don't get truncated
+    const result = await callLLMJson({ prompt, maxTokens: 600, temperature: 0.3 });
     if (!result) {
       console.warn(`[RISK-SPECIFIC] callLLMJson returned null for ${ticker}`);
       return null;
@@ -867,4 +886,3 @@ Antworte NUR mit JSON:
     return null;
   }
 }
-
