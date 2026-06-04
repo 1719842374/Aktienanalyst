@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { StockAnalysis } from "../../../shared/schema";
+import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "@/lib/calculations";
 import { TickerSearch } from "@/components/TickerSearch";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
@@ -53,6 +54,21 @@ const SECTIONS = [
 export default function Dashboard() {
   const { theme, toggleTheme } = useTheme();
   const [data, setData] = useState<StockAnalysis | null>(null);
+  // Canonical Monte Carlo run — computed once and shared by Section16 (display)
+  // and Section17 (summary) so both show identical figures instead of two
+  // independent random runs with divergent probabilities.
+  const sharedMonteCarlo = useMemo<GBMMonteCarloResult | null>(() => {
+    if (!data || !data.historicalPrices?.length) return null;
+    const prices = data.historicalPrices.map(p => p.close);
+    const params = calculateGBMParams(prices);
+    return gbmMonteCarlo({
+      currentPrice: data.currentPrice,
+      mu: params.mu,
+      sigma: params.sigma,
+      iterations: 10000,
+      tradingDays: 252,
+    }, data.analystPT.median);
+  }, [data]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [useLLM, setUseLLM] = useState(false);
   const [currentTicker, setCurrentTicker] = useState('');
@@ -474,8 +490,8 @@ export default function Dashboard() {
                   setData(prev => prev ? { ...prev, catalysts: enriched } : prev);
                 }}
               /></div>
-              <div ref={setSectionRef(16)}><Section12 data={data} /></div>
-              <div ref={setSectionRef(17)}><Section13 data={data} /></div>
+              <div ref={setSectionRef(16)}><Section12 data={data} sharedResult={sharedMonteCarlo} /></div>
+              <div ref={setSectionRef(17)}><Section13 data={data} sharedMonteCarlo={sharedMonteCarlo} /></div>
               <div className="pb-8" />
             </div>
           ) : (

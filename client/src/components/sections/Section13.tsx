@@ -4,14 +4,14 @@ import {
   calculateFCFFDCF, type FCFFDCFParams,
   calculateCRV, calculateRSL, calculateReverseDCF,
   worstCaseM1, worstCaseM2, worstCaseM3, calculateCatalystUpside, selectCatalystBase,
-  gbmMonteCarlo, calculateGBMParams,
+  gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult,
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, formatRatio, getCRVColor } from "../../lib/formatters";
 import { useMemo } from "react";
 
-interface Props { data: StockAnalysis }
+interface Props { data: StockAnalysis; sharedMonteCarlo?: GBMMonteCarloResult | null }
 
-export function Section13({ data }: Props) {
+export function Section13({ data, sharedMonteCarlo }: Props) {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
   const haircut = data.fcfHaircut;
@@ -100,7 +100,7 @@ export function Section13({ data }: Props) {
   const catalystBaseFallback = catalystBaseInfo.source !== "dcf";
   const { totalUpside, adjustedTarget } = calculateCatalystUpside(catalysts, catalystDCFBase);
 
-  const m1 = worstCaseM1(data.currentPrice, data.beta5Y, 50);
+  const m1 = worstCaseM1(data.currentPrice, data.beta5Y, data.sectorMaxDrawdown || 35);
   const m2 = worstCaseM2(data.currentPrice, 35);
   const m3 = worstCaseM3(data.currentPrice, data.sectorMaxDrawdown);
   const worstCase = Math.min(m1, m2, m3);
@@ -134,18 +134,21 @@ export function Section13({ data }: Props) {
   // RSL growth adjustment flag
   const rslGrowthAdj = rsl < 105 ? "-5% to -10%" : "none";
 
-  // Monte Carlo downside probability
-  const mcResult = useMemo(() => {
+  // Monte Carlo downside probability — reuse the canonical run shared with
+  // Section16 so both sections report identical figures. Fall back to a local
+  // run only if no shared result was provided.
+  const localMC = useMemo(() => {
     const prices = data.historicalPrices.map(p => p.close);
     const params = calculateGBMParams(prices);
     return gbmMonteCarlo({
       currentPrice: data.currentPrice,
       mu: params.mu,
       sigma: params.sigma,
-      iterations: 5000,
+      iterations: 10000,
       tradingDays: 252,
     }, data.analystPT.median);
   }, [data]);
+  const mcResult = sharedMonteCarlo ?? localMC;
 
   return (
     <SectionCard number={17} title="ZUSAMMENFASSUNGSTABELLE">

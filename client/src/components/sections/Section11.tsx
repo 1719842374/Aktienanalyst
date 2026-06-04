@@ -94,8 +94,13 @@ export function Section11({ data, onCatalystsEnriched }: Props) {
     ? +((data.operatingIncome / data.revenue) * 100).toFixed(1)
     : data.ebitda > 0 && data.revenue > 0
       ? +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1) : 15;
-  const capexDefault = data.revenue > 0 && data.fcfTTM > 0
-    ? +Math.max(2, Math.min(15, ((data.ebitda - data.fcfTTM) / data.revenue) * 100)).toFixed(1) : 5;
+  // Aligned with Section2 so the conservative DCF per-share is identical across sections
+  const fsCapex = data.financialStatements?.cashFlow?.capex;
+  const capexDefault = fsCapex && fsCapex > 0 && data.revenue > 0
+    ? +Math.max(2, Math.min(25, (fsCapex / data.revenue) * 100)).toFixed(1)
+    : data.revenue > 0 && data.ebitda > 0 && data.operatingIncome > 0
+      ? +Math.max(2, Math.min(20, ((data.ebitda - data.operatingIncome) / data.revenue) * 100)).toFixed(1)
+      : 5;
   const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
   const rf = 4.2, erp = 5.5, taxR = 21, rd = 5.0;
   const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;

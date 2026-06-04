@@ -7,7 +7,7 @@ import { useMemo, useState, useEffect, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
 import { Settings2, RotateCcw, Play, AlertTriangle } from "lucide-react";
 
-interface Props { data: StockAnalysis }
+interface Props { data: StockAnalysis; sharedResult?: GBMMonteCarloResult | null }
 
 interface MCInputs {
   mu: number;
@@ -40,7 +40,7 @@ function MCInputField({ label, value, onChange, suffix, min, max, step = 0.01, t
   );
 }
 
-export function Section12({ data }: Props) {
+export function Section12({ data, sharedResult }: Props) {
   // Calculate historical params from price data
   const historicalParams = useMemo(() => {
     const prices = data.historicalPrices.map(p => p.close);
@@ -71,6 +71,14 @@ export function Section12({ data }: Props) {
   }, []);
 
   useEffect(() => {
+    // Default, unmodified view: reuse the canonical run shared with Section17
+    // so both sections display identical figures (no second random run).
+    if (!isModified && runCount === 0 && sharedResult) {
+      setProgress(100);
+      setResult(sharedResult);
+      return;
+    }
+
     setProgress(0);
     setResult(null);
 
@@ -88,7 +96,7 @@ export function Section12({ data }: Props) {
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [data, inputs.mu, inputs.sigma, inputs.iterations, inputs.tradingDays, runCount]);
+  }, [data, inputs.mu, inputs.sigma, inputs.iterations, inputs.tradingDays, runCount, isModified, sharedResult]);
 
   const horizonLabel = inputs.tradingDays === 252 ? "1 Jahr" : inputs.tradingDays === 126 ? "6 Monate" : `${inputs.tradingDays} Tage`;
 

@@ -494,6 +494,16 @@ function getSectorDefaults(sector: string, industry: string): {
       sectorAvgPE: 18, sectorAvgForwardPE: 16.5, sectorAvgEVEBITDA: 12, sectorAvgPEG: 2.5,
       sectorAvgPS: 3.0, sectorAvgPB: 3.0, sectorEPSGrowth: 8,
     };
+  } else if (s.includes("material") || s.includes("mining") || s.includes("metal") || s.includes("steel") || s.includes("chemical") || s.includes("basic")) {
+    return {
+      waccScenarios: { kons: 12.0, avg: 10.0, opt: 8.0 },
+      growthAssumptions: { g1: 5, g2: 3, terminal: 2 },
+      cycleClass: "Deep Cyclical – Commodity Linked",
+      politicalCycle: "High – commodity prices, environmental regulation, trade tariffs",
+      sectorMaxDrawdown: 60,
+      sectorAvgPE: 14, sectorAvgForwardPE: 12, sectorAvgEVEBITDA: 8, sectorAvgPEG: 1.2,
+      sectorAvgPS: 1.5, sectorAvgPB: 1.8, sectorEPSGrowth: 5,
+    };
   } else {
     return {
       waccScenarios: { kons: 10.0, avg: 8.5, opt: 7.0 },
@@ -655,7 +665,24 @@ async function fetchPeerComparison(
       // Match ticker symbols (uppercase letters, 1-5 chars, possibly with dots)
       const tickerMatches = content.match(/\b[A-Z]{1,5}(?:\.[A-Z]{1,2})?\b/g) || [];
       // Filter common non-ticker words
-      const skipWords = new Set(['THE', 'AND', 'FOR', 'USD', 'ETF', 'CEO', 'CFO', 'IPO', 'NYSE', 'NASDAQ', 'SEC', 'INC', 'LTD', 'LLC', 'NV', 'SA', 'AG', 'PLC', 'SE', 'CO', 'PEER', 'VS', 'EPS', 'PE', 'PEG', ticker]);
+      const skipWords = new Set(['THE', 'AND', 'FOR', 'USD', 'ETF', 'CEO', 'CFO', 'IPO', 'NYSE', 'NASDAQ', 'SEC', 'INC', 'LTD', 'LLC', 'NV', 'SA', 'AG', 'PLC', 'SE', 'CO', 'PEER', 'VS', 'EPS', 'PE', 'PEG',
+        'CTO','COO','CMO','CIO','CPO','CSO','CLO','CAO',
+        'EVP','SVP','MD','GM',
+        'NIM','ROE','ROA','ROI','ROIC','ROCE',
+        'FCF','TTM','LTM','YTD','QoQ','YoY',
+        'DPS','BPS','NAV',
+        'EBITDA','NOPAT','CAPEX',
+        'DCF','IRR','NPV','WACC',
+        'LBO','MBO',
+        'OTC',
+        'HQ','COGS','OPEX',
+        'EUR','GBP','JPY','CHF','CAD','AUD','HKD','CNY','KRW',
+        'AI','ML','API','B2B','B2C',
+        'FTC','DOJ','GAAP','IFRS',
+        'Q1','Q2','Q3','Q4','H1','H2','FY',
+        'PT','TP','BUY','SELL','HOLD','OW','UW','EW','OP',
+        'LOW','HIGH','MAX','MIN',
+        ticker]);
       peerTickers = [...new Set(tickerMatches.filter(t => t.length >= 2 && !skipWords.has(t)))].slice(0, 8);
     }
 
@@ -1307,8 +1334,9 @@ function classifyLynch(params: {
   fcfMargin: number;
   pe: number;
   forwardPE: number;
+  pbRatio?: number;
 }): LynchClass {
-  const { epsGrowth5Y, revenueGrowth, sector, industry, dividendYield, pe, forwardPE } = params;
+  const { epsGrowth5Y, revenueGrowth, sector, industry, dividendYield, pe, forwardPE, pbRatio = 0 } = params;
 
   const growthRate = epsGrowth5Y > 0 ? epsGrowth5Y : revenueGrowth;
   const sectorLower = (sector + ' ' + industry).toLowerCase();
@@ -1318,9 +1346,14 @@ function classifyLynch(params: {
   const hasCyclicalPEPattern = pe > 0 && forwardPE > 0 && pe / forwardPE > 1.5; // Trailing >> Forward = Recovery-Erwartung
   if (isCyclicalSector || hasCyclicalPEPattern) return 'cyclical';
 
-  // Turnaround: negative Earnings aber positive Forward-Erwartung
+  // Asset Play: nur unter/nahe Buchwert (P/B < 1.5) — z.B. ORCL/MSFT mit hohem P/B sind KEINE Asset Plays
+  if (pbRatio > 0 && pbRatio < 1.5 && pe > 0) return 'asset_play';
+
+  // Genuine turnaround: net loss year (negative trailing PE)
   if (pe <= 0 && forwardPE > 0) return 'turnaround';
-  if (pe > 0 && pe > 100 && forwardPE > 0 && forwardPE < 30) return 'turnaround'; // extreme PE-Normalisierung erwartet
+  // Structural decline: multi-year EPS deterioration
+  if (epsGrowth5Y < -15 && forwardPE > 0 && forwardPE < 40) return 'turnaround';
+  // NOTE: high trailing PE + low forward PE (e.g. ORCL, SAP) = PE-compression stalwart, NOT turnaround
 
   // Fast Growers: >20% EPS oder Revenue-Wachstum
   if (growthRate >= 20) return 'fast_grower';
@@ -1901,9 +1934,9 @@ function generateTAMAnalysis(
   else if (s.includes('util')) {
     tamTotal = 2500; tamLabel = 'Global Utilities'; tamCAGR = 4; tamSource = 'IEA / Deloitte Utilities Outlook';
   }
-  // Materials
-  else if (s.includes('material') || s.includes('basic')) {
-    tamTotal = 2000; tamLabel = 'Global Materials & Mining'; tamCAGR = 4; tamSource = 'McKinsey Materials Outlook';
+  // Materials & Mining
+  else if (s.includes('material') || s.includes('mining') || s.includes('metal') || s.includes('steel') || s.includes('chemical') || s.includes('basic')) {
+    tamTotal = 1200; tamLabel = 'Global Materials & Mining'; tamCAGR = 3; tamSource = 'BloombergNEF / Wood Mackenzie';
   }
   // Fallback
   else {
@@ -2105,8 +2138,8 @@ function estimateGovExposure(sector: string, industry: string, description: stri
   if (ind.includes("health care plan") || ind.includes("managed health")) {
     return { exposure: 40, detail: "Managed Healthcare – direkte Abhängigkeit von Medicare/Medicaid-Erstattungssätzen" };
   }
-  if (ind.includes("infrastructure") || ind.includes("construction")) {
-    return { exposure: 25, detail: "Infrastructure sector – moderate public spending exposure" };
+  if (ind.includes("construction") || (ind.includes("infrastructure") && !sect.includes("tech"))) {
+    return { exposure: 25, detail: `${sector} sector – moderate public spending exposure` };
   }
   if (sect.includes("utilities")) {
     return { exposure: 20, detail: "Utilities – regulierte Preisgestaltung, Abhängigkeit von Energiepolitik" };
@@ -2249,7 +2282,11 @@ function generatePESTELAnalysis(
   const isBank = ind.includes("bank") || ind.includes("financ");
   const isRealEstate = s.includes("real estate");
   const isConsumerStaple = s.includes("consumer") && (s.includes("stapl") || s.includes("defensive"));
-  const isConsumerDisc = s.includes("consumer") && s.includes("discret");
+  const isConsumerDisc = s.includes("consumer") && (
+    s.includes("discret") || s.includes("cyclic") || s.includes("retail") ||
+    s.includes("apparel") || s.includes("leisure") || s.includes("restaurant") ||
+    s.includes("hotel") || s.includes("travel") || s.includes("auto")
+  );
   const isSemiconductor = ind.includes("semicon") || desc.includes("semiconductor") || desc.includes("chip");
   const isAuto = ind.includes("auto");
   const isUtil = s.includes("util");
@@ -4595,7 +4632,23 @@ export async function registerRoutes(server: Server, app: Express) {
         fcfMargin,
         pe,
         forwardPE: Number(forwardPE) || 0,
+        pbRatio: totalEquity > 0 ? marketCap / totalEquity : 0,
       });
+      // Compute epsPeak/epsTrough from income statement for cyclical mid-cycle PE
+      let epsPeak: number | undefined;
+      let epsTrough: number | undefined;
+      try {
+        const incStmts = fmpData?.financials?.income;
+        if (Array.isArray(incStmts) && incStmts.length >= 3) {
+          const epsVals = incStmts
+            .map((s: any) => Number(s.epsDiluted || s.eps || 0))
+            .filter((v: number) => v !== 0 && !isNaN(v));
+          if (epsVals.length >= 2) {
+            epsPeak   = Math.max(...epsVals);
+            epsTrough = Math.min(...epsVals);
+          }
+        }
+      } catch { /* ignore */ }
       const { peg: lynchPEG, pegBasis: lynchPEGBasis } = calcLynchPEG({
         lynchClass,
         pe,
@@ -4604,6 +4657,8 @@ export async function registerRoutes(server: Server, app: Express) {
         epsGrowthFwd: Number(epsGrowthFwd) || 0,
         revenueGrowth,
         dividendYield: Number(divYield) || 0,
+        epsPeak,
+        epsTrough,
         price,
       });
       console.log(`[ANALYZE] ${ticker} Lynch=${lynchClass} PEG=${lynchPEG} (${lynchPEGBasis})`);

@@ -516,10 +516,13 @@ export function calculateCRV(fairValue: number, worstCase: number, currentPrice:
 }
 
 // === Worst Case Methods ===
-// M1 fix: When beta × maxDrawdown > 100%, result would go negative.
-// Cap the effective drawdown at 90% (floor = 10% of current price).
+// M1: beta-adjusted sector drawdown. A pure beta × sectorMax overshoots for
+// mega-caps (MSFT β1.32 × 50% = 66%), far worse than its true historical
+// drawdown. Cap the beta uplift at 1.5× the sector max and hard-cap at 65%.
 export function worstCaseM1(price: number, beta: number, maxDrawdown: number): number {
-  const effectiveDrawdown = Math.min(90, beta * maxDrawdown); // cap at 90%
+  const historicalMaxDrawdown = maxDrawdown > 0 ? maxDrawdown : 35;
+  const betaAdjustedDrawdown = Math.min(beta * historicalMaxDrawdown, historicalMaxDrawdown * 1.5);
+  const effectiveDrawdown = Math.min(betaAdjustedDrawdown, 65); // hard cap at 65%
   return price * (1 - effectiveDrawdown / 100);
 }
 

@@ -65,7 +65,7 @@ export function Section6({ data }: Props) {
   }), [baseParams]);
 
   // Worst Case methods
-  const m1 = worstCaseM1(data.currentPrice, data.beta5Y, 50);
+  const m1 = worstCaseM1(data.currentPrice, data.beta5Y, data.sectorMaxDrawdown || 35);
   const m2 = worstCaseM2(data.currentPrice, 35);
   const m3 = worstCaseM3(data.currentPrice, data.sectorMaxDrawdown);
   const worstCase = Math.min(m1, m2, m3);
