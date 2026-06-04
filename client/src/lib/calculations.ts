@@ -132,10 +132,6 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   // 1. Compute WACC via CAPM, or use manual override
   const rawRe = params.riskFreeRate + params.beta * params.erp;
   const Rd = params.costOfDebt;
-  // Cap debt ratio at 60% — companies with massive financial services debt
-  // (e.g. VW, GM, Toyota) have debt ratios of 80-90% which would pull WACC
-  // down unrealistically. Financial services debt is asset-backed and shouldn't
-  // be treated as traditional corporate leverage.
   const cappedDebtRatio = Math.min(params.debtRatio, 60);
   const dv = cappedDebtRatio / 100;
   const ev = 1 - dv;
@@ -146,11 +142,8 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   let waccWasCapped = false;
 
   if (useOverride) {
-    // Direct WACC override — no capping, user has full control
     wacc = params.waccOverride!;
   } else {
-    // Sanity bounds: WACC between 5% and 20%
-    // Floor of 5% prevents unrealistic terminal values from Gordon Growth
     const WACC_FLOOR = 5.0;
     const WACC_CEIL = 20.0;
     wacc = Math.max(WACC_FLOOR, Math.min(WACC_CEIL, rawWacc));
@@ -172,7 +165,6 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   }
   steps.push(`WACC (final) = ${wacc.toFixed(2)}%`);
 
-  // 2. Project FCFF year by year
   steps.push(``);
   steps.push(`=== FCFF-Projektion (10 Jahre) ===`);
   steps.push(`Revenue Basis: ${fmt(params.revenueBase)}`);
@@ -185,7 +177,6 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     const growthRate = y <= 5 ? params.revenueGrowthP1 : params.revenueGrowthP2;
     const revenue = prevRevenue * (1 + growthRate / 100);
 
-    // Margin transitions from current to terminal over 10 years
     const marginProgress = y / 10;
     const ebitMargin = params.ebitMargin + (params.ebitMarginTerminal - params.ebitMargin) * marginProgress;
 
@@ -196,10 +187,8 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     const revenueGrowthAbs = revenue - prevRevenue;
     const deltaWC = revenueGrowthAbs * (params.deltaWCPct / 100);
 
-    // FCFF = NOPAT + D&A - Capex - ΔWC
     let fcff = nopat + da - capex - deltaWC;
 
-    // Apply FCF haircut (gov exposure)
     if (params.fcfHaircut > 0) {
       fcff = fcff * (1 - params.fcfHaircut / 100);
     }
@@ -218,18 +207,15 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     prevRevenue = revenue;
   }
 
-  // 3. Terminal Value (Gordon Growth)
   const lastFCFF = yearlyProjections[9].fcff;
   const terminalFCFF = lastFCFF * (1 + params.terminalG / 100);
 
-  // Safety: WACC must be > terminal g
   const waccDecimal = wacc / 100;
   const gDecimal = params.terminalG / 100;
   let terminalValue = 0;
   if (waccDecimal > gDecimal && terminalFCFF > 0) {
     terminalValue = terminalFCFF / (waccDecimal - gDecimal);
   } else if (terminalFCFF > 0) {
-    // Fallback: cap at 25x terminal FCFF
     terminalValue = terminalFCFF * 25;
     steps.push(`  ⚠ WACC ≤ Terminal g — TV capped at 25× FCFF₁₁`);
   }
@@ -242,13 +228,8 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   steps.push(`TV = ${fmt(terminalFCFF)} / (${wacc.toFixed(2)}% - ${params.terminalG}%) = ${fmt(terminalValue)}`);
   steps.push(`PV(TV) = ${fmt(pvTerminal)}`);
 
-  // 4. Enterprise Value & Equity Bridge
   const enterpriseValue = pvExplicit + pvTerminal;
 
-  // Sanity: If net debt > 70% of EV, cap it at 70%.
-  // Companies with massive financial services debt (VW, GM, Toyota, GE)
-  // have total debt from lending/leasing that is asset-backed and shouldn't
-  // be fully deducted from industrial DCF enterprise value.
   const rawNetDebt = params.netDebt;
   const netDebtCap = enterpriseValue * 0.7;
   const netDebtUsed = (rawNetDebt > 0 && rawNetDebt > netDebtCap) ? netDebtCap : rawNetDebt;
@@ -257,32 +238,15 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   const equityValue = enterpriseValue - netDebtUsed - params.minorityInterests;
   let perShare = params.sharesOutstanding > 0 ? equityValue / params.sharesOutstanding : 0;
 
-  // Sanity check: If net debt > 3× market cap, the company likely has massive
-  // financial services debt (auto OEMs, conglomerates, banks). The FCFF model
-  // projects total revenue at industrial margins, but FS revenue has different
-  // economics. Detect this and apply a P/E-based cap.
   let perShareCapped = false;
-  const netDebtToEV = rawNetDebt / Math.max(enterpriseValue, 1);
-  const impliedMarketCap = equityValue;
-  const rawMarketCapRatio = params.sharesOutstanding > 0 && params.revenueBase > 0
-    ? (equityValue / params.sharesOutstanding) / (params.revenueBase / params.sharesOutstanding)
-    : 0; // P/S implied
-  // Sanity cap: If per-share DCF vastly exceeds a reasonable earnings-based ceiling,
-  // the FCFF model is likely distorted (Financial Services debt, conglomerate structure).
-  // Cap at growth-adjusted P/E × Forward EPS. Bounded [12, 25].
-  // This is CONSERVATIVE by design — better to cap too tight than show 400% upside
-  // for a stock like VW where the market sees 0% upside.
   const ttmEPS = params.actualEPS && params.actualEPS > 0 ? params.actualEPS : 0;
   const fwdEPS = params.forwardEPS && params.forwardEPS > 0 ? params.forwardEPS : 0;
   const capEPS = Math.max(ttmEPS, fwdEPS);
   if (capEPS > 0) {
-    // P/E cap: PEG=1.5 rule → PE = growth × 1.5, bounded [12, 25]
-    // Only trigger if raw perShare > 5× the EPS-based cap (i.e. massively distorted)
     const growthRate = Math.max(params.revenueGrowthP1, 5);
     const peMultiple = Math.min(Math.max(growthRate * 1.5, 12), 25);
     const peCap = capEPS * peMultiple;
     if (perShare > peCap && perShare > peCap * 3) {
-      // Only cap when raw DCF is >3× the PE-based ceiling (clearly distorted)
       const rawVal = perShare;
       perShare = peCap;
       perShareCapped = true;
@@ -324,13 +288,12 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
 }
 
 // === Monte Carlo Simulation (Geometrische Brownsche Bewegung / GBM) ===
-// S_{t+Δt} = S_t * exp((μ - σ²/2)*Δt + σ*√Δt*Z) where Z ~ N(0,1)
 export interface GBMMonteCarloParams {
   currentPrice: number;
-  mu: number;           // drift (annualized), from historical log-returns
-  sigma: number;        // volatility (annualized)
-  iterations: number;   // number of simulation paths
-  tradingDays: number;  // time horizon in trading days (252 = 1 year)
+  mu: number;
+  sigma: number;
+  iterations: number;
+  tradingDays: number;
 }
 
 export interface GBMMonteCarloResult {
@@ -343,16 +306,15 @@ export interface GBMMonteCarloResult {
   p90: number;
   p95: number;
   histogram: { bin: string; count: number }[];
-  downsideProb: number;         // P(S_T < S_0)
-  downsideProb10: number;       // P(S_T < 0.9 * S_0)  — 10%+ loss
-  downsideProb20: number;       // P(S_T < 0.8 * S_0)  — 20%+ loss
-  analystPTProb: number;        // P(S_T >= analystPT)
-  maxDrawdownMean: number;      // average max-drawdown across paths
-  expectedReturn: number;       // mean/currentPrice - 1
-  paths: number[][];            // sample paths for visualization (5 paths)
+  downsideProb: number;
+  downsideProb10: number;
+  downsideProb20: number;
+  analystPTProb: number;
+  maxDrawdownMean: number;
+  expectedReturn: number;
+  paths: number[][];
 }
 
-// Box-Muller transform for N(0,1)
 function boxMuller(): number {
   let u1 = 0, u2 = 0;
   while (u1 === 0) u1 = Math.random();
@@ -365,7 +327,7 @@ export function gbmMonteCarlo(
   analystPTMedian: number
 ): GBMMonteCarloResult {
   const { currentPrice, mu, sigma, iterations, tradingDays } = params;
-  const dt = 1 / 252; // 1 trading day in years
+  const dt = 1 / 252;
   const sqrtDt = Math.sqrt(dt);
   const drift = (mu - 0.5 * sigma * sigma) * dt;
 
@@ -418,7 +380,6 @@ export function gbmMonteCarlo(
   const maxDrawdownMean = maxDrawdowns.reduce((s, v) => s + v, 0) / maxDrawdowns.length;
   const expectedReturn = mean / currentPrice - 1;
 
-  // Build histogram
   const min = finalPrices[0];
   const max = finalPrices[finalPrices.length - 1];
   const binCount = 40;
@@ -429,10 +390,7 @@ export function gbmMonteCarlo(
     const binStart = min + i * binSize;
     const binEnd = binStart + binSize;
     const count = finalPrices.filter((r) => r >= binStart && r < binEnd).length;
-    histogram.push({
-      bin: `$${binStart.toFixed(0)}`,
-      count,
-    });
+    histogram.push({ bin: `$${binStart.toFixed(0)}`, count });
   }
 
   return {
@@ -442,11 +400,9 @@ export function gbmMonteCarlo(
   };
 }
 
-// Calculate historical mu and sigma from price data
 export function calculateGBMParams(prices: number[]): { mu: number; sigma: number } {
   if (prices.length < 30) return { mu: 0.08, sigma: 0.25 };
 
-  // Log returns
   const logReturns: number[] = [];
   for (let i = 1; i < prices.length; i++) {
     if (prices[i] > 0 && prices[i - 1] > 0) {
@@ -459,7 +415,6 @@ export function calculateGBMParams(prices: number[]): { mu: number; sigma: numbe
   const meanDaily = logReturns.reduce((s, r) => s + r, 0) / logReturns.length;
   const varDaily = logReturns.reduce((s, r) => s + (r - meanDaily) ** 2, 0) / logReturns.length;
 
-  // Annualize: μ = meanDaily * 252, σ = sqrt(varDaily * 252)
   const mu = meanDaily * 252;
   const sigma = Math.sqrt(varDaily * 252);
 
@@ -477,6 +432,7 @@ export function calculateRSL(currentPrice: number, prices26w: number[]): number 
 export interface ReverseDCFResult {
   impliedGrowth: number;
   rating: string;
+  referenceGrowth: number;
 }
 
 export function calculateReverseDCF(params: {
@@ -485,29 +441,50 @@ export function calculateReverseDCF(params: {
   wacc: number;
   sharesOutstanding: number;
   netDebt: number;
+  fcfHaircut?: number;       // optional: FCF haircut % (consistent with FCFF-DCF)
+  sectorG1?: number;         // optional: sector growth assumption g1 from sectorProfile
+  epsGrowthNext5Y?: number;  // optional: analyst EPS growth consensus (5Y)
 }): ReverseDCFResult {
   const { currentPrice, fcfBase, wacc, sharesOutstanding, netDebt } = params;
+  const fcfHaircut = params.fcfHaircut ?? 0;
+  const sectorG1 = params.sectorG1 ?? 0;
+  const epsGrowthNext5Y = params.epsGrowthNext5Y ?? 0;
+
   const ev = currentPrice * sharesOutstanding + netDebt;
-  // Guard: EV ≤0 (cash-rich firms with strongly negative netDebt) causes division by zero
   if (!ev || ev <= 0 || !isFinite(ev)) {
-    return { impliedGrowth: 0, rating: "n/a" };
+    return { impliedGrowth: 0, rating: "n/a", referenceGrowth: 0 };
   }
-  // Guard: currentPrice or sharesOutstanding missing
   if (!currentPrice || !sharesOutstanding) {
-    return { impliedGrowth: 0, rating: "n/a" };
+    return { impliedGrowth: 0, rating: "n/a", referenceGrowth: 0 };
   }
-  // Simplified: EV = FCF / (WACC - g) => g = WACC - FCF/EV
-  const impliedGrowth = (wacc / 100 - fcfBase / ev) * 100;
-  if (!isFinite(impliedGrowth)) return { impliedGrowth: 0, rating: "n/a" };
-  let rating = "realistic";
-  if (impliedGrowth > 8) rating = "unrealistic";
-  else if (impliedGrowth > 5) rating = "sportlich";
-  else if (impliedGrowth < 0) rating = "negativ";
-  return { impliedGrowth, rating };
+
+  // Apply FCF haircut for consistency with FCFF-DCF Section 5
+  const adjustedFCF = fcfBase * (1 - fcfHaircut / 100);
+
+  // g* = WACC - FCF / EV  (Gordon Growth Model inverted)
+  const impliedGrowth = (wacc / 100 - adjustedFCF / ev) * 100;
+  if (!isFinite(impliedGrowth)) return { impliedGrowth: 0, rating: "n/a", referenceGrowth: 0 };
+
+  // === Relative rating — sector & company specific ===
+  // referenceGrowth = max(sectorG1, epsGrowthNext5Y, 3%) as floor
+  // This replaces the old hard-coded 5%/8% thresholds.
+  const referenceGrowth = Math.max(sectorG1, epsGrowthNext5Y, 3);
+
+  let rating: string;
+  if (impliedGrowth < 0) {
+    rating = "negativ";
+  } else if (impliedGrowth > referenceGrowth * 1.5) {
+    rating = "unrealistic";
+  } else if (impliedGrowth > referenceGrowth) {
+    rating = "sportlich";
+  } else {
+    rating = "realistic";
+  }
+
+  return { impliedGrowth, rating, referenceGrowth };
 }
 
 // === CRV Calculation ===
-// CORRECT formula per user spec: CRV = (Fair Value - Worst Case) / (Kurs - Worst Case)
 export function calculateCRV(fairValue: number, worstCase: number, currentPrice: number): number {
   const numerator = fairValue - worstCase;
   const denominator = currentPrice - worstCase;
@@ -516,13 +493,10 @@ export function calculateCRV(fairValue: number, worstCase: number, currentPrice:
 }
 
 // === Worst Case Methods ===
-// M1: beta-adjusted sector drawdown. A pure beta × sectorMax overshoots for
-// mega-caps (MSFT β1.32 × 50% = 66%), far worse than its true historical
-// drawdown. Cap the beta uplift at 1.5× the sector max and hard-cap at 65%.
 export function worstCaseM1(price: number, beta: number, maxDrawdown: number): number {
   const historicalMaxDrawdown = maxDrawdown > 0 ? maxDrawdown : 35;
   const betaAdjustedDrawdown = Math.min(beta * historicalMaxDrawdown, historicalMaxDrawdown * 1.5);
-  const effectiveDrawdown = Math.min(betaAdjustedDrawdown, 65); // hard cap at 65%
+  const effectiveDrawdown = Math.min(betaAdjustedDrawdown, 65);
   return price * (1 - effectiveDrawdown / 100);
 }
 
@@ -550,11 +524,6 @@ export function calculateWACC(
 }
 
 // === Catalyst Calculations ===
-// Kat.-adj. Zielwert = Basis × (1 + Σ GB / 100)
-// Die Basis ist normalerweise der Conservative DCF — aber wenn der DCF
-// offensichtlich verzerrt ist, wird auf Analyst PT Median oder den Kurs
-// zurückgegriffen. Sonst entstehen unsinnige negative Catalyst-Targets bei
-// Growth-Stocks mit niedriger aktueller Profitabilität (Infineon, Bloom Energy etc.).
 export function calculateCatalystUpside(
   catalysts: Catalyst[],
   conservativeDCFPerShare: number
@@ -564,28 +533,12 @@ export function calculateCatalystUpside(
   return { totalUpside, adjustedTarget };
 }
 
-/**
- * Smart Catalyst-Base-Selektor mit Plausibilitäts-Gates.
- *
- * Liefert die beste Basis für das Catalyst-Adjusted Target plus Begründung.
- * Reihenfolge der Prüfung:
- *   1. Wenn Conservative DCF + Catalyst-Upside >= 70% des Kurses → DCF nutzen (Standard-Pfad)
- *   2. Sonst, wenn Analyst PT Median > 0 → PT Median als Basis (mehr Kontext, weniger Floskeln)
- *   3. Sonst Kurs als Basis (letzter Anker)
- *
- * Damit ist gewährleistet, dass das Catalyst-Target IMMER realistisch zum
- * Marktpreis steht — ohne dass eine Aktie sich "qualifizieren" muss
- * (kein Hardcoding, rein zahlenbasiertes Plausibilitäts-Gate).
- */
 export function selectCatalystBase(
   conservativeDCFPerShare: number,
   totalCatalystUpsidePct: number,
   currentPrice: number,
   analystPTMedian: number
 ): { base: number; source: "dcf" | "analyst-pt" | "current-price"; reason: string } {
-  // Test 1: Würde DCF + Catalysts realistischen Wert ergeben?
-  // Realistisch = mindestens 70% des Kurses (sonst implizite Negativ-Empfehlung
-  // bei +50% Upside, was unrealistisch ist).
   const dcfWithCatalysts = conservativeDCFPerShare * (1 + totalCatalystUpsidePct / 100);
   const realisticThreshold = currentPrice * 0.70;
 
@@ -597,7 +550,6 @@ export function selectCatalystBase(
     };
   }
 
-  // Test 2: Analyst PT verfügbar?
   if (analystPTMedian > 0) {
     return {
       base: analystPTMedian,
@@ -606,7 +558,6 @@ export function selectCatalystBase(
     };
   }
 
-  // Letzter Anker
   return {
     base: currentPrice,
     source: "current-price",

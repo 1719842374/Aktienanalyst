@@ -11,30 +11,44 @@ export function Section10({ data }: Props) {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
 
-  // Use sector profile WACC for reverse DCF
   const result = useMemo(() => calculateReverseDCF({
     currentPrice: data.currentPrice,
     fcfBase: data.fcfTTM,
     wacc: sp.waccScenarios.avg,
     sharesOutstanding: data.sharesOutstanding,
     netDebt,
+    fcfHaircut: sp.fcfHaircut ?? 0,
+    sectorG1: sp.growthAssumptions?.g1 ?? 0,
+    epsGrowthNext5Y: data.epsGrowthNext5Y ?? 0,
   }), [data, sp, netDebt]);
 
-  const ratingColor = result.rating === "realistic" ? "text-emerald-500" :
-    result.rating === "sportlich" ? "text-amber-500" : "text-red-500";
-  const ratingBg = result.rating === "realistic" ? "bg-emerald-500/10 border-emerald-500/20" :
-    result.rating === "sportlich" ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20";
+  const ratingColor =
+    result.rating === "realistic" ? "text-emerald-500" :
+    result.rating === "sportlich" ? "text-amber-500" :
+    result.rating === "negativ" ? "text-blue-400" :
+    "text-red-500";
+  const ratingBg =
+    result.rating === "realistic" ? "bg-emerald-500/10 border-emerald-500/20" :
+    result.rating === "sportlich" ? "bg-amber-500/10 border-amber-500/20" :
+    result.rating === "negativ" ? "bg-blue-500/10 border-blue-500/20" :
+    "bg-red-500/10 border-red-500/20";
+
+  const ratingLabel =
+    result.rating === "realistic" ? "Realistic" :
+    result.rating === "sportlich" ? "Ambitious (sportlich)" :
+    result.rating === "negativ" ? "Negativ / FCF-negativ" :
+    "Unrealistic";
 
   return (
     <SectionCard number={14} title="REVERSE DCF">
-      {/* Automatic Warning for unrealistic implied growth */}
       {result.rating === "unrealistic" && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">
           <span className="text-red-500 text-lg">⚠</span>
           <div>
             <div className="text-xs font-bold text-red-500">WARNUNG: Implizierte Wachstumsrate unrealistisch</div>
             <div className="text-[11px] text-red-400 mt-0.5">
-              Der Markt preist g* = {formatPercentNoSign(result.impliedGrowth)} ein — deutlich über nachhaltigem GDP-Wachstum.
+              Der Markt preist g* = {formatPercentNoSign(result.impliedGrowth)} ein —
+              über {formatPercentNoSign(result.referenceGrowth * 1.5)} (1,5× Referenzwachstum für diesen Sektor/Titel).
             </div>
           </div>
         </div>
@@ -47,7 +61,11 @@ export function Section10({ data }: Props) {
             {formatPercentNoSign(result.impliedGrowth)}
           </div>
           <div className={`inline-block mt-2 px-2.5 py-1 rounded-md text-xs font-semibold border ${ratingBg} ${ratingColor}`}>
-            {result.rating === "realistic" ? "Realistic" : result.rating === "sportlich" ? "Ambitious (sportlich)" : "Unrealistic"}
+            {ratingLabel}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1.5">
+            Referenzwachstum: {formatPercentNoSign(result.referenceGrowth)}
+            {" "}(max Sektor g1 / EPS-Konsens 5J / 3%)
           </div>
         </div>
 
@@ -68,9 +86,11 @@ export function Section10({ data }: Props) {
         `EV = Price × Shares + Net Debt`,
         `EV = $${formatNumber(data.currentPrice)} × ${formatNumber(data.sharesOutstanding / 1e9, 2)}B + $${formatNumber(netDebt / 1e9, 2)}B`,
         `EV = $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
-        `g* = WACC - FCF/EV = ${formatPercentNoSign(sp.waccScenarios.avg)} - $${formatNumber(data.fcfTTM / 1e9, 2)}B / $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
+        ...(sp.fcfHaircut ? [`FCF (nach ${sp.fcfHaircut}% Haircut) = $${formatNumber(data.fcfTTM * (1 - (sp.fcfHaircut ?? 0) / 100) / 1e9, 2)}B`] : []),
+        `g* = WACC - FCF/EV = ${formatPercentNoSign(sp.waccScenarios.avg)} - $${formatNumber(data.fcfTTM * (1 - (sp.fcfHaircut ?? 0) / 100) / 1e9, 2)}B / $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
         `g* = ${formatPercentNoSign(result.impliedGrowth)}`,
-        `Rating: ${result.rating === "realistic" ? "< 5% = realistic" : result.rating === "sportlich" ? "5-8% = ambitious (sportlich)" : "> 8% = unrealistic"}`,
+        `Referenzwachstum = max(Sektor g1 ${formatPercentNoSign(sp.growthAssumptions?.g1 ?? 0)}, EPS-5J ${formatPercentNoSign(data.epsGrowthNext5Y ?? 0)}, 3%) = ${formatPercentNoSign(result.referenceGrowth)}`,
+        `Rating: g* ${result.rating === "unrealistic" ? ">" : result.rating === "sportlich" ? ">" : "≤"} ${result.rating === "unrealistic" ? "1,5×" : result.rating === "sportlich" ? "1×" : "1×"} Referenz → ${ratingLabel}`,
       ]} />
     </SectionCard>
   );
