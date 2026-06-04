@@ -25,14 +25,9 @@ export function Section6({ data }: Props) {
   const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
   const rf = 4.2, erp = 5.5, taxR = 21, rd = 5.0;
   const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
-  const evFrac = (100 - debtRatioVal) / 100;
-  const dvFrac = debtRatioVal / 100;
-  const targetWACC = sp.waccScenarios.avg;
-  const debtCostPart = dvFrac * rd * (1 - taxR / 100);
-  const impliedBeta = Math.max(0.5, Math.min(1.8,
-    (targetWACC - debtCostPart - evFrac * rf) / (evFrac * erp)
-  ));
-  const dcfBeta = +Math.min(impliedBeta, data.beta5Y + 0.1).toFixed(2);
+
+  // FIX #2: Use data.beta5Y directly — same as Section 5 — not the impliedBeta detour
+  const dcfBeta = +Math.min(data.beta5Y, data.beta5Y + 0.1).toFixed(2);
 
   const baseParams: FCFFDCFParams = useMemo(() => ({
     revenueBase: data.revenue,
@@ -76,7 +71,8 @@ export function Section6({ data }: Props) {
   const worstCase = Math.min(m1, m2, m3);
 
   // === Risk-Adjusted DCF: discount Fair Values by total expected risk damage ===
-  const risks = data.risks;
+  // FIX #4: Safe fallback if data.risks is undefined/null
+  const risks = data.risks ?? [];
   const totalExpectedDamage = risks.reduce((s, r) => s + r.expectedDamage, 0);
   const riskDiscountFactor = 1 - totalExpectedDamage / 100;
   const raConservativeFV = conservativeDCF.perShare * riskDiscountFactor;
@@ -136,7 +132,8 @@ export function Section6({ data }: Props) {
                 <td className="py-2 px-2 font-medium">M1: Beta × Max Drawdown</td>
                 <td className="py-2 px-2 font-mono tabular-nums text-muted-foreground">
                   {formatCurrency(data.currentPrice)} × (1 - min(90%, {formatNumber(data.beta5Y)} × 50%))
-                  {data.beta5Y * 50 > 90 && (
+                  {/* FIX #5: >= 90 (not > 90) — catches the exact boundary case */}
+                  {data.beta5Y * 50 >= 90 && (
                     <span className="ml-1 text-amber-500 text-[10px]">⚠ capped (raw: {formatNumber(data.beta5Y * 50, 0)}%)</span>
                   )}
                 </td>
@@ -247,7 +244,8 @@ function CRVCard({ label, value, fairValue, worstCase, riskAdj }: {
         {label} {riskAdj && <span className="text-amber-500">(RA)</span>}
       </div>
       <div className={`text-xl font-bold font-mono tabular-nums mt-1 ${getCRVColor(value)}`}>
-        {formatNumber(value, 1)}:1
+        {/* FIX #3: Guard against Infinity/NaN when currentPrice ≈ worstCase */}
+        {isFinite(value) && !isNaN(value) ? `${formatNumber(value, 1)}:1` : "n/a"}
       </div>
       <div className="text-[10px] text-muted-foreground mt-1">
         Fair: {formatCurrency(fairValue)} | WC: {formatCurrency(worstCase)}
@@ -256,7 +254,7 @@ function CRVCard({ label, value, fairValue, worstCase, riskAdj }: {
         value >= 2.5 ? "text-emerald-500" :
         value >= 2.0 ? "text-amber-500" : "text-red-500"
       }`}>
-        {value >= 2.5 ? "Attractive" : value >= 2.0 ? "Acceptable" : "Unfavorable"}
+        {!isFinite(value) || isNaN(value) ? "–" : value >= 2.5 ? "Attractive" : value >= 2.0 ? "Acceptable" : "Unfavorable"}
       </div>
     </div>
   );
