@@ -3,3 +3,9 @@ dist
 .cache
 *.log
 .git
+.env
+data.db
+data.db-wal
+data.db-shm
+cache-seed.json
+*.md

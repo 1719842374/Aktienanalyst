@@ -1,79 +1,67 @@
-# Stock Analyst Pro — Self-Hosted Deployment
+# Stock Analyst Pro — Deployment
 
-## Railway (Empfohlen)
+## Aktuelle Deployment-Plattform: Perplexity Computer (pplx.app)
 
-### 1. Repository verbinden
-1. Gehe zu [railway.app](https://railway.app)
-2. "New Project" → "Deploy from GitHub Repo"
-3. Wähle `1719842374/Aktienanalyst`
-4. Railway erkennt automatisch das `Dockerfile` und `railway.toml`
+Die App läuft unter **https://aktienanalyst-pro.pplx.app**
 
-### 2. Environment Variables setzen
-In Railway → Settings → Variables:
+### Deploy-Prozess
+```bash
+# 1. Code ändern
+# 2. Build
+npm run build
 
-```
-NODE_ENV=production
-PORT=5000
-ANTHROPIC_API_KEY=sk-ant-...  (für KI-Katalysatoren, optional)
+# 3. Deploy über Perplexity Computer (publish_website Tool)
+# Keys werden als credentials= übergeben — nie im Code hardcoden
 ```
 
-### 3. Domain zuweisen
-Railway → Settings → Networking → "Generate Domain"
-→ Du bekommst eine URL wie `stock-analyst-pro-production.up.railway.app`
+### Environment Variables (auf pplx.app)
+Werden beim `publish_website`-Aufruf als `credentials=` injiziert:
+- `FMP_API_KEY` — Financial Modeling Prep (FMP Free Tier, 750 Calls/Tag)
+- `OPENROUTER_API_KEY` — OpenRouter für KI-Analysen (Claude 3.5 Haiku)
 
-### 4. Fertig
-Die App läuft permanent. Kein Token-Ablauf, kein Session-Ende.
+### Wichtig: Finance API
+Die Perplexity Finance API (`external-tool` CLI) funktioniert **nur in der Perplexity Sandbox**.
+Auf pplx.app ist sie verfügbar. Extern (Docker, Railway etc.) nicht.
 
 ---
 
-## Einschränkung: Finance API
+## Lokale Entwicklung
 
-Die Aktien-Daten kommen über die **Perplexity Finance API** (`external-tool` CLI).
-Diese funktioniert **nur in der Perplexity Computer Sandbox**.
+```bash
+# 1. .env erstellen
+cp .env.example .env
+# FMP_API_KEY und OPENROUTER_API_KEY eintragen
 
-Auf Railway/Self-Hosted gibt es zwei Optionen:
+# 2. Dependencies installieren
+npm install
 
-### Option A: FMP API (Financial Modeling Prep)
-1. Registriere dich auf [financialmodelingprep.com](https://financialmodelingprep.com)
-2. Setze `FMP_API_KEY` in Railway
-3. Die `callFinanceTool` Funktion in `server/routes.ts` muss angepasst werden
-
-### Option B: Perplexity API als Proxy
-Falls Perplexity in Zukunft eine REST-API für Finance-Daten anbietet,
-kann die `callFinanceTool` Funktion auf diese umgestellt werden.
-
-### Option C: Hybrid
-- App auf Railway für permanentes Hosting
-- Finance-Daten über die gecachten Analysen aus der Sandbox
-- Neue Analysen nur wenn die Sandbox aktiv ist
+# 3. Dev-Server starten (Port 5000)
+npm run dev
+```
 
 ---
 
-## Docker (lokal)
+## Docker (lokales Testing)
 
 ```bash
 docker build -t stock-analyst-pro .
-docker run -p 5000:5000 -e NODE_ENV=production stock-analyst-pro
+docker run -p 5000:5000 \
+  -e FMP_API_KEY=your_key \
+  -e OPENROUTER_API_KEY=your_key \
+  stock-analyst-pro
 ```
 
-Öffne `http://localhost:5000`
+**Hinweis:** Ohne Perplexity Finance API sind nur FMP-Fallback-Daten verfügbar.
 
 ---
 
-## Architektur
-
-```
-client/           → React Frontend (Vite, Tailwind, shadcn/ui)
-server/           → Express Backend (TypeScript)
-shared/           → Shared Types (Schema)
-.cache/           → Server-side Analysis Cache (JSON files)
-dist/             → Build Output
-  index.cjs       → Server bundle
-  public/         → Static frontend assets
-```
-
 ## Tech Stack
-- **Frontend**: React 18, Recharts, Tailwind CSS, shadcn/ui, wouter
-- **Backend**: Express, Zod, jsPDF
-- **Data**: Perplexity Finance API, SEC EDGAR, Google News RSS
-- **AI**: Anthropic Claude (optional, für KI-Katalysatoren)
+
+| Schicht | Technologie |
+|---|---|
+| Frontend | React 18, Recharts, Tailwind CSS, shadcn/ui, wouter |
+| Backend | Express, TypeScript (esbuild), Zod |
+| Daten | FMP API, SEC EDGAR, Blockchain.info, mempool.space |
+| KI | OpenRouter → Claude 3.5 Haiku (Katalysatoren, Risiko, Thesis) |
+| Hosting | pplx.app (Perplexity Computer) |
+| Cache | SQLite (data.db) — 7 Tage Analyse-Cache |
