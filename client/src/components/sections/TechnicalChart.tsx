@@ -78,11 +78,20 @@ export function TechnicalChart({ data }: Props) {
     return { ma: maSlice, macd: macdSlice };
   }, [ti.maData, ti.macdData, timeRange]);
 
-  // Merge MA and MACD data for display — embed signals into each data point
-  // Uses nearest-date matching: if a signal date doesn't exactly match a chart
-  // data point (e.g. signal on Jan 21 but chart only has Jan 20 and Jan 22),
-  // attach the signal to the closest data point within ±1 trading day.
+  // Merge MA and MACD data for display — embed signals into each data point.
+  //
+  // FIX: Previously MACD was merged by array index [i] which silently
+  // misaligns the MACD chart vs the price chart when maData and macdData
+  // have different lengths (e.g. missing trading days, warmup period).
+  // Now uses a Map<date, MACDDataPoint> for exact O(1) date lookup —
+  // identical to how signals are already matched.
   const chartData = useMemo(() => {
+    // Build O(1) MACD lookup by date — fixes silent index-misalignment bug
+    const macdByDate = new Map<string, MACDDataPoint>();
+    for (const m of filteredData.macd) {
+      macdByDate.set(m.date, m);
+    }
+
     // Build a Set of all chart dates for quick exact lookup
     const chartDates = new Set(filteredData.ma.map(d => d.date));
     
@@ -114,8 +123,9 @@ export function TechnicalChart({ data }: Props) {
       signalsByChartDate.set(targetDate, arr);
     }
 
-    return filteredData.ma.map((d, i) => {
-      const macd = filteredData.macd[i] || {};
+    return filteredData.ma.map((d) => {
+      // Date-based MACD lookup — correct even when lengths differ
+      const macd = macdByDate.get(d.date) || {};
       return {
         date: d.date,
         close: d.close,
@@ -126,9 +136,9 @@ export function TechnicalChart({ data }: Props) {
         ema26: d.ema26,
         ema12: d.ema12,
         ema9: d.ema9,
-        macd: macd.macd,
-        signal: macd.signal,
-        histogram: macd.histogram,
+        macd: (macd as MACDDataPoint).macd,
+        signal: (macd as MACDDataPoint).signal,
+        histogram: (macd as MACDDataPoint).histogram,
         _signals: signalsByChartDate.get(d.date) || null,
       };
     });
