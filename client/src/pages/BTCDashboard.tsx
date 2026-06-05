@@ -31,6 +31,7 @@ interface TechChartPoint {
   ma730: number | null; ma730x5: number | null;
   ma111: number | null; ma350x2: number | null; ma350: number | null;
   ma1400: number | null;
+  rsi14: number | null;
 }
 
 interface BTCAnalysis {
@@ -1507,6 +1508,55 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
               stroke="#f97316"
               strokeWidth={1}
               strokeDasharray="3 2"
+              dot={false}
+              connectNulls={true}
+              isAnimationActive={false}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* RSI(14) Chart */}
+      <div className="mt-3">
+        <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-2">
+          <span className="font-medium">RSI(14)</span>
+          <span className="opacity-60">= Relative Strength Index | Überkauft &gt; 70 | Überverkauft &lt; 30 | Wilder Smoothing</span>
+          {(() => {
+            const lastRSI = chartData.length > 0 ? chartData[chartData.length - 1]?.rsi14 : null;
+            if (lastRSI === null || lastRSI === undefined) return null;
+            const color = lastRSI > 70 ? "text-red-400" : lastRSI < 30 ? "text-emerald-400" : "text-blue-400";
+            const label = lastRSI > 70 ? "Überkauft" : lastRSI < 30 ? "Überverkauft" : "Neutral";
+            return <span className={`ml-auto font-mono font-semibold ${color}`}>{lastRSI.toFixed(1)} — {label}</span>;
+          })()}
+        </div>
+        <ResponsiveContainer width="100%" height={110}>
+          <ComposedChart data={chartData} margin={{ top: 2, right: 10, left: 0, bottom: 2 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+            <XAxis dataKey="date" tick={false} axisLine={false} tickLine={false} />
+            <YAxis
+              domain={[0, 100]}
+              ticks={[0, 30, 50, 70, 100]}
+              tick={{ fontSize: 9, fill: "rgba(255,255,255,0.4)" }}
+              tickLine={false}
+              axisLine={false}
+              width={28}
+            />
+            <Tooltip
+              contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "11px" }}
+              formatter={(value: number) => [value?.toFixed(1), "RSI(14)"]}
+              labelFormatter={(label) => label}
+            />
+            {/* Overbought / Oversold zones */}
+            <ReferenceArea y1={70} y2={100} fill="rgba(239,68,68,0.08)" />
+            <ReferenceArea y1={0} y2={30} fill="rgba(34,197,94,0.08)" />
+            <ReferenceLine y={70} stroke="rgba(239,68,68,0.5)" strokeDasharray="3 2" strokeWidth={1} />
+            <ReferenceLine y={50} stroke="rgba(255,255,255,0.15)" strokeDasharray="2 3" strokeWidth={1} />
+            <ReferenceLine y={30} stroke="rgba(34,197,94,0.5)" strokeDasharray="3 2" strokeWidth={1} />
+            <Line
+              type="monotone"
+              dataKey="rsi14"
+              stroke="#818cf8"
+              strokeWidth={1.5}
               dot={false}
               connectNulls={true}
               isAnimationActive={false}
