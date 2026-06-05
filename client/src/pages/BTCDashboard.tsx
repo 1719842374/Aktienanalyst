@@ -22,16 +22,39 @@ import {
   Cell, ReferenceLine, ReferenceArea, PieChart, Pie, ComposedChart, Legend,
 } from "recharts";
 
+// === RSI(14) Wilder Smoothing (analog TechnicalChart.tsx) ===
+function calcRSI(prices: number[], period = 14): (number | null)[] {
+  const rsi: (number | null)[] = [];
+  if (prices.length < period + 1) return prices.map(() => null);
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = prices[i] - prices[i - 1];
+    diff > 0 ? (avgGain += diff / period) : (avgLoss += Math.abs(diff) / period);
+  }
+  for (let i = 0; i < period; i++) rsi.push(null);
+  const rs0 = avgGain / (avgLoss || 1e-10);
+  rsi.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + rs0));
+  for (let i = period + 1; i < prices.length; i++) {
+    const diff = prices[i] - prices[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
+    const rs = avgGain / (avgLoss || 1e-10);
+    rsi.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + rs));
+  }
+  return rsi;
+}
+
 // === Types ===
 interface TechChartPoint {
   date: string; price: number;
+  volume?: number; _volNorm?: number; _volUp?: boolean;
   ma20: number | null; ma50: number | null; ma100: number | null; ma200: number | null;
   ema9: number | null; ema12: number | null; ema26: number | null;
   macd: number | null; signal: number | null; histogram: number | null;
   ma730: number | null; ma730x5: number | null;
   ma111: number | null; ma350x2: number | null; ma350: number | null;
   ma1400: number | null;
-  rsi14: number | null;
+  rsi14?: number | null;
 }
 
 interface BTCAnalysis {
@@ -914,6 +937,22 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
     return result;
   }, [filteredData]);
 
+  // Merge RSI(14) into chartData (server doesn't send rsi14)
+  const chartDataWithRSI = useMemo(() => {
+    if (chartData.length === 0) return chartData;
+    const prices = chartData.map(d => d.price);
+    const rsiArr = calcRSI(prices);
+    // Volume normalisation for overlay (max 15% of price range)
+    const vols = chartData.map(d => d._volNorm ?? 0);
+    const maxVolNorm = Math.max(...vols, 1e-10);
+    return chartData.map((d, i) => ({
+      ...d,
+      rsi14: rsiArr[i] ?? null,
+      // re-normalise _volNorm within the downsampled window
+      _volNorm: maxVolNorm > 0 ? (d._volNorm ?? 0) / maxVolNorm : 0,
+    }));
+  }, [chartData]);
+
   // Filter signals within the displayed time range
   const visibleSignals = useMemo(() => {
     if (!showSignals || chartData.length === 0 || !data.technicalSignals) return [];
@@ -1300,7 +1339,7 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
       <div className={`h-[320px] sm:h-[380px] w-full ${isMeasuring ? "cursor-crosshair" : ""}`}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
-            data={chartData}
+            data={chartDataWithRSI}
             margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
             onClick={(e: any) => {
               if (!isMeasuring || !e?.activePayload?.[0]?.payload) return;
@@ -1329,18 +1368,24 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
               width={55}
               axisLine={{ stroke: "var(--border)" }}
             />
+            {/* Hidden right axis for volume normalisation */}
+            <YAxis yAxisId="vol" hide domain={[0, 1]} orientation="right" />
             <Tooltip
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
+                const volPoint = chartDataWithRSI.find(d => d.date === label);
                 return (
                   <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
                     <div className="font-semibold mb-1">{formatDateFull(label)}</div>
-                    {payload.map((p: any) => (
+                    {payload.filter((p: any) => p.dataKey !== "_volNorm").map((p: any) => (
                       <div key={p.dataKey} className="flex justify-between gap-3">
                         <span style={{ color: p.color }}>{p.name}</span>
                         <span className="font-mono tabular-nums">${Number(p.value).toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
                       </div>
                     ))}
+                    {(volPoint?.volume ?? 0) > 0 && (
+                      <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{((volPoint!.volume ?? 0) / 1e9).toFixed(2)}B</span></div>
+                    )}
                     {visibleSignals.filter(s => s.date === label).map((s, i) => (
                       <div key={i} className={`mt-1 pt-1 border-t border-border ${s.type === "BUY" ? "text-green-400" : "text-red-400"}`}>
                         {s.type === "BUY" ? "▲ BUY" : "▼ SELL"}: {s.reason}
@@ -1348,6 +1393,15 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
                     ))}
                   </div>
                 );
+              }}
+            />
+
+            {/* Volume overlay bars (normalised to 0–15% of price range, analog TechnicalChart) */}
+            <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={6}
+              shape={(props: any) => {
+                const { x, y, width, height, payload } = props;
+                const fillColor = payload._volUp ? "rgba(34,197,94,0.30)" : "rgba(239,68,68,0.30)";
+                return <rect x={x} y={y} width={Math.max(width, 1)} height={Math.abs(height)} fill={fillColor} />;
               }}
             />
 
@@ -1435,7 +1489,7 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
       </div>
       <div className="h-[140px] sm:h-[160px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <ComposedChart data={chartDataWithRSI} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
             <XAxis
               dataKey="date"
@@ -1522,7 +1576,7 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
           <span className="font-medium">RSI(14)</span>
           <span className="opacity-60">= Relative Strength Index | Überkauft &gt; 70 | Überverkauft &lt; 30 | Wilder Smoothing</span>
           {(() => {
-            const lastRSI = chartData.length > 0 ? chartData[chartData.length - 1]?.rsi14 : null;
+            const lastRSI = chartDataWithRSI.length > 0 ? chartDataWithRSI[chartDataWithRSI.length - 1]?.rsi14 : null;
             if (lastRSI === null || lastRSI === undefined) return null;
             const color = lastRSI > 70 ? "text-red-400" : lastRSI < 30 ? "text-emerald-400" : "text-blue-400";
             const label = lastRSI > 70 ? "Überkauft" : lastRSI < 30 ? "Überverkauft" : "Neutral";
@@ -1530,7 +1584,7 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
           })()}
         </div>
         <ResponsiveContainer width="100%" height={110}>
-          <ComposedChart data={chartData} margin={{ top: 2, right: 10, left: 0, bottom: 2 }}>
+          <ComposedChart data={chartDataWithRSI} margin={{ top: 2, right: 10, left: 0, bottom: 2 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="date" tick={false} axisLine={false} tickLine={false} />
             <YAxis

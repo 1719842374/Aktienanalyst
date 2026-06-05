@@ -6238,10 +6238,10 @@ export async function registerRoutes(server: Server, app: Express) {
       const categories = computeCategories();
 
       // === 14. Extended Historical Prices (1Y, 3Y, 5Y, 10Y) ===
-      let allPriceData: { date: string; price: number }[] = [];
+      let allPriceData: { date: string; price: number; volume: number }[] = [];
 
       // Helper to fetch CoinGecko range and deduplicate
-      function fetchCGRange(fromSec: number, toSec: number): { date: string; price: number }[] {
+      function fetchCGRange(fromSec: number, toSec: number): { date: string; price: number; volume: number }[] {
         try {
           const raw = execSync(
             `curl -sL "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fromSec}&to=${toSec}"`,
@@ -6249,12 +6249,19 @@ export async function registerRoutes(server: Server, app: Express) {
           );
           const parsed = JSON.parse(raw);
           if (parsed?.prices && Array.isArray(parsed.prices)) {
-            const dayMap = new Map<string, number>();
+            const dayMap = new Map<string, { price: number; volume: number }>();
             for (const p of parsed.prices as [number, number][]) {
               const d = new Date(p[0]).toISOString().split("T")[0];
-              dayMap.set(d, p[1]);
+              if (!dayMap.has(d)) dayMap.set(d, { price: p[1], volume: 0 });
             }
-            return Array.from(dayMap.entries()).map(([date, price]) => ({ date, price }));
+            if (parsed?.total_volumes && Array.isArray(parsed.total_volumes)) {
+              for (const v of parsed.total_volumes as [number, number][]) {
+                const d = new Date(v[0]).toISOString().split("T")[0];
+                const entry = dayMap.get(d);
+                if (entry) entry.volume = v[1];
+              }
+            }
+            return Array.from(dayMap.entries()).map(([date, { price, volume }]) => ({ date, price, volume }));
           }
         } catch (e: any) {
           console.error("[BTC] CoinGecko range error:", e?.message?.substring(0, 200));
@@ -6288,6 +6295,7 @@ export async function registerRoutes(server: Server, app: Express) {
               allPriceData = rows.map(r => ({
                 date: r["Date"] || r["date"] || "",
                 price: parseNumber(r["Close"] || r["close"] || r["Price"] || r["price"] || "0"),
+                volume: parseNumber(r["Volume"] || r["volume"] || "0"),
               })).filter(r => r.date && r.price > 0);
             }
           }
@@ -6375,9 +6383,15 @@ export async function registerRoutes(server: Server, app: Express) {
       });
 
       // Build technical chart data array
+      // Pre-compute max volume for normalisation (0–15% of price range overlay)
+      const allVols = allPriceData.map(d => d.volume ?? 0).filter(v => v > 0);
+      const maxVol = allVols.length > 0 ? Math.max(...allVols) : 1;
       const technicalChartData = allPriceData.map((d, i) => ({
         date: d.date,
         price: d.price,
+        volume: d.volume ?? 0,
+        _volNorm: (d.volume ?? 0) > 0 ? (d.volume ?? 0) / maxVol : 0,
+        _volUp: i === 0 ? true : (d.price >= allPriceData[i - 1].price),
         ma50: ma50[i],
         ma200: ma200[i],
         macd: macdLine[i],
