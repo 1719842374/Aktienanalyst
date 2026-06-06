@@ -11,7 +11,7 @@
 //   in May 2026. Set OPENROUTER_MODEL env var to override.
 //
 // Model Strategy (May 2026):
-// - Default: anthropic/claude-3-5-haiku-20241022 (cheap + fast + good JSON)
+// - Default: anthropic/claude-3.5-haiku-20241022 (cheap + fast + good JSON)
 // - Alternative: x-ai/grok-4-1-fast (similar tier; gets retired 15 May 2026)
 //   *** IMPORTANT: x-ai/grok-4-1-fast retires on 2026-05-15. After that date
 //   *** OpenRouter will return 404. Use Haiku-3.5 or Grok-4.3 instead.
@@ -32,7 +32,6 @@ function getClient(): OpenAI | null {
     apiKey: key,
     baseURL: "https://openrouter.ai/api/v1",
     defaultHeaders: {
-      // OpenRouter recommends these for analytics/leaderboards
       "HTTP-Referer": "https://stockanalyst.pplx.app",
       "X-Title": "Stock Analyst Pro",
     },
@@ -40,45 +39,18 @@ function getClient(): OpenAI | null {
   return openrouterClient;
 }
 
-// Pick the model based on the current date and OPENROUTER_MODEL override.
-//
-// MODEL STRATEGY (May 2026):
-//   DEFAULT  : x-ai/grok-4.1-fast   — ~85% cheaper than Haiku 3.5, good JSON output
-//   FALLBACK : anthropic/claude-3.5-haiku  (set PREFER_GROK=0 to switch back)
-//
-// IMPORTANT: x-ai/grok-4.1-fast is scheduled for retirement on 2026-05-15.
-// After that date the date-guard auto-switches to x-ai/grok-4.3.
-//
-// Verified OpenRouter model IDs (queried 2026-05-08, ping confirmed):
-//   x-ai/grok-4.1-fast            — DEFAULT, retires 2026-05-15 (→ grok-4.3)
-//   x-ai/grok-4.3                 — auto-successor after 2026-05-16
-//   x-ai/grok-4-fast              — cheapest grok variant
-//   anthropic/claude-3.5-haiku    — fallback when PREFER_GROK=0
-//   anthropic/claude-haiku-4.5    — newer Haiku, slightly pricier
-//
-// Switching guide for the user:
-//   1. Default (no env)     → grok-4.1-fast (cheapest, current default)
-//   2. PREFER_GROK=0        → anthropic/claude-3.5-haiku (more deterministic)
-//   3. OPENROUTER_MODEL=... → hard override (any OpenRouter ID)
 function pickModel(): string {
   const override = process.env.OPENROUTER_MODEL;
   if (override) return override;
-  // Primary: Claude 3.5 Haiku — $0.80/$4.00 per M tokens
-  // Same account (Stock_Analyst) already used this model successfully.
-  // Fast structured JSON, company-specific outputs, 200K context.
   return "anthropic/claude-3.5-haiku";
 }
 
-// Fallback chain — Stock_Analyst OpenRouter account (has $0.113 credit)
-// Claude 3.5 Haiku → Claude 3 Haiku (cheapest) → Grok 4.3 (was "Grok 4.1 Fast")
 const MODEL_FALLBACK_CHAIN = [
-  "anthropic/claude-3.5-haiku",  // $0.80/$4.00 per M — primary, best JSON
-  "anthropic/claude-3-haiku",     // $0.25/$1.25 per M — cheapest fallback
-  "x-ai/grok-4.3",               // $1.25/$2.50 per M — Grok fallback
+  "anthropic/claude-3.5-haiku",
+  "anthropic/claude-3-haiku",
+  "x-ai/grok-4.3",
 ];
 
-// Make one LLM call with automatic model fallback on 429/402.
-// Returns { text, modelUsed } or throws after all fallbacks exhausted.
 async function callWithFallback(client: OpenAI, params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>): Promise<{ text: string; modelUsed: string; usage?: any }> {
   const override = process.env.OPENROUTER_MODEL;
   const chain = override ? [override] : MODEL_FALLBACK_CHAIN;
@@ -99,11 +71,10 @@ async function callWithFallback(client: OpenAI, params: Omit<Parameters<OpenAI['
       if (status === 429 || status === 402) {
         console.warn(`[LLM] ${model} rate-limited (${status}) — trying next model`);
         lastErr = err;
-        // Small delay before trying next model — helps rate-limit recovery
         await new Promise(r => setTimeout(r, 1500));
         continue;
       }
-      throw err; // non-retryable error
+      throw err;
     }
   }
   throw lastErr || new Error('All LLM models exhausted');
@@ -116,12 +87,12 @@ export interface CapexBeneficiary {
 }
 
 export interface CapexTailwindContext {
-  sector: string;         // e.g. "Defense & Aerospace"
-  impact: string;         // "positiv" | "neutral" | "negativ"
-  timeline: string;       // e.g. "12-24M"
-  reasoning: string;      // sector reasoning
-  programmes: string[];   // programme names
-  beneficiaryEntry: CapexBeneficiary; // the matched entry for this ticker
+  sector: string;
+  impact: string;
+  timeline: string;
+  reasoning: string;
+  programmes: string[];
+  beneficiaryEntry: CapexBeneficiary;
 }
 
 export interface CombinedLLMInput {
@@ -136,9 +107,9 @@ export interface CombinedLLMInput {
   price: number;
   pe: number;
   marketCap: number;
-  analystPTMedian?: number;    // optional — used in richer prompt context
-  governmentExposure?: number; // optional — used in richer prompt context
-  capexContext?: CapexTailwindContext | null; // optional — Capex Fiscal Spending tailwind if ticker found in Researcher cache
+  analystPTMedian?: number;
+  governmentExposure?: number;
+  capexContext?: CapexTailwindContext | null;
   keyProjects: string[];
   secFilingExcerpts: string[];
   newsItems: {
@@ -161,35 +132,20 @@ export interface CombinedLLMResult {
   completionTokens?: number;
 }
 
-/**
- * Combined LLM call — returns 5 company-specific catalysts AND tags every
- * news item with sentiment + catalyst-match in a SINGLE request.
- *
- * Replaces the previous two-call flow (generateLLMCatalysts + matchNewsToCatalysts)
- * which cost ~10-15 credits per analysis. This single call costs ~3-4 credits
- * with Haiku 3.5 — roughly 70-80% saving per KI-analysis.
- *
- * Returns null if the LLM call fails OR returns malformed JSON, so the caller
- * can fall back to sector-template catalysts and skip news sentiment.
- */
 export async function generateCatalystsAndMatchNews(
   input: CombinedLLMInput
 ): Promise<CombinedLLMResult | null> {
   const client = getClient();
   if (!client) return null;
 
-  const model = pickModel();
   const {
     ticker, companyName, sector, industry, description, revenue, revenueGrowth,
     fcfMargin, price, pe, marketCap, keyProjects, secFilingExcerpts, newsItems,
     analystPTMedian = 0, governmentExposure = 0, capexContext = null,
   } = input;
 
-  // Compact context — keep prompt under ~1500 input tokens to keep cost low.
-  // Build rich company context — more detail = more specific catalysts
   const ctx: string[] = [];
   ctx.push(`Unternehmen: ${companyName} (${ticker}) | Sektor: ${sector} / ${industry}`);
-  // Full description — key for non-US companies with no SEC filings
   ctx.push(`Beschreibung: ${description.substring(0, 1000)}`);
   ctx.push(`Finanzen: Umsatz ${revenue > 0 ? '$' + (revenue / 1e9).toFixed(1) + 'B' : 'N/A'} | Wachstum ${revenueGrowth != null && revenueGrowth !== 0 ? revenueGrowth.toFixed(1) + '%' : 'N/A'} | FCF-Marge ${fcfMargin > 0 ? fcfMargin.toFixed(1) + '%' : 'N/A'} | KGV ${pe > 0 ? pe.toFixed(1) : 'N/A'} | MCap ${marketCap > 0 ? '$' + (marketCap / 1e9).toFixed(1) + 'B' : 'N/A'}`);
   ctx.push(`Kurs: $${price.toFixed(2)} | Analyst-PT: $${analystPTMedian > 0 ? analystPTMedian.toFixed(2) : 'N/A'} | Gov-Exposure: ${(governmentExposure * 100).toFixed(0)}%`);
@@ -203,7 +159,6 @@ export async function generateCatalystsAndMatchNews(
     ctx.push(`SEC-Auszüge: ${secFilingExcerpts.slice(0, 3).map(e => e.substring(0, 250)).join(" | ")}`);
   }
 
-  // News list — put most recent first, use full title so deals/numbers are visible
   const newsList = newsItems
     .slice(0, 8)
     .map((n, i) => `N${i + 1} [${n.relativeTime}]: "${n.title.substring(0, 160)}" (${n.source})`)
@@ -258,7 +213,6 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
       return null;
     }
 
-    // Strip markdown fences and preamble text before JSON
     let jsonStr = text.trim();
     if (jsonStr.startsWith("```")) {
       jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
@@ -286,7 +240,6 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
       return null;
     }
 
-    // Build Catalyst objects with computed fields
     const catalysts: Catalyst[] = rawCatalysts.slice(0, 5).map((c: any) => {
       const pos = Math.max(20, Math.min(80, Number(c.pos) || 50));
       const bruttoUpside = Math.max(3, Math.min(35, Number(c.bruttoUpside) || 10));
@@ -301,7 +254,6 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
       };
     });
 
-    // Apply news sentiment to newsItems in-place + adjust catalyst PoS
     if (Array.isArray(newsMatches) && newsMatches.length && newsItems.length) {
       for (const m of newsMatches) {
         const newsIdx = (Number(m.idx) || 0) - 1;
@@ -319,7 +271,6 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
         }
       }
 
-      // Aggregate sentiment per catalyst → adjust PoS by ±7 max
       for (let i = 0; i < catalysts.length; i++) {
         const matched = newsItems.filter(n => n.matchedCatalystIdx === i);
         if (!matched.length) continue;
@@ -364,9 +315,6 @@ export function isLLMAvailable(): boolean {
   return !!process.env.OPENROUTER_API_KEY;
 }
 
-// === Catalyst Deep-Dive Explanations (Section 15) ===
-// Generates per-catalyst structured deep-dive, mirroring the Risk Deep-Dive in Section 8.
-// Single LLM call for all catalysts to minimize credits.
 export interface CatalystDeepDiveInput {
   ticker: string;
   companyName: string;
@@ -436,15 +384,6 @@ Erstelle fuer jeden Katalysator ein strukturiertes Deep-Dive-Objekt. Antworte NU
   }
 }
 
-// === Risk Deep-Dive Explanations ===
-//
-// Generates structured, company-specific explanations for each risk in the
-// Risk Inversion table (Section 8). Mirrors the style of catalyst explanations
-// in Section 15 — short, structured, fact-based, in German.
-//
-// Returns risks with .explanation populated, or null on failure.
-// Single LLM call covers all risks to keep cost minimal (~1-2 credits).
-
 export interface RiskExplanationInput {
   ticker: string;
   companyName: string;
@@ -459,10 +398,9 @@ export interface RiskExplanationInput {
   marketCap: number;
   governmentExposure: number;
   risks: Risk[];
-  // B3: optional context from SEC filings and news for more specific explanations
   keyProjects?: string[];
   recentNewsHeadlines?: string[];
-  capexContext?: CapexTailwindContext | null; // optional — Capex Fiscal Spending tailwind / policy-reversal risk
+  capexContext?: CapexTailwindContext | null;
 }
 
 export async function generateRiskExplanations(
@@ -478,7 +416,6 @@ export async function generateRiskExplanations(
     keyProjects = [], recentNewsHeadlines = [],
   } = input;
 
-  // B3: optional SEC + news context for more specific risk explanations
   const secContext = keyProjects.length > 0
     ? `\nKey Projects (SEC):\n${keyProjects.slice(0, 5).map((p: string) => `  - ${p}`).join("\n")}`
     : "";
@@ -490,7 +427,6 @@ export async function generateRiskExplanations(
     ? `\nCAPEX POLICY RISK: ${ticker} ist börsennotierter Profiteur von "${input.capexContext.sector}" (Programme: ${input.capexContext.programmes.join(", ")}). PFLICHT: Prüfe ob ein bestehendes Risiko in der Liste "Policy-Reversal" oder "Budget-Kürzung" abdeckt. Wenn ja, markiere dessen 'unterschaetzt' Feld als true wenn EW < 30% — Capex-Programme haben erhöhtes politisches Kürzungsrisiko. Wenn KEIN Risiko das abdeckt, füge als letzten Eintrag hinzu: riskIndex=${risks.length}, name="Policy-Reversal: ${input.capexContext.programmes[0] || input.capexContext.sector}", category="politisch".`
     : "";
 
-  // riskIndex is 0-based — explicitly labelled to avoid LLM off-by-one (B fix)
   const riskList = risks.map((r, i) =>
     `riskIndex=${i}: ${r.name} | ${r.category} | EW: ${r.ew}% | Impact: ${r.impact}% | Exp.Damage: ${r.expectedDamage.toFixed(2)}%`
   ).join("\n");
@@ -516,11 +452,11 @@ Return ONLY this JSON (no markdown, no commentary):
   "explanations": [
     {
       "riskIndex": 0,
-      "kontext": "Kurze faktenbasierte Beschreibung warum dieses Risiko f\u00fcr ${companyName} relevant ist.",
-      "gewichtungsBegrundung": "Warum EW% und Impact% so gew\u00e4hlt wurden — unternehmensspezifische Begr\u00fcndung.",
+      "kontext": "Kurze faktenbasierte Beschreibung warum dieses Risiko fuer ${companyName} relevant ist.",
+      "gewichtungsBegrundung": "Warum EW% und Impact% so gewaehlt wurden — unternehmensspezifische Begruendung.",
       "bewertungsAuswirkung": "Konkrete Auswirkungen auf Umsatz, Margen, FCF oder DCF-Bewertung.",
-      "mitigation": "Bestehende oder m\u00f6gliche Ma\u00dfnahmen des Unternehmens zur Risikominderung.",
-      "gesamtEinschaetzung": "Kritikalit\u00e4t im Gesamtkontext der These.",
+      "mitigation": "Bestehende oder moegliche Massnahmen des Unternehmens zur Risikominderung.",
+      "gesamtEinschaetzung": "Kritikalitaet im Gesamtkontext der These.",
       "unterschaetzt": false
     }
   ]
@@ -561,7 +497,6 @@ Return ONLY this JSON (no markdown, no commentary):
       return null;
     }
 
-    // Map explanations back onto risks
     const enrichedRisks = risks.map((r, i) => {
       const expl = explanations.find((e: any) => e.riskIndex === i) || explanations[i];
       if (!expl) return r;
@@ -590,9 +525,6 @@ Return ONLY this JSON (no markdown, no commentary):
   }
 }
 
-// Best-effort recovery of truncated JSON. Walks the string, tracks bracket
-// depth, trims any partially-written trailing item, and closes any still-open
-// brackets/braces. Returns the original string if recovery fails.
 function salvageTruncatedJson(raw: string): string {
   try { JSON.parse(raw); return raw; } catch {}
   const lastBrace = raw.lastIndexOf('}');
@@ -613,9 +545,6 @@ function salvageTruncatedJson(raw: string): string {
   try { JSON.parse(s); return s; } catch { return raw; }
 }
 
-// Generic JSON-mode LLM call — reused by the Researcher module so it doesn't
-// have to instantiate its own OpenAI client. Returns parsed JSON or null on
-// any error (network / parse / model-unavailable).
 export async function callLLMJson(opts: {
   prompt: string;
   maxTokens?: number;
@@ -636,16 +565,12 @@ export async function callLLMJson(opts: {
     });
     if (!text) return null;
     let jsonStr = text.trim();
-    // Strip markdown fences
     if (jsonStr.startsWith("```")) {
       jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
     }
-    // Strip any preamble text before the JSON (e.g. "Hier ist ein JSON-Objekt:\n{...}")
-    // Find the first { or [ to locate the actual JSON start
     const jsonStart = jsonStr.search(/[{\[]/);
     if (jsonStart > 0) {
       jsonStr = jsonStr.substring(jsonStart);
-      // Also strip anything after the last } or ]
       const jsonEnd = Math.max(jsonStr.lastIndexOf('}'), jsonStr.lastIndexOf(']'));
       if (jsonEnd >= 0) jsonStr = jsonStr.substring(0, jsonEnd + 1);
     }
@@ -684,12 +609,10 @@ export interface GrowthThesisInput {
   capexContext?: { sector: string; programmes: string[]; rationale: string } | null;
 }
 
-/** Fingerprint for stale-thesis detection — hash of key inputs */
 export function growthThesisFingerprint(input: Pick<GrowthThesisInput,
   "revenueGrowth" | "fcfMargin" | "topCatalysts" | "capexContext">): string {
   const catKey = input.topCatalysts.slice(0, 2).map(c => c.name).join("|");
   const capexKey = input.capexContext ? input.capexContext.programmes.slice(0,2).join("+") : "none";
-  // Round to 1dp so minor float drift doesn't invalidate
   return `rv${input.revenueGrowth.toFixed(1)}_fcf${input.fcfMargin.toFixed(1)}_cats${catKey}_capex${capexKey}`;
 }
 
@@ -699,11 +622,9 @@ export async function generateGrowthThesis(input: GrowthThesisInput): Promise<st
     forwardPE, evEbitda, analystPTMedian, currentPrice, returnOnEquity,
     topCatalysts, capexContext } = input;
 
-  // Extract first 3 sentences from FMP description (contains product-specific details)
   const descSentences = (description || "").match(/[^.!?]+[.!?]+/g) || [];
   const descCore = descSentences.slice(0, 3).join(" ").trim().slice(0, 400);
 
-  // Build hard metrics block — only include metrics that are non-zero/non-null
   const metrics: string[] = [];
   if (revenueGrowth !== 0) metrics.push(`Revenue-Wachstum: ${revenueGrowth.toFixed(1)}%`);
   if (fcfMargin && fcfMargin !== 0) metrics.push(`FCF-Marge: ${fcfMargin.toFixed(1)}%`);
@@ -717,7 +638,6 @@ export async function generateGrowthThesis(input: GrowthThesisInput): Promise<st
     metrics.push(`Analyst-PT: $${analystPTMedian} (+${upside}% Upside)`);
   }
 
-  // Top 2 catalyst names + first context sentence each
   const catLines = topCatalysts.slice(0, 2).map(c => {
     const ctxFirst = (c.context.match(/[^.!?]+[.!?]+/) || [""])[0].trim();
     return `- ${c.name}: ${ctxFirst.slice(0, 150)}`;
@@ -761,6 +681,12 @@ Antworte NUR mit JSON: {"thesis": "..."}`;
   return null;
 }
 
+// ============================================================
+// generateCompanySpecificRisks — ENHANCED VERSION
+// Fix: maxTokens 600→1200, retry on partial (<5) results,
+// stronger prompt with explicit "GENAU 5" mandate and
+// concrete good/bad examples mirror catalyst prompt style.
+// ============================================================
 export async function generateCompanySpecificRisks(input: {
   ticker: string;
   companyName: string;
@@ -787,18 +713,19 @@ export async function generateCompanySpecificRisks(input: {
     topCatalysts, capexContext, recentNewsHeadlines = [],
   } = input;
 
-  // Fix 4: 400→600 chars for richer product/segment context
   const descSentences = (description || "").match(/[^.!?]+[.!?]+/g) || [];
-  const descCore = descSentences.slice(0, 4).join(" ").trim().slice(0, 600);
+  const descCore = descSentences.slice(0, 5).join(" ").trim().slice(0, 700);
 
-  // Fix 4: catContext slice 100→200 chars so inversions can reference full catalyst context
-  const catContext = topCatalysts.slice(0, 3).map(c => `- ${c.name}: ${c.context.slice(0, 200)}`).join("\n");
+  // Use all catalyst context for richer inversion anchors
+  const catContext = topCatalysts.slice(0, 5).map((c, i) =>
+    `K${i+1} - ${c.name}: ${c.context.slice(0, 250)}`
+  ).join("\n");
 
-  // Fix 1: news slice 4→8, same as catalysts prompt
+  // All news headlines for concrete event anchors
   const newsCtx = recentNewsHeadlines.slice(0, 8).map((h, i) => `N${i + 1}: ${h}`).join("\n");
 
   const capexCtx = capexContext
-    ? `Das Unternehmen profitiert von ${capexContext.programmes.slice(0, 2).join(" & ")} — dies schafft auch Abhängigkeitsrisiko bei Programmkürzungen.`
+    ? `PFLICHT: Das Unternehmen hängt von ${capexContext.programmes.slice(0, 2).join(" & ")} ab — Risiko 5 MUSS Programmkürzung/Budget-Freeze adressieren: z.B. "${capexContext.programmes[0] || capexContext.sector} Budget-Freeze".`
     : "";
 
   const metrics = [
@@ -811,78 +738,289 @@ export async function generateCompanySpecificRisks(input: {
     governmentExposure > 0.1 ? `Gov-Exposure ${(governmentExposure * 100).toFixed(0)}%` : null,
   ].filter(Boolean).join(" | ");
 
-  // Fix 2: added GUTE/SCHLECHTE examples, same pattern as catalyst prompt
-  // Fix 1: mandatory news imperative added
-  const prompt = `Du bist ein kritischer Sell-Side-Analyst. Generiere GENAU 5 unternehmensspezifische Inversionsrisiken für ${companyName} (${ticker}).
-
+  const buildPrompt = (attempt: number) => `Du bist ein kritischer Sell-Side-Analyst. Generiere GENAU 5 unternehmensspezifische Inversionsrisiken für ${companyName} (${ticker}).
+${ attempt > 1 ? "WICHTIG: Vorheriger Versuch lieferte weniger als 5 Risiken. Diesmal GENAU 5 vollständige Risiken generieren.\n" : ""}
 GESCHÄFTSMODELL:
 ${descCore}
 
 KENNZAHLEN: ${metrics}
 
-UPSIDE-KATALYSATOREN (als Inversionskontext — was wenn diese nicht eintreten?):
+UPSIDE-KATALYSATOREN als Inversionsanker (was passiert wenn diese NICHT eintreten?):
 ${catContext}
 
-${newsCtx ? `AKTUELLE NEWS (Pflicht: nutze konkrete Events/Zahlen als Risikoankerpunkte — falls News einen Kursrückgangs-Trigger nennt, muss er als eigenes Risiko erscheinen):\n${newsCtx}\n` : ""}${capexCtx ? `FISKAL-ABHÄNGIGKEIT: ${capexCtx}\n` : ""}
+${newsCtx ? `AKTUELLE NEWS (Pflicht: nutze konkrete Events/Zahlen als Risikoankerpunkte):\n${newsCtx}\n` : ""}${capexCtx ? `\n${capexCtx}\n` : ""}
 
-REGELN:
-1. Jedes Risiko MUSS den Firmennamen "${companyName}" oder "${ticker}" oder ein konkretes Produkt/Segment nennen
-2. VERBOTEN: generische Namen wie "Macro Recession", "Multiple Compression", "Rising Rates" — NUR firmenspezifische Risiken
-3. EW% (Eintrittswahrscheinlichkeit 12-24M): 10-45%
-4. Impact% (Kursrückgang bei Eintreten): 10-45%
-5. Category: "Binary" (abruptes Event) | "Gradual" (schleichend) | "Correlated" (Makro)
-6. Risikoname: max 6 Wörter, konkret
-7. Pflicht: mind. 1 Risiko das die Inversion des wichtigsten Katalysators darstellt
-8. Pflicht wenn Capex-Kontext: 1 Risiko zu Programmkürzung/Budget-Freeze
+REGELN — strikte Einhaltung:
+1. GENAU 5 Risiken — nicht mehr, nicht weniger
+2. Jedes Risiko MUSS den Firmennamen "${companyName}", "${ticker}", ein konkretes Produkt/Segment oder einen echten Gegenpartei-Namen nennen
+3. VERBOTEN: generische Namen ohne Firmenbezug ("Macro Recession", "Multiple Compression", "Rising Rates", "Competition Intensifies")
+4. EW% (Eintrittswahrscheinlichkeit 12-24M): 10-45%
+5. Impact% (Kursrückgang wenn Risiko eintritt): 10-45%
+6. Category: "Binary" (abruptes Event) | "Gradual" (schleichend) | "Correlated" (Makro-korreliert)
+7. Risikoname: max 6 Wörter, konkret mit Firmenbezug
+8. Pflicht: Risiko 1 = wichtigste Katalysator-Inversion (Inversion von K1)
+9. Pflicht: Risiko 2 = zweite wichtigste Inversion (Inversion von K2 oder K3)
 
-GUTE Beispiele (firmenspezifisch — so soll es aussehen):
-- "Azure Gov-Cloud FedRAMP Revocation" (MSFT) — konkretes Produkt + regulatorisches Event
-- "Copilot+ Adoption Stagnation" (MSFT) — konkretes Produkt, gradual
-- "F-35 Exportstop Nahost-Embargo" (LMT) — konkretes Programm + geopolitischer Trigger
-- "GLP-1 Ozempic Patent-Herausforderung" (NVO) — konkretes Medikament
-- "CoreWeave Nvidia-Vertrag Nicht-Verlängerung" (CRWV) — konkreter Gegenpartei-Risk
+GUTE Beispiele (firmenspezifisch — Pflichtformat):
+- "Azure Gov-Cloud FedRAMP Revocation" (MSFT) — konkretes Produkt + Regulation
+- "Ozempic Patent-Herausforderung EU" (NVO) — konkretes Medikament
+- "CoreWeave Nvidia-Vertrag Nicht-Verlängerung" (CRWV) — konkrete Gegenpartei
+- "F-35 Exportstop Nahost-Embargo" (LMT) — konkretes Programm + Trigger
+- "GLP-1 Medicare Price Cap Erweiterung" (LLY) — konkretes Produkt + Policy
 
-SCHLECHTE Beispiele (verboten — zu generisch):
-- "Macro Recession / Demand Shock" — kein Firmenbezug
-- "Multiple Compression (Rising Rates)" — generisches Makro
-- "Geopolitical Risk" — kein Produkt, kein Event
-- "Competition Intensifies" — kein konkreter Wettbewerber
+SCHLECHTE Beispiele (VERBOTEN — kein Firmenbezug):
+- "Macro Recession / Demand Shock" → FALSCH
+- "Multiple Compression (Rising Rates)" → FALSCH
+- "Regulatory / Antitrust Action" → FALSCH (zu generisch, kein Produkt)
+- "Competitive Pressure" → FALSCH (kein Wettbewerber genannt)
 
-Antworte NUR mit JSON:
-{
-  "risks": [
-    { "name": "Konkreter Risikoname (max 6 Wörter)", "category": "Binary|Gradual|Correlated", "ew": 25, "impact": 20 },
-    { "name": "...", "category": "...", "ew": 20, "impact": 30 },
-    { "name": "...", "category": "...", "ew": 15, "impact": 25 },
-    { "name": "...", "category": "...", "ew": 30, "impact": 15 },
-    { "name": "...", "category": "...", "ew": 20, "impact": 20 }
-  ]
-}`;
+Antworte NUR mit diesem JSON (GENAU 5 risks-Objekte, kein Markdown):
+{"risks":[{"name":"Konkreter Name max 6 Wörter","category":"Binary|Gradual|Correlated","ew":25,"impact":20},{"name":"...","category":"...","ew":20,"impact":30},{"name":"...","category":"...","ew":15,"impact":25},{"name":"...","category":"...","ew":30,"impact":15},{"name":"...","category":"...","ew":20,"impact":20}]}`;
 
-  try {
-    console.log(`[RISK-SPECIFIC] Calling LLM for ${ticker} (desc=${description.length}chars, cats=${topCatalysts.length})`);
-    // Fix 3: maxTokens 350→600 so specific risk names don't get truncated
-    const result = await callLLMJson({ prompt, maxTokens: 600, temperature: 0.3 });
-    if (!result) {
-      console.warn(`[RISK-SPECIFIC] callLLMJson returned null for ${ticker}`);
-      return null;
-    }
-    const risks = result?.data?.risks;
-    console.log(`[RISK-SPECIFIC] LLM returned risks: ${JSON.stringify(risks)?.substring(0, 200)}`);
-    if (!Array.isArray(risks) || risks.length < 3) {
-      console.warn(`[RISK-SPECIFIC] Invalid risks array for ${ticker}: ${JSON.stringify(risks)?.substring(0, 100)}`);
-      return null;
-    }
-    const validated = risks.slice(0, 5).map((r: any) => ({
+  const validate = (risks: any[]): Array<{ name: string; category: string; ew: number; impact: number }> | null => {
+    if (!Array.isArray(risks) || risks.length < 3) return null;
+    return risks.slice(0, 5).map((r: any) => ({
       name: String(r.name || "Unbekanntes Risiko").slice(0, 80),
       category: ["Binary", "Gradual", "Correlated"].includes(r.category) ? r.category : "Gradual",
       ew: Math.min(Math.max(Number(r.ew) || 20, 5), 50),
       impact: Math.min(Math.max(Number(r.impact) || 15, 5), 50),
     }));
-    console.log(`[RISK-SPECIFIC] Success for ${ticker}: ${validated.map(r => r.name).join(" | ")}`);
+  };
+
+  // Up to 2 attempts — second attempt has a stronger mandate in the prompt
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      console.log(`[RISK-SPECIFIC] Attempt ${attempt}/2 for ${ticker} (desc=${description.length}chars, cats=${topCatalysts.length}, news=${recentNewsHeadlines.length})`);
+      // Increased token limit: 1200 ensures all 5 risks fit even with long names
+      const result = await callLLMJson({ prompt: buildPrompt(attempt), maxTokens: 1200, temperature: attempt === 1 ? 0.3 : 0.5 });
+      if (!result) {
+        console.warn(`[RISK-SPECIFIC] callLLMJson returned null for ${ticker} (attempt ${attempt})`);
+        if (attempt < 2) continue;
+        return null;
+      }
+      const risks = result?.data?.risks;
+      console.log(`[RISK-SPECIFIC] LLM returned ${risks?.length ?? 0} risks for ${ticker}: ${JSON.stringify(risks)?.substring(0, 300)}`);
+      const validated = validate(risks);
+      if (!validated) {
+        console.warn(`[RISK-SPECIFIC] Invalid/incomplete risks array for ${ticker} (attempt ${attempt}): got ${risks?.length ?? 0}`);
+        if (attempt < 2) { await new Promise(r => setTimeout(r, 800)); continue; }
+        return null;
+      }
+      // Accept if ≥4 risks on first attempt, ≥3 on second
+      const minRequired = attempt === 1 ? 4 : 3;
+      if (validated.length < minRequired) {
+        console.warn(`[RISK-SPECIFIC] Only ${validated.length} risks (need ${minRequired}) for ${ticker} (attempt ${attempt})`);
+        if (attempt < 2) { await new Promise(r => setTimeout(r, 800)); continue; }
+      }
+      console.log(`[RISK-SPECIFIC] Success for ${ticker} (attempt ${attempt}): ${validated.map(r => r.name).join(" | ")}`);
+      return validated;
+    } catch (e: any) {
+      console.error(`[RISK-SPECIFIC] Exception attempt ${attempt} for ${ticker}: ${e?.message} status=${e?.status}`);
+      if (attempt < 2) { await new Promise(r => setTimeout(r, 800)); continue; }
+      return null;
+    }
+  }
+  return null;
+}
+
+// ============================================================
+// generatePorterFiveForces — NEW: Company-specific Porter analysis
+// Called in routes.ts when useLLM=true alongside catalyst generation.
+// Returns structured Porter analysis with LLM-written company-specific
+// assessments for all 5 forces.
+// ============================================================
+export interface PorterFiveForceInput {
+  ticker: string;
+  companyName: string;
+  sector: string;
+  industry: string;
+  description: string;
+  revenue: number;
+  revenueGrowth: number;
+  fcfMargin: number;
+  grossMargin: number;
+  marketCap: number;
+  topCatalysts: Array<{ name: string; context: string }>;
+  recentNewsHeadlines?: string[];
+  keyProjects?: string[];
+}
+
+export interface PorterForceResult {
+  force: string;           // e.g. "Rivalität unter Wettbewerbern"
+  rating: string;          // "Hoch" | "Mittel" | "Niedrig"
+  score: number;           // 1-10 (10 = most threatening)
+  summary: string;         // 1-2 German sentences, company-specific
+  keyFactors: string[];    // 2-3 concrete factors
+}
+
+export async function generatePorterFiveForces(
+  input: PorterFiveForceInput
+): Promise<PorterForceResult[] | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  const {
+    ticker, companyName, sector, industry, description,
+    revenue, revenueGrowth, fcfMargin, grossMargin, marketCap,
+    topCatalysts, recentNewsHeadlines = [], keyProjects = [],
+  } = input;
+
+  const descCore = (description || "").slice(0, 600);
+  const catCtx = topCatalysts.slice(0, 3).map(c => `- ${c.name}: ${c.context.slice(0, 120)}`).join("\n");
+  const newsCtx = recentNewsHeadlines.slice(0, 5).map((h, i) => `N${i+1}: ${h}`).join("\n");
+  const projCtx = keyProjects.slice(0, 5).map(p => `- ${p}`).join("\n");
+  const metrics = [
+    revenue > 0 ? `Umsatz $${(revenue / 1e9).toFixed(1)}B` : null,
+    revenueGrowth !== 0 ? `RevWachstum ${revenueGrowth.toFixed(1)}%` : null,
+    fcfMargin !== 0 ? `FCF-Marge ${fcfMargin.toFixed(1)}%` : null,
+    grossMargin > 0 ? `Bruttomarge ${grossMargin.toFixed(1)}%` : null,
+    marketCap > 0 ? `MCap $${(marketCap / 1e9).toFixed(0)}B` : null,
+  ].filter(Boolean).join(" | ");
+
+  const prompt = `Du bist Senior Equity Research Analyst. Erstelle eine firmenspezifische Porter's Five Forces Analyse für ${companyName} (${ticker}).
+
+UNTERNEHMEN: ${companyName} (${ticker}) | ${sector} / ${industry}
+KENNZAHLEN: ${metrics}
+GESCHÄFTSMODELL: ${descCore}
+${catCtx ? `\nHAUPT-KATALYSATOREN:\n${catCtx}` : ""}
+${newsCtx ? `\nAKTUELLE NEWS:\n${newsCtx}` : ""}
+${projCtx ? `\nKEY PROJEKTE:\n${projCtx}` : ""}
+
+ANALYSE-REGELN:
+1. JEDE Kraft muss ${companyName} konkret benennen — Konkurrenten namentlich, Produkte spezifisch
+2. VERBOTEN: generische Aussagen ohne Firmenbezug
+3. score: 1-10 (10 = maximale Bedrohung/Stärke)
+4. rating: "Hoch" (score 7-10) | "Mittel" (score 4-6) | "Niedrig" (score 1-3)
+5. keyFactors: 2-3 konkrete Faktoren mit Firmenbezug
+6. summary: 1-2 Sätze Deutsch, faktenbasiert, mit Zahlen wenn vorhanden
+
+Antworte NUR mit JSON:
+{"forces":[{"force":"Rivalität unter Wettbewerbern","rating":"Hoch|Mittel|Niedrig","score":7,"summary":"Firmenspezifische Beschreibung 1-2 Sätze.","keyFactors":["Faktor 1","Faktor 2","Faktor 3"]},{"force":"Bedrohung durch Neueinsteiger","rating":"...","score":4,"summary":"...","keyFactors":["..."]},{"force":"Verhandlungsmacht Lieferanten","rating":"...","score":5,"summary":"...","keyFactors":["..."]},{"force":"Verhandlungsmacht Kunden","rating":"...","score":6,"summary":"...","keyFactors":["..."]},{"force":"Bedrohung durch Substitute","rating":"...","score":5,"summary":"...","keyFactors":["..."]}]}`;
+
+  try {
+    console.log(`[PORTER] Generating Porter Five Forces for ${ticker}`);
+    const result = await callLLMJson({ prompt, maxTokens: 900, temperature: 0.3 });
+    if (!result) return null;
+    const forces = result.data?.forces;
+    if (!Array.isArray(forces) || forces.length < 4) {
+      console.warn(`[PORTER] Invalid forces for ${ticker}: got ${forces?.length ?? 0}`);
+      return null;
+    }
+    const VALID_FORCES = ["Rivalität unter Wettbewerbern", "Bedrohung durch Neueinsteiger", "Verhandlungsmacht Lieferanten", "Verhandlungsmacht Kunden", "Bedrohung durch Substitute"];
+    const validated: PorterForceResult[] = forces.slice(0, 5).map((f: any, i: number) => ({
+      force: String(f.force || VALID_FORCES[i] || `Kraft ${i+1}`),
+      rating: ["Hoch", "Mittel", "Niedrig"].includes(f.rating) ? f.rating : "Mittel",
+      score: Math.min(Math.max(Number(f.score) || 5, 1), 10),
+      summary: String(f.summary || "").slice(0, 300),
+      keyFactors: Array.isArray(f.keyFactors) ? f.keyFactors.slice(0, 3).map((x: any) => String(x).slice(0, 120)) : [],
+    }));
+    console.log(`[PORTER] OK for ${ticker}: ${validated.map(f => `${f.force}(${f.score})`).join(", ")}`);
     return validated;
   } catch (e: any) {
-    console.error(`[RISK-SPECIFIC] Exception for ${ticker}: ${e?.message} status=${e?.status}`);
+    console.error(`[PORTER] Exception for ${ticker}: ${e?.message}`);
+    return null;
+  }
+}
+
+// ============================================================
+// generatePESTELAnalysis — NEW: Company-specific PESTEL analysis
+// Returns 6 PESTEL dimensions with LLM-written company-specific assessments.
+// ============================================================
+export interface PESTELInput {
+  ticker: string;
+  companyName: string;
+  sector: string;
+  industry: string;
+  description: string;
+  revenue: number;
+  revenueGrowth: number;
+  fcfMargin: number;
+  governmentExposure: number;
+  beta: number;
+  topCatalysts: Array<{ name: string; context: string }>;
+  capexContext?: { sector: string; programmes: string[]; rationale: string } | null;
+  recentNewsHeadlines?: string[];
+  keyProjects?: string[];
+}
+
+export interface PESTELDimensionResult {
+  dimension: string;       // "Politisch" | "Ökonomisch" | "Sozial" | "Technologisch" | "Ökologisch" | "Rechtlich"
+  impact: string;          // "positiv" | "neutral" | "negativ" | "gemischt"
+  score: number;           // -5 (sehr negativ) bis +5 (sehr positiv)
+  summary: string;         // 1-2 German sentences, company-specific
+  keyFactors: string[];    // 2-3 concrete factors
+}
+
+export async function generatePESTELAnalysis(
+  input: PESTELInput
+): Promise<PESTELDimensionResult[] | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  const {
+    ticker, companyName, sector, industry, description,
+    revenue, revenueGrowth, fcfMargin, governmentExposure, beta,
+    topCatalysts, capexContext, recentNewsHeadlines = [], keyProjects = [],
+  } = input;
+
+  const descCore = (description || "").slice(0, 600);
+  const catCtx = topCatalysts.slice(0, 3).map(c => `- ${c.name}: ${c.context.slice(0, 120)}`).join("\n");
+  const newsCtx = recentNewsHeadlines.slice(0, 5).map((h, i) => `N${i+1}: ${h}`).join("\n");
+  const projCtx = keyProjects.slice(0, 5).map(p => `- ${p}`).join("\n");
+  const capexLine = capexContext
+    ? `FISKAL: ${companyName} profitiert von ${capexContext.programmes.slice(0,2).join(" & ")} (${capexContext.sector})`
+    : "";
+  const metrics = [
+    revenue > 0 ? `Umsatz $${(revenue / 1e9).toFixed(1)}B` : null,
+    revenueGrowth !== 0 ? `RevWachstum ${revenueGrowth.toFixed(1)}%` : null,
+    fcfMargin !== 0 ? `FCF-Marge ${fcfMargin.toFixed(1)}%` : null,
+    governmentExposure > 0.05 ? `Gov-Exposure ${(governmentExposure * 100).toFixed(0)}%` : null,
+    `Beta ${beta.toFixed(2)}`,
+  ].filter(Boolean).join(" | ");
+
+  const prompt = `Du bist Senior Equity Research Analyst. Erstelle eine firmenspezifische PESTEL-Analyse für ${companyName} (${ticker}).
+
+UNTERNEHMEN: ${companyName} (${ticker}) | ${sector} / ${industry}
+KENNZAHLEN: ${metrics}
+GESCHÄFTSMODELL: ${descCore}
+${capexLine ? `\n${capexLine}` : ""}
+${catCtx ? `\nKATALYSATOREN:\n${catCtx}` : ""}
+${newsCtx ? `\nNEWS:\n${newsCtx}` : ""}
+${projCtx ? `\nPROJEKTE:\n${projCtx}` : ""}
+
+REGELN:
+1. JEDE Dimension muss ${companyName} konkret benennen — Gesetze, Produkte, Regionen spezifisch
+2. VERBOTEN: generische PESTEL-Templates ohne Firmenbezug
+3. score: -5 bis +5 (-5=stark negativ, 0=neutral, +5=stark positiv)
+4. impact: "positiv" (score>1) | "negativ" (score<-1) | "neutral" (score -1 bis 1) | "gemischt"
+5. keyFactors: 2-3 konkrete firmenspezifische Faktoren
+6. summary: 1-2 Sätze Deutsch, mit Zahlen/Produktnamen wenn vorhanden
+
+Antworte NUR mit JSON:
+{"dimensions":[{"dimension":"Politisch","impact":"positiv|negativ|neutral|gemischt","score":2,"summary":"Firmenspezifisch 1-2 Sätze.","keyFactors":["Faktor 1","Faktor 2"]},{"dimension":"Ökonomisch","impact":"...","score":1,"summary":"...","keyFactors":["..."]},{"dimension":"Sozial","impact":"...","score":0,"summary":"...","keyFactors":["..."]},{"dimension":"Technologisch","impact":"...","score":3,"summary":"...","keyFactors":["..."]},{"dimension":"Ökologisch","impact":"...","score":-1,"summary":"...","keyFactors":["..."]},{"dimension":"Rechtlich","impact":"...","score":-2,"summary":"...","keyFactors":["..."]}]}`;
+
+  try {
+    console.log(`[PESTEL] Generating PESTEL for ${ticker}`);
+    const result = await callLLMJson({ prompt, maxTokens: 900, temperature: 0.3 });
+    if (!result) return null;
+    const dimensions = result.data?.dimensions;
+    if (!Array.isArray(dimensions) || dimensions.length < 5) {
+      console.warn(`[PESTEL] Invalid dimensions for ${ticker}: got ${dimensions?.length ?? 0}`);
+      return null;
+    }
+    const VALID_DIMS = ["Politisch", "Ökonomisch", "Sozial", "Technologisch", "Ökologisch", "Rechtlich"];
+    const VALID_IMPACTS = ["positiv", "negativ", "neutral", "gemischt"];
+    const validated: PESTELDimensionResult[] = dimensions.slice(0, 6).map((d: any, i: number) => ({
+      dimension: String(d.dimension || VALID_DIMS[i] || `Dim ${i+1}`),
+      impact: VALID_IMPACTS.includes(d.impact) ? d.impact : "neutral",
+      score: Math.min(Math.max(Number(d.score) || 0, -5), 5),
+      summary: String(d.summary || "").slice(0, 300),
+      keyFactors: Array.isArray(d.keyFactors) ? d.keyFactors.slice(0, 3).map((x: any) => String(x).slice(0, 120)) : [],
+    }));
+    console.log(`[PESTEL] OK for ${ticker}: ${validated.map(d => `${d.dimension}(${d.score})`).join(", ")}`);
+    return validated;
+  } catch (e: any) {
+    console.error(`[PESTEL] Exception for ${ticker}: ${e?.message}`);
     return null;
   }
 }
