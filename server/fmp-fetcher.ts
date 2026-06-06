@@ -14,7 +14,11 @@ export interface FmpAnalysisData {
   revenue: number; revenueGrowth: number; operatingIncome: number; netIncome: number;
   ebitda: number; grossProfit: number; totalDebt: number; cashEquivalents: number;
   totalEquity: number; totalAssets: number; fcfTTM: number; capex: number; operatingCashFlow: number;
-  epsTTM: number; epsAdjFY: number; epsConsensusNextFY: number; epsGrowth5Y: number;
+  epsTTM: number;
+  /** Last completed fiscal year EPS (diluted). Distinct from epsTTM which is
+   *  trailing 12 months. For Q2-reporting companies these can differ by >10%. */
+  epsAdjFY: number;
+  epsConsensusNextFY: number; epsGrowth5Y: number;
   /** Forward EPS growth % from analyst consensus (next FY vs. TTM).
    *  This is what Yahoo Finance and most data providers use for PEG.
    *  Falls back to epsGrowth5Y when estimates are unavailable. */
@@ -22,6 +26,10 @@ export interface FmpAnalysisData {
   /** Pre-computed PEG = P/E ÷ epsGrowthFwd (forward-based, like Yahoo Finance).
    *  null when growth is zero/negative (PEG undefined). */
   pegRatio: number | null;
+  /** Forward P/E = price / fwdEpsConsensus. Used for Lynch PEG classification. */
+  forwardPE: number;
+  /** Trailing dividend yield % from profile or ratios. Used for Lynch PEGY (slow_grower). */
+  dividendYield: number;
   analystBuy: number; analystHold: number; analystSell: number;
   ptMedian: number; ptHigh: number; ptLow: number; numAnalysts: number;
   ohlcv: { date: string; open: number; high: number; low: number; close: number; volume: number }[];
@@ -37,7 +45,7 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
     console.log(`[FMP] Fetching data for ${ticker}...`);
     const [profile, income, balance, cashflow, ohlcv, estimates, grades, pt, segments, peers, ratios] = await Promise.all([
       fmpProfile(ticker).catch(() => null),
-      fmpIncomeStatement(ticker, 5).catch(e => { console.log(`[FMP] Income error: ${e.message}`); return []; }),
+      fmpIncomeStatement(ticker, 6).catch(e => { console.log(`[FMP] Income error: ${e.message}`); return []; }),
       fmpBalanceSheet(ticker, 1).catch(() => []),
       fmpCashFlow(ticker, 1).catch(() => []),
       fmpHistoricalPrices(ticker, yearAgo(10), today()).catch(() => []),
@@ -58,12 +66,16 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
     const revenueGrowth = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0;
 
     // EPS growth 5Y CAGR (historical — kept for RSL/DCF growth adjustments)
+    // Requires limit=6 income years to have 5Y lookback: [0]=latest, [5]=5Y ago
     let epsGrowth5Y = 0;
     if (income.length >= 3) {
       const latestEps = income[0]?.epsDiluted || 0;
       const oldIdx = Math.min(5, income.length - 1);
       const oldEps = income[oldIdx]?.epsDiluted || 0;
-      if (oldEps > 0 && latestEps > 0) epsGrowth5Y = ((latestEps / oldEps) ** (1 / Math.min(5, oldIdx)) - 1) * 100;
+      const years = oldIdx; // actual number of years between [0] and [oldIdx]
+      if (oldEps > 0 && latestEps > 0 && years > 0) {
+        epsGrowth5Y = ((latestEps / oldEps) ** (1 / years) - 1) * 100;
+      }
     }
 
     // Forward EPS growth — used for PEG (matches Yahoo Finance methodology).
@@ -75,7 +87,13 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       estimatedRevenue: e.estimatedRevenueAvg,
     }));
 
-    const ttmEps = li.epsDiluted || 0;
+    // TTM EPS: from profile (trailing 12 months, GAAP)
+    const ttmEps = profile.eps || li.epsDiluted || 0;
+
+    // FY EPS: last completed fiscal year (income[0] = most recent full year)
+    // This is DISTINCT from TTM: for mid-year reporters (Q2 FY-end) it differs materially.
+    const fyEps = li.epsDiluted || li.eps || ttmEps;
+
     const fwdEpsConsensus = parsedEstimatesRaw[0]?.estimatedEps || 0;
 
     let epsGrowthFwd = 0;
@@ -91,12 +109,27 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       epsGrowthFwd = epsGrowth5Y;
     }
 
+    // Trailing P/E = price / TTM EPS
+    const pe = profile.price && ttmEps > 0 ? profile.price / ttmEps : (profile.pe || 0);
+
+    // Forward P/E = price / next-FY consensus EPS
+    const forwardPE = profile.price && fwdEpsConsensus > 0 ? profile.price / fwdEpsConsensus : 0;
+
     // PEG = P/E ÷ forward EPS growth (%)
     // Undefined (null) when growth ≤ 0 — negative PEG is meaningless.
-    const pe = profile.price && ttmEps ? profile.price / ttmEps : 0;
     const pegRatio: number | null = (pe > 0 && epsGrowthFwd > 0) ? pe / epsGrowthFwd : null;
 
-    console.log(`[FMP] ${ticker} EPS growth — hist5Y: ${epsGrowth5Y.toFixed(1)}%, fwd: ${epsGrowthFwd.toFixed(1)}% | P/E: ${pe.toFixed(1)} | PEG(fwd): ${pegRatio?.toFixed(2) ?? 'n/a'}`);
+    // Dividend yield: prefer ratios[0].dividendYield (annual %)
+    // Fallback: profile.lastAnnualDividend / price × 100
+    const ratiosLatest = (ratios || [])[0] || {} as any;
+    const dividendYield =
+      (ratiosLatest.dividendYield != null && ratiosLatest.dividendYield > 0)
+        ? ratiosLatest.dividendYield * 100  // FMP returns as decimal (e.g. 0.012 = 1.2%)
+        : (profile.lastAnnualDividend && profile.price > 0)
+          ? (profile.lastAnnualDividend / profile.price) * 100
+          : 0;
+
+    console.log(`[FMP] ${ticker} EPS — TTM: ${ttmEps.toFixed(2)}, FY: ${fyEps.toFixed(2)}, FwdEst: ${fwdEpsConsensus.toFixed(2)} | hist5Y: ${epsGrowth5Y.toFixed(1)}%, fwd: ${epsGrowthFwd.toFixed(1)}% | P/E: ${pe.toFixed(1)}, FwdPE: ${forwardPE.toFixed(1)} | PEG(fwd): ${pegRatio?.toFixed(2) ?? 'n/a'}`);
 
     const lb = balance?.[0] || {} as any;
     const lc = cashflow?.[0] || {} as any;
@@ -131,6 +164,11 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       date: d.date, open: d.open, high: d.high, low: d.low, close: d.close || d.adjClose, volume: d.volume,
     }));
 
+    // 52-week high/low from OHLCV (last 252 trading days ≈ 1 year)
+    const recentOhlcv = ohlcvData.slice(-252);
+    const yearHigh = recentOhlcv.length > 0 ? Math.max(...recentOhlcv.map(d => d.high || 0)) : 0;
+    const yearLow = recentOhlcv.length > 0 ? Math.min(...recentOhlcv.filter(d => d.low > 0).map(d => d.low)) : 0;
+
     // Ratios — FMP /stable/ratios renamed peRatio → priceToEarningsRatio
     // evToEbitda removed from /stable/ratios (moved to /stable/key-metrics as enterpriseValueOverEBITDA)
     const parsedRatios = (ratios || []).map((r: any) => ({
@@ -145,7 +183,7 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       price: profile.price, marketCap: profile.marketCap || 0,
       pe, eps: ttmEps, beta: profile.beta || 1,
       currency: profile.currency || "USD", exchange: profile.exchange || "",
-      volume: profile.volume || 0, yearHigh: 0, yearLow: 0,
+      volume: profile.volume || 0, yearHigh, yearLow,
       sharesOutstanding: profile.marketCap && profile.price ? Math.round(profile.marketCap / profile.price) : 0,
       companyName: profile.companyName || ticker, description: profile.description || "",
       sector: profile.sector || "", industry: profile.industry || "", country: profile.country || "",
@@ -155,9 +193,10 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       totalEquity: lb.totalStockholdersEquity || 0, totalAssets: lb.totalAssets || 0,
       fcfTTM: lc.freeCashFlow || (lc.operatingCashFlow || 0) - Math.abs(lc.capitalExpenditure || 0),
       capex: Math.abs(lc.capitalExpenditure || 0), operatingCashFlow: lc.operatingCashFlow || 0,
-      epsTTM: ttmEps, epsAdjFY: ttmEps,
+      epsTTM: ttmEps,
+      epsAdjFY: fyEps,  // Fix: last full FY EPS, not TTM
       epsConsensusNextFY: parsedEstimatesRaw[0]?.estimatedEps || 0, epsGrowth5Y,
-      epsGrowthFwd, pegRatio,
+      epsGrowthFwd, pegRatio, forwardPE, dividendYield,
       analystBuy, analystHold, analystSell,
       ptMedian: pt?.targetConsensus || 0, ptHigh: pt?.targetHigh || 0, ptLow: pt?.targetLow || 0,
       numAnalysts: analystBuy + analystHold + analystSell,
