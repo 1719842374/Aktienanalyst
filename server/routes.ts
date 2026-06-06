@@ -1344,7 +1344,9 @@ function classifyLynch(params: {
   // Cyclicals: Halbleiter, Energie, Rohstoffe, Auto — erkennbar am hohen Trailing PE bei niedrigem Forward PE
   const isCyclicalSector = ['semiconductor', 'energy', 'oil', 'gas', 'material', 'chemical', 'steel', 'mining', 'auto', 'automotive', 'chip'].some(s => sectorLower.includes(s));
   const hasCyclicalPEPattern = pe > 0 && forwardPE > 0 && pe / forwardPE > 1.5; // Trailing >> Forward = Recovery-Erwartung
-  if (isCyclicalSector || hasCyclicalPEPattern) return 'cyclical';
+  // Healthcare/Pharma/Biotech ist strukturell nie Cyclical — erhöhte PEs nach schlechten Jahren sind sektorspezifisch
+  const isHealthcareSector = sectorLower.includes('health') || sectorLower.includes('pharma') || sectorLower.includes('biotech');
+  if (!isHealthcareSector && (isCyclicalSector || hasCyclicalPEPattern)) return 'cyclical';
 
   // Asset Play: nur unter/nahe Buchwert (P/B < 1.5) — z.B. ORCL/MSFT mit hohem P/B sind KEINE Asset Plays
   if (pbRatio > 0 && pbRatio < 1.5 && pe > 0) return 'asset_play';
@@ -5368,6 +5370,10 @@ export async function registerRoutes(server: Server, app: Express) {
           const fcfPS = sharesOutstanding > 0 ? fcfTTM / sharesOutstanding : 0;
           const capex = ebitda > 0 ? Math.abs(ebitda - operatingIncome - fcfTTM) : 0; // approximation
           const ocf = fcfTTM + capex;
+          // Fix 4: Capex-Intensitäts-Warnung bei >15% Revenue
+          const capexWarning = revenue > 0 && capex > revenue * 0.15
+            ? `⚠️ Capex ~${(capex / 1e9).toFixed(1)}B (${((capex / revenue) * 100).toFixed(0)}% of Revenue) — kapitalintensiv`
+            : null;
 
           // Health assessment
           const healthReasons: string[] = [];
@@ -5408,6 +5414,7 @@ export async function registerRoutes(server: Server, app: Express) {
             cashFlow: {
               operatingCashFlow: ocf, capex, fcf: fcfTTM,
               fcfMargin, fcfPerShare: fcfPS,
+              capexWarning: capexWarning ?? undefined,
             },
             health,
             healthReasons,
