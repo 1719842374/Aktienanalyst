@@ -5975,6 +5975,17 @@ export async function registerRoutes(server: Server, app: Express) {
         console.warn(`[CATALYST-ENRICH] capex lookup error: ${capexErr?.message}`);
       }
 
+      // Reverse-DCF: implizites Marktwachstum g* — mathematische Erdung für den
+      // vom LLM geschätzten Einpreisungsgrad (gleiche Formel wie /api/analyze).
+      const netDebtForCatalysts = (Number(cached.totalDebt) || 0) - (Number(cached.cashEquivalents) || 0);
+      const impliedGStarForCatalysts = calcImpliedGStar({
+        price: Number(cached.currentPrice) || 0,
+        sharesOutstanding: Number(cached.sharesOutstanding) || 0,
+        netDebt: netDebtForCatalysts,
+        fcf: Number(cached.fcfTTM) || 0,
+        wacc: cached.sectorProfile?.waccScenarios?.avg || 0,
+      });
+
       const catalystInput = {
         ticker: String(ticker),
         companyName: String(cached.companyName || ticker),
@@ -5993,6 +6004,7 @@ export async function registerRoutes(server: Server, app: Express) {
         keyProjects: Array.isArray(cached.keyProjects) ? cached.keyProjects : [],
         secFilingExcerpts: Array.isArray(cached.secFilingExcerpts) ? cached.secFilingExcerpts : [],
         newsItems: newsItemsArr,
+        impliedGStar: impliedGStarForCatalysts,
       };
 
       // Fire catalyst call first, then deep-dives in parallel once we have catalyst names
@@ -6003,6 +6015,19 @@ export async function registerRoutes(server: Server, app: Express) {
 
       if (!result) {
         return res.json({ catalysts: cached.catalysts || [], _llmSkipped: true });
+      }
+
+      // Mathematische Erdung: Einpreisungsgrad via Reverse-DCF überschreiben,
+      // analog zum /api/analyze-Pfad — keine freie LLM-Schätzung im Frontend.
+      if (impliedGStarForCatalysts !== null) {
+        for (const cat of result.catalysts) {
+          if (cat.bruttoUpside > 0) {
+            const grounded = Math.round(Math.max(0.15, Math.min(0.70, Math.max(0, impliedGStarForCatalysts) / cat.bruttoUpside)) * 100);
+            cat.einpreisungsgrad = grounded;
+            cat.nettoUpside = +(cat.bruttoUpside * (1 - grounded / 100)).toFixed(2);
+            cat.gb = +(cat.pos / 100 * cat.nettoUpside).toFixed(2);
+          }
+        }
       }
 
       // Start deep-dive call immediately after catalysts arrive (don't wait for it to finish
