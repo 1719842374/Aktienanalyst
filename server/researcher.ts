@@ -1474,7 +1474,7 @@ export function registerResearcherRoutes(app: Express) {
         console.log(`[BRIEFING] complete: ${result.diagnostics.netNewEvents} net-new of ${result.diagnostics.eventsScanned} events`);
         return result;
       },
-      (r) => writeBriefingResultCache(r),
+      (r) => { if (r.briefing !== null && (r as any).modelUsed !== "fallback") writeBriefingResultCache(r); },
     );
   });
 }
