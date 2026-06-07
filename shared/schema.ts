@@ -402,6 +402,7 @@ export interface StockAnalysis {
     cashFlow: {
       operatingCashFlow: number; capex: number; fcf: number;
       fcfMargin: number; fcfPerShare: number;
+      capexWarning?: string;
     };
     health: 'Excellent' | 'Good' | 'Moderate' | 'Weak' | 'Critical';
     healthReasons: string[];

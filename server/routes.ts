@@ -5569,6 +5569,23 @@ export async function registerRoutes(server: Server, app: Express) {
         warnings.push({ id: 'beta-extreme', severity: 'info', title: `Beta ${beta5Y.toFixed(2)} — sehr volatil`, detail: `Hohe Beta erhöht WACC und drückt DCF-Fair-Value. Monte Carlo Downside-Wahrscheinlichkeit erhöht.` });
       }
 
+      // 10. Capex-Intensität (aus financialStatements.cashFlow)
+      const _capexWarnStr = analysis.financialStatements?.cashFlow?.capexWarning;
+      if (_capexWarnStr) {
+        const _capexPct = analysis.financialStatements?.cashFlow?.capex && analysis.revenue
+          ? ((analysis.financialStatements.cashFlow.capex / analysis.revenue) * 100).toFixed(0)
+          : '?';
+        const _capexB = analysis.financialStatements?.cashFlow?.capex
+          ? (analysis.financialStatements.cashFlow.capex / 1e9).toFixed(1)
+          : '?';
+        warnings.push({
+          id: 'capex-intensive',
+          severity: 'warning',
+          title: 'Kapitalintensives Geschäftsmodell',
+          detail: `Capex ~$${_capexB}B (${_capexPct}% des Umsatzes) — FCF-Haircut und DCF-Ergebnisse stärker gewichten als bei Asset-Light-Modellen.`,
+        });
+      }
+
       analysis.consistencyWarnings = warnings.length > 0 ? warnings : undefined;
       if (warnings.length > 0) {
         console.log(`[ANALYZE] Consistency warnings for ${ticker}: ${warnings.map(w => w.id).join(', ')}`);
