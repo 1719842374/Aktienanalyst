@@ -16,7 +16,7 @@ export function Section6({ data }: Props) {
   const haircut = data.fcfHaircut;
 
   // === SINGLE SOURCE OF TRUTH: identical defaults as Section5 / Section13 ===
-  // Bug #1 + #6 fix: previously Section6 used data.beta5Y directly (market beta 1.93)
+  // DCF-Parameter: via buildDefaultDCFParams (selbe Basis wie Section5 + SummarySection)
   // and a different capex proxy. Now both sections share buildDefaultDCFParams().
   const baseParams = useMemo(() => buildDefaultDCFParams(data), [data.ticker]);
 
@@ -38,7 +38,7 @@ export function Section6({ data }: Props) {
   const m3 = worstCaseM3(data.currentPrice, sectorDD);
   const worstCase = Math.min(m1, m2, m3);
 
-  // M1 display label — matches implementation exactly (Bug #2 fix)
+  // M1-Label: direkt aus worstCaseM1Label() — Label und Berechnung bleiben synchron
   const m1Label = worstCaseM1Label(data.beta5Y, sectorDD);
 
   // === Risk-Adjusted DCF ===
@@ -99,7 +99,7 @@ export function Section6({ data }: Props) {
             <tbody className="divide-y divide-border/50">
               <tr>
                 <td className="py-2 px-2 font-medium">M1: β-Adj. Drawdown</td>
-                {/* Bug #2 fix: label now generated from worstCaseM1Label() — matches implementation */}
+                {/* M1-Label aus worstCaseM1Label() — immer synchron mit der Implementierung */}
                 <td className="py-2 px-2 font-mono tabular-nums text-muted-foreground text-[10px]">
                   {formatCurrency(data.currentPrice)} × (1 − {m1Label})
                 </td>

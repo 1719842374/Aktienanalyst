@@ -326,13 +326,13 @@ export function Section5({ data }: Props) {
         </div>
       </div>
 
-      {/* Beta-Desync-Hinweis (Bug #4 fix): DCF-Beta ≠ Markt-Beta */}
+      {/* Beta-Desync-Hinweis: DCF-Beta ≠ Markt-Beta */}
       {Math.abs(params.beta - data.beta5Y) > 0.05 && (
         <div className="flex items-start gap-2 p-2 rounded-md border border-amber-500/20 bg-amber-500/5">
           <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
           <div className="text-[10px] text-amber-500/90">
             <span className="font-semibold">Beta-Hinweis:</span> Das DCF-Modell verwendet β = {params.beta.toFixed(2)} (am Sektor-WACC {data.sectorProfile.waccScenarios.avg}% verankert),
-            während das Markt-Beta β = {data.beta5Y.toFixed(2)} beträgt. Die WACC-Tabelle oben (Sektion 2) basiert auf dem Markt-Beta.
+            während das Markt-Beta β = {data.beta5Y.toFixed(2)} beträgt. Die WACC-Tabelle in Sektion 4 „Bewertungskennzahlen“ basiert auf dem Markt-Beta.
             Dies ist beabsichtigt — der Sektor-Anker glättet kurzfristige Beta-Volatiliät. Manueller Override möglich.
           </div>
         </div>

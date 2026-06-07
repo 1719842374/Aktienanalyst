@@ -17,7 +17,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   const haircut = data.fcfHaircut;
 
   // === SINGLE SOURCE OF TRUTH: identical defaults as Section5 / Section6 ===
-  // Bug #1 + #6 fix: previously this summary table derived its own beta/capex
+  // DCF-Parameter: via buildDefaultDCFParams — einheitliche Basis mit Section5 + Section6
   // inline (third DCF path), which diverged from Section5/Section6. Now all
   // consumers share buildDefaultDCFParams().
   const baseParams: FCFFDCFParams = useMemo(() => buildDefaultDCFParams(data), [data.ticker]);
