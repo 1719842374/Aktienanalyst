@@ -76,7 +76,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
     netDebt,
     fcfHaircut: sp.fcfHaircut ?? 0,
     sectorG1: sp.growthAssumptions?.g1 ?? 0,
-    epsGrowthNext5Y: data.epsGrowthNext5Y ?? 0,
+    epsGrowthNext5Y: data.epsGrowth5Y ?? 0,
   });
 
   // CRVs

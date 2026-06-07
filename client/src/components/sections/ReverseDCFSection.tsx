@@ -19,7 +19,7 @@ export function ReverseDCFSection({ data }: Props) {
     netDebt,
     fcfHaircut: sp.fcfHaircut ?? 0,
     sectorG1: sp.growthAssumptions?.g1 ?? 0,
-    epsGrowthNext5Y: data.epsGrowthNext5Y ?? 0,
+    epsGrowthNext5Y: data.epsGrowth5Y ?? 0,
   }), [data, sp, netDebt]);
 
   const ratingColor =
@@ -89,7 +89,7 @@ export function ReverseDCFSection({ data }: Props) {
         ...(sp.fcfHaircut ? [`FCF (nach ${sp.fcfHaircut}% Haircut) = $${formatNumber(data.fcfTTM * (1 - (sp.fcfHaircut ?? 0) / 100) / 1e9, 2)}B`] : []),
         `g* = WACC - FCF/EV = ${formatPercentNoSign(sp.waccScenarios.avg)} - $${formatNumber(data.fcfTTM * (1 - (sp.fcfHaircut ?? 0) / 100) / 1e9, 2)}B / $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
         `g* = ${formatPercentNoSign(result.impliedGrowth)}`,
-        `Referenzwachstum = max(Sektor g1 ${formatPercentNoSign(sp.growthAssumptions?.g1 ?? 0)}, EPS-5J ${formatPercentNoSign(data.epsGrowthNext5Y ?? 0)}, 3%) = ${formatPercentNoSign(result.referenceGrowth)}`,
+        `Referenzwachstum = max(Sektor g1 ${formatPercentNoSign(sp.growthAssumptions?.g1 ?? 0)}, EPS-5J ${formatPercentNoSign(data.epsGrowth5Y ?? 0)}, 3%) = ${formatPercentNoSign(result.referenceGrowth)}`,
         `Rating: g* ${result.rating === "unrealistic" ? ">" : result.rating === "sportlich" ? ">" : "≤"} ${result.rating === "unrealistic" ? "1,5×" : result.rating === "sportlich" ? "1×" : "1×"} Referenz → ${ratingLabel}`,
       ]} />
     </SectionCard>
