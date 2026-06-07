@@ -561,7 +561,7 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
       {/* Sources */}
       <div className="text-[10px] text-muted-foreground space-y-0.5">
         <div className="font-semibold uppercase tracking-wider mb-1">Sources</div>
-        <div>Real-time data from Yahoo Finance, Polygon API, analyst consensus</div>
+        <div>Quellen: Perplexity Finance API / FMP, Damodaran (NYU Stern), SEC EDGAR, Google News (EN/DE)</div>
         <div>WACC methodology: Damodaran (NYU Stern) — sector: {data.sector}</div>
         <div>DCF model: FCFF-based with WACC/CAPM, Gordon Growth terminal value, equity bridge</div>
         <div>Monte Carlo: GBM (Geometrische Brownsche Bewegung), {data.historicalPrices.length} historical data points</div>

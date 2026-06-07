@@ -2,11 +2,10 @@ import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
 import {
-  calculateFCFFDCF, buildDefaultDCFParams, type FCFFDCFParams, type FCFFDCFResult,
-  calculateDCF, buildSensitivityMatrix
+  calculateFCFFDCF, buildDefaultDCFParams, type FCFFDCFParams, type FCFFDCFResult
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign } from "../../lib/formatters";
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import { Settings2, RotateCcw, ChevronDown, ChevronUp, AlertTriangle, Lock, Unlock } from "lucide-react";
 
 interface Props { data: StockAnalysis }
@@ -60,6 +59,11 @@ export function Section5({ data }: Props) {
     setWaccOverrideValue(9.0);
   }, [defaultParams]);
 
+  // Fix: params beim Tickerwechsel zurücksetzen (useState behält sonst veraltete Initialwerte)
+  useEffect(() => {
+    resetParams();
+  }, [data.ticker]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const isModified = JSON.stringify(params) !== JSON.stringify(defaultParams) || waccOverrideEnabled;
 
   // Merge WACC override into params
@@ -111,19 +115,28 @@ export function Section5({ data }: Props) {
 
   // Legacy sensitivity matrix (uses the old calculateDCF for simplicity)
   const netDebt = data.totalDebt - data.cashEquivalents;
-  const sensitivityMatrix = useMemo(
-    () => buildSensitivityMatrix({
-      fcfBase: data.fcfTTM,
-      haircut: params.fcfHaircut,
-      wacc: mainResult.wacc,
-      g1: params.revenueGrowthP1,
-      g2: params.revenueGrowthP2,
-      terminalG: params.terminalG,
-      sharesOutstanding: data.sharesOutstanding,
-      netDebt,
-    }, data.sharesOutstanding),
-    [params, data.sharesOutstanding, data.fcfTTM, netDebt, mainResult.wacc]
-  );
+  // Fix 3: Sensitivity-Matrix nutzt calculateFCFFDCF (gleiche Pipeline wie mainResult) statt Legacy-calculateDCF
+  const sensitivityMatrix = useMemo(() => {
+    const waccDeltas = [-1, 0, 1];
+    const growthDeltas = [-2, 0, 2];
+    const results: { waccLabel: string; growthLabel: string; value: number }[] = [];
+    for (const wd of waccDeltas) {
+      for (const gd of growthDeltas) {
+        const r = calculateFCFFDCF({
+          ...params,
+          waccOverride: mainResult.wacc + wd,
+          revenueGrowthP1: params.revenueGrowthP1 + gd,
+          revenueGrowthP2: params.revenueGrowthP2 + gd / 2,
+        });
+        results.push({
+          waccLabel: `WACC ${wd >= 0 ? '+' : ''}${wd}%`,
+          growthLabel: `g ${gd >= 0 ? '+' : ''}${gd}%`,
+          value: r.perShare,
+        });
+      }
+    }
+    return results;
+  }, [params, mainResult.wacc]);
 
   const scenarios = [
     { name: "Conservative", result: mainResult, color: "border-primary/20 bg-primary/5" },
