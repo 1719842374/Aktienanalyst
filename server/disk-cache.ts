@@ -8,6 +8,9 @@ import path from "path";
 const DB_PATH = path.resolve(process.cwd(), "data.db");
 const CACHE_TTL_DAYS = 7;
 const CACHE_TTL_MS = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
+// Bump this string whenever DCF formulas, field names or Rechenweg-Labels change.
+// Any cached entry with a different version will be silently invalidated.
+const CACHE_SCHEMA_VERSION = "2026-06-07-v1";
 // Researcher cache TTL: 1 day (was 7) — keep macro/fiscal/capex data fresh.
 const RESEARCHER_CACHE_TTL_MS = 1 * 24 * 60 * 60 * 1000;
 
@@ -79,6 +82,12 @@ export function diskCacheGet(ticker: string): any | null {
       return null;
     }
     const data = JSON.parse(row.data);
+    // Schema-version check — invalidate silently if formula/label changes
+    if (data._schemaVersion && data._schemaVersion !== CACHE_SCHEMA_VERSION) {
+      d.prepare("DELETE FROM analysis_cache WHERE ticker = ?").run(ticker);
+      console.log(`[DiskCache] Invalidated ${ticker}: schema ${data._schemaVersion} ≠ ${CACHE_SCHEMA_VERSION}`);
+      return null;
+    }
     return {
       ...data,
       _cached: true,
@@ -97,12 +106,13 @@ export function diskCacheSet(ticker: string, data: any): void {
   if (!d) return;
   try {
     const now = Date.now();
-    const { _cached, _cacheAge, _cacheDate, _diskCache, ...clean } = data || {};
+    const { _cached, _cacheAge, _cacheDate, _diskCache, _schemaVersion: _sv, ...clean } = data || {};
+    const versioned = { ...clean, _schemaVersion: CACHE_SCHEMA_VERSION };
     d.prepare(`
       INSERT INTO analysis_cache (ticker, data, created_at, updated_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(ticker) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-    `).run(ticker, JSON.stringify(clean), now, now);
+    `).run(ticker, JSON.stringify(versioned), now, now);
   } catch (err: any) {
     console.warn(`[DiskCache] Write error for ${ticker}: ${err?.message}`);
   }
