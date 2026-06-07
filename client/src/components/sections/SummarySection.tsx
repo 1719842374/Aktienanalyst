@@ -192,21 +192,21 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
               <td className="py-2 px-2 font-semibold">Conservative DCF (FCFF)</td>
               <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(conservativeDCF.perShare)}</td>
               <td className={`py-2 px-2 font-mono tabular-nums font-medium ${conservativeUpside >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                {conservativeUpside >= 0 ? '+' : ''}{formatNumber(conservativeUpside, 1)}% Upside
+                {conservativeUpside >= 0 ? '+' : ''}{formatNumber(conservativeUpside, 1)}% {conservativeUpside >= 0 ? 'Upside' : 'Downside'}
               </td>
             </tr>
             <tr className="bg-emerald-500/5">
               <td className="py-2 px-2 font-semibold">Optimistic DCF (FCFF)</td>
               <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(optimisticDCF.perShare)}</td>
               <td className={`py-2 px-2 font-mono tabular-nums font-medium ${optimisticUpside >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                {optimisticUpside >= 0 ? '+' : ''}{formatNumber(optimisticUpside, 1)}% Upside
+                {optimisticUpside >= 0 ? '+' : ''}{formatNumber(optimisticUpside, 1)}% {optimisticUpside >= 0 ? 'Upside' : 'Downside'}
               </td>
             </tr>
             <tr className="bg-red-500/5">
               <td className="py-2 px-2 font-semibold">Macro-Stress DCF (FCFF)</td>
               <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(stressDCF.perShare)}</td>
               <td className={`py-2 px-2 font-mono tabular-nums font-medium ${stressDownside >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                {stressDownside >= 0 ? '+' : ''}{formatNumber(stressDownside, 1)}% Downside
+                {stressDownside >= 0 ? '+' : ''}{formatNumber(stressDownside, 1)}% {stressDownside >= 0 ? 'Upside' : 'Downside'}
               </td>
             </tr>
             <SummaryRow label="Safety Margin DCF (30%)" value={formatCurrency(conservativeDCF.perShare * 0.7)} />

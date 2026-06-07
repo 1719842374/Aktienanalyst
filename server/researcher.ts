@@ -227,7 +227,7 @@ interface MacroPulseResult {
       description: string;
       inflationImpact: "steigend" | "fallend" | "neutral";
       rateImpact: "steigend" | "fallend" | "neutral";
-      equityImpact: "positiv" | "negativ" | "gemischt";
+      equityImpact: "positiv" | "negativ" | "neutral";
       affectedSectors: string[];
       rationale: string;
     }>;
@@ -425,7 +425,11 @@ Für jede Kategorie:
 JSON:
 {"trends":[{"id":"defense","growthScore":8,"moatScore":9,"marginRisk":"low","timeline":"12-24M","reasoning":"...","topPlayers":["LMT","RTX","RHM.DE"],"actionRecommendation":"Buy"}]}`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 1500 });
+  // 4000 tokens: 12 fully-populated trend objects (growthScore, moatScore,
+  // marginRisk, timeline, 2-sentence reasoning, 3-5 topPlayers, recommendation)
+  // need far more headroom than 1500 — Capex hit the exact same truncation
+  // issue with fewer objects and was raised from 2500 to 3500 (see line 793-795).
+  const llm = await callLLMJson({ prompt, maxTokens: 4000 });
   if (!llm?.data?.trends || !Array.isArray(llm.data.trends)) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
@@ -498,6 +502,10 @@ interface ScreenerResult {
   _cachedAt?: string;
 }
 
+// FMP company-screener accepts one country per request. Map each region to
+// its largest/most liquid listed market.
+const SCREENER_FMP_COUNTRY: Record<string, string> = { US: "US", EU: "DE", ASIA: "JP" };
+
 async function buildScreener(filters: ScreenerFilters): Promise<ScreenerResult> {
   // Try FMP screener first (real data, no LLM hallucination)
   const fmpKey = process.env.FMP_API_KEY;
@@ -505,6 +513,12 @@ async function buildScreener(filters: ScreenerFilters): Promise<ScreenerResult> 
   if (fmpKey) {
     try {
       const params = new URLSearchParams();
+      // FMP's screener takes a single ISO-3166 country code — pick the
+      // dominant market per region so the region selector actually changes
+      // the result set (it was previously ignored, always returning the
+      // same mostly-US candidates regardless of US/EU/ASIA selection).
+      const country = SCREENER_FMP_COUNTRY[filters.region] || "US";
+      params.set("country", country);
       if (filters.marketCapMin) params.set("marketCapMoreThan", String(filters.marketCapMin * 1e6));
       if (filters.marketCapMax) params.set("marketCapLowerThan", String(filters.marketCapMax * 1e6));
       if (filters.peMax) params.set("peLowerThan", String(filters.peMax));
@@ -1033,7 +1047,7 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
         severity: String(ev.severity || "low"),
         inflationImpact: String(ev.inflationImpact || "neutral"),
         rateImpact: String(ev.rateImpact || "neutral"),
-        equityImpact: String(ev.equityImpact || "gemischt"),
+        equityImpact: String(ev.equityImpact || "neutral"),
       };
       newSnapshot.push(fp);
 
@@ -1159,7 +1173,11 @@ JSON:
 
   let llm: Awaited<ReturnType<typeof callLLMJson>> = null;
   try {
-    llm = await callLLMJson({ prompt, maxTokens: 1500 });
+    // 1500 was too tight for the full schema (headline/summary/stance + up to
+    // 3 topChanges each with title/category/impact/severity/2-sentence
+    // description/dcfImplication/affectedTickers + riskRadar + watchlist) —
+    // same truncation class as the Sectors 1500→4000 fix above.
+    llm = await callLLMJson({ prompt, maxTokens: 2200 });
   } catch (llmErr: any) {
     console.warn(`[RESEARCHER/briefing] LLM threw: ${llmErr?.message?.substring(0, 100)}`);
   }
@@ -1333,7 +1351,10 @@ export function registerResearcherRoutes(app: Express) {
     console.log(`[RESEARCHER/macro] building region=${region}`);
     await withProxyGuard(res, region, "macro",
       () => buildMacroPulse(region),
-      (r) => writeResearcherCache("macro", region, r),
+      // Don't poison the 6h cache with fallback content — a transient
+      // OpenRouter failure would otherwise lock the tab into the
+      // "LLM nicht verfügbar" placeholder until TTL expiry.
+      (r) => { if (!r.llmSynthesis?._fallback) writeResearcherCache("macro", region, r); },
     );
   });
 
@@ -1361,7 +1382,9 @@ export function registerResearcherRoutes(app: Express) {
     console.log(`[RESEARCHER/sectors] building region=${region}`);
     await withProxyGuard(res, region, "sectors",
       () => buildSectorOpportunity(region),
-      (r) => writeResearcherCache("sectors", region, r),
+      // Same cache-poisoning guard as macro — empty trends (LLM failure/
+      // truncation) must not be written, or "Aktualisieren" stays stuck.
+      (r) => { if (r.trends?.length > 0) writeResearcherCache("sectors", region, r); },
     );
   });
 
@@ -1393,7 +1416,7 @@ export function registerResearcherRoutes(app: Express) {
     console.log(`[RESEARCHER/screener] building key=${cacheKey}`);
     await withProxyGuard(res, cacheKey, "screener",
       () => buildScreener(filters),
-      (r) => writeResearcherCache("screener", cacheKey, r),
+      (r) => { if (r.candidates?.length > 0) writeResearcherCache("screener", cacheKey, r); },
     );
   });
 
@@ -1451,7 +1474,7 @@ export function registerResearcherRoutes(app: Express) {
         console.log(`[BRIEFING] complete: ${result.diagnostics.netNewEvents} net-new of ${result.diagnostics.eventsScanned} events`);
         return result;
       },
-      (r) => writeBriefingResultCache(r),
+      (r) => { if (r.briefing !== null && (r as any).modelUsed !== "fallback") writeBriefingResultCache(r); },
     );
   });
 }

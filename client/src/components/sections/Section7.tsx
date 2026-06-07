@@ -29,7 +29,7 @@ export function Section7({ data }: Props) {
     { label: "P/E (TTM)", stock: data.peRatio, sector: data.sectorAvgPE, premium: trailingPEPremium, desc: "Aktuell" },
     { label: "Forward P/E", stock: data.forwardPE, sector: sectorFwdPE, premium: fwdPEPremium, desc: "Erwartet" },
     { label: "EV/EBITDA", stock: data.evEbitda, sector: data.sectorAvgEVEBITDA, premium: evEbitdaPremium, desc: "" },
-    { label: "PEG", stock: data.pegRatio, sector: data.sectorAvgPEG, premium: ((data.pegRatio / data.sectorAvgPEG) - 1) * 100, desc: "" },
+    { label: "PEG", stock: data.pegRatio, sector: data.sectorAvgPEG, premium: data.sectorAvgPEG > 0 ? ((data.pegRatio / data.sectorAvgPEG) - 1) * 100 : 0, desc: "" },
     { label: "Revenue Growth", stock: companyGrowth, sector: sectorGrowth, premium: companyGrowth - sectorGrowth, desc: "YoY vs. Branche", isGrowth: true },
   ] as const;
 
