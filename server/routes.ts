@@ -5743,6 +5743,43 @@ export async function registerRoutes(server: Server, app: Express) {
       const safeDesc = (rawDesc.trim() && rawDesc.length > 30)
         ? rawDesc
         : `${companyStr} ist ein Unternehmen aus dem ${sectorStr || 'Technology'}-Sektor (${industryStr || 'General'}).`;
+
+      // Pull SEC/News/Capex context from the cached analysis (same enrichment
+      // /api/catalyst-enrich uses) so the manual trigger is just as company-specific
+      // as the automatic one fired during /api/analyze.
+      const cachedForRisk = getCachedAnalysis(String(ticker));
+      const keyProjects = Array.isArray(cachedForRisk?.keyProjects) ? cachedForRisk.keyProjects.slice(0, 5) : [];
+      const newsItemsForRisk = Array.isArray(cachedForRisk?.newsItems) ? cachedForRisk.newsItems : [];
+      const recentNewsHeadlines = newsItemsForRisk.slice(0, 5).map((n: any) => n.title || n.headline || "").filter(Boolean);
+
+      let capexContextForRisk: CapexTailwindContext | null = null;
+      try {
+        const CAPEX_REGIONS = ["US", "EU", "ASIA"];
+        outer: for (const region of CAPEX_REGIONS) {
+          const capexData = diskResearcherGet(`capex__${region}`);
+          if (!capexData?.sectorExposure) continue;
+          for (const sectorEntry of capexData.sectorExposure as any[]) {
+            const beneficiaries: any[] = sectorEntry.listedBeneficiaries || [];
+            const match = beneficiaries.find(
+              (b: any) => String(b.ticker || "").toUpperCase() === String(ticker).toUpperCase()
+            );
+            if (match) {
+              capexContextForRisk = {
+                sector: sectorEntry.sector || "",
+                impact: sectorEntry.impact || "positiv",
+                timeline: sectorEntry.timeline || "12-24M",
+                reasoning: sectorEntry.reasoning || "",
+                programmes: Array.isArray(sectorEntry.programmes) ? sectorEntry.programmes : [],
+                beneficiaryEntry: { ticker: match.ticker, name: match.name, rationale: match.rationale || "" },
+              };
+              break outer;
+            }
+          }
+        }
+      } catch (capexErr: any) {
+        console.warn(`[RISK-EXPLANATIONS] capex lookup error: ${capexErr?.message}`);
+      }
+
       const enrichedRisks = await generateRiskExplanations({
         ticker: String(ticker),
         companyName: companyStr,
@@ -5757,6 +5794,9 @@ export async function registerRoutes(server: Server, app: Express) {
         marketCap: Number(marketCap) || 0,
         governmentExposure: Number(governmentExposure) || 0,
         risks: risks as any[],
+        keyProjects,
+        recentNewsHeadlines,
+        capexContext: capexContextForRisk,
       });
 
       if (!enrichedRisks) {
