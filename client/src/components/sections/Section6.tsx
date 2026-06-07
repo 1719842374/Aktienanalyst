@@ -2,56 +2,23 @@ import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
 import {
-  calculateFCFFDCF, type FCFFDCFParams,
-  worstCaseM1, worstCaseM2, worstCaseM3, calculateCRV, calculateCatalystUpside, selectCatalystBase,
+  calculateFCFFDCF, buildDefaultDCFParams,
+  worstCaseM1, worstCaseM1Label, worstCaseM2, worstCaseM3,
+  calculateCRV, calculateCatalystUpside, selectCatalystBase,
 } from "../../lib/calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign, getCRVColor, getCRVBgColor } from "../../lib/formatters";
+import { formatCurrency, formatNumber, getCRVColor, getCRVBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
 
 interface Props { data: StockAnalysis }
 
 export function Section6({ data }: Props) {
-  const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
   const haircut = data.fcfHaircut;
 
-  // === FCFF DCF params (IDENTICAL to Section 5 / Section 13 for consistency) ===
-  const ebitMarginDefault = data.operatingIncome > 0 && data.revenue > 0
-    ? +((data.operatingIncome / data.revenue) * 100).toFixed(1)
-    : data.ebitda > 0 && data.revenue > 0
-      ? +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1) : 15;
-  const capexDefault = data.revenue > 0 && data.fcfTTM > 0
-    ? +Math.max(2, Math.min(15, ((data.ebitda - data.fcfTTM) / data.revenue) * 100)).toFixed(1) : 5;
-  const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
-  const rf = 4.2, erp = 5.5, taxR = 21, rd = 5.0;
-  const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
-
-  // FIX #2: Use data.beta5Y directly — same as Section 5 — not the impliedBeta detour
-  const dcfBeta = +Math.min(data.beta5Y, data.beta5Y + 0.1).toFixed(2);
-
-  const baseParams: FCFFDCFParams = useMemo(() => ({
-    revenueBase: data.revenue,
-    revenueGrowthP1: revenueGrowthDefault,
-    revenueGrowthP2: Math.max(3, +(revenueGrowthDefault * 0.6).toFixed(1)),
-    ebitMargin: ebitMarginDefault,
-    ebitMarginTerminal: +Math.max(8, ebitMarginDefault * 0.9).toFixed(1),
-    capexPct: capexDefault,
-    deltaWCPct: 5,
-    taxRate: taxR,
-    daRatio: +Math.max(2, capexDefault * 0.8).toFixed(1),
-    riskFreeRate: rf,
-    beta: dcfBeta,
-    erp,
-    debtRatio: debtRatioVal,
-    costOfDebt: rd,
-    terminalG: sp.growthAssumptions.terminal || 2.5,
-    sharesOutstanding: data.sharesOutstanding,
-    netDebt,
-    minorityInterests: 0,
-    fcfHaircut: haircut,
-    actualEPS: data.epsTTM,
-    forwardEPS: data.epsConsensusNextFY,
-  }), [data, sp, netDebt, haircut, ebitMarginDefault, capexDefault, revenueGrowthDefault, dcfBeta, debtRatioVal]);
+  // === SINGLE SOURCE OF TRUTH: identical defaults as Section5 / Section13 ===
+  // Bug #1 + #6 fix: previously Section6 used data.beta5Y directly (market beta 1.93)
+  // and a different capex proxy. Now both sections share buildDefaultDCFParams().
+  const baseParams = useMemo(() => buildDefaultDCFParams(data), [data.ticker]);
 
   const conservativeDCF = useMemo(() => calculateFCFFDCF(baseParams), [baseParams]);
 
@@ -65,22 +32,24 @@ export function Section6({ data }: Props) {
   }), [baseParams]);
 
   // Worst Case methods
-  const m1 = worstCaseM1(data.currentPrice, data.beta5Y, data.sectorMaxDrawdown || 35);
+  const sectorDD = data.sectorMaxDrawdown || 35;
+  const m1 = worstCaseM1(data.currentPrice, data.beta5Y, sectorDD);
   const m2 = worstCaseM2(data.currentPrice, 35);
-  const m3 = worstCaseM3(data.currentPrice, data.sectorMaxDrawdown);
+  const m3 = worstCaseM3(data.currentPrice, sectorDD);
   const worstCase = Math.min(m1, m2, m3);
 
-  // === Risk-Adjusted DCF: discount Fair Values by total expected risk damage ===
-  // FIX #4: Safe fallback if data.risks is undefined/null
+  // M1 display label — matches implementation exactly (Bug #2 fix)
+  const m1Label = worstCaseM1Label(data.beta5Y, sectorDD);
+
+  // === Risk-Adjusted DCF ===
   const risks = data.risks ?? [];
   const totalExpectedDamage = risks.reduce((s, r) => s + r.expectedDamage, 0);
   const riskDiscountFactor = 1 - totalExpectedDamage / 100;
   const raConservativeFV = conservativeDCF.perShare * riskDiscountFactor;
   const raOptimisticFV = optimisticDCF.perShare * riskDiscountFactor;
 
-  // Catalyst-adj target (base)
+  // Catalyst-adj target
   const catalysts = data.catalysts;
-  // Smart Catalyst-Base-Selektor (Plausibilitäts-Gate)
   const _rawUpsideS6 = (catalysts || []).reduce((s, c) => s + c.gb, 0);
   const _baseInfoS6 = selectCatalystBase(conservativeDCF.perShare, _rawUpsideS6, data.currentPrice, data.analystPT.median);
   const catalystDCFBase = _baseInfoS6.base;
@@ -97,7 +66,7 @@ export function Section6({ data }: Props) {
   const raCrvOptimistic = calculateCRV(raOptimisticFV, worstCase, data.currentPrice);
   const raCrvCatalyst = calculateCRV(raAdjustedTarget, worstCase, data.currentPrice);
 
-  // DCF bei CRV 3:1 (base and risk-adjusted)
+  // DCF bei CRV 3:1
   const dcfBeiCRV3 = (conservativeDCF.perShare + 3 * worstCase) / 4;
   const raDcfBeiCRV3 = (raConservativeFV + 3 * worstCase) / 4;
 
@@ -123,33 +92,30 @@ export function Section6({ data }: Props) {
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left py-2 px-2 text-muted-foreground font-medium">Method</th>
-                <th className="text-left py-2 px-2 text-muted-foreground font-medium">Formula</th>
-                <th className="text-right py-2 px-2 text-muted-foreground font-medium">Result</th>
+                <th className="text-left py-2 px-2 text-muted-foreground font-medium">Formel</th>
+                <th className="text-right py-2 px-2 text-muted-foreground font-medium">Ergebnis</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
               <tr>
-                <td className="py-2 px-2 font-medium">M1: Beta × Max Drawdown</td>
-                <td className="py-2 px-2 font-mono tabular-nums text-muted-foreground">
-                  {formatCurrency(data.currentPrice)} × (1 - min(90%, {formatNumber(data.beta5Y)} × 50%))
-                  {/* FIX #5: >= 90 (not > 90) — catches the exact boundary case */}
-                  {data.beta5Y * 50 >= 90 && (
-                    <span className="ml-1 text-amber-500 text-[10px]">⚠ capped (raw: {formatNumber(data.beta5Y * 50, 0)}%)</span>
-                  )}
+                <td className="py-2 px-2 font-medium">M1: β-Adj. Drawdown</td>
+                {/* Bug #2 fix: label now generated from worstCaseM1Label() — matches implementation */}
+                <td className="py-2 px-2 font-mono tabular-nums text-muted-foreground text-[10px]">
+                  {formatCurrency(data.currentPrice)} × (1 − {m1Label})
                 </td>
                 <td className="py-2 px-2 text-right font-mono tabular-nums font-semibold text-red-500">{formatCurrency(m1)}</td>
               </tr>
               <tr>
                 <td className="py-2 px-2 font-medium">M2: Most Likely Risk</td>
                 <td className="py-2 px-2 font-mono tabular-nums text-muted-foreground">
-                  {formatCurrency(data.currentPrice)} × (1 - 35%)
+                  {formatCurrency(data.currentPrice)} × (1 − 35%)
                 </td>
                 <td className="py-2 px-2 text-right font-mono tabular-nums font-semibold text-red-500">{formatCurrency(m2)}</td>
               </tr>
               <tr>
-                <td className="py-2 px-2 font-medium">M3: Sector Drawdown</td>
+                <td className="py-2 px-2 font-medium">M3: Sektor-Drawdown</td>
                 <td className="py-2 px-2 font-mono tabular-nums text-muted-foreground">
-                  {formatCurrency(data.currentPrice)} × (1 - {data.sectorMaxDrawdown}%)
+                  {formatCurrency(data.currentPrice)} × (1 − {sectorDD}%)
                 </td>
                 <td className="py-2 px-2 text-right font-mono tabular-nums font-semibold text-red-500">{formatCurrency(m3)}</td>
               </tr>
@@ -192,9 +158,8 @@ export function Section6({ data }: Props) {
         </div>
       </div>
 
-      {/* DCF bei CRV 3:1 — both Base and Risk-Adjusted */}
+      {/* DCF bei CRV 3:1 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* Base */}
         <div className={`rounded-lg p-3 border-2 ${data.currentPrice <= dcfBeiCRV3 ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
           <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">DCF bei CRV 3:1 — Base</div>
           <div className="text-lg font-bold font-mono tabular-nums mt-0.5">{formatCurrency(dcfBeiCRV3)}</div>
@@ -205,7 +170,6 @@ export function Section6({ data }: Props) {
             = ({formatCurrency(conservativeDCF.perShare)} + 3 × {formatCurrency(worstCase)}) / 4
           </div>
         </div>
-        {/* Risk-Adjusted */}
         <div className={`rounded-lg p-3 border-2 ${data.currentPrice <= raDcfBeiCRV3 ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
           <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">DCF bei CRV 3:1 — Risikoadj.</div>
           <div className="text-lg font-bold font-mono tabular-nums mt-0.5">{formatCurrency(raDcfBeiCRV3)}</div>
@@ -230,6 +194,10 @@ export function Section6({ data }: Props) {
         ``,
         `DCF bei CRV 3:1 (Base) = (${formatCurrency(conservativeDCF.perShare)} + 3 × ${formatCurrency(worstCase)}) / 4 = ${formatCurrency(dcfBeiCRV3)}`,
         `DCF bei CRV 3:1 (Risk-Adj.) = (${formatCurrency(raConservativeFV)} + 3 × ${formatCurrency(worstCase)}) / 4 = ${formatCurrency(raDcfBeiCRV3)}`,
+        ``,
+        `=== M1 FORMEL (Implementierung) ===`,
+        `effectiveDrawdown = min(beta × sectorDD, sectorDD × 1.5), gecapped bei 65%`,
+        `M1 = ${formatCurrency(data.currentPrice)} × (1 - ${m1Label})`,
       ]} />
     </SectionCard>
   );
@@ -244,7 +212,6 @@ function CRVCard({ label, value, fairValue, worstCase, riskAdj }: {
         {label} {riskAdj && <span className="text-amber-500">(RA)</span>}
       </div>
       <div className={`text-xl font-bold font-mono tabular-nums mt-1 ${getCRVColor(value)}`}>
-        {/* FIX #3: Guard against Infinity/NaN when currentPrice ≈ worstCase */}
         {isFinite(value) && !isNaN(value) ? `${formatNumber(value, 1)}:1` : "n/a"}
       </div>
       <div className="text-[10px] text-muted-foreground mt-1">
