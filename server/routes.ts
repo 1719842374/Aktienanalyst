@@ -1282,32 +1282,36 @@ JSON array only, no markdown, no explanation:`;
 /**
  * Berechnet den Einpreisungsgrad via Reverse-DCF.
  * Grundidee: Wie viel % Wachstum ist im aktuellen Kurs bereits eingepreist?
- * Je höher das implizite Wachstum vs. dem Catalyst-Upside, desto mehr ist schon drin.
+ * Je höher das implizite Wachstum (g*) vs. dem Catalyst-Upside, desto mehr ist schon drin.
  *
- * Methode:
- * 1. Implied Growth Rate = aus Forward P/E vs. Sektor-Median P/E ableiten
- * 2. Einpreisungsgrad = clamp(impliedGrowth / catalystBruttoUpside, 0.15, 0.70)
+ * Methode (echtes Reverse-DCF, analog Section 14 / calculateReverseDCF):
+ * 1. EV = Price × Shares + NetDebt
+ * 2. g* = WACC − FCF / EV   (Gordon-Growth invertiert — implizit eingepreistes Wachstum)
+ * 3. Einpreisungsgrad = clamp(g* / bruttoUpside, 0.15, 0.70)
  *
- * Fallback wenn keine PE-Daten: Heuristik nach Katalysatorklasse
+ * Fallback wenn EV/FCF/WACC nicht verfügbar (g* nicht berechenbar): Heuristik nach Katalysatorklasse
  */
 function calcEinpreisungsgrad(params: {
   bruttoUpside: number;        // z.B. 22 für +22%
-  forwardPE: number;           // Forward P/E der Aktie
-  sectorMedianPE: number;      // Sektor-Median Forward P/E
-  revenueGrowth: number;       // Revenue-Wachstum %
+  price: number;
+  sharesOutstanding: number;
+  netDebt: number;
+  fcf: number;
+  wacc: number;                // in % (z.B. 8.5)
+  revenueGrowth: number;       // Revenue-Wachstum % (für Fallback-Heuristik)
   catalystType?: string;       // "growth"|"margin"|"product"|"ai"|"macro" für Fallback
 }): number {
-  const { bruttoUpside, forwardPE, sectorMedianPE, revenueGrowth, catalystType } = params;
+  const { bruttoUpside, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType } = params;
 
-  // Wenn Forward PE vorhanden: Reverse-DCF Methode
-  if (forwardPE > 0 && sectorMedianPE > 0 && bruttoUpside > 0) {
-    // Premium über Sektor-Median = bereits eingepreiste Wachstumserwartung
-    const pePremium = Math.max(0, (forwardPE - sectorMedianPE) / sectorMedianPE); // z.B. 0.30 = 30% Premium
-    // Implied eingepreiste Wachstumserwartung in % (normiert auf catalyst brutto upside)
-    // Ein hohes PE-Premium bedeutet: viel ist schon drin
-    const impliedPriced = Math.min(pePremium * 100, bruttoUpside * 0.8); // max 80% des Upside
-    const einpreisungsgrad = impliedPriced / bruttoUpside; // als Anteil 0-1
-    return Math.round(Math.max(0.15, Math.min(0.70, einpreisungsgrad)) * 100); // als %
+  // Reverse-DCF: implizites Marktwachstum g* aus EV/FCF/WACC ableiten
+  const ev = price * sharesOutstanding + netDebt;
+  if (ev > 0 && isFinite(ev) && wacc > 0 && bruttoUpside > 0) {
+    const impliedGrowth = (wacc / 100 - fcf / ev) * 100; // g* = WACC - FCF/EV, in %
+    if (isFinite(impliedGrowth)) {
+      // Je höher g* relativ zum Catalyst-Brutto-Upside, desto mehr ist bereits eingepreist
+      const einpreisungsgrad = Math.max(0, impliedGrowth) / bruttoUpside;
+      return Math.round(Math.max(0.15, Math.min(0.70, einpreisungsgrad)) * 100); // als %
+    }
   }
 
   // Fallback: Revenue-Growth-basiert (wenn PE nicht verfügbar)
@@ -1431,7 +1435,7 @@ function calcLynchPEG(params: {
 }
 
 // === Fallback: Sector-Template Catalysts (used when LLM is unavailable) ===
-function generateCatalysts(sector: string, industry: string, growthRate: number, fcfMargin: number, description: string = '', revenue: number = 0, forwardPE: number = 0, sectorMedianPE: number = 0, revenueGrowth: number = 0): Catalyst[] {
+function generateCatalysts(sector: string, industry: string, growthRate: number, fcfMargin: number, description: string = '', revenue: number = 0, price: number = 0, sharesOutstanding: number = 0, netDebt: number = 0, fcf: number = 0, wacc: number = 0, revenueGrowth: number = 0): Catalyst[] {
   const catalysts: Catalyst[] = [];
   const s = sector.toLowerCase();
   const ind = industry.toLowerCase();
@@ -1443,7 +1447,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
     timeline: growthRate > 15 ? "6-12M" : "12-18M",
     pos: Math.round(revenuePos),
     bruttoUpside: Math.round(Math.min(25, 5 + growthRate * 0.8)),
-    einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: Math.round(Math.min(25, 5 + growthRate * 0.8)), forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'growth' }),
+    einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: Math.round(Math.min(25, 5 + growthRate * 0.8)), price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'growth' }),
     nettoUpside: 0, gb: 0,
     context: generateCatalystContext("Revenue Growth Acceleration", sector, industry, description, growthRate, fcfMargin, revenue),
   });
@@ -1455,7 +1459,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
     timeline: "12-24M",
     pos: marginPos,
     bruttoUpside: Math.round(8 + (30 - fcfMargin) * 0.3),
-    einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: Math.round(8 + (30 - fcfMargin) * 0.3), forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'margin' }),
+    einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: Math.round(8 + (30 - fcfMargin) * 0.3), price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'margin' }),
     nettoUpside: 0, gb: 0,
     context: generateCatalystContext("Margin Expansion / Operating Leverage", sector, industry, description, growthRate, fcfMargin, revenue),
   });
@@ -1467,7 +1471,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "6-18M",
       pos: 60,
       bruttoUpside: 15,
-      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'ai' }),
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'ai' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1476,7 +1480,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "12-24M",
       pos: 45,
       bruttoUpside: 12,
-      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'product' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1486,7 +1490,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "6-18M",
       pos: 35,
       bruttoUpside: 25,
-      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 25, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 25, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'product' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1495,7 +1499,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "12-36M",
       pos: 70,
       bruttoUpside: 8,
-      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 8, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 8, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'macro' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1505,7 +1509,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "6-12M",
       pos: 50,
       bruttoUpside: 12,
-      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'macro' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1514,7 +1518,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "0-12M",
       pos: 65,
       bruttoUpside: 8,
-      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 8, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'margin' }),
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 8, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'margin' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1524,7 +1528,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "6-18M",
       pos: 40,
       bruttoUpside: 20,
-      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 20, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 20, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'macro' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1533,7 +1537,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "12-36M",
       pos: 45,
       bruttoUpside: 15,
-      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'product' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1549,7 +1553,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "6-18M",
         pos: 40,
         bruttoUpside: 15,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'macro' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1558,7 +1562,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 55,
         bruttoUpside: 10,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'margin' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'margin' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1568,7 +1572,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 50,
         bruttoUpside: 15,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'product' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1577,7 +1581,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-36M",
         pos: 40,
         bruttoUpside: 12,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'growth' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'growth' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1587,7 +1591,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "6-12M",
         pos: 50,
         bruttoUpside: 10,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'margin' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'margin' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1596,7 +1600,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 45,
         bruttoUpside: 12,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'growth' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'growth' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1606,7 +1610,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "6-18M",
         pos: 50,
         bruttoUpside: 12,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'macro' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1615,7 +1619,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 45,
         bruttoUpside: 10,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'product' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1625,7 +1629,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 45,
         bruttoUpside: 15,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'product' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1634,7 +1638,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "6-18M",
         pos: 50,
         bruttoUpside: 10,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'macro' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1644,7 +1648,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "6-18M",
         pos: 45,
         bruttoUpside: 12,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'macro' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'macro' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1653,7 +1657,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
         timeline: "12-24M",
         pos: 50,
         bruttoUpside: 10,
-        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'growth' }),
+        einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 10, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'growth' }),
         nettoUpside: 0, gb: 0,
         context: "",
       });
@@ -1664,7 +1668,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "12-24M",
       pos: 45,
       bruttoUpside: 12,
-      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'growth' }),
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 12, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'growth' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -1673,7 +1677,7 @@ function generateCatalysts(sector: string, industry: string, growthRate: number,
       timeline: "6-18M",
       pos: 30,
       bruttoUpside: 15,
-      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, forwardPE, sectorMedianPE, revenueGrowth, catalystType: 'product' }),
+      einpreisungsgrad: calcEinpreisungsgrad({ bruttoUpside: 15, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType: 'product' }),
       nettoUpside: 0, gb: 0,
       context: "",
     });
@@ -4825,14 +4829,14 @@ export async function registerRoutes(server: Server, app: Express) {
           llmActuallyUsed = true;
           console.log(`[ANALYZE] Using OpenRouter LLM catalysts for ${ticker} (model=${combined.modelUsed}, tokens=${combined.promptTokens || '?'}+${combined.completionTokens || '?'})`);
         } else {
-          catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue, forwardPE, sectorDefs.sectorAvgForwardPE || sectorDefs.sectorAvgPE || 20, revenueGrowth);
+          catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue, price, sharesOutstanding, netDebt, fcfTTM, sectorDefs.waccScenarios.avg, revenueGrowth);
           console.log(`[ANALYZE] LLM failed/unavailable, falling back to sector-template catalysts for ${ticker}`);
           // Still do keyword news matching so badges work in Section 15
           if (newsItems.length > 0) await matchNewsToCatalysts(newsItems, catalysts);
         }
       } else {
         // Fast path: sector-template catalysts, no LLM
-        catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue, forwardPE, sectorDefs.sectorAvgForwardPE || sectorDefs.sectorAvgPE || 20, revenueGrowth);
+        catalysts = generateCatalysts(sector, industry, revenueGrowth, fcfMargin, description, revenue, price, sharesOutstanding, netDebt, fcfTTM, sectorDefs.waccScenarios.avg, revenueGrowth);
         console.log(`[ANALYZE] Using sector-template catalysts for ${ticker} (LLM off)`);
         // Still run keyword-based news matching so newsItems get matchedCatalystIdx
         // even without LLM — this powers the news badges in Section 15
