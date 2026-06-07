@@ -1296,11 +1296,14 @@ export function registerResearcherRoutes(app: Express) {
     cacheType: string,
     buildFn: () => Promise<T>,
     writeFn: (result: T) => void,
+    force = false,
   ): Promise<void> {
     const dedupeKey = `${cacheType}:${cacheKey}`;
 
-    // Deduplicate: if a build is already running for this key, wait for it
-    let buildPromise = inFlight.get(dedupeKey);
+    // Deduplicate: if a build is already running for this key, wait for it —
+    // unless this is a forced refresh, in which case the user explicitly
+    // wants a fresh build, not the result of a possibly-stale in-flight one.
+    let buildPromise = force ? undefined : inFlight.get(dedupeKey);
     if (!buildPromise) {
       buildPromise = buildFn()
         .then((result) => {
@@ -1355,6 +1358,7 @@ export function registerResearcherRoutes(app: Express) {
       // OpenRouter failure would otherwise lock the tab into the
       // "LLM nicht verfügbar" placeholder until TTL expiry.
       (r) => { if (!r.llmSynthesis?._fallback) writeResearcherCache("macro", region, r); },
+      force,
     );
   });
 
@@ -1385,6 +1389,7 @@ export function registerResearcherRoutes(app: Express) {
       // Same cache-poisoning guard as macro — empty trends (LLM failure/
       // truncation) must not be written, or "Aktualisieren" stays stuck.
       (r) => { if (r.trends?.length > 0) writeResearcherCache("sectors", region, r); },
+      force,
     );
   });
 
@@ -1417,6 +1422,7 @@ export function registerResearcherRoutes(app: Express) {
     await withProxyGuard(res, cacheKey, "screener",
       () => buildScreener(filters),
       (r) => { if (r.candidates?.length > 0) writeResearcherCache("screener", cacheKey, r); },
+      force,
     );
   });
 
@@ -1450,6 +1456,7 @@ export function registerResearcherRoutes(app: Express) {
     await withProxyGuard(res, region, "capex",
       () => buildCapexFiscal(region),
       (r) => writeCapexCacheIfRich(r),
+      force,
     );
   });
 
@@ -1475,6 +1482,7 @@ export function registerResearcherRoutes(app: Express) {
         return result;
       },
       (r) => { if (r.briefing !== null && (r as any).modelUsed !== "fallback") writeBriefingResultCache(r); },
+      force,
     );
   });
 }
