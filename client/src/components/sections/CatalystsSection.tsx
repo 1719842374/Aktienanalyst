@@ -157,7 +157,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
               ? "bg-violet-500/15 text-violet-400 border-violet-500/30"
               : "text-foreground/50 border-border/50 hover:bg-muted/50 hover:text-foreground/70"
           } ${llmLoading ? "opacity-60 cursor-not-allowed" : ""}`}
-          title="KI Analyse — unternehmensspezifische Katalysatoren via Grok"
+          title="KI Analyse — unternehmensspezifische Katalysatoren via Claude 3.5 Haiku"
           data-testid="button-catalyst-ki-analyse"
         >
           {llmLoading ? (

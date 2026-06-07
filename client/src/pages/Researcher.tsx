@@ -579,7 +579,7 @@ function EmptyState() {
         <Sparkles className="w-10 h-10 text-violet-400/40 mx-auto mb-3" />
         <div className="text-sm font-semibold text-foreground/80">Keine Analyse aktiv</div>
         <div className="text-[11px] text-foreground/50 mt-1.5 leading-relaxed">
-          Wähle eine Region oben und drücke "Analyse starten". Echte Makro-Daten + LLM-Synthese (Grok 4.1 Fast). Ergebnisse werden 7 Tage gecacht (0 Credits bei Wiederaufruf).
+          Wähle eine Region oben und drücke "Analyse starten". Echte Makro-Daten + LLM-Synthese (Claude 3.5 Haiku). Ergebnisse werden 7 Tage gecacht (0 Credits bei Wiederaufruf).
         </div>
       </div>
     </div>

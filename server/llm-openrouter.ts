@@ -10,11 +10,8 @@
 // - Default model: anthropic/claude-3-5-haiku — best price/quality for this task
 //   in May 2026. Set OPENROUTER_MODEL env var to override.
 //
-// Model Strategy (May 2026):
-// - Default: anthropic/claude-3.5-haiku-20241022 (cheap + fast + good JSON)
-// - Alternative: x-ai/grok-4-1-fast (similar tier; gets retired 15 May 2026)
-//   *** IMPORTANT: x-ai/grok-4-1-fast retires on 2026-05-15. After that date
-//   *** OpenRouter will return 404. Use Haiku-3.5 or Grok-4.3 instead.
+// Model Strategy: Claude 3.5 Haiku only (cheap + fast + good JSON; this is what
+// production billing actually shows being used — see MODEL_FALLBACK_CHAIN).
 
 import OpenAI from "openai";
 import type { Catalyst, Risk, RiskExplanation } from "../shared/schema";
@@ -47,8 +44,6 @@ function pickModel(): string {
 
 const MODEL_FALLBACK_CHAIN = [
   "anthropic/claude-3.5-haiku",
-  "anthropic/claude-3-haiku",
-  "x-ai/grok-4.3",
 ];
 
 async function callWithFallback(client: OpenAI, params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>): Promise<{ text: string; modelUsed: string; usage?: any }> {
@@ -57,11 +52,9 @@ async function callWithFallback(client: OpenAI, params: Omit<Parameters<OpenAI['
   let lastErr: any;
   for (const model of chain) {
     try {
-      const isGrok = model.startsWith('x-ai/');
       const completion = await (client.chat.completions.create as any)({
         ...params,
         model,
-        ...(isGrok ? { reasoning: { effort: 'none' } } : {}),
       });
       const text = completion.choices?.[0]?.message?.content?.trim() || '';
       if (!text) { lastErr = new Error('Empty response'); continue; }
