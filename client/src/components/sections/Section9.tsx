@@ -1,6 +1,6 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { calculateRSL } from "../../lib/calculations";
+import { calculateRSL, RSL_MOMENTUM_MALUS_PCT } from "../../lib/calculations";
 import { formatNumber, getRSLColor, getRSLBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
 
@@ -17,10 +17,10 @@ export function Section9({ data }: Props) {
   const rsl = useMemo(() => calculateRSL(data.currentPrice, prices26w), [data.currentPrice, prices26w]);
   const avg26w = prices26w.length > 0 ? prices26w.reduce((s, v) => s + v, 0) / prices26w.length : data.currentPrice;
 
-  // RSL < 105 → DCF growth adjustment -5-10%
+  // RSL < 105 → DCF growth adjustment is now actually applied in calculateFCFFDCF (see RSL_MOMENTUM_MALUS_PCT)
   const growthAdj = rsl > 110 ? "+0% (strong momentum)" :
     rsl > 105 ? "+0% (neutral)" :
-    `-5% to -10% (RSL < 105 → DCF-Wachstum reduzieren)`;
+    `-${RSL_MOMENTUM_MALUS_PCT}% (aktiv im DCF-Modell — siehe Sektion 5 Rechenweg)`;
   const rslZone = rsl > 110 ? "Strong Momentum" : rsl > 105 ? "Neutral" : "Weak Momentum";
 
   // Gauge positioning
@@ -35,9 +35,10 @@ export function Section9({ data }: Props) {
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
           <span className="text-amber-500 text-lg">⚠</span>
           <div>
-            <div className="text-xs font-bold text-amber-500">RSL &lt; 105 — DCF Growth Adjustment</div>
+            <div className="text-xs font-bold text-amber-500">RSL &lt; 105 — DCF Growth Adjustment aktiv</div>
             <div className="text-[11px] text-amber-400 mt-0.5">
-              RSL = {formatNumber(rsl, 1)}. Automatische Anpassung: DCF-Wachstumsrate um -5% bis -10% reduzieren.
+              RSL = {formatNumber(rsl, 1)} (schwaches Momentum). Die DCF-Wachstumsraten in Sektion 5 (DCF-Modell)
+              werden automatisch um {RSL_MOMENTUM_MALUS_PCT}% reduziert (g1/g2 × {(1 - RSL_MOMENTUM_MALUS_PCT / 100).toFixed(3)}).
             </div>
           </div>
         </div>
@@ -105,7 +106,9 @@ export function Section9({ data }: Props) {
           </div>
           <div className="bg-muted/30 rounded-md p-2.5 border border-border/50 text-xs text-muted-foreground">
             RSL measures relative momentum: Price divided by its 26-week moving average × 100.
-            Values above 110 indicate strong momentum, below 105 indicates weakness and triggers automatic DCF growth reduction (-5% to -10%).
+            Values above 110 indicate strong momentum; below 105 indicates weakness and automatically
+            reduces the DCF revenue-growth assumptions (g1/g2) by {RSL_MOMENTUM_MALUS_PCT}% in the DCF model (Section 5)
+            — visible there in the "FCFF-DCF Rechenweg".
           </div>
         </div>
       </div>
