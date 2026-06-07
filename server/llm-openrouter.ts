@@ -102,6 +102,7 @@ export interface CombinedLLMInput {
   marketCap: number;
   analystPTMedian?: number;
   governmentExposure?: number;
+  impliedGStar?: number | null; // Reverse-DCF implizites Marktwachstum g* = WACC - FCF/EV (in %)
   capexContext?: CapexTailwindContext | null;
   keyProjects: string[];
   secFilingExcerpts: string[];
@@ -134,7 +135,7 @@ export async function generateCatalystsAndMatchNews(
   const {
     ticker, companyName, sector, industry, description, revenue, revenueGrowth,
     fcfMargin, price, pe, marketCap, keyProjects, secFilingExcerpts, newsItems,
-    analystPTMedian = 0, governmentExposure = 0, capexContext = null,
+    analystPTMedian = 0, governmentExposure = 0, capexContext = null, impliedGStar = null,
   } = input;
 
   const ctx: string[] = [];
@@ -142,6 +143,9 @@ export async function generateCatalystsAndMatchNews(
   ctx.push(`Beschreibung: ${description.substring(0, 1000)}`);
   ctx.push(`Finanzen: Umsatz ${revenue > 0 ? '$' + (revenue / 1e9).toFixed(1) + 'B' : 'N/A'} | Wachstum ${revenueGrowth != null && revenueGrowth !== 0 ? revenueGrowth.toFixed(1) + '%' : 'N/A'} | FCF-Marge ${fcfMargin > 0 ? fcfMargin.toFixed(1) + '%' : 'N/A'} | KGV ${pe > 0 ? pe.toFixed(1) : 'N/A'} | MCap ${marketCap > 0 ? '$' + (marketCap / 1e9).toFixed(1) + 'B' : 'N/A'}`);
   ctx.push(`Kurs: $${price.toFixed(2)} | Analyst-PT: $${analystPTMedian > 0 ? analystPTMedian.toFixed(2) : 'N/A'} | Gov-Exposure: ${(governmentExposure * 100).toFixed(0)}%`);
+  if (impliedGStar !== null && isFinite(impliedGStar)) {
+    ctx.push(`REVERSE-DCF g* (impliziertes Marktwachstum, bereits im Kurs eingepreist): ${impliedGStar.toFixed(1)}% — abgeleitet aus g* = WACC - FCF/EV. Dieser Wert ist die mathematische Grundlage für 'einpreisungsgrad' (siehe Regel unten).`);
+  }
   if (capexContext) {
     ctx.push(`CAPEX FISCAL TAILWIND: ${ticker} ist börsennotierter Profiteur im Sektor "${capexContext.sector}" (Impact: ${capexContext.impact}, Zeithorizont: ${capexContext.timeline}). Programme: ${capexContext.programmes.join(", ")}. Researcher-Begründung: ${capexContext.beneficiaryEntry.rationale}`);
   }
@@ -171,6 +175,7 @@ PFLICHT-REGELN — strikte Einhaltung:
 4. Bei fehlenden News: nutze description + sector-knowledge für plausible firmenspezifische Treiber (keine Schablonen)
 5. Anti-Bias: mindestens 1 Katalysator muss echtes Downside-Risiko reflektieren (niedrigere PoS ≤ 40%)
 6. context auf Deutsch, präzise mit Zahlen wenn vorhanden (z.B. "3,4 Mrd. USD Vertrag", "4,5 GW gesicherter Kapazität")
+${impliedGStar !== null && isFinite(impliedGStar) ? `6b. PFLICHT für 'einpreisungsgrad': mathematisch herleiten als g* / bruttoUpside (auf 15-70 geklemmt), mit g* = ${impliedGStar.toFixed(1)}% aus REVERSE-DCF oben. Beispiel: g*=${impliedGStar.toFixed(1)}% und bruttoUpside=20% → einpreisungsgrad ≈ ${Math.round(Math.max(0.15, Math.min(0.70, Math.max(0, impliedGStar) / 20)) * 100)}%. KEINE freie Schätzung — der Wert wird serverseitig anhand dieser Formel überprüft/korrigiert.` : ""}
 ${capexContext ? `7. PFLICHT: Da ${ticker} als Capex-Profiteur im Sektor "${capexContext.sector}" identifiziert wurde (Programme: ${capexContext.programmes.join(", ")}), MUSS Katalysator K1 oder K2 einen "Capex Tailwind"-Katalysator enthalten mit dem Programmnamen im Titel (z.B. "${capexContext.sector} Capex Tailwind: ${capexContext.programmes[0] || "Gov Spending"}") und PoS ≥ 55%.` : ""}
 
 GUTE Beispiele (firmenspezifisch):
