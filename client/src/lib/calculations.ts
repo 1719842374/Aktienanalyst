@@ -117,6 +117,13 @@ export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
   // Cap at observed market beta + 0.1 to avoid over-anchoring
   const dcfBeta = +Math.min(impliedBeta, data.beta5Y + 0.1).toFixed(2);
 
+  // RSL-Momentum (single source of truth — same prices26w slice as Section9/Section13)
+  const prices26w = [...data.historicalPrices]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 130)
+    .map((p) => p.close);
+  const rsl = calculateRSL(data.currentPrice, prices26w);
+
   return {
     revenueBase: data.revenue,
     revenueGrowthP1: revenueGrowthDefault,
@@ -140,6 +147,7 @@ export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
     actualEPS: data.epsTTM,
     forwardEPS: data.epsConsensusNextFY,
     waccOverride: null,
+    rsl,
   };
 }
 
@@ -175,7 +183,15 @@ export interface FCFFDCFParams {
   // Optional: actual EPS for sanity-cap (prevents FS-debt distortion)
   actualEPS?: number;        // EPS TTM for per-share ceiling check
   forwardEPS?: number;       // Forward EPS consensus for cap calculation
+  // Optional: RSL momentum value (Levy RSL = Price/26W-Avg × 100).
+  // RSL < 105 triggers an automatic growth-rate malus (see RSL_MOMENTUM_MALUS_PCT),
+  // matching the "Automatische Anpassung" claim shown in Section 9.
+  rsl?: number | null;
 }
+
+// RSL < 105 → reduce DCF growth rates by this relative percentage (UI: "-5% to -10%").
+// We apply the midpoint of that stated range so the DCF Rechenweg matches Section 9's claim.
+export const RSL_MOMENTUM_MALUS_PCT = 7.5;
 
 export interface FCFFDCFResult {
   enterpriseValue: number;
@@ -239,6 +255,21 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   }
   steps.push(`WACC (final) = ${wacc.toFixed(2)}%`);
 
+  // RSL-Momentum-Malus (Section 9): RSL < 105 → Wachstumsraten automatisch reduzieren.
+  // Macht die in Section 9 behauptete "Automatische Anpassung" tatsächlich wirksam,
+  // statt sie nur als Text anzuzeigen.
+  const rslActive = params.rsl != null && params.rsl > 0 && params.rsl < 105;
+  const rslFactor = rslActive ? 1 - RSL_MOMENTUM_MALUS_PCT / 100 : 1;
+  const adjGrowthP1 = params.revenueGrowthP1 * rslFactor;
+  const adjGrowthP2 = params.revenueGrowthP2 * rslFactor;
+
+  if (rslActive) {
+    steps.push(``);
+    steps.push(`⚠ RSL-Momentum-Malus aktiv: RSL = ${params.rsl!.toFixed(1)} < 105 (schwaches Momentum)`);
+    steps.push(`  Wachstumsraten × (1 - ${RSL_MOMENTUM_MALUS_PCT}%) = × ${rslFactor.toFixed(3)}`);
+    steps.push(`  g1: ${params.revenueGrowthP1.toFixed(1)}% → ${adjGrowthP1.toFixed(2)}% | g2: ${params.revenueGrowthP2.toFixed(1)}% → ${adjGrowthP2.toFixed(2)}%`);
+  }
+
   steps.push(``);
   steps.push(`=== FCFF-Projektion (10 Jahre) ===`);
   steps.push(`Revenue Basis: ${fmt(params.revenueBase)}`);
@@ -248,7 +279,7 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   let prevRevenue = params.revenueBase;
 
   for (let y = 1; y <= 10; y++) {
-    const growthRate = y <= 5 ? params.revenueGrowthP1 : params.revenueGrowthP2;
+    const growthRate = y <= 5 ? adjGrowthP1 : adjGrowthP2;
     const revenue = prevRevenue * (1 + growthRate / 100);
 
     const marginProgress = y / 10;
