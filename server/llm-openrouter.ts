@@ -518,6 +518,119 @@ Return ONLY this JSON (no markdown, no commentary):
   }
 }
 
+// ============================================================
+// Policy Context Enrichment (Moat/Porter & PESTEL — manual KI trigger)
+// ============================================================
+// Adds current regulatory, fiscal-programme and monetary-policy context for
+// USA, Europe and Asia, tailored to the specific company/sector — analog zur
+// Risiko-Erklärungen-Architektur (single LLM call, Claude 3.5 Haiku).
+export interface PolicyContextInput {
+  ticker: string;
+  companyName: string;
+  sector: string;
+  industry: string;
+  description: string;
+  governmentExposure: number;
+  capexContextUS?: CapexTailwindContext | null;
+  capexContextEU?: CapexTailwindContext | null;
+  capexContextASIA?: CapexTailwindContext | null;
+}
+
+export interface PolicyContextResult {
+  usa: string;
+  europa: string;
+  asien: string;
+  moatImpact: string;
+}
+
+export async function generatePolicyContext(
+  input: PolicyContextInput
+): Promise<PolicyContextResult | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  const {
+    ticker, companyName, sector, industry, description, governmentExposure,
+    capexContextUS, capexContextEU, capexContextASIA,
+  } = input;
+
+  const regionBlock = (label: string, ctx?: CapexTailwindContext | null) =>
+    ctx ? `\n${label}: Profiteur von "${ctx.sector}" (Programme: ${ctx.programmes.join(", ") || "—"}; Impact: ${ctx.impact}; Horizont: ${ctx.timeline}). ${ctx.reasoning}` : "";
+
+  const capexContext = `${regionBlock("USA-Fiskalprogramme", capexContextUS)}${regionBlock("EU-Fiskalprogramme", capexContextEU)}${regionBlock("Asien-Fiskalprogramme", capexContextASIA)}`;
+
+  const prompt = `Du bist ein präziser Makro-/Regulierungsanalyst. Erkläre für ${companyName} (${ticker}, ${sector} / ${industry}, Staatsabh.: ${governmentExposure.toFixed(0)}%), wie aktuelle (2026) Gesetzesregulierung, Fiskalprogramme und Geldpolitik in USA, Europa und Asien das Unternehmen konkret betreffen.
+
+UNTERNEHMENSKONTEXT:
+${description.substring(0, 350)}${capexContext}
+
+REGELN:
+- Max 50 Wörter je Region, unternehmens-/branchenspezifisch (keine generischen Floskeln)
+- Nenne konkrete Regulierungsthemen, Fiskalprogramme oder Zentralbankpolitik mit Bezug zu ${sector}/${industry}
+- moatImpact: max 50 Wörter — wie diese Politikfaktoren den Burggraben (Moat) und die Wettbewerbsposition von ${companyName} stärken oder schwächen
+
+Return ONLY this JSON (no markdown, no commentary):
+{
+  "usa": "Konkrete regulatorische/fiskal-/geldpolitische Einordnung für USA, bezogen auf ${companyName}.",
+  "europa": "Konkrete regulatorische/fiskal-/geldpolitische Einordnung für Europa, bezogen auf ${companyName}.",
+  "asien": "Konkrete regulatorische/fiskal-/geldpolitische Einordnung für Asien, bezogen auf ${companyName}.",
+  "moatImpact": "Wie diese Faktoren den Moat von ${companyName} beeinflussen."
+}`;
+
+  try {
+    console.log(`[LLM-POLICY] Generating policy context for ${ticker} with fallback chain`);
+    const t0 = Date.now();
+    const { text, modelUsed } = await callWithFallback(client, {
+      max_tokens: 600,
+      temperature: 0.25,
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" } as any,
+    });
+    const elapsedMs = Date.now() - t0;
+    console.log(`[LLM-POLICY] Used model: ${modelUsed} for ${ticker} (${elapsedMs}ms)`);
+    if (!text) {
+      console.warn(`[LLM-POLICY] Empty response for ${ticker}`);
+      return null;
+    }
+
+    let jsonStr = text;
+    if (jsonStr.startsWith("```")) {
+      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (parseErr) {
+      console.warn(`[LLM-POLICY] JSON parse failed for ${ticker}: ${(parseErr as any)?.message}`);
+      return null;
+    }
+
+    if (!parsed.usa && !parsed.europa && !parsed.asien) {
+      console.warn(`[LLM-POLICY] No policy context returned for ${ticker}`);
+      return null;
+    }
+
+    const result: PolicyContextResult = {
+      usa: String(parsed.usa || ""),
+      europa: String(parsed.europa || ""),
+      asien: String(parsed.asien || ""),
+      moatImpact: String(parsed.moatImpact || ""),
+    };
+    console.log(`[LLM-POLICY] OK for ${ticker} in ${elapsedMs}ms`);
+    return result;
+  } catch (err: any) {
+    const status = err?.status || err?.response?.status;
+    const msg = err?.message || String(err);
+    if (status === 402) {
+      console.warn('[LLM] 402 token budget exhausted — skipping LLM');
+    } else {
+      console.error(`[LLM-POLICY] OpenRouter call failed for ${ticker} (status=${status}): ${msg.substring(0, 300)}`);
+    }
+    return null;
+  }
+}
+
 function salvageTruncatedJson(raw: string): string {
   try { JSON.parse(raw); return raw; } catch {}
   const lastBrace = raw.lastIndexOf('}');

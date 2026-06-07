@@ -2,6 +2,7 @@ import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { Shield, ShieldAlert, ShieldCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
+import { PolicyContextPanel } from "./PolicyContextPanel";
 
 interface Props { data: StockAnalysis }
 
@@ -35,6 +36,8 @@ export function MoatPorterSection({ data }: Props) {
 
   return (
     <SectionCard number={11} title="MOAT & PORTER'S FIVE FORCES">
+      <PolicyContextPanel data={data} testIdSuffix="moat" />
+
       {/* Moat Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className={`rounded-lg p-3 border ${

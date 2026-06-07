@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
-import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext, generateGrowthThesis, growthThesisFingerprint, generateCompanySpecificRisks } from "./llm-openrouter";
+import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext, generateGrowthThesis, growthThesisFingerprint, generateCompanySpecificRisks, generatePolicyContext } from "./llm-openrouter";
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
@@ -5807,6 +5807,78 @@ export async function registerRoutes(server: Server, app: Express) {
     } catch (err: any) {
       console.error(`[RISK-EXPLANATIONS] ${err?.message || String(err)}`);
       return res.json({ risks: req.body?.risks || [], _llmSkipped: true });
+    }
+  });
+
+  // ============================================================
+  // Policy Context Endpoint (Moat/Porter & PESTEL — manual KI trigger)
+  // ============================================================
+  // Analog zu /api/risk-explanations: ein einzelner LLM-Aufruf (Claude 3.5 Haiku)
+  // erklärt unternehmensspezifisch, wie aktuelle Regulierung, Fiskalprogramme
+  // (USA/Europa/Asien) und Geldpolitik den Moat/PESTEL-Ausblick beeinflussen.
+  app.post("/api/policy-context", async (req, res) => {
+    try {
+      const { ticker, companyName, sector, industry, description, governmentExposure } = req.body;
+
+      if (!ticker) {
+        return res.status(400).json({ error: "ticker required" });
+      }
+
+      const sectorStr = String(sector || "");
+      const industryStr = String(industry || "");
+      const companyStr = String(companyName || ticker);
+      const rawDesc = String(description || "");
+      const safeDesc = (rawDesc.trim() && rawDesc.length > 30)
+        ? rawDesc
+        : `${companyStr} ist ein Unternehmen aus dem ${sectorStr || 'Technology'}-Sektor (${industryStr || 'General'}).`;
+
+      const buildCapexContext = (region: string): CapexTailwindContext | null => {
+        try {
+          const capexData = diskResearcherGet(`capex__${region}`);
+          if (!capexData?.sectorExposure) return null;
+          for (const sectorEntry of capexData.sectorExposure as any[]) {
+            const beneficiaries: any[] = sectorEntry.listedBeneficiaries || [];
+            const match = beneficiaries.find(
+              (b: any) => String(b.ticker || "").toUpperCase() === String(ticker).toUpperCase()
+            );
+            if (match) {
+              return {
+                sector: sectorEntry.sector || "",
+                impact: sectorEntry.impact || "positiv",
+                timeline: sectorEntry.timeline || "12-24M",
+                reasoning: sectorEntry.reasoning || "",
+                programmes: Array.isArray(sectorEntry.programmes) ? sectorEntry.programmes : [],
+                beneficiaryEntry: { ticker: match.ticker, name: match.name, rationale: match.rationale || "" },
+              };
+            }
+          }
+          return null;
+        } catch (err: any) {
+          console.warn(`[POLICY-CONTEXT] capex lookup error (${region}): ${err?.message}`);
+          return null;
+        }
+      };
+
+      const policyContext = await generatePolicyContext({
+        ticker: String(ticker),
+        companyName: companyStr,
+        sector: sectorStr,
+        industry: industryStr,
+        description: safeDesc,
+        governmentExposure: Number(governmentExposure) || 0,
+        capexContextUS: buildCapexContext("US"),
+        capexContextEU: buildCapexContext("EU"),
+        capexContextASIA: buildCapexContext("ASIA"),
+      });
+
+      if (!policyContext) {
+        return res.json({ policyContext: null, _llmSkipped: true });
+      }
+
+      return res.json({ policyContext });
+    } catch (err: any) {
+      console.error(`[POLICY-CONTEXT] ${err?.message || String(err)}`);
+      return res.json({ policyContext: null, _llmSkipped: true });
     }
   });
 
