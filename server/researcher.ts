@@ -2,7 +2,7 @@
 //
 // 4-Tab autonomous research mode for the Stock Analyst Pro dashboard.
 // Hybrid architecture: REAL data via finance_macro_snapshot / FMP screener,
-// LLM (Grok 4.1 Fast or Haiku 3.5) only for SYNTHESIS and INTERPRETATION,
+// LLM (Claude 3.5 Haiku) only for SYNTHESIS and INTERPRETATION,
 // never for generating numeric facts.
 //
 // Tabs:

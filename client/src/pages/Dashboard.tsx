@@ -340,8 +340,8 @@ export default function Dashboard() {
                 : 'text-foreground/40 border-border/50 hover:bg-muted/50 hover:text-foreground/60'
             }`}
             title={useLLM
-              ? 'KI-Modus aktiv — Grok 4.1 Fast via OpenRouter (~85% günstiger als Haiku, 7-Tage-Cache, ~0.5 Credits / Analyse)'
-              : 'KI aktivieren — erzeugt unternehmensspezifische Katalysatoren + News-Sentiment via Grok 4.1 Fast. Sehr günstig (~0.5 Credits / Analyse, Cache-Hits gratis).'}
+              ? 'KI-Modus aktiv — Claude 3.5 Haiku via OpenRouter (7-Tage-Cache, geringe Kosten pro Analyse)'
+              : 'KI aktivieren — erzeugt unternehmensspezifische Katalysatoren + News-Sentiment via Claude 3.5 Haiku. Cache-Hits sind gratis.'}
             data-testid="button-llm-toggle"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -156,7 +156,7 @@ export function Section8({ data, useLLM = false }: Props) {
     ? (invertedDCF.perShare / analystPT - 1) * 100
     : (invertedDCF.perShare / data.currentPrice - 1) * 100;
 
-  // === KI Analyse Trigger (analog Katalysatoren – nur Grok) ===
+  // === KI Analyse Trigger (analog Katalysatoren – via Claude 3.5 Haiku) ===
   async function triggerKI() {
     setLlmLoading(true);
     setLlmError(null);
@@ -236,7 +236,7 @@ export function Section8({ data, useLLM = false }: Props) {
               ? "bg-violet-500/15 text-violet-400 border-violet-500/30"
               : "text-foreground/50 border-border/50 hover:bg-muted/50 hover:text-foreground/70"
           } ${llmLoading ? "opacity-60 cursor-not-allowed" : ""}`}
-          title="KI Analyse — unternehmensspezifische Risiko-Erklärungen via Grok"
+          title="KI Analyse — unternehmensspezifische Risiko-Erklärungen via Claude 3.5 Haiku"
           data-testid="button-risk-ki-analyse"
         >
           {llmLoading ? (

@@ -5683,9 +5683,9 @@ export async function registerRoutes(server: Server, app: Express) {
   // ============================================================
   // Risk Deep-Dive Explanations Endpoint (on-demand, Section 8)
   // ============================================================
-  // Analog zu den Katalysatoren: ein einzelner Grok-Aufruf generiert
+  // Analog zu den Katalysatoren: ein einzelner LLM-Aufruf (Claude 3.5 Haiku) generiert
   // strukturierte, unternehmensspezifische Erklaerungen fuer jedes Risiko.
-  // Kein separates Search-Feature — nur Grok mit Unternehmenskontext.
+  // Kein separates Search-Feature — nur das LLM mit Unternehmenskontext.
   // /api/refresh-risks — generate company-specific risks without Finance API
   app.post("/api/refresh-risks", async (req, res) => {
     const { ticker, companyName, description, sector, industry, revenue,
