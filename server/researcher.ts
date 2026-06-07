@@ -1163,7 +1163,11 @@ JSON:
 
   let llm: Awaited<ReturnType<typeof callLLMJson>> = null;
   try {
-    llm = await callLLMJson({ prompt, maxTokens: 1500 });
+    // 1500 was too tight for the full schema (headline/summary/stance + up to
+    // 3 topChanges each with title/category/impact/severity/2-sentence
+    // description/dcfImplication/affectedTickers + riskRadar + watchlist) —
+    // same truncation class as the Sectors 1500→4000 fix above.
+    llm = await callLLMJson({ prompt, maxTokens: 2200 });
   } catch (llmErr: any) {
     console.warn(`[RESEARCHER/briefing] LLM threw: ${llmErr?.message?.substring(0, 100)}`);
   }
