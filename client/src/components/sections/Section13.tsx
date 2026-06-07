@@ -2,7 +2,7 @@ import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import {
   calculateFCFFDCF, buildDefaultDCFParams, type FCFFDCFParams,
-  calculateCRV, calculateRSL, calculateReverseDCF,
+  calculateCRV, calculateRiskAdjustedCRV, calculateRSL, calculateReverseDCF,
   worstCaseM1, worstCaseM2, worstCaseM3, calculateCatalystUpside, selectCatalystBase,
   gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult,
 } from "../../lib/calculations";
@@ -329,8 +329,7 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
         const techStatus = data.technicalIndicators?.currentStatus;
         const risks = data.risks;
         const totalExpDmg = risks.reduce((s, r) => s + r.expectedDamage, 0);
-        const riskDiscountFactor = 1 - totalExpDmg / 100;
-        const raCrvCons = calculateCRV(conservativeDCF.perShare * riskDiscountFactor, worstCase, data.currentPrice);
+        const raCrvCons = calculateRiskAdjustedCRV(conservativeDCF.perShare, worstCase, data.currentPrice, totalExpDmg);
         const pestel = data.pestelAnalysis;
         const moatAssess = data.moatAssessment;
         const macroCorr = data.macroCorrelations;
@@ -419,13 +418,13 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
         // S14: Reverse DCF — relative Schwellen (identisch mit Section10)
         const rdRef = reverseDCF.referenceGrowth;
         if (reverseDCF.rating === "unrealistic") {
-          negative.push(`Reverse-DCF g* ${formatNumber(reverseDCF.impliedGrowth, 1)}% \u2014 \u00fcber 1,5\u00d7 Referenz (${formatPercentNoSign(rdRef * 1.5)}), hohes Wachstum eingepreist`);
+          negative.push(`Reverse-DCF g* ${formatPercentNoSign(reverseDCF.impliedGrowth)} \u2014 \u00fcber 1,5\u00d7 Referenz (${formatPercentNoSign(rdRef * 1.5)}), hohes Wachstum eingepreist`);
         } else if (reverseDCF.rating === "sportlich") {
-          neutral.push(`Reverse-DCF g* ${formatNumber(reverseDCF.impliedGrowth, 1)}% \u2014 sportlich (Ref: ${formatPercentNoSign(rdRef)})`);
+          neutral.push(`Reverse-DCF g* ${formatPercentNoSign(reverseDCF.impliedGrowth)} \u2014 sportlich (Ref: ${formatPercentNoSign(rdRef)})`);
         } else if (reverseDCF.rating === "negativ") {
-          negative.push(`Reverse-DCF g* negativ (${formatNumber(reverseDCF.impliedGrowth, 1)}%) \u2014 FCF-negativ oder EV-Anomalie`);
+          negative.push(`Reverse-DCF g* negativ (${formatPercentNoSign(reverseDCF.impliedGrowth)}) \u2014 FCF-negativ oder EV-Anomalie`);
         } else {
-          positive.push(`Reverse-DCF g* ${formatNumber(reverseDCF.impliedGrowth, 1)}% \u2014 realistisch eingepreist (Ref: ${formatPercentNoSign(rdRef)})`);
+          positive.push(`Reverse-DCF g* ${formatPercentNoSign(reverseDCF.impliedGrowth)} \u2014 realistisch eingepreist (Ref: ${formatPercentNoSign(rdRef)})`);
         }
 
         // Beta / Risk

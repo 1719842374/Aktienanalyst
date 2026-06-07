@@ -564,6 +564,21 @@ export function calculateCRV(fairValue: number, worstCase: number, currentPrice:
   return numerator / denominator;
 }
 
+/**
+ * Risk-Adjusted CRV — einheitliche Formel für Section 6 und Section 13 (Fazit).
+ * Diskontiert den Fair Value um totalExpectedDamage (%) bevor CRV berechnet wird.
+ * Beide Sections importieren diese Funktion — keine Ad-hoc-Multiplikation mehr.
+ */
+export function calculateRiskAdjustedCRV(
+  fairValue: number,
+  worstCase: number,
+  currentPrice: number,
+  totalExpectedDamage: number,   // 0–100
+): number {
+  const riskDiscountFactor = 1 - totalExpectedDamage / 100;
+  return calculateCRV(fairValue * riskDiscountFactor, worstCase, currentPrice);
+}
+
 // === Worst Case Methods ===
 // M1 Formula: effectiveDrawdown = min(beta × sectorDD, sectorDD × 1.5), capped at 65%
 // UI label must match: "min(β × SectorDD, SectorDD×1.5), cap 65%"

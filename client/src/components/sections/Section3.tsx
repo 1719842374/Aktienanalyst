@@ -1,5 +1,6 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
+import { calculateRSL } from "../../lib/calculations";
 
 interface Props { data: StockAnalysis }
 
@@ -40,9 +41,9 @@ export function Section3({ data }: Props) {
       {(() => {
         // Determine cycle phase from data signals
         const ti = data.technicalIndicators?.currentStatus;
-        const rslPrices = data.historicalPrices.slice(-130).map(p => p.close);
-        const rslAvg = rslPrices.length > 0 ? rslPrices.reduce((a, b) => a + b, 0) / rslPrices.length : 0;
-        const rsl = rslAvg > 0 ? (data.currentPrice / rslAvg) * 100 : 100;
+        // RSL via kanonische calculateRSL() — identisches Zeitfenster wie Section 9 + 13 (26W = 130 Handelstage)
+        const rslPrices26w = [...data.historicalPrices].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 130).map(p => p.close);
+        const rsl = calculateRSL(data.currentPrice, rslPrices26w);
         const isAboveMA200 = ti?.priceAboveMA200 ?? false;
         const isGolden = ti?.ma50AboveMA200 ?? false;
         const macdPos = ti?.macdAboveZero ?? false;

@@ -4,7 +4,7 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import {
   calculateFCFFDCF, buildDefaultDCFParams,
   worstCaseM1, worstCaseM1Label, worstCaseM2, worstCaseM3,
-  calculateCRV, calculateCatalystUpside, selectCatalystBase,
+  calculateCRV, calculateRiskAdjustedCRV, calculateCatalystUpside, selectCatalystBase,
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, getCRVColor, getCRVBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
@@ -62,9 +62,9 @@ export function Section6({ data }: Props) {
   const crvCatalyst = calculateCRV(adjustedTarget, worstCase, data.currentPrice);
 
   // === RISK-ADJUSTED CRV ===
-  const raCrvConservative = calculateCRV(raConservativeFV, worstCase, data.currentPrice);
-  const raCrvOptimistic = calculateCRV(raOptimisticFV, worstCase, data.currentPrice);
-  const raCrvCatalyst = calculateCRV(raAdjustedTarget, worstCase, data.currentPrice);
+  const raCrvConservative = calculateRiskAdjustedCRV(conservativeDCF.perShare, worstCase, data.currentPrice, totalExpectedDamage);
+  const raCrvOptimistic = calculateRiskAdjustedCRV(optimisticDCF.perShare, worstCase, data.currentPrice, totalExpectedDamage);
+  const raCrvCatalyst = calculateRiskAdjustedCRV(adjustedTarget, worstCase, data.currentPrice, totalExpectedDamage);
 
   // DCF bei CRV 3:1
   const dcfBeiCRV3 = (conservativeDCF.perShare + 3 * worstCase) / 4;

@@ -403,7 +403,7 @@ export function Section8({ data, useLLM = false }: Props) {
             <tr className="border-t-2 border-border font-semibold">
               <td colSpan={4} className="py-2 px-2">Total Expected Damage</td>
               <td className="py-2 px-2 text-right font-mono tabular-nums text-red-500">
-                {formatNumber(totalExpectedDamage, 2)}%
+                {formatNumber(totalExpectedDamage, 1)}%
               </td>
             </tr>
           </tfoot>

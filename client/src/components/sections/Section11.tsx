@@ -461,13 +461,15 @@ export function Section11({ data, onCatalystsEnriched }: Props) {
             {/* Totals row */}
             <tr className="border-t-2 border-primary/30 bg-primary/5">
               <td className="py-2 pr-2" colSpan={6}>
-                <span className="font-bold text-xs">Total Catalyst Upside</span>
+                <div className="font-bold text-xs">Σ Netto-Upside</div>
+                <div className="text-[9px] text-muted-foreground font-normal">(vor PoS-Gewichtung)</div>
               </td>
               <td className="py-2 pr-2 text-center font-mono tabular-nums font-bold text-emerald-500">
                 {formatNumber(catalysts.reduce((s, c) => s + c.nettoUpside, 0), 2)}%
               </td>
-              <td className="py-2 text-right font-mono tabular-nums font-bold text-emerald-500 text-sm">
-                +{formatNumber(totalGB, 2)}
+              <td className="py-2 text-right">
+                <div className="font-mono tabular-nums font-bold text-emerald-500 text-sm">+{formatNumber(totalGB, 2)}</div>
+                <div className="text-[9px] text-muted-foreground font-normal">GB-Summe (nach PoS)</div>
               </td>
             </tr>
           </tbody>
