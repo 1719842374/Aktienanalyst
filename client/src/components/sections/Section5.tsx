@@ -419,7 +419,7 @@ export function Section5({ data }: Props) {
               <div className="flex justify-between">
                 <span className="text-muted-foreground">vs. Current</span>
                 <span className={`font-mono tabular-nums font-medium ${result.perShare > data.currentPrice ? "text-emerald-500" : "text-red-500"}`}>
-                  {result.perShare > 0 ? ((result.perShare / data.currentPrice - 1) * 100).toFixed(1) : "-100.0"}%
+                  {((result.perShare / data.currentPrice - 1) * 100).toFixed(1)}%
                 </span>
               </div>
             </div>

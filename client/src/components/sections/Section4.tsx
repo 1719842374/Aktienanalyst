@@ -147,9 +147,9 @@ export function Section4({ data }: Props) {
             <div className="text-lg font-semibold font-mono tabular-nums">{formatNumber(pegCalc.growth, 1)}%</div>
           </div>
           <span className="text-lg text-muted-foreground">=</span>
-          <div className={`rounded-md p-3 border ${pegCalc.peg < 1 ? "bg-emerald-500/10 border-emerald-500/20" : pegCalc.peg < 2 ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20"}`}>
+          <div className={`rounded-md p-3 border ${pegCalc.peg > 0 && pegCalc.peg < 1 ? "bg-emerald-500/10 border-emerald-500/20" : pegCalc.peg > 0 && pegCalc.peg < 2 ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20"}`}>
             <div className="text-[10px] text-muted-foreground">PEG</div>
-            <div className={`text-lg font-bold font-mono tabular-nums ${pegCalc.peg < 1 ? "text-emerald-500" : pegCalc.peg < 2 ? "text-amber-500" : "text-red-500"}`}>
+            <div className={`text-lg font-bold font-mono tabular-nums ${pegCalc.peg > 0 && pegCalc.peg < 1 ? "text-emerald-500" : pegCalc.peg > 0 && pegCalc.peg < 2 ? "text-amber-500" : "text-red-500"}`}>
               {formatNumber(pegCalc.peg, 2)}
             </div>
           </div>
