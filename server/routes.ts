@@ -1291,6 +1291,20 @@ JSON array only, no markdown, no explanation:`;
  *
  * Fallback wenn EV/FCF/WACC nicht verfügbar (g* nicht berechenbar): Heuristik nach Katalysatorklasse
  */
+/**
+ * Reverse-DCF: implizites Marktwachstum g* aus EV/FCF/WACC ableiten.
+ * g* = WACC - FCF/EV — exakt dieselbe Formel wie Section 14 / calculateReverseDCF.
+ * Wird sowohl im Sektor-Template-Fallback als auch als mathematische Erdung
+ * (Override) für LLM-generierte Katalysatoren verwendet.
+ */
+function calcImpliedGStar(params: { price: number; sharesOutstanding: number; netDebt: number; fcf: number; wacc: number }): number | null {
+  const { price, sharesOutstanding, netDebt, fcf, wacc } = params;
+  const ev = price * sharesOutstanding + netDebt;
+  if (!(ev > 0) || !isFinite(ev) || !(wacc > 0)) return null;
+  const impliedGrowth = (wacc / 100 - fcf / ev) * 100;
+  return isFinite(impliedGrowth) ? impliedGrowth : null;
+}
+
 function calcEinpreisungsgrad(params: {
   bruttoUpside: number;        // z.B. 22 für +22%
   price: number;
@@ -1304,14 +1318,11 @@ function calcEinpreisungsgrad(params: {
   const { bruttoUpside, price, sharesOutstanding, netDebt, fcf, wacc, revenueGrowth, catalystType } = params;
 
   // Reverse-DCF: implizites Marktwachstum g* aus EV/FCF/WACC ableiten
-  const ev = price * sharesOutstanding + netDebt;
-  if (ev > 0 && isFinite(ev) && wacc > 0 && bruttoUpside > 0) {
-    const impliedGrowth = (wacc / 100 - fcf / ev) * 100; // g* = WACC - FCF/EV, in %
-    if (isFinite(impliedGrowth)) {
-      // Je höher g* relativ zum Catalyst-Brutto-Upside, desto mehr ist bereits eingepreist
-      const einpreisungsgrad = Math.max(0, impliedGrowth) / bruttoUpside;
-      return Math.round(Math.max(0.15, Math.min(0.70, einpreisungsgrad)) * 100); // als %
-    }
+  const gStar = calcImpliedGStar({ price, sharesOutstanding, netDebt, fcf, wacc });
+  if (gStar !== null && bruttoUpside > 0) {
+    // Je höher g* relativ zum Catalyst-Brutto-Upside, desto mehr ist bereits eingepreist
+    const einpreisungsgrad = Math.max(0, gStar) / bruttoUpside;
+    return Math.round(Math.max(0.15, Math.min(0.70, einpreisungsgrad)) * 100); // als %
   }
 
   // Fallback: Revenue-Growth-basiert (wenn PE nicht verfügbar)
@@ -4819,13 +4830,33 @@ export async function registerRoutes(server: Server, app: Express) {
         // AND news-sentiment matches in ONE round trip. Saves ~80% on credits:
         //   - Old: 2x Sonnet @ ~5.5k tokens ≈ ~10-15 credits
         //   - New: 1x Haiku @ ~3.5k tokens ≈ ~3-4 credits (Haiku is ~3x cheaper)
+        // Reverse-DCF: implizites Marktwachstum g* — mathematische Erdung für
+        // den vom LLM geschätzten Einpreisungsgrad (siehe unten Override).
+        const impliedGStarForCatalysts = calcImpliedGStar({
+          price, sharesOutstanding, netDebt, fcf: fcfTTM, wacc: sectorDefs.waccScenarios.avg,
+        });
+
         const combined = await generateCatalystsAndMatchNews({
           ticker, companyName, sector, industry, description: safeDescription,
           revenue, revenueGrowth, fcfMargin, price, pe, marketCap,
           keyProjects, secFilingExcerpts, newsItems,
+          impliedGStar: impliedGStarForCatalysts,
         });
         if (combined && combined.catalysts.length >= 3) {
           catalysts = combined.catalysts; // LLM result already has news matching embedded
+          // Mathematische Erdung: Einpreisungsgrad NICHT der freien LLM-Schätzung
+          // überlassen, sondern via Reverse-DCF (g* = WACC - FCF/EV) berechnen —
+          // exakt dieselbe Formel wie der Sektor-Template-Fallback (calcEinpreisungsgrad).
+          if (impliedGStarForCatalysts !== null) {
+            for (const cat of catalysts) {
+              if (cat.bruttoUpside > 0) {
+                const grounded = Math.round(Math.max(0.15, Math.min(0.70, Math.max(0, impliedGStarForCatalysts) / cat.bruttoUpside)) * 100);
+                cat.einpreisungsgrad = grounded;
+                cat.nettoUpside = +(cat.bruttoUpside * (1 - grounded / 100)).toFixed(2);
+                cat.gb = +(cat.pos / 100 * cat.nettoUpside).toFixed(2);
+              }
+            }
+          }
           llmActuallyUsed = true;
           console.log(`[ANALYZE] Using OpenRouter LLM catalysts for ${ticker} (model=${combined.modelUsed}, tokens=${combined.promptTokens || '?'}+${combined.completionTokens || '?'})`);
         } else {
