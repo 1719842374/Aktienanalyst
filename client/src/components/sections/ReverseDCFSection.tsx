@@ -7,7 +7,7 @@ import { useMemo } from "react";
 
 interface Props { data: StockAnalysis }
 
-export function Section10({ data }: Props) {
+export function ReverseDCFSection({ data }: Props) {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
 

@@ -19,7 +19,7 @@ const ratingColors: Record<string, { bg: string; text: string; border: string }>
   High: { bg: "bg-red-500/10", text: "text-red-500", border: "border-red-500/20" },
 };
 
-export function Section15({ data }: Props) {
+export function MoatPorterSection({ data }: Props) {
   const moat = data.moatAssessment;
   const [expandedForce, setExpandedForce] = useState<number | null>(null);
 

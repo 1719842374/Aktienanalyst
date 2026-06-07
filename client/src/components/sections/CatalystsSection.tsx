@@ -33,7 +33,7 @@ function hasGenericCatalysts(cats: { name: string }[]): boolean {
   return generic >= cats.length / 2;
 }
 
-export function Section11({ data, onCatalystsEnriched }: Props) {
+export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
   const reasoning = data.catalystReasoning;
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);

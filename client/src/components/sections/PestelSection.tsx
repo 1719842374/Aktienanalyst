@@ -41,7 +41,7 @@ function StockCorrIcon({ corr }: { corr: string }) {
   return <Minus className="w-3 h-3 text-slate-400" />;
 }
 
-export function Section16({ data }: Props) {
+export function PestelSection({ data }: Props) {
   const pestel = data.pestelAnalysis;
   const [expandedCategory, setExpandedCategory] = useState<number | null>(null);
 

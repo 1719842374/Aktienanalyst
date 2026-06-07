@@ -40,7 +40,7 @@ function MCInputField({ label, value, onChange, suffix, min, max, step = 0.01, t
   );
 }
 
-export function Section12({ data, sharedResult }: Props) {
+export function MonteCarloSection({ data, sharedResult }: Props) {
   // Calculate historical params from price data
   const historicalParams = useMemo(() => {
     const prices = data.historicalPrices.map(p => p.close);

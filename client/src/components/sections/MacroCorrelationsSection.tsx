@@ -34,7 +34,7 @@ function CorrIcon({ corr }: { corr: string }) {
   return <Minus className="w-3.5 h-3.5 text-slate-400" />;
 }
 
-export function Section17({ data }: Props) {
+export function MacroCorrelationsSection({ data }: Props) {
   const mc = data.macroCorrelations;
 
   if (!mc) {

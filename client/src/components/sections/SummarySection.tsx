@@ -11,7 +11,7 @@ import { useMemo } from "react";
 
 interface Props { data: StockAnalysis; sharedMonteCarlo?: GBMMonteCarloResult | null }
 
-export function Section13({ data, sharedMonteCarlo }: Props) {
+export function SummarySection({ data, sharedMonteCarlo }: Props) {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
   const haircut = data.fcfHaircut;

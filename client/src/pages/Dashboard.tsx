@@ -16,14 +16,14 @@ import { Section6 } from "@/components/sections/Section6";
 import { Section7 } from "@/components/sections/Section7";
 import { Section8 } from "@/components/sections/Section8";
 import { Section9 } from "@/components/sections/Section9";
-import { Section10 } from "@/components/sections/Section10";
-import { Section11 } from "@/components/sections/Section11";
-import { Section12 } from "@/components/sections/Section12";
-import { Section13 } from "@/components/sections/Section13";
+import { ReverseDCFSection } from "@/components/sections/ReverseDCFSection";
+import { CatalystsSection } from "@/components/sections/CatalystsSection";
+import { MonteCarloSection } from "@/components/sections/MonteCarloSection";
+import { SummarySection } from "@/components/sections/SummarySection";
 import { TechnicalChart } from "@/components/sections/TechnicalChart";
-import { Section15 } from "@/components/sections/Section15";
-import { Section16 } from "@/components/sections/Section16";
-import { Section17 } from "@/components/sections/Section17";
+import { MoatPorterSection } from "@/components/sections/MoatPorterSection";
+import { PestelSection } from "@/components/sections/PestelSection";
+import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelationsSection";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
@@ -478,11 +478,11 @@ export default function Dashboard() {
               <div ref={setSectionRef(8)}><Section8 data={data} useLLM={useLLM} /></div>
               <div ref={setSectionRef(9)}><Section9 data={data} /></div>
               <div ref={setSectionRef(10)}><TechnicalChart data={data} /></div>
-              <div ref={setSectionRef(11)}><Section15 data={data} /></div>
-              <div ref={setSectionRef(12)}><Section16 data={data} /></div>
-              <div ref={setSectionRef(13)}><Section17 data={data} /></div>
-              <div ref={setSectionRef(14)}><Section10 data={data} /></div>
-              <div ref={setSectionRef(15)}><Section11
+              <div ref={setSectionRef(11)}><MoatPorterSection data={data} /></div>
+              <div ref={setSectionRef(12)}><PestelSection data={data} /></div>
+              <div ref={setSectionRef(13)}><MacroCorrelationsSection data={data} /></div>
+              <div ref={setSectionRef(14)}><ReverseDCFSection data={data} /></div>
+              <div ref={setSectionRef(15)}><CatalystsSection
                 data={data}
                 onCatalystsEnriched={(enriched) => {
                   // Persist enriched catalysts into Dashboard state so they
@@ -490,8 +490,8 @@ export default function Dashboard() {
                   setData(prev => prev ? { ...prev, catalysts: enriched } : prev);
                 }}
               /></div>
-              <div ref={setSectionRef(16)}><Section12 data={data} sharedResult={sharedMonteCarlo} /></div>
-              <div ref={setSectionRef(17)}><Section13 data={data} sharedMonteCarlo={sharedMonteCarlo} /></div>
+              <div ref={setSectionRef(16)}><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></div>
+              <div ref={setSectionRef(17)}><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></div>
               <div className="pb-8" />
             </div>
           ) : (
