@@ -5571,6 +5571,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
       // 10. Capex-Intensität (aus financialStatements.cashFlow)
       const _capexWarnStr = analysis.financialStatements?.cashFlow?.capexWarning;
+
       if (_capexWarnStr) {
         const _capexPct = analysis.financialStatements?.cashFlow?.capex && analysis.revenue
           ? ((analysis.financialStatements.cashFlow.capex / analysis.revenue) * 100).toFixed(0)
@@ -5584,6 +5585,49 @@ export async function registerRoutes(server: Server, app: Express) {
           title: 'Kapitalintensives Geschäftsmodell',
           detail: `Capex ~$${_capexB}B (${_capexPct}% des Umsatzes) — FCF-Haircut und DCF-Ergebnisse stärker gewichten als bei Asset-Light-Modellen.`,
         });
+      }
+
+      // 11. Sektor-Reklassifikation (hybridNote) — war bisher silent-drop
+      if (sectorHybridNote) {
+        warnings.push({
+          id: 'sector-reclassified',
+          severity: 'info',
+          title: 'Sektor-Reklassifikation aktiv',
+          detail: sectorHybridNote,
+        });
+      }
+
+      // 12. FX-Fallback-Rate (für exotische Währungen mit hardcodierten Kursen)
+      if (currencyConverted && reportedCurrency) {
+        const uncertainFX = ['KZT','TRY','VND','NGN','EGP','ARS','CLP','COP','UAH','IDR','PHP','THB'];
+        if (uncertainFX.includes(reportedCurrency)) {
+          warnings.push({
+            id: 'fx-fallback',
+            severity: 'warning',
+            title: `FX-Kurs ${reportedCurrency}/USD möglicherweise veraltet`,
+            detail: `${reportedCurrency} wird mit einem hardcodierten Näherungskurs konvertiert (kein Live-Daten-Feed). Alle USD-Werte (Revenue, DCF, FCF) können bei starker Währungsbewegung ungenau sein.`,
+          });
+        }
+      }
+
+      // 13. PEG nicht berechenbar
+      if (analysis.pegRatio === null && analysis.lynchClass !== 'cyclical' && analysis.lynchClass !== 'asset_play') {
+        const lynchRes = calcLynchPEG({
+          lynchClass: (analysis.lynchClass ?? 'stalwart') as LynchClass,
+          pe, forwardPE,
+          epsGrowth5Y: epsGrowth5Y ?? 0,
+          epsGrowthFwd: epsGrowthFwd ?? 0,
+          revenueGrowth: revenueGrowth ?? 0,
+          dividendYield: Number(divYield) || 0,
+        });
+        if (lynchRes.peg === null && lynchRes.pegBasis && lynchRes.pegBasis !== 'Kein posit. Wachstum') {
+          warnings.push({
+            id: 'peg-unavailable',
+            severity: 'info',
+            title: 'PEG nicht berechenbar',
+            detail: `${lynchRes.pegBasis} — Lynch-Kategorie: ${analysis.lynchClass ?? 'unbekannt'}. PEG-basierte Bewertung eingeschränkt aussagekräftig.`,
+          });
+        }
       }
 
       analysis.consistencyWarnings = warnings.length > 0 ? warnings : undefined;
