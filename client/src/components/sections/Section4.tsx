@@ -18,6 +18,16 @@ export function Section4({ data }: Props) {
   // Use sector profile WACC scenarios as reference
   const waccFromProfile = sp.waccScenarios;
 
+  // Mirror the DCF-Modell beta (sector-WACC anchored, see Section2/Section5)
+  const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
+  const evFrac = (100 - debtRatioVal) / 100;
+  const dvFrac = debtRatioVal / 100;
+  const debtCostPart = dvFrac * 5.0 * (1 - 0.21);
+  const impliedBeta = Math.max(0.5, Math.min(1.8,
+    (waccFromProfile.avg - debtCostPart - evFrac * rfr) / (evFrac * mrp)
+  ));
+  const dcfBeta = +Math.min(impliedBeta, data.beta5Y + 0.1).toFixed(2);
+
   const scenarios = useMemo(() => [
     { name: "Conservative", beta: data.beta5Y * 1.1, dr: debtRatio * 1.1, rfr: rfr + 0.5, profileWACC: waccFromProfile.kons },
     { name: "Average", beta: data.beta5Y, dr: debtRatio, rfr, profileWACC: waccFromProfile.avg },
@@ -93,6 +103,11 @@ export function Section4({ data }: Props) {
           `WACC (Avg) = ${formatPercentNoSign(waccResults[1].wacc, 2)}`,
           `Sector Profile WACC: Kons ${waccFromProfile.kons}% | Avg ${waccFromProfile.avg}% | Opt ${waccFromProfile.opt}%`,
         ]} />
+        {dcfBeta && Math.abs(dcfBeta - data.beta5Y) > 0.1 && (
+          <div className="text-[10px] text-amber-400/80 mt-1">
+            ⚠️ DCF-Modell nutzt adjustiertes β={dcfBeta.toFixed(2)} — WACC-Tabelle zeigt Markt-β={data.beta5Y?.toFixed(2)}
+          </div>
+        )}
       </div>
 
       {/* WACC Sensitivity */}

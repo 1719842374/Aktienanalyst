@@ -189,8 +189,14 @@ export function Section2({ data }: Props) {
             lynchType = 'Stalwart';
             lynchColor = 'text-blue-400 bg-blue-500/10 border-blue-500/20';
             lynchDesc = 'Gro\u00dfes, etabliertes Unternehmen mit solidem Wachstum (' + formatNumber(epsGr, 0) + '% p.a.). Defensive Qualit\u00e4t.';
-            const cUp = ((baseDCF.perShare / data.currentPrice - 1) * 100);
-            lynchBuyTip = 'Attraktiv bei 30-50% Discount zum Fair Value. Verkaufen bei +30-50% Gain. Aktuell ' + (cUp > 30 ? formatNumber(cUp, 0) + '% DCF-Upside \u2014 Einstieg m\u00f6glich' : cUp > 0 ? formatNumber(cUp, 0) + '% DCF-Upside \u2014 halten' : 'am/\u00fcber Fair Value \u2014 Gewinne mitnehmen') + '.';
+            const currentVsFair = baseDCF.perShare > 0
+              ? (data.currentPrice / baseDCF.perShare - 1) * 100
+              : null;
+            lynchBuyTip = currentVsFair !== null && currentVsFair > 100
+              ? 'Kurs ' + formatNumber(currentVsFair, 0) + '% \u00fcber konservativem DCF-Fair Value \u2014 starke Wachstumserwartungen eingepreist. Sicherheitsmarge fehlt.'
+              : currentVsFair !== null && currentVsFair > 30
+              ? 'Kurs ' + formatNumber(currentVsFair, 0) + '% \u00fcber konservativem DCF \u2014 limitierte Sicherheitsmarge. Wachstum muss sich best\u00e4tigen.'
+              : 'Attraktiv bei 30-50% Discount zum Fair Value. Verkaufen bei +30-50% Gain.';
           } else if (epsGr <= 5 && fcfM > 10) {
             lynchType = 'Slow Grower';
             lynchColor = 'text-slate-400 bg-slate-500/10 border-slate-500/20';

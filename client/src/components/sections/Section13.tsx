@@ -1,7 +1,7 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import {
-  calculateFCFFDCF, type FCFFDCFParams,
+  calculateFCFFDCF, buildDefaultDCFParams, type FCFFDCFParams,
   calculateCRV, calculateRSL, calculateReverseDCF,
   worstCaseM1, worstCaseM2, worstCaseM3, calculateCatalystUpside, selectCatalystBase,
   gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult,
@@ -16,53 +16,11 @@ export function Section13({ data, sharedMonteCarlo }: Props) {
   const sp = data.sectorProfile;
   const haircut = data.fcfHaircut;
 
-  // Derive FCFF DCF params from data (same defaults as Section5)
-  const ebitMarginDefault = data.ebitda > 0 && data.revenue > 0
-    ? (data.operatingIncome > 0 ? +((data.operatingIncome / data.revenue) * 100).toFixed(1) : +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1))
-    : 15;
-  const capexDefault = data.revenue > 0 && data.fcfTTM > 0
-    ? +Math.max(2, Math.min(15, ((data.ebitda - data.fcfTTM) / data.revenue) * 100)).toFixed(1)
-    : 5;
-  const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
-
-  // Derive sector-implied beta from avg WACC scenario (same logic as Section5)
-  const rfS13 = 4.2;
-  const erpS13 = 5.5;
-  const taxS13 = 21;
-  const rdS13 = 5.0;
-  const debtRatioS13 = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
-  const evFracS13 = (100 - debtRatioS13) / 100;
-  const dvFracS13 = debtRatioS13 / 100;
-  const targetWACCS13 = sp.waccScenarios.avg;
-  const debtCostPartS13 = dvFracS13 * rdS13 * (1 - taxS13 / 100);
-  const impliedBetaS13 = Math.max(0.5, Math.min(1.8,
-    (targetWACCS13 - debtCostPartS13 - evFracS13 * rfS13) / (evFracS13 * erpS13)
-  ));
-  const dcfBetaS13 = +Math.min(impliedBetaS13, data.beta5Y + 0.1).toFixed(2);
-
-  const baseParams: FCFFDCFParams = useMemo(() => ({
-    revenueBase: data.revenue,
-    revenueGrowthP1: revenueGrowthDefault,
-    revenueGrowthP2: Math.max(3, +(revenueGrowthDefault * 0.6).toFixed(1)),
-    ebitMargin: ebitMarginDefault,
-    ebitMarginTerminal: +Math.max(8, ebitMarginDefault * 0.9).toFixed(1),
-    capexPct: capexDefault,
-    deltaWCPct: 5,
-    taxRate: taxS13,
-    daRatio: +Math.max(2, capexDefault * 0.8).toFixed(1),
-    riskFreeRate: rfS13,
-    beta: dcfBetaS13,
-    erp: erpS13,
-    debtRatio: debtRatioS13,
-    costOfDebt: rdS13,
-    terminalG: sp.growthAssumptions.terminal || 2.5,
-    sharesOutstanding: data.sharesOutstanding,
-    netDebt,
-    minorityInterests: 0,
-    fcfHaircut: haircut,
-    actualEPS: data.epsTTM,
-    forwardEPS: data.epsConsensusNextFY,
-  }), [data, sp, netDebt, haircut, ebitMarginDefault, capexDefault, revenueGrowthDefault, dcfBetaS13, debtRatioS13]);
+  // === SINGLE SOURCE OF TRUTH: identical defaults as Section5 / Section6 ===
+  // Bug #1 + #6 fix: previously this summary table derived its own beta/capex
+  // inline (third DCF path), which diverged from Section5/Section6. Now all
+  // consumers share buildDefaultDCFParams().
+  const baseParams: FCFFDCFParams = useMemo(() => buildDefaultDCFParams(data), [data.ticker]);
 
   const conservativeDCF = useMemo(() => calculateFCFFDCF(baseParams), [baseParams]);
 

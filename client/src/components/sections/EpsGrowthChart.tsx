@@ -238,6 +238,13 @@ export default function EpsGrowthChart({ data }: { data: StockAnalysis }) {
           <span className="text-[11px] font-mono text-foreground/50">+{sectorGrowth}%</span>
         </div>
       </div>
+
+      {Math.abs((histGrowth ?? 0) - (data.epsGrowth5Y ?? 0)) > 15 && (
+        <div className="text-[10px] text-muted-foreground bg-muted/30 rounded px-2 py-1 mt-1">
+          ℹ️ Hist. EPS-CAGR ({histGrowth?.toFixed(1)}%) weicht vom 5Y-Konsens ({data.epsGrowth5Y?.toFixed(1)}%) ab —
+          möglicherweise durch Basiseffekte (Verlustjahr → Gewinnjahr). PEG-Berechnung basiert auf Konsens-Schätzung.
+        </div>
+      )}
     </div>
   );
 }
