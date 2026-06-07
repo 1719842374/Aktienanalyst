@@ -425,7 +425,11 @@ Für jede Kategorie:
 JSON:
 {"trends":[{"id":"defense","growthScore":8,"moatScore":9,"marginRisk":"low","timeline":"12-24M","reasoning":"...","topPlayers":["LMT","RTX","RHM.DE"],"actionRecommendation":"Buy"}]}`;
 
-  const llm = await callLLMJson({ prompt, maxTokens: 1500 });
+  // 4000 tokens: 12 fully-populated trend objects (growthScore, moatScore,
+  // marginRisk, timeline, 2-sentence reasoning, 3-5 topPlayers, recommendation)
+  // need far more headroom than 1500 — Capex hit the exact same truncation
+  // issue with fewer objects and was raised from 2500 to 3500 (see line 793-795).
+  const llm = await callLLMJson({ prompt, maxTokens: 4000 });
   if (!llm?.data?.trends || !Array.isArray(llm.data.trends)) {
     return {
       region, regionLabel, asOf: new Date().toISOString(),
@@ -1333,7 +1337,10 @@ export function registerResearcherRoutes(app: Express) {
     console.log(`[RESEARCHER/macro] building region=${region}`);
     await withProxyGuard(res, region, "macro",
       () => buildMacroPulse(region),
-      (r) => writeResearcherCache("macro", region, r),
+      // Don't poison the 6h cache with fallback content — a transient
+      // OpenRouter failure would otherwise lock the tab into the
+      // "LLM nicht verfügbar" placeholder until TTL expiry.
+      (r) => { if (!r.llmSynthesis?._fallback) writeResearcherCache("macro", region, r); },
     );
   });
 
@@ -1361,7 +1368,9 @@ export function registerResearcherRoutes(app: Express) {
     console.log(`[RESEARCHER/sectors] building region=${region}`);
     await withProxyGuard(res, region, "sectors",
       () => buildSectorOpportunity(region),
-      (r) => writeResearcherCache("sectors", region, r),
+      // Same cache-poisoning guard as macro — empty trends (LLM failure/
+      // truncation) must not be written, or "Aktualisieren" stays stuck.
+      (r) => { if (r.trends?.length > 0) writeResearcherCache("sectors", region, r); },
     );
   });
 
@@ -1393,7 +1402,7 @@ export function registerResearcherRoutes(app: Express) {
     console.log(`[RESEARCHER/screener] building key=${cacheKey}`);
     await withProxyGuard(res, cacheKey, "screener",
       () => buildScreener(filters),
-      (r) => writeResearcherCache("screener", cacheKey, r),
+      (r) => { if (r.candidates?.length > 0) writeResearcherCache("screener", cacheKey, r); },
     );
   });
 
