@@ -2,6 +2,7 @@ import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { ChevronDown, ChevronUp, TrendingUp, TrendingDown, Minus, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { useState } from "react";
+import { PolicyContextPanel } from "./PolicyContextPanel";
 
 interface Props { data: StockAnalysis }
 
@@ -55,6 +56,8 @@ export function PestelSection({ data }: Props) {
 
   return (
     <SectionCard number={12} title="PESTEL-ANALYSE & MAKRO-EXPOSURE">
+      <PolicyContextPanel data={data} testIdSuffix="pestel" />
+
       {/* Overview KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className={`rounded-lg p-3 border ${
