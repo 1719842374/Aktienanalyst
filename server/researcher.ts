@@ -502,6 +502,10 @@ interface ScreenerResult {
   _cachedAt?: string;
 }
 
+// FMP company-screener accepts one country per request. Map each region to
+// its largest/most liquid listed market.
+const SCREENER_FMP_COUNTRY: Record<string, string> = { US: "US", EU: "DE", ASIA: "JP" };
+
 async function buildScreener(filters: ScreenerFilters): Promise<ScreenerResult> {
   // Try FMP screener first (real data, no LLM hallucination)
   const fmpKey = process.env.FMP_API_KEY;
@@ -509,6 +513,12 @@ async function buildScreener(filters: ScreenerFilters): Promise<ScreenerResult> 
   if (fmpKey) {
     try {
       const params = new URLSearchParams();
+      // FMP's screener takes a single ISO-3166 country code — pick the
+      // dominant market per region so the region selector actually changes
+      // the result set (it was previously ignored, always returning the
+      // same mostly-US candidates regardless of US/EU/ASIA selection).
+      const country = SCREENER_FMP_COUNTRY[filters.region] || "US";
+      params.set("country", country);
       if (filters.marketCapMin) params.set("marketCapMoreThan", String(filters.marketCapMin * 1e6));
       if (filters.marketCapMax) params.set("marketCapLowerThan", String(filters.marketCapMax * 1e6));
       if (filters.peMax) params.set("peLowerThan", String(filters.peMax));
