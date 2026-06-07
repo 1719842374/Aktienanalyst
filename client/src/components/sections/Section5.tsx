@@ -1,7 +1,10 @@
 import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { calculateFCFFDCF, type FCFFDCFParams, type FCFFDCFResult, calculateDCF, buildSensitivityMatrix } from "../../lib/calculations";
+import {
+  calculateFCFFDCF, buildDefaultDCFParams, type FCFFDCFParams, type FCFFDCFResult,
+  calculateDCF, buildSensitivityMatrix
+} from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign } from "../../lib/formatters";
 import { useMemo, useState, useCallback } from "react";
 import { Settings2, RotateCcw, ChevronDown, ChevronUp, AlertTriangle, Lock, Unlock } from "lucide-react";
@@ -33,74 +36,17 @@ function InputField({ label, value, onChange, suffix = "%", min, max, step = 0.5
 }
 
 export function Section5({ data }: Props) {
-  const netDebt = data.totalDebt - data.cashEquivalents;
-  const sp = data.sectorProfile;
   const [showEditor, setShowEditor] = useState(false);
   const [showProjections, setShowProjections] = useState(false);
   const [waccOverrideEnabled, setWaccOverrideEnabled] = useState(false);
   const [waccOverrideValue, setWaccOverrideValue] = useState(9.0);
 
-  // Derive sensible defaults from data
-  // Use actual operating income (EBIT) for DCF margin — NOT EBITDA!
-  // EBITDA includes D&A and massively overstates margins for capital-intensive businesses.
-  const ebitMarginDefault = data.operatingIncome > 0 && data.revenue > 0
-    ? +((data.operatingIncome / data.revenue) * 100).toFixed(1)
-    : data.ebitda > 0 && data.revenue > 0
-      ? +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1) // fallback: EBITDA × 0.6 proxy
-      : 15;
-  // Capex estimate: use actual CapEx from financial statements if available, else approximate
-  const fsCapex = data.financialStatements?.cashFlow?.capex;
-  const capexDefault = fsCapex && fsCapex > 0 && data.revenue > 0
-    ? +Math.max(2, Math.min(25, (fsCapex / data.revenue) * 100)).toFixed(1)
-    : data.revenue > 0 && data.ebitda > 0 && data.operatingIncome > 0
-      ? +Math.max(2, Math.min(20, ((data.ebitda - data.operatingIncome) / data.revenue) * 100)).toFixed(1) // D&A proxy
-      : 5;
-  const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
-
-  // Use sector WACC scenarios to back-derive a reasonable beta for DCF.
-  // Reverse: beta = (targetWACC/E_V - D_V*Rd*(1-t)/E_V - Rf) / ERP
-  const rf = 4.2;
-  const erp = 5.5;
-  const taxR = 21;
-  const rd = 5.0;
-  const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
-  const evFrac = (100 - debtRatioVal) / 100;
-  const dvFrac = debtRatioVal / 100;
-  // Target WACC from sector avg scenario (e.g. Tech=9%, Defense=10%)
-  const targetWACC = sp.waccScenarios.avg;
-  // Solve: WACC = evFrac*(Rf + beta*ERP) + dvFrac*Rd*(1-t)
-  // beta = (WACC - dvFrac*Rd*(1-t) - evFrac*Rf) / (evFrac*ERP)
-  const debtCostPart = dvFrac * rd * (1 - taxR / 100);
-  const impliedBeta = Math.max(0.5, Math.min(1.8,
-    (targetWACC - debtCostPart - evFrac * rf) / (evFrac * erp)
-  ));
-  // Use implied beta (anchored to sector WACC) — capped at observed beta + 0.1
-  const dcfBeta = +Math.min(impliedBeta, data.beta5Y + 0.1).toFixed(2);
-
-  const defaultParams: FCFFDCFParams = {
-    revenueBase: data.revenue,
-    revenueGrowthP1: revenueGrowthDefault,
-    revenueGrowthP2: Math.max(3, +(revenueGrowthDefault * 0.6).toFixed(1)),
-    ebitMargin: ebitMarginDefault,
-    ebitMarginTerminal: +Math.max(8, ebitMarginDefault * 0.9).toFixed(1),
-    capexPct: capexDefault,
-    deltaWCPct: 5,
-    taxRate: taxR,
-    daRatio: +Math.max(2, capexDefault * 0.8).toFixed(1),
-    riskFreeRate: rf,
-    beta: dcfBeta,
-    erp,
-    debtRatio: debtRatioVal,
-    costOfDebt: rd,
-    terminalG: sp.growthAssumptions.terminal || 2.5,
-    sharesOutstanding: data.sharesOutstanding,
-    netDebt,
-    minorityInterests: 0,
-    fcfHaircut: data.fcfHaircut,
-    actualEPS: data.epsTTM,
-    forwardEPS: data.epsConsensusNextFY,
-    waccOverride: null,
-  };
+  // === SINGLE SOURCE OF TRUTH: shared defaults (same as Section6 / Section13) ===
+  const defaultParams: FCFFDCFParams = useMemo(
+    () => buildDefaultDCFParams(data),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.ticker] // re-derive only when stock changes
+  );
 
   const [params, setParams] = useState<FCFFDCFParams>(defaultParams);
 
@@ -140,7 +86,7 @@ export function Section5({ data }: Props) {
     ebitMargin: effectiveParams.ebitMargin * 1.15,
     ebitMarginTerminal: effectiveParams.ebitMarginTerminal * 1.1,
     riskFreeRate: effectiveParams.riskFreeRate,
-    erp: effectiveParams.erp - 1, // Lower ERP → lower WACC
+    erp: effectiveParams.erp - 1,
     waccOverride: waccOverrideEnabled ? Math.max(5, waccOverrideValue - 2) : null,
   }), [effectiveParams, waccOverrideEnabled, waccOverrideValue]);
 
@@ -150,7 +96,7 @@ export function Section5({ data }: Props) {
     revenueGrowthP2: Math.max(0, effectiveParams.revenueGrowthP2 * 0.3),
     ebitMargin: effectiveParams.ebitMargin * 0.7,
     ebitMarginTerminal: effectiveParams.ebitMarginTerminal * 0.75,
-    erp: effectiveParams.erp + 2, // Higher ERP → higher WACC
+    erp: effectiveParams.erp + 2,
     terminalG: Math.max(1, effectiveParams.terminalG - 0.5),
     waccOverride: waccOverrideEnabled ? waccOverrideValue + 2 : null,
   }), [effectiveParams, waccOverrideEnabled, waccOverrideValue]);
@@ -164,6 +110,7 @@ export function Section5({ data }: Props) {
   const safetyMarginDCF = mainResult.perShare * 0.7;
 
   // Legacy sensitivity matrix (uses the old calculateDCF for simplicity)
+  const netDebt = data.totalDebt - data.cashEquivalents;
   const sensitivityMatrix = useMemo(
     () => buildSensitivityMatrix({
       fcfBase: data.fcfTTM,
@@ -268,7 +215,6 @@ export function Section5({ data }: Props) {
                   const newEnabled = !waccOverrideEnabled;
                   setWaccOverrideEnabled(newEnabled);
                   if (newEnabled) {
-                    // Pre-fill with current computed WACC
                     setWaccOverrideValue(+mainResult.wacc.toFixed(2));
                   }
                 }}
@@ -347,8 +293,15 @@ export function Section5({ data }: Props) {
           <span className="font-mono font-semibold">{mainResult.costOfEquity.toFixed(2)}%</span>
         </div>
         <div className="bg-muted/30 rounded px-2 py-1 border border-border/50">
-          <span className="text-muted-foreground">β: </span>
+          <span className="text-muted-foreground">β (DCF): </span>
           <span className="font-mono font-semibold">{params.beta.toFixed(2)}</span>
+        </div>
+        <div className="bg-muted/30 rounded px-2 py-1 border border-border/50">
+          <span className="text-muted-foreground">β (Markt): </span>
+          <span className="font-mono font-semibold">{data.beta5Y.toFixed(2)}</span>
+          {Math.abs(params.beta - data.beta5Y) > 0.05 && (
+            <span className="ml-1 text-amber-500 text-[9px]" title="DCF-Beta weicht vom Markt-Beta ab (Sektor-WACC-Anker)">≠ DCF</span>
+          )}
         </div>
         <div className="bg-muted/30 rounded px-2 py-1 border border-border/50">
           <span className="text-muted-foreground">EBIT-M: </span>
@@ -360,43 +313,49 @@ export function Section5({ data }: Props) {
         </div>
       </div>
 
+      {/* Beta-Desync-Hinweis (Bug #4 fix): DCF-Beta ≠ Markt-Beta */}
+      {Math.abs(params.beta - data.beta5Y) > 0.05 && (
+        <div className="flex items-start gap-2 p-2 rounded-md border border-amber-500/20 bg-amber-500/5">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div className="text-[10px] text-amber-500/90">
+            <span className="font-semibold">Beta-Hinweis:</span> Das DCF-Modell verwendet β = {params.beta.toFixed(2)} (am Sektor-WACC {data.sectorProfile.waccScenarios.avg}% verankert),
+            während das Markt-Beta β = {data.beta5Y.toFixed(2)} beträgt. Die WACC-Tabelle oben (Sektion 2) basiert auf dem Markt-Beta.
+            Dies ist beabsichtigt — der Sektor-Anker glättet kurzfristige Beta-Volatiliät. Manueller Override möglich.
+          </div>
+        </div>
+      )}
+
       {/* Business Model Integrity Warning */}
       {(() => {
         const warnings: string[] = [];
         const ind = data.industry.toLowerCase();
         const sect = data.sector.toLowerCase();
         const desc = data.description.toLowerCase();
-        // Pharma: drug pricing reform, patent cliffs
         if (ind.includes('drug') || ind.includes('pharma') || ind.includes('biotechnology')) {
           warnings.push('Preisregulierungsrisiko: IRA/Medicaid-Rabatte, Medicare-Preisverhandlungen können Margen um 10-30% drücken.');
           if (desc.includes('patent') || desc.includes('biosimilar') || desc.includes('generic')) {
             warnings.push('Patent-Cliff-Risiko: Generika/Biosimilar-Konkurrenz bei Patentablauf.');
           }
         }
-        // SaaS / Software: AI disruption (use specific phrases to avoid matching brand names like "Cloudy Bay")
         const hasSoftwareCore = ind.includes('software') || ind.includes('saas') ||
           desc.includes('cloud computing') || desc.includes('cloud platform') || desc.includes('cloud services') ||
           desc.includes('software-as-a-service') || (desc.includes('subscription') && sect.includes('tech'));
         if (hasSoftwareCore) {
           warnings.push('KI-Disruption: AI-Agenten können Software-Margen durch Automatisierung und Commoditisierung erodieren.');
         }
-        // Consumer Cyclical / Luxury: demand risk
         if ((sect.includes('consumer') && (sect.includes('cycl') || sect.includes('discr'))) &&
             (ind.includes('luxury') || ind.includes('fashion') || ind.includes('apparel'))) {
           warnings.push('Zyklisches Konsumrisiko: Luxusgüter-Nachfrage stark abhängig von China-Konjunktur, Vermögenseffekten und Konsumsentiment.');
         }
-        // Negative FCF
         if (data.fcfTTM < 0) {
           warnings.push('Negativer FCF: Geschäftsmodell generiert aktuell keinen freien Cashflow — DCF-Projektion basiert auf Margenverbesserungs-Annahme.');
         }
-        // Very high margin assumed but declining revenue
         if (data.ebitda > 0 && data.revenue > 0) {
           const ebitMargin = (data.ebitda / data.revenue) * 100;
           if (ebitMargin > 30 && data.sectorProfile.growthAssumptions.g1 < 8) {
             warnings.push(`Hohe EBIT-Marge (${ebitMargin.toFixed(0)}%) bei niedrigem Wachstum — Margenerhalt nicht gesichert bei Wettbewerbsdruck.`);
           }
         }
-        // Gov exposure / regulation
         if (data.governmentExposure > 20) {
           warnings.push(`Staatsabhängigkeit ${data.governmentExposure}%: Regulatorische Preisänderungen können DCF-Annahmen entwerten.`);
         }
@@ -569,10 +528,11 @@ export function Section5({ data }: Props) {
 
       {/* Method disclaimer */}
       <div className="p-2 rounded bg-muted/30 text-[9px] text-muted-foreground leading-relaxed">
-        <span className="font-semibold">Methodik:</span> FCFF = EBIT × (1 - Tax) + D&A - Capex - ΔWC | 
-        Terminal Value = Gordon Growth Model: TV = FCFF₁₁ / (WACC - g) | 
-        WACC = E/V × Re + D/V × Rd × (1-t) | Re = Rf + β × ERP (CAPM) | 
-        Equity Value = EV - Net Debt - Minorities
+        <span className="font-semibold">Methodik:</span> FCFF = EBIT × (1 - Tax) + D&A - Capex - ΔWC |
+        Terminal Value = Gordon Growth Model: TV = FCFF₁₁ / (WACC - g) |
+        WACC = E/V × Re + D/V × Rd × (1-t) | Re = Rf + β × ERP (CAPM) |
+        Equity Value = EV - Net Debt - Minorities |
+        <span className="font-semibold text-primary"> β(DCF) = Sektor-WACC-Anker</span> — weicht bewusst vom Markt-β ab.
       </div>
     </SectionCard>
   );
