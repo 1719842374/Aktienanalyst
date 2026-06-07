@@ -1,4 +1,4 @@
-import type { Catalyst, Risk } from "../../../shared/schema";
+import type { Catalyst, Risk, StockAnalysis } from "../../../shared/schema";
 
 // === DCF Model (FCF-Growth based — legacy, still used by sensitivity matrix) ===
 export interface DCFParams {
@@ -67,6 +67,80 @@ export function calculateDCF(params: DCFParams): DCFResult {
   }
 
   return { intrinsicValue: equityValue, perShare, steps };
+}
+
+// === SINGLE SOURCE OF TRUTH: Default DCF Parameters ===
+// Both Section5 and Section6 MUST derive their defaults from this function.
+// Any change to beta or capex logic here propagates to all consumers automatically.
+// This eliminates the Zwei-Pfad-Bug (#1, #6).
+export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
+  const netDebt = data.totalDebt - data.cashEquivalents;
+  const sp = data.sectorProfile;
+  const rf = 4.2;
+  const erp = 5.5;
+  const taxR = 21;
+  const rd = 5.0;
+
+  // EBIT margin — prefer actual operating income, fall back to EBITDA proxy
+  const ebitMarginDefault =
+    data.operatingIncome > 0 && data.revenue > 0
+      ? +((data.operatingIncome / data.revenue) * 100).toFixed(1)
+      : data.ebitda > 0 && data.revenue > 0
+      ? +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1)
+      : 15;
+
+  // Capex — prefer real CapEx from cash flow statement (Section5 logic, authoritative)
+  const fsCapex = data.financialStatements?.cashFlow?.capex;
+  const capexDefault =
+    fsCapex && fsCapex > 0 && data.revenue > 0
+      ? +Math.max(2, Math.min(25, (fsCapex / data.revenue) * 100)).toFixed(1)
+      : data.revenue > 0 && data.ebitda > 0 && data.operatingIncome > 0
+      ? +Math.max(2, Math.min(20, ((data.ebitda - data.operatingIncome) / data.revenue) * 100)).toFixed(1)
+      : 5;
+
+  const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
+
+  const debtRatioVal =
+    data.totalDebt > 0
+      ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0)
+      : 10;
+  const evFrac = (100 - debtRatioVal) / 100;
+  const dvFrac = debtRatioVal / 100;
+
+  // Implied beta anchored to sector WACC (same logic as Section5)
+  const targetWACC = sp.waccScenarios.avg;
+  const debtCostPart = dvFrac * rd * (1 - taxR / 100);
+  const impliedBeta = Math.max(
+    0.5,
+    Math.min(1.8, (targetWACC - debtCostPart - evFrac * rf) / (evFrac * erp))
+  );
+  // Cap at observed market beta + 0.1 to avoid over-anchoring
+  const dcfBeta = +Math.min(impliedBeta, data.beta5Y + 0.1).toFixed(2);
+
+  return {
+    revenueBase: data.revenue,
+    revenueGrowthP1: revenueGrowthDefault,
+    revenueGrowthP2: Math.max(3, +(revenueGrowthDefault * 0.6).toFixed(1)),
+    ebitMargin: ebitMarginDefault,
+    ebitMarginTerminal: +Math.max(8, ebitMarginDefault * 0.9).toFixed(1),
+    capexPct: capexDefault,
+    deltaWCPct: 5,
+    taxRate: taxR,
+    daRatio: +Math.max(2, capexDefault * 0.8).toFixed(1),
+    riskFreeRate: rf,
+    beta: dcfBeta,
+    erp,
+    debtRatio: debtRatioVal,
+    costOfDebt: rd,
+    terminalG: sp.growthAssumptions.terminal || 2.5,
+    sharesOutstanding: data.sharesOutstanding,
+    netDebt,
+    minorityInterests: 0,
+    fcfHaircut: data.fcfHaircut,
+    actualEPS: data.epsTTM,
+    forwardEPS: data.epsConsensusNextFY,
+    waccOverride: null,
+  };
 }
 
 // === FCFF-based DCF Model (full fundamental) ===
@@ -466,8 +540,6 @@ export function calculateReverseDCF(params: {
   if (!isFinite(impliedGrowth)) return { impliedGrowth: 0, rating: "n/a", referenceGrowth: 0 };
 
   // === Relative rating — sector & company specific ===
-  // referenceGrowth = max(sectorG1, epsGrowthNext5Y, 3%) as floor
-  // This replaces the old hard-coded 5%/8% thresholds.
   const referenceGrowth = Math.max(sectorG1, epsGrowthNext5Y, 3);
 
   let rating: string;
@@ -493,11 +565,24 @@ export function calculateCRV(fairValue: number, worstCase: number, currentPrice:
 }
 
 // === Worst Case Methods ===
+// M1 Formula: effectiveDrawdown = min(beta × sectorDD, sectorDD × 1.5), capped at 65%
+// UI label must match: "min(β × SectorDD, SectorDD×1.5), cap 65%"
 export function worstCaseM1(price: number, beta: number, maxDrawdown: number): number {
   const historicalMaxDrawdown = maxDrawdown > 0 ? maxDrawdown : 35;
   const betaAdjustedDrawdown = Math.min(beta * historicalMaxDrawdown, historicalMaxDrawdown * 1.5);
   const effectiveDrawdown = Math.min(betaAdjustedDrawdown, 65);
   return price * (1 - effectiveDrawdown / 100);
+}
+
+// Exported label for UI — keeps formula display in sync with implementation (Bug #2 fix)
+export function worstCaseM1Label(beta: number, sectorDD: number): string {
+  const raw = +(beta * sectorDD).toFixed(1);
+  const capped = Math.min(raw, sectorDD * 1.5);
+  const effective = Math.min(capped, 65);
+  const isCapped = effective < raw;
+  return isCapped
+    ? `β(${beta.toFixed(2)}) × ${sectorDD}% = ${raw}% → gecapped auf ${effective.toFixed(1)}%`
+    : `β(${beta.toFixed(2)}) × ${sectorDD}% = ${effective.toFixed(1)}%`;
 }
 
 export function worstCaseM2(price: number, riskImpact: number): number {
