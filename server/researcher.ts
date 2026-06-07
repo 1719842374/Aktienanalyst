@@ -227,7 +227,7 @@ interface MacroPulseResult {
       description: string;
       inflationImpact: "steigend" | "fallend" | "neutral";
       rateImpact: "steigend" | "fallend" | "neutral";
-      equityImpact: "positiv" | "negativ" | "gemischt";
+      equityImpact: "positiv" | "negativ" | "neutral";
       affectedSectors: string[];
       rationale: string;
     }>;
@@ -1047,7 +1047,7 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
         severity: String(ev.severity || "low"),
         inflationImpact: String(ev.inflationImpact || "neutral"),
         rateImpact: String(ev.rateImpact || "neutral"),
-        equityImpact: String(ev.equityImpact || "gemischt"),
+        equityImpact: String(ev.equityImpact || "neutral"),
       };
       newSnapshot.push(fp);
 
