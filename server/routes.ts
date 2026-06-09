@@ -6586,6 +6586,40 @@ export async function registerRoutes(server: Server, app: Express) {
         }
       }
 
+      // If CoinGecko returned no volume data (common on free tier), patch with Binance klines.
+      // Binance /api/v3/klines returns daily OHLCV free of charge, no auth required.
+      // Each call returns up to 1000 bars — 2 calls cover 5+ years.
+      const volSum = allPriceData.reduce((s, d) => s + (d.volume ?? 0), 0);
+      if (volSum === 0 && allPriceData.length > 0) {
+        try {
+          const binanceVol = new Map<string, number>();
+          // Two pages: oldest 1000 days + newest 1000 days (overlap is fine, later overwrite)
+          for (const startTime of [
+            Math.floor((Date.now() - 5 * 365 * 86400 * 1000)),
+            Math.floor((Date.now() - 2.5 * 365 * 86400 * 1000)),
+          ]) {
+            const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&startTime=${startTime}`;
+            const raw = execSync(`curl -sL "${url}"`, { encoding: "utf-8", timeout: 30000, maxBuffer: 20 * 1024 * 1024 });
+            const klines = JSON.parse(raw) as any[][];
+            for (const k of klines) {
+              // k[0]=openTime, k[4]=close, k[5]=baseAssetVolume(BTC), k[7]=quoteAssetVolume(USD)
+              const date = new Date(k[0]).toISOString().split("T")[0];
+              const quoteVol = parseFloat(k[7]); // USD volume
+              if (quoteVol > 0) binanceVol.set(date, quoteVol);
+            }
+          }
+          if (binanceVol.size > 0) {
+            allPriceData = allPriceData.map(d => ({
+              ...d,
+              volume: binanceVol.get(d.date) ?? 0,
+            }));
+            console.log(`[BTC] Binance volume patch: ${binanceVol.size} days enriched`);
+          }
+        } catch (e: any) {
+          console.warn(`[BTC] Binance volume fallback failed: ${e?.message?.substring(0, 100)}`);
+        }
+      }
+
       // Sort by date
       allPriceData.sort((a, b) => a.date.localeCompare(b.date));
 
