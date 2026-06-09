@@ -91,6 +91,7 @@ export default function Researcher() {
       // Retry only on network-level errors (not on rate-limit or auth errors).
       const MAX_RETRIES = 3;
       let lastErr: any = null;
+      const wasForced = !!body.force;
 
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
@@ -102,8 +103,13 @@ export default function Researcher() {
           lastErr = err;
           const msg = err?.message || "";
           if (!/^(503|504|408|499)/.test(msg) && !/timeout|abort|network|fetch/i.test(msg)) throw err;
+          // If the forced request timed out, the server build is still running in
+          // the background. Wait 40s for it to finish, then poll the cache
+          // (force=false). Switching to force=false immediately would serve the
+          // old stale cache and ignore the ongoing build.
+          const waitMs = wasForced && attempt === 0 ? 40_000 : 3_000;
           body.force = false;
-          await new Promise(r => setTimeout(r, 3000));
+          await new Promise(r => setTimeout(r, waitMs));
         }
       }
       throw lastErr || new Error("Analyse fehlgeschlagen. Bitte erneut versuchen.");
