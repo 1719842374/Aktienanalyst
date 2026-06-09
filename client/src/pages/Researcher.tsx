@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -149,6 +149,18 @@ export default function Researcher() {
   // Stale cache detection — a cached result that has no real LLM content.
   // _staleRefreshing = backend is already refreshing in background (show info, not warning)
   const isStaleRefreshing = !!currentData?._staleRefreshing;
+
+  // Auto-reload after background refresh: the backend fires a background
+  // buildXxx() when it detects stale cache and returns _staleRefreshing:true.
+  // Without this effect the client would just show the spinner indefinitely —
+  // there's no push mechanism, so we poll once after ~32s.
+  useEffect(() => {
+    if (!isStaleRefreshing) return;
+    const timer = setTimeout(() => runAnalysis(false), 32_000);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStaleRefreshing, cacheKey]);
+
   const isStale = !!currentData && !isStaleRefreshing && (
     currentData._fallback === true ||
     currentData?.llmSynthesis?._fallback === true ||
