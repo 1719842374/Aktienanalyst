@@ -10,7 +10,7 @@ const CACHE_TTL_DAYS = 7;
 const CACHE_TTL_MS = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 // Bump this string whenever DCF formulas, field names or Rechenweg-Labels change.
 // Any cached entry with a different version will be silently invalidated.
-const CACHE_SCHEMA_VERSION = "2026-06-07-v1";
+const CACHE_SCHEMA_VERSION = "2026-06-09-v1"; // Bumped: BTC volume fields added to technicalChartData
 // Researcher cache TTL: 1 day (was 7) — keep macro/fiscal/capex data fresh.
 const RESEARCHER_CACHE_TTL_MS = 1 * 24 * 60 * 60 * 1000;
 

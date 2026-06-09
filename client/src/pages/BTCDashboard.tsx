@@ -937,19 +937,37 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
     return result;
   }, [filteredData]);
 
-  // Merge RSI(14) into chartData (server doesn't send rsi14)
+  // Merge RSI(14) + Volume into chartData
   const chartDataWithRSI = useMemo(() => {
     if (chartData.length === 0) return chartData;
     const prices = chartData.map(d => d.price);
     const rsiArr = calcRSI(prices);
-    // Volume normalisation for overlay (max 15% of price range)
-    const vols = chartData.map(d => d._volNorm ?? 0);
-    const maxVolNorm = Math.max(...vols, 1e-10);
+
+    // Volume: server liefert _volNorm (0-1 normalisiert) UND volume (absolut in USD)
+    // Falls _volNorm alle 0 sind (kein Volume vom Server), clientseitig aus volume berechnen
+    const rawVols = chartData.map(d => d.volume ?? 0);
+    const serverVolNorms = chartData.map(d => d._volNorm ?? 0);
+    const hasServerVol = serverVolNorms.some(v => v > 0);
+    const hasRawVol = rawVols.some(v => v > 0);
+
+    let volNorms: number[];
+    if (hasServerVol) {
+      // Server hat _volNorm bereits korrekt normalisiert — direkt nutzen
+      volNorms = serverVolNorms;
+    } else if (hasRawVol) {
+      // Fallback: clientseitig aus absolutem Volume normalisieren
+      const maxRawVol = Math.max(...rawVols);
+      volNorms = rawVols.map(v => maxRawVol > 0 ? v / maxRawVol : 0);
+    } else {
+      volNorms = chartData.map(() => 0);
+    }
+
     return chartData.map((d, i) => ({
       ...d,
       rsi14: rsiArr[i] ?? null,
-      // re-normalise _volNorm within the downsampled window
-      _volNorm: maxVolNorm > 0 ? (d._volNorm ?? 0) / maxVolNorm : 0,
+      _volNorm: volNorms[i] ?? 0,
+      // _volUp: grün wenn Preis gestiegen, rot wenn gefallen
+      _volUp: i === 0 ? true : prices[i] >= prices[i - 1],
     }));
   }, [chartData]);
 
