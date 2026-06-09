@@ -381,23 +381,34 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     else etfFlowScore = -1;                       // strong outflows
   }
 
-  // === 1b. Fetch Binance OHLCV für Volume-Daten (parallel zu anderen Requests) ===
+  // === 1b. Fetch Binance OHLCV für Volume-Daten (2 Calls für ~5Y Coverage) ===
+  // Binance: max 1000 Klines pro Call = ~2.7 Jahre. Zwei Calls ergänzen = ~5.4 Jahre.
   let binanceVolumeMap = new Map<string, number>(); // date → USDT-Volume
   try {
-    const binanceRaw = await fetchJSON(
-      "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000",
-      20000
-    );
-    if (Array.isArray(binanceRaw)) {
-      for (const k of binanceRaw as any[][]) {
+    const now = Date.now();
+    const dayMs = 86400000;
+    // Call 1: neueste 1000 Tage
+    // Call 2: 1000 Tage davor (startTime = vor 2000 Tagen, endTime = vor 1000 Tagen)
+    const endTime1 = now;
+    const startTime2 = now - 2000 * dayMs;
+    const endTime2 = now - 1000 * dayMs;
+
+    const [raw1, raw2] = await Promise.allSettled([
+      fetchJSON(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&endTime=${endTime1}`, 20000),
+      fetchJSON(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&endTime=${endTime2}`, 20000),
+    ]);
+
+    for (const result of [raw1, raw2]) {
+      if (result.status !== "fulfilled" || !Array.isArray(result.value)) continue;
+      for (const k of result.value as any[][]) {
         const date = new Date(k[0]).toISOString().split("T")[0];
         const closePrice = parseFloat(k[4]);
-        // k[5] = base asset volume (BTC), k[7] = quote asset volume (USDT) — nutze USDT
-        const quoteVol = parseFloat(Array.isArray(k) && k.length > 7 ? String(k[7]) : String(k[5]));
+        // k[7] = quote asset volume (USDT) — zuverlässigeres Volume als k[5] (BTC)
+        const quoteVol = parseFloat(k.length > 7 ? String(k[7]) : String(k[5]));
         if (closePrice > 0 && quoteVol > 0) binanceVolumeMap.set(date, quoteVol);
       }
     }
-    console.log(`[BTC client] Binance volume: ${binanceVolumeMap.size} Tage`);
+    console.log(`[BTC client] Binance volume: ${binanceVolumeMap.size} Tage (~${Math.round(binanceVolumeMap.size/365*10)/10} Jahre)`);
   } catch {
     // Binance nicht verfügbar — kein Volume, aber kein Crash
   }
