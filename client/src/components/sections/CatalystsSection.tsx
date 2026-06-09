@@ -474,6 +474,10 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
             </tr>
           </tbody>
         </table>
+        <div className="text-[9px] text-muted-foreground/60 mt-1 px-1">
+          Σ Netto-Upside = Summe aller Katalysatoren vor PoS-Gewichtung (Zwischenwert, nicht Kursziel-Inkrement).
+          GB-Summe = Σ(Netto-Upside × PoS%) = tatsächlicher Kurszielbeitrag.
+        </div>
       </div>
 
       {/* Catalyst-Adjusted Target */}

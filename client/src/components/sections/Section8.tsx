@@ -62,7 +62,7 @@ export function Section8({ data, useLLM = false }: Props) {
         revenueGrowth: data.revenueGrowth || 0,
         fcfMargin: data.fcfMargin || 0,
         forwardPE: data.forwardPE || 0,
-        beta: data.beta || 1.1,
+        beta: data.beta5Y || 1.1,
         governmentExposure: data.governmentExposure || 0,
         catalysts: (data.catalysts || []).filter(c => !c.tags?.includes("capex-tailwind")),
         newsItems: (data.newsItems || []).slice(0, 4),
@@ -142,8 +142,6 @@ export function Section8({ data, useLLM = false }: Props) {
 
   // === Primärer Risiko-adjustierter Zielkurs ===
   // Logik: Analyst PT × (1 - TotalExpectedDamage%) ist realistischer als reiner DCF
-  // Beispiel: PT=$46, TotalDamage=21.95% → RiskTarget = $46 × 0.7805 = $35.90
-  // Der konservative Inverted DCF ($8.55) ist zu stark von WACC-Modellannahmen dominiert.
   const riskAdjTarget = hasPT
     ? analystPT * (1 - totalExpectedDamage / 100)
     : invertedDCF.perShare; // Fallback auf DCF wenn kein Analyst PT
@@ -164,7 +162,7 @@ export function Section8({ data, useLLM = false }: Props) {
       const res = await apiRequest("POST", "/api/risk-explanations", {
         ticker: data.ticker,
         companyName: data.companyName,
-        sector: data.sector,
+        sector: data.sectorProfile?.sector || data.sector || "",
         industry: data.industry,
         description: data.description,
         revenue: data.revenue,
@@ -435,9 +433,14 @@ export function Section8({ data, useLLM = false }: Props) {
                 : 'Basiert auf WACC_adj und Growth_adj'}
             </div>
             {hasPT && (
-              <div className="text-[10px] text-muted-foreground/60 mt-1 font-mono">
-                = {formatCurrency(analystPT)} × {(1 - totalExpectedDamage / 100).toFixed(4)} = {formatCurrency(riskAdjTarget)}
-              </div>
+              <>
+                <div className="text-[10px] text-muted-foreground/60 mt-1 font-mono">
+                  = {formatCurrency(analystPT)} × {(1 - totalExpectedDamage / 100).toFixed(4)} = {formatCurrency(riskAdjTarget)}
+                </div>
+                <div className="text-[9px] text-amber-500/60 mt-0.5">
+                  Hinweis: Basis ist Analysten-Konsensus (potenziell optimistisch) — nicht der unabhängige DCF Fair Value.
+                </div>
+              </>
             )}
           </div>
           <div className="text-right shrink-0">
@@ -475,14 +478,17 @@ export function Section8({ data, useLLM = false }: Props) {
               </div>
               <div className="text-muted-foreground/40">
                 {Math.abs(dcfVsReference) > 50
-                  ? '⚠ Reverse-DCF deutlich unter PT — Markt preist starkes Wachstum ein'
+                  ? '⚠ >50% Divergenz: Markt preist sehr starkes Wachstum ein — DCF-Annahmen vs. Markt prüfen'
+                  : Math.abs(dcfVsReference) > 40
+                  ? '⚠ 40–50% Divergenz: DCF konservativ, Markt wettet auf überdurchschnittliches Wachstum'
                   : Math.abs(dcfVsReference) > 30
-                  ? '⚠ DCF-Modellannahmen sehr konservativ'
-                  : 'DCF und PT konsistent'}
+                  ? '⚠ 30–40% Divergenz: DCF-Annahmen konservativ — Wachstumserwartungen prüfen'
+                  : 'DCF und Analyst PT konsistent (< 30% Abweichung)'}
               </div>
               {/* Divergenz-Erklärung wenn Reverse-DCF stark vom Kurs abweicht */}
               {Math.abs(dcfVsReference) > 40 && (() => {
-                const einpreisungsGradHoch = (risks || []).some((r: any) => r.einpreisungsgrad >= 55);
+                // einpreisungsgrad ist ein Catalyst-Feld, nicht Risk — korrekt aus data.catalysts lesen
+                const einpreisungsGradHoch = (data.catalysts || []).some((c: any) => (c.einpreisungsgrad ?? 0) >= 55);
                 const dcfBelowKurs = invertedDCF.perShare < data.currentPrice * 0.7;
                 if (!dcfBelowKurs) return null;
                 return (
@@ -503,7 +509,7 @@ export function Section8({ data, useLLM = false }: Props) {
       <RechenWeg title="Risk Adjustment Rechenweg" steps={[
         `Total Expected Damage = Σ(EW% × Impact%) = ${formatNumber(totalExpectedDamage, 2)}%`,
         `WACC_adj = Base WACC + Total Damage / 10 = ${formatPercentNoSign(baseWACC)} + ${formatNumber(totalExpectedDamage / 10, 2)}% = ${formatPercentNoSign(waccAdj, 2)}`,
-        `Growth_adj = Base Growth - Total Damage / 5 = ${formatPercentNoSign(baseGrowth, 1)} - ${formatNumber(totalExpectedDamage / 5, 2)}% = ${formatPercentNoSign(Math.max(growthAdj, 1), 2)}`,
+        `Growth_adj = max(Base Growth − Damage/5, 1%) = max(${formatPercentNoSign(baseGrowth, 1)} − ${formatNumber(totalExpectedDamage / 5, 2)}%, 1%) = ${formatPercentNoSign(Math.max(growthAdj, 1), 2)}`,
         `Inverted DCF (konservativ, WACC_adj/Growth_adj) → ${formatCurrency(invertedDCF.perShare)} per share`,
         hasPT
           ? `Risk-Adjusted Target = Analyst PT × (1 − Risiko%) = ${formatCurrency(analystPT)} × ${(1 - totalExpectedDamage / 100).toFixed(4)} = ${formatCurrency(riskAdjTarget)}`

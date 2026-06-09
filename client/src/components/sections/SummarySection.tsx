@@ -163,6 +163,28 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         </div>
       </div>
 
+      {/* Methodischer Hinweis: Monte Carlo (historisch) vs. DCF (fundamental) */}
+      {mcResult && (() => {
+        const mcExpectedReturn = (mcResult.expectedReturn ?? 0) * 100;
+        const dcfUpside = conservativeDCF.perShare > 0
+          ? ((conservativeDCF.perShare / data.currentPrice) - 1) * 100
+          : null;
+        const divergence = dcfUpside !== null ? mcExpectedReturn - dcfUpside : null;
+        if (divergence === null || Math.abs(divergence) < 20) return null;
+        return (
+          <div className="text-[10px] text-muted-foreground bg-muted/20 border border-border/50 rounded px-2 py-1.5">
+            <span className="font-semibold text-foreground/70">⚠ Monte Carlo vs. DCF:</span>{' '}
+            Monte Carlo (historisch-empirisch, μ aus Kursrenditen) impliziert{' '}
+            <span className={mcExpectedReturn >= 0 ? 'text-emerald-400' : 'text-red-400'}>{mcExpectedReturn >= 0 ? '+' : ''}{mcExpectedReturn.toFixed(1)}%</span>,
+            {' '}DCF (fundamental) impliziert{' '}
+            <span className={dcfUpside >= 0 ? 'text-emerald-400' : 'text-red-400'}>{dcfUpside >= 0 ? '+' : ''}{dcfUpside.toFixed(1)}%</span>
+            {' '}— Differenz {Math.abs(divergence).toFixed(0)} Pp.
+            Beide Methoden messen unterschiedliche Dinge: Monte Carlo extrapoliert historischen Kursimpuls,
+            DCF bewertet fundamentale Ertragskraft. Große Divergenz signalisiert: entweder Momentum-überschuss oder DCF-Annahmen zu konservativ.
+          </div>
+        );
+      })()}
+
       {/* Full Summary Table */}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
