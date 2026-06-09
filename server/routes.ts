@@ -6119,9 +6119,20 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ============================================================
-  // BTC Analysis Endpoint
+  // BTC Analysis — In-Memory Cache (6h TTL)
   // ============================================================
-  app.post("/api/analyze-btc", async (_req, res) => {
+  let btcAnalysisCache: { data: any; ts: number } | null = null;
+  const BTC_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 Stunden
+
+  app.post("/api/analyze-btc", async (req: any, res) => {
+    const forceRefresh = req.body?.force === true;
+
+    // Cache hit: return cached data if fresh and not forced
+    if (!forceRefresh && btcAnalysisCache && (Date.now() - btcAnalysisCache.ts) < BTC_CACHE_TTL_MS) {
+      const ageMin = Math.round((Date.now() - btcAnalysisCache.ts) / 60000);
+      console.log(`[BTC] Cache hit (${ageMin}min alt) — kein neuer API-Call`);
+      return res.json({ ...btcAnalysisCache.data, _cached: true, _cacheAgeMin: ageMin });
+    }
     try {
       console.log("[BTC] Starting BTC analysis...");
 
@@ -6480,12 +6491,34 @@ export async function registerRoutes(server: Server, app: Express) {
       // === 14. Extended Historical Prices (1Y, 3Y, 5Y, 10Y) ===
       let allPriceData: { date: string; price: number; volume: number }[] = [];
 
-      // Helper to fetch CoinGecko range and deduplicate
+      // Helper: Binance klines für historische OHLCV-Daten (kein API-Key, zuverlässiger als CoinGecko free tier)
+      function fetchBinanceOHLCV(days: number): { date: string; price: number; volume: number }[] {
+        try {
+          // Binance BTCUSDT daily klines, limit max 1000
+          const limit = Math.min(days + 5, 1000);
+          const raw = execSync(
+            `curl -sL "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=${limit}"`,
+            { encoding: "utf-8", timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
+          );
+          const klines = JSON.parse(raw) as [number,string,string,string,string,string,...any[]][];
+          if (!Array.isArray(klines) || klines.length === 0) return [];
+          return klines.map(k => ({
+            date: new Date(k[0]).toISOString().split("T")[0],
+            price: parseFloat(k[4]),   // close price
+            volume: parseFloat(k[5]) * parseFloat(k[4]), // quoteAssetVolume (USDT)
+          })).filter(d => d.price > 0);
+        } catch (e: any) {
+          console.error("[BTC] Binance OHLCV error:", e?.message?.substring(0, 200));
+          return [];
+        }
+      }
+
+      // Helper: CoinGecko als Fallback für längere Historien (>1000 Tage)
       function fetchCGRange(fromSec: number, toSec: number): { date: string; price: number; volume: number }[] {
         try {
           const raw = execSync(
             `curl -sL "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fromSec}&to=${toSec}"`,
-            { encoding: "utf-8", timeout: 60000, maxBuffer: 50 * 1024 * 1024 }
+            { encoding: "utf-8", timeout: 45000, maxBuffer: 50 * 1024 * 1024 }
           );
           const parsed = JSON.parse(raw);
           if (parsed?.prices && Array.isArray(parsed.prices)) {
@@ -6509,19 +6542,27 @@ export async function registerRoutes(server: Server, app: Express) {
         return [];
       }
 
-      // Fetch in chunks to avoid rate limits: 5Y (CoinGecko range gives daily for >90d)
       const nowSec = Math.floor(Date.now() / 1000);
-      // Try 5Y first, then 1Y fallback
-      const fiveYearsAgo = nowSec - 5 * 365 * 86400;
-      allPriceData = fetchCGRange(fiveYearsAgo, nowSec);
-      console.log(`[BTC] CoinGecko 5Y: ${allPriceData.length} data points`);
 
-      // If 5Y failed (rate limited), try just 1Y after a delay
-      if (allPriceData.length === 0) {
-        await new Promise(r => setTimeout(r, 2000)); // non-blocking rate-limit backoff
-        const oneYearAgo = nowSec - 365 * 86400;
-        allPriceData = fetchCGRange(oneYearAgo, nowSec);
-        console.log(`[BTC] CoinGecko 1Y fallback: ${allPriceData.length} data points`);
+      // === Primär: Binance Public API (keine Limits, mit echtem USDT-Volume) ===
+      allPriceData = fetchBinanceOHLCV(1000); // ~2.7 Jahre (max 1000 Tage)
+      const binanceVol = allPriceData.filter(d => d.volume > 0).length;
+      console.log(`[BTC] Binance: ${allPriceData.length} Tage, ${binanceVol} mit Volume`);
+
+      // === Für 5Y-History: CoinGecko ergänzen (längere Historie als Binance-1000-Limit) ===
+      if (allPriceData.length < 900) {
+        const fiveYearsAgo = nowSec - 5 * 365 * 86400;
+        const cgData = fetchCGRange(fiveYearsAgo, nowSec);
+        console.log(`[BTC] CoinGecko 5Y: ${cgData.length} Punkte`);
+        if (cgData.length > allPriceData.length) {
+          // Merge: CoinGecko als Basis für ältere Daten, Binance-Volume überschreibt neuere
+          const binanceMap = new Map(allPriceData.map(d => [d.date, d]));
+          allPriceData = cgData.map(d => {
+            const bin = binanceMap.get(d.date);
+            return { date: d.date, price: bin?.price ?? d.price, volume: bin?.volume ?? d.volume };
+          });
+          console.log(`[BTC] Merged CoinGecko+Binance: ${allPriceData.length} Punkte`);
+        }
       }
 
       // If still empty, try finance tool
@@ -6859,7 +6900,9 @@ export async function registerRoutes(server: Server, app: Express) {
         },
       };
 
-      console.log(`[BTC] Analysis complete. Price: $${btcPrice}, GWS: ${gwsValue.toFixed(4)}, Outlook: ${outlook}`);
+      // Cache schreiben
+      btcAnalysisCache = { data: analysis, ts: Date.now() };
+      console.log(`[BTC] Analysis complete. Price: $${btcPrice}, GWS: ${gwsValue.toFixed(4)}, Outlook: ${outlook}. Cache gesetzt.`);
       res.json(analysis);
     } catch (error: any) {
       console.error("[BTC] Error:", error?.message);

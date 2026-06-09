@@ -381,6 +381,27 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     else etfFlowScore = -1;                       // strong outflows
   }
 
+  // === 1b. Fetch Binance OHLCV für Volume-Daten (parallel zu anderen Requests) ===
+  let binanceVolumeMap = new Map<string, number>(); // date → USDT-Volume
+  try {
+    const binanceRaw = await fetchJSON(
+      "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000",
+      20000
+    );
+    if (Array.isArray(binanceRaw)) {
+      for (const k of binanceRaw as any[][]) {
+        const date = new Date(k[0]).toISOString().split("T")[0];
+        const closePrice = parseFloat(k[4]);
+        // k[5] = base asset volume (BTC), k[7] = quote asset volume (USDT) — nutze USDT
+        const quoteVol = parseFloat(Array.isArray(k) && k.length > 7 ? String(k[7]) : String(k[5]));
+        if (closePrice > 0 && quoteVol > 0) binanceVolumeMap.set(date, quoteVol);
+      }
+    }
+    console.log(`[BTC client] Binance volume: ${binanceVolumeMap.size} Tage`);
+  } catch {
+    // Binance nicht verfügbar — kein Volume, aber kein Crash
+  }
+
   // === 2. Parse Blockchain.com historical data ===
   let allPriceData: { date: string; price: number }[] = [];
 
@@ -790,27 +811,37 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     return m - s;
   });
 
+  // Volume-Normalisierung für Overlay (0–1, aus Binance-Daten)
+  const allVolumes = allPriceData.map(d => binanceVolumeMap.get(d.date) ?? 0);
+  const maxVol = Math.max(...allVolumes.filter(v => v > 0), 1);
+
   // Build enhanced technical chart data
-  const technicalChartData: TechChartPoint[] = allPriceData.map((d, i) => ({
-    date: d.date,
-    price: d.price,
-    ma20: ma20[i],
-    ma50: ma50[i],
-    ma100: ma100[i],
-    ma200: ma200[i],
-    ema9: ema9[i],
-    ema12: ema12[i],
-    ema26: ema26[i],
-    macd: macdLine[i],
-    signal: signalLine[i],
-    histogram: histogram[i],
-    ma730: ma730[i],
-    ma730x5: ma730x5[i],
-    ma111: ma111[i],
-    ma350x2: ma350x2[i],
-    ma350: ma350[i],
-    ma1400: ma1400[i],
-  }));
+  const technicalChartData: TechChartPoint[] = allPriceData.map((d, i) => {
+    const vol = binanceVolumeMap.get(d.date) ?? 0;
+    return {
+      date: d.date,
+      price: d.price,
+      volume: vol,
+      _volNorm: vol > 0 ? vol / maxVol : 0,
+      _volUp: i === 0 ? true : d.price >= allPriceData[i - 1].price,
+      ma20: ma20[i],
+      ma50: ma50[i],
+      ma100: ma100[i],
+      ma200: ma200[i],
+      ema9: ema9[i],
+      ema12: ema12[i],
+      ema26: ema26[i],
+      macd: macdLine[i],
+      signal: signalLine[i],
+      histogram: histogram[i],
+      ma730: ma730[i],
+      ma730x5: ma730x5[i],
+      ma111: ma111[i],
+      ma350x2: ma350x2[i],
+      ma350: ma350[i],
+      ma1400: ma1400[i],
+    };
+  });
 
   // === 12. Signal Detection ===
   const signals: TechSignal[] = [];
