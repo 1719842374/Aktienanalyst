@@ -781,7 +781,7 @@ REGELN (strikt einhalten):
 Antworte NUR mit JSON: {"thesis": "..."}`;
 
   try {
-    const result = await callLLMJson({ prompt, maxTokens: 200, temperature: 0.25 });
+    const result = await callLLMJson({ prompt, maxTokens: 300, temperature: 0.25 });
     const thesis = result?.data?.thesis;
     if (typeof thesis === "string" && thesis.trim().length > 30) {
       return thesis.trim();
@@ -1010,7 +1010,7 @@ Antworte NUR mit JSON:
 
   try {
     console.log(`[PORTER] Generating Porter Five Forces for ${ticker}`);
-    const result = await callLLMJson({ prompt, maxTokens: 900, temperature: 0.3 });
+    const result = await callLLMJson({ prompt, maxTokens: 1400, temperature: 0.3 });
     if (!result) return null;
     const forces = result.data?.forces;
     if (!Array.isArray(forces) || forces.length < 4) {
@@ -1112,7 +1112,7 @@ Antworte NUR mit JSON:
 
   try {
     console.log(`[PESTEL] Generating PESTEL for ${ticker}`);
-    const result = await callLLMJson({ prompt, maxTokens: 900, temperature: 0.3 });
+    const result = await callLLMJson({ prompt, maxTokens: 1400, temperature: 0.3 });
     if (!result) return null;
     const dimensions = result.data?.dimensions;
     if (!Array.isArray(dimensions) || dimensions.length < 5) {

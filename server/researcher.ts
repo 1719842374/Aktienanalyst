@@ -1016,7 +1016,7 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
       // Cache miss or stale — run fresh
       console.log(`[BRIEFING] macro ${region}: cache miss, building fresh`);
       const data = await buildMacroPulse(region);
-      writeResearcherCache("macro", region, data);
+      if (!data.llmSynthesis?._fallback) writeResearcherCache("macro", region, data);
       return { region, data } as { region: string; data: MacroPulseResult };
     } catch (e: any) {
       console.error(`[BRIEFING] macro ${region} failed:`, e?.message);

@@ -13,7 +13,7 @@ export function Section4({ data }: Props) {
   const mrp = 5.5;
   const cod = 4.8;
   const taxRate = 0.21;
-  const debtRatio = data.totalDebt / (data.marketCap + data.totalDebt);
+  const debtRatio = (data.marketCap + data.totalDebt) > 0 ? data.totalDebt / (data.marketCap + data.totalDebt) : 0;
 
   // Use sector profile WACC scenarios as reference
   const waccFromProfile = sp.waccScenarios;
