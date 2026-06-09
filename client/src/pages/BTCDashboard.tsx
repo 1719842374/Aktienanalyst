@@ -907,6 +907,7 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
     return initial;
   });
   const [showSignals, setShowSignals] = useState(true);
+  const [showVolume, setShowVolume] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
 
   // Measurement tool state
@@ -1282,6 +1283,17 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
           {showSignals ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
           Signale
         </button>
+
+        {/* Volume toggle */}
+        <button
+          onClick={() => setShowVolume(!showVolume)}
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+            showVolume ? "border-sky-500 text-sky-400" : "border-border text-muted-foreground opacity-50"
+          }`}
+        >
+          {showVolume ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+          Volumen
+        </button>
       </div>
 
       {/* BTC-specific overlay toggles */}
@@ -1414,14 +1426,16 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
               }}
             />
 
-            {/* Volume overlay bars (normalised to 0–15% of price range, analog TechnicalChart) */}
-            <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={6}
-              shape={(props: any) => {
-                const { x, y, width, height, payload } = props;
-                const fillColor = payload._volUp ? "rgba(34,197,94,0.30)" : "rgba(239,68,68,0.30)";
-                return <rect x={x} y={y} width={Math.max(width, 1)} height={Math.abs(height)} fill={fillColor} />;
-              }}
-            />
+            {/* Volume overlay bars — sichtbar wenn showVolume aktiv */}
+            {showVolume && (
+              <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={6}
+                shape={(props: any) => {
+                  const { x, y, width, height, payload } = props;
+                  const fillColor = payload._volUp ? "rgba(34,197,94,0.30)" : "rgba(239,68,68,0.30)";
+                  return <rect x={x} y={y} width={Math.max(width, 1)} height={Math.abs(height)} fill={fillColor} />;
+                }}
+              />
+            )}
 
             {/* Price line */}
             <Line
