@@ -431,10 +431,15 @@ JSON:
   // issue with fewer objects and was raised from 2500 to 3500 (see line 793-795).
   const llm = await callLLMJson({ prompt, maxTokens: 4000 });
   if (!llm?.data?.trends || !Array.isArray(llm.data.trends)) {
+    // LLM failed (402 budget / timeout / empty) — return a _fallback result
+    // so the frontend shows a clear "credits / retry" message instead of the
+    // generic "KI nicht verfügbar" empty state, and the cache-poisoning guard
+    // (trends.length === 0) will prevent this from being written to disk.
     return {
       region, regionLabel, asOf: new Date().toISOString(),
-      trends: [], topPicks: [],
-    };
+      trends: [], topPicks: [], _fallback: true,
+      _fallbackReason: llm === null ? "OpenRouter 402 / credits exhausted" : "LLM returned no trends",
+    } as any;
   }
 
   // Hydrate with full label from MEGATRENDS_12 + clamp scores
