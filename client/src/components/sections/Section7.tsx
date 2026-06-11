@@ -29,7 +29,7 @@ export function Section7({ data }: Props) {
     { label: "P/E (TTM)", stock: data.peRatio, sector: data.sectorAvgPE, premium: trailingPEPremium, desc: "Aktuell" },
     { label: "Forward P/E", stock: data.forwardPE, sector: sectorFwdPE, premium: fwdPEPremium, desc: "Erwartet" },
     { label: "EV/EBITDA", stock: data.evEbitda, sector: data.sectorAvgEVEBITDA, premium: evEbitdaPremium, desc: "" },
-    { label: "PEG", stock: data.pegRatio, sector: data.sectorAvgPEG, premium: ((data.pegRatio / data.sectorAvgPEG) - 1) * 100, desc: "" },
+    { label: "PEG", stock: data.pegRatio, sector: data.sectorAvgPEG, premium: data.sectorAvgPEG > 0 ? ((data.pegRatio / data.sectorAvgPEG) - 1) * 100 : 0, desc: "" },
     { label: "Revenue Growth", stock: companyGrowth, sector: sectorGrowth, premium: companyGrowth - sectorGrowth, desc: "YoY vs. Branche", isGrowth: true },
   ] as const;
 
@@ -269,7 +269,8 @@ export function Section7({ data }: Props) {
             </div>
           </div>
         ) : (
-          /* PREMIUM: Show moat-justified vs speculative split */
+          <>
+          {/* PREMIUM: Show moat-justified vs speculative split */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-emerald-500/5 rounded-md p-3 border border-emerald-500/20">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Moat-Justified</div>
@@ -286,6 +287,13 @@ export function Section7({ data }: Props) {
               </div>
             </div>
           </div>
+          {speculative > 15 && fwdPEPremium < 5 && (
+            <div className="mt-2 text-[10px] text-amber-500/70 bg-amber-500/5 border border-amber-500/20 rounded px-2 py-1.5">
+              ⚠ <span className="font-semibold">Trailing vs. Forward:</span> Das Trailing-KGV zeigt +{formatNumber(speculative, 0)}% spekulative Prämie, aber das Forward-P/E liegt bei nur {fwdPEPremium >= 0 ? '+' : ''}{formatNumber(fwdPEPremium, 1)}% zum Sektor.
+              Mögliche Ursache: temporär gedrückte Gewinne (Sonderfaktoren, Investitionsphase). Der Premium Breakdown basiert auf TTM — bei normalisierten Earnings kann die Bewertung deutlich günstiger sein.
+            </div>
+          )}
+          </>
         )}
       </div>
 

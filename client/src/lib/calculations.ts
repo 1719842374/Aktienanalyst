@@ -48,7 +48,9 @@ export function calculateDCF(params: DCFParams): DCFResult {
 
   // Terminal value
   const terminalFCF = currentFCF * (1 + terminalG / 100);
-  const terminalValue = terminalFCF / (wacc / 100 - terminalG / 100);
+  const waccDecimalLeg = wacc / 100;
+  const gDecimalLeg = terminalG / 100;
+  const terminalValue = waccDecimalLeg > gDecimalLeg ? terminalFCF / (waccDecimalLeg - gDecimalLeg) : 0;
   const pvTerminal = terminalValue / Math.pow(1 + wacc / 100, 10);
   pvSum += pvTerminal;
   steps.push(`Terminal Value: FCF₁₁ = ${fmt(terminalFCF)}`);

@@ -345,7 +345,7 @@ Vollständig clientseitige Bitcoin-Bewertung — kein Backend nötig. Alle API-C
 | 7 | **Kategorien A-E** | Probability-Verteilung: Crash/Bear/Neutral/Bull/Euphorie |
 | 8 | **Zyklus-Einschätzung** | Position, Einstiegspunkt, Halving-Katalysator |
 | 9 | **Finale Schätzung** | 3M + 6M Preisrange, Outlook, Zusammenfassung |
-| 10 | **Technische Analyse** | Professioneller Chart (3M-5Y), alle MAs/EMAs, MACD, BTC-Overlays (2Y MA, Pi Cycle, 200W MA, Golden Ratio), Golden/Death Cross Erkennung |
+| 10 | **Technische Analyse** | Professioneller Chart (3M-5Y), alle MAs/EMAs, MACD, RSI(14), **Volumen-Overlay** (grün/rot, Binance OHLCV), BTC-Overlays (2Y MA, Pi Cycle, 200W MA, Golden Ratio), Golden/Death Cross Erkennung |
 | 11 | **Fear & Greed Index** | Halbkreis-Gauge, historischer Vergleich, farbkodierter 1J/3J/5J Verlauf |
 | 12 | **Umfassendes Gesamt-Fazit** | Zyklus, Technische Analyse, Makro/Geopolitik, Miner-Gesundheit, Bärenmarkt-Einschätzung |
 
@@ -381,6 +381,7 @@ Vollständig clientseitige Bitcoin-Bewertung — kein Backend nötig. Alle API-C
 | alternative.me | `/fng/?limit=2000` | Fear & Greed Index (bis 5+ Jahre History) |
 | mempool.space | `/v1/mining/hashrate/3m` | Hashrate (aktuell + 90d Trend) |
 | Binance (Vision) | `/ticker/24hr?symbol=EURUSDT` | EUR/USD für DXY-Approximation |
+| Binance | `/api/v3/klines?symbol=BTCUSDT&interval=1d` | Daily OHLCV inkl. **USD-Volumen** für das Chart-Volumen-Overlay (Fallback, wenn CoinGecko Free-Tier keine `total_volumes` liefert) |
 | FRED | `fredgraph.csv?id=FEDFUNDS` | Federal Funds Rate (CORS-limitiert, Fallback auf letzte bekannte Rate) |
 | GitHub (fadetocrypto) | `daily-crypto-reports` | Tägliche Farside Investors BTC-ETF Flows |
 
@@ -473,9 +474,13 @@ Der Researcher-Tab ist komplett separat vom Aktien-Analyzer und läuft **autonom
 - **🇪🇺 Europa**: Germany, France, Italy, Spain, Netherlands, UK
 - **🌏 Asien**: China, Japan, South Korea, India, Taiwan
 
-### Caching
+### Caching & Refresh-Verhalten
 
-Jede Researcher-Analyse wird **7 Tage** in `.cache/researcher/` gecacht (gleicher Standard wie die Haupt-Aktienanalyse). Pro Tab + Region + Parameter-Kombination ein Cache-Eintrag. **Force-Refresh** über den Refresh-Button im UI.
+- **TTL 6 Stunden** (`.cache/researcher/` Datei-Cache + SQLite Disk-Cache, der Neustarts übersteht). Pro Tab + Region + Parameter-Kombination ein Cache-Eintrag.
+- **Cache-Poisoning-Schutz**: Fallback-/Leer-Ergebnisse (LLM-Ausfall, 402, Truncation) werden NIE in den Cache geschrieben — `trends: []`, `candidates: []`, `_fallback: true` etc. blockieren den Write. Damit bleibt nach einem transienten OpenRouter-Fehler nicht stundenlang Platzhalter-Content hängen.
+- **Stale-while-refresh**: Ist ein Cache-Eintrag als stale erkannt (kein echter KI-Inhalt), wird er sofort ausgeliefert (`_staleRefreshing: true`) und parallel im Hintergrund neu gebaut. Das Frontend pollt **automatisch nach ~32s** das frische Ergebnis nach.
+- **Force-Refresh ("Aktualisieren")**: `{ force: true }` umgeht Cache UND laufende In-Flight-Builds — ein Klick startet garantiert einen frischen LLM-Build. Läuft der Build länger als der 30s-Proxy-Timeout (pplx.app), wartet der Client 40s und holt das Ergebnis dann aus dem Cache nach.
+- **In-Flight-Deduplizierung**: Parallele Anfragen für denselben Tab+Region teilen sich einen Build (außer bei `force: true`).
 
 ### Anti-Bias-Protokoll im Researcher
 
@@ -494,6 +499,8 @@ Automatischer täglicher Briefing-Service mit Net-New-Event-Erkennung gegen den 
 - **Endpoint**: `POST /api/researcher/daily-briefing`
 - **Daily Cache**: Berlin-Datum-keyed (`briefing-result.json`) — 1× LLM-Run pro Tag, danach <100ms Cache-Hits
 - **Force-Refresh**: `{ force: true }` im Body (z.B. via Cron)
+- **Cache-Guard**: Fallback-/Null-Briefings (LLM-Ausfall) werden nicht in den Tages-Cache geschrieben — der nächste Aufruf versucht automatisch einen frischen Build statt den Platzhalter bis Mitternacht zu zeigen
+- **Macro-Wiederverwendung**: Das Briefing nutzt die gecachten Macro-Pulse-Ergebnisse der 3 Regionen (max. 6h alt) statt 3 zusätzliche LLM-Calls zu feuern
 
 ### Diff-Logik
 
@@ -570,6 +577,36 @@ Die Logik ist **rein zahlenbasiert** — keine Hardcoded-Tickers oder Branchen-L
 
 ---
 
+## LLM-Integration (OpenRouter)
+
+Alle KI-Features laufen über **OpenRouter** mit **Claude 3.5 Haiku** (`anthropic/claude-3.5-haiku`, überschreibbar via `OPENROUTER_MODEL`).
+
+### Architektur-Prinzip
+
+**Hybrid**: Echte Zahlen kommen IMMER aus realen Datenquellen (Perplexity Finance API, FMP, Trading Economics). Das LLM macht ausschließlich **Synthese & Interpretation** — nie numerische Fakten generieren.
+
+### LLM-Features & Token-Budgets
+
+| Feature | maxTokens | Hinweis |
+|---------|-----------|---------|
+| Macro Pulse (Synthese + Key Events) | 2× 1400 | Zwei parallele Calls (Synthese / Events) |
+| Sector Opportunity (12 Megatrends) | 4000 | Großes Schema — niedrigere Limits führten zu JSON-Truncation und leeren Trends |
+| Screener-Ranking (Top 8) | 2000 | + PE-basiertes Fallback-Ranking wenn LLM ausfällt |
+| Capex & Fiscal (5 Sektoren, 4+ Programme) | 3500 | |
+| Daily Briefing | 2200 | |
+| Porter Five Forces / PESTEL | je 1400 | |
+| Katalysator-Deep-Dives, Risk-Erklärungen, Policy-Kontext | 1200–2000 | |
+| Wachstumsthese (3 Sätze) | 300 | |
+
+Harte Obergrenze pro Call: **4000 Tokens** (`callLLMJson`). Abgeschnittene JSON-Antworten werden per `salvageTruncatedJson` repariert.
+
+### Fehlerverhalten
+
+- **402 (Credits aufgebraucht)** / Timeout → Feature liefert ein `_fallback: true`-Ergebnis mit klarer Meldung, das NICHT gecacht wird. Sobald Credits/Verbindung zurück sind, baut der nächste Aufruf automatisch frisch.
+- Modell-Ausfälle durchlaufen eine Fallback-Kette (`callWithFallback`) mit Backoff bei 429/402.
+
+---
+
 ## Mobile-Support
 
 Alle Hauptseiten sind responsive mit **375px**-Mindestbreite getestet:
@@ -588,8 +625,10 @@ Alle Hauptseiten sind responsive mit **375px**-Mindestbreite getestet:
 |-----------|-------------|
 | **Frontend** | React 18, TypeScript, Tailwind CSS, shadcn/ui |
 | **Charts** | Recharts (ComposedChart, Line, Bar, Area, Pie) |
-| **Backend** | Express.js, Node.js (nur für Aktien-API) |
-| **BTC-Analyse** | Komplett clientseitig — kein Backend, alle API-Calls im Browser |
+| **Backend** | Express.js, Node.js (Aktien-API, Researcher, Briefing) |
+| **LLM** | OpenRouter → Claude 3.5 Haiku (Synthese/Interpretation, keine Zahlen) |
+| **Caching** | Datei-Cache (`.cache/`) + SQLite Disk-Cache (übersteht Neustarts) + `cache-seed.json` Auto-Export |
+| **BTC-Analyse** | Größtenteils clientseitig; Chart-Daten (Preise + Volumen) via Backend (CoinGecko/Binance) |
 | **Routing** | Wouter (Hash-basiert: `/#/btc`, `/#/gold`, `/#/recession`) |
 | **Build** | Vite, esbuild |
 | **Deploy** | Static Hosting (S3) |
@@ -601,21 +640,39 @@ stock-dashboard/
 ├── client/src/
 │   ├── pages/
 │   │   ├── Dashboard.tsx            # Aktien-Analyse (17 Sektionen)
-│   │   ├── BTCDashboard.tsx         # BTC-Analyse (12 Sektionen, ~2000 Zeilen)
+│   │   ├── Researcher.tsx           # Researcher-Modus (4 Tabs + Briefing-Modal)
+│   │   ├── ScreenerDashboard.tsx    # 13F-Holdings-Screener
+│   │   ├── Compare.tsx              # Side-by-side Ticker-Vergleich
+│   │   ├── BTCDashboard.tsx         # BTC-Analyse (12 Sektionen)
 │   │   ├── GoldDashboard.tsx        # Gold-Analyse
 │   │   └── RecessionDashboard.tsx   # Rezessions-Dashboard
 │   ├── components/sections/         # 17 Aktien-Analyse-Sektionen
-│   │   ├── Section1.tsx ... Section13.tsx
-│   │   └── TechnicalChart.tsx
+│   │   ├── Section1.tsx ... Section9.tsx
+│   │   ├── TechnicalChart.tsx       # Section 10 (Chart inkl. Volumen-Overlay)
+│   │   ├── MoatPorterSection.tsx    # Section 11
+│   │   ├── PestelSection.tsx        # Section 12
+│   │   ├── MacroCorrelationsSection.tsx  # Section 13
+│   │   ├── ReverseDCFSection.tsx    # Section 14
+│   │   ├── CatalystsSection.tsx     # Section 15
+│   │   ├── MonteCarloSection.tsx    # Section 16
+│   │   └── SummarySection.tsx       # Section 17
 │   ├── lib/
-│   │   ├── btcAnalysis.ts           # BTC Client-Side Analysis (~965 Zeilen)
+│   │   ├── btcAnalysis.ts           # BTC Client-Side Analysis
 │   │   ├── btcFallbackData.ts       # Fallback-Daten bei API-Ausfall
 │   │   ├── calculations.ts          # FCFF-DCF, CRV, RSL, Monte Carlo
 │   │   ├── formatters.ts            # Währung, Zahlen, Prozent
 │   │   └── utils.ts                 # Hilfsfunktionen
 │   └── App.tsx                      # Router (wouter, Hash-basiert)
 ├── server/
-│   └── routes.ts                    # Aktien-API Endpunkt /api/analyze
+│   ├── routes.ts                    # Aktien-API (/api/analyze, BTC, Katalysatoren, …)
+│   ├── researcher.ts                # Researcher-Backend (4 Tabs + Daily Briefing + Caching)
+│   ├── llm-openrouter.ts            # OpenRouter-Client (Claude 3.5 Haiku, JSON-Salvage, Fallback-Kette)
+│   ├── fmp.ts / fmp-fetcher.ts      # Financial Modeling Prep Integration
+│   ├── disk-cache.ts                # SQLite Disk-Cache (übersteht Neustarts)
+│   ├── recession.ts                 # Rezessions-Indikatoren
+│   ├── gold-routes.ts               # Gold-Analyse-API
+│   ├── regression-scan.ts           # Daily Regression Scan (DCF-Anomalien)
+│   └── pdf-export.ts                # PDF-Export der Analyse
 ├── shared/
 │   └── schema.ts                    # TypeScript-Interfaces
 ├── dist/public/                     # Build-Output (Static Site)
@@ -734,7 +791,18 @@ npm run build
 NODE_ENV=production node dist/index.cjs
 ```
 
-> **Hinweis:** Die Aktien-APIs benötigen Perplexity Computer Credentials. Die BTC-Analyse funktioniert komplett ohne Backend — alle API-Calls gehen direkt an öffentliche APIs (Blockchain.info, CoinGecko, alternative.me, mempool.space, Binance).
+### Environment-Variablen
+
+Vorlage: [`.env.example`](./.env.example). Die echte `.env` ist git-ignoriert — **API-Keys gehören nie ins Repo**.
+
+| Variable | Pflicht | Zweck |
+|----------|---------|-------|
+| `OPENROUTER_API_KEY` | Für alle KI-Features | Researcher, Daily Briefing, Katalysatoren, Porter/PESTEL, Investmentthese. Ohne Key laufen alle Analysen im Fallback-Modus ("LLM nicht verfügbar"). |
+| `OPENROUTER_MODEL` | Optional | Modell-Override (Default: `anthropic/claude-3.5-haiku`) |
+| `FMP_API_KEY` | Für Screener/Fundamentals | Financial Modeling Prep (Free Tier: 750 Calls/Tag) |
+| `PORT` / `NODE_ENV` | Optional | Server-Konfiguration |
+
+> **Deployment (Perplexity Computer / pplx.app):** Keys werden als Umgebungs-Credentials der Sandbox gesetzt — nicht in Dateien im Repo. Lokal: `.env` (von `.gitignore` abgedeckt). Die Perplexity Finance API (`external-tool` CLI) funktioniert ausschließlich in der Perplexity-Sandbox.
 
 ---
 

@@ -163,6 +163,28 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         </div>
       </div>
 
+      {/* Methodischer Hinweis: Monte Carlo (historisch) vs. DCF (fundamental) */}
+      {mcResult && (() => {
+        const mcExpectedReturn = (mcResult.expectedReturn ?? 0) * 100;
+        const dcfUpside = conservativeDCF.perShare > 0
+          ? ((conservativeDCF.perShare / data.currentPrice) - 1) * 100
+          : null;
+        const divergence = dcfUpside !== null ? mcExpectedReturn - dcfUpside : null;
+        if (divergence === null || Math.abs(divergence) < 20) return null;
+        return (
+          <div className="text-[10px] text-muted-foreground bg-muted/20 border border-border/50 rounded px-2 py-1.5">
+            <span className="font-semibold text-foreground/70">⚠ Monte Carlo vs. DCF:</span>{' '}
+            Monte Carlo (historisch-empirisch, μ aus Kursrenditen) impliziert{' '}
+            <span className={mcExpectedReturn >= 0 ? 'text-emerald-400' : 'text-red-400'}>{mcExpectedReturn >= 0 ? '+' : ''}{mcExpectedReturn.toFixed(1)}%</span>,
+            {' '}DCF (fundamental) impliziert{' '}
+            <span className={dcfUpside >= 0 ? 'text-emerald-400' : 'text-red-400'}>{dcfUpside >= 0 ? '+' : ''}{dcfUpside.toFixed(1)}%</span>
+            {' '}— Differenz {Math.abs(divergence).toFixed(0)} Pp.
+            Beide Methoden messen unterschiedliche Dinge: Monte Carlo extrapoliert historischen Kursimpuls,
+            DCF bewertet fundamentale Ertragskraft. Große Divergenz signalisiert: entweder Momentum-überschuss oder DCF-Annahmen zu konservativ.
+          </div>
+        );
+      })()}
+
       {/* Full Summary Table */}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -192,21 +214,21 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
               <td className="py-2 px-2 font-semibold">Conservative DCF (FCFF)</td>
               <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(conservativeDCF.perShare)}</td>
               <td className={`py-2 px-2 font-mono tabular-nums font-medium ${conservativeUpside >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                {conservativeUpside >= 0 ? '+' : ''}{formatNumber(conservativeUpside, 1)}% Upside
+                {conservativeUpside >= 0 ? '+' : ''}{formatNumber(conservativeUpside, 1)}% {conservativeUpside >= 0 ? 'Upside' : 'Downside'}
               </td>
             </tr>
             <tr className="bg-emerald-500/5">
               <td className="py-2 px-2 font-semibold">Optimistic DCF (FCFF)</td>
               <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(optimisticDCF.perShare)}</td>
               <td className={`py-2 px-2 font-mono tabular-nums font-medium ${optimisticUpside >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                {optimisticUpside >= 0 ? '+' : ''}{formatNumber(optimisticUpside, 1)}% Upside
+                {optimisticUpside >= 0 ? '+' : ''}{formatNumber(optimisticUpside, 1)}% {optimisticUpside >= 0 ? 'Upside' : 'Downside'}
               </td>
             </tr>
             <tr className="bg-red-500/5">
               <td className="py-2 px-2 font-semibold">Macro-Stress DCF (FCFF)</td>
               <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(stressDCF.perShare)}</td>
               <td className={`py-2 px-2 font-mono tabular-nums font-medium ${stressDownside >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                {stressDownside >= 0 ? '+' : ''}{formatNumber(stressDownside, 1)}% Downside
+                {stressDownside >= 0 ? '+' : ''}{formatNumber(stressDownside, 1)}% {stressDownside >= 0 ? 'Upside' : 'Downside'}
               </td>
             </tr>
             <SummaryRow label="Safety Margin DCF (30%)" value={formatCurrency(conservativeDCF.perShare * 0.7)} />

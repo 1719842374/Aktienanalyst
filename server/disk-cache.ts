@@ -10,7 +10,7 @@ const CACHE_TTL_DAYS = 7;
 const CACHE_TTL_MS = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 // Bump this string whenever DCF formulas, field names or Rechenweg-Labels change.
 // Any cached entry with a different version will be silently invalidated.
-const CACHE_SCHEMA_VERSION = "2026-06-07-v1";
+const CACHE_SCHEMA_VERSION = "2026-06-09-v1"; // Bumped: BTC volume fields added to technicalChartData
 // Researcher cache TTL: 1 day (was 7) — keep macro/fiscal/capex data fresh.
 const RESEARCHER_CACHE_TTL_MS = 1 * 24 * 60 * 60 * 1000;
 
@@ -40,27 +40,41 @@ function getDb(): Database.Database | null {
     `);
     console.log(`[DiskCache] SQLite opened at ${DB_PATH}`);
 
-    // Load seed cache if DB is empty (first deploy of fresh sandbox)
-    const rowCount = db.prepare('SELECT COUNT(*) as n FROM analysis_cache').get() as { n: number };
-    if (rowCount.n === 0) {
-      try {
-        const seedPath = path.join(process.cwd(), 'cache-seed.json');
-        if (require('fs').existsSync(seedPath)) {
-          const seeds = JSON.parse(require('fs').readFileSync(seedPath, 'utf-8')) as Array<{ ticker: string; data: any }>;
-          const insert = db.prepare('INSERT OR IGNORE INTO analysis_cache (ticker, data, created_at, updated_at) VALUES (?, ?, ?, ?)');
-          const now = new Date().toISOString();
-          let loaded = 0;
-          for (const seed of seeds) {
-            try {
-              insert.run(seed.ticker.toUpperCase(), JSON.stringify(seed.data), now, now);
-              loaded++;
-            } catch { /* ignore */ }
-          }
-          console.log(`[DiskCache] Loaded ${loaded} seed analyses from cache-seed.json`);
+    // Load seed cache — merge into DB on every start (not just when empty)
+    // This ensures re-deployed sandboxes always have the latest seed data
+    try {
+      const seedPath = path.join(process.cwd(), 'cache-seed.json');
+      const fs = require('fs');
+      if (fs.existsSync(seedPath)) {
+        const rawSeeds = JSON.parse(fs.readFileSync(seedPath, 'utf-8'));
+        // Support both formats: Array<{ticker,data}> and Array<{ticker,...fields}>
+        const seeds: Array<{ ticker: string; data: any }> = Array.isArray(rawSeeds)
+          ? rawSeeds.map((s: any) => ({
+              ticker: s.ticker,
+              // If seed has nested 'data', use it. Otherwise the whole object IS the data.
+              data: s.data ?? s,
+            }))
+          : [];
+        const upsert = db.prepare(`
+          INSERT INTO analysis_cache (ticker, data, created_at, updated_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(ticker) DO NOTHING
+        `);
+        const now = Date.now();
+        let loaded = 0;
+        for (const seed of seeds) {
+          if (!seed.ticker) continue;
+          try {
+            const versioned = { ...seed.data, _schemaVersion: CACHE_SCHEMA_VERSION };
+            // Use INSERT OR IGNORE — don't overwrite newer user-analysed entries
+            upsert.run(seed.ticker.toUpperCase(), JSON.stringify(versioned), now, now);
+            loaded++;
+          } catch { /* ignore */ }
         }
-      } catch (seedErr: any) {
-        console.warn(`[DiskCache] Seed load failed: ${seedErr?.message}`);
+        console.log(`[DiskCache] Merged ${loaded} seed entries from cache-seed.json`);
       }
+    } catch (seedErr: any) {
+      console.warn(`[DiskCache] Seed load failed: ${seedErr?.message}`);
     }
     return db;
   } catch (err: any) {
@@ -113,8 +127,36 @@ export function diskCacheSet(ticker: string, data: any): void {
       VALUES (?, ?, ?, ?)
       ON CONFLICT(ticker) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
     `).run(ticker, JSON.stringify(versioned), now, now);
+
+    // Auto-Export: cache-seed.json nach jeder neuen Analyse aktualisieren
+    // Damit sind alle analysierten Ticker beim nächsten Re-Deploy sofort verfügbar
+    exportCacheSeed(d);
   } catch (err: any) {
     console.warn(`[DiskCache] Write error for ${ticker}: ${err?.message}`);
+  }
+}
+
+// Exportiert alle aktuellen Cache-Einträge nach cache-seed.json
+function exportCacheSeed(d: Database.Database): void {
+  try {
+    const fs = require('fs');
+    const seedPath = path.join(process.cwd(), 'cache-seed.json');
+    const rows = d.prepare(
+      'SELECT ticker, data FROM analysis_cache WHERE updated_at > ?'
+    ).all(Date.now() - CACHE_TTL_MS) as Array<{ ticker: string; data: string }>;
+    const seeds = rows
+      .map(r => {
+        try {
+          const parsed = JSON.parse(r.data);
+          // Entferne Laufzeit-Felder die nicht in den Seed gehören
+          const { _cached, _cacheAge, _cacheDate, _diskCache, historicalPrices, ...seedData } = parsed;
+          return { ticker: r.ticker, data: seedData };
+        } catch { return null; }
+      })
+      .filter(Boolean);
+    fs.writeFileSync(seedPath, JSON.stringify(seeds, null, 2), 'utf-8');
+  } catch {
+    // Non-critical — kein Crash wenn Export fehlschlägt
   }
 }
 

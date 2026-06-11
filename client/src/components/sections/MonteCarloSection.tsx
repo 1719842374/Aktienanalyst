@@ -20,14 +20,47 @@ function MCInputField({ label, value, onChange, suffix, min, max, step = 0.01, t
   label: string; value: number; onChange: (v: number) => void;
   suffix?: string; min?: number; max?: number; step?: number; tooltip?: string;
 }) {
+  // Eigener Text-State: erlaubt Zwischenzustände beim Tippen ("-", "0.", "1.5")
+  // ohne sie sofort auf 0 zu parsen — sonst lassen sich negative/dezimale
+  // Werte praktisch nicht eingeben (Controlled-Input-Bug).
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => {
+    // Externe Änderungen (Reset, geteiltes Ergebnis etc.) synchronisieren —
+    // aber nur wenn der Wert sich tatsächlich von der aktuell editierten Eingabe unterscheidet.
+    if (parseFloat(text) !== value) setText(String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  function commit(raw: string) {
+    const parsed = parseFloat(raw);
+    if (raw.trim() !== "" && isFinite(parsed)) {
+      onChange(parsed);
+    } else {
+      // Ungültige/leere Eingabe beim Verlassen des Felds: auf letzten gültigen Wert zurücksetzen
+      setText(String(value));
+    }
+  }
+
   return (
     <div className="flex items-center gap-2">
       <label className="text-[10px] text-muted-foreground w-24 flex-shrink-0" title={tooltip}>{label}</label>
       <div className="relative flex-1">
         <input
-          type="number"
-          value={value}
-          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          type="text"
+          inputMode="decimal"
+          value={text}
+          onChange={(e) => {
+            const raw = e.target.value;
+            // Nur Ziffern, Minus, Punkt zulassen — Zwischenzustände wie "-", "0.", "-1." erlaubt
+            if (!/^-?\d*\.?\d*$/.test(raw)) return;
+            setText(raw);
+            const parsed = parseFloat(raw);
+            if (raw.trim() !== "" && raw !== "-" && !raw.endsWith(".") && isFinite(parsed)) {
+              onChange(parsed);
+            }
+          }}
+          onBlur={(e) => commit(e.target.value)}
           step={step}
           min={min}
           max={max}

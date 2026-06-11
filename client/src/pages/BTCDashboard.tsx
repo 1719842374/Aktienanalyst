@@ -907,6 +907,7 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
     return initial;
   });
   const [showSignals, setShowSignals] = useState(true);
+  const [showVolume, setShowVolume] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
 
   // Measurement tool state
@@ -937,19 +938,37 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
     return result;
   }, [filteredData]);
 
-  // Merge RSI(14) into chartData (server doesn't send rsi14)
+  // Merge RSI(14) + Volume into chartData
   const chartDataWithRSI = useMemo(() => {
     if (chartData.length === 0) return chartData;
     const prices = chartData.map(d => d.price);
     const rsiArr = calcRSI(prices);
-    // Volume normalisation for overlay (max 15% of price range)
-    const vols = chartData.map(d => d._volNorm ?? 0);
-    const maxVolNorm = Math.max(...vols, 1e-10);
+
+    // Volume: server liefert _volNorm (0-1 normalisiert) UND volume (absolut in USD)
+    // Falls _volNorm alle 0 sind (kein Volume vom Server), clientseitig aus volume berechnen
+    const rawVols = chartData.map(d => d.volume ?? 0);
+    const serverVolNorms = chartData.map(d => d._volNorm ?? 0);
+    const hasServerVol = serverVolNorms.some(v => v > 0);
+    const hasRawVol = rawVols.some(v => v > 0);
+
+    let volNorms: number[];
+    if (hasServerVol) {
+      // Server hat _volNorm bereits korrekt normalisiert — direkt nutzen
+      volNorms = serverVolNorms;
+    } else if (hasRawVol) {
+      // Fallback: clientseitig aus absolutem Volume normalisieren
+      const maxRawVol = Math.max(...rawVols);
+      volNorms = rawVols.map(v => maxRawVol > 0 ? v / maxRawVol : 0);
+    } else {
+      volNorms = chartData.map(() => 0);
+    }
+
     return chartData.map((d, i) => ({
       ...d,
       rsi14: rsiArr[i] ?? null,
-      // re-normalise _volNorm within the downsampled window
-      _volNorm: maxVolNorm > 0 ? (d._volNorm ?? 0) / maxVolNorm : 0,
+      _volNorm: volNorms[i] ?? 0,
+      // _volUp: grün wenn Preis gestiegen, rot wenn gefallen
+      _volUp: i === 0 ? true : prices[i] >= prices[i - 1],
     }));
   }, [chartData]);
 
@@ -1264,6 +1283,17 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
           {showSignals ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
           Signale
         </button>
+
+        {/* Volume toggle */}
+        <button
+          onClick={() => setShowVolume(!showVolume)}
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+            showVolume ? "border-sky-500 text-sky-400" : "border-border text-muted-foreground opacity-50"
+          }`}
+        >
+          {showVolume ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+          Volumen
+        </button>
       </div>
 
       {/* BTC-specific overlay toggles */}
@@ -1396,14 +1426,16 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
               }}
             />
 
-            {/* Volume overlay bars (normalised to 0–15% of price range, analog TechnicalChart) */}
-            <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={6}
-              shape={(props: any) => {
-                const { x, y, width, height, payload } = props;
-                const fillColor = payload._volUp ? "rgba(34,197,94,0.30)" : "rgba(239,68,68,0.30)";
-                return <rect x={x} y={y} width={Math.max(width, 1)} height={Math.abs(height)} fill={fillColor} />;
-              }}
-            />
+            {/* Volume overlay bars — sichtbar wenn showVolume aktiv */}
+            {showVolume && (
+              <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={6}
+                shape={(props: any) => {
+                  const { x, y, width, height, payload } = props;
+                  const fillColor = payload._volUp ? "rgba(34,197,94,0.30)" : "rgba(239,68,68,0.30)";
+                  return <rect x={x} y={y} width={Math.max(width, 1)} height={Math.abs(height)} fill={fillColor} />;
+                }}
+              />
+            )}
 
             {/* Price line */}
             <Line
