@@ -681,6 +681,92 @@ stock-dashboard/
 
 ---
 
+## Schnellstart mit Perplexity Computer
+
+Dieser Abschnitt richtet sich an neue Nutzer, die das Dashboard in **Perplexity Computer** betreiben möchten.
+
+### Voraussetzungen
+
+| Was | Wo | Kosten |
+|-----|----|--------|
+| Perplexity Pro-Abo mit Computer-Zugang | perplexity.ai/pro | ab $20/Monat |
+| OpenRouter-Account + Credits | openrouter.ai | mind. $5 Guthaben (LLM-Calls) |
+| FMP API-Key (Free Tier) | financialmodelingprep.com | kostenlos (750 Calls/Tag) |
+
+---
+
+### Schritt 1 — OpenRouter API-Key erstellen
+
+1. Registriere dich auf **openrouter.ai**
+2. Gehe zu **Credits** → Lade mind. **$5** auf (reicht für hunderte Analysen mit Claude 3.5 Haiku)
+3. Gehe zu **Keys** → **Create Key**
+4. Name: `Stock_Analyst_Prod`
+5. Kopiere den Key (beginnt mit `sk-or-...`) — er wird nur einmal angezeigt
+
+---
+
+### Schritt 2 — FMP API-Key holen
+
+1. Gehe auf **financialmodelingprep.com**
+2. Erstelle ein kostenloses Konto
+3. Dashboard → **API Key** kopieren
+
+---
+
+### Schritt 3 — Keys in Perplexity Computer als Secrets setzen
+
+Gehe in Perplexity Computer zu **Settings → Environment Variables** und füge hinzu:
+
+| Key | Wert |
+|-----|------|
+| `OPENROUTER_API_KEY` | `sk-or-...` (dein OpenRouter-Key) |
+| `FMP_API_KEY` | dein FMP-Key |
+
+> **Wichtig:** Keys niemals in Code oder Git committen. Nur als Sandbox-Secrets speichern.
+
+---
+
+### Schritt 4 — Prompt für Perplexity Computer (Copy-Paste)
+
+Öffne **Perplexity Computer** und füge folgenden Prompt ein:
+
+```
+Bitte führe folgende Schritte aus um das Aktienanalyst-Dashboard zu starten:
+
+1. Klone das Repository:
+   git clone https://github.com/1719842374/Aktienanalyst.git
+   cd Aktienanalyst
+
+2. Installiere die Abhängigkeiten und baue das Projekt:
+   npm install
+   npm run build
+
+3. Starte den Server im Produktionsmodus:
+   NODE_ENV=production node dist/index.cjs
+
+Das Dashboard läuft dann auf Port 5000. Öffne http://localhost:5000 im Browser.
+
+Hinweis: Die Umgebungsvariablen OPENROUTER_API_KEY und FMP_API_KEY müssen als
+Sandbox-Secrets gesetzt sein (Settings → Environment Variables). Ohne diese Keys
+laufen KI-Features im Fallback-Modus.
+```
+
+---
+
+### Schritt 5 — Update auf neuesten Stand
+
+Wenn neue Commits im Repo verfügbar sind, in Perplexity Computer:
+
+```
+Führe folgende Befehle im Ordner Aktienanalyst aus:
+git pull origin main
+npm install
+npm run build
+NODE_ENV=production node dist/index.cjs
+```
+
+---
+
 ## Installation & Entwicklung
 
 ### Voraussetzungen
