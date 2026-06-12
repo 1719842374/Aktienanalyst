@@ -22,7 +22,7 @@ export function Section4({ data }: Props) {
   const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
   const evFrac = (100 - debtRatioVal) / 100;
   const dvFrac = debtRatioVal / 100;
-  const debtCostPart = dvFrac * cod * (1 - 0.21);
+  const debtCostPart = dvFrac * cod * (1 - taxRate);
   const impliedBeta = Math.max(0.5, Math.min(1.8,
     (waccFromProfile.avg - debtCostPart - evFrac * rfr) / (evFrac * mrp)
   ));

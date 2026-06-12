@@ -60,7 +60,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   // M2: größter Einzelrisiko-Impact (brutto) aus der Risikoinversion, Fallback 35% — identisch mit Section6
   const m2Impact = data.risks?.length ? Math.max(...data.risks.map(r => Math.abs(r.impact))) : 35;
   const m2 = worstCaseM2(data.currentPrice, m2Impact);
-  const m3 = worstCaseM3(data.currentPrice, data.sectorMaxDrawdown);
+  const m3 = worstCaseM3(data.currentPrice, data.sectorMaxDrawdown || 35);
   const worstCase = Math.min(m1, m2, m3);
 
   const prices26w = useMemo(() => {

@@ -35,7 +35,12 @@ function MCInputField({ label, value, onChange, suffix, min, max, step = 0.01, t
   function commit(raw: string) {
     const parsed = parseFloat(raw);
     if (raw.trim() !== "" && isFinite(parsed)) {
-      onChange(parsed);
+      // Clamp to [min, max] on blur so the stored value can never exceed bounds
+      const clamped = (min != null && max != null)
+        ? Math.max(min, Math.min(max, parsed))
+        : (min != null ? Math.max(min, parsed) : (max != null ? Math.min(max, parsed) : parsed));
+      setText(String(clamped));
+      onChange(clamped);
     } else {
       // Ungültige/leere Eingabe beim Verlassen des Felds: auf letzten gültigen Wert zurücksetzen
       setText(String(value));
@@ -175,7 +180,7 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
             <MCInputField
               label="μ (Drift p.a.)"
               value={inputs.mu}
-              onChange={(v) => setInputs(p => ({ ...p, mu: v }))}
+              onChange={(v) => setInputs(p => ({ ...p, mu: Math.max(-1, Math.min(2, v)) }))}
               suffix=""
               min={-1}
               max={2}
@@ -185,7 +190,7 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
             <MCInputField
               label="σ (Vol. p.a.)"
               value={inputs.sigma}
-              onChange={(v) => setInputs(p => ({ ...p, sigma: v }))}
+              onChange={(v) => setInputs(p => ({ ...p, sigma: Math.max(0.01, Math.min(3, v)) }))}
               suffix=""
               min={0.01}
               max={3}
