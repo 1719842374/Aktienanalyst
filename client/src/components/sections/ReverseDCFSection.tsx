@@ -1,7 +1,7 @@
 import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { calculateReverseDCF } from "../../lib/calculations";
+import { calculateReverseDCF, calculateFCFFDCF, buildDefaultDCFParams } from "../../lib/calculations";
 import { formatNumber, formatPercentNoSign } from "../../lib/formatters";
 import { useMemo } from "react";
 
@@ -11,16 +11,21 @@ export function ReverseDCFSection({ data }: Props) {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
 
+  // WACC: identisch mit Section 17 (SummarySection) — CAPM-WACC des DCF-Modells
+  // via buildDefaultDCFParams, damit g* in Sektion 14 und 17 übereinstimmt.
+  const baseParams = useMemo(() => buildDefaultDCFParams(data), [data.ticker]);
+  const dcfWacc = useMemo(() => calculateFCFFDCF(baseParams).wacc, [baseParams]);
+
   const result = useMemo(() => calculateReverseDCF({
     currentPrice: data.currentPrice,
     fcfBase: data.fcfTTM,
-    wacc: sp.waccScenarios.avg,
+    wacc: dcfWacc,
     sharesOutstanding: data.sharesOutstanding,
     netDebt,
-    fcfHaircut: sp.fcfHaircut ?? 0,
+    fcfHaircut: data.fcfHaircut ?? 0,
     sectorG1: sp.growthAssumptions?.g1 ?? 0,
     epsGrowthNext5Y: data.epsGrowth5Y ?? 0,
-  }), [data, sp, netDebt]);
+  }), [data, sp, netDebt, dcfWacc]);
 
   const ratingColor =
     result.rating === "realistic" ? "text-emerald-500" :
@@ -86,8 +91,9 @@ export function ReverseDCFSection({ data }: Props) {
         `EV = Price × Shares + Net Debt`,
         `EV = $${formatNumber(data.currentPrice)} × ${formatNumber(data.sharesOutstanding / 1e9, 2)}B + $${formatNumber(netDebt / 1e9, 2)}B`,
         `EV = $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
-        ...(sp.fcfHaircut ? [`FCF (nach ${sp.fcfHaircut}% Haircut) = $${formatNumber(data.fcfTTM * (1 - (sp.fcfHaircut ?? 0) / 100) / 1e9, 2)}B`] : []),
-        `g* = WACC - FCF/EV = ${formatPercentNoSign(sp.waccScenarios.avg)} - $${formatNumber(data.fcfTTM * (1 - (sp.fcfHaircut ?? 0) / 100) / 1e9, 2)}B / $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
+        ...(data.fcfHaircut ? [`FCF (nach ${data.fcfHaircut}% Haircut) = $${formatNumber(data.fcfTTM * (1 - (data.fcfHaircut ?? 0) / 100) / 1e9, 2)}B`] : []),
+        `WACC = ${formatPercentNoSign(dcfWacc)} (CAPM-WACC des DCF-Modells, Sektion 5 — identisch mit Sektion 17)`,
+        `g* = WACC - FCF/EV = ${formatPercentNoSign(dcfWacc)} - $${formatNumber(data.fcfTTM * (1 - (data.fcfHaircut ?? 0) / 100) / 1e9, 2)}B / $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
         `g* = ${formatPercentNoSign(result.impliedGrowth)}`,
         `Referenzwachstum = max(Sektor g1 ${formatPercentNoSign(sp.growthAssumptions?.g1 ?? 0)}, EPS-5J ${formatPercentNoSign(data.epsGrowth5Y ?? 0)}, 3%) = ${formatPercentNoSign(result.referenceGrowth)}`,
         `Rating: g* ${result.rating === "unrealistic" ? ">" : result.rating === "sportlich" ? ">" : "≤"} ${result.rating === "unrealistic" ? "1,5×" : result.rating === "sportlich" ? "1×" : "1×"} Referenz → ${ratingLabel}`,

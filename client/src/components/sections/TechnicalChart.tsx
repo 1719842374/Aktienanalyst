@@ -109,14 +109,18 @@ export function TechnicalChart({ data }: Props) {
     };
   }, [ti.maData, ti.macdData, ohlcv, timeRange]);
 
-  // ── Bollinger + RSI (computed from filtered closes) ─────────────────────────
+  // ── Bollinger + RSI (computed on FULL history, then sliced — values must not
+  //    change when the user switches the time range) ────────────────────────────
   const { bollingerArr, rsiArr } = useMemo(() => {
-    const closes = filteredData.ma.map(d => d.close);
+    const fullCloses = ti.maData.map(d => d.close);
+    const fullBB  = calcBollinger(fullCloses);
+    const fullRSI = calcRSI(fullCloses);
+    const offset = ti.maData.length - filteredData.ma.length;
     return {
-      bollingerArr: calcBollinger(closes),
-      rsiArr:       calcRSI(closes),
+      bollingerArr: fullBB.slice(offset),
+      rsiArr:       fullRSI.slice(offset),
     };
-  }, [filteredData.ma]);
+  }, [ti.maData, filteredData.ma.length]);
 
   // ── Merged chart data (date-keyed MACD + OHLCV + BB + RSI + signals) ────────
   const chartData = useMemo(() => {
@@ -217,6 +221,13 @@ export function TechnicalChart({ data }: Props) {
     : "0 / 4 Bedingungen – kein Kaufsignal";
 
   // ── Y-axis domain for price chart ───────────────────────────────────────────
+  if (chartData.length === 0) {
+    return (
+      <SectionCard id={10} title="Technische Analyse" subtitle="Chart & Signale">
+        <div className="text-center text-muted-foreground text-xs py-8">Keine Daten im gewählten Zeitraum</div>
+      </SectionCard>
+    );
+  }
   const priceMin = Math.min(...chartData.map(d => {
     let min = d.close;
     MA_LINES.forEach(ma => { const v = d[ma.key as keyof typeof d] as number|undefined; if (v && visibleMAs.has(ma.key) && v < min) min = v; });
@@ -425,7 +436,8 @@ export function TechnicalChart({ data }: Props) {
             <XAxis dataKey="date" tickFormatter={formatDate} tick={{fontSize:9,fill:"var(--muted-foreground)"}} interval={Math.floor(chartData.length/8)} axisLine={{stroke:"var(--border)"}}/>
             <YAxis yAxisId="price" domain={[priceMin-pricePadding, priceMax+pricePadding]} tick={{fontSize:9,fill:"var(--muted-foreground)"}} tickFormatter={(v:number)=>`$${v.toFixed(0)}`} width={52} axisLine={{stroke:"var(--border)"}}/>
             {/* Hidden right axis for volume normalisation */}
-            <YAxis yAxisId="vol" hide domain={[0,1]} orientation="right"/>
+            {/* Domain [0, 6.67]: tallest volume bar fills 1/6.67 ≈ 15% of chart height */}
+            <YAxis yAxisId="vol" hide domain={[0, 6.67]} orientation="right"/>
 
             <Tooltip content={({ active, payload }) => {
               if (!active||!payload?.length) return null;
@@ -471,10 +483,6 @@ export function TechnicalChart({ data }: Props) {
             }}/>
 
             {/* Volume overlay bars (normalised to 0–15% of price range) */}
-            {showVolume && chartData.map((d, i) => {
-              // Render via a transparent Bar + custom shape approach
-              return null; // rendered below via <Bar>
-            })}
             {showVolume && (
               <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={8}
                 shape={(props: any) => {

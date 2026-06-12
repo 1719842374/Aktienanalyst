@@ -56,9 +56,9 @@ export function Section9({ data }: Props) {
           {/* Visual gauge bar */}
           <div className="w-full mt-4 relative">
             <div className="h-3 rounded-full bg-muted/50 overflow-hidden flex">
-              <div className="h-full bg-red-500/30 flex-1" />
-              <div className="h-full bg-amber-500/30 flex-1" />
-              <div className="h-full bg-emerald-500/30 flex-1" />
+              <div className="h-full bg-red-500/30" style={{ width: '37.5%' }} />
+              <div className="h-full bg-amber-500/30" style={{ width: '12.5%' }} />
+              <div className="h-full bg-emerald-500/30" style={{ width: '50%' }} />
             </div>
             {/* Marker */}
             <div

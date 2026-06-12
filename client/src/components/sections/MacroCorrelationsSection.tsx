@@ -60,7 +60,7 @@ export function MacroCorrelationsSection({ data }: Props) {
     Mittel: { bg: "bg-amber-500/5 border-amber-500/20", text: "text-amber-500" },
     Niedrig: { bg: "bg-emerald-500/5 border-emerald-500/20", text: "text-emerald-500" },
   };
-  const sensStyle = sensColors[mc.overallMacroSensitivity];
+  const sensStyle = sensColors[mc.overallMacroSensitivity] ?? sensColors.Mittel;
 
   return (
     <SectionCard number={13} title="MAKRO-KORRELATIONEN & INDEX-SENSITIVITÄT">
@@ -94,7 +94,7 @@ export function MacroCorrelationsSection({ data }: Props) {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {mc.correlations
+              {[...mc.correlations]
                 .sort((a, b) => {
                   const strengthOrder = { Stark: 0, Moderat: 1, Schwach: 2 };
                   return (strengthOrder[a.strength] ?? 2) - (strengthOrder[b.strength] ?? 2);

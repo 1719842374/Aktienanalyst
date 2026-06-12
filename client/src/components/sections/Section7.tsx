@@ -19,8 +19,8 @@ export function Section7({ data }: Props) {
   const companyGrowth = data.tamAnalysis?.companyGrowth ?? 0;
   const sectorGrowth = data.tamAnalysis?.tamCAGR ?? 5;
 
-  // Estimate moat-justified vs speculative premium/discount (based on trailing P/E)
-  const isDiscount = trailingPEPremium < 0;
+  // Discount panel shows Forward P/E values → base decision on fwdPEPremium
+  const isDiscount = fwdPEPremium < 0;
   const moatMaxPremium = data.moatRating === "Wide" ? 30 : data.moatRating === "Narrow-Wide" ? 20 : data.moatRating === "Narrow" ? 15 : 0;
   const moatJustified = isDiscount ? 0 : Math.min(trailingPEPremium, moatMaxPremium);
   const speculative = trailingPEPremium - moatJustified;
@@ -50,8 +50,8 @@ export function Section7({ data }: Props) {
           <tbody className="divide-y divide-border/50">
             {metrics.map((m, i) => {
               const isGrowthRow = 'isGrowth' in m && m.isGrowth;
-              // For valuation metrics (P/E, EV/EBITDA, PEG): lower = better (green), higher = worse (amber)
-              // For growth metrics: higher = better (green), lower = worse (amber)
+              // For valuation metrics with negative stock value (loss-making): premium meaningless
+              const stockInvalid = !isGrowthRow && m.stock <= 0;
               const premiumColor = isGrowthRow
                 ? (m.premium >= 0 ? 'text-emerald-500' : 'text-red-500')
                 : (m.premium > 0 ? 'text-amber-500' : 'text-emerald-500');
@@ -62,13 +62,13 @@ export function Section7({ data }: Props) {
                     {m.desc && <span className="text-[9px] text-muted-foreground ml-1">({m.desc})</span>}
                   </td>
                   <td className="py-2 px-2 text-right font-mono tabular-nums font-semibold">
-                    {isGrowthRow ? (m.stock >= 0 ? '+' : '') : ''}{formatNumber(m.stock, 1)}{isGrowthRow ? '%' : ''}
+                    {stockInvalid ? <span className="text-muted-foreground">n/a</span> : <>{isGrowthRow ? (m.stock >= 0 ? '+' : '') : ''}{formatNumber(m.stock, 1)}{isGrowthRow ? '%' : ''}</>}
                   </td>
                   <td className="py-2 px-2 text-right font-mono tabular-nums text-muted-foreground">
-                    {isGrowthRow ? '+' : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}
+                    {isGrowthRow ? (m.sector >= 0 ? '+' : '') : ''}{formatNumber(m.sector, 1)}{isGrowthRow ? '%' : ''}
                   </td>
-                  <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${premiumColor}`}>
-                    {m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}
+                  <td className={`py-2 px-2 text-right font-mono tabular-nums font-medium ${stockInvalid ? 'text-muted-foreground' : premiumColor}`}>
+                    {stockInvalid ? '—' : <>{m.premium >= 0 ? '+' : ''}{formatNumber(m.premium, 1)}{isGrowthRow ? ' Pkt.' : '%'}</>}
                   </td>
                 </tr>
               );
@@ -210,7 +210,7 @@ export function Section7({ data }: Props) {
                   />
                 </div>
                 <span className="text-[10px] font-mono tabular-nums font-semibold w-14 text-right text-primary">
-                  +{formatNumber(tam.tamCAGR, 1)}%
+                  {tam.tamCAGR >= 0 ? '+' : ''}{formatNumber(tam.tamCAGR, 1)}%
                 </span>
               </div>
               <div className={`flex items-center gap-1.5 text-[10px] mt-1 ${tam.outperforming ? 'text-emerald-500' : 'text-amber-500'}`}>

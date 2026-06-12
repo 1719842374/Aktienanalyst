@@ -27,11 +27,12 @@ function findBest(values: (number | null)[], lowerIsBetter: boolean): number | n
 
 export default function PeerComparison({ data }: { data: StockAnalysis }) {
   const pc = data.peerComparison;
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
   if (!pc || !pc.peers || pc.peers.length === 0) return null;
 
   const { subject, peers, peerAvg, sectorMedian } = pc;
-  const [sortKey, setSortKey] = useState<SortKey | null>(null);
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   // Columns config
   const cols: { key: SortKey; label: string; lowerIsBetter: boolean; decimals: number; suffix: string }[] = [

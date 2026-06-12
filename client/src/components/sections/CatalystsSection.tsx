@@ -1,7 +1,7 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { formatNumber, formatCurrency } from "../../lib/formatters";
-import { calculateFCFFDCF, type FCFFDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
+import { calculateFCFFDCF, buildDefaultDCFParams, selectCatalystBase } from "../../lib/calculations";
 import React from "react";
 import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, TrendingUp, Globe, AlertTriangle, Sparkles, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
@@ -87,55 +87,12 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
     }
   }
 
-  // Compute conservative FCFF DCF (same defaults as Section5/Section13)
-  const netDebt = data.totalDebt - data.cashEquivalents;
-  const sp = data.sectorProfile;
-  const ebitMarginDefault = data.operatingIncome > 0 && data.revenue > 0
-    ? +((data.operatingIncome / data.revenue) * 100).toFixed(1)
-    : data.ebitda > 0 && data.revenue > 0
-      ? +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1) : 15;
-  // Aligned with Section2 so the conservative DCF per-share is identical across sections
-  const fsCapex = data.financialStatements?.cashFlow?.capex;
-  const capexDefault = fsCapex && fsCapex > 0 && data.revenue > 0
-    ? +Math.max(2, Math.min(25, (fsCapex / data.revenue) * 100)).toFixed(1)
-    : data.revenue > 0 && data.ebitda > 0 && data.operatingIncome > 0
-      ? +Math.max(2, Math.min(20, ((data.ebitda - data.operatingIncome) / data.revenue) * 100)).toFixed(1)
-      : 5;
-  const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
-  const rf = 4.2, erp = 5.5, taxR = 21, rd = 5.0;
-  const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
-  const evFrac = (100 - debtRatioVal) / 100;
-  const dvFrac = debtRatioVal / 100;
-  const targetWACC = sp.waccScenarios.avg;
-  const debtCostPart = dvFrac * rd * (1 - taxR / 100);
-  const impliedBeta = Math.max(0.5, Math.min(1.8,
-    (targetWACC - debtCostPart - evFrac * rf) / (evFrac * erp)
-  ));
-  const dcfBeta = +Math.min(impliedBeta, data.beta5Y + 0.1).toFixed(2);
+  // Compute conservative FCFF DCF — shared defaults via buildDefaultDCFParams
+  // (same single source of truth as Section2/Section5/Section6, inkl. `rsl`)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const dcfParams = useMemo(() => buildDefaultDCFParams(data), [data.ticker]);
 
-  const conservativeDCF = useMemo(() => calculateFCFFDCF({
-    revenueBase: data.revenue,
-    revenueGrowthP1: revenueGrowthDefault,
-    revenueGrowthP2: Math.max(3, +(revenueGrowthDefault * 0.6).toFixed(1)),
-    ebitMargin: ebitMarginDefault,
-    ebitMarginTerminal: +Math.max(8, ebitMarginDefault * 0.9).toFixed(1),
-    capexPct: capexDefault,
-    deltaWCPct: 5,
-    taxRate: taxR,
-    daRatio: +Math.max(2, capexDefault * 0.8).toFixed(1),
-    riskFreeRate: rf,
-    beta: dcfBeta,
-    erp,
-    debtRatio: debtRatioVal,
-    costOfDebt: rd,
-    terminalG: sp.growthAssumptions.terminal || 2.5,
-    sharesOutstanding: data.sharesOutstanding,
-    netDebt,
-    minorityInterests: 0,
-    fcfHaircut: data.fcfHaircut,
-    actualEPS: data.epsTTM,
-    forwardEPS: data.epsConsensusNextFY,
-  }), [data]);
+  const conservativeDCF = useMemo(() => calculateFCFFDCF(dcfParams), [dcfParams]);
 
   // Smart Catalyst-Base-Selektor (Plausibilitäts-Gate — verhindert unsinnige
   // negative Catalyst-Targets bei Aktien mit verzerrt-niedrigem DCF)
@@ -353,7 +310,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
                           <div className="space-y-1.5">
                             <div>
                               <span className="font-semibold text-foreground/80">PoS-Herleitung:</span>{' '}
-                              Historische Erfolgsrate vergleichbarer Katalysatoren im {data.sector}-Sektor ~{c.pos + 10}%, abzüglich 10% Sicherheitsmarge → {c.pos}%.
+                              PoS-Schätzung: {c.pos}% (konservative Heuristik inkl. 10–15% Sicherheitsmarge).
                               {c.pos >= 70 && ' Hohe Eintrittswahrscheinlichkeit — Katalysator ist strukturell/regulatorisch unterstützt.'}
                               {c.pos >= 40 && c.pos < 70 && ' Moderate Wahrscheinlichkeit — hängt von Marktkondition und Execution ab.'}
                               {c.pos < 40 && ' Niedrige Wahrscheinlichkeit — spekulativ, aber hoher Payoff bei Eintreten.'}
