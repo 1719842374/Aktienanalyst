@@ -344,7 +344,17 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
                   }}
                 />
                 <ReferenceLine
-                  x={`$${data.currentPrice.toFixed(0)}`}
+                  x={(() => {
+                    // Bin labels are "$<binStart>" — pick the bin whose start is closest
+                    // to the current price so the line actually renders on the category axis
+                    let best = result.histogram[0]?.bin;
+                    let bestDist = Infinity;
+                    for (const h of result.histogram) {
+                      const d = Math.abs(parseFloat(h.bin.replace('$', '')) - data.currentPrice);
+                      if (d < bestDist) { bestDist = d; best = h.bin; }
+                    }
+                    return best;
+                  })()}
                   stroke="hsl(217 91% 60%)"
                   strokeDasharray="3 3"
                   label={{ value: 'Current', fill: 'hsl(217 91% 60%)', fontSize: 10 }}
