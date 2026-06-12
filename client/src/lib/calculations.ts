@@ -195,6 +195,10 @@ export interface FCFFDCFParams {
 // We apply the midpoint of that stated range so the DCF Rechenweg matches Section 9's claim.
 export const RSL_MOMENTUM_MALUS_PCT = 7.5;
 
+// WACC sanity bounds — single source for calculation AND Rechenweg text.
+const WACC_FLOOR = 5.0;
+const WACC_CEIL = 20.0;
+
 export interface FCFFDCFResult {
   enterpriseValue: number;
   equityValue: number;
@@ -236,8 +240,6 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   if (useOverride) {
     wacc = params.waccOverride!;
   } else {
-    const WACC_FLOOR = 5.0;
-    const WACC_CEIL = 20.0;
     wacc = Math.max(WACC_FLOOR, Math.min(WACC_CEIL, rawWacc));
     waccWasCapped = Math.abs(wacc - rawWacc) > 0.01;
   }
@@ -251,7 +253,7 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     steps.push(`WACC (raw) = E/V × Re + D/V × Rd × (1-t) = ${(ev * 100).toFixed(0)}% × ${rawRe.toFixed(2)}% + ${(dv * 100).toFixed(0)}% × ${Rd}% × (1 - ${params.taxRate}%)`);
     steps.push(`WACC (raw) = ${rawWacc.toFixed(2)}%`);
     if (waccWasCapped) {
-      steps.push(`⚠ WACC-Sanity-Cap: ${rawWacc.toFixed(2)}% → ${wacc.toFixed(2)}% (Bounds: 3%-20%)`);
+      steps.push(`⚠ WACC-Sanity-Cap: ${rawWacc.toFixed(2)}% → ${wacc.toFixed(2)}% (Bounds: ${WACC_FLOOR}%-${WACC_CEIL}%)`);
       steps.push(`  Grund: CAPM liefert Wert außerhalb des plausiblen Bereichs.`);
     }
   }
@@ -308,7 +310,7 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     if (y <= 5 || y === 10) {
       steps.push(`  Y${y}: Rev ${fmt(revenue)} (g=${growthRate}%), EBIT-M ${ebitMargin.toFixed(1)}%, FCFF ${fmt(fcff)}, PV ${fmt(pvFCFF)}`);
     } else if (y === 6) {
-      steps.push(`  Y6-9: Phase 2 Growth = ${params.revenueGrowthP2}%`);
+      steps.push(`  Y6-9: Phase 2 Growth = ${adjGrowthP2.toFixed(2)}%${rslActive ? " (RSL-adjustiert)" : ""}`);
     }
 
     prevRevenue = revenue;
@@ -493,11 +495,19 @@ export function gbmMonteCarlo(
   const binSize = (max - min) / binCount;
   const histogram: { bin: string; count: number }[] = [];
 
-  for (let i = 0; i < binCount; i++) {
-    const binStart = min + i * binSize;
-    const binEnd = binStart + binSize;
-    const count = finalPrices.filter((r) => r >= binStart && r < binEnd).length;
-    histogram.push({ bin: `$${binStart.toFixed(0)}`, count });
+  if (binSize === 0) {
+    // Alle Endpreise identisch (z.B. σ = 0) — ein einzelner Bin mit allen Pfaden
+    histogram.push({ bin: `$${min.toFixed(0)}`, count: finalPrices.length });
+  } else {
+    for (let i = 0; i < binCount; i++) {
+      const binStart = min + i * binSize;
+      const binEnd = binStart + binSize;
+      // Letzter Bin inklusiv — sonst fällt der Maximalwert aus dem Histogramm
+      const count = finalPrices.filter((r) =>
+        r >= binStart && (i === binCount - 1 ? r <= binEnd : r < binEnd)
+      ).length;
+      histogram.push({ bin: `$${binStart.toFixed(0)}`, count });
+    }
   }
 
   return {
@@ -522,15 +532,20 @@ export function calculateGBMParams(prices: number[]): { mu: number; sigma: numbe
   const meanDaily = logReturns.reduce((s, r) => s + r, 0) / logReturns.length;
   const varDaily = logReturns.reduce((s, r) => s + (r - meanDaily) ** 2, 0) / logReturns.length;
 
-  const mu = meanDaily * 252;
   const sigma = Math.sqrt(varDaily * 252);
+  // Der Mittelwert der Log-Returns schätzt bereits den Log-Drift (μ - σ²/2).
+  // Wir geben den arithmetischen Drift μ zurück, da gbmMonteCarlo σ²/2 wieder abzieht
+  // (drift = μ - 0.5σ²) — sonst würde σ²/2 doppelt reduziert.
+  const mu = meanDaily * 252 + 0.5 * sigma * sigma;
 
   return { mu: +mu.toFixed(4), sigma: +sigma.toFixed(4) };
 }
 
 // === RSL Calculation ===
-export function calculateRSL(currentPrice: number, prices26w: number[]): number {
-  if (prices26w.length === 0) return 100;
+// Gibt null zurück, wenn keine ausreichende Kurshistorie vorliegt (< 60 Datenpunkte) —
+// sonst würde ein Default von 100 fälschlich den RSL-Malus (< 105) im DCF aktivieren.
+export function calculateRSL(currentPrice: number, prices26w: number[]): number | null {
+  if (prices26w.length < 60) return null;
   const avg = prices26w.reduce((s, v) => s + v, 0) / prices26w.length;
   return (currentPrice / avg) * 100;
 }
@@ -608,7 +623,7 @@ export function calculateRiskAdjustedCRV(
   currentPrice: number,
   totalExpectedDamage: number,   // 0–100
 ): number {
-  const riskDiscountFactor = 1 - totalExpectedDamage / 100;
+  const riskDiscountFactor = Math.max(0, 1 - totalExpectedDamage / 100);
   return calculateCRV(fairValue * riskDiscountFactor, worstCase, currentPrice);
 }
 

@@ -11,7 +11,7 @@ export function Section4({ data }: Props) {
   const sp = data.sectorProfile;
   const rfr = 4.2;
   const mrp = 5.5;
-  const cod = 4.8;
+  const cod = 5.0;
   const taxRate = 0.21;
   const debtRatio = (data.marketCap + data.totalDebt) > 0 ? data.totalDebt / (data.marketCap + data.totalDebt) : 0;
 
@@ -22,7 +22,7 @@ export function Section4({ data }: Props) {
   const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
   const evFrac = (100 - debtRatioVal) / 100;
   const dvFrac = debtRatioVal / 100;
-  const debtCostPart = dvFrac * 5.0 * (1 - 0.21);
+  const debtCostPart = dvFrac * cod * (1 - 0.21);
   const impliedBeta = Math.max(0.5, Math.min(1.8,
     (waccFromProfile.avg - debtCostPart - evFrac * rfr) / (evFrac * mrp)
   ));
@@ -44,7 +44,8 @@ export function Section4({ data }: Props) {
     const lynchPEG = data.pegRatio && data.lynchClass ? data.pegRatio : null;
     const pe = data.peRatio;
     const growth = data.epsGrowth5Y;
-    const peg = lynchPEG ?? (growth !== 0 ? pe / growth : 0);
+    // null when no Lynch PEG and P/E or growth are non-positive (not meaningful)
+    const peg = lynchPEG ?? (pe > 0 && growth > 0 ? pe / growth : null);
     const lynchLabel = data.lynchClass === 'cyclical'    ? 'Zykliker (Mid-Cycle PE)' :
                        data.lynchClass === 'fast_grower' ? 'Fast Grower (Forward PE)' :
                        data.lynchClass === 'slow_grower' ? 'Slow Grower (PEGY)' :
@@ -52,15 +53,20 @@ export function Section4({ data }: Props) {
                        data.lynchClass === 'stalwart'    ? 'Stalwart (5Y CAGR)' : null;
     return {
       pe, growth, peg,
-      steps: [
-        lynchLabel ? `Methode: Peter Lynch — ${lynchLabel}` : `PEG = P/E ÷ EPS Growth Rate`,
-        data.lynchPEGBasis ? data.lynchPEGBasis : `PEG = ${formatNumber(pe, 1)} ÷ ${formatNumber(growth, 1)}`,
-        `PEG = ${formatNumber(peg, 2)}`,
-        peg < 1 ? `→ PEG < 1.0: Unterbewertet relativ zum Wachstum` :
-        peg < 1.5 ? `→ PEG 1.0–1.5: Fair bewertet` :
-        peg < 2 ? `→ PEG 1.5–2.0: Leichte Prämie` :
-        `→ PEG > 2.0: Hohe Bewertungsprämie zum Wachstum`,
-      ],
+      steps: peg === null
+        ? [
+            lynchLabel ? `Methode: Peter Lynch — ${lynchLabel}` : `PEG = P/E ÷ EPS Growth Rate`,
+            `PEG nicht aussagekräftig — negatives oder fehlendes P/E (${formatNumber(pe, 1)}) bzw. Wachstum (${formatNumber(growth, 1)}%)`,
+          ]
+        : [
+            lynchLabel ? `Methode: Peter Lynch — ${lynchLabel}` : `PEG = P/E ÷ EPS Growth Rate`,
+            data.lynchPEGBasis ? data.lynchPEGBasis : `PEG = ${formatNumber(pe, 1)} ÷ ${formatNumber(growth, 1)}`,
+            `PEG = ${formatNumber(peg, 2)}`,
+            peg < 1 ? `→ PEG < 1.0: Unterbewertet relativ zum Wachstum` :
+            peg < 1.5 ? `→ PEG 1.0–1.5: Fair bewertet` :
+            peg < 2 ? `→ PEG 1.5–2.0: Leichte Prämie` :
+            `→ PEG > 2.0: Hohe Bewertungsprämie zum Wachstum`,
+          ],
     };
   }, [data.peRatio, data.epsGrowth5Y, data.pegRatio, data.lynchClass, data.lynchPEGBasis]);
 
@@ -147,10 +153,10 @@ export function Section4({ data }: Props) {
             <div className="text-lg font-semibold font-mono tabular-nums">{formatNumber(pegCalc.growth, 1)}%</div>
           </div>
           <span className="text-lg text-muted-foreground">=</span>
-          <div className={`rounded-md p-3 border ${pegCalc.peg > 0 && pegCalc.peg < 1 ? "bg-emerald-500/10 border-emerald-500/20" : pegCalc.peg > 0 && pegCalc.peg < 2 ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20"}`}>
+          <div className={`rounded-md p-3 border ${pegCalc.peg === null ? "bg-muted/30 border-border/50" : pegCalc.peg < 1 ? "bg-emerald-500/10 border-emerald-500/20" : pegCalc.peg < 2 ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20"}`}>
             <div className="text-[10px] text-muted-foreground">PEG</div>
-            <div className={`text-lg font-bold font-mono tabular-nums ${pegCalc.peg > 0 && pegCalc.peg < 1 ? "text-emerald-500" : pegCalc.peg > 0 && pegCalc.peg < 2 ? "text-amber-500" : "text-red-500"}`}>
-              {formatNumber(pegCalc.peg, 2)}
+            <div className={`text-lg font-bold font-mono tabular-nums ${pegCalc.peg === null ? "text-muted-foreground" : pegCalc.peg < 1 ? "text-emerald-500" : pegCalc.peg < 2 ? "text-amber-500" : "text-red-500"}`}>
+              {pegCalc.peg === null ? "n/a" : formatNumber(pegCalc.peg, 2)}
             </div>
           </div>
         </div>

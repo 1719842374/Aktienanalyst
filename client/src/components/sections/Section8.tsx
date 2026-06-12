@@ -138,7 +138,7 @@ export function Section8({ data, useLLM = false }: Props) {
 
   const belowPrice = invertedDCF.perShare < data.currentPrice;
   const analystPT = data.analystPT?.median ?? 0;
-  const hasPT = analystPT > 0 && analystPT !== data.currentPrice;
+  const hasPT = analystPT > 0;
 
   // === Primärer Risiko-adjustierter Zielkurs ===
   // Logik: Analyst PT × (1 - TotalExpectedDamage%) ist realistischer als reiner DCF

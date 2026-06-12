@@ -26,15 +26,19 @@ export function Section6({ data }: Props) {
     ...baseParams,
     revenueGrowthP1: baseParams.revenueGrowthP1 * 1.5,
     revenueGrowthP2: baseParams.revenueGrowthP2 * 1.4,
-    ebitMargin: baseParams.ebitMargin * 1.15,
-    ebitMarginTerminal: baseParams.ebitMarginTerminal * 1.1,
+    // Math.abs: bei negativer Marge soll das Optimistic-Szenario die Marge VERBESSERN,
+    // nicht verschlechtern (×1.15 würde eine negative Marge weiter ins Minus drücken)
+    ebitMargin: baseParams.ebitMargin + Math.abs(baseParams.ebitMargin) * 0.15,
+    ebitMarginTerminal: baseParams.ebitMarginTerminal + Math.abs(baseParams.ebitMarginTerminal) * 0.1,
     erp: baseParams.erp - 1,
   }), [baseParams]);
 
   // Worst Case methods
   const sectorDD = data.sectorMaxDrawdown || 35;
   const m1 = worstCaseM1(data.currentPrice, data.beta5Y, sectorDD);
-  const m2 = worstCaseM2(data.currentPrice, 35);
+  // M2: größter Einzelrisiko-Impact (brutto) aus der Risikoinversion, Fallback 35% — identisch mit Section17
+  const m2Impact = data.risks?.length ? Math.max(...data.risks.map(r => Math.abs(r.impact))) : 35;
+  const m2 = worstCaseM2(data.currentPrice, m2Impact);
   const m3 = worstCaseM3(data.currentPrice, sectorDD);
   const worstCase = Math.min(m1, m2, m3);
 
@@ -44,7 +48,8 @@ export function Section6({ data }: Props) {
   // === Risk-Adjusted DCF ===
   const risks = data.risks ?? [];
   const totalExpectedDamage = risks.reduce((s, r) => s + r.expectedDamage, 0);
-  const riskDiscountFactor = 1 - totalExpectedDamage / 100;
+  // Geclampt auf ≥ 0: Summe der Expected Damages kann > 100% sein → sonst negativer Fair Value
+  const riskDiscountFactor = Math.max(0, 1 - totalExpectedDamage / 100);
   const raConservativeFV = conservativeDCF.perShare * riskDiscountFactor;
   const raOptimisticFV = optimisticDCF.perShare * riskDiscountFactor;
 
@@ -66,9 +71,9 @@ export function Section6({ data }: Props) {
   const raCrvOptimistic = calculateRiskAdjustedCRV(optimisticDCF.perShare, worstCase, data.currentPrice, totalExpectedDamage);
   const raCrvCatalyst = calculateRiskAdjustedCRV(adjustedTarget, worstCase, data.currentPrice, totalExpectedDamage);
 
-  // DCF bei CRV 3:1
-  const dcfBeiCRV3 = (conservativeDCF.perShare + 3 * worstCase) / 4;
-  const raDcfBeiCRV3 = (raConservativeFV + 3 * worstCase) / 4;
+  // DCF bei CRV 3:1 — CRV = (FV - WC) / (P - WC) = 3 aufgelöst nach P: P = (FV + 2·WC) / 3
+  const dcfBeiCRV3 = (conservativeDCF.perShare + 2 * worstCase) / 3;
+  const raDcfBeiCRV3 = (raConservativeFV + 2 * worstCase) / 3;
 
   const baseCRVs = [
     { label: "Conservative", value: crvConservative, fairValue: conservativeDCF.perShare },
@@ -108,7 +113,8 @@ export function Section6({ data }: Props) {
               <tr>
                 <td className="py-2 px-2 font-medium">M2: Most Likely Risk</td>
                 <td className="py-2 px-2 font-mono tabular-nums text-muted-foreground">
-                  {formatCurrency(data.currentPrice)} × (1 − 35%)
+                  {formatCurrency(data.currentPrice)} × (1 − {formatNumber(m2Impact, 0)}%)
+                  <span className="text-[9px] ml-1">{data.risks?.length ? '(max. Risiko-Impact)' : '(Fallback)'}</span>
                 </td>
                 <td className="py-2 px-2 text-right font-mono tabular-nums font-semibold text-red-500">{formatCurrency(m2)}</td>
               </tr>
@@ -167,7 +173,7 @@ export function Section6({ data }: Props) {
             {data.currentPrice <= dcfBeiCRV3 ? 'Kurs UNTER Max-Entry ✔' : 'Kurs ÜBER Max-Entry ⚠'}
           </div>
           <div className="text-[10px] text-muted-foreground mt-1 font-mono">
-            = ({formatCurrency(conservativeDCF.perShare)} + 3 × {formatCurrency(worstCase)}) / 4
+            = ({formatCurrency(conservativeDCF.perShare)} + 2 × {formatCurrency(worstCase)}) / 3
           </div>
         </div>
         <div className={`rounded-lg p-3 border-2 ${data.currentPrice <= raDcfBeiCRV3 ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
@@ -177,7 +183,7 @@ export function Section6({ data }: Props) {
             {data.currentPrice <= raDcfBeiCRV3 ? 'Kurs UNTER Max-Entry ✔' : 'Kurs ÜBER Max-Entry ⚠'}
           </div>
           <div className="text-[10px] text-muted-foreground mt-1 font-mono">
-            = ({formatCurrency(raConservativeFV)} + 3 × {formatCurrency(worstCase)}) / 4
+            = ({formatCurrency(raConservativeFV)} + 2 × {formatCurrency(worstCase)}) / 3
           </div>
         </div>
       </div>
@@ -192,8 +198,8 @@ export function Section6({ data }: Props) {
         `Risk-Adj. Fair Value = ${formatCurrency(conservativeDCF.perShare)} × (1 - ${formatNumber(totalExpectedDamage, 1)}%) = ${formatCurrency(raConservativeFV)}`,
         `Risk-Adj. CRV = (${formatCurrency(raConservativeFV)} - ${formatCurrency(worstCase)}) / (${formatCurrency(data.currentPrice)} - ${formatCurrency(worstCase)}) = ${formatNumber(raCrvConservative, 2)}:1`,
         ``,
-        `DCF bei CRV 3:1 (Base) = (${formatCurrency(conservativeDCF.perShare)} + 3 × ${formatCurrency(worstCase)}) / 4 = ${formatCurrency(dcfBeiCRV3)}`,
-        `DCF bei CRV 3:1 (Risk-Adj.) = (${formatCurrency(raConservativeFV)} + 3 × ${formatCurrency(worstCase)}) / 4 = ${formatCurrency(raDcfBeiCRV3)}`,
+        `DCF bei CRV 3:1 (Base) = (${formatCurrency(conservativeDCF.perShare)} + 2 × ${formatCurrency(worstCase)}) / 3 = ${formatCurrency(dcfBeiCRV3)}`,
+        `DCF bei CRV 3:1 (Risk-Adj.) = (${formatCurrency(raConservativeFV)} + 2 × ${formatCurrency(worstCase)}) / 3 = ${formatCurrency(raDcfBeiCRV3)}`,
         ``,
         `=== M1 FORMEL (Implementierung) ===`,
         `effectiveDrawdown = min(beta × sectorDD, sectorDD × 1.5), gecapped bei 65%`,

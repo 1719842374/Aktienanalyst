@@ -231,7 +231,7 @@ export function PestelSection({ data }: Props) {
                 const negCount = cat.factors.filter(f => f.impact === "Negativ").length;
                 const corrPosCount = cat.factors.filter(f => f.stockCorrelation === "Positiv").length;
                 const corrNegCount = cat.factors.filter(f => f.stockCorrelation === "Negativ").length;
-                const eColors = exposureColors[cat.exposureRating];
+                const eColors = exposureColors[cat.exposureRating] || exposureColors.Mittel;
                 return (
                   <tr key={i}>
                     <td className="py-2 px-2 font-medium">

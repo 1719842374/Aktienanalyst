@@ -1,7 +1,7 @@
 import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, RevenueSegment } from "../../../../shared/schema";
-import { calculateFCFFDCF, type FCFFDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
+import { calculateFCFFDCF, buildDefaultDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
 import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber } from "../../lib/formatters";
 import { useMemo } from "react";
 
@@ -11,57 +11,12 @@ export function Section2({ data }: Props) {
   // Use backend catalysts directly
   const catalysts = data.catalysts;
 
-  const netDebt = data.totalDebt - data.cashEquivalents;
-  const sp = data.sectorProfile;
+  // === SINGLE SOURCE OF TRUTH: shared DCF defaults (same as Section5/Section6/SummarySection) ===
+  // buildDefaultDCFParams liefert auch `rsl` mit → identischer Fair Value wie Section 5/6.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const params = useMemo(() => buildDefaultDCFParams(data), [data.ticker]);
 
-  // Compute conservative FCFF DCF (same defaults as Section5/Section11/Section13)
-  // Use operatingIncome (EBIT) not EBITDA for DCF margin
-  const ebitMarginDefault = data.operatingIncome > 0 && data.revenue > 0
-    ? +((data.operatingIncome / data.revenue) * 100).toFixed(1)
-    : data.ebitda > 0 && data.revenue > 0
-      ? +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1)
-      : 15;
-  const fsCapex = data.financialStatements?.cashFlow?.capex;
-  const capexDefault = fsCapex && fsCapex > 0 && data.revenue > 0
-    ? +Math.max(2, Math.min(25, (fsCapex / data.revenue) * 100)).toFixed(1)
-    : data.revenue > 0 && data.ebitda > 0 && data.operatingIncome > 0
-      ? +Math.max(2, Math.min(20, ((data.ebitda - data.operatingIncome) / data.revenue) * 100)).toFixed(1)
-      : 5;
-  const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
-  const rf = 4.2, erp = 5.5, taxR = 21, rd = 5.0;
-  const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
-  const evFrac = (100 - debtRatioVal) / 100;
-  const dvFrac = debtRatioVal / 100;
-  const targetWACC = sp.waccScenarios.avg;
-  const debtCostPart = dvFrac * rd * (1 - taxR / 100);
-  const impliedBeta = Math.max(0.5, Math.min(1.8,
-    (targetWACC - debtCostPart - evFrac * rf) / (evFrac * erp)
-  ));
-  const dcfBeta = +Math.min(impliedBeta, data.beta5Y + 0.1).toFixed(2);
-
-  const baseDCF = useMemo(() => calculateFCFFDCF({
-    revenueBase: data.revenue,
-    revenueGrowthP1: revenueGrowthDefault,
-    revenueGrowthP2: Math.max(3, +(revenueGrowthDefault * 0.6).toFixed(1)),
-    ebitMargin: ebitMarginDefault,
-    ebitMarginTerminal: +Math.max(8, ebitMarginDefault * 0.9).toFixed(1),
-    capexPct: capexDefault,
-    deltaWCPct: 5,
-    taxRate: taxR,
-    daRatio: +Math.max(2, capexDefault * 0.8).toFixed(1),
-    riskFreeRate: rf,
-    beta: dcfBeta,
-    erp,
-    debtRatio: debtRatioVal,
-    costOfDebt: rd,
-    terminalG: sp.growthAssumptions.terminal || 2.5,
-    sharesOutstanding: data.sharesOutstanding,
-    netDebt,
-    minorityInterests: 0,
-    fcfHaircut: data.fcfHaircut,
-    actualEPS: data.epsTTM,
-    forwardEPS: data.epsConsensusNextFY,
-  }), [data, sp, netDebt]);
+  const baseDCF = useMemo(() => calculateFCFFDCF(params), [params]);
 
   // Smart Catalyst-Base-Selektor (Plausibilitäts-Gate — verhindert unsinnige
   // negative Catalyst-Targets bei Aktien mit verzerrt-niedrigem DCF)

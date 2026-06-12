@@ -77,7 +77,7 @@ export function Section5({ data }: Props) {
 
   // Detect if WACC was capped (compare raw CAPM to final)
   const rawRe = params.riskFreeRate + params.beta * params.erp;
-  const dvCalc = params.debtRatio / 100;
+  const dvCalc = Math.min(params.debtRatio, 60) / 100;
   const evCalc = 1 - dvCalc;
   const rawWaccCalc = evCalc * rawRe + dvCalc * params.costOfDebt * (1 - params.taxRate / 100);
   const waccWasCapped = !waccOverrideEnabled && Math.abs(mainResult.wacc - rawWaccCalc) > 0.01;
@@ -87,8 +87,8 @@ export function Section5({ data }: Props) {
     ...effectiveParams,
     revenueGrowthP1: effectiveParams.revenueGrowthP1 * 1.5,
     revenueGrowthP2: effectiveParams.revenueGrowthP2 * 1.4,
-    ebitMargin: effectiveParams.ebitMargin * 1.15,
-    ebitMarginTerminal: effectiveParams.ebitMarginTerminal * 1.1,
+    ebitMargin: effectiveParams.ebitMargin + Math.abs(effectiveParams.ebitMargin) * 0.15,
+    ebitMarginTerminal: effectiveParams.ebitMarginTerminal + Math.abs(effectiveParams.ebitMarginTerminal) * 0.1,
     riskFreeRate: effectiveParams.riskFreeRate,
     erp: effectiveParams.erp - 1,
     waccOverride: waccOverrideEnabled ? Math.max(5, waccOverrideValue - 2) : null,
@@ -98,8 +98,8 @@ export function Section5({ data }: Props) {
     ...effectiveParams,
     revenueGrowthP1: Math.max(0, effectiveParams.revenueGrowthP1 * 0.3),
     revenueGrowthP2: Math.max(0, effectiveParams.revenueGrowthP2 * 0.3),
-    ebitMargin: effectiveParams.ebitMargin * 0.7,
-    ebitMarginTerminal: effectiveParams.ebitMarginTerminal * 0.75,
+    ebitMargin: effectiveParams.ebitMargin - Math.abs(effectiveParams.ebitMargin) * 0.3,
+    ebitMarginTerminal: effectiveParams.ebitMarginTerminal - Math.abs(effectiveParams.ebitMarginTerminal) * 0.25,
     erp: effectiveParams.erp + 2,
     terminalG: Math.max(1, effectiveParams.terminalG - 0.5),
     waccOverride: waccOverrideEnabled ? waccOverrideValue + 2 : null,
@@ -264,7 +264,7 @@ export function Section5({ data }: Props) {
               <div className="flex items-start gap-1.5 mb-2 p-2 rounded bg-amber-500/10 border border-amber-500/20">
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
                 <div className="text-[10px] text-amber-500">
-                  WACC-Sanity-Cap aktiv: CAPM ergibt {rawWaccCalc.toFixed(2)}%, begrenzt auf {mainResult.wacc.toFixed(2)}% (Bounds: 3–20%).
+                  WACC-Sanity-Cap aktiv: CAPM ergibt {rawWaccCalc.toFixed(2)}%, begrenzt auf {mainResult.wacc.toFixed(2)}% (Bounds: 5–20%).
                   Für vollen Bypass den manuellen WACC-Override aktivieren.
                 </div>
               </div>

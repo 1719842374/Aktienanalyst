@@ -32,7 +32,7 @@ export function MoatPorterSection({ data }: Props) {
     );
   }
 
-  const avgScore = moat.porterForces.reduce((s, f) => s + f.score, 0) / moat.porterForces.length;
+  const avgScore = moat.porterForces.length > 0 ? moat.porterForces.reduce((s, f) => s + f.score, 0) / moat.porterForces.length : 0;
 
   return (
     <SectionCard number={11} title="MOAT & PORTER'S FIVE FORCES">
@@ -168,7 +168,7 @@ export function MoatPorterSection({ data }: Props) {
             </thead>
             <tbody className="divide-y divide-border/50">
               {moat.porterForces.map((force, i) => {
-                const colors = ratingColors[force.rating];
+                const colors = ratingColors[force.rating] || ratingColors.Medium;
                 const moatImpact = force.rating === "Low" ? "Stärkt den Moat" :
                   force.rating === "Medium" ? "Neutral" : "Schwächt den Moat";
                 return (

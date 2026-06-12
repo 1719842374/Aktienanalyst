@@ -57,7 +57,9 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   const { totalUpside, adjustedTarget } = calculateCatalystUpside(catalysts, catalystDCFBase);
 
   const m1 = worstCaseM1(data.currentPrice, data.beta5Y, data.sectorMaxDrawdown || 35);
-  const m2 = worstCaseM2(data.currentPrice, 35);
+  // M2: größter Einzelrisiko-Impact (brutto) aus der Risikoinversion, Fallback 35% — identisch mit Section6
+  const m2Impact = data.risks?.length ? Math.max(...data.risks.map(r => Math.abs(r.impact))) : 35;
+  const m2 = worstCaseM2(data.currentPrice, m2Impact);
   const m3 = worstCaseM3(data.currentPrice, data.sectorMaxDrawdown);
   const worstCase = Math.min(m1, m2, m3);
 
@@ -74,7 +76,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
     wacc: conservativeDCF.wacc,
     sharesOutstanding: data.sharesOutstanding,
     netDebt,
-    fcfHaircut: sp.fcfHaircut ?? 0,
+    fcfHaircut: data.fcfHaircut ?? 0,
     sectorG1: sp.growthAssumptions?.g1 ?? 0,
     epsGrowthNext5Y: data.epsGrowth5Y ?? 0,
   });
@@ -84,7 +86,8 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   const crvOptimistic = calculateCRV(optimisticDCF.perShare, worstCase, data.currentPrice);
 
   // DCF bei CRV 3:1 = max acceptable entry price for exactly 3:1 reward/risk
-  const dcfBeiCRV3 = (conservativeDCF.perShare + 3 * worstCase) / 4;
+  // CRV = (FV - WC) / (P - WC) = 3 aufgelöst nach P: P = (FV + 2·WC) / 3
+  const dcfBeiCRV3 = (conservativeDCF.perShare + 2 * worstCase) / 3;
 
   // Upside/Downside % for DCF scenarios
   const conservativeUpside = ((conservativeDCF.perShare / data.currentPrice - 1) * 100);
@@ -93,10 +96,12 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
 
   const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
 
-  // RSL growth adjustment flag
-  const rslGrowthAdj = rsl < 105 ? "-5% to -10%" : "none";
+  // RSL growth adjustment flag (rsl = null → keine ausreichende Kurshistorie, kein Malus)
+  const rslGrowthAdj = rsl != null && rsl < 105 ? "-5% to -10%" : "none";
 
   const localMC = useMemo(() => {
+    // Lazy: nur rechnen, wenn kein geteiltes Ergebnis (Section16) vorliegt — spart 10.000 Pfade
+    if (sharedMonteCarlo) return null;
     const prices = data.historicalPrices.map(p => p.close);
     const params = calculateGBMParams(prices);
     return gbmMonteCarlo({
@@ -106,8 +111,9 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
       iterations: 10000,
       tradingDays: 252,
     }, data.analystPT.median);
-  }, [data]);
-  const mcResult = sharedMonteCarlo ?? localMC;
+  }, [data, sharedMonteCarlo]);
+  // Genau eines von beiden ist immer gesetzt (localMC wird nur bei fehlendem sharedMonteCarlo berechnet)
+  const mcResult = (sharedMonteCarlo ?? localMC)!;
 
   return (
     <SectionCard number={17} title="ZUSAMMENFASSUNGSTABELLE">
@@ -250,7 +256,11 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
                 {data.currentPrice <= dcfBeiCRV3 ? 'Kurs UNTER Max-Entry' : 'Kurs ÜBER Max-Entry'}
               </td>
             </tr>
-            <SummaryRow label="RSL (Momentum)" value={formatNumber(rsl, 1)} note={rsl > 110 ? "Strong" : rsl > 105 ? "Neutral" : `Weak → growth adj. ${rslGrowthAdj}`} />
+            <SummaryRow
+              label="RSL (Momentum)"
+              value={rsl != null ? formatNumber(rsl, 1) : "n/a"}
+              note={rsl == null ? "n/a — keine ausreichende Kurshistorie" : rsl > 110 ? "Strong" : rsl >= 105 ? "Neutral" : `Weak → growth adj. ${rslGrowthAdj}`}
+            />
             <SummaryRow
               label="Reverse DCF g*"
               value={formatPercentNoSign(reverseDCF.impliedGrowth)}
@@ -342,7 +352,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           CRV = (Fair Value - Worst Case) / (Kurs - Worst Case) = ({formatCurrency(conservativeDCF.perShare)} - {formatCurrency(worstCase)}) / ({formatCurrency(data.currentPrice)} - {formatCurrency(worstCase)}) = {formatNumber(crvConservative, 2)}:1
         </div>
         <div className="font-mono tabular-nums">
-          DCF bei CRV 3:1 = (Kons. DCF + 3 × WC) / 4 = ({formatCurrency(conservativeDCF.perShare)} + 3 × {formatCurrency(worstCase)}) / 4 = {formatCurrency(dcfBeiCRV3)}
+          DCF bei CRV 3:1 = (Kons. DCF + 2 × WC) / 3 = ({formatCurrency(conservativeDCF.perShare)} + 2 × {formatCurrency(worstCase)}) / 3 = {formatCurrency(dcfBeiCRV3)}
         </div>
       </div>
 
@@ -351,6 +361,8 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         const techStatus = data.technicalIndicators?.currentStatus;
         const risks = data.risks;
         const totalExpDmg = risks.reduce((s, r) => s + r.expectedDamage, 0);
+        // Risiko-Abschlagsfaktor: geclampt auf ≥ 0 (Summe der Expected Damages kann > 100% sein)
+        const riskDiscountFactor = Math.max(0, 1 - totalExpDmg / 100);
         const raCrvCons = calculateRiskAdjustedCRV(conservativeDCF.perShare, worstCase, data.currentPrice, totalExpDmg);
         const pestel = data.pestelAnalysis;
         const moatAssess = data.moatAssessment;
@@ -401,9 +413,10 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         if (totalExpDmg > 15) negative.push(`Expected Damage ${formatNumber(totalExpDmg, 1)}% \u2014 erhebliche Risiko-Exposition`);
         else if (totalExpDmg < 8) positive.push(`Expected Damage nur ${formatNumber(totalExpDmg, 1)}% \u2014 moderates Risikoprofil`);
 
-        // S9: RSL
-        if (rsl > 110) positive.push(`RSL ${formatNumber(rsl, 0)} \u2014 starkes Momentum`);
-        else if (rsl > 105) neutral.push(`RSL ${formatNumber(rsl, 0)} \u2014 neutrales Momentum`);
+        // S9: RSL (null = keine ausreichende Kurshistorie \u2192 neutral, kein Score-Beitrag)
+        if (rsl == null) neutral.push(`RSL n/a \u2014 keine ausreichende Kurshistorie`);
+        else if (rsl > 110) positive.push(`RSL ${formatNumber(rsl, 0)} \u2014 starkes Momentum`);
+        else if (rsl >= 105) neutral.push(`RSL ${formatNumber(rsl, 0)} \u2014 neutrales Momentum`);
         else negative.push(`RSL ${formatNumber(rsl, 0)} \u2014 schwaches Momentum, Growth-Adj. -5% bis -10%`);
 
         // S10: Technical
@@ -499,7 +512,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         }
 
         const isBuy = score >= 2 && techStatus?.buySignal && data.currentPrice <= dcfBeiCRV3;
-        const isOvervalued = conservativeUpside < -5 || (raCrvCons < 1.5 && rsl < 100);
+        const isOvervalued = conservativeUpside < -5 || (raCrvCons < 1.5 && rsl != null && rsl < 100);
         const isTechWeak = !techStatus?.priceAboveMA200 || !techStatus?.ma50AboveMA200;
         const isHighRisk = totalExpDmg > 15 || data.beta5Y > 1.5;
         const topRisks = [...risks].sort((a, b) => b.expectedDamage - a.expectedDamage).slice(0, 2).map(r => r.name).join(' und ');
