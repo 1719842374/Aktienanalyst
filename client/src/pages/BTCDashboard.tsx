@@ -107,6 +107,10 @@ interface BTCAnalysis {
   currentSignal: number | null;
   fearGreedHistory: { date: string; value: number; classification: string; }[];
   fearGreedStats: { avg30: number | null; avg90: number | null; avg365: number | null; yearHigh: number | null; yearLow: number | null; };
+  historicalVol?: {
+    vol30d: number; vol90d: number; vol365d: number;
+    volAnn30d: number; volAnn90d: number; volAnn365d: number;
+  };
 }
 
 // === Sidebar Sections ===
@@ -432,6 +436,7 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
   const TRADING_DAYS = 252;
   const muAnnDefault    = Math.round(mc.mu * TRADING_DAYS * 10000) / 10000;
   const sigmaAnnDefault = Math.round(mc.sigmaAdj * Math.sqrt(TRADING_DAYS) * 10000) / 10000;
+  const hv = data.historicalVol;
   const [mu, setMu] = useState(muAnnDefault);
   const [sigma, setSigma] = useState(sigmaAnnDefault);
   const [horizonDays, setHorizonDays] = useState(90);
@@ -482,6 +487,35 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
   return (
     <SectionCard number={6} title="Monte Carlo Simulation">
       <div className="space-y-4">
+        {/* Historical Volatility Panel */}
+        {hv && (hv.vol30d > 0 || hv.vol90d > 0) && (
+          <div className="bg-muted/20 rounded-lg p-3 border border-border">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-2">
+              Historische Volatilität (aus echten Preisrenditen)
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: "30d σ tägl.", daily: hv.vol30d, ann: hv.volAnn30d },
+                { label: "90d σ tägl.", daily: hv.vol90d, ann: hv.volAnn90d },
+                { label: "365d σ tägl.", daily: hv.vol365d, ann: hv.volAnn365d },
+              ].map(({ label, daily, ann }) => (
+                <div key={label} className="bg-muted/30 rounded p-2 text-center">
+                  <div className="text-[9px] text-muted-foreground">{label}</div>
+                  <div className="text-sm font-bold font-mono tabular-nums mt-0.5 text-amber-400">
+                    {daily > 0 ? `${(daily * 100).toFixed(2)}%` : "–"}
+                  </div>
+                  <div className="text-[9px] text-muted-foreground">
+                    {ann > 0 ? `ann. ${(ann * 100).toFixed(1)}%` : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="text-[9px] text-muted-foreground mt-1.5">
+              Monte Carlo σ = {(mc.sigma * 100).toFixed(2)}% tägl. (90d Hist.Vol) — annualisiert: {sigmaAnnDefault.toFixed(4)}
+            </div>
+          </div>
+        )}
+
         {/* Formula */}
         <div className="bg-muted/20 rounded-lg p-2 border border-border text-center">
           <span className="text-[10px] font-mono text-muted-foreground">
@@ -942,10 +976,12 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
   const chartDataWithRSI = useMemo(() => {
     if (chartData.length === 0) return chartData;
     const prices = chartData.map(d => d.price);
-    const rsiArr = calcRSI(prices);
+
+    // Use server-computed RSI(14) if available; otherwise compute client-side
+    const hasServerRSI = chartData.some(d => d.rsi14 != null);
+    const clientRsiArr = hasServerRSI ? [] : calcRSI(prices);
 
     // Volume: server liefert _volNorm (0-1 normalisiert) UND volume (absolut in USD)
-    // Falls _volNorm alle 0 sind (kein Volume vom Server), clientseitig aus volume berechnen
     const rawVols = chartData.map(d => d.volume ?? 0);
     const serverVolNorms = chartData.map(d => d._volNorm ?? 0);
     const hasServerVol = serverVolNorms.some(v => v > 0);
@@ -953,10 +989,8 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
 
     let volNorms: number[];
     if (hasServerVol) {
-      // Server hat _volNorm bereits korrekt normalisiert — direkt nutzen
       volNorms = serverVolNorms;
     } else if (hasRawVol) {
-      // Fallback: clientseitig aus absolutem Volume normalisieren
       const maxRawVol = Math.max(...rawVols);
       volNorms = rawVols.map(v => maxRawVol > 0 ? v / maxRawVol : 0);
     } else {
@@ -965,9 +999,8 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
 
     return chartData.map((d, i) => ({
       ...d,
-      rsi14: rsiArr[i] ?? null,
+      rsi14: hasServerRSI ? (d.rsi14 ?? null) : (clientRsiArr[i] ?? null),
       _volNorm: volNorms[i] ?? 0,
-      // _volUp: grün wenn Preis gestiegen, rot wenn gefallen
       _volUp: i === 0 ? true : prices[i] >= prices[i - 1],
     }));
   }, [chartData]);
@@ -2319,7 +2352,7 @@ export default function BTCDashboard() {
         {/* Main content */}
         <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar">
           {!data && !analyzeMutation.isPending ? (
-            <BTCWelcomeScreen onAnalyze={() => analyzeMutation.mutate()} />
+            <BTCWelcomeScreen onAnalyze={() => analyzeMutation.mutate(undefined)} />
           ) : analyzeMutation.isPending ? (
             <BTCLoadingScreen />
           ) : analyzeMutation.isError ? (
