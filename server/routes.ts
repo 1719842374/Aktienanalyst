@@ -3807,13 +3807,17 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+  // In-progress map: ticker → { started, promise } for dedup
+  const analysisInProgress = new Map<string, { started: number; promise: Promise<any> }>();
+
   app.post("/api/analyze", async (req, res) => {
     // Declare ticker outside try{} so catch{} can use it for cache-fallback (C2 fix)
     let ticker = "";
     let useLLM = false;
-    // Chat-First: no proxy guard needed — in-chat requests are not cut off at 30s.
-    // The analysis runs to completion and returns the full result directly.
-    let proxyResponded = false; // kept for compatibility with catch block
+    // Proxy-Timeout-Safe: If analysis takes > 25s, we respond with 202 + _pending:true
+    // so the client can poll again and get the result from cache.
+    let proxyResponded = false;
+    let proxyTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       const parsed = analyzeRequestSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -3841,6 +3845,16 @@ export async function registerRoutes(server: Server, app: Express) {
           return res.json(cachedFresh);
         }
       }
+
+      // Proxy-Timeout-Guard: respond with _pending:true after 22s if analysis is still running.
+      // The client detects _pending and polls again — gets the result from cache on the 2nd call.
+      proxyTimer = setTimeout(() => {
+        if (!proxyResponded && !res.headersSent) {
+          proxyResponded = true;
+          console.log(`[ANALYZE] ${ticker} still running after 22s — sending _pending response for proxy-safe polling`);
+          res.json({ _pending: true, ticker, message: "Analyse läuft im Hintergrund — bitte erneut abfragen" });
+        }
+      }, 22000);
 
       // Quote-only refresh: if cache is fresh (< 48h) but user requested force refresh,
       // only update the quote field. Saves 7 Finance API calls (uses only 1).
@@ -5729,12 +5743,18 @@ export async function registerRoutes(server: Server, app: Express) {
         wl.tickers = wl.tickers.slice(0, 20);
         fs.writeFileSync(path.join(CACHE_DIR, 'watchlist.json'), JSON.stringify(wl));
       } catch {}
-      if (!proxyResponded) {
+      if (proxyTimer) { clearTimeout(proxyTimer); proxyTimer = null; }
+      if (!proxyResponded && !res.headersSent) {
         proxyResponded = true;
         incrementQuota(); // Count this as one successful Finance analysis
         res.json(analysis);
+      } else if (proxyResponded) {
+        // Proxy already got _pending — analysis is now in cache, client will poll
+        console.log(`[ANALYZE] ${ticker} done after proxy-safe response — result cached, client will poll`);
+        incrementQuota();
       }
     } catch (error: any) {
+      if (proxyTimer) { clearTimeout(proxyTimer); proxyTimer = null; }
       console.error("[ANALYZE] Error:", error?.message);
       // Try to serve cached data as fallback — prefer compatible LLM mode.
       const useLLMCatch = (req.body?.useLLM === true);

@@ -167,6 +167,21 @@ export default function Dashboard() {
             throw new Error(errMsg);
           }
           const json = await res.json();
+          // Proxy-safe async pattern: server responded with _pending:true
+          // (analysis is running in background > 22s). Wait 20s and poll with force=false.
+          if (json?._pending === true) {
+            console.log(`[Analyze] Server busy (proxy-safe _pending) — warte 20s dann nochmal`);
+            await new Promise(r => setTimeout(r, 20000));
+            // Poll without force — result should be in cache now
+            const pollRes = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: false });
+            if (!pollRes.ok) throw new Error(`Poll failed: HTTP ${pollRes.status}`);
+            const pollJson = await pollRes.json();
+            if (pollJson?._pending) throw new Error('Analyse noch nicht fertig — bitte nochmal versuchen');
+            if (!pollJson?.currentPrice && !pollJson?.companyName) throw new Error('Poll: Ungueltige Antwort');
+            const result = pollJson as StockAnalysis;
+            setRetryInfo(null);
+            return result;
+          }
           // Surface RATE_LIMITED from a 200 response body too
           if (json?.errorCode === 'RATE_LIMITED') {
             setRetryInfo(null);
