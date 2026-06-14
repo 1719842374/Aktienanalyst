@@ -3826,7 +3826,7 @@ export async function registerRoutes(server: Server, app: Express) {
     // Force reset quota guard for background analysis — credits may have been restored
     markQuotaReset();
     const fakeReq: any = {
-      body: { ticker, useLLM, force: false, _fullAnalysis: true },
+      body: { ticker, useLLM, force: true, _fullAnalysis: true },
       headers: { 'x-internal-request': 'background' },
     };
     // Minimal Express-compatible response stub.
