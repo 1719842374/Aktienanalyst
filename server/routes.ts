@@ -35,13 +35,15 @@ function callFinanceTool(toolName: string, args: Record<string, any>): any {
       console.error(`Finance API CRITICAL: external-tool binary missing (${toolName}) — ${msg.substring(0, 200)}`);
       return { __binaryMissing: true };
     }
-    if (msg.includes("RATE_LIMITED") || msg.includes("429")) {
+    if (msg.includes("spending_limit_exceeded") || msg.includes("RATE_LIMITED") || msg.includes("429")) {
       console.error(`Finance API rate-limited (${toolName})`);
+      markQuotaExceeded(); // start cold-start cooldown; auto-resets after 1h
       return { __rateLimited: true };
     }
     if (msg.includes("UNAUTHORIZED") || msg.includes("401")) {
       // 401 typically follows a rate-limit — treat as same backoff signal so we retry.
       console.error(`Finance API unauthorized (${toolName}) — likely token-cooldown after rate-limit`);
+      markQuotaExceeded();
       return { __rateLimited: true };
     }
     console.error(`Finance API error (${toolName}):`, msg.substring(0, 300));
@@ -75,6 +77,17 @@ const DAILY_FINANCE_LIMIT = 18; // leave 2 as buffer; user gets ~18 real analyse
 let _quotaDate = new Date().toDateString();
 let _quotaCount = 0; // counts completed full analyses (not individual tool calls)
 
+// ── Spending-limit cold-start cooldown ──────────────────────────────────────
+// On spending_limit_exceeded the external-tool binary needs to cool down before
+// it serves real analyses again. We record when the cooldown started and stop
+// short-circuiting once it has elapsed, so credits-restored recovers on its own.
+let quotaExceededAt: number | null = null;
+const QUOTA_RESET_MS = 60 * 60 * 1000; // Reset after 1 hour
+
+function markQuotaExceeded(): void {
+  quotaExceededAt = Date.now();
+}
+
 function incrementQuota() {
   const today = new Date().toDateString();
   if (today !== _quotaDate) { _quotaDate = today; _quotaCount = 0; } // midnight reset
@@ -83,6 +96,12 @@ function incrementQuota() {
 }
 
 function isQuotaExceeded(): boolean {
+  // Cold-start cooldown: once an hour has passed since the spending-limit hit,
+  // clear the flag and let calls through again so restored credits recover.
+  if (quotaExceededAt && (Date.now() - quotaExceededAt) > QUOTA_RESET_MS) {
+    quotaExceededAt = null; // Reset — try again
+    console.log('[Quota] Reset after 1 hour — retrying Finance API');
+  }
   const today = new Date().toDateString();
   if (today !== _quotaDate) { _quotaDate = today; _quotaCount = 0; }
   if (_quotaCount >= DAILY_FINANCE_LIMIT) {
@@ -90,13 +109,23 @@ function isQuotaExceeded(): boolean {
     console.warn(`[QUOTA] Daily limit reached (${_quotaCount}/${DAILY_FINANCE_LIMIT}) — reset in ~${resetHour}h`);
     return true;
   }
-  return false;
+  return quotaExceededAt !== null;
 }
 
 function getQuotaStatus() {
+  // Apply the same cooldown reset so status reflects reality after 1h.
+  if (quotaExceededAt && (Date.now() - quotaExceededAt) > QUOTA_RESET_MS) {
+    quotaExceededAt = null;
+  }
   const today = new Date().toDateString();
   if (today !== _quotaDate) { _quotaDate = today; _quotaCount = 0; }
-  return { today: _quotaCount, limit: DAILY_FINANCE_LIMIT, remaining: Math.max(0, DAILY_FINANCE_LIMIT - _quotaCount) };
+  return {
+    today: _quotaCount,
+    limit: DAILY_FINANCE_LIMIT,
+    remaining: Math.max(0, DAILY_FINANCE_LIMIT - _quotaCount),
+    quotaExceededAt,
+    resetsAt: quotaExceededAt ? new Date(quotaExceededAt + QUOTA_RESET_MS).toISOString() : null,
+  };
 }
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -3632,7 +3661,7 @@ export async function registerRoutes(server: Server, app: Express) {
   // Tests all critical subsystems: external-tool CLI, LLM availability, cache dir.
   // Used by the client Warmup-Ping on page load and by the morning monitor cron.
   app.get("/api/health", async (_req, res) => {
-    const checks: Record<string, { ok: boolean; detail?: string }> = {};
+    const checks: Record<string, { ok: boolean; detail?: string; [k: string]: any }> = {};
 
     // 1. external-tool CLI available?
     try {
@@ -3666,9 +3695,17 @@ export async function registerRoutes(server: Server, app: Express) {
       checks.cache = { ok: false, detail: `Cache dir not writable: ${e.message}` };
     }
 
-    // 4. Finance API quota — daily counter from soft guard
+    // 4. Finance API quota — daily counter + cold-start cooldown status
     const qs = getQuotaStatus();
-    checks.quota = { ok: qs.remaining > 0, today: qs.today, limit: qs.limit, remaining: qs.remaining };
+    checks.quota = {
+      ok: qs.remaining > 0 && qs.quotaExceededAt === null,
+      today: qs.today,
+      limit: qs.limit,
+      remaining: qs.remaining,
+      quotaExceeded: qs.quotaExceededAt !== null,
+      quotaExceededAt: qs.quotaExceededAt ? new Date(qs.quotaExceededAt).toISOString() : null,
+      resetsAt: qs.resetsAt,
+    };
 
     const allOk = Object.values(checks).every(c => c.ok);
     const critical = !checks.external_tool?.ok; // external-tool down = complete outage
@@ -7251,6 +7288,25 @@ export async function registerRoutes(server: Server, app: Express) {
       res.status(500).json({ error: error?.message || 'Screener failed' });
     }
   });
+
+  // Warm-up: ping Finance API 5 seconds after start to detect binary health
+  setTimeout(async () => {
+    try {
+      console.log('[Startup] Warming up Finance API...');
+      const warmup = execSync(
+        `external-tool '{"source_id":"finance","tool_name":"get_quote","arguments":{"symbol":"AAPL"}}'`,
+        { encoding: 'utf-8', timeout: 15000 }
+      );
+      const parsed = JSON.parse(warmup);
+      if (parsed?.price || parsed?.regularMarketPrice || parsed?.[0]?.price) {
+        console.log('[Startup] Finance API warm — ready for analyses');
+      } else {
+        console.log('[Startup] Finance API responded but no price data yet');
+      }
+    } catch (e: any) {
+      console.warn('[Startup] Finance API warm-up failed (normal on cold start):', e?.message?.substring(0, 100));
+    }
+  }, 5000);
 
   return server;
 }
