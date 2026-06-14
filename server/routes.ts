@@ -3842,6 +3842,8 @@ export async function registerRoutes(server: Server, app: Express) {
           cacheLLMModeMatches(cachedFresh._useLLM, useLLM)
         ) {
           console.log(`[ANALYZE] Cache HIT for ${ticker} (age: ${cachedFresh._cacheAge}min, useLLM=${useLLM}) — 0 credits`);
+          proxyResponded = true; // prevent proxyTimer from firing on closed response
+          if (proxyTimer) { clearTimeout(proxyTimer); proxyTimer = null; }
           return res.json(cachedFresh);
         }
       }
@@ -3881,14 +3883,20 @@ export async function registerRoutes(server: Server, app: Express) {
               _cached: true,
             };
             saveCachedAnalysis(String(ticker).toUpperCase(), refreshed);
+            if (proxyTimer) { clearTimeout(proxyTimer); proxyTimer = null; }
+            if (!proxyResponded) proxyResponded = true;
             return res.json(refreshed);
           }
           if (freshQuote === null) {
             // Rate-limited — return stale cache rather than failing
+            if (proxyTimer) { clearTimeout(proxyTimer); proxyTimer = null; }
+            if (!proxyResponded) proxyResponded = true;
             return res.json({ ...cached, _quoteStale: true });
           }
         } catch (e: any) {
           if ((e?.message || '').includes('RATE_LIMITED')) {
+            if (proxyTimer) { clearTimeout(proxyTimer); proxyTimer = null; }
+            if (!proxyResponded) proxyResponded = true;
             return res.json({ ...cached, _quoteStale: true });
           }
           // Other error: fall through to full analysis
@@ -3911,6 +3919,8 @@ export async function registerRoutes(server: Server, app: Express) {
           try {
             console.log(`[ANALYZE] Soft quota exceeded — using FMP fallback for ${ticker}`);
             const fmpData = await getFmpFallbackData(String(ticker), fmpKey);
+            if (proxyTimer) { clearTimeout(proxyTimer); proxyTimer = null; }
+            if (!proxyResponded) proxyResponded = true;
             if (fmpData) return res.json({ ...fmpData, _quotaFallback: true });
           } catch {}
         }
