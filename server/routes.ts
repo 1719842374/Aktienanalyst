@@ -3810,48 +3810,61 @@ export async function registerRoutes(server: Server, app: Express) {
   // In-progress map: ticker → { started, promise } for dedup
   const analysisInProgress = new Map<string, { started: number; promise: Promise<any> }>();
 
-  // Background analysis endpoint — internal only, called by /api/analyze via self-request
-  // No proxy timeout applies here since it's a loopback request
+  // Runs the FULL analyze pipeline in-process for a ticker and persists the
+  // resulting StockAnalysis to cache. No HTTP — the pplx.app sandbox blocks
+  // 127.0.0.1 loopback, so we synthesize an internal request and a no-op
+  // response and invoke the analyze handler directly. The
+  // `x-internal-request: background` header makes the handler skip its
+  // proxy-timeout _pending short-circuit and run to completion.
+  const runAnalysisDirect = async (ticker: string, useLLM: boolean): Promise<void> => {
+    const fakeReq: any = {
+      body: { ticker, useLLM, force: false },
+      headers: { 'x-internal-request': 'background' },
+    };
+    // Minimal Express-compatible response stub — discards output. The handler
+    // persists results to cache as a side effect, which is all we need here.
+    const fakeRes: any = {
+      headersSent: false,
+      statusCode: 200,
+      status(code: number) { this.statusCode = code; return this; },
+      json(payload: any) {
+        this.headersSent = true;
+        if (payload?.companyName) {
+          console.log(`[BG] Analysis done for ${ticker}: ${payload.companyName} $${payload.currentPrice ?? payload.price ?? '?'}`);
+        }
+        return this;
+      },
+      send(payload: any) { this.headersSent = true; return this; },
+    };
+    await analyzeHandler(fakeReq, fakeRes);
+  };
+
+  // Background analysis endpoint — internal only. Runs the full analysis
+  // pipeline in-process (no HTTP loopback) so uncached tickers actually
+  // complete and land in cache for the client's next poll.
   app.post("/api/analyze-background", async (req, res) => {
     const { ticker, useLLM, _background } = req.body || {};
     if (!_background || !ticker) return res.json({ ok: false });
     res.json({ ok: true, started: true }); // Respond immediately so caller can proceed
-    // Run the full analysis asynchronously after responding
     setImmediate(async () => {
       try {
-        console.log(`[ANALYZE-BG] Background analysis started for ${ticker}`);
-        // Make an internal analyze request that bypasses the proxy
-        const http = await import('http');
-        const body = JSON.stringify({ ticker, useLLM: useLLM || false, force: false });
-        let result = '';
-        await new Promise<void>((resolve, reject) => {
-          const opts = {
-            hostname: '127.0.0.1', port: 5000, path: '/api/analyze', method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body),
-              'X-Internal-Request': 'background' },
-            timeout: 120000,
-          };
-          const req2 = http.request(opts, (r2) => {
-            r2.on('data', (chunk: Buffer) => result += chunk.toString());
-            r2.on('end', resolve);
-          });
-          req2.on('error', reject);
-          req2.setTimeout(120000, () => req2.destroy(new Error('timeout')));
-          req2.write(body); req2.end();
-        });
-        const parsed = JSON.parse(result);
-        if (parsed?.companyName) {
-          console.log(`[ANALYZE-BG] Background analysis done for ${ticker}: ${parsed.companyName} $${parsed.currentPrice}`);
-        } else if (parsed?._pending) {
-          console.log(`[ANALYZE-BG] Background analysis still pending for ${ticker} — retry later`);
-        }
+        console.log(`[BG] Background analysis started for ${ticker}`);
+        await runAnalysisDirect(String(ticker), useLLM === true);
       } catch (e: any) {
-        console.error(`[ANALYZE-BG] Error for ${ticker}: ${e?.message?.substring(0, 100)}`);
+        console.error(`[BG] Failed for ${ticker}: ${e?.message?.substring(0, 120)}`);
+      } finally {
+        analysisInProgress.delete(String(ticker).toUpperCase());
       }
     });
   });
 
-  app.post("/api/analyze", async (req, res) => {
+  // Core analyze handler — extracted as a named function so the background
+  // analysis can invoke the *full* pipeline in-process (no HTTP loopback).
+  // The pplx.app sandbox blocks 127.0.0.1 loopback requests, so the previous
+  // self-request architecture never completed. A synthetic request carrying
+  // the `x-internal-request: background` header skips the _pending short-circuit
+  // and runs to completion, persisting the full StockAnalysis via saveCachedAnalysis.
+  const analyzeHandler = async (req: any, res: any) => {
     // Declare ticker outside try{} so catch{} can use it for cache-fallback (C2 fix)
     let ticker = "";
     let useLLM = false;
@@ -3903,21 +3916,12 @@ export async function registerRoutes(server: Server, app: Express) {
             console.log(`[ANALYZE] ${ticker} not cached — starting background analysis`);
             const bgPromise = (async () => {
               try {
-                // Small delay to ensure response is sent first
-                await new Promise(r => setTimeout(r, 100));
-                // Trigger a new self-request to actually run the analysis
-                // This keeps it truly separate from the current request lifecycle
-                const http = await import('http');
-                await new Promise<void>((resolve) => {
-                  const body = JSON.stringify({ ticker, useLLM: false, force: false, _background: true });
-                  const opts = { hostname: '127.0.0.1', port: 5000, path: '/api/analyze-background', method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } };
-                  const req2 = http.request(opts, (r2) => { r2.resume(); r2.on('end', resolve); });
-                  req2.on('error', resolve);
-                  req2.write(body); req2.end();
-                });
+                // Run the full analysis in-process — no HTTP loopback (blocked by
+                // the pplx.app sandbox). Persists the StockAnalysis to cache so
+                // the client's next poll gets a cache HIT.
+                await runAnalysisDirect(String(ticker), false);
               } catch (e: any) {
-                console.warn(`[ANALYZE-BG] Background trigger failed: ${e?.message}`);
+                console.warn(`[BG] Background analysis failed for ${ticker}: ${e?.message}`);
               } finally {
                 analysisInProgress.delete(ticker.toUpperCase());
               }
@@ -5853,7 +5857,9 @@ export async function registerRoutes(server: Server, app: Express) {
         res.status(500).json({ error: error?.message || "Analysis failed" });
       }
     }
-  });
+  };
+
+  app.post("/api/analyze", analyzeHandler);
 
 
   // ============================================================
