@@ -76,7 +76,7 @@ export default function Dashboard() {
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
-  const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number } | null>(null);
+  const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number; isPending?: boolean } | null>(null);
   const [serverReady, setServerReady] = useState<boolean | null>(null); // null=checking, true=ready, false=down
 
   const [financeQuotaOk, setFinanceQuotaOk] = useState<boolean | null>(null);
@@ -173,7 +173,7 @@ export default function Dashboard() {
             // Background analysis running — poll every 20s, up to 6 times (2 minutes)
             for (let poll = 1; poll <= 6; poll++) {
               console.log(`[Analyze] _pending — warte 20s dann poll ${poll}/6`);
-              setRetryInfo({ attempt: poll, maxRetries: 6 });
+              setRetryInfo({ attempt: poll, maxRetries: 6, isPending: true });
               await new Promise(r => setTimeout(r, 20000));
               const pollRes = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: false });
               if (!pollRes.ok) continue;
@@ -679,18 +679,23 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
   );
 }
 
-function LoadingScreen({ ticker, retryInfo }: { ticker: string; retryInfo?: { attempt: number; maxRetries: number } | null }) {
-  const isRetrying = retryInfo && retryInfo.attempt > 1;
+function LoadingScreen({ ticker, retryInfo }: { ticker: string; retryInfo?: { attempt: number; maxRetries: number; isPending?: boolean } | null }) {
+  const isPendingPoll = retryInfo?.isPending === true;
+  const isRetrying = retryInfo && retryInfo.attempt > 1 && !isPendingPoll;
   return (
     <div className="flex items-center justify-center min-h-full p-8">
       <div className="text-center space-y-4">
         <div className={`w-8 h-8 border-2 ${isRetrying ? 'border-amber-400' : 'border-primary'} border-t-transparent rounded-full animate-spin mx-auto`} />
         <div>
           <div className="text-sm font-medium">
-            {isRetrying ? `Retry ${retryInfo!.attempt}/${retryInfo!.maxRetries}` : `Analysiere ${ticker}...`}
+            {isPendingPoll
+              ? `Analysiere ${ticker}… (${retryInfo!.attempt * 20}s)`
+              : isRetrying ? `Retry ${retryInfo!.attempt}/${retryInfo!.maxRetries}` : `Analysiere ${ticker}…`}
           </div>
           <div className="text-xs text-muted-foreground mt-1">
-            {isRetrying
+            {isPendingPoll
+              ? `Erste Analyse im Hintergrund — gleich fertig`
+              : isRetrying
               ? `Verbindung fehlgeschlagen — neuer Versuch läuft...`
               : 'Umfassende Analyse wird erstellt'
             }
@@ -701,7 +706,9 @@ function LoadingScreen({ ticker, retryInfo }: { ticker: string; retryInfo?: { at
                 <div
                   key={i}
                   className={`w-2 h-2 rounded-full transition-colors ${
-                    i < retryInfo.attempt - 1 ? 'bg-red-400/60' : i === retryInfo.attempt - 1 ? 'bg-amber-400 animate-pulse' : 'bg-foreground/15'
+                    isPendingPoll
+                      ? (i < retryInfo!.attempt ? 'bg-primary/60' : 'bg-foreground/15')
+                      : i < retryInfo.attempt - 1 ? 'bg-red-400/60' : i === retryInfo.attempt - 1 ? 'bg-amber-400 animate-pulse' : 'bg-foreground/15'
                   }`}
                 />
               ))}
