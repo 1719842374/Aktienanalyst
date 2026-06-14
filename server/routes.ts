@@ -7421,6 +7421,24 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+
+  // Temporary test endpoint to debug Finance API
+  app.get('/api/test-finance', (_req, res) => {
+    try {
+      const { execSync } = require('child_process');
+      const params = JSON.stringify({source_id:"finance",tool_name:"finance_quotes",arguments:{ticker_symbols:["AAPL"]}});
+      const escaped = params.replace(/'/g, "'\\''");
+      const t0 = Date.now();
+      const result = execSync(`external-tool call '${escaped}'`, {
+        timeout: 30000, encoding: 'utf-8', maxBuffer: 10*1024*1024
+      });
+      const elapsed = Date.now() - t0;
+      res.json({ ok: true, elapsed, result: result.substring(0, 500) });
+    } catch (e: any) {
+      res.json({ ok: false, error: e?.message?.substring(0, 300) });
+    }
+  });
+
   // Startup: warm Finance API + pre-cache important tickers in background
   // Single ticker first (MSFT) to validate the pipeline, rest follow.
   let startupCacheStatus: Record<string, string> = {};
