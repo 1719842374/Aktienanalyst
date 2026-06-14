@@ -10,7 +10,7 @@ const CACHE_TTL_DAYS = 7;
 const CACHE_TTL_MS = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 // Bump this string whenever DCF formulas, field names or Rechenweg-Labels change.
 // Any cached entry with a different version will be silently invalidated.
-const CACHE_SCHEMA_VERSION = "2026-06-09-v1"; // Bumped: BTC volume fields added to technicalChartData
+const CACHE_SCHEMA_VERSION = "2026-06-14-v1"; // Bumped: invalidate FMP-only entries without historicalPrices
 // Researcher cache TTL: 1 day (was 7) — keep macro/fiscal/capex data fresh.
 const RESEARCHER_CACHE_TTL_MS = 1 * 24 * 60 * 60 * 1000;
 
@@ -100,6 +100,13 @@ export function diskCacheGet(ticker: string): any | null {
     if (data._schemaVersion && data._schemaVersion !== CACHE_SCHEMA_VERSION) {
       d.prepare("DELETE FROM analysis_cache WHERE ticker = ?").run(ticker);
       console.log(`[DiskCache] Invalidated ${ticker}: schema ${data._schemaVersion} ≠ ${CACHE_SCHEMA_VERSION}`);
+      return null;
+    }
+    // Invalidate FMP-only entries without historicalPrices (incomplete data)
+    const hp = data.historicalPrices;
+    if (!hp || (Array.isArray(hp) && hp.length === 0)) {
+      d.prepare("DELETE FROM analysis_cache WHERE ticker = ?").run(ticker);
+      console.log(`[DiskCache] Invalidated ${ticker}: no historicalPrices (FMP-only entry)`);
       return null;
     }
     return {
