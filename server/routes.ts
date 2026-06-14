@@ -87,6 +87,12 @@ const QUOTA_RESET_MS = 60 * 60 * 1000; // Reset after 1 hour
 function markQuotaExceeded(): void {
   quotaExceededAt = Date.now();
 }
+function markQuotaReset(): void {
+  if (quotaExceededAt !== null) {
+    console.log('[Quota] Manual reset via markQuotaReset()');
+    quotaExceededAt = null;
+  }
+}
 
 function incrementQuota() {
   const today = new Date().toDateString();
@@ -3817,8 +3823,10 @@ export async function registerRoutes(server: Server, app: Express) {
   // `x-internal-request: background` header makes the handler skip its
   // proxy-timeout _pending short-circuit and run to completion.
   const runAnalysisDirect = async (ticker: string, useLLM: boolean): Promise<void> => {
+    // Force reset quota guard for background analysis — credits may have been restored
+    markQuotaReset();
     const fakeReq: any = {
-      body: { ticker, useLLM, force: false },
+      body: { ticker, useLLM, force: true }, // force=true to bypass quota guard
       headers: { 'x-internal-request': 'background' },
     };
     // Minimal Express-compatible response stub.
