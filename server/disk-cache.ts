@@ -40,6 +40,26 @@ function getDb(): Database.Database | null {
     `);
     console.log(`[DiskCache] SQLite opened at ${DB_PATH}`);
 
+    // Bulk-cleanup: remove all entries without historicalPrices on startup
+    // This clears FMP-only entries that were persisted via publish_website snapshot
+    try {
+      const allRows = db.prepare('SELECT ticker, data FROM analysis_cache').all() as Array<{ ticker: string; data: string }>;
+      let cleaned = 0;
+      for (const row of allRows) {
+        try {
+          const parsed = JSON.parse(row.data);
+          const hp = parsed?.historicalPrices;
+          if (!hp || (Array.isArray(hp) && hp.length < 50)) {
+            db.prepare('DELETE FROM analysis_cache WHERE ticker = ?').run(row.ticker);
+            cleaned++;
+          }
+        } catch { db.prepare('DELETE FROM analysis_cache WHERE ticker = ?').run(row.ticker); cleaned++; }
+      }
+      if (cleaned > 0) console.log(`[DiskCache] Startup cleanup: removed ${cleaned} incomplete entries (no historicalPrices)`);
+    } catch (cleanErr: any) {
+      console.warn(`[DiskCache] Startup cleanup failed: ${cleanErr?.message}`);
+    }
+
     // Load seed cache — merge into DB on every start (not just when empty)
     // This ensures re-deployed sandboxes always have the latest seed data
     try {
@@ -102,11 +122,11 @@ export function diskCacheGet(ticker: string): any | null {
       console.log(`[DiskCache] Invalidated ${ticker}: schema ${data._schemaVersion} ≠ ${CACHE_SCHEMA_VERSION}`);
       return null;
     }
-    // Invalidate FMP-only entries without historicalPrices (incomplete data)
+    // Invalidate FMP-only entries without historicalPrices (incomplete data — cannot render)
     const hp = data.historicalPrices;
-    if (!hp || (Array.isArray(hp) && hp.length === 0)) {
+    if (!hp || (Array.isArray(hp) && hp.length < 50)) {
       d.prepare("DELETE FROM analysis_cache WHERE ticker = ?").run(ticker);
-      console.log(`[DiskCache] Invalidated ${ticker}: no historicalPrices (FMP-only entry)`);
+      if (hp !== undefined) console.log(`[DiskCache] Invalidated ${ticker}: insufficient historicalPrices (${Array.isArray(hp) ? hp.length : 0} < 50)`);
       return null;
     }
     return {
