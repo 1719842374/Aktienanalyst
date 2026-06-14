@@ -7407,23 +7407,28 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  // Warm-up: ping Finance API 5 seconds after start to detect binary health
+  // Startup: warm Finance API + pre-cache important tickers in background
+  // This runs after server start and fills the cache with real data so the
+  // first user request gets a cached response instead of a _pending response.
   setTimeout(async () => {
-    try {
-      console.log('[Startup] Warming up Finance API...');
-      const warmup = execSync(
-        `external-tool '{"source_id":"finance","tool_name":"get_quote","arguments":{"symbol":"AAPL"}}'`,
-        { encoding: 'utf-8', timeout: 15000 }
-      );
-      const parsed = JSON.parse(warmup);
-      if (parsed?.price || parsed?.regularMarketPrice || parsed?.[0]?.price) {
-        console.log('[Startup] Finance API warm — ready for analyses');
-      } else {
-        console.log('[Startup] Finance API responded but no price data yet');
+    const STARTUP_TICKERS = ['MSFT', 'AAPL', 'NVDA', 'AMZN', 'TSLA', 'GOOGL', 'ORCL'];
+    console.log(`[Startup] Pre-caching ${STARTUP_TICKERS.length} tickers in background...`);
+    for (const t of STARTUP_TICKERS) {
+      try {
+        const existing = getCachedAnalysis(t);
+        if (existing && (existing.historicalPrices?.length ?? 0) > 50) {
+          console.log(`[Startup] ${t} already cached (${existing.historicalPrices?.length} prices) — skip`);
+          continue;
+        }
+        console.log(`[Startup] Caching ${t}...`);
+        await runAnalysisDirect(t, false);
+        console.log(`[Startup] ${t} cached ✅`);
+        await new Promise(r => setTimeout(r, 1000));
+      } catch (e: any) {
+        console.warn(`[Startup] ${t} cache failed: ${e?.message?.substring(0, 60)}`);
       }
-    } catch (e: any) {
-      console.warn('[Startup] Finance API warm-up failed (normal on cold start):', e?.message?.substring(0, 100));
     }
+    console.log('[Startup] Pre-cache complete');
   }, 5000);
 
   return server;
