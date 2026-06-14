@@ -3821,16 +3821,24 @@ export async function registerRoutes(server: Server, app: Express) {
       body: { ticker, useLLM, force: false },
       headers: { 'x-internal-request': 'background' },
     };
-    // Minimal Express-compatible response stub — discards output. The handler
-    // persists results to cache as a side effect, which is all we need here.
+    // Minimal Express-compatible response stub.
+    // When the handler calls res.json(analysis), we intercept it and save to cache.
+    let resolved = false;
     const fakeRes: any = {
       headersSent: false,
       statusCode: 200,
       status(code: number) { this.statusCode = code; return this; },
       json(payload: any) {
         this.headersSent = true;
-        if (payload?.companyName) {
-          console.log(`[BG] Analysis done for ${ticker}: ${payload.companyName} $${payload.currentPrice ?? payload.price ?? '?'}`);
+        if (!resolved && payload?.companyName && (payload?.historicalPrices?.length ?? 0) > 0) {
+          resolved = true;
+          // Explicitly save to cache here (backup in case analyzeHandler already did it)
+          saveCachedAnalysis(String(ticker).toUpperCase(), payload);
+          console.log(`[BG] ✅ Analysis done for ${ticker}: ${payload.companyName} $${payload.currentPrice ?? '?'} | hp=${payload.historicalPrices?.length}`);
+        } else if (payload?._pending) {
+          console.log(`[BG] ⚠ analyzeHandler returned _pending for ${ticker} (background header not honoured?)`);
+        } else if (payload?.companyName) {
+          console.log(`[BG] ⚠ Analysis done but no historicalPrices for ${ticker} — not caching`);
         }
         return this;
       },
