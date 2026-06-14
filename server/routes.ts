@@ -3848,15 +3848,18 @@ export async function registerRoutes(server: Server, app: Express) {
         }
       }
 
-      // Proxy-Timeout-Guard: respond with _pending:true after 22s if analysis is still running.
-      // The client detects _pending and polls again — gets the result from cache on the 2nd call.
-      proxyTimer = setTimeout(() => {
-        if (!proxyResponded && !res.headersSent) {
+      // Proxy-Timeout-Guard: pplx.app Proxy killt Verbindungen nach ~3s ohne Cache-Hit.
+      // Lösung: Sofort _pending:true senden für uncached Ticker, Analyse läuft im Hintergrund.
+      // Client pollt mit force=false und bekommt das Ergebnis aus dem Cache.
+      {
+        const quickCheck = getCachedAnalysis(ticker);
+        if (!quickCheck && !proxyResponded && !res.headersSent) {
           proxyResponded = true;
-          console.log(`[ANALYZE] ${ticker} still running after 8s — sending _pending response for proxy-safe polling`);
-          res.json({ _pending: true, ticker, message: "Analyse läuft im Hintergrund — bitte erneut abfragen" });
+          console.log(`[ANALYZE] ${ticker} not in cache — sending _pending immediately, analysis runs in background`);
+          res.json({ _pending: true, ticker, message: "Analyse läuft im Hintergrund — bitte in 30s erneut abfragen" });
+          // Analysis continues below — res.json at end will be no-op (proxyResponded=true)
         }
-      }, 8000);
+      }
 
       // Quote-only refresh: if cache is fresh (< 48h) but user requested force refresh,
       // only update the quote field. Saves 7 Finance API calls (uses only 1).
