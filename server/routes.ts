@@ -3851,10 +3851,10 @@ export async function registerRoutes(server: Server, app: Express) {
       proxyTimer = setTimeout(() => {
         if (!proxyResponded && !res.headersSent) {
           proxyResponded = true;
-          console.log(`[ANALYZE] ${ticker} still running after 22s — sending _pending response for proxy-safe polling`);
+          console.log(`[ANALYZE] ${ticker} still running after 15s — sending _pending response for proxy-safe polling`);
           res.json({ _pending: true, ticker, message: "Analyse läuft im Hintergrund — bitte erneut abfragen" });
         }
-      }, 22000);
+      }, 15000);
 
       // Quote-only refresh: if cache is fresh (< 48h) but user requested force refresh,
       // only update the quote field. Saves 7 Finance API calls (uses only 1).
