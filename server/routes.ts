@@ -3826,7 +3826,7 @@ export async function registerRoutes(server: Server, app: Express) {
     // Force reset quota guard for background analysis — credits may have been restored
     markQuotaReset();
     const fakeReq: any = {
-      body: { ticker, useLLM, force: true }, // force=true to bypass quota guard
+      body: { ticker, useLLM, force: false, _fullAnalysis: true },
       headers: { 'x-internal-request': 'background' },
     };
     // Minimal Express-compatible response stub.
@@ -3957,7 +3957,8 @@ export async function registerRoutes(server: Server, app: Express) {
       const QUOTE_REFRESH_AGE_MS = 48 * 60 * 60 * 1000;
       const cached = force ? getCachedAnalysis(ticker) : null;
       const cacheAgeMs = cached ? (cached._cacheAge ?? Infinity) * 60000 : Infinity;
-      if (cached && force && cacheAgeMs < QUOTE_REFRESH_AGE_MS && cacheLLMModeMatches(cached._useLLM, useLLM)) {
+      // Skip quote-only refresh for background full analysis requests
+      if (!isInternalFullAnalysis && cached && force && cacheAgeMs < QUOTE_REFRESH_AGE_MS && cacheLLMModeMatches(cached._useLLM, useLLM)) {
         console.log(`[ANALYZE] Quote-only refresh for ${ticker} (cache ${Math.round(cacheAgeMs / 60000)}min old)`);
         try {
           const freshQuote = await callFinanceToolThrottled("finance_quotes", { ticker_symbols: [ticker] });
@@ -4007,7 +4008,10 @@ export async function registerRoutes(server: Server, app: Express) {
       // get the cascade of 401s after the first 429.
 
       // ── Quota Guard: soft-block before making Finance API calls ───────────────
-      if (isQuotaExceeded()) {
+      // Skip quota guard for background (internal) requests — credits should be available
+      const isInternalFullAnalysis = (req as any).body?._fullAnalysis === true ||
+        (req as any).headers?.['x-internal-request'] === 'background';
+      if (!isInternalFullAnalysis && isQuotaExceeded()) {
         const fmpKey = process.env.FMP_API_KEY;
         if (fmpKey) {
           try {
