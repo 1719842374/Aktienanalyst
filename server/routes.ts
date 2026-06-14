@@ -7408,27 +7408,42 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // Startup: warm Finance API + pre-cache important tickers in background
-  // This runs after server start and fills the cache with real data so the
-  // first user request gets a cached response instead of a _pending response.
+  // Single ticker first (MSFT) to validate the pipeline, rest follow.
+  let startupCacheStatus: Record<string, string> = {};
+
+  // Debug endpoint to check pre-cache status
+  app.get('/api/startup-status', (_req, res) => {
+    res.json({ startupCacheStatus, cacheEntries: Object.keys(startupCacheStatus).length });
+  });
+
   setTimeout(async () => {
     const STARTUP_TICKERS = ['MSFT', 'AAPL', 'NVDA', 'AMZN', 'TSLA', 'GOOGL', 'ORCL'];
-    console.log(`[Startup] Pre-caching ${STARTUP_TICKERS.length} tickers in background...`);
+    console.log(`[Startup] Pre-caching ${STARTUP_TICKERS.length} tickers...`);
     for (const t of STARTUP_TICKERS) {
       try {
         const existing = getCachedAnalysis(t);
         if (existing && (existing.historicalPrices?.length ?? 0) > 50) {
-          console.log(`[Startup] ${t} already cached (${existing.historicalPrices?.length} prices) — skip`);
+          startupCacheStatus[t] = `skip (${existing.historicalPrices?.length} prices already cached)`;
+          console.log(`[Startup] ${t}: already cached`);
           continue;
         }
-        console.log(`[Startup] Caching ${t}...`);
+        startupCacheStatus[t] = 'running...';
+        console.log(`[Startup] ${t}: caching now...`);
+        const t0 = Date.now();
         await runAnalysisDirect(t, false);
-        console.log(`[Startup] ${t} cached ✅`);
-        await new Promise(r => setTimeout(r, 1000));
+        const elapsed = Math.round((Date.now() - t0) / 1000);
+        // Verify it was cached
+        const cached = getCachedAnalysis(t);
+        const hp = cached?.historicalPrices?.length ?? 0;
+        startupCacheStatus[t] = hp > 50 ? `✅ done (${hp} prices, ${elapsed}s)` : `⚠ done but hp=${hp} (${elapsed}s)`;
+        console.log(`[Startup] ${t}: ${startupCacheStatus[t]}`);
+        await new Promise(r => setTimeout(r, 500));
       } catch (e: any) {
-        console.warn(`[Startup] ${t} cache failed: ${e?.message?.substring(0, 60)}`);
+        startupCacheStatus[t] = `❌ error: ${e?.message?.substring(0, 60)}`;
+        console.warn(`[Startup] ${t}: ${startupCacheStatus[t]}`);
       }
     }
-    console.log('[Startup] Pre-cache complete');
+    console.log('[Startup] Pre-cache complete:', startupCacheStatus);
   }, 5000);
 
   return server;
