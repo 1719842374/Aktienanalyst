@@ -3810,6 +3810,47 @@ export async function registerRoutes(server: Server, app: Express) {
   // In-progress map: ticker → { started, promise } for dedup
   const analysisInProgress = new Map<string, { started: number; promise: Promise<any> }>();
 
+  // Background analysis endpoint — internal only, called by /api/analyze via self-request
+  // No proxy timeout applies here since it's a loopback request
+  app.post("/api/analyze-background", async (req, res) => {
+    const { ticker, useLLM, _background } = req.body || {};
+    if (!_background || !ticker) return res.json({ ok: false });
+    res.json({ ok: true, started: true }); // Respond immediately so caller can proceed
+    // Run the full analysis asynchronously after responding
+    setImmediate(async () => {
+      try {
+        console.log(`[ANALYZE-BG] Background analysis started for ${ticker}`);
+        // Make an internal analyze request that bypasses the proxy
+        const http = await import('http');
+        const body = JSON.stringify({ ticker, useLLM: useLLM || false, force: false });
+        let result = '';
+        await new Promise<void>((resolve, reject) => {
+          const opts = {
+            hostname: '127.0.0.1', port: 5000, path: '/api/analyze', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body),
+              'X-Internal-Request': 'background' },
+            timeout: 120000,
+          };
+          const req2 = http.request(opts, (r2) => {
+            r2.on('data', (chunk: Buffer) => result += chunk.toString());
+            r2.on('end', resolve);
+          });
+          req2.on('error', reject);
+          req2.setTimeout(120000, () => req2.destroy(new Error('timeout')));
+          req2.write(body); req2.end();
+        });
+        const parsed = JSON.parse(result);
+        if (parsed?.companyName) {
+          console.log(`[ANALYZE-BG] Background analysis done for ${ticker}: ${parsed.companyName} $${parsed.currentPrice}`);
+        } else if (parsed?._pending) {
+          console.log(`[ANALYZE-BG] Background analysis still pending for ${ticker} — retry later`);
+        }
+      } catch (e: any) {
+        console.error(`[ANALYZE-BG] Error for ${ticker}: ${e?.message?.substring(0, 100)}`);
+      }
+    });
+  });
+
   app.post("/api/analyze", async (req, res) => {
     // Declare ticker outside try{} so catch{} can use it for cache-fallback (C2 fix)
     let ticker = "";
@@ -3849,15 +3890,45 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       // Proxy-Timeout-Guard: pplx.app Proxy killt Verbindungen nach ~3s ohne Cache-Hit.
-      // Lösung: Sofort _pending:true senden für uncached Ticker, Analyse läuft im Hintergrund.
-      // Client pollt mit force=false und bekommt das Ergebnis aus dem Cache.
+      // Lösung: Für uncached Ticker sofort _pending:true senden und Analyse als echten
+      // Background-Promise starten (setImmediate — läuft unabhängig vom Request-Lifecycle).
       {
+        const isInternalBg = (req as any).headers?.['x-internal-request'] === 'background';
         const quickCheck = getCachedAnalysis(ticker);
-        if (!quickCheck && !proxyResponded && !res.headersSent) {
+        if (!isInternalBg && !quickCheck && !proxyResponded && !res.headersSent) {
+          // Check if already running in background
+          const inProg = analysisInProgress.get(ticker.toUpperCase());
+          if (!inProg || (Date.now() - inProg.started) > 120000) {
+            // Not running yet — start background analysis
+            console.log(`[ANALYZE] ${ticker} not cached — starting background analysis`);
+            const bgPromise = (async () => {
+              try {
+                // Small delay to ensure response is sent first
+                await new Promise(r => setTimeout(r, 100));
+                // Trigger a new self-request to actually run the analysis
+                // This keeps it truly separate from the current request lifecycle
+                const http = await import('http');
+                await new Promise<void>((resolve) => {
+                  const body = JSON.stringify({ ticker, useLLM: false, force: false, _background: true });
+                  const opts = { hostname: '127.0.0.1', port: 5000, path: '/api/analyze-background', method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } };
+                  const req2 = http.request(opts, (r2) => { r2.resume(); r2.on('end', resolve); });
+                  req2.on('error', resolve);
+                  req2.write(body); req2.end();
+                });
+              } catch (e: any) {
+                console.warn(`[ANALYZE-BG] Background trigger failed: ${e?.message}`);
+              } finally {
+                analysisInProgress.delete(ticker.toUpperCase());
+              }
+            })();
+            analysisInProgress.set(ticker.toUpperCase(), { started: Date.now(), promise: bgPromise });
+          } else {
+            console.log(`[ANALYZE] ${ticker} already running in background (${Math.round((Date.now()-inProg.started)/1000)}s ago)`);
+          }
           proxyResponded = true;
-          console.log(`[ANALYZE] ${ticker} not in cache — sending _pending immediately, analysis runs in background`);
-          res.json({ _pending: true, ticker, message: "Analyse läuft im Hintergrund — bitte in 30s erneut abfragen" });
-          // Analysis continues below — res.json at end will be no-op (proxyResponded=true)
+          if (proxyTimer) { clearTimeout(proxyTimer); proxyTimer = null; }
+          return res.json({ _pending: true, ticker, message: "Analyse läuft im Hintergrund — bitte in 60s erneut abfragen" });
         }
       }
 
