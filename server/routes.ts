@@ -3918,6 +3918,10 @@ export async function registerRoutes(server: Server, app: Express) {
         }
       }
 
+      // Internal background request flag — defined early so all guards below can use it
+      const isInternalFullAnalysis = (req as any).body?._fullAnalysis === true ||
+        (req as any).headers?.['x-internal-request'] === 'background';
+
       // Proxy-Timeout-Guard: pplx.app Proxy killt Verbindungen nach ~3s ohne Cache-Hit.
       // Lösung: Für uncached Ticker sofort _pending:true senden und Analyse als echten
       // Background-Promise starten (setImmediate — läuft unabhängig vom Request-Lifecycle).
@@ -4009,8 +4013,6 @@ export async function registerRoutes(server: Server, app: Express) {
 
       // ── Quota Guard: soft-block before making Finance API calls ───────────────
       // Skip quota guard for background (internal) requests — credits should be available
-      const isInternalFullAnalysis = (req as any).body?._fullAnalysis === true ||
-        (req as any).headers?.['x-internal-request'] === 'background';
       if (!isInternalFullAnalysis && isQuotaExceeded()) {
         const fmpKey = process.env.FMP_API_KEY;
         if (fmpKey) {
