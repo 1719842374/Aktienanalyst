@@ -170,24 +170,37 @@ export default function Dashboard() {
           // Proxy-safe async pattern: server responded with _pending:true
           // (analysis is running in background > 22s). Wait 20s and poll with force=false.
           if (json?._pending === true) {
-            // Background analysis running — poll every 20s, up to 6 times (2 minutes)
-            for (let poll = 1; poll <= 6; poll++) {
-              console.log(`[Analyze] _pending — warte 20s dann poll ${poll}/6`);
-              setRetryInfo({ attempt: poll, maxRetries: 6, isPending: true });
-              await new Promise(r => setTimeout(r, 20000));
+            // Background analysis running — poll every 30s, up to 3 times (90s max)
+            // After 3 attempts, abort and show clear error message
+            for (let poll = 1; poll <= 3; poll++) {
+              console.log(`[Analyze] _pending — warte 30s dann poll ${poll}/3`);
+              setRetryInfo({ attempt: poll, maxRetries: 3, isPending: true });
+              await new Promise(r => setTimeout(r, 30000));
               const pollRes = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: false });
-              if (!pollRes.ok) continue;
+              if (!pollRes.ok) {
+                console.log(`[Analyze] Poll ${poll}/3: HTTP ${pollRes.status}`);
+                continue;
+              }
               const pollJson = await pollRes.json();
               if (pollJson?._pending) {
-                console.log(`[Analyze] Poll ${poll}/6: noch pending`);
-                continue; // keep polling
+                console.log(`[Analyze] Poll ${poll}/3: noch pending`);
+                continue;
+              }
+              if ((pollJson?.companyName || pollJson?.currentPrice) && (pollJson?.historicalPrices?.length ?? 0) > 0) {
+                setRetryInfo(null);
+                return pollJson as StockAnalysis;
               }
               if (pollJson?.companyName || pollJson?.currentPrice) {
+                // Partial data — accept it
                 setRetryInfo(null);
                 return pollJson as StockAnalysis;
               }
             }
-            throw new Error('Analyse läuft noch — bitte in 1-2 Minuten erneut klicken');
+            // After 3 polls, give up cleanly
+            throw Object.assign(
+              new Error(`Analyse für ${ticker} nicht verfügbar — Datenquellen aktuell ausgelastet. Bitte morgen früh versuchen oder bekannten Ticker wählen (AAPL, MSFT, NVDA).`),
+              { errorCode: 'DATA_UNAVAILABLE' }
+            );
           }
           // Surface RATE_LIMITED from a 200 response body too
           if (json?.errorCode === 'RATE_LIMITED') {

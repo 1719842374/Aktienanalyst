@@ -4701,7 +4701,22 @@ export async function registerRoutes(server: Server, app: Express) {
         }
       }
 
-      // === FMP OHLCV Fallback: wenn Finance-Tool OHLCV leer, direkt FMP abfragen ===
+      // === FMP OHLCV Fallback: wenn Finance-Tool OHLCV leer ===
+      // Step 1: Nutze fmpData.ohlcv falls schon geladen (kein extra API-Call nötig)
+      if (closingPrices2Y.length < 100 && fmpData?.ohlcv && Array.isArray(fmpData.ohlcv) && fmpData.ohlcv.length > 0) {
+        const fmpOhlcv = fmpData.ohlcv as any[];
+        for (const row of [...fmpOhlcv].reverse()) {
+          const date = row.date || '';
+          const close = row.close || row.adjClose || 0;
+          if (date && close > 0) {
+            closingPrices2Y.push({ date, close });
+            ohlcvData.push({ date, open: row.open || close, high: row.high || close, low: row.low || close, close, volume: row.volume || 0 });
+          }
+        }
+        console.log(`[FMP-OHLCV-FROM-FMPDATA] ${ticker}: ${closingPrices2Y.length} points from fmpData.ohlcv`);
+      }
+
+      // Step 2: Direkter FMP-Call als letzter Fallback
       if (closingPrices2Y.length < 100) {
         try {
           const fmpStart = new Date(Date.now() - 11 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
