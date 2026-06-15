@@ -3923,12 +3923,20 @@ export async function registerRoutes(server: Server, app: Express) {
         (req as any).headers?.['x-internal-request'] === 'background';
 
       // Proxy-Timeout-Guard: pplx.app Proxy killt Verbindungen nach ~3s ohne Cache-Hit.
-      // Lösung: Für uncached Ticker sofort _pending:true senden und Analyse als echten
-      // Background-Promise starten (setImmediate — läuft unabhängig vom Request-Lifecycle).
+      // WICHTIG: Nur für normale Requests — wenn external-tool fehlt, sofort zu FMP-Fallback.
       {
         const isInternalBg = (req as any).headers?.['x-internal-request'] === 'background';
+        // Schnell prüfen ob external-tool verfügbar ist (Socket-Test)
+        const binaryAvailable = (() => {
+          try {
+            const { execSync: es } = require('child_process');
+            es('test -S /tmp/.tools_service_endpoint 2>/dev/null', { timeout: 500 });
+            return true;
+          } catch { return false; }
+        })();
         const quickCheck = getCachedAnalysis(ticker);
-        if (!isInternalBg && !quickCheck && !proxyResponded && !res.headersSent) {
+        // Nur _pending senden wenn: kein Cache UND binary verfügbar (sonst sofort zu FMP)
+        if (!isInternalBg && !quickCheck && !proxyResponded && !res.headersSent && binaryAvailable) {
           // Check if already running in background
           const inProg = analysisInProgress.get(ticker.toUpperCase());
           if (!inProg || (Date.now() - inProg.started) > 120000) {
