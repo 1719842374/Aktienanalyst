@@ -4105,11 +4105,15 @@ export async function registerRoutes(server: Server, app: Express) {
           console.log(`[ANALYZE] external-tool rate-limited — trying FMP fallback for ${ticker}`);
         }
 
-        // Try cache first (fastest)
+        // Try cache first (fastest) — but only if it has real historicalPrices
         const cachedRL = getCachedAnalysis(ticker);
-        if (cachedRL && cacheLLMModeMatches(cachedRL._useLLM, useLLM)) {
-          console.log(`[ANALYZE] Serving cache for ${ticker} (FMP fallback skipped — fresh cache available)`);
+        if (cachedRL && cacheLLMModeMatches(cachedRL._useLLM, useLLM) &&
+            (cachedRL.historicalPrices?.length ?? 0) >= 50) {
+          console.log(`[ANALYZE] Serving cache for ${ticker} (FMP fallback skipped — fresh cache with ${cachedRL.historicalPrices?.length} prices)`);
           return res.json(cachedRL);
+        }
+        if (cachedRL && (cachedRL.historicalPrices?.length ?? 0) < 50) {
+          console.log(`[ANALYZE] Cache for ${ticker} has no historicalPrices (${cachedRL.historicalPrices?.length ?? 0}) — proceeding with FMP fallback`);
         }
 
         // Try FMP fallback
