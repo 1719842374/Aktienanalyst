@@ -4088,23 +4088,57 @@ export async function registerRoutes(server: Server, app: Express) {
       const endDate = new Date().toISOString().split('T')[0];
       const startDate = new Date(Date.now() - 11 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-      // Batch 1 (critical path) — quote + profile in parallel
-      const [quoteResult, profileResult] = await Promise.all([
-        callFinanceToolThrottled("finance_quotes", {
-          ticker_symbols: [ticker],
-          fields: ["price", "currency", "marketCap", "pe", "eps", "change", "changesPercentage", "volume", "avgVolume", "dayLow", "dayHigh", "yearLow", "yearHigh", "previousClose", "dividendYieldTTM"],
-        }),
-        callFinanceToolThrottled("finance_company_profile", {
-          ticker_symbols: [ticker],
-          query: `Company profile for ${ticker}`,
-          action: `Fetching company profile for ${ticker}`,
-        }),
-      ]);
+      // FMP as PRIMARY path: on published pplx.app the external-tool socket
+      // (/tmp/.tools_service_endpoint) is missing, so external-tool calls only
+      // burn retry-delays before failing. Detect that here and fetch everything
+      // from FMP up front — the downstream builder already consumes `fmpData`.
+      const externalToolAvailable = (() => {
+        try {
+          const { execSync: es } = require('child_process');
+          es('test -S /tmp/.tools_service_endpoint 2>/dev/null', { timeout: 500 });
+          return true;
+        } catch { return false; }
+      })();
+
+      let fmpData: Awaited<ReturnType<typeof getFmpFallbackData>> = null;
+      let quoteResult: any = null;
+      let profileResult: any = null;
+
+      if (!externalToolAvailable) {
+        console.log(`[ANALYZE] external-tool unavailable — using FMP as primary source for ${ticker}`);
+        fmpData = await getFmpFallbackData(ticker);
+        if (!fmpData) {
+          // No external-tool AND no FMP data — serve stale cache if present,
+          // otherwise surface a friendly rate-limit/connector error.
+          const cachedNoFmp = getCachedAnalysis(ticker);
+          if (cachedNoFmp && cacheLLMModeMatches(cachedNoFmp._useLLM, useLLM)) {
+            console.log(`[ANALYZE] FMP returned no data for ${ticker} — serving cache`);
+            return res.json({ ...cachedNoFmp, _cached: true, _quoteStale: true });
+          }
+          return res.status(429).json({
+            error: "Finance-Daten derzeit nicht verfügbar (FMP lieferte kein Ergebnis). Bitte später erneut versuchen.",
+            errorCode: "RATE_LIMITED",
+          });
+        }
+        console.log(`[ANALYZE] FMP primary active for ${ticker} — continuing with FMP data`);
+      } else {
+        // Batch 1 (critical path) — quote + profile in parallel
+        [quoteResult, profileResult] = await Promise.all([
+          callFinanceToolThrottled("finance_quotes", {
+            ticker_symbols: [ticker],
+            fields: ["price", "currency", "marketCap", "pe", "eps", "change", "changesPercentage", "volume", "avgVolume", "dayLow", "dayHigh", "yearLow", "yearHigh", "previousClose", "dividendYieldTTM"],
+          }),
+          callFinanceToolThrottled("finance_company_profile", {
+            ticker_symbols: [ticker],
+            query: `Company profile for ${ticker}`,
+            action: `Fetching company profile for ${ticker}`,
+          }),
+        ]);
+      }
 
       // Circuit-breaker: if Quote returned null after retries OR binary is missing,
       // try FMP fallback first, then cache, then error.
-      const needsFmpFallback = quoteResult?.__binaryMissing || quoteResult === null;
-      let fmpData: Awaited<ReturnType<typeof getFmpFallbackData>> = null;
+      const needsFmpFallback = !fmpData && (quoteResult?.__binaryMissing || quoteResult === null);
 
       if (needsFmpFallback) {
         if (quoteResult?.__binaryMissing) {
@@ -4142,42 +4176,49 @@ export async function registerRoutes(server: Server, app: Express) {
         }
         console.log(`[ANALYZE] FMP fallback active for ${ticker} — continuing with FMP data`);
       }
-      // Batch 2 (enrichment) — run remaining 6 in parallel
-      const [financialsResult, analystResult, estimatesResult, ohlcvHistResult, segmentsResult, newsResult] = await Promise.all([
-        callFinanceToolThrottled("finance_financials", {
-          ticker_symbols: [ticker],
-          period: "annual",
-          as_of_fiscal_year: new Date().getFullYear() - 1,
-          limit: 3,
-          income_statement_metrics: ["revenue", "netIncome", "ebitda", "eps", "epsDiluted", "weightedAverageSharesOutstanding", "operatingIncome", "grossProfit"],
-          balance_sheet_metrics: ["totalDebt", "cashAndCashEquivalents", "totalStockholdersEquity", "totalAssets", "totalCurrentAssets", "totalCurrentLiabilities", "netDebt"],
-          cash_flow_metrics: ["freeCashFlow", "operatingCashFlow", "capitalExpenditure"],
-        }),
-        callFinanceToolThrottled("finance_analyst_research", {
-          ticker_symbols: [ticker],
-        }),
-        callFinanceToolThrottled("finance_estimates", {
-          ticker_symbols: [ticker],
-          period_type: "annual",
-        }),
-        callFinanceToolThrottled("finance_ohlcv_histories", {
-          ticker_symbols: [ticker],
-          start_date_yyyy_mm_dd: startDate,
-          end_date_yyyy_mm_dd: endDate,
-          time_interval: "1day",
-          fields: ["open", "high", "low", "close", "volume"],
-        }),
-        callFinanceToolThrottled("finance_segments", {
-          ticker_symbols: [ticker],
-          query: "revenue by business segment and geographic breakdown",
-          period_type: "annual",
-          limit: 2,
-        }),
-        callFinanceToolThrottled("finance_massive", {
-          pathname: `/v2/reference/news`,
-          params: { ticker, limit: 10, order: "desc" },
-        }, { maxRetries: 0 }),
-      ]);
+      // Batch 2 (enrichment) — run remaining 6 in parallel.
+      // Skip entirely when running on FMP data: all enrichment fields are
+      // sourced from `fmpData` downstream, and external-tool is unavailable
+      // (calls would only return __binaryMissing/null after retry-delays).
+      let financialsResult: any = null, analystResult: any = null, estimatesResult: any = null;
+      let ohlcvHistResult: any = null, segmentsResult: any = null, newsResult: any = null;
+      if (!fmpData) {
+        [financialsResult, analystResult, estimatesResult, ohlcvHistResult, segmentsResult, newsResult] = await Promise.all([
+          callFinanceToolThrottled("finance_financials", {
+            ticker_symbols: [ticker],
+            period: "annual",
+            as_of_fiscal_year: new Date().getFullYear() - 1,
+            limit: 3,
+            income_statement_metrics: ["revenue", "netIncome", "ebitda", "eps", "epsDiluted", "weightedAverageSharesOutstanding", "operatingIncome", "grossProfit"],
+            balance_sheet_metrics: ["totalDebt", "cashAndCashEquivalents", "totalStockholdersEquity", "totalAssets", "totalCurrentAssets", "totalCurrentLiabilities", "netDebt"],
+            cash_flow_metrics: ["freeCashFlow", "operatingCashFlow", "capitalExpenditure"],
+          }),
+          callFinanceToolThrottled("finance_analyst_research", {
+            ticker_symbols: [ticker],
+          }),
+          callFinanceToolThrottled("finance_estimates", {
+            ticker_symbols: [ticker],
+            period_type: "annual",
+          }),
+          callFinanceToolThrottled("finance_ohlcv_histories", {
+            ticker_symbols: [ticker],
+            start_date_yyyy_mm_dd: startDate,
+            end_date_yyyy_mm_dd: endDate,
+            time_interval: "1day",
+            fields: ["open", "high", "low", "close", "volume"],
+          }),
+          callFinanceToolThrottled("finance_segments", {
+            ticker_symbols: [ticker],
+            query: "revenue by business segment and geographic breakdown",
+            period_type: "annual",
+            limit: 2,
+          }),
+          callFinanceToolThrottled("finance_massive", {
+            pathname: `/v2/reference/news`,
+            params: { ticker, limit: 10, order: "desc" },
+          }, { maxRetries: 0 }),
+        ]);
+      }
 
       console.log(`[ANALYZE] All API calls completed for ${ticker} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
@@ -7445,6 +7486,43 @@ export async function registerRoutes(server: Server, app: Express) {
     } catch (error: any) {
       console.error('[SCREENER] Error:', error?.message);
       res.status(500).json({ error: error?.message || 'Screener failed' });
+    }
+  });
+
+  // === Granular FMP analysis endpoints ===
+  // Lightweight, low-cost slices of the full analysis for clients that only need
+  // part of the data. Each uses FMP directly (works without external-tool).
+
+  // POST /api/analyze/fundamentals — profile + financials (3-4 FMP calls)
+  app.post('/api/analyze/fundamentals', async (req, res) => {
+    const ticker = (req.body?.ticker || '').toString().trim().toUpperCase();
+    if (!ticker) return res.status(400).json({ error: 'ticker required' });
+    if (!isFmpAvailable()) return res.status(503).json({ error: 'FMP_API_KEY not set' });
+    try {
+      const [profile, income, cashflow] = await Promise.all([
+        fmpProfile(ticker).catch(() => null),
+        fmpIncomeStatement(ticker, 4).catch(() => []),
+        fmpCashFlow(ticker, 1).catch(() => []),
+      ]);
+      res.json({ ticker, profile, income, cashflow, _source: 'fmp' });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // POST /api/analyze/prices — historical OHLCV only (1 FMP call)
+  app.post('/api/analyze/prices', async (req, res) => {
+    const ticker = (req.body?.ticker || '').toString().trim().toUpperCase();
+    if (!ticker) return res.status(400).json({ error: 'ticker required' });
+    if (!isFmpAvailable()) return res.status(503).json({ error: 'FMP_API_KEY not set' });
+    try {
+      const from = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000 * 3).toISOString().split('T')[0];
+      const to = new Date().toISOString().split('T')[0];
+      const raw = await fmpHistoricalPrices(ticker, from, to);
+      const ohlcv = Array.isArray(raw) ? raw : (raw?.historical || []);
+      res.json({ ticker, ohlcv, count: ohlcv.length, _source: 'fmp' });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
     }
   });
 
