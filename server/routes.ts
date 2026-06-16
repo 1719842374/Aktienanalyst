@@ -7536,7 +7536,9 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   setTimeout(async () => {
-    const STARTUP_TICKERS = ['MSFT', 'AAPL', 'NVDA', 'AMZN', 'TSLA', 'GOOGL', 'ORCL'];
+    // Nur 2 Ticker beim Start cachen um FMP-Budget zu schonen (750 Calls/Tag Free-Tier)
+    // Weitere Ticker werden on-demand gecacht und bleiben 7 Tage im Cache
+    const STARTUP_TICKERS = ['MSFT', 'AAPL'];
     console.log(`[Startup] Pre-caching ${STARTUP_TICKERS.length} tickers...`);
     for (const t of STARTUP_TICKERS) {
       try {
