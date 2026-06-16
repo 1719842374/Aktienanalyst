@@ -100,10 +100,10 @@ export default function Dashboard() {
           setFinanceQuotaOk(true);
         }
       } catch {
-        if (!cancelled && attempt < 5) {
-          // Exponential-ish backoff: 3s, 5s, 8s, 12s — covers up to ~28s cold start
-          const delays = [3000, 5000, 8000, 12000];
-          setTimeout(() => ping(attempt + 1), delays[attempt - 1] ?? 12000);
+        if (!cancelled && attempt < 8) {
+          // Backoff: 3s, 5s, 8s, 10s, 10s, 10s, 10s — covers ~56s cold start
+          const delays = [3000, 5000, 8000, 10000, 10000, 10000, 10000];
+          setTimeout(() => ping(attempt + 1), delays[attempt - 1] ?? 10000);
         } else if (!cancelled) {
           setServerReady(false);
         }
@@ -588,7 +588,7 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
           )}
           {serverReady === false && (
             <div className="text-[10px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-lg max-w-sm text-center">
-              <div className="font-medium mb-0.5">Server kalt gestartet</div>
+              <div className="font-medium mb-0.5">Server startet — bitte 30s warten</div>
               <div className="text-muted-foreground/70">
                 Veröffentlichte Apps werden nach Inaktivität heruntergefahren.
                 Die erste Analyse startet den Server — bitte 20–30s warten.
