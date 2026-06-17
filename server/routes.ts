@@ -1,5 +1,24 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+
+// FMP-Budget-Tracker: 750 Calls/Tag (Free-Tier), 13 Calls/Analyse = max 57 Analysen/Tag
+const FMP_DAILY_LIMIT = 750;
+const FMP_WARN_THRESHOLD = 600;
+let fmpCallsToday = 0;
+let fmpCallsDate = new Date().toDateString();
+export function trackFmpCall(count = 1) {
+  const today = new Date().toDateString();
+  if (today !== fmpCallsDate) { fmpCallsToday = 0; fmpCallsDate = today; }
+  fmpCallsToday += count;
+  if (fmpCallsToday === FMP_WARN_THRESHOLD)
+    console.warn(`[FMP-BUDGET] ⚠ ${fmpCallsToday}/${FMP_DAILY_LIMIT} Calls — noch ${FMP_DAILY_LIMIT-fmpCallsToday} (~${Math.floor((FMP_DAILY_LIMIT-fmpCallsToday)/13)} Analysen)`);
+  return fmpCallsToday;
+}
+export function getFmpBudgetStatus() {
+  const today = new Date().toDateString();
+  if (today !== fmpCallsDate) { fmpCallsToday = 0; fmpCallsDate = today; }
+  return { today: fmpCallsToday, limit: FMP_DAILY_LIMIT, remaining: FMP_DAILY_LIMIT-fmpCallsToday, analyses: Math.floor((FMP_DAILY_LIMIT-fmpCallsToday)/13) };
+}
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
 import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext, generateGrowthThesis, growthThesisFingerprint, generateCompanySpecificRisks, generatePolicyContext } from "./llm-openrouter";
@@ -3713,6 +3732,9 @@ export async function registerRoutes(server: Server, app: Express) {
       resetsAt: qs.resetsAt,
     };
 
+    // 5. FMP Budget Status
+    checks.fmp_budget = getFmpBudgetStatus() as any;
+
     const allOk = Object.values(checks).every(c => c.ok);
     const critical = !checks.external_tool?.ok; // external-tool down = complete outage
 
@@ -4029,7 +4051,7 @@ export async function registerRoutes(server: Server, app: Express) {
             const fmpData = await getFmpFallbackData(String(ticker), fmpKey);
             if (proxyTimer) { clearTimeout(proxyTimer); proxyTimer = null; }
             if (!proxyResponded) proxyResponded = true;
-            if (fmpData) return res.json({ ...fmpData, _quotaFallback: true });
+            if (fmpData) { trackFmpCall(13); return res.json({ ...fmpData, _quotaFallback: true }); }
           } catch {}
         }
         // Serve stale cache if available — but first refresh generic risks synchronously
@@ -4120,6 +4142,7 @@ export async function registerRoutes(server: Server, app: Express) {
             errorCode: "RATE_LIMITED",
           });
         }
+        trackFmpCall(13);
         console.log(`[ANALYZE] FMP primary active for ${ticker} — continuing with FMP data`);
       } else {
         // Batch 1 (critical path) — quote + profile in parallel
@@ -4174,6 +4197,7 @@ export async function registerRoutes(server: Server, app: Express) {
             errorCode: "RATE_LIMITED",
           });
         }
+        trackFmpCall(13);
         console.log(`[ANALYZE] FMP fallback active for ${ticker} — continuing with FMP data`);
       }
       // Batch 2 (enrichment) — run remaining 6 in parallel.
