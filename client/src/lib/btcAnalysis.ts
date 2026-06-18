@@ -32,6 +32,9 @@ interface MonteCarloResult {
 export interface TechChartPoint {
   date: string;
   price: number;
+  volume?: number;
+  _volNorm?: number;
+  _volUp?: boolean;
   ma20: number | null;
   ma50: number | null;
   ma100: number | null;
@@ -42,6 +45,7 @@ export interface TechChartPoint {
   macd: number | null;
   signal: number | null;
   histogram: number | null;
+  rsi14?: number | null;
   // BTC-specific overlays
   ma730: number | null;
   ma730x5: number | null;
@@ -56,6 +60,15 @@ interface TechSignal {
   type: "BUY" | "SELL";
   reason: string;
   price: number;
+}
+
+export interface HistoricalVolatility {
+  vol30d: number;
+  vol90d: number;
+  vol365d: number;
+  volAnn30d: number;
+  volAnn90d: number;
+  volAnn365d: number;
 }
 
 export interface BTCAnalysis {
@@ -143,6 +156,7 @@ export interface BTCAnalysis {
     yearHigh: number | null;
     yearLow: number | null;
   };
+  historicalVol: HistoricalVolatility;
 }
 
 // === Helpers ===
@@ -215,6 +229,46 @@ async function fetchText(url: string, timeoutMs = 30000): Promise<string> {
 }
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+// === Historical Volatility (annualized) ===
+function calcHistoricalVol(prices: number[], lookbackDays: number): number {
+  if (prices.length < lookbackDays + 1) return 0;
+  const slice = prices.slice(-(lookbackDays + 1));
+  const logReturns: number[] = [];
+  for (let i = 1; i < slice.length; i++) {
+    if (slice[i - 1] > 0 && slice[i] > 0) {
+      logReturns.push(Math.log(slice[i] / slice[i - 1]));
+    }
+  }
+  if (logReturns.length < 2) return 0;
+  const mean = logReturns.reduce((a, b) => a + b, 0) / logReturns.length;
+  const variance = logReturns.reduce((s, r) => s + (r - mean) ** 2, 0) / (logReturns.length - 1);
+  return Math.sqrt(variance); // daily volatility
+}
+
+// === RSI(14) Wilder Smoothing ===
+function calcRSI14(prices: number[]): (number | null)[] {
+  const rsi: (number | null)[] = [];
+  const period = 14;
+  if (prices.length < period + 1) return prices.map(() => null);
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = prices[i] - prices[i - 1];
+    if (diff > 0) avgGain += diff / period;
+    else avgLoss += Math.abs(diff) / period;
+  }
+  for (let i = 0; i < period; i++) rsi.push(null);
+  const rs0 = avgGain / (avgLoss || 1e-10);
+  rsi.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + rs0));
+  for (let i = period + 1; i < prices.length; i++) {
+    const diff = prices[i] - prices[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
+    const rs = avgGain / (avgLoss || 1e-10);
+    rsi.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + rs));
+  }
+  return rsi;
+}
 
 // === ETF Flow fetcher (Farside Investors via GitHub) ===
 async function fetchETFFlows(): Promise<{ totalFlow: number; days: number; dailyFlows: { date: string; flow: number }[]; source: string } | null> {
@@ -698,7 +752,14 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   else gwsInterpretation = "Bearish – unfavorable conditions across indicators";
 
   // === 9. Monte Carlo ===
-  const sigma = 0.025;
+  // Dynamic sigma from historical log-return standard deviation
+  const closePricesEarly = allPriceData.map(d => d.price);
+  const vol30d = calcHistoricalVol(closePricesEarly, 30);
+  const vol90d = calcHistoricalVol(closePricesEarly, 90);
+  const vol365d = calcHistoricalVol(closePricesEarly, 365);
+  // Use 90-day vol as primary; fallback to 30d, then hardcoded 0.025
+  const sigmaBase = vol90d > 0 ? vol90d : vol30d > 0 ? vol30d : 0.025;
+  const sigma = sigmaBase;
   const sigmaAdj = sigma * (monthsSinceHalving > 18 ? 1.2 : 1.0);
   const S0 = btcPrice;
 
@@ -826,6 +887,9 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   const allVolumes = allPriceData.map(d => binanceVolumeMap.get(d.date) ?? 0);
   const maxVol = Math.max(...allVolumes.filter(v => v > 0), 1);
 
+  // RSI(14) für alle Preise
+  const rsi14All = calcRSI14(closePrices);
+
   // Build enhanced technical chart data
   const technicalChartData: TechChartPoint[] = allPriceData.map((d, i) => {
     const vol = binanceVolumeMap.get(d.date) ?? 0;
@@ -845,6 +909,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
       macd: macdLine[i],
       signal: signalLine[i],
       histogram: histogram[i],
+      rsi14: rsi14All[i] ?? null,
       ma730: ma730[i],
       ma730x5: ma730x5[i],
       ma111: ma111[i],
@@ -1065,6 +1130,15 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
       avg365: fgAvg365,
       yearHigh: fgYearHigh,
       yearLow: fgYearLow,
+    },
+
+    historicalVol: {
+      vol30d,
+      vol90d,
+      vol365d,
+      volAnn30d: vol30d * Math.sqrt(365),
+      volAnn90d: vol90d * Math.sqrt(365),
+      volAnn365d: vol365d * Math.sqrt(365),
     },
   };
 }

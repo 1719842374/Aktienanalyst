@@ -436,5 +436,13 @@ export const BTC_FALLBACK_DATA: BTCAnalysis = {
     "avg365": 41.24383561643835,
     "yearHigh": 79,
     "yearLow": 5
+  },
+  "historicalVol": {
+    "vol30d": 0.025,
+    "vol90d": 0.025,
+    "vol365d": 0.022,
+    "volAnn30d": 0.478,
+    "volAnn90d": 0.478,
+    "volAnn365d": 0.421
   }
 } as unknown as BTCAnalysis;
