@@ -17,7 +17,8 @@ export function trackFmpCall(count = 1) {
 export function getFmpBudgetStatus() {
   const today = new Date().toDateString();
   if (today !== fmpCallsDate) { fmpCallsToday = 0; fmpCallsDate = today; }
-  return { today: fmpCallsToday, limit: FMP_DAILY_LIMIT, remaining: FMP_DAILY_LIMIT-fmpCallsToday, analyses: Math.floor((FMP_DAILY_LIMIT-fmpCallsToday)/13) };
+  const remaining = FMP_DAILY_LIMIT - fmpCallsToday;
+  return { ok: remaining > 0, today: fmpCallsToday, limit: FMP_DAILY_LIMIT, remaining, analyses: Math.floor(remaining/13) };
 }
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
