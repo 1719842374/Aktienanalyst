@@ -3,13 +3,11 @@ FROM node:20-slim
 WORKDIR /app
 
 # Install build tools (node-gyp needs Python + gcc; playwright needs chromium deps)
-# CACHE-BUST: bump this comment if apt layer gets stale -> 2026-07-15
+# CACHE-BUST: 2026-07-15b
 RUN apt-get update && apt-get install -y \
     python3 \
-    python3-is-python \
     make \
     g++ \
-    # Playwright / Chromium runtime deps
     libnss3 \
     libatk-bridge2.0-0 \
     libdrm2 \
@@ -23,15 +21,16 @@ RUN apt-get update && apt-get install -y \
     libpango-1.0-0 \
     libcairo2 \
     fonts-liberation \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package files AFTER apt layer so npm ci can use python3
+# Copy package files
 COPY package.json package-lock.json ./
 
-# Install all dependencies (including devDeps needed for build)
+# Install all dependencies
 RUN npm ci --production=false
 
-# Install Playwright browser (Chromium only, no extras)
+# Install Playwright Chromium browser
 RUN npx playwright install chromium --with-deps 2>/dev/null || true
 
 # Copy source
