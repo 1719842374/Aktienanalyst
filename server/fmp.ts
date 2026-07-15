@@ -1,6 +1,8 @@
 // === FMP (Financial Modeling Prep) API Client ===
+// Stable API (2025+): https://financialmodelingprep.com/stable/
+// Legacy /api/v3 still works but /stable is the current recommended base.
 
-const FMP_BASE = "https://financialmodelingprep.com/api/v3";
+const FMP_BASE = "https://financialmodelingprep.com/stable";
 
 function getApiKey(): string {
   return process.env.FMP_API_KEY || "";
@@ -22,49 +24,53 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
 }
 
 export async function fmpProfile(symbol: string) {
-  const data = await fmpFetch(`/profile/${symbol}`);
-  return data?.[0] || null;
+  // stable: /profile?symbol=AAPL
+  const data = await fmpFetch(`/profile`, { symbol });
+  return Array.isArray(data) ? data?.[0] : data || null;
 }
 
 export async function fmpQuote(symbol: string) {
   try {
-    const data = await fmpFetch(`/quote/${symbol}`);
-    return data?.[0] || null;
+    // stable: /quote?symbol=AAPL
+    const data = await fmpFetch(`/quote`, { symbol });
+    return Array.isArray(data) ? data?.[0] : data || null;
   } catch {
     return null;
   }
 }
 
 export async function fmpIncomeStatement(symbol: string, limit = 5) {
-  return fmpFetch(`/income-statement/${symbol}`, { limit: String(limit) });
+  return fmpFetch(`/income-statement`, { symbol, limit: String(limit) });
 }
 
 export async function fmpBalanceSheet(symbol: string, limit = 5) {
-  return fmpFetch(`/balance-sheet-statement/${symbol}`, { limit: String(limit) });
+  return fmpFetch(`/balance-sheet-statement`, { symbol, limit: String(limit) });
 }
 
 export async function fmpCashFlow(symbol: string, limit = 5) {
-  return fmpFetch(`/cash-flow-statement/${symbol}`, { limit: String(limit) });
+  return fmpFetch(`/cash-flow-statement`, { symbol, limit: String(limit) });
 }
 
 export async function fmpHistoricalPrices(symbol: string, from?: string, to?: string) {
-  const params: Record<string, string> = {};
+  const params: Record<string, string> = { symbol };
   if (from) params.from = from;
   if (to) params.to = to;
-  return fmpFetch(`/historical-price-full/${symbol}`, params);
+  // stable returns { symbol, historical: [...] }
+  const data = await fmpFetch(`/historical-price-eod/full`, params);
+  return data?.historical || data || [];
 }
 
 export async function fmpAnalystEstimates(symbol: string, limit = 5) {
-  return fmpFetch(`/analyst-estimates/${symbol}`, { limit: String(limit), period: "annual" });
+  return fmpFetch(`/analyst-estimates`, { symbol, limit: String(limit), period: "annual" });
 }
 
 export async function fmpGrades(symbol: string, limit = 20) {
-  return fmpFetch(`/grade/${symbol}`, { limit: String(limit) });
+  return fmpFetch(`/grades-historical`, { symbol, limit: String(limit) });
 }
 
 export async function fmpPriceTarget(symbol: string) {
   const data = await fmpFetch(`/price-target-consensus`, { symbol });
-  return data?.[0] || null;
+  return Array.isArray(data) ? data?.[0] : data || null;
 }
 
 export async function fmpSegments(symbol: string) {
@@ -75,23 +81,25 @@ export async function fmpSegments(symbol: string) {
 
 export async function fmpPeers(symbol: string): Promise<any[]> {
   try {
-    const data = await fmpFetch(`/stock_peers`, { symbol });
-    return data?.[0]?.peersList || [];
+    const data = await fmpFetch(`/stock-peers`, { symbol });
+    // stable returns array of { symbol, peersList }
+    const item = Array.isArray(data) ? data?.[0] : data;
+    return item?.peersList || [];
   } catch { return []; }
 }
 
 export async function fmpRatios(symbol: string, limit = 10) {
-  return fmpFetch(`/ratios/${symbol}`, { limit: String(limit) });
+  return fmpFetch(`/ratios`, { symbol, limit: String(limit) });
 }
 
 export async function fmpKeyMetrics(symbol: string, limit = 5) {
-  return fmpFetch(`/key-metrics/${symbol}`, { limit: String(limit) });
+  return fmpFetch(`/key-metrics`, { symbol, limit: String(limit) });
 }
 
 export async function fmpBatchQuote(symbols: string[]) {
   if (symbols.length === 0) return [];
-  // /quote/{symbol} supports comma-separated batch
-  return fmpFetch(`/quote/${symbols.join(",")}`);
+  // stable: /quote?symbol=AAPL,MSFT
+  return fmpFetch(`/quote`, { symbol: symbols.join(",") });
 }
 
 export function isFmpAvailable(): boolean {
@@ -99,8 +107,6 @@ export function isFmpAvailable(): boolean {
 }
 
 // === Ticker / Company Name Search ===
-// FMP /search akzeptiert Firmennamen UND Ticker und liefert
-// die passenden Listings (alle Welt-Börsen inkl. .NS, .HK, .DE, .SS etc.)
 export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<{
   symbol: string;
   name: string;
