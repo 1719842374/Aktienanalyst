@@ -35,14 +35,22 @@ function curlOrFetchSync(url: string, timeoutMs = 30000): string {
   try {
     return execSync(`curl -sL "${url}"`, { encoding: "utf-8", timeout: timeoutMs, maxBuffer: 50 * 1024 * 1024 });
   } catch (curlErr: any) {
-    console.warn(`[curlOrFetch] curl failed (${curlErr?.message?.substring(0, 80)}), falling back to fetch for ${url.substring(0, 80)}`);
-    // Synchronous fallback via a blocking child process running node's fetch,
-    // since the call sites are synchronous execSync(...) call sites.
-    const escaped = url.replace(/'/g, "'\\''");
-    return execSync(
-      `node -e "fetch('${escaped}').then(r=>r.text()).then(t=>process.stdout.write(t)).catch(e=>{console.error(e.message);process.exit(1)})"`,
-      { encoding: "utf-8", timeout: timeoutMs, maxBuffer: 50 * 1024 * 1024 }
-    );
+    console.warn(`[curlOrFetch] curl failed (${curlErr?.message?.substring(0, 80)}) for ${url.substring(0, 80)} — will retry via async fetchUrlText() at call sites that support it`);
+    throw curlErr;
+  }
+}
+
+// Async, native-fetch based replacement for curlOrFetchSync — preferred over the
+// synchronous execSync(`node -e ...`) subprocess approach (which is fragile: shell
+// quoting/escaping issues, extra process spawn overhead, and no real benefit since
+// all call sites in this file are already inside async route handlers).
+async function fetchUrlText(url: string, timeoutMs = 30000): Promise<string> {
+  try {
+    return curlOrFetchSync(url, timeoutMs);
+  } catch {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!resp.ok) throw new Error(`fetch ${resp.status} for ${url.substring(0, 80)}`);
+    return resp.text();
   }
 }
 import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext, generateGrowthThesis, growthThesisFingerprint, generateCompanySpecificRisks, generatePolicyContext } from "./llm-openrouter";
@@ -6327,7 +6335,7 @@ export async function registerRoutes(server: Server, app: Express) {
       // === 1. Fetch BTC price from CoinGecko ===
       let btcPrice = 0, btcChange24h = 0, btcMarketCap = 0;
       try {
-        const cgRaw = curlOrFetchSync(
+        const cgRaw = await fetchUrlText(
           "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_market_cap=true",
           30000
         );
@@ -6352,7 +6360,7 @@ export async function registerRoutes(server: Server, app: Express) {
       // === 2. Fear & Greed Index ===
       let fearGreedIndex = 50, fearGreedLabel = "Neutral";
       try {
-        const fngRaw = curlOrFetchSync("https://api.alternative.me/fng/?limit=1", 30000);
+        const fngRaw = await fetchUrlText("https://api.alternative.me/fng/?limit=1", 30000);
         const fng = JSON.parse(fngRaw);
         fearGreedIndex = parseInt(fng?.data?.[0]?.value ?? "50", 10);
         fearGreedLabel = fng?.data?.[0]?.value_classification ?? "Neutral";
@@ -6376,7 +6384,7 @@ export async function registerRoutes(server: Server, app: Express) {
       // === 4. Fetch Fed Funds Rate ===
       let fedFundsRate = 5.33;
       try {
-        const fredRaw = curlOrFetchSync("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01", 30000);
+        const fredRaw = await fetchUrlText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01", 30000);
         const fredLines = fredRaw.trim().split("\n");
         if (fredLines.length >= 2) {
           const lastLine = fredLines[fredLines.length - 1];
@@ -6424,7 +6432,7 @@ export async function registerRoutes(server: Server, app: Express) {
       // === 6b. Fetch BTC price history for MVRV + RSI ===
       let historicalPrices: number[] = [];
       try {
-        const bcRaw = curlOrFetchSync("https://api.blockchain.info/charts/market-price?timespan=400days&sampled=false&format=json&cors=true", 30000);
+        const bcRaw = await fetchUrlText("https://api.blockchain.info/charts/market-price?timespan=400days&sampled=false&format=json&cors=true", 30000);
         const bcData = JSON.parse(bcRaw);
         if (bcData?.values && Array.isArray(bcData.values)) {
           historicalPrices = bcData.values.map((p: any) => p.y).filter((v: number) => v > 0);
@@ -6499,7 +6507,7 @@ export async function registerRoutes(server: Server, app: Express) {
       let hashrateDisplayValue = "N/A";
       let hashrateSource = "Default";
       try {
-        const hrRaw = curlOrFetchSync("https://mempool.space/api/v1/mining/hashrate/3m", 15000);
+        const hrRaw = await fetchUrlText("https://mempool.space/api/v1/mining/hashrate/3m", 15000);
         const hrData = JSON.parse(hrRaw);
         if (hrData?.hashrates && Array.isArray(hrData.hashrates) && hrData.hashrates.length >= 2) {
           const rates = hrData.hashrates.map((h: any) => h.avgHashrate);
@@ -6658,11 +6666,11 @@ export async function registerRoutes(server: Server, app: Express) {
       let allPriceData: { date: string; price: number; volume: number }[] = [];
 
       // Helper: Binance klines für historische OHLCV-Daten (kein API-Key, zuverlässiger als CoinGecko free tier)
-      function fetchBinanceOHLCV(days: number): { date: string; price: number; volume: number }[] {
+      async function fetchBinanceOHLCV(days: number): Promise<{ date: string; price: number; volume: number }[]> {
         try {
           // Binance BTCUSDT daily klines, limit max 1000
           const limit = Math.min(days + 5, 1000);
-          const raw = curlOrFetchSync(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=${limit}`, 30000);
+          const raw = await fetchUrlText(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=${limit}`, 30000);
           const klines = JSON.parse(raw) as [number,string,string,string,string,string,...any[]][];
           if (!Array.isArray(klines) || klines.length === 0) return [];
           return klines.map(k => ({
@@ -6677,9 +6685,9 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       // Helper: CoinGecko als Fallback für längere Historien (>1000 Tage)
-      function fetchCGRange(fromSec: number, toSec: number): { date: string; price: number; volume: number }[] {
+      async function fetchCGRange(fromSec: number, toSec: number): Promise<{ date: string; price: number; volume: number }[]> {
         try {
-          const raw = curlOrFetchSync(`https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fromSec}&to=${toSec}`, 45000);
+          const raw = await fetchUrlText(`https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fromSec}&to=${toSec}`, 45000);
           const parsed = JSON.parse(raw);
           if (parsed?.prices && Array.isArray(parsed.prices)) {
             const dayMap = new Map<string, { price: number; volume: number }>();
@@ -6705,14 +6713,14 @@ export async function registerRoutes(server: Server, app: Express) {
       const nowSec = Math.floor(Date.now() / 1000);
 
       // === Primär: Binance Public API (keine Limits, mit echtem USDT-Volume) ===
-      allPriceData = fetchBinanceOHLCV(1000); // ~2.7 Jahre (max 1000 Tage)
+      allPriceData = await fetchBinanceOHLCV(1000); // ~2.7 Jahre (max 1000 Tage)
       const binanceVol = allPriceData.filter(d => d.volume > 0).length;
       console.log(`[BTC] Binance: ${allPriceData.length} Tage, ${binanceVol} mit Volume`);
 
       // === Für 5Y-History: CoinGecko ergänzen (längere Historie als Binance-1000-Limit) ===
       if (allPriceData.length < 900) {
         const fiveYearsAgo = nowSec - 5 * 365 * 86400;
-        const cgData = fetchCGRange(fiveYearsAgo, nowSec);
+        const cgData = await fetchCGRange(fiveYearsAgo, nowSec);
         console.log(`[BTC] CoinGecko 5Y: ${cgData.length} Punkte`);
         if (cgData.length > allPriceData.length) {
           // Merge: CoinGecko als Basis für ältere Daten, Binance-Volume überschreibt neuere
@@ -6738,7 +6746,7 @@ export async function registerRoutes(server: Server, app: Express) {
             Math.floor((Date.now() - 2.5 * 365 * 86400 * 1000)),
           ]) {
             const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&startTime=${startTime}`;
-            const raw = curlOrFetchSync(url, 30000);
+            const raw = await fetchUrlText(url, 30000);
             const klines = JSON.parse(raw) as any[][];
             for (const k of klines) {
               // k[0]=openTime, k[4]=close, k[5]=baseAssetVolume(BTC), k[7]=quoteAssetVolume(USD)
@@ -6913,7 +6921,7 @@ export async function registerRoutes(server: Server, app: Express) {
       let fearGreedHistory: { date: string; value: number; classification: string }[] = [];
       try {
         // Get 365 days of F&G history
-        const fngHistRaw = curlOrFetchSync("https://api.alternative.me/fng/?limit=365&format=json", 30000);
+        const fngHistRaw = await fetchUrlText("https://api.alternative.me/fng/?limit=365&format=json", 30000);
         const fngHist = JSON.parse(fngHistRaw);
         if (fngHist?.data && Array.isArray(fngHist.data)) {
           fearGreedHistory = fngHist.data.map((d: any) => ({
