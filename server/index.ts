@@ -7,7 +7,7 @@ import "dotenv/config";
 // Set them in .env (not committed to git) or as environment variables.
 
 import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
+import { registerRoutes } from "./routes-register";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
