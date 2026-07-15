@@ -48,6 +48,22 @@ function keywordToSpec(keywordRaw: string): SeriesSpec | null {
   if (k.includes("government spending")) return { series: "FYONGDA188S", category: "Government Spending to GDP", unit: "%", mode: "level" };
   if (k.includes("government debt") || k.includes("debt")) return { series: "GFDEGDQ188S", category: "Government Debt to GDP", unit: "%", mode: "level" };
   if (k.includes("gdp")) return { series: "A191RL1Q225SBEA", category: "GDP Annual Growth Rate", unit: "%", mode: "level" };
+  if (k.includes("consumer confidence") || k.includes("sentiment") || k.includes("michigan")) return { series: "UMCSENT", category: "Consumer Sentiment (Michigan CSI)", unit: "Index", mode: "level" };
+  if (k.includes("unemployment") || k.includes("jobless")) return { series: "UNRATE", category: "Unemployment Rate", unit: "%", mode: "level" };
+  if (k.includes("retail sales") || k.includes("consumption")) return { series: "RSAFS", category: "Retail Sales", unit: "USD Million", mode: "yoy" };
+  if (k.includes("industrial production")) return { series: "INDPRO", category: "Industrial Production", unit: "Index", mode: "yoy" };
+  if (k.includes("housing starts") || k.includes("new home")) return { series: "HOUST", category: "Housing Starts", unit: "Thousands", mode: "level" };
+  if (k.includes("core pce") || k.includes("pce deflator")) return { series: "PCEPILFE", category: "Core PCE Inflation", unit: "%", mode: "yoy" };
+  if (k.includes("credit spread") || k.includes("baa")) return { series: "BAA10Y", category: "Credit Spread BAA-10Y", unit: "%", mode: "level" };
+  if (k.includes("vix") || k.includes("volatility")) return { series: "VIXCLS", category: "VIX Volatility Index", unit: "Index", mode: "level" };
+  if (k.includes("yield") || k.includes("10y") || k.includes("2y") || k.includes("curve")) return { series: "T10Y2Y", category: "Yield Curve 10Y-2Y", unit: "%", mode: "level" };
+  if (k.includes("sahm")) return { series: "SAHMREALTIME", category: "Sahm Rule Indicator", unit: "pp", mode: "level" };
+  if (k.includes("nonfarm") || k.includes("payroll")) return { series: "PAYEMS", category: "Nonfarm Payrolls", unit: "Thousands", mode: "level" };
+  if (k.includes("trade balance") || k.includes("trade deficit")) return { series: "BOPGSTB", category: "Trade Balance", unit: "USD Million", mode: "level" };
+  // ISM Manufacturing/Non-Manufacturing PMI has no FRED equivalent (proprietary index) and is not
+  // available via this FMP plan's /stable/economic or /stable/economic-indicators (verified 2026-07-15:
+  // both return empty/"Invalid name"). Explicitly return null so callers surface "N/A" instead of a fake value.
+  if (k.includes("non manufacturing pmi") || k.includes("services pmi") || k.includes("ism services") || k.includes("chicago pmi") || k.includes("manufacturing pmi") || k.includes("ism")) return null;
   return null;
 }
 
@@ -144,6 +160,11 @@ export async function fetchMacroSnapshot(opts: {
     }
   }
 
+  // Non-US countries intentionally yield zero rows above: FRED has no international series here,
+  // and FMP's /stable/economic-indicators `country` parameter is ignored on this plan (verified
+  // 2026-07-15 — `country=DE` returned identical values to no country param, i.e. US data mislabeled
+  // as German data). Rather than silently attribute US numbers to another country, we leave the
+  // snapshot empty for non-US regions; callers (researcher.ts) already fall back to LLM synthesis.
   const header = "| country | category | latest_value | date | previous_value | unit | source |";
   const sep = "| --- | --- | --- | --- | --- | --- | --- |";
   const rows = indicators.map(

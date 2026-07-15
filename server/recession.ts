@@ -160,7 +160,10 @@ async function scorePMI(): Promise<IndicatorResult> {
   const mfg = await getMacroValue(["Chicago PMI"]);
   if (mfg) mfgPmi = mfg.value;
 
-  // Fallback: try FRED ISM (NAPM series)
+  // Fallback: FRED NAPM (ISM Manufacturing proxy) — series discontinued in 2001, always empty.
+  // Kept as a no-op safety net; ISM PMI is proprietary and unavailable via FRED or this FMP plan
+  // (verified 2026-07-15: /stable/economic and /stable/economic-indicators both reject "ISM*" names).
+  // Result: mfgPmi/svcPmi correctly stay NaN -> valueStr renders "N/A" below, never a fake number.
   if (isNaN(mfgPmi)) {
     mfgPmi = getLatestFredValue("NAPM");
   }
