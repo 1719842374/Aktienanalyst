@@ -230,7 +230,7 @@ Schreibe ZWEI Abschnitte im JSON-Format:
 Nur JSON, keine Erklärung. Professioneller Ton, keine Floskeln.`;
 
     const message = await client.messages.create({
-      model: 'claude_sonnet_4_6',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 800,
       messages: [{ role: 'user', content: prompt }],
     });
