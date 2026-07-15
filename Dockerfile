@@ -5,6 +5,7 @@ WORKDIR /app
 # Install build tools (node-gyp needs Python + gcc; playwright needs chromium deps)
 # CACHE-BUST: 2026-07-15b
 RUN apt-get update && apt-get install -y \
+    curl \
     python3 \
     make \
     g++ \

@@ -22,6 +22,29 @@ export function getFmpBudgetStatus() {
 }
 import { analyzeRequestSchema, type StockAnalysis, type Catalyst, type Risk, type OHLCVPoint, type TechnicalIndicators, type MoatAssessment, type PorterForce, type CatalystReasoning, type CurrencyInfo, type PESTELAnalysis, type PESTELFactor, type PESTELFactorItem, type MacroCorrelations, type MacroCorrelation, type RevenueSegment } from "../shared/schema";
 import { execSync } from "child_process";
+
+// curlOrFetch: drop-in replacement for `execSync(`curl -sL "URL"`)` calls.
+// Render's node:20-slim base image does not ship `curl` unless explicitly
+// installed (see Dockerfile) — without it every execSync(curl...) call threw
+// "curl: command not found", which was silently swallowed by callers'
+// try/catch and surfaced as e.g. BTC_PRICE_UNAVAILABLE (503). This tries the
+// existing curl-based path first (fast, no code churn at call sites is
+// needed once the Dockerfile also installs curl) and falls back to Node's
+// native fetch so the app keeps working even if curl is ever missing again.
+function curlOrFetchSync(url: string, timeoutMs = 30000): string {
+  try {
+    return execSync(`curl -sL "${url}"`, { encoding: "utf-8", timeout: timeoutMs, maxBuffer: 50 * 1024 * 1024 });
+  } catch (curlErr: any) {
+    console.warn(`[curlOrFetch] curl failed (${curlErr?.message?.substring(0, 80)}), falling back to fetch for ${url.substring(0, 80)}`);
+    // Synchronous fallback via a blocking child process running node's fetch,
+    // since the call sites are synchronous execSync(...) call sites.
+    const escaped = url.replace(/'/g, "'\\''");
+    return execSync(
+      `node -e "fetch('${escaped}').then(r=>r.text()).then(t=>process.stdout.write(t)).catch(e=>{console.error(e.message);process.exit(1)})"`,
+      { encoding: "utf-8", timeout: timeoutMs, maxBuffer: 50 * 1024 * 1024 }
+    );
+  }
+}
 import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCatalystDeepDives, CapexTailwindContext, generateGrowthThesis, growthThesisFingerprint, generateCompanySpecificRisks, generatePolicyContext } from "./llm-openrouter";
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
@@ -255,7 +278,7 @@ function parseNumber(s: string | undefined): number {
 
 function parseCSVFromUrl(csvUrl: string): Record<string, string>[] {
   try {
-    const csv = execSync(`curl -sL "${csvUrl}"`, { encoding: "utf-8", timeout: 30000, maxBuffer: 50 * 1024 * 1024 });
+    const csv = curlOrFetchSync(csvUrl, 30000);
     const lines = csv.trim().split("\n");
     if (lines.length < 2) return [];
     const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
@@ -6304,9 +6327,9 @@ export async function registerRoutes(server: Server, app: Express) {
       // === 1. Fetch BTC price from CoinGecko ===
       let btcPrice = 0, btcChange24h = 0, btcMarketCap = 0;
       try {
-        const cgRaw = execSync(
-          `curl -sL "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_market_cap=true"`,
-          { encoding: "utf-8", timeout: 30000 }
+        const cgRaw = curlOrFetchSync(
+          "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_market_cap=true",
+          30000
         );
         const cg = JSON.parse(cgRaw);
         btcPrice = cg?.bitcoin?.usd ?? 0;
@@ -6329,10 +6352,7 @@ export async function registerRoutes(server: Server, app: Express) {
       // === 2. Fear & Greed Index ===
       let fearGreedIndex = 50, fearGreedLabel = "Neutral";
       try {
-        const fngRaw = execSync(
-          `curl -sL "https://api.alternative.me/fng/?limit=1"`,
-          { encoding: "utf-8", timeout: 30000 }
-        );
+        const fngRaw = curlOrFetchSync("https://api.alternative.me/fng/?limit=1", 30000);
         const fng = JSON.parse(fngRaw);
         fearGreedIndex = parseInt(fng?.data?.[0]?.value ?? "50", 10);
         fearGreedLabel = fng?.data?.[0]?.value_classification ?? "Neutral";
@@ -6356,10 +6376,7 @@ export async function registerRoutes(server: Server, app: Express) {
       // === 4. Fetch Fed Funds Rate ===
       let fedFundsRate = 5.33;
       try {
-        const fredRaw = execSync(
-          `curl -sL "https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"`,
-          { encoding: "utf-8", timeout: 30000 }
-        );
+        const fredRaw = curlOrFetchSync("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01", 30000);
         const fredLines = fredRaw.trim().split("\n");
         if (fredLines.length >= 2) {
           const lastLine = fredLines[fredLines.length - 1];
@@ -6407,10 +6424,7 @@ export async function registerRoutes(server: Server, app: Express) {
       // === 6b. Fetch BTC price history for MVRV + RSI ===
       let historicalPrices: number[] = [];
       try {
-        const bcRaw = execSync(
-          `curl -sL "https://api.blockchain.info/charts/market-price?timespan=400days&sampled=false&format=json&cors=true"`,
-          { encoding: "utf-8", timeout: 30000 }
-        );
+        const bcRaw = curlOrFetchSync("https://api.blockchain.info/charts/market-price?timespan=400days&sampled=false&format=json&cors=true", 30000);
         const bcData = JSON.parse(bcRaw);
         if (bcData?.values && Array.isArray(bcData.values)) {
           historicalPrices = bcData.values.map((p: any) => p.y).filter((v: number) => v > 0);
@@ -6485,10 +6499,7 @@ export async function registerRoutes(server: Server, app: Express) {
       let hashrateDisplayValue = "N/A";
       let hashrateSource = "Default";
       try {
-        const hrRaw = execSync(
-          `curl -sL "https://mempool.space/api/v1/mining/hashrate/3m"`,
-          { encoding: "utf-8", timeout: 15000 }
-        );
+        const hrRaw = curlOrFetchSync("https://mempool.space/api/v1/mining/hashrate/3m", 15000);
         const hrData = JSON.parse(hrRaw);
         if (hrData?.hashrates && Array.isArray(hrData.hashrates) && hrData.hashrates.length >= 2) {
           const rates = hrData.hashrates.map((h: any) => h.avgHashrate);
@@ -6651,10 +6662,7 @@ export async function registerRoutes(server: Server, app: Express) {
         try {
           // Binance BTCUSDT daily klines, limit max 1000
           const limit = Math.min(days + 5, 1000);
-          const raw = execSync(
-            `curl -sL "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=${limit}"`,
-            { encoding: "utf-8", timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
-          );
+          const raw = curlOrFetchSync(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=${limit}`, 30000);
           const klines = JSON.parse(raw) as [number,string,string,string,string,string,...any[]][];
           if (!Array.isArray(klines) || klines.length === 0) return [];
           return klines.map(k => ({
@@ -6671,10 +6679,7 @@ export async function registerRoutes(server: Server, app: Express) {
       // Helper: CoinGecko als Fallback für längere Historien (>1000 Tage)
       function fetchCGRange(fromSec: number, toSec: number): { date: string; price: number; volume: number }[] {
         try {
-          const raw = execSync(
-            `curl -sL "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fromSec}&to=${toSec}"`,
-            { encoding: "utf-8", timeout: 45000, maxBuffer: 50 * 1024 * 1024 }
-          );
+          const raw = curlOrFetchSync(`https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${fromSec}&to=${toSec}`, 45000);
           const parsed = JSON.parse(raw);
           if (parsed?.prices && Array.isArray(parsed.prices)) {
             const dayMap = new Map<string, { price: number; volume: number }>();
@@ -6733,7 +6738,7 @@ export async function registerRoutes(server: Server, app: Express) {
             Math.floor((Date.now() - 2.5 * 365 * 86400 * 1000)),
           ]) {
             const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&startTime=${startTime}`;
-            const raw = execSync(`curl -sL "${url}"`, { encoding: "utf-8", timeout: 30000, maxBuffer: 20 * 1024 * 1024 });
+            const raw = curlOrFetchSync(url, 30000);
             const klines = JSON.parse(raw) as any[][];
             for (const k of klines) {
               // k[0]=openTime, k[4]=close, k[5]=baseAssetVolume(BTC), k[7]=quoteAssetVolume(USD)
@@ -6908,10 +6913,7 @@ export async function registerRoutes(server: Server, app: Express) {
       let fearGreedHistory: { date: string; value: number; classification: string }[] = [];
       try {
         // Get 365 days of F&G history
-        const fngHistRaw = execSync(
-          `curl -sL "https://api.alternative.me/fng/?limit=365&format=json"`,
-          { encoding: "utf-8", timeout: 30000 }
-        );
+        const fngHistRaw = curlOrFetchSync("https://api.alternative.me/fng/?limit=365&format=json", 30000);
         const fngHist = JSON.parse(fngHistRaw);
         if (fngHist?.data && Array.isArray(fngHist.data)) {
           fearGreedHistory = fngHist.data.map((d: any) => ({
