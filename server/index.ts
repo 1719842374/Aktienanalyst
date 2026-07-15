@@ -68,6 +68,21 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Keep-Alive Health Endpoint ──────────────────────────────────────────────
+// Registered BEFORE registerRoutes so it is always available even during
+// heavy analysis requests. Used by UptimeRobot / cron-job.org every 5 min
+// to prevent Railway from sleeping the container on the free plan.
+// Returns 200 JSON within <5 ms — no DB, no FMP calls, no quota impact.
+const _serverStartTime = Date.now();
+app.get("/api/health", (_req: Request, res: Response) => {
+  res.status(200).json({
+    status: "ok",
+    uptime: Math.floor((Date.now() - _serverStartTime) / 1000),
+    timestamp: new Date().toISOString(),
+  });
+});
+// ────────────────────────────────────────────────────────────────────────────
+
 (async () => {
   await registerRoutes(httpServer, app);
 
