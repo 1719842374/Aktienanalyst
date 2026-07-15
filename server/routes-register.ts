@@ -1,21 +1,37 @@
-// registerRoutes — glue between express/http and the route handlers in routes.ts
+// registerRoutes — bridges server/index.ts with the actual route modules.
+// routes.ts contains helper functions + the /api/analyze handler logic.
+// gold-routes.ts exports registerGoldRoutes for /api/analyze-gold.
 import type { Express } from "express";
 import type { Server } from "http";
-import { trackFmpCall, getFmpBudgetStatus } from "./routes";
+import { registerGoldRoutes } from "./gold-routes";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<void> {
-  // Dynamic import so circular-dep risk is minimised
-  const routes = await import("./routes");
-  if (typeof (routes as any).registerExpressRoutes === "function") {
-    await (routes as any).registerExpressRoutes(httpServer, app);
-  } else if (typeof (routes as any).default === "function") {
-    await (routes as any).default(httpServer, app);
+  // Mount Gold routes (/api/analyze-gold)
+  registerGoldRoutes(httpServer, app);
+
+  // Mount the main stock-analysis route (/api/analyze) and all other routes
+  // from routes.ts. The module exposes a default-export function or named
+  // exports — we try both shapes, then fall back to a no-op with a warning.
+  const routesMod = await import("./routes") as any;
+
+  if (typeof routesMod.registerRoutes === "function") {
+    await routesMod.registerRoutes(httpServer, app);
+  } else if (typeof routesMod.default === "function") {
+    await routesMod.default(httpServer, app);
   } else {
-    // Fallback: scan for a function that looks like a route-registrar
-    const fn = Object.values(routes as any).find(
-      (v) => typeof v === "function" && v.length >= 2
-    ) as ((s: Server, a: Express) => Promise<void>) | undefined;
-    if (fn) await fn(httpServer, app);
-    else console.warn("[registerRoutes] No route-registrar found in routes.ts — routes may not be mounted");
+    // routes.ts only exports utility functions — scan for a registrar-shaped fn
+    const registrar = Object.values(routesMod).find(
+      (v): v is (s: Server, a: Express) => void | Promise<void> =>
+        typeof v === "function" && v.length >= 2
+    );
+    if (registrar) {
+      await registrar(httpServer, app);
+    } else {
+      console.warn(
+        "[registerRoutes] No route-registrar function found in routes.ts. " +
+        "Stock-analysis endpoints may be missing. " +
+        "Add `export async function registerRoutes(server, app) {...}` to routes.ts."
+      );
+    }
   }
 }
