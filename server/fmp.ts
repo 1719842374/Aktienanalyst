@@ -1,6 +1,6 @@
-// === FMP (Financial Modeling Prep) API Client — Stable API (2025+) ===
+// === FMP (Financial Modeling Prep) API Client ===
 
-const FMP_BASE = "https://financialmodelingprep.com/stable";
+const FMP_BASE = "https://financialmodelingprep.com/api/v3";
 
 function getApiKey(): string {
   return process.env.FMP_API_KEY || "";
@@ -22,13 +22,13 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
 }
 
 export async function fmpProfile(symbol: string) {
-  const data = await fmpFetch(`/profile`, { symbol });
+  const data = await fmpFetch(`/profile/${symbol}`);
   return data?.[0] || null;
 }
 
 export async function fmpQuote(symbol: string) {
   try {
-    const data = await fmpFetch(`/quote`, { symbol });
+    const data = await fmpFetch(`/quote/${symbol}`);
     return data?.[0] || null;
   } catch {
     return null;
@@ -36,30 +36,30 @@ export async function fmpQuote(symbol: string) {
 }
 
 export async function fmpIncomeStatement(symbol: string, limit = 5) {
-  return fmpFetch(`/income-statement`, { symbol, limit: String(limit) });
+  return fmpFetch(`/income-statement/${symbol}`, { limit: String(limit) });
 }
 
 export async function fmpBalanceSheet(symbol: string, limit = 5) {
-  return fmpFetch(`/balance-sheet-statement`, { symbol, limit: String(limit) });
+  return fmpFetch(`/balance-sheet-statement/${symbol}`, { limit: String(limit) });
 }
 
 export async function fmpCashFlow(symbol: string, limit = 5) {
-  return fmpFetch(`/cash-flow-statement`, { symbol, limit: String(limit) });
+  return fmpFetch(`/cash-flow-statement/${symbol}`, { limit: String(limit) });
 }
 
 export async function fmpHistoricalPrices(symbol: string, from?: string, to?: string) {
-  const params: Record<string, string> = { symbol };
+  const params: Record<string, string> = {};
   if (from) params.from = from;
   if (to) params.to = to;
-  return fmpFetch(`/historical-price-eod/full`, params);
+  return fmpFetch(`/historical-price-full/${symbol}`, params);
 }
 
 export async function fmpAnalystEstimates(symbol: string, limit = 5) {
-  return fmpFetch(`/analyst-estimates`, { symbol, limit: String(limit), period: "annual" });
+  return fmpFetch(`/analyst-estimates/${symbol}`, { limit: String(limit), period: "annual" });
 }
 
 export async function fmpGrades(symbol: string, limit = 20) {
-  return fmpFetch(`/grades`, { symbol, limit: String(limit) });
+  return fmpFetch(`/grade/${symbol}`, { limit: String(limit) });
 }
 
 export async function fmpPriceTarget(symbol: string) {
@@ -75,22 +75,23 @@ export async function fmpSegments(symbol: string) {
 
 export async function fmpPeers(symbol: string): Promise<any[]> {
   try {
-    return await fmpFetch(`/stock-peers`, { symbol });
+    const data = await fmpFetch(`/stock_peers`, { symbol });
+    return data?.[0]?.peersList || [];
   } catch { return []; }
 }
 
 export async function fmpRatios(symbol: string, limit = 10) {
-  return fmpFetch(`/ratios`, { symbol, limit: String(limit) });
+  return fmpFetch(`/ratios/${symbol}`, { limit: String(limit) });
 }
 
 export async function fmpKeyMetrics(symbol: string, limit = 5) {
-  return fmpFetch(`/key-metrics`, { symbol, limit: String(limit) });
+  return fmpFetch(`/key-metrics/${symbol}`, { limit: String(limit) });
 }
 
 export async function fmpBatchQuote(symbols: string[]) {
   if (symbols.length === 0) return [];
-  // Profile endpoint works as batch with comma-separated symbols
-  return fmpFetch(`/profile`, { symbol: symbols.join(",") });
+  // /quote/{symbol} supports comma-separated batch
+  return fmpFetch(`/quote/${symbols.join(",")}`);
 }
 
 export function isFmpAvailable(): boolean {
@@ -98,7 +99,7 @@ export function isFmpAvailable(): boolean {
 }
 
 // === Ticker / Company Name Search ===
-// FMP /search-symbol akzeptiert Firmennamen UND Ticker und liefert
+// FMP /search akzeptiert Firmennamen UND Ticker und liefert
 // die passenden Listings (alle Welt-Börsen inkl. .NS, .HK, .DE, .SS etc.)
 export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<{
   symbol: string;
@@ -109,30 +110,18 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
 }>> {
   if (!query || query.length < 1) return [];
   try {
-    // FMP Stable hat /search-symbol UND /search-name — beide nehmen wir parallel
-    // damit "Bajaj" → BAJAJ-AUTO.NS findet UND "BAJAJ" → ebenso.
-    const [bySymbol, byName] = await Promise.allSettled([
-      fmpFetch(`/search-symbol`, { query, limit: String(limit) }),
-      fmpFetch(`/search-name`, { query, limit: String(limit) }),
-    ]);
-    const merged: any[] = [];
+    const results = await fmpFetch(`/search`, { query, limit: String(limit) });
+    if (!Array.isArray(results)) return [];
     const seen = new Set<string>();
-    for (const r of [bySymbol, byName]) {
-      if (r.status === "fulfilled" && Array.isArray(r.value)) {
-        for (const row of r.value) {
-          if (row?.symbol && !seen.has(row.symbol)) {
-            seen.add(row.symbol);
-            merged.push({
-              symbol: row.symbol,
-              name: row.name || row.companyName || row.symbol,
-              currency: row.currency,
-              exchangeFullName: row.exchangeFullName || row.exchange || "",
-              exchange: row.exchange,
-            });
-          }
-        }
-      }
-    }
-    return merged.slice(0, limit);
+    return results
+      .filter((row: any) => row?.symbol && !seen.has(row.symbol) && seen.add(row.symbol))
+      .map((row: any) => ({
+        symbol: row.symbol,
+        name: row.name || row.companyName || row.symbol,
+        currency: row.currency,
+        exchangeFullName: row.exchangeFullName || row.stockExchange || "",
+        exchange: row.exchangeShortName || row.exchange,
+      }))
+      .slice(0, limit);
   } catch { return []; }
 }
