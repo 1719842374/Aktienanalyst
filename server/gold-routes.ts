@@ -9,53 +9,7 @@ import type {
   GoldPricePoint,
 } from "../shared/gold-schema";
 import { execSync } from "child_process";
-
-// === Finance API Helper (same throttling/retry contract as main routes) ===
-let lastFinanceCallAt = 0;
-const MIN_SPACING_MS = 250;
-
-function sleepSync(ms: number) {
-  const sab = new SharedArrayBuffer(4);
-  const view = new Int32Array(sab);
-  Atomics.wait(view, 0, 0, ms);
-}
-
-function callFinanceTool(toolName: string, args: Record<string, any>): any {
-  const elapsed = Date.now() - lastFinanceCallAt;
-  if (elapsed < MIN_SPACING_MS) sleepSync(MIN_SPACING_MS - elapsed);
-
-  let result: any = null;
-  try {
-    const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
-    const escaped = params.replace(/'/g, "'\\''" );
-    const raw = execSync(`external-tool call '${escaped}'`, {
-      timeout: 25000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
-    });
-    result = JSON.parse(raw);
-  } catch (err: any) {
-    const msg = err?.message || "";
-    if (msg.includes("RATE_LIMITED") || msg.includes("429") || msg.includes("UNAUTHORIZED") || msg.includes("401")) {
-      console.warn(`[GOLD] ${toolName} rate-limited, backing off 4s and retrying once`);
-      sleepSync(4000);
-      try {
-        const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
-        const escaped = params.replace(/'/g, "'\\''" );
-        const raw = execSync(`external-tool call '${escaped}'`, {
-          timeout: 25000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
-        });
-        result = JSON.parse(raw);
-      } catch (e2: any) {
-        console.error(`[GOLD] ${toolName} retry also failed:`, e2?.message?.substring(0, 200));
-        result = null;
-      }
-    } else {
-      console.error(`Finance API error (${toolName}):`, msg.substring(0, 300));
-      result = null;
-    }
-  }
-  lastFinanceCallAt = Date.now();
-  return result;
-}
+import { fmpQuote, fmpHistoricalPrices } from "./fmp";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -260,39 +214,22 @@ export function registerGoldRoutes(server: Server, app: Express) {
       const endDate = now.toISOString().split("T")[0];
       const startDate = new Date(Date.now() - 2 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
-      // === Parallel data fetching ===
-      const [goldQuoteResult, goldOHLCVResult, dxyQuoteResult, macroResult] = await Promise.all([
-        // 1. Gold spot price
-        Promise.resolve(callFinanceTool("finance_quotes", {
-          ticker_symbols: ["GCUSD"],
-          fields: ["price", "change", "changesPercentage", "yearLow", "yearHigh", "previousClose"],
-        })),
-        // 2. Gold OHLCV history (2 years for MA200)
-        Promise.resolve(callFinanceTool("finance_ohlcv_histories", {
-          ticker_symbols: ["GCUSD"],
-          start_date_yyyy_mm_dd: startDate,
-          end_date_yyyy_mm_dd: endDate,
-          time_interval: "1day",
-          fields: ["close"],
-        })),
-        // 3. DXY
-        Promise.resolve(callFinanceTool("finance_quotes", {
-          ticker_symbols: ["DX-Y.NYB"],
-          fields: ["price"],
-        })),
-        // 4. Macro indicators (Realzinsen, Breakeven, M2, CPI)
-        Promise.resolve(callFinanceTool("finance_macro_snapshot", {
-          countries: ["United States"],
-          keywords: ["CPI", "M2", "interest rate", "inflation"],
-          action: "Fetching US macro indicators for gold analysis",
-        })),
+      // === Parallel data fetching (FMP + FRED) ===
+      const [goldQuoteResult, goldOHLCVResult, dxyQuoteResult] = await Promise.all([
+        // 1. Gold spot price (FMP)
+        fmpQuote("GCUSD"),
+        // 2. Gold OHLCV history (2 years for MA200) (FMP)
+        fmpHistoricalPrices("GCUSD", startDate, endDate),
+        // 3. DXY (FMP)
+        fmpQuote("DX-Y.NYB"),
       ]);
 
       // Also fetch FRED data for more precise indicators
-      const [fredBreakeven, fredRealRate, fredM2] = await Promise.all([
+      const [fredBreakeven, fredRealRate, fredM2, fredCPI] = await Promise.all([
         Promise.resolve(fetchFREDSeries("T10YIE")),
         Promise.resolve(fetchFREDSeries("DFII10")),
         Promise.resolve(fetchFREDSeries("M2SL")),
+        Promise.resolve(fetchFREDSeries("CPIAUCSL")),
       ]);
 
       // === Parse gold quote ===
@@ -302,38 +239,29 @@ export function registerGoldRoutes(server: Server, app: Express) {
       let yearLow = 0;
 
       if (goldQuoteResult) {
-        const content = typeof goldQuoteResult === "string" ? goldQuoteResult : JSON.stringify(goldQuoteResult);
-        // Try to extract price from content
-        const priceMatch = content.match(/price["\s:]+(\d+[\d,.]*)/i);
-        if (priceMatch) spotPrice = parseNumber(priceMatch[1]);
-        const changeMatch = content.match(/changesPercentage["\s:]+(-?[\d.]+)/i);
-        if (changeMatch) changePercent = parseFloat(changeMatch[1]);
-        const yhMatch = content.match(/yearHigh["\s:]+(\d+[\d,.]*)/i);
-        if (yhMatch) yearHigh = parseNumber(yhMatch[1]);
-        const ylMatch = content.match(/yearLow["\s:]+(\d+[\d,.]*)/i);
-        if (ylMatch) yearLow = parseNumber(ylMatch[1]);
+        spotPrice = parseNumber(String(goldQuoteResult.price));
+        changePercent = parseFloat(String(goldQuoteResult.changePercentage ?? goldQuoteResult.changesPercentage ?? 0)) || 0;
+        yearHigh = parseNumber(String(goldQuoteResult.yearHigh));
+        yearLow = parseNumber(String(goldQuoteResult.yearLow));
       }
 
       // Fallback: if no price from quote, try from OHLCV
       let historicalPrices: GoldPricePoint[] = [];
       let closePrices: number[] = [];
 
-      if (goldOHLCVResult) {
-        const content = typeof goldOHLCVResult === "string" ? goldOHLCVResult : JSON.stringify(goldOHLCVResult);
-        // Parse CSV data
-        const lines = content.split("\n").filter((l: string) => l.includes(",") && /\d{4}-\d{2}-\d{2}/.test(l));
-        for (const line of lines) {
-          const parts = line.split(",").map((s: string) => s.trim().replace(/"/g, ""));
-          if (parts.length >= 2) {
-            const dateStr = parts.find((p: string) => /\d{4}-\d{2}-\d{2}/.test(p));
-            const closeStr = parts.find((p: string) => /^\d+\.?\d*$/.test(p) && parseFloat(p) > 100);
-            if (dateStr && closeStr) {
-              const close = parseFloat(closeStr);
-              if (close > 0) {
-                closePrices.push(close);
-                historicalPrices.push({ date: dateStr, close });
-              }
-            }
+      // FMP historical-price-eod/full returns { symbol, historical:[...] } or a bare array.
+      const ohlcvRows: any[] = Array.isArray(goldOHLCVResult)
+        ? goldOHLCVResult
+        : (goldOHLCVResult?.historical ?? []);
+      if (ohlcvRows.length > 0) {
+        // FMP returns newest-first — sort ascending by date for MA/RSI calculations.
+        const sorted = [...ohlcvRows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        for (const row of sorted) {
+          const dateStr = String(row.date || "").slice(0, 10);
+          const close = parseFloat(String(row.close));
+          if (/\d{4}-\d{2}-\d{2}/.test(dateStr) && isFinite(close) && close > 0) {
+            closePrices.push(close);
+            historicalPrices.push({ date: dateStr, close });
           }
         }
       }
@@ -370,10 +298,9 @@ export function registerGoldRoutes(server: Server, app: Express) {
 
       // === Parse DXY ===
       let dxyValue = 100; // default (DXY ~100 as of Mar 2026)
-      if (dxyQuoteResult) {
-        const content = typeof dxyQuoteResult === "string" ? dxyQuoteResult : JSON.stringify(dxyQuoteResult);
-        const m = content.match(/price["\s:]+(\d+[\d,.]*)/i);
-        if (m) dxyValue = parseNumber(m[1]);
+      if (dxyQuoteResult?.price != null) {
+        const v = parseNumber(String(dxyQuoteResult.price));
+        if (v > 0) dxyValue = v;
       }
 
       // === Parse FRED indicators with plausibility validation ===
@@ -408,25 +335,10 @@ export function registerGoldRoutes(server: Server, app: Express) {
         console.warn(`[GOLD] M2 YoY FRED fetch failed: ${m2Err?.message?.substring(0, 100)} — using fallback ${m2YoY}%`);
       }
 
-      // Parse macro snapshot for M2 growth (secondary override if regex matches)
-      if (macroResult) {
-        const content = typeof macroResult === "string" ? macroResult : JSON.stringify(macroResult);
-        const m2Match = content.match(/M2[^}]*?(\d+\.?\d*)%/i);
-        if (m2Match) {
-          const val = parseFloat(m2Match[1]);
-          if (val > 0 && val < 30) m2YoY = val; // sanity check: M2 growth 0-30% range
-        }
-      }
-
-      // === Parse CPI for Fair Value ===
-      let cpiToday = 326.785; // BLS Feb 2026 CPI index
-      if (macroResult) {
-        const content = typeof macroResult === "string" ? macroResult : JSON.stringify(macroResult);
-        const cpiMatch = content.match(/CPI[^}]*?(\d{2,3}\.?\d*)/i);
-        if (cpiMatch) {
-          const val = parseFloat(cpiMatch[1]);
-          if (val > 100 && val < 500) cpiToday = val;
-        }
+      // === CPI for Fair Value — FRED CPIAUCSL (primary), fallback to last known ===
+      let cpiToday = 326.785; // BLS Feb 2026 CPI index (fallback)
+      if (fredCPI?.value != null && fredCPI.value > 100 && fredCPI.value < 500) {
+        cpiToday = fredCPI.value;
       }
 
       // === GPR (Geopolitical Risk) ===

@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { execSync } from "child_process";
+import { fetchMacroSnapshot } from "./fmp-macro";
 
 // ============================================================
 // Geopolitical Analysis Metadata
@@ -10,64 +11,6 @@ const GEO_ANALYSIS = { lastUpdated: "April 2026" };
 // ============================================================
 // Generic Data Helpers
 // ============================================================
-
-// Module-global timestamp of the last finance call — used by the synchronous
-// throttling helper below to enforce a minimum spacing between calls and
-// avoid the burst-rate-limiter that the main /api/analyze path already
-// throttles around. Recession dashboard fires ~17 finance calls so spacing
-// matters here too.
-let lastFinanceCallAt = 0;
-const MIN_SPACING_MS = 250;
-
-function sleepSync(ms: number) {
-  // Synchronous sleep via Atomics — blocks the event loop briefly.
-  // OK here because every caller in this module is itself a sync route
-  // handler (no concurrent awaits to starve).
-  const sab = new SharedArrayBuffer(4);
-  const view = new Int32Array(sab);
-  Atomics.wait(view, 0, 0, ms);
-}
-
-function callFinanceTool(toolName: string, args: Record<string, any>): any {
-  // Enforce minimum spacing since the previous call.
-  const elapsed = Date.now() - lastFinanceCallAt;
-  if (elapsed < MIN_SPACING_MS) sleepSync(MIN_SPACING_MS - elapsed);
-
-  let result: any = null;
-  try {
-    const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
-    const escaped = params.replace(/'/g, "'\\''");
-    const raw = execSync(`external-tool call '${escaped}'`, {
-      timeout: 60000,
-      encoding: "utf-8",
-      maxBuffer: 50 * 1024 * 1024,
-    });
-    result = JSON.parse(raw);
-  } catch (err: any) {
-    const msg = err?.message || "";
-    if (msg.includes("RATE_LIMITED") || msg.includes("429") || msg.includes("UNAUTHORIZED") || msg.includes("401")) {
-      // Single retry with 4s backoff on rate-limit — mirrors the main module.
-      console.warn(`[RECESSION] ${toolName} rate-limited, backing off 4s and retrying once`);
-      sleepSync(4000);
-      try {
-        const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
-        const escaped = params.replace(/'/g, "'\\''");
-        const raw = execSync(`external-tool call '${escaped}'`, {
-          timeout: 60000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
-        });
-        result = JSON.parse(raw);
-      } catch (e2: any) {
-        console.error(`[RECESSION] ${toolName} retry also failed:`, e2?.message?.substring(0, 200));
-        result = null;
-      }
-    } else {
-      console.error(`Finance API error (${toolName}):`, msg.substring(0, 300));
-      result = null;
-    }
-  }
-  lastFinanceCallAt = Date.now();
-  return result;
-}
 
 function fetchUrl(url: string, timeoutMs = 20000, headers: Record<string, string> = {}): string {
   try {
@@ -121,14 +64,10 @@ function getDateNMonthsAgo(n: number): string {
   return d.toISOString().split("T")[0];
 }
 
-/** Generic macro data fetcher via finance API */
-function getMacroValue(keywords: string[], country = "United States"): { value: number; date: string; category: string } | null {
+/** Generic macro data fetcher via FRED (see server/fmp-macro.ts) */
+async function getMacroValue(keywords: string[], country = "United States"): Promise<{ value: number; date: string; category: string } | null> {
   try {
-    const result = callFinanceTool("finance_macro_snapshot", {
-      countries: [country],
-      keywords,
-      action: `Fetching ${keywords.join(", ")}`,
-    });
+    const result = await fetchMacroSnapshot({ countries: [country], keywords });
     if (!result?.content) return null;
     // Parse the markdown table to extract latest_value
     const lines = result.content.split("\n");
@@ -209,16 +148,16 @@ function scoreYieldCurve(): IndicatorResult {
 }
 
 // 3. PMI (Manufacturing + Services average)
-function scorePMI(): IndicatorResult {
-  // Primary: finance_macro_snapshot for Non Manufacturing PMI + Manufacturing proxy
+async function scorePMI(): Promise<IndicatorResult> {
+  // Primary: macro snapshot for Non Manufacturing PMI + Manufacturing proxy
   let mfgPmi = NaN;
   let svcPmi = NaN;
 
-  const svc = getMacroValue(["Non Manufacturing PMI"]);
+  const svc = await getMacroValue(["Non Manufacturing PMI"]);
   if (svc) svcPmi = svc.value;
 
   // ISM Manufacturing not directly available — use Chicago PMI as proxy
-  const mfg = getMacroValue(["Chicago PMI"]);
+  const mfg = await getMacroValue(["Chicago PMI"]);
   if (mfg) mfgPmi = mfg.value;
 
   // Fallback: try FRED ISM (NAPM series)
@@ -335,14 +274,14 @@ function scoreCreditSpreads(): IndicatorResult {
 }
 
 // 7. Consumer Confidence (Michigan CSI)
-function scoreConsumerConfidence(): IndicatorResult {
-  // Primary: finance_macro_snapshot
+async function scoreConsumerConfidence(): Promise<IndicatorResult> {
+  // Primary: macro snapshot
   let csi = NaN;
   let source = "FRED UMCSENT";
-  const macro = getMacroValue(["Consumer Confidence"]);
+  const macro = await getMacroValue(["Consumer Confidence"]);
   if (macro) {
     csi = macro.value;
-    source = "U of Michigan / Finance API";
+    source = "U of Michigan";
   }
   // Fallback: FRED
   if (isNaN(csi)) csi = getLatestFredValue("UMCSENT");
@@ -387,37 +326,7 @@ function scoreBuffett(): IndicatorResult {
     }
   } catch {}
 
-  // SECONDARY: Compute from Wilshire 5000 index via finance_quotes + FRED GDP
-  if (isNaN(ratio)) {
-    try {
-      const w5000Result = callFinanceTool("finance_quotes", {
-        ticker_symbols: ["^W5000"],
-        fields: ["price"],
-      });
-      if (w5000Result?.content) {
-        const priceMatch = w5000Result.content.match(/(\d[\d,.]+)\s*\|/g);
-        // Wilshire 5000 index level ~ 68,000
-        // Total US market cap ≈ Wilshire 5000 index × $1.0 billion (approx scaling)
-        // This relationship: TMC in trillions ≈ Wilshire5000 / 1000
-        // GDP from FRED in billions
-        const w5kMatch = w5000Result.content.match(/\|\s*([\d,]+\.\d+)\s*\|/);
-        if (w5kMatch) {
-          const w5kIndex = parseFloat(w5kMatch[1].replace(/,/g, ""));
-          // Wilshire 5000 Full Cap: 1 point ≈ ~$1B (as of recent calibration)
-          // So TMC ≈ w5kIndex in $B
-          const tmcBillions = w5kIndex; // e.g. 68,217 → $68,217 billion
-          const gdpBillions = getLatestFredValue("GDP"); // e.g. 31,442 billion
-          if (!isNaN(gdpBillions) && gdpBillions > 0) {
-            ratio = (tmcBillions / gdpBillions) * 100;
-            source = "Wilshire 5000 / FRED GDP";
-            console.log(`[RECESSION] Buffett computed: W5000=${w5kIndex}, GDP=${gdpBillions}B → ${ratio.toFixed(1)}%`);
-          }
-        }
-      }
-    } catch {}
-  }
-
-  // TERTIARY: GuruFocus
+  // SECONDARY: GuruFocus
   if (isNaN(ratio)) {
     try {
       const html = fetchUrl("https://www.gurufocus.com/stock-market-valuations.php");
@@ -532,54 +441,38 @@ function scoreGoogleTrends(): IndicatorResult {
   let trendValue = NaN;
   let source = "Google Trends";
 
-  // Primary: pytrends library (Python) — inline script via python3 -c so we don't
-  // depend on the .py file being copied alongside the bundled JS. Previously
-  // the code resolved a path relative to __dirname which broke after esbuild
-  // collapsed everything into dist/index.cjs.
-  try {
-    const pyScript = [
-      "import json, sys",
-      "try:",
-      "    from pytrends.request import TrendReq",
-      "    pytrends = TrendReq(hl='en-US', tz=360, timeout=(10, 25))",
-      "    pytrends.build_payload(['Recession'], cat=0, timeframe='now 7-d', geo='US')",
-      "    df = pytrends.interest_over_time()",
-      "    if not df.empty:",
-      "        avg = round(float(df['Recession'].mean()), 1)",
-      "        latest = int(df['Recession'].iloc[-1])",
-      "        peak = int(df['Recession'].max())",
-      "        print(json.dumps({'avg': avg, 'latest': latest, 'peak': peak}))",
-      "    else:",
-      "        print(json.dumps({'error': 'empty dataframe'}))",
-      "except Exception as e:",
-      "    print(json.dumps({'error': str(e)[:200]}))",
-    ].join("\n");
-    // Write to temp file then exec — avoids any shell-escaping issues with multiline scripts
-    const fs = require("fs");
-    const os = require("os");
-    const path = require("path");
-    const tmpFile = path.join(os.tmpdir(), `gtrends-${Date.now()}.py`);
-    fs.writeFileSync(tmpFile, pyScript);
-    let result = "";
+  // Primary: SerpApi Google Trends (requires SERPAPI_KEY). Without a key we
+  // leave trendValue as NaN → indicator reports N/A (never a faked default).
+  const serpKey = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || "";
+  if (serpKey) {
     try {
-      result = execSync(`python3 "${tmpFile}" 2>/dev/null`, {
-        timeout: 12000, // 12s max for pytrends (was 45s — too long for proxy)
-      }).trim();
-    } finally {
-      try { fs.unlinkSync(tmpFile); } catch {}
-    }
-    if (result) {
-      const parsed = JSON.parse(result);
-      if (parsed.avg && !parsed.error) {
-        trendValue = parsed.avg;
-        source = `Google Trends (7d Ø=${parsed.avg}, Latest=${parsed.latest}, Peak=${parsed.peak})`;
-        console.log(`  Google Trends: avg=${parsed.avg}, latest=${parsed.latest}, peak=${parsed.peak}`);
-      } else if (parsed.error) {
-        console.log(`  Google Trends pytrends error: ${parsed.error}`);
+      const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
+      const raw = fetchUrl(url, 12000);
+      if (raw && !raw.includes("<html")) {
+        const parsed = JSON.parse(raw);
+        const timeline = parsed?.interest_over_time?.timeline_data;
+        if (Array.isArray(timeline) && timeline.length > 0) {
+          const values: number[] = [];
+          for (const point of timeline) {
+            const v = point?.values?.[0]?.extracted_value ?? point?.values?.[0]?.value;
+            const num = typeof v === "number" ? v : parseFloat(v);
+            if (!isNaN(num)) values.push(num);
+          }
+          if (values.length > 0) {
+            const avg = Math.round((values.reduce((s, n) => s + n, 0) / values.length) * 10) / 10;
+            const latest = values[values.length - 1];
+            const peak = Math.max(...values);
+            trendValue = avg;
+            source = `Google Trends via SerpApi (7d Ø=${avg}, Latest=${latest}, Peak=${peak})`;
+            console.log(`  Google Trends (SerpApi): avg=${avg}, latest=${latest}, peak=${peak}`);
+          }
+        }
       }
+    } catch (err: any) {
+      console.log(`  Google Trends SerpApi failed: ${err?.message?.substring(0, 200)}`);
     }
-  } catch (err: any) {
-    console.log(`  Google Trends pytrends failed: ${err?.message?.substring(0, 200)}`);
+  } else {
+    console.log("  Google Trends: SERPAPI_KEY not set — reporting N/A");
   }
 
   // Scoring per methodology: Google(0-100): >75:+7 | 60-75:+4 | 30-60:0 | <30:-4
@@ -606,25 +499,9 @@ function scoreGoogleTrends(): IndicatorResult {
 
 // 12. VIX
 function scoreVIX(): IndicatorResult {
-  // Primary: finance_quotes for real-time
-  let vix = NaN;
-  let source = "CBOE / Finance API";
-  try {
-    const result = callFinanceTool("finance_quotes", {
-      ticker_symbols: ["^VIX"],
-      fields: ["price"],
-    });
-    if (result?.content) {
-      const match = result.content.match(/\|\s*([\d.]+)\s*\|\s*$/m);
-      if (match) vix = parseFloat(match[1]);
-    }
-  } catch {}
-
-  // Fallback: FRED
-  if (isNaN(vix)) {
-    vix = getLatestFredValue("VIXCLS");
-    source = "FRED VIXCLS";
-  }
+  // FRED VIXCLS (daily close) — no external finance tool needed.
+  let vix = getLatestFredValue("VIXCLS");
+  let source = "FRED VIXCLS";
 
   let rawScore = 0;
   let zone = "N/A";
@@ -646,38 +523,17 @@ function scoreVIX(): IndicatorResult {
 
 // 13. Advance-Decline Line
 function scoreADLine(): IndicatorResult {
-  // Use market sentiment analysis as proxy
-  let rawScore = -2; // default: parallel/healthy
-  let zone = "Parallel (AD↑ ≥ Index↑)";
-  let valueStr = "Parallel";
-
-  try {
-    const result = callFinanceTool("finance_market_sentiment", {
-      market_type: "market",
-      country: "US",
-      query: "S&P 500 market breadth advance decline line divergence",
-      action: "Analyzing market breadth",
-    });
-    if (result?.content) {
-      const content = result.content.toLowerCase();
-      if (content.includes("narrow") || content.includes("divergen") || content.includes("breadth") && content.includes("weak")) {
-        rawScore = 3;
-        zone = "Divergenz (AD↓, Index↑)";
-        valueStr = "Divergenz";
-      } else if (content.includes("mix") || content.includes("uneven")) {
-        rawScore = 0;
-        zone = "Schwäche (AD↑ < Index↑)";
-        valueStr = "Schwäche";
-      }
-    }
-  } catch {}
+  // No free real-time breadth source — default to parallel/healthy.
+  const rawScore = -2; // default: parallel/healthy
+  const zone = "Parallel (AD↑ ≥ Index↑)";
+  const valueStr = "Parallel";
 
   return {
     name: "Advance-Decline-Line",
     group: "correction", subgroup: "sentiment",
     value: valueStr,
     rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 3, zone,
-    source: "NYSE / Finance API",
+    source: "NYSE (Proxy)",
     description: "NYSE Advance-Decline-Linie vs. S&P 500 Divergenz",
   };
 }
@@ -721,39 +577,6 @@ function scoreCNNFearGreed(): IndicatorResult {
           fgValue = parseFloat(v);
           source = `alternative.me Crypto F&G (Proxy: ${parsed.data[0].value_classification})`;
           console.log(`  CNN F&G fallback (crypto): ${fgValue}`);
-        }
-      }
-    } catch {}
-  }
-
-  // Secondary: market sentiment as proxy for fear/greed levels
-  if (isNaN(fgValue)) {
-    try {
-      const result = callFinanceTool("finance_market_sentiment", {
-        market_type: "market",
-        country: "US",
-        query: "CNN Fear and Greed Index level current value",
-        action: "Checking market fear and greed level",
-      });
-      if (result?.content) {
-        // Try to extract a numeric value
-        const numMatch = result.content.match(/(?:fear.*?greed|sentiment).*?(\d{1,3})/i);
-        if (numMatch) {
-          const v = parseFloat(numMatch[1]);
-          if (v >= 0 && v <= 100) { fgValue = v; source = "Finance API (Proxy)"; }
-        }
-        // Or interpret qualitative assessment
-        if (isNaN(fgValue)) {
-          const content = result.content.toLowerCase();
-          if (content.includes("extreme fear")) fgValue = 15;
-          else if (content.includes("extreme bearish") || content.includes("very bearish")) fgValue = 15;
-          else if (content.includes("fear")) fgValue = 35;
-          else if (content.includes("bearish")) fgValue = 30;
-          else if (content.includes("neutral")) fgValue = 50;
-          else if (content.includes("extreme greed") || content.includes("extreme bullish") || content.includes("very bullish")) fgValue = 85;
-          else if (content.includes("greed")) fgValue = 65;
-          else if (content.includes("bullish")) fgValue = 65;
-          if (!isNaN(fgValue)) source = "Finance API (Sentiment-Proxy)";
         }
       }
     } catch {}
@@ -806,42 +629,11 @@ function sentimentProxyFromVix(): { rawScore: number; zone: string; valueStr: st
 
 // 15. AAII Sentiment Survey
 function scoreAAII(): IndicatorResult {
-  let bullPct = NaN;
-  let bearPct = NaN;
+  const bullPct = NaN;
+  const bearPct = NaN;
   let rawScore = 0;
   let zone = "N/A";
   let valueStr = "N/A";
-
-  // Try to get AAII data from market sentiment
-  try {
-    const result = callFinanceTool("finance_market_sentiment", {
-      market_type: "market",
-      country: "US",
-      query: "AAII investor sentiment survey bullish bearish percentage current",
-      action: "Checking AAII sentiment",
-    });
-    if (result?.content) {
-      const bullMatch = result.content.match(/bull(?:ish)?[:\s]*(\d{1,3}(?:\.\d)?)\s*%/i);
-      const bearMatch = result.content.match(/bear(?:ish)?[:\s]*(\d{1,3}(?:\.\d)?)\s*%/i);
-      if (bullMatch) bullPct = parseFloat(bullMatch[1]);
-      if (bearMatch) bearPct = parseFloat(bearMatch[1]);
-      // Qualitative fallback: map sentiment labels
-      if (isNaN(bullPct) || isNaN(bearPct)) {
-        const content = result.content.toLowerCase();
-        if (content.includes("extreme bearish") || content.includes("very bearish")) {
-          rawScore = -4; zone = "Extreme Angst (Sentiment-Proxy)"; valueStr = "Sehr Bearish (Proxy)";
-        } else if (content.includes("bearish")) {
-          rawScore = -2; zone = "Bearish (Sentiment-Proxy)"; valueStr = "Bearish (Proxy)";
-        } else if (content.includes("extreme bullish") || content.includes("very bullish")) {
-          rawScore = 4; zone = "Extreme Euphorie (Sentiment-Proxy)"; valueStr = "Sehr Bullish (Proxy)";
-        } else if (content.includes("bullish")) {
-          rawScore = 2; zone = "Bullish (Sentiment-Proxy)"; valueStr = "Bullish (Proxy)";
-        } else if (content.includes("neutral")) {
-          rawScore = 0; zone = "Neutral (Sentiment-Proxy)"; valueStr = "Neutral (Proxy)";
-        }
-      }
-    }
-  } catch {}
 
   if (!isNaN(bullPct) && !isNaN(bearPct) && bearPct > 0) {
     const ratio = bullPct / bearPct;
@@ -874,21 +666,7 @@ function scoreAAII(): IndicatorResult {
 
 // 16. CBOE Put/Call Ratio
 function scorePutCallRatio(): IndicatorResult {
-  let pcr = NaN;
-
-  // Try to get from finance quotes on CBOE index or via sentiment
-  try {
-    const result = callFinanceTool("finance_market_sentiment", {
-      market_type: "market",
-      country: "US",
-      query: "CBOE equity put call ratio latest value",
-      action: "Checking put/call ratio",
-    });
-    if (result?.content) {
-      const match = result.content.match(/put.?call.*?(\d\.\d{1,3})/i);
-      if (match) pcr = parseFloat(match[1]);
-    }
-  } catch {}
+  const pcr = NaN;
 
   let rawScore = 0;
   let zone = "N/A";
@@ -898,25 +676,6 @@ function scorePutCallRatio(): IndicatorResult {
     if (pcr > 1.0) { rawScore = -4; zone = `Hohe Absicherung (${pcr.toFixed(2)} >1.0) → bullish`; }
     else if (pcr < 0.6) { rawScore = 4; zone = `Sorglosigkeit (${pcr.toFixed(2)} <0.6) → bearish`; }
     else { rawScore = 0; zone = `Neutral (0.6-1.0)`; }
-  }
-
-  // Qualitative fallback: bearish market → more puts → higher ratio → score reflects hedging
-  if (isNaN(pcr)) {
-    try {
-      const result = callFinanceTool("finance_market_sentiment", {
-        market_type: "market", country: "US",
-        query: "Options market put call ratio sentiment",
-        action: "Checking options sentiment",
-      });
-      if (result?.content) {
-        const content = result.content.toLowerCase();
-        if (content.includes("bearish")) {
-          rawScore = -2; zone = "Erhöht (Sentiment-Proxy: Bearish)"; valueStr = "Erhöht (Proxy)"; source = "Finance API (Sentiment-Proxy)";
-        } else if (content.includes("bullish")) {
-          rawScore = 2; zone = "Niedrig (Sentiment-Proxy: Bullish)"; valueStr = "Niedrig (Proxy)"; source = "Finance API (Sentiment-Proxy)";
-        }
-      }
-    } catch {}
   }
 
   // Last-resort: VIX-based proxy. Put/Call ratio rises with VIX (more hedging).
@@ -941,35 +700,11 @@ function scorePutCallRatio(): IndicatorResult {
 
 // 17. Investors Intelligence
 function scoreInvestorsIntelligence(): IndicatorResult {
-  let bullPct = NaN;
-  let bearPct = NaN;
+  const bullPct = NaN;
+  const bearPct = NaN;
   let rawScore = 0;
   let zone = "N/A";
   let valueStr = "N/A";
-
-  try {
-    const result = callFinanceTool("finance_market_sentiment", {
-      market_type: "market",
-      country: "US",
-      query: "Investors Intelligence newsletter advisor sentiment bull bear ratio",
-      action: "Checking Investors Intelligence",
-    });
-    if (result?.content) {
-      const bullMatch = result.content.match(/bull(?:ish)?[:\s]*(\d{1,3}(?:\.\d)?)\s*%/i);
-      const bearMatch = result.content.match(/bear(?:ish)?[:\s]*(\d{1,3}(?:\.\d)?)\s*%/i);
-      if (bullMatch) bullPct = parseFloat(bullMatch[1]);
-      if (bearMatch) bearPct = parseFloat(bearMatch[1]);
-      // Qualitative fallback
-      if (isNaN(bullPct) || isNaN(bearPct)) {
-        const content = result.content.toLowerCase();
-        if (content.includes("bearish")) {
-          rawScore = -2; zone = "Vorsichtig (Sentiment-Proxy)"; valueStr = "Bearish (Proxy)";
-        } else if (content.includes("bullish")) {
-          rawScore = 2; zone = "Optimistisch (Sentiment-Proxy)"; valueStr = "Bullish (Proxy)";
-        }
-      }
-    }
-  } catch {}
 
   if (!isNaN(bullPct) && !isNaN(bearPct) && bearPct > 0) {
     const ratio = bullPct / bearPct;
@@ -1039,10 +774,10 @@ function clampAndRound(p: number): number {
   return Math.round(clamped / 5) * 5;
 }
 
-export function runRecessionAnalysis(): RecessionAnalysis {
+export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   console.log("[RECESSION] Starting recession analysis...");
 
-  const indicators: IndicatorResult[] = [
+  const indicators: IndicatorResult[] = await Promise.all([
     scoreSahm(),
     scoreYieldCurve(),
     scorePMI(),
@@ -1060,7 +795,7 @@ export function runRecessionAnalysis(): RecessionAnalysis {
     scoreAAII(),
     scorePutCallRatio(),
     scoreInvestorsIntelligence(),
-  ];
+  ]);
 
   console.log("[RECESSION] All indicators scored:");
   indicators.forEach(ind => {
@@ -1361,8 +1096,7 @@ export function registerRecessionRoutes(app: Express) {
       console.log(`[RECESSION] cache HIT (age=${Math.round((Date.now() - recessionCache.ts)/60000)}min)`);
       return res.json(recessionCache.data);
     }
-    // runRecessionAnalysis is synchronous + heavy. Wrap in setImmediate so the
-    // event loop can process other requests before we block it.
+    // runRecessionAnalysis is async + heavy (many FRED/scrape fetches).
     // Proxy guard: if still running after 24s, return 202 and continue in background.
     let responded = false;
     const guard = setTimeout(() => {
@@ -1378,7 +1112,7 @@ export function registerRecessionRoutes(app: Express) {
     }, 24000);
     guard.unref();
     try {
-      const analysis = runRecessionAnalysis();
+      const analysis = await runRecessionAnalysis();
       recessionCache = { data: analysis, ts: Date.now() };
       clearTimeout(guard);
       if (!responded) {

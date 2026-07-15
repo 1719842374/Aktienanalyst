@@ -26,6 +26,15 @@ export async function fmpProfile(symbol: string) {
   return data?.[0] || null;
 }
 
+export async function fmpQuote(symbol: string) {
+  try {
+    const data = await fmpFetch(`/quote`, { symbol });
+    return data?.[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fmpIncomeStatement(symbol: string, limit = 5) {
   return fmpFetch(`/income-statement`, { symbol, limit: String(limit) });
 }

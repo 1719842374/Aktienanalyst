@@ -1,7 +1,7 @@
 // === Researcher Module ===
 //
 // 4-Tab autonomous research mode for the Stock Analyst Pro dashboard.
-// Hybrid architecture: REAL data via finance_macro_snapshot / FMP screener,
+// Hybrid architecture: REAL data via FRED macro snapshot / FMP screener,
 // LLM (Claude 3.5 Haiku) only for SYNTHESIS and INTERPRETATION,
 // never for generating numeric facts.
 //
@@ -29,6 +29,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { callLLMJson } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
+import { fetchMacroSnapshot } from "./fmp-macro";
 
 // ============================================================
 // Cache Layer (mirrors main dashboard 7-day TTL)
@@ -115,48 +116,9 @@ function isStaleCache(cached: any): boolean {
 }
 
 // ============================================================
-// Finance API helper (synchronous, throttled — same pattern as recession.ts)
+// Macro data helper — FRED-backed snapshot (see server/fmp-macro.ts).
+// Replaces the former Perplexity macro-snapshot tool.
 // ============================================================
-
-let lastFinanceCallAt = 0;
-const MIN_SPACING_MS = 250;
-function sleepSync(ms: number) {
-  const sab = new SharedArrayBuffer(4);
-  const view = new Int32Array(sab);
-  Atomics.wait(view, 0, 0, ms);
-}
-function callFinanceTool(toolName: string, args: Record<string, any>): any {
-  const elapsed = Date.now() - lastFinanceCallAt;
-  if (elapsed < MIN_SPACING_MS) sleepSync(MIN_SPACING_MS - elapsed);
-  let result: any = null;
-  try {
-    const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
-    const escaped = params.replace(/'/g, "'\\''");
-    const raw = execSync(`external-tool call '${escaped}'`, {
-      timeout: 60000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
-    });
-    result = JSON.parse(raw);
-  } catch (err: any) {
-    const msg = err?.message || "";
-    if (msg.includes("RATE_LIMITED") || msg.includes("429") || msg.includes("UNAUTHORIZED") || msg.includes("401")) {
-      console.warn(`[RESEARCHER] ${toolName} rate-limited, backing off 4s`);
-      sleepSync(4000);
-      try {
-        const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
-        const escaped = params.replace(/'/g, "'\\''");
-        const raw = execSync(`external-tool call '${escaped}'`, {
-          timeout: 60000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024,
-        });
-        result = JSON.parse(raw);
-      } catch { result = null; }
-    } else {
-      console.error(`[RESEARCHER] ${toolName} failed:`, msg.substring(0, 200));
-      result = null;
-    }
-  }
-  lastFinanceCallAt = Date.now();
-  return result;
-}
 
 // ============================================================
 // Region -> Country mapping
@@ -242,11 +204,10 @@ async function buildMacroPulse(region: string): Promise<MacroPulseResult> {
   const countries = REGION_COUNTRIES[region] || REGION_COUNTRIES.US;
   const regionLabel = REGION_LABELS[region] || region;
 
-  // Fetch real macro data
-  const macroResult = callFinanceTool("finance_macro_snapshot", {
+  // Fetch real macro data (FRED)
+  const macroResult = await fetchMacroSnapshot({
     countries,
-    keywords: ["interest rate", "M2", "GDP", "inflation", "Government Spending", "Government Debt"],
-    action: `Macro pulse for ${regionLabel}`,
+    keywords: ["interest rate", "M2", "GDP", "inflation", "Core Inflation", "Government Spending", "Government Debt"],
   });
 
   const indicators: MacroPulseResult["indicators"] = [];
@@ -700,11 +661,10 @@ async function buildCapexFiscal(region: string): Promise<CapexFiscalResult> {
   const countries = REGION_COUNTRIES[region] || REGION_COUNTRIES.US;
   const regionLabel = REGION_LABELS[region] || region;
 
-  // Real data: Government Spending to GDP trend
-  const macroResult = callFinanceTool("finance_macro_snapshot", {
+  // Real data: Government Spending to GDP trend (FRED)
+  const macroResult = await fetchMacroSnapshot({
     countries,
-    keywords: ["Government Spending", "Government Debt", "Budget"],
-    action: `Capex/Fiscal data for ${regionLabel}`,
+    keywords: ["Government Spending", "Government Debt"],
   });
 
   let macroSnippet = "";

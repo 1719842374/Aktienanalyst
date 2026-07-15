@@ -26,50 +26,14 @@ import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCataly
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
-  fmpSegments, fmpPeers, fmpRatios, fmpKeyMetrics,
+  fmpSegments, fmpPeers, fmpRatios, fmpKeyMetrics, fmpQuote,
 } from "./fmp";
 
-// === Finance API Helper ===
-// Returns either the parsed result, or { __rateLimited: true } on 429,
-// or null on any other failure.
-function callFinanceTool(toolName: string, args: Record<string, any>): any {
-  try {
-    const params = JSON.stringify({ source_id: "finance", tool_name: toolName, arguments: args });
-    // Escape single quotes in the JSON string for shell
-    const escaped = params.replace(/'/g, "'\\''");
-    const result = execSync(`external-tool call '${escaped}'`, {
-      timeout: 55000, // 55s: chat-first, no proxy cut at 30s (was 25s for published URL)
-      encoding: "utf-8",
-      maxBuffer: 50 * 1024 * 1024,
-    });
-    // H1 fix: guard against empty response before JSON.parse
-    if (!result?.trim()) {
-      console.error(`Finance API empty response (${toolName})`);
-      return null;
-    }
-    return JSON.parse(result);
-  } catch (err: any) {
-    const msg = err?.message || "";
-    // H1 fix: ENOENT = external-tool binary missing — distinct from rate-limit
-    if (msg.includes("ENOENT") || msg.includes("not found") || msg.includes("No such file")) {
-      console.error(`Finance API CRITICAL: external-tool binary missing (${toolName}) — ${msg.substring(0, 200)}`);
-      return { __binaryMissing: true };
-    }
-    if (msg.includes("spending_limit_exceeded") || msg.includes("RATE_LIMITED") || msg.includes("429")) {
-      console.error(`Finance API rate-limited (${toolName})`);
-      markQuotaExceeded(); // start cold-start cooldown; auto-resets after 1h
-      return { __rateLimited: true };
-    }
-    if (msg.includes("UNAUTHORIZED") || msg.includes("401")) {
-      // 401 typically follows a rate-limit — treat as same backoff signal so we retry.
-      console.error(`Finance API unauthorized (${toolName}) — likely token-cooldown after rate-limit`);
-      markQuotaExceeded();
-      return { __rateLimited: true };
-    }
-    console.error(`Finance API error (${toolName}):`, msg.substring(0, 300));
-    return null;
-  }
-}
+// === Finance API Helper (removed) ===
+// The former Perplexity finance connector is no longer used. All market data
+// now comes directly from FMP (see ./fmp and ./fmp-macro). The throttled
+// wrapper below is kept as a no-op returning null so existing call sites
+// transparently fall through to their FMP-based path.
 
 // Sleep helper
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -98,7 +62,7 @@ let _quotaDate = new Date().toDateString();
 let _quotaCount = 0; // counts completed full analyses (not individual tool calls)
 
 // ── Spending-limit cold-start cooldown ──────────────────────────────────────
-// On spending_limit_exceeded the external-tool binary needs to cool down before
+// On spending_limit_exceeded the finance API needs to cool down before
 // it serves real analyses again. We record when the cooldown started and stop
 // short-circuiting once it has elapsed, so credits-restored recovers on its own.
 let quotaExceededAt: number | null = null;
@@ -156,33 +120,17 @@ function getQuotaStatus() {
 // ───────────────────────────────────────────────────────────────────────────
 
 async function callFinanceToolThrottled(
-  toolName: string,
-  args: Record<string, any>,
-  opts: { spacingMs?: number; maxRetries?: number } = {}
+  _toolName: string,
+  _args: Record<string, any>,
+  _opts: { spacingMs?: number; maxRetries?: number } = {}
 ): Promise<any> {
-  const spacingMs = opts.spacingMs ?? 300;
-  const maxRetries = opts.maxRetries ?? 2;
-  let attempt = 0;
-  while (true) {
-    const result = callFinanceTool(toolName, args);
-    await sleep(spacingMs);
-    if (result && result.__rateLimited) {
-      if (attempt < maxRetries) {
-        const backoffMs = 4000 * Math.pow(2, attempt); // 4s, 8s
-        console.log(`[FINANCE-THROTTLE] ${toolName} rate-limited, backoff ${backoffMs}ms (retry ${attempt + 1}/${maxRetries})`);
-        await sleep(backoffMs);
-        attempt++;
-        continue;
-      }
-      console.log(`[FINANCE-THROTTLE] ${toolName} still rate-limited after ${maxRetries} retries — giving up`);
-      return null;
-    }
-    return result;
-  }
+  // External finance tool removed — always return null so callers transparently
+  // fall through to their FMP-based path (see ./fmp and ./fmp-macro).
+  return null;
 }
 
 // === FMP Fallback Data Fetcher ===
-// Fetches all critical data from FMP in parallel when external-tool is unavailable.
+// Fetches all critical data from FMP in parallel — the primary market-data path.
 // Returns a normalized object matching the shape expected by the analyze handler.
 // Used as fallback when: BINARY_MISSING, RATE_LIMITED with no cache, or Railway deploy.
 async function getFmpFallbackData(ticker: string): Promise<{
@@ -203,7 +151,7 @@ async function getFmpFallbackData(ticker: string): Promise<{
   console.log(`[FMP-FALLBACK] Fetching data from FMP for ${ticker}...`);
   const t0 = Date.now();
   try {
-    // Fire all FMP calls in parallel — FMP has much higher rate limits than external-tool
+    // Fire all FMP calls in parallel — FMP has generous rate limits
     const settledAll = await Promise.allSettled([
       fmpBatchQuote([ticker]),      // 0: quote
       fmpProfile(ticker),           // 1: profile
@@ -2235,46 +2183,6 @@ function detectReportedCurrency(financialsContent: string): string | null {
 
 function fetchFXRate(fromCurrency: string, toCurrency: string = "USD"): number | null {
   if (fromCurrency === toCurrency) return 1.0;
-  try {
-    // Try Polygon forex endpoint for latest rate
-    const pair = `C:${fromCurrency}${toCurrency}`;
-    const result = callFinanceTool("finance_massive", {
-      pathname: `/v2/aggs/ticker/${pair}/prev`,
-      params: { adjusted: "true" },
-    });
-    if (result?.content) {
-      const data = typeof result.content === 'string' ? JSON.parse(result.content) : result.content;
-      if (data?.results && data.results.length > 0) {
-        const rate = data.results[0].c; // close price
-        if (rate && rate > 0) {
-          console.log(`[FX] ${fromCurrency}/${toCurrency} = ${rate}`);
-          return rate;
-        }
-      }
-    }
-  } catch (e: any) {
-    console.error(`[FX] Polygon error for ${fromCurrency}/${toCurrency}:`, e?.message?.substring(0, 200));
-  }
-
-  // Fallback: try finance_quotes with forex pair
-  try {
-    const quoteResult = callFinanceTool("finance_quotes", {
-      ticker_symbols: [`${fromCurrency}${toCurrency}=X`],
-      fields: ["price"],
-    });
-    if (quoteResult?.content) {
-      const rows = parseMarkdownTable(quoteResult.content);
-      if (rows.length > 0) {
-        const rate = parseNumber(rows[0].price);
-        if (rate > 0) {
-          console.log(`[FX] Fallback ${fromCurrency}/${toCurrency} = ${rate}`);
-          return rate;
-        }
-      }
-    }
-  } catch (e: any) {
-    console.error(`[FX] Fallback error for ${fromCurrency}/${toCurrency}:`, e?.message?.substring(0, 200));
-  }
 
   // Last resort: hardcoded approximate rates (better than nothing)
   const fallbackRates: Record<string, number> = {
@@ -3684,28 +3592,17 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // Cache listing endpoint
   // === /api/health — Runtime dependency check ===
-  // Tests all critical subsystems: external-tool CLI, LLM availability, cache dir.
+  // Tests all critical subsystems: FMP API key, LLM availability, cache dir.
   // Used by the client Warmup-Ping on page load and by the morning monitor cron.
   app.get("/api/health", async (_req, res) => {
     const checks: Record<string, { ok: boolean; detail?: string; [k: string]: any }> = {};
 
-    // 1. external-tool CLI available?
-    try {
-      const { execSync: exec } = await import("child_process");
-      const out = exec("external-tool --version 2>&1 || external-tool call '{\"source_id\":\"ping\"}' 2>&1 || echo 'available'", {
-        timeout: 5000, encoding: "utf-8",
-      });
-      checks.external_tool = { ok: true, detail: out.trim().substring(0, 80) };
-    } catch (e: any) {
-      // Fallback: just check if binary exists
-      try {
-        const { execSync: exec2 } = await import("child_process");
-        exec2("which external-tool", { timeout: 3000 });
-        checks.external_tool = { ok: true, detail: "binary found" };
-      } catch {
-        checks.external_tool = { ok: false, detail: "external-tool CLI not found — finance API unavailable" };
-      }
-    }
+    // 1. FMP API key configured? (primary market-data source)
+    const hasFmpKey = isFmpAvailable();
+    checks.fmp = {
+      ok: hasFmpKey,
+      detail: hasFmpKey ? "FMP_API_KEY set" : "FMP_API_KEY missing — market data unavailable",
+    };
 
     // 2. LLM (OpenRouter) configured?
     const hasLLMKey = !!(process.env.OPENROUTER_API_KEY);
@@ -3737,7 +3634,7 @@ export async function registerRoutes(server: Server, app: Express) {
     checks.fmp_budget = getFmpBudgetStatus() as any;
 
     const allOk = Object.values(checks).every(c => c.ok);
-    const critical = !checks.external_tool?.ok; // external-tool down = complete outage
+    const critical = !checks.fmp?.ok; // no FMP key = complete outage
 
     res.status(critical ? 503 : 200).json({
       status: allOk ? "healthy" : critical ? "critical" : "degraded",
@@ -3946,10 +3843,10 @@ export async function registerRoutes(server: Server, app: Express) {
         (req as any).headers?.['x-internal-request'] === 'background';
 
       // Proxy-Timeout-Guard: pplx.app Proxy killt Verbindungen nach ~3s ohne Cache-Hit.
-      // WICHTIG: Nur für normale Requests — wenn external-tool fehlt, sofort zu FMP-Fallback.
+      // WICHTIG: Nur für normale Requests — ohne Cache sofort zu FMP-Fallback.
       {
         const isInternalBg = (req as any).headers?.['x-internal-request'] === 'background';
-        // Schnell prüfen ob external-tool verfügbar ist (Socket-Test)
+        // Schnell prüfen ob eine lokale Tool-Socket verfügbar ist (Socket-Test)
         const binaryAvailable = (() => {
           try {
             const { execSync: es } = require('child_process');
@@ -4111,27 +4008,20 @@ export async function registerRoutes(server: Server, app: Express) {
       const endDate = new Date().toISOString().split('T')[0];
       const startDate = new Date(Date.now() - 11 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-      // FMP as PRIMARY path: on published pplx.app the external-tool socket
-      // (/tmp/.tools_service_endpoint) is missing, so external-tool calls only
-      // burn retry-delays before failing. Detect that here and fetch everything
-      // from FMP up front — the downstream builder already consumes `fmpData`.
-      const externalToolAvailable = (() => {
-        try {
-          const { execSync: es } = require('child_process');
-          es('test -S /tmp/.tools_service_endpoint 2>/dev/null', { timeout: 500 });
-          return true;
-        } catch { return false; }
-      })();
+      // FMP is the sole primary market-data source. The former external finance
+      // connector has been removed, so all data is fetched from FMP up front —
+      // the downstream builder already consumes `fmpData`.
+      const externalToolAvailable = false;
 
       let fmpData: Awaited<ReturnType<typeof getFmpFallbackData>> = null;
       let quoteResult: any = null;
       let profileResult: any = null;
 
       if (!externalToolAvailable) {
-        console.log(`[ANALYZE] external-tool unavailable — using FMP as primary source for ${ticker}`);
+        console.log(`[ANALYZE] Using FMP as primary source for ${ticker}`);
         fmpData = await getFmpFallbackData(ticker);
         if (!fmpData) {
-          // No external-tool AND no FMP data — serve stale cache if present,
+          // No FMP data — serve stale cache if present,
           // otherwise surface a friendly rate-limit/connector error.
           const cachedNoFmp = getCachedAnalysis(ticker);
           if (cachedNoFmp && cacheLLMModeMatches(cachedNoFmp._useLLM, useLLM)) {
@@ -4166,9 +4056,9 @@ export async function registerRoutes(server: Server, app: Express) {
 
       if (needsFmpFallback) {
         if (quoteResult?.__binaryMissing) {
-          console.error(`[ANALYZE] CRITICAL: external-tool binary missing — trying FMP fallback for ${ticker}`);
+          console.error(`[ANALYZE] CRITICAL: primary quote unavailable — trying FMP fallback for ${ticker}`);
         } else {
-          console.log(`[ANALYZE] external-tool rate-limited — trying FMP fallback for ${ticker}`);
+          console.log(`[ANALYZE] primary quote empty — trying FMP fallback for ${ticker}`);
         }
 
         // Try cache first (fastest) — but only if it has real historicalPrices
@@ -4203,8 +4093,7 @@ export async function registerRoutes(server: Server, app: Express) {
       }
       // Batch 2 (enrichment) — run remaining 6 in parallel.
       // Skip entirely when running on FMP data: all enrichment fields are
-      // sourced from `fmpData` downstream, and external-tool is unavailable
-      // (calls would only return __binaryMissing/null after retry-delays).
+      // sourced from `fmpData` downstream (the throttled calls are no-ops now).
       let financialsResult: any = null, analystResult: any = null, estimatesResult: any = null;
       let ohlcvHistResult: any = null, segmentsResult: any = null, newsResult: any = null;
       if (!fmpData) {
@@ -4275,7 +4164,7 @@ export async function registerRoutes(server: Server, app: Express) {
         priceTimestamp = q.timestamp ? new Date(q.timestamp * 1000).toISOString() : new Date().toISOString();
         console.log(`[FMP-QUOTE] ${ticker}: price=$${price}, mktcap=$${(marketCap/1e9).toFixed(1)}B`);
       } else if (quoteResult?.content) {
-        // === external-tool Quote Parsing ===
+        // === Legacy markdown Quote Parsing ===
         const rows = parseMarkdownTable(quoteResult.content);
         if (rows.length > 0) {
           const q = rows[0];
@@ -6446,14 +6335,12 @@ export async function registerRoutes(server: Server, app: Express) {
         console.error("[BTC] F&G error:", e?.message?.substring(0, 200));
       }
 
-      // === 3. Fetch DXY ===
+      // === 3. Fetch DXY (FMP quote) ===
       let dxy = 103;
       try {
-        const dxyResult = callFinanceTool("get_stock_price", { symbol: "DX-Y.NYB" });
-        if (dxyResult) {
-          const dxyStr = typeof dxyResult === "string" ? dxyResult : JSON.stringify(dxyResult);
-          const dxyMatch = dxyStr.match(/([\d]+\.[\d]+)/);
-          if (dxyMatch) dxy = parseFloat(dxyMatch[1]);
+        const dxyQuote = await fmpQuote("DX-Y.NYB");
+        if (dxyQuote?.price != null && !isNaN(Number(dxyQuote.price))) {
+          dxy = Number(dxyQuote.price);
         }
         console.log(`[BTC] DXY: ${dxy}`);
       } catch (e: any) {
@@ -6824,27 +6711,6 @@ export async function registerRoutes(server: Server, app: Express) {
             return { date: d.date, price: bin?.price ?? d.price, volume: bin?.volume ?? d.volume };
           });
           console.log(`[BTC] Merged CoinGecko+Binance: ${allPriceData.length} Punkte`);
-        }
-      }
-
-      // If still empty, try finance tool
-      if (allPriceData.length === 0) {
-        try {
-          const chart5Y = callFinanceTool("get_stock_chart", { symbol: "BTC-USD", range: "5y", interval: "1d" });
-          if (chart5Y) {
-            const chartStr = typeof chart5Y === "string" ? chart5Y : JSON.stringify(chart5Y);
-            const rows = parseMarkdownTable(chartStr);
-            if (rows.length > 0) {
-              allPriceData = rows.map(r => ({
-                date: r["Date"] || r["date"] || "",
-                price: parseNumber(r["Close"] || r["close"] || r["Price"] || r["price"] || "0"),
-                volume: parseNumber(r["Volume"] || r["volume"] || "0"),
-              })).filter(r => r.date && r.price > 0);
-            }
-          }
-          console.log(`[BTC] Finance fallback: ${allPriceData.length} data points`);
-        } catch (e: any) {
-          console.error("[BTC] Finance chart error:", e?.message?.substring(0, 200));
         }
       }
 
@@ -7516,7 +7382,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // === Granular FMP analysis endpoints ===
   // Lightweight, low-cost slices of the full analysis for clients that only need
-  // part of the data. Each uses FMP directly (works without external-tool).
+  // part of the data. Each uses FMP directly.
 
   // POST /api/analyze/fundamentals — profile + financials (3-4 FMP calls)
   app.post('/api/analyze/fundamentals', async (req, res) => {
