@@ -246,3 +246,74 @@ export async function convertFmpRowsToUsd<T extends Record<string, any>>(rows: T
     return converted;
   });
 }
+
+// === EPS Growth Calculations (formula-based, no external source needed) ===
+// Derives YoY EPS growth and 1Y/3Y/5Y CAGR directly from the income-statement
+// history after FX conversion. This replaces any hardcoded or FMP-supplied
+// "epsgrowth" field, which is often stale, null, or pre-FX-conversion.
+//
+// Formulas:
+//   YoY%  = (EPS_t / EPS_{t-1} - 1) × 100
+//   CAGR  = (EPS_end / EPS_start)^(1/n) - 1       [compound annual growth rate]
+//
+// Edge cases:
+//   - Negative EPS base year → CAGR returns null (mathematically undefined / misleading)
+//   - Zero EPS base year     → CAGR returns null (division by zero)
+//   - Insufficient history   → returns null for the period that can't be computed
+
+export interface EpsGrowthResult {
+  /** Chronologically sorted EPS history (oldest first), post-FX-conversion */
+  epsHistory: Array<{ year: string; eps: number }>;
+  /** YoY growth rate per year: (EPS_t / EPS_{t-1} - 1) × 100 */
+  yoyGrowthRates: Array<{ year: string; growthPct: number }>;
+  /** 1-year CAGR (%), null if base EPS ≤ 0 or insufficient data */
+  cagr1Y: number | null;
+  /** 3-year CAGR (%), null if base EPS ≤ 0 or fewer than 4 data points */
+  cagr3Y: number | null;
+  /** 5-year CAGR (%), null if base EPS ≤ 0 or fewer than 6 data points */
+  cagr5Y: number | null;
+}
+
+export async function calcEpsGrowth(symbol: string): Promise<EpsGrowthResult> {
+  // Fetch 6 annual rows so we can compute a true 5Y CAGR (needs start + 5 periods)
+  const rawRows = await fmpIncomeStatement(symbol, 6);
+  // Apply DKK / FX normalisation — critical for ADRs like NVO, AZN, RHHBY etc.
+  const rows = await convertFmpRowsToUsd(rawRows);
+
+  // Sort oldest → newest so index 0 is the earliest year
+  const sorted = (Array.isArray(rows) ? rows : [])
+    .filter((r: any) => r?.epsDiluted != null || r?.eps != null)
+    .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  const epsHistory: Array<{ year: string; eps: number }> = sorted
+    .map((r: any) => ({
+      year: String(r.calendarYear ?? r.date?.substring(0, 4) ?? "?"),
+      eps: Number(r.epsDiluted ?? r.eps),
+    }))
+    .filter((h) => !isNaN(h.eps));
+
+  // YoY: (EPS_t / |EPS_{t-1}|) - 1  — abs() on base prevents sign-flip artefacts
+  const yoyGrowthRates: Array<{ year: string; growthPct: number }> = epsHistory
+    .slice(1)
+    .map((curr, i) => ({
+      year: curr.year,
+      growthPct: ((curr.eps - epsHistory[i].eps) / Math.abs(epsHistory[i].eps)) * 100,
+    }));
+
+  // CAGR helper: returns null when base is non-positive or history is too short
+  const cagr = (n: number): number | null => {
+    if (epsHistory.length < n + 1) return null;
+    const end = epsHistory[epsHistory.length - 1].eps;
+    const start = epsHistory[epsHistory.length - 1 - n].eps;
+    if (start <= 0 || end <= 0) return null;
+    return (Math.pow(end / start, 1 / n) - 1) * 100;
+  };
+
+  return {
+    epsHistory,
+    yoyGrowthRates,
+    cagr1Y: cagr(1),
+    cagr3Y: cagr(3),
+    cagr5Y: cagr(5),
+  };
+}
