@@ -1,0 +1,44 @@
+name: Currency Conversion Regression Test
+
+# Guards against foreign-currency financial statements (DKK, EUR, JPY, etc.)
+# being read from FMP without conversion to USD. See script/test-currency-conversion.ts
+# for the full explanation and the Novo Nordisk P/E=2.2 incident this test was
+# written after.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/fmp.ts"
+      - "server/routes.ts"
+      - "script/test-currency-conversion.ts"
+      - ".github/workflows/currency-conversion-test.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "server/fmp.ts"
+      - "server/routes.ts"
+      - "script/test-currency-conversion.ts"
+  workflow_dispatch: {}
+
+jobs:
+  currency-conversion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run currency conversion test
+        env:
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+        run: npx tsx script/test-currency-conversion.ts
