@@ -8,8 +8,8 @@
  *  3. Difficulty Ribbon Compression — gauge (0–1)
  *  4. Breakeven Price — vs current BTC spot price
  *
- * All data comes from the existing server/btc-miner.ts backend.
- * No changes to btcAnalysis.ts required for this component.
+ * Self-contained: fetches /api/btc-miner on mount.
+ * No changes to btcAnalysis.ts or BTCAnalysis type required.
  */
 
 import React, { useEffect, useState } from "react";
@@ -25,7 +25,7 @@ import {
   Legend,
 } from "recharts";
 
-// ── Types (mirror of server/btc-miner.ts MinerData) ─────────────────────────
+// ── Types (mirror of server/btc-miner.ts MinerData) ──────────────────────────
 interface HashratePoint {
   date: string;
   hashrateEH: number;
@@ -49,73 +49,37 @@ interface MinerData {
 }
 
 interface Props {
-  btcPrice: number; // pass current BTC price for hashprice USD calc
+  btcPrice: number;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt(n: number, decimals = 0): string {
   return n.toLocaleString("en-US", { maximumFractionDigits: decimals });
 }
 
-function fmtK(n: number): string {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}k`;
-  return `$${fmt(n, 0)}`;
-}
-
-function scoreColor(value: number, invert = false): string {
-  const v = invert ? -value : value;
-  if (v >= 0.7) return "text-green-400";
-  if (v >= 0.4) return "text-yellow-400";
-  if (v >= 0.0) return "text-orange-400";
-  return "text-red-400";
-}
-
-// ── Gauge component (Difficulty Ribbon Compression) ──────────────────────────
+// ── Gauge: Difficulty Ribbon Compression ─────────────────────────────────────
 function CompressionGauge({ value }: { value: number }) {
   const pct = Math.max(0, Math.min(1, value)) * 100;
   const color =
     pct >= 70 ? "#22c55e" : pct >= 40 ? "#eab308" : pct >= 20 ? "#f97316" : "#ef4444";
+  const arcLen = (pct / 100) * 283;
 
   return (
     <div className="flex flex-col items-center gap-2">
       <div className="relative w-40 h-20 overflow-hidden">
-        {/* Background arc */}
         <svg viewBox="0 0 200 100" className="w-full h-full">
-          <path
-            d="M 10 100 A 90 90 0 0 1 190 100"
-            fill="none"
-            stroke="#334155"
-            strokeWidth="18"
-            strokeLinecap="round"
-          />
-          <path
-            d="M 10 100 A 90 90 0 0 1 190 100"
-            fill="none"
-            stroke={color}
-            strokeWidth="18"
-            strokeLinecap="round"
-            strokeDasharray={`${(pct / 100) * 283} 283`}
-          />
-          <text
-            x="100"
-            y="95"
-            textAnchor="middle"
-            fill={color}
-            fontSize="22"
-            fontWeight="bold"
-          >
+          <path d="M 10 100 A 90 90 0 0 1 190 100" fill="none" stroke="#334155" strokeWidth="18" strokeLinecap="round" />
+          <path d="M 10 100 A 90 90 0 0 1 190 100" fill="none" stroke={color} strokeWidth="18" strokeLinecap="round"
+            strokeDasharray={`${arcLen} 283`} />
+          <text x="100" y="92" textAnchor="middle" fill={color} fontSize="22" fontWeight="bold">
             {pct.toFixed(0)}%
           </text>
         </svg>
       </div>
       <div className="text-xs text-slate-400">
-        {pct >= 70
-          ? "Stark komprimiert → Kaufzone"
-          : pct >= 40
-          ? "Mäßige Kompression"
-          : pct >= 20
-          ? "Ribbons weiten sich"
+        {pct >= 70 ? "Stark komprimiert → Kaufzone"
+          : pct >= 40 ? "Mäßige Kompression"
+          : pct >= 20 ? "Ribbons weiten sich"
           : "Ribbons weit → Kein Signal"}
       </div>
     </div>
@@ -130,21 +94,20 @@ export function BtcMinerSection({ btcPrice }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
+    (async () => {
       try {
         setLoading(true);
         setError(null);
         const res = await fetch("/api/btc-miner");
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
+        const json: MinerData = await res.json();
         if (!cancelled) setData(json);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message ?? "Fetch failed");
+        if (!cancelled) setError(e?.message ?? "Fetch fehlgeschlagen");
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }
-    load();
+    })();
     return () => { cancelled = true; };
   }, []);
 
@@ -160,12 +123,15 @@ export function BtcMinerSection({ btcPrice }: Props) {
   if (error || !data) {
     return (
       <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-400 text-sm">
-        ⚠ Miner-Daten nicht verfügbar: {error ?? "Keine Daten"}
+        ⚠ Miner-Daten nicht verfügbar: {error ?? "Keine Daten"}<br />
+        <span className="text-xs text-slate-500 mt-1 block">
+          Backend-Check: <code>GET /api/btc-miner</code> → mempool.space
+        </span>
       </div>
     );
   }
 
-  // ── Build Hash Ribbon chart data ──────────────────────────────────────────
+  // ── Hash Ribbon chart: last 12 months (need ≥60 pts for ma60) ──────────────
   const hashRibbonData = data.dates
     .map((date, i) => ({
       date,
@@ -173,45 +139,44 @@ export function BtcMinerSection({ btcPrice }: Props) {
       ma30: data.ma30[i] ?? null,
       ma60: data.ma60[i] ?? null,
     }))
-    .filter((_, i) => i >= 59) // skip until ma60 has values
-    .slice(-365); // last 12 months
+    .filter((_, i) => i >= 59)
+    .slice(-365);
 
-  // ── Puell chart (last 2Y) ─────────────────────────────────────────────────
+  // ── Puell chart: last 2 years ─────────────────────────────────────────────
   const puellData = data.puellHistory.slice(-730);
 
-  // ── Hashprice in USD ─────────────────────────────────────────────────────
+  // ── Hashprice in USD ──────────────────────────────────────────────────────
   const hashpriceUSD = data.hashprice * btcPrice;
 
-  // ── Capitulation badge ──────────────────────────────────────────────────
+  // ── Status badges ─────────────────────────────────────────────────────────
   const capBadge = data.inCapitulation ? (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30">
       ⚠ Kapitulation aktiv — MA30 &lt; MA60
     </span>
   ) : data.crossoverSignal ? (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-500/20 text-green-400 border border-green-500/30">
-      ✓ Hash Ribbon Buy Signal (MA30 kreuzte MA60)
+      ✓ Hash Ribbon Buy Signal
     </span>
   ) : (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-700 text-slate-300">
-      Neutral — kein aktives Signal
+      Neutral
     </span>
   );
 
-  // ── Puell zone badge ─────────────────────────────────────────────────────
-  const puellBadge = () => {
+  const puellBadge = (() => {
     const v = data.puellMultiple;
     if (v === null) return null;
-    if (v < 0.5)
-      return <span className="px-2 py-0.5 rounded-full text-xs bg-green-500/20 text-green-400 border border-green-500/30">Kapitulationszone (&lt;0.5) — historisch bullisch</span>;
-    if (v > 4)
-      return <span className="px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-400 border border-red-500/30">Überhitzungszone (&gt;4) — Vorsicht</span>;
-    if (v > 2)
-      return <span className="px-2 py-0.5 rounded-full text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">Erhöhte Miner-Einnahmen</span>;
-    return <span className="px-2 py-0.5 rounded-full text-xs bg-slate-700 text-slate-300">Neutrale Zone</span>;
-  };
+    if (v < 0.5) return <span className="px-2 py-0.5 rounded-full text-xs bg-green-500/20 text-green-400 border border-green-500/30">Kapitulationszone (&lt;0.5) — historisch bullisch</span>;
+    if (v > 4)   return <span className="px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-400 border border-red-500/30">Überhitzung (&gt;4) — Vorsicht</span>;
+    if (v > 2)   return <span className="px-2 py-0.5 rounded-full text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">Erhöhte Miner-Einnahmen</span>;
+    return           <span className="px-2 py-0.5 rounded-full text-xs bg-slate-700 text-slate-300">Neutrale Zone</span>;
+  })();
+
+  const tooltipStyle = { backgroundColor: "#1e293b", border: "1px solid #475569", borderRadius: 8, fontSize: 11 };
 
   return (
     <div className="space-y-4">
+
       {/* ── Row 1: Hash Ribbons + Puell Multiple ── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
 
@@ -219,43 +184,33 @@ export function BtcMinerSection({ btcPrice }: Props) {
         <div className="rounded-xl border border-slate-700/50 bg-slate-800/60 p-4 space-y-3">
           <div className="flex items-start justify-between gap-2 flex-wrap">
             <div>
-              <h3 className="text-sm font-semibold text-white">Hash Ribbons</h3>
-              <p className="text-xs text-slate-400">
-                MA30 vs MA60 der Netzwerk-Hashrate (EH/s) — Quelle: mempool.space
-              </p>
+              <h3 className="text-sm font-semibold text-white">⛏ Hash Ribbons</h3>
+              <p className="text-xs text-slate-400">MA30 vs MA60 der Netzwerk-Hashrate (EH/s) — Quelle: mempool.space</p>
             </div>
             {capBadge}
           </div>
-          <div className="flex gap-4 text-xs">
+
+          <div className="flex gap-6 text-xs">
             <div>
-              <span className="text-slate-400">Aktuelle Hashrate</span>
+              <div className="text-slate-400">Aktuelle Hashrate</div>
               <div className="text-white font-semibold">{data.currentHashrateEH.toFixed(0)} EH/s</div>
             </div>
             <div>
-              <span className="text-slate-400">Hashprice</span>
+              <div className="text-slate-400">Hashprice</div>
               <div className="text-white font-semibold">${hashpriceUSD.toFixed(3)}/TH/d</div>
             </div>
           </div>
+
           {hashRibbonData.length > 0 ? (
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={hashRibbonData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fill: "#94a3b8", fontSize: 10 }}
+                <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }}
                   tickFormatter={(v: string) => v.slice(0, 7)}
-                  interval={Math.floor(hashRibbonData.length / 6)}
-                />
-                <YAxis
-                  tick={{ fill: "#94a3b8", fontSize: 10 }}
-                  tickFormatter={(v: number) => `${v.toFixed(0)}`}
-                  width={40}
-                />
-                <Tooltip
-                  contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #475569", borderRadius: 8, fontSize: 11 }}
-                  formatter={(val: number, name: string) => [`${val?.toFixed(1)} EH/s`, name]}
-                  labelFormatter={(l: string) => l}
-                />
+                  interval={Math.max(1, Math.floor(hashRibbonData.length / 6))} />
+                <YAxis tick={{ fill: "#94a3b8", fontSize: 10 }} tickFormatter={(v: number) => v.toFixed(0)} width={40} />
+                <Tooltip contentStyle={tooltipStyle}
+                  formatter={(val: number, name: string) => [`${val?.toFixed(1)} EH/s`, name]} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <Line type="monotone" dataKey="ma30" name="MA30" stroke="#f97316" dot={false} strokeWidth={2} connectNulls />
                 <Line type="monotone" dataKey="ma60" name="MA60" stroke="#3b82f6" dot={false} strokeWidth={2} connectNulls />
@@ -263,7 +218,7 @@ export function BtcMinerSection({ btcPrice }: Props) {
               </LineChart>
             </ResponsiveContainer>
           ) : (
-            <div className="text-slate-500 text-xs text-center py-8">Nicht genug Daten für Hash-Ribbon-Chart (mind. 60 Datenpunkte)</div>
+            <div className="text-slate-500 text-xs text-center py-8">Mind. 60 Datenpunkte für Hash-Ribbon-Chart nötig</div>
           )}
           <p className="text-xs text-slate-500">
             Kapitulation: MA30 fällt unter MA60 → ineffiziente Miner schalten ab.<br />
@@ -275,17 +230,16 @@ export function BtcMinerSection({ btcPrice }: Props) {
         <div className="rounded-xl border border-slate-700/50 bg-slate-800/60 p-4 space-y-3">
           <div className="flex items-start justify-between gap-2 flex-wrap">
             <div>
-              <h3 className="text-sm font-semibold text-white">Puell Multiple</h3>
-              <p className="text-xs text-slate-400">
-                Tägliche Emission (USD) ÷ 365d-MA — Miner-Einnahmen relativ zum Mittel
-              </p>
+              <h3 className="text-sm font-semibold text-white">📊 Puell Multiple</h3>
+              <p className="text-xs text-slate-400">Tägliche Emission (USD) ÷ 365d-MA — Miner-Einnahmen relativ zum Mittel</p>
             </div>
-            {puellBadge()}
+            {puellBadge}
           </div>
-          <div className="flex gap-4 text-xs">
+
+          <div className="flex gap-6 text-xs">
             <div>
-              <span className="text-slate-400">Aktuell</span>
-              <div className={`font-bold text-lg ${
+              <div className="text-slate-400">Aktuell</div>
+              <div className={`font-bold text-2xl ${
                 data.puellMultiple === null ? "text-slate-400" :
                 data.puellMultiple < 0.5 ? "text-green-400" :
                 data.puellMultiple > 4 ? "text-red-400" : "text-white"
@@ -293,43 +247,32 @@ export function BtcMinerSection({ btcPrice }: Props) {
                 {data.puellMultiple !== null ? data.puellMultiple.toFixed(2) : "N/A"}
               </div>
             </div>
-            <div>
-              <span className="text-slate-400">Benötigt</span>
-              <div className="text-slate-300 text-xs mt-1">BTC-Preishistorie (365d+)</div>
-            </div>
           </div>
+
           {puellData.length > 10 ? (
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={puellData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fill: "#94a3b8", fontSize: 10 }}
+                <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }}
                   tickFormatter={(v: string) => v.slice(0, 7)}
-                  interval={Math.floor(puellData.length / 6)}
-                />
+                  interval={Math.max(1, Math.floor(puellData.length / 6))} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 10 }} width={36} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #475569", borderRadius: 8, fontSize: 11 }}
-                  formatter={(val: number) => [val.toFixed(3), "Puell Multiple"]}
-                />
-                {/* Kapitulationszone */}
-                <ReferenceLine y={0.5} stroke="#22c55e" strokeDasharray="4 2" label={{ value: "0.5 Kap.", fill: "#22c55e", fontSize: 10 }} />
-                {/* Überhitzungszone */}
-                <ReferenceLine y={4} stroke="#ef4444" strokeDasharray="4 2" label={{ value: "4.0 Hot", fill: "#ef4444", fontSize: 10 }} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(val: number) => [val.toFixed(3), "Puell Multiple"]} />
+                <ReferenceLine y={0.5} stroke="#22c55e" strokeDasharray="4 2"
+                  label={{ value: "0.5 Kap.", fill: "#22c55e", fontSize: 10 }} />
+                <ReferenceLine y={4} stroke="#ef4444" strokeDasharray="4 2"
+                  label={{ value: "4.0 Hot", fill: "#ef4444", fontSize: 10 }} />
                 <Line type="monotone" dataKey="value" name="Puell" stroke="#a855f7" dot={false} strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           ) : (
             <div className="text-slate-500 text-xs text-center py-8">
               {data.puellMultiple === null
-                ? "Puell Multiple benötigt BTC-Preishistorie (365 Tage+). Wird berechnet, sobald btcPriceHistory übergeben wird."
+                ? "Puell Multiple benötigt BTC-Preishistorie (365d+) — wird berechnet sobald btcPriceHistory übergeben wird."
                 : "Zu wenige Historien-Datenpunkte für Chart"}
             </div>
           )}
-          <p className="text-xs text-slate-500">
-            &lt;0.5 = Kapitulationszone (Kaufsignal) · 0.5–2 = normal · &gt;4 = Überhitzung
-          </p>
+          <p className="text-xs text-slate-500">&lt;0.5 = Kapitulationszone · 0.5–2 = normal · &gt;4 = Überhitzung</p>
         </div>
       </div>
 
@@ -339,19 +282,17 @@ export function BtcMinerSection({ btcPrice }: Props) {
         {/* Card 3 — Difficulty Ribbon Compression */}
         <div className="rounded-xl border border-slate-700/50 bg-slate-800/60 p-4 space-y-3">
           <div>
-            <h3 className="text-sm font-semibold text-white">Difficulty Ribbon Compression</h3>
-            <p className="text-xs text-slate-400">
-              MAs 9–200 Tage der Mining-Difficulty. Kompression = ineffiziente Miner geben auf.
-            </p>
+            <h3 className="text-sm font-semibold text-white">🎛 Difficulty Ribbon Compression</h3>
+            <p className="text-xs text-slate-400">MAs 9–200 Tage der Mining-Difficulty. Kompression = ineffiziente Miner geben auf.</p>
           </div>
           <CompressionGauge value={data.difficultyRibbonCompression} />
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="bg-slate-700/40 rounded-lg p-2">
-              <div className="text-slate-400">Kompression Score</div>
+              <div className="text-slate-400">Score</div>
               <div className="text-white font-semibold">{(data.difficultyRibbonCompression * 100).toFixed(1)}%</div>
             </div>
             <div className="bg-slate-700/40 rounded-lg p-2">
-              <div className="text-slate-400">Difficulty Datenpunkte</div>
+              <div className="text-slate-400">Difficulty-Punkte</div>
               <div className="text-white font-semibold">{data.difficultyHistory.length}</div>
             </div>
           </div>
@@ -360,27 +301,22 @@ export function BtcMinerSection({ btcPrice }: Props) {
             <div>• 40–70%: Moderate Kompression → Netzwerk konsolidiert</div>
             <div>• &lt;40%: Ribbons weit → kein Kaufsignal</div>
           </div>
-          <p className="text-xs text-slate-500">
-            Quelle: mempool.space difficulty-adjustments (Variationskoeffizient der MAs 9–200d)
-          </p>
+          <p className="text-xs text-slate-500">Quelle: mempool.space difficulty-adjustments (Variationskoeffizient MAs 9–200d)</p>
         </div>
 
         {/* Card 4 — Miner Breakeven Price */}
         <div className="rounded-xl border border-slate-700/50 bg-slate-800/60 p-4 space-y-3">
           <div>
-            <h3 className="text-sm font-semibold text-white">Miner Breakeven-Preis</h3>
-            <p className="text-xs text-slate-400">
-              Antminer S19 XP (140 TH/s, 21.5 J/TH) bei $0.05/kWh — institutioneller Referenz-Miner
-            </p>
+            <h3 className="text-sm font-semibold text-white">💰 Miner Breakeven-Preis</h3>
+            <p className="text-xs text-slate-400">Antminer S19 XP (140 TH/s, 21.5 J/TH) bei $0.05/kWh — institutioneller Referenz-Miner</p>
           </div>
 
-          {/* Big number comparison */}
-          <div className="flex gap-4">
+          <div className="flex gap-3">
             <div className="flex-1 bg-slate-700/40 rounded-xl p-3 text-center">
               <div className="text-xs text-slate-400 mb-1">BTC Spot</div>
               <div className="text-xl font-bold text-white">${fmt(btcPrice, 0)}</div>
             </div>
-            <div className="flex items-center text-slate-500 text-xl">vs</div>
+            <div className="flex items-center text-slate-500 text-lg font-light">vs</div>
             <div className="flex-1 bg-slate-700/40 rounded-xl p-3 text-center">
               <div className="text-xs text-slate-400 mb-1">Breakeven</div>
               <div className={`text-xl font-bold ${
@@ -390,7 +326,6 @@ export function BtcMinerSection({ btcPrice }: Props) {
             </div>
           </div>
 
-          {/* Margin indicator */}
           {data.breakevenPrice > 0 && (
             <div className="space-y-1">
               <div className="flex justify-between text-xs">
@@ -406,9 +341,7 @@ export function BtcMinerSection({ btcPrice }: Props) {
                   className={`h-2 rounded-full transition-all ${
                     btcPrice > data.breakevenPrice ? "bg-green-500" : "bg-red-500"
                   }`}
-                  style={{
-                    width: `${Math.min(100, Math.max(5, (btcPrice / (data.breakevenPrice * 2)) * 100))}%`,
-                  }}
+                  style={{ width: `${Math.min(100, Math.max(5, (btcPrice / (data.breakevenPrice * 2)) * 100))}%` }}
                 />
               </div>
             </div>
@@ -427,7 +360,7 @@ export function BtcMinerSection({ btcPrice }: Props) {
 
           <div className="text-xs text-slate-500 space-y-1">
             <div>• Spot &gt; 1.2× Breakeven: Miner profitabel, Selling-Druck gering</div>
-            <div>• Spot 1.0–1.2× Breakeven: Marginal profitabel, schwache Miner unter Druck</div>
+            <div>• Spot 1.0–1.2× Breakeven: Schwache Miner unter Druck</div>
             <div>• Spot &lt; Breakeven: Miner-Kapitulation wahrscheinlich</div>
           </div>
           <p className="text-xs text-slate-500">
@@ -439,7 +372,7 @@ export function BtcMinerSection({ btcPrice }: Props) {
       {/* ── Footer ── */}
       <div className="text-xs text-slate-500 text-right">
         Letzte Aktualisierung: {new Date(data.lastUpdated).toLocaleString("de-DE")} ·
-        Quellen: mempool.space API (Hashrate, Difficulty) · Berechnet: Breakeven, MA30/60
+        Quellen: mempool.space API · 1h Server-Cache
       </div>
     </div>
   );
