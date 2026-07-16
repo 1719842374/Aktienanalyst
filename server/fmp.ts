@@ -83,11 +83,65 @@ export async function fmpPriceTarget(symbol: string) {
   return Array.isArray(data) ? data?.[0] : data || null;
 }
 
-export async function fmpSegments(symbol: string) {
+// === Non-financial metadata keys to exclude from segment extraction ===
+const SEGMENT_SKIP_KEYS = new Set([
+  "symbol", "date", "reportedCurrency", "cik", "fillingDate",
+  "acceptedDate", "calendarYear", "period", "link", "finalLink",
+]);
+
+/**
+ * Fetches revenue-product-segmentation from FMP /stable and normalises the
+ * response into a consistent { name, revenue, percentage }[] array.
+ *
+ * /stable returns a flat object per year (segment names as keys):
+ *   [{ symbol, date, iPhone: 201183000000, Services: 96169000000, ... }, ...]
+ *
+ * We take the most-recent row, strip metadata keys, compute percentages from
+ * the total of all numeric segment values, and return a sorted array — largest
+ * segment first. Segments with zero / negative / non-numeric values are dropped.
+ */
+export async function fmpSegments(symbol: string): Promise<Array<{ name: string; revenue: number; percentage: number; date?: string }>> {
   try {
-    // GET /stable/revenue-product-segmentation?symbol=AAPL
-    return await fmpFetch(`/revenue-product-segmentation`, { symbol });
-  } catch { return []; }
+    const raw = await fmpFetch(`/revenue-product-segmentation`, { symbol });
+
+    // Normalise: /stable returns an array of yearly flat objects.
+    // Some older responses may wrap results under a `data` key — handle both.
+    const rows: any[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
+    if (rows.length === 0) return [];
+
+    // Sort descending by date and take the most recent period.
+    const sorted = [...rows].sort((a, b) => {
+      const da = a?.date ?? a?.reportedDate ?? "";
+      const db = b?.date ?? b?.reportedDate ?? "";
+      return db.localeCompare(da);
+    });
+    const latest = sorted[0];
+    const reportDate: string | undefined = latest?.date ?? latest?.reportedDate;
+
+    // Extract numeric segment entries, ignoring metadata keys.
+    const entries: Array<{ name: string; revenue: number }> = [];
+    for (const [key, val] of Object.entries(latest)) {
+      if (SEGMENT_SKIP_KEYS.has(key)) continue;
+      const num = Number(val);
+      if (!isNaN(num) && num > 0) {
+        entries.push({ name: key, revenue: num });
+      }
+    }
+    if (entries.length === 0) return [];
+
+    const total = entries.reduce((sum, e) => sum + e.revenue, 0);
+
+    return entries
+      .sort((a, b) => b.revenue - a.revenue)
+      .map(e => ({
+        name: e.name,
+        revenue: e.revenue,
+        percentage: total > 0 ? Math.round((e.revenue / total) * 1000) / 10 : 0,
+        date: reportDate,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 export async function fmpPeers(symbol: string): Promise<any[]> {
