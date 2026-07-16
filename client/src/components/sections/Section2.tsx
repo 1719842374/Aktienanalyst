@@ -7,6 +7,47 @@ import { useMemo } from "react";
 
 interface Props { data: StockAnalysis }
 
+// ─── Peter Lynch Classifier ──────────────────────────────────────────────────
+// Explicitly checks for TRUE cyclicals only.
+// Strings like "Non-Cyclical", "Defensive / Non-Cyclical" must NOT trigger Zykliker.
+
+/** Returns true only for genuinely cyclical cycleClassification strings */
+function isTrueCyclical(cycle: string): boolean {
+  const c = cycle.toLowerCase().trim();
+  // Exclude defensive / non-cyclical strings that contain "cyclical" as substring
+  if (c.includes('non-cyclical') || c.includes('non cyclical')) return false;
+  if (c.includes('defensive')) return false;
+  if (c.includes('pharma') || c.includes('healthcare') || c.includes('health care')) return false;
+  if (c.includes('utility') || c.includes('utilities')) return false;
+  if (c.includes('consumer staples')) return false;
+  if (c.includes('telecom')) return false;
+  // Only true cyclical patterns
+  return (
+    c === 'cyclical' ||
+    c === 'zykliker' ||
+    c === 'zyklisch' ||
+    c.startsWith('cyclical ') ||
+    c.startsWith('zyklisch') ||
+    c.includes('true cyclical') ||
+    c.includes('commodity') ||
+    c.includes('energy cyclical') ||
+    c.includes('materials') ||
+    c.includes('basic materials')
+  );
+}
+
+/** Cyclical ticker whitelist — sectors: energy, materials, auto, chemicals, airlines, steel */
+const CYCLICAL_TICKERS = new Set([
+  'XOM','CVX','COP','SLB','HAL','MPC','VLO','PSX','OXY','DVN','FANG',
+  'FCX','NUE','X','CLF','AA','NEM','GOLD','AEM','WPM',
+  'F','GM','STLA','TM','HMC',
+  'DOW','LYB','CE','EMN','HUN','ALB',
+  'DAL','UAL','AAL','LUV','JBLU','HA',
+  'RIO','BHP','VALE','MT','SCCO',
+  'CAT','DE','CMI','PCAR','TEX',
+  'CF','MOS','NTR',
+]);
+
 export function Section2({ data }: Props) {
   // Use backend catalysts directly
   const catalysts = data.catalysts;
@@ -115,57 +156,82 @@ export function Section2({ data }: Props) {
 
         {/* Peter Lynch Classification */}
         {(() => {
-          // Classify stock using Peter Lynch's framework
           const epsGr = data.epsGrowth5Y;
           const pe = data.peRatio;
-          const rev = data.revenue;
           const revGrowth = data.sectorProfile.growthAssumptions.g1;
           const fcfM = data.fcfMargin;
           const moat = data.moatRating;
-          const beta = data.beta5Y;
-          const cycle = data.cycleClassification?.toLowerCase() || '';
+          const cycle = data.cycleClassification || '';
+          const ticker = data.ticker?.toUpperCase() || '';
+
+          // ── Determine if truly cyclical (fixes NVO/Pharma false-positive) ──
+          const cyclical = isTrueCyclical(cycle) || CYCLICAL_TICKERS.has(ticker);
+
+          // ── Defensive sector detection ──
+          const cycleLower = cycle.toLowerCase();
+          const isDefensiveSector =
+            cycleLower.includes('non-cyclical') ||
+            cycleLower.includes('defensive') ||
+            cycleLower.includes('pharma') ||
+            cycleLower.includes('healthcare') ||
+            cycleLower.includes('health care') ||
+            cycleLower.includes('consumer staples') ||
+            cycleLower.includes('utility') ||
+            cycleLower.includes('utilities');
 
           let lynchType = '';
           let lynchColor = '';
           let lynchDesc = '';
           let lynchBuyTip = '';
 
-          if (cycle.includes('cyclical') || cycle.includes('zyklisch')) {
+          if (cyclical) {
+            // ── Zykliker ──
             lynchType = 'Zykliker';
             lynchColor = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
-            lynchDesc = 'Gewinne schwanken mit dem Konjunkturzyklus. Typisch f\u00fcr Energie, Rohstoffe, Automobil, Chemie.';
-            lynchBuyTip = 'Attraktiv bei NIEDRIGEM P/E am Gewinnhoch \u2014 Lynch kauft Zykliker wenn Gewinne am Boden sind und P/E HOCH erscheint (da Gewinne bald steigen). Aktuell P/E ' + formatNumber(pe, 1) + (pe < 15 ? ' \u2014 m\u00f6glicherweise Gewinnh\u00f6chststand, VORSICHT' : pe > 40 ? ' \u2014 Gewinntief m\u00f6glich, k\u00f6nnte Einstieg sein' : ' \u2014 Zyklusmitte') + '.';
-          } else if (epsGr > 20 && revGrowth > 15) {
+            lynchDesc = 'Gewinne schwanken mit dem Konjunkturzyklus. Typisch für Energie, Rohstoffe, Automobil, Chemie.';
+            lynchBuyTip = 'Attraktiv bei NIEDRIGEM P/E am Gewinnhoch — Lynch kauft Zykliker wenn Gewinne am Boden sind und P/E HOCH erscheint (da Gewinne bald steigen). Aktuell P/E ' + formatNumber(pe, 1) + (pe < 15 ? ' — möglicherweise Gewinnnhöchststand, VORSICHT' : pe > 40 ? ' — Gewinntief möglich, könnte Einstieg sein' : ' — Zyklusmitte') + '.';
+          } else if (epsGr > 20 && revGrowth > 10) {
+            // ── Fast Grower ── (threshold revGrowth >10, not 15, catches pharma/biotech growers)
             lynchType = 'Fast Grower';
             lynchColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
             lynchDesc = 'Hohes Gewinnwachstum (>' + formatNumber(epsGr, 0) + '% p.a.). Aggressives Wachstum in expandierendem Markt.';
-            lynchBuyTip = 'Attraktiv solange PEG < 1.5 und Wachstum nachhaltig. Aktuell PEG ' + formatNumber(data.pegRatio, 2) + (data.pegRatio < 1 ? ' \u2014 UNTERBEWERTET relativ zum Wachstum' : data.pegRatio < 1.5 ? ' \u2014 fair bewertet' : ' \u2014 bereits eingepreist, Vorsicht') + '.';
+            lynchBuyTip = 'Attraktiv solange PEG < 1.5 und Wachstum nachhaltig. Aktuell PEG ' + formatNumber(data.pegRatio, 2) + (data.pegRatio < 1 ? ' — UNTERBEWERTET relativ zum Wachstum' : data.pegRatio < 1.5 ? ' — fair bewertet' : ' — bereits eingepreist, Vorsicht') + '.';
           } else if (epsGr > 8 && epsGr <= 20 && moat !== 'None') {
+            // ── Stalwart ── (also covers pharma/healthcare with solid moat & moderate growth)
             lynchType = 'Stalwart';
             lynchColor = 'text-blue-400 bg-blue-500/10 border-blue-500/20';
-            lynchDesc = 'Gro\u00dfes, etabliertes Unternehmen mit solidem Wachstum (' + formatNumber(epsGr, 0) + '% p.a.). Defensive Qualit\u00e4t.';
+            lynchDesc = 'Großes, etabliertes Unternehmen mit solidem Wachstum (' + formatNumber(epsGr, 0) + '% p.a.). Defensive Qualität.' + (isDefensiveSector ? ' Nicht-zyklischer Sektor — weitgehend konjunkturunabhängig.' : '');
             const currentVsFair = baseDCF.perShare > 0
               ? (data.currentPrice / baseDCF.perShare - 1) * 100
               : null;
             lynchBuyTip = currentVsFair !== null && currentVsFair > 100
-              ? 'Kurs ' + formatNumber(currentVsFair, 0) + '% \u00fcber konservativem DCF-Fair Value \u2014 starke Wachstumserwartungen eingepreist. Sicherheitsmarge fehlt.'
+              ? 'Kurs ' + formatNumber(currentVsFair, 0) + '% über konservativem DCF-Fair Value — starke Wachstumserwartungen eingepreist. Sicherheitsmarge fehlt.'
               : currentVsFair !== null && currentVsFair > 30
-              ? 'Kurs ' + formatNumber(currentVsFair, 0) + '% \u00fcber konservativem DCF \u2014 limitierte Sicherheitsmarge. Wachstum muss sich best\u00e4tigen.'
+              ? 'Kurs ' + formatNumber(currentVsFair, 0) + '% über konservativem DCF — limitierte Sicherheitsmarge. Wachstum muss sich bestätigen.'
               : 'Attraktiv bei 30-50% Discount zum Fair Value. Verkaufen bei +30-50% Gain.';
+          } else if (epsGr > 0 && epsGr <= 8 && isDefensiveSector) {
+            // ── Slow Grower (defensive) ── explicit branch for defensive sectors with low growth
+            lynchType = 'Slow Grower';
+            lynchColor = 'text-slate-400 bg-slate-500/10 border-slate-500/20';
+            lynchDesc = 'Defensiver Sektor, geringes Wachstum (' + formatNumber(epsGr, 0) + '% p.a.). Stabile Dividenden und Cash Flows, konjunkturunabhängig.';
+            lynchBuyTip = 'Nur für Dividendenstrategie. Kaufen bei hoher Dividendenrendite und stabilen FCFs.';
           } else if (epsGr <= 5 && fcfM > 10) {
+            // ── Slow Grower (general) ──
             lynchType = 'Slow Grower';
             lynchColor = 'text-slate-400 bg-slate-500/10 border-slate-500/20';
             lynchDesc = 'Geringe Wachstumsdynamik (' + formatNumber(epsGr, 0) + '% p.a.), aber stabile Dividenden/Cash Flows.';
-            lynchBuyTip = 'Nur f\u00fcr Dividendenstrategie. Kaufen bei hoher Dividendenrendite und stabilen FCFs.';
+            lynchBuyTip = 'Nur für Dividendenstrategie. Kaufen bei hoher Dividendenrendite und stabilen FCFs.';
           } else if (epsGr < 0 || (pe > 0 && pe < 5) || fcfM < 2) {
+            // ── Turnaround ──
             lynchType = 'Turnaround';
             lynchColor = 'text-red-400 bg-red-500/10 border-red-500/20';
             lynchDesc = 'Unternehmen in Schwierigkeiten oder Restrukturierung. Hohes Risiko, hohe Chance.';
-            lynchBuyTip = 'Nur bei klarem Restrukturierungsplan und ausreichend Liquidit\u00e4t. Position klein halten.';
+            lynchBuyTip = 'Nur bei klarem Restrukturierungsplan und ausreichend Liquidität. Position klein halten.';
           } else {
+            // ── Asset Play ──
             lynchType = 'Asset Play';
             lynchColor = 'text-purple-400 bg-purple-500/10 border-purple-500/20';
-            lynchDesc = 'Verborgene Verm\u00f6genswerte nicht im Kurs reflektiert.';
+            lynchDesc = 'Verborgene Vermögenswerte nicht im Kurs reflektiert.';
             lynchBuyTip = 'Attraktiv wenn Summe der Einzelteile > Marktkapitalisierung.';
           }
 
@@ -246,16 +312,13 @@ export function Section2({ data }: Props) {
           <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Investment These & Katalysatoren-Logik</h3>
           <p className="text-xs text-foreground/80 leading-relaxed">{data.growthThesis}</p>
 
-          {/* Capex Fiscal Tailwind highlight — shown when ticker is in Researcher capex cache */}
+          {/* Capex Fiscal Tailwind highlight */}
           {(() => {
             const capexCat = (data.catalysts || []).find(c => c.tags?.includes("capex-tailwind"));
             if (!capexCat) return null;
-            // Extract programme name from catalyst name: "Capex Tailwind: Defense & Aerospace" → sector
             const sector = capexCat.name.replace(/^Capex Tailwind:\s*/i, "").trim();
-            // Extract programme names from context ("Programme: NDAA 2026 & CHIPS Act")
-            const progMatch = capexCat.context?.match(/Programme:\s*([^\.(]+)/i);
+            const progMatch = capexCat.context?.match(/Programme:\s*([^\.,(]+)/i);
             const programmes = progMatch ? progMatch[1].trim() : sector;
-            // First sentence of context as company-specific rationale
             const contextSentences = (capexCat.context || "").match(/[^.!?]+[.!?]+/g) || [];
             const rationale = contextSentences[0]?.trim() || "";
             return (
@@ -340,7 +403,7 @@ export function Section2({ data }: Props) {
             <div className="space-y-1.5 bg-muted/10 rounded-lg p-3 border border-border/30">
               {data.secFilingExcerpts.map((excerpt, i) => (
                 <div key={i} className="text-[10px] text-foreground/80 leading-relaxed">
-                  <span className="text-primary font-semibold">„</span>{excerpt}<span className="text-primary font-semibold">“</span>
+                  <span className="text-primary font-semibold">„</span>{excerpt}<span className="text-primary font-semibold">"</span>
                 </div>
               ))}
               <div className="text-[9px] text-muted-foreground/50 mt-1 italic">Quelle: SEC EDGAR 10-K Filing</div>
