@@ -79,7 +79,6 @@ import {
   generateCatalystDeepDives,
   type CapexTailwindContext,
   generateGrowthThesis,
-  growthThesisFingerprint,
   generateCompanySpecificRisks,
   generatePolicyContext,
   generatePorterFiveForces,
@@ -629,6 +628,13 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           : 0;
 
       // ── 19. Macro correlations ──
+      // isBank: used to differentiate interest-rate correlation direction
+      const isBank =
+        effectiveSector.toLowerCase().includes("financ") ||
+        industry.toLowerCase().includes("bank") ||
+        industry.toLowerCase().includes("financ") ||
+        industry.toLowerCase().includes("insurance");
+
       const macroCorrelations: MacroCorrelation[] = [
         { factor: "Fed Funds Rate", correlation: isBank ? 0.6 : beta > 1.2 ? -0.4 : -0.2, description: isBank ? "Steigende Zinsen erhöhen NIM" : "Steigende Zinsen komprimieren Multiples" },
         { factor: "USD Stärke", correlation: country !== "US" ? -0.3 : 0.1, description: country !== "US" ? "USD-Stärke belastet Auslands-Earnings" : "Geringer USD-Einfluss (US-fokussiert)" },
@@ -716,7 +722,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // ── Cache result ──
       analysisCache.set(cacheKey, { result: analysis, timestamp: Date.now(), usedLLM: useLLM });
 
-      console.log(`[ANALYZE] Done for ${upperTicker} in ${ ((Date.now() - 0) / 1000).toFixed(1) }s (LLM=${useLLM}, cats=${catalysts.length}, risks=${risks.length})`);
+      console.log(`[ANALYZE] Done for ${upperTicker} (LLM=${useLLM}, cats=${catalysts.length}, risks=${risks.length})`);
       return res.json(analysis);
     } catch (err: any) {
       console.error(`[/api/analyze] Unhandled error: ${err?.message?.substring(0, 300)}`);
