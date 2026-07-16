@@ -57,7 +57,7 @@ import { generateCatalystsAndMatchNews, generateRiskExplanations, generateCataly
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
-  fmpSegments, fmpPeers, fmpRatios, fmpKeyMetrics, fmpQuote,
+  fmpSegments, fmpPeers, fmpRatios, fmpKeyMetrics, fmpQuote, convertFmpRowsToUsd,
 } from "./fmp";
 
 // === Finance API Helper (removed) ===
@@ -218,13 +218,23 @@ async function getFmpFallbackData(ticker: string): Promise<{
       return null;
     }
     console.log(`[FMP-FALLBACK] OK for ${ticker} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    // Convert foreign-currency financial statements to USD. Foreign filers (e.g.
+    // Novo Nordisk reports in DKK while trading on NYSE in USD) have their
+    // income/cashflow/balance-sheet rows in reportedCurrency — without this,
+    // revenue/eps/ebitda downstream are off by the FX rate (observed: NVO P/E
+    // showed 2.2 instead of ~12, a ~5.5x DKK/USD mismatch).
+    const [incomeUsd, cashflowUsd, balanceSheetUsd] = await Promise.all([
+      convertFmpRowsToUsd(get(incomeRes) || []),
+      convertFmpRowsToUsd(get(cashflowRes) || []),
+      convertFmpRowsToUsd(get(balanceSheetRes) || []),
+    ]);
     return {
       quote,
       profile: get(profileRes),
       financials: {
-        income: get(incomeRes) || [],
-        cashflow: get(cashflowRes) || [],
-        balanceSheet: get(balanceSheetRes) || [], // Bug 1 fix
+        income: incomeUsd,
+        cashflow: cashflowUsd,
+        balanceSheet: balanceSheetUsd, // Bug 1 fix
       },
       analyst: {
         priceTarget: get(priceTargetRes),
@@ -4479,10 +4489,17 @@ export async function registerRoutes(server: Server, app: Express) {
         if (pe === 0 && price > 0 && eps > 0) {
           pe = +(price / eps).toFixed(2);
         }
-        if (pe === 0 && Array.isArray(fmpData?.ratios) && fmpData.ratios.length > 0) {
-          const ratiosLatest: any = fmpData.ratios[0];
-          const ratiosPE = Number(ratiosLatest?.priceToEarningsRatio ?? ratiosLatest?.priceEarningsRatio ?? 0);
-          if (ratiosPE > 0) pe = +ratiosPE.toFixed(2);
+        const ratiosLatest0: any = Array.isArray(fmpData?.ratios) ? fmpData.ratios[0] : null;
+        const ratiosPE = Number(ratiosLatest0?.priceToEarningsRatio ?? ratiosLatest0?.priceEarningsRatio ?? 0);
+        if (pe === 0 && ratiosPE > 0) {
+          pe = +ratiosPE.toFixed(2);
+        } else if (pe > 0 && ratiosPE > 0 && (pe > ratiosPE * 3 || pe < ratiosPE / 3)) {
+          // Sanity check: FMP's own /stable/ratios computes P/E correctly in USD.
+          // If our price/EPS-derived PE diverges from it by >3x, it's very likely
+          // a currency mismatch (e.g. a DKK/EUR/GBP EPS divided into a USD price)
+          // that slipped past convertFmpRowsToUsd — prefer the FMP-computed ratio.
+          console.warn(`[ANALYZE] ${ticker}: price/EPS P/E (${pe}) diverges >3x from FMP ratios P/E (${ratiosPE}) — likely currency mismatch, using ratios P/E`);
+          pe = +ratiosPE.toFixed(2);
         }
       } else if (financialsResult?.content) {
         // Parse income statement

@@ -168,3 +168,81 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
       .slice(0, limit);
   } catch { return []; }
 }
+
+// === FX Conversion for foreign-currency financial statements ===
+// FMP's /stable financial-statement endpoints (income-statement, cash-flow-statement,
+// balance-sheet-statement) return raw figures in the filer's `reportedCurrency`
+// (e.g. Novo Nordisk reports in DKK even though it trades on NYSE in USD). FMP's
+// own /stable/ratios endpoint DOES compute ratios correctly in USD internally, but
+// routes.ts reads raw revenue/eps/ebitda/etc. directly from the income statement,
+// so a DKK-denominated EPS ends up divided into a USD price — producing a P/E off
+// by the FX factor (observed: NVO showed P/E 2.2 instead of ~12, a ~5.5x error
+// matching the DKK/USD rate). Fetching a live rate via /stable/quote?symbol=XXXUSD
+// is more accurate and lower-maintenance than a hardcoded FX table.
+const fxRateCache = new Map<string, { rate: number; fetchedAt: number }>();
+const FX_CACHE_TTL_MS = 60 * 60 * 1000; // 1h — FX doesn't need to be real-time for this use case
+
+export async function getFxRateToUsd(currency: string): Promise<number> {
+  const cur = (currency || "USD").toUpperCase();
+  if (cur === "USD") return 1;
+  const cached = fxRateCache.get(cur);
+  if (cached && Date.now() - cached.fetchedAt < FX_CACHE_TTL_MS) return cached.rate;
+  try {
+    const q = await fmpQuote(`${cur}USD`);
+    const rate = Number(q?.price);
+    if (rate > 0 && rate < 1000) {
+      fxRateCache.set(cur, { rate, fetchedAt: Date.now() });
+      return rate;
+    }
+  } catch { /* fall through to stale cache / 1 */ }
+  // Stale cache is still better than silently treating foreign currency as USD
+  if (cached) return cached.rate;
+  console.warn(`[FX] Could not fetch ${cur}USD rate — financial figures may be misdenominated`);
+  return 1;
+}
+
+// Converts the numeric financial-statement fields of a FMP income/cashflow/balance-sheet
+// row from its reportedCurrency into USD. EPS-like per-share fields and aggregate
+// currency fields are converted; ratios, percentages, share counts and dates are left as-is.
+const FX_CONVERTIBLE_FIELDS = new Set([
+  "revenue", "costOfRevenue", "grossProfit", "operatingIncome", "netIncome", "ebit", "ebitda",
+  "eps", "epsDiluted", "operatingExpenses", "researchAndDevelopmentExpenses",
+  "generalAndAdministrativeExpenses", "sellingAndMarketingExpenses", "sellingGeneralAndAdministrativeExpenses",
+  "otherExpenses", "costAndExpenses", "interestExpense", "incomeTaxExpense",
+  "freeCashFlow", "operatingCashFlow", "capitalExpenditure", "cashAndCashEquivalents",
+  "dividendsPaid", "depreciationAndAmortization", "stockBasedCompensation", "netCashProvidedByOperatingActivities",
+  "shortTermDebt", "longTermDebt", "totalDebt", "totalStockholdersEquity", "totalEquity", "totalAssets",
+  "enterpriseValue", "freeCashFlowPerShare", "revenuePerShare", "netIncomePerShare", "workingCapital",
+  "investedCapital", "freeCashFlowToFirm", "freeCashFlowToEquity", "grahamNumber", "grahamNetNet",
+]);
+
+export async function convertFmpRowToUsd<T extends Record<string, any>>(row: T): Promise<T> {
+  const currency = row?.reportedCurrency;
+  if (!currency || currency === "USD") return row;
+  const rate = await getFxRateToUsd(currency);
+  if (rate === 1) return row; // fetch failed — leave as-is rather than guess
+  const converted: any = { ...row };
+  for (const field of Array.from(FX_CONVERTIBLE_FIELDS)) {
+    if (typeof converted[field] === "number") converted[field] = converted[field] * rate;
+  }
+  converted._fxConverted = { from: currency, rate };
+  return converted;
+}
+
+// Convenience: convert every row in an array (income-statement/cash-flow/balance-sheet
+// results are arrays of yearly/quarterly rows) using a single fetched FX rate.
+export async function convertFmpRowsToUsd<T extends Record<string, any>>(rows: T[]): Promise<T[]> {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const currency = rows[0]?.reportedCurrency;
+  if (!currency || currency === "USD") return rows;
+  const rate = await getFxRateToUsd(currency);
+  if (rate === 1) return rows;
+  return rows.map((row) => {
+    const converted: any = { ...row };
+    for (const field of Array.from(FX_CONVERTIBLE_FIELDS)) {
+      if (typeof converted[field] === "number") converted[field] = converted[field] * rate;
+    }
+    converted._fxConverted = { from: currency, rate };
+    return converted;
+  });
+}
