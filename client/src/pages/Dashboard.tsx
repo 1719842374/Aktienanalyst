@@ -398,6 +398,14 @@ export default function Dashboard() {
             <span className="hidden sm:inline">Gold</span>
           </button>
           <button
+            onClick={() => navigate("/recession")}
+            className="h-8 px-2.5 text-[11px] font-medium text-orange-500 hover:bg-orange-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-orange-500/20 shrink-0"
+            title="Rezessions-Dashboard"
+          >
+            <AlertTriangle className="w-3 h-3" />
+            <span className="hidden sm:inline">Rezession</span>
+          </button>
+          <button
             onClick={() => navigate("/screener")}
             className="h-8 px-2.5 text-[11px] font-medium text-cyan-500 hover:bg-cyan-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-cyan-500/20 shrink-0"
           >
