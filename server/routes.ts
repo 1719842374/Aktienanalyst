@@ -193,7 +193,10 @@ async function getFmpFallbackData(ticker: string): Promise<{
       fmpGrades(ticker, 20),        // 6: grades
       fmpAnalystEstimates(ticker, 3),// 7: estimates
       fmpHistoricalPrices(ticker,
-        new Date(Date.now() - 2 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        // 10Y history — verified available on the FMP Starter plan (2512 daily
+        // bars for MSFT back to 2016). Was previously hardcoded to 2Y, which
+        // starved the 10Y chart timeframe and MA200/technical-analysis lookback.
+        new Date(Date.now() - 10 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         new Date().toISOString().split('T')[0]
       ),                            // 8: ohlcv
       fmpSegments(ticker),          // 9: segments
@@ -678,12 +681,102 @@ function generateCatalystContext(
   }
 }
 
-// === Peer Comparison Fetcher ===
-async function fetchPeerComparison(
-  ticker: string, companyName: string, pe: number, peg: number, revenue: number,
+// === Peer Comparison via FMP (fast path, used when getFmpFallbackData already
+// fetched /stable/stock-peers tickers — avoids the external-tool round trip that
+// always fails on Render, where the finance-tool binary is unavailable) ===
+async function fetchPeerComparisonFromTickers(
+  ticker: string, peerTickers: string[], pe: number, peg: number, revenue: number,
   marketCap: number, revenueGrowth: number, epsGrowth5Y: number
 ): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
   try {
+    const [quotes, ratiosPerPeer] = await Promise.all([
+      fmpBatchQuote(peerTickers),
+      Promise.all(peerTickers.map(t => fmpRatios(t, 2).catch(() => []))),
+    ]);
+    const quoteByTicker = new Map<string, any>((quotes || []).map((q: any) => [q.symbol, q]));
+
+    const peers: any[] = [];
+    peerTickers.forEach((t, idx) => {
+      const q = quoteByTicker.get(t);
+      const ratios: any[] = ratiosPerPeer[idx] || [];
+      const r0 = ratios[0];
+      const r1 = ratios[1];
+      const peerPE = Number(r0?.priceToEarningsRatio ?? r0?.priceEarningsRatio ?? 0) || (q?.price && q?.eps > 0 ? q.price / q.eps : null);
+      const peerPS = Number(r0?.priceToSalesRatio ?? 0) || null;
+      const peerPB = Number(r0?.priceToBookRatio ?? 0) || null;
+      let epsGrowth1Y: number | null = null;
+      if (r0?.netIncomePerShare && r1?.netIncomePerShare && r1.netIncomePerShare > 0) {
+        epsGrowth1Y = +(((r0.netIncomePerShare / r1.netIncomePerShare) - 1) * 100).toFixed(1);
+      }
+      const growthForPEG = epsGrowth1Y && epsGrowth1Y > 0 ? epsGrowth1Y : (epsGrowth5Y > 0 ? epsGrowth5Y : null);
+      const peerPEG = peerPE && growthForPEG && growthForPEG > 0 ? +(peerPE / growthForPEG).toFixed(2) : null;
+      if (!q && !r0) return; // no data at all for this peer
+      peers.push({
+        ticker: t,
+        name: q?.name || t,
+        pe: peerPE ? +Number(peerPE).toFixed(1) : null,
+        peg: peerPEG,
+        ps: peerPS ? +Number(peerPS).toFixed(1) : null,
+        pb: peerPB ? +Number(peerPB).toFixed(1) : null,
+        epsGrowth1Y,
+        epsGrowth5Y: null,
+        marketCap: q?.marketCap || null,
+        revenueGrowth: null,
+      });
+    });
+
+    const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null).slice(0, 6);
+    console.log(`[PEERS-FMP] Valid peers with data: ${validPeers.length} of ${peers.length} (${validPeers.map(p => p.ticker).join(', ')})`);
+    if (validPeers.length === 0) return null;
+
+    const avg = (arr: (number | null)[]): number | null => {
+      const valid = arr.filter((v): v is number => v !== null && !isNaN(v) && isFinite(v) && v > 0 && v < 1000);
+      return valid.length > 0 ? +(valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(2) : null;
+    };
+    const ps = revenue > 0 && marketCap > 0 ? +(marketCap / revenue).toFixed(1) : null;
+    const subject = {
+      ticker, name: ticker,
+      pe: pe > 0 ? +pe.toFixed(1) : null,
+      peg: peg > 0 ? +peg.toFixed(2) : null,
+      ps,
+      pb: null as number | null,
+      epsGrowth1Y: null as number | null,
+      epsGrowth5Y: epsGrowth5Y > 0 ? +epsGrowth5Y.toFixed(1) : null,
+      marketCap,
+      revenueGrowth: +revenueGrowth.toFixed(1),
+    };
+    const peerAvg = {
+      pe: avg(validPeers.map(p => p.pe)),
+      peg: avg(validPeers.map(p => p.peg)),
+      ps: avg(validPeers.map(p => p.ps)),
+      pb: avg(validPeers.map(p => p.pb)),
+      epsGrowth1Y: avg(validPeers.map(p => p.epsGrowth1Y)),
+      epsGrowth5Y: avg(validPeers.map(p => p.epsGrowth5Y)),
+    };
+    return { subject, peers: validPeers, peerAvg };
+  } catch (err: any) {
+    console.error(`[PEERS-FMP] Failed for ${ticker}: ${err?.message?.substring(0, 150)}`);
+    return null;
+  }
+}
+
+// === Peer Comparison Fetcher ===
+async function fetchPeerComparison(
+  ticker: string, companyName: string, pe: number, peg: number, revenue: number,
+  marketCap: number, revenueGrowth: number, epsGrowth5Y: number,
+  fmpPeerTickers: string[] = []
+): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
+  try {
+    // Fast path: FMP /stable/stock-peers already returned tickers (fetched in
+    // getFmpFallbackData, runs on Render where the external-tool binary is
+    // unavailable). Skip the throttled finance-tool call entirely when we
+    // already have peers — avoids returning null just because external-tool
+    // is missing while FMP peer data sits unused.
+    if (fmpPeerTickers.length > 0) {
+      console.log(`[PEERS] Using ${fmpPeerTickers.length} FMP peer tickers for ${ticker}: ${fmpPeerTickers.join(", ")}`);
+      return fetchPeerComparisonFromTickers(ticker, fmpPeerTickers, pe, peg, revenue, marketCap, revenueGrowth, epsGrowth5Y);
+    }
+
     // Step 1: Get peer tickers via finance API (throttled like main calls)
     console.log(`[PEERS] Fetching peers for ${ticker}`);
     const peersResult = await callFinanceToolThrottled('finance_company_peers', {
@@ -4379,6 +4472,18 @@ export async function registerRoutes(server: Server, app: Express) {
           netDebt = totalDebt - cashEquivalents;
         }
         console.log(`[FMP-FINANCIALS] ${ticker}: rev=$${(revenue/1e9).toFixed(1)}B, fcf=$${(fcfTTM/1e9).toFixed(1)}B, debt=$${(totalDebt/1e9).toFixed(1)}B, growth=${revenueGrowth.toFixed(1)}%`);
+
+        // Trailing P/E fallback: /stable/quote has no `pe` field (unlike the old /api/v3),
+        // so `pe` stays 0 above. Recompute from price/EPS, then from /stable/ratios
+        // priceToEarningsRatio if EPS is unavailable (e.g. negative/loss-making company).
+        if (pe === 0 && price > 0 && eps > 0) {
+          pe = +(price / eps).toFixed(2);
+        }
+        if (pe === 0 && Array.isArray(fmpData?.ratios) && fmpData.ratios.length > 0) {
+          const ratiosLatest: any = fmpData.ratios[0];
+          const ratiosPE = Number(ratiosLatest?.priceToEarningsRatio ?? ratiosLatest?.priceEarningsRatio ?? 0);
+          if (ratiosPE > 0) pe = +ratiosPE.toFixed(2);
+        }
       } else if (financialsResult?.content) {
         // Parse income statement
         const isSections = financialsResult.content.split("## ");
@@ -4772,9 +4877,15 @@ export async function registerRoutes(server: Server, app: Express) {
       const pegRatio = _pegBase > 0 && _pegGrowth > 0 ? _pegBase / _pegGrowth : 2;
       const evEbitda = ebitda > 0 ? (marketCap + totalDebt - cashEquivalents) / ebitda : 15;
 
-      // Start peer comparison fetch (parallel with remaining computation)
+      // Start peer comparison fetch (parallel with remaining computation).
+      // Pass along FMP peer tickers (from /stable/stock-peers, fetched above in
+      // getFmpFallbackData) so fetchPeerComparison can skip the external-tool
+      // path entirely on Render, where that binary is unavailable.
+      const fmpPeerTickers: string[] = Array.isArray(fmpData?.peers)
+        ? fmpData.peers.filter((t: any): t is string => typeof t === "string" && t.length > 0).slice(0, 8)
+        : [];
       const peerComparisonPromise = fetchPeerComparison(
-        ticker, companyName, pe, pegRatio, revenue, marketCap, revenueGrowth, epsGrowth5Y
+        ticker, companyName, pe, pegRatio, revenue, marketCap, revenueGrowth, epsGrowth5Y, fmpPeerTickers
       );
       const enterpriseValue = marketCap + totalDebt - cashEquivalents;
 
