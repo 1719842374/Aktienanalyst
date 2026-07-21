@@ -8,9 +8,9 @@
  *    Structural truncation can never re-occur because no single file is large enough.
  *
  * Module map:
- *  /api/analyze, /api/fmp-budget  → server/analyze-route.ts
- *  /api/btc-miner                 → server/btc-miner.ts (inline below, small)
- *  /api/analyze-gold              → server/gold-routes.ts
+ *  /api/analyze, /api/fmp-budget   → server/analyze-route.ts
+ *  /api/btc-miner                  → server/btc-miner.ts (GET + POST)
+ *  /api/analyze-gold               → server/gold-routes.ts
  *
  * Additional routes (/api/analyze-recession, /api/researcher/*, /api/catalyst-enrich,
  * /api/export-pdf) can be extracted the same way as analyze-route.ts when needed.
@@ -19,7 +19,7 @@
 import type { Express } from "express";
 import { type Server } from "http";
 
-// ─── Re-exports (consumed by other server modules) ───────────────────────────
+// ─── Re-exports ───────────────────────────────────────────────────────────────
 export {
   trackFmpCall,
   getFmpBudgetStatus,
@@ -73,7 +73,7 @@ import { registerAnalyzeRoute } from "./analyze-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { fetchMinerData } from "./btc-miner";
 
-// ─── registerRoutes — called by routes-register.ts ───────────────────────────
+// ─── registerRoutes ───────────────────────────────────────────────────────────
 export async function registerRoutes(httpServer: Server, app: Express): Promise<void> {
   // 1. /api/analyze + /api/fmp-budget
   registerAnalyzeRoute(httpServer, app);
@@ -81,7 +81,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 2. /api/analyze-gold
   registerGoldRoutes(httpServer, app);
 
-  // 3. /api/btc-miner (small, kept inline — no truncation risk)
+  // 3a. GET /api/btc-miner — no price context, returns miner metrics only
   app.get("/api/btc-miner", async (_req, res) => {
     try {
       const minerData = await fetchMinerData();
@@ -90,7 +90,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       res.json(minerData);
     } catch (err: any) {
-      console.error("[/api/btc-miner]", err?.message?.substring(0, 200));
+      console.error("[GET /api/btc-miner]", err?.message?.substring(0, 200));
+      res.status(500).json({ error: err?.message || "Internal error" });
+    }
+  });
+
+  // 3b. POST /api/btc-miner — accepts btcPriceHistory + btcPrice for Puell & minerScore
+  //     Body: { btcPriceHistory: [{date, price}][], btcPrice: number }
+  app.post("/api/btc-miner", async (req, res) => {
+    try {
+      const { btcPriceHistory, btcPrice } = req.body ?? {};
+      const minerData = await fetchMinerData(
+        Array.isArray(btcPriceHistory) ? btcPriceHistory : undefined,
+        typeof btcPrice === 'number' ? btcPrice : undefined
+      );
+      if (!minerData) {
+        return res.status(503).json({ error: "Miner data unavailable — mempool.space unreachable" });
+      }
+      res.json(minerData);
+    } catch (err: any) {
+      console.error("[POST /api/btc-miner]", err?.message?.substring(0, 200));
       res.status(500).json({ error: err?.message || "Internal error" });
     }
   });
