@@ -35,25 +35,6 @@ client/src/pages/
     └── Section13Miner.tsx  ← Puell, Hash Ribbons, Breakeven, Miner Score
 ```
 
-Shell-Gerüst:
-
-```tsx
-import { Section13Miner } from "./btc/Section13Miner";
-import { Sections1to6 }   from "./btc/Sections1to6";
-import { Sections7to12 }  from "./btc/Sections7to12";
-
-export default function BTCDashboard() {
-  const { data, isPending, mutate } = useMutation({ mutationFn: analyzeBTC });
-  const { data: minerData, isLoading: minerLoading, isError: minerError } = useQuery({
-    queryKey: ["btc-miner", data?.btcPrice],
-    queryFn: () => fetch("/api/btc-miner").then(r => r.json()),
-    enabled: !!data,
-  });
-  // Sidebar: SECTIONS ids 1–13, scrollToSection via sectionRefs
-  // Main: switch(activeSection) { case 1..12: <Sections1to6/7to12> case 13: <Section13Miner> }
-}
-```
-
 Kritische fehlende Zeile im Section-Switch:
 
 ```tsx
@@ -67,51 +48,12 @@ case 13: return (
 );
 ```
 
-### Phase 3 — Section 13 Validierung [OFFEN]
+### Doublecheck vor Merge
 
-| Check | Status |
-|---|---|
-| MetricCard, SectionCard | OK |
-| bg-muted/20 rounded-lg border border-border p-4 | OK |
-| grid-cols-2 sm:grid-cols-4 gap-3 | OK |
-| tooltipStyle-Konstante | OK |
-| Ampelfarben text-emerald-500/text-amber-400/text-red-500 | OK |
-| Eingebunden in Parent BTCDashboard | FEHLT |
-
-## Aufgabenliste Restore
-
-| Priorität | Aufgabe | Zeit | Status |
-|---|---|---|---|
-| P0 | Branch btc-restore-modular von 33c8e77 | 2 min | DONE |
-| P0 | export default function BTCDashboard rekonstruieren | 30 min | OFFEN |
-| P1 | BTCDashboard in 4 Dateien aufsplitten | 20 min | OFFEN |
-| P1 | Section13Miner in Shell einbinden (case 13) | 5 min | OFFEN |
-
-## Workflow-Regeln
-
-```bash
-# Anti-Truncation: vor jedem Push prüfen
-wc -c client/src/pages/BTCDashboard.tsx
-# Wenn > 80000 Bytes → aufsplitten
-
-# Lokale Validierung
-npm run check
-npm run dev
-find client/src/pages/btc -name '*.tsx' | xargs wc -c
-
-# Push-Workflow
-git checkout -b fix/description
-# entwickeln + testen
-git push origin fix/description
-# PR öffnen → Copilot-Review → Squash & Merge
-# KEIN direkter push auf main
-```
-
-Doublecheck vor Merge:
 - [ ] Keine zirkulären Imports
 - [ ] export / export default konsistent
 - [ ] tooltipStyle, MetricCard nicht doppelt definiert
-- [ ] BTCAnalysis-Interface nur einmal (Shell oder btc/types.ts)
+- [ ] BTCAnalysis-Interface nur einmal
 - [ ] SECTIONS-Array hat alle 13 Einträge
 - [ ] sectionRefs deckt alle 13 IDs ab
 
@@ -125,176 +67,421 @@ Doublecheck vor Merge:
 
 ---
 
-# TEIL 2 — FMP-MIGRATION (P0-BLOCKER für Aktienanalyse)
+# TEIL 2 — AKTIENANALYSE: BEKANNTE BUGS (mit Commit-Referenz)
 
-## Status: FMP-Integration unvollständig — Aktienanalyse funktioniert nicht
+## BUG A — FMP-Laufstatus (doublecheck ob Analyse über FMP läuft)
 
-### Problem
+**Frage:** Läuft https://aktienanalyst-pro.pplx.app über FMP oder nicht?
 
-Die FMP-API-Calls im Backend sind nicht korrekt implementiert.
-Die Aktienanalyse liefert keine oder fehlerhafte Daten.
-Das betrifft alle Sektionen, die auf FMP-Daten angewiesen sind.
+**Was im Code steht (analyze-route.ts, Commit 5a283e4, 16.07.2026):**
 
-### Betroffene Endpunkte (server/routes/)
+```ts
+// Step 1: getFmpFallbackData(upperTicker) — 13 parallele FMP-Calls
+const { quote, profile, financials, analyst, ohlcv, segments, peers, ratios } = fmpData;
+// Wenn fmpData null → 503 zurück, KEIN Sektor-Fallback
+```
 
-| Endpunkt | FMP-Quelle | Status |
+**Was fmp.ts tut (isFmpAvailable()):**
+```ts
+export function isFmpAvailable(): boolean {
+  return !!process.env.FMP_API_KEY && process.env.FMP_API_KEY.length > 10;
+}
+```
+
+**Diagnose-Checkliste:**
+```
+[ ] GET https://aktienanalyst-pro.pplx.app/api/fmp-budget
+    Erwartete Antwort: { fmp: { calls: N, budget: 750 }, fmpAvailable: true }
+    Wenn fmpAvailable: false → FMP_API_KEY fehlt in credentials
+[ ] Nach Analyse: console.log '[ANALYZE] Starting analysis for MSFT (useLLM=false)'
+    Wenn fehlt → Request kommt gar nicht an (Routing-Bug)
+[ ] Wenn 503: 'Keine Daten für X verfügbar' → FMP liefert null
+```
+
+**Fix wenn FMP nicht läuft:**
+```
+Branch: fix/fmp-key-check
+1. publish_website credentials= FMP_API_KEY=<key> prüfen
+2. isFmpAvailable() im startup loggen
+3. /api/fmp-budget Endpunkt im Frontend sichtbar machen (Admin-Panel)
+```
+
+---
+
+## BUG B — Peer-Vergleich fehlt in Section 7 (Relative Bewertung)
+
+**Symptom (Screenshot 23.07.2026):**
+- P/E (TTM) zeigt n/a statt echtem Wert
+- Sector Avg: 28.0 (Hardcode-Fallback, kein echter FMP-Wert)
+- Peer-Tabelle darunter fehlt komplett
+- Revenue Growth vs. Branche: MSFT +14.9% vs. Branche +16.0% — korrekt, aber Quelle unklar
+- TAM & Marktposition: $1.500B / 18.78% — korrekt
+- Premium Breakdown: +-100.0% Moat-Justified — Darstellungsfehler (sollte z.B. +12% sein)
+
+**Was im Code existiert (Commit ce3b1bc, 16.07.2026, news-peers.ts):**
+
+```ts
+// fetchPeerComparisonFromTickers(peerTickers) — läuft, aber Daten kommen
+// nicht korrekt in Section 7 Frontend an
+export async function fetchPeerComparisonFromTickers(tickers: string[]): Promise<PeerData[]> {
+  // FMP /api/v3/profile/{ticker} + /api/v3/ratios/{ticker}?limit=1
+  // Returns: { ticker, name, pe, forwardPE, peg, evEbitda, revenueGrowth,
+  //            fcfMargin, grossMargin, marketCap, eps5YGrowth }
+}
+```
+
+**Was im Backend assembled wird (analyze-route.ts Step 17):**
+```ts
+// peerComparison: any[] — ist im StockAnalysis-Objekt enthalten
+// Problem: Frontend liest peerComparison nicht aus oder rendert es nicht
+```
+
+**Was fehlt — Peer-Metriken die gezeigt werden müssen:**
+
+| Metrik | FMP-Quelle | Formel / Feld |
 |---|---|---|
-| GET /api/stock/:ticker | /api/v3/profile/:ticker | FEHLERHAFT |
-| GET /api/stock/:ticker/history | /api/v3/historical-price-full/:ticker | FEHLERHAFT |
-| GET /api/stock/:ticker/financials | /api/v3/income-statement/:ticker | FEHLERHAFT |
-| GET /api/stock/:ticker/metrics | /api/v3/key-metrics/:ticker | FEHLERHAFT |
-| GET /api/stock/:ticker/dcf | /api/v3/discounted-cash-flow/:ticker | FEHLERHAFT |
-| GET /api/stock/:ticker/earnings | /api/v3/earnings-surprises/:ticker | FEHLERHAFT |
+| P/E TTM | /ratios/:ticker | priceEarningsRatio |
+| Forward P/E | /ratios/:ticker | priceEarningsRatioTTM |
+| PEG | berechnet | PE / EPS-Wachstum 5J |
+| EV/EBITDA | /ratios/:ticker | enterpriseValueMultiple |
+| Revenue Growth YoY | income[0] vs income[1] | (rev0-rev1)/rev1*100 |
+| Revenue Growth 3J CAGR | income[0] vs income[3] | (rev0/rev3)^(1/3)-1 |
+| EPS 5J CAGR | /financial-growth/:ticker | epsgrowth (5Y avg) |
+| FCF Marge | cashflow + income | (opCF - capex) / revenue * 100 |
+| Gross Margin | income | grossProfit / revenue * 100 |
+| ROE | /ratios/:ticker | returnOnEquity |
+
+**Korrekte Formeln:**
+```ts
+// PEG (Lynch-Methode, wie bereits in catalyst-engine.ts implementiert):
+PEG = forwardPE / epsGrowthFwd_percent
+// Wenn EPS-Wachstum negativ oder 0: PEG = null (nicht anzeigen)
+
+// Revenue CAGR 3 Jahre:
+CAGR_3J = (income[0].revenue / income[2].revenue) ^ (1/3) - 1
+// FMP: /api/v3/income-statement/:ticker?limit=3
+
+// EPS 5J CAGR:
+EPS_5J = aus /api/v3/financial-growth/:ticker Feld 'epsgrowth' (5Y average)
+// Alternativ: (eps[0] / eps[4]) ^ (1/5) - 1
+
+// FCF Marge:
+FCF_Marge = (operatingCashFlow - abs(capitalExpenditure)) / revenue * 100
+```
+
+**Fix-Plan:**
+```
+Branch: fix/peer-comparison-section7
+
+1. server/news-peers.ts: fetchPeerComparisonFromTickers erweitern
+   + CAGR 3J: income-statement?limit=3 pro Peer
+   + EPS 5J: financial-growth?limit=1 pro Peer
+   Achtung: 5 Peers x 4 Calls = 20 FMP-Calls extra → Budget-Check vorher
+
+2. shared/schema.ts: PeerData-Interface erweitern
+   revenueCAGR3Y: number;
+   eps5YGrowth: number;
+   fcfMargin: number;
+   grossMargin: number;
+   roe: number;
+
+3. Frontend Section 7: peerComparison aus StockAnalysis lesen
+   + Tabelle mit allen 10 Metriken rendern
+   + Farbcodierung: besser als Sektor-Median = grün, schlechter = rot
+   + Sektor-Median-Zeile als letzte Zeile der Tabelle
+
+4. P/E (TTM) n/a-Bug:
+   quote.pe ist manchmal null bei FMP für unprofitable Unternehmen
+   Fix: if (pe === 0 || isNaN(pe)) → anzeigen als 'n/a' (bereits so, aber
+   auch priceEarningsRatio aus ratios[0] als Fallback versuchen)
+```
+
+---
+
+## BUG C — Revenue-Segmente (Produkt + Region) fehlen in Investmentthese
+
+**Symptom:** Investmentthese zeigt keinen Umsatz nach Produkten/Medikamenten
+und keine regionale Aufschlüsselung (USA / Europa / Asien) mehr.
+
+**Was im Code existiert (Commit fb84193, 16.07.2026):**
+
+```ts
+// analyze-route.ts Step 7:
+const revenueSegments: RevenueSegment[] = [];
+if (Array.isArray(segments) && segments.length > 0) {
+  const segLatest = segments[0];
+  // Transformiert /stable flat-object → { name, revenue, percentage }[]
+  // PROBLEM: FMP /revenue-product-segmentation gibt Produkt-Segmente
+  // FMP /revenue-geographic-segmentation gibt Regionen
+  // Aktuell nur EINES davon abgerufen (fmpSegments in fmp.ts)
+}
+```
+
+**Zwei getrennte FMP-Endpunkte nötig:**
+
+```ts
+// 1. Produkt-Segmente:
+GET /api/v3/revenue-product-segmentation?symbol={ticker}&apikey={key}
+// Response (stable): { date, "Intelligent Cloud": 111800000000, "Productivity...": ... }
+// Transformation:
+const segObj = Array.isArray(data) ? data[0] : data;
+const keys = Object.keys(segObj).filter(k => !['date','symbol','reportedCurrency','period'].includes(k));
+const total = keys.reduce((s, k) => s + (segObj[k] ?? 0), 0);
+productSegments = keys.map(k => ({
+  name: k,
+  revenue: segObj[k],
+  percentage: Math.round(segObj[k] / total * 1000) / 10
+})).filter(s => s.revenue > 0).sort((a,b) => b.revenue - a.revenue);
+
+// 2. Regionale Segmente:
+GET /api/v3/revenue-geographic-segmentation?symbol={ticker}&apikey={key}
+// Response: { date, "United States": ..., "Europe": ..., "Asia": ... }
+// Gleiche Transformation wie oben
+// Ergebnis: geoSegments: RevenueSegment[]
+```
+
+**Beispiel MSFT (Geschäftsjahr 2025, in $B):**
+```
+Produkt-Segmente:
+  Intelligent Cloud:              111.8B  (39.8%)
+  Productivity & Business Proc.:   91.0B  (32.4%)
+  More Personal Computing:          78.0B  (27.8%)
+
+Regionale Segmente (approximativ):
+  USA:       ~55%
+  Europa:    ~25%
+  Rest Welt: ~20%
+```
+
+**Beispiel NVO (Novo Nordisk, DKK → USD Konvertierung):**
+```
+Produkt-Segmente (FY2024, in DKK):
+  GLP-1 / Obesity (Wegovy):   ~60% des Umsatzes
+  Diabetes (Ozempic, NovoRapid): ~35%
+  Rare Disease:                   ~5%
+
+Regionale Segmente:
+  Nordamerika (USA):          ~60%
+  Europa:                     ~22%
+  Asien / Rest:               ~18%
+
+WICHTIG bei NVO: Umsatz in DKK gemeldet
+Konvertierung: DKK/USD ~0.146 (Stand 2025)
+```
+
+**Fix-Plan:**
+```
+Branch: fix/revenue-segments-product-geo
+
+1. server/fmp.ts: fmpSegments aufsplitten in:
+   fmpProductSegments(ticker): Promise<RevenueSegment[]>
+   fmpGeoSegments(ticker): Promise<RevenueSegment[]>
+
+2. server/analyze-route.ts Step 7:
+   const [productSegments, geoSegments] = await Promise.all([
+     fmpProductSegments(upperTicker).catch(() => []),
+     fmpGeoSegments(upperTicker).catch(() => []),
+   ]);
+   // Kein Crash wenn ein Endpunkt fehlt (nicht alle Ticker haben Segment-Daten)
+
+3. shared/schema.ts:
+   interface StockAnalysis {
+     productSegments: RevenueSegment[];  // NEU (war: revenueSegments)
+     geoSegments: RevenueSegment[];      // NEU
+     revenueSegments: RevenueSegment[];  // behalten für Abwärtskompatibilität
+   }
+
+4. Frontend Investmentthese-Section:
+   + PieChart für productSegments (Produkte/Medikamente, sortiert nach Anteil)
+   + BarChart horizontal für geoSegments (USA / Europa / Asien / Rest)
+   + Wenn keine Daten: 'Segment-Aufschlüsselung nicht verfügbar' (kein Crash)
+```
+
+---
+
+## BUG D — DCF und CRV inflationiert bei nicht-US-Titeln (z.B. NVO, ASML, SAP)
+
+**Symptom:** DCF Fair Value und CRV (Chancen-Risiko-Verhältnis) bei dänischen,
+europäischen oder anderen Nicht-USD-Titeln um Faktor 6–7x inflationiert.
+
+**Ursache (analyze-route.ts Step 2 + 18, Commit 5a283e4):**
+
+```ts
+// Step 2: FX-Rate wird gefetcht
+let fxRate = 1;
+if (reportedCurrency !== 'USD') {
+  fxRate = fetchFXRate(reportedCurrency) ?? 1;
+}
+
+// Step 2: Financials werden geparst — ABER:
+const revenue = parseNumber(String(incomeLatest.revenue ?? 0));
+// PROBLEM: revenue ist in DKK (z.B. NVO: revenue = 232.3 Mrd DKK)
+// fxRate = 0.146 (DKK/USD)
+// Aber convertFinancials() wird NICHT auf alle Felder angewendet!
+
+// Step 18: DCF mit rohen DKK-Werten:
+dcfFairValue = (pvFCF + terminalValue - netDebt) / sharesOutstanding
+// sharesOutstanding ist in Einzel-Aktien (korrekt)
+// fcfTTM ist in DKK (FALSCH — müsste in USD sein)
+// netDebt ist in DKK (FALSCH)
+// Ergebnis: dcfFairValue in DKK/Aktie statt USD/Aktie
+// Display: zeigt z.B. 1.847 DKK als wäre es $1.847 USD → 10x zu hoch
+```
+
+**Konkrete Zahlen NVO (FY2024):**
+```
+NVO reported in DKK:
+  Revenue:      232.3 Mrd DKK
+  FCF TTM:       ~95 Mrd DKK
+  Net Debt:      ~30 Mrd DKK
+  Shares:       ~4.46 Mrd (ADR-adjusted)
+
+FX: DKK/USD = 0.1456 (Jan 2025)
+
+Korrekter DCF Fair Value:
+  FCF_USD = 95 Mrd DKK * 0.1456 = ~13.8 Mrd USD
+  TV = FCF_USD * (1+0.025) / (0.085 - 0.025) / (1.085)^5 = ~168 Mrd USD
+  Equity = PV_FCF + TV - NetDebt_USD = ~185 Mrd USD
+  FairValue/Aktie = 185 Mrd / 4.46 Mrd = ~$41 USD
+  (NVO ADR tatsächlicher Kurs: ~$67, also ca. 40% überbewertet laut DCF — plausibel)
+
+Fehlerhafte Berechnung (aktuell):
+  FCF = 95 Mrd DKK (nicht konvertiert)
+  FairValue/Aktie = 95 Mrd / 4.46 Mrd = ~21 DKK = als $21 angezeigt (zu niedrig)
+  ODER wenn shares in Tausend: = 95.000 / 4.460 = $21.300 (viel zu hoch)
+  → Je nach shares-Normalisierungsfehler entweder 10x zu hoch oder 10x zu niedrig
+```
+
+**Korrekter Fix (convert ALLE Finanzfelder vor DCF):**
+
+```ts
+// Nach Step 2 FX-Fetch, vor Step 18 DCF:
+const toUSD = (val: number) => val * fxRate;
+
+// ALLE betroffenen Felder konvertieren:
+const revenue_usd        = toUSD(revenue);
+const fcfTTM_usd         = toUSD(fcfTTM);
+const netDebt_usd        = toUSD(netDebt);
+const ebitda_usd         = toUSD(ebitda);
+const grossProfit_usd    = toUSD(grossProfit);
+const operatingIncome_usd = toUSD(operatingIncome);
+const netIncome_usd      = toUSD(netIncome);
+const totalDebt_usd      = toUSD(totalDebt);
+const cashEquivalents_usd = toUSD(cashEquivalents);
+
+// sharesOutstanding: NICHT konvertieren (Anzahl, nicht Betrag)
+// price: NICHT konvertieren (FMP liefert bei ADRs bereits USD-Preis)
+// marketCap: NICHT konvertieren wenn aus quote.marketCap (bereits USD bei FMP)
+
+// Margen neu berechnen mit USD-Werten:
+const grossMargin = revenue_usd > 0 ? grossProfit_usd / revenue_usd * 100 : 0;
+const fcfMargin   = revenue_usd > 0 ? fcfTTM_usd / revenue_usd * 100 : 0;
+
+// DCF mit USD-Werten:
+dcfFairValue = (pvFCF_usd + terminalValue_usd - netDebt_usd) / sharesOutstanding;
+```
+
+**Zusatz: CRV (Chancen-Risiko-Verhältnis) ebenfalls betroffen:**
+```
+CRV = (DCF Fair Value - Kurs) / (Kurs - Stop Loss)
+Wenn DCF falsch → CRV falsch
+
+Fix: CRV erst nach DCF-Korrektur berechnen
+Zusätzlich: analystPTMedian von FMP kommt für ADRs in USD → direkt nutzbar
+Für europäische Listings (ASML auf Euronext): analystPTMedian in EUR → auch konvertieren
+```
+
+**Betroffene Ticker (Beispiele):**
+```
+NVO   — Dänische Krone (DKK), ADR auf NYSE
+ASML  — Euro (EUR), ADR auf NASDAQ
+SAP   — Euro (EUR), ADR auf NYSE
+NOVO  — DKK, primäres Listing Kopenhagen
+SHEL  — USD gemeldet (kein Problem)
+NVS   — CHF, ADR auf NYSE
+ROG   — CHF, primäres Listing Zürich
+```
+
+**Fix-Plan:**
+```
+Branch: fix/non-usd-dcf-conversion
+
+1. server/analyze-route.ts: nach fetchFXRate() —
+   alle Betrag-Felder mit fxRate multiplizieren (revenue, fcf, netDebt, etc.)
+   sharesOutstanding und price NICHT konvertieren
+
+2. server/fmp.ts: convertFmpRowsToUsd() Funktion bereits vorhanden (Commit ce3b1bc)
+   Prüfen ob sie vollständig alle Felder abdeckt und korrekt aufgerufen wird
+
+3. Test mit NVO:
+   Erwarteter DCF Fair Value: ~$35-55 USD/ADR (plausible Range)
+   Wenn Ergebnis > $300 oder < $5 → Konvertierungsfehler noch vorhanden
+
+4. Test mit ASML:
+   FY2024 FCF: ~8.5 Mrd EUR, EUR/USD ~1.08
+   Shares: ~394 Mio
+   Erwarteter DCF: ~$100-160 USD (Markt: $680 → stark überbewertet laut DCF = plausibel)
+
+5. shared/schema.ts: CurrencyInfo-Interface prüfen:
+   { reportedCurrency, fxRate, isConverted }
+   Auf jedem Analyse-Ergebnis ausgeben damit Frontend anzeigen kann:
+   "Financials in DKK, umgerechnet mit 1 DKK = 0.146 USD"
+```
+
+---
+
+# TEIL 3 — FMP-MIGRATION (P0-BLOCKER)
+
+## Status: FMP-Integration unvollständig
+
+Hauptentrpunkte laut analyze-route.ts (Commit 5a283e4, 16.07.2026):
+- getFmpFallbackData() macht 13 parallele FMP-Calls: quote, profile, income,
+  cashflow, balanceSheet, ohlcv, analyst.priceTarget, analyst.estimates,
+  analyst.grades, segments, peers, ratios, keyMetrics
+- fmpSegments: ruft /revenue-product-segmentation ab (nicht geo)
+- fetchPeerComparisonFromTickers: vorhanden, aber Output kommt nicht im Frontend an
 
 ### Korrekte FMP-Request-Struktur
 
 ```ts
-// Alle FMP-Calls folgen diesem Pattern:
 const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
-const FMP_KEY  = process.env.FMP_API_KEY; // in .env, nie hardcoded
 
-async function fmpGet<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+export async function fmpGet<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+  const key = process.env.FMP_API_KEY;
+  if (!key) throw new Error('FMP_API_KEY nicht gesetzt');
   const url = new URL(`${FMP_BASE}${path}`);
-  url.searchParams.set('apikey', FMP_KEY!);
+  url.searchParams.set('apikey', key);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`FMP ${path} → HTTP ${res.status}`);
-  return res.json() as Promise<T>;
-}
-
-// Beispiel Nutzung:
-const profile = await fmpGet<FMPProfile[]>(`/profile/${ticker}`);
-const history = await fmpGet<{ historical: FMPHistoricalPrice[] }>(
-  `/historical-price-full/${ticker}`,
-  { from: dayjs().subtract(10, 'year').format('YYYY-MM-DD') }
-);
-const income  = await fmpGet<FMPIncomeStatement[]>(`/income-statement/${ticker}`, { limit: '5' });
-const metrics = await fmpGet<FMPKeyMetrics[]>(`/key-metrics/${ticker}`, { limit: '3' });
-```
-
-### Fehlerbehandlung + Fallback
-
-```ts
-// Jeder Route-Handler:
-try {
-  const data = await fmpGet(...);
-  if (!data || (Array.isArray(data) && data.length === 0)) {
-    return res.status(404).json({ error: 'Keine FMP-Daten für diesen Ticker' });
-  }
-  return res.json(data);
-} catch (err) {
-  console.error('[FMP]', err);
-  return res.status(502).json({ error: 'FMP-API nicht erreichbar', detail: String(err) });
+  if (!res.ok) throw new Error(`FMP ${path} HTTP ${res.status}`);
+  const data = await res.json();
+  if (data && typeof data === 'object' && 'Error Message' in data)
+    throw new Error(`FMP: ${(data as any)['Error Message']}`);
+  return data as T;
 }
 ```
 
-### Frontend-Rendering (StockDashboard.tsx)
-
-```tsx
-// React Query für jeden FMP-Endpunkt:
-const { data: profile, isLoading, isError, error } = useQuery({
-  queryKey: ['stock-profile', ticker],
-  queryFn: () => fetch(`/api/stock/${ticker}`).then(r => {
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
-  }),
-  enabled: !!ticker && ticker.length > 0,
-  retry: 2,
-  staleTime: 5 * 60 * 1000, // 5 Minuten Cache
-});
-
-// Loading/Error-States in jeder Section:
-if (isLoading) return <SectionCard number={N} title="..."><LoadingSpinner /></SectionCard>;
-if (isError)   return <SectionCard number={N} title="..."><ErrorBanner message={error.message} /></SectionCard>;
-if (!data)     return null;
-```
-
-### Sidebar + Section-Routing (StockDashboard.tsx)
-
-```tsx
-// SECTIONS-Array — jede Section hat id, label, icon
-const SECTIONS = [
-  { id: 1,  label: 'Übersicht',        icon: BarChart3   },
-  { id: 2,  label: 'Finanzkennzahlen', icon: Calculator  },
-  { id: 3,  label: 'Bilanz',           icon: Scale       },
-  { id: 4,  label: 'Cashflow',         icon: TrendingUp  },
-  { id: 5,  label: 'Bewertung (DCF)',  icon: Target      },
-  { id: 6,  label: 'Technische Analyse', icon: LineChartIcon },
-  { id: 7,  label: 'Gewinnwachstum',   icon: Activity    },
-  { id: 8,  label: 'Risikoanalyse',    icon: AlertTriangle },
-  { id: 9,  label: 'Equity Researcher', icon: Eye        },
-  // neue Sektionen werden hier angehängt
-];
-
-// Sidebar rendert SECTIONS automatisch:
-<nav>
-  {SECTIONS.map(s => (
-    <button key={s.id}
-      className={activeSection === s.id ? 'bg-primary/20 text-primary' : 'text-muted-foreground'}
-      onClick={() => scrollToSection(s.id)}
-    >
-      <s.icon className="w-4 h-4" />
-      <span>{s.label}</span>
-    </button>
-  ))}
-</nav>
-
-// Main-Render-Switch:
-const renderSection = (id: number) => {
-  switch (id) {
-    case 1: return <Section1Overview data={profile} />;
-    case 2: return <Section2Financials data={income} />;
-    // ...
-    default: return null;
-  }
-};
-```
-
-### Server-Routing (server/routes/stock.ts)
-
-```ts
-import { Router } from 'express';
-const router = Router();
-
-// Alle Stock-Endpunkte in dieser Datei (max 80 KB)
-// Größere Handler auslagern: server/routes/stock-dcf.ts etc.
-
-router.get('/:ticker', async (req, res) => { ... });
-router.get('/:ticker/history', async (req, res) => { ... });
-router.get('/:ticker/financials', async (req, res) => { ... });
-router.get('/:ticker/metrics', async (req, res) => { ... });
-
-export default router;
-
-// In server/index.ts:
-// import stockRouter from './routes/stock';
-// app.use('/api/stock', stockRouter);
-```
-
-### Migrationsplan FMP
+### Migrationsplan
 
 | Schritt | Aufgabe | Branch |
 |---|---|---|
-| 1 | fmpGet Helper + .env FMP_API_KEY prüfen | fix/fmp-helper |
-| 2 | /api/stock/:ticker profile + history 10J | fix/fmp-profile |
-| 3 | /api/stock/:ticker/financials income + balance | fix/fmp-financials |
-| 4 | /api/stock/:ticker/metrics key-metrics + ratios | fix/fmp-metrics |
-| 5 | /api/stock/:ticker/dcf | fix/fmp-dcf |
-| 6 | Frontend React Query + Loading/Error States | fix/fmp-frontend |
-| 7 | Integration-Test: 5 Ticker durchlaufen lassen | fix/fmp-test |
+| 1 | /api/fmp-budget im Frontend sichtbar machen | fix/fmp-debug-panel |
+| 2 | Non-USD Konvertierung fix (BUG D) | fix/non-usd-dcf-conversion |
+| 3 | Peer-Vergleich Section 7 fix (BUG B) | fix/peer-comparison-section7 |
+| 4 | Revenue-Segmente Produkt + Geo (BUG C) | fix/revenue-segments-product-geo |
+| 5 | Integration-Test: MSFT, AAPL, NVO, ASML | fix/integration-test |
 
 ---
 
-# TEIL 3 — LANGFRISTIGE FEATURE-ROADMAP
+# TEIL 4 — LANGFRISTIGE FEATURE-ROADMAP
 
 Alle Items vorzubereiten, nicht sofort implementieren.
 Jedes Feature = eigener Branch + PR + Review.
 
-## Technische Grundregeln (für alle neuen Features)
+## Technische Grundregeln
 
-- Neue Section: Eintrag in SECTIONS-Array + case im Section-Switch (StockDashboard.tsx)
+- Neue Section: Eintrag in SECTIONS-Array + case im Section-Switch
 - Neuer Endpunkt: eigene Datei in server/routes/ (max 80 KB)
-- Express-Registrierung: `app.use('/api/endpunkt', router)` in server/index.ts
 - Formeln: unit-testbare Funktionen in client/src/lib/calculations.ts
 - LLM-Search: POST /api/llm-search { query, ticker, context } → sonar-pro
 - Anti-Truncation: jede Datei < 80 KB vor Push
@@ -305,13 +492,12 @@ Jedes Feature = eigener Branch + PR + Review.
 
 ### Aktienkurshistorie 10 Jahre (statt 5)
 
-Backend:
 ```ts
 const from = dayjs().subtract(10, 'year').format('YYYY-MM-DD');
-// GET /api/v3/historical-price-full/:ticker?from={from}&apikey={key}
+// FMP: /api/v3/historical-price-full/:ticker?from={from}&apikey={key}
 ```
 
-Frontend (TechnicalChart):
+Frontend:
 ```tsx
 type TimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y" | "10Y";
 const daysCutoff: Record<TimeRange, number> = {
@@ -319,72 +505,41 @@ const daysCutoff: Record<TimeRange, number> = {
 };
 ```
 
----
-
 ### Section 8 — WACC & Terminal Value individuell einstellbar
 
 ```tsx
 const [wacc, setWacc] = useState(0.09);
 const [g, setG] = useState(0.025);
-
 // Gordon Growth: TV = FCF_last * (1+g) / (WACC - g)
-// WACC = (E/V)*Re + (D/V)*Rd*(1-Tax)
 // CAPM: Re = Rf + Beta*(Rm-Rf)
 ```
-
-LLM-Search für unternehmensspezifische Risiken:
-```ts
-POST /api/llm-search
-{ query: `Risiken ${ticker}: Regulierung, Wettbewerb, Bilanzschwächen`,
-  model: 'sonar-pro', search_recency_filter: 'month' }
-// Response: { risks: string[], sources: string[] }
-```
-
----
 
 ### PESTEL-Analyse [Section 14]
 
 ```ts
-// POST /api/pestel { ticker, company, sector }
-// sonar-pro Query: PESTEL ${company} Kurstreiber Risiken 2026
+POST /api/pestel { ticker, company, sector }
 // Output: { political, economic, social, tech, env, legal } je { drivers[], risks[] }
 ```
 Sidebar: `{ id: 14, label: 'PESTEL', icon: Globe }`
 
----
-
 ### Reverse DCF [Section 15]
 
 ```
-Reverse DCF: Löse g* aus P = Σ FCFt/(1+WACC)^t + TV/(1+WACC)^N
-g* = impliziertes Wachstum im aktuellen Kurs
-
-g* >> historisches Wachstum  → Bewertung einpreist Perfektion
-g* ≈ historisches Wachstum   → faire Bewertung
-g* << historisches Wachstum  → Margin of Safety
-
+g* = impliziertes Wachstum aus aktuellem Kurs
+g* >> historisch → Bewertung preist Perfektion ein
+g* << historisch → Margin of Safety
 POST /api/reverse-dcf { ticker, currentPrice, fcfHistory[5J], wacc, n }
-Output: { impliedGrowthRate, vsHistoricalGrowth, marginOfSafety, sensitivityTable }
 ```
-Frontend: Slider WACC 4–15%, N 5/7/10J, Heatmap-Sensitivitätstabelle.
 Sidebar: `{ id: 15, label: 'Reverse DCF', icon: RefreshCw }`
-
----
 
 ### Monte Carlo — Flexible Iterationen 0–50.000
 
 ```tsx
-// Freies Texteingabefeld, commit-on-blur
-const [iterInput, setIterInput] = useState('10000');
-onBlur: clamp(parseInt(input), 0, 50000)
-// Warnung bei > 30k: "Performance-Warnung: kann Browser verlangsamen"
+type="text" inputMode="numeric" — onBlur: clamp(parseInt(input), 0, 50000)
+// Warnung bei > 30k
 ```
 
----
-
 ### Section 17 — Zusammenfassungstabelle
-
-Komprimierte Tabelle aller Sektionen:
 
 | Metrik | Wert | Bewertung | Quelle |
 |---|---|---|---|
@@ -396,286 +551,135 @@ Komprimierte Tabelle aller Sektionen:
 | Management Score | xx/100 | — | LLM+FMP |
 | Thesis Score | xx/100 | — | Komposit |
 
-Farb-Badges: Unterbewertet/Neutral/Überbewertet. CSV-Export.
-Sidebar: `{ id: 17, label: 'Zusammenfassung', icon: Table }`
-
----
-
 ### Management-Analyse (Buffett-Kriterien)
 
 ```ts
-// POST /api/management { ticker }
-// FMP: /api/v3/key-executives/:ticker → CEO, Tenure, Compensation
-// FMP: /api/v3/earnings-surprises/:ticker → Beat/Miss-Rate 5J
+POST /api/management { ticker }
+// FMP: /api/v3/key-executives/:ticker, /api/v3/earnings-surprises/:ticker
 // sonar-pro: Skandale, Klagen, SEC-Verfahren
 // Output: { executives, earningsBeatRate, scandals, insiderOwnership, managementScore }
-
-Kriterien:
-  Zukunftsorientierung: Guidance-Qualität, Kapitalallokation-Konsistenz
-  Verlässlichkeit:      Beat/Miss-Rate letzte 5 Jahre
-  Skandale:             LLM-Search (SEC, Klagen, Bilanzskandale)
-  Insider-Ownership:    % Anteil (FMP key-executives)
 ```
-
----
 
 ### ROIC / ROE / ROA — Jahresvergleich 3 Jahre
 
 ```
 ROIC = EBIT * (1 - Tax) / (Equity + LongTermDebt - Cash)
-ROE  = Net Income / Shareholders' Equity
-ROA  = Net Income / Total Assets
-
-Datenquelle: FMP /api/v3/key-metrics/:ticker?limit=3
-Frontend: BarChart 3 Gruppen, Farbe > WACC = grün, < WACC = rot
+FMP: /api/v3/key-metrics/:ticker?limit=3
+Frontend: BarChart 3 Gruppen, Farbe: > WACC = grün, < WACC = rot
 ```
-
----
 
 ### Thesis Score
 
 ```
 Thesis Score (0–100) =
-  Moat Score        * 0.25  (Wide=100, Narrow=60, None=20)
-  FCF Marge 5J      * 0.20  (>15% = 100, linear)
-  Fiskalstimulus    * 0.15  (Infrastruktur, Defense, Re-Industrialisierung)
-  Konjunktur-Trend  * 0.15  (Sektorzyklus Early/Mid/Late/Recession)
-  Reputation Score  * 0.15  (Management + Analyst-Trust)
-  Positive Events   * 0.10  (LLM: Verträge, Patente, Expansionen)
+  Moat Score        * 0.25
+  FCF Marge 5J      * 0.20
+  Fiskalstimulus    * 0.15
+  Konjunktur-Trend  * 0.15
+  Reputation Score  * 0.15
+  Positive Events   * 0.10
 ```
-
----
 
 ### Bilanzen Red-Flag-Screener
 
 ```
-Automatische Checks:
-  Goodwill > 50% Total Assets
-  Accounts Receivable wächst schneller als Revenue (3J)
-  Operating CF < Net Income (2 von 3 Jahren)
-  Debt/Equity > 3x UND Zinsdeckung < 3x
-  Gross Margin Trend < -3 Prozentpunkte p.a. über 3J
-  Freier Cashflow negativ bei positivem Net Income
-  CapEx > 80% Operating CF
-
-Frontend: Checkliste FAIL/WARN/PASS mit Erklärungstext
+Goodwill > 50% Total Assets
+AR wächst schneller als Revenue (3J)
+Operating CF < Net Income (2 von 3J)
+Debt/Equity > 3x UND Zinsdeckung < 3x
+Gross Margin Trend < -3 Pkt./J. über 3J
+FCF negativ bei positivem Net Income
+CapEx > 80% Operating CF
 ```
-
----
 
 ### Virtuelles Portfolio + Kelly-Formel
 
 ```
 Kelly % = (p*b - q) / b
-  p = Gewinnwahrscheinlichkeit (Thesis Score / 100)
-  q = 1 - p
+  p = Thesis Score / 100
   b = Upside/Downside aus DCF
-
-Pabrai-Regel: max 10% Kelly pro Position
-CAPM-Mindestrendite: Re = Rf + Beta*(Rm-Rf) = 4.5% + Beta*5.5%
-Investieren nur wenn erwartete Rendite > Re
-
-Tracking: LocalStorage (V1, keine DB nötig)
-Frontend: Kelly-Allocation BarChart
+Pabrai: max 10% pro Position
+CAPM-Mindestrendite: Re = 4.5% + Beta*5.5%
+Tracking: LocalStorage (V1)
 ```
 
 ---
 
 ## Rezessionsboard
 
-### Google Trends Score — N/A fixen
+### Google Trends — N/A fixen
 
 ```ts
-// server/routes/recession.ts
-// 1. Google Trends API (SerpAPI oder Pytrends)
-// 2. Fallback: Cache letzter erfolgreicher Wert
-// 3. Fallback: score = 50 (neutral), Badge "Daten veraltet"
+// 1. Google Trends API
+// 2. Fallback: Cache letzter Wert
+// 3. Fallback: score=50 (neutral), Amber-Badge 'Daten veraltet'
 ```
 
-### Makro-Risikobeurteilung — LLM-Modus
+### Makro-Risikobeurteilung — LLM
 
 ```ts
 POST /api/recession-summary
-sonar-pro Query: US-Rezessionswahrscheinlichkeit, Fed-Politik,
-  Geopolitik (Hormuz, Ukraine), Kapitalmarktzinsen, Anleihenmärkte
+sonar-pro: US-Rezessionswahrscheinlichkeit, Fed, Geopolitik, Anleihen
 Output: { riskLevel: 'low'|'medium'|'high', summary, keyRisks[], sources[] }
 ```
 
-### Sektor-Rotation — Über-/Unterbewertet
+### Sektor-Rotation
 
 ```
 Relativbewertung = Sektor-KGV_aktuell / Sektor-KGV_10J_Mittel
-> 1.2 → überbewertet
-< 0.8 → unterbewertet
-
-Datenquelle: FMP /api/v3/sector_price_earning_ratio
-Frontend: Heatmap-Tabelle 11 GICS-Sektoren
+FMP: /api/v3/sector_price_earning_ratio
+Heatmap: 11 GICS-Sektoren
 ```
 
 ---
 
-## BTC-Dashboard — Langfristige Features
+## BTC-Dashboard — Section 13 Miner-Zone
 
-### Miner-Zone Section 13 — vollständige Indikatoren
-
-#### Hash Ribbons
-
+### Hash Ribbons
 ```
-MA30 vs MA60 der Netzwerk-Hashrate
-Kapitulation:  MA30 < MA60 und beide fallend
-Kaufsignal:    MA30 kreuzt MA60 von unten (nach Kapitulation)
-Datenquelle:   mempool.space /api/v1/mining/hashrate/3y
-Frontend:      AreaChart MA30 (blau) / MA60 (rot), ReferenceArea rot bei Kapitulation
+MA30 vs MA60 Hashrate
+Kaufsignal: MA30 kreuzt MA60 von unten
+Datenquelle: mempool.space /api/v1/mining/hashrate/3y
 ```
 
-#### Puell Multiple
-
+### Puell Multiple
 ```
 Puell = Tagesemission_USD / MA365(Tagesemission_USD)
-Tagesemission = 144 Blöcke * 3.125 BTC * BTC-Preis
-Zonen: <0.5 Kapitulation | 0.5-1 normal | 1-4 bullish | >4 überhitzt
-Datenquelle: CoinGecko Preishistorie + feste Blocksubvention
+<0.5 Kapitulation | >4 überhitzt
 ```
 
-#### Hashprice
-
+### Hashprice + Breakeven
 ```
-Hashprice = (144 * 3.125 * BTC-Preis + Fees_tägl.) / Hashrate_TH
-Breakeven = Stromkosten_kWh * Effizienz_J_per_TH * 86400 / Hashprice
-Referenz:  Antminer S19 Pro 29.5 J/TH, $0.05/kWh
-Frontend-Slider: Effizienz 18/21.5/30 J/TH, Strompreis 0.04/0.05/0.08/manuell
+Hashprice = (144 * 3.125 * BTC-Preis) / Hashrate_TH
+Breakeven: Slider Effizienz 18/21.5/30 J/TH, Strom $0.04/0.05/0.08
 ```
 
-#### Difficulty Ribbon Compression
-
-```
-MAs: 9, 14, 25, 40, 60, 90, 128, 200 Tage
-Compression Score = 1 - (Spread der MAs / MA200)
->0.9 = starke Kompression (Einstiegszone)
-Datenquelle: mempool.space /api/v1/mining/difficulty-adjustments
-```
-
-#### MVRV / Realized Price
-
+### MVRV
 ```
 MVRV = Market Cap / Realized Cap
-<1.0 → unter Realized Price (Kapitulationszone)
->3.5 → historisch überhitzt
+<1.0 Kapitulation | >3.5 überhitzt
 Datenquelle: Glassnode free tier
 ```
 
-#### Section 13 Props + Server-Route
-
-```ts
-// server/btc-miner.ts (bereits vorhanden)
-type MinerData = {
-  hashRate: number;
-  hashRateMAs: { ma30: number; ma60: number };
-  puellMultiple: number;
-  puellHistory: { date: string; value: number }[];
-  hashprice: number;
-  breakevenPrice: number;
-  difficultyRibbonScore: number;
-  mvrvRatio: number;
-  realizedPrice: number;
-  minerScore: number;  // 0-100 Komposit
-};
-
-// Section13Miner Props:
-// data: BTCAnalysis, minerData: MinerData|null, loading: boolean, error: boolean
-```
-
-Backend-Checklist:
-- [ ] Hash Ribbons MA30/MA60 aus Hashrate-History
-- [ ] Puell Multiple aus CoinGecko + Blocksubvention
-- [ ] Hashprice aus Hashrate + BTC-Preis
-- [ ] Breakeven-Slider-Presets
-- [ ] Difficulty Ribbon Compression Score
-- [ ] MVRV via Glassnode free tier
-
 ---
 
-## Gold-Dashboard (neu, vorzubereiten)
-
-### Architektur
+## Gold-Dashboard (vorzubereiten)
 
 ```
-client/src/pages/GoldDashboard.tsx  ← Shell (~200 Zeilen)
-client/src/pages/gold/
-  GoldMacro.tsx    ← Realzins, DXY, Zentralbank-Käufe
-  GoldMining.tsx   ← AISC-Kostenkurve, GDX/GLD-Ratio
-  GoldSummary.tsx  ← Score, Zusammenfassung
-server/routes/gold.ts
-```
+Architektur:
+  GoldDashboard.tsx (Shell)
+  gold/GoldMacro.tsx   ← TIPS Realzins, DXY, ZB-Käufe
+  gold/GoldMining.tsx  ← AISC, GDX/GLD-Ratio
+  gold/GoldSummary.tsx ← Score
 
-### Indikatoren
+Kernindikatoren:
+  Realzins (FRED DFII10): < 0% bullisch, > 1.5% bearisch
+  Gold_FairValue ≈ 2000 - 800 * Realzins_%
+  AISC: ~$1.200-1.400/oz (World Gold Council)
+  GDX/GLD-Ratio: fallend = Margendruck
+  DXY: inverse Korrelation ~-0.7
 
-#### AISC (All-In Sustaining Cost)
-
-```
-AISC = Förderkosten + Exploration-CapEx + G&A + Sustaining-Invest.  [USD/oz]
-Markt-Durchschnitt: ~$1.200–1.400/oz
-Spot < AISC → marginale Minen unrentabel → Angebotsreduktion
-Datenquelle: World Gold Council (quartalsweise)
-```
-
-#### Realzins-Modell (10Y TIPS)
-
-```
-Realzins = 10J-Nominalrendite - 10Y-Breakeven-Inflation
-Realzins < 0%   → Gold bullisch
-Realzins > 1.5% → Gold bearisch
-
-Regressionsformel (historisch robust):
-Gold_FairValue ≈ 2000 - 800 * Realzins_Prozent
-
-Datenquelle: FRED API (kostenlos)
-  Realzins:   series DFII10
-  Breakeven:  series T10YIE
-```
-
-#### GDX/GLD-Ratio
-
-```
-Ratio = GDX_Preis / GLD_Preis
-Fallend  → Margendruck bei Minern
-Steigend → Miner profitieren überproportional
-Datenquelle: Yahoo Finance
-```
-
-#### DXY-Korrelation
-
-```
-Inverse Korrelation Gold/DXY ~-0.7
-DXY < 100 → schwacher USD → bullisch für Gold
-DXY > 105 → starker USD → bearisch
-Datenquelle: Yahoo Finance (DX-Y.NYB)
-```
-
-#### Gold/Silber-Ratio
-
-```
-> 80 → Silber relativ günstig, Mean-Reversion historisch wahrscheinlich
-< 50 → Risk-On-Umfeld
-Datenquelle: Yahoo Finance (GC=F, SI=F)
-```
-
-#### Gold-Score (0–100)
-
-```
-Realzins-Score   * 0.35
-DXY-Score        * 0.20
-ZB-Käufe-Score   * 0.20
-AISC-Score       * 0.15
-GDX/GLD-Score    * 0.10
-```
-
-### Routing
-
-```tsx
-// App.tsx:
-<Route path="/gold" component={GoldDashboard} />
-// Header-Nav: <button onClick={() => setLocation('/gold')}>Gold</button>
+Gold-Score = Realzins*0.35 + DXY*0.20 + ZB*0.20 + AISC*0.15 + GDX*0.10
 ```
 
 ---
@@ -684,9 +688,8 @@ GDX/GLD-Score    * 0.10
 
 - [ ] Overview-Seite 2026 vor Ticker-Eingabe
 - [ ] Einleitung: Aktien folgen zukünftigem Gewinnwachstum, nicht historischer Performance
-- [ ] Makroanalyse-Sektion: Inflation, Fed, Kapitalmarktzinsen, Geopolitik, Deglobalisierung
-- [ ] Megatrendanalyse: Value Chain KI, Elektrifizierung, Eisenbahn, Rüstung
-- [ ] Blasen- und Rezessionsindikatoren: Shiller-KGV, Buffett-Indikator, Yield Curve
+- [ ] Makroanalyse: Inflation, Fed, Geopolitik, Deglobalisierung
+- [ ] Megatrendanalyse: KI, Elektrifizierung, Eisenbahn, Rüstung
+- [ ] Blasen/Rezessionsindikatoren: Shiller-KGV, Buffett-Indikator, Yield Curve
 - [ ] Mindset-Typen: Value, Growth, Momentum
-- [ ] ETF + Core-Satellite: nur bei Informationsvorteil in Einzelaktien
-- [ ] Asset Price Inflation 2026: Kaufkrafterosion, Debt-Inflation-Mechanismus
+- [ ] Asset Price Inflation 2026: Kaufkrafterosion
