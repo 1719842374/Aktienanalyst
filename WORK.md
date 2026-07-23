@@ -81,92 +81,89 @@ const { quote, profile, financials, analyst, ohlcv, segments, peers, ratios } = 
 // Wenn fmpData null → 503 zurück, KEIN Sektor-Fallback
 ```
 
-**Was fmp.ts tut (isFmpAvailable()):**
-```ts
-export function isFmpAvailable(): boolean {
-  return !!process.env.FMP_API_KEY && process.env.FMP_API_KEY.length > 10;
-}
-```
-
 **Diagnose-Checkliste:**
 ```
 [ ] GET https://aktienanalyst-pro.pplx.app/api/fmp-budget
     Erwartete Antwort: { fmp: { calls: N, budget: 750 }, fmpAvailable: true }
     Wenn fmpAvailable: false → FMP_API_KEY fehlt in credentials
-[ ] Nach Analyse: console.log '[ANALYZE] Starting analysis for MSFT (useLLM=false)'
-    Wenn fehlt → Request kommt gar nicht an (Routing-Bug)
-[ ] Wenn 503: 'Keine Daten für X verfügbar' → FMP liefert null
 ```
 
 **Fix wenn FMP nicht läuft:**
 ```
 Branch: fix/fmp-key-check
-1. publish_website credentials= FMP_API_KEY=<key> prüfen
+1. Deploy-credentials FMP_API_KEY prüfen
 2. isFmpAvailable() im startup loggen
-3. /api/fmp-budget Endpunkt im Frontend sichtbar machen (Admin-Panel)
+3. /api/fmp-budget Endpunkt im Frontend sichtbar machen
 ```
 
 ---
 
-## BUG B — Peer-Vergleich fehlt in Section 7 (Relative Bewertung)
+## BUG B — Peer-Vergleich: ROI (3J) + ROE fehlen, falsche Darstellung Section 7
 
 **Symptom (Screenshot 23.07.2026):**
-- P/E (TTM) zeigt n/a statt echtem Wert
-- Sector Avg: 28.0 (Hardcode-Fallback, kein echter FMP-Wert)
-- Peer-Tabelle darunter fehlt komplett
-- Revenue Growth vs. Branche: MSFT +14.9% vs. Branche +16.0% — korrekt, aber Quelle unklar
-- TAM & Marktposition: $1.500B / 18.78% — korrekt
-- Premium Breakdown: +-100.0% Moat-Justified — Darstellungsfehler (sollte z.B. +12% sein)
+- P/E (TTM) zeigt n/a
+- Peer-Tabelle fehlt komplett
+- Nur ROE im Peer-Objekt — ROI (Return on Invested Capital / ROIC) 3-Jahres-Vergleich fehlt
 
-**Was im Code existiert (Commit ce3b1bc, 16.07.2026, news-peers.ts):**
-
+**Was im Code existiert (news-peers.ts, Commit ce3b1bc, 16.07.2026):**
 ```ts
-// fetchPeerComparisonFromTickers(peerTickers) — läuft, aber Daten kommen
-// nicht korrekt in Section 7 Frontend an
-export async function fetchPeerComparisonFromTickers(tickers: string[]): Promise<PeerData[]> {
-  // FMP /api/v3/profile/{ticker} + /api/v3/ratios/{ticker}?limit=1
-  // Returns: { ticker, name, pe, forwardPE, peg, evEbitda, revenueGrowth,
-  //            fcfMargin, grossMargin, marketCap, eps5YGrowth }
-}
+export async function fetchPeerComparisonFromTickers(tickers: string[]): Promise<PeerData[]>
+// Gibt zurück: { ticker, name, pe, forwardPE, peg, evEbitda, revenueGrowth }
+// FEHLT: roic3Y, roe, roa, revenueCAGR3Y, eps5YGrowth, fcfMargin, grossMargin
 ```
 
-**Was im Backend assembled wird (analyze-route.ts Step 17):**
-```ts
-// peerComparison: any[] — ist im StockAnalysis-Objekt enthalten
-// Problem: Frontend liest peerComparison nicht aus oder rendert es nicht
-```
+**Was fehlt — vollständige Peer-Metriken:**
 
-**Was fehlt — Peer-Metriken die gezeigt werden müssen:**
-
-| Metrik | FMP-Quelle | Formel / Feld |
+| Metrik | FMP-Endpunkt | Formel / Feld |
 |---|---|---|
-| P/E TTM | /ratios/:ticker | priceEarningsRatio |
-| Forward P/E | /ratios/:ticker | priceEarningsRatioTTM |
-| PEG | berechnet | PE / EPS-Wachstum 5J |
-| EV/EBITDA | /ratios/:ticker | enterpriseValueMultiple |
-| Revenue Growth YoY | income[0] vs income[1] | (rev0-rev1)/rev1*100 |
-| Revenue Growth 3J CAGR | income[0] vs income[3] | (rev0/rev3)^(1/3)-1 |
-| EPS 5J CAGR | /financial-growth/:ticker | epsgrowth (5Y avg) |
-| FCF Marge | cashflow + income | (opCF - capex) / revenue * 100 |
-| Gross Margin | income | grossProfit / revenue * 100 |
-| ROE | /ratios/:ticker | returnOnEquity |
+| P/E TTM | `/ratios/:ticker` | `priceEarningsRatio` |
+| Forward P/E | `/ratios/:ticker` | `priceEarningsRatioTTM` |
+| PEG | berechnet | `forwardPE / epsGrowthFwd_%` |
+| EV/EBITDA | `/ratios/:ticker` | `enterpriseValueMultiple` |
+| Revenue CAGR 3J | `/income-statement?limit=3` | `(rev[0]/rev[2])^(1/3)-1` |
+| EPS 5J CAGR | `/financial-growth?limit=1` | Feld `epsgrowth` |
+| FCF Marge | cashflow + income | `(opCF-|capex|)/revenue*100` |
+| Gross Margin | income | `grossProfit/revenue*100` |
+| ROE | `/ratios/:ticker` | `returnOnEquity` |
+| **ROIC 3J (NEU)** | `/key-metrics/:ticker?limit=3` | siehe Formel unten |
+| ROA | `/key-metrics/:ticker?limit=3` | `netIncome/totalAssets` |
 
-**Korrekte Formeln:**
+**Korrekte ROIC-Formel (muss exakt implementiert werden):**
+
 ```ts
-// PEG (Lynch-Methode, wie bereits in catalyst-engine.ts implementiert):
-PEG = forwardPE / epsGrowthFwd_percent
-// Wenn EPS-Wachstum negativ oder 0: PEG = null (nicht anzeigen)
+// ROIC = NOPAT / Invested Capital
+// NOPAT = EBIT * (1 - effektiver Steuersatz)
+// Invested Capital = Eigenkapital + langfristige Schulden - Cash
+//
+// FMP-Felder:
+// EBIT            = incomeLatest.operatingIncome
+// Tax Rate        = incomeLatest.incomeTaxExpense / incomeLatest.incomeBeforeTax
+//                   (clamp: 0.10 – 0.35; wenn negativ → 0.21 Standard)
+// LongTermDebt    = balanceSheet.longTermDebt
+// TotalEquity     = balanceSheet.totalStockholdersEquity
+// Cash            = balanceSheet.cashAndCashEquivalents
+//
+// Invested Capital = TotalEquity + LongTermDebt - Cash
+// NOPAT           = EBIT * (1 - TaxRate)
+// ROIC            = NOPAT / InvestedCapital * 100
+//
+// 3J-Durchschnitt:
+// ROIC_3Y = (ROIC[0] + ROIC[1] + ROIC[2]) / 3
+// FMP-Daten: /api/v3/key-metrics/:ticker?limit=3 liefert roic direkt
 
-// Revenue CAGR 3 Jahre:
-CAGR_3J = (income[0].revenue / income[2].revenue) ^ (1/3) - 1
-// FMP: /api/v3/income-statement/:ticker?limit=3
+export function calcROIC(ebit: number, taxExpense: number, incomeBeforeTax: number,
+  longTermDebt: number, totalEquity: number, cash: number): number {
+  const taxRate = incomeBeforeTax > 0
+    ? Math.max(0.10, Math.min(0.35, taxExpense / incomeBeforeTax))
+    : 0.21;
+  const nopat = ebit * (1 - taxRate);
+  const investedCapital = totalEquity + longTermDebt - cash;
+  if (investedCapital <= 0) return 0;
+  return (nopat / investedCapital) * 100;
+}
 
-// EPS 5J CAGR:
-EPS_5J = aus /api/v3/financial-growth/:ticker Feld 'epsgrowth' (5Y average)
-// Alternativ: (eps[0] / eps[4]) ^ (1/5) - 1
-
-// FCF Marge:
-FCF_Marge = (operatingCashFlow - abs(capitalExpenditure)) / revenue * 100
+// Alternativ direkt aus FMP /key-metrics:
+// const roic3Y = keyMetrics.slice(0,3).map(m => m.roic * 100).reduce((a,b)=>a+b,0) / 3;
 ```
 
 **Fix-Plan:**
@@ -174,309 +171,448 @@ FCF_Marge = (operatingCashFlow - abs(capitalExpenditure)) / revenue * 100
 Branch: fix/peer-comparison-section7
 
 1. server/news-peers.ts: fetchPeerComparisonFromTickers erweitern
+   + ROIC 3J: /key-metrics?limit=3 pro Peer (Feld: roic)
+   + ROA: netIncome/totalAssets
    + CAGR 3J: income-statement?limit=3 pro Peer
    + EPS 5J: financial-growth?limit=1 pro Peer
-   Achtung: 5 Peers x 4 Calls = 20 FMP-Calls extra → Budget-Check vorher
+   Budget: 5 Peers × 5 Calls = 25 extra FMP-Calls — vorher prüfen
 
-2. shared/schema.ts: PeerData-Interface erweitern
+2. shared/schema.ts: PeerData-Interface erweitern:
+   roic3Y: number;  // ROIC 3-Jahres-Durchschnitt in %
+   roa: number;     // Return on Assets in %
+   roe: number;     // Return on Equity in %
    revenueCAGR3Y: number;
    eps5YGrowth: number;
    fcfMargin: number;
    grossMargin: number;
-   roe: number;
 
-3. Frontend Section 7: peerComparison aus StockAnalysis lesen
-   + Tabelle mit allen 10 Metriken rendern
+3. Frontend Section 7:
+   + Tabelle alle 11 Metriken
    + Farbcodierung: besser als Sektor-Median = grün, schlechter = rot
-   + Sektor-Median-Zeile als letzte Zeile der Tabelle
-
-4. P/E (TTM) n/a-Bug:
-   quote.pe ist manchmal null bei FMP für unprofitable Unternehmen
-   Fix: if (pe === 0 || isNaN(pe)) → anzeigen als 'n/a' (bereits so, aber
-   auch priceEarningsRatio aus ratios[0] als Fallback versuchen)
+   + ROIC vs. WACC: wenn ROIC > WACC → grünes Badge "Wertsteigernd"
+   + Sektor-Median als letzte Zeile
 ```
 
 ---
 
 ## BUG C — Revenue-Segmente (Produkt + Region) fehlen in Investmentthese
 
-**Symptom:** Investmentthese zeigt keinen Umsatz nach Produkten/Medikamenten
-und keine regionale Aufschlüsselung (USA / Europa / Asien) mehr.
-
-**Was im Code existiert (Commit fb84193, 16.07.2026):**
-
-```ts
-// analyze-route.ts Step 7:
-const revenueSegments: RevenueSegment[] = [];
-if (Array.isArray(segments) && segments.length > 0) {
-  const segLatest = segments[0];
-  // Transformiert /stable flat-object → { name, revenue, percentage }[]
-  // PROBLEM: FMP /revenue-product-segmentation gibt Produkt-Segmente
-  // FMP /revenue-geographic-segmentation gibt Regionen
-  // Aktuell nur EINES davon abgerufen (fmpSegments in fmp.ts)
-}
-```
-
 **Zwei getrennte FMP-Endpunkte nötig:**
 
 ```ts
 // 1. Produkt-Segmente:
 GET /api/v3/revenue-product-segmentation?symbol={ticker}&apikey={key}
-// Response (stable): { date, "Intelligent Cloud": 111800000000, "Productivity...": ... }
-// Transformation:
-const segObj = Array.isArray(data) ? data[0] : data;
-const keys = Object.keys(segObj).filter(k => !['date','symbol','reportedCurrency','period'].includes(k));
-const total = keys.reduce((s, k) => s + (segObj[k] ?? 0), 0);
-productSegments = keys.map(k => ({
-  name: k,
-  revenue: segObj[k],
-  percentage: Math.round(segObj[k] / total * 1000) / 10
-})).filter(s => s.revenue > 0).sort((a,b) => b.revenue - a.revenue);
 
 // 2. Regionale Segmente:
 GET /api/v3/revenue-geographic-segmentation?symbol={ticker}&apikey={key}
-// Response: { date, "United States": ..., "Europe": ..., "Asia": ... }
-// Gleiche Transformation wie oben
-// Ergebnis: geoSegments: RevenueSegment[]
+
+// Transformation (identisch für beide):
+const segObj = Array.isArray(data) ? data[0] : data;
+const keys = Object.keys(segObj).filter(k =>
+  !['date','symbol','reportedCurrency','period'].includes(k)
+);
+const total = keys.reduce((s, k) => s + (segObj[k] ?? 0), 0);
+const segments = keys
+  .map(k => ({ name: k, revenue: segObj[k], percentage: Math.round(segObj[k]/total*1000)/10 }))
+  .filter(s => s.revenue > 0)
+  .sort((a,b) => b.revenue - a.revenue);
 ```
 
-**Beispiel MSFT (Geschäftsjahr 2025, in $B):**
+**Beispiel MSFT FY2025:**
 ```
-Produkt-Segmente:
-  Intelligent Cloud:              111.8B  (39.8%)
-  Productivity & Business Proc.:   91.0B  (32.4%)
-  More Personal Computing:          78.0B  (27.8%)
-
-Regionale Segmente (approximativ):
-  USA:       ~55%
-  Europa:    ~25%
-  Rest Welt: ~20%
+Produkt: Intelligent Cloud $111.8B (39.8%) | Productivity $91.0B (32.4%) | Personal Computing $78.0B (27.8%)
+Region:  USA ~55% | Europa ~25% | Rest ~20%
 ```
 
-**Beispiel NVO (Novo Nordisk, DKK → USD Konvertierung):**
+**Beispiel NVO FY2024 (DKK → umrechnen!):**
 ```
-Produkt-Segmente (FY2024, in DKK):
-  GLP-1 / Obesity (Wegovy):   ~60% des Umsatzes
-  Diabetes (Ozempic, NovoRapid): ~35%
-  Rare Disease:                   ~5%
-
-Regionale Segmente:
-  Nordamerika (USA):          ~60%
-  Europa:                     ~22%
-  Asien / Rest:               ~18%
-
-WICHTIG bei NVO: Umsatz in DKK gemeldet
-Konvertierung: DKK/USD ~0.146 (Stand 2025)
+Produkt: GLP-1/Wegovy ~60% | Diabetes/Ozempic ~35% | Rare Disease ~5%
+Region:  Nordamerika ~60% | Europa ~22% | Asien ~18%
 ```
 
 **Fix-Plan:**
 ```
 Branch: fix/revenue-segments-product-geo
-
-1. server/fmp.ts: fmpSegments aufsplitten in:
-   fmpProductSegments(ticker): Promise<RevenueSegment[]>
-   fmpGeoSegments(ticker): Promise<RevenueSegment[]>
-
-2. server/analyze-route.ts Step 7:
-   const [productSegments, geoSegments] = await Promise.all([
-     fmpProductSegments(upperTicker).catch(() => []),
-     fmpGeoSegments(upperTicker).catch(() => []),
-   ]);
-   // Kein Crash wenn ein Endpunkt fehlt (nicht alle Ticker haben Segment-Daten)
-
-3. shared/schema.ts:
-   interface StockAnalysis {
-     productSegments: RevenueSegment[];  // NEU (war: revenueSegments)
-     geoSegments: RevenueSegment[];      // NEU
-     revenueSegments: RevenueSegment[];  // behalten für Abwärtskompatibilität
-   }
-
-4. Frontend Investmentthese-Section:
-   + PieChart für productSegments (Produkte/Medikamente, sortiert nach Anteil)
-   + BarChart horizontal für geoSegments (USA / Europa / Asien / Rest)
-   + Wenn keine Daten: 'Segment-Aufschlüsselung nicht verfügbar' (kein Crash)
+server/fmp.ts: fmpSegments aufsplitten in fmpProductSegments() + fmpGeoSegments()
+Frontend: PieChart (Produkte) + Horizontal BarChart (Regionen)
 ```
 
 ---
 
-## BUG D — DCF und CRV inflationiert bei nicht-US-Titeln (z.B. NVO, ASML, SAP)
+## BUG D — DCF und CRV inflationiert bei Nicht-USD-Titeln (NVO, ASML, SAP)
 
-**Symptom:** DCF Fair Value und CRV (Chancen-Risiko-Verhältnis) bei dänischen,
-europäischen oder anderen Nicht-USD-Titeln um Faktor 6–7x inflationiert.
+**Ursache:** fxRate wird gefetcht, aber fcfTTM, netDebt etc. werden nicht konvertiert.
 
-**Ursache (analyze-route.ts Step 2 + 18, Commit 5a283e4):**
+**Konkrete Zahlen NVO:**
+```
+FCF TTM = 95 Mrd DKK × 0.1456 = $13.8 Mrd USD
+Korrekter DCF Fair Value/ADR: ~$35-55 (Kurs $67 → plausibel overvalued)
+Fehler ohne Konvertierung: Ergebnis in DKK als $ angezeigt → 6.9× falsch
+```
+
+**Fix:**
+```ts
+// ALLE Betrags-Felder mit fxRate multiplizieren:
+const toUSD = (val: number) => val * fxRate;
+const fcfTTM_usd  = toUSD(fcfTTM);
+const netDebt_usd = toUSD(netDebt);
+// sharesOutstanding und ADR-price NICHT konvertieren
+```
+
+---
+
+# TEIL 3 — KATALYSATOREN-SEKTION 15: VOLLSTÄNDIGE MATHEMATISCHE FORMELN
+
+> Quelle: catalyst-engine.ts (Commit 18c2e09, vollständig gelesen 23.07.2026)
+> Diese Formeln MÜSSEN exakt so im LLM-Prompt (OpenRouter/llm-openrouter.ts)
+> UND im Template-Fallback (catalyst-engine.ts) verwendet werden.
+
+## 3.1 — Definitionen aller Katalysator-Felder
+
+```
+PoS %           = Probability of Success (historisch begründet, -10-15% Safety Margin)
+Brutto-Upside   = Kursanstieg in % wenn der Katalysator sich vollständig materialisiert
+Einpreisungsgrad = Anteil des Katalysators der bereits im Kurs steckt (via Konsens/Reverse DCF)
+Netto-Upside    = Brutto-Upside × (1 - Einpreisungsgrad/100)
+GB %            = Gewichteter Beitrag = PoS/100 × Netto-Upside
+```
+
+## 3.2 — Exakte Formeln
 
 ```ts
-// Step 2: FX-Rate wird gefetcht
-let fxRate = 1;
-if (reportedCurrency !== 'USD') {
-  fxRate = fetchFXRate(reportedCurrency) ?? 1;
+// 1. Netto-Upside:
+nettoUpside = bruttoUpside * (1 - einpreisungsgrad / 100)
+// Beispiel Screenshot K1: 17% * (1 - 39/100) = 17% * 0.61 = 10.37% ✓
+
+// 2. Gewichteter Beitrag (GB):
+gb = (pos / 100) * nettoUpside
+// Beispiel Screenshot K1: (75/100) * 10.37 = 7.78% ✓
+// Beispiel Screenshot K2: (60/100) * 2.70 = 1.62% ✓
+// Beispiel Screenshot K3: (60/100) * 8.40 = 5.04% ✓
+// Beispiel Screenshot K4: (45/100) * 5.40 = 2.43% ✓
+
+// 3. Σ Netto-Upside (vor PoS-Gewichtung):
+sumNettoUpside = sum(nettoUpside_i)
+// Screenshot: 10.37 + 2.70 + 8.40 + 5.40 = 26.87% ✓
+
+// 4. GB-Summe (nach PoS):
+sumGB = sum(gb_i)
+// Screenshot: 7.78 + 1.62 + 5.04 + 2.43 = 16.87% ✓
+
+// 5. Catalyst-Adjusted Target:
+catalystTarget = dcfFairValue * (1 + sumGB / 100)
+// Screenshot: $364.17 * (1 + 16.87/100) = $364.17 * 1.1687 = $425.61 ✓
+// WICHTIG: Basis ist DCF Fair Value (konservativer Anker), NICHT Analyst PT!
+// Analyst PT wird separat als Referenz gezeigt.
+```
+
+## 3.3 — Reverse DCF / Einpreisungsgrad-Berechnung
+
+**Was aktuell in catalyst-engine.ts steht (calcImpliedGStar, Commit 18c2e09):**
+
+```ts
+export function calcImpliedGStar(params: {
+  price: number; sharesOutstanding: number; netDebt: number;
+  fcf: number; wacc: number;
+}): number | null {
+  const ev = price * sharesOutstanding + netDebt;
+  // g* = (WACC/100 - FCF/EV) * 100
+  const impliedGrowth = (wacc / 100 - fcf / ev) * 100;
+  return isFinite(impliedGrowth) ? impliedGrowth : null;
+}
+```
+
+**PROBLEM: Diese Formel ist eine Näherung (Perpetuity-Approximation), keine exakte Lösung.**
+
+**Korrekte Reverse DCF Formel — algebraisch exakt für N=5 Jahre:**
+
+```ts
+/**
+ * Reverse DCF: Löse g* aus
+ *   EV = FCF * Σ(t=1..N) [(1+g)^t / (1+WACC)^t]
+ *       + FCF * (1+g)^N * (1+g_terminal) / [(WACC - g_terminal) * (1+WACC)^N]
+ *
+ * Wo:
+ *   EV              = price * sharesOutstanding + netDebt  (Enterprise Value)
+ *   FCF             = Free Cash Flow TTM
+ *   WACC            = Weighted Avg Cost of Capital (dezimal, z.B. 0.085)
+ *   N               = 5 (Planungshorizont Jahre)
+ *   g_terminal      = 0.025 (2.5% = BIP-Wachstum langfristig — fix)
+ *   g*              = gesuchtes implizites Wachstum
+ *
+ * Lösung: Binary Search über g* (numerisch, da keine geschlossene algebraische Lösung)
+ */
+export function calcImpliedGStarExact(params: {
+  price: number;
+  sharesOutstanding: number;
+  netDebt: number;
+  fcf: number;
+  wacc: number;
+  n?: number;
+  terminalGrowth?: number;
+}): number | null {
+  const { price, sharesOutstanding, netDebt, fcf, wacc, n = 5, terminalGrowth = 0.025 } = params;
+
+  if (fcf <= 0 || price <= 0 || sharesOutstanding <= 0) return null;
+  const waccD = wacc / 100;
+  const ev = price * sharesOutstanding + netDebt;
+  if (ev <= 0) return null;
+
+  // DCF-Wert berechnen bei gegebenem g
+  function dcfValue(g: number): number {
+    let pv = 0;
+    for (let t = 1; t <= n; t++) {
+      pv += fcf * Math.pow(1 + g, t) / Math.pow(1 + waccD, t);
+    }
+    // Terminal Value (Gordon Growth):
+    const tv = fcf * Math.pow(1 + g, n) * (1 + terminalGrowth)
+              / ((waccD - terminalGrowth) * Math.pow(1 + waccD, n));
+    return pv + tv;
+  }
+
+  // Binary Search: suche g* so dass dcfValue(g*) = EV
+  // Bereich: -5% bis +40% Wachstum
+  let lo = -0.05, hi = 0.40;
+  if (dcfValue(hi) < ev) return null; // EV nicht erreichbar
+  if (dcfValue(lo) > ev) return null; // EV schon bei Schrumpfung zu hoch
+
+  for (let i = 0; i < 50; i++) {
+    const mid = (lo + hi) / 2;
+    if (dcfValue(mid) > ev) hi = mid;
+    else lo = mid;
+    if (hi - lo < 0.0001) break;
+  }
+  return Math.round(((lo + hi) / 2) * 10000) / 100; // in Prozent, 2 Nachkommastellen
 }
 
-// Step 2: Financials werden geparst — ABER:
-const revenue = parseNumber(String(incomeLatest.revenue ?? 0));
-// PROBLEM: revenue ist in DKK (z.B. NVO: revenue = 232.3 Mrd DKK)
-// fxRate = 0.146 (DKK/USD)
-// Aber convertFinancials() wird NICHT auf alle Felder angewendet!
-
-// Step 18: DCF mit rohen DKK-Werten:
-dcfFairValue = (pvFCF + terminalValue - netDebt) / sharesOutstanding
-// sharesOutstanding ist in Einzel-Aktien (korrekt)
-// fcfTTM ist in DKK (FALSCH — müsste in USD sein)
-// netDebt ist in DKK (FALSCH)
-// Ergebnis: dcfFairValue in DKK/Aktie statt USD/Aktie
-// Display: zeigt z.B. 1.847 DKK als wäre es $1.847 USD → 10x zu hoch
+// Beispiel Validierung MSFT (Stand 2025):
+// price = $415, shares = 7.43B, netDebt = -$50B (netto Cash)
+// FCF TTM = $71B, WACC = 8.5%
+// EV = 415 * 7.43B + (-50B) = $3.034T
+// calcImpliedGStarExact → g* ≈ 14.5%
+// Interpretation: Markt preist ~14.5% FCF-Wachstum p.a. über 5J ein
+// Historisches FCF-Wachstum MSFT: ~15-18% → leicht überbewertet
 ```
 
-**Konkrete Zahlen NVO (FY2024):**
-```
-NVO reported in DKK:
-  Revenue:      232.3 Mrd DKK
-  FCF TTM:       ~95 Mrd DKK
-  Net Debt:      ~30 Mrd DKK
-  Shares:       ~4.46 Mrd (ADR-adjusted)
-
-FX: DKK/USD = 0.1456 (Jan 2025)
-
-Korrekter DCF Fair Value:
-  FCF_USD = 95 Mrd DKK * 0.1456 = ~13.8 Mrd USD
-  TV = FCF_USD * (1+0.025) / (0.085 - 0.025) / (1.085)^5 = ~168 Mrd USD
-  Equity = PV_FCF + TV - NetDebt_USD = ~185 Mrd USD
-  FairValue/Aktie = 185 Mrd / 4.46 Mrd = ~$41 USD
-  (NVO ADR tatsächlicher Kurs: ~$67, also ca. 40% überbewertet laut DCF — plausibel)
-
-Fehlerhafte Berechnung (aktuell):
-  FCF = 95 Mrd DKK (nicht konvertiert)
-  FairValue/Aktie = 95 Mrd / 4.46 Mrd = ~21 DKK = als $21 angezeigt (zu niedrig)
-  ODER wenn shares in Tausend: = 95.000 / 4.460 = $21.300 (viel zu hoch)
-  → Je nach shares-Normalisierungsfehler entweder 10x zu hoch oder 10x zu niedrig
-```
-
-**Korrekter Fix (convert ALLE Finanzfelder vor DCF):**
+## 3.4 — Einpreisungsgrad aus g* ableiten
 
 ```ts
-// Nach Step 2 FX-Fetch, vor Step 18 DCF:
-const toUSD = (val: number) => val * fxRate;
+/**
+ * Einpreisungsgrad: Wie viel % des Brutto-Upsides steckt bereits im Kurs?
+ *
+ * Methode (aktuell in catalyst-engine.ts calcEinpreisungsgrad):
+ *   1. g* berechnen (impliziertes Wachstum aus aktuellem Kurs)
+ *   2. Einpreisungsgrad = g* / bruttoUpside_als_g-Äquivalent
+ *   3. Clamp: min 15%, max 70%
+ *
+ * PROBLEM: g* und bruttoUpside haben unterschiedliche Einheiten!
+ *   bruttoUpside ist Kursanstieg in %, g* ist FCF-Wachstum in %/Jahr
+ *   Direkte Division ist dimensionsunstimmig.
+ *
+ * KORREKTE Methode:
+ *   Schritt 1: DCF Fair Value bei historischem Wachstum berechnen (g_hist)
+ *   Schritt 2: DCF Fair Value bei g* (aktueller Kurs) berechnen
+ *   Schritt 3: Einpreisungsgrad = (price - dcf_gHist) / (dcf_gStar - dcf_gHist)
+ *   Interpretation: Wie viel der Differenz zwischen Fair Value und Markt
+ *                  ist durch impliziertes Wachstum erklärt?
+ *
+ * Vereinfachte Formel (pragmatisch, bis exakte Methode implementiert):
+ *   Einpreisungsgrad_approx = clamp(g* / (historischesWachstum * 1.2), 0.15, 0.70)
+ *   d.h.: wenn g* ≈ historisches Wachstum → ~83% eingepreist (hohes g*)
+ *         wenn g* << historisch → niedrig eingepreist (Discount)
+ */
+export function calcEinpreisungsgradV2(params: {
+  gStar: number;         // impliziertes Wachstum in % (aus calcImpliedGStarExact)
+  historicalGrowth: number; // historisches FCF/Revenue-Wachstum in %
+  bruttoUpside: number;  // Brutto-Upside % des Katalysators
+  catalystType: string;
+}): number {
+  const { gStar, historicalGrowth, bruttoUpside, catalystType } = params;
 
-// ALLE betroffenen Felder konvertieren:
-const revenue_usd        = toUSD(revenue);
-const fcfTTM_usd         = toUSD(fcfTTM);
-const netDebt_usd        = toUSD(netDebt);
-const ebitda_usd         = toUSD(ebitda);
-const grossProfit_usd    = toUSD(grossProfit);
-const operatingIncome_usd = toUSD(operatingIncome);
-const netIncome_usd      = toUSD(netIncome);
-const totalDebt_usd      = toUSD(totalDebt);
-const cashEquivalents_usd = toUSD(cashEquivalents);
+  // Wenn g* verfügbar: relative Einpreisung
+  if (gStar > 0 && historicalGrowth > 0) {
+    const relEinpreisung = gStar / (historicalGrowth * 1.2);
+    return Math.round(Math.max(0.15, Math.min(0.70, relEinpreisung)) * 100);
+  }
 
-// sharesOutstanding: NICHT konvertieren (Anzahl, nicht Betrag)
-// price: NICHT konvertieren (FMP liefert bei ADRs bereits USD-Preis)
-// marketCap: NICHT konvertieren wenn aus quote.marketCap (bereits USD bei FMP)
-
-// Margen neu berechnen mit USD-Werten:
-const grossMargin = revenue_usd > 0 ? grossProfit_usd / revenue_usd * 100 : 0;
-const fcfMargin   = revenue_usd > 0 ? fcfTTM_usd / revenue_usd * 100 : 0;
-
-// DCF mit USD-Werten:
-dcfFairValue = (pvFCF_usd + terminalValue_usd - netDebt_usd) / sharesOutstanding;
+  // Fallback: Sektor-Basisraten (unverändert aus aktuellem Code)
+  const growthFactor = Math.min(historicalGrowth / 30, 1.0);
+  const baseRate: Record<string, number> = {
+    growth:  35 + Math.round(growthFactor * 20),
+    margin:  30 + Math.round(growthFactor * 15),
+    product: 25 + Math.round(growthFactor * 15),
+    ai:      45 + Math.round(growthFactor * 20),
+    macro:   35,
+  };
+  return baseRate[catalystType] ?? 35;
+}
 ```
 
-**Zusatz: CRV (Chancen-Risiko-Verhältnis) ebenfalls betroffen:**
+## 3.5 — LLM-Prompt für OpenRouter: Pflicht-Formeln und Regeln
+
+> Diese Regeln müssen in llm-openrouter.ts → generateCatalystsAndMatchNews()
+> als System-Prompt-Block eingefügt werden. Aktuell fehlt die mathematische
+> Spezifikation. Commit: llm-openrouter.ts noch nicht gelesen — Aufgabe:
+> sicherstellen dass dieser Prompt-Block exakt so enthalten ist.
+
+```ts
+// server/llm-openrouter.ts — Prompt-Block für Katalysator-Generierung:
+const CATALYST_MATH_RULES = `
+MATHEMATISCHE REGELN (ZWINGEND — keine Abweichung erlaubt):
+
+1. Netto-Upside = Brutto-Upside × (1 - Einpreisungsgrad/100)
+   Beispiel: Brutto-Upside=17%, Einpreisungsgrad=39% → Netto-Upside = 17 × 0.61 = 10.37%
+
+2. GB (Gewichteter Beitrag) = (PoS/100) × Netto-Upside
+   Beispiel: PoS=75%, Netto-Upside=10.37% → GB = 0.75 × 10.37 = 7.78%
+
+3. PoS (Probability of Success) MUSS historisch begründet sein:
+   - Basiere auf tatsächlichen Erfüllungsraten ähnlicher Katalysatortypen
+   - Ziehe IMMER 10-15 Prozentpunkte Safety Margin ab
+   - Beispiele: Phase-3 FDA: 60-65% Erfolg → PoS max 50%; Cloud-Wachstum: ~75% → PoS max 65%
+   - Niemals PoS > 80% oder < 20%
+
+4. Einpreisungsgrad = Anteil der bereits im Konsens/Forward-Schätzungen steckt:
+   - Hohe Forward-PE relative zu Peers → hoher Einpreisungsgrad (40-60%)
+   - Stock unter 52W-Hoch, Konsens-PT weit über Kurs → niedriger Einpreisungsgrad (20-35%)
+   - Niemals Einpreisungsgrad > 70% (dann wäre Netto-Upside minimal)
+
+5. Brutto-Upside MUSS an konkrete Szenarien geknüpft sein:
+   - Revenue Catalyst: Brutto-Upside ≈ Revenue-Schock × Revenue/MarketCap-Multiplikator
+   - Margin Catalyst: Brutto-Upside ≈ Margenhebel × EBIT-Multiplikator
+   - Beispiel MSFT: +1% Margin → +$2.8B EBIT → bei 30x EV/EBIT ≈ +$84B EV ≈ +3% Kurs
+
+6. KEIN Katalysator darf generisch sein:
+   VERBOTEN: "Revenue Growth Acceleration", "Margin Expansion" (Template-Namen)
+   PFLICHT: Unternehmensname/Produkt/Projekt im Katalysator-Namen
+   Beispiele: "Azure OpenAI Enterprise Adoption", "Wegovy US Market Penetration",
+   "VMware Integration Synergies $3B by FY26"
+`;
+
+// Timestamp-Verifikation der News:
+// Jeder News-Treffer muss auf den Katalysator passen:
+// 1. publishedAt muss innerhalb der letzten 90 Tage liegen
+// 2. Headline muss das Unternehmen ODER das Produkt/Projekt explizit nennen
+// 3. Wenn Timestamp > 90 Tage: News nicht verwenden (veraltet)
+// 4. Cache-Key: `${ticker}:${catalystName}:${date.slice(0,10)}`
+//    Wenn Cache-Hit (< 20 Min): direkter Return ohne LLM-Call
 ```
-CRV = (DCF Fair Value - Kurs) / (Kurs - Stop Loss)
-Wenn DCF falsch → CRV falsch
 
-Fix: CRV erst nach DCF-Korrektur berechnen
-Zusätzlich: analystPTMedian von FMP kommt für ADRs in USD → direkt nutzbar
-Für europäische Listings (ASML auf Euronext): analystPTMedian in EUR → auch konvertieren
+## 3.6 — Reverse DCF Section 15: Vollständige Implementierung
+
+**Was fehlt (Section 15 noch nicht implementiert laut WORK.md Roadmap):**
+
+```ts
+// server/routes/reverse-dcf.ts — NEUER Endpunkt
+// POST /api/reverse-dcf
+// Body: { ticker: string, currentPrice: number, wacc: number, n: number }
+
+interface ReverseDCFResult {
+  impliedGrowthRate: number;   // g* in % p.a.
+  historicalGrowth: number;    // FCF CAGR 5J aus FMP
+  delta: number;               // g* - historicalGrowth (positiv = überbewertet)
+  marginOfSafety: number;      // (dcfFairValue - price) / price * 100
+  dcfFairValue: number;        // DCF bei g=historicalGrowth
+  interpretation: string;      // 'Unterbewertet' | 'Fair' | 'Leicht überbewertet' | 'Stark überbewertet'
+  sensitivityTable: SensitivityRow[];
+}
+
+interface SensitivityRow {
+  wacc: number;        // 7% | 8% | 9% | 10% | 11%
+  g5Y_bear: number;   // -5%: resultierender Fair Value
+  g5Y_base: number;   // historisch
+  g5Y_bull: number;   // +5% über historisch
+}
+
+// Interpretation-Schwellen:
+function interpretDelta(delta: number, marginOfSafety: number): string {
+  if (marginOfSafety > 20) return 'Unterbewertet';     // DCF > 120% Kurs
+  if (marginOfSafety > 0)  return 'Fair';               // DCF 100-120% Kurs
+  if (delta < 5)           return 'Leicht überbewertet'; // g* nur 5% über hist.
+  return 'Stark überbewertet';                           // g* >> historisch
+}
+
+// Sensitivitätstabelle:
+// WACC-Range: [0.07, 0.08, 0.09, 0.10, 0.11]
+// Growth-Range: [hist-5%, hist, hist+5%]
+// 5×3 = 15 DCF-Berechnungen, Heatmap im Frontend
+// Farbe: > aktueller Kurs = grün, < aktueller Kurs = rot
+
+// Frontend:
+// Sidebar: { id: 15, label: 'Reverse DCF', icon: RefreshCw }
+// Slider: WACC 4–15% (Schritt 0.5%)
+// Dropdown: N = 5J / 7J / 10J
+// Heatmap: 5 WACC × 3 Szenarien
+// Badge: Interpretation mit Farbe
+
+// Pflicht-Formel laut Reverse DCF Definition:
+// "Aktienkurs preist g* = X% FCF-Wachstum p.a. ein.
+//  Historisch: Y% — Kurs preist [X-Y]% Prämie auf historisches Wachstum ein."
 ```
 
-**Betroffene Ticker (Beispiele):**
+**Validierungsbeispiele für Tests:**
+
 ```
-NVO   — Dänische Krone (DKK), ADR auf NYSE
-ASML  — Euro (EUR), ADR auf NASDAQ
-SAP   — Euro (EUR), ADR auf NYSE
-NOVO  — DKK, primäres Listing Kopenhagen
-SHEL  — USD gemeldet (kein Problem)
-NVS   — CHF, ADR auf NYSE
-ROG   — CHF, primäres Listing Zürich
-```
+MSFT (Stand Jan 2025):
+  price=$415, shares=7.43B, netDebt=-$50B, FCF=$71B, WACC=8.5%
+  EV = 415*7.43B - 50B = $3.034T
+  calcImpliedGStarExact → g* ≈ 14.5%
+  FCF CAGR 5J (FMP financial-growth) ≈ 16-18%
+  → delta = 14.5 - 17 = -2.5% → Kurs preist weniger ein als historisch → Fair/leicht unterbewertet
 
-**Fix-Plan:**
-```
-Branch: fix/non-usd-dcf-conversion
+NVO (ADR, Stand Jan 2025):
+  price=$67 (ADR), shares_adj=4.46B, FCF_USD=$13.8B (nach DKK-Konvertierung), netDebt_USD=$4.4B
+  WACC=8.0% (Pharma)
+  EV = 67*4.46B + 4.4B = $303B
+  calcImpliedGStarExact → g* ≈ 35%+
+  FCF CAGR 5J ≈ 30-35% (GLP-1 Boom)
+  → delta ≈ 0-5% → Fair bis leicht überbewertet
 
-1. server/analyze-route.ts: nach fetchFXRate() —
-   alle Betrag-Felder mit fxRate multiplizieren (revenue, fcf, netDebt, etc.)
-   sharesOutstanding und price NICHT konvertieren
-
-2. server/fmp.ts: convertFmpRowsToUsd() Funktion bereits vorhanden (Commit ce3b1bc)
-   Prüfen ob sie vollständig alle Felder abdeckt und korrekt aufgerufen wird
-
-3. Test mit NVO:
-   Erwarteter DCF Fair Value: ~$35-55 USD/ADR (plausible Range)
-   Wenn Ergebnis > $300 oder < $5 → Konvertierungsfehler noch vorhanden
-
-4. Test mit ASML:
-   FY2024 FCF: ~8.5 Mrd EUR, EUR/USD ~1.08
-   Shares: ~394 Mio
-   Erwarteter DCF: ~$100-160 USD (Markt: $680 → stark überbewertet laut DCF = plausibel)
-
-5. shared/schema.ts: CurrencyInfo-Interface prüfen:
-   { reportedCurrency, fxRate, isConverted }
-   Auf jedem Analyse-Ergebnis ausgeben damit Frontend anzeigen kann:
-   "Financials in DKK, umgerechnet mit 1 DKK = 0.146 USD"
+ASML (ADR, Stand Jan 2025):
+  price=$680, shares=394M, FCF_USD=$8.5B*1.08=$9.2B, netDebt_USD=$2B
+  WACC=8.5%
+  EV = 680*394M + 2B = $270B
+  calcImpliedGStarExact → g* ≈ 28%
+  FCF CAGR 5J ≈ 15-18%
+  → delta ≈ +12% → stark überbewertet (Prämium gerechtfertigt durch EUV-Monopol?)
 ```
 
 ---
 
-# TEIL 3 — FMP-MIGRATION (P0-BLOCKER)
+# TEIL 4 — FMP-MIGRATION (P0-BLOCKER)
 
-## Status: FMP-Integration unvollständig
+## Migrationsplan
 
-Hauptentrpunkte laut analyze-route.ts (Commit 5a283e4, 16.07.2026):
-- getFmpFallbackData() macht 13 parallele FMP-Calls: quote, profile, income,
-  cashflow, balanceSheet, ohlcv, analyst.priceTarget, analyst.estimates,
-  analyst.grades, segments, peers, ratios, keyMetrics
-- fmpSegments: ruft /revenue-product-segmentation ab (nicht geo)
-- fetchPeerComparisonFromTickers: vorhanden, aber Output kommt nicht im Frontend an
+| Schritt | Aufgabe | Branch |
+|---|---|---|
+| 1 | /api/fmp-budget im Frontend sichtbar | fix/fmp-debug-panel |
+| 2 | Non-USD Konvertierung fix (BUG D) | fix/non-usd-dcf-conversion |
+| 3 | Peer-Vergleich + ROI 3J (BUG B) | fix/peer-comparison-section7 |
+| 4 | Revenue-Segmente Produkt + Geo (BUG C) | fix/revenue-segments-product-geo |
+| 5 | calcImpliedGStarExact ersetzen alten calcImpliedGStar | fix/reverse-dcf-exact |
+| 6 | LLM-Prompt Catalyst Math Rules (BUG E) | fix/llm-catalyst-math-rules |
+| 7 | Integration-Test: MSFT, AAPL, NVO, ASML | fix/integration-test |
 
 ### Korrekte FMP-Request-Struktur
 
 ```ts
-const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
-
 export async function fmpGet<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   const key = process.env.FMP_API_KEY;
   if (!key) throw new Error('FMP_API_KEY nicht gesetzt');
-  const url = new URL(`${FMP_BASE}${path}`);
+  const url = new URL(`https://financialmodelingprep.com/api/v3${path}`);
   url.searchParams.set('apikey', key);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error(`FMP ${path} HTTP ${res.status}`);
   const data = await res.json();
-  if (data && typeof data === 'object' && 'Error Message' in data)
-    throw new Error(`FMP: ${(data as any)['Error Message']}`);
+  if (data && 'Error Message' in data) throw new Error(`FMP: ${(data as any)['Error Message']}`);
   return data as T;
 }
 ```
 
-### Migrationsplan
-
-| Schritt | Aufgabe | Branch |
-|---|---|---|
-| 1 | /api/fmp-budget im Frontend sichtbar machen | fix/fmp-debug-panel |
-| 2 | Non-USD Konvertierung fix (BUG D) | fix/non-usd-dcf-conversion |
-| 3 | Peer-Vergleich Section 7 fix (BUG B) | fix/peer-comparison-section7 |
-| 4 | Revenue-Segmente Produkt + Geo (BUG C) | fix/revenue-segments-product-geo |
-| 5 | Integration-Test: MSFT, AAPL, NVO, ASML | fix/integration-test |
-
 ---
 
-# TEIL 4 — LANGFRISTIGE FEATURE-ROADMAP
-
-Alle Items vorzubereiten, nicht sofort implementieren.
-Jedes Feature = eigener Branch + PR + Review.
+# TEIL 5 — LANGFRISTIGE FEATURE-ROADMAP
 
 ## Technische Grundregeln
 
@@ -490,52 +626,37 @@ Jedes Feature = eigener Branch + PR + Review.
 
 ## Stock Analysis Pro
 
-### Aktienkurshistorie 10 Jahre (statt 5)
+### Aktienkurshistorie 10 Jahre
 
 ```ts
 const from = dayjs().subtract(10, 'year').format('YYYY-MM-DD');
 // FMP: /api/v3/historical-price-full/:ticker?from={from}&apikey={key}
 ```
 
-Frontend:
-```tsx
-type TimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y" | "10Y";
-const daysCutoff: Record<TimeRange, number> = {
-  "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825, "10Y": 3650,
-};
-```
-
-### Section 8 — WACC & Terminal Value individuell einstellbar
+### Section 8 — WACC & Terminal Value individuell
 
 ```tsx
 const [wacc, setWacc] = useState(0.09);
 const [g, setG] = useState(0.025);
-// Gordon Growth: TV = FCF_last * (1+g) / (WACC - g)
+// TV = FCF_last * (1+g) / (WACC - g)
 // CAPM: Re = Rf + Beta*(Rm-Rf)
 ```
 
 ### PESTEL-Analyse [Section 14]
-
 ```ts
 POST /api/pestel { ticker, company, sector }
-// Output: { political, economic, social, tech, env, legal } je { drivers[], risks[] }
+Sidebar: { id: 14, label: 'PESTEL', icon: Globe }
 ```
-Sidebar: `{ id: 14, label: 'PESTEL', icon: Globe }`
 
 ### Reverse DCF [Section 15]
-
 ```
-g* = impliziertes Wachstum aus aktuellem Kurs
-g* >> historisch → Bewertung preist Perfektion ein
-g* << historisch → Margin of Safety
-POST /api/reverse-dcf { ticker, currentPrice, fcfHistory[5J], wacc, n }
+Vollständige Implementierung: siehe TEIL 3.6
+Sidebar: { id: 15, label: 'Reverse DCF', icon: RefreshCw }
 ```
-Sidebar: `{ id: 15, label: 'Reverse DCF', icon: RefreshCw }`
 
 ### Monte Carlo — Flexible Iterationen 0–50.000
-
 ```tsx
-type="text" inputMode="numeric" — onBlur: clamp(parseInt(input), 0, 50000)
+onBlur: clamp(parseInt(input), 0, 50000)
 // Warnung bei > 30k
 ```
 
@@ -552,54 +673,34 @@ type="text" inputMode="numeric" — onBlur: clamp(parseInt(input), 0, 50000)
 | Thesis Score | xx/100 | — | Komposit |
 
 ### Management-Analyse (Buffett-Kriterien)
-
 ```ts
 POST /api/management { ticker }
 // FMP: /api/v3/key-executives/:ticker, /api/v3/earnings-surprises/:ticker
-// sonar-pro: Skandale, Klagen, SEC-Verfahren
-// Output: { executives, earningsBeatRate, scandals, insiderOwnership, managementScore }
+// sonar-pro: Skandale, SEC-Verfahren
 ```
 
 ### ROIC / ROE / ROA — Jahresvergleich 3 Jahre
-
 ```
-ROIC = EBIT * (1 - Tax) / (Equity + LongTermDebt - Cash)
+ROIC = EBIT*(1-Tax) / (Equity+LongTermDebt-Cash)
+ROE  = NetIncome / Equity
+ROA  = NetIncome / TotalAssets
 FMP: /api/v3/key-metrics/:ticker?limit=3
-Frontend: BarChart 3 Gruppen, Farbe: > WACC = grün, < WACC = rot
+BarChart 3 Gruppen, ROIC > WACC = grün
 ```
 
 ### Thesis Score
-
 ```
-Thesis Score (0–100) =
-  Moat Score        * 0.25
-  FCF Marge 5J      * 0.20
-  Fiskalstimulus    * 0.15
-  Konjunktur-Trend  * 0.15
-  Reputation Score  * 0.15
-  Positive Events   * 0.10
+Thesis Score (0-100) =
+  Moat Score * 0.25 + FCF Marge 5J * 0.20 + Fiskalstimulus * 0.15
+  + Konjunktur-Trend * 0.15 + Reputation * 0.15 + Positive Events * 0.10
 ```
 
-### Bilanzen Red-Flag-Screener
-
-```
-Goodwill > 50% Total Assets
-AR wächst schneller als Revenue (3J)
-Operating CF < Net Income (2 von 3J)
-Debt/Equity > 3x UND Zinsdeckung < 3x
-Gross Margin Trend < -3 Pkt./J. über 3J
-FCF negativ bei positivem Net Income
-CapEx > 80% Operating CF
-```
-
-### Virtuelles Portfolio + Kelly-Formel
-
+### Virtuelles Portfolio + Kelly
 ```
 Kelly % = (p*b - q) / b
-  p = Thesis Score / 100
-  b = Upside/Downside aus DCF
+p = Thesis Score/100, b = Upside/Downside aus DCF
 Pabrai: max 10% pro Position
-CAPM-Mindestrendite: Re = 4.5% + Beta*5.5%
+CAPM: Re = 4.5% + Beta*5.5%
 Tracking: LocalStorage (V1)
 ```
 
@@ -608,39 +709,19 @@ Tracking: LocalStorage (V1)
 ## Rezessionsboard
 
 ### Google Trends — N/A fixen
-
 ```ts
-// 1. Google Trends API
-// 2. Fallback: Cache letzter Wert
-// 3. Fallback: score=50 (neutral), Amber-Badge 'Daten veraltet'
-```
-
-### Makro-Risikobeurteilung — LLM
-
-```ts
-POST /api/recession-summary
-sonar-pro: US-Rezessionswahrscheinlichkeit, Fed, Geopolitik, Anleihen
-Output: { riskLevel: 'low'|'medium'|'high', summary, keyRisks[], sources[] }
+// Fallback: Cache letzter Wert → score=50, Amber-Badge 'Daten veraltet'
 ```
 
 ### Sektor-Rotation
-
 ```
 Relativbewertung = Sektor-KGV_aktuell / Sektor-KGV_10J_Mittel
-FMP: /api/v3/sector_price_earning_ratio
-Heatmap: 11 GICS-Sektoren
+FMP: /api/v3/sector_price_earning_ratio — Heatmap 11 GICS-Sektoren
 ```
 
 ---
 
 ## BTC-Dashboard — Section 13 Miner-Zone
-
-### Hash Ribbons
-```
-MA30 vs MA60 Hashrate
-Kaufsignal: MA30 kreuzt MA60 von unten
-Datenquelle: mempool.space /api/v1/mining/hashrate/3y
-```
 
 ### Puell Multiple
 ```
@@ -648,17 +729,14 @@ Puell = Tagesemission_USD / MA365(Tagesemission_USD)
 <0.5 Kapitulation | >4 überhitzt
 ```
 
-### Hashprice + Breakeven
+### Hash Ribbons
 ```
-Hashprice = (144 * 3.125 * BTC-Preis) / Hashrate_TH
-Breakeven: Slider Effizienz 18/21.5/30 J/TH, Strom $0.04/0.05/0.08
+MA30 vs MA60 Hashrate — Kaufsignal: MA30 kreuzt MA60 von unten
 ```
 
 ### MVRV
 ```
-MVRV = Market Cap / Realized Cap
-<1.0 Kapitulation | >3.5 überhitzt
-Datenquelle: Glassnode free tier
+MVRV = Market Cap / Realized Cap — <1.0 Kapitulation | >3.5 überhitzt
 ```
 
 ---
@@ -666,19 +744,8 @@ Datenquelle: Glassnode free tier
 ## Gold-Dashboard (vorzubereiten)
 
 ```
-Architektur:
-  GoldDashboard.tsx (Shell)
-  gold/GoldMacro.tsx   ← TIPS Realzins, DXY, ZB-Käufe
-  gold/GoldMining.tsx  ← AISC, GDX/GLD-Ratio
-  gold/GoldSummary.tsx ← Score
-
-Kernindikatoren:
-  Realzins (FRED DFII10): < 0% bullisch, > 1.5% bearisch
-  Gold_FairValue ≈ 2000 - 800 * Realzins_%
-  AISC: ~$1.200-1.400/oz (World Gold Council)
-  GDX/GLD-Ratio: fallend = Margendruck
-  DXY: inverse Korrelation ~-0.7
-
+Realzins-Modell: Gold_FairValue ≈ 2000 - 800 * Realzins_%  (FRED DFII10)
+AISC: ~$1.200-1.400/oz (World Gold Council)
 Gold-Score = Realzins*0.35 + DXY*0.20 + ZB*0.20 + AISC*0.15 + GDX*0.10
 ```
 
@@ -691,5 +758,4 @@ Gold-Score = Realzins*0.35 + DXY*0.20 + ZB*0.20 + AISC*0.15 + GDX*0.10
 - [ ] Makroanalyse: Inflation, Fed, Geopolitik, Deglobalisierung
 - [ ] Megatrendanalyse: KI, Elektrifizierung, Eisenbahn, Rüstung
 - [ ] Blasen/Rezessionsindikatoren: Shiller-KGV, Buffett-Indikator, Yield Curve
-- [ ] Mindset-Typen: Value, Growth, Momentum
 - [ ] Asset Price Inflation 2026: Kaufkrafterosion
