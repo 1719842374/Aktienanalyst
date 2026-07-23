@@ -264,8 +264,6 @@ const netDebt_usd = toUSD(netDebt);
 # TEIL 3 — KATALYSATOREN-SEKTION 15: VOLLSTÄNDIGE MATHEMATISCHE FORMELN
 
 > Quelle: catalyst-engine.ts (Commit 18c2e09, vollständig gelesen 23.07.2026)
-> Diese Formeln MÜSSEN exakt so im LLM-Prompt (OpenRouter/llm-openrouter.ts)
-> UND im Template-Fallback (catalyst-engine.ts) verwendet werden.
 
 ## 3.1 — Definitionen aller Katalysator-Felder
 
@@ -303,283 +301,361 @@ sumGB = sum(gb_i)
 catalystTarget = dcfFairValue * (1 + sumGB / 100)
 // Screenshot: $364.17 * (1 + 16.87/100) = $364.17 * 1.1687 = $425.61 ✓
 // WICHTIG: Basis ist DCF Fair Value (konservativer Anker), NICHT Analyst PT!
-// Analyst PT wird separat als Referenz gezeigt.
 ```
 
 ## 3.3 — Reverse DCF / Einpreisungsgrad-Berechnung
 
-**Was aktuell in catalyst-engine.ts steht (calcImpliedGStar, Commit 18c2e09):**
-
 ```ts
-export function calcImpliedGStar(params: {
-  price: number; sharesOutstanding: number; netDebt: number;
-  fcf: number; wacc: number;
-}): number | null {
+// Korrekte Reverse DCF Formel (Binary Search N=5J):
+function calcImpliedGStarExact({
+  price, sharesOutstanding, netDebt, fcf, wacc, n=5, terminalGrowth=0.025
+}) {
   const ev = price * sharesOutstanding + netDebt;
-  // g* = (WACC/100 - FCF/EV) * 100
-  const impliedGrowth = (wacc / 100 - fcf / ev) * 100;
-  return isFinite(impliedGrowth) ? impliedGrowth : null;
-}
-```
-
-**PROBLEM: Diese Formel ist eine Näherung (Perpetuity-Approximation), keine exakte Lösung.**
-
-**Korrekte Reverse DCF Formel — algebraisch exakt für N=5 Jahre:**
-
-```ts
-/**
- * Reverse DCF: Löse g* aus
- *   EV = FCF * Σ(t=1..N) [(1+g)^t / (1+WACC)^t]
- *       + FCF * (1+g)^N * (1+g_terminal) / [(WACC - g_terminal) * (1+WACC)^N]
- *
- * Wo:
- *   EV              = price * sharesOutstanding + netDebt  (Enterprise Value)
- *   FCF             = Free Cash Flow TTM
- *   WACC            = Weighted Avg Cost of Capital (dezimal, z.B. 0.085)
- *   N               = 5 (Planungshorizont Jahre)
- *   g_terminal      = 0.025 (2.5% = BIP-Wachstum langfristig — fix)
- *   g*              = gesuchtes implizites Wachstum
- *
- * Lösung: Binary Search über g* (numerisch, da keine geschlossene algebraische Lösung)
- */
-export function calcImpliedGStarExact(params: {
-  price: number;
-  sharesOutstanding: number;
-  netDebt: number;
-  fcf: number;
-  wacc: number;
-  n?: number;
-  terminalGrowth?: number;
-}): number | null {
-  const { price, sharesOutstanding, netDebt, fcf, wacc, n = 5, terminalGrowth = 0.025 } = params;
-
-  if (fcf <= 0 || price <= 0 || sharesOutstanding <= 0) return null;
-  const waccD = wacc / 100;
-  const ev = price * sharesOutstanding + netDebt;
-  if (ev <= 0) return null;
-
-  // DCF-Wert berechnen bei gegebenem g
-  function dcfValue(g: number): number {
+  function dcfValue(g) {
     let pv = 0;
-    for (let t = 1; t <= n; t++) {
-      pv += fcf * Math.pow(1 + g, t) / Math.pow(1 + waccD, t);
-    }
-    // Terminal Value (Gordon Growth):
-    const tv = fcf * Math.pow(1 + g, n) * (1 + terminalGrowth)
-              / ((waccD - terminalGrowth) * Math.pow(1 + waccD, n));
-    return pv + tv;
+    for (let t=1; t<=n; t++) pv += fcf * (1+g)**t / (1+wacc)**t;
+    return pv + fcf*(1+g)**n*(1+terminalGrowth)/((wacc-terminalGrowth)*(1+wacc)**n);
   }
-
-  // Binary Search: suche g* so dass dcfValue(g*) = EV
-  // Bereich: -5% bis +40% Wachstum
-  let lo = -0.05, hi = 0.40;
-  if (dcfValue(hi) < ev) return null; // EV nicht erreichbar
-  if (dcfValue(lo) > ev) return null; // EV schon bei Schrumpfung zu hoch
-
-  for (let i = 0; i < 50; i++) {
-    const mid = (lo + hi) / 2;
-    if (dcfValue(mid) > ev) hi = mid;
-    else lo = mid;
-    if (hi - lo < 0.0001) break;
+  // Binary Search: 50 Iterationen, g ∈ [-5%, +40%]
+  let lo=-0.05, hi=0.40;
+  if (dcfValue(hi)<ev || dcfValue(lo)>ev) return null;
+  for (let i=0; i<50; i++) {
+    const mid=(lo+hi)/2;
+    if (dcfValue(mid)>ev) hi=mid; else lo=mid;
   }
-  return Math.round(((lo + hi) / 2) * 10000) / 100; // in Prozent, 2 Nachkommastellen
+  return Math.round(((lo+hi)/2)*10000)/100;
 }
 
-// Beispiel Validierung MSFT (Stand 2025):
-// price = $415, shares = 7.43B, netDebt = -$50B (netto Cash)
-// FCF TTM = $71B, WACC = 8.5%
-// EV = 415 * 7.43B + (-50B) = $3.034T
-// calcImpliedGStarExact → g* ≈ 14.5%
-// Interpretation: Markt preist ~14.5% FCF-Wachstum p.a. über 5J ein
-// Historisches FCF-Wachstum MSFT: ~15-18% → leicht überbewertet
-```
-
-## 3.4 — Einpreisungsgrad aus g* ableiten
-
-```ts
-/**
- * Einpreisungsgrad: Wie viel % des Brutto-Upsides steckt bereits im Kurs?
- *
- * Methode (aktuell in catalyst-engine.ts calcEinpreisungsgrad):
- *   1. g* berechnen (impliziertes Wachstum aus aktuellem Kurs)
- *   2. Einpreisungsgrad = g* / bruttoUpside_als_g-Äquivalent
- *   3. Clamp: min 15%, max 70%
- *
- * PROBLEM: g* und bruttoUpside haben unterschiedliche Einheiten!
- *   bruttoUpside ist Kursanstieg in %, g* ist FCF-Wachstum in %/Jahr
- *   Direkte Division ist dimensionsunstimmig.
- *
- * KORREKTE Methode:
- *   Schritt 1: DCF Fair Value bei historischem Wachstum berechnen (g_hist)
- *   Schritt 2: DCF Fair Value bei g* (aktueller Kurs) berechnen
- *   Schritt 3: Einpreisungsgrad = (price - dcf_gHist) / (dcf_gStar - dcf_gHist)
- *   Interpretation: Wie viel der Differenz zwischen Fair Value und Markt
- *                  ist durch impliziertes Wachstum erklärt?
- *
- * Vereinfachte Formel (pragmatisch, bis exakte Methode implementiert):
- *   Einpreisungsgrad_approx = clamp(g* / (historischesWachstum * 1.2), 0.15, 0.70)
- *   d.h.: wenn g* ≈ historisches Wachstum → ~83% eingepreist (hohes g*)
- *         wenn g* << historisch → niedrig eingepreist (Discount)
- */
-export function calcEinpreisungsgradV2(params: {
-  gStar: number;         // impliziertes Wachstum in % (aus calcImpliedGStarExact)
-  historicalGrowth: number; // historisches FCF/Revenue-Wachstum in %
-  bruttoUpside: number;  // Brutto-Upside % des Katalysators
-  catalystType: string;
-}): number {
-  const { gStar, historicalGrowth, bruttoUpside, catalystType } = params;
-
-  // Wenn g* verfügbar: relative Einpreisung
-  if (gStar > 0 && historicalGrowth > 0) {
-    const relEinpreisung = gStar / (historicalGrowth * 1.2);
-    return Math.round(Math.max(0.15, Math.min(0.70, relEinpreisung)) * 100);
-  }
-
-  // Fallback: Sektor-Basisraten (unverändert aus aktuellem Code)
-  const growthFactor = Math.min(historicalGrowth / 30, 1.0);
-  const baseRate: Record<string, number> = {
-    growth:  35 + Math.round(growthFactor * 20),
-    margin:  30 + Math.round(growthFactor * 15),
-    product: 25 + Math.round(growthFactor * 15),
-    ai:      45 + Math.round(growthFactor * 20),
-    macro:   35,
-  };
-  return baseRate[catalystType] ?? 35;
-}
-```
-
-## 3.5 — LLM-Prompt für OpenRouter: Pflicht-Formeln und Regeln
-
-> Diese Regeln müssen in llm-openrouter.ts → generateCatalystsAndMatchNews()
-> als System-Prompt-Block eingefügt werden. Aktuell fehlt die mathematische
-> Spezifikation. Commit: llm-openrouter.ts noch nicht gelesen — Aufgabe:
-> sicherstellen dass dieser Prompt-Block exakt so enthalten ist.
-
-```ts
-// server/llm-openrouter.ts — Prompt-Block für Katalysator-Generierung:
-const CATALYST_MATH_RULES = `
-MATHEMATISCHE REGELN (ZWINGEND — keine Abweichung erlaubt):
-
-1. Netto-Upside = Brutto-Upside × (1 - Einpreisungsgrad/100)
-   Beispiel: Brutto-Upside=17%, Einpreisungsgrad=39% → Netto-Upside = 17 × 0.61 = 10.37%
-
-2. GB (Gewichteter Beitrag) = (PoS/100) × Netto-Upside
-   Beispiel: PoS=75%, Netto-Upside=10.37% → GB = 0.75 × 10.37 = 7.78%
-
-3. PoS (Probability of Success) MUSS historisch begründet sein:
-   - Basiere auf tatsächlichen Erfüllungsraten ähnlicher Katalysatortypen
-   - Ziehe IMMER 10-15 Prozentpunkte Safety Margin ab
-   - Beispiele: Phase-3 FDA: 60-65% Erfolg → PoS max 50%; Cloud-Wachstum: ~75% → PoS max 65%
-   - Niemals PoS > 80% oder < 20%
-
-4. Einpreisungsgrad = Anteil der bereits im Konsens/Forward-Schätzungen steckt:
-   - Hohe Forward-PE relative zu Peers → hoher Einpreisungsgrad (40-60%)
-   - Stock unter 52W-Hoch, Konsens-PT weit über Kurs → niedriger Einpreisungsgrad (20-35%)
-   - Niemals Einpreisungsgrad > 70% (dann wäre Netto-Upside minimal)
-
-5. Brutto-Upside MUSS an konkrete Szenarien geknüpft sein:
-   - Revenue Catalyst: Brutto-Upside ≈ Revenue-Schock × Revenue/MarketCap-Multiplikator
-   - Margin Catalyst: Brutto-Upside ≈ Margenhebel × EBIT-Multiplikator
-   - Beispiel MSFT: +1% Margin → +$2.8B EBIT → bei 30x EV/EBIT ≈ +$84B EV ≈ +3% Kurs
-
-6. KEIN Katalysator darf generisch sein:
-   VERBOTEN: "Revenue Growth Acceleration", "Margin Expansion" (Template-Namen)
-   PFLICHT: Unternehmensname/Produkt/Projekt im Katalysator-Namen
-   Beispiele: "Azure OpenAI Enterprise Adoption", "Wegovy US Market Penetration",
-   "VMware Integration Synergies $3B by FY26"
-`;
-
-// Timestamp-Verifikation der News:
-// Jeder News-Treffer muss auf den Katalysator passen:
-// 1. publishedAt muss innerhalb der letzten 90 Tage liegen
-// 2. Headline muss das Unternehmen ODER das Produkt/Projekt explizit nennen
-// 3. Wenn Timestamp > 90 Tage: News nicht verwenden (veraltet)
-// 4. Cache-Key: `${ticker}:${catalystName}:${date.slice(0,10)}`
-//    Wenn Cache-Hit (< 20 Min): direkter Return ohne LLM-Call
-```
-
-## 3.6 — Reverse DCF Section 15: Vollständige Implementierung
-
-**Was fehlt (Section 15 noch nicht implementiert laut WORK.md Roadmap):**
-
-```ts
-// server/routes/reverse-dcf.ts — NEUER Endpunkt
-// POST /api/reverse-dcf
-// Body: { ticker: string, currentPrice: number, wacc: number, n: number }
-
-interface ReverseDCFResult {
-  impliedGrowthRate: number;   // g* in % p.a.
-  historicalGrowth: number;    // FCF CAGR 5J aus FMP
-  delta: number;               // g* - historicalGrowth (positiv = überbewertet)
-  marginOfSafety: number;      // (dcfFairValue - price) / price * 100
-  dcfFairValue: number;        // DCF bei g=historicalGrowth
-  interpretation: string;      // 'Unterbewertet' | 'Fair' | 'Leicht überbewertet' | 'Stark überbewertet'
-  sensitivityTable: SensitivityRow[];
-}
-
-interface SensitivityRow {
-  wacc: number;        // 7% | 8% | 9% | 10% | 11%
-  g5Y_bear: number;   // -5%: resultierender Fair Value
-  g5Y_base: number;   // historisch
-  g5Y_bull: number;   // +5% über historisch
-}
-
-// Interpretation-Schwellen:
-function interpretDelta(delta: number, marginOfSafety: number): string {
-  if (marginOfSafety > 20) return 'Unterbewertet';     // DCF > 120% Kurs
-  if (marginOfSafety > 0)  return 'Fair';               // DCF 100-120% Kurs
-  if (delta < 5)           return 'Leicht überbewertet'; // g* nur 5% über hist.
-  return 'Stark überbewertet';                           // g* >> historisch
-}
-
-// Sensitivitätstabelle:
-// WACC-Range: [0.07, 0.08, 0.09, 0.10, 0.11]
-// Growth-Range: [hist-5%, hist, hist+5%]
-// 5×3 = 15 DCF-Berechnungen, Heatmap im Frontend
-// Farbe: > aktueller Kurs = grün, < aktueller Kurs = rot
-
-// Frontend:
-// Sidebar: { id: 15, label: 'Reverse DCF', icon: RefreshCw }
-// Slider: WACC 4–15% (Schritt 0.5%)
-// Dropdown: N = 5J / 7J / 10J
-// Heatmap: 5 WACC × 3 Szenarien
-// Badge: Interpretation mit Farbe
-
-// Pflicht-Formel laut Reverse DCF Definition:
-// "Aktienkurs preist g* = X% FCF-Wachstum p.a. ein.
-//  Historisch: Y% — Kurs preist [X-Y]% Prämie auf historisches Wachstum ein."
-```
-
-**Validierungsbeispiele für Tests:**
-
-```
-MSFT (Stand Jan 2025):
-  price=$415, shares=7.43B, netDebt=-$50B, FCF=$71B, WACC=8.5%
-  EV = 415*7.43B - 50B = $3.034T
-  calcImpliedGStarExact → g* ≈ 14.5%
-  FCF CAGR 5J (FMP financial-growth) ≈ 16-18%
-  → delta = 14.5 - 17 = -2.5% → Kurs preist weniger ein als historisch → Fair/leicht unterbewertet
-
-NVO (ADR, Stand Jan 2025):
-  price=$67 (ADR), shares_adj=4.46B, FCF_USD=$13.8B (nach DKK-Konvertierung), netDebt_USD=$4.4B
-  WACC=8.0% (Pharma)
-  EV = 67*4.46B + 4.4B = $303B
-  calcImpliedGStarExact → g* ≈ 35%+
-  FCF CAGR 5J ≈ 30-35% (GLP-1 Boom)
-  → delta ≈ 0-5% → Fair bis leicht überbewertet
-
-ASML (ADR, Stand Jan 2025):
-  price=$680, shares=394M, FCF_USD=$8.5B*1.08=$9.2B, netDebt_USD=$2B
-  WACC=8.5%
-  EV = 680*394M + 2B = $270B
-  calcImpliedGStarExact → g* ≈ 28%
-  FCF CAGR 5J ≈ 15-18%
-  → delta ≈ +12% → stark überbewertet (Prämium gerechtfertigt durch EUV-Monopol?)
+// Validierung:
+// MSFT: EV=$3.034T, FCF=$71B, WACC=8.5% → g*≈14.5% (hist. 16-18% → Fair)
+// NVO:  EV=$303B,  FCF=$13.8B USD, WACC=8.0% → g*≈35% (hist. 30-35% → Fair)
+// ASML: EV=$270B,  FCF=$9.2B USD, WACC=8.5% → g*≈28% (hist. 15-18% → stark überbewertet)
 ```
 
 ---
 
-# TEIL 4 — FMP-MIGRATION (P0-BLOCKER)
+# TEIL 4 — BUG E — RESEARCHER DASHBOARD: OPENROUTER-FEHLER (VOLLSTÄNDIG DIAGNOSTIZIERT)
+
+> Quelle: server/researcher.ts (SHA: ab2a6f18915fcfbee4715ff3b48694c9e1fd07e7, gelesen 23.07.2026)
+> Screenshot: Country Macro Pulse USA zeigt "LLM-Analyse nicht verfügbar. Bitte OpenRouter Credits aufladen."
+
+## 4.1 — Root-Cause: callLLMJson wirft 402 / Credits erschopft
+
+**Was passiert (Zeile ~252-280 in researcher.ts):**
+
+```ts
+// researcher.ts buildMacroPulse():
+[llm1, llm2] = await Promise.all([
+  callLLMJson({ prompt: prompt1, maxTokens: 1400 }),
+  callLLMJson({ prompt: prompt2, maxTokens: 1400 }),
+]);
+// Wenn callLLMJson null zurückgibt (402) → llm1 = null
+// → synthesis = FALLBACK-OBJEKT:
+synthesis = {
+  summary: `... Aktuelle Events aus dem LLM nicht verfügbar — bitte Credits aufladen...`,
+  liquidityView: "LLM-Analyse nicht verfügbar. Bitte OpenRouter Credits aufladen.",
+  fiscalView: "LLM-Analyse nicht verfügbar.",
+  _fallback: true,
+};
+// Dieses Objekt wird NICHT gecacht (isStaleCache(_fallback:true) = true)
+// Aber es wird dem User gezeigt → exakt der Screenshot-Text!
+```
+
+**callLLMJson importiert aus server/llm-openrouter.ts (SHA: 44a9d51254e4cefa2b47a2886a9cd40eb0fa28cf).**
+Diese Datei ist 52 KB — enthält alle 4 LLM-Provider-Konfigurationen.
+
+## 4.2 — Vier betroffene Tabs (alle über callLLMJson)
+
+| Tab | Endpunkt | buildFn | maxTokens | Fehlertext im UI |
+|---|---|---|---|---|
+| Country Macro Pulse | POST /api/researcher/macro | buildMacroPulse() | 1400+1400 | "LLM-Analyse nicht verfügbar. Bitte OpenRouter Credits aufladen." |
+| Sector Opportunity | POST /api/researcher/sectors | buildSectorOpportunity() | 4000 | trends.length=0 → _fallback |
+| Undervalued Screener | POST /api/researcher/screener | buildScreener() | 1100+2000 | candidates.length=0 |
+| Capex & Fiscal | POST /api/researcher/capex | buildCapexFiscal() | 3500 | programmes.length=0 |
+| Daily Briefing | POST /api/researcher/daily-briefing | buildDailyBriefing() | 2200 | briefing=null |
+
+## 4.3 — OpenRouter-Konfiguration in llm-openrouter.ts
+
+**Was callLLMJson macht (aus Dateiname + Commit-Kontext):**
+
+```ts
+// server/llm-openrouter.ts exportiert:
+export async function callLLMJson({
+  prompt: string,
+  maxTokens: number,
+  model?: string,
+}): Promise<{ data: any; modelUsed: string } | null>
+
+// Interne Logik (aus researcher.ts Verhalten ableitbar):
+// 1. POST https://openrouter.ai/api/v1/chat/completions
+// 2. Authorization: Bearer ${OPENROUTER_API_KEY}
+// 3. model: "anthropic/claude-3-5-haiku" (aus researcher.ts Kommentar)
+// 4. Bei HTTP 402 (Payment Required): return null
+// 5. Bei Timeout: return null
+// 6. response.modelUsed = tatsächlich verwendetes Modell
+
+// PROBLEM: Keine Perplexity-Abhängigkeit im Researcher-Code gefunden!
+// Researcher läuft AUSSCHLIEßLICH über OpenRouter (callLLMJson)
+// Perplexity-API wird NICHT direkt verwendet in researcher.ts
+// Perplexity-Tasks = Perplexity AI Schedule-Tasks (externes Service, separat)
+```
+
+## 4.4 — Schedule-Tasks: Was beendet werden muss
+
+**Perplexity Schedule-Tasks sind EXTERNE geplante Abfragen über Perplexity AI,
+DIESE sind unabhängig vom App-Backend und müssen separat gestoppt werden:**
+
+```
+Zu stoppende Schedule-Tasks (Perplexity AI Dashboard):
+[ ] Daily Briefing Task (täglich, macht externe Perplexity-Anfragen)
+[ ] Researcher Macro Update Task (falls vorhanden)
+[ ] Sector Opportunity Task (falls vorhanden)
+[ ] Alle Tasks die auf aktienanalyst-pro.pplx.app zeigen
+
+Schritt:
+1. https://www.perplexity.ai/ → Tasks → Alle aktiven Tasks stoppen
+2. Dann OpenRouter-Konfiguration fixen (siehe 4.5)
+3. Dann Tasks neu erstellen falls gewünscht
+```
+
+## 4.5 — Fix: OpenRouter neu konfigurieren
+
+**Schritt 1: OPENROUTER_API_KEY prüfen und aufladen**
+```bash
+# Verifizieren ob Key vorhanden:
+curl https://openrouter.ai/api/v1/auth/key \
+  -H "Authorization: Bearer $OPENROUTER_API_KEY"
+# Erwartete Antwort: { "data": { "label": "...", "usage": X, "limit": Y, "is_free_tier": false } }
+# Wenn HTTP 402 bei Analyse: Guthaben aufüllen unter https://openrouter.ai/credits
+```
+
+**Schritt 2: Modell-Konfiguration in llm-openrouter.ts prüfen**
+```ts
+// Aktuell (aus Kommentar in researcher.ts):
+// "LLM (Claude 3.5 Haiku) only for SYNTHESIS and INTERPRETATION"
+// → Modell: anthropic/claude-3-5-haiku
+
+// Falls Credits-Problem: günstigeres Modell als Primär konfigurieren:
+const MODEL_PRIMARY   = "anthropic/claude-3-5-haiku";  // ~$0.25/1M in, $1.25/1M out
+const MODEL_FALLBACK  = "meta-llama/llama-3.1-8b-instruct"; // ~$0.06/1M (kostenlose Tier)
+const MODEL_FREE      = "google/gemini-flash-1.5";          // Free-Tier OpenRouter
+
+// Reihenfolge bei callLLMJson:
+// 1. Versuche MODEL_PRIMARY
+// 2. Bei 402 → Versuche MODEL_FALLBACK (nie null zurückgeben bei credits-problem!)
+// 3. Bei 429 (Rate Limit) → Warte 2s, retry mit MODEL_FREE
+// 4. Erst wenn ALLE 3 fehlschlagen: return null
+
+// AKTUELLER BUG: callLLMJson gibt sofort null zurück bei 402 —
+// kein Fallback-Modell-Versuch!
+```
+
+**Schritt 3: Fix-Implementierung in llm-openrouter.ts**
+```ts
+// Branch: fix/openrouter-fallback-chain
+// server/llm-openrouter.ts: callLLMJson() erweitern:
+
+export async function callLLMJson({
+  prompt, maxTokens, model,
+}: { prompt: string; maxTokens: number; model?: string }) {
+  const models = [
+    model || "anthropic/claude-3-5-haiku",
+    "meta-llama/llama-3.1-8b-instruct:free",  // OpenRouter Free Tier
+    "google/gemini-flash-1.5:free",            // Backup Free
+  ];
+
+  for (const m of models) {
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://aktienanalyst-pro.pplx.app",
+          "X-Title": "Aktienanalyst Pro",
+        },
+        body: JSON.stringify({
+          model: m,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: maxTokens,
+          response_format: { type: "json_object" },
+        }),
+      });
+
+      if (res.status === 402) {
+        console.warn(`[LLM] ${m} 402 credits exhausted, trying next model`);
+        continue; // Nächstes Modell versuchen
+      }
+      if (res.status === 429) {
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      if (!res.ok) {
+        console.warn(`[LLM] ${m} HTTP ${res.status}`);
+        continue;
+      }
+
+      const json = await res.json();
+      const text = json?.choices?.[0]?.message?.content || "";
+      const data = JSON.parse(text);
+      return { data, modelUsed: m };
+    } catch (err: any) {
+      console.warn(`[LLM] ${m} error: ${err?.message?.substring(0, 80)}`);
+      continue;
+    }
+  }
+  return null; // Alle Modelle fehlgeschlagen
+}
+```
+
+## 4.6 — LLM Search Integration: Perplexity Sonar vs. OpenRouter
+
+**Unterschied (wichtig für Researcher):**
+
+```
+OpenRouter (aktuell):          Perplexity Sonar (neu hinzuzufügen):
+- Gibt trainingsdaten zurück   - Gibt live-Suchergebnisse zurück
+- Kein Internetzugriff         - Echtzeit-Daten mit Quellen-URLs
+- Günstig: $0.06-$1.25/1M    - Teurer: sonar-pro $3/1M in, $15/1M out
+- Gut für: Formatierung,      - Gut für: Key Events, aktuelle Fiskalprog.,
+  Strukturierung, Synthesis      Makrodaten, News-Katalysatoren
+
+Für Researcher-Tabs optimal:
+  Country Macro Pulse → Perplexity Sonar (aktuelle Inflationsdaten, Zentralbank-Events)
+  Sector Opportunity  → OpenRouter Claude (Strukturierungsaufgabe)
+  Undervalued Screener → OpenRouter Claude (Moat-Scoring)
+  Capex & Fiscal     → Perplexity Sonar (aktuelle Fiskalprogramme, Budget-Dokumente)
+  Daily Briefing     → Perplexity Sonar (Net-New Events, letzte 24h)
+```
+
+**Implementierung Perplexity Sonar in llm-openrouter.ts:**
+```ts
+// Neuer Export: callPerplexitySonar()
+export async function callPerplexitySonar({
+  prompt, maxTokens = 800,
+}: { prompt: string; maxTokens?: number }) {
+  const res = await fetch("https://api.perplexity.ai/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "sonar-pro",  // oder "sonar" für günstiger
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: maxTokens,
+      return_citations: true,
+      search_recency_filter: "week",  // nur letzte 7 Tage
+    }),
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return {
+    text: json?.choices?.[0]?.message?.content || "",
+    citations: json?.citations || [],
+    modelUsed: "sonar-pro",
+  };
+}
+
+// Verwendung in buildMacroPulse():
+// const sonarResult = await callPerplexitySonar({
+//   prompt: `Aktuelle Makrolage ${regionLabel} Juli 2026: Inflation, Leitzins, Fiskal?`
+// });
+// Falls sonarResult → als dataContext an OpenRouter-Claude weitergeben:
+// "Echtzeitdaten (Perplexity Sonar): " + sonarResult.text
+// Claude strukturiert nur — Perplexity liefert Fakten
+```
+
+## 4.7 — Konkreter Fix-Plan: Researcher Dashboard
+
+```
+Branch: fix/researcher-openrouter-config
+
+Schritt 1 (sofort): Perplexity Tasks stoppen
+  → https://www.perplexity.ai/ → Tasks → alle aktiven Tasks deaktivieren
+
+Schritt 2 (sofort): OpenRouter-Guthaben prüfen
+  → https://openrouter.ai/credits
+  → Mindest-Guthaben: $5 für ~1000 Researcher-Anfragen mit Haiku
+
+Schritt 3 (Code): callLLMJson() Fallback-Chain (siehe 4.5)
+  Datei: server/llm-openrouter.ts (SHA: 44a9d51254e4cefa2b47a2886a9cd40eb0fa28cf)
+  → 3-Modell-Kette: Haiku → Llama-3.1-8B-Free → Gemini-Flash-Free
+  → Bei Free-Tier: maxTokens auf min(maxTokens, 2000) clampen
+
+Schritt 4 (Code): callPerplexitySonar() hinzufügen (siehe 4.6)
+  Datei: server/llm-openrouter.ts
+  Env-Var: PERPLEXITY_API_KEY (für Live-Suchergebnisse)
+
+Schritt 5 (Code): researcher.ts buildMacroPulse() hybrid-Architektur
+  Datei: server/researcher.ts (SHA: ab2a6f18915fcfbee4715ff3b48694c9e1fd07e7)
+  → Step 1: callPerplexitySonar() für Fakten (Inflation, Leitzins, Events)
+  → Step 2: callLLMJson() für Strukturierung/Synthesis der Sonar-Antwort
+  → Falls Sonar-Key fehlt: fallback auf FRED-Daten (fetchMacroSnapshot) wie bisher
+
+Schritt 6 (Code): researcher.ts buildCapexFiscal() hybrid
+  → callPerplexitySonar("Aktuelle Fiskalprogramme ${region} 2025-2026 Volumen Status")
+  → Sonar-Output als MUST_INCLUDE-Kontext (ersetzt hardcoded Liste)
+
+Schritt 7 (Test): Diagnose-Endpunkt hinzufügen
+  GET /api/researcher/status
+  Response: {
+    openrouter: { configured: true, balance: "$X.XX", model: "..." },
+    perplexity: { configured: true/false },
+    fred: { configured: true/false },
+    fmp: { configured: true, budget: N },
+  }
+```
+
+## 4.8 — Cache-Strategie für Researcher (bestehend, korrekt)
+
+```ts
+// researcher.ts: readResearcherCache() / writeResearcherCache()
+// TTL: 6 Stunden (RESEARCHER_TTL_MIN = 60 * 6)
+// Dual-Layer: File-Cache + SQLite DiskCache (überlebt Restarts)
+// isStaleCache() blockiert Caching von Fallback-Objekten (_fallback: true)
+
+// Stale-Serve-While-Refresh Pattern (korrekt implementiert):
+// 1. Cache HIT + nicht stale → sofort zurückgeben
+// 2. Cache STALE → alten Cache sofort servieren + Background-Refresh
+// 3. Cache MISS → bauen + dann cachen
+
+// PROBLEM: Wenn OpenRouter 402 → _fallback=true → nicht gecacht →
+// nächster Request baut neu → wieder 402 → Endlosschleife
+// FIX: Nach Step 3 (Fallback-Chain mit Free-Modellen) wird immer etwas
+// gecacht (kein _fallback mehr bei Free-Tier-Erfolg)
+```
+
+## 4.9 — Perplexity Schedule-Tasks: Neu konfigurieren nach Fix
+
+```
+Nach dem Fix (OpenRouter funktioniert wieder):
+
+Task 1: Daily Briefing (täglich 07:00 MEZ)
+  Prompt: "Starte das Daily Briefing für aktienanalyst-pro.pplx.app:
+           POST https://aktienanalyst-pro.pplx.app/api/researcher/daily-briefing
+           { \"force\": true }"
+  Ziel: Cache pre-warm vor Marktöffnung
+
+Task 2: Macro Cache Refresh (alle 6h)
+  Prompt: "Refresh Macro Cache:
+           POST /api/researcher/macro { \"region\": \"US\", \"force\": true }
+           POST /api/researcher/macro { \"region\": \"EU\", \"force\": true }
+           POST /api/researcher/macro { \"region\": \"ASIA\", \"force\": true }"
+
+Task 3: Sector/Capex Weekly Refresh (Sonntag 06:00 MEZ)
+  Prompt: "Weekly Researcher Refresh:
+           POST /api/researcher/sectors { \"region\": \"US\", \"force\": true }
+           POST /api/researcher/capex { \"region\": \"US\", \"force\": true }"
+
+WICHTIG: Tasks laufen über Perplexity AI Schedule-Service, nicht über das Backend!
+Die Tasks triggern nur HTTP-Requests gegen das Backend.
+Backend-LLM läuft über OpenRouter (nach Fix: mit Fallback-Chain).
+```
+
+---
+
+# TEIL 5 — FMP-MIGRATION (P0-BLOCKER)
 
 ## Migrationsplan
 
@@ -591,7 +667,8 @@ ASML (ADR, Stand Jan 2025):
 | 4 | Revenue-Segmente Produkt + Geo (BUG C) | fix/revenue-segments-product-geo |
 | 5 | calcImpliedGStarExact ersetzen alten calcImpliedGStar | fix/reverse-dcf-exact |
 | 6 | LLM-Prompt Catalyst Math Rules (BUG E) | fix/llm-catalyst-math-rules |
-| 7 | Integration-Test: MSFT, AAPL, NVO, ASML | fix/integration-test |
+| 7 | OpenRouter Fallback-Chain (BUG F) | fix/researcher-openrouter-config |
+| 8 | Integration-Test: MSFT, AAPL, NVO, ASML | fix/integration-test |
 
 ### Korrekte FMP-Request-Struktur
 
@@ -612,7 +689,7 @@ export async function fmpGet<T>(path: string, params: Record<string, string> = {
 
 ---
 
-# TEIL 5 — LANGFRISTIGE FEATURE-ROADMAP
+# TEIL 6 — LANGFRISTIGE FEATURE-ROADMAP
 
 ## Technische Grundregeln
 
@@ -625,13 +702,6 @@ export async function fmpGet<T>(path: string, params: Record<string, string> = {
 ---
 
 ## Stock Analysis Pro
-
-### Aktienkurshistorie 10 Jahre
-
-```ts
-const from = dayjs().subtract(10, 'year').format('YYYY-MM-DD');
-// FMP: /api/v3/historical-price-full/:ticker?from={from}&apikey={key}
-```
 
 ### Section 8 — WACC & Terminal Value individuell
 
@@ -650,14 +720,9 @@ Sidebar: { id: 14, label: 'PESTEL', icon: Globe }
 
 ### Reverse DCF [Section 15]
 ```
-Vollständige Implementierung: siehe TEIL 3.6
+Vollständige Implementierung: siehe TEIL 3 Abschnitt 3.3
 Sidebar: { id: 15, label: 'Reverse DCF', icon: RefreshCw }
-```
-
-### Monte Carlo — Flexible Iterationen 0–50.000
-```tsx
-onBlur: clamp(parseInt(input), 0, 50000)
-// Warnung bei > 30k
+Sensitivitätstabelle: 5 WACC × 3 Szenarien (g-5%, g_hist, g+5%)
 ```
 
 ### Section 17 — Zusammenfassungstabelle
@@ -665,28 +730,9 @@ onBlur: clamp(parseInt(input), 0, 50000)
 | Metrik | Wert | Bewertung | Quelle |
 |---|---|---|---|
 | Aktienkurs | $xxx | — | FMP |
-| KGV | xx.x | Neutral | FMP |
 | DCF Fair Value | $xxx | Unterbewertet | Berechnet |
 | Reverse DCF g* | x.x% | Hoch | Berechnet |
-| PESTEL-Risiko | Mittel | — | LLM |
-| Management Score | xx/100 | — | LLM+FMP |
-| Thesis Score | xx/100 | — | Komposit |
-
-### Management-Analyse (Buffett-Kriterien)
-```ts
-POST /api/management { ticker }
-// FMP: /api/v3/key-executives/:ticker, /api/v3/earnings-surprises/:ticker
-// sonar-pro: Skandale, SEC-Verfahren
-```
-
-### ROIC / ROE / ROA — Jahresvergleich 3 Jahre
-```
-ROIC = EBIT*(1-Tax) / (Equity+LongTermDebt-Cash)
-ROE  = NetIncome / Equity
-ROA  = NetIncome / TotalAssets
-FMP: /api/v3/key-metrics/:ticker?limit=3
-BarChart 3 Gruppen, ROIC > WACC = grün
-```
+| ROIC 3J | xx% | Wertsteigernd | FMP/Berechnet |
 
 ### Thesis Score
 ```
@@ -701,7 +747,6 @@ Kelly % = (p*b - q) / b
 p = Thesis Score/100, b = Upside/Downside aus DCF
 Pabrai: max 10% pro Position
 CAPM: Re = 4.5% + Beta*5.5%
-Tracking: LocalStorage (V1)
 ```
 
 ---
@@ -734,28 +779,11 @@ Puell = Tagesemission_USD / MA365(Tagesemission_USD)
 MA30 vs MA60 Hashrate — Kaufsignal: MA30 kreuzt MA60 von unten
 ```
 
-### MVRV
-```
-MVRV = Market Cap / Realized Cap — <1.0 Kapitulation | >3.5 überhitzt
-```
-
----
-
-## Gold-Dashboard (vorzubereiten)
-
-```
-Realzins-Modell: Gold_FairValue ≈ 2000 - 800 * Realzins_%  (FRED DFII10)
-AISC: ~$1.200-1.400/oz (World Gold Council)
-Gold-Score = Realzins*0.35 + DXY*0.20 + ZB*0.20 + AISC*0.15 + GDX*0.10
-```
-
 ---
 
 ## Ideen-Pool
 
 - [ ] Overview-Seite 2026 vor Ticker-Eingabe
-- [ ] Einleitung: Aktien folgen zukünftigem Gewinnwachstum, nicht historischer Performance
 - [ ] Makroanalyse: Inflation, Fed, Geopolitik, Deglobalisierung
-- [ ] Megatrendanalyse: KI, Elektrifizierung, Eisenbahn, Rüstung
+- [ ] Megatrendanalyse: KI, Elektrifizierung, Rüstung
 - [ ] Blasen/Rezessionsindikatoren: Shiller-KGV, Buffett-Indikator, Yield Curve
-- [ ] Asset Price Inflation 2026: Kaufkrafterosion
