@@ -82,10 +82,12 @@ export default function Dashboard() {
   const [financeQuotaOk, setFinanceQuotaOk] = useState<boolean | null>(null);
 
   // Cold-Start Warmup Strategy:
-  // Published *.pplx.app containers shut down after inactivity and need 15-30s to restart.
-  // We fire /api/health immediately on page load to wake the sandbox as early as possible.
-  // Retries every 4s up to 4x (covers 16s warmup window).
-  // On success, also check /api/cache to confirm the finance connector is token-refreshed.
+  // Render free-plan containers spin down after 15 min inactivity and need up to 60s to restart.
+  // GitHub Actions keep-alive (.github/workflows/keep-alive.yml) pings /api/health every 5 min
+  // to prevent cold starts during normal usage hours.
+  // On page load we fire /api/health immediately to wake the server as early as possible.
+  // Retries up to 8x with backoff (3s,5s,8s,10s,10s,10s,10s) — covers ~56s warmup window.
+  // On success, also check /api/cache to confirm the finance connector is ready.
   useEffect(() => {
     let cancelled = false;
 
@@ -274,20 +276,12 @@ export default function Dashboard() {
       const ec = (err as any)?.errorCode;
       if (ec !== 'RATE_LIMITED' && dataRef.current) {
         console.log('[Analyze] Error but keeping previous data visible');
-        // Reset mutation state so the overlay disappears — keep old data
-        // We do this by calling reset() which clears isError/isPending
-        // Note: React Query v5 exposes analyzeMutation.reset() but we can't call it here
-        // directly. Instead we set retryInfo=null — the overlay only shows when isPending.
         setRetryInfo(null);
-        // The isError state will naturally clear on next mutate() call.
-        // For now, the overlay disappears (no longer isPending) and old data shows.
       }
     },
   });
 
   // Wire the mutation to its ref so startAnalyze() can call it.
-  // Must come AFTER useMutation since mutation isn't defined yet at the
-  // useRef declaration site.
   analyzeMutationRef.current = analyzeMutation;
 
   const scrollToSection = useCallback((id: number) => {
@@ -325,8 +319,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Scrollable action-bar on mobile (invisible scrollbar via .scrollbar-hide)
-            — fixes problem where Researcher/Compare buttons were clipped on <640px */}
         <div className="flex-1 flex items-center justify-end gap-2 sm:gap-3 overflow-x-auto scrollbar-hide ml-auto">
           {data && (
             <div className="hidden sm:flex items-center gap-2 text-xs">
@@ -355,13 +347,10 @@ export default function Dashboard() {
               <span className="hidden sm:inline">PDF</span>
             </button>
           )}
-          {/* KI-Katalysatoren Toggle (kostet ~3-4 Credits pro Analyse) */}
+          {/* KI-Katalysatoren Toggle */}
           <button
             onClick={() => {
               const next = !useLLM;
-              // No window.confirm() — native browser dialogs are unreliable in
-              // the Perplexity Computer iframe (silently return false). The
-              // tooltip + visible violet badge already make the cost obvious.
               setUseLLM(next);
               if (next && currentTicker) {
                 startAnalyze({ ticker: currentTickerRef.current, llm: true });
@@ -528,8 +517,6 @@ export default function Dashboard() {
               <div ref={setSectionRef(15)}><CatalystsSection
                 data={data}
                 onCatalystsEnriched={(enriched) => {
-                  // Persist enriched catalysts into Dashboard state so they
-                  // survive tab switches and don't reset to generic on re-render
                   setData(prev => prev ? { ...prev, catalysts: enriched } : prev);
                 }}
               /></div>
@@ -538,8 +525,6 @@ export default function Dashboard() {
               <div className="pb-8" />
             </div>
           ) : (
-            // Fallback: data=null + not pending + no error (stale guard race condition)
-            // Always show WelcomeScreen instead of blank white screen
             <WelcomeScreen
               onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
               serverReady={serverReady}
@@ -575,7 +560,6 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
   const [, setLocation] = useLocation();
   const tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "TSLA", "AMZN"];
 
-  // Fetch watchlist from server
   const watchlistQuery = useQuery({
     queryKey: ['/api/watchlist'],
     staleTime: 0,
@@ -587,19 +571,19 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
       <div className="max-w-lg text-center space-y-6">
         {/* Server + Finance-API status indicators */}
         <div className="flex flex-col items-center gap-1">
-          {/* Server status */}
           {serverReady === null && (
             <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 animate-pulse" />
-              Server startet… (kann 15–30s dauern bei erstem Aufruf)
+              Server startet… (Render kann 15–60s brauchen bei Kaltstart)
             </span>
           )}
           {serverReady === false && (
             <div className="text-[10px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-lg max-w-sm text-center">
-              <div className="font-medium mb-0.5">Server startet — bitte 30s warten</div>
+              <div className="font-medium mb-0.5">Server antwortet nicht — Kaltstart</div>
               <div className="text-muted-foreground/70">
-                Veröffentlichte Apps werden nach Inaktivität heruntergefahren.
-                Die erste Analyse startet den Server — bitte 20–30s warten.
+                Render Free Plan schläft nach 15 Min Inaktivität ein.
+                Seite neu laden — der erste Request weckt den Server (20–60s).
+                Diagnose: <code className="bg-muted/50 px-1 py-0.5 rounded">aktienanalyst.onrender.com/api/health</code>
               </div>
             </div>
           )}
@@ -634,7 +618,6 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
           </p>
         </div>
 
-        {/* Watchlist (recent tickers) */}
         {watchlist.length > 0 && (
           <div>
             <p className="text-xs text-muted-foreground mb-2 flex items-center justify-center gap-1">
@@ -670,7 +653,6 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
             ))}
           </div>
         </div>
-        {/* Dashboard Links */}
         <div className="pt-2 border-t border-border">
           <p className="text-xs text-muted-foreground mb-2">Weitere Dashboards:</p>
           <div className="flex flex-wrap justify-center gap-2">
@@ -746,7 +728,6 @@ function ErrorScreen({ error }: { error: Error }) {
   const is404 = !isRateLimited && (error.message.includes('404') || error.message.includes('Not Found') || error.message.includes('Failed to fetch') || error.message.includes('NetworkError'));
   const isTimeout = !isRateLimited && !is404 && (error.message.includes('timeout') || error.message.includes('Timeout'));
 
-  // Estimate reset time: next midnight UTC+2 (CEST)
   const resetTime = (() => {
     const now = new Date();
     const nextMidnight = new Date(now);
@@ -758,10 +739,8 @@ function ErrorScreen({ error }: { error: Error }) {
   return (
     <div className="flex items-center justify-center min-h-[60vh] p-8">
       <div className="text-center space-y-5 max-w-lg">
-        {/* Icon */}
         <div className="text-4xl">{isRateLimited ? '⏳' : is404 ? '🔌' : isTimeout ? '⌛' : '⚠️'}</div>
 
-        {/* Title */}
         <div className="space-y-1">
           <div className="text-base font-semibold text-foreground">
             {isRateLimited ? 'Finance-API Tageslimit erreicht' :
@@ -774,7 +753,6 @@ function ErrorScreen({ error }: { error: Error }) {
           )}
         </div>
 
-        {/* Body */}
         <div className="text-xs text-muted-foreground leading-relaxed bg-muted/20 rounded-lg p-4 text-left space-y-2">
           {isRateLimited ? (
             <>
@@ -785,8 +763,9 @@ function ErrorScreen({ error }: { error: Error }) {
             </>
           ) : is404 ? (
             <>
-              <p>Der Backend-Server antwortet nicht. Die Sandbox-Session ist möglicherweise abgelaufen (~24h Laufzeit).</p>
-              <p><span className="text-foreground/80 font-medium">Lösung:</span> Schreibe im Perplexity-Chat <code className="bg-muted/50 px-1 py-0.5 rounded">Deploy neu</code> — der Server wird mit frischem Token neu gestartet.</p>
+              <p>Der Render-Server antwortet nicht. Mögliche Ursachen: Kaltstart nach Inaktivität, fehlende Umgebungsvariablen (<code className="bg-muted/50 px-1 py-0.5 rounded">FMP_API_KEY</code>, <code className="bg-muted/50 px-1 py-0.5 rounded">OPENROUTER_API_KEY</code>), oder der Dienst ist gestoppt.</p>
+              <p><span className="text-foreground/80 font-medium">Lösung 1:</span> Seite neu laden — Render wacht beim ersten Request auf (20–60s Wartezeit).</p>
+              <p><span className="text-foreground/80 font-medium">Diagnose:</span> <code className="bg-muted/50 px-1 py-0.5 rounded">aktienanalyst.onrender.com/api/health</code> im Browser öffnen. Antwort <code className="bg-muted/50 px-1 py-0.5 rounded">{"{ status: 'ok' }"}</code> = Server läuft.</p>
             </>
           ) : isTimeout ? (
             <p>Die Analyse hat zu lange gedauert. Bitte erneut versuchen — bei komplexen Tickers kann die erste Anfrage länger dauern.</p>
@@ -795,7 +774,6 @@ function ErrorScreen({ error }: { error: Error }) {
           )}
         </div>
 
-        {/* Actions */}
         <div className="flex gap-2 justify-center">
           <button
             onClick={() => window.location.reload()}
