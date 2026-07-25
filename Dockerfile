@@ -2,8 +2,8 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Install build tools (node-gyp needs Python + gcc; playwright needs chromium deps)
-# CACHE-BUST: 2026-07-15b
+# Install build tools (node-gyp needs Python + gcc)
+# CACHE-BUST: 2026-07-25
 RUN apt-get update && apt-get install -y \
     curl \
     python3 \
@@ -28,16 +28,21 @@ RUN apt-get update && apt-get install -y \
 # Copy package files
 COPY package.json package-lock.json ./
 
+# Skip Playwright browser download during npm install — we install it explicitly below.
+# Without this, Playwright's postinstall tries to download Chromium and can time out
+# on Render builders, causing npm ci to exit with code 1.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
 # Install all dependencies
 RUN npm ci --production=false
 
-# Install Playwright Chromium browser
+# Install Playwright Chromium browser (optional — used only for PDF export)
 RUN npx playwright install chromium --with-deps 2>/dev/null || true
 
 # Copy source
 COPY . .
 
-# Build
+# Build (Vite client + esbuild server)
 RUN npm run build
 
 # Production dependencies only
