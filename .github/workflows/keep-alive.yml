@@ -1,0 +1,51 @@
+name: Keep Server Alive
+
+# Pings /api/health every 5 minutes to prevent Render free-plan cold starts.
+# The endpoint is registered in server/index.ts BEFORE all other routes and
+# returns { status: "ok", uptime: N, timestamp: "..." } in <5 ms.
+# No FMP calls, no quota impact, no DB access.
+#
+# Required GitHub Environment "production" variable:
+#   RENDER_URL = https://aktienanalyst.onrender.com
+#
+# pplx.app does not need a keep-alive — Perplexity keeps it warm.
+
+on:
+  schedule:
+    # Every 5 minutes — GitHub Actions minimum interval.
+    # Render free plan sleeps after 15 min inactivity, so 5 min is safe.
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    name: Ping Render health endpoint
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 2
+
+    steps:
+      - name: Ping Render /api/health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 20 \
+            "${{ vars.RENDER_URL }}/api/health")
+          echo "HTTP status: $STATUS"
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ Render is warm (HTTP 200)"
+          elif [ "$STATUS" = "000" ]; then
+            echo "⚠️  Render cold start triggered (timeout/no response — will warm up)"
+            exit 0
+          else
+            echo "❌ Unexpected status $STATUS"
+            exit 1
+          fi
+
+      - name: Ping pplx.app /api/health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 15 \
+            "https://aktienanalyst-pro.pplx.app/api/health")
+          echo "pplx.app HTTP status: $STATUS"
+          # pplx.app is always warm — log only, never fail the job
+          exit 0
