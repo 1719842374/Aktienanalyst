@@ -70,8 +70,12 @@ app.use((req, res, next) => {
 
 // ── Keep-Alive Health Endpoint ──────────────────────────────────────────────
 // Registered BEFORE registerRoutes so it is always available even during
-// heavy analysis requests. Used by UptimeRobot / cron-job.org every 5 min
-// to prevent Railway from sleeping the container on the free plan.
+// heavy analysis requests.
+//
+// Pinged every 5 min by .github/workflows/keep-alive.yml (GitHub Actions cron)
+// to prevent Render free-plan cold starts (Render sleeps after 15 min idle).
+// pplx.app (aktienanalyst-pro.pplx.app) does not need keep-alive pings.
+//
 // Returns 200 JSON within <5 ms — no DB, no FMP calls, no quota impact.
 const _serverStartTime = Date.now();
 app.get("/api/health", (_req: Request, res: Response) => {
