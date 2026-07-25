@@ -1,7 +1,227 @@
 # WORK.md
 
-> Stand: 23.07.2026 | Branch: `btc-restore-modular` (live, von `33c8e77`)
+> Stand: 25.07.2026 | Branch: `btc-restore-modular` (live, von `33c8e77`)
 > Regel: Kein Code-Push über GitHub API ohne lokale Validierung + PR + Review.
+
+---
+
+# TEIL 0 — PLATFORM-REALITÄT & SOFORT-FIXES (Stand 25.07.2026)
+
+> Dieser Teil dokumentiert die echte Deploy-Situation und die daraus resultierenden
+> P0-Fixes. Alle früheren Annahmen zu "Railway" sind falsch — das Projekt läuft
+> NICHT auf Railway und hat es nie produktiv getan.
+
+## 0.1 — Produktive Deployments
+
+```
+Plattform 1: Perplexity Computer (pplx.app)           [PRIMÄR]
+  URL:        https://aktienanalyst-pro.pplx.app
+  Deploy:     publish_website (Perplexity-internes Tool)
+  Keys:       werden als credentials= beim publish_website-Aufruf injiziert
+  Besonderheit: external-tool CLI verfügbar (wird aber nicht mehr genutzt, stub)
+
+Plattform 2: Render (Docker-Container)                [SEKUNDÄR]
+  URL:        https://aktienanalyst.onrender.com
+  Deploy:     Dockerfile → node:20-slim, baut via npm run build, startet node dist/index.cjs
+  Keys:       müssen im Render-Dashboard unter "Environment" gesetzt sein
+  Port:       5000 (fest im Dockerfile: EXPOSE 5000)
+  Branch:     main (auto-deploy bei Push)
+```
+
+## 0.2 — Railway: Nicht verwenden, aus Projekt entfernen
+
+```
+RAILWAY WIRD NICHT GENUTZT. Das Projekt läuft nicht über Railway.
+
+Zu entfernen (Branch: chore/remove-railway):
+[ ] railway.json (falls vorhanden) löschen
+[ ] .github/workflows/*.yml auf Railway-Deploy-Steps prüfen und entfernen
+[ ] Alle Kommentare/Docs die Railway erwähnen → durch Render ersetzen
+[ ] README.md Deploy-Sektion auf pplx.app + Render aktualisieren
+
+Prüfen:
+  find . -name 'railway*' -o -name '*.railway*'
+  grep -r 'railway' . --include='*.json' --include='*.yml' --include='*.md'
+```
+
+## 0.3 — Render: Environment Variables (P0)
+
+```
+Render Dashboard → dein Service → Environment → Add Environment Variable:
+
+  FMP_API_KEY         = <dein FMP Key>          (Financial Modeling Prep)
+  OPENROUTER_API_KEY  = sk-or-v1-...            (LLM-Calls via OpenRouter)
+  PERPLEXITY_API_KEY  = pplx-...                (Sonar-Pro, optional aber empfohlen)
+  NODE_ENV            = production
+  PORT                = 5000
+  PLAYWRIGHT_BROWSERS_PATH = /root/.cache/ms-playwright
+
+Nach dem Setzen: Manual Deploy triggern.
+Diagnose danach:
+  curl https://aktienanalyst.onrender.com/api/health
+  → Erwartung: { status: "ok", uptime: N }
+  curl https://aktienanalyst.onrender.com/api/fmp-budget
+  → Erwartung: { fmp: { calls: 0, budget: 750 }, fmpAvailable: true }
+```
+
+## 0.4 — Legacy Quota Guard: Deaktivieren (P0)
+
+```
+Datei: server/analyze-helpers.ts
+Problem: DAILY_FINANCE_LIMIT = 18 ist ein Überbleibsel vom alten
+  Perplexity Finance External Tool (das hatte 18 Analysen/Tag Limit).
+  Auf Render/pplx.app mit FMP gibt es dieses Limit nicht mehr.
+  isQuotaExceeded() kann Analysen still blockieren wenn _quotaCount >= 18.
+
+Fix (Branch: fix/remove-legacy-quota-guard):
+
+export function isQuotaExceeded(): boolean {
+  // Legacy Perplexity Finance quota guard — deaktiviert.
+  // FMP hat eigenes 750 Calls/Tag Limit (trackFmpCall / getFmpBudgetStatus).
+  return false;
+}
+
+export function incrementQuota() {
+  // Legacy stub — kein Tracking mehr nötig.
+}
+
+// DAILY_FINANCE_LIMIT, _quotaDate, _quotaCount können entfernt werden
+// getQuotaStatus() optional behalten falls /api/fmp-budget darauf zeigt
+```
+
+## 0.5 — Render Health-Check konfigurieren
+
+```
+Render Dashboard → dein Service → Settings → Health & Alerts:
+  Health Check Path: /api/health
+  Health Check Timeout: 30s
+
+Wenn Health-Check nicht konfiguriert → Render markiert Service als "failed"
+auch wenn der Prozess läuft. Das ist die Ursache der täglichen Fail-Emails.
+
+Falls /api/health noch nicht existiert:
+  server/index.ts: vor allen anderen Routes:
+  app.get('/api/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }));
+```
+
+## 0.6 — Mega-Files: Anti-Truncation Split-Plan
+
+```
+Problem: GitHub API trunciert Dateien > ~100 KB Base64 still.
+Bereits betroffen: BTCDashboard.tsx, routes.ts
+Aktuell gefährdet:
+  server/researcher.ts    69 KB  → KRITISCH
+  client/src/pages/Researcher.tsx  56 KB  → KRITISCH
+  server/llm-openrouter.ts 52 KB  → KRITISCH
+  server/recession.ts     47 KB  → HOCH
+  server/pdf-export.ts    42 KB  → HOCH
+
+REGEL: Jede Datei < 80 KB. Prüfen: wc -c <datei>
+```
+
+### Split-Strategie: Barrel-Pattern (Shell bleibt am alten Pfad)
+
+```
+Prinzip:
+- Die Shell-Datei (alter Pfad) wird < 5 KB und re-exportiert nur.
+- Alle bestehenden Imports im Projekt bleiben unverändert.
+- Sub-Dateien kommunizieren ausschließlich über ES-Module-Imports.
+- Kein Shared State, kein globales Objekt.
+
+Beispiel researcher.ts:
+
+  server/researcher.ts          ← Shell (< 5 KB)
+    → export { registerResearcherRoutes } from "./researcher/index";
+
+  server/researcher/
+    index.ts                    ← Route-Registrierung für /api/researcher/*
+    macro-pulse.ts              ← buildMacroPulse()          ~12 KB
+    sector.ts                   ← buildSectorOpportunity()   ~10 KB
+    screener.ts                 ← buildScreener()            ~10 KB
+    capex.ts                    ← buildCapexFiscal()         ~10 KB
+    briefing.ts                 ← buildDailyBriefing()       ~8 KB
+    cache.ts                    ← readResearcherCache /      ~8 KB
+                                   writeResearcherCache
+    types.ts                    ← lokale Interfaces          ~5 KB
+
+Beispiel llm-openrouter.ts:
+
+  server/llm-openrouter.ts      ← Shell (< 5 KB)
+    → export { callLLMJson, callLLMStream } from "./llm/openrouter";
+    → export { callPerplexitySonar } from "./llm/sonar";
+
+  server/llm/
+    openrouter.ts               ← callLLMJson() + Fallback-Chain  ~15 KB
+    sonar.ts                    ← callPerplexitySonar()            ~8 KB
+    anthropic.ts                ← direkte Anthropic SDK Calls      ~8 KB
+    models.ts                   ← Modell-Konstanten                ~3 KB
+
+Beispiel Researcher.tsx (Frontend):
+
+  client/src/pages/Researcher.tsx    ← Shell (< 5 KB)
+    → export { default } from "./researcher/index";
+
+  client/src/pages/researcher/
+    index.tsx                   ← Tab-Router + State              ~8 KB
+    MacroPulse.tsx              ← Country Macro Tab               ~15 KB
+    SectorOpportunity.tsx       ← Sector Tab                      ~12 KB
+    Screener.tsx                ← Undervalued Tab                 ~12 KB
+    CapexFiscal.tsx             ← Capex Tab                       ~10 KB
+    DailyBriefing.tsx           ← Briefing Tab                    ~8 KB
+```
+
+### Kommunikation zwischen Split-Dateien
+
+```ts
+// researcher/cache.ts — exportiert:
+export async function readResearcherCache(key: string) { ... }
+export async function writeResearcherCache(key: string, data: unknown) { ... }
+
+// researcher/macro-pulse.ts — importiert:
+import { readResearcherCache, writeResearcherCache } from "./cache";
+import { callLLMJson } from "../llm-openrouter";   // ← relativer Pfad nach oben
+import type { MacroPulseResult } from "./types";
+export async function buildMacroPulse(region: string): Promise<MacroPulseResult> { ... }
+
+// researcher/index.ts — importiert alle buildFns:
+import { buildMacroPulse }        from "./macro-pulse";
+import { buildSectorOpportunity } from "./sector";
+import { buildScreener }          from "./screener";
+import type { Express }            from "express";
+
+export function registerResearcherRoutes(app: Express) {
+  app.post("/api/researcher/macro",   async (req, res) => { ... });
+  app.post("/api/researcher/sectors", async (req, res) => { ... });
+  // ...
+}
+```
+
+### Split-Branches (Reihenfolge)
+
+| Priorität | Branch | Datei | Ziel |
+|---|---|---|---|
+| P1 | `refactor/split-llm-openrouter` | server/llm-openrouter.ts (52 KB) | server/llm/ |
+| P1 | `refactor/split-researcher-server` | server/researcher.ts (69 KB) | server/researcher/ |
+| P2 | `refactor/split-researcher-frontend` | Researcher.tsx (56 KB) | pages/researcher/ |
+| P2 | `refactor/split-recession` | server/recession.ts (47 KB) | server/recession/ |
+| P3 | `refactor/split-pdf-export` | server/pdf-export.ts (42 KB) | server/pdf/ |
+
+**Regel: Alle Splits lokal entwickeln → npm run check → npm run dev testen → PR → Squash Merge.**
+**Niemals Mega-Files direkt über GitHub API pushen.**
+
+## 0.7 — Checkliste: Render läuft wieder
+
+```
+[ ] 0.3 — Render Env Vars gesetzt (FMP_API_KEY, OPENROUTER_API_KEY)
+[ ] 0.4 — Legacy Quota Guard deaktiviert (DAILY_FINANCE_LIMIT = 18 entfernt)
+[ ] 0.5 — Health-Check-Pfad in Render konfiguriert (/api/health)
+[ ] 0.2 — Railway-Dateien/Referenzen entfernt
+[ ] Test: curl https://aktienanalyst.onrender.com/api/health → { status: ok }
+[ ] Test: curl https://aktienanalyst.onrender.com/api/fmp-budget → fmpAvailable: true
+[ ] Test: Aktienanalyse MSFT aufrufen → Antwort in < 30s
+[ ] Test: OpenRouter → callLLMJson → kein 402 Fehler
+[ ] Fail-Emails stoppen nach 24h
+```
 
 ---
 
