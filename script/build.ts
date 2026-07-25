@@ -2,8 +2,7 @@ import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "fs/promises";
 
-// server deps to bundle to reduce openat(2) syscalls
-// which helps cold start times
+// Server deps to bundle to reduce openat(2) syscalls (helps cold start)
 const allowlist = [
   "@google/generative-ai",
   "axios",
@@ -35,10 +34,19 @@ const allowlist = [
 async function buildAll() {
   await rm("dist", { recursive: true, force: true });
 
-  console.log("building client...");
-  await viteBuild();
+  console.log("[build] building client (Vite)...");
+  try {
+    await viteBuild();
+  } catch (err: any) {
+    // Print a clean error instead of the raw circular-ref object
+    // that Node prints when Vite's ESM graph has unresolved cycles.
+    const msg = err?.message || String(err);
+    console.error("[build] Vite client build failed:", msg);
+    process.exit(1);
+  }
+  console.log("[build] client build complete.");
 
-  console.log("building server...");
+  console.log("[build] building server (esbuild)...");
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));
   const allDeps = [
     ...Object.keys(pkg.dependencies || {}),
@@ -59,9 +67,10 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
+  console.log("[build] server build complete.");
 }
 
 buildAll().catch((err) => {
-  console.error(err);
+  console.error("[build] fatal:", err?.message || err);
   process.exit(1);
 });

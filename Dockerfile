@@ -3,7 +3,7 @@ FROM node:20-slim
 WORKDIR /app
 
 # Install build tools (node-gyp needs Python + gcc)
-# CACHE-BUST: 2026-07-25
+# CACHE-BUST: 2026-07-25c
 RUN apt-get update && apt-get install -y \
     curl \
     python3 \
@@ -28,21 +28,25 @@ RUN apt-get update && apt-get install -y \
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Skip Playwright browser download during npm install — we install it explicitly below.
-# Without this, Playwright's postinstall tries to download Chromium and can time out
-# on Render builders, causing npm ci to exit with code 1.
+# Skip Playwright browser download during npm install.
+# Playwright postinstall downloads Chromium (~150 MB) and times out
+# on Render builders causing npm ci to exit with code 1.
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Install all dependencies
 RUN npm ci --production=false
 
-# Install Playwright Chromium browser (optional — used only for PDF export)
+# Install Playwright Chromium browser (optional — PDF export only)
 RUN npx playwright install chromium --with-deps 2>/dev/null || true
 
 # Copy source
 COPY . .
 
 # Build (Vite client + esbuild server)
+# Uses 'node --import tsx/esm' so Vite 7 (pure-ESM) loads correctly.
+# Plain 'tsx script/build.ts' ran in CJS mode and hit a circular
+# reference crash in Node's require() resolver against Vite 7's
+# ESM-only exports (exit code 1, printed { [Circular *1] }).
 RUN npm run build
 
 # Production dependencies only
