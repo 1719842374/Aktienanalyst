@@ -1,6 +1,6 @@
 # WORK.md
 
-> Stand: 27.07.2026 | Branch: `main`
+> Stand: 28.07.2026 | Branch: `main`
 > Regel: Kein Code-Push über GitHub API ohne lokale Validierung + PR + Review.
 > Ausnahme: reine Dokumentations-Updates in WORK.md sind explizit freigegeben.
 
@@ -1492,3 +1492,276 @@ gates.push({
 - [ ] Keine Hardcoded-Ticker oder absoluten Schwellen — alles relativ / z-score / Perzentil
 
 **Regel bleibt:** Alles hier ist Design-Dokumentation. Implementierung erfolgt lokal → PR → Review.
+
+---
+
+# TEIL 8 — REGULATORY EXPOSURE, GEOGRAPHIC SEGMENTATION, ZÖLLE & PESTEL-INTEGRATION
+
+> Stand: 28.07.2026  
+> Quelle: Chat-Verlauf 27.–28.07.2026  
+> Ziel: Automatische, länder- und aktienspezifische Erkennung von Regulierungs- und Zollrisiken  
+> (Beispiel: Novo Nordisk – US Medicaid / IRA). Kein manuelles Nachziehen über X/News nötig.
+
+## 8.1 Kernprinzip
+
+**Qualitätsprämie nur durch Zahlen, nicht durch Narrative.**  
+Regulatorische und tarifäre Risiken müssen quantifiziert (EPS-Impact + Probability) und  
+gate-fähig sein – sonst bleiben sie Prosa.
+
+## 8.2 Datenmodell
+
+```ts
+export interface RegulatoryExposureRaw {
+  country: string;
+  regulationType: 'drug_pricing' | 'medicaid_medicare' | 'ira' | 'antitrust' | 'carbon' | 'data_privacy' | 'subsidy' | 'other';
+  title: string;
+  description: string;
+  revenueShareInCountry: number | null;   // 0–1
+  estimatedImpactOnSales: number | null;  // z.B. -0.05
+  probability: number;                    // 0–1
+  timeHorizon: '0-12m' | '12-24m' | '24-36m' | 'structural';
+  source: { url: string; publishedAt: string; snippet: string };
+  confidence: 'low' | 'medium' | 'high';
+}
+
+export interface TariffExposure {
+  countryOrRegion: string;
+  title: string;
+  description: string;
+  estimatedImpactOnSales: number | null;
+  probability: number;
+  timeHorizon: '0-12m' | '12-24m' | '24-36m' | 'structural';
+  source: { url: string; publishedAt: string; snippet: string };
+  confidence: 'low' | 'medium' | 'high';
+}
+
+export interface GeoSegment {
+  countryOrRegion: string;  // normalisiert: USA, China, Europe, ...
+  revenue: number;
+  percentage: number;       // 0–100
+  year: number;
+}
+
+export interface EnrichedGeoExposure {
+  countryOrRegion: string;
+  revenueShare: number;     // 0–1
+  revenueAbsolute: number;
+  regulatoryRisks: RegulatoryExposureRaw[];
+  tariffRisks: TariffExposure[];
+  overallRiskScore: number; // 0–100
+}
+```
+
+## 8.3 Geographic Segmentation (FMP)
+
+```ts
+export async function fetchGeographicSegments(ticker: string): Promise<GeoSegment[]> {
+  const data = await fmpGet<any[]>(`/revenue-geographic-segmentation`, { symbol: ticker });
+  if (!Array.isArray(data) || data.length === 0) return [];
+
+  const latest = data[0];
+  const year = latest.date ? new Date(latest.date).getFullYear() : new Date().getFullYear();
+  const ignoreKeys = ['date', 'symbol', 'reportedCurrency', 'period', 'cik'];
+
+  const entries = Object.entries(latest)
+    .filter(([k]) => !ignoreKeys.includes(k) && typeof latest[k] === 'number')
+    .map(([rawName, revenue]) => ({ rawName, revenue: revenue as number }));
+
+  const total = entries.reduce((s, e) => s + e.revenue, 0);
+  if (total <= 0) return [];
+
+  return entries
+    .map(({ rawName, revenue }) => ({
+      countryOrRegion: normalizeGeoName(rawName),
+      revenue,
+      percentage: Math.round((revenue / total) * 1000) / 10,
+      year,
+    }))
+    .filter(s => s.percentage > 0.5)
+    .sort((a, b) => b.percentage - a.percentage);
+}
+
+function normalizeGeoName(raw: string): string {
+  const map: Record<string, string> = {
+    'united states': 'USA', 'u.s.': 'USA', 'us': 'USA', 'north america': 'USA',
+    'china': 'China', 'greater china': 'China',
+    'europe': 'Europe', 'european union': 'Europe', 'germany': 'Germany',
+    'japan': 'Japan', 'rest of world': 'ROW', 'other': 'ROW',
+  };
+  return map[raw.toLowerCase().trim()] ?? raw;
+}
+```
+
+## 8.4 LLM-Prompt (Regulatory + Zölle)
+
+```text
+Du bist ein Extraktions-Assistent für regulatorische und handelspolitische Risiken.
+
+Kontext:
+- Unternehmen: {ticker} ({companyName})
+- Sektor: {sector}
+- Aktuelles Datum: {currentDate}
+- Wichtigste Umsatzländer: {topCountries}
+
+Aufgabe:
+Extrahiere die aktuellsten material relevanten Informationen zu:
+A) Regulatorischen Risiken und Gesetzesänderungen
+B) Zöllen, Handelsbarrieren, tarifären Maßnahmen und Subventionsänderungen
+
+Nur Fakten mit klarer Quelle und Datum. Keine Bewertung, keine Adjektive, keine Prognosen.
+Fehlende Zahlen nicht schätzen. Bei Unsicherheit confidence senken.
+
+Output ausschließlich als JSON:
+{
+  "regulatory": [ { country, regulationType, title, description, revenueShareInCountry, estimatedImpactOnSales, probability, timeHorizon, source, confidence } ],
+  "tariffs": [ { countryOrRegion, title, description, estimatedImpactOnSales, probability, timeHorizon, source, confidence } ]
+}
+
+Sektor-Hinweise:
+- Healthcare: Medicaid, Medicare, IRA, Drug Price Negotiation, Volume-Based Procurement (China)
+- Auto: CO₂-Flottenziele, Subventionen, US-/EU-/China-Zölle, CBAM
+- Tech: Antitrust, DMA, Data Privacy, Exportkontrollen
+- Industrials: Stahl-/Aluminium-Zölle, CBAM
+```
+
+## 8.5 EPS-Impact Berechnung
+
+```ts
+export function calcRegulatoryEpsImpact(
+  reg: RegulatoryExposureRaw,
+  context: { totalRevenue: number; operatingMargin: number; sharesOutstanding: number; taxRate?: number }
+): number | null {
+  if (reg.revenueShareInCountry == null || reg.estimatedImpactOnSales == null) return null;
+
+  const taxRate = context.taxRate ?? 0.21;
+  const revenueImpact = context.totalRevenue * reg.revenueShareInCountry * reg.estimatedImpactOnSales;
+  const ebitImpact = revenueImpact * context.operatingMargin;
+  const netIncomeImpact = ebitImpact * (1 - taxRate);
+  const epsImpactRaw = netIncomeImpact / context.sharesOutstanding;
+
+  const timeDecay =
+    reg.timeHorizon === '0-12m' ? 1.0 :
+    reg.timeHorizon === '12-24m' ? 0.75 :
+    reg.timeHorizon === '24-36m' ? 0.55 : 0.40;
+
+  return Math.round(epsImpactRaw * reg.probability * timeDecay * 100) / 100;
+}
+```
+
+## 8.6 Confidence-Filter + Fehlerbehandlung
+
+```ts
+export function filterByConfidence<T extends { confidence: 'low'|'medium'|'high'; probability: number; source?: { url?: string } }>(
+  items: T[],
+  options = { minProbability: 0.25, requireSource: true, allowLowForDisplay: true }
+) {
+  return items.map(item => {
+    if (item.probability < options.minProbability) return { item, keep: false, reason: 'probability_too_low' };
+    if (options.requireSource && !item.source?.url) return { item, keep: false, reason: 'missing_source' };
+    if (item.confidence === 'low') return { item, keep: options.allowLowForDisplay, reason: 'low_confidence_display_only' };
+    return { item, keep: true };
+  });
+}
+```
+
+- **high/medium** → gate-wirksam + UI  
+- **low** → nur UI (Badge „Low confidence“), kein Gate  
+- fehlende Quelle / probability < 0.25 → verworfen
+
+## 8.7 Test-Matrix (Gate-Verhalten)
+
+| Confidence | |Impact| | Probability | Gate? | Cap | Severity |
+|------------|---------|-------------|---------|-----|----------|
+| high | ≥ 5 % | ≥ 0.55 | Ja | 55 | hard |
+| high | 3–5 % | ≥ 0.50 | Ja | 65 | warn |
+| medium | ≥ 5 % | ≥ 0.60 | Ja | 65 | warn |
+| medium | 3–5 % | ≥ 0.55 | Ja | 70 | warn |
+| low | beliebig | beliebig | Nein | — | — |
+| beliebig | < 3 % | beliebig | Nein | — | — |
+| beliebig | beliebig | < 0.25 | Nein | — | — |
+
+Kumulierung: Summe der gewichteten negativen Impacts ≥ 7 % Umsatz → Cap 55 / hard.
+
+## 8.8 Gate-Erweiterung
+
+```ts
+// in buildGates() zusätzlich:
+const materialRegs = regulatoryExposures.filter(r => r.isMaterial);
+if (materialRegs.length > 0) {
+  const totalNegativeEps = materialRegs
+    .filter(r => (r.epsImpact ?? 0) < 0)
+    .reduce((s, r) => s + (r.epsImpact ?? 0), 0);
+
+  gates.push({
+    id: 'REGULATORY_EXPOSURE',
+    active: true,
+    cap: totalNegativeEps < -1.5 ? 55 : 65,
+    severity: totalNegativeEps < -1.0 ? 'hard' : 'warn',
+    rationale: `Materielles regulatorisches Risiko: ${materialRegs[0].title} (${materialRegs[0].country})`,
+  });
+}
+```
+
+## 8.9 PESTEL-Integration (Political / Legal)
+
+```ts
+export function buildPestelPoliticalLegal(enrichedGeo: EnrichedGeoExposure[], gates: Gate[]) {
+  const relevant = enrichedGeo
+    .filter(g => g.overallRiskScore >= 20 || g.regulatoryRisks.length || g.tariffRisks.length)
+    .sort((a, b) => b.overallRiskScore - a.overallRiskScore);
+
+  const maxScore = relevant[0]?.overallRiskScore ?? 0;
+  const riskLevel = maxScore >= 55 ? 'high' : maxScore >= 30 ? 'medium' : 'low';
+  const regulatoryGate = gates.find(g => g.id === 'REGULATORY_EXPOSURE' && g.active);
+
+  return {
+    summary: relevant.length === 0
+      ? 'Keine materialen länderbezogenen Regulierungs- oder Zollrisiken identifiziert.'
+      : `Risiken in ${relevant.length} Märkten. Höchstes Exposure: ${relevant[0].countryOrRegion} (Score ${relevant[0].overallRiskScore}).`,
+    riskLevel,
+    countries: relevant.map(g => ({
+      country: g.countryOrRegion,
+      revenueShare: g.revenueShare,
+      overallRiskScore: g.overallRiskScore,
+      regulatory: g.regulatoryRisks,
+      tariffs: g.tariffRisks,
+    })),
+    gateTriggered: !!regulatoryGate,
+    gateRationale: regulatoryGate?.rationale,
+  };
+}
+```
+
+Frontend: Länderkarten mit Revenue-Share, Risk-Score, Liste Regulatory + Zölle, Gate-Hinweis.
+
+## 8.10 Gesamt-Pipeline
+
+```
+FMP Geographic Segmentation
+        ↓
+Top-Länder (≥ 8 % Umsatz)
+        ↓
+LLM Search (Sonar → OpenRouter Fallback) – Regulatory + Tariffs
+        ↓
+Confidence-Filter
+        ↓
+┌────────────────────┬──────────────────────┐
+│ Gate-Logik         │ PESTEL Political/Legal│
+│ (nur med/high)     │ (med/high + low)      │
+└────────────────────┴──────────────────────┘
+        ↓
+Katalysatoren (EPS-Impact) + Verdict/Konfliktmatrix
+```
+
+## 8.11 Nächste Umsetzungsschritte
+
+- [ ] Interfaces in `shared/schema.ts`
+- [ ] `fetchGeographicSegments` + `normalizeGeoName`
+- [ ] LLM-Prompt + `fetchRegulatoryAndTariffExposuresSafe`
+- [ ] `calcRegulatoryEpsImpact` + `processRegulatoryExposures`
+- [ ] Confidence-Filter
+- [ ] REGULATORY_EXPOSURE-Gate in `gates.ts`
+- [ ] PESTEL Political/Legal Block + Frontend
+- [ ] Anbindung an bestehende Katalysator-Sektion
+
+**Regel:** Alles Design-Dokumentation. Implementierung lokal → PR → Review.
