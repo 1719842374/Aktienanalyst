@@ -1,404 +1,258 @@
 # WORK_REVERSE_DCF_BRIDGE.md
 
 > Stand: 28.07.2026 | Nur Dokumentation  
-> **1) Reverse-DCF Methodik im Detail**  
-> **2) Bridge: Fiskal-/Megatrend-Programme → Sektor/Branche → Scoring + Daily Briefing**
+> Reverse-DCF Methodik · Bridge Programme→Sektor · **Fiskalprogramm Cache TTL Details**
 
 ---
 
-# Teil 1 — Reverse DCF Methodik im Detail
+# Teil 1 — Reverse DCF (Kurz)
 
-## 1.1 Zweck
+$$EV(g^*)=P\times Shares+NetDebt$$
+g\* per Binary Search · gapRatio = g\*/realized8Q → DCF_REALITY_CHECK  
+Vollcode: §1.3 in Git-History / vorheriger Version.
 
-Der Reverse DCF beantwortet **nicht** „Was ist die Aktie wert?“, sondern:
+---
 
-> **Welche Wachstumsrate g\* ist im aktuellen Kurs bereits eingepreist?**
+# Teil 2 — Bridge + Cache
 
-Vergleich g\* mit dem **realisierten 8Q-Trend** und (optional) mit belegten Fiscal-/Order-Katalysatoren  
-erzeugt den Gate `DCF_REALITY_CHECK` und die Konfliktzeile im Verdict.
+## 2.1–2.11 (Kurz)
+
+FiscalProgram · THEME_SECTOR_MAP · programToCatalyst · Daily Briefing Flow ·  
+AI-Capex = context_only · Staatsprogramm legislated/funded = catalyst
+
+---
+
+## 2.12 Fiskalprogramm Cache — TTL Details
+
+### 2.12.1 Warum TTL (nicht „für immer“)
+
+| Risiko ohne TTL | Folge |
+|-----------------|--------|
+| Veraltetes „announced“ ohne Funding | Falsche Catalysts / DCF-Milderung |
+| Abgelaufenes Programm (endYear vorbei) | Scoring preist Rückenwind, der weg ist |
+| Briefing-Noise / einmalige Schlagzeile | Cache voller Low-Confidence-Müll |
+| Lookahead bei Backtests | expiresAt/publishedAt müssen as-of respektieren |
+
+TTL ist die **Aktualitätsschranke**; `status` + `endYear` sind die **inhaltliche** Schranke.
+
+### 2.12.2 TTL-Staffelung nach Status & Confidence
 
 ```
-Forward DCF:  Annahmen → Fair Value
-Reverse DCF:  Marktpreis → implizite Annahme g*
+expiresAt = cachedAt + TTL(status, confidence)
 ```
 
-## 1.2 Modellgleichung (N-Jahres FCFF + Terminal)
-
-Enterprise Value aus dem Kurs:
-
-$$
-EV_{mkt} = P \times Shares + NetDebt
-$$
-
-Modell-EV bei Wachstumsrate \(g\):
-
-$$
-EV(g) = \sum_{t=1}^{N} \frac{FCF_0 \,(1+g)^t}{(1+WACC)^t}
-+ \frac{FCF_0 \,(1+g)^N \,(1+g_{term})}{(WACC - g_{term})\,(1+WACC)^N}
-$$
-
-Gesucht: \(g^*\) mit \(EV(g^*) = EV_{mkt}\).
-
-| Parameter | Default | Hinweis |
-|-----------|---------|--------|
-| \(N\) | 5 | explizite Phase |
-| \(g_{term}\) | 2,5 % | ≤ langfristiges Nominalwachstum |
-| \(WACC\) | aus Modell / Sector | konsistent zur Forward-DCF |
-| \(FCF_0\) | TTM FCFF in USD | Non-USD: × fxRate (Bug D) |
-| Suche | Binary Search | \(g \in [-5\%,\, +40\%]\), 50 Iterationen |
-
-## 1.3 Binary Search (deterministisch)
+| status | confidence | TTL | Begründung |
+|--------|------------|-----|------------|
+| `announced` | low | **3 Tage** | Schlagzeile, oft Dementi/Korrektur |
+| `announced` | medium | **7 Tage** | warten auf Gesetzestext |
+| `announced` | high | **14 Tage** | offizielle Ankündigung, noch nicht legislated |
+| `legislated` | medium/high | **30 Tage** | Gesetz steht; Refresh für Funding-Updates |
+| `funded` | high | **45 Tage** | Budget da; langsamere Änderung |
+| `deploying` | high | **60 Tage** | mehrjährig; TTL nur für Re-Validation |
+| `expired` | * | **0 / sofort raus** | nicht listen |
+| * | low | max **7 Tage** | egal welcher Status |
 
 ```ts
-export function calcImpliedGStarExact(opts: {
-  price: number;
-  sharesOutstanding: number;
-  netDebt: number;       // bereits USD
-  fcf: number;           // TTM FCFF USD
-  wacc: number;
-  n?: number;            // default 5
-  terminalGrowth?: number; // default 0.025
-}): number | null {
-  const {
-    price, sharesOutstanding, netDebt, fcf, wacc,
-    n = 5, terminalGrowth = 0.025,
-  } = opts;
+export function computeTtlDays(
+  status: FiscalProgram['status'],
+  confidence: FiscalProgram['confidence']
+): number {
+  if (status === 'expired') return 0;
+  if (confidence === 'low') return Math.min(7, status === 'announced' ? 3 : 7);
 
-  if (fcf <= 0 || wacc <= terminalGrowth) return null;
-
-  const evMkt = price * sharesOutstanding + netDebt;
-
-  const dcfValue = (g: number) => {
-    let pv = 0;
-    for (let t = 1; t <= n; t++) {
-      pv += fcf * Math.pow(1 + g, t) / Math.pow(1 + wacc, t);
-    }
-    const term =
-      fcf * Math.pow(1 + g, n) * (1 + terminalGrowth)
-      / ((wacc - terminalGrowth) * Math.pow(1 + wacc, n));
-    return pv + term;
+  const table: Record<FiscalProgram['status'], number> = {
+    announced: confidence === 'high' ? 14 : 7,
+    legislated: 30,
+    funded: 45,
+    deploying: 60,
+    expired: 0,
   };
+  return table[status] ?? 7;
+}
 
-  let lo = -0.05, hi = 0.40;
-  if (dcfValue(hi) < evMkt || dcfValue(lo) > evMkt) return null; // außerhalb Band
+export function computeExpiresAt(cachedAt: string, status: FiscalProgram['status'], confidence: FiscalProgram['confidence']): string {
+  const days = computeTtlDays(status, confidence);
+  const d = new Date(cachedAt);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString();
+}
+```
 
-  for (let i = 0; i < 50; i++) {
-    const mid = (lo + hi) / 2;
-    if (dcfValue(mid) > evMkt) hi = mid;
-    else lo = mid;
+### 2.12.3 Harte Expiry-Regeln (zusätzlich zur TTL)
+
+Ein Programm gilt als **inaktiv** (nicht in `listActive` / nicht als Catalyst), wenn **eine** gilt:
+
+```
+1) now > expiresAt                          // TTL abgelaufen
+2) status === 'expired'
+3) endYear != null && calendarYear > endYear // inhaltlich vorbei
+4) source.publishedAt > asOf                 // Lookahead-Sperre im Backtest
+```
+
+```ts
+export function isProgramActive(p: FiscalProgram, asOf: string): boolean {
+  if (p.status === 'expired') return false;
+  if (p.expiresAt < asOf) return false;
+  if (p.source.publishedAt > asOf) return false;
+  if (p.endYear != null) {
+    const y = new Date(asOf).getUTCFullYear();
+    if (y > p.endYear) return false;
   }
-  return Math.round(((lo + hi) / 2) * 10000) / 100; // z.B. 12.34 (%)
+  return true;
 }
 ```
 
-Rückgabe in **Prozentpunkten** (12.34 = 12,34 %) oder intern als Dezimal — Pipeline einheitlich halten.
+### 2.12.4 Upsert & TTL-Refresh-Politik
 
-## 1.4 Realisierter Trend (8Q)
+```
+Dedupe-Key: id (slug)  — z.B. "nato-2pct", "us-chips-act-2022"
+```
+
+| Ereignis | Aktion auf Cache-Eintrag |
+|----------|--------------------------|
+| Neues Programm (unbekannte id) | insert, `cachedAt=now`, `expiresAt=now+TTL` |
+| Gleiche id, **höherer** status (announced→legislated→funded→deploying) | update Felder, **TTL neu setzen** (längere Staffel) |
+| Gleiche id, gleicher status, neue Source/Volume | update Metadaten, **expiresAt verlängern** (Refresh = now+TTL) |
+| Gleiche id, nur erneute Briefing-Erwähnung ohne Änderung | **soft touch**: expiresAt = max(expiresAt, now+TTL/2) — kein ewiges Verlängern durch Noise |
+| status → expired oder endYear überschritten | status=expired, expiresAt=now (sofort inaktiv) |
+| confidence steigt (medium→high) | update + TTL neu nach Tabelle |
+| confidence fällt | confidence updaten; TTL **nicht** künstlich verlängern |
 
 ```ts
-// YoY FCF oder Revenue/EPS — konsistent wählen, dokumentieren
-realizedGrowth8Q = slope oder CAGR der letzten 8 Quartale
-// Beispiel CAGR:
-realizedGrowth8Q = (fcf_q0 / fcf_q7) ** (1/2) - 1  // 8Q ≈ 2 Jahre
-```
+export function upsertProgram(
+  store: Map<string, FiscalProgram>,
+  incoming: FiscalProgram,
+  now: string
+): FiscalProgram {
+  const prev = store.get(incoming.id);
+  const statusRank = { announced: 1, legislated: 2, funded: 3, deploying: 4, expired: 0 };
 
-## 1.5 Gap-Ratio & Gate
+  if (!prev) {
+    const row = {
+      ...incoming,
+      cachedAt: now,
+      expiresAt: computeExpiresAt(now, incoming.status, incoming.confidence),
+    };
+    store.set(row.id, row);
+    return row;
+  }
 
-```
-gapRatio = g* / max(0.01, realizedGrowth8Q)
+  const upgraded = statusRank[incoming.status] > statusRank[prev.status];
+  const sameStatus = incoming.status === prev.status;
 
-DCF_REALITY_CHECK active wenn gapRatio > 2
-  → Cap 65 (warn)
-  → rationale: "DCF unterstellt X%, realisiert Y%"
-```
+  let expiresAt = prev.expiresAt;
+  if (upgraded) {
+    expiresAt = computeExpiresAt(now, incoming.status, incoming.confidence);
+  } else if (sameStatus && incoming.confidence === prev.confidence) {
+    // soft touch: nur halb TTL verlängern, Cap = full TTL ab now
+    const half = computeTtlDays(incoming.status, incoming.confidence) / 2;
+    const soft = new Date(now);
+    soft.setUTCDate(soft.getUTCDate() + half);
+    const full = new Date(computeExpiresAt(now, incoming.status, incoming.confidence));
+    expiresAt = (soft > new Date(prev.expiresAt) ? soft : new Date(prev.expiresAt)) > full
+      ? full.toISOString()
+      : (soft > new Date(prev.expiresAt) ? soft.toISOString() : prev.expiresAt);
+  } else if (incoming.confidence === 'high' && prev.confidence !== 'high') {
+    expiresAt = computeExpiresAt(now, incoming.status, 'high');
+  }
 
-Interpretation:
-
-| Lage | Bedeutung |
-|------|-----------|
-| g\* ≈ realized | Kurs und Trend konsistent |
-| g\* ≫ realized | Markt preist deutlich mehr Wachstum als geliefert — Gate |
-| g\* ≪ realized | Kurs impliziert Pessimismus vs. Trend (nicht automatisch „billig“) |
-
-## 1.6 Fiscal-/Megatrend-Abgleich (Anbindung §2)
-
-Wenn ein **qualifizierter** Fiscal-/Program-Katalysator greift (siehe Bridge):
-
-- g\* bleibt berechnet (keine Verfälschung der Zahl)
-- Gate `DCF_REALITY_CHECK` kann **gemildert** werden (Cap +10), nie gelöscht
-- Conflict-Text: „Implizites Wachstum über Run-Rate — teilweise durch belegtes Programm X gedeckt“
-
-Private AI-Capex ohne Staats-/Vertragsfund: **keine** Milderung.
-
-## 1.7 Validierungsbeispiele (Orientierung)
-
-```
-MSFT:  g* ≈ hist. Wachstum → fair
-NVO:   g* ≈ hist. → fair
-ASML:  g* deutlich > hist. → Reverse signalisiert teuer / hohes implied growth
-Nike 2023: g* hoch, realized dreht → gapRatio groß → Gate an
-```
-
-## 1.8 Anti-Lookahead
-
-```
-[ ] FCF, Shares, NetDebt, Price nur as-of Datum
-[ ] realizedGrowth8Q nur Quartale ≤ as-of
-[ ] Keine „bekannten“ Future-Earnings im Reverse
-[ ] Programm-Quellen publishedAt ≤ as-of (Bridge)
-```
-
----
-
-# Teil 2 — Bridge: Programme → Sektor → Scoring + Daily Briefing
-
-## 2.1 Ziel
-
-Neu angekündigte oder noch nicht voll umgesetzte **Fiskal- und Capex-Programme**  
-(generisch: Rüstung, Infra, Chips Acts, Energie, **AI-Infra-Subventionen**, …)  
-sollen:
-
-1. **einmal gecacht** werden (Researcher Daily Briefing / LLM-Search),
-2. über eine **Bridge-Datei/Schnittstelle** Sektoren & Branchen zugeordnet,
-3. automatisch in **Scoring** (Katalysator + optionale DCF-Milderung) und  
-   **Daily Briefing** (Sector-Tab) ankommen — ohne manuelles Ticker-Hardcoding.
-
-## 2.2 Bridge-Datei (Kommunikationsschnittstelle)
-
-```
-server/bridge/
-  programCache.ts       ← Store + TTL
-  programTypes.ts       ← Interfaces
-  sectorMap.ts          ← Programm → Sector/Industry GICS/FMP
-  programToCatalyst.ts  ← Programm → Catalyst[] pro Ticker/Sektor
-  index.ts              ← public API für Researcher + Scoring
-```
-
-Oder eine einzige Spec-Datei im Repo als Vertrag:
-
-```
-shared/bridge/fiscalPrograms.ts   // Typen + Mapping-Regeln (Dokumentation = Vertrag)
-```
-
-## 2.3 Datenmodell
-
-```ts
-/** Ein erkanntes Programm — generisch, nicht nur Rüstung */
-export interface FiscalProgram {
-  id: string;                          // slug: "nato-2pct-2022", "us-chips-act", "eu-ai-infra-2026"
-  title: string;
-  type: 'fiscal' | 'capex_subsidy' | 'procurement' | 'tax_credit' | 'regulation_driven_demand';
-  /** Geopolitik / Industriepolitik / Tech */
-  theme: 'defense' | 'ai_infra' | 'semiconductors' | 'energy' | 'infrastructure' | 'healthcare' | 'other';
-  geography: string[];                 // ['US'], ['EU','DE'], ['NATO']
-  status: 'announced' | 'legislated' | 'funded' | 'deploying' | 'expired';
-  confidence: 'low' | 'medium' | 'high';
-  /** Budget / Volumen soweit bekannt */
-  volumeUsdBn: number | null;
-  startYear: number | null;
-  endYear: number | null;
-  /** Für Lookahead-Sperre */
-  source: { url: string; publishedAt: string; snippet: string };
-  /** GICS / FMP Industry Strings oder Sector-Keys */
-  sectorKeys: string[];                // z.B. ['Aerospace & Defense', 'Electrical Equipment']
-  industryKeys: string[];
-  /** Optional explizite Ticker-Boost-Liste (nicht Pflicht) */
-  tickerHints?: string[];
-  /** Wann gecacht */
-  cachedAt: string;
-  expiresAt: string;                   // TTL z.B. 7–30 Tage
-  rawBriefingIds?: string[];           // Verknüpfung Daily Briefing Items
-}
-
-export interface ProgramSectorHit {
-  programId: string;
-  sectorKey: string;
-  industryKey?: string;
-  relevance: number;                   // 0–1
-  appliedAs: 'catalyst' | 'context_only';
-}
-```
-
-## 2.4 Cache-Flow (Daily Briefing → Bridge)
-
-```
-Daily Briefing / LLM-Search (Sonar)
-        │
-        │  extrahiert strukturiert: title, type, theme, geo,
-        │  volume, years, source, sectorKeywords
-        ▼
-programCache.upsert(FiscalProgram)     // TTL, dedupe by id/slug
-        │
-        ▼
-sectorMap.resolve(program) → ProgramSectorHit[]
-        │
-        ├─► Researcher Sector-Tab / Daily Briefing UI
-        │     "Aktive Programme für Aerospace & Defense: …"
-        │
-        └─► Scoring (pro Ticker)
-              programToCatalyst(ticker, sector, industry) → Catalyst[]
-              fiscalMegatrendQualifies / softenDcfRealityGate
-```
-
-## 2.5 Sector-Map (Regeln, kein Hardcoding einzelner Aktien)
-
-```ts
-/** Keyword/Theme → FMP/GICS Sektoren — erweiterbar */
-export const THEME_SECTOR_MAP: Record<FiscalProgram['theme'], string[]> = {
-  defense:        ['Aerospace & Defense', 'Electrical Equipment', 'IT Services'],
-  ai_infra:       ['Semiconductors', 'Software', 'Electrical Equipment', 'Building Products'],
-  semiconductors: ['Semiconductors', 'Semiconductor Equipment & Materials'],
-  energy:         ['Oil, Gas & Consumable Fuels', 'Electrical Equipment', 'Construction & Engineering'],
-  infrastructure: ['Construction & Engineering', 'Building Products', 'Machinery'],
-  healthcare:     ['Health Care Equipment', 'Pharmaceuticals', 'Biotechnology'],
-  other:          [],
-};
-
-export function resolveProgramSectors(p: FiscalProgram): ProgramSectorHit[] {
-  const fromTheme = THEME_SECTOR_MAP[p.theme] ?? [];
-  const keys = [...new Set([...fromTheme, ...p.sectorKeys])];
-  return keys.map(sectorKey => ({
-    programId: p.id,
-    sectorKey,
-    relevance: p.confidence === 'high' ? 0.9 : p.confidence === 'medium' ? 0.6 : 0.3,
-    appliedAs: p.confidence === 'high' && (p.status === 'legislated' || p.status === 'funded' || p.status === 'deploying')
-      ? 'catalyst'
-      : 'context_only',
-  }));
-}
-```
-
-## 2.6 Programm → Catalyst (für runScoringPipeline)
-
-```ts
-export function programToCatalyst(
-  p: FiscalProgram,
-  ctx: { ticker: string; sector: string; industry: string; price: number; eps?: number }
-): Catalyst | null {
-  const hits = resolveProgramSectors(p);
-  const match = hits.find(h =>
-    h.sectorKey === ctx.sector || h.sectorKey === ctx.industry
-    || (p.tickerHints?.includes(ctx.ticker))
-  );
-  if (!match || match.appliedAs !== 'catalyst') return null;
-  if (p.confidence === 'low') return null;
-
-  // epsImpact: nur wenn volume/EPS grob schätzbar — sonst 0 und confidence senken
-  const epsImpact = 0; // bewusst 0 bis Research eine Zahl setzt; EV dann über probability*manual
-
-  return {
-    id: `prog:${p.id}`,
-    type: 'fiscal',
-    title: p.title,
-    eventDate: p.endYear ? `${p.endYear}-12-31` : null,
-    probability: p.confidence === 'high' ? 0.75 : 0.5,
-    epsImpact,
-    source: p.source,
-    confidence: p.confidence,
+  const row: FiscalProgram = {
+    ...prev,
+    ...incoming,
+    cachedAt: prev.cachedAt, // Original-First-Seen behalten
+    expiresAt,
+    rawBriefingIds: [...new Set([...(prev.rawBriefingIds ?? []), ...(incoming.rawBriefingIds ?? [])])],
   };
-}
-
-/** Alle aktiven Programme für einen Ticker-Kontext */
-export function catalystsFromProgramCache(
-  cache: FiscalProgram[],
-  ctx: { ticker: string; sector: string; industry: string; price: number },
-  asOf: string
-): Catalyst[] {
-  return cache
-    .filter(p => p.expiresAt >= asOf && p.source.publishedAt <= asOf) // Lookahead-Sperre
-    .map(p => programToCatalyst(p, ctx))
-    .filter((c): c is Catalyst => c != null);
+  store.set(row.id, row);
+  return row;
 }
 ```
 
-## 2.7 Verknüpfung Daily Briefing (Researcher)
+### 2.12.5 Persistenz & Speicher
 
-```
-POST /api/researcher/daily-briefing
-  → Sonar/LLM liefert News + strukturierte programCandidates[]
-  → server normalisiert zu FiscalProgram[]
-  → programCache.upsert
-  → Response enthält:
-       briefingItems[]
-       activePrograms[]          // für UI-Chip-Leiste
-       programsBySector: Record<sectorKey, FiscalProgram[]>
-
-Sector-Opportunity-Tab:
-  lädt programsBySector[currentSector]
-  zeigt Status, Volumen, Jahre, Confidence, Source
-
-Aktienanalyse (Scoring):
-  catalystsFromProgramCache(cache, { ticker, sector, industry, price }, asOf)
-  merged mit bestehenden Catalyst[] aus LLM-Extraktion
-  → fiscalMegatrendQualifies / softenDcfRealityGate (WORK_SCORING_VORLAGE §17)
-```
-
-## 2.8 LLM-Extraktionsschema (Briefing → Programm)
+| Umgebung | Store | Hinweis |
+|----------|-------|--------|
+| Dev | In-Memory `Map` | reicht für Tests |
+| Render / Prod | Redis oder SQLite/JSON-File | TTL-Index auf `expiresAt` |
+| Serverless (pplx) | KV / File mit periodischem GC | bei jedem Briefing `gcExpired(now)` |
 
 ```ts
-// LLM liefert nur Fakten, kein Urteil
-export interface ProgramExtraction {
-  title: string;
-  type: FiscalProgram['type'];
-  theme: FiscalProgram['theme'];
-  geography: string[];
-  status: FiscalProgram['status'];
-  volumeUsdBn: number | null;
-  startYear: number | null;
-  endYear: number | null;
-  sectorKeywords: string[];
-  sourceUrl: string;
-  publishedAt: string;       // ISO
-  snippet: string;
-  confidence: 'low' | 'medium' | 'high';
+export function gcExpired(store: Map<string, FiscalProgram>, asOf: string): number {
+  let n = 0;
+  for (const [id, p] of store) {
+    if (!isProgramActive(p, asOf)) {
+      // optional: soft-delete flag statt hard delete für Audit
+      store.delete(id);
+      n++;
+    }
+  }
+  return n;
 }
 ```
 
-Prompt-Regeln: keine Ticker-Empfehlung, keine „Buy Defense“-Sprache, nur Felder + Zitat.
+**Max-Größe:** z.B. 200 aktive Programme; bei Overflow zuerst `announced+low`, dann älteste `cachedAt`.
 
-## 2.9 AI-Capex vs. Staatsprogramm (Bridge-Policy)
-
-| Signal | theme | appliedAs | DCF-Milderung |
-|--------|-------|-----------|---------------|
-| NATO / Sondervermögen / legislated procurement | defense | catalyst (high) | ja, eng (§17) |
-| US Chips Act Grants **funded** | semiconductors | catalyst | ja, eng |
-| Hyperscaler „we will spend $X on AI“ (privat) | ai_infra | context_only | **nein** |
-| EU-Programm angekündigt, nicht funded | * | context_only | nein |
-| Tax Credit legislated (IRA-ähnlich) | energy/other | catalyst wenn high | ja, eng |
-
-**Generisch:** Jedes `FiscalProgram` mit `status ∈ {legislated, funded, deploying}` und `confidence=high`  
-kann Sector-Hits erzeugen — Theme ist nicht auf Rüstung beschränkt.
-
-## 2.10 API-Skizze Bridge
-
-```ts
-// server/bridge/index.ts — Vertrag
-export interface ProgramBridge {
-  upsertFromBriefing(extractions: ProgramExtraction[]): Promise<FiscalProgram[]>;
-  listActive(asOf: string): Promise<FiscalProgram[]>;
-  bySector(sectorKey: string, asOf: string): Promise<FiscalProgram[]>;
-  catalystsForTicker(ctx: {
-    ticker: string; sector: string; industry: string; price: number; asOf: string;
-  }): Promise<Catalyst[]>;
-}
-```
-
-Daily Briefing und Scoring hängen **nur** an diesem Vertrag — keine direkten LLM-Calls in der Gate-Logik.
-
-## 2.11 Checkliste
+### 2.12.6 Zusammenspiel mit Daily Briefing
 
 ```
-[ ] programTypes + THEME_SECTOR_MAP
-[ ] programCache mit TTL + publishedAt ≤ asOf
-[ ] Daily Briefing schreibt Extractions → Cache
-[ ] Sector-Tab liest bySector
-[ ] Scoring: catalystsFromProgramCache → merge → fiscalMegatrendQualifies
-[ ] Private AI-Capex-Extractions: theme ai_infra, appliedAs context_only
-[ ] Reverse DCF unverändert berechnen; nur Gate-Cap optional +10
-[ ] Kein Ticker-Hardcoding in der Map
+Täglich (oder bei Briefing-Run):
+  1. Extractions aus Sonar/LLM
+  2. upsertProgram je Extraction
+  3. gcExpired(now)
+  4. listActive(now) → activePrograms + programsBySector
+
+Scoring-Request:
+  catalystsForTicker(..., asOf=heute)
+    → filter isProgramActive
+    → programToCatalyst
+```
+
+Briefing soll **nicht** bei jedem Page-Load die TTL verlängern — nur bei echtem Upsert aus neuem Briefing-Job.
+
+### 2.12.7 Backtest / as-of
+
+```
+Backtest-Tag T:
+  listActive(T) = Programme mit
+    publishedAt ≤ T
+    expiresAt ≥ T     // TTL-Uhr historisch simulieren
+    endYear ≥ year(T) oder null
+    status ≠ expired
+
+Historische TTL-Simulation:
+  cachedAt ≈ publishedAt (oder first-seen in Briefing-Archiv)
+  expiresAt = cachedAt + TTL(status_at_T, confidence)
+```
+
+Ohne archivierte Briefings: nur Programme mit `publishedAt ≤ T` und `status` zum damaligen Kenntnisstand — lieber zu wenig als Lookahead.
+
+### 2.12.8 Defaults (Zusammenfassung)
+
+| Parameter | Wert |
+|-----------|------|
+| TTL announced/low | 3 d |
+| TTL announced/high | 14 d |
+| TTL legislated | 30 d |
+| TTL funded | 45 d |
+| TTL deploying | 60 d |
+| Soft-touch Verlängerung | +TTL/2, Cap = full TTL ab now |
+| GC | bei jedem Briefing-Run + optional cron 6h |
+| Max aktive Einträge | 200 |
+| Lookahead | publishedAt ≤ asOf immer |
+
+### 2.12.9 Checkliste TTL
+
+```
+[ ] computeTtlDays / computeExpiresAt
+[ ] isProgramActive (TTL + endYear + publishedAt + status)
+[ ] upsert mit Status-Upgrade → TTL-Reset
+[ ] soft-touch ohne Statuswechsel
+[ ] gcExpired im Briefing-Job
+[ ] Backtest nutzt asOf, kein „now“
+[ ] expired nie als Catalyst
 ```
 
 ---
 
-**Weiter:** Scoring-Gates → [WORK_SCORING_VORLAGE.md](./WORK_SCORING_VORLAGE.md) §17  
+**Weiter:** [WORK_SCORING_VORLAGE.md](./WORK_SCORING_VORLAGE.md) §17 Fiscal-Ausnahme  
 **Regel:** Dokumentation. Implementierung lokal → PR → Review.
