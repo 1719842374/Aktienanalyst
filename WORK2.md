@@ -25,22 +25,21 @@ Regulatorische und tarifäre Risiken quantifizieren (EPS-Impact + Probability) u
 ## 8.2 Datenmodell
 
 ```ts
-/** regulationType = grobe Achse, NICHT der Programmname */
 export type RegulationAxis =
-  | 'price_regulation'      // Arzneimittelpreise, Utility-Tarife, Mietpreis, …
-  | 'subsidy_incentive'     // Subventionen, Tax Credits, Grants (Zu- oder Wegfall)
+  | 'price_regulation'
+  | 'subsidy_incentive'
   | 'competition_antitrust'
   | 'environmental_climate'
   | 'data_privacy_tech'
   | 'labor_social'
-  | 'trade_tariff'           // Zölle, CBAM-ähnlich, Exportkontrollen — als Achse
-  | 'procurement_public'    // öffentliche Auftrags-/Budgetregeln
+  | 'trade_tariff'
+  | 'procurement_public'
   | 'other';
 
 export interface RegulatoryExposureRaw {
   country: string;
-  regulationAxis: RegulationAxis;   // generische Achse
-  title: string;                    // konkreter Name erst nach Discovery
+  regulationAxis: RegulationAxis;
+  title: string;
   description: string;
   revenueShareInCountry: number | null;
   estimatedImpactOnSales: number | null;
@@ -74,136 +73,24 @@ export interface GeoSegment {
 ## 8.3 Geographic Segmentation (FMP)
 
 `fetchGeographicSegments(ticker)` → Top-Länder mit Revenue-Share.  
-Diese Liste steuert die **Suchkontexte** in 8.4 (nicht eine globale Fixliste).
+Steuert die Suchkontexte in 8.4.
 
 ---
 
-## 8.4 LLM-Prompt & Discovery (Regulatory + Zölle) — generisch
+## 8.4 LLM-Prompt & Discovery — generisch
 
-### 8.4.1 Designziel
+**Kein Hardcoding** von Medicaid/IRA/CBAM.  
+Kontext = Sektor + Branche + Top-Länder; Suche über Überbegriffe; Discovery via LLM/X.
 
-```
-FALSCH:  "Suche Medicaid, IRA, Section 301, CBAM …"  (hardcoded Programme)
-RICHTIG: Kontext (Sektor, Branche, Länder) + Überbegriffe
-         → LLM/X findet aktuelle, material relevante Regime von selbst
-```
+Suchachsen: Subventionen · Preisregulierung · Wettbewerbsrecht · Umwelt · Datenschutz · Zölle · öffentliche Beschaffung.
 
-Der Agent ist ein **Extraktions-Assistent**, kein Keyword-Scanner für US-Gesundheitsgesetze.
+Prompt + `buildRegulatorySearchQueries` → siehe vorherige Version / Git-History für Volltext.
 
-### 8.4.2 Suchachsen (Überbegriffe, stabil)
-
-| Achse | Beispiel-Queries (dynamisch mit Sektor/Land) |
-|-------|-----------------------------------------------|
-| Subventionen / Anreize | `{sector} subsidies {country}`, `state aid {sector}`, `tax credit phase-out` |
-| Preisregulierung | `{sector} price regulation {country}`, `reimbursement cuts`, `tariff review` |
-| Wettbewerbsrecht | `{company} antitrust`, `{sector} merger control {country}` |
-| Umwelt / Klima | `{sector} carbon cost {country}`, `emissions trading exposure` |
-| Datenschutz / Tech | `{sector} data privacy enforcement {country}` |
-| Handel / Zölle | `{sector} tariffs {exportCountry} {importCountry}`, `trade barrier {product}` |
-| Öffentliche Beschaffung | `{sector} public procurement budget {country}` |
-
-Konkrete Eigennamen (IRA, Medicaid, CBAM, …) dürfen **im Treffer** stehen —  
-sie werden nur nicht als **Suchpflicht** vorgegeben.
-
-### 8.4.3 Prompt-Vorlage (kein Programm-Hardcoding)
-
-```text
-Du bist ein Extraktions-Assistent für regulatorische und handelspolitische Risiken.
-
-Kontext (nur das nutzen, nichts erfinden):
-- Unternehmen: {ticker} ({companyName})
-- Sektor / Branche: {sector} / {industry}
-- Analyse-Datum: {currentDate}
-- Wichtigste Umsatzländer (Revenue-Share): {topCountries}
-
-Auftrag:
-Finde material relevante Entwicklungen der letzten ~18 Monate, die Umsatz,
-Marge oder Zugang in diesen Ländernern für DIESE Branche beeinflussen können.
-
-Arbeite entlang generischer Achsen — nicht entlang einer Fixliste von Gesetzen:
-1) Subventionen & staatliche Anreize (Einführung, Kürzung, Auslaufen)
-2) Preis- / Erstattungs- / Tarifregulierung
-3) Wettbewerbsrecht & Marktzugang
-4) Umwelt- und Klimauflage mit Kostenwirkung
-5) Datenschutz / Tech-Regulierung (wenn sektorsrelevant)
-6) Zölle, Handelsbarrieren, Exportkontrollen zwischen den Umsatzländern
-7) Öffentliche Beschaffung / Budgetregeln (wenn sektorsrelevant)
-
-Regeln:
-- Keine Bewertung, keine Kauf-/Verkaufsempfehlung.
-- Nur Fakten mit Quelle (URL) und Datum (publishedAt).
-- Wenn nichts Materiales: leere Arrays zurückgeben.
-- Programm-/Gesetzesnamen nur nennen, wenn die Quelle sie so bezeichnet.
-- Nicht pauschal US-Gesundheits- oder EU-Klimaregime auflisten, nur weil sie berühmt sind.
-
-Output streng als JSON:
-{
-  "regulatory": [
-    {
-      "country": "...",
-      "regulationAxis": "subsidy_incentive|price_regulation|competition_antitrust|environmental_climate|data_privacy_tech|labor_social|procurement_public|other",
-      "title": "...",
-      "description": "...",
-      "estimatedImpactOnSales": null,
-      "probability": 0.0,
-      "timeHorizon": "0-12m|12-24m|24-36m|structural",
-      "source": { "url": "...", "publishedAt": "YYYY-MM-DD", "snippet": "..." },
-      "confidence": "low|medium|high"
-    }
-  ],
-  "tariffs": [
-    {
-      "countryOrRegion": "...",
-      "title": "...",
-      "description": "...",
-      "estimatedImpactOnSales": null,
-      "probability": 0.0,
-      "timeHorizon": "0-12m|12-24m|24-36m|structural",
-      "source": { "url": "...", "publishedAt": "YYYY-MM-DD", "snippet": "..." },
-      "confidence": "low|medium|high"
-    }
-  ]
-}
-```
-
-### 8.4.4 Query-Builder (vor dem LLM, optional Sonar/X)
-
-```ts
-/** Baut Suchstrings aus Sektor + Ländernern — ohne Fix-Programmnamen */
-export function buildRegulatorySearchQueries(opts: {
-  sector: string;
-  industry?: string;
-  topCountries: string[];
-}): string[] {
-  const { sector, industry, topCountries } = opts;
-  const branch = industry || sector;
-  const qs: string[] = [];
-
-  for (const c of topCountries.slice(0, 4)) {
-    qs.push(`${branch} regulation OR subsidy OR "price control" OR tariff ${c}`);
-    qs.push(`${branch} trade tariff OR "import duty" OR "export control" ${c}`);
-  }
-  // sektor-globale Achsen ohne Land
-  qs.push(`${branch} state aid OR subsidy phase-out OR incentive`);
-  qs.push(`${branch} antitrust OR "merger control" enforcement`);
-  return [...new Set(qs)].slice(0, 8); // Budget-Deckel
-}
-```
-
-X / Sonar: dieselben Queries, Results → Prompt als `sourceCandidates` anreichern  
-(oder Prompt allein mit Live-Search-Modell).
-
-### 8.4.5 Pipeline-Schritt
+Pipeline:
 
 ```
-FMP Geo → topCountries
-  → buildRegulatorySearchQueries(sector, industry, topCountries)
-  → LLM/Sonar/X Discovery (Überbegriffe + Kontext)
-  → JSON Extraktion (Prompt 8.4.3)
-  → Confidence-Filter → Gates / PESTEL / Katalysatoren
+FMP Geo → topCountries → Query-Builder → LLM/X → JSON → Confidence-Filter → Gates
 ```
-
-**Nicht:** fester String „Medicaid|IRA|Section 301“ in jedem Run.
 
 ---
 
@@ -228,48 +115,99 @@ export function calcRegulatoryEpsImpact(
 }
 ```
 
+---
+
 ## 8.6 Confidence-Filter
 
-- high/medium → gate-wirksam + UI  
-- low → nur UI  
-- probability < 0.25 oder fehlende Quelle → verworfen
-
-## 8.7 Test-Matrix
-
-| Confidence | |Impact| | Probability | Gate? | Cap |
-|------------|---------|-------------|---------|-----|
-| high | ≥ 5 % | ≥ 0.55 | Ja | 55 hard |
-| high | 3–5 % | ≥ 0.50 | Ja | 65 warn |
-| medium | ≥ 5 % | ≥ 0.60 | Ja | 65 warn |
-| low / <3 % Impact / p<0.25 | * | Nein | — |
-
-## 8.8 REGULATORY_EXPOSURE-Gate
-
-Material + negativer EPS → Cap 55/65. Rationale nennt **entdeckten** `title` + `country`  
-(nicht eine vordefinierte Programmliste).
-
-## 8.9–8.11 PESTEL / Pipeline / Umsetzung
-
-```
-FMP Geo → Query-Builder (Sektor+Land+Überbegriffe)
-  → LLM/X Search → Extraktion → Filter → Gates + PESTEL + Verdict
-```
-
-- [ ] regulationAxis statt program-enum  
-- [ ] Prompt 8.4.3 ohne Fixnamen  
-- [ ] buildRegulatorySearchQueries  
-- [ ] fetchGeographicSegments  
-- [ ] calcRegulatoryEpsImpact + Gate  
+| Confidence | Gate-wirksam? | UI |
+|------------|---------------|-----|
+| **high** | ja | ja |
+| **medium** | ja | ja |
+| **low** | nein | nur Badge |
+| probability < 0.25 | nein | verworfen |
+| fehlende Quelle | nein | verworfen |
 
 ---
 
-## 8.12 FRED + Company-Tech + Pestel Economic/Technological
+## 8.7 Test-Matrix (Gate-Entscheidung)
 
-Unverändert: MacroSnapshot (DGS10, DFII10, …), R&D/Capex-Intensität,  
-`buildPestelEconomic` / `buildPestelTechnological` / `buildFullPestelInput`.
+Wann wird `REGULATORY_EXPOSURE` aktiv — und mit welchem Cap?
 
-Environmental/Social weiter LLM-getrieben mit **denselben generischen Achsen**  
-(kein Pflicht-Keyword CBAM o.Ä.).
+| # | Confidence | |Impact| auf Sales | Probability | Gate? | Cap | Severity |
+|---|------------|----------------------|-------------|-------|-----|----------|
+| 1 | high | ≥ 5 % | ≥ 0.55 | **Ja** | **55** | hard |
+| 2 | high | 3 % – 5 % | ≥ 0.50 | **Ja** | **65** | warn |
+| 3 | medium | ≥ 5 % | ≥ 0.60 | **Ja** | **65** | warn |
+| 4 | medium | 3 % – 5 % | ≥ 0.55 | **Ja** | **70** | warn |
+| 5 | low | beliebig | beliebig | **Nein** | — | — |
+| 6 | beliebig | < 3 % | beliebig | **Nein** | — | — |
+| 7 | beliebig | beliebig | < 0.25 | **Nein** | — | — |
+
+### Lesart
+
+```
+Impact   = |estimatedImpactOnSales|  (Umsatzwirkung im betroffenen Land)
+Gate?    = kommt in buildGates / applyGates
+Cap 55   = härtestes Regulatory-Veto (wie PRICING_POWER)
+Cap 65–70 = Warn-Deckel, Score darf nicht höher
+Nein     = nur Anzeige in PESTEL / UI, kein Score-Deckel
+```
+
+### Kumulierung
+
+Wenn **mehrere** material negative Exposure zusammen ≥ **7 %** gewichteter  
+Umsatz-Impact (Share × Impact × Probability) → immer Cap **55** / hard.
+
+### Beispiele
+
+| Fall | Confidence | Impact | p | Ergebnis |
+|------|------------|--------|---|----------|
+| Starkes Preisregime, klar belegt | high | 8 % | 0.70 | Gate an, Cap **55** hard |
+| Moderates Zollrisiko | high | 4 % | 0.55 | Gate an, Cap **65** warn |
+| Unklare Schlagzeile | low | 10 % | 0.40 | **kein** Gate, nur Badge |
+| Mini-Effekt | high | 1 % | 0.80 | **kein** Gate (< 3 %) |
+
+---
+
+## 8.8 REGULATORY_EXPOSURE-Gate
+
+```ts
+// material = besteht Test-Matrix (Gate? = Ja)
+if (materialRegs.length > 0) {
+  const totalNegativeEps = materialRegs
+    .filter(r => (r.epsImpact ?? 0) < 0)
+    .reduce((s, r) => s + (r.epsImpact ?? 0), 0);
+  gates.push({
+    id: 'REGULATORY_EXPOSURE',
+    active: true,
+    cap: totalNegativeEps < -1.5 ? 55 : 65,
+    severity: totalNegativeEps < -1.0 ? 'hard' : 'warn',
+    rationale: `Materielles Risiko: ${materialRegs[0].title} (${materialRegs[0].country})`,
+  });
+}
+```
+
+Rationale nennt den **entdeckten** Titel — keine Fixliste.
+
+---
+
+## 8.9–8.11 Pipeline / Umsetzung
+
+```
+FMP Geo → Query-Builder (Sektor+Land+Überbegriffe)
+  → LLM/X → Extraktion → Filter (8.6) → Test-Matrix (8.7) → Gate (8.8) → PESTEL / Verdict
+```
+
+- [ ] regulationAxis generisch  
+- [ ] Prompt ohne Fixnamen  
+- [ ] buildRegulatorySearchQueries  
+- [ ] calcRegulatoryEpsImpact + Gate nach Matrix  
+
+---
+
+## 8.12 FRED + Company-Tech
+
+MacroSnapshot · R&D/Capex · Pestel Economic/Technological — unverändert.
 
 ---
 
