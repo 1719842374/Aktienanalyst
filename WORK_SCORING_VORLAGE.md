@@ -1,236 +1,65 @@
 # WORK_SCORING_VORLAGE.md — Scoring-Logik Vorlage
 
-> Stand: 28.07.2026  
-> **Nur Dokumentation.** Copy-Paste-Vorlage für `client/src/lib/scoring/`.  
-> Ziel: Nike-2023-Fehlgriffe verhindern — Gates deckeln, Narrative zählen nicht.
+> Stand: 28.07.2026 | Nur Dokumentation  
+> Enthält: Kern-Pipeline · **Gate-Logik Implementierung** · **Backtesting** · **runScoringPipeline Beispiel**
 
 ---
 
-## 0. Architektur in einem Satz
+## 0. Architektur
 
 ```
-finalScore = min( qualityScore × trendMultiplier , gateCap ) + catalystEV
-             └──────── basis (0–100, multiplikativ) ────────┘   └ separat ┘
-```
-
-- **qualityScore** (0–100): Level-Fundamental (bestehend)
-- **trendMultiplier** (0.5–1.15): Delta über 8Q, asymmetrisch
-- **gateCap**: schärfstes aktives Veto (55/60/65/70/…)
-- **catalystEV**: Erwartungswert in % des Kurses — **nicht** multipliziert, additiv ausgewiesen
-
----
-
-## 1. Dateistruktur (Ziel)
-
-```
-client/src/lib/scoring/
-  types.ts
-  pricingPower.ts
-  relativeMomentum.ts
-  gates.ts
-  trend.ts
-  catalysts.ts
-  verdict.ts
-  index.ts          ← runScoringPipeline()
+finalScore = min( qualityScore × trendMultiplier , gateCap )
+catalystEV  → separat ausweisen (nicht in finalScore einrechnen)
 ```
 
 ---
 
-## 2. types.ts
+## 1–8. Module (Kurz)
+
+`types` · `pricingPowerScore` · `relativeMomentum` · `trendMultiplier` · `buildGates` / `applyGates` · `catalystExpectedValue` · `buildVerdict` · `runScoringPipeline`  
+→ voller Code in Abschnitten 2–8 der Vorgängerversion / unten §15 gebündelt.
+
+### Gate-Caps
+
+| ID | Cap | Severity | Trigger |
+|----|-----|----------|--------|
+| PRICING_POWER | 55 | hard | PRICING_POWER_LOSS ∨ score<40 |
+| RELATIVE_GROWTH | 60 | hard | negativeQuarters ≥ 3 |
+| DCF_REALITY_CHECK | 65 | warn | implied/realized8Q > 2 |
+| INVENTORY | 70 | warn | INVENTORY_BUILD |
+| REGULATORY_EXPOSURE | 55/65 | hard/warn | TEIL 8 |
+
+---
+
+## 13. Implementierung der Gate-Logik
+
+### 13.1 Prinzip
+
+Gates sind **Vetos**, keine Abzüge. Ein aktives Gate setzt eine **Obergrenze** (`cap`).  
+Mehrere aktive Gates → `gateCap = min(caps)`. Hard-Gates schlagen Warn-Gates, wenn Cap niedriger.
+
+```
+rawScore = qualityScore * trendMult          // z.B. 88 * 0.72 = 63.4
+activeCaps = [55, 70]                        // PRICING_POWER + INVENTORY
+gateCap = 55
+finalScore = min(63.4, 55) = 55
+cappedBy = [PRICING_POWER]
+```
+
+### 13.2 Auswertungsreihenfolge
+
+```
+1. pricingPowerScore → flags + score
+2. relativeMomentum  → flags + negativeQuarters
+3. revDcf gapRatio
+4. buildGates(...)   → Gate[] mit active true/false
+5. applyGates(quality, trendMult, gates) → { score, cappedBy }
+6. regulatoryGates (TEIL 8) als extra[] in buildGates mergen
+```
+
+### 13.3 Gate-Builder (vollständig)
 
 ```ts
-export interface PricingPowerInput {
-  grossMarginQ: number[];           // ≥8 Quartale, älteste zuerst
-  inputCostIndex: number[];         // Branchen-PPI, gleiche Länge
-  asp: (number | null)[];
-  volume: (number | null)[];
-  discountMentions: number[];
-  peerGrossMarginQ: number[][];
-}
-
-export interface PricingPowerResult {
-  score: number;                    // 0–100
-  marginVsCostDivergence: number;
-  aspTrend: number | null;
-  volumeTrend: number | null;
-  discountPressure: number;         // 0–1
-  relativeMarginTrend: number;
-  flags: string[];
-}
-
-export interface RelativeMomentumResult {
-  growthGap: number;
-  negativeQuarters: number;
-  inventoryStress: number;
-  marketShareTrend: number;
-  flags: string[];
-}
-
-export interface Gate {
-  id: string;
-  active: boolean;
-  cap: number;
-  severity: 'warn' | 'hard';
-  rationale: string;
-}
-
-export interface Catalyst {
-  id: string;
-  type: 'fiscal' | 'deal' | 'product' | 'regulatory' | 'capacity' | 'buyback' | 'litigation';
-  title: string;
-  eventDate: string | null;
-  probability: number;              // 0–1
-  epsImpact: number;                // Währung/Aktie
-  source: { url: string; publishedAt: string; snippet: string };
-  confidence: 'low' | 'medium' | 'high';
-}
-
-export interface ScoringInput {
-  qualityScore: number;             // 0–100 aus bestehender Pipeline
-  zDeltas: number[];                // z-Scores der Delta-Signale (8Q)
-  pricingPower: PricingPowerInput;
-  ownYoY: number[];
-  peerYoYWeighted: number[];
-  inventoryDays: number[];
-  revenue: number[];
-  revDcf: { impliedGrowth: number; realizedGrowth8Q: number };
-  catalysts: Catalyst[];
-  price: number;
-  technicalRegime: 'uptrend' | 'range' | 'breakdown';
-  reverseDcfConsistent: boolean;
-  /** optional aus TEIL 8 */
-  regulatoryGates?: Gate[];
-}
-
-export interface ScoringResult {
-  qualityScore: number;
-  trendMult: number;
-  pricingPower: PricingPowerResult;
-  relativeMomentum: RelativeMomentumResult;
-  gates: Gate[];
-  score: number;                    // nach Gates
-  cappedBy: Gate[];
-  catalystEV: number;               // % vom Kurs
-  conflicts: string[];
-  testQuestion: string | null;
-  verdict: {
-    score: number;
-    conflicts: string[];
-    cappedBy: Gate[];
-    testQuestion: string | null;
-    catalystEV: number;
-  };
-}
-```
-
----
-
-## 3. pricingPower.ts
-
-```ts
-const slope = (xs: number[]) => {
-  const n = xs.length;
-  if (n < 2) return 0;
-  const mx = (n - 1) / 2;
-  const my = xs.reduce((a, b) => a + b, 0) / n;
-  let num = 0, den = 0;
-  xs.forEach((y, i) => { num += (i - mx) * (y - my); den += (i - mx) ** 2; });
-  return den === 0 ? 0 : num / den;
-};
-
-const avg = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
-const norm = (v: number, s: number) => 50 + 50 * Math.tanh(v / s);
-
-export function pricingPowerScore(i: PricingPowerInput): PricingPowerResult {
-  const flags: string[] = [];
-  const gmSlope = slope(i.grossMarginQ);
-  const costSlope = slope(i.inputCostIndex);
-  const marginVsCostDivergence = gmSlope - costSlope * 0.5;
-
-  if (gmSlope < 0 && costSlope <= 0)
-    flags.push('PRICING_POWER_LOSS');
-
-  const aspSeries = i.asp.filter((v): v is number => v != null);
-  const volSeries = i.volume.filter((v): v is number => v != null);
-  const aspTrend = aspSeries.length >= 4 ? slope(aspSeries) : null;
-  const volumeTrend = volSeries.length >= 4 ? slope(volSeries) : null;
-
-  if (aspTrend != null && volumeTrend != null && aspTrend > 0 && volumeTrend < 0)
-    flags.push('VOLUME_EROSION');
-  if (aspTrend != null && aspTrend < 0)
-    flags.push('DISCOUNTING');
-
-  const mid = Math.floor(i.discountMentions.length / 2);
-  const base = avg(i.discountMentions.slice(0, mid));
-  const recent = avg(i.discountMentions.slice(mid));
-  const discountPressure = base === 0 ? 0 : Math.min(1, Math.max(0, (recent - base) / Math.max(1, base)));
-  if (discountPressure > 0.5) flags.push('PROMO_INTENSITY');
-
-  const peerSlopes = i.peerGrossMarginQ.map(slope).sort((a, b) => a - b);
-  const peerMedian = peerSlopes.length ? peerSlopes[Math.floor(peerSlopes.length / 2)] : 0;
-  const relativeMarginTrend = gmSlope - peerMedian;
-  if (relativeMarginTrend < 0 && peerMedian >= 0) flags.push('RELATIVE_MARGIN_LOSS');
-
-  const score = Math.round(
-    0.35 * norm(marginVsCostDivergence, 0.4) +
-    0.25 * norm(relativeMarginTrend, 0.4) +
-    0.20 * norm(volumeTrend ?? 0, 0.05) +
-    0.20 * (100 - discountPressure * 100)
-  );
-
-  return {
-    score, marginVsCostDivergence, aspTrend, volumeTrend,
-    discountPressure, relativeMarginTrend, flags,
-  };
-}
-```
-
----
-
-## 4. relativeMomentum.ts
-
-```ts
-export function relativeMomentum(
-  ownYoY: number[],
-  peerYoYWeighted: number[],
-  inventoryDays: number[],
-  revenue: number[]
-): RelativeMomentumResult {
-  const gaps = ownYoY.map((v, k) => v - (peerYoYWeighted[k] ?? 0));
-  let negativeQuarters = 0;
-  for (let k = gaps.length - 1; k >= 0 && gaps[k] < 0; k--) negativeQuarters++;
-
-  const dInv = (inventoryDays.at(-1) ?? 0) - (inventoryDays.at(-5) ?? 0);
-  const r0 = revenue.at(-5) ?? 1;
-  const dRev = r0 !== 0 ? ((revenue.at(-1) ?? 0) / r0 - 1) * 100 : 0;
-  const inventoryStress = dInv - dRev;
-
-  const flags: string[] = [];
-  if (negativeQuarters >= 3) flags.push('SHARE_LOSS');
-  if (inventoryStress > 0 && dRev <= 0) flags.push('INVENTORY_BUILD');
-
-  return {
-    growthGap: gaps.at(-1) ?? 0,
-    negativeQuarters,
-    inventoryStress,
-    marketShareTrend: gaps.reduce((a, b) => a + b, 0),
-    flags,
-  };
-}
-```
-
----
-
-## 5. trend.ts + gates.ts
-
-```ts
-/** 0.5–1.15 — Verschlechterung härter bestraft als Verbesserung belohnt */
-export function trendMultiplier(zDeltas: number[]): number {
-  if (!zDeltas.length) return 1;
-  const mean = zDeltas.reduce((a, b) => a + b, 0) / zDeltas.length;
-  return mean >= 0 ? 1 + 0.15 * Math.tanh(mean) : 1 + 0.50 * Math.tanh(mean);
-}
-
 export function buildGates(
   pp: PricingPowerResult,
   rm: RelativeMomentumResult,
@@ -239,6 +68,7 @@ export function buildGates(
 ): Gate[] {
   const gates: Gate[] = [];
 
+  // HARD — Preissetzungsmacht
   gates.push({
     id: 'PRICING_POWER',
     active: pp.flags.includes('PRICING_POWER_LOSS') || pp.score < 40,
@@ -247,26 +77,28 @@ export function buildGates(
     rationale: 'Preissetzungsmacht erodiert — Qualitätsprämie nicht gerechtfertigt',
   });
 
+  // HARD — relatives Wachstum
   gates.push({
     id: 'RELATIVE_GROWTH',
     active: rm.negativeQuarters >= 3,
     cap: 60,
     severity: 'hard',
-    rationale: 'Marktanteilsverlust über 3+ Quartale',
+    rationale: 'Marktanteilsverlust über 3+ Quartale → Moat-Erosion',
   });
 
+  // WARN — DCF vs Realität
   const gapRatio = revDcf.realizedGrowth8Q === 0
     ? Infinity
     : revDcf.impliedGrowth / Math.max(0.01, revDcf.realizedGrowth8Q);
-
   gates.push({
     id: 'DCF_REALITY_CHECK',
     active: gapRatio > 2,
     cap: 65,
     severity: 'warn',
-    rationale: `DCF unterstellt ${(revDcf.impliedGrowth * 100).toFixed(1)}%, realisiert ${(revDcf.realizedGrowth8Q * 100).toFixed(1)}%`,
+    rationale: `DCF g*=${(revDcf.impliedGrowth * 100).toFixed(1)}% vs 8Q=${(revDcf.realizedGrowth8Q * 100).toFixed(1)}%`,
   });
 
+  // WARN — Inventar
   gates.push({
     id: 'INVENTORY',
     active: rm.flags.includes('INVENTORY_BUILD'),
@@ -275,86 +107,246 @@ export function buildGates(
     rationale: 'Lageraufbau bei stagnierendem Umsatz',
   });
 
-  return [...gates, ...extra.filter(g => g.active)];
+  // Extra (Regulatory etc.) — nur aktive übernehmen
+  for (const g of extra) {
+    if (g.active) gates.push(g);
+  }
+  return gates;
 }
 
 export function applyGates(qualityScore: number, trendMult: number, gates: Gate[]) {
   const raw = qualityScore * trendMult;
   const active = gates.filter(g => g.active);
-  const caps = active.map(g => g.cap);
-  const cap = caps.length ? Math.min(...caps) : 100;
+  if (active.length === 0) return { score: raw, cappedBy: [] as Gate[] };
+
+  const cap = Math.min(...active.map(g => g.cap));
+  const cappedBy = active.filter(g => g.cap === cap);
+  // bei gleichem Cap: hard vor warn sortieren für UI
+  cappedBy.sort((a, b) => (a.severity === 'hard' && b.severity !== 'hard' ? -1 : 0));
+
+  return { score: Math.min(raw, cap), cappedBy };
+}
+```
+
+### 13.4 UI-Regeln für Gates
+
+```
+- cappedBy.length > 0 → Badge "GATED" + Liste der IDs
+- severity hard → rote Karte, warn → gelbe Karte
+- testQuestion immer auf cappedBy[0] (schärfstes Gate)
+- score und qualityScore nebeneinander zeigen (Transparenz der Deckelung)
+```
+
+### 13.5 Unit-Test-Vektoren Gate-Logik
+
+```
+T1: pp.score=30, flags=[PRICING_POWER_LOSS], quality=90, trendMult=1.0
+    → active PRICING_POWER, score=55, cappedBy=[PRICING_POWER]
+
+T2: rm.negativeQuarters=4, kein PP-Flag, quality=80, trendMult=0.9
+    → raw=72, cap=60, score=60, cappedBy=[RELATIVE_GROWTH]
+
+T3: gapRatio=3, quality=70, trendMult=1.0, keine anderen Flags
+    → score=65, cappedBy=[DCF_REALITY_CHECK], severity=warn
+
+T4: PP + RELATIVE gleichzeitig, quality=95, trendMult=1.0
+    → cap=min(55,60)=55, score=55, cappedBy=[PRICING_POWER]
+
+T5: keine Flags, quality=80, trendMult=1.1
+    → score=88, cappedBy=[]
+```
+
+---
+
+## 14. Backtesting der Scoring-Modelle
+
+### 14.1 Ziel
+
+Prüfen, ob die Gate-Logik historische Fehlsignale (Nike 2023-Typ) **früher** als reines Level-Scoring erkannt hätte — ohne Lookahead.
+
+### 14.2 Daten-Schnittstelle
+
+```ts
+export interface BacktestPoint {
+  date: string;                     // Quartalsende ISO
+  ticker: string;
+  qualityScore: number;             // damaliger Level-Score (rekonstruiert)
+  zDeltas: number[];
+  pricingPower: PricingPowerInput;  // nur Daten ≤ date
+  ownYoY: number[];
+  peerYoYWeighted: number[];
+  inventoryDays: number[];
+  revenue: number[];
+  revDcf: { impliedGrowth: number; realizedGrowth8Q: number };
+  price: number;
+  // Forward-Labels (nur für Evaluation, nicht für Score-Input):
+  forwardReturn12M?: number;        // realisierte 12M-Performance nach date
+  wasValueTrap?: boolean;           // manuell/regelbasiert: großer Drawdown trotz hohem Quality
+}
+```
+
+### 14.3 Backtest-Runner (Vorlage)
+
+```ts
+export interface BacktestRow {
+  date: string;
+  ticker: string;
+  qualityScore: number;
+  trendMult: number;
+  score: number;
+  cappedBy: string[];
+  gateActive: boolean;
+  forwardReturn12M?: number;
+  wasValueTrap?: boolean;
+}
+
+export function runScoringBacktest(points: BacktestPoint[]): BacktestRow[] {
+  return points.map(p => {
+    const result = runScoringPipeline({
+      qualityScore: p.qualityScore,
+      zDeltas: p.zDeltas,
+      pricingPower: p.pricingPower,
+      ownYoY: p.ownYoY,
+      peerYoYWeighted: p.peerYoYWeighted,
+      inventoryDays: p.inventoryDays,
+      revenue: p.revenue,
+      revDcf: p.revDcf,
+      catalysts: [],
+      price: p.price,
+      technicalRegime: 'range',
+      reverseDcfConsistent: p.revDcf.impliedGrowth / Math.max(0.01, p.revDcf.realizedGrowth8Q) <= 2,
+    });
+    return {
+      date: p.date,
+      ticker: p.ticker,
+      qualityScore: p.qualityScore,
+      trendMult: result.trendMult,
+      score: result.score,
+      cappedBy: result.cappedBy.map(g => g.id),
+      gateActive: result.cappedBy.length > 0,
+      forwardReturn12M: p.forwardReturn12M,
+      wasValueTrap: p.wasValueTrap,
+    };
+  });
+}
+```
+
+### 14.4 Metriken
+
+```ts
+export function evaluateBacktest(rows: BacktestRow[]) {
+  const traps = rows.filter(r => r.wasValueTrap);
+  const trapsCaught = traps.filter(r => r.gateActive);
+  const falseAlarms = rows.filter(r => r.gateActive && r.forwardReturn12M != null && r.forwardReturn12M > 0.1);
+
+  // Trennung: mittlerer Forward-Return wenn gated vs. nicht gated
+  const gated = rows.filter(r => r.gateActive && r.forwardReturn12M != null);
+  const clear = rows.filter(r => !r.gateActive && r.forwardReturn12M != null);
+  const avg = (xs: number[]) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+
   return {
-    score: Math.min(raw, cap),
-    cappedBy: active.filter(g => g.cap === cap),
+    n: rows.length,
+    trapRecall: traps.length ? trapsCaught.length / traps.length : null,       // Anteil Value-Traps mit Gate
+    falseAlarmRate: rows.length ? falseAlarms.length / rows.length : null,
+    avgReturnGated: avg(gated.map(r => r.forwardReturn12M!)),
+    avgReturnClear: avg(clear.map(r => r.forwardReturn12M!)),
+    // Erwartung: avgReturnGated < avgReturnClear
   };
 }
 ```
 
----
-
-## 6. catalysts.ts
+### 14.5 Nike-Stresstest (manuelles Fixture)
 
 ```ts
-export function catalystExpectedValue(cs: Catalyst[], price: number): number {
-  if (!price) return 0;
-  return cs.reduce((sum, c) => {
-    if (c.confidence === 'low') return sum; // low = display only
-    const decay = c.eventDate
-      ? Math.exp(-Math.max(0, (Date.parse(c.eventDate) - Date.now()) / 3.15e10))
-      : 0.5;
-    return sum + c.probability * c.epsImpact * decay;
-  }, 0) / price * 100;
-}
+// Synthetisches Fixture „Nike Q3 2023“
+const nike2023Q3: BacktestPoint = {
+  date: '2023-08-31',
+  ticker: 'NKE',
+  qualityScore: 82,              // ROIC/Marke/Marge noch stark
+  zDeltas: [-0.8, -1.1, -0.6], // negative Verlaufsdynamik
+  pricingPower: {
+    grossMarginQ: [45, 44.5, 44, 43.5, 43, 42.5, 42, 41.5], // fallend
+    inputCostIndex: [100, 99, 98, 98, 97, 97, 96, 96],       // Kosten stabil/fallend
+    asp: [100, 101, 100, 99, 98, 97, 96, 95],
+    volume: [100, 98, 97, 95, 94, 92, 90, 88],
+    discountMentions: [1, 1, 2, 2, 3, 4, 5, 6],
+    peerGrossMarginQ: [[40,40,41,41,41,42,42,42]],
+  },
+  ownYoY: [8, 5, 2, 0, -2, -4, -5, -6],
+  peerYoYWeighted: [6, 6, 5, 5, 4, 4, 3, 3],
+  inventoryDays: [60, 62, 65, 68, 70, 72, 75, 78],
+  revenue: [120, 118, 115, 112, 110, 108, 105, 102],
+  revDcf: { impliedGrowth: 0.12, realizedGrowth8Q: 0.02 },
+  price: 100,
+  forwardReturn12M: -0.30,
+  wasValueTrap: true,
+};
+
+// Erwartung nach runScoringPipeline:
+// PRICING_POWER active (Marge fällt, Kosten nicht steigend)
+// RELATIVE_GROWTH active (viele negative gaps)
+// DCF_REALITY_CHECK active (0.12/0.02 = 6 > 2)
+// score ≤ 55, gateActive = true, trapRecall trägt 1 bei
+```
+
+### 14.6 Backtest-Checkliste
+
+```
+[ ] Quartals-Panel 2018–2025 für 30–50 Liquid-Namen (US + EU)
+[ ] qualityScore zeitpunktgetreu rekonstruieren (kein Lookahead)
+[ ] Pricing-Power-Inputs nur aus bekannten Quartalen ≤ date
+[ ] Forward 12M Total Return als Label
+[ ] Value-Trap-Label: quality≥70 & forwardReturn12M ≤ −25%
+[ ] Metriken: trapRecall, falseAlarmRate, avgReturnGated vs Clear
+[ ] Nike-Fixture als Regressionstest in CI
 ```
 
 ---
 
-## 7. verdict.ts
+## 15. Code-Beispiel: runScoringPipeline (End-to-End)
 
 ```ts
-export function buildVerdict(v: {
-  quality: number;
-  trendMult: number;
-  gates: Gate[];
-  technicalRegime: 'uptrend' | 'range' | 'breakdown';
-  catalystEV: number;
-  reverseDcfConsistent: boolean;
-}) {
-  const { score, cappedBy } = applyGates(v.quality, v.trendMult, v.gates);
-  const conflicts: string[] = [];
+import {
+  pricingPowerScore,
+  relativeMomentum,
+  trendMultiplier,
+  buildGates,
+  applyGates,
+  catalystExpectedValue,
+  buildVerdict,
+  type ScoringInput,
+  type ScoringResult,
+} from './scoring';
 
-  if (v.quality > 70 && v.trendMult < 0.85)
-    conflicts.push('Starke Substanz, aber negative Verlaufsdynamik');
-  if (score > 65 && v.technicalRegime === 'breakdown')
-    conflicts.push('Bewertung attraktiv, Kursstruktur gebrochen');
-  if (!v.reverseDcfConsistent)
-    conflicts.push('DCF-Annahmen nicht durch realisierten Trend gedeckt');
-
-  const testQuestion = cappedBy.length
-    ? `Was müsste passieren, damit "${cappedBy[0].id}" entfällt? → ${cappedBy[0].rationale}`
-    : null;
-
-  return { score, conflicts, cappedBy, testQuestion, catalystEV: v.catalystEV };
-}
-```
-
----
-
-## 8. index.ts — Pipeline-Vorlage
-
-```ts
+/** Vollständige Pipeline — Copy-Paste-Kern für index.ts */
 export function runScoringPipeline(input: ScoringInput): ScoringResult {
-  const pp = pricingPowerScore(input.pricingPower);
-  const rm = relativeMomentum(
+  // 1) Delta-Module
+  const pricingPower = pricingPowerScore(input.pricingPower);
+  const relativeMom = relativeMomentum(
     input.ownYoY,
     input.peerYoYWeighted,
     input.inventoryDays,
     input.revenue
   );
+
+  // 2) Trend-Multiplikator
   const trendMult = trendMultiplier(input.zDeltas);
-  const gates = buildGates(pp, rm, input.revDcf, input.regulatoryGates ?? []);
+
+  // 3) Gates (inkl. optional Regulatory aus TEIL 8)
+  const gates = buildGates(
+    pricingPower,
+    relativeMom,
+    input.revDcf,
+    input.regulatoryGates ?? []
+  );
+
+  // 4) Score deckeln
   const { score, cappedBy } = applyGates(input.qualityScore, trendMult, gates);
+
+  // 5) Katalysatoren (separat)
   const catalystEV = catalystExpectedValue(input.catalysts, input.price);
+
+  // 6) Konfliktmatrix
   const verdict = buildVerdict({
     quality: input.qualityScore,
     trendMult,
@@ -367,8 +359,8 @@ export function runScoringPipeline(input: ScoringInput): ScoringResult {
   return {
     qualityScore: input.qualityScore,
     trendMult,
-    pricingPower: pp,
-    relativeMomentum: rm,
+    pricingPower,
+    relativeMomentum: relativeMom,
     gates,
     score,
     cappedBy,
@@ -378,69 +370,73 @@ export function runScoringPipeline(input: ScoringInput): ScoringResult {
     verdict,
   };
 }
-```
 
----
+// ─── Beispielaufruf (Nike-artig) ─────────────────────────────
+const exampleInput: ScoringInput = {
+  qualityScore: 82,
+  zDeltas: [-0.8, -1.1, -0.6],
+  pricingPower: {
+    grossMarginQ: [45, 44.5, 44, 43.5, 43, 42.5, 42, 41.5],
+    inputCostIndex: [100, 99, 98, 98, 97, 97, 96, 96],
+    asp: [100, 101, 100, 99, 98, 97, 96, 95],
+    volume: [100, 98, 97, 95, 94, 92, 90, 88],
+    discountMentions: [1, 1, 2, 2, 3, 4, 5, 6],
+    peerGrossMarginQ: [[40, 40, 41, 41, 41, 42, 42, 42]],
+  },
+  ownYoY: [8, 5, 2, 0, -2, -4, -5, -6],
+  peerYoYWeighted: [6, 6, 5, 5, 4, 4, 3, 3],
+  inventoryDays: [60, 62, 65, 68, 70, 72, 75, 78],
+  revenue: [120, 118, 115, 112, 110, 108, 105, 102],
+  revDcf: { impliedGrowth: 0.12, realizedGrowth8Q: 0.02 },
+  catalysts: [{
+    id: 'c1',
+    type: 'product',
+    title: 'China-Recovery',
+    eventDate: '2024-06-01',
+    probability: 0.4,
+    epsImpact: 0.5,
+    source: { url: 'https://example.com', publishedAt: '2023-09-01', snippet: '...' },
+    confidence: 'medium',
+  }],
+  price: 100,
+  technicalRegime: 'breakdown',
+  reverseDcfConsistent: false,
+};
 
-## 9. Gate-Cap-Referenz
+const out = runScoringPipeline(exampleInput);
 
-| Gate-ID | Cap | Severity | Trigger |
-|---------|-----|----------|--------|
-| PRICING_POWER | 55 | hard | Flag PRICING_POWER_LOSS oder score < 40 |
-| RELATIVE_GROWTH | 60 | hard | negativeQuarters ≥ 3 |
-| DCF_REALITY_CHECK | 65 | warn | impliedGrowth / realized8Q > 2 |
-| INVENTORY | 70 | warn | INVENTORY_BUILD |
-| REGULATORY_EXPOSURE | 55/65 | hard/warn | TEIL 8 material regs |
-| GOLD_REAL_YIELD_REGIME | 75 | warn | corr > −0.25 (Makro-Kontext) |
-
-**Regel:** `gateCap = min(aktive Caps)`. Ein hard Gate bei 55 kann einen Quality-Score von 90 auf 55 deckeln.
-
----
-
-## 10. Output-Vertrag (UI / PDF)
-
-```ts
-// An Fazit-Sektion / PDF-Export:
+/* Erwartete Struktur von out:
 {
-  score: number,              // 0–gateCap
-  qualityScore: number,
-  trendMult: number,
-  cappedBy: [{ id, rationale, severity }],
-  conflicts: string[],
-  testQuestion: string | null,
-  catalystEV: number,         // separat ausweisen, nicht in score einrechnen
-  flags: {
-    pricingPower: string[],
-    relativeMomentum: string[],
-  }
+  qualityScore: 82,
+  trendMult: ~0.7x (negative zDeltas),
+  pricingPower: { score: <40, flags: ['PRICING_POWER_LOSS', 'VOLUME_EROSION', ...] },
+  relativeMomentum: { negativeQuarters: ≥3, flags: ['SHARE_LOSS', 'INVENTORY_BUILD'] },
+  gates: [ PRICING_POWER active, RELATIVE_GROWTH active, DCF_REALITY active, INVENTORY active ],
+  score: 55,                    // durch PRICING_POWER gedeckelt
+  cappedBy: [{ id: 'PRICING_POWER', ... }],
+  catalystEV: ~0.1–0.2,         // separat
+  conflicts: [
+    'Starke Substanz, aber negative Verlaufsdynamik',
+    'Bewertung attraktiv, Kursstruktur gebrochen',
+    'DCF-Annahmen nicht durch realisierten Trend gedeckt'
+  ],
+  testQuestion: 'Was müsste passieren, damit "PRICING_POWER" entfällt? → ...'
 }
-```
-
-**Kein einzelnes Kauf/Verkauf-Label.** Konfliktmatrix + Testfrage ersetzen das Rating.
-
----
-
-## 11. Anti-Hardcoding-Checkliste
-
-```
-[ ] Keine ticker-spezifischen if (ticker === 'NKE')
-[ ] Keine absoluten Margen-Schwellen (nur Trends / Peers / eigene Historie)
-[ ] Gates nur über Flags + relative Bedingungen
-[ ] LLM liefert ExtractedFact (asp/volume/discount), kein Score-Text
-[ ] Katalysatoren nur mit source.url + publishedAt
-[ ] confidence === 'low' → kein Gate, nur UI-Badge
+*/
 ```
 
 ---
 
-## 12. Minimaler Integrationspfad
+## 16. Integrations-Checkliste
 
 ```
-1. types.ts + pricingPower.ts + relativeMomentum.ts + trend.ts + gates.ts anlegen
-2. runScoringPipeline an bestehende qualityScore-Berechnung hängen
-3. Ergebnis in Section 17 / Fazit rendern (Score, Caps, Conflicts, TestQuestion)
-4. catalystEV als eigene Zeile neben DCF-Target
-5. Unit-Tests: Nike-ähnliche Inputs → PRICING_POWER aktiv, score ≤ 55
+[ ] scoring/-Ordner anlegen (types, pricingPower, relativeMomentum, gates, trend, catalysts, verdict, index)
+[ ] runScoringPipeline an qualityScore der bestehenden Analyse hängen
+[ ] Gate-Unit-Tests T1–T5 (§13.5)
+[ ] Nike-Fixture als Regressionstest (§14.5)
+[ ] Backtest-Panel optional (Researcher) mit trapRecall-Metrik
+[ ] UI: Score + qualityScore + cappedBy + conflicts + testQuestion + catalystEV
+[ ] Kein Kauf/Verkauf-Label — nur Konfliktmatrix
 ```
 
-**Regel:** Vorlage = Dokumentation. Implementierung lokal → `npm run check` → PR → Review.
+**Regel:** Dokumentation. Implementierung lokal → `npm run check` → PR → Review.
