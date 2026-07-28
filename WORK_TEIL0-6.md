@@ -57,10 +57,7 @@ Diagnose:
 
 ```ts
 // server/analyze-helpers.ts
-// DAILY_FINANCE_LIMIT = 18 war Perplexity-Finance-Limit — auf FMP irrelevant
-export function isQuotaExceeded(): boolean {
-  return false; // Legacy deaktiviert
-}
+export function isQuotaExceeded(): boolean { return false; }
 export function incrementQuota() { /* stub */ }
 ```
 
@@ -68,383 +65,433 @@ export function incrementQuota() { /* stub */ }
 
 ```
 Health Check Path: /api/health
-Health Check Timeout: 30s
-// server/index.ts:
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }));
 ```
 
 ## 0.6 — Mega-Files: Anti-Truncation Split-Plan
 
 ```
-Problem: GitHub API trunciert Dateien > ~100 KB Base64 still.
 REGEL: Jede Datei < 80 KB.
-
-Kritisch:
-  server/researcher.ts         69 KB
-  client/src/pages/Researcher.tsx  56 KB
-  server/llm-openrouter.ts     52 KB
-  server/recession.ts          47 KB
-  server/pdf-export.ts         42 KB
-
-Barrel-Pattern:
-  server/researcher.ts  → export { registerResearcherRoutes } from "./researcher/index";
-  server/researcher/
-    index.ts, macro-pulse.ts, sector.ts, screener.ts, capex.ts, briefing.ts, cache.ts, types.ts
-
-  server/llm-openrouter.ts → export from "./llm/openrouter" + "./llm/sonar"
-  server/llm/
-    openrouter.ts, sonar.ts, anthropic.ts, models.ts
-
-  client/src/pages/Researcher.tsx → export from "./researcher/index"
-  client/src/pages/researcher/
-    index.tsx, MacroPulse.tsx, SectorOpportunity.tsx, Screener.tsx, CapexFiscal.tsx, DailyBriefing.tsx
+Barrel-Pattern für researcher.ts, llm-openrouter.ts, Researcher.tsx
 ```
-
-**Regel: Alle Splits lokal → npm run check → PR → Squash Merge. Nie Mega-Files über GitHub API pushen.**
 
 ## 0.7 — Checkliste Render
 
 ```
-[ ] Env Vars gesetzt
-[ ] Quota Guard deaktiviert
-[ ] Health-Check konfiguriert
-[ ] Railway-Referenzen entfernt
-[ ] curl /api/health → ok
-[ ] curl /api/fmp-budget → fmpAvailable: true
-[ ] Analyse MSFT < 30s
-[ ] OpenRouter kein 402
+[ ] Env Vars · Quota Guard · Health-Check · /api/health ok · fmpAvailable true
 ```
 
 ---
 
 # TEIL 1 — BTC DASHBOARD RESTORE
 
-## Diagnose
-
-GitHub API trunciert `BTCDashboard.tsx` bei ~100 KB — Abbruch mitten in Section2Halving.
-Sections 3–12 + `export default function BTCDashboard` fehlen in main.
-
-## Restore-Plan
-
 ```
 client/src/pages/
-├── BTCDashboard.tsx        ← Shell + export default (~200 Zeilen)
+├── BTCDashboard.tsx        ← Shell
 └── btc/
     ├── Sections1to6.tsx
     ├── Sections7to12.tsx
-    └── Section13Miner.tsx
+    └── Section13Miner.tsx   ← Miner-Zone (siehe TEIL 6.4 unten — Spezifikation)
 ```
-
-Kritische Zeile im Section-Switch:
 
 ```tsx
 case 13: return (
-  <Section13Miner
-    data={btcData}
-    minerData={minerData ?? null}
-    loading={minerLoading}
-    error={minerError}
-  />
+  <Section13Miner data={btcData} minerData={minerData ?? null}
+    loading={minerLoading} error={minerError} />
 );
 ```
 
-Bekannte gute Commits: `33c8e77`, `5bf8a2d`, `bafff3c`
+Gute Commits: `33c8e77`, `5bf8a2d`, `bafff3c`
 
 ---
 
-# TEIL 2 — AKTIENANALYSE: BEKANNTE BUGS
+# TEIL 2 — BUGS A–D
 
-## BUG A — FMP-Laufstatus
-
-```
-GET https://aktienanalyst-pro.pplx.app/api/fmp-budget
-Erwartung: { fmp: { calls: N, budget: 750 }, fmpAvailable: true }
-Wenn false → FMP_API_KEY fehlt in credentials
-Branch: fix/fmp-key-check
-```
-
-## BUG B — Peer-Vergleich: ROIC 3J + ROE fehlen
-
-**Symptom:** P/E n/a, Peer-Tabelle fehlt, nur ROE vorhanden.
-
-**Korrekte ROIC-Formel:**
+| Bug | Kern | Branch |
+|-----|------|--------|
+| A | FMP fmpAvailable | fix/fmp-key-check |
+| B | Peer ROIC 3J (`calcROIC`) | fix/peer-comparison-section7 |
+| C | Product + Geo Segments | fix/revenue-segments-product-geo |
+| D | Non-USD `toUSD = val * fxRate` | fix/non-usd-dcf-conversion |
 
 ```ts
-// ROIC = NOPAT / Invested Capital
-// NOPAT = EBIT * (1 - TaxRate)
-// Invested Capital = TotalEquity + LongTermDebt - Cash
-
-export function calcROIC(
-  ebit: number, taxExpense: number, incomeBeforeTax: number,
-  longTermDebt: number, totalEquity: number, cash: number
-): number {
+export function calcROIC(ebit, taxExpense, incomeBeforeTax, longTermDebt, totalEquity, cash) {
   const taxRate = incomeBeforeTax > 0
-    ? Math.max(0.10, Math.min(0.35, taxExpense / incomeBeforeTax))
-    : 0.21;
+    ? Math.max(0.10, Math.min(0.35, taxExpense / incomeBeforeTax)) : 0.21;
   const nopat = ebit * (1 - taxRate);
   const investedCapital = totalEquity + longTermDebt - cash;
-  if (investedCapital <= 0) return 0;
-  return (nopat / investedCapital) * 100;
+  return investedCapital <= 0 ? 0 : (nopat / investedCapital) * 100;
 }
-
-// 3J-Durchschnitt aus FMP /key-metrics?limit=3:
-// const roic3Y = keyMetrics.slice(0,3).map(m => m.roic * 100).reduce((a,b)=>a+b,0) / 3;
 ```
-
-**PeerData erweitern:** roic3Y, roa, roe, revenueCAGR3Y, eps5YGrowth, fcfMargin, grossMargin
-
-Branch: `fix/peer-comparison-section7`
-
-## BUG C — Revenue-Segmente (Produkt + Region)
-
-```ts
-// Produkt:  GET /api/v3/revenue-product-segmentation?symbol={ticker}
-// Region:   GET /api/v3/revenue-geographic-segmentation?symbol={ticker}
-
-const segObj = Array.isArray(data) ? data[0] : data;
-const keys = Object.keys(segObj).filter(k =>
-  !['date','symbol','reportedCurrency','period'].includes(k)
-);
-const total = keys.reduce((s, k) => s + (segObj[k] ?? 0), 0);
-const segments = keys
-  .map(k => ({ name: k, revenue: segObj[k], percentage: Math.round(segObj[k]/total*1000)/10 }))
-  .filter(s => s.revenue > 0)
-  .sort((a,b) => b.revenue - a.revenue);
-```
-
-Branch: `fix/revenue-segments-product-geo`
-
-## BUG D — DCF/CRV bei Nicht-USD (NVO, ASML, SAP)
-
-```ts
-// ALLE Betrags-Felder mit fxRate multiplizieren:
-const toUSD = (val: number) => val * fxRate;
-const fcfTTM_usd  = toUSD(fcfTTM);
-const netDebt_usd = toUSD(netDebt);
-// sharesOutstanding und ADR-price NICHT konvertieren
-
-// NVO Beispiel: FCF 95 Mrd DKK × 0.1456 = $13.8 Mrd
-// Ohne Konvertierung: 6.9× falsch
-```
-
-Branch: `fix/non-usd-dcf-conversion`
 
 ---
 
-# TEIL 3 — KATALYSATOREN-SEKTION 15: VOLLSTÄNDIGE FORMELN
-
-> Quelle: catalyst-engine.ts
-
-## Definitionen
-
-```
-PoS %            = Probability of Success (historisch, -10–15% Safety Margin)
-Brutto-Upside    = Kursanstieg % bei vollständigem Eintritt
-Einpreisungsgrad = Anteil bereits im Kurs (Konsens/Reverse DCF)
-Netto-Upside     = Brutto-Upside × (1 - Einpreisungsgrad/100)
-GB %             = PoS/100 × Netto-Upside
-```
-
-## Exakte Formeln
+# TEIL 3 — KATALYSATOREN-FORMELN
 
 ```ts
 nettoUpside = bruttoUpside * (1 - einpreisungsgrad / 100)
-// Bsp K1: 17% * (1 - 39/100) = 10.37%
-
 gb = (pos / 100) * nettoUpside
-// Bsp K1: 0.75 * 10.37 = 7.78%
-
-sumGB = sum(gb_i)
 catalystTarget = dcfFairValue * (1 + sumGB / 100)
-// Bsp: $364.17 * (1 + 0.1687) = $425.61
-// WICHTIG: Basis = DCF Fair Value, NICHT Analyst PT
-```
-
-## Reverse DCF (Binary Search N=5J)
-
-```ts
-function calcImpliedGStarExact({
-  price, sharesOutstanding, netDebt, fcf, wacc, n = 5, terminalGrowth = 0.025
-}) {
-  const ev = price * sharesOutstanding + netDebt;
-  function dcfValue(g: number) {
-    let pv = 0;
-    for (let t = 1; t <= n; t++) pv += fcf * (1 + g) ** t / (1 + wacc) ** t;
-    return pv + fcf * (1 + g) ** n * (1 + terminalGrowth) / ((wacc - terminalGrowth) * (1 + wacc) ** n);
-  }
-  let lo = -0.05, hi = 0.40;
-  if (dcfValue(hi) < ev || dcfValue(lo) > ev) return null;
-  for (let i = 0; i < 50; i++) {
-    const mid = (lo + hi) / 2;
-    if (dcfValue(mid) > ev) hi = mid; else lo = mid;
-  }
-  return Math.round(((lo + hi) / 2) * 10000) / 100;
-}
-
-// Validierung:
-// MSFT: g*≈14.5% (hist 16-18% → Fair)
-// NVO:  g*≈35%  (hist 30-35% → Fair)
-// ASML: g*≈28%  (hist 15-18% → stark überbewertet)
+// Reverse DCF: Binary Search g* N=5, g ∈ [-5%, +40%]
 ```
 
 ---
 
-# TEIL 4 — RESEARCHER: OPENROUTER 402 / FALLBACK-CHAIN
-
-## Root-Cause
-
-`callLLMJson()` gibt bei HTTP 402 sofort `null` → Fallback-Text "LLM-Analyse nicht verfügbar. Bitte OpenRouter Credits aufladen." in allen 5 Tabs.
-
-## Fix: 3-Modell-Kette
+# TEIL 4 — OPENROUTER FALLBACK
 
 ```ts
-export async function callLLMJson({
-  prompt, maxTokens, model,
-}: { prompt: string; maxTokens: number; model?: string }) {
-  const models = [
-    model || "anthropic/claude-3-5-haiku",
-    "meta-llama/llama-3.1-8b-instruct:free",
-    "google/gemini-flash-1.5:free",
-  ];
-
-  for (const m of models) {
-    try {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://aktienanalyst-pro.pplx.app",
-          "X-Title": "Aktienanalyst Pro",
-        },
-        body: JSON.stringify({
-          model: m,
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: maxTokens,
-          response_format: { type: "json_object" },
-        }),
-      });
-      if (res.status === 402) { console.warn(`[LLM] ${m} 402, next`); continue; }
-      if (res.status === 429) { await new Promise(r => setTimeout(r, 2000)); continue; }
-      if (!res.ok) continue;
-      const json = await res.json();
-      const text = json?.choices?.[0]?.message?.content || "";
-      return { data: JSON.parse(text), modelUsed: m };
-    } catch { continue; }
-  }
-  return null;
-}
+// 3-Modell-Kette: Haiku → Llama-3.1-8B-Free → Gemini-Flash-Free
+// Hybrid: Sonar (Live) + Claude (Struktur)
 ```
-
-## Hybrid: Perplexity Sonar + OpenRouter
-
-```ts
-export async function callPerplexitySonar({ prompt, maxTokens = 800 }) {
-  const res = await fetch("https://api.perplexity.ai/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${process.env.PERPLEXITY_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "sonar-pro",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: maxTokens,
-      return_citations: true,
-      search_recency_filter: "week",
-    }),
-  });
-  if (!res.ok) return null;
-  const json = await res.json();
-  return {
-    text: json?.choices?.[0]?.message?.content || "",
-    citations: json?.citations || [],
-    modelUsed: "sonar-pro",
-  };
-}
-```
-
-**Zuordnung:**
-- Country Macro / Capex / Daily Briefing → Sonar (Live-Fakten)
-- Sector / Screener → OpenRouter Claude (Strukturierung)
-
-Branch: `fix/researcher-openrouter-config`
 
 ---
 
-# TEIL 5 — FMP-MIGRATION (P0)
+# TEIL 5 — FMP-MIGRATION
 
-| # | Aufgabe | Branch |
-|---|---------|--------|
-| 1 | /api/fmp-budget Frontend | fix/fmp-debug-panel |
-| 2 | Non-USD DCF-Konvertierung | fix/non-usd-dcf-conversion |
-| 3 | Peer + ROIC 3J | fix/peer-comparison-section7 |
-| 4 | Revenue-Segmente Produkt+Geo | fix/revenue-segments-product-geo |
-| 5 | calcImpliedGStarExact | fix/reverse-dcf-exact |
-| 6 | LLM Catalyst Math Rules | fix/llm-catalyst-math-rules |
-| 7 | OpenRouter Fallback-Chain | fix/researcher-openrouter-config |
-| 8 | Integration-Test MSFT/AAPL/NVO/ASML | fix/integration-test |
-
-```ts
-export async function fmpGet<T>(path: string, params: Record<string, string> = {}): Promise<T> {
-  const key = process.env.FMP_API_KEY;
-  if (!key) throw new Error('FMP_API_KEY nicht gesetzt');
-  const url = new URL(`https://financialmodelingprep.com/api/v3${path}`);
-  url.searchParams.set('apikey', key);
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`FMP ${path} HTTP ${res.status}`);
-  const data = await res.json();
-  if (data && 'Error Message' in data) throw new Error(`FMP: ${(data as any)['Error Message']}`);
-  return data as T;
-}
-```
+1. Budget-Debug → 2. Non-USD → 3. Peer+ROIC → 4. Segments → 5. Reverse DCF → 6. Catalyst Math → 7. Fallback → 8. Integration-Test
 
 ---
 
 # TEIL 6 — FEATURE-ROADMAP
 
-## Technische Grundregeln
+## 6.1 Technische Grundregeln
 
-- Neue Section: SECTIONS-Array + case im Switch
-- Neuer Endpunkt: eigene Datei in server/routes/ (max 80 KB)
-- Formeln: unit-testbar in client/src/lib/calculations.ts
-- LLM-Search: POST /api/llm-search → sonar-pro
-- Anti-Truncation: Datei < 80 KB vor Push
+- Neue Section: SECTIONS-Array + case
+- Formeln unit-testbar in `client/src/lib/calculations.ts`
+- Datei < 80 KB vor Push
 
-## Geplante Sections
+## 6.2 Geplante Sections
 
-- Section 8: WACC & Terminal Value UI (Slider)
-- Section 14: PESTEL (`POST /api/pestel`)
-- Section 15: Reverse DCF + Sensitivitätstabelle
-- Section 17: Zusammenfassungstabelle
+Section 8 WACC/TV · 14 PESTEL · 15 Reverse DCF · 17 Summary
 
-## Thesis Score
+## 6.3 Thesis Score / Kelly
 
 ```
-Thesis Score (0-100) =
-  Moat Score * 0.25 + FCF Marge 5J * 0.20 + Fiskalstimulus * 0.15
-  + Konjunktur-Trend * 0.15 + Reputation * 0.15 + Positive Events * 0.10
-```
-
-## Kelly Portfolio
-
-```
-Kelly % = (p*b - q) / b
-p = Thesis Score/100, b = Upside/Downside aus DCF
-Pabrai: max 10% pro Position
-```
-
-## BTC Section 13 Miner
-
-```
-Puell = Tagesemission_USD / MA365(Tagesemission_USD)
-  <0.5 Kapitulation | >4 überhitzt
-Hash Ribbons: MA30 vs MA60 Hashrate — Kaufsignal bei Golden Cross
+Thesis = Moat*0.25 + FCF*0.20 + Fiskal*0.15 + Konjunktur*0.15 + Reputation*0.15 + Events*0.10
+Kelly % = (p*b - q) / b · Pabrai max 10%
 ```
 
 ---
 
+## 6.4 BTC Section 13 — Miner-Profitabilität, Kapitulationszonen & Chart-Spezifikation
+
+> **Nur Dokumentation.** Keine Änderungen am BTC-Dashboard-Code in diesem Commit.  
+> Ziel: Section13Miner so spezifizieren, dass Kapitulationszonen (rot) und profitable Zonen (grün)  
+> analog zur bestehenden BTC-Technischen-Analyse visualisiert werden können.
+
+### 6.4.1 Indikatoren-Übersicht
+
+| # | Indikator | Formel / Logik | Kapitulation | Profitabel |
+|---|-----------|----------------|--------------|------------|
+| 1 | **Hash Ribbons** (Capriole) | MA30 vs MA60 der Hashrate | MA30 < MA60 und beide fallend | MA30 kreuzt MA60 von unten (Buy Signal) |
+| 2 | **Puell Multiple** | Tagesemission_USD / MA365(Tagesemission_USD) | < 0.5 | 0.5–1.2 normal; > 4 überhitzt |
+| 3 | **Hashprice** | USD / (TH/s · Tag) | unter Betriebskosten Referenz-Miner | deutlich über Breakeven |
+| 4 | **Mining Breakeven** | (Energiekosten/Hash × Difficulty) / Hardware-Effizienz | Spot < Breakeven | Spot > Breakeven × 1.2 |
+| 5 | **Difficulty Ribbon** | MAs 9/14/25/40/60/90/128/200 der Difficulty | starke Compression (Bänder eng) | Expansion nach Compression |
+| 6 | **Miner Position Index / Netflows** | Miner→Exchange Netflows vs. Hist.-Mittel | hohe Netflows (Zwangsverkauf), dann Austrocknen | Netflows negativ (HODL) |
+| 7 | **Kontext: Realized Price** | Realized Price ≈ Produktionskosten am Bärenmarkt-Tief | Konvergenz Spot / Realized / Breakeven | Spot klar über beiden |
+
+### 6.4.2 Zyklischer Zusammenhang mit dem Halving
+
+```
+Halving → Block-Subvention −50% → Hashprice fällt abrupt (wenn Kurs nicht mitzieht)
+  → ineffiziente Miner (alte ASICs) unprofitabel
+  → Difficulty Adjustment verzögert (alle 2016 Blöcke ≈ 2 Wochen)
+  → Anpassungsphase = Kapitulationszone
+  → schwache Hände raus → Hashrate/Difficulty sinkt → Kostenlinie sinkt nach
+  → Hash-Ribbon-Crossover (MA30 kreuzt MA60 von unten) = historisches Ende der Phase
+```
+
+### 6.4.3 Code-Logik (Dokumentation — `client/src/lib/btcMiner.ts`)
+
+```ts
+export interface MinerSeriesPoint {
+  date: string;           // ISO
+  hashrateEh: number;     // EH/s
+  difficulty: number;
+  priceUsd: number;       // Spot
+  issuanceUsd: number;    // tägliche Coin-Emission in USD
+  hashpriceUsdPerThDay: number | null;
+}
+
+export interface HashRibbonSignal {
+  ma30: number;
+  ma60: number;
+  regime: 'capitulation' | 'recovery' | 'expansion' | 'neutral';
+  buySignal: boolean;     // MA30 kreuzt MA60 von unten
+}
+
+export interface PuellResult {
+  value: number;
+  zone: 'capitulation' | 'neutral' | 'overheated';
+}
+
+export interface BreakevenResult {
+  breakevenUsd: number;
+  spotVsBreakeven: number; // Spot / Breakeven
+  zone: 'unprofitable' | 'marginal' | 'profitable';
+}
+
+export interface MinerZone {
+  start: string;
+  end: string;
+  type: 'capitulation' | 'profitable';
+  reason: string;
+}
+
+/** Einfacher gleitender Durchschnitt */
+function sma(values: number[], window: number): (number | null)[] {
+  return values.map((_, i) => {
+    if (i < window - 1) return null;
+    const slice = values.slice(i - window + 1, i + 1);
+    return slice.reduce((a, b) => a + b, 0) / window;
+  });
+}
+
+/** Hash Ribbons: MA30 vs MA60 Hashrate */
+export function calcHashRibbons(hashrate: number[]): HashRibbonSignal[] {
+  const ma30 = sma(hashrate, 30);
+  const ma60 = sma(hashrate, 60);
+  return hashrate.map((_, i) => {
+    const a = ma30[i], b = ma60[i];
+    if (a == null || b == null) {
+      return { ma30: a ?? 0, ma60: b ?? 0, regime: 'neutral' as const, buySignal: false };
+    }
+    const prevA = i > 0 ? ma30[i - 1] : null;
+    const prevB = i > 0 ? ma60[i - 1] : null;
+    const buySignal =
+      prevA != null && prevB != null && prevA <= prevB && a > b; // Cross von unten
+
+    let regime: HashRibbonSignal['regime'] = 'neutral';
+    if (a < b && (i < 5 || (ma30[i - 1] ?? a) >= a)) regime = 'capitulation'; // unter + fallend
+    else if (a > b && buySignal) regime = 'recovery';
+    else if (a > b) regime = 'expansion';
+
+    return { ma30: a, ma60: b, regime, buySignal };
+  });
+}
+
+/** Puell Multiple */
+export function calcPuell(issuanceUsd: number[]): PuellResult[] {
+  const ma365 = sma(issuanceUsd, 365);
+  return issuanceUsd.map((iss, i) => {
+    const m = ma365[i];
+    if (m == null || m === 0) return { value: 1, zone: 'neutral' as const };
+    const value = iss / m;
+    const zone =
+      value < 0.5 ? 'capitulation' :
+      value > 4   ? 'overheated'   : 'neutral';
+    return { value, zone };
+  });
+}
+
+/**
+ * Mining Breakeven (vereinfachtes Cost-of-Production-Modell)
+ * breakeven ≈ (powerCostUsdPerKwh * joulesPerTh * 24) / (hashprice-Faktor aus Difficulty)
+ * Praktisch: Referenz-Hardware-Effizienz + Strompreis → USD-Kosten pro TH/Tag
+ *            → skaliert mit Difficulty-Niveau auf BTC-Preis-Äquivalent
+ */
+export function calcBreakeven(params: {
+  difficulty: number[];
+  priceUsd: number[];
+  powerCostUsdPerKwh?: number;  // default 0.06
+  efficiencyJPerTh?: number;    // default 25 (moderne Flotte); alte: 60–100
+}): BreakevenResult[] {
+  const power = params.powerCostUsdPerKwh ?? 0.06;
+  const eff = params.efficiencyJPerTh ?? 25;
+  // Kosten pro TH/Tag in USD
+  const costPerThDay = (eff / 1000) * power * 24; // J/TH → kWh/TH/Tag * $/kWh
+
+  // Hashprice-Proxy: bei gegebener Difficulty und bekanntem Network-Hashrate
+  // vereinfacht: Breakeven-Preis skaliert proportional zur Difficulty
+  // (vollständige Formel braucht Hashrate + Block-Reward — hier dokumentiert als Platzhalter)
+  return params.difficulty.map((diff, i) => {
+    // Platzhalter-Skalierung: normalisiere Difficulty auf Index 2024-Basis
+    // In Produktion: breakeven = f(diff, hashrate, blockReward, costPerThDay)
+    const breakevenUsd = costPerThDay * (diff / 1e13) * 50_000; // kalibrierbar
+    const spot = params.priceUsd[i] ?? 0;
+    const ratio = breakevenUsd > 0 ? spot / breakevenUsd : 1;
+    const zone =
+      ratio < 1.0  ? 'unprofitable' :
+      ratio < 1.2  ? 'marginal'     : 'profitable';
+    return { breakevenUsd, spotVsBreakeven: ratio, zone };
+  });
+}
+
+/**
+ * Kapitulations- und Profit-Zonen aus kombinierter Signal-Logik ableiten.
+ * Rote Zone (capitulation): Hash-Ribbon capitulation ODER Puell < 0.5 ODER Spot < Breakeven
+ * Grüne Zone (profitable):  Hash-Ribbon expansion + Puell neutral + Spot > Breakeven×1.2
+ */
+export function deriveMinerZones(
+  dates: string[],
+  ribbons: HashRibbonSignal[],
+  puell: PuellResult[],
+  breakeven: BreakevenResult[]
+): MinerZone[] {
+  const zones: MinerZone[] = [];
+  let current: { type: MinerZone['type']; start: number; reason: string } | null = null;
+
+  for (let i = 0; i < dates.length; i++) {
+    const isCap =
+      ribbons[i]?.regime === 'capitulation' ||
+      puell[i]?.zone === 'capitulation' ||
+      breakeven[i]?.zone === 'unprofitable';
+
+    const isProf =
+      ribbons[i]?.regime === 'expansion' &&
+      puell[i]?.zone === 'neutral' &&
+      breakeven[i]?.zone === 'profitable';
+
+    const type = isCap ? 'capitulation' : isProf ? 'profitable' : null;
+
+    if (type && (!current || current.type !== type)) {
+      if (current) {
+        zones.push({
+          start: dates[current.start],
+          end: dates[i - 1],
+          type: current.type,
+          reason: current.reason,
+        });
+      }
+      current = {
+        type,
+        start: i,
+        reason: isCap
+          ? 'Hash-Ribbon/Puell/Breakeven → Kapitulation'
+          : 'Ribbon Expansion + Puell neutral + Spot > Breakeven',
+      };
+    } else if (!type && current) {
+      zones.push({
+        start: dates[current.start],
+        end: dates[i - 1],
+        type: current.type,
+        reason: current.reason,
+      });
+      current = null;
+    }
+  }
+  if (current) {
+    zones.push({
+      start: dates[current.start],
+      end: dates[dates.length - 1],
+      type: current.type,
+      reason: current.reason,
+    });
+  }
+  return zones;
+}
+```
+
+### 6.4.4 Chart-Visualisierung (analog BTC Technische Analyse)
+
+Zielbild wie bei der bestehenden TA-Sektion: **eine Haupt-Preislinie + Overlay-Zonen + Sekundärachsen-Indikatoren.**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  BTC Spot (blau, linke Achse)                               │
+│  Miner-Breakeven-Linie (orange, gestrichelt)                │
+│                                                             │
+│  ████ rote Flächen = Kapitulationszonen                     │
+│       (Spot unter Breakeven und/oder Ribbon-Capitulation    │
+│        und/oder Puell < 0.5)                                │
+│                                                             │
+│  ▓▓▓▓ grüne Flächen = Profitable Zonen                      │
+│       (Spot > Breakeven×1.2 + Ribbon Expansion)             │
+│                                                             │
+│  ▼ Marker = Hash-Ribbon Buy Signal (MA30×MA60 von unten)    │
+├─────────────────────────────────────────────────────────────┤
+│  Panel 2: Puell Multiple (Linie) + Horizontal 0.5 / 4.0     │
+│  Panel 3: Hash Ribbon MA30/MA60 (zwei Linien)               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Recharts-Skizze (Dokumentation):**
+
+```tsx
+// Section13Miner Chart-Struktur (nur Spezifikation)
+<ComposedChart data={mergedSeries}>
+  {/* Kapitulations-Zonen als ReferenceArea */}
+  {capitulationZones.map(z => (
+    <ReferenceArea
+      key={z.start}
+      x1={z.start} x2={z.end}
+      fill="#ef4444" fillOpacity={0.15}
+      strokeOpacity={0}
+    />
+  ))}
+  {/* Profitable Zonen */}
+  {profitableZones.map(z => (
+    <ReferenceArea
+      key={z.start}
+      x1={z.start} x2={z.end}
+      fill="#22c55e" fillOpacity={0.12}
+      strokeOpacity={0}
+    />
+  ))}
+
+  <Line yAxisId="left" dataKey="priceUsd" stroke="#3b82f6" dot={false} name="BTC Spot" />
+  <Line yAxisId="left" dataKey="breakevenUsd" stroke="#f97316" strokeDasharray="6 4"
+        dot={false} name="Miner Breakeven" />
+
+  {/* Hash-Ribbon Buy-Signale als Scatter/Dots */}
+  <Scatter yAxisId="left" data={buySignalPoints} fill="#22c55e" name="Ribbon Buy" />
+
+  <YAxis yAxisId="left" domain={['auto', 'auto']} />
+  <XAxis dataKey="date" />
+  <Tooltip />
+  <Legend />
+</ComposedChart>
+
+// Separates Panel Puell:
+<LineChart data={mergedSeries}>
+  <Line dataKey="puell" stroke="#a855f7" dot={false} />
+  <ReferenceLine y={0.5} stroke="#ef4444" strokeDasharray="4 4" label="Kapitulation" />
+  <ReferenceLine y={4} stroke="#f59e0b" strokeDasharray="4 4" label="Überhitzt" />
+</LineChart>
+```
+
+### 6.4.5 Wann ist die Bärenmarkt-Konsolidierung am Maximum?
+
+```
+Maximum der Kapitulation (historisch beste Einstiegszone) wenn MEHRERE gleichzeitig gelten:
+
+1. Hash Ribbon: MA30 < MA60, beide fallend (Capitulation-Regime)
+2. Puell Multiple < 0.5
+3. Spot-Preis ≤ oder leicht unter Breakeven-Linie
+4. Difficulty-Ribbon stark komprimiert (wenig Anpassung übrig)
+5. Miner-Netflows: nach Spike wieder austrocknend (schwache Hände raus)
+
+→ Dann: Hash-Ribbon-Crossover (MA30 kreuzt MA60 von unten) = klassisches
+  "Ende der Kapitulation"-Signal. Rote Zone endet, grüne Recovery beginnt.
+```
+
+### 6.4.6 Datenquellen (für spätere Implementierung)
+
+| Serie | Quelle |
+|-------|--------|
+| Hashrate | Blockchain.com API / mempool.space / CryptoQuant |
+| Difficulty | mempool.space / Node |
+| Issuance USD | Block-Reward × Preis (oder Glassnode) |
+| Hashprice | Hashrate Index / Luxor |
+| Strompreis-Annahme | Parameter 0.04–0.08 $/kWh (UI-Slider) |
+| Hardware-Effizienz | Parameter J/TH (Default 25 modern, 60–100 alt) |
+
+### 6.4.7 Umsetzungsschritte (wenn implementiert wird)
+
+```
+[ ] client/src/lib/btcMiner.ts — calcHashRibbons, calcPuell, calcBreakeven, deriveMinerZones
+[ ] Section13Miner.tsx — ComposedChart mit ReferenceArea (rot/grün) + Buy-Signal-Marker
+[ ] Panel Puell + Panel Hash-Ribbon MAs
+[ ] Parameter-Slider: Strompreis $/kWh, Effizienz J/TH
+[ ] Kein Hardcoding von Daten — Serien aus API/Cache
+```
+
+**Regel:** Alles Design-Dokumentation. Implementierung lokal → PR → Review.  
+**Keine Änderung am BTC-Dashboard in diesem Schritt.**
+
+---
+
 **Weiter:**
-- TEIL 7 (volles Scoring-Code) → [WORK_TEIL7_SCORING.md](./WORK_TEIL7_SCORING.md)
-- TEIL 8 (Regulatory/PESTEL/FRED) → [WORK2.md](./WORK2.md)
+- TEIL 7 (Scoring) → [WORK_TEIL7_SCORING.md](./WORK_TEIL7_SCORING.md)
+- TEIL 8 (Regulatory/PESTEL) → [WORK2.md](./WORK2.md)
