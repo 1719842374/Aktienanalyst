@@ -6,1495 +6,6 @@
 
 ---
 
-# TEIL 0 — PLATFORM-REALITÄT & SOFORT-FIXES (Stand 25.07.2026)
-
-> Dieser Teil dokumentiert die echte Deploy-Situation und die daraus resultierenden
-> P0-Fixes. Alle früheren Annahmen zu "Railway" sind falsch — das Projekt läuft
-> NICHT auf Railway und hat es nie produktiv getan.
-
-## 0.1 — Produktive Deployments
-
-```
-Plattform 1: Perplexity Computer (pplx.app)           [PRIMÄR]
-  URL:        https://aktienanalyst-pro.pplx.app
-  Deploy:     publish_website (Perplexity-internes Tool)
-  Keys:       werden als credentials= beim publish_website-Aufruf injiziert
-  Besonderheit: external-tool CLI verfügbar (wird aber nicht mehr genutzt, stub)
-
-Plattform 2: Render (Docker-Container)                [SEKUNDÄR]
-  URL:        https://aktienanalyst.onrender.com
-  Deploy:     Dockerfile → node:20-slim, baut via npm run build, startet node dist/index.cjs
-  Keys:       müssen im Render-Dashboard unter "Environment" gesetzt sein
-  Port:       5000 (fest im Dockerfile: EXPOSE 5000)
-  Branch:     main (auto-deploy bei Push)
-```
-
-## 0.2 — Railway: Nicht verwenden, aus Projekt entfernen
-
-```
-RAILWAY WIRD NICHT GENUTZT. Das Projekt läuft nicht über Railway.
-
-Zu entfernen (Branch: chore/remove-railway):
-[ ] railway.json (falls vorhanden) löschen
-[ ] .github/workflows/*.yml auf Railway-Deploy-Steps prüfen und entfernen
-[ ] Alle Kommentare/Docs die Railway erwähnen → durch Render ersetzen
-[ ] README.md Deploy-Sektion auf pplx.app + Render aktualisieren
-
-Prüfen:
-  find . -name 'railway*' -o -name '*.railway*'
-  grep -r 'railway' . --include='*.json' --include='*.yml' --include='*.md'
-```
-
-## 0.3 — Render: Environment Variables (P0)
-
-```
-Render Dashboard → dein Service → Environment → Add Environment Variable:
-
-  FMP_API_KEY         = <dein FMP Key>          (Financial Modeling Prep)
-  OPENROUTER_API_KEY  = sk-or-v1-...            (LLM-Calls via OpenRouter)
-  PERPLEXITY_API_KEY  = pplx-...                (Sonar-Pro, optional aber empfohlen)
-  NODE_ENV            = production
-  PORT                = 5000
-  PLAYWRIGHT_BROWSERS_PATH = /root/.cache/ms-playwright
-
-Nach dem Setzen: Manual Deploy triggern.
-Diagnose danach:
-  curl https://aktienanalyst.onrender.com/api/health
-  → Erwartung: { status: "ok", uptime: N }
-  curl https://aktienanalyst.onrender.com/api/fmp-budget
-  → Erwartung: { fmp: { calls: 0, budget: 750 }, fmpAvailable: true }
-```
-
-## 0.4 — Legacy Quota Guard: Deaktivieren (P0)
-
-```
-Datei: server/analyze-helpers.ts
-Problem: DAILY_FINANCE_LIMIT = 18 ist ein Überbleibsel vom alten
-  Perplexity Finance External Tool (das hatte 18 Analysen/Tag Limit).
-  Auf Render/pplx.app mit FMP gibt es dieses Limit nicht mehr.
-  isQuotaExceeded() kann Analysen still blockieren wenn _quotaCount >= 18.
-
-Fix (Branch: fix/remove-legacy-quota-guard):
-
-export function isQuotaExceeded(): boolean {
-  // Legacy Perplexity Finance quota guard — deaktiviert.
-  // FMP hat eigenes 750 Calls/Tag Limit (trackFmpCall / getFmpBudgetStatus).
-  return false;
-}
-
-export function incrementQuota() {
-  // Legacy stub — kein Tracking mehr nötig.
-}
-
-// DAILY_FINANCE_LIMIT, _quotaDate, _quotaCount können entfernt werden
-// getQuotaStatus() optional behalten falls /api/fmp-budget darauf zeigt
-```
-
-## 0.5 — Render Health-Check konfigurieren
-
-```
-Render Dashboard → dein Service → Settings → Health & Alerts:
-  Health Check Path: /api/health
-  Health Check Timeout: 30s
-
-Wenn Health-Check nicht konfiguriert → Render markiert Service als "failed"
-auch wenn der Prozess läuft. Das ist die Ursache der täglichen Fail-Emails.
-
-Falls /api/health noch nicht existiert:
-  server/index.ts: vor allen anderen Routes:
-  app.get('/api/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }));
-```
-
-## 0.6 — Mega-Files: Anti-Truncation Split-Plan
-
-```
-Problem: GitHub API trunciert Dateien > ~100 KB Base64 still.
-Bereits betroffen: BTCDashboard.tsx, routes.ts
-Aktuell gefährdet:
-  server/researcher.ts    69 KB  → KRITISCH
-  client/src/pages/Researcher.tsx  56 KB  → KRITISCH
-  server/llm-openrouter.ts 52 KB  → KRITISCH
-  server/recession.ts     47 KB  → HOCH
-  server/pdf-export.ts    42 KB  → HOCH
-
-REGEL: Jede Datei < 80 KB. Prüfen: wc -c <datei>
-```
-
-### Split-Strategie: Barrel-Pattern (Shell bleibt am alten Pfad)
-
-```
-Prinzip:
-- Die Shell-Datei (alter Pfad) wird < 5 KB und re-exportiert nur.
-- Alle bestehenden Imports im Projekt bleiben unverändert.
-- Sub-Dateien kommunizieren ausschließlich über ES-Module-Imports.
-- Kein Shared State, kein globales Objekt.
-
-Beispiel researcher.ts:
-
-  server/researcher.ts          ← Shell (< 5 KB)
-    → export { registerResearcherRoutes } from "./researcher/index";
-
-  server/researcher/
-    index.ts                    ← Route-Registrierung für /api/researcher/*
-    macro-pulse.ts              ← buildMacroPulse()          ~12 KB
-    sector.ts                   ← buildSectorOpportunity()   ~10 KB
-    screener.ts                 ← buildScreener()            ~10 KB
-    capex.ts                    ← buildCapexFiscal()         ~10 KB
-    briefing.ts                 ← buildDailyBriefing()       ~8 KB
-    cache.ts                    ← readResearcherCache /      ~8 KB
-                                   writeResearcherCache
-    types.ts                    ← lokale Interfaces          ~5 KB
-
-Beispiel llm-openrouter.ts:
-
-  server/llm-openrouter.ts      ← Shell (< 5 KB)
-    → export { callLLMJson, callLLMStream } from "./llm/openrouter";
-    → export { callPerplexitySonar } from "./llm/sonar";
-
-  server/llm/
-    openrouter.ts               ← callLLMJson() + Fallback-Chain  ~15 KB
-    sonar.ts                    ← callPerplexitySonar()            ~8 KB
-    anthropic.ts                ← direkte Anthropic SDK Calls      ~8 KB
-    models.ts                   ← Modell-Konstanten                ~3 KB
-
-Beispiel Researcher.tsx (Frontend):
-
-  client/src/pages/Researcher.tsx    ← Shell (< 5 KB)
-    → export { default } from "./researcher/index";
-
-  client/src/pages/researcher/
-    index.tsx                   ← Tab-Router + State              ~8 KB
-    MacroPulse.tsx              ← Country Macro Tab               ~15 KB
-    SectorOpportunity.tsx       ← Sector Tab                      ~12 KB
-    Screener.tsx                ← Undervalued Tab                 ~12 KB
-    CapexFiscal.tsx             ← Capex Tab                       ~10 KB
-    DailyBriefing.tsx           ← Briefing Tab                    ~8 KB
-```
-
-### Kommunikation zwischen Split-Dateien
-
-```ts
-// researcher/cache.ts — exportiert:
-export async function readResearcherCache(key: string) { ... }
-export async function writeResearcherCache(key: string, data: unknown) { ... }
-
-// researcher/macro-pulse.ts — importiert:
-import { readResearcherCache, writeResearcherCache } from "./cache";
-import { callLLMJson } from "../llm-openrouter";   // ← relativer Pfad nach oben
-import type { MacroPulseResult } from "./types";
-export async function buildMacroPulse(region: string): Promise<MacroPulseResult> { ... }
-
-// researcher/index.ts — importiert alle buildFns:
-import { buildMacroPulse }        from "./macro-pulse";
-import { buildSectorOpportunity } from "./sector";
-import { buildScreener }          from "./screener";
-import type { Express }            from "express";
-
-export function registerResearcherRoutes(app: Express) {
-  app.post("/api/researcher/macro",   async (req, res) => { ... });
-  app.post("/api/researcher/sectors", async (req, res) => { ... });
-  // ...
-}
-```
-
-### Split-Branches (Reihenfolge)
-
-| Priorität | Branch | Datei | Ziel |
-|---|---|---|---|
-| P1 | `refactor/split-llm-openrouter` | server/llm-openrouter.ts (52 KB) | server/llm/ |
-| P1 | `refactor/split-researcher-server` | server/researcher.ts (69 KB) | server/researcher/ |
-| P2 | `refactor/split-researcher-frontend` | Researcher.tsx (56 KB) | pages/researcher/ |
-| P2 | `refactor/split-recession` | server/recession.ts (47 KB) | server/recession/ |
-| P3 | `refactor/split-pdf-export` | server/pdf-export.ts (42 KB) | server/pdf/ |
-
-**Regel: Alle Splits lokal entwickeln → npm run check → npm run dev testen → PR → Squash Merge.**
-**Niemals Mega-Files direkt über GitHub API pushen.**
-
-## 0.7 — Checkliste: Render läuft wieder
-
-```
-[ ] 0.3 — Render Env Vars gesetzt (FMP_API_KEY, OPENROUTER_API_KEY)
-[ ] 0.4 — Legacy Quota Guard deaktiviert (DAILY_FINANCE_LIMIT = 18 entfernt)
-[ ] 0.5 — Health-Check-Pfad in Render konfiguriert (/api/health)
-[ ] 0.2 — Railway-Dateien/Referenzen entfernt
-[ ] Test: curl https://aktienanalyst.onrender.com/api/health → { status: ok }
-[ ] Test: curl https://aktienanalyst.onrender.com/api/fmp-budget → fmpAvailable: true
-[ ] Test: Aktienanalyse MSFT aufrufen → Antwort in < 30s
-[ ] Test: OpenRouter → callLLMJson → kein 402 Fehler
-[ ] Fail-Emails stoppen nach 24h
-```
-
----
-
-# TEIL 1 — BTC DASHBOARD RESTORE
-
-## Diagnose
-
-GitHub API trunciert `BTCDashboard.tsx` bei ~100 KB Base64, Abbruch mitten in `Section2Halving`.
-
-- Sections 3–12 + `export default function BTCDashboard` fehlen in `main`
-- `Section13Miner` vorhanden aber nie eingebunden (kein Parent-Render)
-- Identischer Bug wie `routes.ts` — Lösung: Datei aufsplitten
-
-## Restore-Plan
-
-### Phase 1 — Backup-Branch [DONE]
-
-```bash
-git checkout -b btc-restore bafff3c
-# Branch btc-restore-modular ist live von 33c8e77
-```
-
-### Phase 2 — Modular aufsplitten [OFFEN, lokal]
-
-```
-client/src/pages/
-├── BTCDashboard.tsx        ← Shell + export default (~200 Zeilen)
-└── btc/
-    ├── Sections1to6.tsx    ← Status, Halving, Indikatoren, Power-Law, Monte Carlo
-    ├── Sections7to12.tsx   ← Kategorien, Zyklus, Finale Schätzung, TA, Fear&Greed, Fazit
-    └── Section13Miner.tsx  ← Puell, Hash Ribbons, Breakeven, Miner Score
-```
-
-Kritische fehlende Zeile im Section-Switch:
-
-```tsx
-case 13: return (
-  <Section13Miner
-    data={btcData}
-    minerData={minerData ?? null}
-    loading={minerLoading}
-    error={minerError}
-  />
-);
-```
-
-### Doublecheck vor Merge
-
-- [ ] Keine zirkulären Imports
-- [ ] export / export default konsistent
-- [ ] tooltipStyle, MetricCard nicht doppelt definiert
-- [ ] BTCAnalysis-Interface nur einmal
-- [ ] SECTIONS-Array hat alle 13 Einträge
-- [ ] sectionRefs deckt alle 13 IDs ab
-
-## Bekannte gute Commits
-
-| SHA | Beschreibung |
-|---|---|
-| 33c8e77 | HEAD main — Basis btc-restore-modular |
-| 5bf8a2d | Section 13 vollständig (direkter Push) |
-| bafff3c | PR #31 Squash — letzter valider Stand vor Truncation |
-
----
-
-# TEIL 2 — AKTIENANALYSE: BEKANNTE BUGS (mit Commit-Referenz)
-
-## BUG A — FMP-Laufstatus (doublecheck ob Analyse über FMP läuft)
-
-**Frage:** Läuft https://aktienanalyst-pro.pplx.app über FMP oder nicht?
-
-**Was im Code steht (analyze-route.ts, Commit 5a283e4, 16.07.2026):**
-
-```ts
-// Step 1: getFmpFallbackData(upperTicker) — 13 parallele FMP-Calls
-const { quote, profile, financials, analyst, ohlcv, segments, peers, ratios } = fmpData;
-// Wenn fmpData null → 503 zurück, KEIN Sektor-Fallback
-```
-
-**Diagnose-Checkliste:**
-```
-[ ] GET https://aktienanalyst-pro.pplx.app/api/fmp-budget
-    Erwartete Antwort: { fmp: { calls: N, budget: 750 }, fmpAvailable: true }
-    Wenn fmpAvailable: false → FMP_API_KEY fehlt in credentials
-```
-
-**Fix wenn FMP nicht läuft:**
-```
-Branch: fix/fmp-key-check
-1. Deploy-credentials FMP_API_KEY prüfen
-2. isFmpAvailable() im startup loggen
-3. /api/fmp-budget Endpunkt im Frontend sichtbar machen
-```
-
----
-
-## BUG B — Peer-Vergleich: ROI (3J) + ROE fehlen, falsche Darstellung Section 7
-
-**Symptom (Screenshot 23.07.2026):**
-- P/E (TTM) zeigt n/a
-- Peer-Tabelle fehlt komplett
-- Nur ROE im Peer-Objekt — ROI (Return on Invested Capital / ROIC) 3-Jahres-Vergleich fehlt
-
-**Was im Code existiert (news-peers.ts, Commit ce3b1bc, 16.07.2026):**
-```ts
-export async function fetchPeerComparisonFromTickers(tickers: string[]): Promise<PeerData[]>
-// Gibt zurück: { ticker, name, pe, forwardPE, peg, evEbitda, revenueGrowth }
-// FEHLT: roic3Y, roe, roa, revenueCAGR3Y, eps5YGrowth, fcfMargin, grossMargin
-```
-
-**Was fehlt — vollständige Peer-Metriken:**
-
-| Metrik | FMP-Endpunkt | Formel / Feld |
-|---|---|---|
-| P/E TTM | `/ratios/:ticker` | `priceEarningsRatio` |
-| Forward P/E | `/ratios/:ticker` | `priceEarningsRatioTTM` |
-| PEG | berechnet | `forwardPE / epsGrowthFwd_%` |
-| EV/EBITDA | `/ratios/:ticker` | `enterpriseValueMultiple` |
-| Revenue CAGR 3J | `/income-statement?limit=3` | `(rev[0]/rev[2])^(1/3)-1` |
-| EPS 5J CAGR | `/financial-growth?limit=1` | Feld `epsgrowth` |
-| FCF Marge | cashflow + income | `(opCF-|capex|)/revenue*100` |
-| Gross Margin | income | `grossProfit/revenue*100` |
-| ROE | `/ratios/:ticker` | `returnOnEquity` |
-| **ROIC 3J (NEU)** | `/key-metrics/:ticker?limit=3` | siehe Formel unten |
-| ROA | `/key-metrics/:ticker?limit=3` | `netIncome/totalAssets` |
-
-**Korrekte ROIC-Formel (muss exakt implementiert werden):**
-
-```ts
-// ROIC = NOPAT / Invested Capital
-// NOPAT = EBIT * (1 - effektiver Steuersatz)
-// Invested Capital = Eigenkapital + langfristige Schulden - Cash
-//
-// FMP-Felder:
-// EBIT            = incomeLatest.operatingIncome
-// Tax Rate        = incomeLatest.incomeTaxExpense / incomeLatest.incomeBeforeTax
-//                   (clamp: 0.10 – 0.35; wenn negativ → 0.21 Standard)
-// LongTermDebt    = balanceSheet.longTermDebt
-// TotalEquity     = balanceSheet.totalStockholdersEquity
-// Cash            = balanceSheet.cashAndCashEquivalents
-//
-// Invested Capital = TotalEquity + LongTermDebt - Cash
-// NOPAT           = EBIT * (1 - TaxRate)
-// ROIC            = NOPAT / InvestedCapital * 100
-//
-// 3J-Durchschnitt:
-// ROIC_3Y = (ROIC[0] + ROIC[1] + ROIC[2]) / 3
-// FMP-Daten: /api/v3/key-metrics/:ticker?limit=3 liefert roic direkt
-
-export function calcROIC(ebit: number, taxExpense: number, incomeBeforeTax: number,
-  longTermDebt: number, totalEquity: number, cash: number): number {
-  const taxRate = incomeBeforeTax > 0
-    ? Math.max(0.10, Math.min(0.35, taxExpense / incomeBeforeTax))
-    : 0.21;
-  const nopat = ebit * (1 - taxRate);
-  const investedCapital = totalEquity + longTermDebt - cash;
-  if (investedCapital <= 0) return 0;
-  return (nopat / investedCapital) * 100;
-}
-
-// Alternativ direkt aus FMP /key-metrics:
-// const roic3Y = keyMetrics.slice(0,3).map(m => m.roic * 100).reduce((a,b)=>a+b,0) / 3;
-```
-
-**Fix-Plan:**
-```
-Branch: fix/peer-comparison-section7
-
-1. server/news-peers.ts: fetchPeerComparisonFromTickers erweitern
-   + ROIC 3J: /key-metrics?limit=3 pro Peer (Feld: roic)
-   + ROA: netIncome/totalAssets
-   + CAGR 3J: income-statement?limit=3 pro Peer
-   + EPS 5J: financial-growth?limit=1 pro Peer
-   Budget: 5 Peers × 5 Calls = 25 extra FMP-Calls — vorher prüfen
-
-2. shared/schema.ts: PeerData-Interface erweitern:
-   roic3Y: number;  // ROIC 3-Jahres-Durchschnitt in %
-   roa: number;     // Return on Assets in %
-   roe: number;     // Return on Equity in %
-   revenueCAGR3Y: number;
-   eps5YGrowth: number;
-   fcfMargin: number;
-   grossMargin: number;
-
-3. Frontend Section 7:
-   + Tabelle alle 11 Metriken
-   + Farbcodierung: besser als Sektor-Median = grün, schlechter = rot
-   + ROIC vs. WACC: wenn ROIC > WACC → grünes Badge "Wertsteigernd"
-   + Sektor-Median als letzte Zeile
-```
-
----
-
-## BUG C — Revenue-Segmente (Produkt + Region) fehlen in Investmentthese
-
-**Zwei getrennte FMP-Endpunkte nötig:**
-
-```ts
-// 1. Produkt-Segmente:
-GET /api/v3/revenue-product-segmentation?symbol={ticker}&apikey={key}
-
-// 2. Regionale Segmente:
-GET /api/v3/revenue-geographic-segmentation?symbol={ticker}&apikey={key}
-
-// Transformation (identisch für beide):
-const segObj = Array.isArray(data) ? data[0] : data;
-const keys = Object.keys(segObj).filter(k =>
-  !['date','symbol','reportedCurrency','period'].includes(k)
-);
-const total = keys.reduce((s, k) => s + (segObj[k] ?? 0), 0);
-const segments = keys
-  .map(k => ({ name: k, revenue: segObj[k], percentage: Math.round(segObj[k]/total*1000)/10 }))
-  .filter(s => s.revenue > 0)
-  .sort((a,b) => b.revenue - a.revenue);
-```
-
-**Beispiel MSFT FY2025:**
-```
-Produkt: Intelligent Cloud $111.8B (39.8%) | Productivity $91.0B (32.4%) | Personal Computing $78.0B (27.8%)
-Region:  USA ~55% | Europa ~25% | Rest ~20%
-```
-
-**Beispiel NVO FY2024 (DKK → umrechnen!):**
-```
-Produkt: GLP-1/Wegovy ~60% | Diabetes/Ozempic ~35% | Rare Disease ~5%
-Region:  Nordamerika ~60% | Europa ~22% | Asien ~18%
-```
-
-**Fix-Plan:**
-```
-Branch: fix/revenue-segments-product-geo
-server/fmp.ts: fmpSegments aufsplitten in fmpProductSegments() + fmpGeoSegments()
-Frontend: PieChart (Produkte) + Horizontal BarChart (Regionen)
-```
-
----
-
-## BUG D — DCF und CRV inflationiert bei Nicht-USD-Titeln (NVO, ASML, SAP)
-
-**Ursache:** fxRate wird gefetcht, aber fcfTTM, netDebt etc. werden nicht konvertiert.
-
-**Konkrete Zahlen NVO:**
-```
-FCF TTM = 95 Mrd DKK × 0.1456 = $13.8 Mrd USD
-Korrekter DCF Fair Value/ADR: ~$35-55 (Kurs $67 → plausibel overvalued)
-Fehler ohne Konvertierung: Ergebnis in DKK als $ angezeigt → 6.9× falsch
-```
-
-**Fix:**
-```ts
-// ALLE Betrags-Felder mit fxRate multiplizieren:
-const toUSD = (val: number) => val * fxRate;
-const fcfTTM_usd  = toUSD(fcfTTM);
-const netDebt_usd = toUSD(netDebt);
-// sharesOutstanding und ADR-price NICHT konvertieren
-```
-
----
-
-# TEIL 3 — KATALYSATOREN-SEKTION 15: VOLLSTÄNDIGE MATHEMATISCHE FORMELN
-
-> Quelle: catalyst-engine.ts (Commit 18c2e09, vollständig gelesen 23.07.2026)
-
-## 3.1 — Definitionen aller Katalysator-Felder
-
-```
-PoS %           = Probability of Success (historisch begründet, -10-15% Safety Margin)
-Brutto-Upside   = Kursanstieg in % wenn der Katalysator sich vollständig materialisiert
-Einpreisungsgrad = Anteil des Katalysators der bereits im Kurs steckt (via Konsens/Reverse DCF)
-Netto-Upside    = Brutto-Upside × (1 - Einpreisungsgrad/100)
-GB %            = Gewichteter Beitrag = PoS/100 × Netto-Upside
-```
-
-## 3.2 — Exakte Formeln
-
-```ts
-// 1. Netto-Upside:
-nettoUpside = bruttoUpside * (1 - einpreisungsgrad / 100)
-// Beispiel Screenshot K1: 17% * (1 - 39/100) = 17% * 0.61 = 10.37% ✓
-
-// 2. Gewichteter Beitrag (GB):
-gb = (pos / 100) * nettoUpside
-// Beispiel Screenshot K1: (75/100) * 10.37 = 7.78% ✓
-// Beispiel Screenshot K2: (60/100) * 2.70 = 1.62% ✓
-// Beispiel Screenshot K3: (60/100) * 8.40 = 5.04% ✓
-// Beispiel Screenshot K4: (45/100) * 5.40 = 2.43% ✓
-
-// 3. Σ Netto-Upside (vor PoS-Gewichtung):
-sumNettoUpside = sum(nettoUpside_i)
-// Screenshot: 10.37 + 2.70 + 8.40 + 5.40 = 26.87% ✓
-
-// 4. GB-Summe (nach PoS):
-sumGB = sum(gb_i)
-// Screenshot: 7.78 + 1.62 + 5.04 + 2.43 = 16.87% ✓
-
-// 5. Catalyst-Adjusted Target:
-catalystTarget = dcfFairValue * (1 + sumGB / 100)
-// Screenshot: $364.17 * (1 + 16.87/100) = $364.17 * 1.1687 = $425.61 ✓
-// WICHTIG: Basis ist DCF Fair Value (konservativer Anker), NICHT Analyst PT!
-```
-
-## 3.3 — Reverse DCF / Einpreisungsgrad-Berechnung
-
-```ts
-// Korrekte Reverse DCF Formel (Binary Search N=5J):
-function calcImpliedGStarExact({
-  price, sharesOutstanding, netDebt, fcf, wacc, n=5, terminalGrowth=0.025
-}) {
-  const ev = price * sharesOutstanding + netDebt;
-  function dcfValue(g) {
-    let pv = 0;
-    for (let t=1; t<=n; t++) pv += fcf * (1+g)**t / (1+wacc)**t;
-    return pv + fcf*(1+g)**n*(1+terminalGrowth)/((wacc-terminalGrowth)*(1+wacc)**n);
-  }
-  // Binary Search: 50 Iterationen, g ∈ [-5%, +40%]
-  let lo=-0.05, hi=0.40;
-  if (dcfValue(hi)<ev || dcfValue(lo)>ev) return null;
-  for (let i=0; i<50; i++) {
-    const mid=(lo+hi)/2;
-    if (dcfValue(mid)>ev) hi=mid; else lo=mid;
-  }
-  return Math.round(((lo+hi)/2)*10000)/100;
-}
-
-// Validierung:
-// MSFT: EV=$3.034T, FCF=$71B, WACC=8.5% → g*≈14.5% (hist. 16-18% → Fair)
-// NVO:  EV=$303B,  FCF=$13.8B USD, WACC=8.0% → g*≈35% (hist. 30-35% → Fair)
-// ASML: EV=$270B,  FCF=$9.2B USD, WACC=8.5% → g*≈28% (hist. 15-18% → stark überbewertet)
-```
-
----
-
-# TEIL 4 — BUG E — RESEARCHER DASHBOARD: OPENROUTER-FEHLER (VOLLSTÄNDIG DIAGNOSTIZIERT)
-
-> Quelle: server/researcher.ts (SHA: ab2a6f18915fcfbee4715ff3b48694c9e1fd07e7, gelesen 23.07.2026)
-> Screenshot: Country Macro Pulse USA zeigt "LLM-Analyse nicht verfügbar. Bitte OpenRouter Credits aufladen."
-
-## 4.1 — Root-Cause: callLLMJson wirft 402 / Credits erschopft
-
-**Was passiert (Zeile ~252-280 in researcher.ts):**
-
-```ts
-// researcher.ts buildMacroPulse():
-[llm1, llm2] = await Promise.all([
-  callLLMJson({ prompt: prompt1, maxTokens: 1400 }),
-  callLLMJson({ prompt: prompt2, maxTokens: 1400 }),
-]);
-// Wenn callLLMJson null zurückgibt (402) → llm1 = null
-// → synthesis = FALLBACK-OBJEKT:
-synthesis = {
-  summary: `... Aktuelle Events aus dem LLM nicht verfügbar — bitte Credits aufladen...`,
-  liquidityView: "LLM-Analyse nicht verfügbar. Bitte OpenRouter Credits aufladen.",
-  fiscalView: "LLM-Analyse nicht verfügbar.",
-  _fallback: true,
-};
-// Dieses Objekt wird NICHT gecacht (isStaleCache(_fallback:true) = true)
-// Aber es wird dem User gezeigt → exakt der Screenshot-Text!
-```
-
-**callLLMJson importiert aus server/llm-openrouter.ts (SHA: 44a9d51254e4cefa2b47a2886a9cd40eb0fa28cf).**
-Diese Datei ist 52 KB — enthält alle 4 LLM-Provider-Konfigurationen.
-
-## 4.2 — Vier betroffene Tabs (alle über callLLMJson)
-
-| Tab | Endpunkt | buildFn | maxTokens | Fehlertext im UI |
-|---|---|---|---|---|
-| Country Macro Pulse | POST /api/researcher/macro | buildMacroPulse() | 1400+1400 | "LLM-Analyse nicht verfügbar. Bitte OpenRouter Credits aufladen." |
-| Sector Opportunity | POST /api/researcher/sectors | buildSectorOpportunity() | 4000 | trends.length=0 → _fallback |
-| Undervalued Screener | POST /api/researcher/screener | buildScreener() | 1100+2000 | candidates.length=0 |
-| Capex & Fiscal | POST /api/researcher/capex | buildCapexFiscal() | 3500 | programmes.length=0 |
-| Daily Briefing | POST /api/researcher/daily-briefing | buildDailyBriefing() | 2200 | briefing=null |
-
-## 4.3 — OpenRouter-Konfiguration in llm-openrouter.ts
-
-**Was callLLMJson macht (aus Dateiname + Commit-Kontext):**
-
-```ts
-// server/llm-openrouter.ts exportiert:
-export async function callLLMJson({
-  prompt: string,
-  maxTokens: number,
-  model?: string,
-}): Promise<{ data: any; modelUsed: string } | null>
-
-// Interne Logik (aus researcher.ts Verhalten ableitbar):
-// 1. POST https://openrouter.ai/api/v1/chat/completions
-// 2. Authorization: Bearer ${OPENROUTER_API_KEY}
-// 3. model: "anthropic/claude-3-5-haiku" (aus researcher.ts Kommentar)
-// 4. Bei HTTP 402 (Payment Required): return null
-// 5. Bei Timeout: return null
-// 6. response.modelUsed = tatsächlich verwendetes Modell
-
-// PROBLEM: Keine Perplexity-Abhängigkeit im Researcher-Code gefunden!
-// Researcher läuft AUSSCHLIEßLICH über OpenRouter (callLLMJson)
-// Perplexity-API wird NICHT direkt verwendet in researcher.ts
-// Perplexity-Tasks = Perplexity AI Schedule-Tasks (externes Service, separat)
-```
-
-## 4.4 — Schedule-Tasks: Was beendet werden muss
-
-**Perplexity Schedule-Tasks sind EXTERNE geplante Abfragen über Perplexity AI,
-DIESE sind unabhängig vom App-Backend und müssen separat gestoppt werden:**
-
-```
-Zu stoppende Schedule-Tasks (Perplexity AI Dashboard):
-[ ] Daily Briefing Task (täglich, macht externe Perplexity-Anfragen)
-[ ] Researcher Macro Update Task (falls vorhanden)
-[ ] Sector Opportunity Task (falls vorhanden)
-[ ] Alle Tasks die auf aktienanalyst-pro.pplx.app zeigen
-
-Schritt:
-1. https://www.perplexity.ai/ → Tasks → Alle aktiven Tasks stoppen
-2. Dann OpenRouter-Konfiguration fixen (siehe 4.5)
-3. Dann Tasks neu erstellen falls gewünscht
-```
-
-## 4.5 — Fix: OpenRouter neu konfigurieren
-
-**Schritt 1: OPENROUTER_API_KEY prüfen und aufladen**
-```bash
-# Verifizieren ob Key vorhanden:
-curl https://openrouter.ai/api/v1/auth/key \
-  -H "Authorization: Bearer $OPENROUTER_API_KEY"
-# Erwartete Antwort: { "data": { "label": "...", "usage": X, "limit": Y, "is_free_tier": false } }
-# Wenn HTTP 402 bei Analyse: Guthaben aufüllen unter https://openrouter.ai/credits
-```
-
-**Schritt 2: Modell-Konfiguration in llm-openrouter.ts prüfen**
-```ts
-// Aktuell (aus Kommentar in researcher.ts):
-// "LLM (Claude 3.5 Haiku) only for SYNTHESIS and INTERPRETATION"
-// → Modell: anthropic/claude-3-5-haiku
-
-// Falls Credits-Problem: günstigeres Modell als Primär konfigurieren:
-const MODEL_PRIMARY   = "anthropic/claude-3-5-haiku";  // ~$0.25/1M in, $1.25/1M out
-const MODEL_FALLBACK  = "meta-llama/llama-3.1-8b-instruct"; // ~$0.06/1M (kostenlose Tier)
-const MODEL_FREE      = "google/gemini-flash-1.5";          // Free-Tier OpenRouter
-
-// Reihenfolge bei callLLMJson:
-// 1. Versuche MODEL_PRIMARY
-// 2. Bei 402 → Versuche MODEL_FALLBACK (nie null zurückgeben bei credits-problem!)
-// 3. Bei 429 (Rate Limit) → Warte 2s, retry mit MODEL_FREE
-// 4. Erst wenn ALLE 3 fehlschlagen: return null
-
-// AKTUELLER BUG: callLLMJson gibt sofort null zurück bei 402 —
-// kein Fallback-Modell-Versuch!
-```
-
-**Schritt 3: Fix-Implementierung in llm-openrouter.ts**
-```ts
-// Branch: fix/openrouter-fallback-chain
-// server/llm-openrouter.ts: callLLMJson() erweitern:
-
-export async function callLLMJson({
-  prompt, maxTokens, model,
-}: { prompt: string; maxTokens: number; model?: string }) {
-  const models = [
-    model || "anthropic/claude-3-5-haiku",
-    "meta-llama/llama-3.1-8b-instruct:free",  // OpenRouter Free Tier
-    "google/gemini-flash-1.5:free",            // Backup Free
-  ];
-
-  for (const m of models) {
-    try {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://aktienanalyst-pro.pplx.app",
-          "X-Title": "Aktienanalyst Pro",
-        },
-        body: JSON.stringify({
-          model: m,
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: maxTokens,
-          response_format: { type: "json_object" },
-        }),
-      });
-
-      if (res.status === 402) {
-        console.warn(`[LLM] ${m} 402 credits exhausted, trying next model`);
-        continue; // Nächstes Modell versuchen
-      }
-      if (res.status === 429) {
-        await new Promise(r => setTimeout(r, 2000));
-        continue;
-      }
-      if (!res.ok) {
-        console.warn(`[LLM] ${m} HTTP ${res.status}`);
-        continue;
-      }
-
-      const json = await res.json();
-      const text = json?.choices?.[0]?.message?.content || "";
-      const data = JSON.parse(text);
-      return { data, modelUsed: m };
-    } catch (err: any) {
-      console.warn(`[LLM] ${m} error: ${err?.message?.substring(0, 80)}`);
-      continue;
-    }
-  }
-  return null; // Alle Modelle fehlgeschlagen
-}
-```
-
-## 4.6 — LLM Search Integration: Perplexity Sonar vs. OpenRouter
-
-**Unterschied (wichtig für Researcher):**
-
-```
-OpenRouter (aktuell):          Perplexity Sonar (neu hinzuzufügen):
-- Gibt trainingsdaten zurück   - Gibt live-Suchergebnisse zurück
-- Kein Internetzugriff         - Gibt Echtzeit-Daten mit Quellen-URLs
-- Günstig: $0.06-$1.25/1M    - Teurer: sonar-pro $3/1M in, $15/1M out
-- Gut für: Formatierung,      - Gut für: Key Events, aktuelle Fiskalprog.,
-  Strukturierung, Synthesis      Makrodaten, News-Katalysatoren
-
-Für Researcher-Tabs optimal:
-  Country Macro Pulse → Perplexity Sonar (aktuelle Inflationsdaten, Zentralbank-Events)
-  Sector Opportunity  → OpenRouter Claude (Strukturierungsaufgabe)
-  Undervalued Screener → OpenRouter Claude (Moat-Scoring)
-  Capex & Fiscal     → Perplexity Sonar (aktuelle Fiskalprogramme, Budget-Dokumente)
-  Daily Briefing     → Perplexity Sonar (Net-New Events, letzte 24h)
-```
-
-**Implementierung Perplexity Sonar in llm-openrouter.ts:**
-```ts
-// Neuer Export: callPerplexitySonar()
-export async function callPerplexitySonar({
-  prompt, maxTokens = 800,
-}: { prompt: string; maxTokens?: number }) {
-  const res = await fetch("https://api.perplexity.ai/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${process.env.PERPLEXITY_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "sonar-pro",  // oder "sonar" für günstiger
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: maxTokens,
-      return_citations: true,
-      search_recency_filter: "week",  // nur letzte 7 Tage
-    }),
-  });
-  if (!res.ok) return null;
-  const json = await res.json();
-  return {
-    text: json?.choices?.[0]?.message?.content || "",
-    citations: json?.citations || [],
-    modelUsed: "sonar-pro",
-  };
-}
-
-// Verwendung in buildMacroPulse():
-// const sonarResult = await callPerplexitySonar({
-//   prompt: `Aktuelle Makrolage ${regionLabel} Juli 2026: Inflation, Leitzins, Fiskal?`
-// });
-// Falls sonarResult → als dataContext an OpenRouter-Claude weitergeben:
-// "Echtzeitdaten (Perplexity Sonar): " + sonarResult.text
-// Claude strukturiert nur — Perplexity liefert Fakten
-```
-
-## 4.7 — Konkreter Fix-Plan: Researcher Dashboard
-
-```
-Branch: fix/researcher-openrouter-config
-
-Schritt 1 (sofort): Perplexity Tasks stoppen
-  → https://www.perplexity.ai/ → Tasks → alle aktiven Tasks deaktivieren
-
-Schritt 2 (sofort): OpenRouter-Guthaben prüfen
-  → https://openrouter.ai/credits
-  → Mindest-Guthaben: $5 für ~1000 Researcher-Anfragen mit Haiku
-
-Schritt 3 (Code): callLLMJson() Fallback-Chain (siehe 4.5)
-  Datei: server/llm-openrouter.ts (SHA: 44a9d51254e4cefa2b47a2886a9cd40eb0fa28cf)
-  → 3-Modell-Kette: Haiku → Llama-3.1-8B-Free → Gemini-Flash-Free
-  → Bei Free-Tier: maxTokens auf min(maxTokens, 2000) clampen
-
-Schritt 4 (Code): callPerplexitySonar() hinzufügen (siehe 4.6)
-  Datei: server/llm-openrouter.ts
-  Env-Var: PERPLEXITY_API_KEY (für Live-Suchergebnisse)
-
-Schritt 5 (Code): researcher.ts buildMacroPulse() hybrid-Architektur
-  Datei: server/researcher.ts (SHA: ab2a6f18915fcfbee4715ff3b48694c9e1fd07e7)
-  → Step 1: callPerplexitySonar() für Fakten (Inflation, Leitzins, Events)
-  → Step 2: callLLMJson() für Strukturierung/Synthesis der Sonar-Antwort
-  → Falls Sonar-Key fehlt: fallback auf FRED-Daten (fetchMacroSnapshot) wie bisher
-
-Schritt 6 (Code): researcher.ts buildCapexFiscal() hybrid
-  → callPerplexitySonar("Aktuelle Fiskalprogramme ${region} 2025-2026 Volumen Status")
-  → Sonar-Output als MUST_INCLUDE-Kontext (ersetzt hardcoded Liste)
-
-Schritt 7 (Test): Diagnose-Endpunkt hinzufügen
-  GET /api/researcher/status
-  Response: {
-    openrouter: { configured: true, balance: "$X.XX", model: "..." },
-    perplexity: { configured: true/false },
-    fred: { configured: true/false },
-    fmp: { configured: true, budget: N },
-  }
-```
-
-## 4.8 — Cache-Strategie für Researcher (bestehend, korrekt)
-
-```ts
-// researcher.ts: readResearcherCache() / writeResearcherCache()
-// TTL: 6 Stunden (RESEARCHER_TTL_MIN = 60 * 6)
-// Dual-Layer: File-Cache + SQLite DiskCache (überlebt Restarts)
-// isStaleCache() blockiert Caching von Fallback-Objekten (_fallback: true)
-
-// Stale-Serve-While-Refresh Pattern (korrekt implementiert):
-// 1. Cache HIT + nicht stale → sofort zurückgeben
-// 2. Cache STALE → alten Cache sofort servieren + Background-Refresh
-// 3. Cache MISS → bauen + dann cachen
-
-// PROBLEM: Wenn OpenRouter 402 → _fallback=true → nicht gecacht →
-// nächster Request baut neu → wieder 402 → Endlosschleife
-// FIX: Nach Step 3 (Fallback-Chain mit Free-Modellen) wird immer etwas
-// gecacht (kein _fallback mehr bei Free-Tier-Erfolg)
-```
-
-## 4.9 — Perplexity Schedule-Tasks: Neu konfigurieren nach Fix
-
-```
-Nach dem Fix (OpenRouter funktioniert wieder):
-
-Task 1: Daily Briefing (täglich 07:00 MEZ)
-  Prompt: "Starte das Daily Briefing für aktienanalyst-pro.pplx.app:
-           POST https://aktienanalyst-pro.pplx.app/api/researcher/daily-briefing
-           { \"force\": true }"
-  Ziel: Cache pre-warm vor Marktöffnung
-
-Task 2: Macro Cache Refresh (alle 6h)
-  Prompt: "Refresh Macro Cache:
-           POST /api/researcher/macro { \"region\": \"US\", \"force\": true }
-           POST /api/researcher/macro { \"region\": \"EU\", \"force\": true }
-           POST /api/researcher/macro { \"region\": \"ASIA\", \"force\": true }"
-
-Task 3: Sector/Capex Weekly Refresh (Sonntag 06:00 MEZ)
-  Prompt: "Weekly Researcher Refresh:
-           POST /api/researcher/sectors { \"region\": \"US\", \"force\": true }
-           POST /api/researcher/capex { \"region\": \"US\", \"force\": true }"
-
-WICHTIG: Tasks laufen über Perplexity AI Schedule-Service, nicht über das Backend!
-Die Tasks triggern nur HTTP-Requests gegen das Backend.
-Backend-LLM läuft über OpenRouter (nach Fix: mit Fallback-Chain).
-```
-
----
-
-# TEIL 5 — FMP-MIGRATION (P0-BLOCKER)
-
-## Migrationsplan
-
-| Schritt | Aufgabe | Branch |
-|---|---|---|
-| 1 | /api/fmp-budget im Frontend sichtbar | fix/fmp-debug-panel |
-| 2 | Non-USD Konvertierung fix (BUG D) | fix/non-usd-dcf-conversion |
-| 3 | Peer-Vergleich + ROI 3J (BUG B) | fix/peer-comparison-section7 |
-| 4 | Revenue-Segmente Produkt + Geo (BUG C) | fix/revenue-segments-product-geo |
-| 5 | calcImpliedGStarExact ersetzen alten calcImpliedGStar | fix/reverse-dcf-exact |
-| 6 | LLM-Prompt Catalyst Math Rules (BUG E) | fix/llm-catalyst-math-rules |
-| 7 | OpenRouter Fallback-Chain (BUG F) | fix/researcher-openrouter-config |
-| 8 | Integration-Test: MSFT, AAPL, NVO, ASML | fix/integration-test |
-
-### Korrekte FMP-Request-Struktur
-
-```ts
-export async function fmpGet<T>(path: string, params: Record<string, string> = {}): Promise<T> {
-  const key = process.env.FMP_API_KEY;
-  if (!key) throw new Error('FMP_API_KEY nicht gesetzt');
-  const url = new URL(`https://financialmodelingprep.com/api/v3${path}`);
-  url.searchParams.set('apikey', key);
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`FMP ${path} HTTP ${res.status}`);
-  const data = await res.json();
-  if (data && 'Error Message' in data) throw new Error(`FMP: ${(data as any)['Error Message']}`);
-  return data as T;
-}
-```
-
----
-
-# TEIL 6 — LANGFRISTIGE FEATURE-ROADMAP
-
-## Technische Grundregeln
-
-- Neue Section: Eintrag in SECTIONS-Array + case im Section-Switch
-- Neuer Endpunkt: eigene Datei in server/routes/ (max 80 KB)
-- Formeln: unit-testbare Funktionen in client/src/lib/calculations.ts
-- LLM-Search: POST /api/llm-search { query, ticker, context } → sonar-pro
-- Anti-Truncation: jede Datei < 80 KB vor Push
-
----
-
-## Stock Analysis Pro
-
-### Section 8 — WACC & Terminal Value individuell
-
-```tsx
-const [wacc, setWacc] = useState(0.09);
-const [g, setG] = useState(0.025);
-// TV = FCF_last * (1+g) / (WACC - g)
-// CAPM: Re = Rf + Beta*(Rm-Rf)
-```
-
-### PESTEL-Analyse [Section 14]
-```ts
-POST /api/pestel { ticker, company, sector }
-Sidebar: { id: 14, label: 'PESTEL', icon: Globe }
-```
-
-### Reverse DCF [Section 15]
-```
-Vollständige Implementierung: siehe TEIL 3 Abschnitt 3.3
-Sidebar: { id: 15, label: 'Reverse DCF', icon: RefreshCw }
-Sensitivitätstabelle: 5 WACC × 3 Szenarien (g-5%, g_hist, g+5%)
-```
-
-### Section 17 — Zusammenfassungstabelle
-
-| Metrik | Wert | Bewertung | Quelle |
-|---|---|---|---|
-| Aktienkurs | $xxx | — | FMP |
-| DCF Fair Value | $xxx | Unterbewertet | Berechnet |
-| Reverse DCF g* | x.x% | Hoch | Berechnet |
-| ROIC 3J | xx% | Wertsteigernd | FMP/Berechnet |
-
-### Thesis Score
-```
-Thesis Score (0-100) =
-  Moat Score * 0.25 + FCF Marge 5J * 0.20 + Fiskalstimulus * 0.15
-  + Konjunktur-Trend * 0.15 + Reputation * 0.15 + Positive Events * 0.10
-```
-
-### Virtuelles Portfolio + Kelly
-```
-Kelly % = (p*b - q) / b
-p = Thesis Score/100, b = Upside/Downside aus DCF
-Pabrai: max 10% pro Position
-CAPM: Re = 4.5% + Beta*5.5%
-```
-
----
-
-## Rezessionsboard
-
-### Google Trends — N/A fixen
-```ts
-// Fallback: Cache letzter Wert → score=50, Amber-Badge 'Daten veraltet'
-```
-
-### Sektor-Rotation
-```
-Relativbewertung = Sektor-KGV_aktuell / Sektor-KGV_10J_Mittel
-FMP: /api/v3/sector_price_earning_ratio — Heatmap 11 GICS-Sektoren
-```
-
----
-
-## BTC-Dashboard — Section 13 Miner-Zone
-
-### Puell Multiple
-```
-Puell = Tagesemission_USD / MA365(Tagesemission_USD)
-<0.5 Kapitulation | >4 überhitzt
-```
-
-### Hash Ribbons
-```
-MA30 vs MA60 Hashrate — Kaufsignal: MA30 kreuzt MA60 von unten
-```
-
----
-
-## Ideen-Pool
-
-- [ ] Overview-Seite 2026 vor Ticker-Eingabe
-- [ ] Makroanalyse: Inflation, Fed, Geopolitik, Deglobalisierung
-- [ ] Megatrendanalyse: KI, Elektrifizierung, Rüstung
-- [ ] Blasen/Rezessionsindikatoren: Shiller-KGV, Buffett-Indikator, Yield Curve
-
----
-
-# TEIL 7 — TREND-GATES, PRICING POWER & BIG-PICTURE-SCORING + GOLD vs REAL YIELDS
-
-> Stand: 27.07.2026  
-> Ziel: Fehlinvestments vom Typ "Nike 2023" strukturell verhindern — ohne Hardcoding  
-> einzelner Ticker oder fixer Schwellenwerte. Alle Gates arbeiten mit relativen,  
-> selbstkalibrierenden Größen (Peer-Gruppe, eigene Historie, Branchenindex).  
-> Zusätzlich: Makro-Chart-Idee aus dem Katusa-Research-Chart (Gold reconnectet mit Yields).
-
-## 7.1 Problemanalyse: Warum die 17 Sektionen den Nike-Fall nicht fängt
-
-Die Pipeline ist breiter als ein klassischer Analystenreport, aber sie ist  
-überwiegend **level-basiert statt delta-basiert**. Sie beantwortet  
-"Wie gut ist die Firma heute und was ist sie wert?" — nicht  
-"Verändert sich gerade die Grundlage, auf der diese Bewertung ruht?"
-
-Simulation Nike Q3 2023 gegen den aktuellen Stand:
-
-| Sektion | Signal 2023 | Problem |
-|---|---|---|
-| Fundamental / Qualität | grün | ROIC, Marke, Bruttomarge ~44% noch stark |
-| Lynch-Klassifikation | Fast Grower → Stalwart | Reklassifikation ist nur ein Label, kein Score-Abzug |
-| FCFF-DCF | stark grün | Historische Wachstumsraten fortgeschrieben = massive "Unterbewertung" |
-| Reverse DCF | neutral | Prüft gegen 5J-Historie statt gegen 8Q-Realtrend |
-| Porter Five Forces | grün | Statisch: Branche attraktiv, Positionsverlust unsichtbar |
-| Technik (RSI/MACD/RSL) | rot | Wird als "überverkauft = Chance" fehlinterpretiert |
-| News / LLM | Rabatte, DTC-Probleme erwähnt | Prosa ohne Score-Wirkung |
-
-**Ergebnis:** mehrheitlich grün → Fazit "Value-Chance". Der Red Flag wird nicht  
-erkannt, weil kein Mechanismus existiert, der ein negatives Delta gegen einen  
-positiven Level durchsetzt.
-
-Fehlende Kernmessung: **Preissetzungsmacht**. Sie ist in keiner der 17 Sektionen  
-als eigene Größe implementiert.
-
-## 7.2 Designprinzipien (Anti-Hardcoding)
-
-1. **Keine absoluten Schwellen.** Jede Grenze ist ein Perzentil der eigenen  
-   Historie (rolling 20 Quartale) oder der Peer-Gruppe.
-2. **Delta vor Level.** Jede Sektion liefert zusätzlich zum Level einen  
-   z-standardisierten Trendwert über 8 Quartale.
-3. **Gates deckeln, sie addieren nicht.** Ein Red Flag kann nicht durch einen  
-   starken DCF wegkompensiert werden.
-4. **LLM extrahiert, es urteilt nicht.** Das Modell füllt typisierte Felder mit  
-   Quelle + Datum; die Aggregation ist deterministischer Code.
-5. **Konflikte sichtbar machen.** Divergenz zwischen Ebenen ist ein eigener  
-   Output, kein Mittelwert.
-
-## 7.3 Neue Kernmodule (Code-Ideen – nur Dokumentation, noch nicht implementiert)
-
-### 7.3.1 `client/src/lib/pricingPower.ts`
-
-Preissetzungsmacht = Fähigkeit, Kostensteigerungen weiterzugeben, ohne Volumen  
-zu verlieren. Vier Subsignale, alle relativ.
-
-```ts
-export interface PricingPowerInput {
-  grossMarginQ: number[];          // 8+ Quartale, älteste zuerst
-  inputCostIndex: number[];        // Branchen-PPI (FRED), gleiche Länge
-  asp: (number | null)[];          // Average Selling Price, aus Transkript-Extraktion
-  volume: (number | null)[];       // Absatzmenge / Units
-  discountMentions: number[];      // Anzahl Rabatt-Erwähnungen je Call
-  peerGrossMarginQ: number[][];    // je Peer eine Serie
-}
-
-export interface PricingPowerResult {
-  score: number;                   // 0..100
-  marginVsCostDivergence: number;  // negativ = Marge fällt trotz fallender Kosten
-  aspTrend: number | null;
-  volumeTrend: number | null;
-  discountPressure: number;        // 0..1
-  relativeMarginTrend: number;     // vs. Peer-Median
-  flags: string[];
-}
-
-const slope = (xs: number[]) => {
-  const n = xs.length, mx = (n - 1) / 2, my = xs.reduce((a, b) => a + b, 0) / n;
-  let num = 0, den = 0;
-  xs.forEach((y, i) => { num += (i - mx) * (y - my); den += (i - mx) ** 2; });
-  return den === 0 ? 0 : num / den;
-};
-
-export function pricingPowerScore(i: PricingPowerInput): PricingPowerResult {
-  const flags: string[] = [];
-  const gmSlope = slope(i.grossMarginQ);
-  const costSlope = slope(i.inputCostIndex);
-
-  // Kern-Divergenz: Marge fällt, obwohl Kosten nicht steigen
-  const marginVsCostDivergence = gmSlope - costSlope * 0.5;
-  if (gmSlope < 0 && costSlope <= 0) {
-    flags.push('PRICING_POWER_LOSS: Bruttomarge fällt trotz stabiler/fallender Inputkosten');
-  }
-
-  const aspSeries = i.asp.filter((v): v is number => v !== null);
-  const volSeries = i.volume.filter((v): v is number => v !== null);
-  const aspTrend = aspSeries.length >= 4 ? slope(aspSeries) : null;
-  const volumeTrend = volSeries.length >= 4 ? slope(volSeries) : null;
-
-  // Umsatz nur durch Preis getragen, Menge schrumpft → fragile Qualität
-  if (aspTrend !== null && volumeTrend !== null && aspTrend > 0 && volumeTrend < 0) {
-    flags.push('VOLUME_EROSION: Umsatz nur preisgetrieben, Menge rückläufig');
-  }
-
-  // Rabattgetrieben: Preis fällt, Menge steigt nicht ausreichend
-  if (aspTrend !== null && aspTrend < 0) {
-    flags.push('DISCOUNTING: Durchschnittspreise rückläufig');
-  }
-
-  const dm = i.discountMentions;
-  const base = dm.slice(0, Math.floor(dm.length / 2));
-  const recent = dm.slice(Math.floor(dm.length / 2));
-  const avg = (a: number[]) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
-  const discountPressure = avg(base) === 0 ? 0
-    : Math.min(1, Math.max(0, (avg(recent) - avg(base)) / Math.max(1, avg(base))));
-  if (discountPressure > 0.5) flags.push('PROMO_INTENSITY: Rabatt-Rhetorik stark gestiegen');
-
-  const peerSlopes = i.peerGrossMarginQ.map(slope).sort((a, b) => a - b);
-  const peerMedian = peerSlopes.length
-    ? peerSlopes[Math.floor(peerSlopes.length / 2)] : 0;
-  const relativeMarginTrend = gmSlope - peerMedian;
-  if (relativeMarginTrend < 0 && peerMedian >= 0) {
-    flags.push('RELATIVE_MARGIN_LOSS: Marge schwächer als Peer-Median');
-  }
-
-  // Score aus normierten Subsignalen (tanh-Skalierung, keine harten Schwellen)
-  const n = (v: number, s: number) => 50 + 50 * Math.tanh(v / s);
-  const score = Math.round(
-    0.35 * n(marginVsCostDivergence, 0.4) +
-    0.25 * n(relativeMarginTrend, 0.4) +
-    0.20 * n(volumeTrend ?? 0, 0.05) +
-    0.20 * (100 - discountPressure * 100)
-  );
-
-  return { score, marginVsCostDivergence, aspTrend, volumeTrend,
-           discountPressure, relativeMarginTrend, flags };
-}
-```
-
-### 7.3.2 `client/src/lib/relativeMomentum.ts`
-
-```ts
-export interface RelativeMomentumResult {
-  growthGap: number;          // eigenes YoY minus peer-gewichtetes YoY
-  negativeQuarters: number;   // Anzahl Quartale in Folge mit gap < 0
-  inventoryStress: number;    // Delta Inventory-Days vs. Delta Umsatz
-  marketShareTrend: number;   // implizit aus growthGap kumuliert
-  flags: string[];
-}
-
-export function relativeMomentum(
-  ownYoY: number[],
-  peerYoYWeighted: number[],
-  inventoryDays: number[],
-  revenue: number[]
-): RelativeMomentumResult {
-  const gaps = ownYoY.map((v, k) => v - peerYoYWeighted[k]);
-  let negativeQuarters = 0;
-  for (let k = gaps.length - 1; k >= 0 && gaps[k] < 0; k--) negativeQuarters++;
-
-  const dInv = inventoryDays.at(-1)! - inventoryDays.at(-5)!;
-  const dRev = (revenue.at(-1)! / revenue.at(-5)! - 1) * 100;
-  const inventoryStress = dInv - dRev;
-
-  const flags: string[] = [];
-  if (negativeQuarters >= 3)
-    flags.push('SHARE_LOSS: 3+ Quartale schwächer als Peers → Moat-Erosion');
-  if (inventoryStress > 0 && dRev <= 0)
-    flags.push('INVENTORY_BUILD: Lager wächst schneller als Umsatz');
-
-  return {
-    growthGap: gaps.at(-1)!,
-    negativeQuarters,
-    inventoryStress,
-    marketShareTrend: gaps.reduce((a, b) => a + b, 0),
-    flags,
-  };
-}
-```
-
-### 7.3.3 `client/src/lib/gates.ts` — Veto-Architektur
-
-Der zentrale Fix: **Gates deckeln multiplikativ, sie werden nicht addiert.**
-
-```ts
-export interface Gate {
-  id: string;
-  active: boolean;
-  cap: number;          // maximaler Gesamtscore bei Aktivierung
-  severity: 'warn' | 'hard';
-  rationale: string;
-}
-
-export function buildGates(
-  pp: PricingPowerResult,
-  rm: RelativeMomentumResult,
-  revDcf: { impliedGrowth: number; realizedGrowth8Q: number }
-): Gate[] {
-  const gates: Gate[] = [];
-
-  gates.push({
-    id: 'PRICING_POWER',
-    active: pp.flags.includes('PRICING_POWER_LOSS') || pp.score < 40,
-    cap: 55, severity: 'hard',
-    rationale: 'Preissetzungsmacht erodiert — Qualitätsprämie nicht mehr gerechtfertigt',
-  });
-
-  gates.push({
-    id: 'RELATIVE_GROWTH',
-    active: rm.negativeQuarters >= 3,
-    cap: 60, severity: 'hard',
-    rationale: 'Marktanteilsverlust über 3+ Quartale',
-  });
-
-  // Reverse-DCF-Konsistenz: Markterwartung vs. realisierter Trend
-  const gapRatio = revDcf.realizedGrowth8Q === 0 ? Infinity
-    : revDcf.impliedGrowth / Math.max(0.01, revDcf.realizedGrowth8Q);
-
-  gates.push({
-    id: 'DCF_REALITY_CHECK',
-    active: gapRatio > 2,
-    cap: 65, severity: 'warn',
-    rationale: `DCF unterstellt ${(revDcf.impliedGrowth * 100).toFixed(1)} % Wachstum, `
-      + `realisiert wurden ${(revDcf.realizedGrowth8Q * 100).toFixed(1)} %`,
-  });
-
-  gates.push({
-    id: 'INVENTORY',
-    active: rm.flags.includes('INVENTORY_BUILD'),
-    cap: 70, severity: 'warn',
-    rationale: 'Lageraufbau bei stagnierendem Umsatz — Nachfrageschwäche',
-  });
-
-  return gates;
-}
-
-export function applyGates(qualityScore: number, trendMultiplier: number, gates: Gate[]) {
-  const raw = qualityScore * trendMultiplier;
-  const caps = gates.filter(g => g.active).map(g => g.cap);
-  const cap = caps.length ? Math.min(...caps) : 100;
-  return { score: Math.min(raw, cap), cappedBy: gates.filter(g => g.active && g.cap === cap) };
-}
-```
-
-### 7.3.4 Trend-Multiplikator
-
-```ts
-// 0.5 .. 1.15 — bestraft Verschlechterung stärker als es Verbesserung belohnt
-export function trendMultiplier(zDeltas: number[]): number {
-  const mean = zDeltas.reduce((a, b) => a + b, 0) / zDeltas.length;
-  return mean >= 0 ? 1 + 0.15 * Math.tanh(mean) : 1 + 0.50 * Math.tanh(mean);
-}
-```
-
-## 7.4 Katalysatoren als quantifizierte Objekte
-
-Ersetzt LLM-Prosa vom Typ "profitiert von Fiskalprogrammen" durch einen  
-Erwartungswert in EUR/Aktie, der **getrennt vom Basis-DCF** ausgewiesen wird.
-
-```ts
-export interface Catalyst {
-  id: string;
-  type: 'fiscal' | 'deal' | 'product' | 'regulatory' | 'capacity' | 'buyback' | 'litigation';
-  title: string;
-  eventDate: string | null;     // ISO, null = ungetimt
-  probability: number;          // 0..1, LLM-geschätzt + Quelle
-  addressableVolume: number;    // z.B. Programmvolumen in Mio.
-  companyShare: number;         // 0..1 adressierbarer Anteil
-  epsImpact: number;            // EUR/Aktie bei Eintritt
-  multipleImpact: number;       // Delta auf faires KGV
-  source: { url: string; publishedAt: string; snippet: string };
-  confidence: 'low' | 'medium' | 'high';
-}
-
-export function catalystExpectedValue(cs: Catalyst[], price: number): number {
-  return cs.reduce((sum, c) => {
-    const decay = c.eventDate
-      ? Math.exp(-Math.max(0, (Date.parse(c.eventDate) - Date.now()) / 3.15e10))
-      : 0.5; // ungetimt = halbes Gewicht
-    return sum + c.probability * c.epsImpact * decay;
-  }, 0) / price * 100; // in % des Kurses
-}
-```
-
-## 7.5 Porter dynamisch statt statisch
-
-```ts
-export interface PorterSnapshot {
-  supplierPower: number; buyerPower: number; newEntrants: number;
-  substitutes: number; rivalry: number;
-  disruption: number; // 6. Kraft: aus News-/LLM-Layer gespeist
-}
-
-export function porterDelta(t0: PorterSnapshot, t1: PorterSnapshot) {
-  const keys = Object.keys(t0) as (keyof PorterSnapshot)[];
-  const deltas = Object.fromEntries(keys.map(k => [k, t1[k] - t0[k]]));
-  const total = keys.reduce((s, k) => s + (t1[k] - t0[k]), 0);
-  return { deltas, total, deteriorating: keys.filter(k => t1[k] - t0[k] < -1) };
-}
-```
-
-Nur das **Delta** (t-8 Quartale vs. heute) fließt in den Score.
-
-## 7.6 LLM-Layer: Extraktion statt Urteil
-
-```ts
-export interface ExtractedFact {
-  field: 'asp' | 'volume' | 'discount' | 'capacity' | 'guidance' | 'contract' | 'churn';
-  value: number | string;
-  unit: string | null;
-  period: string;           // "Q3 2026"
-  quote: string;            // wörtliches Zitat aus der Quelle
-  source: { url: string; publishedAt: string };
-  confidence: number;       // 0..1
-}
-```
-
-Regeln für den Prompt:
-- Kein Wert ohne `quote` und `source`. Fehlende Daten → `null`, niemals schätzen.
-- Keine Adjektive im Output, nur Zahlen und Zitate.
-- Bei Widerspruch zwischen Quellen: beide Fälle zurückgeben, `confidence` senken.
-
-## 7.7 Fazit-Sektion: Konfliktmatrix statt Rating
-
-```ts
-export function buildVerdict(v: {
-  quality: number; trendMult: number; gates: Gate[];
-  technicalRegime: 'uptrend' | 'range' | 'breakdown';
-  catalystEV: number; reverseDcfConsistent: boolean;
-}) {
-  const { score, cappedBy } = applyGates(v.quality, v.trendMult, v.gates);
-  const conflicts: string[] = [];
-
-  if (v.quality > 70 && v.trendMult < 0.85)
-    conflicts.push('Starke Substanz, aber negative Verlaufsdynamik');
-  if (score > 65 && v.technicalRegime === 'breakdown')
-    conflicts.push('Bewertung attraktiv, Kursstruktur gebrochen');
-  if (!v.reverseDcfConsistent)
-    conflicts.push('DCF-Annahmen nicht durch realisierten Trend gedeckt');
-
-  const testQuestion = cappedBy.length
-    ? `Was müsste passieren, damit "${cappedBy[0].id}" entfällt? → ${cappedBy[0].rationale}`
-    : null;
-
-  return { score, conflicts, cappedBy, testQuestion, catalystEV: v.catalystEV };
-}
-```
-
----
-
-## 7.8 Gold-Chart-Analyse (Katusa Research, Jul 2025 – Jul 2026) + Real-Yields-Idee
-
-### Chart-Struktur (aus dem Bild)
-
-- **Titel:** "Gold Is Reconnecting With Treasury Yields"
-- **Gelbe Linie (linke Achse):** Gold Price ($/oz) — startet ~3.250, steigt bis ~5.300 Anfang 2026, fällt dann auf ~4.100–4.200
-- **Blaue Linie (rechte Achse):** US 10Y Treasury Yield (%) — schwankt zwischen ~3.9 % und ~4.7 %
-- **Quelle:** Bloomberg / Katusa Research
-- **Beobachtung:** Nach einer Phase der Entkopplung (Gold steigt trotz steigender Yields) reconnecten die beiden Serien wieder: steigende Yields üben Druck auf Gold aus (klassische inverse Beziehung).
-
-### Warum Real Yields besser sind
-
-Nominal Yields enthalten Inflationserwartungen. Gold ist ein Real-Asset → die **echte Opportunity-Cost** ist der **Real Yield**.
-
-Formel:
-
-$$
-\text{Real Yield}_{10Y} = \text{Nominal 10Y} - \text{10Y Breakeven Inflation}
-$$
-
-oder direkt:
-
-$$
-\text{Real Yield}_{10Y} = \text{DFII10 (FRED)}
-$$
-
-(DFII10 = Market Yield on U.S. Treasury Securities at 10-Year Constant Maturity, Inflation-Indexed)
-
-Historisch (Longtermtrends / PIMCO):  
-- Gold und Real Yields sind stark negativ korreliert.  
-- 100 bp Anstieg Real Yield → ca. –15 % bis –20 % realer Goldpreis (empirische Duration ~18).
-
-### Code-Idee (nur Dokumentation – noch kein Commit in andere Dateien)
-
-```ts
-// Vorschlag für client/src/lib/macroCharts.ts oder Researcher Macro-Tab
-
-export interface GoldRealYieldSeries {
-  date: string;          // ISO
-  gold: number;          // $/oz (z.B. aus FMP / metals oder Yahoo)
-  nominal10Y: number;    // DGS10 (FRED)
-  real10Y: number;       // DFII10 (FRED) oder berechnet
-  breakeven: number;     // T10YIE (FRED)
-}
-
-/**
- * Inverse Relationship Score (0..100)
- * Höher = stärkere klassische Inverse (Gold fällt wenn Real Yield steigt)
- */
-export function goldRealYieldInverseScore(
-  series: GoldRealYieldSeries[],
-  window = 60 // Trading-Tage
-): { score: number; correlation: number; flags: string[] } {
-  if (series.length < window) return { score: 50, correlation: 0, flags: ['INSUFFICIENT_DATA'] };
-
-  const recent = series.slice(-window);
-  const goldReturns = recent.slice(1).map((d, i) =>
-    (d.gold - recent[i].gold) / recent[i].gold
-  );
-  const realYieldChanges = recent.slice(1).map((d, i) =>
-    d.real10Y - recent[i].real10Y
-  );
-
-  // Pearson-Korrelation
-  const n = goldReturns.length;
-  const meanG = goldReturns.reduce((a, b) => a + b, 0) / n;
-  const meanR = realYieldChanges.reduce((a, b) => a + b, 0) / n;
-  let num = 0, denG = 0, denR = 0;
-  for (let i = 0; i < n; i++) {
-    const dg = goldReturns[i] - meanG;
-    const dr = realYieldChanges[i] - meanR;
-    num += dg * dr;
-    denG += dg * dg;
-    denR += dr * dr;
-  }
-  const correlation = denG === 0 || denR === 0 ? 0 : num / Math.sqrt(denG * denR);
-
-  // Score: starke negative Korrelation = gut (klassische Inverse intakt)
-  // correlation ≈ -0.7 → Score ≈ 85
-  const score = Math.round(50 - 50 * Math.tanh(correlation * 2));
-
-  const flags: string[] = [];
-  if (correlation > -0.2) flags.push('DECOUPLING: Inverse Beziehung geschwächt');
-  if (correlation < -0.5) flags.push('STRONG_INVERSE: Klassische Gold-RealYield Relation intakt');
-
-  return { score, correlation, flags };
-}
-
-/**
- * Chart-Komponenten-Idee (Recharts / Plotly)
- * Dual-Axis:
- *   Left: Gold ($/oz)
- *   Right: Real 10Y Yield (%) — invertiert dargestellt, damit die Inverse optisch klar wird
- */
-export const goldRealYieldChartConfig = {
-  series: [
-    { key: 'gold', name: 'Gold ($/oz)', color: '#F5A623', yAxisId: 'left' },
-    { key: 'real10Y', name: 'US 10Y Real Yield (%)', color: '#4A90E2', yAxisId: 'right', invert: true },
-  ],
-  annotation: 'Klassische Inverse: steigende Real Yields → Druck auf Gold',
-};
-```
-
-### Integration in Scoring-System (Makro-Gate)
-
-```ts
-// Beispiel-Gate für den Researcher / Big-Picture-Score
-gates.push({
-  id: 'GOLD_REAL_YIELD_REGIME',
-  active: inverseScore.correlation > -0.25, // Decoupling
-  cap: 75,
-  severity: 'warn',
-  rationale: 'Gold und Real Yields sind entkoppelt — Regime-Wechsel oder struktureller Bid möglich',
-});
-```
-
-**Datenquellen (FRED, kostenlos):**
-- `DGS10` → Nominal 10Y
-- `DFII10` → Real 10Y (TIPS)
-- `T10YIE` → 10Y Breakeven Inflation
-- Gold: FMP `/commodities` oder externe Metals-API / Yahoo Finance
-
----
-
-## 7.9 Nächste Schritte (nur Dokumentation)
-
-- [ ] PricingPower + RelativeMomentum als reine Lib-Funktionen in `client/src/lib/` (lokal entwickeln)
-- [ ] Gates in die bestehende Verdict-Pipeline einhängen (multiplikativ)
-- [ ] Gold vs Real Yields Chart als optionalen Tab im Researcher Macro-Pulse
-- [ ] LLM-Prompt für ASP / Volume / Discount-Mentions aus Earnings Calls erweitern
-- [ ] Keine Hardcoded-Ticker oder absoluten Schwellen — alles relativ / z-score / Perzentil
-
-**Regel bleibt:** Alles hier ist Design-Dokumentation. Implementierung erfolgt lokal → PR → Review.
-
----
-
 # TEIL 8 — REGULATORY EXPOSURE, GEOGRAPHIC SEGMENTATION, ZÖLLE & PESTEL-INTEGRATION
 
 > Stand: 28.07.2026  
@@ -1763,5 +274,269 @@ Katalysatoren (EPS-Impact) + Verdict/Konfliktmatrix
 - [ ] REGULATORY_EXPOSURE-Gate in `gates.ts`
 - [ ] PESTEL Political/Legal Block + Frontend
 - [ ] Anbindung an bestehende Katalysator-Sektion
+- [ ] FRED MacroSnapshot + CompanyTech (siehe 8.12)
+- [ ] Economic + Technological PESTEL-Blöcke
+
+---
+
+## 8.12 PESTEL-Datenquellen: FRED-Makro + Company-Tech + Economic/Technological
+
+> Ergänzung 28.07.2026 — konkrete Fetch-Funktionen und Builder für die restlichen PESTEL-Dimensionen.
+
+### 8.12.1 Interfaces
+
+```ts
+export interface FredObservation {
+  date: string;   // YYYY-MM-DD
+  value: number | null;
+}
+
+export interface MacroSnapshot {
+  nominal10Y: number | null;       // DGS10
+  real10Y: number | null;          // DFII10
+  breakeven10Y: number | null;     // T10YIE
+  inflationYoY: number | null;     // CPIAUCSL YoY
+  coreInflationYoY: number | null; // CPILFESL YoY
+  gdpGrowth: number | null;        // A191RL1Q225SBEA
+  unemployment: number | null;     // UNRATE
+  policyUncertainty: number | null; // USEPUINDXD
+  usdEur: number | null;           // DEXUSEU
+  usdCny: number | null;           // DEXCHUS
+  asOf: string;
+  source: 'fred';
+}
+
+export interface CompanyTechMetrics {
+  rdIntensity: number | null;      // R&D / Revenue
+  capexIntensity: number | null;   // Capex / Revenue
+  rdAbsolute: number | null;
+  capexAbsolute: number | null;
+}
+
+export interface PestelInput {
+  ticker: string;
+  companyName: string;
+  sector: string;
+  geoSegments: GeoSegment[];
+  regulatory: RegulatoryExposureRaw[];
+  tariffs: TariffExposure[];
+  macro: MacroSnapshot;
+  companyTech: CompanyTechMetrics;
+}
+```
+
+### 8.12.2 FRED Fetch
+
+```ts
+const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
+
+export async function fetchFredSeries(
+  seriesId: string,
+  options: { limit?: number; sortOrder?: 'asc' | 'desc' } = {}
+): Promise<FredObservation[]> {
+  const key = process.env.FRED_API_KEY;
+  if (!key) { console.warn('[FRED] FRED_API_KEY fehlt'); return []; }
+
+  const params = new URLSearchParams({
+    series_id: seriesId,
+    api_key: key,
+    file_type: 'json',
+    sort_order: options.sortOrder ?? 'desc',
+    limit: String(options.limit ?? 12),
+  });
+
+  try {
+    const res = await fetch(`${FRED_BASE}?${params}`);
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json?.observations ?? [])
+      .map((o: any) => ({ date: o.date, value: o.value === '.' ? null : Number(o.value) }))
+      .filter((o: FredObservation) => o.value !== null && !Number.isNaN(o.value));
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchFredLatest(seriesId: string): Promise<number | null> {
+  const series = await fetchFredSeries(seriesId, { limit: 3, sortOrder: 'desc' });
+  return series[0]?.value ?? null;
+}
+
+export async function fetchFredYoY(seriesId: string): Promise<number | null> {
+  const series = await fetchFredSeries(seriesId, { limit: 15, sortOrder: 'desc' });
+  if (series.length < 13) return null;
+  const current = series[0].value;
+  const yearAgo = series[12].value;
+  if (current == null || yearAgo == null || yearAgo === 0) return null;
+  return (current / yearAgo - 1) * 100;
+}
+
+export async function buildMacroSnapshot(): Promise<MacroSnapshot> {
+  const [
+    nominal10Y, real10Y, breakeven10Y,
+    inflationYoY, coreInflationYoY, gdpGrowth,
+    unemployment, policyUncertainty, usdEur, usdCny,
+  ] = await Promise.all([
+    fetchFredLatest('DGS10'),
+    fetchFredLatest('DFII10'),
+    fetchFredLatest('T10YIE'),
+    fetchFredYoY('CPIAUCSL'),
+    fetchFredYoY('CPILFESL'),
+    fetchFredLatest('A191RL1Q225SBEA'),
+    fetchFredLatest('UNRATE'),
+    fetchFredLatest('USEPUINDXD'),
+    fetchFredLatest('DEXUSEU'),
+    fetchFredLatest('DEXCHUS'),
+  ]);
+
+  return {
+    nominal10Y, real10Y, breakeven10Y,
+    inflationYoY, coreInflationYoY, gdpGrowth,
+    unemployment, policyUncertainty, usdEur, usdCny,
+    asOf: new Date().toISOString().slice(0, 10),
+    source: 'fred',
+  };
+}
+```
+
+**Env:** `FRED_API_KEY` (kostenlos: https://fred.stlouisfed.org/docs/api/api_key.html)
+
+### 8.12.3 Company-Tech aus FMP
+
+```ts
+export async function fetchCompanyTechMetrics(ticker: string): Promise<CompanyTechMetrics> {
+  try {
+    const [income, cashflow] = await Promise.all([
+      fmpGet<any[]>(`/income-statement`, { symbol: ticker, limit: '1' }),
+      fmpGet<any[]>(`/cash-flow-statement`, { symbol: ticker, limit: '1' }),
+    ]);
+    const inc = income?.[0];
+    const cf = cashflow?.[0];
+    if (!inc) return { rdIntensity: null, capexIntensity: null, rdAbsolute: null, capexAbsolute: null };
+
+    const revenue = inc.revenue ?? 0;
+    const rd = inc.researchAndDevelopmentExpenses ?? 0;
+    const capex = Math.abs(cf?.capitalExpenditure ?? 0);
+
+    return {
+      rdAbsolute: rd,
+      capexAbsolute: capex,
+      rdIntensity: revenue > 0 ? rd / revenue : null,
+      capexIntensity: revenue > 0 ? capex / revenue : null,
+    };
+  } catch {
+    return { rdIntensity: null, capexIntensity: null, rdAbsolute: null, capexAbsolute: null };
+  }
+}
+```
+
+### 8.12.4 Economic- & Technological-Builder
+
+```ts
+export function buildPestelEconomic(macro: MacroSnapshot) {
+  const flags: string[] = [];
+  if (macro.real10Y != null && macro.real10Y > 2.0)
+    flags.push('Hohe Realzinsen → Belastung für Wachstums- und Langläufer-Assets');
+  if (macro.inflationYoY != null && macro.inflationYoY > 3.5)
+    flags.push('Erhöhte Inflation → mögliche Margen- und Nachfrage-Risiken');
+  if (macro.policyUncertainty != null && macro.policyUncertainty > 150)
+    flags.push('Erhöhte Policy Uncertainty → Risikoaufschlag möglich');
+  if (macro.unemployment != null && macro.unemployment > 5.0)
+    flags.push('Steigende Arbeitslosigkeit → Konsumschwäche-Risiko');
+
+  return {
+    summary: flags.length ? flags.join(' · ') : 'Makroumfeld derzeit ohne extreme Ausschläge.',
+    metrics: {
+      real10Y: macro.real10Y,
+      inflationYoY: macro.inflationYoY,
+      gdpGrowth: macro.gdpGrowth,
+      unemployment: macro.unemployment,
+      policyUncertainty: macro.policyUncertainty,
+    },
+    flags,
+  };
+}
+
+export function buildPestelTechnological(tech: CompanyTechMetrics, sector: string) {
+  const flags: string[] = [];
+  if (tech.rdIntensity != null) {
+    if (tech.rdIntensity < 0.03 && ['Technology', 'Healthcare', 'Communication Services'].includes(sector))
+      flags.push('Niedrige R&D-Intensität relativ zum Sektor → mögliches Innovationsrisiko');
+    if (tech.rdIntensity > 0.15)
+      flags.push('Hohe R&D-Intensität → starker Technologie-Fokus, aber Ergebnisvolatilität möglich');
+  }
+  return {
+    summary: tech.rdIntensity != null
+      ? `R&D-Intensität ${(tech.rdIntensity * 100).toFixed(1)} % · Capex-Intensität ${tech.capexIntensity != null ? (tech.capexIntensity * 100).toFixed(1) + ' %' : 'n/a'}`
+      : 'Keine ausreichenden Tech-Metriken verfügbar.',
+    metrics: tech,
+    flags,
+  };
+}
+```
+
+### 8.12.5 Gesamt-Builder
+
+```ts
+export async function buildFullPestelInput(params: {
+  ticker: string;
+  companyName: string;
+  sector: string;
+}): Promise<PestelInput> {
+  const { ticker, companyName, sector } = params;
+
+  const [geoSegments, macro, companyTech] = await Promise.all([
+    fetchGeographicSegments(ticker),
+    buildMacroSnapshot(),
+    fetchCompanyTechMetrics(ticker),
+  ]);
+
+  const topCountries = geoSegments
+    .filter(s => s.percentage >= 8)
+    .map(s => s.countryOrRegion)
+    .slice(0, 4);
+
+  const { regulatory, tariffs } = await fetchRegulatoryAndTariffExposuresSafe({
+    ticker, companyName, sector,
+    topCountries: topCountries.length ? topCountries : ['USA', 'China', 'Europe'],
+  });
+
+  return { ticker, companyName, sector, geoSegments, regulatory, tariffs, macro, companyTech };
+}
+
+export async function buildPestelAnalysis(params: {
+  ticker: string;
+  companyName: string;
+  sector: string;
+  gates?: Gate[];
+}) {
+  const input = await buildFullPestelInput(params);
+  const enrichedGeo = enrichGeoWithRegulatoryAndTariffs(input.geoSegments, input.regulatory, input.tariffs);
+
+  return {
+    politicalLegal: buildPestelPoliticalLegal(enrichedGeo, params.gates ?? []),
+    economic: buildPestelEconomic(input.macro),
+    technological: buildPestelTechnological(input.companyTech, input.sector),
+    social: { summary: 'Über LLM/News zu ergänzen', flags: [] },
+    environmental: { summary: 'Über LLM/News zu ergänzen (CBAM, Klima)', flags: [] },
+    legal: { summary: 'Über Regulatory Exposure abgedeckt', flags: [] },
+    meta: {
+      asOf: input.macro.asOf,
+      topCountries: input.geoSegments.slice(0, 4).map(g => g.countryOrRegion),
+    },
+  };
+}
+```
+
+### 8.12.6 Datenquellen-Übersicht PESTEL
+
+| Dimension | Primärquelle | Sekundär |
+|-----------|--------------|----------|
+| Political | Regulatory Exposure + Geo + LLM | FRED Policy Uncertainty |
+| Economic | FRED (Zinsen, Inflation, GDP, UNRATE) | LLM Zentralbank-Kommentare |
+| Social | LLM / News | — |
+| Technological | FMP R&D + Capex | LLM Disruption |
+| Environmental | LLM (CBAM, Klima) | — |
+| Legal | Regulatory Exposure | LLM Verfahren |
 
 **Regel:** Alles Design-Dokumentation. Implementierung lokal → PR → Review.
