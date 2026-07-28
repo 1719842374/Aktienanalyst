@@ -84,8 +84,6 @@ Kontext = Sektor + Branche + Top-Länder; Suche über Überbegriffe; Discovery v
 
 Suchachsen: Subventionen · Preisregulierung · Wettbewerbsrecht · Umwelt · Datenschutz · Zölle · öffentliche Beschaffung.
 
-Prompt + `buildRegulatorySearchQueries` → siehe vorherige Version / Git-History für Volltext.
-
 Pipeline:
 
 ```
@@ -120,11 +118,11 @@ export function calcRegulatoryEpsImpact(
 ## 8.6 Confidence-Filter
 
 | Confidence | Gate-wirksam? | UI |
-|------------|---------------|-----|
-| **high** | ja | ja |
-| **medium** | ja | ja |
-| **low** | nein | nur Badge |
-| probability < 0.25 | nein | verworfen |
+| --- | --- | --- |
+| high | ja | ja |
+| medium | ja | ja |
+| low | nein | nur Badge |
+| probability unter 0.25 | nein | verworfen |
 | fehlende Quelle | nein | verworfen |
 
 ---
@@ -133,46 +131,43 @@ export function calcRegulatoryEpsImpact(
 
 Wann wird `REGULATORY_EXPOSURE` aktiv — und mit welchem Cap?
 
-| # | Confidence | |Impact| auf Sales | Probability | Gate? | Cap | Severity |
-|---|------------|----------------------|-------------|-------|-----|----------|
-| 1 | high | ≥ 5 % | ≥ 0.55 | **Ja** | **55** | hard |
-| 2 | high | 3 % – 5 % | ≥ 0.50 | **Ja** | **65** | warn |
-| 3 | medium | ≥ 5 % | ≥ 0.60 | **Ja** | **65** | warn |
-| 4 | medium | 3 % – 5 % | ≥ 0.55 | **Ja** | **70** | warn |
-| 5 | low | beliebig | beliebig | **Nein** | — | — |
-| 6 | beliebig | < 3 % | beliebig | **Nein** | — | — |
-| 7 | beliebig | beliebig | < 0.25 | **Nein** | — | — |
+| Nr | Confidence | Impact auf Sales | Probability | Gate | Cap | Severity |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | high | ab 5 Prozent | ab 0.55 | Ja | 55 | hard |
+| 2 | high | 3 bis 5 Prozent | ab 0.50 | Ja | 65 | warn |
+| 3 | medium | ab 5 Prozent | ab 0.60 | Ja | 65 | warn |
+| 4 | medium | 3 bis 5 Prozent | ab 0.55 | Ja | 70 | warn |
+| 5 | low | beliebig | beliebig | Nein | — | — |
+| 6 | beliebig | unter 3 Prozent | beliebig | Nein | — | — |
+| 7 | beliebig | beliebig | unter 0.25 | Nein | — | — |
 
 ### Lesart
 
-```
-Impact   = |estimatedImpactOnSales|  (Umsatzwirkung im betroffenen Land)
-Gate?    = kommt in buildGates / applyGates
-Cap 55   = härtestes Regulatory-Veto (wie PRICING_POWER)
-Cap 65–70 = Warn-Deckel, Score darf nicht höher
-Nein     = nur Anzeige in PESTEL / UI, kein Score-Deckel
-```
+- **Impact** = Betrag von `estimatedImpactOnSales` (Umsatzwirkung im betroffenen Land)
+- **Gate = Ja** → Eintrag geht in `buildGates` / `applyGates`
+- **Cap 55** = härtestes Regulatory-Veto (vergleichbar PRICING_POWER)
+- **Cap 65–70** = Warn-Deckel, Score darf nicht höher liegen
+- **Gate = Nein** = nur Anzeige in PESTEL / UI, kein Score-Deckel
 
 ### Kumulierung
 
-Wenn **mehrere** material negative Exposure zusammen ≥ **7 %** gewichteter  
-Umsatz-Impact (Share × Impact × Probability) → immer Cap **55** / hard.
+Wenn mehrere material negative Exposures zusammen **mindestens 7 Prozent** gewichteter Umsatz-Impact ergeben (Share × Impact × Probability) → immer Cap **55** / hard.
 
 ### Beispiele
 
 | Fall | Confidence | Impact | p | Ergebnis |
-|------|------------|--------|---|----------|
-| Starkes Preisregime, klar belegt | high | 8 % | 0.70 | Gate an, Cap **55** hard |
-| Moderates Zollrisiko | high | 4 % | 0.55 | Gate an, Cap **65** warn |
-| Unklare Schlagzeile | low | 10 % | 0.40 | **kein** Gate, nur Badge |
-| Mini-Effekt | high | 1 % | 0.80 | **kein** Gate (< 3 %) |
+| --- | --- | --- | --- | --- |
+| Starkes Preisregime, klar belegt | high | 8 Prozent | 0.70 | Gate an, Cap 55 hard |
+| Moderates Zollrisiko | high | 4 Prozent | 0.55 | Gate an, Cap 65 warn |
+| Unklare Schlagzeile | low | 10 Prozent | 0.40 | kein Gate, nur Badge |
+| Mini-Effekt | high | 1 Prozent | 0.80 | kein Gate (unter 3 Prozent) |
 
 ---
 
 ## 8.8 REGULATORY_EXPOSURE-Gate
 
 ```ts
-// material = besteht Test-Matrix (Gate? = Ja)
+// material = besteht Test-Matrix (Gate = Ja)
 if (materialRegs.length > 0) {
   const totalNegativeEps = materialRegs
     .filter(r => (r.epsImpact ?? 0) < 0)
@@ -198,10 +193,10 @@ FMP Geo → Query-Builder (Sektor+Land+Überbegriffe)
   → LLM/X → Extraktion → Filter (8.6) → Test-Matrix (8.7) → Gate (8.8) → PESTEL / Verdict
 ```
 
-- [ ] regulationAxis generisch  
-- [ ] Prompt ohne Fixnamen  
-- [ ] buildRegulatorySearchQueries  
-- [ ] calcRegulatoryEpsImpact + Gate nach Matrix  
+- [ ] regulationAxis generisch
+- [ ] Prompt ohne Fixnamen
+- [ ] buildRegulatorySearchQueries
+- [ ] calcRegulatoryEpsImpact + Gate nach Matrix
 
 ---
 
