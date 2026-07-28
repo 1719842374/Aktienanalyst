@@ -1,8 +1,8 @@
-# WORK_PORTFOLIO.md — Virtuelles Portfolio (Buy-Basket · CAPM · Kelly)
+# WORK_PORTFOLIO.md — Virtuelles Portfolio (Buy-Basket · CAPM · Kelly · Sharpe)
 
 > Stand: 28.07.2026 | Nur Dokumentation  
-> Ziel: Verifizierte „Buy/attraktiv“-Titel → **eine Liste** → **virtuelles Portfolio**  
-> mit automatischer **CAPM-Diversifikation** (Basket) und **separatem Kelly** (Einzeltitel-Anteil).
+> Buy-Liste → virtuelles Portfolio → **CAPM-Gewichte** + **separates Kelly** + **Sharpe**  
+> + überarbeitete **Gewichtungsalgorithmen** (Max-Sharpe / Risk-Parity / Score-Tilt).
 
 ---
 
@@ -10,319 +10,342 @@
 
 ```
 Researcher-Tab  ──┐
-                  ├──► „verifizierter Buy / attraktiv“ ──► Watch/Buy-Liste
-Manuelle Analyse ─┘                                              │
-                                                                  ▼
-                                                    Virtuelles Portfolio
-                                                    ├── CAPM-Gewichte (Basket)
-                                                    └── Kelly % (optional, 1 Titel)
-                                                                  │
-                                                    Input: Kapital K (€/$)
-                                                                  ▼
-                                                    Soll-Stück / Soll-€ je Methode
+                  ├──► verifizierter Buy ──► Buy-Liste
+Manuelle Analyse ─┘                              │
+                                                 ▼
+                                   Virtuelles Portfolio
+                                   ├── Gewichtungs-Modus A/B/C
+                                   ├── Sharpe (Basket vs Equal)
+                                   └── Kelly % (Einzeltitel)
+                                                 │
+                                   Input Kapital K → € / Stück
 ```
 
-| Baustein | Frage | Methode |
-| --- | --- | --- |
-| **Buy-Liste** | Welche Titel sind „drin“? | Scoring/Verdict + manuelles Flag |
-| **CAPM-Basket** | Wie diversifiziert gewichten? | Beta, Σ, erwartete Überschussrenditen |
-| **Kelly (separat)** | Wenn ich **nur diese eine** Aktie im bestehenden Portfolio aufstocke — wie viel %? | Kelly / Half-Kelly |
-| **Kapital-Input** | Bei K Euro — wie viel €/Stück nach CAPM bzw. nach Kelly? | `w × K` |
-
-**Wichtig:** Kelly ersetzt CAPM nicht.  
-- **CAPM** = Gewichte **im Basket mehrerer** verifizierter Buys.  
-- **Kelly** = Größenordnung für **eine** Position (allein oder als Cap neben CAPM).
-
----
-
-## 2. Aufnahme in die Buy-Liste (Intake)
-
-### 2.1 Quellen
-
-| Quelle | Regel |
+| Baustein | Rolle |
 | --- | --- |
-| Researcher-Tab | Sektor/Screening-Lauf markiert Titel als attraktiv / Buy-Kandidat |
-| Manuelle 17-Sektionen-Analyse | User-Flag „Buy“ **oder** automatische Regel aus Verdict |
+| Buy-Liste | Researcher + Manual → aktive Kandidaten |
+| Gewichtung A/B/C | Diversifikation im Basket |
+| Sharpe | Qualität der gewählten Allokation messen |
+| Kelly | separat: %-Anteil **einer** Aktie |
+| Kapital K | `w×K` bzw. `f×K` |
 
-### 2.2 Automatische Regel (Vorschlag, ohne Narrativ)
-
-```
-Kandidat für Liste wenn:
-  score >= scoreMin          // z.B. 65 nach Gates
-  UND kein hard Gate aktiv   // PRICING_POWER / RELATIVE_GROWTH / REGULATORY hard aus
-  UND conflicts leer oder nur warn
-  UND technicalRegime != 'breakdown'   // optional
-```
-
-Manuell immer überschreibbar: `include: true | false`, `conviction: low|medium|high`.
-
-### 2.3 Datenmodell Liste
-
-```ts
-export interface PortfolioCandidate {
-  ticker: string;
-  name: string;
-  addedAt: string;                 // ISO
-  source: 'researcher' | 'manual' | 'both';
-  analysisId?: string;             // Link zur Analyse
-  score: number;                   // nach Gates
-  conviction: 'low' | 'medium' | 'high';
-  expectedReturn?: number;         // μ̂ annualisiert, optional aus Reverse-DCF/Research
-  beta?: number;                   // vs. Benchmark
-  price: number;
-  currency: string;
-  status: 'active' | 'removed' | 'watch_only';
-}
-
-export interface VirtualPortfolio {
-  id: string;
-  name: string;
-  benchmark: string;               // z.B. 'SPY' | 'STOXX50E'
-  rf: number;                      // risk-free annualisiert
-  candidates: PortfolioCandidate[];
-  capitalBase: number;             // Input K
-  updatedAt: string;
-}
-```
+Kelly ersetzt CAPM/Gewichtung **nicht**.
 
 ---
 
-## 3. CAPM-Diversifikation (Basket-Gewichte)
+## 2. Intake Buy-Liste
 
-### 3.1 Idee
+```
+score >= scoreMin  UND  kein hard Gate  UND  (conflicts leer|warn)
+optional: technicalRegime != breakdown
+```
 
-Für **n ≥ 2** aktive Kandidaten: Gewichte so wählen, dass das Portfolio  
-im Mean-Variance- / CAPM-Sinn sinnvoll diversifiziert ist — **generisch**,  
-kein Hardcoding einzelner Ticker.
+Manuell: `include`, `conviction`.  
+Types: `PortfolioCandidate`, `VirtualPortfolio` (ticker, score, beta, mu, price, capitalBase, …).
 
-### 3.2 Bausteine der Finanzmathematik
+---
 
-**CAPM-erwartete Rendite** (falls kein eigenes μ̂):
+## 3. Sharpe-Ratio — Berechnung
 
-$$
-\mu_i = r_f + \beta_i \,(\mu_m - r_f)
-$$
+### 3.1 Definition (ex ante, Allokations-Sharpe)
 
-**Überschussrendite:** \(\tilde\mu_i = \mu_i - r_f\)
-
-**Kovarianzmatrix** \(\Sigma\) aus historischen Returns (z. B. 1Y–3Y daily → annualisiert).
-
-**Unconstrained Max-Sharpe / Tangency (ohne Shorts oft mit Projektion):**
+Portfolio-Überschussrendite und -Volatilität aus denselben Inputs wie die Gewichtung:
 
 $$
-w \propto \Sigma^{-1} \tilde\mu
+\mu_p = w^\top \mu, \quad
+\tilde\mu_p = \mu_p - r_f = w^\top \tilde\mu, \quad
+\sigma_p = \sqrt{w^\top \Sigma w}
 $$
 
-Danach:
-
-1. Negative Gewichte auf 0 setzen (long-only) und renormalisieren, **oder**  
-2. Quadratische Optimierung long-only:
-
 $$
-\max_w \; w^\top \tilde\mu - \frac{\lambda}{2} w^\top \Sigma w
-\quad\text{s.t.}\quad w_i \ge 0,\; \sum w_i = 1
+\mathrm{Sharpe}_p = \frac{\mu_p - r_f}{\sigma_p} = \frac{w^\top \tilde\mu}{\sqrt{w^\top \Sigma w}}
 $$
 
-**Risk-Parity-Fallback** (wenn μ unzuverlässig):
+- \(w\): Gewichtsvektor, \(\sum w_i = 1\), long-only  
+- \(\mu\): erwartete Renditen p.a. (CAPM oder Research-μ̂)  
+- \(\Sigma\): Kovarianzmatrix annualisiert  
+- \(r_f\): risikofreier Satz p.a.
+
+**Einzeltitel-Sharpe** (Vergleichsspalte):
 
 $$
-w_i \propto 1/\sigma_i \quad\text{(oder inverse Vol, renormalisiert)}
+\mathrm{Sharpe}_i = \frac{\mu_i - r_f}{\sigma_i}, \quad \sigma_i = \sqrt{\Sigma_{ii}}
 $$
 
-### 3.3 Praktische Defaults
+### 3.2 Was die UI ausweist
 
-| Parameter | Default | Hinweis |
-| --- | --- | --- |
-| Benchmark | SPY (US) / regional wählbar | Beta-Schätzung |
-| rf | FRED DGS3MO oder 10Y | konsistent zur Analyse |
-| Σ-Fenster | 252 Handelstage | shrink optional (Ledoit-Wolf) |
-| λ (Risikoaversion) | 2–3 | UI-Slider |
-| Max-Gewicht einzeln | 25–35 % | Konzentrations-Cap |
-| Min-Gewicht | 0 % oder 5 % | sonst 0 = raus aus aktivem Basket |
-| Min. Titel für CAPM-Basket | 2 | sonst nur Kelly-Einzel |
+| Metrik | Bedeutung |
+| --- | --- |
+| `sharpePortfolio` | Sharpe der **aktuellen** Basket-Gewichte |
+| `sharpeEqualWeight` | gleiche Titel, \(w_i = 1/n\) — Referenz |
+| `sharpeSingle[i]` | CAPM-/Research-Sharpe je Titel |
+| Δ vs Equal | `sharpePortfolio - sharpeEqualWeight` (Optimierer-Nutzen) |
 
-### 3.4 Output CAPM
+Kein absolutes „gutes Sharpe“-Label ohne Benchmark-Kontext.
+
+### 3.3 Code-Kern (Dokumentation)
 
 ```ts
-export interface CapmAllocation {
-  ticker: string;
-  weight: number;          // 0–1, Summe ≈ 1
-  beta: number;
-  mu: number;              // erwartet p.a.
-  sigma: number;           // Vol p.a.
-  amount: number;          // weight * capitalBase
-  sharesHint: number;      // amount / price (floor optional)
+export function portfolioVol(w: number[], Sigma: number[][]): number {
+  // σ_p = sqrt(w' Σ w)
+  let s = 0;
+  for (let i = 0; i < w.length; i++)
+    for (let j = 0; j < w.length; j++)
+      s += w[i] * Sigma[i][j] * w[j];
+  return Math.sqrt(Math.max(s, 0));
 }
 
-export function allocateCapmBasket(opts: {
-  candidates: PortfolioCandidate[];
-  cov: number[][];         // aligned order
-  mu: number[];            // expected returns p.a.
+export function portfolioExcess(w: number[], mu: number[], rf: number): number {
+  let m = 0;
+  for (let i = 0; i < w.length; i++) m += w[i] * mu[i];
+  return m - rf;
+}
+
+export function sharpeRatio(w: number[], mu: number[], Sigma: number[][], rf: number): number | null {
+  const vol = portfolioVol(w, Sigma);
+  if (vol < 1e-12) return null;
+  return portfolioExcess(w, mu, rf) / vol;
+}
+
+export function equalWeight(n: number): number[] {
+  return Array(n).fill(1 / n);
+}
+```
+
+### 3.4 Annualisierung (wenn Returns daily)
+
+```
+mu_ann   = mu_daily * 252
+Sigma_ann = Sigma_daily * 252
+Sharpe aus annualisierten Größen (nicht zusätzlich * sqrt(252) auf den Sharpe)
+```
+
+### 3.5 Edge Cases
+
+| Fall | Handling |
+| --- | --- |
+| σ_p ≈ 0 | Sharpe = null |
+| n = 1 | nur Single-Sharpe + Kelly, kein Basket-Sharpe-Vergleich nötig |
+| μ alle ≈ rf | Sharpe ≈ 0; Gewichtung eher Risk-Parity |
+| Σ nicht SPD | Shrinkage / Ridge bevor Sharpe/Optimierer |
+
+---
+
+## 4. Gewichtungsalgorithmen (überarbeitet)
+
+Drei Modi + Guards. Kelly bleibt **außerhalb** dieser Basket-Logik.
+
+### 4.1 Modus A — Max-Sharpe long-only (Default)
+
+Unconstrained Tangency-Richtung, dann Projektion:
+
+$$
+w^{\text{raw}} \propto \Sigma^{-1} \tilde\mu
+$$
+
+1. Negative Gewichte → 0  
+2. Renormalisieren auf Summe 1  
+3. **maxWeight**-Cap (z. B. 0.30): Überschuss proportional auf Rest verteilen, iterieren  
+
+Äquivalent Ziel (wenn Solver vorhanden):
+
+$$
+\max_w \frac{w^\top \tilde\mu}{\sqrt{w^\top \Sigma w}}
+\quad\text{s.t.}\quad w \ge 0,\; \sum w_i = 1,\; w_i \le w_{\max}
+$$
+
+**Wann:** n ≥ 3, Σ stabil, μ-Qualität medium/high.
+
+### 4.2 Modus B — Risk-Parity (inverse Volatilität)
+
+$$
+w_i \propto \frac{1}{\sigma_i}, \quad \sigma_i = \sqrt{\Sigma_{ii}}
+$$
+
+Danach renorm + maxWeight-Cap.  
+**Wann:** μ unsicher, n klein (2–4), Σ schlecht konditioniert — **Fallback**.
+
+### 4.3 Modus C — Score-Tilt
+
+1. Basis: Equal-Weight **oder** Risk-Parity  
+2. Tilt mit normalisiertem Score / Conviction:
+
+$$
+w_i \propto w_i^{\text{base}} \cdot \bigl(1 + \kappa \cdot z(\mathrm{score}_i)\bigr)
+$$
+
+- \(z\) = z-Score der Scores im Basket  
+- \(\kappa\) klein (z. B. 0.25–0.5), UI-Slider  
+- wieder renorm + maxWeight  
+
+**Wann:** Brücke Scoring → Portfolio, ohne aggressives Return-Forecasting.
+
+### 4.4 Auto-Wahl des Modus
+
+```ts
+export type WeightMode = 'max_sharpe' | 'risk_parity' | 'score_tilt';
+
+export function pickWeightMode(opts: {
+  n: number;
+  muQuality: 'low' | 'medium' | 'high';
+  sigmaStable: boolean;       // z.B. cond(Σ) unter Schwelle, Shrinkage ok
+}): WeightMode {
+  if (opts.n < 2) throw new Error('use Kelly only');
+  if (opts.n < 3 || !opts.sigmaStable || opts.muQuality === 'low')
+    return 'risk_parity';
+  if (opts.muQuality === 'high' && opts.sigmaStable)
+    return 'max_sharpe';
+  return 'score_tilt';       // mittlerer Weg
+}
+```
+
+### 4.5 Guards (gelten für A/B/C)
+
+```
+[ ] long-only (w_i >= 0)
+[ ] sum w = 1
+[ ] maxWeight z.B. 0.25–0.35
+[ ] minWeight 0 oder 0.05 (sonst Streich-Kandidat)
+[ ] Ledoit-Wolf / Ridge auf Σ wenn n klein oder Fenster kurz
+[ ] n == 1 → kein Basket-Modus, nur Kelly
+[ ] nach Cap: Renorm, bis Constraints erfüllt (max Iterationen)
+```
+
+### 4.6 Code-Skizzen
+
+```ts
+export function allocateMaxSharpeLongOnly(opts: {
+  mu: number[];
+  Sigma: number[][];
   rf: number;
-  capitalBase: number;
+  maxWeight?: number; // default 0.30
+}): number[] { /* Σ^{-1} μ̃ → clip → renorm → cap loop */ }
+
+export function allocateRiskParity(opts: {
+  Sigma: number[][];
   maxWeight?: number;
-}): CapmAllocation[]
+}): number[] { /* 1/σ_i → renorm → cap */ }
+
+export function allocateScoreTilt(opts: {
+  scores: number[];
+  baseWeights: number[];
+  kappa?: number;      // default 0.35
+  maxWeight?: number;
+}): number[] { /* base * (1+κ z(score)) → renorm → cap */ }
+
+export function applyMaxWeight(w: number[], maxW: number): number[] {
+  // iterative: cap, redistribute excess to uncapped names
+}
 ```
 
----
-
-## 4. Kelly — separat (Einzeltitel-Sizing)
-
-### 4.1 Wann
-
-User will **nur eine** Aktie aus der Liste (oder im bestehenden Portfolio)  
-sizen: „Wie groß darf der prozentuale Anteil sein?“
-
-Nicht: Kelly über alle Titel als Ersatz für CAPM (das wäre ein anderes Modell).
-
-### 4.2 Formeln
-
-**Diskret (Edge / Odds-Nähe), oft für Setup mit geschätztem Upside:**
-
-$$
-f^* = \frac{p \cdot b - q}{b}
-$$
-
-- \(p\) = Gewinnwahrscheinlichkeit (aus Conviction/Research, konservativ)  
-- \(q = 1-p\)  
-- \(b\) = Netto-Gewinnquote (z. B. erwarteter Upside / Risiko, „Gewinn pro Einsatz“)  
-
-**Kontinuierlich (log-optimal, Normalnäherung):**
-
-$$
-f^* = \frac{\mu - r_f}{\sigma^2}
-$$
-
-**Half-Kelly (Default in der UI):**
-
-$$
-f_{\text{half}} = \frac{1}{2} f^*
-$$
-
-Cap: z. B. \(f \le 0.25\) (nie mehr als 25 % in einen Titel per Kelly-Hinweis).
-
-### 4.3 Output Kelly
+### 4.7 Output-Zeile je Titel
 
 ```ts
-export interface KellySizing {
+export interface BasketAllocationRow {
   ticker: string;
-  fStar: number;           // Full Kelly
-  fHalf: number;           // Half Kelly (Default-Empfehlung)
-  fCapped: number;         // nach Max-Cap
-  amount: number;          // fCapped * capitalBase
+  mode: WeightMode;
+  weight: number;
+  amount: number;          // weight * K
   sharesHint: number;
-  inputs: { mu?: number; sigma?: number; p?: number; b?: number; method: 'continuous' | 'discrete' };
+  mu: number;
+  sigma: number;
+  sharpeSingle: number | null;
 }
 
-export function sizeKellySingle(opts: {
-  candidate: PortfolioCandidate;
+export interface BasketResult {
+  mode: WeightMode;
+  rows: BasketAllocationRow[];
+  sharpePortfolio: number | null;
+  sharpeEqualWeight: number | null;
   capitalBase: number;
-  mu: number;              // expected excess or total — klar dokumentieren
-  sigma: number;
-  rf: number;
-  fraction?: number;       // 0.5 = half Kelly
-  maxF?: number;           // default 0.25
-}): KellySizing
+}
 ```
 
 ---
 
-## 5. Kapital-Input → beide Methoden
+## 5. Kelly — separat (unverändert im Zweck)
 
-User gibt **K** ein (z. B. 10 000 €).
+$$
+f^* = \frac{\mu - r_f}{\sigma^2} \quad\text{(continuous)}, \quad
+f_{\text{half}} = \tfrac12 f^*, \quad
+f \le f_{\max}\ (\text{default } 0.25)
+$$
 
-| Methode | Ergebnis je Titel |
+Nur **ein** Ticker; nicht über den Basket summieren.  
+UI: Full / Half / Capped + € bei Kapital K.
+
+---
+
+## 6. Kapital-Input
+
+| Methode | Formel |
 | --- | --- |
-| **CAPM-Basket** | \(w_i^{\text{CAPM}} \times K\) für alle aktiven Titel |
-| **Kelly einzeln** | \(f^{\text{half}}_j \times K\) nur für gewählten Titel j |
+| Basket (A/B/C) | \(w_i \times K\) — Summe = K |
+| Kelly | \(f^{\text{capped}}_j \times K\) — nur Titel j |
 
-UI-Tabelle:
+Tabelle: Ticker | Score | Mode-w | € | Kelly-% | Kelly-€ | Stück.
 
-```
-Ticker | Score | CAPM-Gewicht | CAPM-€ | Kelly-Half-% | Kelly-€ | Kurs | Stück-CAPM | Stück-Kelly
-```
+---
 
-Hinweistext:
+## 7. Pipeline
 
 ```
-CAPM = Vorschlag für den gesamten verifizierten Basket (Diversifikation).
-Kelly = Vorschlag nur für diese eine Position (Wachstum/Edge) — nicht summiert als 100 % über alle Titel.
+Scoring/Gates → Buy-Liste
+    → schätze μ, Σ, β, rf
+    → pickWeightMode
+    → allocate (A|B|C) + applyMaxWeight
+    → sharpePortfolio / sharpeEqualWeight
+    → optional sizeKellySingle(ticker)
+    → × Kapital K
 ```
 
 ---
 
-## 6. Zusammenspiel mit Scoring / Gates
+## 8. Defaults
 
-```
-runScoringPipeline → score, gates, conflicts
-        │
-if qualifies as Buy → PortfolioCandidate (active)
-        │
-VirtualPortfolio.candidates
-        │
-        ├─► allocateCapmBasket   (n ≥ 2)
-        └─► sizeKellySingle      (pro Titel on demand)
-```
-
-Hard-Gates → kein Auto-Add; User kann trotzdem `watch_only` setzen.
-
-Fiscal-Catalysts / Reverse-DCF fließen nur über **score / μ̂ / conviction** ein —  
-kein separates Portfolio-Narrativ.
-
----
-
-## 7. Researcher-Tab & manuelle Analyse
-
-| Flow | Aktion |
+| Parameter | Default |
 | --- | --- |
-| Researcher markiert Buy | `source: 'researcher'`, upsert Candidate |
-| Manuelle Analyse speichert Buy | `source: 'manual'` oder `'both'` |
-| Entfernen / Gate bricht später | status `removed` oder Re-Score Job |
-| Re-Score Batch | nächtlich oder on-demand: Scores/Betas/Preise aktualisieren |
+| maxWeight | 0.30 |
+| Σ-Fenster | 252 Tage |
+| Shrinkage | an bei n < 8 oder cond hoch |
+| Kelly fraction | 0.5 (Half) |
+| Kelly maxF | 0.25 |
+| scoreMin Intake | 65 |
+| κ Score-Tilt | 0.35 |
+| Benchmark | SPY (wählbar) |
 
----
-
-## 8. Grenzen & Anti-Bias
-
-```
-[ ] Kelly-Full nie als Default (Half + Cap)
-[ ] CAPM-μ nicht aus reinem Storytelling — Reverse-DCF / hist. + rf/β
-[ ] Ein Titel allein → kein CAPM-Basket, nur Kelly-Hinweis
-[ ] Korrelationen schätzen; bei n klein Σ instabil → Risk-Parity-Fallback
-[ ] Keine automatische Order-Ausführung — nur Soll-Allokation
-[ ] Währung: capitalBase und prices alignen (FX)
-```
+Historie > 5Y: siehe [WORK_DATA_PROVIDERS.md](./WORK_DATA_PROVIDERS.md).
 
 ---
 
 ## 9. UI-Skizze
 
 ```
-┌─ Virtuelles Portfolio ─────────────────────────────┐
-│ Kapital K: [ 10000 ] €    Benchmark: [ SPY ▾ ]     │
-│ rf: 3.5 %   Max single CAPM: 30 %   Kelly: Half    │
-├─ Buy-Liste (aktiv) ────────────────────────────────┤
-│ ☑ Ticker  Score  β   CAPM-w  CAPM-€  Kelly-%  €   │
-│ …                                                  │
-├─ Summary ──────────────────────────────────────────┤
-│ Σ CAPM-€ = K (vollständig allokiert)               │
-│ Kelly ist Einzeltitel-Hinweis, Summe ≠ K           │
-└────────────────────────────────────────────────────┘
+Kapital K | Benchmark | Mode: Auto|Max-Sharpe|Risk-Parity|Score-Tilt
+Max-Gewicht | Kelly: Half
+
+Sharpe Basket: x.xx  |  Equal-Weight: y.yy  |  Δ: …
+
+Ticker  Score  w%  €  Sharpe_i  Kelly-Half%  Kelly-€
+…
 ```
+
+Disclaimer: CAPM/Sharpe = Basket-Diversifikation; Kelly = Einzeltitel; keine Order-Ausführung.
 
 ---
 
-## 10. Checkliste Umsetzung
+## 10. Checkliste
 
 ```
-[ ] PortfolioCandidate + VirtualPortfolio Types
-[ ] Intake aus Researcher + Manual (Flag + Auto-Regel)
-[ ] Beta/μ/Σ-Schätzung (FMP Historie; 5Y-Limit beachten → WORK_DATA_PROVIDERS)
-[ ] allocateCapmBasket (long-only, maxWeight)
-[ ] sizeKellySingle (continuous + half + cap)
-[ ] Kapital-Input → € und Stück-Hinweise
-[ ] UI-Tabelle + Disclaimer
-[ ] Re-Score / Remove bei hard Gate
+[ ] sharpeRatio / portfolioVol / equalWeight
+[ ] allocateMaxSharpeLongOnly + applyMaxWeight
+[ ] allocateRiskParity
+[ ] allocateScoreTilt
+[ ] pickWeightMode
+[ ] sizeKellySingle (half + cap)
+[ ] Intake Researcher + Manual
+[ ] Σ-Schätzung + Shrinkage
+[ ] UI Sharpe Basket vs Equal + Kapital-Tabelle
 ```
 
 **Regel:** Design-Dokumentation. Implementierung lokal → PR → Review.
