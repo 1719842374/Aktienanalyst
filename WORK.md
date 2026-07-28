@@ -1,7 +1,6 @@
 # WORK.md — Index & Navigationskarte
 
-> Stand: 28.07.2026 | Branch: `main`  
-> Regel: Kein Code-Push über GitHub API ohne lokale Validierung + PR + Review.
+> Stand: 28.07.2026 | Branch: `main`
 
 ---
 
@@ -9,29 +8,29 @@
 
 | Datei | Inhalt |
 |-------|--------|
-| **[WORK_SCORING_VORLAGE.md](./WORK_SCORING_VORLAGE.md)** | **Scoring-Logik Vorlage** — types, pricingPower, relativeMomentum, gates, trendMult, catalysts, verdict, `runScoringPipeline`, Gate-Caps, UI-Vertrag |
-| [WORK_TEIL0-6.md](./WORK_TEIL0-6.md) | Platform, BTC, Bugs, Katalysator-Formeln, OpenRouter, FMP, Roadmap |
-| [WORK_BTC_MINER.md](./WORK_BTC_MINER.md) | Section 13 Miner: Hash Ribbons, Puell, Breakeven, Kapitulationszonen |
-| [WORK_TEIL7_SCORING.md](./WORK_TEIL7_SCORING.md) | TEIL 7 Detail + Gold/Realzins-Modell |
-| [WORK2.md](./WORK2.md) | TEIL 8 Regulatory, Geo, PESTEL, FRED |
+| **[WORK_REVERSE_DCF_BRIDGE.md](./WORK_REVERSE_DCF_BRIDGE.md)** | **Reverse-DCF Methodik** + **Bridge** Fiskal/AI-Capex-Programme → Sektor-Cache → Scoring + Daily Briefing |
+| **[WORK_SCORING_VORLAGE.md](./WORK_SCORING_VORLAGE.md)** | Scoring-Pipeline, Gates, Lookahead/Fiscal-Ausnahme §17 |
+| [WORK_TEIL0-6.md](./WORK_TEIL0-6.md) | Platform, BTC, Bugs, Katalysatoren, FMP |
+| [WORK_BTC_MINER.md](./WORK_BTC_MINER.md) | Miner-Zonen |
+| [WORK_TEIL7_SCORING.md](./WORK_TEIL7_SCORING.md) | TEIL 7 + Gold/Realzins |
+| [WORK2.md](./WORK2.md) | TEIL 8 Regulatory/PESTEL/FRED |
 
 ---
 
-## Scoring auf einen Blick
+## Scoring / Reverse DCF / Bridge
 
 ```
-finalScore = min( qualityScore × trendMultiplier , gateCap ) + catalystEV
+finalScore = min(quality × trendMult, gateCap)
+g* = ReverseDCF(price)     // implizites Wachstum
+gapRatio = g* / realized8Q → DCF_REALITY_CHECK
 
-Gates (Cap):
-  PRICING_POWER      55 hard
-  RELATIVE_GROWTH    60 hard
-  DCF_REALITY_CHECK  65 warn
-  INVENTORY          70 warn
-  REGULATORY_EXPOSURE 55/65 (TEIL 8)
+FiscalProgram (gecacht aus Daily Briefing)
+  → sectorMap (defense, ai_infra, semis, …)
+  → catalystsForTicker → Scoring
+  → programsBySector → Researcher Daily Briefing / Sector-Tab
+
+Private AI-Capex = context_only (kein DCF-Softening)
+Staatsprogramm legislated/funded = catalyst (DCF-Cap optional +10)
 ```
-
-Vollständige Vorlage inkl. TypeScript: **[WORK_SCORING_VORLAGE.md](./WORK_SCORING_VORLAGE.md)**
-
----
 
 **Regel:** Design-Dokumentation. Implementierung lokal → PR → Review.
