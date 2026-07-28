@@ -1,237 +1,138 @@
 # WORK_TEIL7_SCORING.md
 
-> TEIL 7: Trend-Gates, Pricing Power, Relative Momentum, Veto, Katalysatoren, Porter, Verdict  
-> + **Gold-Dashboard: Minenkosten, Makro, Chart Gold vs Realzinsen/Leitzinsen**  
+> TEIL 7 + Gold-Dashboard + **Realzins-Modell Implementierung**  
 > Stand: 28.07.2026
 
 ---
 
-# TEIL 7 — TREND-GATES, PRICING POWER & BIG-PICTURE-SCORING
+# TEIL 7 — TREND-GATES & GOLD / REALZINS-MODELL
 
-> Ziel: Fehlinvestments vom Typ "Nike 2023" strukturell verhindern — relativ, selbstkalibrierend.
+## 7.1–7.7
 
-## 7.1–7.7 (Kurzverweis)
+Nike · Designprinzipien · pricingPower · relativeMomentum · gates · Catalyst · Porter · Verdict  
+(Code in Git-History / Vorgängercommits dieser Datei)
 
-Nike-Problem (Level vs Delta) · Designprinzipien · pricingPower · relativeMomentum · gates/Veto · trendMultiplier · Catalyst · Porter-Delta · ExtractedFact · buildVerdict
+## 7.8 Gold-Dashboard (Übersicht)
 
-Vollständige Code-Blöcke bleiben in dieser Datei unter den jeweiligen Unterabschnitten der Vorgängerversion / Git-History. Fokus hier: **7.8 Gold-Dashboard-Erweiterung**.
+Minenkosten (AISC, Cost Curve, GDX/GLD) · Makro (Real Yield, DXY, Fed Funds) · Chart dual-axis  
+Zonen stress/tailwind · Gates GOLD_REAL_YIELD_REGIME / GOLD_AISC_STRESS
 
 ---
 
-## 7.8 Gold-Dashboard: Minenkosten, Makro-Treiber & Chart Gold vs. Kapitalmarkt/Zinsen
+## 7.8.8 Realzins-Modell — Implementierungsspezifikation
 
-> **Nur Dokumentation.** Analog zu BTC Section 13 Miner (WORK_TEIL0-6 §6.4).  
-> Unterschied zu BTC: Bei Gold dominieren **Realzinsen** (Nachfrage/Opportunitätskosten);  
-> Minenkosten markieren einen **langfristigen Angebotsboden** (Monate–Jahre Reaktionszeit).  
-> Bei BTC reagiert Hashrate in Tagen/Wochen.
+> **Nur Dokumentation.** Ziel: deterministische Pipeline von FRED-Rohdaten → Realzins →  
+> Fair-Value-Gold → Chart + Gate. Kein LLM-Urteil in der Berechnung.
 
-### 7.8.1 Minenkosten-Indikatoren (Angebotsseite ≈ BTC-Hashprice/Breakeven)
-
-| # | Indikator | Bedeutung | Kapitulation / Druck | Entspannung |
-|---|-----------|-----------|----------------------|-------------|
-| 1 | **AISC** (All-In Sustaining Cost, World Gold Council) | Förderkosten + Exploration-CAPEX + G&A + Sustaining pro oz | Spot ≤ AISC (~$1.200–1.400/oz typisch) → Minen unrentabel | Spot ≫ AISC |
-| 2 | **Cash Cost (C1) vs All-In Cost (C3)** | C1 = Produktion; C3 = inkl. Kapitalkosten/Abschreibung | Hochkosten-Minen (rechtes Ende der Kurve) schließen zuerst | C1-Minen bleiben online |
-| 3 | **Gold Miners' Cost Curve** (CRU, Metals Focus, S&P) | Ranking globaler Minen nach $/oz — S-Kurve | Marginale Mine bestimmt Angebotsboden | Kurve verschiebt sich mit Kosteninflation |
-| 4 | **GDX/GLD-Ratio** | Miner-Aktien vs. physisches Gold | Ratio fällt → Margendruck (Miner gehebelt auf Goldpreis) | Ratio steigt → operative Erholung |
-| 5 | **P/NAV der Miner** | Reserven abdiskontiert mit Long-Term-Goldpreis-Annahme | Spot ≪ NAV-Annahme → Reserven-Abschreibung | Spot stützt NAV |
-
-**Analogie BTC:** AISC/C3 ≈ Mining Breakeven; Cost Curve ≈ Hashrate-Flotte nach Effizienz; GDX/GLD ≈ Hashprice vs. Spot-Stress.
-
-### 7.8.2 Makro-Indikatoren (Nachfrageseite / antizyklisch)
-
-| # | Indikator | Quelle / Formel | Wirkung auf Gold |
-|---|-----------|-----------------|------------------|
-| 6 | **Real Yield 10Y** | DFII10 (FRED) oder DGS10 − T10YIE | **Dominant inverse** Korrelation |
-| 7 | **Gold-Fair-Value vs Realzins** | Regression Gold ~ Realzins (+ optional DXY, Fed-Bilanz) | Über-/Unterbewertung vs. Modell |
-| 8 | **US-Dollar-Index (DXY)** | ICE / FRED DTWEXBGS | Starker USD → Druck auf Gold |
-| 9 | **Realer Leitzins** | Fed Funds − Inflation (YoY CPI) | Kurzfristige Policy-Straffung |
-| 10 | **Gold/Silber-Ratio** | XAU/XAG | Steigt in Risiko-Off / Rezessionsangst |
-| 11 | **Zentralbank-Nettokäufe** | World Gold Council Quarterly | Strukturelle Nachfrage, oft antizyklisch |
-| 12 | **Gold vs 10Y Treasury Total Return** | Relative Performance | Asset-Rotation Indikator |
-
-### 7.8.3 Kernkonzept Chart: Gold vs. Kapitalmarkt / Zinsen (inverse Beziehung)
-
-**Warum plotten?**  
-Gold trägt keinen Coupon. Steigende Realzinsen erhöhen die Opportunitätskosten → Gold unter Druck. Fallende Realzinsen / expansive Policy → Gold attraktiver. Das ist das etablierte Anti-Zyklus-Muster (Katusa/Bloomberg „Gold reconnecting with yields“).
-
-**Chart-Layout (analog BTC-TA / Miner-Chart):**
+### A) Definition Realzins (zwei äquivalente Wege)
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  HAUPTPANEL (dual axis)                                      │
-│  · Gold Spot $/oz          (gelb, linke Achse)               │
-│  · Real 10Y Yield %        (blau, rechte Achse, optional     │
-│    invertiert skaliert, damit Inverse optisch klar wird)     │
-│  · Nominal 10Y (DGS10)     (grau, gestrichelt, rechte Achse) │
-│  · Optional: Fed Funds     (violett, rechte Achse)           │
-│                                                              │
-│  Zonen:                                                      │
-│  ████ rot  = Real Yield rising + Gold falling (Stress)       │
-│  ▓▓▓▓ grün = Real Yield falling + Gold rising (Tailwind)     │
-│  Marker    = Decoupling-Phasen (Korrelation > −0.2)           │
-├──────────────────────────────────────────────────────────────┤
-│  PANEL 2: AISC-Band (horizontal) + Spot                      │
-│           Spot unter AISC = Angebots-Kapitulationsdruck      │
-│  PANEL 3: GDX/GLD Ratio                                      │
-│  PANEL 4: DXY (inverse Schattierung optional)                │
-└──────────────────────────────────────────────────────────────┘
+Methode 1 — direkt (bevorzugt):
+  real10Y = DFII10          // FRED: 10Y TIPS Yield
+
+Methode 2 — berechnet:
+  real10Y = DGS10 − T10YIE  // Nominal 10Y − 10Y Breakeven Inflation
+
+Differenz DFII10 vs. (DGS10−T10YIE) ist i.d.R. klein (Liquidity/Technical Spread).
+Regel: primär DFII10; Fallback = DGS10 − T10YIE wenn DFII10 fehlt.
 ```
-
-**Recharts-Skizze (Dokumentation):**
-
-```tsx
-<ComposedChart data={goldMacroSeries}>
-  {/* Stress-Zonen: Realzins steigt, Gold fällt */}
-  {stressZones.map(z => (
-    <ReferenceArea key={z.start} x1={z.start} x2={z.end}
-      fill="#ef4444" fillOpacity={0.12} />
-  ))}
-  {/* Tailwind-Zonen: Realzins fällt, Gold steigt */}
-  {tailwindZones.map(z => (
-    <ReferenceArea key={z.start} x1={z.start} x2={z.end}
-      fill="#22c55e" fillOpacity={0.10} />
-  ))}
-
-  <Line yAxisId="left"  dataKey="gold"     stroke="#F5A623" dot={false} name="Gold $/oz" />
-  <Line yAxisId="right" dataKey="real10Y"  stroke="#3b82f6" dot={false} name="Real 10Y %" />
-  <Line yAxisId="right" dataKey="nominal10Y" stroke="#94a3b8" strokeDasharray="4 4"
-        dot={false} name="Nominal 10Y" />
-
-  {/* AISC als horizontale Band-Linie */}
-  <ReferenceLine yAxisId="left" y={aiscUsd} stroke="#f97316" strokeDasharray="6 3"
-                 label="AISC" />
-
-  <YAxis yAxisId="left"  domain={['auto','auto']} orientation="left" />
-  <YAxis yAxisId="right" domain={['auto','auto']} orientation="right" reversed={false} />
-  {/* Hinweis: für optische Inverse kann right axis reversed werden */}
-  <XAxis dataKey="date" />
-  <Tooltip />
-  <Legend />
-</ComposedChart>
-```
-
-### 7.8.4 Code-Logik (Dokumentation — `client/src/lib/goldMacro.ts`)
 
 ```ts
-export interface GoldMacroPoint {
-  date: string;
-  gold: number;          // $/oz
-  nominal10Y: number;    // DGS10
-  real10Y: number;       // DFII10
-  breakeven10Y: number;  // T10YIE
-  dxy?: number;
-  fedFunds?: number;
-  aiscUsd?: number;      // Branchen-AISC oder geschätzt
-  gdxGldRatio?: number;
+export function resolveReal10Y(opts: {
+  dfii10: number | null;
+  dgs10: number | null;
+  t10yie: number | null;
+}): { value: number | null; source: 'DFII10' | 'DGS10-T10YIE' | null } {
+  if (opts.dfii10 != null && !Number.isNaN(opts.dfii10))
+    return { value: opts.dfii10, source: 'DFII10' };
+  if (opts.dgs10 != null && opts.t10yie != null)
+    return { value: opts.dgs10 - opts.t10yie, source: 'DGS10-T10YIE' };
+  return { value: null, source: null };
 }
 
-export interface GoldRegimeZone {
-  start: string;
-  end: string;
-  type: 'stress' | 'tailwind' | 'decoupling';
-  reason: string;
+/** Kurzfristiger Real-Leitzins (Policy) */
+export function realFedFunds(fedFunds: number, cpiYoY: number): number {
+  return fedFunds - cpiYoY; // beide in %
 }
+```
 
-/** Rolling Pearson: Gold-Returns vs Δ Real Yield — stark negativ = intakt */
-export function goldRealYieldInverseScore(
-  series: { gold: number; real10Y: number }[],
-  window = 60
-): { score: number; correlation: number; flags: string[] } {
-  if (series.length < window)
-    return { score: 50, correlation: 0, flags: ['INSUFFICIENT_DATA'] };
+### B) Datenpipeline (Anbindung an WORK2 §8.12 MacroSnapshot)
 
-  const recent = series.slice(-window);
-  const gRet = recent.slice(1).map((d, i) => (d.gold - recent[i].gold) / recent[i].gold);
-  const rChg = recent.slice(1).map((d, i) => d.real10Y - recent[i].real10Y);
-  const n = gRet.length;
-  const mG = gRet.reduce((a, b) => a + b, 0) / n;
-  const mR = rChg.reduce((a, b) => a + b, 0) / n;
-  let num = 0, dG = 0, dR = 0;
-  for (let i = 0; i < n; i++) {
-    const dg = gRet[i] - mG, dr = rChg[i] - mR;
-    num += dg * dr; dG += dg * dg; dR += dr * dr;
-  }
-  const correlation = dG === 0 || dR === 0 ? 0 : num / Math.sqrt(dG * dR);
-  // correlation ≈ -0.7 → score ≈ 85 (starke Inverse)
-  const score = Math.round(50 - 50 * Math.tanh(correlation * 2));
-  const flags: string[] = [];
-  if (correlation > -0.2) flags.push('DECOUPLING: Inverse geschwächt');
-  if (correlation < -0.5) flags.push('STRONG_INVERSE: klassische Relation intakt');
-  return { score, correlation, flags };
-}
+```
+FRED fetchFredSeries / buildMacroSnapshot
+        │
+        ├─ DGS10      → nominal10Y
+        ├─ DFII10     → real10Y (primär)
+        ├─ T10YIE     → breakeven10Y (Fallback-Rechnung)
+        ├─ FEDFUNDS   → fedFunds
+        ├─ CPIAUCSL   → inflationYoY (für realFedFunds)
+        └─ DTWEXBGS   → dxy (optional)
+        │
+        ▼
+Gold Spot Serie (FMP / Yahoo / Metals)
+        │
+        ▼
+mergeAsOfDate(gold[], macro[])  → GoldMacroPoint[]
+        │
+        ├─ goldRealYieldInverseScore(window=60|120|252)
+        ├─ goldFairValueModel(...)
+        ├─ deriveGoldRegimeZones(...)
+        └─ goldRateSensitivity(...)
+```
 
-/** Zonen: Stress (Zinsen↑ Gold↓) vs Tailwind (Zinsen↓ Gold↑) */
-export function deriveGoldRegimeZones(
-  points: GoldMacroPoint[],
-  lookback = 20
-): GoldRegimeZone[] {
-  const zones: GoldRegimeZone[] = [];
-  let cur: { type: GoldRegimeZone['type']; start: number; reason: string } | null = null;
-
-  for (let i = lookback; i < points.length; i++) {
-    const g0 = points[i - lookback].gold, g1 = points[i].gold;
-    const r0 = points[i - lookback].real10Y, r1 = points[i].real10Y;
-    const goldUp = g1 > g0 * 1.02;
-    const goldDn = g1 < g0 * 0.98;
-    const realUp = r1 > r0 + 0.15; // +15 bp
-    const realDn = r1 < r0 - 0.15;
-
-    let type: GoldRegimeZone['type'] | null = null;
-    let reason = '';
-    if (realUp && goldDn) {
-      type = 'stress';
-      reason = 'Realzins steigend, Gold fallend — Opportunitätskosten-Druck';
-    } else if (realDn && goldUp) {
-      type = 'tailwind';
-      reason = 'Realzins fallend, Gold steigend — klassischer Tailwind';
-    }
-
-    // AISC-Kapitulationsdruck als zusätzlicher Stress-Grund
-    if (points[i].aiscUsd != null && points[i].gold < points[i].aiscUsd!) {
-      type = type ?? 'stress';
-      reason = (reason ? reason + ' · ' : '') + 'Spot unter AISC';
-    }
-
-    if (type && (!cur || cur.type !== type)) {
-      if (cur) {
-        zones.push({
-          start: points[cur.start].date,
-          end: points[i - 1].date,
-          type: cur.type,
-          reason: cur.reason,
-        });
-      }
-      cur = { type, start: i, reason };
-    } else if (!type && cur) {
-      zones.push({
-        start: points[cur.start].date,
-        end: points[i - 1].date,
-        type: cur.type,
-        reason: cur.reason,
-      });
-      cur = null;
-    }
-  }
-  if (cur) {
-    zones.push({
-      start: points[cur.start].date,
-      end: points[points.length - 1].date,
-      type: cur.type,
-      reason: cur.reason,
+```ts
+export async function buildGoldMacroSeries(
+  goldSeries: { date: string; gold: number }[],
+  macroByDate: Map<string, { dgs10: number|null; dfii10: number|null; t10yie: number|null;
+                              fedFunds?: number|null; cpiYoY?: number|null; dxy?: number|null }>
+): Promise<GoldMacroPoint[]> {
+  return goldSeries.map(g => {
+    const m = macroByDate.get(g.date) ?? {};
+    const real = resolveReal10Y({
+      dfii10: m.dfii10 ?? null,
+      dgs10: m.dgs10 ?? null,
+      t10yie: m.t10yie ?? null,
     });
-  }
-  return zones;
+    return {
+      date: g.date,
+      gold: g.gold,
+      nominal10Y: m.dgs10 ?? 0,
+      real10Y: real.value ?? 0,
+      breakeven10Y: m.t10yie ?? 0,
+      dxy: m.dxy ?? undefined,
+      fedFunds: m.fedFunds ?? undefined,
+    };
+  }).filter(p => p.real10Y !== 0 || p.nominal10Y !== 0);
+}
+```
+
+### C) Fair-Value-Modell (Gold ~ Realzins)
+
+**Einfach (1-Faktor, rolling OLS):**
+
+$$
+\text{Gold}_t = \alpha_t + \beta_t \cdot \text{Real10Y}_t + \varepsilon_t
+$$
+
+```ts
+export interface FairValueResult {
+  fairValue: number | null;
+  alpha: number | null;
+  beta: number | null;       // typisch negativ (Inverse)
+  residualPct: number | null; // (Spot − FV) / FV
+  regime: 'undervalued' | 'fair' | 'overvalued' | 'n/a';
 }
 
-/** Einfaches Fair-Value aus linearer Regression Gold ~ Realzins (rolling) */
-export function goldFairValueFromRealYield(
+export function goldFairValueModel(
   gold: number[],
   real10Y: number[],
-  window = 252
-): (number | null)[] {
-  // OLS: gold = a + b * real10Y  auf rolling window; Fair Value = a + b * current real
+  window = 252,
+  bandPct = 0.10 // ±10 % = fair
+): FairValueResult[] {
   return gold.map((_, i) => {
-    if (i < window - 1) return null;
+    if (i < window - 1)
+      return { fairValue: null, alpha: null, beta: null, residualPct: null, regime: 'n/a' };
+
     const y = gold.slice(i - window + 1, i + 1);
     const x = real10Y.slice(i - window + 1, i + 1);
     const n = window;
@@ -242,66 +143,171 @@ export function goldFairValueFromRealYield(
       num += (x[k] - mx) * (y[k] - my);
       den += (x[k] - mx) ** 2;
     }
-    if (den === 0) return null;
-    const b = num / den;
-    const a = my - b * mx;
-    return a + b * real10Y[i];
+    if (den === 0)
+      return { fairValue: null, alpha: null, beta: null, residualPct: null, regime: 'n/a' };
+
+    const beta = num / den;
+    const alpha = my - beta * mx;
+    const fairValue = alpha + beta * real10Y[i];
+    const residualPct = fairValue !== 0 ? (gold[i] - fairValue) / fairValue : null;
+
+    let regime: FairValueResult['regime'] = 'fair';
+    if (residualPct != null) {
+      if (residualPct < -bandPct) regime = 'undervalued';
+      else if (residualPct > bandPct) regime = 'overvalued';
+    }
+
+    return { fairValue, alpha, beta, residualPct, regime };
   });
 }
 ```
 
-### 7.8.5 Gate-Anbindung (Makro)
+**Erweitert (2–3 Faktoren, optional):**
+
+$$
+\text{Gold}_t = \alpha + \beta_1 \text{Real10Y}_t + \beta_2 \text{DXY}_t + \beta_3 \log(\text{FedBalance}_t) + \varepsilon
+$$
 
 ```ts
-gates.push({
-  id: 'GOLD_REAL_YIELD_REGIME',
-  active: inverseScore.correlation > -0.25, // Decoupling
-  cap: 75,
-  severity: 'warn',
-  rationale: 'Gold und Real Yields entkoppelt — Regime-Wechsel oder struktureller Bid möglich',
-});
-
-// Optional: Angebotsdruck
-gates.push({
-  id: 'GOLD_AISC_STRESS',
-  active: spot < aiscUsd,
-  cap: 80,
-  severity: 'warn',
-  rationale: 'Gold Spot unter Branchen-AISC — marginale Minen unter Druck',
-});
+// Multiple Regression nur wenn DXY / Fed-Bilanz-Serien verfügbar.
+// Implementierung: normale Gleichungen oder einfache Matrix-OLS (2×2 / 3×3).
+// beta1 weiterhin dominant negativ erwartet; beta2 (DXY) typisch negativ.
 ```
 
-### 7.8.6 Datenquellen
-
-| Serie | Quelle |
-|-------|--------|
-| Gold Spot | FMP commodities / Yahoo / Metals API |
-| DGS10, DFII10, T10YIE | FRED |
-| Fed Funds | FRED FEDFUNDS |
-| DXY | FRED DTWEXBGS / ICE |
-| AISC | World Gold Council Reports (quartalsweise, manuell/LLM) |
-| GDX, GLD | FMP / Yahoo |
-| Zentralbank-Käufe | WGC Quarterly |
-
-### 7.8.7 Umsetzungsschritte (wenn implementiert)
+### D) Zinssensitivität (empirische „Duration“)
 
 ```
-[ ] client/src/lib/goldMacro.ts — inverseScore, deriveGoldRegimeZones, fairValueFromRealYield
-[ ] Gold-Dashboard / Researcher Macro-Tab: dual-axis Chart Gold vs Real10Y (+ Nominal)
-[ ] ReferenceArea stress (rot) / tailwind (grün)
-[ ] AISC ReferenceLine + GDX/GLD Panel
-[ ] FRED-Anbindung (bereits in WORK2 §8.12 MacroSnapshot)
-[ ] Kein Hardcoding — Serien aus API/Cache
+Historisch (Faustformel, Longtermtrends / PIMCO-Nähe):
+  ΔGold ≈ −15 % bis −20 % pro +100 bp Real Yield
+  → empirische Duration ≈ 18
+
+Im Modell aus beta der Regression:
+  semiElasticity ≈ beta / mean(Gold)     // relative Änderung pro 1 %-Punkt Realzins
+  durationProxy  ≈ −semiElasticity * 100 // % Gold-Änderung pro 100 bp
 ```
+
+```ts
+export function goldRateSensitivity(
+  beta: number,           // aus Fair-Value OLS
+  meanGold: number
+): { semiElasticity: number; durationProxy: number } {
+  const semiElasticity = meanGold !== 0 ? beta / meanGold : 0;
+  // beta ist $/oz pro %-Punkt Realzins; semiElasticity = relative Änderung pro pp
+  const durationProxy = -semiElasticity * 100; // % pro 100 bp
+  return { semiElasticity, durationProxy };
+}
+
+/** Szenario-Tabelle für UI */
+export function goldRateScenarios(
+  currentGold: number,
+  currentReal10Y: number,
+  beta: number,
+  shocksBp: number[] = [-100, -50, 0, 50, 100, 150]
+): { shockBp: number; impliedGold: number; changePct: number }[] {
+  return shocksBp.map(shockBp => {
+    const dReal = shockBp / 100; // bp → %-Punkte
+    const impliedGold = currentGold + beta * dReal;
+    const changePct = currentGold !== 0 ? (impliedGold - currentGold) / currentGold * 100 : 0;
+    return { shockBp, impliedGold, changePct };
+  });
+}
+```
+
+### E) End-to-End Builder
+
+```ts
+export async function runRealYieldGoldModel(params: {
+  goldSeries: { date: string; gold: number }[];
+  // aus buildMacroSnapshot / FRED-Historie aligned auf goldSeries.dates
+  macroSeries: {
+    date: string;
+    dgs10: number | null;
+    dfii10: number | null;
+    t10yie: number | null;
+    fedFunds?: number | null;
+    cpiYoY?: number | null;
+    dxy?: number | null;
+  }[];
+  window?: number;
+}) {
+  const window = params.window ?? 252;
+  const macroMap = new Map(params.macroSeries.map(m => [m.date, m]));
+  const points = await buildGoldMacroSeries(params.goldSeries, macroMap);
+
+  const gold = points.map(p => p.gold);
+  const real = points.map(p => p.real10Y);
+
+  const inverse = goldRealYieldInverseScore(
+    points.map(p => ({ gold: p.gold, real10Y: p.real10Y })),
+    Math.min(60, points.length)
+  );
+  const fairSeries = goldFairValueModel(gold, real, window);
+  const zones = deriveGoldRegimeZones(points);
+  const lastFair = fairSeries[fairSeries.length - 1];
+  const sensitivity = lastFair?.beta != null
+    ? goldRateSensitivity(lastFair.beta, gold[gold.length - 1] ?? 1)
+    : null;
+  const scenarios = lastFair?.beta != null
+    ? goldRateScenarios(
+        gold[gold.length - 1],
+        real[real.length - 1],
+        lastFair.beta
+      )
+    : [];
+
+  return {
+    points,
+    inverse,
+    fairSeries,
+    zones,
+    sensitivity,
+    scenarios,
+    latest: {
+      gold: gold[gold.length - 1],
+      real10Y: real[real.length - 1],
+      fairValue: lastFair?.fairValue ?? null,
+      residualPct: lastFair?.residualPct ?? null,
+      regime: lastFair?.regime ?? 'n/a',
+      correlation: inverse.correlation,
+      inverseFlags: inverse.flags,
+    },
+  };
+}
+```
+
+### F) UI-Ausgabe (Gold-Dashboard / Macro-Tab)
+
+```
+1. Dual-Axis Chart: Gold vs Real10Y (+ Nominal gestrichelt)
+2. Fair-Value-Linie über Gold legen (aus fairSeries)
+3. Residual-Badge: undervalued / fair / overvalued (±10 % Band)
+4. Szenario-Tabelle: −100bp … +150bp → implied Gold
+5. Korrelations-Score + Flags (STRONG_INVERSE / DECOUPLING)
+6. Stress/Tailwind ReferenceAreas aus zones
+```
+
+### G) Implementierungs-Checkliste
+
+```
+[ ] resolveReal10Y + realFedFunds in client/src/lib/goldMacro.ts
+[ ] buildGoldMacroSeries (Merge Gold + FRED MacroSnapshot Historie)
+[ ] goldFairValueModel (rolling OLS, window 252 default)
+[ ] goldRateSensitivity + goldRateScenarios
+[ ] runRealYieldGoldModel End-to-End
+[ ] FRED-Serien: DFII10, DGS10, T10YIE, FEDFUNDS, CPI YoY (WORK2 §8.12)
+[ ] Chart: Gold + FV-Linie + Real10Y dual-axis + Zonen
+[ ] Gate GOLD_REAL_YIELD_REGIME aus inverse.correlation
+```
+
+**Regel:** Nur Dokumentation. Implementierung lokal → PR → Review.
 
 ---
 
-## 7.9 Nächste Schritte (gesamt TEIL 7)
+## 7.9 Nächste Schritte
 
-- [ ] PricingPower + RelativeMomentum als Lib
-- [ ] Gates multiplikativ in Verdict-Pipeline
-- [ ] **Gold-Dashboard Chart** (7.8) im Researcher / eigenem Tab
-- [ ] LLM ASP/Volume/Discount aus Earnings Calls
-- [ ] Keine Hardcoded-Ticker — relativ / z-score / Perzentil
+- [ ] PricingPower / RelativeMomentum Lib
+- [ ] Gates in Verdict-Pipeline
+- [ ] **Realzins-Modell** (7.8.8) + Gold-Chart
+- [ ] LLM ExtractedFact ASP/Volume/Discount
 
 **Regel:** Design-Dokumentation. Implementierung lokal → PR → Review.
