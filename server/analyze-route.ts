@@ -196,7 +196,7 @@ function scoreMoat(
     { force: "Rivalität unter Wettbewerbern", rating: hasBrandMoat || hasNetworkMoat ? "Niedrig" : "Hoch", score: hasBrandMoat || hasNetworkMoat ? 3 : 7 },
     { force: "Bedrohung durch Neueinsteiger", rating: hasSwitchingMoat || hasPatentMoat ? "Niedrig" : "Mittel", score: hasSwitchingMoat || hasPatentMoat ? 2 : 5 },
     { force: "Verhandlungsmacht Lieferanten", rating: hasCostMoat ? "Niedrig" : "Mittel", score: hasCostMoat ? 3 : 5 },
-    { force: "Verhandlungsmacht Kunden", rating: hasSwitchingMoat ? "Niedrig" : "Mittel", score: hasSwitchingMoat ? 2 : 5 },
+    { force: "Verhandlungsmacht Kunden", rating: hasSwitchingMoat ? "Niedrig" : "Mittel", score: hasSwitchingMoat || hasPatentMoat ? 2 : 5 },
     { force: "Bedrohung durch Substitute", rating: hasNetworkMoat ? "Niedrig" : "Mittel", score: hasNetworkMoat ? 2 : 5 }
   );
 
@@ -338,7 +338,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         ? closes.slice(-252).map((c, i, arr) => i === 0 ? 0 : (c - arr[i - 1]) / arr[i - 1]).slice(1)
         : [];
 
-      const ohlcvPoints: OHLCVPoint[] = ohlcvRows.slice(-504).map((r: any) => ({
+      // Keep up to ~10Y of trading days (252*10 ≈ 2520 + buffer).
+      // Previous hard-cap of 504 (~2Y) prevented the client TechnicalChart 10Y
+      // timeframe from showing the full history that getFmpFallbackData already
+      // requests (fromDate = now - 10Y). Client still slices per selected range.
+      const OHLCV_MAX_POINTS = 2600;
+      const ohlcvPoints: OHLCVPoint[] = ohlcvRows.slice(-OHLCV_MAX_POINTS).map((r: any) => ({
         date: String(r.date ?? "").slice(0, 10),
         open: parseFloat(String(r.open)) || 0,
         high: parseFloat(String(r.high)) || 0,
