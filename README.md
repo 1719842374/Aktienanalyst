@@ -48,7 +48,7 @@ Erstellt für **jede Aktie weltweit** (US, Europa, Asien) eine objektive, konser
 | 7 | **Relative Bewertung** | Forward P/E, EV/EBITDA, PEG vs. Sektor |
 | 8 | **Risikoinversion** | Top-Risiken nach Expected Damage, invertierter DCF |
 | 9 | **RSL-Momentum** | Levy Relative Strength (26-Wochen) |
-| 10 | **Technische Analyse** | Interaktiver 5Y-Chart mit MA200/MA50/MACD, Golden/Death Cross |
+| 10 | **Technische Analyse** | Interaktiver **10Y-Chart** mit MA200/MA50/MACD/RSI/BB, Golden/Death Cross, Volumen-Overlay |
 | 11 | **Moat & Porter's Five Forces** | Moat-Rating, Porter-Scoring |
 | 12 | **PESTEL-Analyse** | 6 Makro-Kategorien, Exposure-Matrix |
 | 13 | **Makro-Korrelationen** | 20+ Korrelationen (Indizes, Rohstoffe, Währungen, Crypto) |
@@ -345,7 +345,7 @@ Vollständig clientseitige Bitcoin-Bewertung — kein Backend nötig. Alle API-C
 | 7 | **Kategorien A-E** | Probability-Verteilung: Crash/Bear/Neutral/Bull/Euphorie |
 | 8 | **Zyklus-Einschätzung** | Position, Einstiegspunkt, Halving-Katalysator |
 | 9 | **Finale Schätzung** | 3M + 6M Preisrange, Outlook, Zusammenfassung |
-| 10 | **Technische Analyse** | Professioneller Chart (3M-5Y), alle MAs/EMAs, MACD, RSI(14), **Volumen-Overlay** (grün/rot, Binance OHLCV), BTC-Overlays (2Y MA, Pi Cycle, 200W MA, Golden Ratio), Golden/Death Cross Erkennung |
+| 10 | **Technische Analyse** | Professioneller Chart (3M–10Y), alle MAs/EMAs, MACD, RSI(14), **Volumen-Overlay** (grün/rot, Binance OHLCV), BTC-Overlays (2Y MA, Pi Cycle, 200W MA, Golden Ratio), Golden/Death Cross Erkennung |
 | 11 | **Fear & Greed Index** | Halbkreis-Gauge, historischer Vergleich, farbkodierter 1J/3J/5J Verlauf |
 | 12 | **Umfassendes Gesamt-Fazit** | Zyklus, Technische Analyse, Makro/Geopolitik, Miner-Gesundheit, Bärenmarkt-Einschätzung |
 
@@ -648,7 +648,7 @@ stock-dashboard/
 │   │   └── RecessionDashboard.tsx   # Rezessions-Dashboard
 │   ├── components/sections/         # 17 Aktien-Analyse-Sektionen
 │   │   ├── Section1.tsx ... Section9.tsx
-│   │   ├── TechnicalChart.tsx       # Section 10 (Chart inkl. Volumen-Overlay)
+│   │   ├── TechnicalChart.tsx       # Section 10 (Chart inkl. Volumen-Overlay, 3M–10Y)
 │   │   ├── MoatPorterSection.tsx    # Section 11
 │   │   ├── PestelSection.tsx        # Section 12
 │   │   ├── MacroCorrelationsSection.tsx  # Section 13
@@ -667,7 +667,7 @@ stock-dashboard/
 │   ├── routes.ts                    # Aktien-API (/api/analyze, BTC, Katalysatoren, …)
 │   ├── researcher.ts                # Researcher-Backend (4 Tabs + Daily Briefing + Caching)
 │   ├── llm-openrouter.ts            # OpenRouter-Client (Claude 3.5 Haiku, JSON-Salvage, Fallback-Kette)
-│   ├── fmp.ts / fmp-fetcher.ts      # Financial Modeling Prep Integration
+│   ├── fmp.ts / fmp-fetcher.ts      # Financial Modeling Prep Integration (Pro: volle 10Y Historie)
 │   ├── disk-cache.ts                # SQLite Disk-Cache (übersteht Neustarts)
 │   ├── recession.ts                 # Rezessions-Indikatoren
 │   ├── gold-routes.ts               # Gold-Analyse-API
@@ -691,7 +691,7 @@ Dieser Abschnitt richtet sich an neue Nutzer, die das Dashboard in **Perplexity 
 |-----|----|--------|
 | Perplexity Pro-Abo mit Computer-Zugang | perplexity.ai/pro | ab $20/Monat |
 | OpenRouter-Account + Credits | openrouter.ai | mind. $5 Guthaben (LLM-Calls) |
-| FMP API-Key (Free Tier) | financialmodelingprep.com | kostenlos (750 Calls/Tag) |
+| FMP API-Key (Pro empfohlen für volle 10Y-Historie) | financialmodelingprep.com | Pro-Plan |
 
 ---
 
@@ -708,7 +708,7 @@ Dieser Abschnitt richtet sich an neue Nutzer, die das Dashboard in **Perplexity 
 ### Schritt 2 — FMP API-Key holen
 
 1. Gehe auf **financialmodelingprep.com**
-2. Erstelle ein kostenloses Konto
+2. Erstelle ein Konto (Pro-Plan für volle historische Daten empfohlen)
 3. Dashboard → **API Key** kopieren
 
 ---
@@ -799,7 +799,7 @@ Vorlage: [`.env.example`](./.env.example). Die echte `.env` ist git-ignoriert �
 |----------|---------|-------|
 | `OPENROUTER_API_KEY` | Für alle KI-Features | Researcher, Daily Briefing, Katalysatoren, Porter/PESTEL, Investmentthese. Ohne Key laufen alle Analysen im Fallback-Modus ("LLM nicht verfügbar"). |
 | `OPENROUTER_MODEL` | Optional | Modell-Override (Default: `anthropic/claude-3.5-haiku`) |
-| `FMP_API_KEY` | Für Screener/Fundamentals | Financial Modeling Prep (Free Tier: 750 Calls/Tag) |
+| `FMP_API_KEY` | Für Screener/Fundamentals + volle 10Y OHLCV | Financial Modeling Prep (Pro für 10Y-Historie) |
 | `PORT` / `NODE_ENV` | Optional | Server-Konfiguration |
 
 > **Deployment (Perplexity Computer / pplx.app):** Keys werden als Umgebungs-Credentials der Sandbox gesetzt — nicht in Dateien im Repo. Lokal: `.env` (von `.gitignore` abgedeckt). Die Perplexity Finance API (`external-tool` CLI) funktioniert ausschließlich in der Perplexity-Sandbox.
@@ -821,6 +821,7 @@ Vorlage: [`.env.example`](./.env.example). Die echte `.env` ist git-ignoriert �
 
 ### Aktien-Analyse
 - Perplexity Finance API (Quotes, Financials, Segments, OHLCV, Earnings)
+- FMP Pro: volle ~10 Jahre OHLCV für Technical Chart (3M–10Y)
 
 ### BTC-Analyse (alle CORS-fähig, kein API-Key nötig)
 - `api.blockchain.info` — Historische Preise seit Genesis
