@@ -63,6 +63,10 @@ import {
   type Risk,
   type OHLCVPoint,
   type TechnicalIndicators,
+  type MADataPoint,
+  type MACDDataPoint,
+  type TradingSignal,
+  type TechnicalStatus,
   type MoatAssessment,
   type PorterForce,
   type CatalystReasoning,
@@ -155,6 +159,143 @@ function calculateBeta(stockReturns: number[], marketReturns: number[]): number 
   return varM === 0 ? 1 : cov / varM;
 }
 
+// ─── Full technical series (SMA / EMA / MACD / signals) ───────────────────────
+function smaSeries(data: number[], period: number): (number | undefined)[] {
+  const out: (number | undefined)[] = new Array(data.length);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    sum += data[i];
+    if (i >= period) sum -= data[i - period];
+    out[i] = i >= period - 1 ? sum / period : undefined;
+  }
+  return out;
+}
+
+function emaSeries(data: number[], period: number): (number | undefined)[] {
+  const out: (number | undefined)[] = new Array(data.length);
+  const k = 2 / (period + 1);
+  let ema: number | undefined;
+  for (let i = 0; i < data.length; i++) {
+    if (!isFinite(data[i])) { out[i] = undefined; continue; }
+    if (ema === undefined) {
+      if (i >= period - 1) {
+        let s = 0;
+        for (let j = i - period + 1; j <= i; j++) s += data[j];
+        ema = s / period;
+        out[i] = ema;
+      } else {
+        out[i] = undefined;
+      }
+    } else {
+      ema = data[i] * k + ema * (1 - k);
+      out[i] = ema;
+    }
+  }
+  return out;
+}
+
+function buildTechnicalIndicators(
+  ohlcvPoints: OHLCVPoint[],
+  currentPrice: number
+): TechnicalIndicators {
+  const n = ohlcvPoints.length;
+  const closes = ohlcvPoints.map(p => p.close);
+  const dates = ohlcvPoints.map(p => p.date);
+
+  const ma200 = smaSeries(closes, 200);
+  const ma100 = smaSeries(closes, 100);
+  const ma50  = smaSeries(closes, 50);
+  const ma20  = smaSeries(closes, 20);
+  const ema26 = emaSeries(closes, 26);
+  const ema12 = emaSeries(closes, 12);
+  const ema9  = emaSeries(closes, 9);
+
+  // MACD = EMA12 − EMA26; Signal = EMA9(MACD); Histogram = MACD − Signal
+  const macdRaw: number[] = closes.map((_, i) => {
+    const e12 = ema12[i], e26 = ema26[i];
+    return (e12 != null && e26 != null) ? e12 - e26 : NaN;
+  });
+  // Build clean series for EMA of MACD (skip leading NaNs)
+  const firstValid = macdRaw.findIndex(v => isFinite(v));
+  const macdForEma = macdRaw.map(v => isFinite(v) ? v : 0);
+  const signalSeries = emaSeries(macdForEma, 9);
+  // Re-null the signal before first valid MACD
+  for (let i = 0; i < firstValid + 8; i++) if (i < n) signalSeries[i] = undefined;
+
+  const maData: MADataPoint[] = dates.map((date, i) => ({
+    date,
+    close: closes[i],
+    ma200: ma200[i],
+    ma100: ma100[i],
+    ma50:  ma50[i],
+    ma20:  ma20[i],
+    ema26: ema26[i],
+    ema12: ema12[i],
+    ema9:  ema9[i],
+  }));
+
+  const macdData: MACDDataPoint[] = dates.map((date, i) => {
+    const m = isFinite(macdRaw[i]) ? macdRaw[i] : undefined;
+    const s = signalSeries[i];
+    return {
+      date,
+      macd: m,
+      signal: s,
+      histogram: (m != null && s != null) ? m - s : undefined,
+    };
+  });
+
+  // Signals: Golden/Death Cross + MACD zero-cross / signal-cross
+  const signals: TradingSignal[] = [];
+  for (let i = 1; i < n; i++) {
+    const cur50 = ma50[i], prev50 = ma50[i - 1];
+    const cur200 = ma200[i], prev200 = ma200[i - 1];
+    if (cur50 != null && cur200 != null && prev50 != null && prev200 != null) {
+      if (prev50 <= prev200 && cur50 > cur200) {
+        signals.push({ date: dates[i], type: "buy", reason: "Golden Cross (MA50 > MA200)", price: closes[i] });
+      } else if (prev50 >= prev200 && cur50 < cur200) {
+        signals.push({ date: dates[i], type: "sell", reason: "Death Cross (MA50 < MA200)", price: closes[i] });
+      }
+    }
+    const curM = macdData[i].macd, prevM = macdData[i - 1].macd;
+    const curS = macdData[i].signal, prevS = macdData[i - 1].signal;
+    if (curM != null && prevM != null && curS != null && prevS != null) {
+      if (prevM <= prevS && curM > curS) {
+        signals.push({ date: dates[i], type: "buy", reason: "Bullish MACD Cross", price: closes[i] });
+      } else if (prevM >= prevS && curM < curS) {
+        signals.push({ date: dates[i], type: "sell", reason: "Bearish MACD Cross", price: closes[i] });
+      }
+    }
+  }
+
+  // Current status (last valid values)
+  const last = n - 1;
+  const lastMA50 = ma50[last];
+  const lastMA200 = ma200[last];
+  const lastMACD = macdData[last]?.macd;
+  const lastSignal = macdData[last]?.signal;
+  const prevMACD = last > 0 ? macdData[last - 1]?.macd : undefined;
+
+  const priceAboveMA200 = lastMA200 != null ? currentPrice > lastMA200 : false;
+  const ma50AboveMA200 = (lastMA50 != null && lastMA200 != null) ? lastMA50 > lastMA200 : false;
+  const macdAboveZero = lastMACD != null ? lastMACD > 0 : false;
+  const macdRising = (lastMACD != null && prevMACD != null) ? lastMACD > prevMACD : false;
+
+  const currentStatus: TechnicalStatus = {
+    priceAboveMA200,
+    ma50AboveMA200,
+    macdAboveZero,
+    macdRising,
+    buySignal: priceAboveMA200 && ma50AboveMA200 && macdAboveZero && macdRising,
+    ma200Value: lastMA200,
+    ma50Value: lastMA50,
+    macdValue: lastMACD,
+    signalValue: lastSignal,
+  };
+
+  return { maData, macdData, signals, currentStatus };
+}
+
 // ─── Moat scoring ─────────────────────────────────────────────────────────────
 function scoreMoat(
   grossMargin: number,
@@ -196,11 +337,11 @@ function scoreMoat(
     { force: "Rivalität unter Wettbewerbern", rating: hasBrandMoat || hasNetworkMoat ? "Niedrig" : "Hoch", score: hasBrandMoat || hasNetworkMoat ? 3 : 7 },
     { force: "Bedrohung durch Neueinsteiger", rating: hasSwitchingMoat || hasPatentMoat ? "Niedrig" : "Mittel", score: hasSwitchingMoat || hasPatentMoat ? 2 : 5 },
     { force: "Verhandlungsmacht Lieferanten", rating: hasCostMoat ? "Niedrig" : "Mittel", score: hasCostMoat ? 3 : 5 },
-    { force: "Verhandlungsmacht Kunden", rating: hasSwitchingMoat ? "Niedrig" : "Mittel", score: hasSwitchingMoat || hasPatentMoat ? 2 : 5 },
+    { force: "Verhandlungsmacht Kunden", rating: hasSwitchingMoat ? "Niedrig" : "Mittel", score: hasSwitchingMoat ? 2 : 5 },
     { force: "Bedrohung durch Substitute", rating: hasNetworkMoat ? "Niedrig" : "Mittel", score: hasNetworkMoat ? 2 : 5 }
   );
 
-  return { moatStrength, moatScore: Math.min(score, 10), sources, porterForces };
+  return { moatStrength, moatScore: Math.min(score, 10), sources, porterForces } as any;
 }
 
 // ─── Main registration ────────────────────────────────────────────────────────
@@ -300,7 +441,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const forwardPE = parseNumber(String(ratioLatest.priceEarningsRatioTTM ?? ratioLatest.forwardPE ?? 0));
       const pbRatio = parseNumber(String(ratioLatest.priceToBookRatio ?? 0));
       const evEbitda = parseNumber(String(ratioLatest.enterpriseValueMultiple ?? ratioLatest.evToEbitda ?? 0));
-      const dividendYield = parseNumber(String(quote?.dividendYield ?? ratioLatest.dividendYield ?? 0)) * (quote?.dividendYield > 1 ? 0.01 : 1); // normalize if pct
+      const dividendYield = parseNumber(String(quote?.dividendYield ?? ratioLatest.dividendYield ?? 0)) * (quote?.dividendYield > 1 ? 0.01 : 1);
       const returnOnEquity = parseNumber(String(ratioLatest.returnOnEquity ?? 0));
       const beta = parseNumber(String(profile?.beta ?? quote?.beta ?? 1));
       const sharesOutstanding = parseNumber(String(profile?.sharesOutstanding ?? quote?.sharesOutstanding ?? 0));
@@ -321,27 +462,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         console.log(`[ANALYZE] FX: ${reportedCurrency} → USD = ${fxRate}`);
       }
 
-      // ── 3. OHLCV → technical indicators ──
+      // ── 3. OHLCV → full technical indicators (10Y) ──
       let ohlcvRows: any[] = Array.isArray(ohlcv) ? ohlcv : (ohlcv as any)?.historical ?? [];
       ohlcvRows = [...ohlcvRows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-      const closes = ohlcvRows.map((r: any) => parseFloat(String(r.close))).filter((v) => isFinite(v) && v > 0);
-      const volumes = ohlcvRows.map((r: any) => parseFloat(String(r.volume ?? 0)));
-
-      const rsi14 = calculateRSI(closes, 14);
-      const ma50 = calculateMA(closes, 50);
-      const ma200 = calculateMA(closes, 200);
-      const deviationMA200 = ma200 > 0 ? ((price - ma200) / ma200) * 100 : 0;
-      const avgVolume30d = volumes.length > 30 ? volumes.slice(-30).reduce((a, b) => a + b, 0) / 30 : 0;
-
-      // Approximate annual returns for beta
-      const annualReturns = closes.length > 252
-        ? closes.slice(-252).map((c, i, arr) => i === 0 ? 0 : (c - arr[i - 1]) / arr[i - 1]).slice(1)
-        : [];
 
       // Keep up to ~10Y of trading days (252*10 ≈ 2520 + buffer).
-      // Previous hard-cap of 504 (~2Y) prevented the client TechnicalChart 10Y
-      // timeframe from showing the full history that getFmpFallbackData already
-      // requests (fromDate = now - 10Y). Client still slices per selected range.
+      // FMP Pro delivers the full range; previous hard-cap of 504 (~2Y) blocked the client 10Y view.
       const OHLCV_MAX_POINTS = 2600;
       const ohlcvPoints: OHLCVPoint[] = ohlcvRows.slice(-OHLCV_MAX_POINTS).map((r: any) => ({
         date: String(r.date ?? "").slice(0, 10),
@@ -350,19 +476,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         low: parseFloat(String(r.low)) || 0,
         close: parseFloat(String(r.close)) || 0,
         volume: parseFloat(String(r.volume ?? 0)) || 0,
-      }));
+      })).filter(p => p.close > 0 && p.date.length === 10);
 
-      const technicalIndicators: TechnicalIndicators = {
-        rsi14: Math.round(rsi14 * 10) / 10,
-        ma50: Math.round(ma50 * 100) / 100,
-        ma200: Math.round(ma200 * 100) / 100,
-        deviationFromMA200: Math.round(deviationMA200 * 10) / 10,
-        avgVolume30d: Math.round(avgVolume30d),
-        yearHigh,
-        yearLow,
-        priceVsYearHigh: yearHigh > 0 ? Math.round(((price - yearHigh) / yearHigh) * 1000) / 10 : 0,
-        priceVsYearLow: yearLow > 0 ? Math.round(((price - yearLow) / yearLow) * 1000) / 10 : 0,
-      };
+      const technicalIndicators: TechnicalIndicators = buildTechnicalIndicators(ohlcvPoints, price);
+
+      console.log(`[ANALYZE] Technical: ${ohlcvPoints.length} OHLCV pts, ${technicalIndicators.signals.length} signals, buySignal=${technicalIndicators.currentStatus.buySignal}`);
 
       // ── 4. Analyst targets ──
       const analystPTMedian = parseNumber(String(analyst.priceTarget?.targetMedian ?? analyst.priceTarget?.priceTarget ?? 0));
@@ -376,7 +494,6 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // EPS estimates
       const estCurrent = analyst.estimates?.[0] ?? {};
       const epsGrowthFwd = parseNumber(String(estCurrent.epsAvg ?? estCurrent.eps ?? 0));
-      const revenueEstimateNext = parseNumber(String(estCurrent.revenueAvg ?? 0));
 
       // ── 5. Sector + defaults ──
       const effectiveSector = getEffectiveSector(sector, industry, description);
@@ -461,7 +578,6 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           effectiveSector, industry, revenueGrowth, fcfMargin, description,
           revenue, price, sharesOutstanding, netDebt, fcfTTM, wacc, revenueGrowth
         );
-        // Attach context strings if missing
         for (const c of catalysts) {
           if (!c.context) {
             c.context = generateCatalystContext(c.name, effectiveSector, industry, description, revenueGrowth, fcfMargin, revenue);
@@ -471,7 +587,6 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           c.nettoUpside = +(c.bruttoUpside * (1 - epr / 100)).toFixed(2);
           c.gb = +(c.pos / 100 * c.nettoUpside).toFixed(2);
         }
-        // Match news to template catalysts
         if (newsItems.length > 0) {
           try { matchNewsToCatalysts(newsItems, catalysts); } catch {}
         }
@@ -501,12 +616,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         }
       }
 
-      // Fallback: sector template risks
       if (risks.length < 3) {
         risks = generateRisks(effectiveSector, industry, beta, govExposure, description);
       }
 
-      // Enrich risks with LLM explanations
       if (useLLM && risks.length > 0) {
         try {
           const enriched = await generateRiskExplanations({
@@ -557,7 +670,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       let porterForces: any[] | null = null;
       if (useLLM) {
-        const [llmPorter, llmPestel] = await Promise.allSettled([
+        const [llmPorter] = await Promise.allSettled([
           generatePorterFiveForces({
             ticker: upperTicker, companyName, sector: effectiveSector, industry, description,
             revenue, revenueGrowth, fcfMargin, grossMargin, marketCap,
@@ -565,20 +678,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             recentNewsHeadlines: newsHeadlines.slice(0, 5),
             keyProjects: [],
           }),
-          generateLLMPESTEL({
-            ticker: upperTicker, companyName, sector: effectiveSector, industry, description,
-            revenue, revenueGrowth, fcfMargin, governmentExposure: govExposure, beta,
-            topCatalysts: catalysts.slice(0, 3).map((c) => ({ name: c.name, context: c.context ?? "" })),
-            capexContext: capexContext ? { sector: capexContext.sector, programmes: capexContext.programmes, rationale: capexContext.beneficiaryEntry?.rationale ?? "" } : null,
-            recentNewsHeadlines: newsHeadlines.slice(0, 5),
-            keyProjects: [],
-          }),
         ]);
         if (llmPorter.status === "fulfilled" && llmPorter.value) porterForces = llmPorter.value;
-        // LLM PESTEL has different shape — map to PESTELAnalysis if needed
       }
 
-      // Update moat porterForces from LLM if available
       if (porterForces && porterForces.length >= 4) {
         moatAssessment.porterForces = porterForces.map((f: any) => ({
           force: String(f.force),
@@ -633,7 +736,6 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           : 0;
 
       // ── 19. Macro correlations ──
-      // isBank: used to differentiate interest-rate correlation direction
       const isBank =
         effectiveSector.toLowerCase().includes("financ") ||
         industry.toLowerCase().includes("bank") ||
@@ -665,7 +767,6 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         beta,
         yearHigh,
         yearLow,
-        // Financials
         revenue,
         revenueGrowth,
         netIncome,
@@ -678,12 +779,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         netDebt,
         totalEquity,
         totalAssets,
-        // Margins
         grossMargin,
         operatingMargin,
         netMargin,
         fcfMargin,
-        // Valuation
         pe,
         forwardPE,
         pbRatio,
@@ -697,14 +796,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         upsidePotential,
         impliedGStar: impliedGStar ?? 0,
         lynchClass,
-        // Analyst
         analystPTMedian,
         analystPTHigh,
         analystPTLow,
         analystCount,
         analystConsensus,
         governmentExposure: govExposure,
-        // Analysis
         catalysts,
         risks,
         tamAnalysis,
@@ -722,12 +819,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         llmModelUsed,
         dataSource: "fmp" as const,
         analysisTimestamp: new Date().toISOString(),
-      };
+      } as any;
 
-      // ── Cache result ──
       analysisCache.set(cacheKey, { result: analysis, timestamp: Date.now(), usedLLM: useLLM });
 
-      console.log(`[ANALYZE] Done for ${upperTicker} (LLM=${useLLM}, cats=${catalysts.length}, risks=${risks.length})`);
+      console.log(`[ANALYZE] Done for ${upperTicker} (LLM=${useLLM}, cats=${catalysts.length}, risks=${risks.length}, ohlcv=${ohlcvPoints.length})`);
       return res.json(analysis);
     } catch (err: any) {
       console.error(`[/api/analyze] Unhandled error: ${err?.message?.substring(0, 300)}`);
