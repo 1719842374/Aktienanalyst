@@ -42,6 +42,12 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+// apiRequest returns the raw Response so callers can inspect res.ok, res.status,
+// and parse the JSON body themselves. This is critical for /api/analyze which
+// returns structured error bodies (errorCode: RATE_LIMITED, fmpBudget, ...) on
+// 429 / 503 that Dashboard.tsx needs to read. Do NOT re-add throwIfResNotOk
+// here — that would collapse every non-2xx response into a plain Error string,
+// hiding the structured payload the Dashboard's error UI depends on.
 export async function apiRequest(
   method: string,
   url: string,
@@ -58,7 +64,6 @@ export async function apiRequest(
       signal: controller.signal,
     });
     clearTimeout(timer);
-    await throwIfResNotOk(res);
     return res;
   } catch (err: any) {
     clearTimeout(timer);
@@ -68,6 +73,14 @@ export async function apiRequest(
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
+// React-Query default fetcher. Handles two edge cases the SPA hosting layer
+// creates on Render / pplx.app:
+//   1. Missing backend route → the SPA index.html catch-all responds 200 with
+//      Content-Type text/html. Blindly calling res.json() would throw a
+//      SyntaxError with a huge stack that gets swallowed by React-Query and
+//      leaves the page in a broken "error" state. We detect HTML and treat it
+//      as "no data" (return null) instead.
+//   2. 401 with returnNull behavior stays as before.
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
@@ -79,7 +92,22 @@ export const getQueryFn: <T>(options: {
       return null;
     }
 
-    await throwIfResNotOk(res);
+    if (!res.ok) {
+      const text = (await res.text()) || res.statusText;
+      throw new Error(`${res.status}: ${text}`);
+    }
+
+    // Guard against SPA index.html leaking through for a non-existent API path.
+    // Content-Type may be missing on some proxies — fall back to a body sniff.
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      const body = await res.text();
+      if (body.trim().startsWith("<")) {
+        // HTML leaked through — endpoint doesn't exist. Treat as no data.
+        return null as any;
+      }
+      try { return JSON.parse(body); } catch { return null as any; }
+    }
     return await res.json();
   };
 

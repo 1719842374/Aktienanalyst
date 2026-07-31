@@ -6,6 +6,7 @@ import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "@/l
 import { TickerSearch } from "@/components/TickerSearch";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
+import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
 import { Section1 } from "@/components/sections/Section1";
 import { Section2 } from "@/components/sections/Section2";
 import { FinancialStatements } from "@/components/sections/FinancialStatements";
@@ -491,29 +492,33 @@ export default function Dashboard() {
                   {retryInfo && <span className="text-amber-400">Versuch {retryInfo.attempt}/{retryInfo.maxRetries}</span>}
                 </div>
               )}
-              <div ref={setSectionRef(1)}><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} /></div>
-              <div ref={setSectionRef(2)}><Section2 data={data} /></div>
-              <FinancialStatements data={data} />
-              <div ref={setSectionRef(3)}><Section3 data={data} /></div>
-              <div ref={setSectionRef(4)}><Section4 data={data} /></div>
-              <div ref={setSectionRef(5)}><Section5 data={data} /></div>
-              <div ref={setSectionRef(6)}><Section6 data={data} /></div>
-              <div ref={setSectionRef(7)}><Section7 data={data} /></div>
-              <div ref={setSectionRef(8)}><Section8 data={data} useLLM={useLLM} /></div>
-              <div ref={setSectionRef(9)}><Section9 data={data} /></div>
-              <div ref={setSectionRef(10)}><TechnicalChart data={data} /></div>
-              <div ref={setSectionRef(11)}><MoatPorterSection data={data} /></div>
-              <div ref={setSectionRef(12)}><PestelSection data={data} /></div>
-              <div ref={setSectionRef(13)}><MacroCorrelationsSection data={data} /></div>
-              <div ref={setSectionRef(14)}><ReverseDCFSection data={data} /></div>
-              <div ref={setSectionRef(15)}><CatalystsSection
+              {/* Each section is wrapped in a per-section error boundary so a
+                  single component crash (e.g. .slice on undefined) can no longer
+                  unmount the entire dashboard and leave the user with a black
+                  screen. Without this, one bad field → whole app unmounts. */}
+              <div ref={setSectionRef(1)}><SectionErrorBoundary sectionId={1} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Investmentthese"><Section2 data={data} /></SectionErrorBoundary></div>
+              <SectionErrorBoundary sectionId="FS" sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary>
+              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Zyklusanalyse"><Section3 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Bewertung"><Section4 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="DCF-Modell"><Section5 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="CRV"><Section6 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="Rel. Bewertung"><Section7 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="Risikoinversion"><Section8 data={data} useLLM={useLLM} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="Moat / Porter"><MoatPorterSection data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="PESTEL"><PestelSection data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(13)}><SectionErrorBoundary sectionId={13} sectionLabel="Makro-Korr."><MacroCorrelationsSection data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="Reverse DCF"><ReverseDCFSection data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(15)}><SectionErrorBoundary sectionId={15} sectionLabel="Katalysatoren"><CatalystsSection
                 data={data}
                 onCatalystsEnriched={(enriched) => {
                   setData(prev => prev ? { ...prev, catalysts: enriched } : prev);
                 }}
-              /></div>
-              <div ref={setSectionRef(16)}><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></div>
-              <div ref={setSectionRef(17)}><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></div>
+              /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(16)}><SectionErrorBoundary sectionId={16} sectionLabel="Monte Carlo"><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(17)}><SectionErrorBoundary sectionId={17} sectionLabel="Zusammenfassung"><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></SectionErrorBoundary></div>
               <div className="pb-8" />
             </div>
           ) : (

@@ -913,6 +913,36 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Moat rating — legacy string form used by Section2 / Summary.
       const moatRating = moatAssessment.moatStrength ?? "None";
 
+      // Section 11 (MoatPorterSection) reads moatAssessment.overallRating,
+      // moatSources[], porterForces[].name/.reasoning, businessModelStrength,
+      // sustainabilityRating. scoreMoat() returns { moatStrength, moatScore,
+      // sources, porterForces:{force,rating:Niedrig|Mittel|Hoch,score} }, so we
+      // remap into the shared/schema.ts MoatAssessment shape here. If we don't,
+      // moat.moatSources.slice() and moat.overallRating.includes() throw and
+      // React unmounts the whole app (no error boundary above Section 11).
+      const _ratingMap: Record<string, "Low" | "Medium" | "High"> = {
+        Niedrig: "Low", Mittel: "Medium", Hoch: "High",
+        Low: "Low", Medium: "Medium", High: "High",
+      };
+      const moatAssessmentOut = {
+        overallRating: moatAssessment.moatStrength ?? "None",
+        moatSources: Array.isArray((moatAssessment as any).sources) ? (moatAssessment as any).sources : [],
+        porterForces: Array.isArray(moatAssessment.porterForces)
+          ? moatAssessment.porterForces.map((f: any) => ({
+              name: f.name ?? f.force ?? "",
+              rating: _ratingMap[String(f.rating)] ?? "Medium",
+              score: Number(f.score) || 0,
+              reasoning: String(f.reasoning ?? ""),
+            }))
+          : [],
+        businessModelStrength: moatRating === "Wide" ? "Starkes, differenziertes Geschäftsmodell"
+          : moatRating === "Narrow" ? "Solides Geschäftsmodell mit begrenzten Moat-Quellen"
+          : "Kompetitives Geschäftsmodell ohne strukturellen Vorteil",
+        sustainabilityRating: moatRating === "Wide" ? "★★★★★"
+          : moatRating === "Narrow" ? "★★★☆☆"
+          : "★★☆☆☆",
+      };
+
       // Peer comparison must have the {subject, peers, peerAvg, sectorMedian, ...}
       // shape (schema.ts:PeerComparison). Add the sectorMedian field so Section7
       // can render Damodaran-style medians alongside peer-average.
@@ -1020,14 +1050,73 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         ohlcvData: ohlcvPoints,
         technicalIndicators,
 
-        // Section 11
-        moatAssessment,
+        // Section 11 — use schema-conformed moatAssessment (see build above).
+        moatAssessment: moatAssessmentOut,
 
-        // Section 12
-        pestelAnalysis,
+        // Section 12 — shared/schema.ts:PESTELAnalysis expects a very different
+        // shape than generatePESTELAnalysis produces. Remap here so PestelSection
+        // doesn't crash on .icon / .factors[].name / .severity being undefined.
+        pestelAnalysis: {
+          factors: Array.isArray(pestelAnalysis?.factors)
+            ? pestelAnalysis.factors.map((f: any) => {
+                const categoryDEMap: Record<string, string> = {
+                  Political: "Politisch", Economic: "Ökonomisch", Social: "Sozial",
+                  Technological: "Technologisch", Environmental: "Ökologisch", Legal: "Rechtlich",
+                };
+                const items = Array.isArray(f.items) ? f.items : (Array.isArray(f.factors) ? f.factors : []);
+                return {
+                  category: f.category,
+                  categoryDE: categoryDEMap[f.category] ?? f.category,
+                  icon: f.icon ?? f.emoji ?? "📊",
+                  factors: items.map((it: any) => ({
+                    name: String(it.name ?? it.item ?? ""),
+                    impact: it.impact ?? "Neutral",
+                    stockCorrelation: it.stockCorrelation ?? "Neutral",
+                    stockCorrelationNote: String(it.stockCorrelationNote ?? ""),
+                    severity: it.severity ?? (it.impact === "Negativ" ? "Hoch" : it.impact === "Positiv" ? "Niedrig" : "Mittel"),
+                    description: String(it.description ?? it.stockCorrelationNote ?? ""),
+                  })),
+                  regionalOutlook: String(f.regionalOutlook ?? `${f.category}-Faktoren für ${pestelAnalysis?.region ?? "Global"}`),
+                  exposureRating: (f.exposureRating ?? (f.overallImpact === "Negativ" ? "Hoch" : f.overallImpact === "Positiv" ? "Niedrig" : "Mittel")) as "Hoch" | "Mittel" | "Niedrig",
+                };
+              })
+            : [],
+          overallExposure: (pestelAnalysis?.overallSentiment === "Negativ" ? "Hoch"
+            : pestelAnalysis?.overallSentiment === "Positiv" ? "Niedrig" : "Mittel") as "Hoch" | "Mittel" | "Niedrig",
+          macroSummary: `PESTEL-Gesamtbild für ${pestelAnalysis?.region ?? "Global"}: ${pestelAnalysis?.overallSentiment ?? "Neutral"}. ${(pestelAnalysis?.factors ?? []).length} Kategorien analysiert.`,
+          geopoliticalScore: pestelAnalysis?.overallSentiment === "Negativ" ? 7 : pestelAnalysis?.overallSentiment === "Positiv" ? 3 : 5,
+          interestRateOutlook: `WACC-Umgebung: ${sectorDefaults.waccScenarios.avg}% (Sektor-typisch).`,
+          capitalCostImpact: `Ein Zinsanstieg von 100bps hebt die Kapitalkosten um ~${(sectorDefaults.waccScenarios.avg - sectorDefaults.waccScenarios.opt).toFixed(1)}pp; Bewertungs-Effekt sektorabhängig.`,
+        },
 
-        // Section 13
-        macroCorrelations: { correlations: macroCorrelations, overallMacroSensitivity: "Mittel", keyInsight: "" },
+        // Section 13 — shared/schema.ts:MacroCorrelation expects {name, category,
+        // correlation:"Positiv|Neutral|Negativ|Invers", strength:"Stark|Moderat|Schwach",
+        // mechanism, currentLevel?}. Our upstream list uses {factor, correlation:number,
+        // description}. Remap so the section renders instead of crashing on .name.
+        macroCorrelations: {
+          correlations: macroCorrelations.map((c: any) => {
+            const absCorr = Math.abs(Number(c.correlation) || 0);
+            const catMap: Record<string, "Index" | "Commodity" | "Macro-Indikator" | "Währung" | "Edelmetall" | "Industriemetall" | "Crypto"> = {
+              "Fed Funds Rate": "Macro-Indikator",
+              "USD Stärke": "Währung",
+              "Ölpreis (WTI)": "Commodity",
+              "VIX (Volatilität)": "Macro-Indikator",
+            };
+            return {
+              name: String(c.factor ?? c.name ?? ""),
+              category: catMap[c.factor] ?? "Macro-Indikator",
+              correlation: (Number(c.correlation) > 0.2 ? "Positiv"
+                : Number(c.correlation) < -0.2 ? "Negativ"
+                : Number(c.correlation) < -0.5 ? "Invers"
+                : "Neutral") as "Positiv" | "Neutral" | "Negativ" | "Invers",
+              strength: (absCorr > 0.5 ? "Stark" : absCorr > 0.25 ? "Moderat" : "Schwach") as "Stark" | "Moderat" | "Schwach",
+              mechanism: String(c.description ?? c.mechanism ?? ""),
+              currentLevel: c.currentLevel,
+            };
+          }),
+          overallMacroSensitivity: (beta > 1.3 ? "Hoch" : beta < 0.7 ? "Niedrig" : "Mittel") as "Hoch" | "Mittel" | "Niedrig",
+          keyInsight: `Beta ${beta.toFixed(2)} — ${beta > 1.3 ? "höhere als der Markt" : beta < 0.7 ? "geringere als der Markt" : "marktnahe"} Konjunktursensitivität.`,
+        },
 
         // Section 15
         newsItems,

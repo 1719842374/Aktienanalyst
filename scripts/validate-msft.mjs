@@ -61,6 +61,10 @@ function validateSchema(a) {
     fieldExists(a, "sector") && fieldExists(a, "moatRating"),
     `sector=${a.sector} moat=${a.moatRating}`));
 
+  // 11 uses overallRating now, not moatStrength.
+  // Section 11's frontend fields: overallRating, moatSources[], porterForces[].name,
+  // businessModelStrength, sustainabilityRating.
+
   // 3. Zyklusanalyse
   results.push(check("Section 3 — Zyklusanalyse",
     fieldExists(a, "cycleClassification") && fieldExists(a, "politicalCycle") && fieldExists(a, "sectorProfile"),
@@ -106,9 +110,12 @@ function validateSchema(a) {
 
   // 11. Moat / Porter
   const porterLen = a.moatAssessment?.porterForces?.length ?? 0;
+  const firstPorter = a.moatAssessment?.porterForces?.[0] ?? {};
   results.push(check("Section 11 — Moat/Porter",
-    fieldExists(a, "moatAssessment.moatStrength") && porterLen >= 4,
-    `moat=${a.moatAssessment?.moatStrength} porter=${porterLen}`));
+    fieldExists(a, "moatAssessment.overallRating") &&
+    Array.isArray(a.moatAssessment?.moatSources) &&
+    porterLen >= 4 && fieldExists(firstPorter, "name"),
+    `moat=${a.moatAssessment?.overallRating} sources=${a.moatAssessment?.moatSources?.length} porter=${porterLen} first=${firstPorter.name}`));
 
   // 12. PESTEL
   const pestelLen = a.pestelAnalysis?.factors?.length ?? 0;
