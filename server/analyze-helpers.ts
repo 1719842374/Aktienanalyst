@@ -13,70 +13,117 @@ import {
 } from "./fmp";
 
 // ============================================================
-// FMP Budget Tracker
+// FMP Budget Tracker (single source of truth)
+// ------------------------------------------------------------
+// FMP is the only data provider now. This tracker is called by fmp.ts on every
+// outbound HTTP call so budget accounting is authoritative regardless of caller.
+//
+// ENV overrides (documented in fmp.ts, mirrored here for the tracker itself):
+//   FMP_DAILY_LIMIT        default 750  — daily plan cap
+//   FMP_WARN_THRESHOLD     default 600  — [FMP-BUDGET] WARN when crossed
+//   FMP_CALLS_PER_ANALYSIS default 13   — minimum budget required per analysis
 // ============================================================
-const FMP_DAILY_LIMIT = 750;
-const FMP_WARN_THRESHOLD = 600;
+const FMP_DAILY_LIMIT = Number(process.env.FMP_DAILY_LIMIT ?? 750);
+const FMP_WARN_THRESHOLD = Number(process.env.FMP_WARN_THRESHOLD ?? 600);
+const FMP_CALLS_PER_ANALYSIS = Number(process.env.FMP_CALLS_PER_ANALYSIS ?? 13);
+
 let fmpCallsToday = 0;
 let fmpCallsDate = new Date().toDateString();
+let fmpWarnedToday = false;
+
+function rolloverIfNewDay(): void {
+  const today = new Date().toDateString();
+  if (today !== fmpCallsDate) {
+    fmpCallsToday = 0;
+    fmpCallsDate = today;
+    fmpWarnedToday = false;
+  }
+}
 
 export function trackFmpCall(count = 1): number {
-  const today = new Date().toDateString();
-  if (today !== fmpCallsDate) { fmpCallsToday = 0; fmpCallsDate = today; }
+  rolloverIfNewDay();
   fmpCallsToday += count;
-  if (fmpCallsToday === FMP_WARN_THRESHOLD)
-    console.warn(`[FMP-BUDGET] ⚠ ${fmpCallsToday}/${FMP_DAILY_LIMIT} Calls — noch ${FMP_DAILY_LIMIT - fmpCallsToday} (~${Math.floor((FMP_DAILY_LIMIT - fmpCallsToday) / 13)} Analysen)`);
+  if (!fmpWarnedToday && fmpCallsToday >= FMP_WARN_THRESHOLD) {
+    fmpWarnedToday = true;
+    const remaining = Math.max(0, FMP_DAILY_LIMIT - fmpCallsToday);
+    console.warn(
+      `[FMP-BUDGET] ⚠ threshold crossed: today=${fmpCallsToday} limit=${FMP_DAILY_LIMIT} remaining=${remaining} analyses~${Math.floor(remaining / FMP_CALLS_PER_ANALYSIS)}`
+    );
+  }
   return fmpCallsToday;
 }
 
 export function getFmpBudgetStatus() {
-  const today = new Date().toDateString();
-  if (today !== fmpCallsDate) { fmpCallsToday = 0; fmpCallsDate = today; }
-  const remaining = FMP_DAILY_LIMIT - fmpCallsToday;
-  return { ok: remaining > 0, today: fmpCallsToday, limit: FMP_DAILY_LIMIT, remaining, analyses: Math.floor(remaining / 13) };
+  rolloverIfNewDay();
+  const remaining = Math.max(0, FMP_DAILY_LIMIT - fmpCallsToday);
+  return {
+    ok: remaining >= FMP_CALLS_PER_ANALYSIS,
+    today: fmpCallsToday,
+    limit: FMP_DAILY_LIMIT,
+    remaining,
+    analyses: Math.floor(remaining / FMP_CALLS_PER_ANALYSIS),
+    callsPerAnalysis: FMP_CALLS_PER_ANALYSIS,
+    warnThreshold: FMP_WARN_THRESHOLD,
+  };
+}
+
+// True when running one more full analysis would exhaust the daily budget.
+// Consumed by /api/analyze to return a clean HTTP 429 RATE_LIMITED instead of
+// silently failing on the last FMP call mid-run.
+export function isFmpBudgetLow(requiredCalls = FMP_CALLS_PER_ANALYSIS): boolean {
+  rolloverIfNewDay();
+  return (FMP_DAILY_LIMIT - fmpCallsToday) < requiredCalls;
+}
+
+// Manual reset for admin/debug — preserved from the old quota module because
+// operators occasionally reset after buying additional plan capacity mid-day.
+export function resetFmpBudget(): void {
+  fmpCallsToday = 0;
+  fmpCallsDate = new Date().toDateString();
+  fmpWarnedToday = false;
+  console.log(`[FMP-BUDGET] manual reset`);
 }
 
 // ============================================================
-// Daily Quota Guard (legacy Perplexity Finance connector stub)
+// Legacy shims (kept for existing import call-sites) — all Perplexity Finance
+// quota logic has been removed. These functions now delegate to the FMP budget
+// tracker so any leftover call-site behaves consistently instead of tracking a
+// separate 18/day counter that no longer maps to reality.
 // ============================================================
-const DAILY_FINANCE_LIMIT = 18;
-let _quotaDate = new Date().toDateString();
-let _quotaCount = 0;
-let quotaExceededAt: number | null = null;
-const QUOTA_RESET_MS = 60 * 60 * 1000;
-
-export function markQuotaExceeded(): void { quotaExceededAt = Date.now(); }
-export function markQuotaReset(): void { if (quotaExceededAt !== null) { console.log('[Quota] Manual reset'); quotaExceededAt = null; } }
-
-export function incrementQuota() {
-  const today = new Date().toDateString();
-  if (today !== _quotaDate) { _quotaDate = today; _quotaCount = 0; }
-  _quotaCount++;
-  console.log(`[QUOTA] Finance analyses today: ${_quotaCount}/${DAILY_FINANCE_LIMIT}`);
+export function markQuotaExceeded(): void {
+  // No-op: FMP 429 responses are handled by fmp.ts retry/backoff.
 }
-
+export function markQuotaReset(): void {
+  resetFmpBudget();
+}
+export function incrementQuota(): void {
+  // No-op: trackFmpCall in fmp.ts is the authoritative counter.
+}
 export function isQuotaExceeded(): boolean {
-  if (quotaExceededAt && (Date.now() - quotaExceededAt) > QUOTA_RESET_MS) { quotaExceededAt = null; }
-  const today = new Date().toDateString();
-  if (today !== _quotaDate) { _quotaDate = today; _quotaCount = 0; }
-  if (_quotaCount >= DAILY_FINANCE_LIMIT) {
-    console.warn(`[QUOTA] Daily limit reached (${_quotaCount}/${DAILY_FINANCE_LIMIT})`);
-    return true;
-  }
-  return quotaExceededAt !== null;
+  return isFmpBudgetLow();
 }
-
 export function getQuotaStatus() {
-  if (quotaExceededAt && (Date.now() - quotaExceededAt) > QUOTA_RESET_MS) { quotaExceededAt = null; }
-  const today = new Date().toDateString();
-  if (today !== _quotaDate) { _quotaDate = today; _quotaCount = 0; }
-  return { today: _quotaCount, limit: DAILY_FINANCE_LIMIT, remaining: Math.max(0, DAILY_FINANCE_LIMIT - _quotaCount), quotaExceededAt, resetsAt: quotaExceededAt ? new Date(quotaExceededAt + QUOTA_RESET_MS).toISOString() : null };
+  // Return FMP budget in the old shape so /api/fmp-budget consumers don't break.
+  const b = getFmpBudgetStatus();
+  return {
+    today: b.today,
+    limit: b.limit,
+    remaining: b.remaining,
+    quotaExceededAt: null,
+    resetsAt: null,
+  };
 }
 
 // ============================================================
-// callFinanceToolThrottled — stub (external tool removed)
+// callFinanceToolThrottled — removed (external tool no longer used).
+// Kept as a no-op stub so any straggling import in call-sites we haven't
+// migrated yet returns null instead of throwing.
 // ============================================================
-export async function callFinanceToolThrottled(_toolName: string, _args: Record<string, any>, _opts: { spacingMs?: number; maxRetries?: number } = {}): Promise<any> {
+export async function callFinanceToolThrottled(
+  _toolName: string,
+  _args: Record<string, any>,
+  _opts: { spacingMs?: number; maxRetries?: number } = {}
+): Promise<null> {
   return null;
 }
 

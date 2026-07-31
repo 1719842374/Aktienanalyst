@@ -81,31 +81,23 @@ export default function Dashboard() {
 
   const [financeQuotaOk, setFinanceQuotaOk] = useState<boolean | null>(null);
 
-  // Cold-Start Warmup Strategy:
-  // Render free-plan containers spin down after 15 min inactivity and need up to 60s to restart.
-  // GitHub Actions keep-alive (.github/workflows/keep-alive.yml) pings /api/health every 5 min
-  // to prevent cold starts during normal usage hours.
-  // On page load we fire /api/health immediately to wake the server as early as possible.
-  // Retries up to 8x with backoff (3s,5s,8s,10s,10s,10s,10s) — covers ~56s warmup window.
-  // On success, also check /api/cache to confirm the finance connector is ready.
+  // Lightweight server readiness probe.
+  // FMP is the sole data provider now — no external-tool token refresh needed.
+  // Cold-start UI was removed with the migration; a normal network retry is enough.
   useEffect(() => {
     let cancelled = false;
 
     const ping = async (attempt = 1) => {
       try {
-        const res = await apiRequest("GET", "/api/health", undefined, 25000);
+        const res = await apiRequest("GET", "/api/health", undefined, 15000);
         if (!cancelled && (res.ok || res.status === 503)) {
           setServerReady(true);
-          // Fire a second lightweight request to ensure the finance connector
-          // token gets refreshed (the proxy injects it on every frontend request)
-          apiRequest("GET", "/api/cache", undefined, 10000).catch(() => {});
           setFinanceQuotaOk(true);
         }
       } catch {
-        if (!cancelled && attempt < 8) {
-          // Backoff: 3s, 5s, 8s, 10s, 10s, 10s, 10s — covers ~56s cold start
-          const delays = [3000, 5000, 8000, 10000, 10000, 10000, 10000];
-          setTimeout(() => ping(attempt + 1), delays[attempt - 1] ?? 10000);
+        if (!cancelled && attempt < 3) {
+          const delays = [2000, 4000];
+          setTimeout(() => ping(attempt + 1), delays[attempt - 1] ?? 4000);
         } else if (!cancelled) {
           setServerReady(false);
         }
@@ -239,9 +231,9 @@ export default function Dashboard() {
           }
           console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${msg.substring(0, 100)}`);
           if (attempt < maxRetries) {
-            // Cold-start backoff: 3s, 6s, 10s, 15s
-            const backoffs = [3000, 6000, 10000, 15000];
-            await new Promise(r => setTimeout(r, backoffs[attempt - 1] ?? 15000));
+            // Network retry backoff (short) — no cold-start warmup needed anymore.
+            const backoffs = [1000, 2000, 4000, 8000];
+            await new Promise(r => setTimeout(r, backoffs[attempt - 1] ?? 4000));
           }
         }
       }
@@ -574,16 +566,14 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
           {serverReady === null && (
             <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 animate-pulse" />
-              Server startet… (Render kann 15–60s brauchen bei Kaltstart)
+              Verbinde…
             </span>
           )}
           {serverReady === false && (
             <div className="text-[10px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-lg max-w-sm text-center">
-              <div className="font-medium mb-0.5">Server antwortet nicht — Kaltstart</div>
+              <div className="font-medium mb-0.5">Server nicht erreichbar</div>
               <div className="text-muted-foreground/70">
-                Render Free Plan schläft nach 15 Min Inaktivität ein.
-                Seite neu laden — der erste Request weckt den Server (20–60s).
-                Diagnose: <code className="bg-muted/50 px-1 py-0.5 rounded">aktienanalyst.onrender.com/api/health</code>
+                Bitte Seite neu laden. Falls das Problem bestehen bleibt, ist der Backend-Service kurz nicht verfügbar.
               </div>
             </div>
           )}
@@ -595,10 +585,9 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
           )}
           {financeQuotaOk === false && (
             <div className="text-[10px] text-amber-500/90 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-lg max-w-sm text-center">
-              <div className="font-medium mb-0.5">⏳ Finance-API Tageslimit erreicht</div>
+              <div className="font-medium mb-0.5">⏳ FMP-Tagesbudget aufgebraucht</div>
               <div className="text-muted-foreground/70">
-                Neue Analysen sind bis Mitternacht pausiert. Bereits analysierte Tickers in der
-                Watchlist funktionieren weiterhin aus dem Cache.
+                Neue Analysen sind bis Mitternacht pausiert. Bereits analysierte Ticker im Cache funktionieren weiterhin.
               </div>
             </div>
           )}
@@ -724,7 +713,7 @@ function LoadingScreen({ ticker, retryInfo }: { ticker: string; retryInfo?: { at
 }
 
 function ErrorScreen({ error }: { error: Error }) {
-  const isRateLimited = error.message.includes('RATE_LIMITED') || error.message.includes('Tagesquota') || error.message.includes('429');
+  const isRateLimited = error.message.includes('RATE_LIMITED') || error.message.includes('Tagesquota') || error.message.includes('Tagesbudget') || error.message.includes('429');
   const is404 = !isRateLimited && (error.message.includes('404') || error.message.includes('Not Found') || error.message.includes('Failed to fetch') || error.message.includes('NetworkError'));
   const isTimeout = !isRateLimited && !is404 && (error.message.includes('timeout') || error.message.includes('Timeout'));
 
@@ -743,7 +732,7 @@ function ErrorScreen({ error }: { error: Error }) {
 
         <div className="space-y-1">
           <div className="text-base font-semibold text-foreground">
-            {isRateLimited ? 'Finance-API Tageslimit erreicht' :
+            {isRateLimited ? 'FMP-Tagesbudget aufgebraucht' :
              is404 ? 'Server nicht erreichbar' :
              isTimeout ? 'Verbindungs-Timeout' :
              'Analyse fehlgeschlagen'}
@@ -756,19 +745,16 @@ function ErrorScreen({ error }: { error: Error }) {
         <div className="text-xs text-muted-foreground leading-relaxed bg-muted/20 rounded-lg p-4 text-left space-y-2">
           {isRateLimited ? (
             <>
-              <p>Der Finance-Connector ist nicht verfügbar — entweder Tages-Limit erreicht oder der Server-Token ist noch nicht initialisiert.</p>
-              <p><span className="text-foreground/80 font-medium">Lösung 1 (sofort):</span> Seite im Browser neu laden — der Token wird beim nächsten Seitenaufruf automatisch refreshed.</p>
-              <p><span className="text-foreground/80 font-medium">Lösung 2:</span> Bereits analysierte Tickers in der Watchlist (linke Sidebar) laden sofort aus dem Cache.</p>
-              <p><span className="text-foreground/80 font-medium">Falls Tageslimit:</span> Reset {resetTime}.</p>
+              <p>Das FMP-Tagesbudget (750 Calls / Tag im Pro-Plan) ist für heute aufgebraucht.</p>
+              <p><span className="text-foreground/80 font-medium">Lösung 1:</span> Bereits analysierte Ticker im Cache funktionieren sofort — die Sidebar zeigt die Watchlist.</p>
+              <p><span className="text-foreground/80 font-medium">Lösung 2:</span> Reset {resetTime}. Danach neue Analysen wieder möglich.</p>
             </>
           ) : is404 ? (
             <>
-              <p>Der Render-Server antwortet nicht. Mögliche Ursachen: Kaltstart nach Inaktivität, fehlende Umgebungsvariablen (<code className="bg-muted/50 px-1 py-0.5 rounded">FMP_API_KEY</code>, <code className="bg-muted/50 px-1 py-0.5 rounded">OPENROUTER_API_KEY</code>), oder der Dienst ist gestoppt.</p>
-              <p><span className="text-foreground/80 font-medium">Lösung 1:</span> Seite neu laden — Render wacht beim ersten Request auf (20–60s Wartezeit).</p>
-              <p><span className="text-foreground/80 font-medium">Diagnose:</span> <code className="bg-muted/50 px-1 py-0.5 rounded">aktienanalyst.onrender.com/api/health</code> im Browser öffnen. Antwort <code className="bg-muted/50 px-1 py-0.5 rounded">{"{ status: 'ok' }"}</code> = Server läuft.</p>
+              <p>Der Backend-Service antwortet nicht. Bitte Seite neu laden. Falls das Problem länger besteht, ist der Dienst kurz nicht verfügbar.</p>
             </>
           ) : isTimeout ? (
-            <p>Die Analyse hat zu lange gedauert. Bitte erneut versuchen — bei komplexen Tickers kann die erste Anfrage länger dauern.</p>
+            <p>Die Analyse hat zu lange gedauert. Bitte erneut versuchen.</p>
           ) : (
             <p className="font-mono text-[10px] break-all opacity-70">{error.message.substring(0, 300)}</p>
           )}

@@ -20,9 +20,13 @@ import type { Express } from "express";
 import { type Server } from "http";
 
 // ─── Re-exports ───────────────────────────────────────────────────────────────
+// New FMP budget API + legacy quota shims (all no-ops now, kept so crons/scripts
+// that still import isQuotaExceeded / incrementQuota don't break at load time).
 export {
   trackFmpCall,
   getFmpBudgetStatus,
+  isFmpBudgetLow,
+  resetFmpBudget,
   markQuotaExceeded,
   markQuotaReset,
   incrementQuota,

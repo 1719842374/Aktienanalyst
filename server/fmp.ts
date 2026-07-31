@@ -3,11 +3,44 @@
 // NOTE: /api/v3 ("legacy") is BLOCKED for subscriptions after 2025-08-31 and
 // returns "Legacy Endpoint : no longer supported". The Starter plan works only
 // against /stable. All endpoints below use /stable with ?symbol= query params.
+//
+// Rate limits and budget:
+//   FMP_DAILY_LIMIT       (default 750)   — daily plan cap; every call is tracked.
+//   FMP_WARN_THRESHOLD    (default 600)   — WARN log fires once when crossed.
+//   FMP_CALLS_PER_ANALYSIS(default 13)    — budget reserved per /api/analyze run.
+//   FMP_MIN_INTERVAL_MS   (default 250)   — min spacing between outbound FMP calls.
+//   FMP_MAX_RETRIES       (default 2)     — 429/5xx retries with exponential backoff.
+//
+// trackFmpCall / getFmpBudgetStatus live in analyze-helpers.ts (single tracker
+// re-used across the app). fmpFetch below calls trackFmpCall on every request
+// so budget accounting is authoritative, not sprinkled call-site by call-site.
+
+import { trackFmpCall, isFmpBudgetLow } from "./analyze-helpers";
 
 const FMP_BASE = "https://financialmodelingprep.com/stable";
 
+export const FMP_CONFIG = {
+  dailyLimit: Number(process.env.FMP_DAILY_LIMIT ?? 750),
+  warnThreshold: Number(process.env.FMP_WARN_THRESHOLD ?? 600),
+  callsPerAnalysis: Number(process.env.FMP_CALLS_PER_ANALYSIS ?? 13),
+  minIntervalMs: Number(process.env.FMP_MIN_INTERVAL_MS ?? 250),
+  maxRetries: Number(process.env.FMP_MAX_RETRIES ?? 2),
+};
+
 function getApiKey(): string {
   return process.env.FMP_API_KEY || "";
+}
+
+// Simple in-process serialiser: guarantees FMP_MIN_INTERVAL_MS between outbound
+// requests to avoid tripping the plan's burst limit. Parallel callers queue on
+// the shared `lastCall` timestamp; work still runs in parallel over the wire,
+// spaced by minInterval.
+let _lastFmpCallAt = 0;
+async function spaceOutgoingCall(): Promise<void> {
+  const now = Date.now();
+  const wait = _lastFmpCallAt + FMP_CONFIG.minIntervalMs - now;
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  _lastFmpCallAt = Date.now();
 }
 
 async function fmpFetch(path: string, params: Record<string, string> = {}): Promise<any> {
@@ -17,12 +50,46 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
   url.searchParams.set("apikey", key);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
-  const resp = await fetch(url.toString(), {
-    signal: AbortSignal.timeout(15000),
-    headers: { "User-Agent": "StockAnalystPro/1.0" },
-  });
-  if (!resp.ok) throw new Error(`FMP ${resp.status}: ${path}`);
-  return resp.json();
+  let lastErr: any;
+  for (let attempt = 0; attempt <= FMP_CONFIG.maxRetries; attempt++) {
+    await spaceOutgoingCall();
+    // Track BEFORE the request — a rate-limited call still consumed your quota upstream.
+    trackFmpCall(1);
+    try {
+      const resp = await fetch(url.toString(), {
+        signal: AbortSignal.timeout(15000),
+        headers: { "User-Agent": "StockAnalystPro/1.0" },
+      });
+      if (resp.status === 429 || resp.status === 503) {
+        // Exponential backoff: 500ms, 1000ms, 2000ms
+        const wait = 500 * Math.pow(2, attempt);
+        console.warn(`[FMP] ${resp.status} on ${path} — retry ${attempt + 1}/${FMP_CONFIG.maxRetries} in ${wait}ms`);
+        if (attempt < FMP_CONFIG.maxRetries) {
+          await new Promise((r) => setTimeout(r, wait));
+          continue;
+        }
+      }
+      if (!resp.ok) throw new Error(`FMP ${resp.status}: ${path}`);
+      return resp.json();
+    } catch (err: any) {
+      lastErr = err;
+      // Retry only on network/timeout errors (AbortError), not on client errors.
+      if (attempt < FMP_CONFIG.maxRetries && (err?.name === "AbortError" || err?.name === "TimeoutError")) {
+        const wait = 500 * Math.pow(2, attempt);
+        console.warn(`[FMP] ${err?.name} on ${path} — retry ${attempt + 1}/${FMP_CONFIG.maxRetries} in ${wait}ms`);
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr ?? new Error(`FMP fetch failed: ${path}`);
+}
+
+// Cheap guard for /api/analyze — returns true when a full analysis run would
+// exceed the daily budget. isFmpBudgetLow re-uses the same tracker as trackFmpCall.
+export function wouldExceedBudget(callsPerAnalysis = FMP_CONFIG.callsPerAnalysis): boolean {
+  return isFmpBudgetLow(callsPerAnalysis);
 }
 
 export async function fmpProfile(symbol: string) {

@@ -6,7 +6,9 @@
 
 import type { Catalyst } from "../shared/schema";
 import { fmpBatchQuote, fmpRatios } from "./fmp";
-import { parseMarkdownTable, callFinanceToolThrottled } from "./analyze-helpers";
+// parseMarkdownTable is no longer used here since the Perplexity Finance parser
+// was removed — FMP peers are the sole peer source now.
+// callFinanceToolThrottled kept only as a re-export target for legacy imports.
 
 // ============================================================
 // Google News RSS Parser
@@ -200,120 +202,10 @@ export async function fetchPeerComparison(
       console.log(`[PEERS] Using ${fmpPeerTickers.length} FMP peer tickers for ${ticker}`);
       return fetchPeerComparisonFromTickers(ticker, fmpPeerTickers, pe, peg, revenue, marketCap, revenueGrowth, epsGrowth5Y);
     }
-    console.log(`[PEERS] Fetching peers for ${ticker}`);
-    const peersResult = await callFinanceToolThrottled('finance_company_peers', { ticker_symbol: ticker, query: `Competitors of ${companyName}`, action: `Finding peer companies for ${ticker}` }, { maxRetries: 1 });
-    let peerTickers: string[] = [];
-    if (peersResult?.content) {
-      const content = typeof peersResult.content === 'string' ? peersResult.content : JSON.stringify(peersResult.content);
-      const tickerMatches = content.match(/\b[A-Z]{1,5}(?:\.[A-Z]{1,2})?\b/g) || [];
-      const skipWords = new Set(['THE','AND','FOR','USD','ETF','CEO','CFO','IPO','NYSE','NASDAQ','SEC','INC','LTD','LLC','NV','SA','AG','PLC','SE','CO','PEER','VS','EPS','PE','PEG','CTO','COO','CMO','CIO','CPO','EVP','SVP','NIM','ROE','ROA','ROI','ROIC','FCF','TTM','LTM','YTD','EBITDA','DCF','IRR','NPV','WACC','EUR','GBP','JPY','CHF','CAD','AUD','HKD','CNY','KRW','AI','ML','API','B2B','B2C','FTC','DOJ','GAAP','IFRS','Q1','Q2','Q3','Q4','H1','H2','FY','PT','TP','BUY','SELL','HOLD','OW','UW','EW','OP','LOW','HIGH','MAX','MIN', ticker]);
-      peerTickers = [...new Set(tickerMatches.filter(t => t.length >= 2 && !skipWords.has(t)))].slice(0, 8);
-    }
-    if (peerTickers.length === 0) { console.log(`[PEERS] No peers found for ${ticker}`); return null; }
-    console.log(`[PEERS] Found peers for ${ticker}: ${peerTickers.join(', ')}`);
-
-    const ratioIds = ['ratio_price_to_earnings', 'ratio_price_to_sales', 'ratio_price_to_book', 'ratio_diluted_eps', 'calculated_market_cap'];
-    const [ratiosResult, quotesResult] = await Promise.all([
-      callFinanceToolThrottled('finance_company_ratios', { ticker_symbols: peerTickers, ratio_ids: ratioIds }, { maxRetries: 1 }),
-      callFinanceToolThrottled('finance_quotes', { ticker_symbols: peerTickers, fields: ['pe', 'marketCap', 'eps', 'price'] }, { maxRetries: 1 }),
-    ]);
-
-    const peerData: Map<string, any> = new Map();
-    if (ratiosResult?.content) {
-      const content = typeof ratiosResult.content === 'string' ? ratiosResult.content : JSON.stringify(ratiosResult.content);
-      const sections = content.split(/##\s+/);
-      for (const section of sections) {
-        if (!section.trim()) continue;
-        const headerMatch = section.match(/^([A-Z]{1,6})(?:\.[A-Z]{1,2})?\s/);
-        if (!headerMatch) continue;
-        const t = headerMatch[1];
-        if (!peerData.has(t)) peerData.set(t, { epsHistory: [] as { date: string; eps: number }[] });
-        const d = peerData.get(t)!;
-        const rows = parseMarkdownTable(section);
-        const metricBuckets: Record<string, { date: string; value: number }[]> = { pe: [], ps: [], pb: [], marketCap: [], eps: [] };
-        for (const row of rows) {
-          const date = row['date'] || '';
-          for (const [key, val] of Object.entries(row)) {
-            const kl = key.toLowerCase();
-            const num = parseFloat(String(val).replace(/[,$%]/g, ''));
-            if (isNaN(num)) continue;
-            if (kl.includes('price_to_earnings') || kl.includes('p/e')) metricBuckets.pe.push({ date, value: num });
-            else if (kl.includes('price_to_sales') || kl.includes('p/s')) metricBuckets.ps.push({ date, value: num });
-            else if (kl.includes('price_to_book') || kl.includes('p/b')) metricBuckets.pb.push({ date, value: num });
-            else if (kl.includes('market_cap') || kl.includes('marketcap')) metricBuckets.marketCap.push({ date, value: num });
-            else if (kl.includes('diluted_eps') || kl.includes('eps')) { metricBuckets.eps.push({ date, value: num }); if (date && num !== 0) d.epsHistory.push({ date, eps: num }); }
-          }
-        }
-        const pickLatest = (bucket: { date: string; value: number }[]): number | undefined => {
-          const valid = bucket.filter(x => x.value !== 0 && x.date);
-          if (!valid.length) { const anyVal = bucket.find(x => x.value !== 0); return anyVal?.value; }
-          valid.sort((a, b) => b.date.localeCompare(a.date)); return valid[0].value;
-        };
-        const lPE = pickLatest(metricBuckets.pe); const lPS = pickLatest(metricBuckets.ps);
-        const lPB = pickLatest(metricBuckets.pb); const lMcap = pickLatest(metricBuckets.marketCap);
-        const lEPS = pickLatest(metricBuckets.eps);
-        if (lPE !== undefined) d.pe = lPE; if (lPS !== undefined) d.ps = lPS;
-        if (lPB !== undefined) d.pb = lPB; if (lMcap !== undefined) d.marketCap = lMcap;
-        if (lEPS !== undefined) d.eps = lEPS;
-      }
-    }
-    if (quotesResult?.content) {
-      const qContent = typeof quotesResult.content === 'string' ? quotesResult.content : JSON.stringify(quotesResult.content);
-      for (const section of qContent.split(/##\s+/)) {
-        if (!section.trim()) continue;
-        const qHeader = section.match(/^([A-Z]{1,6})(?:\.[A-Z]{1,2})?\s+Quote/);
-        if (!qHeader) continue;
-        const t = qHeader[1];
-        if (!peerData.has(t)) peerData.set(t, { epsHistory: [] as any[] });
-        const d = peerData.get(t)!;
-        for (const row of parseMarkdownTable(section)) {
-          for (const [key, val] of Object.entries(row)) {
-            const kl = key.toLowerCase(); const rawStr = String(val).trim();
-            const num = parseFloat(rawStr.replace(/[,$%]/g, ''));
-            if (kl === 'pe' || kl === 'p/e') { if (!isNaN(num) && num > 0) d.pe = num; }
-            else if (kl.includes('marketcap') || kl.includes('market_cap') || kl === 'mktcap') {
-              if (rawStr.endsWith('T')) d.marketCap = parseFloat(rawStr) * 1e12;
-              else if (rawStr.endsWith('B')) d.marketCap = parseFloat(rawStr) * 1e9;
-              else if (!isNaN(num) && num > 0) d.marketCap = num;
-            } else if (kl === 'eps') { if (!isNaN(num) && num !== 0) d.eps = num; }
-            else if (kl === 'price') { if (!isNaN(num) && num > 0) d.price = num; }
-          }
-        }
-      }
-    }
-
-    const peers: any[] = [];
-    for (const t of peerTickers) {
-      const d = peerData.get(t); if (!d) continue;
-      let epsGrowth1Y: number | null = null, epsGrowth5Y_peer: number | null = null;
-      const history: { date: string; eps: number }[] = (d.epsHistory || []).filter((h: any) => h.eps > 0);
-      if (history.length >= 2) {
-        history.sort((a: any, b: any) => a.date.localeCompare(b.date));
-        const latest = history[history.length - 1]; const prev = history[history.length - 2];
-        if (prev.eps > 0 && latest.eps > 0) epsGrowth1Y = +(((latest.eps / prev.eps) - 1) * 100).toFixed(1);
-        if (history.length >= 3) {
-          const targetIdx = Math.max(0, history.length - 6); const old = history[targetIdx];
-          const years = Math.max(1, history.length - 1 - targetIdx);
-          if (old.eps > 0 && latest.eps > 0) epsGrowth5Y_peer = +(((latest.eps / old.eps) ** (1 / years) - 1) * 100).toFixed(1);
-        }
-      }
-      const growthForPEG = epsGrowth5Y_peer && epsGrowth5Y_peer > 0 ? epsGrowth5Y_peer : (epsGrowth5Y > 0 ? epsGrowth5Y : null);
-      const peerPEG = d.pe && growthForPEG && growthForPEG > 0 ? +(d.pe / growthForPEG).toFixed(2) : null;
-      peers.push({ ticker: t, name: t, pe: d.pe ? +d.pe.toFixed(1) : null, peg: peerPEG, ps: d.ps ? +d.ps.toFixed(1) : null, pb: d.pb ? +d.pb.toFixed(1) : null, epsGrowth1Y, epsGrowth5Y: epsGrowth5Y_peer, marketCap: d.marketCap || null, revenueGrowth: null });
-    }
-    const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null).slice(0, 6);
-    console.log(`[PEERS] Valid peers: ${validPeers.length}/${peers.length}`);
-    if (validPeers.length === 0) { console.log(`[PEERS] All peers had null data`); return null; }
-
-    const avg = (arr: (number | null)[]): number | null => { const valid = arr.filter((v): v is number => v !== null && !isNaN(v) && isFinite(v) && v > 0 && v < 1000); return valid.length > 0 ? +(valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(2) : null; };
-    const cleanEps1Y = (v: number | null) => v != null && v > -60 && v < 80;
-    const cleanEps5Y = (v: number | null) => v != null && v > -30 && v < 60;
-    const ps = revenue > 0 && marketCap > 0 ? +(marketCap / revenue).toFixed(1) : null;
-    const subject = { ticker, name: companyName, pe: pe > 0 ? +pe.toFixed(1) : null, peg: peg > 0 ? +peg.toFixed(2) : null, ps, pb: null as number | null, epsGrowth1Y: null as number | null, epsGrowth5Y: epsGrowth5Y > 0 ? +epsGrowth5Y.toFixed(1) : null, marketCap, revenueGrowth: +revenueGrowth.toFixed(1) };
-    console.log(`[PEERS] Built ${validPeers.length} peer comparisons for ${ticker}`);
-    return {
-      subject, peers: validPeers,
-      peerAvg: { pe: avg(validPeers.map(p => p.pe)), peg: avg(validPeers.map(p => p.peg)), ps: avg(validPeers.map(p => p.ps)), pb: avg(validPeers.map(p => p.pb)), epsGrowth1Y: avg(validPeers.filter(p => cleanEps1Y(p.epsGrowth1Y)).map(p => p.epsGrowth1Y)), epsGrowth5Y: avg(validPeers.filter(p => cleanEps5Y(p.epsGrowth5Y)).map(p => p.epsGrowth5Y)) },
-    };
+    // Legacy fallback path used the Perplexity Finance external-tool to discover
+    // peers when FMP peers were empty. That tool is gone — the FMP peer list
+    // (fmpPeers) is the only source now. If it's empty, there's no peer view.
+    console.log(`[PEERS] No FMP peer tickers for ${ticker} — skipping peer comparison`);
+    return null;
   } catch (err: any) { console.log(`[PEERS] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`); return null; }
 }

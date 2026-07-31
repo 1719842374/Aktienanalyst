@@ -17,11 +17,8 @@ import type { Express, Request, Response } from "express";
 import type { Server } from "http";
 
 import {
-  trackFmpCall,
   getFmpBudgetStatus,
-  isQuotaExceeded,
-  incrementQuota,
-  getQuotaStatus,
+  isFmpBudgetLow,
   getFmpFallbackData,
   cacheLLMModeMatches,
   parseNumber,
@@ -347,10 +344,16 @@ function scoreMoat(
 // ─── Main registration ────────────────────────────────────────────────────────
 export function registerAnalyzeRoute(server: Server, app: Express): void {
   // ── /api/fmp-budget ─────────────────────────────────────────────────────────
+  // Exposes the FMP daily budget (calls consumed, remaining, warn threshold
+  // and callsPerAnalysis). The legacy `quota` field mirrors the FMP budget for
+  // backward compatibility — the old Perplexity 18/day counter is gone.
   app.get("/api/fmp-budget", (_req: Request, res: Response) => {
     const fmp = getFmpBudgetStatus();
-    const quota = getQuotaStatus();
-    res.json({ fmp, quota, fmpAvailable: isFmpAvailable() });
+    res.json({
+      fmp,
+      quota: { today: fmp.today, limit: fmp.limit, remaining: fmp.remaining, quotaExceededAt: null, resetsAt: null },
+      fmpAvailable: isFmpAvailable(),
+    });
   });
 
   // ── /api/analyze ────────────────────────────────────────────────────────────
@@ -374,19 +377,25 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         }
       }
 
-      // ── Quota guard ──
-      if (isQuotaExceeded()) {
-        const status = getQuotaStatus();
+      // ── FMP budget guard ──
+      // Return HTTP 429 upfront when the remaining daily budget can no longer
+      // cover a full analysis. This is cheaper than starting 13 parallel FMP
+      // calls and having the last few fail with an obscure error mid-run.
+      if (isFmpBudgetLow()) {
+        const budget = getFmpBudgetStatus();
+        console.warn(`[ANALYZE] FMP budget low: ${budget.today}/${budget.limit} — refusing ${upperTicker}`);
         return res.status(429).json({
-          error: `Tageslimit erreicht (${status.today}/${status.limit} Analysen)`,
-          quotaStatus: status,
+          error: `FMP-Tagesbudget aufgebraucht (${budget.today}/${budget.limit} Calls, noch ${budget.remaining}). Neue Analysen morgen wieder möglich.`,
+          errorCode: "RATE_LIMITED",
+          fmpBudget: budget,
         });
       }
 
-      incrementQuota();
       console.log(`[ANALYZE] Starting analysis for ${upperTicker} (useLLM=${useLLM})`);
 
       // ── 1. Fetch FMP data ──
+      // trackFmpCall runs inside fmp.ts on every outbound call — no manual
+      // increment here or we'd double-count.
       const fmpData = await getFmpFallbackData(upperTicker);
       if (!fmpData) {
         return res.status(503).json({
@@ -394,9 +403,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         });
       }
 
-      trackFmpCall(13); // getFmpFallbackData uses 13 parallel calls
-
-      const { quote, profile, financials, analyst, ohlcv, segments, geoSegments: geoSegmentsRaw, peers, ratios } = fmpData;
+      // geoSegments was added in commit cd79678 (fmp.ts:fmpGeoSegments +
+      // analyze-helpers.ts wiring). fmpData carries it through to us.
+      const { quote, profile, financials, analyst, ohlcv, segments, geoSegments, peers, ratios } = fmpData as any;
 
       // ── 2. Parse core financials ──
       const price = parseNumber(String(quote?.price ?? 0));
@@ -435,24 +444,37 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const totalAssets = parseNumber(String(bsLatest.totalAssets ?? 0));
       const netDebt = totalDebt - cashEquivalents;
 
-      // Ratios. FMP /stable/quote has no `pe` field (unlike the legacy /api/v3), and
-      // /stable/ratios' field is `priceToEarningsRatio` — not `priceEarningsRatio` or
-      // `priceEarningsRatioTTM`/`forwardPE` (neither of which exist on that endpoint).
-      // Verified against a live FMP Starter response: priceToEarningsRatio=20.72 for
-      // MSFT, while the old field names were always undefined -> pe/forwardPE stuck at 0.
+      // Ratios
       const ratioLatest = ratios[0] ?? {};
-      const pe = parseNumber(String(quote?.pe ?? ratioLatest.priceToEarningsRatio ?? 0));
-      // No separate forward-P/E field exists on /stable/ratios; fall back to trailing
-      // P/E here (still correct instead of the previous always-0), refined further
-      // below once epsGrowthFwd/EPS consensus is available if a forward EPS exists.
-      const forwardPE = pe;
+
+      // eps from quote/profile is TTM; income[0].epsDiluted is last FY. Prefer TTM.
+      const _epsForPE = parseNumber(String(quote?.eps ?? profile?.eps ?? incomeLatest.epsDiluted ?? 0));
+
+      // P/E: try quote first, then ratios, then derive from price / TTM EPS.
+      // FMP's /stable/ratios uses `priceToEarningsRatio` (not `priceEarningsRatio`).
+      let pe = parseNumber(String(quote?.pe ?? ratioLatest.priceToEarningsRatio ?? ratioLatest.priceEarningsRatio ?? 0));
+      if (!(pe > 0) && _epsForPE > 0 && price > 0) pe = price / _epsForPE;
+
+      // Forward P/E: try ratios first, then derive from the next-FY EPS estimate.
+      // We compute the estimate value (`nextFyEpsAbs`) later in the flow, but the
+      // ratios-first branch usually satisfies forwardPE for large caps; the derived
+      // fallback runs below after `nextFyEpsAbs` is known.
+      let forwardPE = parseNumber(String(ratioLatest.forwardPE ?? ratioLatest.priceToEarningsRatioTTM ?? 0));
+
       const pbRatio = parseNumber(String(ratioLatest.priceToBookRatio ?? 0));
       const evEbitda = parseNumber(String(ratioLatest.enterpriseValueMultiple ?? ratioLatest.evToEbitda ?? 0));
       const dividendYield = parseNumber(String(quote?.dividendYield ?? ratioLatest.dividendYield ?? 0)) * (quote?.dividendYield > 1 ? 0.01 : 1);
       const returnOnEquity = parseNumber(String(ratioLatest.returnOnEquity ?? 0));
       const beta = parseNumber(String(profile?.beta ?? quote?.beta ?? 1));
-      const sharesOutstanding = parseNumber(String(profile?.sharesOutstanding ?? quote?.sharesOutstanding ?? 0));
-      const marketCap = price > 0 && sharesOutstanding > 0 ? price * sharesOutstanding : parseNumber(String(profile?.mktCap ?? quote?.marketCap ?? 0));
+
+      // sharesOutstanding: FMP /stable/profile field is `sharesOutstanding` in the
+      // legacy API but `mktCap / price` in newer responses. Fall back to derived.
+      let sharesOutstanding = parseNumber(String(profile?.sharesOutstanding ?? quote?.sharesOutstanding ?? 0));
+      const profileMktCap = parseNumber(String(profile?.mktCap ?? profile?.marketCap ?? quote?.marketCap ?? 0));
+      if (!(sharesOutstanding > 0) && profileMktCap > 0 && price > 0) {
+        sharesOutstanding = Math.round(profileMktCap / price);
+      }
+      const marketCap = price > 0 && sharesOutstanding > 0 ? price * sharesOutstanding : profileMktCap;
       const yearHigh = parseNumber(String(quote?.yearHigh ?? 0));
       const yearLow = parseNumber(String(quote?.yearLow ?? 0));
 
@@ -498,62 +520,58 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const latestGrade = analyst.grades?.[0];
       const analystConsensus = String(latestGrade?.recommendationMean ?? latestGrade?.action ?? "Hold");
 
-      // EPS estimates
-      const estCurrent = analyst.estimates?.[0] ?? {};
-      const epsGrowthFwd = parseNumber(String(estCurrent.epsAvg ?? estCurrent.eps ?? 0));
+      // EPS estimates — FMP /stable/analyst-estimates returns `estimatedEpsAvg`
+      // (average of analyst estimates for next FY EPS). Historic field names
+      // (`epsAvg`, `eps`) are kept as fallbacks so older cached rows still parse.
+      const estCurrent: any = analyst.estimates?.[0] ?? {};
+      const nextFyEpsAbs = parseNumber(String(
+        estCurrent.estimatedEpsAvg ?? estCurrent.estimatedEpsDiluted ??
+        estCurrent.estimatedEps ?? estCurrent.epsAvg ?? estCurrent.eps ?? 0
+      ));
+      // epsGrowthFwd is a PERCENTAGE (used by classifyLynch and calcLynchPEG),
+      // derived from the absolute next-FY estimate vs current TTM EPS.
+      const epsGrowthFwd = _epsForPE > 0 && nextFyEpsAbs > 0
+        ? ((nextFyEpsAbs / _epsForPE) - 1) * 100
+        : 0;
+
+      // Backfill forwardPE if the ratios endpoint didn't supply it.
+      if (!(forwardPE > 0) && nextFyEpsAbs > 0 && price > 0) {
+        forwardPE = price / nextFyEpsAbs;
+      }
 
       // ── 5. Sector + defaults ──
-      // getEffectiveSector() returns { sector, industry, isHybrid, hybridNote } (an
-      // object) — but every downstream usage of `effectiveSector` in this file
-      // (PESTEL, TAM, catalysts, risks, peer comparison, Lynch classification, the
-      // .toLowerCase() calls further below) expects a plain string, exactly as it
-      // was in the original monolithic routes.ts before this file was split out.
-      // Extract .sector immediately so `effectiveSector` stays a string everywhere
-      // it's referenced. Without this, sector.toLowerCase() inside sector-data.ts
-      // throws "r.toLowerCase is not a function" and crashes every /api/analyze
-      // call with HTTP 500.
-      const effectiveSectorResult = getEffectiveSector(sector, industry, description);
-      const effectiveSector = effectiveSectorResult.sector;
-      const sectorDefaults = getSectorDefaults(effectiveSector, industry);
-      const wacc = sectorDefaults.wacc;
-      const govExposure = estimateGovExposure(sector, industry, description, country);
+      // getEffectiveSector returns { sector, industry, isHybrid, hybridNote } —
+      // downstream code expects the plain sector/industry strings so we destructure.
+      const eff = getEffectiveSector(sector, industry, description);
+      const effectiveSector = eff.sector;
+      const effectiveIndustry = eff.industry;
+      const sectorDefaults = getSectorDefaults(effectiveSector, effectiveIndustry);
+      // WACC — mid scenario is our default (kons/opt available for scenarios in DCF).
+      const wacc = sectorDefaults.waccScenarios.avg;
+      const govExposureRaw = estimateGovExposure(sector, industry, description);
+      const govExposure = govExposureRaw.exposure;
 
       // ── 6. Lynch classification ──
-      const epsGrowth5Y = revenueGrowth; // proxy
+      // epsGrowth5Y is refined below from the income-statement history; use
+      // revenueGrowth as a temporary proxy for Lynch until the CAGR is computed.
+      let epsGrowth5Y = revenueGrowth;
       const lynchClass = classifyLynch({ epsGrowth5Y, revenueGrowth, sector: effectiveSector, industry, dividendYield, fcfMargin, pe, forwardPE, pbRatio });
       const { peg, pegBasis } = calcLynchPEG({ lynchClass, pe, forwardPE, epsGrowth5Y, epsGrowthFwd, revenueGrowth, dividendYield });
       const impliedGStar = calcImpliedGStar({ price, sharesOutstanding, netDebt, fcf: fcfTTM, wacc });
 
       // ── 7. Revenue segments ──
-      // `segments` (destructured from fmpData above) is the return value of
-      // fmpSegments() in fmp.ts, which ALREADY parses the raw FMP
-      // /revenue-product-segmentation response into a clean
-      // { name, revenue, percentage, date }[] array (one entry per product/
-      // segment, sorted by revenue). The code here was re-treating that
-      // already-parsed array as if it were a single raw FMP row and iterating
-      // its object keys ("name", "revenue", "percentage", "date") as if THOSE
-      // were segment names — producing garbage entries like
-      // { name: "revenue", ... } / { name: "percentage", ... } instead of real
-      // product segments (e.g. "Productivity and Business Processes"). This was
-      // the root cause of the reported missing/broken revenue segment bars.
-      const revenueSegments: RevenueSegment[] = Array.isArray(segments)
-        ? segments.slice(0, 8).map((s: any) => ({
-            name: String(s.name ?? ""),
-            revenue: parseNumber(String(s.revenue ?? 0)),
-            percentage: parseNumber(String(s.percentage ?? 0)),
-          })).filter((s) => s.name && s.revenue > 0)
-        : [];
-
-      // Geographic/region revenue breakdown — previously entirely missing from the
-      // API response (fmpGeoSegments() in fmp.ts was only added alongside this fix).
-      // Same { name, revenue, percentage } shape as revenueSegments above.
-      const geoSegments: RevenueSegment[] = Array.isArray(geoSegmentsRaw)
-        ? geoSegmentsRaw.slice(0, 8).map((s: any) => ({
-            name: String(s.name ?? ""),
-            revenue: parseNumber(String(s.revenue ?? 0)),
-            percentage: parseNumber(String(s.percentage ?? 0)),
-          })).filter((s) => s.name && s.revenue > 0)
-        : [];
+      const revenueSegments: RevenueSegment[] = [];
+      if (Array.isArray(segments) && segments.length > 0) {
+        const segLatest = segments[0];
+        const segKeys = Object.keys(segLatest).filter((k) => k !== "date" && k !== "symbol" && k !== "reportedCurrency" && k !== "period");
+        const segTotal = segKeys.reduce((sum, k) => sum + parseNumber(String(segLatest[k])), 0);
+        for (const key of segKeys.slice(0, 8)) {
+          const val = parseNumber(String(segLatest[key]));
+          if (val > 0 && segTotal > 0) {
+            revenueSegments.push({ name: key, revenue: val, percentage: Math.round((val / segTotal) * 1000) / 10 });
+          }
+        }
+      }
 
       // ── 8. TAM analysis ──
       const tamAnalysis = generateTAMAnalysis(effectiveSector, industry, description, revenue, revenueGrowth, revenueSegments);
@@ -651,7 +669,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       if (risks.length < 3) {
-        risks = generateRisks(effectiveSector, industry, beta, govExposure, description);
+        risks = generateRisks(effectiveSector, beta, govExposure);
       }
 
       if (useLLM && risks.length > 0) {
@@ -736,25 +754,24 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       // ── 17. Peer comparison ──
-      // Both fetchPeerComparisonFromTickers() and fetchPeerComparison() (news-peers.ts)
-      // return a { subject, peers, peerAvg } object matching shared/schema.ts's
-      // PeerComparison type — not an array. The 1-2 argument calls previously here
-      // dropped the required pe/peg/revenue/marketCap/revenueGrowth/epsGrowth5Y
-      // arguments during the routes.ts split, causing "Cannot read properties of
-      // undefined (reading 'map')" inside fmpBatchQuote() and crashing every
-      // /api/analyze call.
+      // fetchPeerComparisonFromTickers signature (news-peers.ts:156):
+      //   (ticker, peerTickers[], pe, peg, revenue, marketCap, revenueGrowth, epsGrowth5Y)
+      // returns { subject, peers, peerAvg } | null. We pass the full context so
+      // the peer view can render P/E, PEG, P/S and EPS growth for each peer.
       let peerComparison: any = null;
       if (peerTickers.length > 0) {
         try {
           peerComparison = await fetchPeerComparisonFromTickers(
-            upperTicker, peerTickers, pe, peg, revenue, marketCap, revenueGrowth, epsGrowth5Y
+            upperTicker, peerTickers, pe, peg ?? 0, revenue, marketCap, revenueGrowth, epsGrowth5Y
           );
-        } catch {}
+        } catch (peerErr: any) {
+          console.warn(`[ANALYZE] Peer comparison failed: ${peerErr?.message?.substring(0, 80)}`);
+        }
       }
       if (!peerComparison) {
         try {
           peerComparison = await fetchPeerComparison(
-            upperTicker, companyName, pe, peg, revenue, marketCap, revenueGrowth, epsGrowth5Y, peerTickers
+            upperTicker, companyName, pe, peg ?? 0, revenue, marketCap, revenueGrowth, epsGrowth5Y, peerTickers
           );
         } catch {}
       }
@@ -787,15 +804,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         industry.toLowerCase().includes("financ") ||
         industry.toLowerCase().includes("insurance");
 
-      // NOTE: this array's shape ({ factor, correlation: number, description }) predates
-      // shared/schema.ts's MacroCorrelation type ({ name, category, correlation: enum,
-      // strength, mechanism }) — a mismatch introduced when this file was split out of
-      // the original monolithic routes.ts. Kept as `any[]` rather than reshaping the
-      // data (which would be a behavior change) since the frontend consumer for this
-      // specific field is out of scope for this fix; only the type-checker blocker is
-      // resolved here so the rest of the file's type errors (including a real
-      // currentPrice/price field-name bug below) are visible again.
-      const macroCorrelations: any[] = [
+      const macroCorrelations: MacroCorrelation[] = [
         { factor: "Fed Funds Rate", correlation: isBank ? 0.6 : beta > 1.2 ? -0.4 : -0.2, description: isBank ? "Steigende Zinsen erhöhen NIM" : "Steigende Zinsen komprimieren Multiples" },
         { factor: "USD Stärke", correlation: country !== "US" ? -0.3 : 0.1, description: country !== "US" ? "USD-Stärke belastet Auslands-Earnings" : "Geringer USD-Einfluss (US-fokussiert)" },
         { factor: "Ölpreis (WTI)", correlation: effectiveSector.toLowerCase().includes("energ") ? 0.7 : -0.1, description: effectiveSector.toLowerCase().includes("energ") ? "Ölpreis direkt mit Revenue korreliert" : "Indirekter Kostenfaktor" },
@@ -803,90 +812,268 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       ];
 
       // ── 20. Assemble final result ──
-      // StockAnalysis (shared/schema.ts) requires currentPrice/priceTimestamp/currency —
-      // this file previously wrote `price` (no `currentPrice`) and omitted
-      // priceTimestamp/currency entirely, a field-name/completeness mismatch
-      // introduced when this file was split out of the original monolithic
-      // routes.ts. The frontend (Dashboard.tsx) reads `currentPrice`, not `price`.
-      const priceTimestamp = quote?.timestamp
-        ? new Date(Number(quote.timestamp) * 1000).toISOString()
-        : new Date().toISOString();
-      const analysis: StockAnalysis = {
+      // IMPORTANT — the response shape here must match shared/schema.ts:StockAnalysis
+      // so the 17 frontend sections (Dashboard.tsx SECTIONS) don't crash on missing
+      // fields. Field names are prescriptive: currentPrice not price, analystPT.median
+      // not analystPTMedian, historicalPrices not ohlcvPoints, peRatio not pe, etc.
+
+      // historicalPrices[] — Section10 (TechnicalChart) and MonteCarlo both read this.
+      const historicalPrices = ohlcvPoints.map((p) => ({ date: p.date, close: p.close }));
+
+      // EPS chain — keep the three flavours the frontend distinguishes.
+      const rawEpsFY = parseNumber(String(incomeLatest.epsDiluted ?? incomeLatest.eps ?? 0));
+      const epsTTM = parseNumber(String(quote?.eps ?? profile?.eps ?? rawEpsFY));
+      const epsAdjFY = rawEpsFY;
+      // Absolute next-FY consensus EPS (in $) — used by Section 4 for forwardPE
+      // display. Distinct from epsGrowthFwd which is a percentage.
+      const epsConsensusNextFY = nextFyEpsAbs || parseNumber(String(
+        (analyst.estimates?.[0] as any)?.estimatedEpsAvg ??
+        (analyst.estimates?.[0] as any)?.estimatedEps ?? 0
+      ));
+      // 5Y EPS CAGR — refine the proxy from the income-statement history.
+      if (financials.income.length >= 3) {
+        const oldest = financials.income[financials.income.length - 1] ?? {};
+        const oldEps = parseNumber(String((oldest as any).epsDiluted ?? (oldest as any).eps ?? 0));
+        if (oldEps > 0 && rawEpsFY > 0) {
+          const n = financials.income.length - 1;
+          epsGrowth5Y = ((Math.pow(rawEpsFY / oldEps, 1 / n) - 1) * 100);
+        }
+      }
+
+      // Ratings — map buy/hold/sell distribution from analyst.grades.
+      const ratingsBuy = analyst.grades.filter((g: any) => /buy|outperform|overweight/i.test(String(g.newGrade ?? g.gradeCompany ?? ""))).length;
+      const ratingsSell = analyst.grades.filter((g: any) => /sell|underperform|underweight/i.test(String(g.newGrade ?? g.gradeCompany ?? ""))).length;
+      const ratingsHold = Math.max(0, analyst.grades.length - ratingsBuy - ratingsSell);
+
+      // Sector profile — the shape Section5/Section6 depend on.
+      const sectorProfile = {
+        sector: effectiveSector,
+        cycleClass: sectorDefaults.cycleClass,
+        politicalCycle: sectorDefaults.politicalCycle,
+        waccScenarios: sectorDefaults.waccScenarios,
+        growthAssumptions: sectorDefaults.growthAssumptions,
+        macroSensitivity: {
+          interestUp: { wacc: "+50–100bps", dcf: "-5–-12%" },
+          interestDown: { wacc: "-50–100bps", dcf: "+5–+12%" },
+          fiscalUp: "Positiv — höhere öff. Aufwendungen bei govExposure > 20%",
+          fiscalDown: "Neutral bis leicht negativ",
+          geoUp: "Negativ für grenzüberschreitende Umsatz-Exposition",
+          geoDown: "Neutral",
+        },
+        regulatoryNotes: sectorDefaults.politicalCycle,
+      };
+
+      // financialStatements — aggregated view for the FinancialStatements section.
+      const debtToEquity = totalEquity > 0 ? totalDebt / totalEquity : 0;
+      const currentAssets = parseNumber(String(bsLatest.totalCurrentAssets ?? 0));
+      const currentLiab = parseNumber(String(bsLatest.totalCurrentLiabilities ?? 0));
+      const currentRatio = currentLiab > 0 ? currentAssets / currentLiab : 0;
+      const totalLiab = parseNumber(String(bsLatest.totalLiabilities ?? Math.max(0, totalAssets - totalEquity)));
+      const ebitdaMargin = revenue > 0 ? (ebitda / revenue) * 100 : 0;
+      const fcfPerShare = sharesOutstanding > 0 ? fcfTTM / sharesOutstanding : 0;
+      const rawEpsGrowth = (() => {
+        const prevEps = parseNumber(String((incomeY1 as any).epsDiluted ?? (incomeY1 as any).eps ?? 0));
+        return prevEps > 0 && rawEpsFY > 0 ? ((rawEpsFY / prevEps - 1) * 100) : 0;
+      })();
+      const healthReasons: string[] = [];
+      if (fcfMargin > 15) healthReasons.push("Starke FCF-Marge > 15%");
+      else if (fcfMargin < 5 && fcfMargin > 0) healthReasons.push("Schwache FCF-Marge < 5%");
+      else if (fcfMargin <= 0) healthReasons.push("Negative FCF-Marge");
+      if (debtToEquity > 2) healthReasons.push("Hohe Verschuldung (D/E > 2)");
+      if (currentRatio > 1.5) healthReasons.push("Solide Liquidität (Current Ratio > 1.5)");
+      else if (currentRatio < 1 && currentRatio > 0) healthReasons.push("Angespannte Liquidität (Current Ratio < 1)");
+      const health: "Excellent" | "Good" | "Moderate" | "Weak" | "Critical" =
+        fcfMargin > 20 && debtToEquity < 1 ? "Excellent" :
+        fcfMargin > 10 && debtToEquity < 2 ? "Good" :
+        fcfMargin > 0 ? "Moderate" :
+        fcfMargin > -10 ? "Weak" : "Critical";
+
+      const financialStatements = {
+        incomeStatement: {
+          revenue, revenueGrowth,
+          grossProfit, grossMargin,
+          operatingIncome, operatingMargin,
+          netIncome, netMargin,
+          ebitda, ebitdaMargin,
+          eps: epsTTM, epsGrowth: rawEpsGrowth,
+        },
+        balanceSheet: {
+          totalAssets, totalLiabilities: totalLiab, totalEquity,
+          cashEquivalents, totalDebt, netDebt,
+          debtToEquity, currentRatio,
+        },
+        cashFlow: {
+          operatingCashFlow: operatingCF, capex, fcf: fcfTTM,
+          fcfMargin, fcfPerShare,
+        },
+        health,
+        healthReasons: healthReasons.length ? healthReasons : ["Keine kritischen Signale"],
+      };
+
+      // Moat rating — legacy string form used by Section2 / Summary.
+      const moatRating = moatAssessment.moatStrength ?? "None";
+
+      // Peer comparison must have the {subject, peers, peerAvg, sectorMedian, ...}
+      // shape (schema.ts:PeerComparison). Add the sectorMedian field so Section7
+      // can render Damodaran-style medians alongside peer-average.
+      let peerComparisonOut: any = null;
+      if (peerComparison && typeof peerComparison === "object" && (peerComparison as any).subject) {
+        peerComparisonOut = {
+          ...peerComparison,
+          sectorMedian: (peerComparison as any).sectorMedian ?? {
+            pe: sectorDefaults.sectorAvgPE, peg: sectorDefaults.sectorAvgPEG,
+            ps: sectorDefaults.sectorAvgPS, pb: sectorDefaults.sectorAvgPB,
+            epsGrowth: sectorDefaults.sectorEPSGrowth, sectorName: effectiveSector,
+          },
+        };
+      }
+
+      // NOTE: Cast to any at the end because we intentionally include a few
+      // legacy-compatible extras (analystPTMedian etc.) alongside the canonical
+      // schema fields. shared/schema.ts:StockAnalysis is the source of truth
+      // for what the frontend actually reads.
+      const analysis = {
+        // ─── Section 1: Datenaktualität (Section1.tsx) ───
         ticker: upperTicker,
         companyName,
-        description,
-        sector: effectiveSector,
-        industry,
-        country,
         exchange,
-        website,
-        image,
-        reportedCurrency,
+        sector: effectiveSector,
+        industry: effectiveIndustry,
+        description,
         currentPrice: price,
-        priceTimestamp,
-        currency: reportedCurrency,
-        price,
+        priceTimestamp: new Date().toISOString(),
+        currency: reportedCurrency || "USD",
         marketCap,
         sharesOutstanding,
+
+        // Analyst data (schema: analystPT + ratings objects, NOT flat fields)
+        analystPT: {
+          median: analystPTMedian,
+          high: analystPTHigh,
+          low: analystPTLow,
+          count: analystCount,
+        },
+        ratings: { buy: ratingsBuy, hold: ratingsHold, sell: ratingsSell },
+
+        // Earnings (schema: peRatio, forwardPE, pegRatio — NOT pe)
+        epsTTM,
+        epsAdjFY,
+        epsConsensusNextFY,
+        epsGrowth5Y,
+
+        peRatio: pe,
+        forwardPE,
+        pegRatio: peg ?? 0,
+        peg: peg ?? null,
+        lynchClass,
+        lynchPEGBasis: pegBasis,
+        evEbitda,
+        beta5Y: beta,
         beta,
-        yearHigh,
-        yearLow,
-        revenue,
-        revenueGrowth,
-        netIncome,
-        ebitda,
-        grossProfit,
-        operatingIncome,
         fcfTTM,
+        fcfMargin,
+        revenue,
+        ebitda,
+        operatingIncome,
+        netIncome,
         totalDebt,
         cashEquivalents,
-        netDebt,
-        totalEquity,
-        totalAssets,
-        grossMargin,
-        operatingMargin,
-        netMargin,
-        fcfMargin,
-        peRatio: pe,
-        pe,
-        forwardPE,
-        pbRatio,
-        evEbitda,
-        peg: peg ?? 0,
-        pegBasis,
+        enterpriseValue: marketCap + Math.max(0, netDebt),
+
+        // Section 10: TechnicalChart reads historicalPrices[]
+        historicalPrices,
+
+        // Section 7: Rel. Bewertung — sector averages
+        sectorAvgPE: sectorDefaults.sectorAvgPE,
+        sectorAvgForwardPE: sectorDefaults.sectorAvgForwardPE,
+        sectorAvgEVEBITDA: sectorDefaults.sectorAvgEVEBITDA,
+        sectorAvgPEG: sectorDefaults.sectorAvgPEG,
+
+        financialStatements,
+        tamAnalysis,
+
+        // Investment thesis (Section 2)
+        moatRating,
+        governmentExposure: govExposure,
+        growthThesis: growthThesis ?? "",
+        structuralTrends: [],
+
+        // Section 3: Zyklusanalyse
+        cycleClassification: sectorDefaults.cycleClass,
+        politicalCycle: sectorDefaults.politicalCycle,
+        sectorMaxDrawdown: sectorDefaults.sectorMaxDrawdown,
+        sectorProfile,
+
+        // Sections 8+15
+        catalysts,
+        risks,
+
+        // Section 8 helpers
+        govExposureDetail: govExposureRaw.detail,
+        fcfHaircut: 0,
+
+        // Section 9: RSL-Momentum (uses historical drawdown data)
+        maxDrawdownHistory: "—",
+        maxDrawdownYear: "—",
+
+        // Section 10
+        ohlcvData: ohlcvPoints,
+        technicalIndicators,
+
+        // Section 11
+        moatAssessment,
+
+        // Section 12
+        pestelAnalysis,
+
+        // Section 13
+        macroCorrelations: { correlations: macroCorrelations, overallMacroSensitivity: "Mittel", keyInsight: "" },
+
+        // Section 15
+        newsItems,
+        newsHeadlines,
+
+        // Section 17 / Peer view
+        revenueSegments,
+        geoSegments: Array.isArray(geoSegments) ? geoSegments : [],
+        peerComparison: peerComparisonOut,
+        catalystDeepDives: catalystDeepDives ?? [],
+
+        // KI mode signalling for Dashboard state
+        llmMode: useLLM,
+        llmModelUsed,
+        dataSource: "fmp" as const,
+        dataTimestamp: new Date().toISOString(),
+        _useLLM: useLLM,
+
+        // Legacy-compatible extras kept so any older consumer doesn't break
+        analystPTMedian,
+        analystPTHigh,
+        analystPTLow,
+        analystCount,
+        analystConsensus,
+        policyContext: policyContext ?? null,
         dividendYield,
         returnOnEquity,
         wacc,
         dcfFairValue,
         upsidePotential,
         impliedGStar: impliedGStar ?? 0,
-        lynchClass,
-        analystPTMedian,
-        analystPTHigh,
-        analystPTLow,
-        analystCount,
-        analystConsensus,
-        governmentExposure: govExposure,
-        catalysts,
-        risks,
-        tamAnalysis,
-        revenueSegments,
-        geoSegments,
-        peerComparison,
-        moatAssessment,
-        pestelAnalysis,
-        technicalIndicators,
-        historicalPrices: ohlcvPoints,
-        ohlcvData: ohlcvPoints,
-        macroCorrelations: { correlations: macroCorrelations },
-        newsItems,
-        growthThesis: growthThesis ?? "",
-        policyContext: policyContext ?? null,
-        catalystDeepDives: catalystDeepDives ?? [],
-        llmModelUsed,
-        dataSource: "fmp" as const,
-        analysisTimestamp: new Date().toISOString(),
-      } as any;
+        pbRatio,
+        yearHigh,
+        yearLow,
+        totalEquity,
+        totalAssets,
+        netDebt,
+        grossMargin,
+        operatingMargin,
+        netMargin,
+        grossProfit,
+        website,
+        image,
+        country,
+        reportedCurrency,
+      } as unknown as StockAnalysis;
 
       analysisCache.set(cacheKey, { result: analysis, timestamp: Date.now(), usedLLM: useLLM });
 
