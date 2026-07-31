@@ -793,15 +793,30 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       // ── 17. Peer comparison ──
-      // fetchPeerComparisonFromTickers signature (news-peers.ts:156):
-      //   (ticker, peerTickers[], pe, peg, revenue, marketCap, revenueGrowth, epsGrowth5Y)
-      // returns { subject, peers, peerAvg } | null. We pass the full context so
-      // the peer view can render P/E, PEG, P/S and EPS growth for each peer.
+      // Fills every column of the Rel. Bewertung section: pe, peg, ps, pb,
+      // epsGrowth1Y, epsGrowth5Y for BOTH subject and each peer, plus a peer
+      // average and a sector median. Values missing from FMP's /ratios /quote
+      // endpoints are computed on the fly (5Y EPS CAGR, revenue YoY per share).
+      //
+      // Subject-side pb + epsGrowth1Y are computed here because
+      // fetchPeerComparisonFromTickers only has the peers' /ratios rows in
+      // scope; the subject's TTM figures live on the /api/analyze call chain.
+      const subjectPB = pbRatio > 0 ? pbRatio : null;
+      // 1Y EPS YoY: rawEpsFY vs the prior-FY EPS from the income-statement
+      // history (income is sorted newest-first). Fallback null if no prior FY.
+      // NOTE: use _rawEpsFY (declared in step 6) — the alias `rawEpsFY` is
+      // defined later in the flow, referencing it here would trip the TDZ.
+      const _priorFyEps = parseNumber(String((financials.income[1] as any)?.epsDiluted ?? (financials.income[1] as any)?.eps ?? 0));
+      const subjectEpsGrowth1Y = _priorFyEps > 0 && _rawEpsFY > 0
+        ? +(((_rawEpsFY / _priorFyEps) - 1) * 100).toFixed(1)
+        : null;
+
       let peerComparison: any = null;
       if (peerTickers.length > 0) {
         try {
           peerComparison = await fetchPeerComparisonFromTickers(
-            upperTicker, peerTickers, pe, peg ?? 0, revenue, marketCap, revenueGrowth, epsGrowth5Y
+            upperTicker, peerTickers, pe, peg ?? 0, revenue, marketCap, revenueGrowth, epsGrowth5Y,
+            { pb: subjectPB, epsGrowth1Y: subjectEpsGrowth1Y }
           );
         } catch (peerErr: any) {
           console.warn(`[ANALYZE] Peer comparison failed: ${peerErr?.message?.substring(0, 80)}`);
@@ -983,10 +998,19 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       if (peerComparison && typeof peerComparison === "object" && (peerComparison as any).subject) {
         peerComparisonOut = {
           ...peerComparison,
+          // Sector median: Damodaran-style anchor row shown alongside peers.
+          // schema.ts:PeerComparison expects a single `epsGrowth` field on the
+          // sector median; we set both epsGrowth1Y and epsGrowth5Y to the same
+          // sector-typical growth number so Section 7's 1Y/5Y columns render.
           sectorMedian: (peerComparison as any).sectorMedian ?? {
-            pe: sectorDefaults.sectorAvgPE, peg: sectorDefaults.sectorAvgPEG,
-            ps: sectorDefaults.sectorAvgPS, pb: sectorDefaults.sectorAvgPB,
-            epsGrowth: sectorDefaults.sectorEPSGrowth, sectorName: effectiveSector,
+            pe: sectorDefaults.sectorAvgPE,
+            peg: sectorDefaults.sectorAvgPEG,
+            ps: sectorDefaults.sectorAvgPS,
+            pb: sectorDefaults.sectorAvgPB,
+            epsGrowth: sectorDefaults.sectorEPSGrowth,
+            epsGrowth1Y: sectorDefaults.sectorEPSGrowth,
+            epsGrowth5Y: sectorDefaults.sectorEPSGrowth,
+            sectorName: effectiveSector,
           },
         };
       }

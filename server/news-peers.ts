@@ -153,40 +153,140 @@ export async function matchNewsToCatalysts(
 // ============================================================
 // Peer Comparison via FMP (fast path)
 // ============================================================
+// Peer comparison fed by FMP only. WORK_SCORING_VORLAGE / relative-valuation
+// docs require every peer column to be populated when the data is available
+// (per-share ratios are computed from FMP /ratios rows chronologically).
+//
+// Fields expected by the Rel. Bewertung section (Section 7):
+//   subject: { ticker, name, pe, peg, ps, pb, epsGrowth1Y, epsGrowth5Y,
+//              marketCap, revenueGrowth }
+//   peers:   same shape
+//   peerAvg: { pe, peg, ps, pb, epsGrowth1Y, epsGrowth5Y }
+//
+// The 5Y CAGR needs ≥6 annual ratio rows (start + 5 growth periods), the 1Y
+// YoY needs 2 rows, so we fetch 6. FMP /stable/ratios returns rows sorted
+// most-recent first.
 export async function fetchPeerComparisonFromTickers(
-  ticker: string, peerTickers: string[], pe: number, peg: number, revenue: number,
-  marketCap: number, revenueGrowth: number, epsGrowth5Y: number
+  ticker: string,
+  peerTickers: string[],
+  pe: number,
+  peg: number,
+  revenue: number,
+  marketCap: number,
+  revenueGrowth: number,
+  epsGrowth5Y: number,
+  subjectExtras?: { pb?: number | null; epsGrowth1Y?: number | null }
 ): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
   try {
     const [quotes, ratiosPerPeer] = await Promise.all([
       fmpBatchQuote(peerTickers),
-      Promise.all(peerTickers.map(t => fmpRatios(t, 2).catch(() => []))),
+      Promise.all(peerTickers.map(t => fmpRatios(t, 6).catch(() => []))),
     ]);
     const quoteByTicker = new Map<string, any>((quotes || []).map((q: any) => [q.symbol, q]));
+
+    // Small helper to CAGR two same-unit per-share values across `years`.
+    // Sign-safe: skips negatives (can't take fractional power of a negative).
+    const cagr = (endValue: number | undefined, startValue: number | undefined, years: number): number | null => {
+      if (!endValue || !startValue || years <= 0) return null;
+      if (endValue <= 0 || startValue <= 0) return null;
+      return +((Math.pow(endValue / startValue, 1 / years) - 1) * 100).toFixed(1);
+    };
+
     const peers: any[] = [];
     peerTickers.forEach((t, idx) => {
       const q = quoteByTicker.get(t);
-      const ratios: any[] = ratiosPerPeer[idx] || [];
+      const ratios: any[] = Array.isArray(ratiosPerPeer[idx]) ? ratiosPerPeer[idx] : [];
       const r0 = ratios[0]; const r1 = ratios[1];
-      const peerPE = Number(r0?.priceToEarningsRatio ?? r0?.priceEarningsRatio ?? 0) || (q?.price && q?.eps > 0 ? q.price / q.eps : null);
+
+      // Valuation multiples — prefer /ratios, fall back to quote-derived P/E.
+      const peerPE = Number(r0?.priceToEarningsRatio ?? r0?.priceEarningsRatio ?? 0)
+        || (q?.price && q?.eps > 0 ? q.price / q.eps : null);
       const peerPS = Number(r0?.priceToSalesRatio ?? 0) || null;
       const peerPB = Number(r0?.priceToBookRatio ?? 0) || null;
+
+      // EPS 1Y YoY — uses netIncomePerShare (diluted EPS proxy).
       let epsGrowth1Y: number | null = null;
-      if (r0?.netIncomePerShare && r1?.netIncomePerShare && r1.netIncomePerShare > 0) epsGrowth1Y = +(((r0.netIncomePerShare / r1.netIncomePerShare) - 1) * 100).toFixed(1);
-      const growthForPEG = epsGrowth1Y && epsGrowth1Y > 0 ? epsGrowth1Y : (epsGrowth5Y > 0 ? epsGrowth5Y : null);
-      const peerPEG = peerPE && growthForPEG && growthForPEG > 0 ? +(peerPE / growthForPEG).toFixed(2) : null;
+      if (r0?.netIncomePerShare != null && r1?.netIncomePerShare != null && r1.netIncomePerShare > 0) {
+        epsGrowth1Y = +(((r0.netIncomePerShare / r1.netIncomePerShare) - 1) * 100).toFixed(1);
+      }
+
+      // EPS 5Y CAGR — needs 6 rows (start + 5 growth years). Ratios come newest
+      // first, so oldest is the last element. Use up to 5-year lookback.
+      let epsGrowth5Y_peer: number | null = null;
+      if (ratios.length >= 3) {
+        const endEps = r0?.netIncomePerShare;
+        const lookback = Math.min(5, ratios.length - 1);
+        const startEps = ratios[lookback]?.netIncomePerShare;
+        epsGrowth5Y_peer = cagr(endEps, startEps, lookback);
+      }
+
+      // Revenue growth (YoY) — revenuePerShare is share-count-neutral.
+      let revenueGrowthPeer: number | null = null;
+      if (r0?.revenuePerShare != null && r1?.revenuePerShare != null && r1.revenuePerShare > 0) {
+        revenueGrowthPeer = +(((r0.revenuePerShare / r1.revenuePerShare) - 1) * 100).toFixed(1);
+      }
+
+      // PEG for the peer: prefer forward-ish 1Y growth if positive, else 5Y CAGR.
+      const growthForPEG = epsGrowth1Y && epsGrowth1Y > 0
+        ? epsGrowth1Y
+        : (epsGrowth5Y_peer && epsGrowth5Y_peer > 0 ? epsGrowth5Y_peer : (epsGrowth5Y > 0 ? epsGrowth5Y : null));
+      const peerPEG = peerPE && growthForPEG && growthForPEG > 0
+        ? +(peerPE / growthForPEG).toFixed(2)
+        : null;
+
       if (!q && !r0) return;
-      peers.push({ ticker: t, name: q?.name || t, pe: peerPE ? +Number(peerPE).toFixed(1) : null, peg: peerPEG, ps: peerPS ? +Number(peerPS).toFixed(1) : null, pb: peerPB ? +Number(peerPB).toFixed(1) : null, epsGrowth1Y, epsGrowth5Y: null, marketCap: q?.marketCap || null, revenueGrowth: null });
+      peers.push({
+        ticker: t,
+        name: q?.name || t,
+        pe: peerPE ? +Number(peerPE).toFixed(1) : null,
+        peg: peerPEG,
+        ps: peerPS ? +Number(peerPS).toFixed(1) : null,
+        pb: peerPB ? +Number(peerPB).toFixed(1) : null,
+        epsGrowth1Y,
+        epsGrowth5Y: epsGrowth5Y_peer,
+        marketCap: q?.marketCap || null,
+        revenueGrowth: revenueGrowthPeer,
+      });
     });
+
     const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null).slice(0, 6);
-    console.log(`[PEERS-FMP] Valid peers: ${validPeers.length}/${peers.length}`);
+    console.log(`[PEERS-FMP] Valid peers: ${validPeers.length}/${peers.length} (with growth series)`);
     if (validPeers.length === 0) return null;
-    const avg = (arr: (number | null)[]): number | null => { const valid = arr.filter((v): v is number => v !== null && !isNaN(v) && isFinite(v) && v > 0 && v < 1000); return valid.length > 0 ? +(valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(2) : null; };
+
+    // Average helper: filters nulls/NaN and clamps to a sensible range so a
+    // single outlier peer with pb=-153 doesn't destroy the peer-avg PB.
+    const avg = (arr: (number | null)[], lo = -1000, hi = 1000): number | null => {
+      const valid = arr.filter((v): v is number => v !== null && !isNaN(v) && isFinite(v) && v > lo && v < hi);
+      return valid.length > 0 ? +(valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(2) : null;
+    };
+
     const ps = revenue > 0 && marketCap > 0 ? +(marketCap / revenue).toFixed(1) : null;
-    const subject = { ticker, name: ticker, pe: pe > 0 ? +pe.toFixed(1) : null, peg: peg > 0 ? +peg.toFixed(2) : null, ps, pb: null as number | null, epsGrowth1Y: null as number | null, epsGrowth5Y: epsGrowth5Y > 0 ? +epsGrowth5Y.toFixed(1) : null, marketCap, revenueGrowth: +revenueGrowth.toFixed(1) };
-    const peerAvg = { pe: avg(validPeers.map(p => p.pe)), peg: avg(validPeers.map(p => p.peg)), ps: avg(validPeers.map(p => p.ps)), pb: avg(validPeers.map(p => p.pb)), epsGrowth1Y: avg(validPeers.map(p => p.epsGrowth1Y)), epsGrowth5Y: avg(validPeers.map(p => p.epsGrowth5Y)) };
+    const subject = {
+      ticker,
+      name: ticker,
+      pe: pe > 0 ? +pe.toFixed(1) : null,
+      peg: peg > 0 ? +peg.toFixed(2) : null,
+      ps,
+      pb: subjectExtras?.pb != null && subjectExtras.pb > 0 ? +Number(subjectExtras.pb).toFixed(1) : null,
+      epsGrowth1Y: subjectExtras?.epsGrowth1Y != null && isFinite(subjectExtras.epsGrowth1Y) ? +Number(subjectExtras.epsGrowth1Y).toFixed(1) : null,
+      epsGrowth5Y: epsGrowth5Y > 0 ? +epsGrowth5Y.toFixed(1) : null,
+      marketCap,
+      revenueGrowth: revenueGrowth ? +revenueGrowth.toFixed(1) : null,
+    };
+    const peerAvg = {
+      pe: avg(validPeers.map(p => p.pe), 0, 500),
+      peg: avg(validPeers.map(p => p.peg), 0, 20),
+      ps: avg(validPeers.map(p => p.ps), 0, 100),
+      // PB avg tolerates positives only — negative book value peers (DOCN) are outliers.
+      pb: avg(validPeers.map(p => p.pb).map(v => v && v > 0 ? v : null), 0, 200),
+      epsGrowth1Y: avg(validPeers.map(p => p.epsGrowth1Y), -100, 300),
+      epsGrowth5Y: avg(validPeers.map(p => p.epsGrowth5Y), -100, 300),
+    };
     return { subject, peers: validPeers, peerAvg };
-  } catch (err: any) { console.error(`[PEERS-FMP] Failed for ${ticker}: ${err?.message?.substring(0, 150)}`); return null; }
+  } catch (err: any) {
+    console.error(`[PEERS-FMP] Failed for ${ticker}: ${err?.message?.substring(0, 150)}`);
+    return null;
+  }
 }
 
 // ============================================================
