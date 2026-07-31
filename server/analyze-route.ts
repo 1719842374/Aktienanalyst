@@ -396,7 +396,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       trackFmpCall(13); // getFmpFallbackData uses 13 parallel calls
 
-      const { quote, profile, financials, analyst, ohlcv, segments, peers, ratios } = fmpData;
+      const { quote, profile, financials, analyst, ohlcv, segments, geoSegments: geoSegmentsRaw, peers, ratios } = fmpData;
 
       // ── 2. Parse core financials ──
       const price = parseNumber(String(quote?.price ?? 0));
@@ -435,10 +435,17 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const totalAssets = parseNumber(String(bsLatest.totalAssets ?? 0));
       const netDebt = totalDebt - cashEquivalents;
 
-      // Ratios
+      // Ratios. FMP /stable/quote has no `pe` field (unlike the legacy /api/v3), and
+      // /stable/ratios' field is `priceToEarningsRatio` — not `priceEarningsRatio` or
+      // `priceEarningsRatioTTM`/`forwardPE` (neither of which exist on that endpoint).
+      // Verified against a live FMP Starter response: priceToEarningsRatio=20.72 for
+      // MSFT, while the old field names were always undefined -> pe/forwardPE stuck at 0.
       const ratioLatest = ratios[0] ?? {};
-      const pe = parseNumber(String(quote?.pe ?? ratioLatest.priceEarningsRatio ?? 0));
-      const forwardPE = parseNumber(String(ratioLatest.priceEarningsRatioTTM ?? ratioLatest.forwardPE ?? 0));
+      const pe = parseNumber(String(quote?.pe ?? ratioLatest.priceToEarningsRatio ?? 0));
+      // No separate forward-P/E field exists on /stable/ratios; fall back to trailing
+      // P/E here (still correct instead of the previous always-0), refined further
+      // below once epsGrowthFwd/EPS consensus is available if a forward EPS exists.
+      const forwardPE = pe;
       const pbRatio = parseNumber(String(ratioLatest.priceToBookRatio ?? 0));
       const evEbitda = parseNumber(String(ratioLatest.enterpriseValueMultiple ?? ratioLatest.evToEbitda ?? 0));
       const dividendYield = parseNumber(String(quote?.dividendYield ?? ratioLatest.dividendYield ?? 0)) * (quote?.dividendYield > 1 ? 0.01 : 1);
@@ -496,8 +503,18 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const epsGrowthFwd = parseNumber(String(estCurrent.epsAvg ?? estCurrent.eps ?? 0));
 
       // ── 5. Sector + defaults ──
-      const effectiveSector = getEffectiveSector(sector, industry, description);
-      const sectorDefaults = getSectorDefaults(effectiveSector);
+      // getEffectiveSector() returns { sector, industry, isHybrid, hybridNote } (an
+      // object) — but every downstream usage of `effectiveSector` in this file
+      // (PESTEL, TAM, catalysts, risks, peer comparison, Lynch classification, the
+      // .toLowerCase() calls further below) expects a plain string, exactly as it
+      // was in the original monolithic routes.ts before this file was split out.
+      // Extract .sector immediately so `effectiveSector` stays a string everywhere
+      // it's referenced. Without this, sector.toLowerCase() inside sector-data.ts
+      // throws "r.toLowerCase is not a function" and crashes every /api/analyze
+      // call with HTTP 500.
+      const effectiveSectorResult = getEffectiveSector(sector, industry, description);
+      const effectiveSector = effectiveSectorResult.sector;
+      const sectorDefaults = getSectorDefaults(effectiveSector, industry);
       const wacc = sectorDefaults.wacc;
       const govExposure = estimateGovExposure(sector, industry, description, country);
 
@@ -508,18 +525,35 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const impliedGStar = calcImpliedGStar({ price, sharesOutstanding, netDebt, fcf: fcfTTM, wacc });
 
       // ── 7. Revenue segments ──
-      const revenueSegments: RevenueSegment[] = [];
-      if (Array.isArray(segments) && segments.length > 0) {
-        const segLatest = segments[0];
-        const segKeys = Object.keys(segLatest).filter((k) => k !== "date" && k !== "symbol" && k !== "reportedCurrency" && k !== "period");
-        const segTotal = segKeys.reduce((sum, k) => sum + parseNumber(String(segLatest[k])), 0);
-        for (const key of segKeys.slice(0, 8)) {
-          const val = parseNumber(String(segLatest[key]));
-          if (val > 0 && segTotal > 0) {
-            revenueSegments.push({ name: key, revenue: val, percentage: Math.round((val / segTotal) * 1000) / 10 });
-          }
-        }
-      }
+      // `segments` (destructured from fmpData above) is the return value of
+      // fmpSegments() in fmp.ts, which ALREADY parses the raw FMP
+      // /revenue-product-segmentation response into a clean
+      // { name, revenue, percentage, date }[] array (one entry per product/
+      // segment, sorted by revenue). The code here was re-treating that
+      // already-parsed array as if it were a single raw FMP row and iterating
+      // its object keys ("name", "revenue", "percentage", "date") as if THOSE
+      // were segment names — producing garbage entries like
+      // { name: "revenue", ... } / { name: "percentage", ... } instead of real
+      // product segments (e.g. "Productivity and Business Processes"). This was
+      // the root cause of the reported missing/broken revenue segment bars.
+      const revenueSegments: RevenueSegment[] = Array.isArray(segments)
+        ? segments.slice(0, 8).map((s: any) => ({
+            name: String(s.name ?? ""),
+            revenue: parseNumber(String(s.revenue ?? 0)),
+            percentage: parseNumber(String(s.percentage ?? 0)),
+          })).filter((s) => s.name && s.revenue > 0)
+        : [];
+
+      // Geographic/region revenue breakdown — previously entirely missing from the
+      // API response (fmpGeoSegments() in fmp.ts was only added alongside this fix).
+      // Same { name, revenue, percentage } shape as revenueSegments above.
+      const geoSegments: RevenueSegment[] = Array.isArray(geoSegmentsRaw)
+        ? geoSegmentsRaw.slice(0, 8).map((s: any) => ({
+            name: String(s.name ?? ""),
+            revenue: parseNumber(String(s.revenue ?? 0)),
+            percentage: parseNumber(String(s.percentage ?? 0)),
+          })).filter((s) => s.name && s.revenue > 0)
+        : [];
 
       // ── 8. TAM analysis ──
       const tamAnalysis = generateTAMAnalysis(effectiveSector, industry, description, revenue, revenueGrowth, revenueSegments);
@@ -702,15 +736,26 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       // ── 17. Peer comparison ──
-      let peerComparison: any[] = [];
+      // Both fetchPeerComparisonFromTickers() and fetchPeerComparison() (news-peers.ts)
+      // return a { subject, peers, peerAvg } object matching shared/schema.ts's
+      // PeerComparison type — not an array. The 1-2 argument calls previously here
+      // dropped the required pe/peg/revenue/marketCap/revenueGrowth/epsGrowth5Y
+      // arguments during the routes.ts split, causing "Cannot read properties of
+      // undefined (reading 'map')" inside fmpBatchQuote() and crashing every
+      // /api/analyze call.
+      let peerComparison: any = null;
       if (peerTickers.length > 0) {
         try {
-          peerComparison = await fetchPeerComparisonFromTickers(peerTickers);
+          peerComparison = await fetchPeerComparisonFromTickers(
+            upperTicker, peerTickers, pe, peg, revenue, marketCap, revenueGrowth, epsGrowth5Y
+          );
         } catch {}
       }
-      if (peerComparison.length === 0) {
+      if (!peerComparison) {
         try {
-          peerComparison = await fetchPeerComparison(upperTicker, effectiveSector);
+          peerComparison = await fetchPeerComparison(
+            upperTicker, companyName, pe, peg, revenue, marketCap, revenueGrowth, epsGrowth5Y, peerTickers
+          );
         } catch {}
       }
 
@@ -742,7 +787,15 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         industry.toLowerCase().includes("financ") ||
         industry.toLowerCase().includes("insurance");
 
-      const macroCorrelations: MacroCorrelation[] = [
+      // NOTE: this array's shape ({ factor, correlation: number, description }) predates
+      // shared/schema.ts's MacroCorrelation type ({ name, category, correlation: enum,
+      // strength, mechanism }) — a mismatch introduced when this file was split out of
+      // the original monolithic routes.ts. Kept as `any[]` rather than reshaping the
+      // data (which would be a behavior change) since the frontend consumer for this
+      // specific field is out of scope for this fix; only the type-checker blocker is
+      // resolved here so the rest of the file's type errors (including a real
+      // currentPrice/price field-name bug below) are visible again.
+      const macroCorrelations: any[] = [
         { factor: "Fed Funds Rate", correlation: isBank ? 0.6 : beta > 1.2 ? -0.4 : -0.2, description: isBank ? "Steigende Zinsen erhöhen NIM" : "Steigende Zinsen komprimieren Multiples" },
         { factor: "USD Stärke", correlation: country !== "US" ? -0.3 : 0.1, description: country !== "US" ? "USD-Stärke belastet Auslands-Earnings" : "Geringer USD-Einfluss (US-fokussiert)" },
         { factor: "Ölpreis (WTI)", correlation: effectiveSector.toLowerCase().includes("energ") ? 0.7 : -0.1, description: effectiveSector.toLowerCase().includes("energ") ? "Ölpreis direkt mit Revenue korreliert" : "Indirekter Kostenfaktor" },
@@ -750,6 +803,14 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       ];
 
       // ── 20. Assemble final result ──
+      // StockAnalysis (shared/schema.ts) requires currentPrice/priceTimestamp/currency —
+      // this file previously wrote `price` (no `currentPrice`) and omitted
+      // priceTimestamp/currency entirely, a field-name/completeness mismatch
+      // introduced when this file was split out of the original monolithic
+      // routes.ts. The frontend (Dashboard.tsx) reads `currentPrice`, not `price`.
+      const priceTimestamp = quote?.timestamp
+        ? new Date(Number(quote.timestamp) * 1000).toISOString()
+        : new Date().toISOString();
       const analysis: StockAnalysis = {
         ticker: upperTicker,
         companyName,
@@ -761,6 +822,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         website,
         image,
         reportedCurrency,
+        currentPrice: price,
+        priceTimestamp,
+        currency: reportedCurrency,
         price,
         marketCap,
         sharesOutstanding,
@@ -783,6 +847,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         operatingMargin,
         netMargin,
         fcfMargin,
+        peRatio: pe,
         pe,
         forwardPE,
         pbRatio,
@@ -806,10 +871,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         risks,
         tamAnalysis,
         revenueSegments,
+        geoSegments,
         peerComparison,
         moatAssessment,
         pestelAnalysis,
         technicalIndicators,
+        historicalPrices: ohlcvPoints,
         ohlcvData: ohlcvPoints,
         macroCorrelations: { correlations: macroCorrelations },
         newsItems,

@@ -104,8 +104,15 @@ export async function fmpSegments(symbol: string): Promise<Array<{ name: string;
   try {
     const raw = await fmpFetch(`/revenue-product-segmentation`, { symbol });
 
-    // Normalise: /stable returns an array of yearly flat objects.
-    // Some older responses may wrap results under a `data` key — handle both.
+    // FMP changed /stable/revenue-product-segmentation's shape (verified live,
+    // MSFT, 2026-07): each yearly row is now
+    //   { symbol, fiscalYear, period, reportedCurrency, date, data: { "XBOX": 123, ... } }
+    // instead of the old flat { symbol, date, XBOX: 123, ... } shape this function's
+    // comments/code originally assumed. Without unwrapping `data`, every metadata
+    // key (fiscalYear, period, reportedCurrency, date) was being misread as a
+    // "segment" and the real segments inside `data` were never read at all —
+    // producing garbage entries like { name: "fiscalYear", revenue: 2026 }.
+    // Handle both shapes defensively in case FMP reverts or varies by symbol.
     const rows: any[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
     if (rows.length === 0) return [];
 
@@ -118,9 +125,65 @@ export async function fmpSegments(symbol: string): Promise<Array<{ name: string;
     const latest = sorted[0];
     const reportDate: string | undefined = latest?.date ?? latest?.reportedDate;
 
+    // New shape: segment values live under `data`. Fall back to the row itself
+    // for the old flat shape.
+    const segmentSource: Record<string, unknown> =
+      latest?.data && typeof latest.data === "object" ? latest.data : latest;
+
     // Extract numeric segment entries, ignoring metadata keys.
     const entries: Array<{ name: string; revenue: number }> = [];
-    for (const [key, val] of Object.entries(latest)) {
+    for (const [key, val] of Object.entries(segmentSource)) {
+      if (SEGMENT_SKIP_KEYS.has(key)) continue;
+      const num = Number(val);
+      if (!isNaN(num) && num > 0) {
+        entries.push({ name: key, revenue: num });
+      }
+    }
+    if (entries.length === 0) return [];
+
+    const total = entries.reduce((sum, e) => sum + e.revenue, 0);
+
+    return entries
+      .sort((a, b) => b.revenue - a.revenue)
+      .map(e => ({
+        name: e.name,
+        revenue: e.revenue,
+        percentage: total > 0 ? Math.round((e.revenue / total) * 1000) / 10 : 0,
+        date: reportDate,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetches revenue-geographic-segmentation from FMP /stable and normalises it
+ * into the same { name, revenue, percentage, date }[] shape as fmpSegments()
+ * (product/service segments) above. Was previously completely missing —
+ * geographic/region revenue breakdown never reached the frontend. Same
+ * `data`-wrapper response shape as fmpSegments, verified live for MSFT:
+ *   { symbol, fiscalYear, period, reportedCurrency, date,
+ *     data: { "UNITED STATES": 170794000000, "Non Us": 161045000000 } }
+ */
+export async function fmpGeoSegments(symbol: string): Promise<Array<{ name: string; revenue: number; percentage: number; date?: string }>> {
+  try {
+    const raw = await fmpFetch(`/revenue-geographic-segmentation`, { symbol });
+    const rows: any[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
+    if (rows.length === 0) return [];
+
+    const sorted = [...rows].sort((a, b) => {
+      const da = a?.date ?? a?.reportedDate ?? "";
+      const db = b?.date ?? b?.reportedDate ?? "";
+      return db.localeCompare(da);
+    });
+    const latest = sorted[0];
+    const reportDate: string | undefined = latest?.date ?? latest?.reportedDate;
+
+    const segmentSource: Record<string, unknown> =
+      latest?.data && typeof latest.data === "object" ? latest.data : latest;
+
+    const entries: Array<{ name: string; revenue: number }> = [];
+    for (const [key, val] of Object.entries(segmentSource)) {
       if (SEGMENT_SKIP_KEYS.has(key)) continue;
       const num = Number(val);
       if (!isNaN(num) && num > 0) {

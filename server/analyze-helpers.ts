@@ -9,7 +9,7 @@ import type { PESTELAnalysis, PESTELFactor, PESTELFactorItem, CurrencyInfo } fro
 import {
   isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
-  fmpSegments, fmpPeers, fmpRatios, fmpKeyMetrics, convertFmpRowsToUsd,
+  fmpSegments, fmpGeoSegments, fmpPeers, fmpRatios, fmpKeyMetrics, convertFmpRowsToUsd,
 } from "./fmp";
 
 // ============================================================
@@ -170,7 +170,7 @@ export async function getFmpFallbackData(ticker: string): Promise<{
   quote: any; profile: any;
   financials: { income: any[]; cashflow: any[]; balanceSheet: any[] };
   analyst: { priceTarget: any; grades: any[]; estimates: any[] };
-  ohlcv: any[]; segments: any[]; peers: any[]; ratios: any[];
+  ohlcv: any[]; segments: any[]; geoSegments: any[]; peers: any[]; ratios: any[];
   source: 'fmp';
 } | null> {
   if (!isFmpAvailable()) { console.warn(`[FMP-FALLBACK] FMP_API_KEY not set for ${ticker}`); return null; }
@@ -194,9 +194,10 @@ export async function getFmpFallbackData(ticker: string): Promise<{
       fmpPeers(ticker),
       fmpRatios(ticker, 3),
       fmpKeyMetrics(ticker, 3),
+      fmpGeoSegments(ticker),
     ]);
     const get = (res: PromiseSettledResult<any>) => res.status === 'fulfilled' ? res.value : null;
-    const [quoteRes, profileRes, incomeRes, cashflowRes, balanceSheetRes, priceTargetRes, gradesRes, estimatesRes, ohlcvRes, segmentsRes, peersRes, ratiosRes] = settledAll;
+    const [quoteRes, profileRes, incomeRes, cashflowRes, balanceSheetRes, priceTargetRes, gradesRes, estimatesRes, ohlcvRes, segmentsRes, peersRes, ratiosRes, , geoSegmentsRes] = settledAll;
     const quoteData = get(quoteRes);
     const quote = Array.isArray(quoteData) ? quoteData[0] : quoteData;
     if (!quote?.price) { console.warn(`[FMP-FALLBACK] No quote data for ${ticker}`); return null; }
@@ -210,7 +211,7 @@ export async function getFmpFallbackData(ticker: string): Promise<{
       quote, profile: get(profileRes),
       financials: { income: incomeUsd, cashflow: cashflowUsd, balanceSheet: balanceSheetUsd },
       analyst: { priceTarget: get(priceTargetRes), grades: get(gradesRes) || [], estimates: get(estimatesRes) || [] },
-      ohlcv: get(ohlcvRes) || [], segments: get(segmentsRes) || [], peers: get(peersRes) || [], ratios: get(ratiosRes) || [],
+      ohlcv: get(ohlcvRes) || [], segments: get(segmentsRes) || [], geoSegments: get(geoSegmentsRes) || [], peers: get(peersRes) || [], ratios: get(ratiosRes) || [],
       source: 'fmp',
     };
   } catch (err: any) { console.error(`[FMP-FALLBACK] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`); return null; }
