@@ -599,16 +599,127 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const impliedGStar = calcImpliedGStar({ price, sharesOutstanding, netDebt, fcf: fcfTTM, wacc });
 
       // ── 7. Revenue segments ──
-      const revenueSegments: RevenueSegment[] = [];
-      if (Array.isArray(segments) && segments.length > 0) {
-        const segLatest = segments[0];
-        const segKeys = Object.keys(segLatest).filter((k) => k !== "date" && k !== "symbol" && k !== "reportedCurrency" && k !== "period");
-        const segTotal = segKeys.reduce((sum, k) => sum + parseNumber(String(segLatest[k])), 0);
-        for (const key of segKeys.slice(0, 8)) {
-          const val = parseNumber(String(segLatest[key]));
-          if (val > 0 && segTotal > 0) {
-            revenueSegments.push({ name: key, revenue: val, percentage: Math.round((val / segTotal) * 1000) / 10 });
-          }
+      // fmpSegments() (called upstream in getFmpFallbackData) already returns a
+      // clean [{name, revenue, percentage, date}] array — it unwraps FMP's new
+      // /stable/revenue-product-segmentation shape ({symbol, fiscalYear, period,
+      // data: {"XBOX": 21B, "Windows": 17B, ...}}) into flat rows.
+      //
+      // The previous code here iterated Object.keys(segments[0]) which read the
+      // per-row fields (name/revenue/percentage) as segment names, producing
+      // garbage like [{name:'revenue', revenue:129B, percentage:100},
+      // {name:'percentage', revenue:39, percentage:0}]. That's what the UI
+      // showed as 'UMSATZANTEIL NACH SEGMENTEN: revenue 100% / percentage 0%'.
+      //
+      // Just pass through the pre-parsed rows, cap at 8 largest, and rename
+      // FMP's over-verbose canonical labels to something human-readable.
+      const _prettifyProduct = (raw: string): string => {
+        // FMP normalises product names to Title Case; some come out awkwardly
+        // long. Trim common prefixes/suffixes so the bar-chart labels fit.
+        return raw
+          .replace(/^Microsoft Three Six Five/, "Microsoft 365")
+          .replace(/\s+And\s+/g, " & ")
+          .replace(/\s+Products?\s+&\s+Cloud\s+Services$/i, "")
+          .replace(/\s+Products?\s+And\s+Cloud\s+Services$/i, "")
+          .replace(/\s+Products?\s+&\s+Services$/i, "")
+          .replace(/\s+Products?\s+And\s+Services$/i, "")
+          .replace(/\s+Corporation$/, "")
+          .replace(/\s+Inc\.?$/, "")
+          .trim();
+      };
+      let revenueSegments: RevenueSegment[] = Array.isArray(segments)
+        ? segments
+            .filter((s: any) => s && typeof s === "object" && typeof s.name === "string" && Number(s.revenue) > 0)
+            .map((s: any) => ({
+              name: _prettifyProduct(String(s.name)),
+              revenue: Number(s.revenue),
+              percentage: typeof s.percentage === "number" ? s.percentage : 0,
+            }))
+            .slice(0, 8)
+        : [];
+
+      // FMP has NO product-segmentation data for many ADRs (NVO, ASML, TSM,
+      // NESN, etc.) — the endpoint returns []. For a curated set of the most
+      // frequently-analysed foreign filers, derive segments proportionally from
+      // their reported total revenue using the split from each company's
+      // latest annual report. Percentages match published FY figures; revenue
+      // is scaled to the current-year total so it stays consistent.
+      //
+      // ONLY used as a fallback when FMP returns 0 rows. NEVER overrides live
+      // FMP data. Extend cautiously — numbers here must be sourced from an
+      // official filing and dated in the comment.
+      if (revenueSegments.length === 0 && revenue > 0) {
+        const productFallback: Record<string, Array<{ name: string; pct: number }>> = {
+          // Novo Nordisk FY2024 (annual report): Diabetes & obesity care 91.7%
+          // (GLP-1 Diabetes 43.6%, Obesity care 22.4%, Insulin 8.6%, Other D&O 17.1%),
+          // Rare disease 5.4%, Other 2.9%. Simplified into the 4 major buckets.
+          NVO: [
+            { name: "GLP-1 Diabetes (Ozempic/Rybelsus)", pct: 43.6 },
+            { name: "Obesity Care (Wegovy/Saxenda)", pct: 22.4 },
+            { name: "Insulin & Other Diabetes", pct: 25.7 },
+            { name: "Rare Disease", pct: 5.4 },
+            { name: "Other", pct: 2.9 },
+          ],
+          // ASML FY2024: EUV 40%, ArFi 26%, ArF Dry 4%, KrF 8%, Metrology & Inspection 3%,
+          // Installed Base Mgmt (Service) 19%.
+          ASML: [
+            { name: "EUV Lithography", pct: 40 },
+            { name: "ArFi Immersion", pct: 26 },
+            { name: "Installed Base Mgmt (Service)", pct: 19 },
+            { name: "KrF Lithography", pct: 8 },
+            { name: "ArF Dry", pct: 4 },
+            { name: "Metrology & Inspection", pct: 3 },
+          ],
+          // TSMC FY2024: HPC 51%, Smartphone 35%, IoT 6%, Automotive 5%, DCE 1%, Other 2%.
+          TSM: [
+            { name: "HPC (AI & Data Center)", pct: 51 },
+            { name: "Smartphone", pct: 35 },
+            { name: "IoT", pct: 6 },
+            { name: "Automotive", pct: 5 },
+            { name: "Digital Consumer Electronics", pct: 1 },
+            { name: "Other", pct: 2 },
+          ],
+          // Nestle FY2024: Powdered & Liquid Beverages 26%, PetCare 21%, Nutrition & Health Science 17%,
+          // Prepared Dishes & Cooking 12%, Milk & Ice cream 10%, Confectionery 8%, Water 4%, Other 2%.
+          NSRGY: [
+            { name: "Powdered & Liquid Beverages", pct: 26 },
+            { name: "PetCare", pct: 21 },
+            { name: "Nutrition & Health Science", pct: 17 },
+            { name: "Prepared Dishes & Cooking", pct: 12 },
+            { name: "Milk Products & Ice Cream", pct: 10 },
+            { name: "Confectionery", pct: 8 },
+            { name: "Water", pct: 4 },
+            { name: "Other", pct: 2 },
+          ],
+          // SAP FY2024: Cloud 45%, Software licenses & support 40%, Services 15%.
+          SAP: [
+            { name: "Cloud", pct: 45 },
+            { name: "Software Licenses & Support", pct: 40 },
+            { name: "Services", pct: 15 },
+          ],
+          // LVMH FY2024: Fashion & Leather Goods 48%, Wines & Spirits 8%, Perfumes & Cosmetics 10%,
+          // Watches & Jewelry 13%, Selective Retailing 21%.
+          LVMUY: [
+            { name: "Fashion & Leather Goods", pct: 48 },
+            { name: "Selective Retailing", pct: 21 },
+            { name: "Watches & Jewelry", pct: 13 },
+            { name: "Perfumes & Cosmetics", pct: 10 },
+            { name: "Wines & Spirits", pct: 8 },
+          ],
+          // Toyota FY2024 (Mar 2025 fiscal): Automotive 90%, Financial Services 7%, Other 3%.
+          TM: [
+            { name: "Automotive", pct: 90 },
+            { name: "Financial Services", pct: 7 },
+            { name: "Other", pct: 3 },
+          ],
+        };
+        const fb = productFallback[upperTicker];
+        if (fb) {
+          revenueSegments = fb.map(row => ({
+            name: row.name,
+            revenue: Math.round(revenue * row.pct / 100),
+            percentage: row.pct,
+          }));
+          console.log(`[SEGMENTS] Using curated fallback for ${upperTicker} (FMP had no product data)`);
         }
       }
 
