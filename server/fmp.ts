@@ -391,6 +391,18 @@ export async function getFxRateToUsd(currency: string): Promise<number> {
 const FX_CONVERTIBLE_FIELDS = new Set([
   "revenue", "costOfRevenue", "grossProfit", "operatingIncome", "netIncome", "ebit", "ebitda",
   "eps", "epsDiluted", "operatingExpenses", "researchAndDevelopmentExpenses",
+  // /stable/analyst-estimates response fields for foreign-currency filers
+  // (NVO reports EPS estimates in DKK etc.) — must FX-convert or PEG/forwardPE
+  // come out ~5x too high.
+  "epsAvg", "epsHigh", "epsLow",
+  "revenueAvg", "revenueHigh", "revenueLow",
+  "ebitdaAvg", "ebitdaHigh", "ebitdaLow",
+  "ebitAvg", "ebitHigh", "ebitLow",
+  "netIncomeAvg", "netIncomeHigh", "netIncomeLow",
+  "sgaExpenseAvg", "sgaExpenseHigh", "sgaExpenseLow",
+  // Older FMP endpoint variants sometimes use these names — keep as safety net.
+  "estimatedEpsAvg", "estimatedEps", "estimatedRevenueAvg",
+  "estimatedEbitdaAvg", "estimatedNetIncomeAvg",
   "generalAndAdministrativeExpenses", "sellingAndMarketingExpenses", "sellingGeneralAndAdministrativeExpenses",
   "otherExpenses", "costAndExpenses", "interestExpense", "incomeTaxExpense",
   "freeCashFlow", "operatingCashFlow", "capitalExpenditure", "cashAndCashEquivalents",

@@ -89,6 +89,28 @@ export function calcLynchPEG(params: {
       if (basePE > 0 && totalReturn > 0) return { peg: +(basePE / totalReturn).toFixed(2), pegBasis: 'PEGY = Fwd P/E ÷ (Fwd EPS Growth + Dividende)' };
       return { peg: null, pegBasis: 'PEGY nicht berechenbar' };
     }
+    case 'stalwart': {
+      // Peter Lynch: Stalwarts (defensive Blue-Chips wie Pharma-Majors, Consumer
+      // Staples) haben moderates Wachstum + solide Dividende. Klassisches PEG
+      // oder PEGY je nachdem ob Dividende relevant ist.
+      const basePE = forwardPE > 0 ? forwardPE : pe;
+      const growth = epsGrowthFwd > 0 ? epsGrowthFwd : (epsGrowth5Y > 0 ? epsGrowth5Y : revenueGrowth);
+      if (basePE > 0 && growth > 0) {
+        // If dividend yield is material (≥1%), use PEGY (Lynch's preferred
+        // method for dividend-paying Stalwarts).
+        if (dividendYield >= 1) {
+          const totalReturn = growth + dividendYield;
+          return { peg: +(basePE / totalReturn).toFixed(2), pegBasis: 'PEGY = Fwd P/E ÷ (Fwd EPS Growth + Dividende)' };
+        }
+        // Otherwise plain PEG.
+        return { peg: +(basePE / growth).toFixed(2), pegBasis: 'PEG = Fwd P/E ÷ Fwd EPS Growth' };
+      }
+      // Fallback: try trailing PE with 5Y growth if forwards are missing.
+      if (pe > 0 && epsGrowth5Y > 0) {
+        return { peg: +(pe / epsGrowth5Y).toFixed(2), pegBasis: 'PEG = Trailing P/E ÷ 5Y EPS CAGR' };
+      }
+      return { peg: null, pegBasis: 'PEG nicht berechenbar (fehlende Wachstumsdaten)' };
+    }
     default: {
       const bestPE = forwardPE > 0 ? forwardPE : pe;
       const bestGrowth = epsGrowthFwd > 0 ? epsGrowthFwd : epsGrowth5Y > 0 ? epsGrowth5Y : revenueGrowth;

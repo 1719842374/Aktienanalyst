@@ -463,7 +463,21 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       const pbRatio = parseNumber(String(ratioLatest.priceToBookRatio ?? 0));
       const evEbitda = parseNumber(String(ratioLatest.enterpriseValueMultiple ?? ratioLatest.evToEbitda ?? 0));
-      const dividendYield = parseNumber(String(quote?.dividendYield ?? ratioLatest.dividendYield ?? 0)) * (quote?.dividendYield > 1 ? 0.01 : 1);
+      // dividendYield: FMP inconsistently returns either a decimal (0.036 = 3.6%)
+      // or an already-percent value (3.6 = 3.6%). Detect by magnitude: any value
+      // < 1 must be decimal form, so multiply by 100. This replaces the older
+      // check `> 1 ? 0.01 : 1` which mis-scaled 0.036 to 0.036% instead of 3.6%.
+      const _divRaw = parseNumber(String(quote?.dividendYield ?? ratioLatest.dividendYield ?? profile?.lastAnnualDividend ?? 0));
+      const _divYield = (() => {
+        if (_divRaw <= 0) return 0;
+        // Value < 1 is definitely a decimal (0.036 → 3.6%). Value ≥ 1 is already
+        // in percent (3.6 stays 3.6). Yields > 25% are implausible for equities
+        // so treat those as raw dividend-per-share divided by price.
+        if (_divRaw < 1) return _divRaw * 100;
+        if (_divRaw > 25 && price > 0) return (_divRaw / price) * 100;
+        return _divRaw;
+      })();
+      const dividendYield = _divYield;
       const returnOnEquity = parseNumber(String(ratioLatest.returnOnEquity ?? 0));
       const beta = parseNumber(String(profile?.beta ?? quote?.beta ?? 1));
 
@@ -520,14 +534,27 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const latestGrade = analyst.grades?.[0];
       const analystConsensus = String(latestGrade?.recommendationMean ?? latestGrade?.action ?? "Hold");
 
-      // EPS estimates — FMP /stable/analyst-estimates returns `estimatedEpsAvg`
-      // (average of analyst estimates for next FY EPS). Historic field names
-      // (`epsAvg`, `eps`) are kept as fallbacks so older cached rows still parse.
-      const estCurrent: any = analyst.estimates?.[0] ?? {};
-      const nextFyEpsAbs = parseNumber(String(
-        estCurrent.estimatedEpsAvg ?? estCurrent.estimatedEpsDiluted ??
-        estCurrent.estimatedEps ?? estCurrent.epsAvg ?? estCurrent.eps ?? 0
+      // EPS estimates — FMP /stable/analyst-estimates returns rows sorted
+      // DESCENDING by date and covers multiple future FYs (e.g. NVO returns
+      // 2030, 2029, 2028, … — the [0] entry is 5 years out, not "next FY"!).
+      // We must pick the earliest fiscal-year end that is still in the future
+      // (or the most-recent past FY if none are ahead — e.g. late-year filings).
+      //
+      // Fields: /stable/analyst-estimates uses `epsAvg` today; older variants
+      // used `estimatedEpsAvg` / `estimatedEps`. FX conversion is applied
+      // upstream in getFmpFallbackData (see FX_CONVERTIBLE_FIELDS).
+      const _todayIso = new Date().toISOString().slice(0, 10);
+      const _estRows: any[] = Array.isArray(analyst.estimates) ? analyst.estimates : [];
+      const _epsField = (r: any): number => parseNumber(String(
+        r?.epsAvg ?? r?.estimatedEpsAvg ?? r?.estimatedEpsDiluted ?? r?.estimatedEps ?? r?.eps ?? 0
       ));
+      // Prefer future FYs; among futures, take the CLOSEST one to today. If no
+      // future FY has a positive EPS estimate, fall back to the latest past FY
+      // with a positive estimate.
+      const _futureRows = _estRows.filter((r) => (r?.date ?? "") > _todayIso && _epsField(r) > 0).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      const _pastRows = _estRows.filter((r) => (r?.date ?? "") <= _todayIso && _epsField(r) > 0).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      const estCurrent: any = _futureRows[0] ?? _pastRows[0] ?? analyst.estimates?.[0] ?? {};
+      const nextFyEpsAbs = _epsField(estCurrent);
       // epsGrowthFwd is a PERCENTAGE (used by classifyLynch and calcLynchPEG),
       // derived from the absolute next-FY estimate vs current TTM EPS.
       const epsGrowthFwd = _epsForPE > 0 && nextFyEpsAbs > 0
@@ -552,9 +579,21 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const govExposure = govExposureRaw.exposure;
 
       // ── 6. Lynch classification ──
-      // epsGrowth5Y is refined below from the income-statement history; use
-      // revenueGrowth as a temporary proxy for Lynch until the CAGR is computed.
+      // Compute epsGrowth5Y FIRST from the income-statement history so
+      // classifyLynch sees the real 5Y CAGR, not the revenueGrowth proxy.
+      // Getting this wrong caused NVO (Healthcare Pharma) to be classified as
+      // slow_grower because Wegovy-year revenueGrowth turned negative even
+      // though EPS CAGR is still ~11%.
+      const _rawEpsFY = parseNumber(String(incomeLatest.epsDiluted ?? incomeLatest.eps ?? 0));
       let epsGrowth5Y = revenueGrowth;
+      if (financials.income.length >= 3) {
+        const oldest = financials.income[financials.income.length - 1] ?? {};
+        const oldEps = parseNumber(String((oldest as any).epsDiluted ?? (oldest as any).eps ?? 0));
+        if (oldEps > 0 && _rawEpsFY > 0) {
+          const n = financials.income.length - 1;
+          epsGrowth5Y = ((Math.pow(_rawEpsFY / oldEps, 1 / n) - 1) * 100);
+        }
+      }
       const lynchClass = classifyLynch({ epsGrowth5Y, revenueGrowth, sector: effectiveSector, industry, dividendYield, fcfMargin, pe, forwardPE, pbRatio });
       const { peg, pegBasis } = calcLynchPEG({ lynchClass, pe, forwardPE, epsGrowth5Y, epsGrowthFwd, revenueGrowth, dividendYield });
       const impliedGStar = calcImpliedGStar({ price, sharesOutstanding, netDebt, fcf: fcfTTM, wacc });
@@ -820,8 +859,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // historicalPrices[] — Section10 (TechnicalChart) and MonteCarlo both read this.
       const historicalPrices = ohlcvPoints.map((p) => ({ date: p.date, close: p.close }));
 
-      // EPS chain — keep the three flavours the frontend distinguishes.
-      const rawEpsFY = parseNumber(String(incomeLatest.epsDiluted ?? incomeLatest.eps ?? 0));
+      // EPS chain — rawEpsFY was already parsed in step 6 for the CAGR; alias
+      // it for clarity here.
+      const rawEpsFY = _rawEpsFY;
       const epsTTM = parseNumber(String(quote?.eps ?? profile?.eps ?? rawEpsFY));
       const epsAdjFY = rawEpsFY;
       // Absolute next-FY consensus EPS (in $) — used by Section 4 for forwardPE
@@ -830,15 +870,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         (analyst.estimates?.[0] as any)?.estimatedEpsAvg ??
         (analyst.estimates?.[0] as any)?.estimatedEps ?? 0
       ));
-      // 5Y EPS CAGR — refine the proxy from the income-statement history.
-      if (financials.income.length >= 3) {
-        const oldest = financials.income[financials.income.length - 1] ?? {};
-        const oldEps = parseNumber(String((oldest as any).epsDiluted ?? (oldest as any).eps ?? 0));
-        if (oldEps > 0 && rawEpsFY > 0) {
-          const n = financials.income.length - 1;
-          epsGrowth5Y = ((Math.pow(rawEpsFY / oldEps, 1 / n) - 1) * 100);
-        }
-      }
+      // epsGrowth5Y was computed earlier from the income-statement history
+      // (see step 6 — needed for classifyLynch). No refinement needed here.
 
       // Ratings — map buy/hold/sell distribution from analyst.grades.
       const ratingsBuy = analyst.grades.filter((g: any) => /buy|outperform|overweight/i.test(String(g.newGrade ?? g.gradeCompany ?? ""))).length;

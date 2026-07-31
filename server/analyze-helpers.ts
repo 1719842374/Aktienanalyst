@@ -232,7 +232,11 @@ export async function getFmpFallbackData(ticker: string): Promise<{
       fmpBalanceSheet(ticker, 1),
       fmpPriceTarget(ticker),
       fmpGrades(ticker, 20),
-      fmpAnalystEstimates(ticker, 3),
+      // Fetch enough estimates rows to cover past + next 2-3 fiscal years.
+      // FMP returns rows sorted descending by date; limit=3 only gave us the
+      // three FURTHEST future years (e.g. 2028/29/30) — not "next FY". With
+      // limit=8 we always have the next completed FY available for consensus.
+      fmpAnalystEstimates(ticker, 8),
       fmpHistoricalPrices(ticker,
         new Date(Date.now() - 10 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         new Date().toISOString().split('T')[0]
@@ -249,15 +253,34 @@ export async function getFmpFallbackData(ticker: string): Promise<{
     const quote = Array.isArray(quoteData) ? quoteData[0] : quoteData;
     if (!quote?.price) { console.warn(`[FMP-FALLBACK] No quote data for ${ticker}`); return null; }
     console.log(`[FMP-FALLBACK] OK for ${ticker} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-    const [incomeUsd, cashflowUsd, balanceSheetUsd] = await Promise.all([
-      convertFmpRowsToUsd(get(incomeRes) || []),
+    // FX normalisation — analyst-estimates for foreign filers (e.g. NVO in DKK,
+    // ASML in EUR) come back in the REPORTING currency, not the trading currency.
+    // Profile.currency is the trading currency (USD for ADRs like NVO), so we can't
+    // use it — the truth lives in income-statement rows'.reportedCurrency (NVO's
+    // income statement is in DKK even though profile.currency=USD).
+    //
+    // Income/cashflow/balance-sheet already get converted via convertFmpRowsToUsd
+    // because their rows carry reportedCurrency natively. Estimates don't carry
+    // that field, so we tag them from the income statement's currency before
+    // running the same conversion — otherwise epsConsensusNextFY is ~5.4x too
+    // high for DKK filers and PEG blows out to 0 / nonsense.
+    const incomeRawArr: any[] = Array.isArray(get(incomeRes)) ? get(incomeRes) : [];
+    const filerCurrency: string | undefined = incomeRawArr[0]?.reportedCurrency;
+    const estimatesRawArr: any[] = Array.isArray(get(estimatesRes)) ? get(estimatesRes) : [];
+    const estimatesTagged = filerCurrency && filerCurrency !== "USD"
+      ? estimatesRawArr.map((r) => ({ ...r, reportedCurrency: filerCurrency }))
+      : estimatesRawArr;
+
+    const [incomeUsd, cashflowUsd, balanceSheetUsd, estimatesUsd] = await Promise.all([
+      convertFmpRowsToUsd(incomeRawArr),
       convertFmpRowsToUsd(get(cashflowRes) || []),
       convertFmpRowsToUsd(get(balanceSheetRes) || []),
+      convertFmpRowsToUsd(estimatesTagged),
     ]);
     return {
       quote, profile: get(profileRes),
       financials: { income: incomeUsd, cashflow: cashflowUsd, balanceSheet: balanceSheetUsd },
-      analyst: { priceTarget: get(priceTargetRes), grades: get(gradesRes) || [], estimates: get(estimatesRes) || [] },
+      analyst: { priceTarget: get(priceTargetRes), grades: get(gradesRes) || [], estimates: estimatesUsd },
       ohlcv: get(ohlcvRes) || [], segments: get(segmentsRes) || [], geoSegments: get(geoSegmentsRes) || [], peers: get(peersRes) || [], ratios: get(ratiosRes) || [],
       source: 'fmp',
     };
