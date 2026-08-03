@@ -62,9 +62,22 @@ export function useMinerData(data: BTCAnalysis) {
     (async () => {
       try {
         setLoading(true);
-        const history = data.chartData?.prices5Y?.length
-          ? data.chartData.prices5Y
-          : data.chartData?.prices3Y ?? [];
+        // WICHTIG: calcPuellMultiple() (server/btc-miner.ts) braucht ein
+        // 365-Tage-Kalenderfenster als "Anlaufzeit", bevor der erste
+        // puellHistory-Punkt entsteht. Wird nur prices5Y (=exakt 5 Jahre)
+        // gesendet, verschluckt diese Anlaufzeit fast das gesamte erste
+        // Jahr des gewuenschten Fensters -- verifiziert live: mit
+        // prices5Y (458 Punkte, 2021-08 bis 2026-08) begann puellHistory
+        // erst am 2022-07-06, wodurch die reale Jun/Jul-2022-Kapitulation
+        // nie in den zurueckgegebenen Daten auftauchte, obwohl die
+        // Bedingung selbst dort erfuellt war. allPrices (ungefilterte
+        // Vollhistorie seit 2009) gibt dem 365-Tage-Fenster genug Vorlauf,
+        // damit puellHistory bereits ab dem gewuenschten 5Y-Start Werte hat.
+        const history = data.chartData?.allPrices?.length
+          ? data.chartData.allPrices
+          : data.chartData?.prices5Y?.length
+            ? data.chartData.prices5Y
+            : data.chartData?.prices3Y ?? [];
         const res = await apiRequest("POST", "/api/btc-miner", {
           btcPriceHistory: history,
           btcPrice: data.btcPrice,
