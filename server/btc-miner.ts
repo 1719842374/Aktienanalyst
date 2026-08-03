@@ -21,9 +21,36 @@ const REF_MINER = {
   electricityCostKWh: 0.05,  // $0.05/kWh — institutional miner
 };
 
-// Post-2024-halving block reward
+// Post-2024-halving block reward (current era — used for live hashprice/breakeven,
+// which only ever look at TODAY's reward, so a constant is correct there).
 const BLOCK_REWARD_BTC = 3.125;
 const DAILY_BLOCKS = 144;
+
+// Historical halving schedule (block reward halves every 210,000 blocks;
+// dates below are the actual halving block-confirmation dates). Puell
+// Multiple's 365-day rolling emission average spans multiple eras across
+// 2012, 2016, 2020, and 2024 — using today's constant reward for the whole
+// history silently overstates the multiple around every halving boundary
+// (verified: with the flat constant, Puell Multiple never dropped below
+// 0.70 anywhere in the full history, when the real 2018/2022 bear-market
+// floors are documented around 0.4–0.5). Emission must use the reward that
+// was actually in effect on each date.
+const HALVING_SCHEDULE: { date: string; reward: number }[] = [
+  { date: '2009-01-03', reward: 50 },
+  { date: '2012-11-28', reward: 25 },
+  { date: '2016-07-09', reward: 12.5 },
+  { date: '2020-05-11', reward: 6.25 },
+  { date: '2024-04-20', reward: 3.125 },
+];
+
+export function blockRewardForDate(dateStr: string): number {
+  let reward = HALVING_SCHEDULE[0].reward;
+  for (const h of HALVING_SCHEDULE) {
+    if (dateStr >= h.date) reward = h.reward;
+    else break;
+  }
+  return reward;
+}
 
 export interface HashratePoint {
   date: string;
@@ -156,18 +183,56 @@ export function calcPuellMultiple(
   if (!btcPriceHistory || btcPriceHistory.length < 365) {
     return { puellMultiple: null, puellHistory: [] };
   }
+  // Use the block reward actually in effect on each date (see
+  // blockRewardForDate / HALVING_SCHEDULE above) — a flat constant here
+  // silently overstates emission (and therefore Puell Multiple) for every
+  // date before the most recent halving, which erases genuine capitulation
+  // readings around historical bear-market floors.
   const emissionUSD = btcPriceHistory.map(p => ({
     date: p.date,
-    value: BLOCK_REWARD_BTC * DAILY_BLOCKS * p.price,
+    value: blockRewardForDate(p.date) * DAILY_BLOCKS * p.price,
   }));
-  const ema365 = rollingAvg(emissionUSD.map(e => e.value), 365);
+
+  // rollingAvg() (used elsewhere for hashrate MA30/MA60) averages over N
+  // ARRAY INDICES, which is only equivalent to N calendar days when the
+  // input has one point per day. btcPriceHistory here comes from
+  // blockchain.info's `timespan=all`, which is downsampled to ~91
+  // points/year (~4-day spacing) — a 365-INDEX window over that spans
+  // roughly 4 CALENDAR YEARS, not 365 days. That silently smears every
+  // bear-market floor across surrounding bull years, which is why the
+  // multiple never dropped below ~0.6-0.7 even after fixing the halving
+  // reward bug above (documented 2018/2022 floors are ~0.4-0.5). Use an
+  // explicit calendar-day window instead, keyed off actual dates.
+  const emissionByDate = new Map(emissionUSD.map(e => [e.date, e.value]));
+  const sortedDates = emissionUSD.map(e => e.date); // already chronological
+  const WINDOW_DAYS = 365;
   const puellHistory: { date: string; value: number }[] = [];
-  for (let i = 364; i < emissionUSD.length; i++) {
-    const ma = ema365[i];
-    if (ma && ma > 0) {
+  let windowStart = 0;
+  let windowSum = 0;
+  let windowCount = 0;
+  for (let i = 0; i < sortedDates.length; i++) {
+    const date = sortedDates[i];
+    windowSum += emissionByDate.get(date) ?? 0;
+    windowCount++;
+    // Advance the window start past any dates older than WINDOW_DAYS from `date`.
+    const cutoff = new Date(date);
+    cutoff.setDate(cutoff.getDate() - WINDOW_DAYS);
+    const cutoffStr = cutoff.toISOString().split('T')[0];
+    while (windowStart < i && sortedDates[windowStart] < cutoffStr) {
+      windowSum -= emissionByDate.get(sortedDates[windowStart]) ?? 0;
+      windowCount--;
+      windowStart++;
+    }
+    // Only emit once the window actually covers ~1 full year of history,
+    // so early-history points (before day 365) don't get a falsely low MA.
+    const firstDateInWindow = new Date(sortedDates[windowStart]);
+    const spanDays = (new Date(date).getTime() - firstDateInWindow.getTime()) / 86400000;
+    if (spanDays < WINDOW_DAYS - 30) continue; // require near-full window coverage
+    const ma = windowSum / windowCount;
+    if (ma > 0) {
       puellHistory.push({
-        date: emissionUSD[i].date,
-        value: +(emissionUSD[i].value / ma).toFixed(4),
+        date,
+        value: +((emissionByDate.get(date) ?? 0) / ma).toFixed(4),
       });
     }
   }
