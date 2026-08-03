@@ -1031,6 +1031,41 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     return result;
   }, [filteredData]);
 
+  // Kapitulationssegmente auf tatsaechlich im Chart gerenderte Datums-
+  // Kategorien snappen. Recharts' <XAxis dataKey="date"> ist eine
+  // category-Achse -- ReferenceArea x1/x2 muss exakt einem Wert aus
+  // chartData[].date entsprechen, sonst wird die Flaeche gar nicht
+  // gezeichnet (kein Fehler, einfach stiller No-Render). capitulation-
+  // SegmentsFull wurde bisher aus fullChart (volle, ungefilterte Reihe)
+  // berechnet, aber gegen chartData (auf max. 500 Punkte downgesampelt)
+  // gerendert -- die exakten Segment-Datumswerte existierten dort meist
+  // nicht. Fix: jede Segmentgrenze auf den naechstgelegenen Datumswert
+  // in chartData snappen, der tatsaechlich existiert.
+  const capitulationSegmentsSnapped = useMemo(() => {
+    if (chartData.length === 0 || capitulationSegmentsFull.length === 0) return [];
+    const chartDates = chartData.map(d => d.date);
+    const snapToChartDate = (target: string): string | null => {
+      if (chartDates.includes(target)) return target;
+      // Naechstgelegenes Datum finden (kleinste absolute Differenz in Tagen)
+      let best: string | null = null;
+      let bestDiff = Infinity;
+      const targetMs = new Date(target).getTime();
+      for (const d of chartDates) {
+        const diff = Math.abs(new Date(d).getTime() - targetMs);
+        if (diff < bestDiff) { bestDiff = diff; best = d; }
+      }
+      return best;
+    };
+    return capitulationSegmentsFull
+      .map(seg => {
+        const x1 = snapToChartDate(seg.x1);
+        const x2 = snapToChartDate(seg.x2);
+        if (!x1 || !x2) return null;
+        return { ...seg, x1, x2 };
+      })
+      .filter((seg): seg is NonNullable<typeof seg> => seg !== null);
+  }, [chartData, capitulationSegmentsFull]);
+
   // Merge RSI(14) + Volume into chartData
   const chartDataWithRSI = useMemo(() => {
     if (chartData.length === 0) return chartData;
@@ -1523,7 +1558,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 < MA60(Hashrate) gleichzeitig gelten (siehe minerMetrics.ts).
                 Nur Segmente sichtbar, die im aktuell gewählten Zeitfenster liegen
                 — Recharts clippt ReferenceArea automatisch am sichtbaren Bereich. */}
-            {capitulationSegmentsFull.map((seg, idx) => (
+            {capitulationSegmentsSnapped.map((seg, idx) => (
               <ReferenceArea
                 key={`cap-zone-${idx}`}
                 x1={seg.x1}
