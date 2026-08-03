@@ -47,6 +47,55 @@ export interface MinerScore {
   };
 }
 
+/**
+ * WORK_BTC_MINER.md §3 — aggregierte Zonen-Klassifikation.
+ * Additives Feld; MPI geht mangels Datenquelle (CryptoQuant/Glassnode-Key
+ * erforderlich) als 'neutral' ein (±0 Punkte — kein Fake-Default).
+ */
+export interface MinerZoneResult {
+  zone: 'capitulation' | 'transition' | 'profitable' | 'euphoria';
+  score: number; // 0 = max Kapitulation, 100 = max Profit/Euphorie
+  flags: string[];
+}
+
+export function classifyMinerZone(i: {
+  spotPrice: number;
+  breakeven: number;
+  puell: number | null;
+  hashRibbonSignal: 'capitulation' | 'buy' | 'neutral';
+  difficultyCompression: 'compressed' | 'neutral' | 'expanded';
+  mpiZone: 'distribution' | 'neutral' | 'accumulation';
+}): MinerZoneResult {
+  const flags: string[] = [];
+  let score = 50;
+
+  const premium = i.breakeven > 0 ? (i.spotPrice - i.breakeven) / i.breakeven : 0;
+  if (premium < -0.05) { score -= 25; flags.push('SPOT_BELOW_BREAKEVEN'); }
+  else if (premium > 0.20) { score += 15; flags.push('SPOT_ABOVE_BREAKEVEN'); }
+
+  if (i.puell != null) {
+    if (i.puell < 0.5) { score -= 20; flags.push('PUELL_CAPITULATION'); }
+    else if (i.puell > 4) { score += 20; flags.push('PUELL_EUPHORIA'); }
+  }
+
+  if (i.hashRibbonSignal === 'capitulation') { score -= 15; flags.push('HASH_RIBBON_CAPITULATION'); }
+  if (i.hashRibbonSignal === 'buy') { score += 20; flags.push('HASH_RIBBON_BUY'); }
+
+  if (i.difficultyCompression === 'compressed') { score -= 10; flags.push('DIFFICULTY_COMPRESSION'); }
+
+  if (i.mpiZone === 'distribution') { score -= 10; flags.push('MINER_DISTRIBUTION'); }
+  if (i.mpiZone === 'accumulation') { score += 10; flags.push('MINER_ACCUMULATION'); }
+
+  score = Math.max(0, Math.min(100, score));
+
+  const zone: MinerZoneResult['zone'] =
+    score < 30 ? 'capitulation' :
+    score < 45 ? 'transition' :
+    score > 80 ? 'euphoria' : 'profitable';
+
+  return { zone, score, flags };
+}
+
 export interface MinerData {
   hashrateHistory: HashratePoint[]; // 3Y daily
   ma30: (number | null)[];          // 30d MA of hashrate
@@ -62,6 +111,8 @@ export interface MinerData {
   difficultyHistory: { date: string; difficulty: number }[];
   difficultyRibbonCompression: number; // 0–1 (1 = highly compressed = bullish)
   minerScore: MinerScore | null;
+  /** WORK_BTC_MINER §3 — nur gesetzt wenn btcPrice übergeben wurde (POST) */
+  minerZone?: MinerZoneResult | null;
   lastUpdated: string;
 }
 
@@ -263,7 +314,15 @@ export async function fetchMinerData(
   btcPriceHistory?: { date: string; price: number }[],
   btcPrice?: number
 ): Promise<MinerData | null> {
-  if (_cache && Date.now() - _cacheTime < CACHE_TTL_MS) return _cache;
+  // Cache-Hit nur wenn der Cache mindestens so viel Kontext hat wie der Call:
+  // Ein GET (ohne Preis) darf einem POST (mit Preis) kein Ergebnis ohne
+  // Puell/minerZone unterschieben — sonst zeigt die Miner-Sektion 1h lang
+  // "keine Daten" obwohl die Preishistorie mitgeschickt wurde.
+  const callHasPriceContext = (btcPriceHistory?.length ?? 0) > 0 || (btcPrice ?? 0) > 0;
+  const cacheHasPriceContext = _cache != null && (_cache.puellMultiple != null || _cache.minerZone != null);
+  if (_cache && Date.now() - _cacheTime < CACHE_TTL_MS && (!callHasPriceContext || cacheHasPriceContext)) {
+    return _cache;
+  }
 
   try {
     const timeout = AbortSignal.timeout(20000);
@@ -343,6 +402,20 @@ export async function fetchMinerData(
       difficultyRibbonCompression
     );
 
+    // ── §3 Zonen-Klassifikation (nur mit Preis-Kontext sinnvoll) ─────────────
+    const minerZone = (btcPrice ?? 0) > 0
+      ? classifyMinerZone({
+          spotPrice: btcPrice!,
+          breakeven: breakevenPrice,
+          puell: puellMultiple,
+          hashRibbonSignal: crossoverSignal ? 'buy' : (inCapitulation ? 'capitulation' : 'neutral'),
+          difficultyCompression:
+            difficultyRibbonCompression > 0.7 ? 'compressed'
+            : difficultyRibbonCompression < 0.4 ? 'expanded' : 'neutral',
+          mpiZone: 'neutral',
+        })
+      : null;
+
     const result: MinerData = {
       hashrateHistory,
       ma30,
@@ -358,6 +431,7 @@ export async function fetchMinerData(
       difficultyHistory,
       difficultyRibbonCompression,
       minerScore,
+      minerZone,
       lastUpdated: new Date().toISOString(),
     };
 

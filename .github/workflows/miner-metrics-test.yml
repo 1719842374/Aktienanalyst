@@ -1,0 +1,43 @@
+name: Miner Metrics Unit Tests
+
+# Sichert die BTC-Miner-Zone-Rechenlogik ab (WORK_BTC_MINER.md §2 + §3):
+# Hash-Ribbon-Signale, Breakeven-Formel (inkl. des korrigierten 1000×-Fehlers
+# aus dem Spec-Code — siehe Kommentar in client/src/lib/btc/minerMetrics.ts),
+# Puell-Zonen, classifyMinerZone-Score und Zonen-Segmentierung für die Charts.
+# Läuft komplett offline — keine API-Keys nötig.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "client/src/lib/btc/**"
+      - "server/btc-miner.ts"
+      - "script/test-miner-metrics.ts"
+      - ".github/workflows/miner-metrics-test.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "client/src/lib/btc/**"
+      - "server/btc-miner.ts"
+      - "script/test-miner-metrics.ts"
+  workflow_dispatch: {}
+
+jobs:
+  miner-metrics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run miner metrics unit tests
+        run: npx tsx script/test-miner-metrics.ts

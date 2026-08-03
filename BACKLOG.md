@@ -16,25 +16,27 @@ Dieser Backlog extrahiert die konkreten Umsetzungs-Deltas.
 **Doku-Ziel:** BTC-Miner-Sektion (Section 13) mit Hash Ribbons, Puell,
 Breakeven, Difficulty Ribbon, MPI, Kapitulations-Zonen (rot/gelb/grün).
 
-**Umsetzungsstand:**
-- `server/btc-miner.ts` — vorhanden, `/api/btc-miner` läuft (Puell,
-  Hash Ribbons, Breakeven, minerScore) ✅
-- `client/src/components/sections/BtcMinerSection.tsx` — vorhanden ✅
-- `client/src/pages/BTCDashboard.tsx` — Miner-Tab **NICHT verdrahtet**
-  🚫 (Owner-Entscheidung 30.07.: "Exakt alter Stand (12 Sektionen),
-  Miner-Zone entfällt" — `BTCDashboard.tsx` wurde bewusst auf den
-  bf623e7-Stand vor der Miner-Integration zurückgesetzt)
-
-**Restaufwand falls Miner-Integration doch gewünscht:**
-- 3 chirurgische Änderungen in `BTCDashboard.tsx` (Import + Tab-Button
-  + Tab-Body-Switch) — 15 min
-- Multi-Panel-Chart mit Recharts ReferenceAreas (rot/gelb/grün-Bänder,
-  Panel 2 Hash Ribbons mit Buy-Markern, Panel 3 Puell+MPI) — 3-5h,
-  weil die vorhandene `BtcMinerSection.tsx` aktuell nur die 4
-  Metrik-Karten hat, nicht die drei Panels aus WORK_BTC_MINER.md §4
-
-**Empfehlung:** Explizit vom Owner freigeben — steht im direkten
-Widerspruch zur letzten Design-Entscheidung.
+**Umsetzungsstand: ✅ UMGESETZT (03.08.2026, Owner-Freigabe: "Konzept +
+Scoring-Logik ja, ChatGPT-Code nein")**
+- `client/src/lib/btc/minerMetrics.ts` — §2/§3-Rechenlogik als reine,
+  unit-testbare Funktionen (Ribbon-Signale, Breakeven, Hashprice,
+  classifyMinerZone, Zonen-Serie + Segmente) ✅
+- `client/src/components/sections/Section13Miner.tsx` — NATIVE Sektion 13
+  im Stil der bestehenden 12 Sektionen (SectionCard, MetricCards,
+  3 Recharts-Panels mit rot/gelb/grün-ReferenceAreas, Zone-Badge,
+  Flags, konfigurierbare Fleet-Annahmen) ✅
+- `client/src/pages/BTCDashboard.tsx` — 3 chirurgische Änderungen
+  (Import, SECTIONS id 13, Render-Ref) ✅
+- `server/btc-miner.ts` — additiv: classifyMinerZone + minerZone-Feld,
+  Cache-Fix (GET-Ergebnis ohne Preis-Kontext blockiert POST nicht mehr) ✅
+- Alte ChatGPT-Komponenten (`BtcMinerSection.tsx` ×2, nirgends
+  referenziert) entfernt — inkompatibel mit Dashboard-Konventionen ✅
+- `script/test-miner-metrics.ts` + CI-Workflow `miner-metrics-test.yml` ✅
+- MPI (§2.6) bewusst ausgelassen: erfordert CryptoQuant/Glassnode-Key;
+  geht neutral (±0) in den Score ein — kein Fake-Default.
+- WICHTIG: §2.4-Spec-Code enthält einen 1000×-Fehler (doppeltes /1000
+  in kwhPerThDay) — in der Implementierung korrigiert, per Unit-Test
+  abgesichert.
 
 ---
 

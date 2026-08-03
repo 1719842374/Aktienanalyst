@@ -5,6 +5,7 @@ import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
+import { Section13Miner } from "@/components/sections/Section13Miner";
 import { RechenWeg } from "@/components/RechenWeg";
 import { formatCurrency, formatLargeNumber, formatPercent, getChangeColor } from "@/lib/formatters";
 import { gbmMonteCarlo, type GBMMonteCarloResult } from "@/lib/calculations";
@@ -127,6 +128,7 @@ const SECTIONS = [
   { id: 10, label: "Technische Analyse", icon: LineChartIcon },
   { id: 11, label: "Fear & Greed", icon: Gauge },
   { id: 12, label: "Gesamt-Fazit", icon: Scale },
+  { id: 13, label: "Miner-Zone", icon: Activity },
 ];
 
 // === Helper Components ===
@@ -2371,6 +2373,7 @@ export default function BTCDashboard() {
               <div ref={setSectionRef(10)}><Section10TechnicalChart data={data} /></div>
               <div ref={setSectionRef(11)}><Section11FearGreed data={data} /></div>
               <div ref={setSectionRef(12)}><Section12Fazit data={data} /></div>
+              <div ref={setSectionRef(13)}><Section13Miner data={data} /></div>
               <div className="pb-8" />
             </div>
           ) : null}
