@@ -208,8 +208,14 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
   try {
     console.log(`[LLM] Calling (with fallback) for ${ticker} (combined catalyst+news, news_count=${newsItems.length})`);
     const t0 = Date.now();
+    // 900 tokens was too low for 5 catalysts + German context text + news
+    // matches — verified live (MSFT): response truncated mid-string at 900,
+    // "Unterminated string in JSON" on every call, silently falling back to
+    // the non-LLM catalysts (modelUsed: null) despite the LLM call itself
+    // succeeding. 1800 gives headroom; salvageTruncatedJson below is a
+    // second line of defense if a response still gets cut off.
     const result = await callWithFallback(client, {
-      max_tokens: 900,
+      max_tokens: 2400,
       temperature: 0.4,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" } as any,
@@ -237,8 +243,14 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
     try {
       parsed = JSON.parse(jsonStr);
     } catch (parseErr) {
-      console.warn(`[LLM] JSON parse failed for ${ticker}: ${(parseErr as any)?.message}`);
-      return null;
+      const salvaged = salvageTruncatedJson(jsonStr);
+      try {
+        parsed = JSON.parse(salvaged);
+        console.warn(`[LLM] Salvaged truncated JSON for ${ticker} (orig=${jsonStr.length}b, salvaged=${salvaged.length}b)`);
+      } catch (parseErr2) {
+        console.warn(`[LLM] JSON parse failed for ${ticker}: ${(parseErr as any)?.message}`);
+        return null;
+      }
     }
 
     const rawCatalysts = parsed.catalysts;
@@ -362,16 +374,43 @@ Erstelle fuer jeden Katalysator ein strukturiertes Deep-Dive-Objekt. Antworte NU
 {"deepDives":[{"idx":0,"unternehmenskontext":"1 Satz warum spezifisch fuer ${companyName}","posHerleitung":"1 Satz Begruendung fuer PoS%","bewertungsauswirkung":"1 Satz Auswirkung auf Umsatz/Margen/DCF","marktumfeld":"1 Satz Wettbewerb/Regulation/Macro","risiken":"1 Satz Was koennte diesen Katalysator verhindern","unterschaetzt":false}]}`;
 
   try {
-    const { text } = await callWithFallback(client, {
-      max_tokens: 700,
+    // 700 tokens truncated mid-response for 5 catalysts x 5 one-sentence
+    // fields each (verified live) — JSON.parse threw silently and the caller's
+    // try/catch swallowed it, so deep-dives always silently failed to null.
+    // 1600 gives headroom; salvageTruncatedJson is a second line of defense.
+    const { text, modelUsed } = await callWithFallback(client, {
+      max_tokens: 2400,
       temperature: 0.25,
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' } as any,
     });
-    if (!text) return null;
-    const parsed = JSON.parse(text);
+    if (!text) { console.warn(`[LLM-CATALYST-DEEPDIVE] Empty response for ${ticker}`); return null; }
+    // response_format: json_object should prevent markdown fences, but this
+    // model wrapped its output in ```json ... ``` anyway (verified live for
+    // MSFT: "Unexpected token '`', ... is not valid JSON") — strip them like
+    // every other LLM function in this file does before parsing.
+    let jsonText = text.trim();
+    if (jsonText.startsWith("```")) {
+      jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    }
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (parseErr) {
+      try {
+        parsed = JSON.parse(salvageTruncatedJson(jsonText));
+        console.warn(`[LLM-CATALYST-DEEPDIVE] Salvaged truncated JSON for ${ticker}`);
+      } catch {
+        console.warn(`[LLM-CATALYST-DEEPDIVE] JSON parse failed for ${ticker} even after salvage: ${(parseErr as any)?.message}`);
+        return null;
+      }
+    }
     const dives = parsed.deepDives || [];
-    if (!Array.isArray(dives) || dives.length === 0) return null;
+    if (!Array.isArray(dives) || dives.length === 0) {
+      console.warn(`[LLM-CATALYST-DEEPDIVE] Empty deepDives array for ${ticker}`);
+      return null;
+    }
+    console.log(`[LLM-CATALYST-DEEPDIVE] OK for ${ticker}: ${dives.length} deep-dives, model=${modelUsed}`);
     return dives.map((d: any) => ({
       deepDive: {
         unternehmenskontext: String(d.unternehmenskontext || ''),
@@ -474,8 +513,11 @@ Return ONLY this JSON (no markdown, no commentary):
   try {
     console.log(`[LLM-RISK] Generating risk explanations for ${ticker} (${risks.length} risks) with fallback chain`);
     const t0 = Date.now();
+    // 800 tokens was tight for 5 risks x 5 fields each (same truncation class
+    // of bug as generateCatalystsAndMatchNews/generateCatalystDeepDives above)
+    // — raised with headroom + salvage as a second line of defense.
     const { text, modelUsed: riskModel } = await callWithFallback(client, {
-      max_tokens: 800,
+      max_tokens: 2400,
       temperature: 0.25,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" } as any,
@@ -496,8 +538,13 @@ Return ONLY this JSON (no markdown, no commentary):
     try {
       parsed = JSON.parse(jsonStr);
     } catch (parseErr) {
-      console.warn(`[LLM-RISK] JSON parse failed for ${ticker}: ${(parseErr as any)?.message}`);
-      return null;
+      try {
+        parsed = JSON.parse(salvageTruncatedJson(jsonStr));
+        console.warn(`[LLM-RISK] Salvaged truncated JSON for ${ticker}`);
+      } catch {
+        console.warn(`[LLM-RISK] JSON parse failed for ${ticker}: ${(parseErr as any)?.message}`);
+        return null;
+      }
     }
 
     const explanations: any[] = parsed.explanations || [];
@@ -597,7 +644,7 @@ Return ONLY this JSON (no markdown, no commentary):
     console.log(`[LLM-POLICY] Generating policy context for ${ticker} with fallback chain`);
     const t0 = Date.now();
     const { text, modelUsed } = await callWithFallback(client, {
-      max_tokens: 600,
+      max_tokens: 1000,
       temperature: 0.25,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" } as any,
@@ -618,8 +665,13 @@ Return ONLY this JSON (no markdown, no commentary):
     try {
       parsed = JSON.parse(jsonStr);
     } catch (parseErr) {
-      console.warn(`[LLM-POLICY] JSON parse failed for ${ticker}: ${(parseErr as any)?.message}`);
-      return null;
+      try {
+        parsed = JSON.parse(salvageTruncatedJson(jsonStr));
+        console.warn(`[LLM-POLICY] Salvaged truncated JSON for ${ticker}`);
+      } catch {
+        console.warn(`[LLM-POLICY] JSON parse failed for ${ticker}: ${(parseErr as any)?.message}`);
+        return null;
+      }
     }
 
     if (!parsed.usa && !parsed.europa && !parsed.asien) {
@@ -649,22 +701,69 @@ Return ONLY this JSON (no markdown, no commentary):
 
 function salvageTruncatedJson(raw: string): string {
   try { JSON.parse(raw); return raw; } catch {}
-  const lastBrace = raw.lastIndexOf('}');
-  const lastBracket = raw.lastIndexOf(']');
-  const lastClose = Math.max(lastBrace, lastBracket);
-  if (lastClose <= 0) return raw;
-  let s = raw.substring(0, lastClose + 1);
-  let depth = 0, inStr = false, prev = '';
-  for (const c of s) {
+
+  // First pass (original approach): trim to the last '}' or ']' in the raw
+  // text and close any still-open brackets/braces. This works when the
+  // response is cut off right after a complete element, but fails when it's
+  // cut off MID-STRING (e.g. `"explanation": "Text der nicht en`) — in that
+  // case `inStr` is still true at the end of the scan, so depth-closing
+  // brackets get appended while inside/right after a dangling open quote,
+  // producing invalid JSON that still throws. Verified live: catalyst-enrich,
+  // risk-explanations, and catalyst-deepdive responses all hit exactly this
+  // case ("Unterminated string in JSON").
+  const attempt1 = salvageByClosingBrackets(raw);
+  try { JSON.parse(attempt1); return attempt1; } catch {}
+
+  // Second pass: walk the string tracking a bracket-type STACK (not just a
+  // depth counter) plus whether we're inside a string literal. Remember the
+  // offset of the last position where a bracket/brace fully closed. Truncate
+  // there instead of at the raw text's last brace — this discards the
+  // dangling mid-string tail entirely rather than trying to close it.
+  const stack: string[] = [];
+  let inStr = false, prev = '';
+  let lastSafeCut = -1;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
     if (c === '"' && prev !== '\\') inStr = !inStr;
     else if (!inStr) {
-      if (c === '{' || c === '[') depth++;
-      else if (c === '}' || c === ']') depth--;
+      if (c === '{') stack.push('}');
+      else if (c === '[') stack.push(']');
+      else if (c === '}' || c === ']') { stack.pop(); lastSafeCut = i; }
     }
     prev = c;
   }
-  while (depth > 0) { s += '}'; depth--; }
-  try { JSON.parse(s); return s; } catch { return raw; }
+  if (lastSafeCut > 0) {
+    const truncated = raw.substring(0, lastSafeCut + 1);
+    const attempt2 = salvageByClosingBrackets(truncated);
+    try { JSON.parse(attempt2); return attempt2; } catch {}
+  }
+
+  return raw;
+}
+
+/**
+ * Closes any unbalanced {}/[] in `s` using a bracket-type stack (not a plain
+ * depth counter — mixing '{' and '[' closers as bare '}' produces invalid
+ * JSON like `...}}}`  when the true nesting was `...]}}`). Also closes a
+ * dangling open string literal first, since an unterminated string is the
+ * far more common truncation shape from LLM outputs than a bare bracket cut.
+ */
+function salvageByClosingBrackets(s: string): string {
+  const stack: string[] = [];
+  let inStr = false, prev = '';
+  for (const c of s) {
+    if (c === '"' && prev !== '\\') inStr = !inStr;
+    else if (!inStr) {
+      if (c === '{') stack.push('}');
+      else if (c === '[') stack.push(']');
+      else if (c === '}' || c === ']') stack.pop();
+    }
+    prev = c;
+  }
+  let out = s;
+  if (inStr) out += '"';
+  while (stack.length > 0) out += stack.pop();
+  return out;
 }
 
 export async function callLLMJson(opts: {

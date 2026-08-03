@@ -84,6 +84,7 @@ import {
   generatePolicyContext,
   generatePorterFiveForces,
   generatePESTELAnalysis as generateLLMPESTEL,
+  isLLMAvailable,
 } from "./llm-openrouter";
 
 import {
@@ -1338,6 +1339,166 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       return res.json(analysis);
     } catch (err: any) {
       console.error(`[/api/analyze] Unhandled error: ${err?.message?.substring(0, 300)}`);
+      return res.status(500).json({ error: err?.message ?? "Internal server error" });
+    }
+  });
+
+  // ── /api/catalyst-enrich ──────────────────────────────────────────────
+  // Frontend (CatalystsSection.tsx) sends only { ticker, useLLM, force } and
+  // expects the server to pull the already-computed analysis context from
+  // its own cache — this route, generateRiskExplanations, and
+  // generatePolicyContext below were called by the frontend but never
+  // registered anywhere after the routes.ts split, so every "KI Analyse"
+  // button returned the Express 404 HTML fallback page ("Unexpected token
+  // '<' ... is not valid JSON"). Restored using the already-cached
+  // StockAnalysis (analysisCache, populated by /api/analyze above) as the
+  // context source — no second FMP round-trip needed.
+  app.post("/api/catalyst-enrich", async (req: Request, res: Response) => {
+    try {
+      const ticker = String(req.body?.ticker ?? "").toUpperCase().trim();
+      if (!ticker) return res.status(400).json({ error: "ticker fehlt" });
+
+      // /api/analyze keys its cache as `${ticker}:${useLLM}` (see cacheKey above),
+      // not the bare ticker. Try both variants since we don't know which mode
+      // the initial analyze call used.
+      const cached = analysisCache.get(`${ticker}:true`) ?? analysisCache.get(`${ticker}:false`);
+      if (!cached) {
+        return res.status(404).json({ error: "Keine Analyse im Cache — zuerst /api/analyze aufrufen" });
+      }
+      const a = cached.result;
+      const cacheKeyUsed = analysisCache.has(`${ticker}:true`) ? `${ticker}:true` : `${ticker}:false`;
+
+      if (!isLLMAvailable()) {
+        return res.json({ _llmSkipped: true, catalysts: a.catalysts, modelUsed: null });
+      }
+
+      const llmResult = await generateCatalystsAndMatchNews({
+        ticker: a.ticker,
+        companyName: a.companyName,
+        sector: a.sector,
+        industry: a.industry,
+        description: a.description,
+        revenue: a.revenue,
+        revenueGrowth: a.financialStatements?.incomeStatement?.revenueGrowth ?? 0,
+        fcfMargin: a.fcfMargin,
+        price: a.currentPrice,
+        pe: a.peRatio,
+        marketCap: a.marketCap,
+        analystPTMedian: a.analystPT?.median ?? 0,
+        governmentExposure: (a.governmentExposure ?? 0) / 100,
+        impliedGStar: (a as any).impliedGStar ?? null,
+        keyProjects: [],
+        secFilingExcerpts: [],
+        newsItems: (a.newsItems ?? []).map((n: any) => ({
+          title: n.title, source: n.source, relativeTime: n.relativeTime,
+          pubDate: n.pubDate, url: n.url, sentiment: n.sentiment,
+          sentimentScore: n.sentimentScore, matchedCatalyst: n.matchedCatalyst,
+          matchedCatalystIdx: n.matchedCatalystIdx,
+        })),
+      });
+
+      if (!llmResult) {
+        return res.json({ _llmSkipped: true, catalysts: a.catalysts, modelUsed: null });
+      }
+
+      // Compute netto/gb for each LLM catalyst (same formula as generateCatalysts in catalyst-engine.ts)
+      const enrichedCatalysts: Catalyst[] = llmResult.catalysts.map((c: any) => {
+        const pos = Math.max(0, Math.min(100, Number(c.pos) || 0));
+        const bruttoUpside = Number(c.bruttoUpside) || 0;
+        const einpreisungsgrad = Math.max(0, Math.min(100, Number(c.einpreisungsgrad) || 0));
+        const nettoUpside = bruttoUpside * (1 - einpreisungsgrad / 100);
+        const gb = nettoUpside * (pos / 100);
+        return {
+          name: String(c.name ?? ""), timeline: String(c.timeline ?? ""),
+          pos, bruttoUpside, einpreisungsgrad, nettoUpside, gb,
+          context: c.context ? String(c.context) : undefined,
+          tags: Array.isArray(c.tags) ? c.tags : undefined,
+        };
+      });
+
+      // Deep-dives (parallel, best-effort — timeout already bounded by generateCatalystDeepDives internals)
+      let withDeepDives = enrichedCatalysts;
+      try {
+        const deepDives = await generateCatalystDeepDives({
+          ticker: a.ticker, companyName: a.companyName, sector: a.sector,
+          description: a.description, revenue: a.revenue,
+          revenueGrowth: a.financialStatements?.incomeStatement?.revenueGrowth ?? 0,
+          fcfMargin: a.fcfMargin, price: a.currentPrice,
+          analystPT: a.analystPT?.median ?? 0,
+          catalysts: enrichedCatalysts.map(c => ({
+            name: c.name, pos: c.pos, bruttoUpside: c.bruttoUpside,
+            einpreisungsgrad: c.einpreisungsgrad, context: c.context,
+          })),
+        });
+        if (Array.isArray(deepDives)) {
+          withDeepDives = enrichedCatalysts.map((c, i) => ({
+            ...c, deepDive: deepDives[i]?.deepDive,
+          }));
+        }
+      } catch { /* deep-dives are a nice-to-have; keep base catalysts on failure */ }
+
+      // Persist enriched catalysts back into the cache so subsequent requests
+      // (e.g. PDF export, page reload within TTL) see the enriched version.
+      const updated: StockAnalysis = { ...a, catalysts: withDeepDives };
+      analysisCache.set(cacheKeyUsed, { ...cached, result: updated });
+
+      return res.json({ catalysts: withDeepDives, modelUsed: llmResult.modelUsed });
+    } catch (err: any) {
+      console.error(`[/api/catalyst-enrich] ${err?.message?.substring(0, 300)}`);
+      return res.status(500).json({ error: err?.message ?? "Internal server error" });
+    }
+  });
+
+  // ── /api/risk-explanations ────────────────────────────────────
+  // Section8.tsx sends the full context directly — no cache lookup needed.
+  app.post("/api/risk-explanations", async (req: Request, res: Response) => {
+    try {
+      const b = req.body ?? {};
+      if (!b.ticker || !Array.isArray(b.risks)) {
+        return res.status(400).json({ error: "ticker/risks fehlen" });
+      }
+      if (!isLLMAvailable()) {
+        return res.json({ _llmSkipped: true, risks: b.risks });
+      }
+      const explained = await generateRiskExplanations({
+        ticker: b.ticker, companyName: b.companyName ?? b.ticker,
+        sector: b.sector ?? "", industry: b.industry ?? "",
+        description: b.description ?? "", revenue: b.revenue ?? 0,
+        revenueGrowth: b.revenueGrowth ?? 0, fcfMargin: b.fcfMargin ?? 0,
+        price: b.price ?? 0, pe: b.pe ?? 0, marketCap: b.marketCap ?? 0,
+        governmentExposure: b.governmentExposure ?? 0, risks: b.risks,
+      });
+      if (!explained) {
+        return res.json({ _llmSkipped: true, risks: b.risks });
+      }
+      return res.json({ risks: explained });
+    } catch (err: any) {
+      console.error(`[/api/risk-explanations] ${err?.message?.substring(0, 300)}`);
+      return res.status(500).json({ error: err?.message ?? "Internal server error" });
+    }
+  });
+
+  // ── /api/policy-context ──────────────────────────────────────
+  // Used by both MoatPorterSection (Section 11) and PestelSection (Section 12)
+  // via the shared PolicyContextPanel component.
+  app.post("/api/policy-context", async (req: Request, res: Response) => {
+    try {
+      const b = req.body ?? {};
+      if (!b.ticker) return res.status(400).json({ error: "ticker fehlt" });
+      if (!isLLMAvailable()) {
+        return res.json({ _llmSkipped: true, policyContext: null });
+      }
+      const policyContext = await generatePolicyContext({
+        ticker: b.ticker, companyName: b.companyName ?? b.ticker,
+        sector: b.sector ?? "", industry: b.industry ?? "",
+        description: b.description ?? "", governmentExposure: b.governmentExposure ?? 0,
+      });
+      if (!policyContext) {
+        return res.json({ _llmSkipped: true, policyContext: null });
+      }
+      return res.json({ policyContext });
+    } catch (err: any) {
+      console.error(`[/api/policy-context] ${err?.message?.substring(0, 300)}`);
       return res.status(500).json({ error: err?.message ?? "Internal server error" });
     }
   });
