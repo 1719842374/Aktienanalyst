@@ -76,6 +76,7 @@ export {
 import { registerAnalyzeRoute } from "./analyze-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { fetchMinerData } from "./btc-miner";
+import { assessRegulatoryExposure } from "./regulatory";
 
 // ─── registerRoutes ───────────────────────────────────────────────────────────
 export async function registerRoutes(httpServer: Server, app: Express): Promise<void> {
@@ -114,6 +115,46 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(minerData);
     } catch (err: any) {
       console.error("[POST /api/btc-miner]", err?.message?.substring(0, 200));
+      res.status(500).json({ error: err?.message || "Internal error" });
+    }
+  });
+
+  // 4. POST /api/regulatory — WORK2.md §8 Regulatory-Exposure-Analyse (LLM,
+  //    generische Achsen ohne Fixnamen). Frontend liefert den Kontext aus der
+  //    bereits geladenen StockAnalysis (geoSegments, revenue, margin, shares) —
+  //    kein zweiter FMP-Roundtrip. 24h-Cache pro Ticker in regulatory.ts.
+  //    Body: { ticker, companyName, sector, industry, description?,
+  //            topCountries: [{countryOrRegion, percentage}], totalRevenue,
+  //            operatingMargin, sharesOutstanding, taxRate?, force? }
+  app.post("/api/regulatory", async (req, res) => {
+    try {
+      const b = req.body ?? {};
+      if (!b.ticker || typeof b.ticker !== "string") {
+        return res.status(400).json({ error: "ticker fehlt" });
+      }
+      if (!Array.isArray(b.topCountries) || typeof b.totalRevenue !== "number" ||
+          typeof b.operatingMargin !== "number" || typeof b.sharesOutstanding !== "number") {
+        return res.status(400).json({ error: "Kontext unvollständig (topCountries/totalRevenue/operatingMargin/sharesOutstanding)" });
+      }
+      const assessment = await assessRegulatoryExposure({
+        ticker: b.ticker,
+        companyName: String(b.companyName ?? b.ticker),
+        sector: String(b.sector ?? ""),
+        industry: String(b.industry ?? ""),
+        description: typeof b.description === "string" ? b.description : undefined,
+        topCountries: b.topCountries,
+        totalRevenue: b.totalRevenue,
+        operatingMargin: b.operatingMargin,
+        sharesOutstanding: b.sharesOutstanding,
+        taxRate: typeof b.taxRate === "number" ? b.taxRate : undefined,
+        force: b.force === true,
+      });
+      if (!assessment) {
+        return res.status(503).json({ error: "Regulatory-Analyse nicht verfügbar — LLM (OpenRouter) nicht erreichbar" });
+      }
+      res.json(assessment);
+    } catch (err: any) {
+      console.error("[POST /api/regulatory]", err?.message?.substring(0, 200));
       res.status(500).json({ error: err?.message || "Internal error" });
     }
   });

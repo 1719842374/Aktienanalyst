@@ -1,0 +1,40 @@
+name: Regulatory Exposure Unit Tests
+
+# Sichert die WORK2.md-§8-Logik ab: EPS-Impact-Formel (§8.5),
+# Confidence-Filter (§8.6), Gate-Test-Matrix (§8.7), REGULATORY_EXPOSURE-Gate
+# inkl. Kumulierungs-Regel (§8.8) und Anti-Hardcoding-Query-Builder (§8.4).
+# Läuft komplett offline — kein LLM-/API-Key nötig.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/regulatory.ts"
+      - "script/test-regulatory.ts"
+      - ".github/workflows/regulatory-test.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "server/regulatory.ts"
+      - "script/test-regulatory.ts"
+  workflow_dispatch: {}
+
+jobs:
+  regulatory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run regulatory unit tests
+        run: npx tsx script/test-regulatory.ts

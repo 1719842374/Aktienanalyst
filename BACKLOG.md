@@ -149,11 +149,25 @@ Faktor-Priorisierung.
 **Doku-Ziel:** Generisches Regulatory-Exposure-Modell mit LLM-basiertem
 Search + EPS-Impact-Berechnung.
 
-**Umsetzungsstand:** 4 offene Checkboxen — alle 4 **NICHT umgesetzt** ⬜:
-- [ ] `regulationAxis` generisch
-- [ ] Prompt ohne Fixnamen
-- [ ] `buildRegulatorySearchQueries`
-- [ ] `calcRegulatoryEpsImpact` + Gate nach Matrix
+**Umsetzungsstand: ✅ UMGESETZT (03.08.2026)** — alle 4 Checkboxen:
+- [x] `regulationAxis` generisch (9 Achsen, server/regulatory.ts)
+- [x] Prompt ohne Fixnamen (generische Überbegriffe, Regime werden erst
+      nach Extraktion benannt — per Unit-Test abgesichert)
+- [x] `buildRegulatorySearchQueries` (Sektor + Branche + Top-Umsatzländer
+      ≥ 5 % aus den FMP-geoSegments)
+- [x] `calcRegulatoryEpsImpact` (§8.5 exakt) + Confidence-Filter (§8.6) +
+      Test-Matrix (§8.7, alle 7 Zeilen) + REGULATORY_EXPOSURE-Gate (§8.8
+      inkl. 7-%-Kumulierungs-Regel)
+
+**Wiring:** POST /api/regulatory (24h-Cache/Ticker) + lazy KI-Panel in der
+PESTEL-Sektion (Section 12) mit Gate-Banner, Exposure-Karten, EPS-Impacts.
+Unit-Tests: script/test-regulatory.ts (22 Tests) + CI regulatory-test.yml.
+Verifiziert live für MSFT: DMA/FTC/IRA/EED vom LLM selbst entdeckt,
+Gate cap 65 warn.
+
+Das Gate-Objekt ist vorbereitet für das (noch offene) Scoring-Gate-System
+aus WORK_SCORING_VORLAGE.md — sobald buildGates/applyGates existieren,
+kann `assessment.gate` dort direkt eingespeist werden.
 
 **Umgesetzt statt dessen:**
 - Fest verdrahtete PESTEL-Kategorie "Legal" in analyze-helpers.ts

@@ -39,11 +39,19 @@ function getClient(): OpenAI | null {
 function pickModel(): string {
   const override = process.env.OPENROUTER_MODEL;
   if (override) return override;
-  return "anthropic/claude-3.5-haiku";
+  return "anthropic/claude-haiku-4.5";
 }
 
+// WICHTIG (03.08.2026): OpenRouter hat "anthropic/claude-3.5-haiku" entfernt
+// (404 "No endpoints found") — dadurch fielen ALLE LLM-Features aus, weil die
+// Kette nur aus diesem einen Modell bestand. Neuer Primär: claude-haiku-4.5
+// (direkter Nachfolger, $1.00/$5.00 per M tok, gleiche Preisklasse wie 3.5-haiku).
+// Dahinter günstige Fallbacks (per OpenRouter /models-API verifiziert verfügbar).
 const MODEL_FALLBACK_CHAIN = [
-  "anthropic/claude-3.5-haiku",
+  "anthropic/claude-haiku-4.5",
+  "deepseek/deepseek-v3.2",
+  "meta-llama/llama-3.3-70b-instruct",
+  "google/gemma-3-27b-it",
 ];
 
 async function callWithFallback(client: OpenAI, params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>): Promise<{ text: string; modelUsed: string; usage?: any }> {
@@ -61,10 +69,13 @@ async function callWithFallback(client: OpenAI, params: Omit<Parameters<OpenAI['
       return { text, modelUsed: model, usage: completion.usage };
     } catch (err: any) {
       const status = err?.status || err?.response?.status;
-      if (status === 429 || status === 402) {
-        console.warn(`[LLM] ${model} rate-limited (${status}) — trying next model`);
+      // 404 = Modell von OpenRouter entfernt/umbenannt (z.B. claude-3.5-haiku
+      // am 03.08.2026) — muss wie 429/402 zur nächsten Kettenstufe durchfallen,
+      // sonst legt ein einziges entferntes Modell alle LLM-Features lahm.
+      if (status === 429 || status === 402 || status === 404) {
+        console.warn(`[LLM] ${model} nicht verfügbar (${status}) — trying next model`);
         lastErr = err;
-        await new Promise(r => setTimeout(r, 1500));
+        if (status !== 404) await new Promise(r => setTimeout(r, 1500));
         continue;
       }
       throw err;
