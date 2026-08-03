@@ -124,10 +124,11 @@ Zusätzlich: Detailed Breakeven Formula.
 
 **Umsetzungsstand:**
 - Breakeven-Formel in `server/btc-miner.ts` ✅
-- Halving→Hashrate-Impact-Text im UI ⬜ (BtcMinerSection zeigt nur die
-  Metriken, keine Halving-Erklärung)
+- Halving→Hashrate-Impact-Text im UI ✅ (03.08.2026: Leselogik-Footer in
+  Section13Miner.tsx erklärt den vollen §6-Zyklus Halving → Hashprice-
+  Einbruch → Kapitulationszone → Difficulty-Rückgang → Hash Ribbon Buy)
 
-**Empfehlung:** Kein Blocker.
+**Empfehlung:** Erledigt.
 
 ---
 
