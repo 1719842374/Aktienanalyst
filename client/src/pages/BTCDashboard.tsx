@@ -5,7 +5,12 @@ import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
-import { Section13Miner } from "@/components/sections/Section13Miner";
+import { Section13Miner, useMinerData } from "@/components/sections/Section13Miner";
+import {
+  calcCapitulationZones, buildCapitulationSegments, isCapitulationResolved,
+  calcBreakevenPrice, DEFAULT_FLEET,
+  type CapitulationInput,
+} from "@/lib/btc/minerMetrics";
 import { RechenWeg } from "@/components/RechenWeg";
 import { formatCurrency, formatLargeNumber, formatPercent, getChangeColor } from "@/lib/formatters";
 import { gbmMonteCarlo, type GBMMonteCarloResult } from "@/lib/calculations";
@@ -931,7 +936,15 @@ function StatusPill({ label, value, detail }: { label: string; value: boolean; d
   );
 }
 
-function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
+/**
+ * timeRange/onTimeRangeChange sind OPTIONAL (additiv): werden sie vom Parent
+ * (BTCDashboard) übergeben, teilt sich Section 10 den Timeframe-State mit
+ * Section 13 (Miner-Zone) — andernfalls fällt die Komponente auf ihren
+ * bisherigen internen State zurück (kein Breaking Change).
+ */
+function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeChange }: {
+  data: BTCAnalysis; timeRange?: TimeRange; onTimeRangeChange?: (r: TimeRange) => void;
+}) {
   const [visibleMAs, setVisibleMAs] = useState<Set<MAKey>>(() => {
     const initial = new Set<MAKey>();
     MA_LINES.forEach(ma => { if (ma.defaultOn) initial.add(ma.key); });
@@ -944,7 +957,9 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
   });
   const [showSignals, setShowSignals] = useState(true);
   const [showVolume, setShowVolume] = useState(true);
-  const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
+  const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>("1Y");
+  const timeRange = timeRangeProp ?? internalTimeRange;
+  const setTimeRange = onTimeRangeChange ?? setInternalTimeRange;
 
   // Measurement tool state
   const [isMeasuring, setIsMeasuring] = useState(false);
@@ -952,6 +967,48 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
   const [measureEnd, setMeasureEnd] = useState<{ date: string; price: number } | null>(null);
 
   const fullChart = data.technicalChartFull || data.technicalChart || [];
+
+  // ── Kapitulationszonen-Overlay (additiv): teilt sich den Miner-Daten-Fetch
+  // mit Section 13 ueber useMinerData (server/btc-miner.ts, mempool.space).
+  const { minerData: capMinerData } = useMinerData(data);
+  const breakevenNowForChart = capMinerData
+    ? calcBreakevenPrice({ hashrateEHs: capMinerData.currentHashrateEH, assumptions: DEFAULT_FLEET })
+    : null;
+  const capitulationInputsFull: CapitulationInput[] = useMemo(() => {
+    if (!capMinerData || fullChart.length === 0) return [];
+    const puellByDate = new Map<string, number>();
+    for (const p of capMinerData.puellHistory ?? []) puellByDate.set(p.date, p.value);
+    // Pro-Tag-Breakeven auf MA30-Hashrate-Basis — identische Formel wie
+    // buildMinerZoneSeries in minerMetrics.ts, damit Section 10 und Section 13
+    // dieselbe Breakeven-Linie zeigen (keine zweite, abweichende Herleitung).
+    const breakevenByDate = new Map<string, number>();
+    const ma30ByDate = new Map<string, number | null>();
+    const ma60ByDate = new Map<string, number | null>();
+    capMinerData.dates.forEach((d, i) => {
+      const ma30v = capMinerData.ma30[i] ?? null;
+      const ma60v = capMinerData.ma60[i] ?? null;
+      ma30ByDate.set(d, ma30v);
+      ma60ByDate.set(d, ma60v);
+      const hashrateForBreakeven = ma30v ?? capMinerData.hashrateHistory[i]?.hashrateEH ?? 0;
+      breakevenByDate.set(d, calcBreakevenPrice({ hashrateEHs: hashrateForBreakeven, assumptions: DEFAULT_FLEET }));
+    });
+    return fullChart.map(pt => ({
+      date: pt.date,
+      spot: pt.price ?? null,
+      breakeven: breakevenByDate.has(pt.date) ? breakevenByDate.get(pt.date)! : (breakevenNowForChart ?? 0),
+      puell: puellByDate.has(pt.date) ? puellByDate.get(pt.date)! : null,
+      ma30: ma30ByDate.has(pt.date) ? ma30ByDate.get(pt.date)! : null,
+      ma60: ma60ByDate.has(pt.date) ? ma60ByDate.get(pt.date)! : null,
+    }));
+  }, [capMinerData, fullChart, breakevenNowForChart]);
+  const capitulationSegmentsFull = useMemo(
+    () => buildCapitulationSegments(calcCapitulationZones(capitulationInputsFull)),
+    [capitulationInputsFull]
+  );
+  const capitulationResolvedFull = useMemo(
+    () => isCapitulationResolved(capitulationInputsFull),
+    [capitulationInputsFull]
+  );
 
   // Filter data by time range (using calendar days)
   const filteredData = useMemo(() => {
@@ -1460,6 +1517,36 @@ function Section10TechnicalChart({ data }: { data: BTCAnalysis }) {
                 );
               }}
             />
+
+            {/* Kapitulationszonen (additiv): rote Fläche pro zusammenhängendem
+                Segment, in dem Spot < Breakeven UND Puell < 0.5 UND MA30(Hashrate)
+                < MA60(Hashrate) gleichzeitig gelten (siehe minerMetrics.ts).
+                Nur Segmente sichtbar, die im aktuell gewählten Zeitfenster liegen
+                — Recharts clippt ReferenceArea automatisch am sichtbaren Bereich. */}
+            {capitulationSegmentsFull.map((seg, idx) => (
+              <ReferenceArea
+                key={`cap-zone-${idx}`}
+                x1={seg.x1}
+                x2={seg.x2}
+                fill="#EF4444"
+                fillOpacity={0.3}
+                strokeOpacity={0}
+                ifOverflow="hidden"
+              />
+            ))}
+            {capitulationResolvedFull && breakevenNowForChart != null && (
+              <>
+                <ReferenceLine
+                  y={breakevenNowForChart}
+                  stroke="#F97316"
+                  strokeDasharray="5 5"
+                  strokeWidth={1.3}
+                  ifOverflow="hidden"
+                  label={{ value: "Erwarteter Break-Even nach Konsolidierung", fontSize: 9, fill: "#F97316", position: "insideTopRight" }}
+                />
+                <ReferenceLine y={breakevenNowForChart * 1.2} stroke="#F97316" strokeDasharray="2 4" strokeWidth={0.8} strokeOpacity={0.5} ifOverflow="hidden" />
+              </>
+            )}
 
             {/* Volume overlay bars — sichtbar wenn showVolume aktiv */}
             {showVolume && (
@@ -2233,6 +2320,9 @@ export default function BTCDashboard() {
   const { theme, toggleTheme } = useTheme();
   const [data, setData] = useState<BTCAnalysis | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Geteilter Timeframe zwischen Section 10 (Technische Analyse) und Section 13
+  // (Miner-Zone) — EIN Switcher statt zwei unabhängiger Zustände (additiv).
+  const [sharedTimeRange, setSharedTimeRange] = useState<TimeRange>("1Y");
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const [, setLocation] = useLocation();
@@ -2370,10 +2460,10 @@ export default function BTCDashboard() {
               <div ref={setSectionRef(7)}><Section7Categories data={data} /></div>
               <div ref={setSectionRef(8)}><Section8CycleAssessment data={data} /></div>
               <div ref={setSectionRef(9)}><Section9FinalEstimate data={data} /></div>
-              <div ref={setSectionRef(10)}><Section10TechnicalChart data={data} /></div>
+              <div ref={setSectionRef(10)}><Section10TechnicalChart data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
               <div ref={setSectionRef(11)}><Section11FearGreed data={data} /></div>
               <div ref={setSectionRef(12)}><Section12Fazit data={data} /></div>
-              <div ref={setSectionRef(13)}><Section13Miner data={data} /></div>
+              <div ref={setSectionRef(13)}><Section13Miner data={data} timeRange={sharedTimeRange} /></div>
               <div className="pb-8" />
             </div>
           ) : null}

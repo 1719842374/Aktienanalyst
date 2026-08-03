@@ -97,7 +97,7 @@ export function classifyMinerZone(i: {
 }
 
 export interface MinerData {
-  hashrateHistory: HashratePoint[]; // 3Y daily
+  hashrateHistory: HashratePoint[]; // Voller Verlauf (siehe fetchMinerData-Kommentar zu mempool.space-Limits)
   ma30: (number | null)[];          // 30d MA of hashrate
   ma60: (number | null)[];          // 60d MA of hashrate
   dates: string[];
@@ -327,9 +327,24 @@ export async function fetchMinerData(
   try {
     const timeout = AbortSignal.timeout(20000);
 
+    // WICHTIG (BTC-Miner-Zone 5Y-Feature): mempool.space liefert unter
+    // /mining/hashrate/3y NUR 3 Jahre Historie (verifiziert 2026-08:
+    // 1096 Tage, erster Tag = heute-3y). Für den geforderten 5-Jahres-
+    // Zeitraum (~2021-08 bis 2026-08) wird stattdessen /mining/hashrate/all
+    // verwendet — liefert die volle mempool.space-Historie zurück bis 2009
+    // (verifiziert: 6422 Tagespunkte, erster Punkt 2009-01-03). Es werden
+    // KEINE synthetischen/erfundenen Werte für fehlende Jahre erzeugt; die
+    // tatsächlich verfügbare Historie deckt den 5Y-Zeitraum vollständig ab.
+    //
+    // Bugfix: die Difficulty-Adjustments-URL zeigte fälschlich auf
+    // /api/v1/difficulty-adjustments (404) statt /api/v1/mining/difficulty-
+    // adjustments — dadurch war difficultyHistory bisher immer leer und
+    // difficultyRibbonCompression immer 0. Response-Format ist außerdem ein
+    // Array von Tupeln [timestamp, height, difficulty, change], nicht ein
+    // Objekt-Array — Parsing unten entsprechend angepasst.
     const [hashrateResp, difficultyResp] = await Promise.allSettled([
-      fetch(`${MEMPOOL_BASE}/mining/hashrate/3y`, { signal: timeout }),
-      fetch(`${MEMPOOL_BASE}/difficulty-adjustments?interval=144`, { signal: timeout }),
+      fetch(`${MEMPOOL_BASE}/mining/hashrate/all`, { signal: timeout }),
+      fetch(`${MEMPOOL_BASE}/mining/difficulty-adjustments?interval=144`, { signal: timeout }),
     ]);
 
     // ── Parse hashrate ────────────────────────────────────────────
@@ -352,15 +367,25 @@ export async function fetchMinerData(
     }
 
     // ── Parse difficulty ──────────────────────────────────────────
+    // mempool.space liefert hier ein Array von Tupeln:
+    // [timestamp(sec), blockHeight, difficulty, percentChange] — absteigend
+    // sortiert (neuester Eintrag zuerst). Objekt-Format (d.time/d.difficulty)
+    // wird zur Sicherheit weiter unterstützt, falls die API sich ändert.
     let difficultyHistory: { date: string; difficulty: number }[] = [];
     if (difficultyResp.status === 'fulfilled' && difficultyResp.value.ok) {
       const raw = await difficultyResp.value.json();
       const items = Array.isArray(raw) ? raw : (raw?.difficultyAdjustments || raw?.data || []);
       difficultyHistory = items
-        .map((d: any) => ({
-          date: new Date((d.time || d.timestamp || 0) * 1000).toISOString().split('T')[0],
-          difficulty: d.difficulty || d.difficultyNew || 0,
-        }))
+        .map((d: any) => {
+          if (Array.isArray(d)) {
+            const [ts, , difficulty] = d;
+            return { date: new Date((ts || 0) * 1000).toISOString().split('T')[0], difficulty: difficulty || 0 };
+          }
+          return {
+            date: new Date((d.time || d.timestamp || 0) * 1000).toISOString().split('T')[0],
+            difficulty: d.difficulty || d.difficultyNew || 0,
+          };
+        })
         .filter((d: { date: string; difficulty: number }) => d.difficulty > 0)
         .sort((a: { date: string; difficulty: number }, b: { date: string; difficulty: number }) => a.date.localeCompare(b.date));
     }

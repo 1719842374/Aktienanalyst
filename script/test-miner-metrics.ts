@@ -9,6 +9,8 @@ import {
   calcRibbonSignals, calcBreakevenPrice, calcHashpriceUsd,
   classifyMinerZone, buildMinerZoneSeries, buildZoneSegments,
   difficultyZoneFromCompression, DEFAULT_FLEET,
+  calcCapitulationDay, calcCapitulationZones, buildCapitulationSegments,
+  isCapitulationResolved, type CapitulationInput,
 } from "../client/src/lib/btc/minerMetrics";
 
 let failed = 0;
@@ -150,6 +152,89 @@ console.log("\nbuildMinerZoneSeries + buildZoneSegments");
   check("Genau 2 zusammenhängende Zonen-Segmente", segments.length === 2, `got ${segments.length}`);
   check("Segment 1 = capitulation, Segment 2 = profitable",
     segments[0]?.zone === "capitulation" && segments[1]?.zone === "profitable");
+}
+
+// ─── Kapitulationszonen (Sektion 10 — 3-fach-UND-Bedingung) ──────────────────
+console.log("\ncalcCapitulationDay / calcCapitulationZones / buildCapitulationSegments");
+{
+  // Volle Kapitulation: alle 3 Bedingungen erfüllt
+  const full: CapitulationInput = {
+    date: "2026-01-01", spot: 30000, breakeven: 40000, puell: 0.3, ma30: 500, ma60: 600,
+  };
+  check("Alle 3 Bedingungen erfüllt → TRUE", calcCapitulationDay(full) === true);
+
+  // Nur Spot < Breakeven, aber Puell hoch → FALSE
+  check("Nur Spot<Breakeven (Puell hoch) → FALSE",
+    calcCapitulationDay({ ...full, puell: 1.5 }) === false);
+
+  // Spot < Breakeven + Puell < 0.5, aber MA30 > MA60 (kein Death Cross) → FALSE
+  check("Spot+Puell erfüllt, aber MA30>MA60 → FALSE",
+    calcCapitulationDay({ ...full, ma30: 700, ma60: 600 }) === false);
+
+  // Spot > Breakeven, sonst alles erfüllt → FALSE (Spot-Bedingung fehlt)
+  check("Puell+MA30<MA60 erfüllt, aber Spot>Breakeven → FALSE",
+    calcCapitulationDay({ ...full, spot: 50000 }) === false);
+
+  // Fehlende Werte (null) → FALSE, kein Crash
+  check("puell=null → FALSE (kein Fake-Default)",
+    calcCapitulationDay({ ...full, puell: null }) === false);
+  check("ma30=null → FALSE", calcCapitulationDay({ ...full, ma30: null }) === false);
+  check("breakeven=null → FALSE", calcCapitulationDay({ ...full, breakeven: null }) === false);
+
+  // Grenzfall: exakt gleich → FALSE (strikt <, nicht <=)
+  check("Spot === Breakeven (Grenzfall) → FALSE (strikt <)",
+    calcCapitulationDay({ ...full, spot: 40000 }) === false);
+  check("Puell === 0.5 (Grenzfall) → FALSE (strikt <)",
+    calcCapitulationDay({ ...full, puell: 0.5 }) === false);
+  check("MA30 === MA60 (Grenzfall) → FALSE (strikt <)",
+    calcCapitulationDay({ ...full, ma30: 600, ma60: 600 }) === false);
+
+  // Serie mit einer zusammenhängenden Kapitulationsphase in der Mitte
+  const n = 40;
+  const series: CapitulationInput[] = Array.from({ length: n }, (_, i) => {
+    const inCap = i >= 10 && i < 20; // Tage 10..19 = Kapitulation
+    return {
+      date: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().split("T")[0],
+      spot: inCap ? 30000 : 60000,
+      breakeven: 40000,
+      puell: inCap ? 0.3 : 1.2,
+      ma30: inCap ? 500 : 700,
+      ma60: 600,
+    };
+  });
+  const zones = calcCapitulationZones(series);
+  check("Serie hat volle Länge", zones.length === n);
+  check("Tage 10-19 als Kapitulation markiert", zones.slice(10, 20).every(z => z.capitulation));
+  check("Tage außerhalb nicht markiert", zones.slice(0, 10).every(z => !z.capitulation) && zones.slice(20).every(z => !z.capitulation));
+
+  const segments = buildCapitulationSegments(zones);
+  check("Genau 1 zusammenhängendes Kapitulationssegment", segments.length === 1, `got ${segments.length}`);
+  check("Segment beginnt Tag 10, endet Tag 19",
+    segments[0]?.x1 === series[10].date && segments[0]?.x2 === series[19].date,
+    JSON.stringify(segments[0]));
+
+  // isCapitulationResolved: Zone durchlaufen UND beendet (letzter Punkt außerhalb)
+  check("Kapitulationszone durchlaufen und beendet → resolved=true", isCapitulationResolved(series) === true);
+
+  // Noch aktive Kapitulation am letzten Tag → nicht resolved
+  const stillCapitulating = series.map((p, i) => i === n - 1 ? { ...p, spot: 30000, puell: 0.3, ma30: 500 } : p);
+  check("Aktive Kapitulation am letzten Tag → resolved=false", isCapitulationResolved(stillCapitulating) === false);
+
+  // Nie eine Kapitulation gehabt → resolved=false (nichts zu markieren)
+  const neverCapitulated: CapitulationInput[] = series.map(p => ({ ...p, spot: 60000, puell: 1.2, ma30: 700 }));
+  check("Nie Kapitulation → resolved=false", isCapitulationResolved(neverCapitulated) === false);
+
+  // Mehrere getrennte Kapitulationsphasen → mehrere Segmente
+  const multiPhase: CapitulationInput[] = Array.from({ length: 30 }, (_, i) => {
+    const inCap = i === 5 || (i >= 15 && i < 18);
+    return {
+      date: new Date(Date.UTC(2026, 2, 1 + i)).toISOString().split("T")[0],
+      spot: inCap ? 30000 : 60000, breakeven: 40000,
+      puell: inCap ? 0.3 : 1.2, ma30: inCap ? 500 : 700, ma60: 600,
+    };
+  });
+  const multiSegments = buildCapitulationSegments(calcCapitulationZones(multiPhase));
+  check("2 getrennte Kapitulationsphasen → 2 Segmente", multiSegments.length === 2, `got ${multiSegments.length}`);
 }
 
 // ─── Ergebnis ─────────────────────────────────────────────────────────────────

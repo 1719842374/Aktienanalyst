@@ -18,16 +18,18 @@ import {
   buildMinerZoneSeries, buildZoneSegments, classifyMinerZone,
   calcBreakevenPrice, calcHashpriceUsd, difficultyZoneFromCompression,
   DEFAULT_FLEET, ZONE_FILL, ZONE_LABEL,
+  calcCapitulationZones, buildCapitulationSegments, isCapitulationResolved,
   type FleetAssumptions, type MinerSeriesPoint, type MinerZoneResult,
+  type CapitulationInput,
 } from "@/lib/btc/minerMetrics";
 import {
   ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine, ReferenceArea, Legend, Scatter,
+  ResponsiveContainer, ReferenceLine, ReferenceArea, Legend, Area,
 } from "recharts";
 import { RefreshCw, AlertTriangle } from "lucide-react";
 
 // ─── Backend-Antwort (server/btc-miner.ts MinerData, relevante Felder) ────────
-interface MinerApiData {
+export interface MinerApiData {
   hashrateHistory: { date: string; hashrateEH: number }[];
   ma30: (number | null)[];
   ma60: (number | null)[];
@@ -40,6 +42,49 @@ interface MinerApiData {
   puellHistory: { date: string; value: number }[];
   difficultyRibbonCompression: number;
   lastUpdated: string;
+}
+
+/**
+ * Gemeinsamer Daten-Hook fuer POST /api/btc-miner. Von Section13Miner UND
+ * Section10TechnicalChart (Kapitulationszonen-Overlay) genutzt, damit der
+ * Fetch pro Seiten-Aufruf konsolidiert ist (Backend hat zusaetzlich 1h-Cache).
+ * Additiver Export -- die Fetch-Logik ist inhaltlich identisch zur bisherigen
+ * useEffect-Implementierung innerhalb der Section13Miner-Komponente, nur
+ * hier ausgelagert, damit beide Sektionen sie teilen koennen.
+ */
+export function useMinerData(data: BTCAnalysis) {
+  const [minerData, setMinerData] = useState<MinerApiData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const history = data.chartData?.prices5Y?.length
+          ? data.chartData.prices5Y
+          : data.chartData?.prices3Y ?? [];
+        const res = await apiRequest("POST", "/api/btc-miner", {
+          btcPriceHistory: history,
+          btcPrice: data.btcPrice,
+        }, 45000);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body?.error || `HTTP ${res.status}`);
+        }
+        const json = (await res.json()) as MinerApiData;
+        if (!cancelled) { setMinerData(json); setError(null); }
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || "Miner-Daten nicht verfuegbar");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [data.btcPrice]);
+
+  return { minerData, loading, error };
 }
 
 // ─── Lokale Style-Helfer (analog BTCDashboard-Pattern) ────────────────────────
@@ -77,42 +122,23 @@ const FLAG_TEXT: Record<string, string> = {
 };
 
 // ─── Hauptkomponente ──────────────────────────────────────────────────────────
-export function Section13Miner({ data }: { data: BTCAnalysis }) {
-  const [minerData, setMinerData] = useState<MinerApiData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+/** Gemeinsame Timeframe-Optionen, identisch zu Section10TechnicalChart (BTCDashboard.tsx). */
+export type MinerTimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y";
+const RANGE_DAYS: Record<MinerTimeRange, number> = { "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825 };
+
+/**
+ * timeRange ist OPTIONAL (additiv): wird sie vom Parent (BTCDashboard)
+ * uebergeben, teilt sich Section 13 denselben Timeframe-State wie Section 10
+ * (Technische Analyse) -- kein eigener, zweiter Switcher. Ohne Prop faellt
+ * die Komponente auf "5Y" zurueck (voller Zeitraum, bisheriges Verhalten
+ * blieb bereits nahe 5Y durch prices5Y/prices3Y-Fallback).
+ */
+export function Section13Miner({ data, timeRange = "5Y" }: { data: BTCAnalysis; timeRange?: MinerTimeRange }) {
+  const { minerData, loading, error } = useMinerData(data);
   const [assumptions, setAssumptions] = useState<FleetAssumptions>(DEFAULT_FLEET);
 
-  // Lazy-Fetch beim Mount — Preishistorie mitschicken für Puell (365d-Warm-up nötig)
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoading(true);
-        const history = data.chartData?.prices5Y?.length
-          ? data.chartData.prices5Y
-          : data.chartData?.prices3Y ?? [];
-        const res = await apiRequest("POST", "/api/btc-miner", {
-          btcPriceHistory: history,
-          btcPrice: data.btcPrice,
-        }, 45000);
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body?.error || `HTTP ${res.status}`);
-        }
-        const json = (await res.json()) as MinerApiData;
-        if (!cancelled) { setMinerData(json); setError(null); }
-      } catch (err: any) {
-        if (!cancelled) setError(err?.message || "Miner-Daten nicht verfügbar");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [data.btcPrice]);
-
   // ── Serien + Zonen-Klassifikation (reagiert auf Fleet-Annahmen) ──
-  const series: MinerSeriesPoint[] = useMemo(() => {
+  const fullSeries: MinerSeriesPoint[] = useMemo(() => {
     if (!minerData) return [];
     const priceByDate = new Map<string, number>();
     const priceSrc = data.chartData?.prices5Y?.length
@@ -132,18 +158,37 @@ export function Section13Miner({ data }: { data: BTCAnalysis }) {
     });
   }, [minerData, data.chartData, assumptions]);
 
+  // ── Timeframe-Filter: dieselbe Range-Auswahl wie Section 10 (geteilter State) ──
+  const series: MinerSeriesPoint[] = useMemo(() => {
+    if (fullSeries.length === 0) return fullSeries;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - RANGE_DAYS[timeRange]);
+    const cutoffStr = cutoff.toISOString().split("T")[0];
+    return fullSeries.filter(p => p.date >= cutoffStr);
+  }, [fullSeries, timeRange]);
+
   const zoneSegments = useMemo(() => buildZoneSegments(series), [series]);
 
-  // ── Aktuelle Zonen-Klassifikation (voller §3-Input inkl. Difficulty) ──
+  // ── Kapitulationszonen (strikte 3-fach-UND-Bedingung, siehe minerMetrics.ts) ──
+  const capitulationInputs: CapitulationInput[] = useMemo(() => series.map(p => ({
+    date: p.date, spot: p.spot, breakeven: p.breakeven, puell: p.puell, ma30: p.ma30, ma60: p.ma60,
+  })), [series]);
+  const capitulationSegments = useMemo(
+    () => buildCapitulationSegments(calcCapitulationZones(capitulationInputs)),
+    [capitulationInputs]
+  );
+  const capitulationDone = useMemo(() => isCapitulationResolved(capitulationInputs), [capitulationInputs]);
+
+  // ── Aktuelle Zonen-Klassifikation (voller §3-Input inkl. Difficulty, IMMER auf vollem Verlauf) ──
   const latest: MinerZoneResult | null = useMemo(() => {
-    if (!minerData || series.length === 0) return null;
+    if (!minerData || fullSeries.length === 0) return null;
     const breakevenNow = calcBreakevenPrice({
       hashrateEHs: minerData.currentHashrateEH, assumptions,
     });
-    const lastSignal = [...series].reverse().find(p => p.ribbonSignal !== 'neutral');
+    const lastSignal = [...fullSeries].reverse().find(p => p.ribbonSignal !== 'neutral');
     const ribbonNow = minerData.crossoverSignal ? 'buy'
       : minerData.inCapitulation ? 'capitulation'
-      : (lastSignal && series.indexOf(lastSignal) >= series.length - 7 ? lastSignal.ribbonSignal : 'neutral');
+      : (lastSignal && fullSeries.indexOf(lastSignal) >= fullSeries.length - 7 ? lastSignal.ribbonSignal : 'neutral');
     return classifyMinerZone({
       spotPrice: data.btcPrice,
       breakeven: breakevenNow,
@@ -152,7 +197,7 @@ export function Section13Miner({ data }: { data: BTCAnalysis }) {
       difficultyCompression: difficultyZoneFromCompression(minerData.difficultyRibbonCompression),
       mpiZone: 'neutral',
     });
-  }, [minerData, series, assumptions, data.btcPrice]);
+  }, [minerData, fullSeries, assumptions, data.btcPrice]);
 
   const breakevenNow = minerData
     ? calcBreakevenPrice({ hashrateEHs: minerData.currentHashrateEH, assumptions })
@@ -267,10 +312,10 @@ export function Section13Miner({ data }: { data: BTCAnalysis }) {
         </div>
       </div>
 
-      {/* Panel 1: Spot vs Breakeven mit Zonen-Bändern */}
+      {/* Panel 1: Spot vs Breakeven mit Zonen-Bändern + Kapitulationszonen */}
       <div>
         <div className="text-xs font-semibold text-muted-foreground mb-1">
-          Spot vs. Miner-Breakeven — Zonen: 🔴 Kapitulation · 🟡 Übergang · 🟢 Profitabel
+          Spot vs. Miner-Breakeven — Zonen: Kapitulation (rot) · Übergang (gelb) · Profitabel (grün)
         </div>
         <ResponsiveContainer width="100%" height={260}>
           <ComposedChart data={series} margin={{ top: 5, right: 10, bottom: 0, left: 0 }}>
@@ -288,8 +333,17 @@ export function Section13Miner({ data }: { data: BTCAnalysis }) {
             />
             <Legend wrapperStyle={{ fontSize: 11 }} />
             {zoneSegments.map((seg, idx) => (
-              <ReferenceArea key={idx} x1={seg.x1} x2={seg.x2} fill={ZONE_FILL[seg.zone]} strokeOpacity={0} />
+              <ReferenceArea key={`zone-${idx}`} x1={seg.x1} x2={seg.x2} fill={ZONE_FILL[seg.zone]} strokeOpacity={0} />
             ))}
+            {capitulationSegments.map((seg, idx) => (
+              <ReferenceArea key={`capitulation-${idx}`} x1={seg.x1} x2={seg.x2} fill="#EF4444" fillOpacity={0.3} strokeOpacity={0} />
+            ))}
+            {capitulationDone && (
+              <ReferenceLine
+                y={breakevenNow} stroke="#F97316" strokeDasharray="5 5" strokeWidth={1.3}
+                label={{ value: "Erwarteter Break-Even nach Konsolidierung", fontSize: 10, fill: "#F97316", position: "insideTopRight" }}
+              />
+            )}
             <Line type="monotone" dataKey="spot" name="BTC Spot ($)" stroke="#3B82F6" dot={false} strokeWidth={1.8} connectNulls />
             <Line type="monotone" dataKey="breakeven" name="Miner Breakeven ($)" stroke="#F97316" dot={false} strokeWidth={1.5} strokeDasharray="6 4" />
           </ComposedChart>
@@ -299,7 +353,7 @@ export function Section13Miner({ data }: { data: BTCAnalysis }) {
       {/* Panel 2: Hash Ribbons */}
       <div>
         <div className="text-xs font-semibold text-muted-foreground mb-1">
-          Hash Ribbons (Capriole) — ▲ = Buy-Signal (MA30 kreuzt MA60 von unten)
+          Hash Ribbons (Capriole) — grüne Fläche markiert aktive Buy-Phasen (MA30 &gt; MA60 nach Golden Cross)
         </div>
         <ResponsiveContainer width="100%" height={200}>
           <ComposedChart data={series} margin={{ top: 5, right: 10, bottom: 0, left: 0 }}>
@@ -316,10 +370,9 @@ export function Section13Miner({ data }: { data: BTCAnalysis }) {
             <Line type="monotone" dataKey="hashrate" name="Hashrate (EH/s)" stroke="#64748B" dot={false} strokeWidth={1} opacity={0.6} />
             <Line type="monotone" dataKey="ma30" name="MA30" stroke="#22C55E" dot={false} strokeWidth={1.8} connectNulls />
             <Line type="monotone" dataKey="ma60" name="MA60" stroke="#EF4444" dot={false} strokeWidth={1.8} connectNulls />
-            {/* buyMarker ist Teil des gemeinsamen Datensatzes — ein separater data-Prop
-                würde die Kategorie-X-Achse des ComposedChart überschreiben und die
-                Linien unsichtbar machen (im Playwright-Test verifiziert). */}
-            <Scatter dataKey="buyMarker" name="Hash Ribbon Buy" fill="#22C55E" shape="triangle" legendType="triangle" />
+            {/* buyMarker-Werte (=MA30 an Signal-Tagen) werden als dezente Fläche statt
+                Scatter-Dreiecken dargestellt — keine Symbol-/Emoji-Overlays. */}
+            <Area type="monotone" dataKey="buyMarker" name="Hash Ribbon Buy" stroke="#22C55E" fill="#22C55E" fillOpacity={0.25} strokeWidth={1.5} connectNulls={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

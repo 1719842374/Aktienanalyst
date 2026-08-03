@@ -326,3 +326,90 @@ export const ZONE_LABEL: Record<MinerZone, string> = {
   profitable: 'Profitabel',
   euphoria: 'Euphorie',
 };
+
+// ─── Kapitulationszonen für Sektion 10 (Technische Analyse) ──────────────────
+/**
+ * Kapitulationsbedingung (Aufgabenspezifikation, exakt so) = TRUE wenn GLEICHZEITIG:
+ *  - BTC Spot < Miner-Breakeven
+ *  - Puell Multiple < 0.5
+ *  - MA30(Hashrate) < MA60(Hashrate)  (Death Cross der Hash Ribbons)
+ *
+ * Bewusst STRIKTER als classifyMinerZone (§3, gewichteter Score): hier zählt
+ * nur die reine boolesche UND-Verknüpfung der drei Rohsignale, ohne Score-
+ * Gewichtung/Schwellen-Overlap. Separate, unit-testbare Funktion, damit die
+ * bestehende classifyMinerZone-Logik (Section 13) unverändert bleibt.
+ */
+export interface CapitulationInput {
+  date: string;
+  spot: number | null;
+  breakeven: number | null;
+  puell: number | null;
+  ma30: number | null;
+  ma60: number | null;
+}
+
+export interface CapitulationPoint {
+  date: string;
+  capitulation: boolean;
+}
+
+/** Reine Tages-Klassifikation nach der exakten 3-fach-UND-Bedingung. */
+export function calcCapitulationDay(p: CapitulationInput): boolean {
+  if (p.spot == null || p.breakeven == null || p.puell == null || p.ma30 == null || p.ma60 == null) {
+    return false;
+  }
+  return p.spot < p.breakeven && p.puell < 0.5 && p.ma30 < p.ma60;
+}
+
+/** Serie aller Tage → boolean (für Chart-Overlays und Segment-Bildung). */
+export function calcCapitulationZones(points: CapitulationInput[]): CapitulationPoint[] {
+  return points.map(p => ({ date: p.date, capitulation: calcCapitulationDay(p) }));
+}
+
+export interface CapitulationSegment {
+  x1: string;
+  x2: string;
+}
+
+/**
+ * Gruppiert aufeinanderfolgende Kapitulationstage zu zusammenhängenden
+ * Segmenten (analog buildZoneSegments, aber ohne Zonen-Glättung — die
+ * Kapitulationsbedingung ist bereits eine strikte 3-fach-UND-Bedingung und
+ * soll nicht weiter geglättet werden, um keine Tage fälschlich ein-/auszuschließen).
+ */
+export function buildCapitulationSegments(points: CapitulationPoint[]): CapitulationSegment[] {
+  const segments: CapitulationSegment[] = [];
+  let current: CapitulationSegment | null = null;
+  for (const p of points) {
+    if (!p.capitulation) { current = null; continue; }
+    if (current) {
+      current.x2 = p.date;
+    } else {
+      current = { x1: p.date, x2: p.date };
+      segments.push(current);
+    }
+  }
+  return segments;
+}
+
+/**
+ * Ermittelt, ob die aktuellste (letzte) Kapitulationszone bereits beendet ist
+ * (Spot > Breakeven UND Puell > 0.5 UND MA30 > MA60 am letzten Datenpunkt),
+ * aber innerhalb der Serie mindestens eine Kapitulationszone existierte.
+ * Wird genutzt, um die "Erwarteter Break-Even nach Konsolidierung"-Linie nur
+ * dann zu zeigen, wenn eine Kapitulationsphase bereits durchlaufen und
+ * beendet wurde (nicht während einer aktiven Kapitulation).
+ */
+export function isCapitulationResolved(points: CapitulationInput[]): boolean {
+  if (points.length === 0) return false;
+  const zones = calcCapitulationZones(points);
+  const hadCapitulation = zones.some(z => z.capitulation);
+  if (!hadCapitulation) return false;
+  const last = points[points.length - 1];
+  const lastZone = zones[zones.length - 1];
+  if (lastZone.capitulation) return false; // noch aktive Kapitulation
+  if (last.spot == null || last.breakeven == null || last.puell == null || last.ma30 == null || last.ma60 == null) {
+    return false;
+  }
+  return last.spot > last.breakeven && last.puell > 0.5 && last.ma30 > last.ma60;
+}
