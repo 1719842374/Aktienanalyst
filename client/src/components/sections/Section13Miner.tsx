@@ -17,6 +17,7 @@ import type { BTCAnalysis } from "@/lib/btcAnalysis";
 import {
   buildMinerZoneSeries, buildZoneSegments, classifyMinerZone,
   calcBreakevenPrice, calcHashpriceUsd, difficultyZoneFromCompression,
+  calcRealizedPriceSeries,
   DEFAULT_FLEET, ZONE_FILL, ZONE_LABEL,
   calcCapitulationZones, buildCapitulationSegments, isCapitulationResolved,
   type FleetAssumptions, type MinerSeriesPoint, type MinerZoneResult,
@@ -160,6 +161,13 @@ export function Section13Miner({ data, timeRange = "5Y" }: { data: BTCAnalysis; 
     for (const p of priceSrc) priceByDate.set(p.date, p.price);
     const puellByDate = new Map<string, number>();
     for (const p of minerData.puellHistory ?? []) puellByDate.set(p.date, p.value);
+    // §2.7 Realized-Price-Kontext: braucht wie Puell ein 200-Tage-Kalender-
+    // Fenster Vorlauf, daher volle Preishistorie (allPrices) statt nur prices5Y
+    // — sonst hätte die Serie erst ~200 Tage nach dem 5Y-Fenster-Start Werte.
+    const realizedPriceSrc = data.chartData?.allPrices?.length
+      ? data.chartData.allPrices
+      : priceSrc;
+    const realizedPriceByDate = calcRealizedPriceSeries(realizedPriceSrc);
     return buildMinerZoneSeries({
       dates: minerData.dates,
       hashrateEH: minerData.hashrateHistory.map(h => h.hashrateEH),
@@ -168,6 +176,7 @@ export function Section13Miner({ data, timeRange = "5Y" }: { data: BTCAnalysis; 
       priceByDate,
       puellByDate,
       assumptions,
+      realizedPriceByDate,
     });
   }, [minerData, data.chartData, assumptions]);
 
@@ -359,6 +368,9 @@ export function Section13Miner({ data, timeRange = "5Y" }: { data: BTCAnalysis; 
             )}
             <Line type="monotone" dataKey="spot" name="BTC Spot ($)" stroke="#3B82F6" dot={false} strokeWidth={1.8} connectNulls />
             <Line type="monotone" dataKey="breakeven" name="Miner Breakeven ($)" stroke="#F97316" dot={false} strokeWidth={1.5} strokeDasharray="6 4" />
+            {/* §2.7 Realized-Price-Kontext: konvergiert in Bärenmarkt-Tiefs oft mit
+                der Miner-Kostenlinie — duenne, dezente Linie, kein Symbol-Overlay. */}
+            <Line type="monotone" dataKey="realizedPrice" name="Realized Price ($, Kontext)" stroke="#94A3B8" dot={false} strokeWidth={1} strokeDasharray="2 2" connectNulls />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

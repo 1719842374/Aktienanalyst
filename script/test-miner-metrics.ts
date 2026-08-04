@@ -10,7 +10,7 @@ import {
   classifyMinerZone, buildMinerZoneSeries, buildZoneSegments,
   difficultyZoneFromCompression, DEFAULT_FLEET,
   calcCapitulationDay, calcCapitulationZones, buildCapitulationSegments,
-  isCapitulationResolved, type CapitulationInput,
+  isCapitulationResolved, calcRealizedPriceSeries, type CapitulationInput,
 } from "../client/src/lib/btc/minerMetrics";
 
 let failed = 0;
@@ -235,6 +235,78 @@ console.log("\ncalcCapitulationDay / calcCapitulationZones / buildCapitulationSe
   });
   const multiSegments = buildCapitulationSegments(calcCapitulationZones(multiPhase));
   check("2 getrennte Kapitulationsphasen → 2 Segmente", multiSegments.length === 2, `got ${multiSegments.length}`);
+}
+
+// ─── §2.7 calcRealizedPriceSeries ──────────────────────────────────────────────
+console.log("\n§2.7 calcRealizedPriceSeries");
+{
+  // 400 Tage konstanter Preis: MA200 = Preis, realizedPrice = Preis * 0.92
+  const history: { date: string; price: number }[] = [];
+  const start = new Date("2024-01-01T00:00:00Z");
+  for (let i = 0; i < 400; i++) {
+    const d = new Date(start);
+    d.setUTCDate(d.getUTCDate() + i);
+    history.push({ date: d.toISOString().split("T")[0], price: 50000 });
+  }
+  const series = calcRealizedPriceSeries(history);
+  check("Serie nicht leer nach genug Historie", series.size > 0, `size=${series.size}`);
+  const lastDate = history[history.length - 1].date;
+  const lastVal = series.get(lastDate);
+  check(
+    "realizedPrice = MA200 * 0.92 bei konstantem Preis",
+    lastVal != null && Math.abs(lastVal - 50000 * 0.92) < 1,
+    `got ${lastVal}`
+  );
+  const firstDate = history[0].date;
+  check("Kein Wert vor Mindestabdeckung (Tag 0)", !series.has(firstDate));
+
+  // Trend-Serie: Preis verdoppelt sich linear -> MA200 < aktueller Preis,
+  // realizedPrice muss klar unter dem letzten Spotpreis liegen (kein Fake-1:1).
+  const trending: { date: string; price: number }[] = [];
+  for (let i = 0; i < 400; i++) {
+    const d = new Date(start);
+    d.setUTCDate(d.getUTCDate() + i);
+    trending.push({ date: d.toISOString().split("T")[0], price: 20000 + i * 100 });
+  }
+  const trendSeries = calcRealizedPriceSeries(trending);
+  const lastTrendVal = trendSeries.get(trending[trending.length - 1].date);
+  const lastTrendPrice = trending[trending.length - 1].price;
+  check(
+    "Bei steigendem Preis liegt realizedPrice klar unter aktuellem Spot",
+    lastTrendVal != null && lastTrendVal < lastTrendPrice,
+    `realized=${lastTrendVal} spot=${lastTrendPrice}`
+  );
+}
+
+console.log("\nbuildMinerZoneSeries — realizedPriceByDate additiv, fehlt ohne Parameter (kein Fake-Default)");
+{
+  const dates = ["2024-01-01", "2024-01-02"];
+  const withoutRealized = buildMinerZoneSeries({
+    dates,
+    hashrateEH: [500, 500],
+    ma30: [500, 500],
+    ma60: [500, 500],
+    priceByDate: new Map([["2024-01-01", 40000], ["2024-01-02", 41000]]),
+    puellByDate: new Map(),
+    assumptions: DEFAULT_FLEET,
+  });
+  check(
+    "realizedPrice ist null wenn Parameter fehlt (kein Fake-Default)",
+    withoutRealized.every(p => p.realizedPrice === null)
+  );
+
+  const withRealized = buildMinerZoneSeries({
+    dates,
+    hashrateEH: [500, 500],
+    ma30: [500, 500],
+    ma60: [500, 500],
+    priceByDate: new Map([["2024-01-01", 40000], ["2024-01-02", 41000]]),
+    puellByDate: new Map(),
+    assumptions: DEFAULT_FLEET,
+    realizedPriceByDate: new Map([["2024-01-01", 36000]]),
+  });
+  check("realizedPrice wird korrekt pro Datum durchgereicht", withRealized[0].realizedPrice === 36000);
+  check("realizedPrice ist null fuer Datum ohne Eintrag", withRealized[1].realizedPrice === null);
 }
 
 // ─── Ergebnis ─────────────────────────────────────────────────────────────────

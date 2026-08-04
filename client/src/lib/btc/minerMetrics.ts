@@ -98,6 +98,51 @@ export interface MinerSeriesPoint {
   buyMarker: number | null;
   puell: number | null;
   zone: MinerZone | null;
+  /** §2.7 Realized-Price-Kontext (200-Tage-MA-Proxy × 0.92), null bis genug Historie vorliegt */
+  realizedPrice: number | null;
+}
+
+// ─── §2.7 Realized-Price-Kontext-Serie ─────────────────────────────────────────────────
+/**
+ * Realized Price konvergiert in Bärenmarkt-Tiefs oft mit den Miner-
+ * Produktionskosten (WORK_BTC_MINER.md §2.7) — kein Miner-Indikator im
+ * engeren Sinn, aber wertvoller Kontext im selben Chart wie Spot/Breakeven.
+ *
+ * Nutzt denselben 200-Tage-MA-Proxy × 0.92 wie client/src/lib/btcAnalysis.ts
+ * (dort nur als Einzelwert für den MVRV-Snapshot berechnet), hier aber als
+ * vollständige Zeitreihe. WICHTIG: kalendertag-basiertes Fenster (nicht
+ * indexbasiert) — dieselbe Klasse von Bug wie bei calcPuellMultiple
+ * (server/btc-miner.ts, Commit b584446): bei ungleichmäßig beabstandeten
+ * Preispunkten würde ein 200-INDEX-Fenster ein falsches Kalenderfenster
+ * abbilden.
+ */
+export function calcRealizedPriceSeries(
+  priceHistory: { date: string; price: number }[]
+): Map<string, number> {
+  const WINDOW_DAYS = 200;
+  const out = new Map<string, number>();
+  const sorted = [...priceHistory].sort((a, b) => a.date.localeCompare(b.date));
+  let windowStart = 0;
+  let windowSum = 0;
+  let windowCount = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const { date, price } = sorted[i];
+    windowSum += price;
+    windowCount++;
+    const cutoff = new Date(date);
+    cutoff.setDate(cutoff.getDate() - WINDOW_DAYS);
+    const cutoffStr = cutoff.toISOString().split('T')[0];
+    while (windowStart < i && sorted[windowStart].date < cutoffStr) {
+      windowSum -= sorted[windowStart].price;
+      windowCount--;
+      windowStart++;
+    }
+    const spanDays = (new Date(date).getTime() - new Date(sorted[windowStart].date).getTime()) / 86400000;
+    if (spanDays < WINDOW_DAYS - 20) continue; // Mindestabdeckung, sonst falsch niedriger MA früh in der Historie
+    const ma200 = windowSum / windowCount;
+    out.set(date, ma200 * 0.92);
+  }
+  return out;
 }
 
 // ─── §2.1 Hash Ribbons — Signal pro Tag ──────────────────────────────────────
@@ -238,8 +283,12 @@ export function buildMinerZoneSeries(params: {
   priceByDate: Map<string, number>;
   puellByDate: Map<string, number>;
   assumptions: FleetAssumptions;
+  /** §2.7 optional: von calcRealizedPriceSeries(). Fehlt der Parameter, bleibt
+   * realizedPrice pro Punkt einfach null — kein Fake-Default, kein Bruch
+   * bestehender Call-Sites, die diesen Parameter noch nicht kennen. */
+  realizedPriceByDate?: Map<string, number>;
 }): MinerSeriesPoint[] {
-  const { dates, hashrateEH, ma30, ma60, priceByDate, puellByDate, assumptions } = params;
+  const { dates, hashrateEH, ma30, ma60, priceByDate, puellByDate, assumptions, realizedPriceByDate } = params;
   const ribbonSignals = calcRibbonSignals(ma30, ma60);
   const out: MinerSeriesPoint[] = [];
 
@@ -290,6 +339,7 @@ export function buildMinerZoneSeries(params: {
       buyMarker: ribbonSignal === 'buy' ? (ma30[idx] ?? null) : null,
       puell,
       zone,
+      realizedPrice: realizedPriceByDate?.get(date) ?? null,
     });
   }
   return out;
