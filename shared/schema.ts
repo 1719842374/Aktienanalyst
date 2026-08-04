@@ -509,3 +509,49 @@ export interface StockAnalysis {
   // "Unternehmen berichtet nur geografisch"). Never a generic "N/A".
   revenueSegmentsMessage?: string;
 }
+
+// ─── NEW (WORK_PORTFOLIO.md — Virtuelles Portfolio, additive-only) ─────────────
+// Eigenstaendige, komplett neue Interfaces fuer das Virtuelle-Portfolio-Feature.
+// Beruehren KEINE bestehenden Typen (Catalyst, Risk, StockAnalysis etc.).
+// Siehe WORK_PORTFOLIO.md Kapitel A.2 fuer das normative Datenmodell.
+
+/** Ein Kandidat fuer die virtuelle Buy-Liste / das Portfolio (WORK_PORTFOLIO.md §A.2/§A.3). */
+export interface PortfolioCandidate {
+  ticker: string;
+  score: number; // 0-100, Scoring-Ergebnis
+  conviction: "high" | "medium" | "low";
+  mu?: number; // erwartete annualisierte Rendite (Dezimal, z.B. 0.12 = 12%)
+  beta?: number;
+  price: number;
+  status: "active" | "excluded" | "pending";
+  source: "researcher" | "manual" | "both";
+}
+
+/** Container fuer das virtuelle Portfolio inkl. Benchmark/rf/Kapitalbasis (WORK_PORTFOLIO.md §A.2). */
+export interface VirtualPortfolio {
+  candidates: PortfolioCandidate[];
+  benchmark: string; // z.B. "SPY", "^GSPC"
+  rf: number; // risikofreier Zins, Dezimal p.a.
+  capitalBase: number; // Gesamtkapital K in EUR/USD
+}
+
+/** Ergebnis eines Basket-Gewichtungslaufs (Modus A/B/C) inkl. Sharpe-Vergleich (WORK_PORTFOLIO.md Kapitel B/C). */
+export interface BasketResult {
+  mode: "A" | "B" | "C" | "kelly-only";
+  rows: Array<{
+    ticker: string;
+    weight: number;
+    amount: number;
+    sharpeSingle: number | null;
+  }>;
+  sharpePortfolio: number | null;
+  sharpeEqualWeight: number | null;
+}
+
+/** Kelly-Sizing-Ergebnis fuer EINEN Einzeltitel bezogen auf Gesamtkapital K (WORK_PORTFOLIO.md Kapitel D). */
+export interface KellySizing {
+  fStar: number;
+  fHalf: number;
+  fCapped: number;
+  amount: number;
+}

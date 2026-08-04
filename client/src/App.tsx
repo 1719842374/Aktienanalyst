@@ -12,6 +12,7 @@ import RecessionDashboard from "@/pages/RecessionDashboard";
 import ScreenerDashboard from "@/pages/ScreenerDashboard";
 import Researcher from "@/pages/Researcher";
 import Compare from "@/pages/Compare";
+import PortfolioPage from "@/pages/PortfolioPage";
 import NotFound from "@/pages/not-found";
 
 function AppRouter() {
@@ -24,6 +25,7 @@ function AppRouter() {
       <Route path="/screener" component={ScreenerDashboard} />
       <Route path="/researcher" component={Researcher} />
       <Route path="/compare" component={Compare} />
+      <Route path="/portfolio" component={PortfolioPage} />
       <Route component={NotFound} />
     </Switch>
   );
