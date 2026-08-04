@@ -219,3 +219,240 @@ export function fiscalMegatrendConflictText(): string {
   return 'Fiscal-Megatrend aktiv: DCF_REALITY gemildert — Rückenwind aus Staatsbudget, ' +
     'nicht aus historischem Run-Rate. Bilanz-/Order-Risiko bleibt.';
 }
+
+// ============================================================================
+// buildGates + runScoringPipeline
+// ============================================================================
+//
+// WICHTIGER HINWEIS ZUR SPEZIFIKATIONSLAGE (Transparenz statt Erfindung):
+// WORK_SCORING_VORLAGE.md §13-16 ("Gate-Implementierung · Backtest ohne
+// Lookahead · Nike-Fixture · runScoringPipeline Beispiel · Integrations-
+// Checkliste") sind im Dokument selbst NUR als Kurzverweis vorhanden:
+// "→ Detailcode in vorherigen Abschnitten dieser Datei." Es gibt aber keine
+// vorherigen Abschnitte mit diesem Code — §0 (Architektur) und §17-18 sind
+// die einzigen Abschnitte mit konkretem Code/Formeln. Es existiert also KEINE
+// spezifizierte Formel dafuer, WIE qualityScore/trendMultiplier aus rohen
+// Fundamentaldaten berechnet werden.
+//
+// Diese Implementierung erfindet daher NICHT die fehlende qualityScore-Formel.
+// Stattdessen:
+//   - qualityScore/trendMultiplier bleiben Eingabeparameter des Aufrufers
+//     (exakt wie in §0 vorgesehen: "finalScore = min(qualityScore ×
+//     trendMultiplier, gateCap)" — das SIND die beiden Inputs, keine
+//     abgeleiteten Werte dieser Datei).
+//   - buildGates() leitet NUR die vier in §17.8 konkret benannten Gates aus
+//     denselben, bereits im Code vorhandenen Signalen ab, die §17.8 explizit
+//     als Auslöser nennt: "Realized 8Q schwach", "Reverse DCF hoch",
+//     "Marge bricht", "Share-Loss". Diese Signale kommen aus
+//     calculateRealizedGrowth8Q()/calculateGapRatio() (bereits vorhanden,
+//     WORK_REVERSE_DCF_BRIDGE.md TEIL 1) und aus direkt beobachtbaren
+//     Fundamentaldaten (Marge-YoY-Delta, Marktanteils-Trend).
+//   - Wo §17.8 nur qualitativ beschreibt ("schwach", "hoch", "bricht") ohne
+//     exakte Zahl, wird die Schwelle unten explizit als benannte Konstante
+//     dokumentiert (GATE_THRESHOLDS) statt implizit im Code versteckt —
+//     damit sie sichtbar und im Review anpassbar ist, statt als stille
+//     Annahme zu gelten.
+
+export const GATE_THRESHOLDS = {
+  /** "Realized 8Q schwach" (§17.8): annualisiertes 8Q-Umsatzwachstum unter
+   *  dieser Schwelle gilt als schwach genug, um RELATIVE_GROWTH auszulösen. */
+  WEAK_REALIZED_GROWTH_PCT: 5,
+  /** "Reverse DCF hoch" (§17.8): gapRatio (g* / realizedGrowth8Q) über dieser
+   *  Schwelle heißt der Markt preist deutlich mehr Wachstum ein, als die
+   *  Historie stützt → DCF_REALITY_CHECK. gapRatio > 1 bedeutet g* > realized;
+   *  1.5 = 50% höher als die Realized-Rate, als "deutlich" gewählt. */
+  HIGH_GAP_RATIO: 1.5,
+  /** "Marge bricht" (§17.8, Rüstungsbeispiel Zeile 4): YoY-Punkte-Rückgang der
+   *  operativen Marge über dieser Schwelle löst PRICING_POWER aus. */
+  MARGIN_COMPRESSION_PP: 2,
+  /** "Share-Loss" (§17.8): YoY-Rückgang des Marktanteils/relativen
+   *  Wachstums-Deltas gegenüber dem Sektor über dieser Schwelle löst
+   *  RELATIVE_GROWTH (als "SHARE"-Gate in §17.8 bezeichnet) aus. */
+  SHARE_LOSS_PP: 2,
+} as const;
+
+/** Rohe, beobachtbare Signale — Aufrufer befuellt diese aus bereits
+ *  vorhandenen Analyse-Daten (StockAnalysis, Reverse-DCF-Ergebnis, Segment-
+ *  Wachstumsraten). Keine dieser Groessen wird hier neu erfunden — sie
+ *  kommen aus bereits existierenden Berechnungen im Repo. */
+export interface GateInputs {
+  /** g* aus dem Reverse-DCF (client/src/lib/calculations.ts calculateReverseDCF). */
+  impliedGrowthPercent: number | null;
+  /** annualisiertes 8Q-Realized-Wachstum (calculateRealizedGrowth8Q). */
+  realizedGrowth8QPercent: number | null;
+  /** YoY-Delta der operativen Marge in Prozentpunkten (negativ = Kompression). */
+  marginDeltaYoYPp: number | null;
+  /** YoY-Delta des relativen Wachstums vs. Sektor/Peer-Median in Prozentpunkten
+   *  (negativ = Share-Loss). z.B. aus Section7 Segment-TAM outperforming-Delta. */
+  relativeGrowthDeltaYoYPp: number | null;
+  /** Lagerbestand/Inventory-Tage YoY-Delta in % (positiv = Aufbau/Risiko). null
+   *  wenn nicht anwendbar (z.B. Software-/Dienstleistungsunternehmen ohne Inventory). */
+  inventoryDaysDeltaYoYPct: number | null;
+  /** Optionales, bereits vorhandenes REGULATORY_EXPOSURE-Gate aus server/regulatory.ts
+   *  (strukturell kompatibel: id/active/cap/severity/rationale). Wird 1:1 durchgereicht,
+   *  falls vorhanden — diese Datei berechnet es nicht neu. */
+  regulatoryGate?: Gate | null;
+}
+
+/**
+ * §17.8 — leitet die vier dort benannten Gates (PRICING_POWER, RELATIVE_GROWTH,
+ * DCF_REALITY_CHECK, INVENTORY) aus den GateInputs ab, plus ein optional
+ * durchgereichtes REGULATORY_EXPOSURE-Gate. Jedes Gate ist nur `active`, wenn
+ * sein jeweiliger GATE_THRESHOLDS-Schwellenwert überschritten UND die
+ * zugrunde liegende Kennzahl überhaupt vorhanden ist (kein Fake-Trigger bei
+ * fehlenden Daten — fehlende Daten heißt "Gate inaktiv", nicht "Gate greift
+ * automatisch").
+ */
+export function buildGates(inputs: GateInputs): Gate[] {
+  const gates: Gate[] = [];
+
+  // DCF_REALITY_CHECK — "Reverse DCF hoch" (§17.8)
+  const gapRatio =
+    inputs.impliedGrowthPercent != null && inputs.realizedGrowth8QPercent
+      ? inputs.impliedGrowthPercent / inputs.realizedGrowth8QPercent
+      : null;
+  const dcfRealityActive =
+    gapRatio != null && isFinite(gapRatio) && gapRatio >= GATE_THRESHOLDS.HIGH_GAP_RATIO;
+  gates.push({
+    id: 'DCF_REALITY_CHECK',
+    active: dcfRealityActive,
+    cap: GATE_CAPS.DCF_REALITY,
+    severity: 'hard',
+    rationale: dcfRealityActive
+      ? `Reverse-DCF impliziert ${inputs.impliedGrowthPercent?.toFixed(1)}% Wachstum, `
+        + `Realized-8Q liegt bei ${inputs.realizedGrowth8QPercent?.toFixed(1)}% `
+        + `(gapRatio=${gapRatio?.toFixed(2)} ≥ ${GATE_THRESHOLDS.HIGH_GAP_RATIO})`
+      : 'Reverse-DCF-Wachstumsannahme wird durch die 8Q-Historie hinreichend gestützt',
+  });
+
+  // RELATIVE_GROWTH — "Realized 8Q schwach" UND/ODER "Share-Loss" (§17.8)
+  const weakGrowth =
+    inputs.realizedGrowth8QPercent != null &&
+    inputs.realizedGrowth8QPercent < GATE_THRESHOLDS.WEAK_REALIZED_GROWTH_PCT;
+  const shareLoss =
+    inputs.relativeGrowthDeltaYoYPp != null &&
+    inputs.relativeGrowthDeltaYoYPp <= -GATE_THRESHOLDS.SHARE_LOSS_PP;
+  const relativeGrowthActive = weakGrowth || shareLoss;
+  gates.push({
+    id: 'RELATIVE_GROWTH',
+    active: relativeGrowthActive,
+    cap: GATE_CAPS.RELATIVE_GROWTH,
+    severity: 'hard',
+    rationale: relativeGrowthActive
+      ? [
+          weakGrowth ? `Realized-8Q schwach (${inputs.realizedGrowth8QPercent?.toFixed(1)}% < ${GATE_THRESHOLDS.WEAK_REALIZED_GROWTH_PCT}%)` : null,
+          shareLoss ? `Share-Loss (${inputs.relativeGrowthDeltaYoYPp?.toFixed(1)}pp ≤ -${GATE_THRESHOLDS.SHARE_LOSS_PP}pp)` : null,
+        ].filter(Boolean).join(' · ')
+      : 'Relatives Wachstum ggü. Sektor/Historie unauffällig',
+  });
+
+  // PRICING_POWER — "Marge bricht" (§17.8, Rüstungsbeispiel Zeile 4)
+  const marginBreaking =
+    inputs.marginDeltaYoYPp != null &&
+    inputs.marginDeltaYoYPp <= -GATE_THRESHOLDS.MARGIN_COMPRESSION_PP;
+  gates.push({
+    id: 'PRICING_POWER',
+    active: marginBreaking,
+    cap: GATE_CAPS.PRICING_POWER,
+    severity: 'hard',
+    rationale: marginBreaking
+      ? `Operative Marge bricht YoY um ${Math.abs(inputs.marginDeltaYoYPp ?? 0).toFixed(1)}pp `
+        + `(≥ ${GATE_THRESHOLDS.MARGIN_COMPRESSION_PP}pp-Schwelle) — Preissetzungsmacht erodiert`
+      : 'Keine materielle Margenkompression erkennbar',
+  });
+
+  // INVENTORY — Lager-/Bestandsaufbau als Frühindikator für Nachfrageschwäche.
+  // §0 nennt INVENTORY als eigenständiges Gate mit Cap 70, §17.8 spezifiziert
+  // keinen konkreten Auslöse-Schwellenwert dafür — bewusst konservativ (>15%
+  // YoY-Aufbau) gewählt, siehe GATE_THRESHOLDS-Dokumentation oben für die
+  // anderen drei; dieser Wert ist ANALOG dazu benannt, nicht aus §17.8 zitiert.
+  const inventoryBuildup =
+    inputs.inventoryDaysDeltaYoYPct != null && inputs.inventoryDaysDeltaYoYPct > 15;
+  gates.push({
+    id: 'INVENTORY',
+    active: inventoryBuildup,
+    cap: GATE_CAPS.INVENTORY,
+    severity: 'warn',
+    rationale: inventoryBuildup
+      ? `Lagerbestand YoY um ${inputs.inventoryDaysDeltaYoYPct?.toFixed(1)}% aufgebaut — Nachfrage-Frühindikator`
+      : 'Kein auffälliger Lageraufbau',
+  });
+
+  // REGULATORY_EXPOSURE — 1:1 durchgereicht falls vom Aufrufer übergeben
+  // (bereits vollständig in server/regulatory.ts implementiert, WORK2.md).
+  if (inputs.regulatoryGate) {
+    gates.push(inputs.regulatoryGate);
+  }
+
+  return gates;
+}
+
+export interface ScoringPipelineInput {
+  qualityScore: number;
+  trendMultiplier: number;
+  catalysts: Catalyst[];
+  asOfDate: string;
+  /** Aktueller Kurs — für catalystEV-in-%-Berechnung (§17.6). */
+  price: number;
+  gateInputs: GateInputs;
+}
+
+export interface ScoringPipelineResult extends ApplyGatesResult {
+  gatesBeforeFiscal: Gate[];
+  fiscal: FiscalMegatrendQualification;
+  fiscalEVPercent: number;
+  fiscalQualifiedAndMaterial: boolean;
+  conflictTexts: string[];
+}
+
+/**
+ * §17.6 — vollständige Scoring-Pipeline: buildGates() → Fiscal-Megatrend-Prüfung
+ * → softenGatesForFiscalMegatrend() → applyGates(). Exakt der in §17.6
+ * skizzierte Ablauf, hier tatsächlich als aufrufbare Funktion zusammengesetzt
+ * statt nur als Codefragment in der Doku zu stehen.
+ */
+export function runScoringPipeline(input: ScoringPipelineInput): ScoringPipelineResult {
+  const gatesBeforeFiscal = buildGates(input.gateInputs);
+
+  const fiscal = fiscalMegatrendQualifies(input.catalysts, input.asOfDate);
+
+  // §17.6: "fiscalEV = catalystExpectedValue(fiscal catalysts, price)".
+  // catalystExpectedValue() existiert nicht als eigene Funktion in diesem Repo
+  // (nicht Teil von §17.5s Codeblock) — die EV-Definition selbst liegt bereits
+  // in shared/schema.ts als Catalyst.bruttoUpside/nettoUpside vor. Wir nutzen
+  // die bereits vorhandene EV-Größe (nettoUpside, in %) für qualifizierende
+  // Fiscal-Katalysatoren, statt eine zweite, redundante EV-Formel zu erfinden.
+  const qualifyingFiscal = input.catalysts.filter(c =>
+    (c.type === 'fiscal' || c.type === 'capacity') &&
+    c.confidence === 'high' &&
+    c.probability != null && c.probability >= 0.6 &&
+    c.source?.url &&
+    c.epsImpact != null
+  );
+  const fiscalEVPercent = qualifyingFiscal.reduce((sum, c) => sum + (c.nettoUpside ?? c.bruttoUpside ?? 0), 0);
+
+  // §17.6: "qualifies = fiscal.qualifies && fiscalEV >= 5" (≥ 5% vom Kurs als
+  // Materialitätsschwelle, exakt wie in der Doku vorgegeben).
+  const fiscalQualifiedAndMaterial = fiscal.qualifies && fiscalEVPercent >= 5;
+
+  const gatesAdjusted = softenGatesForFiscalMegatrend(gatesBeforeFiscal, {
+    qualifies: fiscalQualifiedAndMaterial,
+    catalystEV: fiscalEVPercent,
+  });
+
+  const applied = applyGates(input.qualityScore, input.trendMultiplier, gatesAdjusted);
+
+  const conflictTexts: string[] = [];
+  if (fiscalQualifiedAndMaterial) {
+    conflictTexts.push(fiscalMegatrendConflictText());
+  }
+
+  return {
+    ...applied,
+    gatesBeforeFiscal,
+    fiscal,
+    fiscalEVPercent,
+    fiscalQualifiedAndMaterial,
+    conflictTexts,
+  };
+}
