@@ -178,7 +178,21 @@ export function deriveGateInputs(ctx: AnalysisScoringContext): GateInputs & {
     if (isFinite(m0) && isFinite(m1)) marginDeltaYoYPp = +(m0 - m1).toFixed(2);
   }
 
-  // Relatives Wachstum: Subjekt minus Peer-Durchschnitt (nur echte Werte).
+  // Relatives Wachstum: Subjekt minus Peer-MEDIAN (nicht Mittelwert!).
+  //
+  // BUGFIX (live gefunden bei TSLA, 04.08.2026): Ein einzelner FMP-Daten-
+  // Ausreisser (GELHY/Geely-ADR mit gemeldetem revenueGrowth=2684.3% —
+  // vermutlich Basiseffekt einer sehr kleinen Vorjahreszahl) zog den
+  // arithmetischen Mittelwert der 5 Peers auf +535.6%, wodurch
+  // relativeGrowthDeltaYoYPp auf -533pp explodierte — ein voellig
+  // unplausibler Wert, der RELATIVE_GROWTH mit einer Falschbegruendung
+  // ausgeloest haette. Das ist KEIN Nike/TSLA-Spezialfall, sondern ein
+  // generisches Robustheitsproblem: JEDER Ticker mit einem verzerrten
+  // Peer-Datenpunkt (Spin-off-Jahr, M&A-Sondereffekt, sehr kleine
+  // Vorjahresbasis) waere betroffen. Der Median ist robust gegen einzelne
+  // Ausreisser und die in der Finanzanalyse uebliche Wahl fuer Peer-
+  // Vergleiche — ersetzt den arithmetischen Mittelwert, keine Ticker-
+  // spezifische Sonderbehandlung.
   let relativeGrowthDeltaYoYPp: number | null = null;
   const peerVals = (ctx.peerRevenueGrowths ?? []).filter(
     (v): v is number => typeof v === "number" && isFinite(v)
@@ -188,8 +202,12 @@ export function deriveGateInputs(ctx: AnalysisScoringContext): GateInputs & {
     typeof ctx.subjectRevenueGrowth === "number" &&
     isFinite(ctx.subjectRevenueGrowth)
   ) {
-    const peerAvg = peerVals.reduce((s, v) => s + v, 0) / peerVals.length;
-    relativeGrowthDeltaYoYPp = +(ctx.subjectRevenueGrowth - peerAvg).toFixed(2);
+    const sorted = [...peerVals].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const peerMedian = sorted.length % 2 === 0
+      ? (sorted[mid - 1] + sorted[mid]) / 2
+      : sorted[mid];
+    relativeGrowthDeltaYoYPp = +(ctx.subjectRevenueGrowth - peerMedian).toFixed(2);
   }
 
   // Inventory YoY-%-Delta — null wenn kein Inventory berichtet (Services/Software).

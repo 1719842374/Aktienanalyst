@@ -75,13 +75,13 @@ console.log("\n=== 2. deriveGateInputs aus echten Analyse-Rohdaten ===");
     ],
     annualBalance: [{ inventory: 9500 }, { inventory: 7800 }], // +21.8%
     subjectRevenueGrowth: 2.0,
-    peerRevenueGrowths: [8.0, 5.0, null, 9.0],   // Avg der echten Werte: 7.33
+    peerRevenueGrowths: [8.0, 5.0, null, 9.0],   // Median der echten Werte [5,8,9]: 8.0
   };
   const gi = deriveGateInputs(ctx);
   check("impliedGrowthPercent durchgereicht (9.5)", gi.impliedGrowthPercent === 9.5);
   check("realizedGrowth8Q = 0 % (identische 8Q-Bloecke, yoy_8q)", gi.realizedGrowth8QPercent === 0 && gi.realizedGrowthMethod === "yoy_8q");
   check("marginDeltaYoYPp = -3.22pp (10.98 - 14.2)", gi.marginDeltaYoYPp === -3.22, String(gi.marginDeltaYoYPp));
-  check("relativeGrowthDeltaYoYPp = -5.33pp (2.0 - 7.33)", gi.relativeGrowthDeltaYoYPp === -5.33, String(gi.relativeGrowthDeltaYoYPp));
+  check("relativeGrowthDeltaYoYPp = -6.0pp (2.0 - Median[5,8,9]=8.0)", gi.relativeGrowthDeltaYoYPp === -6.0, String(gi.relativeGrowthDeltaYoYPp));
   check("inventoryDaysDeltaYoYPct = +21.8 %", gi.inventoryDaysDeltaYoYPct === 21.8, String(gi.inventoryDaysDeltaYoYPct));
 }
 {
@@ -100,6 +100,23 @@ console.log("\n=== 2. deriveGateInputs aus echten Analyse-Rohdaten ===");
       impliedGStar: 5, quarterlyRevenueChronological: null, annualIncome: null,
       annualBalance: null, subjectRevenueGrowth: 3, peerRevenueGrowths: [7, null, null],
     }).relativeGrowthDeltaYoYPp === null);
+}
+{
+  // BUGFIX-Regressionstest (live gefunden bei TSLA, generisches Problem —
+  // nicht ticker-spezifisch): ein einzelner extremer Ausreisser-Peer (z.B.
+  // Spin-off-/Sondereffekt-Jahr) darf den Mittelwert NICHT verzerren. Median
+  // ist robust: [3, 4, 5, 2684.3] hat Median 4.5, nicht den vom Ausreisser
+  // dominierten Mittelwert 674.1.
+  const withOutlier = deriveGateInputs({
+    impliedGStar: 5, quarterlyRevenueChronological: null, annualIncome: null,
+    annualBalance: null, subjectRevenueGrowth: -2.9,
+    peerRevenueGrowths: [-28.9, 1.2, 2684.3, 19.7, -25.2], // echte TSLA-Peer-Fixture
+  });
+  check(
+    `Ausreisser-Robustheit: Median statt Mittelwert (Median[-28.9,-25.2,1.2,19.7,2684.3]=1.2 → Delta -4.1pp, NICHT -533pp)`,
+    withOutlier.relativeGrowthDeltaYoYPp !== null && Math.abs(withOutlier.relativeGrowthDeltaYoYPp - (-4.1)) < 0.01,
+    String(withOutlier.relativeGrowthDeltaYoYPp)
+  );
 }
 
 console.log("\n=== 3. Mapping-Tabellen ===");
