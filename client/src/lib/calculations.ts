@@ -71,6 +71,74 @@ export function calculateDCF(params: DCFParams): DCFResult {
   return { intrinsicValue: equityValue, perShare, steps };
 }
 
+// === Anti-Bias Inverted DCF (WORK_ANTIBIAS_DCF.md §5) ===
+// Root cause dieses Fixes: Section8.tsx rief zuvor calculateDCF() gleichzeitig
+// mit erhöhtem WACC (waccAdj = base + damage/10) UND reduziertem Wachstum
+// (growthAdj = base - damage/5) auf — beide aus demselben totalExpectedDamage
+// abgeleitet. Das ist der in WORK_ANTIBIAS_DCF.md §5.4 explizit verbotene
+// Mehrfach-Abschlag ("D− mappt EINMAL auf g ODER auf r, nie beides"): EV fällt
+// in r und steigt in g, also multipliziert man dieselbe Downside-Information
+// zweimal in dieselbe Richtung — systematisch FV_inv ≪ P und inflationäre
+// Warnungen, unabhängig vom tatsächlichen Risiko.
+//
+// invertedDcf() kapselt genau EINE Mapping-Entscheidung (mode: 'growth' | 'wacc')
+// und liefert daraus einen einzigen intern konsistenten DCF-Aufruf.
+
+export interface InvertedDcfParams {
+  fcfBase: number;
+  gBase: number;         // Basis-Wachstum in % (wie g1 bisher), OHNE Downside-Adjustierung
+  wacc: number;           // Basis-WACC in %, OHNE Downside-Adjustierung
+  terminalG: number;
+  sharesOutstanding: number;
+  netDebt: number;
+  sigmaGbDown: number;    // Summe der NEGATIVEN Risiko-/GB-Beiträge (<= 0), z.B. -totalExpectedDamage
+  mode?: 'growth' | 'wacc'; // Default 'growth' (WORK_ANTIBIAS_DCF.md §5.3 Variante G = Default)
+  lambda?: number;        // nur mode='wacc', Default 0.02 (Policy: max +70bp bei D-=0.35)
+  haircut?: number;       // unabhängiger FCF-Basis-Parameter (Default 0) — NICHT aus sigmaGbDown ableiten,
+                           // sonst wäre das der von §5.4 verbotene dritte Penalty-Kanal (FV × (1-Damage))
+}
+
+export interface InvertedDcfResult extends DCFResult {
+  Dminus: number;   // gedeckelter Downside-Faktor, 0..0.35
+  gAdj: number;      // effektiv verwendetes Wachstum (Jahre 1-5)
+  waccAdj: number;   // effektiv verwendeter WACC
+  mode: 'growth' | 'wacc';
+}
+
+/**
+ * Anti-Bias Inverted DCF — mappt die aggregierte Downside-Masse D− GENAU EINMAL
+ * auf entweder das Wachstum (mode='growth', Default) oder den WACC (mode='wacc').
+ * Niemals beides gleichzeitig. Siehe WORK_ANTIBIAS_DCF.md §5 für die Herleitung.
+ */
+export function invertedDcf(params: InvertedDcfParams): InvertedDcfResult {
+  const mode = params.mode ?? 'growth';
+  const lambda = params.lambda ?? 0.02;
+  const haircut = params.haircut ?? 0;
+
+  // D- = min(0.35, -ΣGB-) — §5.2, gedeckelt auf 35%
+  const Dminus = Math.min(0.35, Math.max(0, -params.sigmaGbDown));
+
+  // Genau eine der beiden Größen wird adjustiert; die andere bleibt an der Basis.
+  const gAdj = mode === 'growth' ? params.gBase * (1 - Dminus) : params.gBase;
+  const waccAdj = mode === 'wacc' ? params.wacc + Dminus * lambda * 100 : params.wacc;
+  // Hinweis: lambda ist in der Doku dimensionslos auf D- (0..1) bezogen und liefert
+  // einen Spread in Prozentpunkten (z.B. 0.35 * 0.02 = 0.007 -> 0.7 Prozentpunkte).
+  // Hier *100, weil wacc/waccAdj in diesem Codebase in Prozentpunkten (nicht Dezimal) gefuehrt werden.
+
+  const dcf = calculateDCF({
+    fcfBase: params.fcfBase,
+    haircut,
+    wacc: waccAdj,
+    g1: gAdj,
+    g2: gAdj / 2,
+    terminalG: params.terminalG,
+    sharesOutstanding: params.sharesOutstanding,
+    netDebt: params.netDebt,
+  });
+
+  return { ...dcf, Dminus, gAdj, waccAdj, mode };
+}
+
 // === SINGLE SOURCE OF TRUTH: Default DCF Parameters ===
 // Both Section5 and Section6 MUST derive their defaults from this function.
 // Any change to beta or capex logic here propagates to all consumers automatically.

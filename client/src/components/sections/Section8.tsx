@@ -2,7 +2,7 @@ import React from "react";
 import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, Risk } from "../../../../shared/schema";
-import { calculateDCF } from "../../lib/calculations";
+import { calculateDCF, invertedDcf } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign } from "../../lib/formatters";
 import { useMemo, useState, useEffect, useRef } from "react";
 import {
@@ -120,21 +120,31 @@ export function Section8({ data, useLLM = false }: Props) {
   const totalExpectedDamage = risks.reduce((s, r) => s + r.expectedDamage, 0);
   const baseWACC  = sp.waccScenarios.kons;
   const baseGrowth = sp.growthAssumptions.g1;
-  const waccAdj   = baseWACC + totalExpectedDamage / 10;
-  const growthAdj = baseGrowth - totalExpectedDamage / 5;
   const netDebt   = data.totalDebt - data.cashEquivalents;
   const haircut   = data.fcfHaircut;
 
-  const invertedDCF = useMemo(() => calculateDCF({
+  // Anti-Bias Inverted DCF (WORK_ANTIBIAS_DCF.md §5): totalExpectedDamage (in
+  // %) entspricht ΣGB- (Downside-Katalysator-Masse) und darf laut Spezifikation
+  // NUR EINMAL gemappt werden — hier auf das Wachstum (mode='growth', der in
+  // §5.3 dokumentierte Default). Vorher wurde SOWOHL wacc (+damage/10) ALS AUCH
+  // g1/g2 (-damage/5) aus demselben Schaden abgeleitet und gemeinsam in
+  // calculateDCF gegeben — das ist der explizit verbotene Doppel-Penalty
+  // (§5.4: "gleichzeitig g↓ und r↑ multipliziert dieselbe Information zweimal").
+  const invertedDCF = useMemo(() => invertedDcf({
     fcfBase: data.fcfTTM,
-    haircut,
-    wacc: waccAdj,
-    g1: Math.max(growthAdj, 1),
-    g2: Math.max(growthAdj / 2, 0.5),
+    gBase: Math.max(baseGrowth, 1),
+    wacc: baseWACC,
     terminalG: sp.growthAssumptions.terminal,
     sharesOutstanding: data.sharesOutstanding,
     netDebt,
-  }), [data, waccAdj, growthAdj, sp, netDebt, haircut]);
+    // totalExpectedDamage ist in Prozentpunkten (z.B. 25 fuer 25%), invertedDcf's
+    // Dminus-Formel erwartet einen Dezimalwert 0..1 (siehe WORK_ANTIBIAS_DCF.md
+    // §5.2: D- = min(0.35, -ΣGB-) — ΣGB- selbst ist dezimal). Ohne /100 würde
+    // jeder Schaden >35 sofort auf den Cap springen statt proportional zu skalieren.
+    sigmaGbDown: -totalExpectedDamage / 100,
+    mode: 'growth',
+    haircut,
+  }), [data, baseWACC, baseGrowth, totalExpectedDamage, sp, netDebt, haircut]);
 
   const belowPrice = invertedDCF.perShare < data.currentPrice;
   const analystPT = data.analystPT?.median ?? 0;
@@ -411,9 +421,9 @@ export function Section8({ data, useLLM = false }: Props) {
       {/* Adjusted Parameters */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <AdjCard label="WACC Base"   value={formatPercentNoSign(baseWACC)} />
-        <AdjCard label="WACC Adj."   value={formatPercentNoSign(waccAdj, 1)} highlight />
+        <AdjCard label="WACC Adj."   value={formatPercentNoSign(invertedDCF.waccAdj, 1)} highlight={invertedDCF.mode === 'wacc'} />
         <AdjCard label="Growth Base" value={formatPercentNoSign(baseGrowth, 1)} />
-        <AdjCard label="Growth Adj." value={formatPercentNoSign(Math.max(growthAdj, 1), 1)} highlight />
+        <AdjCard label="Growth Adj." value={formatPercentNoSign(invertedDCF.gAdj, 1)} highlight={invertedDCF.mode === 'growth'} />
       </div>
 
       {/* Risiko-adjustierter Zielkurs (Primär) + Inverted DCF (Sekundär) */}
@@ -508,9 +518,13 @@ export function Section8({ data, useLLM = false }: Props) {
 
       <RechenWeg title="Risk Adjustment Rechenweg" steps={[
         `Total Expected Damage = Σ(EW% × Impact%) = ${formatNumber(totalExpectedDamage, 2)}%`,
-        `WACC_adj = Base WACC + Total Damage / 10 = ${formatPercentNoSign(baseWACC)} + ${formatNumber(totalExpectedDamage / 10, 2)}% = ${formatPercentNoSign(waccAdj, 2)}`,
-        `Growth_adj = max(Base Growth − Damage/5, 1%) = max(${formatPercentNoSign(baseGrowth, 1)} − ${formatNumber(totalExpectedDamage / 5, 2)}%, 1%) = ${formatPercentNoSign(Math.max(growthAdj, 1), 2)}`,
-        `Inverted DCF (konservativ, WACC_adj/Growth_adj) → ${formatCurrency(invertedDCF.perShare)} per share`,
+        // Anti-Bias Inverted DCF (WORK_ANTIBIAS_DCF.md §5): genau EINE Adjustierung,
+        // nie WACC und Growth gleichzeitig — siehe invertedDCF.mode.
+        `D− = min(35%, Total Damage) = min(35%, ${formatPercentNoSign(totalExpectedDamage, 1)}) = ${formatPercentNoSign(invertedDCF.Dminus * 100, 1)}`,
+        invertedDCF.mode === 'growth'
+          ? `Growth_adj = Base Growth × (1 − D−) = ${formatPercentNoSign(baseGrowth, 1)} × (1 − ${formatPercentNoSign(invertedDCF.Dminus * 100, 1)}) = ${formatPercentNoSign(invertedDCF.gAdj, 2)} (WACC bleibt Base — nur eine Adjustierung)`
+          : `WACC_adj = Base WACC + λ × D− = ${formatPercentNoSign(baseWACC)} + 0.02 × ${formatPercentNoSign(invertedDCF.Dminus * 100, 1)} = ${formatPercentNoSign(invertedDCF.waccAdj, 2)} (Growth bleibt Base — nur eine Adjustierung)`,
+        `Inverted DCF (konservativ, ${invertedDCF.mode === 'growth' ? 'Growth_adj' : 'WACC_adj'} — einzige Adjustierung) → ${formatCurrency(invertedDCF.perShare)} per share`,
         hasPT
           ? `Risk-Adjusted Target = Analyst PT × (1 − Risiko%) = ${formatCurrency(analystPT)} × ${(1 - totalExpectedDamage / 100).toFixed(4)} = ${formatCurrency(riskAdjTarget)}`
           : `Risk-Adjusted Target = Inverted DCF = ${formatCurrency(riskAdjTarget)}`,
