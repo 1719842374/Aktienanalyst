@@ -36,9 +36,39 @@ export const DEFAULT_FLEET: FleetAssumptions = {
   otherOpexPct: 0.15,
 };
 
-/** Post-2024-Halving Block-Subvention */
+/** Post-2024-Halving Block-Subvention — nur für LIVE-Werte (heutiges Datum) korrekt. */
 export const BLOCK_REWARD_BTC = 3.125;
 export const DAILY_BLOCKS = 144;
+
+// Historischer Block-Reward pro Halving-Ära (identisches Schema wie
+// server/btc-miner.ts blockRewardForDate). calcBreakevenPrice() und
+// calcHashpriceUsd() wurden bisher IMMER mit der Post-2024-Konstante
+// (3.125 BTC) aufgerufen, auch für historische Datenpunkte (z.B. Section
+// 13s buildMinerZoneSeries iteriert über Jahre von Hashrate-Historie).
+// Das halbiert den berechneten historischen Breakeven-Preis systematisch
+// gegenüber dem tatsächlichen Wert vor jedem Halving (2022 hatte real
+// 6.25 BTC/Block, nicht 3.125) — wodurch "Spot < Breakeven" für echte
+// historische Kapitulationsphasen (z.B. Jun/Jul 2022) faktisch nie
+// zutraf, obwohl der reale Miner-Breakeven damals sehr wohl über dem
+// Spot-Preis lag. Verifiziert live: mit der Konstante lag der berechnete
+// Breakeven am 2022-06-01 bei $14.351, waehrend der reale BTC-Spot bei
+// $31.716 lag — die Bedingung war dadurch nie erfüllbar.
+const HALVING_SCHEDULE: { date: string; reward: number }[] = [
+  { date: '2009-01-03', reward: 50 },
+  { date: '2012-11-28', reward: 25 },
+  { date: '2016-07-09', reward: 12.5 },
+  { date: '2020-05-11', reward: 6.25 },
+  { date: '2024-04-20', reward: 3.125 },
+];
+
+export function blockRewardForDate(dateStr: string): number {
+  let reward = HALVING_SCHEDULE[0].reward;
+  for (const h of HALVING_SCHEDULE) {
+    if (dateStr >= h.date) reward = h.reward;
+    else break;
+  }
+  return reward;
+}
 
 export interface MinerZoneInput {
   spotPrice: number;
@@ -230,7 +260,11 @@ export function buildMinerZoneSeries(params: {
     // Breakeven auf MA30-Basis: tägliche Hashrate schwankt stark (Rauschen),
     // ökonomisch relevant ist die nachhaltige Hashrate — glättet die Kostenlinie
     // im Chart und stabilisiert die Zonen-Klassifikation.
-    const breakeven = calcBreakevenPrice({ hashrateEHs: ma30[idx] ?? hashrate, assumptions });
+    const breakeven = calcBreakevenPrice({
+      hashrateEHs: ma30[idx] ?? hashrate,
+      assumptions,
+      blockRewardBtc: blockRewardForDate(date),
+    });
     const ribbonSignal = ribbonSignals[idx] ?? 'neutral';
 
     let zone: MinerZone | null = null;

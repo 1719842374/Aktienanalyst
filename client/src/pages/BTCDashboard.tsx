@@ -8,7 +8,7 @@ import { SectionCard } from "@/components/SectionCard";
 import { Section13Miner, useMinerData } from "@/components/sections/Section13Miner";
 import {
   calcCapitulationZones, buildCapitulationSegments, isCapitulationResolved,
-  calcBreakevenPrice, DEFAULT_FLEET,
+  calcBreakevenPrice, DEFAULT_FLEET, blockRewardForDate,
   type CapitulationInput,
 } from "@/lib/btc/minerMetrics";
 import { RechenWeg } from "@/components/RechenWeg";
@@ -990,7 +990,16 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
       ma30ByDate.set(d, ma30v);
       ma60ByDate.set(d, ma60v);
       const hashrateForBreakeven = ma30v ?? capMinerData.hashrateHistory[i]?.hashrateEH ?? 0;
-      breakevenByDate.set(d, calcBreakevenPrice({ hashrateEHs: hashrateForBreakeven, assumptions: DEFAULT_FLEET }));
+      // blockRewardBtc MUSS pro Datum historisch korrekt sein (siehe
+      // minerMetrics.ts blockRewardForDate-Kommentar) — sonst wird der
+      // historische Breakeven vor jedem Halving systematisch halbiert,
+      // wodurch "Spot < Breakeven" fuer echte Kapitulationsphasen (z.B.
+      // Jun/Jul 2022) nie zutrifft.
+      breakevenByDate.set(d, calcBreakevenPrice({
+        hashrateEHs: hashrateForBreakeven,
+        assumptions: DEFAULT_FLEET,
+        blockRewardBtc: blockRewardForDate(d),
+      }));
     });
     return fullChart.map(pt => ({
       date: pt.date,

@@ -191,20 +191,6 @@ export function Section13Miner({ data, timeRange = "5Y" }: { data: BTCAnalysis; 
     [capitulationInputs]
   );
   const capitulationDone = useMemo(() => isCapitulationResolved(capitulationInputs), [capitulationInputs]);
-  // TEMP-DEBUG (wird nach Live-Verifikation entfernt): zaehlt, wie viele Tage
-  // in capitulationInputs ueberhaupt alle 3 Rohwerte (spot/puell/ma30/ma60)
-  // ungleich null haben, und wie viele davon die Bedingung erfuellen.
-  if (typeof window !== 'undefined') {
-    (window as any).__capDebug = {
-      seriesLen: series.length,
-      inputsLen: capitulationInputs.length,
-      withAllFields: capitulationInputs.filter(i => i.spot != null && i.breakeven != null && i.puell != null && i.ma30 != null && i.ma60 != null).length,
-      segmentsCount: capitulationSegments.length,
-      segments: capitulationSegments,
-      sample: capitulationInputs.slice(0, 3),
-      puellMin: Math.min(...capitulationInputs.map(i => i.puell ?? Infinity).filter(v => v !== Infinity)),
-    };
-  }
 
   // ── Aktuelle Zonen-Klassifikation (voller §3-Input inkl. Difficulty, IMMER auf vollem Verlauf) ──
   const latest: MinerZoneResult | null = useMemo(() => {
