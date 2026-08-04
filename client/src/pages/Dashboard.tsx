@@ -28,7 +28,7 @@ import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelation
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
-  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search, Star, Sparkles,
+  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search, Star, Sparkles, Briefcase,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -404,6 +404,14 @@ export default function Dashboard() {
             <span className="hidden sm:inline">Researcher</span>
           </button>
           <button
+            onClick={() => navigate("/portfolio")}
+            className="h-8 px-2.5 text-[11px] font-medium text-emerald-500 hover:bg-emerald-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-emerald-500/20 shrink-0"
+            title="Virtuelles Portfolio — Sharpe, Kelly, CAPM-Basket"
+          >
+            <Briefcase className="w-3 h-3" />
+            <span className="hidden sm:inline">Portfolio</span>
+          </button>
+          <button
             onClick={() => navigate("/compare")}
             className="h-8 px-2.5 text-[11px] font-medium text-foreground/40 hover:bg-muted/50 hover:text-foreground/60 rounded-md transition-colors flex items-center gap-1 border border-border/50 shrink-0"
             title="Ticker-Vergleich"
@@ -663,6 +671,13 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
             >
               <AlertTriangle className="w-3 h-3" />
               Rezessions-Dashboard
+            </button>
+            <button
+              onClick={() => setLocation("/portfolio")}
+              className="px-3 py-1.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs font-medium text-emerald-600 dark:text-emerald-400 transition-colors flex items-center gap-1.5"
+            >
+              <Briefcase className="w-3 h-3" />
+              Virtuelles Portfolio
             </button>
           </div>
         </div>
