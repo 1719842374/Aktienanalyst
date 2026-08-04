@@ -12,6 +12,12 @@ interface SearchResult {
   name: string;
   exchange?: string;
   type?: string;
+  /** true = native asiatische Börse (.HK/.T/.KS/.SS/.SZ/.TW/.KQ), die mit dem
+   * aktuellen FMP-Plan keine Daten liefert (live verifiziert). US-ADR/OTC-
+   * Notierungen desselben Unternehmens (z.B. XIACY statt 1810.HK) funktionieren
+   * einwandfrei — dieses Flag markiert nur die bekannt nicht abrufbare Variante,
+   * damit der Nutzer nicht versehentlich einen kaputten Ticker wählt. */
+  unavailable?: boolean;
 }
 
 export function TickerSearch({ onSearch, isLoading }: TickerSearchProps) {
@@ -128,13 +134,21 @@ export function TickerSearch({ onSearch, isLoading }: TickerSearchProps) {
                 onMouseEnter={() => setHighlight(i)}
                 className={`w-full text-left px-3 py-2 text-xs border-b border-border/50 last:border-b-0 transition-colors ${
                   i === highlight ? "bg-primary/10" : "hover:bg-muted/40"
-                }`}
+                } ${r.unavailable ? "opacity-60" : ""}`}
                 data-testid={`option-ticker-${r.ticker}`}
+                title={r.unavailable ? "Diese lokale Börsennotierung liefert aktuell keine Daten — nach der US-ADR-Variante suchen (z.B. Firmenname ohne Börsen-Suffix)" : undefined}
               >
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="font-mono font-semibold text-foreground truncate">{r.ticker}</span>
-                  <span className="text-[10px] text-muted-foreground shrink-0">
-                    {r.exchange || ""}
+                  <span className="flex items-center gap-1 shrink-0">
+                    {r.unavailable && (
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/15 text-amber-500 font-medium">
+                        keine Daten
+                      </span>
+                    )}
+                    <span className="text-[10px] text-muted-foreground">
+                      {r.exchange || ""}
+                    </span>
                   </span>
                 </div>
                 <div className="text-foreground/70 truncate mt-0.5">{r.name}</div>

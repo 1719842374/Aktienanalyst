@@ -76,6 +76,7 @@ export {
 import { registerAnalyzeRoute } from "./analyze-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { fetchMinerData } from "./btc-miner";
+import { fmpSearchTicker } from "./fmp";
 import { assessRegulatoryExposure } from "./regulatory";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
@@ -159,6 +160,66 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err: any) {
       console.error("[POST /api/regulatory]", err?.message?.substring(0, 200));
       res.status(500).json({ error: err?.message || "Internal error" });
+    }
+  });
+
+  // 4b. /api/search-ticker — Ticker-/Firmennamen-Autocomplete fuer TickerSearch.tsx.
+  //
+  // REGRESSION-FIX (04.08.2026): Diese Route wurde von TickerSearch.tsx seit
+  // jeher aufgerufen (GET /api/search-ticker?q=...), existierte aber NIE im
+  // Server — fmpSearchTicker() in fmp.ts war eine fertige, aber komplett
+  // unbenutzte Funktion. Express' SPA-Catch-All antwortete mit der index.html
+  // (HTTP 200 + HTML). Das Frontend faengt den JSON-Parse-Fehler in einem
+  // try/catch ab und setzt still `results=[]` — daher fiel der Bug nie als
+  // Fehler auf, die Autocomplete zeigte einfach nie Vorschlaege an. Wer den
+  // exakten Ticker bereits kannte, konnte ihn trotzdem manuell eintippen und
+  // ueber Enter/Analyze-Button direkt an /api/analyze schicken — deshalb blieb
+  // das unbemerkt. Betraf ALLE Ticker, nicht nur asiatische Werte.
+  // Boersen-Suffixe, die mit dem aktuellen FMP-Plan NICHT abrufbar sind (live
+  // verifiziert 04.08.2026 gegen /stable/quote): Hongkong .HK, Tokio .T, Seoul
+  // .KS, Shanghai .SS, Shenzhen .SZ, Taiwan .TW/.KQ — alle asiatischen
+  // Primaerboersen liefern eine Premium-Sperre statt Daten. Beim Testen zeigte
+  // sich zusaetzlich, dass das Limit NICHT asien-spezifisch ist: deutsche
+  // Sekundaernotierungen (.F Frankfurt, .HM Hamburg, .BE Berlin, .DU
+  // Duesseldorf, .MU Muenchen) und mexikanische (.MX) sind ebenso gesperrt,
+  // waehrend London (.L) und Wien (.VI) funktionieren — das Plan-Limit betrifft
+  // offenbar generell "kleinere"/Sekundaer-Boersen unabhaengig vom Kontinent.
+  // Diese Liste deckt die live getesteten Faelle ab, ist aber keine
+  // erschoepfende FMP-Enumeration — falls weitere gesperrte Suffixe auffallen,
+  // hier ergaenzen. Betrifft NUR die native Lokalboersen-Notierung, NICHT die
+  // US-ADR/OTC-Notierungen derselben Unternehmen (z.B. BYDDY, XIACY, TCEHY,
+  // TSM, TM, SONY funktionieren alle einwandfrei).
+  const UNAVAILABLE_EXCHANGE_SUFFIXES = [
+    ".HK", ".T", ".KS", ".SS", ".SZ", ".TW", ".KQ", // Asien
+    ".F", ".HM", ".BE", ".DU", ".MU", ".MX",         // deutsche Sekundaerboersen + Mexiko
+  ];
+  function isLikelyUnavailable(symbol: string): boolean {
+    return UNAVAILABLE_EXCHANGE_SUFFIXES.some(suf => symbol.toUpperCase().endsWith(suf));
+  }
+
+  app.get("/api/search-ticker", async (req, res) => {
+    try {
+      const q = String(req.query?.q ?? "").trim();
+      if (q.length < 1) return res.json({ results: [] });
+      const rows = await fmpSearchTicker(q, 20);
+      // WORK_DATA_PROVIDERS.md-Prinzip (Transparenz statt stillem Fehlschlag):
+      // native asiatische Boersen-Symbole werden nicht ausgeblendet (der Nutzer
+      // soll sehen, dass es das Unternehmen gibt), aber klar markiert und ans
+      // Ende sortiert, damit die funktionierende US-ADR/OTC-Variante zuerst
+      // erscheint. Ohne diese Markierung waeren z.B. bei "Xiaomi" 1810.HK und
+      // 81810.HK (beide gesperrt) die ersten beiden Treffer vor dem
+      // funktionierenden XIACY-ADR erschienen.
+      const mapped = rows.map(r => ({
+        ticker: r.symbol,
+        name: r.name,
+        exchange: r.exchange || r.exchangeFullName || "",
+        unavailable: isLikelyUnavailable(r.symbol),
+      }));
+      mapped.sort((a, b) => Number(a.unavailable) - Number(b.unavailable));
+      res.json({ results: mapped.slice(0, 12) });
+    } catch (err: any) {
+      console.error("[GET /api/search-ticker]", err?.message?.substring(0, 150));
+      res.json({ results: [] }); // fail-open: Autocomplete-Ausfall darf die App nicht blockieren
     }
   });
 

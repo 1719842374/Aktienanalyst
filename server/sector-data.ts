@@ -60,10 +60,39 @@ export function getEffectiveSector(
 
   const isSemiConductorCompany = desc.includes('semiconductor') || desc.includes('microcontroller') ||
     desc.includes('power semiconductor') || desc.includes('microchip') || ind.includes('semiconductor');
+
+  // BUGFIX (live gefunden bei Xiaomi/XIACY, 04.08.2026): Die urspruengliche
+  // Pruefung feuerte, sobald IRGENDEINE der generischen fintechPhrases (u.a.
+  // "payment", "banking", "lending", "credit") IRGENDWO im Beschreibungstext
+  // vorkam — unabhaengig davon, ob Fintech das Kerngeschaeft oder nur ein
+  // Nebensegment ist. Xiaomis Beschreibung nennt "internet finance, consumer
+  // lending, virtual banking ... electronic payment solutions" als EINE von
+  // vielen Nebenaktivitaeten neben dem dominanten Smartphone-/IoT-Geschaeft —
+  // das reichte, um den gesamten Sektor faelschlich auf "Financial Services /
+  // FinTech" umzuklassifizieren. Das ist kein Xiaomi-Spezialfall: JEDES Tech-
+  // Unternehmen mit einem Zahlungs-Nebengeschaeft (z.B. Apple Pay/Apple Card,
+  // Samsung Pay) waere betroffen gewesen.
+  //
+  // Fix: (a) Hardware/Elektronik-Kernbegriffe haben Vorrang — wenn die
+  // Beschreibung frueh und deutlich Hardware/Consumer-Electronics als
+  // Kerngeschaeft nennt, greift die Fintech-Umklassifizierung NICHT, selbst
+  // wenn spaeter ein Fintech-Nebensegment erwaehnt wird. (b) Die Fintech-
+  // Phrasen muessen mehrfach vorkommen ODER explizit als "core business"/
+  // "primarily"-Formulierung auftreten, nicht nur als beliebige Woerter
+  // irgendwo im Fliesstext — ein einzelner beilaeufiger Treffer reicht nicht.
+  const hardwareCorePhrases = [
+    "smartphone", "consumer electronics", "iot", "hardware manufactur",
+    "semiconductor", "chip design", "electronic devices", "mobile device",
+  ];
+  const hasHardwareCore = hardwareCorePhrases.some(p => desc.includes(p));
+
   const fintechPhrases = ["payment", "fintech", "buy now pay later", "bnpl", "merchant finance",
     "banking", "deposit", "lending", "credit", "consumer finance", "super app",
     "marketplace platform", "peer to peer payment"];
-  const hasFinTechCore = fintechPhrases.some(p => desc.includes(p));
+  const fintechMatchCount = fintechPhrases.filter(p => desc.includes(p)).length;
+  const hasDominantFintechPhrase = /(primarily|core business|principally)[^.]{0,60}(fintech|payment|banking|lending)/.test(desc)
+    || /(fintech|payment|banking|lending)[^.]{0,60}(primarily|core business|principally)/.test(desc);
+  const hasFinTechCore = !hasHardwareCore && (fintechMatchCount >= 3 || hasDominantFintechPhrase);
   if (s.includes("tech") && hasFinTechCore && !hasTechCore && !isSemiConductorCompany) {
     return {
       sector: "Financial Services",
