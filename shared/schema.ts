@@ -141,6 +141,18 @@ export interface Catalyst {
   tags?: string[]; // Optional tags e.g. ["gov-spending", "capex-tailwind"]
   posAdjustment?: number; // PoS adjustment from news sentiment (e.g. +5 or -5)
   posOriginal?: number; // Original PoS before news adjustment
+
+  // WORK_REVERSE_DCF_BRIDGE.md Teil 3 — additive Fiscal-/Program-Felder.
+  // Generischer string statt Fix-Enum (Spezifikation: "keine Fixnamen-Enum-Beschraenkung noetig").
+  type?: 'fiscal' | 'capacity' | string;
+  confidence?: 'low' | 'medium' | 'high';
+  source?: { url: string; publishedAt: string; snippet: string };
+  status?: 'announced' | 'legislated' | 'funded' | 'deploying' | 'expired';
+  probability?: number; // 0-1
+  addressableVolume?: number; // USD, adressierbares Programmvolumen (falls quantifizierbar)
+  epsImpact?: number; // $ pro Aktie, analog server/regulatory.ts Muster
+  startYear?: number;
+  endYear?: number;
 }
 
 export interface Risk {
