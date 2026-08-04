@@ -31,7 +31,7 @@ export interface HistoricalPrice {
 export interface TAMSegment {
   segmentName: string; // e.g. "Intelligent Cloud"
   segmentRevenue: number; // Segment revenue in $B
-  segmentGrowth: number; // Segment YoY growth %
+  segmentGrowth: number | null; // Segment YoY growth % — null = keine Vorjahreszahl (NIEMALS 0 als Platzhalter)
   segmentShare: number; // % of total company revenue
   tamSize: number; // TAM for this segment in $B
   tamLabel: string; // e.g. "Global Cloud Computing"
@@ -50,6 +50,10 @@ export interface TAMAnalysis {
   tamSource: string; // Source description
   outperforming: boolean; // Company growing faster than weighted TAM CAGR?
   segments?: TAMSegment[]; // Per-segment TAM breakdown (if revenue segments available)
+  /** Umsatzgewichtetes Wachstum aus den ECHTEN Segment-YoY-Raten. null = keine Segment-Vorjahresdaten. */
+  segmentWeightedGrowth?: number | null;
+  /** Anteil des Umsatzes (%), fuer den eine echte Segment-Wachstumsrate vorliegt (Abdeckung der Gewichtung). */
+  segmentGrowthCoveragePct?: number;
 }
 
 export interface PeerCompany {
@@ -325,7 +329,8 @@ export interface RevenueSegment {
   name: string;           // Segment name (e.g. "AWS", "Advertising", "Online Stores")
   revenue: number;        // Revenue in reporting currency
   percentage: number;     // Percentage of total revenue
-  growth?: number;        // YoY growth % (optional)
+  growth?: number | null; // YoY growth % — null = keine Vorjahreszahl berichtet (NIEMALS 0 als Platzhalter)
+  prevRevenue?: number;   // Umsatz der Vergleichsperiode (Nachvollziehbarkeit der YoY-Rate)
   // NEW (Segment-Fallback-Pipeline, 2026-08): provenance metadata so the UI can
   // show "Quelle: FMP" vs. "Quelle: 10-K FY2025" instead of a silent number.
   // Optional + additive — never renames/removes the fields above.

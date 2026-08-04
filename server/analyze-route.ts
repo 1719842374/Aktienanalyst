@@ -640,6 +640,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               name: _prettifyProduct(String(s.name)),
               revenue: Number(s.revenue),
               percentage: typeof s.percentage === "number" ? s.percentage : 0,
+              // Echte YoY-Segment-Wachstumsrate aus fmpSegments() durchreichen.
+              // Ohne dieses Feld sah generateTAMAnalysis() nur `undefined` und
+              // die Spalte "Wachstum" der Segment-TAM-Analyse zeigte 0.0 %.
+              // null bleibt null (keine Vorjahreszahl) — kein 0-Default.
+              growth: typeof s.growth === "number" && isFinite(s.growth) ? s.growth : null,
+              ...(typeof s.prevRevenue === "number" ? { prevRevenue: s.prevRevenue } : {}),
             }))
             .slice(0, 8)
         : [];

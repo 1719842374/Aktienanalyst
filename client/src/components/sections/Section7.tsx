@@ -154,9 +154,20 @@ export function Section7({ data }: Props) {
                         <td className="py-1.5 pr-2 font-medium">{seg.segmentName}</td>
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.segmentRevenue, 1)}B</td>
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground">{formatNumber(seg.segmentShare, 1)}%</td>
-                        <td className={`py-1.5 px-1.5 text-right font-mono tabular-nums font-medium ${seg.segmentGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                          {seg.segmentGrowth >= 0 ? '+' : ''}{formatNumber(seg.segmentGrowth, 1)}%
-                        </td>
+                        {/* Echte YoY-Segment-Wachstumsrate. null/undefined =
+                            keine Vorjahreszahl → "n/a", NIEMALS 0.0 % (war der Bug). */}
+                        {typeof seg.segmentGrowth === 'number' && isFinite(seg.segmentGrowth) ? (
+                          <td className={`py-1.5 px-1.5 text-right font-mono tabular-nums font-medium ${seg.segmentGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                            {seg.segmentGrowth >= 0 ? '+' : ''}{formatNumber(seg.segmentGrowth, 1)}%
+                          </td>
+                        ) : (
+                          <td
+                            className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60"
+                            title="Keine Vorjahreszahl fuer dieses Segment berichtet"
+                          >
+                            n/a
+                          </td>
+                        )}
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.tamSize, 0)}B</td>
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-primary">{seg.tamCAGR}%</td>
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">{formatNumber(seg.marketShare, 1)}%</td>
@@ -184,6 +195,24 @@ export function Section7({ data }: Props) {
                   {' '}({tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}% vs. {formatNumber(tam.tamCAGR, 1)}%)
                 </span>
               </div>
+              {/* QS: umsatzgewichtetes Wachstum aus den ECHTEN Segment-Raten —
+                  muss plausibel zum oben gezeigten Revenue Growth passen. */}
+              {typeof tam.segmentWeightedGrowth === 'number' && isFinite(tam.segmentWeightedGrowth) && (
+                <div className="text-[10px] text-muted-foreground flex flex-wrap items-center gap-1">
+                  <span>
+                    Segment-gewichtetes Wachstum:{' '}
+                    <span className={`font-mono tabular-nums font-medium ${tam.segmentWeightedGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                      {tam.segmentWeightedGrowth >= 0 ? '+' : ''}{formatNumber(tam.segmentWeightedGrowth, 1)}%
+                    </span>
+                  </span>
+                  <span className="text-muted-foreground/60">
+                    (vs. Revenue Growth {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                    {typeof tam.segmentGrowthCoveragePct === 'number' && tam.segmentGrowthCoveragePct < 99.5
+                      ? `, Abdeckung ${formatNumber(tam.segmentGrowthCoveragePct, 0)}% des Umsatzes`
+                      : ''})
+                  </span>
+                </div>
+              )}
             </div>
           ) : (
             /* Fallback: single growth comparison bar */

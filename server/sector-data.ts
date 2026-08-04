@@ -208,7 +208,7 @@ export function generateTAMAnalysis(
   sector: string, industry: string, description: string,
   revenue: number, revenueGrowth: number,
   revenueSegments?: any[]
-): { tamTotal: number; tamLabel: string; tamCAGR: number; companyGrowth: number; companyRevenue: number; marketShare: number; tamSource: string; outperforming: boolean; segments?: any[] } {
+): { tamTotal: number; tamLabel: string; tamCAGR: number; companyGrowth: number; companyRevenue: number; marketShare: number; tamSource: string; outperforming: boolean; segments?: any[]; segmentWeightedGrowth?: number | null; segmentGrowthCoveragePct?: number } {
   const s = sector.toLowerCase();
   const ind = industry.toLowerCase();
   const desc = description.toLowerCase();
@@ -266,13 +266,28 @@ export function generateTAMAnalysis(
       const match = matchSegmentTAM(seg.name, desc);
       const segRevB = seg.revenue / 1e9;
       const segShare = match.tamSize > 0 ? (segRevB / match.tamSize) * 100 : 0;
-      return { segmentName: seg.name, segmentRevenue: Math.round(segRevB * 10) / 10, segmentGrowth: seg.growth, segmentShare: seg.percentage, tamSize: match.tamSize, tamLabel: match.tamLabel, tamCAGR: match.tamCAGR, marketShare: Math.round(segShare * 100) / 100, outperforming: seg.growth > match.tamCAGR };
+      // segmentGrowth kommt aus fmpSegments()/fmpGeoSegments() (echte YoY-Rate
+      // aus zwei Perioden). null = keine Vorjahreszahl → UI zeigt "n/a".
+      // NIEMALS auf 0 defaulten: 0 waere die Aussage "kein Wachstum" und war
+      // genau der gemeldete Bug (alle Segmente zeigten 0.0 %).
+      const segGrowth: number | null =
+        typeof seg.growth === 'number' && isFinite(seg.growth) ? seg.growth : null;
+      return { segmentName: seg.name, segmentRevenue: Math.round(segRevB * 10) / 10, segmentGrowth: segGrowth, segmentShare: seg.percentage, tamSize: match.tamSize, tamLabel: match.tamLabel, tamCAGR: match.tamCAGR, marketShare: Math.round(segShare * 100) / 100, outperforming: segGrowth !== null && segGrowth > match.tamCAGR };
     });
     const weightedTAM = segTAMs.reduce((sum, seg) => sum + seg.tamSize * (seg.segmentShare / 100), 0);
     const weightedCAGR = segTAMs.reduce((sum, seg) => sum + seg.tamCAGR * (seg.segmentShare / 100), 0);
     const weightedShare = weightedTAM > 0 ? (revB / weightedTAM) * 100 : 0;
+    // QS: gewichtetes Unternehmens-Wachstum aus den ECHTEN Segment-Raten
+    // (Gewicht = Umsatzanteil). Segmente ohne Vorjahreszahl werden
+    // ausgeschlossen und die Gewichte auf die verbleibende Basis renormiert,
+    // damit fehlende Daten das Ergebnis nicht faelschlich Richtung 0 ziehen.
+    const growthRows = segTAMs.filter(s => s.segmentGrowth !== null && s.segmentShare > 0);
+    const growthWeightBase = growthRows.reduce((sum, s) => sum + s.segmentShare, 0);
+    const segmentWeightedGrowth = growthWeightBase > 0
+      ? Math.round((growthRows.reduce((sum, s) => sum + (s.segmentGrowth as number) * s.segmentShare, 0) / growthWeightBase) * 10) / 10
+      : null;
     const allSources = [...new Set(segTAMs.map(s => s.tamLabel))].join(' + ');
-    return { tamTotal: Math.round(weightedTAM), tamLabel: `Gewichtet: ${allSources}`, tamCAGR: Math.round(weightedCAGR * 10) / 10, companyGrowth: revenueGrowth, companyRevenue: Math.round(revB * 10) / 10, marketShare: Math.round(weightedShare * 100) / 100, tamSource: 'Segment-gewichteter TAM aus ' + segTAMs.map(s => s.tamLabel.replace('Global ', '')).join(', '), outperforming: revenueGrowth > weightedCAGR, segments: segTAMs };
+    return { tamTotal: Math.round(weightedTAM), tamLabel: `Gewichtet: ${allSources}`, tamCAGR: Math.round(weightedCAGR * 10) / 10, companyGrowth: revenueGrowth, companyRevenue: Math.round(revB * 10) / 10, marketShare: Math.round(weightedShare * 100) / 100, tamSource: 'Segment-gewichteter TAM aus ' + segTAMs.map(s => s.tamLabel.replace('Global ', '')).join(', '), outperforming: revenueGrowth > weightedCAGR, segments: segTAMs, segmentWeightedGrowth, segmentGrowthCoveragePct: Math.round(growthWeightBase * 10) / 10 };
   }
 
   const marketShare = tamTotal > 0 ? (revB / tamTotal) * 100 : 0;

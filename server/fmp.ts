@@ -154,7 +154,97 @@ export async function fmpPriceTarget(symbol: string) {
 const SEGMENT_SKIP_KEYS = new Set([
   "symbol", "date", "reportedCurrency", "cik", "fillingDate",
   "acceptedDate", "calendarYear", "period", "link", "finalLink",
+  "fiscalYear",
 ]);
+
+/** Normalisierte Segment-Zeile inkl. echter YoY-Wachstumsrate. */
+export interface FmpSegmentRow {
+  name: string;
+  revenue: number;
+  percentage: number;
+  date?: string;
+  /** YoY-Wachstum in % gegenueber der Vorperiode. null = keine Vorjahreszahl. */
+  growth: number | null;
+  /** Umsatz der Vorperiode (Diagnose/Cache-Nachvollziehbarkeit). */
+  prevRevenue?: number;
+  /** Datum/Fiskaljahr der Vergleichsperiode. */
+  prevDate?: string;
+}
+
+/**
+ * Extrahiert die Segment-Zahlen aus einer FMP-Periodenzeile. FMP liefert die
+ * Werte je nach Endpoint/Symbol entweder flach oder unter `data` — beide Formen
+ * werden defensiv behandelt (siehe Kommentar in fmpSegments).
+ */
+function extractSegmentMap(row: any): Record<string, number> {
+  const src: Record<string, unknown> =
+    row?.data && typeof row.data === "object" ? row.data : (row ?? {});
+  const out: Record<string, number> = {};
+  for (const [key, val] of Object.entries(src)) {
+    if (SEGMENT_SKIP_KEYS.has(key)) continue;
+    const num = Number(val);
+    if (!isNaN(num) && num > 0) out[key] = num;
+  }
+  return out;
+}
+
+/**
+ * Gemeinsame Normalisierung fuer Produkt- UND Geo-Segmente inkl. echter
+ * YoY-Wachstumsrate pro Segment.
+ *
+ * WARUM: Vorher wurde ausschliesslich die neueste Periode gelesen und KEIN
+ * Wachstumsfeld zurueckgegeben. Downstream (server/sector-data.ts) las
+ * `seg.growth` → `undefined` → die Spalte "Wachstum" der Segment-TAM-Analyse
+ * zeigte fuer jedes Segment 0.0 %. Jetzt wird zusaetzlich die
+ * naechstaeltere Periode mit ABWEICHENDEM Fiskaljahr geladen und
+ *   growth = (rev_t / rev_{t-1} - 1) × 100
+ * pro Segmentnamen berechnet. Fehlt die Vorjahreszahl (neues Segment,
+ * umbenannt, nur eine Periode berichtet), ist `growth` bewusst `null` —
+ * NIEMALS 0, damit die UI "n/a" statt einer erfundenen Null anzeigen kann.
+ */
+function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+
+  const periodKey = (r: any): string =>
+    String(r?.date ?? r?.reportedDate ?? r?.fiscalYear ?? r?.calendarYear ?? "");
+
+  const sorted = [...rows].sort((a, b) => periodKey(b).localeCompare(periodKey(a)));
+  const latest = sorted[0];
+  const latestKey = periodKey(latest);
+  const reportDate: string | undefined = latest?.date ?? latest?.reportedDate;
+
+  // Vorperiode = erste Zeile mit anderem Perioden-Key (verhindert, dass ein
+  // Duplikat derselben Periode als "Vorjahr" missbraucht wird → sonst 0 %).
+  const prev = sorted.find(r => periodKey(r) !== latestKey);
+  const prevKey = prev ? periodKey(prev) : undefined;
+
+  const curMap = extractSegmentMap(latest);
+  const prevMap = prev ? extractSegmentMap(prev) : {};
+
+  const names = Object.keys(curMap);
+  if (names.length === 0) return [];
+
+  const total = names.reduce((s, n) => s + curMap[n], 0);
+
+  return names
+    .sort((a, b) => curMap[b] - curMap[a])
+    .map(name => {
+      const revenue = curMap[name];
+      const prevRevenue = prevMap[name];
+      const hasPrev = typeof prevRevenue === "number" && isFinite(prevRevenue) && prevRevenue > 0;
+      const growth = hasPrev
+        ? Math.round(((revenue / prevRevenue) - 1) * 1000) / 10
+        : null;
+      return {
+        name,
+        revenue,
+        percentage: total > 0 ? Math.round((revenue / total) * 1000) / 10 : 0,
+        date: reportDate,
+        growth,
+        ...(hasPrev ? { prevRevenue, prevDate: prevKey } : {}),
+      };
+    });
+}
 
 /**
  * Fetches revenue-product-segmentation from FMP /stable and normalises the
@@ -167,7 +257,7 @@ const SEGMENT_SKIP_KEYS = new Set([
  * the total of all numeric segment values, and return a sorted array — largest
  * segment first. Segments with zero / negative / non-numeric values are dropped.
  */
-export async function fmpSegments(symbol: string): Promise<Array<{ name: string; revenue: number; percentage: number; date?: string }>> {
+export async function fmpSegments(symbol: string): Promise<FmpSegmentRow[]> {
   try {
     const raw = await fmpFetch(`/revenue-product-segmentation`, { symbol });
 
@@ -179,45 +269,14 @@ export async function fmpSegments(symbol: string): Promise<Array<{ name: string;
     // key (fiscalYear, period, reportedCurrency, date) was being misread as a
     // "segment" and the real segments inside `data` were never read at all —
     // producing garbage entries like { name: "fiscalYear", revenue: 2026 }.
-    // Handle both shapes defensively in case FMP reverts or varies by symbol.
+    // Beide Formen werden in extractSegmentMap() defensiv behandelt.
+    //
+    // normaliseSegmentRows() liest bewusst ZWEI Perioden (neueste + naechst-
+    // aeltere mit abweichendem Fiskaljahr) und berechnet daraus die echte
+    // YoY-Wachstumsrate pro Segment. Vorher wurde nur die neueste Periode
+    // gelesen und kein Wachstum geliefert → Segment-TAM-Analyse zeigte 0.0 %.
     const rows: any[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
-    if (rows.length === 0) return [];
-
-    // Sort descending by date and take the most recent period.
-    const sorted = [...rows].sort((a, b) => {
-      const da = a?.date ?? a?.reportedDate ?? "";
-      const db = b?.date ?? b?.reportedDate ?? "";
-      return db.localeCompare(da);
-    });
-    const latest = sorted[0];
-    const reportDate: string | undefined = latest?.date ?? latest?.reportedDate;
-
-    // New shape: segment values live under `data`. Fall back to the row itself
-    // for the old flat shape.
-    const segmentSource: Record<string, unknown> =
-      latest?.data && typeof latest.data === "object" ? latest.data : latest;
-
-    // Extract numeric segment entries, ignoring metadata keys.
-    const entries: Array<{ name: string; revenue: number }> = [];
-    for (const [key, val] of Object.entries(segmentSource)) {
-      if (SEGMENT_SKIP_KEYS.has(key)) continue;
-      const num = Number(val);
-      if (!isNaN(num) && num > 0) {
-        entries.push({ name: key, revenue: num });
-      }
-    }
-    if (entries.length === 0) return [];
-
-    const total = entries.reduce((sum, e) => sum + e.revenue, 0);
-
-    return entries
-      .sort((a, b) => b.revenue - a.revenue)
-      .map(e => ({
-        name: e.name,
-        revenue: e.revenue,
-        percentage: total > 0 ? Math.round((e.revenue / total) * 1000) / 10 : 0,
-        date: reportDate,
-      }));
+    return normaliseSegmentRows(rows);
   } catch {
     return [];
   }
@@ -232,43 +291,13 @@ export async function fmpSegments(symbol: string): Promise<Array<{ name: string;
  *   { symbol, fiscalYear, period, reportedCurrency, date,
  *     data: { "UNITED STATES": 170794000000, "Non Us": 161045000000 } }
  */
-export async function fmpGeoSegments(symbol: string): Promise<Array<{ name: string; revenue: number; percentage: number; date?: string }>> {
+export async function fmpGeoSegments(symbol: string): Promise<FmpSegmentRow[]> {
   try {
     const raw = await fmpFetch(`/revenue-geographic-segmentation`, { symbol });
     const rows: any[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
-    if (rows.length === 0) return [];
-
-    const sorted = [...rows].sort((a, b) => {
-      const da = a?.date ?? a?.reportedDate ?? "";
-      const db = b?.date ?? b?.reportedDate ?? "";
-      return db.localeCompare(da);
-    });
-    const latest = sorted[0];
-    const reportDate: string | undefined = latest?.date ?? latest?.reportedDate;
-
-    const segmentSource: Record<string, unknown> =
-      latest?.data && typeof latest.data === "object" ? latest.data : latest;
-
-    const entries: Array<{ name: string; revenue: number }> = [];
-    for (const [key, val] of Object.entries(segmentSource)) {
-      if (SEGMENT_SKIP_KEYS.has(key)) continue;
-      const num = Number(val);
-      if (!isNaN(num) && num > 0) {
-        entries.push({ name: key, revenue: num });
-      }
-    }
-    if (entries.length === 0) return [];
-
-    const total = entries.reduce((sum, e) => sum + e.revenue, 0);
-
-    return entries
-      .sort((a, b) => b.revenue - a.revenue)
-      .map(e => ({
-        name: e.name,
-        revenue: e.revenue,
-        percentage: total > 0 ? Math.round((e.revenue / total) * 1000) / 10 : 0,
-        date: reportDate,
-      }));
+    // Gleiche Normalisierung wie bei den Produkt-Segmenten — auch rein
+    // geografisch berichtende Unternehmen bekommen damit echte YoY-Raten.
+    return normaliseSegmentRows(rows);
   } catch {
     return [];
   }
