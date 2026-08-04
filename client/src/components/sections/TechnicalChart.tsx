@@ -106,8 +106,25 @@ export function TechnicalChart({ data }: Props) {
       ma:   ti.maData.slice(-Math.min(cutoff, ti.maData.length)),
       macd: ti.macdData.slice(-Math.min(cutoff, ti.macdData.length)),
       ohlcv: ohlcv.slice(-Math.min(cutoff, ohlcv.length)),
+      cutoff,
     };
   }, [ti.maData, ti.macdData, ohlcv, timeRange]);
+
+  // WORK_DATA_PROVIDERS.md §4: Chart-Domain muss an tatsaechlich geladene
+  // Min/Max-Daten gebunden sein, nicht an das Button-Label. Wenn der gewaehlte
+  // Timeframe mehr Handelstage verlangt als tatsaechlich vorhanden (z.B. FMP-
+  // Plan-Downgrade auf Free/Starter mit nur 5 Jahren Historie, oder ein sehr
+  // junger Börsengang), zeigen wir einen klaren Hinweis statt den Button-Wert
+  // ("10Y") so zu tun als waere er erfuellt. Aktuell liefert der produktive
+  // FMP-Plan verifiziert 10+ Jahre (siehe yearAgo(10) in fmp-fetcher.ts) — dieser
+  // Hinweis ist ein Sicherheitsnetz fuer den Fall, dass sich das aendert, nicht
+  // ein aktiv beobachtetes Problem.
+  // Toleranz 95%: Handelstage pro Kalenderjahr schwanken leicht (Feiertage,
+  // Boersenferien), ein exaktes "< cutoff" wuerde bei z.B. 2513 von 2520
+  // Punkten (99.7%, faktisch volle 10 Jahre) einen falschen Alarm ausloesen.
+  const isHistoryTruncated = ti.maData.length > 0 && ti.maData.length < filteredData.cutoff * 0.95;
+  const actualYearsAvailable = ti.maData.length > 0 ? +(ti.maData.length / 252).toFixed(1) : 0;
+  const hasEnoughForMA200 = ti.maData.length >= 200;
 
   // ── Bollinger + RSI (computed on FULL history, then sliced — values must not
   //    change when the user switches the time range) ────────────────────────────
@@ -310,6 +327,18 @@ export function TechnicalChart({ data }: Props) {
           ))}
         </div>
 
+        {/* WORK_DATA_PROVIDERS.md §4: Hinweis wenn weniger Historie geladen wurde
+            als der gewaehlte Timeframe verlangt — Chart-Domain bindet sich immer
+            an die tatsaechlichen Daten, aber der Nutzer soll das sehen koennen. */}
+        {isHistoryTruncated && (
+          <span
+            className="px-2 py-1 rounded text-[10px] font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+            title={`Nur ${actualYearsAvailable} Jahre Historie verfügbar (angefragt: ${timeRange}). Quelle: FMP.`}
+          >
+            Historie: {actualYearsAvailable}J verfügbar
+          </span>
+        )}
+
         {/* MA toggles */}
         <div className="flex flex-wrap gap-1">
           {MA_LINES.map(ma => (
@@ -403,7 +432,20 @@ export function TechnicalChart({ data }: Props) {
             if (cur.ma50 < cur.ma200 && prev.ma50 >= prev.ma200) { lastCrossType='death';  lastCrossDate=cur.date; break; }
           }
         }
-        if (!lastCrossType) return null;
+        if (!lastCrossType) {
+          // WORK_DATA_PROVIDERS.md §4: explizite Meldung statt stillem Wegfall,
+          // wenn der Grund fuer den fehlenden Banner zu wenig Historie ist
+          // (< 200 Handelstage fuer MA200) — unterscheidet sich von "es gab
+          // in der sichtbaren Historie einfach keinen Cross".
+          if (!hasEnoughForMA200) {
+            return (
+              <div className="rounded-lg p-3 mb-3 border bg-muted/30 border-border text-xs text-muted-foreground">
+                Historie zu kurz für MA200 / Golden-Death-Cross ({ti.maData.length} von 200 benötigten Handelstagen verfügbar).
+              </div>
+            );
+          }
+          return null;
+        }
         const isGolden = lastCrossType === 'golden';
         const crossDate = new Date(lastCrossDate + 'T00:00:00');
         const dateStr = crossDate.toLocaleDateString('de-DE',{day:'2-digit',month:'short',year:'numeric'});
