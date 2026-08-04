@@ -12,6 +12,14 @@ type TimeRange = "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL";
 
 export function GoldPriceChart({ data }: Props) {
   const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
+  // WORK_TEIL7_SCORING.md §7.8.3: "Chart: Gold (links) vs Real10Y (rechts)" —
+  // Default AN, da genau das die geforderte Kernansicht ist; abschaltbar, weil
+  // eine zweite Achse den Chart bei kurzen Zeitraeumen ueberladen kann.
+  const [showReal10y, setShowReal10y] = useState(true);
+  const hasReal10y = useMemo(
+    () => (data.historicalPrices ?? []).some(p => p.real10y != null),
+    [data.historicalPrices]
+  );
 
   // Measurement tool state
   const [measureMode, setMeasureMode] = useState(false);
@@ -60,6 +68,7 @@ export function GoldPriceChart({ data }: Props) {
         date: p.date,
         close: p.close,
         ma200: p.ma200,
+        real10y: p.real10y,
         dateLabel: new Date(p.date).toLocaleDateString("de-DE", { day: "2-digit", month: "short" }),
       }));
   }, [data.historicalPrices, timeRange]);
@@ -73,6 +82,15 @@ export function GoldPriceChart({ data }: Props) {
     const max = Math.max(...allValues);
     const padding = (max - min) * 0.05;
     return [Math.floor(min - padding), Math.ceil(max + padding)];
+  }, [chartData]);
+
+  const real10yDomain = useMemo(() => {
+    const vals = chartData.map(d => d.real10y).filter((v): v is number => v != null);
+    if (vals.length === 0) return [0, 5] as [number, number];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const padding = Math.max((max - min) * 0.15, 0.2);
+    return [+(min - padding).toFixed(1), +(max + padding).toFixed(1)] as [number, number];
   }, [chartData]);
 
   if (chartData.length === 0) {
@@ -103,6 +121,23 @@ export function GoldPriceChart({ data }: Props) {
                 {r}
               </button>
             ))}
+            {hasReal10y && (
+              <>
+                <div className="w-px h-4 bg-border mx-1" />
+                <button
+                  onClick={() => setShowReal10y(v => !v)}
+                  className={`flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+                    showReal10y
+                      ? "bg-sky-500/20 text-sky-500 border border-sky-500/30"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  }`}
+                  title="Realzins (DFII10) als zweite Achse ein-/ausblenden"
+                  data-testid="toggle-real10y"
+                >
+                  Real10Y
+                </button>
+              </>
+            )}
             <div className="w-px h-4 bg-border mx-1" />
             <button
               onClick={() => { setMeasureMode(!measureMode); setMeasurePoints([]); }}
@@ -186,11 +221,22 @@ export function GoldPriceChart({ data }: Props) {
                 minTickGap={50}
               />
               <YAxis
+                yAxisId="left"
                 domain={yDomain}
                 tickFormatter={(v: number) => `$${v.toLocaleString()}`}
                 tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
                 width={60}
               />
+              {showReal10y && hasReal10y && (
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  domain={real10yDomain}
+                  tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+                  tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                  width={44}
+                />
+              )}
               <Tooltip
                 contentStyle={{
                   backgroundColor: "hsl(var(--card))",
@@ -200,24 +246,28 @@ export function GoldPriceChart({ data }: Props) {
                 }}
                 labelFormatter={(d: string) => new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" })}
                 formatter={(value: number, name: string) => {
+                  if (name === "real10y") return [`${value.toFixed(2)}%`, "Real10Y (DFII10)"];
                   const label = name === "close" ? "Gold" : "200-DMA";
                   return [`$${value.toFixed(2)}`, label];
                 }}
               />
               {/* Fair Value reference */}
               <ReferenceLine
+                yAxisId="left"
                 y={data.fairValue.fvAdj}
                 stroke="#a855f7"
                 strokeDasharray="5 5"
                 strokeOpacity={0.5}
               />
               <Area
+                yAxisId="left"
                 type="monotone"
                 dataKey="close"
                 fill="url(#goldGradient)"
                 stroke="none"
               />
               <Line
+                yAxisId="left"
                 type="monotone"
                 dataKey="close"
                 stroke="#f59e0b"
@@ -226,6 +276,7 @@ export function GoldPriceChart({ data }: Props) {
                 name="close"
               />
               <Line
+                yAxisId="left"
                 type="monotone"
                 dataKey="ma200"
                 stroke="#ef4444"
@@ -235,6 +286,18 @@ export function GoldPriceChart({ data }: Props) {
                 name="ma200"
                 connectNulls
               />
+              {showReal10y && hasReal10y && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="real10y"
+                  stroke="#38bdf8"
+                  strokeWidth={1.25}
+                  dot={false}
+                  name="real10y"
+                  connectNulls
+                />
+              )}
 
               {/* Measurement overlay */}
               {measurePoints.length >= 1 && (
@@ -279,6 +342,11 @@ export function GoldPriceChart({ data }: Props) {
           <span className="flex items-center gap-1">
             <span className="w-3 h-0.5 bg-purple-500 rounded-full border-dashed" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value
           </span>
+          {showReal10y && hasReal10y && (
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5 bg-sky-400 rounded-full" /> Real10Y (DFII10, %, rechte Achse)
+            </span>
+          )}
         </div>
       </div>
     </div>

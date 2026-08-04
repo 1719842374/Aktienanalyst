@@ -57,6 +57,10 @@ export interface GoldPricePoint {
   date: string;
   close: number;
   ma200?: number;
+  /** Real10Y (FRED DFII10, %) am selben Datum — für den Dual-Axis-Chart aus
+   * WORK_TEIL7_SCORING.md §7.8.3 ("Gold links vs Real10Y rechts"). Optional,
+   * da FRED nur Handelstage liefert und Wochenenden/Feiertage lücken können. */
+  real10y?: number;
 }
 
 export interface GoldAnalysis {

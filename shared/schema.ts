@@ -67,6 +67,10 @@ export interface PeerCompany {
   epsGrowth5Y: number | null; // EPS Growth 5Y CAGR %
   marketCap: number | null;
   revenueGrowth: number | null;
+  /** Return on Invested Capital in % (FMP returnOnInvestedCapital × 100). null = nicht berechenbar. */
+  roic?: number | null;
+  /** Fiskaljahr der ROIC-Zahl, z.B. "2025" — zeigt Datenaktualität in der UI. */
+  roicFiscalYear?: string | null;
 }
 
 export type WarningSeverity = 'critical' | 'warning' | 'info';

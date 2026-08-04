@@ -65,6 +65,39 @@ function fetchFREDSeries(seriesId: string): { value: number; date: string } | nu
   }
 }
 
+// === Fetch FRED historical series (fuer Dual-Axis Gold-vs-Real10Y-Chart) ===
+// Additiv neben fetchFREDSeries() (die nur den letzten Wert liefert) — die
+// bestehende Funktion bleibt unveraendert, da sie bereits produktiv fuer die
+// Indikator-Karten genutzt wird. Diese Variante liest die volle CSV statt
+// `tail -5`, damit der Chart aus WORK_TEIL7_SCORING.md §7.8.3 ("Gold links vs
+// Real10Y rechts") tatsaechlich eine Zeitreihe zeichnen kann statt nur einen
+// einzelnen aktuellen Punkt.
+function fetchFREDSeriesHistory(
+  seriesId: string,
+  startDate: string
+): Array<{ date: string; value: number }> {
+  try {
+    const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}&cosd=${startDate}`;
+    const csv = execSync(`curl -sL "${url}" 2>/dev/null`, {
+      encoding: "utf-8",
+      timeout: 20000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    const lines = csv.trim().split("\n").filter(l => l && !l.startsWith("DATE") && !l.includes("observation_date"));
+    const out: Array<{ date: string; value: number }> = [];
+    for (const line of lines) {
+      const parts = line.split(",");
+      if (parts.length >= 2 && parts[1] !== "." && parts[1].trim() !== "") {
+        const value = parseFloat(parts[1]);
+        if (isFinite(value)) out.push({ date: parts[0], value });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 // === RSI Calculation ===
 function calculateRSI(prices: number[], period: number = 14): number {
   if (prices.length < period + 1) return 50;
@@ -212,25 +245,37 @@ export function registerGoldRoutes(server: Server, app: Express) {
       console.log("[GOLD] Starting gold analysis...");
       const now = new Date();
       const endDate = now.toISOString().split("T")[0];
-      const startDate = new Date(Date.now() - 2 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+      // BUGFIX (WORK_TEIL7_SCORING.md §7.8.3 / §8): der Chart bietet 3M..5Y/ALL
+      // an, aber hier wurden bisher nur 2 Jahre Historie angefragt — bei 5Y
+      // oder ALL zeigte der Chart schlicht keine Daten vor "heute − 2 Jahre",
+      // unabhaengig vom Button. 10 Jahre analog zur Aktien-TA (yearAgo(10)).
+      const startDate = new Date(Date.now() - 10 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
       // === Parallel data fetching (FMP + FRED) ===
       const [goldQuoteResult, goldOHLCVResult, dxyQuoteResult] = await Promise.all([
         // 1. Gold spot price (FMP)
         fmpQuote("GCUSD"),
-        // 2. Gold OHLCV history (2 years for MA200) (FMP)
+        // 2. Gold OHLCV history (10 years — vorher 2Y, siehe Bugfix-Kommentar oben)
         fmpHistoricalPrices("GCUSD", startDate, endDate),
         // 3. DXY (FMP)
         fmpQuote("DX-Y.NYB"),
       ]);
 
-      // Also fetch FRED data for more precise indicators
+      // Also fetch FRED data for more precise indicators (letzter Wert je Serie)
       const [fredBreakeven, fredRealRate, fredM2, fredCPI] = await Promise.all([
         Promise.resolve(fetchFREDSeries("T10YIE")),
         Promise.resolve(fetchFREDSeries("DFII10")),
         Promise.resolve(fetchFREDSeries("M2SL")),
         Promise.resolve(fetchFREDSeries("CPIAUCSL")),
       ]);
+
+      // WORK_TEIL7_SCORING.md §7.8.3: "Chart: Gold (links) vs Real10Y (rechts)" —
+      // bisher komplett fehlend, obwohl server/gold-realyield-model.ts (§7.8.8/9)
+      // das Modell bereits enthaelt. Das Modell wurde aber nie an diese Route
+      // angebunden. Real10Y-Historie ueber denselben Zeitraum wie der Gold-Chart,
+      // damit beide Achsen dieselbe Zeitspanne (bis zu 10Y) abdecken.
+      const real10yHistory = fetchFREDSeriesHistory("DFII10", startDate);
+      console.log(`[GOLD] Real10Y (DFII10) history points: ${real10yHistory.length}`);
 
       // === Parse gold quote ===
       let spotPrice = 0;
@@ -295,6 +340,19 @@ export function registerGoldRoutes(server: Server, app: Express) {
         }
         return p;
       });
+
+      // WORK_TEIL7_SCORING.md §7.8.3: Real10Y (DFII10) je Datum in dieselbe
+      // Zeitreihe mergen, damit der Chart Gold links / Real10Y rechts als
+      // EINE gemeinsame Achse zeichnen kann. FRED liefert nur Handelstage —
+      // Map statt direktem Index-Join, da Gold- und FRED-Kalender leicht
+      // abweichen koennen (unterschiedliche Feiertage US vs. Rohstoffmarkt).
+      if (real10yHistory.length > 0) {
+        const real10yByDate = new Map(real10yHistory.map(r => [r.date, r.value]));
+        historicalPrices = historicalPrices.map(p => {
+          const r = real10yByDate.get(p.date);
+          return r != null ? { ...p, real10y: r } : p;
+        });
+      }
 
       // === Parse DXY ===
       let dxyValue = 100; // default (DXY ~100 as of Mar 2026)

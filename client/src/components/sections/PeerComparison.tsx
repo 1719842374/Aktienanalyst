@@ -15,7 +15,7 @@ function fmtCap(v: number | null | undefined): string {
   return `$${v.toFixed(0)}`;
 }
 
-type SortKey = "ticker" | "marketCap" | "pe" | "peg" | "ps" | "pb" | "epsGrowth1Y" | "epsGrowth5Y";
+type SortKey = "ticker" | "marketCap" | "pe" | "peg" | "ps" | "pb" | "epsGrowth1Y" | "epsGrowth5Y" | "roic";
 type SortDir = "asc" | "desc";
 
 // Find best value in a column (for green highlight)
@@ -42,6 +42,10 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
     { key: "pb", label: "P/B", lowerIsBetter: true, decimals: 1, suffix: "" },
     { key: "epsGrowth1Y", label: "EPS 1Y", lowerIsBetter: false, decimals: 1, suffix: "%" },
     { key: "epsGrowth5Y", label: "EPS 5Y", lowerIsBetter: false, decimals: 1, suffix: "%" },
+    // ROIC (Return on Invested Capital) — vorher komplett fehlend. FMP liefert
+    // returnOnInvestedCapital ueber /stable/key-metrics; roicFiscalYear zeigt
+    // an, aus welchem Geschaeftsjahr der Wert stammt (Datenaktualitaet).
+    { key: "roic", label: "ROIC", lowerIsBetter: false, decimals: 1, suffix: "%" },
   ];
 
   // Sort peers
@@ -104,6 +108,8 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
     if (key === "ps") return sectorMedian.ps;
     if (key === "pb") return sectorMedian.pb;
     if (key === "epsGrowth1Y" || key === "epsGrowth5Y") return sectorMedian.epsGrowth;
+    // ROIC hat (noch) keinen Damodaran-Sektor-Median in sectorMedian — bewusst
+    // null statt einer erfundenen Zahl.
     return null;
   }
 
@@ -128,6 +134,9 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
       <div className="flex items-center justify-between">
         <div className="text-xs text-muted-foreground">
           {peers.length} Wettbewerber — <span className="text-emerald-400 font-medium">■</span> bester Wert
+          {subject.roicFiscalYear && (
+            <span className="text-foreground/40"> · ROIC-Basis: Geschäftsjahr {subject.roicFiscalYear}</span>
+          )}
         </div>
         {sortKey && (
           <button className="text-[10px] text-foreground/40 hover:text-foreground/60 transition-colors" onClick={() => { setSortKey(null); setSortDir("asc"); }}>

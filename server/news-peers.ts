@@ -5,7 +5,7 @@
  */
 
 import type { Catalyst } from "../shared/schema";
-import { fmpBatchQuote, fmpRatios } from "./fmp";
+import { fmpBatchQuote, fmpRatios, fmpKeyMetrics } from "./fmp";
 // parseMarkdownTable is no longer used here since the Perplexity Finance parser
 // was removed — FMP peers are the sole peer source now.
 // callFinanceToolThrottled kept only as a re-export target for legacy imports.
@@ -166,6 +166,62 @@ export async function matchNewsToCatalysts(
 // The 5Y CAGR needs ≥6 annual ratio rows (start + 5 growth periods), the 1Y
 // YoY needs 2 rows, so we fetch 6. FMP /stable/ratios returns rows sorted
 // most-recent first.
+// ============================================================
+// ROIC (Return on Invested Capital) — Subjekt + Peers
+// ============================================================
+// FMP liefert ROIC direkt als `returnOnInvestedCapital` in /stable/key-metrics
+// (0..1-Skala, hier ×100 fuer %-Anzeige). War bisher NIRGENDS im Code genutzt:
+// fmpKeyMetrics() wurde importiert und sogar schon fuer den Fallback-Pfad
+// aufgerufen (analyze-helpers.ts), aber das Ergebnis wurde beim Destrukturieren
+// mit einem leeren Slot (",") verworfen. Im primaeren Analyze-Pfad wurde die
+// Funktion gar nicht erst aufgerufen. Diese Datei ergaenzt additiv einen
+// eigenen ROIC-Fetch fuer Subjekt + Peers inkl. Fiskaljahr/Datum, damit die
+// Rel.-Bewertung-Tabelle eine echte Kapitalrendite-Spalte zeigen kann statt
+// gar keine.
+export interface RoicPoint {
+  roicPercent: number | null;   // returnOnInvestedCapital × 100, oder null wenn nicht berechenbar
+  fiscalYear: string | null;    // z.B. "2025"
+  periodDate: string | null;    // z.B. "2025-09-27" — fuer Datenaktualitaets-Anzeige
+}
+
+function extractRoicFromKeyMetricsRow(row: any): RoicPoint {
+  if (!row) return { roicPercent: null, fiscalYear: null, periodDate: null };
+  // WICHTIG: row.returnOnInvestedCapital kann `null`/`undefined` sein, wenn
+  // FMP das Feld fuer diesen Ticker nicht liefert. `Number(null)` ergibt 0
+  // (nicht NaN!), also muss explizit auf null/undefined geprueft werden,
+  // bevor Number() aufgerufen wird — sonst wird "keine Daten" faelschlich
+  // als "ROIC = 0 %" interpretiert.
+  const field = row.returnOnInvestedCapital;
+  const raw = field == null ? NaN : Number(field);
+  const roicPercent = isFinite(raw) ? +(raw * 100).toFixed(1) : null;
+  return {
+    roicPercent,
+    fiscalYear: row.fiscalYear != null ? String(row.fiscalYear) : null,
+    periodDate: typeof row.date === "string" ? row.date : null,
+  };
+}
+
+/**
+ * ROIC fuer das Subjekt UND alle Peers in EINEM Batch (parallel), damit die
+ * Rel.-Bewertung-Tabelle eine konsistente Spalte fuellen kann. Nutzt die
+ * neueste verfuegbare Periode je Ticker (limit=1 reicht fuer den aktuellen
+ * Wert; der Aufrufer kann bei Bedarf mehr Historie nachladen).
+ */
+export async function fetchRoicForTickers(
+  tickers: string[]
+): Promise<Record<string, RoicPoint>> {
+  const out: Record<string, RoicPoint> = {};
+  if (tickers.length === 0) return out;
+  const rows = await Promise.all(
+    tickers.map(t => fmpKeyMetrics(t, 1).catch(() => []))
+  );
+  tickers.forEach((t, i) => {
+    const arr: any[] = Array.isArray(rows[i]) ? rows[i] : [];
+    out[t] = extractRoicFromKeyMetricsRow(arr[0]);
+  });
+  return out;
+}
+
 export async function fetchPeerComparisonFromTickers(
   ticker: string,
   peerTickers: string[],
@@ -178,9 +234,14 @@ export async function fetchPeerComparisonFromTickers(
   subjectExtras?: { pb?: number | null; epsGrowth1Y?: number | null }
 ): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
   try {
-    const [quotes, ratiosPerPeer] = await Promise.all([
+    const [quotes, ratiosPerPeer, roicByTicker, subjectRoic] = await Promise.all([
       fmpBatchQuote(peerTickers),
       Promise.all(peerTickers.map(t => fmpRatios(t, 6).catch(() => []))),
+      // ROIC additiv: bisher komplett fehlend (fmpKeyMetrics wurde importiert,
+      // aber das Ergebnis nirgends verwendet). Ein Batch fuer alle Peers +
+      // Subjekt zusammen, damit die Tabelle konsistent befuellt ist.
+      fetchRoicForTickers(peerTickers),
+      fetchRoicForTickers([ticker]).then(r => r[ticker]),
     ]);
     const quoteByTicker = new Map<string, any>((quotes || []).map((q: any) => [q.symbol, q]));
 
@@ -235,6 +296,7 @@ export async function fetchPeerComparisonFromTickers(
         : null;
 
       if (!q && !r0) return;
+      const peerRoic = roicByTicker[t];
       peers.push({
         ticker: t,
         name: q?.name || t,
@@ -246,6 +308,8 @@ export async function fetchPeerComparisonFromTickers(
         epsGrowth5Y: epsGrowth5Y_peer,
         marketCap: q?.marketCap || null,
         revenueGrowth: revenueGrowthPeer,
+        roic: peerRoic?.roicPercent ?? null,
+        roicFiscalYear: peerRoic?.fiscalYear ?? null,
       });
     });
 
@@ -272,6 +336,8 @@ export async function fetchPeerComparisonFromTickers(
       epsGrowth5Y: epsGrowth5Y > 0 ? +epsGrowth5Y.toFixed(1) : null,
       marketCap,
       revenueGrowth: revenueGrowth ? +revenueGrowth.toFixed(1) : null,
+      roic: subjectRoic?.roicPercent ?? null,
+      roicFiscalYear: subjectRoic?.fiscalYear ?? null,
     };
     const peerAvg = {
       pe: avg(validPeers.map(p => p.pe), 0, 500),
@@ -281,6 +347,9 @@ export async function fetchPeerComparisonFromTickers(
       pb: avg(validPeers.map(p => p.pb).map(v => v && v > 0 ? v : null), 0, 200),
       epsGrowth1Y: avg(validPeers.map(p => p.epsGrowth1Y), -100, 300),
       epsGrowth5Y: avg(validPeers.map(p => p.epsGrowth5Y), -100, 300),
+      // ROIC-Range statt Avg allein tolerant: negative ROIC (Turnaround-Peers)
+      // sind real und sollen NICHT als Ausreisser gefiltert werden — nur NaN/Inf raus.
+      roic: avg(validPeers.map(p => p.roic), -500, 500),
     };
     return { subject, peers: validPeers, peerAvg };
   } catch (err: any) {

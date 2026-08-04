@@ -2507,7 +2507,7 @@ export default function BTCDashboard() {
               <div ref={setSectionRef(10)}><Section10TechnicalChart data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
               <div ref={setSectionRef(11)}><Section11FearGreed data={data} /></div>
               <div ref={setSectionRef(12)}><Section12Fazit data={data} /></div>
-              <div ref={setSectionRef(13)}><Section13Miner data={data} timeRange={sharedTimeRange} /></div>
+              <div ref={setSectionRef(13)}><Section13Miner data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
               <div className="pb-8" />
             </div>
           ) : null}

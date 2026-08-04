@@ -147,9 +147,32 @@ const RANGE_DAYS: Record<MinerTimeRange, number> = { "3M": 90, "6M": 180, "1Y": 
  * die Komponente auf "5Y" zurueck (voller Zeitraum, bisheriges Verhalten
  * blieb bereits nahe 5Y durch prices5Y/prices3Y-Fallback).
  */
-export function Section13Miner({ data, timeRange = "5Y" }: { data: BTCAnalysis; timeRange?: MinerTimeRange }) {
+export function Section13Miner({
+  data,
+  timeRange: timeRangeProp,
+  onTimeRangeChange,
+}: {
+  data: BTCAnalysis;
+  timeRange?: MinerTimeRange;
+  /** Optional: wenn gesetzt, aendert ein Klick auf die Buttons auch den
+   * geteilten Timeframe im Parent (z.B. Section 10 bleibt synchron). Ohne
+   * diese Prop funktioniert der Switcher trotzdem eigenstaendig ueber
+   * internen State — die Buttons sind IMMER da, unabhaengig davon, ob ein
+   * Parent zuhoert. */
+  onTimeRangeChange?: (r: MinerTimeRange) => void;
+}) {
   const { minerData, loading, error } = useMinerData(data);
   const [assumptions, setAssumptions] = useState<FleetAssumptions>(DEFAULT_FLEET);
+  // Vorher: timeRange war ausschliesslich eine von aussen kommende Prop ohne
+  // eigene UI in dieser Section — Section 13 hatte KEINE sichtbaren
+  // Jahres-/Zeitraum-Buttons, anders als die Technische-Analyse-Chart
+  // (Section 10). Nutzer musste zu Section 10 scrollen, um den Zeitraum fuer
+  // die Miner-Zone zu aendern. Jetzt: eigener lokaler Fallback-State, der
+  // per Prop von aussen ueberschrieben werden kann (kontrolliert), aber auch
+  // ohne Parent-State komplett funktionsfaehig ist.
+  const [internalTimeRange, setInternalTimeRange] = useState<MinerTimeRange>("1Y");
+  const timeRange = timeRangeProp ?? internalTimeRange;
+  const setTimeRange = onTimeRangeChange ?? setInternalTimeRange;
 
   // ── Serien + Zonen-Klassifikation (reagiert auf Fleet-Annahmen) ──
   const fullSeries: MinerSeriesPoint[] = useMemo(() => {
@@ -260,14 +283,32 @@ export function Section13Miner({ data, timeRange = "5Y" }: { data: BTCAnalysis; 
   return (
     <SectionCard number={13} title="Miner-Zone: Profitabilität & Kapitulation">
       {/* Zone-Badge + Score */}
-      <div className="flex flex-wrap items-center gap-3">
-        <span className={`inline-flex items-center px-3 py-1 rounded-md text-sm font-bold border ${ZONE_BADGE_CLASS[latest.zone]}`}>
-          {ZONE_LABEL[latest.zone]}
-        </span>
-        <span className="text-sm text-muted-foreground">
-          Kapitulations-Score: <span className="font-mono font-bold text-foreground">{latest.score}/100</span>
-          <span className="text-xs ml-1">(0 = max. Kapitulation, 100 = max. Euphorie)</span>
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className={`inline-flex items-center px-3 py-1 rounded-md text-sm font-bold border ${ZONE_BADGE_CLASS[latest.zone]}`}>
+            {ZONE_LABEL[latest.zone]}
+          </span>
+          <span className="text-sm text-muted-foreground">
+            Kapitulations-Score: <span className="font-mono font-bold text-foreground">{latest.score}/100</span>
+            <span className="text-xs ml-1">(0 = max. Kapitulation, 100 = max. Euphorie)</span>
+          </span>
+        </div>
+
+        {/* Zeitraum-Buttons — gleicher Stil wie Section 10 (Technische Analyse) */}
+        <div className="flex rounded-md border border-border overflow-hidden shrink-0">
+          {(["3M", "6M", "1Y", "2Y", "3Y", "5Y"] as const).map(r => (
+            <button
+              key={r}
+              onClick={() => setTimeRange(r)}
+              className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                timeRange === r ? "bg-primary text-primary-foreground" : "hover:bg-muted/50"
+              }`}
+              data-testid={`button-miner-timerange-${r}`}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Metrik-Karten */}
