@@ -542,3 +542,14 @@ export async function calcEpsGrowth(symbol: string): Promise<EpsGrowthResult> {
     cagr5Y: cagr(5),
   };
 }
+
+/**
+ * Quartals-Income-Statements (fuer Realized-8Q-Wachstum der Scoring-Pipeline,
+ * WORK_SCORING_VORLAGE.md §17.8 "Realized 8Q schwach").
+ * GET /stable/income-statement?symbol=X&period=quarter&limit=16
+ * FMP liefert newest-first — der Aufrufer muss fuer chronologische Auswertung
+ * (calculateRealizedGrowth8Q-Spiegellogik) die Reihenfolge UMKEHREN.
+ */
+export async function fmpIncomeStatementQuarterly(symbol: string, limit = 16) {
+  return fmpFetch(`/income-statement`, { symbol, period: "quarter", limit: String(limit) });
+}

@@ -229,7 +229,10 @@ export async function getFmpFallbackData(ticker: string): Promise<{
       fmpProfile(ticker),
       fmpIncomeStatement(ticker, 3),
       fmpCashFlow(ticker, 3),
-      fmpBalanceSheet(ticker, 1),
+      // limit=2: Scoring-Pipeline (WORK_SCORING_VORLAGE.md §17.8 INVENTORY-Gate)
+      // braucht das Vorjahr fuer das Inventory-YoY-Delta — mit limit=1 war der
+      // Input dauerhaft null und das Gate konnte nie feuern.
+      fmpBalanceSheet(ticker, 2),
       fmpPriceTarget(ticker),
       fmpGrades(ticker, 20),
       // Fetch enough estimates rows to cover past + next 2-3 fiscal years.

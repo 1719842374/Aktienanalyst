@@ -278,6 +278,35 @@ console.log("\n=== Rüstung, aber Marge bricht + Share-Loss (§17.8 Zeile 4) ===
 // ============================================================================
 // §17.7 Lookahead-Regel — explizit als eigener Test (Backtest-Sicherheit)
 // ============================================================================
+// ============================================================================
+// Negativ-Realized-Zweig: implied positiv + Realized schrumpfend = maximale
+// Realitätslücke — darf NICHT durch den negativen Quotienten verfehlt werden.
+// (Live-NKE-Fall 2026: implied +4.6% vs. Realized-8Q -9.6%.)
+// ============================================================================
+console.log("\n=== DCF_REALITY bei negativem Realized-Wachstum ===");
+{
+  const gates = buildGates({
+    impliedGrowthPercent: 4.6,
+    realizedGrowth8QPercent: -9.6,
+    marginDeltaYoYPp: 0,
+    relativeGrowthDeltaYoYPp: 0,
+    inventoryDaysDeltaYoYPct: null,
+  });
+  check("implied +4.6% vs. Realized -9.6% → DCF_REALITY_CHECK aktiv (Negativ-Zweig)",
+    gates.find(g => g.id === "DCF_REALITY_CHECK")!.active);
+  check("Rationale nennt die maximale Realitätslücke",
+    gates.find(g => g.id === "DCF_REALITY_CHECK")!.rationale.includes("maximale Realitätslücke"));
+  const gates2 = buildGates({
+    impliedGrowthPercent: -2.0,
+    realizedGrowth8QPercent: -9.6,
+    marginDeltaYoYPp: 0,
+    relativeGrowthDeltaYoYPp: 0,
+    inventoryDaysDeltaYoYPct: null,
+  });
+  check("implied NEGATIV (-2%) + Realized negativ → NICHT aktiv (Markt preist bereits Schrumpfung ein)",
+    !gates2.find(g => g.id === "DCF_REALITY_CHECK")!.active);
+}
+
 console.log("\n=== §17.7 Lookahead-Sperre ===");
 {
   const futureCatalyst = makeCatalyst({

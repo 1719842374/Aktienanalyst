@@ -92,6 +92,7 @@ import {
   fmpBatchQuote,
   fmpProfile,
   fmpIncomeStatement,
+  fmpIncomeStatementQuarterly,
   fmpCashFlow,
   fmpBalanceSheet,
   fmpHistoricalPrices,
@@ -105,6 +106,7 @@ import {
   fmpQuote,
   convertFmpRowsToUsd,
 } from "./fmp";
+import { buildScoringForAnalysis } from "./scoring-integration";
 
 // Segment-Fallback-Pipeline (2026-08): SEC EDGAR fallback for when FMP's
 // /revenue-product-segmentation returns [] (verified for IREN). Additive-only
@@ -1014,6 +1016,21 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         ? +(((_rawEpsFY / _priorFyEps) - 1) * 100).toFixed(1)
         : null;
 
+      // Quartalsumsaetze fuer Realized-8Q (Scoring-Pipeline, §17.8) — 16 Quartale,
+      // FMP liefert newest-first, calcRealizedGrowth8QServer erwartet chronologisch.
+      let quarterlyRevenueChronological: number[] | null = null;
+      try {
+        const qRows: any[] = await fmpIncomeStatementQuarterly(upperTicker, 16);
+        if (Array.isArray(qRows) && qRows.length > 0) {
+          quarterlyRevenueChronological = qRows
+            .map(r => Number(r?.revenue))
+            .filter(v => isFinite(v) && v > 0)
+            .reverse();
+        }
+      } catch (qErr: any) {
+        console.warn(`[ANALYZE] Quarterly revenue fetch failed: ${qErr?.message?.substring(0, 80)}`);
+      }
+
       let peerComparison: any = null;
       if (peerTickers.length > 0) {
         try {
@@ -1164,6 +1181,38 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Moat rating — legacy string form used by Section2 / Summary.
       const moatRating = moatAssessment.moatStrength ?? "None";
 
+      // ── Scoring-Pipeline (WORK_SCORING_VORLAGE.md §0 + §17) ──
+      // Verdrahtet mit ECHTEN Analyse-Daten: g* (calcImpliedGStar, oben),
+      // FMP-Quartalsumsaetze (Realized-8Q), Jahres-Statements (Margen-Delta,
+      // Inventory-Delta), Peer-Wachstum (Share-Loss-Signal), health/Moat
+      // (qualityScore-Mapping), MA200-Trendlage (trendMultiplier) und die
+      // Katalysatoren (Fiscal-Megatrend-Pruefung mit Lookahead-Sperre).
+      let scoring: StockAnalysis["scoring"] = undefined;
+      try {
+        scoring = buildScoringForAnalysis({
+          ctx: {
+            impliedGStar,
+            quarterlyRevenueChronological,
+            annualIncome: financials.income as any[],
+            annualBalance: financials.balanceSheet as any[],
+            subjectRevenueGrowth: isFinite(revenueGrowth) ? revenueGrowth : null,
+            peerRevenueGrowths: peerComparison?.peers
+              ? (peerComparison.peers as any[]).map(p => p?.revenueGrowth ?? null)
+              : null,
+          },
+          health,
+          moatRating,
+          // Trend-Booleans liegen in currentStatus (TechnicalStatus), nicht am
+          // TechnicalIndicators-Objekt selbst.
+          technicalIndicators: technicalIndicators?.currentStatus ?? null,
+          catalysts,
+          price,
+          asOfDate: new Date().toISOString().slice(0, 10),
+        });
+      } catch (scErr: any) {
+        console.warn(`[ANALYZE] Scoring pipeline failed: ${scErr?.message?.substring(0, 120)}`);
+      }
+
       // Section 11 (MoatPorterSection) reads moatAssessment.overallRating,
       // moatSources[], porterForces[].name/.reasoning, businessModelStrength,
       // sustainabilityRating. scoreMoat() returns { moatStrength, moatScore,
@@ -1281,6 +1330,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
         financialStatements,
         tamAnalysis,
+        scoring,
 
         // Investment thesis (Section 2)
         moatRating,

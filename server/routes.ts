@@ -77,6 +77,9 @@ import { registerAnalyzeRoute } from "./analyze-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { fetchMinerData } from "./btc-miner";
 import { assessRegulatoryExposure } from "./regulatory";
+import { registerResearcherRoutes } from "./researcher";
+import { registerRecessionRoutes } from "./recession";
+import { registerRegressionScanRoutes } from "./regression-scan";
 
 // ─── registerRoutes ───────────────────────────────────────────────────────────
 export async function registerRoutes(httpServer: Server, app: Express): Promise<void> {
@@ -158,6 +161,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(500).json({ error: err?.message || "Internal error" });
     }
   });
+
+  // 5. /api/researcher/* — alle 5 Researcher-Tabs (macro, sectors, screener,
+  //    capex, daily-briefing) × 3 Regionen.
+  //
+  // REGRESSION-FIX (04.08.2026): Diese Registrierung (und die beiden darunter)
+  // ging beim routes.ts-Modularisierungs-Refactor (ce3b1bc "Split routes.ts
+  // into 4 focused modules") verloren — registerResearcherRoutes() existierte
+  // weiter in server/researcher.ts, wurde aber von NIEMANDEM mehr aufgerufen.
+  // Der Kommentar in routes-register.ts behauptete fälschlich, routes.ts
+  // mounte "EVERYTHING" inkl. /api/researcher/*. Folge: Express' SPA-Catch-All
+  // beantwortete jeden Researcher-/Recession-Request mit der index.html
+  // (HTTP 200 + HTML statt JSON) → Frontend zeigte "Unexpected end of JSON
+  // input". Frische Researcher-Analysen waren seitdem unmöglich — sichtbare
+  // Daten kamen nur noch aus alten Disk-Caches der Scheduled Tasks.
+  registerResearcherRoutes(app);
+
+  // 6. /api/analyze-recession — Rezessions-Dashboard (17 Indikatoren)
+  registerRecessionRoutes(app);
+
+  // 7. /api/regression-scan — Regressions-Scanner
+  registerRegressionScanRoutes(app);
 
   // httpServer available for future WebSocket upgrades
 }

@@ -592,6 +592,72 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         );
       })()}
 
+      {/* Scoring-Pipeline (WORK_SCORING_VORLAGE.md §0 + §17) — serverseitig aus
+          echten Analyse-Daten berechnet. Optional: fehlt bei alten Cache-
+          Eintraegen (vor der Verdrahtung) — dann wird der Block nicht gerendert. */}
+      {data.scoring && (
+        <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Scoring-Pipeline — Gates & Anti-Bias
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className={`text-lg font-bold font-mono tabular-nums ${
+                data.scoring.finalScore >= 65 ? "text-emerald-400" :
+                data.scoring.finalScore >= 50 ? "text-amber-400" : "text-red-400"
+              }`}>
+                {data.scoring.finalScore}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                / 100 {data.scoring.cappedBy
+                  ? `(roh ${data.scoring.rawScore} — gedeckelt durch ${data.scoring.cappedBy})`
+                  : `(roh ${data.scoring.rawScore}, kein Gate greift)`}
+              </span>
+            </div>
+          </div>
+
+          <div className="text-[10px] text-muted-foreground">
+            Quality {data.scoring.qualityScore} × Trend {data.scoring.trendMultiplier} = {data.scoring.rawScore} —
+            {" "}min(rohScore, strengster aktiver Gate-Cap) = {data.scoring.finalScore}
+          </div>
+
+          {/* Gates */}
+          <div className="space-y-1">
+            {data.scoring.gates.map(g => (
+              <div key={g.id} className={`flex items-start gap-2 text-[11px] rounded px-2 py-1 ${
+                g.active ? "bg-red-500/10 border border-red-500/20" : "bg-muted/30"
+              }`}>
+                <span className={`font-mono font-semibold shrink-0 ${g.active ? "text-red-400" : "text-muted-foreground/60"}`}>
+                  {g.active ? "\u26a0" : "\u2713"} {g.id}
+                </span>
+                <span className={`font-mono shrink-0 ${g.active ? "text-red-400" : "text-muted-foreground/50"}`}>
+                  Cap {g.cap}
+                </span>
+                <span className={g.active ? "text-foreground/80" : "text-muted-foreground/50"}>
+                  {g.rationale}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Gate-Inputs (Transparenz: welche echten Zahlen die Gates gesteuert haben) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-[10px] text-muted-foreground border-t border-border/30 pt-2">
+            <div>g* (Reverse-DCF): <span className="font-mono text-foreground/70">{data.scoring.gateInputs.impliedGrowthPercent != null ? `${data.scoring.gateInputs.impliedGrowthPercent.toFixed(1)}%` : "n/a"}</span></div>
+            <div>Realized 8Q: <span className="font-mono text-foreground/70">{data.scoring.gateInputs.realizedGrowth8QPercent != null ? `${data.scoring.gateInputs.realizedGrowth8QPercent.toFixed(1)}%` : "n/a"}</span>{data.scoring.gateInputs.realizedGrowth8QPercent != null && <span className="text-muted-foreground/50"> ({data.scoring.gateInputs.realizedGrowthQuartersUsed}Q)</span>}</div>
+            <div>Margen-Δ YoY: <span className="font-mono text-foreground/70">{data.scoring.gateInputs.marginDeltaYoYPp != null ? `${data.scoring.gateInputs.marginDeltaYoYPp > 0 ? "+" : ""}${data.scoring.gateInputs.marginDeltaYoYPp.toFixed(1)}pp` : "n/a"}</span></div>
+            <div>Rel. Wachstum vs. Peers: <span className="font-mono text-foreground/70">{data.scoring.gateInputs.relativeGrowthDeltaYoYPp != null ? `${data.scoring.gateInputs.relativeGrowthDeltaYoYPp > 0 ? "+" : ""}${data.scoring.gateInputs.relativeGrowthDeltaYoYPp.toFixed(1)}pp` : "n/a"}</span></div>
+            <div>Inventory Δ YoY: <span className="font-mono text-foreground/70">{data.scoring.gateInputs.inventoryDaysDeltaYoYPct != null ? `${data.scoring.gateInputs.inventoryDaysDeltaYoYPct > 0 ? "+" : ""}${data.scoring.gateInputs.inventoryDaysDeltaYoYPct.toFixed(1)}%` : "n/a"}</span></div>
+            <div>Fiscal-Ausnahme: <span className={`font-mono ${data.scoring.fiscal.qualifies ? "text-amber-400" : "text-foreground/70"}`}>{data.scoring.fiscal.qualifies ? `aktiv (EV ${data.scoring.fiscal.evPercent}%)` : "nicht aktiv"}</span></div>
+          </div>
+
+          {data.scoring.conflictTexts.length > 0 && (
+            <div className="text-[10px] text-amber-400/90 border-t border-border/30 pt-2">
+              {data.scoring.conflictTexts.map((t, i) => <div key={i}>{"\u26a0"} {t}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Sources */}
       <div className="text-[10px] text-muted-foreground space-y-0.5">
         <div className="font-semibold uppercase tracking-wider mb-1">Sources</div>

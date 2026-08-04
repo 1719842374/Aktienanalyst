@@ -311,17 +311,34 @@ export function buildGates(inputs: GateInputs): Gate[] {
     inputs.impliedGrowthPercent != null && inputs.realizedGrowth8QPercent
       ? inputs.impliedGrowthPercent / inputs.realizedGrowth8QPercent
       : null;
-  const dcfRealityActive =
+  // Zwei Auslöse-Wege:
+  //  a) Realized positiv, aber implied deutlich darüber (gapRatio ≥ 1.5)
+  //  b) Realized NEGATIV oder 0, implied aber positiv — der Quotient wird dann
+  //     negativ/undefiniert und würde Weg (a) fälschlich verfehlen, obwohl das
+  //     die MAXIMALE Realitätslücke ist (Markt preist Wachstum ein, Historie
+  //     schrumpft). Live-NKE-Fall (2026): implied +4.6% vs. Realized-8Q -9.6%
+  //     — ohne diesen Zweig blieb DCF_REALITY fälschlich inaktiv.
+  const positiveGapHit =
     gapRatio != null && isFinite(gapRatio) && gapRatio >= GATE_THRESHOLDS.HIGH_GAP_RATIO;
+  const negativeRealizedHit =
+    inputs.realizedGrowth8QPercent != null &&
+    inputs.realizedGrowth8QPercent <= 0 &&
+    inputs.impliedGrowthPercent != null &&
+    inputs.impliedGrowthPercent > 0;
+  const dcfRealityActive = positiveGapHit || negativeRealizedHit;
   gates.push({
     id: 'DCF_REALITY_CHECK',
     active: dcfRealityActive,
     cap: GATE_CAPS.DCF_REALITY,
     severity: 'hard',
     rationale: dcfRealityActive
-      ? `Reverse-DCF impliziert ${inputs.impliedGrowthPercent?.toFixed(1)}% Wachstum, `
-        + `Realized-8Q liegt bei ${inputs.realizedGrowth8QPercent?.toFixed(1)}% `
-        + `(gapRatio=${gapRatio?.toFixed(2)} ≥ ${GATE_THRESHOLDS.HIGH_GAP_RATIO})`
+      ? negativeRealizedHit
+        ? `Reverse-DCF impliziert +${inputs.impliedGrowthPercent?.toFixed(1)}% Wachstum, `
+          + `aber Realized-8Q ist ${inputs.realizedGrowth8QPercent?.toFixed(1)}% (schrumpfend/stagnierend) `
+          + `— maximale Realitätslücke`
+        : `Reverse-DCF impliziert ${inputs.impliedGrowthPercent?.toFixed(1)}% Wachstum, `
+          + `Realized-8Q liegt bei ${inputs.realizedGrowth8QPercent?.toFixed(1)}% `
+          + `(gapRatio=${gapRatio?.toFixed(2)} ≥ ${GATE_THRESHOLDS.HIGH_GAP_RATIO})`
       : 'Reverse-DCF-Wachstumsannahme wird durch die 8Q-Historie hinreichend gestützt',
   });
 

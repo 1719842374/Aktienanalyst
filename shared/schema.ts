@@ -439,6 +439,29 @@ export interface StockAnalysis {
   // TAM Analysis
   tamAnalysis?: TAMAnalysis;
 
+  /** Scoring-Pipeline-Ergebnis (WORK_SCORING_VORLAGE.md §0 + §17) — serverseitig
+   * aus echten Analyse-Daten berechnet (server/scoring-integration.ts). Optional:
+   * fehlt bei alten Cache-Einträgen, die vor der Verdrahtung erzeugt wurden. */
+  scoring?: {
+    finalScore: number;
+    rawScore: number;
+    qualityScore: number;
+    trendMultiplier: number;
+    cappedBy: string | null;
+    gates: Array<{ id: string; active: boolean; cap: number; severity: string; rationale: string }>;
+    gateInputs: {
+      impliedGrowthPercent: number | null;
+      realizedGrowth8QPercent: number | null;
+      realizedGrowthMethod: string;
+      realizedGrowthQuartersUsed: number;
+      marginDeltaYoYPp: number | null;
+      relativeGrowthDeltaYoYPp: number | null;
+      inventoryDaysDeltaYoYPct: number | null;
+    };
+    fiscal: { qualifies: boolean; evPercent: number; reasons: string[] };
+    conflictTexts: string[];
+  };
+
   // For investment thesis
   moatRating: string;
   governmentExposure: number;
