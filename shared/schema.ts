@@ -314,6 +314,13 @@ export interface RevenueSegment {
   revenue: number;        // Revenue in reporting currency
   percentage: number;     // Percentage of total revenue
   growth?: number;        // YoY growth % (optional)
+  // NEW (Segment-Fallback-Pipeline, 2026-08): provenance metadata so the UI can
+  // show "Quelle: FMP" vs. "Quelle: 10-K FY2025" instead of a silent number.
+  // Optional + additive — never renames/removes the fields above.
+  source?: "fmp" | "sec" | "curated"; // where this row's numbers came from
+  fiscalYear?: string;     // e.g. "FY2025" or "2025-06-30" — reporting period label
+  yoyChangePercent?: number; // YoY revenue change in % (distinct from `growth`, which some
+                              // older callers already populate with a slightly different basis)
 }
 
 // === Macro Correlation Section ===
@@ -480,4 +487,13 @@ export interface StockAnalysis {
   _useLLM?: boolean; // LLM mode of the cached entry
   // NEW: Geographic segments (Umsatzanteil nach Regionen)
   geoSegments?: RevenueSegment[];
+
+  // NEW (Segment-Fallback-Pipeline, 2026-08): explains WHERE revenueSegments came
+  // from and what to render when it's empty. Additive-only, see server/sec-segments.ts
+  // and server/analyze-route.ts for the fallback chain (FMP -> SEC EDGAR 10-K/20-F -> none).
+  revenueSegmentsSource?: "fmp" | "sec" | "curated" | "none";
+  // Human-readable message shown in the UI ONLY when revenueSegments is empty
+  // (e.g. "Segmentreporting nicht in den letzten 10-K/20-F enthalten" or
+  // "Unternehmen berichtet nur geografisch"). Never a generic "N/A".
+  revenueSegmentsMessage?: string;
 }

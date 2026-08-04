@@ -106,6 +106,12 @@ import {
   convertFmpRowsToUsd,
 } from "./fmp";
 
+// Segment-Fallback-Pipeline (2026-08): SEC EDGAR fallback for when FMP's
+// /revenue-product-segmentation returns [] (verified for IREN). Additive-only
+// module, see server/sec-segments.ts for the full fallback-chain rationale.
+import { fetchSecBusinessSegments } from "./sec-segments";
+import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ─── In-memory analysis cache ─────────────────────────────────────────────────
@@ -724,6 +730,85 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         }
       }
 
+      // ── 7b. SEC EDGAR fallback for business segments (Segment-Fallback-Pipeline, 2026-08) ──
+      // ROOT CAUSE this fixes: FMP's /revenue-product-segmentation returns []
+      // for a meaningful number of tickers (verified live for IREN: FMP HAS
+      // geographic data — Australia/Canada — but NO business-segment split).
+      // Until now the ONLY fallback was the curated hardcoded map above, which
+      // only covers a handful of well-known ADRs (NVO, ASML, TSM, ...) — every
+      // other ticker with empty FMP segments (e.g. IREN) silently showed only
+      // the geographic block, which looked like "the feature is broken" rather
+      // than "this data source doesn't have it".
+      //
+      // Fallback order (ticker-agnostic, no IREN special-case):
+      //   (a) FMP fmpSegments() — already tried above, fastest & free
+      //   (b) curated static map — already tried above, covers foreign ADRs
+      //       FMP structurally never reports on
+      //   (c) THIS BLOCK: SEC EDGAR full-text 10-K/20-F extraction via LLM —
+      //       ticker-agnostic, works for any SEC-registered filer (US listing
+      //       OR foreign private issuer filing 20-F)
+      //   (d) if all three fail: revenueSegmentsSource = "none" +
+      //       revenueSegmentsMessage set below — NEVER a generic/fake fallback.
+      //
+      // Cached per ticker (disk-cache.ts researcher_cache table, 24h TTL) since
+      // SEC filings only change ~once per quarter — avoids re-fetching/re-LLM'ing
+      // a multi-MB filing on every analysis request for the same ticker.
+      let revenueSegmentsSource: "fmp" | "sec" | "curated" | "none" = "none";
+      let revenueSegmentsMessage: string | undefined;
+      let secFiscalYearLabel: string | undefined;
+
+      if (revenueSegments.length > 0) {
+        // Rows already came from fmpSegments() (step 7 above) or the curated
+        // map. Distinguish which one so the UI can show the right "Quelle:".
+        revenueSegmentsSource = Array.isArray(segments) && segments.length > 0 ? "fmp" : "curated";
+      } else {
+        const secCacheKey = `segments__${upperTicker}`;
+        let secResult = diskResearcherGet(secCacheKey) as
+          | { segments: RevenueSegment[]; fiscalYear?: string; formType?: string; filingUrl?: string; _empty?: boolean }
+          | null;
+
+        if (!secResult) {
+          const fetched = await fetchSecBusinessSegments(upperTicker, companyName);
+          if (fetched && fetched.segments.length > 0) {
+            const total = fetched.segments.reduce((sum, s) => sum + s.revenue, 0);
+            secResult = {
+              segments: fetched.segments.map(s => ({
+                name: s.name,
+                revenue: s.revenue,
+                percentage: total > 0 ? Math.round((s.revenue / total) * 1000) / 10 : s.percentage,
+                source: "sec" as const,
+                fiscalYear: fetched.fiscalYear,
+              })),
+              fiscalYear: fetched.fiscalYear,
+              formType: fetched.formType,
+              filingUrl: fetched.filingUrl,
+            };
+          } else {
+            // Cache the "nothing found" result too — otherwise every request
+            // for a ticker with no segment reporting re-triggers a full SEC
+            // filing fetch + LLM call for nothing.
+            secResult = { segments: [], _empty: true };
+          }
+          diskResearcherSet(secCacheKey, secResult);
+        }
+
+        if (secResult.segments.length > 0) {
+          revenueSegments = secResult.segments;
+          revenueSegmentsSource = "sec";
+          secFiscalYearLabel = secResult.fiscalYear;
+          console.log(`[SEGMENTS] SEC EDGAR fallback succeeded for ${upperTicker}: ${secResult.formType ?? "10-K/20-F"} (${secResult.fiscalYear ?? "unknown FY"}), ${secResult.segments.length} segments`);
+        } else {
+          // (d) Nothing found anywhere — clear message, NEVER a fake/generic fallback.
+          // Distinguish "company only reports geographically" (geoSegments present)
+          // from "no segment data at all" (neither present) per hard requirement #1.
+          revenueSegmentsSource = "none";
+          revenueSegmentsMessage = (Array.isArray(geoSegments) && geoSegments.length > 0)
+            ? "Unternehmen berichtet nur geografisch — kein separates Geschäftssegment-Reporting im letzten 10-K/20-F gefunden."
+            : "Segmentreporting nicht in den letzten 10-K/20-F enthalten.";
+          console.log(`[SEGMENTS] No business-segment data found for ${upperTicker} via FMP, curated map, or SEC EDGAR`);
+        }
+      }
+
       // ── 8. TAM analysis ──
       const tamAnalysis = generateTAMAnalysis(effectiveSector, industry, description, revenue, revenueGrowth, revenueSegments);
 
@@ -1294,6 +1379,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         // Section 17 / Peer view
         revenueSegments,
         geoSegments: Array.isArray(geoSegments) ? geoSegments : [],
+        // Segment-Fallback-Pipeline (2026-08): lets the UI show "Quelle: FMP"
+        // vs. "Quelle: 10-K FY2025" vs. a clear "not available" message instead
+        // of a silent/empty block. See step 7b above for the fallback chain.
+        revenueSegmentsSource,
+        revenueSegmentsMessage,
         peerComparison: peerComparisonOut,
         catalystDeepDives: catalystDeepDives ?? [],
 

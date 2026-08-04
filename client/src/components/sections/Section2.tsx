@@ -247,46 +247,102 @@ export function Section2({ data }: Props) {
           );
         })()}
 
-        {/* Revenue Segments (Umsatzanteil nach Produkten/Segmenten) */}
-        {data.revenueSegments && data.revenueSegments.length > 0 && (
+        {/* Revenue Segments (Umsatzanteil nach Geschäftssegmenten / Business Segments)
+            Segment-Fallback-Pipeline (2026-08): data.revenueSegments now comes from
+            one of THREE sources (see server/analyze-route.ts step 7/7b + server/sec-segments.ts):
+              1) FMP fmpSegments() — fastest, free, but empty for many tickers (e.g. IREN)
+              2) curated static fallback (foreign ADRs FMP structurally never covers)
+              3) SEC EDGAR 10-K/20-F full-text extraction via LLM (ticker-agnostic)
+            data.revenueSegmentsSource / data.revenueSegmentsMessage tell the UI which
+            case applies so we NEVER show a generic/empty placeholder (hard requirement:
+            no "None"/"N/A"/empty bars — always a concrete number or a clear explanation). */}
+        {data.revenueSegments && data.revenueSegments.length > 0 ? (
           <div>
-            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatzanteil nach Segmenten</h3>
-            <div className="space-y-1.5">
-              {data.revenueSegments.map((seg, i) => (
-                <div key={i} className="relative">
-                  <div className="flex items-center justify-between text-xs mb-0.5">
-                    <span className="font-medium truncate mr-2">{seg.name}</span>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {seg.growth !== undefined && seg.growth !== null && (
-                        <span className={`text-[10px] font-mono tabular-nums ${seg.growth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                          {seg.growth >= 0 ? '+' : ''}{formatNumber(seg.growth, 1)}%
-                        </span>
-                      )}
-                      <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
+            <div className="flex items-center justify-between mb-1.5">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Umsatz nach Geschäftssegmenten (Business Segments)</h3>
+              {(() => {
+                const src = data.revenueSegmentsSource;
+                const fy = data.revenueSegments!.find(s => s.fiscalYear)?.fiscalYear;
+                const label = src === "sec" ? `Quelle: 10-K/20-F${fy ? ` ${fy}` : ""}`
+                  : src === "fmp" ? "Quelle: FMP"
+                  : src === "curated" ? "Quelle: Geschäftsbericht (kuratiert)"
+                  : null;
+                return label ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground font-medium">{label}</span>
+                ) : null;
+              })()}
+            </div>
+            {data.revenueSegments.length === 1 ? (
+              // Pure Play: nur ein einziges Segment gemeldet — statt einer einsamen
+              // 100%-Balke lieber der explizite Hinweistext (Anforderung #3A).
+              <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
+                <span className="text-xs font-semibold">Pure Play: 100% {data.revenueSegments[0].name}</span>
+                {data.revenueSegments[0].revenue > 0 && (
+                  <span className="text-[10px] text-muted-foreground ml-2 font-mono">({formatLargeNumber(data.revenueSegments[0].revenue)})</span>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {data.revenueSegments.map((seg, i) => (
+                  <div key={i} className="relative">
+                    <div className="flex items-center justify-between text-xs mb-0.5">
+                      <span className="font-medium truncate mr-2">{seg.name}</span>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {seg.revenue > 0 && (
+                          <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
+                        )}
+                        {(seg.growth !== undefined && seg.growth !== null) || (seg.yoyChangePercent !== undefined && seg.yoyChangePercent !== null) ? (
+                          <span className={`text-[10px] font-mono tabular-nums ${(seg.growth ?? seg.yoyChangePercent ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                            {(seg.growth ?? seg.yoyChangePercent ?? 0) >= 0 ? '+' : ''}{formatNumber(seg.growth ?? seg.yoyChangePercent ?? 0, 1)}%
+                          </span>
+                        ) : null}
+                        <span className="font-mono tabular-nums text-muted-foreground w-12 text-right">{formatNumber(seg.percentage, 1)}%</span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-primary/60 transition-all duration-500"
+                        style={{ width: `${Math.min(100, seg.percentage)}%` }}
+                      />
                     </div>
                   </div>
-                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-primary/60 transition-all duration-500"
-                      style={{ width: `${Math.min(100, seg.percentage)}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
+        ) : (
+          // Anforderung #1/#6: klare Meldung statt generischem/leerem Block, wenn
+          // wirklich keine Business-Segment-Daten verfügbar sind (weder FMP noch
+          // SEC EDGAR fanden welche). Wird nur gerendert wenn eine Meldung vom
+          // Server gesetzt wurde — sonst (z.B. alter Cache-Eintrag ohne das Feld)
+          // bleibt der Block ganz ausgeblendet statt "N/A" zu zeigen.
+          data.revenueSegmentsMessage && (
+            <div>
+              <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Geschäftssegmenten (Business Segments)</h3>
+              <div className="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
+                <span className="text-xs text-muted-foreground italic">{data.revenueSegmentsMessage}</span>
+              </div>
+            </div>
+          )
         )}
 
-        {/* Geographic Segments (Umsatzanteil nach Regionen) */}
+        {/* Geographic Segments (Umsatz nach Regionen) — funktioniert bereits über
+            fmpGeoSegments() für praktisch jeden Ticker, daher hier NUR additive
+            Änderungen (Titel-Text an Anforderung #3B angeglichen, absolute
+            Umsatzzahl ergänzt, explizit absteigend sortiert). Render-Logik/Struktur
+            unverändert — "NICHT KAPUTT MACHEN" (siehe Task-Vorgabe). */}
         {data.geoSegments && data.geoSegments.length > 0 && (
           <div>
-            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatzanteil nach Regionen</h3>
+            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Regionen (Geographic Segments)</h3>
             <div className="space-y-1.5">
-              {data.geoSegments.map((seg, i) => (
+              {[...data.geoSegments].sort((a, b) => b.percentage - a.percentage).map((seg, i) => (
                 <div key={i} className="relative">
                   <div className="flex items-center justify-between text-xs mb-0.5">
                     <span className="font-medium truncate mr-2">{seg.name}</span>
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      {seg.revenue > 0 && (
+                        <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
+                      )}
                       {seg.growth !== undefined && seg.growth !== null && (
                         <span className={`text-[10px] font-mono tabular-nums ${seg.growth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
                           {seg.growth >= 0 ? '+' : ''}{formatNumber(seg.growth, 1)}%
