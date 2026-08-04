@@ -19,12 +19,13 @@
  *   3. Tabelle: Ticker, Score, w%, €, Sharpe_i, Kelly-Half%, Kelly-€
  *   4. Footer: Disclaimer CAPM≠Kelly; keine Order-Ausführung
  */
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
-import { ArrowLeft, Plus, Trash2, Info } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Info, Menu, X, SlidersHorizontal, ListOrdered, BarChart3, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SectionCard } from "@/components/SectionCard";
+import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import {
   DEFAULTS,
   runPortfolioPipeline,
@@ -32,6 +33,14 @@ import {
 } from "@/lib/portfolio/pipeline";
 import { pickWeightMode, type WeightMode } from "@/lib/portfolio/weighting";
 import type { PortfolioCandidate } from "../../../shared/schema";
+
+// Sidebar-Sprungnavigation — gleiches Muster wie BTC-/Rezessions-Dashboard
+const SECTIONS = [
+  { id: 1, label: "Kopf & Policy", icon: SlidersHorizontal },
+  { id: 2, label: "Kandidaten", icon: ListOrdered },
+  { id: 3, label: "Kennzahlen", icon: BarChart3 },
+  { id: 4, label: "Basket-Tabelle", icon: Table2 },
+] as const;
 
 interface EditableRow {
   id: string;
@@ -156,26 +165,90 @@ export default function PortfolioPage() {
     }
   }
 
+  // ── Scroll-Layout (identisch zu BTC-/Rezessions-Dashboard) ───────────────────
+  // Global gilt `html, body { overflow: hidden }` (index.css), daher MUSS die
+  // Seite einen eigenen scrollbaren Container haben — `min-h-screen` allein
+  // führte dazu, dass Inhalt unterhalb des Viewports nicht erreichbar war.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const scrollToSection = useCallback((id: number) => {
+    const el = sectionRefs.current[id];
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    setSidebarOpen(false);
+  }, []);
+  const setSectionRef = useCallback(
+    (id: number) => (el: HTMLDivElement | null) => {
+      sectionRefs.current[id] = el;
+    },
+    []
+  );
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => setLocation("/")} data-testid="button-back">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-            <div>
-              <h1 className="text-lg font-bold tracking-tight">Virtuelles Portfolio</h1>
-              <p className="text-xs text-muted-foreground">
-                Sharpe + Kelly + CAPM-Basket — reine Berechnungslogik, keine Order-Ausführung
-              </p>
-            </div>
-          </div>
+    <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
+      {/* Header (fix, scrollt nicht mit) */}
+      <header className="h-12 shrink-0 border-b border-border bg-card/50 backdrop-blur flex items-center gap-2 px-3">
+        <button
+          onClick={() => setSidebarOpen((v) => !v)}
+          className="lg:hidden h-8 w-8 flex items-center justify-center rounded-md hover:bg-muted/50 transition-colors"
+          aria-label="Sektionen"
+        >
+          {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+        </button>
+        <Button variant="ghost" size="icon" onClick={() => setLocation("/")} data-testid="button-back">
+          <ArrowLeft className="w-4 h-4" />
+        </Button>
+        <div className="min-w-0">
+          <h1 className="text-sm font-bold tracking-tight leading-tight truncate">Virtuelles Portfolio</h1>
+          <p className="text-[10px] text-muted-foreground leading-tight truncate">
+            Sharpe + Kelly + CAPM-Basket — reine Berechnungslogik, keine Order-Ausführung
+          </p>
         </div>
+      </header>
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar mit Sprungnavigation */}
+        <aside
+          className={`
+            fixed lg:relative inset-y-0 left-0 top-12 lg:top-0 z-30 lg:z-0
+            w-52 bg-card border-r border-border
+            transition-transform duration-200 ease-in-out
+            ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
+            overflow-y-auto overscroll-contain custom-scrollbar
+          `}
+        >
+          <nav className="py-2 px-2 space-y-0.5">
+            {SECTIONS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => scrollToSection(s.id)}
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-xs hover:bg-muted/50 transition-colors text-left group"
+              >
+                <s.icon className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 group-hover:text-emerald-500 transition-colors" />
+                <span className="flex-1 truncate">{s.label}</span>
+                <span className="text-[10px] font-mono tabular-nums text-muted-foreground/50">{s.id}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="px-3 py-3 border-t border-border mt-2">
+            <PerplexityAttribution />
+          </div>
+        </aside>
+
+        {/* Overlay auf Mobile */}
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 bg-black/40 z-20 lg:hidden top-12"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
+        {/* Scrollbarer Hauptbereich */}
+        <main className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar">
+          <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
 
         {/* 1. Kopf: K, Benchmark, rf, Mode, maxWeight, Kelly-Policy */}
-        <SectionCard number={1} title="Kopf — Kapital, Benchmark, Modus, Policy">
+        <div ref={setSectionRef(1)}>
+          <SectionCard number={1} title="Kopf — Kapital, Benchmark, Modus, Policy">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <label className="text-xs text-muted-foreground">Kapital K (€)</label>
@@ -228,10 +301,12 @@ export default function PortfolioPage() {
               die Auto-Mode-Berechnung ({autoMode ?? "—"}) nach §B.3, um keine stille Zweit-Logik zu erzeugen.
             </p>
           )}
-        </SectionCard>
+          </SectionCard>
+        </div>
 
         {/* Eingabe der Kandidaten (manuell, kein Fake-Datenabruf) */}
-        <SectionCard number={2} title="Kandidaten (manuelle Eingabe — keine Buy-Liste-Datenquelle im Code vorhanden)">
+        <div ref={setSectionRef(2)}>
+          <SectionCard number={2} title="Kandidaten (manuelle Eingabe — keine Buy-Liste-Datenquelle im Code vorhanden)">
           <div className="space-y-2">
             <div className="grid grid-cols-12 gap-2 text-xs text-muted-foreground font-medium px-1">
               <div className="col-span-2">Ticker</div>
@@ -289,10 +364,12 @@ export default function PortfolioPage() {
               <Plus className="w-4 h-4 mr-1" /> Kandidat hinzufügen
             </Button>
           </div>
-        </SectionCard>
+          </SectionCard>
+        </div>
 
         {/* 2. Kennzahlen: Sharpe_p | Sharpe_equal | Δ */}
-        <SectionCard number={3} title="Kennzahlen — Sharpe_p vs Sharpe_equal">
+        <div ref={setSectionRef(3)}>
+          <SectionCard number={3} title="Kennzahlen — Sharpe_p vs Sharpe_equal">
           {pipelineError && <p className="text-sm text-destructive">Fehler: {pipelineError}</p>}
           {!pipelineError && (
             <div className="grid grid-cols-3 gap-4">
@@ -316,10 +393,12 @@ export default function PortfolioPage() {
               relevant.
             </p>
           )}
-        </SectionCard>
+          </SectionCard>
+        </div>
 
         {/* 3. Tabelle: Ticker, Score, w%, €, Sharpe_i, Kelly-Half%, Kelly-€ */}
-        <SectionCard number={4} title="Tabelle — Basket-Gewichte & Kelly-Hinweis pro Titel">
+        <div ref={setSectionRef(4)}>
+          <SectionCard number={4} title="Tabelle — Basket-Gewichte & Kelly-Hinweis pro Titel">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -366,7 +445,8 @@ export default function PortfolioPage() {
               ))}
             </ul>
           )}
-        </SectionCard>
+          </SectionCard>
+        </div>
 
         {/* 4. Footer: Disclaimer */}
         <div className="text-xs text-muted-foreground border-t border-card-border pt-4 pb-8 space-y-1">
@@ -377,7 +457,9 @@ export default function PortfolioPage() {
             automatischer Full-Kelly.
           </p>
           <p>Diese Seite führt <strong>keine Order-Ausführung</strong> durch — reine Berechnungs-/Diagnose-Ansicht.</p>
-        </div>
+            </div>
+          </div>
+        </main>
       </div>
     </div>
   );
