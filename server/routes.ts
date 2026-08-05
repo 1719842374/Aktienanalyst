@@ -78,6 +78,7 @@ import { registerGoldRoutes } from "./gold-routes";
 import { fetchMinerData } from "./btc-miner";
 import { fmpSearchTicker } from "./fmp";
 import { assessRegulatoryExposure } from "./regulatory";
+import { computeManagementScoreForTicker } from "./management-score";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
 import { registerRegressionScanRoutes } from "./regression-scan";
@@ -245,4 +246,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerRegressionScanRoutes(app);
 
   // httpServer available for future WebSocket upgrades
+
+  // 8. POST /api/management-score — Management-Execution-Score (1-10),
+  //    Auftrag 05.08.2026. Analog zum /api/regulatory-Muster: lazy (Frontend
+  //    ruft ihn separat, nicht bei jedem /api/analyze auf), eigener
+  //    In-Memory-Cache 24h/Ticker (kostenintensive FMP-Comp/Insider-Calls +
+  //    optionaler LLM-Call sollen nicht bei jedem Klick neu laufen).
+  //    Body: siehe ManagementScoreRequestInput in management-score.ts —
+  //    Frontend liefert Segment-/Delivery-/Capital-/Credibility-Rohdaten aus
+  //    der bereits geladenen StockAnalysis, kein zweiter /api/analyze-Call.
+  const _managementScoreCache = new Map<string, { data: any; time: number }>();
+  const MANAGEMENT_SCORE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  app.post("/api/management-score", async (req, res) => {
+    try {
+      const b = req.body ?? {};
+      if (!b.ticker || typeof b.ticker !== "string") {
+        return res.status(400).json({ error: "ticker fehlt" });
+      }
+      if (!Array.isArray(b.segments) || typeof b.totalRevenue !== "number") {
+        return res.status(400).json({ error: "Kontext unvollständig (segments/totalRevenue)" });
+      }
+      const key = String(b.ticker).toUpperCase();
+      const cached = _managementScoreCache.get(key);
+      if (!b.force && cached && Date.now() - cached.time < MANAGEMENT_SCORE_CACHE_TTL_MS) {
+        return res.json(cached.data);
+      }
+      const result = await computeManagementScoreForTicker(b);
+      _managementScoreCache.set(key, { data: result, time: Date.now() });
+      res.json(result);
+    } catch (err: any) {
+      console.error("[POST /api/management-score]", err?.message?.substring(0, 200));
+      res.status(500).json({ error: err?.message || "Internal error" });
+    }
+  });
 }

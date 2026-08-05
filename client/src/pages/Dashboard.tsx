@@ -21,6 +21,7 @@ import { ReverseDCFSection } from "@/components/sections/ReverseDCFSection";
 import { CatalystsSection } from "@/components/sections/CatalystsSection";
 import { MonteCarloSection } from "@/components/sections/MonteCarloSection";
 import { SummarySection } from "@/components/sections/SummarySection";
+import { ManagementScoreSection } from "@/components/sections/ManagementScoreSection";
 import { TechnicalChart } from "@/components/sections/TechnicalChart";
 import { MoatPorterSection } from "@/components/sections/MoatPorterSection";
 import { PestelSection } from "@/components/sections/PestelSection";
@@ -28,7 +29,7 @@ import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelation
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
-  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search, Star, Sparkles, Briefcase,
+  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search, Star, Sparkles, Briefcase, UserCheck,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -50,6 +51,7 @@ const SECTIONS = [
   { id: 15, label: "Katalysatoren", icon: Zap },
   { id: 16, label: "Monte Carlo", icon: Dice6 },
   { id: 17, label: "Zusammenfassung", icon: Table2 },
+  { id: 18, label: "Management-Score", icon: UserCheck },
 ];
 
 export default function Dashboard() {
@@ -527,6 +529,7 @@ export default function Dashboard() {
               /></SectionErrorBoundary></div>
               <div ref={setSectionRef(16)}><SectionErrorBoundary sectionId={16} sectionLabel="Monte Carlo"><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(17)}><SectionErrorBoundary sectionId={17} sectionLabel="Zusammenfassung"><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(18)}><SectionErrorBoundary sectionId={18} sectionLabel="Management-Score"><ManagementScoreSection data={data} /></SectionErrorBoundary></div>
               <div className="pb-8" />
             </div>
           ) : (

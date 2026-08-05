@@ -553,3 +553,57 @@ export async function calcEpsGrowth(symbol: string): Promise<EpsGrowthResult> {
 export async function fmpIncomeStatementQuarterly(symbol: string, limit = 16) {
   return fmpFetch(`/income-statement`, { symbol, period: "quarter", limit: String(limit) });
 }
+
+// ============================================================
+// Management-Execution-Score: Executive-Compensation + Insider-Trading
+// ============================================================
+// Neue FMP-Endpunkte fuer den Management-Score (05.08.2026). Beide Endpunkte
+// live gegen echte Ticker verifiziert (MSFT/AAPL) — liefern SEC-Proxy-
+// Rohdaten (DEF 14A / Form 4), keine erfundenen Werte.
+
+/**
+ * GET /stable/governance-executive-compensation?symbol=X
+ * Liefert Vergütungszeilen JE Executive UND Jahr (mehrere Zeilen pro Jahr,
+ * ein Executive pro Zeile). `total` ist die Gesamtvergütung des jeweiligen
+ * Executives in diesem Jahr. Kein CEO-Filter hier — das macht der Aufrufer
+ * (Titel-Match auf "Chief Executive Officer" in nameAndPosition), da FMP
+ * kein separates CEO-Flag liefert.
+ */
+export async function fmpExecutiveCompensation(symbol: string): Promise<any[]> {
+  try {
+    const data = await fmpFetch(`/governance-executive-compensation`, { symbol });
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+
+/**
+ * GET /stable/executive-compensation-benchmark?year=X
+ * Liefert branchenweite (SIC-Industry, NICHT FMPs eigenes `industry`-Feld —
+ * unterschiedliche Taxonomien, kein direkter String-Match moeglich) DURCH-
+ * SCHNITTS-Vergütung aller Executives der Branche in einem Jahr. Nur ein
+ * grober Kontext-Wert, KEIN echter Peer-Median — dient im Management-Score
+ * nur als Fallback-Referenz, wenn kein echter Peer-Vergleich moeglich ist
+ * (siehe server/management-score.ts fuer die Priorisierung: echte Peers vor
+ * Branchen-Durchschnitt).
+ */
+export async function fmpExecutiveCompensationBenchmark(year: number): Promise<any[]> {
+  try {
+    const data = await fmpFetch(`/executive-compensation-benchmark`, { year: String(year) });
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+
+/**
+ * GET /stable/insider-trading/search?symbol=X&limit=N
+ * Liefert Form-4-Insider-Transaktionen (Kaeufe/Verkaeufe von Officers/
+ * Directors), newest-first. `acquisitionOrDisposition`: "A" = Acquired
+ * (Kauf/Erhalt), "D" = Disposed (Verkauf). `securitiesTransacted` ist die
+ * Stueckzahl, `price` der Preis je Stueck (0 bei reinen RSU-Vesting-Events
+ * ohne Barzahlung).
+ */
+export async function fmpInsiderTrading(symbol: string, limit = 50): Promise<any[]> {
+  try {
+    const data = await fmpFetch(`/insider-trading/search`, { symbol, limit: String(limit) });
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
