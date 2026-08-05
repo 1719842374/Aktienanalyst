@@ -51,6 +51,7 @@ import {
   matchNewsToCatalysts,
   fetchPeerComparisonFromTickers,
   fetchPeerComparison,
+  filterAndSelectPeers,
 } from "./news-peers";
 
 import {
@@ -832,7 +833,22 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const tamAnalysis = generateTAMAnalysis(effectiveSector, industry, description, revenue, revenueGrowth, revenueSegments);
 
       // ── 9. Peers ──
-      const peerTickers: string[] = Array.isArray(peers) ? peers.slice(0, 5).map((p: any) => String(p.symbol ?? p ?? "")).filter(Boolean) : [];
+      // Auftrag 05.08.2026: FMP /stock-peers liefert Kandidaten rein aus
+      // Kursbewegungs-/Marktkap-Aehnlichkeit, NICHT aus Sector/Industry. Live-
+      // Beispiel BYDDY: FMP mischt Richemont/Dior (Luxury Goods) unter die
+      // "Peers" eines Auto-Herstellers. filterAndSelectPeers() prueft jeden
+      // Kandidaten gegen die Subjekt-Industry (sector/industry aus Schritt 2
+      // oben bereits verfuegbar) und greift bei Bedarf auf eine kuratierte
+      // Fallback-Liste zurueck (nur fuer bekannte Problemfaelle, nur wenn die
+      // FMP-Peers den Filter nicht bestehen). ROIC-Berechnung, Scoring-Gate-
+      // Logik und alle anderen Peer-Spalten bleiben unveraendert.
+      const rawPeerTickers: string[] = Array.isArray(peers) ? peers.map((p: any) => String(p.symbol ?? p ?? "")).filter(Boolean) : [];
+      let peerTickers: string[] = rawPeerTickers.slice(0, 5);
+      try {
+        peerTickers = await filterAndSelectPeers(upperTicker, sector, industry, rawPeerTickers, 5);
+      } catch (peerFilterErr: any) {
+        console.warn(`[ANALYZE] Peer-Filter fehlgeschlagen fuer ${upperTicker}, verwende ungefilterte FMP-Peers: ${peerFilterErr?.message?.substring(0, 100)}`);
+      }
 
       // ── 10. News ──
       let newsItems: any[] = [];

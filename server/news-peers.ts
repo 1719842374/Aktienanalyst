@@ -151,6 +151,215 @@ export async function matchNewsToCatalysts(
 }
 
 // ============================================================
+// Peer-Auswahl: Industry-/Sector-Filter + kuratierter Fallback
+// ============================================================
+// Auftrag 05.08.2026: FMP /stock-peers liefert Peers rein aus einem
+// Korrelations-/Similarity-Modell (Kursbewegung, Marktkapitalisierung), NICHT
+// aus Sector/Industry. Live-Beispiel BYDDY: FMP liefert u.a. CFRHF/CFRUY
+// (Richemont, Luxury Goods) und CHDRF/CHDRY (Christian Dior, Luxury Goods)
+// als "Peers" fuer einen Auto-Hersteller — 6 von 10 FMP-Peers fuer BYDDY
+// sind branchenfremd (Luxury Goods/Apparel statt Auto Manufacturers).
+//
+// Diese Funktion laeuft NACH fmpPeers() und VOR fetchPeerComparisonFromTickers():
+// 1. Holt Sector/Industry fuer Subjekt + jeden FMP-Peer via fmpProfile()
+//    (parallel, einzelne Calls — /stable/profile unterstuetzt keine
+//    Comma-Batch-Symbole, siehe fmpBatchQuote-Kommentar fuer dasselbe Muster).
+// 2. Verwirft jeden Peer, dessen Industry NICHT zur Subjekt-Industry passt
+//    (siehe isIndustryCompatible) — loggt den Grund ("Industry mismatch: X vs Y").
+// 3. Steht der Subjekt-Ticker in der kuratierten Fallback-Map (BYDDY, NIO,
+//    LI, XPEV, GELYF), hat die kuratierte NEV-Pure-Play-Liste IMMER Vorrang
+//    vor generischen FMP-Industry-Treffern (Owner-Entscheidung 05.08.2026:
+//    BMW/Mercedes tragen zwar denselben FMP-Industry-String "Auto -
+//    Manufacturers" wie BYDDY, sind aber traditionelle ICE-Hersteller statt
+//    NEV-Pure-Plays — sollen nur als Auffuellung dienen, falls die kuratierte
+//    Liste selbst < maxPeers Eintraege hat). Fuer alle anderen Subjekte (kein
+//    kuratierter Eintrag) bleibt der reine Industry-Filter massgeblich.
+// 4. Liefert nie mehr "Fake-Peers": lieber 3 echte als 5 falsche.
+// ============================================================
+
+import { fmpProfile } from "./fmp";
+
+/** Branchen, die für Auto-/EV-Hersteller garantiert branchenfremd sind — auch
+ *  wenn FMP sie (Kursbewegungs-Korrelation) als "Peer" ausspielt. */
+const LUXURY_INDUSTRY_BLOCKLIST = [
+  "luxury goods", "apparel", "apparel manufacturing", "apparel retail",
+  "jewelry", "watches", "footwear", "fashion", "textile", "department stores",
+];
+
+/** Kuratierte Fallback-Peers für bekannte Problemfälle, bei denen FMPs
+ *  Similarity-Modell systematisch branchenfremde Ergebnisse liefert (v.a.
+ *  chinesische NEV-ADRs, die FMP mit anderen China-ADRs/Luxusmarken statt
+ *  echten Auto-/EV-Herstellern gruppiert). Nur ADRs/US-Listings, die FMP
+ *  auch mit Financials/ROIC beliefern kann (Regel #3 im Auftrag). Greift NUR,
+ *  wenn die FMP-Peers den Industry-Filter nicht bestehen (siehe Regel #4).
+ */
+const CURATED_PEER_FALLBACK: Record<string, string[]> = {
+  BYDDY: ["TSLA", "NIO", "LI", "XPEV", "GELYF"],
+  NIO: ["BYDDY", "LI", "XPEV", "TSLA", "GELYF"],
+  LI: ["BYDDY", "NIO", "XPEV", "TSLA", "GELYF"],
+  XPEV: ["BYDDY", "NIO", "LI", "TSLA", "GELYF"],
+  GELYF: ["BYDDY", "TSLA", "NIO", "LI", "XPEV"],
+};
+
+/**
+ * Grobe Industry-Kompatibilitaets-Pruefung. Exact-Match ODER beide Seiten
+ * enthalten denselben Auto-/EV-Wortstamm. Bewusst konservativ (Substring statt
+ * Taxonomie-Tabelle) — FMPs Industry-Strings sind uneinheitlich genug
+ * ("Auto - Manufacturers", "Auto Manufacturers", "Electric Vehicle Industry"),
+ * dass ein exaktes Enum schnell veraltet. Substring-Match auf normalisierten
+ * (lowercase, Bindestriche entfernt) Strings deckt alle beobachteten FMP-
+ * Varianten ab, ohne bei jedem FMP-Naming-Wechsel neu gepflegt werden zu muessen.
+ */
+function normaliseIndustry(s: string): string {
+  return s.toLowerCase().replace(/[-–—]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+const AUTO_EV_KEYWORDS = ["auto", "vehicle", "ev ", " ev", "electric vehicle"];
+
+function isAutoEvIndustry(industry: string): boolean {
+  const n = normaliseIndustry(industry);
+  return AUTO_EV_KEYWORDS.some(k => n.includes(k.trim()));
+}
+
+function isLuxuryIndustry(industry: string): boolean {
+  const n = normaliseIndustry(industry);
+  return LUXURY_INDUSTRY_BLOCKLIST.some(l => n.includes(l));
+}
+
+/**
+ * Sector/Industry-Kompatibilitaet zwischen Subjekt und Kandidat-Peer.
+ *  - Wenn das Subjekt ein Auto-/EV-Hersteller ist: Kandidat MUSS ebenfalls
+ *    Auto/EV sein. Luxury/Apparel/Jewelry/Watches/Fashion sind PFLICHT-
+ *    ausgeschlossen, selbst wenn der generische Sector (Consumer Cyclical)
+ *    zufaellig uebereinstimmt (Regel #2 im Auftrag).
+ *  - Sonst: exakter Industry-Match ODER exakter Sector-Match als Mindestmass
+ *    (deckt AAPL/MSFT-Kontrollfaelle ab, ohne branchenfremde Auto-Ticker
+ *    durchzulassen).
+ */
+function isIndustryCompatible(
+  subjectSector: string,
+  subjectIndustry: string,
+  candidateSector: string,
+  candidateIndustry: string
+): { ok: boolean; reason: string } {
+  const subjIsAutoEv = isAutoEvIndustry(subjectIndustry);
+
+  if (subjIsAutoEv) {
+    if (isLuxuryIndustry(candidateIndustry)) {
+      return { ok: false, reason: `Industry mismatch: ${candidateIndustry} (Luxury Goods) vs ${subjectIndustry} (Auto/EV)` };
+    }
+    if (!isAutoEvIndustry(candidateIndustry)) {
+      return { ok: false, reason: `Industry mismatch: ${candidateIndustry} vs ${subjectIndustry} (Auto/EV)` };
+    }
+    return { ok: true, reason: "Auto/EV-Industry-Match" };
+  }
+
+  // Generischer Fall (nicht Auto/EV-Subjekt): exakter Industry- ODER
+  // Sector-Match als Mindestanforderung — verhindert branchenfremde Peers
+  // (z.B. Auto-Ticker als "Peer" fuer AAPL/MSFT), ohne die enge Auto/EV-
+  // Sonderregel auf alle anderen Branchen auszudehnen.
+  const nSubjInd = normaliseIndustry(subjectIndustry);
+  const nCandInd = normaliseIndustry(candidateIndustry);
+  const nSubjSec = normaliseIndustry(subjectSector);
+  const nCandSec = normaliseIndustry(candidateSector);
+
+  if (nSubjInd && nCandInd && nSubjInd === nCandInd) {
+    return { ok: true, reason: "Exact Industry-Match" };
+  }
+  if (nSubjSec && nCandSec && nSubjSec === nCandSec) {
+    return { ok: true, reason: "Sector-Match" };
+  }
+  return { ok: false, reason: `Industry mismatch: ${candidateIndustry || "unbekannt"} (${candidateSector || "unbekannt"}) vs ${subjectIndustry || "unbekannt"} (${subjectSector || "unbekannt"})` };
+}
+
+/**
+ * Filtert eine rohe FMP-/stock-peers-Ticker-Liste nach Sector/Industry-
+ * Kompatibilitaet mit dem Subjekt und greift bei Bedarf auf eine kuratierte
+ * Fallback-Liste zurueck (nur wenn der Filter zu wenige Treffer liefert).
+ *
+ * WICHTIG: reine Verdrahtungs-/Filterschicht — ROIC-Berechnung, Scoring-Gate-
+ * Logik und die uebrigen Peer-Spalten (pe/peg/ps/pb/epsGrowth) bleiben
+ * unveraendert; diese Funktion aendert nur, WELCHE Ticker in die Pipeline
+ * gelangen, nicht WIE sie berechnet werden.
+ */
+export async function filterAndSelectPeers(
+  subjectTicker: string,
+  subjectSector: string,
+  subjectIndustry: string,
+  rawPeerTickers: string[],
+  maxPeers: number = 5
+): Promise<string[]> {
+  const upperSubject = subjectTicker.toUpperCase();
+
+  // Kandidaten begrenzen (FMP liefert bis zu 10) — genug Spielraum, dass nach
+  // dem Filter i.d.R. noch >= 3 uebrig bleiben, ohne unnoetig viele Profile-
+  // Calls zu machen.
+  const candidates = rawPeerTickers.slice(0, 10);
+  if (candidates.length === 0) {
+    return CURATED_PEER_FALLBACK[upperSubject]?.slice(0, maxPeers) ?? [];
+  }
+
+  let candidateProfiles: Array<{ symbol: string; sector: string; industry: string } | null>;
+  try {
+    candidateProfiles = await Promise.all(
+      candidates.map(async (sym) => {
+        try {
+          const p = await fmpProfile(sym);
+          if (!p) return null;
+          return { symbol: sym, sector: String(p.sector ?? ""), industry: String(p.industry ?? "") };
+        } catch {
+          return null;
+        }
+      })
+    );
+  } catch {
+    candidateProfiles = candidates.map(() => null);
+  }
+
+  const filtered: string[] = [];
+  for (let i = 0; i < candidates.length; i++) {
+    const sym = candidates[i];
+    const prof = candidateProfiles[i];
+    if (!prof) {
+      console.log(`[PEERS] ${upperSubject}: ${sym} verworfen — Profil nicht abrufbar`);
+      continue;
+    }
+    const check = isIndustryCompatible(subjectSector, subjectIndustry, prof.sector, prof.industry);
+    if (check.ok) {
+      filtered.push(sym);
+    } else {
+      console.log(`[PEERS] ${upperSubject}: ${sym} verworfen — ${check.reason}`);
+    }
+    // Kein fruehes Abbrechen mehr bei maxPeers hier — wir brauchen ALLE
+    // branchengerechten Kandidaten, um sie unten ggf. mit der kuratierten
+    // Liste zu kombinieren (Auffuell-Reihenfolge), statt sie zu verwerfen.
+  }
+
+  // Owner-Entscheidung (05.08.2026): fuer Subjekte mit kuratierter NEV-
+  // Fallback-Liste (BYDDY, NIO, LI, XPEV, GELYF) hat die kuratierte Liste
+  // IMMER Vorrang vor generischen FMP-Industry-Treffern wie BMW/Mercedes
+  // (die zwar denselben FMP-Industry-String "Auto - Manufacturers" tragen,
+  // aber traditionelle ICE-Hersteller statt NEV-Pure-Plays sind). FMP-Treffer
+  // dienen hier nur noch als Auffuellung, falls die kuratierte Liste selbst
+  // < maxPeers Eintraege hat (z.B. GELYF vergriffen). Fuer alle anderen
+  // Subjekte (kein kuratierter Eintrag) bleibt der reine Industry-Filter
+  // massgeblich — siehe Regel #5 im Auftrag: "lieber weniger Peers als
+  // falsche", kein Fake-Auffuellen mit branchenfremden Tickern.
+  const curated = CURATED_PEER_FALLBACK[upperSubject];
+  if (curated) {
+    const combined = [...curated];
+    for (const sym of filtered) {
+      if (combined.length >= maxPeers) break;
+      if (!combined.includes(sym)) combined.push(sym);
+    }
+    console.log(`[PEERS] ${upperSubject}: kuratierte NEV-Peer-Liste verwendet (${curated.length} kuratiert${filtered.length > 0 ? `, ${Math.max(0, combined.length - curated.length)} FMP-Treffer aufgefuellt` : ""})`);
+    return combined.slice(0, maxPeers);
+  }
+
+  return filtered.slice(0, maxPeers);
+}
+
+// ============================================================
 // Peer Comparison via FMP (fast path)
 // ============================================================
 // Peer comparison fed by FMP only. WORK_SCORING_VORLAGE / relative-valuation
