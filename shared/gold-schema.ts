@@ -63,6 +63,68 @@ export interface GoldPricePoint {
   real10y?: number;
 }
 
+// Punkt 2 (HOCH-Ticket 05.08.2026): gold-realyield-model.ts an gold-routes.ts
+// anbinden. Eigenstaendiges Gate-Shape statt Import von server/scoring-gates.ts
+// Gate — gold-schema.ts wird auch vom Client importiert (GoldDashboard.tsx,
+// goldFallbackData.ts), Server-Module sollen dort nicht reinragen. Strukturell
+// identisch zum generischen Gate-Interface in scoring-gates.ts.
+export interface GoldModelGate {
+  id: string;
+  active: boolean;
+  cap: number;
+  severity: "warn" | "hard";
+  rationale: string;
+}
+
+export interface GoldRealYieldFairValueResult {
+  windowUsed: number;
+  alpha: number;
+  beta: number;
+  correlation: number;
+  fairValue: number;
+  actualPrice: number;
+  premiumPct: number;
+  withinFairBand: boolean;
+  decoupled: boolean;
+}
+
+export interface GoldRealYieldInverseScoreResult {
+  windowUsed: number;
+  correlation: number | null;
+  score: -1 | 0 | 1;
+  details: string;
+}
+
+export interface GoldRateScenarioPoint {
+  shockBp: number;
+  shockedReal10Y: number;
+  impliedGoldPrice: number;
+  impliedChangePct: number;
+}
+
+export interface GoldRegimeZoneResult {
+  regime: "stress" | "tailwind" | "neutral";
+  real10YTrendPp: number;
+  rationale: string;
+}
+
+/**
+ * Punkt 2 (HOCH-Ticket 05.08.2026): additives Response-Feld fuer das neue
+ * Real-Yield-Gold-Modell (gold-realyield-model.ts, WORK_TEIL7_SCORING.md
+ * §7.8.8). Optional, da FRED-Datenausfall (Real10Y nicht abrufbar) dazu
+ * fuehren kann, dass kein Modell-Ergebnis vorliegt — dann bleibt dieses Feld
+ * weg statt einen Fake-Default zu zeigen; das alte 1980/2011-Fair-Value-
+ * Modell (GoldFairValue oben) bleibt in jedem Fall als Fallback erhalten.
+ */
+export interface GoldRealYieldModelSummary {
+  fairValue: GoldRealYieldFairValueResult | null;
+  inverseScore: GoldRealYieldInverseScoreResult;
+  scenarios: GoldRateScenarioPoint[];
+  regime: GoldRegimeZoneResult | null;
+  gates: GoldModelGate[];
+  generatedAt: string;
+}
+
 export interface GoldAnalysis {
   // Section 1: Status
   timestamp: string;
@@ -122,4 +184,9 @@ export interface GoldAnalysis {
 
   // RSI
   rsi14: number;
+
+  // Punkt 2 (HOCH-Ticket 05.08.2026): neues Real-Yield-Modell additiv, altes
+  // 1980/2011-Modell (fairValue oben) bleibt als Fallback bestehen. null/
+  // undefined, wenn FRED Real10Y nicht abrufbar war (kein Fake-Default).
+  realYieldModel?: GoldRealYieldModelSummary | null;
 }

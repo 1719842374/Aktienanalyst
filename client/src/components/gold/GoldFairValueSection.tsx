@@ -64,7 +64,66 @@ export function GoldFairValueSection({ data }: Props) {
                 : "→ Im Bereich der Fair Value"}
           </span>
         </div>
+
+        {/* Punkt 2 (HOCH-Ticket 05.08.2026): Real-Yield-Modell additiv, altes
+            10-Schritte-Modell oben bleibt unveraendert der Hauptpfad. */}
+        {data.realYieldModel && <RealYieldModelCard model={data.realYieldModel} />}
       </div>
+    </div>
+  );
+}
+
+function RealYieldModelCard({ model }: { model: NonNullable<import("../../../../shared/gold-schema").GoldAnalysis["realYieldModel"]> }) {
+  const fv = model.fairValue;
+  const activeGates = model.gates.filter(g => g.active);
+  const regimeColor = model.regime?.regime === "stress"
+    ? "text-red-400 bg-red-500/10 border-red-500/20"
+    : model.regime?.regime === "tailwind"
+      ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+      : "text-amber-400 bg-amber-500/10 border-amber-500/20";
+
+  return (
+    <div className="bg-muted/30 rounded-lg p-3 border border-border space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+          Real-Yield-Modell (Regression Gold ~ Real10Y)
+        </div>
+        {fv?.decoupled && (
+          <span className="text-[9px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+            Entkoppelt — geringe Aussagekraft
+          </span>
+        )}
+      </div>
+
+      {fv ? (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 text-xs">
+          <StepRow step={1} label="Fair Value (Real10Y-Fit)" value={`$${fv.fairValue.toFixed(0)}`} highlight />
+          <StepRow step={2} label="Aktueller Preis" value={`$${fv.actualPrice.toFixed(0)}`} />
+          <StepRow step={3} label="Premium/Discount" value={`${fv.premiumPct >= 0 ? "+" : ""}${(fv.premiumPct * 100).toFixed(1)}%`} />
+          <StepRow step={4} label="Korrelation (252T)" value={fv.correlation.toFixed(2)} />
+        </div>
+      ) : (
+        <div className="text-xs text-muted-foreground">Zu wenig Datenpunkte für Regression (&lt;30 Handelstage verfügbar)</div>
+      )}
+
+      <div className={`flex items-center gap-2 px-3 py-2 rounded-md border text-xs ${regimeColor}`}>
+        <span className="font-medium">Regime: {model.regime?.regime ?? "n/a"}</span>
+        <span className="text-muted-foreground">{model.regime?.rationale ?? "Nicht bestimmbar"}</span>
+      </div>
+
+      <div className="text-xs text-muted-foreground">
+        Inverse-Score (60T): <span className="font-mono tabular-nums text-foreground">{model.inverseScore.score}</span> — {model.inverseScore.details}
+      </div>
+
+      {activeGates.length > 0 && (
+        <div className="space-y-1">
+          {activeGates.map(g => (
+            <div key={g.id} className="text-[10px] px-2 py-1 rounded bg-red-500/10 border border-red-500/20 text-red-400">
+              {g.id}: {g.rationale}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

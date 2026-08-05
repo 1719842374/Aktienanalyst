@@ -10,6 +10,7 @@ import type {
 } from "../shared/gold-schema";
 import { execSync } from "child_process";
 import { fmpQuote, fmpHistoricalPrices } from "./fmp";
+import { runRealYieldGoldModel } from "./gold-realyield-model";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -354,6 +355,36 @@ export function registerGoldRoutes(server: Server, app: Express) {
         });
       }
 
+      // Punkt 2 (HOCH-Ticket 05.08.2026): gold-realyield-model.ts produktiv
+      // anbinden. runRealYieldGoldModel() nutzt DIESELBEN bereits geladenen
+      // Daten (historicalPrices mit Gold-Close je Datum, real10yHistory ueber
+      // denselben bis-zu-10J-Zeitraum) — kein zusaetzlicher FRED/FMP-Call.
+      // Additiv: das alte 1980/2011-Fair-Value-Modell (fairValue weiter unten)
+      // bleibt unveraendert bestehen und ist weiterhin der Hauptpfad fuer
+      // Section 5; realYieldModel ist ein zusaetzliches Feld. Bei zu wenigen
+      // Datenpunkten (<30) liefert goldFairValueModel() intern null — kein
+      // Fake-Default, das Feld zeigt dann fairValue:null statt erfundener Werte.
+      let realYieldModel: import("../shared/gold-schema").GoldRealYieldModelSummary | null = null;
+      try {
+        if (historicalPrices.length > 0 && real10yHistory.length >= 5) {
+          const goldPricesForModel = historicalPrices.map(p => ({ date: p.date, close: p.close }));
+          const modelResult = runRealYieldGoldModel(goldPricesForModel, real10yHistory);
+          realYieldModel = {
+            fairValue: modelResult.fairValue,
+            inverseScore: modelResult.inverseScore,
+            scenarios: modelResult.scenarios,
+            regime: modelResult.regime,
+            gates: modelResult.gates,
+            generatedAt: modelResult.generatedAt,
+          };
+          console.log(`[GOLD] Real-Yield-Modell: fairValue=${modelResult.fairValue ? '$' + modelResult.fairValue.fairValue.toFixed(0) : 'n/a (<30 Punkte)'}, regime=${modelResult.regime?.regime ?? 'n/a'}, gates=${modelResult.gates.filter(g => g.active).map(g => g.id).join(',') || 'keine aktiv'}`);
+        } else {
+          console.log(`[GOLD] Real-Yield-Modell uebersprungen: zu wenig Daten (gold=${historicalPrices.length}, real10Y=${real10yHistory.length})`);
+        }
+      } catch (rymErr: any) {
+        console.warn(`[GOLD] Real-Yield-Modell fehlgeschlagen: ${rymErr?.message?.substring(0, 150)}`);
+      }
+
       // === Parse DXY ===
       let dxyValue = 100; // default (DXY ~100 as of Mar 2026)
       if (dxyQuoteResult?.price != null) {
@@ -694,6 +725,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         ],
         historicalPrices,
         rsi14,
+        realYieldModel,
       };
 
       console.log(`[GOLD] Analysis complete: $${spotPrice}, GIS=${gis.toFixed(2)}, Sentiment=${sentiment}`);
