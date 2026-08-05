@@ -15,7 +15,7 @@ function fmtCap(v: number | null | undefined): string {
   return `$${v.toFixed(0)}`;
 }
 
-type SortKey = "ticker" | "marketCap" | "pe" | "peg" | "ps" | "pb" | "epsGrowth1Y" | "epsGrowth5Y" | "roic";
+type SortKey = "ticker" | "marketCap" | "pe" | "peg" | "ps" | "pb" | "epsGrowth1Y" | "epsGrowth5Y" | "roic" | "roic5Y";
 type SortDir = "asc" | "desc";
 
 // Find best value in a column (for green highlight)
@@ -45,7 +45,15 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
     // ROIC (Return on Invested Capital) — vorher komplett fehlend. FMP liefert
     // returnOnInvestedCapital ueber /stable/key-metrics; roicFiscalYear zeigt
     // an, aus welchem Geschaeftsjahr der Wert stammt (Datenaktualitaet).
-    { key: "roic", label: "ROIC", lowerIsBetter: false, decimals: 1, suffix: "%" },
+    // Auftrag 05.08.2026: Label enthaelt jetzt das Fiskaljahr des Subjekts
+    // (z.B. "ROIC (FY2025)") statt generisch "ROIC", damit klar ist, welches
+    // Jahr gemeint ist — unabhaengig ob Subjekt oder Peers ein anderes FY haben.
+    { key: "roic", label: subject.roicFiscalYear ? `ROIC (FY${subject.roicFiscalYear})` : "ROIC (FY)", lowerIsBetter: false, decimals: 1, suffix: "%" },
+    // Auftrag 05.08.2026: zweite ROIC-Spalte — arithmetischer Durchschnitt der
+    // letzten bis zu 5 Geschaeftsjahre. Zeigt "n/a" (via fmt() -> "—", da null),
+    // wenn < 3 Jahre mit echtem Wert vorliegen (server-seitig entschieden in
+    // news-peers.ts extractRoicFromKeyMetricsRows).
+    { key: "roic5Y", label: "ROIC 5Y Ø", lowerIsBetter: false, decimals: 1, suffix: "%" },
   ];
 
   // Sort peers
@@ -135,7 +143,9 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
         <div className="text-xs text-muted-foreground">
           {peers.length} Wettbewerber — <span className="text-emerald-400 font-medium">■</span> bester Wert
           {subject.roicFiscalYear && (
-            <span className="text-foreground/40"> · ROIC-Basis: Geschäftsjahr {subject.roicFiscalYear}</span>
+            <span className="text-foreground/40" title="ROIC-Basis: letztes FY + 5Y-Durchschnitt (soweit verfügbar)">
+              {" "}· ROIC-Basis: letztes FY ({subject.roicFiscalYear}) + 5Y-Durchschnitt (soweit verfügbar)
+            </span>
           )}
         </div>
         {sortKey && (
@@ -156,7 +166,7 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
                 <div className="flex items-center justify-end gap-0.5">Mkt Cap <SortIcon col="marketCap" /></div>
               </th>
               {cols.map(c => (
-                <th key={c.key} className="text-right py-1.5 px-1 text-muted-foreground font-medium cursor-pointer select-none hover:text-foreground/80 transition-colors" onClick={() => handleSort(c.key)}>
+                <th key={c.key} className="text-right py-1.5 px-1 text-muted-foreground font-medium cursor-pointer select-none hover:text-foreground/80 transition-colors" onClick={() => handleSort(c.key)} title={c.key === "roic5Y" ? "Durchschnitt der letzten 3–5 verfügbaren Geschäftsjahre. \"—\" = Historie zu kurz (<3 Jahre)" : undefined}>
                   <div className="flex items-center justify-end gap-0.5">{c.label} <SortIcon col={c.key} /></div>
                 </th>
               ))}

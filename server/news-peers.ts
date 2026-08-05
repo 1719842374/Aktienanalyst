@@ -391,30 +391,71 @@ export interface RoicPoint {
   roicPercent: number | null;   // returnOnInvestedCapital × 100, oder null wenn nicht berechenbar
   fiscalYear: string | null;    // z.B. "2025"
   periodDate: string | null;    // z.B. "2025-09-27" — fuer Datenaktualitaets-Anzeige
+  // Auftrag 05.08.2026 (Peer-Vergleich: zwei ROIC-Spalten): arithmetischer
+  // Durchschnitt ueber die letzten bis zu 5 verfuegbaren Geschaeftsjahre.
+  // null, wenn < 3 Jahre mit einem echten numerischen Wert vorliegen (siehe
+  // MIN_ROIC_5Y_YEARS unten) — NIEMALS 0 als Platzhalter fuer "zu wenig Daten".
+  roic5YPercent: number | null;
+  // Anzahl der Jahre, die tatsaechlich in den 5Y-Durchschnitt eingeflossen
+  // sind (3, 4 oder 5) — fuer den UI-Tooltip ("Durchschnitt aus 4 Jahren").
+  roic5YYearsUsed: number;
 }
 
-function extractRoicFromKeyMetricsRow(row: any): RoicPoint {
-  if (!row) return { roicPercent: null, fiscalYear: null, periodDate: null };
-  // WICHTIG: row.returnOnInvestedCapital kann `null`/`undefined` sein, wenn
-  // FMP das Feld fuer diesen Ticker nicht liefert. `Number(null)` ergibt 0
-  // (nicht NaN!), also muss explizit auf null/undefined geprueft werden,
-  // bevor Number() aufgerufen wird — sonst wird "keine Daten" faelschlich
-  // als "ROIC = 0 %" interpretiert.
+/** Mindestanzahl an Jahren mit echtem numerischem ROIC-Wert, damit ROIC 5Y
+ *  ueberhaupt einen Durchschnitt zeigt (statt "n/a") — Regel #2 im Auftrag
+ *  05.08.2026 ("Wenn < 3 Jahre verfuegbar -> n/a"). */
+const MIN_ROIC_5Y_YEARS = 3;
+/** Maximale Anzahl Jahre, die in den 5Y-Durchschnitt einfliessen. */
+const MAX_ROIC_5Y_YEARS = 5;
+
+/** Einzelne rohe returnOnInvestedCapital-Extraktion aus einer FMP-key-metrics-
+ *  Zeile. NULL/undefined bleibt NULL (niemals 0) — Number(null) waere 0, also
+ *  muss explizit auf null/undefined geprueft werden, BEVOR Number() aufgerufen
+ *  wird, sonst wird "keine Daten" faelschlich als "ROIC = 0 %" interpretiert. */
+export function extractRoicPercentFromRow(row: any): number | null {
+  if (!row) return null;
   const field = row.returnOnInvestedCapital;
   const raw = field == null ? NaN : Number(field);
-  const roicPercent = isFinite(raw) ? +(raw * 100).toFixed(1) : null;
+  return isFinite(raw) ? +(raw * 100).toFixed(1) : null;
+}
+
+export function extractRoicFromKeyMetricsRows(rows: any[]): RoicPoint {
+  const arr = Array.isArray(rows) ? rows : [];
+  const latest = arr[0];
+  if (!latest) {
+    return { roicPercent: null, fiscalYear: null, periodDate: null, roic5YPercent: null, roic5YYearsUsed: 0 };
+  }
+  const roicPercent = extractRoicPercentFromRow(latest);
+
+  // ROIC 5Y: arithmetischer Durchschnitt ueber die letzten bis zu 5 Jahre.
+  // Nur Jahre mit einem echten numerischen Wert fliessen ein (null/undefined
+  // werden UEBERSPRUNGEN, nicht als 0 gezaehlt — Regel #2 im Auftrag).
+  // Negative Werte und 0 werden normal einbezogen (kein Ausfiltern nach
+  // Groesse) — auch ein Jahr mit ROIC=-940% (echter Datenausreisser, z.B.
+  // Sondereffekt) zaehlt als gueltiger Datenpunkt, nicht als fehlend.
+  const window = arr.slice(0, MAX_ROIC_5Y_YEARS);
+  const yearValues = window
+    .map(r => extractRoicPercentFromRow(r))
+    .filter((v): v is number => v !== null);
+  const roic5YPercent = yearValues.length >= MIN_ROIC_5Y_YEARS
+    ? +(yearValues.reduce((a, b) => a + b, 0) / yearValues.length).toFixed(1)
+    : null;
+
   return {
     roicPercent,
-    fiscalYear: row.fiscalYear != null ? String(row.fiscalYear) : null,
-    periodDate: typeof row.date === "string" ? row.date : null,
+    fiscalYear: latest.fiscalYear != null ? String(latest.fiscalYear) : null,
+    periodDate: typeof latest.date === "string" ? latest.date : null,
+    roic5YPercent,
+    roic5YYearsUsed: yearValues.length,
   };
 }
 
 /**
  * ROIC fuer das Subjekt UND alle Peers in EINEM Batch (parallel), damit die
- * Rel.-Bewertung-Tabelle eine konsistente Spalte fuellen kann. Nutzt die
- * neueste verfuegbare Periode je Ticker (limit=1 reicht fuer den aktuellen
- * Wert; der Aufrufer kann bei Bedarf mehr Historie nachladen).
+ * Rel.-Bewertung-Tabelle eine konsistente Spalte fuellen kann. Holt bis zu
+ * MAX_ROIC_5Y_YEARS (5) Jahre Historie in EINEM Call pro Ticker (kein
+ * zusaetzlicher Call fuer den 5Y-Durchschnitt — derselbe /key-metrics-
+ * Endpoint liefert sowohl den aktuellen FY-Wert als auch die Historie).
  */
 export async function fetchRoicForTickers(
   tickers: string[]
@@ -422,11 +463,11 @@ export async function fetchRoicForTickers(
   const out: Record<string, RoicPoint> = {};
   if (tickers.length === 0) return out;
   const rows = await Promise.all(
-    tickers.map(t => fmpKeyMetrics(t, 1).catch(() => []))
+    tickers.map(t => fmpKeyMetrics(t, MAX_ROIC_5Y_YEARS).catch(() => []))
   );
   tickers.forEach((t, i) => {
     const arr: any[] = Array.isArray(rows[i]) ? rows[i] : [];
-    out[t] = extractRoicFromKeyMetricsRow(arr[0]);
+    out[t] = extractRoicFromKeyMetricsRows(arr);
   });
   return out;
 }
@@ -519,6 +560,11 @@ export async function fetchPeerComparisonFromTickers(
         revenueGrowth: revenueGrowthPeer,
         roic: peerRoic?.roicPercent ?? null,
         roicFiscalYear: peerRoic?.fiscalYear ?? null,
+        // Auftrag 05.08.2026: zweite ROIC-Spalte (5Y-Durchschnitt). null,
+        // wenn < 3 Jahre mit echtem Wert vorliegen — UI zeigt dann "n/a",
+        // niemals 0 %.
+        roic5Y: peerRoic?.roic5YPercent ?? null,
+        roic5YYearsUsed: peerRoic?.roic5YYearsUsed ?? 0,
       });
     });
 
@@ -547,6 +593,8 @@ export async function fetchPeerComparisonFromTickers(
       revenueGrowth: revenueGrowth ? +revenueGrowth.toFixed(1) : null,
       roic: subjectRoic?.roicPercent ?? null,
       roicFiscalYear: subjectRoic?.fiscalYear ?? null,
+      roic5Y: subjectRoic?.roic5YPercent ?? null,
+      roic5YYearsUsed: subjectRoic?.roic5YYearsUsed ?? 0,
     };
     const peerAvg = {
       pe: avg(validPeers.map(p => p.pe), 0, 500),
@@ -559,6 +607,9 @@ export async function fetchPeerComparisonFromTickers(
       // ROIC-Range statt Avg allein tolerant: negative ROIC (Turnaround-Peers)
       // sind real und sollen NICHT als Ausreisser gefiltert werden — nur NaN/Inf raus.
       roic: avg(validPeers.map(p => p.roic), -500, 500),
+      // Gleiche Toleranz-Range wie roic oben — 5Y-Durchschnitte koennen durch
+      // einzelne Ausreisser-Jahre (z.B. Sondereffekte) genauso stark ausschlagen.
+      roic5Y: avg(validPeers.map(p => p.roic5Y), -500, 500),
     };
     return { subject, peers: validPeers, peerAvg };
   } catch (err: any) {

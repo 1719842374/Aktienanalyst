@@ -71,6 +71,13 @@ export interface PeerCompany {
   roic?: number | null;
   /** Fiskaljahr der ROIC-Zahl, z.B. "2025" — zeigt Datenaktualität in der UI. */
   roicFiscalYear?: string | null;
+  /** Auftrag 05.08.2026: arithmetischer Durchschnitt der ROIC-Werte der letzten
+   *  bis zu 5 Geschaeftsjahre (nur Jahre mit echtem numerischem Wert, negative
+   *  Werte/0 zaehlen normal). null, wenn < 3 Jahre verfuegbar — UI zeigt dann
+   *  "n/a", niemals 0 %. */
+  roic5Y?: number | null;
+  /** Anzahl der Jahre, die tatsaechlich in roic5Y eingeflossen sind (0, 3, 4 oder 5) — fuer den UI-Tooltip. */
+  roic5YYearsUsed?: number;
 }
 
 export type WarningSeverity = 'critical' | 'warning' | 'info';
@@ -98,6 +105,11 @@ export interface PeerComparison {
     pb: number | null;
     epsGrowth1Y: number | null;
     epsGrowth5Y: number | null;
+    /** Peer-Durchschnitt des ROIC (FY), in %. Additiv — war zuvor bereits in
+     *  news-peers.ts befuellt, aber nicht im Schema deklariert. */
+    roic?: number | null;
+    /** Peer-Durchschnitt des ROIC 5Y, in %. Auftrag 05.08.2026. */
+    roic5Y?: number | null;
   };
   sectorMedian: { // Damodaran sector medians
     pe: number | null;
