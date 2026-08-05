@@ -47,6 +47,7 @@ import {
   runScoringPipeline,
   type GateInputs,
   type ScoringPipelineResult,
+  type Gate,
 } from "./scoring-gates";
 import type { Catalyst } from "../shared/schema";
 
@@ -152,6 +153,11 @@ export interface AnalysisScoringContext {
   subjectRevenueGrowth: number | null;
   /** Peer-Umsatzwachstumsraten in % (peerComparison.peers[].revenueGrowth). */
   peerRevenueGrowths: Array<number | null> | null;
+  /** Punkt 1 (HOCH-Ticket 05.08.2026): bereits fertiges REGULATORY_EXPOSURE-Gate
+   *  aus regulatory.ts (WORK2.md §8), 1:1 durchgereicht an buildGates(). null,
+   *  wenn fuer diesen Ticker noch keine Regulatory-Analyse gelaufen ist — das
+   *  Gate bleibt dann in buildGates() korrekt inaktiv (kein Fake-Default). */
+  regulatoryGate?: Gate | null;
 }
 
 export function deriveGateInputs(ctx: AnalysisScoringContext): GateInputs & {
@@ -229,6 +235,9 @@ export function deriveGateInputs(ctx: AnalysisScoringContext): GateInputs & {
     marginDeltaYoYPp,
     relativeGrowthDeltaYoYPp,
     inventoryDaysDeltaYoYPct,
+    // 1:1 durchgereicht, keine eigene Berechnung hier — buildGates() haengt
+    // dieses fertige Gate nur an, falls vorhanden (siehe Punkt 1 oben).
+    regulatoryGate: ctx.regulatoryGate ?? null,
     realizedGrowthMethod: r8.method,
     realizedGrowthQuartersUsed: r8.quartersUsed,
   };

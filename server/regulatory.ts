@@ -332,6 +332,32 @@ Antworte NUR mit JSON:
 const _cache = new Map<string, { data: RegulatoryAssessment; time: number }>();
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Liest ein bereits vorhandenes Regulatory-Assessment aus dem In-Memory-Cache,
+ * OHNE einen neuen LLM-Call auszulösen (Punkt 1, HOCH-Ticket 05.08.2026:
+ * REGULATORY-Gate an die Scoring-Pipeline verdrahten).
+ *
+ * WARUM non-blocking/read-only: Die Regulatory-Analyse ist bewusst lazy — sie
+ * laeuft nur, wenn der Nutzer das PESTEL-KI-Panel im Frontend oeffnet (POST
+ * /api/regulatory, eigener LLM-Call, eigener Cache-Eintrag). /api/analyze
+ * selbst ruft assessRegulatoryExposure() NICHT auf (kein zusaetzlicher LLM-
+ * Roundtrip bei jeder Analyse — das waere teuer und die Aufgabenstellung
+ * verlangt ausdruecklich, nur die Verdrahtung zu aendern, nicht die
+ * bestehende Lazy-Loading-Architektur). Diese Funktion liest daher nur, was
+ * ggf. bereits vom PESTEL-Panel-Aufruf im Cache liegt (24h TTL, siehe oben).
+ * Wurde die Regulatory-Analyse fuer diesen Ticker noch nie ausgefuehrt, gibt
+ * es hier `null` — das REGULATORY_EXPOSURE-Gate bleibt dann in buildGates()
+ * korrekt inaktiv (kein Fake-Default, exakt wie in der Aufgabenstellung
+ * gefordert).
+ */
+export function getCachedRegulatoryAssessment(ticker: string): RegulatoryAssessment | null {
+  const key = ticker.toUpperCase();
+  const cached = _cache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.time >= CACHE_TTL_MS) return null; // abgelaufen -> wie "nicht vorhanden" behandeln
+  return cached.data;
+}
+
 export async function assessRegulatoryExposure(input: {
   ticker: string;
   companyName: string;

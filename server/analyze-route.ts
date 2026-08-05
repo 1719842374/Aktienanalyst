@@ -107,6 +107,7 @@ import {
   convertFmpRowsToUsd,
 } from "./fmp";
 import { buildScoringForAnalysis } from "./scoring-integration";
+import { getCachedRegulatoryAssessment } from "./regulatory";
 
 // Segment-Fallback-Pipeline (2026-08): SEC EDGAR fallback for when FMP's
 // /revenue-product-segmentation returns [] (verified for IREN). Additive-only
@@ -373,7 +374,17 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         return res.status(400).json({ error: "Invalid request", details: parsed.error.flatten() });
       }
 
-      const { ticker, useLLM = false, forceRefresh = false } = parsed.data;
+      // BUGFIX (05.08.2026, gefunden waehrend Live-Verifikation des
+      // REGULATORY-Gate-Fixes): analyzeRequestSchema definiert das Feld als
+      // `force` (shared/schema.ts), diese Zeile destrukturierte aber
+      // `forceRefresh` — ein Feld, das im Schema gar nicht existiert. Jeder
+      // Request mit `{"force": true}` wurde dadurch STILL ignoriert: `force`
+      // landete nie in `parsed.data.forceRefresh` (welches folglich immer
+      // beim Default `false` blieb), der Analyze-Cache griff also IMMER,
+      // selbst wenn der Aufrufer explizit einen frischen Re-Fetch verlangte.
+      // Betraf jeden Client-Request und jeden Cron-Precache-Call mit
+      // force=true, nicht nur diese Verifikation.
+      const { ticker, useLLM = false, force: forceRefresh = false } = parsed.data;
       const upperTicker = ticker.toUpperCase();
 
       // ── Cache check ──
@@ -1187,6 +1198,16 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Inventory-Delta), Peer-Wachstum (Share-Loss-Signal), health/Moat
       // (qualityScore-Mapping), MA200-Trendlage (trendMultiplier) und die
       // Katalysatoren (Fiscal-Megatrend-Pruefung mit Lookahead-Sperre).
+      // Punkt 1 (HOCH-Ticket 05.08.2026): REGULATORY_EXPOSURE-Gate an die
+      // Scoring-Pipeline verdrahten. Liest NUR aus dem bestehenden In-Memory-
+      // Cache von regulatory.ts (kein neuer LLM-Call — die Regulatory-Analyse
+      // bleibt bewusst lazy und wird weiterhin vom PESTEL-KI-Panel im Frontend
+      // ausgeloest). Wurde fuer diesen Ticker noch nie eine Regulatory-Analyse
+      // gefahren, liefert dies `null` und das Gate bleibt in buildGates()
+      // korrekt inaktiv (kein Fake-Default).
+      const cachedRegulatory = getCachedRegulatoryAssessment(upperTicker);
+      const regulatoryGate = cachedRegulatory?.gate ?? null;
+
       let scoring: StockAnalysis["scoring"] = undefined;
       try {
         scoring = buildScoringForAnalysis({
@@ -1199,6 +1220,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             peerRevenueGrowths: peerComparison?.peers
               ? (peerComparison.peers as any[]).map(p => p?.revenueGrowth ?? null)
               : null,
+            regulatoryGate,
           },
           health,
           moatRating,
