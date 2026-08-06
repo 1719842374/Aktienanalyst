@@ -753,7 +753,10 @@ export interface ManagementScoreRequestInput {
   industry: string;
   description?: string;
   // Segment-Daten (aus bereits geladenen revenueSegments der Analyse)
-  segments: Array<{ name: string; revenue: number; percentage: number; growth?: number | null; prevRevenue?: number; prevPercentage?: number }>;
+  // fiscalYear (Auftrag 06.08.2026, "Segment-FY durchreichen"): additiv, aus
+  // dem FMP-Berichtsdatum abgeleitet (analyze-route.ts). Optional, damit
+  // aeltere/curated Segmentquellen ohne Datum weiterhin funktionieren.
+  segments: Array<{ name: string; revenue: number; percentage: number; growth?: number | null; prevRevenue?: number; prevPercentage?: number; fiscalYear?: string }>;
   totalRevenue: number;
   totalRevenuePrevYear?: number;
   overallMarginPct?: number | null;
@@ -811,7 +814,7 @@ export interface ManagementScoreRequestInput {
  */
 export function identifyNewSegment(
   segments: ManagementScoreRequestInput["segments"]
-): { name: string; sharePct: number; sharePrevPct: number | null; growthPct: number | null; noPriorYearFlag?: boolean } | null {
+): { name: string; sharePct: number; sharePrevPct: number | null; growthPct: number | null; fiscalYear?: string; noPriorYearFlag?: boolean } | null {
   if (!Array.isArray(segments) || segments.length === 0) return null;
 
   const toResult = (s: ManagementScoreRequestInput["segments"][number], noPriorYearFlag = false) => ({
@@ -819,6 +822,10 @@ export function identifyNewSegment(
     sharePct: s.percentage,
     sharePrevPct: typeof (s as any).prevPercentage === "number" ? (s as any).prevPercentage : null,
     growthPct: typeof s.growth === "number" && isFinite(s.growth) ? s.growth : null,
+    // Auftrag 06.08.2026 ("Segment-FY durchreichen"): Jahr des gewaehlten
+    // Segments an das Result durchreichen, damit dataAsOf.segmentFiscalYear
+    // es bevorzugt gegenueber einem beliebigen anderen Segment nutzen kann.
+    ...(typeof (s as any).fiscalYear === "string" && (s as any).fiscalYear ? { fiscalYear: (s as any).fiscalYear as string } : {}),
     ...(noPriorYearFlag ? { noPriorYearFlag: true } : {}),
   });
 
@@ -1197,7 +1204,16 @@ export async function computeManagementScoreForTicker(
   return {
     breakdown,
     dataAsOf: {
-      segmentFiscalYear: input.segments.length > 0 ? (input as any).segmentFiscalYear ?? null : null,
+      // Auftrag 06.08.2026 ("Segment-FY durchreichen"): vorher stand hier
+      // (input as any).segmentFiscalYear — ein Feld auf dem Request-ROOT-
+      // Objekt, das nirgendwo gesetzt wurde (Root-Level-Verwechslung, nicht
+      // pro Segment). Jetzt wird das Jahr aus dem gewaehlten "neuen" Segment
+      // bevorzugt (falls vorhanden), sonst aus dem ersten Segment mit einem
+      // gueltigen fiscalYear — niemals erfunden, bleibt null wenn wirklich
+      // kein Segment ein Jahr mitbringt.
+      segmentFiscalYear: newSeg?.fiscalYear
+        ?? input.segments.find(s => typeof (s as any).fiscalYear === "string" && (s as any).fiscalYear)?.fiscalYear as string | undefined
+        ?? null,
       roicFiscalYear: null, // vom Aufrufer bereits als roicPct-Kontext bekannt, hier nicht redundant dupliziert
       compensationYear,
       insiderTradingWindowDays: 180,

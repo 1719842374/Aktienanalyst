@@ -143,12 +143,18 @@ export function ManagementScoreSection({ data }: Props) {
         name: s.name, revenue: s.revenue, percentage: s.percentage,
         growth: s.growth ?? null, prevRevenue: s.prevRevenue,
         prevPercentage: s.prevPercentage,
+        // Auftrag 06.08.2026 ("Segment-FY durchreichen"): derselbe Fehlertyp
+        // wie beim prevPercentage-Bug — fiscalYear wurde serverseitig in
+        // analyze-route.ts bereits aus dem echten FMP-Berichtsdatum abgeleitet,
+        // aber hier im Request-Mapping nie mitgeschickt -> Segment-FY blieb
+        // in der Management-Score-UI immer n/a, obwohl das Jahr vorlag.
+        fiscalYear: s.fiscalYear,
       }));
       // Pflicht-Debug-Log (Auftrag 06.08.2026): Rohsegmente vor dem Request,
       // damit sich "warum ist ΔShare n/a" direkt aus der Browser-Konsole
       // nachvollziehen laesst, ohne Server-Logs zu brauchen.
       console.log(`[MGMT-SCORE] ${data.ticker}: Rohsegmente vor Request`, segments.map(s => ({
-        name: s.name, percentage: s.percentage, prevPercentage: s.prevPercentage, growth: s.growth,
+        name: s.name, percentage: s.percentage, prevPercentage: s.prevPercentage, growth: s.growth, fiscalYear: s.fiscalYear,
       })));
       const overallMarginPct = data.financialStatements?.incomeStatement?.operatingMargin ?? null;
       const actualRevenueGrowthPct = data.financialStatements?.incomeStatement?.revenueGrowth ?? null;

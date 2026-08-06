@@ -665,6 +665,15 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               // wurde dieses Feld an dieser Stelle verworfen, obwohl es
               // bereits berechnet wurde. Noetig fuer ΔSegment-Anteil.
               ...(typeof s.prevPercentage === "number" ? { prevPercentage: s.prevPercentage } : {}),
+              // Auftrag 06.08.2026 ("Segment-FY durchreichen"): derselbe
+              // Fehlertyp wie beim prevPercentage-Bug — normaliseSegmentRows()
+              // in fmp.ts setzt bereits s.date (das reale Berichtsdatum der
+              // Segmentzeile, z.B. "2025-06-30"), aber dieses Mapping hat es
+              // nie nach RevenueSegment.fiscalYear uebernommen. Jahr wird
+              // NUR aus einem echten Datum extrahiert -- nie erfunden.
+              ...(typeof s.date === "string" && /^\d{4}/.test(s.date)
+                ? { fiscalYear: s.date.slice(0, 4) }
+                : {}),
             }))
             .slice(0, 8)
         : [];

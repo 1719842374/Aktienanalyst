@@ -457,6 +457,20 @@ console.log("\n=== identifyNewSegment v2 (Nutzer-Entscheidung 06.08.2026, MSFT-L
   check("Bug-Reproduktion: OHNE prevPercentage waehlt die Heuristik NICHT Server (bestaetigt die Kritikalitaet der Durchreichung)",
     rBuggy?.name !== "Server", JSON.stringify(rBuggy));
 
+  // ═══ REGRESSIONSTEST: Segment-FY-Durchreichung (Auftrag 06.08.2026) ═══
+  // Derselbe Fehlertyp wie beim prevPercentage-Bug: fiscalYear wird jetzt am
+  // Segment-Objekt mitgefuehrt und muss vom gewaehlten Segment (Server) in
+  // identifyNewSegment()'s Rueckgabewert landen, damit dataAsOf.
+  // segmentFiscalYear im Result korrekt befuellt wird statt n/a zu bleiben.
+  const msftSegmentsWithFiscalYear = msftSegments.map(s => ({ ...s, fiscalYear: "2025" }));
+  const rWithFy = identifyNewSegment(msftSegmentsWithFiscalYear as any);
+  check("Segment-FY: gewaehltes Segment (Server) traegt das fiscalYear weiter", rWithFy?.fiscalYear === "2025", JSON.stringify(rWithFy));
+
+  // Fehlt fiscalYear komplett (aeltere/curated Segmentquelle ohne Datum) ->
+  // bleibt bewusst undefined, NIEMALS ein erfundenes Jahr.
+  const rWithoutFy = identifyNewSegment(msftSegments as any);
+  check("Segment-FY: ohne fiscalYear am Input bleibt es undefined (kein Fake-Jahr)", rWithoutFy?.fiscalYear === undefined);
+
   // Prio 1 (PRIMAER): Growth + steigender Anteil + Anteil noch nicht dominant (<50%)
   const withHighGrowthRisingShare = [
     { name: "Legacy", revenue: 70_000_000_000, percentage: 70, growth: 2, prevRevenue: 68_000_000_000, prevPercentage: 71 },
