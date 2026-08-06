@@ -15,6 +15,7 @@ import {
   scoreCashConversion, scoreWorkingCapital, scoreAccruals, computeCredibilityScore,
   computeQualNewsScore, deriveStructuredNewsAdjustments,
   computeManagementScoreBreakdown,
+  deriveStatementTrends, countAvailableDeliveryInputs, identifyNewSegment,
 } from "../server/management-score";
 
 let failed = 0;
@@ -208,6 +209,7 @@ console.log("\n=== deriveStructuredNewsAdjustments: harte Trigger aus strukturie
     fcfMarginPct: 10, fcfMarginPrevYearPct: 12,
     roicPct: 5, roicPrevYearPct: 8,
     netInsiderTransactionValue: null, storyIsPositive: false,
+    isDeliveryBelastbar: true,
   });
   check("excessive_comp_weak_delivery Trigger bei 4x Median + schwacher Delivery", adj1.some(a => a.type === "excessive_comp_weak_delivery"));
   check("Penalty im Ticket-Band -0.25 bis -0.40", adj1.find(a => a.type === "excessive_comp_weak_delivery")!.delta <= -0.25 && adj1.find(a => a.type === "excessive_comp_weak_delivery")!.delta >= -0.40);
@@ -221,6 +223,7 @@ console.log("\n=== deriveStructuredNewsAdjustments: harte Trigger aus strukturie
     fcfMarginPct: 30, fcfMarginPrevYearPct: 25,
     roicPct: 20, roicPrevYearPct: 15,
     netInsiderTransactionValue: null, storyIsPositive: true,
+    isDeliveryBelastbar: true,
   });
   check("kein excessive_comp Trigger bei starker Delivery, trotz hoher Vergütung", !adj2.some(a => a.type === "excessive_comp_weak_delivery"));
 
@@ -232,6 +235,7 @@ console.log("\n=== deriveStructuredNewsAdjustments: harte Trigger aus strukturie
     fcfMarginPct: 10, fcfMarginPrevYearPct: 15,
     roicPct: 5, roicPrevYearPct: 10,
     netInsiderTransactionValue: null, storyIsPositive: false,
+    isDeliveryBelastbar: true,
   });
   check("comp_up_performance_down Trigger bei Comp↑ + Revenue/FCF/ROIC↓", adj3.some(a => a.type === "comp_up_performance_down"));
   check("Penalty exakt -0.20 laut Ticket", adj3.find(a => a.type === "comp_up_performance_down")!.delta === -0.20);
@@ -242,6 +246,7 @@ console.log("\n=== deriveStructuredNewsAdjustments: harte Trigger aus strukturie
     deliveryPlusCapitalScore: null, revenueGrowthPct: null, revenueGrowthPrevYearPct: null,
     fcfMarginPct: null, fcfMarginPrevYearPct: null, roicPct: null, roicPrevYearPct: null,
     netInsiderTransactionValue: -5_000_000, storyIsPositive: true,
+    isDeliveryBelastbar: true,
   });
   check("insider_selling_positive_story Trigger", adj4.some(a => a.type === "insider_selling_positive_story"));
   check("Penalty exakt -0.10 laut Ticket", adj4.find(a => a.type === "insider_selling_positive_story")!.delta === -0.10);
@@ -252,6 +257,7 @@ console.log("\n=== deriveStructuredNewsAdjustments: harte Trigger aus strukturie
     deliveryPlusCapitalScore: null, revenueGrowthPct: null, revenueGrowthPrevYearPct: null,
     fcfMarginPct: null, fcfMarginPrevYearPct: null, roicPct: null, roicPrevYearPct: null,
     netInsiderTransactionValue: 2_000_000, storyIsPositive: false,
+    isDeliveryBelastbar: true,
   });
   check("positive_governance Trigger bei Netto-Insider-Käufen", adj5.some(a => a.type === "positive_governance"));
   check("Bonus exakt +0.10 laut Ticket", adj5.find(a => a.type === "positive_governance")!.delta === 0.10);
@@ -262,8 +268,41 @@ console.log("\n=== deriveStructuredNewsAdjustments: harte Trigger aus strukturie
     deliveryPlusCapitalScore: null, revenueGrowthPct: null, revenueGrowthPrevYearPct: null,
     fcfMarginPct: null, fcfMarginPrevYearPct: null, roicPct: null, roicPrevYearPct: null,
     netInsiderTransactionValue: null, storyIsPositive: false,
+    isDeliveryBelastbar: true,
   });
   check("keine Daten → keine Adjustments (kein Fake-Penalty)", adj6.length === 0);
+}
+
+console.log("\n=== Penalty-Absicherung (Auftrag 05.08.2026, Punkt 2): Abschwächung bei nicht belastbarer Delivery ===");
+{
+  // Gleiches Szenario wie adj1 oben (4x Median + Score<0.45), aber
+  // isDeliveryBelastbar=false — die Penalty MUSS deutlich schwächer ausfallen
+  const adjFull = deriveStructuredNewsAdjustments({
+    ceoCompTotalLatest: 40_000_000, ceoCompTotalPrevYear: 38_000_000,
+    referenceCompMedian: 10_000_000, referenceCompSource: "peer_median",
+    deliveryPlusCapitalScore: 0.30,
+    revenueGrowthPct: 2, revenueGrowthPrevYearPct: 5,
+    fcfMarginPct: 10, fcfMarginPrevYearPct: 12,
+    roicPct: 5, roicPrevYearPct: 8,
+    netInsiderTransactionValue: null, storyIsPositive: false,
+    isDeliveryBelastbar: true,
+  });
+  const adjWeak = deriveStructuredNewsAdjustments({
+    ceoCompTotalLatest: 40_000_000, ceoCompTotalPrevYear: 38_000_000,
+    referenceCompMedian: 10_000_000, referenceCompSource: "peer_median",
+    deliveryPlusCapitalScore: 0.30,
+    revenueGrowthPct: 2, revenueGrowthPrevYearPct: 5,
+    fcfMarginPct: 10, fcfMarginPrevYearPct: 12,
+    roicPct: 5, roicPrevYearPct: 8,
+    netInsiderTransactionValue: null, storyIsPositive: false,
+    isDeliveryBelastbar: false,
+  });
+  const fullDelta = adjFull.find(a => a.type === "excessive_comp_weak_delivery")!.delta;
+  const weakDelta = adjWeak.find(a => a.type === "excessive_comp_weak_delivery")!.delta;
+  check("bei belastbarer Delivery: volle Penalty im Ticket-Band", fullDelta <= -0.25 && fullDelta >= -0.40, String(fullDelta));
+  check("bei NICHT belastbarer Delivery: Penalty deutlich abgeschwächt (mind. 50% schwächer)", Math.abs(weakDelta) < Math.abs(fullDelta) * 0.5, `full=${fullDelta} weak=${weakDelta}`);
+  check("abgeschwächte Penalty bleibt trotzdem negativ (kein komplettes Verschwinden — bleibt als Warn-Flag sichtbar)", weakDelta < 0);
+  check("Rationale der abgeschwächten Penalty erklärt die Datenlücke", adjWeak.find(a => a.type === "excessive_comp_weak_delivery")!.rationale.includes("fehlende") || adjWeak.find(a => a.type === "excessive_comp_weak_delivery")!.rationale.includes("Datenlücken"));
 }
 
 console.log("\n=== Gesamtformel: Gewichtung 30/25/20/15/10 ===");
@@ -302,6 +341,152 @@ console.log("\n=== Gesamtformel: Gewichtung 30/25/20/15/10 ===");
 
   // allFlags sammelt Flags aus allen Bausteinen
   check("allFlags aggregiert Flags aus allen 5 Bausteinen", Array.isArray(r.allFlags));
+}
+
+console.log("\n=== deriveStatementTrends: Datenpipeline aus Mehrjahres-Statements (Auftrag 05.08.2026, Punkt 1) ===");
+{
+  // Echte MSFT-Struktur (newest-first), live gegen FMP verifiziert 06.08.2026
+  const incomeRows = [
+    { fiscalYear: "2026", revenue: 331839000000, grossProfit: 225465000000, operatingIncome: 155237000000, netIncome: 133749000000 },
+    { fiscalYear: "2025", revenue: 281724000000, grossProfit: 193893000000, operatingIncome: 128528000000, netIncome: 101832000000 },
+    { fiscalYear: "2024", revenue: 245122000000, grossProfit: 171008000000, operatingIncome: 109433000000, netIncome: 88136000000 },
+  ];
+  const cashflowRows = [
+    { fiscalYear: "2026", operatingCashFlow: 182935000000, capitalExpenditure: -115948000000, netIncome: 133749000000 },
+    { fiscalYear: "2025", operatingCashFlow: 136162000000, capitalExpenditure: -64551000000, netIncome: 101832000000 },
+    { fiscalYear: "2024", operatingCashFlow: 118548000000, capitalExpenditure: -44477000000, netIncome: 88136000000 },
+  ];
+  const balanceRows = [
+    { fiscalYear: "2026", inventory: 1397000000, netReceivables: 80876000000, totalDebt: 100000000000, totalStockholdersEquity: 350000000000, cashAndCashEquivalents: 30000000000 },
+    { fiscalYear: "2025", inventory: 938000000, netReceivables: 69905000000, totalDebt: 95000000000, totalStockholdersEquity: 300000000000, cashAndCashEquivalents: 25000000000 },
+    { fiscalYear: "2024", inventory: 1246000000, netReceivables: 56924000000, totalDebt: 90000000000, totalStockholdersEquity: 270000000000, cashAndCashEquivalents: 20000000000 },
+  ];
+  const r = deriveStatementTrends({ incomeRows, cashflowRows, balanceRows });
+
+  check("operatingMarginTrend erkannt (Marge steigt 2024->2026)", r.operatingMarginTrend === "steigend", String(r.operatingMarginTrend));
+  check("marginTrend kombiniert gesetzt (nicht mehr n/a wie vorher)", r.marginTrend !== null);
+  check("cashConversionRatio berechnet (OCF/NetIncome, nicht n/a)", r.cashConversionRatio !== null, String(r.cashConversionRatio));
+  check("cashConversionRatio plausibel > 1 (MSFT konvertiert Gewinn stark in Cash)", (r.cashConversionRatio ?? 0) > 1);
+  check("fcfMarginPct berechnet (nicht n/a)", r.fcfMarginPct !== null, String(r.fcfMarginPct));
+  check("workingCapitalTrend bestimmt (nicht n/a)", r.workingCapitalTrend !== null, String(r.workingCapitalTrend));
+  check("reinvestmentEfficiency berechnet (nicht n/a)", r.reinvestmentEfficiency !== null, String(r.reinvestmentEfficiency));
+  check("revenueGrowthPrevYearPct berechnet aus 3 Jahren Historie", r.revenueGrowthPrevYearPct !== null);
+  check("deutlich weniger Flags als vorher (Datenpipeline-Fix wirkt)", r.flags.length <= 1, JSON.stringify(r.flags));
+}
+{
+  // Leere Historie -> alles null, keine Fake-Werte, klare Flags
+  const r = deriveStatementTrends({ incomeRows: [], cashflowRows: [], balanceRows: [] });
+  check("leere Historie -> alle Trends null (kein Fake)", r.operatingMarginTrend === null && r.cashConversionRatio === null && r.workingCapitalTrend === null);
+  check("leere Historie -> Flags erklären die Lücke", r.flags.length > 0);
+}
+{
+  // Working-Capital steigt deutlich schneller als Revenue -> Warnsignal
+  const income = [{ fiscalYear: "2026", revenue: 110_000_000, grossProfit: 50_000_000, operatingIncome: 20_000_000, netIncome: 15_000_000 }, { fiscalYear: "2025", revenue: 100_000_000, grossProfit: 45_000_000, operatingIncome: 18_000_000, netIncome: 14_000_000 }];
+  const balance = [{ fiscalYear: "2026", inventory: 40_000_000, netReceivables: 10_000_000 }, { fiscalYear: "2025", inventory: 20_000_000, netReceivables: 8_000_000 }];
+  const r = deriveStatementTrends({ incomeRows: income, cashflowRows: [], balanceRows: balance });
+  check("WC waechst deutlich schneller als Revenue -> steigend_bei_wachstum (Warnsignal)", r.workingCapitalTrend === "steigend_bei_wachstum", String(r.workingCapitalTrend));
+}
+
+console.log("\n=== countAvailableDeliveryInputs: Belastbarkeits-Check (Auftrag 05.08.2026, Punkt 2) ===");
+{
+  const allPresent = countAvailableDeliveryInputs({
+    actualRevenueGrowthPct: 10, marginTrend: "steigend", epsOrFcfVsGuidancePct: 2,
+    roicPct: 15, fcfMarginPct: 20, cashConversionRatio: 1.1,
+  });
+  check("alle 6 Inputs vorhanden -> belastbar", allPresent.isBelastbar === true);
+  check("available=6/6", allPresent.available === 6 && allPresent.total === 6);
+
+  const mostlyMissing = countAvailableDeliveryInputs({
+    actualRevenueGrowthPct: 10, marginTrend: null, epsOrFcfVsGuidancePct: null,
+    roicPct: null, fcfMarginPct: null, cashConversionRatio: null,
+  });
+  check("nur 1/6 Inputs (Ticket-Szenario: fast alles n/a) -> NICHT belastbar", mostlyMissing.isBelastbar === false);
+  check("available=1/6", mostlyMissing.available === 1);
+
+  const noRevenue = countAvailableDeliveryInputs({
+    actualRevenueGrowthPct: null, marginTrend: "steigend", epsOrFcfVsGuidancePct: 2,
+    roicPct: 15, fcfMarginPct: 20, cashConversionRatio: 1.1,
+  });
+  check("5/6 vorhanden aber KEIN Revenue-Wachstum -> nicht belastbar (Revenue ist Pflicht)", noRevenue.isBelastbar === false);
+
+  const halfPresent = countAvailableDeliveryInputs({
+    actualRevenueGrowthPct: 10, marginTrend: "steigend", epsOrFcfVsGuidancePct: null,
+    roicPct: 15, fcfMarginPct: null, cashConversionRatio: null,
+  });
+  check("genau die Haelfte (3/6) inkl. Revenue -> belastbar (Grenzfall)", halfPresent.isBelastbar === true, JSON.stringify(halfPresent));
+}
+
+console.log("\n=== identifyNewSegment v2 (Nutzer-Entscheidung 06.08.2026, MSFT-Live-Fund) ===");
+{
+  // REGRESSIONSTEST: echte MSFT-Segmentdaten (Live-verifiziert 06.08.2026).
+  // Vorher waehlte die Heuristik faelschlich XBOX (kein Vorjahreswert, aber
+  // KEIN echtes neues Segment — wahrscheinlich Reporting-Umbenennung) statt
+  // Server/Azure (+31.5% Wachstum, Anteil 34.9%→39%, die eigentliche Story).
+  const msftSegments = [
+    { name: "Server", revenue: 129425000000, percentage: 39, growth: 31.5, prevRevenue: 98435000000, prevPercentage: 34.9 },
+    { name: "Microsoft 365 Commercial", revenue: 101997000000, percentage: 30.7, growth: 16.2, prevRevenue: 87767000000, prevPercentage: 31.2 },
+    { name: "XBOX", revenue: 21790000000, percentage: 6.6, growth: null as any, prevRevenue: undefined, prevPercentage: undefined },
+    { name: "Linked In", revenue: 19817000000, percentage: 6, growth: 11.3, prevRevenue: 17812000000, prevPercentage: 6.3 },
+    { name: "Windows", revenue: 17084000000, percentage: 5.1, growth: -1.3, prevRevenue: 17314000000, prevPercentage: 6.1 },
+  ];
+  const rMsft = identifyNewSegment(msftSegments as any);
+  check("MSFT: Server/Azure gewinnt (Growth+steigender Anteil), NICHT XBOX (Reporting-Artefakt)", rMsft?.name === "Server", JSON.stringify(rMsft));
+  check("MSFT: echtes ΔShare verfügbar (sharePrevPct=34.9, kein n/a mehr)", rMsft?.sharePrevPct === 34.9);
+  check("MSFT: kein noPriorYearFlag (Server hat einen echten Vorjahreswert)", !(rMsft as any)?.noPriorYearFlag);
+
+  // Prio 1 (PRIMAER): Growth + steigender Anteil + Anteil noch nicht dominant (<50%)
+  const withHighGrowthRisingShare = [
+    { name: "Legacy", revenue: 70_000_000_000, percentage: 70, growth: 2, prevRevenue: 68_000_000_000, prevPercentage: 71 },
+    { name: "Server & Cloud", revenue: 30_000_000_000, percentage: 30, growth: 25, prevRevenue: 24_000_000_000, prevPercentage: 27 },
+  ];
+  const r2 = identifyNewSegment(withHighGrowthRisingShare as any);
+  check("Prio 1: Growth + steigender Anteil erkannt (nicht das grosse Legacy-Segment)", r2?.name === "Server & Cloud", JSON.stringify(r2));
+  check("sharePrevPct wird aus prevPercentage uebernommen (echtes ΔShare moeglich)", r2?.sharePrevPct === 27);
+
+  // Prio 1 greift NICHT, wenn der Anteil bereits dominant ist (>=50%) —
+  // selbst bei steigendem Anteil und Wachstum gilt das nicht mehr als "Shift"
+  const dominantSegment = [
+    { name: "Dominant", revenue: 60_000_000_000, percentage: 60, growth: 10, prevRevenue: 54_000_000_000, prevPercentage: 55 },
+    { name: "Klein", revenue: 40_000_000_000, percentage: 40, growth: 3, prevRevenue: 39_000_000_000, prevPercentage: 40.5 }, // fallender Anteil
+  ];
+  const rDominant = identifyNewSegment(dominantSegment as any);
+  check("Segment mit Anteil >=50% wird NICHT als Shift gewertet, obwohl es waechst", rDominant?.name !== "Dominant", JSON.stringify(rDominant));
+
+  // Prio 2 (SEKUNDAER): sehr hohes Wachstum (>=15%) bei moderatem Anteil
+  // (<35%), auch OHNE prevPercentage (Prio 1 kann hier nicht greifen)
+  const withHighGrowthNoShareHistory = [
+    { name: "Legacy", revenue: 70_000_000_000, percentage: 70, growth: 2, prevRevenue: 68_000_000_000, prevPercentage: 71 },
+    { name: "Neu", revenue: 30_000_000_000, percentage: 30, growth: 22, prevRevenue: 24_000_000_000 }, // kein prevPercentage
+  ];
+  const r3 = identifyNewSegment(withHighGrowthNoShareHistory as any);
+  check("Prio 2 greift, wenn Prio 1 mangels prevPercentage nicht anwendbar ist", r3?.name === "Neu", JSON.stringify(r3));
+
+  // Prio 3 (LETZTER AUSWEG): neu aufgetaucht MIT Mindestumsatzfilter (>=3%)
+  const withTinyNewSegment = [
+    { name: "Mini-Pilot", revenue: 500_000_000, percentage: 0.5, growth: null as any, prevRevenue: undefined }, // <3% -> darf NICHT gewinnen
+    { name: "Core", revenue: 99_500_000_000, percentage: 99.5, growth: null as any, prevRevenue: 99_000_000_000 },
+  ];
+  const rTiny = identifyNewSegment(withTinyNewSegment as any);
+  check("Mini-Segment (<3% Anteil) gewinnt NICHT ueber den Mindestumsatzfilter", rTiny === null, JSON.stringify(rTiny));
+
+  const withMaterialNewSegment = [
+    { name: "Neues Standbein", revenue: 5_000_000_000, percentage: 5, growth: null as any, prevRevenue: undefined }, // >=3% -> darf gewinnen (letzter Ausweg)
+    { name: "Core", revenue: 95_000_000_000, percentage: 95, growth: 3, prevRevenue: 92_000_000_000, prevPercentage: 96 },
+  ];
+  const rMaterial = identifyNewSegment(withMaterialNewSegment as any);
+  check("materielles neues Segment (>=3% Anteil) gewinnt als letzter Ausweg", rMaterial?.name === "Neues Standbein", JSON.stringify(rMaterial));
+  check("noPriorYearFlag gesetzt (Transparenz: moegliche Segment-Umbenennung statt echtem Shift)", (rMaterial as any)?.noPriorYearFlag === true);
+
+  // Kein Segment mit Wachstumsdaten UND beide bereits im Vorjahr vorhanden -> null
+  const noGrowthData = [
+    { name: "X", revenue: 50_000_000_000, percentage: 50, growth: null as any, prevRevenue: 49_000_000_000 },
+    { name: "Y", revenue: 50_000_000_000, percentage: 50, growth: null as any, prevRevenue: 51_000_000_000 },
+  ];
+  const r4 = identifyNewSegment(noGrowthData as any);
+  check("keine Wachstumsdaten -> null (kein Fake-Segment)", r4 === null, JSON.stringify(r4));
+
+  // BYDDY-Fall: keine Segmente ueberhaupt
+  check("leeres Array -> null", identifyNewSegment([] as any) === null);
 }
 
 console.log(failed === 0 ? "\n✅ Alle Management-Score-Tests bestanden" : `\n❌ ${failed} Test(s) fehlgeschlagen`);

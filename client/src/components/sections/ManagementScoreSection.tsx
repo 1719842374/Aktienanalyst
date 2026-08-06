@@ -51,6 +51,12 @@ interface ManagementScoreResult {
     generatedAt: string;
   };
   llmModelUsed: string | null;
+  deliveryDataQuality: {
+    availableInputs: number;
+    totalInputs: number;
+    isBelastbar: boolean;
+    warning: string | null;
+  };
 }
 
 const BAUSTEINE: { key: keyof ManagementScoreBreakdown; label: string; weight: string; frage: string }[] = [
@@ -202,6 +208,12 @@ export function ManagementScoreSection({ data }: Props) {
 
         {result && (
           <div className="space-y-4">
+            {result.deliveryDataQuality.warning && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-400">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <span>{result.deliveryDataQuality.warning}</span>
+              </div>
+            )}
             <ScoreAmpel score1to10={result.breakdown.score1to10} />
 
             {/* Datenaktualität — explizit pro Baustein, wie im Auftrag gefordert */}

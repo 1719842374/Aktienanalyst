@@ -169,6 +169,12 @@ export interface FmpSegmentRow {
   prevRevenue?: number;
   /** Datum/Fiskaljahr der Vergleichsperiode. */
   prevDate?: string;
+  /** Management-Score Auftrag 05.08.2026: Umsatzanteil (%) dieses Segments
+   *  IN DER VORPERIODE, berechnet aus prevRevenue / Summe(prevMap). Noetig
+   *  fuer die ΔSegment-Anteil-Berechnung (S_Segment.S_Share) — vorher fehlte
+   *  dieser Wert komplett, obwohl prevRevenue pro Segment schon vorlag.
+   *  undefined, wenn keine Vorperiode gefunden wurde (kein Fake-0). */
+  prevPercentage?: number;
 }
 
 /**
@@ -225,6 +231,14 @@ function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
   if (names.length === 0) return [];
 
   const total = names.reduce((s, n) => s + curMap[n], 0);
+  // Vorperioden-Gesamtsumme fuer prevPercentage (ΔShare-Berechnung, Auftrag
+  // 05.08.2026 Management-Score-Fix). Nutzt ALLE Vorjahres-Segmentnamen, nicht
+  // nur die aktuellen — ein Segment kann im Vorjahr anders geheissen haben,
+  // aber die Gesamtsumme muss trotzdem stimmen (z.B. "Devices" 2024 vs. nicht
+  // mehr vorhanden 2025 bei MSFT — total bleibt korrekt, nur das einzelne
+  // Segment hat dann keinen Vorjahreswert -> hasPrev=false, kein Fake).
+  const prevNames = Object.keys(prevMap);
+  const prevTotal = prevNames.reduce((s, n) => s + prevMap[n], 0);
 
   return names
     .sort((a, b) => curMap[b] - curMap[a])
@@ -235,6 +249,9 @@ function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
       const growth = hasPrev
         ? Math.round(((revenue / prevRevenue) - 1) * 1000) / 10
         : null;
+      const prevPercentage = hasPrev && prevTotal > 0
+        ? Math.round((prevRevenue / prevTotal) * 1000) / 10
+        : undefined;
       return {
         name,
         revenue,
@@ -242,6 +259,7 @@ function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
         date: reportDate,
         growth,
         ...(hasPrev ? { prevRevenue, prevDate: prevKey } : {}),
+        ...(prevPercentage !== undefined ? { prevPercentage } : {}),
       };
     });
 }

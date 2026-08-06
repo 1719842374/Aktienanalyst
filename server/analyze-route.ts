@@ -660,6 +660,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               // null bleibt null (keine Vorjahreszahl) — kein 0-Default.
               growth: typeof s.growth === "number" && isFinite(s.growth) ? s.growth : null,
               ...(typeof s.prevRevenue === "number" ? { prevRevenue: s.prevRevenue } : {}),
+              // Management-Score-Fix (05.08.2026): prevPercentage aus
+              // fmpSegments()/normaliseSegmentRows() durchreichen — vorher
+              // wurde dieses Feld an dieser Stelle verworfen, obwohl es
+              // bereits berechnet wurde. Noetig fuer ΔSegment-Anteil.
+              ...(typeof s.prevPercentage === "number" ? { prevPercentage: s.prevPercentage } : {}),
             }))
             .slice(0, 8)
         : [];

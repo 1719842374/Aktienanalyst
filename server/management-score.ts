@@ -409,6 +409,14 @@ export function deriveStructuredNewsAdjustments(input: {
   roicPrevYearPct: number | null;
   netInsiderTransactionValue: number | null; // positiv = Netto-Käufe, negativ = Netto-Verkäufe
   storyIsPositive: boolean; // z.B. starke Kursperformance / bullische Guidance im Betrachtungszeitraum
+  /** Auftrag 05.08.2026, Punkt 2 (Penalty-Logik absichern): true, wenn die
+   *  Delivery-Berechnung auf ausreichend echten Daten beruht (siehe
+   *  countAvailableDeliveryInputs) — NICHT ueberwiegend auf neutralen
+   *  Defaults, weil Inputs fehlten. Bei false wird die schwere Verguetungs-
+   *  Penalty auf ein reines Warn-Flag ohne vollen Punktabzug reduziert
+   *  (Ticket: "Wenn zu viele Delivery-Inputs fehlen -> Penalty abschwaechen
+   *  oder nur als Warn-Flag ohne vollen Punktabzug anzeigen"). */
+  isDeliveryBelastbar: boolean;
 }): NewsAdjustment[] {
   const adjustments: NewsAdjustment[] = [];
 
@@ -422,13 +430,29 @@ export function deriveStructuredNewsAdjustments(input: {
     input.deliveryPlusCapitalScore < 0.45
   ) {
     const ratio = input.ceoCompTotalLatest / input.referenceCompMedian;
-    // Skaliert innerhalb des Ticket-Bandes -0.25..-0.40 je nach Ratio (3x -> -0.25, 6x+ -> -0.40)
-    const delta = -clamp(lerp(ratio, 3, 6, 0.25, 0.40), 0.25, 0.40);
-    adjustments.push({
-      type: "excessive_comp_weak_delivery",
-      delta,
-      rationale: `CEO-Vergütung ${ratio.toFixed(1)}× über dem ${input.referenceCompSource === "peer_median" ? "Peer-Median" : "Branchendurchschnitt"} bei schwacher operativer Delivery (Score ${input.deliveryPlusCapitalScore.toFixed(2)} < 0.45)`,
-    });
+    if (input.isDeliveryBelastbar) {
+      // Volle Penalty, skaliert innerhalb des Ticket-Bandes -0.25..-0.40 je
+      // nach Ratio (3x -> -0.25, 6x+ -> -0.40) — nur wenn die "schwache
+      // Delivery", auf der der Trigger beruht, tatsaechlich belastbar
+      // berechnet wurde.
+      const delta = -clamp(lerp(ratio, 3, 6, 0.25, 0.40), 0.25, 0.40);
+      adjustments.push({
+        type: "excessive_comp_weak_delivery",
+        delta,
+        rationale: `CEO-Vergütung ${ratio.toFixed(1)}× über dem ${input.referenceCompSource === "peer_median" ? "Peer-Median" : "Branchendurchschnitt"} bei schwacher operativer Delivery (Score ${input.deliveryPlusCapitalScore.toFixed(2)} < 0.45)`,
+      });
+    } else {
+      // Abgeschwaecht: die "schwache Delivery" ist hier vor allem ein
+      // Datenlücken-Artefakt (viele neutrale 0.35-Defaults statt echter
+      // Werte) — der hohe Verguetungswert ist real und bleibt als Warn-Flag
+      // sichtbar, zieht den Score aber nicht mit voller Wucht nach unten.
+      const delta = -clamp(lerp(ratio, 3, 6, 0.25, 0.40), 0.25, 0.40) * 0.25; // 75% Abschwaechung
+      adjustments.push({
+        type: "excessive_comp_weak_delivery",
+        delta,
+        rationale: `CEO-Vergütung ${ratio.toFixed(1)}× über dem ${input.referenceCompSource === "peer_median" ? "Peer-Median" : "Branchendurchschnitt"} — Delivery-Score liegt unter 0.45, beruht aber überwiegend auf fehlenden Daten statt belegter Schwaeche. Penalty abgeschwaecht (nur Warn-Flag), volle Penalty erfordert belastbare Delivery-Berechnung.`,
+      });
+    }
   }
 
   // Vergütung steigt, Performance fällt
@@ -496,6 +520,218 @@ export function computeManagementScoreBreakdown(
 }
 
 // ============================================================
+// Fundamentaldaten-Trends aus FMP-Mehrjahres-Statements ableiten
+// ============================================================
+// Auftrag 05.08.2026 (Datenpipeline schließen): financialStatements im
+// StockAnalysis-Response liefert nur den AKTUELLEN Snapshot (eine Zahl pro
+// Feld), keine Mehrjahres-Serie — deshalb konnten Margin-Trend, Cash-
+// Conversion, WC-Trend und FCF-Margin-Trend bisher nicht berechnet werden.
+// Diese Funktionen nehmen die rohen FMP-/income-statement-, /cash-flow-
+// statement- und /balance-sheet-statement-Zeilen (limit>=3, newest-first,
+// exakt wie server/fmp.ts sie zurueckgibt) entgegen und leiten die Trends
+// direkt her — kein neuer FMP-Endpoint-Typ, nur groesseres `limit` auf den
+// bereits vorhandenen fmpIncomeStatement/fmpCashFlow/fmpBalanceSheet-Calls.
+
+export type TrendDirection = "steigend" | "stabil" | "fallend";
+
+/** Klassifiziert eine Zahlenreihe (newest-first) als steigend/stabil/fallend.
+ *  Braucht mindestens 2 Werte. Schwelle 1.5pp/Prozentpunkt-äquivalent, um
+ *  Rauschen nicht als Trend zu werten. */
+function classifyTrend(valuesNewestFirst: (number | null)[], thresholdPp = 1.0): TrendDirection | null {
+  const valid = valuesNewestFirst.filter((v): v is number => v != null && isFinite(v));
+  if (valid.length < 2) return null;
+  // Chronologisch (ältest -> neuest) fuer eine stabile Trendrichtung
+  const chrono = [...valid].reverse();
+  const first = chrono[0];
+  const last = chrono[chrono.length - 1];
+  const delta = last - first;
+  if (delta > thresholdPp) return "steigend";
+  if (delta < -thresholdPp) return "fallend";
+  return "stabil";
+}
+
+export interface StatementTrendInputs {
+  /** newest-first, wie von fmpIncomeStatement(ticker, limit>=3) geliefert. */
+  incomeRows: any[];
+  /** newest-first, wie von fmpCashFlow(ticker, limit>=3) geliefert. */
+  cashflowRows: any[];
+  /** newest-first, wie von fmpBalanceSheet(ticker, limit>=3) geliefert. */
+  balanceRows: any[];
+}
+
+export interface StatementTrendResult {
+  operatingMarginTrend: TrendDirection | null;
+  grossMarginTrend: TrendDirection | null;
+  /** Kombiniert Operating+Gross — fuer S_Delivery.marginTrend (Ticket: "Op. / Gross"). */
+  marginTrend: TrendDirection | null;
+  fcfMarginTrend: TrendDirection | null;
+  fcfMarginPct: number | null; // aktuellste Periode
+  cashConversionRatio: number | null; // OCF / Net Income, aktuellste Periode
+  workingCapitalTrend: "stabil_oder_sinkend" | "steigend_bei_wachstum" | null;
+  reinvestmentEfficiency: number | null; // Revenue-Wachstum% / ΔInvested-Capital%
+  revenueGrowthPrevYearPct: number | null; // fuer comp_up_performance_down-Vergleich
+  fcfMarginPrevYearPct: number | null;
+  flags: string[];
+}
+
+function numOrNull(v: any): number | null {
+  const n = Number(v);
+  return isFinite(n) ? n : null;
+}
+
+/**
+ * Leitet alle Statement-basierten Trend-Inputs aus den rohen FMP-Zeilen her.
+ * Reine Funktion (keine Netzwerkzugriffe) — unit-testbar mit synthetischen
+ * Fixtures. Jeder Trend, der mangels Datenpunkten nicht bestimmbar ist,
+ * bleibt null + wird in `flags` benannt (kein Fake-Trend).
+ */
+export function deriveStatementTrends(input: StatementTrendInputs): StatementTrendResult {
+  const flags: string[] = [];
+  const income = Array.isArray(input.incomeRows) ? input.incomeRows : [];
+  const cashflow = Array.isArray(input.cashflowRows) ? input.cashflowRows : [];
+  const balance = Array.isArray(input.balanceRows) ? input.balanceRows : [];
+
+  // ── Margentrends (Income Statement) ──
+  const operatingMargins = income.map(r => {
+    const rev = numOrNull(r?.revenue);
+    const opInc = numOrNull(r?.operatingIncome);
+    return rev && rev > 0 && opInc != null ? (opInc / rev) * 100 : null;
+  });
+  const grossMargins = income.map(r => {
+    const rev = numOrNull(r?.revenue);
+    const gp = numOrNull(r?.grossProfit);
+    return rev && rev > 0 && gp != null ? (gp / rev) * 100 : null;
+  });
+  const operatingMarginTrend = classifyTrend(operatingMargins);
+  const grossMarginTrend = classifyTrend(grossMargins);
+  if (operatingMarginTrend == null && grossMarginTrend == null) flags.push("Margentrend nicht bestimmbar (zu wenig Income-Statement-Historie)");
+  // Kombiniert: wenn beide vorhanden und einig -> diese Richtung; wenn nur
+  // eine vorhanden -> diese; wenn beide vorhanden aber uneinig -> stabil
+  // (konservativ, kein erfundener Konsens).
+  let marginTrend: TrendDirection | null = null;
+  if (operatingMarginTrend && grossMarginTrend) {
+    marginTrend = operatingMarginTrend === grossMarginTrend ? operatingMarginTrend : "stabil";
+  } else {
+    marginTrend = operatingMarginTrend ?? grossMarginTrend;
+  }
+
+  // ── FCF-Marge + Trend (Cash Flow + Revenue aus Income Statement) ──
+  const fcfMargins: (number | null)[] = cashflow.map((r, i) => {
+    const ocf = numOrNull(r?.operatingCashFlow ?? r?.netCashProvidedByOperatingActivities);
+    const capex = numOrNull(r?.capitalExpenditure ?? r?.capitalExpenditures);
+    const rev = numOrNull(income[i]?.revenue); // gleiche Periode, newest-first parallel
+    if (ocf == null || capex == null || !rev || rev <= 0) return null;
+    const fcf = ocf - Math.abs(capex);
+    return (fcf / rev) * 100;
+  });
+  const fcfMarginTrend = classifyTrend(fcfMargins);
+  const fcfMarginPct = fcfMargins[0] ?? null;
+  const fcfMarginPrevYearPct = fcfMargins[1] ?? null;
+  if (fcfMarginPct == null) flags.push("FCF-Marge nicht berechenbar (Cashflow- oder Revenue-Daten fehlen)");
+  else if (fcfMarginTrend == null) flags.push("FCF-Margentrend nicht bestimmbar (zu wenig Historie)");
+
+  // ── Cash Conversion (OCF / Net Income), aktuellste Periode ──
+  const ocfLatest = numOrNull(cashflow[0]?.operatingCashFlow ?? cashflow[0]?.netCashProvidedByOperatingActivities);
+  const netIncomeLatest = numOrNull(income[0]?.netIncome ?? cashflow[0]?.netIncome);
+  const cashConversionRatio = ocfLatest != null && netIncomeLatest != null && netIncomeLatest !== 0
+    ? ocfLatest / netIncomeLatest
+    : null;
+  if (cashConversionRatio == null) flags.push("Cash-Conversion (OCF/Net Income) nicht berechenbar");
+
+  // ── Working-Capital-Trend (Inventory + Receivables Days vs. Revenue-Wachstum) ──
+  // Ticket-Regel: "stabil oder sinkend" ist gut, "stark steigend bei
+  // wachsendem Umsatz" ist schlecht. Wir vergleichen die WACHSTUMSRATE von
+  // (Inventory+Receivables) gegen die Umsatzwachstumsrate ueber denselben
+  // Zeitraum — waechst WC deutlich schneller als der Umsatz, ist das ein
+  // Warnsignal (Lagerbestandsaufbau/Zahlungsverzug), nicht nur der Roh-Trend.
+  let workingCapitalTrend: "stabil_oder_sinkend" | "steigend_bei_wachstum" | null = null;
+  if (balance.length >= 2 && income.length >= 2) {
+    const wcLatest = (numOrNull(balance[0]?.inventory) ?? 0) + (numOrNull(balance[0]?.netReceivables ?? balance[0]?.accountsReceivable) ?? 0);
+    const wcPrev = (numOrNull(balance[1]?.inventory) ?? 0) + (numOrNull(balance[1]?.netReceivables ?? balance[1]?.accountsReceivable) ?? 0);
+    const revLatest = numOrNull(income[0]?.revenue);
+    const revPrev = numOrNull(income[1]?.revenue);
+    if (wcPrev > 0 && revPrev && revPrev > 0 && revLatest != null) {
+      const wcGrowthPct = ((wcLatest - wcPrev) / wcPrev) * 100;
+      const revGrowthPct = ((revLatest - revPrev) / revPrev) * 100;
+      // WC waechst > 10pp schneller als der Umsatz -> Warnsignal
+      workingCapitalTrend = wcGrowthPct - revGrowthPct > 10 ? "steigend_bei_wachstum" : "stabil_oder_sinkend";
+    }
+  }
+  if (workingCapitalTrend == null) flags.push("Working-Capital-Trend nicht bestimmbar (Inventory/Receivables-Historie fehlt)");
+
+  // ── Reinvestment-Effizienz: Revenue-Wachstum% / ΔInvested-Capital% ──
+  // Invested Capital ≈ Total Debt + Total Equity - Cash (gaengige Naeherung,
+  // konsistent mit ROIC-Definitionen). Nur berechnet, wenn beide Perioden
+  // vollstaendige Bilanzdaten haben.
+  let reinvestmentEfficiency: number | null = null;
+  if (balance.length >= 2 && income.length >= 2) {
+    const icLatest = numOrNull(balance[0]?.totalDebt) != null && numOrNull(balance[0]?.totalStockholdersEquity ?? balance[0]?.totalEquity) != null
+      ? (numOrNull(balance[0]?.totalDebt)! + numOrNull(balance[0]?.totalStockholdersEquity ?? balance[0]?.totalEquity)! - (numOrNull(balance[0]?.cashAndCashEquivalents) ?? 0))
+      : null;
+    const icPrev = numOrNull(balance[1]?.totalDebt) != null && numOrNull(balance[1]?.totalStockholdersEquity ?? balance[1]?.totalEquity) != null
+      ? (numOrNull(balance[1]?.totalDebt)! + numOrNull(balance[1]?.totalStockholdersEquity ?? balance[1]?.totalEquity)! - (numOrNull(balance[1]?.cashAndCashEquivalents) ?? 0))
+      : null;
+    const revLatest = numOrNull(income[0]?.revenue);
+    const revPrev = numOrNull(income[1]?.revenue);
+    if (icLatest != null && icPrev != null && icPrev > 0 && revLatest != null && revPrev && revPrev > 0) {
+      const revGrowthPct = ((revLatest - revPrev) / revPrev) * 100;
+      const icGrowthPct = ((icLatest - icPrev) / icPrev) * 100;
+      // Effizienz = Umsatzwachstum je Prozentpunkt Kapitalwachstum. Bei ICGrowth
+      // nahe 0 (kaum reinvestiert, aber trotzdem gewachsen) -> hohe Efficiency
+      // (Boden bei 0.1pp Nenner, um Division durch ~0 zu vermeiden).
+      reinvestmentEfficiency = revGrowthPct / (Math.max(Math.abs(icGrowthPct), 0.1) * Math.sign(icGrowthPct || 1));
+    }
+  }
+  if (reinvestmentEfficiency == null) flags.push("Reinvestment-Effizienz nicht berechenbar (Bilanz-Historie unvollständig)");
+
+  const revenueGrowthPrevYearPct = income.length >= 3 && numOrNull(income[1]?.revenue) && numOrNull(income[2]?.revenue)
+    ? (((numOrNull(income[1]?.revenue)! - numOrNull(income[2]?.revenue)!) / numOrNull(income[2]?.revenue)!) * 100)
+    : null;
+
+  return {
+    operatingMarginTrend, grossMarginTrend, marginTrend,
+    fcfMarginTrend, fcfMarginPct: fcfMarginPct != null ? +fcfMarginPct.toFixed(1) : null,
+    cashConversionRatio: cashConversionRatio != null ? +cashConversionRatio.toFixed(2) : null,
+    workingCapitalTrend,
+    reinvestmentEfficiency: reinvestmentEfficiency != null ? +reinvestmentEfficiency.toFixed(2) : null,
+    revenueGrowthPrevYearPct: revenueGrowthPrevYearPct != null ? +revenueGrowthPrevYearPct.toFixed(1) : null,
+    fcfMarginPrevYearPct: fcfMarginPrevYearPct != null ? +fcfMarginPrevYearPct.toFixed(1) : null,
+    flags,
+  };
+}
+
+/**
+ * Zaehlt, wie viele der zentralen Delivery/Capital/Credibility-Inputs
+ * tatsaechlich berechnet werden konnten (nicht null). Wird verwendet, um zu
+ * entscheiden, ob die Delivery-Berechnung "belastbar" ist (Ticket-Regel 2:
+ * schwere Verguetungs-Penalty nur bei belastbarer Delivery).
+ */
+export function countAvailableDeliveryInputs(inputs: {
+  actualRevenueGrowthPct: number | null;
+  marginTrend: TrendDirection | null;
+  epsOrFcfVsGuidancePct: number | null;
+  roicPct: number | null;
+  fcfMarginPct: number | null;
+  cashConversionRatio: number | null;
+}): { available: number; total: number; isBelastbar: boolean } {
+  const checks = [
+    inputs.actualRevenueGrowthPct,
+    inputs.marginTrend,
+    inputs.epsOrFcfVsGuidancePct,
+    inputs.roicPct,
+    inputs.fcfMarginPct,
+    inputs.cashConversionRatio,
+  ];
+  const available = checks.filter(v => v != null).length;
+  const total = checks.length;
+  // "Belastbar" = mindestens die Haelfte der zentralen Inputs vorhanden UND
+  // mindestens der Revenue-Wert (Kernkennzahl) verfuegbar — ohne echtes
+  // Revenue-Wachstum ist keine sinnvolle Delivery-Aussage moeglich.
+  const isBelastbar = available >= Math.ceil(total / 2) && inputs.actualRevenueGrowthPct != null;
+  return { available, total, isBelastbar };
+}
+
+// ============================================================
 // Orchestrierung: Rohdaten -> Teilscores -> Gesamtscore
 // ============================================================
 // Nimmt die bereits im Client vorliegenden Analyse-Daten (kein zweiter
@@ -505,7 +741,7 @@ export function computeManagementScoreBreakdown(
 // /api/regulatory-Muster: lazy, eigener Cache, kein Pflichtbestandteil von
 // /api/analyze.
 
-import { fmpExecutiveCompensation, fmpExecutiveCompensationBenchmark, fmpInsiderTrading, fmpKeyMetrics } from "./fmp";
+import { fmpExecutiveCompensation, fmpExecutiveCompensationBenchmark, fmpInsiderTrading, fmpKeyMetrics, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet } from "./fmp";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { getSectorDefaults } from "./sector-data";
 import { extractRoicPercentFromRow } from "./news-peers";
@@ -517,7 +753,7 @@ export interface ManagementScoreRequestInput {
   industry: string;
   description?: string;
   // Segment-Daten (aus bereits geladenen revenueSegments der Analyse)
-  segments: Array<{ name: string; revenue: number; percentage: number; growth?: number | null; prevRevenue?: number }>;
+  segments: Array<{ name: string; revenue: number; percentage: number; growth?: number | null; prevRevenue?: number; prevPercentage?: number }>;
   totalRevenue: number;
   totalRevenuePrevYear?: number;
   overallMarginPct?: number | null;
@@ -550,21 +786,69 @@ export interface ManagementScoreRequestInput {
   force?: boolean;
 }
 
-/** Bestimmt das "neue Segment" als das Top-3-Umsatzsegment mit dem höchsten
- *  YoY-Wachstum — Heuristik, da FMP/SEC kein explizites "ist das neu"-Flag
- *  liefern. Kein Segment mit growth=null wird berücksichtigt (kein Fake). */
-function identifyNewSegment(
+/**
+ * Segment-Heuristik v2 (Nutzer-Entscheidung 06.08.2026, nach MSFT-Live-Fund):
+ * Live-Fund: XBOX (kein Vorjahreswert in den FMP-Rohdaten, wahrscheinlich
+ * Segment-Umbenennung/Reporting-Aenderung — KEIN echtes neues Segment) wurde
+ * von der alten "Prio 1: neu aufgetaucht"-Regel faelschlich vor Server/Azure
+ * (+31.5% Wachstum, Anteil 34.9%→39%) gewählt. "Neu aufgetaucht" ist bei FMP
+ * zu fragil, um als Hauptkriterium zu dienen — degradiert zum reinen
+ * Fallback mit Mindestumsatzfilter.
+ *
+ * Neue Prioritaet (Nutzervorgabe, ersetzt die alte Reihenfolge):
+ *  1. PRIMAER: hohes YoY-Wachstum UND steigender Umsatzanteil (die eigentliche
+ *     Story) UND Anteil noch nicht dominant (<50%, verhindert dass das
+ *     ohnehin groesste Segment als "neuer Shift" gilt).
+ *  2. SEKUNDAER: sehr hohes Wachstum (>=15%) bei noch moderatem Anteil
+ *     (<35%), auch ohne perfekten Vorjahres-Anteils-Wert.
+ *  3. LETZTER AUSWEG: "neu aufgetaucht" (kein prevRevenue, kein growth) NUR
+ *     mit Mindestumsatzfilter (>=3% vom Gesamtumsatz), damit Mini-Segmente
+ *     oder reine Reporting-Artefakte nicht gewinnen. `noPriorYearFlag` wird
+ *     in diesem Fall gesetzt, damit die UI "kein Vorjahreswert — moegliche
+ *     Segment-Umbenennung" anzeigen kann statt ein hartes ΔShare zu suggerieren.
+ * Kommt keine Kandidatengruppe zustande, liefert die Funktion null und
+ * S_Segment faellt auf die dokumentierte neutrale Sonderregel (0.35).
+ */
+export function identifyNewSegment(
   segments: ManagementScoreRequestInput["segments"]
-): { name: string; sharePct: number; sharePrevPct: number | null; growthPct: number | null } | null {
+): { name: string; sharePct: number; sharePrevPct: number | null; growthPct: number | null; noPriorYearFlag?: boolean } | null {
   if (!Array.isArray(segments) || segments.length === 0) return null;
-  const topByShare = [...segments].sort((a, b) => b.percentage - a.percentage).slice(0, 3);
-  const withGrowth = topByShare.filter(s => typeof s.growth === "number" && isFinite(s.growth!));
-  if (withGrowth.length === 0) return null;
-  const candidate = withGrowth.reduce((best, s) => (s.growth! > best.growth! ? s : best));
-  const sharePrevPct = candidate.prevRevenue != null && candidate.prevRevenue > 0
-    ? null // prevRevenue ist absolut, nicht als Vorjahres-Share verfügbar ohne Vorjahres-Gesamtumsatz — konservativ null statt geschätzt
-    : null;
-  return { name: candidate.name, sharePct: candidate.percentage, sharePrevPct, growthPct: candidate.growth ?? null };
+
+  const toResult = (s: ManagementScoreRequestInput["segments"][number], noPriorYearFlag = false) => ({
+    name: s.name,
+    sharePct: s.percentage,
+    sharePrevPct: typeof (s as any).prevPercentage === "number" ? (s as any).prevPercentage : null,
+    growthPct: typeof s.growth === "number" && isFinite(s.growth) ? s.growth : null,
+    ...(noPriorYearFlag ? { noPriorYearFlag: true } : {}),
+  });
+
+  // Prio 1 (PRIMAER): Growth + steigender Anteil + noch nicht dominant (<50%).
+  const growthAndRisingShare = segments
+    .filter(s =>
+      typeof s.growth === "number" && isFinite(s.growth) && s.growth > 0 &&
+      typeof (s as any).prevPercentage === "number" &&
+      s.percentage > (s as any).prevPercentage &&
+      s.percentage < 50
+    )
+    .sort((a, b) => b.growth! - a.growth!)[0];
+  if (growthAndRisingShare) return toResult(growthAndRisingShare);
+
+  // Prio 2 (SEKUNDAER): hohes Wachstum (>=15%) UND moderater Anteil (<35%),
+  // auch ohne belastbaren Vorjahres-Anteils-Wert.
+  const highGrowthModerateShare = segments
+    .filter(s => typeof s.growth === "number" && isFinite(s.growth) && s.growth >= 15 && s.percentage < 35)
+    .sort((a, b) => b.growth! - a.growth!)[0];
+  if (highGrowthModerateShare) return toResult(highGrowthModerateShare);
+
+  // Prio 3 (LETZTER AUSWEG): neu aufgetaucht, NUR mit Mindestumsatzfilter
+  // (>=3% vom Gesamtumsatz) — verhindert, dass Mini-Segmente oder reine
+  // Reporting-Artefakte (z.B. XBOX ohne Vorjahreswert bei MSFT) gewinnen,
+  // waehrend echte kleine, aber materielle neue Sparten weiterhin erkannt
+  // werden. noPriorYearFlag=true signalisiert der UI die Unsicherheit.
+  const brandNew = segments.find(s => s.revenue > 0 && s.prevRevenue == null && s.growth == null && s.percentage >= 3);
+  if (brandNew) return toResult(brandNew, true);
+
+  return null;
 }
 
 /** Gewichtetes Durchschnittswachstum der übrigen ("alten") Segmente. */
@@ -629,6 +913,16 @@ export interface ManagementScoreResult {
     generatedAt: string;
   };
   llmModelUsed: string | null;
+  /** Auftrag 05.08.2026, Punkt 4: Transparenz ueber die Datenlage der
+   *  Delivery-Bausteine — UI zeigt einen Hinweis, wenn der Score wegen
+   *  fehlender Inputs weniger aussagekräftig ist, statt das stillschweigend
+   *  in einer niedrigen Zahl verschwinden zu lassen. */
+  deliveryDataQuality: {
+    availableInputs: number;
+    totalInputs: number;
+    isBelastbar: boolean;
+    warning: string | null;
+  };
 }
 
 /**
@@ -641,6 +935,34 @@ export async function computeManagementScoreForTicker(
   input: ManagementScoreRequestInput
 ): Promise<ManagementScoreResult> {
   const upperTicker = input.ticker.toUpperCase();
+
+  // ── 0. Datenpipeline schließen (Auftrag 05.08.2026): Mehrjahres-Statements
+  // direkt von FMP holen (limit=4 reicht für alle Trend-Klassifikationen
+  // oben) statt auf einzelne, vom Client mitgeschickte Snapshot-Werte
+  // angewiesen zu sein. Client-Werte (falls vorhanden) dienen nur noch als
+  // Fallback, wenn dieser Fetch fehlschlägt — die serverseitige Herleitung
+  // hat Vorrang, weil sie die vollständige Historie nutzt.
+  let trends: StatementTrendResult | null = null;
+  try {
+    const [incomeRows, cashflowRows, balanceRows] = await Promise.all([
+      fmpIncomeStatement(upperTicker, 4).catch(() => []),
+      fmpCashFlow(upperTicker, 4).catch(() => []),
+      fmpBalanceSheet(upperTicker, 4).catch(() => []),
+    ]);
+    trends = deriveStatementTrends({ incomeRows, cashflowRows, balanceRows });
+  } catch {
+    trends = null; // Fetch komplett fehlgeschlagen -> alle Felder unten fallen auf Client-Input/null zurück
+  }
+
+  const marginTrend = trends?.marginTrend ?? input.marginTrend ?? null;
+  const fcfMarginTrend = trends?.fcfMarginTrend ?? input.fcfMarginTrend ?? null;
+  const fcfMarginPct = trends?.fcfMarginPct ?? input.fcfMarginPct ?? null;
+  const cashConversionRatio = trends?.cashConversionRatio ?? input.cashConversionRatio ?? null;
+  const workingCapitalTrend = trends?.workingCapitalTrend ?? input.workingCapitalTrend ?? null;
+  const reinvestmentEfficiency = trends?.reinvestmentEfficiency ?? input.reinvestmentEfficiency ?? null;
+  const revenueGrowthPrevYearPct = trends?.revenueGrowthPrevYearPct ?? input.revenueGrowthPrevYearPct ?? null;
+  const fcfMarginPrevYearPct = trends?.fcfMarginPrevYearPct ?? input.fcfMarginPrevYearPct ?? null;
+  const statementFlags = trends?.flags ?? ["Mehrjahres-Statements nicht abrufbar — Trends basieren auf ggf. unvollständigen Client-Daten"];
 
   // ── 1. Segment-Score ──
   const newSeg = identifyNewSegment(input.segments);
@@ -660,19 +982,34 @@ export async function computeManagementScoreForTicker(
       oldSegmentsGrowthPct: oldGrowth,
       newSegmentMarginPct: null, // kein separates Segment-Margen-Reporting im aktuellen Datenmodell -> Trend-Fallback unten
       overallMarginPct: input.overallMarginPct ?? null,
-      marginTrend: input.overallMarginTrend ?? null,
+      marginTrend: marginTrend, // jetzt aus der echten Mehrjahres-Historie statt fast immer null
       hasIdentifiableNewSegment: true,
     };
   }
   const segment = computeSegmentScore(segmentInput);
+  if (newSeg && (newSeg as any).noPriorYearFlag) {
+    segment.flags.push(`„${newSeg.name}“ hat keinen Vorjahreswert in den FMP-Segmentdaten — mögliche Segment-Umbenennung/Reporting-Änderung statt eines echten neuen Geschäftszweigs. ΔShare entsprechend unsicher.`);
+  }
 
   // ── 2. Delivery-Score ──
   const delivery = computeDeliveryScore({
     actualRevenueGrowthPct: input.actualRevenueGrowthPct ?? null,
     guidanceRevenueGrowthPct: input.guidanceRevenueGrowthPct ?? null,
     revenueGrowthTrend: input.revenueGrowthTrend ?? null,
-    marginTrend: input.marginTrend ?? null,
+    marginTrend: marginTrend,
     epsOrFcfVsGuidancePct: input.epsOrFcfVsGuidancePct ?? null,
+  });
+
+  // Belastbarkeits-Check (Auftrag 05.08.2026, Punkt 2): zaehlt, wie viele der
+  // zentralen Delivery/Capital-Inputs tatsaechlich vorliegen. Wird unten fuer
+  // die Penalty-Abschwaechung verwendet.
+  const deliveryInputAvailability = countAvailableDeliveryInputs({
+    actualRevenueGrowthPct: input.actualRevenueGrowthPct ?? null,
+    marginTrend,
+    epsOrFcfVsGuidancePct: input.epsOrFcfVsGuidancePct ?? null,
+    roicPct: input.roicPct ?? null,
+    fcfMarginPct,
+    cashConversionRatio,
   });
 
   // ── 3. Capital-Score ── (WACC: Sektor-Default, da FMP keinen Firmen-WACC liefert)
@@ -682,16 +1019,16 @@ export async function computeManagementScoreForTicker(
     roicPct: input.roicPct ?? null,
     roic5YPct: input.roic5YPct ?? null,
     waccPct,
-    fcfMarginPct: input.fcfMarginPct ?? null,
-    fcfMarginTrend: input.fcfMarginTrend ?? null,
-    cashConversionRatio: input.cashConversionRatio ?? null,
-    reinvestmentEfficiency: input.reinvestmentEfficiency ?? null,
+    fcfMarginPct,
+    fcfMarginTrend,
+    cashConversionRatio,
+    reinvestmentEfficiency,
   });
 
   // ── 4. Credibility-Score ──
   const credibility = computeCredibilityScore({
-    cashConversionRatio: input.cashConversionRatio ?? null,
-    workingCapitalTrend: input.workingCapitalTrend ?? null,
+    cashConversionRatio,
+    workingCapitalTrend,
     accrualsLevel: input.accrualsLevel ?? null,
   });
 
@@ -755,13 +1092,14 @@ export async function computeManagementScoreForTicker(
     ceoCompTotalLatest, ceoCompTotalPrevYear, referenceCompMedian, referenceCompSource,
     deliveryPlusCapitalScore,
     revenueGrowthPct: input.actualRevenueGrowthPct ?? null,
-    revenueGrowthPrevYearPct: input.revenueGrowthPrevYearPct ?? null,
-    fcfMarginPct: input.fcfMarginPct ?? null,
-    fcfMarginPrevYearPct: input.fcfMarginPrevYearPct ?? null,
+    revenueGrowthPrevYearPct: revenueGrowthPrevYearPct,
+    fcfMarginPct,
+    fcfMarginPrevYearPct: fcfMarginPrevYearPct,
     roicPct: input.roicPct ?? null,
     roicPrevYearPct: input.roicPrevYearPct ?? roicPrevYearFromHistory,
     netInsiderTransactionValue: netInsiderValue,
     storyIsPositive: input.storyIsPositive ?? false,
+    isDeliveryBelastbar: deliveryInputAvailability.isBelastbar,
   });
 
   // Qualitative Basis (0-0.6): LLM, falls verfuegbar UND News-Headlines vorhanden;
@@ -790,6 +1128,23 @@ export async function computeManagementScoreForTicker(
 
   const breakdown = computeManagementScoreBreakdown(delivery, segment, capital, credibility, qualNews);
 
+  // Statement-Trend-Flags (Datenpipeline-Transparenz) in die Delivery-Flags
+  // einspeisen, damit sie in der UI zusammen mit den uebrigen Delivery-
+  // Hinweisen erscheinen (additiv, dedupliziert).
+  for (const f of statementFlags) {
+    if (!breakdown.delivery.flags.includes(f)) breakdown.delivery.flags.push(f);
+    if (!breakdown.allFlags.includes(f)) breakdown.allFlags.push(f);
+  }
+
+  // Auftrag 05.08.2026, Punkt 4 (UI-Transparenz): Datenlage-Hinweis, wenn
+  // viele zentrale Delivery-Inputs fehlen — Score bleibt sichtbar, aber wird
+  // explizit als weniger aussagekraeftig gekennzeichnet statt stillschweigend
+  // niedrig zu wirken.
+  let dataQualityWarning: string | null = null;
+  if (!deliveryInputAvailability.isBelastbar) {
+    dataQualityWarning = `Eingeschränkte Datenlage — nur ${deliveryInputAvailability.available}/${deliveryInputAvailability.total} zentrale Delivery-Kennzahlen berechenbar. Score weniger aussagekräftig, Vergütungs-Penalties (falls vorhanden) wurden abgeschwächt.`;
+  }
+
   return {
     breakdown,
     dataAsOf: {
@@ -800,5 +1155,11 @@ export async function computeManagementScoreForTicker(
       generatedAt: new Date().toISOString(),
     },
     llmModelUsed,
+    deliveryDataQuality: {
+      availableInputs: deliveryInputAvailability.available,
+      totalInputs: deliveryInputAvailability.total,
+      isBelastbar: deliveryInputAvailability.isBelastbar,
+      warning: dataQualityWarning,
+    },
   };
 }
