@@ -852,7 +852,7 @@ export function identifyNewSegment(
 }
 
 /** Gewichtetes Durchschnittswachstum der übrigen ("alten") Segmente. */
-function computeOldSegmentsGrowth(
+export function computeOldSegmentsGrowth(
   segments: ManagementScoreRequestInput["segments"],
   newSegmentName: string
 ): number | null {
@@ -965,7 +965,47 @@ export async function computeManagementScoreForTicker(
   const statementFlags = trends?.flags ?? ["Mehrjahres-Statements nicht abrufbar — Trends basieren auf ggf. unvollständigen Client-Daten"];
 
   // ── 1. Segment-Score ──
+  // PFLICHT-DEBUG-LOGGING (Auftrag 06.08.2026, "Segment-Matching & Management-
+  // Score hart fixen"): Root Cause des gemeldeten Bugs war NICHT die
+  // Heuristik selbst (die besteht denselben Unit-Test unveraendert), sondern
+  // dass der UI-Request-Builder (ManagementScoreSection.tsx) prevPercentage
+  // nie an /api/management-score durchreichte -> jedes Segment hatte
+  // prevPercentage=undefined -> Prio 1 konnte NIE greifen -> Heuristik fiel
+  // auf Prio 2 zurueck und waehlte "Microsoft 365 Consumer" (hohes % -Wachstum,
+  // aber winziger Anteil) statt Server/Azure. Dieses Logging macht die
+  // Matching-Kette bei jedem zukuenftigen Bruch sofort sichtbar, OHNE dass
+  // man erst raten muss, ob es an der Heuristik oder an der Durchreichung lag.
+  console.log(`[MGMT-SCORE][${upperTicker}] Roh-Segmente aktuelles FY:`, JSON.stringify(
+    input.segments.map(s => ({ name: s.name, revenue: s.revenue, percentage: s.percentage }))
+  ));
+  console.log(`[MGMT-SCORE][${upperTicker}] Roh-Segmente growth/prevRevenue/prevPercentage:`, JSON.stringify(
+    input.segments.map(s => ({ name: s.name, growth: s.growth ?? null, prevRevenue: s.prevRevenue ?? null, prevPercentage: (s as any).prevPercentage ?? null }))
+  ));
+  const segmentMatchMap: Record<string, { revenue: number; share: number; prevShare: number | null; growth: number | null }> = {};
+  for (const s of input.segments) {
+    const prevShare = typeof (s as any).prevPercentage === "number" ? (s as any).prevPercentage : null;
+    segmentMatchMap[s.name] = {
+      revenue: s.revenue, share: s.percentage, prevShare,
+      growth: typeof s.growth === "number" && isFinite(s.growth) ? s.growth : null,
+    };
+    if (prevShare === null) {
+      console.log(`[MGMT-SCORE][${upperTicker}] no_prior_year_match for \"${s.name}\" (prevPercentage fehlt)`);
+    }
+  }
+  console.log(`[MGMT-SCORE][${upperTicker}] Nach Normalisierung (Matching-Map):`, JSON.stringify(segmentMatchMap));
+
   const newSeg = identifyNewSegment(input.segments);
+  if (newSeg) {
+    const prio = (newSeg as any).noPriorYearFlag
+      ? 3
+      : (typeof newSeg.sharePrevPct === "number" && newSeg.sharePct > newSeg.sharePrevPct && newSeg.sharePct < 50 && (newSeg.growthPct ?? 0) > 0)
+        ? 1
+        : 2;
+    console.log(`[MGMT-SCORE][${upperTicker}] Gewaehltes Segment: \"${newSeg.name}\" (Prio ${prio}) — share=${newSeg.sharePct}%, prevShare=${newSeg.sharePrevPct ?? "n/a"}, growth=${newSeg.growthPct ?? "n/a"}%`);
+  } else {
+    console.log(`[MGMT-SCORE][${upperTicker}] Kein Segment identifiziert — S_Segment faellt auf neutrale Sonderregel (0.35)`);
+  }
+
   let segmentInput: SegmentScoreInput;
   if (!newSeg) {
     segmentInput = {
@@ -989,6 +1029,15 @@ export async function computeManagementScoreForTicker(
   const segment = computeSegmentScore(segmentInput);
   if (newSeg && (newSeg as any).noPriorYearFlag) {
     segment.flags.push(`„${newSeg.name}“ hat keinen Vorjahreswert in den FMP-Segmentdaten — mögliche Segment-Umbenennung/Reporting-Änderung statt eines echten neuen Geschäftszweigs. ΔShare entsprechend unsicher.`);
+  }
+  // Auftrag 06.08.2026, Punkt 1: explizites no_prior_year_match-Flag auch
+  // dann, wenn das gewaehlte Segment ueber Prio 2 (hohes Wachstum, moderater
+  // Anteil) ohne belastbaren Vorjahres-Anteil gefunden wurde — nicht nur bei
+  // Prio 3. S_Share bleibt in diesem Fall bereits durch computeSegmentScore()
+  // korrekt neutral (0.35), dieses Flag macht die Ursache nur explizit
+  // sichtbar statt implizit im n/a zu verschwinden.
+  if (newSeg && newSeg.sharePrevPct == null && !(newSeg as any).noPriorYearFlag) {
+    segment.flags.push(`no_prior_year_match: „${newSeg.name}“ hat keinen Vorjahres-Anteilswert — ΔShare bleibt neutral (0.35), kein willkürlicher Wert.`);
   }
 
   // ── 2. Delivery-Score ──

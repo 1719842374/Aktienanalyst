@@ -15,7 +15,7 @@ import {
   scoreCashConversion, scoreWorkingCapital, scoreAccruals, computeCredibilityScore,
   computeQualNewsScore, deriveStructuredNewsAdjustments,
   computeManagementScoreBreakdown,
-  deriveStatementTrends, countAvailableDeliveryInputs, identifyNewSegment,
+  deriveStatementTrends, countAvailableDeliveryInputs, identifyNewSegment, computeOldSegmentsGrowth,
 } from "../server/management-score";
 
 let failed = 0;
@@ -433,6 +433,29 @@ console.log("\n=== identifyNewSegment v2 (Nutzer-Entscheidung 06.08.2026, MSFT-L
   check("MSFT: Server/Azure gewinnt (Growth+steigender Anteil), NICHT XBOX (Reporting-Artefakt)", rMsft?.name === "Server", JSON.stringify(rMsft));
   check("MSFT: echtes ΔShare verfügbar (sharePrevPct=34.9, kein n/a mehr)", rMsft?.sharePrevPct === 34.9);
   check("MSFT: kein noPriorYearFlag (Server hat einen echten Vorjahreswert)", !(rMsft as any)?.noPriorYearFlag);
+
+  // Growth-Gap-Regressionstest: mit dem korrekt gewaehlten Server-Segment
+  // muss der Gap deutlich ueber +15pp liegen (Ticket-Erwartung: ~+17.8pp),
+  // NICHT die faelschlich niedrigen +2.7pp aus dem Bug-Report.
+  const oldGrowthMsft = computeOldSegmentsGrowth(msftSegments as any, "Server");
+  const growthGapMsft = (rMsft!.growthPct ?? 0) - (oldGrowthMsft ?? 0);
+  check("MSFT: Growth-Gap deutlich ueber +15pp (Ticket-Erwartung ~+17.8pp)", growthGapMsft > 15, `gap=${growthGapMsft.toFixed(1)}`);
+
+  // ═══ REGRESSIONSTEST: der tatsaechlich aufgetretene UI→Server-Bug ═══
+  // Root Cause (06.08.2026): ManagementScoreSection.tsx (Client) mappte
+  // prevPercentage NIE in den Request-Body — der Server-Fix aus dem
+  // vorherigen Ticket war korrekt, aber jedes Segment kam mit
+  // prevPercentage=undefined am Server an. Dieser Test reproduziert EXAKT
+  // diesen Zustand (Segmente ohne prevPercentage, wie sie der kaputte
+  // Client-Code verschickt haette) und beweist, dass die Heuristik dann auf
+  // das FALSCHE Segment (Microsoft 365 Consumer, hohes %-Wachstum aber
+  // winziger 2.8%-Anteil) zurueckfaellt — als Beleg, WARUM die Client-
+  // Durchreichung von prevPercentage zwingend erforderlich ist, nicht nur
+  // die Server-Heuristik selbst.
+  const msftSegmentsWithoutPrevPct = msftSegments.map(({ prevPercentage, ...rest }) => rest);
+  const rBuggy = identifyNewSegment(msftSegmentsWithoutPrevPct as any);
+  check("Bug-Reproduktion: OHNE prevPercentage waehlt die Heuristik NICHT Server (bestaetigt die Kritikalitaet der Durchreichung)",
+    rBuggy?.name !== "Server", JSON.stringify(rBuggy));
 
   // Prio 1 (PRIMAER): Growth + steigender Anteil + Anteil noch nicht dominant (<50%)
   const withHighGrowthRisingShare = [

@@ -133,10 +133,23 @@ export function ManagementScoreSection({ data }: Props) {
     setLoading(true);
     setError(null);
     try {
+      // BUGFIX (06.08.2026, Auftrag "Segment-Matching & Management-Score hart
+      // fixen"): prevPercentage fehlte hier komplett im Mapping — der Server-
+      // seitige Fix aus dem vorherigen Ticket (fmp.ts liefert prevPercentage
+      // korrekt) lief ins Leere, weil dieser Client-Request-Builder das Feld
+      // nie an /api/management-score durchreichte. ΔShare war deshalb IMMER
+      // n/a, unabhängig davon wie gut die Server-Logik war.
       const segments = (data.revenueSegments ?? []).map(s => ({
         name: s.name, revenue: s.revenue, percentage: s.percentage,
         growth: s.growth ?? null, prevRevenue: s.prevRevenue,
+        prevPercentage: s.prevPercentage,
       }));
+      // Pflicht-Debug-Log (Auftrag 06.08.2026): Rohsegmente vor dem Request,
+      // damit sich "warum ist ΔShare n/a" direkt aus der Browser-Konsole
+      // nachvollziehen laesst, ohne Server-Logs zu brauchen.
+      console.log(`[MGMT-SCORE] ${data.ticker}: Rohsegmente vor Request`, segments.map(s => ({
+        name: s.name, percentage: s.percentage, prevPercentage: s.prevPercentage, growth: s.growth,
+      })));
       const overallMarginPct = data.financialStatements?.incomeStatement?.operatingMargin ?? null;
       const actualRevenueGrowthPct = data.financialStatements?.incomeStatement?.revenueGrowth ?? null;
       const peerTickers = (data.peerComparison?.peers ?? []).map(p => p.ticker);
