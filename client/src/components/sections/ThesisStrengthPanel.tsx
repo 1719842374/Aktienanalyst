@@ -1,0 +1,24 @@
+import { useState } from "react";
+import { RefreshCw, AlertTriangle } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
+import type { StockAnalysis } from "../../../../shared/schema";
+
+interface Props { data: StockAnalysis }
+interface Result { finalScore:number; classificationConfidence:number; styleConfidences:Record<string,number>; blendedWeights:Record<string,number>; subScores:Record<string,number>; flags:string[]; turnaroundEvidence:{evidence:number;signals:string[]}; sectorReferences:{sector:string;peer_count:number;metrics:Record<string,{median:number|null;std:number|null}>}; growthCoverage?:{coverage:number|null;gRequired:number|null;gThesis:number|null}; }
+const color=(x:number)=>x>=.7?"text-emerald-400":x>=.45?"text-amber-400":"text-red-400";
+export function ThesisStrengthPanel({data}:Props){
+ const [result,setResult]=useState<Result|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState<string|null>(null);
+ const run=async(force=false)=>{setLoading(true);setError(null);try{const res=await apiRequest("POST","/api/thesis-strength",{ticker:data.ticker,sector:data.sector,industry:data.industry,segments:(data.revenueSegments??[]).map(s=>({name:s.name,revenue:s.revenue,percentage:s.percentage,growth:s.growth??null,prevRevenue:s.prevRevenue,prevPercentage:s.prevPercentage,fiscalYear:s.fiscalYear})),revenueGrowth:data.financialStatements?.incomeStatement?.revenueGrowth??null,fcfTTM:data.fcfTTM,impliedGStar:(data as any).impliedGStar??data.scoring?.gateInputs?.impliedGrowthPercent??null,catalysts:data.catalysts??[],force},120000);if(!res.ok){const b=await res.json().catch(()=>({}));throw new Error(b.error||`HTTP ${res.status}`)}setResult(await res.json())}catch(e:any){setError(e?.message||"Berechnung fehlgeschlagen")}finally{setLoading(false)}};
+ return <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 space-y-3">
+  <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-xs font-semibold uppercase tracking-wider">Thesis Strength Score</h3><p className="text-[10px] text-muted-foreground">Messung zukünftiger Cashflow-Treiber, separat von bestehenden Scoring-Gates.</p></div><button onClick={()=>run(!!result)} disabled={loading} className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-xs text-primary disabled:opacity-50"><RefreshCw className={`w-3 h-3 ${loading?"animate-spin":""}`}/>{loading?"Berechne …":result?"Neu berechnen":"Thesis-Score berechnen"}</button></div>
+  {error&&<p className="text-xs text-amber-400">{error}</p>}
+  {result&&<div className="space-y-3"><div className="flex items-end gap-3"><span className={`font-mono text-4xl font-bold ${color(result.finalScore/10)}`}>{result.finalScore.toFixed(1)}</span><span className="pb-1 text-xs text-muted-foreground">/ 10 · Klassifikations-Konfidenz {(result.classificationConfidence*100).toFixed(0)}%</span></div>
+   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[10px]">{Object.entries(result.styleConfidences).map(([k,v])=><div key={k} className="flex gap-2"><span className="w-24 text-muted-foreground">{k}</span><div className="h-1.5 mt-1 flex-1 rounded bg-muted overflow-hidden"><div className="h-full bg-primary" style={{width:`${v*100}%`}}/></div><span className="font-mono">{(v*100).toFixed(0)}%</span></div>)}</div>
+   <div className="grid grid-cols-5 gap-1">{Object.entries(result.subScores).map(([k,v])=><div key={k} className="rounded border border-border/40 bg-background/30 p-1.5 text-center"><div className="text-[9px] text-muted-foreground">{k} · {(result.blendedWeights[k]*100).toFixed(0)}%</div><div className={`font-mono text-sm font-semibold ${color(v)}`}>{(v*100).toFixed(0)}%</div></div>)}</div>
+   {result.growthCoverage?.coverage!=null&&<p className="text-[10px] text-muted-foreground">Growth Coverage: {result.growthCoverage.coverage.toFixed(2)}× · g erforderlich {result.growthCoverage.gRequired?.toFixed(1)}% · g Thesis {result.growthCoverage.gThesis?.toFixed(1)}%</p>}
+   {result.styleConfidences["Turnaround"]>.30&&<p className="text-[10px] text-muted-foreground">Turnaround Evidence: {(result.turnaroundEvidence.evidence*100).toFixed(0)}%{result.turnaroundEvidence.signals.length?` · ${result.turnaroundEvidence.signals.join(", ")}`:""}</p>}
+   <p className="text-[10px] text-muted-foreground">Sektor-Referenz: {result.sectorReferences.sector||"n/a"} · {result.sectorReferences.peer_count} Peers</p>
+   {result.flags.length>0&&<div className="space-y-1"><div className="flex gap-1 text-[10px] font-semibold text-amber-400"><AlertTriangle className="w-3 h-3"/>Transparenz-Hinweise</div>{result.flags.map((f,i)=><p className="border-l border-amber-500/30 pl-2 text-[10px] text-muted-foreground" key={i}>{f}</p>)}</div>}
+  </div>}
+ </div>;
+}

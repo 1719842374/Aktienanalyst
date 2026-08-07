@@ -529,6 +529,12 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         } else {
           fazitSatz = `${data.companyName} (${data.ticker}) befindet sich in einer neutralen Zone. Das Base-CRV von ${formatNumber(crvConservative, 1)}:1 wirkt zwar ${crvConservative >= 2.0 ? 'akzeptabel' : 'schwach'}, wird aber durch ${formatNumber(totalExpDmg, 1)}% Expected Damage auf risikoadjustiert ${formatNumber(raCrvCons, 1)}:1 reduziert. ${isTechWeak ? 'Technisch kein Kaufsignal.' : 'Technisch gemischte Signale.'} ${topRisks ? `Hauptrisiken: ${topRisks}.` : ''} Empfehlung: Abwarten.`;
         }
+        // Datenaktualität additiv im Fazit referenzierbar; ohne bestätigten
+        // Termin bleibt der Satz bewusst aus, statt einen Termin zu erfinden.
+        if (data.nextEarningsDate) {
+          const earningsLabel = new Date(`${data.nextEarningsDate}T12:00:00`).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' });
+          fazitSatz += ` Nächster Earnings Call: ${earningsLabel}${data.nextEarningsTime ? ` (${data.nextEarningsTime.toUpperCase()})` : ''}.`;
+        }
 
         return (
           <div className={`rounded-lg border-2 p-4 ${ratingBg}`}>

@@ -105,6 +105,7 @@ import {
   fmpRatios,
   fmpKeyMetrics,
   fmpQuote,
+  fmpEarningsCalendar,
   convertFmpRowsToUsd,
 } from "./fmp";
 import { buildScoringForAnalysis } from "./scoring-integration";
@@ -545,6 +546,46 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const technicalIndicators: TechnicalIndicators = buildTechnicalIndicators(ohlcvPoints, price);
 
       console.log(`[ANALYZE] Technical: ${ohlcvPoints.length} OHLCV pts, ${technicalIndicators.signals.length} signals, buySignal=${technicalIndicators.currentStatus.buySignal}`);
+
+      // ── 3a. Datenaktualität Section 1: Earnings + FCF-Yield ──
+      // Nur echte zukünftige Kalendertermine werden gezeigt. Fehlt FMPs Termin,
+      // bleibt das Feld null; die UI zeigt transparent "n/a" statt einer Schätzung.
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const earningsRows = await fmpEarningsCalendar(upperTicker).catch(() => []);
+      const nextEarnings = earningsRows
+        .filter((r: any) => (!r?.symbol || String(r.symbol).toUpperCase() === upperTicker) && typeof r?.date === "string" && r.date.slice(0, 10) > todayIso)
+        .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))[0] ?? null;
+      const nextEarningsDate = nextEarnings?.date ? String(nextEarnings.date).slice(0, 10) : null;
+      const nextEarningsTimeRaw = String(nextEarnings?.time ?? "").toLowerCase();
+      const nextEarningsTime = /amc|after/.test(nextEarningsTimeRaw) ? "amc"
+        : /bmo|before/.test(nextEarningsTimeRaw) ? "bmo" : undefined;
+      const nextEarningsIsEstimate = nextEarnings
+        ? Boolean(nextEarnings?.isEstimate ?? nextEarnings?.estimated ?? nextEarnings?.estimate)
+        : undefined;
+      const latestFiscalYear = String(incomeLatest?.fiscalYear ?? incomeLatest?.calendarYear ?? "").trim();
+      const latestPeriodRaw = String(incomeLatest?.period ?? "FY").trim();
+      const latestPeriod = /^fy$/i.test(latestPeriodRaw) ? "Q4" : latestPeriodRaw;
+      const lastReportedQuarter = latestFiscalYear ? `${latestPeriod} FY${latestFiscalYear}` : null;
+
+      // Definition: FCF-Yield = FCF / Market Cap. Für die Vorjahresbasis wird
+      // der historische Kurs am/kurz vor FY-Ende mit den damals gemeldeten
+      // weightedAverageShsOutDil multipliziert. Fehlt eine Komponente: n/a.
+      const fcfYield = fcfTTM > 0 && marketCap > 0 ? (fcfTTM / marketCap) * 100 : null;
+      const cfPrev = financials.cashflow[1] ?? {};
+      const incomePrev = financials.income[1] ?? {};
+      const fcfPrevOcf = parseNumber(String(cfPrev?.operatingCashFlow ?? cfPrev?.netCashProvidedByOperatingActivities ?? 0));
+      const fcfPrevCapex = Math.abs(parseNumber(String(cfPrev?.capitalExpenditure ?? cfPrev?.capitalExpenditures ?? 0)));
+      const fcfPrev = fcfPrevOcf - fcfPrevCapex;
+      const priorDate = String(incomePrev?.date ?? cfPrev?.date ?? "");
+      const priorPrice = priorDate
+        ? [...ohlcvRows].filter((r: any) => String(r?.date ?? "") <= priorDate).sort((a: any, b: any) => String(b.date).localeCompare(String(a.date)))[0]
+        : null;
+      const priorClose = parseNumber(String(priorPrice?.close ?? priorPrice?.adjClose ?? 0));
+      const priorShares = parseNumber(String(incomePrev?.weightedAverageShsOutDil ?? incomePrev?.weightedAverageShsOut ?? 0));
+      const priorMarketCap = priorClose > 0 && priorShares > 0 ? priorClose * priorShares : 0;
+      const fcfYieldPrev = fcfPrev > 0 && priorMarketCap > 0 ? (fcfPrev / priorMarketCap) * 100 : null;
+      const fcfYieldYoyPp = fcfYield != null && fcfYieldPrev != null ? +(fcfYield - fcfYieldPrev).toFixed(2) : null;
+      const fcfYieldYoyAvailable = fcfYieldYoyPp != null;
 
       // ── 4. Analyst targets ──
       const analystPTMedian = parseNumber(String(analyst.priceTarget?.targetMedian ?? analyst.priceTarget?.priceTarget ?? 0));
@@ -1363,6 +1404,13 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         beta,
         fcfTTM,
         fcfMargin,
+        nextEarningsDate,
+        ...(nextEarningsTime ? { nextEarningsTime } : {}),
+        ...(nextEarningsIsEstimate !== undefined ? { nextEarningsIsEstimate } : {}),
+        lastReportedQuarter,
+        fcfYield,
+        fcfYieldYoyPp,
+        fcfYieldYoyAvailable,
         revenue,
         ebitda,
         operatingIncome,

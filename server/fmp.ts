@@ -123,6 +123,29 @@ export async function fmpCashFlow(symbol: string, limit = 5) {
   return fmpFetch(`/cash-flow-statement`, { symbol, limit: String(limit) });
 }
 
+// Earnings-Kalender ist zeitkritisch, aber pro Symbol nur einmal täglich nötig.
+// Der Cache folgt dem bestehenden In-Memory-TTL-Muster und vermeidet zusätzliche
+// FMP-Last bei wiederholten Analysen desselben Titels.
+const earningsCalendarCache = new Map<string, { value: any[]; fetchedAt: number }>();
+const EARNINGS_CALENDAR_TTL_MS = 24 * 60 * 60 * 1000;
+export async function fmpEarningsCalendar(symbol: string): Promise<any[]> {
+  const key = symbol.toUpperCase();
+  const cached = earningsCalendarCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < EARNINGS_CALENDAR_TTL_MS) return cached.value;
+  try {
+    // Stable-Endpoint; das explizite Zeitfenster verhindert, dass FMP nur
+    // historische Zeilen zurückliefert. time enthält bei Verfügbarkeit bmo/amc.
+    const from = new Date().toISOString().slice(0, 10);
+    const until = new Date(Date.now() + 370 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const data = await fmpFetch(`/earnings-calendar`, { symbol: key, from, to: until });
+    const value = Array.isArray(data) ? data : [];
+    earningsCalendarCache.set(key, { value, fetchedAt: Date.now() });
+    return value;
+  } catch {
+    return [];
+  }
+}
+
 export async function fmpHistoricalPrices(symbol: string, from?: string, to?: string) {
   const params: Record<string, string> = { symbol };
   if (from) params.from = from;

@@ -1,0 +1,68 @@
+{
+  "MSFT": {
+    "nextEarningsDate": "2027-05-19",
+    "nextEarningsTime": null,
+    "lastReportedQuarter": "Q4 FY2026",
+    "fcfYield": 1.7894846362946648,
+    "fcfYieldYoyPp": -0.14,
+    "styleConfidences": {
+      "Fast Grower": 7.841065441775932e-10,
+      "Stalwart": 0.9986339302606523,
+      "Cyclical": 9.612907844372457e-11,
+      "Turnaround": 6.953940405259132e-13,
+      "Value/Asset": 0.0013660688584169122
+    },
+    "blendedWeights": {
+      "A": 0.14993169663064862,
+      "B": 0.10013660692988827,
+      "C": 0.24986339318769302,
+      "D": 0.3499999998480547,
+      "E": 0.15006830340371555
+    },
+    "subScores": {
+      "A": 0.375,
+      "B": 0.5,
+      "C": 0.9411368392036029,
+      "D": 0.7,
+      "E": 0.3
+    },
+    "finalScore": 6.31,
+    "flags": [
+      "keine RPO/Backlog-Daten verfügbar",
+      "External Capital Support: noch nicht datengetrieben (Fiscal/Private Commitments fehlen)"
+    ]
+  },
+  "TSLA": {
+    "nextEarningsDate": "2027-05-19",
+    "nextEarningsTime": null,
+    "lastReportedQuarter": "Q4 FY2025",
+    "fcfYield": 0.4858741857283212,
+    "fcfYieldYoyPp": 0.23,
+    "styleConfidences": {
+      "Fast Grower": 0.9902543627727907,
+      "Stalwart": 1.0725105025495014e-16,
+      "Cyclical": 0.009745637227209027,
+      "Turnaround": 2.7461634749318804e-27,
+      "Value/Asset": 3.949076826466887e-20
+    },
+    "blendedWeights": {
+      "A": 0.2485381544159186,
+      "B": 0.14999999999999994,
+      "C": 0.3485381544159185,
+      "D": 0.15243640930680222,
+      "E": 0.10048728186136044
+    },
+    "subScores": {
+      "A": 0.375,
+      "B": 0.5,
+      "C": 0.15,
+      "D": 0.7,
+      "E": 0.3
+    },
+    "finalScore": 3.56,
+    "flags": [
+      "keine RPO/Backlog-Daten verfügbar",
+      "External Capital Support: noch nicht datengetrieben (Fiscal/Private Commitments fehlen)"
+    ]
+  }
+}

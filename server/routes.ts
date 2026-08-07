@@ -76,9 +76,12 @@ export {
 import { registerAnalyzeRoute } from "./analyze-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { fetchMinerData } from "./btc-miner";
-import { fmpSearchTicker } from "./fmp";
+import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpPeers } from "./fmp";
 import { assessRegulatoryExposure } from "./regulatory";
 import { computeManagementScoreForTicker } from "./management-score";
+import { deriveStatementTrends, identifyNewSegment, computeOldSegmentsGrowth } from "./management-score";
+import { computeThesisStrength, relativeZ } from "./thesis-strength";
+import { filterAndSelectPeers } from "./news-peers";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
 import { registerRegressionScanRoutes } from "./regression-scan";
@@ -278,5 +281,64 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       console.error("[POST /api/management-score]", err?.message?.substring(0, 200));
       res.status(500).json({ error: err?.message || "Internal error" });
     }
+  });
+
+  // 9. POST /api/thesis-strength — lazy, 24h-cached, damit die umfangreiche
+  // sektorrelative Einordnung nicht jede Standardanalyse verteuert.
+  const _thesisStrengthCache = new Map<string, { data: any; time: number }>();
+  const THESIS_STRENGTH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  app.post("/api/thesis-strength", async (req, res) => {
+    try {
+      const b = req.body ?? {};
+      if (!b.ticker || typeof b.ticker !== "string") return res.status(400).json({ error: "ticker fehlt" });
+      if (!Array.isArray(b.segments)) return res.status(400).json({ error: "Kontext unvollständig (segments)" });
+      const ticker = String(b.ticker).toUpperCase();
+      const cached = _thesisStrengthCache.get(ticker);
+      if (!b.force && cached && Date.now() - cached.time < THESIS_STRENGTH_CACHE_TTL_MS) return res.json(cached.data);
+
+      const [incomeRows, cashflowRows, balanceRows, rawPeers] = await Promise.all([
+        fmpIncomeStatement(ticker, 5).catch(() => []), fmpCashFlow(ticker, 5).catch(() => []),
+        fmpBalanceSheet(ticker, 5).catch(() => []), fmpPeers(ticker).catch(() => []),
+      ]);
+      const trends = deriveStatementTrends({ incomeRows, cashflowRows, balanceRows });
+      const number = (v: any): number | null => { const n = Number(v); return isFinite(n) ? n : null; };
+      const revenue = (r: any) => number(r?.revenue);
+      const oldest = incomeRows[incomeRows.length - 1]; const newest = incomeRows[0];
+      const revNow = revenue(newest), revOld = revenue(oldest);
+      const years = Math.max(1, incomeRows.length - 1);
+      const revenueCagr3to5y = revNow && revOld && revNow > 0 && revOld > 0 && incomeRows.length >= 3 ? (Math.pow(revNow / revOld, 1 / years) - 1) * 100 : null;
+      const netIncomeChrono = incomeRows.slice().reverse().map((r: any) => number(r?.netIncome)).filter((x: any) => x != null) as number[];
+      const earningsGrowth = netIncomeChrono.slice(1).map((x, i) => netIncomeChrono[i] !== 0 ? ((x - netIncomeChrono[i]) / Math.abs(netIncomeChrono[i])) * 100 : null).filter((x): x is number => x != null);
+      const mean = earningsGrowth.length ? earningsGrowth.reduce((a, x) => a + x, 0) / earningsGrowth.length : null;
+      const earningsVolatility = mean != null && earningsGrowth.length >= 2 ? Math.sqrt(earningsGrowth.reduce((a, x) => a + Math.pow(x - mean!, 2), 0) / earningsGrowth.length) : null;
+      const fcfMarginTrend = trends.fcfMarginTrend === "steigend" ? 1 : trends.fcfMarginTrend === "fallend" ? -1 : trends.fcfMarginTrend === "stabil" ? 0 : null;
+      const leverageValues = balanceRows.map((r: any, i: number) => { const debt=number(r?.totalDebt), cash=number(r?.cashAndCashEquivalents), ebitda=number(incomeRows[i]?.ebitda); return debt != null && cash != null && ebitda && ebitda > 0 ? (debt-cash)/ebitda : null; }).filter((x: any) => x != null) as number[];
+      const leverageTrend = leverageValues.length >= 2 ? (leverageValues[0] < leverageValues[leverageValues.length-1] ? 1 : leverageValues[0] > leverageValues[leverageValues.length-1] ? -1 : 0) : null;
+      const opMargins = incomeRows.map((r: any) => { const rv=revenue(r), op=number(r?.operatingIncome); return rv && op != null ? op/rv*100 : null; }).filter((x: any) => x != null) as number[];
+      const marginInflectionStrength = opMargins.length >= 3 ? Math.abs((opMargins[0]-opMargins[1])-(opMargins[1]-opMargins[2])) : null;
+      const realizedGrowth = b.revenueGrowth != null ? Number(b.revenueGrowth) : (revNow && revenue(incomeRows[1]) ? (revNow/revenue(incomeRows[1])!-1)*100 : null);
+      const gStar = number(b.impliedGStar);
+      const missingFeatures: string[] = [];
+      const vectorFields: Array<[string, number | null]> = [["revenueCagr3to5y",revenueCagr3to5y],["earningsVolatility",earningsVolatility],["fcfMarginTrend",fcfMarginTrend],["leverageTrend",leverageTrend],["marginInflectionStrength",marginInflectionStrength],["growthGap",gStar != null && realizedGrowth != null ? gStar-realizedGrowth : null]];
+      vectorFields.forEach(([name,value])=>{if(value==null)missingFeatures.push(name);});
+      const rawPeerTickers = Array.isArray(rawPeers) ? rawPeers.map((p:any)=>String(p?.symbol ?? p ?? "")).filter(Boolean) : [];
+      const peers = await filterAndSelectPeers(ticker, String(b.sector ?? ""), String(b.industry ?? ""), rawPeerTickers, 5).catch(()=>[]);
+      const peerStatements = await Promise.all(peers.map(async p => {
+        const [i,c,bs] = await Promise.all([fmpIncomeStatement(p,3).catch(()=>[]),fmpCashFlow(p,3).catch(()=>[]),fmpBalanceSheet(p,3).catch(()=>[])]);
+        const it=deriveStatementTrends({incomeRows:i,cashflowRows:c,balanceRows:bs}); const r0=number(i[0]?.revenue),r1=number(i[1]?.revenue);
+        const inv=number(bs[0]?.inventory), fcfM=it.fcfMarginPct, grow=r0&&r1?(r0/r1-1):null, op=r0&&number(i[0]?.operatingIncome)!=null?number(i[0]?.operatingIncome)!/r0:null;
+        return { inventory_yoy: inv&&number(bs[1]?.inventory)?inv/number(bs[1]?.inventory)!-1:null, revenue_yoy:grow, op_margin_delta:op, fcf_margin:fcfM, capex_revenue:r0&&number(c[0]?.capitalExpenditure)!=null?Math.abs(number(c[0]?.capitalExpenditure)!)/r0:null, net_debt_ebitda:null, earnings_volatility:null };
+      }));
+      const metric = (key:string) => { const xs=peerStatements.map((x:any)=>x[key]).filter((x:any)=>typeof x==="number"&&isFinite(x)) as number[]; const med=xs.length?[...xs].sort((a,b)=>a-b)[Math.floor(xs.length/2)]:null; const avg=xs.length?xs.reduce((a,x)=>a+x,0)/xs.length:0; const std=xs.length?Math.sqrt(xs.reduce((a,x)=>a+Math.pow(x-avg,2),0)/xs.length):null; return {median:med,std}; };
+      const sectorReferences = { sector:String(b.sector??""), as_of:new Date().toISOString(), metrics:{inventory_yoy:metric("inventory_yoy"),revenue_yoy:metric("revenue_yoy"),op_margin_delta:metric("op_margin_delta"),fcf_margin:metric("fcf_margin"),capex_revenue:metric("capex_revenue"),net_debt_ebitda:metric("net_debt_ebitda"),earnings_volatility:metric("earnings_volatility"),working_capital:metric("working_capital"),cash_conversion:metric("cash_conversion")}, peer_count:peers.length };
+      const sectorFlag = peers.length < 5 ? ["Sektor-Referenz nicht belastbar (<5 Peers)"] : [];
+      const invNow=number(balanceRows[0]?.inventory), invPrev=number(balanceRows[1]?.inventory);
+      const invYoy=invNow&&invPrev?invNow/invPrev-1:null;
+      const newSeg=identifyNewSegment(b.segments); const oldGrowth=newSeg?computeOldSegmentsGrowth(b.segments,newSeg.name):null;
+      const thesisGrowth=newSeg?.growthPct != null && oldGrowth != null ? (newSeg.sharePct/100)*newSeg.growthPct+(1-newSeg.sharePct/100)*oldGrowth : null;
+      const result=computeThesisStrength({vector:{revenueCagr3to5y,earningsVolatility,fcfMarginTrend,leverageTrend,marginInflectionStrength,growthGap:gStar!=null&&realizedGrowth!=null?gStar-realizedGrowth:null,missingFeatures},fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth),sectorGrowthMedian:sectorReferences.metrics.revenue_yoy.median != null ? sectorReferences.metrics.revenue_yoy.median*100:null,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,balance:{inventoryZ:relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std),growthZ:relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std),marginZ:relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std),marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
+      const response={...result,sectorReferences,flags:[...result.flags,...sectorFlag],generatedAt:new Date().toISOString()};
+      _thesisStrengthCache.set(ticker,{data:response,time:Date.now()}); res.json(response);
+    } catch(err:any){ console.error("[POST /api/thesis-strength]",err?.message?.substring(0,200)); res.status(500).json({error:err?.message||"Internal error"}); }
   });
 }

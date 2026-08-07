@@ -2,6 +2,7 @@ import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
 import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock } from "lucide-react";
+import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 
 interface Props { data: StockAnalysis; onRefresh?: () => void }
 
@@ -123,6 +124,28 @@ export function Section1({ data, onRefresh }: Props) {
         <KPI label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
       </div>
 
+      {/* Termin- und Cashflow-Daten: nur echte FMP-Werte, n/a statt Schätzung. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-2.5 text-xs">
+        <div>
+          <span className="text-muted-foreground">Nächster Earnings Call: </span>
+          {data.nextEarningsDate ? (
+            <span className="font-medium">{new Date(`${data.nextEarningsDate}T12:00:00`).toLocaleDateString("de-DE", { day: "numeric", month: "short", year: "numeric" })}{data.nextEarningsTime ? ` (${data.nextEarningsTime.toUpperCase()})` : ""}{data.nextEarningsIsEstimate ? " · geschätzt" : ""}</span>
+          ) : <span className="text-muted-foreground">n/a</span>}
+          {!data.nextEarningsDate && <p className="text-[10px] text-amber-400 mt-0.5">Kein bestätigter Earnings-Termin verfügbar</p>}
+          <p className="text-[10px] text-muted-foreground mt-0.5">Zuletzt berichtet: {data.lastReportedQuarter ?? "n/a"}</p>
+        </div>
+        <div>
+          <span className="text-muted-foreground">FCF Yield: </span>
+          <span className="font-mono font-medium">{data.fcfYield != null ? `${data.fcfYield.toFixed(1)}%` : "n/a"}</span>
+          {data.fcfYieldYoyAvailable && data.fcfYieldYoyPp != null && (
+            <span className={`ml-1.5 font-mono ${Math.abs(data.fcfYieldYoyPp) < 0.05 ? "text-muted-foreground" : data.fcfYieldYoyPp > 0 ? "text-emerald-400" : "text-red-400"}`}>
+              (YoY {data.fcfYieldYoyPp > 0 ? "+" : ""}{data.fcfYieldYoyPp.toFixed(1)} pp)
+            </span>
+          )}
+          {!data.fcfYieldYoyAvailable && <span className="ml-1.5 text-muted-foreground">(YoY n/a)</span>}
+        </div>
+      </div>
+
       {/* EPS Table */}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -202,6 +225,8 @@ export function Section1({ data, onRefresh }: Props) {
           </table>
         </div>
       </div>
+
+      <ThesisStrengthPanel data={data} />
     </SectionCard>
   );
 }

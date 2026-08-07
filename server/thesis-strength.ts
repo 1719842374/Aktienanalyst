@@ -1,0 +1,72 @@
+/**
+ * Thesis-Strength-Score — rein funktionales Modul.
+ * Fehlende Daten erhalten neutrale Werte und transparente Flags; sie werden
+ * niemals als Nullsignal oder erfundene Kennzahl interpretiert.
+ */
+export type ThesisStyle = "Fast Grower" | "Stalwart" | "Cyclical" | "Turnaround" | "Value/Asset";
+export type Weights = { A: number; B: number; C: number; D: number; E: number };
+export const STYLE_PROTOTYPES: Record<ThesisStyle, number[]> = {
+  "Fast Grower": [0.8, 0.5, 0.7, 0.5, 0.3, 0.8],
+  "Stalwart": [0.4, 0.2, 0.6, 0.5, 0.2, 0.3],
+  "Cyclical": [0.5, 0.8, 0.4, 0.5, 0.5, 0.5],
+  "Turnaround": [0.3, 0.7, 0.5, 0.7, 0.9, 0.2],
+  "Value/Asset": [0.2, 0.5, 0.5, 0.6, 0.4, 0.2],
+};
+export const NEUTRAL_WEIGHTS: Weights = { A: .20, B: .15, C: .30, D: .25, E: .10 };
+export const STYLE_WEIGHTS: Record<ThesisStyle, Weights> = {
+  "Fast Grower": { A:.25,B:.15,C:.35,D:.15,E:.10 }, "Stalwart": { A:.15,B:.10,C:.25,D:.35,E:.15 },
+  "Cyclical": { A:.10,B:.15,C:.20,D:.40,E:.15 }, "Turnaround": { A:.10,B:.15,C:.15,D:.45,E:.15 },
+  "Value/Asset": { A:.10,B:.20,C:.15,D:.35,E:.20 },
+};
+export interface CompanyVector { revenueCagr3to5y:number|null; earningsVolatility:number|null; fcfMarginTrend:number|null; leverageTrend:number|null; marginInflectionStrength:number|null; growthGap:number|null; missingFeatures?:string[] }
+export const clamp01=(v:number)=>Math.max(0,Math.min(1,v));
+const finite=(v:any):v is number=>typeof v==='number'&&isFinite(v);
+// Normierung: Wachstumswerte werden bei 0..30% bzw. 0..100pp gedeckelt,
+// Trends [-1,1] linear abgebildet. So liegen Vektor und Prototypen [0,1].
+export function normalizeCompanyVector(v:CompanyVector): number[] { return [
+  finite(v.revenueCagr3to5y)?clamp01(v.revenueCagr3to5y/30):0,
+  finite(v.earningsVolatility)?clamp01(v.earningsVolatility/100):0,
+  finite(v.fcfMarginTrend)?clamp01((v.fcfMarginTrend+1)/2):0,
+  finite(v.leverageTrend)?clamp01((v.leverageTrend+1)/2):0,
+  finite(v.marginInflectionStrength)?clamp01(v.marginInflectionStrength/10):0,
+  finite(v.growthGap)?clamp01((v.growthGap+20)/60):0,
+]; }
+export function computeStyleConfidences(v:CompanyVector):Record<ThesisStyle,number>{
+ const x=normalizeCompanyVector(v); const sims=(Object.keys(STYLE_PROTOTYPES) as ThesisStyle[]).map(s=>{const p=STYLE_PROTOTYPES[s];const den=Math.sqrt(x.reduce((a,n)=>a+n*n,0))*Math.sqrt(p.reduce((a,n)=>a+n*n,0));return den>0?Math.max(0,x.reduce((a,n,i)=>a+n*p[i],0)/den):0;});
+ // Robuste Softmax-Normalisierung, auch beim leeren/gleichen Vektor gleichverteilt.
+ // Cosine-Similarities der positiven Referenzvektoren liegen naturgemäß eng
+ // beieinander. Die Temperatur 250 trennt echte Nähe robust, ohne eine harte
+ // if/else-Klassifikation einzuführen; bei gleichen Similarities bleibt die
+ // Verteilung weiterhin exakt gleichmäßig.
+ const ex=sims.map(s=>Math.exp(s*250)); const sum=ex.reduce((a,b)=>a+b,0)||1; const out={} as Record<ThesisStyle,number>; (Object.keys(STYLE_PROTOTYPES) as ThesisStyle[]).forEach((s,i)=>out[s]=ex[i]/sum); return out;
+}
+export function blendWeights(c:Record<ThesisStyle,number>):Weights { const max=Math.max(...Object.values(c)); if(max<.35)return {...NEUTRAL_WEIGHTS}; const out:Weights={A:0,B:0,C:0,D:0,E:0}; (Object.keys(STYLE_WEIGHTS)as ThesisStyle[]).forEach(s=>{(Object.keys(out)as (keyof Weights)[]).forEach(k=>out[k]+= (c[s]||0)*STYLE_WEIGHTS[s][k]);}); return out; }
+export function relativeZ(value:number|null,median:number|null,std:number|null):number { return finite(value)&&finite(median)&&finite(std)&&std>=1e-6?(value-median)/std:0; }
+export function scoreContractual(backlogAvailable:boolean):{score:number;flags:string[]}{return backlogAvailable?{score:.65,flags:[]}:{score:.375,flags:["keine RPO/Backlog-Daten verfügbar"]};}
+export function scoreExternal():{score:number;flags:string[]}{return{score:.5,flags:["External Capital Support: noch nicht datengetrieben (Fiscal/Private Commitments fehlen)"]};}
+export function scoreGrowthCoverage(input:{fcf:number|null;gStar:number|null;thesisGrowth:number|null;consensusGrowth?:number|null;sectorGrowthMedian?:number|null}):{score:number;coverage:number|null;gRequired:number|null;gThesis:number|null;flags:string[]}{
+ const flags:string[]=[]; if(!finite(input.fcf)||input.fcf<=0||!finite(input.gStar)||input.gStar< -20||input.gStar>100){return{score:.40,coverage:null,gRequired:null,gThesis:null,flags:["Reverse-DCF nicht interpretierbar"]};}
+ const candidates=[input.gStar,input.consensusGrowth,input.sectorGrowthMedian,3].filter(finite) as number[]; const gRequired=Math.max(...candidates); if(!finite(input.thesisGrowth)){return{score:.35,coverage:null,gRequired,gThesis:null,flags:["Thesis-Wachstum nicht berechenbar — neutraler Teilscore"]};}
+ // Harte Guard-Regel: g_thesis darf 1,5× g_required niemals überschreiten.
+ const gThesis=Math.min(input.thesisGrowth,1.5*gRequired); const cov=gThesis/gRequired; let score:number;
+ if(cov>=1.25)score=.90+clamp01((cov-1.25)/.5)*.10; else if(cov>=1)score=.70+((cov-1)/.25)*.15; else if(cov>=.7)score=.45+((cov-.7)/.3)*.20; else score=.15+clamp01(cov/.7)*.20;
+ return{score:clamp01(score),coverage:cov,gRequired,gThesis,flags};
+}
+export interface TurnaroundSeries { margins?:number[]; fcfMargins?:number[]; workingCapital?:number[]; inventorySales?:number[]; leverage?:number[]; cashConversion?:number[]; capexRevenue?:number[]; revenue?:number[] }
+export function computeTurnaroundEvidence(s:TurnaroundSeries):{evidence:number;signals:string[]}{ const hits:{name:string;weight:number}[]=[]; const asc=(a?:number[],n=2)=>!!a&&a.length>=n+1&&a.slice(-n).every((x,i)=>x>a![a!.length-n-1+i]);
+ if(s.margins&&s.margins.length>=4&&Math.min(...s.margins.slice(0,-2))===s.margins[0]&&asc(s.margins,2))hits.push({name:"Margin Trough",weight:.25});
+ if(s.fcfMargins&&s.fcfMargins.length>=3&&s.fcfMargins[0]<=0&&asc(s.fcfMargins,2))hits.push({name:"FCF Inflection",weight:.25});
+ if(s.workingCapital&&asc(s.workingCapital.map(x=>-x),2))hits.push({name:"Working Capital Release",weight:.12});
+ if(s.inventorySales&&asc(s.inventorySales.map(x=>-x),2))hits.push({name:"Inventory Normalization",weight:.12});
+ if(s.leverage&&asc(s.leverage.map(x=>-x),2))hits.push({name:"Leverage Improvement",weight:.12});
+ if(s.cashConversion&&s.cashConversion.length>=3&&s.cashConversion[0]<.6&&s.cashConversion[s.cashConversion.length-1]>.8&&asc(s.cashConversion,2))hits.push({name:"Cash Conversion Improvement",weight:.25});
+ if(s.capexRevenue&&s.revenue&&asc(s.capexRevenue.map(x=>-x),2)&&asc(s.revenue,2))hits.push({name:"CapEx Peak vorbei",weight:.12});
+ let evidence=clamp01(hits.reduce((a,h)=>a+h.weight,0)); if(hits.length===1)evidence=Math.min(.20,evidence); return{evidence,signals:hits.map(h=>h.name)}; }
+export function scoreBalanceSheet(input:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number;workingCapitalZ?:number;cashConversionZ?:number;capexAlignmentZ?:number;turnaroundConfidence:number;turnaroundEvidence:number}):{score:number;normalScore:number;flags:string[]}{let s=.70; const flags:string[]=[]; // Harte Regel 6: Diese Signale gelten ausschließlich innerhalb des eigenständigen S_D und verändern keine bestehenden Scoring-Gates.
+ if(input.inventoryZ>1.2&&input.growthZ<0){s-=.15;flags.push("Inventory sektorrelativ erhöht bei schwachem Wachstum");} if(input.marginZ>1&&input.marginPositivePeriods>=2){s+=.10;flags.push("Marge sektorrelativ über mehrere Perioden positiv");} if((input.workingCapitalZ??0)>1){s-=.05;flags.push("Working Capital sektorrelativ belastend");} if((input.cashConversionZ??0)>1){s+=.05;flags.push("Cash Conversion sektorrelativ positiv");} if((input.capexAlignmentZ??0)<-1){s-=.05;flags.push("CapEx-Quote sektorrelativ belastend");} s=clamp01(s); let final=s;
+ // Harte Guard-Regel: TurnaroundEvidence <0,35 bewirkt keinen D-Boost.
+ if(input.turnaroundConfidence>.30){if(input.turnaroundEvidence>=.60)final=.60*s+.40*input.turnaroundEvidence;else if(input.turnaroundEvidence>=.35)final=.85*s+.15*input.turnaroundEvidence;}
+ return{score:clamp01(final),normalScore:s,flags};}
+export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:string;tags?:string[]}>|null|undefined,segmentName?:string|null):{score:number;flags:string[]}{if(!catalysts?.length)return{score:.35,flags:["Keine Katalysatoren verfügbar — neutraler Teilscore"]}; const seg=(segmentName||"").toLowerCase();let num=0,den=0;for(const c of catalysts){const text=`${c.name||""} ${c.context||""}`;const quantified=/\d[\d.,]*\s*(%|mrd|mio|\$|€|usd|eur|gw|mw)/i.test(text);const specific=!!seg&&(text.toLowerCase().includes(seg)||c.tags?.some(t=>t.toLowerCase().includes(seg)));const w=(specific&&quantified)?1:quantified?.3:.3; num+=w;den+=1;}return{score:clamp01(num/Math.max(1,den)),flags:[]};}
+export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[]}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; }
+export function computeThesisStrength(input:ThesisStrengthInput){const flags=[...(input.vector.missingFeatures||[]).map(x=>`Merkmal fehlt: ${x}`)];const c=computeStyleConfidences(input.vector);const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.backlogAvailable);const b=scoreExternal();const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+(raw*(.55+.45*conf)).toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf};}

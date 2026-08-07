@@ -411,6 +411,15 @@ export interface StockAnalysis {
   beta5Y: number;
   fcfTTM: number;
   fcfMargin: number;
+  /** Datenaktualität Section 1: nächster bestätigter FMP-Earnings-Termin. */
+  nextEarningsDate?: string | null;
+  nextEarningsTime?: string;
+  nextEarningsIsEstimate?: boolean;
+  lastReportedQuarter?: string | null;
+  /** FCF-Yield nach derselben FCF-TTM/Market-Cap-Definition wie Section 1. */
+  fcfYield?: number | null;
+  fcfYieldYoyPp?: number | null;
+  fcfYieldYoyAvailable?: boolean;
   revenue: number;
   ebitda: number;
   operatingIncome: number;
