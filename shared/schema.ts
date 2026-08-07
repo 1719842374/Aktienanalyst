@@ -420,6 +420,8 @@ export interface StockAnalysis {
   fcfYield?: number | null;
   fcfYieldYoyPp?: number | null;
   fcfYieldYoyAvailable?: boolean;
+  fcfMarginYoyPp?: number | null;
+  fcfMarginYoyAvailable?: boolean;
   revenue: number;
   ebitda: number;
   operatingIncome: number;

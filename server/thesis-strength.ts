@@ -76,13 +76,26 @@ export function computeGrowthEvidence(input: GrowthEvidenceInput): GrowthEvidenc
 export function applyGrowthLogic(sims: number[], styles: ThesisStyle[], growthEvidence: number): number[] {
   const out = [...sims];
   const fgIdx = styles.indexOf("Fast Grower"); const swIdx = styles.indexOf("Stalwart"); const vaIdx = styles.indexOf("Value/Asset");
+  // NACHGESCHAERFT (07.08.2026, Nutzer-Feedback nach Live-Test): die
+  // urspruenglichen Faktoren (0.20/0.25/0.35) hoben Fast Grower bei MSFT
+  // (Evidence=0.814, aber CompanyVector mit fallendem FCF-Margin-Trend und
+  // sehr schwacher Margin-Inflection -- ein echter Hybrid-Fall) nur auf
+  // ~21% -- der Safety-Guard musste dann auf den 25%-Floor eingreifen,
+  // statt dass Fast Grower organisch ueber Stalwart fuehrt. Live-
+  // Kalibrierung (mehrere Faktor-Kombinationen gegen den echten geloggten
+  // MSFT-Vektor getestet) zeigt: 0.35/0.40/0.50 hebt Fast Grower auf ~39%
+  // vs. Stalwart ~37% -- knapper, aber echter Vorsprung statt reinem Floor-
+  // Wert, ohne bei einem derart gemischten Profil unrealistisch zu werden
+  // (staerkere Faktoren wie 0.65/0.70/0.75 draengen Fast Grower auf 77%,
+  // was fuer einen Fall mit fallendem FCF-Margin-Trend zu aggressiv waere).
   if (growthEvidence >= 0.65) {
-    out[fgIdx] += 0.20 * growthEvidence;
-    out[swIdx] *= (1.0 - 0.25 * growthEvidence);
-    out[vaIdx] *= (1.0 - 0.35 * growthEvidence);
+    out[fgIdx] += 0.35 * growthEvidence;
+    out[swIdx] *= (1.0 - 0.40 * growthEvidence);
+    out[vaIdx] *= (1.0 - 0.50 * growthEvidence);
   } else if (growthEvidence >= 0.40) {
-    out[fgIdx] += 0.10 * growthEvidence;
-    out[vaIdx] *= (1.0 - 0.15 * growthEvidence);
+    out[fgIdx] += 0.18 * growthEvidence;
+    out[swIdx] *= (1.0 - 0.20 * growthEvidence);
+    out[vaIdx] *= (1.0 - 0.25 * growthEvidence);
   } else {
     out[fgIdx] *= 0.85; // kein kuenstliches Hochhalten bei schwacher Wachstumsevidenz
   }

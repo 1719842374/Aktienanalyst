@@ -587,6 +587,16 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const fcfYieldYoyPp = fcfYield != null && fcfYieldPrev != null ? +(fcfYield - fcfYieldPrev).toFixed(2) : null;
       const fcfYieldYoyAvailable = fcfYieldYoyPp != null;
 
+      // Auftrag 07.08.2026 ("FCF Margin YoY"): analog zur bereits vorhandenen
+      // FCF-Yield-YoY-Berechnung, aber einfacher -- keine Marktkapitalisierungs-
+      // Historie noetig, nur FCF und Revenue der Vorperiode (beide bereits
+      // oben fuer fcfYieldPrev berechnet bzw. verfuegbar: fcfPrev, incomePrev).
+      // Fehlt eine Komponente: n/a, kein Fake-Wert.
+      const revenuePrev = parseNumber(String(incomePrev?.revenue ?? 0));
+      const fcfMarginPrevYearPct = fcfPrev > 0 && revenuePrev > 0 ? (fcfPrev / revenuePrev) * 100 : null;
+      const fcfMarginYoyPp = fcfMargin != null && fcfMarginPrevYearPct != null ? +(fcfMargin - fcfMarginPrevYearPct).toFixed(2) : null;
+      const fcfMarginYoyAvailable = fcfMarginYoyPp != null;
+
       // ── 4. Analyst targets ──
       const analystPTMedian = parseNumber(String(analyst.priceTarget?.targetMedian ?? analyst.priceTarget?.priceTarget ?? 0));
       const analystPTHigh = parseNumber(String(analyst.priceTarget?.targetHigh ?? 0));
@@ -1411,6 +1421,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         fcfYield,
         fcfYieldYoyPp,
         fcfYieldYoyAvailable,
+        fcfMarginYoyPp,
+        fcfMarginYoyAvailable,
         revenue,
         ebitda,
         operatingIncome,

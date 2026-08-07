@@ -87,4 +87,18 @@ check("apply_growth_logic bei hoher Evidence (>=0.65): Stalwart und Value/Asset 
 const grownLow=applyGrowthLogic(simsBase,styles,.20);
 check("apply_growth_logic bei niedriger Evidence (<0.40): Fast Grower wird gedaempft, nicht kuenstlich hochgehalten",grownLow[0]<simsBase[0]);
 
+// REGRESSIONSTEST (07.08.2026, Nutzer-Feedback "Growth-Logic zu schwach"):
+// mit den EXAKT geloggten echten MSFT-Werten (fallender FCF-Margin-Trend,
+// sehr schwache Margin-Inflection -- ein echter Hybrid-Fall, kein idealer
+// Fast-Grower-Vektor) musste Fast Grower vor der Nachschaerfung durch den
+// Safety-Guard auf den 25%-Floor angehoben werden (organisch nur ~21%).
+// Nach der Nachschaerfung muss Fast Grower OHNE Guard-Eingriff bereits
+// klar ueber Stalwart liegen.
+const realMsftVector={revenueCagr3to5y:13.741147353015858,earningsVolatility:11.595005818732501,fcfMarginTrend:-1,leverageTrend:1,marginInflectionStrength:0.18120550048123363,growthGap:-10.53181217626079};
+const realEvidence=0.8142294581589679;
+const confRealMsft=computeStyleConfidences(realMsftVector as any,"fast_grower",realEvidence);
+check("Echter MSFT-Vektor: Fast Grower fuehrt organisch vor Stalwart (kein reiner Floor-Wert)",confRealMsft["Fast Grower"]>confRealMsft["Stalwart"],JSON.stringify(confRealMsft));
+const guardedRealMsft=applyFastGrowerSafetyGuard(confRealMsft,realEvidence,3.62,31.5);
+check("Echter MSFT-Vektor: Safety-Guard greift nicht mehr ein (Fast Grower bereits >25% organisch)",Math.abs(guardedRealMsft["Fast Grower"]-confRealMsft["Fast Grower"])<1e-9);
+
 console.log(`\n${total-failed}/${total} Checks grün.`); if(failed)process.exit(1);

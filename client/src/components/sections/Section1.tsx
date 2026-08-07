@@ -220,7 +220,22 @@ export function Section1({ data, onRefresh }: Props) {
               </tr>
               <Row label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
               <Row label="FCF TTM" value={formatLargeNumber(data.fcfTTM)} />
-              <Row label="FCF Margin" value={formatPercentNoSign(data.fcfMargin)} />
+              {/* Auftrag 07.08.2026 ("FCF Margin YoY"): analog zur bereits
+                  vorhandenen FCF-Yield-YoY-Darstellung oben -- eigene <tr>
+                  statt der generischen Row-Komponente, da Row nur einen
+                  einzelnen String-Wert ohne separate Farblogik unterstuetzt. */}
+              <tr>
+                <td className="py-1.5 px-2 text-muted-foreground">FCF Margin</td>
+                <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium text-foreground">
+                  {formatPercentNoSign(data.fcfMargin)}
+                  {data.fcfMarginYoyAvailable && data.fcfMarginYoyPp != null && (
+                    <span className={`ml-1.5 ${Math.abs(data.fcfMarginYoyPp) < 0.05 ? "text-muted-foreground" : data.fcfMarginYoyPp > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      (YoY {data.fcfMarginYoyPp > 0 ? "+" : ""}{data.fcfMarginYoyPp.toFixed(1)} pp)
+                    </span>
+                  )}
+                  {!data.fcfMarginYoyAvailable && <span className="ml-1.5 text-muted-foreground">(YoY n/a)</span>}
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
