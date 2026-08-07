@@ -343,14 +343,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // zukuenftigen Kollaps auf einen Stil sofort sichtbar, ob es an den
       // rohen Similarities, dem Lynch-Boost oder der Softmax-Temperatur liegt.
       const thesisCompanyVector = {revenueCagr3to5y,earningsVolatility,fcfMarginTrend,leverageTrend,marginInflectionStrength,growthGap:gStar!=null&&realizedGrowth!=null?gStar-realizedGrowth:null,missingFeatures};
+      // Auftrag 07.08.2026 ("Querschnitts-Konsistenz + Wachstums-Logik"):
+      // GrowthEvidence-Inputs verbindlich aus den bereits vorhandenen
+      // Querschnittsdaten ableiten -- KEINE neue Datenquelle, nur Wiederver-
+      // wendung von S1 (EPS-CAGR, ueber b.epsGrowth5Y vom Client), S2
+      // (newSeg?.growthPct -- das bereits ermittelte Hauptthese-Segment,
+      // z.B. Server +31.5%) und S7 (realizedGrowth vs. Sektor-Median aus
+      // sectorReferences, dieselbe Quelle wie fuer sectorGrowthMedian).
+      const sectorRevenueYoyPct = sectorReferences.metrics.revenue_yoy.median != null ? sectorReferences.metrics.revenue_yoy.median*100 : null;
+      const peerGapPct = realizedGrowth != null && sectorRevenueYoyPct != null ? realizedGrowth - sectorRevenueYoyPct : null;
+      const maxSegmentGrowthPct = newSeg?.growthPct ?? null;
+      const epsCagr5yPct = number(b.epsGrowth5Y);
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Company-Vektor (roh):`, JSON.stringify(thesisCompanyVector));
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] lynchClass vom Client:`, b.lynchClass ?? "n/a");
-      const result=computeThesisStrength({vector:thesisCompanyVector,fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth),sectorGrowthMedian:sectorReferences.metrics.revenue_yoy.median != null ? sectorReferences.metrics.revenue_yoy.median*100:null,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,lynchClass:b.lynchClass ?? null,balance:{inventoryZ:peerReferenceReliable?relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std):0,growthZ:peerReferenceReliable?relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std):0,marginZ:peerReferenceReliable?relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std):0,marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
+      console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] GrowthEvidence-Inputs: peerGapPct=${peerGapPct}, maxSegmentGrowthPct=${maxSegmentGrowthPct}, epsCagr5yPct=${epsCagr5yPct} (realizedGrowth=${realizedGrowth}, sectorRevenueYoyPct=${sectorRevenueYoyPct})`);
+      const result=computeThesisStrength({vector:thesisCompanyVector,fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth),sectorGrowthMedian:sectorRevenueYoyPct,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,lynchClass:b.lynchClass ?? null,peerGapPct,maxSegmentGrowthPct,epsCagr5yPct,balance:{inventoryZ:peerReferenceReliable?relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std):0,growthZ:peerReferenceReliable?relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std):0,marginZ:peerReferenceReliable?relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std):0,marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
       // Auftrag 07.08.2026 ("Denoising Softmax + Temperature Scaling"): finale
       // Konfidenzen + Gewichte loggen, damit ein zukuenftiger Kollaps sofort
       // an der Similarity- vs. Konfidenz-Differenz erkennbar ist.
-      console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Konfidenzen nach Lynch-Boost+Temperature-Softmax+Floor:`, JSON.stringify(result.styleConfidences));
+      console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] GrowthEvidence:`, JSON.stringify(result.growthEvidence));
+      console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Konfidenzen nach Growth-Logic+Lynch-Boost+Temperature-Softmax+Floor+Safety-Guard:`, JSON.stringify(result.styleConfidences));
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Gemischte Gewichte:`, JSON.stringify(result.blendedWeights), "| classificationConfidence:", result.classificationConfidence);
+      console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] g_required Split:`, JSON.stringify(result.growthCoverage.gRequiredBreakdown));
       const response={...result,sectorReferences,flags:[...result.flags,...sectorFlag],generatedAt:new Date().toISOString()};
       _thesisStrengthCache.set(ticker,{data:response,time:Date.now()}); res.json(response);
     } catch(err:any){ console.error("[POST /api/thesis-strength]",err?.message?.substring(0,200)); res.status(500).json({error:err?.message||"Internal error"}); }

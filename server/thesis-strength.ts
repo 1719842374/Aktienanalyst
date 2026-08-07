@@ -41,8 +41,81 @@ const LYNCH_TO_STYLE: Record<string, ThesisStyle> = {
   cyclical: "Cyclical", turnaround: "Turnaround", asset_play: "Value/Asset",
 };
 
-export function computeStyleConfidences(v:CompanyVector, lynchClass?: string | null):Record<ThesisStyle,number>{
- const x=normalizeCompanyVector(v); const sims=(Object.keys(STYLE_PROTOTYPES) as ThesisStyle[]).map(s=>{const p=STYLE_PROTOTYPES[s];const den=Math.sqrt(x.reduce((a,n)=>a+n*n,0))*Math.sqrt(p.reduce((a,n)=>a+n*n,0));return den>0?Math.max(0,x.reduce((a,n,i)=>a+n*p[i],0)/den):0;});
+// Auftrag 07.08.2026 ("Thesis-Score: Querschnitts-Konsistenz + Wachstums-Logik"):
+// GrowthEvidence bindet die Thesis-Klassifikation verbindlich an die harten
+// Wachstumsdaten aus S1 (EPS-CAGR), S2 (Segment-Wachstum, Lynch-Label) und S7
+// (Peer-Gap) -- OHNE diese Bindung konnte ein Titel mit +17.8% Revenue vs.
+// Sektor, +31.5% Hauptsegment und Lynch=Fast Grower dennoch als Stalwart/
+// Value-dominant enden, weil der Company-Vektor diese Querschnittsdaten
+// nie sah. GrowthEvidence macht diesen Widerspruch strukturell unmoeglich.
+export interface GrowthEvidenceInput { peerGapPct: number | null; maxSegmentGrowthPct: number | null; epsCagr5yPct: number | null; lynchClass?: string | null; }
+export interface GrowthEvidenceResult { evidence: number; peerScore: number; segScore: number; cagrScore: number; lynchBoostActive: boolean; flags: string[]; }
+export function computeGrowthEvidence(input: GrowthEvidenceInput): GrowthEvidenceResult {
+  const flags: string[] = [];
+  if (!finite(input.peerGapPct)) flags.push("GrowthEvidence: Peer-Gap fehlt (Sektor-Referenz nicht belastbar)");
+  if (!finite(input.maxSegmentGrowthPct)) flags.push("GrowthEvidence: Segment-Wachstum fehlt");
+  if (!finite(input.epsCagr5yPct)) flags.push("GrowthEvidence: EPS-CAGR 5J fehlt");
+  // peer_gap in Prozentpunkten (z.B. +7.0), Formel arbeitet in Anteilen (0.07).
+  const peerGap = finite(input.peerGapPct) ? input.peerGapPct / 100 : 0;
+  const maxSegGrowth = finite(input.maxSegmentGrowthPct) ? input.maxSegmentGrowthPct / 100 : 0;
+  const epsCagr = finite(input.epsCagr5yPct) ? input.epsCagr5yPct / 100 : 0;
+  const peerScore = clamp01((peerGap - 0.00) / 0.12);
+  const segScore = clamp01((maxSegGrowth - 0.08) / 0.25);
+  const cagrScore = clamp01((epsCagr - 0.08) / 0.20);
+  const lynchBoostActive = input.lynchClass === "fast_grower";
+  const lynchBoost = lynchBoostActive ? 0.20 : 0.0;
+  // Ticket-Formel woertlich: 0.30*peer + 0.30*seg + 0.25*cagr + 0.15*(1 wenn Boost aktiv) + 0.50*lynch_boost.
+  const evidence = clamp01(0.30 * peerScore + 0.30 * segScore + 0.25 * cagrScore + 0.15 * (lynchBoostActive ? 1.0 : 0.0) + 0.50 * lynchBoost);
+  return { evidence, peerScore, segScore, cagrScore, lynchBoostActive, flags };
+}
+
+// apply_growth_logic (Ticket Teil 3): verschiebt die ROHEN Similarities VOR
+// dem Lynch-Boost/Softmax, damit starke Querschnitts-Wachstumsevidenz nicht
+// erst am Ende (nur ueber den einzelnen Lynch-Boost) wirkt, sondern die
+// gesamte Similarity-Verteilung konsistent zur Wachstumslage verschiebt.
+export function applyGrowthLogic(sims: number[], styles: ThesisStyle[], growthEvidence: number): number[] {
+  const out = [...sims];
+  const fgIdx = styles.indexOf("Fast Grower"); const swIdx = styles.indexOf("Stalwart"); const vaIdx = styles.indexOf("Value/Asset");
+  if (growthEvidence >= 0.65) {
+    out[fgIdx] += 0.20 * growthEvidence;
+    out[swIdx] *= (1.0 - 0.25 * growthEvidence);
+    out[vaIdx] *= (1.0 - 0.35 * growthEvidence);
+  } else if (growthEvidence >= 0.40) {
+    out[fgIdx] += 0.10 * growthEvidence;
+    out[vaIdx] *= (1.0 - 0.15 * growthEvidence);
+  } else {
+    out[fgIdx] *= 0.85; // kein kuenstliches Hochhalten bei schwacher Wachstumsevidenz
+  }
+  return out;
+}
+
+// Harte Safety-Guard (Ticket Teil 3): verhindert den urspruenglich gemeldeten
+// Querschnitts-Widerspruch strukturell -- bei starker, mehrfach belegter
+// Wachstumsevidenz DARF Fast Grower nach dem gesamten Pipeline-Durchlauf
+// (Growth-Logic + Lynch-Boost + Temperature-Softmax + Floor) nicht unter
+// 25% fallen. Greift nur, wenn die Evidence stark UND zusaetzlich mindestens
+// eines der beiden Belege (Peer-Gap oder Segment-Wachstum) fuer sich allein
+// schon eindeutig ist -- verhindert, dass ein rein CAGR-getriebener Fall
+// den Guard versehentlich ausloest.
+export function applyFastGrowerSafetyGuard(confidences: Record<ThesisStyle, number>, growthEvidence: number, peerGapPct: number | null, maxSegmentGrowthPct: number | null): Record<ThesisStyle, number> {
+  const strongPeerGap = finite(peerGapPct) && peerGapPct >= 5;
+  const strongSegmentGrowth = finite(maxSegmentGrowthPct) && maxSegmentGrowthPct >= 20;
+  if (growthEvidence < 0.70 || !(strongPeerGap || strongSegmentGrowth)) return confidences;
+  if (confidences["Fast Grower"] >= 0.25) return confidences;
+  const out = { ...confidences };
+  const deficit = 0.25 - out["Fast Grower"];
+  out["Fast Grower"] = 0.25;
+  // Defizit proportional von den anderen Stilen abziehen, damit die Summe 1 bleibt.
+  const others = (Object.keys(out) as ThesisStyle[]).filter(s => s !== "Fast Grower");
+  const othersSum = others.reduce((a, s) => a + out[s], 0) || 1;
+  others.forEach(s => { out[s] = Math.max(0, out[s] - deficit * (out[s] / othersSum)); });
+  const total = (Object.keys(out) as ThesisStyle[]).reduce((a, s) => a + out[s], 0) || 1;
+  (Object.keys(out) as ThesisStyle[]).forEach(s => out[s] = out[s] / total);
+  return out;
+}
+
+export function computeStyleConfidences(v:CompanyVector, lynchClass?: string | null, growthEvidence?: number):Record<ThesisStyle,number>{
+ const x=normalizeCompanyVector(v); const styleKeys=(Object.keys(STYLE_PROTOTYPES) as ThesisStyle[]); const sims=styleKeys.map(s=>{const p=STYLE_PROTOTYPES[s];const den=Math.sqrt(x.reduce((a,n)=>a+n*n,0))*Math.sqrt(p.reduce((a,n)=>a+n*n,0));return den>0?Math.max(0,x.reduce((a,n,i)=>a+n*p[i],0)/den):0;});
  // BUGFIX (07.08.2026): Live-Beweis MSFT zeigte einen harten 100%-Kollaps auf
  // Stalwart, obwohl die rohen Cosine-Similarities eng beieinander lagen
  // (z.B. 0.918 vs. 0.963 -- nur 0.045 Differenz). Root Cause: Temperatur 250
@@ -74,6 +147,13 @@ export function computeStyleConfidences(v:CompanyVector, lynchClass?: string | n
  // zwischen den Stilen erhalten, aber der Softmax hat wieder genug Dynamik.
  const simMin = Math.min(...sims); const simMax = Math.max(...sims); const simRange = simMax - simMin;
  const scaled = simRange > 1e-9 ? sims.map(s => (s - simMin) / simRange) : sims.map(() => 0.5);
+ // Auftrag 07.08.2026 ("Querschnitts-Konsistenz + Wachstums-Logik"): Growth-
+ // Logic wirkt NACH der Min-Max-Skalierung (gleiche [0,1]-Skala wie der
+ // Lynch-Boost, damit die Effektgroessen konsistent bleiben) aber VOR dem
+ // Lynch-Boost selbst -- so verschiebt starke Querschnitts-Wachstumsevidenz
+ // (Peer-Gap, Segment-Wachstum, EPS-CAGR) die GESAMTE Similarity-Verteilung,
+ // nicht nur den einzelnen vom Lynch-Label getroffenen Stil.
+ const grown = growthEvidence != null && growthEvidence >= 0 ? applyGrowthLogic(scaled, styleKeys, growthEvidence) : scaled;
  const LYNCH_BOOST = 0.15;
  // T=0.25 statt der Ticket-Ausgangsempfehlung 1.8: Nach der Min-Max-Skalierung
  // (Similarities jetzt in [0,1] statt im engen 0.67-0.97-Band) kalibriert,
@@ -84,7 +164,7 @@ export function computeStyleConfidences(v:CompanyVector, lynchClass?: string | n
  const CONFIDENCE_TEMPERATURE = 0.25;
  const CONFIDENCE_FLOOR = 0.03;
  const boostedStyle = lynchClass ? LYNCH_TO_STYLE[lynchClass] : undefined;
- const boosted = scaled.map((s, i) => (Object.keys(STYLE_PROTOTYPES) as ThesisStyle[])[i] === boostedStyle ? s + LYNCH_BOOST : s);
+ const boosted = grown.map((s, i) => (Object.keys(STYLE_PROTOTYPES) as ThesisStyle[])[i] === boostedStyle ? s + LYNCH_BOOST : s);
  const ex=boosted.map(s=>Math.exp(s/CONFIDENCE_TEMPERATURE)); const sum=ex.reduce((a,b)=>a+b,0)||1;
  const raw=ex.map(e=>e/sum);
  // Denoising-Floor + Renormalisierung: kein Stil bleibt unter 3%, Summe bleibt 1.
@@ -99,13 +179,21 @@ export function sectorReferenceFallback(peerCount:number){const neutral=peerCoun
 
 export function scoreContractual(backlogAvailable:boolean):{score:number;flags:string[]}{return backlogAvailable?{score:.65,flags:[]}:{score:.375,flags:["keine RPO/Backlog-Daten verfügbar"]};}
 export function scoreExternal():{score:number;flags:string[]}{return{score:.5,flags:["External Capital Support: noch nicht datengetrieben (Fiscal/Private Commitments fehlen)"]};}
-export function scoreGrowthCoverage(input:{fcf:number|null;gStar:number|null;thesisGrowth:number|null;consensusGrowth?:number|null;sectorGrowthMedian?:number|null}):{score:number;coverage:number|null;gRequired:number|null;gThesis:number|null;flags:string[]}{
- const flags:string[]=[]; if(!finite(input.fcf)||input.fcf<=0||!finite(input.gStar)||input.gStar< -20||input.gStar>100){return{score:.40,coverage:null,gRequired:null,gThesis:null,flags:["Reverse-DCF nicht interpretierbar"]};}
- const candidates=[input.gStar,input.consensusGrowth,input.sectorGrowthMedian,3].filter(finite) as number[]; const gRequired=Math.max(...candidates); if(!finite(input.thesisGrowth)){return{score:.35,coverage:null,gRequired,gThesis:null,flags:["Thesis-Wachstum nicht berechenbar — neutraler Teilscore"]};}
+export function scoreGrowthCoverage(input:{fcf:number|null;gStar:number|null;thesisGrowth:number|null;consensusGrowth?:number|null;sectorGrowthMedian?:number|null}):{score:number;coverage:number|null;gRequired:number|null;gThesis:number|null;flags:string[];gRequiredBreakdown:{gStar:number|null;consensus:number|null;sector:number|null;floor:number;used:number|null;usedSource:string|null}}{
+ // Auftrag 07.08.2026 ("g_required Transparenz", Ticket Teil 5): jede
+ // Kandidatenquelle einzeln benannt zurueckgeben, nicht nur das Maximum --
+ // die UI zeigt jetzt "g* / Konsens / Sektor / Floor -> verwendet: X%".
+ const gStarBd=finite(input.gStar)?input.gStar:null; const consensusBd=finite(input.consensusGrowth)?input.consensusGrowth!:null; const sectorBd=finite(input.sectorGrowthMedian)?input.sectorGrowthMedian!:null; const floorBd=3;
+ const bdCandidates:Array<[string,number|null]>=[["gStar",gStarBd],["Konsenswachstum",consensusBd],["Sektor-Median",sectorBd],["Floor",floorBd]];
+ const flags:string[]=[]; if(!finite(input.fcf)||input.fcf<=0||!finite(input.gStar)||input.gStar< -20||input.gStar>100){return{score:.40,coverage:null,gRequired:null,gThesis:null,flags:["Reverse-DCF nicht interpretierbar"],gRequiredBreakdown:{gStar:gStarBd,consensus:consensusBd,sector:sectorBd,floor:floorBd,used:null,usedSource:null}};}
+ const candidates=[input.gStar,input.consensusGrowth,input.sectorGrowthMedian,3].filter(finite) as number[]; const gRequired=Math.max(...candidates);
+ const usedEntry=bdCandidates.filter(([,v])=>finite(v)).reduce((best,cur)=>cur[1]!>best[1]!?cur:best);
+ const gRequiredBreakdown={gStar:gStarBd,consensus:consensusBd,sector:sectorBd,floor:floorBd,used:gRequired,usedSource:usedEntry[0]};
+ if(!finite(input.thesisGrowth)){return{score:.35,coverage:null,gRequired,gThesis:null,flags:["Thesis-Wachstum nicht berechenbar — neutraler Teilscore"],gRequiredBreakdown};}
  // Harte Guard-Regel: g_thesis darf 1,5× g_required niemals überschreiten.
  const gThesis=Math.min(input.thesisGrowth,1.5*gRequired); const cov=gThesis/gRequired; let score:number;
  if(cov>=1.25)score=.90+clamp01((cov-1.25)/.5)*.10; else if(cov>=1)score=.70+((cov-1)/.25)*.15; else if(cov>=.7)score=.45+((cov-.7)/.3)*.20; else score=.15+clamp01(cov/.7)*.20;
- return{score:clamp01(score),coverage:cov,gRequired,gThesis,flags};
+ return{score:clamp01(score),coverage:cov,gRequired,gThesis,flags,gRequiredBreakdown};
 }
 export interface TurnaroundSeries { margins?:number[]; fcfMargins?:number[]; workingCapital?:number[]; inventorySales?:number[]; leverage?:number[]; cashConversion?:number[]; capexRevenue?:number[]; revenue?:number[] }
 export function computeTurnaroundEvidence(s:TurnaroundSeries):{evidence:number;signals:string[]}{ const hits:{name:string;weight:number}[]=[]; const asc=(a?:number[],n=2)=>!!a&&a.length>=n+1&&a.slice(-n).every((x,i)=>x>a![a!.length-n-1+i]);
@@ -123,5 +211,16 @@ export function scoreBalanceSheet(input:{inventoryZ:number;growthZ:number;margin
  if(input.turnaroundConfidence>.30){if(input.turnaroundEvidence>=.60)final=.60*s+.40*input.turnaroundEvidence;else if(input.turnaroundEvidence>=.35)final=.85*s+.15*input.turnaroundEvidence;}
  return{score:clamp01(final),normalScore:s,flags};}
 export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:string;tags?:string[]}>|null|undefined,segmentName?:string|null):{score:number;flags:string[]}{if(!catalysts?.length)return{score:.35,flags:["Keine Katalysatoren verfügbar — neutraler Teilscore"]}; const seg=(segmentName||"").toLowerCase();let num=0,den=0;for(const c of catalysts){const text=`${c.name||""} ${c.context||""}`;const quantified=/\d[\d.,]*\s*(%|mrd|mio|\$|€|usd|eur|gw|mw)/i.test(text);const specific=!!seg&&(text.toLowerCase().includes(seg)||c.tags?.some(t=>t.toLowerCase().includes(seg)));const w=(specific&&quantified)?1:quantified?.3:.3; num+=w;den+=1;}return{score:clamp01(num/Math.max(1,den)),flags:[]};}
-export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[]}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; }
-export function computeThesisStrength(input:ThesisStrengthInput){const flags=[...(input.vector.missingFeatures||[]).map(x=>`Merkmal fehlt: ${x}`)];const c=computeStyleConfidences(input.vector, input.lynchClass);const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.backlogAvailable);const b=scoreExternal();const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+(raw*(.55+.45*conf)).toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf};}
+export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[]}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; }
+export function computeThesisStrength(input:ThesisStrengthInput){const flags=[...(input.vector.missingFeatures||[]).map(x=>`Merkmal fehlt: ${x}`)];
+ // Auftrag 07.08.2026 ("Querschnitts-Konsistenz + Wachstums-Logik"): GrowthEvidence
+ // wird IMMER berechnet (auch bei fehlenden Einzel-Inputs -- computeGrowthEvidence
+ // liefert dann niedrigere Teilscores + Flags, nie einen Absturz), bevor die
+ // Stil-Konfidenzen berechnet werden. Damit ist die Thesis-Klassifikation
+ // verbindlich an die Querschnittsdaten aus S1/S2/S7 gebunden statt isoliert
+ // vom Company-Vektor allein abzuhaengen.
+ const ge=computeGrowthEvidence({peerGapPct:input.peerGapPct??null,maxSegmentGrowthPct:input.maxSegmentGrowthPct??null,epsCagr5yPct:input.epsCagr5yPct??null,lynchClass:input.lynchClass});
+ flags.push(...ge.flags);
+ let c=computeStyleConfidences(input.vector, input.lynchClass, ge.evidence);
+ c=applyFastGrowerSafetyGuard(c, ge.evidence, input.peerGapPct??null, input.maxSegmentGrowthPct??null);
+ const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.backlogAvailable);const b=scoreExternal();const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+(raw*(.55+.45*conf)).toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf,growthEvidence:ge};}
