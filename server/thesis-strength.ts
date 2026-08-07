@@ -42,6 +42,9 @@ export function computeStyleConfidences(v:CompanyVector):Record<ThesisStyle,numb
 }
 export function blendWeights(c:Record<ThesisStyle,number>):Weights { const max=Math.max(...Object.values(c)); if(max<.35)return {...NEUTRAL_WEIGHTS}; const out:Weights={A:0,B:0,C:0,D:0,E:0}; (Object.keys(STYLE_WEIGHTS)as ThesisStyle[]).forEach(s=>{(Object.keys(out)as (keyof Weights)[]).forEach(k=>out[k]+= (c[s]||0)*STYLE_WEIGHTS[s][k]);}); return out; }
 export function relativeZ(value:number|null,median:number|null,std:number|null):number { return finite(value)&&finite(median)&&finite(std)&&std>=1e-6?(value-median)/std:0; }
+/** Unter fünf Peers wären z-Scores statistisch nicht belastbar; daher neutralisieren wir sie vollständig. */
+export function sectorReferenceFallback(peerCount:number){const neutral=peerCount<5;return{neutral,flags:neutral?["Sektor-Referenz nicht belastbar (<5 Peers)"]:[]};}
+
 export function scoreContractual(backlogAvailable:boolean):{score:number;flags:string[]}{return backlogAvailable?{score:.65,flags:[]}:{score:.375,flags:["keine RPO/Backlog-Daten verfügbar"]};}
 export function scoreExternal():{score:number;flags:string[]}{return{score:.5,flags:["External Capital Support: noch nicht datengetrieben (Fiscal/Private Commitments fehlen)"]};}
 export function scoreGrowthCoverage(input:{fcf:number|null;gStar:number|null;thesisGrowth:number|null;consensusGrowth?:number|null;sectorGrowthMedian?:number|null}):{score:number;coverage:number|null;gRequired:number|null;gThesis:number|null;flags:string[]}{

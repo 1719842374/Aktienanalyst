@@ -1,4 +1,4 @@
-import { computeStyleConfidences, blendWeights, NEUTRAL_WEIGHTS, scoreBalanceSheet, scoreGrowthCoverage, computeTurnaroundEvidence, scoreContractual, relativeZ, computeThesisStrength } from "../server/thesis-strength";
+import { computeStyleConfidences, blendWeights, NEUTRAL_WEIGHTS, scoreBalanceSheet, scoreGrowthCoverage, computeTurnaroundEvidence, scoreContractual, relativeZ, sectorReferenceFallback, computeThesisStrength } from "../server/thesis-strength";
 let failed=0, total=0; const check=(n:string,c:boolean,d="")=>{total++;if(c)console.log(`  ✅ ${n}`);else{failed++;console.error(`  ❌ ${n} ${d}`)}};
 console.log("\n=== Thesis Strength Score ===");
 const dominant=computeStyleConfidences({revenueCagr3to5y:8,earningsVolatility:70,fcfMarginTrend:0,leverageTrend:1,marginInflectionStrength:9,growthGap:-8});
@@ -15,5 +15,6 @@ const two=computeTurnaroundEvidence({margins:[1,2,3,4],leverage:[5,4,3,2]});chec
 const d0=scoreBalanceSheet({inventoryZ:0,growthZ:0,marginZ:0,marginPositivePeriods:0,turnaroundConfidence:.5,turnaroundEvidence:.2});check("Evidence <0.35 löst keinen D-Boost aus",d0.score===d0.normalScore);
 const a=scoreContractual(false);check("Fehlende Backlog-Daten neutral 0.375 + Flag",a.score===.375&&a.flags.length>0);
 check("Sektor-Referenz mit fehlendem std liefert z=0",relativeZ(.2,.1,null)===0);
+const sectorFallback=sectorReferenceFallback(4);check("<5 Peers neutralisieren z-Scores und setzen den Transparenz-Flag",sectorFallback.neutral&&sectorFallback.flags.includes("Sektor-Referenz nicht belastbar (<5 Peers)"));
 const msft=computeThesisStrength({vector:{revenueCagr3to5y:16,earningsVolatility:20,fcfMarginTrend:1,leverageTrend:1,marginInflectionStrength:3,growthGap:5},fcf:100,gStar:8,thesisGrowth:26,sectorGrowthMedian:8,backlogAvailable:false,catalysts:[{name:"Server Azure",context:"31.5% Wachstum"}],segmentName:"Server",balance:{inventoryZ:0,growthZ:1,marginZ:1,marginPositivePeriods:3},turnaround:{}});check("MSFT-Regression: plausibler Score >6",msft.finalScore>6,`${msft.finalScore}`);
 console.log(`\n${total-failed}/${total} Checks grün.`); if(failed)process.exit(1);
