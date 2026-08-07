@@ -133,11 +133,17 @@ export async function fmpEarningsCalendar(symbol: string): Promise<any[]> {
   const cached = earningsCalendarCache.get(key);
   if (cached && Date.now() - cached.fetchedAt < EARNINGS_CALENDAR_TTL_MS) return cached.value;
   try {
-    // Stable-Endpoint; das explizite Zeitfenster verhindert, dass FMP nur
-    // historische Zeilen zurückliefert. time enthält bei Verfügbarkeit bmo/amc.
-    const from = new Date().toISOString().slice(0, 10);
-    const until = new Date(Date.now() + 370 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const data = await fmpFetch(`/earnings-calendar`, { symbol: key, from, to: until });
+    // BUGFIX (07.08.2026, Live-Verifikation nach Thesis-Strength-Ticket):
+    // /stable/earnings-calendar IGNORIERT den symbol-Parameter komplett -- es
+    // ist ein reiner marktweiter Datums-Feed (2000+ Zeilen aller Symbole je
+    // Zeitfenster), kein per-Symbol-Lookup. Live-Test bestaetigt: MSFT taucht
+    // dort im 180-Tage-Fenster NICHT auf, obwohl FMP fuer MSFT sehr wohl einen
+    // naechsten Termin kennt. Der korrekte per-Symbol-Endpoint ist /stable/
+    // earnings?symbol=X (OHNE "-calendar"), der echte vergangene+zukuenftige
+    // Terminzeilen NUR fuer dieses Symbol liefert. from/to werden dort nicht
+    // gebraucht -- die Filterung auf "zukuenftig" passiert bereits im Aufrufer
+    // (analyze-route.ts vergleicht date > heute).
+    const data = await fmpFetch(`/earnings`, { symbol: key });
     const value = Array.isArray(data) ? data : [];
     earningsCalendarCache.set(key, { value, fetchedAt: Date.now() });
     return value;
