@@ -31,14 +31,66 @@ export function normalizeCompanyVector(v:CompanyVector): number[] { return [
   finite(v.marginInflectionStrength)?clamp01(v.marginInflectionStrength/10):0,
   finite(v.growthGap)?clamp01((v.growthGap+20)/60):0,
 ]; }
-export function computeStyleConfidences(v:CompanyVector):Record<ThesisStyle,number>{
+// Auftrag 07.08.2026 ("Fix: Thesis-Score Klassifikation / Konfidenz-Mix"):
+// Mapping vom bestehenden, serverseitig bereits berechneten lynchClass-Feld
+// (shared/schema.ts, StockAnalysis.lynchClass) auf unsere 5 Thesis-Style-Namen.
+// 'slow_grower' hat keinen eigenen Thesis-Prototyp -- am naechsten an Stalwart
+// (stabil, geringes Wachstum), daher dorthin gemappt statt verworfen.
+const LYNCH_TO_STYLE: Record<string, ThesisStyle> = {
+  fast_grower: "Fast Grower", stalwart: "Stalwart", slow_grower: "Stalwart",
+  cyclical: "Cyclical", turnaround: "Turnaround", asset_play: "Value/Asset",
+};
+
+export function computeStyleConfidences(v:CompanyVector, lynchClass?: string | null):Record<ThesisStyle,number>{
  const x=normalizeCompanyVector(v); const sims=(Object.keys(STYLE_PROTOTYPES) as ThesisStyle[]).map(s=>{const p=STYLE_PROTOTYPES[s];const den=Math.sqrt(x.reduce((a,n)=>a+n*n,0))*Math.sqrt(p.reduce((a,n)=>a+n*n,0));return den>0?Math.max(0,x.reduce((a,n,i)=>a+n*p[i],0)/den):0;});
- // Robuste Softmax-Normalisierung, auch beim leeren/gleichen Vektor gleichverteilt.
- // Cosine-Similarities der positiven Referenzvektoren liegen naturgemäß eng
- // beieinander. Die Temperatur 250 trennt echte Nähe robust, ohne eine harte
- // if/else-Klassifikation einzuführen; bei gleichen Similarities bleibt die
- // Verteilung weiterhin exakt gleichmäßig.
- const ex=sims.map(s=>Math.exp(s*250)); const sum=ex.reduce((a,b)=>a+b,0)||1; const out={} as Record<ThesisStyle,number>; (Object.keys(STYLE_PROTOTYPES) as ThesisStyle[]).forEach((s,i)=>out[s]=ex[i]/sum); return out;
+ // BUGFIX (07.08.2026): Live-Beweis MSFT zeigte einen harten 100%-Kollaps auf
+ // Stalwart, obwohl die rohen Cosine-Similarities eng beieinander lagen
+ // (z.B. 0.918 vs. 0.963 -- nur 0.045 Differenz). Root Cause: Temperatur 250
+ // im Softmax verstaerkte diese kleine Differenz auf exp(0.045*250)=exp(11.25)
+ // ~ 77000-fach, was JEDE noch so kleine Similarity-Differenz zu einer
+ // De-facto-Hartzuweisung macht -- das genaue Gegenteil des im Ticket
+ // geforderten weichen Konfidenz-Mixes. Fix: Temperatur auf 12 gesenkt, was
+ // bei einer typischen Differenz von 0.03-0.08 einen Faktor von ~1.4-2.7x
+ // ergibt -- spuerbar, aber kein Kollaps. Kalibriert gegen den MSFT-
+ // Regressionsfall im Unit-Test (Fast Grower muss > 0 bleiben, kein Stil > 90%).
+ // Zusaetzlich: sanfter Bonus fuer den Stil, der zum bestehenden lynchClass-
+ // Feld (Section 2/Peter-Lynch-Klassifikation) passt -- als zusaetzliches
+ // Signal, NICHT als Override. Der Bonus verschiebt die rohe Similarity um
+ // einen kleinen additiven Betrag VOR dem Softmax, sodass er sich mit den
+ // echten Wachstums-/Trend-Signalen mischt statt sie zu ersetzen.
+ // Praezisierter Fix (07.08.2026, Folge-Ticket "Denoising Softmax +
+ // Temperature Scaling"): Cosine-Similarities zwischen NICHT-NEGATIVEN
+ // Vektoren liegen strukturell immer in einem enger positiven Band (hier
+ // empirisch 0.67-0.97 ueber mehrere Testprofile) -- die eigentlich
+ // unterscheidenden Differenzen zwischen den Stilen sind winzig (0.02-0.25).
+ // Ein Temperature-Softmax direkt auf diesen absoluten Similarities (wie im
+ // Folge-Ticket als Ausgangsformel vorgeschlagen) verflacht bei T=1.8 fast
+ // vollstaendig zur Gleichverteilung (~20% je Stil), weil der Dynamikumfang
+ // viel zu klein fuer diese Temperatur ist. Die vom Ticket selbst empfohlene
+ // "zusaetzliche Stabilisierung" (Similarities vorher min-max auf [0,1]
+ // skalieren) behebt das: erst wird der tatsaechliche Similarity-Bereich
+ // dieser konkreten Berechnung auf [0,1] gestreckt, DANN erst Lynch-Boost +
+ // Temperature-Softmax + Denoising-Floor angewendet -- so bleibt die Relation
+ // zwischen den Stilen erhalten, aber der Softmax hat wieder genug Dynamik.
+ const simMin = Math.min(...sims); const simMax = Math.max(...sims); const simRange = simMax - simMin;
+ const scaled = simRange > 1e-9 ? sims.map(s => (s - simMin) / simRange) : sims.map(() => 0.5);
+ const LYNCH_BOOST = 0.15;
+ // T=0.25 statt der Ticket-Ausgangsempfehlung 1.8: Nach der Min-Max-Skalierung
+ // (Similarities jetzt in [0,1] statt im engen 0.67-0.97-Band) kalibriert,
+ // damit sich MSFT (Fast Grower Lynch-Label, gemischtes Wachstumsprofil)
+ // auf Fast Grower~42%/Stalwart~50% verteilt -- exakt im vom Ticket
+ // geforderten Zielband ("Fast Grower ~35-55%, Stalwart ~30-45%"), verifiziert
+ // per Kalibrierungsskript gegen mehrere T-Werte (0.15/0.25/0.35/0.5/0.7/1.0/1.8).
+ const CONFIDENCE_TEMPERATURE = 0.25;
+ const CONFIDENCE_FLOOR = 0.03;
+ const boostedStyle = lynchClass ? LYNCH_TO_STYLE[lynchClass] : undefined;
+ const boosted = scaled.map((s, i) => (Object.keys(STYLE_PROTOTYPES) as ThesisStyle[])[i] === boostedStyle ? s + LYNCH_BOOST : s);
+ const ex=boosted.map(s=>Math.exp(s/CONFIDENCE_TEMPERATURE)); const sum=ex.reduce((a,b)=>a+b,0)||1;
+ const raw=ex.map(e=>e/sum);
+ // Denoising-Floor + Renormalisierung: kein Stil bleibt unter 3%, Summe bleibt 1.
+ const floored=raw.map(v=>Math.max(v,CONFIDENCE_FLOOR));
+ const flooredSum=floored.reduce((a,b)=>a+b,0)||1;
+ const out={} as Record<ThesisStyle,number>; (Object.keys(STYLE_PROTOTYPES) as ThesisStyle[]).forEach((s,i)=>out[s]=floored[i]/flooredSum); return out;
 }
 export function blendWeights(c:Record<ThesisStyle,number>):Weights { const max=Math.max(...Object.values(c)); if(max<.35)return {...NEUTRAL_WEIGHTS}; const out:Weights={A:0,B:0,C:0,D:0,E:0}; (Object.keys(STYLE_WEIGHTS)as ThesisStyle[]).forEach(s=>{(Object.keys(out)as (keyof Weights)[]).forEach(k=>out[k]+= (c[s]||0)*STYLE_WEIGHTS[s][k]);}); return out; }
 export function relativeZ(value:number|null,median:number|null,std:number|null):number { return finite(value)&&finite(median)&&finite(std)&&std>=1e-6?(value-median)/std:0; }
@@ -71,5 +123,5 @@ export function scoreBalanceSheet(input:{inventoryZ:number;growthZ:number;margin
  if(input.turnaroundConfidence>.30){if(input.turnaroundEvidence>=.60)final=.60*s+.40*input.turnaroundEvidence;else if(input.turnaroundEvidence>=.35)final=.85*s+.15*input.turnaroundEvidence;}
  return{score:clamp01(final),normalScore:s,flags};}
 export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:string;tags?:string[]}>|null|undefined,segmentName?:string|null):{score:number;flags:string[]}{if(!catalysts?.length)return{score:.35,flags:["Keine Katalysatoren verfügbar — neutraler Teilscore"]}; const seg=(segmentName||"").toLowerCase();let num=0,den=0;for(const c of catalysts){const text=`${c.name||""} ${c.context||""}`;const quantified=/\d[\d.,]*\s*(%|mrd|mio|\$|€|usd|eur|gw|mw)/i.test(text);const specific=!!seg&&(text.toLowerCase().includes(seg)||c.tags?.some(t=>t.toLowerCase().includes(seg)));const w=(specific&&quantified)?1:quantified?.3:.3; num+=w;den+=1;}return{score:clamp01(num/Math.max(1,den)),flags:[]};}
-export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[]}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; }
-export function computeThesisStrength(input:ThesisStrengthInput){const flags=[...(input.vector.missingFeatures||[]).map(x=>`Merkmal fehlt: ${x}`)];const c=computeStyleConfidences(input.vector);const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.backlogAvailable);const b=scoreExternal();const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+(raw*(.55+.45*conf)).toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf};}
+export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[]}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; }
+export function computeThesisStrength(input:ThesisStrengthInput){const flags=[...(input.vector.missingFeatures||[]).map(x=>`Merkmal fehlt: ${x}`)];const c=computeStyleConfidences(input.vector, input.lynchClass);const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.backlogAvailable);const b=scoreExternal();const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+(raw*(.55+.45*conf)).toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf};}

@@ -3,6 +3,27 @@ let failed=0, total=0; const check=(n:string,c:boolean,d="")=>{total++;if(c)cons
 console.log("\n=== Thesis Strength Score ===");
 const dominant=computeStyleConfidences({revenueCagr3to5y:8,earningsVolatility:70,fcfMarginTrend:0,leverageTrend:1,marginInflectionStrength:9,growthGap:-8});
 check("Konfidenzmischung: klarer Stil hat dominantes Gewicht", Math.max(...Object.values(dominant))>.30,JSON.stringify(dominant));
+
+// REGRESSIONSTEST (07.08.2026, Folge-Ticket "Fix: Thesis-Score Klassifikation
+// / Konfidenz-Mix"): Live-Beweis MSFT zeigte einen harten 100%-Kollaps auf
+// Stalwart, waehrend das bestehende lynchClass-Feld "fast_grower" meldete.
+// Root Cause war eine viel zu hohe Softmax-Temperatur (250) auf eng
+// beieinanderliegenden Cosine-Similarities. Dieser Test reproduziert exakt
+// das MSFT-Profil (moderates Gesamt-CAGR, niedrige Volatilitaet, stabile
+// Trends -- typisch fuer einen Mega-Cap mit einem schnell wachsenden
+// Cloud-Segment) und verlangt: kein Stil > 90%, UND Fast Grower bleibt klar
+// sichtbar (> 15%) wenn das Lynch-Label "fast_grower" ist.
+const msftLikeVector={revenueCagr3to5y:14.5,earningsVolatility:8,fcfMarginTrend:0,leverageTrend:0.3,marginInflectionStrength:1.2,growthGap:7.37};
+const msftConfNoLynch=computeStyleConfidences(msftLikeVector as any);
+check("Kein 100%-Kollaps ohne Lynch-Label (max < 90%)", Math.max(...Object.values(msftConfNoLynch))<.90, JSON.stringify(msftConfNoLynch));
+const msftConfWithLynch=computeStyleConfidences(msftLikeVector as any, "fast_grower");
+check("Fast Grower bleibt sichtbar (>15%) wenn Lynch-Label = fast_grower", msftConfWithLynch["Fast Grower"]>.15, JSON.stringify(msftConfWithLynch));
+check("Kein 100%-Kollaps auch mit Lynch-Boost (max < 90%)", Math.max(...Object.values(msftConfWithLynch))<.90, JSON.stringify(msftConfWithLynch));
+check("Denoising-Floor: kein Stil exakt 0% (immer >= 2%)", Object.values(msftConfWithLynch).every(v=>v>=.02), JSON.stringify(msftConfWithLynch));
+// Kontrollfall: ein WIRKLICH eindeutiger Zykliker darf trotzdem hoch genug
+// ausfallen -- der Floor darf echte Klarheit nicht kuenstlich verwaschen.
+const clearCyclical=computeStyleConfidences({revenueCagr3to5y:15,earningsVolatility:80,fcfMarginTrend:0,leverageTrend:0,marginInflectionStrength:5,growthGap:10} as any);
+check("Eindeutiger Zykliker (Vektor praktisch identisch zum Cyclical-Prototyp) bleibt klar dominant (>50%)", clearCyclical["Cyclical"]>.50, JSON.stringify(clearCyclical));
 const neutral={"Fast Grower":.2,"Stalwart":.2,"Cyclical":.2,"Turnaround":.2,"Value/Asset":.2} as any; check("Neutral-Fallback nutzt neutrale Gewichte",JSON.stringify(blendWeights(neutral))===JSON.stringify(NEUTRAL_WEIGHTS));
 check("Inventory-Malus bei z>1.2 und schwachem Wachstum",scoreBalanceSheet({inventoryZ:1.3,growthZ:-.1,marginZ:0,marginPositivePeriods:0,turnaroundConfidence:0,turnaroundEvidence:0}).normalScore<.70);
 check("Kein Inventory-Malus bei positivem Wachstum",scoreBalanceSheet({inventoryZ:1.3,growthZ:.1,marginZ:0,marginPositivePeriods:0,turnaroundConfidence:0,turnaroundEvidence:0}).normalScore===.70);
