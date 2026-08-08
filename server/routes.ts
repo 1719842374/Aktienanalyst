@@ -76,11 +76,11 @@ export {
 import { registerAnalyzeRoute } from "./analyze-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { fetchMinerData } from "./btc-miner";
-import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpPeers } from "./fmp";
+import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpPeers, fmpQuote, fmpRatios } from "./fmp";
 import { assessRegulatoryExposure } from "./regulatory";
 import { computeManagementScoreForTicker } from "./management-score";
 import { deriveStatementTrends, identifyNewSegment, computeOldSegmentsGrowth } from "./management-score";
-import { computeThesisStrength, relativeZ, sectorReferenceFallback } from "./thesis-strength";
+import { computeThesisStrength, relativeZ, sectorReferenceFallback, computeMaterialSegmentGrowth } from "./thesis-strength";
 import { filterAndSelectPeers } from "./news-peers";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
@@ -324,13 +324,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const rawPeerTickers = Array.isArray(rawPeers) ? rawPeers.map((p:any)=>String(p?.symbol ?? p ?? "")).filter(Boolean) : [];
       const peers = await filterAndSelectPeers(ticker, String(b.sector ?? ""), String(b.industry ?? ""), rawPeerTickers, 5).catch(()=>[]);
       const peerStatements = await Promise.all(peers.map(async p => {
-        const [i,c,bs] = await Promise.all([fmpIncomeStatement(p,3).catch(()=>[]),fmpCashFlow(p,3).catch(()=>[]),fmpBalanceSheet(p,3).catch(()=>[])]);
+        const [i,c,bs,ratios] = await Promise.all([fmpIncomeStatement(p,3).catch(()=>[]),fmpCashFlow(p,3).catch(()=>[]),fmpBalanceSheet(p,3).catch(()=>[]),fmpRatios(p,1).catch(()=>[])]);
         const it=deriveStatementTrends({incomeRows:i,cashflowRows:c,balanceRows:bs}); const r0=number(i[0]?.revenue),r1=number(i[1]?.revenue);
         const inv=number(bs[0]?.inventory), fcfM=it.fcfMarginPct, grow=r0&&r1?(r0/r1-1):null, op=r0&&number(i[0]?.operatingIncome)!=null?number(i[0]?.operatingIncome)!/r0:null;
-        return { inventory_yoy: inv&&number(bs[1]?.inventory)?inv/number(bs[1]?.inventory)!-1:null, revenue_yoy:grow, op_margin_delta:op, fcf_margin:fcfM, capex_revenue:r0&&number(c[0]?.capitalExpenditure)!=null?Math.abs(number(c[0]?.capitalExpenditure)!)/r0:null, net_debt_ebitda:null, earnings_volatility:null };
+        // Auftrag 07.08.2026 ("P/E-Zyklus-Filter"): pe pro Peer additiv aus
+        // /stable/ratios ergaenzt -- FMP liefert das Feld priceToEarningsRatio
+        // (NICHT peRatio/pe -- /stable/quote enthaelt seit dem Schema-Wechsel
+        // gar kein P/E-Feld mehr, siehe fmp-fetcher.ts Regression-Log).
+        const peQ = number((ratios as any)?.[0]?.priceToEarningsRatio);
+        return { inventory_yoy: inv&&number(bs[1]?.inventory)?inv/number(bs[1]?.inventory)!-1:null, revenue_yoy:grow, op_margin_delta:op, fcf_margin:fcfM, capex_revenue:r0&&number(c[0]?.capitalExpenditure)!=null?Math.abs(number(c[0]?.capitalExpenditure)!)/r0:null, net_debt_ebitda:null, earnings_volatility:null, pe: peQ&&peQ>0?peQ:null };
       }));
       const metric = (key:string) => { const xs=peerStatements.map((x:any)=>x[key]).filter((x:any)=>typeof x==="number"&&isFinite(x)) as number[]; const med=xs.length?[...xs].sort((a,b)=>a-b)[Math.floor(xs.length/2)]:null; const avg=xs.length?xs.reduce((a,x)=>a+x,0)/xs.length:0; const std=xs.length?Math.sqrt(xs.reduce((a,x)=>a+Math.pow(x-avg,2),0)/xs.length):null; return {median:med,std}; };
-      const sectorReferences = { sector:String(b.sector??""), as_of:new Date().toISOString(), metrics:{inventory_yoy:metric("inventory_yoy"),revenue_yoy:metric("revenue_yoy"),op_margin_delta:metric("op_margin_delta"),fcf_margin:metric("fcf_margin"),capex_revenue:metric("capex_revenue"),net_debt_ebitda:metric("net_debt_ebitda"),earnings_volatility:metric("earnings_volatility"),working_capital:metric("working_capital"),cash_conversion:metric("cash_conversion")}, peer_count:peers.length };
+      const sectorReferences = { sector:String(b.sector??""), as_of:new Date().toISOString(), metrics:{inventory_yoy:metric("inventory_yoy"),revenue_yoy:metric("revenue_yoy"),op_margin_delta:metric("op_margin_delta"),fcf_margin:metric("fcf_margin"),capex_revenue:metric("capex_revenue"),net_debt_ebitda:metric("net_debt_ebitda"),earnings_volatility:metric("earnings_volatility"),working_capital:metric("working_capital"),cash_conversion:metric("cash_conversion"),pe:metric("pe")}, peer_count:peers.length };
+      const sectorMedianPETTM = sectorReferences.metrics.pe.median ?? null;
       const sectorFallback = sectorReferenceFallback(peers.length);
       const peerReferenceReliable = !sectorFallback.neutral;
       const sectorFlag = sectorFallback.flags;
@@ -352,12 +358,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // sectorReferences, dieselbe Quelle wie fuer sectorGrowthMedian).
       const sectorRevenueYoyPct = sectorReferences.metrics.revenue_yoy.median != null ? sectorReferences.metrics.revenue_yoy.median*100 : null;
       const peerGapPct = realizedGrowth != null && sectorRevenueYoyPct != null ? realizedGrowth - sectorRevenueYoyPct : null;
-      const maxSegmentGrowthPct = newSeg?.growthPct ?? null;
+      // Auftrag 07.08.2026 ("Segment-Materialitaet"): statt ausschliesslich
+      // newSeg?.growthPct (das ueber identifyNewSegment() gewaehlte einzelne
+      // Hauptthese-Segment) wird jetzt computeMaterialSegmentGrowth() ueber
+      // ALLE gelieferten Segmente angewendet -- ein <10%-Segment mit +40%
+      // darf nicht allein die Evidence treiben. Faellt kein Segment unter die
+      // 10%-Schwelle, greift der umsatzgewichtete Top-3-Fallback.
+      const materialSegment = computeMaterialSegmentGrowth((b.segments ?? []).map((s:any)=>({name:s.name,percentage:s.percentage,growth:s.growth})));
+      const maxSegmentGrowthPct = materialSegment.materialGrowthPct != null ? materialSegment.materialGrowthPct*100 : (newSeg?.growthPct ?? null);
       const epsCagr5yPct = number(b.epsGrowth5Y);
+      const peTTM = number(b.peTTM);
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Company-Vektor (roh):`, JSON.stringify(thesisCompanyVector));
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] lynchClass vom Client:`, b.lynchClass ?? "n/a");
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] GrowthEvidence-Inputs: peerGapPct=${peerGapPct}, maxSegmentGrowthPct=${maxSegmentGrowthPct}, epsCagr5yPct=${epsCagr5yPct} (realizedGrowth=${realizedGrowth}, sectorRevenueYoyPct=${sectorRevenueYoyPct})`);
-      const result=computeThesisStrength({vector:thesisCompanyVector,fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth),sectorGrowthMedian:sectorRevenueYoyPct,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,lynchClass:b.lynchClass ?? null,peerGapPct,maxSegmentGrowthPct,epsCagr5yPct,balance:{inventoryZ:peerReferenceReliable?relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std):0,growthZ:peerReferenceReliable?relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std):0,marginZ:peerReferenceReliable?relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std):0,marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
+      console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Segment-Materialitaet: source=${materialSegment.source}, materialGrowthPct=${materialSegment.materialGrowthPct}`);
+      console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] P/E-Filter-Inputs: peTTM=${peTTM}, sectorMedianPE=${sectorMedianPETTM}, sector=${b.sector}`);
+      const result=computeThesisStrength({vector:thesisCompanyVector,fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth),sectorGrowthMedian:sectorRevenueYoyPct,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,lynchClass:b.lynchClass ?? null,peerGapPct,maxSegmentGrowthPct,epsCagr5yPct,revenueYoyPct:realizedGrowth,sector:b.sector??null,peTTM,sectorMedianPE:sectorMedianPETTM,balance:{inventoryZ:peerReferenceReliable?relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std):0,growthZ:peerReferenceReliable?relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std):0,marginZ:peerReferenceReliable?relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std):0,marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
       // Auftrag 07.08.2026 ("Denoising Softmax + Temperature Scaling"): finale
       // Konfidenzen + Gewichte loggen, damit ein zukuenftiger Kollaps sofort
       // an der Similarity- vs. Konfidenz-Differenz erkennbar ist.

@@ -1,4 +1,4 @@
-import { computeStyleConfidences, blendWeights, NEUTRAL_WEIGHTS, scoreBalanceSheet, scoreGrowthCoverage, computeTurnaroundEvidence, scoreContractual, relativeZ, sectorReferenceFallback, computeThesisStrength, computeGrowthEvidence, applyGrowthLogic, applyFastGrowerSafetyGuard } from "../server/thesis-strength";
+import { computeStyleConfidences, blendWeights, NEUTRAL_WEIGHTS, scoreBalanceSheet, scoreGrowthCoverage, computeTurnaroundEvidence, scoreContractual, relativeZ, sectorReferenceFallback, computeThesisStrength, computeGrowthEvidence, applyGrowthLogic, applyFastGrowerSafetyGuard, computeMaterialSegmentGrowth, checkCyclicalPeDiscount, isCyclicalSectorName } from "../server/thesis-strength";
 let failed=0, total=0; const check=(n:string,c:boolean,d="")=>{total++;if(c)console.log(`  ✅ ${n}`);else{failed++;console.error(`  ❌ ${n} ${d}`)}};
 console.log("\n=== Thesis Strength Score ===");
 const dominant=computeStyleConfidences({revenueCagr3to5y:8,earningsVolatility:70,fcfMarginTrend:0,leverageTrend:1,marginInflectionStrength:9,growthGap:-8});
@@ -50,7 +50,14 @@ const msft=computeThesisStrength({vector:{revenueCagr3to5y:16,earningsVolatility
 
 // GrowthEvidence-Formel: MSFT-Realdaten (Peer-Gap +7.0pp, Segment +31.5%, EPS-CAGR 23.34%, Lynch=fast_grower)
 const geMsft=computeGrowthEvidence({peerGapPct:7.0,maxSegmentGrowthPct:31.5,epsCagr5yPct:23.34,lynchClass:"fast_grower"});
-check("GrowthEvidence-Formel: MSFT-Profil liegt im Ticket-Zielband 0.75-0.90",geMsft.evidence>=.75&&geMsft.evidence<=.95,`${geMsft.evidence}`);
+// Auftrag 07.08.2026 ("Final-Fix: Fast-Grower-Ranges"): die Peer-/Segment-
+// Score-Ankerpunkte wurden bewusst grosszuegiger kalibriert (2pp statt 0pp
+// Start, 10pp statt 12pp Vollausschlag fuer Peer-Gap; 12% statt 8% Start
+// fuer Segment) -- ein Profil mit +7pp Peer-Gap UND +31.5% Segment saettigt
+// beide Teilscores jetzt nahezu vollstaendig, daher liegt Evidence hoeher
+// als im vorherigen (engeren) Zielband. Grenze auf >=0.75 (weiterhin "stark")
+// belassen, obere Grenze auf 1.0 erweitert statt 0.95.
+check("GrowthEvidence-Formel: MSFT-Profil liegt im (durch die geschaerften Ranges erweiterten) Zielband >=0.75",geMsft.evidence>=.75&&geMsft.evidence<=1.0,`${geMsft.evidence}`);
 check("GrowthEvidence: Lynch-Boost ist bei fast_grower aktiv",geMsft.lynchBoostActive===true);
 
 // GrowthEvidence bei fehlenden Inputs: Flags statt stiller 0-Wert, Evidence bleibt niedrig aber kein Crash.
@@ -100,5 +107,56 @@ const confRealMsft=computeStyleConfidences(realMsftVector as any,"fast_grower",r
 check("Echter MSFT-Vektor: Fast Grower fuehrt organisch vor Stalwart (kein reiner Floor-Wert)",confRealMsft["Fast Grower"]>confRealMsft["Stalwart"],JSON.stringify(confRealMsft));
 const guardedRealMsft=applyFastGrowerSafetyGuard(confRealMsft,realEvidence,3.62,31.5);
 check("Echter MSFT-Vektor: Safety-Guard greift nicht mehr ein (Fast Grower bereits >25% organisch)",Math.abs(guardedRealMsft["Fast Grower"]-confRealMsft["Fast Grower"])<1e-9);
+
+// ═══ REGRESSIONSTESTS (07.08.2026, Ticket "Final-Fix: Fast-Grower-Ranges +
+// P/E-Zyklus-Filter") ═══
+
+// 1. Segment-Materialitaet: ein 3%-Segment mit +40% darf NICHT allein
+// Fast-Grower-Evidence ausloesen -- nur Segmente mit Anteil>=10% zaehlen.
+const tinySegmentDominant=computeMaterialSegmentGrowth([{name:"Mini",percentage:3,growth:40},{name:"Kern",percentage:80,growth:5}]);
+check("Segment-Materialitaet: kleines 3%-Segment mit +40% wird NICHT gewaehlt (Kern-Segment mit Anteil>=10% gewinnt)",tinySegmentDominant.materialGrowthPct===5,JSON.stringify(tinySegmentDominant));
+const materialSegmentWins=computeMaterialSegmentGrowth([{name:"Cloud",percentage:39,growth:31.5},{name:"Legacy",percentage:61,growth:2}]);
+check("Segment-Materialitaet: materielles Segment (Anteil>=10%) mit hoechstem Wachstum gewinnt",materialSegmentWins.materialGrowthPct===31.5&&materialSegmentWins.source==="material_segment");
+const noMaterialSegment=computeMaterialSegmentGrowth([{name:"A",percentage:5,growth:20},{name:"B",percentage:4,growth:15},{name:"C",percentage:3,growth:10}]);
+check("Segment-Materialitaet: kein Segment>=10% -> Fallback auf umsatzgewichteten Top-3-Durchschnitt",noMaterialSegment.source==="weighted_top3"&&noMaterialSegment.materialGrowthPct!=null);
+
+// 2. P/E-Zyklus-Filter: Zykliker mit P/E-Discount wird gedaempft, MSFT (nicht
+// zyklisch, kein Discount) bleibt unbeeintraechtigt.
+check("isCyclicalSectorName erkennt Materials als zyklisch",isCyclicalSectorName("Materials")===true);
+check("isCyclicalSectorName erkennt Technology NICHT als zyklisch",isCyclicalSectorName("Technology")===false);
+const cyclicalPeDiscount=checkCyclicalPeDiscount({sector:"Materials",peTTM:9,sectorMedianPE:20,earningsVolatility:null});
+check("P/E-Filter greift: zyklischer Sektor + P/E deutlich unter Sektor-Median (9 < 20*0.75=15)",cyclicalPeDiscount.cyclicalPeFlag===true&&cyclicalPeDiscount.dampingFactor<1);
+const msftPeCheck=checkCyclicalPeDiscount({sector:"Technology",peTTM:21,sectorMedianPE:28,earningsVolatility:11.6});
+check("P/E-Filter greift NICHT bei MSFT (P/E~21, Sektor~28, nicht zyklisch, PEG-Bereich normal)",msftPeCheck.cyclicalPeFlag===false&&msftPeCheck.dampingFactor===1);
+const geZyklikerHighGrowthLowPe=computeGrowthEvidence({peerGapPct:10,maxSegmentGrowthPct:35,epsCagr5yPct:30,lynchClass:"fast_grower",sector:"Materials",peTTM:9,sectorMedianPE:20,earningsVolatility:null});
+check("GrowthEvidence: Zykliker mit CAGR 30% + P/E 9 (Sektor 20) wird gedaempft (cyclicalPeFlag aktiv)",geZyklikerHighGrowthLowPe.cyclicalPeFlag===true);
+const geMsftNoDiscount=computeGrowthEvidence({peerGapPct:3.62,maxSegmentGrowthPct:31.5,epsCagr5yPct:23.34,lynchClass:"fast_grower",sector:"Technology",peTTM:21,sectorMedianPE:28,earningsVolatility:11.6});
+check("GrowthEvidence: MSFT (P/E~21, Sektor~28, nicht zyklisch) bleibt vom P/E-Filter unbeeintraechtigt",geMsftNoDiscount.cyclicalPeFlag===false);
+
+// 3. Nachgeschaerfte Ranges: EPS-CAGR>=16% + Bestaetigungssignal reicht fuer
+// spuerbare Fast-Grower-Evidence -- 16-18%-Wachstum darf nicht automatisch
+// in Stalwart rutschen.
+const ge16PctMitBestaetigung=computeGrowthEvidence({peerGapPct:3,maxSegmentGrowthPct:null,epsCagr5yPct:16,lynchClass:null});
+check("16%-CAGR-Fall MIT Bestaetigung (Peer-Gap>=2pp): cagrScore erreicht 0.50 (nicht gedaempft)",Math.abs(ge16PctMitBestaetigung.cagrScore-0.50)<0.01,JSON.stringify(ge16PctMitBestaetigung));
+const ge16PctOhneBestaetigung=computeGrowthEvidence({peerGapPct:0,maxSegmentGrowthPct:5,epsCagr5yPct:16,lynchClass:null});
+check("16%-CAGR-Fall OHNE Bestaetigung: cagrScore wird auf 60% gedaempft (Flag gesetzt)",ge16PctOhneBestaetigung.cagrScore<0.50&&ge16PctOhneBestaetigung.flags.some(f=>f.includes("ohne Bestaetigungssignal")));
+check("16%-CAGR-Fall: Evidence bleibt trotz fehlender Bestaetigung > 0 (kein automatischer Stalwart-Rutsch)",ge16PctOhneBestaetigung.evidence>0);
+
+// 4. MSFT-Gesamtfall (echte geloggte Werte, jetzt mit P/E-Kontext und den
+// nachgeschaerften Ranges): Fast Grower muss weiterhin >= Stalwart bleiben.
+const geMsftFinal=computeGrowthEvidence({peerGapPct:3.62,maxSegmentGrowthPct:31.5,epsCagr5yPct:23.34,lynchClass:"fast_grower",sector:"Technology",peTTM:21,sectorMedianPE:28,earningsVolatility:11.6});
+const confMsftFinal=computeStyleConfidences(realMsftVector as any,"fast_grower",geMsftFinal.evidence);
+const guardedMsftFinal=applyFastGrowerSafetyGuard(confMsftFinal,geMsftFinal.evidence,3.62,31.5,geMsftFinal.cyclicalPeFlag,17.79);
+check("MSFT-Gesamtfall (mit P/E-Kontext): Fast Grower liegt weiterhin bei mindestens Stalwart-Niveau",guardedMsftFinal["Fast Grower"]>=guardedMsftFinal["Stalwart"]-0.02,JSON.stringify(guardedMsftFinal));
+
+// 5. Weicher Safety-Guard: greift NICHT wenn cyclicalPeFlag aktiv ist, auch
+// bei sonst ausreichender Evidence.
+const weakFgCyclical={"Fast Grower":.10,"Stalwart":.20,"Cyclical":.60,"Turnaround":.05,"Value/Asset":.05} as any;
+const guardedWithCyclicalFlag=applyFastGrowerSafetyGuard(weakFgCyclical,.85,10,35,true,25);
+check("Weicher Safety-Guard: greift NICHT wenn cyclicalPeFlag aktiv ist (kein Erzwingen gegen P/E-Zyklus-Peak)",guardedWithCyclicalFlag["Fast Grower"]===.10);
+const guardedLowRevenueYoy=applyFastGrowerSafetyGuard(weakFgCyclical,.85,10,35,false,5);
+check("Weicher Safety-Guard: greift NICHT bei Revenue-YoY<10% (keine abrupte Abkuehlung uebertoenchen)",guardedLowRevenueYoy["Fast Grower"]===.10);
+const guardedNormal=applyFastGrowerSafetyGuard(weakFgCyclical,.85,10,35,false,15);
+check("Weicher Safety-Guard: greift normal (kein Cyclical-Flag, Revenue-YoY>=10%) und hebt auf 0.35 an",guardedNormal["Fast Grower"]===.35);
 
 console.log(`\n${total-failed}/${total} Checks grün.`); if(failed)process.exit(1);

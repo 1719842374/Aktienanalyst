@@ -48,8 +48,58 @@ const LYNCH_TO_STYLE: Record<string, ThesisStyle> = {
 // Sektor, +31.5% Hauptsegment und Lynch=Fast Grower dennoch als Stalwart/
 // Value-dominant enden, weil der Company-Vektor diese Querschnittsdaten
 // nie sah. GrowthEvidence macht diesen Widerspruch strukturell unmoeglich.
-export interface GrowthEvidenceInput { peerGapPct: number | null; maxSegmentGrowthPct: number | null; epsCagr5yPct: number | null; lynchClass?: string | null; }
-export interface GrowthEvidenceResult { evidence: number; peerScore: number; segScore: number; cagrScore: number; lynchBoostActive: boolean; flags: string[]; }
+export interface GrowthEvidenceInput { peerGapPct: number | null; maxSegmentGrowthPct: number | null; epsCagr5yPct: number | null; lynchClass?: string | null; revenueYoyPct?: number | null; sector?: string | null; earningsVolatility?: number | null; peTTM?: number | null; sectorMedianPE?: number | null; }
+export interface GrowthEvidenceResult { evidence: number; peerScore: number; segScore: number; cagrScore: number; lynchBoostActive: boolean; flags: string[]; cyclicalPeFlag: boolean; }
+// Auftrag 07.08.2026 ("Final-Fix: Fast-Grower-Ranges + P/E-Zyklus-Filter"):
+// Segment-Materialitaet -- ein 3%-Segment mit +40% Wachstum darf NICHT
+// allein Fast-Grower-Evidence ausloesen. Nur Segmente mit Umsatzanteil >=10%
+// zaehlen fuer den Materialitaets-Score; als Fallback (kein Segment erreicht
+// 10%) wird der umsatzgewichtete Durchschnitt der Top-3-Segmente genutzt --
+// so bleibt ein Ergebnis auch bei stark fragmentierten Portfolios moeglich,
+// ohner ein Mini-Segment isoliert entscheiden zu lassen.
+export interface SegmentMaterialityInput { name: string; percentage: number; growth?: number | null }
+export function computeMaterialSegmentGrowth(segments: SegmentMaterialityInput[] | null | undefined): { materialGrowthPct: number | null; source: "material_segment" | "weighted_top3" | null } {
+  if (!segments?.length) return { materialGrowthPct: null, source: null };
+  const withGrowth = segments.filter(s => typeof s.growth === "number" && isFinite(s.growth!));
+  const material = withGrowth.filter(s => s.percentage >= 10);
+  if (material.length > 0) {
+    const best = material.reduce((a, b) => (b.growth! > a.growth! ? b : a));
+    return { materialGrowthPct: best.growth!, source: "material_segment" };
+  }
+  // Fallback: umsatzgewichtetes Wachstum der Top-3 Segmente (nach Anteil).
+  const top3 = [...withGrowth].sort((a, b) => b.percentage - a.percentage).slice(0, 3);
+  if (top3.length === 0) return { materialGrowthPct: null, source: null };
+  const totalShare = top3.reduce((a, s) => a + s.percentage, 0);
+  if (totalShare <= 0) return { materialGrowthPct: null, source: null };
+  const weighted = top3.reduce((a, s) => a + (s.percentage / totalShare) * s.growth!, 0);
+  return { materialGrowthPct: weighted, source: "weighted_top3" };
+}
+
+// Auftrag 07.08.2026: zyklische Sektoren fuer den P/E-Filter. Liste bewusst
+// konservativ (nur Sektoren, die im Ticket explizit genannt sind oder
+// eindeutig zyklisch sind) -- Erweiterung ueber Earnings-Volatilitaet als
+// zusaetzliches, datengetriebenes Signal (siehe isCyclicalProfile).
+const CYCLICAL_SECTORS = new Set(["materials", "energy", "industrials", "basic materials", "consumer cyclical", "automobiles"]);
+export function isCyclicalSectorName(sector?: string | null): boolean {
+  if (!sector) return false;
+  return CYCLICAL_SECTORS.has(sector.trim().toLowerCase());
+}
+
+// P/E-Zyklus-Filter (Ticket Teil 3): "Hohes Wachstum + niedriges P/E +
+// zyklischer Sektor = Peak-Earnings-Verdacht, kein saekularer Fast Grower."
+// Greift additiv NACH der Grundformel, daempft NICHT den EPS-CAGR-Score
+// selbst (der bleibt eine reine Messung), sondern die AUSGABE der gesamten
+// GrowthEvidence -- so bleibt die Kernformel unveraendert nachvollziehbar,
+// waehrend der Filter separat sichtbar (cyclicalPeFlag) bleibt.
+export interface CyclicalPeCheckInput { sector?: string | null; earningsVolatility?: number | null; peTTM: number | null; sectorMedianPE: number | null; }
+export function checkCyclicalPeDiscount(input: CyclicalPeCheckInput): { cyclicalPeFlag: boolean; dampingFactor: number } {
+  const cyclicalSector = isCyclicalSectorName(input.sector) || (finite(input.earningsVolatility) && input.earningsVolatility! > 40);
+  const peDiscount = finite(input.peTTM) && finite(input.sectorMedianPE) && input.sectorMedianPE! > 0 && input.peTTM! > 0 && input.peTTM! < input.sectorMedianPE! * 0.75;
+  const cyclicalPeFlag = cyclicalSector && peDiscount;
+  // 0.60-0.70 Daempfung laut Ticket -- Mittelwert 0.65 als fester, transparenter Faktor.
+  return { cyclicalPeFlag, dampingFactor: cyclicalPeFlag ? 0.65 : 1.0 };
+}
+
 export function computeGrowthEvidence(input: GrowthEvidenceInput): GrowthEvidenceResult {
   const flags: string[] = [];
   if (!finite(input.peerGapPct)) flags.push("GrowthEvidence: Peer-Gap fehlt (Sektor-Referenz nicht belastbar)");
@@ -59,14 +109,36 @@ export function computeGrowthEvidence(input: GrowthEvidenceInput): GrowthEvidenc
   const peerGap = finite(input.peerGapPct) ? input.peerGapPct / 100 : 0;
   const maxSegGrowth = finite(input.maxSegmentGrowthPct) ? input.maxSegmentGrowthPct / 100 : 0;
   const epsCagr = finite(input.epsCagr5yPct) ? input.epsCagr5yPct / 100 : 0;
-  const peerScore = clamp01((peerGap - 0.00) / 0.12);
-  const segScore = clamp01((maxSegGrowth - 0.08) / 0.25);
-  const cagrScore = clamp01((epsCagr - 0.08) / 0.20);
+  // NACHGESCHAERFTE RANGES (07.08.2026, Ticket "Fast-Grower-Ranges ab ~16%"):
+  // EPS-CAGR>=16% soll ausreichend Evidence liefern, SOFERN mindestens ein
+  // Bestaetigungssignal vorliegt (Rev YoY>=12% ODER materielles Segment
+  // >=18% ODER Peer-Gap>=+2pp). Die Score-Formeln selbst bleiben weiche
+  // Rampen (clamp01), aber die unteren Ankerpunkte wurden verschoben: cagr
+  // 8%->12% (16% liegt jetzt bei 0.50 statt vorher 0.40), peer 0pp->+2pp
+  // Ankerpunkt fuer die erste Evidence-Einheit, segment 8%->12%.
+  const peerScore = clamp01(peerGap / 0.10); // 2pp->0.20, 5pp->0.50, 10pp->1.0
+  const segScore = clamp01((maxSegGrowth - 0.12) / 0.18); // 12%->0, 18%->0.33, 30%->1.0
+  const cagrScore = clamp01((epsCagr - 0.08) / 0.16); // 8%->0, 16%->0.50, 24%->1.0 (Ticket-Formel woertlich)
   const lynchBoostActive = input.lynchClass === "fast_grower";
   const lynchBoost = lynchBoostActive ? 0.20 : 0.0;
-  // Ticket-Formel woertlich: 0.30*peer + 0.30*seg + 0.25*cagr + 0.15*(1 wenn Boost aktiv) + 0.50*lynch_boost.
-  const evidence = clamp01(0.30 * peerScore + 0.30 * segScore + 0.25 * cagrScore + 0.15 * (lynchBoostActive ? 1.0 : 0.0) + 0.50 * lynchBoost);
-  return { evidence, peerScore, segScore, cagrScore, lynchBoostActive, flags };
+  // Bestaetigungslogik (Ticket Kernregel): EPS-CAGR>=16% allein reicht NICHT
+  // fuer starke Evidence -- es braucht zusaetzlich mindestens eines der drei
+  // Bestaetigungssignale (Rev YoY>=12%, materielles Segment>=18%, Peer-Gap
+  // >=+2pp). Ohne Bestaetigung wird der CAGR-Beitrag auf 60% gedaempft, damit
+  // ein isoliert hoher CAGR-Wert (z.B. durch Sondereffekte) nicht allein
+  // starke Fast-Grower-Evidence erzeugt.
+  const hasConfirmation = peerGap >= 0.02 || maxSegGrowth >= 0.18 || (finite(input.revenueYoyPct) && input.revenueYoyPct! >= 12);
+  const confirmedCagrScore = epsCagr >= 0.16 && !hasConfirmation ? cagrScore * 0.60 : cagrScore;
+  if (epsCagr >= 0.16 && !hasConfirmation) flags.push("EPS-CAGR>=16% ohne Bestaetigungssignal (Rev/Segment/Peer-Gap) -- Beitrag gedaempft");
+  let evidence = clamp01(0.30 * peerScore + 0.30 * segScore + 0.25 * confirmedCagrScore + 0.15 * (lynchBoostActive ? 1.0 : 0.0) + 0.50 * lynchBoost);
+  // P/E-Zyklus-Filter (Ticket Teil 3): daempft die GESAMTE Evidence additiv,
+  // sichtbar ueber cyclicalPeFlag, ohne die einzelnen Teilscores zu verfaelschen.
+  const cyclicalPe = checkCyclicalPeDiscount({ sector: input.sector, earningsVolatility: input.earningsVolatility, peTTM: input.peTTM ?? null, sectorMedianPE: input.sectorMedianPE ?? null });
+  if (cyclicalPe.cyclicalPeFlag) {
+    evidence = clamp01(evidence * cyclicalPe.dampingFactor);
+    flags.push("P/E-Zyklus-Filter aktiv: zyklischer Sektor + P/E deutlich unter Sektor-Median -> Peak-Earnings-Verdacht, Fast-Grower-Evidence gedaempft");
+  }
+  return { evidence, peerScore, segScore, cagrScore: confirmedCagrScore, lynchBoostActive, flags, cyclicalPeFlag: cyclicalPe.cyclicalPeFlag };
 }
 
 // apply_growth_logic (Ticket Teil 3): verschiebt die ROHEN Similarities VOR
@@ -110,14 +182,24 @@ export function applyGrowthLogic(sims: number[], styles: ThesisStyle[], growthEv
 // eines der beiden Belege (Peer-Gap oder Segment-Wachstum) fuer sich allein
 // schon eindeutig ist -- verhindert, dass ein rein CAGR-getriebener Fall
 // den Guard versehentlich ausloest.
-export function applyFastGrowerSafetyGuard(confidences: Record<ThesisStyle, number>, growthEvidence: number, peerGapPct: number | null, maxSegmentGrowthPct: number | null): Record<ThesisStyle, number> {
+// Auftrag 07.08.2026 ("Final-Fix: Fast-Grower-Ranges + P/E-Zyklus-Filter",
+// Ticket Teil 5, "weicher Safety-Guard"): Untergrenze von 0.25 auf 0.35
+// angehoben (Fast Grower darf nicht klar hinter Stalwart liegen), aber neue
+// Ausschlussbedingungen ergaenzt: greift NICHT wenn der P/E-Zyklus-Filter
+// aktiv ist (Peak-Earnings-Verdacht -- kein Erzwingen gegen einen klaren
+// Zyklus-Peak) UND NICHT wenn das aktuelle Revenue-YoY unter 10% liegt
+// (keine abrupte Wachstumsabkuehlung soll durch den Guard uebertoencht werden).
+export function applyFastGrowerSafetyGuard(confidences: Record<ThesisStyle, number>, growthEvidence: number, peerGapPct: number | null, maxSegmentGrowthPct: number | null, cyclicalPeFlag?: boolean, revenueYoyPct?: number | null): Record<ThesisStyle, number> {
   const strongPeerGap = finite(peerGapPct) && peerGapPct >= 5;
   const strongSegmentGrowth = finite(maxSegmentGrowthPct) && maxSegmentGrowthPct >= 20;
   if (growthEvidence < 0.70 || !(strongPeerGap || strongSegmentGrowth)) return confidences;
-  if (confidences["Fast Grower"] >= 0.25) return confidences;
+  if (cyclicalPeFlag) return confidences; // kein Erzwingen gegen einen klaren P/E-Zyklus-Peak
+  if (finite(revenueYoyPct) && revenueYoyPct! < 10) return confidences; // keine abrupte Abkuehlung uebertoenchen
+  const FAST_GROWER_FLOOR = 0.35;
+  if (confidences["Fast Grower"] >= FAST_GROWER_FLOOR) return confidences;
   const out = { ...confidences };
-  const deficit = 0.25 - out["Fast Grower"];
-  out["Fast Grower"] = 0.25;
+  const deficit = FAST_GROWER_FLOOR - out["Fast Grower"];
+  out["Fast Grower"] = FAST_GROWER_FLOOR;
   // Defizit proportional von den anderen Stilen abziehen, damit die Summe 1 bleibt.
   const others = (Object.keys(out) as ThesisStyle[]).filter(s => s !== "Fast Grower");
   const othersSum = others.reduce((a, s) => a + out[s], 0) || 1;
@@ -224,7 +306,7 @@ export function scoreBalanceSheet(input:{inventoryZ:number;growthZ:number;margin
  if(input.turnaroundConfidence>.30){if(input.turnaroundEvidence>=.60)final=.60*s+.40*input.turnaroundEvidence;else if(input.turnaroundEvidence>=.35)final=.85*s+.15*input.turnaroundEvidence;}
  return{score:clamp01(final),normalScore:s,flags};}
 export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:string;tags?:string[]}>|null|undefined,segmentName?:string|null):{score:number;flags:string[]}{if(!catalysts?.length)return{score:.35,flags:["Keine Katalysatoren verfügbar — neutraler Teilscore"]}; const seg=(segmentName||"").toLowerCase();let num=0,den=0;for(const c of catalysts){const text=`${c.name||""} ${c.context||""}`;const quantified=/\d[\d.,]*\s*(%|mrd|mio|\$|€|usd|eur|gw|mw)/i.test(text);const specific=!!seg&&(text.toLowerCase().includes(seg)||c.tags?.some(t=>t.toLowerCase().includes(seg)));const w=(specific&&quantified)?1:quantified?.3:.3; num+=w;den+=1;}return{score:clamp01(num/Math.max(1,den)),flags:[]};}
-export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[]}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; }
+export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[]}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; revenueYoyPct?:number|null; sector?:string|null; peTTM?:number|null; sectorMedianPE?:number|null; }
 export function computeThesisStrength(input:ThesisStrengthInput){const flags=[...(input.vector.missingFeatures||[]).map(x=>`Merkmal fehlt: ${x}`)];
  // Auftrag 07.08.2026 ("Querschnitts-Konsistenz + Wachstums-Logik"): GrowthEvidence
  // wird IMMER berechnet (auch bei fehlenden Einzel-Inputs -- computeGrowthEvidence
@@ -232,8 +314,8 @@ export function computeThesisStrength(input:ThesisStrengthInput){const flags=[..
  // Stil-Konfidenzen berechnet werden. Damit ist die Thesis-Klassifikation
  // verbindlich an die Querschnittsdaten aus S1/S2/S7 gebunden statt isoliert
  // vom Company-Vektor allein abzuhaengen.
- const ge=computeGrowthEvidence({peerGapPct:input.peerGapPct??null,maxSegmentGrowthPct:input.maxSegmentGrowthPct??null,epsCagr5yPct:input.epsCagr5yPct??null,lynchClass:input.lynchClass});
+ const ge=computeGrowthEvidence({peerGapPct:input.peerGapPct??null,maxSegmentGrowthPct:input.maxSegmentGrowthPct??null,epsCagr5yPct:input.epsCagr5yPct??null,lynchClass:input.lynchClass,revenueYoyPct:input.revenueYoyPct??null,sector:input.sector??null,earningsVolatility:input.vector.earningsVolatility,peTTM:input.peTTM??null,sectorMedianPE:input.sectorMedianPE??null});
  flags.push(...ge.flags);
  let c=computeStyleConfidences(input.vector, input.lynchClass, ge.evidence);
- c=applyFastGrowerSafetyGuard(c, ge.evidence, input.peerGapPct??null, input.maxSegmentGrowthPct??null);
+ c=applyFastGrowerSafetyGuard(c, ge.evidence, input.peerGapPct??null, input.maxSegmentGrowthPct??null, ge.cyclicalPeFlag, input.revenueYoyPct??null);
  const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.backlogAvailable);const b=scoreExternal();const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+(raw*(.55+.45*conf)).toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf,growthEvidence:ge};}
