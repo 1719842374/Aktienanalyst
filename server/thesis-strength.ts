@@ -305,8 +305,49 @@ export function scoreBalanceSheet(input:{inventoryZ:number;growthZ:number;margin
  // Harte Guard-Regel: TurnaroundEvidence <0,35 bewirkt keinen D-Boost.
  if(input.turnaroundConfidence>.30){if(input.turnaroundEvidence>=.60)final=.60*s+.40*input.turnaroundEvidence;else if(input.turnaroundEvidence>=.35)final=.85*s+.15*input.turnaroundEvidence;}
  return{score:clamp01(final),normalScore:s,flags};}
-export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:string;tags?:string[]}>|null|undefined,segmentName?:string|null):{score:number;flags:string[]}{if(!catalysts?.length)return{score:.35,flags:["Keine Katalysatoren verfügbar — neutraler Teilscore"]}; const seg=(segmentName||"").toLowerCase();let num=0,den=0;for(const c of catalysts){const text=`${c.name||""} ${c.context||""}`;const quantified=/\d[\d.,]*\s*(%|mrd|mio|\$|€|usd|eur|gw|mw)/i.test(text);const specific=!!seg&&(text.toLowerCase().includes(seg)||c.tags?.some(t=>t.toLowerCase().includes(seg)));const w=(specific&&quantified)?1:quantified?.3:.3; num+=w;den+=1;}return{score:clamp01(num/Math.max(1,den)),flags:[]};}
-export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[]}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; revenueYoyPct?:number|null; sector?:string|null; peTTM?:number|null; sectorMedianPE?:number|null; }
+// Auftrag 08.08.2026 ("Live-These + Thesis-Score + Katalysatoren", Teil 4):
+// Baustein E wird jetzt an die frische These gebunden statt rein heuristisch
+// aus Segment-Textmatch + Quantifizierung zu bestehen. Ein Katalysator zaehlt
+// nur voll, wenn er (a) im Thesis-Text namentlich/thematisch erwaehnt wird,
+// (b) quantifiziert ist (PoS + Netto-Upside numerisch vorhanden, nicht nur
+// Regex-Text-Quantifizierung) UND (c) nicht als generic=true geflaggt ist.
+// Generic-Guard: wenn ALLE Katalysatoren generic=true sind, wird der Score
+// auf max. 0.40 gedeckelt und ein Flag gesetzt ("Katalysatoren noch nicht
+// firmenspezifisch") -- Fake-Alignment (hohe E-Note trotz generischer
+// Katalysatoren) wird damit verbindlich verhindert.
+export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:string;tags?:string[];pos?:number;nettoUpside?:number;generic?:boolean}>|null|undefined,segmentName?:string|null,thesisText?:string|null):{score:number;flags:string[]}{
+  if(!catalysts?.length)return{score:.35,flags:["Keine Katalysatoren verfügbar — neutraler Teilscore"]};
+  const seg=(segmentName||"").toLowerCase();
+  const thesis=(thesisText||"").toLowerCase();
+  const flags:string[]=[];
+  let num=0,den=0;
+  for(const c of catalysts){
+    const text=`${c.name||""} ${c.context||""}`;
+    // Quantifizierung: numerisch belastbar (PoS + Netto-Upside vorhanden) ODER
+    // Text-Regex-Fallback (fuer Aufrufer ohne pos/nettoUpside-Felder, z.B.
+    // aeltere Call-Sites -- additiv, kein Bruch der bestehenden Signatur).
+    const quantifiedNumeric = typeof c.pos==="number" && isFinite(c.pos) && typeof c.nettoUpside==="number" && isFinite(c.nettoUpside);
+    const quantifiedText=/\d[\d.,]*\s*(%|mrd|mio|\$|€|usd|eur|gw|mw)/i.test(text);
+    const quantified = quantifiedNumeric || quantifiedText;
+    const specificSegment=!!seg&&(text.toLowerCase().includes(seg)||c.tags?.some(t=>t.toLowerCase().includes(seg)));
+    // Themenuebereinstimmung mit der frischen These: Katalysator-Name (oder
+    // dessen erste 2 Woerter) taucht im Thesis-Text auf.
+    const nameWords=(c.name||"").toLowerCase().split(/\s+/).filter(w=>w.length>3).slice(0,3);
+    const thesisMatch = thesis.length>0 && nameWords.some(w=>thesis.includes(w));
+    const specific = specificSegment || thesisMatch;
+    const isGeneric = c.generic === true;
+    const w = isGeneric ? .15 : (specific&&quantified)?1:quantified?.5:.3;
+    num+=w;den+=1;
+  }
+  let score = clamp01(num/Math.max(1,den));
+  const allGeneric = catalysts.every(c=>c.generic===true);
+  if(allGeneric){
+    score = Math.min(score, .40);
+    flags.push("Katalysatoren noch nicht firmenspezifisch — E-Score gedeckelt (max. 0.40)");
+  }
+  return{score,flags};
+}
+export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[];pos?:number;nettoUpside?:number;generic?:boolean}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; revenueYoyPct?:number|null; sector?:string|null; peTTM?:number|null; sectorMedianPE?:number|null; thesisText?:string|null; }
 export function computeThesisStrength(input:ThesisStrengthInput){const flags=[...(input.vector.missingFeatures||[]).map(x=>`Merkmal fehlt: ${x}`)];
  // Auftrag 07.08.2026 ("Querschnitts-Konsistenz + Wachstums-Logik"): GrowthEvidence
  // wird IMMER berechnet (auch bei fehlenden Einzel-Inputs -- computeGrowthEvidence
@@ -318,4 +359,4 @@ export function computeThesisStrength(input:ThesisStrengthInput){const flags=[..
  flags.push(...ge.flags);
  let c=computeStyleConfidences(input.vector, input.lynchClass, ge.evidence);
  c=applyFastGrowerSafetyGuard(c, ge.evidence, input.peerGapPct??null, input.maxSegmentGrowthPct??null, ge.cyclicalPeFlag, input.revenueYoyPct??null);
- const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.backlogAvailable);const b=scoreExternal();const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+(raw*(.55+.45*conf)).toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf,growthEvidence:ge};}
+ const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.backlogAvailable);const b=scoreExternal();const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName,input.thesisText);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+(raw*(.55+.45*conf)).toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf,growthEvidence:ge};}

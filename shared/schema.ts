@@ -173,6 +173,13 @@ export interface Catalyst {
   epsImpact?: number; // $ pro Aktie, analog server/regulatory.ts Muster
   startYear?: number;
   endYear?: number;
+
+  // Auftrag 08.08.2026 ("Live-These + Thesis-Score + Katalysatoren"): explizites
+  // Flag statt Heuristik (z.B. llmModelUsed leer) -- eindeutig fuer UI, These-
+  // Generierung und Baustein-E-Deckelung. true = Template-/Fallback-Katalysator
+  // (generateCatalysts()), false = firmenspezifischer LLM-Output
+  // (generateCatalystsAndMatchNews()).
+  generic?: boolean;
 }
 
 export interface Risk {
@@ -495,6 +502,7 @@ export interface StockAnalysis {
   beta?: number; // 5Y beta estimate
   growthThesis: string;
   growthThesisFingerprint?: string; // fingerprint of inputs used — used for stale-thesis detection
+  growthThesisGeneratedAt?: string; // ISO-Timestamp: wann die aktuelle These generiert (oder aus Fingerprint-Cache uebernommen) wurde
   structuralTrends: string[];
 
   // Cycle info

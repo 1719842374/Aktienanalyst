@@ -367,6 +367,17 @@ export function Section2({ data }: Props) {
         <div className="bg-muted/30 rounded-md p-3 border border-border/50">
           <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Investment These & Katalysatoren-Logik</h3>
           <p className="text-xs text-foreground/80 leading-relaxed">{data.growthThesis}</p>
+          {/* Auftrag 08.08.2026 ("Live-These + Thesis-Score + Katalysatoren"): Quellen-
+              Hinweis + Timestamp unter der These, wie im Zielbild spezifiziert.
+              Kein alter Cache-Text mehr ohne Kontext, wann/woraus generiert. */}
+          {data.growthThesis && (
+            <p className="text-[10px] text-muted-foreground/70 mt-1.5">
+              Quellen: Segmente, Wachstum, Katalysatoren, Sektor
+              {data.growthThesisGeneratedAt && (
+                <> · Stand: {new Date(data.growthThesisGeneratedAt).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" })}</>
+              )}
+            </p>
+          )}
 
           {/* Capex Fiscal Tailwind highlight */}
           {(() => {

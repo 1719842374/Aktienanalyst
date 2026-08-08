@@ -826,22 +826,40 @@ export interface GrowthThesisInput {
   analystPTMedian?: number;
   currentPrice?: number;
   returnOnEquity?: number;
-  topCatalysts: Array<{ name: string; context: string }>;
+  topCatalysts: Array<{ name: string; context: string; pos?: number; nettoUpside?: number; gb?: number; generic?: boolean }>;
   capexContext?: { sector: string; programmes: string[]; rationale: string } | null;
+  // Auftrag 08.08.2026 ("Live-These + Thesis-Score + Katalysatoren"): additive
+  // Felder fuer die erweiterte 4-8-Saetze-These (Segmente, g*, GB-Summe,
+  // Next Earnings, Moat, Lynch-Label) -- alle optional, damit ein Aufruf ohne
+  // diese Felder (Altverhalten) weiterhin funktioniert.
+  topSegment?: { name: string; growthPct: number; sharePct: number } | null;
+  otherSegments?: Array<{ name: string; growthPct: number }>;
+  sectorMedianRevenueYoyPct?: number | null;
+  peerGapPct?: number | null;
+  gStar?: number | null;
+  gbSum?: number | null;
+  moat?: string | null;
+  lynchClass?: string | null;
+  nextEarningsDate?: string | null;
 }
 
 export function growthThesisFingerprint(input: Pick<GrowthThesisInput,
-  "revenueGrowth" | "fcfMargin" | "topCatalysts" | "capexContext">): string {
-  const catKey = input.topCatalysts.slice(0, 2).map(c => c.name).join("|");
+  "revenueGrowth" | "fcfMargin" | "topCatalysts" | "capexContext" | "topSegment" | "gStar" | "gbSum" | "lynchClass">): string {
+  const catKey = input.topCatalysts.slice(0, 4).map(c => `${c.name}:${(c.gb ?? 0).toFixed(2)}:${c.generic ? "g" : "s"}`).join("|");
   const capexKey = input.capexContext ? input.capexContext.programmes.slice(0,2).join("+") : "none";
-  return `rv${input.revenueGrowth.toFixed(1)}_fcf${input.fcfMargin.toFixed(1)}_cats${catKey}_capex${capexKey}`;
+  const segKey = input.topSegment ? `${input.topSegment.name}:${input.topSegment.growthPct.toFixed(1)}:${input.topSegment.sharePct.toFixed(1)}` : "none";
+  const gStarKey = input.gStar != null ? input.gStar.toFixed(1) : "na";
+  const gbSumKey = input.gbSum != null ? input.gbSum.toFixed(2) : "na";
+  return `rv${input.revenueGrowth.toFixed(1)}_fcf${input.fcfMargin.toFixed(1)}_cats${catKey}_capex${capexKey}_seg${segKey}_g${gStarKey}_gb${gbSumKey}_lynch${input.lynchClass ?? "na"}`;
 }
 
 export async function generateGrowthThesis(input: GrowthThesisInput): Promise<string | null> {
   const { ticker, companyName, description, sector, industry,
     revenueGrowth, fcfMargin, grossMargin, operatingMargin,
     forwardPE, evEbitda, analystPTMedian, currentPrice, returnOnEquity,
-    topCatalysts, capexContext } = input;
+    topCatalysts, capexContext,
+    topSegment, otherSegments, sectorMedianRevenueYoyPct, peerGapPct,
+    gStar, gbSum, moat, lynchClass, nextEarningsDate } = input;
 
   const descSentences = (description || "").match(/[^.!?]+[.!?]+/g) || [];
   const descCore = descSentences.slice(0, 3).join(" ").trim().slice(0, 400);
@@ -858,40 +876,75 @@ export async function generateGrowthThesis(input: GrowthThesisInput): Promise<st
     const upside = ((analystPTMedian - currentPrice) / currentPrice * 100).toFixed(0);
     metrics.push(`Analyst-PT: $${analystPTMedian} (+${upside}% Upside)`);
   }
+  if (sectorMedianRevenueYoyPct != null) metrics.push(`Sektor-Median Rev YoY: ${sectorMedianRevenueYoyPct.toFixed(1)}%`);
+  if (peerGapPct != null) metrics.push(`Peer-Gap: ${peerGapPct >= 0 ? "+" : ""}${peerGapPct.toFixed(1)}pp`);
+  if (gStar != null) metrics.push(`g* (Reverse-DCF): ${gStar.toFixed(1)}%`);
 
-  const catLines = topCatalysts.slice(0, 2).map(c => {
+  // Auftrag 08.08.2026 ("Live-These + Thesis-Score + Katalysatoren", Teil 2):
+  // Segment-Zeile mit Zahlen -- Top-Segment + bis zu 2 weitere, damit die
+  // These "welches Segment traegt das Wachstum" konkret beantworten kann.
+  const segmentLines: string[] = [];
+  if (topSegment) segmentLines.push(`${topSegment.name} +${topSegment.growthPct.toFixed(1)}% (Anteil ${topSegment.sharePct.toFixed(0)}%)`);
+  if (otherSegments?.length) segmentLines.push(...otherSegments.slice(0, 2).map(s => `${s.name} +${s.growthPct.toFixed(1)}%`));
+
+  // Auftrag 08.08.2026 Teil 2: K1-K4 mit PoS + Netto-Upside + GB%, nicht nur
+  // Name+Kontext wie in der alten 2-3-Saetze-Version.
+  const catLines = topCatalysts.slice(0, 4).map((c, i) => {
     const ctxFirst = (c.context.match(/[^.!?]+[.!?]+/) || [""])[0].trim();
-    return `- ${c.name}: ${ctxFirst.slice(0, 150)}`;
+    const quant = (c.pos != null || c.nettoUpside != null || c.gb != null)
+      ? ` (PoS ${c.pos?.toFixed(0) ?? "?"}%, Netto-Upside ${c.nettoUpside?.toFixed(1) ?? "?"}%, GB ${c.gb?.toFixed(2) ?? "?"}%)`
+      : "";
+    const genericFlag = c.generic ? " [generisch]" : "";
+    return `- K${i + 1} ${c.name}${quant}${genericFlag}: ${ctxFirst.slice(0, 150)}`;
   }).join("\n");
 
   const capexLine = capexContext
     ? `Staatliche Förderprogramme: ${capexContext.programmes.slice(0, 2).join(" & ")} (${capexContext.sector}). ${capexContext.rationale.slice(0, 120)}`
     : "";
 
-  const prompt = `Du bist ein erfahrener Aktienanalyst. Schreibe 2-3 präzise deutsche Sätze als Investment-These für ${companyName} (${ticker}).
+  const gbLine = gbSum != null ? `GB-Summe (gewichteter Beitrag aller Katalysatoren): ${gbSum >= 0 ? "+" : ""}${gbSum.toFixed(1)}%` : "";
+  const moatLine = moat ? `Moat: ${moat}` : "";
+  const lynchLine = lynchClass ? `Lynch-Klassifikation: ${lynchClass}` : "";
+  const earningsLine = nextEarningsDate ? `Nächste Earnings: ${nextEarningsDate}` : "";
+
+  // Auftrag 08.08.2026 Teil 3: 4-8 Saetze statt 2-3, mit den 5 inhaltlichen
+  // Pflichtpunkten aus dem Ticket (Kernthese / Segment-Treiber / Katalysatoren
+  // mit PoS+Netto-Upside / Bewertung+g*+FCF / ein klares Risiko).
+  const prompt = `Du bist ein erfahrener Aktienanalyst. Schreibe die aktuelle Investment-These für ${companyName} (${ticker}) in 4-8 präzisen deutschen Sätzen, NUR auf Basis der gelieferten Daten. Keine Floskeln.
 
 GESCHÄFTSMODELL (FMP):
 ${descCore}
 
 HARTE KENNZAHLEN:
 ${metrics.length > 0 ? metrics.join(" | ") : "Keine aktuellen Daten verfügbar"}
+${lynchLine}
+${moatLine}
+${earningsLine}
 
-WESENTLICHE KATALYSATOREN:
+SEGMENTE (Wachstumstreiber mit Zahlen):
+${segmentLines.length > 0 ? segmentLines.join(" | ") : "Keine Segmentdaten verfügbar"}
+
+KATALYSATOREN (K1-K4, mit Erfolgswahrscheinlichkeit + Netto-Upside):
 ${catLines || "- Keine spezifischen Katalysatoren verfügbar"}
+${gbLine}
 ${capexLine ? `\nFISKAL-RÜCKENWIND: ${capexLine}` : ""}
 
+Die These MUSS folgende 5 Punkte enthalten (je 1 Satz, in dieser Reihenfolge):
+1. Kernthese in einem Satz: was treibt den Wert von "${companyName}"?
+2. Welches Segment / welcher Trend trägt das Wachstum -- MIT den gelieferten Zahlen
+3. Welche Katalysatoren (beim EXAKTEN Namen, z.B. "K1 ...") stützen die These -- mit PoS und Netto-Upside falls vorhanden. Wenn ein Katalysator als [generisch] markiert ist, erwähne ihn nicht als tragende Stuetze.
+4. Was die Bewertung / g* (Reverse-DCF) / FCF-Marge dazu sagen (kurz, mit Zahl)
+5. Ein klares Risiko, das diese These brechen kann
+
 REGELN (strikt einhalten):
-1. Nenne "${companyName}" in Satz 1 und erkläre KONKRET womit das Unternehmen Geld verdient (aus Geschäftsmodell)
-2. Erwähne mind. 1 harte Kennzahl (FCF-Marge, Forward KGV, Analystenziel etc.)
-3. Nenne mind. 1 konkreten Katalysator beim EXAKTEN Namen
-4. Falls Fiskal-Rückenwind: letzter Satz nennt das Programm
-5. VERBOTEN: "strategische Initiativen", "operative Effizienz", "Wachstumspotenzial" als leere Phrasen
-6. Maximal 3 Sätze, klar und direkt auf Deutsch
+- VERBOTEN: "strategische Initiativen", "operative Effizienz", "Wachstumspotenzial" als leere Phrasen ohne Zahl dahinter
+- Keine Wiederholung der reinen Geschäftsmodell-Beschreibung -- das ist eine These, keine Beschreibung
+- 4-8 Sätze insgesamt, sachlich, zahlenbasiert, auf Deutsch
 
 Antworte NUR mit JSON: {"thesis": "..."}`;
 
   try {
-    const result = await callLLMJson({ prompt, maxTokens: 300, temperature: 0.25 });
+    const result = await callLLMJson({ prompt, maxTokens: 550, temperature: 0.25 });
     const thesis = result?.data?.thesis;
     if (typeof thesis === "string" && thesis.trim().length > 30) {
       return thesis.trim();

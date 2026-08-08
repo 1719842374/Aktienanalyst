@@ -81,6 +81,7 @@ import {
   generateCatalystDeepDives,
   type CapexTailwindContext,
   generateGrowthThesis,
+  growthThesisFingerprint,
   generateCompanySpecificRisks,
   generatePolicyContext,
   generatePorterFiveForces,
@@ -954,6 +955,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           if (llmResult) {
             catalysts = llmResult.catalysts;
             llmModelUsed = llmResult.modelUsed;
+            // Auftrag 08.08.2026 ("Live-These + Thesis-Score + Katalysatoren"):
+            // explizites generic=false fuer firmenspezifische LLM-Katalysatoren --
+            // Grundlage fuer die Investment-These (Schritt 14) und Baustein E.
+            for (const c of catalysts) c.generic = false;
           }
         } catch (llmErr: any) {
           console.warn(`[ANALYZE] LLM catalyst call failed: ${llmErr?.message?.substring(0, 100)}`);
@@ -974,6 +979,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           c.einpreisungsgrad = epr;
           c.nettoUpside = +(c.bruttoUpside * (1 - epr / 100)).toFixed(2);
           c.gb = +(c.pos / 100 * c.nettoUpside).toFixed(2);
+          // Auftrag 08.08.2026: Template-/Fallback-Katalysatoren sind per
+          // Definition generisch (keine firmenspezifische LLM-Ableitung).
+          c.generic = true;
         }
         if (newsItems.length > 0) {
           try { matchNewsToCatalysts(newsItems, catalysts); } catch {}
@@ -1036,21 +1044,66 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       // ── 14. Growth thesis ──
+      // Auftrag 08.08.2026 ("Live-These + Thesis-Score + Katalysatoren"):
+      // moatAssessment wird additiv vorgezogen (reine Funktion, keine LLM-
+      // Abhaengigkeit) -- vorher lief scoreMoat() erst in Schritt 15, NACH
+      // der These. Die urspruengliche Zeile in Schritt 15 referenziert jetzt
+      // dieselbe Variable statt sie neu zu berechnen (kein doppelter Call).
+      const moatAssessment = scoreMoat(grossMargin, fcfMargin, returnOnEquity, revenueGrowth, description);
+
+      // Auftrag 08.08.2026 Teil 4: Segment-Treiber (Top + bis zu 2 weitere)
+      // aus revenueSegments (bereits in Schritt 7 geladen) fuer die These.
+      const sortedSegs = [...revenueSegments]
+        .filter(s => typeof s.growth === "number" && isFinite(s.growth as number))
+        .sort((a, b) => (b.growth as number) - (a.growth as number));
+      const topSegmentForThesis = sortedSegs[0]
+        ? { name: sortedSegs[0].name, growthPct: sortedSegs[0].growth as number, sharePct: sortedSegs[0].percentage }
+        : null;
+      const otherSegmentsForThesis = sortedSegs.slice(1, 3).map(s => ({ name: s.name, growthPct: s.growth as number }));
+
+      // GB-Summe: gewichteter Beitrag aller (nicht nur Top-2) Katalysatoren.
+      const gbSumForThesis = catalysts.length > 0
+        ? catalysts.reduce((sum, c) => sum + (typeof c.gb === "number" && isFinite(c.gb) ? c.gb : 0), 0)
+        : null;
+
       let growthThesis: string | null = null;
+      let growthThesisFingerprintValue: string | null = null;
+      let growthThesisGeneratedAt: string | null = null;
       if (useLLM) {
         try {
-          growthThesis = await generateGrowthThesis({
+          const thesisInput = {
             ticker: upperTicker, companyName, description, sector: effectiveSector, industry,
             revenueGrowth, fcfMargin, grossMargin, operatingMargin, forwardPE, evEbitda,
             analystPTMedian, currentPrice: price, returnOnEquity,
-            topCatalysts: catalysts.slice(0, 2).map((c) => ({ name: c.name, context: c.context ?? "" })),
+            topCatalysts: catalysts.slice(0, 4).map((c) => ({ name: c.name, context: c.context ?? "", pos: c.pos, nettoUpside: c.nettoUpside, gb: c.gb, generic: c.generic })),
             capexContext: capexContext ? { sector: capexContext.sector, programmes: capexContext.programmes, rationale: capexContext.beneficiaryEntry?.rationale ?? "" } : null,
-          });
+            topSegment: topSegmentForThesis,
+            otherSegments: otherSegmentsForThesis,
+            gStar: impliedGStar,
+            gbSum: gbSumForThesis,
+            moat: (moatAssessment as any).moatStrength ?? null,
+            lynchClass,
+            nextEarningsDate,
+          };
+          growthThesisFingerprintValue = growthThesisFingerprint(thesisInput);
+          // Nur neu generieren wenn der Fingerprint der letzten gecachten
+          // Analyse abweicht (oder noch keine gecachte These existiert) --
+          // vorher wurde bei JEDEM useLLM-Lauf komplett neu generiert, auch
+          // wenn sich Segmente/Katalysatoren/Zahlen gar nicht geaenderten.
+          const prevCached = analysisCache.get(cacheKey)?.result;
+          if (prevCached?.growthThesis && prevCached?.growthThesisFingerprint === growthThesisFingerprintValue) {
+            growthThesis = prevCached.growthThesis;
+            growthThesisGeneratedAt = (prevCached as any).growthThesisGeneratedAt ?? new Date().toISOString();
+            console.log(`[GROWTH-THESIS][${upperTicker}] Fingerprint unveraendert — gecachte These wiederverwendet`);
+          } else {
+            growthThesis = await generateGrowthThesis(thesisInput);
+            growthThesisGeneratedAt = new Date().toISOString();
+            console.log(`[GROWTH-THESIS][${upperTicker}] Neu generiert (Fingerprint: ${growthThesisFingerprintValue})`);
+          }
         } catch {}
       }
 
       // ── 15. Porter + PESTEL ──
-      const moatAssessment = scoreMoat(grossMargin, fcfMargin, returnOnEquity, revenueGrowth, description);
 
       let pestelAnalysis: PESTELAnalysis = generatePESTELAnalysis(
         effectiveSector, industry, description, beta, govExposure, reportedCurrency
@@ -1448,6 +1501,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         moatRating,
         governmentExposure: govExposure,
         growthThesis: growthThesis ?? "",
+        growthThesisFingerprint: growthThesisFingerprintValue ?? undefined,
+        growthThesisGeneratedAt: growthThesisGeneratedAt ?? undefined,
         structuralTrends: [],
 
         // Section 3: Zyklusanalyse
@@ -1671,6 +1726,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           pos, bruttoUpside, einpreisungsgrad, nettoUpside, gb,
           context: c.context ? String(c.context) : undefined,
           tags: Array.isArray(c.tags) ? c.tags : undefined,
+          // Auftrag 08.08.2026: KI-Enrich-Button liefert ausschliesslich
+          // firmenspezifische LLM-Katalysatoren -- generic=false.
+          generic: false,
         };
       });
 

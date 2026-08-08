@@ -1,4 +1,5 @@
-import { computeStyleConfidences, blendWeights, NEUTRAL_WEIGHTS, scoreBalanceSheet, scoreGrowthCoverage, computeTurnaroundEvidence, scoreContractual, relativeZ, sectorReferenceFallback, computeThesisStrength, computeGrowthEvidence, applyGrowthLogic, applyFastGrowerSafetyGuard, computeMaterialSegmentGrowth, checkCyclicalPeDiscount, isCyclicalSectorName } from "../server/thesis-strength";
+import { computeStyleConfidences, blendWeights, NEUTRAL_WEIGHTS, scoreBalanceSheet, scoreGrowthCoverage, computeTurnaroundEvidence, scoreContractual, relativeZ, sectorReferenceFallback, computeThesisStrength, computeGrowthEvidence, applyGrowthLogic, applyFastGrowerSafetyGuard, computeMaterialSegmentGrowth, checkCyclicalPeDiscount, isCyclicalSectorName, scoreCatalystAlignment } from "../server/thesis-strength";
+import { growthThesisFingerprint } from "../server/llm-openrouter";
 let failed=0, total=0; const check=(n:string,c:boolean,d="")=>{total++;if(c)console.log(`  ✅ ${n}`);else{failed++;console.error(`  ❌ ${n} ${d}`)}};
 console.log("\n=== Thesis Strength Score ===");
 const dominant=computeStyleConfidences({revenueCagr3to5y:8,earningsVolatility:70,fcfMarginTrend:0,leverageTrend:1,marginInflectionStrength:9,growthGap:-8});
@@ -158,5 +159,43 @@ const guardedLowRevenueYoy=applyFastGrowerSafetyGuard(weakFgCyclical,.85,10,35,f
 check("Weicher Safety-Guard: greift NICHT bei Revenue-YoY<10% (keine abrupte Abkuehlung uebertoenchen)",guardedLowRevenueYoy["Fast Grower"]===.10);
 const guardedNormal=applyFastGrowerSafetyGuard(weakFgCyclical,.85,10,35,false,15);
 check("Weicher Safety-Guard: greift normal (kein Cyclical-Flag, Revenue-YoY>=10%) und hebt auf 0.35 an",guardedNormal["Fast Grower"]===.35);
+
+// ═══ REGRESSIONSTESTS (08.08.2026, Ticket "Live-These + Thesis-Score +
+// Katalysatoren") ═══
+
+// 1. Baustein E: firmenspezifischer, quantifizierter, zur These passender
+// Katalysator zaehlt voll; generischer Katalysator wird stark abgewertet.
+const thesisTextMsft="Microsoft treibt sein Wachstum ueber Azure Cloud-Nachfrage und AI-Adoption. Server-Segment waechst mit 31.5%. K1 Cloud Expansion mit PoS 78% stuetzt die These zusaetzlich. Bewertung mit PEG 2.7 nicht guenstig. Risiko: CapEx-Belastung auf FCF-Marge.";
+const specificQuantifiedCat=[{name:"Cloud Expansion",context:"Azure waechst deutlich schneller als der Markt",pos:78,nettoUpside:11.8,generic:false}];
+const eSpecific=scoreCatalystAlignment(specificQuantifiedCat,"Server",thesisTextMsft);
+check("Baustein E: firmenspezifischer + quantifizierter + these-passender Katalysator erreicht hohen Score",eSpecific.score>=0.9,JSON.stringify(eSpecific));
+const genericCat=[{name:"Margin Expansion",context:"Allgemeine operative Verbesserungen",generic:true}];
+const eGeneric=scoreCatalystAlignment(genericCat,"Server",thesisTextMsft);
+check("Baustein E: ausschliesslich generische Katalysatoren werden auf max. 0.40 gedeckelt",eGeneric.score<=0.40&&eGeneric.flags.some(f=>f.includes("nicht firmenspezifisch")));
+
+// 2. Gemischter Fall: ein firmenspezifischer + ein generischer Katalysator ->
+// kein Deckel (nicht ALLE generisch), aber der generische zaehlt schwaecher.
+const mixedCats=[
+  {name:"Cloud Expansion",context:"Azure waechst",pos:78,nettoUpside:11.8,generic:false},
+  {name:"Generic Initiative",context:"Allgemeine Massnahme",generic:true},
+];
+const eMixed=scoreCatalystAlignment(mixedCats,"Server",thesisTextMsft);
+check("Baustein E: gemischter Fall (nicht alle generisch) wird NICHT gedeckelt",!eMixed.flags.some(f=>f.includes("nicht firmenspezifisch")));
+
+// 3. Rueckwaertskompatibilitaet: Aufruf ohne thesisText/pos/nettoUpside/generic
+// (alte Signatur) funktioniert weiterhin unveraendert (reiner Text-Regex-Pfad).
+const eLegacy=scoreCatalystAlignment([{name:"Server",context:"Azure waechst um 31.5%"}],"Server");
+check("Baustein E: Legacy-Aufruf ohne neue Felder funktioniert weiterhin (Text-Quantifizierung + Segment-Match)",eLegacy.score>0);
+
+// 4. growthThesisFingerprint: identischer Input -> identischer Fingerprint;
+// geaenderter Input (z.B. neues Segment-Wachstum) -> anderer Fingerprint.
+const fpInputBase={revenueGrowth:17.8,fcfMargin:20.2,topCatalysts:[{name:"Cloud Expansion",context:"...",gb:9.2,generic:false}],capexContext:null,topSegment:{name:"Server",growthPct:31.5,sharePct:39},gStar:7.2,gbSum:18.3,lynchClass:"fast_grower"};
+const fp1=growthThesisFingerprint(fpInputBase);
+const fp2=growthThesisFingerprint({...fpInputBase});
+check("growthThesisFingerprint: identischer Input erzeugt identischen Fingerprint (Cache-Re-Use moeglich)",fp1===fp2);
+const fp3=growthThesisFingerprint({...fpInputBase,topSegment:{name:"Server",growthPct:35.0,sharePct:39}});
+check("growthThesisFingerprint: geaendertes Segment-Wachstum erzeugt anderen Fingerprint (Cache-Invalidierung)",fp1!==fp3);
+const fp4=growthThesisFingerprint({...fpInputBase,topCatalysts:[{name:"Andere Katalysatoren",context:"...",gb:5,generic:true}]});
+check("growthThesisFingerprint: geaenderte Katalysatoren (Name+GB+generic) erzeugen anderen Fingerprint",fp1!==fp4);
 
 console.log(`\n${total-failed}/${total} Checks grün.`); if(failed)process.exit(1);
