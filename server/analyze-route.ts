@@ -354,6 +354,71 @@ function scoreMoat(
   return { moatStrength, moatScore: Math.min(score, 10), sources, porterForces } as any;
 }
 
+// Auftrag 08.08.2026 ("These direkt nach KI-Enrich aktualisieren + Peer-Gap"):
+// gemeinsame Helper-Funktion fuer die These-Generierung, wiederverwendet von
+// Schritt 14 (/api/analyze) UND von /api/catalyst-enrich (These-Refresh nach
+// KI-Katalysator-Update). Kapselt Segment-Ableitung, GB-Summe, Peer-Gap
+// (optional -- null wenn zum Aufrufzeitpunkt nicht verfuegbar), Fingerprint-
+// Berechnung und den Cache-Vergleich (kein neuer LLM-Call bei identischem
+// Fingerprint). Reine Extraktion des bereits in Schritt 14 verwendeten
+// Musters -- keine Verhaltensaenderung fuer den bestehenden Aufrufer.
+async function generateThesisWithFingerprintCache(params: {
+  ticker: string; companyName: string; description: string; sector: string; industry: string;
+  revenueGrowth: number; fcfMargin: number; grossMargin?: number; operatingMargin?: number;
+  forwardPE?: number; evEbitda?: number; analystPTMedian?: number; currentPrice?: number; returnOnEquity?: number;
+  catalysts: Array<{ name: string; context?: string; pos?: number; nettoUpside?: number; gb?: number; generic?: boolean }>;
+  capexContext?: { sector: string; programmes: string[]; rationale: string } | null;
+  revenueSegments: RevenueSegment[];
+  gStar: number | null;
+  moat: string | null;
+  lynchClass: string | null;
+  nextEarningsDate: string | null;
+  peerGapPct?: number | null;
+  sectorMedianRevenueYoyPct?: number | null;
+  prevGrowthThesis?: string | null;
+  prevGrowthThesisFingerprint?: string | null;
+  prevGrowthThesisGeneratedAt?: string | null;
+}): Promise<{ growthThesis: string | null; growthThesisFingerprintValue: string | null; growthThesisGeneratedAt: string | null }> {
+  const sortedSegs = [...params.revenueSegments]
+    .filter(s => typeof s.growth === "number" && isFinite(s.growth as number))
+    .sort((a, b) => (b.growth as number) - (a.growth as number));
+  const topSegmentForThesis = sortedSegs[0]
+    ? { name: sortedSegs[0].name, growthPct: sortedSegs[0].growth as number, sharePct: sortedSegs[0].percentage }
+    : null;
+  const otherSegmentsForThesis = sortedSegs.slice(1, 3).map(s => ({ name: s.name, growthPct: s.growth as number }));
+  const gbSumForThesis = params.catalysts.length > 0
+    ? params.catalysts.reduce((sum, c) => sum + (typeof c.gb === "number" && isFinite(c.gb) ? c.gb : 0), 0)
+    : null;
+
+  const thesisInput = {
+    ticker: params.ticker, companyName: params.companyName, description: params.description,
+    sector: params.sector, industry: params.industry,
+    revenueGrowth: params.revenueGrowth, fcfMargin: params.fcfMargin, grossMargin: params.grossMargin,
+    operatingMargin: params.operatingMargin, forwardPE: params.forwardPE, evEbitda: params.evEbitda,
+    analystPTMedian: params.analystPTMedian, currentPrice: params.currentPrice, returnOnEquity: params.returnOnEquity,
+    topCatalysts: params.catalysts.slice(0, 4).map((c) => ({ name: c.name, context: c.context ?? "", pos: c.pos, nettoUpside: c.nettoUpside, gb: c.gb, generic: c.generic })),
+    capexContext: params.capexContext ?? null,
+    topSegment: topSegmentForThesis,
+    otherSegments: otherSegmentsForThesis,
+    gStar: params.gStar,
+    gbSum: gbSumForThesis,
+    moat: params.moat,
+    lynchClass: params.lynchClass,
+    nextEarningsDate: params.nextEarningsDate,
+    peerGapPct: params.peerGapPct ?? null,
+    sectorMedianRevenueYoyPct: params.sectorMedianRevenueYoyPct ?? null,
+  };
+
+  const fp = growthThesisFingerprint(thesisInput);
+  if (params.prevGrowthThesis && params.prevGrowthThesisFingerprint === fp) {
+    console.log(`[GROWTH-THESIS][${params.ticker}] Fingerprint unveraendert — gecachte These wiederverwendet`);
+    return { growthThesis: params.prevGrowthThesis, growthThesisFingerprintValue: fp, growthThesisGeneratedAt: params.prevGrowthThesisGeneratedAt ?? new Date().toISOString() };
+  }
+  const growthThesis = await generateGrowthThesis(thesisInput);
+  console.log(`[GROWTH-THESIS][${params.ticker}] Neu generiert (Fingerprint: ${fp})`);
+  return { growthThesis, growthThesisFingerprintValue: fp, growthThesisGeneratedAt: new Date().toISOString() };
+}
+
 // ─── Main registration ────────────────────────────────────────────────────────
 export function registerAnalyzeRoute(server: Server, app: Express): void {
   // ── /api/fmp-budget ─────────────────────────────────────────────────────────
@@ -1051,55 +1116,42 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // dieselbe Variable statt sie neu zu berechnen (kein doppelter Call).
       const moatAssessment = scoreMoat(grossMargin, fcfMargin, returnOnEquity, revenueGrowth, description);
 
-      // Auftrag 08.08.2026 Teil 4: Segment-Treiber (Top + bis zu 2 weitere)
-      // aus revenueSegments (bereits in Schritt 7 geladen) fuer die These.
-      const sortedSegs = [...revenueSegments]
-        .filter(s => typeof s.growth === "number" && isFinite(s.growth as number))
-        .sort((a, b) => (b.growth as number) - (a.growth as number));
-      const topSegmentForThesis = sortedSegs[0]
-        ? { name: sortedSegs[0].name, growthPct: sortedSegs[0].growth as number, sharePct: sortedSegs[0].percentage }
-        : null;
-      const otherSegmentsForThesis = sortedSegs.slice(1, 3).map(s => ({ name: s.name, growthPct: s.growth as number }));
-
-      // GB-Summe: gewichteter Beitrag aller (nicht nur Top-2) Katalysatoren.
-      const gbSumForThesis = catalysts.length > 0
-        ? catalysts.reduce((sum, c) => sum + (typeof c.gb === "number" && isFinite(c.gb) ? c.gb : 0), 0)
-        : null;
-
       let growthThesis: string | null = null;
       let growthThesisFingerprintValue: string | null = null;
       let growthThesisGeneratedAt: string | null = null;
       if (useLLM) {
         try {
-          const thesisInput = {
+          // Auftrag 08.08.2026 ("These-Refresh + Peer-Gap"): Peer-Gap/Sektor-
+          // Median sind an dieser Stelle (Schritt 14) noch NICHT verfuegbar --
+          // peerComparison wird erst in Schritt 9b (weiter unten) berechnet.
+          // Bewusste Entscheidung (Ticket-Empfehlung Option B): nicht den
+          // gesamten Analyze-Flow umbauen, um sie vorzuverlegen. Die erste
+          // These bleibt ohne Peer-Gap-Satz; der Enrich-Refresh (siehe
+          // /api/catalyst-enrich) hat peerComparison bereits im Cache und
+          // gibt Peer-Gap dann mit. Beide Aufrufer teilen sich jetzt dieselbe
+          // Helper-Funktion (generateThesisWithFingerprintCache) fuer
+          // Segment-Ableitung, GB-Summe, Fingerprint-Vergleich und Cache-Hit.
+          const prevCached = analysisCache.get(cacheKey)?.result;
+          const thesisResult = await generateThesisWithFingerprintCache({
             ticker: upperTicker, companyName, description, sector: effectiveSector, industry,
             revenueGrowth, fcfMargin, grossMargin, operatingMargin, forwardPE, evEbitda,
             analystPTMedian, currentPrice: price, returnOnEquity,
-            topCatalysts: catalysts.slice(0, 4).map((c) => ({ name: c.name, context: c.context ?? "", pos: c.pos, nettoUpside: c.nettoUpside, gb: c.gb, generic: c.generic })),
+            catalysts,
             capexContext: capexContext ? { sector: capexContext.sector, programmes: capexContext.programmes, rationale: capexContext.beneficiaryEntry?.rationale ?? "" } : null,
-            topSegment: topSegmentForThesis,
-            otherSegments: otherSegmentsForThesis,
+            revenueSegments,
             gStar: impliedGStar,
-            gbSum: gbSumForThesis,
             moat: (moatAssessment as any).moatStrength ?? null,
             lynchClass,
             nextEarningsDate,
-          };
-          growthThesisFingerprintValue = growthThesisFingerprint(thesisInput);
-          // Nur neu generieren wenn der Fingerprint der letzten gecachten
-          // Analyse abweicht (oder noch keine gecachte These existiert) --
-          // vorher wurde bei JEDEM useLLM-Lauf komplett neu generiert, auch
-          // wenn sich Segmente/Katalysatoren/Zahlen gar nicht geaenderten.
-          const prevCached = analysisCache.get(cacheKey)?.result;
-          if (prevCached?.growthThesis && prevCached?.growthThesisFingerprint === growthThesisFingerprintValue) {
-            growthThesis = prevCached.growthThesis;
-            growthThesisGeneratedAt = (prevCached as any).growthThesisGeneratedAt ?? new Date().toISOString();
-            console.log(`[GROWTH-THESIS][${upperTicker}] Fingerprint unveraendert — gecachte These wiederverwendet`);
-          } else {
-            growthThesis = await generateGrowthThesis(thesisInput);
-            growthThesisGeneratedAt = new Date().toISOString();
-            console.log(`[GROWTH-THESIS][${upperTicker}] Neu generiert (Fingerprint: ${growthThesisFingerprintValue})`);
-          }
+            peerGapPct: null,
+            sectorMedianRevenueYoyPct: null,
+            prevGrowthThesis: prevCached?.growthThesis ?? null,
+            prevGrowthThesisFingerprint: prevCached?.growthThesisFingerprint ?? null,
+            prevGrowthThesisGeneratedAt: (prevCached as any)?.growthThesisGeneratedAt ?? null,
+          });
+          growthThesis = thesisResult.growthThesis;
+          growthThesisFingerprintValue = thesisResult.growthThesisFingerprintValue;
+          growthThesisGeneratedAt = thesisResult.growthThesisGeneratedAt;
         } catch {}
       }
 
@@ -1753,12 +1805,78 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         }
       } catch { /* deep-dives are a nice-to-have; keep base catalysts on failure */ }
 
-      // Persist enriched catalysts back into the cache so subsequent requests
-      // (e.g. PDF export, page reload within TTL) see the enriched version.
-      const updated: StockAnalysis = { ...a, catalysts: withDeepDives };
+      // Auftrag 08.08.2026 ("These direkt nach KI-Enrich aktualisieren"):
+      // sobald firmenspezifische Katalysatoren vorliegen, wird die
+      // Investment-These (Section 2) SOFORT mit denselben neuen
+      // Katalysatoren neu generiert -- vorher stand in S15 "firmenspezifisch"
+      // aber S2 zeigte weiterhin die alte These auf den vorherigen
+      // (moeglicherweise generischen) Katalysatoren bis zum naechsten
+      // vollen /api/analyze-Lauf. peerComparison liegt an dieser Stelle
+      // bereits im gecachten `a` vor (die volle Analyse ist schon
+      // durchgelaufen) -- Peer-Gap/Sektor-Median werden daher hier zum
+      // ersten Mal in die These aufgenommen (in Schritt 14 selbst noch
+      // nicht verfuegbar, siehe Kommentar dort).
+      let refreshedGrowthThesis = a.growthThesis ?? null;
+      let refreshedFingerprint = a.growthThesisFingerprint ?? null;
+      let refreshedGeneratedAt = (a as any).growthThesisGeneratedAt ?? null;
+      try {
+        const peers = (a as any).peerComparison?.peers as Array<{ revenueGrowth?: number | null }> | undefined;
+        const peerRevGrowths = Array.isArray(peers)
+          ? peers.map(p => p?.revenueGrowth).filter((x): x is number => typeof x === "number" && isFinite(x))
+          : [];
+        const sortedPeerGrowths = [...peerRevGrowths].sort((x, y) => x - y);
+        const sectorMedianRevenueYoyPct = sortedPeerGrowths.length > 0
+          ? sortedPeerGrowths[Math.floor(sortedPeerGrowths.length / 2)]
+          : null;
+        const subjectRevenueGrowth = a.financialStatements?.incomeStatement?.revenueGrowth ?? null;
+        const peerGapPct = subjectRevenueGrowth != null && sectorMedianRevenueYoyPct != null
+          ? subjectRevenueGrowth - sectorMedianRevenueYoyPct
+          : null;
+
+        const moatForThesis = (a as any).moatAssessment?.overallRating ?? null;
+        console.log(`[GROWTH-THESIS][${a.ticker}] Enrich-Refresh Peer-Gap-Inputs: subjectRevenueGrowth=${subjectRevenueGrowth}, sectorMedianRevenueYoyPct=${sectorMedianRevenueYoyPct}, peerGapPct=${peerGapPct}, peerRevGrowths=${JSON.stringify(peerRevGrowths)}`);
+        const thesisResult = await generateThesisWithFingerprintCache({
+          ticker: a.ticker, companyName: a.companyName, description: a.description,
+          sector: a.sector, industry: a.industry,
+          revenueGrowth: subjectRevenueGrowth ?? 0, fcfMargin: a.fcfMargin,
+          analystPTMedian: a.analystPT?.median ?? undefined, currentPrice: a.currentPrice,
+          catalysts: withDeepDives,
+          capexContext: null,
+          revenueSegments: a.revenueSegments ?? [],
+          gStar: (a as any).impliedGStar ?? null,
+          moat: moatForThesis,
+          lynchClass: (a as any).lynchClass ?? null,
+          nextEarningsDate: (a as any).nextEarningsDate ?? null,
+          peerGapPct,
+          sectorMedianRevenueYoyPct,
+          prevGrowthThesis: a.growthThesis ?? null,
+          prevGrowthThesisFingerprint: a.growthThesisFingerprint ?? null,
+          prevGrowthThesisGeneratedAt: (a as any).growthThesisGeneratedAt ?? null,
+        });
+        if (thesisResult.growthThesis) {
+          refreshedGrowthThesis = thesisResult.growthThesis;
+          refreshedFingerprint = thesisResult.growthThesisFingerprintValue;
+          refreshedGeneratedAt = thesisResult.growthThesisGeneratedAt;
+        }
+      } catch (thesisErr: any) {
+        console.warn(`[/api/catalyst-enrich] These-Refresh fehlgeschlagen fuer ${ticker}: ${thesisErr?.message?.substring(0, 100)}`);
+      }
+
+      // Persist enriched catalysts (und ggf. aktualisierte These) back into
+      // the cache so subsequent requests (e.g. PDF export, page reload
+      // within TTL) see the enriched version.
+      const updated: StockAnalysis = {
+        ...a, catalysts: withDeepDives,
+        growthThesis: refreshedGrowthThesis ?? a.growthThesis,
+        growthThesisFingerprint: refreshedFingerprint ?? a.growthThesisFingerprint,
+        growthThesisGeneratedAt: refreshedGeneratedAt ?? (a as any).growthThesisGeneratedAt,
+      } as StockAnalysis;
       analysisCache.set(cacheKeyUsed, { ...cached, result: updated });
 
-      return res.json({ catalysts: withDeepDives, modelUsed: llmResult.modelUsed });
+      return res.json({
+        catalysts: withDeepDives, modelUsed: llmResult.modelUsed,
+        growthThesis: updated.growthThesis, growthThesisGeneratedAt: (updated as any).growthThesisGeneratedAt,
+      });
     } catch (err: any) {
       console.error(`[/api/catalyst-enrich] ${err?.message?.substring(0, 300)}`);
       return res.status(500).json({ error: err?.message ?? "Internal server error" });

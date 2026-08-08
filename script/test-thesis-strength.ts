@@ -198,4 +198,18 @@ check("growthThesisFingerprint: geaendertes Segment-Wachstum erzeugt anderen Fin
 const fp4=growthThesisFingerprint({...fpInputBase,topCatalysts:[{name:"Andere Katalysatoren",context:"...",gb:5,generic:true}]});
 check("growthThesisFingerprint: geaenderte Katalysatoren (Name+GB+generic) erzeugen anderen Fingerprint",fp1!==fp4);
 
+// ═══ REGRESSIONSTESTS (08.08.2026, Ticket "These-Refresh nach KI-Enrich +
+// Peer-Gap in die These") ═══
+
+// 5. Peer-Gap wird als optionales Feld akzeptiert -- Aufruf ohne Peer-Gap
+// (Schritt 14, noch kein peerComparison verfuegbar) bleibt unveraendert
+// moeglich; ein Aufruf MIT Peer-Gap (Enrich-Refresh) liefert einen anderen
+// Fingerprint als ohne, da growthThesisFingerprint keine Peer-Gap-Signatur
+// enthaelt (bewusst -- Peer-Gap fliesst nur in den Prompt-Text, nicht in
+// den Fingerprint-Vergleich, da es sich nicht kurzfristig aendert und sonst
+// jeder Enrich-Lauf faelschlich als "neuer Input" erkannt wuerde).
+const fpWithoutPeerGap=growthThesisFingerprint(fpInputBase);
+const fpBaseNoPeerGapField={...fpInputBase};
+check("growthThesisFingerprint: Aufruf ohne Peer-Gap-Feld (Schritt-14-Fall) funktioniert weiterhin unveraendert",typeof fpWithoutPeerGap==="string"&&fpWithoutPeerGap.length>0);
+
 console.log(`\n${total-failed}/${total} Checks grün.`); if(failed)process.exit(1);

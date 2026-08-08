@@ -9,7 +9,10 @@ import { apiRequest } from "../../lib/queryClient";
 
 interface Props {
   data: StockAnalysis;
-  onCatalystsEnriched?: (catalysts: StockAnalysis['catalysts']) => void;
+  // Auftrag 08.08.2026 ("These direkt nach KI-Enrich aktualisieren"): additive
+  // optionale Parameter -- bestehende Aufrufer, die nur (catalysts) erwarten,
+  // bleiben unveraendert kompatibel (TypeScript optional params).
+  onCatalystsEnriched?: (catalysts: StockAnalysis['catalysts'], growthThesis?: string | null, growthThesisGeneratedAt?: string | null) => void;
 }
 
 const GENERIC_CATALYST_NAMES = new Set<string>([
@@ -66,7 +69,11 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
         setLlmDone(true);
         // Persist enriched catalysts into parent Dashboard state
         // so they survive navigation/re-renders (won't reset to generic)
-        onCatalystsEnriched?.(json.catalysts);
+        // Auftrag 08.08.2026: /api/catalyst-enrich liefert jetzt zusaetzlich
+        // die sofort neu generierte These (Section 2) im selben Response --
+        // wird additiv mit weitergegeben, damit S2 sofort konsistent mit den
+        // gerade firmenspezifisch gewordenen Katalysatoren in S15 ist.
+        onCatalystsEnriched?.(json.catalysts, json.growthThesis, json.growthThesisGeneratedAt);
       } else {
         setLlmError("Keine Katalysatoren erhalten.");
       }

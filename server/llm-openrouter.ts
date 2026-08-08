@@ -876,8 +876,16 @@ export async function generateGrowthThesis(input: GrowthThesisInput): Promise<st
     const upside = ((analystPTMedian - currentPrice) / currentPrice * 100).toFixed(0);
     metrics.push(`Analyst-PT: $${analystPTMedian} (+${upside}% Upside)`);
   }
-  if (sectorMedianRevenueYoyPct != null) metrics.push(`Sektor-Median Rev YoY: ${sectorMedianRevenueYoyPct.toFixed(1)}%`);
-  if (peerGapPct != null) metrics.push(`Peer-Gap: ${peerGapPct >= 0 ? "+" : ""}${peerGapPct.toFixed(1)}pp`);
+  // Auftrag 08.08.2026 ("Peer-Gap/Sektor-Median in die These"): Pflichtsatz-
+  // Format aus dem Ticket -- "Umsatzwachstum +17,8% vs. Sektor +10,8% (Gap
+  // +7,0pp)" -- als EINE zusammenhaengende Metrik-Zeile statt zwei separater,
+  // damit das LLM den Vergleich direkt als fertigen Satz uebernehmen kann.
+  if (sectorMedianRevenueYoyPct != null && peerGapPct != null) {
+    metrics.push(`Umsatzwachstum ${revenueGrowth >= 0 ? "+" : ""}${revenueGrowth.toFixed(1)}% vs. Sektor ${sectorMedianRevenueYoyPct >= 0 ? "+" : ""}${sectorMedianRevenueYoyPct.toFixed(1)}% (Gap ${peerGapPct >= 0 ? "+" : ""}${peerGapPct.toFixed(1)}pp)`);
+  } else {
+    if (sectorMedianRevenueYoyPct != null) metrics.push(`Sektor-Median Rev YoY: ${sectorMedianRevenueYoyPct.toFixed(1)}%`);
+    if (peerGapPct != null) metrics.push(`Peer-Gap: ${peerGapPct >= 0 ? "+" : ""}${peerGapPct.toFixed(1)}pp`);
+  }
   if (gStar != null) metrics.push(`g* (Reverse-DCF): ${gStar.toFixed(1)}%`);
 
   // Auftrag 08.08.2026 ("Live-These + Thesis-Score + Katalysatoren", Teil 2):
@@ -940,6 +948,7 @@ REGELN (strikt einhalten):
 - VERBOTEN: "strategische Initiativen", "operative Effizienz", "Wachstumspotenzial" als leere Phrasen ohne Zahl dahinter
 - Keine Wiederholung der reinen Geschäftsmodell-Beschreibung -- das ist eine These, keine Beschreibung
 - 4-8 Sätze insgesamt, sachlich, zahlenbasiert, auf Deutsch
+- Uebernimm alle Zahlen aus den HARTEN KENNZAHLEN EXAKT wie geliefert -- niemals selbst neu berechnen, ableiten oder verwechseln. Insbesondere die Gap-Zahl in Klammern bei "Umsatzwachstum X% vs. Sektor Y% (Gap Z pp)" ist bereits die fertige Differenz Z -- schreibe niemals den Sektor-Wert Y anstelle des Gap-Werts Z
 
 Antworte NUR mit JSON: {"thesis": "..."}`;
 
