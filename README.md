@@ -4,8 +4,9 @@
 
 > Objektiv · Transparent · Konservativ · Alle Rechenwege ausgewiesen
 
-[![Live Demo](https://img.shields.io/badge/Live-Demo-blue?style=for-the-badge)](https://www.perplexity.ai/computer/a/stock-analyst-pro-VUJ7saGaQJ6IoJV6D1plrQ)
+[![Live Demo](https://img.shields.io/badge/Live-Demo-blue?style=for-the-badge)](https://aktienanalyst.onrender.com)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/1719842374/Aktienanalyst)
+[![Changelog](https://img.shields.io/badge/Changelog-Thesis%20Score-informational?style=for-the-badge)](./docs/CHANGELOG_THESIS_SCORE.md)
 
 ---
 
@@ -40,7 +41,7 @@ Erstellt für **jede Aktie weltweit** (US, Europa, Asien) eine objektive, konser
 | Nr | Sektion | Beschreibung |
 |----|---------|-------------|
 | 1 | **Datenaktualität & Plausibilität** | Live-Kurs, Market Cap, P/E, EV/EBITDA, Analyst Ratings |
-| 2 | **Investmentthese & Katalysatoren** | Peter Lynch Klassifikation, Revenue-Segmente, Katalysatoren-Tabelle |
+| 2 | **Investmentthese & Katalysatoren** | LLM-generierte Live-These (4–8 Sätze, Fingerprint-Cache), Peter Lynch Klassifikation, Revenue-Segmente, Katalysatoren-Tabelle, **Thesis Strength Score** (0–5, sektor-adaptiv) |
 | 3 | **Zyklus- & Strukturanalyse** | Konjunkturzyklus, Makro-Sensitivität, Geopolitische Risiken |
 | 4 | **Bewertungskennzahlen** | WACC-Szenarien (Damodaran), CAPM, PEG-Ratio |
 | 5 | **DCF-Modell (FCFF)** | Vollständiger FCFF-DCF mit editierbaren Parametern, 3 Szenarien |
@@ -325,6 +326,46 @@ BUY-Signal (alle Bedingungen müssen erfüllt sein):
 | Dänemark | NVO (Novo Nordisk) | DKK → USD |
 | China | PDD, BABA, 0700.HK | CNY/HKD → USD |
 | Weitere | Jede Aktie mit gültigem Ticker | Auto-Konvertierung |
+
+---
+
+## Thesis Strength Score (Sektion 2)
+
+Ein zusätzlicher, sektor-adaptiver 0–5-Score in der Investmentthese, der die Peter-Lynch-Klassifikation gegen die harten Section-1-Fakten (EPS-CAGR, Revenue YoY, Segment-Wachstum, Peer-Gap) absichert. **Kein Ersatz für die 17-Sektionen-Analyse** — reiner Zusatzindikator, damit ein schwacher/zyklischer Titel nicht wie ein Fast Grower aussieht, nur weil ein einzelnes Segment oder ein Sondereffekt den Rohwert verzerrt.
+
+### Kernprinzip: Single Source of Truth
+
+Alle Eingaben kommen ausschließlich aus Section 1 / den Financials — keine zweite, abweichende Berechnung derselben Größen (EPS-CAGR, Revenue YoY, FCF-Marge, Industry/Sector, Lynch-Label).
+
+### Universelle Guards (sektorunabhängig, keine Ticker-Hardcodes)
+
+| Guard | Regel |
+|---|---|
+| **G1** | `eps_cagr <= 0` → `cagr_score = 0`, kein Fast-Grower-Boost |
+| **G2** | Weak-Growth-Ceiling: `revenue_yoy < 5%` UND `eps_cagr < 5%` → Fast-Grower-Konfidenz gedeckelt auf ≤15% |
+| **G3** | Segment-Materialität: nur Segmente mit `revenue_share >= 10%` fließen in den Segment-Score ein — Mini-Segmente können den Score nicht treiben |
+| **G4** | Lynch-Boost nur auf den zum Label passenden Stil (Zykliker→Cyclical, Turnaround→Turnaround, Fast Grower→Fast Grower) — nie Cross-Boost |
+
+### Profil-Mapping (Industry/Sector → adaptive Ranges)
+
+```
+software_growth   ← Software, Semiconductors, Internet
+consumer_brands   ← Apparel, Footwear, Luxury, Restaurants, Beverage
+cyclical          ← Materials, Energy, Industrials, Autos, Consumer Cyclical
+other             ← Fallback
+```
+
+Jedes Profil hat eigene CAGR-/Segment-Score-Ranges — Software gilt erst ab 16–24% EPS-CAGR als stark, Consumer/Cyclical bereits ab 10–16%.
+
+### Sektor-Median statt Technology-Default
+
+`g_required` (Reverse-DCF-Referenzwert) nutzt den tatsächlichen Peer-/Sektor-Median des Tickers (via `robustSectorGrowth()`, Winsorized Mean bei kleinen Peer-Gruppen) statt einer pauschalen Technology-Referenz — relevant für Sektoren wie Apparel oder Basic Materials, deren typisches Wachstum stark von Software abweicht.
+
+### Optionale Erweiterung: Inflection-Logik (nur `profile==cyclical`)
+
+Für echte Zykliker (Steel, Autos, Energy) misst `computeInflectionEvidence()` zusätzlich die *Verbesserung über Zeit* (Boden→Erholung) statt nur das Wachstums-Niveau, gedämpft durch einen abgestuften Breadth-Filter (0–3 verbesserte Metriken aus Revenue/EPS/Marge). Alle anderen Profile bleiben bei der reinen Niveau-Formel.
+
+Details, Formeln und Live-Verifikation: [Changelog — Thesis Strength Score](./docs/CHANGELOG_THESIS_SCORE.md).
 
 ---
 
@@ -802,7 +843,7 @@ Vorlage: [`.env.example`](./.env.example). Die echte `.env` ist git-ignoriert �
 | `FMP_API_KEY` | Für Screener/Fundamentals + volle 10Y OHLCV | Financial Modeling Prep (Pro für 10Y-Historie) |
 | `PORT` / `NODE_ENV` | Optional | Server-Konfiguration |
 
-> **Deployment (Perplexity Computer / pplx.app):** Keys werden als Umgebungs-Credentials der Sandbox gesetzt — nicht in Dateien im Repo. Lokal: `.env` (von `.gitignore` abgedeckt). Die Perplexity Finance API (`external-tool` CLI) funktioniert ausschließlich in der Perplexity-Sandbox.
+> **Deployment:** Primäres Live-Deployment läuft auf **Render** ([aktienanalyst.onrender.com](https://aktienanalyst.onrender.com)), Auto-Deploy bei jedem Push auf `main`. Keys werden dort als Environment-Variablen im Render-Dashboard gesetzt — nicht in Dateien im Repo. Lokal: `.env` (von `.gitignore` abgedeckt). Die Perplexity Finance API (`external-tool` CLI) funktioniert ausschließlich innerhalb der Perplexity-Sandbox — auf Render greift automatisch der FMP-Fallback.
 
 ---
 
@@ -840,6 +881,7 @@ Vorlage: [`.env.example`](./.env.example). Die echte `.env` ist git-ignoriert �
 - [Code of Conduct](./CODE_OF_CONDUCT.md) — Contributor Covenant 2.1
 - [Security Policy](./SECURITY.md) — private Meldung von Vulnerabilities
 - [Bug Report](./.github/ISSUE_TEMPLATE/bug_report.md) · [Feature Request](./.github/ISSUE_TEMPLATE/feature_request.md)
+- [Changelog — Thesis Strength Score](./docs/CHANGELOG_THESIS_SCORE.md) — Root-Cause-Fixes, Guards, Inflection-Logik, Peer-Median-Bereinigung
 
 ---
 
