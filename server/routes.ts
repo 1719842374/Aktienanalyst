@@ -80,7 +80,7 @@ import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpP
 import { assessRegulatoryExposure } from "./regulatory";
 import { computeManagementScoreForTicker } from "./management-score";
 import { deriveStatementTrends, identifyNewSegment, computeOldSegmentsGrowth } from "./management-score";
-import { computeThesisStrength, relativeZ, sectorReferenceFallback, computeMaterialSegmentGrowth } from "./thesis-strength";
+import { computeThesisStrength, relativeZ, sectorReferenceFallback, computeMaterialSegmentGrowth, mapGrowthProfile, LYNCH_TO_STYLE } from "./thesis-strength";
 import { filterAndSelectPeers } from "./news-peers";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
@@ -365,7 +365,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // darf nicht allein die Evidence treiben. Faellt kein Segment unter die
       // 10%-Schwelle, greift der umsatzgewichtete Top-3-Fallback.
       const materialSegment = computeMaterialSegmentGrowth((b.segments ?? []).map((s:any)=>({name:s.name,percentage:s.percentage,growth:s.growth})));
-      const maxSegmentGrowthPct = materialSegment.materialGrowthPct != null ? materialSegment.materialGrowthPct*100 : (newSeg?.growthPct ?? null);
+      // Auftrag 09.08.2026 ("NKE-Vorfall", Root-Cause-Fix): computeMaterialSegmentGrowth()
+      // liefert materialGrowthPct BEREITS in Prozent-Notation (best.growth! ist
+      // direkt der RevenueSegment.growth-Wert, z.B. 2.9 fuer +2.9%) -- die
+      // vorherige *100-Multiplikation hier war ein doppelter Skalierungsfehler
+      // (2.9 wurde zu 290, wodurch computeGrowthEvidence's segScore faelschlich
+      // auf 1.0 saettigte, unabhaengig vom tatsaechlichen Segment-Wachstum).
+      const maxSegmentGrowthPct = materialSegment.materialGrowthPct != null ? materialSegment.materialGrowthPct : (newSeg?.growthPct ?? null);
       const epsCagr5yPct = number(b.epsGrowth5Y);
       const peTTM = number(b.peTTM);
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Company-Vektor (roh):`, JSON.stringify(thesisCompanyVector));
@@ -373,7 +379,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] GrowthEvidence-Inputs: peerGapPct=${peerGapPct}, maxSegmentGrowthPct=${maxSegmentGrowthPct}, epsCagr5yPct=${epsCagr5yPct} (realizedGrowth=${realizedGrowth}, sectorRevenueYoyPct=${sectorRevenueYoyPct})`);
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Segment-Materialitaet: source=${materialSegment.source}, materialGrowthPct=${materialSegment.materialGrowthPct}`);
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] P/E-Filter-Inputs: peTTM=${peTTM}, sectorMedianPE=${sectorMedianPETTM}, sector=${b.sector}`);
-      const result=computeThesisStrength({vector:thesisCompanyVector,fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth),sectorGrowthMedian:sectorRevenueYoyPct,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,lynchClass:b.lynchClass ?? null,peerGapPct,maxSegmentGrowthPct,epsCagr5yPct,revenueYoyPct:realizedGrowth,sector:b.sector??null,peTTM,sectorMedianPE:sectorMedianPETTM,thesisText:b.thesisText??null,balance:{inventoryZ:peerReferenceReliable?relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std):0,growthZ:peerReferenceReliable?relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std):0,marginZ:peerReferenceReliable?relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std):0,marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
+      // Auftrag 09.08.2026 ("NKE-Vorfall", Debug-Pflicht): ticker, industry,
+      // mapped_profile UND das Lynch-Boost-Ziel VOR der Berechnung loggen --
+      // damit ein zukuenftiger Fehlklassifikations-Fall (wie NKE mit
+      // faelschlich Technology-Referenz) sofort an diesen 2 Zeilen erkennbar
+      // ist, ohne erst die volle Similarity-Matrix durchsuchen zu muessen.
+      console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] industry=${b.industry}, mapped_profile=${mapGrowthProfile(b.sector??null, b.industry??null)}, lynch_boost_ziel=${b.lynchClass ? (LYNCH_TO_STYLE[b.lynchClass as string] ?? "unbekannt") : "kein Lynch-Label"}`);
+      const result=computeThesisStrength({vector:thesisCompanyVector,fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth),sectorGrowthMedian:sectorRevenueYoyPct,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,lynchClass:b.lynchClass ?? null,peerGapPct,maxSegmentGrowthPct,epsCagr5yPct,revenueYoyPct:realizedGrowth,sector:b.sector??null,industry:b.industry??null,peTTM,sectorMedianPE:sectorMedianPETTM,thesisText:b.thesisText??null,balance:{inventoryZ:peerReferenceReliable?relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std):0,growthZ:peerReferenceReliable?relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std):0,marginZ:peerReferenceReliable?relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std):0,marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
       // Auftrag 07.08.2026 ("Denoising Softmax + Temperature Scaling"): finale
       // Konfidenzen + Gewichte loggen, damit ein zukuenftiger Kollaps sofort
       // an der Similarity- vs. Konfidenz-Differenz erkennbar ist.

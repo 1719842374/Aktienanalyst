@@ -1,4 +1,4 @@
-import { computeStyleConfidences, blendWeights, NEUTRAL_WEIGHTS, scoreBalanceSheet, scoreGrowthCoverage, computeTurnaroundEvidence, scoreContractual, relativeZ, sectorReferenceFallback, computeThesisStrength, computeGrowthEvidence, applyGrowthLogic, applyFastGrowerSafetyGuard, computeMaterialSegmentGrowth, checkCyclicalPeDiscount, isCyclicalSectorName, scoreCatalystAlignment } from "../server/thesis-strength";
+import { computeStyleConfidences, blendWeights, NEUTRAL_WEIGHTS, scoreBalanceSheet, scoreGrowthCoverage, computeTurnaroundEvidence, scoreContractual, relativeZ, sectorReferenceFallback, computeThesisStrength, computeGrowthEvidence, applyGrowthLogic, applyFastGrowerSafetyGuard, computeMaterialSegmentGrowth, checkCyclicalPeDiscount, isCyclicalSectorName, scoreCatalystAlignment, mapGrowthProfile, applyWeakGrowthCeiling, LYNCH_TO_STYLE } from "../server/thesis-strength";
 import { growthThesisFingerprint } from "../server/llm-openrouter";
 let failed=0, total=0; const check=(n:string,c:boolean,d="")=>{total++;if(c)console.log(`  ✅ ${n}`);else{failed++;console.error(`  ❌ ${n} ${d}`)}};
 console.log("\n=== Thesis Strength Score ===");
@@ -137,8 +137,14 @@ check("GrowthEvidence: MSFT (P/E~21, Sektor~28, nicht zyklisch) bleibt vom P/E-F
 // 3. Nachgeschaerfte Ranges: EPS-CAGR>=16% + Bestaetigungssignal reicht fuer
 // spuerbare Fast-Grower-Evidence -- 16-18%-Wachstum darf nicht automatisch
 // in Stalwart rutschen.
-const ge16PctMitBestaetigung=computeGrowthEvidence({peerGapPct:3,maxSegmentGrowthPct:null,epsCagr5yPct:16,lynchClass:null});
-check("16%-CAGR-Fall MIT Bestaetigung (Peer-Gap>=2pp): cagrScore erreicht 0.50 (nicht gedaempft)",Math.abs(ge16PctMitBestaetigung.cagrScore-0.50)<0.01,JSON.stringify(ge16PctMitBestaetigung));
+// Auftrag 09.08.2026 ("NKE-Vorfall", Profil-adaptive Ranges): dieser Test
+// pruefte urspruenglich die Ticket-Formel "16%->0.50" ohne sector/industry --
+// seit der Profil-Einfuehrung faellt ein Aufruf ohne Sektor auf das neutrale
+// "other"-Profil zurueck (andere Ranges als software_growth). Die woertliche
+// Ticket-Formel (8%->0,16%->0.50,24%->1.0) gilt spezifisch fuer
+// software_growth -- daher jetzt explizit mit Technology/Software-Kontext.
+const ge16PctMitBestaetigung=computeGrowthEvidence({peerGapPct:3,maxSegmentGrowthPct:null,epsCagr5yPct:16,lynchClass:null,sector:"Technology",industry:"Software"});
+check("16%-CAGR-Fall MIT Bestaetigung (Peer-Gap>=2pp, software_growth-Profil): cagrScore erreicht 0.50 (nicht gedaempft)",Math.abs(ge16PctMitBestaetigung.cagrScore-0.50)<0.01,JSON.stringify(ge16PctMitBestaetigung));
 const ge16PctOhneBestaetigung=computeGrowthEvidence({peerGapPct:0,maxSegmentGrowthPct:5,epsCagr5yPct:16,lynchClass:null});
 check("16%-CAGR-Fall OHNE Bestaetigung: cagrScore wird auf 60% gedaempft (Flag gesetzt)",ge16PctOhneBestaetigung.cagrScore<0.50&&ge16PctOhneBestaetigung.flags.some(f=>f.includes("ohne Bestaetigungssignal")));
 check("16%-CAGR-Fall: Evidence bleibt trotz fehlender Bestaetigung > 0 (kein automatischer Stalwart-Rutsch)",ge16PctOhneBestaetigung.evidence>0);
@@ -211,5 +217,69 @@ check("growthThesisFingerprint: geaenderte Katalysatoren (Name+GB+generic) erzeu
 const fpWithoutPeerGap=growthThesisFingerprint(fpInputBase);
 const fpBaseNoPeerGapField={...fpInputBase};
 check("growthThesisFingerprint: Aufruf ohne Peer-Gap-Feld (Schritt-14-Fall) funktioniert weiterhin unveraendert",typeof fpWithoutPeerGap==="string"&&fpWithoutPeerGap.length>0);
+
+// ═══ REGRESSIONSTESTS (09.08.2026, Ticket "Thesis-Score: Sektor-adaptive Ranges
+// + Sync mit Section 1 (NKE-Vorfall)") ═══
+
+// 1. NKE-Root-Cause: negative EPS-CAGR MUSS cagr_score=0 liefern, unabhaengig
+// vom Profil (universeller Guard, Ticket Teil D.1).
+const geNegativeCagr=computeGrowthEvidence({peerGapPct:2,maxSegmentGrowthPct:3,epsCagr5yPct:-24.97,lynchClass:"turnaround",sector:"Consumer Cyclical",industry:"Apparel - Footwear & Accessories"});
+check("NKE-Fall: negative EPS-CAGR (-24.97%) liefert cagr_score=0",geNegativeCagr.cagrScore===0,JSON.stringify(geNegativeCagr));
+check("NKE-Fall: GrowthEvidence bleibt niedrig (<0.30) bei negativer CAGR + schwachem Segment/Peer-Gap",geNegativeCagr.evidence<0.30,`evidence=${geNegativeCagr.evidence}`);
+
+// 2. Mini-Segment (0.3% Anteil, +93.2% Wachstum) darf NICHT die Evidence
+// treiben -- computeMaterialSegmentGrowth() muss es ausschliessen (bereits in
+// den Fast-Grower-Ranges-Tests abgedeckt), UND selbst wenn faelschlich der
+// rohe Wert durchgereicht wuerde, zeigt dieser Test den Root-Cause-Bug: die
+// Route darf materialGrowthPct NICHT nochmal mit 100 multiplizieren (der
+// Wert ist bereits in Prozent). Regressionstest fuer genau diesen Bug.
+const nkeSegments=[{name:"Footwear",percentage:65.8,growth:-1.4},{name:"Apparel",percentage:33.9,growth:2.9},{name:"Product and Service, Other",percentage:0.3,growth:93.2}];
+const nkeMaterial=computeMaterialSegmentGrowth(nkeSegments);
+check("NKE-Segmente: Mini-Segment (0.3% Anteil, +93.2%) wird NICHT gewaehlt -- materielles Apparel-Segment (+2.9%) gewinnt",nkeMaterial.materialGrowthPct===2.9,JSON.stringify(nkeMaterial));
+const geWithCorrectScale=computeGrowthEvidence({peerGapPct:2,maxSegmentGrowthPct:nkeMaterial.materialGrowthPct,epsCagr5yPct:-24.97,lynchClass:"turnaround"});
+check("NKE-Segmente: korrekt skaliertes Segment-Wachstum (2.9%, NICHT 290%) liefert segScore nahe 0",geWithCorrectScale.segScore<0.10,`segScore=${geWithCorrectScale.segScore}`);
+const geWithBuggyDoubleScale=computeGrowthEvidence({peerGapPct:2,maxSegmentGrowthPct:nkeMaterial.materialGrowthPct!*100,epsCagr5yPct:-24.97,lynchClass:"turnaround"});
+check("Root-Cause-Beweis: OHNE den Skalierungsfix wuerde segScore faelschlich auf 1.0 saettigen (290% statt 2.9%)",geWithBuggyDoubleScale.segScore===1,`segScore=${geWithBuggyDoubleScale.segScore} (zeigt den Bug, den die Route jetzt nicht mehr macht)`);
+
+// 3. Profil-Mapping: Apparel/Footwear -> consumer_brands, NICHT software_growth
+// ("Technology"-Referenz-Bug aus dem Ticket-Screenshot).
+check("Profil-Mapping: Apparel/Footwear -> consumer_brands (nicht software_growth/Technology)",mapGrowthProfile("Consumer Cyclical","Apparel - Footwear & Accessories")==="consumer_brands");
+check("Profil-Mapping: Software/Semiconductors -> software_growth",mapGrowthProfile("Technology","Software - Infrastructure")==="software_growth");
+check("Profil-Mapping: Materials/Steel -> cyclical",mapGrowthProfile("Basic Materials","Steel")==="cyclical");
+check("Profil-Mapping: unbekannter Sektor -> other (neutraler Fallback, kein Bias)",mapGrowthProfile("","")==="other");
+// consumer_brands hat niedrigere Ranges als software_growth -- 10% EPS-CAGR
+// soll bei consumer_brands staerker zaehlen als bei software_growth.
+const geConsumerBrands10pct=computeGrowthEvidence({peerGapPct:0,maxSegmentGrowthPct:0,epsCagr5yPct:10,lynchClass:null,sector:"Consumer Cyclical",industry:"Apparel"});
+const geSoftware10pct=computeGrowthEvidence({peerGapPct:0,maxSegmentGrowthPct:0,epsCagr5yPct:10,lynchClass:null,sector:"Technology",industry:"Software"});
+check("Profil-adaptive Ranges: 10% EPS-CAGR zaehlt bei consumer_brands staerker als bei software_growth",geConsumerBrands10pct.cagrScore>geSoftware10pct.cagrScore,`consumer=${geConsumerBrands10pct.cagrScore}, software=${geSoftware10pct.cagrScore}`);
+
+// 4. Lynch-Boost nur auf den zum Label passenden Stil (Ticket Teil D.4) --
+// bereits im bestehenden LYNCH_TO_STYLE-Mapping korrekt, hier explizit als
+// Regressionstest fuer den NKE-Fall (Zykliker/Turnaround darf NICHT auf Fast
+// Grower boosten).
+check("Lynch-Mapping: 'turnaround' boostet 'Turnaround', NICHT 'Fast Grower'",LYNCH_TO_STYLE["turnaround"]==="Turnaround");
+check("Lynch-Mapping: 'cyclical' boostet 'Cyclical', NICHT 'Fast Grower'",LYNCH_TO_STYLE["cyclical"]==="Cyclical");
+const confTurnaroundLabel=computeStyleConfidences({revenueCagr3to5y:-2,earningsVolatility:30,fcfMarginTrend:-1,leverageTrend:0,marginInflectionStrength:2,growthGap:-5},"turnaround",0.20);
+// Der Boost darf NICHT versehentlich Fast Grower erhoehen -- der Lynch-Boost-
+// Mechanismus selbst wendet sich additiv nur auf den gemappten Stil an.
+check("Lynch-Boost bei Label='turnaround': Fast Grower bleibt niedrig (kein Cross-Boost)",confTurnaroundLabel["Fast Grower"]<0.20,JSON.stringify(confTurnaroundLabel));
+
+// 5. Weak-Growth-Ceiling (Ticket Teil D.2): Revenue YoY<5% UND EPS-CAGR<5% ->
+// Fast Grower Konfidenz nach dem Guard hoechstens 15%.
+const strongFgConfidence={"Fast Grower":.60,"Stalwart":.15,"Cyclical":.10,"Turnaround":.10,"Value/Asset":.05} as any;
+const ceilingApplied=applyWeakGrowthCeiling(strongFgConfidence,0.2,-24.97);
+check("Weak-Growth-Ceiling: Revenue YoY=0.2% + EPS-CAGR=-25% -> Fast Grower auf <=15% gedeckelt",ceilingApplied["Fast Grower"]<=0.15,JSON.stringify(ceilingApplied));
+const ceilingNotApplied=applyWeakGrowthCeiling(strongFgConfidence,15,20);
+check("Weak-Growth-Ceiling: greift NICHT bei starkem Wachstum (Revenue YoY=15%, EPS-CAGR=20%)",ceilingNotApplied["Fast Grower"]===0.60);
+const ceilingMissingData=applyWeakGrowthCeiling(strongFgConfidence,null,null);
+check("Weak-Growth-Ceiling: greift NICHT bei fehlenden Daten (kein Fehlalarm bei unvollstaendigen Kennzahlen)",ceilingMissingData["Fast Grower"]===0.60);
+
+// 6. MSFT-Regression: Profil software_growth bleibt exakt wie vorher (Ticket-
+// Formel woertlich: 8%->0, 16%->0.50, 24%->1.0), keine Verschiebung durch die
+// Profil-Einfuehrung.
+const geMsftProfileCheck=computeGrowthEvidence({peerGapPct:7.0,maxSegmentGrowthPct:31.5,epsCagr5yPct:23.34,lynchClass:"fast_grower",sector:"Technology",industry:"Software - Infrastructure"});
+check("MSFT-Regression: software_growth-Profil liefert weiterhin die Ticket-Formel woertlich (>=0.75 Evidence)",geMsftProfileCheck.evidence>=0.75,`evidence=${geMsftProfileCheck.evidence}`);
+check("MSFT-Regression: mapped_profile ist korrekt software_growth",geMsftProfileCheck.profile==="software_growth");
+check("NKE-Regression: mapped_profile ist korrekt consumer_brands",geNegativeCagr.profile==="consumer_brands");
 
 console.log(`\n${total-failed}/${total} Checks grün.`); if(failed)process.exit(1);

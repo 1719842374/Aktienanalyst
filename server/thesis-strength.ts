@@ -36,7 +36,7 @@ export function normalizeCompanyVector(v:CompanyVector): number[] { return [
 // (shared/schema.ts, StockAnalysis.lynchClass) auf unsere 5 Thesis-Style-Namen.
 // 'slow_grower' hat keinen eigenen Thesis-Prototyp -- am naechsten an Stalwart
 // (stabil, geringes Wachstum), daher dorthin gemappt statt verworfen.
-const LYNCH_TO_STYLE: Record<string, ThesisStyle> = {
+export const LYNCH_TO_STYLE: Record<string, ThesisStyle> = {
   fast_grower: "Fast Grower", stalwart: "Stalwart", slow_grower: "Stalwart",
   cyclical: "Cyclical", turnaround: "Turnaround", asset_play: "Value/Asset",
 };
@@ -48,8 +48,8 @@ const LYNCH_TO_STYLE: Record<string, ThesisStyle> = {
 // Sektor, +31.5% Hauptsegment und Lynch=Fast Grower dennoch als Stalwart/
 // Value-dominant enden, weil der Company-Vektor diese Querschnittsdaten
 // nie sah. GrowthEvidence macht diesen Widerspruch strukturell unmoeglich.
-export interface GrowthEvidenceInput { peerGapPct: number | null; maxSegmentGrowthPct: number | null; epsCagr5yPct: number | null; lynchClass?: string | null; revenueYoyPct?: number | null; sector?: string | null; earningsVolatility?: number | null; peTTM?: number | null; sectorMedianPE?: number | null; }
-export interface GrowthEvidenceResult { evidence: number; peerScore: number; segScore: number; cagrScore: number; lynchBoostActive: boolean; flags: string[]; cyclicalPeFlag: boolean; }
+export interface GrowthEvidenceInput { peerGapPct: number | null; maxSegmentGrowthPct: number | null; epsCagr5yPct: number | null; lynchClass?: string | null; revenueYoyPct?: number | null; sector?: string | null; industry?: string | null; earningsVolatility?: number | null; peTTM?: number | null; sectorMedianPE?: number | null; }
+export interface GrowthEvidenceResult { evidence: number; peerScore: number; segScore: number; cagrScore: number; lynchBoostActive: boolean; flags: string[]; cyclicalPeFlag: boolean; profile: GrowthProfile; }
 // Auftrag 07.08.2026 ("Final-Fix: Fast-Grower-Ranges + P/E-Zyklus-Filter"):
 // Segment-Materialitaet -- ein 3%-Segment mit +40% Wachstum darf NICHT
 // allein Fast-Grower-Evidence ausloesen. Nur Segmente mit Umsatzanteil >=10%
@@ -85,6 +85,45 @@ export function isCyclicalSectorName(sector?: string | null): boolean {
   return CYCLICAL_SECTORS.has(sector.trim().toLowerCase());
 }
 
+// Auftrag 09.08.2026 ("NKE-Vorfall", Ticket Teil B/C): Profil-Mapping aus
+// Sektor/Industry -- generisch per Substring-Match, KEINE Ticker-Hardcodes.
+// Vier Profile mit unterschiedlichen "was zaehlt als starkes Wachstum"-
+// Ranges. Fallback "other" bei unbekanntem Sektor/Industry -- neutrale
+// Mitte zwischen software_growth und consumer_brands, kein Bias.
+export type GrowthProfile = "software_growth" | "consumer_brands" | "cyclical" | "other";
+export function mapGrowthProfile(sector?: string | null, industry?: string | null): GrowthProfile {
+  const s = (sector || "").toLowerCase();
+  const i = (industry || "").toLowerCase();
+  const text = `${s} ${i}`;
+  // Reihenfolge bewusst: (1) software_growth-Industries zuerst, damit z.B.
+  // "Consumer Cyclical"-Sektor mit Internet/Semiconductor-Industry (FMP
+  // klassifiziert manche Tech-Subsegmente sektoral uneindeutig) nicht
+  // faelschlich als cyclical/consumer_brands landet. (2) consumer_brands
+  // (Industry-Ebene, spezifischer als der breite "Consumer Cyclical"-Sektor)
+  // VOR dem generischen Rohstoff-/Sektor-Cyclical-Fallback -- Apparel/
+  // Footwear/Luxury sind zwar oft sektoral "Consumer Cyclical" gelabelt,
+  // gehoeren aber laut Ticket-Tabelle explizit zu consumer_brands, nicht in
+  // den breiten Rohstoff-/Auto-/Energie-Cyclical-Topf. (3) breite Sektor-
+  // Cyclical-Gruppen (Materials/Energy/Industrials/Autos/Airlines) danach.
+  if (/software|semiconductor|internet|information technology/.test(i)) return "software_growth";
+  if (/apparel|footwear|leisure|luxury|restaurant|beverage|household|personal products|textile/.test(i)) return "consumer_brands";
+  if (/materials|energy|industrials|automobiles|autos|airlines|basic materials/.test(text)) return "cyclical";
+  if (/consumer cyclical/.test(s)) return "cyclical";
+  if (/software|semiconductor|internet|information technology|technology/.test(text)) return "software_growth";
+  return "other";
+}
+
+// Profil-adaptive Ranges (Ticket Teil C) -- Ankerpunkte pro Profil fuer
+// EPS-CAGR- und Segment-Score. Peer-Gap bleibt profil-uebergreifend gleich
+// (Peer-Gap ist bereits relativ zum EIGENEN Sektor-Median berechnet, braucht
+// daher keine separate Profil-Anpassung).
+const GROWTH_PROFILE_RANGES: Record<GrowthProfile, { cagrFloor: number; cagrSpan: number; segFloor: number; segSpan: number }> = {
+  software_growth: { cagrFloor: 0.08, cagrSpan: 0.16, segFloor: 0.12, segSpan: 0.18 }, // 8%->0,16%->0.50,24%->1.0 (Ticket-Formel woertlich)
+  consumer_brands: { cagrFloor: 0.04, cagrSpan: 0.12, segFloor: 0.08, segSpan: 0.14 }, // 4%->0,10%->0.50,16%->1.0
+  cyclical: { cagrFloor: 0.04, cagrSpan: 0.14, segFloor: 0.08, segSpan: 0.16 }, // Fokus Inflection statt Niveau -- flachere Rampe, kein hartes Level-Erfordernis
+  other: { cagrFloor: 0.06, cagrSpan: 0.14, segFloor: 0.10, segSpan: 0.16 }, // Mitte zwischen software_growth und consumer_brands
+};
+
 // P/E-Zyklus-Filter (Ticket Teil 3): "Hohes Wachstum + niedriges P/E +
 // zyklischer Sektor = Peak-Earnings-Verdacht, kein saekularer Fast Grower."
 // Greift additiv NACH der Grundformel, daempft NICHT den EPS-CAGR-Score
@@ -116,9 +155,21 @@ export function computeGrowthEvidence(input: GrowthEvidenceInput): GrowthEvidenc
   // Rampen (clamp01), aber die unteren Ankerpunkte wurden verschoben: cagr
   // 8%->12% (16% liegt jetzt bei 0.50 statt vorher 0.40), peer 0pp->+2pp
   // Ankerpunkt fuer die erste Evidence-Einheit, segment 8%->12%.
-  const peerScore = clamp01(peerGap / 0.10); // 2pp->0.20, 5pp->0.50, 10pp->1.0
-  const segScore = clamp01((maxSegGrowth - 0.12) / 0.18); // 12%->0, 18%->0.33, 30%->1.0
-  const cagrScore = clamp01((epsCagr - 0.08) / 0.16); // 8%->0, 16%->0.50, 24%->1.0 (Ticket-Formel woertlich)
+  // Auftrag 09.08.2026 ("NKE-Vorfall", Ticket Teil B/C): Profil-adaptive Ranges
+  // statt fixer Software-Ankerpunkte. Fuer software_growth bleiben die exakten
+  // Ticket-Werte (8%->0, 16%->0.50, 24%->1.0) unveraendert -- MSFT-Regression
+  // ausgeschlossen. Fuer consumer_brands/cyclical/other greifen niedrigere
+  // Floors/Spans, weil in diesen Profilen bereits 10-16% EPS-CAGR als stark
+  // gilt (siehe Ticket-Tabelle), nicht erst ab 16-24% wie bei Software.
+  const profile = mapGrowthProfile(input.sector, input.industry);
+  const ranges = GROWTH_PROFILE_RANGES[profile];
+  const peerScore = clamp01(peerGap / 0.10); // 2pp->0.20, 5pp->0.50, 10pp->1.0 (profiluebergreifend -- Peer-Gap ist bereits relativ zum eigenen Sektor)
+  const segScore = clamp01((maxSegGrowth - ranges.segFloor) / ranges.segSpan);
+  // Universeller Guard (Ticket Teil D.1): negative EPS-CAGR liefert IMMER
+  // score=0, unabhaengig vom Profil -- clamp01 faengt das bereits ab (negativer
+  // Zaehler -> negatives Ergebnis -> 0), hier explizit dokumentiert statt nur
+  // implizit durch clamp01, damit die Absicht im Code sichtbar ist.
+  const cagrScore = epsCagr <= 0 ? 0 : clamp01((epsCagr - ranges.cagrFloor) / ranges.cagrSpan);
   const lynchBoostActive = input.lynchClass === "fast_grower";
   const lynchBoost = lynchBoostActive ? 0.20 : 0.0;
   // Bestaetigungslogik (Ticket Kernregel): EPS-CAGR>=16% allein reicht NICHT
@@ -138,7 +189,7 @@ export function computeGrowthEvidence(input: GrowthEvidenceInput): GrowthEvidenc
     evidence = clamp01(evidence * cyclicalPe.dampingFactor);
     flags.push("P/E-Zyklus-Filter aktiv: zyklischer Sektor + P/E deutlich unter Sektor-Median -> Peak-Earnings-Verdacht, Fast-Grower-Evidence gedaempft");
   }
-  return { evidence, peerScore, segScore, cagrScore: confirmedCagrScore, lynchBoostActive, flags, cyclicalPeFlag: cyclicalPe.cyclicalPeFlag };
+  return { evidence, peerScore, segScore, cagrScore: confirmedCagrScore, lynchBoostActive, flags, cyclicalPeFlag: cyclicalPe.cyclicalPeFlag, profile };
 }
 
 // apply_growth_logic (Ticket Teil 3): verschiebt die ROHEN Similarities VOR
@@ -204,6 +255,36 @@ export function applyFastGrowerSafetyGuard(confidences: Record<ThesisStyle, numb
   const others = (Object.keys(out) as ThesisStyle[]).filter(s => s !== "Fast Grower");
   const othersSum = others.reduce((a, s) => a + out[s], 0) || 1;
   others.forEach(s => { out[s] = Math.max(0, out[s] - deficit * (out[s] / othersSum)); });
+  const total = (Object.keys(out) as ThesisStyle[]).reduce((a, s) => a + out[s], 0) || 1;
+  (Object.keys(out) as ThesisStyle[]).forEach(s => out[s] = out[s] / total);
+  return out;
+}
+
+// Auftrag 09.08.2026 ("NKE-Vorfall", Ticket Teil D.2): Deckel-Guard --
+// Gegenstueck zu applyFastGrowerSafetyGuard (Boden). Wenn SOWOHL Revenue-YoY
+// ALS AUCH EPS-CAGR schwach sind (<5%), darf Fast Grower nach dem Softmax
+// nicht mehr als 15% Konfidenz behalten -- ein negativ/flach wachsendes
+// Unternehmen (wie NKE: Rev YoY +0.2%, EPS-CAGR -25%) darf strukturell nicht
+// als Fast-Grower-dominant klassifiziert werden, unabhaengig davon, wie die
+// rohen Cosine-Similarities zufaellig ausfallen.
+export function applyWeakGrowthCeiling(confidences: Record<ThesisStyle, number>, revenueYoyPct: number | null, epsCagr5yPct: number | null): Record<ThesisStyle, number> {
+  // Nur greifen wenn BEIDE Werte tatsaechlich vorliegen und schwach sind --
+  // fehlende Daten (finite()===false) duerfen den Deckel NICHT ausloesen,
+  // sonst wuerde jeder Ticker mit unvollstaendigen Kennzahlen faelschlich
+  // gedeckelt statt neutral behandelt zu werden.
+  if (!finite(revenueYoyPct) || !finite(epsCagr5yPct)) return confidences;
+  const weakRevenue = revenueYoyPct! < 5;
+  const weakCagr = epsCagr5yPct! < 5;
+  if (!(weakRevenue && weakCagr)) return confidences;
+  const FAST_GROWER_CEILING = 0.15;
+  if (confidences["Fast Grower"] <= FAST_GROWER_CEILING) return confidences;
+  const out = { ...confidences };
+  const surplus = out["Fast Grower"] - FAST_GROWER_CEILING;
+  out["Fast Grower"] = FAST_GROWER_CEILING;
+  // Ueberschuss proportional an die anderen Stile verteilen, Summe bleibt 1.
+  const others = (Object.keys(out) as ThesisStyle[]).filter(s => s !== "Fast Grower");
+  const othersSum = others.reduce((a, s) => a + out[s], 0) || 1;
+  others.forEach(s => { out[s] = out[s] + surplus * (out[s] / othersSum); });
   const total = (Object.keys(out) as ThesisStyle[]).reduce((a, s) => a + out[s], 0) || 1;
   (Object.keys(out) as ThesisStyle[]).forEach(s => out[s] = out[s] / total);
   return out;
@@ -347,7 +428,7 @@ export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:st
   }
   return{score,flags};
 }
-export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[];pos?:number;nettoUpside?:number;generic?:boolean}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; revenueYoyPct?:number|null; sector?:string|null; peTTM?:number|null; sectorMedianPE?:number|null; thesisText?:string|null; }
+export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[];pos?:number;nettoUpside?:number;generic?:boolean}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; revenueYoyPct?:number|null; sector?:string|null; industry?:string|null; peTTM?:number|null; sectorMedianPE?:number|null; thesisText?:string|null; }
 export function computeThesisStrength(input:ThesisStrengthInput){const flags=[...(input.vector.missingFeatures||[]).map(x=>`Merkmal fehlt: ${x}`)];
  // Auftrag 07.08.2026 ("Querschnitts-Konsistenz + Wachstums-Logik"): GrowthEvidence
  // wird IMMER berechnet (auch bei fehlenden Einzel-Inputs -- computeGrowthEvidence
@@ -355,8 +436,9 @@ export function computeThesisStrength(input:ThesisStrengthInput){const flags=[..
  // Stil-Konfidenzen berechnet werden. Damit ist die Thesis-Klassifikation
  // verbindlich an die Querschnittsdaten aus S1/S2/S7 gebunden statt isoliert
  // vom Company-Vektor allein abzuhaengen.
- const ge=computeGrowthEvidence({peerGapPct:input.peerGapPct??null,maxSegmentGrowthPct:input.maxSegmentGrowthPct??null,epsCagr5yPct:input.epsCagr5yPct??null,lynchClass:input.lynchClass,revenueYoyPct:input.revenueYoyPct??null,sector:input.sector??null,earningsVolatility:input.vector.earningsVolatility,peTTM:input.peTTM??null,sectorMedianPE:input.sectorMedianPE??null});
+ const ge=computeGrowthEvidence({peerGapPct:input.peerGapPct??null,maxSegmentGrowthPct:input.maxSegmentGrowthPct??null,epsCagr5yPct:input.epsCagr5yPct??null,lynchClass:input.lynchClass,revenueYoyPct:input.revenueYoyPct??null,sector:input.sector??null,industry:input.industry??null,earningsVolatility:input.vector.earningsVolatility,peTTM:input.peTTM??null,sectorMedianPE:input.sectorMedianPE??null});
  flags.push(...ge.flags);
  let c=computeStyleConfidences(input.vector, input.lynchClass, ge.evidence);
  c=applyFastGrowerSafetyGuard(c, ge.evidence, input.peerGapPct??null, input.maxSegmentGrowthPct??null, ge.cyclicalPeFlag, input.revenueYoyPct??null);
+ c=applyWeakGrowthCeiling(c, input.revenueYoyPct??null, input.epsCagr5yPct??null);
  const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.backlogAvailable);const b=scoreExternal();const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName,input.thesisText);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+(raw*(.55+.45*conf)).toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf,growthEvidence:ge};}
