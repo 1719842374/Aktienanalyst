@@ -1,6 +1,6 @@
 # Stock Analyst Pro
 
-**Umfassende Finanzanalyse-Plattform — Aktien-Tiefenanalyse (17 Sektionen), Bitcoin-Bewertung, Gold-Analyse, Rezessions-Dashboard, autonomer Researcher-Modus mit 4 Tabs, Pre-Market Daily Briefing und Regression-Scan.**
+**Umfassende Finanzanalyse-Plattform — Aktien-Tiefenanalyse (18 Sektionen), Bitcoin-Bewertung, Gold-Analyse, Rezessions-Dashboard, autonomer Researcher-Modus mit 4 Tabs, Pre-Market Daily Briefing und Regression-Scan.**
 
 > Objektiv · Transparent · Konservativ · Alle Rechenwege ausgewiesen
 
@@ -16,7 +16,7 @@ Stock Analyst Pro vereint vier spezialisierte Analyse-Dashboards in einer Anwend
 
 | Dashboard | Route | Beschreibung |
 |-----------|-------|-------------|
-| **Aktien-Analyse** | `/#/` | 17-Sektionen-Analyse für jede Aktie weltweit (DCF, Monte Carlo, Tech. Analyse) |
+| **Aktien-Analyse** | `/#/` | 18-Sektionen-Analyse für jede Aktie weltweit (DCF, Monte Carlo, Thesis-/Management-Score, Tech. Analyse) |
 | **Researcher** | `/#/researcher` | Hedge-Fund-Style autonomer Macro & Stock Discovery Modus (4 Tabs) |
 | **Screener** | `/#/screener` | 13F-Holdings-Screener (institutional ownership) |
 | **Compare** | `/#/compare` | Side-by-side Ticker-Vergleich (Win/Loss-Highlighting) |
@@ -26,7 +26,7 @@ Stock Analyst Pro vereint vier spezialisierte Analyse-Dashboards in einer Anwend
 
 ---
 
-## Aktien-Analyse (17 Sektionen)
+## Aktien-Analyse (18 Sektionen)
 
 Erstellt für **jede Aktie weltweit** (US, Europa, Asien) eine objektive, konservative Bewertung.
 
@@ -36,27 +36,28 @@ Erstellt für **jede Aktie weltweit** (US, Europa, Asien) eine objektive, konser
 - Generisch für jede Aktie — automatische Währungsumrechnung
 - Echtzeit-Daten — Kurse, Fundamentaldaten, Analystenschätzungen via Finance API
 
-### Die 17 Sektionen
+### Die 18 Sektionen
 
 | Nr | Sektion | Beschreibung |
 |----|---------|-------------|
-| 1 | **Datenaktualität & Plausibilität** | Live-Kurs, Market Cap, P/E, EV/EBITDA, Analyst Ratings |
-| 2 | **Investmentthese & Katalysatoren** | LLM-generierte Live-These (4–8 Sätze, Fingerprint-Cache), Peter Lynch Klassifikation, Revenue-Segmente, Katalysatoren-Tabelle, **Thesis Strength Score** (0–5, sektor-adaptiv) |
+| 1 | **Datenaktualität & Plausibilität** | Live-Kurs, Market Cap, P/E, EV/EBITDA, Analyst Ratings, **nächster Earnings Call**, **FCF Yield & FCF-Marge YoY** (pp, grün/rot), Thesis Strength Score Panel |
+| 2 | **Investmentthese & Katalysatoren** | LLM-generierte Live-These (auto in `/api/analyze`, Fingerprint-Cache), Peter Lynch Klassifikation, Revenue-Segmente **inkl. YoY-Wachstum** (SEC/kuratiert), firmenspezifische Katalysatoren, **Thesis Strength Score (0–10, sektor-adaptiv)** |
 | 3 | **Zyklus- & Strukturanalyse** | Konjunkturzyklus, Makro-Sensitivität, Geopolitische Risiken |
 | 4 | **Bewertungskennzahlen** | WACC-Szenarien (Damodaran), CAPM, PEG-Ratio |
-| 5 | **DCF-Modell (FCFF)** | Vollständiger FCFF-DCF mit editierbaren Parametern, 3 Szenarien |
-| 6 | **Risikoadjustiertes CRV** | Worst Case (3 Methoden), Base + Risk-Adjusted CRV |
-| 7 | **Relative Bewertung** | Forward P/E, EV/EBITDA, PEG vs. Sektor |
+| 5 | **DCF-Modell (FCFF)** | Vollständiger FCFF-DCF mit editierbaren Parametern, 3 Szenarien, TV/EV-Anteil |
+| 6 | **Risikoadjustiertes CRV** | Worst Case (3 Methoden), Base + Risk-Adjusted CRV, **CRV-Gehärtet** (WACC-Floor, TV-Guard, Margin-Stress, Structural WC, DCF-vs-Markt-Divergenz) |
+| 7 | **Relative Bewertung** | Forward P/E, EV/EBITDA, PEG vs. Sektor, Peer-Tabelle mit **manuellem Peer Add/Remove** (`peerOverrides`) |
 | 8 | **Risikoinversion** | Top-Risiken nach Expected Damage, invertierter DCF |
 | 9 | **RSL-Momentum** | Levy Relative Strength (26-Wochen) |
 | 10 | **Technische Analyse** | Interaktiver **10Y-Chart** mit MA200/MA50/MACD/RSI/BB, Golden/Death Cross, Volumen-Overlay |
 | 11 | **Moat & Porter's Five Forces** | Moat-Rating, Porter-Scoring |
 | 12 | **PESTEL-Analyse** | 6 Makro-Kategorien, Exposure-Matrix |
 | 13 | **Makro-Korrelationen** | 20+ Korrelationen (Indizes, Rohstoffe, Währungen, Crypto) |
-| 14 | **Reverse DCF** | Implizierte Wachstumsrate g*, Plausibilitätscheck |
-| 15 | **Katalysatoren (Anti-Bias)** | Catalyst-Adj. Target, Downside-Katalysatoren |
+| 14 | **Reverse DCF** | Implizierte Wachstumsrate g*, Plausibilitätscheck vs. Realized 8Q |
+| 15 | **Katalysatoren (Anti-Bias)** | Unabhängiger LLM-Call (firmenspezifisch, `generic`-Flag), Catalyst-Adj. Target, Downside-Katalysatoren |
 | 16 | **Monte Carlo Simulation** | GBM mit 10.000 Iterationen, Percentil-Verteilung |
-| 17 | **Zusammenfassung & Fazit** | Gesamtbewertung, Signal-Score, dynamischer Fazit-Satz |
+| 17 | **Zusammenfassung & Fazit** | Gesamtbewertung, Signal-Score, Scoring-Gates (DCF_REALITY, RELATIVE_GROWTH, PRICING_POWER, INVENTORY), dynamischer Fazit-Satz |
+| 18 | **Management-Execution-Score** | Delivery, Segment-Shift, Kapitalallokation, Glaubwürdigkeit, Qual+News (1–10); SEC Executive-Comp & Insider (Form 4); on-demand |
 
 ---
 
@@ -264,6 +265,19 @@ Worst Case = min(M1, M2, M3)              // Konservativste Schätzung
 | 1.0-2.0:1 | Grenzwertig | Abwarten / Teil-Position |
 | < 1.0:1 | Unfavorable | **Nicht kaufen** — Kurs zu nah am Worst Case |
 
+#### CRV-Härtung (gegen DCF-Extrapolation)
+
+Generisch (keine Ticker-Hardcodes), live u. a. an NVO verifiziert:
+
+| Baustein | Regel |
+|----------|--------|
+| **WACC-Floor** | `WACC_used = max(model, sektor_ref, sektor_floor)` — Pharma/Healthcare ≥ 7,5 %, Software ≥ 7,0 %, Consumer Cyclical ≥ 8,0 %, Default ≥ 7,0 % |
+| **TV-Guard** | TV/EV > 70 % → Flag + optional Haircut auf Fair Value für CRV |
+| **Margin-Stress** | Stress aus YoY-Margenschock + `govExposure` (≥ 20 % → mind. 3 pp) |
+| **Structural WC** | WC = min(β-Drawdown, Sektor-Drawdown, Structural Floor bei hoher govExposure / FCF-Schock / schwachem Moat) |
+| **Divergenz-Flag** | DCF-Upside > 80 % und Analyst-Upside < 15 % → Flag; Fazit-Rating eine Stufe gedeckelt |
+| **UI** | Sektion 6: Block **CRV — Gehärtet** (Raw / Gehärtet / Stress) neben Base-CRV |
+
 #### Max-Entry-Preis bei CRV 3:1
 
 ```
@@ -307,7 +321,7 @@ BUY-Signal (alle Bedingungen müssen erfüllt sein):
 | Feature | Beschreibung | Auto-Trigger |
 |---------|-------------|--------------|
 | **FCF Haircut** | FCF wird um 10-20% reduziert | Gov. Exposure > 20% |
-| **WACC Floor** | Minimum 5% WACC, Debt-Ratio gecapped bei 60% | Immer aktiv |
+| **WACC Floor** | Sektor-adaptive Floors (Pharma ≥7,5 %, Software ≥7 %, …) + Debt-Ratio-Cap | Immer aktiv |
 | **DCF Sanity Cap** | DCF gecapped bei growth-adjusted PE × EPS | Immer aktiv |
 | **Anti-Bias-Warnung** | Automatische Warnung bei inkonsistenten Signalen | Inverted DCF < Kurs |
 | **Geschäftsmodell-Warnung** | Spezielle Hinweise zu Sektor-Risiken | Pharma, SaaS, neg. FCF |
@@ -331,7 +345,7 @@ BUY-Signal (alle Bedingungen müssen erfüllt sein):
 
 ## Thesis Strength Score (Sektion 2)
 
-Ein zusätzlicher, sektor-adaptiver 0–5-Score in der Investmentthese, der die Peter-Lynch-Klassifikation gegen die harten Section-1-Fakten (EPS-CAGR, Revenue YoY, Segment-Wachstum, Peer-Gap) absichert. **Kein Ersatz für die 17-Sektionen-Analyse** — reiner Zusatzindikator, damit ein schwacher/zyklischer Titel nicht wie ein Fast Grower aussieht, nur weil ein einzelnes Segment oder ein Sondereffekt den Rohwert verzerrt.
+Ein zusätzlicher, sektor-adaptiver **0–10-Score** in der Investmentthese, der die Peter-Lynch-Klassifikation gegen die harten Section-1-Fakten (EPS-CAGR, Revenue YoY, Segment-Wachstum, Peer-Gap) absichert. **Kein Ersatz für die 18-Sektionen-Analyse** — reiner Zusatzindikator, damit ein schwacher/zyklischer Titel nicht wie ein Fast Grower aussieht, nur weil ein einzelnes Segment oder ein Sondereffekt den Rohwert verzerrt.
 
 ### Kernprinzip: Single Source of Truth
 
@@ -366,6 +380,43 @@ Jedes Profil hat eigene CAGR-/Segment-Score-Ranges — Software gilt erst ab 16�
 Für echte Zykliker (Steel, Autos, Energy) misst `computeInflectionEvidence()` zusätzlich die *Verbesserung über Zeit* (Boden→Erholung) statt nur das Wachstums-Niveau, gedämpft durch einen abgestuften Breadth-Filter (0–3 verbesserte Metriken aus Revenue/EPS/Marge). Alle anderen Profile bleiben bei der reinen Niveau-Formel.
 
 Details, Formeln und Live-Verifikation: [Changelog — Thesis Strength Score](./docs/CHANGELOG_THESIS_SCORE.md).
+
+---
+
+## Scoring-Pipeline & Gates (Anti-Bias)
+
+Nach Quality × Trend wird der Roh-Score durch Gates gedeckelt (`min(rohScore, strengster Gate-Cap)`):
+
+| Gate | Typischer Cap | Trigger (Daten aus Statements) |
+|------|---------------|--------------------------------|
+| **DCF_REALITY_CHECK** | 65 | Reverse-DCF g* vs. Realized 8Q-Wachstum — z. B. implied > 0 und realized ≤ 0 (NKE-Fixture: +4,6 % vs. −9,6 %) |
+| **RELATIVE_GROWTH** | 60 | Schwaches Relativwachstum / Share-Loss vs. Sektor |
+| **PRICING_POWER** | 55 | Operative Marge bricht YoY um ≥ 2 pp |
+| **INVENTORY** | 70 | Lagerbestand YoY auffällig aufgebaut |
+
+Live-These und Katalysatoren: Katalysatoren = **eigener** LLM-Call (S15, `generic`-Flag); Investment-These = auto in `/api/analyze` auf Basis Segmente + Katalysatoren; Thesis Strength Score und Management-Score = **on-demand**.
+
+### Peer-Overrides (Sektion 7)
+
+Optionales `peerOverrides` in `/api/analyze` (max. 8 Peers). UI: **+ Peer hinzufügen**, **× entfernen**, **Standard wiederherstellen** — z. B. LLY bei NVO nachziehbar, wenn Auto-Peers unvollständig sind.
+
+### Segment-Wachstum
+
+Business-Segmente: `prevRevenue` / `growth` aus FMP oder SEC-EDGAR-Anreicherung (Vorjahres-Vergleichsspalte). Materialität für Scores: **share ≥ 10 %**. Geographic-Segmente lieferten YoY bereits; Business-Segmente folgen derselben Logik.
+
+---
+
+## Recent Updates (Aug 2026)
+
+| Bereich | Inhalt |
+|---------|--------|
+| **18. Sektion** | Management-Execution-Score (Delivery, Segment-Shift, Kapital, Glaubwürdigkeit, Qual+News) |
+| **Thesis Strength Score** | 0–10, Guards G1–G4, Profil-Mapping, Inflection (cyclical), Weak-Growth-Ceiling, Lynch-Boost nur Label-Stil |
+| **CRV-Härtung** | WACC-Floor, TV-Guard, Margin-Stress, Structural WC, Divergenz-Flag |
+| **Peers** | Manuelles Add/Remove (`peerOverrides`) |
+| **Segmente** | YoY-Wachstum aus SEC/kuratiert; Materialitätsfilter |
+| **S1** | Earnings-Datum, FCF Yield/Marge YoY |
+| **These/Katalysatoren** | Live-LLM-These; unabhängige firmenspezifische Katalysatoren |
 
 ---
 
@@ -680,14 +731,14 @@ Alle Hauptseiten sind responsive mit **375px**-Mindestbreite getestet:
 stock-dashboard/
 ├── client/src/
 │   ├── pages/
-│   │   ├── Dashboard.tsx            # Aktien-Analyse (17 Sektionen)
+│   │   ├── Dashboard.tsx            # Aktien-Analyse (18 Sektionen)
 │   │   ├── Researcher.tsx           # Researcher-Modus (4 Tabs + Briefing-Modal)
 │   │   ├── ScreenerDashboard.tsx    # 13F-Holdings-Screener
 │   │   ├── Compare.tsx              # Side-by-side Ticker-Vergleich
 │   │   ├── BTCDashboard.tsx         # BTC-Analyse (12 Sektionen)
 │   │   ├── GoldDashboard.tsx        # Gold-Analyse
 │   │   └── RecessionDashboard.tsx   # Rezessions-Dashboard
-│   ├── components/sections/         # 17 Aktien-Analyse-Sektionen
+│   ├── components/sections/         # 18 Aktien-Analyse-Sektionen
 │   │   ├── Section1.tsx ... Section9.tsx
 │   │   ├── TechnicalChart.tsx       # Section 10 (Chart inkl. Volumen-Overlay, 3M–10Y)
 │   │   ├── MoatPorterSection.tsx    # Section 11
@@ -696,7 +747,8 @@ stock-dashboard/
 │   │   ├── ReverseDCFSection.tsx    # Section 14
 │   │   ├── CatalystsSection.tsx     # Section 15
 │   │   ├── MonteCarloSection.tsx    # Section 16
-│   │   └── SummarySection.tsx       # Section 17
+│   │   ├── SummarySection.tsx       # Section 17
+│   │   └── ManagementScoreSection.tsx  # Section 18
 │   ├── lib/
 │   │   ├── btcAnalysis.ts           # BTC Client-Side Analysis
 │   │   ├── btcFallbackData.ts       # Fallback-Daten bei API-Ausfall
@@ -882,6 +934,7 @@ Vorlage: [`.env.example`](./.env.example). Die echte `.env` ist git-ignoriert �
 - [Security Policy](./SECURITY.md) — private Meldung von Vulnerabilities
 - [Bug Report](./.github/ISSUE_TEMPLATE/bug_report.md) · [Feature Request](./.github/ISSUE_TEMPLATE/feature_request.md)
 - [Changelog — Thesis Strength Score](./docs/CHANGELOG_THESIS_SCORE.md) — Root-Cause-Fixes, Guards, Inflection-Logik, Peer-Median-Bereinigung
+- README: **18 Sektionen** (inkl. Management-Score), CRV-Härtung, Peer-Overrides, Segment-YoY (Aug 2026)
 
 ---
 
