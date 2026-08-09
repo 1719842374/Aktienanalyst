@@ -5,6 +5,15 @@ export const analyzeRequestSchema = z.object({
   ticker: z.string().min(1).max(32).toUpperCase(),  // 32 deckt internationale Ticker ab: BAJAJ-AUTO.NS, 600519.SS, 0700.HK, etc.
   useLLM: z.boolean().optional().default(false), // KI-Katalysatoren toggle
   force: z.boolean().optional().default(false), // Bypass cache and re-fetch live data
+  // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): manuelle Peer-Ergaenzung/
+  // -Entfernung, additiv zur Auto-Peer-Auswahl. Kein Ticker-Hardcode im Core --
+  // der User kann JEDEN fehlenden Wettbewerber nachziehen (z.B. LLY bei NVO),
+  // nicht nur einen vordefinierten. Leere/fehlende Listen -> unveraendertes
+  // Verhalten (reine Auto-Auswahl wie bisher).
+  peerOverrides: z.object({
+    add: z.array(z.string().min(1).max(20)).max(8).optional().default([]),
+    remove: z.array(z.string().min(1).max(20)).max(8).optional().default([]),
+  }).optional(),
 });
 
 export type AnalyzeRequest = z.infer<typeof analyzeRequestSchema>;
@@ -556,6 +565,10 @@ export interface StockAnalysis {
   // NEW: Structured news items from Google News RSS
   newsItems?: NewsItem[];
   peerComparison?: PeerComparison;
+  // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): spiegelt die tatsaechlich
+  // angewendeten User-Overrides zurueck, damit die UI den Add/Remove-Zustand
+  // korrekt vorbelegen kann (z.B. nach einem Seiten-Reload mit demselben Request).
+  activePeerOverrides?: { add: string[]; remove: string[] };
   llmMode?: boolean; // Whether LLM-powered catalysts were used
   consistencyWarnings?: ConsistencyWarning[];
   dataTimestamp?: string; // ISO date when data was fetched

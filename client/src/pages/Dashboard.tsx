@@ -130,7 +130,7 @@ export default function Dashboard() {
 
   // Tagged mutate: assigns a fresh reqId on every kick-off so onSuccess can
   // reject stale responses. Use this everywhere instead of mutation.mutate().
-  const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean }) => {
+  const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean; peerOverrides?: { add: string[]; remove: string[] } }) => {
     requestIdRef.current += 1;
     const reqId = requestIdRef.current;
     analyzeMutationRef.current.mutate({ ...args, reqId });
@@ -139,7 +139,7 @@ export default function Dashboard() {
   const analyzeMutationRef = useRef<any>(null);
 
   const analyzeMutation = useMutation({
-    mutationFn: async ({ ticker, llm, force }: { ticker: string; llm: boolean; force?: boolean; reqId?: number }) => {
+    mutationFn: async ({ ticker, llm, force, peerOverrides }: { ticker: string; llm: boolean; force?: boolean; reqId?: number; peerOverrides?: { add: string[]; remove: string[] } }) => {
       const maxRetries = 5;
       let lastError: Error | null = null;
 
@@ -149,7 +149,7 @@ export default function Dashboard() {
           // On last attempt: always use force=false to hit cache if available
           // This prevents blank screen when server is warming up but cache has data
           const useForce = attempt < maxRetries ? (force === true) : false;
-          const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: useForce });
+          const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: useForce, ...(peerOverrides && (peerOverrides.add.length > 0 || peerOverrides.remove.length > 0) ? { peerOverrides } : {}) });
           if (!res.ok) {
             const errJson = await res.json().catch(() => ({}));
             const errMsg = errJson?.error || errJson?.message || `HTTP ${res.status}`;
@@ -513,7 +513,7 @@ export default function Dashboard() {
               <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Bewertung"><Section4 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="DCF-Modell"><Section5 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="CRV"><Section6 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="Rel. Bewertung"><Section7 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="Rel. Bewertung"><Section7 data={data} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="Risikoinversion"><Section8 data={data} useLLM={useLLM} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>

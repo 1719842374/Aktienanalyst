@@ -1046,3 +1046,254 @@ export function forwardDcfWithFiscal(opts: {
     fcfPath,
   };
 }
+
+// ============================================================================
+// === CRV-Härtung gegen DCF-Extrapolation (Auftrag 09.08.2026, "NVO-Muster") ===
+// ============================================================================
+// Root-Problem (live an NVO beobachtet): CRV = (FV - WC) / (Preis - WC) ist
+// mathematisch korrekt, wird aber optisch sehr attraktiv, wenn FV durch
+// niedrigen WACC + hohen Terminal-Value-Anteil + fortgeschriebene hohe Margen
+// extrapoliert wird, UND der Worst Case wegen niedrigem Beta zu milde ausfällt.
+// Diese Sektion haertet die Kette generisch (Teil A-F), OHNE Ticker-Hardcodes:
+// jeder Low-Beta/High-TV/High-Margin-Titel wird gleich behandelt.
+
+// --- Teil A: Sektor-adaptiver WACC-Floor ---
+// Startwerte konfigurierbar, keine Ticker-Liste — nur Sektor-Substring-Mapping,
+// analog zum bestehenden mapGrowthProfile()-Muster im Thesis-Score.
+export interface WaccFloorResult {
+  waccFloorPct: number;
+  sectorMatched: string;
+}
+export function computeSectorWaccFloor(sector?: string | null, industry?: string | null): WaccFloorResult {
+  const text = `${(sector || "").toLowerCase()} ${(industry || "").toLowerCase()}`;
+  if (/pharma|drug manufacturer|biotechnology|healthcare/.test(text)) {
+    return { waccFloorPct: 7.5, sectorMatched: "Healthcare/Pharma" };
+  }
+  if (/software|semiconductor|internet|information technology|technology/.test(text)) {
+    return { waccFloorPct: 7.0, sectorMatched: "Software/Quality Growth" };
+  }
+  if (/consumer cyclical|apparel|footwear|retail/.test(text)) {
+    return { waccFloorPct: 8.0, sectorMatched: "Consumer Cyclical" };
+  }
+  return { waccFloorPct: 7.0, sectorMatched: "Default" };
+}
+
+/**
+ * WACC_used = max(WACC_model, WACC_sektor_ref, WACC_sektor_floor).
+ * WACC_sektor_ref ist hier bewusst gleich dem Floor (keine separate Referenz-
+ * Datenquelle verdrahtet) — der Floor selbst wirkt als Sektor-Referenz.
+ */
+export function applyWaccFloor(waccModelPct: number, sector?: string | null, industry?: string | null): {
+  waccUsed: number; waccFloorPct: number; waccFloorApplied: boolean; sectorMatched: string;
+} {
+  const { waccFloorPct, sectorMatched } = computeSectorWaccFloor(sector, industry);
+  const waccUsed = Math.max(waccModelPct, waccFloorPct);
+  return { waccUsed, waccFloorPct, waccFloorApplied: waccUsed > waccModelPct + 1e-9, sectorMatched };
+}
+
+// --- Teil B: Terminal-Value-Guard ---
+// TV/EV > 70% -> Flag + optionaler Haircut auf den FV, der in die CRV einfliesst.
+// haircut = min(0.25, (TV/EV - 0.70) * 0.5) -- Ticket-Formel woertlich.
+export interface TvGuardResult {
+  tvOverEv: number;
+  highTvFlag: boolean;
+  haircutPct: number;
+  fvAfterHaircut: number;
+}
+export function applyTerminalValueGuard(fairValue: number, pvTerminal: number, enterpriseValue: number): TvGuardResult {
+  const tvOverEv = enterpriseValue > 0 ? pvTerminal / enterpriseValue : 0;
+  const highTvFlag = tvOverEv > 0.70;
+  const haircutPct = highTvFlag ? Math.min(0.25, (tvOverEv - 0.70) * 0.5) : 0;
+  const fvAfterHaircut = fairValue * (1 - haircutPct);
+  return { tvOverEv, highTvFlag, haircutPct, fvAfterHaircut };
+}
+
+// --- Teil C: datengetriebener Margen-Stress ---
+// margin_stress_pp = max(2.0, 0.5*|min(0,marginDeltaYoYPp)|, govExposure>=20% ? 3.0 : 0)
+export interface MarginStressResult {
+  marginStressPp: number;
+  ebitMarginStressed: number;
+}
+export function computeMarginStress(
+  ebitMarginPct: number,
+  marginDeltaYoYPp: number | null,
+  govExposurePct: number | null,
+): MarginStressResult {
+  const fromYoyShock = marginDeltaYoYPp != null ? 0.5 * Math.abs(Math.min(0, marginDeltaYoYPp)) : 0;
+  const fromGovExposure = (govExposurePct != null && govExposurePct >= 20) ? 3.0 : 0;
+  const marginStressPp = Math.max(2.0, fromYoyShock, fromGovExposure);
+  return { marginStressPp, ebitMarginStressed: ebitMarginPct - marginStressPp };
+}
+
+// --- Teil D: struktureller Worst-Case-Floor (nicht nur Beta) ---
+// Verhindert, dass WC bei Low-Beta-Titeln trotz struktureller Risiken (Policy,
+// Patent-Cliff-Exposure via govExposure, FCF-Margen-Schock, schwacher Moat +
+// hohe DCF-Upside) zu milde "kleben" bleibt.
+export interface StructuralFloorResult {
+  structuralFloorPct: number;
+  reasons: string[];
+}
+export function computeStructuralWorstCaseFloor(opts: {
+  govExposurePct: number | null;
+  fcfMarginYoYPp: number | null;
+  moatRating?: string | null;
+  dcfUpsidePct?: number | null;
+}): StructuralFloorResult {
+  const reasons: string[] = [];
+  let floor = 0; // 0 = kein zusaetzlicher struktureller Floor (Ticket-Skala: Prozent-Drawdown)
+  if (opts.govExposurePct != null && opts.govExposurePct >= 25) {
+    floor = Math.max(floor, 35);
+    reasons.push(`govExposure ${opts.govExposurePct.toFixed(0)}% >= 25% -> mind. 35% Drawdown-Floor`);
+  }
+  if (opts.fcfMarginYoYPp != null && opts.fcfMarginYoYPp <= -10) {
+    floor = Math.max(floor, 30);
+    reasons.push(`FCF-Marge YoY ${opts.fcfMarginYoYPp.toFixed(1)}pp <= -10pp -> zusaetzlicher Abschlag (mind. 30%)`);
+  }
+  const moatWeakOrNone = opts.moatRating != null && /schwach|none|kein/i.test(opts.moatRating);
+  if (moatWeakOrNone && opts.dcfUpsidePct != null && opts.dcfUpsidePct > 50) {
+    floor = Math.max(floor, 35);
+    reasons.push(`Moat schwach/none + DCF-Upside ${opts.dcfUpsidePct.toFixed(0)}% > 50% -> tieferer Floor (mind. 35%)`);
+  }
+  return { structuralFloorPct: floor, reasons };
+}
+
+/** WC = min(beta-adjusted drawdown, sector drawdown, structural_floor). structuralFloorPct=0 bedeutet "kein Effekt" (min() ignoriert es dann nicht -- 0% Drawdown wuerde WC=Preis erzwingen, daher wird 0 explizit ausgeschlossen). */
+export function worstCaseStructural(price: number, betaAdjDrawdownPct: number, sectorDrawdownPct: number, structuralFloorPct: number): number {
+  const candidates = [betaAdjDrawdownPct, sectorDrawdownPct];
+  if (structuralFloorPct > 0) candidates.push(structuralFloorPct);
+  const effectiveDrawdown = Math.max(...candidates); // strukturell tieferer WC = HÖHERER Drawdown-Prozentsatz
+  return price * (1 - effectiveDrawdown / 100);
+}
+
+// --- Teil E: Divergenz-Flag DCF vs. Markt ---
+export interface DivergenceFlagResult {
+  divergenceFlag: boolean;
+  dcfUpsidePct: number;
+  analystUpsidePct: number;
+}
+export function computeDcfVsMarketDivergence(conservativeDCFPerShare: number, analystPTMedian: number, currentPrice: number): DivergenceFlagResult {
+  const dcfUpsidePct = currentPrice > 0 ? ((conservativeDCFPerShare - currentPrice) / currentPrice) * 100 : 0;
+  const analystUpsidePct = currentPrice > 0 ? ((analystPTMedian - currentPrice) / currentPrice) * 100 : 0;
+  const divergenceFlag = dcfUpsidePct > 80 && analystUpsidePct < 15;
+  return { divergenceFlag, dcfUpsidePct, analystUpsidePct };
+}
+
+// --- Teil F: gehärtete CRV-Kette (ein Aufruf, alle Bausteine kombiniert) ---
+export interface HardenedCRVInput {
+  price: number;
+  conservativeDCF: { perShare: number; wacc: number; enterpriseValue: number; pvTerminal: number };
+  sector?: string | null;
+  industry?: string | null;
+  ebitMarginPct: number;
+  marginDeltaYoYPp: number | null;
+  fcfMarginYoYPp: number | null;
+  govExposurePct: number | null;
+  moatRating?: string | null;
+  betaAdjDrawdownPct: number;
+  sectorDrawdownPct: number;
+  analystPTMedian: number;
+}
+export interface HardenedCRVResult {
+  crvRaw: number;
+  crvHardened: number;
+  crvStress: number;
+  fvRaw: number;
+  fvHardened: number;
+  fvStress: number;
+  wcUsed: number;
+  waccModel: number;
+  waccFloor: number;
+  waccUsed: number;
+  waccFloorApplied: boolean;
+  tvOverEv: number;
+  highTvFlag: boolean;
+  tvHaircutPct: number;
+  marginStressPp: number;
+  structuralFloorPct: number;
+  structuralReasons: string[];
+  divergenceFlag: boolean;
+  dcfUpsidePct: number;
+  analystUpsidePct: number;
+  flags: string[];
+}
+/**
+ * Kombiniert A-E zu einer gehärteten CRV-Kette. Nimmt bereits berechnete
+ * conservativeDCF-Werte entgegen (kein Re-Run der vollen FCFF-Projektion
+ * hier) -- der WACC-Floor-Effekt wird approximativ über eine WACC-Delta-
+ * Diskontierung auf den bereits berechneten Fair Value angewendet, um keinen
+ * zweiten vollen DCF-Durchlauf mit anderem WACC in der UI-Schicht zu
+ * erzwingen. Für eine exakte Neu-Discountierung kann der Aufrufer optional
+ * calculateFCFFDCF() erneut mit waccOverride=waccUsed aufrufen (siehe Section6-
+ * Integration) -- diese Funktion bleibt die reine, testbare Kernlogik.
+ */
+export function computeHardenedCRV(input: HardenedCRVInput): HardenedCRVResult {
+  const flags: string[] = [];
+
+  // A) WACC-Floor
+  const { waccUsed, waccFloorPct, waccFloorApplied, sectorMatched } = applyWaccFloor(input.conservativeDCF.wacc, input.sector, input.industry);
+  if (waccFloorApplied) flags.push(`WACC-Floor aktiv (${sectorMatched}): ${input.conservativeDCF.wacc.toFixed(2)}% -> ${waccUsed.toFixed(2)}%`);
+
+  // Approximation: WACC-Delta wirkt auf den Fair Value über eine vereinfachte
+  // Duration-Näherung (10J expliziter Horizont + Perpetuity) -- der Aufrufer
+  // sollte für die exakte Zahl calculateFCFFDCF() mit waccOverride erneut
+  // aufrufen; hier wird ein konservativer Korrekturfaktor angewendet, der bei
+  // gleichem WACC (kein Floor-Effekt) exakt 1.0 ergibt (keine Verzerrung).
+  const waccDeltaBp = (waccUsed - input.conservativeDCF.wacc) * 100;
+  const waccCorrectionFactor = waccDeltaBp > 0 ? Math.pow(1 + input.conservativeDCF.wacc / 100, 10) / Math.pow(1 + waccUsed / 100, 10) : 1;
+  const fvAfterWaccFloor = input.conservativeDCF.perShare * waccCorrectionFactor;
+
+  // B) Terminal-Value-Guard
+  const tvGuard = applyTerminalValueGuard(fvAfterWaccFloor, input.conservativeDCF.pvTerminal, input.conservativeDCF.enterpriseValue);
+  if (tvGuard.highTvFlag) flags.push(`High-TV-Extrapolation: TV/EV=${(tvGuard.tvOverEv * 100).toFixed(0)}% -> Haircut ${(tvGuard.haircutPct * 100).toFixed(1)}%`);
+
+  // C) Margin-Stress -> CRV_stress (separater Pfad, beeinflusst NICHT fvHardened)
+  const marginStress = computeMarginStress(input.ebitMarginPct, input.marginDeltaYoYPp, input.govExposurePct);
+  // Stress wirkt proportional auf den Fair Value (Marge ist der dominante FCFF-Treiber
+  // in der vereinfachten Näherung: ΔFV/FV ≈ ΔMarge/Marge, da FCFF ≈ Revenue × Marge × (1-t)).
+  const marginStressFactor = input.ebitMarginPct > 0 ? Math.max(0, (input.ebitMarginPct - marginStress.marginStressPp) / input.ebitMarginPct) : 1;
+  const fvStress = tvGuard.fvAfterHaircut * marginStressFactor;
+  if (marginStress.marginStressPp > 2.0) flags.push(`Margin-Stress: -${marginStress.marginStressPp.toFixed(1)}pp (YoY-Schock/govExposure-getrieben)`);
+
+  // D) Struktureller Worst Case
+  const structural = computeStructuralWorstCaseFloor({
+    govExposurePct: input.govExposurePct,
+    fcfMarginYoYPp: input.fcfMarginYoYPp,
+    moatRating: input.moatRating,
+    dcfUpsidePct: input.price > 0 ? ((input.conservativeDCF.perShare - input.price) / input.price) * 100 : null,
+  });
+  const wcUsed = worstCaseStructural(input.price, input.betaAdjDrawdownPct, input.sectorDrawdownPct, structural.structuralFloorPct);
+  if (structural.structuralFloorPct > 0) flags.push(...structural.reasons.map((r: string) => `Structural-WC: ${r}`));
+
+  // E) Divergenz-Flag (misst gegen den urspruenglichen, ungehärteten DCF -- so
+  // wie im Ticket beschrieben: "Base-CRV weiter zeigen", Divergenz bezieht sich
+  // auf den rohen DCF-Upside vs. Analyst-Upside)
+  const divergence = computeDcfVsMarketDivergence(input.conservativeDCF.perShare, input.analystPTMedian, input.price);
+  if (divergence.divergenceFlag) flags.push(`DCF_vs_Markt_Divergenz: DCF-Upside ${divergence.dcfUpsidePct.toFixed(0)}% vs. Analyst-Upside ${divergence.analystUpsidePct.toFixed(0)}%`);
+
+  // F) finale CRV-Kette
+  const crvRaw = calculateCRV(input.conservativeDCF.perShare, input.betaAdjDrawdownPct > 0 ? input.price * (1 - Math.min(input.betaAdjDrawdownPct, input.sectorDrawdownPct) / 100) : input.price, input.price);
+  const crvHardened = calculateCRV(tvGuard.fvAfterHaircut, wcUsed, input.price);
+  const crvStress = calculateCRV(fvStress, wcUsed, input.price);
+
+  return {
+    crvRaw, crvHardened, crvStress,
+    fvRaw: input.conservativeDCF.perShare,
+    fvHardened: tvGuard.fvAfterHaircut,
+    fvStress,
+    wcUsed,
+    waccModel: input.conservativeDCF.wacc,
+    waccFloor: waccFloorPct,
+    waccUsed,
+    waccFloorApplied,
+    tvOverEv: tvGuard.tvOverEv,
+    highTvFlag: tvGuard.highTvFlag,
+    tvHaircutPct: tvGuard.haircutPct,
+    marginStressPp: marginStress.marginStressPp,
+    structuralFloorPct: structural.structuralFloorPct,
+    structuralReasons: structural.reasons,
+    divergenceFlag: divergence.divergenceFlag,
+    dcfUpsidePct: divergence.dcfUpsidePct,
+    analystUpsidePct: divergence.analystUpsidePct,
+    flags,
+  };
+}

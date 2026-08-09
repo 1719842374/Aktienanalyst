@@ -5,6 +5,7 @@ import {
   calculateFCFFDCF, buildDefaultDCFParams,
   worstCaseM1, worstCaseM1Label, worstCaseM2, worstCaseM3,
   calculateCRV, calculateRiskAdjustedCRV, calculateCatalystUpside, selectCatalystBase,
+  computeHardenedCRV,
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, getCRVColor, getCRVBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
@@ -87,6 +88,27 @@ export function Section6({ data }: Props) {
     { label: "Catalyst-Adjusted", value: raCrvCatalyst, fairValue: raAdjustedTarget },
   ];
 
+  // === CRV-Härtung gegen DCF-Extrapolation (Auftrag 09.08.2026, "NVO-Muster") ===
+  // Generisch: WACC-Floor, Terminal-Value-Guard, Margin-Stress, struktureller
+  // Worst-Case-Floor, Divergenz-Flag DCF vs. Markt. Base-CRV bleibt oben
+  // unveraendert sichtbar -- dies ist der zusaetzliche, entscheidungsrelevante
+  // gehaertete Ausweis (Ticket Teil F: "Base-CRV weiter zeigen, aber
+  // entscheidungsrelevante CRV = CRV aus gehaertetem FV/WC").
+  const hardenedCRV = useMemo(() => computeHardenedCRV({
+    price: data.currentPrice,
+    conservativeDCF: { perShare: conservativeDCF.perShare, wacc: conservativeDCF.wacc, enterpriseValue: conservativeDCF.enterpriseValue, pvTerminal: conservativeDCF.pvTerminal },
+    sector: data.sector,
+    industry: data.sectorProfile?.sector ?? data.sector,
+    ebitMarginPct: baseParams.ebitMargin,
+    marginDeltaYoYPp: data.scoring?.gateInputs?.marginDeltaYoYPp ?? null,
+    fcfMarginYoYPp: data.fcfMarginYoyPp ?? null,
+    govExposurePct: data.governmentExposure ?? null,
+    moatRating: data.moatRating,
+    betaAdjDrawdownPct: (1 - m1 / data.currentPrice) * 100,
+    sectorDrawdownPct: sectorDD,
+    analystPTMedian: data.analystPT?.median ?? data.currentPrice,
+  }), [conservativeDCF, data, baseParams, m1, sectorDD]);
+
   return (
     <SectionCard number={6} title="RISIKOADJUSTIERTES CRV">
       {/* Worst Case Methods */}
@@ -162,6 +184,53 @@ export function Section6({ data }: Props) {
             <CRVCard key={i} label={crv.label} value={crv.value} fairValue={crv.fairValue} worstCase={worstCase} riskAdj />
           ))}
         </div>
+      </div>
+
+      {/* === GEHÄRTETE CRV (gegen Low-WACC/High-TV/High-Margin-Extrapolation) === */}
+      <div>
+        <h3 className="text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wider">
+          CRV — Gehärtet (WACC-Floor, TV-Guard, Margin-Stress, Structural-WC)
+        </h3>
+        <div className="text-[10px] text-muted-foreground mb-2">
+          Entscheidungsrelevante CRV nach Härtung gegen DCF-Extrapolation — schützt vor optisch attraktiven CRVs bei Low-Beta/Low-WACC/High-Terminal-Value-Setups.
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <CRVCard label="Raw (unbereinigt)" value={hardenedCRV.crvRaw} fairValue={hardenedCRV.fvRaw} worstCase={data.currentPrice * (1 - Math.min((1 - m1 / data.currentPrice) * 100, sectorDD) / 100)} />
+          <CRVCard label="Gehärtet" value={hardenedCRV.crvHardened} fairValue={hardenedCRV.fvHardened} worstCase={hardenedCRV.wcUsed} />
+          <CRVCard label="Stress (+ Margin-Stress)" value={hardenedCRV.crvStress} fairValue={hardenedCRV.fvStress} worstCase={hardenedCRV.wcUsed} />
+        </div>
+        {hardenedCRV.flags.length > 0 && (
+          <div className="mt-2 flex flex-col gap-1">
+            {hardenedCRV.flags.map((flag, i) => (
+              <div key={i} className="text-[10px] text-amber-500 bg-amber-500/10 rounded-md px-2 py-1 border border-amber-500/20">
+                ⚠ {flag}
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+          <div className="bg-muted/30 rounded-md p-2 border border-border/50">
+            <div className="text-muted-foreground">WACC (Modell → verwendet)</div>
+            <div className="font-mono font-semibold">{formatNumber(hardenedCRV.waccModel, 2)}% → {formatNumber(hardenedCRV.waccUsed, 2)}%</div>
+          </div>
+          <div className="bg-muted/30 rounded-md p-2 border border-border/50">
+            <div className="text-muted-foreground">TV / EV</div>
+            <div className="font-mono font-semibold">{formatNumber(hardenedCRV.tvOverEv * 100, 1)}%</div>
+          </div>
+          <div className="bg-muted/30 rounded-md p-2 border border-border/50">
+            <div className="text-muted-foreground">Margin-Stress</div>
+            <div className="font-mono font-semibold">−{formatNumber(hardenedCRV.marginStressPp, 1)}pp</div>
+          </div>
+          <div className="bg-muted/30 rounded-md p-2 border border-border/50">
+            <div className="text-muted-foreground">Structural-WC-Floor</div>
+            <div className="font-mono font-semibold">{hardenedCRV.structuralFloorPct > 0 ? `${formatNumber(hardenedCRV.structuralFloorPct, 0)}%` : "—"}</div>
+          </div>
+        </div>
+        {hardenedCRV.divergenceFlag && (
+          <div className="mt-2 text-[10px] text-red-400 bg-red-500/10 rounded-md p-2 border border-red-500/20">
+            <span className="font-semibold">DCF vs. Markt Divergenz:</span> DCF-Upside {formatNumber(hardenedCRV.dcfUpsidePct, 0)}% vs. Analyst-Upside {formatNumber(hardenedCRV.analystUpsidePct, 0)}% — das Fazit darf nicht allein auf dem unbereinigten Base-CRV beruhen.
+          </div>
+        )}
       </div>
 
       {/* DCF bei CRV 3:1 */}

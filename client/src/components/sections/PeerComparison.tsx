@@ -25,14 +25,45 @@ function findBest(values: (number | null)[], lowerIsBetter: boolean): number | n
   return lowerIsBetter ? Math.min(...valid) : Math.max(...valid);
 }
 
-export default function PeerComparison({ data }: { data: StockAnalysis }) {
+// Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): onOverridesChange ist optional
+// -- Aufrufer ohne den Callback (falls je vorhanden) sehen weiterhin nur die
+// reine Tabelle, keine Verhaltensaenderung. Additiv, kein Ersatz bestehender Props.
+export default function PeerComparison({ data, onOverridesChange }: { data: StockAnalysis; onOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void }) {
   const pc = data.peerComparison;
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [addInput, setAddInput] = useState("");
+
+  // Lokaler Override-State, vorbelegt aus dem letzten Server-Response (falls
+  // die Seite mit bereits aktiven Overrides geladen wurde).
+  const activeAdd = data.activePeerOverrides?.add ?? [];
+  const activeRemove = data.activePeerOverrides?.remove ?? [];
 
   if (!pc || !pc.peers || pc.peers.length === 0) return null;
 
   const { subject, peers, peerAvg, sectorMedian } = pc;
+
+  const handleRemove = (ticker: string) => {
+    if (!onOverridesChange) return;
+    const newRemove = activeRemove.includes(ticker) ? activeRemove : [...activeRemove, ticker];
+    const newAdd = activeAdd.filter(t => t !== ticker);
+    onOverridesChange({ add: newAdd, remove: newRemove });
+  };
+
+  const handleAdd = () => {
+    if (!onOverridesChange) return;
+    const t = addInput.trim().toUpperCase();
+    if (!t || t === data.ticker) return;
+    if (activeAdd.includes(t)) return;
+    if (activeAdd.length + peers.length >= 8) return; // Ticket: max. 8 Peers
+    onOverridesChange({ add: [...activeAdd, t], remove: activeRemove.filter(r => r !== t) });
+    setAddInput("");
+  };
+
+  const handleResetDefaults = () => {
+    if (!onOverridesChange) return;
+    onOverridesChange({ add: [], remove: [] });
+  };
 
   // Columns config
   const cols: { key: SortKey; label: string; lowerIsBetter: boolean; decimals: number; suffix: string }[] = [
@@ -170,6 +201,7 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
                   <div className="flex items-center justify-end gap-0.5">{c.label} <SortIcon col={c.key} /></div>
                 </th>
               ))}
+              {onOverridesChange && <th className="w-6"></th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-border/40">
@@ -186,6 +218,7 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
                 const val = (subject as any)[c.key] as number | null;
                 return <td key={c.key} className={cellCls(c.key, val, true)}>{val != null ? `${fmt(val, c.decimals)}${c.suffix}` : "—"}</td>;
               })}
+              {onOverridesChange && <td></td>}
             </tr>
 
             {/* Peer rows */}
@@ -197,6 +230,17 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
                   const val = (p as any)[c.key] as number | null;
                   return <td key={c.key} className={cellCls(c.key, val, false)}>{val != null ? `${fmt(val, c.decimals)}${c.suffix}` : "—"}</td>;
                 })}
+                {onOverridesChange && (
+                  <td className="py-1.5 px-1 text-right">
+                    <button
+                      className="text-[10px] text-foreground/30 hover:text-red-400 transition-colors"
+                      title={`${p.ticker} aus Peer-Liste entfernen`}
+                      onClick={() => handleRemove(p.ticker)}
+                    >
+                      ×
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
 
@@ -208,6 +252,7 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
                 const avgVal = (peerAvg as any)[c.key] as number | null;
                 return <td key={c.key} className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px] text-muted-foreground">{avgVal != null ? `${fmt(avgVal, c.decimals)}${c.suffix}` : "—"}</td>;
               })}
+              {onOverridesChange && <td></td>}
             </tr>
 
             {/* Sector Median row (Damodaran) */}
@@ -224,11 +269,48 @@ export default function PeerComparison({ data }: { data: StockAnalysis }) {
                   const sv = sectorVal(c.key);
                   return <td key={c.key} className="py-1.5 px-1 text-right font-mono tabular-nums text-[10px] text-amber-400/70">{sv != null ? `${fmt(sv, c.decimals)}${c.suffix}` : "—"}</td>;
                 })}
+                {onOverridesChange && <td></td>}
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): manuelles Nachziehen
+          fehlender Wettbewerber -- kein Hardcode im Core, der User kann jeden
+          Ticker ergaenzen (z.B. LLY bei NVO), Overrides werden serverseitig
+          angewendet und fliessen in Peer-Tabelle, Sektor-Median, g_required. */}
+      {onOverridesChange && (
+        <div className="flex items-center gap-2 pt-1">
+          <input
+            type="text"
+            value={addInput}
+            onChange={e => setAddInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") handleAdd(); }}
+            placeholder="Ticker hinzufügen (z.B. LLY)"
+            className="text-[11px] bg-muted/30 border border-border/50 rounded-md px-2 py-1 w-40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+            maxLength={12}
+          />
+          <button
+            onClick={handleAdd}
+            disabled={!addInput.trim() || activeAdd.length + peers.length >= 8}
+            className="text-[11px] px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            + Peer hinzufügen
+          </button>
+          {(activeAdd.length > 0 || activeRemove.length > 0) && (
+            <button
+              onClick={handleResetDefaults}
+              className="text-[10px] text-foreground/40 hover:text-foreground/60 transition-colors ml-1"
+            >
+              Standard wiederherstellen
+            </button>
+          )}
+          {activeAdd.length + peers.length >= 8 && (
+            <span className="text-[10px] text-amber-400/70">Max. 8 Peers erreicht</span>
+          )}
+        </div>
+      )}
 
       {/* Premium/Discount Summary Cards */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">

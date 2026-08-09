@@ -452,11 +452,22 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // selbst wenn der Aufrufer explizit einen frischen Re-Fetch verlangte.
       // Betraf jeden Client-Request und jeden Cron-Precache-Call mit
       // force=true, nicht nur diese Verifikation.
-      const { ticker, useLLM = false, force: forceRefresh = false } = parsed.data;
+      const { ticker, useLLM = false, force: forceRefresh = false, peerOverrides } = parsed.data;
       const upperTicker = ticker.toUpperCase();
 
+      // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): normalisierte Override-
+      // Listen, leer wenn nicht mitgeschickt -- reines Additiv, kein Effekt auf
+      // Ticker ohne Overrides.
+      const peerAddList = (peerOverrides?.add ?? []).map(t => t.trim().toUpperCase()).filter(Boolean);
+      const peerRemoveList = (peerOverrides?.remove ?? []).map(t => t.trim().toUpperCase()).filter(Boolean);
+      const hasPeerOverrides = peerAddList.length > 0 || peerRemoveList.length > 0;
+
       // ── Cache check ──
-      const cacheKey = `${upperTicker}:${useLLM}`;
+      // Cache-Key MUSS die Peer-Overrides enthalten -- sonst wuerde ein User,
+      // der LLY zu NVO hinzufuegt, den gecachten Response OHNE LLY zurueckbekommen
+      // (oder umgekehrt: der naechste User ohne Override erhaelt versehentlich
+      // die mit LLY angereicherte Version).
+      const cacheKey = `${upperTicker}:${useLLM}${hasPeerOverrides ? `:peers[+${peerAddList.join(",")}][-${peerRemoveList.join(",")}]` : ""}`;
       if (!forceRefresh) {
         const cached = analysisCache.get(cacheKey);
         if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cacheLLMModeMatches(cached.usedLLM, useLLM)) {
@@ -912,6 +923,62 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         // Rows already came from fmpSegments() (step 7 above) or the curated
         // map. Distinguish which one so the UI can show the right "Quelle:".
         revenueSegmentsSource = Array.isArray(segments) && segments.length > 0 ? "fmp" : "curated";
+
+        // Auftrag 09.08.2026 ("Segment-Wachstum aus SEC-/Geschäftsberichten
+        // extrahieren"): der curated Fallback (NVO, ASML, TSM, ...) liefert nur
+        // { name, revenue, percentage } -- KEIN growth/prevRevenue, weil er aus
+        // einer statischen Prozent-Aufteilung ohne Vorjahresbezug abgeleitet
+        // wird. Ohne diese Anreicherung zeigt die UI dauerhaft "n/a" und der
+        // Thesis-Score-Segment-Score bleibt bei 0, obwohl echte YoY-Zahlen im
+        // 10-K/20-F stehen. Additiv, ticker-agnostisch: ruft die bestehende
+        // SEC-EDGAR-Pipeline zusaetzlich auf, WENN der curated Fallback aktiv
+        // ist UND kein Segment bereits ein growth-Feld hat -- matched per
+        // normalisiertem Namens-Substring, ueberschreibt NIE die curated
+        // Prozente/Revenue-Werte, ergaenzt nur growth/prevRevenue additiv.
+        const needsGrowthEnrichment = revenueSegmentsSource === "curated" && revenueSegments.every(s => s.growth == null);
+        if (needsGrowthEnrichment) {
+          try {
+            const enrichCacheKey = `segments_growth__${upperTicker}`;
+            let enrichResult = diskResearcherGet(enrichCacheKey) as { segments: RevenueSegment[]; _empty?: boolean } | null;
+            if (!enrichResult) {
+              const fetched = await fetchSecBusinessSegments(upperTicker, companyName);
+              enrichResult = fetched && fetched.segments.length > 0
+                ? { segments: fetched.segments.map(s => ({ name: s.name, revenue: s.revenue, percentage: s.percentage, ...(typeof s.prevRevenue === "number" && s.prevRevenue > 0 && !s.noPriorYearMatch ? { prevRevenue: s.prevRevenue } : {}) })) }
+                : { segments: [], _empty: true };
+              diskResearcherSet(enrichCacheKey, enrichResult);
+            }
+            if (enrichResult.segments.length > 0) {
+              const norm = (n: string) => n.toLowerCase().replace(/[^a-z0-9]/g, "");
+              let matchedCount = 0;
+              revenueSegments = revenueSegments.map(curatedSeg => {
+                const curatedNorm = norm(curatedSeg.name);
+                const secMatch = enrichResult!.segments.find(secSeg => {
+                  const secNorm = norm(secSeg.name);
+                  return curatedNorm.includes(secNorm) || secNorm.includes(curatedNorm) || curatedNorm.slice(0, 6) === secNorm.slice(0, 6);
+                });
+                if (secMatch && typeof secMatch.prevRevenue === "number" && secMatch.prevRevenue > 0) {
+                  matchedCount++;
+                  // WICHTIG: growth wird auf Basis des CURATED revenue (nicht des
+                  // SEC-revenue, das evtl. anders skaliert ist) mit dem SEC-
+                  // prevRevenue berechnet -- vermeidet Skalen-Inkonsistenzen
+                  // zwischen der prozentual abgeleiteten curated Revenue und der
+                  // absoluten SEC-Revenue.
+                  const impliedPrevRevenue = curatedSeg.revenue / (secMatch.revenue / secMatch.prevRevenue);
+                  const growth = ((curatedSeg.revenue / impliedPrevRevenue) - 1) * 100;
+                  return { ...curatedSeg, growth, prevRevenue: Math.round(impliedPrevRevenue) };
+                }
+                return curatedSeg;
+              });
+              if (matchedCount > 0) {
+                console.log(`[SEGMENTS] Growth-Anreicherung fuer ${upperTicker}: ${matchedCount}/${revenueSegments.length} curated Segmente mit SEC-YoY angereichert`);
+              }
+            }
+          } catch (enrichErr) {
+            console.warn(`[SEGMENTS] Growth-Anreicherung fehlgeschlagen fuer ${upperTicker}:`, enrichErr);
+            // Fehler hier ist NIE fatal -- curated Segmente ohne growth sind
+            // weiterhin besser als kein Ergebnis; die UI zeigt dann weiterhin n/a.
+          }
+        }
       } else {
         const secCacheKey = `segments__${upperTicker}`;
         let secResult = diskResearcherGet(secCacheKey) as
@@ -923,13 +990,25 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           if (fetched && fetched.segments.length > 0) {
             const total = fetched.segments.reduce((sum, s) => sum + s.revenue, 0);
             secResult = {
-              segments: fetched.segments.map(s => ({
-                name: s.name,
-                revenue: s.revenue,
-                percentage: total > 0 ? Math.round((s.revenue / total) * 1000) / 10 : s.percentage,
-                source: "sec" as const,
-                fiscalYear: fetched.fiscalYear,
-              })),
+              segments: fetched.segments.map(s => {
+                // Auftrag 09.08.2026 ("Segment-Wachstum aus SEC-Berichten"):
+                // growth wird HIER aus prevRevenue berechnet -- niemals vom LLM
+                // selbst geschaetzt. Nur wenn eine plausible Vorjahreszahl
+                // vorliegt (prevRevenue > 0, kein noPriorYearMatch); sonst
+                // bleibt growth null (NIEMALS 0 als Platzhalter, analog zur
+                // bestehenden FMP-Pipeline weiter oben in dieser Datei).
+                const priorYearRevenue: number | undefined = (typeof s.prevRevenue === "number" && isFinite(s.prevRevenue) && s.prevRevenue > 0 && !s.noPriorYearMatch) ? s.prevRevenue : undefined;
+                const growth = priorYearRevenue != null ? ((s.revenue / priorYearRevenue) - 1) * 100 : null;
+                return {
+                  name: s.name,
+                  revenue: s.revenue,
+                  percentage: total > 0 ? Math.round((s.revenue / total) * 1000) / 10 : s.percentage,
+                  source: "sec" as const,
+                  fiscalYear: fetched.fiscalYear,
+                  growth,
+                  ...(priorYearRevenue != null ? { prevRevenue: priorYearRevenue } : {}),
+                };
+              }),
               fiscalYear: fetched.fiscalYear,
               formType: fetched.formType,
               filingUrl: fetched.filingUrl,
@@ -942,12 +1021,16 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           }
           diskResearcherSet(secCacheKey, secResult);
         }
+        // secResult ist nach dem obigen Block garantiert gesetzt (entweder aus
+        // dem Disk-Cache oder frisch befuellt) -- non-null Assertion statt einer
+        // strukturellen Aenderung an der bestehenden if(!secResult)-Neubefuellung.
+        const secResultFinal = secResult!;
 
-        if (secResult.segments.length > 0) {
-          revenueSegments = secResult.segments;
+        if (secResultFinal.segments.length > 0) {
+          revenueSegments = secResultFinal.segments;
           revenueSegmentsSource = "sec";
-          secFiscalYearLabel = secResult.fiscalYear;
-          console.log(`[SEGMENTS] SEC EDGAR fallback succeeded for ${upperTicker}: ${secResult.formType ?? "10-K/20-F"} (${secResult.fiscalYear ?? "unknown FY"}), ${secResult.segments.length} segments`);
+          secFiscalYearLabel = secResultFinal.fiscalYear;
+          console.log(`[SEGMENTS] SEC EDGAR fallback succeeded for ${upperTicker}: ${secResultFinal.formType ?? "10-K/20-F"} (${secResultFinal.fiscalYear ?? "unknown FY"}), ${secResultFinal.segments.length} segments`);
         } else {
           // (d) Nothing found anywhere — clear message, NEVER a fake/generic fallback.
           // Distinguish "company only reports geographically" (geoSegments present)
@@ -979,6 +1062,22 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         peerTickers = await filterAndSelectPeers(upperTicker, sector, industry, rawPeerTickers, 5);
       } catch (peerFilterErr: any) {
         console.warn(`[ANALYZE] Peer-Filter fehlgeschlagen fuer ${upperTicker}, verwende ungefilterte FMP-Peers: ${peerFilterErr?.message?.substring(0, 100)}`);
+      }
+
+      // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): User-Override NACH der
+      // Auto-Auswahl/Filterung anwenden -- remove zuerst (falls ein User einen
+      // Auto-Peer aktiv ausschliessen will), dann add (z.B. LLY bei NVO, das
+      // FMPs Kursbewegungs-Aehnlichkeits-Heuristik nicht automatisch findet).
+      // Max. 8 Peers gesamt, damit Sektor-Median/Peer-Tabelle stabil bleiben
+      // (Ticket-Vorgabe "Max. Anzahl Peers begrenzen").
+      if (hasPeerOverrides) {
+        peerTickers = peerTickers.filter(t => !peerRemoveList.includes(t));
+        for (const addTicker of peerAddList) {
+          if (addTicker !== upperTicker && !peerTickers.includes(addTicker) && peerTickers.length < 8) {
+            peerTickers.push(addTicker);
+          }
+        }
+        console.log(`[ANALYZE] Peer-Override fuer ${upperTicker}: +[${peerAddList.join(",")}] -[${peerRemoveList.join(",")}] -> effektiv [${peerTickers.join(",")}]`);
       }
 
       // ── 10. News ──
@@ -1660,6 +1759,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         revenueSegmentsSource,
         revenueSegmentsMessage,
         peerComparison: peerComparisonOut,
+        activePeerOverrides: hasPeerOverrides ? { add: peerAddList, remove: peerRemoveList } : { add: [], remove: [] },
         catalystDeepDives: catalystDeepDives ?? [],
 
         // KI mode signalling for Dashboard state

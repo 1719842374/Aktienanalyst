@@ -5,9 +5,9 @@ import { TrendingUp, TrendingDown, Globe, BarChart3 } from "lucide-react";
 import PeerComparison from "./PeerComparison";
 import EpsGrowthChart from "./EpsGrowthChart";
 
-interface Props { data: StockAnalysis }
+interface Props { data: StockAnalysis; onPeerOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void }
 
-export function Section7({ data }: Props) {
+export function Section7({ data, onPeerOverridesChange }: Props) {
   // Use TTM sector avg for TTM stock P/E, and forward sector avg for forward stock P/E
   // Fallback: if backend didn't ship sectorAvgForwardPE (older cached payloads), fall back to TTM to avoid NaN
   const sectorFwdPE = data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE;
@@ -337,7 +337,7 @@ export function Section7({ data }: Props) {
       {data.peerComparison && data.peerComparison.peers.length > 0 && (
         <div className="mt-4 pt-4 border-t border-border">
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Peer-Vergleich (Wettbewerber)</h3>
-          <PeerComparison data={data} />
+          <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} />
         </div>
       )}
     </SectionCard>

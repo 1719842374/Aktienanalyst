@@ -48,6 +48,15 @@ export interface SecRevenueSegment {
   revenue: number; // in reporting currency, absolute (not thousands)
   percentage: number;
   fiscalYear?: string;
+  // Auftrag 09.08.2026 ("Segment-Wachstum aus SEC-/Geschäftsberichten
+  // extrahieren"): Vorjahres-Umsatz derselben Segmentzeile, falls im selben
+  // Filing-Ausschnitt eine Vorjahresvergleichsspalte vorhanden ist (10-Ks
+  // haben praktisch immer eine 2-Jahres-Vergleichstabelle in der Segment-
+  // Note). null/undefined wenn keine belastbare Vorjahreszahl im Text stand
+  // -- NIEMALS eine geratene Zahl. growth wird daraus abgeleitet, NIE selbst
+  // vom LLM geschaetzt.
+  prevRevenue?: number | null;
+  noPriorYearMatch?: boolean; // Segment-Zuschnitt geändert/umbenannt -- kein YoY erzwingen
 }
 
 export interface SecSegmentResult {
@@ -240,8 +249,10 @@ STRIKTE REGELN:
 - ERFINDE NIEMALS Zahlen oder Segmentnamen.
 - Falls der Text KEINE klare Segment-Umsatzaufteilung enthält (z.B. nur Fließtext ohne Zahlen, oder nur geografische Aufteilung), gib ein LEERES Array zurück.
 - Nutze die NEUESTE / letzte volle Berichtsperiode (meist die erste Zahlenspalte in einer Jahresvergleichstabelle).
+- WICHTIG (Vorjahresvergleich): SEC-Segmentnotes enthalten fast immer eine 2-Jahres-Vergleichstabelle (aktuelle Periode + Vorjahresperiode nebeneinander). Falls eine Vorjahresspalte für dieselbe Segmentzeile im Text vorhanden ist, extrahiere den Vorjahreswert als "prevRevenue". Nur wenn der Text WÖRTLICH eine zweite Zahlenspalte für dasselbe Segment zeigt — sonst prevRevenue weglassen (null), NIEMALS schätzen oder aus einer Wachstumsrate rückrechnen.
+- Falls sich der Segment-Zuschnitt zwischen den beiden Jahren offensichtlich geändert hat (Segment umbenannt, aufgespalten, oder im Vorjahr nicht separat ausgewiesen), setze "noPriorYearMatch": true für dieses Segment und lasse prevRevenue weg — erzwinge KEIN falsches YoY.
 - Berechne percentage als (segment revenue / Summe aller Segment-Revenues) * 100, gerundet auf 1 Nachkommastelle.
-- revenue in absoluten Dollar/Währungseinheiten angeben (falls der Text "in USD thousands" o.ä. sagt, MULTIPLIZIERE mit 1000; falls "in millions", MULTIPLIZIERE mit 1000000).
+- revenue und prevRevenue in absoluten Dollar/Währungseinheiten angeben (falls der Text "in USD thousands" o.ä. sagt, MULTIPLIZIERE mit 1000; falls "in millions", MULTIPLIZIERE mit 1000000).
 - Gib fiscalYear als String an (z.B. "FY2025" oder "2025-06-30"), falls im Text erkennbar, sonst weglassen.
 
 TEXT-AUSSCHNITT:
@@ -250,7 +261,7 @@ ${excerpt}
 """
 
 Antworte NUR mit JSON in diesem Format:
-{"segments": [{"name": "...", "revenue": 123456789, "percentage": 96.7}], "fiscalYear": "FY2025"}
+{"segments": [{"name": "...", "revenue": 123456789, "prevRevenue": 110000000, "percentage": 96.7}], "fiscalYear": "FY2025"}
 
 Falls keine verlässliche Segment-Aufteilung im Text erkennbar ist: {"segments": [], "fiscalYear": null}`;
 
@@ -265,12 +276,22 @@ Falls keine verlässliche Segment-Aufteilung im Text erkennbar ist: {"segments":
   const segs = Array.isArray(result.data.segments) ? result.data.segments : [];
   const clean: SecRevenueSegment[] = segs
     .filter((s: any) => s && typeof s.name === "string" && Number(s.revenue) > 0)
-    .map((s: any) => ({
-      name: String(s.name).trim(),
-      revenue: Number(s.revenue),
-      percentage: typeof s.percentage === "number" ? s.percentage : 0,
-      fiscalYear: result.data.fiscalYear ?? undefined,
-    }));
+    .map((s: any) => {
+      // Nur eine PLAUSIBLE Vorjahreszahl uebernehmen: muss ein positiver,
+      // endlicher Wert sein UND vom LLM nicht als "kein Match" markiert sein.
+      // Kein 0-Default -- fehlende/unplausible Werte bleiben undefined, damit
+      // die UI "n/a" statt eine falsche 0%-Wachstumsrate zeigt.
+      const prevRevenueRaw = Number(s.prevRevenue);
+      const hasPlausiblePrevRevenue = !s.noPriorYearMatch && typeof s.prevRevenue === "number" && isFinite(prevRevenueRaw) && prevRevenueRaw > 0;
+      return {
+        name: String(s.name).trim(),
+        revenue: Number(s.revenue),
+        percentage: typeof s.percentage === "number" ? s.percentage : 0,
+        fiscalYear: result.data.fiscalYear ?? undefined,
+        ...(hasPlausiblePrevRevenue ? { prevRevenue: prevRevenueRaw } : {}),
+        ...(s.noPriorYearMatch === true ? { noPriorYearMatch: true } : {}),
+      };
+    });
 
   return { segments: clean, fiscalYear: result.data.fiscalYear ?? undefined };
 }

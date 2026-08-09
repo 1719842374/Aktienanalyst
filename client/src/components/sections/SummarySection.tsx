@@ -5,6 +5,7 @@ import {
   calculateCRV, calculateRiskAdjustedCRV, calculateRSL, calculateReverseDCF,
   worstCaseM1, worstCaseM2, worstCaseM3, calculateCatalystUpside, selectCatalystBase,
   gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult,
+  computeDcfVsMarketDivergence,
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, formatRatio, getCRVColor } from "../../lib/formatters";
 import { useMemo } from "react";
@@ -511,6 +512,21 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           rating = "STARK UNATTRAKTIV"; ratingColor = "text-red-500"; ratingBg = "bg-red-500/10 border-red-500/30";
         }
 
+        // CRV-Haerte-Guard (Auftrag 09.08.2026, "NVO-Muster"): ein ATTRAKTIV/
+        // LEICHT ATTRAKTIV-Rating darf nicht allein auf einem unbereinigten
+        // Base-DCF beruhen, wenn DCF-Upside > 80% aber Analyst-Upside < 15%
+        // (Low-WACC/High-TV-Extrapolation, generisch, kein Ticker-Hardcode).
+        // Downgrade um genau eine Stufe, niemals unter NEUTRAL erzwungen --
+        // das ist ein Vorsicht-Signal, keine automatische Abwertung auf
+        // UNATTRAKTIV, da andere Faktoren (Moat, Technik) weiterhin zaehlen.
+        const dcfMarketDivergence = computeDcfVsMarketDivergence(conservativeDCF.perShare, data.analystPT.median, data.currentPrice);
+        let dcfDivergenceDowngraded = false;
+        if (dcfMarketDivergence.divergenceFlag) {
+          if (rating === "ATTRAKTIV") { rating = "LEICHT ATTRAKTIV"; dcfDivergenceDowngraded = true; }
+          else if (rating === "LEICHT ATTRAKTIV") { rating = "NEUTRAL"; dcfDivergenceDowngraded = true; }
+          if (dcfDivergenceDowngraded) { ratingColor = "text-amber-400"; ratingBg = "bg-amber-500/10 border-amber-500/20"; }
+        }
+
         const isBuy = score >= 2 && techStatus?.buySignal && data.currentPrice <= dcfBeiCRV3;
         const isOvervalued = conservativeUpside < -5 || (raCrvCons < 1.5 && rsl != null && rsl < 100);
         const isTechWeak = !techStatus?.priceAboveMA200 || !techStatus?.ma50AboveMA200;
@@ -528,6 +544,11 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           fazitSatz = `${data.companyName} (${data.ticker}) zeigt fundamental solide Kennzahlen mit ${formatNumber(conservativeUpside, 0)}% DCF-Upside und CRV ${formatNumber(crvConservative, 1)}:1. ${!techStatus?.buySignal ? 'Allerdings fehlt ein technisches Buy-Signal \u2014 Timing abwarten.' : 'Technisch ebenfalls positiv.'} ${isHighRisk ? `Erh\u00f6hte Risiken (${topRisks}) beachten.` : ''}`;
         } else {
           fazitSatz = `${data.companyName} (${data.ticker}) befindet sich in einer neutralen Zone. Das Base-CRV von ${formatNumber(crvConservative, 1)}:1 wirkt zwar ${crvConservative >= 2.0 ? 'akzeptabel' : 'schwach'}, wird aber durch ${formatNumber(totalExpDmg, 1)}% Expected Damage auf risikoadjustiert ${formatNumber(raCrvCons, 1)}:1 reduziert. ${isTechWeak ? 'Technisch kein Kaufsignal.' : 'Technisch gemischte Signale.'} ${topRisks ? `Hauptrisiken: ${topRisks}.` : ''} Empfehlung: Abwarten.`;
+        }
+        // CRV-Haerte-Guard: Divergenz-Hinweis additiv anhaengen, damit der
+        // Rating-Downgrade auch textuell nachvollziehbar ist.
+        if (dcfMarketDivergence.divergenceFlag) {
+          fazitSatz += ` \u26a0 DCF-Upside (${formatNumber(dcfMarketDivergence.dcfUpsidePct, 0)}%) weicht stark vom Analysten-Konsens (${formatNumber(dcfMarketDivergence.analystUpsidePct, 0)}%) ab \u2014 der Base-DCF k\u00f6nnte durch niedrigen WACC/hohen Terminal-Value-Anteil optimistisch extrapoliert sein (siehe geh\u00e4rtetes CRV in Sektion 6).`;
         }
         // Datenaktualität additiv im Fazit referenzierbar; ohne bestätigten
         // Termin bleibt der Satz bewusst aus, statt einen Termin zu erfinden.
