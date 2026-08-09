@@ -80,7 +80,7 @@ import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpP
 import { assessRegulatoryExposure } from "./regulatory";
 import { computeManagementScoreForTicker } from "./management-score";
 import { deriveStatementTrends, identifyNewSegment, computeOldSegmentsGrowth } from "./management-score";
-import { computeThesisStrength, relativeZ, sectorReferenceFallback, computeMaterialSegmentGrowth, mapGrowthProfile, LYNCH_TO_STYLE } from "./thesis-strength";
+import { computeThesisStrength, relativeZ, sectorReferenceFallback, computeMaterialSegmentGrowth, mapGrowthProfile, LYNCH_TO_STYLE, robustSectorGrowth } from "./thesis-strength";
 import { filterAndSelectPeers } from "./news-peers";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
@@ -316,6 +316,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const leverageTrend = leverageValues.length >= 2 ? (leverageValues[0] < leverageValues[leverageValues.length-1] ? 1 : leverageValues[0] > leverageValues[leverageValues.length-1] ? -1 : 0) : null;
       const opMargins = incomeRows.map((r: any) => { const rv=revenue(r), op=number(r?.operatingIncome); return rv && op != null ? op/rv*100 : null; }).filter((x: any) => x != null) as number[];
       const marginInflectionStrength = opMargins.length >= 3 ? Math.abs((opMargins[0]-opMargins[1])-(opMargins[1]-opMargins[2])) : null;
+      // Auftrag 09.08.2026 ("Inflection-Zeitreihen-Logik"): periodische Revenue-
+      // und Margin-Wachstumsraten chronologisch AELTESTE ZUERST fuer
+      // computeInflectionEvidence() -- analog zum bereits vorhandenen Muster
+      // fuer earningsGrowth (netIncomeChrono.slice().reverse()). incomeRows ist
+      // NEUESTE ZUERST, daher .reverse() vor der YoY-Differenzbildung.
+      const revenueChrono = incomeRows.slice().reverse().map((r: any) => revenue(r)).filter((x: any) => x != null) as number[];
+      const revenueGrowthSeries = revenueChrono.slice(1).map((x, i) => revenueChrono[i] !== 0 ? ((x - revenueChrono[i]) / Math.abs(revenueChrono[i])) * 100 : null).filter((x): x is number => x != null);
+      const opMarginsChrono = incomeRows.slice().reverse().map((r: any) => { const rv=revenue(r), op=number(r?.operatingIncome); return rv && op != null ? op/rv*100 : null; }).filter((x: any) => x != null) as number[];
       const realizedGrowth = b.revenueGrowth != null ? Number(b.revenueGrowth) : (revNow && revenue(incomeRows[1]) ? (revNow/revenue(incomeRows[1])!-1)*100 : null);
       const gStar = number(b.impliedGStar);
       const missingFeatures: string[] = [];
@@ -357,6 +365,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // z.B. Server +31.5%) und S7 (realizedGrowth vs. Sektor-Median aus
       // sectorReferences, dieselbe Quelle wie fuer sectorGrowthMedian).
       const sectorRevenueYoyPct = sectorReferences.metrics.revenue_yoy.median != null ? sectorReferences.metrics.revenue_yoy.median*100 : null;
+      // Auftrag 09.08.2026 ("Peer-Group-Bereinigung", Teil 2): roher Median
+      // (sectorRevenueYoyPct) bleibt fuer Transparenz/Debug erhalten, aber
+      // g_required nutzt ab jetzt den ROBUSTEN Median -- Winsorize auf P20-P80
+      // bei n>=6, sonst (kleine Gruppe wie bei NKE mit n=5) 40/60-Blend Richtung
+      // Industry-Median falls verfuegbar, sonst roher Median als letzter
+      // Fallback (transparent als "raw_median" markiert, kein Ticker-Hardcode).
+      // Keine Aenderung an der PEER-AUSWAHL selbst -- nur an der Aggregation.
+      const peerRevenueGrowthsPct = peerStatements.map((x:any)=>x.revenue_yoy).filter((x:any)=>typeof x==="number"&&isFinite(x)).map((x:number)=>x*100);
+      // Keine separate Industry-Index-Datenquelle verdrahtet -- robustSectorGrowth
+      // faellt bei kleiner Gruppe ohne Industry-Referenz auf Winsorize/raw_median
+      // zurueck (in sich bereits robust gegen 1-2 Extreme bei n>=6, transparent
+      // markiert bei n<6 ohne Industry-Daten).
+      const robustSector = robustSectorGrowth(peerRevenueGrowthsPct, null);
+      const sectorMedianForGRequired = robustSector.value ?? sectorRevenueYoyPct;
       const peerGapPct = realizedGrowth != null && sectorRevenueYoyPct != null ? realizedGrowth - sectorRevenueYoyPct : null;
       // Auftrag 07.08.2026 ("Segment-Materialitaet"): statt ausschliesslich
       // newSeg?.growthPct (das ueber identifyNewSegment() gewaehlte einzelne
@@ -385,7 +407,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // faelschlich Technology-Referenz) sofort an diesen 2 Zeilen erkennbar
       // ist, ohne erst die volle Similarity-Matrix durchsuchen zu muessen.
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] industry=${b.industry}, mapped_profile=${mapGrowthProfile(b.sector??null, b.industry??null)}, lynch_boost_ziel=${b.lynchClass ? (LYNCH_TO_STYLE[b.lynchClass as string] ?? "unbekannt") : "kein Lynch-Label"}`);
-      const result=computeThesisStrength({vector:thesisCompanyVector,fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth),sectorGrowthMedian:sectorRevenueYoyPct,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,lynchClass:b.lynchClass ?? null,peerGapPct,maxSegmentGrowthPct,epsCagr5yPct,revenueYoyPct:realizedGrowth,sector:b.sector??null,industry:b.industry??null,peTTM,sectorMedianPE:sectorMedianPETTM,thesisText:b.thesisText??null,balance:{inventoryZ:peerReferenceReliable?relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std):0,growthZ:peerReferenceReliable?relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std):0,marginZ:peerReferenceReliable?relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std):0,marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
+      const result=computeThesisStrength({vector:thesisCompanyVector,fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth),sectorGrowthMedian:sectorMedianForGRequired,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,lynchClass:b.lynchClass ?? null,peerGapPct,maxSegmentGrowthPct,epsCagr5yPct,revenueYoyPct:realizedGrowth,sector:b.sector??null,industry:b.industry??null,peTTM,sectorMedianPE:sectorMedianPETTM,thesisText:b.thesisText??null,revenueGrowthSeries,epsGrowthSeries:earningsGrowth,marginSeries:opMarginsChrono,balance:{inventoryZ:peerReferenceReliable?relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std):0,growthZ:peerReferenceReliable?relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std):0,marginZ:peerReferenceReliable?relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std):0,marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
       // Auftrag 07.08.2026 ("Denoising Softmax + Temperature Scaling"): finale
       // Konfidenzen + Gewichte loggen, damit ein zukuenftiger Kollaps sofort
       // an der Similarity- vs. Konfidenz-Differenz erkennbar ist.
@@ -393,6 +415,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Konfidenzen nach Growth-Logic+Lynch-Boost+Temperature-Softmax+Floor+Safety-Guard:`, JSON.stringify(result.styleConfidences));
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Gemischte Gewichte:`, JSON.stringify(result.blendedWeights), "| classificationConfidence:", result.classificationConfidence);
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] g_required Split:`, JSON.stringify(result.growthCoverage.gRequiredBreakdown));
+      // Auftrag 09.08.2026 ("Inflection-Zeitreihen-Logik + robuste Peer-
+      // Median-Bereinigung", Debug-Pflicht): Inflection-Delta UND Peer-Median
+      // roh vs. robust explizit loggen -- ein zukuenftiger Verzerrungsfall
+      // (wie NKEs 24%-Sektor-Median durch 1-2 Hyper-Growth-Peers) ist damit
+      // sofort an dieser Zeile erkennbar, ohne die volle Peer-Statement-Liste
+      // durchsuchen zu muessen.
+      console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Peer-Median: raw=${sectorRevenueYoyPct}, robust=${robustSector.value} (method=${robustSector.method}, n=${peerRevenueGrowthsPct.length}), verwendet_fuer_g_required=${sectorMedianForGRequired}`);
+      console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Inflection:`, JSON.stringify(result.growthEvidence.inflection));
       const response={...result,sectorReferences,flags:[...result.flags,...sectorFlag],generatedAt:new Date().toISOString()};
       _thesisStrengthCache.set(ticker,{data:response,time:Date.now()}); res.json(response);
     } catch(err:any){ console.error("[POST /api/thesis-strength]",err?.message?.substring(0,200)); res.status(500).json({error:err?.message||"Internal error"}); }

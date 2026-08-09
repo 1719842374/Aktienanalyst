@@ -1,4 +1,4 @@
-import { computeStyleConfidences, blendWeights, NEUTRAL_WEIGHTS, scoreBalanceSheet, scoreGrowthCoverage, computeTurnaroundEvidence, scoreContractual, relativeZ, sectorReferenceFallback, computeThesisStrength, computeGrowthEvidence, applyGrowthLogic, applyFastGrowerSafetyGuard, computeMaterialSegmentGrowth, checkCyclicalPeDiscount, isCyclicalSectorName, scoreCatalystAlignment, mapGrowthProfile, applyWeakGrowthCeiling, LYNCH_TO_STYLE } from "../server/thesis-strength";
+import { computeStyleConfidences, blendWeights, NEUTRAL_WEIGHTS, scoreBalanceSheet, scoreGrowthCoverage, computeTurnaroundEvidence, scoreContractual, relativeZ, sectorReferenceFallback, computeThesisStrength, computeGrowthEvidence, applyGrowthLogic, applyFastGrowerSafetyGuard, computeMaterialSegmentGrowth, checkCyclicalPeDiscount, isCyclicalSectorName, scoreCatalystAlignment, mapGrowthProfile, applyWeakGrowthCeiling, LYNCH_TO_STYLE, computeInflectionEvidence, robustSectorGrowth } from "../server/thesis-strength";
 import { growthThesisFingerprint } from "../server/llm-openrouter";
 let failed=0, total=0; const check=(n:string,c:boolean,d="")=>{total++;if(c)console.log(`  ✅ ${n}`);else{failed++;console.error(`  ❌ ${n} ${d}`)}};
 console.log("\n=== Thesis Strength Score ===");
@@ -281,5 +281,80 @@ const geMsftProfileCheck=computeGrowthEvidence({peerGapPct:7.0,maxSegmentGrowthP
 check("MSFT-Regression: software_growth-Profil liefert weiterhin die Ticket-Formel woertlich (>=0.75 Evidence)",geMsftProfileCheck.evidence>=0.75,`evidence=${geMsftProfileCheck.evidence}`);
 check("MSFT-Regression: mapped_profile ist korrekt software_growth",geMsftProfileCheck.profile==="software_growth");
 check("NKE-Regression: mapped_profile ist korrekt consumer_brands",geNegativeCagr.profile==="consumer_brands");
+
+// ═══ REGRESSIONSTESTS (09.08.2026, Ticket "Inflection-Logik + robuste Peer-
+// Median-Bereinigung") ═══
+
+// 1. Inflection: zu kurze Zeitreihe (<4 Perioden) -> Score 0, kein Fake-Turnaround.
+const inflShortSeries=computeInflectionEvidence({revenueGrowthSeries:[-5,-3],epsGrowthSeries:null,marginSeries:null});
+check("Inflection: zu kurze Zeitreihe (<4 Perioden) liefert Score 0",inflShortSeries.inflectionScore===0&&inflShortSeries.flags.some(f=>f.includes("zu kurz")));
+
+// 2. Inflection: klarer Boden->Erholung-Fall (Revenue-Growth verbessert sich
+// von stark negativ auf leicht positiv ueber die letzten 2 vs. vorherigen 2
+// Perioden) -- Score muss deutlich > 0 sein.
+const inflRecovery=computeInflectionEvidence({revenueGrowthSeries:[-8,-6,-1,1],epsGrowthSeries:[-10,-8,-2,2],marginSeries:[10,10.5,11,11.5]});
+check("Inflection: klare Boden->Erholung ueber Revenue+EPS+Marge liefert hohen Score (Breadth erfuellt)",inflRecovery.inflectionScore>0.30,JSON.stringify(inflRecovery));
+check("Inflection: breadthCount ist 3 (alle 3 Serien verbessern sich)",inflRecovery.breadthCount===3);
+
+// 3. Inflection: nur 1 Serie verfuegbar (kein Breadth-Vergleich moeglich) ->
+// Deckel auf max. 0.40, selbst bei starker Verbesserung in der einen Serie.
+const inflSingleSeries=computeInflectionEvidence({revenueGrowthSeries:[-20,-15,5,20],epsGrowthSeries:null,marginSeries:null});
+check("Inflection: nur 1 Datenserie -> Score auf max. 0.40 gedeckelt (breadthCount<=1 -> Breadth-Faktor 0.6)",inflSingleSeries.inflectionScore<=0.40&&inflSingleSeries.flags.some(f=>f.includes("Breadth-Faktor")));
+
+// 4. Inflection: nur 1 von >=2 verfuegbaren Serien verbessert sich (die andere
+// verschlechtert sich weiter) -> Breadth-Daempfung (x0.7), kein voller Score.
+const inflNoBreadth=computeInflectionEvidence({revenueGrowthSeries:[-8,-6,-1,5],epsGrowthSeries:[-5,-8,-12,-18],marginSeries:null});
+check("Inflection: Revenue verbessert sich, EPS verschlechtert sich weiter -> Breadth-Faktor gedaempft (nur 1 von 2 verfuegbaren Metriken)",inflNoBreadth.flags.some(f=>f.includes("Breadth-Faktor")));
+
+// 5. Einbindung ins cyclical-Profil: GrowthEvidence fuer profile==cyclical
+// nutzt jetzt 0.40*Niveau+0.60*Inflection statt reiner Niveau-Formel.
+const geCyclicalWithInflection=computeGrowthEvidence({peerGapPct:0,maxSegmentGrowthPct:0,epsCagr5yPct:-10,lynchClass:"cyclical",sector:"Basic Materials",industry:"Steel",revenueGrowthSeries:[-15,-10,-2,3],epsGrowthSeries:[-20,-15,-3,5],marginSeries:[5,5.5,6,7]});
+check("Cyclical-Profil: Inflection wird berechnet und im Ergebnis transparent zurueckgegeben",geCyclicalWithInflection.inflection!=null&&geCyclicalWithInflection.inflection!.inflectionScore>0,JSON.stringify(geCyclicalWithInflection.inflection));
+check("Cyclical-Profil: trotz negativer CAGR (-10%) hebt die Inflection-Komponente den cagrScore (Mischformel) an",geCyclicalWithInflection.cagrScore>0,`cagrScore=${geCyclicalWithInflection.cagrScore}`);
+
+// 6. Andere Profile bleiben unveraendert: inflection ist null, wenn profile !=
+// cyclical (keine Berechnung, kein Seiteneffekt).
+const geSoftwareNoInflection=computeGrowthEvidence({peerGapPct:7,maxSegmentGrowthPct:31.5,epsCagr5yPct:23.34,lynchClass:"fast_grower",sector:"Technology",industry:"Software",revenueGrowthSeries:[10,12,15,18]});
+check("Software-Profil: inflection bleibt null (keine Inflection-Berechnung ausserhalb cyclical)",geSoftwareNoInflection.inflection===null);
+
+// 7. Peer-Median-Robustheit: Winsorize daempft einen einzelnen Hyper-Growth-
+// Ausreisser in einer kleinen Peer-Gruppe (n=5, analog NKE-Fall).
+const peerGrowthsWithOutlier=[9.2,10.7,15.7,17.4,66.8]; // 1 klarer Ausreisser (66.8)
+// Praezisierung 09.08.2026 (Nutzer-Feedback): Winsorize-MEDIAN bleibt bei
+// ungerader n unveraendert, wenn der mittlere Wert kein Extremwert ist --
+// live an NKE bewiesen. Fuer n<6 ohne Industry-Referenz wird daher der
+// Winsorized MEAN genutzt (reagiert tatsaechlich auf die Randkappung).
+const robustNoIndustry=robustSectorGrowth(peerGrowthsWithOutlier,null);
+check("Peer-Median-Robustheit: n=5 ohne Industry-Referenz nutzt Winsorized MEAN (method=winsorized_mean_small_n)",robustNoIndustry.method==="winsorized_mean_small_n");
+// Korrektur: Winsorized MEAN vs. ROHEM MEAN vergleichen (nicht gegen den
+// rohen Median -- der Median ignoriert den Ausreisser konzeptionell bereits
+// komplett, waehrend der Mean per Definition davon beeinflusst wird. Der
+// Winsorize-Effekt zeigt sich als Daempfung GEGENUEBER DEM ROHEN MEAN.)
+const rawMeanForTest=peerGrowthsWithOutlier.reduce((a,x)=>a+x,0)/peerGrowthsWithOutlier.length;
+check("Peer-Median-Robustheit: Winsorized Mean liegt spuerbar unter dem rohen (ungekappten) Mean -- Ausreisser-Daempfung wirkt",robustNoIndustry.value!<rawMeanForTest,`winsorizedMean=${robustNoIndustry.value}, rawMean=${rawMeanForTest}`);
+
+// 8. Peer-Median-Blend: bei n<6 UND vorhandener Industry-Referenz wird ein
+// 40/60-Blend Richtung Industry-Median gebildet.
+const robustWithIndustry=robustSectorGrowth(peerGrowthsWithOutlier,8.0);
+check("Peer-Median-Blend: n<6 mit Industry-Referenz (8.0%) nutzt 40/60-Blend (method=blend)",robustWithIndustry.method==="blend");
+const expectedBlend=0.4*15.7+0.6*8.0; // rawMedian=15.7 (Index 2 von 5 sortiert)
+check("Peer-Median-Blend: Blend-Formel liefert den erwarteten Wert (0.4*rawMedian+0.6*industryMedian)",Math.abs(robustWithIndustry.value!-expectedBlend)<0.01,`value=${robustWithIndustry.value}, expected=${expectedBlend}`);
+
+// 9. Peer-Median: grosse Gruppe (n>=6) nutzt Winsorize unabhaengig von
+// Industry-Referenz (Blend nur fuer kleine Gruppen).
+const largeGroupGrowths=[5,7,9,11,13,15,80]; // 7 Peers, 1 Ausreisser
+const robustLargeGroup=robustSectorGrowth(largeGroupGrowths,null);
+check("Peer-Median: n>=6 nutzt Winsorized MEDIAN (method=winsorized_median), kein Blend/Mean",robustLargeGroup.method==="winsorized_median");
+
+// 10. NKE-Gesamtfall: robuster Peer-Median darf den urspruenglichen Fehler
+// (GrowthEvidence 90%) nicht wieder einfuehren -- weiterhin niedrig bei
+// negativer CAGR, unabhaengig von der Peer-Median-Methode.
+const geNkeWithRobustPeerGap=computeGrowthEvidence({peerGapPct:-23.97,maxSegmentGrowthPct:2.9,epsCagr5yPct:-24.97,lynchClass:"turnaround",sector:"Consumer Cyclical",industry:"Apparel - Footwear & Accessories"});
+check("NKE-Gesamtfall bleibt niedrig (GrowthEvidence<0.30) auch mit der neuen Inflection/Peer-Median-Logik",geNkeWithRobustPeerGap.evidence<0.30,`evidence=${geNkeWithRobustPeerGap.evidence}`);
+
+// 11. MSFT-Regression: software_growth-Profil unveraendert, keine Inflection-
+// Berechnung, GrowthEvidence bleibt >=0.75.
+const geMsftFinalCheck=computeGrowthEvidence({peerGapPct:7.0,maxSegmentGrowthPct:31.5,epsCagr5yPct:23.34,lynchClass:"fast_grower",sector:"Technology",industry:"Software - Infrastructure"});
+check("MSFT-Regression (Inflection-Ticket): software_growth bleibt bei Evidence>=0.75, inflection=null",geMsftFinalCheck.evidence>=0.75&&geMsftFinalCheck.inflection===null);
 
 console.log(`\n${total-failed}/${total} Checks grün.`); if(failed)process.exit(1);

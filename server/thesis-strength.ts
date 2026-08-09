@@ -48,8 +48,8 @@ export const LYNCH_TO_STYLE: Record<string, ThesisStyle> = {
 // Sektor, +31.5% Hauptsegment und Lynch=Fast Grower dennoch als Stalwart/
 // Value-dominant enden, weil der Company-Vektor diese Querschnittsdaten
 // nie sah. GrowthEvidence macht diesen Widerspruch strukturell unmoeglich.
-export interface GrowthEvidenceInput { peerGapPct: number | null; maxSegmentGrowthPct: number | null; epsCagr5yPct: number | null; lynchClass?: string | null; revenueYoyPct?: number | null; sector?: string | null; industry?: string | null; earningsVolatility?: number | null; peTTM?: number | null; sectorMedianPE?: number | null; }
-export interface GrowthEvidenceResult { evidence: number; peerScore: number; segScore: number; cagrScore: number; lynchBoostActive: boolean; flags: string[]; cyclicalPeFlag: boolean; profile: GrowthProfile; }
+export interface GrowthEvidenceInput { peerGapPct: number | null; maxSegmentGrowthPct: number | null; epsCagr5yPct: number | null; lynchClass?: string | null; revenueYoyPct?: number | null; sector?: string | null; industry?: string | null; earningsVolatility?: number | null; peTTM?: number | null; sectorMedianPE?: number | null; revenueGrowthSeries?: number[] | null; epsGrowthSeries?: number[] | null; marginSeries?: number[] | null; }
+export interface GrowthEvidenceResult { evidence: number; peerScore: number; segScore: number; cagrScore: number; lynchBoostActive: boolean; flags: string[]; cyclicalPeFlag: boolean; profile: GrowthProfile; inflection: InflectionResult | null; }
 // Auftrag 07.08.2026 ("Final-Fix: Fast-Grower-Ranges + P/E-Zyklus-Filter"):
 // Segment-Materialitaet -- ein 3%-Segment mit +40% Wachstum darf NICHT
 // allein Fast-Grower-Evidence ausloesen. Nur Segmente mit Umsatzanteil >=10%
@@ -131,6 +131,117 @@ const GROWTH_PROFILE_RANGES: Record<GrowthProfile, { cagrFloor: number; cagrSpan
 // GrowthEvidence -- so bleibt die Kernformel unveraendert nachvollziehbar,
 // waehrend der Filter separat sichtbar (cyclicalPeFlag) bleibt.
 export interface CyclicalPeCheckInput { sector?: string | null; earningsVolatility?: number | null; peTTM: number | null; sectorMedianPE: number | null; }
+// Auftrag 09.08.2026 ("Inflection-Zeitreihen-Logik + robuste Peer-Median-
+// Bereinigung", Teil 1): bei Zyklikern zaehlt oft nicht das Wachstums-NIVEAU,
+// sondern die VERBESSERUNG ueber die Zeit (Boden -> Erholung). Erwartet eine
+// Serie periodischer Wachstumsraten (z.B. YoY-Revenue ueber 4-8 Perioden,
+// chronologisch AELTESTE ZUERST). Zu kurze Historie -> Score 0 (kein
+// Fake-Turnaround durch fehlende Daten). Nur 1 Periode Verbesserung wird auf
+// max. 0.40 gedeckelt (echte Bestaetigung braucht mehr als einen Ausschlag).
+export interface InflectionInput {
+  revenueGrowthSeries?: number[] | null; // periodische YoY-Growth-Raten in %, chronologisch aelteste zuerst
+  epsGrowthSeries?: number[] | null;
+  marginSeries?: number[] | null; // z.B. operative Marge in %, chronologisch aelteste zuerst (fuer Breadth-Check)
+}
+export interface InflectionResult { inflectionScore: number; delta: number | null; breadthCount: number; flags: string[]; }
+function singleSeriesInflection(series: number[] | null | undefined, minPeriods = 4): { delta: number | null; improving: boolean } {
+  if (!series || series.length < minPeriods) return { delta: null, improving: false };
+  const recentWindow = series.slice(-2);
+  const priorWindow = series.slice(-4, -2);
+  if (priorWindow.length === 0) return { delta: null, improving: false };
+  const recent = recentWindow.reduce((a, x) => a + x, 0) / recentWindow.length;
+  const prior = priorWindow.reduce((a, x) => a + x, 0) / priorWindow.length;
+  const delta = recent - prior;
+  return { delta, improving: delta > 0 };
+}
+// Praezisierung 09.08.2026 (Nutzer-Feedback, "Breadth-Filter im Detail"):
+// abgestufter breadth_factor statt binaerem 0.7/1.0-Schalter. Der Faktor
+// haengt direkt von der ANZAHL VERBESSERTER Metriken ab (nicht von der Zahl
+// der insgesamt verfuegbaren Serien) -- 0 Metriken->0.0 (kein Inflection-Wert
+// ueberhaupt, aber das ist bereits durch score selbst abgedeckt, wenn delta<=0),
+// 1 Metrik->0.6, 2 Metriken->0.90, 3 Metriken->1.0. Verhindert, dass ein
+// einmaliger Basis-Effekt in NUR EINER Kennzahl (z.B. Revenue) einen hohen
+// Inflection-Score erzeugt, waehrend EPS/Marge weiter fallen.
+const BREADTH_FACTORS: Record<number, number> = { 0: 0.0, 1: 0.6, 2: 0.90, 3: 1.0 };
+export function computeInflectionEvidence(input: InflectionInput): InflectionResult {
+  const flags: string[] = [];
+  const rev = singleSeriesInflection(input.revenueGrowthSeries, 4);
+  const eps = singleSeriesInflection(input.epsGrowthSeries, 4);
+  const margin = singleSeriesInflection(input.marginSeries, 4);
+  const deltas = [rev.delta, eps.delta, margin.delta].filter((d): d is number => d != null);
+  if (deltas.length === 0) {
+    flags.push("Inflection: Zeitreihe zu kurz (<4 Perioden) -- Score 0, kein Fake-Turnaround");
+    return { inflectionScore: 0, delta: null, breadthCount: 0, flags };
+  }
+  // Primaer-Delta: Revenue wenn vorhanden, sonst EPS, sonst Marge -- Revenue
+  // ist die robusteste/am wenigsten volatile Serie fuer die Kernmessung.
+  const primaryDelta = rev.delta ?? eps.delta ?? margin.delta!;
+  // inflection_raw in Prozentpunkten: 0pp->0, 10pp->1.0 (Ticket-Formel woertlich).
+  let inflectionRaw = clamp01(primaryDelta / 10);
+  // Persistenz-Guard: nur 1 Periode Verbesserung (kein 2.-Fenster-Vergleich
+  // moeglich, da nur 4 Perioden minimal vorliegen und singleSeriesInflection
+  // bereits 2 vs. 2 Perioden vergleicht) -- konservativ gedeckelt, wenn die
+  // Zeitreihe exakt am Minimum (4 Perioden) liegt, sprich kein 3. Fenster fuer
+  // eine mehrperiodige Bestaetigung existiert.
+  const primarySeries = input.revenueGrowthSeries ?? input.epsGrowthSeries ?? input.marginSeries;
+  if (primarySeries && primarySeries.length === 4) {
+    inflectionRaw = Math.min(inflectionRaw, 0.40);
+    flags.push("Inflection: nur exakt 4 Perioden verfuegbar (keine mehrperiodige Persistenz-Bestaetigung moeglich) -- Rohwert auf max. 0.40 gedeckelt");
+  }
+  const breadthCount = [rev.improving, eps.improving, margin.improving].filter(Boolean).length;
+  const breadthFactor = BREADTH_FACTORS[breadthCount] ?? 1.0;
+  const score = clamp01(inflectionRaw * breadthFactor);
+  if (breadthCount <= 1) {
+    flags.push(`Inflection: nur ${breadthCount} von 3 Metriken verbessert sich -- Breadth-Faktor ${breadthFactor.toFixed(2)} angewendet (Fake-Turnaround-Schutz)`);
+  }
+  return { inflectionScore: score, delta: primaryDelta, breadthCount, flags };
+}
+
+// Auftrag 09.08.2026 (Teil 2): robuste Peer-Median-Bereinigung -- eine kleine
+// (n<6) Peer-Gruppe mit 1-2 Hyper-Growth-Ausreissern soll g_required nicht
+// kuenstlich in die Hoehe treiben. Zwei Strategien je nach Datenlage:
+// (a) n<6 UND Industry-Median vorhanden -> 40/60-Blend Richtung Industry
+// (b) sonst -> Winsorize auf [P20,P80] dann Median (robust gegen 1-2 Extreme)
+// Praezisierung 09.08.2026 (Nutzer-Feedback nach Live-Test): Winsorize-MEDIAN
+// bei ungerader Stichprobengroesse (n=5) bleibt UNVERAENDERT, wenn der
+// mittlere sortierte Wert selbst kein Extremwert ist -- Winsorize kappt nur
+// die Raender, der Median-INDEX zeigt aber weiterhin auf denselben (nicht
+// gekappten) Wert. Live-Beweis: NKE-Peers ergaben robust===raw (24.16%
+// unveraendert), weil der mittlere Wert der 5 Peers kein Ausreisser war,
+// sondern die gesamte Gruppe strukturell hoch wuchs. Fuer den Fall, dass EIN
+// oder ZWEI echte Hyper-Growth-Ausreisser den Median selbst NICHT direkt
+// treffen (n ungerade), aber trotzdem den PRAKTISCHEN Vergleichswert nach
+// oben ziehen sollen (Trimmed/Winsorized MEAN statt Median), wird bei
+// kleinen Gruppen (n<6) ohne Industry-Referenz der Winsorized MEAN als
+// zusaetzliche, tatsaechlich wirksame Robustheits-Schicht zurueckgegeben --
+// der Mean reagiert (anders als der Median bei ungerader n) sichtbar auf die
+// Kappung der Randwerte. Bei n>=6 bleibt Winsorized MEDIAN Standard (mehr
+// Datenpunkte, robusterer Median-Index).
+export function robustSectorGrowth(peerGrowthsPct: number[], industryMedianPct: number | null): { value: number | null; method: "blend" | "winsorized_median" | "winsorized_mean_small_n" | "raw_median" | "none"; rawMedian: number | null } {
+  const clean = peerGrowthsPct.filter(x => typeof x === "number" && isFinite(x));
+  if (clean.length === 0) return { value: industryMedianPct ?? null, method: industryMedianPct != null ? "raw_median" : "none", rawMedian: null };
+  const sorted = [...clean].sort((a, b) => a - b);
+  const rawMedian = sorted[Math.floor(sorted.length / 2)];
+  if (sorted.length < 6 && industryMedianPct != null) {
+    return { value: 0.4 * rawMedian + 0.6 * industryMedianPct, method: "blend", rawMedian };
+  }
+  if (sorted.length < 3) {
+    return { value: rawMedian, method: "raw_median", rawMedian };
+  }
+  const percentile = (arr: number[], p: number) => { const idx = (p / 100) * (arr.length - 1); const lo = Math.floor(idx), hi = Math.ceil(idx); return lo === hi ? arr[lo] : arr[lo] + (arr[hi] - arr[lo]) * (idx - lo); };
+  const p20 = percentile(sorted, 20), p80 = percentile(sorted, 80);
+  const winsorized = sorted.map(x => Math.min(Math.max(x, p20), p80));
+  if (sorted.length < 6) {
+    // Kleine Gruppe, keine Industry-Referenz: Winsorized MEAN statt Median --
+    // reagiert tatsaechlich auf die Randkappung (im Gegensatz zum Median bei
+    // ungerader n), daempft 1-2 Hyper-Growth-Ausreisser spuerbar.
+    const winsorizedMean = winsorized.reduce((a, x) => a + x, 0) / winsorized.length;
+    return { value: winsorizedMean, method: "winsorized_mean_small_n", rawMedian };
+  }
+  const winsorizedMedian = winsorized[Math.floor(winsorized.length / 2)];
+  return { value: winsorizedMedian, method: "winsorized_median", rawMedian };
+}
+
 export function checkCyclicalPeDiscount(input: CyclicalPeCheckInput): { cyclicalPeFlag: boolean; dampingFactor: number } {
   const cyclicalSector = isCyclicalSectorName(input.sector) || (finite(input.earningsVolatility) && input.earningsVolatility! > 40);
   const peDiscount = finite(input.peTTM) && finite(input.sectorMedianPE) && input.sectorMedianPE! > 0 && input.peTTM! > 0 && input.peTTM! < input.sectorMedianPE! * 0.75;
@@ -181,7 +292,25 @@ export function computeGrowthEvidence(input: GrowthEvidenceInput): GrowthEvidenc
   const hasConfirmation = peerGap >= 0.02 || maxSegGrowth >= 0.18 || (finite(input.revenueYoyPct) && input.revenueYoyPct! >= 12);
   const confirmedCagrScore = epsCagr >= 0.16 && !hasConfirmation ? cagrScore * 0.60 : cagrScore;
   if (epsCagr >= 0.16 && !hasConfirmation) flags.push("EPS-CAGR>=16% ohne Bestaetigungssignal (Rev/Segment/Peer-Gap) -- Beitrag gedaempft");
-  let evidence = clamp01(0.30 * peerScore + 0.30 * segScore + 0.25 * confirmedCagrScore + 0.15 * (lynchBoostActive ? 1.0 : 0.0) + 0.50 * lynchBoost);
+  // Auftrag 09.08.2026 ("Inflection-Zeitreihen-Logik", Teil 1): bei profile==
+  // "cyclical" zaehlt nicht nur das Wachstums-NIVEAU (bestehender CAGR-Score),
+  // sondern vor allem die VERBESSERUNG ueber die Zeit (Boden->Erholung).
+  // GrowthEvidence_cyclical ersetzt den reinen Niveau-Beitrag (confirmedCagrScore)
+  // durch eine 0.40/0.60-Mischung aus Niveau und Inflection -- alle anderen
+  // Profile (software_growth/consumer_brands/other) bleiben UNVERAENDERT bei
+  // der reinen Niveau-Formel (MSFT-Regression ausgeschlossen).
+  let inflectionResult: InflectionResult | null = null;
+  let cagrOrInflectionScore = confirmedCagrScore;
+  if (profile === "cyclical") {
+    inflectionResult = computeInflectionEvidence({
+      revenueGrowthSeries: input.revenueGrowthSeries ?? null,
+      epsGrowthSeries: input.epsGrowthSeries ?? null,
+      marginSeries: input.marginSeries ?? null,
+    });
+    flags.push(...inflectionResult.flags);
+    cagrOrInflectionScore = clamp01(0.40 * confirmedCagrScore + 0.60 * inflectionResult.inflectionScore);
+  }
+  let evidence = clamp01(0.30 * peerScore + 0.30 * segScore + 0.25 * cagrOrInflectionScore + 0.15 * (lynchBoostActive ? 1.0 : 0.0) + 0.50 * lynchBoost);
   // P/E-Zyklus-Filter (Ticket Teil 3): daempft die GESAMTE Evidence additiv,
   // sichtbar ueber cyclicalPeFlag, ohne die einzelnen Teilscores zu verfaelschen.
   const cyclicalPe = checkCyclicalPeDiscount({ sector: input.sector, earningsVolatility: input.earningsVolatility, peTTM: input.peTTM ?? null, sectorMedianPE: input.sectorMedianPE ?? null });
@@ -189,7 +318,7 @@ export function computeGrowthEvidence(input: GrowthEvidenceInput): GrowthEvidenc
     evidence = clamp01(evidence * cyclicalPe.dampingFactor);
     flags.push("P/E-Zyklus-Filter aktiv: zyklischer Sektor + P/E deutlich unter Sektor-Median -> Peak-Earnings-Verdacht, Fast-Grower-Evidence gedaempft");
   }
-  return { evidence, peerScore, segScore, cagrScore: confirmedCagrScore, lynchBoostActive, flags, cyclicalPeFlag: cyclicalPe.cyclicalPeFlag, profile };
+  return { evidence, peerScore, segScore, cagrScore: cagrOrInflectionScore, lynchBoostActive, flags, cyclicalPeFlag: cyclicalPe.cyclicalPeFlag, profile, inflection: inflectionResult };
 }
 
 // apply_growth_logic (Ticket Teil 3): verschiebt die ROHEN Similarities VOR
@@ -428,7 +557,7 @@ export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:st
   }
   return{score,flags};
 }
-export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[];pos?:number;nettoUpside?:number;generic?:boolean}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; revenueYoyPct?:number|null; sector?:string|null; industry?:string|null; peTTM?:number|null; sectorMedianPE?:number|null; thesisText?:string|null; }
+export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[];pos?:number;nettoUpside?:number;generic?:boolean}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; revenueYoyPct?:number|null; sector?:string|null; industry?:string|null; peTTM?:number|null; sectorMedianPE?:number|null; thesisText?:string|null; revenueGrowthSeries?:number[]|null; epsGrowthSeries?:number[]|null; marginSeries?:number[]|null; }
 export function computeThesisStrength(input:ThesisStrengthInput){const flags=[...(input.vector.missingFeatures||[]).map(x=>`Merkmal fehlt: ${x}`)];
  // Auftrag 07.08.2026 ("Querschnitts-Konsistenz + Wachstums-Logik"): GrowthEvidence
  // wird IMMER berechnet (auch bei fehlenden Einzel-Inputs -- computeGrowthEvidence
@@ -436,7 +565,7 @@ export function computeThesisStrength(input:ThesisStrengthInput){const flags=[..
  // Stil-Konfidenzen berechnet werden. Damit ist die Thesis-Klassifikation
  // verbindlich an die Querschnittsdaten aus S1/S2/S7 gebunden statt isoliert
  // vom Company-Vektor allein abzuhaengen.
- const ge=computeGrowthEvidence({peerGapPct:input.peerGapPct??null,maxSegmentGrowthPct:input.maxSegmentGrowthPct??null,epsCagr5yPct:input.epsCagr5yPct??null,lynchClass:input.lynchClass,revenueYoyPct:input.revenueYoyPct??null,sector:input.sector??null,industry:input.industry??null,earningsVolatility:input.vector.earningsVolatility,peTTM:input.peTTM??null,sectorMedianPE:input.sectorMedianPE??null});
+ const ge=computeGrowthEvidence({peerGapPct:input.peerGapPct??null,maxSegmentGrowthPct:input.maxSegmentGrowthPct??null,epsCagr5yPct:input.epsCagr5yPct??null,lynchClass:input.lynchClass,revenueYoyPct:input.revenueYoyPct??null,sector:input.sector??null,industry:input.industry??null,earningsVolatility:input.vector.earningsVolatility,peTTM:input.peTTM??null,sectorMedianPE:input.sectorMedianPE??null,revenueGrowthSeries:input.revenueGrowthSeries??null,epsGrowthSeries:input.epsGrowthSeries??null,marginSeries:input.marginSeries??null});
  flags.push(...ge.flags);
  let c=computeStyleConfidences(input.vector, input.lynchClass, ge.evidence);
  c=applyFastGrowerSafetyGuard(c, ge.evidence, input.peerGapPct??null, input.maxSegmentGrowthPct??null, ge.cyclicalPeFlag, input.revenueYoyPct??null);
