@@ -44,10 +44,13 @@ console.log("\nModus A: Max-Sharpe long-only");
     [0.003, 0.001, 0.002, 0.025],
   ];
   const rf = 0.03;
-  const w = weightMaxSharpe({ mu, Sigma, rf });
+  const result = weightMaxSharpe({ mu, Sigma, rf });
+  const w = result.weights;
   check("long-only: alle Gewichte ≥ 0", w.every((x) => x >= -1e-9), JSON.stringify(w));
   check("Σw = 1", approxEqual(sum(w), 1), String(sum(w)));
   check("maxWeight-Cap eingehalten (≤0.30+eps)", w.every((x) => x <= 0.30 + 1e-6), JSON.stringify(w));
+  check("Cap war erfüllbar (n=4, 0.30*4≥1) -> capWasInfeasible=false", result.capWasInfeasible === false);
+  check("Solve erfolgreich (nicht-singäre Σ) -> solveFailed=false", result.solveFailed === false);
 }
 
 // ─── Modus B: Risk-Parity ───────────────────────────────────────────────────
@@ -58,7 +61,8 @@ console.log("\nModus B: Risk-Parity (w_i ∝ 1/σ_i)");
     [0, 0.04, 0], // σ=0.20
     [0, 0, 0.09], // σ=0.30
   ];
-  const w = weightRiskParity({ Sigma, maxWeight: 1 }); // maxWeight=1 um reine RP-Proportionen zu prüfen
+  const rpResult = weightRiskParity({ Sigma, maxWeight: 1 }); // maxWeight=1 um reine RP-Proportionen zu prüfen
+  const w = rpResult.weights;
   check("long-only", w.every((x) => x >= -1e-9), JSON.stringify(w));
   check("Σw = 1", approxEqual(sum(w), 1), String(sum(w)));
   // Erwartete Proportionen: 1/0.1 : 1/0.2 : 1/0.3 = 10 : 5 : 3.333 → normiert
@@ -73,13 +77,14 @@ console.log("\nModus C: Score-Tilt (Basis × (1+κ·z(score)))");
 {
   const scores = [90, 50, 30];
   const base = [1 / 3, 1 / 3, 1 / 3];
-  const w = weightScoreTilt({ scores, base, kappa: 0.35, maxWeight: 1 });
+  const stResult = weightScoreTilt({ scores, base, kappa: 0.35, maxWeight: 1 });
+  const w = stResult.weights;
   check("long-only", w.every((x) => x >= -1e-9), JSON.stringify(w));
   check("Σw = 1", approxEqual(sum(w), 1), String(sum(w)));
   check("höchster Score bekommt höchstes Gewicht", w[0] > w[1] && w[1] > w[2], JSON.stringify(w));
 
   // κ=0 → sollte exakt Basis reproduzieren (kein Tilt)
-  const wNoTilt = weightScoreTilt({ scores, base, kappa: 0, maxWeight: 1 });
+  const wNoTilt = weightScoreTilt({ scores, base, kappa: 0, maxWeight: 1 }).weights;
   check("κ=0 reproduziert Basisgewichte", wNoTilt.every((x, i) => approxEqual(x, base[i])), JSON.stringify(wNoTilt));
 }
 
@@ -88,25 +93,36 @@ console.log("\nGuard: maxWeight-Cap + Redistribution (Σw bleibt 1)");
 {
   // n=5 (0.30*5=1.5 ≥ 1 → Cap ist erfüllbar), stark konzentriert auf Position 1
   const raw = [0.6, 0.15, 0.1, 0.1, 0.05];
-  const capped = applyMaxWeightCap(raw, 0.30);
+  const capResult = applyMaxWeightCap(raw, 0.30);
+  const capped = capResult.weights;
   check("kein Gewicht > 0.30+eps", capped.every((x) => x <= 0.30 + 1e-6), JSON.stringify(capped));
   check("Σw = 1 nach Cap+Redistribution", approxEqual(sum(capped), 1), String(sum(capped)));
+  check("Cap war erfüllbar (n=5) -> wasInfeasible=false", capResult.wasInfeasible === false);
 }
 
-console.log("\nGuard: maxWeight rechnerisch unerfüllbar bei n=3 (0.30*3=0.90<1) → Equal-Weight-Fallback ist KORREKT");
+console.log("\nBUGFIX 10.08.2026: maxWeight rechnerisch unerfüllbar bei n=3 (0.30*3=0.90<1) -> Cap wird NICHT erzwungen, KEIN stiller Equal-Weight-Fallback mehr");
 {
+  // Früher fiel dieser Fall STILL auf Equal-Weight (1/3,1/3,1/3) zurück --
+  // das war exakt der 10.08.2026 gemeldete Live-Bug (w%CAPM=33.3/33.3/33.3
+  // trotz stark unterschiedlichem μ/σ). Der Fix: Rohgewichte werden nur
+  // renormiert (Struktur bleibt erhalten), Cap-Verletzung wird geflaggt.
   const raw = [0.7, 0.2, 0.1];
-  const capped = applyMaxWeightCap(raw, 0.30);
-  check("Fallback auf 1/n=0.3333 bei struktureller Unerfüllbarkeit", capped.every((x) => approxEqual(x, 1 / 3)), JSON.stringify(capped));
+  const capResult = applyMaxWeightCap(raw, 0.30);
+  const capped = capResult.weights;
+  check("KEIN Equal-Weight-Fallback mehr -- Struktur von raw bleibt erhalten (w[0]>w[1]>w[2])", capped[0] > capped[1] && capped[1] > capped[2], JSON.stringify(capped));
+  check("Gewichte sind einfach die renormierten Rohgewichte (0.7/0.2/0.1 -> identisch da bereits Σ=1)", capped.every((x, i) => approxEqual(x, raw[i])), JSON.stringify(capped));
   check("Σw = 1 bleibt erhalten", approxEqual(sum(capped), 1), String(sum(capped)));
+  check("wasInfeasible=true (Cap konnte nicht durchgesetzt werden, sichtbar geflaggt)", capResult.wasInfeasible === true);
 }
 
-console.log("\nGuard: maxWeight zu klein für n Titel → gleichmäßige Verteilung (bestmöglich)");
+console.log("\nGuard: maxWeight zu klein für n Titel -> Struktur bleibt erhalten, wasInfeasible=true");
 {
   // n=5, maxWeight=0.10 → 5*0.10=0.50 < 1 → unmöglich, alle unter Cap zu halten
   const raw = [0.5, 0.2, 0.1, 0.1, 0.1];
-  const capped = applyMaxWeightCap(raw, 0.10);
-  check("Fallback: gleichmäßige Verteilung 1/n", capped.every((x) => approxEqual(x, 0.2)), JSON.stringify(capped));
+  const capResult = applyMaxWeightCap(raw, 0.10);
+  const capped = capResult.weights;
+  check("Struktur bleibt erhalten (kein Equal-Weight, raw war bereits normiert)", capped.every((x, i) => approxEqual(x, raw[i])), JSON.stringify(capped));
+  check("wasInfeasible=true", capResult.wasInfeasible === true);
 }
 
 // ─── pickWeightMode: §B.3 Entscheidungslogik ───────────────────────────────
@@ -189,6 +205,7 @@ console.log("\nallocate(): n=1-Sonderfall (kein Basket-Optimierer)");
   check("mode = kelly-only bei n=1", result.mode === "kelly-only", result.mode);
   check("weights = [1] bei n=1", result.weights.length === 1 && approxEqual(result.weights[0], 1), JSON.stringify(result.weights));
   check("Notes erwähnen n=1/Kelly", result.notes.some((n) => n.toLowerCase().includes("n=1")), JSON.stringify(result.notes));
+  check("capWasInfeasible=false bei n=1 (kein Cap-Problem)", result.capWasInfeasible === false);
 }
 
 console.log("\nallocate(): n≥3 End-to-End Guard-Kette (long-only, Σw=1, maxWeight)");
@@ -209,6 +226,27 @@ console.log("\nallocate(): n≥3 End-to-End Guard-Kette (long-only, Σw=1, maxWe
   check("long-only", result.weights.every((x) => x >= -1e-9), JSON.stringify(result.weights));
   check("maxWeight eingehalten", result.weights.every((x) => x <= 0.30 + 1e-6), JSON.stringify(result.weights));
   check("mode ist A oder C (n≥3, gemischtes μ)", result.mode === "A" || result.mode === "C", result.mode);
+  check("Cap war erfüllbar (n=4, maxWeight=0.30 -> 0.30*4=1.2≥1) -> capWasInfeasible=false", result.capWasInfeasible === false);
+}
+
+console.log("\nBUGFIX 10.08.2026: allocate() end-to-end mit unerfüllbarem Cap (n=3, maxWeight=0.30) -> KEIN Equal-Weight-Bug mehr");
+{
+  // Das ist der exakte Live-Reproduktionsfall (MSFT/NVDA/NVO-artig): stark
+  // unterschiedliches μ/σ bei n=3 und UI-Default maxWeight=0.30. Vor dem Fix
+  // lieferte dies immer 1/3,1/3,1/3 mit Δ=0 -- unabhängig von μ/σ/Σ.
+  const mu = [0.25, 0.12, 0.30];
+  const Sigma = [
+    [0.08, 0.01, 0.02],
+    [0.01, 0.03, 0.01],
+    [0.02, 0.01, 0.15],
+  ];
+  const result = allocate({ tickers: ["A", "B", "C"], mu, Sigma, rf: 0.03, maxWeight: 0.30 });
+  const w = result.weights;
+  const isExactlyEqualWeight = w.every((x) => approxEqual(x, 1 / 3, 1e-4));
+  check("Ergebnis ist NICHT mehr stur 1/3,1/3,1/3 trotz maxWeight=0.30 bei n=3", !isExactlyEqualWeight, JSON.stringify(w));
+  check("capWasInfeasible=true wird sichtbar gemeldet", result.capWasInfeasible === true);
+  check("Σw = 1 bleibt auch im Infeasible-Fall erhalten", approxEqual(sum(w), 1), String(sum(w)));
+  check("Notes enthalten fallback_reason=cap_infeasible-Hinweis", result.notes.some((n) => n.includes("cap_infeasible")), JSON.stringify(result.notes));
 }
 
 console.log(failed === 0 ? "\n✅ Alle Weighting-Tests bestanden" : `\n❌ ${failed} Test(s) fehlgeschlagen`);

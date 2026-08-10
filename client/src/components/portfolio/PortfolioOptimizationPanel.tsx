@@ -112,6 +112,23 @@ export default function PortfolioOptimizationPanel({
         <p className="text-[10px] text-muted-foreground">{result.mode ? MODE_LABELS[result.mode] : "—"}</p>
       </div>
 
+      {result.fallbackReason === "cap_infeasible" && (
+        <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-500">
+            Die eingestellte maxWeight-Obergrenze ist bei {result.rows.length} Titeln rechnerisch nicht einhaltbar (maxWeight × Anzahl &lt; 100%). Der Cap wurde deshalb <strong>nicht</strong> durchgesetzt — die Gewichte unten zeigen die unbeschränkte Optimierungsstruktur. Erhöhe maxWeight in der Policy, um den Cap wieder wirksam zu machen.
+          </p>
+        </div>
+      )}
+      {result.fallbackReason === "solve_failed" && (
+        <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+          <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+          <p className="text-xs text-red-500">
+            Die Kovarianzmatrix konnte trotz Ridge-Stabilisierung nicht invertiert werden — als Basis wurde Equal-Weight verwendet. Die angezeigten Sharpe-Werte sind dadurch nicht aussagekräftig.
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-muted/30 rounded-lg p-3">
           <div className="text-xs text-muted-foreground">Sharpe_p (optimiert)</div>

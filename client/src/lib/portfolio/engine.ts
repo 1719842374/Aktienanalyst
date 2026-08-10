@@ -62,6 +62,13 @@ export interface EngineResult {
   covariance: CovarianceResult | null;
   concentration: ConcentrationResult | null; // HHI/Effective-N/Korrelations-Warnungen (Diagnostik, ändert keine Gewichte)
   excludedTickers: string[]; // Positionen ohne ausreichende Historie ODER ohne Override -- nicht in der Optimierung
+  /** Strukturierter Fallback-Grund fuer sichtbare UI-Warnung (10.08.2026
+   * Equal-Weight-Bugfix). null = normale Optimierung ohne Einschraenkung.
+   * "cap_infeasible": maxWeight*n < 1, Cap wurde NICHT durchgesetzt (Gewichte
+   * zeigen unbeschraenkte Struktur, koennen den UI-Cap ueberschreiten).
+   * "solve_failed": Σ-Invertierung ist trotz Ridge/Shrinkage gescheitert,
+   * Equal-Weight-Basis wurde verwendet. */
+  fallbackReason: "cap_infeasible" | "solve_failed" | null;
   flags: string[];
 }
 
@@ -98,6 +105,7 @@ export function computePortfolioFromPositions(opts: {
     return {
       status: "insufficient_positions", mode: null, rows: [], sharpePortfolio: null,
       sharpeEqualWeight: null, deltaVsEqual: null, covariance: null, concentration: null, excludedTickers: [],
+      fallbackReason: null,
       flags: [`Mindestens ${MIN_POSITIONS_FOR_OPTIMIZATION} offene Positionen für Portfolio-Optimierung erforderlich (aktuell: ${positions.length}).`],
     };
   }
@@ -128,6 +136,7 @@ export function computePortfolioFromPositions(opts: {
     return {
       status: "insufficient_history", mode: null, rows: [], sharpePortfolio: null,
       sharpeEqualWeight: null, deltaVsEqual: null, covariance, concentration: null, excludedTickers,
+      fallbackReason: null,
       flags: [...flags, `Nur ${usableTickers.length} Position(en) mit ausreichender Historie/Override -- mindestens ${MIN_POSITIONS_FOR_OPTIMIZATION} nötig.`],
     };
   }
@@ -199,6 +208,11 @@ export function computePortfolioFromPositions(opts: {
 
   const allocResult = allocate({ tickers: usableTickers, mu: muForAllocation, Sigma, rf, scores, maxWeight: opts.maxWeight, kappa: undefined });
   flags.push(...allocResult.notes);
+  const fallbackReason: EngineResult["fallbackReason"] = allocResult.solveFailed
+    ? "solve_failed"
+    : allocResult.capWasInfeasible
+      ? "cap_infeasible"
+      : null;
 
   const report = sharpeReport({ w: allocResult.weights, mu: muForAllocation, Sigma, rf });
   const concentration = assessConcentration(allocResult.weights, Sigma);
@@ -247,6 +261,7 @@ export function computePortfolioFromPositions(opts: {
     covariance,
     concentration,
     excludedTickers,
+    fallbackReason,
     flags,
   };
 }

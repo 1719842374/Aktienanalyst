@@ -45,6 +45,15 @@ export interface WeightingResult {
   mode: WeightMode;
   weights: number[]; // Reihenfolge wie tickers
   notes: string[];
+  /** true wenn maxWeight*n < 1 war (Cap rechnerisch unerfüllbar fuer n Titel)
+   * -- Gewichte wurden dann NICHT auf den Cap begrenzt, nur renormiert.
+   * Frueher fuehrte dieser Fall zu einem stillen Equal-Weight-Fallback ohne
+   * jedes Flag (Bug, 10.08.2026 behoben). */
+  capWasInfeasible: boolean;
+  /** true wenn die Σ-Invertierung in Modus A fehlgeschlagen ist (Singularität
+   * trotz Ridge+Shrinkage) und auf eine Equal-Weight-Basis zurueckgefallen
+   * wurde. Getrennt von capWasInfeasible, da unterschiedliche Ursachen. */
+  solveFailed: boolean;
 }
 
 // ─── Hilfsfunktionen ───────────────────────────────────────────────────────
@@ -123,14 +132,35 @@ export function renormalize(w: number[]): number[] {
 
 /** maxWeight-Cap mit iterativer Redistribution des Überschusses auf die
  * ungedeckelten Positionen, bis alle Gewichte ≤ maxWeight oder keine
- * Redistribution mehr möglich ist (dann gleichmäßig gecappt). */
-export function applyMaxWeightCap(w: number[], maxWeight: number): number[] {
+ * Redistribution mehr möglich ist.
+ *
+ * BUGFIX (10.08.2026, "Equal-Weight trotz Max-Sharpe"): Wenn `maxWeight * n
+ * < 1` ist es rechnerisch UNMOEGLICH, alle n Gewichte ≤ maxWeight zu halten
+ * und trotzdem Σw=1 zu erreichen (z.B. maxWeight=30% bei n=3 -> max. 90%
+ * erreichbar). Die frühere Implementierung hat in diesem Fall STILL auf
+ * Equal-Weight (1/n) zurueckgesetzt -- ohne jedes Flag. Das erzeugte exakt
+ * das beobachtete Live-Symptom: w%CAPM=33.3/33.3/33.3 trotz stark
+ * unterschiedlichem μ/σ pro Titel, weil der UI-Default maxWeight=30% bei
+ * jedem n≤3 IMMER diesen Zweig auslöst (0.30*2=0.6<1, 0.30*3=0.9<1 -- der
+ * Cap wird erst ab n≥4 rechnerisch erfuellbar).
+ *
+ * Fix: der Cap wird in diesem unerfüllbaren Fall NICHT erzwungen -- die
+ * Rohgewichte werden stattdessen nur renormiert (Σw=1), OHNE die Ober-
+ * grenze durchzusetzen, und `wasInfeasible=true` wird zurückgegeben, damit
+ * der Aufrufer (allocate/engine) ein sichtbares Flag setzen kann. Das ist
+ * die einzige nicht-stille Option: entweder man verletzt den Cap (mit
+ * Warnung) oder man verletzt die Optimierung (Equal-Weight, wie bisher
+ * OHNE Warnung) -- ersteres ist strikt besser, weil es transparent macht,
+ * dass der Cap zu eng für n Titel gewählt wurde. */
+export function applyMaxWeightCap(w: number[], maxWeight: number): { weights: number[]; wasInfeasible: boolean } {
   let weights = [...w];
   const n = weights.length;
-  if (n === 0) return weights;
+  if (n === 0) return { weights, wasInfeasible: false };
   if (maxWeight * n < 1 - 1e-9) {
-    // maxWeight zu klein für Σw=1 mit n Titeln → gleichmäßig verteilen (bestmöglich)
-    return Array(n).fill(1 / n);
+    // maxWeight zu klein für Σw=1 mit n Titeln -- Cap ist unerfüllbar.
+    // NICHT still auf Equal-Weight zuruecksetzen: nur renormieren und die
+    // relative Struktur der Rohgewichte erhalten, Cap-Verletzung flaggen.
+    return { weights: renormalize(weights), wasInfeasible: true };
   }
   for (let iter = 0; iter < 50; iter++) {
     const overIdx: number[] = [];
@@ -157,7 +187,7 @@ export function applyMaxWeightCap(w: number[], maxWeight: number): number[] {
       weights[i] += overflow * share;
     });
   }
-  return renormalize(weights);
+  return { weights: renormalize(weights), wasInfeasible: false };
 }
 
 /** minWeight-Floor (optional): Positionen unter minWeight werden auf 0
@@ -169,12 +199,12 @@ export function applyMinWeightFloor(w: number[], minWeight: number): number[] {
   return renormalize(filtered);
 }
 
-function guardWeights(w: number[], maxWeight: number, minWeight: number): number[] {
+function guardWeights(w: number[], maxWeight: number, minWeight: number): { weights: number[]; capWasInfeasible: boolean } {
   let out = clipLongOnly(w);
   out = renormalize(out);
-  out = applyMaxWeightCap(out, maxWeight);
-  out = applyMinWeightFloor(out, minWeight);
-  return out;
+  const capResult = applyMaxWeightCap(out, maxWeight);
+  out = applyMinWeightFloor(capResult.weights, minWeight);
+  return { weights: out, capWasInfeasible: capResult.wasInfeasible };
 }
 
 // ─── Matrix-Helfer (klein, nur für n×n mit kleinem n gedacht) ──────────────
@@ -228,7 +258,7 @@ export function weightMaxSharpe(opts: {
   rf: number;
   maxWeight?: number;
   minWeight?: number;
-}): number[] {
+}): { weights: number[]; capWasInfeasible: boolean; solveFailed: boolean } {
   const n = opts.mu.length;
   const maxWeight = opts.maxWeight ?? DEFAULT_MAX_WEIGHT;
   const minWeight = opts.minWeight ?? DEFAULT_MIN_WEIGHT;
@@ -236,13 +266,17 @@ export function weightMaxSharpe(opts: {
   const muExcess = opts.mu.map((m) => m - opts.rf);
   const inv = invertMatrix(SigmaShrunk);
   let raw: number[];
+  let solveFailed = false;
   if (!inv) {
-    // Fallback bei Singularität: Equal-Weight als Basis
+    // Fallback bei Singularität: Equal-Weight als Basis, aber SICHTBAR geflaggt
+    // (frueher stiller Fallback -- Teil desselben Equal-Weight-Bugs).
     raw = Array(n).fill(1 / n);
+    solveFailed = true;
   } else {
     raw = matVec(inv, muExcess);
   }
-  return guardWeights(raw, maxWeight, minWeight);
+  const guarded = guardWeights(raw, maxWeight, minWeight);
+  return { weights: guarded.weights, capWasInfeasible: guarded.capWasInfeasible, solveFailed };
 }
 
 // ─── Modus B: Risk-Parity (w_i ∝ 1/σ_i) ────────────────────────────────────
@@ -251,7 +285,7 @@ export function weightRiskParity(opts: {
   Sigma: number[][];
   maxWeight?: number;
   minWeight?: number;
-}): number[] {
+}): { weights: number[]; capWasInfeasible: boolean } {
   const n = opts.Sigma.length;
   const maxWeight = opts.maxWeight ?? DEFAULT_MAX_WEIGHT;
   const minWeight = opts.minWeight ?? DEFAULT_MIN_WEIGHT;
@@ -259,7 +293,8 @@ export function weightRiskParity(opts: {
     const sigma = Math.sqrt(Math.max(row[i], 0));
     return sigma < 1e-12 ? 0 : 1 / sigma;
   });
-  return guardWeights(raw, maxWeight, minWeight);
+  const guarded = guardWeights(raw, maxWeight, minWeight);
+  return { weights: guarded.weights, capWasInfeasible: guarded.capWasInfeasible };
 }
 
 // ─── Modus C: Score-Tilt ────────────────────────────────────────────────────
@@ -270,7 +305,7 @@ export function weightScoreTilt(opts: {
   kappa?: number;
   maxWeight?: number;
   minWeight?: number;
-}): number[] {
+}): { weights: number[]; capWasInfeasible: boolean } {
   const n = opts.scores.length;
   const kappa = opts.kappa ?? DEFAULT_KAPPA_SCORE_TILT;
   const maxWeight = opts.maxWeight ?? DEFAULT_MAX_WEIGHT;
@@ -278,7 +313,8 @@ export function weightScoreTilt(opts: {
   const base = opts.base ?? Array(n).fill(1 / n);
   const z = zScore(opts.scores);
   const raw = base.map((b, i) => b * (1 + kappa * z[i]));
-  return guardWeights(raw, maxWeight, minWeight);
+  const guarded = guardWeights(raw, maxWeight, minWeight);
+  return { weights: guarded.weights, capWasInfeasible: guarded.capWasInfeasible };
 }
 
 // ─── §B.3 Auto-Mode: pickWeightMode ────────────────────────────────────────
@@ -309,33 +345,45 @@ export function allocate(input: WeightingInput): WeightingResult {
 
   if (n === 1) {
     notes.push("n=1 → kein Basket-Optimierer, nur Kelly (§B.2/§D.4).");
-    return { mode: "kelly-only", weights: [1], notes };
+    return { mode: "kelly-only", weights: [1], notes, capWasInfeasible: false, solveFailed: false };
   }
   if (n === 0) {
-    return { mode: "kelly-only", weights: [], notes: ["Keine Kandidaten."] };
+    return { mode: "kelly-only", weights: [], notes: ["Keine Kandidaten."], capWasInfeasible: false, solveFailed: false };
   }
 
   const mode = pickWeightMode({ n, mu: input.mu, Sigma: input.Sigma, rf: input.rf });
 
   let weights: number[];
+  let capWasInfeasible = false;
+  let solveFailed = false;
   switch (mode) {
-    case "A":
-      weights = weightMaxSharpe({ mu: input.mu, Sigma: input.Sigma, rf: input.rf, maxWeight, minWeight });
+    case "A": {
+      const result = weightMaxSharpe({ mu: input.mu, Sigma: input.Sigma, rf: input.rf, maxWeight, minWeight });
+      weights = result.weights;
+      capWasInfeasible = result.capWasInfeasible;
+      solveFailed = result.solveFailed;
       notes.push("Modus A: Max-Sharpe long-only (w ∝ Σ⁻¹μ̃).");
+      if (result.solveFailed) notes.push("Σ-Invertierung fehlgeschlagen (Singularität trotz Ridge/Shrinkage) -- Equal-Weight-Basis verwendet, fallback_reason=solve_failed.");
       break;
-    case "B":
-      weights = weightRiskParity({ Sigma: input.Sigma, maxWeight, minWeight });
+    }
+    case "B": {
+      const result = weightRiskParity({ Sigma: input.Sigma, maxWeight, minWeight });
+      weights = result.weights;
+      capWasInfeasible = result.capWasInfeasible;
       notes.push("Modus B: Risk-Parity (w_i ∝ 1/σ_i).");
       break;
+    }
     case "C": {
       const base = weightRiskParity({ Sigma: input.Sigma, maxWeight: 1, minWeight: 0 });
-      weights = weightScoreTilt({
+      const result = weightScoreTilt({
         scores: input.scores ?? Array(n).fill(50),
-        base,
+        base: base.weights,
         kappa: input.kappa,
         maxWeight,
         minWeight,
       });
+      weights = result.weights;
+      capWasInfeasible = result.capWasInfeasible;
       notes.push("Modus C: Score-Tilt auf Risk-Parity-Basis.");
       break;
     }
@@ -346,5 +394,9 @@ export function allocate(input: WeightingInput): WeightingResult {
       break;
   }
 
-  return { mode, weights, notes };
+  if (capWasInfeasible) {
+    notes.push(`maxWeight=${(maxWeight * 100).toFixed(0)}% ist bei ${n} Titeln rechnerisch unerfüllbar (max. ${(maxWeight * n * 100).toFixed(0)}% erreichbar bei Σw=1) -- Cap wurde NICHT durchgesetzt, Gewichte zeigen die unbeschränkte Struktur. fallback_reason=cap_infeasible.`);
+  }
+
+  return { mode, weights, notes, capWasInfeasible, solveFailed };
 }

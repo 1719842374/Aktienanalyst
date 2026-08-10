@@ -32,6 +32,7 @@ const result = computePortfolioFromPositions({
 console.log("=== Live-Verifikation: MSFT + NVDA (echte FMP-Historie) ===\n");
 console.log("Status:", result.status);
 console.log("Modus:", result.mode);
+console.log("fallbackReason:", result.fallbackReason);
 console.log("nObs (gemeinsame Handelstage):", result.covariance?.nObs);
 console.log("Ridge angewendet:", result.covariance?.ridgeApplied);
 console.log("");
