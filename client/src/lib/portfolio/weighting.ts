@@ -31,34 +31,56 @@ export const DEFAULT_KAPPA_SCORE_TILT = 0.35;
 // ─── Dynamisches maxWeight für kleine Portfolios (Auftrag 10.08.2026) ───────
 //
 // Der feste 30%-Default war fachlich unsinnig für 2-3-Titel-Portfolios:
-// maxWeight=0.30 macht bei n≤3 IMMER `cap_infeasible` (0.30×2=0.60<1,
-// 0.30×3=0.90<1) -- Nutzer, die bewusst konzentriert in 2-3 Aktien
-// investieren wollen (z.B. 50/50 oder 70/30), sehen eine Dauerwarnung,
-// obwohl die Optimierung korrekt arbeitet.
+// maxWeight=0.30 macht bei n≤3 IMMER `cap_infeasible` (0.30x2=0.60<1,
+// 0.30x3=0.90<1) -- Nutzer, die bewusst konzentriert in 2-3 Aktien
+// investieren wollen, sahen eine Dauerwarnung, obwohl die Optimierung
+// korrekt arbeitet.
 //
-// Zwei getrennte Konzepte, NICHT verwechseln:
-// 1. suggestedDefault(n): nur für EIN NEUES/LEERES Policy-Feld -- schlägt
-//    einen sinnvollen Startwert vor, abhängig von n. Ueberschreibt NIE eine
-//    bereits vom User gesetzte maxWeight-Eingabe.
-// 2. resolveEffectiveMaxWeight(userMaxWeight, n): harter Floor, der IMMER
-//    auf den vom User (oder von suggestedDefault) stammenden Wert angewendet
-//    wird. effective = max(userMaxWeight, 1/n) -- ein Cap unter 1/n ist bei
-//    n Titeln rechnerisch nie erfüllbar (Σw=1 unmoeglich), also wird er
-//    IMMER auf 1/n angehoben, NIE still auf den Nutzerwert reduziert. Das
-//    ist die explizite User-Entscheidung fuer dieses Ticket: ein Cap unter
-//    1/n wird NICHT als echter Cap uebernommen (das wuerde wieder Equal-
-//    Weight- oder "Maske zeigt X, Wirkung ist Y"-Situationen erzeugen wie
-//    beim urspruenglichen Equal-Weight-Bug), sondern transparent angehoben.
+// FOLGE-KORREKTUR (10.08.2026, zweiter Nachtrag): Ein reiner 1/n-Floor
+// alleine reicht NICHT aus -- wenn effectiveMaxWeight direkt auf 1/n
+// landet (z.B. userMaxWeight=0.30 -> effective=1/3=0.333 bei n=3), ist
+// (1/n, 1/n, ..., 1/n) der EINZIGE zulässige Punkt mit Σw=1 und w_i≤1/n
+// -- das erzwingt rechnerisch Equal Weight, auch wenn dies NICHT mehr der
+// stille Equal-Weight-BUG ist (es ist transparent geflaggt), sondern eine
+// unerwuenschte PRODUKT-Eigenschaft: Modus A (Max-Sharpe) wird dadurch
+// UNSICHTBAR, weil der Cap selbst keine differenzierte Gewichtung mehr
+// zulaesst. Deshalb: die Policy-Defaults werden bewusst DEUTLICH ueber
+// 1/n gesetzt (60% bei n=2/3 statt z.B. 50%/33%), damit der Cap Raum fuer
+// eine sichtbar differenzierte Max-Sharpe-Struktur laesst.
+//
+// Drei getrennte Konzepte, NICHT verwechseln:
+// 1. suggestedMaxWeightDefault(n): nur für EIN NEUES/LEERES Policy-Feld --
+//    schlägt einen Startwert vor, der bewusst > 1/n liegt (siehe Tabelle
+//    unten). Ueberschreibt NIE eine bereits vom User gesetzte Eingabe.
+// 2. resolveEffectiveMaxWeight(userMaxWeight, n): harter 1/n-Floor, IMMER
+//    `effective = max(userMaxWeight, 1/n)` -- ein Cap unter 1/n ist bei n
+//    Titeln rechnerisch nie erfüllbar (Σw=1 unmoeglich), wird daher IMMER
+//    angehoben, NIE still auf den Nutzerwert reduziert.
+// 3. capForcesEqualWeight: zusätzliches Signal (unabhängig vom Floor!) --
+//    true wenn effectiveMaxWeight so nah an 1/n liegt, dass (1/n,...,1/n)
+//    der einzige oder praktisch einzige zulässige Punkt ist. Das kann
+//    AUCH bei einem User-Wert oberhalb des Floors auftreten (z.B. User
+//    setzt bewusst 34% bei n=3 -- das ist minimal ueber dem Floor 33%,
+//    aber immer noch faktisch Equal-Weight-erzwingend). Wird separat von
+//    wasFloorApplied gemeldet, weil es ein anderes Symptom ist: nicht "Cap
+//    war unerfuellbar", sondern "Cap laesst der Optimierung keinen Raum".
 
-/** Empfohlener Policy-Default fuer maxWeight, abhängig von der Anzahl Titel.
+/** Empfohlener Policy-Default fuer maxWeight, abhängig von der Anzahl
+ * Titel. Liegt bewusst DEUTLICH ueber 1/n bei kleinem n, damit Max-Sharpe
+ * (Modus A) eine sichtbar differenzierte Struktur liefern kann, statt vom
+ * Cap auf Equal-Weight gezwungen zu werden:
+ *   n=2 -> 60% (Floor 1/2=50%, Cap lässt 60/40 statt nur 50/50 zu)
+ *   n=3 -> 60% (Floor 1/3≈33%, Cap lässt z.B. 55/30/15 statt 33/33/33 zu)
+ *   n=4 -> 40% (Floor 1/4=25%, leichte Bremse)
+ *   n≥5 -> 30% (bisheriger Diversifikations-Default, Floor längst ≤ 20%)
  * Nur als STARTWERT fuer ein neues/leeres Feld gedacht -- ersetzt NIEMALS
  * eine bereits vorhandene User-Eingabe (das ist Aufgabe der aufrufenden
  * UI-Schicht, z.B. beim ersten Laden der Policy oder beim Reset-Button). */
 export function suggestedMaxWeightDefault(n: number): number {
   if (n <= 1) return 1.0;
-  if (n === 2) return 1.0; // volle Konzentration erlaubt (z.B. 50/50 oder 70/30)
-  if (n === 3) return 0.50;
-  if (n === 4) return 0.35;
+  if (n === 2) return 0.60;
+  if (n === 3) return 0.60;
+  if (n === 4) return 0.40;
   return DEFAULT_MAX_WEIGHT; // n≥5: bisheriger Diversifikations-Default
 }
 
@@ -67,14 +89,29 @@ export interface EffectiveMaxWeightResult {
   effectiveMaxWeight: number; // tatsaechlich in der Optimierung verwendeter Cap
   minFeasible: number; // 1/n -- die absolute Untergrenze, unter der Σw=1 nie erreichbar ist
   wasFloorApplied: boolean; // true wenn userMaxWeight < minFeasible und daher angehoben wurde
+  /** true wenn effectiveMaxWeight so nah an 1/n liegt, dass Equal-Weight
+   * (1/n,...,1/n) faktisch der einzige zulässige Punkt ist -- unabhängig
+   * davon, ob der Floor selbst gegriffen hat. Toleranz: effectiveMaxWeight
+   * innerhalb von 2 Prozentpunkten über 1/n gilt als "erzwingt Equal-
+   * Weight", weil dann kaum Spielraum fuer eine differenzierte Loesung
+   * bleibt (z.B. bei n=3: 1/n=33.3%, alles bis ~35.3% zaehlt als eng). */
+  capForcesEqualWeight: boolean;
 }
+
+const CAP_FORCES_EQUAL_WEIGHT_TOLERANCE = 0.02; // 2 Prozentpunkte Marge über 1/n
 
 /** Wendet den harten 1/n-Floor auf einen (User- oder Default-)maxWeight-Wert
  * an. IMMER `effective = max(userMaxWeight, 1/n)` -- ein Cap unter 1/n ist
  * bei n Titeln rechnerisch nie erfüllbar und wuerde sonst denselben Effekt
  * wie der urspruengliche Equal-Weight-Bug erzeugen (Maske zeigt einen Wert,
- * die tatsaechliche Struktur ist eine andere). Explizite User-Entscheidung
- * (10.08.2026): Floor statt "User-Wert respektieren + nur warnen". */
+ * die tatsaechliche Struktur ist eine andere). Zusätzlich wird geprueft, ob
+ * der resultierende effektive Cap der Optimierung noch Spielraum laesst
+ * (capForcesEqualWeight) -- das ist das eigentliche Symptom aus dem
+ * Live-Test ("Cap=1/n erzwingt Equal Weight, sieht aus wie der alte Bug,
+ * ist aber eine Cap-Eigenschaft"). Explizite User-Entscheidung (10.08.2026):
+ * Floor statt "User-Wert respektieren + nur warnen", PLUS Defaults deutlich
+ * ueber 1/n, damit dieser Fall bei den empfohlenen Werten gar nicht erst
+ * eintritt. */
 export function resolveEffectiveMaxWeight(userMaxWeight: number, n: number): EffectiveMaxWeightResult {
   const minFeasible = n > 0 ? 1 / n : 1;
   const effectiveMaxWeight = Math.max(userMaxWeight, minFeasible);
@@ -83,6 +120,7 @@ export function resolveEffectiveMaxWeight(userMaxWeight: number, n: number): Eff
     effectiveMaxWeight,
     minFeasible,
     wasFloorApplied: userMaxWeight < minFeasible - 1e-9,
+    capForcesEqualWeight: n > 1 && effectiveMaxWeight <= minFeasible + CAP_FORCES_EQUAL_WEIGHT_TOLERANCE + 1e-9,
   };
 }
 

@@ -17,7 +17,7 @@
  */
 import type { PortfolioPosition } from "./positions";
 import { buildCovariance, type PricePoint, type CovarianceResult } from "./covariance";
-import { allocate, resolveEffectiveMaxWeight, DEFAULT_MAX_WEIGHT, type WeightMode } from "./weighting";
+import { allocate, resolveEffectiveMaxWeight, suggestedMaxWeightDefault, DEFAULT_MAX_WEIGHT, type WeightMode } from "./weighting";
 import { sharpeReport } from "./sharpe";
 import { applyKellyPolicy, kellyContinuous } from "./kelly";
 import { assessConcentration, type ConcentrationResult } from "./concentration";
@@ -82,6 +82,11 @@ export interface EngineResult {
   userMaxWeight: number;
   effectiveMaxWeight: number;
   wasFloorApplied: boolean;
+  /** true wenn effectiveMaxWeight so nah an 1/n liegt, dass Equal-Weight
+   * faktisch der einzige zulässige Punkt ist -- Modus A (Max-Sharpe) kann
+   * dann keine sichtbar differenzierte Struktur mehr liefern, selbst wenn
+   * kein Floor-Eingriff nötig war. Siehe weighting.ts resolveEffectiveMaxWeight. */
+  capForcesEqualWeight: boolean;
   flags: string[];
 }
 
@@ -119,7 +124,7 @@ export function computePortfolioFromPositions(opts: {
       status: "insufficient_positions", mode: null, rows: [], sharpePortfolio: null,
       sharpeEqualWeight: null, deltaVsEqual: null, covariance: null, concentration: null, excludedTickers: [],
       fallbackReason: null,
-      userMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, effectiveMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, wasFloorApplied: false,
+      userMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, effectiveMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, wasFloorApplied: false, capForcesEqualWeight: false,
       flags: [`Mindestens ${MIN_POSITIONS_FOR_OPTIMIZATION} offene Positionen für Portfolio-Optimierung erforderlich (aktuell: ${positions.length}).`],
     };
   }
@@ -151,7 +156,7 @@ export function computePortfolioFromPositions(opts: {
       status: "insufficient_history", mode: null, rows: [], sharpePortfolio: null,
       sharpeEqualWeight: null, deltaVsEqual: null, covariance, concentration: null, excludedTickers,
       fallbackReason: null,
-      userMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, effectiveMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, wasFloorApplied: false,
+      userMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, effectiveMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, wasFloorApplied: false, capForcesEqualWeight: false,
       flags: [...flags, `Nur ${usableTickers.length} Position(en) mit ausreichender Historie/Override -- mindestens ${MIN_POSITIONS_FOR_OPTIMIZATION} nötig.`],
     };
   }
@@ -232,6 +237,10 @@ export function computePortfolioFromPositions(opts: {
   if (maxWeightResolution.wasFloorApplied) {
     flags.push(`maxWeight=${(userMaxWeight * 100).toFixed(0)}% liegt unter der bei ${n} Titeln erreichbaren Untergrenze (1/${n}=${(maxWeightResolution.minFeasible * 100).toFixed(0)}%) -- effektiv auf ${(effectiveMaxWeight * 100).toFixed(0)}% angehoben, damit Σw=1 erfüllbar bleibt.`);
   }
+  if (maxWeightResolution.capForcesEqualWeight) {
+    const suggested = suggestedMaxWeightDefault(n);
+    flags.push(`maxWeight=${(effectiveMaxWeight * 100).toFixed(0)}% liegt so nah an 1/${n}=${(maxWeightResolution.minFeasible * 100).toFixed(0)}%, dass der Cap Equal-Weight praktisch erzwingt -- Modus A (Max-Sharpe) kann dadurch keine differenzierte Struktur zeigen. Empfehlung: maxWeight auf ${(suggested * 100).toFixed(0)}% erhöhen.`);
+  }
 
   const allocResult = allocate({ tickers: usableTickers, mu: muForAllocation, Sigma, rf, scores, maxWeight: effectiveMaxWeight, kappa: undefined });
   flags.push(...allocResult.notes);
@@ -292,6 +301,7 @@ export function computePortfolioFromPositions(opts: {
     userMaxWeight,
     effectiveMaxWeight,
     wasFloorApplied: maxWeightResolution.wasFloorApplied,
+    capForcesEqualWeight: maxWeightResolution.capForcesEqualWeight,
     flags,
   };
 }

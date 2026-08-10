@@ -11,6 +11,7 @@
 import { useMemo } from "react";
 import { Info, AlertTriangle } from "lucide-react";
 import { computePortfolioFromPositions, MIN_POSITIONS_FOR_OPTIMIZATION, type EnginePositionInput } from "@/lib/portfolio/engine";
+import { suggestedMaxWeightDefault } from "@/lib/portfolio/weighting";
 import type { PortfolioPosition } from "@/lib/portfolio/positions";
 import type { PricePoint } from "@/lib/portfolio/covariance";
 
@@ -118,12 +119,18 @@ export default function PortfolioOptimizationPanel({
         </p>
       </div>
 
-      {result.wasFloorApplied && (
-        <div className="flex items-start gap-2 bg-sky-500/10 border border-sky-500/30 rounded-lg p-3">
-          <Info className="w-4 h-4 text-sky-500 shrink-0 mt-0.5" />
-          <p className="text-xs text-sky-600">
-            Der Policy-Cap ({fmtPct(result.userMaxWeight, 0)}) ist bei {result.rows.length} Titeln rechnerisch nicht erreichbar (Summe der Gewichte muss 100% ergeben). Er wurde deshalb automatisch auf <strong>{fmtPct(result.effectiveMaxWeight, 0)}</strong> (= 1/{result.rows.length}) angehoben — das ist die kleinste Obergrenze, die bei {result.rows.length} Titeln überhaupt funktioniert. Trage in der Policy einen höheren Wert ein, wenn du bewusst diversifizieren willst.
-          </p>
+      {result.capForcesEqualWeight && (
+        <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <div className="text-xs text-amber-600 space-y-1.5">
+            <p>
+              maxWeight ({fmtPct(result.effectiveMaxWeight, 0)}) liegt so nah an 1/{result.rows.length} ={fmtPct(1 / result.rows.length, 0)}, dass <strong>Equal-Weight praktisch der einzige zulässige Punkt</strong> ist — {result.mode === "A" ? "Modus A (Max-Sharpe)" : "die Optimierung"} kann dadurch keine differenzierte Struktur mehr zeigen, obwohl die Rechnung korrekt läuft.
+              {result.wasFloorApplied && <> Der Policy-Wert ({fmtPct(result.userMaxWeight, 0)}) war sogar unter 1/{result.rows.length} und wurde bereits automatisch angehoben.</>}
+            </p>
+            <p>
+              Empfehlung für {result.rows.length} Titel: <strong>{fmtPct(suggestedMaxWeightDefault(result.rows.length), 0)}</strong> — lässt der Optimierung Spielraum für eine sichtbar ungleiche Gewichtung.
+            </p>
+          </div>
         </div>
       )}
       {result.fallbackReason === "cap_infeasible" && (
