@@ -427,4 +427,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       _thesisStrengthCache.set(ticker,{data:response,time:Date.now()}); res.json(response);
     } catch(err:any){ console.error("[POST /api/thesis-strength]",err?.message?.substring(0,200)); res.status(500).json({error:err?.message||"Internal error"}); }
   });
+
+  // 13F Star-Investor Screener: kept as an isolated module so this fragile
+  // route orchestrator remains append-only.
+  const { registerScreenerRoute } = await import("./screener");
+  registerScreenerRoute(app);
 }

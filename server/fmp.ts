@@ -429,6 +429,26 @@ export async function fmpSearchTicker(query: string, limit = 10): Promise<Array<
   } catch { return []; }
 }
 
+// Reference dataset for SEC 13F issuer-name resolution. Cache it to avoid
+// repeated API calls when several star-investor filings are screened together.
+let stockListCache: { value: Array<{ symbol: string; companyName: string }>; fetchedAt: number } | null = null;
+const STOCK_LIST_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+export async function fmpStockList(): Promise<Array<{ symbol: string; companyName: string }>> {
+  if (stockListCache && Date.now() - stockListCache.fetchedAt < STOCK_LIST_CACHE_TTL_MS) return stockListCache.value;
+  try {
+    const data = await fmpFetch("/stock-list");
+    const value = Array.isArray(data)
+      ? data
+        .map((row: any) => ({ symbol: String(row?.symbol || "").toUpperCase(), companyName: String(row?.companyName || row?.name || "") }))
+        .filter((row: { symbol: string; companyName: string }) => row.symbol && row.companyName)
+      : [];
+    stockListCache = { value, fetchedAt: Date.now() };
+    return value;
+  } catch {
+    return [];
+  }
+}
+
 // === FX Conversion for foreign-currency financial statements ===
 // FMP's /stable financial-statement endpoints (income-statement, cash-flow-statement,
 // balance-sheet-statement) return raw figures in the filer's `reportedCurrency`
