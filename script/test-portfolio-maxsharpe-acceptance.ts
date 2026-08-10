@@ -137,10 +137,19 @@ console.log("\n=== Teil 2: Volle Engine (computePortfolioFromPositions) mit synt
   check("KERNKRITERIUM: Δ (deltaSharpe) > 0 (Optimierung schlägt Equal-Weight)", (result.deltaVsEqual ?? -1) > 0, String(result.deltaVsEqual));
   check("fallbackReason=null (Cap war erfüllbar bei maxWeight=0.8, n=3 -> 2.4≥1)", result.fallbackReason === null, String(result.fallbackReason));
 
-  // Regressions-Wächter: mit dem ALTEN UI-Default maxWeight=0.30 ist der Cap
-  // bei n=3 IMMER unerfüllbar (0.30*3=0.9<1) -- das darf NICHT mehr zu
-  // stillem Equal-Weight fuehren (der eigentliche gemeldete Bug), sondern
-  // muss die Max-Sharpe-Struktur zeigen UND das Flag setzen.
+  // Regressions-Waechter (aktualisiert nach Folge-Ticket "Dynamisches
+  // maxWeight fuer kleine Portfolios"): mit dem ALTEN UI-Default
+  // maxWeight=0.30 wird der Cap bei n=3 jetzt automatisch auf den 1/n-Floor
+  // (33.3%) angehoben (resolveEffectiveMaxWeight), NICHT mehr durch den
+  // fruehen cap_infeasible-Bugfix-Zweig (der greift nur noch, wenn selbst
+  // der Floor nicht reicht). Bei stark konzentriertem Rohsignal (wie hier,
+  // A dominiert alle anderen deutlich) fuehrt ein knapper 33.3%-Cap dazu,
+  // dass ALLE Titel am Cap landen -- das SIEHT aus wie das alte Symptom,
+  // ist aber ein korrekt begruendeter, transparent geflaggter Cap-Effekt
+  // (wasFloorApplied=true), kein stiller Bug mehr. Kernkriterium daher:
+  // wasFloorApplied=true UND effectiveMaxWeight=1/3 UND KEIN
+  // fallbackReason=cap_infeasible mehr (der Floor macht den Cap ja gerade
+  // wieder erfuellbar).
   const resultOldDefault = computePortfolioFromPositions({
     positions: [
       { ticker: "ASSET_A", qty: 1, entryPrice: 100, lastPrice: 100, side: "long" },
@@ -151,10 +160,11 @@ console.log("\n=== Teil 2: Volle Engine (computePortfolioFromPositions) mit synt
     rf: 0.03, capital: 100000, maxWeight: 0.30,
     muWinsorizeMin: null, muWinsorizeMax: null,
   });
-  const rowAOld = resultOldDefault.rows.find(r => r.ticker === "ASSET_A");
-  const rowBOld = resultOldDefault.rows.find(r => r.ticker === "ASSET_B");
-  check("REGRESSIONSTEST (alter UI-Default maxWeight=0.30, n=3): KEIN stiller Equal-Weight mehr", rowAOld != null && rowBOld != null && Math.abs(rowAOld.weightCapm - rowBOld.weightCapm) > 0.03, JSON.stringify({ wA: rowAOld?.weightCapm, wB: rowBOld?.weightCapm }));
-  check("REGRESSIONSTEST: fallbackReason=cap_infeasible sichtbar gemeldet (0.30*3=0.9<1)", resultOldDefault.fallbackReason === "cap_infeasible", String(resultOldDefault.fallbackReason));
+  console.log("  [alter UI-Default 0.30]", resultOldDefault.rows.map(r => `${r.ticker}=${(r.weightCapm * 100).toFixed(1)}%`).join(" "), "| effectiveMaxWeight:", resultOldDefault.effectiveMaxWeight, "| wasFloorApplied:", resultOldDefault.wasFloorApplied, "| fallbackReason:", resultOldDefault.fallbackReason);
+  check("Floor wurde angewendet (userMaxWeight=0.30 < 1/3)", resultOldDefault.wasFloorApplied === true, String(resultOldDefault.wasFloorApplied));
+  check("effectiveMaxWeight = 1/3 (33.3%), NICHT der alte User-Wert 30%", Math.abs(resultOldDefault.effectiveMaxWeight - 1 / 3) < 1e-6, String(resultOldDefault.effectiveMaxWeight));
+  check("KEIN fallbackReason=cap_infeasible mehr (der Floor macht den Cap wieder erfuellbar)", resultOldDefault.fallbackReason !== "cap_infeasible", String(resultOldDefault.fallbackReason));
+  check("userMaxWeight bleibt unveraendert bei 0.30 (nur effectiveMaxWeight wurde angehoben)", Math.abs(resultOldDefault.userMaxWeight - 0.30) < 1e-9, String(resultOldDefault.userMaxWeight));
 }
 
 console.log(failed === 0 ? "\n✅ Akzeptanz-Test bestanden (Bug behoben, Max-Sharpe ≠ Equal-Weight)" : `\n❌ ${failed} Test(s) fehlgeschlagen -- Bug NICHT behoben`);

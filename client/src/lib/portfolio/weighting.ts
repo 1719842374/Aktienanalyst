@@ -28,6 +28,64 @@ export const DEFAULT_MAX_WEIGHT = 0.30;
 export const DEFAULT_MIN_WEIGHT = 0; // kein Floor per Default
 export const DEFAULT_KAPPA_SCORE_TILT = 0.35;
 
+// ─── Dynamisches maxWeight für kleine Portfolios (Auftrag 10.08.2026) ───────
+//
+// Der feste 30%-Default war fachlich unsinnig für 2-3-Titel-Portfolios:
+// maxWeight=0.30 macht bei n≤3 IMMER `cap_infeasible` (0.30×2=0.60<1,
+// 0.30×3=0.90<1) -- Nutzer, die bewusst konzentriert in 2-3 Aktien
+// investieren wollen (z.B. 50/50 oder 70/30), sehen eine Dauerwarnung,
+// obwohl die Optimierung korrekt arbeitet.
+//
+// Zwei getrennte Konzepte, NICHT verwechseln:
+// 1. suggestedDefault(n): nur für EIN NEUES/LEERES Policy-Feld -- schlägt
+//    einen sinnvollen Startwert vor, abhängig von n. Ueberschreibt NIE eine
+//    bereits vom User gesetzte maxWeight-Eingabe.
+// 2. resolveEffectiveMaxWeight(userMaxWeight, n): harter Floor, der IMMER
+//    auf den vom User (oder von suggestedDefault) stammenden Wert angewendet
+//    wird. effective = max(userMaxWeight, 1/n) -- ein Cap unter 1/n ist bei
+//    n Titeln rechnerisch nie erfüllbar (Σw=1 unmoeglich), also wird er
+//    IMMER auf 1/n angehoben, NIE still auf den Nutzerwert reduziert. Das
+//    ist die explizite User-Entscheidung fuer dieses Ticket: ein Cap unter
+//    1/n wird NICHT als echter Cap uebernommen (das wuerde wieder Equal-
+//    Weight- oder "Maske zeigt X, Wirkung ist Y"-Situationen erzeugen wie
+//    beim urspruenglichen Equal-Weight-Bug), sondern transparent angehoben.
+
+/** Empfohlener Policy-Default fuer maxWeight, abhängig von der Anzahl Titel.
+ * Nur als STARTWERT fuer ein neues/leeres Feld gedacht -- ersetzt NIEMALS
+ * eine bereits vorhandene User-Eingabe (das ist Aufgabe der aufrufenden
+ * UI-Schicht, z.B. beim ersten Laden der Policy oder beim Reset-Button). */
+export function suggestedMaxWeightDefault(n: number): number {
+  if (n <= 1) return 1.0;
+  if (n === 2) return 1.0; // volle Konzentration erlaubt (z.B. 50/50 oder 70/30)
+  if (n === 3) return 0.50;
+  if (n === 4) return 0.35;
+  return DEFAULT_MAX_WEIGHT; // n≥5: bisheriger Diversifikations-Default
+}
+
+export interface EffectiveMaxWeightResult {
+  userMaxWeight: number; // unveraendert wie eingegeben/uebergeben
+  effectiveMaxWeight: number; // tatsaechlich in der Optimierung verwendeter Cap
+  minFeasible: number; // 1/n -- die absolute Untergrenze, unter der Σw=1 nie erreichbar ist
+  wasFloorApplied: boolean; // true wenn userMaxWeight < minFeasible und daher angehoben wurde
+}
+
+/** Wendet den harten 1/n-Floor auf einen (User- oder Default-)maxWeight-Wert
+ * an. IMMER `effective = max(userMaxWeight, 1/n)` -- ein Cap unter 1/n ist
+ * bei n Titeln rechnerisch nie erfüllbar und wuerde sonst denselben Effekt
+ * wie der urspruengliche Equal-Weight-Bug erzeugen (Maske zeigt einen Wert,
+ * die tatsaechliche Struktur ist eine andere). Explizite User-Entscheidung
+ * (10.08.2026): Floor statt "User-Wert respektieren + nur warnen". */
+export function resolveEffectiveMaxWeight(userMaxWeight: number, n: number): EffectiveMaxWeightResult {
+  const minFeasible = n > 0 ? 1 / n : 1;
+  const effectiveMaxWeight = Math.max(userMaxWeight, minFeasible);
+  return {
+    userMaxWeight,
+    effectiveMaxWeight,
+    minFeasible,
+    wasFloorApplied: userMaxWeight < minFeasible - 1e-9,
+  };
+}
+
 export type WeightMode = "A" | "B" | "C" | "kelly-only";
 
 export interface WeightingInput {

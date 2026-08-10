@@ -36,6 +36,7 @@ import PortfolioOverview, { type TimeframeFilter, type DirectionFilter } from "@
 import PortfolioInvestmentsTable from "@/components/portfolio/PortfolioInvestmentsTable";
 import PortfolioOptimizationPanel from "@/components/portfolio/PortfolioOptimizationPanel";
 import { computePortfolioFromPositions, MIN_POSITIONS_FOR_OPTIMIZATION } from "@/lib/portfolio/engine";
+import { suggestedMaxWeightDefault } from "@/lib/portfolio/weighting";
 
 // Sidebar-Sprungnavigation — gleiches Muster wie BTC-/Rezessions-Dashboard
 const SECTIONS = [
@@ -232,6 +233,18 @@ export default function PortfolioPage() {
   const kellyFractionNum = Number(kellyFraction) || 0.5;
   const kellyMaxF = (Number(kellyMaxFPct) || 25) / 100;
 
+  // Anzahl offener Long-Positionen -- nur fuer den Policy-Hinweis (empfohlener
+  // maxWeight-Wert je Titelzahl, Folge-Ticket "Dynamisches maxWeight fuer
+  // kleine Portfolios"). Ueberschreibt NIE den vom User gesetzten Wert --
+  // reiner Hinweistext, die tatsaechliche Floor-Anwendung passiert in engine.ts.
+  const openLongPositionsCount = useMemo(
+    () => positions.filter(p => p.status === "open" && p.side === "long").length,
+    [positions]
+  );
+  const suggestedMaxWeightPct = openLongPositionsCount >= MIN_POSITIONS_FOR_OPTIMIZATION
+    ? Math.round(suggestedMaxWeightDefault(openLongPositionsCount) * 100)
+    : null;
+
   // Ziel-Gewichte fuer den Pie-Toggle "Ist-Marktwert" vs. "Ziel-Gewicht CAPM"
   // (Auftrag 10.08.2026, Punkt 6) -- gleicher Engine-Aufruf wie im Optimierungs-
   // Panel, hier nur die Gewichte extrahiert fuer PortfolioOverview.
@@ -397,6 +410,14 @@ export default function PortfolioPage() {
                   <div>
                     <label className="text-xs text-muted-foreground">maxWeight (%)</label>
                     <Input value={maxWeightPct} onChange={(e) => setMaxWeightPct(e.target.value)} data-testid="input-maxweight" />
+                    {suggestedMaxWeightPct != null && Number(maxWeightPct) !== suggestedMaxWeightPct && (
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Empfehlung bei {openLongPositionsCount} Titeln: {suggestedMaxWeightPct}%.{" "}
+                        <button type="button" className="text-primary underline" onClick={() => setMaxWeightPct(String(suggestedMaxWeightPct))}>
+                          Übernehmen
+                        </button>
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground">Kelly-Fraction (0.5=Half)</label>

@@ -110,13 +110,27 @@ export default function PortfolioOptimizationPanel({
       <div>
         <h3 className="text-sm font-semibold">Optimierung — CAPM + Kelly (automatisch ab {MIN_POSITIONS_FOR_OPTIMIZATION} Positionen)</h3>
         <p className="text-[10px] text-muted-foreground">{result.mode ? MODE_LABELS[result.mode] : "—"}</p>
+        <p className="text-[10px] text-muted-foreground mt-0.5">
+          maxWeight: <span className="font-mono">{fmtPct(result.userMaxWeight, 0)}</span> (Policy)
+          {result.wasFloorApplied && (
+            <> → wirksam <span className="font-mono text-primary">{fmtPct(result.effectiveMaxWeight, 0)}</span> (auf 1/{result.rows.length} angehoben, da {fmtPct(result.userMaxWeight, 0)} bei {result.rows.length} Titeln unerfüllbar wäre)</>
+          )}
+        </p>
       </div>
 
+      {result.wasFloorApplied && (
+        <div className="flex items-start gap-2 bg-sky-500/10 border border-sky-500/30 rounded-lg p-3">
+          <Info className="w-4 h-4 text-sky-500 shrink-0 mt-0.5" />
+          <p className="text-xs text-sky-600">
+            Der Policy-Cap ({fmtPct(result.userMaxWeight, 0)}) ist bei {result.rows.length} Titeln rechnerisch nicht erreichbar (Summe der Gewichte muss 100% ergeben). Er wurde deshalb automatisch auf <strong>{fmtPct(result.effectiveMaxWeight, 0)}</strong> (= 1/{result.rows.length}) angehoben — das ist die kleinste Obergrenze, die bei {result.rows.length} Titeln überhaupt funktioniert. Trage in der Policy einen höheren Wert ein, wenn du bewusst diversifizieren willst.
+          </p>
+        </div>
+      )}
       {result.fallbackReason === "cap_infeasible" && (
         <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
           <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-500">
-            Die eingestellte maxWeight-Obergrenze ist bei {result.rows.length} Titeln rechnerisch nicht einhaltbar (maxWeight × Anzahl &lt; 100%). Der Cap wurde deshalb <strong>nicht</strong> durchgesetzt — die Gewichte unten zeigen die unbeschränkte Optimierungsstruktur. Erhöhe maxWeight in der Policy, um den Cap wieder wirksam zu machen.
+            Selbst der automatische 1/n-Floor konnte den Cap nicht retten (numerischer Grenzfall) — die Gewichte unten zeigen die unbeschränkte Optimierungsstruktur.
           </p>
         </div>
       )}

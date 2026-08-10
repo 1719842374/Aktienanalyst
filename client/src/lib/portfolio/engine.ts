@@ -17,7 +17,7 @@
  */
 import type { PortfolioPosition } from "./positions";
 import { buildCovariance, type PricePoint, type CovarianceResult } from "./covariance";
-import { allocate, type WeightMode } from "./weighting";
+import { allocate, resolveEffectiveMaxWeight, DEFAULT_MAX_WEIGHT, type WeightMode } from "./weighting";
 import { sharpeReport } from "./sharpe";
 import { applyKellyPolicy, kellyContinuous } from "./kelly";
 import { assessConcentration, type ConcentrationResult } from "./concentration";
@@ -64,11 +64,24 @@ export interface EngineResult {
   excludedTickers: string[]; // Positionen ohne ausreichende Historie ODER ohne Override -- nicht in der Optimierung
   /** Strukturierter Fallback-Grund fuer sichtbare UI-Warnung (10.08.2026
    * Equal-Weight-Bugfix). null = normale Optimierung ohne Einschraenkung.
-   * "cap_infeasible": maxWeight*n < 1, Cap wurde NICHT durchgesetzt (Gewichte
-   * zeigen unbeschraenkte Struktur, koennen den UI-Cap ueberschreiten).
+   * "cap_infeasible": selbst der 1/n-Floor konnte den Cap nicht retten (sollte
+   * nach Einfuehrung des dynamischen maxWeight praktisch nie mehr auftreten,
+   * bleibt als Sicherheitsnetz fuer Kanten/Rundungsfaelle erhalten).
    * "solve_failed": Σ-Invertierung ist trotz Ridge/Shrinkage gescheitert,
    * Equal-Weight-Basis wurde verwendet. */
   fallbackReason: "cap_infeasible" | "solve_failed" | null;
+  /** Dynamisches maxWeight (Auftrag 10.08.2026, Folge-Ticket "Dynamisches
+   * maxWeight fuer kleine Portfolios"): userMaxWeight ist der von der Policy
+   * uebergebene Wert (unveraendert), effectiveMaxWeight der tatsaechlich in
+   * der Optimierung verwendete Cap NACH Anwendung des 1/n-Floors
+   * (effective = max(userMaxWeight, 1/n)). wasFloorApplied=true, wenn der
+   * User-Wert unter 1/n lag und deshalb transparent angehoben wurde -- das
+   * ist eine bewusste Entscheidung: ein Cap unter 1/n ist bei n Titeln nie
+   * erfuellbar und wird NIE als echter Cap uebernommen (siehe weighting.ts
+   * resolveEffectiveMaxWeight-Docstring). */
+  userMaxWeight: number;
+  effectiveMaxWeight: number;
+  wasFloorApplied: boolean;
   flags: string[];
 }
 
@@ -106,6 +119,7 @@ export function computePortfolioFromPositions(opts: {
       status: "insufficient_positions", mode: null, rows: [], sharpePortfolio: null,
       sharpeEqualWeight: null, deltaVsEqual: null, covariance: null, concentration: null, excludedTickers: [],
       fallbackReason: null,
+      userMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, effectiveMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, wasFloorApplied: false,
       flags: [`Mindestens ${MIN_POSITIONS_FOR_OPTIMIZATION} offene Positionen für Portfolio-Optimierung erforderlich (aktuell: ${positions.length}).`],
     };
   }
@@ -137,6 +151,7 @@ export function computePortfolioFromPositions(opts: {
       status: "insufficient_history", mode: null, rows: [], sharpePortfolio: null,
       sharpeEqualWeight: null, deltaVsEqual: null, covariance, concentration: null, excludedTickers,
       fallbackReason: null,
+      userMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, effectiveMaxWeight: opts.maxWeight ?? DEFAULT_MAX_WEIGHT, wasFloorApplied: false,
       flags: [...flags, `Nur ${usableTickers.length} Position(en) mit ausreichender Historie/Override -- mindestens ${MIN_POSITIONS_FOR_OPTIMIZATION} nötig.`],
     };
   }
@@ -206,7 +221,19 @@ export function computePortfolioFromPositions(opts: {
     flags.push("Für mindestens einen Override-Ticker ohne Historie wurde die Korrelation zu anderen Titeln als 0 angenommen (Diagonal-Näherung) -- keine Kovarianzdaten verfügbar.");
   }
 
-  const allocResult = allocate({ tickers: usableTickers, mu: muForAllocation, Sigma, rf, scores, maxWeight: opts.maxWeight, kappa: undefined });
+  // Dynamisches maxWeight (Folge-Ticket 10.08.2026): der User-/Policy-Wert
+  // wird IMMER auf mindestens 1/n angehoben, bevor er in die Optimierung
+  // geht. Ein Cap unter 1/n ist bei n Titeln nie erfüllbar und wuerde sonst
+  // exakt denselben "Maske zeigt X, Wirkung ist Y"-Effekt erzeugen wie der
+  // urspruengliche Equal-Weight-Bug -- daher harter Floor, transparent geflaggt.
+  const userMaxWeight = opts.maxWeight ?? DEFAULT_MAX_WEIGHT;
+  const maxWeightResolution = resolveEffectiveMaxWeight(userMaxWeight, n);
+  const effectiveMaxWeight = maxWeightResolution.effectiveMaxWeight;
+  if (maxWeightResolution.wasFloorApplied) {
+    flags.push(`maxWeight=${(userMaxWeight * 100).toFixed(0)}% liegt unter der bei ${n} Titeln erreichbaren Untergrenze (1/${n}=${(maxWeightResolution.minFeasible * 100).toFixed(0)}%) -- effektiv auf ${(effectiveMaxWeight * 100).toFixed(0)}% angehoben, damit Σw=1 erfüllbar bleibt.`);
+  }
+
+  const allocResult = allocate({ tickers: usableTickers, mu: muForAllocation, Sigma, rf, scores, maxWeight: effectiveMaxWeight, kappa: undefined });
   flags.push(...allocResult.notes);
   const fallbackReason: EngineResult["fallbackReason"] = allocResult.solveFailed
     ? "solve_failed"
@@ -262,6 +289,9 @@ export function computePortfolioFromPositions(opts: {
     concentration,
     excludedTickers,
     fallbackReason,
+    userMaxWeight,
+    effectiveMaxWeight,
+    wasFloorApplied: maxWeightResolution.wasFloorApplied,
     flags,
   };
 }
