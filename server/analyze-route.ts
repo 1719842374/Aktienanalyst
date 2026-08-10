@@ -117,6 +117,7 @@ import { getCachedRegulatoryAssessment } from "./regulatory";
 // module, see server/sec-segments.ts for the full fallback-chain rationale.
 import { fetchSecBusinessSegments } from "./sec-segments";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
+import { normalizePeerOverrides, buildAnalyzeCacheKey, applyPeerOverrides } from "./peer-cache-key";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -455,24 +456,31 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const { ticker, useLLM = false, force: forceRefresh = false, peerOverrides } = parsed.data;
       const upperTicker = ticker.toUpperCase();
 
-      // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): normalisierte Override-
-      // Listen, leer wenn nicht mitgeschickt -- reines Additiv, kein Effekt auf
-      // Ticker ohne Overrides.
-      const peerAddList = (peerOverrides?.add ?? []).map(t => t.trim().toUpperCase()).filter(Boolean);
-      const peerRemoveList = (peerOverrides?.remove ?? []).map(t => t.trim().toUpperCase()).filter(Boolean);
-      const hasPeerOverrides = peerAddList.length > 0 || peerRemoveList.length > 0;
+      // Auftrag 09.08.2026 / gehaertet 10.08.2026 ("Peer-Add/Remove zuverlaessig"):
+      // Normalisierung (trim, uppercase, dedupliziert, SORTIERT) lebt in
+      // server/peer-cache-key.ts -- pure, unit-getestet (script/test-peer-
+      // cache-key.ts). Root-Cause des urspruenglichen Bugs: die Listen wurden
+      // zwar uppercased, aber NICHT sortiert vor dem Cache-Key-Join -- zwei
+      // Requests mit semantisch identischem Override-Set aber unterschied-
+      // licher Array-Reihenfolge erzeugten unterschiedliche Cache-Keys und
+      // damit potenziell "Geister-Peers" aus einem alten Cache-Eintrag.
+      const { add: peerAddList, remove: peerRemoveList, hasOverrides: hasPeerOverrides } = normalizePeerOverrides(peerOverrides);
 
       // ── Cache check ──
       // Cache-Key MUSS die Peer-Overrides enthalten -- sonst wuerde ein User,
       // der LLY zu NVO hinzufuegt, den gecachten Response OHNE LLY zurueckbekommen
       // (oder umgekehrt: der naechste User ohne Override erhaelt versehentlich
       // die mit LLY angereicherte Version).
-      const cacheKey = `${upperTicker}:${useLLM}${hasPeerOverrides ? `:peers[+${peerAddList.join(",")}][-${peerRemoveList.join(",")}]` : ""}`;
+      const cacheKey = buildAnalyzeCacheKey(upperTicker, useLLM, peerAddList, peerRemoveList);
       if (!forceRefresh) {
         const cached = analysisCache.get(cacheKey);
-        if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cacheLLMModeMatches(cached.usedLLM, useLLM)) {
+        const cacheHit = !!(cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cacheLLMModeMatches(cached.usedLLM, useLLM));
+        if (hasPeerOverrides || cached) {
+          console.log(`[PEERS] ticker=${upperTicker} incoming overrides=[${[...peerAddList.map(t => `+${t}`), ...peerRemoveList.map(t => `-${t}`)].join(",")}] cacheKey=${cacheKey} cacheHit=${cacheHit}`);
+        }
+        if (cacheHit) {
           console.log(`[ANALYZE] Cache hit for ${upperTicker}`);
-          return res.json(cached.result);
+          return res.json(cached!.result);
         }
       }
 
@@ -1071,13 +1079,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Max. 8 Peers gesamt, damit Sektor-Median/Peer-Tabelle stabil bleiben
       // (Ticket-Vorgabe "Max. Anzahl Peers begrenzen").
       if (hasPeerOverrides) {
-        peerTickers = peerTickers.filter(t => !peerRemoveList.includes(t));
-        for (const addTicker of peerAddList) {
-          if (addTicker !== upperTicker && !peerTickers.includes(addTicker) && peerTickers.length < 8) {
-            peerTickers.push(addTicker);
-          }
-        }
-        console.log(`[ANALYZE] Peer-Override fuer ${upperTicker}: +[${peerAddList.join(",")}] -[${peerRemoveList.join(",")}] -> effektiv [${peerTickers.join(",")}]`);
+        peerTickers = applyPeerOverrides(peerTickers, upperTicker, peerAddList, peerRemoveList, 8);
+        // Ticket-Pflichtformat (10.08.2026, "Peer-Add/Remove zuverlaessig"):
+        // [PEERS] ticker=... incoming overrides=[...] effective=[...] cacheKey=... cacheHit=...
+        console.log(`[PEERS] ticker=${upperTicker} incoming overrides=[${[...peerAddList.map(t => `+${t}`), ...peerRemoveList.map(t => `-${t}`)].join(",")}] effective=[${peerTickers.join(",")}] cacheKey=${cacheKey}`);
       }
 
       // ── 10. News ──
@@ -1823,15 +1828,31 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const ticker = String(req.body?.ticker ?? "").toUpperCase().trim();
       if (!ticker) return res.status(400).json({ error: "ticker fehlt" });
 
-      // /api/analyze keys its cache as `${ticker}:${useLLM}` (see cacheKey above),
-      // not the bare ticker. Try both variants since we don't know which mode
-      // the initial analyze call used.
-      const cached = analysisCache.get(`${ticker}:true`) ?? analysisCache.get(`${ticker}:false`);
+      // /api/analyze keys its cache as `analyze:${ticker}:llm:${0|1}[:peers:+..:-..]`
+      // (siehe cacheKey oben, gehaertet 10.08.2026 fuer Peer-Override-Stabilitaet).
+      // Da hier zum Zeitpunkt des KI-Enrich-Klicks nicht bekannt ist, ob/welche
+      // Peer-Overrides beim urspruenglichen /api/analyze-Call aktiv waren, wird
+      // die Cache-Map nach dem neuesten passenden Eintrag fuer diesen Ticker
+      // durchsucht (mit oder ohne Peer-Overrides, LLM an/aus) -- robuster als
+      // eine feste Zwei-Varianten-Rateliste, die bei aktiven Overrides ins
+      // Leere liefe. Faellt zusaetzlich auf die alte Key-Form zurueck (Legacy-
+      // Cache-Eintraege aus einem laufenden Prozess vor diesem Deploy).
+      let cached = analysisCache.get(`analyze:${ticker}:llm:1`) ?? analysisCache.get(`analyze:${ticker}:llm:0`);
+      let cacheKeyUsed: string | null = cached ? (analysisCache.get(`analyze:${ticker}:llm:1`) === cached ? `analyze:${ticker}:llm:1` : `analyze:${ticker}:llm:0`) : null;
       if (!cached) {
+        for (const [key, entry] of Array.from(analysisCache.entries())) {
+          if (key.startsWith(`analyze:${ticker}:llm:`)) { cached = entry; cacheKeyUsed = key; break; }
+        }
+      }
+      if (!cached) {
+        // Legacy-Fallback: alte Key-Form von vor der Peer-Override-Haertung.
+        cached = analysisCache.get(`${ticker}:true`) ?? analysisCache.get(`${ticker}:false`);
+        cacheKeyUsed = cached ? (analysisCache.get(`${ticker}:true`) === cached ? `${ticker}:true` : `${ticker}:false`) : null;
+      }
+      if (!cached || !cacheKeyUsed) {
         return res.status(404).json({ error: "Keine Analyse im Cache — zuerst /api/analyze aufrufen" });
       }
       const a = cached.result;
-      const cacheKeyUsed = analysisCache.has(`${ticker}:true`) ? `${ticker}:true` : `${ticker}:false`;
 
       if (!isLLMAvailable()) {
         return res.json({ _llmSkipped: true, catalysts: a.catalysts, modelUsed: null });
