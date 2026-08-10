@@ -43,6 +43,8 @@ console.log("Sharpe_p:", result.sharpePortfolio?.toFixed(3));
 console.log("Sharpe_eq:", result.sharpeEqualWeight?.toFixed(3));
 console.log("Δ vs Equal:", result.deltaVsEqual?.toFixed(3));
 console.log("");
+console.log("Konzentration:", result.concentration ? `HHI=${result.concentration.hhi.toFixed(3)} Effective-N=${result.concentration.effectiveN.toFixed(2)} avgCorr=${result.concentration.avgPairwiseCorrelation?.toFixed(2)}` : "n/a");
+console.log("");
 console.log("Flags:");
 result.flags.forEach(f => console.log(" -", f));
 

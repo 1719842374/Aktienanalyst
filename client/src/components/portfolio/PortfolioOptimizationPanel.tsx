@@ -129,6 +129,23 @@ export default function PortfolioOptimizationPanel({
         </div>
       </div>
 
+      {result.concentration && (
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-muted/20 rounded-lg p-3">
+            <div className="text-xs text-muted-foreground">HHI (Konzentration)</div>
+            <div className="text-base font-semibold tabular-nums">{result.concentration.hhi.toFixed(3)}</div>
+          </div>
+          <div className="bg-muted/20 rounded-lg p-3">
+            <div className="text-xs text-muted-foreground">Effective-N</div>
+            <div className="text-base font-semibold tabular-nums">{result.concentration.effectiveN.toFixed(2)} <span className="text-[10px] text-muted-foreground">von {result.rows.length}</span></div>
+          </div>
+          <div className="bg-muted/20 rounded-lg p-3">
+            <div className="text-xs text-muted-foreground">Ø-Korrelation</div>
+            <div className="text-base font-semibold tabular-nums">{fmtPct(result.concentration.avgPairwiseCorrelation, 0)}</div>
+          </div>
+        </div>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -149,7 +166,9 @@ export default function PortfolioOptimizationPanel({
               <tr key={row.ticker} className="border-b border-border/30">
                 <td className="py-2 px-2 font-mono font-medium">{row.ticker}</td>
                 <td className="py-2 px-2 text-right tabular-nums">
-                  {fmtPct(row.mu)}{row.muSource === "override" && <span className="text-primary ml-1" title="manueller Override">*</span>}
+                  {fmtPct(row.mu)}
+                  {row.muSource === "override" && <span className="text-primary ml-1" title="manueller Override">*</span>}
+                  {row.muWasWinsorized && <span className="text-amber-500 ml-1" title="μ wurde winsorisiert (extreme Historie gedämpft)">†</span>}
                 </td>
                 <td className="py-2 px-2 text-right tabular-nums">
                   {fmtPct(row.sigma)}{row.sigmaSource === "override" && <span className="text-primary ml-1" title="manueller Override">*</span>}
@@ -167,7 +186,7 @@ export default function PortfolioOptimizationPanel({
       </div>
 
       <p className="text-[10px] text-muted-foreground">
-        <span className="text-primary">*</span> manueller Override (statt aus Kurs-Historie berechnet) · <strong>w% CAPM</strong> = Zielstruktur des risikobehafteten Portfolios (Summe 100%) · <strong>Kelly %/€</strong> = separater Kapitaleinsatz-Hinweis pro Titel bezogen auf Gesamtkapital K, ersetzt NICHT die CAPM-Diversifikation.
+        <span className="text-primary">*</span> manueller Override (statt aus Kurs-Historie berechnet) · <span className="text-amber-500">†</span> μ winsorisiert (Band ±20%/+40% p.a., extreme historische Rendite gedämpft) · <strong>w% CAPM</strong> = Zielstruktur des risikobehafteten Portfolios (Summe 100%) · <strong>Kelly %/€</strong> = separater Kapitaleinsatz-Hinweis pro Titel bezogen auf Gesamtkapital K, ersetzt NICHT die CAPM-Diversifikation.
       </p>
 
       {result.flags.length > 0 && (

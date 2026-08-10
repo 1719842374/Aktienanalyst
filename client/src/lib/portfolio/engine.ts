@@ -20,6 +20,8 @@ import { buildCovariance, type PricePoint, type CovarianceResult } from "./covar
 import { allocate, type WeightMode } from "./weighting";
 import { sharpeReport } from "./sharpe";
 import { applyKellyPolicy, kellyContinuous } from "./kelly";
+import { assessConcentration, type ConcentrationResult } from "./concentration";
+import { winsorizeMuArray, DEFAULT_MU_WINSORIZE_MIN, DEFAULT_MU_WINSORIZE_MAX } from "./winsorize";
 
 export const MIN_POSITIONS_FOR_OPTIMIZATION = 2;
 
@@ -39,6 +41,7 @@ export interface EngineRow {
   ticker: string;
   mu: number;
   muSource: "override" | "historical";
+  muWasWinsorized: boolean; // true wenn das historische μ auf das Band geclippt wurde
   sigma: number;
   sigmaSource: "override" | "historical";
   score: number | null;
@@ -57,6 +60,7 @@ export interface EngineResult {
   sharpeEqualWeight: number | null;
   deltaVsEqual: number | null;
   covariance: CovarianceResult | null;
+  concentration: ConcentrationResult | null; // HHI/Effective-N/Korrelations-Warnungen (Diagnostik, ändert keine Gewichte)
   excludedTickers: string[]; // Positionen ohne ausreichende Historie ODER ohne Override -- nicht in der Optimierung
   flags: string[];
 }
@@ -80,6 +84,12 @@ export function computePortfolioFromPositions(opts: {
   kellyFraction?: number;
   kellyMaxF?: number;
   scoreDefault?: number; // wenn kein Score verfuegbar (Ticket: "neutral 50")
+  /** μ-Winsorizing-Band (nur auf historisch geschaetzte μ angewendet, NIE auf
+   * Overrides). Default [-20%, +40%] p.a. (Folge-Ticket Punkt 3). Auf `null`
+   * setzen, um Winsorizing komplett zu deaktivieren (z.B. fuer Tests, die das
+   * unveraenderte Roh-μ pruefen wollen). */
+  muWinsorizeMin?: number | null;
+  muWinsorizeMax?: number | null;
 }): EngineResult {
   const { positions, historicalPricesByTicker, rf, capital } = opts;
   const flags: string[] = [];
@@ -87,7 +97,7 @@ export function computePortfolioFromPositions(opts: {
   if (positions.length < MIN_POSITIONS_FOR_OPTIMIZATION) {
     return {
       status: "insufficient_positions", mode: null, rows: [], sharpePortfolio: null,
-      sharpeEqualWeight: null, deltaVsEqual: null, covariance: null, excludedTickers: [],
+      sharpeEqualWeight: null, deltaVsEqual: null, covariance: null, concentration: null, excludedTickers: [],
       flags: [`Mindestens ${MIN_POSITIONS_FOR_OPTIMIZATION} offene Positionen für Portfolio-Optimierung erforderlich (aktuell: ${positions.length}).`],
     };
   }
@@ -117,7 +127,7 @@ export function computePortfolioFromPositions(opts: {
   if (usableTickers.length < MIN_POSITIONS_FOR_OPTIMIZATION) {
     return {
       status: "insufficient_history", mode: null, rows: [], sharpePortfolio: null,
-      sharpeEqualWeight: null, deltaVsEqual: null, covariance, excludedTickers,
+      sharpeEqualWeight: null, deltaVsEqual: null, covariance, concentration: null, excludedTickers,
       flags: [...flags, `Nur ${usableTickers.length} Position(en) mit ausreichender Historie/Override -- mindestens ${MIN_POSITIONS_FOR_OPTIMIZATION} nötig.`],
     };
   }
@@ -145,6 +155,23 @@ export function computePortfolioFromPositions(opts: {
     scores.push(pos.scoreOverride ?? opts.scoreDefault ?? 50);
   }
 
+  // μ-Winsorizing: daempft extreme historische Renditeschaetzungen (z.B. ein
+  // Titel mit starker Kursrally im Historie-Fenster), BEVOR sie in die
+  // Max-Sharpe-Gewichtung einfliessen. Overrides bleiben unangetastet.
+  const muMin = opts.muWinsorizeMin === null ? null : (opts.muWinsorizeMin ?? DEFAULT_MU_WINSORIZE_MIN);
+  const muMax = opts.muWinsorizeMax === null ? null : (opts.muWinsorizeMax ?? DEFAULT_MU_WINSORIZE_MAX);
+  let muForAllocation = mu;
+  const muWasWinsorized: boolean[] = usableTickers.map(() => false);
+  if (muMin != null && muMax != null) {
+    const winsorized = winsorizeMuArray(mu, muSource, muMin, muMax);
+    muForAllocation = winsorized.mu;
+    winsorized.clippedTickerIndices.forEach(i => { muWasWinsorized[i] = true; });
+    if (winsorized.clippedTickerIndices.length > 0) {
+      const clippedNames = winsorized.clippedTickerIndices.map(i => usableTickers[i]).join(", ");
+      flags.push(`μ-Winsorizing angewendet auf [${(muMin * 100).toFixed(0)}%, ${(muMax * 100).toFixed(0)}%] p.a. für: ${clippedNames} — historische Rendite wurde gedämpft, um Overfitting auf vergangene Kursrallys zu vermeiden.`);
+    }
+  }
+
   // Σ-Teilmatrix nur für usable Ticker MIT Historie aufbauen. Ticker mit
   // reinem Override (keine Historie) bekommen eine Diagonal-Naeherung
   // (Kovarianz zu anderen Titeln unbekannt -> 0 angenommen, transparent
@@ -170,10 +197,12 @@ export function computePortfolioFromPositions(opts: {
     flags.push("Für mindestens einen Override-Ticker ohne Historie wurde die Korrelation zu anderen Titeln als 0 angenommen (Diagonal-Näherung) -- keine Kovarianzdaten verfügbar.");
   }
 
-  const allocResult = allocate({ tickers: usableTickers, mu, Sigma, rf, scores, maxWeight: opts.maxWeight, kappa: undefined });
+  const allocResult = allocate({ tickers: usableTickers, mu: muForAllocation, Sigma, rf, scores, maxWeight: opts.maxWeight, kappa: undefined });
   flags.push(...allocResult.notes);
 
-  const report = sharpeReport({ w: allocResult.weights, mu, Sigma, rf });
+  const report = sharpeReport({ w: allocResult.weights, mu: muForAllocation, Sigma, rf });
+  const concentration = assessConcentration(allocResult.weights, Sigma);
+  flags.push(...concentration.flags);
 
   // Ist-Gewichte aus aktuellem Marktwert (nur für Positionen mit gültigem Kurs).
   const marketValues = usableTickers.map(t => {
@@ -187,12 +216,16 @@ export function computePortfolioFromPositions(opts: {
   const kellyMaxF = opts.kellyMaxF ?? 0.25;
 
   const rows: EngineRow[] = usableTickers.map((ticker, i) => {
+    // Kelly rechnet bewusst auf dem UNGECLIPPTEN μ weiter -- Winsorizing ist
+    // eine CAPM/Max-Sharpe-Massnahme gegen Overfitting im Basket, Kelly bleibt
+    // die separate Einzeltitel-Kennzahl (Zwecktrennung laut kelly.ts §D.1).
     const fStar = kellyContinuous(mu[i], sigma[i], rf);
     const policy = applyKellyPolicy(fStar, { fraction: kellyFraction, maxF: kellyMaxF });
     return {
       ticker,
-      mu: mu[i],
+      mu: muForAllocation[i],
       muSource: muSource[i],
+      muWasWinsorized: muWasWinsorized[i],
       sigma: sigma[i],
       sigmaSource: sigmaSource[i],
       score: scores[i],
@@ -212,6 +245,7 @@ export function computePortfolioFromPositions(opts: {
     sharpeEqualWeight: report.sharpeEqualWeight,
     deltaVsEqual: report.deltaVsEqual,
     covariance,
+    concentration,
     excludedTickers,
     flags,
   };

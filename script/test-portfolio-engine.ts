@@ -138,5 +138,59 @@ check("Optimierung läuft trotzdem für die übrigen 2 Ticker", mixedResult.stat
 const emptyResult = computePortfolioFromPositions({ positions: [], historicalPricesByTicker: {}, rf: 0.03, capital: 100000 });
 check("Leere Positionsliste -> insufficient_positions, keine Rows", emptyResult.status === "insufficient_positions" && emptyResult.rows.length === 0);
 
-console.log(failed === 0 ? `\n✅ Alle Portfolio-Engine-Tests bestanden (16 Checks)` : `\n❌ ${failed} Test(s) fehlgeschlagen`);
+// === 10. μ-Winsorizing ist standardmaessig aktiv und wirkt auf extreme Historie-μ ===
+// (Folge-Ticket 10.08.2026 Punkt 3) -- baue eine Serie mit sehr hoher Drift,
+// die garantiert ueber dem Default-Max (+40% p.a.) annualisiert.
+const randExtreme = seededRandom(55);
+const extremeDriftReturns = Array.from({ length: 150 }, () => 0.006 + (randExtreme() - 0.5) * 0.01); // ~150%+ p.a. Drift
+const extremeSeries = makeSeries(100, extremeDriftReturns);
+
+const winsorizeResult = computePortfolioFromPositions({
+  positions: [
+    { ticker: "EXTREME", qty: 10, entryPrice: 100, lastPrice: 100, side: "long" },
+    { ticker: "LOW", qty: 10, entryPrice: 300, lastPrice: 300, side: "long" },
+  ],
+  historicalPricesByTicker: { EXTREME: extremeSeries, LOW: seriesLowDrift },
+  rf: 0.03, capital: 100000,
+});
+const extremeRow = winsorizeResult.rows.find(r => r.ticker === "EXTREME");
+check("μ-Winsorizing clippt extrem hohe historische Drift auf das Default-Max (+40%)", extremeRow != null && Math.abs(extremeRow.mu - 0.40) < 1e-6, JSON.stringify(extremeRow));
+check("muWasWinsorized=true fuer den geclippten Ticker", extremeRow?.muWasWinsorized === true, JSON.stringify(extremeRow));
+check("Winsorizing-Flag im Ergebnis vorhanden", winsorizeResult.flags.some(f => f.includes("Winsorizing")), JSON.stringify(winsorizeResult.flags));
+
+// Override bleibt auch bei extremem Wert unangetastet (kein Winsorizing auf User-Eingabe)
+const overrideExtreme = computePortfolioFromPositions({
+  positions: [
+    { ticker: "EXTREME", qty: 10, entryPrice: 100, lastPrice: 100, side: "long", muOverride: 0.90, sigmaOverride: 0.3 },
+    { ticker: "LOW", qty: 10, entryPrice: 300, lastPrice: 300, side: "long" },
+  ],
+  historicalPricesByTicker: { EXTREME: extremeSeries, LOW: seriesLowDrift },
+  rf: 0.03, capital: 100000,
+});
+const overrideRow = overrideExtreme.rows.find(r => r.ticker === "EXTREME");
+check("Explizites Override (90% p.a.) wird NICHT winsorisiert", overrideRow?.mu === 0.90 && overrideRow?.muWasWinsorized === false, JSON.stringify(overrideRow));
+
+// Winsorizing abschaltbar via null (fuer Tests/Debugging)
+const noWinsorizeResult = computePortfolioFromPositions({
+  positions: [
+    { ticker: "EXTREME", qty: 10, entryPrice: 100, lastPrice: 100, side: "long" },
+    { ticker: "LOW", qty: 10, entryPrice: 300, lastPrice: 300, side: "long" },
+  ],
+  historicalPricesByTicker: { EXTREME: extremeSeries, LOW: seriesLowDrift },
+  rf: 0.03, capital: 100000,
+  muWinsorizeMin: null, muWinsorizeMax: null,
+});
+const noWinsorizeRow = noWinsorizeResult.rows.find(r => r.ticker === "EXTREME");
+check("Winsorizing abschaltbar (muWinsorizeMin/Max=null) -- μ bleibt roh", noWinsorizeRow != null && noWinsorizeRow.mu > 0.40, JSON.stringify(noWinsorizeRow));
+
+// === 11. Concentration (HHI/Effective-N/Korrelation) wird im Ergebnis mitgeliefert ===
+
+check("concentration ist bei status=ok gesetzt (nicht null)", twoPosResult.concentration != null, JSON.stringify(twoPosResult.concentration));
+check("concentration.hhi liegt zwischen 1/n und 1", (() => {
+  const c = twoPosResult.concentration;
+  return c != null && c.hhi >= 0.5 - 1e-6 && c.hhi <= 1;
+})(), JSON.stringify(twoPosResult.concentration));
+check("concentration bei insufficient_positions/insufficient_history ist null", singlePosResult.concentration === null && noHistoryResult.concentration === null);
+
+console.log(failed === 0 ? `\n✅ Alle Portfolio-Engine-Tests bestanden (25 Checks)` : `\n❌ ${failed} Test(s) fehlgeschlagen`);
 process.exit(failed === 0 ? 0 : 1);
