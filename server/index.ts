@@ -11,6 +11,23 @@ import { registerRoutes } from "./routes-register";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
+// Guard against an unhandled rejection or exception anywhere in the app
+// (e.g. a background job like the 13F screener build) taking down the whole
+// process. Without this, Node's default behavior is to crash on an unhandled
+// rejection, which on Render means the entire server becomes unreachable
+// (including unrelated endpoints like /api/health) until the platform
+// restarts the instance — observed live on 2026-08-10 after the screener's
+// background build ran unattended for several minutes under SEC rate-limit
+// retries. Logging and continuing is safe here: individual request handlers
+// already have their own try/catch and return proper error responses: this
+// is a last-resort net for anything that slips through.
+process.on("unhandledRejection", (reason: any) => {
+  console.error(`[FATAL-GUARD] Unhandled promise rejection (process kept alive): ${reason?.stack || reason}`);
+});
+process.on("uncaughtException", (error: any) => {
+  console.error(`[FATAL-GUARD] Uncaught exception (process kept alive): ${error?.stack || error}`);
+});
+
 const app = express();
 const httpServer = createServer(app);
 

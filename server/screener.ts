@@ -17,9 +17,14 @@ import {
 import { STAR_INVESTORS, type StarInvestor } from "./star-investors";
 
 const SCREENER_CACHE_KEY = "screener_star_investors";
-// 100 deduplicated positions need 601 FMP calls including the one stock-list
-// reference call, staying inside the shared 750-call daily FMP plan budget.
-const MAX_SCREENED_TICKERS = 100;
+// Reduced from 100 to 50 after a live incident on 2026-08-10: a 100-ticker
+// build (601 FMP calls across 14 sequential-per-ticker enrichment chains,
+// held in memory alongside ~5700 raw SEC holdings) ran the Render instance
+// unresponsive for several minutes, including unrelated endpoints like
+// /api/health. 50 tickers already covers every issuer held by 2+ of the 14
+// star investors in practice and roughly halves both FMP call volume and
+// peak memory for the background build.
+const MAX_SCREENED_TICKERS = 50;
 const SEC_USER_AGENT = "Aktienanalyst Pro contact@example.com";
 const SEC_MIN_INTERVAL_MS = 120; // stays below the SEC's 10 requests/second guidance
 
