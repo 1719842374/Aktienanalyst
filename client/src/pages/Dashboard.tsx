@@ -279,6 +279,31 @@ export default function Dashboard() {
   // Wire the mutation to its ref so startAnalyze() can call it.
   analyzeMutationRef.current = analyzeMutation;
 
+  // Auftrag 10.08.2026 ("Portfolio UX", Teil A): Deep-Link von der Portfolio-
+  // Seite (/#/?ticker=XXX) zur Aktienanalyse dieses Tickers. NEUER, isolierter
+  // Effect -- laeuft nur einmal beim Mount, ruft ausschliesslich die
+  // bestehende startAnalyze() auf (keine Aenderung an TickerSearch,
+  // useLLMRef oder dem Section-Ref-System). force=false, damit ein
+  // vorhandener Analyse-Cache fuer den Ziel-Ticker normal genutzt wird statt
+  // einen Voll-Refresh zu erzwingen (Ticket-Vorgabe: "ohne Voll-Refresh wenn
+  // TTL ok").
+  const deepLinkHandledRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkHandledRef.current) return;
+    deepLinkHandledRef.current = true;
+    // Hash-basiertes Routing (useHashLocation, siehe App.tsx) -- der Query-
+    // String liegt IM Hash-Fragment (#/?ticker=XXX), nicht in
+    // window.location.search. Beide Formen werden vorsorglich unterstuetzt.
+    const hashQueryIdx = window.location.hash.indexOf("?");
+    const hashParams = hashQueryIdx >= 0 ? new URLSearchParams(window.location.hash.slice(hashQueryIdx + 1)) : null;
+    const searchParams = new URLSearchParams(window.location.search);
+    const deepLinkTicker = (hashParams?.get("ticker") ?? searchParams.get("ticker"))?.trim().toUpperCase();
+    if (deepLinkTicker) {
+      startAnalyze({ ticker: deepLinkTicker, llm: useLLMRef.current, force: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const scrollToSection = useCallback((id: number) => {
     const el = sectionRefs.current[id];
     if (el) {
