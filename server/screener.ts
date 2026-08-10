@@ -411,6 +411,46 @@ function validCachedData(value: any): value is ScreenerData {
     && Array.isArray(value.screenedStocks);
 }
 
+// A full 14-investor / ~100-ticker build takes several minutes (sequential
+// SEC rate-limiting + 6 sequential FMP calls per de-duplicated ticker).
+// Render's gateway kills any single request around ~75s with a 502, which
+// looked identical to the original "route missing" bug from the client's
+// point of view. Holding the HTTP request open for the whole build is
+// therefore not viable in production. Instead: kick the build off once in
+// the background (deduplicated so concurrent requests don't start it twice)
+// and let the client poll the same endpoint — it gets an immediate
+// {status:"building"} response until the cache is populated, matching the
+// existing frontend loading state ("13F-Holdings werden geladen...").
+let screenerBuildInFlight: Promise<void> | null = null;
+// Minimum number of successful 13F filers required before a build result is
+// trusted enough to overwrite the 24h cache. SEC EDGAR occasionally rate-
+// limits (HTTP 429) all 14 filer requests within a short window (e.g. after
+// several manual/force refreshes back to back). Without this guard, that
+// transient failure would silently "poison" the cache with an empty
+// {totalInvestors:0, screenedStocks:[]} result for a full 24h, hiding real
+// data behind what looks like a successful, cached response.
+const MIN_INVESTORS_TO_CACHE = 4;
+
+function triggerScreenerBuild(force: boolean): void {
+  if (screenerBuildInFlight) return;
+  console.log(`[SCREENER] building 13F star-investor screen force=${force} (background)`);
+  screenerBuildInFlight = buildScreenerData()
+    .then((data) => {
+      if (data.totalInvestors < MIN_INVESTORS_TO_CACHE) {
+        console.warn(`[SCREENER] build produced only ${data.totalInvestors} successful investor(s) (likely SEC rate-limit) — NOT caching, will retry on next request`);
+        return;
+      }
+      diskResearcherSet(SCREENER_CACHE_KEY, data);
+      console.log(`[SCREENER] background build complete: ${data.screenedStocks.length} tickers from ${data.totalInvestors} investors`);
+    })
+    .catch((error: any) => {
+      console.error(`[SCREENER] background build failed: ${error?.message}`);
+    })
+    .finally(() => {
+      screenerBuildInFlight = null;
+    });
+}
+
 export function registerScreenerRoute(app: Express): void {
   app.get("/api/screener", async (req, res) => {
     const force = String(req.query.force || "").toLowerCase() === "true";
@@ -426,14 +466,10 @@ export function registerScreenerRoute(app: Express): void {
         });
       }
     }
-    try {
-      console.log(`[SCREENER] building 13F star-investor screen force=${force}`);
-      const data = await buildScreenerData();
-      diskResearcherSet(SCREENER_CACHE_KEY, data);
-      return res.json(data);
-    } catch (error: any) {
-      console.error(`[SCREENER] build failed: ${error?.message}`);
-      return res.status(500).json({ error: error?.message || "Screener build failed" });
-    }
+    // No usable cache (or an explicit refresh was requested): trigger a
+    // background build if one isn't already running, and immediately return a
+    // "building" status instead of holding the connection open for minutes.
+    triggerScreenerBuild(force);
+    return res.status(202).json({ status: "building" });
   });
 }

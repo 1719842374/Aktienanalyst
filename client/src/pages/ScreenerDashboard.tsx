@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { Search, TrendingUp, TrendingDown, Users, DollarSign, ArrowUpDown, Filter, RefreshCw, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import { useLocation } from "wouter";
@@ -43,15 +42,52 @@ export default function ScreenerDashboard() {
   const [searchFilter, setSearchFilter] = useState("");
   const [, navigate] = useLocation();
 
-  const { data, isLoading, error, refetch, isFetching } = useQuery<ScreenerData>({
-    queryKey: ["/api/screener"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/screener");
-      return res.json();
-    },
-    staleTime: 24 * 60 * 60 * 1000, // 24h cache
-    retry: 1,
-  });
+  // /api/screener returns 202 {status:"building"} on first load / cache miss
+  // instead of holding the request open for the several minutes a full 14-
+  // investor SEC+FMP build takes (Render's gateway kills long requests with a
+  // 502 well before that, and apiRequest's own client-side timeout is 90s).
+  // Poll every 8s while building; the backend serializes concurrent builds so
+  // repeated polls just re-check the same in-flight/cached result.
+  const [data, setData] = useState<ScreenerData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isBuilding, setIsBuilding] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [isFetching, setIsFetching] = useState(false);
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = useCallback(async (force: boolean) => {
+    if (pollTimer.current) { clearTimeout(pollTimer.current); pollTimer.current = null; }
+    setIsFetching(true);
+    try {
+      const res = await apiRequest("GET", `/api/screener${force ? "?force=true" : ""}`);
+      if (res.status === 202) {
+        setIsBuilding(true);
+        setIsLoading(true);
+        pollTimer.current = setTimeout(() => load(false), 8000);
+        return;
+      }
+      if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
+      const json = await res.json();
+      setData(json);
+      setIsBuilding(false);
+      setIsLoading(false);
+      setError(null);
+    } catch (err: any) {
+      setError(err instanceof Error ? err : new Error(String(err)));
+      setIsBuilding(false);
+      setIsLoading(false);
+    } finally {
+      setIsFetching(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load(false);
+    return () => { if (pollTimer.current) clearTimeout(pollTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const refetch = () => load(true);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) setSortAsc(!sortAsc);
@@ -108,7 +144,10 @@ export default function ScreenerDashboard() {
               <h2 className="text-sm font-semibold">13F-Holdings werden geladen...</h2>
               <p className="text-xs text-muted-foreground mt-1">
                 SEC EDGAR Filings von 14 Star-Investoren abrufen + Bewertung berechnen.
-                <br />Erster Lauf dauert ~2-3 Minuten (wird dann 24h gecacht).
+                <br />
+                {isBuilding
+                  ? "Erster Lauf dauert bis zu ~8 Minuten (SEC-Rate-Limit + FMP-Anreicherung), wird dann 24h gecacht. Diese Seite aktualisiert sich automatisch."
+                  : "Erster Lauf dauert einige Minuten (wird dann 24h gecacht)."}
               </p>
             </div>
           </div>
