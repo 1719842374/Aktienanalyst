@@ -9,7 +9,7 @@
  * computePortfolioPerformanceSeries (client/src/lib/portfolio/positions.ts,
  * reine Funktionen, unit-getestet) -- KEIN LLM fuer Kurse/Performance/Gewichte.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { PieChart, Pie, Cell, Tooltip as PieTooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as AreaTooltip } from "recharts";
 import { Target, Award, PiggyBank } from "lucide-react";
 import {
@@ -55,6 +55,7 @@ export default function PortfolioOverview({
   onTimeframeChange,
   onDirectionChange,
   onSelectTicker,
+  capmWeights,
 }: {
   positions: PortfolioPosition[];
   lastPriceByTicker: Record<string, number | null | undefined>;
@@ -64,7 +65,13 @@ export default function PortfolioOverview({
   onTimeframeChange: (t: TimeframeFilter) => void;
   onDirectionChange: (d: DirectionFilter) => void;
   onSelectTicker?: (ticker: string) => void;
+  /** Ziel-Gewichte aus der CAPM-Optimierung (engine.ts), Ticker->Gewicht (0..1).
+   * Optional -- wenn nicht gesetzt oder leer, wird nur "Ist-Marktwert" angezeigt
+   * und der Toggle ausgeblendet (Auftrag 10.08.2026, Punkt 6). */
+  capmWeights?: Record<string, number> | null;
 }) {
+  const [pieMode, setPieMode] = useState<"market" | "capm">("market");
+  const hasCapmWeights = !!capmWeights && Object.keys(capmWeights).length > 0;
   const directionFiltered = useMemo(
     () => (direction === "all" ? positions : positions.filter(p => p.side === direction)),
     [positions, direction]
@@ -75,9 +82,18 @@ export default function PortfolioOverview({
   const rawSeries = useMemo(() => computePortfolioPerformanceSeries(directionFiltered, historicalPricesByTicker), [directionFiltered, historicalPricesByTicker]);
   const series = useMemo(() => filterByTimeframe(rawSeries, timeframe), [rawSeries, timeframe]);
 
-  const pieData = weights
+  const marketPieData = weights
     .filter(w => w.weight != null && w.weight > 0)
     .map(w => ({ name: w.position.ticker, value: (w.weight ?? 0) * 100, ticker: w.position.ticker }));
+
+  const capmPieData = hasCapmWeights
+    ? Object.entries(capmWeights!)
+        .filter(([, w]) => w > 0)
+        .map(([ticker, w]) => ({ name: ticker, value: w * 100, ticker }))
+    : [];
+
+  const effectivePieMode = hasCapmWeights ? pieMode : "market";
+  const pieData = effectivePieMode === "capm" ? capmPieData : marketPieData;
 
   return (
     <div className="space-y-4">
@@ -152,8 +168,30 @@ export default function PortfolioOverview({
       {/* Pie + Performance-Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-card rounded-xl border border-border p-4">
-          <h3 className="text-sm font-semibold">Selektierte Aktien</h3>
-          <p className="text-[10px] text-muted-foreground mb-2">Prozentuale Verteilung (Marktwert-Gewichte)</p>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <h3 className="text-sm font-semibold">Selektierte Aktien</h3>
+            {hasCapmWeights && (
+              <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-0.5 text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => setPieMode("market")}
+                  className={`px-2 py-1 rounded-md transition-colors ${effectivePieMode === "market" ? "bg-card shadow-sm font-semibold" : "text-muted-foreground"}`}
+                >
+                  Ist-Marktwert
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPieMode("capm")}
+                  className={`px-2 py-1 rounded-md transition-colors ${effectivePieMode === "capm" ? "bg-card shadow-sm font-semibold" : "text-muted-foreground"}`}
+                >
+                  Ziel-Gewicht CAPM
+                </button>
+              </div>
+            )}
+          </div>
+          <p className="text-[10px] text-muted-foreground mb-2">
+            {effectivePieMode === "capm" ? "Ziel-Allokation aus CAPM-Optimierung (Modus A/B/C)" : "Prozentuale Verteilung (Marktwert-Gewichte)"}
+          </p>
           {pieData.length === 0 ? (
             <div className="h-56 flex items-center justify-center text-xs text-muted-foreground">
               Keine Positionen — Kandidat hinzufügen

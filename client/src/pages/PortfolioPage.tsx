@@ -35,6 +35,7 @@ import {
 import PortfolioOverview, { type TimeframeFilter, type DirectionFilter } from "@/components/portfolio/PortfolioOverview";
 import PortfolioInvestmentsTable from "@/components/portfolio/PortfolioInvestmentsTable";
 import PortfolioOptimizationPanel from "@/components/portfolio/PortfolioOptimizationPanel";
+import { computePortfolioFromPositions, MIN_POSITIONS_FOR_OPTIMIZATION } from "@/lib/portfolio/engine";
 
 // Sidebar-Sprungnavigation — gleiches Muster wie BTC-/Rezessions-Dashboard
 const SECTIONS = [
@@ -231,6 +232,29 @@ export default function PortfolioPage() {
   const kellyFractionNum = Number(kellyFraction) || 0.5;
   const kellyMaxF = (Number(kellyMaxFPct) || 25) / 100;
 
+  // Ziel-Gewichte fuer den Pie-Toggle "Ist-Marktwert" vs. "Ziel-Gewicht CAPM"
+  // (Auftrag 10.08.2026, Punkt 6) -- gleicher Engine-Aufruf wie im Optimierungs-
+  // Panel, hier nur die Gewichte extrahiert fuer PortfolioOverview.
+  const capmWeights = useMemo(() => {
+    const openLongPositions = positions.filter(p => p.status === "open" && p.side === "long");
+    if (openLongPositions.length < MIN_POSITIONS_FOR_OPTIMIZATION) return null;
+    const enginePositions = openLongPositions.map(p => ({
+      ticker: p.ticker.toUpperCase(), qty: p.qty, entryPrice: p.entryPrice,
+      lastPrice: lastPriceByTicker[p.ticker.toUpperCase()], side: p.side as "long",
+      muOverride: p.muOverride, sigmaOverride: p.sigmaOverride, scoreOverride: p.scoreOverride,
+    }));
+    const histForEngine: Record<string, { date: string; close: number }[] | undefined> = {};
+    for (const p of openLongPositions) histForEngine[p.ticker.toUpperCase()] = historicalPricesByTicker[p.ticker.toUpperCase()];
+    const engineResult = computePortfolioFromPositions({
+      positions: enginePositions, historicalPricesByTicker: histForEngine,
+      rf: rfDecimal, capital: capitalBaseNum, maxWeight, kellyFraction: kellyFractionNum, kellyMaxF,
+    });
+    if (engineResult.status !== "ok") return null;
+    const map: Record<string, number> = {};
+    engineResult.rows.forEach(r => { map[r.ticker] = r.weightCapm; });
+    return map;
+  }, [positions, lastPriceByTicker, historicalPricesByTicker, rfDecimal, capitalBaseNum, maxWeight, kellyFractionNum, kellyMaxF]);
+
   // ── Scroll-Layout (identisch zu BTC-/Rezessions-Dashboard) ───────────────────
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -323,6 +347,7 @@ export default function PortfolioPage() {
                 onTimeframeChange={setTimeframe}
                 onDirectionChange={setDirection}
                 onSelectTicker={(ticker) => scrollToSection(2)}
+                capmWeights={capmWeights}
               />
             </div>
 
