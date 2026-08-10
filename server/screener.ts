@@ -89,7 +89,7 @@ interface AggregatedHolding {
   investors: string[];
 }
 
-interface StockListRow {
+export interface StockListRow {
   symbol: string;
   companyName: string;
 }
@@ -132,17 +132,44 @@ function isLikelyUsTicker(symbol: string): boolean {
   return /^[A-Z]{1,5}$/.test(symbol);
 }
 
-function resolveTickerFromStockList(issuer: string, rows: StockListRow[]): string | null {
+// Pre-normalized, pre-filtered view of the FMP stock list built ONCE per
+// build cycle instead of being recomputed on every lookup.
+//
+// PERFORMANCE INCIDENT (2026-08-10): the previous implementation called
+// normalizeCompanyName() (5 chained regex passes) on every row of the FULL
+// FMP stock list (tens of thousands of symbols) for EVERY SEC holding being
+// resolved. With 14 investors aggregating ~5700 raw holdings, that is
+// ~5700 x ~65000 x 5 regex passes -- well over a billion regex operations
+// in a tight synchronous loop. That blocked the Node event loop long enough
+// to make the ENTIRE app (including unrelated endpoints like /api/health)
+// unresponsive on Render for 10+ minutes, well beyond what a process-level
+// unhandledRejection/uncaughtException guard can catch (this was a live CPU
+// stall, not a thrown error). Building one normalized array up front turns
+// the exact-match path into an O(rows) scan done ONCE (not once per holding)
+// and keeps the fuzzy fallback bounded to the same pre-normalized array.
+interface NormalizedStockRow {
+  symbol: string;
+  normalizedName: string;
+}
+
+export function buildNormalizedStockList(rows: StockListRow[]): NormalizedStockRow[] {
+  const normalized: NormalizedStockRow[] = [];
+  for (const row of rows) {
+    if (!isLikelyUsTicker(row.symbol)) continue;
+    const normalizedName = normalizeCompanyName(row.companyName);
+    if (normalizedName) normalized.push({ symbol: row.symbol, normalizedName });
+  }
+  return normalized;
+}
+
+export function resolveTickerFromNormalizedList(issuer: string, normalizedRows: NormalizedStockRow[], exactByName: Map<string, string>): string | null {
   const normalizedIssuer = normalizeCompanyName(issuer);
   if (!normalizedIssuer) return null;
-  const exact = rows.find((row) => normalizeCompanyName(row.companyName) === normalizedIssuer && isLikelyUsTicker(row.symbol));
-  if (exact) return exact.symbol.toUpperCase();
 
-  const looselyMatching = rows.find((row) => {
-    if (!isLikelyUsTicker(row.symbol)) return false;
-    const normalizedName = normalizeCompanyName(row.companyName);
-    return normalizedName.length >= 5 && (normalizedName.includes(normalizedIssuer) || normalizedIssuer.includes(normalizedName));
-  });
+  const exactSymbol = exactByName.get(normalizedIssuer);
+  if (exactSymbol) return exactSymbol.toUpperCase();
+
+  const looselyMatching = normalizedRows.find((row) => row.normalizedName.length >= 5 && (row.normalizedName.includes(normalizedIssuer) || normalizedIssuer.includes(row.normalizedName)));
   return looselyMatching?.symbol?.toUpperCase() || null;
 }
 
@@ -401,9 +428,18 @@ async function buildScreenerData(): Promise<ScreenerData> {
     }
   }));
   const stockList = await getFmpStockList();
+  // Normalize + index once per build, not once per holding (see the incident
+  // note on buildNormalizedStockList above).
+  const normalizedStockList = buildNormalizedStockList(stockList);
+  const exactByName = new Map<string, string>();
+  for (const row of normalizedStockList) {
+    // First symbol wins on a duplicate normalized name (e.g. multiple share
+    // classes); this matches the previous .find()-based "first match" behavior.
+    if (!exactByName.has(row.normalizedName)) exactByName.set(row.normalizedName, row.symbol);
+  }
   return buildScreenerDataFromResults(
     settledResults,
-    (holding) => resolveTickerFromStockList(holding.issuer, stockList),
+    (holding) => resolveTickerFromNormalizedList(holding.issuer, normalizedStockList, exactByName),
     fetchFmpScreenerData,
   );
 }

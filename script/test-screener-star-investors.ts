@@ -6,10 +6,13 @@
  */
 import {
   buildScreenerDataFromResults,
+  buildNormalizedStockList,
   calculateCrv,
   parseYearRange,
+  resolveTickerFromNormalizedList,
   type InvestorHoldings,
   type SecHolding,
+  type StockListRow,
 } from "../server/screener";
 import type { StarInvestor } from "../server/star-investors";
 
@@ -108,6 +111,61 @@ check("Dreistellige Range '1000-1250.5' -> {1000, 1250.5}", JSON.stringify(parse
 check("Leerer String -> {0, 0} (kein Crash)", JSON.stringify(parseYearRange("")) === JSON.stringify({ yearLow: 0, yearHigh: 0 }));
 check("Nur eine Zahl -> {0, 0} (kein Rateergebnis)", JSON.stringify(parseYearRange("150")) === JSON.stringify({ yearLow: 0, yearHigh: 0 }));
 check("null/undefined -> {0, 0} (kein Crash)", JSON.stringify(parseYearRange(null)) === JSON.stringify({ yearLow: 0, yearHigh: 0 }) && JSON.stringify(parseYearRange(undefined)) === JSON.stringify({ yearLow: 0, yearHigh: 0 }));
+
+// Regression: die Ticker-Aufloesung darf die Stock-Liste NICHT pro Holding
+// neu normalisieren/durchsuchen. Live-Vorfall am 10.08.2026: die alte
+// .find()-Implementierung rief normalizeCompanyName() (5 Regex-Passes) fuer
+// JEDE Zeile der kompletten FMP-Stock-Liste bei JEDEM der ~5700 SEC-Holdings
+// auf -- das blockierte den Node-Event-Loop so lange, dass die gesamte
+// Render-App (inkl. /api/health) 10+ Minuten unerreichbar wurde. Der Fix
+// normalisiert die Stock-Liste einmal (buildNormalizedStockList) und nutzt
+// eine Map fuer den exakten Treffer -- dieser Test baut eine synthetische
+// 20.000-Zeilen-Liste und misst, dass 500 Aufloesungen dagegen deutlich
+// unter einer Sekunde dauern (die alte Implementierung haette bei dieser
+// Groessenordnung bereits mehrere Sekunden gebraucht, bei der echten
+// Produktionsgroesse von ~65.000 Zeilen und ~5700 Holdings mehrere Minuten).
+console.log("\n=== Performance: Ticker-Aufloesung skaliert nicht mit holdings×liste ===");
+{
+  const bigList: StockListRow[] = [];
+  for (let i = 0; i < 20000; i++) {
+    bigList.push({ symbol: `SYM${i}`, companyName: `Synthetic Company Number ${i} Inc` });
+  }
+  bigList.push({ symbol: "AAPL", companyName: "Apple Inc" });
+  bigList.push({ symbol: "MSFT", companyName: "Microsoft Corp" });
+
+  const normalizedList = buildNormalizedStockList(bigList);
+  const exactByName = new Map<string, string>();
+  for (const row of normalizedList) {
+    if (!exactByName.has(row.normalizedName)) exactByName.set(row.normalizedName, row.symbol);
+  }
+
+  const start = Date.now();
+  let resolvedCount = 0;
+  for (let i = 0; i < 500; i++) {
+    const issuer = i % 2 === 0 ? "Apple Inc" : "Microsoft Corp";
+    const ticker = resolveTickerFromNormalizedList(issuer, normalizedList, exactByName);
+    if (ticker) resolvedCount++;
+  }
+  const elapsedMs = Date.now() - start;
+  check("500 Auflösungen gegen 20k-Zeilen-Liste unter 1000ms (kein O(holdings×liste)-Rescan)", elapsedMs < 1000, `${elapsedMs}ms`);
+  check("Alle 500 Auflösungen liefern korrekten Ticker", resolvedCount === 500, String(resolvedCount));
+}
+console.log("\n=== Ticker-Auflösung: Korrektheit exakter vs. fuzzy Treffer ===");
+{
+  const list: StockListRow[] = [
+    { symbol: "AAPL", companyName: "Apple Inc" },
+    { symbol: "BRKB", companyName: "Berkshire Hathaway Inc Class B" },
+    { symbol: "XYZ", companyName: "NotAMatch Corp" },
+  ];
+  const normalizedList = buildNormalizedStockList(list);
+  const exactByName = new Map<string, string>();
+  for (const row of normalizedList) {
+    if (!exactByName.has(row.normalizedName)) exactByName.set(row.normalizedName, row.symbol);
+  }
+  check("Exakter Treffer 'Apple Inc' -> AAPL", resolveTickerFromNormalizedList("Apple Inc", normalizedList, exactByName) === "AAPL");
+  check("Fuzzy Treffer 'Berkshire Hathaway' -> BRKB", resolveTickerFromNormalizedList("Berkshire Hathaway", normalizedList, exactByName) === "BRKB");
+  check("Kein Treffer für unbekannten Issuer -> null", resolveTickerFromNormalizedList("Completely Unknown Company", normalizedList, exactByName) === null);
+}
 
 console.log(failed === 0 ? "\n✅ Alle Screener-Star-Investor-Tests bestanden" : `\n❌ ${failed} Screener-Test(s) fehlgeschlagen`);
 process.exit(failed === 0 ? 0 : 1);
