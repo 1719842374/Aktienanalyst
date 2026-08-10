@@ -141,8 +141,14 @@ function resolveTickerFromStockList(issuer: string, rows: StockListRow[]): strin
   return looselyMatching?.symbol?.toUpperCase() || null;
 }
 
-function parseYearRange(value: unknown): { yearLow: number; yearHigh: number } {
-  const values = String(value || "").match(/-?\d+(?:\.\d+)?/g)?.map(Number).filter((number) => number > 0) || [];
+export function parseYearRange(value: unknown): { yearLow: number; yearHigh: number } {
+  // FMP formats the 52-week range as "low-high" (e.g. "196-287.2"). A number
+  // regex with an optional leading "-" misreads that separating hyphen as a
+  // minus sign on the second number ("196", "-287.2" -> filtered to just
+  // "196", so length < 2 -> false 0/0 fallback on almost every real value).
+  // Stock prices are never negative, so dropping the sign entirely fixes the
+  // parse without needing to special-case the separator.
+  const values = String(value || "").match(/\d+(?:\.\d+)?/g)?.map(Number).filter((number) => number > 0) || [];
   if (values.length < 2) return { yearLow: 0, yearHigh: 0 };
   return { yearLow: Math.min(...values), yearHigh: Math.max(...values) };
 }

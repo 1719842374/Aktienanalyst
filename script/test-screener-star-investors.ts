@@ -7,6 +7,7 @@
 import {
   buildScreenerDataFromResults,
   calculateCrv,
+  parseYearRange,
   type InvestorHoldings,
   type SecHolding,
 } from "../server/screener";
@@ -93,6 +94,20 @@ check(
   data.totalInvestors === 2 && data.totalHoldings === 3 && data.screenedStocks.length === 2,
   JSON.stringify({ totalInvestors: data.totalInvestors, totalHoldings: data.totalHoldings, stocks: data.screenedStocks.length }),
 );
+
+// Regression: parseYearRange muss FMPs echtes 52-Wochen-Range-Format
+// "low-high" (z.B. "196-287.2") korrekt parsen. Ein naiver Zahlen-Regex mit
+// optionalem führendem "-" liest den trennenden Bindestrich als Minuszeichen
+// der zweiten Zahl und liefert dadurch faelschlich yearLow=yearHigh=0 fuer
+// praktisch jeden echten FMP-Wert (live auf Render am 10.08.2026 beobachtet:
+// AMZN/TSM/etc. hatten trotz korrektem price/pe ueberall yearLow=0, was die
+// CRV-downside-Formel auf den 100%-Fallback zwang).
+console.log("\n=== parseYearRange: FMP-Format \"low-high\" ===");
+check("AMZN-Beispiel '196-287.2' -> {196, 287.2}", JSON.stringify(parseYearRange("196-287.2")) === JSON.stringify({ yearLow: 196, yearHigh: 287.2 }), JSON.stringify(parseYearRange("196-287.2")));
+check("Dreistellige Range '1000-1250.5' -> {1000, 1250.5}", JSON.stringify(parseYearRange("1000-1250.5")) === JSON.stringify({ yearLow: 1000, yearHigh: 1250.5 }), JSON.stringify(parseYearRange("1000-1250.5")));
+check("Leerer String -> {0, 0} (kein Crash)", JSON.stringify(parseYearRange("")) === JSON.stringify({ yearLow: 0, yearHigh: 0 }));
+check("Nur eine Zahl -> {0, 0} (kein Rateergebnis)", JSON.stringify(parseYearRange("150")) === JSON.stringify({ yearLow: 0, yearHigh: 0 }));
+check("null/undefined -> {0, 0} (kein Crash)", JSON.stringify(parseYearRange(null)) === JSON.stringify({ yearLow: 0, yearHigh: 0 }) && JSON.stringify(parseYearRange(undefined)) === JSON.stringify({ yearLow: 0, yearHigh: 0 }));
 
 console.log(failed === 0 ? "\n✅ Alle Screener-Star-Investor-Tests bestanden" : `\n❌ ${failed} Screener-Test(s) fehlgeschlagen`);
 process.exit(failed === 0 ? 0 : 1);
