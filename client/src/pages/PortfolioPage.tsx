@@ -1,35 +1,32 @@
 /**
  * PortfolioPage — Virtuelles Portfolio-Dashboard.
  *
- * Auftrag 10.08.2026 ("Portfolio UX (CAPM/Kelly) + Peer-Add/Remove Fix",
- * Teil A). Von einer reinen Form-Seite zu einem Investment-Dashboard
- * umgebaut: KPI-Zeile, Pie-Chart (Gewichte), Performance-Chart (Zeitreihe),
- * Investments-Tabelle mit Analyse-Deep-Link -- die bestehende Kelly/CAPM-
- * Logik (client/src/lib/portfolio/{kelly,pipeline,sharpe,weighting}.ts)
- * bleibt UNVERAENDERT und wird nur visuell untergeordnet (Ticket A5, Punkt 5).
+ * Auftrag 10.08.2026 ("Portfolio-Engine – eine Optimierung ab 2 Positionen
+ * (Kovarianz + CAPM/Kelly)"). KPI-Zeile, Pie-Chart (Gewichte), Performance-
+ * Chart (Zeitreihe), Investments-Tabelle mit Analyse-Deep-Link, EIN
+ * Optimierungs-Block (CAPM/Kelly) der automatisch ab 2 offenen Positionen
+ * aus der echten Kurs-Historie rechnet (client/src/lib/portfolio/engine.ts).
+ * Die fruehere manuelle "Kandidaten"-Tabelle wurde entfernt -- Overrides
+ * pro Position kommen ueber "Aus Analyse übernehmen" (handleTakeoverFromAnalysis).
+ * Die reinen Kelly/CAPM-Bausteine (client/src/lib/portfolio/{kelly,sharpe,
+ * weighting}.ts) bleiben UNVERAENDERT und werden von engine.ts wiederverwendet.
  *
  * EIGENSTAENDIGE Seite/Route — NICHT in Dashboard.tsx eingehängt (siehe
  * Fragile-File-Registry). Registrierung in client/src/App.tsx unveraendert.
  *
  * Single Source of Truth fuer Fundamentals: /api/analyze (Analyse-Cache) +
  * darin enthaltene FMP-Kurse/-Historie. KEIN LLM fuer Kurse, Performance
- * oder Gewichte -- reine Berechnung ueber client/src/lib/portfolio/positions.ts.
+ * oder Gewichte -- reine Berechnung ueber client/src/lib/portfolio/{positions,engine}.ts.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
-import { ArrowLeft, Plus, Trash2, Info, Menu, X, SlidersHorizontal, ListOrdered, BarChart3, Table2, LayoutDashboard, RefreshCw } from "lucide-react";
+import { ArrowLeft, Info, Menu, X, SlidersHorizontal, BarChart3, Table2, LayoutDashboard, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SectionCard } from "@/components/SectionCard";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { apiRequest } from "@/lib/queryClient";
-import {
-  DEFAULTS,
-  runPortfolioPipeline,
-  type PortfolioPipelineResult,
-} from "@/lib/portfolio/pipeline";
-import { pickWeightMode, type WeightMode } from "@/lib/portfolio/weighting";
-import type { PortfolioCandidate, StockAnalysis } from "../../../shared/schema";
+import type { StockAnalysis } from "../../../shared/schema";
 import {
   makePosition, loadPositionsFromStorage, savePositionsToStorage,
   loadPolicyFromStorage, savePolicyToStorage, suggestConvictionFromScore,
@@ -37,53 +34,15 @@ import {
 } from "@/lib/portfolio/positions";
 import PortfolioOverview, { type TimeframeFilter, type DirectionFilter } from "@/components/portfolio/PortfolioOverview";
 import PortfolioInvestmentsTable from "@/components/portfolio/PortfolioInvestmentsTable";
+import PortfolioOptimizationPanel from "@/components/portfolio/PortfolioOptimizationPanel";
 
 // Sidebar-Sprungnavigation — gleiches Muster wie BTC-/Rezessions-Dashboard
 const SECTIONS = [
   { id: 1, label: "Übersicht", icon: LayoutDashboard },
   { id: 2, label: "Investments", icon: Table2 },
   { id: 3, label: "Policy", icon: SlidersHorizontal },
-  { id: 4, label: "Kandidaten", icon: ListOrdered },
-  { id: 5, label: "CAPM/Kelly", icon: BarChart3 },
+  { id: 4, label: "Optimierung", icon: BarChart3 },
 ] as const;
-
-interface EditableRow {
-  id: string;
-  ticker: string;
-  score: string;
-  conviction: PortfolioCandidate["conviction"];
-  mu: string;
-  sigma: string;
-  price: string;
-}
-
-function mkRow(over: Partial<EditableRow> = {}): EditableRow {
-  return {
-    id: Math.random().toString(36).slice(2),
-    ticker: "",
-    score: "70",
-    conviction: "medium",
-    mu: "10",
-    sigma: "20",
-    price: "100",
-    ...over,
-  };
-}
-
-function fmtPct(x: number | null | undefined, digits = 2): string {
-  if (x == null || !Number.isFinite(x)) return "—";
-  return `${(x * 100).toFixed(digits)}%`;
-}
-
-function fmtEur(x: number | null | undefined): string {
-  if (x == null || !Number.isFinite(x)) return "—";
-  return x.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
-}
-
-function fmtSharpe(x: number | null | undefined): string {
-  if (x == null || !Number.isFinite(x)) return "n/a";
-  return x.toFixed(3);
-}
 
 export default function PortfolioPage() {
   const [, setLocation] = useLocation();
@@ -259,71 +218,18 @@ export default function PortfolioPage() {
     });
   }, [capitalBase, benchmark, rf, maxWeightPct, kellyFraction, kellyMaxFPct, modeOverride]);
 
-  // ─── 4. Kandidaten (bestehende manuelle CAPM/Kelly-Eingabe, unveraendert) ─
-  const [rows, setRows] = useState<EditableRow[]>([
-    mkRow({ ticker: "AAPL", score: "78", mu: "12", sigma: "22", price: "230", conviction: "high" }),
-    mkRow({ ticker: "MSFT", score: "74", mu: "11", sigma: "20", price: "420", conviction: "high" }),
-    mkRow({ ticker: "NVO", score: "68", mu: "9", sigma: "28", price: "80", conviction: "medium" }),
-  ]);
-
-  function updateRow(id: string, patch: Partial<EditableRow>) {
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-  }
-  function addRow() {
-    setRows((prev) => [...prev, mkRow()]);
-  }
-  function removeRow(id: string) {
-    setRows((prev) => prev.filter((r) => r.id !== id));
-  }
-
-  // ─── Parsing + Pipeline-Aufruf (UNVERAENDERTE Kelly/CAPM-Logik) ───────────
-  const parsed = useMemo(() => {
-    const valid = rows.filter((r) => r.ticker.trim().length > 0);
-    const candidates: PortfolioCandidate[] = valid.map((r) => ({
-      ticker: r.ticker.trim().toUpperCase(),
-      score: Number(r.score) || 0,
-      conviction: r.conviction,
-      mu: (Number(r.mu) || 0) / 100,
-      price: Number(r.price) || 0,
-      status: "active",
-      source: "manual",
-    }));
-    const sigmas = valid.map((r) => (Number(r.sigma) || 0) / 100);
-    const n = candidates.length;
-    const Sigma: number[][] = Array.from({ length: n }, (_, i) =>
-      Array.from({ length: n }, (_, j) => (i === j ? sigmas[i] * sigmas[i] : 0))
-    );
-    return { candidates, Sigma, n };
-  }, [rows]);
-
+  // ─── 4. Optimierung (CAPM + Kelly) -- Auftrag 10.08.2026 ─────────────────
+  // ERSETZT die vormals getrennte manuelle "Kandidaten"-Tabelle. Single
+  // source of truth = positions[] (Investments). μ/σ kommen aus der Kurs-
+  // Historie (buildCovariance) ODER aus expliziten Overrides pro Position
+  // (gesetzt ueber "Aus Analyse übernehmen", siehe handleTakeoverFromAnalysis
+  // oben). Keine zweite, parallel gepflegte Wahrheit mehr -- PortfolioOptimiz-
+  // ationPanel liest direkt aus positions/lastPriceByTicker/historicalPrices.
   const rfDecimal = (Number(rf) || 0) / 100;
   const capitalBaseNum = Number(capitalBase) || 0;
   const maxWeight = (Number(maxWeightPct) || 30) / 100;
   const kellyFractionNum = Number(kellyFraction) || 0.5;
   const kellyMaxF = (Number(kellyMaxFPct) || 25) / 100;
-
-  const autoMode: WeightMode | null =
-    parsed.n >= 1
-      ? pickWeightMode({ n: parsed.n, mu: parsed.candidates.map((c) => c.mu ?? 0), Sigma: parsed.Sigma, rf: rfDecimal })
-      : null;
-
-  let result: PortfolioPipelineResult | null = null;
-  let pipelineError: string | null = null;
-  if (parsed.n >= 1) {
-    try {
-      result = runPortfolioPipeline({
-        candidates: parsed.candidates,
-        Sigma: parsed.Sigma,
-        rf: rfDecimal,
-        capitalBase: capitalBaseNum,
-        maxWeight,
-        kellyFraction: kellyFractionNum,
-        kellyMaxF,
-      });
-    } catch (e: any) {
-      pipelineError = e?.message || String(e);
-    }
-  }
 
   // ── Scroll-Layout (identisch zu BTC-/Rezessions-Dashboard) ───────────────────
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -464,20 +370,6 @@ export default function PortfolioPage() {
                     <Input value={rf} onChange={(e) => setRf(e.target.value)} data-testid="input-rf" />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground">Modus</label>
-                    <select
-                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={modeOverride}
-                      onChange={(e) => setModeOverride(e.target.value as any)}
-                      data-testid="select-mode"
-                    >
-                      <option value="Auto">Auto (pickWeightMode)</option>
-                      <option value="A">A — Max-Sharpe</option>
-                      <option value="B">B — Risk-Parity</option>
-                      <option value="C">C — Score-Tilt</option>
-                    </select>
-                  </div>
-                  <div>
                     <label className="text-xs text-muted-foreground">maxWeight (%)</label>
                     <Input value={maxWeightPct} onChange={(e) => setMaxWeightPct(e.target.value)} data-testid="input-maxweight" />
                   </div>
@@ -489,136 +381,26 @@ export default function PortfolioPage() {
                     <label className="text-xs text-muted-foreground">Kelly maxF (%)</label>
                     <Input value={kellyMaxFPct} onChange={(e) => setKellyMaxFPct(e.target.value)} data-testid="input-kelly-maxf" />
                   </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">Auto-Mode (berechnet)</label>
-                    <div className="h-9 flex items-center px-3 rounded-md border border-input bg-muted/30 text-sm font-mono">
-                      {autoMode ?? "—"}
-                    </div>
-                  </div>
                 </div>
-                {modeOverride !== "Auto" && (
-                  <p className="text-xs text-amber-500 flex items-center gap-1 mt-2">
-                    <Info className="w-3 h-3" /> Modus-Override „{modeOverride}" ist rein informativ — die Tabelle unten zeigt
-                    die Auto-Mode-Berechnung ({autoMode ?? "—"}), um keine stille Zweit-Logik zu erzeugen.
-                  </p>
-                )}
+                <p className="text-xs text-muted-foreground flex items-center gap-1 mt-2">
+                  <Info className="w-3 h-3" /> Der Optimierungs-Modus (A/B/C) wird automatisch aus μ/σ/Σ der echten Positionen gewählt (pickWeightMode) — siehe Block „Optimierung" unten.
+                </p>
               </SectionCard>
             </div>
 
-            {/* 4. Kandidaten (bestehende manuelle CAPM/Kelly-Eingabe) */}
+            {/* 4. Optimierung (CAPM + Kelly) — EIN Block, automatisch ab 2 Positionen */}
             <div ref={setSectionRef(4)}>
-              <SectionCard number={4} title="Kandidaten (manuelle CAPM/Kelly-Eingabe)">
-                <div className="space-y-2">
-                  <div className="grid grid-cols-12 gap-2 text-xs text-muted-foreground font-medium px-1">
-                    <div className="col-span-2">Ticker</div>
-                    <div className="col-span-2">Score (0-100)</div>
-                    <div className="col-span-2">Conviction</div>
-                    <div className="col-span-2">μ erwartet (%/a)</div>
-                    <div className="col-span-2">σ (%/a)</div>
-                    <div className="col-span-1">Preis</div>
-                    <div className="col-span-1"></div>
-                  </div>
-                  {rows.map((r) => (
-                    <div key={r.id} className="grid grid-cols-12 gap-2 items-center">
-                      <Input
-                        className="col-span-2"
-                        value={r.ticker}
-                        onChange={(e) => updateRow(r.id, { ticker: e.target.value })}
-                        placeholder="AAPL"
-                        data-testid={`input-ticker-${r.id}`}
-                      />
-                      <Input className="col-span-2" value={r.score} onChange={(e) => updateRow(r.id, { score: e.target.value })} />
-                      <select
-                        className="col-span-2 flex h-9 rounded-md border border-input bg-background px-2 text-sm"
-                        value={r.conviction}
-                        onChange={(e) => updateRow(r.id, { conviction: e.target.value as any })}
-                      >
-                        <option value="high">high</option>
-                        <option value="medium">medium</option>
-                        <option value="low">low</option>
-                      </select>
-                      <Input className="col-span-2" value={r.mu} onChange={(e) => updateRow(r.id, { mu: e.target.value })} />
-                      <Input className="col-span-2" value={r.sigma} onChange={(e) => updateRow(r.id, { sigma: e.target.value })} />
-                      <Input className="col-span-1" value={r.price} onChange={(e) => updateRow(r.id, { price: e.target.value })} />
-                      <Button variant="ghost" size="icon" className="col-span-1" onClick={() => removeRow(r.id)}>
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  ))}
-                  <Button variant="outline" size="sm" onClick={addRow} className="mt-2">
-                    <Plus className="w-4 h-4 mr-1" /> Kandidat hinzufügen
-                  </Button>
-                </div>
-              </SectionCard>
-            </div>
-
-            {/* 5. CAPM/Kelly-Kennzahlen + Basket-Gewichte (bestehende Logik) */}
-            <div ref={setSectionRef(5)}>
-              <SectionCard number={5} title="CAPM/Kelly — Kennzahlen & Basket-Gewichte">
-                {pipelineError && <p className="text-sm text-destructive">Fehler: {pipelineError}</p>}
-                {!pipelineError && (
-                  <div className="grid grid-cols-3 gap-4 mb-4">
-                    <div className="bg-muted/30 rounded-lg p-3">
-                      <div className="text-xs text-muted-foreground">Sharpe_p (Basket)</div>
-                      <div className="text-xl font-bold tabular-nums">{fmtSharpe(result?.sharpePortfolio)}</div>
-                    </div>
-                    <div className="bg-muted/30 rounded-lg p-3">
-                      <div className="text-xs text-muted-foreground">Sharpe_equal (1/n)</div>
-                      <div className="text-xl font-bold tabular-nums">{fmtSharpe(result?.sharpeEqualWeight)}</div>
-                    </div>
-                    <div className="bg-muted/30 rounded-lg p-3">
-                      <div className="text-xs text-muted-foreground">Δ vs Equal-Weight</div>
-                      <div className="text-xl font-bold tabular-nums">{fmtSharpe(result?.deltaVsEqual)}</div>
-                    </div>
-                  </div>
-                )}
-                {parsed.n === 1 && (
-                  <p className="text-xs text-muted-foreground mb-3">
-                    n=1: kein Basket-Optimierer — Sharpe_p/Sharpe_equal nicht aussagekräftig. Nur Kelly-Hinweis unten relevant.
-                  </p>
-                )}
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-xs text-muted-foreground border-b border-card-border">
-                        <th className="text-left py-2 px-2">Ticker</th>
-                        <th className="text-right py-2 px-2">Score</th>
-                        <th className="text-right py-2 px-2">w%</th>
-                        <th className="text-right py-2 px-2">Basket-€</th>
-                        <th className="text-right py-2 px-2">Sharpe_i</th>
-                        <th className="text-right py-2 px-2">Kelly-Half %</th>
-                        <th className="text-right py-2 px-2">Kelly-€</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(result?.rows ?? []).map((row) => (
-                        <tr key={row.ticker} className="border-b border-card-border/50">
-                          <td className="py-2 px-2 font-mono font-medium">{row.ticker}</td>
-                          <td className="py-2 px-2 text-right tabular-nums">{row.score}</td>
-                          <td className="py-2 px-2 text-right tabular-nums">{fmtPct(row.weight, 1)}</td>
-                          <td className="py-2 px-2 text-right tabular-nums">{fmtEur(row.amount)}</td>
-                          <td className="py-2 px-2 text-right tabular-nums">{fmtSharpe(row.sharpeSingle)}</td>
-                          <td className="py-2 px-2 text-right tabular-nums">{row.kelly ? fmtPct(row.kelly.fHalf, 1) : "—"}</td>
-                          <td className="py-2 px-2 text-right tabular-nums">{row.kelly ? fmtEur(row.kelly.fCapped * capitalBaseNum) : "—"}</td>
-                        </tr>
-                      ))}
-                      {(!result || result.rows.length === 0) && (
-                        <tr>
-                          <td colSpan={7} className="text-center py-6 text-muted-foreground text-xs">
-                            Keine Kandidaten — Ticker oben hinzufügen.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                {result && result.notes.length > 0 && (
-                  <ul className="text-xs text-muted-foreground mt-3 space-y-1">
-                    {result.notes.map((n, i) => (
-                      <li key={i}>• {n}</li>
-                    ))}
-                  </ul>
-                )}
+              <SectionCard number={4} title="Optimierung (CAPM/Kelly)">
+                <PortfolioOptimizationPanel
+                  positions={positions}
+                  lastPriceByTicker={lastPriceByTicker}
+                  historicalPricesByTicker={historicalPricesByTicker}
+                  rf={rfDecimal}
+                  capital={capitalBaseNum}
+                  maxWeight={maxWeight}
+                  kellyFraction={kellyFractionNum}
+                  kellyMaxF={kellyMaxF}
+                />
               </SectionCard>
             </div>
 
