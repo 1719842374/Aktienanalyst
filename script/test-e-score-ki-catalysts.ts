@@ -29,6 +29,23 @@ const genericOnly=scoreCatalystAlignment([{name:"Template",timeline:"6-12M",pos:
 // Fallback wie keine Daten, statt Template-Daten als firmenspezifisch zu werten.
 check("Ausschließlich generische Katalysatoren ergeben den neutralen Fallback",genericOnly.score===.35&&genericOnly.flags.some(f=>f.includes("valide für E-Score: 0")),JSON.stringify(genericOnly));
 
+// Regression (11.08.2026, Nutzerentscheidung nach Live-Test): generic===undefined
+// (älterer Cache-Stand VOR dem 08.08.2026-Ticket, das generic explizit setzt --
+// der aktuelle /api/analyze-Pfad in analyze-route.ts setzt generic bereits
+// zuverlässig auf false/true) darf NICHT wie explizites generic=true behandelt
+// werden, sonst kollabiert der E-Score standardmäßig für jede Analyse ohne
+// KI-Enrich-Klick. undefined wird wie firmenspezifisch (false) gewertet --
+// nur ein EXPLIZITES generic=true (Template/Fallback) wird verworfen.
+const undefinedGenericCatalysts=[
+  {name:"Azure AI demand",timeline:"6-12M",pos:78,nettoUpside:10.6},
+  {name:"Copilot monetisation",timeline:"12-18M",pos:73,nettoUpside:14.7},
+  {name:"Cloud operating leverage",timeline:"12-24M",pos:80,nettoUpside:12.6},
+  {name:"Security cross-sell",timeline:"12-36M",pos:70,nettoUpside:8.6},
+];
+const undefinedGenericResult=scoreCatalystAlignment(undefinedGenericCatalysts);
+check("generic===undefined wird wie firmenspezifisch behandelt (nicht verworfen)",undefinedGenericResult.flags.some(f=>f.includes("erhalten: 4, valide für E-Score: 4")),JSON.stringify(undefinedGenericResult));
+check("generic===undefined liefert denselben E-Score wie generic=false (identische Katalysatoren)",Math.abs(undefinedGenericResult.score-four.score)<1e-9,`undefined=${undefinedGenericResult.score} vs false=${four.score}`);
+
 check("Katalysator-Konfidenz: E=0.90 ergibt exakt 0.81",scoreCatalystConfidenceFromE(.90)===.81,`${scoreCatalystConfidenceFromE(.90)}`);
 check("Katalysator-Konfidenz: E=1.00 wird bei 0.85 gedeckelt",scoreCatalystConfidenceFromE(1)===.85,`${scoreCatalystConfidenceFromE(1)}`);
 const thesis=computeThesisStrength({vector:{revenueCagr3to5y:12,earningsVolatility:10,fcfMarginTrend:0,leverageTrend:0,marginInflectionStrength:2,growthGap:0},fcf:100,gStar:5,thesisGrowth:8,backlogAvailable:true,catalysts:msftCatalysts,balance:{inventoryZ:0,growthZ:0,marginZ:0,marginPositivePeriods:2},turnaround:{}});

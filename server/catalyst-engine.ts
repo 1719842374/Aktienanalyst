@@ -338,7 +338,12 @@ JSON array only, no markdown, no explanation:`;
       const einpreisungsgrad = Math.max(15, Math.min(65, Number(c.einpreisungsgrad) || 35));
       const nettoUpside = +(bruttoUpside * (1 - einpreisungsgrad / 100)).toFixed(2);
       const gb = +(pos / 100 * nettoUpside).toFixed(2);
-      return { name: String(c.name || 'Unknown Catalyst').substring(0, 60), timeline: String(c.timeline || '12-24M'), pos, bruttoUpside, einpreisungsgrad, nettoUpside, gb, context: String(c.context || '') };
+      // generic=false: dies ist ein echter LLM-generierter, firmenspezifischer
+      // Katalysator (Claude-Aufruf oben), kein Template/Fallback. Explizit
+      // gesetzt statt undefined zu lassen, damit E-Score-Verbraucher
+      // (thesis-strength.ts scoreCatalystAlignment) das Feld konsistent lesen
+      // koennen, ohne sich auf eine Default-Annahme verlassen zu muessen.
+      return { name: String(c.name || 'Unknown Catalyst').substring(0, 60), timeline: String(c.timeline || '12-24M'), pos, bruttoUpside, einpreisungsgrad, nettoUpside, gb, context: String(c.context || ''), generic: false };
     });
 
     console.log(`[ANALYZE] LLM catalysts for ${ticker}: ${catalysts.map(c => c.name).join(', ')}`);

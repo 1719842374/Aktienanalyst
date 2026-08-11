@@ -533,12 +533,22 @@ export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:st
   let hasNearTermTimeline=false;
   for(const c of catalysts){
     // Uebergangsloesung bis zum echten evidence_strength-Schemafeld:
-    // generic=false => firmenspezifischer KI-Output (0.75), generic true/undefined
-    // => Template/Fallback bzw. unbekannt (0.45). Nur generic=false ist valide.
-    const evidenceStrength = c.generic === false ? .75 : .45;
+    // generic=false => firmenspezifischer KI-Output (0.75). generic=true =>
+    // explizit als Template/Fallback markiert (0.45), wird verworfen.
+    // generic===undefined (der haeufigste Fall im normalen /api/analyze-Pfad
+    // OHNE KI-Enrich-Klick, siehe generateCatalysts() in catalyst-engine.ts,
+    // das generic bisher nie setzt) wird NICHT konservativ verworfen -- sonst
+    // waere der E-Score fuer die meisten Analysen standardmaessig kollabiert
+    // und nur nach explizitem KI-Enrich-Klick brauchbar (Live-Beweis 11.08.2026:
+    // MSFT-Cache ohne Enrich-Klick hatte generic=undefined auf allen 4
+    // Katalysatoren, E-Score fiel von 0.75 auf 0.35 -- Nutzerentscheidung:
+    // undefined wird wie firmenspezifisch (false) behandelt, nur ein
+    // EXPLIZITES generic=true (Template/Fallback) wird verworfen).
+    const isExplicitlyGeneric = c.generic === true;
+    const evidenceStrength = isExplicitlyGeneric ? .45 : .75;
     let pos = finite(c.pos) ? c.pos! : NaN;
     const nettoUpside = finite(c.nettoUpside) ? c.nettoUpside! : NaN;
-    const valid = c.generic === false && finite(pos) && pos >= 5 && pos <= 90 && finite(nettoUpside) && nettoUpside > 0;
+    const valid = !isExplicitlyGeneric && finite(pos) && pos >= 5 && pos <= 90 && finite(nettoUpside) && nettoUpside > 0;
     if(!valid){discardedCount++;continue;}
     if(pos > 85) pos = 80; // Extrem-PoS konservativ kappen, nicht verwerfen.
     validCount++;
@@ -548,7 +558,7 @@ export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:st
     if(/^6-12M\b/i.test(timeline)||/^12-18M\b/i.test(timeline))hasNearTermTimeline=true;
   }
   flags.push(`Katalysatoren erhalten: ${catalysts.length}, valide für E-Score: ${validCount}`);
-  if(discardedCount>0)flags.push(`Katalysatoren verworfen: ${discardedCount} (generic/fehlende PoS/Netto-Upside/Skala außerhalb 5-90%)`);
+  if(discardedCount>0)flags.push(`Katalysatoren verworfen: ${discardedCount} (explizit generic=true/fehlende PoS/Netto-Upside/Skala außerhalb 5-90%)`);
   if(validCount===0)return{score:.35,flags:[...flags,"Keine Katalysatoren verfügbar — neutraler Teilscore"]};
   const firmSpecificRatio=validCount/Math.max(1,catalysts.length);
   const avgEvidence=evidenceSum/validCount;
