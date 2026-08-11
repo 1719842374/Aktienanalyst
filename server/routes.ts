@@ -476,7 +476,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const result = await callLLMJson({
         systemPrompt: buildManagementInterpretSystemPrompt(),
         prompt: buildManagementInterpretPrompt(b),
-        maxTokens: 900,
+        maxTokens: 1600,
         temperature: 0.3,
       });
       if (!result) {
