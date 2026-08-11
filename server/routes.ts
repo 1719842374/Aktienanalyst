@@ -85,6 +85,7 @@ import { filterAndSelectPeers } from "./news-peers";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
 import { registerRegressionScanRoutes } from "./regression-scan";
+import { thesisStrengthCache, catalystSignature } from "./thesis-strength-cache";
 
 // Leitet aus den naechstliegenden 2-3 belastbar abgedeckten Fiskaljahren die
 // annualisierte EPS-Konsenswachstumsrate ab. Bei unzureichender Abdeckung bleibt
@@ -305,7 +306,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // 9. POST /api/thesis-strength — lazy, 24h-cached, damit die umfangreiche
   // sektorrelative Einordnung nicht jede Standardanalyse verteuert.
-  const _thesisStrengthCache = new Map<string, { data: any; time: number }>();
   const THESIS_STRENGTH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   app.post("/api/thesis-strength", async (req, res) => {
     try {
@@ -313,7 +313,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!b.ticker || typeof b.ticker !== "string") return res.status(400).json({ error: "ticker fehlt" });
       if (!Array.isArray(b.segments)) return res.status(400).json({ error: "Kontext unvollständig (segments)" });
       const ticker = String(b.ticker).toUpperCase();
-      const cached = _thesisStrengthCache.get(ticker);
+      const cacheKey = `${ticker}::${catalystSignature(b.catalysts)}`;
+      const cached = thesisStrengthCache.get(cacheKey);
       if (!b.force && cached && Date.now() - cached.time < THESIS_STRENGTH_CACHE_TTL_MS) return res.json(cached.data);
 
       const [incomeRows, cashflowRows, balanceRows, rawPeers, analystEstimates] = await Promise.all([
@@ -445,7 +446,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Peer-Median: raw=${sectorRevenueYoyPct}, robust=${robustSector.value} (method=${robustSector.method}, n=${peerRevenueGrowthsPct.length}), verwendet_fuer_g_required=${sectorMedianForGRequired}`);
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] Inflection:`, JSON.stringify(result.growthEvidence.inflection));
       const response={...result,sectorReferences,flags:[...result.flags,...sectorFlag],generatedAt:new Date().toISOString()};
-      _thesisStrengthCache.set(ticker,{data:response,time:Date.now()}); res.json(response);
+      thesisStrengthCache.set(cacheKey,{data:response,time:Date.now()}); res.json(response);
     } catch(err:any){ console.error("[POST /api/thesis-strength]",err?.message?.substring(0,200)); res.status(500).json({error:err?.message||"Internal error"}); }
   });
 

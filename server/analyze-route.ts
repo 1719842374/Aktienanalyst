@@ -118,6 +118,7 @@ import { getCachedRegulatoryAssessment } from "./regulatory";
 import { fetchSecBusinessSegments } from "./sec-segments";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
 import { normalizePeerOverrides, buildAnalyzeCacheKey, applyPeerOverrides } from "./peer-cache-key";
+import { invalidateThesisStrengthCache } from "./thesis-strength-cache";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -1993,6 +1994,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         growthThesisGeneratedAt: refreshedGeneratedAt ?? (a as any).growthThesisGeneratedAt,
       } as StockAnalysis;
       analysisCache.set(cacheKeyUsed, { ...cached, result: updated });
+      invalidateThesisStrengthCache(ticker);
 
       return res.json({
         catalysts: withDeepDives, modelUsed: llmResult.modelUsed,
