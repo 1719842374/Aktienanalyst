@@ -87,6 +87,12 @@ import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
 import { registerRegressionScanRoutes } from "./regression-scan";
 import { thesisStrengthCache, catalystSignature } from "./thesis-strength-cache";
+import { callLLMJson } from "./llm-openrouter";
+import {
+  buildManagementInterpretPrompt,
+  buildManagementInterpretSystemPrompt,
+  validateManagementInterpretRequest,
+} from "./management-score-interpret";
 
 // Leitet aus den naechstliegenden 2-3 belastbar abgedeckten Fiskaljahren die
 // annualisierte EPS-Konsenswachstumsrate ab. Bei unzureichender Abdeckung bleibt
@@ -456,4 +462,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // route orchestrator remains append-only.
   const { registerScreenerRoute } = await import("./screener");
   registerScreenerRoute(app);
+
+  // 14. POST /api/management-score-interpret — KI-Mini-Analyse des fertigen
+  // Management-Execution-Scores (Section 18 KI-Button). Getrennt vom
+  // score-internen qualNews-LLM-Call (server/management-score.ts): Dieser Call
+  // interpretiert nur den bereits berechneten, fertigen Score-Breakdown.
+  app.post("/api/management-score-interpret", async (req, res) => {
+    try {
+      const b = req.body ?? {};
+      const validationError = validateManagementInterpretRequest(b);
+      if (validationError) return res.status(400).json({ error: validationError });
+
+      const result = await callLLMJson({
+        systemPrompt: buildManagementInterpretSystemPrompt(),
+        prompt: buildManagementInterpretPrompt(b),
+        maxTokens: 900,
+        temperature: 0.3,
+      });
+      if (!result) {
+        return res.status(503).json({
+          error: "KI-Interpretation nicht verfügbar (LLM-Budget erschöpft oder Modell nicht erreichbar).",
+        });
+      }
+      res.json({ interpretation: result.data, modelUsed: result.modelUsed });
+    } catch (err: any) {
+      console.error("[POST /api/management-score-interpret]", err?.message?.substring(0, 200));
+      res.status(500).json({ error: err?.message || "Internal error" });
+    }
+  });
 }

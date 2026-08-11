@@ -14,7 +14,7 @@ import { useState } from "react";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { apiRequest } from "@/lib/queryClient";
-import { RefreshCw, TrendingUp, TrendingDown, Minus, AlertTriangle, Info } from "lucide-react";
+import { RefreshCw, TrendingUp, TrendingDown, Minus, AlertTriangle, Info, Loader2, Sparkles } from "lucide-react";
 
 interface Props { data: StockAnalysis }
 
@@ -57,6 +57,24 @@ interface ManagementScoreResult {
     isBelastbar: boolean;
     warning: string | null;
   };
+}
+
+interface ManagementScoreInterpretation {
+  gesamteinschaetzung: string;
+  staerken: string[];
+  schwaechen: string[];
+  interpretation: {
+    positiv: string;
+    kritisch: string;
+    governanceSignal: string | null;
+    datenlueckenHinweis: string | null;
+  };
+  fazit: string;
+}
+
+interface ManagementScoreInterpretResponse {
+  interpretation: ManagementScoreInterpretation;
+  modelUsed: string;
 }
 
 const BAUSTEINE: { key: keyof ManagementScoreBreakdown; label: string; weight: string; frage: string }[] = [
@@ -128,6 +146,11 @@ export function ManagementScoreSection({ data }: Props) {
   const [result, setResult] = useState<ManagementScoreResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Separater, nachgelagerter KI-Call: Der bestehende Score-Lazy-Load bleibt
+  // unverändert und liefert weiterhin allein den berechneten Breakdown.
+  const [llmInterpretLoading, setLlmInterpretLoading] = useState(false);
+  const [llmInterpretResult, setLlmInterpretResult] = useState<ManagementScoreInterpretResponse | null>(null);
+  const [llmInterpretError, setLlmInterpretError] = useState<string | null>(null);
 
   const run = async (force = false) => {
     setLoading(true);
@@ -204,6 +227,35 @@ export function ManagementScoreSection({ data }: Props) {
     }
   };
 
+  async function triggerInterpretation() {
+    if (!result) return;
+    setLlmInterpretLoading(true);
+    setLlmInterpretError(null);
+    try {
+      const res = await apiRequest("POST", "/api/management-score-interpret", {
+        ticker: data.ticker,
+        companyName: data.companyName,
+        breakdown: result.breakdown,
+      }, 60_000);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+      if (!json?.interpretation) throw new Error("Keine KI-Interpretation erhalten.");
+      setLlmInterpretResult(json);
+    } catch (err: any) {
+      const msg = err?.message || "";
+      console.warn(`[Section18] KI-Interpretation fehlgeschlagen: ${msg}`);
+      if (/timeout|60s/i.test(msg)) {
+        setLlmInterpretError("KI-Interpretation: Server zu langsam — bitte erneut versuchen.");
+      } else if (/503|402/.test(msg)) {
+        setLlmInterpretError("KI-Interpretation nicht verfügbar (Token-Budget erschöpft).");
+      } else {
+        setLlmInterpretError(msg || "KI-Interpretation fehlgeschlagen.");
+      }
+    } finally {
+      setLlmInterpretLoading(false);
+    }
+  }
+
   return (
     <SectionCard number={18} title="MANAGEMENT-EXECUTION-SCORE">
       <div className="space-y-4">
@@ -234,6 +286,37 @@ export function ManagementScoreSection({ data }: Props) {
               </div>
             )}
             <ScoreAmpel score1to10={result.breakdown.score1to10} />
+
+            {/* Separater KI-Button: interpretiert ausschliesslich den geladenen Score. */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => !llmInterpretLoading && triggerInterpretation()}
+                disabled={llmInterpretLoading}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all ${
+                  llmInterpretResult
+                    ? "bg-violet-500/15 text-violet-400 border-violet-500/30"
+                    : "text-foreground/50 border-border/50 hover:bg-muted/50 hover:text-foreground/70"
+                } ${llmInterpretLoading ? "opacity-60 cursor-not-allowed" : ""}`}
+                title="KI-Mini-Analyse — Score-Interpretation via LLM"
+                data-testid="management-score-interpret"
+              >
+                {llmInterpretLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                KI-Interpretation
+                {llmInterpretResult && !llmInterpretLoading && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+              </button>
+              {llmInterpretLoading && (
+                <span className="text-[10px] text-muted-foreground animate-pulse">Interpretiere Score…</span>
+              )}
+              {llmInterpretResult?.modelUsed && !llmInterpretLoading && (
+                <span className="text-[10px] text-muted-foreground">Modell: {llmInterpretResult.modelUsed}</span>
+              )}
+            </div>
+
+            {llmInterpretError && (
+              <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
+                ⚠ {llmInterpretError}
+              </div>
+            )}
 
             {/* Datenaktualität — explizit pro Baustein, wie im Auftrag gefordert */}
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground bg-muted/20 rounded-md p-2 border border-border/50">
@@ -296,6 +379,66 @@ export function ManagementScoreSection({ data }: Props) {
                     <li key={i} className="text-[10px] text-muted-foreground pl-3 border-l border-border/50">{f}</li>
                   ))}
                 </ul>
+              </div>
+            )}
+
+            {/* Nachgelagerte KI-Mini-Interpretation des unveränderten Breakdowns. */}
+            {llmInterpretResult?.interpretation && (
+              <div className="space-y-3 rounded-lg border border-violet-500/25 bg-violet-500/5 p-3">
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-violet-400">
+                  <Sparkles className="w-3.5 h-3.5" /> KI-Interpretation
+                </div>
+                <p className="text-xs text-foreground/85 leading-relaxed">{llmInterpretResult.interpretation.gesamteinschaetzung}</p>
+
+                {llmInterpretResult.interpretation.staerken?.length > 0 && (
+                  <div>
+                    <h3 className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">Stärken</h3>
+                    <ul className="mt-1 space-y-1">
+                      {llmInterpretResult.interpretation.staerken.map((item, i) => (
+                        <li key={i} className="text-[11px] text-foreground/75 pl-3 border-l border-emerald-500/30">{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {llmInterpretResult.interpretation.schwaechen?.length > 0 && (
+                  <div>
+                    <h3 className="text-[10px] font-semibold uppercase tracking-wider text-red-400">Schwächen</h3>
+                    <ul className="mt-1 space-y-1">
+                      {llmInterpretResult.interpretation.schwaechen.map((item, i) => (
+                        <li key={i} className="text-[11px] text-foreground/75 pl-3 border-l border-red-500/30">{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="rounded border border-border/50 bg-background/20 p-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Positiv</div>
+                    <p className="mt-0.5 text-[11px] text-foreground/75">{llmInterpretResult.interpretation.interpretation.positiv}</p>
+                  </div>
+                  <div className="rounded border border-border/50 bg-background/20 p-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Kritisch</div>
+                    <p className="mt-0.5 text-[11px] text-foreground/75">{llmInterpretResult.interpretation.interpretation.kritisch}</p>
+                  </div>
+                </div>
+
+                {llmInterpretResult.interpretation.interpretation.governanceSignal && (
+                  <div className="rounded border border-amber-500/25 bg-amber-500/5 p-2 text-[11px] text-foreground/75">
+                    <span className="font-semibold text-amber-400">Governance-Signal: </span>
+                    {llmInterpretResult.interpretation.interpretation.governanceSignal}
+                  </div>
+                )}
+                {llmInterpretResult.interpretation.interpretation.datenlueckenHinweis && (
+                  <div className="rounded border border-border/50 bg-muted/20 p-2 text-[11px] text-muted-foreground">
+                    <span className="font-semibold">Datenlücken-Hinweis: </span>
+                    {llmInterpretResult.interpretation.interpretation.datenlueckenHinweis}
+                  </div>
+                )}
+
+                <p className="border-l-2 border-violet-400/60 pl-2 text-xs italic text-foreground/85 leading-relaxed">
+                  {llmInterpretResult.interpretation.fazit}
+                </p>
               </div>
             )}
 
