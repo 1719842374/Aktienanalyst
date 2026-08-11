@@ -169,15 +169,17 @@ check("Weicher Safety-Guard: greift normal (kein Cyclical-Flag, Revenue-YoY>=10%
 // ═══ REGRESSIONSTESTS (08.08.2026, Ticket "Live-These + Thesis-Score +
 // Katalysatoren") ═══
 
-// 1. Baustein E: firmenspezifischer, quantifizierter, zur These passender
-// Katalysator zaehlt voll; generischer Katalysator wird stark abgewertet.
+// 1. Baustein E: Erwartungswerte wurden mit dem E-Score-KI-Katalysatoren-Fix
+// angepasst. Statt des alten Text-Alignment-Verhaeltnisses gilt jetzt
+// GB_norm x Q x ConfidenceFactor; ein einzelner valider Katalysator nutzt
+// daher verpflichtend den transparenten ConfidenceFactor von 0.40.
 const thesisTextMsft="Microsoft treibt sein Wachstum ueber Azure Cloud-Nachfrage und AI-Adoption. Server-Segment waechst mit 31.5%. K1 Cloud Expansion mit PoS 78% stuetzt die These zusaetzlich. Bewertung mit PEG 2.7 nicht guenstig. Risiko: CapEx-Belastung auf FCF-Marge.";
 const specificQuantifiedCat=[{name:"Cloud Expansion",context:"Azure waechst deutlich schneller als der Markt",pos:78,nettoUpside:11.8,generic:false}];
 const eSpecific=scoreCatalystAlignment(specificQuantifiedCat,"Server",thesisTextMsft);
-check("Baustein E: firmenspezifischer + quantifizierter + these-passender Katalysator erreicht hohen Score",eSpecific.score>=0.9,JSON.stringify(eSpecific));
+check("Baustein E: einzelner valider Katalysator wird mit ConfidenceFactor 0.40 gedeckelt",eSpecific.score>0&&eSpecific.score<.20&&eSpecific.flags.some(f=>f.includes("zu wenige firmenspezifische")),JSON.stringify(eSpecific));
 const genericCat=[{name:"Margin Expansion",context:"Allgemeine operative Verbesserungen",generic:true}];
 const eGeneric=scoreCatalystAlignment(genericCat,"Server",thesisTextMsft);
-check("Baustein E: ausschliesslich generische Katalysatoren werden auf max. 0.40 gedeckelt",eGeneric.score<=0.40&&eGeneric.flags.some(f=>f.includes("nicht firmenspezifisch")));
+check("Baustein E: ausschliesslich generische Katalysatoren erhalten den neutralen Fallback",eGeneric.score===.35&&eGeneric.flags.some(f=>f.includes("Keine Katalysatoren verfügbar")));
 
 // 2. Gemischter Fall: ein firmenspezifischer + ein generischer Katalysator ->
 // kein Deckel (nicht ALLE generisch), aber der generische zaehlt schwaecher.
@@ -186,12 +188,13 @@ const mixedCats=[
   {name:"Generic Initiative",context:"Allgemeine Massnahme",generic:true},
 ];
 const eMixed=scoreCatalystAlignment(mixedCats,"Server",thesisTextMsft);
-check("Baustein E: gemischter Fall (nicht alle generisch) wird NICHT gedeckelt",!eMixed.flags.some(f=>f.includes("nicht firmenspezifisch")));
+check("Baustein E: gemischter Fall dokumentiert den einzelnen validen Katalysator und dessen 0.40-Cap",eMixed.flags.some(f=>f.includes("valide für E-Score: 1"))&&eMixed.flags.some(f=>f.includes("zu wenige firmenspezifische")));
 
-// 3. Rueckwaertskompatibilitaet: Aufruf ohne thesisText/pos/nettoUpside/generic
-// (alte Signatur) funktioniert weiterhin unveraendert (reiner Text-Regex-Pfad).
+// 3. Rueckwaertskompatibilitaet: Die Funktionssignatur bleibt unveraendert;
+// alte Aufrufer ohne strukturierte Catalyst-Felder erhalten konservativ den
+// neutralen Fallback statt einer stillschweigenden Text-Regex-Schaetzung.
 const eLegacy=scoreCatalystAlignment([{name:"Server",context:"Azure waechst um 31.5%"}],"Server");
-check("Baustein E: Legacy-Aufruf ohne neue Felder funktioniert weiterhin (Text-Quantifizierung + Segment-Match)",eLegacy.score>0);
+check("Baustein E: Legacy-Aufruf ohne strukturierte Felder bleibt stabil mit neutralem Fallback",eLegacy.score===.35&&eLegacy.flags.some(f=>f.includes("Keine Katalysatoren verfügbar")));
 
 // 4. growthThesisFingerprint: identischer Input -> identischer Fingerprint;
 // geaenderter Input (z.B. neues Segment-Wachstum) -> anderer Fingerprint.
