@@ -76,7 +76,7 @@ export {
 import { registerAnalyzeRoute } from "./analyze-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { fetchMinerData } from "./btc-miner";
-import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpPeers, fmpQuote, fmpRatios } from "./fmp";
+import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpPeers, fmpQuote, fmpRatios, fmpAnalystEstimates } from "./fmp";
 import { assessRegulatoryExposure } from "./regulatory";
 import { computeManagementScoreForTicker } from "./management-score";
 import { deriveStatementTrends, identifyNewSegment, computeOldSegmentsGrowth } from "./management-score";
@@ -85,6 +85,26 @@ import { filterAndSelectPeers } from "./news-peers";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
 import { registerRegressionScanRoutes } from "./regression-scan";
+
+// Leitet aus den naechstliegenden 2-3 belastbar abgedeckten Fiskaljahren die
+// annualisierte EPS-Konsenswachstumsrate ab. Bei unzureichender Abdeckung bleibt
+// das Ergebnis bewusst null, statt eine Schaetzung zu erfinden.
+export function deriveConsensusGrowth(estimates: any[]): number | null {
+  const usable = estimates
+    .filter(e => Number(e?.epsAvg) > 0 && Number(e?.numAnalystsEps) >= 3)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .slice(0, 3);
+  if (usable.length < 2) return null;
+  const first = Number(usable[0].epsAvg);
+  const last = Number(usable[usable.length - 1].epsAvg);
+  const years = usable.length - 1;
+  if (first <= 0 || years < 1) return null;
+  const pct = (Math.pow(last / first, 1 / years) - 1) * 100;
+  // Plausibilitaets-Deckel: Sondereffekte eines einzelnen Fiskaljahrs nicht
+  // ungeprueft als strukturelles Konsenswachstum in den Score durchreichen.
+  if (!isFinite(pct)) return null;
+  return Math.max(-30, Math.min(60, pct));
+}
 
 // ─── registerRoutes ───────────────────────────────────────────────────────────
 export async function registerRoutes(httpServer: Server, app: Express): Promise<void> {
@@ -296,9 +316,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const cached = _thesisStrengthCache.get(ticker);
       if (!b.force && cached && Date.now() - cached.time < THESIS_STRENGTH_CACHE_TTL_MS) return res.json(cached.data);
 
-      const [incomeRows, cashflowRows, balanceRows, rawPeers] = await Promise.all([
+      const [incomeRows, cashflowRows, balanceRows, rawPeers, analystEstimates] = await Promise.all([
         fmpIncomeStatement(ticker, 5).catch(() => []), fmpCashFlow(ticker, 5).catch(() => []),
         fmpBalanceSheet(ticker, 5).catch(() => []), fmpPeers(ticker).catch(() => []),
+        fmpAnalystEstimates(ticker, 5).catch(() => []),
       ]);
       const trends = deriveStatementTrends({ incomeRows, cashflowRows, balanceRows });
       const number = (v: any): number | null => { const n = Number(v); return isFinite(n) ? n : null; };
@@ -407,7 +428,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // faelschlich Technology-Referenz) sofort an diesen 2 Zeilen erkennbar
       // ist, ohne erst die volle Similarity-Matrix durchsuchen zu muessen.
       console.log(`[THESIS-STRENGTH][${String(b.ticker||"?").toUpperCase()}] industry=${b.industry}, mapped_profile=${mapGrowthProfile(b.sector??null, b.industry??null)}, lynch_boost_ziel=${b.lynchClass ? (LYNCH_TO_STYLE[b.lynchClass as string] ?? "unbekannt") : "kein Lynch-Label"}`);
-      const result=computeThesisStrength({vector:thesisCompanyVector,fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth),sectorGrowthMedian:sectorMedianForGRequired,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,lynchClass:b.lynchClass ?? null,peerGapPct,maxSegmentGrowthPct,epsCagr5yPct,revenueYoyPct:realizedGrowth,sector:b.sector??null,industry:b.industry??null,peTTM,sectorMedianPE:sectorMedianPETTM,thesisText:b.thesisText??null,revenueGrowthSeries,epsGrowthSeries:earningsGrowth,marginSeries:opMarginsChrono,externalCapital:{netDebt:(()=>{const debt=number(balanceRows[0]?.totalDebt),cash=number(balanceRows[0]?.cashAndCashEquivalents);return debt!=null&&cash!=null?debt-cash:null;})(),ebitda:number(incomeRows[0]?.ebitda),cashAndEquivalents:number(balanceRows[0]?.cashAndCashEquivalents),marketCap:number(b.marketCap),commonStockRepurchased:number(cashflowRows[0]?.commonStockRepurchased),dividendsPaid:number(cashflowRows[0]?.dividendsPaid)},balance:{inventoryZ:peerReferenceReliable?relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std):0,growthZ:peerReferenceReliable?relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std):0,marginZ:peerReferenceReliable?relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std):0,marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
+      const result=computeThesisStrength({vector:thesisCompanyVector,fcf:number(b.fcfTTM),gStar,thesisGrowth,consensusGrowth:number(b.consensusGrowth) ?? deriveConsensusGrowth(analystEstimates),sectorGrowthMedian:sectorMedianForGRequired,backlogAvailable:false,catalysts:b.catalysts,segmentName:newSeg?.name,lynchClass:b.lynchClass ?? null,peerGapPct,maxSegmentGrowthPct,epsCagr5yPct,revenueYoyPct:realizedGrowth,sector:b.sector??null,industry:b.industry??null,peTTM,sectorMedianPE:sectorMedianPETTM,thesisText:b.thesisText??null,revenueGrowthSeries,epsGrowthSeries:earningsGrowth,marginSeries:opMarginsChrono,externalCapital:{netDebt:(()=>{const debt=number(balanceRows[0]?.totalDebt),cash=number(balanceRows[0]?.cashAndCashEquivalents);return debt!=null&&cash!=null?debt-cash:null;})(),ebitda:number(incomeRows[0]?.ebitda),cashAndEquivalents:number(balanceRows[0]?.cashAndCashEquivalents),marketCap:number(b.marketCap),commonStockRepurchased:number(cashflowRows[0]?.commonStockRepurchased),dividendsPaid:number(cashflowRows[0]?.dividendsPaid)},balance:{inventoryZ:peerReferenceReliable?relativeZ(invYoy,sectorReferences.metrics.inventory_yoy.median,sectorReferences.metrics.inventory_yoy.std):0,growthZ:peerReferenceReliable?relativeZ(realizedGrowth != null ? realizedGrowth/100:null,sectorReferences.metrics.revenue_yoy.median,sectorReferences.metrics.revenue_yoy.std):0,marginZ:peerReferenceReliable?relativeZ(trends.fcfMarginPct != null ? trends.fcfMarginPct/100:null,sectorReferences.metrics.fcf_margin.median,sectorReferences.metrics.fcf_margin.std):0,marginPositivePeriods:opMargins.length>=3?opMargins.filter(x=>x>0).length:0},turnaround:{margins:opMargins.slice().reverse(),fcfMargins:cashflowRows.map((r:any,i:number)=>{const rv=revenue(incomeRows[i]),oc=number(r?.operatingCashFlow),cap=number(r?.capitalExpenditure);return rv&&oc!=null&&cap!=null?(oc-Math.abs(cap))/rv:null;}).filter((x:any)=>x!=null).reverse(),leverage:leverageValues.slice().reverse()}});
       // Auftrag 07.08.2026 ("Denoising Softmax + Temperature Scaling"): finale
       // Konfidenzen + Gewichte loggen, damit ein zukuenftiger Kollaps sofort
       // an der Similarity- vs. Konfidenz-Differenz erkennbar ist.
