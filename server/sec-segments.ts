@@ -92,13 +92,43 @@ async function loadTickerCikMap(): Promise<Map<string, string>> {
   return map;
 }
 
-async function getCikForTicker(ticker: string): Promise<string | null> {
+export async function getCikForTicker(ticker: string): Promise<string | null> {
   try {
     const map = await loadTickerCikMap();
     return map.get(ticker.toUpperCase()) ?? null;
   } catch (err: any) {
     console.warn(`[SEC-SEGMENTS] CIK lookup failed for ${ticker}: ${err?.message}`);
     return null;
+  }
+}
+
+// RPO (Remaining Performance Obligation) via SEC XBRL Company Concept API --
+// nur fuer US-Ticker mit SEC-Filing verfuegbar. Liefert die letzten 2-3
+// Datenpunkte (chronologisch), um daraus ein YoY-Wachstum abzuleiten.
+// Gibt null zurueck wenn kein CIK gefunden wird, das Tag fehlt, oder der
+// SEC-Call fehlschlaegt -- NIEMALS geraten/geschaetzt (Zahlen-Prinzip).
+export async function fetchSecRpo(ticker: string): Promise<{ latest: number; previous: number | null; asOf: string } | null> {
+  const cik = await getCikForTicker(ticker);
+  if (!cik) return null;
+  const cik10 = cik.padStart(10, "0");
+  try {
+    const resp = await fetch(
+      `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik10}/us-gaap/RevenueRemainingPerformanceObligation.json`,
+      { headers: { "User-Agent": SEC_USER_AGENT }, signal: AbortSignal.timeout(15000) }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const points = (data?.units?.USD ?? []) as Array<{ end: string; val: number; form: string }>;
+    // Nur 10-K/10-Q-Werte, nach Datum aufsteigend sortiert, letzte 2 Punkte.
+    const usable = points
+      .filter(p => (p.form === "10-K" || p.form === "10-Q") && typeof p.val === "number" && p.val > 0)
+      .sort((a, b) => new Date(a.end).getTime() - new Date(b.end).getTime());
+    if (usable.length === 0) return null;
+    const latest = usable[usable.length - 1];
+    const previous = usable.length >= 5 ? usable[usable.length - 5] : null; // ~1 Jahr zurück bei Quartalsdaten
+    return { latest: latest.val, previous: previous?.val ?? null, asOf: latest.end };
+  } catch {
+    return null; // Netzwerkfehler/Timeout -> null, kein Crash, kein Rateergebnis
   }
 }
 

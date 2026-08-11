@@ -482,7 +482,51 @@ export function relativeZ(value:number|null,median:number|null,std:number|null):
 /** Unter fünf Peers wären z-Scores statistisch nicht belastbar; daher neutralisieren wir sie vollständig. */
 export function sectorReferenceFallback(peerCount:number){const neutral=peerCount<5;return{neutral,flags:neutral?["Sektor-Referenz nicht belastbar (<5 Peers)"]:[]};}
 
-export function scoreContractual(backlogAvailable:boolean):{score:number;flags:string[]}{return backlogAvailable?{score:.65,flags:[]}:{score:.375,flags:["keine RPO/Backlog-Daten verfügbar"]};}
+export interface ContractualInput {
+  rpoLatest?: number | null;
+  rpoPrevious?: number | null;
+  deferredRevenue?: number | null;
+  totalRevenue?: number | null; // zur Normierung von deferredRevenue
+}
+export function scoreContractual(input:ContractualInput|boolean):{score:number;flags:string[]}{
+  // Abwaertskompatibilitaet: alter boolean-Call-Stil faellt auf die bisherige
+  // binaere Logik zurueck (falls noch irgendwo referenziert).
+  if(typeof input==="boolean")return input?{score:.65,flags:[]}:{score:.375,flags:["keine RPO/Backlog-Daten verfügbar"]};
+
+  const flags:string[]=[];
+  // RPO-Score: YoY-Wachstum aus SEC XBRL, falls vorhanden. Neutral (0.375,
+  // identisch zum bisherigen Fallback) wenn keine Daten (z.B. Nicht-US-Ticker).
+  let rpoScore=.375;
+  if(finite(input.rpoLatest)&&input.rpoLatest!>0){
+    if(finite(input.rpoPrevious)&&input.rpoPrevious!>0){
+      const yoy=(input.rpoLatest!-input.rpoPrevious!)/input.rpoPrevious!;
+      if(yoy>=.20)rpoScore=.90;
+      else if(yoy>=.10)rpoScore=.75;
+      else if(yoy>=0)rpoScore=.60;
+      else rpoScore=.40; // RPO vorhanden, aber schrumpfend
+    }else{
+      rpoScore=.55; // RPO-Level vorhanden, aber kein YoY-Vergleich möglich
+      flags.push("RPO vorhanden, aber kein Vorjahreswert für Wachstumsrate");
+    }
+  }else{
+    flags.push("keine RPO-Daten verfügbar (SEC XBRL — nur für US-Filer)");
+  }
+
+  // Contracted-Score: deferredRevenue relativ zum Umsatz (echte Bilanzgröße).
+  let contractedScore=.375;
+  if(finite(input.deferredRevenue)&&finite(input.totalRevenue)&&input.totalRevenue!>0){
+    const ratio=input.deferredRevenue!/input.totalRevenue!;
+    if(ratio>=.15)contractedScore=.80;
+    else if(ratio>=.08)contractedScore=.60;
+    else if(ratio>=.03)contractedScore=.45;
+    else contractedScore=.30;
+  }else{
+    flags.push("keine Deferred-Revenue-Daten verfügbar");
+  }
+
+  const score=+clamp01(.70*rpoScore+.30*contractedScore).toFixed(12);
+  return{score,flags};
+}
 export interface ExternalCapitalInput { netDebt:number|null; ebitda:number|null; cashAndEquivalents:number|null; marketCap:number|null; commonStockRepurchased:number|null; dividendsPaid:number|null; }
 export function scoreExternal(input:ExternalCapitalInput):{score:number;flags:string[]}{const flags:string[]=[];const allMissing=Object.values(input).every(v=>!finite(v));if(allMissing)return{score:.50,flags:["Bilanz- und Kapitalrückführungsdaten fehlen — neutraler B-Score"]};let balanceScore:number;if(!finite(input.netDebt)||!finite(input.ebitda)||input.ebitda<=0){balanceScore=.50;flags.push("Bilanzdaten für Net Debt/EBITDA fehlen — neutraler Teilscore");}else if(input.netDebt/input.ebitda<0||(finite(input.cashAndEquivalents)&&finite(input.marketCap)&&input.marketCap>0&&input.cashAndEquivalents/input.marketCap>.15))balanceScore=.90;else if(input.netDebt/input.ebitda<=1)balanceScore=.70;else if(input.netDebt/input.ebitda<=2.5)balanceScore=.50;else balanceScore=.25;const repurchased=finite(input.commonStockRepurchased)?Math.abs(input.commonStockRepurchased):null,dividends=finite(input.dividendsPaid)?Math.abs(input.dividendsPaid):null;const capitalReturnScore=repurchased!=null&&dividends!=null&&repurchased>0&&dividends>0 ? .80 : (repurchased!=null&&repurchased>0)||(dividends!=null&&dividends>0) ? .60 : .35;if(capitalReturnScore===.35)flags.push("keine Kapitalrückführung erkennbar");return{score:.60*balanceScore+.40*capitalReturnScore,flags};}
 export function scoreGrowthCoverage(input:{fcf:number|null;gStar:number|null;thesisGrowth:number|null;consensusGrowth?:number|null;sectorGrowthMedian?:number|null}):{score:number;coverage:number|null;gRequired:number|null;gThesis:number|null;flags:string[];gRequiredBreakdown:{gStar:number|null;consensus:number|null;sector:number|null;floor:number;used:number|null;usedSource:string|null}}{
@@ -571,7 +615,7 @@ export function scoreCatalystAlignment(catalysts:Array<{name?:string;context?:st
   const score=clamp01(gbNorm*q*confidenceFactor);
   return{score,flags};
 }
-export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable:boolean; catalysts?:Array<{name?:string;context?:string;tags?:string[];pos?:number;nettoUpside?:number;generic?:boolean}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; revenueYoyPct?:number|null; sector?:string|null; industry?:string|null; peTTM?:number|null; sectorMedianPE?:number|null; thesisText?:string|null; revenueGrowthSeries?:number[]|null; epsGrowthSeries?:number[]|null; marginSeries?:number[]|null; externalCapital?:ExternalCapitalInput; }
+export interface ThesisStrengthInput { vector:CompanyVector; fcf:number|null; gStar:number|null; thesisGrowth:number|null; consensusGrowth?:number|null; sectorGrowthMedian?:number|null; backlogAvailable?:boolean; contractual?:ContractualInput; catalysts?:Array<{name?:string;context?:string;tags?:string[];pos?:number;nettoUpside?:number;generic?:boolean}>; segmentName?:string|null; balance:{inventoryZ:number;growthZ:number;marginZ:number;marginPositivePeriods:number}; turnaround:TurnaroundSeries; lynchClass?:string|null; peerGapPct?:number|null; maxSegmentGrowthPct?:number|null; epsCagr5yPct?:number|null; revenueYoyPct?:number|null; sector?:string|null; industry?:string|null; peTTM?:number|null; sectorMedianPE?:number|null; thesisText?:string|null; revenueGrowthSeries?:number[]|null; epsGrowthSeries?:number[]|null; marginSeries?:number[]|null; externalCapital?:ExternalCapitalInput; }
 export function computeThesisStrength(input:ThesisStrengthInput){const flags=[...(input.vector.missingFeatures||[]).map(x=>`Merkmal fehlt: ${x}`)];
  // Auftrag 07.08.2026 ("Querschnitts-Konsistenz + Wachstums-Logik"): GrowthEvidence
  // wird IMMER berechnet (auch bei fehlenden Einzel-Inputs -- computeGrowthEvidence
@@ -584,4 +628,4 @@ export function computeThesisStrength(input:ThesisStrengthInput){const flags=[..
  let c=computeStyleConfidences(input.vector, input.lynchClass, ge.evidence);
  c=applyFastGrowerSafetyGuard(c, ge.evidence, input.peerGapPct??null, input.maxSegmentGrowthPct??null, ge.cyclicalPeFlag, input.revenueYoyPct??null);
  c=applyWeakGrowthCeiling(c, input.revenueYoyPct??null, input.epsCagr5yPct??null);
- const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.backlogAvailable);const b=scoreExternal(input.externalCapital??{netDebt:null,ebitda:null,cashAndEquivalents:null,marketCap:null,commonStockRepurchased:null,dividendsPaid:null});const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName,input.thesisText);const catalystConfidence=Math.min(.85,.45+e.score*.40);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+raw.toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf,catalystConfidence,growthEvidence:ge};}
+ const w=blendWeights(c);if(Math.max(...Object.values(c))<.35)flags.push("Klassifikation unsicher — neutrale Gewichte verwendet");const a=scoreContractual(input.contractual??input.backlogAvailable??false);const b=scoreExternal(input.externalCapital??{netDebt:null,ebitda:null,cashAndEquivalents:null,marketCap:null,commonStockRepurchased:null,dividendsPaid:null});const gc=scoreGrowthCoverage({fcf:input.fcf,gStar:input.gStar,thesisGrowth:input.thesisGrowth,consensusGrowth:input.consensusGrowth,sectorGrowthMedian:input.sectorGrowthMedian});const ta=computeTurnaroundEvidence(input.turnaround);const d=scoreBalanceSheet({...input.balance,turnaroundConfidence:c["Turnaround"],turnaroundEvidence:ta.evidence});const e=scoreCatalystAlignment(input.catalysts,input.segmentName,input.thesisText);const catalystConfidence=Math.min(.85,.45+e.score*.40);flags.push(...a.flags,...b.flags,...gc.flags,...d.flags,...e.flags);const raw=10*(w.A*a.score+w.B*b.score+w.C*gc.score+w.D*d.score+w.E*e.score);const conf=Math.max(...Object.values(c));return{finalScore:+raw.toFixed(2),rawScore:+raw.toFixed(2),styleConfidences:c,blendedWeights:w,subScores:{A:a.score,B:b.score,C:gc.score,D:d.score,E:e.score},growthCoverage:gc,turnaroundEvidence:ta,flags:Array.from(new Set(flags)),classificationConfidence:conf,catalystConfidence,growthEvidence:ge};}
