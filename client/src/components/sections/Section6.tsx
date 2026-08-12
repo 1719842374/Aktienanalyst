@@ -40,7 +40,7 @@ export function Section6({ data }: Props) {
   // M2: größter Einzelrisiko-Impact (brutto) aus der Risikoinversion, Fallback 35% — identisch mit Section17
   const m2Impact = data.risks?.length ? Math.max(...data.risks.map(r => Math.abs(r.impact))) : 35;
   const m2 = worstCaseM2(data.currentPrice, m2Impact);
-  const m3 = worstCaseM3(data.currentPrice, sectorDD);
+  const m3 = worstCaseM3(data.currentPrice, sectorDD, data.lynchClass);
   const worstCase = Math.min(m1, m2, m3);
 
   // M1-Label: direkt aus worstCaseM1Label() — Label und Berechnung bleiben synchron

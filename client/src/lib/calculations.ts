@@ -696,32 +696,55 @@ export function calculateRiskAdjustedCRV(
 }
 
 // === Worst Case Methods ===
-// M1 Formula: effectiveDrawdown = min(beta × sectorDD, sectorDD × 1.5), capped at 65%
-// UI label must match: "min(β × SectorDD, SectorDD×1.5), cap 65%"
+// M1 Formula: effectiveDrawdown = min(max(0.70, beta) × sectorDD, sectorDD × 1.5), capped at 65%
+// UI label must match: "min(max(0.70, β) × SectorDD, SectorDD×1.5), cap 65%"
 export function worstCaseM1(price: number, beta: number, maxDrawdown: number): number {
   const historicalMaxDrawdown = maxDrawdown > 0 ? maxDrawdown : 35;
-  const betaAdjustedDrawdown = Math.min(beta * historicalMaxDrawdown, historicalMaxDrawdown * 1.5);
+  // Beta-Floor 0.70: verhindert, dass sehr niedriges Beta den Drawdown unbegrenzt nach unten glättet.
+  // Der bestehende Cap nach oben (DD × 1.5, dann 65%) bleibt unverändert.
+  const effectiveBeta = Math.max(0.70, beta);
+  const betaAdjustedDrawdown = Math.min(effectiveBeta * historicalMaxDrawdown, historicalMaxDrawdown * 1.5);
   const effectiveDrawdown = Math.min(betaAdjustedDrawdown, 65);
   return price * (1 - effectiveDrawdown / 100);
 }
 
 // Exported label for UI — keeps formula display in sync with implementation (Bug #2 fix)
 export function worstCaseM1Label(beta: number, sectorDD: number): string {
-  const raw = +(beta * sectorDD).toFixed(1);
+  const effectiveBeta = Math.max(0.70, beta);
+  const raw = +(effectiveBeta * sectorDD).toFixed(1);
   const capped = Math.min(raw, sectorDD * 1.5);
   const effective = Math.min(capped, 65);
   const isCapped = effective < raw;
+  const betaFloorNote = effectiveBeta > beta ? ` (β-Floor 0.70 statt ${beta.toFixed(2)})` : "";
   return isCapped
-    ? `β(${beta.toFixed(2)}) × ${sectorDD}% = ${raw}% → gecapped auf ${effective.toFixed(1)}%`
-    : `β(${beta.toFixed(2)}) × ${sectorDD}% = ${effective.toFixed(1)}%`;
+    ? `β(${effectiveBeta.toFixed(2)})${betaFloorNote} × ${sectorDD}% = ${raw}% → gecapped auf ${effective.toFixed(1)}%`
+    : `β(${effectiveBeta.toFixed(2)})${betaFloorNote} × ${sectorDD}% = ${effective.toFixed(1)}%`;
 }
 
 export function worstCaseM2(price: number, riskImpact: number): number {
   return price * (1 - riskImpact / 100);
 }
 
-export function worstCaseM3(price: number, sectorDrawdown: number): number {
-  return price * (1 - sectorDrawdown / 100);
+// Klassifikations-Basis-Drawdowns: additive Erweiterung von M3; sectorMaxDrawdown
+// selbst bleibt unverändert sektorspezifisch. slow_grower liegt konservativ zwischen
+// Stalwart und Asset Play, da hierfür kein separater Nutzerwert vorgegeben wurde.
+const LYNCH_CLASS_BASE_DRAWDOWN: Record<string, number> = {
+  fast_grower: 45,
+  stalwart: 32,
+  slow_grower: 28,
+  cyclical: 55,
+  turnaround: 60,
+  asset_play: 30,
+};
+
+// Der optionale dritte Parameter erhält das bisherige Verhalten für bestehende Aufrufer:
+// Ohne bekannte Lynch-Klassifikation gilt unverändert ausschließlich der Sektor-Drawdown.
+export function worstCaseM3(price: number, sectorDrawdown: number, lynchClass?: string | null): number {
+  const classBase = lynchClass ? LYNCH_CLASS_BASE_DRAWDOWN[lynchClass] : undefined;
+  const basisDrawdown = classBase != null
+    ? 0.55 * classBase + 0.45 * sectorDrawdown
+    : sectorDrawdown;
+  return price * (1 - basisDrawdown / 100);
 }
 
 // === WACC Calculation ===
