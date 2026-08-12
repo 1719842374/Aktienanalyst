@@ -60,6 +60,7 @@ interface TechChartPoint {
   ma730: number | null; ma730x5: number | null;
   ma111: number | null; ma350x2: number | null; ma350: number | null;
   ma1400: number | null;
+  real10y?: number | null; m2Yoy?: number | null;
   rsi14?: number | null;
 }
 
@@ -957,6 +958,9 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   });
   const [showSignals, setShowSignals] = useState(true);
   const [showVolume, setShowVolume] = useState(true);
+  // Analog zum Gold-Chart standardmaessig sichtbar, aber separat abschaltbar.
+  const [showReal10y, setShowReal10y] = useState(true);
+  const [showM2Yoy, setShowM2Yoy] = useState(true);
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>("1Y");
   const timeRange = timeRangeProp ?? internalTimeRange;
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange;
@@ -1039,6 +1043,29 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     }
     return result;
   }, [filteredData]);
+
+  const hasReal10y = useMemo(() => chartData.some(d => d.real10y != null), [chartData]);
+  const hasM2Yoy = useMemo(() => chartData.some(d => d.m2Yoy != null), [chartData]);
+
+  // Exakt analog zur Gold-Domain: eigene Skala verhindert, dass die kleine
+  // Prozentreihe die unveraenderte BTC-Preisachse oder MAs verzieht.
+  const real10yDomain = useMemo(() => {
+    const vals = chartData.map(d => d.real10y).filter((v): v is number => v != null);
+    if (vals.length === 0) return [0, 5] as [number, number];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const padding = Math.max((max - min) * 0.15, 0.2);
+    return [+(min - padding).toFixed(1), +(max + padding).toFixed(1)] as [number, number];
+  }, [chartData]);
+
+  const m2YoyDomain = useMemo(() => {
+    const vals = chartData.map(d => d.m2Yoy).filter((v): v is number => v != null);
+    if (vals.length === 0) return [0, 10] as [number, number];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const padding = Math.max((max - min) * 0.15, 0.2);
+    return [+(min - padding).toFixed(1), +(max + padding).toFixed(1)] as [number, number];
+  }, [chartData]);
 
   // Kapitulationssegmente auf tatsaechlich im Chart gerenderte Datums-
   // Kategorien snappen. Recharts' <XAxis dataKey="date"> ist eine
@@ -1451,6 +1478,39 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
           </button>
         ))}
 
+        {(hasReal10y || hasM2Yoy) && (
+          <>
+            <span className="text-muted-foreground/30 self-center mx-1">|</span>
+            <span className="text-[9px] text-muted-foreground self-center mr-1">Makro:</span>
+            {hasReal10y && (
+              <button
+                onClick={() => setShowReal10y(v => !v)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                  showReal10y ? "border-sky-400 text-sky-400" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
+                }`}
+                title="Realzins (DFII10) als rechte Achse ein-/ausblenden"
+                data-testid="toggle-btc-real10y"
+              >
+                {showReal10y ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+                Real10Y
+              </button>
+            )}
+            {hasM2Yoy && (
+              <button
+                onClick={() => setShowM2Yoy(v => !v)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                  showM2Yoy ? "border-violet-400 text-violet-400" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
+                }`}
+                title="US-M2-Geldmengenwachstum (YoY) ein-/ausblenden"
+                data-testid="toggle-btc-m2yoy"
+              >
+                {showM2Yoy ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+                M2 YoY
+              </button>
+            )}
+          </>
+        )}
+
         {/* Measurement tool toggle */}
         <span className="text-muted-foreground/30 self-center mx-1">|</span>
         <button
@@ -1506,7 +1566,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartDataWithRSI}
-            margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+            margin={{ top: 5, right: 54, left: 0, bottom: 5 }}
             onClick={(e: any) => {
               if (!isMeasuring || !e?.activePayload?.[0]?.payload) return;
               const point = e.activePayload[0].payload;
@@ -1536,6 +1596,29 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             />
             {/* Hidden right axis for volume normalisation */}
             <YAxis yAxisId="vol" hide domain={[0, 1]} orientation="right" />
+            {showReal10y && hasReal10y && (
+              <YAxis
+                yAxisId="real10y"
+                orientation="right"
+                domain={real10yDomain}
+                tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+                tick={{ fontSize: 9, fill: "#38bdf8" }}
+                width={44}
+                axisLine={{ stroke: "#38bdf8" }}
+              />
+            )}
+            {showM2Yoy && hasM2Yoy && (
+              <YAxis
+                yAxisId="m2yoy"
+                orientation="right"
+                domain={m2YoyDomain}
+                tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+                tick={{ fontSize: 9, fill: "#a78bfa" }}
+                width={44}
+                axisLine={false}
+                tickLine={false}
+              />
+            )}
             <Tooltip
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
@@ -1546,7 +1629,11 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                     {payload.filter((p: any) => p.dataKey !== "_volNorm").map((p: any) => (
                       <div key={p.dataKey} className="flex justify-between gap-3">
                         <span style={{ color: p.color }}>{p.name}</span>
-                        <span className="font-mono tabular-nums">${Number(p.value).toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                        <span className="font-mono tabular-nums">
+                          {p.dataKey === "real10y" || p.dataKey === "m2Yoy"
+                            ? `${Number(p.value).toFixed(2)}%`
+                            : `$${Number(p.value).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
+                        </span>
                       </div>
                     ))}
                     {(volPoint?.volume ?? 0) > 0 && (
@@ -1645,6 +1732,32 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 isAnimationActive={false}
               />
             ))}
+            {showReal10y && hasReal10y && (
+              <Line
+                yAxisId="real10y"
+                type="monotone"
+                dataKey="real10y"
+                name="Real10Y (DFII10)"
+                stroke="#38bdf8"
+                strokeWidth={1.25}
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            )}
+            {showM2Yoy && hasM2Yoy && (
+              <Line
+                yAxisId="m2yoy"
+                type="stepAfter"
+                dataKey="m2Yoy"
+                name="M2 YoY"
+                stroke="#a78bfa"
+                strokeWidth={1.25}
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            )}
 
             {/* Buy/Sell signal markers */}
             {showSignals && visibleSignals.map((s, i) => (

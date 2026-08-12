@@ -10,6 +10,7 @@
  * Module map:
  *  /api/analyze, /api/fmp-budget   → server/analyze-route.ts
  *  /api/btc-miner                  → server/btc-miner.ts (GET + POST)
+ *  /api/analyze-btc/macro-history  → server/btc-routes.ts
  *  /api/analyze-gold               → server/gold-routes.ts
  *
  * Additional routes (/api/analyze-recession, /api/researcher/*, /api/catalyst-enrich,
@@ -75,6 +76,7 @@ export {
 // ─── Route modules ────────────────────────────────────────────────────────────
 import { registerAnalyzeRoute } from "./analyze-route";
 import { registerGoldRoutes } from "./gold-routes";
+import { registerBTCRoutes } from "./btc-routes";
 import { fetchMinerData } from "./btc-miner";
 import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpPeers, fmpQuote, fmpRatios, fmpAnalystEstimates } from "./fmp";
 import { assessRegulatoryExposure } from "./regulatory";
@@ -121,6 +123,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // 2. /api/analyze-gold
   registerGoldRoutes(httpServer, app);
+
+  // 2a. /api/analyze-btc/macro-history (FRED: DFII10 + M2SL YoY)
+  registerBTCRoutes(app);
 
   // 3a. GET /api/btc-miner — no price context, returns miner metrics only
   app.get("/api/btc-miner", async (_req, res) => {

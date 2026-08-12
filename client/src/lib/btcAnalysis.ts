@@ -53,6 +53,9 @@ export interface TechChartPoint {
   ma350x2: number | null;
   ma350: number | null;
   ma1400: number | null;
+  // Makro-Overlays aus /api/analyze-btc/macro-history (FRED).
+  real10y?: number | null;
+  m2Yoy?: number | null;
 }
 
 interface TechSignal {
@@ -838,6 +841,20 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   // === 11. Calculate ALL moving averages & indicators ===
   const closePrices = allPriceData.map(d => d.price);
 
+  // FRED-Daten serverseitig laden: Die bestehende BTC-Preisanalyse bleibt im
+  // Browser, erhaelt hier aber additiv zwei date-keyed Makroserien zum Mergen.
+  // Ein Fehler darf die bestehende Analyse keinesfalls blockieren.
+  let real10yByDate: Record<string, number> = {};
+  let m2YoyByDate: Record<string, number> = {};
+  try {
+    const startDate = allPriceData[0]?.date ?? "2011-01-01";
+    const macro = await fetchJSON(`/api/analyze-btc/macro-history?startDate=${encodeURIComponent(startDate)}`, 30000);
+    real10yByDate = macro?.real10yByDate ?? {};
+    m2YoyByDate = macro?.m2YoyByDate ?? {};
+  } catch {
+    // FRED-Overlay optional: BTC-Preis, MAs und Signale bleiben voll nutzbar.
+  }
+
   // Standard MAs
   const ma20 = calcSMA(closePrices, 20);
   const ma50 = calcSMA(closePrices, 50);
@@ -916,6 +933,8 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
       ma350x2: ma350x2[i],
       ma350: ma350[i],
       ma1400: ma1400[i],
+      real10y: real10yByDate[d.date] ?? null,
+      m2Yoy: m2YoyByDate[d.date] ?? null,
     };
   });
 
