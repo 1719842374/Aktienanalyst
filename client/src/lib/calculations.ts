@@ -728,7 +728,7 @@ export function worstCaseM2(price: number, riskImpact: number): number {
 // Klassifikations-Basis-Drawdowns: additive Erweiterung von M3; sectorMaxDrawdown
 // selbst bleibt unverändert sektorspezifisch. slow_grower liegt konservativ zwischen
 // Stalwart und Asset Play, da hierfür kein separater Nutzerwert vorgegeben wurde.
-const LYNCH_CLASS_BASE_DRAWDOWN: Record<string, number> = {
+export const LYNCH_CLASS_BASE_DRAWDOWN: Record<string, number> = {
   fast_grower: 45,
   stalwart: 32,
   slow_grower: 28,

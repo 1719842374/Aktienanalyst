@@ -5,7 +5,7 @@ import {
   calculateFCFFDCF, buildDefaultDCFParams,
   worstCaseM1, worstCaseM1Label, worstCaseM2, worstCaseM3,
   calculateCRV, calculateRiskAdjustedCRV, calculateCatalystUpside, selectCatalystBase,
-  computeHardenedCRV,
+  computeHardenedCRV, LYNCH_CLASS_BASE_DRAWDOWN,
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, getCRVColor, getCRVBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
@@ -141,9 +141,11 @@ export function Section6({ data }: Props) {
                 <td className="py-2 px-2 text-right font-mono tabular-nums font-semibold text-red-500">{formatCurrency(m2)}</td>
               </tr>
               <tr>
-                <td className="py-2 px-2 font-medium">M3: Sektor-Drawdown</td>
+                <td className="py-2 px-2 font-medium">M3: Klassifikation + Sektor-Drawdown</td>
                 <td className="py-2 px-2 font-mono tabular-nums text-muted-foreground">
-                  {formatCurrency(data.currentPrice)} × (1 − {sectorDD}%)
+                  {data.lynchClass && LYNCH_CLASS_BASE_DRAWDOWN[data.lynchClass] != null
+                    ? <>{formatCurrency(data.currentPrice)} × (1 − [0.55×{LYNCH_CLASS_BASE_DRAWDOWN[data.lynchClass]}% + 0.45×{sectorDD}%] = {(0.55 * LYNCH_CLASS_BASE_DRAWDOWN[data.lynchClass] + 0.45 * sectorDD).toFixed(1)}%)</>
+                    : <>{formatCurrency(data.currentPrice)} × (1 − {sectorDD}%)</>}
                 </td>
                 <td className="py-2 px-2 text-right font-mono tabular-nums font-semibold text-red-500">{formatCurrency(m3)}</td>
               </tr>
