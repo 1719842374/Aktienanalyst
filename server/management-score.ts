@@ -287,6 +287,28 @@ export function computeCapitalScore(input: CapitalScoreInput): CapitalScoreResul
   return { score, roicScore, fcfScore, reinvestScore, flags };
 }
 
+/** Extrahiert aktuelle und älteste verfügbare ROIC-Werte aus FMP-Key-Metrics.
+ *  FMP liefert Dezimalwerte; der Management-Score erwartet Prozentwerte. */
+export function extractRoicInputsFromKeyMetrics(
+  keyMetricsRows: unknown
+): { roicPct: number | null; roic5YPct: number | null; historyLength: number } {
+  const roicHistory = (Array.isArray(keyMetricsRows) ? keyMetricsRows : [])
+    .map((r: any) => ({
+      date: String(r?.date ?? ""),
+      returnOnInvestedCapital: typeof r?.returnOnInvestedCapital === "number" && isFinite(r.returnOnInvestedCapital)
+        ? r.returnOnInvestedCapital * 100
+        : null,
+    }))
+    .filter(r => r.date)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // ältestes zuerst
+
+  return {
+    roicPct: roicHistory.length > 0 ? roicHistory[roicHistory.length - 1].returnOnInvestedCapital : null,
+    roic5YPct: roicHistory.length >= 2 ? roicHistory[0].returnOnInvestedCapital : null,
+    historyLength: roicHistory.length,
+  };
+}
+
 // ============================================================
 // 2D. Bilanzielle Glaubwürdigkeit (S_Credibility) — 15%
 // ============================================================
@@ -971,6 +993,22 @@ export async function computeManagementScoreForTicker(
   const fcfMarginPrevYearPct = trends?.fcfMarginPrevYearPct ?? input.fcfMarginPrevYearPct ?? null;
   const statementFlags = trends?.flags ?? ["Mehrjahres-Statements nicht abrufbar — Trends basieren auf ggf. unvollständigen Client-Daten"];
 
+  // ROIC-Verdrahtung (Nachtrag, 12.08.2026): computeCapitalScore erwartet
+  // roicPct/roic5YPct, aber diese wurden bisher nie befüllt (immer null ->
+  // Fallback-Score 0.35). FMP liefert returnOnInvestedCapital bereits fertig
+  // berechnet in key-metrics — kein eigenes NOPAT/Invested-Capital-Berechnen
+  // nötig. Serverseitig geholt (wie bei Trends oben), Client-Input bleibt
+  // Fallback falls der Fetch fehlschlägt.
+  let roicInputs = { roicPct: null as number | null, roic5YPct: null as number | null, historyLength: 0 };
+  try {
+    const keyMetricsRows = await fmpKeyMetrics(upperTicker, 6).catch(() => []);
+    roicInputs = extractRoicInputsFromKeyMetrics(keyMetricsRows);
+  } catch {
+    roicInputs = { roicPct: null, roic5YPct: null, historyLength: 0 };
+  }
+  const roicPct = roicInputs.historyLength > 0 ? roicInputs.roicPct : (input.roicPct ?? null);
+  const roic5YPct = roicInputs.historyLength >= 2 ? roicInputs.roic5YPct : (input.roic5YPct ?? null);
+
   // ── 1. Segment-Score ──
   // PFLICHT-DEBUG-LOGGING (Auftrag 06.08.2026, "Segment-Matching & Management-
   // Score hart fixen"): Root Cause des gemeldeten Bugs war NICHT die
@@ -1072,8 +1110,8 @@ export async function computeManagementScoreForTicker(
   const sectorDefaults = getSectorDefaults(input.sector, input.industry);
   const waccPct = sectorDefaults.waccScenarios.avg;
   const capital = computeCapitalScore({
-    roicPct: input.roicPct ?? null,
-    roic5YPct: input.roic5YPct ?? null,
+    roicPct,
+    roic5YPct,
     waccPct,
     fcfMarginPct,
     fcfMarginTrend,
