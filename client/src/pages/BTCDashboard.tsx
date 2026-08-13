@@ -61,6 +61,7 @@ interface TechChartPoint {
   ma111: number | null; ma350x2: number | null; ma350: number | null;
   ma1400: number | null;
   real10y?: number | null; m2Yoy?: number | null;
+  m2Absolute?: number | null; m2AbsoluteLagged?: number | null;
   rsi14?: number | null;
 }
 
@@ -961,6 +962,10 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   // Analog zum Gold-Chart standardmaessig sichtbar, aber separat abschaltbar.
   const [showReal10y, setShowReal10y] = useState(true);
   const [showM2Yoy, setShowM2Yoy] = useState(true);
+  // Absolute M2-Linien werden wegen der bereits aktiven Makro-Overlays nur
+  // manuell aktiviert; beide Toggles bleiben bewusst voneinander unabhaengig.
+  const [showM2Absolute, setShowM2Absolute] = useState(false);
+  const [showM2AbsoluteLagged, setShowM2AbsoluteLagged] = useState(false);
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>("1Y");
   const timeRange = timeRangeProp ?? internalTimeRange;
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange;
@@ -1046,6 +1051,8 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
 
   const hasReal10y = useMemo(() => chartData.some(d => d.real10y != null), [chartData]);
   const hasM2Yoy = useMemo(() => chartData.some(d => d.m2Yoy != null), [chartData]);
+  const hasM2Absolute = useMemo(() => chartData.some(d => d.m2Absolute != null), [chartData]);
+  const hasM2AbsoluteLagged = useMemo(() => chartData.some(d => d.m2AbsoluteLagged != null), [chartData]);
 
   // Exakt analog zur Gold-Domain: eigene Skala verhindert, dass die kleine
   // Prozentreihe die unveraenderte BTC-Preisachse oder MAs verzieht.
@@ -1061,6 +1068,15 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   const m2YoyDomain = useMemo(() => {
     const vals = chartData.map(d => d.m2Yoy).filter((v): v is number => v != null);
     if (vals.length === 0) return [0, 10] as [number, number];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const padding = Math.max((max - min) * 0.15, 0.2);
+    return [+(min - padding).toFixed(1), +(max + padding).toFixed(1)] as [number, number];
+  }, [chartData]);
+
+  const m2AbsoluteDomain = useMemo(() => {
+    const vals = chartData.map(d => d.m2Absolute).filter((v): v is number => v != null);
+    if (vals.length === 0) return [15, 30] as [number, number];
     const min = Math.min(...vals);
     const max = Math.max(...vals);
     const padding = Math.max((max - min) * 0.15, 0.2);
@@ -1478,7 +1494,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
           </button>
         ))}
 
-        {(hasReal10y || hasM2Yoy) && (
+        {(hasReal10y || hasM2Yoy || hasM2Absolute || hasM2AbsoluteLagged) && (
           <>
             <span className="text-muted-foreground/30 self-center mx-1">|</span>
             <span className="text-[9px] text-muted-foreground self-center mr-1">Makro:</span>
@@ -1506,6 +1522,32 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               >
                 {showM2Yoy ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
                 M2 YoY
+              </button>
+            )}
+            {hasM2Absolute && (
+              <button
+                onClick={() => setShowM2Absolute(v => !v)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                  showM2Absolute ? "border-slate-200 text-slate-200" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
+                }`}
+                title="Absolute US-M2-Geldmenge in Billionen USD ein-/ausblenden"
+                data-testid="toggle-btc-m2absolute"
+              >
+                {showM2Absolute ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+                M2 Absolut
+              </button>
+            )}
+            {hasM2AbsoluteLagged && (
+              <button
+                onClick={() => setShowM2AbsoluteLagged(v => !v)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                  showM2AbsoluteLagged ? "border-amber-300 text-amber-300" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
+                }`}
+                title="Absolute US-M2-Geldmenge, um 10 Wochen nach vorne verschoben, ein-/ausblenden"
+                data-testid="toggle-btc-m2absolute-lagged"
+              >
+                {showM2AbsoluteLagged ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+                M2 Lag (10W)
               </button>
             )}
           </>
@@ -1566,7 +1608,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartDataWithRSI}
-            margin={{ top: 5, right: 54, left: 0, bottom: 5 }}
+            margin={{ top: 5, right: 106, left: 0, bottom: 5 }}
             onClick={(e: any) => {
               if (!isMeasuring || !e?.activePayload?.[0]?.payload) return;
               const point = e.activePayload[0].payload;
@@ -1619,6 +1661,18 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 tickLine={false}
               />
             )}
+            {(showM2Absolute && hasM2Absolute || showM2AbsoluteLagged && hasM2AbsoluteLagged) && (
+              <YAxis
+                yAxisId="m2absolute"
+                orientation="right"
+                domain={m2AbsoluteDomain}
+                tickFormatter={(v: number) => `$${v.toFixed(1)}T`}
+                tick={{ fontSize: 9, fill: "#e2e8f0" }}
+                width={54}
+                axisLine={false}
+                tickLine={false}
+              />
+            )}
             <Tooltip
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
@@ -1632,7 +1686,9 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                         <span className="font-mono tabular-nums">
                           {p.dataKey === "real10y" || p.dataKey === "m2Yoy"
                             ? `${Number(p.value).toFixed(2)}%`
-                            : `$${Number(p.value).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
+                            : p.dataKey === "m2Absolute" || p.dataKey === "m2AbsoluteLagged"
+                              ? `$${Number(p.value).toFixed(1)} T`
+                              : `$${Number(p.value).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
                         </span>
                       </div>
                     ))}
@@ -1753,6 +1809,33 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 name="M2 YoY"
                 stroke="#a78bfa"
                 strokeWidth={1.25}
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            )}
+            {showM2Absolute && hasM2Absolute && (
+              <Line
+                yAxisId="m2absolute"
+                type="monotone"
+                dataKey="m2Absolute"
+                name="M2 Absolut"
+                stroke="#e2e8f0"
+                strokeWidth={1.25}
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            )}
+            {showM2AbsoluteLagged && hasM2AbsoluteLagged && (
+              <Line
+                yAxisId="m2absolute"
+                type="monotone"
+                dataKey="m2AbsoluteLagged"
+                name="M2 Lag (10W)"
+                stroke="#fbbf24"
+                strokeWidth={1.25}
+                strokeDasharray="6 3"
                 dot={false}
                 connectNulls
                 isAnimationActive={false}

@@ -56,6 +56,8 @@ export interface TechChartPoint {
   // Makro-Overlays aus /api/analyze-btc/macro-history (FRED).
   real10y?: number | null;
   m2Yoy?: number | null;
+  m2Absolute?: number | null;
+  m2AbsoluteLagged?: number | null;
 }
 
 interface TechSignal {
@@ -846,11 +848,15 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   // Ein Fehler darf die bestehende Analyse keinesfalls blockieren.
   let real10yByDate: Record<string, number> = {};
   let m2YoyByDate: Record<string, number> = {};
+  let m2AbsoluteByDate: Record<string, number> = {};
+  let m2AbsoluteLaggedByDate: Record<string, number> = {};
   try {
     const startDate = allPriceData[0]?.date ?? "2011-01-01";
     const macro = await fetchJSON(`/api/analyze-btc/macro-history?startDate=${encodeURIComponent(startDate)}`, 30000);
     real10yByDate = macro?.real10yByDate ?? {};
     m2YoyByDate = macro?.m2YoyByDate ?? {};
+    m2AbsoluteByDate = macro?.m2AbsoluteByDate ?? {};
+    m2AbsoluteLaggedByDate = macro?.m2AbsoluteLaggedByDate ?? {};
   } catch {
     // FRED-Overlay optional: BTC-Preis, MAs und Signale bleiben voll nutzbar.
   }
@@ -935,6 +941,8 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
       ma1400: ma1400[i],
       real10y: real10yByDate[d.date] ?? null,
       m2Yoy: m2YoyByDate[d.date] ?? null,
+      m2Absolute: m2AbsoluteByDate[d.date] ?? null,
+      m2AbsoluteLagged: m2AbsoluteLaggedByDate[d.date] ?? null,
     };
   });
 

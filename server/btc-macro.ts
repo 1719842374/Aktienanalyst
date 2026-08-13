@@ -17,8 +17,11 @@ export interface FredPoint {
 export interface BTCMacroHistory {
   real10yByDate: Record<string, number>;
   m2YoyByDate: Record<string, number>;
+  m2AbsoluteByDate: Record<string, number>;
+  m2AbsoluteLaggedByDate: Record<string, number>;
   latestReal10y: FredPoint | null;
   latestM2Yoy: FredPoint | null;
+  latestM2Absolute: FredPoint | null;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -84,6 +87,52 @@ export function buildM2YoyForwardFill(
   return output;
 }
 
+/**
+ * Absolute M2-Geldmenge (in Billionen USD) als glatte, taeglich forward-
+ * gefuellte Linie. Anders als buildM2YoyForwardFill wird hier keine YoY-Rate
+ * berechnet: M2SL kommt in Mrd. USD von FRED und wird fuer die Anzeige in
+ * Billionen durch 1000 geteilt.
+ */
+export function buildM2AbsoluteForwardFill(
+  monthlyM2: FredPoint[],
+  startDate: string,
+  endDate: string,
+): Record<string, number> {
+  const ordered = [...monthlyM2].sort((a, b) => a.date.localeCompare(b.date));
+  const output: Record<string, number> = {};
+  let pointIndex = 0;
+  let latestValue: number | null = null;
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+
+  for (let time = start.getTime(); time <= end.getTime(); time += DAY_MS) {
+    const date = toDateKey(new Date(time));
+    while (pointIndex < ordered.length && ordered[pointIndex].date <= date) {
+      latestValue = ordered[pointIndex].value / 1000;
+      pointIndex++;
+    }
+    if (latestValue !== null) output[date] = latestValue;
+  }
+  return output;
+}
+
+/**
+ * Verschiebt eine datierte Serie um lagDays Tage in die Zukunft. Damit liegt
+ * der heutige M2-Wert auf der Zeitachse beim BTC-Kurs in rund zehn Wochen.
+ */
+export function shiftSeriesForwardDays(
+  seriesByDate: Record<string, number>,
+  lagDays: number,
+): Record<string, number> {
+  const output: Record<string, number> = {};
+  for (const [dateStr, value] of Object.entries(seriesByDate)) {
+    const d = new Date(`${dateStr}T00:00:00.000Z`);
+    d.setUTCDate(d.getUTCDate() + lagDays);
+    output[toDateKey(d)] = value;
+  }
+  return output;
+}
+
 function subtractMonths(date: string, months: number): string {
   const d = new Date(`${date}T00:00:00.000Z`);
   d.setUTCMonth(d.getUTCMonth() - months);
@@ -117,11 +166,21 @@ export async function fetchBTCMacroHistory(startDate: string, endDate = toDateKe
   const latestM2Yoy = m2YoyEntries.length > 0
     ? { date: m2YoyEntries[m2YoyEntries.length - 1][0], value: m2YoyEntries[m2YoyEntries.length - 1][1] }
     : null;
+  const M2_LAG_DAYS = 70;
+  const m2AbsoluteByDate = buildM2AbsoluteForwardFill(m2, startDate, endDate);
+  const m2AbsoluteLaggedByDate = shiftSeriesForwardDays(m2AbsoluteByDate, M2_LAG_DAYS);
+  const m2AbsoluteEntries = Object.entries(m2AbsoluteByDate);
+  const latestM2Absolute = m2AbsoluteEntries.length > 0
+    ? { date: m2AbsoluteEntries[m2AbsoluteEntries.length - 1][0], value: m2AbsoluteEntries[m2AbsoluteEntries.length - 1][1] }
+    : null;
 
   return {
     real10yByDate: Object.fromEntries(real10y.map(point => [point.date, point.value])),
     m2YoyByDate,
+    m2AbsoluteByDate,
+    m2AbsoluteLaggedByDate,
     latestReal10y: real10y.length > 0 ? real10y[real10y.length - 1] : null,
     latestM2Yoy,
+    latestM2Absolute,
   };
 }
