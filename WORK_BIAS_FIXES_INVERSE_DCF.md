@@ -530,72 +530,165 @@ onSuccess: (result) => {
 
 ---
 
-## 16. Portfolio: Erwartete Rendite / Konzentration fehlt generisch per Ticker (CAPM) (NEU)
+## 16. Portfolio: CAPM E[R], Reverse Optimization, Black-Litterman, DCF-Korrektur (NEU)
 
-### Problem
+### 16.1 Problem
 
-Im **Virtuellen Portfolio** (Positions-Tracker + Sharpe/Kelly/CAPM) wird die **erwartete Rendite** der jeweiligen Ticker **nirgends generisch** nach dem CAPM-Modell aus Beta berechnet.
+Im Virtuellen Portfolio fehlt die **generische** Berechnung der erwarteten Rendite pro Ticker und die konsistente Verknüpfung mit CAPM, Reverse Optimization und (optional) Black-Litterman. „Ziel-Gewicht CAPM“ ist aktuell ein Label ohne ticker-spezifisches E[R].
 
-Aktuell sichtbar (Stand UI 14.08.2026):
-
-| Element | Vorhanden | Fehlt |
-|---------|-----------|-------|
-| Ist-Marktgewicht (Pie: LLY 61 %, MSFT 25 %, NVDA 12 %, NVO 2 %) | Ja | — |
-| Ziel-Gewicht CAPM (Toggle) | UI-Label | **Keine ticker-spezifische E[R]-Berechnung** |
-| Realisierte Performance pro Position | Ja (z. B. MSFT −0,92 %, NVDA +0,54 %) | — |
-| Portfolio-Performance-Chart | Ja | — |
-| **E[R]_i = r_f + β_i · (E[R_m] − r_f)** pro Ticker | — | **fehlt komplett** |
-| Konzentrations-Risiko aus CAPM-Gewichten vs. Ist-Gewichten | — | **fehlt** |
-| Beitrag der Konzentration zur Portfolio-Expected-Return | — | **fehlt** |
-
-### Was generisch fehlen muss
-
-Für **jeden** Ticker im Portfolio (nicht hardcodiert):
+### 16.2 CAPM-Formel (korrekt)
 
 ```text
 E[R]_i = r_f + β_i × ERP
 ```
 
-| Input | Quelle (generisch) |
-|-------|--------------------|
-| β_i | FMP / Analyse-Daten (5Y Beta), bereits in Sektion 1 |
-| r_f | konfigurierbar (z. B. US 10Y oder DE Bund), Policy-Sektion |
-| ERP (Equity Risk Premium) | konfigurierbar oder Damodaran-Default |
+| Parameter | Typischer Wert (2026) | Quelle |
+|-----------|----------------------|--------|
+| r_f | 4,0 % | US 10Y / Policy |
+| ERP | 4,5 % | Damodaran / Policy |
+| β_i | FMP 5Y | Sektion 1 Analyse |
 
-Daraus ableiten:
+**Zahlenbeispiel (Portfolio aus UI):**
 
-1. **Ticker-Expected-Return** E[R]_i für jede Position  
-2. **Portfolio-Expected-Return** Σ (w_i × E[R]_i) mit Ist-Gewichten und mit Ziel-Gewichten  
-3. **Konzentrations-Impakt**: Differenz Ist-Gewicht vs. CAPM-Zielgewicht → Über-/Untergewichtung und deren Beitrag zur erwarteten Rendite  
-4. Anzeige in Investments-Tabelle + Übersicht (nicht nur realisierte Performance)
+| Ticker | β | E[R] CAPM | Ist-Gewicht |
+|--------|---|-----------|-------------|
+| LLY | 0,45 | 4,0 + 0,45×4,5 = **6,03 %** | 61 % |
+| MSFT | 1,10 | 4,0 + 1,10×4,5 = **8,95 %** | 25 % |
+| NVDA | 1,70 | 4,0 + 1,70×4,5 = **11,65 %** | 12 % |
+| NVO | 0,35 | 4,0 + 0,35×4,5 = **5,58 %** | 2 % |
 
-### Beispiel (illustrativ, MSFT-Portfolio-Kontext)
+**Portfolio-E[R] (Ist-Gewichte):**
 
-| Ticker | β | E[R] (CAPM) | Ist-Gewicht | CAPM-Ziel | Δ Gewicht |
-|--------|---|-------------|-------------|-----------|-----------|
-| LLY | z. B. 0,4 | r_f + 0,4·ERP | 61 % | … | stark über |
-| MSFT | 1,10 | r_f + 1,10·ERP | 25 % | … | — |
-| NVDA | z. B. 1,7 | r_f + 1,7·ERP | 12 % | … | — |
-| NVO | 0,35 | r_f + 0,35·ERP | 2 % | … | stark unter |
+```text
+E[R]_P = 0,61×6,03% + 0,25×8,95% + 0,12×11,65% + 0,02×5,58%
+       ≈ 3,68 + 2,24 + 1,40 + 0,11 = 7,43 %
+```
 
-Ohne diese Schicht bleibt „Ziel-Gewicht CAPM“ ein Label ohne mathematische Grundlage pro Ticker.
+Konzentration auf LLY (niedriges β) drückt die erwartete Portfolio-Rendite.
 
-### Anforderungen an die Implementierung
+### 16.3 Beta-Schätzung (generisch)
 
-- **Generisch:** keine Ticker-Hardcodes; Formel identisch für alle Positionen  
-- **Inputs aus vorhandenen Daten:** Beta aus Analyse/FMP, r_f und ERP aus Policy  
-- **Ausgabe:**  
-  - Spalte „E[R] (CAPM)“ in der Investments-Tabelle  
-  - Portfolio-E[R] in der Übersicht  
-  - optional: Konzentrations-Warnung, wenn max. Ist-Gewicht ≫ CAPM-Ziel (z. B. LLY 61 %)  
-- **Konsistenz:** gleiche r_f / ERP wie in DCF-WACC, wo sinnvoll
+| Methode | Formel / Regel | Wann |
+|---------|----------------|------|
+| Raw Beta | Cov(R_i, R_m) / Var(R_m), 5Y | Standard (FMP) |
+| Adjusted Beta | (2/3)·β_raw + (1/3)·1 | wenn \|β_raw − 1\| > 0,5 |
+| Sektor-Fallback | Damodaran Industry Beta | History < 2J oder fehlend |
+
+### 16.4 Reverse Optimization
+
+Gleichgewichtsrenditen aus **Marktgewichten** (nicht aus CAPM-β):
+
+```text
+Π = λ × Σ × w_mkt
+```
+
+| Symbol | Bedeutung | Typischer Wert |
+|--------|-----------|----------------|
+| Π | Implied Returns (Vektor) | — |
+| λ | Risk Aversion | 2,0 – 3,0 |
+| Σ | Kovarianzmatrix der Returns | aus historischen Returns |
+| w_mkt | Marktgewichte (oder Ist-Portfolio-Gewichte) | z. B. LLY 61 %, … |
+
+**Praxis-Schritt für Aktienanalyst:**
+
+1. Σ aus historischen Returns der Portfolio-Ticker schätzen (ggf. Shrinkage).
+2. w = Ist-Gewichte (oder CAPM-Ziel, sobald vorhanden).
+3. λ so kalibrieren, dass Σ w · Π ≈ beobachtbare Marktrisikoprämie.
+4. Π_i als „marktimplizite“ E[R]_i ausweisen und mit CAPM-E[R]_i vergleichen.
+
+Differenz CAPM vs. Reverse-Opt = Signal, ob Gewicht und β konsistent sind.
+
+### 16.5 Black-Litterman Views
+
+CAPM/Reverse-Opt liefert Prior Π. Views Q mischen Analysten-Edge ein:
+
+```text
+E[R]_BL = [ (τΣ)⁻¹ + Pᵀ Ω⁻¹ P ]⁻¹ · [ (τΣ)⁻¹ Π + Pᵀ Ω⁻¹ Q ]
+```
+
+| Symbol | Bedeutung |
+|--------|-----------|
+| Π | Gleichgewichtsrenditen (aus Reverse Opt oder CAPM) |
+| Q | View-Vektor (z. B. „NVDA +3 Pp über Gleichgewicht“) |
+| P | Pick-Matrix (welche Assets die View betrifft) |
+| Ω | Unsicherheit der Views (diagonal, größer = weniger Einfluss) |
+| τ | Skalar, typisch 0,025 – 0,05 |
+
+**Views aus Aktienanalyst-Daten (generisch):**
+
+| View-Quelle | Beispiel | Konfidenz |
+|-------------|---------|-----------|
+| DCF-Upside (gehärtet) | MSFT Fair Value impliziert +X % vs. Kurs | mittel–hoch |
+| Thesis Strength | starker Score → leichte Übergewichtung E[R] | mittel |
+| Management-Score < 5 | Abschlag auf E[R] | mittel |
+| Moat = None | Abschlag / höhere Ω | hoch |
+
+**Ohne Views** = reines CAPM / Reverse Opt.  
+**Mit Views** = BL, sobald DCF/Thesis zuverlässig pro Ticker vorliegen.
+
+### 16.6 Portfolio-E[R] mit DCF korrigieren
+
+Rein CAPM ignoriert fundamentalen Edge. Hybrid:
+
+```text
+E[R]_i^{hybrid} = (1 − α) · E[R]_i^{CAPM} + α · E[R]_i^{DCF}
+```
+
+| α | Bedeutung |
+|---|-----------|
+| 0 | reines CAPM |
+| 0,3 – 0,5 | ausgewogen (empfohlen Start) |
+| 1 | nur DCF-implizite Rendite |
+
+**DCF-implizite Rendite (Näherung):**
+
+```text
+E[R]_i^{DCF} ≈ (Fair Value_hardened − Kurs) / Kurs   +   r_f
+```
+
+oder aus Reverse-DCF g* + Dividenden/FCF-Yield, konsistent zur Analyse.
+
+**Wichtig:** Nur **gehärteten** DCF verwenden (siehe §1–2), nie unbereinigte Extrapolation.
+
+**Zahlenbeispiel MSFT (illustrativ):**
+
+| Quelle | Wert |
+|--------|------|
+| CAPM E[R] | 8,95 % |
+| Hardened FV | $428 | Kurs $495 → implizite Underperformance |
+| Hybrid α=0,4 | zieht E[R] nach unten Richtung fundamentaler Realität |
+
+So wird Portfolio-E[R] nicht nur von Beta/Konzentration, sondern auch von der Analyse-Ampel getrieben.
+
+### 16.7 Implementierungs-Reihenfolge (Portfolio)
+
+| Prio | Task |
+|------|------|
+| P1 | E[R]_i = r_f + β_i × ERP pro Ticker (generisch) |
+| P1 | Portfolio-E[R] = Σ w_i E[R]_i (Ist + Ziel) |
+| P1 | Spalte in Investments-Tabelle + Übersicht |
+| P2 | Reverse Optimization Π = λ Σ w |
+| P2 | Hybrid E[R] mit gehärtetem DCF (α konfigurierbar) |
+| P3 | Black-Litterman Views aus Thesis/DCF/Moat |
+
+### 16.8 Portfolio-Optimierungs-Tools (Referenz)
+
+| Tool / Lib | Nutzen |
+|------------|--------|
+| eigene JS/TS-Implementierung | volle Kontrolle, keine Extra-Dependency |
+| PyPortfolioOpt (falls Backend-Python) | Mean-Variance, BL, Efficient Frontier |
+| quantstats / empyrical | Performance-Metriken |
+| manuelle Matrix-Inversion (mathjs) | BL-Formel im Frontend für kleine n (4–15 Ticker) |
+
+Für n ≤ 15 Ticker ist eine schlanke Eigenimplementierung (CAPM → optional BL) ausreichend und hält den Stack einfach.
 
 ### Priorität
 
-**P1** (Portfolio-Logik) – die UI behauptet CAPM-Zielgewichte; ohne ticker-spezifisches E[R] aus Beta ist das unvollständig und irreführend.
+**P1** für CAPM-E[R] pro Ticker + Portfolio-E[R].  
+**P2/P3** für Reverse Opt, DCF-Hybrid und Black-Litterman.
 
 ---
 
 **Document Owner:** Aktienanalyst Project  
-**Last Updated:** 14.08.2026 (erweitert um Portfolio CAPM Expected Return / Konzentration Gap)  
-**Next Action:** Implement P0 items + Sektions-Tausch + Variante B Background-Trigger + Portfolio CAPM E[R]
+**Last Updated:** 14.08.2026 (erweitert §16: Beta-Methoden, Reverse Opt, BL Views, DCF-Hybrid Portfolio E[R])  
+**Next Action:** Implement P0 items + Sektions-Tausch + Variante B + Portfolio CAPM E[R]
