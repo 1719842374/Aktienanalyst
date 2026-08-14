@@ -412,6 +412,124 @@ Auf Mobile wird der BTC-Technische-Analyse-Chart (Sektion 10) **zusammengedrück
 
 ---
 
+## 15. Auto-Trigger Thesis-Score + Management-Score (Variante B) (NEU)
+
+### Problem
+
+Thesis Strength Score und Management-Execution-Score müssen aktuell **manuell** per Button gestartet werden. Das unterbricht den Analyse-Flow und verhindert, dass beide Scores zuverlässig in die Executive Summary einfließen.
+
+### Aktueller Stand (bewusst lazy)
+
+| Score | Endpoint | Warum manuell? | Cache |
+|-------|----------|----------------|-------|
+| Thesis Strength | `POST /api/thesis-strength` | Viele FMP-Calls + Peer-Analyse | 24h / Ticker |
+| Management-Execution | `POST /api/management-score` | Comp/Insider-Daten + optional LLM | 24h / Ticker |
+
+Code-Kommentar (routes.ts):  
+*„lazy (Frontend ruft ihn separat, nicht bei jedem /api/analyze auf) … kostenintensive FMP-Comp/Insider-Calls + optionaler LLM-Call sollen nicht bei jedem Klick neu laufen.“*
+
+### Kosten bei automatischem Start (Zahlen / Daten / Fakten)
+
+**Thesis Strength – Call-Profil:**
+
+| Call | Anzahl | Typische Dauer |
+|------|--------|----------------|
+| Income Statement (5J) | 1 | 0,3–0,8 s |
+| Cash Flow (5J) | 1 | 0,3–0,8 s |
+| Balance Sheet (5J) | 1 | 0,3–0,8 s |
+| Peers | 1 | 0,2–0,5 s |
+| Analyst Estimates | 1 | 0,3–0,6 s |
+| SEC RPO | 1 | 0,5–1,5 s |
+| Peer-Statements (bis 5 Peers × 4 Calls) | bis ~20 | **2–6 s** |
+| Berechnung | — | 0,1–0,3 s |
+
+| Szenario | Dauer |
+|----------|-------|
+| Cache-Hit | < 50 ms |
+| Cache-Miss | **3–8 s** |
+
+**Management-Score – Call-Profil:**
+
+| Call | Typische Dauer |
+|------|----------------|
+| FMP Governance / Compensation / Insider | 1–3 s |
+| Optional LLM (Qual+News) | 2–6 s |
+| Berechnung | < 0,2 s |
+
+| Szenario | Dauer |
+|----------|-------|
+| Cache-Hit | < 50 ms |
+| Cache-Miss (ohne LLM) | 1–3 s |
+| Cache-Miss (mit LLM) | 4–9 s |
+
+**Kombiniert (beide Scores):**
+
+| Szenario | Zusätzliche Wartezeit |
+|----------|------------------------|
+| Beide im Cache (< 24h) | praktisch 0 |
+| Beide Cache-Miss, **parallel** | **ca. 4–9 s** |
+| Sequentiell | ca. 6–15 s |
+
+Die Hauptanalyse (`/api/analyze`) dauert bereits oft 5–15 s. Ein blockierender Auto-Start würde die gefühlte Ladezeit spürbar verlängern.
+
+### Varianten-Vergleich
+
+| Variante | Vorteil | Nachteil |
+|----------|---------|----------|
+| **A. Komplett manuell** (aktuell) | Schnelle Erstanalyse, User steuert Kosten | Extra-Klicks, Scores fehlen oft im Fazit |
+| **B. Auto nach Analyse (Background)** | Kein Extra-Klick, UI bleibt responsiv | Scores erscheinen verzögert |
+| **C. Auto parallel zum Analyze** | Alles fertig, wenn die Seite da ist | Längere Wartezeit beim ersten Load |
+| **D. Auto nur bei Cache-Hit** | Fast instant bei Wiederholung | Beim ersten Mal weiterhin manuell |
+
+### Entscheidung: Variante B (empfohlen)
+
+**Ablauf:**
+
+1. User gibt Ticker ein → normale Analyse (`/api/analyze`) läuft.
+2. Sobald `StockAnalysis` erfolgreich geladen ist, feuern Frontend **parallel im Hintergrund**:
+   - `POST /api/thesis-strength`
+   - `POST /api/management-score`
+3. Sektionen zeigen „wird berechnet…“ und füllen sich nach, ohne den Rest zu blockieren.
+4. 24h-Cache bleibt aktiv → zweiter Besuch desselben Tickers ist fast instant.
+5. Sobald beide Scores da sind, kann die Executive Summary (nach Sektions-Tausch) sie einbeziehen.
+
+### Implementierung Background-Trigger (Frontend)
+
+**Ort:** `client/src/pages/Dashboard.tsx` (oder Analyse-Success-Handler)
+
+```ts
+// Nach erfolgreichem analyzeMutation.onSuccess:
+onSuccess: (result) => {
+  setData(result);
+  // Variante B: Background-Trigger (nicht blockierend)
+  void triggerThesisStrength(result);
+  void triggerManagementScore(result);
+}
+```
+
+- Beide Calls laufen parallel (`Promise.all` oder separate `void`-Aufrufe).
+- UI-State: `thesisStatus: "idle" | "loading" | "done" | "error"` (analog Management).
+- Fehler in einem Score dürfen den anderen und die Hauptanalyse nicht abbrechen.
+- Manuelle Buttons bleiben als Fallback / Force-Refresh erhalten.
+
+### FMP-API-Kontingente – Optimierung
+
+| Maßnahme | Wirkung |
+|----------|--------|
+| 24h-Cache pro Ticker (bereits aktiv) | Wiederholte Analysen desselben Tickers verbrauchen 0 zusätzliche Calls |
+| Parallel statt sequentiell | Keine doppelte Wartezeit, gleiche Call-Anzahl |
+| Peer-Limit bei Thesis (max. 5) | Begrenzt teure Peer-Statement-Calls |
+| Optional: Management-Score ohne LLM beim Auto-Trigger | Spart 2–6 s und LLM-Budget; LLM nur bei manuellem „KI interpretieren“ |
+| FMP-Budget-Tracking (`/api/fmp-budget`) | Sichtbarkeit, wann Kontingent eng wird |
+
+**Richtwert:** Ein Cache-Miss für Thesis + Management (ohne LLM) verbraucht grob **15–30 FMP-Calls**. Bei 50 neuen Ticker/Tag ≈ 750–1.500 Calls nur für diese beiden Scores – deshalb Cache und Background (nicht blockierend) Pflicht.
+
+### Priorität
+
+**P1** – direkt nach dem Sektions-Tausch (Management vor Fazit), damit die Scores automatisch verfügbar sind, wenn die Executive Summary sie braucht.
+
+---
+
 **Document Owner:** Aktienanalyst Project  
-**Last Updated:** 14.08.2026 (erweitert um BTC Mobile-Chart-Höhen + ResponsiveContainer)  
-**Next Action:** Implement P0 items + Sektions-Tausch + BTC Chart Mobile-Höhen
+**Last Updated:** 14.08.2026 (erweitert um Variante B Auto-Trigger Thesis/Management + FMP-Kontingente)  
+**Next Action:** Implement P0 items + Sektions-Tausch + Variante B Background-Trigger
