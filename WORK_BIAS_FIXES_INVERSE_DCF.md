@@ -322,6 +322,96 @@ Der finale Moat-Rating steuert den Multiplikator für Management- und Thesis-Sco
 
 ---
 
+## 14. BTC Chart Mobile-Höhen & ResponsiveContainer (NEU)
+
+### Problem
+
+Auf Mobile wird der BTC-Technische-Analyse-Chart (Sektion 10) **zusammengedrückt**, obwohl noch Platz auf der Seite vorhanden ist.
+
+### Aktuelle Höhenwerte (BTCDashboard.tsx → Section10TechnicalChart)
+
+| Chart-Teil | Aktuell (Mobile) | Aktuell (sm+) | Problem |
+|------------|------------------|---------------|--------|
+| Haupt-Preis-Chart | `h-[320px]` | `sm:h-[380px]` | Zu niedrig auf Phone (~390–430px Viewport-Höhe nutzbar) |
+| MACD | `h-[140px]` | `sm:h-[160px]` | Eng |
+| RSI | feste `height={110}` | — | Starr, keine Breakpoint-Staffelung |
+
+### Tailwind Breakpoints (relevant für Charts)
+
+| Prefix | Min-Width | Typische Geräte |
+|--------|-----------|-----------------|
+| (keine) | 0 px | Smartphones (Portrait) |
+| `sm:` | 640 px | Große Phones / kleine Tablets |
+| `md:` | 768 px | Tablets |
+| `lg:` | 1024 px | Desktop / Landscape |
+| `xl:` | 1280 px | Große Desktops |
+
+**Wichtig:** `h-[320px]` gilt von 0 px bis 639 px. Ab 640 px greift `sm:h-[380px]`.
+
+### ResponsiveContainer – Funktionsweise
+
+```tsx
+<div className="h-[320px] sm:h-[380px] w-full">
+  <ResponsiveContainer width="100%" height="100%">
+    <ComposedChart ... />
+  </ResponsiveContainer>
+</div>
+```
+
+- `ResponsiveContainer` nimmt **100 % der Höhe und Breite des Parent-Divs**.
+- Die Höhe kommt **nur** vom Parent (`h-[…]`).
+- Wenn der Parent zu klein ist, wird der Chart gestaucht – unabhängig davon, wie viel Platz die Seite insgesamt hat.
+
+### Empfohlene neue Höhenwerte
+
+| Chart-Teil | Mobile (< 640 px) | sm (≥ 640 px) | md (≥ 768 px) |
+|------------|-------------------|---------------|---------------|
+| Haupt-Preis-Chart | `h-[380px]` | `sm:h-[420px]` | `md:h-[460px]` |
+| MACD | `h-[160px]` | `sm:h-[180px]` | — |
+| RSI | `height={130}` | — | — |
+
+**Code-Vorschlag:**
+
+```tsx
+{/* Haupt-Chart */}
+<div className="h-[380px] sm:h-[420px] md:h-[460px] w-full">
+  <ResponsiveContainer width="100%" height="100%">
+    ...
+  </ResponsiveContainer>
+</div>
+
+{/* MACD */}
+<div className="h-[160px] sm:h-[180px] w-full">
+  <ResponsiveContainer width="100%" height="100%">
+    ...
+  </ResponsiveContainer>
+</div>
+
+{/* RSI */}
+<ResponsiveContainer width="100%" height={130}>
+  ...
+</ResponsiveContainer>
+```
+
+### Warum das hilft (Zahlen)
+
+- iPhone 14 Viewport-Höhe (ohne Browser-Chrome): ca. **650–720 px**
+- Header + Sidebar-Button + Padding: ca. **80–100 px**
+- Verbleibend für Content: ca. **550–620 px**
+- Aktuell belegter Chart-Block (320 + 140 + 110 + Abstände): ca. **600 px** → Chart wirkt gestaucht
+- Neu (380 + 160 + 130): ca. **700 px** → nutzt den verfügbaren Platz besser, Scrollen bleibt möglich
+
+### Betroffene Datei
+
+- `client/src/pages/BTCDashboard.tsx`
+  - Section10TechnicalChart: drei Höhen-Stellen (Preis-Chart, MACD, RSI)
+
+### Priorität
+
+**P2** (UI/UX) – unabhängig von den Bias-Fixes, aber schnell umsetzbar und spürbar auf Mobile.
+
+---
+
 **Document Owner:** Aktienanalyst Project  
-**Last Updated:** 14.08.2026 (erweitert um Sektions-Reihenfolge 17↔18)  
-**Next Action:** Implement P0 items + Sektions-Tausch Management-Score ↔ Zusammenfassung
+**Last Updated:** 14.08.2026 (erweitert um BTC Mobile-Chart-Höhen + ResponsiveContainer)  
+**Next Action:** Implement P0 items + Sektions-Tausch + BTC Chart Mobile-Höhen
