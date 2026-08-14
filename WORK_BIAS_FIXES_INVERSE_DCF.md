@@ -177,6 +177,108 @@ The top Executive Summary must:
 
 ---
 
+## 10. Zwei-Pfad-Logik: Daten-Modus vs. KI-Modus (NEU)
+
+### Problemstellung
+
+Wenn der KI-Button aktiviert ist, ändern sich mehrere Inputs fundamental:
+
+- **Sektion 15 (Katalysatoren):** Generische/sektor-basierte Katalysatoren werden durch firmenspezifische ersetzt (andere Namen, andere PoS, andere Brutto-Upside, andere Einpreisungsgrade).
+- Daraus resultieren **andere GB-Summen** und damit andere Catalyst-Adj. Targets.
+- KI kann zusätzliche regulatorische Risiken, Moat-Einschätzungen oder Red Flags liefern, die im reinen Daten-Modus fehlen.
+
+Ohne klare Trennung der beiden Pfade ist nicht nachvollziehbar, warum Upside-Zahlen und Fazit bei KI-Modus anders aussehen.
+
+### Zwei-Pfad-Architektur
+
+| Aspekt | Pfad A: Daten-Modus (ohne KI) | Pfad B: KI-Modus |
+|--------|------------------------------|------------------|
+| Katalysatoren | Generisch / sektor-basiert | Firmenspezifisch (andere Namen + andere PoS/Upside) |
+| GB-Summe / Catalyst-Adj. Target | Basieren auf generischen Katalysatoren | Basieren auf KI-Katalysatoren |
+| Moat / regulatorische Scores | Rein regelbasiert aus vorhandenen Daten | Können durch KI-Analyse ergänzt oder korrigiert werden |
+| Expected Damage / Risiken | Aus regelbasierter Risikoinversion | Können durch KI-angereicherte Risiken erweitert werden |
+| Executive Summary | Muss klar kennzeichnen: „Basis: Daten-Modus (generische Katalysatoren)“ | Muss klar kennzeichnen: „Basis: KI-angereicherte Inputs“ |
+
+### Implementierungsanforderungen
+
+1. **Flag im Data-Objekt**  
+   `data.llmMode: boolean` (existiert bereits) und ggf. `data.catalystsSource: "generic" | "llm"` explizit setzen.
+
+2. **Executive Summary** muss den Modus anzeigen:  
+   - „Katalysatoren: generisch (Sektor)“ oder  
+   - „Katalysatoren: KI-firmenspezifisch (Stand: [Timestamp])“
+
+3. **Scoring / Upside-Berechnung**  
+   Darf nicht einfach „die aktuellen Katalysatoren“ nehmen, sondern muss wissen, aus welchem Pfad sie stammen.  
+   Bei Modus-Wechsel (KI an/aus) müssen GB-Summe und Catalyst-Adj. Target neu berechnet werden.
+
+4. **Nachvollziehbarkeit**  
+   Im Fazit und in der Control-Calculation muss sichtbar sein, welcher DCF-Base und welche Katalysatoren-Quelle verwendet wurden.
+
+### Zahlenbeispiel (NVO-Typ)
+
+| Metrik | Daten-Modus (generisch) | KI-Modus (firmenspezifisch) | Differenz |
+|--------|-------------------------|-----------------------------|-----------|
+| Anzahl Katalysatoren | 4–5 generisch | 4–5 firmenspezifisch | — |
+| Σ GB (nach PoS) | z. B. +12–18 % | z. B. +35–45 % | +20–30 Pp möglich |
+| Catalyst-Adj. Target | basiert auf niedrigerer GB | basiert auf höherer GB | deutlich höher |
+| Moat-Rating | regelbasiert (None) | kann durch KI bestätigt oder nuanciert werden | — |
+
+**Fazit:** Die Zwei-Pfad-Logik ist Pflicht, sonst sind die Upside-Zahlen und das Fazit zwischen den Modi nicht vergleichbar und nicht erklärbar.
+
+---
+
+## 11. Moat-Score Berechnungsmethoden (NEU)
+
+### Aktueller Stand
+
+- Moat-Rating kommt primär aus regelbasierten Heuristiken + optionaler KI-Analyse (Sektion 11).
+- Werte: `Wide` / `Narrow` / `None` (teilweise auch numerische Porter-Scores).
+
+### Empfohlene Berechnungslogik (generisch)
+
+**A. Regelbasierter Basis-Moat (ohne KI)**
+
+| Kriterium | Beitrag zum Moat-Score |
+|-----------|------------------------|
+| Bruttomarge dauerhaft > 60 % | +1 (Pricing Power Signal) |
+| ROIC 5Y-Durchschnitt > Sektor-Median + 5 Pp | +1 |
+| FCF-Marge stabil / steigend | +0.5 |
+| Switching Costs / Network Effects erkennbar | +1 (wenn Daten vorhanden) |
+| Intangible Assets (Patente, Marken) stark | +1 |
+| Government Exposure ≥ 25 % | –1 (regulatorische Verletzlichkeit) |
+| Hohe Rivalität (Porter) | –1 |
+
+Ergebnis wird auf `Wide` (≥ 3), `Narrow` (1–2.5), `None` (< 1) gemappt.
+
+**B. KI-angereicherter Moat (wenn llmMode = true)**
+
+- KI kann qualitative Faktoren hinzufügen (z. B. „Ökosystem-Stärke“, „regulatorische Eintrittsbarrieren“, „Switching Costs durch Daten“).
+- Diese dürfen den regelbasierten Score **ergänzen**, aber nicht vollständig überschreiben.
+- Empfohlen: KI-Beitrag max. ±1.5 Punkte auf den Basis-Score, mit Transparenzhinweis.
+
+**C. Verwendung im Scoring**
+
+Der finale Moat-Rating steuert den Multiplikator für Management- und Thesis-Score (siehe Abschnitt 4).
+
+---
+
+## 12. Ergänzte Implementation Priority (inkl. Zwei-Pfad + Moat)
+
+| Priority | Task | Status |
+|----------|------|--------|
+| P0 | Negative catalyst (▼) exclusion from positive GB (Variant A) | To do |
+| P0 | Inverse / Hardened DCF becomes base when ≥2 triggers active | To do |
+| P0 | WACC uplift + Growth reduction rules | To do |
+| P0 | Zwei-Pfad-Logik: Flag + Kennzeichnung Daten-Modus vs. KI-Modus in Executive Summary und Upside-Berechnung | To do |
+| P1 | Moat multiplier for Management + Thesis scores | To do |
+| P1 | PESTEL dampening factor | To do |
+| P1 | Executive Summary forced to use hardened numbers + Red Flag priority | To do |
+| P1 | Moat-Score: klare regelbasierte Basis + begrenzter KI-Beitrag | To do |
+| P2 | Fine-tune exact weights after testing on 10–15 names | Later |
+
+---
+
 **Document Owner:** Aktienanalyst Project  
-**Last Updated:** 14.08.2026  
-**Next Action:** Implement P0 items (K5 fix + Inverse DCF as base + WACC/Growth hardening)
+**Last Updated:** 14.08.2026 (erweitert um Zwei-Pfad-Logik + Moat-Methoden)  
+**Next Action:** Implement P0 items (K5 fix + Inverse DCF as base + WACC/Growth hardening + Zwei-Pfad-Kennzeichnung)
