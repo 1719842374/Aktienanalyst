@@ -370,325 +370,130 @@ Auf Mobile wird der BTC-Technische-Analyse-Chart (Sektion 10) **zusammengedrück
 | MACD | `h-[160px]` | `sm:h-[180px]` | — |
 | RSI | `height={130}` | — | — |
 
-**Code-Vorschlag:**
-
-```tsx
-{/* Haupt-Chart */}
-<div className="h-[380px] sm:h-[420px] md:h-[460px] w-full">
-  <ResponsiveContainer width="100%" height="100%">
-    ...
-  </ResponsiveContainer>
-</div>
-
-{/* MACD */}
-<div className="h-[160px] sm:h-[180px] w-full">
-  <ResponsiveContainer width="100%" height="100%">
-    ...
-  </ResponsiveContainer>
-</div>
-
-{/* RSI */}
-<ResponsiveContainer width="100%" height={130}>
-  ...
-</ResponsiveContainer>
-```
-
-### Warum das hilft (Zahlen)
-
-- iPhone 14 Viewport-Höhe (ohne Browser-Chrome): ca. **650–720 px**
-- Header + Sidebar-Button + Padding: ca. **80–100 px**
-- Verbleibend für Content: ca. **550–620 px**
-- Aktuell belegter Chart-Block (320 + 140 + 110 + Abstände): ca. **600 px** → Chart wirkt gestaucht
-- Neu (380 + 160 + 130): ca. **700 px** → nutzt den verfügbaren Platz besser, Scrollen bleibt möglich
-
-### Betroffene Datei
-
-- `client/src/pages/BTCDashboard.tsx`
-  - Section10TechnicalChart: drei Höhen-Stellen (Preis-Chart, MACD, RSI)
-
 ### Priorität
 
-**P2** (UI/UX) – unabhängig von den Bias-Fixes, aber schnell umsetzbar und spürbar auf Mobile.
+**P2** (UI/UX).
 
 ---
 
 ## 15. Auto-Trigger Thesis-Score + Management-Score (Variante B) (NEU)
 
-### Problem
-
-Thesis Strength Score und Management-Execution-Score müssen aktuell **manuell** per Button gestartet werden. Das unterbricht den Analyse-Flow und verhindert, dass beide Scores zuverlässig in die Executive Summary einfließen.
-
-### Aktueller Stand (bewusst lazy)
-
-| Score | Endpoint | Warum manuell? | Cache |
-|-------|----------|----------------|-------|
-| Thesis Strength | `POST /api/thesis-strength` | Viele FMP-Calls + Peer-Analyse | 24h / Ticker |
-| Management-Execution | `POST /api/management-score` | Comp/Insider-Daten + optional LLM | 24h / Ticker |
-
-Code-Kommentar (routes.ts):  
-*„lazy (Frontend ruft ihn separat, nicht bei jedem /api/analyze auf) … kostenintensive FMP-Comp/Insider-Calls + optionaler LLM-Call sollen nicht bei jedem Klick neu laufen.“*
-
-### Kosten bei automatischem Start (Zahlen / Daten / Fakten)
-
-**Thesis Strength – Call-Profil:**
-
-| Call | Anzahl | Typische Dauer |
-|------|--------|----------------|
-| Income Statement (5J) | 1 | 0,3–0,8 s |
-| Cash Flow (5J) | 1 | 0,3–0,8 s |
-| Balance Sheet (5J) | 1 | 0,3–0,8 s |
-| Peers | 1 | 0,2–0,5 s |
-| Analyst Estimates | 1 | 0,3–0,6 s |
-| SEC RPO | 1 | 0,5–1,5 s |
-| Peer-Statements (bis 5 Peers × 4 Calls) | bis ~20 | **2–6 s** |
-| Berechnung | — | 0,1–0,3 s |
-
-| Szenario | Dauer |
-|----------|-------|
-| Cache-Hit | < 50 ms |
-| Cache-Miss | **3–8 s** |
-
-**Management-Score – Call-Profil:**
-
-| Call | Typische Dauer |
-|------|----------------|
-| FMP Governance / Compensation / Insider | 1–3 s |
-| Optional LLM (Qual+News) | 2–6 s |
-| Berechnung | < 0,2 s |
-
-| Szenario | Dauer |
-|----------|-------|
-| Cache-Hit | < 50 ms |
-| Cache-Miss (ohne LLM) | 1–3 s |
-| Cache-Miss (mit LLM) | 4–9 s |
-
-**Kombiniert (beide Scores):**
-
-| Szenario | Zusätzliche Wartezeit |
-|----------|------------------------|
-| Beide im Cache (< 24h) | praktisch 0 |
-| Beide Cache-Miss, **parallel** | **ca. 4–9 s** |
-| Sequentiell | ca. 6–15 s |
-
-Die Hauptanalyse (`/api/analyze`) dauert bereits oft 5–15 s. Ein blockierender Auto-Start würde die gefühlte Ladezeit spürbar verlängern.
-
-### Varianten-Vergleich
-
-| Variante | Vorteil | Nachteil |
-|----------|---------|----------|
-| **A. Komplett manuell** (aktuell) | Schnelle Erstanalyse, User steuert Kosten | Extra-Klicks, Scores fehlen oft im Fazit |
-| **B. Auto nach Analyse (Background)** | Kein Extra-Klick, UI bleibt responsiv | Scores erscheinen verzögert |
-| **C. Auto parallel zum Analyze** | Alles fertig, wenn die Seite da ist | Längere Wartezeit beim ersten Load |
-| **D. Auto nur bei Cache-Hit** | Fast instant bei Wiederholung | Beim ersten Mal weiterhin manuell |
-
-### Entscheidung: Variante B (empfohlen)
-
-**Ablauf:**
-
-1. User gibt Ticker ein → normale Analyse (`/api/analyze`) läuft.
-2. Sobald `StockAnalysis` erfolgreich geladen ist, feuern Frontend **parallel im Hintergrund**:
-   - `POST /api/thesis-strength`
-   - `POST /api/management-score`
-3. Sektionen zeigen „wird berechnet…“ und füllen sich nach, ohne den Rest zu blockieren.
-4. 24h-Cache bleibt aktiv → zweiter Besuch desselben Tickers ist fast instant.
-5. Sobald beide Scores da sind, kann die Executive Summary (nach Sektions-Tausch) sie einbeziehen.
-
-### Implementierung Background-Trigger (Frontend)
-
-**Ort:** `client/src/pages/Dashboard.tsx` (oder Analyse-Success-Handler)
-
-```ts
-// Nach erfolgreichem analyzeMutation.onSuccess:
-onSuccess: (result) => {
-  setData(result);
-  // Variante B: Background-Trigger (nicht blockierend)
-  void triggerThesisStrength(result);
-  void triggerManagementScore(result);
-}
-```
-
-- Beide Calls laufen parallel (`Promise.all` oder separate `void`-Aufrufe).
-- UI-State: `thesisStatus: "idle" | "loading" | "done" | "error"` (analog Management).
-- Fehler in einem Score dürfen den anderen und die Hauptanalyse nicht abbrechen.
-- Manuelle Buttons bleiben als Fallback / Force-Refresh erhalten.
-
-### FMP-API-Kontingente – Optimierung
-
-| Maßnahme | Wirkung |
-|----------|--------|
-| 24h-Cache pro Ticker (bereits aktiv) | Wiederholte Analysen desselben Tickers verbrauchen 0 zusätzliche Calls |
-| Parallel statt sequentiell | Keine doppelte Wartezeit, gleiche Call-Anzahl |
-| Peer-Limit bei Thesis (max. 5) | Begrenzt teure Peer-Statement-Calls |
-| Optional: Management-Score ohne LLM beim Auto-Trigger | Spart 2–6 s und LLM-Budget; LLM nur bei manuellem „KI interpretieren“ |
-| FMP-Budget-Tracking (`/api/fmp-budget`) | Sichtbarkeit, wann Kontingent eng wird |
-
-**Richtwert:** Ein Cache-Miss für Thesis + Management (ohne LLM) verbraucht grob **15–30 FMP-Calls**. Bei 50 neuen Ticker/Tag ≈ 750–1.500 Calls nur für diese beiden Scores – deshalb Cache und Background (nicht blockierend) Pflicht.
-
-### Priorität
-
-**P1** – direkt nach dem Sektions-Tausch (Management vor Fazit), damit die Scores automatisch verfügbar sind, wenn die Executive Summary sie braucht.
+Siehe vorheriger Stand: Background nach Analyze-Success, 24h-Cache, FMP-Kontingente. **P1**.
 
 ---
 
-## 16. Portfolio: CAPM E[R], Reverse Optimization, Black-Litterman, DCF-Korrektur (NEU)
+## 16. Portfolio: CAPM E[R], Reverse Opt, Black-Litterman, DCF-Hybrid, MC (NEU)
 
-### 16.1 Problem
+### 16.1–16.8 (Kurz)
 
-Im Virtuellen Portfolio fehlt die **generische** Berechnung der erwarteten Rendite pro Ticker und die konsistente Verknüpfung mit CAPM, Reverse Optimization und (optional) Black-Litterman. „Ziel-Gewicht CAPM“ ist aktuell ein Label ohne ticker-spezifisches E[R].
+- CAPM: `E[R]_i = r_f + β_i × ERP` (generisch, keine Ticker-Hardcodes)
+- Reverse Opt: `Π = λ Σ w`
+- BL: Views aus DCF/Thesis/Moat
+- Hybrid: `(1-α)·CAPM + α·DCF_hardened`
+- P1: CAPM-E[R] pro Ticker + Portfolio-E[R]; P2/P3: Reverse Opt, Hybrid, BL
 
-### 16.2 CAPM-Formel (korrekt)
-
-```text
-E[R]_i = r_f + β_i × ERP
-```
-
-| Parameter | Typischer Wert (2026) | Quelle |
-|-----------|----------------------|--------|
-| r_f | 4,0 % | US 10Y / Policy |
-| ERP | 4,5 % | Damodaran / Policy |
-| β_i | FMP 5Y | Sektion 1 Analyse |
-
-**Zahlenbeispiel (Portfolio aus UI):**
-
-| Ticker | β | E[R] CAPM | Ist-Gewicht |
-|--------|---|-----------|-------------|
-| LLY | 0,45 | 4,0 + 0,45×4,5 = **6,03 %** | 61 % |
-| MSFT | 1,10 | 4,0 + 1,10×4,5 = **8,95 %** | 25 % |
-| NVDA | 1,70 | 4,0 + 1,70×4,5 = **11,65 %** | 12 % |
-| NVO | 0,35 | 4,0 + 0,35×4,5 = **5,58 %** | 2 % |
-
-**Portfolio-E[R] (Ist-Gewichte):**
-
-```text
-E[R]_P = 0,61×6,03% + 0,25×8,95% + 0,12×11,65% + 0,02×5,58%
-       ≈ 3,68 + 2,24 + 1,40 + 0,11 = 7,43 %
-```
-
-Konzentration auf LLY (niedriges β) drückt die erwartete Portfolio-Rendite.
-
-### 16.3 Beta-Schätzung (generisch)
-
-| Methode | Formel / Regel | Wann |
-|---------|----------------|------|
-| Raw Beta | Cov(R_i, R_m) / Var(R_m), 5Y | Standard (FMP) |
-| Adjusted Beta | (2/3)·β_raw + (1/3)·1 | wenn \|β_raw − 1\| > 0,5 |
-| Sektor-Fallback | Damodaran Industry Beta | History < 2J oder fehlend |
-
-### 16.4 Reverse Optimization
-
-Gleichgewichtsrenditen aus **Marktgewichten** (nicht aus CAPM-β):
-
-```text
-Π = λ × Σ × w_mkt
-```
-
-| Symbol | Bedeutung | Typischer Wert |
-|--------|-----------|----------------|
-| Π | Implied Returns (Vektor) | — |
-| λ | Risk Aversion | 2,0 – 3,0 |
-| Σ | Kovarianzmatrix der Returns | aus historischen Returns |
-| w_mkt | Marktgewichte (oder Ist-Portfolio-Gewichte) | z. B. LLY 61 %, … |
-
-**Praxis-Schritt für Aktienanalyst:**
-
-1. Σ aus historischen Returns der Portfolio-Ticker schätzen (ggf. Shrinkage).
-2. w = Ist-Gewichte (oder CAPM-Ziel, sobald vorhanden).
-3. λ so kalibrieren, dass Σ w · Π ≈ beobachtbare Marktrisikoprämie.
-4. Π_i als „marktimplizite“ E[R]_i ausweisen und mit CAPM-E[R]_i vergleichen.
-
-Differenz CAPM vs. Reverse-Opt = Signal, ob Gewicht und β konsistent sind.
-
-### 16.5 Black-Litterman Views
-
-CAPM/Reverse-Opt liefert Prior Π. Views Q mischen Analysten-Edge ein:
+### 16.9 Black-Litterman – Formel (erklärt)
 
 ```text
 E[R]_BL = [ (τΣ)⁻¹ + Pᵀ Ω⁻¹ P ]⁻¹ · [ (τΣ)⁻¹ Π + Pᵀ Ω⁻¹ Q ]
 ```
 
-| Symbol | Bedeutung |
-|--------|-----------|
-| Π | Gleichgewichtsrenditen (aus Reverse Opt oder CAPM) |
-| Q | View-Vektor (z. B. „NVDA +3 Pp über Gleichgewicht“) |
-| P | Pick-Matrix (welche Assets die View betrifft) |
-| Ω | Unsicherheit der Views (diagonal, größer = weniger Einfluss) |
-| τ | Skalar, typisch 0,025 – 0,05 |
+| Symbol | Bedeutung | Generische Quelle |
+|--------|-----------|-------------------|
+| Π | Gleichgewichtsrenditen | Reverse Opt oder CAPM-Vektor |
+| Q | View-Renditen | aus Analyse (DCF-Upside, Thesis) – **nicht hardcodiert** |
+| P | Pick-Matrix | 1 in Spalte des betroffenen Tickers |
+| Ω | View-Unsicherheit | diagonal; größer = View schwächer |
+| τ | Skalar | Policy 0,01–0,05 |
+| Σ | Kovarianz | aus historischen Returns der Portfolio-Ticker |
 
-**Views aus Aktienanalyst-Daten (generisch):**
+**Ohne Views (Q leer):** E[R]_BL = Π (reines CAPM / Reverse Opt).  
+**Mit Views:** Analyse-Edge fließt gewichtet ein.
 
-| View-Quelle | Beispiel | Konfidenz |
-|-------------|---------|-----------|
-| DCF-Upside (gehärtet) | MSFT Fair Value impliziert +X % vs. Kurs | mittel–hoch |
-| Thesis Strength | starker Score → leichte Übergewichtung E[R] | mittel |
-| Management-Score < 5 | Abschlag auf E[R] | mittel |
-| Moat = None | Abschlag / höhere Ω | hoch |
+### 16.10 Black-Litterman – Sensitivitätsanalyse
 
-**Ohne Views** = reines CAPM / Reverse Opt.  
-**Mit Views** = BL, sobald DCF/Thesis zuverlässig pro Ticker vorliegen.
+| Hebel | ↑ | Wirkung auf E[R]_BL / Zielgewichte |
+|-------|---|-------------------------------------|
+| τ | ↑ | Views stärker |
+| Ω_ii | ↑ | View i schwächer |
+| λ | ↑ | Implied Returns Π sinken |
+| α (Hybrid) | ↑ | DCF-Anteil steigt |
 
-### 16.6 Portfolio-E[R] mit DCF korrigieren
+**Regel:** τ, Ω, λ, α als Policy-Parameter – keine festen Ticker-Werte.  
+UI: bei Änderung E[R]_BL und Zielgewichte neu; Anzeige „View-Einfluss: schwach/mittel/stark“ aus |E[R]_BL − Π|.
 
-Rein CAPM ignoriert fundamentalen Edge. Hybrid:
+### 16.11 Portfolio-Monte-Carlo – aus Dashboard-GBM (generisch)
 
-```text
-E[R]_i^{hybrid} = (1 − α) · E[R]_i^{CAPM} + α · E[R]_i^{DCF}
+**Quelle im Repo:** `client/src/lib/calculations.ts` → `gbmMonteCarlo` + `calculateGBMParams`  
+(Aktien-Analyse Sektion 16, Einzeltitel). Für das **Portfolio** dieselbe Mathematik, multi-asset, **ohne Ticker-Hardcodes**.
+
+#### Einzeltitel-GBM (bereits implementiert)
+
+```ts
+// Parameter: alles aus Daten, nichts hardcodiert
+interface GBMMonteCarloParams {
+  currentPrice: number;  // Kurs
+  mu: number;            // Drift aus calculateGBMParams(historicalPrices)
+  sigma: number;         // Vol aus calculateGBMParams(historicalPrices)
+  iterations: number;    // z.B. 5000–10000 (Policy)
+  tradingDays: number;   // z.B. 252
+}
+
+// Kernschritt (GBM):
+// S_{t+1} = S_t · exp( (μ − ½σ²)·dt + σ·√dt · Z ),  Z ~ N(0,1)
+// dt = 1/252
 ```
 
-| α | Bedeutung |
-|---|-----------|
-| 0 | reines CAPM |
-| 0,3 – 0,5 | ausgewogen (empfohlen Start) |
-| 1 | nur DCF-implizite Rendite |
+`calculateGBMParams(prices)` leitet μ und σ **nur** aus der Kursreihe ab (Log-Returns, annualisiert) – Fallback nur wenn History < 30 Punkte (μ=0,08, σ=0,25 als neutrale Defaults, nicht ticker-spezifisch).
 
-**DCF-implizite Rendite (Näherung):**
+#### Portfolio-Erweiterung (generisch, zu implementieren)
 
-```text
-E[R]_i^{DCF} ≈ (Fair Value_hardened − Kurs) / Kurs   +   r_f
+```ts
+// Pro Ticker i im Portfolio (beliebige Menge):
+//   μ_i, σ_i  aus calculateGBMParams(historicalPrices_i)
+//   oder μ_i = E[R]_i^{CAPM|Hybrid}  (aus Policy wählbar)
+// Σ = Kovarianzmatrix aus gemeinsamen Returns (gleiche Tage)
+// L = Cholesky(Σ)
+// Pro Pfad: Z ~ N(0,I), ε = L·Z  → korrelierte Schocks
+// R_P = Σ_i w_i · R_i
+// Output: Verteilung von R_P, VaR, CVaR, P(R_P < 0), max DD
 ```
 
-oder aus Reverse-DCF g* + Dividenden/FCF-Yield, konsistent zur Analyse.
+| Input | Quelle (generisch) |
+|-------|--------------------|
+| w_i | Ist-Gewichte oder CAPM-Zielgewichte |
+| μ_i | CAPM / Hybrid / historische Drift – Policy |
+| σ_i, Σ | historische Returns der **aktuellen** Portfolio-Ticker |
+| iterations, horizon | Policy (z. B. 5000, 252 Tage) |
 
-**Wichtig:** Nur **gehärteten** DCF verwenden (siehe §1–2), nie unbereinigte Extrapolation.
+**Kein** Hardcode von MSFT/NVDA/LLY/NVO – funktioniert für jedes Portfolio mit n ≥ 2.
 
-**Zahlenbeispiel MSFT (illustrativ):**
+#### Kennzahlen (Output)
 
-| Quelle | Wert |
-|--------|------|
-| CAPM E[R] | 8,95 % |
-| Hardened FV | $428 | Kurs $495 → implizite Underperformance |
-| Hybrid α=0,4 | zieht E[R] nach unten Richtung fundamentaler Realität |
+| Metrik | Definition |
+|--------|------------|
+| E[R]_P | Mittel der Pfad-Endrenditen |
+| σ_P | Std. der Pfad-Endrenditen |
+| VaR 5 % | 5%-Quantil |
+| CVaR 5 % | Mittel unter VaR 5 % |
+| P(R_P < 0) | Anteil negativer Pfade |
+| maxDD (mean) | mittlerer Max-Drawdown über Pfade |
 
-So wird Portfolio-E[R] nicht nur von Beta/Konzentration, sondern auch von der Analyse-Ampel getrieben.
+Zwei Läufe vergleichen: **Ist-Gewichte** vs. **CAPM-Zielgewichte** (gleiche μ/Σ).
 
-### 16.7 Implementierungs-Reihenfolge (Portfolio)
+### 16.12 Implementierungs-Reihenfolge (Portfolio)
 
 | Prio | Task |
 |------|------|
-| P1 | E[R]_i = r_f + β_i × ERP pro Ticker (generisch) |
-| P1 | Portfolio-E[R] = Σ w_i E[R]_i (Ist + Ziel) |
-| P1 | Spalte in Investments-Tabelle + Übersicht |
-| P2 | Reverse Optimization Π = λ Σ w |
-| P2 | Hybrid E[R] mit gehärtetem DCF (α konfigurierbar) |
-| P3 | Black-Litterman Views aus Thesis/DCF/Moat |
-
-### 16.8 Portfolio-Optimierungs-Tools (Referenz)
-
-| Tool / Lib | Nutzen |
-|------------|--------|
-| eigene JS/TS-Implementierung | volle Kontrolle, keine Extra-Dependency |
-| PyPortfolioOpt (falls Backend-Python) | Mean-Variance, BL, Efficient Frontier |
-| quantstats / empyrical | Performance-Metriken |
-| manuelle Matrix-Inversion (mathjs) | BL-Formel im Frontend für kleine n (4–15 Ticker) |
-
-Für n ≤ 15 Ticker ist eine schlanke Eigenimplementierung (CAPM → optional BL) ausreichend und hält den Stack einfach.
-
-### Priorität
-
-**P1** für CAPM-E[R] pro Ticker + Portfolio-E[R].  
-**P2/P3** für Reverse Opt, DCF-Hybrid und Black-Litterman.
+| P1 | E[R]_i = r_f + β_i × ERP + Portfolio-E[R] |
+| P1 | Spalte in Investments + Übersicht |
+| P2 | Reverse Opt Π = λ Σ w |
+| P2 | Hybrid E[R] mit gehärtetem DCF |
+| P2 | Portfolio-MC (GBM multi-asset, aus Dashboard-Logik) |
+| P3 | BL Views + Sensitivität (τ, Ω) |
 
 ---
 
 **Document Owner:** Aktienanalyst Project  
-**Last Updated:** 14.08.2026 (erweitert §16: Beta-Methoden, Reverse Opt, BL Views, DCF-Hybrid Portfolio E[R])  
-**Next Action:** Implement P0 items + Sektions-Tausch + Variante B + Portfolio CAPM E[R]
+**Last Updated:** 14.08.2026 (§16: BL-Formel, Sensitivität, generischer Portfolio-MC aus calculations.ts GBM)  
+**Next Action:** P0 Bias-Fixes + Sektions-Tausch + Variante B + Portfolio CAPM E[R]
