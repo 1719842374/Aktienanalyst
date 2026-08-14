@@ -530,6 +530,72 @@ onSuccess: (result) => {
 
 ---
 
+## 16. Portfolio: Erwartete Rendite / Konzentration fehlt generisch per Ticker (CAPM) (NEU)
+
+### Problem
+
+Im **Virtuellen Portfolio** (Positions-Tracker + Sharpe/Kelly/CAPM) wird die **erwartete Rendite** der jeweiligen Ticker **nirgends generisch** nach dem CAPM-Modell aus Beta berechnet.
+
+Aktuell sichtbar (Stand UI 14.08.2026):
+
+| Element | Vorhanden | Fehlt |
+|---------|-----------|-------|
+| Ist-Marktgewicht (Pie: LLY 61 %, MSFT 25 %, NVDA 12 %, NVO 2 %) | Ja | — |
+| Ziel-Gewicht CAPM (Toggle) | UI-Label | **Keine ticker-spezifische E[R]-Berechnung** |
+| Realisierte Performance pro Position | Ja (z. B. MSFT −0,92 %, NVDA +0,54 %) | — |
+| Portfolio-Performance-Chart | Ja | — |
+| **E[R]_i = r_f + β_i · (E[R_m] − r_f)** pro Ticker | — | **fehlt komplett** |
+| Konzentrations-Risiko aus CAPM-Gewichten vs. Ist-Gewichten | — | **fehlt** |
+| Beitrag der Konzentration zur Portfolio-Expected-Return | — | **fehlt** |
+
+### Was generisch fehlen muss
+
+Für **jeden** Ticker im Portfolio (nicht hardcodiert):
+
+```text
+E[R]_i = r_f + β_i × ERP
+```
+
+| Input | Quelle (generisch) |
+|-------|--------------------|
+| β_i | FMP / Analyse-Daten (5Y Beta), bereits in Sektion 1 |
+| r_f | konfigurierbar (z. B. US 10Y oder DE Bund), Policy-Sektion |
+| ERP (Equity Risk Premium) | konfigurierbar oder Damodaran-Default |
+
+Daraus ableiten:
+
+1. **Ticker-Expected-Return** E[R]_i für jede Position  
+2. **Portfolio-Expected-Return** Σ (w_i × E[R]_i) mit Ist-Gewichten und mit Ziel-Gewichten  
+3. **Konzentrations-Impakt**: Differenz Ist-Gewicht vs. CAPM-Zielgewicht → Über-/Untergewichtung und deren Beitrag zur erwarteten Rendite  
+4. Anzeige in Investments-Tabelle + Übersicht (nicht nur realisierte Performance)
+
+### Beispiel (illustrativ, MSFT-Portfolio-Kontext)
+
+| Ticker | β | E[R] (CAPM) | Ist-Gewicht | CAPM-Ziel | Δ Gewicht |
+|--------|---|-------------|-------------|-----------|-----------|
+| LLY | z. B. 0,4 | r_f + 0,4·ERP | 61 % | … | stark über |
+| MSFT | 1,10 | r_f + 1,10·ERP | 25 % | … | — |
+| NVDA | z. B. 1,7 | r_f + 1,7·ERP | 12 % | … | — |
+| NVO | 0,35 | r_f + 0,35·ERP | 2 % | … | stark unter |
+
+Ohne diese Schicht bleibt „Ziel-Gewicht CAPM“ ein Label ohne mathematische Grundlage pro Ticker.
+
+### Anforderungen an die Implementierung
+
+- **Generisch:** keine Ticker-Hardcodes; Formel identisch für alle Positionen  
+- **Inputs aus vorhandenen Daten:** Beta aus Analyse/FMP, r_f und ERP aus Policy  
+- **Ausgabe:**  
+  - Spalte „E[R] (CAPM)“ in der Investments-Tabelle  
+  - Portfolio-E[R] in der Übersicht  
+  - optional: Konzentrations-Warnung, wenn max. Ist-Gewicht ≫ CAPM-Ziel (z. B. LLY 61 %)  
+- **Konsistenz:** gleiche r_f / ERP wie in DCF-WACC, wo sinnvoll
+
+### Priorität
+
+**P1** (Portfolio-Logik) – die UI behauptet CAPM-Zielgewichte; ohne ticker-spezifisches E[R] aus Beta ist das unvollständig und irreführend.
+
+---
+
 **Document Owner:** Aktienanalyst Project  
-**Last Updated:** 14.08.2026 (erweitert um Variante B Auto-Trigger Thesis/Management + FMP-Kontingente)  
-**Next Action:** Implement P0 items + Sektions-Tausch + Variante B Background-Trigger
+**Last Updated:** 14.08.2026 (erweitert um Portfolio CAPM Expected Return / Konzentration Gap)  
+**Next Action:** Implement P0 items + Sektions-Tausch + Variante B Background-Trigger + Portfolio CAPM E[R]
