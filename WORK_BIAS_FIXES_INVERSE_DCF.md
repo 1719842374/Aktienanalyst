@@ -279,6 +279,49 @@ Der finale Moat-Rating steuert den Multiplikator für Management- und Thesis-Sco
 
 ---
 
+## 13. Sektions-Reihenfolge ändern: Management-Score vor Zusammenfassung (NEU)
+
+### Aktuelle Reihenfolge (Sidebar + Dashboard)
+
+| Nr | Label |
+|----|-------|
+| 16 | Monte Carlo |
+| 17 | Zusammenfassung (Fazit) |
+| 18 | Management-Score |
+
+### Gewünschte Reihenfolge
+
+| Nr | Label |
+|----|-------|
+| 16 | Monte Carlo |
+| **17** | **Management-Score** |
+| **18** | **Zusammenfassung (Fazit)** |
+
+### Begründung
+
+- Der Management-Score muss **vor** dem Fazit berechnet und sichtbar sein, damit die Executive Summary (Sektion 18) ihn direkt in die Ampel-Logik, die positiven/negativen Faktoren und den Fließtext einbeziehen kann.
+- Aktuell steht Management-Score nach dem Fazit → das Fazit kann den Score nicht zuverlässig referenzieren.
+- Durch den Tausch wird die logische Abhängigkeitskette eingehalten: alle Inputs (inkl. Management-Score) → dann Fazit.
+
+### Technische Stellen, die angepasst werden müssen
+
+1. **`client/src/pages/Dashboard.tsx`**
+   - Array `SECTIONS`: Label und id von 17 und 18 tauschen.
+   - Render-Reihenfolge der Section-Komponenten tauschen (`ManagementScoreSection` vor `SummarySection`).
+   - `sectionRefs` / `scrollToSection` bleiben über die id konsistent, solange die ids mitgetauscht werden.
+
+2. **Sidebar-Navigation**  
+   Wird über das `SECTIONS`-Array gesteuert → automatisch korrekt nach dem Tausch.
+
+3. **SummarySection (neues Nr. 18)**  
+   Kann danach zuverlässig auf `data.managementScore` (bzw. das Ergebnis von Sektion 17) zugreifen und es in positive/negative Listen + Gesamtscore einbauen.
+
+### Priorität
+
+**P1** – sollte zusammen mit der Integration des Management-Scores in die Executive Summary umgesetzt werden.
+
+---
+
 **Document Owner:** Aktienanalyst Project  
-**Last Updated:** 14.08.2026 (erweitert um Zwei-Pfad-Logik + Moat-Methoden)  
-**Next Action:** Implement P0 items (K5 fix + Inverse DCF as base + WACC/Growth hardening + Zwei-Pfad-Kennzeichnung)
+**Last Updated:** 14.08.2026 (erweitert um Sektions-Reihenfolge 17↔18)  
+**Next Action:** Implement P0 items + Sektions-Tausch Management-Score ↔ Zusammenfassung
