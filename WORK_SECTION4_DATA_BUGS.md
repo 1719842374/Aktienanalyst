@@ -1,8 +1,8 @@
 # WORK.md – Section 4 / Datenqualitäts-Bugs (Aktienanalyst)
 
-**Status:** Bug-Report + Fix-Spec (Brookfield / BN-Typ, Stand 15.08.2026)  
-**Priority:** P0 PEG + FCF; P1 Segmente/Earnings/Analysten/Growth; P2 Moat Alternatives  
-**Scope:** Section 4, FMP-Mapping, Alternatives-Asset-Management-Metriken, Moat
+**Status:** Bug-Report + Fix-Spec (Brookfield / BN-Typ + AMZN Segment-Dedup, Stand 15.08.2026)  
+**Priority:** P0 PEG + FCF; P1 Segmente (Dedup Geo/Business) / Earnings / Analysten / Growth; P2 Moat Alternatives  
+**Scope:** Section 4, FMP-Mapping, Segment-Dedup, Alternatives-Metriken, Moat
 
 ---
 
@@ -40,6 +40,7 @@
 | 1 | FCF = $0 / 0 % Marge (Reality TTM ca. –$8 bis –$13 Mrd.) | **P0** |
 | 2 | PEG 0.04 statt ≈8.1 bei P/E 88.3 ÷ Growth 10.9 % | **P0** |
 | 3 | „Nur geografisch“ – falsch (Business-Segmente existieren) | **P1** |
+| 3b | **Business-Segment erscheint erneut unter Geographic** (z. B. AMZN AWS $128.72B doppelt) | **P1** |
 | 4 | „Zuletzt berichtet Q4 FY2025“ – Q1/Q2 2026 schon raus | **P1** |
 | 5 | Moat = None zu harsch | **P2** |
 | 6 | 47 Buy – Grade-Events, nicht unique Analysten | **P1** |
@@ -57,154 +58,160 @@ Forward PEG = Forward_P/E ÷ EPS_Growth_Fwd_%
 PEGY (Lynch Slow Grower) = P/E ÷ (Growth_% + DivYield_%)
 ```
 
-Brookfield-Beispiel:
+Nenner ist immer die **Wachstumsrate in %**, nie absolutes EPS in $.
 
-```text
-88.3 ÷ 10.9 ≈ 8.10   ← korrekt
-Anzeige 0.04         ← Bug
-```
+Brookfield-Beispiel: `88.3 ÷ 10.9 ≈ 8.10` (Anzeige 0.04 = Bug).  
+AMZN-Beispiel: UI `31.7 ÷ 57.2%` → korrekt ≈0.55, Anzeige 0.36 = derselbe Display-Bug.
 
 ### 3.2 Code-Ursache
 
-**`Section4.tsx`:**
+**`Section4.tsx`:** UI zeigt `peRatio` + `epsGrowth5Y`, Wert oft `data.pegRatio` (Lynch/Forward).
 
-```ts
-const lynchPEG = data.pegRatio && data.lynchClass ? data.pegRatio : null;
-const pe = data.peRatio;            // Anzeige 88.3
-const growth = data.epsGrowth5Y;    // Anzeige 10.9%
-const peg = lynchPEG ?? (pe / growth); // Wert oft data.pegRatio ≠ pe/growth
-```
+**`fmp-fetcher.ts`:** `pegRatio = pe / epsGrowthFwd`.
 
-**`fmp-fetcher.ts`:**
+### 3.3 Fix (generisch)
 
-```ts
-pegRatio = (pe > 0 && epsGrowthFwd > 0) ? pe / epsGrowthFwd : null;
-```
-
-UI zeigt Trailing-Inputs, Wert kommt aus Forward/Lynch → Gleichung gelogen.
-
-### 3.3 Fix (generisch, keine Ticker-Hardcodes)
-
-1. **Modus explizit wählen und anzeigen:**
-   - `trailing`: `peg = peRatio / epsGrowth5Y`, Box zeigt P/E TTM + 5Y Growth
-   - `forward`: `peg = forwardPE / epsGrowthFwd`, Box zeigt Forward P/E + Fwd Growth
-   - `lynch`: nur mit `lynchPEGBasis` und den **gleichen** Inputs wie die Berechnung
-2. Niemals Zähler/Nenner aus Pfad A und Ergebnis aus Pfad B.
-3. `growth <= 0` oder `pe <= 0` → `n/a` (nicht 0.04).
-4. Sanity-Flag: `peg < 0.1 && pe > 20 && growth < 30` → „Dateninkonsistenz prüfen“.
-5. Rechenweg-Text muss die **tatsächlich verwendeten** Zahlen wiedergeben.
-
-**Akzeptanztest:** Für BN (oder jeden Titel mit pe≈88, growth≈11) muss die Box **≈8.1** zeigen, wenn Trailing-Modus aktiv ist – oder Forward-Zahlen, wenn Forward-Modus aktiv ist.
+1. Modus `trailing` | `forward` | `lynch` – Anzeige = Berechnung, gleiche Inputs.
+2. Keine Mischung Pfad A / Pfad B.
+3. growth ≤ 0 oder pe ≤ 0 → `n/a`.
+4. Sanity: peg < 0.1 && pe > 20 && growth < 30 → Flag.
 
 ---
 
 ## 4. FCF = 0 (P0)
 
-```ts
-fcfTTM: lc.freeCashFlow || (OCF - |CapEx|),
-cashflow limit=1
+Cashflow `limit=1`; negatives GAAP-FCF wird zu $0.  
+**Fix:** Mehrperioden, Vorzeichen sichtbar, High-CapEx-Hinweis generisch (Infra/Alternatives/RE/AM).
+
+---
+
+## 5. Business vs. Geographic Segments – Doppelzählung (P1, NEU)
+
+### 5.1 Problem (AMZN Live)
+
+| Liste | Eintrag | Revenue |
+|-------|---------|--------|
+| Business Segments | Amazon Web Services | **$128.72B** (18 %) |
+| Geographic Segments | Amazon Web Services Segment | **$128.72B** (18 %) |
+
+Gleiche Zahl zweimal. AWS ist ein **Geschäftssegment** (global), keine Region. Amazon reportet in Filings oft NA / International / AWS als drei „reportable segments“ – FMP mappt AWS naiv in beide Buckets.
+
+**Folgen:** optische Doppelzählung, verzerrte Geo-Anteile, falsche Interpretation („AWS = Region“).
+
+### 5.2 Generische Fix-Logik (Code)
+
+Keine Ticker-Hardcodes. Reihenfolge der Regeln:
+
+```text
+INPUT:
+  businessSegments: { name, revenue }[]
+  geographicSegments: { name, revenue }[]
+
+// 1) Exakte Dedup: gleicher normalisierter Name + gleicher Revenue (±1% Toleranz)
+function norm(s) = lower(trim(s)).replace(/\s+/g, " ")
+
+for each g in geographicSegments:
+  if exists b in businessSegments where
+       norm(b.name) == norm(g.name)
+       AND abs(b.revenue - g.revenue) / max(b.revenue, 1) < 0.01:
+    → remove g from geographicSegments  // gehört nur zu Business
+
+// 2) Non-Geo-Keywords (generisch, erweiterbar – keine Ticker-Liste)
+NON_GEO_PATTERN = /web services|aws|cloud|advertising|subscription|
+                   asset management|private equity|infrastructure fund|
+                   wealth solutions|fee.?related|corporate (activities)?/i
+
+for each g in geographicSegments:
+  if NON_GEO_PATTERN.test(g.name):
+    → remove g from geographic  (optional: merge into business if missing there)
+
+// 3) UI Geographic
+- Nur verbleibende echte Regionen anzeigen
+- Wenn Einträge entfernt wurden: Hinweis
+  "Einige reportable Segments (z. B. globale Geschäftsbereiche) sind unter
+   Business Segments geführt, nicht unter Regionen."
 ```
 
-| Reality (BN-Typ) | Tool |
-|------------------|------|
-| GAAP-FCF TTM stark negativ (–$8 bis –$13 Mrd.) | $0 / 0 % Marge |
+### 5.3 UI-Regeln
 
-**Fix:**
-- Cashflow `limit` ≥ 4 (Quarter) oder klar annual + Label
-- Negatives FCF anzeigen, nie stilles „0 % Marge“
-- Generischer Hinweis wenn Sector/Industry ∈ Infra / Alternatives / RE / Asset Management: „GAAP-FCF durch Investitions-CapEx verzerrt; FRE/DE/AFFO beachten“
+1. Einträge mit **gleichem Namen + gleichem Revenue** in beiden Listen → nur in **Business**, aus **Geographic** entfernen.  
+2. Namen, die klar **Non-Geo** sind (Web Services, AWS, Advertising, Asset Management, …) → nur Business.  
+3. Geographic-Label: nur Regionen; optional Fußnote bei entfernten globalen Segmenten.
 
----
+### 5.4 Akzeptanztest
 
-## 5. Alternatives Asset Management – Analyse-Metriken (für Fixes & Moat)
-
-GAAP-P/E und GAAP-FCF allein sind für Alternatives **unzureichend**. Beim Fix und bei der Interpretation priorisieren:
-
-| Metrik | Rolle |
-|--------|--------|
-| Fee-Bearing Capital (FBC) | Fee-Basis |
-| Fee-Related Earnings (FRE) | „Betriebsgewinn“ der AM-Franchise |
-| Fundraising | Wachstum FBC |
-| Deployable Capital / Dry Powder | Fähigkeit zu deployen |
-| Distributable Earnings (DE) | Cash an Corp-Ebene |
-| Forward P/E / FRE-Multiple | relevantere Bewertung als GAAP-Trailing-P/E |
-
-Segment-Soll (Business, nicht nur Geo): Asset Management, Wealth Solutions, Infrastructure, Energy, Private Equity, Real Estate, Corporate.
-
-Text „Unternehmen berichtet nur geografisch“ **nur** wenn Product- **und** sinnvolle Business-Segmentdaten fehlen.
+| Case | Erwartung |
+|------|-----------|
+| AMZN | AWS nur unter Business; Geographic = North America + International (ohne AWS-Balken) |
+| BN | Business-Segmente sichtbar; kein „nur geografisch“-Text wenn Business-Daten da |
+| Titel nur Geo | Geographic unverändert; kein falsches Löschen |
 
 ---
 
-## 6. Brookfield Capital-Strategie 2026 (Referenz zum Verifizieren der Fixes)
+## 6. Alternatives Asset Management – Metriken
 
-Quelle: BN/BAM Q2 2026 (u. a. 13.08.2026 Supplemental / Earnings).
+Priorität für Interpretation: FBC, FRE, Fundraising, Deployable Capital, DE – nicht allein GAAP-FCF/P/E.  
+Segment-Soll: Asset Management, Wealth Solutions, Infrastructure, Energy, PE, Real Estate, Corporate.
+
+---
+
+## 7. Brookfield Capital-Strategie 2026 (Referenz)
 
 | Kennzahl | Wert |
 |----------|------|
-| Fundraising Q2 2026 | **$77 Mrd.** (Rekordquartal) |
-| Fundraising YTD 2026 | **~$98 Mrd.** |
-| Fee-Bearing Capital | **$672 Mrd.** (+19 % YoY) |
-| Fee-Related Earnings | **+20 %** YoY (Quartal) |
-| Deployable Capital | **$210 Mrd.** Rekord ($96 Mrd. Liquidität + $114 Mrd. uncalled) |
-| Deployment YTD | **~$100 Mrd.** |
-| Monetisierungen YTD | **~$40 Mrd.** |
-| DE Quartal / LTM | $1.5 Mrd. / $6.2 Mrd. |
-| Buybacks | u. a. BN @ ~$42 unter Management-Intrinsic-View |
-| Struktur | Simplification BN + Wealth Solutions (Shareholder approved) |
+| Fundraising Q2 | $77 Mrd. Rekord |
+| FBC | $672 Mrd. (+19 % YoY) |
+| FRE | +20 % YoY |
+| Deployable Capital | $210 Mrd. |
+| Deployment YTD | ~$100 Mrd. |
 
-Strategische Säulen: Flagship-Fundraising (PE/Infra), Permanent Capital + Insurance (Just Group), Deployment in AI-Infra/Energy/Retirement, Buybacks, Franchise-Scale.
-
-→ Unterstützt **Narrow Moat** (Scale, Fundraising-Zugang, Permanent Capital), nicht „None“.  
-→ Unterstützt, dass **FRE/DE/FBC** die Analyse treiben sollen, nicht FCF=$0.
+→ Narrow Moat plausibler als None; FRE/DE statt FCF=$0.
 
 ---
 
-## 7. WACC Live vs. Sektor-Ref. (kein Formel-Bug)
+## 8. WACC Live vs. Sektor-Ref.
 
-| Szenario | Beta | D/V | WACC Live | Sektor-Ref. |
-|----------|------|-----|-----------|-------------|
-| Average | 1.84 | 76.1 % | 6.42 % | 9.5 % |
-
-`Re = 4.2 + 1.84×5.5 = 14.32 %` → hoher D/V drückt Live-WACC. DCF nutzt bewusst Sektor-Ref. – beibehalten. Optional: Warnung bei D/V > 60 %.
+Hoher D/V drückt Live-WACC (kein Formel-Bug). DCF nutzt Sektor-Ref. – beibehalten.
 
 ---
 
-## 8. Weitere P1/P2-Fixes
+## 9. Weitere P1/P2
 
 | Thema | Fix |
 |-------|-----|
-| Analyst Grades | Unique Firm/Analyst oder Label „Grade-Events (nicht unique)“ |
-| Earnings-Datum | An `/stable/earnings` / letztes Quarter koppeln |
-| EPS-Growth | Eine CAGR-Pipeline (`calcEpsGrowth`) + Labels „5Y CAGR“ vs. „Fwd YoY“ |
-| Moat | Generisch: Scale + Permanent-Capital-/AM-Profil → mindestens Narrow erlauben (kein BN-Hardcode) |
+| Analyst Grades | Unique oder „Grade-Events“-Label |
+| Earnings-Datum | `/stable/earnings` / letztes Quarter |
+| EPS-Growth | Eine CAGR-Quelle + Labels |
+| Moat | Scale/Permanent-Capital → Narrow generisch |
 
 ---
 
-## 9. Implementation Priority
+## 10. Implementation Priority
 
 | Prio | Task | Done-Kriterium |
 |------|------|----------------|
-| **P0** | PEG Section4: eine Formel = sichtbare Inputs | BN-Trailing zeigt ≈8.1, nicht 0.04 |
-| **P0** | FCF Mehrperioden + Vorzeichen + High-CapEx-Hinweis | kein stilles $0 / 0 % bei negativem GAAP-FCF |
-| **P1** | Analyst Dedup/Label | Counts plausibel oder als Events gekennzeichnet |
-| **P1** | Earnings „zuletzt berichtet“ | Q2 2026 sichtbar wo published |
-| **P1** | Growth-Labels vereinheitlichen | keine 10 % vs. 141 % ohne Erklärung |
-| **P1** | Segment-Text | Business-Segmente oder ehrliches „unvollständig“ |
-| **P2** | Moat Alternatives | Narrow bei Franchise/Scale-Signalen möglich |
+| **P0** | PEG: Anzeige = Formel = Inputs | BN Trailing ≈8.1; AMZN Trailing ≈0.55 wenn 31.7/57.2 |
+| **P0** | FCF Mehrperioden + Vorzeichen | kein stilles $0 bei negativem FCF |
+| **P1** | **Segment-Dedup Business vs Geographic** | AMZN: AWS nur einmal (Business); Geo ohne AWS |
+| **P1** | Analyst / Earnings / Growth-Labels | wie oben |
+| **P1** | Segment-Text „nur geo“ | nur wenn wirklich keine Business-Daten |
+| **P2** | Moat Alternatives | Narrow bei Franchise/Scale möglich |
 
 ---
 
-## 10. Betroffene Dateien
+## 11. Betroffene Dateien
 
 | Datei | Änderung |
 |-------|----------|
-| `client/src/components/sections/Section4.tsx` | PEG-Modus, Anzeige = Berechnung |
-| `server/fmp-fetcher.ts` | pegRatio-Klarheit, FCF limit/Vorzeichen, grades |
-| `server/fmp.ts` | earnings, Segmente, calcEpsGrowth |
-| Moat-/Summary-Logik | Alternatives Narrow-Moat-Heuristik |
+| `client/src/components/sections/Section4.tsx` | PEG-Modus |
+| Segment-UI (Section 2 / Thesis / wo Business+Geo gerendert werden) | Dedup-Anzeige, Hinweistext |
+| `server/fmp-fetcher.ts` / `server/fmp.ts` | optional serverseitig Geographic filtern; FCF; grades; earnings |
+| Moat-/Summary-Logik | Alternatives Narrow |
+
+**Empfehlung:** Dedup **serverseitig** beim Bauen von `segments` / `geographicSegments` *oder* zentral in einer shared `dedupeSegments(business, geographic)`-Hilfsfunktion – eine Stelle, UI nur noch render.
 
 ---
 
 **Document Owner:** Aktienanalyst Project  
-**Updated:** 15.08.2026 (Fix-Spec PEG/FCF + Alternatives-Metriken + BN Capital Strategy 2026)  
-**Next Action:** P0 implementieren (PEG-Konsistenz + FCF-Datenpfad)
+**Updated:** 15.08.2026 (Segment-Dedup generisch + PEG/FCF/Alternatives)  
+**Next Action:** P0 PEG + FCF; parallel P1 Segment-Dedup
