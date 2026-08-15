@@ -1,22 +1,20 @@
 # WORK.md – Section 4 / Datenqualitäts-Bugs (Aktienanalyst)
 
-**Status:** Bug-Report aus Live-Analyse (Brookfield / BN-Typ, Stand 15.08.2026)  
-**Priority:** P0 für PEG-Anzeige + FCF; P1 für übrige Datenlücken  
-**Scope:** Bewertungskennzahlen (Section 4), FMP-Mapping, Segment-/Earnings-/Moat-/Analyst-Daten
+**Status:** Bug-Report + Fix-Spec (Brookfield / BN-Typ, Stand 15.08.2026)  
+**Priority:** P0 PEG + FCF; P1 Segmente/Earnings/Analysten/Growth; P2 Moat Alternatives  
+**Scope:** Section 4, FMP-Mapping, Alternatives-Asset-Management-Metriken, Moat
 
 ---
 
 ## 0. Gesamtbewertung (Live-Check 15.08.2026)
 
-**Nein – nicht alles ist korrekt.** Der Report hat solide Teile, aber auch klare Fehler und Datenqualitätsprobleme.
+**Nein – nicht alles ist korrekt.** Solide Marktdaten/News, aber klare Fehler bei FCF, PEG, Segmenten, Earnings-Datum, Analysten-Zählung, Moat.
 
 | Bereich | Bewertung |
 |---------|-----------|
-| Marktdaten & aktuelle News (Kurs, Multiples, Revenue, Geography, Boralex, SWI) | **größtenteils korrekt und aktuell** |
-| Finanzkennzahlen (FCF, PEG, Segment-Reporting) | **mehrere Fehler** |
-| Interpretation (Moat, Fazit „STARK UNATTRAKTIV“) | Diskutabel; hohe GAAP-P/E und negativer FCF bleiben **legitime Warnsignale** |
-
-**Fazit:** Rohanalyse brauchbar, Katalysatoren frisch; Datenqualitätslücken (besonders FCF und PEG) und faktische Fehler müssen gefixt werden. Relative Bewertungsvergleiche und Revenue-Zahlen halten.
+| Marktdaten & News (Kurs, Multiples, Revenue, Geo, Boralex, SWI) | größtenteils korrekt & aktuell |
+| Finanzkennzahlen (FCF, PEG, Segment-Reporting) | mehrere Fehler |
+| Interpretation (Moat None, „STARK UNATTRAKTIV“) | diskutabel; hohe GAAP-P/E + negativer FCF = legitime Warnsignale |
 
 ---
 
@@ -24,143 +22,189 @@
 
 | Punkt | Report | Realität | Bewertung |
 |-------|--------|----------|-----------|
-| Kurs & Market Cap | $43.85 / $97.94B | Preis ~$43–45, Shares ~2.2–2.3 Mrd. | Korrekt |
-| P/E TTM 88.3 | 88.3 | GAAP-Trailing-P/E ca. 81–93 | Sehr gut |
+| Kurs & Market Cap | $43.85 / $97.94B | ~$43–45, Shares ~2.2–2.3 Mrd. | Korrekt |
+| P/E TTM 88.3 | 88.3 | GAAP-Trailing ca. 81–93 | Sehr gut |
 | Forward P/E ~15.9 | 15.9 | Plausibel | Gut |
-| Revenue $76.1B / –11.5 % YoY | $76.1B / –11.5 % | FY 2025: $75.1B (–12.7 %), TTM ähnlich | Gute Approximation |
-| Geografische Umsätze | US $27.36B, Kanada $7.81B usw. | Exakt aus 2025 Annual Report | Korrekt |
-| Boralex-Deal | Integrationsabschluss als Katalysator | Deal 14.08.2026 abgeschlossen | Sehr aktuell & korrekt |
-| SWI-Partnerschaft | US-Multifamily | 14.08. angekündigt | Sehr aktuell |
-| Analyst-PT Median ~$59.50 | $59.50 | Median/Avg. $54–59 | Im oberen, realistischen Bereich |
-| Balance-Sheet | Assets ~$519B, hohe Debt | Passt zu Q1/Q2 2026 | Gut |
-| Sektor-Vergleiche | P/E 14.0, Branche +5 % | Passt | Gut |
+| Revenue $76.1B / –11.5 % YoY | $76.1B / –11.5 % | FY2025 ~$75.1B (–12.7 %) | Gute Approximation |
+| Geografische Umsätze | US $27.36B, Kanada $7.81B … | Annual Report 2025 | Korrekt |
+| Boralex / SWI | Katalysatoren | 14.08.2026 | Sehr aktuell |
+| Analyst-PT Median ~$59.50 | $59.50 | $54–59 | Realistisch |
+| Balance Sheet | Assets ~$519B, hohe Debt | Q1/Q2 2026 | Gut |
 
 ---
 
-## 2. Klare Fehler / Probleme (User-Befund + Code-Abgleich)
+## 2. Klare Fehler (Kurz)
 
-| # | Befund | Schwere | Code-Ursache (soweit nachweisbar) |
-|---|--------|---------|-----------------------------------|
-| 1 | **FCF = $0 / 0 % Marge** trotz stark negativem GAAP-FCF (TTM ca. –$8 bis –$13 Mrd., hohes CapEx in Infra/Energy/PE) | **P0** | `fmp-fetcher`: Cashflow nur `limit=1`; `fcfTTM = lc.freeCashFlow \|\| OCF - \|CapEx\|`. Bei 0/null oder Investitions-CapEx → 0. Kein TTM aus mehreren Perioden, kein Hinweis „GAAP-FCF verzerrt bei High-CapEx“. |
-| 2 | **PEG 0.04** bei Anzeige P/E 88.3 ÷ Growth 10.9 % | **P0** | **Display-Bug `Section4.tsx`:** UI zeigt `peRatio` + `epsGrowth5Y`, PEG kommt aus `data.pegRatio` (Lynch/Forward). Korrekt: 88.3/10.9 ≈ **8.1**, nicht 0.04. |
-| 3 | „Nur geografisch — kein Geschäftssegment-Reporting“ | **P1** | Falsch. Brookfield reportet Asset Management, Wealth Solutions, Infrastructure, Energy, PE, Real Estate, Corporate. Parse nur product-segmentation unzureichend. |
-| 4 | „Zuletzt berichtet: Q4 FY2025“ | **P1** | Veraltet. Q1 + Q2 2026 veröffentlicht (Q2 am 13.08.2026). Label nicht an `/stable/earnings` gekoppelt. |
-| 5 | Moat = None | **P2** | Zu harsch. Scale, Permanent Capital, operative Expertise, Franchise in Alternatives → mindestens Narrow Moat plausibel. |
-| 6 | Analysten 47 Buy / 4 Hold / 0 Sell | **P1** | Übertrieben. Realistisch ca. 8–12 Analysten. Code zählt Grade-**Events** (`grades.slice(0, 30)`), nicht unique Analysten. |
-| 7 | EPS-Growth 10.88 % vs. 141.9 % CAGR | **P1** | Inkonsistente Quellen/Labels (`epsGrowth5Y` vs. `epsGrowthFwd` / andere Stellen). |
+| # | Befund | Prio |
+|---|--------|------|
+| 1 | FCF = $0 / 0 % Marge (Reality TTM ca. –$8 bis –$13 Mrd.) | **P0** |
+| 2 | PEG 0.04 statt ≈8.1 bei P/E 88.3 ÷ Growth 10.9 % | **P0** |
+| 3 | „Nur geografisch“ – falsch (Business-Segmente existieren) | **P1** |
+| 4 | „Zuletzt berichtet Q4 FY2025“ – Q1/Q2 2026 schon raus | **P1** |
+| 5 | Moat = None zu harsch | **P2** |
+| 6 | 47 Buy – Grade-Events, nicht unique Analysten | **P1** |
+| 7 | EPS-Growth 10.88 % vs. 141.9 % – inkonsistente Quellen | **P1** |
 
 ---
 
-## 3. PEG – Code-Bug (Zahlen / Fakten)
+## 3. PEG – Bug, Formel, Fix-Spec (P0)
 
-### Erwartete Rechnung
-
-```text
-PEG = P/E ÷ EPS-Wachstum(%)
-    = 88.3 ÷ 10.9 ≈ 8.10
-```
-
-### Was die UI zeigt
+### 3.1 Korrekte Formeln
 
 ```text
-P/E 88.3  ÷  EPS Growth 10.9%  =  PEG 0.04   ← inkonsistent
+Trailing PEG = P/E_TTM ÷ EPS_Growth_5Y_%
+Forward PEG = Forward_P/E ÷ EPS_Growth_Fwd_%
+PEGY (Lynch Slow Grower) = P/E ÷ (Growth_% + DivYield_%)
 ```
 
-### Code (`client/src/components/sections/Section4.tsx`)
+Brookfield-Beispiel:
+
+```text
+88.3 ÷ 10.9 ≈ 8.10   ← korrekt
+Anzeige 0.04         ← Bug
+```
+
+### 3.2 Code-Ursache
+
+**`Section4.tsx`:**
 
 ```ts
 const lynchPEG = data.pegRatio && data.lynchClass ? data.pegRatio : null;
-const pe = data.peRatio;
-const growth = data.epsGrowth5Y;
-const peg = lynchPEG ?? (pe > 0 && growth > 0 ? pe / growth : null);
+const pe = data.peRatio;            // Anzeige 88.3
+const growth = data.epsGrowth5Y;    // Anzeige 10.9%
+const peg = lynchPEG ?? (pe / growth); // Wert oft data.pegRatio ≠ pe/growth
 ```
 
-- Anzeige: immer Trailing-P/E + 5Y-Growth.
-- Wert: bei gesetztem `lynchClass` → Server-`pegRatio` (Forward/Lynch) → **Gleichung auf dem Screen stimmt nicht**.
-
-### Server (`server/fmp-fetcher.ts`)
+**`fmp-fetcher.ts`:**
 
 ```ts
-const pegRatio = (pe > 0 && epsGrowthFwd > 0) ? pe / epsGrowthFwd : null;
+pegRatio = (pe > 0 && epsGrowthFwd > 0) ? pe / epsGrowthFwd : null;
 ```
 
-### Fix (generisch)
+UI zeigt Trailing-Inputs, Wert kommt aus Forward/Lynch → Gleichung gelogen.
 
-1. Eine Formel = dieselben Inputs in der Box (Trailing **oder** Forward, nie Mischung).
-2. Lynch-Varianten nur mit passenden Inputs + `lynchPEGBasis`-Text.
-3. Growth ≤ 0 oder P/E ≤ 0 → `n/a`.
-4. Sanity: PEG < 0.1 bei P/E > 20 und Growth < 30 % → Flag Dateninkonsistenz.
+### 3.3 Fix (generisch, keine Ticker-Hardcodes)
+
+1. **Modus explizit wählen und anzeigen:**
+   - `trailing`: `peg = peRatio / epsGrowth5Y`, Box zeigt P/E TTM + 5Y Growth
+   - `forward`: `peg = forwardPE / epsGrowthFwd`, Box zeigt Forward P/E + Fwd Growth
+   - `lynch`: nur mit `lynchPEGBasis` und den **gleichen** Inputs wie die Berechnung
+2. Niemals Zähler/Nenner aus Pfad A und Ergebnis aus Pfad B.
+3. `growth <= 0` oder `pe <= 0` → `n/a` (nicht 0.04).
+4. Sanity-Flag: `peg < 0.1 && pe > 20 && growth < 30` → „Dateninkonsistenz prüfen“.
+5. Rechenweg-Text muss die **tatsächlich verwendeten** Zahlen wiedergeben.
+
+**Akzeptanztest:** Für BN (oder jeden Titel mit pe≈88, growth≈11) muss die Box **≈8.1** zeigen, wenn Trailing-Modus aktiv ist – oder Forward-Zahlen, wenn Forward-Modus aktiv ist.
 
 ---
 
-## 4. WACC Live vs. Sektor-Ref. (kein Rechenfehler)
-
-| Szenario | Beta | D/V | WACC Live | WACC Sektor-Ref. |
-|----------|------|-----|-----------|------------------|
-| Conservative | 2.02 | 83.8 % | 5.88 % | 11.0 % |
-| Average | 1.84 | 76.1 % | 6.42 % | 9.5 % |
-| Optimistic | 1.65 | 68.5 % | 6.80 % | 8.0 % |
-
-```text
-Re = 4.2% + 1.84 × 5.5% = 14.32%
-WACC ≈ 23.9%×14.32% + 76.1%×5.0%×0.79 ≈ 6.4%
-```
-
-Hoher D/V drückt Live-WACC – methodisch ok, für DCF oft zu optimistisch → Section 5 nutzt Sektor-Ref. (korrekt).
-
----
-
-## 5. FCF = 0 (P0 Datenpfad)
+## 4. FCF = 0 (P0)
 
 ```ts
-fcfTTM: lc.freeCashFlow || (lc.operatingCashFlow || 0) - Math.abs(lc.capitalExpenditure || 0),
-// cashflow limit=1
+fcfTTM: lc.freeCashFlow || (OCF - |CapEx|),
+cashflow limit=1
 ```
 
-- Reality: GAAP-FCF TTM stark negativ (ca. –$8 bis –$13 Mrd.) wegen CapEx in Operating Businesses.
-- Tool: $0 / 0 % Marge → Datenfehler.
+| Reality (BN-Typ) | Tool |
+|------------------|------|
+| GAAP-FCF TTM stark negativ (–$8 bis –$13 Mrd.) | $0 / 0 % Marge |
 
-**Fix:** Mehrperioden-Cashflow; negatives FCF sichtbar; optional AFFO/Owner-Earnings-Hinweis generisch für Infra/Alternatives/RE.
-
----
-
-## 6. Segmente, Earnings, Analysten, EPS-Growth, Moat
-
-| Thema | Soll |
-|-------|------|
-| Segmente | Business-Segmente parsen; Text „nur geo“ nur wenn wirklich keine Business-Daten |
-| Earnings | „Zuletzt berichtet“ an `/stable/earnings` / letztes Quarter |
-| Analysten | Unique Firms/Analysten oder Label „Grade-Events“ |
-| EPS-Growth | Eine CAGR-Quelle + klare Labels (5Y CAGR vs. Fwd YoY) |
-| Moat | Narrow bei Scale/Permanent-Capital-Profilen generisch ermöglichen (P2) |
+**Fix:**
+- Cashflow `limit` ≥ 4 (Quarter) oder klar annual + Label
+- Negatives FCF anzeigen, nie stilles „0 % Marge“
+- Generischer Hinweis wenn Sector/Industry ∈ Infra / Alternatives / RE / Asset Management: „GAAP-FCF durch Investitions-CapEx verzerrt; FRE/DE/AFFO beachten“
 
 ---
 
-## 7. Implementation Priority
+## 5. Alternatives Asset Management – Analyse-Metriken (für Fixes & Moat)
 
-| Priority | Task |
+GAAP-P/E und GAAP-FCF allein sind für Alternatives **unzureichend**. Beim Fix und bei der Interpretation priorisieren:
+
+| Metrik | Rolle |
+|--------|--------|
+| Fee-Bearing Capital (FBC) | Fee-Basis |
+| Fee-Related Earnings (FRE) | „Betriebsgewinn“ der AM-Franchise |
+| Fundraising | Wachstum FBC |
+| Deployable Capital / Dry Powder | Fähigkeit zu deployen |
+| Distributable Earnings (DE) | Cash an Corp-Ebene |
+| Forward P/E / FRE-Multiple | relevantere Bewertung als GAAP-Trailing-P/E |
+
+Segment-Soll (Business, nicht nur Geo): Asset Management, Wealth Solutions, Infrastructure, Energy, Private Equity, Real Estate, Corporate.
+
+Text „Unternehmen berichtet nur geografisch“ **nur** wenn Product- **und** sinnvolle Business-Segmentdaten fehlen.
+
+---
+
+## 6. Brookfield Capital-Strategie 2026 (Referenz zum Verifizieren der Fixes)
+
+Quelle: BN/BAM Q2 2026 (u. a. 13.08.2026 Supplemental / Earnings).
+
+| Kennzahl | Wert |
 |----------|------|
-| **P0** | Section4 PEG: Anzeige = Formel = Inputs |
-| **P0** | FCF: Mehrperioden, Vorzeichen, kein stilles 0 %-Marge |
-| **P1** | Analyst Grades dedup / kennzeichnen |
-| **P1** | Earnings-Datum aktualisieren |
-| **P1** | EPS-Growth vereinheitlichen + Label |
-| **P1** | Segment-Text nur wenn zutreffend |
-| **P2** | Moat-Heuristik Quality-Alternatives |
+| Fundraising Q2 2026 | **$77 Mrd.** (Rekordquartal) |
+| Fundraising YTD 2026 | **~$98 Mrd.** |
+| Fee-Bearing Capital | **$672 Mrd.** (+19 % YoY) |
+| Fee-Related Earnings | **+20 %** YoY (Quartal) |
+| Deployable Capital | **$210 Mrd.** Rekord ($96 Mrd. Liquidität + $114 Mrd. uncalled) |
+| Deployment YTD | **~$100 Mrd.** |
+| Monetisierungen YTD | **~$40 Mrd.** |
+| DE Quartal / LTM | $1.5 Mrd. / $6.2 Mrd. |
+| Buybacks | u. a. BN @ ~$42 unter Management-Intrinsic-View |
+| Struktur | Simplification BN + Wealth Solutions (Shareholder approved) |
+
+Strategische Säulen: Flagship-Fundraising (PE/Infra), Permanent Capital + Insurance (Just Group), Deployment in AI-Infra/Energy/Retirement, Buybacks, Franchise-Scale.
+
+→ Unterstützt **Narrow Moat** (Scale, Fundraising-Zugang, Permanent Capital), nicht „None“.  
+→ Unterstützt, dass **FRE/DE/FBC** die Analyse treiben sollen, nicht FCF=$0.
 
 ---
 
-## 8. Betroffene Dateien
+## 7. WACC Live vs. Sektor-Ref. (kein Formel-Bug)
 
-| Datei | Thema |
-|-------|--------|
-| `client/src/components/sections/Section4.tsx` | PEG-Display |
-| `server/fmp-fetcher.ts` | pegRatio, FCF, grades, cashflow limit |
-| `server/fmp.ts` | calcEpsGrowth, Segmente, earnings |
-| Moat-/Summary-Logik | Moat, Fazit |
+| Szenario | Beta | D/V | WACC Live | Sektor-Ref. |
+|----------|------|-----|-----------|-------------|
+| Average | 1.84 | 76.1 % | 6.42 % | 9.5 % |
+
+`Re = 4.2 + 1.84×5.5 = 14.32 %` → hoher D/V drückt Live-WACC. DCF nutzt bewusst Sektor-Ref. – beibehalten. Optional: Warnung bei D/V > 60 %.
+
+---
+
+## 8. Weitere P1/P2-Fixes
+
+| Thema | Fix |
+|-------|-----|
+| Analyst Grades | Unique Firm/Analyst oder Label „Grade-Events (nicht unique)“ |
+| Earnings-Datum | An `/stable/earnings` / letztes Quarter koppeln |
+| EPS-Growth | Eine CAGR-Pipeline (`calcEpsGrowth`) + Labels „5Y CAGR“ vs. „Fwd YoY“ |
+| Moat | Generisch: Scale + Permanent-Capital-/AM-Profil → mindestens Narrow erlauben (kein BN-Hardcode) |
+
+---
+
+## 9. Implementation Priority
+
+| Prio | Task | Done-Kriterium |
+|------|------|----------------|
+| **P0** | PEG Section4: eine Formel = sichtbare Inputs | BN-Trailing zeigt ≈8.1, nicht 0.04 |
+| **P0** | FCF Mehrperioden + Vorzeichen + High-CapEx-Hinweis | kein stilles $0 / 0 % bei negativem GAAP-FCF |
+| **P1** | Analyst Dedup/Label | Counts plausibel oder als Events gekennzeichnet |
+| **P1** | Earnings „zuletzt berichtet“ | Q2 2026 sichtbar wo published |
+| **P1** | Growth-Labels vereinheitlichen | keine 10 % vs. 141 % ohne Erklärung |
+| **P1** | Segment-Text | Business-Segmente oder ehrliches „unvollständig“ |
+| **P2** | Moat Alternatives | Narrow bei Franchise/Scale-Signalen möglich |
+
+---
+
+## 10. Betroffene Dateien
+
+| Datei | Änderung |
+|-------|----------|
+| `client/src/components/sections/Section4.tsx` | PEG-Modus, Anzeige = Berechnung |
+| `server/fmp-fetcher.ts` | pegRatio-Klarheit, FCF limit/Vorzeichen, grades |
+| `server/fmp.ts` | earnings, Segmente, calcEpsGrowth |
+| Moat-/Summary-Logik | Alternatives Narrow-Moat-Heuristik |
 
 ---
 
 **Document Owner:** Aktienanalyst Project  
-**Created / Updated:** 15.08.2026 (vollständiger Live-Check inkl. „Was stimmt“)  
-**Next Action:** P0 PEG + FCF fixen
+**Updated:** 15.08.2026 (Fix-Spec PEG/FCF + Alternatives-Metriken + BN Capital Strategy 2026)  
+**Next Action:** P0 implementieren (PEG-Konsistenz + FCF-Datenpfad)
