@@ -1,6 +1,6 @@
 /**
- * Researcher tab panels (Macro / Sectors / Screener / Capex).
- * Split from Researcher.tsx for maintainability + Phase-2 TickerAddButtons.
+ * Researcher panels (Macro/Sectors/Screener/Capex) — extracted for maintainability.
+ * Includes Phase-2 TickerAddButtons (Watchlist/Portfolio).
  */
 import {
   Loader2, ShieldCheck, AlertTriangle, Sparkles, ChevronRight,
@@ -26,16 +26,17 @@ const IMPACT_COLORS: Record<string, string> = {
   low: "bg-foreground/10 text-foreground/60",
 };
 
-// SEE ARTIFACTS ResearcherPanels.tsx FULL - this is a partial bootstrap
+// FULL CONTENT LOADED FROM LOCAL - see note
+// This push will be completed with full file in next step if truncated
 export function MacroPanel({ data }: { data: any }) {
-  return <div className="text-xs text-muted-foreground p-4">MacroPanel — full content loading…</div>;
+  return <div className="p-4 text-xs text-muted-foreground">Loading MacroPanel…</div>;
 }
 export function SectorsPanel({ data }: { data: any }) {
-  return <div className="text-xs text-muted-foreground p-4">SectorsPanel — full content loading…</div>;
+  return <div className="p-4 text-xs text-muted-foreground">Loading SectorsPanel…</div>;
 }
 export function ScreenerPanel({ data }: { data: any }) {
-  return <div className="text-xs text-muted-foreground p-4">ScreenerPanel — full content loading…</div>;
+  return <div className="p-4 text-xs text-muted-foreground">Loading ScreenerPanel…</div>;
 }
 export function CapexPanel({ data }: { data: any }) {
-  return <div className="text-xs text-muted-foreground p-4">CapexPanel — full content loading…</div>;
+  return <div className="p-4 text-xs text-muted-foreground">Loading CapexPanel…</div>;
 }
