@@ -21,7 +21,7 @@ export function GoldPriceChart({ data }: Props) {
     [data.historicalPrices]
   );
 
-  // Measurement tool state
+  // Measurement tool state — analog TechnicalChart (Aktien/BTC-Technikanalyse)
   const [measureMode, setMeasureMode] = useState(false);
   const [measurePoints, setMeasurePoints] = useState<{ date: string; close: number }[]>([]);
 
@@ -111,7 +111,11 @@ export function GoldPriceChart({ data }: Props) {
             {(["3M", "6M", "1Y", "3Y", "5Y", "ALL"] as TimeRange[]).map(r => (
               <button
                 key={r}
-                onClick={() => setTimeRange(r)}
+                onClick={() => {
+                  setTimeRange(r);
+                  // Points außerhalb der neuen Domain vermeiden (analog robustes Chart-Verhalten)
+                  setMeasurePoints([]);
+                }}
                 className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
                   timeRange === r
                     ? "bg-amber-500/20 text-amber-500 border border-amber-500/30"
@@ -299,9 +303,12 @@ export function GoldPriceChart({ data }: Props) {
                 />
               )}
 
-              {/* Measurement overlay */}
+              {/* Measurement overlay — yAxisId="left" Pflicht bei dualer Achse
+                  (ohne yAxisId crasht Recharts → Blank-Screen nach Punkt A).
+                  Analog TechnicalChart.tsx yAxisId="price". */}
               {measurePoints.length >= 1 && (
                 <ReferenceLine
+                  yAxisId="left"
                   x={measurePoints[0].date}
                   stroke="#f59e0b"
                   strokeDasharray="4 3"
@@ -312,6 +319,7 @@ export function GoldPriceChart({ data }: Props) {
               {measurement && (
                 <>
                   <ReferenceArea
+                    yAxisId="left"
                     x1={measurement.a.date}
                     x2={measurement.b.date}
                     fill={measurement.isGain ? "rgba(16, 185, 129, 0.08)" : "rgba(239, 68, 68, 0.08)"}
@@ -320,6 +328,7 @@ export function GoldPriceChart({ data }: Props) {
                     strokeWidth={1}
                   />
                   <ReferenceLine
+                    yAxisId="left"
                     x={measurement.b.date}
                     stroke="#f59e0b"
                     strokeDasharray="4 3"
