@@ -39,34 +39,79 @@ export function Section4({ data }: Props) {
     wacc: calculateWACC(s.beta, s.rfr, mrp, s.dr, cod, taxRate),
   }));
 
+  /**
+   * PEG — WORK_SECTION4_DATA_BUGS.md §3 (P0)
+   *
+   * Regel: Eine Formel = dieselben Inputs in der Box. Nie Zähler/Nenner aus
+   * Trailing-Pfad und Ergebnis aus Server-Lynch/Forward-pegRatio mischen
+   * (Bug: BN zeigte 88.3 ÷ 10.9 = 0.04; AMZN 31.7 ÷ 57.2% = 0.36).
+   *
+   * Primary (Anzeige): Trailing PEG = peRatio ÷ epsGrowth5Y_%
+   * Secondary (nur Hinweis): data.pegRatio wenn Lynch/Forward und abweichend.
+   */
   const pegCalc = useMemo(() => {
-    // Prefer Lynch PEG if available, fall back to manual P/E ÷ EPS 5Y
-    const lynchPEG = data.pegRatio && data.lynchClass ? data.pegRatio : null;
     const pe = data.peRatio;
     const growth = data.epsGrowth5Y;
-    // null when no Lynch PEG and P/E or growth are non-positive (not meaningful)
-    const peg = lynchPEG ?? (pe > 0 && growth > 0 ? pe / growth : null);
-    const lynchLabel = data.lynchClass === 'cyclical'    ? 'Zykliker (Mid-Cycle PE)' :
-                       data.lynchClass === 'fast_grower' ? 'Fast Grower (Forward PE)' :
-                       data.lynchClass === 'slow_grower' ? 'Slow Grower (PEGY)' :
-                       data.lynchClass === 'turnaround'  ? 'Turnaround (Forward PE)' :
-                       data.lynchClass === 'stalwart'    ? 'Stalwart (5Y CAGR)' : null;
+
+    // growth ≤ 0 oder pe ≤ 0 → n/a (kein Fake-0.04)
+    const trailingOk = typeof pe === "number" && pe > 0
+      && typeof growth === "number" && growth > 0 && isFinite(pe) && isFinite(growth);
+    const trailingPeg = trailingOk ? pe / growth : null;
+
+    // Sanity: extrem niedriger PEG bei hohem P/E und moderatem Wachstum → Flag
+    // (früher oft Symptom der Pfad-Vermischung)
+    const inconsistencyFlag = trailingPeg != null
+      && trailingPeg < 0.1
+      && pe > 20
+      && growth < 30;
+
+    // Server/Lynch-PEG nur als Zusatz, wenn klar abweichend und dokumentiert
+    const serverPeg = typeof data.pegRatio === "number" && data.pegRatio > 0 && isFinite(data.pegRatio)
+      ? data.pegRatio
+      : null;
+    const serverDiffers = trailingPeg != null && serverPeg != null
+      && Math.abs(serverPeg - trailingPeg) > 0.05;
+
+    const lynchLabel = data.lynchClass === "cyclical"    ? "Zykliker (Mid-Cycle PE)" :
+                       data.lynchClass === "fast_grower" ? "Fast Grower (Forward PE)" :
+                       data.lynchClass === "slow_grower" ? "Slow Grower (PEGY)" :
+                       data.lynchClass === "turnaround"  ? "Turnaround (Forward PE)" :
+                       data.lynchClass === "stalwart"    ? "Stalwart (5Y CAGR)" : null;
+
+    const steps: string[] = trailingPeg === null
+      ? [
+          "Trailing PEG = P/E (TTM) ÷ EPS Growth 5Y (%)",
+          `PEG nicht aussagekräftig — P/E (${formatNumber(pe, 1)}) oder Wachstum (${formatNumber(growth, 1)}%) ≤ 0 / fehlend`,
+        ]
+      : [
+          "Trailing PEG = P/E (TTM) ÷ EPS Growth 5Y (%)",
+          `PEG = ${formatNumber(pe, 1)} ÷ ${formatNumber(growth, 1)} = ${formatNumber(trailingPeg, 2)}`,
+          trailingPeg < 1 ? "→ PEG < 1.0: Unterbewertet relativ zum Wachstum" :
+          trailingPeg < 1.5 ? "→ PEG 1.0–1.5: Fair bewertet" :
+          trailingPeg < 2 ? "→ PEG 1.5–2.0: Leichte Prämie" :
+          "→ PEG > 2.0: Hohe Bewertungsprämie zum Wachstum",
+        ];
+
+    if (inconsistencyFlag) {
+      steps.push("⚠ Sanity: PEG < 0.1 bei P/E > 20 und Growth < 30 % — Dateninkonsistenz prüfen");
+    }
+    if (serverDiffers) {
+      steps.push(
+        lynchLabel
+          ? `Hinweis Server/Lynch (${lynchLabel}): PEG ${formatNumber(serverPeg, 2)}` +
+            (data.lynchPEGBasis ? ` — ${data.lynchPEGBasis}` : " (andere Inputs als Trailing; nicht in der Box oben)")
+          : `Hinweis Server-PEG: ${formatNumber(serverPeg, 2)} (Forward/Lynch-Pfad; Box oben = nur Trailing)`
+      );
+    }
+
     return {
-      pe, growth, peg,
-      steps: peg === null
-        ? [
-            lynchLabel ? `Methode: Peter Lynch — ${lynchLabel}` : `PEG = P/E ÷ EPS Growth Rate`,
-            `PEG nicht aussagekräftig — negatives oder fehlendes P/E (${formatNumber(pe, 1)}) bzw. Wachstum (${formatNumber(growth, 1)}%)`,
-          ]
-        : [
-            lynchLabel ? `Methode: Peter Lynch — ${lynchLabel}` : `PEG = P/E ÷ EPS Growth Rate`,
-            data.lynchPEGBasis ? data.lynchPEGBasis : `PEG = ${formatNumber(pe, 1)} ÷ ${formatNumber(growth, 1)}`,
-            `PEG = ${formatNumber(peg, 2)}`,
-            peg < 1 ? `→ PEG < 1.0: Unterbewertet relativ zum Wachstum` :
-            peg < 1.5 ? `→ PEG 1.0–1.5: Fair bewertet` :
-            peg < 2 ? `→ PEG 1.5–2.0: Leichte Prämie` :
-            `→ PEG > 2.0: Hohe Bewertungsprämie zum Wachstum`,
-          ],
+      pe,
+      growth,
+      peg: trailingPeg,
+      mode: "trailing" as const,
+      inconsistencyFlag,
+      serverPeg: serverDiffers ? serverPeg : null,
+      steps,
     };
   }, [data.peRatio, data.epsGrowth5Y, data.pegRatio, data.lynchClass, data.lynchPEGBasis]);
 
@@ -139,17 +184,19 @@ export function Section4({ data }: Props) {
         </div>
       </div>
 
-      {/* PEG Calculation */}
+      {/* PEG Calculation — Inputs = Ergebnis (Trailing) */}
       <div>
-        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">PEG Ratio</h3>
-        <div className="flex items-center gap-4">
+        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
+          PEG Ratio <span className="font-normal normal-case tracking-normal">(Trailing: P/E TTM ÷ EPS Growth 5Y)</span>
+        </h3>
+        <div className="flex items-center gap-4 flex-wrap">
           <div className="bg-muted/30 rounded-md p-3 border border-border/50">
-            <div className="text-[10px] text-muted-foreground">P/E</div>
+            <div className="text-[10px] text-muted-foreground">P/E (TTM)</div>
             <div className="text-lg font-semibold font-mono tabular-nums">{formatNumber(pegCalc.pe, 1)}</div>
           </div>
           <span className="text-lg text-muted-foreground">÷</span>
           <div className="bg-muted/30 rounded-md p-3 border border-border/50">
-            <div className="text-[10px] text-muted-foreground">EPS Growth</div>
+            <div className="text-[10px] text-muted-foreground">EPS Growth 5Y</div>
             <div className="text-lg font-semibold font-mono tabular-nums">{formatNumber(pegCalc.growth, 1)}%</div>
           </div>
           <span className="text-lg text-muted-foreground">=</span>
@@ -160,6 +207,16 @@ export function Section4({ data }: Props) {
             </div>
           </div>
         </div>
+        {pegCalc.inconsistencyFlag && (
+          <div className="text-[10px] text-amber-400/90 mt-1.5">
+            ⚠ Sanity-Flag: PEG < 0.1 bei P/E > 20 und Growth < 30 % — Dateninkonsistenz prüfen
+          </div>
+        )}
+        {pegCalc.serverPeg != null && (
+          <div className="text-[10px] text-muted-foreground mt-1">
+            Server/Lynch-PEG (andere Inputs): <span className="font-mono">{formatNumber(pegCalc.serverPeg, 2)}</span> — nicht mit der Trailing-Box vermischt
+          </div>
+        )}
         <RechenWeg title="PEG Rechenweg" steps={pegCalc.steps} />
       </div>
     </SectionCard>
