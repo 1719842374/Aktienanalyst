@@ -53,7 +53,7 @@ export function Section4({ data }: Props) {
     const pe = data.peRatio;
     const growth = data.epsGrowth5Y;
 
-    // growth ≤ 0 oder pe ≤ 0 → n/a (kein Fake-0.04)
+    // growth <= 0 oder pe <= 0 → n/a (kein Fake-0.04)
     const trailingOk = typeof pe === "number" && pe > 0
       && typeof growth === "number" && growth > 0 && isFinite(pe) && isFinite(growth);
     const trailingPeg = trailingOk ? pe / growth : null;
@@ -80,20 +80,20 @@ export function Section4({ data }: Props) {
 
     const steps: string[] = trailingPeg === null
       ? [
-          "Trailing PEG = P/E (TTM) ÷ EPS Growth 5Y (%)",
-          `PEG nicht aussagekräftig — P/E (${formatNumber(pe, 1)}) oder Wachstum (${formatNumber(growth, 1)}%) ≤ 0 / fehlend`,
+          "Trailing PEG = P/E (TTM) / EPS Growth 5Y (%)",
+          `PEG nicht aussagekraeftig — P/E (${formatNumber(pe, 1)}) oder Wachstum (${formatNumber(growth, 1)}%) <= 0 / fehlend`,
         ]
       : [
-          "Trailing PEG = P/E (TTM) ÷ EPS Growth 5Y (%)",
-          `PEG = ${formatNumber(pe, 1)} ÷ ${formatNumber(growth, 1)} = ${formatNumber(trailingPeg, 2)}`,
-          trailingPeg < 1 ? "→ PEG < 1.0: Unterbewertet relativ zum Wachstum" :
-          trailingPeg < 1.5 ? "→ PEG 1.0–1.5: Fair bewertet" :
-          trailingPeg < 2 ? "→ PEG 1.5–2.0: Leichte Prämie" :
-          "→ PEG > 2.0: Hohe Bewertungsprämie zum Wachstum",
+          "Trailing PEG = P/E (TTM) / EPS Growth 5Y (%)",
+          `PEG = ${formatNumber(pe, 1)} / ${formatNumber(growth, 1)} = ${formatNumber(trailingPeg, 2)}`,
+          trailingPeg < 1 ? "-> PEG unter 1.0: Unterbewertet relativ zum Wachstum" :
+          trailingPeg < 1.5 ? "-> PEG 1.0–1.5: Fair bewertet" :
+          trailingPeg < 2 ? "-> PEG 1.5–2.0: Leichte Praemie" :
+          "-> PEG ueber 2.0: Hohe Bewertungsprämie zum Wachstum",
         ];
 
     if (inconsistencyFlag) {
-      steps.push("⚠ Sanity: PEG < 0.1 bei P/E > 20 und Growth < 30 % — Dateninkonsistenz prüfen");
+      steps.push("Sanity: PEG unter 0.1 bei P/E ueber 20 und Growth unter 30 % — Dateninkonsistenz pruefen");
     }
     if (serverDiffers) {
       steps.push(
@@ -150,7 +150,7 @@ export function Section4({ data }: Props) {
         <div className="text-[10px] text-muted-foreground bg-muted/20 rounded px-2 py-1.5 mt-2 space-y-0.5">
           <div><span className="font-semibold text-foreground/70">WACC Live (CAPM)</span> — Echtzeit-Berechnung aus aktuellem Markt-Beta ({formatNumber(data.beta5Y, 2)}), Rf={rfr}%, MRP={mrp}%. Wird für die WACC-Sensitivitäts-Tabelle (unten) genutzt.</div>
           <div><span className="font-semibold text-foreground/70">WACC Sektor-Ref.</span> — Sektor-Heuristik (Damodaran-Datenbank, sektoradjustiertes Beta). <span className="text-primary/80">Diese Werte nutzt das DCF-Modell (Section 5) und Risk Inversion (Section 8)</span> — bewusst konservativer als Markt-Beta, da implizites Beta aus Sektor-Medianrenditen abgeleitet.</div>
-          <div className="text-amber-400/70">⚠ Abweichung zwischen beiden Spalten ist methodisch, kein Fehler — aber Analyst sollte die Wahl transparent dokumentieren.</div>
+          <div className="text-amber-400/70">Abweichung zwischen beiden Spalten ist methodisch, kein Fehler — aber Analyst sollte die Wahl transparent dokumentieren.</div>
         </div>
         <RechenWeg title="WACC Rechenweg" steps={[
           `WACC = E/V × Re + D/V × Rd × (1 - T)`,
@@ -162,7 +162,7 @@ export function Section4({ data }: Props) {
         ]} />
         {dcfBeta && Math.abs(dcfBeta - data.beta5Y) > 0.1 && (
           <div className="text-[10px] text-amber-400/80 mt-1">
-            ⚠️ DCF-Modell nutzt adjustiertes β={dcfBeta.toFixed(2)} — WACC-Tabelle zeigt Markt-β={data.beta5Y?.toFixed(2)}
+            {`DCF-Modell nutzt adjustiertes β=${dcfBeta.toFixed(2)} — WACC-Tabelle zeigt Markt-β=${data.beta5Y?.toFixed(2)}`}
           </div>
         )}
       </div>
@@ -187,14 +187,14 @@ export function Section4({ data }: Props) {
       {/* PEG Calculation — Inputs = Ergebnis (Trailing) */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
-          PEG Ratio <span className="font-normal normal-case tracking-normal">(Trailing: P/E TTM ÷ EPS Growth 5Y)</span>
+          PEG Ratio <span className="font-normal normal-case tracking-normal">(Trailing: P/E TTM / EPS Growth 5Y)</span>
         </h3>
         <div className="flex items-center gap-4 flex-wrap">
           <div className="bg-muted/30 rounded-md p-3 border border-border/50">
             <div className="text-[10px] text-muted-foreground">P/E (TTM)</div>
             <div className="text-lg font-semibold font-mono tabular-nums">{formatNumber(pegCalc.pe, 1)}</div>
           </div>
-          <span className="text-lg text-muted-foreground">÷</span>
+          <span className="text-lg text-muted-foreground">/</span>
           <div className="bg-muted/30 rounded-md p-3 border border-border/50">
             <div className="text-[10px] text-muted-foreground">EPS Growth 5Y</div>
             <div className="text-lg font-semibold font-mono tabular-nums">{formatNumber(pegCalc.growth, 1)}%</div>
@@ -209,7 +209,7 @@ export function Section4({ data }: Props) {
         </div>
         {pegCalc.inconsistencyFlag && (
           <div className="text-[10px] text-amber-400/90 mt-1.5">
-            ⚠ Sanity-Flag: PEG < 0.1 bei P/E > 20 und Growth < 30 % — Dateninkonsistenz prüfen
+            {"Sanity-Flag: PEG unter 0.1 bei P/E ueber 20 und Growth unter 30 % — Dateninkonsistenz pruefen"}
           </div>
         )}
         {pegCalc.serverPeg != null && (
