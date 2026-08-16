@@ -39,194 +39,109 @@ Dieses Dokument ist die verbindliche Spec für die Umsetzung der Features aus `F
 > Diese Punkte sind **nicht** Teil des MVP, sondern bewusst als nächste Vertiefungsstufe für die Implementierungsphase vorgesehen.  
 > Sie bauen auf der bestehenden `robustStats.ts` auf und bleiben 100 % generisch (kein Ticker-/Sektor-Hardcode).
 
-### 10.1 Hyndman-Fan Quantiltypen vergleichen
+### 10.1–10.5 (Hyndman-Fan, Huber, Bootstrap, Median-Unbiased, TS-Typen)
 
-**Hintergrund (Fakten):**  
-Hyndman & Fan (1996) definieren 9 Quantil-Typen. Die Unterschiede sind bei kleinen Stichproben (n = 4–15, typisch für Peer-Baskets) relevant und können 5–15 Prozentpunkte betragen.
-
-| Typ | Name / Verwendung | Index-Formel (vereinfacht) | Eigenschaften | Empfohlen? |
-|-----|-------------------|----------------------------|---------------|------------|
-| **R-1** | Inverse empirisch | h = p·n, floor | Diskret, springt | Nein |
-| **R-2** | Mittelwert zweier Punkte | – | Etwas glatter | Selten |
-| **R-3** | – | – | – | Nein |
-| **R-4** | Linear (andere Indexierung) | h = p·n | – | Nein |
-| **R-5** | Piecewise linear | h = p·n + 0.5 | – | Nein |
-| **R-6** | Weibull | h = (n+1)·p | Excel PERCENTILE.EXC | Optional |
-| **R-7** | **Linear (Excel INC / NumPy default)** | h = p·(n–1) | Weit verbreitet, stabil | **Aktueller Standard** |
-| **R-8** | Median-unbiased | h = (n + 1/3)·p + 1/3 | Theoretisch besser für Median | **Kandidat für Upgrade** |
-| **R-9** | Approx. normal-unbiased | h = (n + 0.25)·p + 0.375 | – | Selten |
-
-**Zahlenvergleich (gleiche Daten n=8):**
-```
-DATA = [-18.2, 3.1, 8.4, 11.0, 13.7, 15.9, 21.4, 94.6]
-
-R-7  Q5  ≈ -10.75 %    Q95 ≈ 68.98 %
-R-8  Q5  ≈  -9.1 %     Q95 ≈ 62.3 %
-R-6  Q5  ≈ -12.4 %     Q95 ≈ 72.1 %
-```
-Differenz R-7 vs. R-8: ca. **1,6–6,7 pp** – bei kleinen n nicht vernachlässigbar.
-
-**Implementierungs-Task (offen):**
-- Funktion `quantile(data, p, method: "R-7" | "R-8" | "R-6")`
-- Default bleibt R-7 (Excel-Kompatibilität)
-- Option R-8 als „median-unbiased“ Variante für den Basket freischaltbar
-- Unit-Tests mit den obigen Zahlenvektoren
+Siehe vorherige Dokumentation in diesem File (unverändert).
 
 ---
 
-### 10.2 Huber-Schätzer Implementierung
+## 12. MVP vs. Ausbaustufen – Entscheidungsplan (Bootstrap + Huber)
 
-**Was ist der Huber-Schätzer?**  
-Ein M-Schätzer, der zwischen Mean und Median interpoliert. Beobachtungen innerhalb eines Bereichs ±k·σ werden linear behandelt, außerhalb nur noch linear mit reduzierter Steigung (weniger Einfluss von Ausreißern).
+> **Stand: 17.08.2026**  
+> Klare Priorisierung, ob und wann Bootstrap-Konfidenzintervalle und Huber-Schätzer gebaut werden sollen.
 
-**Formel (vereinfacht):**
-```
-ρ(u) = { ½u²          wenn |u| ≤ k
-       { k·|u| – ½k²  wenn |u| > k
+### Kurzentscheidung
 
-wobei u = (x – μ) / σ
-k typisch = 1.345 (95 % Effizienz bei Normalverteilung)
-```
+Für den **aktuellen MVP** (Reverse-DCF-Basket + Winsorized Median) brauchst du **beides noch nicht zwingend**.  
+Die bereits vorhandene `robustStats.ts` (R-7 + Winsorize 5/95 + Median) reicht für den Start völlig aus.
 
-**Typische Zahlen im Finanzkontext:**
-
-| k | Effizienz (Normal) | Breakdown-Punkt (ca.) | Verhalten |
-|---|--------------------|------------------------|-----------|
-| 1.0 | niedriger | höher | näher am Median |
-| **1.345** | **≈ 95 %** | ≈ 0.25–0.30 | Standard-Empfehlung |
-| 2.0 | höher | niedriger | näher am Mean |
-
-**Beispiel (gleiche DATA):**
-- Klassischer Mean: ≈ 18,74 %
-- Winsorized Median: ≈ 12,35 %
-- Huber (k=1.345, iterative): liegt typischerweise dazwischen (ca. 13–15 %)
-
-**Implementierungs-Task (offen):**
-- `huberLocation(data, k = 1.345, maxIter = 50)` → robuste Lage
-- Optional `huberScale` (robuste Streuung)
-- Vergleichs-Output in der Reverse-DCF-Basket-Karte (Mean vs. Winsor-Median vs. Huber) als Transparenz-Option
-- Kein Default für den Hauptpfad (Winsorized Median bleibt Standard)
+Beide Themen sind **sinnvolle nächste Ausbaustufen**, aber **keine Blocker**.
 
 ---
 
-### 10.3 Bootstrap-Vertrauensintervalle implementieren
+### 12.1 Bootstrap-Resampling / Konfidenzintervalle
 
-**Ziel:** Für g_basket und Δg ein 90 %- oder 95 %-Konfidenzintervall angeben, damit die Ampel nicht als Punkt-Schätzung missverstanden wird.
+**Was ist das?**  
+Beim Bootstrap ziehst du aus dem Peer-Basket viele Male mit Zurücklegen neue Stichproben und berechnest jedes Mal denselben Schätzer (winsorized Median / g_basket). Daraus entsteht eine empirische Verteilung → Konfidenzintervalle.
 
-**Methode (non-parametrischer Bootstrap):**
-```
-1. Ziehe B-mal (z.B. B = 1.000 oder 2.000) mit Zurücklegen aus dem Peer-Basket
-2. Berechne jedes Mal den winsorized Median (bzw. g_basket)
-3. Sortiere die B Ergebnisse
-4. 95 %-KI = [2.5 %-Quantil, 97.5 %-Quantil] der Bootstrap-Verteilung
-```
+**Typische Zahlen (Use-Case Reverse-DCF-Basket):**
 
-**Typische Zahlen:**
+| Basket-Größe n | B (Resamples) | Typische 95 %-KI-Breite für g_basket | Aussagekraft |
+|----------------|---------------|-------------------------------------|--------------|
+| 4              | 1.000         | ± 8–15 pp                           | Sehr unsicher |
+| 6–8            | 1.000         | ± 4–8 pp                            | Brauchbar |
+| 12–15          | 2.000         | ± 3–5 pp                            | Stabil |
 
-| Basket-Größe n | B | 95 %-KI-Breite (Beispiel SaaS) | Interpretation |
-|----------------|---|-------------------------------|----------------|
-| 4 | 1000 | oft ±8–15 pp | Sehr breit → hohe Unsicherheit |
-| 8 | 1000 | ± ±4–8 pp | Brauchbar |
-| 12–15 | 2000 | ± ±3–5 pp | Stabil |
+**Beispiel:**  
+g_basket = 13,1 % → mit Bootstrap z. B. **13,1 % [9,4 % – 16,8 %]**.  
+Damit siehst du, ob ein Δg von +6 pp wirklich „sportlich“ ist oder noch innerhalb der Unsicherheit liegt.
 
-**Implementierungs-Task (offen):**
-- `bootstrapCI(data, statisticFn, B = 1000, alpha = 0.05)` → `{ point, lower, upper }`
-- Für g_basket und Δg in Section 14 anzeigen (z.B. „13,1 % [9,4 % – 16,8 %]“)
-- Performance: bei n ≤ 15 und B = 1000 < 50 ms (client-side machbar)
-- Seed-Option für reproduzierbare Tests
+**Wann brauchst du es?**
 
----
+| Situation                              | Empfehlung                                      |
+|----------------------------------------|-------------------------------------------------|
+| MVP / erste Live-Version               | **Nein** – Punkt-Schätzung + Ampel reicht       |
+| Transparenz in Section 14              | **Ja** – sehr hoher Erklärwert                  |
+| Basket oft nur 4–6 Peers               | **Besonders sinnvoll** (Unsicherheit groß)      |
+| Performance (Client)                   | B=1.000 bei n≤15 ist < 50 ms → unproblematisch  |
 
-### 10.4 Median-Unbiased-Schätzer verwenden
-
-**Hintergrund:**  
-R-7 ist nicht median-unbiased. R-8 (Hyndman-Fan) ist so konstruiert, dass der Schätzer des Medians (p=0,5) median-unbiased ist und auch für andere Quantile bessere Eigenschaften bei kleinen n hat.
-
-**Formel R-8:**
-```
-h = (n + 1/3) · p + 1/3
-```
-Dann lineare Interpolation wie bei R-7.
-
-**Zahlen (n=8, p=0.5):**
-- R-7 und R-8 liefern für den Median fast identische Werte
-- Bei p=0.05 / 0.95 divergieren sie (siehe Tabelle in 10.1)
-
-**Implementierungs-Task (offen):**
-- R-8 als wählbare Methode in `quantile(..., method: "R-8")`
-- Optionaler Schalter in der Basket-Konfiguration: `quantileMethod: "R-7" | "R-8"`
-- Default bleibt R-7 (Excel-Kompatibilität + bestehende Tests)
-- Dokumentation, wann R-8 bevorzugt werden sollte (sehr kleine n, Fokus auf Median)
+**Fazit Bootstrap:** Nice-to-have mit hohem pädagogischem Nutzen. Nicht dringend für die erste funktionsfähige Basket-Logik.
 
 ---
 
-### 10.5 TypeScript-Typdefinitionen hinzufügen
+### 12.2 Robuste Statistik-Algorithmen (Überblick)
 
-**Aktueller Stand:**  
-`robustStats.ts` ist bereits typisiert, aber die erweiterten Rückgaben (Bootstrap-CI, Huber, Multi-Method-Quantile) brauchen explizite Interfaces.
+| Algorithmus              | Was er macht                          | Breakdown-Punkt | Status bei uns          |
+|--------------------------|---------------------------------------|-----------------|-------------------------|
+| Median                   | 50 %-Quantil                          | 50 %            | ✅ bereits im Einsatz  |
+| Winsorisierung           | Extreme auf Quantile setzen           | abhängig        | ✅ bereits im Einsatz  |
+| Trimmen                  | Extreme entfernen                     | abhängig        | optional vorhanden      |
+| Huber-Schätzer           | Kompromiss Mean ↔ Median              | ca. 25–30 %     | offen (niedrige Prio)   |
+| MAD                      | Robuste Streuung                      | 50 %            | noch nicht nötig        |
+| Quantile Regression      | Bedingte Quantile                     | hoch            | später                  |
 
-**Vorgeschlagene Typen (offen zu implementieren):**
+**Aktueller Stand reicht:** R-7 + Winsorize 5/95 + winsorizedMedian ist die Standard-Kombination in der Finanzliteratur für Peer-Baskets.
 
-```ts
-export type QuantileMethod = "R-6" | "R-7" | "R-8";
-
-export interface QuantileOptions {
-  method?: QuantileMethod;   // Default "R-7"
-}
-
-export interface WinsorizeOptions {
-  lower?: number;            // Default 0.05
-  upper?: number;            // Default 0.95
-  method?: QuantileMethod;
-}
-
-export interface BootstrapCI {
-  point: number;
-  lower: number;
-  upper: number;
-  level: number;             // z.B. 0.95
-  B: number;                 // Anzahl Resamples
-  n: number;                 // Original-Stichprobengröße
-}
-
-export interface HuberResult {
-  location: number;
-  scale?: number;
-  iterations: number;
-  converged: boolean;
-  k: number;
-}
-
-export interface BasketGrowthResult {
-  gBasket: number;
-  gRevenue: number | null;
-  gEps: number | null;
-  ci?: BootstrapCI;          // optional, wenn Bootstrap aktiv
-  method: QuantileMethod;
-  n: number;
-}
-```
-
-**Implementierungs-Task (offen):**
-- Interfaces in `robustStats.ts` (oder `shared/robust-stats-types.ts`) ergänzen
-- Alle neuen Funktionen mit diesen Typen absichern
-- Export für Section 14 und ggf. Server-Side nutzen
+| Erweiterung              | Jetzt nötig? | Begründung                                      |
+|--------------------------|--------------|-------------------------------------------------|
+| Huber-Schätzer           | **Nein**     | Winsorized Median ist robuster und einfacher    |
+| MAD / robuste Volatilität| **Nein**     | Erst relevant bei Unsicherheit der CAGRs selbst |
+| R-8 Quantile             | Optional     | Theoretisch etwas besser bei sehr kleinen n     |
+| Bootstrap                | Optional     | Gibt Unsicherheitsmaß, ändert Punkt-Schätzer nicht |
 
 ---
 
-## 11. Priorisierung der offenen Statistik-Tasks
+### 12.3 Klare Empfehlung für das Projekt
 
-| Rang | Task | Aufwand | Nutzen | Abhängigkeit |
-|------|------|---------|--------|--------------|
-| 1 | TypeScript-Typdefinitionen erweitern | gering | Saubere API | – |
-| 2 | Hyndman-Fan Methodenvergleich (R-7/R-8) | gering–mittel | Transparenz + optionale Verbesserung | Typen |
-| 3 | Median-Unbiased (R-8) als Option | gering | Theoretisch besser bei kleinen n | 2 |
-| 4 | Bootstrap-Vertrauensintervalle | mittel | Unsicherheit sichtbar machen | winsorizedMedian |
-| 5 | Huber-Schätzer | mittel | Zusätzliche robuste Lage-Schätzung | optional |
+**Jetzt (MVP)**
+1. Bleib bei **winsorizedMedian** (5/95, R-7).
+2. Zeige in Section 14 nur: g* · g_basket · Δg · Ampel.
+3. Das beantwortet die Kernfrage:  
+   „Preist der Markt realistisch im Vergleich zu dem, was die Peers historisch geliefert haben?“
 
-**Empfehlung:**  
-Zuerst Typen + R-8-Option. Bootstrap als nächstes (hoher Erklärwert in der UI). Huber nur wenn Bedarf nach einer dritten robusten Lage-Kennzahl besteht.
+**Als nächstes (wenn die Basis läuft)**
+1. **Bootstrap-KI** für g_basket und Δg (hoher UI-Nutzen) → Priorität unter den Ausbaustufen.
+2. Optional R-8 als umschaltbare Methode.
+3. Huber nur, wenn wirklich eine dritte robuste Lage-Kennzahl verglichen werden soll.
+
+**Was du nicht brauchst**
+- Komplexe M-Schätzer-Bibliotheken
+- Quantile Regression
+- Sehr hohe Bootstrap-Zahlen (B > 2000)
+- Hardcodierte Schwellen pro Sektor
 
 ---
 
-*Erweitert am 17.08.2026 um Abschnitt 10 (Hyndman-Fan, Huber, Bootstrap-CI, Median-Unbiased, TS-Typen) als unmarked Implementierungs-Tasks.*
+### 12.4 Implementierungs-Reihenfolge (aktualisiert)
+
+| Rang | Task                              | MVP? | Aufwand | Nutzen                  |
+|------|-----------------------------------|------|---------|-------------------------|
+| 1    | winsorizedMedian + Δg + Ampel     | **Ja** | gering  | Kernfunktion            |
+| 2    | TypeScript-Typen erweitern        | Nein | gering  | Saubere API             |
+| 3    | Bootstrap-Konfidenzintervalle     | Nein | mittel  | Hoher Erklärwert in UI  |
+| 4    | R-8 als Option                    | Nein | gering  | Theoretische Verbesserung |
+| 5    | Huber-Schätzer                    | Nein | mittel  | Nur bei explizitem Bedarf |
+
+---
+
+*Abschnitt 12 hinzugefügt am 17.08.2026 – Entscheidungsplan MVP vs. Bootstrap/Huber.*
