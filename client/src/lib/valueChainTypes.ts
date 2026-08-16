@@ -30,7 +30,7 @@ export interface ValueChainCompany {
   institutionalHolders13F?: number;
   topHolders?: string[];
   starInvestorFlag?: boolean;
-  /** Capex / Revenue (TTM), 0–1 scale or percent */
+  /** Capex / Revenue (TTM), 0–1 scale */
   capexIntensity?: number | null;
   logoUrl?: string;
   validated: boolean;
@@ -44,7 +44,7 @@ export interface ValueChainStage {
   companies: ValueChainCompany[];
   /** Aggregated metrics (computed client- or server-side) */
   aggregatedMarketCap?: number | null;
-  /** Median or weighted-average Capex intensity of companies in this stage */
+  /** Median Capex intensity of companies in this stage */
   avgCapexIntensity?: number | null;
   companyCount?: number;
 }
@@ -149,4 +149,27 @@ export function aggregateStageCapexIntensity(
 export function formatCapexIntensity(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "n/a";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+/**
+ * Tailwind-oriented color class for CAPEX intensity visualization.
+ * - < 10%  → emerald (asset-light)
+ * - 10–25% → amber  (medium)
+ * - > 25%  → rose   (capital-intensive)
+ */
+export function capexColorClass(intensity: number | null | undefined): string {
+  if (intensity == null || !Number.isFinite(intensity)) return "text-slate-400";
+  if (intensity < 0.1) return "text-emerald-400";
+  if (intensity < 0.25) return "text-amber-400";
+  return "text-rose-400";
+}
+
+/**
+ * Background / border helper for StageNode color coding.
+ */
+export function capexBorderClass(intensity: number | null | undefined): string {
+  if (intensity == null || !Number.isFinite(intensity)) return "border-slate-500/60";
+  if (intensity < 0.1) return "border-emerald-500/60";
+  if (intensity < 0.25) return "border-amber-500/60";
+  return "border-rose-500/60";
 }

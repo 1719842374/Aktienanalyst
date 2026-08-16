@@ -2,197 +2,133 @@
 
 > **Stand: 17.08.2026**  
 > Detaillierte Spezifikation für den Block **Industrie- & Sektor-Visualisierung**  
-> inkl. React-Flow Nodes, Custom Edges + Animationen, FMP Financials, Rate-Limit-Management und CAPEX-Intensität.
+> inkl. React-Flow Nodes, Custom Edges, FMP Rate-Limit (Backoff + Jitter + Redis), CAPEX-Intensität.
 
 ---
 
-## Implementierungsphase – Aktuelle Reihenfolge (Value Chain UI)
+## Implementierungsphase – Aktuelle Reihenfolge
 
-| Rang | Task | Status | Aufwand |
-|------|------|--------|--------|
-| **1** | React-Flow Node-Spezifikation + Komponenten | ✅ gepusht | 1–1,5 Tage |
-| **2** | Branchen-Selector + API-Contract | offen | 0,5–1 Tag |
-| **3** | LLM + FMP-Validierung + Cache + **Rate-Limit-Management** | offen | 1–1,5 Tage |
-| **4** | Firmen in Nodes rendern + Klick → Analyse | offen | 0,5 Tag |
-| **5** | CAPEX-Intensität pro Stufe | offen | ~1 Tag |
-| **6** | 13F-Badges | offen | 0,5–1 Tag |
-| **7** | React-Flow Custom Edges (MVP: smoothstep / valueFlow) | offen | 0,5 Tag |
-| **8** | Custom Edge Animationen (Glow-Flow) | offen (Nice-to-have) | 0,5–1 Tag |
-| **9** | Optional: CAPEX-Bar/Waterfall | offen | 0,5 Tag |
+| Rang | Task | Status |
+|------|------|--------|
+| 1 | React-Flow Node-Spezifikation + Komponenten | ✅ |
+| 2 | `withExponentialBackoff` (Equal + Decorrelated Jitter) | ✅ gepusht |
+| 3 | CAPEX Color / Border Helpers | ✅ gepusht |
+| 4 | Branchen-Selector + API-Contract | offen |
+| 5 | FMP Enrichment + Rate-Limit-Schichten | offen |
+| 6 | CAPEX live berechnen + Badge/Farbe | offen |
+| 7 | Custom Edges (MVP) | offen |
+| 8 | Edge-Animationen | Nice-to-have |
+| 9 | Redis-basiertes Rate Limiting (optional) | offen / später |
 
 ---
 
-## 1. React-Flow Custom Edge Types & Animationen
+## 1. Exponential Backoff + Jitter (implementiert)
 
-### Was sind Edges?
+**Datei:** `client/src/lib/withBackoff.ts`
 
-In React-Flow sind **Edges** die Verbindungen zwischen Nodes.  
-Standard-Edges sind einfache Linien. **Custom Edges** erlauben Aussehen, Animation und Daten an der Verbindung.
+### Unterstützte Jitter-Strategien
 
-### Warum relevant für die Wertschöpfungskette?
+| Strategie | Formel | Wann |
+|-----------|--------|------|
+| `equal` (Default) | `exp * (0.7 + random()*0.6)` | Guter Alltags-Kompromiss |
+| `decorrelated` | `random(base, previousDelay * 3)` | Sehr robust gegen Thundering Herd (AWS-Stil) |
+| `full` | `random(0, exp)` | Maximale Streuung |
+| `none` | `exp` | Nur zum Vergleich / Debugging |
 
-| Anwendungsfall | Beispiel | Nutzen |
-|----------------|----------|--------|
-| Liefer-/Abhängigkeitsbeziehung | Foundry → Chip Design | Zeigt, wer von wem abhängt |
-| Stärkere vs. schwächere Beziehung | Dicke Linie = hoher Umsatzanteil | Visuelle Gewichtung |
-| Animierter Flow | Leuchtender „Daten-/Wert-Fluss“ | Ähnlich dem Referenzbild |
-| Label auf der Kante | „HBM-Engpass“ oder „Capex-Träger“ | Zusätzliche Info |
-
-### Empfohlene Edge-Typen
+### Empfohlene Defaults
 
 ```ts
-type EdgeType = "default" | "smoothstep" | "straight" | "step" | "valueFlow" | "dependency" | "critical";
+baseDelayMs: 1000
+maxDelayMs: 16000
+maxRetries: 4
+jitter: "equal"          // oder "decorrelated" bei starkem Parallelismus
 ```
 
-| Edge-Typ | Aussehen | Wann nutzen |
-|----------|----------|-------------|
-| `valueFlow` | Geschwungene, leicht animierte Linie (cyan/blau Glow) | Hauptpfad Upstream → Downstream |
-| `dependency` | Gestrichelte Linie | Schwächere / optionale Beziehungen |
-| `critical` | Dickere, orangefarbene Linie | Engpass-Stufen (HBM, Foundry) |
+### Zahlenbeispiel (base = 1000 ms)
 
-### Custom Edge Animationen (Detail)
+| Attempt | Equal Jitter (ca.) | Decorrelated Jitter (ca.) |
+|---------|--------------------|---------------------------|
+| 0 | 700–1300 ms | 1000–3000 ms |
+| 1 | 1400–2600 ms | hängt vom vorherigen Delay ab |
+| 2 | 2800–5200 ms | weiter gestreut |
+| 3 | 5600–10400 ms | bis maxDelay |
 
-**Ziel:** Ein subtiler „Flow“-Effekt wie im Referenzbild (leuchtende Bahn).
-
-| Technik | Beschreibung | Aufwand | Performance |
-|---------|--------------|--------|-------------|
-| CSS `stroke-dashoffset` Animation | Klassischer „laufender Strich“ | gering | Sehr gut |
-| SVG Gradient + Animation | Weicher Glow entlang der Kante | mittel | Gut |
-| Framer Motion / CSS keyframes | Stärkerer visueller Effekt | mittel | Achtung bei vielen Edges |
-| Canvas / WebGL | Übertrieben für diesen Use-Case | hoch | Unnötig |
-
-**Empfehlung MVP:**  
-- `smoothstep` oder einfache `valueFlow`-Edge mit cyanem Stroke  
-- Optional: leichte `stroke-dasharray` Animation (nicht zu aggressiv)  
-- Volle Glow-Animation erst nach stabilem Layout
-
-**Zahlen & Aufwand**
-
-| Baustein | Aufwand |
-|----------|--------|
-| Einfache Custom Edge (Farbe + Stroke) | 1–2 h |
-| Animierter Glow-Flow | 0,5–1 Tag |
-| Edge mit Label + Hover-Info | 0,5 Tag |
+**Decorrelated Jitter** ist besonders stark, wenn viele parallele Worker denselben 429 sehen – die Retries verteilen sich deutlich besser als bei festem Multiplikator.
 
 ---
 
-## 2. FMP Financials API Integration + Rate Limit Management
+## 2. Redis für Rate Limiting (optional / später)
 
-### Benötigte Endpoints pro Ticker
+### Warum Redis?
 
-| Datenpunkt | FMP-Endpoint | Verwendung |
-|------------|--------------|------------|
-| Market Cap, Sector, Name | `/profile` | Company-Node, Filter ≥ 1 Mrd. |
-| Revenue (TTM / annual) | `/income-statement` | CAPEX-Intensität, Wachstum |
-| Capex (TTM) | `/cash-flow-statement` | CAPEX-Intensität |
-| 1Y Performance | `/quote` oder historische Preise | Company-Node |
-| Optional: Peers | `/stock-peers` | Fallback-Basket |
+In-Memory-Limiter (Token Bucket im Node-Prozess) funktionieren nur **innerhalb einer Instanz**.  
+Bei mehreren Render/Railway-Instanzen oder Serverless-Funktionen braucht man einen **zentralen** Zähler.
 
-### Konkrete Zahlen aus dem bestehenden Stack
+### Typische Patterns mit Redis
 
-- Pro Ticker oft **4–6 FMP-Calls** (Profile, Ratios, Income, Cashflow, Estimates …).
-- **Incident 10.08.2026:** ~601 FMP-Calls bei 100 Tickern → Render-Instanz unresponsive → Limit auf **50 Ticker**.
-- Value Chain: typisch **25–50 validierte Ticker** pro Branche → realistisch **100–250 Calls**, wenn alles frisch geladen wird.
+| Pattern | Redis-Befehl / Idee | Vorteil |
+|---------|---------------------|--------|
+| **Fixed Window** | `INCR` + `EXPIRE` pro Minute-Key | Sehr einfach |
+| **Sliding Window** | Sorted Set mit Timestamps | Präziser |
+| **Token Bucket** | Lua-Script: Tokens nachfüllen + abziehen | Glättet Bursts am besten |
+| **Concurrency Gate** | `INCR`/`DECR` mit TTL | Max. parallele Calls cluster-weit |
 
-### FMP API Rate Limit Management (Detail)
+### Konkrete Zahlen für FMP
 
-| Maßnahme | Konkrete Regel | Begründung |
-|----------|----------------|----------|
-| **Cache pro Branche** | 12–24 h TTL (`industry + region`) | 13F/Financials ändern sich nicht stündlich |
-| **Max. parallele Requests** | 5–8 gleichzeitig | Verhindert Burst-Limits |
-| **Budget-Guard** | `wouldExceedBudget()` (bereits vorhanden) | Früher Abbruch statt 429-Spam |
-| **Capex optional** | `includeCapex: boolean` im Request | Schnellerer Erst-Load möglich |
-| **Ticker-Cap pro Request** | ≤ 50–60 Firmen | Wiederholung des 10.08.-Incidents vermeiden |
-| **Background-Build + Polling** | Wie beim 13F-Screener | Lange Jobs blockieren nicht den HTTP-Request |
-| **Retry mit Backoff** | Bei 429: 1s → 2s → 4s | Robust gegen kurzzeitige Limits |
+| Setting | Vorschlag |
+|---------|----------|
+| Global Budget | z. B. 300–600 Calls / Minute (je nach FMP-Plan) |
+| Concurrency | 5–8 parallele Calls cluster-weit |
+| Key-Schema | `fmp:ratelimit:{minute}` oder `fmp:tokens` |
+| TTL | 60–120 s |
 
-**Beispiel-Budget-Rechnung**
+### Aufwand vs. Nutzen
 
-```
-40 Ticker × 3 Calls (Profile + Income + Cashflow) = 120 Calls
-Bei 8 parallelen Requests ≈ 15 Runden
-Mit 100–150 ms Pause → Gesamt ~2–4 Sekunden (+ Cache-Hit fast 0)
-```
+| Ansatz | Aufwand | Wann sinnvoll |
+|--------|--------|---------------|
+| In-Process Concurrency + Backoff + Cache | gering | **Jetzt / MVP** (eine Instanz) |
+| Redis Token Bucket | mittel (1–2 Tage inkl. Infra) | Mehrere Instanzen oder sehr hohe Last |
+| Redis + bestehendes `wouldExceedBudget` | mittel | Produktions-Härtung |
 
-### CAPEX-Berechnung mit FMP-Daten
-
-```
-Capex (Cash Flow) = -4.2 Mrd. USD   (oft negativ)
-Revenue (Income)  = 18.5 Mrd. USD
-
-capexIntensity = |−4.2| / 18.5 ≈ 0.227 → 22.7 %
-```
-
-**Typische Bandbreiten (AI-Beispiel)**
-
-| Stufe | Typische Capex/Revenue | Charakter |
-|-------|------------------------|----------|
-| Foundry / Manufacturing | 30–50 %+ | Sehr kapitalintensiv |
-| Hyperscaler / Data Center | 20–35 % | Hoch |
-| Chip Design (fabless) | 5–15 % | Mittel |
-| AI Software / SaaS | 2–8 % | Asset-light |
+**Empfehlung:**  
+Für den aktuellen Stand (einzelne Render-Instanz + 12–24 h Cache) reicht **In-Process Limit + `withExponentialBackoff` + Cache**.  
+Redis wird erst interessant, wenn ihr horizontal skaliert oder den FMP-Budget sehr eng ausreizt.
 
 ---
 
-## 3. CAPEX-Intensität (bereits in Spec)
+## 3. CAPEX-Visualisierung (Helper gepusht)
 
-### Status in Code
-
-In `valueChainTypes.ts` bereits vorbereitet:
+**Datei:** `client/src/lib/valueChainTypes.ts`
 
 ```ts
-capexIntensity?: number | null;          // pro Firma
-avgCapexIntensity?: number | null;       // pro Stufe
-
-computeCapexIntensity(capex, revenue)
-aggregateStageCapexIntensity(companies)  // Median
-formatCapexIntensity(value)              // "22.7%"
+capexColorClass(intensity)   // text-emerald / amber / rose
+capexBorderClass(intensity)  // border-*-500/60 für StageNode
 ```
 
-StageNode zeigt das Badge, sobald `avgCapexIntensity` befüllt ist.
+Schwellen:
+- `< 10%` → emerald (asset-light)
+- `10–25%` → amber (mittel)
+- `> 25%` → rose (kapitalintensiv)
 
-### Noch offene Implementierungsschritte
-
-| Schritt | Beschreibung | Aufwand |
-|---------|--------------|--------|
-| 1 | Beim FMP-Enrichment Capex + Revenue laden | 0,5 Tag |
-| 2 | `computeCapexIntensity` pro Firma | gering |
-| 3 | `aggregateStageCapexIntensity` pro Stufe | gering |
-| 4 | Wert in StageNodeData schreiben | vorbereitet |
-| 5 | Optional: Farbcodierung | 0,25 Tag |
-| 6 | Optional: Bar-Chart unter dem Pfad | 0,5 Tag |
-
-**Aggregation:** Median der Firmen-Intensitäten (robust).
+StageNode kann das Badge + Rahmenfarbe direkt nutzen, sobald `avgCapexIntensity` befüllt ist.
 
 ---
 
-## Zusammenspiel
+## Zusammenspiel (Rate Limit Schichten)
 
 ```
-FMP Financials (+ Rate-Limit-Management)
-    ↓
-Capex + Revenue pro Ticker
-    ↓
-capexIntensity pro Firma
-    ↓
-avgCapexIntensity pro Stufe
-    ↓
-StageNode zeigt Badge
-    +
-React-Flow Custom Edges (+ optionale Animation)
-    → verbinden die Stufen optisch (Glow / Flow)
+Request
+  → Cache Hit? → fertig
+  → Concurrency Gate (max 5–8)
+  → wouldExceedBudget()
+  → withExponentialBackoff(fn, { jitter: "equal" | "decorrelated" })
+  → FMP Call
+  → bei 429 → Backoff + Jitter → Retry
+  → Ergebnis cachen (12–24 h)
 ```
+
+Optional später: Redis als zentraler Token-Bucket / Concurrency-Gate vor dem lokalen Backoff.
 
 ---
 
-## Priorität
-
-1. Nodes rendern (✅ Spec da)  
-2. FMP-Daten inkl. Rate-Limit-Management anschließen  
-3. CAPEX-Intensität live berechnen und anzeigen  
-4. Custom Edges (MVP ohne starke Animation)  
-5. Edge-Animationen (Nice-to-have)
-
----
-
-*Aktualisiert am 17.08.2026: Custom Edge Animationen + FMP Rate Limit Management detailliert aufgenommen.*
+*Aktualisiert 17.08.2026: withBackoff.ts (Equal + Decorrelated Jitter), CAPEX Color Helpers, Redis Rate-Limiting Spec.*
