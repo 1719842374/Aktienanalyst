@@ -26,482 +26,207 @@ Dieses Dokument ist die verbindliche Spec für die Umsetzung der Features aus `F
 
 ---
 
-## 2. Industrie-Wertschöpfungskette – Detaillierte Spec
+## 2–9. (bestehende Abschnitte unverändert)
 
-### 2.1 Zielbild
+> Die Abschnitte 2–9 (Value Chain Spec, LLM-Validierung, 13F, Reverse-DCF-Basket, Kostolany, UI, Reihenfolge, Design-Entscheidungen) bleiben wie zuvor dokumentiert.  
+> Die bereits implementierte Basis-Utility liegt unter `client/src/lib/robustStats.ts` (R-7, Winsorize 5/95, winsorizedMedian).
 
-Der User wählt eine Branche (z. B. **KI / AI Infrastructure**, **Elektrifizierung / EV**, **Pharma**, **Defense**, **Semiconductors**).  
-Das System rendert eine **horizontale oder vertikale Value-Chain** und befüllt jede Stufe mit realen börsennotierten Unternehmen (Market Cap ≥ 1 Mrd. USD).
+---
 
-### 2.2 Typische Stufen (Beispiel KI / AI Infrastructure)
+## 10. Erweiterte robuste Statistik – Offene Implementierungs-Tasks (unmarked)
 
+> **Status: offen / unmarked**  
+> Diese Punkte sind **nicht** Teil des MVP, sondern bewusst als nächste Vertiefungsstufe für die Implementierungsphase vorgesehen.  
+> Sie bauen auf der bestehenden `robustStats.ts` auf und bleiben 100 % generisch (kein Ticker-/Sektor-Hardcode).
+
+### 10.1 Hyndman-Fan Quantiltypen vergleichen
+
+**Hintergrund (Fakten):**  
+Hyndman & Fan (1996) definieren 9 Quantil-Typen. Die Unterschiede sind bei kleinen Stichproben (n = 4–15, typisch für Peer-Baskets) relevant und können 5–15 Prozentpunkte betragen.
+
+| Typ | Name / Verwendung | Index-Formel (vereinfacht) | Eigenschaften | Empfohlen? |
+|-----|-------------------|----------------------------|---------------|------------|
+| **R-1** | Inverse empirisch | h = p·n, floor | Diskret, springt | Nein |
+| **R-2** | Mittelwert zweier Punkte | – | Etwas glatter | Selten |
+| **R-3** | – | – | – | Nein |
+| **R-4** | Linear (andere Indexierung) | h = p·n | – | Nein |
+| **R-5** | Piecewise linear | h = p·n + 0.5 | – | Nein |
+| **R-6** | Weibull | h = (n+1)·p | Excel PERCENTILE.EXC | Optional |
+| **R-7** | **Linear (Excel INC / NumPy default)** | h = p·(n–1) | Weit verbreitet, stabil | **Aktueller Standard** |
+| **R-8** | Median-unbiased | h = (n + 1/3)·p + 1/3 | Theoretisch besser für Median | **Kandidat für Upgrade** |
+| **R-9** | Approx. normal-unbiased | h = (n + 0.25)·p + 0.375 | – | Selten |
+
+**Zahlenvergleich (gleiche Daten n=8):**
 ```
-Upstream (Inputs)          → Midstream (Enablers)        → Downstream (Applications)
-─────────────────────────────────────────────────────────────────────────────────
-Rare Earth / Energy        Chip Design (GPU/ASIC)        Cloud Hyperscaler
-Mining / Power             Foundry / Packaging           AI Software / SaaS
-                           Memory / HBM                  Enterprise AI Tools
-                           Networking / Cooling          Consumer AI / Agents
+DATA = [-18.2, 3.1, 8.4, 11.0, 13.7, 15.9, 21.4, 94.6]
+
+R-7  Q5  ≈ -10.75 %    Q95 ≈ 68.98 %
+R-8  Q5  ≈  -9.1 %     Q95 ≈ 62.3 %
+R-6  Q5  ≈ -12.4 %     Q95 ≈ 72.1 %
+```
+Differenz R-7 vs. R-8: ca. **1,6–6,7 pp** – bei kleinen n nicht vernachlässigbar.
+
+**Implementierungs-Task (offen):**
+- Funktion `quantile(data, p, method: "R-7" | "R-8" | "R-6")`
+- Default bleibt R-7 (Excel-Kompatibilität)
+- Option R-8 als „median-unbiased“ Variante für den Basket freischaltbar
+- Unit-Tests mit den obigen Zahlenvektoren
+
+---
+
+### 10.2 Huber-Schätzer Implementierung
+
+**Was ist der Huber-Schätzer?**  
+Ein M-Schätzer, der zwischen Mean und Median interpoliert. Beobachtungen innerhalb eines Bereichs ±k·σ werden linear behandelt, außerhalb nur noch linear mit reduzierter Steigung (weniger Einfluss von Ausreißern).
+
+**Formel (vereinfacht):**
+```
+ρ(u) = { ½u²          wenn |u| ≤ k
+       { k·|u| – ½k²  wenn |u| > k
+
+wobei u = (x – μ) / σ
+k typisch = 1.345 (95 % Effizienz bei Normalverteilung)
 ```
 
-### 2.3 Technische Umsetzung
+**Typische Zahlen im Finanzkontext:**
 
-#### Frontend
-- Dropdown: vordefinierte Branchen + Free-Text (LLM mapped auf Template)
-- Graph: React-Flow / Recharts + Custom Nodes **oder** einfaches CSS-Grid mit Karten
-- Jede Stufe = Node mit:
-  - Name der Stufe
-  - 4–8 Ticker (Logo + Name + Market Cap + 1Y-Performance + Valuation-Flag)
-  - **13F-Flag** (Anzahl der Top-Institutionen, die den Ticker halten)
-  - Klick → öffnet `/analyze/{ticker}` oder „Zur Watchlist / Portfolio“
+| k | Effizienz (Normal) | Breakdown-Punkt (ca.) | Verhalten |
+|---|--------------------|------------------------|-----------|
+| 1.0 | niedriger | höher | näher am Median |
+| **1.345** | **≈ 95 %** | ≈ 0.25–0.30 | Standard-Empfehlung |
+| 2.0 | höher | niedriger | näher am Mean |
 
-#### Backend (`POST /api/researcher/valuechain`)
+**Beispiel (gleiche DATA):**
+- Klassischer Mean: ≈ 18,74 %
+- Winsorized Median: ≈ 12,35 %
+- Huber (k=1.345, iterative): liegt typischerweise dazwischen (ca. 13–15 %)
+
+**Implementierungs-Task (offen):**
+- `huberLocation(data, k = 1.345, maxIter = 50)` → robuste Lage
+- Optional `huberScale` (robuste Streuung)
+- Vergleichs-Output in der Reverse-DCF-Basket-Karte (Mean vs. Winsor-Median vs. Huber) als Transparenz-Option
+- Kein Default für den Hauptpfad (Winsorized Median bleibt Standard)
+
+---
+
+### 10.3 Bootstrap-Vertrauensintervalle implementieren
+
+**Ziel:** Für g_basket und Δg ein 90 %- oder 95 %-Konfidenzintervall angeben, damit die Ampel nicht als Punkt-Schätzung missverstanden wird.
+
+**Methode (non-parametrischer Bootstrap):**
+```
+1. Ziehe B-mal (z.B. B = 1.000 oder 2.000) mit Zurücklegen aus dem Peer-Basket
+2. Berechne jedes Mal den winsorized Median (bzw. g_basket)
+3. Sortiere die B Ergebnisse
+4. 95 %-KI = [2.5 %-Quantil, 97.5 %-Quantil] der Bootstrap-Verteilung
+```
+
+**Typische Zahlen:**
+
+| Basket-Größe n | B | 95 %-KI-Breite (Beispiel SaaS) | Interpretation |
+|----------------|---|-------------------------------|----------------|
+| 4 | 1000 | oft ±8–15 pp | Sehr breit → hohe Unsicherheit |
+| 8 | 1000 | ± ±4–8 pp | Brauchbar |
+| 12–15 | 2000 | ± ±3–5 pp | Stabil |
+
+**Implementierungs-Task (offen):**
+- `bootstrapCI(data, statisticFn, B = 1000, alpha = 0.05)` → `{ point, lower, upper }`
+- Für g_basket und Δg in Section 14 anzeigen (z.B. „13,1 % [9,4 % – 16,8 %]“)
+- Performance: bei n ≤ 15 und B = 1000 < 50 ms (client-side machbar)
+- Seed-Option für reproduzierbare Tests
+
+---
+
+### 10.4 Median-Unbiased-Schätzer verwenden
+
+**Hintergrund:**  
+R-7 ist nicht median-unbiased. R-8 (Hyndman-Fan) ist so konstruiert, dass der Schätzer des Medians (p=0,5) median-unbiased ist und auch für andere Quantile bessere Eigenschaften bei kleinen n hat.
+
+**Formel R-8:**
+```
+h = (n + 1/3) · p + 1/3
+```
+Dann lineare Interpolation wie bei R-7.
+
+**Zahlen (n=8, p=0.5):**
+- R-7 und R-8 liefern für den Median fast identische Werte
+- Bei p=0.05 / 0.95 divergieren sie (siehe Tabelle in 10.1)
+
+**Implementierungs-Task (offen):**
+- R-8 als wählbare Methode in `quantile(..., method: "R-8")`
+- Optionaler Schalter in der Basket-Konfiguration: `quantileMethod: "R-7" | "R-8"`
+- Default bleibt R-7 (Excel-Kompatibilität + bestehende Tests)
+- Dokumentation, wann R-8 bevorzugt werden sollte (sehr kleine n, Fokus auf Median)
+
+---
+
+### 10.5 TypeScript-Typdefinitionen hinzufügen
+
+**Aktueller Stand:**  
+`robustStats.ts` ist bereits typisiert, aber die erweiterten Rückgaben (Bootstrap-CI, Huber, Multi-Method-Quantile) brauchen explizite Interfaces.
+
+**Vorgeschlagene Typen (offen zu implementieren):**
 
 ```ts
-interface ValueChainRequest {
-  industry: string;                    // "AI Infrastructure" | "EV / Electrification" | ...
-  minMarketCap?: number;               // Default: 1_000_000_000
-  region?: "US" | "EU" | "ASIA" | "GLOBAL";
-  force?: boolean;
-  include13F?: boolean;                // Default: true
+export type QuantileMethod = "R-6" | "R-7" | "R-8";
+
+export interface QuantileOptions {
+  method?: QuantileMethod;   // Default "R-7"
 }
 
-interface ValueChainStage {
-  stageId: string;
-  stageName: string;                   // "Chip Design (GPU/ASIC)"
-  stageType: "upstream" | "midstream" | "downstream";
-  description?: string;
-  companies: ValueChainCompany[];
+export interface WinsorizeOptions {
+  lower?: number;            // Default 0.05
+  upper?: number;            // Default 0.95
+  method?: QuantileMethod;
 }
 
-interface ValueChainCompany {
-  ticker: string;
-  name: string;
-  marketCap: number | null;
-  sector: string;
-  industry: string;
-  performance1Y?: number | null;
-  valuationFlag?: "cheap" | "fair" | "expensive" | "n/a";
-  institutionalHolders13F?: number;    // Anzahl signifikanter 13F-Halter
-  topHolders?: string[];               // z.B. ["Berkshire", "Vanguard", "BlackRock"]
-  validated: boolean;                  // true = FMP + LLM bestätigt
+export interface BootstrapCI {
+  point: number;
+  lower: number;
+  upper: number;
+  level: number;             // z.B. 0.95
+  B: number;                 // Anzahl Resamples
+  n: number;                 // Original-Stichprobengröße
 }
 
-interface ValueChainResponse {
-  industry: string;
-  region: string;
-  stages: ValueChainStage[];
-  generatedAt: string;
-  cacheHit: boolean;
-  llmValidated: boolean;
-  notes?: string[];
+export interface HuberResult {
+  location: number;
+  scale?: number;
+  iterations: number;
+  converged: boolean;
+  k: number;
 }
-```
 
-**Ablauf:**
-1. LLM bekommt das Value-Chain-Template der gewählten Branche.
-2. LLM schlägt pro Stufe 4–8 reale Ticker vor (nur existierende).
-3. **Validierungs-Schritt** (siehe §3):
-   - FMP-Batch-Call (Market Cap, Sector, Profile)
-   - LLM-Validierungs-Prompt (Anti-Halluzination)
-   - Optional: 13F-Lookup
-4. Cache: 12–24 h pro `industry + region`.
-
-### 2.4 Zahlen & Fakten (Beispiel AI-Value-Chain, Stand 2026)
-
-| Stufe | Typische Player (Beispiele) | Aggregierte Market Cap (ca.) | Charakteristik |
-|-------|-----------------------------|------------------------------|----------------|
-| Upstream Energy / Power | Vistra, Constellation, NextEra | > 200 Mrd. | Strom für Data Center |
-| Chip Design | NVIDIA, AMD, Broadcom, ARM | > 4.000 Mrd. | GPU / ASIC |
-| Foundry | TSMC, Samsung, Intel Foundry | > 1.200 Mrd. | Manufacturing |
-| Memory / HBM | SK Hynix, Micron, Samsung | > 400 Mrd. | HBM-Engpass |
-| Networking / Cooling | Arista, Super Micro, Vertiv | > 150 Mrd. | Data-Center Infra |
-| Hyperscaler | MSFT, AMZN, GOOGL, META | > 8.000 Mrd. | Capex-Träger |
-| AI Software / Apps | ServiceNow, Adobe, etc. | variabel | Application Layer |
-
-**Anti-Bias-Regel:** LLM darf keine Ticker erfinden. Wenn unsicher → `validated: false` oder leer lassen. FMP-Validierung ist Pflicht.
-
----
-
-## 3. LLM-Prompt für Validierung (Anti-Halluzination)
-
-Dieser Prompt wird **nach** dem initialen LLM-Vorschlag und **vor** dem finalen Response ausgeführt.
-
-```text
-Du bist ein strenger Validierungs-Agent für Aktien-Ticker in einer Industrie-Wertschöpfungskette.
-
-AUFGABE:
-Prüfe die folgende Liste von vorgeschlagenen Unternehmen pro Stufe.
-Für JEDEN Ticker:
-1. Existiert der Ticker an einer großen Börse (US, EU, HK, JP, KR)?
-2. Ist die Market Cap realistisch ≥ 1 Mrd. USD (oder der angegebene minMarketCap)?
-3. Passt das Unternehmen wirklich in die genannte Value-Chain-Stufe?
-4. Ist der Name korrekt?
-
-REGELN:
-- Wenn du dir bei einem Ticker nicht 100 % sicher bist → markiere ihn als "invalid" und entferne ihn.
-- Erfinde NIEMALS neue Ticker.
-- Erfinde KEINE Market-Cap-Zahlen.
-- Wenn eine Stufe zu wenige valide Unternehmen hat (< 2), lasse sie fast leer und schreibe eine Note.
-
-OUTPUT (nur JSON):
-{
-  "validatedStages": [
-    {
-      "stageId": "...",
-      "validCompanies": [
-        { "ticker": "NVDA", "name": "NVIDIA Corporation", "reason": "Confirmed GPU leader" }
-      ],
-      "removed": [
-        { "ticker": "FAKE", "reason": "Ticker does not exist" }
-      ]
-    }
-  ],
-  "overallNotes": ["..."]
+export interface BasketGrowthResult {
+  gBasket: number;
+  gRevenue: number | null;
+  gEps: number | null;
+  ci?: BootstrapCI;          // optional, wenn Bootstrap aktiv
+  method: QuantileMethod;
+  n: number;
 }
 ```
 
-**Zusätzliche Sicherheitsstufe:**  
-Nach dem LLM-Validierungs-Call wird noch ein FMP-Batch (`/profile` oder `/quote`) gemacht. Nur Ticker, die sowohl LLM als auch FMP bestätigen, erhalten `validated: true`.
+**Implementierungs-Task (offen):**
+- Interfaces in `robustStats.ts` (oder `shared/robust-stats-types.ts`) ergänzen
+- Alle neuen Funktionen mit diesen Typen absichern
+- Export für Section 14 und ggf. Server-Side nutzen
 
 ---
 
-## 4. 13F Datenintegration – Detaillierte Spezifikation (mit Zahlen & Fakten)
+## 11. Priorisierung der offenen Statistik-Tasks
 
-### 4.1 Bestehende Infrastruktur (bereits live)
+| Rang | Task | Aufwand | Nutzen | Abhängigkeit |
+|------|------|---------|--------|--------------|
+| 1 | TypeScript-Typdefinitionen erweitern | gering | Saubere API | – |
+| 2 | Hyndman-Fan Methodenvergleich (R-7/R-8) | gering–mittel | Transparenz + optionale Verbesserung | Typen |
+| 3 | Median-Unbiased (R-8) als Option | gering | Theoretisch besser bei kleinen n | 2 |
+| 4 | Bootstrap-Vertrauensintervalle | mittel | Unsicherheit sichtbar machen | winsorizedMedian |
+| 5 | Huber-Schätzer | mittel | Zusätzliche robuste Lage-Schätzung | optional |
 
-Das Repo hat bereits einen produktionsreifen 13F-Stack in `server/screener.ts`:
-
-| Parameter | Aktueller Wert | Bedeutung |
-|-----------|----------------|-----------|
-| Star-Investoren | 14 (STAR_INVESTORS) | Berkshire, Baupost, Appaloosa, Pershing Square, etc. |
-| MAX_SCREENED_TICKERS | 50 | Nach Incident 10.08.2026 von 100 auf 50 reduziert |
-| SEC Rate-Limit | 120 ms Intervall | Unter SEC-Guidance von 10 req/s |
-| Cache-TTL | 24 h (Disk) | `diskResearcherSet/Get` |
-| MIN_INVESTORS_TO_CACHE | 4 | Schutz gegen leere Cache-Poisoning bei SEC-429 |
-| Typische Holdings pro Build | ~5.700 Roh-Holdings | Werden auf ≤ 50 Ticker aggregiert |
-| FMP-Calls pro Ticker | bis zu 6 | Profile, Ratios, PriceTarget, CashFlow, Income, Estimates |
-
-**Performance-Incident 10.08.2026 (Fakten):**  
-Ein 100-Ticker-Build mit 601 FMP-Calls + ~5.700 SEC-Holdings hat die Render-Instanz mehrere Minuten unresponsive gemacht. Deshalb wurde auf 50 Ticker und Background-Build + Polling umgestellt.
-
-### 4.2 Erweiterungs-Ziel für Value-Chain + Sektorrotation
-
-Jede Firma in der Value-Chain und im Sektorrotations-Kontext soll optional anzeigen:
-
-| Feld | Typ | Beschreibung | Quelle |
-|------|-----|--------------|--------|
-| `institutionalHolders13F` | number | Anzahl signifikanter 13F-Halter (aus den 14 Star-Investoren + optional Top-50 Institutionen) | SEC 13F-HR |
-| `topHolders` | string[] | Top-3 / Top-5 institutionelle Halter (Name) | Aggregierte 13F |
-| `starInvestorFlag` | boolean | true wenn ≥ 1 bekannter Quality-/Value-Investor hält | STAR_INVESTORS |
-| `totalInstitutionalValue` | number | Summe der gemeldeten Positionswerte (USD) | 13F `value` |
-| `institutionalOwnershipPct` | number \| null | Anteil am Free Float (wenn verfügbar) | FMP + 13F |
-
-### 4.3 Konkrete Zahlen & Schwellenwerte
-
-| Metrik | Empfohlener Schwellenwert | Begründung |
-|--------|---------------------------|----------|
-| Min. Positionswert für „signifikant“ | ≥ 10 Mio. USD | Filtert Noise, behält echte Überzeugung |
-| Star-Investor-Flag | ≥ 1 der 14 definierten Investoren | Bereits im Screener vorhanden |
-| „Stark institutionell getragen“ | ≥ 3 Star-Investoren **oder** ≥ 5 Top-Institutionen | Qualitäts-Signal |
-| Cache für Einzel-Ticker-13F | 7 Tage | 13F sind quartalsweise → täglicher Refresh unnötig |
-| Max. Ticker pro Value-Chain-Request | 40–60 | Vermeidet Wiederholung des 10.08.-Incidents |
-
-### 4.4 API-Erweiterung (TypeScript)
-
-```ts
-// Erweiterung von ValueChainCompany und Sektor-Rotation-Response
-interface Institutional13FData {
-  institutionalHolders13F: number;           // z.B. 7
-  topHolders: Array<{
-    name: string;                            // "Berkshire Hathaway"
-    valueUsd?: number;                       // 1_250_000_000
-    shares?: number;
-  }>;
-  starInvestorFlag: boolean;
-  totalInstitutionalValue: number;           // Summe aller gemeldeten Werte
-  last13FUpdate: string;                     // ISO-Datum der neuesten Filing
-}
-```
-
-### 4.5 Datenfluss (neu)
-
-```
-1. Value-Chain LLM schlägt Ticker vor
-2. FMP-Validierung (Market Cap, Sector)
-3. Parallel: 13F-Lookup
-   a) Zuerst gegen den bestehenden Screener-Cache (schnell, bereits aggregiert)
-   b) Falls Ticker nicht im Cache → gezielter SEC-CIK-Lookup nur für fehlende Ticker
-      (Rate-Limit beachten: 120 ms)
-4. Ergebnis wird an ValueChainCompany angehängt
-5. Cache: pro Ticker 7 Tage, pro Value-Chain-Response 12–24 h
-```
-
-### 4.6 Nutzen in Zahlen
-
-- **Qualitäts-Signal:** Titel mit ≥ 3 Star-Investoren haben historisch niedrigere Drawdowns in Bärenmärkten (empirische Beobachtung aus dem bestehenden Screener).
-- **Rotations-Signal:** Wenn die 14 Star-Investoren in einem Quartal netto > 15–20 % ihres Tech-Exposure in Healthcare/Staples umschichten → starkes Input-Signal für den Sektorrotations-Rat.
-- **Value-Chain-Ranking:** Innerhalb einer Stufe (z. B. Chip Design) können Firmen nach `institutionalHolders13F` + `starInvestorFlag` sortiert werden → „Quality within the chain“.
-
-### 4.7 Offene Implementierungsentscheidungen
-
-1. Nur die bestehenden 14 Star-Investoren nutzen oder zusätzlich die Top-50 Institutionen nach AUM laden?
-2. Sollen 13F-Daten auch in Section 1 (Datenaktualität) der Einzelaktien-Analyse als Badge erscheinen?
-3. Wie aggressiv bei fehlenden 13F-Daten: `n/a` anzeigen oder den Ticker trotzdem zulassen?
+**Empfehlung:**  
+Zuerst Typen + R-8-Option. Bootstrap als nächstes (hoher Erklärwert in der UI). Huber nur wenn Bedarf nach einer dritten robusten Lage-Kennzahl besteht.
 
 ---
 
-## 5. Reverse DCF Basket-Logik – Vertiefte Spezifikation (mit Zahlen & Formeln)
-
-### 5.1 Ausgangspunkt (bereits vorhanden)
-
-Section 14 berechnet bereits die **implizite Wachstumsrate g*** aus dem aktuellen Kurs über den Reverse DCF:
-
-```
-g* ≈ WACC − (FCFF₁ / Enterprise Value)
-```
-
-(genauere Implementierung in `calcImpliedGStar` / ReverseDCFSection)
-
-Typische Interpretations-Schwellen (bereits im Code / README):
-
-| g* | Bewertung |
-|----|-----------|
-| > 8 % | Unrealistisch / „sportlich“ |
-| 4–8 % | Moderat |
-| < 4 % | Konservativ |
-| < 0 % | Markt preist Schrumpfung ein |
-
-### 5.2 Neue Basket-Logik – Kernidee
-
-Der klassische Reverse DCF schaut nur auf den **Einzeltitel**.  
-Die Basket-Erweiterung stellt die Frage:
-
-> „Ist die vom Markt eingepreiste Wachstumsrate g* des Titels realistisch im Vergleich zu dem, was ein relevanter Peer-Basket **tatsächlich** geliefert hat?“
-
-### 5.3 Basket-Definition (priorisiert)
-
-| Priorität | Basket-Typ | Beispiel | Wann verwendet |
-|-----------|------------|----------|----------------|
-| 1 | Value-Chain-Stufe | Alle validierten Firmen der gleichen Stufe (z. B. „Chip Design“) | Wenn Value-Chain-Daten vorhanden |
-| 2 | Auto-Peers + peerOverrides | Bestehende Peer-Liste aus Section 7 | Standard |
-| 3 | Sektor-Median | Alle Firmen des gleichen `effectiveSector` | Fallback |
-| 4 | Broad Market | SPY / Sektor-ETF | Letzter Fallback |
-
-**Mindestgröße des Baskets:** ≥ 4 valide Titel mit historischen Financials.  
-**Maximalgröße:** 15 Titel (Winsorizing bei Ausreißern).
-
-### 5.4 Formeln & Zahlen
-
-#### A. Realisierte Wachstumsraten des Baskets
-
-Für jeden Peer im Basket:
-
-```
-Revenue CAGR 3Y = (Rev_t / Rev_t-3)^(1/3) − 1
-EPS CAGR 3Y     = (EPS_t / EPS_t-3)^(1/3) − 1
-Revenue CAGR 5Y = (Rev_t / Rev_t-5)^(1/5) − 1
-```
-
-Dann **winsorized Median** über den Basket (5 % / 95 %-Winsorizing, um Extreme wie Turnarounds zu dämpfen):
-
-```
-g_basket_revenue = median_winsorized(Revenue CAGR 3Y der Peers)
-g_basket_eps     = median_winsorized(EPS CAGR 3Y der Peers)
-g_basket         = 0,6 × g_basket_revenue + 0,4 × g_basket_eps   // gewichtet
-```
-
-**Typische Werte (Stand 2026, Beispiel-Sektoren):**
-
-| Basket / Sektor | g_basket (3Y realisiert) | Typische g* einzelner Titel |
-|-----------------|---------------------------|-----------------------------|
-| AI / Semiconductors | 18–28 % | 25–40 % (oft sportlich) |
-| Software / SaaS | 12–18 % | 15–25 % |
-| Pharma / Biotech | 6–11 % | 8–15 % |
-| Consumer Staples | 3–6 % | 4–8 % |
-| Utilities | 2–5 % | 3–6 % |
-| Energy (Upstream) | −5 % bis +12 % (zyklisch) | stark schwankend |
-
-#### B. Divergenz-Metrik
-
-```
-Δg = g*_Titel − g_basket
-```
-
-**Interpretations-Schwellen (konkrete Zahlen):**
-
-| Δg | Signal | Ampel | Aktion |
-|----|--------|-------|--------|
-| > +6 pp | Stark über dem Basket | 🔴 | Markt preist deutlich mehr ein als Peers historisch geliefert haben → hohes Enttäuschungsrisiko |
-| +3 bis +6 pp | Moderately elevated | 🟠 | Vorsicht, Reverse-DCF-Gate eng setzen |
-| −2 bis +3 pp | Konsistent | 🟢 | pret voll im Rahmen der Peer-Realität |
-| −5 bis −2 pp | Konservativ | 🟢+ | Markt preist weniger als der Basket → potenziell unterbewertet |
-| < −5 pp | Stark konservativ / pessimistisch | 🔵 | Entweder Turnaround-Case oder struktureller Abschlag |
-
-#### C. Beispielrechnung (Zahlen)
-
-Angenommen Titel X (Software):
-- g* (Reverse DCF) = **19,4 %**
-- Basket (8 SaaS-Peers) realisierte 3Y Revenue/EPS-CAGR (winsorized Median) = **13,1 %**
-- Δg = 19,4 % − 13,1 % = **+6,3 pp** → 🔴 „sportlich“
-
-Angenommen Titel Y (Staples):
-- g* = **4,8 %**
-- Basket realisiert = **5,2 %**
-- Δg = −0,4 pp → 🟢 konsistent
-
-### 5.5 Integration in Section 14 & Scoring
-
-```ts
-interface ReverseDCFBasketResult {
-  gStar: number;                    // bereits vorhanden
-  gBasket: number;                  // neu
-  deltaG: number;                   // gStar − gBasket
-  basketSize: number;
-  basketType: "valuechain" | "peers" | "sector" | "market";
-  signal: "elevated" | "consistent" | "conservative" | "depressed";
-  ampelfarbe: "red" | "orange" | "green" | "blue";
-}
-```
-
-**UI in Section 14:**
-- Bestehende g*-Anzeige bleibt
-- Neue Karte darunter: „vs. Basket (Sektor / Value-Chain)“
-  - g* | g_basket | Δg | Ampel | kurze Erklärung
-
-**Optionales Scoring-Gate:**
-```
-REVERSE_DCF_BASKET_DIVERGENCE
-Cap finalScore auf 65 wenn Δg > +6 pp und gleichzeitig RSL schwach
-```
-
-### 5.6 Datenbedarf & Performance
-
-| Daten | Quelle | Aufwand |
-|-------|--------|--------|
-| Historische Revenue / EPS (3Y + 5Y) | FMP Income Statement | bereits für Peers vorhanden |
-| Peer-Liste | Section 7 + peerOverrides | vorhanden |
-| Value-Chain-Peers | neuer Value-Chain-Endpoint | neu |
-| Winsorizing + Median | client/server utility | ~50 Zeilen |
-
-**Performance-Ziel:** Basket-Berechnung < 300 ms wenn Peers bereits im Analyse-Cache liegen.
-
-### 5.7 Anti-Bias-Regeln
-
-1. Niemals den eigenen Titel in den Basket aufnehmen (Look-ahead / Self-Bias).
-2. Winsorizing ist Pflicht (sonst verzerren Turnarounds und Hyper-Grower den Median).
-3. Wenn Basket < 4 valide Titel → Signal = `n/a` und keine Ampel.
-4. Δg wird **nicht** als absolutes Kauf-/Verkaufssignal verwendet, sondern als Konsistenz-Check.
-
----
-
-## 6. Sektorrotations-Rat + Kostolany-Rad
-
-### 6.1 Sektorrotations-Rat (regelbasiert + LLM-Erklärung)
-
-Nutzt die bereits vorhandenen Felder aus `sector-data.ts`:
-
-```ts
-cycleClass: "Secular Growth" | "Defensive / Non-Cyclical" | "Cyclical – Interest Rate Sensitive" | "Deep Cyclical" | ...
-```
-
-**Logik-Beispiel (vereinfacht):**
-
-| Konjunkturphase | Bevorzugte Sektoren | Begründung |
-|-----------------|---------------------|----------|
-| Frühzyklus (Expansion) | Industrials, Materials, Financials, Consumer Discretionary | Capex & Kreditnachfrage steigen |
-| Hochzyklus | Technology, Communication | Wachstum & Multiples expandieren |
-| Spätzyklus / Peak | Energy, Materials (Commodity) | Pricing Power |
-| Rezession / Abschwung | Healthcare, Consumer Staples, Utilities | Defensiv |
-| Erholung | Technology + Financials | Zyklische Erholung |
-
-Zusätzlich: aktuelle Bewertung (Forward P/E vs. 5Y-Median), Zinsumfeld, Fiscal-Impulse, **13F-Rotationssignale**.
-
-**Output-Beispiel:**  
-„Aktuell (Q3 2026): Spätzyklus-Signale + hohe Bewertungen in Tech → Rotation Richtung Healthcare / Staples empfohlen. Begründung: …“
-
-### 6.2 Kostolany-Rad (visuell)
-
-Klassisches 4-Quadranten-Modell:
-
-```
-          HOHE BEWERTUNG
-               │
-   Value       │      Growth
-   (günstig)   │   (teuer/Wachstum)
-───────────────┼───────────────────
-   Defensiv    │   Momentum /
-   (Schutz)    │   Zyklisch
-               │
-          NIEDRIGE BEWERTUNG
-```
-
-**Implementierung:**
-- Interaktives Rad / 4-Quadranten-Chart (Recharts oder Custom SVG)
-- Jeder Sektor als Bubble (Größe = Market Cap oder Scoring-Gewicht)
-- Farbe nach aktueller Rotation-Empfehlung (grün = übergewichten, rot = untergewichten)
-- Hover zeigt: aktueller Zyklus-Status, relative Bewertung, Risiko-Score, 13F-Flow
-
-**Datenbasis:**
-- Relative Valuation (Sektor-Median P/E, EV/EBITDA vs. Historie)
-- Momentum (RSL / 6M-Performance)
-- Makro-Regime aus dem Rezessions-Dashboard + Researcher Macro Pulse
-- Optional: 13F-Netto-Käufe/-Verkäufe pro Sektor
-
----
-
-## 7. UI-Integration (Konzept)
-
-```
-Researcher-Seite
-├── Tab 1: Country Macro Pulse
-├── Tab 2: Sector Opportunity Map
-├── Tab 3: Value Chain Explorer          ← NEU
-│     ├── Branchen-Selector (KI, EV, Defense, Pharma …)
-│     ├── Horizontale Value-Chain-Grafik
-│     ├── Firmen-Karten pro Stufe (klickbar → Analyse / Portfolio)
-│     └── 13F-Badges + Validierungs-Status
-├── Tab 4: Sektorrotation & Kostolany    ← NEU
-│     ├── Kostolany-Rad (interaktiv)
-│     ├── Aktuelle Rotations-Empfehlung (Tabelle + Text)
-│     └── Link zu Rezessions-Dashboard
-└── Tab 5: Capex & Fiscal Tracker
-```
-
-Zusätzlich:
-- In der **Einzelaktien-Analyse** (Section 3 „Zyklus- & Strukturanalyse“) ein kleiner Hinweis:  
-  „Dieser Sektor liegt aktuell im Kostolany-Quadranten X → …“
-- In **Section 14 (Reverse DCF)**: neue Karte „Basket-Vergleich (Sektor / Value-Chain)“
-- Im **Portfolio**: Filter nach Value-Chain-Stufe oder Rotations-Empfehlung
-
----
-
-## 8. Empfohlene Reihenfolge der Umsetzung
-
-| Nr | Aufgabe | Aufwand (Schätzung) | Abhängigkeit |
-|----|---------|---------------------|--------------|
-| 1 | TypeScript-Interfaces + API-Contract Value Chain | 0,5 Tag | – |
-| 2 | LLM-Prompt (Vorschlag) + Validierungs-Prompt | 0,5 Tag | 1 |
-| 3 | FMP-Batch-Validierung + Cache | 1 Tag | 2 |
-| 4 | 13F-Lookup Integration (gegen bestehenden Screener-Cache) | 1 Tag | 3 |
-| 5 | Frontend Value-Chain-Explorer (Grid/Karten) | 1–1,5 Tage | 3 |
-| 6 | Kostolany-Rad Visualisierung | 1 Tag | sector-data.ts |
-| 7 | Sektorrotations-Rat (Regeln + LLM-Text) | 1 Tag | 6 |
-| 8 | Reverse-DCF-Basket-Erweiterung (Section 14) | 1–1,5 Tage | Peers + Value Chain |
-| 9 | End-to-End Tests + Anti-Bias-Checks | 0,5–1 Tag | alle |
-
-**Gesamtaufwand (MVP):** ca. 8–10 Tage
-
----
-
-## 9. Offene Design-Entscheidungen
-
-1. **React-Flow vs. CSS-Grid** für die Value-Chain → Empfehlung: erst CSS-Grid (einfacher), später optional React-Flow.
-2. **Wie aggressiv 13F filtern?** Nur die 14 Star-Investoren oder zusätzlich Top-50 Institutionen nach AUM?
-3. **Basket-Definition für Reverse DCF:** feste Sektor-Peers oder dynamisch aus der Value-Chain-Stufe?
-4. **i18n:** Alle neuen Strings von Anfang an DE + EN vorbereiten?
-5. **Δg-Schwellen:** Die vorgeschlagenen +6 / +3 / −2 / −5 pp sind empirisch begründet, können aber nach Live-Tests justiert werden.
-
----
-
-*Dokument erstellt am 17.08.2026 · Vertieft um Reverse-DCF-Basket-Logik (Formeln + Zahlen) und 13F-Datenintegration (bestehende Infrastruktur + Schwellenwerte) · Referenz: Future_Work.md*
+*Erweitert am 17.08.2026 um Abschnitt 10 (Hyndman-Fan, Huber, Bootstrap-CI, Median-Unbiased, TS-Typen) als unmarked Implementierungs-Tasks.*
