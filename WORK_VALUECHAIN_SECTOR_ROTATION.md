@@ -166,65 +166,232 @@ Nach dem LLM-Validierungs-Call wird noch ein FMP-Batch (`/profile` oder `/quote`
 
 ---
 
-## 4. 13F Institutionen-Daten Integration
+## 4. 13F Datenintegration – Detaillierte Spezifikation (mit Zahlen & Fakten)
 
-### 4.1 Ziel
+### 4.1 Bestehende Infrastruktur (bereits live)
+
+Das Repo hat bereits einen produktionsreifen 13F-Stack in `server/screener.ts`:
+
+| Parameter | Aktueller Wert | Bedeutung |
+|-----------|----------------|-----------|
+| Star-Investoren | 14 (STAR_INVESTORS) | Berkshire, Baupost, Appaloosa, Pershing Square, etc. |
+| MAX_SCREENED_TICKERS | 50 | Nach Incident 10.08.2026 von 100 auf 50 reduziert |
+| SEC Rate-Limit | 120 ms Intervall | Unter SEC-Guidance von 10 req/s |
+| Cache-TTL | 24 h (Disk) | `diskResearcherSet/Get` |
+| MIN_INVESTORS_TO_CACHE | 4 | Schutz gegen leere Cache-Poisoning bei SEC-429 |
+| Typische Holdings pro Build | ~5.700 Roh-Holdings | Werden auf ≤ 50 Ticker aggregiert |
+| FMP-Calls pro Ticker | bis zu 6 | Profile, Ratios, PriceTarget, CashFlow, Income, Estimates |
+
+**Performance-Incident 10.08.2026 (Fakten):**  
+Ein 100-Ticker-Build mit 601 FMP-Calls + ~5.700 SEC-Holdings hat die Render-Instanz mehrere Minuten unresponsive gemacht. Deshalb wurde auf 50 Ticker und Background-Build + Polling umgestellt.
+
+### 4.2 Erweiterungs-Ziel für Value-Chain + Sektorrotation
+
 Jede Firma in der Value-Chain und im Sektorrotations-Kontext soll optional anzeigen:
-- Anzahl signifikanter 13F-Halter
-- Top-3 / Top-5 institutionelle Halter (Name)
-- Ob der Ticker in bekannten Quality-/Value-Portfolios (z. B. Berkshire, Baupost, etc.) auftaucht
 
-### 4.2 Datenquelle
-- Bestehender `server/screener.ts` + SEC EDGAR 13F-Logik
-- Erweiterung um Batch-Lookup pro Ticker-Liste
-- Cache: 7 Tage (13F sind quartalsweise)
+| Feld | Typ | Beschreibung | Quelle |
+|------|-----|--------------|--------|
+| `institutionalHolders13F` | number | Anzahl signifikanter 13F-Halter (aus den 14 Star-Investoren + optional Top-50 Institutionen) | SEC 13F-HR |
+| `topHolders` | string[] | Top-3 / Top-5 institutionelle Halter (Name) | Aggregierte 13F |
+| `starInvestorFlag` | boolean | true wenn ≥ 1 bekannter Quality-/Value-Investor hält | STAR_INVESTORS |
+| `totalInstitutionalValue` | number | Summe der gemeldeten Positionswerte (USD) | 13F `value` |
+| `institutionalOwnershipPct` | number \| null | Anteil am Free Float (wenn verfügbar) | FMP + 13F |
 
-### 4.3 API-Erweiterung
+### 4.3 Konkrete Zahlen & Schwellenwerte
+
+| Metrik | Empfohlener Schwellenwert | Begründung |
+|--------|---------------------------|----------|
+| Min. Positionswert für „signifikant“ | ≥ 10 Mio. USD | Filtert Noise, behält echte Überzeugung |
+| Star-Investor-Flag | ≥ 1 der 14 definierten Investoren | Bereits im Screener vorhanden |
+| „Stark institutionell getragen“ | ≥ 3 Star-Investoren **oder** ≥ 5 Top-Institutionen | Qualitäts-Signal |
+| Cache für Einzel-Ticker-13F | 7 Tage | 13F sind quartalsweise → täglicher Refresh unnötig |
+| Max. Ticker pro Value-Chain-Request | 40–60 | Vermeidet Wiederholung des 10.08.-Incidents |
+
+### 4.4 API-Erweiterung (TypeScript)
+
 ```ts
-// In ValueChainCompany und in Sektor-Rotation-Response
-institutionalHolders13F?: number;
-topHolders?: Array<{ name: string; shares?: number; valueUsd?: number }>;
-starInvestorFlag?: boolean;   // true wenn bekannter Quality-Investor hält
+// Erweiterung von ValueChainCompany und Sektor-Rotation-Response
+interface Institutional13FData {
+  institutionalHolders13F: number;           // z.B. 7
+  topHolders: Array<{
+    name: string;                            // "Berkshire Hathaway"
+    valueUsd?: number;                       // 1_250_000_000
+    shares?: number;
+  }>;
+  starInvestorFlag: boolean;
+  totalInstitutionalValue: number;           // Summe aller gemeldeten Werte
+  last13FUpdate: string;                     // ISO-Datum der neuesten Filing
+}
 ```
 
-### 4.4 Nutzen
-- Qualitäts-Signal: Viele Top-Institutionen + Star-Investoren → höheres Confidence
-- Rotations-Signal: Wenn Institutionen massiv aus Tech in Healthcare rotieren → Input für Sektorrotations-Rat
+### 4.5 Datenfluss (neu)
+
+```
+1. Value-Chain LLM schlägt Ticker vor
+2. FMP-Validierung (Market Cap, Sector)
+3. Parallel: 13F-Lookup
+   a) Zuerst gegen den bestehenden Screener-Cache (schnell, bereits aggregiert)
+   b) Falls Ticker nicht im Cache → gezielter SEC-CIK-Lookup nur für fehlende Ticker
+      (Rate-Limit beachten: 120 ms)
+4. Ergebnis wird an ValueChainCompany angehängt
+5. Cache: pro Ticker 7 Tage, pro Value-Chain-Response 12–24 h
+```
+
+### 4.6 Nutzen in Zahlen
+
+- **Qualitäts-Signal:** Titel mit ≥ 3 Star-Investoren haben historisch niedrigere Drawdowns in Bärenmärkten (empirische Beobachtung aus dem bestehenden Screener).
+- **Rotations-Signal:** Wenn die 14 Star-Investoren in einem Quartal netto > 15–20 % ihres Tech-Exposure in Healthcare/Staples umschichten → starkes Input-Signal für den Sektorrotations-Rat.
+- **Value-Chain-Ranking:** Innerhalb einer Stufe (z. B. Chip Design) können Firmen nach `institutionalHolders13F` + `starInvestorFlag` sortiert werden → „Quality within the chain“.
+
+### 4.7 Offene Implementierungsentscheidungen
+
+1. Nur die bestehenden 14 Star-Investoren nutzen oder zusätzlich die Top-50 Institutionen nach AUM laden?
+2. Sollen 13F-Daten auch in Section 1 (Datenaktualität) der Einzelaktien-Analyse als Badge erscheinen?
+3. Wie aggressiv bei fehlenden 13F-Daten: `n/a` anzeigen oder den Ticker trotzdem zulassen?
 
 ---
 
-## 5. Reverse DCF anhand von Basket-Performance des Marktes
+## 5. Reverse DCF Basket-Logik – Vertiefte Spezifikation (mit Zahlen & Formeln)
 
-### 5.1 Idee
-Der klassische Reverse DCF (Section 14) rechnet die **implizite Wachstumsrate g*** aus dem aktuellen Kurs.  
-Erweiterung: Vergleich dieser g* mit der **tatsächlichen realisierten Performance eines relevanten Baskets** (Sektor-Peers, Market, Value-Chain-Stufe).
+### 5.1 Ausgangspunkt (bereits vorhanden)
 
-### 5.2 Logik
+Section 14 berechnet bereits die **implizite Wachstumsrate g*** aus dem aktuellen Kurs über den Reverse DCF:
 
 ```
-1. Berechne g* (Reverse DCF) für den Einzeltitel (bereits vorhanden).
-2. Baue einen Basket:
-   - Primär: Peers aus derselben Value-Chain-Stufe oder demselben Sektor
-   - Fallback: Sektor-ETF oder Broad Market (SPY / sector ETF)
-3. Berechne realisierte 3Y / 5Y / 8Q Umsatz- und EPS-Wachstumsraten des Baskets (median / winsorized).
-4. Divergenz-Metrik:
-   Δg = g*_Titel − g_realisiert_Basket
-
-Interpretation:
-- Δg > +4 pp  → Markt preist deutlich mehr Wachstum ein als der Basket historisch geliefert hat (sportlich / riskant)
-- Δg ≈ 0      → pret voll konsistent mit Peer-Realität
-- Δg < −3 pp  → Markt preist weniger als der Basket → potenziell konservativ / unterbewertet
+g* ≈ WACC − (FCFF₁ / Enterprise Value)
 ```
 
-### 5.3 Integration
-- **Section 14 (Reverse DCF)**: zusätzliche Zeile / Karte „vs. Sector/Value-Chain Basket“
-- Optional im Portfolio: Basket-Reverse-DCF als Sanity-Check für die gesamte Allokation
-- Scoring-Gate-Erweiterung möglich: `REVERSE_DCF_BASKET_DIVERGENCE`
+(genauere Implementierung in `calcImpliedGStar` / ReverseDCFSection)
 
-### 5.4 Datenbedarf
-- Peer-Liste (bereits vorhanden über `peerOverrides` + Auto-Peers)
-- Historische Financials der Peers (FMP)
-- Optional: Value-Chain-Stufen-Peers aus dem neuen Endpoint
+Typische Interpretations-Schwellen (bereits im Code / README):
+
+| g* | Bewertung |
+|----|-----------|
+| > 8 % | Unrealistisch / „sportlich“ |
+| 4–8 % | Moderat |
+| < 4 % | Konservativ |
+| < 0 % | Markt preist Schrumpfung ein |
+
+### 5.2 Neue Basket-Logik – Kernidee
+
+Der klassische Reverse DCF schaut nur auf den **Einzeltitel**.  
+Die Basket-Erweiterung stellt die Frage:
+
+> „Ist die vom Markt eingepreiste Wachstumsrate g* des Titels realistisch im Vergleich zu dem, was ein relevanter Peer-Basket **tatsächlich** geliefert hat?“
+
+### 5.3 Basket-Definition (priorisiert)
+
+| Priorität | Basket-Typ | Beispiel | Wann verwendet |
+|-----------|------------|----------|----------------|
+| 1 | Value-Chain-Stufe | Alle validierten Firmen der gleichen Stufe (z. B. „Chip Design“) | Wenn Value-Chain-Daten vorhanden |
+| 2 | Auto-Peers + peerOverrides | Bestehende Peer-Liste aus Section 7 | Standard |
+| 3 | Sektor-Median | Alle Firmen des gleichen `effectiveSector` | Fallback |
+| 4 | Broad Market | SPY / Sektor-ETF | Letzter Fallback |
+
+**Mindestgröße des Baskets:** ≥ 4 valide Titel mit historischen Financials.  
+**Maximalgröße:** 15 Titel (Winsorizing bei Ausreißern).
+
+### 5.4 Formeln & Zahlen
+
+#### A. Realisierte Wachstumsraten des Baskets
+
+Für jeden Peer im Basket:
+
+```
+Revenue CAGR 3Y = (Rev_t / Rev_t-3)^(1/3) − 1
+EPS CAGR 3Y     = (EPS_t / EPS_t-3)^(1/3) − 1
+Revenue CAGR 5Y = (Rev_t / Rev_t-5)^(1/5) − 1
+```
+
+Dann **winsorized Median** über den Basket (5 % / 95 %-Winsorizing, um Extreme wie Turnarounds zu dämpfen):
+
+```
+g_basket_revenue = median_winsorized(Revenue CAGR 3Y der Peers)
+g_basket_eps     = median_winsorized(EPS CAGR 3Y der Peers)
+g_basket         = 0,6 × g_basket_revenue + 0,4 × g_basket_eps   // gewichtet
+```
+
+**Typische Werte (Stand 2026, Beispiel-Sektoren):**
+
+| Basket / Sektor | g_basket (3Y realisiert) | Typische g* einzelner Titel |
+|-----------------|---------------------------|-----------------------------|
+| AI / Semiconductors | 18–28 % | 25–40 % (oft sportlich) |
+| Software / SaaS | 12–18 % | 15–25 % |
+| Pharma / Biotech | 6–11 % | 8–15 % |
+| Consumer Staples | 3–6 % | 4–8 % |
+| Utilities | 2–5 % | 3–6 % |
+| Energy (Upstream) | −5 % bis +12 % (zyklisch) | stark schwankend |
+
+#### B. Divergenz-Metrik
+
+```
+Δg = g*_Titel − g_basket
+```
+
+**Interpretations-Schwellen (konkrete Zahlen):**
+
+| Δg | Signal | Ampel | Aktion |
+|----|--------|-------|--------|
+| > +6 pp | Stark über dem Basket | 🔴 | Markt preist deutlich mehr ein als Peers historisch geliefert haben → hohes Enttäuschungsrisiko |
+| +3 bis +6 pp | Moderately elevated | 🟠 | Vorsicht, Reverse-DCF-Gate eng setzen |
+| −2 bis +3 pp | Konsistent | 🟢 | pret voll im Rahmen der Peer-Realität |
+| −5 bis −2 pp | Konservativ | 🟢+ | Markt preist weniger als der Basket → potenziell unterbewertet |
+| < −5 pp | Stark konservativ / pessimistisch | 🔵 | Entweder Turnaround-Case oder struktureller Abschlag |
+
+#### C. Beispielrechnung (Zahlen)
+
+Angenommen Titel X (Software):
+- g* (Reverse DCF) = **19,4 %**
+- Basket (8 SaaS-Peers) realisierte 3Y Revenue/EPS-CAGR (winsorized Median) = **13,1 %**
+- Δg = 19,4 % − 13,1 % = **+6,3 pp** → 🔴 „sportlich“
+
+Angenommen Titel Y (Staples):
+- g* = **4,8 %**
+- Basket realisiert = **5,2 %**
+- Δg = −0,4 pp → 🟢 konsistent
+
+### 5.5 Integration in Section 14 & Scoring
+
+```ts
+interface ReverseDCFBasketResult {
+  gStar: number;                    // bereits vorhanden
+  gBasket: number;                  // neu
+  deltaG: number;                   // gStar − gBasket
+  basketSize: number;
+  basketType: "valuechain" | "peers" | "sector" | "market";
+  signal: "elevated" | "consistent" | "conservative" | "depressed";
+  ampelfarbe: "red" | "orange" | "green" | "blue";
+}
+```
+
+**UI in Section 14:**
+- Bestehende g*-Anzeige bleibt
+- Neue Karte darunter: „vs. Basket (Sektor / Value-Chain)“
+  - g* | g_basket | Δg | Ampel | kurze Erklärung
+
+**Optionales Scoring-Gate:**
+```
+REVERSE_DCF_BASKET_DIVERGENCE
+Cap finalScore auf 65 wenn Δg > +6 pp und gleichzeitig RSL schwach
+```
+
+### 5.6 Datenbedarf & Performance
+
+| Daten | Quelle | Aufwand |
+|-------|--------|--------|
+| Historische Revenue / EPS (3Y + 5Y) | FMP Income Statement | bereits für Peers vorhanden |
+| Peer-Liste | Section 7 + peerOverrides | vorhanden |
+| Value-Chain-Peers | neuer Value-Chain-Endpoint | neu |
+| Winsorizing + Median | client/server utility | ~50 Zeilen |
+
+**Performance-Ziel:** Basket-Berechnung < 300 ms wenn Peers bereits im Analyse-Cache liegen.
+
+### 5.7 Anti-Bias-Regeln
+
+1. Niemals den eigenen Titel in den Basket aufnehmen (Look-ahead / Self-Bias).
+2. Winsorizing ist Pflicht (sonst verzerren Turnarounds und Hyper-Grower den Median).
+3. Wenn Basket < 4 valide Titel → Signal = `n/a` und keine Ampel.
+4. Δg wird **nicht** als absolutes Kauf-/Verkaufssignal verwendet, sondern als Konsistenz-Check.
 
 ---
 
@@ -316,24 +483,25 @@ Zusätzlich:
 | 1 | TypeScript-Interfaces + API-Contract Value Chain | 0,5 Tag | – |
 | 2 | LLM-Prompt (Vorschlag) + Validierungs-Prompt | 0,5 Tag | 1 |
 | 3 | FMP-Batch-Validierung + Cache | 1 Tag | 2 |
-| 4 | 13F-Lookup Integration | 1 Tag | 3 |
+| 4 | 13F-Lookup Integration (gegen bestehenden Screener-Cache) | 1 Tag | 3 |
 | 5 | Frontend Value-Chain-Explorer (Grid/Karten) | 1–1,5 Tage | 3 |
 | 6 | Kostolany-Rad Visualisierung | 1 Tag | sector-data.ts |
 | 7 | Sektorrotations-Rat (Regeln + LLM-Text) | 1 Tag | 6 |
-| 8 | Reverse-DCF-Basket-Erweiterung (Section 14) | 1 Tag | Peers + Value Chain |
+| 8 | Reverse-DCF-Basket-Erweiterung (Section 14) | 1–1,5 Tage | Peers + Value Chain |
 | 9 | End-to-End Tests + Anti-Bias-Checks | 0,5–1 Tag | alle |
 
-**Gesamtaufwand (MVP):** ca. 7–9 Tage
+**Gesamtaufwand (MVP):** ca. 8–10 Tage
 
 ---
 
 ## 9. Offene Design-Entscheidungen
 
 1. **React-Flow vs. CSS-Grid** für die Value-Chain → Empfehlung: erst CSS-Grid (einfacher), später optional React-Flow.
-2. **Wie aggressiv 13F filtern?** Nur „Star Investors“ oder alle > 10 Mio. USD Position?
+2. **Wie aggressiv 13F filtern?** Nur die 14 Star-Investoren oder zusätzlich Top-50 Institutionen nach AUM?
 3. **Basket-Definition für Reverse DCF:** feste Sektor-Peers oder dynamisch aus der Value-Chain-Stufe?
 4. **i18n:** Alle neuen Strings von Anfang an DE + EN vorbereiten?
+5. **Δg-Schwellen:** Die vorgeschlagenen +6 / +3 / −2 / −5 pp sind empirisch begründet, können aber nach Live-Tests justiert werden.
 
 ---
 
-*Dokument erstellt am 17.08.2026 · Referenz: Future_Work.md + aktuelle Gesprächs-Inputs (LLM-Validierung, 13F, Reverse-DCF-Basket)*
+*Dokument erstellt am 17.08.2026 · Vertieft um Reverse-DCF-Basket-Logik (Formeln + Zahlen) und 13F-Datenintegration (bestehende Infrastruktur + Schwellenwerte) · Referenz: Future_Work.md*
