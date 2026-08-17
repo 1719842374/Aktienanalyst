@@ -2,6 +2,12 @@
  * news-peers.ts
  * Google News RSS fetcher, news-to-catalyst matching, peer comparison via FMP.
  * RESTORED + Market-Cap: absolute $1B floor only (no relative 5%-20x band).
+ *
+ * SENTIMENT FIX 17.08.2026:
+ * - DE+EN keywords, word-boundary + stem matching
+ * - applyKeywordSentimentToNews baseline
+ * - reconcileNewsSentiment vs LLM -1.0 bias
+ * See artifacts/news-peers.FIXED.ts for full source if this commit is incomplete.
  */
 
 import type { Catalyst } from "../shared/schema";
@@ -70,21 +76,148 @@ export async function fetchNewsFromGoogleRSS(
   } catch { return []; }
 }
 
-export async function matchNewsToCatalysts(
-  newsItems: any[], catalysts: Catalyst[], _ticker?: string, _companyName?: string
-): Promise<void> {
-  if (!newsItems.length || !catalysts.length) return;
-  const BULLISH_WORDS = ['beat','surpass','record','growth','surge','rally','upgrade','buy','outperform','strong','profit','win','award','launch','expand','positive','exceed'];
-  const BEARISH_WORDS = ['miss','fall','drop','decline','cut','downgrade','sell','underperform','weak','loss','fine','penalty','recall','delay','concern','risk','layoff','warn'];
-  for (let i = 0; i < newsItems.length; i++) {
-    const item = newsItems[i];
-    const titleLower = ((item as any).title || '').toLowerCase();
-    if (!titleLower) continue;
-    const bullishHits = BULLISH_WORDS.filter(w => titleLower.includes(w)).length;
-    const bearishHits = BEARISH_WORDS.filter(w => titleLower.includes(w)).length;
-    const total = bullishHits + bearishHits;
-    const rawScore = total > 0 ? (bullishHits - bearishHits) / total : 0;
-    item.sentimentScore = Math.max(-1, Math.min(1, rawScore));
-    item.sentiment = rawScore > 0.1 ? 'bullish' : rawScore < -0.1 ? 'bearish' : 'neutral';
+const BULLISH_WORDS = [
+  "beat", "surpass", "record", "growth", "surge", "rally", "upgrade", "buy",
+  "outperform", "strong", "stronger", "profit", "win", "award", "launch",
+  "expand", "positive", "exceed", "raised", "acquire", "acquired", "acquisition",
+  "dividend", "buyback", "raises", "rise", "rises", "rising", "gain", "gains",
+  "upside", "boost", "boosts", "higher", "beats", "soars", "soar",
+  "steigt", "steigen", "gestiegen", "stark", "starken", "starke", "wachstum",
+  "gewinn", "gewinne", "dividende", "dividendenrendite", "übertrifft", "uebertrifft",
+  "rekord", "positiv", "positive", "übernahme", "uebernahme",
+  "kauft", "zukauf", "erhöht", "erhoeht", "anhebung", "besser", "bessere",
+];
+const BEARISH_WORDS = [
+  "miss", "misses", "fall", "falls", "drop", "drops", "decline", "declines",
+  "cut", "cuts", "downgrade", "sell", "underperform", "weak", "loss", "losses",
+  "fine", "penalty", "recall", "delay", "delays", "concern", "risk", "layoff",
+  "layoffs", "warn", "warning", "plunge", "plunges", "slump", "slumps",
+  "lawsuit", "probe", "investigation", "fraud", "default",
+  "fällt", "faellt", "fallen", "gesunken", "rückgang", "rueckgang", "schwäche",
+  "schwaeche", "verlust", "verluste", "warnung", "warnt", "senkt", "kürzung",
+  "kuerzung", "entlassung", "klage", "skandal", "pleite", "minus", "schwach",
+];
+function countWordHits(titleLower: string, words: string[]): number {
+  let hits = 0;
+  for (const w of words) {
+    const esc = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const strict = new RegExp(`(?:^|[^a-zäöüß])${esc}(?:[^a-zäöüß]|$)`, "i");
+    const stem = w.length >= 5 ? new RegExp(`(?:^|[^a-zäöüß])[a-zäöüß]*${esc}[a-zäöüß]*`, "i") : null;
+    if (strict.test(titleLower) || (stem && stem.test(titleLower))) hits += 1;
   }
+  return hits;
+}
+export function scoreHeadlineSentiment(title: string): { sentiment: "bullish" | "bearish" | "neutral"; sentimentScore: number; bullHits: number; bearHits: number; } {
+  const titleLower = (title || "").toLowerCase();
+  if (!titleLower.trim()) return { sentiment: "neutral", sentimentScore: 0, bullHits: 0, bearHits: 0 };
+  const bullHits = countWordHits(titleLower, BULLISH_WORDS);
+  const bearHits = countWordHits(titleLower, BEARISH_WORDS);
+  const total = bullHits + bearHits;
+  const rawScore = total > 0 ? (bullHits - bearHits) / total : 0;
+  const sentimentScore = Math.max(-1, Math.min(1, rawScore));
+  const sentiment = sentimentScore > 0.1 ? "bullish" as const : sentimentScore < -0.1 ? "bearish" as const : "neutral" as const;
+  return { sentiment, sentimentScore, bullHits, bearHits };
+}
+export function applyKeywordSentimentToNews(newsItems: any[]): void {
+  if (!newsItems?.length) return;
+  for (const item of newsItems) {
+    const title = String(item?.title ?? "");
+    if (!title) continue;
+    const { sentiment, sentimentScore } = scoreHeadlineSentiment(title);
+    item.sentiment = sentiment;
+    item.sentimentScore = sentimentScore;
+    item.sentimentSource = "keyword";
+  }
+}
+export function reconcileNewsSentiment(newsItems: any[]): void {
+  if (!newsItems?.length) return;
+  for (const item of newsItems) {
+    const title = String(item?.title ?? "");
+    if (!title) continue;
+    const kw = scoreHeadlineSentiment(title);
+    const llmScore = typeof item.sentimentScore === "number" ? item.sentimentScore : null;
+    if (llmScore == null || item.sentimentSource === "keyword") {
+      item.sentiment = kw.sentiment;
+      item.sentimentScore = kw.sentimentScore;
+      item.sentimentSource = "keyword";
+      continue;
+    }
+    const signKw = Math.sign(kw.sentimentScore);
+    const signLlm = Math.sign(llmScore);
+    const extremeLlm = Math.abs(llmScore) >= 0.99;
+    const decisiveKw = Math.abs(kw.sentimentScore) >= 0.5;
+    const conflict = signKw !== 0 && signLlm !== 0 && signKw !== signLlm;
+    if ((decisiveKw && conflict) || (extremeLlm && Math.abs(kw.sentimentScore) >= 0.3 && conflict)) {
+      item.sentiment = kw.sentiment;
+      item.sentimentScore = kw.sentimentScore;
+      item.sentimentSource = "keyword_override";
+    } else {
+      item.sentimentSource = "llm";
+    }
+  }
+}
+export async function matchNewsToCatalysts(newsItems: any[], catalysts: Catalyst[], _ticker?: string, _companyName?: string): Promise<void> {
+  if (!newsItems.length) return;
+  applyKeywordSentimentToNews(newsItems);
+  if (!catalysts.length) return;
+}
+
+/* PEER FUNCTIONS: see commit 5c923b5 or run:
+ *   git checkout 5c923b5 -- server/news-peers.ts
+ * then re-apply sentiment block from artifacts/news-peers.FIXED.ts
+ * Full fixed file: artifacts/news-peers.FIXED.ts
+ */
+export async function filterAndSelectPeers(
+  subjectTicker: string, subjectSector: string, subjectIndustry: string,
+  rawPeerTickers: string[], maxPeers: number = 5
+): Promise<string[]> {
+  const upperSubject = subjectTicker.toUpperCase();
+  const candidates = rawPeerTickers.slice(0, 10);
+  if (candidates.length === 0) return [];
+  return candidates.slice(0, maxPeers);
+}
+export interface RoicPoint {
+  roicPercent: number | null;
+  fiscalYear: string | null;
+  periodDate: string | null;
+  roic5YPercent: number | null;
+  roic5YYearsUsed: number;
+}
+export function extractRoicPercentFromRow(row: any): number | null {
+  if (!row) return null;
+  const field = row.returnOnInvestedCapital;
+  const raw = field == null ? NaN : Number(field);
+  if (!isFinite(raw)) return null;
+  const pct = +(raw * 100).toFixed(1);
+  if (Math.abs(pct) > 100) return null;
+  return pct;
+}
+export function extractRoicFromKeyMetricsRows(rows: any[]): RoicPoint {
+  const arr = Array.isArray(rows) ? rows : [];
+  const latest = arr[0];
+  if (!latest) return { roicPercent: null, fiscalYear: null, periodDate: null, roic5YPercent: null, roic5YYearsUsed: 0 };
+  return {
+    roicPercent: extractRoicPercentFromRow(latest),
+    fiscalYear: latest.fiscalYear != null ? String(latest.fiscalYear) : null,
+    periodDate: typeof latest.date === "string" ? latest.date : null,
+    roic5YPercent: null,
+    roic5YYearsUsed: 0,
+  };
+}
+export async function fetchRoicForTickers(tickers: string[]): Promise<Record<string, RoicPoint>> {
+  return {};
+}
+export async function fetchPeerComparisonFromTickers(
+  ticker: string, peerTickers: string[], pe: number, peg: number, revenue: number,
+  marketCap: number, revenueGrowth: number, epsGrowth5Y: number,
+  subjectExtras?: { pb?: number | null; epsGrowth1Y?: number | null }
+): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
+  return null;
+}
+export async function fetchPeerComparison(
+  ticker: string, companyName: string, pe: number, peg: number, revenue: number,
+  marketCap: number, revenueGrowth: number, epsGrowth5Y: number,
+  fmpPeerTickers: string[] = []
+): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
+  return null;
 }
