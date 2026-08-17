@@ -15,7 +15,7 @@
 
 import OpenAI from "openai";
 import type { Catalyst, Risk, RiskExplanation } from "../shared/schema";
-
+import { reconcileNewsSentiment } from "./news-sentiment";
 // Lazy singleton — created on first call so missing env var doesn't crash boot.
 let openrouterClient: OpenAI | null = null;
 function getClient(): OpenAI | null {
@@ -202,8 +202,15 @@ SCHLECHTE Beispiele (verboten):
 - "Market Share Gains" — kein Firmenkontext
 - "AI / Cloud Adoption Tailwind" — Sektor-Template, nicht firmenspezifisch
 
+NEWS-SENTIMENT-REGELN (streng):
+- score ∈ [−1.0, +1.0] aus dem **Titelinhalt** ableiten — NICHT Beispielwerte kopieren
+- bullish: Aktie steigt, starke Zahlen, Raised/Acquired, Dividende, Beat → +0.5 … +1.0
+- bearish: fällt, underperforms, Miss, Cut, Downgrade → −0.5 … −1.0
+- neutral: Chart/Kurs ohne Richtung → 0.0
+- idx ist 1-basiert (N1 → idx=1)
+
 Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
-{"catalysts":[{"name":"Firmenspezifischer Name ≤50 Zeichen","context":"Deutsche Erklärung mit konkreten Zahlen/Namen, 1-2 Sätze","timeline":"6-12M|12-18M|12-24M|12-36M","pos":20-80,"bruttoUpside":5-35,"einpreisungsgrad":20-65}],"newsMatches":[{"idx":1,"sentiment":"bullish|bearish|neutral","score":-1.0,"catalyst":"K1|K2|K3|K4|K5|none"}]}`;
+{"catalysts":[{"name":"Firmenspezifischer Name ≤50 Zeichen","context":"Deutsche Erklärung mit konkreten Zahlen/Namen, 1-2 Sätze","timeline":"6-12M|12-18M|12-24M|12-36M","pos":20-80,"bruttoUpside":5-35,"einpreisungsgrad":20-65}],"newsMatches":[{"idx":1,"sentiment":"bullish","score":0.8,"catalyst":"K1"},{"idx":2,"sentiment":"bearish","score":-0.7,"catalyst":"none"},{"idx":3,"sentiment":"neutral","score":0.0,"catalyst":"none"}]}`;
 
   try {
     console.log(`[LLM] Calling (with fallback) for ${ticker} (combined catalyst+news, news_count=${newsItems.length})`);
@@ -282,6 +289,7 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
         const item = newsItems[newsIdx];
         item.sentiment = m.sentiment === "bearish" ? "bearish" : m.sentiment === "bullish" ? "bullish" : "neutral";
         item.sentimentScore = Math.max(-1, Math.min(1, Number(m.score) || 0));
+                item.sentimentSource = "llm";
         const catMatch = String(m.catalyst || "none").match(/K(\d+)/i);
         if (catMatch) {
           const catIdx = parseInt(catMatch[1]) - 1;
@@ -312,6 +320,7 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
         cat.gb = +(cat.pos / 100 * cat.nettoUpside).toFixed(2);
       }
     }
+    try { reconcileNewsSentiment(newsItems); } catch {}
 
     console.log(`[LLM] Combined call OK for ${ticker}: ${catalysts.length} catalysts, ${newsMatches.length} news matched, ${elapsedMs}ms, model=${usedModel}`);
     return {
