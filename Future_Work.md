@@ -96,6 +96,7 @@ Die folgenden Punkte aus der ursprünglichen Feature-Liste sind **bereits umgese
   2. Sofort nach Laden auf `revenueSegments` und `geoSegments` anwenden.  
   3. Optional Cross-Dedup: Name, der in beiden Listen vorkommt, nur in der Produktliste behalten.  
   **Aufwand:** ~1–2 h.  
+  **Detail-Spec:** [WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md)  
   **Referenz:** Chat 17.08.2026 (Amazon-Screenshot + Analyse der Segment-Pipeline).
 
 ### 7. Rezessions-Dashboard
@@ -140,7 +141,7 @@ Die folgenden Punkte aus der ursprünglichen Feature-Liste sind **bereits umgese
 | **Mittel**| Bilanzen-Red-Flag-Screener                 | offen                                   |
 | **Mittel**| Rezession: Google Trends + KI-Fazit        | offen                                   |
 | **Mittel**| Konfliktmatrix im Fazit                    | teilweise                               |
-| **Mittel**| Segment-Deduplizierung (Produkt/Geo)       | offen (Quick-Win ~1–2 h)                |
+| **Mittel**| Segment-Deduplizierung (Produkt/Geo)       | offen (Quick-Win ~1–2 h) → [WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md) |
 | **Niedrig**| Content / Overview-Ideen 2026             | rein konzeptionell                      |
 
 ---
@@ -164,8 +165,8 @@ Diese Punkte aus dem vorherigen Backlog bleiben relevant und sind hier der Volls
 1. **Priorisierte Umsetzungs-Roadmap** mit Aufwandsschätzung und Abhängigkeiten erstellen.
 2. Detaillierte Specs für die Hoch-Priorität-Items (i18n, Wertschöpfungskette, Sektorrotation, BTC M2/Fiscal, Gold AISC).
 3. Konsistenz-Fixes (`inCapitulation` / `minerZone`) als Quick-Win.
-4. **Segment-Deduplizierung** als Quick-Win (~1–2 h) – verhindert doppelte AWS-/Cloud-Balken bei AMZN, MSFT etc.
+4. **Segment-Deduplizierung** als Quick-Win (~1–2 h) – verhindert doppelte AWS-/Cloud-Balken bei AMZN, MSFT etc. → [WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md)
 
 ---
 
-*Erstellt am 16.08.2026 · Aktualisiert 17.08.2026 (Segment-Dedup) · Referenz-Repo: https://github.com/1719842374/Aktienanalyst*
+*Erstellt am 16.08.2026 · Aktualisiert 17.08.2026 (Segment-Dedup + Detail-Spec) · Referenz-Repo: https://github.com/1719842374/Aktienanalyst*
