@@ -49,6 +49,8 @@ import {
 import {
   fetchNewsFromGoogleRSS,
   matchNewsToCatalysts,
+  applyKeywordSentimentToNews,
+  reconcileNewsSentiment,
   fetchPeerComparisonFromTickers,
   fetchPeerComparison,
   filterAndSelectPeers,
@@ -1092,6 +1094,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         newsItems = await fetchNewsFromGoogleRSS(upperTicker, companyName);
       } catch (newsErr: any) {
         console.warn(`[ANALYZE] News fetch failed for ${upperTicker}: ${newsErr?.message?.substring(0, 80)}`);
+      }      if (newsItems.length > 0) {
+        try { applyKeywordSentimentToNews(newsItems); } catch {}
       }
       const newsHeadlines = newsItems.map((n: any) => String(n.title ?? "")).filter(Boolean);
 
@@ -1157,7 +1161,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           try { matchNewsToCatalysts(newsItems, catalysts); } catch {}
         }
       }
-
+            if (newsItems.length > 0) {
+        try { reconcileNewsSentiment(newsItems); } catch {}
+      }
       // ── 12. Risks ──
       let risks: Risk[] = [];
 
