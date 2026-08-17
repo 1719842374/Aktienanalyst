@@ -6,6 +6,7 @@
 > Verankerung: `Future_Work.md` §2 Industrie- & Sektor-Visualisierung · Priorität **Hoch** · Status dort: *komplett offen*
 
 ---
+<img width="1014" height="1417" alt="image" src="https://github.com/user-attachments/assets/9898f3d0-20ba-4477-b33d-45326da79f7c" />
 
 ## 0) Ziel in einem Satz
 
