@@ -57,6 +57,20 @@ Die folgenden Punkte aus der ursprünglichen Feature-Liste sind **bereits umgese
 - Gecachte Analysen (Aktienanalyse ↔ Researcher ↔ Portfolio) müssen **vollständig miteinander kommunizieren** und manuell refreshbar sein.  
   Teilweise Bridge existiert (`portfolioBridge`, Watchlist, „Aus Analyse übernehmen“), aber volle bidirektionale Synchronisation + konsistenter Cross-Modul-Refresh ist noch offen.
 
+### 3.1 NEU (19.08.2026) — Researcher Sector Opportunity: fehlende Portfolio-/Watchlist-Add-Buttons
+
+**Bug / Feature-Gap**  
+Im Tab **Sector Opportunity** können die angezeigten Kandidaten-Ticker (`topPlayers`) **nicht** zum Portfolio oder zur Watchlist hinzugefügt werden.  
+Im **Undervalued Screener** und im **Daily Briefing** funktioniert der Add einwandfrei.
+
+**Ursache (Code-Fakt):**  
+`SectorsPanel.tsx` rendert die Ticker nur als statische `<span>`-Tags. Der Import und die Verwendung von `TickerAddButtons` + `bulkAddToWatchlist` fehlen komplett (im Gegensatz zu `ScreenerPanel.tsx` und `BriefingChangeCard`).
+
+**Detail-Dokumentation + Fix-Vorschlag:**  
+→ [WORK_RESEARCHER_SECTOR_ADD.md](./WORK_RESEARCHER_SECTOR_ADD.md)
+
+**Aufwand:** ~30–60 Minuten (UI-only, keine Backend-Änderung).
+
 ### 4. BTC-Dashboard – Erweiterungen
 
 - **M2 Year / Fiscal Spending (US + Global)** auf den technischen BTC-Chart plotten.  
@@ -203,6 +217,7 @@ Die folgenden Punkte aus der ursprünglichen Feature-Liste sind **bereits umgese
 | **Hoch**  | BTC M2/Fiscal + erweiterte Miner-Indikatoren | teilweise (Section 13)                 |
 | **Hoch**  | **BTC + Gold: WALCL / QE-QT Regime + Overlay + Scoring (Phase 2)** | neu detailliert 19.08.2026 |
 | **Hoch**  | Gold AISC + Realzins-Kombination           | teilweise (Realyield schon da)          |
+| **Hoch**  | **Researcher Sector Opportunity — fehlende Add-Buttons** | neu 19.08.2026 (Quick-Win ~30–60 min) |
 | **Mittel**| Monte-Carlo flexibel                       | offen                                   |
 | **Mittel**| Bilanzen-Red-Flag-Screener                 | offen                                   |
 | **Mittel**| Rezession: Google Trends + KI-Fazit        | offen                                   |
@@ -232,7 +247,8 @@ Diese Punkte aus dem vorherigen Backlog bleiben relevant und sind hier der Volls
 2. Detaillierte Specs für die Hoch-Priorität-Items (i18n, Wertschöpfungskette, Sektorrotation, BTC M2/Fiscal, **Gold/BTC WALCL-QE-QT Phase 2**, Gold AISC).
 3. Konsistenz-Fixes (`inCapitulation` / `minerZone`) als Quick-Win.
 4. **Segment-Deduplizierung** als Quick-Win (~1–2 h) – verhindert doppelte AWS-/Cloud-Balken bei AMZN, MSFT etc. → [WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md)
+5. **Researcher Sector Opportunity Add-Buttons** als Quick-Win (~30–60 min) → [WORK_RESEARCHER_SECTOR_ADD.md](./WORK_RESEARCHER_SECTOR_ADD.md)
 
 ---
 
-*Erstellt am 16.08.2026 · Aktualisiert 17.08.2026 (Segment-Dedup + Detail-Spec) · Aktualisiert 19.08.2026 (WALCL / QE-QT Phase-2 für Gold + BTC detailliert aufgenommen) · Referenz-Repo: https://github.com/1719842374/Aktienanalyst*
+*Erstellt am 16.08.2026 · Aktualisiert 17.08.2026 (Segment-Dedup + Detail-Spec) · Aktualisiert 19.08.2026 (WALCL / QE-QT Phase-2 + Researcher Sector Add-Buttons Bug) · Referenz-Repo: https://github.com/1719842374/Aktienanalyst*
