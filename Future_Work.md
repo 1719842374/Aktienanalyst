@@ -1,6 +1,6 @@
 # Future Work — Offene Roadmap Stock Analyst Pro (Aktienanalyst)
 
-> **Stand: 17.08.2026**  
+> **Stand: 19.08.2026**  
 > Abgeglichen mit aktuellem Code-Stand auf `main`, README.md, BACKLOG.md (05.08.2026) und den live vorhandenen Komponenten (PortfolioPage, BTC Section 13, Gold Realyield, Scoring-Gates, Researcher, etc.).
 
 Dieses Dokument listet die **noch nicht (vollständig) umgesetzten Ideen** und verweist explizit auf den bereits erreichten Implementierungsstand.
@@ -67,6 +67,36 @@ Die folgenden Punkte aus der ursprünglichen Feature-Liste sind **bereits umgese
   Inkl. klarer Kapitulationszonen-Visualisierung.  
   *(Kern bereits in Section 13 / `btc-miner.ts` vorhanden, aber nicht alle Indikatoren live + konsistent und die dokumentierte Inkonsistenz `inCapitulation` vs. `minerZone.zone` ist noch offen.)*
 
+#### 4.1 NEU (19.08.2026): Fed-Bilanzsumme (WALCL) + QE/QT-Regime für BTC
+
+**Ziel:** Die Logik „Asset / Fed Balance Sheet“ (wie beim SPX/FARBAST-Chart) + explizites QE/QT-Regime in BTC integrieren — sowohl als **technisches Overlay** im Chart als auch als **Scoring-Faktor**.
+
+**Datenquellen & Fakten (FRED):**
+- `WALCL` = Federal Reserve Total Assets (wöchentlich, in Mio. USD)
+- Historische Peak-Werte: ~$8,96 Tn (April 2022), ~$8,9 Tn (Mai 2022)
+- QT-Phase 2022–2025: Abbau um ca. $2,2 Tn → Stand Frühjahr/Sommer 2026 ca. $6,7–6,8 Tn
+- QE-Phasen: 2008–2014, 2020–2022 (COVID + Nachwirkungen)
+- Ratio-Logik analog SPX: `BTC_Price / WALCL` (oder log-transformiert). Sinkender Ratio bei steigendem BTC = Bilanzsumme wächst relativ stärker (QE-Effekt).
+
+**Technische Analyse Overlay (Plot):**
+- Dual-Axis oder normale Overlay-Linie: `log(WALCL)` oder normalisierte WALCL-Wachstumsrate (4W/13W/52W YoY bzw. Change).
+- QE/QT-Regime-Bänder farblich markieren (grün = QE-Expansion, rot = QT-Kontraktion, grau = neutral/stagnierend).
+- Analog zur bereits vorhandenen M2-Absolute + M2-YoY + Real10Y Overlay-Pipeline in `server/btc-macro.ts` und `client/src/lib/btcAnalysis.ts` (Forward-Fill + Lag-Option).
+- Optional: Ratio-Chart (BTC / WALCL) als separater Sub-Chart oder Toggle, vergleichbar dem SPX/Fed-Balance-Sheet-Chart.
+
+**Scoring-Logik (Vorschlag):**
+- Neuer Indikator „Fed Balance Sheet Regime“ (Gewicht z. B. 0.10–0.15 in der GIS-/GWS-Berechnung).
+- Score-Regeln (Beispiele):
+  - WALCL 13W-Change > +1,5 % → +1 (QE-Rückenwind)
+  - WALCL 13W-Change < –1,0 % → –1 (QT-Gegenwind)
+  - Dazwischen → 0 (neutral)
+- Zusätzlicher Gate `BTC_QE_QT_REGIME` (warn/hard), der bei starkem QT + gleichzeitig hohem BTC-Bewertungsniveau (Power-Law-Deviation / MVRV) aktiv wird.
+- Integration in bestehende Macro-Score-Komponente (aktuell nur Fed Funds + DXY + M2).
+
+**Aufwand:** 1–2 Tage (Daten-Fetch + Forward-Fill analog M2, Chart-Overlay, Scoring-Verdrahtung, Tests).
+
+**Abhängigkeit:** Wiederverwendung der bestehenden FRED-Fetch-Helfer aus `btc-macro.ts` und `gold-realyield-model.ts`.
+
 ### 5. Gold-Dashboard – Erweiterungen
 
 - Analoge **Minenkosten-Indikatoren**  
@@ -77,6 +107,41 @@ Die folgenden Punkte aus der ursprünglichen Feature-Liste sind **bereits umgese
 
 - Kombinierte Visualisierung **Realzins + AISC-Kostenkurve** (Python-backed Chart).  
   *(Realyield-Modell + Gates bereits live; AISC + kombinierte Kurve noch offen.)*
+
+#### 5.1 NEU (19.08.2026): Multi-Faktor Phase 2 – log(WALCL) + QE/QT-Regime für Gold
+
+**Ziel:** Das bestehende 1-Faktor-Realzins-Modell (`gold-realyield-model.ts`) um den explizit als Phase 2 dokumentierten Multi-Faktor erweitern und QE/QT-Regime-Scoring + Overlay hinzufügen.
+
+**Bereits dokumentierter Code-Stand (TODO in `server/gold-realyield-model.ts`):**
+```
+// PHASE 2 (explizit NICHT umgesetzt, nur TODO)
+// Multi-Faktor-Erweiterung G_t = α + β1·R_t + β2·DXY_t + β3·log(WALCL_t) + ε_t
+// Voraussetzung: DXY (DTWEXBGS) und WALCL business-day-aligned (WALCL wöchentlich → LOCF-Forward-Fill)
+```
+
+**Datenquellen & Fakten:**
+- `WALCL` (FRED) – Fed Total Assets, wöchentlich
+- `DTWEXBGS` (FRED) – Trade Weighted U.S. Dollar Index (Broad)
+- Peak WALCL ~$8,96 Tn (2022) → QT-Abbau auf ~$6,7–6,8 Tn (2026)
+- Ökonomische Erwartung der Vorzeichen: β1 < 0 (Realzins), β2 < 0 (DXY), β3 > 0 (log(WALCL) = Liquiditäts-/Bilanzexpansion stützt Gold)
+
+**Technische Analyse Overlay (Plot):**
+- In `GoldPriceChart.tsx` zusätzliche Toggle-fähige Linien:
+  - `log(WALCL)` (oder normalisierte WALCL-Wachstumsrate)
+  - Optional DXY
+- QE/QT-Regime-Hintergründe (farbige Bänder) analog zum BTC-Vorschlag.
+- Ratio-Visualisierung `Gold / WALCL` als optionaler Sub-Chart (gleiche Logik wie SPX/Fed-Balance-Sheet).
+
+**Scoring- & Modell-Logik:**
+1. **Multi-OLS** (Rolling Window 252 Handelstage) nur wenn alle drei Serien (Real10Y, DXY, log(WALCL)) non-null und aligned sind.
+2. Vorzeichen-Check: Wenn β3 nicht positiv oder β1/β2 nicht negativ → `REGIME_UNSTABLE`-Flag und Fallback auf reines 1-Faktor-Modell.
+3. Neuer Gate `GOLD_QE_QT_REGIME` (warn):
+   - Aktiv bei starkem QT (WALCL 13W-Change < –1 %) + gleichzeitigem Realzins-Stress.
+4. Fair-Value-Anzeige bleibt standardmäßig 1-Faktor (Realzins); Multi-Faktor erscheint als Vergleichslinie / „Liquidity-Adjusted Fair Value“.
+5. Integration in bestehende `GOLD_REAL_YIELD_REGIME` und `GOLD_AISC_STRESS` Gates (keine Doppelzählung).
+
+**Aufwand:** 1–2 Tage (wie bereits in BACKLOG geschätzt).  
+**Priorität:** Hoch (explizites TODO im Produktionscode + starke ökonomische Relevanz für Gold).
 
 ### 6. Analyse-Engine & Parameter
 
@@ -136,6 +201,7 @@ Die folgenden Punkte aus der ursprünglichen Feature-Liste sind **bereits umgese
 | **Hoch**  | Industrie-Wertschöpfungskette + LLM        | komplett offen                          |
 | **Hoch**  | Sektorrotation / Kostolany                 | komplett offen                          |
 | **Hoch**  | BTC M2/Fiscal + erweiterte Miner-Indikatoren | teilweise (Section 13)                 |
+| **Hoch**  | **BTC + Gold: WALCL / QE-QT Regime + Overlay + Scoring (Phase 2)** | neu detailliert 19.08.2026 |
 | **Hoch**  | Gold AISC + Realzins-Kombination           | teilweise (Realyield schon da)          |
 | **Mittel**| Monte-Carlo flexibel                       | offen                                   |
 | **Mittel**| Bilanzen-Red-Flag-Screener                 | offen                                   |
@@ -154,7 +220,7 @@ Diese Punkte aus dem vorherigen Backlog bleiben relevant und sind hier der Volls
 |------|---------------------|--------|--------|
 | Fiscal-Bridge an echten Discovery-Workflow anschließen | ~1 Tag | ⬜ offen | Modul fertig (`server/fiscal-bridge.ts`), nur Anschluss fehlt |
 | `inCapitulation` vs. `minerZone.zone` Namensklärung / Konsistenz | ~2 h | ⬜ offen | Dokumentierte Inkonsistenz, kein Crash |
-| Gold Multi-Faktor-Modell Phase 2 (WALCL, DXY, Multi-OLS) | 1–2 Tage | ⬜ offen | Explizit als TODO in `gold-realyield-model.ts` |
+| **Gold Multi-Faktor-Modell Phase 2 (WALCL, DXY, Multi-OLS) + QE/QT-Regime** | 1–2 Tage | ⬜ offen | Explizit als TODO in `gold-realyield-model.ts` + neu detailliert für BTC und Gold (19.08.2026) |
 | Screener-Gates + Backtesting (Vollversion) | 2–3 Tage | 🟡 teilweise | Kern-Gate-System läuft |
 | Regulatory-Impact auch direkt in Risks/PESTEL-Sektion integrieren | ~3–4 h | 🟡 teilweise | Lazy über PESTEL-KI-Panel vorhanden |
 
@@ -163,10 +229,10 @@ Diese Punkte aus dem vorherigen Backlog bleiben relevant und sind hier der Volls
 ## Nächste Schritte (Vorschlag)
 
 1. **Priorisierte Umsetzungs-Roadmap** mit Aufwandsschätzung und Abhängigkeiten erstellen.
-2. Detaillierte Specs für die Hoch-Priorität-Items (i18n, Wertschöpfungskette, Sektorrotation, BTC M2/Fiscal, Gold AISC).
+2. Detaillierte Specs für die Hoch-Priorität-Items (i18n, Wertschöpfungskette, Sektorrotation, BTC M2/Fiscal, **Gold/BTC WALCL-QE-QT Phase 2**, Gold AISC).
 3. Konsistenz-Fixes (`inCapitulation` / `minerZone`) als Quick-Win.
 4. **Segment-Deduplizierung** als Quick-Win (~1–2 h) – verhindert doppelte AWS-/Cloud-Balken bei AMZN, MSFT etc. → [WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md)
 
 ---
 
-*Erstellt am 16.08.2026 · Aktualisiert 17.08.2026 (Segment-Dedup + Detail-Spec) · Referenz-Repo: https://github.com/1719842374/Aktienanalyst*
+*Erstellt am 16.08.2026 · Aktualisiert 17.08.2026 (Segment-Dedup + Detail-Spec) · Aktualisiert 19.08.2026 (WALCL / QE-QT Phase-2 für Gold + BTC detailliert aufgenommen) · Referenz-Repo: https://github.com/1719842374/Aktienanalyst*
