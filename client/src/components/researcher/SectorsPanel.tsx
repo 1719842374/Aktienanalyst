@@ -2,6 +2,7 @@
  * SectorsPanel (extracted).
  */
 import { AlertTriangle, Sparkles } from "lucide-react";
+import { TickerAddButtons } from "@/components/portfolio/TickerAddButtons";
 
 const ACTION_COLORS: Record<string, string> = {
   Buy: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -76,7 +77,10 @@ export function SectorsPanel({ data }: { data: any }) {
                 {t.topPlayers?.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-2">
                     {t.topPlayers.map((p: string, i: number) => (
-                      <span key={i} className="px-1.5 py-0.5 rounded bg-muted/40 text-[10px] font-mono text-foreground/70">{p}</span>
+                      <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-muted/40 text-[10px] font-mono text-foreground/70">
+                        {p}
+                        <TickerAddButtons ticker={p} source="researcher" compact />
+                      </span>
                     ))}
                   </div>
                 )}
