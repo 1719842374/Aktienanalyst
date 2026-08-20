@@ -3,6 +3,7 @@
  */
 import { ListPlus } from "lucide-react";
 import { TickerAddButtons, bulkAddToWatchlist } from "@/components/portfolio/TickerAddButtons";
+import type { PortfolioRegion } from "@/lib/portfolio/watchlist";
 
 const ACTION_COLORS: Record<string, string> = {
   Buy: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -14,7 +15,7 @@ const ACTION_COLORS: Record<string, string> = {
 // Tab 3: Screener
 // ============================================================
 
-export function ScreenerPanel({ data }: { data: any }) {
+export function ScreenerPanel({ data, region }: { data: any; region?: PortfolioRegion }) {
   const candidates: any[] = data.candidates || [];
   if (!candidates.length) {
     return (
@@ -27,7 +28,7 @@ export function ScreenerPanel({ data }: { data: any }) {
     const items = candidates
       .filter((c: any) => c?.ticker)
       .map((c: any) => ({ ticker: String(c.ticker), name: c.companyName, score: c.moatScore ?? null }));
-    const r = bulkAddToWatchlist(items, "researcher");
+    const r = bulkAddToWatchlist(items, "researcher", region);
     window.alert(`Watchlist: ${r.added} neu, ${r.skipped} übersprungen (Duplikat/leer)`);
   }
 
@@ -80,7 +81,7 @@ export function ScreenerPanel({ data }: { data: any }) {
               )}
             </div>
             <div className="shrink-0 flex flex-col items-end gap-2">
-              <TickerAddButtons ticker={c.ticker} name={c.companyName} source="researcher" score={c.moatScore ?? null} />
+              <TickerAddButtons ticker={c.ticker} name={c.companyName} source="researcher" score={c.moatScore ?? null} region={region} />
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-right text-[10px]">
               <div className="text-foreground/40">MCap</div>
               <div className="font-mono tabular-nums text-foreground/85">${(c.marketCap / 1e9).toFixed(1)}B</div>

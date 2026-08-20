@@ -2,6 +2,7 @@
  * CapexPanel with Phase-2 Watchlist/Portfolio buttons.
  */
 import { TickerAddButtons } from "@/components/portfolio/TickerAddButtons";
+import type { PortfolioRegion } from "@/lib/portfolio/watchlist";
 
 const IMPACT_COLORS: Record<string, string> = {
   high: "bg-violet-500/15 text-violet-300",
@@ -13,7 +14,7 @@ const IMPACT_COLORS: Record<string, string> = {
 // Tab 4: Capex & Fiscal
 // ============================================================
 
-export function CapexPanel({ data }: { data: any }) {
+export function CapexPanel({ data, region }: { data: any; region?: PortfolioRegion }) {
   const programmes: any[] = data.programmes || [];
   const sectorExposure: any[] = Array.isArray(data.sectorExposure) ? data.sectorExposure : [];
   const isEmpty = programmes.length === 0 && !data.headline && !data.totalCapexEstimate;
@@ -98,7 +99,7 @@ export function CapexPanel({ data }: { data: any }) {
                               {b.name && b.rationale && <span className="text-foreground/40"> · </span>}
                               {b.rationale}
                             </span>
-                            <TickerAddButtons ticker={b.ticker} name={b.name} source="researcher" compact />
+                            <TickerAddButtons ticker={b.ticker} name={b.name} source="researcher" region={region} compact />
                           </div>
                         ))}
                       </div>
@@ -155,7 +156,7 @@ export function CapexPanel({ data }: { data: any }) {
                         {b.name && b.rationale && <span className="text-foreground/40"> · </span>}
                         {b.rationale}
                       </span>
-                      <TickerAddButtons ticker={b.ticker} name={b.name} source="researcher" compact />
+                      <TickerAddButtons ticker={b.ticker} name={b.name} source="researcher" region={region} compact />
                     </div>
                   ))}
                 </div>

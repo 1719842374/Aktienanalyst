@@ -3,6 +3,7 @@
  */
 import { AlertTriangle, Sparkles } from "lucide-react";
 import { TickerAddButtons } from "@/components/portfolio/TickerAddButtons";
+import type { PortfolioRegion } from "@/lib/portfolio/watchlist";
 
 const ACTION_COLORS: Record<string, string> = {
   Buy: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -20,7 +21,7 @@ const RISK_COLORS: Record<string, string> = {
 // Tab 2: Sector Opportunity
 // ============================================================
 
-export function SectorsPanel({ data }: { data: any }) {
+export function SectorsPanel({ data, region }: { data: any; region?: PortfolioRegion }) {
   const trends: any[] = data.trends || [];
   const topPicks: string[] = data.topPicks || [];
   const sectorsStale = data?.modelUsed === "fallback" || trends.length === 0;
@@ -79,7 +80,7 @@ export function SectorsPanel({ data }: { data: any }) {
                     {t.topPlayers.map((p: string, i: number) => (
                       <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-muted/40 text-[10px] font-mono text-foreground/70">
                         {p}
-                        <TickerAddButtons ticker={p} source="researcher" compact />
+                        <TickerAddButtons ticker={p} source="researcher" region={region} compact />
                       </span>
                     ))}
                   </div>

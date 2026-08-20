@@ -319,9 +319,9 @@ export default function Researcher() {
 
         <div className={loadingForCurrentView && currentData ? "relative opacity-60 transition-opacity" : "relative"}>
           {currentData && activeTab === "macro" && <MacroPanel data={currentData} />}
-          {currentData && activeTab === "sectors" && <SectorsPanel data={currentData} />}
-          {currentData && activeTab === "screener" && <ScreenerPanel data={currentData} />}
-          {currentData && activeTab === "capex" && <CapexPanel data={currentData} />}
+          {currentData && activeTab === "sectors" && <SectorsPanel data={currentData} region={region} />}
+          {currentData && activeTab === "screener" && <ScreenerPanel data={currentData} region={region} />}
+          {currentData && activeTab === "capex" && <CapexPanel data={currentData} region={region} />}
           {loadingForCurrentView && currentData && (
             <div className="absolute top-0 left-0 right-0 flex justify-center pointer-events-none">
               <div className="bg-card/95 border border-border rounded-full shadow-lg px-3 py-1 text-[11px] flex items-center gap-2 pointer-events-auto mt-2">
@@ -469,14 +469,14 @@ function BriefingChangeCard({ change }: { change: any }) {
               {tickers.slice(0, 8).map((t: string, i: number) => (
                 <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-violet-500/10 text-[10px] font-mono text-violet-300/90 border border-violet-400/20">
                   {t}
-                  <TickerAddButtons ticker={t} source="researcher" compact />
+                  <TickerAddButtons ticker={t} source="researcher" region={change.region} compact />
                 </span>
               ))}
               <button
                 type="button"
                 className="text-[9px] px-1.5 py-0.5 rounded border border-border/40 text-foreground/60 hover:bg-muted/40"
                 onClick={() => {
-                  const r = bulkAddToWatchlist(tickers.slice(0, 12).map((t: string) => ({ ticker: t })), "researcher");
+                  const r = bulkAddToWatchlist(tickers.slice(0, 12).map((t: string) => ({ ticker: t })), "researcher", change.region);
                   window.alert(`Watchlist: ${r.added} neu, ${r.skipped} übersprungen`);
                 }}
               >

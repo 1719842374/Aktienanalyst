@@ -39,6 +39,7 @@ import PortfolioOverview, { type TimeframeFilter, type DirectionFilter } from "@
 import PortfolioInvestmentsTable from "@/components/portfolio/PortfolioInvestmentsTable";
 import PortfolioOptimizationPanel from "@/components/portfolio/PortfolioOptimizationPanel";
 import WatchlistPortfolioPanel from "@/components/portfolio/WatchlistPortfolioPanel";
+import ResearcherPortfoliosPanel from "@/components/portfolio/ResearcherPortfoliosPanel";
 import { computePortfolioFromPositions, MIN_POSITIONS_FOR_OPTIMIZATION } from "@/lib/portfolio/engine";
 import { suggestedMaxWeightDefault } from "@/lib/portfolio/weighting";
 import { consumePendingPortfolioAdd } from "@/lib/portfolio/portfolioBridge";
@@ -422,10 +423,7 @@ export default function PortfolioPage() {
 
             <div ref={setSectionRef(6)}>
               <SectionCard number={6} title="Researcher-Portfolios (P3)">
-                <p className="text-xs text-muted-foreground">
-                  Kommt in Phase 3: Researcher-Einträge werden getrennt nach US, EU, China/Asien
-                  und Mixed als automatische Portfolios angezeigt.
-                </p>
+                <ResearcherPortfoliosPanel policy={policy} />
               </SectionCard>
             </div>
 

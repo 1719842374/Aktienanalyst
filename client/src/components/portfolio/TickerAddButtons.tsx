@@ -10,6 +10,7 @@ import {
 import {
   addToWatchlist,
   bulkAddToWatchlist as bulkAddWatchlistEntries,
+  type PortfolioRegion,
   type WatchlistSource,
 } from "@/lib/portfolio/watchlist";
 
@@ -18,12 +19,15 @@ export function TickerAddButtons({
   name,
   source = "researcher",
   score,
+  region,
   compact = false,
 }: {
   ticker: string;
   name?: string;
   source?: WatchlistSource;
   score?: number | null;
+  /** Optionaler Researcher-Kontext; inferRegion bleibt der Fallback. */
+  region?: PortfolioRegion;
   compact?: boolean;
 }) {
   const [msg, setMsg] = useState<string | null>(null);
@@ -45,7 +49,7 @@ export function TickerAddButtons({
   function onWatchlist(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    const r = addToWatchlist({ ticker: upper, name, source, score });
+    const r = addToWatchlist({ ticker: upper, name, source, score, region });
     flash(r.added ? "→ Watchlist" : r.reason === "duplicate" ? "schon auf Watchlist" : "Fehler");
   }
 
@@ -99,6 +103,7 @@ export function TickerAddButtons({
 export function bulkAddToWatchlist(
   items: Array<{ ticker: string; name?: string; score?: number | null }>,
   source: WatchlistSource = "researcher",
+  region?: PortfolioRegion,
 ): { added: number; skipped: number } {
-  return bulkAddWatchlistEntries(items, source);
+  return bulkAddWatchlistEntries(items.map(item => ({ ...item, region })), source);
 }
