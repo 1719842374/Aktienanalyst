@@ -38,6 +38,7 @@ import {
 import PortfolioOverview, { type TimeframeFilter, type DirectionFilter } from "@/components/portfolio/PortfolioOverview";
 import PortfolioInvestmentsTable from "@/components/portfolio/PortfolioInvestmentsTable";
 import PortfolioOptimizationPanel from "@/components/portfolio/PortfolioOptimizationPanel";
+import WatchlistPortfolioPanel from "@/components/portfolio/WatchlistPortfolioPanel";
 import { computePortfolioFromPositions, MIN_POSITIONS_FOR_OPTIMIZATION } from "@/lib/portfolio/engine";
 import { suggestedMaxWeightDefault } from "@/lib/portfolio/weighting";
 import { consumePendingPortfolioAdd } from "@/lib/portfolio/portfolioBridge";
@@ -415,10 +416,7 @@ export default function PortfolioPage() {
 
             <div ref={setSectionRef(5)}>
               <SectionCard number={5} title="Watchlist-Portfolio (P2)">
-                <p className="text-xs text-muted-foreground">
-                  Kommt in Phase 2: Der automatisch gewichtete Basket aus „Zur Watchlist“-Einträgen
-                  wird dann mit der vorhandenen CAPM-/Kelly-Logik berechnet. P1 bleibt unverändert.
-                </p>
+                <WatchlistPortfolioPanel policy={policy} />
               </SectionCard>
             </div>
 

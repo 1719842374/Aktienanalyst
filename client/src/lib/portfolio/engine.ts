@@ -15,7 +15,7 @@
  * verwendet wurde, wird pro Ticker transparent im Ergebnis ausgewiesen
  * (Ticket-Vorgabe: "Overrides markiert").
  */
-import type { PortfolioPosition } from "./positions";
+import type { PortfolioPosition, PortfolioPolicy } from "./positions";
 import { buildCovariance, type PricePoint, type CovarianceResult } from "./covariance";
 import { allocate, resolveEffectiveMaxWeight, suggestedMaxWeightDefault, DEFAULT_MAX_WEIGHT, type WeightMode } from "./weighting";
 import { sharpeReport } from "./sharpe";
@@ -88,6 +88,58 @@ export interface EngineResult {
    * kein Floor-Eingriff nötig war. Siehe weighting.ts resolveEffectiveMaxWeight. */
   capForcesEqualWeight: boolean;
   flags: string[];
+}
+
+/**
+ * Marktdaten für einen automatischen Ticker-Basket ohne echte Positionen.
+ *
+ * P2/P3 liefern bewusst nur Ticker und optionale Research-Scores. Historische
+ * Preise bleiben Eingabe des Aufrufers, damit diese Engine-Schicht weiterhin
+ * rein, testbar und frei von Netzwerkzugriffen ist.
+ */
+export interface TickerPortfolioMarketData {
+  historicalPricesByTicker: Record<string, PricePoint[] | undefined>;
+  scoreByTicker?: Record<string, number | null | undefined>;
+}
+
+/**
+ * Berechnet einen automatischen CAPM/Kelly-Basket direkt aus einer Tickerliste.
+ *
+ * Diese additive Variante ist für Watchlist- und Researcher-Portfolios (P2/P3)
+ * gedacht. Sie erzeugt ausschließlich interne, synthetische Long-Inputs ohne
+ * Stückzahl, Einstand oder Stop und delegiert dann unverändert an
+ * computePortfolioFromPositions(). P1 nutzt weiterhin ausschließlich die
+ * bestehende Positions-Funktion und wird hierdurch nicht beeinflusst.
+ */
+export function computePortfolioFromTickers(
+  tickers: string[],
+  policy: PortfolioPolicy,
+  marketData: TickerPortfolioMarketData,
+): EngineResult {
+  const uniqueTickers = Array.from(new Set(
+    tickers.map(ticker => ticker.trim().toUpperCase()).filter(Boolean),
+  ));
+  const scoreByTicker = marketData.scoreByTicker ?? {};
+
+  return computePortfolioFromPositions({
+    positions: uniqueTickers.map(ticker => ({
+      ticker,
+      // Watchlist-Baskets haben absichtlich keine reale Position bzw. keinen
+      // Marktwert. Dadurch bleibt weightMarket=null, während CAPM/Kelly wie
+      // in der bewährten Engine aus μ/σ/Σ berechnet werden.
+      qty: 0,
+      entryPrice: 0,
+      lastPrice: null,
+      side: "long" as const,
+      scoreOverride: scoreByTicker[ticker] ?? null,
+    })),
+    historicalPricesByTicker: marketData.historicalPricesByTicker,
+    rf: policy.rfPct / 100,
+    capital: policy.capital,
+    maxWeight: policy.maxWeightPct / 100,
+    kellyFraction: policy.kellyFraction,
+    kellyMaxF: policy.kellyMaxFPct / 100,
+  });
 }
 
 /**

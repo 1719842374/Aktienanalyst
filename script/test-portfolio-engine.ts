@@ -9,7 +9,7 @@
  *
  * Ausfuehren: npx tsx script/test-portfolio-engine.ts
  */
-import { computePortfolioFromPositions, MIN_POSITIONS_FOR_OPTIMIZATION } from "../client/src/lib/portfolio/engine";
+import { computePortfolioFromPositions, computePortfolioFromTickers, MIN_POSITIONS_FOR_OPTIMIZATION } from "../client/src/lib/portfolio/engine";
 import type { PricePoint } from "../client/src/lib/portfolio/covariance";
 
 let failed = 0;
@@ -89,6 +89,28 @@ check("μ/σ stammen aus Historie (muSource=historical) wenn kein Override geset
 check("Kovarianzmatrix wurde tatsächlich berechnet (nicht leer)", twoPosResult.covariance != null && twoPosResult.covariance.Sigma.length === 2, JSON.stringify(twoPosResult.covariance?.Sigma));
 const weightSum = twoPosResult.rows.reduce((s, r) => s + r.weightCapm, 0);
 check("CAPM-Gewichte summieren zu ≈100%", Math.abs(weightSum - 1) < 0.01, `sum=${weightSum}`);
+
+// === 3b. P2/P3-Tickerliste delegiert ohne echte Positionsdaten an dieselbe Engine ===
+
+const tickerBasketResult = computePortfolioFromTickers(
+  ["HIGH", "low", "HIGH"], // Duplikat darf keine zweite Basket-Position ergeben
+  {
+    capital: 100000,
+    benchmark: "SPY",
+    rfPct: 3,
+    maxWeightPct: 60,
+    kellyFraction: 0.5,
+    kellyMaxFPct: 25,
+    mode: "auto",
+  },
+  {
+    historicalPricesByTicker: { HIGH: seriesHighDrift, LOW: seriesLowDrift },
+    scoreByTicker: { HIGH: 80, LOW: 60 },
+  },
+);
+check("Tickerliste (P2/P3) -> status=ok", tickerBasketResult.status === "ok", JSON.stringify(tickerBasketResult.status));
+check("Tickerliste dedupliziert und berechnet zwei Zielgewichte", tickerBasketResult.rows.length === 2 && new Set(tickerBasketResult.rows.map(r => r.ticker)).size === 2);
+check("Tickerliste verwendet Research-Scores für Score-Tilt und keine Marktgewichte", tickerBasketResult.rows.some(r => r.score === 80) && tickerBasketResult.rows.every(r => r.weightMarket === null), JSON.stringify(tickerBasketResult.rows));
 
 // === 4. Override hat Vorrang vor Historie ===
 
@@ -192,5 +214,5 @@ check("concentration.hhi liegt zwischen 1/n und 1", (() => {
 })(), JSON.stringify(twoPosResult.concentration));
 check("concentration bei insufficient_positions/insufficient_history ist null", singlePosResult.concentration === null && noHistoryResult.concentration === null);
 
-console.log(failed === 0 ? `\n✅ Alle Portfolio-Engine-Tests bestanden (25 Checks)` : `\n❌ ${failed} Test(s) fehlgeschlagen`);
+console.log(failed === 0 ? `\n✅ Alle Portfolio-Engine-Tests bestanden (28 Checks)` : `\n❌ ${failed} Test(s) fehlgeschlagen`);
 process.exit(failed === 0 ? 0 : 1);
