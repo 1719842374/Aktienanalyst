@@ -27,7 +27,7 @@ export function Section1({ data, onRefresh }: Props) {
   function handleAddWatchlist() {
     const r = addTickerToWatchlist(data.ticker, {
       name: data.companyName,
-      source: "analysis",
+      source: "dashboard",
       score: (data as any).thesisStrengthScore ?? (data as any).overallScore ?? null,
     });
     if (r.ok) showFlash(`${data.ticker} → Watchlist (P2)`);

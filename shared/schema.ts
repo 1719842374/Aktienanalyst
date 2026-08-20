@@ -635,3 +635,18 @@ export interface KellySizing {
   fCapped: number;
   amount: number;
 }
+
+/**
+ * Ein Eintrag der lokalen Watchlist für das Watchlist-Portfolio (P2) bzw.
+ * Researcher-Portfolio (P3). Eigenständig und additiv: P1 verwendet weiterhin
+ * ausschließlich PortfolioPosition aus client/src/lib/portfolio/positions.ts.
+ */
+export interface WatchlistEntry {
+  ticker: string;
+  name?: string;
+  addedAt: string; // ISO
+  source: "manual" | "researcher" | "screener" | "dashboard" | "btc";
+  score?: number | null;
+  /** Nur für P3-/Researcher-Einträge relevant. */
+  region?: "US" | "EU" | "ASIA" | "MIXED";
+}

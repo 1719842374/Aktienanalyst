@@ -6,9 +6,12 @@ import { useState } from "react";
 import { Briefcase, ListPlus } from "lucide-react";
 import {
   addTickerToManualPortfolio,
-  addTickerToWatchlist,
 } from "@/lib/portfolio/portfolioBridge";
-import type { WatchlistSource } from "@/lib/portfolio/watchlist";
+import {
+  addToWatchlist,
+  bulkAddToWatchlist as bulkAddWatchlistEntries,
+  type WatchlistSource,
+} from "@/lib/portfolio/watchlist";
 
 export function TickerAddButtons({
   ticker,
@@ -42,8 +45,8 @@ export function TickerAddButtons({
   function onWatchlist(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    const r = addTickerToWatchlist(upper, { name, source, score });
-    flash(r.ok ? "→ Watchlist" : r.reason === "duplicate" ? "schon auf Watchlist" : "Fehler");
+    const r = addToWatchlist({ ticker: upper, name, source, score });
+    flash(r.added ? "→ Watchlist" : r.reason === "duplicate" ? "schon auf Watchlist" : "Fehler");
   }
 
   if (compact) {
@@ -65,20 +68,19 @@ export function TickerAddButtons({
         >
           <ListPlus className="w-3 h-3" />
         </button>
-        {msg && <span className="text-[9px] text-emerald-400 ml-0.5">{msg}</span>}
       </span>
     );
   }
 
   return (
-    <div className="flex flex-col items-end gap-1 shrink-0">
+    <div className="flex flex-wrap items-center justify-end gap-1 shrink-0">
       <button
         type="button"
         onClick={onPortfolio}
         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border border-primary/30 text-primary/90 hover:bg-primary/15"
         title="Zum manuellen Portfolio (P1)"
       >
-        <Briefcase className="w-3 h-3" /> Portfolio
+        <Briefcase className="w-3 h-3" /> Zum Portfolio
       </button>
       <button
         type="button"
@@ -86,7 +88,7 @@ export function TickerAddButtons({
         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border border-border/50 text-foreground/70 hover:bg-muted/40"
         title="Zur Watchlist (P2) / Researcher-Portfolio (P3)"
       >
-        <ListPlus className="w-3 h-3" /> Watchlist
+        <ListPlus className="w-3 h-3" /> Zur Watchlist
       </button>
       {msg && <span className="text-[9px] text-emerald-400">{msg}</span>}
     </div>
@@ -98,14 +100,5 @@ export function bulkAddToWatchlist(
   items: Array<{ ticker: string; name?: string; score?: number | null }>,
   source: WatchlistSource = "researcher",
 ): { added: number; skipped: number } {
-  let added = 0;
-  let skipped = 0;
-  for (const it of items) {
-    const t = (it.ticker || "").trim().toUpperCase();
-    if (!t) continue;
-    const r = addTickerToWatchlist(t, { name: it.name, source, score: it.score });
-    if (r.ok) added++;
-    else skipped++;
-  }
-  return { added, skipped };
+  return bulkAddWatchlistEntries(items, source);
 }

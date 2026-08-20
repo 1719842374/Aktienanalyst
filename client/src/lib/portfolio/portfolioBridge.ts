@@ -4,7 +4,7 @@
  */
 
 import { makePosition, loadPositionsFromStorage, savePositionsToStorage, type PortfolioPosition } from "./positions";
-import { addWatchlistEntry, type WatchlistSource } from "./watchlist";
+import { addToWatchlist, type WatchlistSource } from "./watchlist";
 
 const PENDING_P1_KEY = "aktienanalyst_pending_portfolio_add_v1";
 
@@ -35,13 +35,13 @@ export function addTickerToWatchlist(
   ticker: string,
   opts?: { name?: string; source?: WatchlistSource; score?: number | null }
 ): { ok: boolean; reason?: string } {
-  const added = addWatchlistEntry({
+  const result = addToWatchlist({
     ticker,
     name: opts?.name,
-    source: opts?.source ?? "analysis",
+    source: opts?.source ?? "dashboard",
     score: opts?.score,
   });
-  return added ? { ok: true } : { ok: false, reason: "duplicate" };
+  return result.added ? { ok: true } : { ok: false, reason: result.reason };
 }
 
 export function consumePendingPortfolioAdd(): PendingPortfolioAdd | null {
