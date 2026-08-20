@@ -1,30 +1,22 @@
 # WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md
 
-> Stand: 20.08.2026  
+> Stand: 20.08.2026 (Update 21:06)  
 > Status: **Planung / Implementation Ready**  
-> Themen: Lynch-Klassen → DCF-Parameter-Automatisierung · Reverse-DCF g* als aktives Signal · Explizite Ablehnung FMP-DCF-Endpoints
+> Themen: Lynch-DCF-Defaults · RSL-Momentum-Malus (klassenabhängig) · Explizite Ablehnung FMP-DCF-Endpoints · Reverse-DCF g* als aktives Signal
 
 ---
 
-## 0. Kontext & Entscheidungsgrundlage
+## 0. Die drei aktuellen Umsetzungspunkte (Stand 20.08.2026)
 
-Aus der Analyse vom 20.08.2026 ergeben sich drei klare Punkte:
-
-| # | Thema | Status heute | Entscheidung |
+| # | Punkt | Status heute | Entscheidung |
 |---|-------|--------------|--------------|
-| 1 | Automatisierung Lynch-Klassen Parameter | Klassifikation vorhanden (`classifyLynch`), DCF-Defaults noch sektor- + generisch | **Umsetzen** |
-| 2 | Reverse DCF implizite Erwartungen (g*) | g* wird berechnet + angezeigt, aber passiv | **Stärker aktivieren** |
-| 3 | FMP-DCF-Endpoints (Standard / Levered / Custom Advanced / Custom Levered) | Nicht integriert | **Komplett weglassen** |
-
-Begründung gegen FMP-DCF (kurz):
-
-- Eigenes FCFF-Modell + Reverse DCF + Inverted DCF + Fiscal Overlay + WACC-Floor + TV-Guard + Margin-Stress + Structural Floor + Hardened CRV ist bereits deutlich mächtiger und transparenter.
-- FMP-DCF liefert undurchsichtige Annahmen und ist für Fast-Grower / Deep-Value / Turnarounds oft zu optimistisch.
-- Kein Integrationsaufwand → Fokus auf die beiden wertschöpfenden Punkte oben.
+| 1 | **Implementierung von Lynch-DCF-Defaults** | Klassifikation vorhanden, DCF-Parameter noch sektor- + generisch | **Umsetzen** |
+| 2 | **Integration von RSL-Momentum-Malus** | Bereits aktiv (7,5 %), aber pauschal für alle Klassen | **Klassenabhängig steuern** |
+| 3 | **FMP-DCF-Endpoints explizit ausschließen** | Nicht integriert | **Komplett weglassen** |
 
 ---
 
-## 1. Automatisierung Lynch-Klassen Parameter
+## 1. Implementierung von Lynch-DCF-Defaults
 
 ### 1.1 Ist-Zustand (Fakten aus Code)
 
@@ -76,7 +68,7 @@ Alle Werte in %. Diese Tabelle ist der Single Source of Truth für die Automatis
 | **ebitMarginTerminal**    | +1.5 pp**   | 0 pp     | –0.5 pp     | 0 pp     | +2.0 pp*** | 0 pp       |
 | **fcfHaircut Default**    | 5           | 3        | 2           | 8        | 12         | 5          |
 | **WACC-Floor Add-on**     | +0.0        | +0.0     | +0.0        | +0.5     | +1.0       | +0.0       |
-| **RSL-Malus aktiv**       | ja          | ja       | nein        | ja       | ja         | nein       |
+| **RSL-Malus aktiv**       | ja          | ja       | **nein**    | ja       | ja         | **nein**   |
 | **Kommentar**             | Aggressive Phase-1, höheres Terminal | Stabiles Compounding | Dividenden-lastig, konservativ | *Mid-Cycle normalisiert | *** Recovery-Marge | Asset-Floor wichtiger als Growth |
 
 \* Cyclical: g1 sollte idealerweise aus Mid-Cycle / Normalised Earnings abgeleitet werden (siehe 1.5).  
@@ -177,7 +169,7 @@ In `buildDefaultDCFParams`:
 **slow_grower**
 - Dividendenrendite stärker gewichten (bereits in PEGY vorhanden).
 - Terminal Growth hart auf ≤ 2.0 % begrenzen.
-- RSL-Malus deaktivieren (langsame Compounder dürfen auch bei schwachem Momentum fair bewertet werden).
+- RSL-Malus **deaktivieren** (langsame Compounder dürfen auch bei schwachem Momentum fair bewertet werden).
 
 **cyclical**
 - Ideal: Mid-Cycle EPS / Revenue als Basis statt aktueller Peak/Trough.
@@ -210,12 +202,117 @@ Checkliste:
 
 ---
 
-## 2. Reverse DCF – implizite Erwartungen (g*) stärker nutzen
+## 2. Integration von RSL-Momentum-Malus (klassenabhängig)
 
-### 2.1 Ist-Zustand
+### 2.1 Ist-Zustand (Fakten aus Code)
+
+Der RSL-Momentum-Malus ist **bereits implementiert** und wirkt:
 
 ```ts
-// calculateReverseDCF
+// client/src/lib/calculations.ts
+export const RSL_MOMENTUM_MALUS_PCT = 7.5;
+
+// In calculateFCFFDCF:
+const rslActive = params.rsl != null && params.rsl > 0 && params.rsl < 105;
+const rslFactor = rslActive ? 1 - RSL_MOMENTUM_MALUS_PCT / 100 : 1;
+const adjGrowthP1 = params.revenueGrowthP1 * rslFactor;
+const adjGrowthP2 = params.revenueGrowthP2 * rslFactor;
+```
+
+**Zahlen:**
+- RSL = (Aktueller Kurs / 26-Wochen-Durchschnitt) × 100
+- Schwelle: RSL < **105**
+- Malus: **7,5 % relativ** auf g1 und g2
+- Beispiel: g1 = 20 % → wird zu 20 × (1 – 0,075) = **18,5 %**
+- Der Malus erscheint im Rechenweg und wird in Section 9 als „Automatische Anpassung“ angezeigt
+
+**Problem heute:** Der Malus gilt pauschal für **alle** Aktien, unabhängig von der Lynch-Klasse.
+
+### 2.2 Zielbild – klassenabhängige Steuerung
+
+| Lynch-Klasse   | RSL-Malus aktiv? | Begründung |
+|----------------|------------------|------------|
+| fast_grower    | **Ja**           | Momentum ist kritisch für Wachstumsaktien |
+| stalwart       | **Ja**           | Sinnvoll als Reality-Check |
+| cyclical       | **Ja**           | Zykliker reagieren stark auf Momentum |
+| turnaround     | **Ja**           | Schwaches Momentum = höheres Risiko |
+| slow_grower    | **Nein**         | Langsame Compounder dürfen auch bei schwachem Momentum fair bewertet werden |
+| asset_play     | **Nein**         | Asset-Wert / PB wichtiger als Kursmomentum |
+
+### 2.3 Implementierungs-Vorschlag
+
+In `LYNCH_DCF_DEFAULTS` ist das Flag `applyRslMalus` bereits vorgesehen (siehe Abschnitt 1.4).
+
+In `calculateFCFFDCF` / `buildDefaultDCFParams`:
+
+```ts
+// Pseudo-Logik
+const overrides = LYNCH_DCF_DEFAULTS[lynchClass];
+const rslActive = overrides.applyRslMalus 
+  && params.rsl != null 
+  && params.rsl > 0 
+  && params.rsl < 105;
+
+const rslFactor = rslActive ? 1 - RSL_MOMENTUM_MALUS_PCT / 100 : 1;
+```
+
+**Wichtig:**  
+- Der bestehende 7,5 %-Wert bleibt unverändert.  
+- Es wird nur gesteuert, **ob** der Malus greift.  
+- Manuelle User-Overrides behalten höchste Priorität.
+
+### 2.4 Testfälle
+
+```
+[ ] fast_grower + RSL 98  → g1 und g2 werden um 7,5 % reduziert
+[ ] slow_grower + RSL 98  → g1 und g2 bleiben unverändert (kein Malus)
+[ ] asset_play  + RSL 90  → kein Malus
+[ ] stalwart    + RSL 110 → kein Malus (RSL ≥ 105)
+[ ] Rechenweg zeigt korrekt an, ob Malus aktiv war
+```
+
+---
+
+## 3. FMP-DCF-Endpoints explizit ausschließen
+
+### 3.1 Entscheidung
+
+**Keine Integration** der folgenden FMP-Endpoints:
+
+- `/discounted-cash-flow` (Standard DCF Valuation)
+- `/levered-dcf`
+- Custom DCF Advanced
+- Custom DCF Levered
+
+### 3.2 Begründung (Zahlen & Fakten)
+
+1. Eigenes Modell deckt bereits ab:
+   - Volles 10-Jahres-FCFF-Modell
+   - Manuelle Anpassung von WACC, g1, g2, Margen, Capex, Terminal Growth, Haircut
+   - Reverse DCF (g*)
+   - Anti-Bias Inverted DCF
+   - Fiscal Overlay
+   - RSL-Momentum-Malus (7,5 %)
+   - WACC-Floor, TV-Guard, Margin-Stress, Structural Floor
+   - Hardened CRV
+
+2. FMP-DCF ist Black-Box (Annahmen nicht transparent steuerbar).
+3. Für Fast-Grower und Deep-Value / Turnarounds sind FMP-Defaults häufig zu optimistisch.
+4. Zusätzliche API-Calls belasten das FMP-Budget unnötig (aktuell ca. **13 Calls pro Analyse**).
+5. Entwicklungsaufwand besser in Lynch-Parameter + klassenabhängigen RSL-Malus investieren.
+
+### 3.3 Dokumentation im Repo
+
+Dieser Abschnitt gilt als **verbindliche Entscheidung**.  
+Falls später doch ein externer Vergleich gewünscht wird, nur als optionaler Side-by-Side (nicht als primäre Quelle) und nur nach explizitem Ticket.
+
+---
+
+## 4. Reverse DCF – implizite Erwartungen (g*) stärker nutzen (weiterhin gültig)
+
+### 4.1 Ist-Zustand
+
+```ts
 g* = WACC - FCF / EV
 
 Rating:
@@ -227,136 +324,57 @@ Rating:
 Referenzwachstum = max(sectorG1, epsGrowth5Y, 3 %)
 ```
 
-g* wird bereits für den **Einpreisungsgrad** von Katalysatoren genutzt (`calcEinpreisungsgrad`).  
-Ansonsten ist es primär eine Anzeige in Sektion 14.
+g* wird bereits für den Einpreisungsgrad von Katalysatoren genutzt. Ansonsten primär Anzeige in Sektion 14.
 
-### 2.2 Zielbild – g* als aktives Signal
-
-Vier konkrete Verwendungen:
+### 4.2 Zielbild – g* als aktives Signal
 
 | # | Verwendung | Beschreibung | Priorität |
 |---|------------|--------------|-----------|
-| A | Gap-Analyse | `gap = g* – eigene g1` → Warnung / Score-Abzug wenn |gap| groß | Hoch |
-| B | Thesis-Strength Input | g*-Rating fließt in Thesis-Strength / Scoring-Gates ein | Hoch |
-| C | Soft-Signal für Lynch | Wenn g* ≥ 25 % und aktuelle Klasse ≠ fast_grower → Hinweis / Soft-Override | Mittel |
-| D | Reality-Check UI | Expliziter Block „Markt preist X % vs. unser Modell Y %“ | Hoch |
+| A | Gap-Analyse | `gap = g* – eigene g1` → Warnung / Score-Abzug | Hoch |
+| B | Thesis-Strength Input | g*-Rating fließt in Scoring-Gates ein | Hoch |
+| C | Soft-Signal für Lynch | g* ≥ 25 % und Klasse ≠ fast_grower → Hinweis | Mittel |
+| D | Reality-Check UI | „Markt preist X % vs. unser Modell Y %“ | Hoch |
 
-### 2.3 Konkrete Implementierungs-Vorschläge
-
-**A – Gap-Analyse (einfach & wirkungsvoll)**
-
-```ts
-export function calculateGrowthGap(impliedGStar: number, modelG1: number): {
-  gapPp: number;
-  gapRatio: number;
-  flag: 'aligned' | 'market_more_optimistic' | 'market_more_pessimistic' | 'extreme';
-} {
-  const gapPp = impliedGStar - modelG1;
-  const gapRatio = modelG1 !== 0 ? impliedGStar / modelG1 : (impliedGStar > 0 ? Infinity : 0);
-
-  let flag: 'aligned' | 'market_more_optimistic' | 'market_more_pessimistic' | 'extreme' = 'aligned';
-  if (Math.abs(gapPp) <= 3) flag = 'aligned';
-  else if (gapPp > 8 || gapRatio > 1.6) flag = 'extreme';
-  else if (gapPp > 3) flag = 'market_more_optimistic';
-  else flag = 'market_more_pessimistic';
-
-  return { gapPp, gapRatio, flag };
-}
-```
-
-Verwendung:
-- In Sektion 14 + Summary anzeigen
-- Bei `extreme` → automatischer Hinweis im Thesis-Strength / Score
-
-**B – Thesis-Strength Integration**
-
-In `thesis-strength.ts` / Scoring-Gates:
-
-- `unrealistic` → leichter Score-Abzug oder Gate-Warnung („Markt preist unrealistisches Wachstum“)
-- `negativ` → separates Flag (Markt erwartet Schrumpfung)
-- `realistic` → neutral bis leicht positiv
-
-**C – Soft-Signal für Lynch-Klassifikation**
-
-Nur als Hinweis, kein Hard-Override:
-
-```ts
-if (gStar >= 25 && lynchClass !== 'fast_grower') {
-  // UI: "Markt preist Fast-Grower-Wachstum ein (g* = 27 %), Klassifikation ist aktuell 'stalwart'"
-}
-```
-
-**D – UI-Block (Sektion 14 / Summary)**
-
-```
-Markt-implizite Erwartung (g*)     14.2 %   [sportlich]
-Unser Modell g1                   9.0 %
-Gap                               +5.2 pp  → Markt optimistischer
-```
-
-### 2.4 Guardrails
+### 4.3 Guardrails
 
 - g* bleibt **clean** (kein Fiscal-Overlay) – Regel aus WORK_REVERSE_DCF_BRIDGE.md bleibt unangetastet.
-- Gap-Analyse und Soft-Signals dürfen die Reverse-DCF-Formel selbst nicht verändern.
 - Keine automatische Überschreibung der User-Wachstumsannahmen – nur Hinweise + Score-Einfluss.
 
 ---
 
-## 3. FMP-DCF-Endpoints – explizite Entscheidung
-
-### 3.1 Entscheidung
-
-**Keine Integration** der folgenden FMP-Endpoints:
-
-- `/discounted-cash-flow` (Standard DCF Valuation)
-- `/levered-dcf`
-- Custom DCF Advanced
-- Custom DCF Levered
-
-### 3.2 Begründung (kurz & belastbar)
-
-1. Eigenes Modell deckt bereits ab: FCFF-Projektion, WACC-Override, g1/g2, Margen, Capex, Terminal, Haircut, Reverse DCF, Inverted DCF, Fiscal Overlay, RSL-Malus, WACC-Floor, TV-Guard, Margin-Stress, Structural Floor, Hardened CRV.
-2. FMP-DCF ist Black-Box (Annahmen nicht transparent steuerbar).
-3. Für Fast-Grower und Deep-Value / Turnarounds sind FMP-Defaults häufig zu optimistisch.
-4. Zusätzliche API-Calls belasten das FMP-Budget unnötig (aktuell ~13 Calls pro Analyse).
-5. Entwicklungsaufwand besser in Lynch-Parameter + g*-Nutzung investieren.
-
-### 3.3 Dokumentation im Repo
-
-Dieser Abschnitt gilt als verbindliche Entscheidung.  
-Falls später doch ein externer Vergleich gewünscht wird, nur als **optionaler Side-by-Side** (nicht als primäre Quelle) und nur nach explizitem Ticket.
-
----
-
-## 4. Umsetzungs-Reihenfolge (empfohlen)
+## 5. Umsetzungs-Reihenfolge (empfohlen)
 
 | Phase | Aufgabe | Aufwand (geschätzt) | Abhängigkeit |
 |-------|---------|---------------------|--------------|
 | 1 | `LYNCH_DCF_DEFAULTS` + Integration in `buildDefaultDCFParams` | 0.5–1 Tag | LynchClass muss in StockAnalysis vorhanden sein |
-| 2 | Gap-Analyse + UI-Anzeige in Sektion 14 / Summary | 0.5 Tag | Phase 1 nicht zwingend |
-| 3 | g*-Rating in Thesis-Strength / Scoring-Gates | 0.5–1 Tag | Phase 2 |
-| 4 | Soft-Signal Lynch vs. g* (nur Hinweis) | 0.25 Tag | Phase 1 + 2 |
-| 5 | Dokumentation + Tests (Unit-Tests für Defaults + Gap) | 0.5 Tag | – |
+| 2 | RSL-Malus klassenabhängig steuern (`applyRslMalus`) | 0.25–0.5 Tag | Phase 1 |
+| 3 | Gap-Analyse + UI-Anzeige in Sektion 14 / Summary | 0.5 Tag | – |
+| 4 | g*-Rating in Thesis-Strength / Scoring-Gates | 0.5–1 Tag | Phase 3 |
+| 5 | Soft-Signal Lynch vs. g* (nur Hinweis) | 0.25 Tag | Phase 1 + 3 |
+| 6 | Dokumentation + Tests | 0.5 Tag | – |
 
-Gesamt: ca. 2–3 Tage fokussierte Arbeit.
+Gesamt: ca. **2–3 Tage** fokussierte Arbeit.
 
 ---
 
-## 5. Test-Checkliste
+## 6. Test-Checkliste
 
 ```
-[ ] classifyLynch liefert für bekannte Ticker die erwartete Klasse (MSFT → stalwart/fast_grower je nach Wachstum, NVO etc.)
+[ ] classifyLynch liefert für bekannte Ticker die erwartete Klasse
 [ ] buildDefaultDCFParams setzt g1/g2/terminalG/haircut korrekt nach Lynch-Klasse
 [ ] Manuelle Overrides überschreiben Lynch-Defaults weiterhin
+[ ] fast_grower + RSL < 105 → Malus 7,5 % wird angewendet
+[ ] slow_grower + RSL < 105 → kein Malus
+[ ] asset_play  + RSL < 105 → kein Malus
 [ ] Gap-Analyse liefert korrekte Flags (aligned / market_more_optimistic / extreme)
-[ ] g* bleibt identisch mit/ohne Fiscal-Overlay (Regression aus WORK_REVERSE_DCF_BRIDGE)
+[ ] g* bleibt identisch mit/ohne Fiscal-Overlay
 [ ] Thesis-Strength reagiert auf unrealistic / negativ
 [ ] Keine FMP-DCF-Calls im Network-Log / Budget-Tracker
 ```
 
 ---
 
-## 6. Offene Punkte / spätere Erweiterungen
+## 7. Offene Punkte / spätere Erweiterungen
 
 - Mid-Cycle-Normalisierung für Cyclicals (Peak/Trough-EPS aus Historie) – aktuell nur Placeholder.
 - Feineres Mapping von Sektor + Lynch-Klasse (z. B. Healthcare-Stalwart vs. Tech-Stalwart).
