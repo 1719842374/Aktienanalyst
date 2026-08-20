@@ -20,7 +20,12 @@
  *
  * Ausfuehren: npx tsx script/test-roic.ts
  */
-import { extractRoicFromKeyMetricsRows, extractRoicPercentFromRow } from "../server/news-peers";
+import {
+  extractRoicFromKeyMetricsRows,
+  extractRoicPercentFromRow,
+  isPeerMarketCapWithinBand,
+  sanitizeRoic,
+} from "../server/news-peers";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail?: string) {
@@ -29,6 +34,13 @@ function check(name: string, cond: boolean, detail?: string) {
 }
 
 console.log("\n=== Extraktion aus FMP /stable/key-metrics Zeile (1Y/FY, bestehend) ===");
+{
+  check("ROIC +469.4 % wird als unplausibel verworfen", sanitizeRoic(469.4) === null);
+  check("ROIC -101 % wird als unplausibel verworfen", sanitizeRoic(-101) === null);
+  check("ROIC +100 % bleibt sichtbar (Cap ist inklusiv)", sanitizeRoic(100) === 100);
+  check("ROIC -100 % bleibt sichtbar (Cap ist inklusiv)", sanitizeRoic(-100) === -100);
+  check("plausibler stark negativer ROIC bleibt sichtbar", sanitizeRoic(-80) === -80);
+}
 {
   // Echte Struktur, live gegen FMP AAPL 2025 verifiziert (0..1-Skala von FMP)
   const row = { symbol: "AAPL", date: "2025-09-27", fiscalYear: "2025", returnOnInvestedCapital: 0.5196842110031786 };
@@ -82,9 +94,8 @@ console.log("\n=== ROIC 5Y — arithmetischer Durchschnitt (Auftrag 05.08.2026) 
   check("roic5YYearsUsed = 5 (nicht 6 — nur die ersten 5 Zeilen fliessen ein)", r.roic5YYearsUsed === 5, String(r.roic5YYearsUsed));
 }
 {
-  // BYDDY-Fall: 6 Jahre Historie, davon ein extremer Ausreisser (2022: -940%,
-  // echter Sondereffekt laut FMP-Rohdaten) — MUSS normal einbezogen werden,
-  // kein Ausfiltern nach Groesse (Regel #2 im Auftrag).
+  // Ein extremer Jahreswert darf den 5Y-Durchschnitt nicht verzerren. Er wird
+  // verworfen; die verbleibenden plausiblen Jahre werden normal gemittelt.
   const rows = [
     { fiscalYear: "2025", returnOnInvestedCapital: 0.03759826729471851 },
     { fiscalYear: "2024", returnOnInvestedCapital: 0.14112118620717876 },
@@ -93,10 +104,38 @@ console.log("\n=== ROIC 5Y — arithmetischer Durchschnitt (Auftrag 05.08.2026) 
     { fiscalYear: "2021", returnOnInvestedCapital: 0.048562354159807655 },
   ];
   const r = extractRoicFromKeyMetricsRows(rows);
-  check("extremer negativer Ausreisser (2022) wird NICHT gefiltert (fliesst in den Durchschnitt ein)",
-    r.roic5YYearsUsed === 5, `yearsUsed=${r.roic5YYearsUsed}`);
-  check("roic5YPercent ist stark negativ durch den Ausreisser (kein Clamping)",
-    (r.roic5YPercent ?? 0) < -100, String(r.roic5YPercent));
+  check("extremer negativer Ausreisser wird verworfen", r.roic5YYearsUsed === 4, `yearsUsed=${r.roic5YYearsUsed}`);
+  check("roic5YPercent nutzt nur die plausiblen Jahre", r.roic5YPercent === 9.0, String(r.roic5YPercent));
+}
+{
+  const rows = [
+    { fiscalYear: "2025", returnOnInvestedCapital: 4.694 },
+    { fiscalYear: "2024", returnOnInvestedCapital: 0.10 },
+    { fiscalYear: "2023", returnOnInvestedCapital: 0.20 },
+    { fiscalYear: "2022", returnOnInvestedCapital: 0.30 },
+    { fiscalYear: "2021", returnOnInvestedCapital: 0.40 },
+  ];
+  const r = extractRoicFromKeyMetricsRows(rows);
+  check("extremer positiver FY-ROIC wird null statt angezeigt", r.roicPercent === null, String(r.roicPercent));
+  check("5Y-Durchschnitt schließt den extremen positiven Jahreswert aus", r.roic5YPercent === 25.0 && r.roic5YYearsUsed === 4, `${r.roic5YPercent}, years=${r.roic5YYearsUsed}`);
+}
+{
+  const rows = [
+    { returnOnInvestedCapital: 4.694 },
+    { returnOnInvestedCapital: -9.4 },
+    { returnOnInvestedCapital: 0.30 },
+    { returnOnInvestedCapital: 0.20 },
+    { returnOnInvestedCapital: null },
+  ];
+  const r = extractRoicFromKeyMetricsRows(rows);
+  check("weniger als drei plausible Jahre ergeben keinen 5Y-Durchschnitt", r.roic5YPercent === null && r.roic5YYearsUsed === 2, `${r.roic5YPercent}, years=${r.roic5YYearsUsed}`);
+}
+{
+  const subjectCap = 2_800_000_000_000;
+  check("Market-Cap-Band akzeptiert 5 % der Subjekt-Marktkapitalisierung", isPeerMarketCapWithinBand(subjectCap * 0.05, subjectCap));
+  check("Market-Cap-Band akzeptiert 20x der Subjekt-Marktkapitalisierung", isPeerMarketCapWithinBand(subjectCap * 20, subjectCap));
+  check("Market-Cap-Band verwirft Micro-Cap unter 5 %", !isPeerMarketCapWithinBand(28_000_000, subjectCap));
+  check("Market-Cap-Band verwirft fehlende Marktkapitalisierung", !isPeerMarketCapWithinBand(null, subjectCap));
 }
 {
   // Genau 3 Jahre mit Wert → Grenzfall, MIN_ROIC_5Y_YEARS=3 → Durchschnitt wird gezeigt

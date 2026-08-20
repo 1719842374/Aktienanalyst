@@ -15,6 +15,22 @@ function fmtCap(v: number | null | undefined): string {
   return `$${v.toFixed(0)}`;
 }
 
+const ROIC_ABS_CAP = 100;
+const isRoicColumn = (key: string) => key === "roic" || key === "roic5Y";
+
+// Cached responses may predate the backend plausibility rule. Do not surface
+// those invalid values or let them affect a visual best-value highlight.
+function sanitizedMetricValue(key: string, value: number | null | undefined): number | null {
+  if (value == null || isNaN(value) || !isFinite(value)) return null;
+  return isRoicColumn(key) && Math.abs(value) > ROIC_ABS_CAP ? null : value;
+}
+
+function fmtMetric(key: string, value: number | null | undefined, decimals: number, suffix: string): string {
+  const sanitized = sanitizedMetricValue(key, value);
+  if (sanitized == null) return isRoicColumn(key) ? "n/a" : "—";
+  return `${fmt(sanitized, decimals)}${suffix}`;
+}
+
 type SortKey = "ticker" | "marketCap" | "pe" | "peg" | "ps" | "pb" | "epsGrowth1Y" | "epsGrowth5Y" | "roic" | "roic5Y";
 type SortDir = "asc" | "desc";
 
@@ -81,7 +97,7 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
     // Jahr gemeint ist — unabhaengig ob Subjekt oder Peers ein anderes FY haben.
     { key: "roic", label: subject.roicFiscalYear ? `ROIC (FY${subject.roicFiscalYear})` : "ROIC (FY)", lowerIsBetter: false, decimals: 1, suffix: "%" },
     // Auftrag 05.08.2026: zweite ROIC-Spalte — arithmetischer Durchschnitt der
-    // letzten bis zu 5 Geschaeftsjahre. Zeigt "n/a" (via fmt() -> "—", da null),
+    // letzten bis zu 5 Geschaeftsjahre. Zeigt "n/a",
     // wenn < 3 Jahre mit echtem Wert vorliegen (server-seitig entschieden in
     // news-peers.ts extractRoicFromKeyMetricsRows).
     { key: "roic5Y", label: "ROIC 5Y Ø", lowerIsBetter: false, decimals: 1, suffix: "%" },
@@ -91,8 +107,8 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
   const sortedPeers = useMemo(() => {
     if (!sortKey) return peers;
     return [...peers].sort((a, b) => {
-      const av = (a as any)[sortKey];
-      const bv = (b as any)[sortKey];
+      const av = sanitizedMetricValue(sortKey, (a as any)[sortKey]);
+      const bv = sanitizedMetricValue(sortKey, (b as any)[sortKey]);
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
@@ -117,13 +133,14 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
   const allCompanies: PeerCompany[] = [subject, ...peers];
   const bestValues = new Map<string, number | null>();
   for (const col of cols) {
-    bestValues.set(col.key, findBest(allCompanies.map(c => (c as any)[col.key]), col.lowerIsBetter));
+    bestValues.set(col.key, findBest(allCompanies.map(c => sanitizedMetricValue(col.key, (c as any)[col.key])), col.lowerIsBetter));
   }
 
   function isBest(key: string, val: number | null | undefined): boolean {
-    if (val == null || isNaN(val) || !isFinite(val) || val <= 0) return false;
+    const sanitized = sanitizedMetricValue(key, val);
+    if (sanitized == null || sanitized <= 0) return false;
     const best = bestValues.get(key);
-    return best != null && Math.abs(val - best) < 0.01;
+    return best != null && Math.abs(sanitized - best) < 0.01;
   }
 
   // Cell styling
@@ -197,7 +214,7 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
                 <div className="flex items-center justify-end gap-0.5">Mkt Cap <SortIcon col="marketCap" /></div>
               </th>
               {cols.map(c => (
-                <th key={c.key} className="text-right py-1.5 px-1 text-muted-foreground font-medium cursor-pointer select-none hover:text-foreground/80 transition-colors" onClick={() => handleSort(c.key)} title={c.key === "roic5Y" ? "Durchschnitt der letzten 3–5 verfügbaren Geschäftsjahre. \"—\" = Historie zu kurz (<3 Jahre)" : undefined}>
+                <th key={c.key} className="text-right py-1.5 px-1 text-muted-foreground font-medium cursor-pointer select-none hover:text-foreground/80 transition-colors" onClick={() => handleSort(c.key)} title={c.key === "roic5Y" ? "Durchschnitt der letzten 3–5 verfügbaren Geschäftsjahre. \"n/a\" = zu kurze Historie oder unplausibler FMP-Wert" : undefined}>
                   <div className="flex items-center justify-end gap-0.5">{c.label} <SortIcon col={c.key} /></div>
                 </th>
               ))}
@@ -216,7 +233,8 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
               <td className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px]">{fmtCap(subject.marketCap)}</td>
               {cols.map(c => {
                 const val = (subject as any)[c.key] as number | null;
-                return <td key={c.key} className={cellCls(c.key, val, true)}>{val != null ? `${fmt(val, c.decimals)}${c.suffix}` : "—"}</td>;
+                const sanitized = sanitizedMetricValue(c.key, val);
+                return <td key={c.key} className={cellCls(c.key, sanitized, true)}>{fmtMetric(c.key, val, c.decimals, c.suffix)}</td>;
               })}
               {onOverridesChange && <td></td>}
             </tr>
@@ -228,7 +246,8 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
                 <td className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px] text-foreground/50">{fmtCap(p.marketCap)}</td>
                 {cols.map(c => {
                   const val = (p as any)[c.key] as number | null;
-                  return <td key={c.key} className={cellCls(c.key, val, false)}>{val != null ? `${fmt(val, c.decimals)}${c.suffix}` : "—"}</td>;
+                  const sanitized = sanitizedMetricValue(c.key, val);
+                  return <td key={c.key} className={cellCls(c.key, sanitized, false)}>{fmtMetric(c.key, val, c.decimals, c.suffix)}</td>;
                 })}
                 {onOverridesChange && (
                   <td className="py-1.5 px-1 text-right">
@@ -250,7 +269,7 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
               <td className="py-1.5 px-1 text-right text-muted-foreground text-[11px]">—</td>
               {cols.map(c => {
                 const avgVal = (peerAvg as any)[c.key] as number | null;
-                return <td key={c.key} className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px] text-muted-foreground">{avgVal != null ? `${fmt(avgVal, c.decimals)}${c.suffix}` : "—"}</td>;
+                return <td key={c.key} className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px] text-muted-foreground">{fmtMetric(c.key, avgVal, c.decimals, c.suffix)}</td>;
               })}
               {onOverridesChange && <td></td>}
             </tr>
@@ -315,8 +334,8 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
       {/* Premium/Discount Summary Cards */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
         {cols.map(c => {
-          const sVal = (subject as any)[c.key] as number | null;
-          const aVal = (peerAvg as any)[c.key] as number | null;
+          const sVal = sanitizedMetricValue(c.key, (subject as any)[c.key] as number | null);
+          const aVal = sanitizedMetricValue(c.key, (peerAvg as any)[c.key] as number | null);
           const prem = premiumPct(sVal, aVal);
           const color = premColor(sVal, aVal, c.lowerIsBetter);
           const bgColor = color.includes("emerald") ? "bg-emerald-500/8 border-emerald-500/20" :

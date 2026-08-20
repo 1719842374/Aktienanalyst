@@ -1,7 +1,7 @@
 /**
  * news-peers.ts
  * Google News RSS fetcher, news-to-catalyst matching, peer comparison via FMP.
- * RESTORED + Market-Cap: absolute $1B floor only (no relative 5%-20x band).
+ * Peer comparison with ROIC plausibility checks and a relative market-cap band.
  */
 
 import type { Catalyst } from "../shared/schema";
@@ -164,16 +164,39 @@ export interface RoicPoint {
 }
 const MIN_ROIC_5Y_YEARS = 3;
 const MAX_ROIC_5Y_YEARS = 5;
-const ROIC_ABS_CAP = 100;
+export const ROIC_ABS_CAP = 100;
+const PEER_CAP_MIN_FACTOR = 0.05;
+const PEER_CAP_MAX_FACTOR = 20;
+
+/**
+ * Removes implausible FMP ROIC observations instead of clipping them. A tiny
+ * invested-capital denominator can otherwise turn an unusable raw value into a
+ * misleading best-in-class result or peer average.
+ */
+export function sanitizeRoic(pct: number | null): number | null {
+  if (pct == null || !isFinite(pct) || Math.abs(pct) > ROIC_ABS_CAP) return null;
+  return pct;
+}
+
+export function isPeerMarketCapWithinBand(peerMarketCap: number | null, subjectMarketCap: number): boolean {
+  if (
+    peerMarketCap == null ||
+    !isFinite(peerMarketCap) ||
+    peerMarketCap <= 0 ||
+    !isFinite(subjectMarketCap) ||
+    subjectMarketCap <= 0
+  ) return false;
+  return peerMarketCap >= subjectMarketCap * PEER_CAP_MIN_FACTOR
+    && peerMarketCap <= subjectMarketCap * PEER_CAP_MAX_FACTOR;
+}
 
 export function extractRoicPercentFromRow(row: any): number | null {
   if (!row) return null;
   const field = row.returnOnInvestedCapital;
   const raw = field == null ? NaN : Number(field);
   if (!isFinite(raw)) return null;
-  const pct = +(raw * 100).toFixed(1);
-  if (Math.abs(pct) > ROIC_ABS_CAP) return null;
-  return pct;
+  const sanitized = sanitizeRoic(raw * 100);
+  return sanitized == null ? null : +sanitized.toFixed(1);
 }
 
 export function extractRoicFromKeyMetricsRows(rows: any[]): RoicPoint {
@@ -217,13 +240,12 @@ export async function fetchPeerComparisonFromTickers(
       if (endValue <= 0 || startValue <= 0) return null;
       return +((Math.pow(endValue / startValue, 1 / years) - 1) * 100).toFixed(1);
     };
-    const PEER_CAP_ABS_FLOOR = 1_000_000_000;
     const peers: any[] = [];
     peerTickers.forEach((t, idx) => {
       const q = quoteByTicker.get(t);
       const peerCap = q?.marketCap != null ? Number(q.marketCap) : null;
-      if (peerCap != null && peerCap > 0 && peerCap < PEER_CAP_ABS_FLOOR) {
-        console.log(`[PEERS-FMP] ${t} verworfen — Market-Cap < $1B (peer=${peerCap})`);
+      if (!isPeerMarketCapWithinBand(peerCap, marketCap)) {
+        console.log(`[PEERS-FMP] ${t} verworfen — Market-Cap außerhalb des 5%-bis-20x-Bands (peer=${peerCap}, subject=${marketCap})`);
         return;
       }
       const ratios: any[] = Array.isArray(ratiosPerPeer[idx]) ? ratiosPerPeer[idx] : [];
@@ -294,8 +316,8 @@ export async function fetchPeerComparisonFromTickers(
       pb: avg(validPeers.map(p => p.pb).map(v => v && v > 0 ? v : null), 0, 200),
       epsGrowth1Y: avg(validPeers.map(p => p.epsGrowth1Y), -100, 300),
       epsGrowth5Y: avg(validPeers.map(p => p.epsGrowth5Y), -100, 300),
-      roic: avg(validPeers.map(p => p.roic), -100, 100),
-      roic5Y: avg(validPeers.map(p => p.roic5Y), -100, 100),
+      roic: avg(validPeers.map(p => sanitizeRoic(p.roic))),
+      roic5Y: avg(validPeers.map(p => sanitizeRoic(p.roic5Y))),
     };
     return { subject, peers: validPeers, peerAvg };
   } catch (err: any) {
