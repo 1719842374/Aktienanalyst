@@ -12,8 +12,8 @@
  *   Mit Keywords (steigt, starken) → +1.0 → grün.
  *
  * Reconcile:
- *   1) |kw| ≥ 0.5 und Vorzeichen ≠ LLM → Keyword gewinnt
- *   2) |LLM| ≥ 0.99 und |kw| ≥ 0.3 und Konflikt → Keyword gewinnt
+ *   1) kw > 0.3 bei LLM < -0.3 → Keyword gewinnt
+ *   2) kw < -0.3 bei LLM > 0.3 → Keyword gewinnt
  *   3) sonst LLM behalten
  */
 
@@ -27,8 +27,9 @@ const BULLISH_WORDS = [
   // DE
   "steigt", "steigen", "gestiegen", "stark", "starken", "starke", "wachstum",
   "gewinn", "gewinne", "dividende", "dividendenrendite", "übertrifft", "uebertrifft",
-  "rekord", "positiv", "positive", "übernahme", "uebernahme",
+  "rekord", "positiv", "positive", "übernahme", "uebernahme", "übernehmen", "uebernehmen",
   "kauft", "zukauf", "erhöht", "erhoeht", "anhebung", "besser", "bessere",
+  "anheben",
 ];
 
 const BEARISH_WORDS = [
@@ -39,7 +40,7 @@ const BEARISH_WORDS = [
   "layoffs", "warn", "warning", "plunge", "plunges", "slump", "slumps",
   "lawsuit", "probe", "investigation", "fraud", "default",
   // DE
-  "fällt", "faellt", "fallen", "gesunken", "rückgang", "rueckgang", "schwäche",
+  "fällt", "faellt", "fallen", "sinkt", "gesunken", "rückgang", "rueckgang", "schwäche",
   "schwaeche", "verlust", "verluste", "warnung", "warnt", "senkt", "kürzung",
   "kuerzung", "entlassung", "klage", "skandal", "pleite", "minus", "schwach",
 ];
@@ -105,13 +106,15 @@ export function reconcileNewsSentiment(newsItems: any[]): void {
       continue;
     }
 
-    const signKw = Math.sign(kw.sentimentScore);
-    const signLlm = Math.sign(llmScore);
-    const extremeLlm = Math.abs(llmScore) >= 0.99;
-    const decisiveKw = Math.abs(kw.sentimentScore) >= 0.5;
-    const conflict = signKw !== 0 && signLlm !== 0 && signKw !== signLlm;
+    const clearKeywordConflict =
+      (kw.sentimentScore > 0.3 && llmScore < -0.3)
+      || (kw.sentimentScore < -0.3 && llmScore > 0.3);
 
-    if ((decisiveKw && conflict) || (extremeLlm && Math.abs(kw.sentimentScore) >= 0.3 && conflict)) {
+    if (clearKeywordConflict) {
+      console.warn(
+        `[NEWS-SENTIMENT] LLM/keyword conflict; keyword overrides LLM `
+        + `(llm=${llmScore.toFixed(2)}, keyword=${kw.sentimentScore.toFixed(2)}, title="${title.substring(0, 120)}")`
+      );
       item.sentiment = kw.sentiment;
       item.sentimentScore = kw.sentimentScore;
       item.sentimentSource = "keyword_override";

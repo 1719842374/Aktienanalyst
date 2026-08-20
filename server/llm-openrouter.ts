@@ -203,14 +203,14 @@ SCHLECHTE Beispiele (verboten):
 - "AI / Cloud Adoption Tailwind" — Sektor-Template, nicht firmenspezifisch
 
 NEWS-SENTIMENT-REGELN (streng):
-- score ∈ [−1.0, +1.0] aus dem **Titelinhalt** ableiten — NICHT Beispielwerte kopieren
-- bullish: Aktie steigt, starke Zahlen, Raised/Acquired, Dividende, Beat → +0.5 … +1.0
-- bearish: fällt, underperforms, Miss, Cut, Downgrade → −0.5 … −1.0
+- score und sentiment ∈ [−1.0, +1.0] strikt aus dem **Nachrichtentitel** ableiten — Beispielwerte sind nur Formatbeispiele und dürfen niemals kopiert werden
+- bullish: Aktie steigt, starke Zahlen, Gewinn, Dividende, Raised/Acquired oder Beat → +0.5 … +1.0
+- bearish: Aktie fällt, Verlust, Warnung, underperforms, Miss, Cut oder Downgrade → −0.5 … −1.0
 - neutral: Chart/Kurs ohne Richtung → 0.0
 - idx ist 1-basiert (N1 → idx=1)
 
 Antworte NUR mit diesem JSON (kein Markdown, keine Erklärungen):
-{"catalysts":[{"name":"Firmenspezifischer Name ≤50 Zeichen","context":"Deutsche Erklärung mit konkreten Zahlen/Namen, 1-2 Sätze","timeline":"6-12M|12-18M|12-24M|12-36M","pos":20-80,"bruttoUpside":5-35,"einpreisungsgrad":20-65}],"newsMatches":[{"idx":1,"sentiment":"bullish","score":0.8,"catalyst":"K1"},{"idx":2,"sentiment":"bearish","score":-0.7,"catalyst":"none"},{"idx":3,"sentiment":"neutral","score":0.0,"catalyst":"none"}]}`;
+{"catalysts":[{"name":"Firmenspezifischer Name ≤50 Zeichen","context":"Deutsche Erklärung mit konkreten Zahlen/Namen, 1-2 Sätze","timeline":"6-12M|12-18M|12-24M|12-36M","pos":20-80,"bruttoUpside":5-35,"einpreisungsgrad":20-65}],"newsMatches":[{"idx":1,"sentiment":"bullish","score":0.8,"catalyst":"K1"},{"idx":2,"sentiment":"bearish","score":-0.8,"catalyst":"none"},{"idx":3,"sentiment":"neutral","score":0.0,"catalyst":"none"}]}`;
 
   try {
     console.log(`[LLM] Calling (with fallback) for ${ticker} (combined catalyst+news, news_count=${newsItems.length})`);
