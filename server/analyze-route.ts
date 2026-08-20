@@ -73,7 +73,6 @@ import {
   type CurrencyInfo,
   type PESTELAnalysis,
   type MacroCorrelations,
-  type MacroCorrelation,
   type RevenueSegment,
 } from "../shared/schema";
 
@@ -1094,8 +1093,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         newsItems = await fetchNewsFromGoogleRSS(upperTicker, companyName);
       } catch (newsErr: any) {
         console.warn(`[ANALYZE] News fetch failed for ${upperTicker}: ${newsErr?.message?.substring(0, 80)}`);
-      }
-      if (newsItems.length > 0) {
+      }      if (newsItems.length > 0) {
         try { applyKeywordSentimentToNews(newsItems); } catch {}
       }
       const newsHeadlines = newsItems.map((n: any) => String(n.title ?? "")).filter(Boolean);
@@ -1162,11 +1160,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           try { matchNewsToCatalysts(newsItems, catalysts); } catch {}
         }
       }
-
-      if (newsItems.length > 0) {
+            if (newsItems.length > 0) {
         try { reconcileNewsSentiment(newsItems); } catch {}
       }
-
       // ── 12. Risks ──
       let risks: Risk[] = [];
 
@@ -1389,7 +1385,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         industry.toLowerCase().includes("financ") ||
         industry.toLowerCase().includes("insurance");
 
-      const macroCorrelations: MacroCorrelation[] = [
+      // Raw correlations remain numeric for the calculation below and are mapped
+      // to the shared MacroCorrelation union when assembling the response.
+      const macroCorrelations: Array<{ factor: string; correlation: number; description: string }> = [
         { factor: "Fed Funds Rate", correlation: isBank ? 0.6 : beta > 1.2 ? -0.4 : -0.2, description: isBank ? "Steigende Zinsen erhöhen NIM" : "Steigende Zinsen komprimieren Multiples" },
         { factor: "USD Stärke", correlation: country !== "US" ? -0.3 : 0.1, description: country !== "US" ? "USD-Stärke belastet Auslands-Earnings" : "Geringer USD-Einfluss (US-fokussiert)" },
         { factor: "Ölpreis (WTI)", correlation: effectiveSector.toLowerCase().includes("energ") ? 0.7 : -0.1, description: effectiveSector.toLowerCase().includes("energ") ? "Ölpreis direkt mit Revenue korreliert" : "Indirekter Kostenfaktor" },
