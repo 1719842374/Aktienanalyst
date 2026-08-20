@@ -109,6 +109,7 @@ import {
   fmpQuote,
   fmpEarningsCalendar,
   convertFmpRowsToUsd,
+  dedupeSegmentsByName,
 } from "./fmp";
 import { buildScoringForAnalysis } from "./scoring-integration";
 import { getCachedRegulatoryAssessment } from "./regulatory";
@@ -1053,6 +1054,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         }
       }
 
+      revenueSegments = dedupeSegmentsByName(revenueSegments);
+
       // ── 8. TAM analysis ──
       const tamAnalysis = generateTAMAnalysis(effectiveSector, industry, description, revenue, revenueGrowth, revenueSegments);
 
@@ -1587,6 +1590,26 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         };
       }
 
+      const rawGeo = Array.isArray(geoSegments) ? geoSegments : [];
+      const geoSegmentsClean = dedupeSegmentsByName(rawGeo);
+      const productKeys = new Set(
+        revenueSegments.map(s =>
+          s.name
+            .toLowerCase()
+            .replace(/[^a-z0-9äöüß]/g, "")
+            .replace(/segment$/, "")
+            .trim()
+        )
+      );
+      const geoWithoutOverlap = geoSegmentsClean.filter(g => {
+        const key = g.name
+          .toLowerCase()
+          .replace(/[^a-z0-9äöüß]/g, "")
+          .replace(/segment$/, "")
+          .trim();
+        return !productKeys.has(key);
+      });
+
       // NOTE: Cast to any at the end because we intentionally include a few
       // legacy-compatible extras (analystPTMedian etc.) alongside the canonical
       // schema fields. shared/schema.ts:StockAnalysis is the source of truth
@@ -1765,7 +1788,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
         // Section 17 / Peer view
         revenueSegments,
-        geoSegments: Array.isArray(geoSegments) ? geoSegments : [],
+        geoSegments: geoWithoutOverlap,
         // Segment-Fallback-Pipeline (2026-08): lets the UI show "Quelle: FMP"
         // vs. "Quelle: 10-K FY2025" vs. a clear "not available" message instead
         // of a silent/empty block. See step 7b above for the fallback chain.

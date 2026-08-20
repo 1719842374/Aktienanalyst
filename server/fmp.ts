@@ -294,6 +294,41 @@ function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
 }
 
 /**
+ * Dedupliziert Segmente nach normalisiertem Namen.
+ * - Behält den Eintrag mit dem höheren Revenue (bei Gleichstand den ersten).
+ * - Ticker-agnostisch, keine Hardcodes.
+ * - Entfernt leere / ungültige Namen.
+ */
+export function dedupeSegmentsByName<T extends { name: string; revenue: number }>(
+  segs: T[]
+): T[] {
+  if (!Array.isArray(segs) || segs.length === 0) return [];
+
+  const map = new Map<string, T>();
+
+  for (const s of segs) {
+    if (!s || typeof s.name !== "string" || !s.name.trim()) continue;
+
+    const key = s.name
+      .toLowerCase()
+      .replace(/[^a-z0-9äöüß]/g, "")
+      .replace(/segment$/, "")
+      .trim();
+
+    if (!key) continue;
+
+    const existing = map.get(key);
+    if (!existing || (Number(s.revenue) || 0) > (Number(existing.revenue) || 0)) {
+      map.set(key, s);
+    }
+  }
+
+  return Array.from(map.values()).sort(
+    (a, b) => (Number(b.revenue) || 0) - (Number(a.revenue) || 0)
+  );
+}
+
+/**
  * Fetches revenue-product-segmentation from FMP /stable and normalises the
  * response into a consistent { name, revenue, percentage }[] array.
  *
