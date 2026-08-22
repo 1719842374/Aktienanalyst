@@ -20,8 +20,8 @@ import { trackFmpCall, isFmpBudgetLow } from "./analyze-helpers";
 const FMP_BASE = "https://financialmodelingprep.com/stable";
 
 export const FMP_CONFIG = {
-  dailyLimit: Number(process.env.FMP_DAILY_LIMIT ?? 750),
-  warnThreshold: Number(process.env.FMP_WARN_THRESHOLD ?? 600),
+  dailyLimit: Number(process.env.FMP_DAILY_LIMIT ?? 15000),
+  warnThreshold: Number(process.env.FMP_WARN_THRESHOLD ?? 10000),
   callsPerAnalysis: Number(process.env.FMP_CALLS_PER_ANALYSIS ?? 13),
   minIntervalMs: Number(process.env.FMP_MIN_INTERVAL_MS ?? 250),
   maxRetries: Number(process.env.FMP_MAX_RETRIES ?? 2),
