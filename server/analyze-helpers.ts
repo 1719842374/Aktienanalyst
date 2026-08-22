@@ -23,8 +23,8 @@ import {
 //   FMP_WARN_THRESHOLD     default 600  — [FMP-BUDGET] WARN when crossed
 //   FMP_CALLS_PER_ANALYSIS default 13   — minimum budget required per analysis
 // ============================================================
-const FMP_DAILY_LIMIT = Number(process.env.FMP_DAILY_LIMIT ?? 750);
-const FMP_WARN_THRESHOLD = Number(process.env.FMP_WARN_THRESHOLD ?? 600);
+const FMP_DAILY_LIMIT = Number(process.env.FMP_DAILY_LIMIT ?? 15000);
+const FMP_WARN_THRESHOLD = Number(process.env.FMP_WARN_THRESHOLD ?? 10000);
 const FMP_CALLS_PER_ANALYSIS = Number(process.env.FMP_CALLS_PER_ANALYSIS ?? 13);
 
 let fmpCallsToday = 0;
