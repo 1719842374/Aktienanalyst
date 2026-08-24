@@ -1,6 +1,6 @@
 # WORK.md — Index & Navigationskarte
 
-> Stand: 17.08.2026 | Branch: `main`
+> Stand: 24.08.2026 | Branch: `main`
 
 ---
 
@@ -21,6 +21,7 @@
 | [WORK_BTC_MINER.md](./WORK_BTC_MINER.md) | Miner-Zonen |
 | [WORK_TEIL7_SCORING.md](./WORK_TEIL7_SCORING.md) | Gold/Realzins |
 | [WORK2.md](./WORK2.md) | Regulatory/PESTEL |
+| **[WORK_STABLECOIN_TBILL_GENIUS.md](./WORK_STABLECOIN_TBILL_GENIUS.md)** | **Adaptive Stablecoin → T-Bill Nachfrage + GENIUS Act Impact (BTC/Gold Liquidity Channel)** |
 
 ---
 
