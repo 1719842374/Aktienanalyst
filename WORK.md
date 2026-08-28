@@ -1,6 +1,6 @@
 # WORK.md — Index & Navigationskarte
 
-> Stand: 24.08.2026 | Branch: `main`
+> Stand: 28.08.2026 | Branch: `main`
 
 ---
 
@@ -8,6 +8,7 @@
 
 | Datei | Inhalt |
 |-------|--------|
+| **[WORK_TAM_SEGMENT_MAPPING.md](./WORK_TAM_SEGMENT_MAPPING.md)** | **Segment-TAM Mapping: kein Konzern-desc-Fallback, Aliase 365/Xbox/LinkedIn/Dynamics, Quality-Tor Coverage/Labels/Share>25%, DCF-g nur bei quality=ok, MSFT $896B-Repro** |
 | **[WORK_ANTIBIAS_DCF.md](./WORK_ANTIBIAS_DCF.md)** | Anti-Bias Inverted DCF |
 | [WORK_PORTFOLIO.md](./WORK_PORTFOLIO.md) | Virtuelles Portfolio, CAPM, Kelly, Sharpe |
 | **[WORK_RESEARCHER_PORTFOLIO.md](./WORK_RESEARCHER_PORTFOLIO.md)** | **3 Portfolios P1/P2/P3, Direkt-Add Analyse/Researcher** |
