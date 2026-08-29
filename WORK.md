@@ -1,6 +1,6 @@
 # WORK.md — Index & Navigationskarte
 
-> Stand: 28.08.2026 | Branch: `main`
+> Stand: 29.08.2026 | Branch: `main`
 
 ---
 
@@ -8,6 +8,8 @@
 
 | Datei | Inhalt |
 |-------|--------|
+| **[WORK_ANALYZE_DISK_CACHE.md](./WORK_ANALYZE_DISK_CACHE.md)** | **7-Tage-KI-Catch: Ist 20-min-RAM / Disk tot; Soll L1 20 min + L2 7 d + force; OpenRouter 4–7 Calls** |
+| **[WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md)** | **Wiring diskCacheGet/Set in /api/analyze + enrich; Schema 2026-08-29-v2; HP-Keep 252** |
 | **[WORK_TAM_SEGMENT_MAPPING.md](./WORK_TAM_SEGMENT_MAPPING.md)** | **Segment-TAM Mapping: kein Konzern-desc-Fallback, Aliase 365/Xbox/LinkedIn/Dynamics, Quality-Tor Coverage/Labels/Share>25%, DCF-g nur bei quality=ok, MSFT $896B-Repro** |
 | **[WORK_TAM_RESIDUAL_XBOX.md](./WORK_TAM_RESIDUAL_XBOX.md)** | **Addendum: Other-Mix 2,5 % / $8.3B adaptiv bei genau 1 Loch; Xbox-YoY nicht aus 17,8 vs 21,3 invertierbar (2 Unbekannte)** |
 | **[WORK_ANTIBIAS_DCF.md](./WORK_ANTIBIAS_DCF.md)** | Anti-Bias Inverted DCF |

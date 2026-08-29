@@ -1,0 +1,90 @@
+--- server/analyze-route.ts
++++ server/analyze-route.ts
+@@ -118,7 +118,7 @@
+ // /revenue-product-segmentation returns [] (verified for IREN). Additive-only
+ // module, see server/sec-segments.ts for the full fallback-chain rationale.
+ import { fetchSecBusinessSegments } from "./sec-segments";
+-import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
++import { diskResearcherGet, diskResearcherSet, diskCacheGet, diskCacheSet, diskCacheDelete } from "./disk-cache";
+ import { normalizePeerOverrides, buildAnalyzeCacheKey, applyPeerOverrides } from "./peer-cache-key";
+ import { invalidateThesisStrengthCache } from "./thesis-strength-cache";
+ 
+@@ -475,6 +475,11 @@
+       // (oder umgekehrt: der naechste User ohne Override erhaelt versehentlich
+       // die mit LLY angereicherte Version).
+       const cacheKey = buildAnalyzeCacheKey(upperTicker, useLLM, peerAddList, peerRemoveList);
++      if (forceRefresh) {
++        analysisCache.delete(cacheKey);
++        diskCacheDelete(cacheKey);
++        console.log(`[ANALYZE] Force refresh — dropped L1+L2 for ${cacheKey}`);
++      }
+       if (!forceRefresh) {
+         const cached = analysisCache.get(cacheKey);
+         const cacheHit = !!(cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cacheLLMModeMatches(cached.usedLLM, useLLM));
+@@ -485,6 +490,50 @@
+           console.log(`[ANALYZE] Cache hit for ${upperTicker}`);
+           return res.json(cached!.result);
+         }
++        const diskHit = diskCacheGet(cacheKey);
++        if (diskHit) {
++          const {
++            _cached, _cacheAge, _cacheDate, _diskCache, _schemaVersion, _needsOhlcv,
++            ...diskResult
++          } = diskHit;
++          let served: any = diskResult;
++          const hpLen = Array.isArray(diskResult.historicalPrices) ? diskResult.historicalPrices.length : 0;
++          if (_needsOhlcv || hpLen < 50) {
++            try {
++              const rawHp = await fmpHistoricalPrices(upperTicker);
++              const rows: any[] = Array.isArray(rawHp) ? rawHp : (rawHp as any)?.historical ?? [];
++              const sorted = [...rows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
++              const ohlcvPoints = sorted.slice(-2600).map((r: any) => ({
++                date: String(r.date ?? "").slice(0, 10),
++                open: parseFloat(String(r.open)) || 0,
++                high: parseFloat(String(r.high)) || 0,
++                low: parseFloat(String(r.low)) || 0,
++                close: parseFloat(String(r.close)) || 0,
++                volume: parseFloat(String(r.volume ?? 0)) || 0,
++              })).filter((pt: any) => pt.close > 0 && pt.date.length === 10);
++              if (ohlcvPoints.length >= 50) {
++                const px = Number(served.currentPrice) || ohlcvPoints[ohlcvPoints.length - 1].close;
++                served = {
++                  ...served,
++                  historicalPrices: ohlcvPoints.map((pt: any) => ({ date: pt.date, close: pt.close })),
++                  ohlcvData: ohlcvPoints,
++                  technicalIndicators: buildTechnicalIndicators(ohlcvPoints, px),
++                };
++                diskCacheSet(cacheKey, served);
++                console.log(`[ANALYZE] Disk hit ${upperTicker}: OHLCV refreshed (${ohlcvPoints.length} pts), KI reused`);
++              }
++            } catch (ohlcvErr: any) {
++              console.warn(`[ANALYZE] Disk hit OHLCV refresh failed for ${upperTicker}: ${ohlcvErr?.message?.substring(0, 80)}`);
++            }
++          }
++          analysisCache.set(cacheKey, {
++            result: served,
++            timestamp: Date.now(),
++            usedLLM: !!(served.llmMode ?? served._useLLM ?? useLLM),
++          });
++          console.log(`[ANALYZE] Disk cache hit for ${upperTicker} (age=${_cacheAge}min)`);
++          return res.json(served);
++        }
+       }
+ 
+       // ── FMP budget guard ──
+@@ -1835,6 +1884,7 @@
+       } as unknown as StockAnalysis;
+ 
+       analysisCache.set(cacheKey, { result: analysis, timestamp: Date.now(), usedLLM: useLLM });
++      diskCacheSet(cacheKey, analysis);
+ 
+       console.log(`[ANALYZE] Done for ${upperTicker} (LLM=${useLLM}, cats=${catalysts.length}, risks=${risks.length}, ohlcv=${ohlcvPoints.length})`);
+       return res.json(analysis);
+@@ -2024,6 +2074,7 @@
+         growthThesisGeneratedAt: refreshedGeneratedAt ?? (a as any).growthThesisGeneratedAt,
+       } as StockAnalysis;
+       analysisCache.set(cacheKeyUsed, { ...cached, result: updated });
++      diskCacheSet(cacheKeyUsed, updated);
+       invalidateThesisStrengthCache(ticker);
+ 
+       return res.json({
