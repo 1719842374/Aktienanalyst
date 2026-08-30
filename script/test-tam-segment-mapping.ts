@@ -280,6 +280,60 @@ console.log("\n=== A1: Casino/Gaming-Reihenfolge (Regression) ===");
   expectTrue(r.matched === true && r.tamLabel === "Global PC & Gaming Market", "matchSegmentTAM('Casino & Gaming Resorts') matched (enthaelt 'gaming') -- Branchen-Sonderfall bleibt in matchSegmentTAMLegacy/generateTAMAnalysis's sector-Zweig, nicht hier");
 }
 
+console.log("\n=== A2: Residuum-Mix (WORK_TAM_RESIDUAL_XBOX.md) ===");
+{
+  // MSFT Screenshot-Zahlen exakt: 8 Segmente summieren auf 97.5% / $323.5B,
+  // Konzernumsatz $331.8B -> Residual $8.3B / 2.5% als "Other"-Zeile.
+  const msftSegments = [
+    { name: "Server", revenue: 129.4e9, percentage: 39.0, growth: 31.5 },
+    { name: "Microsoft 365 Commercial", revenue: 102.0e9, percentage: 30.7, growth: 16.2 },
+    { name: "XBOX", revenue: 21.8e9, percentage: 6.6, growth: null },
+    { name: "Linked In", revenue: 19.8e9, percentage: 6.0, growth: null },
+    { name: "Windows", revenue: 17.1e9, percentage: 5.1, growth: null },
+    { name: "Search Advertising", revenue: 15.2e9, percentage: 4.6, growth: null },
+    { name: "Microsoft 365 Consumer", revenue: 9.2e9, percentage: 2.8, growth: null },
+    { name: "Dynamics", revenue: 9.0e9, percentage: 2.7, growth: null },
+  ];
+  const result = generateTAMAnalysis("Technology", "Software", "Microsoft Azure cloud", 331.8e9, 17.8, msftSegments);
+  const other = result.segments?.find((s: any) => s.segmentName === "Other / nicht segmentiert");
+  expectTrue(!!other, "MSFT Residuum: 'Other / nicht segmentiert'-Zeile wurde erzeugt");
+  expectTrue(!!other && Math.abs(other.segmentRevenue - 8.3) < 0.15, `MSFT Residuum: Other-Revenue ~= $8.3B (ist: ${other?.segmentRevenue})`);
+  expectTrue(!!other && Math.abs(other.segmentShare - 2.5) < 0.05, `MSFT Residuum: Other-Anteil ~= 2.5% (ist: ${other?.segmentShare})`);
+  expectTrue(!!other && other.matched === false && other.tamSize === null, "MSFT Residuum: Other hat KEIN Katalog-TAM (matched:false, tamSize:null)");
+  expectTrue(!!other && other.segmentGrowth === null, "MSFT Residuum: Other-Wachstum ist n/a (null), nicht 0");
+
+  const xbox = result.segments?.find((s: any) => s.segmentName === "XBOX");
+  expectTrue(!!xbox && xbox.segmentGrowth === null, "MSFT Xbox: Wachstum bleibt n/a ohne Vorjahreszahl (kein Invertieren aus 17.8% vs 21.3%)");
+  expectTrue(!!xbox && xbox.segmentRevenue !== undefined, "MSFT Xbox: Revenue bleibt aus FMP ($21.8B), Residuum fuellt NICHT Xbox");
+
+  const server = result.segments?.find((s: any) => s.segmentName === "Server");
+  expectTrue(!!server && server.matched === false, "MSFT Residuum fuellt nicht Server-TAM (Server bleibt separat unmatched)");
+}
+
+{
+  // nHolesRev === 2 (zwei Segmente ohne revenue) -> kein Solve, keine Other-Zeile.
+  const segments = [
+    { name: "Segment A", revenue: 50e9, percentage: 50, growth: 5 },
+    { name: "Segment B", revenue: 0, percentage: 25, growth: null },
+    { name: "Segment C", revenue: 0, percentage: 25, growth: null },
+  ];
+  const result = generateTAMAnalysis("Technology", "Software", "desc", 100e9, 5, segments);
+  const other = result.segments?.find((s: any) => s.segmentName === "Other / nicht segmentiert");
+  expectTrue(!other, "Zwei Rev-Loecher -> kein Solve, keine synthetische Other-Zeile");
+  expect(result.segments?.length, 3, "Zwei Rev-Loecher -> Segmentanzahl unveraendert (3, nicht 4)");
+}
+
+{
+  // residualMix ausserhalb (0, 15] -> keine Other-Zeile (z.B. > 15% oder negativ/Rundungsrauschen).
+  const segments = [
+    { name: "Segment A", revenue: 50e9, percentage: 50, growth: 5 },
+    { name: "Segment B", revenue: 20e9, percentage: 20, growth: 5 },
+  ];
+  const result = generateTAMAnalysis("Technology", "Software", "desc", 100e9, 5, segments);
+  const other = result.segments?.find((s: any) => s.segmentName === "Other / nicht segmentiert");
+  expectTrue(!other, "residualMix 30% (> 15%) -> keine synthetische Other-Zeile");
+}
+
 console.log(`\n=== Ergebnis: ${passed} bestanden, ${failed} fehlgeschlagen ===`);
 if (failed > 0) {
   process.exit(1);

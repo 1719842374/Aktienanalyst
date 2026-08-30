@@ -476,6 +476,9 @@ export function generateTAMAnalysis(
 
     let segmentsForMapping = revenueSegments;
     if (nHolesRev === 0 && residualMix > 0 && residualMix <= 15) {
+      // Alle Segmente haben ein revenue, aber sie summieren nicht auf 100% des
+      // Konzernumsatzes (z.B. "Other"/Corporate-Perimeter, den FMP nicht als
+      // eigenes Segment ausweist). Genau EINE synthetische Restzeile, kein TAM.
       segmentsForMapping = [
         ...revenueSegments,
         {
@@ -486,9 +489,19 @@ export function generateTAMAnalysis(
           __isResidual: true,
         } as any,
       ];
+    } else if (nHolesRev === 1 && residualRev > 0) {
+      // Genau EIN gemeldetes Segment hat kein revenue (z.B. nur "percentage"
+      // von FMP geliefert) -- das eine Loch ist ueber die Konzern-Differenz
+      // eindeutig loesbar (eine Gleichung, eine Unbekannte). TAM-Matching
+      // bleibt regulaer ueber den vorhandenen Segmentnamen (kein "Other").
+      segmentsForMapping = revenueSegments.map(seg =>
+        Number(seg.revenue) > 0
+          ? seg
+          : { ...seg, revenue: Math.max(0, residualRev) * 1e9 }
+      );
     }
-    // nHolesRev >= 2 (oder residualMix ausserhalb 0..15): nichts ableiten --
-    // zwei Unbekannte sind nicht loesbar (Spec Abschnitt 2/3).
+    // nHolesRev >= 2 (oder residualMix ausserhalb 0..15 im nHolesRev===0-Fall):
+    // nichts ableiten -- zwei Unbekannte sind nicht loesbar (Spec Abschnitt 2/3).
 
     const segTAMs = segmentsForMapping.map(seg => {
       const isResidual = (seg as any).__isResidual === true;
