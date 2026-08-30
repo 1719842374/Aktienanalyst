@@ -116,6 +116,7 @@ import {
 } from "./fmp";
 import { buildScoringForAnalysis } from "./scoring-integration";
 import { getCachedRegulatoryAssessment } from "./regulatory";
+import { fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq } from "./history-fallback";
 
 // Segment-Fallback-Pipeline (2026-08): SEC EDGAR fallback for when FMP's
 // /revenue-product-segmentation returns [] (verified for IREN). Additive-only
@@ -644,7 +645,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Keep up to ~10Y of trading days (252*10 ≈ 2520 + buffer).
       // FMP Pro delivers the full range; previous hard-cap of 504 (~2Y) blocked the client 10Y view.
       const OHLCV_MAX_POINTS = 2600;
-      const ohlcvPoints: OHLCVPoint[] = ohlcvRows.slice(-OHLCV_MAX_POINTS).map((r: any) => ({
+      let ohlcvPoints: OHLCVPoint[] = ohlcvRows.slice(-OHLCV_MAX_POINTS).map((r: any) => ({
         date: String(r.date ?? "").slice(0, 10),
         open: parseFloat(String(r.open)) || 0,
         high: parseFloat(String(r.high)) || 0,
@@ -652,6 +653,35 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         close: parseFloat(String(r.close)) || 0,
         volume: parseFloat(String(r.volume ?? 0)) || 0,
       })).filter(p => p.close > 0 && p.date.length === 10);
+
+      // Sprint B1 (WORK_DATA_PROVIDERS.md §5, additiv, server-only): FMP
+      // Free/Starter liefert nur ~5 Jahre Historie. Reicht die geladene Serie
+      // nicht fuer den 10Y-Chart (< ~9.5 Jahre Handelstage), wird ueber
+      // history-fallback.ts ein Alt-Provider (Yahoo, sonst Stooq) nachgeladen
+      // und die Luecke nach links aufgefuellt/ergaenzt. FMP-Daten behalten
+      // dabei immer Vorrang (Merge fuellt nur fehlende Daten auf, siehe Spec).
+      let historyDataSource: StockAnalysis["historyDataSource"] = "fmp";
+      let historyTruncated = false;
+      try {
+        const need10Y = fromDateForTimeframe("10Y");
+        const gotFrom = ohlcvPoints[0]?.date;
+        if (!gotFrom || gotFrom > need10Y) {
+          const { bars, source, truncated } = await fetchDailyHistory({
+            symbol: upperTicker,
+            timeframe: "10Y",
+            fmpFetch: async () => ohlcvPoints.map((p) => ({ ...p, source: "fmp" as const })),
+            altFetch: (from, to) => altFetchYahooThenStooq(upperTicker, from, to),
+          });
+          if (bars.length > ohlcvPoints.length) {
+            ohlcvPoints = bars.slice(-OHLCV_MAX_POINTS).map(({ source: _s, ...bar }) => bar);
+          }
+          historyDataSource = (source === "fmp+alt" ? "fmp+yahoo" : "fmp") as StockAnalysis["historyDataSource"];
+          historyTruncated = truncated;
+          console.log(`[HISTORY-FALLBACK] ${upperTicker}: source=${historyDataSource} truncated=${historyTruncated} points=${ohlcvPoints.length}`);
+        }
+      } catch (err) {
+        console.warn(`[HISTORY-FALLBACK] Fallback-Versuch fehlgeschlagen fuer ${upperTicker}: ${(err as Error)?.message ?? err}`);
+      }
 
       const technicalIndicators: TechnicalIndicators = buildTechnicalIndicators(ohlcvPoints, price);
 
@@ -1742,6 +1772,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
         // Section 10
         ohlcvData: ohlcvPoints,
+        historyDataSource,
+        historyTruncated,
         technicalIndicators,
 
         // Section 11 — use schema-conformed moatAssessment (see build above).

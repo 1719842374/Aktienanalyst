@@ -333,9 +333,28 @@ export function TechnicalChart({ data }: Props) {
         {isHistoryTruncated && (
           <span
             className="px-2 py-1 rounded text-[10px] font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
-            title={`Nur ${actualYearsAvailable} Jahre Historie verfügbar (angefragt: ${timeRange}). Quelle: FMP.`}
+            title={`Nur ${actualYearsAvailable} Jahre Historie verfügbar (angefragt: ${timeRange}). Quelle: ${data.historyDataSource ?? "fmp"}.`}
           >
             Historie: {actualYearsAvailable}J verfügbar
+          </span>
+        )}
+
+        {/* Sprint B1 (WORK_DATA_PROVIDERS.md §4/§7): dataSource klein sichtbar,
+            zeigt ob ein Alt-Provider (Yahoo/Stooq) die FMP-Historie ergaenzt hat. */}
+        {data.historyDataSource && data.historyDataSource !== "fmp" && (
+          <span
+            className="px-2 py-1 rounded text-[10px] font-medium bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30"
+            title="Kurshistorie kombiniert aus FMP (primär) und einem Alt-Provider (füllt ältere Lücken)."
+          >
+            Quelle: {data.historyDataSource}
+          </span>
+        )}
+        {data.historyTruncated && (
+          <span
+            className="px-2 py-1 rounded text-[10px] font-medium bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30"
+            title="Auch nach Alt-Provider-Fallback ist die angeforderte Zeitspanne nicht vollständig abgedeckt — Daten werden ehrlich angezeigt, nicht künstlich verlängert."
+          >
+            Historie unvollständig
           </span>
         )}
 

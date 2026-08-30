@@ -555,6 +555,20 @@ export interface StockAnalysis {
   // NEW: OHLCV data for interactive chart
   ohlcvData?: OHLCVPoint[];
 
+  /** Sprint B1 (WORK_DATA_PROVIDERS.md §5, additiv): woher die geladene
+   *  Kurshistorie stammt. 'fmp' = volle Historie von FMP allein.
+   *  'fmp+yahoo' / 'fmp+stooq' = FMP-Basis + Alt-Provider hat Luecken
+   *  gefuellt/nach links verlaengert (z.B. weil der FMP-Plan nur 5 Jahre
+   *  liefert, der UI-Timeframe aber 10Y anfordert). Optional: fehlt bei
+   *  alten Cache-Eintraegen vor diesem Ticket. */
+  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt';
+
+  /** true, wenn selbst nach Alt-Provider-Fallback nicht genug Historie fuer
+   *  den urspruenglich gewuenschten Zeitraum vorhanden war (ehrliche
+   *  Kennzeichnung statt Kuenstlich-Verlaengern/Interpolieren, siehe Ticket-
+   *  Regel "Zahlen-Prinzip"). Optional, additiv. */
+  historyTruncated?: boolean;
+
   // NEW: Technical indicators (MAs, MACD, signals)
   technicalIndicators?: TechnicalIndicators;
 
