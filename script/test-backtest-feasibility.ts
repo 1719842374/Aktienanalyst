@@ -1,49 +1,51 @@
 /**
- * script/test-backtest-feasibility.ts — Sprint B3 Phase 3, Ticket-Punkt
- * "Baue einen kleinen Machbarkeits-Backtest (20-30 Titel, ein Fold) statt
+ * script/test-backtest-feasibility.ts — Sprint B3 Phase 3 + Phase 3b
+ * (tickets/SPRINT_B3_PHASE3B_SLIM_PIT_VALUATION.md), Ticket-Punkt
+ * "Baue einen kleinen Machbarkeits-Backtest (40-60 Titel, ein Fold) statt
  * eines vollen 5-Jahres-Produktionslaufs."
  *
- * ZWECK: Beweist, dass die komplette Phase-3-Pipeline (echtes Ticker-
- * Universum ohne Hardcodes -> echte FMP-Rohdaten -> replayAt() ->
- * deriveSignalV1() -> forwardReturn() -> evaluateT1GateLift()/
- * evaluateT2SignalCohort()) end-to-end verdrahtet ist und mit echten Daten
- * laeuft — NICHT, dass sie auf dieser winzigen Stichprobe ein Buy/Avoid-
- * Signal mit Aussagekraft produziert.
+ * ZWECK: Beweist, dass die komplette Phase-3(+3b)-Pipeline (echtes Ticker-
+ * Universum ohne Hardcodes -> server/backtest/pit-valuation.ts (gecachte
+ * PIT-Rohdaten -> invDcf/crv) -> replayAt() -> deriveSignalV1() ->
+ * forwardReturn() -> evaluateT1GateLift()/evaluateT2SignalCohort())
+ * end-to-end verdrahtet ist und mit echten Daten laeuft — NICHT, dass sie
+ * auf dieser kleinen Stichprobe ein Buy/Avoid-Signal mit statistischer
+ * Aussagekraft produziert.
  *
- * BEWUSSTE VEREINFACHUNG (kein Abkuerzen der "kein zweites Modell"-Regel,
- * siehe Kommentar in replayAt()/deriveSignalV1()): invDcf/crv werden hier
- * NICHT berechnet, sondern ehrlich als `null` durchgereicht. Der volle
- * gehaertete DCF/CRV-Pfad (buildDefaultDCFParams() -> calculateFCFFDCF() ->
- * computeHardenedCRV()) braucht das komplette StockAnalysis/sectorProfile-
- * Objekt (Sektor-Klassifikation, WACC-Szenarien, Growth-Assumptions,
- * financialStatements-Cashflow) — das aus rohen FMP-Feldern hier
- * nachzubauen, WAERE das zweite Modell, das das Ticket verbietet ("Verbot:
- * zweiter Backtest-Score. Drift Live vs. Replay = Bug."). Mit invDcf=null,
- * crv=null liefert deriveSignalV1() ueber dataComplete.overall=false
- * korrekt `signal=null` fuer JEDEN Ticker — das macht evaluateT2SignalCohort()
- * fast zwangslaeufig `status: "insufficient_data"` (0 Avoid/Buy-Events).
- * Das ist laut Ticket explizit ein GUELTIGES Ergebnis: "Es ist
- * akzeptabel/erwartet, dass dies insufficient_data meldet, wenn die kleine
- * Stichprobe die Schwellen nicht erreicht — das zaehlt als korrektes
- * Ergebnis." T1 (Gate-Lift) bleibt davon unberuehrt, da es NICHT von
- * invDcf/crv abhaengt, sondern von `cappedBy`/Gates (echtes Scoring-
- * Ergebnis aus buildScoringForAnalysis()) — T1 liefert daher ein echtes
- * (wenn auch datenarmes) Ergebnis.
+ * PHASE 3b-AENDERUNG (vorher: Phase 3 BEWUSSTE VEREINFACHUNG unten
+ * historisch dokumentiert): invDcf/crv wurden in Phase 3 ehrlich als
+ * `null` durchgereicht, weil der volle gehaertete DCF/CRV-Pfad
+ * (buildDefaultDCFParams() -> calculateFCFFDCF() -> worstCaseM1() ->
+ * computeHardenedCRV()) das komplette StockAnalysis/sectorProfile-Objekt
+ * braucht — das aus rohen FMP-Feldern HIER INLINE nachzubauen, WAERE das
+ * zweite Modell, das das Ticket verbietet ("Verbot: zweiter Backtest-
+ * Score. Drift Live vs. Replay = Bug."). server/backtest/pit-valuation.ts
+ * (Phase 3b) loest das GENAU: pro Ticker EINMAL Rohdaten cachen (OHLCV,
+ * Quartals-Statements MIT filingDate, Profile, Market Cap), dann pro asOf
+ * NUR aus dem Cache ableiten und dieselben, UNVERAENDERTEN
+ * shared/valuation-signal.ts-Funktionen aufrufen wie server/analyze-
+ * route.ts — kein zweites Modell, keine Drift. Diese Datei ruft daher
+ * runPitValuation()/loadTickerRawData()+derivePitValuation() auf und
+ * uebergibt echte invDcf/crv/fv/wc/fcf_T/wacc_T/g_T/WC_T an replayAt(),
+ * statt sie hart auf null zu setzen. T1 (Gate-Lift) war von der
+ * Vereinfachung nie betroffen (haengt nur von `cappedBy`/Gates ab) und
+ * bleibt unveraendert ein echtes (wenn auch datenarmes) Ergebnis.
  *
  * UNIVERSUM: `allKnownSp500Symbols(await getConstituentChanges())` liefert
  * ALLE historisch bekannten S&P-500-Ticker (aktuelle + entfernte) als Set —
- * keine Ticker-Hardcodes, reine FMP-Daten. Wir nehmen die ersten N Symbole
- * aus dieser Menge in alphabetischer Reihenfolge (deterministisch, nicht
- * per Zufall ausgewaehlt, damit der Lauf reproduzierbar ist) — bewusst
- * NICHT nach "bekannten" Namen gefiltert.
+ * keine Ticker-Hardcodes, reine FMP-Daten. Aus dieser Menge werden die
+ * ersten Symbole (alphabetisch, deterministisch) genommen, die laut
+ * `inUniverse(ticker, asOf, "corr", ...)` durchgaengig in U_corr sind (§5.1)
+ * — bis N_TICKERS (40-60) erreicht ist, wie im Ticket gefordert.
  *
  * ASOF: fest auf 2023-01-31 (Fold-1-"Letztes Train-as-of" aus §6.4) mit
  * Horizont 126 Handelstage (~6 Monate) — ein einzelner Monats-Snapshot,
  * ein einzelner Fold, wie im Ticket gefordert ("ein Fold").
  */
 import "dotenv/config";
-import { getConstituentChanges, allKnownSp500Symbols, CAP_FLOOR_USD } from "../server/backtest/universe";
-import { fmpProfile, fmpQuote, fmpHistoricalPrices, fmpIncomeStatementQuarterly, fmpIncomeStatement, fmpBalanceSheet } from "../server/fmp";
+import { getConstituentChanges, allKnownSp500Symbols, inUniverse, CAP_FLOOR_USD } from "../server/backtest/universe";
+import { fmpIncomeStatement, fmpBalanceSheet } from "../server/fmp";
+import { loadTickerRawData, derivePitValuation } from "../server/backtest/pit-valuation";
 import { replayAt, computeDcfApplicable } from "../server/backtest/replay";
 import { deriveSignalV1 } from "../server/backtest/signal";
 import { forwardReturn } from "../server/backtest/returns";
@@ -52,7 +54,7 @@ import { WF_V1_FOLDS, DEFAULT_PITCH_HORIZON_DAYS } from "../server/backtest/walk
 import type { SignalReturnEvent } from "../server/backtest/cluster";
 import type { AnalysisScoringContext } from "../server/scoring-integration";
 
-const N_TICKERS = Number(process.env.FEASIBILITY_N_TICKERS ?? 25);
+const N_TICKERS = Number(process.env.FEASIBILITY_N_TICKERS ?? 50);
 const AS_OF = "2023-01-31"; // Fold 1 "Letztes Train-as-of" (§6.4) — Monatsultimo
 const AS_OF_MONTH = "2023-01";
 const HORIZON_DAYS = DEFAULT_PITCH_HORIZON_DAYS; // 126
@@ -71,6 +73,11 @@ interface TickerOutcome {
   forwardReturnPct: number | null;
   forwardReturnMethod: string | null;
   forwardReturnNote: string | null;
+  // Phase 3b: PIT-Valuation-Diagnose (fuer CRV-Paritaets-Check/Report).
+  invDcf: number | null;
+  crv: number | null;
+  pitDataComplete: boolean;
+  pitReasons: string[];
 }
 
 async function fetchOneTicker(ticker: string): Promise<TickerOutcome> {
@@ -86,41 +93,39 @@ async function fetchOneTicker(ticker: string): Promise<TickerOutcome> {
     forwardReturnPct: null,
     forwardReturnMethod: null,
     forwardReturnNote: null,
+    invDcf: null,
+    crv: null,
+    pitDataComplete: false,
+    pitReasons: [],
   };
   try {
-    const [profile, quarterlyIncome, annualIncome, annualBalance, prices] = await Promise.all([
-      fmpProfile(ticker),
-      fmpIncomeStatementQuarterly(ticker, 16),
+    // Phase 3b: EIN gecachter Rohdaten-Fetch pro Ticker (OHLCV, Quartals-
+    // Income+Cashflow MIT filingDate, Profile, Market Cap) statt vieler
+    // Einzel-FMP-Calls hier inline — server/backtest/pit-valuation.ts haelt
+    // den SQLite-Cache, wiederholte Script-Laeufe fetchen NICHT erneut.
+    const [raw, annualIncome, annualBalance] = await Promise.all([
+      loadTickerRawData(ticker),
       fmpIncomeStatement(ticker, 6),
       fmpBalanceSheet(ticker, 6),
-      // Genuegend Historie vor UND nach AS_OF fuer Embargo-Einstieg + 126-Tage-Exit.
-      fmpHistoricalPrices(ticker, "2020-01-01", "2024-06-30"),
     ]);
 
-    if (!profile) {
-      return { ...base, error: "kein FMP-Profil (evtl. delistet/nicht abgedeckt)" };
+    if (!raw.fetchedOk || !raw.profile) {
+      return { ...base, error: raw.error ?? "kein FMP-Profil/keine Kurse (evtl. delistet/nicht abgedeckt)" };
     }
 
-    const capT = typeof profile.mktCap === "number" ? profile.mktCap : null;
-    const priceAtProfile = typeof profile.price === "number" ? profile.price : null;
-
-    if (!Array.isArray(prices) || prices.length === 0) {
-      return { ...base, error: "keine historischen Kurse verfuegbar" };
-    }
-    const priceRows = prices
-      .filter((p: any) => p?.date && typeof p?.close === "number")
-      .map((p: any) => ({ date: p.date as string, close: p.close as number }));
+    const priceRows = raw.prices;
 
     // Kurs "an T" (asOf) fuer die Score-Pipeline: letzter verfuegbarer Close <= AS_OF.
     const sortedAsc = [...priceRows].sort((a, b) => a.date.localeCompare(b.date));
-    const priceAtAsOf = [...sortedAsc].filter(p => p.date <= AS_OF).pop()?.close ?? priceAtProfile;
+    const priceAtAsOf = [...sortedAsc].filter(p => p.date <= AS_OF).pop()?.close ?? null;
     if (priceAtAsOf == null) {
       return { ...base, error: "kein Kurs am/vor asOf verfuegbar" };
     }
 
-    // Quartalsumsaetze CHRONOLOGISCH (aeltestes zuerst) — FMP liefert newest-first.
-    const quarterlyRevenueChronological = Array.isArray(quarterlyIncome)
-      ? [...quarterlyIncome].reverse().map((q: any) => (typeof q?.revenue === "number" ? q.revenue : 0))
+    // Quartalsumsaetze CHRONOLOGISCH (aeltestes zuerst) — raw.quarterlyIncome
+    // ist bereits newest-first (aus fmpIncomeStatementQuarterly, gecacht).
+    const quarterlyRevenueChronological = raw.quarterlyIncome.length > 0
+      ? [...raw.quarterlyIncome].reverse().map(q => q.revenue ?? 0)
       : null;
 
     const annualIncomeRows = Array.isArray(annualIncome)
@@ -152,7 +157,12 @@ async function fetchOneTicker(ticker: string): Promise<TickerOutcome> {
       regulatoryGate: null,
     };
 
-    const fcfTTM = null; // kein Cashflow-Statement geladen (bewusst schlank) -> dcfApplicable-FCF-Gate greift konservativ als false, s.u.
+    // Phase 3b: PIT-Valuation-Ableitung NUR aus den bereits gecachten
+    // Rohdaten (raw) — KEIN zusaetzlicher FMP-Call, KEIN /api/analyze-Call,
+    // KEIN LLM. derivePitValuation() ruft intern unveraendert
+    // buildDefaultDCFParams()/calculateFCFFDCF()/worstCaseM1()/
+    // computeHardenedCRV() aus shared/valuation-signal.ts auf.
+    const pit = derivePitValuation(raw, AS_OF);
 
     const snapshot = replayAt({
       ticker,
@@ -163,11 +173,17 @@ async function fetchOneTicker(ticker: string): Promise<TickerOutcome> {
       technicalIndicators: null,
       catalysts: [],
       price: priceAtAsOf,
-      fcfTTM,
-      sector: profile.sector ?? undefined,
-      industry: profile.industry ?? undefined,
-      invDcf: null, // siehe Datei-Kopfkommentar: bewusst nicht nachgebaut
-      crv: null,
+      fcfTTM: pit.fcfTTM,
+      sector: raw.profile.sector || undefined,
+      industry: raw.profile.industry || undefined,
+      invDcf: pit.invDcf,
+      crv: pit.crv,
+      fv: pit.fv,
+      wc: pit.wc,
+      fcf_T: pit.fcf_T,
+      wacc_T: pit.wacc_T,
+      g_T: pit.g_T,
+      WC_T: pit.WC_T,
     });
 
     const signalResult = deriveSignalV1({
@@ -203,7 +219,10 @@ async function fetchOneTicker(ticker: string): Promise<TickerOutcome> {
       forwardReturnPct: fwd.r != null ? +(fwd.r * 100).toFixed(2) : null,
       forwardReturnMethod: fwd.method,
       forwardReturnNote: fwd.note ?? null,
-      error: capT != null && capT < CAP_FLOOR_USD ? `Hinweis: cap_now=${(capT / 1e9).toFixed(2)}Mrd < ${CAP_FLOOR_USD / 1e9}Mrd Floor (PIT-Cap an AS_OF nicht geprueft, nur Anzeige)` : undefined,
+      invDcf: pit.invDcf,
+      crv: pit.crv,
+      pitDataComplete: pit.dataComplete,
+      pitReasons: pit.reasons,
     };
   } catch (e: any) {
     return { ...base, error: e?.message ?? String(e) };
@@ -211,19 +230,42 @@ async function fetchOneTicker(ticker: string): Promise<TickerOutcome> {
 }
 
 async function main() {
-  console.log("=== Sprint B3 Phase 3 — Machbarkeits-Backtest (kein Produktionslauf) ===");
+  console.log("=== Sprint B3 Phase 3b — Machbarkeits-Backtest mit PIT-Valuation-Replay (kein Produktionslauf) ===");
   console.log(`AS_OF=${AS_OF} (Fold 1 Letztes Train-as-of), Horizont=${HORIZON_DAYS} Handelstage, Fold=${JSON.stringify(FOLD)}`);
 
   const changes = await getConstituentChanges();
   const universe = Array.from(allKnownSp500Symbols(changes)).sort();
   console.log(`Bekanntes S&P-500-Universum (historisch, aus FMP): ${universe.length} Symbole total.`);
 
-  const sample = universe.slice(0, N_TICKERS);
-  console.log(`Feasibility-Stichprobe (erste ${sample.length} alphabetisch, deterministisch, KEIN Hardcode): ${sample.join(", ")}`);
+  // Ticket Phase 3b: Vorauswahl auf Ticker, die laut inUniverse(ticker, asOf,
+  // "corr", ...) durchgaengig in U_corr sind (§5.1) — alphabetisch iterieren,
+  // bis N_TICKERS (40-60) erreicht sind. EIN inUniverse()-Call pro geprueftem
+  // Ticker (fmpProfile + capAt via server/backtest/universe.ts), NICHT pro
+  // Monat — additiv zu den PIT-Valuation-Rohdaten-Calls unten.
+  const preselected: string[] = [];
+  const skippedNotInCorrUniverse: string[] = [];
+  for (const ticker of universe) {
+    if (preselected.length >= N_TICKERS) break;
+    try {
+      const check = await inUniverse(ticker, AS_OF, "corr", { changes });
+      if (check.inUniverse) {
+        preselected.push(ticker);
+      } else {
+        skippedNotInCorrUniverse.push(ticker);
+      }
+    } catch {
+      skippedNotInCorrUniverse.push(ticker);
+    }
+  }
+  const sample = preselected;
+  console.log(
+    `Feasibility-Stichprobe (U_corr(${AS_OF})-gefiltert, alphabetisch, deterministisch, KEIN Ticker-Hardcode): ` +
+      `${sample.length} von ${sample.length + skippedNotInCorrUniverse.length} geprueften Symbolen qualifiziert -> ${sample.join(", ")}`
+  );
 
   const outcomes: TickerOutcome[] = [];
   // Sequentiell (nicht parallel) — schont FMP-Rate-Limits, bewusst fuer eine
-  // kleine 20-30-Ticker-Stichprobe akzeptabel (siehe Zeitschaetzung im
+  // 40-60-Ticker-Stichprobe akzeptabel (siehe Zeitschaetzung im
   // Abschlussbericht).
   for (const ticker of sample) {
     const outcome = await fetchOneTicker(ticker);
@@ -232,7 +274,7 @@ async function main() {
     console.log(
       `  ${ticker.padEnd(8)} ${statusStr}` +
         (outcome.fetchOk
-          ? ` price=${outcome.price} cappedBy=${outcome.cappedBy ?? "-"} dcfApplicable=${outcome.dcfApplicable} dataComplete=${outcome.dataCompleteOverall} signal=${outcome.signal ?? "null"} fwdReturn=${outcome.forwardReturnPct ?? "null"}% (${outcome.forwardReturnMethod ?? "-"})`
+          ? ` price=${outcome.price} cappedBy=${outcome.cappedBy ?? "-"} dcfApplicable=${outcome.dcfApplicable} dataComplete=${outcome.dataCompleteOverall} invDcf=${outcome.invDcf?.toFixed(2) ?? "null"} crv=${outcome.crv?.toFixed(2) ?? "null"} signal=${outcome.signal ?? "null"} fwdReturn=${outcome.forwardReturnPct ?? "null"}% (${outcome.forwardReturnMethod ?? "-"})`
           : "")
     );
   }
@@ -240,9 +282,10 @@ async function main() {
   const ok = outcomes.filter(o => o.fetchOk);
   const withReturn = ok.filter(o => o.forwardReturnPct != null);
   const withSignal = ok.filter(o => o.signal != null);
+  const withPitComplete = ok.filter(o => o.pitDataComplete);
 
   console.log("\n=== Zusammenfassung Rohdaten-Abdeckung ===");
-  console.log(`Angefragt: ${sample.length}, erfolgreich verarbeitet: ${ok.length}, mit forwardReturn: ${withReturn.length}, mit signal_v1 != null: ${withSignal.length}`);
+  console.log(`Angefragt: ${sample.length}, erfolgreich verarbeitet: ${ok.length}, mit forwardReturn: ${withReturn.length}, mit PIT-Valuation dataComplete: ${withPitComplete.length}, mit signal_v1 != null: ${withSignal.length}`);
 
   // --- T1 Gate-Lift: Ereignisse aus ECHTEN Gates (cappedBy), unabhaengig von invDcf/crv. ---
   const t1Events: GateLiftEvent[] = ok
@@ -256,8 +299,10 @@ async function main() {
     }));
   const t1Report = evaluateT1GateLift(t1Events, [FOLD]);
 
-  // --- T2 Signal-Kohorte: Ereignisse aus signal_v1 (Buy/Avoid/...), das mit
-  // invDcf=null/crv=null erwartungsgemaess ueberwiegend/vollstaendig null ist. ---
+  // --- T2 Signal-Kohorte: Ereignisse aus signal_v1 (Buy/Avoid/...), jetzt mit
+  // ECHTEN invDcf/crv aus server/backtest/pit-valuation.ts (Phase 3b) statt
+  // hart auf null gesetzt — signal=null bleibt nur noch fuer Ticker, deren
+  // PIT-Rohdaten unvollstaendig sind (siehe TickerOutcome.pitReasons). ---
   const t2Events: SignalReturnEvent[] = ok
     .filter(o => o.forwardReturnPct != null && o.signal != null)
     .map(o => ({
@@ -273,15 +318,19 @@ async function main() {
   console.log(`headline: ${JSON.stringify(t1Report.headline)}`);
 
   console.log("\n=== T2 Signal-Kohorte Report (Machbarkeit, 1 Fold, n klein) ===");
-  console.log(`status=${t2Report.status}, n Events total=${t2Events.length} (erwartungsgemaess klein/0, da invDcf=null,crv=null -> dataComplete.overall=false -> signal=null fuer alle Ticker ohne vollen DCF/CRV-Pfad)`);
+  console.log(`status=${t2Report.status}, n Events total=${t2Events.length} (PIT-Valuation liefert jetzt echte invDcf/crv -- signal=null nur noch bei unvollstaendigen PIT-Rohdaten, siehe pitReasons je Ticker)`);
   console.log(`minNAvoidPerFold=${t2Report.minNAvoidPerFold}`);
   console.log(`headlineGross: ${JSON.stringify(t2Report.headlineGross)}`);
+  const nBuy = t2Events.filter(e => e.signal === "Buy").length;
+  const nAvoid = t2Events.filter(e => e.signal === "Avoid").length;
+  console.log(`n_buy=${nBuy}, n_avoid=${nAvoid}, coverage_T (pitDataComplete/erfolgreich verarbeitet)=${ok.length > 0 ? (withPitComplete.length / ok.length).toFixed(3) : "n/a"}`);
 
   console.log("\n=== FAZIT ===");
   console.log(
     "Pipeline-Verdrahtung end-to-end BESTAETIGT mit echten FMP-Daten: " +
-      "Universum (FMP, kein Hardcode) -> replayAt()/buildScoringForAnalysis() (echte Gates/Score) -> " +
-      "deriveSignalV1() (echte Signalregel, korrekt null ohne invDcf/crv) -> forwardReturn() (echte Kurshistorie, echtes Embargo) -> " +
+      "Universum (FMP, U_corr-gefiltert, kein Hardcode) -> server/backtest/pit-valuation.ts (gecachte PIT-Rohdaten -> echte invDcf/crv ueber UNVERAENDERTE shared/valuation-signal.ts-Funktionen) -> " +
+      "replayAt()/buildScoringForAnalysis() (echte Gates/Score) -> " +
+      "deriveSignalV1() (echte Signalregel mit echten invDcf/crv) -> forwardReturn() (echte Kurshistorie, echtes Embargo) -> " +
       "evaluateT1GateLift()/evaluateT2SignalCohort() (echte Cluster/Fold-Aggregation)."
   );
   console.log(
@@ -289,9 +338,9 @@ async function main() {
       "dies ist ein ECHTES (wenn auch datenarmes) Ergebnis, unabhaengig von invDcf/crv."
   );
   console.log(
-    `T2 (Signal-Kohorte) liefert erwartungsgemaess status="${t2Report.status}" mit ${t2Events.length} Signal-Events, ` +
-      "weil invDcf/crv bewusst nicht nachgebaut wurden (siehe Datei-Kopfkommentar) -- " +
-      'laut Ticket ist "insufficient_data" hier ein GUELTIGES, akzeptables Ergebnis, kein Fehler.'
+    `T2 (Signal-Kohorte) liefert status="${t2Report.status}" mit ${t2Events.length} Signal-Events (n_buy=${nBuy}, n_avoid=${nAvoid}), ` +
+      "jetzt basierend auf ECHTEN, aus gecachten PIT-Rohdaten abgeleiteten invDcf/crv (server/backtest/pit-valuation.ts, Phase 3b) -- " +
+      'falls weiterhin "insufficient_data": laut Ticket bei kleiner Stichprobe/Schwellen weiterhin ein GUELTIGES, akzeptables Ergebnis, kein Fehler.'
   );
 
   console.log("\n=== ROH-OUTCOMES (JSON, fuer Weiterverarbeitung/Report) ===");

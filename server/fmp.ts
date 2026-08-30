@@ -690,6 +690,31 @@ export async function fmpIncomeStatementQuarterly(symbol: string, limit = 16) {
   return fmpFetch(`/income-statement`, { symbol, period: "quarter", limit: String(limit) });
 }
 
+/**
+ * Quartals-Cashflow-Statements (Sprint B3 Phase 3b, server/backtest/pit-valuation.ts):
+ * GET /stable/cash-flow-statement?symbol=X&period=quarter&limit=16
+ * Liefert `filingDate` (PIT-Feld, nicht Periodenende) + operatingCashFlow/
+ * capitalExpenditure/freeCashFlow — analog fmpIncomeStatementQuarterly()
+ * newest-first. Additive Ergaenzung zu fmpCashFlow() (nur Jahreswerte) oben,
+ * KEINE Aenderung an fmpCashFlow() selbst.
+ */
+export async function fmpCashFlowQuarterly(symbol: string, limit = 16) {
+  return fmpFetch(`/cash-flow-statement`, { symbol, period: "quarter", limit: String(limit) });
+}
+
+/**
+ * Quartals-Bilanz-Statements (Sprint B3 Phase 3b Nachbesserung, server/backtest/
+ * pit-valuation.ts): GET /stable/balance-sheet-statement?symbol=X&period=quarter&limit=16
+ * Liefert `filingDate` (PIT-Feld) + totalDebt/cashAndCashEquivalents fuer die
+ * PIT-Netdebt-Berechnung in buildDefaultDCFParams() (shared/valuation-signal.ts:184).
+ * Additive Ergaenzung zu fmpBalanceSheet() (nur Jahreswerte) oben, KEINE
+ * Aenderung an fmpBalanceSheet() selbst. Analog fmpIncomeStatementQuarterly/
+ * fmpCashFlowQuarterly.
+ */
+export async function fmpBalanceSheetQuarterly(symbol: string, limit = 16) {
+  return fmpFetch(`/balance-sheet-statement`, { symbol, period: "quarter", limit: String(limit) });
+}
+
 // ============================================================
 // Management-Execution-Score: Executive-Compensation + Insider-Trading
 // ============================================================
