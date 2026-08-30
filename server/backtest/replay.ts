@@ -29,41 +29,40 @@
  * FCF_T > 0 abgeleitet — das ist keine neue Scoring-Formel, sondern eine
  * reine Boolean-Klassifikationsregel exakt nach Spec §3.3, ohne
  * Ticker-Hardcodes (Sektor-/Industry-String-Vergleich, adaptiv).
+ *
+ * SPRINT B3 PHASE 1b (Ticket: tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md):
+ * Der obige SCOPE-EINSCHRAENKUNG-Absatz galt fuer Phase 0+1. Seit Phase 1b
+ * berechnet server/analyze-route.ts invDcf/crv jetzt SERVERSEITIG — ueber
+ * dieselben reinen Funktionen wie der Client (shared/valuation-signal.ts:
+ * buildDefaultDCFParams/calculateFCFFDCF/worstCaseM1-3/calculateCRV), nicht
+ * ueber eine zweite Formel-Implementierung. replayAt() selbst bleibt
+ * UNVERAENDERT ein reiner Durchreicher: es nimmt invDcf/crv (und die
+ * zugehoerigen T-Rohwerte fuer ScoringSnapshot) weiterhin als vom Aufrufer
+ * BEREITS BERECHNETE, optionale Werte entgegen — nur der Aufrufer
+ * (analyze-route.ts) hat sich geaendert: er liefert jetzt echte Werte statt
+ * `undefined`/`null`. computeDcfApplicable() delegiert an die kanonische
+ * shared/valuation-signal.ts:dcfApplicable() (kein zweites Regel-Set).
  */
 import {
   buildScoringForAnalysis,
   type AnalysisScoringContext,
 } from "../scoring-integration";
+import { dcfApplicable as sharedDcfApplicable } from "../../shared/valuation-signal";
 import type { ScoringSnapshot, DataCompleteFlags } from "./types";
-
-/** §3.3: "sector notin {Banks, Insurance, Capital Markets als Bank-Proxy}".
- *  Reiner String-Match auf Sektor/Industry — keine Ticker-Namen, adaptiv
- *  fuer jeden Ticker mit passendem Sektor/Industry-String. */
-function isBankProxySector(sector: string | undefined, industry: string | undefined): boolean {
-  const hay = `${sector ?? ""} ${industry ?? ""}`.toLowerCase();
-  return (
-    hay.includes("bank") ||
-    hay.includes("insurance") ||
-    hay.includes("capital markets")
-  );
-}
 
 /**
  * §3.3 dcfApplicable = FCF_T > 0 AND sector NOT IN {Banks, Insurance,
  * Capital Markets-als-Bank-Proxy} AND profile erlaubt FCF-DCF.
- * "profile erlaubt FCF-DCF" ist in diesem Repo nicht als eigenes Flag
- * spezifiziert (kein Profil verbietet FCF-DCF explizit in thesis-strength.ts)
- * — daher wird dieser dritte Faktor konservativ als "true, solange kein
- * Bank/Insurance-Sektor" behandelt (keine Erfindung einer neuen Profilregel).
+ * Duenner Wrapper um die kanonische shared/valuation-signal.ts:dcfApplicable()
+ * — erhaelt den bisherigen Funktionsnamen/Signatur fuer bestehende Aufrufer
+ * (analyze-route.ts, script/test-backtest-replay-parity.ts).
  */
 export function computeDcfApplicable(params: {
   fcfTTM: number | null | undefined;
   sector: string | undefined;
   industry: string | undefined;
 }): boolean {
-  const fcfPositive = typeof params.fcfTTM === "number" && isFinite(params.fcfTTM) && params.fcfTTM > 0;
-  const bankProxy = isBankProxySector(params.sector, params.industry);
-  return fcfPositive && !bankProxy;
+  return sharedDcfApplicable(params);
 }
 
 export interface ReplayAtInput {
@@ -86,6 +85,21 @@ export interface ReplayAtInput {
    *  markiert das Feld als fehlend, deriveSignalV1 liefert dann null. */
   invDcf?: number | null;
   crv?: number | null;
+  /** Additiv seit Phase 1b-Praezisierung (30.08.2026): gehaertete Fair-
+   *  Value/Worst-Case-Werte (`computeHardenedCRV().fvHardened`/`wcUsed`),
+   *  Zaehler/Nenner-Basis von `crv` oben. Reine Weiterreichung wie invDcf/
+   *  crv — replayAt() berechnet hier nichts neu. */
+  fv?: number | null;
+  wc?: number | null;
+  /** Additive Rohdaten-Inputs "at T" (Sprint B3 Phase 1b, ScoringSnapshot.
+   *  fcf_T/wacc_T/g_T/P_T/WC_T/D_minus) — rein informativ fuer Phase 2+,
+   *  keine Pflichtangabe. Werden vom Aufrufer (analyze-route.ts) bereits
+   *  berechnet uebergeben, genau wie invDcf/crv oben — replayAt() leitet
+   *  hier nichts neu ab. */
+  fcf_T?: number | null;
+  wacc_T?: number | null;
+  g_T?: number | null;
+  WC_T?: number | null;
 }
 
 /**
@@ -144,6 +158,8 @@ export function replayAt(input: ReplayAtInput): ScoringSnapshot {
     invDcf,
     dcfApplicable,
     crv,
+    fv: input.fv ?? null,
+    wc: input.wc ?? null,
     dataComplete,
     capReached: {
       reached: scoring.cappedBy != null,
@@ -155,5 +171,15 @@ export function replayAt(input: ReplayAtInput): ScoringSnapshot {
     fiscalEVPercent: scoring.fiscal.evPercent,
     createdAt: new Date().toISOString(),
     scoringVersion: "v1",
+
+    // Sprint B3 Phase 1b: additive T-Rohwerte, reine Weiterreichung (siehe
+    // ReplayAtInput-Kommentar oben) — P_T/D_minus werden HIER aus price/WC_T
+    // abgeleitet (triviale Subtraktion, keine neue Formel).
+    fcf_T: input.fcf_T ?? null,
+    wacc_T: input.wacc_T ?? null,
+    g_T: input.g_T ?? null,
+    P_T: input.price,
+    WC_T: input.WC_T ?? null,
+    D_minus: input.WC_T != null ? input.price - input.WC_T : null,
   };
 }

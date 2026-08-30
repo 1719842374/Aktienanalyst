@@ -69,18 +69,32 @@ export interface ScoringSnapshot {
   cappedBySeverity: "warn" | "hard" | null;
   gates: Array<{ id: string; active: boolean; cap: number; severity: string; rationale: string }>;
 
-  /** Reverse-DCF-Ableitung (g-Stern, invDcf) — Fair-Value-Preis aus dem
-   *  invertierten DCF, analog client/src/lib/calculations.ts
-   *  calculateReverseDCF, aber als reiner Preis (nicht nur g-Stern) fuer den
-   *  signal_v1-Vergleich "invDcf < price". */
+  /** invDcf — Fair-Value-PREIS aus dem konservativen FCFF-DCF
+   *  (`calculateFCFFDCF().perShare`, gehaertete Variante seit Phase
+   *  1b-Praezisierung: `computeHardenedCRV().fvHardened`), NICHT g-Stern /
+   *  calcImpliedGStar (das ist eine Wachstumsrate, kein Fair-Value-Preis —
+   *  unterschiedliche Konzepte, siehe Nutzer-Praezisierung 30.08.2026). Fuer
+   *  den signal_v1-Vergleich "invDcf < price". */
   invDcf: number | null;
   /** §3.3 Klassensperre: FCF_T > 0 UND Sektor nicht Bank/Insurance-artig UND
    *  Profil erlaubt FCF-DCF. false => invDcf ist NICHT signalrelevant
    *  (signal_v1 deckelt dann auf max. Hold). */
   dcfApplicable: boolean;
 
-  /** CRV (Chance-Risiko-Verhaeltnis), analog calculateCRV() im Client. */
+  /** CRV (Chance-Risiko-Verhaeltnis) — seit Nutzer-Praezisierung vom
+   *  30.08.2026 die GEHAERTETE Variante (`computeHardenedCRV().crvHardened`),
+   *  NICHT die Base-Optimistic- oder Catalyst-Variante. Base-CRV bleibt
+   *  ausschliesslich UI-Anzeige (Section6.tsx); signal_v1 entscheidet auf
+   *  Basis der gehaerteten Kette (WACC-Floor, TV-Guard, Margin-Stress,
+   *  struktureller Floor, Divergenz-Flag). */
   crv: number | null;
+
+  /** Fair Value (gehaertet) — `computeHardenedCRV().fvHardened`. Zaehler
+   *  von `crv` oben. Additiv seit Phase 1b-Praezisierung. */
+  fv: number | null;
+  /** Worst Case (gehaertet/verwendet) — `computeHardenedCRV().wcUsed`.
+   *  Nenner-Basis von `crv` oben. Additiv seit Phase 1b-Praezisierung. */
+  wc: number | null;
 
   /** dataComplete-Flags (siehe DataCompleteFlags oben). */
   dataComplete: DataCompleteFlags;
@@ -111,6 +125,34 @@ export interface ScoringSnapshot {
    *  GATE_THRESHOLDS erzeugt scoringVersion != v1". Fest "v1" fuer Phase 0+1,
    *  da GATE_THRESHOLDS in diesem Ticket nicht angetastet wird. */
   scoringVersion: string;
+
+  // ── Sprint B3 Phase 1b (Ticket: tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md) ──
+  // Additive Rohdaten-Inputs "at T" (Analysezeitpunkt), aus denen invDcf/crv
+  // ueber shared/valuation-signal.ts abgeleitet wurden. Rein informativ fuer
+  // Phase 2+ (Transparenz/Debugging/Backtest-Reports) — signal_v1 selbst
+  // liest nur invDcf/crv/dcfApplicable oben, NICHT diese Rohwerte direkt.
+  // null, wenn der jeweilige Wert am Analysezeitpunkt nicht verfuegbar war
+  // (z.B. fcfTTM fehlt -> fcf_T=null, dcfApplicable bereits false).
+
+  /** Freier Cashflow (TTM) zum Analysezeitpunkt T — Basis fuer dcfApplicable
+   *  (§3.3: FCF_T > 0) und fuer calculateFCFFDCF()/calculateReverseDCF(). */
+  fcf_T: number | null;
+  /** WACC (Modell, %) zum Analysezeitpunkt T — aus calculateFCFFDCF().wacc
+   *  bzw. dem Sektor-WACC-Szenario, das buildDefaultDCFParams() gewaehlt hat. */
+  wacc_T: number | null;
+  /** Sektor-Wachstumsannahme g1 (%) zum Analysezeitpunkt T, wie an
+   *  buildDefaultDCFParams()/calculateReverseDCF() uebergeben. */
+  g_T: number | null;
+  /** Kurs (P) zum Analysezeitpunkt T — identisch zu `price`, der an
+   *  replayAt() uebergeben wurde; hier redundant fuer Backtest-Reports, die
+   *  nur den Snapshot lesen (ohne Zugriff auf den urspruenglichen Aufruf). */
+  P_T: number | null;
+  /** Worst-Case-Kurs (min(M1, M2, M3)) zum Analysezeitpunkt T — Nenner-Basis
+   *  von calculateCRV(). */
+  WC_T: number | null;
+  /** Worst-Case-Delta: P_T - WC_T (positiver Wert = WC unterhalb des Kurses,
+   *  wie von calculateCRV() erwartet; <= 0 loest den 99-Sonderfall aus). */
+  D_minus: number | null;
 }
 
 /** Re-Export des generischen Gate-Typs fuer Konsumenten dieser Datei, damit

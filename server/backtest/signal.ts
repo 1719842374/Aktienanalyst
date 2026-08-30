@@ -27,125 +27,52 @@
  * Raster 1.5/2.0/2.5, kein expliziter dcfApplicable/dataComplete-Gate-Schritt).
  *
  * Die serverseitige Scoring-Pipeline (scoring-gates.ts/scoring-integration.ts)
- * liefert bereits Score/Gates/cappedBy — aber KEIN invDcf-als-Preis, KEIN CRV,
- * KEIN dcfApplicable/dataComplete in der von §9 verlangten Form. Diese Felder
- * existieren bislang nur implizit/clientseitig (SummarySection.tsx berechnet
- * reverseDCF.impliedGrowth + calculateCRV() selbst, ohne sie an den Server
- * zurueckzugeben).
+ * liefert bereits Score/Gates/cappedBy. invDcf/CRV/dcfApplicable kommen seit
+ * Sprint B3 Phase 1b ECHT aus server/analyze-route.ts (ueber
+ * shared/valuation-signal.ts, siehe dortiger Datei-Kommentar) statt vorher
+ * `null` zu sein.
+ *
+ * SPRINT B3 PHASE 1b (Ticket: tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md):
+ * Die Regel selbst (§9) ist jetzt in shared/valuation-signal.ts als
+ * signalV1() die KANONISCHE, EINZIGE Implementierung — EIN Modul, KEINE
+ * zweite Regel-Kopie. deriveSignalV1() hier ist nur noch ein duenner
+ * Re-Export-Wrapper, der den bisherigen Namen/Signatur/Import-Pfad
+ * (`from "./backtest/signal"` / `from "../server/backtest/signal"`) fuer
+ * bestehende Aufrufer (server/analyze-route.ts, script/test-backtest-replay-
+ * parity.ts) unveraendert erhaelt.
  *
  * ENTSCHEIDUNG (wie im Ticket vorgegeben, Regel "Live NICHT umbauen"):
- * deriveSignalV1() ist eine EIGENSTAENDIGE, NEUE Funktion nach der Spec-Regel
- * oben. Sie ruft AUSSCHLIESSLICH bereits vorhandene Scoring-Ergebnisse
- * (ScoringSnapshot-Felder, die ihrerseits aus runScoringPipeline() /
- * buildScoringForAnalysis() / calculateReverseDCF() / calculateCRV() stammen)
- * als Eingabe entgegen — sie berechnet NICHTS davon neu (kein zweites
- * Score-Modell, WORK_SIGNAL_BACKTEST.md §1 "Verbot: zweiter Backtest-Score").
- * Die Live-Fazit-Logik in SummarySection.tsx bleibt unveraendert bestehen.
- * Live-Summary und deriveSignalV1() laufen bewusst NEBENEINANDER, bis ein
- * spaeteres, separates Ticket (nicht Teil von Phase 0-1) entscheidet, ob/wie
- * die Live-UI auf signal_v1 umgestellt wird.
+ * deriveSignalV1()/signalV1() ruft AUSSCHLIESSLICH bereits vorhandene
+ * Scoring-Ergebnisse (ScoringSnapshot-Felder, die ihrerseits aus
+ * runScoringPipeline() / buildScoringForAnalysis() / calculateReverseDCF() /
+ * calculateCRV() stammen) als Eingabe entgegen — sie berechnet NICHTS davon
+ * neu (kein zweites Score-Modell, WORK_SIGNAL_BACKTEST.md §1 "Verbot:
+ * zweiter Backtest-Score"). Die Live-Fazit-Logik in SummarySection.tsx
+ * bleibt unveraendert bestehen. Live-Summary und deriveSignalV1() laufen
+ * bewusst NEBENEINANDER, bis ein spaeteres, separates Ticket (nicht Teil von
+ * Phase 0-1) entscheidet, ob/wie die Live-UI auf signal_v1 umgestellt wird.
  */
-import type { DataCompleteFlags, SignalV1 } from "./types";
+import {
+  signalV1,
+  NO_BUY_HARD_GATES,
+  SIGNAL_V1_CRV_THRESHOLDS,
+  type SignalV1Input,
+} from "../../shared/valuation-signal";
+
+export { NO_BUY_HARD_GATES, SIGNAL_V1_CRV_THRESHOLDS };
 
 /** Eingabe fuer deriveSignalV1() — alle Felder sind bereits vorhandene
- *  Scoring-Ergebnisse, keine Rohdaten. Siehe Datei-Kommentar oben. */
-export interface DeriveSignalV1Input {
-  dataComplete: DataCompleteFlags;
-  dcfApplicable: boolean;
-  /** Reverse-DCF-Fair-Value als Preis (nicht g*). null, wenn nicht berechenbar. */
-  invDcf: number | null;
-  price: number;
-  /** true, wenn die Fiscal-Megatrend-Ausnahme qualifiziert UND materiell ist
-   *  (runScoringPipeline().fiscalQualifiedAndMaterial) — §9 "kein Fiscal-
-   *  Qualify" bedeutet: dieses Flag ist false. */
-  fiscalQualifies: boolean;
-  /** cappedBy-Gate-ID (z.B. "PRICING_POWER"), falls der Score gedeckelt wurde. */
-  cappedBy: string | null;
-  /** severity des cappedBy-Gates ("warn" | "hard"), falls cappedBy gesetzt ist. */
-  cappedBySeverity: "warn" | "hard" | null;
-  /** Chance-Risiko-Verhaeltnis (calculateCRV()-Ergebnis). null, wenn nicht
-   *  berechenbar (z.B. worstCase >= price). */
-  crv: number | null;
-}
-
-/** Gate-IDs, die laut §9 Zeile 4 ein Buy verhindern, wenn severity=hard.
- *  Benannte Konstante statt Inline-String-Vergleich — WORK_SIGNAL_BACKTEST.md
- *  §4 verlangt benannte Konstanten ohne Ticker-Bezug fuer Regel-Schwellen. */
-export const NO_BUY_HARD_GATES: ReadonlySet<string> = new Set([
-  "PRICING_POWER",
-  "RELATIVE_GROWTH",
-]);
-
-/** CRV-Schwellen aus §9 — identisch zu den im Ticket genannten Skill/Template-
- *  Werten (>=2.5 attraktiv, 2.0-2.5 neutral, <2 Warnung, <1.5 Avoid). */
-export const SIGNAL_V1_CRV_THRESHOLDS = {
-  AVOID_BELOW: 1.5,
-  HOLD_BELOW: 2.0,
-  ACCUMULATE_BELOW: 2.5,
-} as const;
+ *  Scoring-Ergebnisse, keine Rohdaten. Siehe Datei-Kommentar oben.
+ *  Identisch zu shared/valuation-signal.ts SignalV1Input — hier als Alias
+ *  re-exportiert, damit bestehende Importe (`DeriveSignalV1Input`) nicht
+ *  angepasst werden muessen. */
+export type DeriveSignalV1Input = SignalV1Input;
 
 /**
  * deriveSignalV1() — reine Funktion, keine Seiteneffekte, kein I/O.
- * Implementiert §9 Zeile fuer Zeile, in genau der dort vorgegebenen
- * Reihenfolge (fruehe Returns = strengere Regel gewinnt).
+ * Duenner Wrapper um shared/valuation-signal.ts:signalV1() (§9-Regel,
+ * kanonische Implementierung — siehe Datei-Kommentar oben).
  */
-export function deriveSignalV1(input: DeriveSignalV1Input): SignalV1 {
-  // Zeile 1: "if !dataComplete: kein Signal"
-  if (!input.dataComplete.overall) return null;
-
-  // Zeile 2: "if !dcfApplicable: max Hold" — degradiert JEDES weitere
-  // Ergebnis auf hoechstens Hold. Wir werten die restlichen Regeln trotzdem
-  // aus (fuer die Avoid-Faelle, die STRENGER als Hold sind, siehe Zeile 3+4),
-  // aber am Ende wird auf "houchstens Hold" gecappt.
-  const dcfCapsToHold = !input.dcfApplicable;
-
-  // Zeile 3: "if invDcf != null && invDcf < price && kein Fiscal-Qualify:
-  //           Avoid (oder Reduce, aber nicht Buy)"
-  // Spec erlaubt explizit Avoid ODER Reduce — wir waehlen Avoid als
-  // strengere, eindeutige Variante (kein zusaetzliches Kriterium erfunden,
-  // um zwischen Avoid/Reduce zu unterscheiden).
-  if (
-    input.invDcf != null &&
-    input.invDcf < input.price &&
-    !input.fiscalQualifies
-  ) {
-    return "Avoid";
-  }
-
-  // Zeile 4: "if cappedBy in {PRICING_POWER, RELATIVE_GROWTH} und
-  //           severity=hard: kein Buy"
-  const noBuyHardGate =
-    input.cappedBy != null &&
-    NO_BUY_HARD_GATES.has(input.cappedBy) &&
-    input.cappedBySeverity === "hard";
-
-  // Zeilen 5-8: CRV-Treppe. Fehlendes CRV faellt konservativ auf "kein
-  // Signal" zurueck (§3.1: nur mit vollstaendigen Daten werten) — das ist
-  // durch dataComplete.crv bereits am Anfang abgedeckt (dataComplete.overall
-  // erfordert crv laut ScoringSnapshot-Vertrag), aber wir bleiben defensiv,
-  // falls ein Aufrufer dataComplete falsch befuellt.
-  if (input.crv == null) return null;
-
-  let signal: SignalV1;
-  if (input.crv < SIGNAL_V1_CRV_THRESHOLDS.AVOID_BELOW) {
-    signal = "Avoid";
-  } else if (input.crv < SIGNAL_V1_CRV_THRESHOLDS.HOLD_BELOW) {
-    signal = "Hold";
-  } else if (input.crv < SIGNAL_V1_CRV_THRESHOLDS.ACCUMULATE_BELOW) {
-    signal = "Accumulate";
-  } else {
-    signal = "Buy";
-  }
-
-  // Zeile 4 anwenden: hartes Gate verhindert Buy → Deckel auf Accumulate.
-  if (signal === "Buy" && noBuyHardGate) {
-    signal = "Accumulate";
-  }
-
-  // Zeile 2 anwenden: !dcfApplicable deckelt auf hoechstens Hold.
-  if (dcfCapsToHold && (signal === "Buy" || signal === "Accumulate")) {
-    signal = "Hold";
-  }
-
-  return signal;
+export function deriveSignalV1(input: DeriveSignalV1Input) {
+  return signalV1(input);
 }

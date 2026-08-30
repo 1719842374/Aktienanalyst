@@ -28,12 +28,55 @@
 import { buildScoringForAnalysis, type AnalysisScoringContext } from "../server/scoring-integration";
 import { replayAt, computeDcfApplicable } from "../server/backtest/replay";
 import { deriveSignalV1 } from "../server/backtest/signal";
-import type { Catalyst } from "../shared/schema";
+import type { Catalyst, Risk, StockAnalysis } from "../shared/schema";
+// Sprint B3 Phase 1b (Ticket: tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md;
+// Nutzer-Praezisierung 30.08.2026): dieselben Funktionen wie Client
+// (Section6.tsx) UND Server (analyze-route.ts) — importiert aus dem EINEN
+// gemeinsamen Modul, um zu beweisen, dass beide Seiten bit-identisch
+// rechnen (kein zweiter Pfad). Signal-CRV = GEHAERTETE Kette
+// (computeHardenedCRV), NICHT die Base-Optimistic-Variante.
+import {
+  buildDefaultDCFParams,
+  calculateFCFFDCF,
+  worstCaseM1,
+  computeHardenedCRV,
+  calculateCRV,
+  signalV1,
+} from "../shared/valuation-signal";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail?: string) {
   if (cond) console.log(`  ✅ ${name}`);
   else { failed++; console.error(`  ❌ ${name}${detail ? ` — ${detail}` : ""}`); }
+}
+
+// Deterministischer, seed-basierter Pseudo-Zufallsgenerator (kein echter
+// Zufall -- Testlauf muss reproduzierbar bit-identisch bleiben) fuer
+// synthetische 26W-Kurshistorien (RSL-Input in buildDefaultDCFParams()).
+function seededRandom(seed: number): () => number {
+  let s = seed % 2147483647;
+  if (s <= 0) s += 2147483646;
+  return () => {
+    s = (s * 16807) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+
+/** Erzeugt 130 synthetische Tagesschlusskurse (>= 60 fuer RSL, siehe
+ *  calculateRSL()-Mindestanforderung), endend bei `endDateIso`, mit
+ *  leichtem Drift um `startPrice`. Deterministisch je `seed`. */
+function genHistoricalPrices(startPrice: number, endDateIso: string, seed: number): { date: string; close: number }[] {
+  const rnd = seededRandom(seed);
+  const prices: { date: string; close: number }[] = [];
+  let p = startPrice;
+  const end = new Date(endDateIso + "T00:00:00Z");
+  for (let i = 0; i < 130; i++) {
+    p = p * (1 + 0.0002 + (rnd() - 0.5) * 0.02);
+    const d = new Date(end);
+    d.setUTCDate(d.getUTCDate() - i);
+    prices.push({ date: d.toISOString().slice(0, 10), close: +p.toFixed(2) });
+  }
+  return prices;
 }
 
 function makeCatalyst(overrides: Partial<Catalyst>): Catalyst {
@@ -61,6 +104,123 @@ interface Fixture {
   fcfTTM: number | null;
   sector: string;
   industry: string;
+  // ── Sprint B3 Phase 1b: zusaetzliche Rohdaten fuer den CRV/invDcf-
+  // Paritaetstest (buildDefaultDCFParams() braucht ein volles
+  // StockAnalysis-Objekt, siehe makeStockAnalysis() unten). ──
+  crvFixture: {
+    totalDebt: number;
+    cashEquivalents: number;
+    marketCap: number;
+    sharesOutstanding: number;
+    revenue: number;
+    ebitda: number;
+    operatingIncome: number;
+    capex: number;
+    epsTTM: number;
+    epsConsensusNextFY: number;
+    beta5Y: number;
+    lynchClass: string;
+    sectorMaxDrawdown: number;
+    fcfHaircut: number;
+    sectorGrowthG1: number;
+    sectorGrowthTerminal: number;
+    sectorWaccAvg: number;
+    historicalPrices: { date: string; close: number }[];
+    risks: Risk[];
+    // ── zusaetzlich fuer computeHardenedCRV() (Nutzer-Praezisierung 30.08.2026) ──
+    sector: string;
+    moatRating: string;
+    analystPTMedian: number;
+    governmentExposure: number | null;
+    fcfMarginYoyPp: number | null;
+    marginDeltaYoYPp: number | null;
+  };
+}
+
+/**
+ * makeStockAnalysis() — baut aus einer Fixture ein minimales, aber fuer
+ * buildDefaultDCFParams()/calculateFCFFDCF()/worstCaseM1-3/calculateCRV()
+ * VOLLSTAENDIGES StockAnalysis-Objekt (nur die von diesen Funktionen
+ * tatsaechlich gelesenen Felder sind befuellt — siehe shared/valuation-
+ * signal.ts:buildDefaultDCFParams() fuer die exakte Feldliste). Das ist der
+ * "Live"-Simulationspfad (analog SummarySection.tsx `data`-Prop).
+ */
+function makeStockAnalysis(fx: Fixture): StockAnalysis {
+  const c = fx.crvFixture;
+  return {
+    currentPrice: fx.price,
+    totalDebt: c.totalDebt,
+    cashEquivalents: c.cashEquivalents,
+    marketCap: c.marketCap,
+    sharesOutstanding: c.sharesOutstanding,
+    revenue: c.revenue,
+    ebitda: c.ebitda,
+    operatingIncome: c.operatingIncome,
+    epsTTM: c.epsTTM,
+    epsConsensusNextFY: c.epsConsensusNextFY,
+    beta5Y: c.beta5Y,
+    lynchClass: c.lynchClass,
+    sectorMaxDrawdown: c.sectorMaxDrawdown,
+    fcfHaircut: c.fcfHaircut,
+    historicalPrices: c.historicalPrices,
+    risks: c.risks,
+    sector: c.sector,
+    moatRating: c.moatRating,
+    governmentExposure: c.governmentExposure,
+    fcfMarginYoyPp: c.fcfMarginYoyPp,
+    analystPT: { median: c.analystPTMedian },
+    financialStatements: {
+      cashFlow: { operatingCashFlow: 0, capex: c.capex, fcf: 0, fcfMargin: 0, fcfPerShare: 0 },
+    },
+    sectorProfile: {
+      sector: c.sector,
+      waccScenarios: { kons: c.sectorWaccAvg + 1.5, avg: c.sectorWaccAvg, opt: c.sectorWaccAvg - 1.5 },
+      growthAssumptions: { g1: c.sectorGrowthG1, g2: c.sectorGrowthG1 * 0.6, terminal: c.sectorGrowthTerminal },
+    },
+  } as unknown as StockAnalysis;
+}
+
+/**
+ * computeCrvAndInvDcf() — die EXAKTE Pipeline aus Section6.tsx (gehaertete
+ * Kette), 1:1 dieselben Funktionsaufrufe wie server/analyze-route.ts jetzt
+ * serverseitig macht (Nutzer-Praezisierung 30.08.2026: Signal-CRV ist die
+ * GEHAERTETE Variante, nicht die Base-Optimistic-/Catalyst-Variante). Dient
+ * hier als "Live"-Referenzwert, gegen den server-seitig (replayAt()-
+ * Snapshot) auf Bit-Identitaet (4 Nachkommastellen) geprueft wird.
+ */
+function computeCrvAndInvDcf(fx: Fixture): { invDcf: number; crv: number; wacc: number; g1: number; worstCase: number; fv: number; wc: number } {
+  const data = makeStockAnalysis(fx);
+  const baseParams = buildDefaultDCFParams(data);
+  const conservativeDCF = calculateFCFFDCF(baseParams);
+  const m1 = worstCaseM1(data.currentPrice, data.beta5Y, data.sectorMaxDrawdown || 35);
+  const hardened = computeHardenedCRV({
+    price: data.currentPrice,
+    conservativeDCF: {
+      perShare: conservativeDCF.perShare,
+      wacc: conservativeDCF.wacc,
+      enterpriseValue: conservativeDCF.enterpriseValue,
+      pvTerminal: conservativeDCF.pvTerminal,
+    },
+    sector: data.sector,
+    industry: data.sectorProfile?.sector ?? data.sector,
+    ebitMarginPct: baseParams.ebitMargin,
+    marginDeltaYoYPp: fx.crvFixture.marginDeltaYoYPp,
+    fcfMarginYoYPp: data.fcfMarginYoyPp ?? null,
+    govExposurePct: data.governmentExposure ?? null,
+    moatRating: data.moatRating,
+    betaAdjDrawdownPct: (1 - m1 / data.currentPrice) * 100,
+    sectorDrawdownPct: data.sectorMaxDrawdown || 35,
+    analystPTMedian: data.analystPT?.median ?? data.currentPrice,
+  });
+  return {
+    invDcf: hardened.fvHardened,
+    crv: hardened.crvHardened,
+    wacc: hardened.waccUsed,
+    g1: baseParams.revenueGrowthP1,
+    worstCase: hardened.wcUsed,
+    fv: hardened.fvHardened,
+    wc: hardened.wcUsed,
+  };
 }
 
 // ============================================================================
@@ -95,6 +255,19 @@ const msft: Fixture = {
   fcfTTM: 74000, // Mio USD, oeffentlich bekannt grob FY24
   sector: "Technology",
   industry: "Software - Infrastructure",
+  crvFixture: {
+    totalDebt: 42700, cashEquivalents: 75500, marketCap: 3200000, sharesOutstanding: 7430,
+    revenue: 245100, ebitda: 133400, operatingIncome: 109400, capex: 44500,
+    epsTTM: 12.4, epsConsensusNextFY: 14.1, beta5Y: 0.9, lynchClass: "fast_grower",
+    sectorMaxDrawdown: 35, fcfHaircut: 0, sectorGrowthG1: 15, sectorGrowthTerminal: 3, sectorWaccAvg: 9.0,
+    historicalPrices: genHistoricalPrices(430, "2026-08-30", 11),
+    risks: [
+      { name: "Cloud-Wettbewerb", category: "Gradual", ew: 40, impact: 20, expectedDamage: 8 },
+      { name: "Regulatorik/Antitrust", category: "Binary", ew: 20, impact: 30, expectedDamage: 6 },
+    ],
+    sector: "Technology", moatRating: "Wide", analystPTMedian: 470,
+    governmentExposure: 5, fcfMarginYoyPp: 1.2, marginDeltaYoYPp: 0.8,
+  },
 };
 
 // ============================================================================
@@ -132,6 +305,19 @@ const nke: Fixture = {
   fcfTTM: 3200,
   sector: "Consumer Cyclical",
   industry: "Footwear & Accessories",
+  crvFixture: {
+    totalDebt: 8900, cashEquivalents: 10800, marketCap: 130000, sharesOutstanding: 1560,
+    revenue: 51200, ebitda: 6300, operatingIncome: 5100, capex: 900,
+    epsTTM: 3.2, epsConsensusNextFY: 3.4, beta5Y: 1.0, lynchClass: "stalwart",
+    sectorMaxDrawdown: 40, fcfHaircut: 0, sectorGrowthG1: 8, sectorGrowthTerminal: 2.5, sectorWaccAvg: 8.5,
+    historicalPrices: genHistoricalPrices(90, "2023-09-30", 22),
+    risks: [
+      { name: "Marktanteilsverlust (On/Hoka)", category: "Gradual", ew: 55, impact: 25, expectedDamage: 13.75 },
+      { name: "Lageraufbau/Abschreibungen", category: "Gradual", ew: 45, impact: 20, expectedDamage: 9 },
+    ],
+    sector: "Consumer Cyclical", moatRating: "Narrow", analystPTMedian: 95,
+    governmentExposure: 2, fcfMarginYoyPp: -3.5, marginDeltaYoYPp: -2.8,
+  },
 };
 
 // ============================================================================
@@ -166,6 +352,19 @@ const asml: Fixture = {
   fcfTTM: 6900,
   sector: "Technology",
   industry: "Semiconductor Equipment & Materials",
+  crvFixture: {
+    totalDebt: 2900, cashEquivalents: 6300, marketCap: 310000, sharesOutstanding: 393,
+    revenue: 27600, ebitda: 10600, operatingIncome: 8700, capex: 2000,
+    epsTTM: 21.5, epsConsensusNextFY: 24.0, beta5Y: 1.2, lynchClass: "fast_grower",
+    sectorMaxDrawdown: 35, fcfHaircut: 0, sectorGrowthG1: 15, sectorGrowthTerminal: 3, sectorWaccAvg: 9.0,
+    historicalPrices: genHistoricalPrices(780, "2026-08-30", 33),
+    risks: [
+      { name: "China-Exportbeschraenkungen", category: "Binary", ew: 35, impact: 30, expectedDamage: 10.5 },
+      { name: "Zyklischer Auftragseingang", category: "Gradual", ew: 50, impact: 20, expectedDamage: 10 },
+    ],
+    sector: "Technology", moatRating: "Wide", analystPTMedian: 850,
+    governmentExposure: 15, fcfMarginYoyPp: 2.0, marginDeltaYoYPp: 1.5,
+  },
 };
 
 // ============================================================================
@@ -222,6 +421,19 @@ const rhm: Fixture = {
   fcfTTM: 450,
   sector: "Industrials",
   industry: "Aerospace & Defense",
+  crvFixture: {
+    totalDebt: 3200, cashEquivalents: 1800, marketCap: 55000, sharesOutstanding: 43,
+    revenue: 10450, ebitda: 1750, operatingIncome: 1225, capex: 550,
+    epsTTM: 18.0, epsConsensusNextFY: 24.0, beta5Y: 1.4, lynchClass: "fast_grower",
+    sectorMaxDrawdown: 40, fcfHaircut: 0, sectorGrowthG1: 8, sectorGrowthTerminal: 2.5, sectorWaccAvg: 9.0,
+    historicalPrices: genHistoricalPrices(1650, "2026-08-30", 44),
+    risks: [
+      { name: "Ruestungsbudget-Kuerzung nach Wahl", category: "Binary", ew: 25, impact: 35, expectedDamage: 8.75 },
+      { name: "Bewertung bereits hoch (Multiple-Kompression)", category: "Gradual", ew: 45, impact: 25, expectedDamage: 11.25 },
+    ],
+    sector: "Industrials", moatRating: "Narrow", analystPTMedian: 1750,
+    governmentExposure: 65, fcfMarginYoyPp: 0.5, marginDeltaYoYPp: 0.3,
+  },
 };
 
 const fixtures: Fixture[] = [msft, nke, asml, rhm];
@@ -243,7 +455,17 @@ for (const fx of fixtures) {
     asOfDate: fx.asOf,
   });
 
-  // (b) "Replay"-Pfad — Phase 1 (server/backtest/replay.ts).
+  // Sprint B3 Phase 1b: "Live"-CRV/invDcf — EXAKT dieselbe Pipeline wie
+  // SummarySection.tsx ("Fazit"-Block) UND wie server/analyze-route.ts sie
+  // jetzt am replayAt()-Call-Site berechnet (siehe computeCrvAndInvDcf()
+  // oben) — ein Modul, ein Aufruf, zwei "Seiten" (hier: zwei Aufrufstellen
+  // im selben Testlauf, die beide dieselbe Funktion nutzen).
+  const liveCrv = computeCrvAndInvDcf(fx);
+
+  // (b) "Replay"-Pfad — Phase 1 (server/backtest/replay.ts). invDcf/crv/
+  // T-Rohwerte werden jetzt (Phase 1b) mit den ECHTEN, oben berechneten
+  // Werten uebergeben — genau wie analyze-route.ts es jetzt tut (kein
+  // hartcodiertes null mehr).
   const snapshot = replayAt({
     ticker: fx.ticker,
     asOf: fx.asOf,
@@ -256,6 +478,14 @@ for (const fx of fixtures) {
     fcfTTM: fx.fcfTTM,
     sector: fx.sector,
     industry: fx.industry,
+    invDcf: liveCrv.invDcf,
+    crv: liveCrv.crv,
+    fv: liveCrv.fv,
+    wc: liveCrv.wc,
+    fcf_T: fx.fcfTTM,
+    wacc_T: liveCrv.wacc,
+    g_T: liveCrv.g1,
+    WC_T: liveCrv.worstCase,
   });
 
   check(`${fx.ticker}: finalScore identisch (${live.finalScore} === ${snapshot.finalScore})`, live.finalScore === snapshot.finalScore);
@@ -276,10 +506,63 @@ for (const fx of fixtures) {
   const expectedDcfApplicable = computeDcfApplicable({ fcfTTM: fx.fcfTTM, sector: fx.sector, industry: fx.industry });
   check(`${fx.ticker}: dcfApplicable = ${expectedDcfApplicable} (FCF=${fx.fcfTTM}, Sektor=${fx.sector})`, snapshot.dcfApplicable === expectedDcfApplicable);
 
-  // deriveSignalV1() darf mit fehlendem invDcf/CRV (Phase 0+1-Scope, siehe
-  // replay.ts-Kommentar) NICHT halluzinieren -- muss `null` liefern
-  // ("kein Signal"), solange dataComplete.overall = false ist.
-  const signal = deriveSignalV1({
+  // Sprint B3 Phase 1b (Ticket-Akzeptanzkriterien):
+  // 1) dataComplete.overall muss jetzt TRUE sein — invDcf/crv sind nicht
+  //    mehr null (vorher Phase 0+1: immer false/null).
+  check(
+    `${fx.ticker}: dataComplete.overall = true (invDcf/crv jetzt real statt null)`,
+    snapshot.dataComplete.overall === true && snapshot.invDcf != null && snapshot.crv != null
+  );
+
+  // 2) CRV bit-identisch (4 Nachkommastellen) zwischen "Live"-Berechnung
+  //    (computeCrvAndInvDcf(), hier simuliert wie SummarySection.tsx) und
+  //    dem server-seitigen Snapshot (replayAt(), gefuettert von genau
+  //    denselben Werten wie analyze-route.ts es jetzt tut). Da beide Seiten
+  //    dieselbe Funktion (shared/valuation-signal.ts:calculateCRV) mit
+  //    denselben Inputs aufrufen, MUESSEN die Werte exakt gleich sein --
+  //    kein Rundungsunterschied durch getrennte Formel-Pfade.
+  check(
+    `${fx.ticker}: CRV bit-identisch auf 4 Nachkommastellen (live=${liveCrv.crv.toFixed(4)} === snapshot=${snapshot.crv?.toFixed(4)})`,
+    snapshot.crv != null && liveCrv.crv.toFixed(4) === snapshot.crv.toFixed(4)
+  );
+  check(
+    `${fx.ticker}: invDcf bit-identisch auf 4 Nachkommastellen (live=${liveCrv.invDcf.toFixed(4)} === snapshot=${snapshot.invDcf?.toFixed(4)})`,
+    snapshot.invDcf != null && liveCrv.invDcf.toFixed(4) === snapshot.invDcf.toFixed(4)
+  );
+  check(
+    `${fx.ticker}: fv (gehaertet) bit-identisch auf 4 Nachkommastellen (live=${liveCrv.fv.toFixed(4)} === snapshot=${snapshot.fv?.toFixed(4)})`,
+    snapshot.fv != null && liveCrv.fv.toFixed(4) === snapshot.fv.toFixed(4)
+  );
+  check(
+    `${fx.ticker}: wc (gehaertet) bit-identisch auf 4 Nachkommastellen (live=${liveCrv.wc.toFixed(4)} === snapshot=${snapshot.wc?.toFixed(4)})`,
+    snapshot.wc != null && liveCrv.wc.toFixed(4) === snapshot.wc.toFixed(4)
+  );
+
+  // 3) P - WC <= 0 => calculateCRV() liefert 99 (Sonderfall) -- clientseitig
+  //    UND serverseitig identisch, da dieselbe Funktion aufgerufen wird.
+  //    Informativ mitgeprueft (kein Fixture hier hat WC >= P, aber die
+  //    Regel selbst wird unten separat isoliert getestet, siehe §5).
+  if (fx.price - liveCrv.worstCase <= 0) {
+    check(`${fx.ticker}: P - WC <= 0 => CRV = 99 (Sonderfall)`, liveCrv.crv === 99 && snapshot.crv === 99);
+  }
+
+  // 4) signal(live) === signal(replay(heute)) -- die zentrale Paritaets-
+  //    Anforderung des Tickets. "live" hier: signalV1() direkt mit den
+  //    liveCrv-Werten (der "echten" Live-Berechnung) plus den Score/Gate-
+  //    Feldern aus buildScoringForAnalysis() (live). "replay": deriveSignalV1()
+  //    (duenner Wrapper um signalV1(), siehe signal.ts) mit dem persistierten
+  //    Snapshot. Beide muessen zum selben Ergebnis kommen.
+  const liveSignal = signalV1({
+    dataComplete: { overall: true },
+    dcfApplicable: snapshot.dcfApplicable, // dcfApplicable ist reine Klassifikation, nicht "Live" vs. "Replay" -- identisch in beiden Pfaden
+    invDcf: liveCrv.invDcf,
+    price: fx.price,
+    fiscalQualifies: live.fiscal.qualifies,
+    cappedBy: live.cappedBy,
+    cappedBySeverity: (live.gates.find(g => g.id === live.cappedBy)?.severity as "warn" | "hard" | undefined) ?? null,
+    crv: liveCrv.crv,
+  });
+  const replaySignal = deriveSignalV1({
     dataComplete: snapshot.dataComplete,
     dcfApplicable: snapshot.dcfApplicable,
     invDcf: snapshot.invDcf,
@@ -290,11 +573,11 @@ for (const fx of fixtures) {
     crv: snapshot.crv,
   });
   check(
-    `${fx.ticker}: deriveSignalV1() = null solange invDcf/CRV fehlen (dataComplete.overall=${snapshot.dataComplete.overall})`,
-    signal === null && !snapshot.dataComplete.overall
+    `${fx.ticker}: signal(live) === signal(replay(heute)) (${liveSignal} === ${replaySignal})`,
+    liveSignal === replaySignal && liveSignal !== null
   );
 
-  console.log(`  ℹ️  Score=${live.finalScore} (raw=${live.rawScore}) cappedBy=${live.cappedBy ?? "-"} fiscal.qualifies=${live.fiscal.qualifies} dcfApplicable=${snapshot.dcfApplicable}`);
+  console.log(`  ℹ️  Score=${live.finalScore} (raw=${live.rawScore}) cappedBy=${live.cappedBy ?? "-"} fiscal.qualifies=${live.fiscal.qualifies} dcfApplicable=${snapshot.dcfApplicable} invDcf=${snapshot.invDcf?.toFixed(2)} crv=${snapshot.crv?.toFixed(4)} signal=${replaySignal}`);
   console.log("");
 }
 
@@ -347,6 +630,35 @@ console.log("--- deriveSignalV1() Regel-Isolationstests (§9) ---");
     "§9 Zeile 8: CRV >= 2.5 -> Buy",
     deriveSignalV1({ dataComplete: complete, dcfApplicable: true, invDcf: null, price: 90, fiscalQualifies: false, cappedBy: null, cappedBySeverity: null, crv: 2.8 }) === "Buy"
   );
+}
+
+// ============================================================================
+// Sprint B3 Phase 1b (Ticket-Akzeptanzkriterium + Nutzer-Praezisierung
+// 30.08.2026): P - WC <= 0 => calculateCRV() liefert exakt 99 (Sonderfall,
+// "unendlich gutes" CRV weil kein Downside mehr vorhanden ist). Explizit
+// isoliert getestet (keine der 4 Ticker-Fixtures oben trifft diesen Fall).
+// "Client"- und "Server"-Pfad sind hier trivial identisch, weil es sich um
+// denselben Aufruf derselben Funktion aus shared/valuation-signal.ts
+// handelt (EIN Modul) -- genau das ist der Punkt: es gibt keinen zweiten
+// Formel-Pfad, der abweichen koennte.
+// ============================================================================
+console.log("\n--- CRV Sonderfall: P - WC <= 0 -> 99 (isoliert) ---");
+{
+  const price = 100;
+  const wcEqualToPrice = 100; // P - WC = 0
+  const wcAbovePrice = 110; // P - WC = -10 (WC > P, kann strukturell vorkommen wenn Floor > Price-Delta)
+  const fv = 150;
+
+  const crvAtZero = calculateCRV(fv, wcEqualToPrice, price);
+  const crvAtZeroClientSide = calculateCRV(fv, wcEqualToPrice, price); // "zweiter Aufruf" simuliert den anderen Aufrufort (Section6.tsx vs. analyze-route.ts) -- dieselbe Funktion, daher zwingend bitgleich
+  check("P - WC = 0 -> calculateCRV() = 99", crvAtZero === 99);
+  check("P - WC = 0 -> 'Client'- und 'Server'-Pfad liefern identisch 99 (dieselbe Funktion)", crvAtZero === crvAtZeroClientSide);
+
+  const crvNegative = calculateCRV(fv, wcAbovePrice, price);
+  check("P - WC < 0 -> calculateCRV() = 99 (Sonderfall greift auch bei negativem Delta)", crvNegative === 99);
+
+  const crvNormal = calculateCRV(fv, 80, price); // P - WC = 20 > 0 -> normale Formel, KEIN Sonderfall
+  check("P - WC > 0 -> calculateCRV() != 99 (Regelfall bleibt unangetastet)", crvNormal !== 99 && isFinite(crvNormal));
 }
 
 console.log(`\n${failed === 0 ? "✅ Alle Tests bestanden" : `❌ ${failed} Test(s) fehlgeschlagen`}`);

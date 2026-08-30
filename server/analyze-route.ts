@@ -131,6 +131,19 @@ import { normalizePeerOverrides, buildAnalyzeCacheKey, applyPeerOverrides } from
 import { replayAt } from "./backtest/replay";
 import { persistScoringSnapshot } from "./backtest/snapshot-store";
 import { deriveSignalV1 } from "./backtest/signal";
+// Sprint B3 Phase 1b (Ticket: tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md;
+// Nutzer-Praezisierung 30.08.2026): dieselben reinen CRV/DCF-Funktionen wie
+// die Live-UI (Section6.tsx via client/src/lib/calculations.ts) — EIN
+// Modul, KEINE zweite Formel-Implementierung. Signal-CRV ist die GEHAERTETE
+// Kette (computeHardenedCRV -> crvHardened/fvHardened/wcUsed), NICHT die
+// Base-Optimistic-/Catalyst-Variante (die bleibt reine UI-Anzeige). Siehe
+// replayAt()-Aufruf unten fuer den vollen Kontext.
+import {
+  buildDefaultDCFParams,
+  calculateFCFFDCF,
+  worstCaseM1,
+  computeHardenedCRV,
+} from "../shared/valuation-signal";
 import { invalidateThesisStrengthCache } from "./thesis-strength-cache";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -1916,6 +1929,76 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // dem kritischen Antwortpfad: try/catch, kein Effekt auf `analysis`
       // oder die Response, falls SQLite/Scoring hier fehlschlaegt.
       try {
+        // Sprint B3 Phase 1b (Ticket: tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md;
+        // Nutzer-Praezisierung 30.08.2026): invDcf/CRV jetzt ECHT serverseitig
+        // berechnen — ueber dieselben reinen Funktionen wie die Live-UI
+        // (Section6.tsx), importiert aus shared/valuation-signal.ts (EIN
+        // Modul, KEINE zweite Formel-Implementierung). `analysis` (oben,
+        // Zeile ~1683) ist bereits StockAnalysis-foermig und enthaelt exakt
+        // dieselben Felder, die Section6.tsx als `data` konsumiert
+        // (sectorProfile, risks, beta5Y, lynchClass, sectorMaxDrawdown,
+        // fcfTTM, sharesOutstanding, totalDebt, cashEquivalents, fcfHaircut,
+        // currentPrice) — daher 1:1 dieselbe Pipeline, dieselben
+        // Zwischenwerte, BIS ZUR HAERTUNG (Section6.tsx-Aequivalent):
+        //   baseParams = buildDefaultDCFParams(analysis)
+        //   conservativeDCF = calculateFCFFDCF(baseParams)
+        //   m1/m2/m3 = worstCaseM1/M2/M3(...)
+        //   hardened = computeHardenedCRV({ price, conservativeDCF, ... })
+        //   invDcf = hardened.fvHardened (Fair-Value-Preis, GEHAERTET — nicht
+        //     die Base-Optimistic-/Catalyst-Variante, die bleibt reine
+        //     UI-Anzeige; und NICHT g*/calcImpliedGStar, siehe
+        //     shared/valuation-signal.ts:SignalV1Input-Kommentar zu invDcf)
+        //   crv = hardened.crvHardened
+        let invDcfValue: number | null = null;
+        let crvValue: number | null = null;
+        let fvValue: number | null = null;
+        let wcValue: number | null = null;
+        let fcfTValue: number | null = null;
+        let waccTValue: number | null = null;
+        let gTValue: number | null = null;
+        let wcTValue: number | null = null;
+        try {
+          const baseParams = buildDefaultDCFParams(analysis);
+          const conservativeDCF = calculateFCFFDCF(baseParams);
+          const m1 = worstCaseM1(analysis.currentPrice, analysis.beta5Y, analysis.sectorMaxDrawdown || 35);
+          // computeHardenedCRV() berechnet WC intern nur ueber den
+          // betaAdjDrawdownPct-Parameter (M1) plus sectorDrawdownPct (M3) und
+          // einen strukturellen Floor — M2 (Risk-Impact) fliesst NICHT in die
+          // gehaertete Kette ein (siehe shared/valuation-signal.ts:
+          // worstCaseStructural()). Das entspricht exakt Section6.tsx: dort
+          // wird `m1` (nicht `worstCase`) als betaAdjDrawdownPct-Basis an
+          // computeHardenedCRV() uebergeben.
+          const hardened = computeHardenedCRV({
+            price: analysis.currentPrice,
+            conservativeDCF: {
+              perShare: conservativeDCF.perShare,
+              wacc: conservativeDCF.wacc,
+              enterpriseValue: conservativeDCF.enterpriseValue,
+              pvTerminal: conservativeDCF.pvTerminal,
+            },
+            sector: analysis.sector,
+            industry: analysis.sectorProfile?.sector ?? analysis.sector,
+            ebitMarginPct: baseParams.ebitMargin,
+            marginDeltaYoYPp: scoring?.gateInputs?.marginDeltaYoYPp ?? null,
+            fcfMarginYoYPp: analysis.fcfMarginYoyPp ?? null,
+            govExposurePct: analysis.governmentExposure ?? null,
+            moatRating: analysis.moatRating,
+            betaAdjDrawdownPct: (1 - m1 / analysis.currentPrice) * 100,
+            sectorDrawdownPct: analysis.sectorMaxDrawdown || 35,
+            analystPTMedian: analysis.analystPT?.median ?? analysis.currentPrice,
+          });
+          invDcfValue = hardened.fvHardened;
+          crvValue = hardened.crvHardened;
+          fvValue = hardened.fvHardened;
+          wcValue = hardened.wcUsed;
+          fcfTValue = fcfAvailable ? fcfTTM : null;
+          waccTValue = hardened.waccUsed;
+          gTValue = baseParams.revenueGrowthP1;
+          wcTValue = hardened.wcUsed;
+        } catch (crvErr: any) {
+          console.warn(`[ANALYZE] Server-CRV/invDcf-Berechnung fehlgeschlagen fuer ${upperTicker}: ${crvErr?.message?.substring(0, 150)}`);
+        }
+
         const snapshot = replayAt({
           ticker: upperTicker,
           asOf: new Date().toISOString().slice(0, 10),
@@ -1938,6 +2021,14 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           fcfTTM: fcfAvailable ? fcfTTM : null,
           sector: effectiveSector,
           industry: effectiveIndustry,
+          invDcf: invDcfValue,
+          crv: crvValue,
+          fv: fvValue,
+          wc: wcValue,
+          fcf_T: fcfTValue,
+          wacc_T: waccTValue,
+          g_T: gTValue,
+          WC_T: wcTValue,
         });
         const signal = deriveSignalV1({
           dataComplete: snapshot.dataComplete,
