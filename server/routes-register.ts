@@ -10,4 +10,6 @@ import type { Server } from "http";
 export async function registerRoutes(httpServer: Server, app: Express): Promise<void> {
   const { registerRoutes: registerAllRoutes } = await import("./routes");
   await registerAllRoutes(httpServer, app);
+  const { registerSectorRotationRoute } = await import("./researcher-sector-rotation-route");
+  registerSectorRotationRoute(app);
 }
