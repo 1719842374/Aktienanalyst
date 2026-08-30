@@ -18,6 +18,7 @@ import {
 } from "@/lib/portfolio/positions";
 import { computeMarketWeights } from "@/lib/portfolio/engine";
 import EfficientFrontierPanel from "./EfficientFrontierPanel";
+import PortfolioBacktestPanel from "./PortfolioBacktestPanel";
 
 const PIE_COLORS = [
   "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4",
@@ -59,6 +60,10 @@ export default function PortfolioOverview({
   onSelectTicker,
   capmWeights,
   solveFailed,
+  sectorByTicker,
+  benchmarkTicker,
+  benchmarkHistoricalPrices,
+  riskFreeRateAnnual,
 }: {
   positions: PortfolioPosition[];
   lastPriceByTicker: Record<string, number | null | undefined>;
@@ -77,6 +82,13 @@ export default function PortfolioOverview({
    * sichtbar, dass die Σ-Invertierung fehlgeschlagen ist und ein Equal-Weight-Fallback
    * verwendet wurde, auch auf der Uebersicht (nicht nur im Optimierungs-Panel). */
   solveFailed?: boolean;
+  /** Sprint B2 (Portfolio-Backtest vs. Benchmark), alle vier Props additiv und
+   * optional -- ohne sie (z.B. andere bestehende Aufrufer dieser Komponente,
+   * falls vorhanden) wird der neue Backtest-Block einfach nicht gerendert. */
+  sectorByTicker?: Record<string, string | undefined>;
+  benchmarkTicker?: string;
+  benchmarkHistoricalPrices?: Array<{ date: string; close: number }> | undefined;
+  riskFreeRateAnnual?: number;
 }) {
   const [pieMode, setPieMode] = useState<"market" | "capm">("market");
   const hasCapmWeights = !!capmWeights && Object.keys(capmWeights).length > 0;
@@ -330,6 +342,24 @@ export default function PortfolioOverview({
         historicalPricesByTicker={historicalPricesByTicker}
         currentWeights={frontierCurrentWeights}
       />
+
+      {/* Sprint B2 (WORK_PORTFOLIO_BACKTEST.md): ex-post Performance-Attribution
+          vs. Benchmark -- rein additiv NACH dem bestehenden Inhalt (UI-
+          Platzierung Empfehlung A, Spec §6). Nutzt ausschliesslich offene
+          Long-Positionen aus `positions` (nicht `directionFiltered`, damit
+          der Backtest unabhaengig vom Long/Short-Filter der Uebersicht bleibt --
+          Short-Attribution ist laut Spec §10 bewusst nicht Teil von v1). Rendert
+          nichts, wenn benchmarkTicker/benchmarkHistoricalPrices fehlen. */}
+      {benchmarkTicker && (
+        <PortfolioBacktestPanel
+          positions={positions}
+          historicalPricesByTicker={historicalPricesByTicker}
+          sectorByTicker={sectorByTicker ?? {}}
+          benchmarkTicker={benchmarkTicker}
+          benchmarkHistoricalPrices={benchmarkHistoricalPrices}
+          riskFreeRateAnnual={riskFreeRateAnnual ?? 0}
+        />
+      )}
     </div>
   );
 }

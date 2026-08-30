@@ -99,6 +99,16 @@ export default function PortfolioPage() {
     tickers.forEach(t => fetchAnalysisForTicker(t));
   }, [positions, fetchAnalysisForTicker]);
 
+  // Sprint B2 (Portfolio-Backtest vs. Benchmark): Benchmark-Kurshistorie ueber
+  // denselben /api/analyze-Fetch-Mechanismus wie Einzeltitel (inkl. FMP/Yahoo-
+  // Fallback aus Sprint B1) laden. policy.benchmark (Default "SPY") steuert
+  // den Ticker -- additiv, beeinflusst KEINE bestehende Positions-Logik.
+  useEffect(() => {
+    const upper = (policy.benchmark || "SPY").trim().toUpperCase();
+    if (!upper) return;
+    fetchAnalysisForTicker(upper);
+  }, [policy.benchmark, fetchAnalysisForTicker]);
+
   const lastPriceByTicker = useMemo(() => {
     const map: Record<string, number | null | undefined> = {};
     for (const [ticker, a] of Object.entries(analysisByTicker)) {
@@ -111,6 +121,17 @@ export default function PortfolioPage() {
     const map: Record<string, Array<{ date: string; close: number }> | undefined> = {};
     for (const [ticker, a] of Object.entries(analysisByTicker)) {
       map[ticker] = a?.historicalPrices?.map(h => ({ date: h.date, close: h.close }));
+    }
+    return map;
+  }, [analysisByTicker]);
+
+  // Sprint B2 (Portfolio-Backtest vs. Benchmark): Sektor je Ticker aus dem
+  // bereits geladenen Analyse-Cache (StockAnalysis.sector) -- kein neuer
+  // Fetch, additiv fuer die Sektor-Attribution im Backtest-Panel.
+  const sectorByTicker = useMemo(() => {
+    const map: Record<string, string | undefined> = {};
+    for (const [ticker, a] of Object.entries(analysisByTicker)) {
+      map[ticker] = a?.sector;
     }
     return map;
   }, [analysisByTicker]);
@@ -350,6 +371,10 @@ export default function PortfolioPage() {
                 onSelectTicker={(ticker) => scrollToSection(2)}
                 capmWeights={capmWeights}
                 solveFailed={solveFailed}
+                sectorByTicker={sectorByTicker}
+                benchmarkTicker={policy.benchmark}
+                benchmarkHistoricalPrices={historicalPricesByTicker[(policy.benchmark || "SPY").trim().toUpperCase()]}
+                riskFreeRateAnnual={rfDecimal}
               />
             </div>
 
