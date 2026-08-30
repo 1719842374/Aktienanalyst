@@ -171,6 +171,15 @@ async function fetchOneTicker(ticker: string): Promise<TickerOutcome> {
       health: undefined,
       moatRating: undefined,
       technicalIndicators: null,
+      // Sprint B3 Phase 6 (Fiscal-Bridge-Replay, tickets/
+      // SPRINT_B3_PHASE6_FISCAL_REPLAY.md): dieses Machbarkeits-Skript bleibt
+      // bewusst bei `[]` (kein Fiscal-Programm-Fixture hier) -- die
+      // eigentliche Fiscal-Bridge-Verdrahtung (server/backtest/fiscal-
+      // replay.ts::qualifyingFiscalCatalystsAt(), ueber fiscal-bridge.ts::
+      // isProgramActive()) sitzt additiv in server/backtest/build-events.ts
+      // (BuildBacktestEventsParams.fiscalPrograms), das denselben replayAt()
+      // aufruft. Siehe script/test-backtest-fiscal-replay.ts fuer den
+      // Lookahead-Beweis (2026-Programm qualifiziert NICHT bei 2023-Replay).
       catalysts: [],
       price: priceAtAsOf,
       fcfTTM: pit.fcfTTM,

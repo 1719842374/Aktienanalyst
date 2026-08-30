@@ -38,6 +38,11 @@ import { coverageT, type CoverageResult } from "./pit";
 import type { GateLiftEvent } from "./evaluate";
 import type { SignalReturnEvent } from "./cluster";
 import type { AnalysisScoringContext } from "../scoring-integration";
+import {
+  qualifyingFiscalCatalystsAt,
+  type FiscalProgramQualifyContext,
+} from "./fiscal-replay";
+import type { FiscalProgram } from "../fiscal-bridge";
 
 export interface BuildBacktestEventsParams {
   /** Ticker-Kandidatenmenge, aus der die U_corr(T)-gefilterte Stichprobe
@@ -58,6 +63,16 @@ export interface BuildBacktestEventsParams {
    *  MAX_SCREENED_TICKERS, damit ein einzelner HTTP-Request nicht Hunderte
    *  FMP-Calls blockierend ausloest (siehe backtest-routes.ts-Kopfkommentar). */
   maxTickersPerMonth?: number;
+  /** Sprint B3 Phase 6 (Fiscal-Bridge-Replay): OPTIONALE Fiscal-Programme,
+   *  die pro Monats-asOf PIT-gefiltert (server/backtest/fiscal-replay.ts::
+   *  qualifyingFiscalCatalystsAt(), ueber fiscal-bridge.ts::isProgramActive())
+   *  als Katalysatoren in den Replay einfliessen -- NICHT ticker-spezifisch,
+   *  gilt fuer alle Ticker im Monats-Snapshot gleich (Fiscal-Megatrends sind
+   *  makro/sektorweit, keine Einzeltitel-Katalysatoren). Default: leer/
+   *  undefined -- IDENTISCHES Verhalten wie vor Phase 6 (§3.1 "LLM-
+   *  Katalysatoren im historischen Replay: default aus"). */
+  fiscalPrograms?: FiscalProgram[];
+  fiscalQualifyCtxByProgramId?: Map<string, FiscalProgramQualifyContext>;
 }
 
 export interface BuildBacktestEventsResult {
@@ -120,7 +135,16 @@ export async function fetchOneTickerMonth(
   asOf: string,
   asOfMonth: string,
   horizonDays: number,
-  opts: { changes: ConstituentChangeRow[]; delisted: DelistedCompanyRow[]; survivorshipMode: "naive" | "corr" }
+  opts: {
+    changes: ConstituentChangeRow[];
+    delisted: DelistedCompanyRow[];
+    survivorshipMode: "naive" | "corr";
+    /** Sprint B3 Phase 6: bereits PIT-gefilterte Fiscal-Katalysatoren fuer
+     *  GENAU dieses asOf (vom Aufrufer EINMAL pro Monat berechnet, siehe
+     *  buildBacktestEvents() unten -- nicht pro Ticker neu ableiten, da
+     *  Fiscal-Programme nicht ticker-spezifisch sind). Default leer. */
+    fiscalCatalystsAtAsOf?: import("../../shared/schema").Catalyst[];
+  }
 ): Promise<TickerMonthOutcome> {
   const base: TickerMonthOutcome = {
     ticker, fetchOk: false, price: null, cappedBy: null, dataCompleteOverall: false,
@@ -187,7 +211,12 @@ export async function fetchOneTickerMonth(
       health: undefined,
       moatRating: undefined,
       technicalIndicators: null,
-      catalysts: [],
+      // Sprint B3 Phase 6 (Fiscal-Bridge-Replay): vorher fest `[]` -- jetzt
+      // die vom Aufrufer bereits PIT-gefilterten Fiscal-Katalysatoren (leer,
+      // wenn keine uebergeben wurden -- identisches Default-Verhalten wie
+      // vor Phase 6, §3.1 "LLM-Katalysatoren im historischen Replay: default
+      // aus"). Kein LLM-Call hier, keine Neuberechnung -- reine Weiterreichung.
+      catalysts: opts.fiscalCatalystsAtAsOf ?? [],
       price: priceAtAsOf,
       fcfTTM: pit.fcfTTM,
       sector: raw.profile.sector || undefined,
@@ -270,8 +299,19 @@ export async function buildBacktestEvents(params: BuildBacktestEventsParams): Pr
   let tickersConsidered = 0;
   let tickersProcessedOk = 0;
 
+  // Sprint B3 Phase 6: Fiscal-Programme sind nicht ticker-spezifisch --
+  // NICHT pro Ticker, sondern EINMAL pro Monats-asOf PIT-filtern (via
+  // fiscal-bridge.ts::isProgramActive(), inkl. dessen harter
+  // publishedAt<=asOf-Lookahead-Sperre). params.fiscalPrograms bleibt
+  // undefined/leer -> IDENTISCHES Verhalten wie vor Phase 6.
+  const fiscalPrograms = params.fiscalPrograms ?? [];
+  const fiscalQualifyCtx = params.fiscalQualifyCtxByProgramId ?? new Map();
+
   for (const asOf of months) {
     const asOfMonth = asOf.slice(0, 7);
+    const fiscalCatalystsAtAsOf = fiscalPrograms.length > 0
+      ? qualifyingFiscalCatalystsAt(fiscalPrograms, asOf, fiscalQualifyCtx)
+      : [];
 
     // Vorauswahl: U_corr(asOf)-gefiltert, alphabetisch, deterministisch,
     // bis maxPerMonth erreicht ist (identisch zum Skript-Muster).
@@ -292,7 +332,7 @@ export async function buildBacktestEvents(params: BuildBacktestEventsParams): Pr
     const outcomes: TickerMonthOutcome[] = [];
     for (const ticker of preselected) {
       const outcome = await fetchOneTickerMonth(ticker, asOf, asOfMonth, params.horizonDays, {
-        changes, delisted, survivorshipMode: "corr",
+        changes, delisted, survivorshipMode: "corr", fiscalCatalystsAtAsOf,
       });
       outcomes.push(outcome);
       if (outcome.error) errors.push({ ticker, asOfMonth, error: outcome.error });
