@@ -86,7 +86,7 @@ Offene Routen unverändert: Portfolio-Backtest, Signal-PIT, Liquidity/WALCL, Sek
 | 19 | WORK_SECTION4_DATA_BUGS.md | PEG done, FCF offen | PEG ja + FCF-Fix (computeFcfTTM, Mehrperioden) | ✅ | Section4.tsx, analyze-helpers.ts |
 | 20 | WORK_SEGMENT_DEDUP.md | Cross-Dedup | Name-Dedup + Alias-Dedup (AWS<->Amazon Web Services) | ✅ | fmp.ts |
 | 21 | WORK_SEKTORROTATIONS_RAT.md | Radar | leer | ⬜ | |
-| 22 | WORK_SIGNAL_BACKTEST.md | PIT-Backtest | Phase 0-3b: Signal+Snapshot+Universum+Cluster+WF+PIT-Valuation | 🟡 | server/backtest/* |
+| 22 | WORK_SIGNAL_BACKTEST.md | PIT-Backtest | Phase 0-6 komplett: Signal+Snapshot+Universum+Cluster+WF+PIT-Valuation+T3-Policy+Fiscal-Replay | ✅ | server/backtest/* |
 | 23 | WORK_STABLECOIN_TBILL_GENIUS.md | Stablecoin-Kanal | leer | ⬜ | |
 | 24 | WORK_TAM_RESIDUAL_XBOX.md | Mix 2,5% | Residuum-Zeile + Xbox-n/a implementiert | ✅ | sector-data.ts |
 | 25 | WORK_TAM_SEGMENT_MAPPING.md | Quality-Tor | assessTamQuality + Alias-Katalog + DCF-Kopplung | ✅ | sector-data.ts |
