@@ -39,6 +39,17 @@ import {
 import { t2EntryCost, type T2EntryCostResult } from "./costs";
 import type { SignalV1 } from "./types";
 import { biasGap, type BiasGapResult } from "./pit";
+import { simulateT3Policy, type T3PolicyReport, type T3TickerSignalAtQuarter } from "./t3-policy";
+
+// Re-Export fuer Aufrufer (backtest-routes.ts), die T3 ausschliesslich ueber
+// evaluate.ts importieren wollen (Ticket Punkt 5b.2: "Erweitere .../evaluate.ts
+// um mode=t3"). Die eigentliche Simulation lebt in t3-policy.ts (Ticket
+// Punkt 1: "Neue Datei server/backtest/t3-policy.ts") -- evaluateT3Policy()
+// hier ist nur ein duenner Wrapper, kein zweites Modell.
+export type { T3PolicyReport, T3TickerSignalAtQuarter };
+export function evaluateT3Policy(signalsByQuarter: T3TickerSignalAtQuarter[][]): T3PolicyReport {
+  return simulateT3Policy(signalsByQuarter);
+}
 
 // ============================================================================
 // T1 Gate-Lift (§1 Testtabelle, §8.1: 0bp Kosten)
@@ -224,9 +235,20 @@ export interface CombinedBacktestReport {
   survivorship: "naive" | "corrected";
   t1: T1GateLiftReport | null;
   t2: T2SignalCohortReport | null;
+  /** Sprint B3 Phase 5b: T3 Policy-Portfolio-Report, nur gesetzt wenn
+   *  mode='t3' (oder 't1_t2_t3', falls kombiniert angefordert) UND
+   *  Signalzeitreihe uebergeben wurde -- sonst null. */
+  t3: T3PolicyReport | null;
   purgeChecks: ReturnType<typeof validateAllFoldsPurge>;
   gap: BiasGapResult | null;
   generatedAt: string;
+  /** Sprint B3 Phase 5a (Ticket-Punkt 4): coverage_T (§5.4) je verarbeitetem
+   *  Monat, NUR gesetzt wenn der Aufrufer (server/backtest-routes.ts) die
+   *  Bridge (buildBacktestEvents(), server/backtest/build-events.ts) selbst
+   *  ausgefuehrt hat -- bei reinem Event-Passthrough (t1Events/t2Events im
+   *  Body) bleibt dieses Feld `null` (CalibrationPage.tsx behaelt ihr
+   *  manuelles JSON-Einfuegefeld als Fallback fuer diesen Fall). */
+  coverageByMonth: import("./pit").CoverageResult[] | null;
 }
 
 /**
@@ -242,9 +264,13 @@ export function buildCombinedReport(params: {
   survivorship: "naive" | "corrected";
   t1?: T1GateLiftReport | null;
   t2?: T2SignalCohortReport | null;
+  t3?: T3PolicyReport | null;
   folds?: WalkForwardFold[];
   naiveHeadlineMedian?: number | null;
   corrHeadlineMedian?: number | null;
+  /** Sprint B3 Phase 5a: coverage_T-Zeilen, wenn die Bridge selbst Rohdaten
+   *  geholt hat (buildBacktestEvents()) -- sonst weglassen/null. */
+  coverageByMonth?: import("./pit").CoverageResult[] | null;
 }): CombinedBacktestReport {
   const folds = params.folds ?? WF_V1_FOLDS;
   const purgeChecks = validateAllFoldsPurge(folds, params.horizonDays);
@@ -261,8 +287,10 @@ export function buildCombinedReport(params: {
     survivorship: params.survivorship,
     t1: params.t1 ?? null,
     t2: params.t2 ?? null,
+    t3: params.t3 ?? null,
     purgeChecks,
     gap,
     generatedAt: new Date().toISOString(),
+    coverageByMonth: params.coverageByMonth ?? null,
   };
 }

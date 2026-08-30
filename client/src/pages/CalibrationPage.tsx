@@ -136,6 +136,12 @@ interface CombinedReportLike {
   purgeChecks: PurgeCheckLike[];
   gap: BiasGapLike | null;
   generatedAt: string;
+  // Sprint B3 Phase 5a (Ticket-Punkt 4): server/backtest/evaluate.ts liefert
+  // coverage_T jetzt DIREKT im Report, wenn die Route selbst die Bridge
+  // (buildBacktestEvents()) ausgefuehrt hat. Additiv/optional -- bei reinem
+  // Event-Passthrough (t1Events/t2Events direkt im Body) bleibt das Feld
+  // null, und die manuelle JSON-Eingabe unten bleibt als Fallback nutzbar.
+  coverageByMonth?: CoverageRowLike[] | null;
 }
 interface CoverageRowLike {
   month: string;
@@ -145,7 +151,7 @@ interface CoverageRowLike {
   coverage: number | null;
 }
 
-type RunMode = "t1" | "t2" | "t1_t2";
+type RunMode = "t1" | "t2" | "t1_t2" | "t3" | "t1_t2_t3";
 type Survivorship = "naive" | "corrected";
 
 const GROWTH_PROFILES_ORDER = ["software", "cyclical", "industrial", "defensive"] as const;
@@ -199,7 +205,13 @@ export default function CalibrationPage() {
   // die Tabelle leer ("keine coverage_T-Daten übergeben"), statt Werte zu
   // erfinden.
   const [coverageRaw, setCoverageRaw] = useState("");
+  // Sprint B3 Phase 5a (Ticket-Punkt 4): server-seitige coverage_T (aus
+  // report.coverageByMonth, wenn die Bridge lief) hat IMMER Vorrang vor der
+  // manuellen JSON-Eingabe -- die JSON-Eingabe bleibt als Fallback nur fuer
+  // den Fall relevant, dass coverageByMonth null ist (reiner Event-
+  // Passthrough ohne Bridge).
   const coverageRows: CoverageRowLike[] | null = useMemo(() => {
+    if (report?.coverageByMonth && report.coverageByMonth.length > 0) return report.coverageByMonth;
     if (!coverageRaw.trim()) return null;
     try {
       const parsed = JSON.parse(coverageRaw);
@@ -208,7 +220,8 @@ export default function CalibrationPage() {
     } catch {
       return null;
     }
-  }, [coverageRaw]);
+  }, [report, coverageRaw]);
+  const coverageFromServer = !!(report?.coverageByMonth && report.coverageByMonth.length > 0);
 
   async function runBacktest() {
     setLoading(true);
@@ -375,6 +388,8 @@ export default function CalibrationPage() {
                   <SelectItem value="t1">T1 — Gate-Lift</SelectItem>
                   <SelectItem value="t2">T2 — Signal-Kohorte</SelectItem>
                   <SelectItem value="t1_t2">T1 + T2</SelectItem>
+                  <SelectItem value="t3">T3 — Policy-Portfolio</SelectItem>
+                  <SelectItem value="t1_t2_t3">T1 + T2 + T3</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -607,14 +622,17 @@ export default function CalibrationPage() {
             <CardHeader>
               <CardTitle className="text-sm">coverage_T pro Monat</CardTitle>
               <CardDescription className="text-xs">
-                coverage_T = #dataComplete im PIT-Universum / #U_corr(T) (§5.4). Diese Route liefert coverage_T nicht
-                automatisch mit — optional als CoverageResult[]-JSON aus einem Skript-Lauf einfügen.
+                coverage_T = #dataComplete im PIT-Universum / #U_corr(T) (§5.4).{" "}
+                {coverageFromServer
+                  ? "Direkt vom Server übernommen (Bridge lief für diesen Run)."
+                  : "Diese Antwort enthält kein server-seitiges coverageByMonth (reiner Event-Passthrough) — optional als CoverageResult[]-JSON aus einem Skript-Lauf einfügen."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <Input
                 value={coverageRaw}
                 onChange={e => setCoverageRaw(e.target.value)}
+                disabled={coverageFromServer}
                 placeholder='z.B. [{"month":"2023-01","asOf":"2023-01-31","nUniverse":520,"nDataComplete":498,"coverage":0.958}]'
                 data-testid="input-coverage-json"
               />
@@ -642,7 +660,7 @@ export default function CalibrationPage() {
                   </TableBody>
                 </Table>
               ) : (
-                <div className="text-xs text-muted-foreground">Keine coverage_T-Daten übergeben.</div>
+                <div className="text-xs text-muted-foreground">Keine coverage_T-Daten übergeben (weder vom Server noch per JSON-Eingabe).</div>
               )}
             </CardContent>
           </Card>
