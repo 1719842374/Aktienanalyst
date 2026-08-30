@@ -210,7 +210,7 @@ console.log("\n=== Test 6: computeSectorRotation Fixture — 9 Zeilen, Coverage,
   assertEqual("Tech phaseFit 5 (bevorzugt in Hochkonjunktur)", tech.phaseFit, 5);
   const staples = out.sectors.find(s => s.id === "staples")!;
   assertEqual("Staples phaseFit 1 (nicht bevorzugt in Hochkonjunktur)", staples.phaseFit, 1);
-  assertEqual("recommendations Frühzyklus[0] Industrie", out.recommendations["Frühzyklus"][0], "Industrie");
+  assertEqual("recommendations Frühzyklus[0] Industrie", out.recommendations.Frühzyklus[0], "Industrie");
   assertEqual("recommendations keys = 4 Phasen", Object.keys(out.recommendations).length, 4);
   assertTrue("risk in 1..5", out.sectors.every(s => s.risk >= 1 && s.risk <= 5));
   assertTrue("attractiveness in 1..5", out.sectors.every(s => s.attractiveness >= 1 && s.attractiveness <= 5));
@@ -227,9 +227,9 @@ console.log("\n=== Test 6: computeSectorRotation Fixture — 9 Zeilen, Coverage,
 
 console.log("\n=== Test 7: PHASE_PREFERRED Listen aus Spec ===");
 {
-  assertEqual("Frühzyklus 3", PHASE_PREFERRED["Frühzyklus"].join(","), "Industrie,Technologie,Konsumzyklik");
+  assertEqual("Frühzyklus 3", PHASE_PREFERRED.Frühzyklus.join(","), "Industrie,Technologie,Konsumzyklik");
   assertEqual("Hochkonjunktur 3", PHASE_PREFERRED.Hochkonjunktur.join(","), "Technologie,Kommunikationsdienste,Finanzen");
-  assertEqual("Spätkonjunktur 3", PHASE_PREFERRED["Spätkonjunktur"].join(","), "Gesundheitswesen,Konsumdefensiv,Energie");
+  assertEqual("Spätkonjunktur 3", PHASE_PREFERRED.Spätkonjunktur.join(","), "Gesundheitswesen,Konsumdefensiv,Energie");
   assertEqual("Abschwung 3", PHASE_PREFERRED.Abschwung.join(","), "Gesundheitswesen,Versorger,Konsumdefensiv");
 }
 
