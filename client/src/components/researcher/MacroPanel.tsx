@@ -4,6 +4,7 @@
 import {
   ChevronRight, Flame, ArrowUp, ArrowDown, Minus, Activity
 } from "lucide-react";
+import { LiquidityPanel } from "./LiquidityPanel";
 
 const ACTION_COLORS: Record<string, string> = {
   Buy: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -20,6 +21,7 @@ export function MacroPanel({ data }: { data: any }) {
   const indicators = data.indicators || [];
   return (
     <div className="space-y-4">
+      <LiquidityPanel />
       {llm && (
         <div className="rounded-lg border border-border/40 bg-card/30 p-4">
           <div className="text-[10px] text-foreground/40 uppercase tracking-wider mb-2">Macro Synthesis</div>
