@@ -495,4 +495,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(500).json({ error: err?.message || "Internal error" });
     }
   });
+
+  // 15. Sprint B3 Phase 3: POST /api/backtest/run + GET /api/backtest/report
+  // (T1 Gate-Lift + T2 Signal-Kohorte, Cluster-Median, Walk-Forward mit
+  // Purge). Isoliertes, additives Modul (server/backtest-routes.ts) genau
+  // wie der 13F-Screener oben — dieser Route-Orchestrator bleibt append-only.
+  const { registerBacktestRoutes } = await import("./backtest-routes");
+  registerBacktestRoutes(app);
 }
