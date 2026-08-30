@@ -234,4 +234,4 @@ console.log("\n=== Test 7: PHASE_PREFERRED Listen aus Spec ===");
 }
 
 console.log(`\n=== Ergebnis: ${failures === 0 ? "ALLE TESTS BESTANDEN" : `${failures} FEHLER`} ===`);
-if (failures > 0) process.exit(1);
+ if (failures > 0) process.exit(1);
