@@ -35,6 +35,7 @@ import {
   estimateGovExposure,
   matchSegmentTAM,
   generateTAMAnalysis,
+  dcfGrowthCapFromTam,
 } from "./sector-data";
 
 import {
@@ -1362,6 +1363,18 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       // ── 18. DCF / fair value ──
       const dcfWacc = wacc / 100;
+      // A1 (WORK_TAM_SEGMENT_MAPPING.md §5): Segment-TAM darf g1 NUR deckeln/
+      // stuetzen, wenn das Qualitaetstor 'ok' ist (Coverage >= 70%, >= 2
+      // unterschiedliche TAM-Labels). Bei 'weak'/'unreliable' bleibt g1 exakt
+      // wie zuvor rein aus dem Konzern-revenueGrowth abgeleitet — kein
+      // Segment-Freibrief fuer ein hoeheres g1 (Reverse-DCF bleibt die
+      // eigentliche Kontrolle). dcfGrowthCap ist rein informativ (Kommentar-
+      // Zweck laut Spec), aendert den Zahlenwert von dcfGrowthRate NICHT.
+      const dcfGrowthCap = dcfGrowthCapFromTam({
+        quality: tamAnalysis.quality ?? 'weak',
+        tamCAGR: tamAnalysis.tamCAGR,
+        companyGrowth: revenueGrowth,
+      });
       const dcfGrowthRate = Math.min(Math.max(revenueGrowth / 100, -0.05), 0.25);
       const dcfTerminalGrowth = 0.025;
       const dcfYears = 5;

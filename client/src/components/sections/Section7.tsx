@@ -96,36 +96,53 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
       </div>
 
       {/* TAM Analysis */}
-      {tam && tam.tamTotal > 0 && (
+      {tam && (tam.tamTotal !== null && tam.tamTotal !== undefined ? tam.tamTotal > 0 : (tam.segments && tam.segments.length > 0)) && (
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1.5">
             <Globe className="w-3 h-3" />
             TAM & Marktposition
           </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-            <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">TAM</div>
-              <div className="text-sm font-bold font-mono tabular-nums mt-0.5">${formatNumber(tam.tamTotal, 0)}B</div>
-              <div className="text-[9px] text-muted-foreground mt-0.5 leading-tight">{tam.tamLabel}</div>
+          {/* A1 Qualitaetstor: bei quality==='unreliable' (Coverage < 70% oder < 2
+              unterschiedliche TAM-Labels) zeigen wir KEINE falsche Konzernzahl
+              mehr (z.B. den $896B-Bug), sondern einen erklaerenden Banner. */}
+          {tam.quality === 'unreliable' || tam.tamTotal === null || tam.tamTotal === undefined ? (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5 mb-3 text-[10.5px] text-amber-600 dark:text-amber-400 leading-relaxed">
+              Segment-TAM nicht belastbar genug fuer eine Gesamtkennzahl
+              {typeof tam.coveragePct === 'number' ? ` (nur ${formatNumber(tam.coveragePct, 0)}% des Umsatzes zuordenbar` : ''}
+              {typeof tam.distinctLabels === 'number' ? `, ${tam.distinctLabels} unterschiedliche(r) Markt(-e))` : ')'}
+              . Einzelsegmente unten, sofern zuordenbar.
             </div>
-            <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Branchen-CAGR</div>
-              <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.tamCAGR}%</div>
-              <div className="text-[9px] text-muted-foreground mt-0.5">p.a. (5Y Prognose)</div>
-            </div>
-            <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Unternehmens-Wachstum</div>
-              <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+              <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider">TAM</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">${formatNumber(tam.tamTotal, 0)}B</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5 leading-tight">{tam.tamLabel}</div>
               </div>
-              <div className="text-[9px] text-muted-foreground mt-0.5">Revenue YoY</div>
+              <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Branchen-CAGR</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.tamCAGR !== null && tam.tamCAGR !== undefined ? `${tam.tamCAGR}%` : 'n/a'}</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">p.a. (5Y Prognose)</div>
+              </div>
+              <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Unternehmens-Wachstum</div>
+                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                </div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">Revenue YoY</div>
+              </div>
+              <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                  Marktanteil (TAM)
+                  {tam.shareWarning && (
+                    <span title="Mindestens ein Segment-Marktanteil > 25% — Wert mit Vorsicht interpretieren" className="text-amber-500">⚠</span>
+                  )}
+                </div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.marketShare === null || tam.marketShare === undefined ? 'n/a' : (tam.marketShare < 0.01 ? '<0.01' : formatNumber(tam.marketShare, 2)) + '%'}</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">${formatNumber(tam.companyRevenue, 1)}B / ${formatNumber(tam.tamTotal, 0)}B</div>
+              </div>
             </div>
-            <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Marktanteil (TAM)</div>
-              <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.marketShare < 0.01 ? '<0.01' : formatNumber(tam.marketShare, 2)}%</div>
-              <div className="text-[9px] text-muted-foreground mt-0.5">${formatNumber(tam.companyRevenue, 1)}B / ${formatNumber(tam.tamTotal, 0)}B</div>
-            </div>
-          </div>
+          )}
 
           {/* Per-segment TAM breakdown (when segments available) */}
           {tam.segments && tam.segments.length > 0 ? (
@@ -149,9 +166,16 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
-                    {tam.segments.map((seg: any, i: number) => (
+                    {tam.segments.map((seg: any, i: number) => {
+                      const unmatched = seg.matched === false;
+                      return (
                       <tr key={i} className="hover:bg-muted/10">
-                        <td className="py-1.5 pr-2 font-medium">{seg.segmentName}</td>
+                        <td className="py-1.5 pr-2 font-medium">
+                          {seg.segmentName}
+                          {seg.shareWarning && (
+                            <span title="Marktanteil > 25% des zugeordneten TAM — mit Vorsicht interpretieren" className="text-amber-500 ml-1">⚠</span>
+                          )}
+                        </td>
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.segmentRevenue, 1)}B</td>
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground">{formatNumber(seg.segmentShare, 1)}%</td>
                         {/* Echte YoY-Segment-Wachstumsrate. null/undefined =
@@ -168,33 +192,54 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                             n/a
                           </td>
                         )}
-                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.tamSize, 0)}B</td>
-                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-primary">{seg.tamCAGR}%</td>
-                        <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">{formatNumber(seg.marketShare, 1)}%</td>
-                        <td className="py-1.5 pl-1.5 text-center">
-                          {seg.outperforming ? (
-                            <span className="inline-flex items-center gap-0.5 text-emerald-500 font-medium">
-                              <TrendingUp className="w-2.5 h-2.5" /> Über
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-0.5 text-amber-500 font-medium">
-                              <TrendingDown className="w-2.5 h-2.5" /> Unter
-                            </span>
-                          )}
-                        </td>
+                        {unmatched ? (
+                          <>
+                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title="Kein TAM-Markt zugeordnet">n/a</td>
+                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60">n/a</td>
+                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60">n/a</td>
+                            <td className="py-1.5 pl-1.5 text-center text-muted-foreground/60">n/a</td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.tamSize, 0)}B</td>
+                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-primary">{seg.tamCAGR}%</td>
+                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">{formatNumber(seg.marketShare, 1)}%</td>
+                            <td className="py-1.5 pl-1.5 text-center">
+                              {seg.outperforming === null || seg.outperforming === undefined ? (
+                                <span className="text-muted-foreground/60">n/a</span>
+                              ) : seg.outperforming ? (
+                                <span className="inline-flex items-center gap-0.5 text-emerald-500 font-medium">
+                                  <TrendingUp className="w-2.5 h-2.5" /> Über
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-0.5 text-amber-500 font-medium">
+                                  <TrendingDown className="w-2.5 h-2.5" /> Unter
+                                </span>
+                              )}
+                            </td>
+                          </>
+                        )}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
-              {/* Weighted verdict */}
-              <div className={`flex items-center gap-1.5 text-[10px] ${tam.outperforming ? 'text-emerald-500' : 'text-amber-500'}`}>
-                {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                <span className="font-medium">
-                  Gewichteter Branchen-CAGR: {formatNumber(tam.tamCAGR, 1)}% — Unternehmen {tam.outperforming ? 'outperformed' : 'underperformed'}
-                  {' '}({tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}% vs. {formatNumber(tam.tamCAGR, 1)}%)
-                </span>
-              </div>
+              {/* Weighted verdict — nur wenn das Qualitaetstor eine belastbare
+                  Gewichtung zugelassen hat (tamCAGR/outperforming nicht null). */}
+              {tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
+                <div className={`flex items-center gap-1.5 text-[10px] ${tam.outperforming ? 'text-emerald-500' : 'text-amber-500'}`}>
+                  {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                  <span className="font-medium">
+                    Gewichteter Branchen-CAGR: {formatNumber(tam.tamCAGR, 1)}% — Unternehmen {tam.outperforming ? 'outperformed' : 'underperformed'}
+                    {' '}({tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}% vs. {formatNumber(tam.tamCAGR, 1)}%)
+                  </span>
+                </div>
+              ) : (
+                <div className="text-[10px] text-muted-foreground/70 italic">
+                  Kein belastbarer gewichteter Branchen-CAGR (Segment-TAM-Abdeckung zu gering).
+                </div>
+              )}
               {/* QS: umsatzgewichtetes Wachstum aus den ECHTEN Segment-Raten —
                   muss plausibel zum oben gezeigten Revenue Growth passen. */}
               {typeof tam.segmentWeightedGrowth === 'number' && isFinite(tam.segmentWeightedGrowth) && (
@@ -215,7 +260,10 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
               )}
             </div>
           ) : (
-            /* Fallback: single growth comparison bar */
+            /* Fallback: single growth comparison bar — nur wenn tamCAGR/outperforming
+               belastbar sind (Pfad A liefert quality:'weak', aber tamCAGR ist dort
+               immer eine Zahl, nie null; Guard bleibt trotzdem defensiv). */
+            tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
             <div className="space-y-1.5">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Wachstum: Unternehmen vs. Branche</div>
               <div className="flex items-center gap-2">
@@ -252,11 +300,14 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                 </span>
               </div>
             </div>
+            ) : (
+              <div className="text-[10px] text-muted-foreground/70 italic">Kein belastbarer Branchenvergleich verfügbar.</div>
+            )
           )}
 
-          {/* TAM source */}
+          {/* TAM source — dedupliziert (mehrere Segmente koennen dieselbe Quelle teilen) */}
           <div className="text-[9px] text-muted-foreground/50 mt-2 italic">
-            TAM-Schätzung: {tam.tamSource}
+            TAM-Schätzung: {Array.from(new Set(String(tam.tamSource).split(',').map(s => s.trim()).filter(Boolean))).join(', ')}
           </div>
         </div>
       )}

@@ -42,27 +42,39 @@ export interface TAMSegment {
   segmentRevenue: number; // Segment revenue in $B
   segmentGrowth: number | null; // Segment YoY growth % — null = keine Vorjahreszahl (NIEMALS 0 als Platzhalter)
   segmentShare: number; // % of total company revenue
-  tamSize: number; // TAM for this segment in $B
-  tamLabel: string; // e.g. "Global Cloud Computing"
-  tamCAGR: number; // Industry CAGR for this segment
-  marketShare: number; // Segment revenue / TAM %
-  outperforming: boolean; // Segment growing faster than its TAM CAGR?
+  tamSize: number | null; // TAM for this segment in $B — null wenn unmatched (A1 Qualitaetstor)
+  tamLabel: string | null; // e.g. "Global Cloud Computing" — null wenn unmatched
+  tamCAGR: number | null; // Industry CAGR for this segment — null wenn unmatched
+  marketShare: number | null; // Segment revenue / TAM % — null wenn unmatched
+  outperforming: boolean | null; // Segment growing faster than its TAM CAGR? null wenn unmatched/keine Wachstumsrate
+  /** A1: true nur wenn ein TAM_ALIASES-Eintrag den Segmentnamen getroffen hat (kein desc-Fallback mehr). */
+  matched?: boolean;
+  /** A1: Segment-Marktanteil > TAM_SHARE_WARN (25%) — Hinweis-Badge, keine harte Fehlermeldung. */
+  shareWarning?: boolean;
 }
 
 export interface TAMAnalysis {
-  tamTotal: number; // Weighted total TAM in $B
+  tamTotal: number | null; // Weighted total TAM in $B — null wenn quality==='unreliable' oder coveragePct<=0
   tamLabel: string; // Primary TAM label
-  tamCAGR: number; // Weighted average industry CAGR %
+  tamCAGR: number | null; // Weighted average industry CAGR % — null wenn tamTotal null ist
   companyGrowth: number; // Company revenue growth %
   companyRevenue: number; // Company revenue in $B
-  marketShare: number; // Company share of weighted TAM in %
+  marketShare: number | null; // Company share of weighted TAM in % — null wenn tamTotal null ist
   tamSource: string; // Source description
-  outperforming: boolean; // Company growing faster than weighted TAM CAGR?
+  outperforming: boolean | null; // Company growing faster than weighted TAM CAGR? null wenn tamCAGR null ist
   segments?: TAMSegment[]; // Per-segment TAM breakdown (if revenue segments available)
   /** Umsatzgewichtetes Wachstum aus den ECHTEN Segment-YoY-Raten. null = keine Segment-Vorjahresdaten. */
   segmentWeightedGrowth?: number | null;
   /** Anteil des Umsatzes (%), fuer den eine echte Segment-Wachstumsrate vorliegt (Abdeckung der Gewichtung). */
   segmentGrowthCoveragePct?: number;
+  /** A1 Qualitaetstor (assessTamQuality): 'ok' | 'weak' | 'unreliable'. Fehlt bei aelteren Cache-Eintraegen. */
+  quality?: 'ok' | 'weak' | 'unreliable';
+  /** A1: Anzahl unterschiedlicher TAM-Labels unter den gematchten Segmenten. */
+  distinctLabels?: number;
+  /** A1: Umsatzanteil (%) mit matched===true — Basis fuer das Qualitaetstor. */
+  coveragePct?: number;
+  /** A1: mindestens ein Segment hat marketShare > TAM_SHARE_WARN (25%). */
+  shareWarning?: boolean;
 }
 
 export interface PeerCompany {

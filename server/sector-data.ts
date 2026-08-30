@@ -191,7 +191,14 @@ export function estimateGovExposure(sector: string, industry: string, descriptio
 }
 
 // === TAM Analysis ===
-export function matchSegmentTAM(segName: string, desc: string): { tamSize: number; tamLabel: string; tamCAGR: number; tamSource: string } {
+//
+// A1 (Sprint A, WORK_TAM_SEGMENT_MAPPING.md) — Segment-TAM Qualitaetstor.
+// matchSegmentTAMLegacy() ist die urspruengliche Implementierung (Name +
+// Konzern-desc-Fallback). Sie bleibt unangetastet und wird weiterhin von
+// generateTAMAnalysis() fuer den Konzern-Dummy-Pfad (< 2 Segmente) benutzt.
+// matchSegmentTAM() (neu, siehe unten) ist der Soll-Zustand ohne desc-Fallback
+// fuer den Segment-Mix-Pfad (>= 2 Segmente) und nutzt TAM_CATALOG/TAM_ALIASES.
+export function matchSegmentTAMLegacy(segName: string, desc: string): { tamSize: number; tamLabel: string; tamCAGR: number; tamSource: string } {
   const n = segName.toLowerCase();
   if (n.includes('cloud') || n.includes('azure') || n.includes('aws') || n.includes('infrastructure')) return { tamSize: 1500, tamLabel: 'Global Cloud Computing', tamCAGR: 16, tamSource: 'Gartner/IDC Cloud Forecast' };
   if (n.includes('productiv') || n.includes('office') || n.includes('business process') || n.includes('collaboration')) return { tamSize: 600, tamLabel: 'Global Productivity & Collaboration Software', tamCAGR: 12, tamSource: 'Gartner SaaS/Productivity Forecast' };
@@ -233,11 +240,176 @@ export function matchSegmentTAM(segName: string, desc: string): { tamSize: numbe
   return { tamSize: 2000, tamLabel: 'Global Industry', tamCAGR: 5, tamSource: 'Industry Estimate' };
 }
 
+// === A1: Segment-TAM Qualitaetstor (WORK_TAM_SEGMENT_MAPPING.md, Abschnitte 2-4) ===
+//
+// Ziel: Segment-TAM ist die Plausibilitaetsbremse fuer DCF-g, nicht eine
+// Relativ-Kennzahl. Kein Fallback auf die Konzern-`description` mehr, weil das
+// jedes ungemappte Segment (z.B. "Server", "XBOX", "LinkedIn") faelschlich in
+// denselben Cloud/Azure-Pool wirft, sobald IRGENDEIN Konzernsegment Cloud
+// enthaelt (siehe MSFT-Repro: $896B-Karte war ein Artefakt aus 5x demselben
+// $1.500B-Cloud-Dummy). Unmatched -> matched:false, TAM/CAGR/Share null.
+
+/** Schwellen fuer das Qualitaetstor (siehe assessTamQuality()). */
+export const TAM_COVERAGE_MIN = 70;      // % Umsatz mit matched TAM
+export const TAM_DISTINCT_LABELS_MIN = 2;
+export const TAM_SHARE_WARN = 25;        // Segmentumsatz / TAM_i in %
+
+export type TamQuality = 'ok' | 'weak' | 'unreliable';
+
+/**
+ * Neue, kleine TAM-Pools fuer Segmente, die sonst faelschlich in Cloud
+ * (CLOUD) oder den generischen Konzern-Fallback fallen wuerden. Bewusst
+ * konservativ/klein bemessen, damit Share nicht explodiert -- lieber N/A als
+ * ein falscher Mini-Markt (siehe Spec 3.2). Bestehende Branchen-Eintraege
+ * (Pharma, Semi, Luxury, ...) bleiben unangetastet in matchSegmentTAMLegacy().
+ */
+export const TAM_CATALOG = {
+  CLOUD:            { tamSize: 1500, tamCAGR: 16, tamLabel: 'Global Cloud Computing', tamSource: 'Gartner/IDC Cloud Forecast' },
+  PRODUCTIVITY:     { tamSize: 600,  tamCAGR: 12, tamLabel: 'Global Productivity & Collaboration Software', tamSource: 'Gartner SaaS/Productivity Forecast' },
+  ENTERPRISE_APPS:  { tamSize: 400,  tamCAGR: 12, tamLabel: 'Global ERP/CRM & Enterprise Applications', tamSource: 'Gartner Enterprise Apps' },
+  PC_GAMING:        { tamSize: 400,  tamCAGR: 3,  tamLabel: 'Global PC & Gaming Market', tamSource: 'IDC/Gartner PC & Gaming Forecast' },
+  DIGITAL_ADS:      { tamSize: 1000, tamCAGR: 10, tamLabel: 'Global Digital Advertising', tamSource: 'eMarketer / GroupM' },
+  TALENT:           { tamSize: 80,   tamCAGR: 8,  tamLabel: 'Global Talent Solutions & Professional Network', tamSource: 'Industry Estimate Recruiting/Talent' },
+  ENTERPRISE_IT:    { tamSize: 250,  tamCAGR: 6,  tamLabel: 'Global Enterprise IT Infrastructure', tamSource: 'IDC Enterprise IT' },
+  // bestehende Einträge Pharma, Semi, Luxury, Energy, … unverändert lassen (matchSegmentTAMLegacy)
+} as const;
+
+/** Normalisiert einen Segmentnamen fuer den Alias-Regex-Vergleich. */
+export function normalizeSegmentKey(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\bsegment\b/g, '')
+    .trim();
+}
+
+/**
+ * Alias-Tabelle, getestet gegen normalizeSegmentKey(name). Erstes Match
+ * gewinnt -- Reihenfolge ist bewusst: laengster/spezifischster Alias zuerst,
+ * generische Substrings danach. "infrastructure" darf NICHT vor Azure/Cloud
+ * stehen und Cloud erzwingen, wenn der Name "server" ist. Erweiterbar (neues
+ * Objekt anhaengen), Default-Verhalten ohne Treffer = N/A, NICHT Cloud.
+ */
+export const TAM_ALIASES: Array<{ test: RegExp; catalog: keyof typeof TAM_CATALOG }> = [
+  // Cloud / Hyperscale — nur klare Cloud-Woerter
+  { test: /\b(azure|aws|amazon web services|google cloud|gcp|intelligent cloud|public cloud)\b/, catalog: 'CLOUD' },
+  { test: /\bcloud\b/, catalog: 'CLOUD' },
+
+  // Productivity / M365
+  { test: /\b(microsoft 365|office 365|m365|365 commercial|365 consumer)\b/, catalog: 'PRODUCTIVITY' },
+  { test: /\b(office|productivity|collaboration|workplace)\b/, catalog: 'PRODUCTIVITY' },
+
+  // Enterprise Apps (nicht Cloud)
+  { test: /\b(dynamics|salesforce|erp|crm|business applications)\b/, catalog: 'ENTERPRISE_APPS' },
+  { test: /\bbusiness process\b/, catalog: 'ENTERPRISE_APPS' },
+
+  // Legacy server hardware / on-prem — NICHT Azure. Muss VOR der generischen
+  // "windows"-Regel stehen, sonst faengt "windows" in "Windows Server" den
+  // PC_GAMING/Device-Alias ab, bevor ENTERPRISE_IT drankommt (First-Match).
+  // Bewusst NICHT "server" allein -> unmatched (N/A), nicht $250B / 51%
+  // (siehe Spec 3.3).
+  { test: /\b(windows server|sql server|on[- ]prem)\b/, catalog: 'ENTERPRISE_IT' },
+  { test: /\b(mainframe|storage hardware)\b/, catalog: 'ENTERPRISE_IT' },
+
+  // Gaming
+  { test: /\b(xbox|playstation|nintendo|console)\b/, catalog: 'PC_GAMING' },
+  { test: /\bgaming\b/, catalog: 'PC_GAMING' },
+
+  // OS / Devices
+  { test: /\b(windows|surface|personal comput|pc oem)\b/, catalog: 'PC_GAMING' },
+
+  // Ads vs Talent — "linked ?in" deckt sowohl "LinkedIn" als auch die
+  // FMP-Schreibweise "Linked In" (mit Leerzeichen) ab.
+  { test: /\b(linked ?in|talent|recruiter|jobs network)\b/, catalog: 'TALENT' },
+  { test: /\b(advertis|search ads|youtube ads|google services)\b/, catalog: 'DIGITAL_ADS' },
+  { test: /\bsearch\b/, catalog: 'DIGITAL_ADS' },
+];
+
+/**
+ * Soll-Zustand von matchSegmentTAM (Spec 3.4): reine Alias-Regelwerk-Funktion,
+ * KEIN Fallback auf Konzern-`desc` mehr. `_desc` bleibt in der Signatur, damit
+ * bestehende Aufrufer `matchSegmentTAM(name, desc)` kompilierbar bleiben --
+ * der Parameter wird aber ignoriert (deprecated).
+ */
+export function matchSegmentTAM(
+  segName: string,
+  _desc?: string // deprecated, ignoriert — kein desc-Fallback mehr (Spec 2.1 #2)
+): {
+  matched: boolean;
+  tamSize: number | null;
+  tamLabel: string | null;
+  tamCAGR: number | null;
+  tamSource: string | null;
+} {
+  const key = normalizeSegmentKey(segName);
+  for (const rule of TAM_ALIASES) {
+    if (rule.test.test(key)) {
+      const c = TAM_CATALOG[rule.catalog];
+      return { matched: true, ...c };
+    }
+  }
+  // KEIN: if (desc.includes('cloud')) … — genau das war der MSFT-Bug.
+  return { matched: false, tamSize: null, tamLabel: null, tamCAGR: null, tamSource: null };
+}
+
+/**
+ * Qualitaetstor fuer die Segment-TAM-Karte (Spec 2.2). Eine Funktion, die von
+ * generateTAMAnalysis() UND vom DCF-Kopplungs-Layer gleich ausgewertet wird.
+ */
+export function assessTamQuality(input: {
+  segments: Array<{ matched: boolean; tamLabel: string | null; segmentShare: number; marketShare: number | null }>;
+  coveragePct: number; // Umsatzanteil mit matched === true
+}): {
+  quality: TamQuality;
+  distinctLabels: number;
+  coveragePct: number;
+  highShareFlags: number;
+  reasons: string[];
+} {
+  const matched = input.segments.filter(s => s.matched && s.tamLabel);
+  const distinctLabels = new Set(matched.map(s => s.tamLabel as string)).size;
+  const highShareFlags = matched.filter(s => (s.marketShare ?? 0) > TAM_SHARE_WARN).length;
+  const reasons: string[] = [];
+
+  if (input.coveragePct < TAM_COVERAGE_MIN) reasons.push(`coverage_${input.coveragePct}`);
+  if (distinctLabels < TAM_DISTINCT_LABELS_MIN) reasons.push(`distinct_labels_${distinctLabels}`);
+  if (highShareFlags > 0) reasons.push(`share_gt_25_x${highShareFlags}`);
+
+  let quality: TamQuality = 'ok';
+  if (input.coveragePct < TAM_COVERAGE_MIN || distinctLabels < TAM_DISTINCT_LABELS_MIN) quality = 'unreliable';
+  else if (highShareFlags > 0) quality = 'weak';
+
+  return { quality, distinctLabels, coveragePct: input.coveragePct, highShareFlags, reasons };
+}
+
+/**
+ * DCF-Kopplung (Spec Abschnitt 5): Segment-CAGR darf `g1` nur dann deckeln,
+ * wenn dasselbe Qualitaetstor gruen ist. Bei 'weak'/'unreliable': Konzern-g +
+ * Reverse DCF, kein Segment-Freibrief fuer ein hoeheres g1.
+ */
+export function dcfGrowthCapFromTam(tam: {
+  quality: TamQuality;
+  tamCAGR: number | null;
+  companyGrowth: number;
+}): { useSegmentCagr: boolean; note: string } {
+  if (tam.quality !== 'ok' || tam.tamCAGR == null) {
+    return { useSegmentCagr: false, note: 'Konzern-g + Reverse DCF (Segment-TAM unreliable/weak)' };
+  }
+  return { useSegmentCagr: true, note: 'g1 ≤ max(companyGrowth, tamCAGR + share-shift Begründung)' };
+}
+
 export function generateTAMAnalysis(
   sector: string, industry: string, description: string,
   revenue: number, revenueGrowth: number,
   revenueSegments?: any[]
-): { tamTotal: number; tamLabel: string; tamCAGR: number; companyGrowth: number; companyRevenue: number; marketShare: number; tamSource: string; outperforming: boolean; segments?: any[]; segmentWeightedGrowth?: number | null; segmentGrowthCoveragePct?: number } {
+): {
+  tamTotal: number | null; tamLabel: string; tamCAGR: number | null; companyGrowth: number;
+  companyRevenue: number; marketShare: number | null; tamSource: string; outperforming: boolean | null;
+  segments?: any[]; segmentWeightedGrowth?: number | null; segmentGrowthCoveragePct?: number;
+  // A1 Qualitaetstor (additiv, siehe assessTamQuality()):
+  quality?: TamQuality; distinctLabels?: number; coveragePct?: number; shareWarning?: boolean;
+} {
   const s = sector.toLowerCase();
   const ind = industry.toLowerCase();
   const desc = description.toLowerCase();
@@ -291,21 +463,80 @@ export function generateTAMAnalysis(
   }
 
   if (revenueSegments && revenueSegments.length >= 2) {
-    const segTAMs = revenueSegments.map(seg => {
-      const match = matchSegmentTAM(seg.name, desc);
+    // A2 (WORK_TAM_RESIDUAL_XBOX.md, Abschnitt 2): Residuum-Regel VOR dem
+    // Mapping anwenden -- genau EIN Rev-Loch darf als "Other / nicht
+    // segmentiert"-Zeile ergaenzt werden, wenn die gemeldeten Segmente nicht
+    // auf 100% des Konzernumsatzes summieren. Kein Hardcode: Umsatz kommt aus
+    // der Differenz Konzernumsatz - Summe bekannter Segmentumsaetze.
+    const knownRevB = revenueSegments.reduce((sum, seg) => sum + (Number(seg.revenue) || 0), 0) / 1e9;
+    const knownPct = revenueSegments.reduce((sum, seg) => sum + (Number(seg.percentage) || 0), 0);
+    const nHolesRev = revenueSegments.filter(seg => !(Number(seg.revenue) > 0)).length;
+    const residualRev = revB - knownRevB;
+    const residualMix = 100 - knownPct;
+
+    let segmentsForMapping = revenueSegments;
+    if (nHolesRev === 0 && residualMix > 0 && residualMix <= 15) {
+      segmentsForMapping = [
+        ...revenueSegments,
+        {
+          name: 'Other / nicht segmentiert',
+          revenue: Math.max(0, residualRev) * 1e9,
+          percentage: Math.round(residualMix * 100) / 100,
+          growth: null,
+          __isResidual: true,
+        } as any,
+      ];
+    }
+    // nHolesRev >= 2 (oder residualMix ausserhalb 0..15): nichts ableiten --
+    // zwei Unbekannte sind nicht loesbar (Spec Abschnitt 2/3).
+
+    const segTAMs = segmentsForMapping.map(seg => {
+      const isResidual = (seg as any).__isResidual === true;
+      const match = isResidual
+        ? { matched: false, tamSize: null, tamLabel: null, tamCAGR: null, tamSource: null }
+        : matchSegmentTAM(seg.name);
       const segRevB = seg.revenue / 1e9;
-      const segShare = match.tamSize > 0 ? (segRevB / match.tamSize) * 100 : 0;
+      const marketShare = match.matched && match.tamSize
+        ? Math.round((segRevB / match.tamSize) * 10000) / 100
+        : null;
       // segmentGrowth kommt aus fmpSegments()/fmpGeoSegments() (echte YoY-Rate
-      // aus zwei Perioden). null = keine Vorjahreszahl → UI zeigt "n/a".
-      // NIEMALS auf 0 defaulten: 0 waere die Aussage "kein Wachstum" und war
-      // genau der gemeldete Bug (alle Segmente zeigten 0.0 %).
+      // aus zwei Perioden). null = keine Vorjahreszahl -> UI zeigt "n/a".
+      // NIEMALS auf 0 defaulten -- und NIEMALS aus einer unterbestimmten
+      // Gleichung herleiten/invertieren (Xbox-Fall, Spec Abschnitt 3: zwei
+      // Unbekannte sind nicht loesbar, das ist so gewollt).
       const segGrowth: number | null =
-        typeof seg.growth === 'number' && isFinite(seg.growth) ? seg.growth : null;
-      return { segmentName: seg.name, segmentRevenue: Math.round(segRevB * 10) / 10, segmentGrowth: segGrowth, segmentShare: seg.percentage, tamSize: match.tamSize, tamLabel: match.tamLabel, tamCAGR: match.tamCAGR, marketShare: Math.round(segShare * 100) / 100, outperforming: segGrowth !== null && segGrowth > match.tamCAGR };
+        !isResidual && typeof seg.growth === 'number' && isFinite(seg.growth) ? seg.growth : null;
+      return {
+        segmentName: seg.name,
+        segmentRevenue: Math.round(segRevB * 10) / 10,
+        segmentGrowth: segGrowth,
+        segmentShare: seg.percentage,
+        matched: match.matched,
+        tamSize: match.tamSize,
+        tamLabel: match.tamLabel,
+        tamCAGR: match.tamCAGR,
+        marketShare,
+        outperforming: match.matched && segGrowth !== null && match.tamCAGR !== null
+          ? segGrowth > match.tamCAGR
+          : null,
+        shareWarning: marketShare !== null && marketShare > TAM_SHARE_WARN,
+      };
     });
-    const weightedTAM = segTAMs.reduce((sum, seg) => sum + seg.tamSize * (seg.segmentShare / 100), 0);
-    const weightedCAGR = segTAMs.reduce((sum, seg) => sum + seg.tamCAGR * (seg.segmentShare / 100), 0);
-    const weightedShare = weightedTAM > 0 ? (revB / weightedTAM) * 100 : 0;
+
+    // Gewichtung NUR ueber matched-Zeilen (Spec 3.5), Mix auf Coverage renormiert.
+    const matchedForWeight = segTAMs.filter(s => s.matched && s.tamSize && s.segmentShare > 0);
+    const coveragePct = Math.round(matchedForWeight.reduce((sum, x) => sum + x.segmentShare, 0) * 100) / 100;
+
+    const quality = assessTamQuality({ segments: segTAMs, coveragePct });
+
+    const weightedTAM = quality.quality === 'unreliable' || coveragePct <= 0
+      ? null
+      : matchedForWeight.reduce((sum, x) => sum + (x.tamSize as number) * (x.segmentShare / coveragePct), 0);
+    const weightedCAGR = quality.quality === 'unreliable' || coveragePct <= 0
+      ? null
+      : matchedForWeight.reduce((sum, x) => sum + (x.tamCAGR as number) * (x.segmentShare / coveragePct), 0);
+    const weightedShare = weightedTAM !== null && weightedTAM > 0 ? (revB / weightedTAM) * 100 : null;
+
     // QS: gewichtetes Unternehmens-Wachstum aus den ECHTEN Segment-Raten
     // (Gewicht = Umsatzanteil). Segmente ohne Vorjahreszahl werden
     // ausgeschlossen und die Gewichte auf die verbleibende Basis renormiert,
@@ -315,10 +546,63 @@ export function generateTAMAnalysis(
     const segmentWeightedGrowth = growthWeightBase > 0
       ? Math.round((growthRows.reduce((sum, s) => sum + (s.segmentGrowth as number) * s.segmentShare, 0) / growthWeightBase) * 10) / 10
       : null;
-    const allSources = [...new Set(segTAMs.map(s => s.tamLabel))].join(' + ');
-    return { tamTotal: Math.round(weightedTAM), tamLabel: `Gewichtet: ${allSources}`, tamCAGR: Math.round(weightedCAGR * 10) / 10, companyGrowth: revenueGrowth, companyRevenue: Math.round(revB * 10) / 10, marketShare: Math.round(weightedShare * 100) / 100, tamSource: 'Segment-gewichteter TAM aus ' + segTAMs.map(s => s.tamLabel.replace('Global ', '')).join(', '), outperforming: revenueGrowth > weightedCAGR, segments: segTAMs, segmentWeightedGrowth, segmentGrowthCoveragePct: Math.round(growthWeightBase * 10) / 10 };
+
+    const tamSourceLabels = Array.from(new Set(
+      matchedForWeight.map(s => (s.tamLabel || '').replace(/^Global /, '')).filter(Boolean)
+    ));
+
+    if (quality.quality === 'unreliable') {
+      // Spec 3.5 / Abschnitt 4: Karte zeigt keinen (falschen) Konzern-TAM mehr.
+      return {
+        tamTotal: null,
+        tamLabel: 'Segment-TAM unzuverlässig',
+        tamCAGR: null,
+        companyGrowth: revenueGrowth,
+        companyRevenue: Math.round(revB * 10) / 10,
+        marketShare: null,
+        tamSource: tamSourceLabels.length > 0 ? tamSourceLabels.join(', ') : 'Mapping unvollständig',
+        outperforming: null,
+        segments: segTAMs,
+        segmentWeightedGrowth,
+        segmentGrowthCoveragePct: Math.round(growthWeightBase * 10) / 10,
+        quality: quality.quality,
+        distinctLabels: quality.distinctLabels,
+        coveragePct,
+        shareWarning: quality.highShareFlags > 0,
+      } as any;
+    }
+
+    return {
+      tamTotal: weightedTAM !== null ? Math.round(weightedTAM) : null,
+      tamLabel: tamSourceLabels.length > 0 ? `Gewichtet: ${tamSourceLabels.join(' + ')}` : 'Segment-TAM',
+      tamCAGR: weightedCAGR !== null ? Math.round(weightedCAGR * 10) / 10 : null,
+      companyGrowth: revenueGrowth,
+      companyRevenue: Math.round(revB * 10) / 10,
+      marketShare: weightedShare !== null ? Math.round(weightedShare * 100) / 100 : null,
+      tamSource: 'Segment-gewichteter TAM aus ' + (tamSourceLabels.length > 0 ? tamSourceLabels.join(', ') : 'n/a'),
+      outperforming: weightedCAGR !== null ? revenueGrowth > weightedCAGR : null,
+      segments: segTAMs,
+      segmentWeightedGrowth,
+      segmentGrowthCoveragePct: Math.round(growthWeightBase * 10) / 10,
+      quality: quality.quality,
+      distinctLabels: quality.distinctLabels,
+      coveragePct,
+      shareWarning: quality.highShareFlags > 0,
+    } as any;
   }
 
   const marketShare = tamTotal > 0 ? (revB / tamTotal) * 100 : 0;
-  return { tamTotal, tamLabel, tamCAGR, companyGrowth: revenueGrowth, companyRevenue: Math.round(revB * 10) / 10, marketShare: Math.round(marketShare * 100) / 100, tamSource, outperforming: revenueGrowth > tamCAGR };
+  // Pfad A (< 2 Segmente): Konzern-Dummy bleibt, aber als quality:'weak' und
+  // distinctLabels:1 markiert (Spec 3.5, letzter Satz) -- kein Segment-Mix,
+  // also kann das Qualitaetstor nie 'ok' sein.
+  return {
+    tamTotal, tamLabel, tamCAGR, companyGrowth: revenueGrowth,
+    companyRevenue: Math.round(revB * 10) / 10,
+    marketShare: Math.round(marketShare * 100) / 100,
+    tamSource, outperforming: revenueGrowth > tamCAGR,
+    quality: 'weak' as TamQuality,
+    distinctLabels: 1,
+    coveragePct: 100,
+    shareWarning: false,
+  } as any;
 }
