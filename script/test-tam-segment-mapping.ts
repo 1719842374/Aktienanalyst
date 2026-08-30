@@ -17,6 +17,7 @@ import {
   normalizeSegmentKey,
 } from "../server/sector-data";
 import { computeFcfTTM } from "../server/analyze-helpers";
+import { normalizeSegmentAliasKey, dedupeSegmentsByName } from "../server/fmp";
 
 let passed = 0;
 let failed = 0;
@@ -357,6 +358,42 @@ console.log("\n=== A3: computeFcfTTM (WORK_SECTION4_DATA_BUGS.md §4) ===");
 
   const r7 = computeFcfTTM(undefined);
   expect(r7, null, "computeFcfTTM: undefined -> null (kein Crash)");
+}
+
+console.log("\n=== A4: Segment-Alias-Dedup (WORK_IMPLEMENTIERUNG_OFFEN.md A4) ===");
+{
+  expect(normalizeSegmentAliasKey("AWS"), "aws", "normalizeSegmentAliasKey('AWS') -> 'aws'");
+  expect(normalizeSegmentAliasKey("Amazon Web Services"), "aws", "normalizeSegmentAliasKey('Amazon Web Services') -> 'aws' (gleicher Key wie 'AWS')");
+  expect(normalizeSegmentAliasKey("Amazon Web Services (AWS)"), "aws", "normalizeSegmentAliasKey('Amazon Web Services (AWS)') -> 'aws'");
+  expect(normalizeSegmentAliasKey("North America"), "northamerica", "normalizeSegmentAliasKey('North America') bleibt unveraendert (kein Alias-Treffer)");
+  expect(normalizeSegmentAliasKey("Thawson Inc"), "thawsoninc", "normalizeSegmentAliasKey('Thawson Inc') -- 'aws' als Teilstring in 'Thawson' matcht NICHT (Wortgrenze)");
+
+  // AMZN-Test aus dem Ticket: 'AWS' Produkt-Segment vs. 'Amazon Web Services'
+  // Geo-/Alt-Segment werden als Duplikat erkannt und aus geoWithoutOverlap gefiltert.
+  const revenueSegments = [
+    { name: "AWS", revenue: 100e9 },
+    { name: "North America", revenue: 200e9 },
+    { name: "International", revenue: 50e9 },
+  ];
+  const rawGeo = [
+    { name: "Amazon Web Services", revenue: 100e9 },
+    { name: "United States", revenue: 220e9 },
+    { name: "Germany", revenue: 15e9 },
+  ];
+  const geoSegmentsClean = dedupeSegmentsByName(rawGeo);
+  const productKeys = new Set(revenueSegments.map(s => normalizeSegmentAliasKey(s.name)));
+  const geoWithoutOverlap = geoSegmentsClean.filter(g => !productKeys.has(normalizeSegmentAliasKey(g.name)));
+  expectTrue(!geoWithoutOverlap.find(g => g.name === "Amazon Web Services"), "AMZN: 'Amazon Web Services' (Geo) wird durch 'AWS' (Produkt) ueberdeckt und entfernt");
+  expectTrue(!!geoWithoutOverlap.find(g => g.name === "United States"), "AMZN: 'United States' bleibt in geoWithoutOverlap (kein Produkt-Alias)");
+  expect(geoWithoutOverlap.length, 2, "AMZN: geoWithoutOverlap hat nur noch 2 Zeilen (US, Germany) statt 3");
+
+  // dedupeSegmentsByName selbst: zwei Zeilen mit Alias-Namen im selben Array werden zu einer.
+  const mixed = dedupeSegmentsByName([
+    { name: "AWS", revenue: 90e9 },
+    { name: "Amazon Web Services", revenue: 100e9 },
+  ]);
+  expect(mixed.length, 1, "dedupeSegmentsByName: 'AWS' + 'Amazon Web Services' im selben Array -> 1 Zeile");
+  expect(mixed[0]?.revenue, 100e9, "dedupeSegmentsByName: behaelt den Eintrag mit hoeherem Revenue (100e9 statt 90e9)");
 }
 
 console.log(`\n=== Ergebnis (final): ${passed} bestanden, ${failed} fehlgeschlagen ===`);

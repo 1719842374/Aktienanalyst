@@ -112,6 +112,7 @@ import {
   fmpEarningsCalendar,
   convertFmpRowsToUsd,
   dedupeSegmentsByName,
+  normalizeSegmentAliasKey,
 } from "./fmp";
 import { buildScoringForAnalysis } from "./scoring-integration";
 import { getCachedRegulatoryAssessment } from "./regulatory";
@@ -1623,23 +1624,18 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         };
       }
 
+      // A4 (WORK_IMPLEMENTIERUNG_OFFEN.md "A4 Segment-Dedup Rest"): beide
+      // Vergleichsseiten (Produkt-Segmente vs. Geo-Segmente) nutzen denselben
+      // normalizeSegmentAliasKey() aus fmp.ts, damit z.B. "AWS" (Produkt) und
+      // "Amazon Web Services" (Geo, falls FMP das so liefert) als dasselbe
+      // Segment erkannt und aus geoWithoutOverlap herausgefiltert werden.
       const rawGeo = Array.isArray(geoSegments) ? geoSegments : [];
       const geoSegmentsClean = dedupeSegmentsByName(rawGeo);
       const productKeys = new Set(
-        revenueSegments.map(s =>
-          s.name
-            .toLowerCase()
-            .replace(/[^a-z0-9äöüß]/g, "")
-            .replace(/segment$/, "")
-            .trim()
-        )
+        revenueSegments.map(s => normalizeSegmentAliasKey(s.name))
       );
       const geoWithoutOverlap = geoSegmentsClean.filter(g => {
-        const key = g.name
-          .toLowerCase()
-          .replace(/[^a-z0-9äöüß]/g, "")
-          .replace(/segment$/, "")
-          .trim();
+        const key = normalizeSegmentAliasKey(g.name);
         return !productKeys.has(key);
       });
 

@@ -293,8 +293,46 @@ function normaliseSegmentRows(rows: any[]): FmpSegmentRow[] {
     });
 }
 
+// A4 (WORK_IMPLEMENTIERUNG_OFFEN.md, Abschnitt A4 Segment-Dedup Rest):
+// generische, ticker-agnostische Synonym-Liste. Reine alphanumerische
+// Normalisierung erkennt AWS (Produkt-Segment) und Amazon Web Services
+// (Geo-/Alt-Segment) NICHT als Duplikat, weil die Zeichenketten komplett
+// verschieden sind. Diese Liste ist ein generisches Woerterbuch (kein
+// if (ticker === 'AMZN')) und darf um weitere bekannte Alias-Paare erweitert
+// werden. [kanonischer Key, RegExp die alle Schreibweisen matcht].
+// WICHTIG: Diese Regexe laufen auf dem noch NICHT alphanumerisch bereinigten,
+// nur lowercased Namen (Leerzeichen bleiben erhalten) -- sonst funktionieren
+// \b-Wortgrenzen nicht mehr ("aws cloud" -> "awscloud" haette keine Grenze
+// mehr zwischen "aws" und "cloud", \b(aws)\b wuerde dann nicht mehr matchen).
+const SEGMENT_ALIAS_CANON: Array<[string, RegExp]> = [
+  ["aws", /\b(aws|amazon\s*web\s*services)\b/],
+  ["gcp", /\b(gcp|google\s*cloud\s*platform|google\s*cloud)\b/],
+  ["azure", /\b(azure|microsoft\s*azure)\b/],
+  ["icloud", /\b(icloud|apple\s*icloud\s*services)\b/],
+];
+
 /**
- * Dedupliziert Segmente nach normalisiertem Namen.
+ * Normalisiert einen Segmentnamen zu einem Vergleichs-Key: lowercase,
+ * bekannte Firmen-/Produkt-Alias-Paare (AWS <-> Amazon Web Services etc.)
+ * zuerst auf denselben kanonischen Key gemappt (auf dem noch space-erhaltenen
+ * String, damit Wortgrenzen funktionieren), danach nicht-alphanumerisch
+ * entfernt und 'segment'-Suffix entfernt. Generisch erweiterbar, keine
+ * Ticker-Bedingungen.
+ */
+export function normalizeSegmentAliasKey(name: string): string {
+  const lower = name.toLowerCase();
+  for (const [canon, re] of SEGMENT_ALIAS_CANON) {
+    if (re.test(lower)) return canon;
+  }
+  return lower
+    .replace(/[^a-z0-9äöüß]/g, "")
+    .replace(/segment$/, "")
+    .trim();
+}
+
+/**
+ * Dedupliziert Segmente nach normalisiertem Namen (inkl. Alias-Mapping, siehe
+ * normalizeSegmentAliasKey -- AWS und Amazon Web Services zaehlen als eins).
  * - Behält den Eintrag mit dem höheren Revenue (bei Gleichstand den ersten).
  * - Ticker-agnostisch, keine Hardcodes.
  * - Entfernt leere / ungültige Namen.
@@ -309,11 +347,7 @@ export function dedupeSegmentsByName<T extends { name: string; revenue: number }
   for (const s of segs) {
     if (!s || typeof s.name !== "string" || !s.name.trim()) continue;
 
-    const key = s.name
-      .toLowerCase()
-      .replace(/[^a-z0-9äöüß]/g, "")
-      .replace(/segment$/, "")
-      .trim();
+    const key = normalizeSegmentAliasKey(s.name);
 
     if (!key) continue;
 
