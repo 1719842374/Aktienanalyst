@@ -13,6 +13,11 @@ import ScreenerDashboard from "@/pages/ScreenerDashboard";
 import Researcher from "@/pages/Researcher";
 import Compare from "@/pages/Compare";
 import PortfolioPage from "@/pages/PortfolioPage";
+// CalibrationPage: interne Kalibrierungs-Diagnose (Sprint B3 Phase 4,
+// tickets/SPRINT_B3_PHASE4_CALIBRATION_UI.md). Bewusst NICHT im Dashboard/
+// in der Hauptnavigation verlinkt -- nur ueber die direkte Hash-Route
+// /#/calibration erreichbar (siehe Route unten). Kein Endnutzer-Feature.
+import CalibrationPage from "@/pages/CalibrationPage";
 import NotFound from "@/pages/not-found";
 
 function AppRouter() {
@@ -26,6 +31,9 @@ function AppRouter() {
       <Route path="/researcher" component={Researcher} />
       <Route path="/compare" component={Compare} />
       <Route path="/portfolio" component={PortfolioPage} />
+      {/* /calibration: absichtlich NICHT in Dashboard.tsx/Sidebar verlinkt (siehe
+          Import-Kommentar oben) -- Route existiert nur fuer direkten Aufruf. */}
+      <Route path="/calibration" component={CalibrationPage} />
       <Route component={NotFound} />
     </Switch>
   );
