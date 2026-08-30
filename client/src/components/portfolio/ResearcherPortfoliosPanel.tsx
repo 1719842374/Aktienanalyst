@@ -22,6 +22,7 @@ import {
 } from "@/lib/portfolio/watchlist";
 import type { PortfolioPolicy } from "@/lib/portfolio/positions";
 import type { StockAnalysis } from "../../../../shared/schema";
+import EfficientFrontierPanel from "./EfficientFrontierPanel";
 
 type RegionTab = "ALL" | PortfolioRegion;
 
@@ -71,14 +72,21 @@ function ResearcherRegionBasket({
   );
   const isLoading = tickers.some(ticker => loadingTickers.has(ticker));
 
+  const historicalPricesByTicker = useMemo(() => {
+    const map: Record<string, Array<{ date: string; close: number }> | undefined> = {};
+    for (const entry of entries) {
+      const ticker = entry.ticker.toUpperCase();
+      map[ticker] = analysisByTicker[ticker]?.historicalPrices
+        ?.map(point => ({ date: point.date, close: point.close }));
+    }
+    return map;
+  }, [analysisByTicker, entries]);
+
   const result = useMemo(() => {
-    const historicalPricesByTicker: Record<string, Array<{ date: string; close: number }> | undefined> = {};
     const scoreByTicker: Record<string, number | null | undefined> = {};
 
     for (const entry of entries) {
       const ticker = entry.ticker.toUpperCase();
-      historicalPricesByTicker[ticker] = analysisByTicker[ticker]?.historicalPrices
-        ?.map(point => ({ date: point.date, close: point.close }));
       if (entry.score != null) {
         scoreByTicker[ticker] = Math.max(scoreByTicker[ticker] ?? -Infinity, entry.score);
       }
@@ -88,7 +96,16 @@ function ResearcherRegionBasket({
       historicalPricesByTicker,
       scoreByTicker,
     });
-  }, [analysisByTicker, entries, policy, tickers]);
+  }, [entries, historicalPricesByTicker, policy, tickers]);
+
+  // Referenzgewichte fuer die Effizienzlinie (Phase 5, additiv): wie P2 hat
+  // P3 keinen echten Marktwert -- nur das CAPM-Ziel wird markiert.
+  const frontierCurrentWeights = useMemo(() => {
+    if (result.status !== "ok") return undefined;
+    const map: Record<string, { market?: number | null; capm?: number | null }> = {};
+    result.rows.forEach(row => { map[row.ticker] = { capm: row.weightCapm }; });
+    return map;
+  }, [result]);
 
   if (tickers.length < MIN_POSITIONS_FOR_OPTIMIZATION) {
     return (
@@ -181,6 +198,13 @@ function ResearcherRegionBasket({
           ))}
         </ul>
       )}
+
+      {/* Effizienzlinie (Phase 5, additiv) */}
+      <EfficientFrontierPanel
+        tickers={tickers}
+        historicalPricesByTicker={historicalPricesByTicker}
+        currentWeights={frontierCurrentWeights}
+      />
     </div>
   );
 }

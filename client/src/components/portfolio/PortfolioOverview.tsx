@@ -17,6 +17,7 @@ import {
   type PortfolioPosition,
 } from "@/lib/portfolio/positions";
 import { computeMarketWeights } from "@/lib/portfolio/engine";
+import EfficientFrontierPanel from "./EfficientFrontierPanel";
 
 const PIE_COLORS = [
   "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4",
@@ -128,6 +129,22 @@ export default function PortfolioOverview({
     return maxAbs;
   }, [hasCapmWeights, marketWeightsForDelta, capmWeights]);
   const showDeviationBanner = maxDeviationPp != null && maxDeviationPp > 0.10;
+
+  // Efficient-Frontier-Panel (Phase 5, additiv): kombiniert Ist- (weightMarket)
+  // und CAPM-Ziel-Gewichte (weightCapm) je Ticker fuer die Referenzpunkte auf
+  // der Effizienzlinie. Nur offene Long-Positionen (dieselbe Basis wie der
+  // Δ-Banner oben), damit Ist-Gewichte und Frontier-Ticker konsistent sind.
+  const frontierTickers = useMemo(
+    () => Array.from(new Set(openLongPositions.map(p => p.ticker.toUpperCase()))),
+    [openLongPositions],
+  );
+  const frontierCurrentWeights = useMemo(() => {
+    const map: Record<string, { market?: number | null; capm?: number | null }> = {};
+    for (const ticker of frontierTickers) {
+      map[ticker] = { market: marketWeightsForDelta[ticker] ?? null, capm: capmWeights?.[ticker] ?? null };
+    }
+    return map;
+  }, [frontierTickers, marketWeightsForDelta, capmWeights]);
 
   return (
     <div className="space-y-4">
@@ -304,6 +321,15 @@ export default function PortfolioOverview({
           )}
         </div>
       </div>
+
+      {/* Effizienzlinie (Phase 5, additiv) -- Risiko/Rendite-Scatter mit Ist-,
+          CAPM-Ziel- und Equal-Weight-Referenzpunkten. Nutzt dieselben
+          historicalPricesByTicker wie Performance-Chart oben. */}
+      <EfficientFrontierPanel
+        tickers={frontierTickers}
+        historicalPricesByTicker={historicalPricesByTicker}
+        currentWeights={frontierCurrentWeights}
+      />
     </div>
   );
 }

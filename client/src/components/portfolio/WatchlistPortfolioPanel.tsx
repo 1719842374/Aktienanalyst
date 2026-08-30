@@ -20,6 +20,7 @@ import {
 } from "@/lib/portfolio/watchlist";
 import type { PortfolioPolicy } from "@/lib/portfolio/positions";
 import type { StockAnalysis } from "../../../../shared/schema";
+import EfficientFrontierPanel from "./EfficientFrontierPanel";
 
 const MODE_LABELS: Record<string, string> = {
   A: "Modus A — Max-Sharpe",
@@ -50,14 +51,21 @@ function WatchlistBasketResult({
   );
   const isLoading = tickers.some(ticker => loadingTickers.has(ticker));
 
+  const historicalPricesByTicker = useMemo(() => {
+    const map: Record<string, Array<{ date: string; close: number }> | undefined> = {};
+    for (const entry of entries) {
+      const ticker = entry.ticker.toUpperCase();
+      map[ticker] = analysisByTicker[ticker]?.historicalPrices
+        ?.map(point => ({ date: point.date, close: point.close }));
+    }
+    return map;
+  }, [analysisByTicker, entries]);
+
   const result = useMemo(() => {
-    const historicalPricesByTicker: Record<string, Array<{ date: string; close: number }> | undefined> = {};
     const scoreByTicker: Record<string, number | null | undefined> = {};
 
     for (const entry of entries) {
       const ticker = entry.ticker.toUpperCase();
-      historicalPricesByTicker[ticker] = analysisByTicker[ticker]?.historicalPrices
-        ?.map(point => ({ date: point.date, close: point.close }));
       // Falls P2 und P3 denselben Ticker enthalten, genügt ein vorhandener
       // Score. Der höchste verfügbare Score ist für den Score-Tilt stabil und
       // transparent; eine doppelte Position wird nicht angelegt.
@@ -70,7 +78,17 @@ function WatchlistBasketResult({
       historicalPricesByTicker,
       scoreByTicker,
     });
-  }, [analysisByTicker, entries, policy, tickers]);
+  }, [entries, historicalPricesByTicker, policy, tickers]);
+
+  // Referenzgewichte fuer die Effizienzlinie (Phase 5, additiv): P2 hat keine
+  // echten Marktwerte (Watchlist-Basket ohne Stueckzahl) -- nur das CAPM-Ziel
+  // wird markiert, Equal-Weight berechnet EfficientFrontierPanel selbst.
+  const frontierCurrentWeights = useMemo(() => {
+    if (result.status !== "ok") return undefined;
+    const map: Record<string, { market?: number | null; capm?: number | null }> = {};
+    result.rows.forEach(row => { map[row.ticker] = { capm: row.weightCapm }; });
+    return map;
+  }, [result]);
 
   if (tickers.length < MIN_POSITIONS_FOR_OPTIMIZATION) {
     return (
@@ -159,6 +177,13 @@ function WatchlistBasketResult({
           ))}
         </ul>
       )}
+
+      {/* Effizienzlinie (Phase 5, additiv) */}
+      <EfficientFrontierPanel
+        tickers={tickers}
+        historicalPricesByTicker={historicalPricesByTicker}
+        currentWeights={frontierCurrentWeights}
+      />
     </div>
   );
 }
