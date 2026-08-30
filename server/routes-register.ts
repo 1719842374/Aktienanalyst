@@ -12,4 +12,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   await registerAllRoutes(httpServer, app);
   const { registerSectorRotationRoute } = await import("./researcher-sector-rotation-route");
   registerSectorRotationRoute(app);
+  const { registerLiquidityRoute } = await import("./researcher-liquidity-route");
+  registerLiquidityRoute(app);
 }
