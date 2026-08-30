@@ -75,7 +75,7 @@ Offene Routen unverändert: Portfolio-Backtest, Signal-PIT, Liquidity/WALCL, Sek
 | 8 | WORK_NEWS_SENTIMENT.md | keine −100-False-Negatives | Keyword-Override | ✅ | news-sentiment.ts |
 | 9 | WORK_PEER_ROIC_SANITY.md | LITB 469% kappen | sanitizeRoic | ✅ | news-peers.ts |
 | 10 | WORK_PORTFOLIO.md | F.2 complete | ja + Tests | ✅ | lib/portfolio |
-| 11 | WORK_PORTFOLIO_BACKTEST.md | Depot vs Benchmark | keine Engine | ⬜ | — |
+| 11 | WORK_PORTFOLIO_BACKTEST.md | Depot vs Benchmark | Equity-Curve+Underwater+Attribution | ✅ | lib/portfolio/backtest.ts |
 | 12 | WORK_RESEARCHER_BUTTONS_APPLY.md | Phase-2 Buttons | verdrahtet | ✅ | TickerAddButtons |
 | 13 | WORK_RESEARCHER_LIQUIDITY_REGIME.md | WALCL/RRP/TGA | nicht gebaut | ⬜ | |
 | 14 | WORK_RESEARCHER_PORTFOLIO.md | P1/P2/P3 | ja | ✅ | |
@@ -86,7 +86,7 @@ Offene Routen unverändert: Portfolio-Backtest, Signal-PIT, Liquidity/WALCL, Sek
 | 19 | WORK_SECTION4_DATA_BUGS.md | PEG done, FCF offen | PEG ja + FCF-Fix (computeFcfTTM, Mehrperioden) | ✅ | Section4.tsx, analyze-helpers.ts |
 | 20 | WORK_SEGMENT_DEDUP.md | Cross-Dedup | Name-Dedup + Alias-Dedup (AWS<->Amazon Web Services) | ✅ | fmp.ts |
 | 21 | WORK_SEKTORROTATIONS_RAT.md | Radar | leer | ⬜ | |
-| 22 | WORK_SIGNAL_BACKTEST.md | PIT-Backtest | leer | ⬜ | |
+| 22 | WORK_SIGNAL_BACKTEST.md | PIT-Backtest | Phase 0-3b: Signal+Snapshot+Universum+Cluster+WF+PIT-Valuation | 🟡 | server/backtest/* |
 | 23 | WORK_STABLECOIN_TBILL_GENIUS.md | Stablecoin-Kanal | leer | ⬜ | |
 | 24 | WORK_TAM_RESIDUAL_XBOX.md | Mix 2,5% | Residuum-Zeile + Xbox-n/a implementiert | ✅ | sector-data.ts |
 | 25 | WORK_TAM_SEGMENT_MAPPING.md | Quality-Tor | assessTamQuality + Alias-Katalog + DCF-Kopplung | ✅ | sector-data.ts |
