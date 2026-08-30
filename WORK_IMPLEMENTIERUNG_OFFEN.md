@@ -7,8 +7,8 @@
 ## Sprint
 
 ```
-A P0  TAM-Quality + Xbox-Residuum + FCF=0 + Segment-Alias-Dedup
-B P1  OHLCV-10Y-Fallback → Portfolio-Backtest → PIT-Signal-Backtest
+A P0  TAM-Quality + Xbox-Residuum + FCF=0 + Segment-Alias-Dedup   -- DONE 30.08.2026 (d277527/dc2bc64/c484b3e/d18ac4a)
+B P1  OHLCV-10Y-Fallback → Portfolio-Backtest → PIT-Signal-Backtest  -- IN ARBEIT
 C P1  Sektorradar + Liquidity WALCL/RRP/TGA
 D P2  Lynch-Matrix, BL+Portfolio-MC, Fiscal-Wiring, Valuechain-Rest, GENIUS, Gold Multi-OLS
 ```

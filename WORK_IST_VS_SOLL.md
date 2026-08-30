@@ -34,9 +34,9 @@ Scoreboard Feature-Docs (ohne Index `WORK.md`):
 
 | Ampel | Anzahl | Anteil |
 |-------|--------|--------|
-| ✅ Kern umgesetzt | 16 | 52 % |
-| 🟡 teilweise | 9 | 31 % |
-| ⬜ offen | 6 | 21 % |
+| ✅ Kern umgesetzt | 20 | 65 % |
+| 🟡 teilweise | 6 | 19 % |
+| ⬜ offen | 5 | 16 % |
 
 Route-Patch für L2-Read/Write: `git apply patches/0001-analyze-l2-disk-cache.patch`.
 
@@ -83,13 +83,13 @@ Offene Routen unverändert: Portfolio-Backtest, Signal-PIT, Liquidity/WALCL, Sek
 | 16 | WORK_RESEARCHER_SECTOR_ADD.md | Add-Buttons | Code hat Buttons | ✅ | |
 | 17 | WORK_REVERSE_DCF_BRIDGE.md | Fiscal in DCF | Modul unwired | 🟡 | fiscal-bridge.ts |
 | 18 | WORK_SCORING_VORLAGE.md | Gates + Lookahead | Pipeline ja | 🟡 | scoring-gates.ts |
-| 19 | WORK_SECTION4_DATA_BUGS.md | PEG done, FCF offen | PEG ja | 🟡 | Section4.tsx |
-| 20 | WORK_SEGMENT_DEDUP.md | Cross-Dedup | Name-Dedup | 🟡 | |
+| 19 | WORK_SECTION4_DATA_BUGS.md | PEG done, FCF offen | PEG ja + FCF-Fix (computeFcfTTM, Mehrperioden) | ✅ | Section4.tsx, analyze-helpers.ts |
+| 20 | WORK_SEGMENT_DEDUP.md | Cross-Dedup | Name-Dedup + Alias-Dedup (AWS<->Amazon Web Services) | ✅ | fmp.ts |
 | 21 | WORK_SEKTORROTATIONS_RAT.md | Radar | leer | ⬜ | |
 | 22 | WORK_SIGNAL_BACKTEST.md | PIT-Backtest | leer | ⬜ | |
 | 23 | WORK_STABLECOIN_TBILL_GENIUS.md | Stablecoin-Kanal | leer | ⬜ | |
-| 24 | WORK_TAM_RESIDUAL_XBOX.md | Mix 2,5% | Spec only | ⬜ | |
-| 25 | WORK_TAM_SEGMENT_MAPPING.md | Quality-Tor | alte matchSegmentTAM | 🟡 | sector-data.ts |
+| 24 | WORK_TAM_RESIDUAL_XBOX.md | Mix 2,5% | Residuum-Zeile + Xbox-n/a implementiert | ✅ | sector-data.ts |
+| 25 | WORK_TAM_SEGMENT_MAPPING.md | Quality-Tor | assessTamQuality + Alias-Katalog + DCF-Kopplung | ✅ | sector-data.ts |
 | 26 | WORK_TEIL0-6.md | Platform/BTC/FMP | Kern | ✅ | |
 | 27 | WORK_TEIL7_SCORING.md | Gold + WALCL | OLS ja | 🟡 | |
 | 28 | WORK_VALUECHAIN_SECTOR_ROTATION.md | 9 Tasks | 1–3 ja | 🟡 | |
@@ -100,9 +100,10 @@ Offene Routen unverändert: Portfolio-Backtest, Signal-PIT, Liquidity/WALCL, Sek
 - ANTIBIAS, BTC_MINER, NEWS_SENTIMENT, PEER_ROIC, PORTFOLIO F.2
 - BUTTONS_APPLY + SECTOR_ADD + RESEARCHER_PORTFOLIO
 - TEIL0-6 Kern
+- **Sprint A (30.08.2026, Commits d277527/dc2bc64/c484b3e/d18ac4a):** TAM_SEGMENT_MAPPING (Qualitätstor + Alias-Katalog + DCF-Kopplung), TAM_RESIDUAL_XBOX (Residuum-Zeile + Xbox-n/a), SECTION4_DATA_BUGS FCF-Fix (`computeFcfTTM`, Mehrperioden + freeCashFlow-Priorität, `fcfAvailable`-Flag), SEGMENT_DEDUP Alias-Rest (AWS ↔ Amazon Web Services). 67 neue Tests in `script/test-tam-segment-mapping.ts`, tsc-Baseline 102→101, Build grün.
 
 ## 3. Offen (⬜)
 
-PORTFOLIO_BACKTEST, SIGNAL_BACKTEST, SEKTORROTATIONS_RAT, LIQUIDITY_REGIME, STABLECOIN_TBILL_GENIUS, TAM_RESIDUAL_XBOX.
+PORTFOLIO_BACKTEST, SIGNAL_BACKTEST, SEKTORROTATIONS_RAT, LIQUIDITY_REGIME, STABLECOIN_TBILL_GENIUS.
 
 Siehe `WORK_IMPLEMENTIERUNG_OFFEN.md` und `WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md`.
