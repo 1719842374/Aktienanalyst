@@ -237,7 +237,7 @@ export function Section1({ data, onRefresh }: Props) {
                 </td>
               </tr>
               <Row label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
-              <Row label="FCF TTM" value={formatLargeNumber(data.fcfTTM)} />
+              <Row label="FCF TTM" value={data.fcfAvailable === false ? "n/a" : formatLargeNumber(data.fcfTTM)} />
               <tr>
                 <td className="py-1.5 px-2 text-muted-foreground">FCF Margin</td>
                 <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium text-foreground">

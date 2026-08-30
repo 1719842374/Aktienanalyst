@@ -26,6 +26,7 @@ import {
   fetchFXRate,
   convertFinancials,
   generatePESTELAnalysis,
+  computeFcfTTM,
 } from "./analyze-helpers";
 
 import {
@@ -542,10 +543,29 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const operatingIncome = parseNumber(String(incomeLatest.operatingIncome ?? 0));
 
       // Cash flow
+      // A3 (WORK_SECTION4_DATA_BUGS.md §4): vorher wurde ausschliesslich
+      // operatingCF - capex aus GENAU EINER Periode (cashflow[0]) berechnet.
+      // Fehlt/ist 0 in dieser einen Periode (z.B. Lag im FMP-Datensatz), kam
+      // ein stilles $0 statt eines Fallbacks oder n/a raus. Fix:
+      //   1. cfLatest.freeCashFlow direkt verwenden, falls FMP es liefert.
+      //   2. Fallback: OCF - |capex| ueber MEHRERE Perioden (financials.cashflow
+      //      hat bis zu 3 Jahre, siehe fmpCashFlow(ticker,3) in analyze-helpers.ts),
+      //      capex wird IMMER als Abzug behandelt (FMP liefert es meist negativ
+      //      -> Math.abs() + Subtraktion, nie Addition).
+      //   3. Kein plausibler Wert in keiner der bis zu 3 Perioden -> fcfTTM=null,
+      //      NIEMALS stilles $0.
       const cfLatest = financials.cashflow[0] ?? {};
       const operatingCF = parseNumber(String(cfLatest.operatingCashFlow ?? cfLatest.netCashProvidedByOperatingActivities ?? 0));
       const capex = Math.abs(parseNumber(String(cfLatest.capitalExpenditure ?? cfLatest.capitalExpenditures ?? 0)));
-      const fcfTTM = operatingCF - capex;
+      const fcfTTMRaw = computeFcfTTM(financials.cashflow);
+      // fcfAvailable: additive Qualitaets-Flag (Muster wie fcfMarginYoyAvailable).
+      // fcfTTM bleibt `number` (kein Breaking-Type-Change durch ~10 Frontend-
+      // Konsumenten), aber 0 bedeutet ab jetzt NUR NOCH "kein plausibler Wert
+      // gefunden" -- die eigentliche Ursache (Einzelperiode, keine freeCashFlow-
+      // Prioritaet) ist behoben; fcfAvailable erlaubt der UI zusaetzlich n/a
+      // statt einer (jetzt viel selteneren) echten $0-Anzeige.
+      const fcfAvailable = fcfTTMRaw !== null;
+      const fcfTTM = fcfTTMRaw ?? 0;
 
       // Balance sheet
       const bsLatest = financials.balanceSheet[0] ?? {};
@@ -607,7 +627,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const grossMargin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
       const operatingMargin = revenue > 0 ? (operatingIncome / revenue) * 100 : 0;
       const netMargin = revenue > 0 ? (netIncome / revenue) * 100 : 0;
-      const fcfMargin = revenue > 0 ? (fcfTTM / revenue) * 100 : 0;
+      const fcfMargin = fcfAvailable && revenue > 0 ? (fcfTTM / revenue) * 100 : 0;
 
       // FX (non-USD stocks)
       let fxRate = 1;
@@ -1667,6 +1687,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         beta,
         fcfTTM,
         fcfMargin,
+        fcfAvailable,
         nextEarningsDate,
         ...(nextEarningsTime ? { nextEarningsTime } : {}),
         ...(nextEarningsIsEstimate !== undefined ? { nextEarningsIsEstimate } : {}),

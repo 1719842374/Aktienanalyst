@@ -176,6 +176,38 @@ export function parseMarkdownTable(content: string): Record<string, string>[] {
   return rows;
 }
 
+// A3 (WORK_SECTION4_DATA_BUGS.md §4): FCF=$0-Bug. Vorher: OCF - |capex| aus
+// GENAU EINER Cashflow-Periode (cashflow[0]) -- fehlte/war 0 in dieser einen
+// Periode, kam ein stilles $0 raus statt eines Fallbacks. Fix:
+//   1. cf.freeCashFlow direkt verwenden, wenn FMP es fuer die Periode liefert
+//      (FMP-Cashflow-Statements haben dieses Feld nativ, siehe fmp.ts:539).
+//   2. Sonst OCF - |capex| fuer DIESELBE Periode -- capex wird bei FMP i.d.R.
+//      negativ geliefert, daher immer Math.abs() + Subtraktion, nie Addition.
+//   3. Ueber bis zu 3 Perioden probieren (financials.cashflow, siehe
+//      fmpCashFlow(ticker,3) in getFmpFallbackData) bis ein plausibler
+//      (von Null verschiedener) Wert gefunden wird.
+//   4. Keine Periode liefert einen plausiblen Wert -> null (NIEMALS $0).
+export function computeFcfTTM(cashflowRows: any[] | undefined | null): number | null {
+  if (!Array.isArray(cashflowRows)) return null;
+  for (const cf of cashflowRows) {
+    if (!cf) continue;
+    // 1. Direktes FMP-Feld hat Vorrang, wenn plausibel (!= 0).
+    const directFcf = parseNumber(String(cf.freeCashFlow ?? ""));
+    if (directFcf !== 0) return directFcf;
+
+    // 2. Fallback: OCF - |capex| fuer dieselbe Periode.
+    const ocf = parseNumber(String(cf.operatingCashFlow ?? cf.netCashProvidedByOperatingActivities ?? ""));
+    const capexRaw = parseNumber(String(cf.capitalExpenditure ?? cf.capitalExpenditures ?? ""));
+    const capexAbs = Math.abs(capexRaw);
+    if (ocf !== 0 || capexAbs !== 0) {
+      const derived = ocf - capexAbs;
+      if (derived !== 0) return derived;
+    }
+  }
+  // 3. Keine der bis zu 3 Perioden lieferte einen plausiblen (!= 0) Wert.
+  return null;
+}
+
 export function parseNumber(s: string | undefined): number {
   if (!s) return 0;
   let cleaned = s.replace(/,/g, "").replace(/\$/g, "").replace(/%/g, "").trim();

@@ -439,6 +439,10 @@ export interface StockAnalysis {
   beta5Y: number;
   fcfTTM: number;
   fcfMargin: number;
+  /** A3 (WORK_SECTION4_DATA_BUGS.md §4): false wenn weder freeCashFlow noch
+   * OCF-|capex| in irgendeiner der bis zu 3 Cashflow-Perioden einen
+   * plausiblen (!=0) Wert ergaben -- UI kann dann n/a statt $0 anzeigen. */
+  fcfAvailable?: boolean;
   /** Datenaktualität Section 1: nächster bestätigter FMP-Earnings-Termin. */
   nextEarningsDate?: string | null;
   nextEarningsTime?: string;

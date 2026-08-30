@@ -16,6 +16,7 @@ import {
   generateTAMAnalysis,
   normalizeSegmentKey,
 } from "../server/sector-data";
+import { computeFcfTTM } from "../server/analyze-helpers";
 
 let passed = 0;
 let failed = 0;
@@ -334,7 +335,31 @@ console.log("\n=== A2: Residuum-Mix (WORK_TAM_RESIDUAL_XBOX.md) ===");
   expectTrue(!other, "residualMix 30% (> 15%) -> keine synthetische Other-Zeile");
 }
 
-console.log(`\n=== Ergebnis: ${passed} bestanden, ${failed} fehlgeschlagen ===`);
+console.log("\n=== A3: computeFcfTTM (WORK_SECTION4_DATA_BUGS.md §4) ===");
+{
+  const r1 = computeFcfTTM([{ freeCashFlow: 45_000_000_000 }]);
+  expect(r1, 45_000_000_000, "computeFcfTTM: freeCashFlow-Feld hat Vorrang");
+
+  const r2 = computeFcfTTM([{ operatingCashFlow: 50_000_000_000, capitalExpenditure: -8_000_000_000 }]);
+  expect(r2, 42_000_000_000, "computeFcfTTM: Fallback OCF - |capex| (capex FMP-typisch negativ)");
+
+  const r3 = computeFcfTTM([{ operatingCashFlow: 50_000_000_000, capitalExpenditure: 8_000_000_000 }]);
+  expect(r3, 42_000_000_000, "computeFcfTTM: Fallback OCF - |capex| auch wenn capex positiv geliefert wird (nie addieren)");
+
+  const r4 = computeFcfTTM([{ freeCashFlow: 0, operatingCashFlow: 0, capitalExpenditure: 0 }, { freeCashFlow: 33_000_000_000 }]);
+  expect(r4, 33_000_000_000, "computeFcfTTM: erste Periode leer -> zweite (aeltere) Periode wird verwendet, kein stilles $0");
+
+  const r5 = computeFcfTTM([{ freeCashFlow: 0, operatingCashFlow: 0, capitalExpenditure: 0 }, {}, null as any]);
+  expect(r5, null, "computeFcfTTM: keine der bis zu 3 Perioden plausibel -> null, NIEMALS 0");
+
+  const r6 = computeFcfTTM([]);
+  expect(r6, null, "computeFcfTTM: leeres Array -> null");
+
+  const r7 = computeFcfTTM(undefined);
+  expect(r7, null, "computeFcfTTM: undefined -> null (kein Crash)");
+}
+
+console.log(`\n=== Ergebnis (final): ${passed} bestanden, ${failed} fehlgeschlagen ===`);
 if (failed > 0) {
   process.exit(1);
 }
