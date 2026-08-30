@@ -1,1 +1,1 @@
-PLACEHOLDER_WILL_REPLACE
+@/workspace/c1/script/test-sector-rotation.ts
