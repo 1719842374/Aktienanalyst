@@ -302,7 +302,7 @@ export default function Researcher() {
           </div>
         )}
 
-        {!currentData && !loadingForCurrentView && !error && (
+        {!currentData && !loadingForCurrentView && !error && activeTab !== "sectors" && (
           <EmptyState />
         )}
         {!currentData && loadingForCurrentView && (
@@ -319,7 +319,7 @@ export default function Researcher() {
 
         <div className={loadingForCurrentView && currentData ? "relative opacity-60 transition-opacity" : "relative"}>
           {currentData && activeTab === "macro" && <MacroPanel data={currentData} />}
-          {currentData && activeTab === "sectors" && <SectorsPanel data={currentData} region={region} />}
+          {activeTab === "sectors" && <SectorsPanel data={currentData} region={region} />}
           {currentData && activeTab === "screener" && <ScreenerPanel data={currentData} region={region} />}
           {currentData && activeTab === "capex" && <CapexPanel data={currentData} region={region} />}
           {loadingForCurrentView && currentData && (
