@@ -25,6 +25,49 @@ import { winsorizeMuArray, DEFAULT_MU_WINSORIZE_MIN, DEFAULT_MU_WINSORIZE_MAX } 
 
 export const MIN_POSITIONS_FOR_OPTIMIZATION = 2;
 
+/**
+ * Ist-Gewichte (Marktwert) — reine Funktion, additiv (WORK_RESEARCHER_PORTFOLIO_TEIL2
+ * Kapitel O / PORTFOLIO_PHASE4_IST_ZIEL Punkt 3). Getrennt von computePortfolioWeights
+ * (positions.ts, gibt WeightedPosition[] fuer P1-UI zurueck) -- diese Variante liefert
+ * ein einfaches Record<ticker, weight> passend zu allocate()/engine-Rows, damit
+ * Ist- und Ziel-Gewicht (weightCapm) unter demselben Ticker-Key direkt vergleichbar
+ * sind (z.B. fuer die Δ-Banner-Berechnung in PortfolioOverview.tsx).
+ *
+ * marketValue_i = qty_i * lastPrice_i, weightMarket_i = marketValue_i / Σ marketValue.
+ * Normiert NUR wenn fuer ALLE uebergebenen Positionen ein gueltiger Kurs vorhanden ist
+ * (Σ weightMarket = 1) -- sonst wird das Ticket-Kriterium "Summe=1 wenn alle Kurse da"
+ * verletzt, falls stillschweigend nur ein Teil normiert wird. Fehlt auch nur einer
+ * Position der Kurs, wird ein leeres Record zurueckgegeben (kein irreführendes
+ * Teil-Ergebnis) -- Aufrufer erkennt das am fehlenden Ticker-Key (kein Wert = kein Preis).
+ */
+export function computeMarketWeights(
+  positions: PortfolioPosition[],
+  lastPriceByTicker: Record<string, number | null | undefined>,
+): Record<string, number> {
+  if (positions.length === 0) return {};
+  const marketValueByTicker: Record<string, number> = {};
+  for (const p of positions) {
+    const ticker = p.ticker.toUpperCase();
+    const lastPrice = lastPriceByTicker[ticker];
+    if (lastPrice == null || !isFinite(lastPrice) || lastPrice <= 0) continue;
+    if (!isFinite(p.qty) || p.qty <= 0) continue;
+    marketValueByTicker[ticker] = (marketValueByTicker[ticker] ?? 0) + p.qty * lastPrice;
+  }
+  // Nur normieren, wenn fuer JEDE Position ein gueltiger Marktwert ermittelt wurde --
+  // sonst waere Σ weightMarket < 1 und die Normierung wuerde die fehlenden Kurse
+  // unsichtbar "wegrechnen" (Ticket-Akzeptanz: "Summe = 1 wenn fuer alle Positionen
+  // ein Preis vorhanden ist", implizit: sonst kein normiertes Ergebnis liefern).
+  const uniqueTickers = new Set(positions.map(p => p.ticker.toUpperCase()));
+  if (Object.keys(marketValueByTicker).length !== uniqueTickers.size) return {};
+  const total = Object.values(marketValueByTicker).reduce((s, v) => s + v, 0);
+  if (!(total > 0)) return {};
+  const weights: Record<string, number> = {};
+  for (const [ticker, value] of Object.entries(marketValueByTicker)) {
+    weights[ticker] = value / total;
+  }
+  return weights;
+}
+
 export interface EnginePositionInput {
   ticker: string;
   qty: number;

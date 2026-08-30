@@ -11,11 +11,12 @@
  */
 import { useMemo, useState } from "react";
 import { PieChart, Pie, Cell, Tooltip as PieTooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as AreaTooltip } from "recharts";
-import { Target, Award, PiggyBank } from "lucide-react";
+import { Target, Award, PiggyBank, AlertTriangle } from "lucide-react";
 import {
   computePortfolioKPIs, computePortfolioWeights, computePortfolioPerformanceSeries,
   type PortfolioPosition,
 } from "@/lib/portfolio/positions";
+import { computeMarketWeights } from "@/lib/portfolio/engine";
 
 const PIE_COLORS = [
   "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4",
@@ -56,6 +57,7 @@ export default function PortfolioOverview({
   onDirectionChange,
   onSelectTicker,
   capmWeights,
+  solveFailed,
 }: {
   positions: PortfolioPosition[];
   lastPriceByTicker: Record<string, number | null | undefined>;
@@ -69,6 +71,11 @@ export default function PortfolioOverview({
    * Optional -- wenn nicht gesetzt oder leer, wird nur "Ist-Marktwert" angezeigt
    * und der Toggle ausgeblendet (Auftrag 10.08.2026, Punkt 6). */
   capmWeights?: Record<string, number> | null;
+  /** solveFailed-Flag aus dem Allocation-Ergebnis (engine.ts EngineResult.fallbackReason
+   * === "solve_failed"). Optional, additiv -- PORTFOLIO_PHASE4_IST_ZIEL Punkt 5: macht
+   * sichtbar, dass die Σ-Invertierung fehlgeschlagen ist und ein Equal-Weight-Fallback
+   * verwendet wurde, auch auf der Uebersicht (nicht nur im Optimierungs-Panel). */
+  solveFailed?: boolean;
 }) {
   const [pieMode, setPieMode] = useState<"market" | "capm">("market");
   const hasCapmWeights = !!capmWeights && Object.keys(capmWeights).length > 0;
@@ -94,6 +101,33 @@ export default function PortfolioOverview({
 
   const effectivePieMode = hasCapmWeights ? pieMode : "market";
   const pieData = effectivePieMode === "capm" ? capmPieData : marketPieData;
+
+  // Ist- vs. Ziel-Abweichungs-Banner (PORTFOLIO_PHASE4_IST_ZIEL Punkt 5): max(|weightMarket_i
+  // - weightCapm_i|) ueber alle offenen Long-Positionen, fuer die BEIDE Gewichte vorliegen.
+  // computeMarketWeights() normiert NUR wenn fuer ALLE offenen Positionen ein Kurs vorhanden
+  // ist (siehe engine.ts) -- fehlt ein Kurs, bleibt deltaBanner bewusst null (kein irrefuehrender
+  // Teil-Vergleich). Das KPI "Profit" oben folgt weiterhin dem Ist-Portfolio (unveraendert),
+  // dieser Banner macht das nur transparent, ohne die KPI-Berechnung selbst anzufassen.
+  const openLongPositions = useMemo(
+    () => directionFiltered.filter(p => p.status === "open" && p.side === "long"),
+    [directionFiltered]
+  );
+  const marketWeightsForDelta = useMemo(
+    () => computeMarketWeights(openLongPositions, lastPriceByTicker),
+    [openLongPositions, lastPriceByTicker]
+  );
+  const maxDeviationPp = useMemo(() => {
+    if (!hasCapmWeights) return null;
+    let maxAbs: number | null = null;
+    for (const ticker of Object.keys(marketWeightsForDelta)) {
+      const capmW = capmWeights?.[ticker];
+      if (capmW == null) continue;
+      const diff = Math.abs(marketWeightsForDelta[ticker] - capmW);
+      if (maxAbs == null || diff > maxAbs) maxAbs = diff;
+    }
+    return maxAbs;
+  }, [hasCapmWeights, marketWeightsForDelta, capmWeights]);
+  const showDeviationBanner = maxDeviationPp != null && maxDeviationPp > 0.10;
 
   return (
     <div className="space-y-4">
@@ -140,6 +174,28 @@ export default function PortfolioOverview({
           </div>
         </div>
       </div>
+
+      {/* Ist-vs-Ziel-Abweichungs-Banner + solveFailed-Warnung (additiv, Punkt 5) */}
+      {(showDeviationBanner || solveFailed) && (
+        <div className="space-y-2">
+          {showDeviationBanner && (
+            <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-600">
+                Ist- und Ziel-Gewichte weichen deutlich ab (max. Δ = {(maxDeviationPp! * 100).toFixed(1)} pp). KPI „Profit“ folgt dem Ist-Portfolio.
+              </p>
+            </div>
+          )}
+          {solveFailed && (
+            <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+              <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-red-500">
+                Optimierung konnte Ziel nicht exakt erreichen — Fallback verwendet.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Filter-Leiste */}
       <div className="flex flex-wrap items-center gap-2">

@@ -22,6 +22,14 @@ function fmtPct(x: number | null | undefined): string {
   return `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)}%`;
 }
 
+/** Formatiert ein Gewicht (0..1) als Prozent ohne Vorzeichen, fuer die neuen
+ * Ist-%/Ziel-%-Spalten (PORTFOLIO_PHASE4_IST_ZIEL Punkt 4). Getrennt von fmtPct
+ * oben, da Gewichte nie negativ sind und kein "+"-Praefix brauchen. */
+function fmtWeightPct(x: number | null | undefined): string {
+  if (x == null || !Number.isFinite(x)) return "\u2014";
+  return `${(x * 100).toFixed(1)}%`;
+}
+
 interface TickerSearchResult { ticker: string; name: string; exchange?: string }
 
 /** Kompakte, eigenstaendige Ticker-Autocomplete fuer "Position hinzufuegen" --
@@ -91,6 +99,8 @@ export default function PortfolioInvestmentsTable({
   onUpdatePosition,
   onClosePosition,
   onDeletePosition,
+  weightMarketByTicker,
+  weightCapmByTicker,
 }: {
   positions: PortfolioPosition[];
   lastPriceByTicker: Record<string, number | null | undefined>;
@@ -99,6 +109,13 @@ export default function PortfolioInvestmentsTable({
   onUpdatePosition: (id: string, patch: Partial<PortfolioPosition>) => void;
   onClosePosition: (id: string, exitPrice: number) => void;
   onDeletePosition: (id: string) => void;
+  /** Ist-Gewicht (Marktwert, computeMarketWeights aus engine.ts) je Ticker (Grossbuchstaben),
+   * 0..1. Optional -- additiv (PORTFOLIO_PHASE4_IST_ZIEL Punkt 4), wenn nicht uebergeben
+   * zeigt die Spalte "\u2014" statt einen Fehler zu werfen. */
+  weightMarketByTicker?: Record<string, number | null | undefined>;
+  /** Ziel-Gewicht (CAPM/Kelly-Allokation, allocate()/engine.ts weightCapm) je Ticker
+   * (Grossbuchstaben), 0..1. Optional -- additiv, gleiche Semantik wie oben. */
+  weightCapmByTicker?: Record<string, number | null | undefined>;
 }) {
   const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
@@ -158,6 +175,8 @@ export default function PortfolioInvestmentsTable({
               <th className="text-right py-2 px-2">Stopp</th>
               <th className="text-right py-2 px-2">Kurs</th>
               <th className="text-right py-2 px-2">Performance</th>
+              <th className="text-right py-2 px-2" title="Ist-Gewicht aus Marktwert (qty \u00d7 Kurs), normiert auf Summe=1 (PORTFOLIO_PHASE4_IST_ZIEL)">Ist-%</th>
+              <th className="text-right py-2 px-2" title="Ziel-Gewicht aus der CAPM/Kelly-Optimierung (allocate(), engine.ts)">Ziel-%</th>
               <th className="text-center py-2 px-2">Analyse</th>
               <th className="text-center py-2 px-2 w-8"></th>
             </tr>
@@ -165,7 +184,7 @@ export default function PortfolioInvestmentsTable({
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="text-center py-8 text-muted-foreground text-xs">
+                <td colSpan={10} className="text-center py-8 text-muted-foreground text-xs">
                   Keine Positionen — Ticker oben hinzufügen.
                 </td>
               </tr>
@@ -228,6 +247,12 @@ export default function PortfolioInvestmentsTable({
                     <span className={`font-semibold tabular-nums ${perf == null ? "text-muted-foreground" : perf >= 0 ? "text-emerald-500" : "text-red-500"}`}>
                       {perf == null ? "n/a" : `Ø ${fmtPct(perf)}`}
                     </span>
+                  </td>
+                  <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">
+                    {fmtWeightPct(weightMarketByTicker?.[p.ticker.toUpperCase()])}
+                  </td>
+                  <td className="py-2 px-2 text-right tabular-nums font-semibold">
+                    {fmtWeightPct(weightCapmByTicker?.[p.ticker.toUpperCase()])}
                   </td>
                   <td className="py-2 px-2 text-center">
                     <button

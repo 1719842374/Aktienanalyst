@@ -223,7 +223,13 @@ export default function PortfolioPage() {
     ? Math.round(suggestedMaxWeightDefault(openLongPositionsCount) * 100)
     : null;
 
-  const capmWeights = useMemo(() => {
+  // PORTFOLIO_PHASE4_IST_ZIEL: engineResultForOverview liefert zusaetzlich zu den
+  // bisherigen capmWeights (unveraendert weiterverwendet) auch weightMarketByTicker
+  // (Ist-Gewicht, aus engine.ts EngineRow.weightMarket -- bereits vorhanden, jetzt
+  // additiv in der UI genutzt) und solveFailed, damit Investments-Tabelle + Uebersicht
+  // dieselbe EINE Optimierung anzeigen wie das Optimierungs-Panel (Section 4), ohne eine
+  // zweite Berechnung zu duplizieren.
+  const engineResultForOverview = useMemo(() => {
     const openLongPositions = positions.filter(p => p.status === "open" && p.side === "long");
     if (openLongPositions.length < MIN_POSITIONS_FOR_OPTIMIZATION) return null;
     const enginePositions = openLongPositions.map(p => ({
@@ -233,15 +239,29 @@ export default function PortfolioPage() {
     }));
     const histForEngine: Record<string, { date: string; close: number }[] | undefined> = {};
     for (const p of openLongPositions) histForEngine[p.ticker.toUpperCase()] = historicalPricesByTicker[p.ticker.toUpperCase()];
-    const engineResult = computePortfolioFromPositions({
+    return computePortfolioFromPositions({
       positions: enginePositions, historicalPricesByTicker: histForEngine,
       rf: rfDecimal, capital: capitalBaseNum, maxWeight, kellyFraction: kellyFractionNum, kellyMaxF,
     });
-    if (engineResult.status !== "ok") return null;
-    const map: Record<string, number> = {};
-    engineResult.rows.forEach(r => { map[r.ticker] = r.weightCapm; });
-    return map;
   }, [positions, lastPriceByTicker, historicalPricesByTicker, rfDecimal, capitalBaseNum, maxWeight, kellyFractionNum, kellyMaxF]);
+
+  const capmWeights = useMemo(() => {
+    if (!engineResultForOverview || engineResultForOverview.status !== "ok") return null;
+    const map: Record<string, number> = {};
+    engineResultForOverview.rows.forEach(r => { map[r.ticker] = r.weightCapm; });
+    return map;
+  }, [engineResultForOverview]);
+
+  // Ist-Gewicht je Ticker direkt aus den EngineRows (weightMarket -- normiert auf
+  // Summe=1 NUR wenn fuer ALLE usable Ticker ein Kurs vorliegt, siehe engine.ts).
+  const weightMarketByTicker = useMemo(() => {
+    if (!engineResultForOverview || engineResultForOverview.status !== "ok") return {};
+    const map: Record<string, number | null | undefined> = {};
+    engineResultForOverview.rows.forEach(r => { map[r.ticker] = r.weightMarket; });
+    return map;
+  }, [engineResultForOverview]);
+
+  const solveFailed = engineResultForOverview?.status === "ok" ? engineResultForOverview.fallbackReason === "solve_failed" : false;
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -329,6 +349,7 @@ export default function PortfolioPage() {
                 onDirectionChange={setDirection}
                 onSelectTicker={(ticker) => scrollToSection(2)}
                 capmWeights={capmWeights}
+                solveFailed={solveFailed}
               />
             </div>
 
@@ -341,6 +362,8 @@ export default function PortfolioPage() {
                 onUpdatePosition={handleUpdatePosition}
                 onClosePosition={handleClosePosition}
                 onDeletePosition={handleDeletePosition}
+                weightMarketByTicker={weightMarketByTicker}
+                weightCapmByTicker={capmWeights ?? undefined}
               />
               {positions.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -374,7 +397,24 @@ export default function PortfolioPage() {
                     <Input value={rf} onChange={(e) => setRf(e.target.value)} data-testid="input-rf" />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground">maxWeight (%)</label>
+                    <label className="text-xs text-muted-foreground flex items-center justify-between gap-2">
+                      <span>maxWeight (%)</span>
+                      {/* Policy-Reset-Button (PORTFOLIO_PHASE4_IST_ZIEL Punkt 6): setzt maxWeight
+                          IMMER auf suggestedMaxWeightDefault(n) zurueck -- statt eines festen
+                          Wertes. n = aktuelle Anzahl offener Long-Positionen. Additiv neben der
+                          bestehenden "Übernehmen"-Empfehlung unten, die nur bei Abweichung erscheint. */}
+                      {openLongPositionsCount >= MIN_POSITIONS_FOR_OPTIMIZATION && (
+                        <button
+                          type="button"
+                          className="text-[10px] text-muted-foreground hover:text-primary underline shrink-0"
+                          title={`Setzt maxWeight auf den empfohlenen Default fuer ${openLongPositionsCount} Titel zurueck (suggestedMaxWeightDefault)`}
+                          onClick={() => setMaxWeightPct(String(Math.round(suggestedMaxWeightDefault(openLongPositionsCount) * 100)))}
+                          data-testid="button-reset-maxweight"
+                        >
+                          Zurücksetzen
+                        </button>
+                      )}
+                    </label>
                     <Input value={maxWeightPct} onChange={(e) => setMaxWeightPct(e.target.value)} data-testid="input-maxweight" />
                     {suggestedMaxWeightPct != null && Number(maxWeightPct) !== suggestedMaxWeightPct && (
                       <p className="text-[10px] text-muted-foreground mt-1">
