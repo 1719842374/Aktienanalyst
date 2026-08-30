@@ -743,3 +743,77 @@ export async function fmpInsiderTrading(symbol: string, limit = 50): Promise<any
     return Array.isArray(data) ? data : [];
   } catch { return []; }
 }
+
+// ============================================================
+// Sprint B3 Phase 2 (PIT-Universum, WORK_SIGNAL_BACKTEST.md §5): historische
+// S&P-500-Konstituenten + Delisted-Companies. Beide Endpunkte live gegen
+// echte Daten verifiziert (30.08.2026, siehe tickets/
+// SPRINT_B3_PHASE2_PIT_UNIVERSE.md): /historical-sp500-constituent liefert
+// ~1500 Aenderungsereignisse (KEINE Pagination noetig, ein Call liefert die
+// komplette Historie), /delisted-companies ist auf 100 Zeilen/Seite gedeckelt
+// (echte Pagination ueber `page`, NICHT `limit` — limit=1000 aendert nichts
+// an der 100er-Serverseite) und deckt global > 4000 Symbole ab (die meisten
+// OTC/nicht-US, fuer das S&P-500-Laboruniversum wird spaeter auf bekannte
+// Ticker gefiltert — universe.ts uebernimmt das Filtern, hier nur der reine
+// FMP-Zugriff ohne Ticker-Hardcodes).
+// ============================================================
+
+/**
+ * GET /stable/historical-sp500-constituent
+ * Liefert JEDE Indexänderung (Aufnahme + zugehörige Entfernung in einer
+ * Zeile) seit Beginn der FMP-Historie, newest-first. Felder: `dateAdded`
+ * (Langform-Datum, z.B. "August 18, 2026"), `date` (ISO yyyy-mm-dd, =
+ * Wirkungsdatum der Änderung), `symbol`/`addedSecurity` (neu aufgenommen),
+ * `removedTicker`/`removedSecurity` (entfernt), `reason` (Freitext, z.B.
+ * "X was acquired by Y"). KEIN period-Parameter — ein Call liefert die
+ * komplette Historie, daher serverseitig cachen (s. universe.ts).
+ */
+export async function fmpHistoricalSp500Constituents(): Promise<any[]> {
+  try {
+    const data = await fmpFetch(`/historical-sp500-constituent`, {});
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+
+/**
+ * GET /stable/delisted-companies?page=N&limit=100
+ * Liefert delistete Symbole (global, alle Boersen) mit `symbol`,
+ * `companyName`, `exchange`, `ipoDate`, `delistedDate`. Server-seitig hart
+ * auf 100 Zeilen/Seite gedeckelt — `limit` hoeher zu setzen aendert NICHTS
+ * (verifiziert 30.08.2026). Echte Pagination nur ueber `page` (0-indiziert).
+ * `maxPages` begrenzt die Anzahl Calls pro Cache-Refresh (Budget-Schutz,
+ * s. FMP_CONFIG); Default 50 Seiten = 5000 Zeilen, deckt den beobachteten
+ * Gesamtbestand (~4100 Zeilen bei Stichprobe 30.08.2026) ab.
+ */
+export async function fmpDelistedCompanies(maxPages = 50): Promise<any[]> {
+  const out: any[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    let data: any;
+    try {
+      data = await fmpFetch(`/delisted-companies`, { page: String(page), limit: "100" });
+    } catch {
+      break; // Netzwerkfehler nach Retries: bereits gesammelte Seiten behalten, nicht alles verwerfen.
+    }
+    if (!Array.isArray(data) || data.length === 0) break;
+    out.push(...data);
+    if (data.length < 100) break; // letzte Seite (weniger als volle Seitengroesse)
+  }
+  return out;
+}
+
+/**
+ * GET /stable/historical-market-capitalization?symbol=X&from=...&to=...
+ * Liefert taegliche Marktkapitalisierung (`marketCap`, bereits Preis ×
+ * Shares-Outstanding — FMP-seitig vorberechnet, KEINE eigene Multiplikation
+ * noetig/gewuenscht, verifiziert 30.08.2026). newest-first. Deckt den fuer
+ * `cap_T` (WORK_SIGNAL_BACKTEST.md §5.1) benoetigten PIT-Wert direkt ab.
+ */
+export async function fmpHistoricalMarketCap(symbol: string, from?: string, to?: string): Promise<any[]> {
+  const params: Record<string, string> = { symbol };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  try {
+    const data = await fmpFetch(`/historical-market-capitalization`, params);
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
