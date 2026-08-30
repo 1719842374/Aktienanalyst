@@ -254,7 +254,7 @@ export function mapPhaseFromRecession(rec: RecessionLike): { phase: CyclePhase; 
   const c3 = p3 ?? 50;
   const c6 = p6 ?? 50;
   const c12 = p12 ?? 50;
-  const cSent = pSent; // missing sentiment must NOT look like elevated stress
+  const cSent = pSent;
 
   if (sahmTriggered || pmiContraction || c3 >= 55) {
     const conf = clamp(Math.max(c3, c12) / 100, 0.5, 0.95);
@@ -444,9 +444,6 @@ export async function fetchSectorRotationLive(): Promise<SectorRotationResult> {
     console.warn(`[SECTOR-ROTATION] SPX proxy ${SPX_PROXY_ETF} failed: ${(err as Error)?.message ?? err}`);
   }
 
-  // OHLCV: Yahoo/Stooq in parallel (kein FMP-Quote). Render: Client 90s,
-  // FMP 15s Abort + 250ms Spacing sitzt in fmpFetch. PE daher sequentiell,
-  // max 9 fmpRatios, hartes Zeitbudget damit ein Cold-Start nicht die 90s sprengt.
   const ohlcv = await Promise.all(ETF_PROXY_MAP.map(async (proxy) => {
     let bars: DailyBar[] = [];
     try {
@@ -473,7 +470,7 @@ export async function fetchSectorRotationLive(): Promise<SectorRotationResult> {
         const pes = rows.map(r => pickPe(r)).filter((v): v is number => v != null);
         if (pes.length > 0) pe = pes[0];
         if (pes.length >= 5) pe10y = mean(pes);
-      } catch { /* live PE optional — Coverage sinkt, kein Throw */ }
+      } catch { /* live PE optional */ }
     }
 
     if (pe == null) {
