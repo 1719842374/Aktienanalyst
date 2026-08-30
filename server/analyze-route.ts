@@ -124,6 +124,13 @@ import { fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq } from 
 import { fetchSecBusinessSegments } from "./sec-segments";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
 import { normalizePeerOverrides, buildAnalyzeCacheKey, applyPeerOverrides } from "./peer-cache-key";
+// Sprint B3 Phase 1 (WORK_SIGNAL_BACKTEST.md): additiver Snapshot-Seiteneffekt.
+// Persistiert den bereits berechneten Scoring-Zustand fuer spaetere Backtest-
+// Phasen (PIT-Universum, Walk-Forward, ...). Rein additiv, kein Einfluss auf
+// die Analyze-Response — siehe try/catch-Hook unten vor res.json().
+import { replayAt } from "./backtest/replay";
+import { persistScoringSnapshot } from "./backtest/snapshot-store";
+import { deriveSignalV1 } from "./backtest/signal";
 import { invalidateThesisStrengthCache } from "./thesis-strength-cache";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -1899,6 +1906,54 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       analysisCache.set(cacheKey, { result: analysis, timestamp: Date.now(), usedLLM: useLLM });
 
       console.log(`[ANALYZE] Done for ${upperTicker} (LLM=${useLLM}, cats=${catalysts.length}, risks=${risks.length}, ohlcv=${ohlcvPoints.length})`);
+
+      // Sprint B3 Phase 1 (WORK_SIGNAL_BACKTEST.md §2.2/§11): additiver
+      // Snapshot-Seiteneffekt. replayAt() ruft NUR buildScoringForAnalysis()
+      // erneut mit dem bereits berechneten `scoring`-Kontext auf (identische
+      // Eingaben wie oben bei Zeile ~1578) — dient als Parity-Nachweis, dass
+      // der persistierte Snapshot exakt dem Live-Ergebnis entspricht, und
+      // legt die Grundlage fuer Phase 2 (PIT-Universum). Laeuft NIEMALS auf
+      // dem kritischen Antwortpfad: try/catch, kein Effekt auf `analysis`
+      // oder die Response, falls SQLite/Scoring hier fehlschlaegt.
+      try {
+        const snapshot = replayAt({
+          ticker: upperTicker,
+          asOf: new Date().toISOString().slice(0, 10),
+          ctx: {
+            impliedGStar,
+            quarterlyRevenueChronological,
+            annualIncome: financials.income as any[],
+            annualBalance: financials.balanceSheet as any[],
+            subjectRevenueGrowth: isFinite(revenueGrowth) ? revenueGrowth : null,
+            peerRevenueGrowths: peerComparison?.peers
+              ? (peerComparison.peers as any[]).map(p => p?.revenueGrowth ?? null)
+              : null,
+            regulatoryGate,
+          },
+          health,
+          moatRating,
+          technicalIndicators: technicalIndicators?.currentStatus ?? null,
+          catalysts,
+          price,
+          fcfTTM: fcfAvailable ? fcfTTM : null,
+          sector: effectiveSector,
+          industry: effectiveIndustry,
+        });
+        const signal = deriveSignalV1({
+          dataComplete: snapshot.dataComplete,
+          dcfApplicable: snapshot.dcfApplicable,
+          invDcf: snapshot.invDcf,
+          price,
+          fiscalQualifies: snapshot.fiscalQualifies,
+          cappedBy: snapshot.cappedBy,
+          cappedBySeverity: snapshot.cappedBySeverity,
+          crv: snapshot.crv,
+        });
+        persistScoringSnapshot({ ...snapshot, signal });
+      } catch (snapErr: any) {
+        console.warn(`[ANALYZE] Scoring-Snapshot (Backtest) fehlgeschlagen fuer ${upperTicker}: ${snapErr?.message?.substring(0, 150)}`);
+      }
+
       return res.json(analysis);
     } catch (err: any) {
       console.error(`[/api/analyze] Unhandled error: ${err?.message?.substring(0, 300)}`);
