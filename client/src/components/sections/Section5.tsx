@@ -159,6 +159,22 @@ export function Section5({ data }: Props) {
         </div>
       )}
 
+      {/* Sprint D1 (WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md §1.6) — Transparenzhinweis: welche Lynch-Klasse
+          hat die DCF-Defaults unten geliefert. Rein additiv, entfernt keine bestehenden Elemente.
+          Verschwindet automatisch sobald der Nutzer manuell Parameter aendert (isModified),
+          da die Defaults dann nicht mehr die aktiv verwendeten Werte sind. */}
+      {data.lynchClass && !isModified && (
+        <div className="bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 flex items-start gap-2" data-testid="lynch-dcf-transparency-hint">
+          <span className="text-primary text-sm">ℹ</span>
+          <div className="text-[11px] text-muted-foreground">
+            <span className="font-semibold text-foreground">DCF-Defaults nach Lynch-Klasse:</span> {data.lynchClass}
+            {" "}— g1/g2/Terminal-Growth/Haircut/WACC-Floor-Addon unten sind klassenspezifisch vorbelegt
+            (Sektor-Defaults &lt; Lynch-Klasse &lt; manuelle Anpassung). Ändere Parameter manuell, um diese
+            Defaults zu überschreiben.
+          </div>
+        </div>
+      )}
+
       {/* Parameter Editor Toggle */}
       <div className="flex items-center gap-2">
         <button

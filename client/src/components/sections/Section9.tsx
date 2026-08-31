@@ -1,6 +1,6 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { calculateRSL, RSL_MOMENTUM_MALUS_PCT } from "../../lib/calculations";
+import { calculateRSL, RSL_MOMENTUM_MALUS_PCT, LYNCH_DCF_DEFAULTS } from "../../lib/calculations";
 import { formatNumber, getRSLColor, getRSLBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
 
@@ -17,10 +17,24 @@ export function Section9({ data }: Props) {
   const rsl = useMemo(() => calculateRSL(data.currentPrice, prices26w), [data.currentPrice, prices26w]);
   const avg26w = prices26w.length > 0 ? prices26w.reduce((s, v) => s + v, 0) / prices26w.length : data.currentPrice;
 
-  // RSL < 105 → DCF growth adjustment is now actually applied in calculateFCFFDCF (see RSL_MOMENTUM_MALUS_PCT)
+  // Sprint D1 §2 (WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md): der Malus greift jetzt klassenabhaengig
+  // (slow_grower/asset_play: nie) — Section 9 muss dieselbe Regel wie buildDefaultDCFParams()/
+  // calculateFCFFDCF() anzeigen, sonst widerspricht sich die "Automatische Anpassung"-Behauptung
+  // dem tatsaechlichen Rechenweg in Sektion 5.
+  const lynchClass = data.lynchClass ?? null;
+  const malusAllowedForClass = lynchClass && lynchClass in LYNCH_DCF_DEFAULTS
+    ? LYNCH_DCF_DEFAULTS[lynchClass as keyof typeof LYNCH_DCF_DEFAULTS].applyRslMalus
+    : true; // keine bekannte Klasse → bisheriges (klassen-agnostisches) Verhalten
+  const rslWeak = !(rsl > 105);
+  const malusActive = rslWeak && malusAllowedForClass;
+
+  // RSL < 105 → DCF growth adjustment is now actually applied in calculateFCFFDCF (see RSL_MOMENTUM_MALUS_PCT),
+  // aber NUR wenn die Lynch-Klasse den Malus erlaubt (applyRslMalus).
   const growthAdj = rsl > 110 ? "+0% (strong momentum)" :
     rsl > 105 ? "+0% (neutral)" :
-    `-${RSL_MOMENTUM_MALUS_PCT}% (aktiv im DCF-Modell — siehe Sektion 5 Rechenweg)`;
+    malusActive
+      ? `-${RSL_MOMENTUM_MALUS_PCT}% (aktiv im DCF-Modell — siehe Sektion 5 Rechenweg)`
+      : `+0% (kein Malus — Lynch-Klasse "${lynchClass}" schließt RSL-Malus aus)`;
   const rslZone = rsl > 110 ? "Strong Momentum" : rsl > 105 ? "Neutral" : "Weak Momentum";
 
   // Gauge positioning
@@ -31,7 +45,7 @@ export function Section9({ data }: Props) {
   return (
     <SectionCard number={9} title="RSL-MOMENTUM (Levy RSL)">
       {/* RSL < 105 Warning */}
-      {rsl < 105 && (
+      {rslWeak && malusActive && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
           <span className="text-amber-500 text-lg">⚠</span>
           <div>
@@ -39,6 +53,19 @@ export function Section9({ data }: Props) {
             <div className="text-[11px] text-amber-400 mt-0.5">
               RSL = {formatNumber(rsl, 1)} (schwaches Momentum). Die DCF-Wachstumsraten in Sektion 5 (DCF-Modell)
               werden automatisch um {RSL_MOMENTUM_MALUS_PCT}% reduziert (g1/g2 × {(1 - RSL_MOMENTUM_MALUS_PCT / 100).toFixed(3)}).
+            </div>
+          </div>
+        </div>
+      )}
+      {rslWeak && !malusActive && (
+        <div className="bg-muted/30 border border-border/50 rounded-lg p-3 flex items-start gap-2">
+          <span className="text-muted-foreground text-lg">ℹ</span>
+          <div>
+            <div className="text-xs font-bold text-muted-foreground">RSL &lt; 105 — DCF Growth Adjustment ausgesetzt</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              RSL = {formatNumber(rsl ?? 0, 1)} (schwaches Momentum), aber Lynch-Klasse "{lynchClass}" schließt den
+              RSL-Momentum-Malus explizit aus (siehe WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md §2) — die
+              DCF-Wachstumsraten in Sektion 5 bleiben unverändert.
             </div>
           </div>
         </div>
@@ -106,9 +133,12 @@ export function Section9({ data }: Props) {
           </div>
           <div className="bg-muted/30 rounded-md p-2.5 border border-border/50 text-xs text-muted-foreground">
             RSL measures relative momentum: Price divided by its 26-week moving average × 100.
-            Values above 110 indicate strong momentum; below 105 indicates weakness and automatically
+            Values above 110 indicate strong momentum; below 105 indicates weakness and{malusAllowedForClass ? " automatically" : ", for most Lynch classes,"}
             reduces the DCF revenue-growth assumptions (g1/g2) by {RSL_MOMENTUM_MALUS_PCT}% in the DCF model (Section 5)
-            — visible there in the "FCFF-DCF Rechenweg".
+            — visible there in the "FCFF-DCF Rechenweg". {lynchClass && !malusAllowedForClass && (
+              <>For this stock's Lynch class ("{lynchClass}"), the malus is deactivated by design
+              (WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md §2) — growth stays unadjusted.</>
+            )}
           </div>
         </div>
       </div>

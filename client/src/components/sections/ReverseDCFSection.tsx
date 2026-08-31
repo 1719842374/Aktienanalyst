@@ -31,6 +31,20 @@ export function ReverseDCFSection({ data }: Props) {
     epsGrowthNext5Y: data.epsGrowth5Y ?? 0,
   }), [data, sp, netDebt, dcfWacc]);
 
+  // === Sprint D1 §4 (WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md) — g*-Gap-Analyse, NUR Punkt A+D ("Hoch") ===
+  // gap = g* (Markt-implizit, bleibt clean/ohne Fiscal-Overlay) − eigene g1 (unser Modell,
+  // inkl. Lynch-Klassen-Defaults via buildDefaultDCFParams/baseParams). Reine Anzeige/Warnung —
+  // KEINE automatische Ueberschreibung der User-Wachstumsannahmen (Ticket-Regel, Spec §4.3).
+  const gStarGap = useMemo(() => {
+    const gap = result.impliedGrowth - baseParams.revenueGrowthP1;
+    let flag: "aligned" | "market_more_optimistic" | "extreme";
+    if (Math.abs(gap) <= 3) flag = "aligned";
+    else if (gap > 3 && gap <= 10) flag = "market_more_optimistic";
+    else if (gap > 10) flag = "extreme";
+    else flag = "aligned"; // Markt implizit vorsichtiger als unser Modell — kein Warn-Flag nötig
+    return { gap, flag };
+  }, [result.impliedGrowth, baseParams.revenueGrowthP1]);
+
   const ratingColor =
     result.rating === "realistic" ? "text-emerald-500" :
     result.rating === "sportlich" ? "text-amber-500" :
@@ -143,6 +157,34 @@ export function ReverseDCFSection({ data }: Props) {
         </div>
       </div>
 
+      {/* Sprint D1 §4 (WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md) — g*-Gap-Analyse (Punkt A+D, "Hoch"-Priorität).
+          g* selbst bleibt unveraendert clean (oben, kein Fiscal-Overlay) — dieser Block vergleicht
+          NUR zur Anzeige g* gegen unser eigenes Modell-g1 (inkl. Lynch-Klassen-Defaults). Keine
+          automatische Ueberschreibung der User-Wachstumsannahmen. */}
+      <div className={`rounded-md p-3 border text-xs mt-4 ${
+        gStarGap.flag === "extreme" ? "bg-red-500/10 border-red-500/30" :
+        gStarGap.flag === "market_more_optimistic" ? "bg-amber-500/10 border-amber-500/30" :
+        "bg-muted/30 border-border/50"
+      }`} data-testid="gstar-gap-analysis">
+        <div className={`font-semibold uppercase tracking-wider text-[10px] mb-1 ${
+          gStarGap.flag === "extreme" ? "text-red-500" :
+          gStarGap.flag === "market_more_optimistic" ? "text-amber-500" :
+          "text-muted-foreground"
+        }`}>
+          g*-Gap-Analyse: Markt- vs. Modell-Wachstum
+        </div>
+        <div className="text-muted-foreground">
+          Markt preist g* = {formatPercentNoSign(result.impliedGrowth)} ein vs. unser Modell g1 = {formatPercentNoSign(baseParams.revenueGrowthP1)}
+          {data.lynchClass ? ` (Lynch-Klasse "${data.lynchClass}")` : ""}.
+          {" "}Gap = {gStarGap.gap >= 0 ? "+" : ""}{formatPercentNoSign(gStarGap.gap)}
+          {" "}{gStarGap.flag === "extreme"
+            ? "— Markt preist deutlich mehr Wachstum ein als unser Modell annimmt (Gap > 10pp)."
+            : gStarGap.flag === "market_more_optimistic"
+            ? "— Markt ist optimistischer als unser Modell (Gap 3–10pp)."
+            : "— Markt- und Modell-Wachstum sind im Rahmen üblicher Schwankung (|Gap| ≤ 3pp)."}
+        </div>
+      </div>
+
       {fiscalOverlayView && (
         <div className="bg-muted/30 rounded-md p-3 border border-border/50 text-xs space-y-1.5 mt-4">
           <div className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px]">
@@ -174,6 +216,11 @@ export function ReverseDCFSection({ data }: Props) {
         `g* = ${formatPercentNoSign(result.impliedGrowth)}`,
         `Referenzwachstum = max(Sektor g1 ${formatPercentNoSign(sp.growthAssumptions?.g1 ?? 0)}, EPS-5J ${formatPercentNoSign(data.epsGrowth5Y ?? 0)}, 3%) = ${formatPercentNoSign(result.referenceGrowth)}`,
         `Rating: g* ${result.rating === "unrealistic" ? ">" : result.rating === "sportlich" ? ">" : "≤"} ${result.rating === "unrealistic" ? "1,5×" : result.rating === "sportlich" ? "1×" : "1×"} Referenz → ${ratingLabel}`,
+        ``,
+        `=== g*-Gap-Analyse (Sprint D1 §4) ===`,
+        `Unser Modell g1 = ${formatPercentNoSign(baseParams.revenueGrowthP1)}${data.lynchClass ? ` (Lynch-Klasse "${data.lynchClass}", buildDefaultDCFParams)` : ""}`,
+        `Gap = g* - eigene g1 = ${formatPercentNoSign(result.impliedGrowth)} - ${formatPercentNoSign(baseParams.revenueGrowthP1)} = ${gStarGap.gap >= 0 ? "+" : ""}${formatPercentNoSign(gStarGap.gap)}`,
+        `Flag: ${gStarGap.flag} (aligned: |Gap|≤3pp, market_more_optimistic: 3–10pp, extreme: >10pp)`,
       ]} />
     </SectionCard>
   );

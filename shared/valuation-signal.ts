@@ -36,6 +36,8 @@
  * IMMER identisch auf diesen Randfall.
  */
 import type { StockAnalysis } from "./schema";
+import { LYNCH_DCF_DEFAULTS, resolveLynchDcfOverrides, type LynchDcfOverrides } from "./lynch-dcf-defaults";
+import type { LynchClass } from "../server/catalyst-engine";
 
 // === DCF Model (FCF-Growth based — legacy, still used by sensitivity matrix) ===
 export interface DCFParams {
@@ -207,6 +209,24 @@ export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
 
   const revenueGrowthDefault = sp.growthAssumptions.g1 || 10;
 
+  // === Sprint D1 — Lynch-Klassen-DCF-Defaults (WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md §1) ===
+  // Priorität: Sektor-Defaults (Base, oben) < Lynch-Klasse (hier) < manuelle User-Overrides
+  // (Slider in Section5 — diese Funktion liefert NUR die Defaults, die UI überschreibt sie
+  // im lokalen State, siehe Section5.tsx `params`/`updateParam`; buildDefaultDCFParams() wird
+  // NIE erneut aufgerufen, nachdem der Nutzer manuell etwas geändert hat).
+  const lynchClass = (data.lynchClass ?? null) as LynchClass | null;
+  const ebitMarginPhase1ForLynch =
+    data.operatingIncome > 0 && data.revenue > 0
+      ? +((data.operatingIncome / data.revenue) * 100).toFixed(1)
+      : data.ebitda > 0 && data.revenue > 0
+      ? +((data.ebitda / data.revenue) * 100 * 0.6).toFixed(1)
+      : 15;
+  const lynchOverrides = resolveLynchDcfOverrides({
+    lynchClass,
+    sectorG1: sp.growthAssumptions.g1 || 0,
+    ebitMarginPhase1: ebitMarginPhase1ForLynch,
+  });
+
   const debtRatioVal =
     data.totalDebt > 0
       ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0)
@@ -231,12 +251,19 @@ export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
     .map((p) => p.close);
   const rsl = calculateRSL(data.currentPrice, prices26w);
 
+  // Sektor-Basis (bisheriges Verhalten, unveraendert als Fallback wenn keine Lynch-Klasse vorliegt):
+  const sectorRevenueGrowthP1 = revenueGrowthDefault;
+  const sectorRevenueGrowthP2 = Math.max(3, +(revenueGrowthDefault * 0.6).toFixed(1));
+  const sectorEbitMarginTerminal = +Math.max(8, ebitMarginDefault * 0.9).toFixed(1);
+  const sectorFcfHaircut = data.fcfHaircut;
+  const sectorTerminalG = sp.growthAssumptions.terminal || 2.5;
+
   return {
     revenueBase: data.revenue,
-    revenueGrowthP1: revenueGrowthDefault,
-    revenueGrowthP2: Math.max(3, +(revenueGrowthDefault * 0.6).toFixed(1)),
+    revenueGrowthP1: lynchOverrides ? lynchOverrides.revenueGrowthP1 : sectorRevenueGrowthP1,
+    revenueGrowthP2: lynchOverrides ? lynchOverrides.revenueGrowthP2 : sectorRevenueGrowthP2,
     ebitMargin: ebitMarginDefault,
-    ebitMarginTerminal: +Math.max(8, ebitMarginDefault * 0.9).toFixed(1),
+    ebitMarginTerminal: lynchOverrides ? lynchOverrides.ebitMarginTerminal : sectorEbitMarginTerminal,
     capexPct: capexDefault,
     deltaWCPct: 5,
     taxRate: taxR,
@@ -246,15 +273,22 @@ export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
     erp,
     debtRatio: debtRatioVal,
     costOfDebt: rd,
-    terminalG: sp.growthAssumptions.terminal || 2.5,
+    terminalG: lynchOverrides ? lynchOverrides.terminalG : sectorTerminalG,
     sharesOutstanding: data.sharesOutstanding,
     netDebt,
     minorityInterests: 0,
-    fcfHaircut: data.fcfHaircut,
+    // fcfHaircut bleibt primaer data.fcfHaircut (Governance-/Policy-Haircut, separat vom Lynch-
+    // Modell-Haircut) — nur wenn KEIN expliziter Haircut auf der Analyse gesetzt ist (0/undefined),
+    // greift der Lynch-Klassen-Default als sinnvoller Startwert.
+    fcfHaircut: sectorFcfHaircut || (lynchOverrides ? lynchOverrides.fcfHaircut : sectorFcfHaircut),
     actualEPS: data.epsTTM,
     forwardEPS: data.epsConsensusNextFY,
     waccOverride: null,
     rsl,
+    // Sprint D1 — additive Felder (siehe FCFFDCFParams-Kommentar):
+    lynchClass: lynchClass ?? undefined,
+    waccFloorAddon: lynchOverrides ? lynchOverrides.waccFloorAddon : 0,
+    applyRslMalus: lynchOverrides ? lynchOverrides.applyRslMalus : true,
   };
 }
 
@@ -294,6 +328,17 @@ export interface FCFFDCFParams {
   // RSL < 105 triggers an automatic growth-rate malus (see RSL_MOMENTUM_MALUS_PCT),
   // matching the "Automatische Anpassung" claim shown in Section 9.
   rsl?: number | null;
+  // === Sprint D1 additions (WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md §1/§2) — additiv, optional. ===
+  // Welche Lynch-Klasse diesen Default-Satz erzeugt hat (nur Transparenz/UI-Hinweis,
+  // fliesst NICHT in die Zahlen-Berechnung von calculateFCFFDCF ein).
+  lynchClass?: string;
+  // Ob der RSL-Momentum-Malus fuer diese Lynch-Klasse ueberhaupt greifen darf.
+  // undefined/true = bisheriges Verhalten (Malus greift bei RSL < 105) — bestehende
+  // Aufrufer ohne dieses Feld sind dadurch 100% unveraendert (Rueckwaertskompatibel).
+  applyRslMalus?: boolean;
+  // Lynch-Klassen-WACC-Floor-Addon (%-Punkte), wird auf den bestehenden WACC_FLOOR
+  // addiert (siehe calculateFCFFDCF). 0/undefined = bisheriges Verhalten.
+  waccFloorAddon?: number;
 }
 
 // RSL < 105 → reduce DCF growth rates by this relative percentage (UI: "-5% to -10%").
@@ -342,10 +387,15 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   let wacc: number;
   let waccWasCapped = false;
 
+  // Sprint D1 §1.3: Lynch-Klassen-WACC-Floor-Addon (cyclical +0.5, turnaround +1.0) wird auf
+  // den bestehenden Sanity-Floor addiert — wirkt NUR wenn kein manueller waccOverride aktiv ist
+  // (User-Override hat weiterhin absolute Prioritaet, siehe Ticket-Regel).
+  const effectiveWaccFloor = WACC_FLOOR + Math.max(0, params.waccFloorAddon ?? 0);
+
   if (useOverride) {
     wacc = params.waccOverride!;
   } else {
-    wacc = Math.max(WACC_FLOOR, Math.min(WACC_CEIL, rawWacc));
+    wacc = Math.max(effectiveWaccFloor, Math.min(WACC_CEIL, rawWacc));
     waccWasCapped = Math.abs(wacc - rawWacc) > 0.01;
   }
 
@@ -358,7 +408,10 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     steps.push(`WACC (raw) = E/V × Re + D/V × Rd × (1-t) = ${(ev * 100).toFixed(0)}% × ${rawRe.toFixed(2)}% + ${(dv * 100).toFixed(0)}% × ${Rd}% × (1 - ${params.taxRate}%)`);
     steps.push(`WACC (raw) = ${rawWacc.toFixed(2)}%`);
     if (waccWasCapped) {
-      steps.push(`⚠ WACC-Sanity-Cap: ${rawWacc.toFixed(2)}% → ${wacc.toFixed(2)}% (Bounds: ${WACC_FLOOR}%-${WACC_CEIL}%)`);
+      steps.push(`⚠ WACC-Sanity-Cap: ${rawWacc.toFixed(2)}% → ${wacc.toFixed(2)}% (Bounds: ${effectiveWaccFloor.toFixed(2)}%-${WACC_CEIL}%)`);
+      if (params.waccFloorAddon && params.waccFloorAddon > 0) {
+        steps.push(`  Floor inkl. Lynch-Klassen-Addon: ${WACC_FLOOR}% + ${params.waccFloorAddon.toFixed(1)}pp = ${effectiveWaccFloor.toFixed(2)}%`);
+      }
       steps.push(`  Grund: CAPM liefert Wert außerhalb des plausiblen Bereichs.`);
     }
   }
@@ -367,7 +420,10 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   // RSL-Momentum-Malus (Section 9): RSL < 105 → Wachstumsraten automatisch reduzieren.
   // Macht die in Section 9 behauptete "Automatische Anpassung" tatsächlich wirksam,
   // statt sie nur als Text anzuzeigen.
-  const rslActive = params.rsl != null && params.rsl > 0 && params.rsl < 105;
+  // Sprint D1 §2: applyRslMalus steuert klassenabhängig, OB der Malus überhaupt greifen darf
+  // (undefined/true = altes Verhalten, false = slow_grower/asset_play — kein Malus).
+  const rslMalusAllowed = params.applyRslMalus !== false;
+  const rslActive = rslMalusAllowed && params.rsl != null && params.rsl > 0 && params.rsl < 105;
   const rslFactor = rslActive ? 1 - RSL_MOMENTUM_MALUS_PCT / 100 : 1;
   const adjGrowthP1 = params.revenueGrowthP1 * rslFactor;
   const adjGrowthP2 = params.revenueGrowthP2 * rslFactor;
@@ -377,6 +433,11 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
     steps.push(`⚠ RSL-Momentum-Malus aktiv: RSL = ${params.rsl!.toFixed(1)} < 105 (schwaches Momentum)`);
     steps.push(`  Wachstumsraten × (1 - ${RSL_MOMENTUM_MALUS_PCT}%) = × ${rslFactor.toFixed(3)}`);
     steps.push(`  g1: ${params.revenueGrowthP1.toFixed(1)}% → ${adjGrowthP1.toFixed(2)}% | g2: ${params.revenueGrowthP2.toFixed(1)}% → ${adjGrowthP2.toFixed(2)}%`);
+  } else if (!rslMalusAllowed && params.rsl != null && params.rsl > 0 && params.rsl < 105) {
+    // Sprint D1 §2: Malus waere nach altem (klassen-agnostischem) Regelwerk aktiv gewesen,
+    // wird aber fuer diese Lynch-Klasse (slow_grower/asset_play) bewusst deaktiviert.
+    steps.push(``);
+    steps.push(`ℹ RSL-Momentum-Malus deaktiviert: RSL = ${params.rsl!.toFixed(1)} < 105, aber Lynch-Klasse${params.lynchClass ? ` "${params.lynchClass}"` : ""} schliesst den Malus aus (siehe Section 9).`);
   }
 
   steps.push(``);

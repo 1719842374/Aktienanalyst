@@ -38,6 +38,17 @@ import {
   computeHardenedCRV,
 } from "@shared/valuation-signal";
 
+// Sprint D1 (WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md §1.4; tickets/SPRINT_D1_LYNCH_DCF_DEFAULTS.md):
+// Lynch-Klassen-DCF-Default-Tabelle. Liegt in shared/ (siehe Kommentar dort), re-exportiert hier
+// analog zu LYNCH_CLASS_BASE_DRAWDOWN oben, damit UI-Importpfade konsistent bleiben.
+import {
+  LYNCH_DCF_DEFAULTS,
+  type LynchDcfOverrides,
+  FAST_GROWER_G1_FLOOR,
+  FAST_GROWER_TERMINAL_G_CAP,
+  SLOW_GROWER_TERMINAL_G_CAP,
+} from "@shared/lynch-dcf-defaults";
+
 // ============================================================================
 // Sprint B3 Phase 1b (WORK_SIGNAL_BACKTEST.md §3.3/§9; Ticket:
 // tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md): CRV/invDcf/DCF-Kern-Funktionen
@@ -87,6 +98,11 @@ export {
   type HardenedCRVInput,
   type HardenedCRVResult,
   computeHardenedCRV,
+  LYNCH_DCF_DEFAULTS,
+  type LynchDcfOverrides,
+  FAST_GROWER_G1_FLOOR,
+  FAST_GROWER_TERMINAL_G_CAP,
+  SLOW_GROWER_TERMINAL_G_CAP,
 };
 
 // === Monte Carlo Simulation (Geometrische Brownsche Bewegung / GBM) ===
