@@ -29,7 +29,7 @@ import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelation
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
-  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search, Star, Sparkles, Briefcase, UserCheck,
+  RotateCcw, Zap, Dice6, Table2, Menu, X, ChevronRight, Landmark, Globe, Bitcoin, Search, Star, Sparkles, Briefcase, UserCheck, Network,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -439,6 +439,15 @@ export default function Dashboard() {
             <span className="hidden sm:inline">Portfolio</span>
           </button>
           <button
+            onClick={() => navigate("/valuechain")}
+            className="h-8 px-2.5 text-[11px] font-medium text-indigo-400 hover:bg-indigo-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-indigo-400/30 shrink-0"
+            title="Wertschöpfungskette — Branchen-Value-Chain (Upstream/Midstream/Downstream)"
+            data-testid="button-valuechain"
+          >
+            <Network className="w-3 h-3" />
+            <span className="hidden sm:inline">Value Chain</span>
+          </button>
+          <button
             onClick={() => navigate("/compare")}
             className="h-8 px-2.5 text-[11px] font-medium text-foreground/40 hover:bg-muted/50 hover:text-foreground/60 rounded-md transition-colors flex items-center gap-1 border border-border/50 shrink-0"
             title="Ticker-Vergleich"
@@ -714,6 +723,13 @@ function WelcomeScreen({ onSearch, serverReady, financeQuotaOk, onAnalyzeDone }:
             >
               <Briefcase className="w-3 h-3" />
               Virtuelles Portfolio
+            </button>
+            <button
+              onClick={() => setLocation("/valuechain")}
+              className="px-3 py-1.5 rounded-md bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-xs font-medium text-indigo-500 dark:text-indigo-400 transition-colors flex items-center gap-1.5"
+            >
+              <Network className="w-3 h-3" />
+              Wertschöpfungskette
             </button>
           </div>
         </div>

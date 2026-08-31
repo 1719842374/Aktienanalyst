@@ -34,6 +34,12 @@ export interface ValueChainCompany {
   capexIntensity?: number | null;
   logoUrl?: string;
   validated: boolean;
+  /** Sprint D6c: KI-generierte 1-Satz-Rolle in der Wertschöpfungskette
+   *  (server/llm-openrouter.ts::enrichValueChainStages). Nur gesetzt nach
+   *  erfolgreichem KI-Anreicherungs-Call, sonst undefined. */
+  aiRole?: string;
+  /** true wenn die KI die generische Keyword-Stage-Zuordnung korrigiert hat. */
+  stageCorrected?: boolean;
 }
 
 export interface ValueChainStage {

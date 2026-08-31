@@ -79,6 +79,14 @@ export function StageColumn({ stage, index, total, onCompanyClick }: StageColumn
           <span className={`text-[11px] font-semibold uppercase tracking-wider ${accent.text}`}>
             {index + 1}. {stage.stageName}
           </span>
+          {stage.companies.some((c) => c.validated) && (
+            <span
+              className="rounded-full bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-medium text-violet-300"
+              title="Mindestens eine Firma in dieser Stage wurde per LLM validiert"
+            >
+              KI-validiert
+            </span>
+          )}
         </div>
         {stage.description && (
           <p className="mt-1 text-[11px] leading-snug text-slate-400">{stage.description}</p>
@@ -123,6 +131,11 @@ export function StageColumn({ stage, index, total, onCompanyClick }: StageColumn
                     )}
                   </div>
                   <div className="truncate text-[10px] text-slate-400">{c.name}</div>
+                  {c.aiRole && (
+                    <div className="mt-0.5 line-clamp-2 text-[9px] leading-snug text-slate-500" title={c.aiRole}>
+                      {c.aiRole}
+                    </div>
+                  )}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-0.5">
                   <span className="text-[10px] text-slate-300">{formatMarketCap(c.marketCap)}</span>

@@ -1316,3 +1316,144 @@ Antworte NUR mit JSON:
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Sprint D6c (tickets/SPRINT_D6C_VALUECHAIN_NAV_UND_KI.md): KI-Anreicherung
+// für die Value-Chain-Daten. In D6a war `llmValidated`/`validated` bewusst
+// hartkodiert `false` ("kein LLM-Call in diesem Ticket") — dieser Call holt
+// das nach. Gleiches Muster wie generateCatalystDeepDives: callWithFallback,
+// response_format json_object, Markdown-Fence-Stripping, kein Fake-Erfolg.
+// ---------------------------------------------------------------------------
+export interface ValueChainEnrichCompanyInput {
+  ticker: string;
+  name: string;
+  sector: string;
+  industry: string;
+  stageType: "upstream" | "midstream" | "downstream";
+}
+
+export interface ValueChainEnrichInput {
+  industryLabel: string;
+  companies: ValueChainEnrichCompanyInput[];
+}
+
+export interface ValueChainEnrichCompanyResult {
+  ticker: string;
+  role: string;
+  /** Korrigierte Stage, NUR falls das Keyword-Matching aus D6a offensichtlich
+   *  falsch lag — sonst identisch zur Eingabe-Stage. */
+  suggestedStage: "upstream" | "midstream" | "downstream";
+  stageCorrected: boolean;
+}
+
+export interface ValueChainEnrichResult {
+  companies: ValueChainEnrichCompanyResult[];
+  modelUsed: string;
+}
+
+/**
+ * Reichert Value-Chain-Firmenkarten mit einer kurzen, unternehmensspezifischen
+ * Rolle-in-der-Kette-Beschreibung an und validiert optional die generische
+ * Keyword-Stage-Zuordnung aus server/valuechain-routes.ts. Gibt `null` zurück
+ * bei fehlendem API-Key, Netzwerkfehler oder ungültiger/leerer LLM-Antwort —
+ * der Aufrufer (server/valuechain-routes.ts) setzt `llmValidated` NUR bei
+ * einem non-null Ergebnis auf `true` (Zahlen-Prinzip: kein Fake-Erfolg).
+ */
+export async function enrichValueChainStages(
+  input: ValueChainEnrichInput
+): Promise<ValueChainEnrichResult | null> {
+  const client = getClient();
+  if (!client) return null;
+  const { industryLabel, companies } = input;
+  if (!companies || companies.length === 0) return null;
+
+  // Cap auf 40 Firmen pro Call — Token-Budget-Schutz, analog anderen
+  // LLM-Funktionen in dieser Datei (z.B. Katalysator-Listen-Caps).
+  const capped = companies.slice(0, 40);
+  const companyList = capped
+    .map(
+      (c, i) =>
+        `F${i} (idx=${i}): ${c.name} (${c.ticker}) | Sektor: ${c.sector} | Industrie: ${c.industry} | Aktuelle Stage: ${c.stageType}`
+    )
+    .join("\n");
+
+  const prompt = `Branchen-Analyst. Branche: ${industryLabel}.
+
+Firmen in der Wertschöpfungskette (Stage per generischem Keyword-Matching vorklassifiziert):
+${companyList}
+
+Für JEDE Firma:
+1. "role": EIN Satz, unternehmensspezifisch, was die Firma konkret in dieser Wertschöpfungskette tut
+   (Beispiel: "Marktführer bei EUV-Lithografie-Systemen, kritischer Flaschenhals für High-End-Chipfertigung").
+   KEINE generischen Floskeln ohne Firmenbezug.
+2. "suggestedStage": upstream, midstream oder downstream — identisch zur aktuellen Stage, AUSSER das
+   Keyword-Matching lag offensichtlich falsch (dann korrigierte Stage).
+3. "stageCorrected": true NUR wenn suggestedStage von der aktuellen Stage abweicht, sonst false.
+
+Antworte NUR mit JSON:
+{"companies":[{"idx":0,"role":"1 Satz Rolle in der Kette","suggestedStage":"upstream|midstream|downstream","stageCorrected":false}]}`;
+
+  try {
+    const { text, modelUsed } = await callWithFallback(client, {
+      max_tokens: 2200,
+      temperature: 0.2,
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" } as any,
+    });
+    if (!text) {
+      console.warn("[LLM-VALUECHAIN-ENRICH] Empty response");
+      return null;
+    }
+    let jsonText = text.trim();
+    if (jsonText.startsWith("```")) {
+      jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    }
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (parseErr) {
+      try {
+        parsed = JSON.parse(salvageTruncatedJson(jsonText));
+        console.warn("[LLM-VALUECHAIN-ENRICH] Salvaged truncated JSON");
+      } catch {
+        console.warn(`[LLM-VALUECHAIN-ENRICH] JSON parse failed even after salvage: ${(parseErr as any)?.message}`);
+        return null;
+      }
+    }
+    const rows = parsed?.companies;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      console.warn("[LLM-VALUECHAIN-ENRICH] Empty companies array in LLM response");
+      return null;
+    }
+    const VALID_STAGES = ["upstream", "midstream", "downstream"];
+    const results: ValueChainEnrichCompanyResult[] = rows
+      .map((r: any) => {
+        const idx = Number(r?.idx);
+        const source = Number.isInteger(idx) ? capped[idx] : undefined;
+        if (!source) return null;
+        const suggested = VALID_STAGES.includes(r?.suggestedStage) ? r.suggestedStage : source.stageType;
+        return {
+          ticker: source.ticker,
+          role: String(r?.role || "").slice(0, 240),
+          suggestedStage: suggested as "upstream" | "midstream" | "downstream",
+          stageCorrected: Boolean(r?.stageCorrected) && suggested !== source.stageType,
+        };
+      })
+      .filter(Boolean) as ValueChainEnrichCompanyResult[];
+
+    if (results.length === 0) {
+      console.warn("[LLM-VALUECHAIN-ENRICH] No valid rows after idx-mapping");
+      return null;
+    }
+    console.log(`[LLM-VALUECHAIN-ENRICH] OK: ${results.length} companies enriched, model=${modelUsed}`);
+    return { companies: results, modelUsed };
+  } catch (err: any) {
+    const status = err?.status || err?.response?.status;
+    if (status === 402) {
+      console.warn("[LLM-VALUECHAIN-ENRICH] 402 token budget exhausted — skipping LLM");
+    } else {
+      console.error(`[LLM-VALUECHAIN-ENRICH] Failed: ${err?.message?.substring(0, 200)}`);
+    }
+    return null;
+  }
+}

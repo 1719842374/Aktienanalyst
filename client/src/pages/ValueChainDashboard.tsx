@@ -22,7 +22,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocation } from "wouter";
-import { RefreshCw, Factory, Info } from "lucide-react";
+import { RefreshCw, Factory, Info, ArrowLeft, Sparkles, Loader2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { StageColumn } from "@/components/valuechain/StageColumn";
 import { ValueChainKpiTiles } from "@/components/valuechain/ValueChainKpiTiles";
@@ -58,6 +58,12 @@ export default function ValueChainDashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
+
+  // Sprint D6c: KI-Anreicherung (server/llm-openrouter.ts::enrichValueChainStages
+  // via POST /api/valuechain/enrich). Eigener Loading-/Error-State, damit ein
+  // Fehlschlag NICHT die bereits geladenen Basis-Stages (data) zerstört.
+  const [isEnriching, setIsEnriching] = useState(false);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
 
   // Branchen-Optionen einmalig laden (Dropdown-Inhalt)
   useEffect(() => {
@@ -102,8 +108,31 @@ export default function ValueChainDashboard() {
 
   useEffect(() => {
     load(false);
+    setEnrichError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [industry, region, minMarketCap]);
+
+  const enrichWithAI = useCallback(async () => {
+    if (!data || data.stages.length === 0) return;
+    setIsEnriching(true);
+    setEnrichError(null);
+    try {
+      const res = await apiRequest("POST", "/api/valuechain/enrich", {
+        industry,
+        region,
+        minMarketCap,
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.error || `${res.status}: ${res.statusText}`);
+      }
+      setData(json);
+    } catch (err: any) {
+      setEnrichError(err?.message || String(err));
+    } finally {
+      setIsEnriching(false);
+    }
+  }, [data, industry, region, minMarketCap]);
 
   const currentIndustryLabel = useMemo(() => {
     return industries.find((i) => i.key === industry)?.label ?? industry;
@@ -133,6 +162,14 @@ export default function ValueChainDashboard() {
         {/* Header: Icon + Titel + Untertitel + Branchen-Dropdown oben rechts + Info-Icon */}
         <header className="mb-6 flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/80 to-slate-900/30 px-5 py-4">
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate("/")}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-slate-800/80 text-slate-300 transition-colors hover:bg-slate-700 hover:text-white"
+              title="Zurück zur Startseite"
+              data-testid="button-back-to-dashboard"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-500/10 ring-1 ring-cyan-400/30">
               <Factory className="h-5 w-5 text-cyan-300" />
             </div>
@@ -205,6 +242,25 @@ export default function ValueChainDashboard() {
             </button>
 
             <button
+              onClick={enrichWithAI}
+              disabled={isEnriching || !data || data.stages.length === 0}
+              title="KI-Anreicherung — unternehmensspezifische Rollen-Beschreibung + Stage-Validierung via LLM (OpenRouter)"
+              className={`mt-4 flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
+                data?.llmValidated
+                  ? "border-violet-400/40 bg-violet-500/20 text-violet-200 hover:bg-violet-500/30"
+                  : "border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20"
+              }`}
+              data-testid="button-valuechain-ai-enrich"
+            >
+              {isEnriching ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              KI{data?.llmValidated ? " ✓" : ""}
+            </button>
+
+            <button
               onClick={() => setShowInfo((v) => !v)}
               className="mt-4 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-slate-800/80 text-slate-300 hover:bg-slate-700"
               aria-label="Info"
@@ -226,6 +282,15 @@ export default function ValueChainDashboard() {
         {error && (
           <div className="mb-4 rounded-md border border-rose-800/60 bg-rose-950/40 px-4 py-2 text-sm text-rose-300">
             {error}
+          </div>
+        )}
+
+        {enrichError && (
+          <div
+            className="mb-4 rounded-md border border-rose-800/60 bg-rose-950/40 px-4 py-2 text-sm text-rose-300"
+            data-testid="text-enrich-error"
+          >
+            KI-Anreicherung fehlgeschlagen: {enrichError}
           </div>
         )}
 

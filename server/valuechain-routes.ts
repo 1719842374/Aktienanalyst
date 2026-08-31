@@ -34,6 +34,7 @@ import {
 } from "../client/src/lib/valueChainTypes";
 import { enrichTickersWithFmp } from "./valuechain-fmp-enrichment";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
+import { enrichValueChainStages, type ValueChainEnrichCompanyInput } from "./llm-openrouter";
 
 const FMP_BASE = "https://financialmodelingprep.com/stable";
 
@@ -155,6 +156,18 @@ const RESPONSE_CACHE_TTL_MS = Number(process.env.VALUECHAIN_RESPONSE_CACHE_TTL_M
 
 function responseCacheKey(industry: string, region: string, minMarketCap: number): string {
   return `valuechain_response__${industry}__${region}__${minMarketCap}`;
+}
+
+// ---------------------------------------------------------------------------
+// Sprint D6c: KI-Anreicherungs-Cache (7 Tage TTL, analog zum bestehenden
+// KI-Katalysator-Feature/catalyst-enrich). Getrennter Cache-Namespace von
+// der Basis-Response, damit ein Force-Refresh der Basisdaten den teuren
+// LLM-Call nicht unnötig invalidiert.
+// ---------------------------------------------------------------------------
+const ENRICH_CACHE_TTL_MS = Number(process.env.VALUECHAIN_ENRICH_CACHE_TTL_MS ?? 7 * 24 * 60 * 60 * 1000);
+
+function enrichCacheKey(industry: string, region: string, minMarketCap: number): string {
+  return `valuechain_enrich__${industry}__${region}__${minMarketCap}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,5 +317,112 @@ export function registerValueChainRoutes(app: Express): void {
     res.json({
       industries: VALUECHAIN_INDUSTRIES.map((i) => ({ key: i.key, label: i.label })),
     });
+  });
+
+  // Sprint D6c: KI-Anreicherung der bereits geladenen Value-Chain-Stages.
+  // Holt die (ggf. gecachte) Basis-Response ueber dieselbe Pipeline wie
+  // GET /api/valuechain, ruft dann enrichValueChainStages() (echter LLM-Call,
+  // server/llm-openrouter.ts) auf und liefert die angereicherten Stages
+  // zurueck. llmValidated wird NUR bei einem tatsaechlich erfolgreichen Call
+  // auf true gesetzt -- niemals bei Fallback/Fehler (Zahlen-Prinzip).
+  app.post("/api/valuechain/enrich", async (req, res) => {
+    try {
+      const industryKey = String(req.body?.industry || "").toLowerCase().trim();
+      const region = (String(req.body?.region || "GLOBAL").toUpperCase() as Region) || "GLOBAL";
+      const minMarketCap = Number(req.body?.minMarketCap) > 0 ? Number(req.body.minMarketCap) : 1_000_000_000;
+      const force = req.body?.force === true || req.body?.force === "1";
+
+      const def = findIndustry(industryKey);
+      if (!def) {
+        return res.status(404).json({
+          error: `Unbekannte Branche: ${industryKey}`,
+          availableIndustries: VALUECHAIN_INDUSTRIES.map((i) => ({ key: i.key, label: i.label })),
+        });
+      }
+
+      const eCacheKey = enrichCacheKey(def.key, region, minMarketCap);
+      if (!force) {
+        const cachedEnrich = diskResearcherGet(eCacheKey);
+        if (cachedEnrich) {
+          const age = Date.now() - new Date(cachedEnrich.generatedAt || 0).getTime();
+          if (Number.isFinite(age) && age < ENRICH_CACHE_TTL_MS) {
+            return res.json({ ...cachedEnrich, cacheHit: true });
+          }
+        }
+      }
+
+      // Basis-Stages laden -- nutzt denselben Response-Cache wie GET
+      // /api/valuechain (kein doppelter FMP-Call noetig, wenn frisch im Cache).
+      const baseCacheKey = responseCacheKey(def.key, region, minMarketCap);
+      let base: ValueChainResponse | null = diskResearcherGet(baseCacheKey);
+      if (!base) {
+        return res.status(409).json({
+          error: "Keine Basis-Value-Chain-Daten im Cache -- zuerst GET /api/valuechain aufrufen.",
+        });
+      }
+
+      const companiesInput: ValueChainEnrichCompanyInput[] = base.stages.flatMap((stage) =>
+        stage.companies.map((c) => ({
+          ticker: c.ticker,
+          name: c.name,
+          sector: c.sector,
+          industry: c.industry,
+          stageType: stage.stageType,
+        }))
+      );
+
+      if (companiesInput.length === 0) {
+        return res.status(400).json({ error: "Keine Firmen in den geladenen Stages zum Anreichern." });
+      }
+
+      const enrichResult = await enrichValueChainStages({
+        industryLabel: def.label,
+        companies: companiesInput,
+      });
+
+      if (!enrichResult) {
+        // Kein Fake-Erfolg: llmValidated bleibt false, keine erfundenen Rollen.
+        return res.status(502).json({
+          error: "KI-Anreicherung nicht verfuegbar (kein OPENROUTER_API_KEY, Rate-Limit, oder LLM nicht erreichbar).",
+          llmValidated: false,
+        });
+      }
+
+      const roleByTicker = new Map(enrichResult.companies.map((c) => [c.ticker.toUpperCase(), c]));
+      const enrichedStages = base.stages.map((stage) => ({
+        ...stage,
+        companies: stage.companies.map((c) => {
+          const hit = roleByTicker.get(c.ticker.toUpperCase());
+          if (!hit) return c;
+          return {
+            ...c,
+            aiRole: hit.role,
+            stageCorrected: hit.stageCorrected,
+            validated: true,
+          };
+        }),
+      }));
+
+      const response = {
+        industry: def.key,
+        region,
+        stages: enrichedStages,
+        generatedAt: new Date().toISOString(),
+        cacheHit: false,
+        llmValidated: true,
+        modelUsed: enrichResult.modelUsed,
+      };
+
+      try {
+        diskResearcherSet(eCacheKey, response);
+      } catch {
+        /* best-effort */
+      }
+
+      return res.json(response);
+    } catch (err: any) {
+      console.error("[ValueChain] /api/valuechain/enrich failed:", err?.message || err);
+      return res.status(500).json({ error: err?.message || "valuechain enrich failed", llmValidated: false });
+    }
   });
 }
