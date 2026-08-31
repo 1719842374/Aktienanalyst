@@ -38,6 +38,7 @@ import {
 import PortfolioOverview, { type TimeframeFilter, type DirectionFilter } from "@/components/portfolio/PortfolioOverview";
 import PortfolioInvestmentsTable from "@/components/portfolio/PortfolioInvestmentsTable";
 import PortfolioOptimizationPanel from "@/components/portfolio/PortfolioOptimizationPanel";
+import PortfolioAdvancedPanel from "@/components/portfolio/PortfolioAdvancedPanel";
 import WatchlistPortfolioPanel from "@/components/portfolio/WatchlistPortfolioPanel";
 import ResearcherPortfoliosPanel from "@/components/portfolio/ResearcherPortfoliosPanel";
 import { computePortfolioFromPositions, MIN_POSITIONS_FOR_OPTIMIZATION } from "@/lib/portfolio/engine";
@@ -477,6 +478,18 @@ export default function PortfolioPage() {
                   kellyFraction={kellyFractionNum}
                   kellyMaxF={kellyMaxF}
                 />
+                {/* Sprint D2 (additiv): Black-Litterman + Portfolio-Monte-Carlo als
+                    zusätzlicher Unterblock innerhalb desselben Optimierungs-Bereichs --
+                    kein neues Top-Level-SectionCard mit doppelter number={4}/data-testid. */}
+                <div className="mt-4 pt-4 border-t border-border/50">
+                  <h3 className="text-sm font-semibold mb-3">Black-Litterman & Portfolio-Monte-Carlo</h3>
+                  <PortfolioAdvancedPanel
+                    tickers={Object.keys(historicalPricesByTicker)}
+                    historicalPricesByTicker={historicalPricesByTicker}
+                    weightsCurrent={Object.fromEntries(Object.entries(weightMarketByTicker).filter(([, w]) => w != null) as [string, number][])}
+                    weightsCapmTarget={capmWeights ?? {}}
+                  />
+                </div>
               </SectionCard>
             </div>
 
