@@ -6,6 +6,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { Section13Miner, useMinerData } from "@/components/sections/Section13Miner";
+import { StablecoinLiquidityPanel } from "@/components/btc/StablecoinLiquidityPanel";
 import {
   calcCapitulationZones, buildCapitulationSegments, isCapitulationResolved,
   calcBreakevenPrice, DEFAULT_FLEET, blockRewardForDate,
@@ -136,6 +137,7 @@ const SECTIONS = [
   { id: 11, label: "Fear & Greed", icon: Gauge },
   { id: 12, label: "Gesamt-Fazit", icon: Scale },
   { id: 13, label: "Miner-Zone", icon: Activity },
+  { id: 14, label: "Stablecoin/GENIUS", icon: Layers },
 ];
 
 // === Helper Components ===
@@ -2704,6 +2706,7 @@ export default function BTCDashboard() {
               <div ref={setSectionRef(11)}><Section11FearGreed data={data} /></div>
               <div ref={setSectionRef(12)}><Section12Fazit data={data} /></div>
               <div ref={setSectionRef(13)}><Section13Miner data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
+              <div ref={setSectionRef(14)}><StablecoinLiquidityPanel /></div>
               <div className="pb-8" />
             </div>
           ) : null}
