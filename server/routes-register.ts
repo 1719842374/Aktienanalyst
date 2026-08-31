@@ -14,4 +14,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerSectorRotationRoute(app);
   const { registerLiquidityRoute } = await import("./researcher-liquidity-route");
   registerLiquidityRoute(app);
+  // Sprint D6a (tickets/SPRINT_D6A_VALUECHAIN_DATEN.md): Branchen-Selector +
+  // FMP-Enrichment + CAPEX live — additive Registrierung, gleiches Muster.
+  const { registerValueChainRoutes } = await import("./valuechain-routes");
+  registerValueChainRoutes(app);
 }

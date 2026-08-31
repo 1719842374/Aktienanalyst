@@ -13,6 +13,9 @@ import ScreenerDashboard from "@/pages/ScreenerDashboard";
 import Researcher from "@/pages/Researcher";
 import Compare from "@/pages/Compare";
 import PortfolioPage from "@/pages/PortfolioPage";
+// Sprint D6a (tickets/SPRINT_D6A_VALUECHAIN_DATEN.md): Branchen-Selector +
+// FMP-Enrichment + CAPEX live, additive neue Route.
+import ValueChainDashboard from "@/pages/ValueChainDashboard";
 // CalibrationPage: interne Kalibrierungs-Diagnose (Sprint B3 Phase 4,
 // tickets/SPRINT_B3_PHASE4_CALIBRATION_UI.md). Bewusst NICHT im Dashboard/
 // in der Hauptnavigation verlinkt -- nur ueber die direkte Hash-Route
@@ -31,6 +34,7 @@ function AppRouter() {
       <Route path="/researcher" component={Researcher} />
       <Route path="/compare" component={Compare} />
       <Route path="/portfolio" component={PortfolioPage} />
+      <Route path="/valuechain" component={ValueChainDashboard} />
       {/* /calibration: absichtlich NICHT in Dashboard.tsx/Sidebar verlinkt (siehe
           Import-Kommentar oben) -- Route existiert nur fuer direkten Aufruf. */}
       <Route path="/calibration" component={CalibrationPage} />

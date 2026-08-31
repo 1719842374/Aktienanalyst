@@ -1,15 +1,18 @@
 /**
  * CompanyNode.tsx
  * ---------------
- * React-Flow custom node for a single listed company inside a Value Chain stage.
+ * Statische Karte für eine einzelne Firma innerhalb einer Value-Chain-Stage
+ * (KEIN React-Flow-Node — Sprint D6a, siehe Kommentar in StageNode.tsx für
+ * die Begründung/Vorgeschichte der @xyflow/react-Entfernung).
  *
- * Shows: ticker, name, market cap, 1Y performance, valuation flag, 13F badge.
- * Click → navigate to /analyze/{ticker} or add to watchlist (handled by parent).
+ * Zeigt: Ticker, Name, Marktkapitalisierung, 1J-Performance, Valuation-Flag,
+ * 13F-Badge, sowie CAPEX-Intensity mit Farbe (capexColorClass, unverändert
+ * aus valueChainTypes.ts übernommen — Rang 6).
  */
 
 import { memo } from "react";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { CompanyNodeData, ValuationFlag } from "@/lib/valueChainTypes";
+import { formatCapexIntensity, capexColorClass, capexBorderClass } from "@/lib/valueChainTypes";
 
 function formatMarketCap(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "–";
@@ -32,7 +35,13 @@ const valuationColors: Record<ValuationFlag, string> = {
   "n/a": "bg-slate-700/40 text-slate-500",
 };
 
-function CompanyNodeComponent({ data }: NodeProps & { data: CompanyNodeData }) {
+interface CompanyNodeProps {
+  data: CompanyNodeData;
+  /** Optionaler Klick-Handler (z.B. Navigation zu /#/?ticker=XYZ) */
+  onClick?: (ticker: string) => void;
+}
+
+function CompanyNodeComponent({ data, onClick }: CompanyNodeProps) {
   const perfColor =
     data.performance1Y == null
       ? "text-slate-400"
@@ -41,11 +50,13 @@ function CompanyNodeComponent({ data }: NodeProps & { data: CompanyNodeData }) {
         : "text-rose-400";
 
   const flag = data.valuationFlag ?? "n/a";
+  const capexBorder = capexBorderClass(data.capexIntensity);
 
   return (
-    <div className="min-w-[160px] max-w-[200px] rounded-lg border border-slate-600/70 bg-slate-900/80 px-3 py-2 shadow-md backdrop-blur-sm hover:border-cyan-500/60 transition-colors cursor-pointer">
-      <Handle type="target" position={Position.Left} className="!bg-slate-500 !w-2 !h-2" />
-
+    <div
+      className={`min-w-[160px] max-w-[220px] rounded-lg border ${capexBorder} bg-slate-900/80 px-3 py-2 shadow-md backdrop-blur-sm hover:border-cyan-500/60 transition-colors cursor-pointer`}
+      onClick={() => onClick?.(data.ticker)}
+    >
       <div className="flex items-center gap-2">
         {data.logoUrl ? (
           <img
@@ -76,7 +87,7 @@ function CompanyNodeComponent({ data }: NodeProps & { data: CompanyNodeData }) {
         <span className={perfColor}>{formatPerf(data.performance1Y)}</span>
       </div>
 
-      <div className="mt-1 flex items-center gap-1.5">
+      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
         <span className={`rounded px-1.5 py-0.5 text-[9px] ${valuationColors[flag]}`}>
           {flag}
         </span>
@@ -85,9 +96,10 @@ function CompanyNodeComponent({ data }: NodeProps & { data: CompanyNodeData }) {
             13F: {data.institutionalHolders13F}
           </span>
         )}
+        <span className={`text-[9px] font-medium ${capexColorClass(data.capexIntensity)}`}>
+          CAPEX {formatCapexIntensity(data.capexIntensity)}
+        </span>
       </div>
-
-      <Handle type="source" position={Position.Right} className="!bg-slate-500 !w-2 !h-2" />
     </div>
   );
 }
