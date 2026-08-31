@@ -1,22 +1,31 @@
 /**
  * ValueChainDashboard.tsx
  * -----------------------
- * Sprint D6a (Rang 4): Branchen-Selector + Filter (Region/MarketCap) +
- * Ergebnis-Anzeige als CSS-Grid-Karten/Tabelle pro Stage (upstream/midstream/
- * downstream) — KEIN Graph-Canvas/React-Flow (siehe Ticket, "Explizit NICHT
- * in diesem Ticket"). StageNode/CompanyNode werden hier als reine
- * Anzeige-Komponenten (Props) verwendet.
+ * Sprint D6b (Redesign nach Referenzbild): Dark-Theme-Dashboard mit
+ * Branchen-Dropdown oben rechts, gestufter/isometrisch wirkender
+ * Kartenreihe (Stufen-Effekt via CSS `translateY`, siehe StageColumn.tsx)
+ * und KPI-Kacheln unten (siehe ValueChainKpiTiles.tsx) — angelehnt an das
+ * vom Nutzer vorgegebene "KI-Wertschöpfungskette"-Referenzbild, ABER
+ * adaptiv aus den echten API-Stages generiert statt der 7 fixen KI-Stufen
+ * aus der Vorlage. KEIN Graph-Canvas, KEIN React-Flow, KEINE neue
+ * npm-Abhängigkeit — reines CSS/Tailwind/SVG.
  *
- * Datenquelle: GET /api/valuechain?industry=&region=&minMarketCap=
- * (server/valuechain-routes.ts, additiv registriert).
+ * Datenquelle (unverändert, bereits vollständig funktionierend):
+ * GET /api/valuechain?industry=&region=&minMarketCap=
+ * (server/valuechain-routes.ts, server/valuechain-fmp-enrichment.ts)
+ *
+ * Sprint D6a (vorher): Branchen-Selector + Filter + einfache CSS-Grid-
+ * Karten/Tabelle pro Stage — funktional, aber visuell schlicht. Diese
+ * Datei ersetzt NUR die visuelle Darstellung; State/Fetch-Logik ist
+ * unverändert aus D6a übernommen.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocation } from "wouter";
-import { RefreshCw, Factory } from "lucide-react";
+import { RefreshCw, Factory, Info } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
-import { StageNode } from "@/components/valuechain/StageNode";
-import { CompanyNode } from "@/components/valuechain/CompanyNode";
+import { StageColumn } from "@/components/valuechain/StageColumn";
+import { ValueChainKpiTiles } from "@/components/valuechain/ValueChainKpiTiles";
 import type { ValueChainResponse, Region } from "@/lib/valueChainTypes";
 
 interface IndustryOption {
@@ -48,6 +57,7 @@ export default function ValueChainDashboard() {
   const [data, setData] = useState<ValueChainResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showInfo, setShowInfo] = useState(false);
 
   // Branchen-Optionen einmalig laden (Dropdown-Inhalt)
   useEffect(() => {
@@ -95,80 +105,123 @@ export default function ValueChainDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [industry, region, minMarketCap]);
 
+  const currentIndustryLabel = useMemo(() => {
+    return industries.find((i) => i.key === industry)?.label ?? industry;
+  }, [industries, industry]);
+
+  const datenstand = data
+    ? new Date(data.generatedAt).toLocaleString("de-DE", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 px-4 py-6 md:px-8">
+    // Dark-Theme-Scope NUR für diese Seite (lokaler Wrapper, kein globales
+    // App-Theme-Wechsel) — analog Referenzbild-Optik. `h-screen`+`overflow-hidden`
+    // Außenhülle + `flex-1 overflow-y-auto` Innenbereich, analog zum
+    // bestehenden Muster in RecessionDashboard/GoldDashboard/BTCDashboard
+    // (globales `body{overflow:hidden}` aus index.css macht einen eigenen
+    // Scroll-Container hier notwendig, sonst wird der untere Seiteninhalt
+    // abgeschnitten).
+    <div className="h-screen flex flex-col overflow-hidden bg-[#0a0e17] text-slate-100">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-6 md:px-8">
       <div className="mx-auto max-w-7xl">
-        <header className="mb-6 flex items-center gap-3">
-          <Factory className="h-6 w-6 text-cyan-400" />
-          <div>
-            <h1 className="text-xl font-semibold text-white">Value-Chain-Explorer</h1>
-            <p className="text-sm text-slate-400">
-              Branchen-Wertschöpfungskette: Upstream / Midstream / Downstream mit CAPEX-Intensität
-            </p>
+        {/* Header: Icon + Titel + Untertitel + Branchen-Dropdown oben rechts + Info-Icon */}
+        <header className="mb-6 flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/80 to-slate-900/30 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-500/10 ring-1 ring-cyan-400/30">
+              <Factory className="h-5 w-5 text-cyan-300" />
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold text-white md:text-xl">Wertschöpfungskette</h1>
+              <p className="text-xs text-slate-400 md:text-sm">
+                End-to-End-Wertschöpfung in der Branche — {currentIndustryLabel}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wide text-slate-500">Branche</label>
+              <select
+                className="rounded-md border border-white/10 bg-slate-800/80 px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-cyan-400/60"
+                value={industry}
+                onChange={(e) => setIndustry(e.target.value)}
+                data-testid="select-industry"
+              >
+                {industries.length === 0 && <option value="semiconductors">Halbleiter</option>}
+                {industries.map((opt) => (
+                  <option key={opt.key} value={opt.key}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wide text-slate-500">Region</label>
+              <select
+                className="rounded-md border border-white/10 bg-slate-800/80 px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-cyan-400/60"
+                value={region}
+                onChange={(e) => setRegion(e.target.value as Region)}
+                data-testid="select-region"
+              >
+                {REGION_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wide text-slate-500">Min. MCap</label>
+              <select
+                className="rounded-md border border-white/10 bg-slate-800/80 px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-cyan-400/60"
+                value={minMarketCap}
+                onChange={(e) => setMinMarketCap(Number(e.target.value))}
+                data-testid="select-marketcap"
+              >
+                {MARKET_CAP_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={() => load(true)}
+              disabled={isLoading}
+              className="mt-4 flex items-center gap-1.5 rounded-md border border-white/10 bg-slate-800/80 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+              data-testid="button-refresh"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
+              Aktualisieren
+            </button>
+
+            <button
+              onClick={() => setShowInfo((v) => !v)}
+              className="mt-4 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-slate-800/80 text-slate-300 hover:bg-slate-700"
+              aria-label="Info"
+              data-testid="button-info"
+            >
+              <Info className="h-4 w-4" />
+            </button>
           </div>
         </header>
 
-        {/* Branchen-Selector + Filter */}
-        <div className="mb-6 flex flex-wrap items-end gap-4 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-slate-400">Branche</label>
-            <select
-              className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white"
-              value={industry}
-              onChange={(e) => setIndustry(e.target.value)}
-              data-testid="select-industry"
-            >
-              {industries.length === 0 && <option value="semiconductors">Halbleiter</option>}
-              {industries.map((opt) => (
-                <option key={opt.key} value={opt.key}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+        {showInfo && (
+          <div className="mb-4 rounded-lg border border-cyan-800/40 bg-cyan-950/20 px-4 py-3 text-xs text-cyan-200">
+            Zeigt die reale Branchen-Wertschöpfungskette (Upstream → Midstream → Downstream) mit
+            Firmen aus dem FMP-Company-Screener. CAPEX-Intensität = |Capex| / Umsatz (TTM), live
+            berechnet. Keine KI-generierten oder erfundenen Kennzahlen.
           </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-slate-400">Region</label>
-            <select
-              className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white"
-              value={region}
-              onChange={(e) => setRegion(e.target.value as Region)}
-              data-testid="select-region"
-            >
-              {REGION_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-slate-400">Min. Marktkapitalisierung</label>
-            <select
-              className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white"
-              value={minMarketCap}
-              onChange={(e) => setMinMarketCap(Number(e.target.value))}
-              data-testid="select-marketcap"
-            >
-              {MARKET_CAP_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <button
-            onClick={() => load(true)}
-            disabled={isLoading}
-            className="ml-auto flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-50"
-            data-testid="button-refresh"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
-            Aktualisieren
-          </button>
-        </div>
+        )}
 
         {error && (
           <div className="mb-4 rounded-md border border-rose-800/60 bg-rose-950/40 px-4 py-2 text-sm text-rose-300">
@@ -181,7 +234,9 @@ export default function ValueChainDashboard() {
         )}
 
         {data && data.stages.length === 0 && !isLoading && (
-          <div className="text-sm text-slate-400">Keine Firmen für diese Filterkombination gefunden.</div>
+          <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-8 text-center text-sm text-slate-400">
+            Keine Firmen für diese Filterkombination gefunden.
+          </div>
         )}
 
         {data && data.notes && data.notes.length > 0 && (
@@ -192,53 +247,46 @@ export default function ValueChainDashboard() {
           </div>
         )}
 
-        {/* Stage-Spalten als CSS-Grid (kein Graph-Layout) */}
+        {/* Haupt-Visualisierung: gestufte Kartenreihe, adaptiv aus echten
+            API-Stages (upstream → midstream → downstream), NICHT die 7
+            fixen KI-Stufen aus dem Referenzbild. Desktop: Stufen-Layout via
+            translateY; Mobile: einfache vertikale Liste (Media Query unten). */}
         {data && data.stages.length > 0 && (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {data.stages.map((stage) => (
-              <div key={stage.stageId} className="flex flex-col gap-3">
-                <StageNode
-                  data={{
-                    stageId: stage.stageId,
-                    stageName: stage.stageName,
-                    stageType: stage.stageType,
-                    description: stage.description,
-                    companyCount: stage.companyCount ?? stage.companies.length,
-                    aggregatedMarketCap: stage.aggregatedMarketCap,
-                    avgCapexIntensity: stage.avgCapexIntensity,
-                  }}
+          <div className="mb-6 overflow-x-auto rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-slate-950/60 p-5 md:overflow-visible">
+            <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-6">
+              {data.stages.map((stage, i) => (
+                <StageColumn
+                  key={stage.stageId}
+                  stage={stage}
+                  index={i}
+                  total={data.stages.length}
+                  onCompanyClick={(ticker) => navigate(`/?ticker=${ticker}`)}
                 />
-                <div className="flex flex-col gap-2">
-                  {stage.companies.map((c) => (
-                    <CompanyNode
-                      key={c.ticker}
-                      data={{
-                        ticker: c.ticker,
-                        name: c.name,
-                        marketCap: c.marketCap,
-                        performance1Y: c.performance1Y,
-                        valuationFlag: c.valuationFlag,
-                        institutionalHolders13F: c.institutionalHolders13F,
-                        starInvestorFlag: c.starInvestorFlag,
-                        capexIntensity: c.capexIntensity,
-                        logoUrl: c.logoUrl,
-                        validated: c.validated,
-                      }}
-                      onClick={(ticker) => navigate(`/?ticker=${ticker}`)}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
 
-        {data && (
-          <div className="mt-6 text-[11px] text-slate-500">
-            Stand: {new Date(data.generatedAt).toLocaleString("de-DE")} · {data.cacheHit ? "aus Cache" : "live geladen"} ·
-            {" "}llmValidated: {String(data.llmValidated)}
+        {/* KPI-Kachel-Reihe unten */}
+        {data && data.stages.length > 0 && (
+          <div className="mb-6">
+            <ValueChainKpiTiles stages={data.stages} />
           </div>
         )}
+
+        {/* Footer */}
+        {data && (
+          <div className="flex flex-wrap items-center gap-3 border-t border-white/5 pt-3 text-[11px] text-slate-500">
+            <span>Datenstand: {datenstand}</span>
+            <span>·</span>
+            <span>Aktualisierung: on-demand</span>
+            <span>·</span>
+            <span>{data.cacheHit ? "aus Cache" : "live geladen"}</span>
+            <span>·</span>
+            <span>llmValidated: {String(data.llmValidated)}</span>
+          </div>
+        )}
+      </div>
       </div>
     </div>
   );
