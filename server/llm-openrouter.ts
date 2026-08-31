@@ -1359,18 +1359,14 @@ export interface ValueChainEnrichResult {
  * der Aufrufer (server/valuechain-routes.ts) setzt `llmValidated` NUR bei
  * einem non-null Ergebnis auf `true` (Zahlen-Prinzip: kein Fake-Erfolg).
  */
-export async function enrichValueChainStages(
-  input: ValueChainEnrichInput
-): Promise<ValueChainEnrichResult | null> {
+async function enrichValueChainBatch(
+  industryLabel: string,
+  batch: ValueChainEnrichCompanyInput[]
+): Promise<ValueChainEnrichCompanyResult[] | null> {
   const client = getClient();
   if (!client) return null;
-  const { industryLabel, companies } = input;
-  if (!companies || companies.length === 0) return null;
 
-  // Cap auf 40 Firmen pro Call — Token-Budget-Schutz, analog anderen
-  // LLM-Funktionen in dieser Datei (z.B. Katalysator-Listen-Caps).
-  const capped = companies.slice(0, 40);
-  const companyList = capped
+  const companyList = batch
     .map(
       (c, i) =>
         `F${i} (idx=${i}): ${c.name} (${c.ticker}) | Sektor: ${c.sector} | Industrie: ${c.industry} | Aktuelle Stage: ${c.stageType}`
@@ -1401,7 +1397,7 @@ Antworte NUR mit JSON:
       response_format: { type: "json_object" } as any,
     });
     if (!text) {
-      console.warn("[LLM-VALUECHAIN-ENRICH] Empty response");
+      console.warn("[LLM-VALUECHAIN-ENRICH] Empty response for batch");
       return null;
     }
     let jsonText = text.trim();
@@ -1414,7 +1410,7 @@ Antworte NUR mit JSON:
     } catch (parseErr) {
       try {
         parsed = JSON.parse(salvageTruncatedJson(jsonText));
-        console.warn("[LLM-VALUECHAIN-ENRICH] Salvaged truncated JSON");
+        console.warn("[LLM-VALUECHAIN-ENRICH] Salvaged truncated JSON for batch");
       } catch {
         console.warn(`[LLM-VALUECHAIN-ENRICH] JSON parse failed even after salvage: ${(parseErr as any)?.message}`);
         return null;
@@ -1422,14 +1418,14 @@ Antworte NUR mit JSON:
     }
     const rows = parsed?.companies;
     if (!Array.isArray(rows) || rows.length === 0) {
-      console.warn("[LLM-VALUECHAIN-ENRICH] Empty companies array in LLM response");
+      console.warn("[LLM-VALUECHAIN-ENRICH] Empty companies array in LLM response for batch");
       return null;
     }
     const VALID_STAGES = ["upstream", "midstream", "downstream"];
     const results: ValueChainEnrichCompanyResult[] = rows
       .map((r: any) => {
         const idx = Number(r?.idx);
-        const source = Number.isInteger(idx) ? capped[idx] : undefined;
+        const source = Number.isInteger(idx) ? batch[idx] : undefined;
         if (!source) return null;
         const suggested = VALID_STAGES.includes(r?.suggestedStage) ? r.suggestedStage : source.stageType;
         return {
@@ -1442,18 +1438,69 @@ Antworte NUR mit JSON:
       .filter(Boolean) as ValueChainEnrichCompanyResult[];
 
     if (results.length === 0) {
-      console.warn("[LLM-VALUECHAIN-ENRICH] No valid rows after idx-mapping");
+      console.warn("[LLM-VALUECHAIN-ENRICH] No valid rows after idx-mapping for batch");
       return null;
     }
-    console.log(`[LLM-VALUECHAIN-ENRICH] OK: ${results.length} companies enriched, model=${modelUsed}`);
-    return { companies: results, modelUsed };
+    console.log(`[LLM-VALUECHAIN-ENRICH] Batch OK: ${results.length}/${batch.length} companies enriched, model=${modelUsed}`);
+    return results;
   } catch (err: any) {
     const status = err?.status || err?.response?.status;
     if (status === 402) {
-      console.warn("[LLM-VALUECHAIN-ENRICH] 402 token budget exhausted — skipping LLM");
+      console.warn("[LLM-VALUECHAIN-ENRICH] 402 token budget exhausted — skipping batch");
     } else {
-      console.error(`[LLM-VALUECHAIN-ENRICH] Failed: ${err?.message?.substring(0, 200)}`);
+      console.error(`[LLM-VALUECHAIN-ENRICH] Batch failed: ${err?.message?.substring(0, 200)}`);
     }
     return null;
   }
+}
+
+export async function enrichValueChainStages(
+  input: ValueChainEnrichInput
+): Promise<ValueChainEnrichResult | null> {
+  const client = getClient();
+  if (!client) return null;
+  const { industryLabel, companies } = input;
+  if (!companies || companies.length === 0) return null;
+
+  // Chunking statt hartem Cap: bei Branchen mit >40 Firmen (z.B. Halbleiter
+  // Midstream allein hat 36) fielen zuvor alle Firmen ab Position 41 komplett
+  // aus der Anreicherung (auch ganze Stages wie Downstream) — live am
+  // Halbleiter-Screenshot verifiziert (Downstream blieb unangereichert).
+  // Sequenzielle Batches von 40 halten das Token-Budget pro Call konstant,
+  // ohne Firmen zu verlieren. Sequenziell statt Promise.all, um OpenRouter-
+  // Rate-Limits nicht mit Bursts zu belasten (analog anderen Multi-Call-Stellen
+  // in dieser Datei, z.B. generateCatalystDeepDives-Aufrufern).
+  // 25 statt 40 pro Batch: bei 40 Firmen x ~1 Satz Rolle reichte das Token-
+  // Budget (2200) nicht immer aus (live beobachtet: JSON riss mitten im Satz
+  // ab, salvageTruncatedJson rettete nur einen Teil der Zeilen). 25 haelt
+  // ausreichend Abstand zum Limit ohne die Batch-Anzahl unnoetig zu erhoehen.
+  const BATCH_SIZE = 25;
+  const batches: ValueChainEnrichCompanyInput[][] = [];
+  for (let i = 0; i < companies.length; i += BATCH_SIZE) {
+    batches.push(companies.slice(i, i + BATCH_SIZE));
+  }
+
+  const allResults: ValueChainEnrichCompanyResult[] = [];
+  let anyModelUsed: string | null = null;
+  for (const batch of batches) {
+    const batchResults = await enrichValueChainBatch(industryLabel, batch);
+    if (batchResults) {
+      allResults.push(...batchResults);
+      if (!anyModelUsed) {
+        // modelUsed selbst wird in enrichValueChainBatch geloggt, hier nur
+        // ein Marker, dass mindestens ein Batch erfolgreich war.
+        anyModelUsed = "ok";
+      }
+    }
+    // Ein fehlgeschlagener Batch bricht die anderen nicht ab — Teil-Erfolg
+    // ist besser als kompletter Ausfall (Zahlen-Prinzip: nur was wirklich
+    // vom LLM kam wird als validated markiert, der Rest bleibt unangetastet).
+  }
+
+  if (allResults.length === 0) {
+    console.warn("[LLM-VALUECHAIN-ENRICH] All batches failed — no companies enriched");
+    return null;
+  }
+  console.log(`[LLM-VALUECHAIN-ENRICH] Total: ${allResults.length}/${companies.length} companies enriched across ${batches.length} batch(es)`);
+  return { companies: allResults, modelUsed: anyModelUsed || "unknown" };
 }
