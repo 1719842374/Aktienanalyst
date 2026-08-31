@@ -536,13 +536,266 @@ export function runRealYieldGoldModel(
   };
 }
 
-// ─── PHASE 2 (explizit NICHT umgesetzt, nur TODO) ─────────────────────────────
-// WORK_TEIL7_SCORING.md §6: Multi-Faktor-Erweiterung G_t = α + β1·R_t + β2·DXY_t
-// + β3·log(WALCL_t) + ε_t. Voraussetzung laut Spezifikation: DXY (DTWEXBGS) und
-// WALCL business-day-aligned verfügbar (WALCL wöchentlich → LOCF-Forward-Fill).
-// NICHT hier implementieren — nur vermerkt, damit ein Folge-Task anknüpfen kann:
-//   [ ] FRED WALCL wöchentlich → LOCF auf Gold-Kalender
-//   [ ] FRED DTWEXBGS daily aligned
-//   [ ] Rolling multivariate OLS (Window 252) nur wenn alle drei Serien non-null
-//   [ ] Vorzeichen-Check: β1 negativ, β2 negativ, β3 positiv — sonst REGIME_UNSTABLE
-//   [ ] Default-Anzeige bleibt 1-Faktor Realzins (Multi-Faktor nur als Vergleichslinie)
+// ─── PHASE 2 (Sprint D5): Multi-Faktor-OLS G_t = α + β1·R_t + β2·DXY_t + β3·log(WALCL_t) + ε_t ──
+// WORK_TEIL7_SCORING.md §6 (6.1-6.6). Rein additiv: runRealYieldGoldModel() und alle Exports
+// oberhalb dieser Zeile bleiben unveraendert (Signatur + Verhalten identisch). Diese Erweiterung
+// liefert eine ZUSAETZLICHE, optionale Vergleichslinie (3-Faktor) neben dem weiter primären
+// 1-Faktor-Modell — siehe §6.6 letzter Punkt: "Default-Anzeige bleibt 1-Faktor Realzins".
+//
+// Kein Lookahead: WALCL/DXY werden nur as-of dem jeweiligen Gold-Handelstag verwendet (§6.5
+// letzter Punkt) — LOCF-Forward-Fill traegt einen Wert nur in die Zukunft fort (ein am Zeitpunkt t
+// bereits veroeffentlichter Wert bleibt bis zur naechsten Veroeffentlichung gueltig), niemals
+// rueckwaerts. Fehlt eine Serie fuer einen Tag komplett, wird NICHT interpoliert — der Tag wird
+// beim Join ausgelassen (kein Fake-Default).
+
+// ─── WALCL LOCF-Forward-Fill: wöchentliche Fed-Bilanz → tägliche Gold-Handelstage ────
+// Analog zum Muster in server/btc-macro.ts (`buildM2AbsoluteForwardFill`): läuft chronologisch
+// durch die Handelstage und trägt den zuletzt bekannten WALCL-Wert fort (LOCF), bis ein neuerer
+// WALCL-Punkt veröffentlicht wurde. Vor dem allerersten WALCL-Punkt bleibt ein Tag ohne Wert
+// (kein Rückwärts-Interpolieren, kein Lookahead).
+export function buildWalclForwardFill(
+  walclWeekly: FredPoint[],
+  tradingDates: string[]
+): Map<string, number> {
+  const ordered = [...walclWeekly].sort((a, b) => a.date.localeCompare(b.date));
+  const sortedDates = [...tradingDates].sort((a, b) => a.localeCompare(b));
+  const out = new Map<string, number>();
+  let pointIndex = 0;
+  let latestValue: number | null = null;
+  for (const date of sortedDates) {
+    // Alle WALCL-Punkte mit Datum <= aktueller Handelstag "einsammeln" (as-of, kein Lookahead:
+    // ein WALCL-Punkt vom 2026-01-05 wird erst ab 2026-01-05 sichtbar, nie davor).
+    while (pointIndex < ordered.length && ordered[pointIndex].date <= date) {
+      latestValue = ordered[pointIndex].value;
+      pointIndex++;
+    }
+    if (latestValue != null) out.set(date, latestValue);
+  }
+  return out;
+}
+
+// ─── Multi-Faktor-Zeitreihe: Gold + Real10Y + DXY + log(WALCL) auf gemeinsamen Handelstagen ──
+
+export interface GoldMultiFactorPoint {
+  date: string;
+  goldClose: number;
+  real10Y: number;
+  dxy: number;
+  logWalcl: number;
+}
+
+/**
+ * Kombiniert Gold-Preis, Real10Y, DXY (DTWEXBGS, täglich) und WALCL (wöchentlich, bereits
+ * LOCF-forward-gefüllt auf Handelstage via `buildWalclForwardFill`) auf einem Inner-Join über
+ * das Datum. Ein Handelstag geht nur ein, wenn ALLE DREI Faktoren für diesen Tag vorhanden sind
+ * (Spec 6.6 Punkt 3: "nur wenn alle drei Serien non-null") — kein Interpolieren, kein Fake-Fill
+ * über das WALCL-LOCF hinaus.
+ */
+export function buildGoldMultiFactorSeries(
+  goldPrices: { date: string; close: number }[],
+  real10Y: FredPoint[],
+  dxy: FredPoint[],
+  walclForwardFilled: Map<string, number>
+): GoldMultiFactorPoint[] {
+  const real10YByDate = new Map(real10Y.map(p => [p.date, p.value]));
+  const dxyByDate = new Map(dxy.map(p => [p.date, p.value]));
+  const points: GoldMultiFactorPoint[] = [];
+  for (const g of goldPrices) {
+    if (!isFinite(g.close) || g.close <= 0) continue;
+    const r = real10YByDate.get(g.date);
+    const d = dxyByDate.get(g.date);
+    const w = walclForwardFilled.get(g.date);
+    if (r == null || d == null || w == null || !(w > 0)) continue; // unvollständig → Tag auslassen
+    points.push({ date: g.date, goldClose: g.close, real10Y: r, dxy: d, logWalcl: Math.log(w) });
+  }
+  return points.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// ─── Kleine eigene OLS-Implementierung: 3 Faktoren + Konstante (Normalengleichung) ───────────
+// Vorlage: client/src/lib/portfolio/blackLitterman.ts `invertMatrixBL` (Gauss-Jordan mit
+// Pivot-Suche, Sprint D2) — hier lokal reimplementiert (server-seitig, keine neue Abhängigkeit,
+// kein Cross-Import client→server). Löst β = (XᵗX)⁻¹ Xᵗy für X = [1, R, DXY, log(WALCL)].
+
+function invertMatrix4(A: number[][]): number[][] | null {
+  const n = A.length;
+  const M = A.map((row, i) => [...row, ...Array(n).fill(0).map((_, j) => (i === j ? 1 : 0))]);
+  for (let col = 0; col < n; col++) {
+    let pivotRow = col;
+    let maxAbs = Math.abs(M[col][col]);
+    for (let r = col + 1; r < n; r++) {
+      if (Math.abs(M[r][col]) > maxAbs) { maxAbs = Math.abs(M[r][col]); pivotRow = r; }
+    }
+    if (maxAbs < 1e-10) return null; // (nahezu) singulär — kein Raten
+    if (pivotRow !== col) { const tmp = M[col]; M[col] = M[pivotRow]; M[pivotRow] = tmp; }
+    const pivotVal = M[col][col];
+    for (let j = 0; j < 2 * n; j++) M[col][j] /= pivotVal;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const factor = M[r][col];
+      if (factor === 0) continue;
+      for (let j = 0; j < 2 * n; j++) M[r][j] -= factor * M[col][j];
+    }
+  }
+  return M.map(row => row.slice(n));
+}
+
+export interface MultiFactorOLSResult {
+  windowUsed: number;
+  alpha: number;
+  beta1: number; // Real10Y — erwartet negativ
+  beta2: number; // DXY — erwartet negativ
+  beta3: number; // log(WALCL) — erwartet positiv
+}
+
+/**
+ * Multivariate OLS über die Normalengleichung β = (XᵗX)⁻¹ Xᵗy für drei Faktoren + Konstante.
+ * Gibt null zurück bei zu wenigen Punkten (< 30, konsistent mit `goldFairValueModel`) oder bei
+ * (nahezu) singulärer XᵗX-Matrix (z.B. wenn ein Faktor über das Fenster praktisch konstant ist).
+ */
+function multiFactorOLS(rows: { y: number; x1: number; x2: number; x3: number }[]): MultiFactorOLSResult | null {
+  if (rows.length < 30) return null;
+  const n = rows.length;
+  // XᵗX (4x4) und Xᵗy (4x1) direkt akkumulieren — X-Zeile ist [1, x1, x2, x3].
+  const XtX: number[][] = Array.from({ length: 4 }, () => [0, 0, 0, 0]);
+  const Xty: number[] = [0, 0, 0, 0];
+  for (const row of rows) {
+    const xi = [1, row.x1, row.x2, row.x3];
+    for (let a = 0; a < 4; a++) {
+      for (let b = 0; b < 4; b++) XtX[a][b] += xi[a] * xi[b];
+      Xty[a] += xi[a] * row.y;
+    }
+  }
+  const inv = invertMatrix4(XtX);
+  if (!inv) return null;
+  const beta = inv.map(r => r.reduce((s, v, j) => s + v * Xty[j], 0));
+  if (!beta.every(isFinite)) return null;
+  return { windowUsed: n, alpha: beta[0], beta1: beta[1], beta2: beta[2], beta3: beta[3] };
+}
+
+// ─── Rolling Multi-Faktor-OLS (Window 252) ────────────────────────────────────────────────────
+
+export interface GoldMultiFactorFairValueResult {
+  windowUsed: number;
+  alpha: number;
+  beta1: number;
+  beta2: number;
+  beta3: number;
+  fairValue: number;
+  actualPrice: number;
+  premiumPct: number;
+  /** Vorzeichen-Check (Spec 6.6 Punkt 4): β1<0, β2<0, β3>0 — nur dann verlässlich. */
+  signsValid: boolean;
+}
+
+/**
+ * Rolling multivariate OLS (Default-Window 252, Spec 6.6 + §7) für das 3-Faktor-Modell.
+ * Nutzt die letzten `window` Punkte der bereits vollständig-non-null gejointen Serie
+ * (`buildGoldMultiFactorSeries` liefert nur Tage mit allen drei Faktoren — Spec 6.6 Punkt 3).
+ * Gibt null zurück bei < 30 Punkten oder singulärer Regression — kein Fake-Fit.
+ */
+export function goldMultiFactorFairValueModel(
+  series: GoldMultiFactorPoint[],
+  window: number = GOLD_MODEL_DEFAULTS.OLS_WINDOW
+): GoldMultiFactorFairValueResult | null {
+  if (series.length < 30) return null;
+  const slice = series.slice(-window);
+  const rows = slice.map(p => ({ y: p.goldClose, x1: p.real10Y, x2: p.dxy, x3: p.logWalcl }));
+  const ols = multiFactorOLS(rows);
+  if (!ols) return null;
+
+  const last = slice[slice.length - 1];
+  const fairValue = ols.alpha + ols.beta1 * last.real10Y + ols.beta2 * last.dxy + ols.beta3 * last.logWalcl;
+  if (!isFinite(fairValue) || fairValue <= 0) return null;
+
+  const premiumPct = (last.goldClose - fairValue) / fairValue;
+  // Vorzeichen-Check-Gate (Spec 6.6 Punkt 4, PFLICHT): β1 negativ (Realzins↑ → Gold↓),
+  // β2 negativ (USD stark → Gold in USD schwächer), β3 positiv (Bilanz↑/QE → Gold↑).
+  const signsValid = ols.beta1 < 0 && ols.beta2 < 0 && ols.beta3 > 0;
+
+  return {
+    windowUsed: ols.windowUsed,
+    alpha: ols.alpha,
+    beta1: ols.beta1,
+    beta2: ols.beta2,
+    beta3: ols.beta3,
+    fairValue,
+    actualPrice: last.goldClose,
+    premiumPct,
+    signsValid,
+  };
+}
+
+// ─── Vorzeichen-Check-Gate: REGIME_UNSTABLE (Spec 6.6 Punkt 4, PFLICHT) ───────────────────────
+
+/**
+ * GOLD_MULTIFACTOR_REGIME_UNSTABLE — aktiv (warn), wenn das 3-Faktor-Modell verfügbar ist, aber
+ * der Vorzeichen-Check verletzt wird (β1 nicht negativ, β2 nicht negativ oder β3 nicht positiv).
+ * Bei aktivem Gate gilt die Multi-Faktor-Linie laut Spec NICHT als verlässlich — Konsumenten
+ * (Route/UI) sollen die Linie dann ausblenden oder nur mit Warnhinweis zeigen. Kein Gate, wenn
+ * gar kein Modell-Ergebnis vorliegt (fehlende Daten sind kein Regime-Problem, sondern bereits
+ * durch `goldMultiFactorFairValueModel() === null` abgedeckt).
+ */
+export function buildGoldMultiFactorRegimeGate(mf: GoldMultiFactorFairValueResult | null): Gate {
+  if (!mf) {
+    return {
+      id: 'GOLD_MULTIFACTOR_REGIME_UNSTABLE',
+      active: false,
+      cap: 100,
+      severity: 'warn',
+      rationale: 'Kein 3-Faktor-Modell verfügbar (zu wenig Daten oder singuläre Regression) — Gate inaktiv',
+    };
+  }
+  const active = !mf.signsValid;
+  return {
+    id: 'GOLD_MULTIFACTOR_REGIME_UNSTABLE',
+    active,
+    cap: 100,
+    severity: 'warn',
+    rationale: active
+      ? `Vorzeichen-Check verletzt (β1=${mf.beta1.toFixed(2)}, β2=${mf.beta2.toFixed(4)}, β3=${mf.beta3.toFixed(1)}) — erwartet β1<0, β2<0, β3>0 → Multi-Faktor-Linie nicht verlässlich`
+      : `Vorzeichen-Check erfüllt (β1=${mf.beta1.toFixed(2)}, β2=${mf.beta2.toFixed(4)}, β3=${mf.beta3.toFixed(1)})`,
+  };
+}
+
+// ─── runMultiFactorGoldModel — additiver Orchestrierungs-Layer NEBEN runRealYieldGoldModel ────
+
+export interface MultiFactorGoldModelResult {
+  series: GoldMultiFactorPoint[];
+  fairValue: GoldMultiFactorFairValueResult | null;
+  gate: Gate;
+  generatedAt: string;
+}
+
+/**
+ * §6.6 Sprint D5 — additiver Layer NEBEN `runRealYieldGoldModel` (dieses bleibt unverändert,
+ * Signatur/Verhalten identisch zu vorher). Liefert die OPTIONALE 3-Faktor-Vergleichslinie:
+ * G_t = α + β1·R_t + β2·DXY_t + β3·log(WALCL_t) + ε_t.
+ *
+ * Erwartet WALCL bereits roh (wöchentlich, unverändert von FRED) — das LOCF-Forward-Fill auf die
+ * Gold-Handelstage passiert intern über `buildWalclForwardFill`, damit der Aufrufer nur die drei
+ * rohen FRED/Gold-Serien anliefern muss (kein Lookahead: LOCF trägt nur rückwirkend bekannte
+ * Werte fort). DXY wird bereits täglich erwartet (kein Forward-Fill nötig).
+ *
+ * Default-Anzeige bleibt laut Spec 1-Faktor (`runRealYieldGoldModel`) — dieses Ergebnis ist ein
+ * separat aufrufbarer, rein additiver Vergleichs-Layer für die UI (optionale zweite Linie).
+ */
+export function runMultiFactorGoldModel(
+  goldPrices: { date: string; close: number }[],
+  real10Y: FredPoint[],
+  dxy: FredPoint[],
+  walclWeekly: FredPoint[],
+  window: number = GOLD_MODEL_DEFAULTS.OLS_WINDOW
+): MultiFactorGoldModelResult {
+  const tradingDates = goldPrices.map(g => g.date);
+  const walclForwardFilled = buildWalclForwardFill(walclWeekly, tradingDates);
+  const series = buildGoldMultiFactorSeries(goldPrices, real10Y, dxy, walclForwardFilled);
+  const fairValue = goldMultiFactorFairValueModel(series, window);
+  const gate = buildGoldMultiFactorRegimeGate(fairValue);
+
+  return {
+    series,
+    fairValue,
+    gate,
+    generatedAt: new Date().toISOString(),
+  };
+}

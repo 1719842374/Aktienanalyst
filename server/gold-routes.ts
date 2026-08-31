@@ -10,7 +10,7 @@ import type {
 } from "../shared/gold-schema";
 import { execSync } from "child_process";
 import { fmpQuote, fmpHistoricalPrices } from "./fmp";
-import { runRealYieldGoldModel } from "./gold-realyield-model";
+import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield-model";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -385,6 +385,36 @@ export function registerGoldRoutes(server: Server, app: Express) {
         console.warn(`[GOLD] Real-Yield-Modell fehlgeschlagen: ${rymErr?.message?.substring(0, 150)}`);
       }
 
+      // Sprint D5 (WORK_TEIL7_SCORING.md §6.6): additive 3-Faktor-Vergleichslinie NEBEN
+      // realYieldModel (1-Faktor bleibt Default-Anzeige, siehe Section 5-Wiring weiter unten
+      // sowie GoldFairValueSection.tsx im Client). Eigene FRED-Fetches fuer DTWEXBGS (DXY-Proxy,
+      // taeglich) und WALCL (Fed-Bilanz, woechentlich) — dieselbe fetchFREDSeriesHistory()-
+      // Hilfsfunktion, die bereits fuer DFII10 oben genutzt wird, also kein neuer Fetch-Pfad.
+      let multiFactorModel: import("../shared/gold-schema").GoldMultiFactorModelSummary | null = null;
+      try {
+        if (historicalPrices.length > 0 && real10yHistory.length >= 5) {
+          const [dxyHistory, walclHistory] = await Promise.all([
+            Promise.resolve(fetchFREDSeriesHistory("DTWEXBGS", startDate)),
+            Promise.resolve(fetchFREDSeriesHistory("WALCL", startDate)),
+          ]);
+          console.log(`[GOLD] Multi-Faktor: DTWEXBGS-Punkte=${dxyHistory.length}, WALCL-Punkte=${walclHistory.length}`);
+          if (dxyHistory.length > 0 && walclHistory.length > 0) {
+            const goldPricesForModel = historicalPrices.map(p => ({ date: p.date, close: p.close }));
+            const mfResult = runMultiFactorGoldModel(goldPricesForModel, real10yHistory, dxyHistory, walclHistory);
+            multiFactorModel = {
+              fairValue: mfResult.fairValue,
+              gate: mfResult.gate,
+              generatedAt: mfResult.generatedAt,
+            };
+            console.log(`[GOLD] Multi-Faktor-Modell: fairValue=${mfResult.fairValue ? '$' + mfResult.fairValue.fairValue.toFixed(0) : 'n/a (<30 vollstaendige Punkte)'}, signsValid=${mfResult.fairValue?.signsValid ?? 'n/a'}, gate=${mfResult.gate.active ? 'REGIME_UNSTABLE aktiv' : 'inaktiv'}`);
+          } else {
+            console.log(`[GOLD] Multi-Faktor-Modell uebersprungen: DTWEXBGS oder WALCL nicht abrufbar`);
+          }
+        }
+      } catch (mfErr: any) {
+        console.warn(`[GOLD] Multi-Faktor-Modell fehlgeschlagen: ${mfErr?.message?.substring(0, 150)}`);
+      }
+
       // === Parse DXY ===
       let dxyValue = 100; // default (DXY ~100 as of Mar 2026)
       if (dxyQuoteResult?.price != null) {
@@ -726,6 +756,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         historicalPrices,
         rsi14,
         realYieldModel,
+        multiFactorModel,
       };
 
       console.log(`[GOLD] Analysis complete: $${spotPrice}, GIS=${gis.toFixed(2)}, Sentiment=${sentiment}`);

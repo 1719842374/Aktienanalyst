@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { GoldAnalysis } from "../../../../shared/gold-schema";
 
 interface Props { data: GoldAnalysis }
@@ -5,6 +6,10 @@ interface Props { data: GoldAnalysis }
 export function GoldFairValueSection({ data }: Props) {
   const fv = data.fairValue;
   const priceVsFV = ((data.spotPrice - fv.fvAdj) / fv.fvAdj) * 100;
+  // Sprint D5 (WORK_TEIL7_SCORING.md §6.6 letzter Punkt): 3-Faktor-Vergleichslinie ist
+  // standardmäßig AUS — 1-Faktor (realYieldModel) bleibt die Standard-Anzeige. Der Nutzer
+  // kann die Vergleichslinie optional einblenden.
+  const [showMultiFactor, setShowMultiFactor] = useState(false);
 
   return (
     <div className="bg-card border border-card-border rounded-lg overflow-hidden">
@@ -68,7 +73,72 @@ export function GoldFairValueSection({ data }: Props) {
         {/* Punkt 2 (HOCH-Ticket 05.08.2026): Real-Yield-Modell additiv, altes
             10-Schritte-Modell oben bleibt unveraendert der Hauptpfad. */}
         {data.realYieldModel && <RealYieldModelCard model={data.realYieldModel} />}
+
+        {/* Sprint D5 (WORK_TEIL7_SCORING.md §6.6): optionale 3-Faktor-Vergleichslinie —
+            additiv, standardmäßig eingeklappt/aus. 1-Faktor (oben) bleibt Standard-Anzeige. */}
+        {data.multiFactorModel && (
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setShowMultiFactor(v => !v)}
+              className="text-[10px] font-medium text-muted-foreground hover:text-foreground uppercase tracking-wider underline decoration-dotted"
+            >
+              {showMultiFactor ? "3-Faktor (Vergleich) ausblenden" : "3-Faktor (Vergleich) einblenden"}
+            </button>
+            {showMultiFactor && <MultiFactorModelCard model={data.multiFactorModel} />}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Sprint D5 (WORK_TEIL7_SCORING.md §6.6): sekundäre, rein additive Vergleichskarte für das
+ * 3-Faktor-Modell (Real10Y + DXY + log(WALCL)). Wird nur gerendert, wenn der Nutzer sie über
+ * den Toggle oben aktiv einblendet — 1-Faktor (RealYieldModelCard) bleibt Standardanzeige.
+ */
+function MultiFactorModelCard({ model }: { model: NonNullable<import("../../../../shared/gold-schema").GoldAnalysis["multiFactorModel"]> }) {
+  const fv = model.fairValue;
+  const gateActive = model.gate.active;
+
+  return (
+    <div className="bg-muted/20 rounded-lg p-3 border border-dashed border-border space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+          3-Faktor-Modell (Vergleich): Real10Y + DXY + log(WALCL)
+        </div>
+        <span className="text-[9px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+          Sekundär — nur Vergleich
+        </span>
+      </div>
+
+      {gateActive && (
+        <div className="text-[10px] px-2 py-1 rounded bg-red-500/10 border border-red-500/20 text-red-400">
+          {model.gate.id}: {model.gate.rationale}
+        </div>
+      )}
+
+      {fv ? (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 text-xs">
+            <StepRow step={1} label="Fair Value (3-Faktor-Fit)" value={`$${fv.fairValue.toFixed(0)}`} highlight={!gateActive} />
+            <StepRow step={2} label="Aktueller Preis" value={`$${fv.actualPrice.toFixed(0)}`} />
+            <StepRow step={3} label="Premium/Discount" value={`${fv.premiumPct >= 0 ? "+" : ""}${(fv.premiumPct * 100).toFixed(1)}%`} />
+            <StepRow step={4} label="Fenster (Handelstage)" value={String(fv.windowUsed)} />
+          </div>
+          <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 text-xs">
+            <StepRow step={5} label="β1 (Real10Y, erw. <0)" value={fv.beta1.toFixed(2)} />
+            <StepRow step={6} label="β2 (DXY, erw. <0)" value={fv.beta2.toFixed(4)} />
+            <StepRow step={7} label="β3 (log WALCL, erw. >0)" value={fv.beta3.toFixed(1)} />
+          </div>
+          {!gateActive && (
+            <div className="text-[10px] text-muted-foreground">Vorzeichen-Check bestanden (β1&lt;0, β2&lt;0, β3&gt;0) — Linie gilt als verlässlich.</div>
+          )}
+        </>
+      ) : (
+        <div className="text-xs text-muted-foreground">Zu wenig vollständige Datenpunkte für die 3-Faktor-Regression (WALCL/DXY/Real10Y müssen alle vorliegen).</div>
+      )}
     </div>
   );
 }

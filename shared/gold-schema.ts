@@ -125,6 +125,26 @@ export interface GoldRealYieldModelSummary {
   generatedAt: string;
 }
 
+// Sprint D5: additive Typen für die optionale 3-Faktor-Vergleichslinie (WORK_TEIL7_SCORING.md
+// §6.6). Eigenständig neben GoldRealYieldModelSummary — greift NICHT in dessen Struktur ein.
+export interface GoldMultiFactorFairValueResultShape {
+  windowUsed: number;
+  alpha: number;
+  beta1: number;
+  beta2: number;
+  beta3: number;
+  fairValue: number;
+  actualPrice: number;
+  premiumPct: number;
+  signsValid: boolean;
+}
+
+export interface GoldMultiFactorModelSummary {
+  fairValue: GoldMultiFactorFairValueResultShape | null;
+  gate: GoldModelGate;
+  generatedAt: string;
+}
+
 export interface GoldAnalysis {
   // Section 1: Status
   timestamp: string;
@@ -189,4 +209,9 @@ export interface GoldAnalysis {
   // 1980/2011-Modell (fairValue oben) bleibt als Fallback bestehen. null/
   // undefined, wenn FRED Real10Y nicht abrufbar war (kein Fake-Default).
   realYieldModel?: GoldRealYieldModelSummary | null;
+
+  // Sprint D5 (WORK_TEIL7_SCORING.md §6.6): optionale 3-Faktor-Vergleichslinie NEBEN
+  // realYieldModel (1-Faktor bleibt Default-Anzeige). null/undefined bei fehlenden
+  // WALCL/DXY-Daten oder < 30 vollständigen Datenpunkten (kein Fake-Default).
+  multiFactorModel?: GoldMultiFactorModelSummary | null;
 }
