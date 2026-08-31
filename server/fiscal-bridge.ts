@@ -250,3 +250,266 @@ export function saveFiscalProgram(program: FiscalProgram): void {
 export function deleteFiscalProgram(programId: string): void {
   diskResearcherDelete(fiscalDiskKey(programId));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEIL 3 — DCF-Modellierung mit Fiskaldaten (WORK_REVERSE_DCF_BRIDGE.md §3.1–§3.8)
+//
+// Server-seitiges Gegenstück zu client/src/lib/calculations.ts
+// (allocateProgramToFcf/capOverlays/forwardDcfWithFiscal, dort bereits für die
+// Live-UI implementiert und durch script/test-fiscal-dcf.ts abgedeckt). Wird
+// hier ADDITIV ergänzt, weil server/analyze-route.ts (registerAnalyzeRoute)
+// nicht aus client/src/lib importieren kann/soll — beide Implementierungen
+// nutzen exakt dieselbe Formel aus §3.2/§3.3 und denselben FiscalProgram-Typ
+// (hier: das oben in diesem Modul definierte FiscalProgram, TEIL 2 — nicht der
+// minimale Client-Subtyp FiscalProgramForFcf).
+//
+// KERNREGEL (§3.1/§3.4, PFLICHT): Diese Funktionen wirken AUSSCHLIESSLICH auf
+// den separaten Forward-DCF-FCF-Pfad. Sie werden nirgends aus der Reverse-DCF-
+// Berechnung (calcImpliedGStar/g*) heraus aufgerufen und verändern keinen ihrer
+// Parameter. g* bleibt immer "was der Kurs auf Basis historischem FCF verlangt"
+// — siehe §3.4 Tabelle und §3.5 Abgleich Forward vs Reverse.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * §3.2 — Ein einzelner Fiscal-FCF-Overlay-Eintrag für ein Kalenderjahr t.
+ * probability bereits am Eintrag (z.B. 0.75 bei confidence=high), damit
+ * capOverlays()/forwardDcfWithFiscal() konsistent π·ΔFCF rechnen können.
+ */
+export interface FiscalFcfOverlay {
+  programId: string;
+  year: number;                 // Kalenderjahr t
+  deltaFcfUsd: number;          // absolute FCF-Wirkung in USD
+  probability: number;          // 0–1
+  source: FiscalProgram['source'];
+}
+
+/**
+ * §3.2 — Verteilt das Programmvolumen linear über die Programmjahre auf den
+ * Unternehmens-FCF (exakte Referenzformel):
+ *   totalCompanyFcf = volumeUsdBn * 1e9 * companyShare * fcfMargin
+ *   perYear         = totalCompanyFcf / (endYear - startYear + 1)
+ *
+ * Guardrails (§3.2/§3.6, Zahlen-Prinzip PFLICHT): volumeUsdBn/startYear/endYear
+ * müssen gesetzt sein und endYear >= startYear, sonst [] — d.h. KEIN numerisches
+ * Overlay, nur ein qualitativer Catalyst-Text bleibt möglich (ΔFCF=0-Fall aus
+ * §3.6). companyShare wird hier NIE geraten/hartkodiert — der Aufrufer (analyze-
+ * route.ts) darf diese Funktion nur mit einer belastbaren, dokumentierten
+ * companyShare aus Research/Segment-Daten aufrufen, sonst gar nicht (siehe
+ * WORK_REVERSE_DCF_BRIDGE.md §2.13.1 Guardrails "companyShare konservativ,
+ * dokumentiert").
+ */
+export function allocateProgramToFcf(opts: {
+  program: FiscalProgram;
+  /** Anteil des Unternehmens am adressierbaren Markt/Orders, 0–1, aus Research/Segment */
+  companyShare: number;
+  /** Wie viel vom Revenue-Uplift als FCF ankommt, z.B. 0.15 */
+  fcfMargin: number;
+  probability: number;
+}): FiscalFcfOverlay[] {
+  const { program: p, companyShare, fcfMargin, probability } = opts;
+  if (p.volumeUsdBn == null || p.startYear == null || p.endYear == null) return [];
+  if (p.endYear < p.startYear) return [];
+
+  const years = p.endYear - p.startYear + 1;
+  const totalCompanyFcf = p.volumeUsdBn * 1e9 * companyShare * fcfMargin;
+  const perYear = totalCompanyFcf / years;
+
+  const out: FiscalFcfOverlay[] = [];
+  for (let y = p.startYear; y <= p.endYear; y++) {
+    out.push({
+      programId: p.id,
+      year: y,
+      deltaFcfUsd: perYear,
+      probability,
+      source: p.source,
+    });
+  }
+  return out;
+}
+
+/**
+ * §3.2 — Cap gegen Explosiv-Szenarien: Summe π·ΔFCF über alle Programme in
+ * einem Kalenderjahr darf maxFraction (Default 30%) von baseFcf0 nicht
+ * überschreiten. Skaliert bei Überschreitung alle Overlays des betroffenen
+ * Jahres proportional herunter (exakte Referenzformel §3.2).
+ */
+export function capOverlays(
+  baseFcf0: number,
+  overlays: FiscalFcfOverlay[],
+  maxFraction = 0.30
+): FiscalFcfOverlay[] {
+  const byYear = new Map<number, FiscalFcfOverlay[]>();
+  for (const o of overlays) {
+    const arr = byYear.get(o.year) ?? [];
+    arr.push(o);
+    byYear.set(o.year, arr);
+  }
+  const result: FiscalFcfOverlay[] = [];
+  // Array.from() statt for...of ueber Map.values(), analog client/src/lib/
+  // calculations.ts und server/sector-data.ts (TS2802 downlevelIteration).
+  Array.from(byYear.values()).forEach((arr: FiscalFcfOverlay[]) => {
+    const raw = arr.reduce((s, o) => s + o.probability * o.deltaFcfUsd, 0);
+    const cap = Math.abs(baseFcf0) * maxFraction;
+    const scale = raw > cap && raw > 0 ? cap / raw : 1;
+    arr.forEach(o => result.push({ ...o, deltaFcfUsd: o.deltaFcfUsd * scale }));
+  });
+  return result;
+}
+
+export interface ForwardDcfWithFiscalResult {
+  equityValue: number;
+  fairValuePerShare: number;
+  fcfPath: number[];
+}
+
+/**
+ * §3.3 — Forward-DCF mit optionalem Fiscal-Overlay pro Jahr (exakte
+ * Referenzformel). baseGrowth ist die organische Wachstumsrate OHNE Fiscal —
+ * der Fiscal-Beitrag kommt additiv aus `overlays` (π·ΔFCF pro Jahr).
+ *
+ * Diese Funktion hat KEINE Wechselwirkung mit calcImpliedGStar()/g* — komplett
+ * getrennter Rechenweg mit eigenem Fair-Value-Ergebnis (§3.4/§3.5-Tabelle:
+ * "Fair Value Forward + Overlay" ist NUR die "mit Programm"-Szenario-Spalte,
+ * g* bleibt in der "nein"-Spalte).
+ */
+export function forwardDcfWithFiscal(opts: {
+  fcf0: number;
+  baseGrowth: number;           // organische g ohne Fiscal (Dezimal, z.B. 0.05 = 5%)
+  wacc: number;                 // Dezimal, z.B. 0.09 = 9%
+  n?: number;
+  terminalGrowth?: number;
+  overlays: FiscalFcfOverlay[]; // bereits probability-gewichtet oder roh
+  netDebt: number;
+  shares: number;
+}): ForwardDcfWithFiscalResult {
+  const n = opts.n ?? 5;
+  const gTerm = opts.terminalGrowth ?? 0.025;
+  const startYear = new Date().getUTCFullYear();
+
+  const fcfPath: number[] = [];
+  let pv = 0;
+  for (let t = 1; t <= n; t++) {
+    const year = startYear + t - 1;
+    const base = opts.fcf0 * Math.pow(1 + opts.baseGrowth, t);
+    const fiscal = opts.overlays
+      .filter(o => o.year === year)
+      .reduce((s, o) => s + o.probability * o.deltaFcfUsd, 0);
+    const fcfT = base + fiscal;
+    fcfPath.push(fcfT);
+    pv += fcfT / Math.pow(1 + opts.wacc, t);
+  }
+  const last = fcfPath[n - 1];
+  const term = last * (1 + gTerm) / ((opts.wacc - gTerm) * Math.pow(1 + opts.wacc, n));
+  const ev = pv + term;
+  const equity = ev - opts.netDebt;
+  return {
+    equityValue: equity,
+    fairValuePerShare: opts.shares > 0 ? equity / opts.shares : 0,
+    fcfPath,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sprint D3 (SPRINT_D3_FISCAL_BRIDGE_WIRING.md Ziel 6) — Adapter: Capex-Researcher-
+// Cache (server/researcher.ts, NUR gelesen über diskResearcherGet("capex__US/EU/ASIA"),
+// keine Strukturänderung dort) → qualifizierende Live-Ticker-Treffer für den
+// Fiscal-Overlay in registerAnalyzeRoute.
+//
+// WICHTIGER BEFUND (dokumentiert statt erfunden): Die Capex-Researcher-Cache-
+// Struktur (CapexFiscalResult in researcher.ts) liefert programmes[]/
+// sectorExposure[].listedBeneficiaries[] mit Ticker-Treffern, aber KEIN
+// strukturiertes volumeUsdBn (nur freie Budget-Strings wie "$20bn"), KEIN
+// startYear/endYear (nur freie Timeline-Strings wie "2025-2027") und KEIN
+// Item-Level source.url. Ein FiscalProgram (oben, TEIL 2) verlangt genau diese
+// Felder typisiert; ein Catalyst (shared/schema.ts) verlangt zusaetzlich
+// epsImpact != null UND source.url nicht-leer, um bei fiscalMegatrendQualifies()
+// (server/scoring-gates.ts) bzw. addressableVolume>0 (ReverseDCFSection.tsx) zu
+// qualifizieren.
+//
+// Deshalb: DIESER Adapter parst/errät NIEMALS Zahlen aus den Freitext-Feldern
+// (budget-String, timeline-String) — das waere genau das im Ticket verbotene
+// "companyShare/volumeUsdBn raten". Er liefert ausschliesslich einen TEXTUELLEN
+// Treffer (Ticker + Quelle des Programms/Sektors), aus dem der Aufrufer NUR einen
+// qualitativen Catalyst (kein numerisches Overlay, ΔFCF=0) bauen darf — exakt der
+// "volumeUsdBn == null"-Pfad aus §3.6. Sobald der Researcher-Cache irgendwann
+// strukturiertes volumeUsdBn/startYear/endYear/source.url liefert (additive
+// Erweiterung von researcher.ts durch ein anderes Ticket), kann dieser Adapter
+// ohne Aenderung an allocateProgramToFcf/capOverlays/forwardDcfWithFiscal auf
+// echte numerische Overlays umgestellt werden.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Minimaler Blick auf den Teil des CapexFiscalResult-Caches (server/researcher.ts),
+ * der fuer die Ticker-Treffersuche benoetigt wird. Bewusst als eigener, loser Typ
+ * gehalten statt Import aus researcher.ts (dort nicht exportiert; Struktur-
+ * Aenderung an researcher.ts ist laut Ticket nicht erlaubt). */
+export interface CapexResearchCacheSlice {
+  region?: string;
+  asOf?: string;
+  programmes?: Array<{
+    name: string;
+    timeline?: string;
+    amountUSD?: string;
+    listedBeneficiaries?: Array<{ ticker: string; name: string; rationale: string }>;
+  }>;
+  sectorExposure?: Array<{
+    sector: string;
+    timeline?: string;
+    listedBeneficiaries?: Array<{ ticker: string; name: string; rationale: string }>;
+  }>;
+}
+
+export interface FiscalResearchMatch {
+  region: string;
+  programName: string;
+  sector?: string;
+  ticker: string;
+  beneficiaryName: string;
+  rationale: string;
+  timeline?: string;
+  /** Freitext-Budget-String aus dem Researcher-Cache (z.B. "$20bn") — bewusst
+   * NICHT geparst, siehe Moduldoku oben. Nur zur textuellen Anzeige geeignet. */
+  amountUSDText?: string;
+  asOf?: string;
+}
+
+/**
+ * Sucht in einem Capex-Researcher-Cache-Snapshot (eine Region) nach echten
+ * Ticker-Treffern fuer den analysierten Titel — sowohl in programmes[].
+ * listedBeneficiaries[] als auch in sectorExposure[].listedBeneficiaries[].
+ * Reine Lesefunktion, keine Zahlen-Herleitung (siehe Moduldoku oben).
+ * Kein Ticker-Hardcode: `ticker` ist ein Parameter, kein literaler Wert im Code.
+ */
+export function findFiscalResearchMatches(
+  cache: CapexResearchCacheSlice | null | undefined,
+  ticker: string
+): FiscalResearchMatch[] {
+  if (!cache) return [];
+  const wantedTicker = ticker.trim().toUpperCase();
+  if (!wantedTicker) return [];
+  const region = cache.region ?? "";
+  const out: FiscalResearchMatch[] = [];
+
+  for (const p of cache.programmes ?? []) {
+    for (const b of p.listedBeneficiaries ?? []) {
+      if (b.ticker?.toUpperCase() === wantedTicker) {
+        out.push({
+          region, programName: p.name, ticker: wantedTicker,
+          beneficiaryName: b.name, rationale: b.rationale,
+          timeline: p.timeline, amountUSDText: p.amountUSD, asOf: cache.asOf,
+        });
+      }
+    }
+  }
+  for (const s of cache.sectorExposure ?? []) {
+    for (const b of s.listedBeneficiaries ?? []) {
+      if (b.ticker?.toUpperCase() === wantedTicker) {
+        out.push({
+          region, programName: s.sector, sector: s.sector, ticker: wantedTicker,
+          beneficiaryName: b.name, rationale: b.rationale,
+          timeline: s.timeline, asOf: cache.asOf,
+        });
+      }
+    }
+  }
+  return out;
+}

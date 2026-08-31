@@ -123,6 +123,15 @@ import { fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq } from 
 // module, see server/sec-segments.ts for the full fallback-chain rationale.
 import { fetchSecBusinessSegments } from "./sec-segments";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
+import {
+  findFiscalResearchMatches,
+  allocateProgramToFcf,
+  capOverlays,
+  forwardDcfWithFiscal,
+  type CapexResearchCacheSlice,
+  type FiscalResearchMatch,
+  type FiscalProgramStatus,
+} from "./fiscal-bridge";
 import { normalizePeerOverrides, buildAnalyzeCacheKey, applyPeerOverrides } from "./peer-cache-key";
 // Sprint B3 Phase 1 (WORK_SIGNAL_BACKTEST.md): additiver Snapshot-Seiteneffekt.
 // Persistiert den bereits berechneten Scoring-Zustand fuer spaetere Backtest-
@@ -1238,6 +1247,57 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             if (newsItems.length > 0) {
         try { reconcileNewsSentiment(newsItems); } catch {}
       }
+
+      // Sprint D3 (tickets/SPRINT_D3_FISCAL_BRIDGE_WIRING.md Ziel 2/6;
+      // WORK_REVERSE_DCF_BRIDGE.md Teil 3): additiver Fiscal-Catalyst aus dem
+      // bereits vorhandenen Capex-Researcher-Cache (server/researcher.ts,
+      // NUR gelesen ueber diskResearcherGet("capex__US/EU/ASIA") -- keine
+      // Struktur-Aenderung dort). findFiscalResearchMatches() sucht echte
+      // Ticker-Treffer in listedBeneficiaries[] (kein Ticker-Hardcode).
+      //
+      // ZAHLEN-PRINZIP (Ticket-Regel + WORK_REVERSE_DCF_BRIDGE.md §3.6): Der
+      // Researcher-Cache liefert nur Freitext-Budget/Timeline-Strings, KEIN
+      // strukturiertes volumeUsdBn/startYear/endYear und KEIN Item-Level
+      // source.url. Ohne diese Felder darf der Catalyst NUR qualitativ/
+      // textuell sein (addressableVolume/epsImpact bleiben unbesetzt) --
+      // das haelt ihn automatisch aus fiscalMegatrendQualifies() (Gate-
+      // Milderung, server/scoring-gates.ts verlangt epsImpact!=null UND
+      // source.url) UND aus dem numerischen Forward-Overlay in
+      // ReverseDCFSection.tsx (verlangt addressableVolume>0) heraus -- kein
+      // geratener Wert, siehe Modul-Doku in server/fiscal-bridge.ts. Sobald
+      // der Researcher-Cache strukturierte Felder liefert, greift automatisch
+      // der numerische Pfad, ohne dass hier etwas geaendert werden muss.
+      try {
+        const capexRegions = ["US", "EU", "ASIA"] as const;
+        const fiscalMatches: FiscalResearchMatch[] = [];
+        for (const region of capexRegions) {
+          const cached = diskResearcherGet(`capex__${region}`) as CapexResearchCacheSlice | null;
+          if (!cached) continue;
+          fiscalMatches.push(...findFiscalResearchMatches({ ...cached, region }, upperTicker));
+        }
+        if (fiscalMatches.length > 0 && !catalysts.some(c => c.tags?.includes("fiscal-tailwind"))) {
+          const m = fiscalMatches[0];
+          const label = m.sector ? `${m.programName} (${m.sector})` : m.programName;
+          catalysts.push({
+            name: `Fiskalprogramm-Rueckenwind: ${label}`,
+            timeline: m.timeline || "n/a",
+            pos: 0,
+            bruttoUpside: 0,
+            einpreisungsgrad: 0,
+            nettoUpside: 0,
+            gb: 0,
+            context: `${m.rationale || "Als Nutznie\u00dfer in Researcher-Capex-Tracker (" + m.region + ") gelistet."}${m.amountUSDText ? ` Programmvolumen (Freitext, nicht quantifiziert): ${m.amountUSDText}.` : ""} Kein numerisches DCF-Overlay -- companyShare/volumeUsdBn nicht belastbar quantifizierbar (WORK_REVERSE_DCF_BRIDGE.md §3.6).`,
+            tags: ["fiscal-tailwind", "capex-tailwind"],
+            generic: false,
+            // Bewusst NICHT gesetzt (Zahlen-Prinzip): type/confidence/probability/
+            // source/status/addressableVolume/epsImpact/startYear/endYear --
+            // ohne belastbare Quelle+Zahlen bleibt dies ein reiner Text-Catalyst.
+          });
+        }
+      } catch (fiscalMatchErr: any) {
+        console.warn(`[ANALYZE] Fiscal-Research-Match fehlgeschlagen fuer ${upperTicker}: ${fiscalMatchErr?.message?.substring(0, 120)}`);
+      }
+
       // ── 12. Risks ──
       let risks: Risk[] = [];
 
@@ -1915,6 +1975,80 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         country,
         reportedCurrency,
       } as unknown as StockAnalysis;
+
+      // Sprint D3 (tickets/SPRINT_D3_FISCAL_BRIDGE_WIRING.md Ziel 2/3;
+      // WORK_REVERSE_DCF_BRIDGE.md §3.2–§3.6): additives, separates
+      // `fiscalOverlay`-Feld. Beeinflusst NIEMALS dcfFairValue/impliedGStar/
+      // invDcfValue/crvValue (die werden weiter unten unabhaengig berechnet
+      // und lesen `analysis` nur, schreiben es aber nicht um) -- reiner
+      // additiver Zusatzwert fuer die UI (Section 14/ReverseDCFSection macht
+      // denselben Vergleich clientseitig; dieses Feld ist die serverseitige
+      // Entsprechung fuer Konsumenten ohne eigene Forward-DCF-Berechnung).
+      //
+      // Qualifikation exakt nach §3.6: status ∈ {legislated,funded,deploying},
+      // confidence===high, isProgramActive, UND volumeUsdBn/startYear/endYear
+      // numerisch gesetzt (sonst bleibt das Feld undefined -- Zahlen-Prinzip,
+      // siehe findFiscalResearchMatches()-Doku in server/fiscal-bridge.ts:
+      // der aktuelle Capex-Researcher-Cache liefert diese Felder NICHT, daher
+      // ist `fiscalOverlay` fuer alle Live-Ticker heute korrekt undefined,
+      // bis eine strukturierte Quelle verfuegbar ist).
+      try {
+        const qualifyingFiscalCatalysts = catalysts.filter(c =>
+          c.type === 'fiscal' || c.type === 'capacity'
+        ).filter(c =>
+          c.confidence === 'high' &&
+          typeof c.addressableVolume === 'number' && c.addressableVolume > 0 &&
+          c.startYear != null && c.endYear != null &&
+          (c.status == null || ['legislated', 'funded', 'deploying'].includes(c.status))
+        );
+        if (qualifyingFiscalCatalysts.length > 0 && fcfAvailable && fcfTTM !== 0) {
+          const overlays = qualifyingFiscalCatalysts.flatMap(c => allocateProgramToFcf({
+            program: {
+              id: c.name,
+              name: c.name,
+              region: "US",
+              status: (c.status ?? 'legislated') as FiscalProgramStatus,
+              confidence: 'high',
+              volumeUsdBn: (c.addressableVolume as number) / 1e9,
+              startYear: c.startYear as number,
+              endYear: c.endYear as number,
+              source: c.source ?? { url: "", publishedAt: "", snippet: "" },
+              expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+            },
+            companyShare: 0.10, // konservativer Default (§3.2-Guardrail: ≤ 5–15%) -- nur als Rechenpfad, greift erst wenn addressableVolume real gesetzt ist
+            fcfMargin: 0.15,
+            probability: c.probability ?? 0.75,
+          }));
+          const capped = capOverlays(fcfTTM, overlays, 0.30);
+          // Nutzt dieselben, an dieser Stelle bereits vorhandenen Basis-Groessen
+          // wie der Rest der Analyse (Sektor-WACC/organisches Umsatzwachstum) --
+          // NICHT baseParams/hardened aus dem weiter unten folgenden separaten
+          // CRV-Try-Block (der laeuft unabhaengig und bleibt unberuehrt, §3.4/§3.5).
+          const baseGrowthDecimal = (isFinite(revenueGrowth) ? revenueGrowth : 5) / 100;
+          const waccDecimal = wacc / 100;
+          const fvBaseResult = forwardDcfWithFiscal({
+            fcf0: fcfTTM, baseGrowth: baseGrowthDecimal, wacc: waccDecimal,
+            overlays: [], netDebt, shares: sharesOutstanding,
+          });
+          const fvFiscalResult = forwardDcfWithFiscal({
+            fcf0: fcfTTM, baseGrowth: baseGrowthDecimal, wacc: waccDecimal,
+            overlays: capped, netDebt, shares: sharesOutstanding,
+          });
+          const year1 = new Date().getUTCFullYear();
+          const totalDeltaFcfYear1 = capped
+            .filter(o => o.year === year1)
+            .reduce((s, o) => s + o.probability * o.deltaFcfUsd, 0);
+          (analysis as any).fiscalOverlay = {
+            fvBase: Math.round(fvBaseResult.fairValuePerShare * 100) / 100,
+            fvFiscal: Math.round(fvFiscalResult.fairValuePerShare * 100) / 100,
+            programIds: qualifyingFiscalCatalysts.map(c => c.name),
+            totalDeltaFcfYear1: Math.round(totalDeltaFcfYear1),
+            gateSoftened: scoring?.fiscal?.qualifies === true,
+          };
+        }
+      } catch (fiscalOverlayErr: any) {
+        console.warn(`[ANALYZE] fiscalOverlay-Berechnung fehlgeschlagen fuer ${upperTicker}: ${fiscalOverlayErr?.message?.substring(0, 120)}`);
+      }
 
       analysisCache.set(cacheKey, { result: analysis, timestamp: Date.now(), usedLLM: useLLM });
 

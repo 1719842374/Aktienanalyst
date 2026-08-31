@@ -521,6 +521,22 @@ export interface StockAnalysis {
     conflictTexts: string[];
   };
 
+  /** Sprint D3 (WORK_REVERSE_DCF_BRIDGE.md Teil 3, §3.2–§3.6) — additiver,
+   * separater Fiscal-DCF-Overlay auf den FORWARD-FCF-Pfad. Befuellt NUR wenn
+   * ein qualifizierendes Fiskalprogramm (status ∈ {legislated,funded,deploying},
+   * confidence=high, isProgramActive) UND eine belastbare, dokumentierte
+   * companyShare/volumeUsdBn-Quelle vorliegen — sonst bleibt dieses Feld
+   * undefined (KEIN geratener Wert, Zahlen-Prinzip). Beeinflusst NIEMALS
+   * invDcfValue/crvValue/dcfFairValue/impliedGStar (§3.4 "Reverse-DCF bleibt
+   * clean") — rein additive UI-Zusatzinfo (FV base | FV fiscal | g* | Gate). */
+  fiscalOverlay?: {
+    fvBase: number;
+    fvFiscal: number;
+    programIds: string[];
+    totalDeltaFcfYear1: number;
+    gateSoftened: boolean;
+  };
+
   // For investment thesis
   moatRating: string;
   governmentExposure: number;
