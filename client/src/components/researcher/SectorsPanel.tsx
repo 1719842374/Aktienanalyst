@@ -6,6 +6,7 @@ import { AlertTriangle, Sparkles } from "lucide-react";
 import { TickerAddButtons } from "@/components/portfolio/TickerAddButtons";
 import type { PortfolioRegion } from "@/lib/portfolio/watchlist";
 import { SectorRotationPanel } from "@/components/researcher/SectorRotationPanel";
+import "./cycle-progress-table.css";
 
 const ACTION_COLORS: Record<string, string> = {
   Buy: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
