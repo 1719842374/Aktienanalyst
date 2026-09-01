@@ -6,23 +6,51 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 
+type PolicyRegime = "QT" | "QT_ended_RMP" | "QE" | "twist_treasury";
+type DurationImpulse = "easing" | "neutral" | "tightening";
+
 interface LiquidityPayload {
   walclBn: number | null;
   rrpBn: number | null;
   tgaBn: number | null;
   netLiquidityBn: number | null;
   netLiquidityDelta13wBn: number | null;
+  tgaDelta4wBn?: number | null;
   m2YoY: number | null;
   velocity: number | null;
   excessMoneyGrowth: number | null;
   regimeScore: number;
   regimeLabel: "expansiv" | "neutral" | "restriktiv";
+  regimeScoreV1?: number;
+  policyScore?: number;
+  policyRegime?: PolicyRegime;
+  bessentPutActive?: boolean;
+  durationImpulse?: DurationImpulse;
   asOf: string;
   source: string;
   dataQuality?: { walcl: boolean; rrp: boolean; tga: boolean; m2: boolean };
   _cached?: boolean;
   _cacheAge?: number;
 }
+
+const POLICY_REGIME_LABEL: Record<PolicyRegime, string> = {
+  QT: "QT aktiv",
+  QT_ended_RMP: "QT beendet · Bill-RMP",
+  QE: "QE aktiv",
+  twist_treasury: "Treasury-Twist (Bessent)",
+};
+
+const DURATION_LABEL: Record<DurationImpulse, string> = {
+  easing: "easing",
+  neutral: "neutral",
+  tightening: "tightening",
+};
+
+const DURATION_COLOR: Record<DurationImpulse, string> = {
+  easing: "text-emerald-300",
+  neutral: "text-amber-300",
+  tightening: "text-rose-300",
+};
 
 const LAMP: Record<string, string> = {
   expansiv: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -111,6 +139,25 @@ export function LiquidityPanel() {
             <Metric label="Excess Money" value={fmt(data.excessMoneyGrowth, 2, " pp")} />
             <Metric label="Regime" value={`${data.regimeScore}`} />
           </div>
+
+          {/* v2 (Spec WORK_RESEARCHER_LIQUIDITY_REGIME.md §5.1/§5.5): Policy-Kanal
+              — Fed-Regime (QT/RMP/QE) getrennt vom Duration-Kanal (Bessent-Twist),
+              damit ein Treasury-Buyback niemals als Fed-QE erscheint. */}
+          {(data.policyRegime || data.durationImpulse) && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
+              <Metric label="Fed-Regime" value={data.policyRegime ? POLICY_REGIME_LABEL[data.policyRegime] : "n/a"} />
+              <Metric
+                label="Bessent"
+                value={data.bessentPutActive ? `an · Cap ≥ 4 Mrd.` : "aus"}
+              />
+              <Metric
+                label="Duration"
+                value={data.durationImpulse ? DURATION_LABEL[data.durationImpulse] : "n/a"}
+                valueClassName={data.durationImpulse ? DURATION_COLOR[data.durationImpulse] : undefined}
+              />
+            </div>
+          )}
+
           <p className="text-[11px] text-foreground/75 leading-relaxed">
             Aktuelles Liquiditätsregime: {data.regimeLabel} (Score {data.regimeScore}).
             {data.excessMoneyGrowth != null && data.excessMoneyGrowth > 0
@@ -118,6 +165,15 @@ export function LiquidityPanel() {
               : data.excessMoneyGrowth != null && data.excessMoneyGrowth < 0
                 ? " Excess Money Growth negativ. Eher restriktiv für Multiples."
                 : " Plumbing aus Fed-Bilanz (WALCL − RRP − TGA)."}
+            {data.policyRegime === "QE"
+              ? " Fed kauft aktiv Duration (QE) — klar expansiv."
+              : data.policyRegime === "twist_treasury"
+                ? " Treasury-Buybacks am langen Ende (Bessent-Twist) — Duration-Impuls, aber kein Fed-QE."
+                : data.policyRegime === "QT_ended_RMP"
+                  ? " Fed: QT-Runoff beendet, nur T-Bill-Reserve-Management — kein QE."
+                  : data.policyRegime === "QT"
+                    ? " Fed: aktiver Bilanzabbau (QT) — restriktiv fuer Duration."
+                    : ""}
           </p>
           <div className="text-[10px] text-foreground/40" data-testid="text-liquidity-source">
             {data.source} · Stand {data.asOf}
@@ -128,11 +184,11 @@ export function LiquidityPanel() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, valueClassName }: { label: string; value: string; valueClassName?: string }) {
   return (
     <div className="rounded-md bg-background/40 border border-border/30 p-2">
       <div className="text-[9px] uppercase tracking-wider text-foreground/40">{label}</div>
-      <div className="text-[12px] font-mono text-foreground/85 mt-0.5">{value}</div>
+      <div className={`text-[12px] font-mono mt-0.5 ${valueClassName || "text-foreground/85"}`}>{value}</div>
     </div>
   );
 }

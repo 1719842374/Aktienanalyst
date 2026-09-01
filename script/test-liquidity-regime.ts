@@ -5,6 +5,9 @@
 import {
   type FredObs,
   alignWeekly,
+  buybackCapLongBn,
+  BESSENT_WINDOW,
+  classifyPolicy,
   computeLiquidityMetrics,
   delta13w,
   excessMoneyGrowth,
@@ -122,11 +125,56 @@ ok("source names FRED series", /WALCL/.test(metrics.source) && /RRPONTSYD/.test(
 const pipeOnly = computeLiquidityMetrics({ walcl, rrp, tga });
 ok("ohne M2: quality.m2 false", pipeOnly.dataQuality.m2 === false);
 ok("ohne M2: excess null", pipeOnly.excessMoneyGrowth == null);
-ok("ohne M2: score = plumbing", pipeOnly.regimeScore === plumbingScore(d13));
+// v1-Score (Ruecksichtskompatibilitaet, separates Feld) bleibt exakt = plumbing
+// ohne M2-Daten — der Haupt-regimeScore ist seit v2 IMMER eine Mischung aus
+// Plumbing+Spec+Policy, auch ohne M2 faellt Spec dann auf pipe zurueck, aber
+// der Policy-Anteil (20%) bleibt bestehen, also regimeScore != plumbing exakt.
+ok("ohne M2: regimeScoreV1 = plumbing", pipeOnly.regimeScoreV1 === plumbingScore(d13));
+ok("regimeScore(v2) enthaelt Policy-Anteil", typeof pipeOnly.policyScore === "number" && pipeOnly.policyScore >= 0 && pipeOnly.policyScore <= 100);
+ok("policyRegime ist einer der 4 erlaubten Werte", ["QT", "QT_ended_RMP", "QE", "twist_treasury"].includes(pipeOnly.policyRegime));
+ok("durationImpulse ist einer der 3 erlaubten Werte", ["easing", "neutral", "tightening"].includes(pipeOnly.durationImpulse));
 
 const drain = wednesdays(20).map((p, i) => ({ ...p, value: 6_800_000 - i * 40_000 }));
 const drained = computeLiquidityMetrics({ walcl: drain, rrp, tga });
 ok("drain 13w → restriktiv oder <70", drained.regimeScore < 70, String(drained.regimeScore));
+
+// ─── Policy-Classifier (v2, Spec §6) ────────────────────────────────────────
+ok("Bessent-Fenster: vor 9.9. -> kein Cap", buybackCapLongBn("2026-09-08") === null);
+ok("Bessent-Fenster: 9.9. (Startdatum inklusiv) -> Cap 4", buybackCapLongBn("2026-09-09") === 4);
+ok("Bessent-Fenster: 4.11. (Enddatum inklusiv) -> Cap 4", buybackCapLongBn("2026-11-04") === 4);
+ok("Bessent-Fenster: nach 4.11. -> kein Cap", buybackCapLongBn("2026-11-05") === null);
+ok("BESSENT_WINDOW Konstante stimmt mit Spec ueberein", BESSENT_WINDOW.from === "2026-09-09" && BESSENT_WINDOW.to === "2026-11-04" && BESSENT_WINDOW.capBn === 4);
+
+const beforeBessent = classifyPolicy({ asOf: "2026-08-15", buybackCapLongBnValue: buybackCapLongBn("2026-08-15") });
+ok("vor Bessent, nach QT-Ende: QT_ended_RMP", beforeBessent.policyRegime === "QT_ended_RMP");
+ok("vor Bessent: bessentPutActive=false", beforeBessent.bessentPutActive === false);
+ok("vor Bessent: durationImpulse=neutral", beforeBessent.durationImpulse === "neutral");
+ok("vor Bessent: policyScore=55 (Basis QT_ended_RMP, kein Zuschlag)", beforeBessent.policyScore === 55);
+
+const duringBessent = classifyPolicy({ asOf: "2026-09-15", buybackCapLongBnValue: buybackCapLongBn("2026-09-15") });
+ok("waehrend Bessent-Fenster: twist_treasury (NICHT QE)", duringBessent.policyRegime === "twist_treasury");
+ok("waehrend Bessent-Fenster: bessentPutActive=true", duringBessent.bessentPutActive === true);
+ok("waehrend Bessent-Fenster: durationImpulse=easing", duringBessent.durationImpulse === "easing");
+ok("waehrend Bessent-Fenster: policyScore=65 (55 Basis + 10 Twist-Zuschlag)", duringBessent.policyScore === 65);
+
+const withTgaDrain = classifyPolicy({ asOf: "2026-09-15", buybackCapLongBnValue: buybackCapLongBn("2026-09-15"), tgaDelta4wBn: -60 });
+ok("Twist + TGA-Drain <-50: policyScore=75 (55+10+10)", withTgaDrain.policyScore === 75);
+
+// Bewusst OHNE gleichzeitiges Bessent-Fenster getestet, damit der Twist-
+// Zuschlag (+10) das erwartete Basis-QE-policyScore=90 nicht verdeckt — die
+// beiden Zuschlaege (Twist, TGA-Drain) sind additiv und regime-unabhaengig,
+// das ist gewollt (Spec §5.2: "additive Zuschlaege, Deckel bei 100").
+const withQe = classifyPolicy({ asOf: "2026-06-15", notesBondsDelta13wBn: 50 });
+ok("explizites QE-Signal (Notes/Bonds-Aufbau) -> QE, nicht twist", withQe.policyRegime === "QE");
+ok("QE: policyScore=90", withQe.policyScore === 90);
+
+const withQeAndTwist = classifyPolicy({ asOf: "2026-09-15", notesBondsDelta13wBn: 50, buybackCapLongBnValue: buybackCapLongBn("2026-09-15") });
+ok("QE + gleichzeitiges Bessent-Fenster: Twist-Zuschlag ist additiv (90+10=100, Deckel)", withQeAndTwist.policyScore === 100);
+
+const duringQt = classifyPolicy({ asOf: "2025-06-01" });
+ok("vor QT-Ende (1.12.2025): policyRegime=QT", duringQt.policyRegime === "QT");
+ok("vor QT-Ende: durationImpulse=tightening", duringQt.durationImpulse === "tightening");
+ok("vor QT-Ende: policyScore=25", duringQt.policyScore === 25);
 
 if (failed) {
   console.log(`\n${failed} TESTS FEHLGESCHLAGEN`);
