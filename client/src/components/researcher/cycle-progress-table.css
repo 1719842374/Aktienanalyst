@@ -1,0 +1,23 @@
+/* Table Zyklusfortschritt only. Gesamt-Balken stays original (outside table). */
+[data-testid="table-sector-rotation"] [data-testid^="cycle-progress-row-"] {
+  overflow-x: hidden;
+}
+
+[data-testid="table-sector-rotation"] [data-testid="bar-cycle-progress"] {
+  height: 1rem;
+  overflow-x: hidden;
+  padding-left: 0.375rem;
+  padding-right: 0.375rem;
+}
+
+[data-testid="table-sector-rotation"] [data-testid="bar-cycle-progress"] > .relative {
+  height: 0.75rem !important;
+  overflow: hidden !important;
+}
+
+[data-testid="table-sector-rotation"] [data-testid="marker-cycle-current-phase"] {
+  width: 0.5rem !important;
+  height: 0.5rem !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+}
