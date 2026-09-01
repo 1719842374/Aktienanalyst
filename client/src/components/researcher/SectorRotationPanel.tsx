@@ -162,7 +162,7 @@ function SectorCycleProgressBar({
 
   return (
     <div className="w-full overflow-visible" data-testid="bar-cycle-progress">
-      <div className="relative h-5 overflow-visible">
+      <div className="relative h-8 overflow-visible">
         <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-5 flex rounded-full overflow-hidden">
         {PHASE_ORDER.map(p => (
           <div
@@ -180,12 +180,12 @@ function SectorCycleProgressBar({
         />
       </div>
       {hasFit && (
-        <div className={`mt-0.5 text-[10px] leading-tight ${fitIsGood ? "text-emerald-400/80" : "text-foreground/40"}`}>
+        <div className={`mt-0.5 text-[8px] leading-tight ${fitIsGood ? "text-emerald-400/80" : "text-foreground/40"}`}>
           {fitIsGood ? "passt zur Phase" : "passt nicht"}
         </div>
       )}
       {!compact && (
-        <div className="flex justify-between mt-1.5">
+        <div className="flex justify-between mt-1">
           {PHASE_ORDER.map(p => (
             <span
               key={p}
@@ -762,7 +762,7 @@ export function SectorRotationPanel() {
                   <td className="px-3 py-3 tabular-nums">{fmtNum(s.attractiveness, 1)}</td>
                   <td className="px-3 py-3 tabular-nums">{fmtPct(s.return6M)}</td>
                   <td className="px-3 py-3 tabular-nums">{s.phaseFit}</td>
-                  <td className="px-3 py-3 min-w-[220px] overflow-x-visible" data-testid={`cycle-progress-row-${s.id}`}>
+                  <td className="px-3 py-3 min-w-[220px] overflow-x-hidden" data-testid={`cycle-progress-row-${s.id}`}>
                     {data && <SectorCycleProgressBar phase={data.phase} phaseFit={s.phaseFit} compact />}
                   </td>
                 </tr>
