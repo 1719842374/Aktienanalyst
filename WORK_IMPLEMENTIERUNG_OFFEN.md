@@ -1,82 +1,65 @@
 # WORK_IMPLEMENTIERUNG_OFFEN.md — Tickets für den aktuellen Gap
 
-> Stand 30.08.2026 · HEAD `9aa6f9a` (C1 P0+P1 squash PR #40) · Companion `WORK_IST_VS_SOLL.md`
-> Root-`WORK.md` unverändert (Index).
-> Portfolio hat **keine** Server-Route. Analyze = `POST /api/analyze` in `server/analyze-route.ts`.
+> Stand 01.09.2026 · HEAD `a02ad19` (Valuechain Phase 2) · Companion `WORK_IST_VS_SOLL.md`
+> Root-`WORK.md` unverändert (Index). `Future_Work.md` = Roadmap, kein Ticket.
+> Portfolio hat **keine** Server-Route. Analyze = `POST /api/analyze`.
 
 ## Sprint
 
 ```
-A P0  TAM-Quality + Xbox-Residuum + FCF=0 + Segment-Alias-Dedup   -- DONE 30.08.2026 (d277527/dc2bc64/c484b3e/d18ac4a)
+A P0  TAM-Quality + Xbox-Residuum + FCF=0 + Segment-Alias-Dedup   -- DONE 30.08.2026
 B P1  OHLCV-10Y-Fallback → Portfolio-Backtest → PIT-Signal-Backtest  -- DONE 30.08.2026
-C1 P1 Sektorradar P0+P1 (Engine+Route+Tabelle)  -- DONE 30.08.2026 (9aa6f9a, PR #40)
-C2 P1 Liquidity WALCL/RRP/TGA  -- IN ARBEIT (feat/c2-liquidity-regime)
-C1 P2/P3 Donut + Zyklus-Karten  -- nach C2, nicht parallel
-D P2  D3 Fiscal-Hook → D1 Lynch → D5 Gold → D4 GENIUS → D2 BL+MC → D6 Valuechain-Rest
+C1 P0+P1 Sektorradar Engine+Route+Tabelle  -- DONE 30.08.2026 (9aa6f9a, PR #40)
+C2    Liquidity WALCL/RRP/TGA               -- DONE 30.08.2026 (f0931d86, PR #41)
+C1 P2/P3 Donut + 3D-Ring + Zyklus-Karten   -- DONE 01.09.2026 (u. a. 480e98a / ce68d10 / ed71688)
+D1–D6c Lynch, BL+MC, Fiscal-Hook, GENIUS, Gold Multi-OLS, Valuechain-Kern -- DONE 31.08.2026
+Valuechain Phase 1–2 (GICS-Ketten)         -- DONE 01.09.2026 (4401ce6 / a02ad19)
 ```
+
+Nächste Lane **P1 sequential, nicht parallel:**
+1. `WORK2.md` — Regulatory/PESTEL (Gate da, Risks lazy)
+2. `WORK_RESEARCHER_PORTFOLIO_TEIL2.md` — δ/Cap/HHI
+3. `WORK_SCORING_VORLAGE.md` — Lookahead-Details
+
+Rang 7–9 Valuechain (xyflow Custom Edges / Animation / Redis) **nicht starten** ohne Entscheidung: neue Dependency `@xyflow/react`.
 
 Nicht anfassen: Miner, PEG, inverted DCF, Sentiment, Portfolio F.2.
 
-## Betroffene Routen
+## Betroffene Routen (live)
 
 | Ticket | Route / Datei |
 |--------|----------------|
-| A1/A2 TAM | `POST /api/analyze` → `generateTAMAnalysis` (`server/sector-data.ts`), UI `Section7.tsx` |
-| A3 FCF=0 | dieselbe Route, `financials.cashflow[0]`, Felder `fcfTTM` / `fcfMargin` |
-| A4 Dedup-Rest | dieselbe Route nach `dedupeSegmentsByName` / `geoWithoutOverlap` |
-| B1 OHLCV | `fmpHistoricalPrices` + Yahoo/Stooq Fallback; Cap 2600 |
-| B2 Backtest | `client/src/lib/portfolio/backtest.ts`; Page `/#/portfolio` |
-| B3 Signal-BT | `server/backtest/*` Phase 0–6 |
-| C1 Radar | **live** `GET /api/researcher/sector-rotation` (additiv, `researcher.ts` unberührt) |
-| C2 Liquidity | `GET /api/researcher/liquidity`; Cache-Key `macro_v2__US`, TTL 6h; `liquidity-regime.ts` |
-| D3 Fiscal | Hook in `registerAnalyzeRoute` **vor** DCF; Modul `server/fiscal-bridge.ts` existiert |
-| D5 Gold | `/api/analyze-gold` + `gold-realyield-model.ts` TODO Z. 541 |
+| C1 Radar | `GET /api/researcher/sector-rotation` — Tabelle + Donut/Ring + Zyklus |
+| C2 Liquidity | `GET /api/researcher/liquidity` — Cache `macro_v2__US`, TTL 6h |
+| D3 Fiscal | Hook in `registerAnalyzeRoute` vor DCF — `fiscal-bridge.ts` |
+| D4 GENIUS | `GET /api/analyze-btc/stablecoin-liquidity` |
+| D5 Gold | `GET /api/analyze-gold` Multi-Faktor optional |
+| D6 Valuechain | `GET /api/valuechain`, `POST /api/valuechain/enrich` |
 | Miner | `GET/POST /api/btc-miner` nicht anfassen |
 
 Researcher-Cache: `.cache/researcher/{tab}__{params}.json` + `diskResearcherSet`.
 
 ---
 
-## A1–A4 / B1–B3 / C1 P0+P1 — done
+## P1.1 WORK2 Regulatory/PESTEL
 
-Acceptance in den Ursprungs-WORK bzw. Ampel `WORK_IST_VS_SOLL.md`. C1: `server/sector-rotation*.ts` + `researcher-sector-rotation-route.ts`. PR #39 Draft geschlossen, nicht mergen.
+Gate existiert (`regulatory.ts`). Offen: Risks-Herleitung lazy/teilweise. Kein Rebuild des Gates.
 
-## C2 Liquidity-Regime
+## P1.2 Portfolio Teil 2 — δ/Cap/HHI
 
-Spec `WORK_RESEARCHER_LIQUIDITY_REGIME.md`. Serien FRED **WALCL, RRPONTSYD, WTREGEN (TGA)**. Dateien: neues `liquidity-regime.ts` (split ok), Route additiv über `routes-register.ts`, Panel analog MacroPanel. **`researcher.ts` nicht umschreiben.** `/api/health` unberührt.
+Konstanten im Code. Spec-Abdeckung (δ, `maxWeight`, HHI-Schwellen) verifizieren, Lücken schließen. F.2 nicht aufmachen.
 
-## D1 Lynch-DCF-Matrix
+## P1.3 Scoring-Vorlage — Lookahead
 
-`lynchClass` existiert. Defaults g1/g2/terminal/Haircut/WACC-Add-on je Klasse in `calculations.ts` + Section 5. g* bleibt eigene Schicht.
+Pipeline `scoring-gates.ts` da. Lookahead-Detailregeln gegen Spec ziehen.
 
-## D2 BL + Portfolio-MC
+## D6 Rang 7–9 (geblockt)
 
-```
-μ_BL = π + τΣP'(PτΣP' + Ω)^{-1}(Q - Pπ)
-Pfade: Cholesky(Σ) * GBM, nicht n unabhängige Sims
-```
-
-`covariance.ts` + neues `portfolioMc.ts`.
-
-## D3 Fiscal-Bridge verdrahten
-
-`server/fiscal-bridge.ts` + `test-fiscal-bridge.ts` / `test-fiscal-dcf.ts` grün. In `registerAnalyzeRoute` einhaengen. g* invariant.
-
-## D4 Stablecoin / GENIUS
-
-Spec `WORK_STABLECOIN_TBILL_GENIUS.md`. Score 0 / 1 / 1,5. Nicht im Analyze-Hot-Path hardcoden.
-
-## D5 Gold Multi-OLS
-
-TODO in `gold-realyield-model.ts`: WALCL LOCF, DXY DTWEXBGS, Vorzeichen β1<0 β2<0 β3>0.
-
-## D6 Valuechain Rest
-
-Offen Rang 4–7+9 der Spec. Tasks 1–3 nicht wiederholen.
+Custom Edges / Animation / Redis. Würde `@xyflow/react` brauchen. CSS-Karten-Layout ist der bewusste Ersatz. Kupfer-Downstream-Gate (Phase 1) ehrlich fehlgeschlagen — kein Fake-Fill.
 
 ## Nicht nochmal bauen
 
-Portfolio F.2, P1/P2/P3 Buttons, News-Sentiment-Override, sanitizeRoic, Trailing-PEG-Box, Miner Section 13, Scoring-Gates-Kern, invertedDcf, Einzeltitel-GBM.
+C2, C1 P2/P3, Valuechain Phase 1–2, Portfolio F.2, P1/P2/P3 Buttons, News-Sentiment-Override, sanitizeRoic, Trailing-PEG-Box, Miner Section 13, Scoring-Gates-Kern, invertedDcf, Einzeltitel-GBM, D1–D5.
 
 ## DoD
 
