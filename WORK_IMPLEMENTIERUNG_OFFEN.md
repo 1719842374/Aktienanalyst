@@ -1,6 +1,6 @@
 # WORK_IMPLEMENTIERUNG_OFFEN.md — Tickets für den aktuellen Gap
 
-> Stand 01.09.2026 · HEAD `a02ad19` (Valuechain Phase 2) · Companion `WORK_IST_VS_SOLL.md`
+> Stand 01.09.2026 · HEAD `9215cee` (P1.3 Scoring-Lookahead, PR #45) · Companion `WORK_IST_VS_SOLL.md`
 > Root-`WORK.md` unverändert (Index). `Future_Work.md` = Roadmap, kein Ticket.
 > Portfolio hat **keine** Server-Route. Analyze = `POST /api/analyze`.
 
@@ -14,14 +14,16 @@ C2    Liquidity WALCL/RRP/TGA               -- DONE 30.08.2026 (f0931d86, PR #41
 C1 P2/P3 Donut + 3D-Ring + Zyklus-Karten   -- DONE 01.09.2026 (u. a. 480e98a / ce68d10 / ed71688)
 D1–D6c Lynch, BL+MC, Fiscal-Hook, GENIUS, Gold Multi-OLS, Valuechain-Kern -- DONE 31.08.2026
 Valuechain Phase 1–2 (GICS-Ketten)         -- DONE 01.09.2026 (4401ce6 / a02ad19)
+P1.1 WORK2 TEIL 8 PESTEL-Risks             -- DONE 01.09.2026 (c83e543, PR #43)
+P1.2 Portfolio TEIL2 Kapitel Q             -- DONE 01.09.2026 (d6b41b3, PR #44)
+P1.3 Scoring Lookahead Kap. 17–18          -- DONE 01.09.2026 (9215cee, PR #45)
 ```
 
-Nächste Lane **P1 sequential, nicht parallel:**
-1. `WORK2.md` — Regulatory/PESTEL (Gate da, Risks lazy)
-2. `WORK_RESEARCHER_PORTFOLIO_TEIL2.md` — δ/Cap/HHI
-3. `WORK_SCORING_VORLAGE.md` — Lookahead-Details
+Nächste Lane: **keine sequentielle P1 mehr.** P1.1–P1.3 nicht neu bauen.
 
 Rang 7–9 Valuechain (xyflow Custom Edges / Animation / Redis) **nicht starten** ohne Entscheidung: neue Dependency `@xyflow/react`.
+
+`Future_Work.md` = Roadmap, kein Ticket.
 
 Nicht anfassen: Miner, PEG, inverted DCF, Sentiment, Portfolio F.2.
 
@@ -41,17 +43,17 @@ Researcher-Cache: `.cache/researcher/{tab}__{params}.json` + `diskResearcherSet`
 
 ---
 
-## P1.1 WORK2 Regulatory/PESTEL
+## P1.1 WORK2 Regulatory/PESTEL — DONE
 
-Gate existiert (`regulatory.ts`). Offen: Risks-Herleitung lazy/teilweise. Kein Rebuild des Gates.
+SHA `c83e543` (PR #43). `derivePestelRisks` + Disk 24h + `GET /api/regulatory/cached/:ticker`. Gate nicht neu bauen.
 
-## P1.2 Portfolio Teil 2 — δ/Cap/HHI
+## P1.2 Portfolio Teil 2 — δ/Cap/HHI — DONE
 
-Konstanten im Code. Spec-Abdeckung (δ, `maxWeight`, HHI-Schwellen) verifizieren, Lücken schließen. F.2 nicht aufmachen.
+SHA `d6b41b3` (PR #44). Fixture Q: HHI 0.28, Effective-N ≈ 3.57, δ=0.25 bei n=4, weightMarket-Summe=1. UI lag schon auf main. F.2 nicht aufmachen.
 
-## P1.3 Scoring-Vorlage — Lookahead
+## P1.3 Scoring-Vorlage — Lookahead — DONE
 
-Pipeline `scoring-gates.ts` da. Lookahead-Detailregeln gegen Spec ziehen.
+SHA `9215cee` (PR #45). Fixture AI qualifies=false, NATO DCF 65→75, PP/SHARE hart. Pipeline `scoring-gates.ts` nicht neu bauen.
 
 ## D6 Rang 7–9 (geblockt)
 
@@ -59,7 +61,7 @@ Custom Edges / Animation / Redis. Würde `@xyflow/react` brauchen. CSS-Karten-La
 
 ## Nicht nochmal bauen
 
-C2, C1 P2/P3, Valuechain Phase 1–2, Portfolio F.2, P1/P2/P3 Buttons, News-Sentiment-Override, sanitizeRoic, Trailing-PEG-Box, Miner Section 13, Scoring-Gates-Kern, invertedDcf, Einzeltitel-GBM, D1–D5.
+C2, C1 P2/P3, Valuechain Phase 1–2, P1.1–P1.3, Portfolio F.2, P1/P2/P3 Buttons, News-Sentiment-Override, sanitizeRoic, Trailing-PEG-Box, Miner Section 13, Scoring-Gates-Kern, invertedDcf, Einzeltitel-GBM, D1–D5.
 
 ## DoD
 
