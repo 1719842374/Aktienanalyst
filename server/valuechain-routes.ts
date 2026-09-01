@@ -82,14 +82,36 @@ const STAGE_ALIASES: Array<{ test: RegExp; stage: StageType }> = [
   // als Vertriebskanal) oder "manufactures" (laesst extern fertigen), die
   // faelschlich Upstream/Midstream triggern wuerden (live beobachtet: NVDA).
   {
-    test: /\b(fabless|designs?,?( and)? (develops|markets)|graphics|computational|end[- ]user|branded|consumer products|distribution to|dealership)\b/i,
+    // Bugfix (Nutzer-Feedback 01.09.2026): das blosse Wort "computational"
+    // matchte auch "computational lithography solutions" in ASML's FMP-
+    // Beschreibung -- ein Fertigungsverfahren, kein fabless-Vertriebssignal.
+    // ASML (Lithografie-Equipment-Hersteller) wurde dadurch faelschlich als
+    // Downstream statt Upstream klassifiziert, noch bevor der eigentlich
+    // zutreffende Upstream-Alias ("lithograph", siehe unten) ueberhaupt
+    // geprueft wurde -- dieser Downstream-Block laeuft laut Kommentar oben
+    // bewusst ZUERST. Fix: "computational" komplett entfernt (zu
+    // unspezifisch, kommt in Fertigungs- wie in Konsumenten-Kontexten vor).
+    // "graphics" bleibt als eigenstaendiges Signal erhalten -- das war der
+    // urspruenglich tragende Begriff fuer den NVIDIA-Fall ("advanced
+    // graphics, computational, and networking solutions") und matcht dort
+    // weiterhin unabhaengig von "computational". Verifiziert: NVDA-Text
+    // matcht weiter ueber "graphics", ASML-Text matcht nicht mehr und faellt
+    // korrekt durch zum Upstream-Alias "lithograph".
+    test: /\b(fabless|designs?,?( and)? (develops|markets)|graphics|end[- ]user|branded|consumer products|distribution to|dealership)\b/i,
     stage: "downstream",
   },
   // Upstream: Ausrüster / Materialien / Test-Equipment / Rohstoffe — bewusst
   // spezifische Mehrwort-Phrasen statt des blossen Worts "equipment" (das
   // auch in generischen OEM-Vertriebssaetzen vorkommt, siehe oben).
+  // Bugfix (Nutzer-Feedback 01.09.2026): KLAC (Metrology/Inspection-
+  // Equipment-Hersteller, wie ASML/AMAT/LRCX ein reiner Upstream-Ausruester)
+  // landete faelschlich Midstream, weil sein FMP-Text "IC fabrication"
+  // erwaehnt (beschreibt den Fertigungsprozess des KUNDEN, nicht KLACs
+  // eigene Taetigkeit) und keiner der bisherigen Upstream-Aliase traf.
+  // Ergaenzt: process-control/wafer-inspection/metrology/yield-enhancement
+  // -- die Kernbegriffe von Semiconductor-Equipment-Herstellern.
   {
-    test: /\b(supplier of equipment|semiconductor (processing )?equipment|equipment (vital|used) for semiconductor|process equipment|lithograph|deposition system|etch(ing)? system|wafer fabrication (tools|equipment)|materials (supplier|engineering)|specialty materials|automated test equipment|testing equipment|exploration|drilling|upstream supplier|raw material)\b/i,
+    test: /\b(supplier of equipment|semiconductor (processing )?equipment|equipment (vital|used) for semiconductor|process equipment|lithograph|deposition system|etch(ing)? system|wafer fabrication (tools|equipment)|materials (supplier|engineering)|specialty materials|automated test equipment|testing equipment|exploration|drilling|upstream supplier|raw material|process control|wafer inspection|yield enhancement|metrology)\b/i,
     stage: "upstream",
   },
   // Midstream: Fertigung / Foundry / Verarbeitung / Assembly / Refining / Midstream-Logistik
