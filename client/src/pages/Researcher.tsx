@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -159,6 +159,26 @@ export default function Researcher() {
     (Array.isArray(currentData.candidates) && currentData.candidates.length === 0) ||
     (Array.isArray(currentData.programmes) && currentData.programmes.length === 0)
   );
+
+  // Selbstheilung: ein duenner Cache-Eintrag (isStale=true, z.B. Capex mit
+  // programmes=[]) blieb bisher haengen, bis der Nutzer manuell "Aktualisieren"
+  // klickte — isStaleRefreshing deckt nur den Fall ab, in dem der Server
+  // BEREITS einen Hintergrund-Refresh gestartet hat (z.B. isStaleCache() bei
+  // einem noch teilweise befuellten Eintrag). Ein komplett leerer/degradierter
+  // Eintrag (kein Hintergrund-Refresh aktiv) loeste bislang gar keinen erneuten
+  // Fetch aus. Max. 1 automatischer force-Retry pro cacheKey, damit ein
+  // dauerhaft dünn liefernder Server (z.B. LLM down) nicht in eine Schleife
+  // aus teuren force-Calls läuft — danach bleibt der manuelle Button die
+  // einzige Eskalation, exakt wie im Normalfall.
+  const autoHealedKeysRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!isStale) return;
+    if (autoHealedKeysRef.current.has(cacheKey)) return;
+    autoHealedKeysRef.current.add(cacheKey);
+    const timer = setTimeout(() => runAnalysis(true), 500);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStale, cacheKey]);
 
   return (
     <div className="h-screen overflow-y-auto bg-background text-foreground">

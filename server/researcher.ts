@@ -40,6 +40,31 @@ const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 const RESEARCHER_TTL_MIN = 60 * 6; // 6 hours — keep researcher data fresh (current macro/fiscal context)
 
+// Capex-Selbstheilung: verhindert, dass ein zu duenner Cache-Eintrag (weniger
+// als der verifizierte Soll-Stand von 4 programmes) laenger als noetig
+// ausgeliefert wird, ohne dass ein Nutzer manuell "Aktualisieren" klicken muss.
+// isStaleCache() weiter unten deckt bereits den Fall komplett leerer Arrays ab
+// und startet dafuer selbst schon einen Hintergrund-Refresh — dieser Guard ist
+// zusaetzlich strenger (Schwelle 4 statt 0) und rate-limitiert, damit ein
+// dauerhaft duenn liefernder LLM nicht bei jedem Request neu angefragt wird.
+const CAPEX_MIN_PROGRAMMES = 4;
+const CAPEX_SELFHEAL_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 1x pro Region pro 6h
+const capexSelfHealAttempts = new Map<string, number>();
+
+function capexCacheIsThin(payload: any): boolean {
+  const n = Array.isArray(payload?.programmes) ? payload.programmes.length : 0;
+  return n < CAPEX_MIN_PROGRAMMES;
+}
+
+function capexSelfHealAllowed(region: string): boolean {
+  const last = capexSelfHealAttempts.get(region) ?? 0;
+  return Date.now() - last >= CAPEX_SELFHEAL_COOLDOWN_MS;
+}
+
+function markCapexSelfHealAttempt(region: string): void {
+  capexSelfHealAttempts.set(region, Date.now());
+}
+
 function safeKey(s: string): string {
   return s.replace(/[^a-zA-Z0-9_-]/g, "_").substring(0, 80);
 }
@@ -1406,15 +1431,36 @@ export function registerResearcherRoutes(app: Express) {
     };
     if (!force) {
       const cached = readResearcherCache("capex", region);
-      if (cached && !isStaleCache(cached)) {
+      if (cached && !isStaleCache(cached) && !capexCacheIsThin(cached)) {
         console.log(`[RESEARCHER/capex] cache HIT region=${region} age=${cached._cacheAge}min`);
         return res.json(cached);
+      }
+      // Duenner Cache-Eintrag (< CAPEX_MIN_PROGRAMMES) UND noch kein Selbstheilungs-
+      // Versuch in den letzten 6h fuer diese Region: einmal synchron neu bauen,
+      // statt den duennen Stand auszuliefern und auf den manuellen Klick zu warten.
+      if (cached && capexCacheIsThin(cached) && !isStaleCache(cached) && capexSelfHealAllowed(region)) {
+        markCapexSelfHealAttempt(region);
+        console.log(`[RESEARCHER/capex] self-heal region=${region} (thin cache, ${cached?.programmes?.length ?? 0} programmes)`);
+        try {
+          const fresh = await buildCapexFiscal(region);
+          writeCapexCacheIfRich(fresh);
+          if (!capexCacheIsThin(fresh)) return res.json(fresh);
+          // Selbstheilung ebenfalls duenn (z.B. LLM weiterhin schwach) — lieber den
+          // alten, aber vollstaendigeren Cache-Stand behalten als ihn zu ueberschreiben.
+          return res.json(cached);
+        } catch {
+          return res.json(cached);
+        }
       }
       if (cached && isStaleCache(cached)) {
         buildCapexFiscal(region)
           .then(r => writeCapexCacheIfRich(r))
           .catch(() => {});
         return res.json({ ...cached, _staleRefreshing: true });
+      }
+      if (cached && capexCacheIsThin(cached)) {
+        // duenn, aber Cooldown noch aktiv — Stand ausliefern, kein weiterer teurer Call
+        return res.json(cached);
       }
     }
     console.log(`[RESEARCHER/capex] building region=${region}`);
