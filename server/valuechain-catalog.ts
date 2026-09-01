@@ -254,11 +254,20 @@ export const PHASE2_INDUSTRIES: IndustryDef[] = [
     label: "Shipping / Ports / Logistics",
     gicsSector: "Industrials",
     fmpSector: "Industrials",
-    fmpIndustries: ["Marine Shipping", "Integrated Freight & Logistics", "General Transportation"],
+    fmpIndustries: ["Marine Shipping", "Integrated Freight & Logistics"],
+    // Flugzeug-/Bahn-Equipment-Leasing (AerCap, GATX, Wabtec, Trinity)
+    // liegt unter "Rental & Leasing Services"/"Railroads" -- weiterhin
+    // FMP-Sektor Industrials, additiv als fmpPairs.
+    fmpPairs: [
+      { sector: "Industrials", industry: "Marine Shipping" },
+      { sector: "Industrials", industry: "Integrated Freight & Logistics" },
+      { sector: "Industrials", industry: "Rental & Leasing Services" },
+      { sector: "Industrials", industry: "Railroads" },
+    ],
     stageAliases: {
-      upstream: [/\b(shipbuild|cargo aircraft lessor|port equipment manufactur)\b/i],
-      midstream: [/\b(liner (shipping|operator)|tanker (owner|operator)|owns and operates (a fleet|vessels)|dry bulk carrier)\b/i],
-      downstream: [/\b(port terminal operator|third[- ]party logistics|3pl provider|freight forward(er|ing))\b/i],
+      upstream: [/\b(shipbuild|cargo aircraft lessor|acquisition, leasing.{0,20}(and|,) sale of aircraft|equipment lessor|railcar and locomotive leasing|global freight railway|railroad freight car equipment|railway transportation solutions|port equipment manufactur)\b/i],
+      midstream: [/\b(liner (shipping|operator)|tanker (owner|operator)|owns and operates (a fleet|vessels)|dry bulk carrier|ownership and operation of (dry bulk|containerships|product tankers))\b/i],
+      downstream: [/\b(port terminal operator|third[- ]party logistics|3pl provider|freight forward(er|ing)|package delivery and logistics|global logistics and supply chain management)\b/i],
     },
     excludeKeywords: {
       downstream: [/\b(e[- ]?commerce retailer|online retail(er)?)\b/i],
@@ -271,13 +280,23 @@ export const PHASE2_INDUSTRIES: IndustryDef[] = [
     label: "Telecom-Infrastruktur",
     gicsSector: "Communication Services",
     fmpSector: "Communication Services",
-    fmpIndustries: ["Communication Equipment", "Telecommunications Services", "REIT - Specialty"],
+    fmpIndustries: ["Telecommunications Services"],
+    // Communication Equipment (Nokia, Ericsson, Ciena, Lumentum, Viavi)
+    // liegt unter FMP-Sektor Technology, nicht Communication Services;
+    // Tower-REITs (AMT/CCI/SBAC) liegen unter Real Estate -- deshalb
+    // fmpPairs.
+    fmpPairs: [
+      { sector: "Communication Services", industry: "Telecommunications Services" },
+      { sector: "Technology", industry: "Communication Equipment" },
+      { sector: "Real Estate", industry: "REIT - Specialty" },
+    ],
     stageAliases: {
-      upstream: [/\b(tower (equipment|construction) (manufactur|supplier)|optical fiber (vendor|manufactur)|radio access network|ran equipment)\b/i],
-      midstream: [/\b(tower reit|owns and operates (wireless )?towers|fiber wholesale|wholesale fiber network)\b/i],
-      downstream: [/\b(mobile network operator|wireless carrier|cable operator|broadband (provider|internet service))\b/i],
+      upstream: [/\b(delivering comprehensive network infrastructure|global supplier of communication infrastructure|optical (and photonic )?(product|component) manufactur|focused on telecommunications infrastructure|radio access network|ran equipment|tower (equipment|construction) (manufactur|supplier))\b/i],
+      midstream: [/\b(tower reit|multitenant communications real estate|cellular communication towers|wireless communication infrastructure|owns and operates (wireless )?towers|fiber wholesale|wholesale fiber network)\b/i],
+      downstream: [/\b(mobile telecommunications services|wireless (voice and data|carrier)|cable communications|media and technology conglomerate|telecommunications (conglomerate|leader|service provider)|mobile network operator|broadband (provider|internet service))\b/i],
     },
     excludeKeywords: {
+      upstream: [/\bdata center (power|cooling)\b/i],
       downstream: [/\b(social (media|network)|search engine|advertising platform)\b/i],
     },
     notes: "NICHT: Meta/Google als Telecom-Downstream.",
@@ -288,11 +307,20 @@ export const PHASE2_INDUSTRIES: IndustryDef[] = [
     label: "Food & Agri",
     gicsSector: "Consumer Staples",
     fmpSector: "Consumer Defensive",
-    fmpIndustries: ["Agricultural Inputs", "Farm Products", "Agricultural Farm Products", "Packaged Foods", "Beverages - Non-Alcoholic"],
+    fmpIndustries: ["Packaged Foods", "Beverages - Non-Alcoholic", "Agricultural Farm Products", "Grocery Stores"],
+    // Agricultural Inputs (Corteva/Nutrien/CF/Mosaic) liegt unter FMP-
+    // Sektor Basic Materials, nicht Consumer Defensive -- deshalb fmpPairs.
+    fmpPairs: [
+      { sector: "Basic Materials", industry: "Agricultural Inputs" },
+      { sector: "Consumer Defensive", industry: "Agricultural Farm Products" },
+      { sector: "Consumer Defensive", industry: "Packaged Foods" },
+      { sector: "Consumer Defensive", industry: "Beverages - Non-Alcoholic" },
+      { sector: "Consumer Defensive", industry: "Grocery Stores" },
+    ],
     stageAliases: {
-      upstream: [/\b(seed (producer|company)|fertilizer manufactur|farm equipment manufactur|commodity agri(cultural)? (trading|trader))\b/i],
-      midstream: [/\b(food processor|meat packer|packing (plant|company)|beverage bottler|processes and packages)\b/i],
-      downstream: [/\b(grocery (retail|store|chain)|foodservice distributor|supermarket operator)\b/i],
+      upstream: [/\b(seed (producer|company|and crop protection)|develops and supplies advanced germplasm|fertilizer manufactur|supplier of essential agricultural resources|producer and distributor of (hydrogen and nitrogen|crop nutrients)|concentrated phosphate and potash|farm equipment manufactur|commodity agri(cultural)? (trading|trader))\b/i],
+      midstream: [/\b(food processor|meat packer|packing (plant|company)|beverage bottler|processes and packages|sourcing, transportation, storage, processing|global food producer|agribusiness and food corporation|manufactures and sells .{0,20}beverages|production, marketing, and distribution of non[- ]alcoholic beverages)\b/i],
+      downstream: [/\b(grocery (retail|store|chain)|retailer that specializes in providing fresh|foodservice distributor|supermarket operator|integrated food and drug stores)\b/i],
     },
     notes: "NICHT: Restaurant-Kette ohne Processor-Mitte erzwingen -- lieber Gate-Fail als 2-Stufen-Fake.",
   },
@@ -304,9 +332,9 @@ export const PHASE2_INDUSTRIES: IndustryDef[] = [
     fmpSector: "Consumer Cyclical",
     fmpIndustries: ["Luxury Goods", "Apparel - Manufacturers", "Apparel - Footwear & Accessories", "Apparel - Retail"],
     stageAliases: {
-      upstream: [/\b(leather (goods|tannery)|textile (manufactur|mill)|cashmere (producer|supplier)|watch mouvement|movement manufactur)\b/i],
-      midstream: [/\b(manufactures? in[- ]house|atelier|brand manufactur|in[- ]house production)\b/i],
-      downstream: [/\b(maison retail|wholesale luxury|branded apparel retail|operates (boutiques|retail stores)|retail (stores|boutiques) (and|selling))\b/i],
+      upstream: [/\b(leather (goods|tannery)|textile (manufactur|mill)|cashmere (producer|supplier)|watch mouvement|movement manufactur|designs? and sources? (a broad|premium) (collection|lifestyle))\b/i],
+      midstream: [/\b(manufactures? in[- ]house|atelier|brand manufactur|in[- ]house production|production, wholesale, and retail|design, production, marketing, and .{0,20}distribut|global producer and seller of .{0,20}clothing|conceptualization, promotion, and distribution)\b/i],
+      downstream: [/\b(maison retail|wholesale luxury|branded apparel retail|off[- ]price retail|discount retailer|operates (boutiques|retail stores)|retail (stores|boutiques) (and|selling)|design, global distribution, and retail)\b/i],
     },
     excludeKeywords: {
       midstream: [/\bfast[- ]fashion\b/i],
@@ -319,11 +347,20 @@ export const PHASE2_INDUSTRIES: IndustryDef[] = [
     label: "Batterie / EV",
     gicsSector: "Consumer Discretionary",
     fmpSector: "Consumer Cyclical",
-    fmpIndustries: ["Auto - Manufacturers", "Specialty Chemicals", "Electrical Equipment & Parts"],
+    fmpIndustries: ["Auto - Manufacturers"],
+    // Lithium-Miner (LAC/PLL) liegen unter FMP-Industry "Industrial
+    // Materials", Lithiumchemie (ALB/SQM) unter "Chemicals - Specialty" --
+    // beide unter Basic Materials, nicht Consumer Cyclical -- fmpPairs.
+    fmpPairs: [
+      { sector: "Consumer Cyclical", industry: "Auto - Manufacturers" },
+      { sector: "Basic Materials", industry: "Industrial Materials" },
+      { sector: "Basic Materials", industry: "Chemicals - Specialty" },
+      { sector: "Consumer Cyclical", industry: "Auto - Parts" },
+    ],
     stageAliases: {
-      upstream: [/\b(lithium (mining|producer|extraction)|nickel sulfate|cobalt (mining|refin)|cathode (material|manufactur)|anode (material|manufactur)|separator (film|manufactur))\b/i],
-      midstream: [/\b(battery cell (manufactur|producer)|gigafactory|battery pack (manufactur|assembly))\b/i],
-      downstream: [/\b(electric vehicle (manufactur|maker|oem)|ev (manufacturer|maker)|manufactures? (battery[- ])?electric vehicles)\b/i],
+      upstream: [/\b(exploration and development of lithium|lithium (mining|producer|extraction|deposits)|nickel sulfate|cobalt (mining|refin)|cathode (material|manufactur)|anode (material|manufactur)|separator (film|manufactur)|engineered specialty chemicals)\b/i],
+      midstream: [/\b(battery cell (manufactur|producer)|gigafactory|battery pack (manufactur|assembly)|solid[- ]state lithium[- ]metal batteries)\b/i],
+      downstream: [/\b(electric vehicle(s)?,? (alongside|and)|design(s|ing)?,? (engineering,? )?and manufacturing of electric vehicles|intelligent electric vehicles|new energy vehicle market|electric vehicle \(ev\) technolog(y|ies)|electric vehicle (manufactur|maker|oem)|ev (manufacturer|maker)|manufactures? (battery[- ])?electric vehicles)\b/i],
     },
     excludeKeywords: {
       downstream: [/\blegacy (oem|automaker) without (battery|cell) production\b/i],
@@ -337,13 +374,23 @@ export const PHASE2_INDUSTRIES: IndustryDef[] = [
     gicsSector: "Utilities",
     fmpSector: "Utilities",
     fmpIndustries: ["Regulated Electric", "Diversified Utilities", "General Utilities", "Independent Power Producers"],
+    // Turbinen-/Nuklear-Equipment-Hersteller (GE Vernova, BWXT) liegen
+    // unter FMP-Sektor Industrials, nicht Utilities -- deshalb fmpPairs.
+    fmpPairs: [
+      { sector: "Utilities", industry: "Regulated Electric" },
+      { sector: "Utilities", industry: "Diversified Utilities" },
+      { sector: "Utilities", industry: "General Utilities" },
+      { sector: "Utilities", industry: "Independent Power Producers" },
+      { sector: "Industrials", industry: "Industrial - Machinery" },
+      { sector: "Industrials", industry: "Aerospace & Defense" },
+    ],
     stageAliases: {
-      upstream: [/\b(power generation equipment|nuclear steam supply|gas turbine manufactur)\b/i],
-      midstream: [/\b(regulated (electric )?(generation|transmission)|owns and operates (power plants|generation and transmission)|electric transmission (and|&) distribution)\b/i],
-      downstream: [/\b(retail electricity (provider|supplier)|regulated utility retail|distributes electricity to (residential|retail) customers)\b/i],
+      upstream: [/\b(power generation equipment|nuclear steam supply|gas turbine manufactur|energy enterprise primarily engaged in generating electricity|production and sale of nuclear components)\b/i],
+      midstream: [/\b(regulated (electric )?(generation|transmission)|owns and operates (power plants|generation and transmission)|electric transmission (and|&) distribution|electric power provider|electric utility holding company)\b/i],
+      downstream: [/\b(retail electricity (provider|supplier)|regulated utility retail|distributes electricity to customers|supplies electric power to approximately|provides electricity and natural gas to approximately|furnishes electricity to)\b/i],
     },
     excludeKeywords: {
-      upstream: [/\b(wind turbine|solar module|solar panel)\b/i],
+      upstream: [/\b(pure[- ]play wind turbine manufactur|pure[- ]play solar module manufactur)\b/i],
     },
     notes: "Renewable-OEM bleibt Renewables-Upstream, NICHT Utilities-Upstream.",
   },
@@ -355,9 +402,9 @@ export const PHASE2_INDUSTRIES: IndustryDef[] = [
     fmpSector: "Financial Services",
     fmpIndustries: ["Financial - Data & Stock Exchanges", "Financial - Capital Markets", "Financial - Credit Services"],
     stageAliases: {
-      upstream: [/\b(card (network|rail) infrastructure|payment processor core|securities exchange matching engine|custody infrastructure)\b/i],
-      midstream: [/\b(merchant acquir(er|ing)|clearing house|prime brokerage infrastructure|card scheme|payment network operator)\b/i],
-      downstream: [/\b(consumer payments app|broker[- ]dealer (front[- ]end|platform)|neobank|digital banking app)\b/i],
+      upstream: [/\b(card (network|rail) infrastructure|payment processor core|securities exchange matching engine|custody infrastructure|manages (international marketplaces|a global network of regulated financial venues)|exchange of futures and options|global leader in risk assessment)\b/i],
+      midstream: [/\b(merchant acquir(er|ing)|clearing house|prime brokerage infrastructure|card scheme|payment network operator|technology company (dedicated to|specializing in) payments|transaction processing and .{0,20}payment solutions)\b/i],
+      downstream: [/\b(consumer payments app|broker[- ]dealer (front[- ]end|platform)|financial services platform available to users|neobank|digital (and mobile-first commerce|banking) platform|digital banking app|online financial solutions|worldwide technological framework that facilitates digital financial transactions)\b/i],
     },
     excludeKeywords: {
       downstream: [/\buniversal bank\b/i],
@@ -373,9 +420,9 @@ export const PHASE2_INDUSTRIES: IndustryDef[] = [
     fmpSector: "Real Estate",
     fmpIndustries: ["Real Estate - Development", "REIT - Diversified", "REIT - Industrial", "REIT - Office", "REIT - Residential", "REIT - Retail", "Real Estate - Services"],
     stageAliases: {
-      upstream: [/\b(land (development|developer)|construction (services )?for (commercial|property)|property construction contractor)\b/i],
-      midstream: [/\b(reit (that owns|owner)|owns(,| and) operates.{0,30}(properties|real estate)|rental property portfolio|owns and manages a portfolio)\b/i],
-      downstream: [/\b(real estate (brokerage|services) (company|firm)|property (management|services) company)\b/i],
+      upstream: [/\b(real estate development firm|real estate development,? asset management|developing residential lots|aviation infrastructure development|land (development|developer)|construction (services )?for (commercial|property)|property construction contractor)\b/i],
+      midstream: [/\b(reit (that owns|owner)|real estate investment trust|net lease real estate|owns(,| and) operates.{0,30}(properties|real estate)|rental property portfolio|owns and manages a portfolio|acquisition, ownership, and management of)\b/i],
+      downstream: [/\b(commercial real estate services|global professional services firm, specializing in .{0,30}real estate|real estate (brokerage|services) (company|firm)|property (management|services) company|residential property management)\b/i],
     },
     excludeKeywords: {
       midstream: [/\b(data center reit|hyperscale)\b/i],
