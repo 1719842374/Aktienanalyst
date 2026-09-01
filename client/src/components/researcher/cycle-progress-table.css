@@ -12,6 +12,11 @@ div:has(> [data-testid="table-sector-rotation"]) {
   width: 100%;
 }
 
+/* Risiko & Bewertung: etwas breiter als max-w-6xl, volle 9 Zeilen ohne inneren Scroll. */
+main.max-w-6xl:has([data-testid="table-sector-rotation"]) {
+  max-width: 80rem;
+}
+
 [data-testid="table-sector-rotation"] [data-testid^="cycle-progress-row-"] {
   overflow-x: hidden;
 }
