@@ -1,4 +1,4 @@
-/* Layout lives in SectorRotationPanel.tsx. No height overrides. */
+/* Layout in SectorRotationPanel.tsx. Kill mini-scrollbars from overflow-x + fixed height. */
 
 div:has(> [data-testid="table-sector-rotation"]) {
   overflow: visible !important;
@@ -9,6 +9,11 @@ div:has(> [data-testid="table-sector-rotation"]) {
 
 [data-testid="table-sector-rotation"] {
   width: 100%;
+}
+
+[data-testid="bar-cycle-progress"] {
+  overflow: visible !important;
+  height: auto !important;
 }
 
 main.max-w-6xl:has([data-testid="table-sector-rotation"]) {
