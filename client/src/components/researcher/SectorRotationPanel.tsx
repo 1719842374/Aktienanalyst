@@ -8,8 +8,10 @@
  * phase/phaseConfidence/recommendations/dataQuality). Server/Engine unveraendert.
  */
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
-import { PieChart, Pie, Cell, Tooltip as PieTooltip, ResponsiveContainer } from "recharts";
+import {
+  AlertTriangle, Loader2, RefreshCw,
+  Monitor, Radio, ShoppingBag, Factory, Landmark, Fuel, HeartPulse, ShoppingCart, Plug,
+} from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 
 type Valuation = "Teuer" | "Angemessen" | "Attraktiv" | "n.v.";
@@ -61,6 +63,19 @@ const SECTOR_COLORS: Record<string, string> = {
 };
 const FALLBACK_COLOR = "#64748b";
 
+// Icon je Sektor fuer den 3D-Ring (Bild-Referenz: Icon direkt im Segment).
+const SECTOR_ICONS: Record<string, typeof Monitor> = {
+  technology: Monitor,
+  communication: Radio,
+  discretionary: ShoppingBag,
+  industrials: Factory,
+  financials: Landmark,
+  energy: Fuel,
+  healthcare: HeartPulse,
+  staples: ShoppingCart,
+  utilities: Plug,
+};
+
 const PHASE_ORDER: CyclePhase[] = ["Frühzyklus", "Hochkonjunktur", "Spätkonjunktur", "Abschwung"];
 const PHASE_DESCRIPTION: Record<CyclePhase, string> = {
   Frühzyklus: "Erholung nach Rezession — Wachstumserwartungen, Investitionen und Risikobereitschaft steigen.",
@@ -77,6 +92,156 @@ function fmtPct(x: number | null): string {
 function fmtNum(x: number | null, d = 1): string {
   if (x == null || !Number.isFinite(x)) return "n/a";
   return x.toFixed(d);
+}
+
+// ─── 3D-Ring-Sektorradar (Bild-Referenz "Sektorrotations-Rat") ────────────
+// Format 1:1 wie die Design-Vorlage: dicke Ring-Segmente mit isometrischem
+// Tiefen-Effekt (Gradient hell->dunkel + Schatten-Boden-Ellipse), Icon +
+// Label direkt im Segment. Reines SVG, keine neue Lib, Farben frei waehlbar
+// (nicht 1:1 Board-Farben, aber gleiches raeumliches Format).
+const RING_CENTER = 150;
+const RING_OUTER = 130;
+const RING_INNER = 78;
+const RING_DEPTH = 14; // Extrusions-Tiefe (Boden-Versatz nach unten)
+const GAP_DEG = 1.4; // kleiner Spalt zwischen Segmenten
+
+function polar(cx: number, cy: number, r: number, deg: number): { x: number; y: number } {
+  const rad = ((deg - 90) * Math.PI) / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function ringSegmentPath(
+  cx: number, cy: number, rOuter: number, rInner: number,
+  startDeg: number, endDeg: number, depth: number
+): { top: string; wall: string } {
+  const s = startDeg + GAP_DEG / 2;
+  const e = endDeg - GAP_DEG / 2;
+  const largeArc = e - s > 180 ? 1 : 0;
+
+  const oStart = polar(cx, cy, rOuter, s);
+  const oEnd = polar(cx, cy, rOuter, e);
+  const iStart = polar(cx, cy, rInner, s);
+  const iEnd = polar(cx, cy, rInner, e);
+
+  // Deckflaeche (Top-Face) — die eigentliche Ring-Kachel
+  const top = [
+    `M ${oStart.x} ${oStart.y}`,
+    `A ${rOuter} ${rOuter} 0 ${largeArc} 1 ${oEnd.x} ${oEnd.y}`,
+    `L ${iEnd.x} ${iEnd.y}`,
+    `A ${rInner} ${rInner} 0 ${largeArc} 0 ${iStart.x} ${iStart.y}`,
+    "Z",
+  ].join(" ");
+
+  // Aussenwand (Extrusion nach unten) — erzeugt den 3D-Tiefen-Eindruck nur
+  // am unteren Aussenbogen, analog zur Board-Illustration.
+  const oStartD = { x: oStart.x, y: oStart.y + depth };
+  const oEndD = { x: oEnd.x, y: oEnd.y + depth };
+  const wall = [
+    `M ${oStart.x} ${oStart.y}`,
+    `A ${rOuter} ${rOuter} 0 ${largeArc} 1 ${oEnd.x} ${oEnd.y}`,
+    `L ${oEndD.x} ${oEndD.y}`,
+    `A ${rOuter} ${rOuter} 0 ${largeArc} 0 ${oStartD.x} ${oStartD.y}`,
+    "Z",
+  ].join(" ");
+
+  return { top, wall };
+}
+
+interface RingSectorDatum {
+  id: string;
+  name: string;
+  color: string;
+  risk: number;
+  valuation: string;
+  attractiveness: number;
+  phaseFit: number;
+}
+
+function SectorRadarRing({ sectors }: { sectors: RingSectorDatum[] }) {
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const n = sectors.length;
+  const step = n > 0 ? 360 / n : 0;
+
+  const hoverDatum = sectors.find(s => s.id === hoverId) || null;
+  const midAngleFor = (i: number) => i * step + step / 2;
+
+  return (
+    <div className="relative" data-testid="chart-sector-radar-donut">
+      <svg viewBox="0 0 300 300" className="w-full h-auto max-h-[260px]">
+        <defs>
+          {sectors.map(s => (
+            <linearGradient key={s.id} id={`ring-grad-${s.id}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={s.color} stopOpacity={hoverId && hoverId !== s.id ? 0.35 : 1} />
+              <stop offset="100%" stopColor={s.color} stopOpacity={hoverId && hoverId !== s.id ? 0.2 : 0.75} />
+            </linearGradient>
+          ))}
+        </defs>
+
+        {/* Boden-Schatten-Ellipse fuer den isometrischen Eindruck */}
+        <ellipse cx={RING_CENTER} cy={RING_CENTER + RING_DEPTH + 2} rx={RING_OUTER} ry={RING_OUTER * 0.34} fill="black" opacity={0.18} />
+
+        {/* Aussenwaende zuerst (liegen "unter" den Deckflaechen) */}
+        {sectors.map((s, i) => {
+          const start = i * step;
+          const end = start + step;
+          const { wall } = ringSegmentPath(RING_CENTER, RING_CENTER, RING_OUTER, RING_INNER, start, end, RING_DEPTH);
+          return <path key={`wall-${s.id}`} d={wall} fill={s.color} opacity={hoverId && hoverId !== s.id ? 0.25 : 0.55} />;
+        })}
+
+        {/* Deckflaechen (Top-Faces) mit Hover-Interaktion */}
+        {sectors.map((s, i) => {
+          const start = i * step;
+          const end = start + step;
+          const { top } = ringSegmentPath(RING_CENTER, RING_CENTER, RING_OUTER, RING_INNER, start, end, RING_DEPTH);
+          return (
+            <path
+              key={`top-${s.id}`}
+              d={top}
+              fill={`url(#ring-grad-${s.id})`}
+              stroke="var(--card)"
+              strokeWidth={1.5}
+              className="cursor-pointer transition-opacity"
+              onMouseEnter={() => setHoverId(s.id)}
+              onMouseLeave={() => setHoverId(null)}
+              data-testid={`sector-radar-segment-${s.id}`}
+            />
+          );
+        })}
+
+        {/* Icon + Label je Segment (Bild-Referenz: Icon zentriert im Segment) */}
+        {sectors.map((s, i) => {
+          const mid = midAngleFor(i);
+          const iconR = (RING_OUTER + RING_INNER) / 2;
+          const pos = polar(RING_CENTER, RING_CENTER, iconR, mid);
+          const Icon = SECTOR_ICONS[s.id];
+          return (
+            <g key={`label-${s.id}`} opacity={hoverId && hoverId !== s.id ? 0.45 : 1} className="pointer-events-none">
+              {Icon && (
+                <foreignObject x={pos.x - 9} y={pos.y - 9} width={18} height={18}>
+                  <Icon className="w-[18px] h-[18px] text-white drop-shadow-sm" strokeWidth={2} />
+                </foreignObject>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+
+      {/* Zentrale Info: Hover-Detail oder neutraler Hinweis */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="text-center px-4">
+          {hoverDatum ? (
+            <>
+              <div className="text-[11px] font-semibold text-foreground/90">{hoverDatum.name}</div>
+              <div className="text-[9px] text-foreground/60 mt-0.5">Risiko {hoverDatum.risk} · {hoverDatum.valuation}</div>
+              <div className="text-[9px] text-foreground/60">Attr. {fmtNum(hoverDatum.attractiveness, 1)} · Fit {hoverDatum.phaseFit}</div>
+            </>
+          ) : (
+            <div className="text-[9px] text-foreground/40 uppercase tracking-wider">Sektorradar</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function SectorRotationPanel() {
@@ -203,41 +368,10 @@ export function SectorRotationPanel() {
             </div>
           </div>
 
-          {/* Block 4: Sektorradar (Donut) */}
+          {/* Block 4: Sektorradar — 3D-Ring im Format der Design-Vorlage */}
           <div className="rounded-lg border border-border/40 bg-card/30 p-3">
             <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Sektorradar</div>
-            <div className="h-[220px]" data-testid="chart-sector-radar-donut">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={donutData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={55}
-                    outerRadius={80}
-                    stroke="var(--card)"
-                    strokeWidth={2}
-                  >
-                    {donutData.map(d => <Cell key={d.id} fill={d.color} />)}
-                  </Pie>
-                  <PieTooltip
-                    content={({ payload }) => {
-                      const d = payload?.[0]?.payload;
-                      if (!d) return null;
-                      return (
-                        <div className="rounded-md border border-border/50 bg-popover px-2.5 py-1.5 text-[10px] shadow-lg">
-                          <div className="font-semibold text-foreground/90">{d.name}</div>
-                          <div className="text-foreground/60 mt-0.5">Risiko: {d.risk} · {d.valuation}</div>
-                          <div className="text-foreground/60">Attraktivität: {fmtNum(d.attractiveness, 1)} · Phase-Fit: {d.phaseFit}</div>
-                        </div>
-                      );
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+            <SectorRadarRing sectors={donutData} />
             <div className="flex items-center justify-between text-[9px] text-foreground/40 mt-1 px-1">
               <span>AGGRESSIV / ZYKLISCH</span>
               <span>DEFENSIV</span>
