@@ -1,8 +1,8 @@
 # WORK_IST_VS_SOLL.md — Code vs. WORK-Specs
 
-> **Stand Audit:** 01.09.2026 18:15 CEST
+> **Stand Audit:** 01.09.2026 20:30 CEST
 > **Repo:** `1719842374/Aktienanalyst`
-> **HEAD:** `a02ad19` (Valuechain Phase 2: 8 neue GICS-Sektoren)
+> **HEAD:** `9ecaf8e` (Banner P1.1–P1.3 done)
 > **Regel:** Ist nur aus Code. ✅ Kern im Code · 🟡 Kern da, Spec-Zusatz fehlt · ⬜ Spec ohne Engine/UI.
 > **tsc-Baseline:** 97 Fehler.
 
@@ -22,8 +22,8 @@ Scoreboard Feature-Docs (ohne Index `WORK.md`):
 
 | Ampel | Anzahl | Anteil |
 |-------|--------|--------|
-| ✅ Kern umgesetzt | 27 | 87 % |
-| 🟡 teilweise | 4 | 13 % |
+| ✅ Kern umgesetzt | 30 | 97 % |
+| 🟡 teilweise | 1 | 3 % |
 | ⬜ offen | 0 | 0 % |
 
 ---
@@ -56,7 +56,7 @@ Keine offene Radar-/Liquidity-Route.
 | 1 | WORK.md | Index | Navigation + Cache-Docs | 📄 | Root |
 | 1b | WORK_ANALYZE_DISK_CACHE.md | 7d KI-Catch | L2-Schicht + Patch | ✅ | disk-cache |
 | 1c | WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md | Wiring | disk-cache live | ✅ | |
-| 2 | WORK2.md | Regulatory/PESTEL | Gate da, Risks lazy | 🟡 | regulatory.ts |
+| 2 | WORK2.md | Regulatory/PESTEL | PESTEL-Risks live, kein Hardcoding | ✅ | regulatory.ts (`c83e543`, PR #43) |
 | 3 | WORK_ANTIBIAS_DCF.md | eine Schicht, g* | ja | ✅ | invertedDcf |
 | 4 | WORK_BIAS_FIXES_INVERSE_DCF.md | BL + Portfolio-MC | Reverse Opt Π, BL, Cholesky-MC | ✅ | blackLitterman.ts (D2, `08e8938`) |
 | 5 | WORK_BTC_MINER.md | Hash Ribbons/Puell | ja | ✅ | btc-miner.ts |
@@ -69,10 +69,10 @@ Keine offene Radar-/Liquidity-Route.
 | 12 | WORK_RESEARCHER_BUTTONS_APPLY.md | Phase-2 Buttons | verdrahtet | ✅ | TickerAddButtons |
 | 13 | WORK_RESEARCHER_LIQUIDITY_REGIME.md | WALCL/RRP/TGA | live GET `/api/researcher/liquidity` | ✅ | liquidity-regime.ts (C2, `f0931d86`) |
 | 14 | WORK_RESEARCHER_PORTFOLIO.md | P1/P2/P3 | ja | ✅ | |
-| 15 | WORK_RESEARCHER_PORTFOLIO_TEIL2.md | δ/Cap/HHI | Konstanten ja | 🟡 | |
+| 15 | WORK_RESEARCHER_PORTFOLIO_TEIL2.md | δ/Cap/HHI | Fixture Q + UI auf main | ✅ | test-portfolio-teil2.ts (`d6b41b3`, PR #44) |
 | 16 | WORK_RESEARCHER_SECTOR_ADD.md | Add-Buttons | Code hat Buttons | ✅ | |
 | 17 | WORK_REVERSE_DCF_BRIDGE.md | Fiscal in DCF | Teil 3 live in `/api/analyze` | ✅ | fiscal-bridge.ts (D3) |
-| 18 | WORK_SCORING_VORLAGE.md | Gates + Lookahead | Pipeline ja | 🟡 | scoring-gates.ts |
+| 18 | WORK_SCORING_VORLAGE.md | Gates + Lookahead | Pipeline + Lookahead-Fixture | ✅ | scoring-gates.ts (`9215cee`, PR #45) |
 | 19 | WORK_SECTION4_DATA_BUGS.md | PEG + FCF | PEG ja + FCF-Fix | ✅ | Section4.tsx |
 | 20 | WORK_SEGMENT_DEDUP.md | Cross-Dedup | Name + Alias | ✅ | fmp.ts |
 | 21 | WORK_SEKTORROTATIONS_RAT.md | Radar | P0–P3 Engine+Route+Tabelle+Donut/Ring+Zyklus-Karten live | ✅ | SectorRotationPanel (`480e98a`/`ce68d10`/`ed71688`) |
@@ -90,12 +90,12 @@ Keine offene Radar-/Liquidity-Route.
 - **C1 P2/P3 (01.09.2026):** Donut/3D-Ring, 2D-Radar, Zyklusfortschritt-Leiste in `SectorRotationPanel.tsx` (`480e98a`/`ce68d10`/`ed71688` + Follow-ups). Nicht neu bauen.
 - Sprint D1–D6c (Lynch, BL+MC, Fiscal, GENIUS, Gold Multi-OLS, Valuechain-Kern+Nav+KI)
 - **Valuechain Phase 1–2 (01.09.2026):** `4401ce6` Pharma/Medtech/Renewables/Data-Center/Kupfer/Chemie-Stahl; `a02ad19` 8 weitere GICS-Ketten. Kupfer-Downstream-Gate ehrlich rot. Rang 7–9 nicht angefasst.
+- **P1.1 WORK2 (01.09.2026):** `c83e543` PR #43, PESTEL-Risks. Nicht neu bauen.
+- **P1.2 TEIL2 (01.09.2026):** `d6b41b3` PR #44, Fixture Q. Nicht neu bauen.
+- **P1.3 Scoring (01.09.2026):** `9215cee` PR #45, Lookahead-Fixture. Nicht neu bauen.
 
 ## 3. Offen (🟡)
 
-- **WORK2** Regulatory/PESTEL — Gate da, Risks lazy (P1.1)
-- **WORK_RESEARCHER_PORTFOLIO_TEIL2** — δ/Cap/HHI (P1.2)
-- **WORK_SCORING_VORLAGE** — Lookahead-Details (P1.3)
 - **D6 Rang 7–9** — Custom Edges/Animation/Redis; `@xyflow/react` nur nach Entscheidung. CSS-Karten bleiben.
 
 `Future_Work.md` ist Roadmap, kein Ticket. Siehe `WORK_IMPLEMENTIERUNG_OFFEN.md`.
