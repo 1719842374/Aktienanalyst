@@ -1,4 +1,4 @@
-/* Layout lives in SectorRotationPanel.tsx. Keep only container width/overflow. */
+/* Layout lives in SectorRotationPanel.tsx. No height overrides. */
 
 div:has(> [data-testid="table-sector-rotation"]) {
   overflow: visible !important;
