@@ -730,31 +730,38 @@ export function SectorRotationPanel() {
       {data && (
         <div>
         <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Risiko & Bewertung</div>
-        <div className="overflow-x-auto rounded-lg border border-border/40">
-          <table className="w-full text-left" data-testid="table-sector-rotation">
+        {/* Bugfix (Nutzer-Feedback): Container/Zeilen waren zu eng, die Zyklus-
+            fortschritt-Balken hingen ohne sichtbaren Abstand aneinander --
+            wirkte wie eine durchgehende Masse statt klar getrennter Zeilen.
+            Groesseres Zeilen-Padding (py-1.5 -> py-3) + breitere Zyklus-
+            fortschritt-Spalte (min-w-[110px] -> min-w-[160px], eigenes
+            Innen-Padding py-1) schaffen sichtbaren Luftraum zwischen den
+            Sektorzeilen, insbesondere auf schmalen/mobilen Breiten. */}
+        <div className="overflow-x-auto rounded-lg border border-border/40 p-1">
+          <table className="w-full text-left border-separate border-spacing-0" data-testid="table-sector-rotation">
             <thead>
               <tr className="text-[10px] uppercase tracking-wider text-foreground/40 border-b border-border/40">
-                <th className="px-2 py-1.5 font-medium">Sektor</th>
-                <th className="px-2 py-1.5 font-medium">ETF</th>
-                <th className="px-2 py-1.5 font-medium">Risiko 1–5</th>
-                <th className="px-2 py-1.5 font-medium">Bewertung</th>
-                <th className="px-2 py-1.5 font-medium">Attraktivität</th>
-                <th className="px-2 py-1.5 font-medium">6M</th>
-                <th className="px-2 py-1.5 font-medium">Phase-Fit</th>
-                <th className="px-2 py-1.5 font-medium">Zyklusfortschritt</th>
+                <th className="px-3 py-2.5 font-medium">Sektor</th>
+                <th className="px-3 py-2.5 font-medium">ETF</th>
+                <th className="px-3 py-2.5 font-medium">Risiko 1–5</th>
+                <th className="px-3 py-2.5 font-medium">Bewertung</th>
+                <th className="px-3 py-2.5 font-medium">Attraktivität</th>
+                <th className="px-3 py-2.5 font-medium">6M</th>
+                <th className="px-3 py-2.5 font-medium">Phase-Fit</th>
+                <th className="px-3 py-2.5 font-medium">Zyklusfortschritt</th>
               </tr>
             </thead>
             <tbody>
               {(data.sectors || []).map(s => (
                 <tr key={s.id} className="border-b border-border/20 text-[11px]">
-                  <td className="px-2 py-1.5 font-medium text-foreground/90">{s.label}</td>
-                  <td className="px-2 py-1.5 font-mono text-foreground/60">{s.etf}</td>
-                  <td className="px-2 py-1.5 tabular-nums">{s.risk}</td>
-                  <td className={`px-2 py-1.5 ${VAL_CLASS[s.valuation] || ""}`}>{s.valuation}</td>
-                  <td className="px-2 py-1.5 tabular-nums">{fmtNum(s.attractiveness, 1)}</td>
-                  <td className="px-2 py-1.5 tabular-nums">{fmtPct(s.return6M)}</td>
-                  <td className="px-2 py-1.5 tabular-nums">{s.phaseFit}</td>
-                  <td className="px-2 py-1.5 min-w-[110px]" data-testid={`cycle-progress-row-${s.id}`}>
+                  <td className="px-3 py-3 font-medium text-foreground/90">{s.label}</td>
+                  <td className="px-3 py-3 font-mono text-foreground/60">{s.etf}</td>
+                  <td className="px-3 py-3 tabular-nums">{s.risk}</td>
+                  <td className={`px-3 py-3 ${VAL_CLASS[s.valuation] || ""}`}>{s.valuation}</td>
+                  <td className="px-3 py-3 tabular-nums">{fmtNum(s.attractiveness, 1)}</td>
+                  <td className="px-3 py-3 tabular-nums">{fmtPct(s.return6M)}</td>
+                  <td className="px-3 py-3 tabular-nums">{s.phaseFit}</td>
+                  <td className="px-3 py-3 min-w-[160px]" data-testid={`cycle-progress-row-${s.id}`}>
                     {data && <SectorCycleProgressBar phase={data.phase} phaseFit={s.phaseFit} compact />}
                   </td>
                 </tr>
