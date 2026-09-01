@@ -1,13 +1,19 @@
 /**
- * SectorRotationPanel — Sprint C1 P1 (Tabelle).
- * Spec WORK_SEKTORROTATIONS_RAT.md §3.3 Block 1 + §6 Quellenzeile.
- * P2 Donut / P3 Zyklus-Karten: nicht in diesem Slice.
+ * SectorRotationPanel — Sprint C1 P0-P3.
+ * Spec WORK_SEKTORROTATIONS_RAT.md §3.3 alle 4 Bloecke + §6 Quellenzeile.
+ * P0/P1 (Engine/Route/Tabelle) siehe Commit 9aa6f9a.
+ * P2 (Sektorradar-Donut) + P3 (Zyklus-Ring + 4 Empfehlungskarten) hier ergaenzt
+ * -- rein additiv im Client, KEIN neues API-Feld (Response deckt §3.4 bereits
+ * vollstaendig ab: risk/valuation/attractiveness/phaseFit/pe/pe10y/return6M/
+ * phase/phaseConfidence/recommendations/dataQuality). Server/Engine unveraendert.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
+import { PieChart, Pie, Cell, Tooltip as PieTooltip, ResponsiveContainer } from "recharts";
 import { apiRequest } from "@/lib/queryClient";
 
 type Valuation = "Teuer" | "Angemessen" | "Attraktiv" | "n.v.";
+type CyclePhase = "Frühzyklus" | "Hochkonjunktur" | "Spätkonjunktur" | "Abschwung";
 
 interface SectorRow {
   id: string;
@@ -24,9 +30,10 @@ interface SectorRow {
 
 interface SectorRotationPayload {
   asOf: string;
-  phase: string;
+  phase: CyclePhase;
   phaseConfidence: number;
   sectors: SectorRow[];
+  recommendations?: Record<CyclePhase, string[]>;
   dataQuality?: { etfCoverage: number; pe10yCoverage: number; source: string };
   _cached?: boolean;
   _cacheAge?: number;
@@ -37,6 +44,29 @@ const VAL_CLASS: Record<string, string> = {
   Angemessen: "text-amber-300",
   Attraktiv: "text-emerald-300",
   "n.v.": "text-foreground/40",
+};
+
+// Feste Palette aggressiv→defensiv, Reihenfolge exakt wie ETF_PROXY_MAP in
+// server/sector-rotation-math.ts (Technologie..Versorger). Spec §3.2.
+const SECTOR_COLORS: Record<string, string> = {
+  technology: "#e11d48",
+  communication: "#f43f5e",
+  discretionary: "#f97316",
+  industrials: "#f59e0b",
+  financials: "#eab308",
+  energy: "#84cc16",
+  healthcare: "#22c55e",
+  staples: "#14b8a6",
+  utilities: "#3b82f6",
+};
+const FALLBACK_COLOR = "#64748b";
+
+const PHASE_ORDER: CyclePhase[] = ["Frühzyklus", "Hochkonjunktur", "Spätkonjunktur", "Abschwung"];
+const PHASE_DESCRIPTION: Record<CyclePhase, string> = {
+  Frühzyklus: "Erholung nach Rezession — Wachstumserwartungen, Investitionen und Risikobereitschaft steigen.",
+  Hochkonjunktur: "Expansion & starkes Wachstum — Gewinne breit hoch, Zinsen moderat steigend, Bewertungen teurer.",
+  Spätkonjunktur: "Abschwächung & Unsicherheit — Gewinnwachstum verlangsamt, Inflation/Zinsen hoch.",
+  Abschwung: "Rezession / Kontraktion — Nachfrage & Gewinne fallen, Risikoaversion steigt.",
 };
 
 function fmtPct(x: number | null): string {
@@ -74,6 +104,25 @@ export function SectorRotationPanel() {
 
   const dq = data?.dataQuality;
   const peGap = (dq?.pe10yCoverage ?? 9) < 9;
+
+  // P2: Donut-Segmente aus den bereits gelieferten Sektor-Zeilen -- kein
+  // zweiter Score, keine Neuberechnung, nur Visualisierung der API-Werte.
+  const donutData = useMemo(
+    () => (data?.sectors || []).map(s => ({
+      id: s.id,
+      name: s.label,
+      value: 1, // gleich große Segmente (9 feste Slices), Farbe traegt die Info
+      risk: s.risk,
+      valuation: s.valuation,
+      attractiveness: s.attractiveness,
+      phaseFit: s.phaseFit,
+      color: SECTOR_COLORS[s.id] || FALLBACK_COLOR,
+    })),
+    [data]
+  );
+
+  const recommendations = data?.recommendations;
+  const activePhase = data?.phase;
 
   return (
     <div className="space-y-3">
@@ -118,6 +167,121 @@ export function SectorRotationPanel() {
       )}
 
       {data && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {/* Block 2: Zykluseinordnung */}
+          <div className="rounded-lg border border-border/40 bg-card/30 p-3">
+            <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Zykluseinordnung</div>
+            <div className="space-y-1.5">
+              {PHASE_ORDER.map(p => {
+                const isActive = p === activePhase;
+                return (
+                  <div
+                    key={p}
+                    className={`rounded-md border p-2 transition-colors ${
+                      isActive
+                        ? "border-primary/50 bg-primary/10"
+                        : "border-border/30 bg-transparent opacity-50"
+                    }`}
+                    data-testid={`cycle-phase-${p}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`text-[11px] font-semibold ${isActive ? "text-primary" : "text-foreground/70"}`}>
+                        {p}
+                      </span>
+                      {isActive && (
+                        <span className="text-[10px] text-primary/80 font-mono">
+                          {Math.round((data.phaseConfidence || 0) * 100)}%
+                        </span>
+                      )}
+                    </div>
+                    {isActive && (
+                      <p className="text-[10px] text-foreground/60 mt-1 leading-relaxed">{PHASE_DESCRIPTION[p]}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Block 4: Sektorradar (Donut) */}
+          <div className="rounded-lg border border-border/40 bg-card/30 p-3">
+            <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Sektorradar</div>
+            <div className="h-[220px]" data-testid="chart-sector-radar-donut">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={donutData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={55}
+                    outerRadius={80}
+                    stroke="var(--card)"
+                    strokeWidth={2}
+                  >
+                    {donutData.map(d => <Cell key={d.id} fill={d.color} />)}
+                  </Pie>
+                  <PieTooltip
+                    content={({ payload }) => {
+                      const d = payload?.[0]?.payload;
+                      if (!d) return null;
+                      return (
+                        <div className="rounded-md border border-border/50 bg-popover px-2.5 py-1.5 text-[10px] shadow-lg">
+                          <div className="font-semibold text-foreground/90">{d.name}</div>
+                          <div className="text-foreground/60 mt-0.5">Risiko: {d.risk} · {d.valuation}</div>
+                          <div className="text-foreground/60">Attraktivität: {fmtNum(d.attractiveness, 1)} · Phase-Fit: {d.phaseFit}</div>
+                        </div>
+                      );
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex items-center justify-between text-[9px] text-foreground/40 mt-1 px-1">
+              <span>AGGRESSIV / ZYKLISCH</span>
+              <span>DEFENSIV</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {data && recommendations && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Explizite Empfehlung nach Phase</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            {PHASE_ORDER.map(p => {
+              const isActive = p === activePhase;
+              const picks = recommendations[p] || [];
+              return (
+                <div
+                  key={p}
+                  className={`rounded-lg border p-2.5 ${
+                    isActive ? "border-primary/50 bg-primary/10" : "border-border/30 bg-card/20"
+                  }`}
+                  data-testid={`recommendation-card-${p}`}
+                >
+                  <div className={`text-[10px] font-semibold ${isActive ? "text-primary" : "text-foreground/70"}`}>
+                    {p}{isActive && " · aktuell"}
+                  </div>
+                  <ul className="mt-1.5 space-y-0.5">
+                    {picks.map(label => (
+                      <li key={label} className="text-[10px] text-foreground/60 flex items-center gap-1">
+                        <span className="w-1 h-1 rounded-full bg-current opacity-50 shrink-0" />
+                        {label}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {data && (
+        <div>
+        <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Risiko & Bewertung</div>
         <div className="overflow-x-auto rounded-lg border border-border/40">
           <table className="w-full text-left" data-testid="table-sector-rotation">
             <thead>
@@ -145,6 +309,7 @@ export function SectorRotationPanel() {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 

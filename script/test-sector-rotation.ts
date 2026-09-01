@@ -233,5 +233,40 @@ console.log("\n=== Test 7: PHASE_PREFERRED Listen aus Spec ===");
   assertEqual("Abschwung 3", PHASE_PREFERRED.Abschwung.join(","), "Gesundheitswesen,Versorger,Konsumdefensiv");
 }
 
+console.log("\n=== Test 8 (P2/P3 Client-Konsistenz): Sektorradar/Zyklus-Karten decken alle 9 IDs + 4 Phasen ab ===");
+{
+  // Spiegelt die im Client (SectorRotationPanel.tsx) hartkodierte SECTOR_COLORS-Map
+  // und PHASE_ORDER — reiner Konsistenz-Check, kein Client-Import (Client bündelt
+  // via Vite, kein direkter tsx-Import möglich). Bricht absichtlich, falls
+  // ETF_PROXY_MAP jemals ergänzt/umbenannt wird, ohne die Client-Palette nachzuziehen.
+  const CLIENT_SECTOR_COLOR_KEYS = [
+    "technology", "communication", "discretionary", "industrials",
+    "financials", "energy", "healthcare", "staples", "utilities",
+  ];
+  assertEqual("Client-Farbpalette deckt 9 IDs ab", CLIENT_SECTOR_COLOR_KEYS.length, ETF_PROXY_MAP.length);
+  assertTrue(
+    "jede ETF_PROXY_MAP-ID hat einen Client-Farbeintrag",
+    ETF_PROXY_MAP.every(p => CLIENT_SECTOR_COLOR_KEYS.includes(p.id))
+  );
+
+  const CLIENT_PHASE_ORDER = ["Frühzyklus", "Hochkonjunktur", "Spätkonjunktur", "Abschwung"];
+  assertEqual("Client PHASE_ORDER deckt alle 4 Phasen ab", CLIENT_PHASE_ORDER.length, Object.keys(PHASE_PREFERRED).length);
+  assertTrue(
+    "jede PHASE_PREFERRED-Phase ist in Client PHASE_ORDER",
+    Object.keys(PHASE_PREFERRED).every(p => CLIENT_PHASE_ORDER.includes(p))
+  );
+
+  // recommendations liefert für jede Phase genau 3 Einträge (Empfehlungskarten
+  // im Client rendern eine feste 3er-Liste ohne Overflow-Handling).
+  const fixtureOut = computeSectorRotation({
+    asOf: "2026-08-17",
+    recession: { indicators: [], subgroups: [], nyFedValue: null, interpretation: "" },
+    sectors: ETF_PROXY_MAP.map(p => ({ id: p.id })),
+  });
+  for (const phase of CLIENT_PHASE_ORDER as Array<keyof typeof fixtureOut.recommendations>) {
+    assertEqual(`recommendations.${phase} hat genau 3 Einträge`, fixtureOut.recommendations[phase].length, 3);
+  }
+}
+
 console.log(`\n=== Ergebnis: ${failures === 0 ? "ALLE TESTS BESTANDEN" : `${failures} FEHLER`} ===`);
 if (failures > 0) process.exit(1);
