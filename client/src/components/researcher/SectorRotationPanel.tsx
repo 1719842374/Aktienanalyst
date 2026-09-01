@@ -161,8 +161,9 @@ function SectorCycleProgressBar({
     : `Aktuelle Phase: ${phase}`;
 
   return (
-    <div className={compact ? "w-full" : "w-full"} data-testid="bar-cycle-progress">
-      <div className="relative h-2 rounded-full overflow-hidden flex">
+    <div className="w-full overflow-visible" data-testid="bar-cycle-progress">
+      <div className="relative h-8 overflow-visible">
+        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-5 flex rounded-full overflow-hidden">
         {PHASE_ORDER.map(p => (
           <div
             key={p}
@@ -170,10 +171,10 @@ function SectorCycleProgressBar({
             style={{ width: `${segW}%`, backgroundColor: PHASE_BAR_COLORS[p], opacity: p === phase ? 1 : 0.35 }}
           />
         ))}
-        {/* Marker: Position folgt phaseFit (siehe Kommentar oben), nicht mehr blind der globalen Phase */}
+        </div>
         <div
-          className={`absolute -top-1 w-3 h-3 rounded-full border-2 border-white shadow -translate-x-1/2 ${markerColorClass}`}
-          style={{ left: `${markerLeftPct}%` }}
+          className={`absolute top-1/2 w-3 h-3 rounded-full border-2 border-white shadow -translate-x-1/2 -translate-y-1/2 ${markerColorClass}`}
+          style={{ left: `clamp(8px, ${markerLeftPct}%, calc(100% - 8px))` }}
           title={markerTitle}
           data-testid="marker-cycle-current-phase"
         />
@@ -188,7 +189,7 @@ function SectorCycleProgressBar({
           {PHASE_ORDER.map(p => (
             <span
               key={p}
-              className={`text-[8px] leading-tight ${p === phase ? "text-foreground/80 font-semibold" : "text-foreground/30"}`}
+              className={`text-[10px] leading-tight whitespace-nowrap ${p === phase ? "text-foreground/80 font-semibold" : "text-foreground/30"}`}
               style={{ width: `${segW}%` }}
             >
               {p}
@@ -401,7 +402,7 @@ function SectorRadar2D({ sectors }: { sectors: RadarSectorDatum[] }) {
 
   return (
     <div data-testid="chart-sector-radar-2d">
-      <div className="h-[260px] w-full">
+      <div className="h-[360px] w-full">
         <ResponsiveContainer width="100%" height="100%">
           <RadarChart data={chartData} outerRadius="70%">
             {/* Bugfix (Nutzer-Feedback, schwer lesbare Achsenlabels): CSS-Variablen
@@ -442,7 +443,7 @@ function SectorRadarRing({ sectors }: { sectors: RingSectorDatum[] }) {
 
   return (
     <div className="relative" data-testid="chart-sector-radar-donut">
-      <svg viewBox="0 0 300 300" className="w-full h-auto max-h-[260px]">
+      <svg viewBox="0 0 300 300" className="w-full h-auto max-h-[360px]">
         <defs>
           {sectors.map(s => (
             <linearGradient key={s.id} id={`ring-grad-${s.id}`} x1="0" y1="0" x2="0" y2="1">
@@ -625,7 +626,7 @@ export function SectorRotationPanel() {
       {data && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           {/* Block 2: Zykluseinordnung */}
-          <div className="rounded-lg border border-border/40 bg-card/30 p-3">
+          <div className="rounded-lg border border-border/40 bg-card/30 p-4">
             <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Zykluseinordnung</div>
             <div className="space-y-1.5">
               {PHASE_ORDER.map(p => {
@@ -662,7 +663,7 @@ export function SectorRotationPanel() {
           {/* Block 4: Sektorradar — 2D-Radar (Recharts) + 3D-Ring nebeneinander,
               beide lesen dieselben donutData/data-Props, kein Refetch, kein
               zweiter Score. Gestapelt auf Mobile (<1024px), side-by-side ab lg. */}
-          <div className="rounded-lg border border-border/40 bg-card/30 p-3 lg:col-span-2">
+          <div className="rounded-lg border border-border/40 bg-card/30 p-4 lg:col-span-2">
             <div className="flex items-center justify-between mb-2">
               <div className="text-[10px] uppercase tracking-wider text-foreground/40">Sektorradar — 2D & 3D</div>
               {data && (
@@ -704,17 +705,17 @@ export function SectorRotationPanel() {
               return (
                 <div
                   key={p}
-                  className={`rounded-lg border p-2.5 ${
+                  className={`rounded-lg border p-4 ${
                     isActive ? "border-primary/50 bg-primary/10" : "border-border/30 bg-card/20"
                   }`}
                   data-testid={`recommendation-card-${p}`}
                 >
-                  <div className={`text-[10px] font-semibold ${isActive ? "text-primary" : "text-foreground/70"}`}>
+                  <div className={`text-xs font-semibold ${isActive ? "text-primary" : "text-foreground/70"}`}>
                     {p}{isActive && " · aktuell"}
                   </div>
                   <ul className="mt-1.5 space-y-0.5">
                     {picks.map(label => (
-                      <li key={label} className="text-[10px] text-foreground/60 flex items-center gap-1">
+                      <li key={label} className="text-xs text-foreground/60 flex items-center gap-1">
                         <span className="w-1 h-1 rounded-full bg-current opacity-50 shrink-0" />
                         {label}
                       </li>
@@ -737,7 +738,7 @@ export function SectorRotationPanel() {
             fortschritt-Spalte (min-w-[110px] -> min-w-[160px], eigenes
             Innen-Padding py-1) schaffen sichtbaren Luftraum zwischen den
             Sektorzeilen, insbesondere auf schmalen/mobilen Breiten. */}
-        <div className="overflow-x-auto rounded-lg border border-border/40 p-1">
+        <div className="rounded-lg border border-border/40 p-3 w-full min-h-[28rem]">
           <table className="w-full text-left border-separate border-spacing-0" data-testid="table-sector-rotation">
             <thead>
               <tr className="text-[10px] uppercase tracking-wider text-foreground/40 border-b border-border/40">
@@ -761,7 +762,7 @@ export function SectorRotationPanel() {
                   <td className="px-3 py-3 tabular-nums">{fmtNum(s.attractiveness, 1)}</td>
                   <td className="px-3 py-3 tabular-nums">{fmtPct(s.return6M)}</td>
                   <td className="px-3 py-3 tabular-nums">{s.phaseFit}</td>
-                  <td className="px-3 py-3 min-w-[160px]" data-testid={`cycle-progress-row-${s.id}`}>
+                  <td className="px-3 py-3 min-w-[220px] overflow-x-hidden" data-testid={`cycle-progress-row-${s.id}`}>
                     {data && <SectorCycleProgressBar phase={data.phase} phaseFit={s.phaseFit} compact />}
                   </td>
                 </tr>
