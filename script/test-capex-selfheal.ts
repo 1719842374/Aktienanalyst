@@ -12,11 +12,13 @@
  */
 
 const CAPEX_MIN_PROGRAMMES = 4;
+const CAPEX_MIN_SECTOR_EXPOSURE = 4;
 const CAPEX_SELFHEAL_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 function capexCacheIsThin(payload: any): boolean {
-  const n = Array.isArray(payload?.programmes) ? payload.programmes.length : 0;
-  return n < CAPEX_MIN_PROGRAMMES;
+  const programmesN = Array.isArray(payload?.programmes) ? payload.programmes.length : 0;
+  const sectorExposureN = Array.isArray(payload?.sectorExposure) ? payload.sectorExposure.length : 0;
+  return programmesN < CAPEX_MIN_PROGRAMMES || sectorExposureN < CAPEX_MIN_SECTOR_EXPOSURE;
 }
 
 function makeAllowedChecker() {
@@ -39,12 +41,25 @@ function check(label: string, cond: boolean) {
 }
 
 console.log("§ capexCacheIsThin — Schwelle 4 programmes (Live-verifizierter Soll-Stand)");
-check("0 programmes -> thin", capexCacheIsThin({ programmes: [] }) === true);
-check("3 programmes -> thin", capexCacheIsThin({ programmes: [1, 2, 3] }) === true);
-check("4 programmes -> NICHT thin", capexCacheIsThin({ programmes: [1, 2, 3, 4] }) === false);
-check("5 programmes -> NICHT thin", capexCacheIsThin({ programmes: [1, 2, 3, 4, 5] }) === false);
-check("programmes fehlt komplett -> thin", capexCacheIsThin({}) === true);
-check("programmes ist kein Array -> thin (defensiv)", capexCacheIsThin({ programmes: null }) === true);
+// sectorExposure wird hier bewusst >= 4 mitgegeben, damit ausschliesslich die
+// programmes-Dimension getestet wird (die zweite Dimension hat einen eigenen
+// Block weiter unten) -- ohne sectorExposure waere jeder Fall automatisch
+// thin, weil das Feld fehlt (0 < 4), unabhaengig von programmes.
+const withOkSectorExposure = { sectorExposure: [1, 2, 3, 4] };
+check("0 programmes -> thin", capexCacheIsThin({ ...withOkSectorExposure, programmes: [] }) === true);
+check("3 programmes -> thin", capexCacheIsThin({ ...withOkSectorExposure, programmes: [1, 2, 3] }) === true);
+check("4 programmes -> NICHT thin", capexCacheIsThin({ ...withOkSectorExposure, programmes: [1, 2, 3, 4] }) === false);
+check("5 programmes -> NICHT thin", capexCacheIsThin({ ...withOkSectorExposure, programmes: [1, 2, 3, 4, 5] }) === false);
+check("programmes fehlt komplett -> thin (sectorExposure allein reicht nicht)", capexCacheIsThin({ ...withOkSectorExposure }) === true);
+check("programmes ist kein Array -> thin (defensiv)", capexCacheIsThin({ ...withOkSectorExposure, programmes: null }) === true);
+check("beide Felder fehlen komplett -> thin", capexCacheIsThin({}) === true);
+
+console.log("\n§ capexCacheIsThin — zweite Dimension sectorExposure (Prompt fordert exakt 5, Schwelle bewusst bei 4)");
+check("4 programmes + 0 sectorExposure -> thin (sectorExposure zu niedrig)", capexCacheIsThin({ programmes: [1, 2, 3, 4], sectorExposure: [] }) === true);
+check("4 programmes + 3 sectorExposure -> thin", capexCacheIsThin({ programmes: [1, 2, 3, 4], sectorExposure: [1, 2, 3] }) === true);
+check("4 programmes + 4 sectorExposure -> NICHT thin (Live-beobachteter Normalfall, LLM liefert manchmal 4 statt Prompt-Soll 5)", capexCacheIsThin({ programmes: [1, 2, 3, 4], sectorExposure: [1, 2, 3, 4] }) === false);
+check("4 programmes + 5 sectorExposure -> NICHT thin (Prompt-Soll exakt erreicht)", capexCacheIsThin({ programmes: [1, 2, 3, 4], sectorExposure: [1, 2, 3, 4, 5] }) === false);
+check("5 programmes + 3 sectorExposure -> thin (programmes allein reicht nicht, sectorExposure zaehlt eigenstaendig)", capexCacheIsThin({ programmes: [1, 2, 3, 4, 5], sectorExposure: [1, 2, 3] }) === true);
 
 console.log("\n§ Rate-Limit — max 1 Selbstheilungs-Versuch pro Region pro 6h");
 {

@@ -41,19 +41,28 @@ if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 const RESEARCHER_TTL_MIN = 60 * 6; // 6 hours — keep researcher data fresh (current macro/fiscal context)
 
 // Capex-Selbstheilung: verhindert, dass ein zu duenner Cache-Eintrag (weniger
-// als der verifizierte Soll-Stand von 4 programmes) laenger als noetig
-// ausgeliefert wird, ohne dass ein Nutzer manuell "Aktualisieren" klicken muss.
+// als der verifizierte Soll-Stand) laenger als noetig ausgeliefert wird, ohne
+// dass ein Nutzer manuell "Aktualisieren" klicken muss.
 // isStaleCache() weiter unten deckt bereits den Fall komplett leerer Arrays ab
 // und startet dafuer selbst schon einen Hintergrund-Refresh — dieser Guard ist
 // zusaetzlich strenger (Schwelle 4 statt 0) und rate-limitiert, damit ein
 // dauerhaft duenn liefernder LLM nicht bei jedem Request neu angefragt wird.
+//
+// Schwelle bewusst bei 4 statt beim Prompt-Soll 5 fuer sectorExposure (§
+// "MUSS EXAKT 5 Eintraege"): das LLM haelt sich in der Praxis nicht immer
+// strikt an die 5, ein Live-Check lieferte z.B. 4/5 ohne dass das inhaltlich
+// ein Fehler war. Schwelle 4 heilt also nur echte Ausreisser (0-3), nicht
+// jede kleine, harmlose LLM-Schwankung — sonst wuerde fast jeder Request
+// eine teure Selbstheilung auslösen.
 const CAPEX_MIN_PROGRAMMES = 4;
+const CAPEX_MIN_SECTOR_EXPOSURE = 4;
 const CAPEX_SELFHEAL_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 1x pro Region pro 6h
 const capexSelfHealAttempts = new Map<string, number>();
 
 function capexCacheIsThin(payload: any): boolean {
-  const n = Array.isArray(payload?.programmes) ? payload.programmes.length : 0;
-  return n < CAPEX_MIN_PROGRAMMES;
+  const programmesN = Array.isArray(payload?.programmes) ? payload.programmes.length : 0;
+  const sectorExposureN = Array.isArray(payload?.sectorExposure) ? payload.sectorExposure.length : 0;
+  return programmesN < CAPEX_MIN_PROGRAMMES || sectorExposureN < CAPEX_MIN_SECTOR_EXPOSURE;
 }
 
 function capexSelfHealAllowed(region: string): boolean {
