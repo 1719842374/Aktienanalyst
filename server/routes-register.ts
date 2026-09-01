@@ -8,8 +8,11 @@ import type { Express } from "express";
 import type { Server } from "http";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<void> {
+  const { registerRegulatoryRisksHooks, registerRegulatoryRisksRoute } = await import("./regulatory-risks-route");
+  registerRegulatoryRisksHooks(app);
   const { registerRoutes: registerAllRoutes } = await import("./routes");
   await registerAllRoutes(httpServer, app);
+  registerRegulatoryRisksRoute(app);
   const { registerSectorRotationRoute } = await import("./researcher-sector-rotation-route");
   registerSectorRotationRoute(app);
   const { registerLiquidityRoute } = await import("./researcher-liquidity-route");

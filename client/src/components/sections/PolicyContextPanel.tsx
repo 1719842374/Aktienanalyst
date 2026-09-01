@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Sparkles, Loader2 } from "lucide-react";
 import { apiRequest } from "../../lib/queryClient";
 import type { StockAnalysis } from "../../../../shared/schema";
+import { RegulatoryPestelRisks } from "./RegulatoryPestelRisks";
 
 interface PolicyContext {
   usa: string;
@@ -56,7 +57,9 @@ export function PolicyContextPanel({ data, testIdSuffix }: Props) {
   }
 
   return (
-    <div className="rounded-lg border border-border/50 p-3 space-y-2">
+    <>
+      <RegulatoryPestelRisks data={data} />
+      <div className="rounded-lg border border-border/50 p-3 space-y-2">
       <div className="flex items-center gap-2">
         <button
           onClick={() => !loading && (policy ? setExpanded(e => !e) : trigger())}
@@ -102,6 +105,7 @@ export function PolicyContextPanel({ data, testIdSuffix }: Props) {
           )}
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
