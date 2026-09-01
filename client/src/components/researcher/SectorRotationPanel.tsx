@@ -1,1 +1,1 @@
-PLACEHOLDER_USE_DISK
+SEE_FILE_/workspace/SectorRotationPanel.tsx
