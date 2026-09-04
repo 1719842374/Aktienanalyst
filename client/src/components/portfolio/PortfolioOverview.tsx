@@ -2,21 +2,17 @@
  * PortfolioOverview — KPI-Zeile + Pie-Chart (Gewichte) + Performance-Chart.
  *
  * Auftrag 10.08.2026 ("Portfolio UX (CAPM/Kelly)", Teil A, Screen 1).
- * Neue, eigenstaendige Komponente fuer client/src/pages/PortfolioPage.tsx --
- * greift NICHT in Dashboard.tsx / fragile Dateien ein.
- *
- * Zahlen ausschliesslich aus computePortfolioKPIs/computePortfolioWeights/
- * computePortfolioPerformanceSeries (client/src/lib/portfolio/positions.ts,
- * reine Funktionen, unit-getestet) -- KEIN LLM fuer Kurse/Performance/Gewichte.
+ * Zahlen aus computePortfolioKPIs / computeCapmExpectedReturn — kein LLM.
  */
 import { useMemo, useState } from "react";
 import { PieChart, Pie, Cell, Tooltip as PieTooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as AreaTooltip } from "recharts";
-import { Target, Award, PiggyBank, AlertTriangle } from "lucide-react";
+import { Target, Award, PiggyBank, AlertTriangle, TrendingUp } from "lucide-react";
 import {
   computePortfolioKPIs, computePortfolioWeights, computePortfolioPerformanceSeries,
   type PortfolioPosition,
 } from "@/lib/portfolio/positions";
 import { computeMarketWeights } from "@/lib/portfolio/engine";
+import { computeCapmExpectedReturn } from "@/lib/portfolio/capmExpectedReturn";
 import EfficientFrontierPanel from "./EfficientFrontierPanel";
 import PortfolioBacktestPanel from "./PortfolioBacktestPanel";
 
@@ -73,18 +69,8 @@ export default function PortfolioOverview({
   onTimeframeChange: (t: TimeframeFilter) => void;
   onDirectionChange: (d: DirectionFilter) => void;
   onSelectTicker?: (ticker: string) => void;
-  /** Ziel-Gewichte aus der CAPM-Optimierung (engine.ts), Ticker->Gewicht (0..1).
-   * Optional -- wenn nicht gesetzt oder leer, wird nur "Ist-Marktwert" angezeigt
-   * und der Toggle ausgeblendet (Auftrag 10.08.2026, Punkt 6). */
   capmWeights?: Record<string, number> | null;
-  /** solveFailed-Flag aus dem Allocation-Ergebnis (engine.ts EngineResult.fallbackReason
-   * === "solve_failed"). Optional, additiv -- PORTFOLIO_PHASE4_IST_ZIEL Punkt 5: macht
-   * sichtbar, dass die Σ-Invertierung fehlgeschlagen ist und ein Equal-Weight-Fallback
-   * verwendet wurde, auch auf der Uebersicht (nicht nur im Optimierungs-Panel). */
   solveFailed?: boolean;
-  /** Sprint B2 (Portfolio-Backtest vs. Benchmark), alle vier Props additiv und
-   * optional -- ohne sie (z.B. andere bestehende Aufrufer dieser Komponente,
-   * falls vorhanden) wird der neue Backtest-Block einfach nicht gerendert. */
   sectorByTicker?: Record<string, string | undefined>;
   benchmarkTicker?: string;
   benchmarkHistoricalPrices?: Array<{ date: string; close: number }> | undefined;
@@ -99,6 +85,19 @@ export default function PortfolioOverview({
 
   const kpis = useMemo(() => computePortfolioKPIs(directionFiltered, lastPriceByTicker), [directionFiltered, lastPriceByTicker]);
   const weights = useMemo(() => computePortfolioWeights(directionFiltered, lastPriceByTicker), [directionFiltered, lastPriceByTicker]);
+  const capmEr = useMemo(() => {
+    const openLong = directionFiltered.filter(p => p.status === "open" && p.side === "long");
+    const tickers = Array.from(new Set(openLong.map(p => p.ticker.toUpperCase())));
+    const wMarket = computeMarketWeights(openLong, lastPriceByTicker);
+    return computeCapmExpectedReturn({
+      tickers,
+      weightsByTicker: Object.keys(wMarket).length ? wMarket : (capmWeights ?? {}),
+      historicalPricesByTicker,
+      benchmarkTicker: benchmarkTicker || "SPY",
+      benchmarkPrices: benchmarkHistoricalPrices,
+      rfAnnual: riskFreeRateAnnual ?? 0,
+    });
+  }, [directionFiltered, lastPriceByTicker, historicalPricesByTicker, benchmarkTicker, benchmarkHistoricalPrices, riskFreeRateAnnual, capmWeights]);
   const rawSeries = useMemo(() => computePortfolioPerformanceSeries(directionFiltered, historicalPricesByTicker), [directionFiltered, historicalPricesByTicker]);
   const series = useMemo(() => filterByTimeframe(rawSeries, timeframe), [rawSeries, timeframe]);
 
@@ -115,12 +114,6 @@ export default function PortfolioOverview({
   const effectivePieMode = hasCapmWeights ? pieMode : "market";
   const pieData = effectivePieMode === "capm" ? capmPieData : marketPieData;
 
-  // Ist- vs. Ziel-Abweichungs-Banner (PORTFOLIO_PHASE4_IST_ZIEL Punkt 5): max(|weightMarket_i
-  // - weightCapm_i|) ueber alle offenen Long-Positionen, fuer die BEIDE Gewichte vorliegen.
-  // computeMarketWeights() normiert NUR wenn fuer ALLE offenen Positionen ein Kurs vorhanden
-  // ist (siehe engine.ts) -- fehlt ein Kurs, bleibt deltaBanner bewusst null (kein irrefuehrender
-  // Teil-Vergleich). Das KPI "Profit" oben folgt weiterhin dem Ist-Portfolio (unveraendert),
-  // dieser Banner macht das nur transparent, ohne die KPI-Berechnung selbst anzufassen.
   const openLongPositions = useMemo(
     () => directionFiltered.filter(p => p.status === "open" && p.side === "long"),
     [directionFiltered]
@@ -142,10 +135,6 @@ export default function PortfolioOverview({
   }, [hasCapmWeights, marketWeightsForDelta, capmWeights]);
   const showDeviationBanner = maxDeviationPp != null && maxDeviationPp > 0.10;
 
-  // Efficient-Frontier-Panel (Phase 5, additiv): kombiniert Ist- (weightMarket)
-  // und CAPM-Ziel-Gewichte (weightCapm) je Ticker fuer die Referenzpunkte auf
-  // der Effizienzlinie. Nur offene Long-Positionen (dieselbe Basis wie der
-  // Δ-Banner oben), damit Ist-Gewichte und Frontier-Ticker konsistent sind.
   const frontierTickers = useMemo(
     () => Array.from(new Set(openLongPositions.map(p => p.ticker.toUpperCase()))),
     [openLongPositions],
@@ -160,8 +149,7 @@ export default function PortfolioOverview({
 
   return (
     <div className="space-y-4">
-      {/* KPI-Zeile */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-card rounded-xl border border-border p-4 flex items-center gap-3">
           <div className="w-11 h-11 rounded-full border-2 border-indigo-400/40 flex items-center justify-center shrink-0">
             <Target className="w-5 h-5 text-indigo-400" />
@@ -172,6 +160,23 @@ export default function PortfolioOverview({
             </div>
             <div className="text-xs font-medium">Profit</div>
             <div className="text-[10px] text-muted-foreground leading-tight">Durchschnittliche Performance der aktiven Investments</div>
+          </div>
+        </div>
+
+        <div className="bg-card rounded-xl border border-border p-4 flex items-center gap-3">
+          <div className="w-11 h-11 rounded-full border-2 border-sky-400/40 flex items-center justify-center shrink-0">
+            <TrendingUp className="w-5 h-5 text-sky-400" />
+          </div>
+          <div className="min-w-0">
+            <div className={`text-2xl font-bold tabular-nums ${(capmEr.muPortfolio ?? 0) >= 0 ? "text-sky-400" : "text-red-500"}`}>
+              {fmtPct(capmEr.muPortfolio)}
+            </div>
+            <div className="text-xs font-medium truncate">Erw. Rendite CAPM</div>
+            <div className="text-[10px] text-muted-foreground leading-tight">
+              {capmEr.available
+                ? `r_f+β(r_m−r_f) vs. ${capmEr.benchmark} · ${capmEr.nTickersUsed} Titel`
+                : (capmEr.flags[0] ?? "SML sobald Historie ≥60 Tage")}
+            </div>
           </div>
         </div>
 
@@ -204,7 +209,6 @@ export default function PortfolioOverview({
         </div>
       </div>
 
-      {/* Ist-vs-Ziel-Abweichungs-Banner + solveFailed-Warnung (additiv, Punkt 5) */}
       {(showDeviationBanner || solveFailed) && (
         <div className="space-y-2">
           {showDeviationBanner && (
@@ -226,7 +230,6 @@ export default function PortfolioOverview({
         </div>
       )}
 
-      {/* Filter-Leiste */}
       <div className="flex flex-wrap items-center gap-2">
         <select
           className="text-xs bg-muted/30 border border-border/50 rounded-md px-2 py-1.5"
@@ -250,7 +253,6 @@ export default function PortfolioOverview({
         </select>
       </div>
 
-      {/* Pie + Performance-Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-card rounded-xl border border-border p-4">
           <div className="flex items-center justify-between gap-2 mb-1">
@@ -334,22 +336,12 @@ export default function PortfolioOverview({
         </div>
       </div>
 
-      {/* Effizienzlinie (Phase 5, additiv) -- Risiko/Rendite-Scatter mit Ist-,
-          CAPM-Ziel- und Equal-Weight-Referenzpunkten. Nutzt dieselben
-          historicalPricesByTicker wie Performance-Chart oben. */}
       <EfficientFrontierPanel
         tickers={frontierTickers}
         historicalPricesByTicker={historicalPricesByTicker}
         currentWeights={frontierCurrentWeights}
       />
 
-      {/* Sprint B2 (WORK_PORTFOLIO_BACKTEST.md): ex-post Performance-Attribution
-          vs. Benchmark -- rein additiv NACH dem bestehenden Inhalt (UI-
-          Platzierung Empfehlung A, Spec §6). Nutzt ausschliesslich offene
-          Long-Positionen aus `positions` (nicht `directionFiltered`, damit
-          der Backtest unabhaengig vom Long/Short-Filter der Uebersicht bleibt --
-          Short-Attribution ist laut Spec §10 bewusst nicht Teil von v1). Rendert
-          nichts, wenn benchmarkTicker/benchmarkHistoricalPrices fehlen. */}
       {benchmarkTicker && (
         <PortfolioBacktestPanel
           positions={positions}
