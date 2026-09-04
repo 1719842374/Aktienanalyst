@@ -2,106 +2,87 @@
 
 > Status: **Soll** · nicht im Analyze-UI · 04.09.2026
 > Karte **über** Sektion 1.
->
-> Pro/Contra: S8, S11 Porter, S12 PESTEL, S14, S15.
-> Fazit: S17-Wort + Einpreisung vs. Unterschätzung, **als Fließtext**.
 
-Referenz MSFT 4.9.2026 12:49.
-
----
-
-## Pflichtkopf (Code, eine Zeile)
-
-$510.12 · $3.79T · +17.8 % Umsatz · WACC 8.99 % · g* 7.3 % · P/E 20.7 /
-Fwd 25.9 · PEG 2.62 · DCF $519 · Risk $430 · CRV 1.0 · Score 60 · 28.10.
-
-Pro/Contra-Listen und PESTEL/Porter-Raster unverändert (max. 5+5, Zahl+src).
+Pro/Contra: S8, S11, S12, S14, S15.
+Fazit: S17-Wort + Einpreisung vs. Unterschätzung als Fließtext.
+**Earnings Call ist Pflichtnennung** (Datum + Wort „Call“).
 
 ---
 
-## Fazit — Ton
+## Earnings Call — wann, wie nennen
 
-Kein Semikolon-Staccato. Kein zweites Rating. Drei kurze Absätze, jeweils
-**ein Gedanke**, Zahlen nur wo sie den Satz tragen.
+Quelle nur S1-Cache: `nextEarningsDate` / `lastReported`. Kein LLM-Datum.
 
-Verboten im Fazit: ΣGB-Formel, Gate-Interna als Akronym ohne Erklärung,
-mehr als **zwei** Zahlen pro Satz, „Liste A/B“, Roh-Flags (`UNTERSCHÄTZT` als
-Label — stattdessen den Satz „das Modell rechnet das Risiko zu klein“).
+| Feld | Pflicht | MSFT-Ist 4.9.2026 |
+|------|---------|-------------------|
+| Nächster Call | ja, Absatz 3 + Kopf | **Earnings Call am 28. Oktober 2026** |
+| Letztes berichtetes Quartal | ja, ein Halbsatz wenn vorhanden | zuletzt Q4 FY2026 |
+| Uhrzeit / Ticker-Zeit | nur wenn im Cache | sonst weglassen, nicht 16:00 raten |
+| Kein Datum | Satz: „Ein Call-Termin steht im Cache nicht.“ | nie „demnächst“ |
 
-Erlaubt: Alltagswörter (teuer, schon drin, zu klein gerechnet, warten,
-Erstkauf unter …). S17-Wort steht **einmal**, am Anfang von Absatz 1.
+Formulierung fest, damit es nicht als beliebiges Event untergeht:
 
-### Bau (Code füllt Klammern, LLM schreibt den Satz)
+```
+Der nächste Earnings Call ist am {TT. Monat JJJJ}.
+```
 
-**Absatz 1 — Lage (2–3 Sätze).**
-Was das Unternehmen ist und warum der Kurs nicht „billig weil DCF +2 %“ ist.
-Einpreisung in einem Bild: der Markt glaubt weniger Wachstum als das Modell.
+Nicht: „28.10.“, „Zahlentermin“, „Prüfpunkt“ allein. Das Wort **Earnings Call**
+muss im Fazit stehen. Im Kopf darf die Kurzform `Call 28.10.2026` stehen.
 
-**Absatz 2 — Was der Markt schon bezahlt hat vs. was er ignoriert.**
-Erst das Eingepreiste (PEG, nahe PT, hohe Einpreisung bei K4/K5) in einem
-Atemzug. Dann der Bruch: welches Risiko die Inversion als zu klein zeigt,
-in klarer Sprache (Preisdruck Cloud, Kartell, Fehlschlag nächstes Quartal).
-Eine Zahl für das Risk-Ziel oder den Abstand zum Kurs, nicht beides plus Inverted-DCF plus CRV in einem Satz.
-
-**Absatz 3 — Was tun.**
-Ein Verb. Bedingung in Alltagsdeutsch (erst kaufen unter Max-Entry).
-Datum des nächsten Events als Satzende, nicht als Tickermüll.
-
-Schwellen bleiben die Tabellen aus der vorigen Fassung (g*-Gap, PEG≥2,
-PT≤8 %, S8-Flag, Risk-Ziel < Kurs, Inverted-Gap>50 %). Sie steuern, *welche*
-Gedanken rein müssen — nicht, wie der Satz klingt.
-
-Ohne KI: drei feste Sätze aus einem Template mit {Klammern}.
-Mit KI: Umschreiben der drei Absätze, FactPack an jeder Zahl, Wort aus S17
-unangetastet.
+Abstand heute → Call (MSFT: 4.9. → 28.10. = 54 Tage) darf als Kontext rein
+(„in gut sieben Wochen“), ersetzt aber nicht das Kalenderdatum.
 
 ---
 
-## Template ohne KI (lesbar, nicht poetisch)
+## Pflichtkopf
+
+$510.12 · $3.79T · +17.8 % · WACC 8.99 % · g* 7.3 % · P/E 20.7 ·
+PEG 2.62 · DCF $519 · Risk $430 · CRV 1.0 · Score 60 · **Call 28.10.2026**.
+
+---
+
+## Fazit — drei Absätze
+
+1. Lage + was schon im Kurs steckt.
+2. Was zu klein gerechnet ist (eine Zielzahl).
+3. Handlung + **Earnings Call am {Datum}** als eigener Satz.
+
+---
+
+## Template ohne KI
 
 ```
 {Name} ist {S17-Wort}: das konservative DCF liegt praktisch am Kurs, der Markt
-preischt aber nur {g*} Wachstum ein — unser Modell unterstellt mehr. Die Cloud-
-und Software-Story steckt damit großteils im Preis, nicht in einem versteckten
-Abschlag.
+preist aber nur {g*} Wachstum ein — unser Modell unterstellt mehr.
 
-Was fehlt, ist der Risikoabschlag. {Höchstes S8-Risiko in einem Halbsatz} wird
-in der Inversion als zu gering angesetzt; ein realistischer Abschlag führt auf
-etwa {Risk-Ziel}, unter dem heutigen Kurs. Rivalität und Regulierung sind in der
-Weit-Moat-Erzählung nicht die Hauptfigur — in der Inversion schon.
+Was fehlt, ist der Risikoabschlag. {S8-Risiko in einem Halbsatz} wird zu klein
+gerechnet; mit Abschlag eher {Risk-Ziel} als der heutige Kurs.
 
-Deshalb nicht nachkaufen. Ein Einstieg ist erst unter {Max-Entry} sinnvoll.
-Nächster Prüfpunkt ist der Zahlentermin am {Earnings}.
+Deshalb nicht nachkaufen. Einstieg erst unter {Max-Entry}.
+Der nächste Earnings Call ist am {TT. Monat JJJJ} (zuletzt berichtet: {Quartal}).
 ```
 
 ---
 
-## MSFT — Soll-Fazit (menschlich)
+## MSFT — Soll-Fazit
 
 Microsoft ist **neutral**. Das konservative DCF sitzt fast auf dem Kurs — knapp
-519 gegen 510 Dollar. Der Markt glaubt trotzdem nur gut 7 % Dauerwachstum, nicht
-die 15 %, die das Fast-Grower-Modell braucht. Azure und Copilot sind deshalb
-keine unentdeckte Story; das KGV und das Kursziel der Analysten (535 Dollar,
-knapp 5 % über dem Kurs) sagen dasselbe: viel ist schon bezahlt.
+519 gegen 510 Dollar. Der Markt glaubt nur gut 7 % Dauerwachstum, nicht die 15 %
+des Fast-Grower-Modells. Azure und Copilot sind keine unentdeckte Story; das
+Analystenziel von 535 Dollar liegt nur knapp 5 % über dem Kurs.
 
-Was *nicht* im Preis steckt, ist der Abschlag fürs Wettbewerbs- und
-Margenrisiko. Die Inversion hält den Druck durch OpenAI, Gemini und offene
-Modelle für zu klein gerechnet — die FCF-Marge könnte Richtung 15 bis 17 %,
-nicht bei 20 % bleiben. Rechnet man das ein, landet man eher bei knapp 430
-Dollar, nicht bei 510. Kartellverfahren und ein schwaches Quartal sind in der
-Weit-Moat- Erzählung Nebenfiguren; in der Inversion sind sie der Grund, warum
-das Chance-Risiko-Verhältnis unter 1 fällt.
+Was nicht im Preis steckt, ist der Abschlag fürs Wettbewerbs- und Margenrisiko.
+Druck durch OpenAI, Gemini und offene Modelle wird zu klein gerechnet — die
+FCF-Marge könnte Richtung 15 bis 17 % gehen. Dann eher knapp 430 Dollar als 510.
 
-Deshalb warten. Nachkaufen erst unter 375 Dollar, dem konservativen Einstieg
-nach Chance-Risiko 3:1. Der nächste ehrliche Test ist der 28. Oktober.
+Deshalb warten. Nachkaufen erst unter 375 Dollar. Der nächste **Earnings Call
+ist am 28. Oktober 2026**; zuletzt gemeldet wurde Q4 FY2026.
 
 ---
 
-## DoD Fazit
+## DoD
 
-1. Drei Absätze, nicht vier Label-Zeilen.
-2. S17-Wort genau einmal.
-3. Pro Absatz ≤ 2 Zahlen; Rest in Pro/Contra-Liste.
-4. „Zu klein gerechnet“ statt Flag-Druck `UNTERSCHÄTZT`.
-5. Handlung als Verb + Schwelle + Datum.
-6. FactPack, wenn KI den Absatz schreibt.
+1. Fazit-Absatz 3 enthält wörtlich „Earnings Call“ + volles Datum.
+2. Kopf enthält `Call {TT.MM.JJJJ}`.
+3. Fehlt das Feld → Satz „steht im Cache nicht“, kein erfundenes Datum.
+4. S17-Wort einmal. FactPack an Zahlen.
