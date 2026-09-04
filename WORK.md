@@ -8,11 +8,12 @@
 
 | Datei | Inhalt |
 |-------|--------|
-| **[WORK_RESEARCHER_BRIEFING_REGIONAL.md](./WORK_RESEARCHER_BRIEFING_REGIONAL.md)** | **Morning Briefing: Ist ein Prompt/US-lastig; Soll 3 Regionsblöcke + Cross + gleiche Filter Zoll/Fiskal/Geld** |
-| **[WORK_RESEARCHER_LIQUIDITY_INDEX.md](./WORK_RESEARCHER_LIQUIDITY_INDEX.md)** | **Researcher Liquidity Index US/EU/ASIA: s(z), Katalog nicht Score** |
-| **[WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md)** | **Zwei Bücher M/F je Region, Cache-Keys, APP/PEPP vs EU-Bonds vs BoJ/MoF** |
-| **[WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md)** | **Debt/GDP, Bondmarkt, Realzins, V, π, T½ = ln2/ln(1+r) 1:1 zu WACC** |
-| **[WORK_FISCAL_FRONTEND_ADAPTIVE.md](./WORK_FISCAL_FRONTEND_ADAPTIVE.md)** | **BTC/US Fiscal-Frontend (Bills/TGA/SOMA)** |
+| **[WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md)** | **Serien-IDs, letzte Prints (Sep 2026), APIs, tote FRED-Reihen, X-Bot-Allowlist** |
+| **[WORK_RESEARCHER_BRIEFING_REGIONAL.md](./WORK_RESEARCHER_BRIEFING_REGIONAL.md)** | **Morning Briefing: 3 Regionsblöcke + Cross + Filter Zoll/Fiskal/Geld** |
+| **[WORK_RESEARCHER_LIQUIDITY_INDEX.md](./WORK_RESEARCHER_LIQUIDITY_INDEX.md)** | **Researcher Liquidity Index US/EU/ASIA: s(z)** |
+| **[WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md)** | **Zwei Bücher M/F, APP/PEPP vs EU-Bonds vs BoJ/MoF** |
+| **[WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md)** | **Debt/GDP, Bondmarkt, r, V, π, T½ = ln2/ln(1+r)** |
+| **[WORK_FISCAL_FRONTEND_ADAPTIVE.md](./WORK_FISCAL_FRONTEND_ADAPTIVE.md)** | **BTC/US Fiscal-Frontend** |
 | **[WORK_ANALYZE_DISK_CACHE.md](./WORK_ANALYZE_DISK_CACHE.md)** | **7-Tage-KI-Catch** |
 | **[WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md)** | **Wiring diskCacheGet/Set** |
 | **[WORK_TAM_SEGMENT_MAPPING.md](./WORK_TAM_SEGMENT_MAPPING.md)** | **Segment-TAM Mapping** |
