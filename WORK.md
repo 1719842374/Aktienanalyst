@@ -13,7 +13,7 @@
 
 | Datei | Inhalt |
 |-------|--------|
-| [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) | Exec-Karte vor S1 · Pro/Contra aus S8/S11/S12/S15 |
+| [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) | Exec vor S1 · Pro/Contra S8/S11/S12/S15 · Fazit Fließtext · **Call-Pflicht** · adaptiver Builder |
 | [WORK_FISCAL_FRONTEND_ADAPTIVE.md](./WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z) Bills/TGA/SOMA — Ist `BESSENT_WINDOW` |
 | [WORK_RESEARCHER_LIQUIDITY_INDEX.md](./WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA |
 | [WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F |
@@ -21,7 +21,8 @@
 | [WORK_RESEARCHER_BRIEFING_REGIONAL.md](./WORK_RESEARCHER_BRIEFING_REGIONAL.md) | Briefing 3 Regionen |
 | [WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Serien-IDs + Prints |
 
-Tabelle mit Ist-Spalte: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
+Code-Soll: [`server/exec-summary.ts`](./server/exec-summary.ts) — generisch, kein Ticker-Hardcode.
+Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 
 ---
 
@@ -51,5 +52,3 @@ Tabelle mit Ist-Spalte: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/
 | [WORK_TEIL7_SCORING.md](./WORK_TEIL7_SCORING.md) | Gold |
 | [WORK2.md](./WORK2.md) | PESTEL |
 | [Future_Work.md](./Future_Work.md) | Roadmap |
-
-Alle Ist-Links inkl. Bias/Lynch/Signal: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md#ist--kern-im-code-dokumentation)

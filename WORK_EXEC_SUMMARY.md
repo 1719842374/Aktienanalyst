@@ -1,88 +1,80 @@
 # WORK_EXEC_SUMMARY.md
 
-> Status: **Soll** · nicht im Analyze-UI · 04.09.2026
-> Karte **über** Sektion 1.
+> Status: **Soll** · UI-Karte nicht verdrahtet · 04.09.2026
+> Code: [`server/exec-summary.ts`](./server/exec-summary.ts) — **generisch, jeder Ticker**
+> Index: [WORK.md](./WORK.md)
 
-Pro/Contra: S8, S11, S12, S14, S15.
-Fazit: S17-Wort + Einpreisung vs. Unterschätzung als Fließtext.
-**Earnings Call ist Pflichtnennung** (Datum + Wort „Call“).
-
----
-
-## Earnings Call — wann, wie nennen
-
-Quelle nur S1-Cache: `nextEarningsDate` / `lastReported`. Kein LLM-Datum.
-
-| Feld | Pflicht | MSFT-Ist 4.9.2026 |
-|------|---------|-------------------|
-| Nächster Call | ja, Absatz 3 + Kopf | **Earnings Call am 28. Oktober 2026** |
-| Letztes berichtetes Quartal | ja, ein Halbsatz wenn vorhanden | zuletzt Q4 FY2026 |
-| Uhrzeit / Ticker-Zeit | nur wenn im Cache | sonst weglassen, nicht 16:00 raten |
-| Kein Datum | Satz: „Ein Call-Termin steht im Cache nicht.“ | nie „demnächst“ |
-
-Formulierung fest, damit es nicht als beliebiges Event untergeht:
-
-```
-Der nächste Earnings Call ist am {TT. Monat JJJJ}.
-```
-
-Nicht: „28.10.“, „Zahlentermin“, „Prüfpunkt“ allein. Das Wort **Earnings Call**
-muss im Fazit stehen. Im Kopf darf die Kurzform `Call 28.10.2026` stehen.
-
-Abstand heute → Call (MSFT: 4.9. → 28.10. = 54 Tage) darf als Kontext rein
-(„in gut sieben Wochen“), ersetzt aber nicht das Kalenderdatum.
+Keine MSFT-Konstanten im Builder. MSFT unten nur als Beispiel-Output nach einem Live-Cache.
 
 ---
 
-## Pflichtkopf
+## Adaptive Quelle (alle Aktien gleich)
 
-$510.12 · $3.79T · +17.8 % · WACC 8.99 % · g* 7.3 % · P/E 20.7 ·
-PEG 2.62 · DCF $519 · Risk $430 · CRV 1.0 · Score 60 · **Call 28.10.2026**.
+`buildExecSummary(input)` liest nur Felder, die `/api/analyze` schon legt:
+
+| Input | Analyze-Feld |
+|-------|----------------|
+| price, name, ticker | S1 |
+| nextEarningsDate, lastReportedQuarter | S1 Kalender |
+| wacc, dcfConservative, g1 | S5 |
+| gStar | S14 |
+| peg, pe, pt | S1/S4/S9 |
+| riskAdjTarget, invertedDcf, risks[] | S8 |
+| crv*, maxEntryCrv3, scoreCapped, gate | S6/S17 |
+| catalysts[], downside[] | S15 |
+| moat, porterHighForces | S11 |
+| pestel[] exposure/kurstreiber/kursrisiko | S12 |
+| segments[] | S2 |
+| s17Verdict | S17 Fazit-Wort |
+
+Fehlt ein Feld → Zeile weglassen oder `n/v`. Nichts raten (Call-Datum!).
 
 ---
 
-## Fazit — drei Absätze
+## Call (Pflicht, adaptiv)
 
-1. Lage + was schon im Kurs steckt.
-2. Was zu klein gerechnet ist (eine Zielzahl).
-3. Handlung + **Earnings Call am {Datum}** als eigener Satz.
-
----
-
-## Template ohne KI
-
-```
-{Name} ist {S17-Wort}: das konservative DCF liegt praktisch am Kurs, der Markt
-preist aber nur {g*} Wachstum ein — unser Modell unterstellt mehr.
-
-Was fehlt, ist der Risikoabschlag. {S8-Risiko in einem Halbsatz} wird zu klein
-gerechnet; mit Abschlag eher {Risk-Ziel} als der heutige Kurs.
-
-Deshalb nicht nachkaufen. Einstieg erst unter {Max-Entry}.
-Der nächste Earnings Call ist am {TT. Monat JJJJ} (zuletzt berichtet: {Quartal}).
+```ts
+formatEarningsCall(nextEarningsDate, lastReportedQuarter)
+// Date ok  → "Der nächste Earnings Call ist am 28. Oktober 2026; zuletzt gemeldet wurde Q4 FY2026."
+// Date fehlt → "Ein Call-Termin steht im Cache nicht."
 ```
 
+Kopf immer `Call TT.MM.JJJJ` oder `Call n/v`.
+
 ---
 
-## MSFT — Soll-Fazit
+## Pro / Contra (Priorität, nicht Namen)
 
-Microsoft ist **neutral**. Das konservative DCF sitzt fast auf dem Kurs — knapp
-519 gegen 510 Dollar. Der Markt glaubt nur gut 7 % Dauerwachstum, nicht die 15 %
-des Fast-Grower-Modells. Azure und Copilot sind keine unentdeckte Story; das
-Analystenziel von 535 Dollar liegt nur knapp 5 % über dem Kurs.
+Pro: Top-2 GB mit PoS ≥ 40 → Moat → PESTEL-Kurstreiber → Umsatz-g > WACC.
+Contra: max ED (+ „zu klein gerechnet“ wenn Flag) → Porter-High → PESTEL Hoch → Risk-Ziel < 0.95×Kurs → CRV-RA < 1 → K mit PoS<40 oder Einpr.≥60.
 
-Was nicht im Preis steckt, ist der Abschlag fürs Wettbewerbs- und Margenrisiko.
-Druck durch OpenAI, Gemini und offene Modelle wird zu klein gerechnet — die
-FCF-Marge könnte Richtung 15 bis 17 % gehen. Dann eher knapp 430 Dollar als 510.
+Max 5 je Seite. Jede Zeile `src` + Text.
 
-Deshalb warten. Nachkaufen erst unter 375 Dollar. Der nächste **Earnings Call
-ist am 28. Oktober 2026**; zuletzt gemeldet wurde Q4 FY2026.
+---
+
+## Fazit (3 Absätze, Template füllt Klammern)
+
+1. `{Name} ist {s17}.` DCF vs Kurs. g* vs g1. PT wenn da.
+2. Risikoabschlag. Höchstes S8. Risk-Ziel vs Kurs.
+3. `Deshalb warten.` + Max-Entry-Schwelle wenn Kurs darüber. + **Earnings-Call-Satz**.
+
+LLM darf umschreiben, nicht das Wort und nicht das Call-Datum ändern. FactPack an Zahlen.
+
+---
+
+## Beispiel nur zur Kontrolle (MSFT-Cache 4.9.2026)
+
+Kopf: `MSFT · 510,12 · 60 · g* 7,3 % · Call 28.10.2026`
+
+Fazit-Absatz 3:
+`Deshalb warten. Nachkaufen erst unter 375,00 Dollar. Der nächste Earnings Call ist am 28. Oktober 2026; zuletzt gemeldet wurde Q4 FY2026.`
+
+Nebius oder META laufen durch dieselbe Funktion — anderes Cache, gleicher Satzbau.
 
 ---
 
 ## DoD
 
-1. Fazit-Absatz 3 enthält wörtlich „Earnings Call“ + volles Datum.
-2. Kopf enthält `Call {TT.MM.JJJJ}`.
-3. Fehlt das Feld → Satz „steht im Cache nicht“, kein erfundenes Datum.
-4. S17-Wort einmal. FactPack an Zahlen.
+1. `exec-summary.ts` importiert keinen Ticker-String außer `input.ticker`.
+2. Call-Satz immer vorhanden (Datum oder n/v).
+3. UI-Karte über S1 noch offen (Ampel ⬜).
