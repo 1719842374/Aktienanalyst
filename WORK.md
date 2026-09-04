@@ -1,6 +1,6 @@
 # WORK.md — Index & Navigationskarte
 
-> Stand: 03.09.2026 | Branch: `main`
+> Stand: 04.09.2026 | Branch: `main`
 
 ---
 
@@ -8,7 +8,8 @@
 
 | Datei | Inhalt |
 |-------|--------|
-| **[WORK_FISCAL_FRONTEND_ADAPTIVE.md](./WORK_FISCAL_FRONTEND_ADAPTIVE.md)** | **BTC/Researcher Fiscal-Frontend: Ist (hardcodiert/Request-Cache) vs Soll s(z)+API; NetBillSupply, QRA-Anker, FrontEndImpulse; TGA/SOMA/DFF/DefiLlama; Dateien Frontend/Backend** |
+| **[WORK_RESEARCHER_LIQUIDITY_INDEX.md](./WORK_RESEARCHER_LIQUIDITY_INDEX.md)** | **Researcher Liquidity Index US/EU/ASIA: gleiche 4 Kanäle, adaptives s(z), Serie = Katalog nicht Score; kein GENIUS, kein Bessent-Kalender** |
+| **[WORK_FISCAL_FRONTEND_ADAPTIVE.md](./WORK_FISCAL_FRONTEND_ADAPTIVE.md)** | **BTC/US Fiscal-Frontend (Bills/TGA/SOMA) — Detailkanal, fließt nur in US-Slot Fiskal wenn available** |
 | **[WORK_ANALYZE_DISK_CACHE.md](./WORK_ANALYZE_DISK_CACHE.md)** | **7-Tage-KI-Catch: Ist 20-min-RAM / Disk tot; Soll L1 20 min + L2 7 d + force; OpenRouter 4–7 Calls** |
 | **[WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md)** | **Wiring diskCacheGet/Set in /api/analyze + enrich; Schema 2026-08-29-v2; HP-Keep 252** |
 | **[WORK_TAM_SEGMENT_MAPPING.md](./WORK_TAM_SEGMENT_MAPPING.md)** | **Segment-TAM Mapping: kein Konzern-desc-Fallback, Aliase 365/Xbox/LinkedIn/Dynamics, Quality-Tor Coverage/Labels/Share>25%, DCF-g nur bei quality=ok, MSFT $896B-Repro** |
@@ -26,8 +27,8 @@
 | [WORK_BTC_MINER.md](./WORK_BTC_MINER.md) | Miner-Zonen |
 | [WORK_TEIL7_SCORING.md](./WORK_TEIL7_SCORING.md) | Gold/Realzins |
 | [WORK2.md](./WORK2.md) | Regulatory/PESTEL |
-| **[WORK_STABLECOIN_TBILL_GENIUS.md](./WORK_STABLECOIN_TBILL_GENIUS.md)** | **Adaptive Stablecoin → T-Bill Nachfrage + GENIUS Act Impact (BTC/Gold Liquidity Channel) — Basis-Version live, Adaptive Layer offen** |
-| [WORK_RESEARCHER_LIQUIDITY_REGIME.md](./WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 WALCL/RRP/TGA + Policy-Kanal (Bessent-Fenster noch Kalenderkonstante) |
+| **[WORK_STABLECOIN_TBILL_GENIUS.md](./WORK_STABLECOIN_TBILL_GENIUS.md)** | **BTC Sektion 14 Stablecoin-Kanal — nicht Teil des Researcher-Index** |
+| [WORK_RESEARCHER_LIQUIDITY_REGIME.md](./WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 Ist: nur US WALCL/RRP/TGA + Kalender-Policy |
 
 ---
 
