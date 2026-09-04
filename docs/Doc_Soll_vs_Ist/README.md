@@ -1,6 +1,6 @@
 # Doc_Soll_vs_Ist
 
-> Stand: 04.09.2026 12:15 CEST | Ampel aus **Code + UI**, nicht aus Commit-Text
+> Stand: 04.09.2026 13:10 CEST | Ampel aus **Code + UI**, nicht aus Commit-Text
 > Originale im **Repo-Root**. Dieser Ordner verlinkt nur.
 >
 > Alt: [work-offen](../work-offen/) · [work-dokumentation](../work-dokumentation/)
@@ -9,29 +9,13 @@
 
 ---
 
-## Korrektur 04.09. — Portfolio (Übersicht-Screenshot)
-
-Live-UI (`PortfolioOverview.tsx`): drei Kacheln **Profit / Bester Performer / Realisierter Profit** = Durchschnitt *ex-post* (Einstieg vs. `lastPrice`). Leere Depot-State: `Keine Positionen`, `Keine Kursdaten`, Frontier `≥60` Beobachtungen, Backtest `0 Handelstage vs. SPY`.
-
-| Erwartung User | Code-Ist | Ampel |
-|----------------|----------|-------|
-| Erwartete Rendite CAPM oben, autonom | **Kein KPI.** `E[r_i]=r_f+\beta_i(E[r_m]-r_f)` wird nirgends gerendert. `EngineRow.mu` = historische Mittelrendite aus `buildCovariance()` oder Override, Quelle `historical`/`override` — nicht SML-CAPM | `⬜` Anzeige / `🟡` Lib |
-| Performance-Rendite-Kurve | `computePortfolioPerformanceSeries` nur mit Positionen **und** Analyse-Cache-OHLCV. Kein autonomer Kurs-Fetch auf der Übersicht | `🟡` |
-| Attribution vs. SPY (`WORK_PORTFOLIO_BACKTEST.md`) | `PortfolioBacktestPanel` + `backtest.ts` existieren. Gate: offene Longs + gemeinsame Historie. Screenshot: 0 Tage → Block leer | `🟡` |
-| „CAPM“ im Produkt | Mean-Variance-Gewichte `weightCapm` (Toggle Pie **Ziel-Gewicht CAPM**, erst wenn Engine `ok` und ≥2 Titel mit Historie) | `🟡` Name ≠ SML |
-
-Preise: Engine ist **reine Funktion**, kein Netzwerk. Kurse kommen nur, wenn `/api/analyze` vorher gelaufen ist. Leeres `localStorage`-Depot → keine Zahl, by design und gegen „autonom“.
-
-Audit 01.09. (`WORK_IST_VS_SOLL.md` Zeile 11 `✅`) zählte die Datei `backtest.ts`. Das ist Commit-Historie, nicht die Übersicht.
-
----
-
 ## Soll — Spec, erwartete UI fehlt oder Engine fehlt
 
 | Spec (Root) | Soll | Ist Code + UI | Ampel |
 |-------------|------|---------------|-------|
+| [WORK_EXEC_SUMMARY.md](../../WORK_EXEC_SUMMARY.md) | Karte über S1, Pro/Contra aus S8/S11/S12/S15, PESTEL-Raster + Porter-High | Analyze startet bei S1 Datenaktualität; keine Exec-Karte | `⬜` |
 | [WORK_PORTFOLIO.md](../../WORK_PORTFOLIO.md) | CAPM/Kelly sichtbar | Gewichte + Kelly in Optimierung; **kein** E[r]-KPI Übersicht | `🟡` |
-| [WORK_PORTFOLIO_BACKTEST.md](../../WORK_PORTFOLIO_BACKTEST.md) | Equity, α/β/IR, Underwater, Capture | Panel da, leer ohne Positionen+OHLCV; Acceptance §8 unchecked in der Spec selbst | `🟡` |
+| [WORK_PORTFOLIO_BACKTEST.md](../../WORK_PORTFOLIO_BACKTEST.md) | Equity, α/β/IR, Underwater, Capture | Panel da, leer ohne Positionen+OHLCV | `🟡` |
 | [WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](../../WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Katalog + Fetch | nur Markdown | `⬜` |
 | [WORK_FISCAL_FRONTEND_ADAPTIVE.md](../../WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z), kein Kalender | `BESSENT_WINDOW` in `liquidity-regime-math.ts` | `⬜` |
 | [WORK_RESEARCHER_LIQUIDITY_INDEX.md](../../WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA | C2 nur US | `⬜` |
@@ -40,7 +24,7 @@ Audit 01.09. (`WORK_IST_VS_SOLL.md` Zeile 11 `✅`) zählte die Datei `backtest.
 | [WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../WORK_RESEARCHER_BRIEFING_REGIONAL.md) | 3 Regionen + Spillover | ein Prompt, NEW=`high` | `⬜` |
 | [WORK_VALUECHAIN_SECTOR_ROTATION.md](../../WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–9 | 1–6 live, 7–9 offen | `🟡` |
 
-Kopie Briefing: [work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md](../work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md)
+Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPACK_LLM.md](./FACTPACK_LLM.md) · FMP/BB [FMP_GRENZEN_BLOOMBERG.md](./FMP_GRENZEN_BLOOMBERG.md)
 
 ---
 
@@ -69,19 +53,5 @@ Kopie Briefing: [work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md](../work-offen/
 | [WORK_TEIL7_SCORING.md](../../WORK_TEIL7_SCORING.md) | Gold |
 | [WORK2.md](../../WORK2.md) | PESTEL |
 | [WORK.md](../../WORK.md) | Index |
-| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 01.09. — Portfolio-Zeilen **überholt** siehe oben |
+| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 01.09. |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 |
-
----
-
-## Was die Übersicht bräuchte (Soll, noch nicht gebaut)
-
-Vierte KPI-Kachel, gleiche Zeile wie Profit:
-
-\[
-\mu_p = \sum_i w_i\,\mu_i,\quad \mu_i^{\mathrm{CAPM}}=r_f+\beta_i\bigl(\mu_m-r_f\bigr)
-\]
-
-`\beta_i` aus Kovarianz vs. Policy-Benchmark (Default SPY), `r_f` aus Policy, `\mu_m` aus Benchmark-Historie — **nicht** das bisherige historische Titel-`mu` umbenennen.
-
-Autonom: Overview darf Benchmark+Positionen-OHLCV selbst ziehen (FMP/Yahoo), nicht nur Analyse-Cache. Sonst bleibt die Kachel bei leerem Depot `—`.
