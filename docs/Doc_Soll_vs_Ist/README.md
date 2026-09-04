@@ -1,64 +1,87 @@
 # Doc_Soll_vs_Ist
 
-> Stand: 04.09.2026 | Hub Soll vs. Ist
-> Originale bleiben im **Repo-Root**. Dieser Ordner ist nur die Verlinkung.
+> Stand: 04.09.2026 12:15 CEST | Ampel aus **Code + UI**, nicht aus Commit-Text
+> Originale im **Repo-Root**. Dieser Ordner verlinkt nur.
 >
-> Altpfade (noch da, nicht löschen): [work-offen](../work-offen/) · [work-dokumentation](../work-dokumentation/)
+> Alt: [work-offen](../work-offen/) · [work-dokumentation](../work-dokumentation/)
+
+**Regel:** `✅` nur wenn die *erwartete Anzeige* live ist. Datei + Lib ohne KPI/Serie = `🟡` oder `⬜`.
 
 ---
 
-## Soll — Spec, Engine fehlt
+## Korrektur 04.09. — Portfolio (Übersicht-Screenshot)
 
-| Spec (Root) | Soll | Ist im Code |
-|-------------|------|-------------|
-| [WORK_FISCAL_FRONTEND_ADAPTIVE.md](../../WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z) Bills/TGA/SOMA/DFF, kein Kalender | `BESSENT_WINDOW` in `liquidity-regime-math.ts` |
-| [WORK_RESEARCHER_LIQUIDITY_INDEX.md](../../WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA, 4 Kanäle s(z) | C2 nur US WALCL/RRP/TGA |
-| [WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](../../WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F, APP/PEPP, BoJ/MoF | kein `CATALOG[EU\|ASIA]` |
-| [WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | Debt/GDP, r, V, π, T½ | `M2V` US-only, Eimer ΔV=0.02 |
-| [WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../WORK_RESEARCHER_BRIEFING_REGIONAL.md) | 3 Regionen + Spillover + Handel | ein Prompt, NEW nur `high` |
-| Kopie im Offen-Ordner | — | [work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md](../work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md) |
-| [WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](../../WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Serien-IDs, Prints, X-Allowlist | kein `liqidx_v1__*` |
+Live-UI (`PortfolioOverview.tsx`): drei Kacheln **Profit / Bester Performer / Realisierter Profit** = Durchschnitt *ex-post* (Einstieg vs. `lastPrice`). Leere Depot-State: `Keine Positionen`, `Keine Kursdaten`, Frontier `≥60` Beobachtungen, Backtest `0 Handelstage vs. SPY`.
 
-Audit-Ist (älter, 01.09.): [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) · Rest-Offen D6: [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md)
+| Erwartung User | Code-Ist | Ampel |
+|----------------|----------|-------|
+| Erwartete Rendite CAPM oben, autonom | **Kein KPI.** `E[r_i]=r_f+\beta_i(E[r_m]-r_f)` wird nirgends gerendert. `EngineRow.mu` = historische Mittelrendite aus `buildCovariance()` oder Override, Quelle `historical`/`override` — nicht SML-CAPM | `⬜` Anzeige / `🟡` Lib |
+| Performance-Rendite-Kurve | `computePortfolioPerformanceSeries` nur mit Positionen **und** Analyse-Cache-OHLCV. Kein autonomer Kurs-Fetch auf der Übersicht | `🟡` |
+| Attribution vs. SPY (`WORK_PORTFOLIO_BACKTEST.md`) | `PortfolioBacktestPanel` + `backtest.ts` existieren. Gate: offene Longs + gemeinsame Historie. Screenshot: 0 Tage → Block leer | `🟡` |
+| „CAPM“ im Produkt | Mean-Variance-Gewichte `weightCapm` (Toggle Pie **Ziel-Gewicht CAPM**, erst wenn Engine `ok` und ≥2 Titel mit Historie) | `🟡` Name ≠ SML |
+
+Preise: Engine ist **reine Funktion**, kein Netzwerk. Kurse kommen nur, wenn `/api/analyze` vorher gelaufen ist. Leeres `localStorage`-Depot → keine Zahl, by design und gegen „autonom“.
+
+Audit 01.09. (`WORK_IST_VS_SOLL.md` Zeile 11 `✅`) zählte die Datei `backtest.ts`. Das ist Commit-Historie, nicht die Übersicht.
 
 ---
 
-## Ist — Kern im Code (Dokumentation)
+## Soll — Spec, erwartete UI fehlt oder Engine fehlt
+
+| Spec (Root) | Soll | Ist Code + UI | Ampel |
+|-------------|------|---------------|-------|
+| [WORK_PORTFOLIO.md](../../WORK_PORTFOLIO.md) | CAPM/Kelly sichtbar | Gewichte + Kelly in Optimierung; **kein** E[r]-KPI Übersicht | `🟡` |
+| [WORK_PORTFOLIO_BACKTEST.md](../../WORK_PORTFOLIO_BACKTEST.md) | Equity, α/β/IR, Underwater, Capture | Panel da, leer ohne Positionen+OHLCV; Acceptance §8 unchecked in der Spec selbst | `🟡` |
+| [WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](../../WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Katalog + Fetch | nur Markdown | `⬜` |
+| [WORK_FISCAL_FRONTEND_ADAPTIVE.md](../../WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z), kein Kalender | `BESSENT_WINDOW` in `liquidity-regime-math.ts` | `⬜` |
+| [WORK_RESEARCHER_LIQUIDITY_INDEX.md](../../WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA | C2 nur US | `⬜` |
+| [WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](../../WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F EZ/JP | kein Katalog | `⬜` |
+| [WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ | M2V US + Eimer 0.02 | `⬜` |
+| [WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../WORK_RESEARCHER_BRIEFING_REGIONAL.md) | 3 Regionen + Spillover | ein Prompt, NEW=`high` | `⬜` |
+| [WORK_VALUECHAIN_SECTOR_ROTATION.md](../../WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–9 | 1–6 live, 7–9 offen | `🟡` |
+
+Kopie Briefing: [work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md](../work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md)
+
+---
+
+## Ist — Kern im Code und in der UI nutzbar (wenn Daten da)
 
 | Spec (Root) | Code |
 |-------------|------|
-| [WORK_RESEARCHER_LIQUIDITY_REGIME.md](../../WORK_RESEARCHER_LIQUIDITY_REGIME.md) | GET `/api/researcher/liquidity` C2 US |
-| [WORK_STABLECOIN_TBILL_GENIUS.md](../../WORK_STABLECOIN_TBILL_GENIUS.md) | `stablecoin-liquidity.ts` |
+| [WORK_RESEARCHER_LIQUIDITY_REGIME.md](../../WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 US GET `/api/researcher/liquidity` |
+| [WORK_STABLECOIN_TBILL_GENIUS.md](../../WORK_STABLECOIN_TBILL_GENIUS.md) | DefiLlama live; GENIUS-Score manuell |
 | [WORK_ANALYZE_DISK_CACHE.md](../../WORK_ANALYZE_DISK_CACHE.md) | L1+L2 |
-| [WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](../../WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | disk-cache Wiring |
+| [WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](../../WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | Wiring |
 | [WORK_ANTIBIAS_DCF.md](../../WORK_ANTIBIAS_DCF.md) | inverted DCF |
-| [WORK_REVERSE_DCF_BRIDGE.md](../../WORK_REVERSE_DCF_BRIDGE.md) | `fiscal-bridge.ts` |
+| [WORK_REVERSE_DCF_BRIDGE.md](../../WORK_REVERSE_DCF_BRIDGE.md) | fiscal-bridge |
 | [WORK_BIAS_FIXES_INVERSE_DCF.md](../../WORK_BIAS_FIXES_INVERSE_DCF.md) | BL + MC |
-| [WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md](../../WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md) | Lynch-Defaults |
-| [WORK_PORTFOLIO.md](../../WORK_PORTFOLIO.md) | `lib/portfolio` |
-| [WORK_PORTFOLIO_BACKTEST.md](../../WORK_PORTFOLIO_BACKTEST.md) | `backtest.ts` |
-| [WORK_RESEARCHER_PORTFOLIO.md](../../WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 |
+| [WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md](../../WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md) | Defaults |
+| [WORK_RESEARCHER_PORTFOLIO.md](../../WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 Tabs |
 | [WORK_RESEARCHER_PORTFOLIO_TEIL2.md](../../WORK_RESEARCHER_PORTFOLIO_TEIL2.md) | δ/HHI |
 | [WORK_RESEARCHER_BUTTONS_APPLY.md](../../WORK_RESEARCHER_BUTTONS_APPLY.md) | Add-Buttons |
-| [WORK_RESEARCHER_SECTOR_ADD.md](../../WORK_RESEARCHER_SECTOR_ADD.md) | Sector-Add |
-| [WORK_NEWS_SENTIMENT.md](../../WORK_NEWS_SENTIMENT.md) | `news-sentiment.ts` |
-| [WORK_PEER_ROIC_SANITY.md](../../WORK_PEER_ROIC_SANITY.md) | `sanitizeRoic` |
-| [WORK_SEGMENT_DEDUP.md](../../WORK_SEGMENT_DEDUP.md) | `fmp.ts` |
-| [WORK_SECTION4_DATA_BUGS.md](../../WORK_SECTION4_DATA_BUGS.md) | PEG/FCF |
-| [WORK_TAM_SEGMENT_MAPPING.md](../../WORK_TAM_SEGMENT_MAPPING.md) | assessTamQuality |
-| [WORK_TAM_RESIDUAL_XBOX.md](../../WORK_TAM_RESIDUAL_XBOX.md) | Residuum |
+| [WORK_NEWS_SENTIMENT.md](../../WORK_NEWS_SENTIMENT.md) | news-sentiment |
+| [WORK_SEGMENT_DEDUP.md](../../WORK_SEGMENT_DEDUP.md) | fmp |
+| [WORK_TAM_SEGMENT_MAPPING.md](../../WORK_TAM_SEGMENT_MAPPING.md) | TAM-Tor |
 | [WORK_DATA_PROVIDERS.md](../../WORK_DATA_PROVIDERS.md) | FMP/Yahoo |
 | [WORK_SCORING_VORLAGE.md](../../WORK_SCORING_VORLAGE.md) | Gates |
-| [WORK_SIGNAL_BACKTEST.md](../../WORK_SIGNAL_BACKTEST.md) | `server/backtest/*` |
-| [WORK_SEKTORROTATIONS_RAT.md](../../WORK_SEKTORROTATIONS_RAT.md) | SectorRotationPanel |
-| [WORK_VALUECHAIN_SECTOR_ROTATION.md](../../WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–6, 7–9 offen |
-| [WORK_BTC_MINER.md](../../WORK_BTC_MINER.md) | `btc-miner.ts` |
-| [WORK_TEIL0-6.md](../../WORK_TEIL0-6.md) | Platform/BTC |
-| [WORK_TEIL7_SCORING.md](../../WORK_TEIL7_SCORING.md) | Gold/WALCL |
+| [WORK_SIGNAL_BACKTEST.md](../../WORK_SIGNAL_BACKTEST.md) | server/backtest |
+| [WORK_BTC_MINER.md](../../WORK_BTC_MINER.md) | miner |
+| [WORK_TEIL7_SCORING.md](../../WORK_TEIL7_SCORING.md) | Gold |
 | [WORK2.md](../../WORK2.md) | PESTEL |
-| [Future_Work.md](../../Future_Work.md) | Roadmap |
-| [WORK.md](../../WORK.md) | Root-Index |
+| [WORK.md](../../WORK.md) | Index |
+| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 01.09. — Portfolio-Zeilen **überholt** siehe oben |
+| [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 |
 
 ---
 
-**Regel:** Links zeigen auf Root-`WORK_*.md`. Kein Bulk-Move.
+## Was die Übersicht bräuchte (Soll, noch nicht gebaut)
+
+Vierte KPI-Kachel, gleiche Zeile wie Profit:
+
+\[
+\mu_p = \sum_i w_i\,\mu_i,\quad \mu_i^{\mathrm{CAPM}}=r_f+\beta_i\bigl(\mu_m-r_f\bigr)
+\]
+
+`\beta_i` aus Kovarianz vs. Policy-Benchmark (Default SPY), `r_f` aus Policy, `\mu_m` aus Benchmark-Historie — **nicht** das bisherige historische Titel-`mu` umbenennen.
+
+Autonom: Overview darf Benchmark+Positionen-OHLCV selbst ziehen (FMP/Yahoo), nicht nur Analyse-Cache. Sonst bleibt die Kachel bei leerem Depot `—`.
