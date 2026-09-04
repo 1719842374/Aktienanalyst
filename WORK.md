@@ -8,27 +8,30 @@
 
 | Datei | Inhalt |
 |-------|--------|
-| **[WORK_RESEARCHER_LIQUIDITY_INDEX.md](./WORK_RESEARCHER_LIQUIDITY_INDEX.md)** | **Researcher Liquidity Index US/EU/ASIA: gleiche 4 Kanäle, adaptives s(z), Serie = Katalog nicht Score; kein GENIUS, kein Bessent-Kalender** |
-| **[WORK_FISCAL_FRONTEND_ADAPTIVE.md](./WORK_FISCAL_FRONTEND_ADAPTIVE.md)** | **BTC/US Fiscal-Frontend (Bills/TGA/SOMA) — Detailkanal, fließt nur in US-Slot Fiskal wenn available** |
-| **[WORK_ANALYZE_DISK_CACHE.md](./WORK_ANALYZE_DISK_CACHE.md)** | **7-Tage-KI-Catch: Ist 20-min-RAM / Disk tot; Soll L1 20 min + L2 7 d + force; OpenRouter 4–7 Calls** |
-| **[WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md)** | **Wiring diskCacheGet/Set in /api/analyze + enrich; Schema 2026-08-29-v2; HP-Keep 252** |
-| **[WORK_TAM_SEGMENT_MAPPING.md](./WORK_TAM_SEGMENT_MAPPING.md)** | **Segment-TAM Mapping: kein Konzern-desc-Fallback, Aliase 365/Xbox/LinkedIn/Dynamics, Quality-Tor Coverage/Labels/Share>25%, DCF-g nur bei quality=ok, MSFT $896B-Repro** |
-| **[WORK_TAM_RESIDUAL_XBOX.md](./WORK_TAM_RESIDUAL_XBOX.md)** | **Addendum: Other-Mix 2,5 % / $8.3B adaptiv bei genau 1 Loch; Xbox-YoY nicht aus 17,8 vs 21,3 invertierbar (2 Unbekannte)** |
+| **[WORK_RESEARCHER_BRIEFING_REGIONAL.md](./WORK_RESEARCHER_BRIEFING_REGIONAL.md)** | **Morning Briefing: Ist ein Prompt/US-lastig; Soll 3 Regionsblöcke + Cross + gleiche Filter Zoll/Fiskal/Geld** |
+| **[WORK_RESEARCHER_LIQUIDITY_INDEX.md](./WORK_RESEARCHER_LIQUIDITY_INDEX.md)** | **Researcher Liquidity Index US/EU/ASIA: s(z), Katalog nicht Score** |
+| **[WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md)** | **Zwei Bücher M/F je Region, Cache-Keys, APP/PEPP vs EU-Bonds vs BoJ/MoF** |
+| **[WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md)** | **Debt/GDP, Bondmarkt, Realzins, V, π, T½ = ln2/ln(1+r) 1:1 zu WACC** |
+| **[WORK_FISCAL_FRONTEND_ADAPTIVE.md](./WORK_FISCAL_FRONTEND_ADAPTIVE.md)** | **BTC/US Fiscal-Frontend (Bills/TGA/SOMA)** |
+| **[WORK_ANALYZE_DISK_CACHE.md](./WORK_ANALYZE_DISK_CACHE.md)** | **7-Tage-KI-Catch** |
+| **[WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md)** | **Wiring diskCacheGet/Set** |
+| **[WORK_TAM_SEGMENT_MAPPING.md](./WORK_TAM_SEGMENT_MAPPING.md)** | **Segment-TAM Mapping** |
+| **[WORK_TAM_RESIDUAL_XBOX.md](./WORK_TAM_RESIDUAL_XBOX.md)** | **Addendum Xbox-Residual** |
 | **[WORK_ANTIBIAS_DCF.md](./WORK_ANTIBIAS_DCF.md)** | Anti-Bias Inverted DCF |
-| [WORK_PORTFOLIO.md](./WORK_PORTFOLIO.md) | Virtuelles Portfolio, CAPM, Kelly, Sharpe |
-| **[WORK_RESEARCHER_PORTFOLIO.md](./WORK_RESEARCHER_PORTFOLIO.md)** | **3 Portfolios P1/P2/P3, Direkt-Add Analyse/Researcher** |
-| **[WORK_RESEARCHER_PORTFOLIO_TEIL2.md](./WORK_RESEARCHER_PORTFOLIO_TEIL2.md)** | **Zahlen/Daten/Fakten: File-Map, Gewichtung, Shrinkage δ=0,25, HHI 0,28, Ist-Gewichte MSFT ~48% vs 30%, Frontier** |
-| **[WORK_NEWS_SENTIMENT.md](./WORK_NEWS_SENTIMENT.md)** | **News Section2: positive Headlines fälschlich rot (−100) — LLM-Beispiel-Bias score:-1.0, EN-only Keywords, Fix-Spec** |
-| **[WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md)** | **Segment-Deduplizierung Produkt vs. Geographic (AWS-Duplikat AMZN etc.) — Helper + Cross-Dedup Spec** |
-| [WORK_DATA_PROVIDERS.md](./WORK_DATA_PROVIDERS.md) | FMP 5Y-Limit + OHLCV |
+| [WORK_PORTFOLIO.md](./WORK_PORTFOLIO.md) | Virtuelles Portfolio |
+| **[WORK_RESEARCHER_PORTFOLIO.md](./WORK_RESEARCHER_PORTFOLIO.md)** | **P1/P2/P3** |
+| **[WORK_RESEARCHER_PORTFOLIO_TEIL2.md](./WORK_RESEARCHER_PORTFOLIO_TEIL2.md)** | **Zahlen P2/P3** |
+| **[WORK_NEWS_SENTIMENT.md](./WORK_NEWS_SENTIMENT.md)** | **News Section2 Sentiment-Fix** |
+| **[WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md)** | **Segment-Dedup** |
+| [WORK_DATA_PROVIDERS.md](./WORK_DATA_PROVIDERS.md) | FMP |
 | [WORK_REVERSE_DCF_BRIDGE.md](./WORK_REVERSE_DCF_BRIDGE.md) | Reverse-DCF + Fiscal Bridge |
 | [WORK_SCORING_VORLAGE.md](./WORK_SCORING_VORLAGE.md) | Scoring, Gates |
 | [WORK_TEIL0-6.md](./WORK_TEIL0-6.md) | Platform, BTC, FMP |
 | [WORK_BTC_MINER.md](./WORK_BTC_MINER.md) | Miner-Zonen |
 | [WORK_TEIL7_SCORING.md](./WORK_TEIL7_SCORING.md) | Gold/Realzins |
 | [WORK2.md](./WORK2.md) | Regulatory/PESTEL |
-| **[WORK_STABLECOIN_TBILL_GENIUS.md](./WORK_STABLECOIN_TBILL_GENIUS.md)** | **BTC Sektion 14 Stablecoin-Kanal — nicht Teil des Researcher-Index** |
-| [WORK_RESEARCHER_LIQUIDITY_REGIME.md](./WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 Ist: nur US WALCL/RRP/TGA + Kalender-Policy |
+| **[WORK_STABLECOIN_TBILL_GENIUS.md](./WORK_STABLECOIN_TBILL_GENIUS.md)** | **BTC Sektion 14 — nicht Researcher-Index** |
+| [WORK_RESEARCHER_LIQUIDITY_REGIME.md](./WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 Ist US-only |
 
 ---
 
