@@ -2,151 +2,123 @@
 
 > Status: **Soll** · nicht im Analyze-UI · 04.09.2026
 > Hub: [docs/Doc_Soll_vs_Ist/WORK_EXEC_SUMMARY.md](./docs/Doc_Soll_vs_Ist/WORK_EXEC_SUMMARY.md)
-> Karte **über** Sektion 1. Kein 19. Essay.
+> Karte **über** Sektion 1.
 
-Zero-Hülle + **Pflicht Pro/Contra**. Quellen: S8 Invertierung, S11 Porter,
-S12 PESTEL, S14/S8 Inverted DCF, S15 Katalysatoren.
+Quellen Pro/Contra: S8 Invertierung, S11 Porter, S12 PESTEL, S14 Reverse-DCF, S15 Katalysatoren.
+Fazit-Logik: **dieselbe** wie S17 (Wort + Positiv/Negativ-Zählung), plus explizit
+**eingepreist / nicht eingepreist / unterschätzt**.
 
 Referenz MSFT 4.9.2026 12:49: $510.12 · DCF $518.86 · ΣGB 28.17 % ·
-CRV 1.0 · Score 60 · NEUTRAL.
-
-Max. Länge: Kopf + 8 Sätze + Pro-Liste (5) + Contra-Liste (5) + Urteil.
-Kein 10-K, keine 10 News, keine WACC-Matrix.
+CRV 1.0 · Score 60 · S17 = NEUTRAL.
 
 ---
 
-## Pflichtkopf (Code, mit/ohne KI)
+## Pflichtkopf (Code)
 
 Kurs $510.12 · $3.79T · Umsatz +17.8 % · WACC 8.99 % · g* 7.27 % ·
 P/E 20.7 / Fwd 25.9 / PEG 2.62 · DCF $518.86 (+1.7 %) ·
 Risk-Ziel $429.87 (−15.7 %) · CRV 1.0 / RA 0.2 · Max-Entry $375 ·
-Score 60 RELATIVE_GROWTH (−20.2 pp) · ΣGB 28.17 · Earnings 28.10. · NEUTRAL.
+Score 60 RELATIVE_GROWTH (−20.2 pp) · ΣGB 28.17 · Earnings 28.10.
 
 ---
 
-## Pro / Contra — Pflicht, auch ohne KI
+## Pro / Contra (max. 5, Zahl + src Pflicht)
 
-Jede Zeile hat `src` und eine Zahl. Ohne Zahl fliegt die Zeile (KI-Modus:
-FactPack). Reihenfolge fest: zuerst Code-Zeilen, dann LLM-Satz hinter der Zahl.
+**Pro-Priorität:** S15 Top-GB → S15 #2 → S11 Moat-Zahl → S12 Kurstreiber → 8Q/g > WACC.
+**Contra-Priorität:** S8 max ED (+ Flag UNTERSCHÄTZT) → D1 oder ED#2 → Porter High → PESTEL Hoch → Inverted-DCF-Gap.
 
-### Pro-Quellen (max. 5, Priorität)
+K5 mit PoS < 40 oder Einpr. ≥ 60 zählt Contra.
+Zoll nur bei Tariff-Hit, nicht wegen Non-US-Anteil.
 
-1. S15 Top-GB Katalysator (nicht K5 wenn PoS < 40)
-2. S15 zweiter GB
-3. S11 Moat-Quelle mit Zahl (FCF-Marge / Brutto / Switching)
-4. S12 PESTEL-Faktor mit `kurstreiber ≥ 1` oder Exposure Niedrig + positiv
-5. S5/S14 wenn Umsatz-g oder Realized-8Q **über** WACC / g*
-6. S17 Positiv-Faktor nur wenn Platz
-
-### Contra-Quellen (max. 5, Priorität)
-
-1. S8 höchstes Expected Damage (+ Flag UNTERSCHÄTZT wenn gesetzt)
-2. S8 zweites ED **oder** S15 D1 Miss
-3. S11 Force mit Bewertung High / Score ≥ 7 (Rivalität)
-4. S12 PESTEL Exposure Hoch **oder** `kursrisiko ≥ 1` **oder** `marktNeg ≥ 1`
-5. S8/S14 Inverted DCF vs Kurs / vs Analyst-PT (Divergenz > 20 %)
-6. S6 CRV / Max-Entry / Gate-Delta
-
-K5 (PoS 35 %, Einpr. 65 %) zählt **Contra**, nicht Pro.
-
-Zoll-Satz nur wenn S12 Politisch `kursrisiko|marktNeg` **oder** Regulatory-Discovery
-`tariff` ≠ 0. Non-US-Anteil allein reicht nicht.
+**PESTEL-Raster Pflicht:** P M · Ö M · S M · T N · Öko M · R H (MSFT-Ist).
+**Porter Pflicht:** Moat Wide · Rivalität High · Rest nicht extra.
 
 ---
 
-## PESTEL in der Summary (Pflicht-Block, kompakt)
+## Fazit-Text — Pflicht, analog S17
 
-Keine 6 Essays. Eine Zeile Raster + die Treffer in Pro/Contra.
+Das Wort allein (`NEUTRAL`) reicht nicht. Vier Sätze, Reihenfolge fest.
+Zahlen nur aus Cache. LLM darf die Klammern füllen, nicht die Schwellen ändern.
+
+### Schablone (Code baut den Satz, KI schmückt max. 1 Halbsatz)
 
 ```
-P | Ö | S | T | Öko | R     ← Exposure aus S12
-M | M | M | N | M   | H     ← MSFT Ist
+FAZIT {S17-Wort}.
+EINGEPREIST: {Liste A}.
+NICHT EINGEPREIST / UNTERSCHÄTZT: {Liste B}.
+HANDLUNG: {Regel C} · nächster Event {Earnings-Datum}.
 ```
 
-Dann nur Kategorien mit Hoch **oder** kurstreiber **oder** kursrisiko:
+### Liste A — eingepreist (wenn Bedingung wahr)
 
-| Kat | MSFT-Ist | Liste |
-|-----|----------|-------|
-| Rechtlich Hoch | marktNeg 1, kursrisiko 1 | Contra |
-| Technologisch Niedrig | kurstreiber 1 | Pro |
-| Ökonomisch Mittel | marktNeg 1 | Contra nur wenn Satz eine Zahl hat (WACC/Δi) |
-| Politisch Mittel | 0/0/1 | Zoll-Contra **nein** (kein Tariff-Hit) |
+| Bedingung | MSFT-Ist | Satzteil |
+|-----------|----------|----------|
+| \|g* − g1\| ≥ 3 pp **und** g* < g1 | 7.27 vs 15.0 = −7.7 pp | Modell-Wachstum 15 % nicht im Kurs; Markt preist g* 7.3 % |
+| PEG ≥ 2 **oder** Lynch „schon eingepreist“ | PEG 2.62 Fast Grower | PEG 2.62 |
+| Katalysator Einpr. ≥ 50 % | K4 52 %, K5 65 % | K4/K5 weitgehend im Kurs |
+| Analyst-PT-Upside ≤ 8 % | +4.9 % | PT $535 nur +4.9 % |
+| DCF vs Kurs \|Gap\| ≤ 5 % | +1.7 % | Kons.-DCF ≈ Kurs |
+| S17-Hinweis „Katalysatoren stark eingepreist“ | ja (S8 Kasten) | ΣGB 28 % ist Modell-Upside, kein freier Hebel |
 
----
+### Liste B — nicht eingepreist / unterschätzt (wenn wahr)
 
-## Porter in der Summary (Pflicht-Block, kompakt)
+| Bedingung | MSFT-Ist | Satzteil |
+|-----------|----------|----------|
+| S8 Flag `UNTERSCHÄTZT` | Disruption ED 5 %, Impact bis 30–35 | Disruption unterschätzt |
+| Risk-Adj. Ziel < Kurs − 5 % | $429.87 vs $510.12 = −15.7 % | Risikoabschlag nicht im Kurs |
+| Inverted DCF vs PT Gap > 50 % | $183 vs $535 = −65.7 % | Inverted DCF $183 |
+| CRV RA < 1 | 0.2:1 | CRV RA 0.2 |
+| Gate bindet | RELATIVE_GROWTH −20.2 pp | Wachstum hinter Peers nicht als Qualität lesbar |
+| S15 D1/D3 noch ohne hohen Einpr. | D1 Miss −15 %, D3 −20 % | Miss/Antitrust nicht wie K2 eingepreist |
+| Porter High + PESTEL Legal Hoch | beides | Rivalität/Legal unterbewertet gegenüber Moat-Wide-Narrativ |
+
+Liste A und B je **max. 3** Treffer, höchste Priorität oben.
+Widerspruch ist erlaubt und gewollt (eingepreist **und** unterschätzt gleichzeitig).
+
+### Regel C — Handlung (kein drittes Urteilwort)
 
 ```
-Moat Wide · Quellen: Brutto 67.9 % · FCF 20.2 % · Switching · Netzwerk
-Rivalität High → Contra
-Rest Medium → keine Extra-Zeile
+WENN S17 ∈ {VERKAUFEN, MEIDEN}            → „nicht aufstocken“
+WENN Kurs > Max-Entry (CRV 3:1)            → „Abwarten, Einstieg erst ≤ $375“
+WENN Risk-Ziel < Kurs UND S17 = NEUTRAL    → „Abwarten bis Earnings / besserem CRV“
+WENN S17 ∈ {KAUFEN} UND CRV RA ≥ 2         → „Staffel unter DCF, Stop = WC“
+SONST                                      → S17-Wort + Earnings-Datum
 ```
 
-Rohscore `8/5` nicht zeigen. Nur Label + eine Mechanik.
+MSFT trifft Zeile 3: Neutral + Risk-Ziel unter Kurs + Kurs über Max-Entry
+→ Handlung = Abwarten, nicht Staffelkauf.
+
+Ohne KI: die vier Sätze rein aus Tabellen (Template-Fill).
+Mit KI: ein Halbsatz pro Liste, FactPack an jeder Zahl. Kein neues Wort neben S17.
 
 ---
 
-## Inverted-DCF / S8-LLM
+## MSFT Soll-Karte (inkl. Fazit)
 
-Pflicht-Contra, keine optionale Catch:
+**MSFT · $510.12 · $3.79T · 4.9.2026 12:49 · 60 · CRV 1.0 · g* 7.3 % · 28.10.**
 
-- Risk-Adj. Ziel = PT × (1 − ED) → $429.87
-- Kons. Inverted DCF $183.35 (−65.7 % vs PT) wenn |Gap| > 50 % → eine Zeile
-- Höchstes Risiko inkl. LLM-Flag (UNTERSCHÄTZT) — Text aus S8, Zahlen aus EW/Impact/ED
-- Growth Adj. 12.1 % vs Base 15.0 % (S8-Kacheln)
+Server/Azure $129.4B 39 % +31.5 % · M365 $102B 31 %. Umsatz +17.8 % über WACC 8.99 %.
+**Porter:** Wide · FCF 20.2 · Rivalität High. **PESTEL:** R Hoch · T Niedrig · kein Zoll.
 
----
+**Pro:** K2 GB 10.02 · K1 GB 7.65 · FCF 20.2 % · Tech-Kurstreiber · 8Q 34.2 % > WACC.
+**Contra:** Disruption ED 5 % UNTERSCHÄTZT · Rivalität High · Legal/Antitrust ED 3 % ·
+Inverted $183 vs PT $535 · CRV RA 0.2 / Max-Entry $375 / PEG 2.62.
 
-## Mit vs ohne KI
-
-| Slot | ohne KI | mit KI |
-|------|---------|--------|
-| Kopf | Code | Code |
-| Pro 5 / Contra 5 | Label + Zahl + src | + ein Halbsatz, FactPack |
-| PESTEL-Raster | 6 Buchstaben | unverändert |
-| Porter-Zeile | Moat + High-Force | + Rivalitäts-Satz |
-| Zero 3 Slots | 1 Satz Segmente | 4+5 Sätze |
-| Urteil | NEUTRAL | NEUTRAL + warum |
-
-FactPack: [`server/factpack-validate.ts`](./server/factpack-validate.ts).
-FMP-Grenzen / Bloomberg: [docs/Doc_Soll_vs_Ist/FMP_GRENZEN_BLOOMBERG.md](./docs/Doc_Soll_vs_Ist/FMP_GRENZEN_BLOOMBERG.md).
-
----
-
-## MSFT Soll-Karte
-
-**MSFT · $510.12 · $3.79T · 4.9.2026 12:49 · NEUTRAL · 60 · CRV 1.0 · g* 7.3 % · 28.10.**
-
-Server/Azure $129.4B 39 % +31.5 % · M365 Comm. $102B 31 % +16.2 % ·
-USA 51.5 / Non-US 48.5. Umsatz +17.8 % über WACC 8.99 %, Markt g* 7.27 %.
-
-**Porter:** Wide · Brutto 67.9 · FCF 20.2 · Switching/Netzwerk · Rivalität High.
-**PESTEL:** P M · Ö M · S M · T N · Öko M · **R H** · Geo 5/10 · kein Zoll-Hit.
-
-### Pro
-- K2 Copilot F500 · GB **10.02** · PoS 68 % · Netto 14.74 % · src S15
-- K1 Azure-Disclosure · GB **7.65** · PoS 72 % · src S15
-- Moat Wide · FCF-Marge **20.2 %** · $66.99B TTM · src S11
-- PESTEL Tech Niedrig · kurstreiber · Cloud/AI-Stack · src S12
-- Realized 8Q **34.2 %** > WACC 8.99 % · src S14/S17 Gate (Stütze, nicht Kauf)
-
-### Contra
-- S8 Disruption ED **5.00 %** · UNTERSCHÄTZT · Impact 25 % (bis 30–35) · FCF 15–17 %
-- Porter Rivalität **High** · OpenAI/Gemini/Llama · Preisdruck Copilot/Azure · src S11
-- PESTEL Rechtlich **Hoch** · Antitrust EW 15 % · ED **3.00 %** · D3 −20 % · src S12+S8+S15
-- Inverted DCF **$183.35** vs PT $535 (−65.7 %) · Risk-Ziel **$429.87** · Kurs $510 · src S8/S14
-- CRV RA **0.2:1** · Max-Entry $375 · Gate −20.2 pp vs Peers · PEG 2.62 · K5 Einpr. 65 %
-
-**Urteil NEUTRAL.** DCF +1.7 % ist kein Kauf. Pro sind Cloud-Mix und GB 28 %.
-Contra sind Einpreisung (g* 7.3 vs Modell 15), Legal/Rivalität und Ziel $429 unter Kurs.
+**Fazit NEUTRAL.**
+EINGEPREIST: Kons.-DCF $518.86 liegt +1.7 % am Kurs; Markt g* 7.27 % statt Modell 15 %;
+PEG 2.62; PT nur +4.9 %; K4/K5 Einpr. 52/65 % — ΣGB 28 % ist kein freier Hebel.
+NICHT EINGEPREIST / UNTERSCHÄTZT: S8 Disruption (Flag UNTERSCHÄTZT, Impact bis 30–35 %,
+FCF 15–17 %); Risk-Ziel $429.87 (−15.7 % vs Kurs); Inverted DCF $183 (−65.7 % vs PT);
+Miss/Antitrust (D1/D3); Relativwachstum −20.2 pp steckt im Gate 60, nicht im Multiple.
+HANDLUNG: Abwarten. Kein Aufstocken über Max-Entry $375. Nächster Event Earnings 28.10.2026.
 
 ---
 
 ## DoD
 
-1. Karte sitzt über Sektion 1, Default offen.
-2. Ohne `useLLM` vollständig (Kopf + 5 Pro + 5 Contra + Raster).
-3. PESTEL-6er und Porter-High stehen immer, Essays nicht.
-4. Jede Pro/Contra-Zeile hat Zahl + `src`.
-5. FactPack droppt Sätze mit Zahl außerhalb Pack.
-6. Kein neuer Score, keine neue DCF-Zahl vom LLM.
+1. Karte über S1.
+2. Fazit immer 4 Sätze: Wort · eingepreist · unterschätzt · Handlung.
+3. S17-Wort unverändert; Summary erfindet kein zweites Rating.
+4. Liste A/B nur aus den Tabellen, max. 3 Treffer.
+5. `UNTERSCHÄTZT` aus S8-Flag, nicht aus LLM-Stimmung.
+6. FactPack auf Zahlen im Fazit-Fließtext.
