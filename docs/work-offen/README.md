@@ -2,7 +2,7 @@
 
 > Hub: [../Doc_Soll_vs_Ist/](../Doc_Soll_vs_Ist/)
 
-Neu nach UI-Check 04.09. (nicht nur Commit):
+Neu nach UI-Check 05.09. (nicht nur Commit):
 
 | Spec | Warum offen/gelb |
 |------|------------------|
@@ -14,3 +14,5 @@ Neu nach UI-Check 04.09. (nicht nur Commit):
 | [WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](../../WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | |
 | [WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | |
 | [WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../WORK_RESEARCHER_BRIEFING_REGIONAL.md) | |
+| [WORK_RECESSION_MARKET_CHARTS.md](../../WORK_RECESSION_MARKET_CHARTS.md) | VIX-Pane, PEG-Click, FINRA |
+| [WORK_RECESSION_RSI_MACD.md](../../WORK_RECESSION_RSI_MACD.md) | Engine+GET+Panel; Dashboard-Sektion / VIX/PEG offen |
