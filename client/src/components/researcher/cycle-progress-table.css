@@ -1,4 +1,4 @@
-/* Layout lives in SectorRotationPanel.tsx. Keep only container width/overflow. */
+/* Layout: table overflow + Zykluseinordnung size (Philip 05.09. — no nested scroll). */
 
 div:has(> [data-testid="table-sector-rotation"]) {
   overflow: visible !important;
@@ -13,4 +13,37 @@ div:has(> [data-testid="table-sector-rotation"]) {
 
 main.max-w-6xl:has([data-testid="table-sector-rotation"]) {
   max-width: 80rem;
+}
+
+/* Zykluseinordnung outer card: taller, full width, no clip */
+div.rounded-lg:has([data-testid^="cycle-phase-"]) {
+  padding: 1.25rem !important;
+  min-height: 22rem !important;
+  overflow: visible !important;
+  grid-column: 1 / -1;
+}
+
+/* Phase list spacing */
+div:has(> [data-testid^="cycle-phase-"]) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+/* Phase cards */
+[data-testid^="cycle-phase-"] {
+  padding: 0.875rem !important;
+  overflow: visible !important;
+}
+
+[data-testid^="cycle-phase-"] > div > span:first-child {
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+}
+
+[data-testid^="cycle-phase-"] p {
+  font-size: 0.75rem !important;
+  line-height: 1.625 !important;
+  margin-top: 0.5rem !important;
+  white-space: normal !important;
 }
