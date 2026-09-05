@@ -1,6 +1,6 @@
 # Doc_Soll_vs_Ist
 
-> Stand: 05.09.2026 11:48 CEST | Ampel aus **Code + UI**, nicht aus Commit-Text
+> Stand: 05.09.2026 12:20 CEST | Ampel aus **Code + UI**, nicht aus Commit-Text
 > Originale im **Repo-Root**. Dieser Ordner verlinkt nur.
 >
 > Alt: [work-offen](../work-offen/) · [work-dokumentation](../work-dokumentation/)
@@ -25,6 +25,7 @@
 | [WORK_VALUECHAIN_SECTOR_ROTATION.md](../../WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–9 | 1–6 live, 7–9 offen | `🟡` |
 | [WORK_RECESSION_MARKET_CHARTS.md](../../WORK_RECESSION_MARKET_CHARTS.md) | VIX-Pane + PEG-Click + FINRA | nur Spec | `⬜` |
 | [WORK_RECESSION_RSI_MACD.md](../../WORK_RECESSION_RSI_MACD.md) | RSI+MACD+Div im `#/recession` nach S7 | Engine+Panel+GET da; Dashboard-Import / VIX/PEG offen | `🟡` |
+| [WORK_RECESSION_2008_DRIVERS_LLM.md](../../WORK_RECESSION_2008_DRIVERS_LLM.md) | SLOOS/Price-Rent/TED \(s(z)\) + OpenRouter-Driver 1–3. Ordnung | Kurve+BAA live; Hormuz-Essay hardcodiert in `generateFazit` | `⬜` |
 
 Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPACK_LLM.md](./FACTPACK_LLM.md) · FMP/BB [FMP_GRENZEN_BLOOMBERG.md](./FMP_GRENZEN_BLOOMBERG.md)
 
