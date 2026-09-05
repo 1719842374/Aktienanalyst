@@ -21,4 +21,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // FMP-Enrichment + CAPEX live — additive Registrierung, gleiches Muster.
   const { registerValueChainRoutes } = await import("./valuechain-routes");
   registerValueChainRoutes(app);
+  const { registerRecessionMarketRoutes } = await import("./recession-markets");
+  registerRecessionMarketRoutes(app);
 }
