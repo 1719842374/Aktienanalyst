@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { fmpHistoricalPrices, isFmpAvailable } from "./fmp";
-import { rsiWilder, rsiZone, macd1269, combineRsiMacd } from "../shared/tech-rsi";
+import { rsiWilder, rsiZone, macd1269, combineRsiMacd, detectRsiDivergence } from "../shared/tech-rsi";
 
 export const MARKET_BOOKS = {
   US: { etf: "SPY", volId: "VIXCLS", volKind: "implied" as const, label: "S&P 500 (SPY)" },
@@ -75,6 +75,12 @@ export async function buildRegionMarket(region: RegionId, window: string) {
     last?.hist ?? null,
     prev?.hist ?? null,
   );
+  const winCloses = series.map(s => s.close);
+  const winRsi = series.map(s => s.rsi);
+  const divergence = detectRsiDivergence(winCloses, winRsi, { lookback: 90, order: 5, minGap: 8 });
+  const d1 = divergence.i1 >= 0 ? series[divergence.i1]?.date ?? null : null;
+  const d2 = divergence.i2 >= 0 ? series[divergence.i2]?.date ?? null : null;
+
   return {
     region,
     label: book.label,
@@ -88,6 +94,16 @@ export async function buildRegionMarket(region: RegionId, window: string) {
     signal: last?.signal ?? null,
     hist: last?.hist ?? null,
     combo,
+    divergence: {
+      kind: divergence.kind,
+      lookback: divergence.lookback,
+      from: d1,
+      to: d2,
+      price1: divergence.price1,
+      price2: divergence.price2,
+      rsi1: divergence.rsi1,
+      rsi2: divergence.rsi2,
+    },
     points: series.length,
     series,
   };
@@ -102,7 +118,7 @@ export function registerRecessionMarketRoutes(app: Express) {
     const region = (regionRaw === "EU" || regionRaw === "AS" ? regionRaw : "US") as RegionId;
     const windowRaw = String(req.query.window || "5Y").toUpperCase();
     const window = WINDOW_DAYS[windowRaw] ? windowRaw : "5Y";
-    const key = `v2:${region}:${window}`;
+    const key = `v3:${region}:${window}`;
 
     if (marketCache && marketCache.key === key && Date.now() - marketCache.ts < TTL_MS) {
       return res.json(marketCache.data);

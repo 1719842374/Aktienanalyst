@@ -9,6 +9,7 @@ type RegionId = "US" | "EU" | "AS";
 type WindowId = "1Y" | "3Y" | "5Y" | "10Y" | "MAX";
 type Combo =
   | "oversold_turn" | "overbought_fade" | "aligned_up" | "aligned_down" | "mixed" | "n/a";
+type DivKind = "regular_bull" | "regular_bear" | "hidden_bull" | "hidden_bear" | "none";
 
 interface MarketPoint {
   date: string;
@@ -31,6 +32,16 @@ interface MarketPayload {
   signal: number | null;
   hist: number | null;
   combo: Combo;
+  divergence?: {
+    kind: DivKind;
+    lookback: number;
+    from: string | null;
+    to: string | null;
+    price1: number;
+    price2: number;
+    rsi1: number;
+    rsi2: number;
+  };
   series: MarketPoint[];
 }
 
@@ -64,6 +75,21 @@ function comboDe(c: Combo) {
   return "n/a";
 }
 
+function divDe(d: NonNullable<MarketPayload["divergence"]>) {
+  if (d.kind === "none") return "Keine RSI-Divergenz in den letzten " + d.lookback + " Sessions.";
+  const span = d.from && d.to ? ` (${d.from} → ${d.to})` : "";
+  if (d.kind === "regular_bull") {
+    return `Regular Bull: Preis tieferes Tief, RSI höheres Tief${span}.`;
+  }
+  if (d.kind === "regular_bear") {
+    return `Regular Bear: Preis höheres Hoch, RSI tieferes Hoch${span}.`;
+  }
+  if (d.kind === "hidden_bull") {
+    return `Hidden Bull: Preis höheres Tief, RSI tieferes Tief${span}.`;
+  }
+  return `Hidden Bear: Preis tieferes Hoch, RSI höheres Hoch${span}.`;
+}
+
 export function RegionRsiPanel() {
   const [region, setRegion] = useState<RegionId>("US");
   const [window, setWindow] = useState<WindowId>("5Y");
@@ -83,6 +109,7 @@ export function RegionRsiPanel() {
 
   const rsiSeries = (q.data?.series || []).filter(p => p.rsi != null);
   const macdSeries = (q.data?.series || []).filter(p => p.macd != null && p.signal != null);
+  const div = q.data?.divergence;
 
   return (
     <div className="space-y-3">
@@ -116,7 +143,7 @@ export function RegionRsiPanel() {
         ))}
       </div>
 
-      {q.isLoading && <p className="text-xs text-muted-foreground">RSI/MACD aus ETF-OHLCV …</p>}
+      {q.isLoading && <p className="text-xs text-muted-foreground">RSI/MACD/Divergenz aus ETF-OHLCV …</p>}
       {q.error && (
         <p className="text-xs text-red-500">
           {(q.error as Error).message}. Braucht FMP-Historie für {region === "US" ? "SPY" : region === "EU" ? "VGK" : "ASHR"}.
@@ -140,6 +167,11 @@ export function RegionRsiPanel() {
             {q.data.asOf && <span className="text-xs text-muted-foreground">Stand {q.data.asOf}</span>}
           </div>
           <p className="text-xs">{comboDe(q.data.combo)}</p>
+          {div && (
+            <p className={`text-xs ${div.kind === "none" ? "text-muted-foreground" : "text-foreground"}`}>
+              {divDe(div)}
+            </p>
+          )}
 
           <div className="h-[160px] w-full">
             <ResponsiveContainer>
@@ -174,7 +206,7 @@ export function RegionRsiPanel() {
             </ResponsiveContainer>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            RSI Wilder-14 + MACD 12/26/9 aus {q.data.etf}. Kombi ist ein Label, kein Kaufsignal und kein Input in die 17er-Scores.
+            Divergenz: letzte zwei Swings (Order 5, Gap ≥8, 90 Sessions). Regular = Trendwende-Kandidat, Hidden = Trendfortsetzung. Kein 17er-Score.
           </p>
         </>
       )}
