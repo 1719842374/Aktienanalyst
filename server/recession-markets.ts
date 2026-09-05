@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { fmpHistoricalPrices, isFmpAvailable } from "./fmp";
-import { rsiWilder, rsiZone } from "../shared/tech-rsi";
+import { rsiWilder, rsiZone, macd1269, combineRsiMacd } from "../shared/tech-rsi";
 
 export const MARKET_BOOKS = {
   US: { etf: "SPY", volId: "VIXCLS", volKind: "implied" as const, label: "S&P 500 (SPY)" },
@@ -19,7 +19,7 @@ const WINDOW_DAYS: Record<string, number> = {
 };
 
 const RSI_PERIOD = 14;
-const WARMUP = 40;
+const WARMUP = 80;
 
 function addDays(iso: string, n: number): string {
   const d = new Date(iso + "T00:00:00Z");
@@ -49,14 +49,32 @@ export async function buildRegionMarket(region: RegionId, window: string) {
 
   const closes = rows.map(r => r.close);
   const rsi = rsiWilder(closes, RSI_PERIOD);
+  const macd = macd1269(closes);
   const cut = Math.max(0, rows.length - days);
   const series = rows.slice(cut).map((r, i) => {
     const idx = i + cut;
-    return { date: r.date, close: r.close, volume: r.volume ?? null, rsi: rsi[idx] };
+    const m = macd[idx] || { macd: null, signal: null, hist: null };
+    return {
+      date: r.date,
+      close: r.close,
+      volume: r.volume ?? null,
+      rsi: rsi[idx],
+      macd: m.macd,
+      signal: m.signal,
+      hist: m.hist,
+    };
   });
 
   const last = series[series.length - 1];
+  const prev = series[series.length - 2];
   const lastRsi = last?.rsi ?? null;
+  const combo = combineRsiMacd(
+    lastRsi,
+    last?.macd ?? null,
+    last?.signal ?? null,
+    last?.hist ?? null,
+    prev?.hist ?? null,
+  );
   return {
     region,
     label: book.label,
@@ -66,6 +84,10 @@ export async function buildRegionMarket(region: RegionId, window: string) {
     rsiPeriod: RSI_PERIOD,
     rsi: lastRsi,
     rsiZone: rsiZone(lastRsi),
+    macd: last?.macd ?? null,
+    signal: last?.signal ?? null,
+    hist: last?.hist ?? null,
+    combo,
     points: series.length,
     series,
   };
@@ -80,7 +102,7 @@ export function registerRecessionMarketRoutes(app: Express) {
     const region = (regionRaw === "EU" || regionRaw === "AS" ? regionRaw : "US") as RegionId;
     const windowRaw = String(req.query.window || "5Y").toUpperCase();
     const window = WINDOW_DAYS[windowRaw] ? windowRaw : "5Y";
-    const key = `${region}:${window}`;
+    const key = `v2:${region}:${window}`;
 
     if (marketCache && marketCache.key === key && Date.now() - marketCache.ts < TTL_MS) {
       return res.json(marketCache.data);
