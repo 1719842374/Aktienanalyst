@@ -5,6 +5,7 @@ import { RECESSION_FALLBACK_DATA } from "@/lib/recessionFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
+import { RegionRsiPanel } from "@/components/recession/RegionRsiPanel";
 import { useLocation } from "wouter";
 import {
   Sun, Moon, AlertTriangle, TrendingDown, Activity,
@@ -221,20 +222,25 @@ export default function RecessionDashboard() {
               <ProbabilityEstimates subgroups={data.subgroups} />
             </SectionCard>
 
-            {/* Section 8: Zusammenfassung + Top-3 Treiber */}
-            <SectionCard number={8} title="Zusammenfassung & Top-3 Treiber">
+            {/* Section 8: Markt-RSI / MACD nach Region (WORK_RECESSION_RSI_MACD §6) */}
+            <SectionCard number={8} title="Markt-RSI / MACD nach Region">
+              <RegionRsiPanel />
+            </SectionCard>
+
+            {/* Section 9: Zusammenfassung + Top-3 Treiber */}
+            <SectionCard number={9} title="Zusammenfassung & Top-3 Treiber">
               <Summary data={data} />
             </SectionCard>
 
-            {/* Section 9: Fazit & Makro-Risikobewertung */}
+            {/* Section 10: Fazit & Makro-Risikobewertung */}
             {data.fazit && (
-              <SectionCard number={9} title="Fazit & Makro-Risikobewertung">
+              <SectionCard number={10} title="Fazit & Makro-Risikobewertung">
                 <FazitSection fazit={data.fazit} />
               </SectionCard>
             )}
 
-            {/* Section 10: Quellenliste */}
-            <SectionCard number={data.fazit ? 10 : 9} title="Quellenliste">
+            {/* Section 11: Quellenliste */}
+            <SectionCard number={data.fazit ? 11 : 10} title="Quellenliste">
               <SourcesList sources={data.sources} />
             </SectionCard>
 
@@ -623,7 +629,7 @@ function IndicatorTable({ indicators }: { indicators: IndicatorResult[] }) {
           <tfoot>
             <tr className="border-t-2 border-border font-semibold">
               <td className="py-2 px-2" colSpan={5}>Summe</td>
-              <td className={`py-2 px-2 text-center font-mono tabular-nums ${getScoreColor(items.reduce((s, i) => s + i.weightedScore, 0))}`}>
+              <td className={`py-2 px-2 text-center font-mono tabular-nums ${getScoreColor(items.reduce((s, i) => s + i.weightedScore, 0))`}>
                 {items.reduce((s, i) => s + i.weightedScore, 0) > 0 ? "+" : ""}
                 {items.reduce((s, i) => s + i.weightedScore, 0).toFixed(1)}
               </td>
