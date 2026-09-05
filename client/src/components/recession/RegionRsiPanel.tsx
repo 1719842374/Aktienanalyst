@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip,
-  CartesianGrid, ReferenceLine, BarChart, Bar, Cell,
+  CartesianGrid, ReferenceLine, ComposedChart, Bar, Cell,
 } from "recharts";
 
 type RegionId = "US" | "EU" | "AS";
@@ -147,7 +147,7 @@ export function RegionRsiPanel() {
                 <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={48} />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} width={32} />
-                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => [v.toFixed(1), "RSI(14)"]} />
+                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => [Number(v).toFixed(1), "RSI(14)"]} />
                 <ReferenceLine y={70} stroke="#ef4444" strokeDasharray="4 4" />
                 <ReferenceLine y={30} stroke="#10b981" strokeDasharray="4 4" />
                 <Line type="monotone" dataKey="rsi" stroke="#f97316" dot={false} strokeWidth={1.5} />
@@ -157,14 +157,11 @@ export function RegionRsiPanel() {
 
           <div className="h-[140px] w-full">
             <ResponsiveContainer>
-              <BarChart data={macdSeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <ComposedChart data={macdSeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={48} />
                 <YAxis tick={{ fontSize: 10 }} width={40} />
-                <Tooltip
-                  contentStyle={{ fontSize: 11 }}
-                  formatter={(v: number, name: string) => [Number(v).toFixed(3), name]}
-                />
+                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number, name: string) => [Number(v).toFixed(3), name]} />
                 <ReferenceLine y={0} stroke="#888" />
                 <Bar dataKey="hist" name="Hist">
                   {macdSeries.map((p, i) => (
@@ -173,7 +170,7 @@ export function RegionRsiPanel() {
                 </Bar>
                 <Line type="monotone" dataKey="macd" name="MACD" stroke="#38bdf8" dot={false} strokeWidth={1.2} />
                 <Line type="monotone" dataKey="signal" name="Signal" stroke="#a78bfa" dot={false} strokeWidth={1.2} />
-              </BarChart>
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
           <p className="text-[11px] text-muted-foreground">
