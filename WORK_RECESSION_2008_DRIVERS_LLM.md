@@ -1,185 +1,176 @@
 # WORK_RECESSION_2008_DRIVERS_LLM.md
 
-Stand: **05.09.2026**. Zwei Aufträge in einer Spec.
+Stand: **05.09.2026 12:27 CEST**.
 
-1. Welche Serien vor 2008 wirklich vorliefen — und wie man sie **ohne** „Housing-2006“-Hardcode wiederfindet.
-2. OpenRouter-LLM findet Key-Driver (Hormuz 1/2/3. Ordnung, Private Credit) — **setzt keine Scores**.
+1. 2008-Vorläufer ohne Housing-Hardcode.
+2. OpenRouter findet **Events** (Geo→Inflation, Fiskal, Geld nach Niedrigzins) über News, cached Implikationen 1–3. Ordnung — **setzt keine Scores**.
 
-Eltern: [WORK_RECESSION_RSI_MACD.md](./WORK_RECESSION_RSI_MACD.md), Scoring-Ist `server/recession.ts`.
 Hub: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md).
+Code-Haken: `callLLMJson` in [`server/llm-openrouter.ts`](./server/llm-openrouter.ts) (JSON-Object, Fallback-Kette, Default Haiku).
 
 ---
 
-## 0. Invertierung 2006–08 — nicht CAPE
+## 0. 2008-Invertierung (kurz)
 
-Korrektur-Buch (Buffett/CAPE) hätte **2007 nicht** wie 2000 oder 2021 geschrien.
-CAPE Jan 2007 **27,2** vs. Jan 2000 **43,8** vs. Board 05.09.2026 **41,4**.
-Buffett Q2 2007 **~131 %** vs. Q1 2000 **~164–172 %** vs. Board **244 %**.
-VIX-Schnitt 2007 **17,5** — Sorglosigkeit, kein Panic-Print.
-
-Der Bruch 2008 war ein **Kredit-/Funding-Event**, das in Immobilien *sichtbar* wurde. House-Price-Index allein ist die Folge, nicht der Fühler.
+CAPE 27 / Buffett ~131 % ≠ heutige 41 / 244 %. Vorlauf war Kredit.
+Kurve `T10Y2Y` und `BAA10Y` sind im 17er-Set. SLOOS, Price/Rent, Funding fehlen.
+Erkennung: \(z\) auf der eigenen Serie, nicht `if (2008) housing`.
 
 ---
 
-## 1. Was vor Lehman (15.09.2008) gezogen hat
+## 1. Drei Event-Klassen — Katalog, keine Namen
 
-Zeitordnung, nicht Narrative.
+Die KI darf **kein** festes Event-Set („Hormuz“, „Bessent“, „QT“) als Score schreiben. Sie darf nur in Klassen einsortieren. Die Klasse existiert, das Event nicht.
 
-| Wann | Serie | Was passierte | Buch |
-|------|-------|---------------|------|
-| Dez 2005 – 2007 | `T10Y2Y` | Kurve invertiert | Rezession Leading |
-| 2005–06 | Case-Shiller / `CSUSHPINSA` Peak + Price/Rent, Price/Income | Bestand teuer, **Credit** schon locker | Fiskal/Kredit, nicht „Haus-Hardcode“ |
-| 2006–07 | SLOOS `DRTSCIS` Net Tightening | Banken ziehen Standards an *bevor* ALQ steigt | Kreditangebot |
-| Aug 2007 | TED / LIBOR–OIS, ABX, CP | BNP friert Fonds — Funding | Stress |
-| 2007 H2 | `BAA10Y` weitet sich | Qualität vs. Treasury | schon im 17er-Set |
-| 2007–08 | Financials vs. S&P, Broker-Stocks | relative Underperformance | Marktstruktur |
-| 2008 | `WALCL` Notfall-QE, RRP/CPFF | nach dem Bruch | Geld |
-| Dez 2008 | Sahm `SAHMREALTIME` ≥ 0,50 | **gleichlaufend**, zu spät für Vorwarnung | Rezession Coincident |
+| Klasse | Was News liefern darf | Was Code danach misst |
+|--------|----------------------|------------------------|
+| `geo_inflation` | Physische Enge, Embargo, Ernte, Krieg um Rohstoffroute | \(z(\Delta)\) auf `DCOILWTICO` / `DCOILBRENTEU` / `PNGASUSUSDM` / `PWHEAMTUSDM` / `WPU065` (Dünger-PPI) |
+| `fiscal` | Emissionskalender, TGA, Defizit, Buybacks — **Amt nicht Person** | `WTREGEN`, Bills-Netto, QRA-Identität |
+| `monetary_regime` | Erste Straffung nach langer Niedrigzinsphase, QT/QE, RMP | \(z(\Delta_{90d} DFF)\), \(z(\Delta WALCL)\), Notes vs Bills getrennt |
+| `credit` | Private Credit, SLOOS, Funding | `DRTSCIS`, `BAA10Y`, CP−Bill |
 
-Sahm, PMI-Kollaps, VIX 80 sind **Bestätigung**, kein Alarm 12 Monate vorher.
-
-Was *heute im Code* davon existiert:
-
-| Ist `recession.ts` | 2008-Nutzen |
-|--------------------|-------------|
-| `scoreYieldCurve` `T10Y2Y` binär <0 | **Ja**, hätte 2006–07 gezogen |
-| `scoreCreditSpreads` `BAA10Y` Zonen | **Ja**, 2007 H2 |
-| `scoreSahm` binär 0,50 | **Nein** als Vorwarnung |
-| `scoreBuffett` / `scoreCAPE` | **schwach** 2007 |
-| `scoreVIX` konträr | 2007 eher Sorglosigkeit = Korrektur-Score hoch, aber nicht das Kreditereignis |
-| `scoreMarginDebt` Regex | US-Aktienhebel, nicht CDO/SLOOS |
-| `generateFazit` Hormuz-Essay Apr 2026 | **Hardcode**, nicht 2008, nicht adaptiv |
-
-Fehlt: SLOOS, TED/CP, Price/Rent, Private-Credit/GDP, Bank-vs-Market, ABX-Ersatz.
-
----
-
-## 2. Adaptive Erkennung — keine „Housing-2006“-Konstante
-
-Dieselbe Philosophie wie Liquidity-Index: Rohserie → eigene Historie → \(z\) → \(s(z)\).
+Regime-Logik Geld **ohne FOMC-Text**:
 
 \[
-z_t=\frac{x_t-\mu_{H}}{\sigma_{H}+\varepsilon},\quad
-s=50+50\cdot\mathrm{clip}(z/2,-1,1)
+\text{hikeAfterEase}\iff z(\Delta_{90d} i_{DFF})>1 \land i_{t-90}\text{ im unteren Terzil der 10J-Historie}
 \]
 
-Entdeckung statt Namen:
+Dann Kette fest (Code, nicht LLM):
 
 \[
-\begin{aligned}
-\text{curveInv} &\iff z(T10Y2Y)<-1 \land T10Y2Y<0\\
-\text{creditTighten} &\iff z(\Delta \text{SLOOS})>1 \land \Delta>0\\
-\text{spreadStress} &\iff z(BAA10Y)>1 \land \Delta>0\\
-\text{fundingStress} &\iff z(\text{TED oder CP–Bill})>1\\
-\text{housingRich} &\iff z(\text{Price/Rent})>1 \lor z(\text{Price/Income})>1\\
-\text{privLeverage} &\iff z(\Delta(\text{Private Credit}/GDP))>1
-\end{aligned}
+\Delta i_{10}\approx \Delta r_{10}+\Delta\pi^e \quad(DFII10+T10YIE=DGS10)
 \]
 
-`housingRich` ist **ein** Slot über Verhältnisse, nicht „wenn Case-Shiller > 184,6“.
-EU/AS: dieselbe Funktion auf EZ-SLOOS-Analog, JP-Loan Officer, nicht US-Ticker kopieren.
+\[
+\Delta P/P \approx -D_{eq}\cdot\Delta i_{10},\quad D_{eq}\approx 15
+\]
 
-Katalog (FRED, kein LLM):
-
-| Slot | Serie | H |
-|------|-------|---|
-| Kurve | `T10Y2Y` | 20J |
-| Credit Spread | `BAA10Y` | 20J |
-| SLOOS C&I | `DRTSCIS` | 20J |
-| House Price | `CSUSHPINSA` nur als Zähler | — |
-| Rent | `CUSR0000SEHA` → Price/Rent | 20J |
-| Disposable income | `DSPIC96` → Price/Income | 20J |
-| Private Depository Credit | `TOTLL` oder BIS Credit/GDP | 20J |
-| TED-Ersatz | `TEDRATE` (ende 2022) → `SOFR`–Bill oder `CPF3M–DTB3` | 10J |
-| Financials vs SPX | FMP `XLF`/`SPY` Relativ-52W | 15J |
-
-`n<H_min` → `available:false`, Slot 50, kein Default „Housing-Blase“.
-
-Gewichte: Kredit-Fühler ins **Rezessions-Leading** (6M), nicht ins Korrektur-12M (das bleibt Buffett/CAPE). Sonst wiederholt ihr den 2007-Fehler umgekehrt: 2024 schreit Bewertung, 2007 schrie Kredit.
+LLM sagt höchstens: „Regimewechsel-Kandidat“. Ob \(z(\Delta DFF)\) wirklich >1, entscheidet FRED.
 
 ---
 
-## 3. LLM / OpenRouter — Key-Driver, keine Score-Maschine
+## 2. OpenRouter-Call — Konfiguration
 
-Ist: `generateFazit` in `server/recession.ts` §Geopolitik klebt **Iran/Hormuz April 2026** fest. Das ist der verbotene Hardcode.
+Bestehende Funktion, nicht neuer Vendor:
 
-Soll: ein Prompt, strukturiertes JSON, Cache ≥ 30 Tage wie Researcher-Briefing. Zahlen kommen aus FRED/FMP. LLM darf nur **benennen und Ordnungen legen**.
+```ts
+callLLMJson({
+  systemPrompt: DRIVER_SYSTEM,
+  prompt: DRIVER_USER(newsPack, seriesSnapshot),
+  maxTokens: 1800,
+  temperature: 0.2,
+})
+```
 
-### 3.1 Output-Schema
+`temperature` 0.2 (Ist-Default 0.4 ist für Katalysatoren zu lose).
+Modell: Fallback-Kette in `llm-openrouter.ts`, kein Fixname im Scorer.
+
+### 2.1 System (unveränderlich)
+
+*Du extrahierst höchstens fünf Treiber. Klassen nur geo_inflation | fiscal | monetary_regime | credit. Jeder Treiber: title, klasse, order1/2/3 als eine Kette, seriesHint aus der erlaubten Liste, optional shareClaim (Zahl+Einheit, Quelle im Text). Personennamen ignorieren. Keine Score-Zahl. Kein „Administration bullish“. Kein Event erfinden, das nicht in NEWS_PACK steht. Wenn die Kette ohne Serie auskommt: weglassen.*
+
+Erlaubte `seriesHint` (Whitelist im Prompt **und** im Gate — das ist Methodik, keine Marktmeinung):
+
+`DCOILWTICO, DCOILBRENTEU, PNGASUSUSDM, PWHEAMTUSDM, WPU065, T10YIE, DGS10, DFII10, DFF, WALCL, WTREGEN, BAA10Y, T10Y2Y, DRTSCIS, DCOILBRENTEU`
+
+### 2.2 User-Pack (kein Hormuz-String)
+
+`NEWS_PACK`: letzte 7 Tage Researcher-Headlines + FMP-News-Titel, Region-Tag US/EU/AS, **ohne** vorformulierte Implikation.
+`SERIES_SNAP`: für jede Whitelist-ID `{ id, last, d20, z20, asOf }` aus FRED-Cache. Die KI sieht die Zahl, darf sie nicht überschreiben.
+
+### 2.3 JSON-Soll
 
 ```
 {
-  asOf, region: "US"|"EU"|"AS",
+  asOf, region,
   drivers: [{
-    id, title,
-    book: "geo"|"credit"|"funding"|"fiscal"|"policy",
-    order1: "direkt, eine Kette",
-    order2: "eine Kette",
-    order3: "eine Kette",
-    seriesHint: ["DCOILWTICO", "BAA10Y"],
-    confidence: 0..1,
-    staleIfDays: 30
+    id, title, class,
+    order1, order2, order3,
+    seriesHint: ["DCOILWTICO", "WPU065", "T10YIE"],
+    shareClaim: { qty: 20, unit: "pct_seaborne_oil", evidence: "quote from NEWS_PACK" } | null,
+    fertilizerLink: true | false,
+    confidence: 0..1
   }]
 }
 ```
 
-Max 5 Driver. Kein Satz „Korrektur 80 % wegen Hormuz“.
+`shareClaim.qty=20` ist eine **Behauptung aus News**, kein Modellparameter. Gate:
 
-### 3.2 Ordnung — Hormuz als Beispiel, nicht als Default
-
-| Ordnung | Kette | Messbar |
-|---------|-------|---------|
-| 1 | Enge dicht → Spot-Brent/WTI \(\uparrow\) | `DCOILWTICO`, `DCOILBRENTEU` \(z(\Delta_{20d})\) |
-| 2 | Energie → Headline-CPI, Dünger, Fracht | CPI Energy-Gewicht ~3,5 % Benzin; Dallas Fed short-run ε≈0 |
-| 3 | BE-Inflation → 10Y \(\uparrow\) → WACC \(\uparrow\) → Wachstums-/ALQ-Risiko | `T10YIE`, `DGS10`, `DFII10` |
-
-Private Credit analog:
-
-| 1 | Funds stoppen Redemptions / Spreads leveraged loans | kein FRED-Pflicht; Flag aus Briefing + `BAA10Y` |
-| 2 | Bank-Kreditlinien gezogen, SLOOS strafft | `DRTSCIS` |
-| 3 | Capex runter, Default-Welle → ALQ | Sahm *danach* |
-
-LLM schreibt die Ketten. Code prüft, ob `seriesHint` \(z\) wirklich läuft. Wenn WTI-\(z\)<0,5: Driver `available:false`, Text ausblenden — genau das hätte den April-2026-Hormuz-Absatz ohne Spot-Schock verhindert.
-
-### 3.3 Prompt-Kern (ein Satz)
-
-*Extrahiere höchstens fünf Treiber. Jeder Treiber: Buch, drei Ordnungen, FRED/FMP-IDs. Keine Personen, keine Score-Zahl, kein „Administration bullish“. Wenn die Kette ohne Serie auskommt: verwerfen.*
-
-Modell: bestehendes `callLLMJson` / OpenRouter (Haiku oder gleich). Nicht Perplexity-Computer als Score.
-
-Trigger: wöchentlich nach H.4.1 **oder** wenn irgendein Kredit-/Öl-Slot \(|z|>1{,}5\). Nicht bei jedem Dashboard-Klick.
+- ohne `evidence` ∨ `evidence` nicht im NEWS_PACK → Claim drop.
+- `fertilizerLink=true` nur wenn `WPU065` oder Weizen/Gas in `seriesHint`.
+- UI zeigt Claim nur zusammen mit Live-\(z\) der Hint-Serie.
 
 ---
 
-## 4. Dateien
+## 3. Implikation cachen — Beispiel Öl 20 % + Dünger
+
+Nicht den Satz „20 % der Weltölversorgung“ hardcoden (Ist-Fazit). Cachen so:
+
+```
+impl:{
+  driverId,
+  order: 1|2|3,
+  channel: "oil"|"lng"|"fertilizer"|"cpi"|"be10"|"wacc",
+  claimPct: 20 | null,
+  seriesId: "DCOILWTICO",
+  z: 1.4,
+  passedGate: true,
+  cachedUntil: ISO
+}
+```
+
+Auswertung **Code**:
+
+| Ordnung | Kette | Gate |
+|---------|-------|------|
+| 1 | Route/Event → Spot | \(|z_{20d}(WTI \lor Brent \lor Henry Hub)|\ge 0{,}5\) sonst Text aus |
+| 2 | Spot → CPI / Dünger | Benzin-Gewicht CPI **3,5 %** ist Modellkonstante; \(\Delta CPI \approx 0{,}035\cdot\Delta\%\) Benzin; Dünger nur wenn `WPU065` \(z\) mitläuft |
+| 3 | \(\pi^e\) → 10Y → WACC | `T10YIE`, `DGS10`; Duration-Näherung \(D_{eq}\approx 15\) |
+
+Niedrigzins → erste hike (Klasse `monetary_regime`):
+
+| 1 | \(\Delta DFF_{90d}\) | FRED `DFF` |
+| 2 | Front-End / Bills | DTS/QRA, nicht LLM |
+| 3 | 10Y und Equity-Multiple | `DGS10`, nicht „FOMC hawkish“ |
+
+Cache: `recession_drv_v2_{region}_{yyyy-ww}` TTL **7 Tage**. News-Pack separat `recession_news_{region}` TTL **24 h**. Driver ohne frisches News-Pack nicht neu halluzinieren — alten Driver mit `stale:true` stehen lassen.
+
+Trigger: Sonntag 22:00 ET **oder** irgendein Whitelist-\(|z|>1{,}5\). Nicht beim Dashboard-Klick.
+
+---
+
+## 4. Was verboten bleibt
+
+- Score aus Reden / „Administration“.
+- GENIUS oder Hormuz auf 1,3 setzen.
+- QE inferieren, weil WALCL steigt (kann RMP-Bills sein).
+- `generateFazit`-Absatz mit festem Iran-Text.
+- 20 % als Konstante im Scorer (nur Claim+Gate).
+
+---
+
+## 5. Dateien
 
 | Datei | Rolle |
 |-------|-------|
-| **diese Spec** | Soll |
-| `server/recession.ts` | 17er Ist; `generateFazit` Hormuz raus |
-| `server/recession-markets.ts` | RSI/MACD, anderes Buch |
-| `shared/tech-rsi.ts` | nicht hier |
+| diese Spec | Soll |
 | `server/llm-openrouter.ts` | `callLLMJson` |
-| `server/researcher.ts` | Briefing-Cache-Vorbild |
-| `WORK_RESEARCHER_BRIEFING_REGIONAL.md` | Spillover-Prompt |
-| `WORK_RECESSION_RATE_OIL_BRIDGE.md` | Öl → CPI → 10Y |
-| `WORK_RECESSION_FRED_SAHM.md` | Sahm \(s(z)\) |
-| `client/src/pages/RecessionDashboard.tsx` | S9 Fazit durch Driver-Karten ersetzen |
-
-Neu (Soll-Code, noch nicht gebaut):
-
-- `server/recession-credit-book.ts` — SLOOS, Price/Rent, TED-Ersatz, \(s(z)\)
-- `server/recession-drivers.ts` — OpenRouter → Schema + Gate gegen Live-\(z\)
-- Cache-Key `recession_drv_v1_{region}_{week}`
+| `server/recession.ts` | `generateFazit` Hormuz löschen |
+| `server/researcher.ts` | News/Briefing-Pack wiederverwenden |
+| `WORK_RECESSION_RATE_OIL_BRIDGE.md` | Öl→CPI→10Y Formeln |
+| `WORK_FISCAL_FRONTEND_ADAPTIVE.md` | TGA/Bills \(s(z)\) |
+| Soll-neu `server/recession-drivers.ts` | Pack + Prompt + Gate + Cache |
+| Soll-neu `server/recession-credit-book.ts` | SLOOS / Price-Rent \(s(z)\) |
+| `client/.../RecessionDashboard.tsx` S9 | Driver-Karten statt Essay |
 
 ---
 
-## 5. DoD
+## 6. DoD
 
-1. Fixture 2006-12: `T10Y2Y<0` → Leading-Slot nicht 50.
-2. Fixture 2007-01: CAPE 27 ≠ Max-Eimer; \(P_{Korr,12M}\) nicht 80.
-3. Fixture 2008-10: Sahm feuert, Label coincident, nicht „hätte 2006 gewarnt“.
-4. Löschen des Hormuz-Strings in `generateFazit` ändert keine der 17 rawScores.
-5. Driver ohne \(|z|>0{,}5\) auf `seriesHint` → UI aus.
-6. Kein `BESSENT_WINDOW`, kein `if (year===2008) housing=true`.
-7. GIS/Korrektur-Gewicht unverändert 0,15 / Buffett×2 — Kredit-Slots extra, nicht doppelt auf CAPE.
+1. Prompt ohne das Wort Hormuz, Output kann Hormuz enthalten **wenn** NEWS_PACK es trägt.
+2. Claim 20 % ohne Evidence-Substring → `shareClaim=null`.
+3. `fertilizerLink` ohne `WPU065`/`PWHEAMT` in Hint → false.
+4. \(|z_{WTI}|<0{,}5\) → Driver in UI aus, Cache bleibt.
+5. `hikeAfterEase` nur über `DFF`-Historie, nicht über FOMC-Headline allein.
+6. Löschen des April-2026-Hormuz-Strings ändert keine 17 rawScores.
+7. Fixture 2006-12: `T10Y2Y<0` Leading ≠ 50; CAPE 27 ≠ Korrektur 80.
