@@ -20,6 +20,11 @@ interface MarketPoint {
   hist: number | null;
 }
 
+interface VolPoint {
+  date: string;
+  value: number;
+}
+
 interface MarketPayload {
   region: RegionId;
   label: string;
@@ -43,6 +48,13 @@ interface MarketPayload {
     rsi2: number;
   };
   series: MarketPoint[];
+  volId?: string;
+  volKind?: "implied" | "realized";
+  volYMax?: number;
+  volLatest?: number | null;
+  volBand?: string;
+  volNote?: string | null;
+  vol?: VolPoint[];
 }
 
 const REGIONS: { id: RegionId; name: string }[] = [
@@ -90,6 +102,12 @@ function divDe(d: NonNullable<MarketPayload["divergence"]>) {
   return `Hidden Bear: Preis tieferes Hoch, RSI höheres Hoch${span}.`;
 }
 
+function volTitle(data: MarketPayload) {
+  if (data.volKind === "realized") return "Realisierte Vol 20T (ASHR), %";
+  if (data.region === "EU") return "VSTOXX (analog), Index";
+  return "VIX (FRED VIXCLS), Index";
+}
+
 export function RegionRsiPanel() {
   const [region, setRegion] = useState<RegionId>("US");
   const [window, setWindow] = useState<WindowId>("5Y");
@@ -109,7 +127,9 @@ export function RegionRsiPanel() {
 
   const rsiSeries = (q.data?.series || []).filter(p => p.rsi != null);
   const macdSeries = (q.data?.series || []).filter(p => p.macd != null && p.signal != null);
+  const volSeries = q.data?.vol || [];
   const div = q.data?.divergence;
+  const yMax = q.data?.volYMax ?? 90;
 
   return (
     <div className="space-y-3">
@@ -143,7 +163,7 @@ export function RegionRsiPanel() {
         ))}
       </div>
 
-      {q.isLoading && <p className="text-xs text-muted-foreground">RSI/MACD/Divergenz aus ETF-OHLCV …</p>}
+      {q.isLoading && <p className="text-xs text-muted-foreground">RSI/MACD/Vol aus ETF-OHLCV …</p>}
       {q.error && (
         <p className="text-xs text-red-500">
           {(q.error as Error).message}. Braucht FMP-Historie für {region === "US" ? "SPY" : region === "EU" ? "VGK" : "ASHR"}.
@@ -164,6 +184,11 @@ export function RegionRsiPanel() {
                 {q.data.hist != null ? ` / H ${q.data.hist.toFixed(2)}` : ""}
               </span>
             )}
+            {q.data.volLatest != null && (
+              <span className="font-mono text-xs">
+                Vol {q.data.volLatest.toFixed(1)} · {q.data.volBand || "n/a"}
+              </span>
+            )}
             {q.data.asOf && <span className="text-xs text-muted-foreground">Stand {q.data.asOf}</span>}
           </div>
           <p className="text-xs">{comboDe(q.data.combo)}</p>
@@ -172,6 +197,40 @@ export function RegionRsiPanel() {
               {divDe(div)}
             </p>
           )}
+
+          <div>
+            <p className="text-[11px] text-muted-foreground mb-1">
+              {volTitle(q.data)} · Y linear 0–{yMax} · Fenster {q.data.window}
+              {q.data.volId ? ` · ${q.data.volId}` : ""}
+            </p>
+            {q.data.volNote && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 mb-1">{q.data.volNote}</p>
+            )}
+            {volSeries.length > 0 ? (
+              <div className="h-[150px] w-full">
+                <ResponsiveContainer>
+                  <LineChart data={volSeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={48} />
+                    <YAxis domain={[0, yMax]} tick={{ fontSize: 10 }} width={32} />
+                    <Tooltip
+                      contentStyle={{ fontSize: 11 }}
+                      formatter={(v: number) => [Number(v).toFixed(2), q.data?.volId || "Vol"]}
+                    />
+                    <ReferenceLine y={40} stroke="#ef4444" strokeDasharray="4 4" />
+                    <ReferenceLine y={30} stroke="#f97316" strokeDasharray="4 4" />
+                    <ReferenceLine y={20} stroke="#10b981" strokeDasharray="4 4" />
+                    <Line type="monotone" dataKey="value" stroke="#6366f1" dot={false} strokeWidth={1.5} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Keine Vol-Serie für dieses Fenster.</p>
+            )}
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Bänder (US-kalibriert, EU/AS analog): &gt;40 Extreme Fear · 30–40 Fear · 20–30 Normal · &lt;20 Complacency. Kein 17er-Score.
+            </p>
+          </div>
 
           <div className="h-[160px] w-full">
             <ResponsiveContainer>
