@@ -215,7 +215,16 @@ export function buildFazit(input: ExecSummaryInput): ExecSummary["fazit"] {
     finite(input.maxEntryCrv3) && input.price > input.maxEntryCrv3
       ? `Nachkaufen erst unter ${entry} Dollar.`
       : "Position nicht überstürzen.";
-  const handlung = `Deshalb warten. ${waitBecause} ${call.callLine}`;
+  // Bugfix (06.09.2026, Nutzer-Feedback per Screenshot): call.callLine wurde
+  // hier in "handlung" eingebettet UND zusaetzlich als eigenstaendiges Feld
+  // ExecSummary.callLine exportiert (Zeile ~284 unten), das die UI-Karte
+  // (ExecSummaryCard.tsx) separat NACH dem Fazit-Block nochmal rendert --
+  // der Earnings-Call-Satz erschien dadurch zweimal identisch im Text (im
+  // AAPL-Screenshot sichtbar: einmal in "handlung", einmal ausgegraut ganz
+  // am Ende). Spec (WORK_EXEC_SUMMARY.md, MSFT-Soll-Fazit) hat den Call-Satz
+  // nur EINMAL am Textende. Fix: aus "handlung" entfernt, bleibt nur noch im
+  // separaten callLine-Feld (das die UI ohnehin direkt danach zeigt).
+  const handlung = `Deshalb warten. ${waitBecause}`;
 
   return { lage, bruch, handlung };
 }

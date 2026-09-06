@@ -27,8 +27,17 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
       }))
     : [];
 
+  // Bugfix (06.09.2026, Nutzer-Feedback): keiner der drei bisherigen
+  // Feldnamen (conservativeDcfPerShare, dcfConservative,
+  // scoring.dcfConservative) existiert tatsaechlich in der StockAnalysis-
+  // Response -- das echte Feld heisst dcfFairValue. Dadurch war fv fuer
+  // JEDEN Ticker immer null, der DCF-Vergleichssatz im Fazit fehlte komplett
+  // (live an AAPL verifiziert: dcfFairValue=120.21 vorhanden, aber keiner
+  // der alten Feldnamen). dcfFairValue zuerst pruefen, alte Namen als
+  // Fallback fuer etwaige andere Aufrufer/Altdaten belassen.
   const fv =
-    finite(a?.conservativeDcfPerShare) ? a.conservativeDcfPerShare
+    finite(a?.dcfFairValue) ? a.dcfFairValue
+    : finite(a?.conservativeDcfPerShare) ? a.conservativeDcfPerShare
     : finite(a?.dcfConservative) ? a.dcfConservative
     : finite(scoring?.dcfConservative) ? scoring.dcfConservative
     : null;

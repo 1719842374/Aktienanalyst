@@ -154,6 +154,7 @@ import {
   calculateFCFFDCF,
   worstCaseM1,
   computeHardenedCRV,
+  calculateRiskAdjustedCRV,
 } from "../shared/valuation-signal";
 import { invalidateThesisStrengthCache } from "./thesis-strength-cache";
 
@@ -2140,6 +2141,37 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           waccTValue = hardened.waccUsed;
           gTValue = baseParams.revenueGrowthP1;
           wcTValue = hardened.wcUsed;
+
+          // Bugfix (06.09.2026, Nutzer-Feedback): crvValue/fvValue/wcValue
+          // wurden bisher NUR in den internen Backtest-Scoring-Snapshot
+          // (persistScoringSnapshot() unten) geschrieben, NIE auf das
+          // "analysis"-Objekt selbst, das an res.json() geht. Section6.tsx
+          // (Frontend) berechnet CRV komplett clientseitig neu aus
+          // Rohdaten -- funktioniert fuer die UI, aber server/exec-
+          // summary-attach.ts (liest NUR vom "analysis"-Objekt, kein
+          // Zugriff auf Client-State) bekam dadurch fuer crvBase/
+          // crvRiskAdj/maxEntryCrv3 immer null -> "n/v:1" im Fazit-CRV-
+          // Satz statt echter Zahlen (live an AAPL verifiziert). Additive
+          // Ergaenzung: dieselbe gehaertete CRV (hardened.crvHardened) als
+          // crvBase, PLUS risikoadjustierte CRV ueber die bereits
+          // bestehende, geteilte calculateRiskAdjustedCRV()-Funktion
+          // (identische Formel wie Section6.tsx: Fair Value abgeschlagen
+          // um totalExpectedDamage aus analysis.risks) als crvRiskAdj,
+          // PLUS maxEntryCrv3 = (FV + 2*WC)/3 (identische Formel wie
+          // Section6.tsx dcfBeiCRV3). Schreibt NUR zusaetzliche Felder,
+          // keine bestehende Logik/Snapshot-Verhalten veraendert.
+          const totalExpectedDamage = Array.isArray(analysis.risks)
+            ? analysis.risks.reduce((s: number, r: any) => s + (Number(r?.expectedDamage) || 0), 0)
+            : 0;
+          const crvRiskAdjValue = calculateRiskAdjustedCRV(
+            hardened.fvHardened,
+            hardened.wcUsed,
+            analysis.currentPrice,
+            totalExpectedDamage,
+          );
+          (analysis as any).crvBase = crvValue;
+          (analysis as any).crvRiskAdj = crvRiskAdjValue;
+          (analysis as any).maxEntryCrv3 = (hardened.fvHardened + 2 * hardened.wcUsed) / 3;
         } catch (crvErr: any) {
           console.warn(`[ANALYZE] Server-CRV/invDcf-Berechnung fehlgeschlagen fuer ${upperTicker}: ${crvErr?.message?.substring(0, 150)}`);
         }
