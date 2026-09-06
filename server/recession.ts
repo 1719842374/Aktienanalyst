@@ -1029,14 +1029,12 @@ function generateFazit(
     valuationText += `Die NYSE Margin Debt (${marginDebt.value}) zeigt erhöhte Hebelwirkung im Markt — ein klassischer Vorlauf-Indikator für abrupte Sell-Offs.`;
   }
 
-  // Section 3: Geopolitical/Macro Risks (Iran/Hormuz + Inflation + Rates)
+  // Section 3: Geopolitical/Macro Risks (Inflation + Rates)
   // NOTE: Static analysis from GEO_ANALYSIS.lastUpdated. Update this constant quarterly.
   let geoText = `[Stand: ${GEO_ANALYSIS.lastUpdated}] `;
-  geoText += `Die Sperrung der Straße von Hormuz durch den Iran-Konflikt stellt den gravierendsten exogenen Schock dar. Rund 20% der globalen Ölversorgung und ein Fünftel des weltweiten LNG-Handels fließen durch diese Meerenge. `;
-  geoText += `Die Dallas Fed schätzt einen WTI-Ölpreis von $98-132/Barrel bei andauernder Sperrung, mit einem BIP-Wachstumsrückgang von bis zu 2,9 Prozentpunkten. `;
-  geoText += `Goldman Sachs rechnet mit einem Inflationsanstieg um ~1 Prozentpunkt und hat die US-Rezessionswahrscheinlichkeit auf 30% angehoben. `;
+  geoText += `Exogene Energie- und Lieferkettenrisiken bleiben ein unauffälliger, aber relevanter Makro-Faktor für Inflation und Wachstum. `;
   geoText += `Die Fed steht vor einem Stagflations-Dilemma: Zinssenkungen würden die Inflation anheizen, Zinserhöhungen die Konjunktur belasten. `;
-  geoText += `Natixis prognostiziert, dass die Fed-Funds-Rate bei 3,50-3,75% verharrt, mit einem Bias Richtung "keine Senkung in 2026" oder sogar mögliche Zinserhöhungen. `;
+  geoText += `Marktkonsens sieht die Fed-Funds-Rate nahe 3,50-3,75%, mit Bias Richtung keine Senkung in 2026 oder sogar mögliche Zinserhöhungen. `;
   geoText += `Für den Aktienmarkt bedeutet das: Höhere Kapitalmarktzinsen drücken Equity-Bewertungen durch steigende Diskontierungsraten — besonders bei Growth-Aktien mit langer Duration.`;
 
   // Section 4: Private Credit / Systemic Risk
@@ -1067,7 +1065,7 @@ function generateFazit(
   summary += `Rezession 12M: ${pRez12M}%, Korrektur 12M: ${pKorr12M}%. `;
   if (pKorr12M >= 65) {
     summary += `Die Kombination aus historisch extremen Bewertungen (Buffett ${buffett?.value}, CAPE ${cape?.value}), `;
-    summary += `dem Iran/Hormuz-Ölpreisschock mit Stagflationspotenzial, `;
+    summary += `anhaltendem Inflations- und Zinsdruck mit Stagflationspotenzial, `;
     summary += `und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, `;
     summary += `das defensives Portfoliomanagement erfordert.`;
   }
@@ -1075,7 +1073,7 @@ function generateFazit(
   const sections: FazitSection[] = [
     { title: "Quantitative Bewertung", emoji: "📊", text: quantSummary },
     { title: "Bewertungsrisiko", emoji: "⚠️", text: valuationText },
-    { title: "Geopolitik & Makro: Iran/Hormuz, Inflation, Zinsen", emoji: "🌍", text: geoText },
+    { title: "Geopolitik & Makro: Inflation, Zinsen", emoji: "🌍", text: geoText },
     { title: "Private Credit & Systemisches Risiko", emoji: "🏦", text: creditText },
     { title: "Handlungsempfehlung", emoji: "🎯", text: actionText },
   ];
