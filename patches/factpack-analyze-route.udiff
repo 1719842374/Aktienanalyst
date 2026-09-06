@@ -50,6 +50,3 @@ index e4567bf..229674a 100644
          const pos = Math.max(0, Math.min(100, Number(c.pos) || 0));
          const bruttoUpside = Number(c.bruttoUpside) || 0;
          const einpreisungsgrad = Math.max(0, Math.min(100, Number(c.einpreisungsgrad) || 0));
--- 
-2.47.3
-

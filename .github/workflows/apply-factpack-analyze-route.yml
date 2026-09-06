@@ -34,5 +34,5 @@ jobs:
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "feat(factpack): apply FactPack after generateCatalystsAndMatchNews"
+          git commit -m "feat(analyze): FactPack hook via factpack-apply (×2 call sites)"
           git push origin HEAD:feat/factpack-v2
