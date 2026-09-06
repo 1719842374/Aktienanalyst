@@ -154,7 +154,16 @@ const STAGE_ALIASES: Array<{ test: RegExp; stage: StageType }> = [
   },
 ];
 
-function classifyStage(text: string): StageType {
+// Exportiert fuer script/debug-valuechain-classify.ts (06.09.2026 Bugfix --
+// das Debug-Skript rief bisher IMMER classifyStageForChain() auf, auch fuer
+// Legacy-Ketten wie "semiconductors", was dort eine irrefuehrend falsche
+// Diagnose lieferte: ASML/AMAT/LRCX/KLAC/NVDA erschienen faelschlich alle
+// als "midstream" im Debug-Output, obwohl der echte /api/valuechain-
+// Endpunkt -- der fuer Legacy-Ketten korrekt DIESE Funktion nutzt -- sie
+// weiterhin richtig klassifiziert (Upstream/Midstream/Downstream). Live
+// gegen den Server verifiziert: Produktions-Endpunkt unveraendert korrekt,
+// nur das Debug-Tooling war fehlerhaft.
+export function classifyStage(text: string): StageType {
   const lower = text.toLowerCase();
   for (const alias of STAGE_ALIASES) {
     if (alias.test.test(lower)) return alias.stage;

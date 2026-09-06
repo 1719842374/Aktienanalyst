@@ -360,7 +360,17 @@ export const PHASE2_INDUSTRIES: IndustryDef[] = [
     stageAliases: {
       upstream: [/\b(exploration and development of lithium|lithium (mining|producer|extraction|deposits)|nickel sulfate|cobalt (mining|refin)|cathode (material|manufactur)|anode (material|manufactur)|separator (film|manufactur)|engineered specialty chemicals)\b/i],
       midstream: [/\b(battery cell (manufactur|producer)|gigafactory|battery pack (manufactur|assembly)|solid[- ]state lithium[- ]metal batteries)\b/i],
-      downstream: [/\b(electric vehicle(s)?,? (alongside|and)|design(s|ing)?,? (engineering,? )?and manufacturing of electric vehicles|intelligent electric vehicles|new energy vehicle market|electric vehicle \(ev\) technolog(y|ies)|electric vehicle (manufactur|maker|oem)|ev (manufacturer|maker)|manufactures? (battery[- ])?electric vehicles)\b/i],
+      // Bugfix (06.09.2026, Nutzer-Feedback): das urspruengliche Muster war
+      // zu wortwoertlich exakt und fing BYDDY ("new energy vehicles (NEVs)"
+      // -- Plural + Klammer-Abkuerzung, nicht "new energy vehicle market")
+      // und XPEV ("electric vehicle (EV) sector", nicht "...technologies")
+      // nicht ab, obwohl beide eindeutige EV-Hersteller sind. Aeussere
+      // schliessende \b entfernt (kollidierte mit der Klammer in "(nevs)"
+      // -- \b bildet nach \) vor einem Satzzeichen wie "," keine Grenze),
+      // dafuer pro Alternative gezielt non-capturing Gruppen. Live gegen
+      // FMP-Beschreibungen verifiziert: TSLA/RIVN/LCID/BYDDY/NIO/LI/XPEV
+      // matchen jetzt alle sieben korrekt.
+      downstream: [/\b(?:design(?:s|ing)?,?\s*(?:engineering,?\s*)?and\s*manufactur\w*\s*of\s*electric\s*vehicles|manufactur\w*\s*(?:of\s*)?(?:battery[- ]?)?electric\s*vehicles|intelligent\s*electric\s*vehicles|new\s*energy\s*vehicles?\s*(?:\(nevs?\))?|new\s*energy\s*vehicle\s*market|electric\s*vehicle\s*\(ev\)\s*(?:technolog\w*|sector|maker|manufactur\w*)|electric\s*vehicles?,?\s*(?:alongside|and)|ev\s*(?:manufactur\w*|maker))/i],
     },
     excludeKeywords: {
       downstream: [/\blegacy (oem|automaker) without (battery|cell) production\b/i],
@@ -382,12 +392,35 @@ export const PHASE2_INDUSTRIES: IndustryDef[] = [
       { sector: "Utilities", industry: "General Utilities" },
       { sector: "Utilities", industry: "Independent Power Producers" },
       { sector: "Industrials", industry: "Industrial - Machinery" },
-      { sector: "Industrials", industry: "Aerospace & Defense" },
+      // Bugfix (06.09.2026, Nutzer-Feedback): "Aerospace & Defense" als
+      // ganze fmpPair-Kategorie ENTFERNT -- war viel zu breit und zog die
+      // komplette Ruestungs-/Raumfahrtbranche (Boeing, Lockheed, RTX,
+      // SpaceX, ~80 Firmen) in die Utilities-Kette, nur weil BWXT
+      // (Nuklearkomponenten-Hersteller) dort gelistet ist. Diese
+      // Fremdfirmen landeten alle im Midstream-Default und blaehten die
+      // Kandidatenzahl kuenstlich auf, ohne echte Utility-Relevanz. BWXT
+      // selbst faellt dadurch als Upstream-Kandidat weg (Coverage-Tradeoff,
+      // kein Ticker-Hardcode-Ersatz) -- die Upstream-Stufe bleibt trotzdem
+      // ueber "Industrial - Machinery" (Turbinen-Hersteller) besetzt.
     ],
     stageAliases: {
-      upstream: [/\b(power generation equipment|nuclear steam supply|gas turbine manufactur|energy enterprise primarily engaged in generating electricity|production and sale of nuclear components)\b/i],
+      // Bugfix (06.09.2026) Ergaenzung: "specialized solutions for energy
+      // generation" (Babcock & Wilcox, echter Kraftwerksausruester/Boiler-
+      // Hersteller) matchte keines der bisherigen Muster. Nach Entfernung
+      // der zu breiten Aerospace&Defense-fmpPair (BWXT fiel als Kandidat
+      // weg) reduziert dieser Zusatz den Upstream-Coverage-Verlust.
+      upstream: [/\b(power generation equipment|nuclear steam supply|gas turbine manufactur|energy enterprise primarily engaged in generating electricity|production and sale of nuclear components|solutions for energy generation)\b/i],
       midstream: [/\b(regulated (electric )?(generation|transmission)|owns and operates (power plants|generation and transmission)|electric transmission (and|&) distribution|electric power provider|electric utility holding company)\b/i],
-      downstream: [/\b(retail electricity (provider|supplier)|regulated utility retail|distributes electricity to customers|supplies electric power to approximately|provides electricity and natural gas to approximately|furnishes electricity to)\b/i],
+      // Bugfix (06.09.2026): Muster war zu wortwoertlich exakt ("retail
+      // electricity supplier" statt "supply", "supplies...to approximately"
+      // statt "selling...to approximately X million customers") und fing
+      // echte Retail-Versorger wie VST ("retail electricity supply"), CNP
+      // ("...networks that supply electricity to consumers") und DTE
+      // ("...selling electricity to approximately 2.3 million customers")
+      // nicht ab. Erweitert um Verb-Varianten und das sehr charakteristische
+      // "serves X million customers"-Signal (NRG, CMS) -- live gegen echte
+      // FMP-Beschreibungen verifiziert.
+      downstream: [/\b(?:retail\s*electricity\s*(?:provider|supplier|supply)|regulated\s*utility\s*retail|distributes?\s*electricity\s*to\s*(?:customers|consumers)|(?:supplies|sells?|selling|delivers?|delivering)\s*(?:electric\s*power|electricity)\s*to\s*(?:approximately|customers|consumers)|provides?\s*electricity\s*and\s*natural\s*gas\s*to\s*(?:approximately|customers)|furnishes?\s*electricity\s*to|(?:distribution|transmission)\s*networks?\s*(?:that\s*)?supply\s*electricity\s*to\s*consumers|serves?\s*(?:approximately\s*)?[0-9.,]+\s*(?:million\s*)?(?:electric\s*)?(?:and\s*[0-9.,]+\s*million\s*gas\s*)?customers|markets?\s*energy.{0,30}to\s*retail\s*consumers)/i],
     },
     excludeKeywords: {
       upstream: [/\b(pure[- ]play wind turbine manufactur|pure[- ]play solar module manufactur)\b/i],

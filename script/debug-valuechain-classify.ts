@@ -5,6 +5,15 @@
  * Aufruf: npx tsx script/debug-valuechain-classify.ts <chainKey>
  */
 import { ALL_INDUSTRIES, classifyStageForChain } from "../server/valuechain-catalog";
+// Bugfix (06.09.2026): Legacy-Ketten (z.B. "semiconductors") muessen ueber
+// classifyStage() klassifiziert werden -- exakt wie im echten
+// /api/valuechain-Endpunkt (server/valuechain-routes.ts:
+// "catalogDef.legacy ? classifyStage(...) : classifyStageForChain(...)").
+// Dieses Skript rief bisher IMMER classifyStageForChain() auf, was fuer
+// Legacy-Ketten eine falsche Diagnose lieferte (ASML/AMAT/LRCX/KLAC/NVDA
+// erschienen faelschlich als "midstream", obwohl der Produktions-Endpunkt
+// sie weiterhin korrekt klassifiziert).
+import { classifyStage } from "../server/valuechain-routes";
 
 const FMP_BASE = "https://financialmodelingprep.com/stable";
 const key = process.env.FMP_API_KEY || "";
@@ -57,7 +66,7 @@ async function main() {
   for (const row of rows.slice(0, 200)) {
     const p = await profile(row.symbol);
     const text = `${p?.description || ""} ${row.companyName}`;
-    const stage = classifyStageForChain(def, text);
+    const stage = def.legacy ? classifyStage(text) : classifyStageForChain(def, text);
     counts[stage]++;
     console.log(stage.padEnd(10), row.symbol.padEnd(8), row.companyName.slice(0, 50));
   }
