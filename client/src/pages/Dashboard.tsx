@@ -7,6 +7,7 @@ import { TickerSearch } from "@/components/TickerSearch";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
+import { ExecSummaryCard } from "@/components/ExecSummaryCard";
 import { Section1 } from "@/components/sections/Section1";
 import { Section2 } from "@/components/sections/Section2";
 import { FinancialStatements } from "@/components/sections/FinancialStatements";
@@ -540,6 +541,7 @@ export default function Dashboard() {
                   single component crash (e.g. .slice on undefined) can no longer
                   unmount the entire dashboard and leave the user with a black
                   screen. Without this, one bad field → whole app unmounts. */}
+              <ExecSummaryCard data={data} />
               <div ref={setSectionRef(1)}><SectionErrorBoundary sectionId={1} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Investmentthese"><Section2 data={data} /></SectionErrorBoundary></div>
               <SectionErrorBoundary sectionId="FS" sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary>

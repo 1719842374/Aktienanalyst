@@ -1,7 +1,7 @@
 /**
  * Adaptive Executive Summary — gilt für jeden Ticker.
  * Keine MSFT-Konstanten. Alles aus der Analyze-Response / Cache.
- * UI-Hook (Soll): Karte über Sektion 1. Noch nicht verdrahtet.
+ * UI-Hook: Response-Feld execSummary + Karte über Sektion 1.
  */
 
 export interface ExecLine {
@@ -34,6 +34,9 @@ export interface ExecSummaryInput {
   s17Verdict?: string | null;
   nextEarningsDate?: string | null;
   lastReportedQuarter?: string | null;
+  /** S9 cache — omit Cross sentence when undefined */
+  ma50AboveMA200?: boolean | null;
+  priceAboveMA200?: boolean | null;
   catalysts?: Array<{
     name: string; pos?: number; einpreisungsgrad?: number;
     gb?: number; nettoUpside?: number;
@@ -58,6 +61,12 @@ export interface ExecSummary {
   pro: ExecLine[];
   contra: ExecLine[];
   fazit: { lage: string; bruch: string; handlung: string };
+  /** DoD: always present */
+  crvLine: string;
+  /** DoD: P_alle / P_bind from Top-3 PoS≥40 with GB */
+  posLine: string;
+  /** DoD: only when ma50AboveMA200 is boolean in cache; else empty */
+  crossLine: string;
 }
 
 const MONTH_DE = [
@@ -211,6 +220,55 @@ export function buildFazit(input: ExecSummaryInput): ExecSummary["fazit"] {
   return { lage, bruch, handlung };
 }
 
+
+export function buildCrvLine(input: ExecSummaryInput): string {
+  const entry = finite(input.maxEntryCrv3) ? input.maxEntryCrv3 : null;
+  const crvBase = finite(input.crvBase) ? input.crvBase : null;
+  const crvRA = finite(input.crvRiskAdj) ? input.crvRiskAdj : null;
+  if (entry != null && input.price <= entry) {
+    return "Chance zu Risiko 3 zu 1 ist am Kurs erfüllt.";
+  }
+  const baseBit = crvBase != null ? crvBase.toFixed(1) : "n/v";
+  const raBit = crvRA != null ? crvRA.toFixed(1) : "n/v";
+  const entryBit = entry != null ? fmtPx(entry) : "n/v";
+  return `3 zu 1 ist am Kurs nicht erfüllt (jetzt ${baseBit}:1, risikoadjustiert ${raBit}:1). Dafür erst unter ${entryBit}.`;
+}
+
+/** Top 3 catalysts with GB + PoS, PoS ≥ 40 — same pool as S15/S2. */
+export function buildPosLine(input: ExecSummaryInput): string {
+  const ranked = [...(input.catalysts || [])]
+    .filter(c => finite(c.gb) && finite(c.pos) && (c.pos as number) >= 40)
+    .sort((a, b) => (b.gb || 0) - (a.gb || 0))
+    .slice(0, 3);
+  if (ranked.length === 0) {
+    return "Für P_alle/P_bind fehlen Katalysatoren mit GB und PoS ≥ 40.";
+  }
+  const names = ranked.map(c => c.name).join(", ");
+  const pcts = ranked.map(c => Math.round(c.pos as number)).join(", ");
+  let pAlle = 1;
+  for (const c of ranked) pAlle *= (c.pos as number) / 100;
+  const pBind = Math.min(...ranked.map(c => (c.pos as number) / 100));
+  const bindName = ranked.reduce((a, b) => ((a.pos as number) <= (b.pos as number) ? a : b)).name;
+  const allePct = Math.round(pAlle * 100);
+  const bindPct = Math.round(pBind * 100);
+  return `${names} stehen bei ${pcts} Prozent. Dass alle kommen, sind unter Unabhängigkeit knapp ${allePct} Prozent. Der bindende Fall ist ${bindName} mit ${bindPct} Prozent.`;
+}
+
+export function buildCrossLine(input: ExecSummaryInput): string {
+  if (typeof input.ma50AboveMA200 !== "boolean") return "";
+  if (input.ma50AboveMA200 === false) {
+    return "Im Chart liegt ein Death Cross (50-Tage unter 200-Tage) — Bärenlage, die Bewertung ist kein Timing.";
+  }
+  if (input.ma50AboveMA200 === true && input.priceAboveMA200 === true) {
+    return "50-Tage über 200-Tage (Golden-Cross-Lage), Kurs über der 200-Tage.";
+  }
+  // Golden-cross flag true but price not above MA200 — still one factual sentence, no invent
+  if (input.ma50AboveMA200 === true) {
+    return "50-Tage über 200-Tage (Golden-Cross-Lage).";
+  }
+  return "";
+}
+
 export function buildExecSummary(input: ExecSummaryInput): ExecSummary {
   const call = formatEarningsCall(input.nextEarningsDate, input.lastReportedQuarter);
   const pestelBits = (input.pestel || []).map(p => `${p.key[0]?.toUpperCase() || "?"}:${p.exposure[0]?.toUpperCase() || "?"}`);
@@ -230,5 +288,8 @@ export function buildExecSummary(input: ExecSummaryInput): ExecSummary {
     pro: pickPro(input),
     contra: pickContra(input),
     fazit: buildFazit(input),
+    crvLine: buildCrvLine(input),
+    posLine: buildPosLine(input),
+    crossLine: buildCrossLine(input),
   };
 }
