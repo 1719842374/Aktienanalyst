@@ -1,1 +1,1 @@
-__LOAD_FROM_FILE__:/workspace/dash_only.txt
+PLACEHOLDER_WILL_REPLACE
