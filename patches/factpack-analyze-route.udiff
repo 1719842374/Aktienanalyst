@@ -1,0 +1,52 @@
+diff --git a/server/analyze-route.ts b/server/analyze-route.ts
+index e4567bf..229674a 100644
+--- a/server/analyze-route.ts
++++ b/server/analyze-route.ts
+@@ -115,6 +115,7 @@ import {
+   normalizeSegmentAliasKey,
+ } from "./fmp";
+ import { buildScoringForAnalysis } from "./scoring-integration";
++import { applyFactPackFromFmpContext } from "./factpack-apply";
+ import { getCachedRegulatoryAssessment } from "./regulatory";
+ import { fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq } from "./history-fallback";
+ 
+@@ -1210,7 +1211,16 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
+             newsItems,
+           });
+           if (llmResult) {
+-            catalysts = llmResult.catalysts;
++            catalysts = applyFactPackFromFmpContext(llmResult.catalysts, {
++              ticker: upperTicker,
++              estimates: analyst?.estimates,
++              quote,
++              income: financials?.income,
++              price,
++              pe,
++              revenue,
++              revenueGrowthPct: revenueGrowth,
++            });
+             llmModelUsed = llmResult.modelUsed;
+             // Auftrag 08.08.2026 ("Live-These + Thesis-Score + Katalysatoren"):
+             // explizites generic=false fuer firmenspezifische LLM-Katalysatoren --
+@@ -2260,8 +2270,20 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
+         return res.json({ _llmSkipped: true, catalysts: a.catalysts, modelUsed: null });
+       }
+ 
++      // FactPack: LLM-Zahlen gegen FMP-Kontext aus Cache (Estimates ggf. leer)
++      const factCheckedCatalysts = applyFactPackFromFmpContext(llmResult.catalysts, {
++        ticker: a.ticker,
++        estimates: null,
++        quote: null,
++        income: null,
++        price: a.currentPrice,
++        pe: a.peRatio,
++        revenue: a.revenue,
++        revenueGrowthPct: a.financialStatements?.incomeStatement?.revenueGrowth ?? 0,
++      });
++
+       // Compute netto/gb for each LLM catalyst (same formula as generateCatalysts in catalyst-engine.ts)
+-      const enrichedCatalysts: Catalyst[] = llmResult.catalysts.map((c: any) => {
++      const enrichedCatalysts: Catalyst[] = factCheckedCatalysts.map((c: any) => {
+         const pos = Math.max(0, Math.min(100, Number(c.pos) || 0));
+         const bruttoUpside = Number(c.bruttoUpside) || 0;
+         const einpreisungsgrad = Math.max(0, Math.min(100, Number(c.einpreisungsgrad) || 0));

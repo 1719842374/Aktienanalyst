@@ -1,0 +1,38 @@
+name: apply-factpack-analyze-route
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/factpack-v2]
+    paths:
+      - patches/factpack-analyze-route.udiff
+      - .github/workflows/apply-factpack-analyze-route.yml
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/factpack-v2
+      - name: Apply FactPack patch to server/analyze-route.ts
+        run: |
+          set -euo pipefail
+          if grep -q applyFactPackFromFmpContext server/analyze-route.ts; then
+            echo "Already applied; nothing to do"
+            exit 0
+          fi
+          patch -p1 < patches/factpack-analyze-route.udiff
+          python3 -c 'from pathlib import Path; c=Path("server/analyze-route.ts").read_text(); assert len(c)>120000 and "PLACEHOLDER" not in c and "applyFactPackFromFmpContext" in c and "factpack-apply" in c; print("ASSERT_OK", len(c))'
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/analyze-route.ts
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "feat(analyze): FactPack hook via factpack-apply (×2 call sites)"
+          git push origin HEAD:feat/factpack-v2
