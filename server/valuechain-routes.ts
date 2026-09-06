@@ -340,6 +340,13 @@ function enrichCacheKey(industry: string, region: string, minMarketCap: number):
   return `valuechain_enrich__${industry}__${region}__${minMarketCap}`;
 }
 
+// Persistenter Gate-Status pro Kette (region-unabhaengig -- das Gate prueft
+// globale Kandidatenzahl/Capex-Coverage, nicht regionsspezifisch). Siehe
+// Bugfix-Kommentar bei evaluateGate()-Aufruf oben.
+function gateStatusCacheKey(industryKey: string): string {
+  return `valuechain_gate_status__${industryKey}`;
+}
+
 // ---------------------------------------------------------------------------
 // Route registration
 // ---------------------------------------------------------------------------
@@ -454,6 +461,15 @@ export function registerValueChainRoutes(app: Express): void {
           downstream: byStage.downstream.length,
         };
         gate = evaluateGate(catalogDef, rawCompanies.length, stageCounts, capexCoveredCount, rawCompanies.length);
+        // Bugfix (02.09.2026): Gate-Status persistieren, damit
+        // /api/valuechain/industries (Dropdown-Feed) am Gate gescheiterte
+        // Ketten NICHT mehr listet -- vorher wurde das Gate nur hier live
+        // pro Chain-Request geprueft, aber /industries zeigte immer den
+        // vollen statischen Katalog ungefiltert an (Ticket-Verstoss: "Fail
+        // -> Kette skippen, nicht ins Dropdown"). Persistenter Status via
+        // gleichem disk-cache-Mechanismus wie die Response selbst; TTL lang
+        // (Gate-Ergebnis aendert sich selten, FMP-Kandidatenzahl ist stabil).
+        diskResearcherSet(gateStatusCacheKey(def.key), { pass: gate.pass, checkedAt: new Date().toISOString() });
         if (!gate.pass) {
           const gateFailResponse: ValueChainResponse = {
             industry: def.key,
@@ -527,9 +543,26 @@ export function registerValueChainRoutes(app: Express): void {
   // (flache Liste) bleibt zur Abwaertskompatibilitaet erhalten, `sectors`
   // (GICS-gruppiert, inkl. Ketten unter dem Gate mit gate:false) ist neu.
   app.get("/api/valuechain/industries", (_req, res) => {
+    // Bugfix (02.09.2026): am Gate gescheiterte Ketten (persistenter Status
+    // aus dem letzten /api/valuechain-Aufruf, siehe gateStatusCacheKey())
+    // NICHT mehr listen -- vorher zeigte dieser Endpoint den vollen
+    // statischen Katalog ungefiltert, auch fuer Ketten die live als
+    // GATE FAIL zurueckkommen (Ticket-Verstoss: "Fail -> Kette skippen,
+    // nicht ins Dropdown"). Legacy-Ketten sind vom Gate ausgenommen und
+    // werden nie gefiltert (kein Cache-Eintrag = immer sichtbar). Eine
+    // neue Kette ohne bisherigen /api/valuechain-Aufruf ist ebenfalls noch
+    // sichtbar (kein Cache-Eintrag = "noch nicht geprueft", optimistisch
+    // sichtbar bis zum ersten echten Check) -- das entspricht dem
+    // Katalog-Kommentar "noch nicht geprueft != Gate-Fail".
+    const isGateFailed = (key: string): boolean => {
+      const status = diskResearcherGet(gateStatusCacheKey(key)) as { pass?: boolean } | null;
+      return status != null && status.pass === false;
+    };
+    const visibleIndustries = ALL_INDUSTRIES.filter((i) => i.legacy || !isGateFailed(i.key));
+
     const bySector = new Map<string, Array<{ key: string; label: string }>>();
     for (const gs of GICS_SECTOR_ORDER) bySector.set(gs, []);
-    for (const i of ALL_INDUSTRIES) {
+    for (const i of visibleIndustries) {
       const arr = bySector.get(i.gicsSector) || [];
       arr.push({ key: i.key, label: i.label });
       bySector.set(i.gicsSector, arr);
@@ -539,7 +572,7 @@ export function registerValueChainRoutes(app: Express): void {
       chains: bySector.get(gicsSector) || [],
     }));
     res.json({
-      industries: VALUECHAIN_INDUSTRIES.map((i) => ({ key: i.key, label: i.label })),
+      industries: visibleIndustries.map((i) => ({ key: i.key, label: i.label })),
       sectors,
     });
   });
