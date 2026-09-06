@@ -93,7 +93,12 @@ function splitSentences(text: string): string[] {
 }
 
 /** Zahlen mit optionalem $ € % und Mrd/Mio. */
-const NUM_RE = /(?:\$|€)?\(?-?[0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]+)?|-?[0-9]+(?:[.,][0-9]+)?)\)?\s*(?:Mrd\.?|Mio\.?|billion|million|bn|mn|%|B|M)?/gi;
+// Bugfix (02.09.2026, pre-existing seit Commit 1685bbf): fehlende oeffnende
+// Klammer der Alternativ-Gruppe blockierte den gesamten esbuild-Server-Build
+// ("Unexpected ')' in regular expression"). Absicht laut umgebendem Code
+// (\(?...\)? aussen, zwei Zahlenformat-Alternativen innen) war eine Gruppe
+// um beide Alternativen -- ergaenzt, keine Verhaltensaenderung sonst.
+const NUM_RE = /(?:\$|€)?\(?(?:-?[0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]+)?|-?[0-9]+(?:[.,][0-9]+)?)\)?\s*(?:Mrd\.?|Mio\.?|billion|million|bn|mn|%|B|M)?/gi;
 
 export function extractClaims(text: string): NumericClaim[] {
   const out: NumericClaim[] = [];

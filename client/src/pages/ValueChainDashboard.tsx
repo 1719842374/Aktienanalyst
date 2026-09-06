@@ -33,6 +33,16 @@ interface IndustryOption {
   label: string;
 }
 
+// Ticket VALUECHAIN_GICS_COVERAGE.md, UI-Abschnitt: "Dropdown GRUPPIERT
+// nach den 11 GICS-Sektoren, darunter die Ketten eingerueckt". Kommt vom
+// Server (server/valuechain-routes.ts::/api/valuechain/industries) bereits
+// in der kanonischen 11-Sektoren-Reihenfolge, inkl. leerer chains[]-Arrays
+// fuer Sektoren ohne (noch) gelistete Kette -- Header wird trotzdem gezeigt.
+interface GicsSectorGroup {
+  gicsSector: string;
+  chains: IndustryOption[];
+}
+
 const REGION_OPTIONS: Array<{ value: Region; label: string }> = [
   { value: "GLOBAL", label: "Global" },
   { value: "US", label: "USA" },
@@ -50,6 +60,7 @@ const MARKET_CAP_OPTIONS = [
 export default function ValueChainDashboard() {
   const [, navigate] = useLocation();
   const [industries, setIndustries] = useState<IndustryOption[]>([]);
+  const [sectorGroups, setSectorGroups] = useState<GicsSectorGroup[]>([]);
   const [industry, setIndustry] = useState<string>("semiconductors");
   const [region, setRegion] = useState<Region>("GLOBAL");
   const [minMarketCap, setMinMarketCap] = useState<number>(1_000_000_000);
@@ -73,6 +84,7 @@ export default function ValueChainDashboard() {
         if (res.ok) {
           const json = await res.json();
           setIndustries(json.industries || []);
+          setSectorGroups(json.sectors || []);
         }
       } catch {
         /* Dropdown bleibt leer, Auswahl per Freitext-Fallback unten */
@@ -191,11 +203,27 @@ export default function ValueChainDashboard() {
                 data-testid="select-industry"
               >
                 {industries.length === 0 && <option value="semiconductors">Halbleiter</option>}
-                {industries.map((opt) => (
-                  <option key={opt.key} value={opt.key}>
-                    {opt.label}
-                  </option>
-                ))}
+                {sectorGroups.length > 0
+                  ? sectorGroups.map((group) => (
+                      <optgroup key={group.gicsSector} label={group.gicsSector}>
+                        {group.chains.length === 0 ? (
+                          <option value={industry} disabled className="hidden">
+                            (keine Kette mit Capex-Coverage ≥ 70%)
+                          </option>
+                        ) : (
+                          group.chains.map((opt) => (
+                            <option key={opt.key} value={opt.key}>
+                              {opt.label}
+                            </option>
+                          ))
+                        )}
+                      </optgroup>
+                    ))
+                  : industries.map((opt) => (
+                      <option key={opt.key} value={opt.key}>
+                        {opt.label}
+                      </option>
+                    ))}
               </select>
             </div>
 
