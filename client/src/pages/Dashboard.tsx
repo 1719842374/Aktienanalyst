@@ -559,15 +559,21 @@ export default function Dashboard() {
               <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="Reverse DCF"><ReverseDCFSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(15)}><SectionErrorBoundary sectionId={15} sectionLabel="Katalysatoren"><CatalystsSection
                 data={data}
-                onCatalystsEnriched={(enriched, growthThesis, growthThesisGeneratedAt) => {
+                onCatalystsEnriched={(enriched, growthThesis, growthThesisGeneratedAt, execSummary) => {
                   // Auftrag 08.08.2026 ("These direkt nach KI-Enrich aktualisieren"):
                   // additive Uebernahme der sofort neu generierten These aus
                   // Section 15 -- nur wenn vorhanden (undefined bei aelteren
                   // Response-Formen oder wenn der Refresh serverseitig
                   // fehlschlug), sonst bleibt die vorherige These stehen.
+                  // Bugfix (06.09.2026, Nutzer-Feedback): execSummary (S0-
+                  // Karte) genauso additiv uebernehmen -- sonst bleiben
+                  // Pro/Contra/PoS-Satz/Fazit dort auf den alten generischen
+                  // Katalysatoren stehen, obwohl S15 hier schon firmen-
+                  // spezifisch aktualisiert wird.
                   setData(prev => prev ? {
                     ...prev, catalysts: enriched,
                     ...(growthThesis ? { growthThesis, growthThesisGeneratedAt: growthThesisGeneratedAt ?? prev.growthThesisGeneratedAt } : {}),
+                    ...(execSummary ? { execSummary } : {}),
                   } : prev);
                 }}
               /></SectionErrorBoundary></div>

@@ -2415,18 +2415,33 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Persist enriched catalysts (und ggf. aktualisierte These) back into
       // the cache so subsequent requests (e.g. PDF export, page reload
       // within TTL) see the enriched version.
-      const updated: StockAnalysis = {
+      let updated: StockAnalysis = {
         ...a, catalysts: withDeepDives,
         growthThesis: refreshedGrowthThesis ?? a.growthThesis,
         growthThesisFingerprint: refreshedFingerprint ?? a.growthThesisFingerprint,
         growthThesisGeneratedAt: refreshedGeneratedAt ?? (a as any).growthThesisGeneratedAt,
       } as StockAnalysis;
+
+      // Bugfix (06.09.2026, Nutzer-Feedback): das Executive-Summary-Feld
+      // (S0-Karte) wurde bisher NUR bei /api/analyze berechnet (attach-
+      // ExecSummary), niemals hier bei /api/catalyst-enrich neu -- nach
+      // dem KI-Klick blieben Pro/Contra, der PoS-Satz (posLine, basiert
+      // direkt auf catalysts) und damit auch Fazit/Bruch weiterhin auf
+      // den ALTEN generischen Katalysatoren stehen, obwohl S15 selbst
+      // schon firmenspezifisch war. attachExecSummary() nimmt bereits das
+      // gesamte Analysis-Objekt als Input (inkl. risks/dcfFairValue/
+      // invertedDcf, die sich durch Enrichment NICHT aendern) -- ein
+      // erneuter Aufruf auf "updated" zieht automatisch die neuen
+      // Katalysatoren mit ein, ohne Logik zu duplizieren.
+      updated = attachExecSummary(updated);
+
       analysisCache.set(cacheKeyUsed, { ...cached, result: updated });
       invalidateThesisStrengthCache(ticker);
 
       return res.json({
         catalysts: withDeepDives, modelUsed: llmResult.modelUsed,
         growthThesis: updated.growthThesis, growthThesisGeneratedAt: (updated as any).growthThesisGeneratedAt,
+        execSummary: (updated as any).execSummary,
       });
     } catch (err: any) {
       console.error(`[/api/catalyst-enrich] ${err?.message?.substring(0, 300)}`);

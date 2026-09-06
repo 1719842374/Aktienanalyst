@@ -12,7 +12,13 @@ interface Props {
   // Auftrag 08.08.2026 ("These direkt nach KI-Enrich aktualisieren"): additive
   // optionale Parameter -- bestehende Aufrufer, die nur (catalysts) erwarten,
   // bleiben unveraendert kompatibel (TypeScript optional params).
-  onCatalystsEnriched?: (catalysts: StockAnalysis['catalysts'], growthThesis?: string | null, growthThesisGeneratedAt?: string | null) => void;
+  // Bugfix (06.09.2026, Nutzer-Feedback): zusaetzlicher optionaler
+  // execSummary-Parameter -- Server liefert nach KI-Enrich jetzt das neu
+  // berechnete Executive Summary (S0-Karte) mit, das dann die neuen
+  // firmenspezifischen Katalysatoren in Pro/Contra/PoS-Satz/Fazit zeigt
+  // statt der alten generischen. Optional gehalten (aeltere Response-
+  // Formen/Fehlerfaelle liefern es ggf. nicht).
+  onCatalystsEnriched?: (catalysts: StockAnalysis['catalysts'], growthThesis?: string | null, growthThesisGeneratedAt?: string | null, execSummary?: any) => void;
 }
 
 const GENERIC_CATALYST_NAMES = new Set<string>([
@@ -73,7 +79,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
         // die sofort neu generierte These (Section 2) im selben Response --
         // wird additiv mit weitergegeben, damit S2 sofort konsistent mit den
         // gerade firmenspezifisch gewordenen Katalysatoren in S15 ist.
-        onCatalystsEnriched?.(json.catalysts, json.growthThesis, json.growthThesisGeneratedAt);
+        onCatalystsEnriched?.(json.catalysts, json.growthThesis, json.growthThesisGeneratedAt, json.execSummary);
       } else {
         setLlmError("Keine Katalysatoren erhalten.");
       }
