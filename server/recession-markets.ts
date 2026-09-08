@@ -20,10 +20,19 @@ const WINDOW_DAYS: Record<string, number> = {
 
 const RSI_PERIOD = 14;
 const WARMUP = 80;
+const VOL_Y_MAX = 90;
+
+type VolPoint = { date: string; value: number };
 
 function addDays(iso: string, n: number): string {
   const d = new Date(iso + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function yearsAgoISO(n: number): string {
+  const d = new Date();
+  d.setUTCFullYear(d.getUTCFullYear() - n);
   return d.toISOString().slice(0, 10);
 }
 
@@ -33,6 +42,105 @@ function parseClose(row: any): { date: string; close: number; volume?: number } 
   const volume = Number(row?.volume);
   if (!date || !Number.isFinite(close)) return null;
   return { date, close, volume: Number.isFinite(volume) ? volume : undefined };
+}
+
+/** FRED CSV — same public fredgraph path as recession.ts (no API key). */
+async function fetchFredVolSeries(seriesId: string, cosd: string): Promise<VolPoint[]> {
+  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(seriesId)}&cosd=${cosd}`;
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    if (!resp.ok) return [];
+    const csv = await resp.text();
+    if (!csv || csv.includes("<html") || csv.includes("<!DOCTYPE")) return [];
+    const out: VolPoint[] = [];
+    for (const line of csv.trim().split("\n").slice(1)) {
+      const [date, valStr] = line.split(",");
+      const value = parseFloat(valStr?.trim());
+      if (date && Number.isFinite(value)) out.push({ date: date.trim(), value });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** VSTOXX via FMP EOD (Yahoo ^V2TX oft delisted). */
+async function fetchVstoxxVol(from: string, to: string): Promise<VolPoint[]> {
+  for (const sym of ["^V2TX", "V2TX"]) {
+    try {
+      const raw = await fmpHistoricalPrices(sym, from, to);
+      const rows = (Array.isArray(raw) ? raw : [])
+        .map(parseClose)
+        .filter((x): x is NonNullable<typeof x> => x != null)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (rows.length > 10) {
+        return rows.map(r => ({ date: r.date, value: r.close }));
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  return [];
+}
+
+/** 20-session realized vol (annualized %): sqrt(252) * stdev(ln returns). */
+function realizedVol20(closes: { date: string; close: number }[]): VolPoint[] {
+  const out: VolPoint[] = [];
+  for (let i = 20; i < closes.length; i++) {
+    const rets: number[] = [];
+    for (let j = i - 19; j <= i; j++) {
+      const a = closes[j - 1]?.close;
+      const b = closes[j]?.close;
+      if (!(a > 0) || !(b > 0)) continue;
+      rets.push(Math.log(b / a));
+    }
+    if (rets.length < 15) continue;
+    const mean = rets.reduce((s, x) => s + x, 0) / rets.length;
+    const var_ = rets.reduce((s, x) => s + (x - mean) ** 2, 0) / (rets.length - 1);
+    const ann = Math.sqrt(Math.max(0, var_) * 252) * 100;
+    if (Number.isFinite(ann)) out.push({ date: closes[i].date, value: ann });
+  }
+  return out;
+}
+
+function sliceVolToWindow(vol: VolPoint[], windowStart: string | null, days: number): VolPoint[] {
+  if (!vol.length) return [];
+  if (windowStart) {
+    return vol.filter(v => v.date >= windowStart).slice(-days);
+  }
+  return vol.slice(-days);
+}
+
+function volBandLabel(v: number | null): string {
+  if (v == null || !Number.isFinite(v)) return "n/a";
+  if (v > 40) return "Extreme Fear";
+  if (v >= 30) return "Fear";
+  if (v >= 20) return "Normal";
+  return "Complacency";
+}
+
+async function fetchRegionVol(
+  region: RegionId,
+  book: (typeof MARKET_BOOKS)[RegionId],
+  etfRows: { date: string; close: number }[],
+  from: string,
+  to: string,
+): Promise<{ vol: VolPoint[]; volNote: string | null }> {
+  if (book.volKind === "realized" || book.volId === "realized20") {
+    return { vol: realizedVol20(etfRows), volNote: null };
+  }
+  if (region === "US") {
+    // MAX ≈ series start 1990; keep headroom for window
+    const cosd = yearsAgoISO(40);
+    const vol = await fetchFredVolSeries("VIXCLS", cosd);
+    return { vol, volNote: vol.length ? null : "FRED VIXCLS leer" };
+  }
+  // EU implied: VSTOXX
+  const vol = await fetchVstoxxVol(from, to);
+  return {
+    vol,
+    volNote: vol.length ? null : "VSTOXX (^V2TX) nicht lieferbar — Pane leer",
+  };
 }
 
 export async function buildRegionMarket(region: RegionId, window: string) {
@@ -65,6 +173,11 @@ export async function buildRegionMarket(region: RegionId, window: string) {
     };
   });
 
+  const windowStart = series[0]?.date ?? null;
+  const { vol: volFull, volNote } = await fetchRegionVol(region, book, rows, from, to);
+  const vol = sliceVolToWindow(volFull, windowStart, days);
+  const volLatest = vol.length ? vol[vol.length - 1].value : null;
+
   const last = series[series.length - 1];
   const prev = series[series.length - 2];
   const lastRsi = last?.rsi ?? null;
@@ -85,6 +198,13 @@ export async function buildRegionMarket(region: RegionId, window: string) {
     region,
     label: book.label,
     etf: book.etf,
+    volId: book.volId,
+    volKind: book.volKind,
+    volYMax: VOL_Y_MAX,
+    volLatest,
+    volBand: volBandLabel(volLatest),
+    volNote,
+    vol,
     window,
     asOf: last?.date ?? null,
     rsiPeriod: RSI_PERIOD,
@@ -118,7 +238,8 @@ export function registerRecessionMarketRoutes(app: Express) {
     const region = (regionRaw === "EU" || regionRaw === "AS" ? regionRaw : "US") as RegionId;
     const windowRaw = String(req.query.window || "5Y").toUpperCase();
     const window = WINDOW_DAYS[windowRaw] ? windowRaw : "5Y";
-    const key = `v3:${region}:${window}`;
+    // v4: vol series (VIX/VSTOXX/realized20) + pane fields
+    const key = `v4:${region}:${window}`;
 
     if (marketCache && marketCache.key === key && Date.now() - marketCache.ts < TTL_MS) {
       return res.json(marketCache.data);
