@@ -1,157 +1,230 @@
 # WORK.md_portfolio_3 — Performance & Attribution vs. Benchmark
 
-> **Stand:** 09.09.2026 (Update 09:25 CEST — Performance-Chart Rebase + Default 1–2 Jahre)
-> **Status:** Planung / Implementation Ready
-> **Scope:** P1 Attribution-Card **und** Overview-Block „Performance“ (Pie + Area-Chart). Kein DCF-/Analyze-Route-Umbau.
+> **Stand:** 09.09.2026 (Update 09:37 CEST — 1Y/2Y OHLCV-Fetch Spec)
+> **Status:** Phase 0 (Rebase + 6M/1Y/2Y UI) auf `main`. Nächster Schritt: langer OHLCV-Fetch.
 > **Live:** https://aktienanalyst.onrender.com/#/portfolio
-> **Repo:** https://github.com/1719842374/Aktienanalyst
-> **Commit-Stand der Analyse:** `main` @ `20ff553f15ebf6ecad4653354305436525879f95` (08.09.2026)
-
-Verwandte Specs: [WORK_PORTFOLIO.md](./WORK_PORTFOLIO.md) · [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) · [WORK_BIAS_FIXES_INVERSE_DCF.md](./WORK_BIAS_FIXES_INVERSE_DCF.md) §16.11 · [WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md](./WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md)
+> **Verwandt:** [WORK_DATA_PROVIDERS.md](./WORK_DATA_PROVIDERS.md) · [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md)
 
 ---
 
-## 0. Kernbefund Overview-Performance (Live 09.09.2026)
+## 6. 1Y/2Y ohne Cache-6M — so wird der Kombinationskurs lang genug
 
-Dropdown **6 Monate** + **Long**. Chart-Titel „Kumulative Portfolio-Performance (%)“.
+### 6.1 Fakt: Rebase allein reicht nicht
 
-| Größe | Live-Wert | Soll |
+Live-Achse 09.09.2026 (Filter 6 Monate): **2026-03-20 → 2026-09-08**.
+
+Kalendertage:
+
+\[
+2026\text{-}09\text{-}08 - 2026\text{-}03\text{-}20 = 172\ \text{Tage}
+\]
+
+Handelstage (Näherung):
+
+\[
+n \approx 172 \times \frac{252}{365} \approx 119\ \text{Bars}
+\]
+
+Soll-Bars je Preset (Puffer gegen Feiertage / Lücken):
+
+| Preset | Kalender | Handelstage Ziel | Puffer | Fetch-from (heute = 2026-09-09) | Min. Bars nach Slice |
+| --- | --- | --- | --- | --- | --- |
+| 6M | 182 d | 126 | +20 | 2026-03-11 | ≥ 110 |
+| **1Y** | 365 d | 252 | +28 | **2025-09-09** | ≥ 240 |
+| **2Y** | 730 d | 504 | +40 | **2024-09-09** | ≥ 480 |
+
+Wenn der Analyse-Cache nur ≈ 119 Bars hat:
+
+- Dropdown „1 Jahr“ schneidet auf today−1Y, findet aber nur Daten ab 2026-03-20
+- Dropdown „2 Jahre“ ebenso
+- Chart sieht aus wie 6 Monate, nur bei 0 % rebased
+
+Darum: **separater OHLCV-Fetch**, Analyse-Cache nicht als 1Y/2Y-Quelle.
+
+### 6.2 Warum der Cache kurz ist (Code-Fakten)
+
+| Stelle | Was passiert | Folge |
 | --- | --- | --- |
-| Profit-KPI | −2,8 % (Entry vs. Last, gleichgewichtet) | bleibt eigene KPI |
-| CAPM E[R] | +13,1 % vs. SPY, 2 Titel | unverändert |
-| Bester Performer | MSFT −1,2 % vs. Entry | unverändert |
-| Pie | MSFT 92 % / NVO 8 % | unverändert |
-| Chart X | 2026-03-20 → 2026-09-08 | Fenster von–bis |
-| Chart Start-Y | **≈ 450 %** | **0 %** |
-| Tooltip 2026-09-04 | **579,39 %** | Fenster-Rendite V_T/V_t0 - 1, nicht 579 % |
+| `PortfolioPage.tsx` | `historicalPricesByTicker = analysis.historicalPrices` aus `POST /api/analyze` | Portfolio sieht nur, was die Analyse mitgibt |
+| `WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md` | Seed-Export `historicalPrices.slice(-252)` | manche Seeds max. 1Y, oft kürzer |
+| `server/disk-cache.ts` | HP < 50 → Flag `_needsOhlcv`, Payload trotzdem ausgeliefert | kurze Serie kann die UI erreichen |
+| `scripts/validate-msft.mjs` | RSL will `historicalPrices.length >= 200` | Analyse-Soll ≥ 200, Live-Portfolio hatte ~119 |
+| `server/fmp-fetcher.ts` | Fetch intern `yearAgo(10)` , danach `ohlcvData.slice(-252)` für 52w-High | Server holt 10Y, nutzt 1Y-Slice für Kennzahlen |
+| `server/analyze-helpers.ts` | `fmpHistoricalPrices(ticker, today-10Y, today)` | 10Y existieren serverseitig, kommen nicht 1:1 ins Portfolio |
 
-Ursache in Code:
+Regel: `/api/analyze` nicht aufblasen und nicht 13 FMP-Calls pro Portfolio-Ticker wiederholen.
 
-```ts
-// positions.ts: rebase nur auf ersten Cache-Bar
-performancePct_t = V_t / V_cache0 - 1
+### 6.3 Fertige Bausteine (nicht neu erfinden)
 
-// PortfolioOverview.tsx: danach nur Slice, kein zweites Rebase
-const series = filterByTimeframe(rawSeries, timeframe)
-```
-
-TimeframeFilter = 1M|3M|6M|YTD|1Y — **kein 2Y**, Default im Screenshot = 6M.
-
-Rechenweg Screenshot (symbolisch):
-
-L_t = 1 + performancePct_t_alt
-
-L(2026-03-20) ≈ 5,50
-L(2026-09-04) ≈ 6,7939
-
-R_6M = 6,7939 / 5,50 - 1 ≈ 23,5 %   nicht 579 %
-
----
-
-## 1. Soll-Formel (verbindlich)
-
-R_t_Fenster = V_t / V_t0 - 1
-
-V_t = Summe Q_i * P_i,t   über alle offenen Longs mit openedAt <= t
-
-- t0 = erster Tag im Fenster, an dem alle aktiven offenen Longs einen Kurs haben
-- Chart startet bei 0 %
-- Chart-Ende = Performance von t0 bis heute
-- kein Look-ahead vor openedAt
-- V_t0 = 0 oder unvollständig → insufficient_data, keine 579 %-Zahl
-
-Subtitle Pflicht: Performance YYYY-MM-DD → YYYY-MM-DD · Fenster +X.X % · 1Y
-
----
-
-## 2. Fenster: Default 1 Jahr, Preset 2 Jahre
-
-| Preset | Rolle |
-| --- | --- |
-| 1M / 3M / 6M / YTD | bleiben |
-| **1Y** | **Default** (ersetzt 6M) |
-| **2Y** | **Pflicht-Preset** (heute fehlend) |
-| MAX / CUSTOM | optional, immer rebased auf t0 |
+`server/fmp.ts` existiert bereits:
 
 ```ts
-export type TimeframeFilter = "1M" | "3M" | "6M" | "YTD" | "1Y" | "2Y";
-// Default in PortfolioPage / Overview: "1Y"
-```
-
-Fetch:
-- 1Y >= 252 + Puffer (~280) Bars je offenem Long + Benchmark
-- 2Y >= 504 + Puffer
-- Analyse-Cache (oft 6M, daher Achse ab 2026-03-20) nicht als 1Y/2Y-Quelle. State historicalPricesByTickerLong.
-
----
-
-## 3. Kleinster Codeweg
-
-Neue Funktion in client/src/lib/portfolio/positions.ts (Signatur von computePortfolioPerformanceSeries bleibt):
-
-```ts
-export function rebasePerformanceSeries(
-  series: PortfolioPerformancePoint[],
-  fromDate: string,
-): PortfolioPerformancePoint[] {
-  const sliced = series.filter(pt => pt.date >= fromDate);
-  if (sliced.length === 0) return [];
-  const base = 1 + sliced[0].performancePct;
-  if (!Number.isFinite(base) || base === 0) return [];
-  return sliced.map(pt => ({
-    date: pt.date,
-    performancePct: (1 + pt.performancePct) / base - 1,
-  }));
+export async function fmpHistoricalPrices(symbol: string, from?: string, to?: string) {
+  // GET https://financialmodelingprep.com/stable/historical-price-eod/full
+  //     ?symbol=MSFT&from=2024-09-09&to=2026-09-09&apikey=...
 }
 ```
 
-In PortfolioOverview.tsx:
+Gold holt 10Y schon so: `fmpHistoricalPrices("GCUSD", startDate, endDate)` in `server/gold-routes.ts`.
+PIT-Backtest ebenso: `server/backtest/pit.ts`.
+
+Budget (`server/fmp.ts`):
+
+| Env | Default | Bedeutung |
+| --- | --- | --- |
+| `FMP_DAILY_LIMIT` | 15000 | Tageskappe |
+| `FMP_CALLS_PER_ANALYSIS` | 13 | ein volles `/api/analyze` |
+| `FMP_MIN_INTERVAL_MS` | 250 | Abstand zwischen Calls |
+
+Kostenvergleich bei 2 Longs + SPY:
+
+| Weg | FMP-Calls |
+| --- | --- |
+| 3× `/api/analyze` | 3 × 13 = **39** |
+| 3× `fmpHistoricalPrices` | **3** |
+
+3 Calls × 250 ms Abstand ≈ 0,75 s plus Netz. Das ist der Weg.
+
+Plan-Limit Historie (WORK_DATA_PROVIDERS.md): Free/Starter oft max. **5 Jahre**. 1Y und 2Y liegen darunter → FMP Starter reicht. 10Y wäre Premium oder Yahoo-Fallback.
+
+### 6.4 Soll-API (additiv, analyze-route unangetastet)
+
+Neuer Endpoint, nur EOD Close:
+
+```
+GET /api/ohlcv?tickers=MSFT,NVO,SPY&from=2024-09-09&to=2026-09-09
+```
+
+Antwort:
+
+```json
+{
+  "from": "2024-09-09",
+  "to": "2026-09-09",
+  "source": "fmp",
+  "bars": {
+    "MSFT": [{ "date": "2024-09-09", "close": 408.12 }, "..."],
+    "NVO":  [{ "date": "2024-09-09", "close": 138.40 }, "..."],
+    "SPY":  [{ "date": "2024-09-09", "close": 547.01 }, "..."]
+  },
+  "meta": {
+    "MSFT": { "n": 504, "first": "2024-09-09", "last": "2026-09-08", "truncated": false },
+    "NVO":  { "n": 498, "first": "2024-09-16", "last": "2026-09-08", "truncated": false }
+  }
+}
+```
+
+Regeln:
+
+- max. 12 Ticker pro Request (Portfolio-Größe)
+- `to` clamp auf heute (kein Look-ahead)
+- `from` clamp auf today−5Y (Starter-Plan)
+- leere Serie → `bars[ticker]=[]`, `truncated=true`, keine Interpolation
+- Server-Cache Key `ohlcv:{TICKER}:{from}:{to}` TTL **24 h**
+- nur `date` + `close` (Kombinationskurs braucht kein OHLC)
+
+from-Datum aus Preset:
+
+\[
+from_{6M} = today - 182\,d,\quad
+from_{1Y} = today - 365\,d,\quad
+from_{2Y} = today - 730\,d
+\]
+
+Implementierung Server (~40 Zeilen):
 
 ```ts
-const rawSeries = computePortfolioPerformanceSeries(...)
-const series = rebasePerformanceSeries(rawSeries, cutoffDate(timeframe))
+// server/ohlcv-route.ts  (neu) — mount in routes.ts
+app.get("/api/ohlcv", async (req, res) => {
+  const tickers = String(req.query.tickers || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 12);
+  const from = String(req.query.from || "").slice(0, 10);
+  const to = String(req.query.to || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const bars: Record<string, { date: string; close: number }[]> = {};
+  for (const t of tickers) {
+    const raw = await fmpHistoricalPrices(t, from, to).catch(() => []);
+    bars[t] = (Array.isArray(raw) ? raw : [])
+      .map((r: any) => ({ date: String(r.date).slice(0, 10), close: Number(r.close ?? r.adjClose) }))
+      .filter(p => p.date && Number.isFinite(p.close) && p.close > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+  res.json({ from, to, source: "fmp", bars });
+});
 ```
 
-Nicht nur filterByTimeframe(rawSeries).
+Wenn `bars[t][0].date > from` und Starter-Plan: optional Yahoo-Fallback laut WORK_DATA_PROVIDERS.md §3. Für 1Y/2Y meist unnötig.
 
-Select: option value=2Y → 2 Jahre. Default-Prop timeframe="1Y".
-Guard: |R_end| > 200% auf Fenster <= 2Y → Flag unplausibles V0.
+### 6.5 Client (PortfolioPage)
 
-Attribution-Equity-Curve (PortfolioBacktestPanel) dieselbe Rebase-Regel + Presets 1Y/2Y. Abweichung Overview vs. Attribution > 0,1 pp bei gleichem Fenster und Marktwert-Gewichten = Bug.
+Zwei Maps, nicht eine:
+
+```
+analysisByTicker.historicalPrices     → Scoring / CAPM-Engine / 52w  (unverändert)
+historicalPricesByTickerLong          → Overview-Chart + Attribution-Equity
+```
+
+Trigger: `timeframe` oder offene Longs ändern sich.
+
+```ts
+const from = timeframeCutoffIso(timeframe); // 6M / 1Y / 2Y
+const tickers = [...openLongs, benchmark].join(",");
+const res = await apiRequest("GET", `/api/ohlcv?tickers=${tickers}&from=${from}`);
+setHistoricalPricesByTickerLong(res.bars);
+```
+
+An `PortfolioOverview` **Long-Map** übergeben, nicht den Analyse-Cache.
+
+Kombinationskurs bleibt:
+
+\[
+V_t = \sum_i Q_i P_{i,t}^{\text{long}}
+\]
+
+Fenster-Rendite:
+
+\[
+R_t = V_t / V_{t_0} - 1
+\]
+
+UI-Badge wenn `meta.n < sollBars(preset)`:
+
+```
+Historie 119 Bars < 252 (1Y) — Chart zeigt verfügbare Spanne, nicht das Label
+```
+
+X-Achse = min/max der **tatsächlichen** Long-Serie, nicht der Button-Text „2 Jahre“.
+
+### 6.6 Dateien
+
+| Pfad | Aktion |
+| --- | --- |
+| `server/ohlcv-route.ts` | **neu** — GET /api/ohlcv |
+| `server/routes.ts` | mount, 5 Zeilen |
+| `client/src/pages/PortfolioPage.tsx` | Long-Map fetchen, an Overview + Backtest |
+| `client/src/components/portfolio/PortfolioOverview.tsx` | Long-Map als `historicalPricesByTicker` (schon rebase-fähig) |
+| `script/test-ohlcv-window.ts` | **neu** — from/to clamp, n-Bars, leerer Ticker |
+
+Nicht anfassen: `server/analyze-route.ts`, DCF, `disk-cache.ts` Schema, `engine.ts`.
+
+### 6.7 Acceptance (Zahlen)
+
+```
+[ ] GET /api/ohlcv?tickers=MSFT,NVO,SPY&from=2025-09-09  → je Ticker n ≥ 240
+[ ] from=2024-09-09 → n ≥ 480 (2Y), sonst Badge truncated
+[ ] 6M-Chart X-Start ≈ today-6M, nicht fest 2026-03-20
+[ ] 1Y-Endwert ≠ 6M-Endwert (außer Markt zufällig gleich)
+[ ] 3 Ticker = 3 FMP-Calls, nicht 39 Analyze-Calls
+[ ] to > today wird auf today geclampt
+[ ] unbekannter Ticker → bars=[] , kein Fake-Close
+[ ] Analyse-Cache-Länge bleibt unverändert (Regression Scoring)
+```
+
+Aufwand: **0,5 Tag** (Route + Page-Fetch + Badge + 1 Testfile).
 
 ---
 
-## 4. Betroffene Dateien
+## 0–5 Kurz (unverändert gültig)
 
-Aendern:
-- client/src/lib/portfolio/positions.ts — rebasePerformanceSeries
-- client/src/components/portfolio/PortfolioOverview.tsx — 2Y, Default 1Y, Rebase, Subtitle von-bis
-- client/src/pages/PortfolioPage.tsx — OHLCV-Fetch 1Y/2Y
-- client/src/lib/portfolio/backtest.ts — Fenster-Args analog
-- client/src/components/portfolio/PortfolioBacktestPanel.tsx — Presets 1Y/2Y
+Rebase ist auf `main` (`rebasePerformanceSeries`, Dropdown 6M/1Y/2Y, Kombinationskurs = Summe qty×Preis).
+Ohne §6 bleibt 1Y/2Y optisch ein 6M-Fenster ab Cache-Start.
 
-Nicht anfassen: engine.ts, DCF, analyze-route.ts, Section5.tsx.
-
----
-
-## 5. Rest der Portfolio-3-Spec (weiterhin gültig)
-
-- Attribution-Overrides analog DCF (Slider, Auto vs. Manuell, Reset)
-- Days erweiterbar, minCommonTradingDays / Fill editierbar
-- Monte Carlo in der Attribution-Card (portfolioMonteCarlo.ts reuse)
-- Manueller Ticker-Add in der Sektion (portfolioBridge.addTickerToManualPortfolio)
-- Live-Attribution-Snapshot: Alpha -11,9 % p.a., Beta 1,56, n = 20, MSFT 91,4 % / NVO 8,6 %
-- Phasen 0-5, Aufwand ~2,5 Tage inkl. Rebase-Fix (Phase 0 = 0,5 Tag)
-
-Acceptance Phase 0:
-
-```
-[ ] Chart startet bei 0 %
-[ ] Endwert = V_T / V_t0 - 1 (nicht 579 %)
-[ ] Default timeframe === "1Y"
-[ ] Preset "2Y" existiert
-[ ] Fetch deckt 1-2 Jahre, nicht nur Cache-6M
-[ ] test-portfolio-positions.ts bleibt gruen
-```
-
-**Regel:** Zahlen-Prinzip. Keine Look-ahead-Daten. Performance-Chart immer R_t = V_t / V_t0 - 1. Default 1 Jahr, Preset 2 Jahre.
+**Regel:** Zahlen-Prinzip. Langer Kursweg = `fmpHistoricalPrices(from,to)`, nicht `/api/analyze`. Default-Fenster 1Y sobald n ≥ 240.
