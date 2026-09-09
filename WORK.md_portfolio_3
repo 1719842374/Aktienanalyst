@@ -5,5 +5,153 @@
 > **Scope:** P1 Attribution-Card **und** Overview-Block „Performance“ (Pie + Area-Chart). Kein DCF-/Analyze-Route-Umbau.
 > **Live:** https://aktienanalyst.onrender.com/#/portfolio
 > **Repo:** https://github.com/1719842374/Aktienanalyst
+> **Commit-Stand der Analyse:** `main` @ `20ff553f15ebf6ecad4653354305436525879f95` (08.09.2026)
 
-Vollständige Spec liegt lokal in der Workspace-Kopie. Dieser Commit stellt den Inhalt wieder her — siehe nachfolgenden Force-Update falls nötig.
+Verwandte Specs: [WORK_PORTFOLIO.md](./WORK_PORTFOLIO.md) · [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) · [WORK_BIAS_FIXES_INVERSE_DCF.md](./WORK_BIAS_FIXES_INVERSE_DCF.md) §16.11 · [WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md](./WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md)
+
+---
+
+## 0. Kernbefund Overview-Performance (Live 09.09.2026)
+
+Dropdown **6 Monate** + **Long**. Chart-Titel „Kumulative Portfolio-Performance (%)“.
+
+| Größe | Live-Wert | Soll |
+| --- | --- | --- |
+| Profit-KPI | −2,8 % (Entry vs. Last, gleichgewichtet) | bleibt eigene KPI |
+| CAPM E[R] | +13,1 % vs. SPY, 2 Titel | unverändert |
+| Bester Performer | MSFT −1,2 % vs. Entry | unverändert |
+| Pie | MSFT 92 % / NVO 8 % | unverändert |
+| Chart X | 2026-03-20 → 2026-09-08 | Fenster von–bis |
+| Chart Start-Y | **≈ 450 %** | **0 %** |
+| Tooltip 2026-09-04 | **579,39 %** | Fenster-Rendite V_T/V_t0 - 1, nicht 579 % |
+
+Ursache in Code:
+
+```ts
+// positions.ts: rebase nur auf ersten Cache-Bar
+performancePct_t = V_t / V_cache0 - 1
+
+// PortfolioOverview.tsx: danach nur Slice, kein zweites Rebase
+const series = filterByTimeframe(rawSeries, timeframe)
+```
+
+TimeframeFilter = 1M|3M|6M|YTD|1Y — **kein 2Y**, Default im Screenshot = 6M.
+
+Rechenweg Screenshot (symbolisch):
+
+L_t = 1 + performancePct_t_alt
+
+L(2026-03-20) ≈ 5,50
+L(2026-09-04) ≈ 6,7939
+
+R_6M = 6,7939 / 5,50 - 1 ≈ 23,5 %   nicht 579 %
+
+---
+
+## 1. Soll-Formel (verbindlich)
+
+R_t_Fenster = V_t / V_t0 - 1
+
+V_t = Summe Q_i * P_i,t   über alle offenen Longs mit openedAt <= t
+
+- t0 = erster Tag im Fenster, an dem alle aktiven offenen Longs einen Kurs haben
+- Chart startet bei 0 %
+- Chart-Ende = Performance von t0 bis heute
+- kein Look-ahead vor openedAt
+- V_t0 = 0 oder unvollständig → insufficient_data, keine 579 %-Zahl
+
+Subtitle Pflicht: Performance YYYY-MM-DD → YYYY-MM-DD · Fenster +X.X % · 1Y
+
+---
+
+## 2. Fenster: Default 1 Jahr, Preset 2 Jahre
+
+| Preset | Rolle |
+| --- | --- |
+| 1M / 3M / 6M / YTD | bleiben |
+| **1Y** | **Default** (ersetzt 6M) |
+| **2Y** | **Pflicht-Preset** (heute fehlend) |
+| MAX / CUSTOM | optional, immer rebased auf t0 |
+
+```ts
+export type TimeframeFilter = "1M" | "3M" | "6M" | "YTD" | "1Y" | "2Y";
+// Default in PortfolioPage / Overview: "1Y"
+```
+
+Fetch:
+- 1Y >= 252 + Puffer (~280) Bars je offenem Long + Benchmark
+- 2Y >= 504 + Puffer
+- Analyse-Cache (oft 6M, daher Achse ab 2026-03-20) nicht als 1Y/2Y-Quelle. State historicalPricesByTickerLong.
+
+---
+
+## 3. Kleinster Codeweg
+
+Neue Funktion in client/src/lib/portfolio/positions.ts (Signatur von computePortfolioPerformanceSeries bleibt):
+
+```ts
+export function rebasePerformanceSeries(
+  series: PortfolioPerformancePoint[],
+  fromDate: string,
+): PortfolioPerformancePoint[] {
+  const sliced = series.filter(pt => pt.date >= fromDate);
+  if (sliced.length === 0) return [];
+  const base = 1 + sliced[0].performancePct;
+  if (!Number.isFinite(base) || base === 0) return [];
+  return sliced.map(pt => ({
+    date: pt.date,
+    performancePct: (1 + pt.performancePct) / base - 1,
+  }));
+}
+```
+
+In PortfolioOverview.tsx:
+
+```ts
+const rawSeries = computePortfolioPerformanceSeries(...)
+const series = rebasePerformanceSeries(rawSeries, cutoffDate(timeframe))
+```
+
+Nicht nur filterByTimeframe(rawSeries).
+
+Select: option value=2Y → 2 Jahre. Default-Prop timeframe="1Y".
+Guard: |R_end| > 200% auf Fenster <= 2Y → Flag unplausibles V0.
+
+Attribution-Equity-Curve (PortfolioBacktestPanel) dieselbe Rebase-Regel + Presets 1Y/2Y. Abweichung Overview vs. Attribution > 0,1 pp bei gleichem Fenster und Marktwert-Gewichten = Bug.
+
+---
+
+## 4. Betroffene Dateien
+
+Aendern:
+- client/src/lib/portfolio/positions.ts — rebasePerformanceSeries
+- client/src/components/portfolio/PortfolioOverview.tsx — 2Y, Default 1Y, Rebase, Subtitle von-bis
+- client/src/pages/PortfolioPage.tsx — OHLCV-Fetch 1Y/2Y
+- client/src/lib/portfolio/backtest.ts — Fenster-Args analog
+- client/src/components/portfolio/PortfolioBacktestPanel.tsx — Presets 1Y/2Y
+
+Nicht anfassen: engine.ts, DCF, analyze-route.ts, Section5.tsx.
+
+---
+
+## 5. Rest der Portfolio-3-Spec (weiterhin gültig)
+
+- Attribution-Overrides analog DCF (Slider, Auto vs. Manuell, Reset)
+- Days erweiterbar, minCommonTradingDays / Fill editierbar
+- Monte Carlo in der Attribution-Card (portfolioMonteCarlo.ts reuse)
+- Manueller Ticker-Add in der Sektion (portfolioBridge.addTickerToManualPortfolio)
+- Live-Attribution-Snapshot: Alpha -11,9 % p.a., Beta 1,56, n = 20, MSFT 91,4 % / NVO 8,6 %
+- Phasen 0-5, Aufwand ~2,5 Tage inkl. Rebase-Fix (Phase 0 = 0,5 Tag)
+
+Acceptance Phase 0:
+
+```
+[ ] Chart startet bei 0 %
+[ ] Endwert = V_T / V_t0 - 1 (nicht 579 %)
+[ ] Default timeframe === "1Y"
+[ ] Preset "2Y" existiert
+[ ] Fetch deckt 1-2 Jahre, nicht nur Cache-6M
+[ ] test-portfolio-positions.ts bleibt gruen
+```
+
+**Regel:** Zahlen-Prinzip. Keine Look-ahead-Daten. Performance-Chart immer R_t = V_t / V_t0 - 1. Default 1 Jahr, Preset 2 Jahre.
