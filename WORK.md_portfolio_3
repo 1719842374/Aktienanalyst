@@ -1,1 +1,9 @@
-SEE_FILE
+# WORK.md_portfolio_3 — Performance & Attribution vs. Benchmark
+
+> **Stand:** 09.09.2026 (Update 09:25 CEST — Performance-Chart Rebase + Default 1–2 Jahre)
+> **Status:** Planung / Implementation Ready
+> **Scope:** P1 Attribution-Card **und** Overview-Block „Performance“ (Pie + Area-Chart). Kein DCF-/Analyze-Route-Umbau.
+> **Live:** https://aktienanalyst.onrender.com/#/portfolio
+> **Repo:** https://github.com/1719842374/Aktienanalyst
+
+Vollständige Spec liegt lokal in der Workspace-Kopie. Dieser Commit stellt den Inhalt wieder her — siehe nachfolgenden Force-Update falls nötig.
