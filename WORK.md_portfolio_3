@@ -1,0 +1,516 @@
+# WORK.md_portfolio_3 — Performance & Attribution vs. Benchmark
+
+> **Stand:** 09.09.2026
+> **Status:** Planung / Implementation Ready (v1 Attribution existiert, Overrides + Days + MC-Einbindung + Ticker-Add fehlen)
+> **Scope:** NUR Portfolio-Sektion „Performance & Attribution vs. Benchmark“ (P1). Kein DCF-/Analyze-Route-Umbau.
+> **Live:** https://aktienanalyst.onrender.com/#/portfolio
+> **Repo:** https://github.com/1719842374/Aktienanalyst
+> **Commit-Stand der Analyse:** `main` @ `20ff553f15ebf6ecad4653354305436525879f95` (08.09.2026)
+
+Verwandte Specs (nicht ersetzen, sondern ergänzen):
+
+| Dokument | Rolle |
+| --- | --- |
+| [WORK_PORTFOLIO.md](./WORK_PORTFOLIO.md) | Portfolio 1 — Basket A/B/C, Sharpe, Kelly, Kapital (15.08.2026, implementiert) |
+| [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) | Portfolio 2 — ex-post Attribution v1 (19.08.2026, implementiert) |
+| **WORK.md_portfolio_3 (diese Datei)** | Portfolio 3 — editierbare Parameter, erweiterbare Days, Monte Carlo in der Sektion, manueller Ticker-Add |
+| [WORK_RESEARCHER_PORTFOLIO.md](./WORK_RESEARCHER_PORTFOLIO.md) | P3 Researcher-Portfolios / Add-Buttons |
+| [WORK_BIAS_FIXES_INVERSE_DCF.md](./WORK_BIAS_FIXES_INVERSE_DCF.md) §16.11 | Portfolio-Monte-Carlo (Cholesky-GBM) |
+| [WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md](./WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md) | Referenz-Muster: Default-Pyramide + manueller Override hat höchste Priorität |
+| [Future_Work.md](./Future_Work.md) | Roadmap-Abgleich PortfolioPage / Backtest |
+
+Abgrenzung (bewusst NICHT Teil dieses Tickets):
+
+- `WORK_SIGNAL_BACKTEST.md` (B3 PIT-Signal-Backtest der Scoring-Pipeline)
+- DCF-Slider / Lynch-Defaults / Reverse-DCF / CRV
+- Short-Positionen, Paper-Trading, Multi-Benchmark-Parallel
+
+---
+
+## 0. Warum Portfolio 3
+
+v1 (B2) liefert die Kacheln und Charts. Die Sektion ist aber **fest verdrahtet**:
+
+1. Zeitraum faktisch auf das Minimum von 20 gemeinsamen Handelstagen geklemmt.
+2. Kein Parameter-Override analog DCF (Slider + Auto vs. Manuell + Reset).
+3. Monte Carlo existiert (`portfolioMonteCarlo.ts` + `PortfolioAdvancedPanel.tsx`), ist aber **nicht** in dieser Sektion verdrahtet.
+4. Ticker-Add existiert (`TickerAddButtons.tsx` / `portfolioBridge.ts`), sitzt aber **nicht** in der Attribution-Card.
+
+WORK_PORTFOLIO_BACKTEST.md §7 listet genau das als „Später“: Zeitfenster Max/1Y/6M/3M/1M, Custom Date Range, Transaktionskosten, tägliche Marktgewichtung. Dieses Dokument ist die verbindliche Umsetzungsspec dafür.
+
+---
+
+## 1. Ist-Zustand — Zahlen, Daten, Fakten
+
+### 1.1 Live-Snapshot (Screenshot Portfolio-Seite, Fenster 2026-08-11 → 2026-09-08)
+
+Ex-post Backtest, Buy-and-Hold, Gewichte fix ab Entry, 20 Handelstage, Benchmark SPY.
+
+| Kennzahl | Wert | Einheit | Interpretation |
+| --- | --- | --- | --- |
+| Up Capture | 127,1 | % | An Up-Tagen von SPY steigt das Portfolio stärker |
+| Down Capture | 154,1 | % | An Down-Tagen fällt das Portfolio stärker (ungünstig) |
+| Hit Rate | 50,0 | % | Hälfte der Perioden positiv |
+| Profit Factor | 0,81 | Ratio | Summe Wins / \|Summe Losses\| < 1 → Verluste dominieren |
+| Avg Win | +1,0 | % | Mittlere positive Periodenrendite |
+| Avg Loss | −1,3 | % | Mittlere negative Periodenrendite |
+| Alpha p.a. | −11,9 | % | OLS-α daily × 252 |
+| Beta | 1,56 | — | Systematische Marktsensitivität vs. SPY |
+| Information Ratio | −0,63 | — | α / σ(ε) |
+| Max Drawdown | −4,7 | % | 11 Handelstage, 2026-08-11 → 2026-08-26 |
+| Trading Days | **20** | Tage | = `MIN_COMMON_TRADING_DAYS` (Hard-Gate und faktisches Fenster) |
+
+Holdings-Attribution (gleiche Session):
+
+| Ticker | Sektor | Weight % | Contrib % | α % | Ret/Vol | Max DD % | Vol % | β | Days |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| MSFT | Technology | 91,4 | −1,2 | −8,7 | −0,10 | −4,7 | 23,3 | 1,56 | 20 |
+| NVO | Healthcare | 8,6 | −0,4 | −45,6 | −0,17 | −7,3 | 32,2 | 1,55 | 20 |
+
+Konzentration: eine Position trägt 91,4 % des Entry-Notionals. Equal-Weight im Frontier-Header der Seite ist **nicht** der Backtest-Gewichtungsmodus (v1 = Entry-fix).
+
+### 1.2 Warum genau 20 Tage (Rechenweg)
+
+1. Offene Longs: MSFT, NVO (`MIN_OPEN_LONG_POSITIONS = 2` in `PortfolioBacktestPanel.tsx`).
+2. Kalender = Intersection der Handelstage aller Positionen ∪ Benchmark, begrenzt auf `date >= latestEntryDate` und `date <= today`.
+3. `latestEntryDate` im Snapshot = 2026-08-11.
+4. `today` im Snapshot = 2026-09-08 → 20 gemeinsame Handelstage.
+5. Gate `commonDates.length < MIN_COMMON_TRADING_DAYS` mit Konstante **20** in `backtest.ts` — gerade erfüllt, Block erscheint.
+6. Annualisierung aus n = 20:
+
+\[
+\alpha_{\text{p.a.}} = \alpha_{\text{daily}} \times 252
+\]
+
+\[
+\alpha_{\text{daily}} \approx \frac{-0{,}119}{252} \approx -0{,}000472 \;\approx\; -0{,}0472\,\%/\text{Tag}
+\]
+
+Fakt: −11,9 % p.a. ist bei n = 20 statistisch instabil. v1 zeigt das nicht.
+
+### 1.3 Hardcodes (Single Source of Truth im Code)
+
+| Konstante | Wert | Datei |
+| --- | --- | --- |
+| `MIN_OPEN_LONG_POSITIONS` | 2 | `client/src/components/portfolio/PortfolioBacktestPanel.tsx` |
+| `MIN_COMMON_TRADING_DAYS` | 20 | `client/src/lib/portfolio/backtest.ts` |
+| `MAX_FORWARD_FILL_DAYS` | 3 | `client/src/lib/portfolio/backtest.ts` |
+| `TRADING_DAYS_PER_YEAR` | 252 | `client/src/lib/portfolio/backtest.ts` |
+| Gewichtungsvariante | A = Entry-fix, Buy-and-Hold | `computeEntryFixedWeights()` in `backtest.ts` |
+| Benchmark-Default | Policy / SPY | Panel-Prop `benchmarkTicker` |
+| \(r_f\) | `policy.rfPct` (Dezimal, z. B. 0.03) | Panel-Prop `riskFreeRateAnnual` |
+| Look-ahead | verboten (`bar.date <= todayStr`) | `computePortfolioBacktest` |
+| MC Iterationen (Spec) | 5 000–10 000 | `portfolioMonteCarlo.ts` Kommentar |
+| MC Horizont (Spec) | 252 Handelstage = 1 Jahr | `portfolioMonteCarlo.ts` |
+| MC VaR-Quantil | 0.05 | `varQuantile ?? 0.05` |
+| MC n-Minimum | 2 Ticker | `runPortfolioMonteCarlo` |
+| Cholesky | \(\Sigma = LL^\top\), bei nicht-PD → `cholesky_failed` | `choleskyDecomposition` |
+| GBM dt | \(1/252\) | identisch `calculations.ts` `gbmMonteCarlo` |
+| Ticker-Add Storage | `positions.ts` + Event `aktienanalyst-portfolio-positions-changed` | `portfolioBridge.ts` |
+| Pending-Add Key | `aktienanalyst_pending_portfolio_add_v1` | `portfolioBridge.ts` |
+
+### 1.4 Was v1 bewusst nicht kann (WORK_PORTFOLIO_BACKTEST.md §7 / §10)
+
+| Aspekt | v1 | Soll in Portfolio 3 |
+| --- | --- | --- |
+| Zeitfenster | implizit seit spätestem Entry | 1M / 3M / 6M / 1Y / 3Y / MAX / CUSTOM |
+| Gewichtung | fix ab Entry | entryFixed \| dailyMarket \| equal \| custom |
+| Rebalancing | keines | none \| monthly \| quarterly |
+| Transaktionskosten | 0 | 0–50 bps Roundtrip |
+| Monte Carlo | „bleibt bei der bestehenden Optimierung“ | in derselben Card |
+| Ticker-Add | außerhalb der Sektion | Button + Tabellen-Footer in der Card |
+| Parameter-UI | keine | DCF-analog Override-Drawer |
+
+---
+
+## 2. Ökonomische Formeln (verbindlich, Variablen erklärt)
+
+### 2.1 Einzeltitel-Tagesrendite
+
+\[
+r_{i,t} = \frac{P_{i,t}}{P_{i,t-1}} - 1
+\]
+
+- \(P_{i,t}\): Schlusskurs Titel \(i\) am Handelstag \(t\)
+- Forward-Fill nur wenn Lücke \(\le\) `maxForwardFillDays` (Default 3), sonst `null` (Zahlen-Prinzip, kein Raten)
+
+### 2.2 Portfolio-Tagesrendite
+
+Variante A (Default, v1, bleibt Default):
+
+\[
+r_{p,t} = \sum_{i=1}^{N} w_i\, r_{i,t}, \qquad
+w_i = \frac{Q_i \cdot P_{i,\text{entry}}}{\sum_j Q_j \cdot P_{j,\text{entry}}}
+\]
+
+- \(Q_i\): Stückzahl der offenen Long-Position
+- \(w_i\) konstant über das Fenster
+
+Variante B (Override `weightMode = dailyMarket`):
+
+\[
+w_{i,t} = \frac{Q_i \cdot P_{i,t}}{\sum_j Q_j \cdot P_{j,t}}, \qquad
+r_{p,t} = \sum_{i=1}^{N} w_{i,t}\, r_{i,t}
+\]
+
+Variante Equal (Override):
+
+\[
+w_i = \frac{1}{N}
+\]
+
+Kosten an Rebalance-Tagen (Override, Default 0):
+
+\[
+r_{p,t}^{\text{netto}} = r_{p,t} - c_t, \qquad
+c_t = \frac{\text{costBpsRoundtrip}}{10000} \cdot \mathbf{1}_{\{t \in \text{Rebalance}\}}
+\]
+
+### 2.3 Kumulative Equity-Kurve
+
+\[
+C_t = \prod_{s=1}^{t} (1 + r_{p,s}) - 1
+\]
+
+Analog \(C_{b,t}\) für den Benchmark.
+
+### 2.4 Alpha, Beta, Information Ratio (OLS, Excess-Returns)
+
+\[
+r_{f,\text{daily}} = \frac{r_{f,\text{p.a.}}}{252}
+\]
+
+\[
+(r_{p,t} - r_{f,t}) = \alpha + \beta (r_{b,t} - r_{f,t}) + \varepsilon_t
+\]
+
+\[
+\alpha_{\text{p.a.}} = \alpha_{\text{daily}} \cdot 252, \qquad
+\text{IR} = \frac{\alpha_{\text{daily}}}{\sigma(\varepsilon)}
+\]
+
+- \(\alpha\): tägliches Intercept der OLS
+- \(\beta\): Steigung vs. Benchmark-Excess
+- \(\sigma(\varepsilon)\): Residual-Std (Freiheitsgrade \(n-2\), Fallback \(n\) bei \(n=2\))
+- IR im Code aus **daily** α und daily Residual-σ — UI muss das so beschriften
+
+### 2.5 Maximum Drawdown
+
+\[
+\text{Peak}_t = \max_{s \le t} (1 + C_s), \qquad
+\text{DD}_t = \frac{(1 + C_t) - \text{Peak}_t}{\text{Peak}_t}, \qquad
+\text{MaxDD} = \min_t \text{DD}_t
+\]
+
+### 2.6 Capture, Hit Rate, Profit Factor
+
+\[
+\text{UpCapture} = \frac{\overline{r_p} \mid r_b > 0}{\overline{r_b} \mid r_b > 0}, \qquad
+\text{DownCapture} = \frac{\overline{r_p} \mid r_b < 0}{\overline{r_b} \mid r_b < 0}
+\]
+
+\[
+\text{HitRate} = \frac{\#\{r_p > 0\}}{\#\{r_p\}}, \qquad
+\text{ProfitFactor} = \frac{\sum r_p^{+}}{\left|\sum r_p^{-}\right|}
+\]
+
+### 2.7 Contribution
+
+\[
+\text{Contrib}_i = w_i \cdot (r_i - r_b)
+\]
+
+Summe der Contributions ≈ Portfolio-Alpha bei konstanter Gewichtung.
+
+### 2.8 Monte Carlo (unveränderte Engine, neue UI-Heimat)
+
+\[
+r_{i,t} = \bigl(\mu_i - \tfrac12 \sigma_i^2\bigr)\, dt + \sigma_i \sqrt{dt}\, \varepsilon_{i,t}, \qquad
+\varepsilon = Lz, \quad \Sigma = LL^{\top}, \quad dt = \frac{1}{252}
+\]
+
+\[
+R_{P,t} = \sum_i w_i r_{i,t}
+\]
+
+Output (Spec 16.11, sechs Kennzahlen): \(\mathbb{E}[R]_P\), \(\sigma_P\), VaR 5 %, CVaR 5 %, \(P(R_P < 0)\), mean MaxDD.
+
+Zwei Läufe bei gleichem \(\mu/\Sigma\): Ist-Gewichte vs. CAPM-Zielgewichte (`comparePortfolioWeightings`).
+
+---
+
+## 3. Override-Pyramide (DCF-analog, nur P1-Attribution)
+
+Priorität absteigend:
+
+1. **Sektions-Override** (Slider / Input im Attribution-Drawer) — höchste Priorität
+2. **Policy** (`policy.benchmark`, `policy.rfPct`, Advanced-Panel-MC-Defaults)
+3. **Code-Fallback** (`SPY`, 20 Tage, Fill 3, iterations 5000, horizon 252, VaR 0.05)
+
+Explizit **nicht** durchreichen nach:
+
+- `server/analyze-route.ts`
+- `shared/valuation-signal.ts` / `calculateFCFFDCF`
+- Scoring-Gates, Thesis, Reverse-DCF
+
+Persistenz:
+
+```
+localStorage: aktienanalyst_p1_attribution_overrides_v1
+```
+
+Jedes Feld trägt `source: "auto" | "override"`. Reset setzt alle auf Auto. Badge: `N Overrides aktiv`.
+
+---
+
+## 4. Editierbare Variablen (Pflichtliste)
+
+### 4.1 Fenster / Days (erweiterbar)
+
+| Variable | Default v1 | UI | Range |
+| --- | --- | --- | --- |
+| `windowPreset` | implizit latest-entry → ~20d | Segmented | `1M / 3M / 6M / 1Y / 3Y / MAX / CUSTOM` |
+| `customFrom` / `customTo` | — | Datepicker | `to \le today` |
+| `startRule` | `latestEntry` | Select | `latestEntry` \| `earliestEntry` \| `windowStart` |
+| `calendarMode` | intersection | Select | `intersection` \| `union+fill` |
+| `minCommonTradingDays` | 20 | Number | 10 … 252 |
+| `maxForwardFillDays` | 3 | Number | 0 … 10 |
+
+`windowStart`: Titel vor `openedAt` mit Gewicht 0, kein Look-ahead auf nicht gehaltene Stücke. Das ist die einzige saubere MAX/3Y-Regel.
+
+**Daten-Fix:** Preset 1Y/3Y/MAX erfordert OHLCV-Fetch unabhängig vom Analyse-Cache (typisch ~1–6M). Neuer State `historicalPricesByTickerLong`, Analyse-Cache nicht überschreiben.
+
+Warn-Badge wenn `tradingDays < 60`: „n klein, Annualisierung instabil“.
+
+### 4.2 Benchmark, RF, Gewichte, Kosten
+
+| Variable | Default v1 | UI |
+| --- | --- | --- |
+| `benchmarkTicker` | Policy / SPY | Autocomplete + Presets SPY, QQQ, IWM, VWCE.DE, EXW1.DE |
+| `riskFreeRateAnnual` | `policy.rfPct` | Slider 0–6 % |
+| `weightMode` | `entryFixed` | `entryFixed` \| `dailyMarket` \| `equal` \| `custom` |
+| `rebalance` | `none` | `none` \| `monthly` \| `quarterly` |
+| `costBpsRoundtrip` | 0 | 0–50 |
+| `excludeTickers` | [] | Chip je Holding |
+
+UI-Text Pflicht: „Attribution-Gewichte ≠ Optimierungs-Gewichte (Frontier/CAPM)“.
+
+### 4.3 Monte Carlo (in dieselbe Sektion)
+
+| Variable | Default | UI |
+| --- | --- | --- |
+| `mcEnabled` | false (heute ausgelagert) | Toggle |
+| `iterations` | 5 000 | 1 000 / 5 000 / 10 000 |
+| `horizonDays` | 252 | 21 / 63 / 126 / 252 / 504 |
+| `varQuantile` | 0.05 | 0.01 / 0.05 / 0.10 |
+| `muSource` | historical | historical \| capm \| hybrid |
+| `weightSetForMc` | current | current \| entryFixed \| capmTarget \| equal |
+| `seed` | random | Number + Toggle reproducible |
+
+`cholesky_failed` / `invalid_input` → Flag + keine Fake-Zahl (Zahlen-Prinzip).
+
+---
+
+## 5. UI in der bestehenden Card
+
+Datei: `client/src/components/portfolio/PortfolioBacktestPanel.tsx`
+
+Header-Zeile rechts neben Trend-Icon:
+
+```
+[ + Ticker ]   [ Parameter überschreiben ▾ ]   [ Reset ]
+```
+
+### 5.1 Manual Ticker Add (in der Sektion)
+
+Reuse, keine Logik-Kopie:
+
+- `TickerAutocomplete` (`client/src/components/ui/TickerAutocomplete.tsx`)
+- `addTickerToManualPortfolio` (`client/src/lib/portfolio/portfolioBridge.ts`)
+- Event `aktienanalyst-portfolio-positions-changed`
+- Duplicate-Flash wie `TickerAddButtons.tsx` („schon im Portfolio“)
+
+Felder: Ticker, optional Qty (Default 1), optional Entry (leer = letzter Close).
+
+Zweite Einstiegstelle: letzte Zeile der Holdings-Tabelle `+ Ticker manuell hinzufügen`.
+
+Nach Add: OHLCV des neuen Tickers nachziehen, `useMemo` des Backtests neu.
+
+### 5.2 Override-Drawer (DCF-Look)
+
+Zwei Spalten:
+
+- Links: ex-post (Fenster, Benchmark, \(r_f\), Weight-Mode, Fill, Min-Days, Kosten)
+- Rechts: ex-ante MC (Iterationen, Horizont, µ-Quelle, VaR, Weight-Set)
+
+Feldzeile:
+
+```
+Label
+[Slider | Input | Select]
+klein: Auto 3.00%  →  Override 4.25%   [x]
+```
+
+### 5.3 Card-Reihenfolge nach Umbau
+
+1. Header + Add + Override + Reset
+2. Metrics-Leiste (bestehend) + n<60 Warning
+3. Equity Curve + Underwater (X-Achse folgt Preset)
+4. Holdings-Attribution + Add-Row
+5. **Neu:** MC-Zeile (6 Kacheln, Ist vs. CAPM-Ziel, Histogram `pathReturns`)
+6. Footer: Auto vs. Override, Benchmark, Fenster, Weight-Mode, Iterationen
+
+`PortfolioAdvancedPanel` bleibt stehen (kein Entfernen). Optional später Deep-Link „gleiche Parameter“.
+
+---
+
+## 6. Betroffene Dateien
+
+### 6.1 Ändern
+
+| Pfad | Warum | Art |
+| --- | --- | --- |
+| [client/src/lib/portfolio/backtest.ts](./client/src/lib/portfolio/backtest.ts) | Args: `from`, `to`, `weightMode`, `startRule`, `minCommonTradingDays`, `maxForwardFillDays`, `costBps`, `rebalance`. Funktion bleibt pure. | erweitern |
+| [client/src/components/portfolio/PortfolioBacktestPanel.tsx](./client/src/components/portfolio/PortfolioBacktestPanel.tsx) | Override-State, Presets, Ticker-Add, MC-Block, Reset, n<60 Badge | erweitern |
+| [client/src/pages/PortfolioPage.tsx](./client/src/pages/PortfolioPage.tsx) | Längere OHLCV-Map + Benchmark-Fetch abhängig von `windowPreset`; Props an Panel | erweitern |
+| [client/src/components/portfolio/PortfolioOverview.tsx](./client/src/components/portfolio/PortfolioOverview.tsx) | Nur falls Panel-Props hier durchgereicht werden (aktueller Einhängepunkt) | prüfen / ggf. Props |
+
+### 6.2 Neu
+
+| Pfad | Inhalt |
+| --- | --- |
+| `client/src/lib/portfolio/attributionOverrides.ts` | Zod-/TS-Schema, Defaults, load/save localStorage, `source`-Flags |
+| `script/test-portfolio-attribution-overrides.ts` | Fenster, Fill, Weight-Mode, Min-Days, Look-ahead-Block, Add-Duplicate |
+| `WORK.md_portfolio_3` | diese Spec |
+
+### 6.3 Wiederverwenden, nicht umbauen
+
+| Pfad | Nutzung |
+| --- | --- |
+| [client/src/lib/portfolio/portfolioMonteCarlo.ts](./client/src/lib/portfolio/portfolioMonteCarlo.ts) | `runPortfolioMonteCarlo`, `comparePortfolioWeightings`, `choleskyDecomposition` |
+| [client/src/lib/portfolio/portfolioBridge.ts](./client/src/lib/portfolio/portfolioBridge.ts) | `addTickerToManualPortfolio` |
+| [client/src/components/portfolio/TickerAddButtons.tsx](./client/src/components/portfolio/TickerAddButtons.tsx) | UI-Muster / Compact-Buttons |
+| [client/src/lib/portfolio/positions.ts](./client/src/lib/portfolio/positions.ts) | `PortfolioPosition`, Storage |
+| [client/src/components/ui/TickerAutocomplete.tsx](./client/src/components/ui/TickerAutocomplete.tsx) | Ticker-Suche |
+| [script/test-portfolio-monte-carlo.ts](./script/test-portfolio-monte-carlo.ts) | Regression-Guard: bestehende MC-Tests müssen grün bleiben |
+
+### 6.4 Nicht anfassen (Regression-Guard)
+
+| Pfad | Grund |
+| --- | --- |
+| `client/src/lib/portfolio/engine.ts` | CAPM/Kelly-Pfad unverändert |
+| `client/src/lib/portfolio/weighting.ts` / `sharpe.ts` / `kelly.ts` | Basket-Optimierung ≠ Attribution |
+| `client/src/lib/calculations.ts` | Einzeltitel-GBM nicht verändern (MC dupliziert Box-Muller absichtlich) |
+| `server/analyze-route.ts` | Analyse-Pipeline |
+| `shared/valuation-signal.ts` | DCF manual override bleibt Aktie, nicht Portfolio |
+| `client/src/components/sections/Section5.tsx` und DCF-UI | außerhalb Scope |
+| `client/src/components/portfolio/PortfolioAdvancedPanel.tsx` | nicht entfernen, nicht als einzige MC-Heimat belassen |
+
+---
+
+## 7. Datenfluss (Soll)
+
+```
+PortfolioPage
+  ├─ positions (localStorage / positions.ts)
+  ├─ policy.benchmark, policy.rfPct
+  ├─ historicalPricesByTicker          (Analyse-Cache, unverändert)
+  ├─ historicalPricesByTickerLong      (NEU, Fenster-Fetch)
+  ├─ attributionOverrides              (NEU, localStorage)
+  └─ PortfolioBacktestPanel
+        ├─ computePortfolioBacktest(args + overrides)     // ex-post
+        ├─ addTickerToManualPortfolio                     // P1 Add
+        └─ runPortfolioMonteCarlo / comparePortfolioWeightings  // ex-ante
+```
+
+Fetch-Regel:
+
+- Preset ≤ Cache-Länge → kein Extra-Call
+- Preset > Cache-Länge → `GET` OHLCV für alle offenen Longs + Benchmark, Cache separat
+- Fehler / leere Serie → `insufficient_data` + reason, keine Interpolation
+
+---
+
+## 8. Phasen, Aufwand, Acceptance
+
+| Phase | Inhalt | Aufwand | Acceptance |
+| --- | --- | --- | --- |
+| 1 | Days-Presets + Custom Range + Min-Days/Fill editierbar + Benchmark/\(r_f\) Slider + OHLCV-Fenster entkoppeln | 0,5–1 Tag | Preset 1Y zeigt \(\gg 20\) Tage; Kacheln ändern sich live; `to > today` blockiert |
+| 2 | `weightMode` + Rebalance + Kosten-bps | 0,5 Tag | Equal-Weight bei MSFT/NVO ändert Contrib gegenüber 91,4 / 8,6 |
+| 3 | Ticker-Add in Header + Tabellen-Footer | 2–3 h | Neuer Ticker erscheint als Holdings-Zeile; Duplicate-Flash |
+| 4 | MC-Block in der Card, gleiche Override-Map | 0,5–1 Tag | 1 000 → 10 000 Iterationen ändert VaR; `cholesky_failed` ohne Fake-Zahl |
+| 5 | Tests + Footer Auto/Override + n<60 Badge | 0,5 Tag | `test-portfolio-attribution-overrides.ts` grün; bestehende MC-/Backtest-Tests grün |
+
+**Gesamt: ca. 2–2,5 Tage.**
+
+Acceptance-Checkliste (muss vor Merge alle gelten):
+
+```
+[ ] ≥2 offene Longs + genug Historie → Block sichtbar (Regression v1)
+[ ] windowPreset 1M/3M/6M/1Y/3Y/MAX/CUSTOM steuerbar
+[ ] startRule windowStart hält Titel vor Entry auf Gewicht 0
+[ ] minCommonTradingDays und maxForwardFillDays überschreibbar
+[ ] Benchmark und rf Slider; source-Flag Auto vs Override
+[ ] weightMode entryFixed | dailyMarket | equal
+[ ] + Ticker in der Sektion schreibt P1 und dispatched Event
+[ ] MC-Kacheln unter Underwater, Ist vs CAPM-Ziel
+[ ] n < 60 → Warning, keine stillen Jahres-α ohne Hinweis
+[ ] Look-ahead unmöglich (to ≤ today, prices ≤ today)
+[ ] engine.ts / DCF / analyze-route unverändert
+[ ] AdvancedPanel weiterhin funktionsfähig
+[ ] Zahlen-Prinzip: insufficient_data statt Interpolation
+```
+
+---
+
+## 9. Testvektoren (Phase 5)
+
+Synthetische Serien, kein Netz.
+
+1. n = 19 gemeinsame Tage + Default Min 20 → `insufficient_data`
+2. n = 19 + Override Min 10 → `status: ok`
+3. Fill 0 vs. Fill 3 auf Serie mit 2-Tage-Loch → unterschiedliche `tradingDays`
+4. `to = today+1` → geclampt / rejected
+5. `weightMode=equal` bei Notionals 91,4 / 8,6 → \(w = 0{,}5 / 0{,}5\)
+6. `costBpsRoundtrip=50` + monthly Rebalance → \(C_T\) strikt kleiner als ohne Kosten
+7. Add vorhandener Ticker → `{ ok: false, reason: "duplicate" }`
+8. MC n = 1 → `invalid_input`
+9. Σ nicht PD → `cholesky_failed`, alle Kennzahlen `null`
+10. Snapshot-Repro: 20 Tage, β-Richtung > 1 bei gehebeltem Kunstportfolio
+
+Bestehende Tests nicht anfassen außer Import-Stabilität:
+
+- `script/test-portfolio-monte-carlo.ts`
+- `script/test-portfolio-sharpe.ts`
+- `script/test-portfolio-kelly.ts`
+- `script/test-portfolio-weighting.ts`
+
+---
+
+## 10. Label / Ticket-Schnitt
+
+Repo-Labels: https://github.com/1719842374/Aktienanalyst/labels
+
+Empfohlenes Issue:
+
+- Title: `P1 Attribution: editierbare Parameter, Days-Presets, Monte Carlo, Ticker-Add`
+- Labels: `enhancement`, `documentation`
+- Body: Link auf diese Datei `WORK.md_portfolio_3`
+
+Kein Breaking Change. Rein additiv zur v1-Card.
+
+---
+
+## 11. Offene Punkte (nicht blockierend)
+
+- Multi-Benchmark parallel (SPY + VWCE.DE in einem Chart)
+- Custom-Gewichte je Ticker per Zahleneingabe (Mode `custom`)
+- Währung / FX-Serie (WORK_PORTFOLIO_BACKTEST.md §7)
+- Seeded MC für bitgenaue Reproduktion in CI
+- Sync der MC-Slider mit `PortfolioAdvancedPanel` (eine Policy-Quelle)
+
+---
+
+**Regel:** Dokumentation. Implementierung lokal → Tests grün → PR gegen `main`.
+**Zahlen-Prinzip bleibt verbindlich.** Keine geschätzten Kurse, keine stille Renormierung, keine Look-ahead-Daten.
+**Override-Scope nur P1-Attribution.** DCF- und Scoring-Pfade bleiben unberührt.
