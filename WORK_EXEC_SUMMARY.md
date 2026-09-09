@@ -1,70 +1,195 @@
 # WORK_EXEC_SUMMARY.md
 
-> Soll · Builder [`server/exec-summary.ts`](./server/exec-summary.ts) · generisch
+> Soll · Builder [`server/exec-summary.ts`](./server/exec-summary.ts) · Karte [`client/src/components/ExecSummaryCard.tsx`](./client/src/components/ExecSummaryCard.tsx)
+> Stand: 09.09.2026 09:55 CEST — Ampel + S8/S15-Upside
 
-Fazit = Lage + Bruch + Handlung + **CRV-Satz** + **PoS-Satz** + **Call** + **Cross nur wenn im Cache**.
+S0 und S17-Fazit nutzen **dieselbe Ampel, dieselben Faktoren, dieselbe Upside**.
+Technik aus S9, KI-Text aus S2, Katalysatoren aus S15, Risiken aus S8.
 
 ---
 
-## Pflicht am Textende (Absatz 3–4)
+## 0. Ist vs. Soll (MSFT Live 09.09.2026)
 
-### CRV 3:1
+| Block | S0 Executive Summary | S17 Fazit | S15 / S8 Quelle |
+| --- | --- | --- | --- |
+| Ampel | fehlt | **NEUTRAL** gelb | Score = #pos − #neg |
+| Faktoren +/−/● | nein | 7 / 6 / 4 | S17-Listen |
+| KI-These | nur Fließtext Lage/Bruch | eigener Satz, ohne S2-Wortlaut | S2 Investmentthese |
+| Technik | ein Cross-Satz | „Technisch gemischt: Kurs > MA200, MA50 > MA200“ | S9 `currentStatus` |
+| Upside | **fehlt** | +17,9 % (4 Treiber) | S15 GB-Summe **+36,05 %**, Ziel **705,91** |
+| Pro-Namen nach KI | Azure, LinkedIn, Moat | nicht als Pro-Spalte | S15 K2/K3 |
+| Contra | CRV RA 0,2:1 + K5 Bremse | ED 19,9 %, CRV 1,1 / 0,6 | S8 Total ED **19,9 %** |
+| DCF im Fließtext | 252,37 vs Kurs 493,95 | Tabelle Kons. DCF + CRV 3:1 = 368,89 | S5/S6 |
 
-```
-crv3ok ⇔ price ≤ maxEntryCrv3
-```
+S0 nach KI wechselt die **Namen**, nicht die **Zahlen**. 705,91 und +36,05 % stehen nur in S15.
 
-Erfüllt: „Chance zu Risiko 3 zu 1 ist am Kurs erfüllt.“
-Nicht: „3 zu 1 ist am Kurs nicht erfüllt (jetzt {crvBase}:1, risikoadjustiert {crvRA}:1). Dafür erst unter {maxEntry}.“
+---
 
-MSFT-Ist: 1.0 bzw. 0.2 — **nicht** erfüllt, Schwelle 375.
+## 1. Ampel (identisch S0 = S17)
 
-### Finale Erfolgswahrscheinlichkeit (aus S15/S2, nicht neu schätzen)
-
-Nur Katalysatoren mit GB und PoS, Top 3 nach GB, PoS ≥ 40.
+Quelle: `SummarySection.tsx` ab „FAZIT (Big Picture)“.
 
 \[
-P_{\mathrm{alle}} = \prod_i p_i,\qquad
-P_{\mathrm{bind}} = \min_i p_i
+S = n_{+} - n_{-}
 \]
 
-Unabhängigkeit ist eine Rechenannahme, steht als Halbsatz dabei.
+| S | Rating | Farbe |
+| --- | --- | --- |
+| ≥ 4 | ATTRAKTIV | grün |
+| ≥ 2 | LEICHT ATTRAKTIV | grün |
+| ≥ −1 | **NEUTRAL** | gelb |
+| ≥ −3 | UNATTRAKTIV | rot |
+| sonst | STARK UNATTRAKTIV | rot |
 
-MSFT: 0.72 × 0.68 × 0.65 = **0.318**. Bindend K2 Copilot **68 %**.
+MSFT Screenshot: 7 − 6 = **1** → NEUTRAL.
 
-Satz: „Azure-Disclosure, Copilot Fortune 500 und Dynamics-Bündel stehen bei 72, 68 und 65 Prozent. Dass alle drei kommen, sind unter Unabhängigkeit knapp 32 Prozent. Der bindende Fall ist Copilot mit 68 Prozent — genau das Hauptrisiko aus der These.“
+Guard: DCF-Upside > 80 % und Analyst-Upside < 15 % → eine Stufe runter, nicht unter NEUTRAL.
 
-### Golden / Death Cross (S9, nur wenn Status da)
+Eine Funktion `buildSummaryFazit(data)` in `client/src/lib/summaryFazit.ts`.
+S0 und S17 rufen sie auf. Kein zweites Scoring.
 
-| Cache | Satz |
-|-------|------|
-| `ma50AboveMA200 === false` | „Im Chart liegt ein Death Cross (50-Tage unter 200-Tage) — Bärenlage, die Bewertung ist kein Timing.“ |
-| `ma50AboveMA200 && priceAboveMA200` | „50-Tage über 200-Tage (Golden-Cross-Lage), Kurs über der 200-Tage.“ |
-| Feld fehlt | Satz weglassen, kein Cross erfinden |
+UI-Kopie S17 → S0:
 
-Kein MACD-Essay. Ein Satz.
+- Badge rechts **NEUTRAL**
+- Kasten mit Fazit-Satz
+- Positive Faktoren (n)
+- Negative Faktoren (n)
+- Neutral (n)
+- Zeile `Signal-Score: 7 positiv / 6 negativ / 4 neutral = NEUTRAL`
 
-### Call
-
-Unverändert: „Der nächste Earnings Call ist am {Datum}.“
-
----
-
-## MSFT Soll-Fazit (menschlich, vollständig)
-
-Microsoft ist **neutral**. Das konservative DCF sitzt fast auf dem Kurs — knapp 519 gegen 510 Dollar. Der Markt glaubt nur gut 7 % Dauerwachstum, nicht die 15 % des Fast-Grower-Modells. Azure und Copilot sind keine unentdeckte Story; das Analystenziel von 535 Dollar liegt nur knapp 5 % über dem Kurs.
-
-Was nicht im Preis steckt, ist der Abschlag fürs Wettbewerbs- und Margenrisiko. Druck durch offene Modelle wird zu klein gerechnet — die FCF-Marge könnte Richtung 15 bis 17 % gehen. Dann eher knapp 430 Dollar als 510.
-
-Die drei Kernkatalysatoren (Azure-Disclosure, Copilot in den Fortune 500, Dynamics-Bündel) stehen bei 72, 68 und 65 Prozent Eintritt. Dass alle drei kommen, sind unter Unabhängigkeit knapp 32 Prozent. Bindend ist Copilot mit 68 Prozent — genau der Punkt, an dem die These kippt.
-
-Chance zu Risiko 3 zu 1 ist am Kurs **nicht** erfüllt (1 zu 1, risikoadjustiert 0,2 zu 1). Nachkaufen erst unter 375 Dollar. {Falls Death Cross im Cache: einen Satz Bärenlage.} Der nächste Earnings Call ist am 28. Oktober 2026.
+S0 behält Headline + Pro/Contra-Spalte **zusätzlich**, ersetzt sie nicht.
 
 ---
 
-## DoD
+## 2. Was in beide Fazit-Kästen muss
 
-1. CRV-3:1-Satz immer, mit erfüllt/nicht erfüllt.
-2. P_alle und P_bind aus denselben PoS wie S2/S15.
-3. Cross nur aus `technicalIndicators.currentStatus`.
-4. Kein zweites Rating neben S17.
+### 2.1 Technik (S9), ein Satz wie S17
+
+Felder: `technicalIndicators.currentStatus`
+
+- `priceAboveMA200`
+- `ma50AboveMA200`
+- `macdAboveZero`, `macdRising`
+- `buySignal`
+
+MSFT: Golden Cross, Kurs > MA200, kein volles BUY → Neutral-Faktor
+„Technisch gemischt: Kurs > MA200, MA50 > MA200 (Golden Cross)“.
+
+Nicht nur der verkürzte S0-Satz.
+
+### 2.2 KI-Text aus S2 Investmentthese
+
+Feld (erstes nicht-leeres):
+
+`data.investmentThesis` | `data.thesis.summary` | `data.section2.kiText`
+
+Regel: 1–2 Sätze, kein Prompt, kein zweites LLM in S0.
+Nach KI-Enrich derselbe String wie in S2.
+
+### 2.3 Katalysatoren = S15, Risiken = S8
+
+**Pro (max. 3)** = Top-GB aus S15, PoS ≥ 40:
+
+MSFT nach KI:
+
+| # | Name | PoS | GB |
+| --- | --- | --- | --- |
+| K2 | Azure AI Infrastructure Capacity Expansion | 68 % | +10,02 |
+| K3 | LinkedIn Advertising AI Monetization | 65 % | +8,32 |
+| K4 | Dynamics 365 Cloud Migration Acceleration | 70 % | +8,25 |
+
+Nicht die generischen Labels „Revenue Growth Acceleration“.
+
+**Contra (max. 2)** = Top-Expected-Damage aus S8:
+
+| Risiko | EW | Impact | ED |
+| --- | --- | --- | --- |
+| Macro Recession / Demand Shock | 20 % | 21 % | **4,20 %** |
+| Tech Disruption / Competitive Shift | 20 % | 25 % | **5,00 %** |
+| **Summe ED** | | | **19,9 %** |
+
+Mapping-Bug: S8 heißt `expectedDamage`, Builder liest `expectedDamagePct` → ED-Zeile in S0 oft leer, Contra fällt auf CRV/K5 zurück.
+
+Fix in `exec-summary-attach.ts`:
+
+```ts
+risks: (a.risks || []).map(r => ({
+  name: r.name,
+  expectedDamagePct: r.expectedDamagePct ?? r.expectedDamage,
+  underestimated: r.underestimated,
+})),
+```
+
+---
+
+## 3. Upside — die fehlende Zahl
+
+S15 Rechenweg (Screenshot):
+
+\[
+\text{GB-Summe} = \sum_i \mathrm{PoS}_i \times \text{Netto-Upside}_i = +36{,}05\,\%
+\]
+
+\[
+T_{\text{Kat}} = \mathrm{DCF}_{\text{kons}} \times (1 + \text{GB-Summe})
+= 518{,}86 \times 1{,}3605 = 705{,}91
+\]
+
+\[
+U_{\text{vs Kurs}} = \frac{705{,}91}{493{,}95} - 1 = +42{,}9\,\%
+\]
+
+Nicht eingepreist am Kurs:
+
+\[
+493{,}95 \times 1{,}3605 = 672{,}02 \quad (+36{,}05\,\%)
+\]
+
+S17 zeigt +17,9 % (andere Aggregation, 4 Treiber). S0 zeigt **nichts** davon.
+
+Pflichtzeile in S0 unter der Headline:
+
+```
+Kat.-Upside +36.05 % · Ziel 705.91 · vs. Kurs +42.9 % · S15
+Risk-Adj. Target 428.80 (−13.2 % vs Kurs, ED 19.9 %) · S8
+```
+
+S8-Ziel laut Screenshot:
+
+\[
+535 \times (1 - 0{,}199) = 428{,}80
+\]
+
+Eine Quelle: `calculateCatalystUpside(catalysts, dcfBase)` wie S15/S17.
+Kein dritter Pfad.
+
+`dcfFairValue` in der Analyze-Response war zeitweise 252,37 — das ist **nicht** die S15-Basis 518,86. S0 darf 252,37 nicht als „Das konservative DCF sitzt bei …“ zeigen, wenn S5/S15 518,86 rechnen. Basis = dieselbe `calculateFCFFDCF(buildDefaultDCFParams(data)).perShare` wie S5.
+
+---
+
+## 4. Dateien
+
+| Datei | Änderung |
+| --- | --- |
+| `client/src/lib/summaryFazit.ts` | **neu** — Listen + Score + Rating + Fazit-Satz |
+| `client/src/components/sections/SummarySection.tsx` | FAZIT-IIFE → Aufruf summaryFazit |
+| `client/src/components/ExecSummaryCard.tsx` | Ampel-Block + Upside-Zeile + S2-Satz |
+| `server/exec-summary.ts` | `upsideLine`, `thesisLine`, `rating` |
+| `server/exec-summary-attach.ts` | `expectedDamage` mappen, thesis-Feld, S15-GB-Summe |
+
+Nicht anfassen: DCF-Engine, Analyze-Route-LLM, S15-Tabelle selbst.
+
+---
+
+## 5. Acceptance MSFT
+
+```
+[ ] S0-Badge === S17-Badge (NEUTRAL)
+[ ] Signal-Score S0 === S17 (7 / 6 / 4)
+[ ] S0-Pro nach KI = Azure / LinkedIn / Dynamics (S15), nicht Generic-Labels
+[ ] S0-Contra enthält Top-ED aus S8 (Tech Disruption 5.00 % oder Macro 4.20 %)
+[ ] S0-Upside-Zeile: GB +36.05 %, Ziel ~705.91, vs Kurs ~+42.9 %
+[ ] S0-Technik-Satz enthält Golden Cross wie S17
+[ ] S0-Fazit zitiert S2-KI-Satz, kein zweites LLM
+[ ] DCF-Zahl in S0-Lage === S5 perShare (nicht 252.37 wenn S5 = 518.86)
+```
