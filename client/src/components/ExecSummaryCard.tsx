@@ -1,6 +1,6 @@
 /**
- * Executive Summary card — mounts above S1 (WORK_EXEC_SUMMARY.md DoD).
- * No second rating beside S17. Cross only when crossLine non-empty.
+ * Executive Summary card — mounts above S1 (WORK_EXEC_SUMMARY.md).
+ * KI an: data.growthThesis (S2) 1:1, kein Umformulieren.
  */
 import { SectionCard } from "@/components/SectionCard";
 
@@ -15,11 +15,23 @@ export type ExecSummaryView = {
   crvLine?: string;
   posLine?: string;
   crossLine?: string;
+  thesisLine?: string;
+  upsideLine?: string;
 };
 
-export function ExecSummaryCard({ data }: { data: { execSummary?: ExecSummaryView | null } }) {
+export function ExecSummaryCard({ data }: {
+  data: {
+    execSummary?: ExecSummaryView | null;
+    growthThesis?: string | null;
+    growthThesisGeneratedAt?: string | null;
+  };
+}) {
   const s = data?.execSummary;
   if (!s) return null;
+
+  const thesis = (typeof data.growthThesis === "string" && data.growthThesis.trim().length >= 80)
+    ? data.growthThesis.trim()
+    : (typeof s.thesisLine === "string" && s.thesisLine.trim().length >= 80 ? s.thesisLine.trim() : "");
 
   return (
     <SectionCard number={0} title="Executive Summary" defaultOpen>
@@ -29,6 +41,22 @@ export function ExecSummaryCard({ data }: { data: { execSummary?: ExecSummaryVie
             {s.headline}
           </p>
         )}
+        {s.upsideLine && (
+          <p className="text-xs text-emerald-400/90 font-medium" data-testid="exec-summary-upside">{s.upsideLine}</p>
+        )}
+        {thesis ? (
+          <div className="rounded-md border border-border/50 bg-muted/20 p-3" data-testid="exec-summary-thesis">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">
+              Investmentthese (S2, 1:1)
+            </div>
+            <p className="text-xs text-foreground/85 leading-relaxed whitespace-pre-wrap">{thesis}</p>
+            {data.growthThesisGeneratedAt && (
+              <div className="text-[10px] text-muted-foreground mt-2">
+                Stand: {data.growthThesisGeneratedAt}
+              </div>
+            )}
+          </div>
+        ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">Pro</div>
