@@ -1,6 +1,6 @@
 # WORK.md — Index
 
-> Stand: 04.09.2026 | Branch: `main`
+> Stand: 11.09.2026 | Branch: `main`
 >
 > **Hub Soll vs. Ist:** [docs/Doc_Soll_vs_Ist/](./docs/Doc_Soll_vs_Ist/)
 >
@@ -20,6 +20,7 @@
 | [WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ |
 | [WORK_RESEARCHER_BRIEFING_REGIONAL.md](./WORK_RESEARCHER_BRIEFING_REGIONAL.md) | Briefing 3 Regionen |
 | [WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Serien-IDs + Prints |
+| [WORK_PORTFOLIO_SOLL_IST.md](./WORK_PORTFOLIO_SOLL_IST.md) | Target vs Actual · Active Weight · Nenner A/B · Feng-Feng-Zahlen 2026-08-28 · Drop-in noch nicht verdrahtet |
 
 Code-Soll: [`server/exec-summary.ts`](./server/exec-summary.ts) — generisch, kein Ticker-Hardcode.
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
@@ -39,6 +40,8 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [WORK_ANTIBIAS_DCF.md](./WORK_ANTIBIAS_DCF.md) | Inverted DCF |
 | [WORK_REVERSE_DCF_BRIDGE.md](./WORK_REVERSE_DCF_BRIDGE.md) | Fiscal Bridge |
 | [WORK_PORTFOLIO.md](./WORK_PORTFOLIO.md) | Portfolio |
+| [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) | Equity α/β/IR Underwater |
+| [WORK_PORTFOLIO_SOLL_IST.md](./WORK_PORTFOLIO_SOLL_IST.md) | Soll/Ist-Tracking Spec + Zahlen 11.09.2026 |
 | [WORK_RESEARCHER_PORTFOLIO.md](./WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 |
 | [WORK_RESEARCHER_PORTFOLIO_TEIL2.md](./WORK_RESEARCHER_PORTFOLIO_TEIL2.md) | Zahlen P2 |
 | [WORK_NEWS_SENTIMENT.md](./WORK_NEWS_SENTIMENT.md) | Sentiment |
