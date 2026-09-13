@@ -5,7 +5,7 @@
 > **HEAD:** `a64cfad` (#66 STOXX TLS CA; Doc-Hub Nachzug)  
 > **Regel:** Ist nur aus Code + UI. ✅ erwartete Anzeige live · 🟡 Kern da, Spec-/UI-Zusatz fehlt · ⬜ Spec ohne Engine/UI.  
 > **Quelle Nachzug:** Doc_Soll_vs_Ist/README · Companion `WORK_IMPLEMENTIERUNG_OFFEN.md`  
-> **Delta 13.09.:** Exec/FactPack/VIX+EU ✅ · Portfolio OHLCV §6 🟡 · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert.  
+> **Delta 13.09.:** Exec/FactPack/VIX+EU/Portfolio OHLCV §6 ✅ · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert · Backtest 🟡.  
 > **tsc-Baseline:** 97 Fehler (unverändert).
 
 ---
@@ -92,7 +92,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 |---|-------|------|-----|-------|
 | 28 | WORK_VALUECHAIN_SECTOR_ROTATION.md | Rang 1–9 | 1–6 + Phase 1–2 live; **Rang 7–9** xyflow | 🟡 blockiert |
 | 29 | WORK_PORTFOLIO_BACKTEST.md | Equity α/β/IR Underwater | Panel da; braucht Position+OHLCV; Rest-DoD | 🟡 |
-| 29b | WORK.md_portfolio_3 §6 | `GET /api/ohlcv` + Long-Map | Code main `#61`; Live-DoD (AAPL/Charts) offen | 🟡 |
+| 29b | WORK.md_portfolio_3 §6 | `GET /api/ohlcv` + Long-Map | Live PASS Tester AAPL 1Y/2Y @ `6a1807b` (`#61`) | ✅ |
 | 30 | WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
 | 31 | WORK_EXEC_SUMMARY.md | Karte über S1 | Exec-Karte live `#58` | ✅ |
 | 32 | WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalog + Fetch | nur Markdown | ⬜ |
@@ -119,7 +119,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 - P1.1–P1.3: `c83e543` / `d6b41b3` / `9215cee`.
 - CAPM E[r]-KPI auf Portfolio-Übersicht live.
 - FactPack Hook+UI (`#57`), Exec-Summary UI (`#58`), VIX-Pane (`#60`), EU VSTOXX STOXX+CA (`#66` Live vol≈942).
-- Portfolio `GET /api/ohlcv` (`#61`) — Live-DoD noch 🟡.
+- Portfolio `GET /api/ohlcv` (`#61`) — Live PASS Tester AAPL 1Y/2Y @ `6a1807b`.
 
 **Nicht neu bauen / nicht anfassen:** Miner, PEG, inverted DCF, Sentiment, Portfolio F.2.
 
@@ -127,11 +127,11 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 
 ## 3. Offen 🟡 / ⬜ (workable, Rang 7–9 auszunehmen)
 
-**🟡 Partial:** Portfolio OHLCV §6 Live-DoD · Portfolio-Backtest Rest-DoD · Market-Charts PEG/FINRA · Hormuz (B) `recession-drivers.ts` · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`).
+**🟡 Partial:** Portfolio-Backtest Rest-DoD · Market-Charts PEG/FINRA · Hormuz (B) `recession-drivers.ts` · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`).
 
 **⬜ Spec (Liquidity-Bundle + Rest):** Regional LI + Books + Velocity + Data Sources · Fiscal Adaptive · Briefing regional · FRED/Sahm · Rate/Oil · Recession Sources · Peer Adaptive + Pricing-Power.
 
-Reihenfolge sinnvoll: Portfolio Live-DoD → Hormuz (B) (separates Gate) → Liquidity-Bundle → Peer → Backtest-Rest / PEG-FINRA.
+Reihenfolge sinnvoll: Hormuz (B) (separates Gate) → Liquidity-Bundle → Peer → Backtest-Rest / PEG-FINRA.
 
 ---
 

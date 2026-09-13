@@ -7,7 +7,7 @@
 > Alt (nicht löschen): [docs/work-offen/](./docs/work-offen/) · [docs/work-dokumentation/](./docs/work-dokumentation/)
 > Root-`WORK_*.md` bleiben die Inhaltsquelle.
 
-**Ampel-Kurz 13.09.:** Exec / FactPack / VIX+EU-Vol ✅ · Portfolio OHLCV §6 🟡 · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert.
+**Ampel-Kurz 13.09.:** Exec / FactPack / VIX+EU-Vol / Portfolio OHLCV §6 ✅ · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert · Backtest 🟡.
 
 ---
 
@@ -15,7 +15,6 @@
 
 | Datei | Inhalt |
 |-------|--------|
-| [WORK.md_portfolio_3](./WORK.md_portfolio_3) | §6 OHLCV Charts — Code main, Live-DoD 🟡 |
 | [WORK_FISCAL_FRONTEND_ADAPTIVE.md](./WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z) Bills/TGA/SOMA — Ist `BESSENT_WINDOW` |
 | [WORK_RESEARCHER_LIQUIDITY_INDEX.md](./WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA |
 | [WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F |
@@ -46,6 +45,7 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [WORK_ANTIBIAS_DCF.md](./WORK_ANTIBIAS_DCF.md) | Inverted DCF |
 | [WORK_REVERSE_DCF_BRIDGE.md](./WORK_REVERSE_DCF_BRIDGE.md) | Fiscal Bridge |
 | [WORK_PORTFOLIO.md](./WORK_PORTFOLIO.md) | Portfolio |
+| [WORK.md_portfolio_3](./WORK.md_portfolio_3) | §6 OHLCV Charts live — Tester AAPL 1Y/2Y PASS @ `6a1807b` |
 | [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) | Equity α/β/IR Underwater |
 | [WORK_PORTFOLIO_SOLL_IST.md](./WORK_PORTFOLIO_SOLL_IST.md) | Soll/Ist-Tracking Spec + Zahlen |
 | [WORK_RESEARCHER_PORTFOLIO.md](./WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 |
