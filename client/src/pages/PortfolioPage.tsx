@@ -36,8 +36,7 @@ import type { StockAnalysis } from "../../../shared/schema";
 import {
   makePosition, loadPositionsFromStorage, savePositionsToStorage,
   loadPolicyFromStorage, savePolicyToStorage, suggestConvictionFromScore,
-  type PortfolioPosition, type PortfolioPolicy,
-} from "@/lib/portfolio/positions";
+  type PortfolioPosition, type PortfolioPolicy, timeframeCutoffIso } from "@/lib/portfolio/positions";
 import PortfolioOverview, { type TimeframeFilter, type DirectionFilter } from "@/components/portfolio/PortfolioOverview";
 import PortfolioInvestmentsTable from "@/components/portfolio/PortfolioInvestmentsTable";
 import PortfolioOptimizationPanel from "@/components/portfolio/PortfolioOptimizationPanel";
@@ -128,6 +127,59 @@ export default function PortfolioPage() {
     }
     return map;
   }, [analysisByTicker]);
+
+  // WORK.md_portfolio_3 §6 — langer OHLCV-Fetch für Chart/Attribution (analyze HP bleibt für Scoring)
+  const [historicalPricesByTickerLong, setHistoricalPricesByTickerLong] = useState<
+    Record<string, Array<{ date: string; close: number }> | undefined>
+  >({});
+  const [ohlcvMetaByTicker, setOhlcvMetaByTicker] = useState<
+    Record<string, { n: number; first: string | null; last: string | null; truncated: boolean } | undefined>
+  >({});
+
+  useEffect(() => {
+    const openLongs = positions
+      .filter(p => p.status === "open" && p.side === "long")
+      .map(p => p.ticker.toUpperCase())
+      .filter(Boolean);
+    const bench = (policy.benchmark || "SPY").trim().toUpperCase();
+    const tickers = Array.from(new Set([...openLongs, bench])).slice(0, 12);
+    if (tickers.length === 0) {
+      setHistoricalPricesByTickerLong({});
+      setOhlcvMetaByTicker({});
+      return;
+    }
+    const from = timeframeCutoffIso(timeframe);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest(
+          "GET",
+          `/api/ohlcv?tickers=${encodeURIComponent(tickers.join(","))}&from=${encodeURIComponent(from)}`,
+        );
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setHistoricalPricesByTickerLong(data.bars || {});
+        setOhlcvMetaByTicker(data.meta || {});
+      } catch {
+        /* keep previous long map */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [positions, policy.benchmark, timeframe]);
+
+  const chartPricesByTicker = useMemo(() => {
+    const keys = new Set([
+      ...Object.keys(historicalPricesByTickerLong || {}),
+      ...Object.keys(historicalPricesByTicker || {}),
+    ]);
+    const map: Record<string, Array<{ date: string; close: number }> | undefined> = {};
+    for (const t of keys) {
+      const long = historicalPricesByTickerLong[t];
+      map[t] = long && long.length ? long : historicalPricesByTicker[t];
+    }
+    return map;
+  }, [historicalPricesByTicker, historicalPricesByTickerLong]);
 
   // Sprint B2 (Portfolio-Backtest vs. Benchmark): Sektor je Ticker aus dem
   // bereits geladenen Analyse-Cache (StockAnalysis.sector) -- kein neuer
@@ -367,7 +419,7 @@ export default function PortfolioPage() {
               <PortfolioOverview
                 positions={positions}
                 lastPriceByTicker={lastPriceByTicker}
-                historicalPricesByTicker={historicalPricesByTicker}
+                historicalPricesByTicker={chartPricesByTicker}
                 timeframe={timeframe}
                 direction={direction}
                 onTimeframeChange={setTimeframe}
@@ -377,8 +429,9 @@ export default function PortfolioPage() {
                 solveFailed={solveFailed}
                 sectorByTicker={sectorByTicker}
                 benchmarkTicker={policy.benchmark}
-                benchmarkHistoricalPrices={historicalPricesByTicker[(policy.benchmark || "SPY").trim().toUpperCase()]}
+                benchmarkHistoricalPrices={chartPricesByTicker[(policy.benchmark || "SPY").trim().toUpperCase()]}
                 riskFreeRateAnnual={rfDecimal}
+                ohlcvMetaByTicker={ohlcvMetaByTicker}
               />
             </div>
 
