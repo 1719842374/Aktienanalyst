@@ -3,7 +3,7 @@ FROM node:20-slim
 WORKDIR /app
 
 # Install build tools (node-gyp needs Python + gcc)
-# CACHE-BUST: 2026-09-13-ca
+# CACHE-BUST: 2026-09-13-ca2
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     libcairo2 \
     fonts-liberation \
     && ln -sf /usr/bin/python3 /usr/local/bin/python \
+    && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Node default Mozilla bundle misses some SSL.com chains on slim; use system CAs
