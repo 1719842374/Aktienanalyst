@@ -31,6 +31,7 @@ export default function PortfolioOverview({
   positions, lastPriceByTicker, historicalPricesByTicker, timeframe, direction,
   onTimeframeChange, onDirectionChange, onSelectTicker, capmWeights, solveFailed,
   sectorByTicker, benchmarkTicker, benchmarkHistoricalPrices, riskFreeRateAnnual,
+  ohlcvMetaByTicker,
 }: {
   positions: PortfolioPosition[];
   lastPriceByTicker: Record<string, number | null | undefined>;
@@ -46,6 +47,7 @@ export default function PortfolioOverview({
   benchmarkTicker?: string;
   benchmarkHistoricalPrices?: Array<{ date: string; close: number }> | undefined;
   riskFreeRateAnnual?: number;
+  ohlcvMetaByTicker?: Record<string, { n: number; first: string | null; last: string | null; truncated: boolean } | undefined>;
 }) {
   const [pieMode, setPieMode] = useState<"market" | "capm">("market");
   const hasCapmWeights = !!capmWeights && Object.keys(capmWeights).length > 0;
@@ -77,6 +79,23 @@ export default function PortfolioOverview({
   const comboEnd = series.length ? series[series.length - 1].value : null;
   const windowFrom = series[0]?.date ?? null;
   const windowTo = series.length ? series[series.length - 1].date : null;
+  const sollBars = timeframe === "2Y" ? 480 : timeframe === "1Y" ? 240 : 120;
+  const histBadge = useMemo(() => {
+    const openLong = directionFiltered.filter(p => p.status === "open" && p.side === "long");
+    const tickers = openLong.map(p => p.ticker.toUpperCase());
+    if (!tickers.length) return null;
+    let minN: number | null = null;
+    let truncated = false;
+    for (const t of tickers) {
+      const m = ohlcvMetaByTicker?.[t];
+      const n = m?.n ?? (historicalPricesByTicker[t]?.length ?? 0);
+      if (minN == null || n < minN) minN = n;
+      if (m?.truncated || n < sollBars) truncated = true;
+    }
+    if (!truncated || minN == null) return null;
+    return `Historie ${minN} Bars < ${sollBars} (${timeframe}) — Chart zeigt verfügbare Spanne, nicht das Label`;
+  }, [directionFiltered, ohlcvMetaByTicker, historicalPricesByTicker, timeframe, sollBars]);
+
 
   const marketPieData = weights
     .filter(w => w.weight != null && w.weight > 0)
@@ -169,6 +188,12 @@ export default function PortfolioOverview({
           <option value="1Y">1 Jahr</option>
           <option value="2Y">2 Jahre</option>
         </select>
+        {histBadge && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5 w-full mt-1">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            {histBadge}
+          </p>
+        )}
         <select className="text-xs bg-muted/30 border border-border/50 rounded-md px-2 py-1.5" value={direction} onChange={e => onDirectionChange(e.target.value as DirectionFilter)}>
           <option value="all">Long/Short</option>
           <option value="long">Long</option>
