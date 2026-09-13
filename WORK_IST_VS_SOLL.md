@@ -1,10 +1,11 @@
 # WORK_IST_VS_SOLL.md — Code vs. WORK-Specs
 
-> **Stand Audit:** 05.09.2026 23:10 CEST  
+> **Stand Audit:** 13.09.2026  
 > **Repo:** `1719842374/Aktienanalyst`  
-> **HEAD:** `68327f5` (Doc-Hub `docs/Doc_Soll_vs_Ist/` Stand 05.09. 12:20 CEST)  
+> **HEAD:** `a64cfad` (#66 STOXX TLS CA; Doc-Hub Nachzug)  
 > **Regel:** Ist nur aus Code + UI. ✅ erwartete Anzeige live · 🟡 Kern da, Spec-/UI-Zusatz fehlt · ⬜ Spec ohne Engine/UI.  
-> **Quelle Nachzug:** Doc_Soll_vs_Ist/README (9⬜ + 4🟡) · Companion `WORK_IMPLEMENTIERUNG_OFFEN.md`  
+> **Quelle Nachzug:** Doc_Soll_vs_Ist/README · Companion `WORK_IMPLEMENTIERUNG_OFFEN.md`  
+> **Delta 13.09.:** Exec/FactPack/VIX+EU ✅ · Portfolio OHLCV §6 🟡 · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert.  
 > **tsc-Baseline:** 97 Fehler (unverändert).
 
 ---
@@ -42,7 +43,8 @@ Scoreboard Feature-Docs (ohne Index `WORK.md`; Ampel nach Doc-Hub + Code-Check):
 | GET | `/api/analyze-gold` | 1-Faktor + optionales Multi-Faktor (D5) |
 | GET | `/api/valuechain` | 18-24h Disk (D6a + Phase 1–2) |
 | POST | `/api/valuechain/enrich` | 7 d Disk, LLM (D6c) |
-| GET | `/api/analyze-recession/markets` | RAM 6h (RSI/MACD Charts seit `52ed940`) |
+| GET | `/api/analyze-recession/markets` | RAM 6h (RSI/MACD + Vol-Pane; EU VSTOXX live `#66`) |
+| GET | `/api/ohlcv` | 24h Cache, max 12 Tickers (`#61` portfolio §6) |
 | GET | `/api/health` | unberührt |
 
 Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
@@ -84,28 +86,30 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 26 | WORK_TEIL0-6.md | Platform/BTC/FMP | Kern | ✅ | |
 | 27 | WORK_TEIL7_SCORING.md | Gold + WALCL | Multi-OLS | ✅ | |
 
-### 1b. Neu aus Doc-Hub (05.09.) — 🟡 / ⬜
+### 1b. Nachzug Doc-Hub (13.09.) — ✅ / 🟡 / ⬜
 
 | # | Datei | Soll | Ist | Ampel |
 |---|-------|------|-----|-------|
 | 28 | WORK_VALUECHAIN_SECTOR_ROTATION.md | Rang 1–9 | 1–6 + Phase 1–2 live; **Rang 7–9** xyflow | 🟡 blockiert |
-| 29 | WORK_PORTFOLIO_BACKTEST.md | Equity α/β/IR Underwater | Panel da, leer ohne Position+OHLCV; Rest-DoD | 🟡 |
-| 30 | WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Engine+GET+Panel da; **Dashboard-Import / VIX/PEG offen** | 🟡 |
-| 31 | WORK_EXEC_SUMMARY.md | Karte über S1 | Analyze startet bei S1; keine Exec-Karte | ⬜ |
+| 29 | WORK_PORTFOLIO_BACKTEST.md | Equity α/β/IR Underwater | Panel da; braucht Position+OHLCV; Rest-DoD | 🟡 |
+| 29b | WORK.md_portfolio_3 §6 | `GET /api/ohlcv` + Long-Map | Code main `#61`; Live-DoD (AAPL/Charts) offen | 🟡 |
+| 30 | WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
+| 31 | WORK_EXEC_SUMMARY.md | Karte über S1 | Exec-Karte live `#58` | ✅ |
 | 32 | WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalog + Fetch | nur Markdown | ⬜ |
 | 33 | WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), kein Kalender | noch `BESSENT_WINDOW` | ⬜ |
 | 34 | WORK_RESEARCHER_LIQUIDITY_INDEX.md | LI US/EU/ASIA | C2 nur US | ⬜ |
 | 35 | WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md | Buch M/F EZ/JP | kein Katalog | ⬜ |
 | 36 | WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md | r, V, π, T½ | Spec; M2V-Teil | ⬜ |
 | 37 | WORK_RESEARCHER_BRIEFING_REGIONAL.md | 3 Regionen + Spillover | ein Prompt, US-lastig | ⬜ |
-| 38 | WORK_RECESSION_MARKET_CHARTS.md | VIX-Pane + PEG-Click + FINRA | nur Spec | ⬜ |
-| 39 | WORK_RECESSION_2008_DRIVERS_LLM.md | s(z)+OpenRouter-Driver | Kurve live; **Hormuz hardcodiert** | ⬜ |
+| 38 | WORK_RECESSION_MARKET_CHARTS.md | VIX-Pane + PEG-Click + FINRA | Vol-Pane live US/EU/AS (`#60`/`#66`); PEG+FINRA offen | 🟡 |
+| 39 | WORK_RECESSION_2008_DRIVERS_LLM.md | s(z)+OpenRouter-Driver | Hormuz-(A) weg `#59`; **`recession-drivers.ts` fehlt** (B) | 🟡 |
 | 40 | WORK_RECESSION_FRED_SAHM.md | adaptive FRED + Sahm s(z) | Spec | ⬜ |
 | 41 | WORK_RECESSION_RATE_OIL_BRIDGE.md | Zins-Brücke + Öl | Spec | ⬜ |
 | 42 | WORK_RECESSION_SOURCES.md | Quellenkatalog | Spec | ⬜ |
 | 43 | WORK_PEER_ADAPTIVE.md | 2-Hop+Industry | Spec; Hardcode-Map lebt | ⬜ |
 | 44 | WORK_PEER_PRICING_POWER.md | Relativ nur Low-Moat | Spec Companion | ⬜ |
-| 45 | FactPack (`docs/.../FACTPACK_LLM.md`) | Validate+Hook | Validator da, Analyze-Hook fehlt | 🟡 |
+| 45 | FactPack (`docs/.../FACTPACK_LLM.md`) | Validate+Hook | Hook+UI live `#57` | ✅ |
+
 
 ---
 
@@ -114,18 +118,20 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 - Sprint A/B, C1 (inkl. #49/#50/#51), C2, D1–D6c, Valuechain Phase 1–2 (Kupfer ehrlich rot).
 - P1.1–P1.3: `c83e543` / `d6b41b3` / `9215cee`.
 - CAPM E[r]-KPI auf Portfolio-Übersicht live.
+- FactPack Hook+UI (`#57`), Exec-Summary UI (`#58`), VIX-Pane (`#60`), EU VSTOXX STOXX+CA (`#66` Live vol≈942).
+- Portfolio `GET /api/ohlcv` (`#61`) — Live-DoD noch 🟡.
 
 **Nicht neu bauen / nicht anfassen:** Miner, PEG, inverted DCF, Sentiment, Portfolio F.2.
 
 ---
 
-## 3. Offen 🟡 / ⬜ (workable, Rang 7–9 ausgenommen)
+## 3. Offen 🟡 / ⬜ (workable, Rang 7–9 auszunehmen)
 
-**🟡 Partial:** RSI/MACD Dashboard-Wire · Portfolio-Backtest Rest-DoD · FactPack-Hook · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`).
+**🟡 Partial:** Portfolio OHLCV §6 Live-DoD · Portfolio-Backtest Rest-DoD · Market-Charts PEG/FINRA · Hormuz (B) `recession-drivers.ts` · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`).
 
-**⬜ Spec:** Exec-Summary UI · Hormuz/2008-Drivers · Regional LI + Books + Velocity + Data Sources · Fiscal Adaptive · Briefing regional · Market Charts · FRED/Sahm · Rate/Oil · Recession Sources · Peer Adaptive + Pricing-Power.
+**⬜ Spec (Liquidity-Bundle + Rest):** Regional LI + Books + Velocity + Data Sources · Fiscal Adaptive · Briefing regional · FRED/Sahm · Rate/Oil · Recession Sources · Peer Adaptive + Pricing-Power.
 
-Reihenfolge sinnvoll: RSI-Wire → FactPack → Exec UI → Rezession-Rest → Liquidity-Bundle → Peer → Backtest-Rest.
+Reihenfolge sinnvoll: Portfolio Live-DoD → Hormuz (B) (separates Gate) → Liquidity-Bundle → Peer → Backtest-Rest / PEG-FINRA.
 
 ---
 
