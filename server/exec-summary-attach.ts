@@ -89,8 +89,26 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
     lastReportedQuarter: a?.lastReportedQuarter ?? null,
     ma50AboveMA200: typeof status.ma50AboveMA200 === "boolean" ? status.ma50AboveMA200 : null,
     priceAboveMA200: typeof status.priceAboveMA200 === "boolean" ? status.priceAboveMA200 : null,
-    catalysts: Array.isArray(a?.catalysts) ? a.catalysts : [],
-    risks: Array.isArray(a?.risks) ? a.risks : [],
+    catalysts: Array.isArray(a?.catalysts)
+      ? a.catalysts.map((c: any) => ({
+          name: String(c?.name ?? "Katalysator"),
+          pos: finite(c?.pos) ? c.pos : finite(c?.probabilityOfSuccess) ? c.probabilityOfSuccess : undefined,
+          einpreisungsgrad: finite(c?.einpreisungsgrad) ? c.einpreisungsgrad : undefined,
+          gb: finite(c?.gb) ? c.gb : undefined,
+          nettoUpside: finite(c?.nettoUpside) ? c.nettoUpside : finite(c?.netUpside) ? c.netUpside : undefined,
+          generic: typeof c?.generic === "boolean" ? c.generic : undefined,
+        }))
+      : [],
+    risks: Array.isArray(a?.risks)
+      ? a.risks.map((r: any) => ({
+          name: String(r?.name ?? "Risiko"),
+          expectedDamagePct: finite(r?.expectedDamagePct)
+            ? r.expectedDamagePct
+            : finite(r?.expectedDamage) ? r.expectedDamage : undefined,
+          underestimated: Boolean(r?.underestimated ?? r?.explanation?.unterschaetzt),
+        }))
+      : [],
+    growthThesis: typeof a?.growthThesis === "string" ? a.growthThesis : null,
     moat: a?.moatRating ?? a?.moatAssessment?.rating ?? null,
     porterHighForces: highForces,
     pestel: pestelFactors,

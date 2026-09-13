@@ -39,12 +39,14 @@ export interface ExecSummaryInput {
   priceAboveMA200?: boolean | null;
   catalysts?: Array<{
     name: string; pos?: number; einpreisungsgrad?: number;
-    gb?: number; nettoUpside?: number;
+    gb?: number; nettoUpside?: number; generic?: boolean;
   }>;
   downside?: Array<{ name: string; impactPct?: number }>;
   risks?: Array<{
     name: string; expectedDamagePct?: number; underestimated?: boolean;
   }>;
+  /** S2 growthThesis 1:1 (trim) — only set when KI produced a real thesis */
+  growthThesis?: string | null;
   moat?: string | null;
   porterHighForces?: string[];
   pestel?: Array<{ key: string; exposure: string; kurstreiber?: number; kursrisiko?: number }>;
@@ -67,6 +69,12 @@ export interface ExecSummary {
   posLine: string;
   /** DoD: only when ma50AboveMA200 is boolean in cache; else empty */
   crossLine: string;
+  /** S2 growthThesis 1:1 when present */
+  thesisLine?: string;
+  /** S15 GB-Summe + Kat.-Ziel + vs Kurs */
+  upsideLine?: string;
+  /** S8 top ED names + total ED */
+  riskLine?: string;
 }
 
 const MONTH_DE = [
@@ -130,7 +138,7 @@ export function pickPro(input: ExecSummaryInput): ExecLine[] {
     out.push({
       src: "S15",
       value: c.gb,
-      text: `${c.name} · GB ${c.gb!.toFixed(2)} %`,
+      text: `${c.name} · GB ${c.gb!.toFixed(2)} %${c.generic ? " · generisch" : ""}`,
     });
   }
   if (input.moat) {
@@ -278,6 +286,48 @@ export function buildCrossLine(input: ExecSummaryInput): string {
   return "";
 }
 
+
+export function buildThesisLine(input: ExecSummaryInput): string {
+  const raw = typeof input.growthThesis === "string" ? input.growthThesis.trim() : "";
+  return raw;
+}
+
+/** Mirror calculateCatalystUpside: Σ GB (PoS≥40) → Ziel = DCF×(1+Σ/100), vs Kurs. */
+export function buildUpsideLine(input: ExecSummaryInput): string {
+  const ranked = [...(input.catalysts || [])]
+    .filter(c => finite(c.gb) && (c.pos == null || c.pos >= 40));
+  if (ranked.length === 0) {
+    return "Katalysator-Upside n/v — keine Katalysatoren mit GB und PoS ≥ 40.";
+  }
+  const sumGb = ranked.reduce((s, c) => s + (c.gb as number), 0);
+  const fv = finite(input.dcfConservative) ? input.dcfConservative : null;
+  const px = finite(input.price) && input.price > 0 ? input.price : null;
+  const bits: string[] = [`Katalysator-Upside +${sumGb.toFixed(1)}%`];
+  if (fv != null) {
+    const ziel = fv * (1 + sumGb / 100);
+    bits.push(`Ziel ${fmtPx(ziel)}`);
+    if (px != null) {
+      const vs = (ziel / px - 1) * 100;
+      bits.push(`vs Kurs ${vs >= 0 ? "+" : ""}${vs.toFixed(1)}%`);
+    }
+  } else if (px != null) {
+    bits.push(`vs Kurs n/v (kein DCF)`);
+  }
+  return bits.join(" · ");
+}
+
+export function buildRiskLine(input: ExecSummaryInput): string {
+  const risks = [...(input.risks || [])]
+    .filter(r => finite(r.expectedDamagePct))
+    .sort((a, b) => (b.expectedDamagePct || 0) - (a.expectedDamagePct || 0));
+  if (risks.length === 0) {
+    return "Risiko-ED n/v.";
+  }
+  const total = risks.reduce((s, r) => s + (r.expectedDamagePct || 0), 0);
+  const top = risks.slice(0, 2).map(r => r.name).join(", ");
+  return `Was schiefgehen kann: ${top} · Total ED ${total.toFixed(1)}%`;
+}
+
 export function buildExecSummary(input: ExecSummaryInput): ExecSummary {
   const call = formatEarningsCall(input.nextEarningsDate, input.lastReportedQuarter);
   const pestelBits = (input.pestel || []).map(p => `${p.key[0]?.toUpperCase() || "?"}:${p.exposure[0]?.toUpperCase() || "?"}`);
@@ -300,5 +350,8 @@ export function buildExecSummary(input: ExecSummaryInput): ExecSummary {
     crvLine: buildCrvLine(input),
     posLine: buildPosLine(input),
     crossLine: buildCrossLine(input),
+    thesisLine: buildThesisLine(input),
+    upsideLine: buildUpsideLine(input),
+    riskLine: buildRiskLine(input),
   };
 }
