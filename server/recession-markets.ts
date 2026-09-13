@@ -72,11 +72,20 @@ const STOXX_UA =
   "Aktienanalyst/1.0 (+https://github.com/1719842374/Aktienanalyst)";
 
 function stoxxErrMsg(e: any): string {
-  const parts = [e?.message || e?.name || String(e), e?.cause?.code, e?.cause?.message]
+  // Prefer message/cause — Error.name alone is useless ("TypeError")
+  const parts = [e?.message, e?.cause?.code, e?.cause?.message, e?.name]
     .filter(Boolean)
     .map((x: any) => String(x));
-  const msg = parts.join(" | ").slice(0, 120);
-  return msg || "network";
+  const seen = new Set<string>();
+  const uniq = parts.filter(p => (seen.has(p) ? false : (seen.add(p), true)));
+  return (uniq.join(" | ") || "network").slice(0, 120);
+}
+
+/** Prefer AbortController — timeout() helper is flaky under some undici builds. */
+function abortAfter(ms: number): { signal: AbortSignal; clear: () => void } {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  return { signal: ac.signal, clear: () => clearTimeout(t) };
 }
 
 function parseStoxxV2txText(text: string, from: string, to: string): { vol: VolPoint[]; err: string | null } {
@@ -99,7 +108,6 @@ function parseStoxxV2txText(text: string, from: string, to: string): { vol: VolP
   }
   raw.sort((x, y) => x.date.localeCompare(y.date));
   if (raw.length <= 10) return { vol: [], err: `parse ${raw.length} rows` };
-  // If from/to filter too thin, keep raw — sliceVolToWindow trims later
   const filtered = raw.filter(p => p.date >= from && p.date <= to);
   if (filtered.length > 10) return { vol: filtered, err: null };
   return { vol: raw, err: null };
@@ -107,12 +115,22 @@ function parseStoxxV2txText(text: string, from: string, to: string): { vol: VolP
 
 async function fetchStoxxViaHttps(from: string, to: string): Promise<{ vol: VolPoint[]; err: string | null }> {
   const https = await import("node:https");
+  const fs = await import("node:fs");
+  // Prefer system CA bundle when present (Docker ca-certificates + SSL_CERT_FILE)
+  let ca: string | undefined;
+  try {
+    const p = process.env.SSL_CERT_FILE || "/etc/ssl/certs/ca-certificates.crt";
+    if (fs.existsSync(p)) ca = fs.readFileSync(p, "utf8");
+  } catch {
+    /* fall back to Node defaults */
+  }
   const text: string = await new Promise((resolve, reject) => {
     const req = https.get(
       STOXX_V2TX_URL,
       {
         headers: { "User-Agent": STOXX_UA, Accept: "text/plain,*/*" },
         timeout: 45000,
+        ...(ca ? { ca } : {}),
       },
       res => {
         if ((res.statusCode || 0) >= 400) {
@@ -134,28 +152,34 @@ async function fetchStoxxViaHttps(from: string, to: string): Promise<{ vol: VolP
   return parseStoxxV2txText(text, from, to);
 }
 
+async function fetchStoxxWithFetch(
+  initHeaders?: Record<string, string>,
+): Promise<string> {
+  const { signal, clear } = abortAfter(45000);
+  try {
+    const resp = await fetch(STOXX_V2TX_URL, {
+      signal,
+      ...(initHeaders ? { headers: initHeaders } : {}),
+    });
+    if (!resp.ok) throw new Error(`http ${resp.status}`);
+    return await resp.text();
+  } finally {
+    clear();
+  }
+}
+
 async function fetchStoxxOfficialV2tx(
   from: string,
   to: string,
 ): Promise<{ vol: VolPoint[]; err: string | null }> {
-  const attempts: Array<() => Promise<Response>> = [
-    // Match FRED style first (known-good on Render)
-    () => fetch(STOXX_V2TX_URL, { signal: AbortSignal.timeout(45000) }),
-    () =>
-      fetch(STOXX_V2TX_URL, {
-        signal: AbortSignal.timeout(45000),
-        headers: { "User-Agent": STOXX_UA, Accept: "text/plain,*/*" },
-      }),
+  const attempts: Array<() => Promise<string>> = [
+    () => fetchStoxxWithFetch(),
+    () => fetchStoxxWithFetch({ "User-Agent": STOXX_UA, Accept: "text/plain,*/*" }),
   ];
   let lastErr: string | null = null;
   for (const run of attempts) {
     try {
-      const resp = await run();
-      if (!resp.ok) {
-        lastErr = `http ${resp.status}`;
-        continue;
-      }
-      const parsed = parseStoxxV2txText(await resp.text(), from, to);
+      const parsed = parseStoxxV2txText(await run(), from, to);
       if (parsed.vol.length > 10) return parsed;
       lastErr = parsed.err;
     } catch (e: any) {
@@ -359,8 +383,8 @@ export function registerRecessionMarketRoutes(app: Express) {
     const region = (regionRaw === "EU" || regionRaw === "AS" ? regionRaw : "US") as RegionId;
     const windowRaw = String(req.query.window || "5Y").toUpperCase();
     const window = WINDOW_DAYS[windowRaw] ? windowRaw : "5Y";
-    // v8: STOXX fetch/https fallback + better TypeError msg
-    const key = `v8:${region}:${window}`;
+    // v10: AbortController + Docker ca-certificates / use-openssl-ca
+    const key = `v10:${region}:${window}`;
 
     if (marketCache && marketCache.key === key && Date.now() - marketCache.ts < TTL_MS) {
       return res.json(marketCache.data);

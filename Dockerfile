@@ -5,6 +5,7 @@ WORKDIR /app
 # Install build tools (node-gyp needs Python + gcc)
 # CACHE-BUST: 2026-07-25c
 RUN apt-get update && apt-get install -y \
+    ca-certificates \
     curl \
     python3 \
     make \
@@ -24,6 +25,10 @@ RUN apt-get update && apt-get install -y \
     fonts-liberation \
     && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
+
+# Node default Mozilla bundle misses some SSL.com chains on slim; use system CAs
+ENV NODE_OPTIONS="--use-openssl-ca"
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Copy package files
 COPY package.json package-lock.json ./
