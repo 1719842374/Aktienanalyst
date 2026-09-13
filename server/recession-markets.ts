@@ -68,51 +68,108 @@ async function fetchFredVolSeries(seriesId: string, cosd: string): Promise<VolPo
 const STOXX_V2TX_URL =
   "https://www.stoxx.com/document/Indices/Current/HistoricalData/h_v2tx.txt";
 
+const STOXX_UA =
+  "Aktienanalyst/1.0 (+https://github.com/1719842374/Aktienanalyst)";
+
+function stoxxErrMsg(e: any): string {
+  const parts = [e?.message || e?.name || String(e), e?.cause?.code, e?.cause?.message]
+    .filter(Boolean)
+    .map((x: any) => String(x));
+  const msg = parts.join(" | ").slice(0, 120);
+  return msg || "network";
+}
+
+function parseStoxxV2txText(text: string, from: string, to: string): { vol: VolPoint[]; err: string | null } {
+  if (!text) return { vol: [], err: "empty body" };
+  if (/<html|<!DOCTYPE/i.test(text)) return { vol: [], err: "html/bot" };
+  const raw: VolPoint[] = [];
+  for (const line of text.trim().split("\n").slice(1)) {
+    const parts = line.split(";");
+    if (parts.length < 3) continue;
+    const dRaw = parts[0];
+    const vRaw = parts[parts.length - 1];
+    const dp = dRaw.trim().replace(/\r/g, "").split(".");
+    if (dp.length !== 3) continue;
+    const [dd, mm, yyyy] = dp;
+    if (!yyyy || yyyy.length !== 4) continue;
+    const iso = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+    const value = parseFloat(String(vRaw).trim().replace(/\r/g, "").replace(",", "."));
+    if (!Number.isFinite(value)) continue;
+    raw.push({ date: iso, value });
+  }
+  raw.sort((x, y) => x.date.localeCompare(y.date));
+  if (raw.length <= 10) return { vol: [], err: `parse ${raw.length} rows` };
+  // If from/to filter too thin, keep raw — sliceVolToWindow trims later
+  const filtered = raw.filter(p => p.date >= from && p.date <= to);
+  if (filtered.length > 10) return { vol: filtered, err: null };
+  return { vol: raw, err: null };
+}
+
+async function fetchStoxxViaHttps(from: string, to: string): Promise<{ vol: VolPoint[]; err: string | null }> {
+  const https = await import("node:https");
+  const text: string = await new Promise((resolve, reject) => {
+    const req = https.get(
+      STOXX_V2TX_URL,
+      {
+        headers: { "User-Agent": STOXX_UA, Accept: "text/plain,*/*" },
+        timeout: 45000,
+      },
+      res => {
+        if ((res.statusCode || 0) >= 400) {
+          reject(new Error(`http ${res.statusCode}`));
+          res.resume();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("timeout"));
+    });
+  });
+  return parseStoxxV2txText(text, from, to);
+}
+
 async function fetchStoxxOfficialV2tx(
   from: string,
   to: string,
 ): Promise<{ vol: VolPoint[]; err: string | null }> {
-  try {
-    const resp = await fetch(STOXX_V2TX_URL, {
-      signal: AbortSignal.timeout(45000),
-      headers: {
-        "User-Agent":
-          "Aktienanalyst/1.0 (+https://github.com/1719842374/Aktienanalyst)",
-        Accept: "text/plain,*/*",
-      },
-      redirect: "follow",
-    });
-    if (!resp.ok) return { vol: [], err: `http ${resp.status}` };
-    const text = await resp.text();
-    if (!text) return { vol: [], err: "empty body" };
-    if (/<html|<!DOCTYPE/i.test(text)) return { vol: [], err: "html/bot" };
-
-    const raw: VolPoint[] = [];
-    for (const line of text.trim().split("\n").slice(1)) {
-      const parts = line.split(";");
-      if (parts.length < 3) continue;
-      const dRaw = parts[0];
-      const vRaw = parts[parts.length - 1];
-      const dp = dRaw.trim().replace(/\r/g, "").split(".");
-      if (dp.length !== 3) continue;
-      const [dd, mm, yyyy] = dp;
-      if (yyyy.length !== 4) continue;
-      const iso = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
-      const value = parseFloat(String(vRaw).trim().replace(/\r/g, "").replace(",", "."));
-      if (!Number.isFinite(value)) continue;
-      raw.push({ date: iso, value });
+  const attempts: Array<() => Promise<Response>> = [
+    // Match FRED style first (known-good on Render)
+    () => fetch(STOXX_V2TX_URL, { signal: AbortSignal.timeout(45000) }),
+    () =>
+      fetch(STOXX_V2TX_URL, {
+        signal: AbortSignal.timeout(45000),
+        headers: { "User-Agent": STOXX_UA, Accept: "text/plain,*/*" },
+      }),
+  ];
+  let lastErr: string | null = null;
+  for (const run of attempts) {
+    try {
+      const resp = await run();
+      if (!resp.ok) {
+        lastErr = `http ${resp.status}`;
+        continue;
+      }
+      const parsed = parseStoxxV2txText(await resp.text(), from, to);
+      if (parsed.vol.length > 10) return parsed;
+      lastErr = parsed.err;
+    } catch (e: any) {
+      lastErr = stoxxErrMsg(e);
     }
-    raw.sort((x, y) => x.date.localeCompare(y.date));
-    if (raw.length <= 10) return { vol: [], err: `parse ${raw.length} rows` };
-
-    // If from/to filter too thin, keep raw — sliceVolToWindow trims later
-    const filtered = raw.filter(p => p.date >= from && p.date <= to);
-    if (filtered.length > 10) return { vol: filtered, err: null };
-    return { vol: raw, err: null };
-  } catch (e: any) {
-    const msg = String(e?.name || e?.message || e).slice(0, 80);
-    return { vol: [], err: msg || "network" };
   }
+  try {
+    const viaHttps = await fetchStoxxViaHttps(from, to);
+    if (viaHttps.vol.length > 10) return viaHttps;
+    lastErr = viaHttps.err || lastErr;
+  } catch (e: any) {
+    lastErr = stoxxErrMsg(e) || lastErr;
+  }
+  return { vol: [], err: lastErr || "network" };
 }
 
 /** VSTOXX: FMP first, then STOXX official h_v2tx.txt (Yahoo delisted / Stooq bot-wall). */
@@ -302,8 +359,8 @@ export function registerRecessionMarketRoutes(app: Express) {
     const region = (regionRaw === "EU" || regionRaw === "AS" ? regionRaw : "US") as RegionId;
     const windowRaw = String(req.query.window || "5Y").toUpperCase();
     const window = WINDOW_DAYS[windowRaw] ? windowRaw : "5Y";
-    // v7: STOXX UA + raw-if-window-thin + no-cache empty EU
-    const key = `v7:${region}:${window}`;
+    // v8: STOXX fetch/https fallback + better TypeError msg
+    const key = `v8:${region}:${window}`;
 
     if (marketCache && marketCache.key === key && Date.now() - marketCache.ts < TTL_MS) {
       return res.json(marketCache.data);
