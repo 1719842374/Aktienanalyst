@@ -1,11 +1,13 @@
 # Doc_Soll_vs_Ist
 
-> Stand: 05.09.2026 12:20 CEST | Ampel aus **Code + UI**, nicht aus Commit-Text
+> Stand: 13.09.2026 | Ampel aus **Code + UI** (Live Render) · HEAD `a64cfad`
 > Originale im **Repo-Root**. Dieser Ordner verlinkt nur.
 >
 > Alt: [work-offen](../work-offen/) · [work-dokumentation](../work-dokumentation/)
 
 **Regel:** `✅` nur wenn die *erwartete Anzeige* live ist. Datei + Lib ohne KPI/Serie = `🟡` oder `⬜`.
+
+**Nachzug 13.09.:** Exec / FactPack / VIX+EU-Vol ✅ · Portfolio OHLCV (`WORK.md_portfolio_3` §6) 🟡 · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert.
 
 ---
 
@@ -13,19 +15,22 @@
 
 | Spec (Root) | Soll | Ist Code + UI | Ampel |
 |-------------|------|---------------|-------|
-| [WORK_EXEC_SUMMARY.md](../../WORK_EXEC_SUMMARY.md) | Karte über S1, Pro/Contra aus S8/S11/S12/S15, PESTEL-Raster + Porter-High | Analyze startet bei S1 Datenaktualität; keine Exec-Karte | `⬜` |
-| [WORK_PORTFOLIO.md](../../WORK_PORTFOLIO.md) | CAPM/Kelly sichtbar | Gewichte + Kelly in Optimierung; **kein** E[r]-KPI Übersicht | `🟡` |
-| [WORK_PORTFOLIO_BACKTEST.md](../../WORK_PORTFOLIO_BACKTEST.md) | Equity, α/β/IR, Underwater, Capture | Panel da, leer ohne Positionen+OHLCV | `🟡` |
+| [WORK.md_portfolio_3](../../WORK.md_portfolio_3) §6 | `GET /api/ohlcv` + Long-Map Charts | Route+UI auf main (`9c8070c`/#61); Live-DoD (Position+Charts) noch offen | `🟡` |
+| [WORK_PORTFOLIO_BACKTEST.md](../../WORK_PORTFOLIO_BACKTEST.md) | Equity, α/β/IR, Underwater, Capture | Panel da; braucht Positionen+OHLCV; Rest-DoD | `🟡` |
 | [WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](../../WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Katalog + Fetch | nur Markdown | `⬜` |
 | [WORK_FISCAL_FRONTEND_ADAPTIVE.md](../../WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z), kein Kalender | `BESSENT_WINDOW` in `liquidity-regime-math.ts` | `⬜` |
 | [WORK_RESEARCHER_LIQUIDITY_INDEX.md](../../WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA | C2 nur US | `⬜` |
 | [WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](../../WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F EZ/JP | kein Katalog | `⬜` |
 | [WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ | M2V US + Eimer 0.02 | `⬜` |
 | [WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../WORK_RESEARCHER_BRIEFING_REGIONAL.md) | 3 Regionen + Spillover | ein Prompt, NEW=`high` | `⬜` |
-| [WORK_VALUECHAIN_SECTOR_ROTATION.md](../../WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–9 | 1–6 live, 7–9 offen | `🟡` |
-| [WORK_RECESSION_MARKET_CHARTS.md](../../WORK_RECESSION_MARKET_CHARTS.md) | VIX-Pane + PEG-Click + FINRA | nur Spec | `⬜` |
-| [WORK_RECESSION_RSI_MACD.md](../../WORK_RECESSION_RSI_MACD.md) | RSI+MACD+Div im `#/recession` nach S7 | Engine+Panel+GET da; Dashboard-Import / VIX/PEG offen | `🟡` |
-| [WORK_RECESSION_2008_DRIVERS_LLM.md](../../WORK_RECESSION_2008_DRIVERS_LLM.md) | SLOOS/Price-Rent/TED \(s(z)\) + OpenRouter-Driver 1–3. Ordnung | Kurve+BAA live; Hormuz-Essay hardcodiert in `generateFazit` | `⬜` |
+| [WORK_VALUECHAIN_SECTOR_ROTATION.md](../../WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–9 | 1–6 live; **Rang 7–9** xyflow blockiert | `🟡` blockiert |
+| [WORK_RECESSION_MARKET_CHARTS.md](../../WORK_RECESSION_MARKET_CHARTS.md) | VIX-Pane + PEG-Click + FINRA | VIX/VSTOXX/realized live (US/EU/AS); PEG-Click + FINRA offen | `🟡` |
+| [WORK_RECESSION_2008_DRIVERS_LLM.md](../../WORK_RECESSION_2008_DRIVERS_LLM.md) | SLOOS/Price-Rent/TED + OpenRouter-Driver | Hormuz-(A) Essay gelöscht (#59); **`recession-drivers.ts` fehlt** (B) | `🟡` |
+| [WORK_RECESSION_FRED_SAHM.md](../../WORK_RECESSION_FRED_SAHM.md) | adaptive FRED + Sahm s(z) | Spec | `⬜` |
+| [WORK_RECESSION_RATE_OIL_BRIDGE.md](../../WORK_RECESSION_RATE_OIL_BRIDGE.md) | Zins-Brücke + Öl | Spec | `⬜` |
+| [WORK_RECESSION_SOURCES.md](../../WORK_RECESSION_SOURCES.md) | Quellenkatalog | Spec | `⬜` |
+| [WORK_PEER_ADAPTIVE.md](../../WORK_PEER_ADAPTIVE.md) | 2-Hop+Industry | Spec; Hardcode-Map lebt | `⬜` |
+| [WORK_PEER_PRICING_POWER.md](../../WORK_PEER_PRICING_POWER.md) | Relativ nur Low-Moat | Spec Companion | `⬜` |
 
 Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPACK_LLM.md](./FACTPACK_LLM.md) · FMP/BB [FMP_GRENZEN_BLOOMBERG.md](./FMP_GRENZEN_BLOOMBERG.md)
 
@@ -33,8 +38,13 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 
 ## Ist — Kern im Code und in der UI nutzbar (wenn Daten da)
 
-| Spec (Root) | Code |
-|-------------|------|
+| Spec (Root) | Code / Live |
+|-------------|-------------|
+| [WORK_EXEC_SUMMARY.md](../../WORK_EXEC_SUMMARY.md) | Exec-Karte über S1 live (#58) |
+| [FACTPACK_LLM.md](./FACTPACK_LLM.md) | Analyze-Hook + UI live (#57) |
+| [WORK_RECESSION_RSI_MACD.md](../../WORK_RECESSION_RSI_MACD.md) | Dashboard-Wire + Pane live |
+| [WORK_RECESSION_MARKET_CHARTS.md](../../WORK_RECESSION_MARKET_CHARTS.md) | Vol-Pane: US FRED VIXCLS · EU VSTOXX STOXX `h_v2tx.txt` (#66 Live vol≈942) · AS realized20 |
+| [WORK_PORTFOLIO.md](../../WORK_PORTFOLIO.md) | CAPM/Kelly + E[r]-KPI |
 | [WORK_RESEARCHER_LIQUIDITY_REGIME.md](../../WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 US GET `/api/researcher/liquidity` |
 | [WORK_STABLECOIN_TBILL_GENIUS.md](../../WORK_STABLECOIN_TBILL_GENIUS.md) | DefiLlama live; GENIUS-Score manuell |
 | [WORK_ANALYZE_DISK_CACHE.md](../../WORK_ANALYZE_DISK_CACHE.md) | L1+L2 |
@@ -56,5 +66,5 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | [WORK_TEIL7_SCORING.md](../../WORK_TEIL7_SCORING.md) | Gold |
 | [WORK2.md](../../WORK2.md) | PESTEL |
 | [WORK.md](../../WORK.md) | Index |
-| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 01.09. |
-| [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 |
+| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 13.09. |
+| [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 geblockt |

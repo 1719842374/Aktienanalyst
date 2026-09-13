@@ -1,28 +1,30 @@
 # WORK.md — Index
 
-> Stand: 11.09.2026 | Branch: `main`
+> Stand: 13.09.2026 | Branch: `main` @ `a64cfad`
 >
 > **Hub Soll vs. Ist:** [docs/Doc_Soll_vs_Ist/](./docs/Doc_Soll_vs_Ist/)
 >
 > Alt (nicht löschen): [docs/work-offen/](./docs/work-offen/) · [docs/work-dokumentation/](./docs/work-dokumentation/)
 > Root-`WORK_*.md` bleiben die Inhaltsquelle.
 
+**Ampel-Kurz 13.09.:** Exec / FactPack / VIX+EU-Vol ✅ · Portfolio OHLCV §6 🟡 · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert.
+
 ---
 
-## Soll (nicht live)
+## Soll (nicht live / partial)
 
 | Datei | Inhalt |
 |-------|--------|
-| [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) | Exec vor S1 · Pro/Contra S8/S11/S12/S15 · Fazit Fließtext · **Call-Pflicht** · adaptiver Builder |
+| [WORK.md_portfolio_3](./WORK.md_portfolio_3) | §6 OHLCV Charts — Code main, Live-DoD 🟡 |
 | [WORK_FISCAL_FRONTEND_ADAPTIVE.md](./WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z) Bills/TGA/SOMA — Ist `BESSENT_WINDOW` |
 | [WORK_RESEARCHER_LIQUIDITY_INDEX.md](./WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA |
 | [WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F |
 | [WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ |
 | [WORK_RESEARCHER_BRIEFING_REGIONAL.md](./WORK_RESEARCHER_BRIEFING_REGIONAL.md) | Briefing 3 Regionen |
 | [WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Serien-IDs + Prints |
+| [WORK_RECESSION_2008_DRIVERS_LLM.md](./WORK_RECESSION_2008_DRIVERS_LLM.md) | Hormuz (B) — `recession-drivers.ts` fehlt |
 | [WORK_PORTFOLIO_SOLL_IST.md](./WORK_PORTFOLIO_SOLL_IST.md) | Target vs Actual · Active Weight · Nenner A/B · Feng-Feng-Zahlen 2026-08-28 · Drop-in noch nicht verdrahtet |
 
-Code-Soll: [`server/exec-summary.ts`](./server/exec-summary.ts) — generisch, kein Ticker-Hardcode.
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 
 ---
@@ -31,7 +33,11 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 
 | Datei | Inhalt |
 |-------|--------|
-| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 01.09. |
+| [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) | Exec vor S1 live (#58) |
+| [docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md](./docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md) | FactPack Hook+UI live (#57) |
+| [WORK_RECESSION_RSI_MACD.md](./WORK_RECESSION_RSI_MACD.md) | RSI/MACD Dashboard live |
+| [WORK_RECESSION_MARKET_CHARTS.md](./WORK_RECESSION_MARKET_CHARTS.md) | VIX/VSTOXX/realized Pane (#60/#66) |
+| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 13.09. |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](./WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 Rang 7–9 |
 | [WORK_ANALYZE_DISK_CACHE.md](./WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch |
 | [WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | disk-cache |
@@ -41,7 +47,7 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [WORK_REVERSE_DCF_BRIDGE.md](./WORK_REVERSE_DCF_BRIDGE.md) | Fiscal Bridge |
 | [WORK_PORTFOLIO.md](./WORK_PORTFOLIO.md) | Portfolio |
 | [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) | Equity α/β/IR Underwater |
-| [WORK_PORTFOLIO_SOLL_IST.md](./WORK_PORTFOLIO_SOLL_IST.md) | Soll/Ist-Tracking Spec + Zahlen 11.09.2026 |
+| [WORK_PORTFOLIO_SOLL_IST.md](./WORK_PORTFOLIO_SOLL_IST.md) | Soll/Ist-Tracking Spec + Zahlen |
 | [WORK_RESEARCHER_PORTFOLIO.md](./WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 |
 | [WORK_RESEARCHER_PORTFOLIO_TEIL2.md](./WORK_RESEARCHER_PORTFOLIO_TEIL2.md) | Zahlen P2 |
 | [WORK_NEWS_SENTIMENT.md](./WORK_NEWS_SENTIMENT.md) | Sentiment |
