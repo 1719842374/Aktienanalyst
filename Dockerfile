@@ -3,7 +3,7 @@ FROM node:20-slim
 WORKDIR /app
 
 # Install build tools (node-gyp needs Python + gcc)
-# CACHE-BUST: 2026-07-25c
+# CACHE-BUST: 2026-09-13-ca
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
