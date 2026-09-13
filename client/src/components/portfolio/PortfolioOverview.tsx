@@ -74,6 +74,26 @@ export default function PortfolioOverview({
 
   const rawSeries = useMemo(() => computePortfolioPerformanceSeries(directionFiltered, historicalPricesByTicker), [directionFiltered, historicalPricesByTicker]);
   const series = useMemo(() => rebasePerformanceSeries(rawSeries, timeframeCutoffIso(timeframe)), [rawSeries, timeframe]);
+  const chartData = useMemo(() => {
+    const cutoff = timeframeCutoffIso(timeframe);
+    const benchSorted = (benchmarkHistoricalPrices ?? [])
+      .filter(pt => pt.date >= cutoff && Number.isFinite(pt.close) && pt.close > 0)
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const closeFrom = benchSorted[0]?.close;
+    const benchByDate = new Map<string, number>();
+    if (closeFrom != null && Number.isFinite(closeFrom) && closeFrom > 0) {
+      for (const pt of benchSorted) {
+        benchByDate.set(pt.date, (pt.close / closeFrom - 1) * 100);
+      }
+    }
+    return series.map(pt => ({
+      date: pt.date,
+      pct: pt.performancePct * 100,
+      combo: pt.value,
+      benchPct: benchByDate.get(pt.date),
+    }));
+  }, [series, timeframe, benchmarkHistoricalPrices]);
   const windowReturnPct = series.length ? series[series.length - 1].performancePct : null;
   const comboStart = series[0]?.value ?? null;
   const comboEnd = series.length ? series[series.length - 1].value : null;
@@ -238,7 +258,7 @@ export default function PortfolioOverview({
             <div className="h-56 flex items-center justify-center text-xs text-muted-foreground">Keine Kursdaten verfügbar — Analyse für offene Positionen laden</div>
           ) : (
             <ResponsiveContainer width="100%" height={224}>
-              <ComposedChart data={series.map(pt => ({ date: pt.date, pct: pt.performancePct * 100, combo: pt.value }))}>
+              <ComposedChart data={chartData}>
                 <defs>
                   <linearGradient id="portfolioPerfGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
@@ -252,6 +272,7 @@ export default function PortfolioOverview({
                 <AreaTooltip formatter={(v: number, name: string) => name === "Kombinationskurs" ? [v.toFixed(2), name] : [`${v.toFixed(2)}%`, name]} labelFormatter={(l) => l} />
                 <Legend wrapperStyle={{ fontSize: 10 }} />
                 <Area yAxisId="pct" type="monotone" dataKey="pct" name="Fenster-Rendite" stroke="#10b981" strokeWidth={2} fill="url(#portfolioPerfGradient)" />
+                <Line yAxisId="pct" type="monotone" dataKey="benchPct" name={benchmarkTicker || "SPY"} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
                 <Line yAxisId="combo" type="monotone" dataKey="combo" name="Kombinationskurs" stroke="#38bdf8" strokeWidth={1.5} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>

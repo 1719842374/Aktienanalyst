@@ -141,8 +141,8 @@ export default function PortfolioPage() {
       .filter(p => p.status === "open" && p.side === "long")
       .map(p => p.ticker.toUpperCase())
       .filter(Boolean);
-    const bench = (policy.benchmark || "SPY").trim().toUpperCase();
-    const tickers = Array.from(new Set([...openLongs, bench])).slice(0, 12);
+    const bench = (policy.benchmark || "SPY").trim().toUpperCase() || "SPY";
+    const tickers = Array.from(new Set([bench, ...openLongs])).slice(0, 12);
     if (tickers.length === 0) {
       setHistoricalPricesByTickerLong({});
       setOhlcvMetaByTicker({});
@@ -428,8 +428,8 @@ export default function PortfolioPage() {
                 capmWeights={capmWeights}
                 solveFailed={solveFailed}
                 sectorByTicker={sectorByTicker}
-                benchmarkTicker={policy.benchmark}
-                benchmarkHistoricalPrices={chartPricesByTicker[(policy.benchmark || "SPY").trim().toUpperCase()]}
+                benchmarkTicker={(policy.benchmark || "SPY").trim() || "SPY"}
+                benchmarkHistoricalPrices={chartPricesByTicker[((policy.benchmark || "SPY").trim() || "SPY").toUpperCase()]}
                 riskFreeRateAnnual={rfDecimal}
                 ohlcvMetaByTicker={ohlcvMetaByTicker}
               />
