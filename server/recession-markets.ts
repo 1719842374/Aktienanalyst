@@ -68,29 +68,50 @@ async function fetchFredVolSeries(seriesId: string, cosd: string): Promise<VolPo
 const STOXX_V2TX_URL =
   "https://www.stoxx.com/document/Indices/Current/HistoricalData/h_v2tx.txt";
 
-async function fetchStoxxOfficialV2tx(from: string, to: string): Promise<VolPoint[]> {
+async function fetchStoxxOfficialV2tx(
+  from: string,
+  to: string,
+): Promise<{ vol: VolPoint[]; err: string | null }> {
   try {
-    const resp = await fetch(STOXX_V2TX_URL, { signal: AbortSignal.timeout(20000) });
-    if (!resp.ok) return [];
+    const resp = await fetch(STOXX_V2TX_URL, {
+      signal: AbortSignal.timeout(45000),
+      headers: {
+        "User-Agent":
+          "Aktienanalyst/1.0 (+https://github.com/1719842374/Aktienanalyst)",
+        Accept: "text/plain,*/*",
+      },
+      redirect: "follow",
+    });
+    if (!resp.ok) return { vol: [], err: `http ${resp.status}` };
     const text = await resp.text();
-    if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) return [];
-    const out: VolPoint[] = [];
+    if (!text) return { vol: [], err: "empty body" };
+    if (/<html|<!DOCTYPE/i.test(text)) return { vol: [], err: "html/bot" };
+
+    const raw: VolPoint[] = [];
     for (const line of text.trim().split("\n").slice(1)) {
       const parts = line.split(";");
       if (parts.length < 3) continue;
-      const [dRaw, , vRaw] = parts;
-      const dp = dRaw.trim().split(".");
+      const dRaw = parts[0];
+      const vRaw = parts[parts.length - 1];
+      const dp = dRaw.trim().replace(/\r/g, "").split(".");
       if (dp.length !== 3) continue;
       const [dd, mm, yyyy] = dp;
+      if (yyyy.length !== 4) continue;
       const iso = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
-      const value = parseFloat(String(vRaw).trim().replace(",", "."));
+      const value = parseFloat(String(vRaw).trim().replace(/\r/g, "").replace(",", "."));
       if (!Number.isFinite(value)) continue;
-      if (iso < from || iso > to) continue;
-      out.push({ date: iso, value });
+      raw.push({ date: iso, value });
     }
-    return out.sort((a, b) => a.date.localeCompare(b.date));
-  } catch {
-    return [];
+    raw.sort((x, y) => x.date.localeCompare(y.date));
+    if (raw.length <= 10) return { vol: [], err: `parse ${raw.length} rows` };
+
+    // If from/to filter too thin, keep raw — sliceVolToWindow trims later
+    const filtered = raw.filter(p => p.date >= from && p.date <= to);
+    if (filtered.length > 10) return { vol: filtered, err: null };
+    return { vol: raw, err: null };
+  } catch (e: any) {
+    const msg = String(e?.name || e?.message || e).slice(0, 80);
+    return { vol: [], err: msg || "network" };
   }
 }
 
@@ -98,24 +119,28 @@ async function fetchStoxxOfficialV2tx(from: string, to: string): Promise<VolPoin
 async function fetchVstoxxVol(
   from: string,
   to: string,
-): Promise<{ vol: VolPoint[]; source: "fmp" | "stoxx" | null }> {
+): Promise<{ vol: VolPoint[]; source: "fmp" | "stoxx" | null; stoxxErr: string | null }> {
   for (const sym of ["^V2TX", "V2TX"]) {
     try {
-      const raw = await fmpHistoricalPrices(sym, from, to);
-      const rows = (Array.isArray(raw) ? raw : [])
+      const rawPrices = await fmpHistoricalPrices(sym, from, to);
+      const rows = (Array.isArray(rawPrices) ? rawPrices : [])
         .map(parseClose)
         .filter((x): x is NonNullable<typeof x> => x != null)
-        .sort((a, b) => a.date.localeCompare(b.date));
+        .sort((a2, b2) => a2.date.localeCompare(b2.date));
       if (rows.length > 10) {
-        return { vol: rows.map(r => ({ date: r.date, value: r.close })), source: "fmp" };
+        return {
+          vol: rows.map(r => ({ date: r.date, value: r.close })),
+          source: "fmp",
+          stoxxErr: null,
+        };
       }
     } catch {
       /* try next */
     }
   }
-  const stoxx = await fetchStoxxOfficialV2tx(from, to);
-  if (stoxx.length > 10) return { vol: stoxx, source: "stoxx" };
-  return { vol: [], source: null };
+  const { vol, err } = await fetchStoxxOfficialV2tx(from, to);
+  if (vol.length > 10) return { vol, source: "stoxx", stoxxErr: null };
+  return { vol: [], source: null, stoxxErr: err };
 }
 
 /** 20-session realized vol (annualized %): sqrt(252) * stdev(ln returns). */
@@ -171,9 +196,10 @@ async function fetchRegionVol(
     return { vol, volNote: vol.length ? null : "FRED VIXCLS leer" };
   }
   // EU implied: VSTOXX — FMP first, STOXX official fallback
-  const { vol, source } = await fetchVstoxxVol(from, to);
+  const { vol, source, stoxxErr } = await fetchVstoxxVol(from, to);
   if (!vol.length) {
-    return { vol, volNote: "VSTOXX nicht lieferbar (FMP + STOXX h_v2tx.txt leer)" };
+    const why = stoxxErr ? `STOXX ${stoxxErr}` : "STOXX leer";
+    return { vol, volNote: `VSTOXX nicht lieferbar (FMP leer, ${why})` };
   }
   return {
     vol,
@@ -276,8 +302,8 @@ export function registerRecessionMarketRoutes(app: Express) {
     const region = (regionRaw === "EU" || regionRaw === "AS" ? regionRaw : "US") as RegionId;
     const windowRaw = String(req.query.window || "5Y").toUpperCase();
     const window = WINDOW_DAYS[windowRaw] ? windowRaw : "5Y";
-    // v5: VSTOXX FMP + STOXX h_v2tx.txt fallback
-    const key = `v5:${region}:${window}`;
+    // v7: STOXX UA + raw-if-window-thin + no-cache empty EU
+    const key = `v7:${region}:${window}`;
 
     if (marketCache && marketCache.key === key && Date.now() - marketCache.ts < TTL_MS) {
       return res.json(marketCache.data);
@@ -287,7 +313,12 @@ export function registerRecessionMarketRoutes(app: Express) {
     }
     try {
       const data = await buildRegionMarket(region, window);
-      marketCache = { key, ts: Date.now(), data };
+      // Empty EU vol often transient (STOXX egress) — do not pin for 6h
+      const euEmpty =
+        region === "EU" && Array.isArray(data?.vol) && data.vol.length === 0;
+      if (!euEmpty) {
+        marketCache = { key, ts: Date.now(), data };
+      }
       res.json(data);
     } catch (err: any) {
       console.error("[RECESSION-MARKETS]", err?.message);
