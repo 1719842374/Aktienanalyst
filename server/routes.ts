@@ -75,6 +75,7 @@ export {
 
 // ─── Route modules ────────────────────────────────────────────────────────────
 import { registerAnalyzeRoute } from "./analyze-route";
+import { registerOhlcvRoute } from "./ohlcv-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { registerBTCRoutes } from "./btc-routes";
 import { fetchMinerData } from "./btc-miner";
@@ -120,6 +121,7 @@ export function deriveConsensusGrowth(estimates: any[]): number | null {
 export async function registerRoutes(httpServer: Server, app: Express): Promise<void> {
   // 1. /api/analyze + /api/fmp-budget
   registerAnalyzeRoute(httpServer, app);
+  registerOhlcvRoute(app);
 
   // 2. /api/analyze-gold
   registerGoldRoutes(httpServer, app);
