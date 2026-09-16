@@ -1,72 +1,62 @@
 # WORK_THESIS_LAB.md
 
-> **Stand: 16.09.2026**  
-> Status: **MVP implementiert (Fixtures + API + eigene Route)**  
-> Parent: Chat-These „KI/Zyklus eingepreist“ + Informationskurve  
-> Abgrenzung: **nicht** Researcher-Tab, **nicht** Value-Chain-Index, **nicht** `/api/analyze`
+> **Stand: 16.09.2026 22:56 CEST**  
+> Status: MVP + Value-Chain-Lookup-Spec  
+> Lookup-Details: `WORK_VALUECHAIN_LAB_LOOKUP.md`
 
----
+## 0) Entscheidung
 
-## 0) Entscheidung (final)
-
-| Frage | Entscheidung |
-|---|---|
-| Lab in Researcher-Tabs? | **Nein.** Eigene Hash-Route `/#/lab` |
-| Value-Chain-Sektions-Index als Produkt? | **Nein** als handelbarer Index. Value Chain bleibt Lookup-Ziel |
-| Sektorrotations-Rat? | **Ja, parallel** (`WORK_SEKTORROTATIONS_RAT.md`) als Makro-Phase |
-| Wer färbt die Ampel? | **Deterministische Formel**, LLM nur Scout-Text |
-| Analyze auto-triggern? | **Nein** (FMP 750/Tag) |
-
-Schichten:
-
-```
-Lab (These + Ampel + Einpreisung)
-  → Value Chain (Stufe / industryKey)
-  → Ticker-Suche / /#/?ticker= (18 Sektionen)
-  → Rotation-Rat (Phase, separat)
-```
-
----
+Lab = eigene Route `/#/lab`. Value Chain = Lookup-Ziel, kein Index. Rotation-Rat = Phase. Ampel = Formel.
 
 ## 1) Dateien
 
 | Pfad | Rolle |
 |---|---|
-| `WORK_THESIS_LAB.md` | diese Spec |
-| `server/thesisLab.ts` | Hash, Einpreisung, Ampel, GB, Fixtures |
-| `server/thesis-lab-routes.ts` | `/api/lab/*` |
-| `server/routes-register.ts` | `registerThesisLabRoutes(app)` |
-| `client/src/lib/thesisLabTypes.ts` | Shared Types |
-| `client/src/components/thesislab/InfoCurvePlot.tsx` | SVG-Plot Einpreisung vs. Aufmerksamkeit |
-| `client/src/pages/ThesisLabDashboard.tsx` | Dashboard |
+| `WORK_THESIS_LAB.md` | Lab-Spec |
+| `WORK_VALUECHAIN_LAB_LOOKUP.md` | Lookup-Spec, Mapping, Acceptance |
+| `server/thesisLab.ts` | Engine + Fixtures |
+| `server/thesis-lab-valuechain-map.ts` | Stage → industryKey |
+| `server/thesis-lab-routes.ts` | `/api/lab/*` inkl. lookup |
+| `server/routes-register.ts` | registerThesisLabRoutes |
+| `server/valuechain-routes.ts` | unverändert Screener |
+| `server/valuechain-catalog.ts` | unverändert Keys |
+| `client/src/lib/thesisLabTypes.ts` | Types |
+| `client/src/components/thesislab/InfoCurvePlot.tsx` | Plot |
+| `client/src/pages/ThesisLabDashboard.tsx` | `/#/lab` |
+| `client/src/pages/ValueChainDashboard.tsx` | Banner + industry-Query |
+| `client/src/components/valuechain/StageColumn.tsx` | Lab-Badge |
 | `client/src/App.tsx` | Route `/lab` |
-| `client/src/pages/Dashboard.tsx` | Nav-Button **Lab** |
+| `client/src/pages/Dashboard.tsx` | Nav Lab |
 
----
+## 2) API
 
-## 2) API-Contract
+- GET `/api/lab/theses?ampel=&stage=&q=`
+- GET `/api/lab/thesis/:id`
+- GET `/api/lab/lookup?ticker=` `|` `stage=` `|` `industry=`
+- GET `/api/lab/valuechain-map`
+- POST `/api/lab/thesis`
 
-`GET /api/lab/theses?ampel=&stage=&q=`
-
-```json
-{ "asOf": "2026-09-16", "count": 6, "items": [ "ThesisLabResult" ] }
-```
-
-`GET /api/lab/thesis/:id`  
-`GET /api/lab/lookup?ticker=CRM`  
-`POST /api/lab/thesis`  Body: `{ "thesis": "...", "overrides": { } }`
-
-Cache: Fixtures statisch. Free-Text-Eval ohne LLM im MVP.
+Kein `/api/analyze`, kein FMP im Lookup.
 
 ## 3) Ampel
 
-Grau wenn keine Gegen-These oder dataQuality=low (kein g* und kein PE/10J).  
-Rot wenn pricedIn>70 oder Coverage>80 oder Layer=1.  
-Grün wenn pricedIn<40 und Coverage<40 und Layer>=2.  
-Sonst Gelb. LLM setzt Grün nicht allein.
+Grau: keine Gegen-These oder dataQuality=low. Rot: pricedIn>70 oder Coverage>80 oder Layer=1. Grün: pricedIn<40 und Coverage<40 und Layer>=2. Sonst Gelb.
 
-Netto = Brutto * (1 - pricedIn/100); GB = PoS * Netto.
+Netto = Brutto *(1 - pricedIn/100). GB = PoS * Netto.
 
 ## 4) Fixtures
 
-HBM Peak-Marge → Rot; SaaS stirbt → Gelb; VAT Lock-in → Gelb; Strain-Wave → Gelb; DE Farm-OS → Rot; Agenten-Haftpflicht → Grau.
+HBM Rot 87%. SaaS Gelb 45%. VAT Gelb 59%. Strain-Wave Gelb 61%. DE Farm-OS Rot 83%. Haftpflicht Grau.
+
+## 5) Value-Chain-Lookup
+
+| Stage | industryKey |
+|---|---|
+| memory, process_lockin | semiconductors |
+| agent_runtime | software-infrastructure |
+| physical_motion | auto-manufacturers + aerospace-defense |
+| farm_os | food-agri |
+| agent_liability | payments-market-infra |
+
+Deep-Links: `/#/valuechain?industry=` und `/#/lab?ticker=`.
+Vollständige Tabelle, GB-Zahlen, Acceptance: `WORK_VALUECHAIN_LAB_LOOKUP.md`.
