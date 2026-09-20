@@ -1,8 +1,8 @@
 /**
- * PortfolioOverview — KPI-Zeile + Pie + Performance (Fenster-Rendite + Kombinationskurs).
+ * PortfolioOverview — KPI-Zeile + Pie + Performance (4 Serien + BTC-style Toggles).
  */
 import { useMemo, useState } from "react";
-import { PieChart, Pie, Cell, Tooltip as PieTooltip, ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as AreaTooltip, Legend } from "recharts";
+import { PieChart, Pie, Cell, Tooltip as PieTooltip, ResponsiveContainer } from "recharts";
 import { Target, Award, PiggyBank, AlertTriangle, TrendingUp } from "lucide-react";
 import {
   computePortfolioKPIs, computePortfolioWeights, computePortfolioPerformanceSeries,
@@ -13,6 +13,7 @@ import { computeMarketWeights } from "@/lib/portfolio/engine";
 import { computeCapmExpectedReturn } from "@/lib/portfolio/capmExpectedReturn";
 import EfficientFrontierPanel from "./EfficientFrontierPanel";
 import PortfolioBacktestPanel from "./PortfolioBacktestPanel";
+import PortfolioPerformanceChart from "./PortfolioPerformanceChart";
 
 const PIE_COLORS = [
   "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4",
@@ -74,31 +75,6 @@ export default function PortfolioOverview({
 
   const rawSeries = useMemo(() => computePortfolioPerformanceSeries(directionFiltered, historicalPricesByTicker), [directionFiltered, historicalPricesByTicker]);
   const series = useMemo(() => rebasePerformanceSeries(rawSeries, timeframeCutoffIso(timeframe)), [rawSeries, timeframe]);
-  const chartData = useMemo(() => {
-    const cutoff = timeframeCutoffIso(timeframe);
-    const benchSorted = (benchmarkHistoricalPrices ?? [])
-      .filter(pt => pt.date >= cutoff && Number.isFinite(pt.close) && pt.close > 0)
-      .slice()
-      .sort((a, b) => a.date.localeCompare(b.date));
-    const closeFrom = benchSorted[0]?.close;
-    const benchByDate = new Map<string, number>();
-    if (closeFrom != null && Number.isFinite(closeFrom) && closeFrom > 0) {
-      for (const pt of benchSorted) {
-        benchByDate.set(pt.date, (pt.close / closeFrom - 1) * 100);
-      }
-    }
-    return series.map(pt => ({
-      date: pt.date,
-      pct: pt.performancePct * 100,
-      combo: pt.value,
-      benchPct: benchByDate.get(pt.date),
-    }));
-  }, [series, timeframe, benchmarkHistoricalPrices]);
-  const windowReturnPct = series.length ? series[series.length - 1].performancePct : null;
-  const comboStart = series[0]?.value ?? null;
-  const comboEnd = series.length ? series[series.length - 1].value : null;
-  const windowFrom = series[0]?.date ?? null;
-  const windowTo = series.length ? series[series.length - 1].date : null;
   const sollBars = timeframe === "2Y" ? 480 : timeframe === "1Y" ? 240 : 120;
   const histBadge = useMemo(() => {
     const openLong = directionFiltered.filter(p => p.status === "open" && p.side === "long");
@@ -247,37 +223,12 @@ export default function PortfolioOverview({
           )}
         </div>
 
-        <div className="bg-card rounded-xl border border-border p-4">
-          <h3 className="text-sm font-semibold">Performance</h3>
-          <p className="text-[10px] text-muted-foreground mb-2">
-            {windowFrom && windowTo
-              ? `${windowFrom} → ${windowTo} · Fenster ${windowReturnPct == null ? "—" : fmtPct(windowReturnPct)}${comboStart != null && comboEnd != null ? ` · Kombi-Kurs ${comboStart.toFixed(2)} → ${comboEnd.toFixed(2)}` : ""}`
-              : "Fenster-Rendite ab Startpunkt (0%) + Kombinationskurs"}
-          </p>
-          {series.length === 0 ? (
-            <div className="h-56 flex items-center justify-center text-xs text-muted-foreground">Keine Kursdaten verfügbar — Analyse für offene Positionen laden</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={224}>
-              <ComposedChart data={chartData}>
-                <defs>
-                  <linearGradient id="portfolioPerfGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="#10b981" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                <XAxis dataKey="date" tick={{ fontSize: 9 }} minTickGap={30} />
-                <YAxis yAxisId="pct" tick={{ fontSize: 9 }} tickFormatter={(v) => `${v}%`} width={40} />
-                <YAxis yAxisId="combo" orientation="right" tick={{ fontSize: 9 }} tickFormatter={(v) => Number(v).toFixed(0)} width={44} />
-                <AreaTooltip formatter={(v: number, name: string) => name === "Kombinationskurs" ? [v.toFixed(2), name] : [`${v.toFixed(2)}%`, name]} labelFormatter={(l) => l} />
-                <Legend wrapperStyle={{ fontSize: 10 }} />
-                <Area yAxisId="pct" type="monotone" dataKey="pct" name="Fenster-Rendite" stroke="#10b981" strokeWidth={2} fill="url(#portfolioPerfGradient)" />
-                <Line yAxisId="pct" type="monotone" dataKey="benchPct" name={benchmarkTicker || "SPY"} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
-                <Line yAxisId="combo" type="monotone" dataKey="combo" name="Kombinationskurs" stroke="#38bdf8" strokeWidth={1.5} dot={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+        <PortfolioPerformanceChart
+          series={series}
+          timeframe={timeframe}
+          benchmarkTicker={benchmarkTicker}
+          benchmarkHistoricalPrices={benchmarkHistoricalPrices}
+        />
       </div>
 
       <EfficientFrontierPanel tickers={frontierTickers} historicalPricesByTicker={historicalPricesByTicker} currentWeights={frontierCurrentWeights} />
