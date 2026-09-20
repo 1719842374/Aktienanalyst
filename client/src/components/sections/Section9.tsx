@@ -43,7 +43,7 @@ export function Section9({ data }: Props) {
   const gaugePos = Math.max(0, Math.min(100, ((rsl - gaugeMin) / (gaugeMax - gaugeMin)) * 100));
 
   return (
-    <SectionCard number={9} title="RSL-MOMENTUM (Levy RSL)">
+    <SectionCard number={11} title="RSL-MOMENTUM (Levy RSL)">
       {/* RSL < 105 Warning */}
       {rslWeak && malusActive && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
