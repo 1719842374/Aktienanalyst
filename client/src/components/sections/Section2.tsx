@@ -1,1 +1,1 @@
-@/workspace/agent-tools/push_Section2_only.json
+PLACEHOLDER_WILL_REPLACE_WITH_FULL
