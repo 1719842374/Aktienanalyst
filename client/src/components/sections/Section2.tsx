@@ -1,1 +1,1 @@
-PLACEHOLDER_WILL_REPLACE_WITH_FULL
+/workspace/agent-tools/Section2_FULL_RESTORE.tsx
