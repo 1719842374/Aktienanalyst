@@ -48,7 +48,7 @@ export function Section1({ data, onRefresh }: Props) {
   const isStaleCache = !!data._cached && !isFreshCache;
 
   return (
-    <SectionCard number={1} title="DATENAKTUALITÄT & PLAUSIBILITÄT">
+    <SectionCard number={2} title="DATENAKTUALITÄT & PLAUSIBILITÄT">
       {isStaleCache && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
