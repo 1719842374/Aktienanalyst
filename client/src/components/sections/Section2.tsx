@@ -1,1 +1,1 @@
-/workspace/agent-tools/Section2_FULL_RESTORE.tsx
+${include:/workspace/agent-tools/Section2_FULL_RESTORE.tsx}
