@@ -1,1 +1,1 @@
-__LOAD_FROM__:/tmp/mcp_push/TechnicalChart.tsx
+file:///workspace/TECH_CONTENT_ONLY.tsx
