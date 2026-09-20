@@ -145,7 +145,7 @@ export function Section5({ data }: Props) {
   ];
 
   return (
-    <SectionCard number={5} title="DCF-MODELL (FCFF)">
+    <SectionCard number={7} title="DCF-MODELL (FCFF)">
       {/* Inverted DCF Warning */}
       {invertedBelowPrice && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">
