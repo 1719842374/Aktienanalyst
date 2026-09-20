@@ -35,31 +35,33 @@ import {
 import { useLocation } from "wouter";
 
 const SECTIONS = [
-  { id: 1, label: "Datenaktualität", icon: BarChart3 },
-  { id: 2, label: "Investmentthese", icon: TrendingUp },
-  { id: 3, label: "Zyklusanalyse", icon: Activity },
-  { id: 4, label: "Bewertung", icon: Calculator },
-  { id: 5, label: "DCF-Modell", icon: LineChart },
-  { id: 6, label: "CRV", icon: Target },
-  { id: 7, label: "Rel. Bewertung", icon: Scale },
-  { id: 8, label: "Risikoinversion", icon: AlertTriangle },
-  { id: 9, label: "RSL-Momentum", icon: Activity },
-  { id: 10, label: "Tech. Analyse", icon: LineChart },
-  { id: 11, label: "Moat / Porter", icon: Landmark },
-  { id: 12, label: "PESTEL", icon: Globe },
-  { id: 13, label: "Makro-Korr.", icon: BarChart3 },
-  { id: 14, label: "Reverse DCF", icon: RotateCcw },
-  { id: 15, label: "Katalysatoren", icon: Zap },
-  { id: 16, label: "Monte Carlo", icon: Dice6 },
-  { id: 17, label: "Zusammenfassung", icon: Table2 },
-  { id: 18, label: "Management-Score", icon: UserCheck },
+  { id: 1, label: "Executive Summary", icon: Sparkles },
+  { id: 2, label: "Datenaktualität", icon: BarChart3 },
+  { id: 3, label: "Investmentthese", icon: TrendingUp },
+  { id: 4, label: "Financial Statements", icon: Shield },
+  { id: 5, label: "Zyklusanalyse", icon: Activity },
+  { id: 6, label: "Bewertung", icon: Calculator },
+  { id: 7, label: "DCF-Modell", icon: LineChart },
+  { id: 8, label: "CRV", icon: Target },
+  { id: 9, label: "Rel. Bewertung", icon: Scale },
+  { id: 10, label: "Risikoinversion", icon: AlertTriangle },
+  { id: 11, label: "RSL-Momentum", icon: Activity },
+  { id: 12, label: "Tech. Analyse", icon: LineChart },
+  { id: 13, label: "Moat / Porter", icon: Landmark },
+  { id: 14, label: "PESTEL", icon: Globe },
+  { id: 15, label: "Makro-Korr.", icon: BarChart3 },
+  { id: 16, label: "Reverse DCF", icon: RotateCcw },
+  { id: 17, label: "Katalysatoren", icon: Zap },
+  { id: 18, label: "Monte Carlo", icon: Dice6 },
+  { id: 19, label: "Zusammenfassung", icon: Table2 },
+  { id: 20, label: "Management-Score", icon: UserCheck },
 ];
 
 export default function Dashboard() {
   const { theme, toggleTheme } = useTheme();
   const [data, setData] = useState<StockAnalysis | null>(null);
-  // Canonical Monte Carlo run — computed once and shared by Section16 (display)
-  // and Section17 (summary) so both show identical figures instead of two
+  // Canonical Monte Carlo run — computed once and shared by Section18 (display)
+  // and Section19 (summary) so both show identical figures instead of two
   // independent random runs with divergent probabilities.
   const sharedMonteCarlo = useMemo<GBMMonteCarloResult | null>(() => {
     if (!data || !data.historicalPrices?.length) return null;
@@ -541,28 +543,28 @@ export default function Dashboard() {
                   single component crash (e.g. .slice on undefined) can no longer
                   unmount the entire dashboard and leave the user with a black
                   screen. Without this, one bad field → whole app unmounts. */}
-              <ExecSummaryCard data={data} />
-              <div ref={setSectionRef(1)}><SectionErrorBoundary sectionId={1} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Investmentthese"><Section2 data={data} /></SectionErrorBoundary></div>
-              <SectionErrorBoundary sectionId="FS" sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary>
-              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Zyklusanalyse"><Section3 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Bewertung"><Section4 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="DCF-Modell"><Section5 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="CRV"><Section6 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="Rel. Bewertung"><Section7 data={data} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="Risikoinversion"><Section8 data={data} useLLM={useLLM} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="Moat / Porter"><MoatPorterSection data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="PESTEL"><PestelSection data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(13)}><SectionErrorBoundary sectionId={13} sectionLabel="Makro-Korr."><MacroCorrelationsSection data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="Reverse DCF"><ReverseDCFSection data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(15)}><SectionErrorBoundary sectionId={15} sectionLabel="Katalysatoren"><CatalystsSection
+              <div ref={setSectionRef(1)}><ExecSummaryCard data={data} /></div>
+              <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese"><Section2 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="Zyklusanalyse"><Section3 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung"><Section4 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="DCF-Modell"><Section5 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="CRV"><Section6 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion"><Section8 data={data} useLLM={useLLM} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(13)}><SectionErrorBoundary sectionId={13} sectionLabel="Moat / Porter"><MoatPorterSection data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="PESTEL"><PestelSection data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(15)}><SectionErrorBoundary sectionId={15} sectionLabel="Makro-Korr."><MacroCorrelationsSection data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(16)}><SectionErrorBoundary sectionId={16} sectionLabel="Reverse DCF"><ReverseDCFSection data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(17)}><SectionErrorBoundary sectionId={17} sectionLabel="Katalysatoren"><CatalystsSection
                 data={data}
                 onCatalystsEnriched={(enriched, growthThesis, growthThesisGeneratedAt, execSummary) => {
                   // Auftrag 08.08.2026 ("These direkt nach KI-Enrich aktualisieren"):
                   // additive Uebernahme der sofort neu generierten These aus
-                  // Section 15 -- nur wenn vorhanden (undefined bei aelteren
+                  // Section 17 -- nur wenn vorhanden (undefined bei aelteren
                   // Response-Formen oder wenn der Refresh serverseitig
                   // fehlschlug), sonst bleibt die vorherige These stehen.
                   // Bugfix (06.09.2026, Nutzer-Feedback): execSummary (S0-
@@ -577,9 +579,9 @@ export default function Dashboard() {
                   } : prev);
                 }}
               /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(16)}><SectionErrorBoundary sectionId={16} sectionLabel="Monte Carlo"><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(17)}><SectionErrorBoundary sectionId={17} sectionLabel="Zusammenfassung"><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(18)}><SectionErrorBoundary sectionId={18} sectionLabel="Management-Score"><ManagementScoreSection data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(18)}><SectionErrorBoundary sectionId={18} sectionLabel="Monte Carlo"><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(19)}><SectionErrorBoundary sectionId={19} sectionLabel="Zusammenfassung"><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Management-Score"><ManagementScoreSection data={data} /></SectionErrorBoundary></div>
               <div className="pb-8" />
             </div>
           ) : (
