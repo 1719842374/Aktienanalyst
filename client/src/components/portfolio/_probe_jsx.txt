@@ -1,3 +1,0 @@
-line1
-<div className="x">hi</div>
-line3
