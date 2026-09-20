@@ -1,1 +1,1 @@
-PLACEHOLDER_WILL_REPLACE
+__LOAD_FROM__:/tmp/mcp_push/TechnicalChart.tsx
