@@ -36,7 +36,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
   const tam = data.tamAnalysis;
 
   return (
-    <SectionCard number={7} title="RELATIVE BEWERTUNG">
+    <SectionCard number={9} title="RELATIVE BEWERTUNG">
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
