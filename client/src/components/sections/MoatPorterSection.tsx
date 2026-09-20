@@ -26,7 +26,7 @@ export function MoatPorterSection({ data }: Props) {
 
   if (!moat) {
     return (
-      <SectionCard number={11} title="MOAT & PORTER'S FIVE FORCES">
+      <SectionCard number={13} title="MOAT & PORTER'S FIVE FORCES">
         <div className="text-xs text-muted-foreground">Keine Moat-Daten verfügbar.</div>
       </SectionCard>
     );
@@ -35,7 +35,7 @@ export function MoatPorterSection({ data }: Props) {
   const avgScore = moat.porterForces.length > 0 ? moat.porterForces.reduce((s, f) => s + f.score, 0) / moat.porterForces.length : 0;
 
   return (
-    <SectionCard number={11} title="MOAT & PORTER'S FIVE FORCES">
+    <SectionCard number={13} title="MOAT & PORTER'S FIVE FORCES">
       <PolicyContextPanel data={data} testIdSuffix="moat" />
 
       {/* Moat Overview */}
