@@ -117,7 +117,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   const mcResult = (sharedMonteCarlo ?? localMC)!;
 
   return (
-    <SectionCard number={17} title="ZUSAMMENFASSUNGSTABELLE">
+    <SectionCard number={19} title="ZUSAMMENFASSUNGSTABELLE">
       {/* DCF Upside/Downside Visual */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">DCF Szenarien — Upside / Downside (FCFF)</h3>
@@ -248,7 +248,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             <tr className={crvOptimistic >= 2.5 ? "bg-emerald-500/5" : crvOptimistic >= 2.0 ? "bg-amber-500/5" : "bg-red-500/5"}>
               <td className="py-2 px-2 font-semibold">CRV (Optimistisch)</td>
               <td className={`py-2 px-2 text-right font-mono tabular-nums font-bold ${getCRVColor(crvOptimistic)}`}>{formatRatio(crvOptimistic)}</td>
-              <td className="py-2 px-2 text-muted-foreground">{crvOptimistic >= 2.5 ? "Attractive" : crvOptimistic >= 2.0 ? "Acceptable" : "Unfavorable"}</td>
+              <td className="py-2 px-2 text-muted-foreground">{crvOptimistic >= 2.0 ? "Attractive" : crvOptimistic >= 2.0 ? "Acceptable" : "Unfavorable"}</td>
             </tr>
             <tr className={data.currentPrice <= dcfBeiCRV3 ? "bg-emerald-500/5" : "bg-red-500/5"}>
               <td className="py-2 px-2 font-semibold">DCF bei CRV 3:1</td>

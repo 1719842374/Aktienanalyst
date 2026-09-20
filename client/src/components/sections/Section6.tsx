@@ -110,7 +110,7 @@ export function Section6({ data }: Props) {
   }), [conservativeDCF, data, baseParams, m1, sectorDD]);
 
   return (
-    <SectionCard number={6} title="RISIKOADJUSTIERTES CRV">
+    <SectionCard number={8} title="RISIKOADJUSTIERTES CRV">
       {/* Worst Case Methods */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Worst Case Methods</h3>

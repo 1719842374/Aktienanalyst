@@ -93,7 +93,7 @@ export function TechnicalChart({ data }: Props) {
 
   if (!ti || !ohlcv || ohlcv.length === 0) {
     return (
-      <SectionCard id={10} title="Technische Analyse" subtitle="Chart & Signale">
+      <SectionCard number={12} title="Technische Analyse" subtitle="Chart & Signale">
         <div className="text-center text-muted-foreground text-xs py-8">Keine OHLCV-Daten verfügbar</div>
       </SectionCard>
     );
@@ -240,7 +240,7 @@ export function TechnicalChart({ data }: Props) {
   // ── Y-axis domain for price chart ───────────────────────────────────────────
   if (chartData.length === 0) {
     return (
-      <SectionCard id={10} title="Technische Analyse" subtitle="Chart & Signale">
+      <SectionCard number={12} title="Technische Analyse" subtitle="Chart & Signale">
         <div className="text-center text-muted-foreground text-xs py-8">Keine Daten im gewählten Zeitraum</div>
       </SectionCard>
     );
@@ -270,7 +270,7 @@ export function TechnicalChart({ data }: Props) {
     new Date(date + "T00:00:00").toLocaleDateString("de-DE", { day:"2-digit", month:"short", year:"numeric" });
 
   return (
-    <SectionCard id={10} title="Technische Analyse" subtitle="Interactive Chart – MA / MACD / RSI / BB / Volume">
+    <SectionCard number={12} title="Technische Analyse" subtitle="Interactive Chart – MA / MACD / RSI / BB / Volume">
 
       {/* ── Ampel-Score (0-4) ── */}
       <div className={`rounded-lg p-3 mb-3 border ${scoreBg}`}>

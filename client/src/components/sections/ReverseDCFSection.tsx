@@ -115,7 +115,7 @@ export function ReverseDCFSection({ data }: Props) {
   }, [data.catalysts, data.fcfTTM, data.fcfHaircut, data.sharesOutstanding, sp, dcfWacc, netDebt]);
 
   return (
-    <SectionCard number={14} title="REVERSE DCF">
+    <SectionCard number={16} title="REVERSE DCF">
       {result.rating === "unrealistic" && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">
           <span className="text-red-500 text-lg">⚠</span>

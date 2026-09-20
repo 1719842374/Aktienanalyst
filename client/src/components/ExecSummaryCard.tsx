@@ -62,7 +62,7 @@ export function ExecSummaryCard({ data }: {
     : (typeof s.thesisLine === "string" && s.thesisLine.trim().length >= 80 ? s.thesisLine.trim() : "");
 
   return (
-    <SectionCard number={0} title="Executive Summary" defaultOpen>
+    <SectionCard number={1} title="Executive Summary" defaultOpen>
       <div className="space-y-3 text-sm" data-testid="exec-summary-card">
         <div className={`rounded-md border px-3 py-2 flex items-center justify-between gap-2 ${fazit.ratingBg}`}>
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Ampel (S17)</span>

@@ -214,7 +214,7 @@ export function Section8({ data, useLLM = false }: Props) {
   }
 
   return (
-    <SectionCard number={8} title="INVERSION – RISIKOEINPREISUNG">
+    <SectionCard number={10} title="INVERSION – RISIKOEINPREISUNG">
 
       {/* Warnung — Risiko-adjustierter Zielkurs vs. Kurs */}
       {belowReference && (

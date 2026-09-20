@@ -49,14 +49,14 @@ export function PestelSection({ data }: Props) {
 
   if (!pestel) {
     return (
-      <SectionCard number={12} title="PESTEL-ANALYSE & MAKRO-EXPOSURE">
+      <SectionCard number={14} title="PESTEL-ANALYSE & MAKRO-EXPOSURE">
         <div className="text-xs text-muted-foreground">Keine PESTEL-Daten verfügbar.</div>
       </SectionCard>
     );
   }
 
   return (
-    <SectionCard number={12} title="PESTEL-ANALYSE & MAKRO-EXPOSURE">
+    <SectionCard number={14} title="PESTEL-ANALYSE & MAKRO-EXPOSURE">
       <PolicyContextPanel data={data} testIdSuffix="pestel" />
 
       {/* Overview KPIs */}

@@ -257,7 +257,7 @@ export function ManagementScoreSection({ data }: Props) {
   }
 
   return (
-    <SectionCard number={18} title="MANAGEMENT-EXECUTION-SCORE">
+    <SectionCard number={20} title="MANAGEMENT-EXECUTION-SCORE">
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <p className="text-xs text-muted-foreground max-w-2xl">

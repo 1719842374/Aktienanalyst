@@ -116,7 +116,7 @@ export function Section4({ data }: Props) {
   }, [data.peRatio, data.epsGrowth5Y, data.pegRatio, data.lynchClass, data.lynchPEGBasis]);
 
   return (
-    <SectionCard number={4} title="BEWERTUNGSKENNZAHLEN">
+    <SectionCard number={6} title="BEWERTUNGSKENNZAHLEN">
       {/* WACC Table */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">WACC Scenarios (Damodaran)</h3>

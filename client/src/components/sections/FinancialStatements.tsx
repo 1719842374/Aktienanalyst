@@ -30,7 +30,7 @@ export function FinancialStatements({ data }: Props) {
     health === 'Weak' ? 'bg-orange-500/10 border-orange-500/20' : 'bg-red-500/10 border-red-500/20';
 
   return (
-    <SectionCard number="FS" title="FINANCIAL STATEMENTS" subtitle="Income • Balance Sheet • Cash Flow">
+    <SectionCard number={4} title="FINANCIAL STATEMENTS" subtitle="Income • Balance Sheet • Cash Flow">
       {/* Health Badge */}
       <div className={`rounded-lg p-3 border ${healthBg} flex items-start gap-3`}>
         <Shield className={`w-5 h-5 ${healthColor} flex-shrink-0 mt-0.5`} />

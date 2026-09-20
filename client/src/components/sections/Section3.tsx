@@ -27,7 +27,7 @@ export function Section3({ data }: Props) {
   ];
 
   return (
-    <SectionCard number={3} title="ZYKLUS- & STRUKTURANALYSE">
+    <SectionCard number={5} title="ZYKLUS- & STRUKTURANALYSE">
       {/* Cycle Classification */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Cycle Classification</h3>

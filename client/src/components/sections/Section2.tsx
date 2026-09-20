@@ -72,7 +72,7 @@ export function Section2({ data }: Props) {
   );
 
   return (
-    <SectionCard number={2} title="INVESTMENTTHESE & KATALYSATOREN">
+    <SectionCard number={3} title="INVESTMENTTHESE & KATALYSATOREN">
       {/* Part A: Company thesis */}
       <div className="space-y-3">
         <div>

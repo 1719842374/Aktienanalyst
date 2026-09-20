@@ -139,7 +139,7 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
   const horizonLabel = inputs.tradingDays === 252 ? "1 Jahr" : inputs.tradingDays === 126 ? "6 Monate" : `${inputs.tradingDays} Tage`;
 
   return (
-    <SectionCard number={16} title="MONTE CARLO SIMULATION (GBM)">
+    <SectionCard number={18} title="MONTE CARLO SIMULATION (GBM)">
       {/* GBM Formula Reference */}
       <div className="text-[10px] text-muted-foreground bg-muted/30 rounded-md p-2 border border-border/50 font-mono">
         <span className="font-semibold text-foreground">Geometrische Brownsche Bewegung:</span>{" "}
