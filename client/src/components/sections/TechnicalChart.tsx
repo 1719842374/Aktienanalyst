@@ -6,6 +6,7 @@ import {
   Tooltip, ReferenceLine, ReferenceArea, Area, CartesianGrid,
 } from "recharts";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
 
 interface Props { data: StockAnalysis; }
 
@@ -21,6 +22,23 @@ const MA_LINES = [
 type MAKey = typeof MA_LINES[number]["key"];
 
 const SIGNALS_PAGE_SIZE = 10;
+
+// Preset-Schnitte in Handelstagen — identisch zum bisherigen IST (slice vom letzten Bar).
+const TIME_RANGE_CUTOFF = {
+  "3M": 63, "6M": 126, "1Y": 252, "2Y": 504, "3Y": 756, "5Y": 1260, "10Y": 2520,
+} as const;
+type TimeRange = keyof typeof TIME_RANGE_CUTOFF;
+
+const EMPTY_WINDOW_HINT = "Keine Bars in diesem Fenster";
+
+function clampIsoDate(value: string, minDate: string, maxDate: string): string {
+  if (value < minDate) return minDate;
+  if (value > maxDate) return maxDate;
+  return value;
+}
+
+const DATE_INPUT_CLASS =
+  "h-7 w-full min-w-0 max-w-full rounded border border-border bg-background px-1.5 text-[10px] text-foreground scheme-light dark:scheme-dark";
 
 // ─── RSI (Wilder, period=14) ────────────────────────────────────────────────
 function calcRSI(closes: number[], period = 14): (number | undefined)[] {
@@ -72,7 +90,14 @@ export function TechnicalChart({ data }: Props) {
   const [showSignals,   setShowSignals]   = useState(true);
   const [showVolume,    setShowVolume]    = useState(true);
   const [showBollinger, setShowBollinger] = useState(false);
-  const [timeRange, setTimeRange] = useState<"3M"|"6M"|"1Y"|"2Y"|"3Y"|"5Y"|"10Y">("1Y");
+  const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
+  // null = Preset-Slice (IST). Gesetzt, sobald Von/Bis A vom Kalender kommt.
+  const [customA, setCustomA] = useState<{ from: string; to: string } | null>(null);
+  const [windowBOpen, setWindowBOpen] = useState(false);
+  const [showWindowB, setShowWindowB] = useState(false);
+  const [fromB, setFromB] = useState("");
+  const [toB, setToB] = useState("");
+  const [rangeHint, setRangeHint] = useState<string | null>(null);
   const [measureMode,   setMeasureMode]   = useState(false);
   const [measurePoints, setMeasurePoints] = useState<{date:string;close:number}[]>([]);
   const [signalPage,    setSignalPage]    = useState(0);
@@ -99,16 +124,35 @@ export function TechnicalChart({ data }: Props) {
     );
   }
 
+  // Kalender-Clamp auf die geladene OHLCV-Spanne (nicht auf das Preset-Label).
+  let minDate = ohlcv[0].date;
+  let maxDate = ohlcv[0].date;
+  for (let i = 1; i < ohlcv.length; i++) {
+    const d = ohlcv[i].date;
+    if (d < minDate) minDate = d;
+    else if (d > maxDate) maxDate = d;
+  }
+
   // ── Time-range slice ────────────────────────────────────────────────────────
+  // Preset: Ende = letzter Bar, Start = cutoff (IST). Custom-A: Datum ∈ [from, to].
   const filteredData = useMemo(() => {
-    const cutoff = timeRange==="3M"?63:timeRange==="6M"?126:timeRange==="1Y"?252:timeRange==="2Y"?504:timeRange==="3Y"?756:timeRange==="5Y"?1260:2520;
+    const cutoff = TIME_RANGE_CUTOFF[timeRange];
+    if (customA && customA.from <= customA.to) {
+      const inA = (date: string) => date >= customA.from && date <= customA.to;
+      return {
+        ma: ti.maData.filter(d => inA(d.date)),
+        macd: ti.macdData.filter(d => inA(d.date)),
+        ohlcv: ohlcv.filter(d => inA(d.date)),
+        cutoff,
+      };
+    }
     return {
       ma:   ti.maData.slice(-Math.min(cutoff, ti.maData.length)),
       macd: ti.macdData.slice(-Math.min(cutoff, ti.macdData.length)),
       ohlcv: ohlcv.slice(-Math.min(cutoff, ohlcv.length)),
       cutoff,
     };
-  }, [ti.maData, ti.macdData, ohlcv, timeRange]);
+  }, [ti.maData, ti.macdData, ohlcv, timeRange, customA]);
 
   // WORK_DATA_PROVIDERS.md §4: Chart-Domain muss an tatsaechlich geladene
   // Min/Max-Daten gebunden sein, nicht an das Button-Label. Wenn der gewaehlte
@@ -122,7 +166,7 @@ export function TechnicalChart({ data }: Props) {
   // Toleranz 95%: Handelstage pro Kalenderjahr schwanken leicht (Feiertage,
   // Boersenferien), ein exaktes "< cutoff" wuerde bei z.B. 2513 von 2520
   // Punkten (99.7%, faktisch volle 10 Jahre) einen falschen Alarm ausloesen.
-  const isHistoryTruncated = ti.maData.length > 0 && ti.maData.length < filteredData.cutoff * 0.95;
+  const isHistoryTruncated = !customA && ti.maData.length > 0 && ti.maData.length < filteredData.cutoff * 0.95;
   const actualYearsAvailable = ti.maData.length > 0 ? +(ti.maData.length / 252).toFixed(1) : 0;
   const hasEnoughForMA200 = ti.maData.length >= 200;
 
@@ -132,12 +176,88 @@ export function TechnicalChart({ data }: Props) {
     const fullCloses = ti.maData.map(d => d.close);
     const fullBB  = calcBollinger(fullCloses);
     const fullRSI = calcRSI(fullCloses);
-    const offset = ti.maData.length - filteredData.ma.length;
+    // Preset bleibt Suffix-Slice. Custom-A kann ein Innenfenster sein — dann nach Datum ausrichten.
+    if (!customA) {
+      const offset = ti.maData.length - filteredData.ma.length;
+      return {
+        bollingerArr: fullBB.slice(offset),
+        rsiArr:       fullRSI.slice(offset),
+      };
+    }
+    const indexByDate = new Map<string, number>();
+    ti.maData.forEach((d, i) => indexByDate.set(d.date, i));
     return {
-      bollingerArr: fullBB.slice(offset),
-      rsiArr:       fullRSI.slice(offset),
+      bollingerArr: filteredData.ma.map(d => {
+        const i = indexByDate.get(d.date);
+        return i == null ? { bbMid: undefined, bbUpper: undefined, bbLower: undefined } : fullBB[i];
+      }),
+      rsiArr: filteredData.ma.map(d => {
+        const i = indexByDate.get(d.date);
+        return i == null ? undefined : fullRSI[i];
+      }),
     };
-  }, [ti.maData, filteredData.ma.length]);
+  }, [ti.maData, filteredData.ma, customA]);
+
+  const fromADisplay = customA?.from
+    ?? filteredData.ma[0]?.date
+    ?? filteredData.ohlcv[0]?.date
+    ?? minDate;
+  const toADisplay = customA?.to
+    ?? filteredData.ma[filteredData.ma.length - 1]?.date
+    ?? filteredData.ohlcv[filteredData.ohlcv.length - 1]?.date
+    ?? maxDate;
+
+  // Ohne Fenster B (Default) bleibt closeB leer — Chart = bisheriges Verhalten.
+  const windowBLineOn = windowBOpen && showWindowB && fromB !== "" && toB !== "" && fromB <= toB;
+
+  const rejectInvertedRange = () => {
+    const msg = "Von liegt nach Bis — Eingabe ignoriert.";
+    setRangeHint(msg);
+    toast({ title: "Zeitraum ungültig", description: msg });
+  };
+
+  const applyWindowA = (nextFromRaw: string, nextToRaw: string) => {
+    if (!nextFromRaw || !nextToRaw) return;
+    const from = clampIsoDate(nextFromRaw, minDate, maxDate);
+    const to = clampIsoDate(nextToRaw, minDate, maxDate);
+    if (from > to) {
+      rejectInvertedRange();
+      return;
+    }
+    setCustomA({ from, to });
+    setSignalPage(0);
+    setRangeHint(null);
+  };
+
+  const applyWindowB = (nextFromRaw: string, nextToRaw: string) => {
+    if (!nextFromRaw || !nextToRaw) return;
+    const from = clampIsoDate(nextFromRaw, minDate, maxDate);
+    const to = clampIsoDate(nextToRaw, minDate, maxDate);
+    if (from > to) {
+      rejectInvertedRange();
+      return;
+    }
+    setFromB(from);
+    setToB(to);
+    setRangeHint(null);
+  };
+
+  const openWindowB = () => {
+    if (!fromB || !toB) {
+      const from = clampIsoDate(fromADisplay, minDate, maxDate);
+      const to = clampIsoDate(toADisplay, minDate, maxDate);
+      if (from && to && from <= to) {
+        setFromB(from);
+        setToB(to);
+      }
+    }
+    setWindowBOpen(true);
+    setShowWindowB(true);
+  };
+
+  const bHasBars = windowBOpen && fromB !== "" && toB !== "" && fromB <= toB
+    && ohlcv.some(p => p.date >= fromB && p.date <= toB);
+  const bWindowEmpty = windowBOpen && fromB !== "" && toB !== "" && fromB <= toB && !bHasBars;
 
   // ── Merged chart data (date-keyed MACD + OHLCV + BB + RSI + signals) ────────
   const chartData = useMemo(() => {
@@ -179,6 +299,8 @@ export function TechnicalChart({ data }: Props) {
       return {
         date: d.date,
         close: d.close,
+        // Absolute Kurse, gleiche Y-Achse. Nur Überlappung mit Domain A; sonst null, connectNulls=false.
+        closeB: windowBLineOn && d.date >= fromB && d.date <= toB ? d.close : null,
         ma200: d.ma200, ma100: d.ma100, ma50: d.ma50,
         ma20: d.ma20, ema26: d.ema26, ema12: d.ema12, ema9: d.ema9,
         macd:      (macd as MACDDataPoint).macd,
@@ -195,14 +317,16 @@ export function TechnicalChart({ data }: Props) {
         _signals: signalsByDate.get(d.date) || null,
       };
     });
-  }, [filteredData, ti.signals, bollingerArr, rsiArr]);
+  }, [filteredData, ti.signals, bollingerArr, rsiArr, windowBLineOn, fromB, toB]);
 
   // ── Visible signals + pagination ────────────────────────────────────────────
   const allVisibleSignals = useMemo(() => {
     if (!showSignals || chartData.length === 0) return [];
     const startDate = chartData[0].date;
-    return [...ti.signals.filter(s => s.date >= startDate)].reverse(); // newest first
-  }, [ti.signals, chartData, showSignals]);
+    // Preset endet am letzten Bar — bisher nur Start-Filter. Custom-A hat ein Bis, Signale bleiben in Domain A.
+    const endDate = customA ? chartData[chartData.length - 1].date : null;
+    return [...ti.signals.filter(s => s.date >= startDate && (endDate == null || s.date <= endDate))].reverse(); // newest first
+  }, [ti.signals, chartData, showSignals, customA]);
 
   const totalSignalPages = Math.max(1, Math.ceil(allVisibleSignals.length / SIGNALS_PAGE_SIZE));
   const pagedSignals = allVisibleSignals.slice(signalPage * SIGNALS_PAGE_SIZE, (signalPage + 1) * SIGNALS_PAGE_SIZE);
@@ -238,31 +362,37 @@ export function TechnicalChart({ data }: Props) {
     : "0 / 4 Bedingungen – kein Kaufsignal";
 
   // ── Y-axis domain for price chart ───────────────────────────────────────────
-  if (chartData.length === 0) {
-    return (
-      <SectionCard number={12} title="Technische Analyse" subtitle="Chart & Signale">
-        <div className="text-center text-muted-foreground text-xs py-8">Keine Daten im gewählten Zeitraum</div>
-      </SectionCard>
-    );
+  // Leeres Fenster lässt die Controls stehen, damit Von/Bis korrigierbar bleiben.
+  const chartEmpty = chartData.length === 0;
+  const bHasOverlap = windowBLineOn && chartData.some(d => typeof d.closeB === "number");
+  let priceMin = 0;
+  let priceMax = 1;
+  let pricePadding = 0;
+  if (!chartEmpty) {
+    priceMin = Math.min(...chartData.map(d => {
+      let min = d.close;
+      if (typeof d.closeB === "number" && d.closeB < min) min = d.closeB;
+      MA_LINES.forEach(ma => { const v = d[ma.key as keyof typeof d] as number|undefined; if (v && visibleMAs.has(ma.key) && v < min) min = v; });
+      if (showBollinger && d.bbLower != null && d.bbLower < min) min = d.bbLower;
+      return min;
+    }));
+    priceMax = Math.max(...chartData.map(d => {
+      let max = d.close;
+      if (typeof d.closeB === "number" && d.closeB > max) max = d.closeB;
+      MA_LINES.forEach(ma => { const v = d[ma.key as keyof typeof d] as number|undefined; if (v && visibleMAs.has(ma.key) && v > max) max = v; });
+      if (showBollinger && d.bbUpper != null && d.bbUpper > max) max = d.bbUpper;
+      return max;
+    }));
+    const priceRange = priceMax - priceMin;
+    pricePadding = priceRange * 0.05;
   }
-  const priceMin = Math.min(...chartData.map(d => {
-    let min = d.close;
-    MA_LINES.forEach(ma => { const v = d[ma.key as keyof typeof d] as number|undefined; if (v && visibleMAs.has(ma.key) && v < min) min = v; });
-    if (showBollinger && d.bbLower != null && d.bbLower < min) min = d.bbLower;
-    return min;
-  }));
-  const priceMax = Math.max(...chartData.map(d => {
-    let max = d.close;
-    MA_LINES.forEach(ma => { const v = d[ma.key as keyof typeof d] as number|undefined; if (v && visibleMAs.has(ma.key) && v > max) max = v; });
-    if (showBollinger && d.bbUpper != null && d.bbUpper > max) max = d.bbUpper;
-    return max;
-  }));
-  const priceRange = priceMax - priceMin;
-  const pricePadding = priceRange * 0.05;
 
   const formatDate = (date: string) => {
     const p = date.split("-");
-    return (timeRange==="2Y"||timeRange==="3Y"||timeRange==="5Y"||timeRange==="10Y")
+    const presetLong = timeRange==="2Y"||timeRange==="3Y"||timeRange==="5Y"||timeRange==="10Y";
+    const customLong = !!customA && (new Date(customA.to + "T00:00:00").getTime() - new Date(customA.from + "T00:00:00").getTime()) > 400 * 86400000;
+    const long = customA ? customLong : presetLong;
+    return long
       ? `${p[1]}/${p[0].slice(2)}`
       : `${p[1]}/${p[2]}`;
   };
@@ -314,18 +444,93 @@ export function TechnicalChart({ data }: Props) {
       </div>
 
       {/* ── Controls ── */}
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        {/* Time range */}
+      <div className="flex flex-wrap items-end gap-2 mb-3 min-w-0 max-w-full">
+        {/* Time range — setzt nur Fenster A (Ende = letzter Bar, Start = cutoff) */}
         <div className="flex rounded-md border border-border overflow-hidden">
           {(["3M","6M","1Y","2Y","3Y","5Y","10Y"] as const).map(r => (
-            <button key={r} onClick={() => { setTimeRange(r); setSignalPage(0); }}
+            <button key={r} type="button" onClick={() => { setTimeRange(r); setCustomA(null); setRangeHint(null); setSignalPage(0); }}
               className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${
-                timeRange===r ? "bg-primary text-primary-foreground" : "hover:bg-muted/50"
+                timeRange===r && !customA ? "bg-primary text-primary-foreground" : "hover:bg-muted/50"
               }`}>
               {r}
             </button>
           ))}
         </div>
+
+        <label className="flex flex-col gap-0.5 w-[9.5rem] max-w-full min-w-0">
+          <span className="text-[10px] text-muted-foreground leading-none">Von A</span>
+          <input
+            type="date"
+            min={minDate}
+            max={maxDate}
+            value={fromADisplay}
+            onChange={e => applyWindowA(e.target.value, toADisplay)}
+            data-testid="input-window-a-from"
+            className={DATE_INPUT_CLASS}
+          />
+        </label>
+        <label className="flex flex-col gap-0.5 w-[9.5rem] max-w-full min-w-0">
+          <span className="text-[10px] text-muted-foreground leading-none">Bis A</span>
+          <input
+            type="date"
+            min={minDate}
+            max={maxDate}
+            value={toADisplay}
+            onChange={e => applyWindowA(fromADisplay, e.target.value)}
+            data-testid="input-window-a-to"
+            className={DATE_INPUT_CLASS}
+          />
+        </label>
+
+        {!windowBOpen ? (
+          <button
+            type="button"
+            onClick={openWindowB}
+            data-testid="button-window-b-open"
+            className="px-2 py-1 rounded text-[10px] font-medium border border-border text-muted-foreground hover:bg-muted/50"
+          >
+            + Fenster B
+          </button>
+        ) : (
+          <>
+            <label className="flex flex-col gap-0.5 w-[9.5rem] max-w-full min-w-0">
+              <span className="text-[10px] text-muted-foreground leading-none">Von B</span>
+              <input
+                type="date"
+                min={minDate}
+                max={maxDate}
+                value={fromB}
+                onChange={e => applyWindowB(e.target.value, toB)}
+                data-testid="input-window-b-from"
+                className={DATE_INPUT_CLASS}
+              />
+            </label>
+            <label className="flex flex-col gap-0.5 w-[9.5rem] max-w-full min-w-0">
+              <span className="text-[10px] text-muted-foreground leading-none">Bis B</span>
+              <input
+                type="date"
+                min={minDate}
+                max={maxDate}
+                value={toB}
+                onChange={e => applyWindowB(fromB, e.target.value)}
+                data-testid="input-window-b-to"
+                className={DATE_INPUT_CLASS}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowWindowB(v => !v)}
+              data-testid="button-window-b-eye"
+              title="Fenster B"
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                showWindowB ? "border-[#a78bfa] text-[#a78bfa]" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}
+            >
+              {showWindowB ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Fenster B
+            </button>
+          </>
+        )}
 
         {/* WORK_DATA_PROVIDERS.md §4: Hinweis wenn weniger Historie geladen wurde
             als der gewaehlte Timeframe verlangt — Chart-Domain bindet sich immer
@@ -409,6 +614,14 @@ export function TechnicalChart({ data }: Props) {
         </button>
       </div>
 
+      {(rangeHint || bWindowEmpty || (customA && chartEmpty)) && (
+        <div className="mb-3 -mt-1 flex flex-col gap-0.5 min-w-0" data-testid="hint-chart-windows">
+          {rangeHint && <span className="text-[10px] text-amber-600 dark:text-amber-400">{rangeHint}</span>}
+          {customA && chartEmpty && <span className="text-[10px] text-amber-600 dark:text-amber-400">Fenster A: {EMPTY_WINDOW_HINT}</span>}
+          {bWindowEmpty && <span className="text-[10px] text-amber-600 dark:text-amber-400">Fenster B: {EMPTY_WINDOW_HINT}</span>}
+        </div>
+      )}
+
       {/* Measure result bar */}
       {measureMode && (
         <div className={`rounded-lg p-2.5 mb-3 border text-[10px] flex items-center justify-between ${
@@ -489,6 +702,10 @@ export function TechnicalChart({ data }: Props) {
         );
       })()}
 
+      {chartEmpty ? (
+        <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-window-empty">{EMPTY_WINDOW_HINT}</div>
+      ) : (
+      <>
       {/* ── Price Chart (MA + BB + Volume overlay) ── */}
       <div className={`h-[320px] sm:h-[380px] w-full ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma">
         <ResponsiveContainer width="100%" height="100%">
@@ -528,7 +745,7 @@ export function TechnicalChart({ data }: Props) {
                       {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">${bbWidth}</span></div>}
                     </>
                   )}
-                  {payload.filter((p:any)=>p.yAxisId==="price"&&!['close','bbUpper','bbMid','bbLower'].includes(p.dataKey)).map((p:any)=>(
+                  {payload.filter((p:any)=>p.yAxisId==="price"&&!['close','bbUpper','bbMid','bbLower'].includes(p.dataKey)&&(p.dataKey!=="closeB"||p.value!=null)).map((p:any)=>(
                     <div key={p.dataKey} className="flex justify-between gap-3">
                       <span style={{color:p.color}}>{p.name}</span>
                       <span className="font-mono">${Number(p.value).toFixed(2)}</span>
@@ -557,6 +774,10 @@ export function TechnicalChart({ data }: Props) {
 
             {/* Price line */}
             <Line yAxisId="price" type="monotone" dataKey="close" name="Kurs" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} isAnimationActive={false}/>
+
+            {bHasOverlap && (
+              <Line yAxisId="price" type="monotone" dataKey="closeB" name="Fenster B" stroke="#a78bfa" strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false}/>
+            )}
 
             {/* MA lines */}
             {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
@@ -657,6 +878,8 @@ export function TechnicalChart({ data }: Props) {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+      </>
+      )}
 
       {/* ── Signals Table with Pagination ── */}
       {allVisibleSignals.length > 0 && (
