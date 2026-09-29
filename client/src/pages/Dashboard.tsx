@@ -322,7 +322,7 @@ export default function Dashboard() {
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       {/* Header */}
-      <header className="flex-shrink-0 h-12 border-b border-border bg-card flex items-center px-3 sm:px-4 z-20 gap-2">
+      <header className="flex-shrink-0 h-[5.5rem] sm:h-12 border-b border-border bg-card flex flex-wrap sm:flex-nowrap content-center items-center px-3 sm:px-4 z-20 gap-x-2 gap-y-2">
         <div className="flex items-center gap-3 shrink-0">
           <button
             className="lg:hidden p-1.5 rounded-md hover:bg-muted/50"
@@ -342,19 +342,27 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="flex-1 flex items-center justify-end gap-2 sm:gap-3 overflow-x-auto scrollbar-hide ml-auto">
-          {data && (
-            <div className="hidden sm:flex items-center gap-2 text-xs">
-              <span className="font-mono tabular-nums font-bold text-primary">{data.ticker}</span>
-              <span className="text-muted-foreground">{data.companyName}</span>
-              <span className="text-muted-foreground">•</span>
-              <span className="font-mono tabular-nums font-semibold">${data.currentPrice.toFixed(2)}</span>
-            </div>
-          )}
+        {/* Search has its own slot: inside the overflow-x strip below it was clipped behind the logo.
+            Below sm it wraps to a full-width second row so the pill strip keeps the first row. */}
+        <div className="relative z-10 order-last basis-full sm:order-none sm:basis-auto shrink-0" data-testid="header-search-slot">
           <TickerSearch
             onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
             isLoading={analyzeMutation.isPending}
           />
+        </div>
+
+        {data && (
+          <div className="hidden xl:flex items-center gap-2 text-xs min-w-0 max-w-[16rem] shrink" data-testid="header-ticker-info">
+            <span className="font-mono tabular-nums font-bold text-primary shrink-0">{data.ticker}</span>
+            <span className="text-muted-foreground truncate">{data.companyName}</span>
+            <span className="text-muted-foreground shrink-0">•</span>
+            <span className="font-mono tabular-nums font-semibold shrink-0">${data.currentPrice.toFixed(2)}</span>
+          </div>
+        )}
+
+        {/* justify-end on an overflow container clips the start unreachably; w-max + ml-auto keeps it scrollable. */}
+        <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide" data-testid="header-nav-strip">
+          <div className="flex w-max ml-auto items-center gap-2 sm:gap-3">
           {/* PDF Export */}
           {data && (
             <button
@@ -458,21 +466,22 @@ export default function Dashboard() {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
             <span className="hidden sm:inline">VGL</span>
           </button>
-          <button
-            onClick={toggleTheme}
-            className="p-1.5 rounded-md hover:bg-muted/50 transition-colors shrink-0"
-            data-testid="button-theme-toggle"
-          >
-            {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          </button>
+          </div>
         </div>
+        <button
+          onClick={toggleTheme}
+          className="p-1.5 rounded-md hover:bg-muted/50 transition-colors shrink-0"
+          data-testid="button-theme-toggle"
+        >
+          {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <aside
           className={`
-            fixed lg:relative inset-y-0 left-0 top-12 lg:top-0 z-30 lg:z-0
+            fixed lg:relative inset-y-0 left-0 top-[5.5rem] sm:top-12 lg:top-0 z-30 lg:z-0
             w-52 bg-card border-r border-border
             transition-transform duration-200 ease-in-out
             ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
@@ -503,7 +512,7 @@ export default function Dashboard() {
         {/* Sidebar overlay on mobile */}
         {sidebarOpen && (
           <div
-            className="fixed inset-0 bg-black/40 z-20 lg:hidden top-12"
+            className="fixed inset-0 bg-black/40 z-20 lg:hidden top-[5.5rem] sm:top-12"
             onClick={() => setSidebarOpen(false)}
           />
         )}

@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { execSync } from "child_process";
 import { fetchMacroSnapshot } from "./fmp-macro";
+import { riskLevelPhrase } from "../shared/risk-level-label";
 
 // ============================================================
 // Geopolitical Analysis Metadata
@@ -1061,7 +1062,7 @@ function generateFazit(
   }
 
   // Build summary
-  let summary = `Gesamtbewertung: ${riskLevel}es Risiko. `;
+  let summary = `Gesamtbewertung: ${riskLevelPhrase(riskLevel)}. `;
   summary += `Rezession 12M: ${pRez12M}%, Korrektur 12M: ${pKorr12M}%. `;
   if (pKorr12M >= 65) {
     summary += `Die Kombination aus historisch extremen Bewertungen (Buffett ${buffett?.value}, CAPE ${cape?.value}), `;

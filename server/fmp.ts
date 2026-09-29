@@ -69,7 +69,7 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
           continue;
         }
       }
-      if (!resp.ok) throw new Error(`FMP ${resp.status}: ${path}`);
+      if (!resp.ok) throw Object.assign(new Error(`FMP ${resp.status}: ${path}`), { fmpStatus: resp.status });
       return resp.json();
     } catch (err: any) {
       lastErr = err;
@@ -462,6 +462,30 @@ export async function fmpBatchQuote(symbols: string[]) {
 
 export function isFmpAvailable(): boolean {
   return !!process.env.FMP_API_KEY;
+}
+
+// Unlike fmpBatchQuote/fmpQuote this rejects, so callers can see 429 vs. unreachable.
+export async function fmpQuoteStrict(symbol: string) {
+  const data = await fmpFetch(`/quote`, { symbol });
+  return Array.isArray(data) ? data?.[0] ?? null : data || null;
+}
+
+export type FmpErrorCode = "RATE_LIMITED" | "FMP_NOT_CONFIGURED" | "FMP_UPSTREAM_ERROR" | "FMP_UNREACHABLE" | "FMP_NO_DATA";
+export interface FmpFailure {
+  errorCode: FmpErrorCode;
+  fmpStatus: number | null;
+  message: string;
+}
+
+export function classifyFmpError(err: unknown): FmpFailure {
+  const e = err as { fmpStatus?: unknown; message?: unknown; name?: unknown } | null;
+  const message = String(e?.message ?? err ?? "unknown error").slice(0, 200);
+  const statusFromMsg = /^FMP (\d{3}):/.exec(message)?.[1];
+  const fmpStatus = typeof e?.fmpStatus === "number" ? e.fmpStatus : statusFromMsg ? Number(statusFromMsg) : null;
+  if (/FMP_API_KEY not set/.test(message)) return { errorCode: "FMP_NOT_CONFIGURED", fmpStatus: null, message };
+  if (fmpStatus === 429) return { errorCode: "RATE_LIMITED", fmpStatus, message };
+  if (fmpStatus != null) return { errorCode: "FMP_UPSTREAM_ERROR", fmpStatus, message };
+  return { errorCode: "FMP_UNREACHABLE", fmpStatus: null, message };
 }
 
 // === Ticker / Company Name Search ===

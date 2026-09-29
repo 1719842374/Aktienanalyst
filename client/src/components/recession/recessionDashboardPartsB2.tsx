@@ -9,6 +9,7 @@ import {
   type RecessionAnalysis, type IndicatorResult, type SubgroupResult, type FazitSection,
   getProbColor, getProbBg, getScoreColor, getScoreBg, getGaugeColor,
 } from "./recessionDashboardShared";
+import { riskLevelPhrase } from "@shared/risk-level-label";
 
 // Section 5: Indicator Table (full 17 indicators)
 
@@ -65,7 +66,7 @@ export function FazitSection({ fazit }: { fazit: { summary: string; riskLevel: s
       {/* Risk Level Badge + Summary */}
       <div className={`rounded-lg border p-3 ${riskColor}`}>
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-lg font-bold">{fazit.riskLevel}es Risiko</span>
+          <span className="text-lg font-bold" data-testid="text-fazit-risk-level">{riskLevelPhrase(fazit.riskLevel)}</span>
         </div>
         <p className="text-xs leading-relaxed opacity-90">{fazit.summary}</p>
       </div>

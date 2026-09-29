@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiErrorFromResponse } from "@/lib/apiError";
+import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip,
   CartesianGrid, ReferenceLine, ComposedChart, Bar, Cell,
@@ -116,10 +118,7 @@ export function RegionRsiPanel() {
     queryKey: ["recession-markets", region, window],
     queryFn: async () => {
       const res = await fetch(`/api/analyze-recession/markets?region=${region}&window=${window}`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       return res.json() as Promise<MarketPayload>;
     },
     staleTime: 30 * 60 * 1000,
@@ -165,9 +164,18 @@ export function RegionRsiPanel() {
 
       {q.isLoading && <p className="text-xs text-muted-foreground">RSI/MACD/Vol aus ETF-OHLCV …</p>}
       {q.error && (
-        <p className="text-xs text-red-500">
-          {(q.error as Error).message}. Braucht FMP-Historie für {region === "US" ? "SPY" : region === "EU" ? "VGK" : "ASHR"}.
-        </p>
+        <div className="space-y-1">
+          <ApiErrorBanner
+            error={q.error}
+            block={!q.data}
+            onRetry={() => q.refetch()}
+            retrying={q.isFetching}
+            testId="text-region-rsi-error"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            RSI/MACD/Vol benötigen die Kurshistorie für {region === "US" ? "SPY" : region === "EU" ? "VGK" : "ASHR"}.
+          </p>
+        </div>
       )}
 
       {q.data && (
