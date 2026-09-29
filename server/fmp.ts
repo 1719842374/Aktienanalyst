@@ -470,7 +470,7 @@ export async function fmpQuoteStrict(symbol: string) {
   return Array.isArray(data) ? data?.[0] ?? null : data || null;
 }
 
-export type FmpErrorCode = "RATE_LIMITED" | "FMP_NOT_CONFIGURED" | "FMP_UPSTREAM_ERROR" | "FMP_UNREACHABLE";
+export type FmpErrorCode = "RATE_LIMITED" | "FMP_NOT_CONFIGURED" | "FMP_UPSTREAM_ERROR" | "FMP_UNREACHABLE" | "FMP_NO_DATA";
 export interface FmpFailure {
   errorCode: FmpErrorCode;
   fmpStatus: number | null;
