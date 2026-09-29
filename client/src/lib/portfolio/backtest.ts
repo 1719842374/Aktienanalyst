@@ -91,18 +91,50 @@ export interface PortfolioBacktestResult {
   // Attribution
   holdings: HoldingAttribution[];
   sectorAggregates: SectorAggregate[];
+
+  /**
+   * Ticker mit weniger als MIN_COMMON_TRADING_DAYS Bars <= heute.
+   * Nicht in der Intersection — eine Stub-Serie darf die Schnittmenge nicht kollabieren.
+   */
+  excludedTickersThin: ThinSeriesExclusion[];
+}
+
+/** Ticker, dessen OHLCV-Serie (<= heute) zu kurz fuer die Backtest-Intersection ist. */
+export interface ThinSeriesExclusion {
+  ticker: string;
+  /** Eindeutige Handelstage mit date <= heute. */
+  bars: number;
 }
 
 export interface PortfolioBacktestInsufficientData {
   status: "insufficient_data";
   reason: string;
   commonTradingDays: number;
+  /** Leer, wenn der Abbruch nicht an einer zu kurzen Serie lag. */
+  excludedTickersThin: ThinSeriesExclusion[];
 }
 
 export type PortfolioBacktestOutput = PortfolioBacktestResult | PortfolioBacktestInsufficientData;
 
 /** Mindestanzahl gemeinsamer Handelstage (Spec §4 Robustheit). */
 export const MIN_COMMON_TRADING_DAYS = 20;
+
+/** Hinweis-Text fuer aus der Intersection ausgeschlossene Kurzserien. */
+export function formatThinSeriesExclusion(excluded: ThinSeriesExclusion[]): string {
+  return excluded
+    .map(e => `${e.ticker}: nur ${e.bars} ${e.bars === 1 ? "Bar" : "Bars"} — aus Intersection ausgeschlossen`)
+    .join("; ");
+}
+
+/** Eindeutige Bars mit date <= todayStr. Bars nach heute zaehlen nicht (kein Look-ahead). */
+function tradingDaysOnOrBefore(series: PriceBar[] | undefined, todayStr: string): number {
+  const dates = new Set<string>();
+  for (const bar of series ?? []) {
+    if (bar.date <= todayStr) dates.add(bar.date);
+  }
+  return dates.size;
+}
+
 /** Maximale Forward-Fill-Laenge in Handelstagen (Spec §4 Robustheit). */
 const MAX_FORWARD_FILL_DAYS = 3;
 const TRADING_DAYS_PER_YEAR = 252;
@@ -370,21 +402,53 @@ export function computePortfolioBacktest(args: ComputePortfolioBacktestArgs): Po
   const today = args.today ?? new Date();
   const todayStr = today.toISOString().slice(0, 10);
 
-  const usablePositions = positions.filter(p => {
-    const series = historicalPricesByTicker[p.ticker.toUpperCase()];
-    return series && series.length > 0 && isFinite(p.entryPrice) && p.entryPrice > 0 && isFinite(p.qty) && p.qty > 0;
-  });
-
-  if (usablePositions.length === 0 || !benchmarkPrices || benchmarkPrices.length === 0) {
-    return { status: "insufficient_data", reason: "Keine nutzbaren Positionen oder keine Benchmark-Historie.", commonTradingDays: 0 };
+  if (!benchmarkPrices || benchmarkPrices.length === 0) {
+    return {
+      status: "insufficient_data",
+      reason: "Keine nutzbaren Positionen oder keine Benchmark-Historie.",
+      commonTradingDays: 0,
+      excludedTickersThin: [],
+    };
   }
 
-  // Schritt 1: gemeinsamer Kalender -- Intersection der Handelstage aller
-  // Positionen + Benchmark. openedAt ist kein Hard-Cut fuer commonTradingDays:
-  // Performance & Attribution vs. Benchmark nutzen die volle gemeinsame
-  // OHLCV-Historie (Produktentscheid). Nie ueber "heute" hinaus (keine
-  // Look-ahead-Daten, Spec §4 Punkt 4).
-  const dateSets = usablePositions.map(p => new Set(
+  // Kurzserien (Stub/Race, z.B. 1 Bar) duerfen die Intersection nicht auf sich
+  // ziehen. Nur Ticker mit >= MIN_COMMON_TRADING_DAYS Bars <= heute bilden den
+  // Kalender. openedAt bleibt Feld auf dem Input und ist kein Hard-Cut.
+  const excludedTickersThin: ThinSeriesExclusion[] = [];
+  const calendarTickers = new Set<string>();
+  const seenTicker = new Set<string>();
+  for (const p of positions) {
+    if (!isFinite(p.entryPrice) || p.entryPrice <= 0 || !isFinite(p.qty) || p.qty <= 0) continue;
+    const upper = p.ticker.toUpperCase();
+    if (seenTicker.has(upper)) continue;
+    seenTicker.add(upper);
+    const bars = tradingDaysOnOrBefore(historicalPricesByTicker[upper], todayStr);
+    if (bars < MIN_COMMON_TRADING_DAYS) excludedTickersThin.push({ ticker: upper, bars });
+    else calendarTickers.add(upper);
+  }
+
+  const includedPositions = positions.filter(p => {
+    const upper = p.ticker.toUpperCase();
+    return calendarTickers.has(upper) && isFinite(p.entryPrice) && p.entryPrice > 0 && isFinite(p.qty) && p.qty > 0;
+  });
+
+  if (includedPositions.length === 0) {
+    return {
+      status: "insufficient_data",
+      reason: excludedTickersThin.length > 0
+        ? formatThinSeriesExclusion(excludedTickersThin)
+        : "Keine nutzbaren Positionen oder keine Benchmark-Historie.",
+      commonTradingDays: 0,
+      excludedTickersThin,
+    };
+  }
+
+  // Schritt 1: gemeinsamer Kalender -- Intersection der Handelstage der
+  // verbleibenden Positionen + Benchmark. openedAt ist kein Hard-Cut fuer
+  // commonTradingDays: Performance & Attribution vs. Benchmark nutzen die volle
+  // gemeinsame OHLCV-Historie (Produktentscheid). Nie ueber "heute" hinaus
+  // (keine Look-ahead-Daten, Spec §4 Punkt 4).
+  const dateSets = includedPositions.map(p => new Set(
     (historicalPricesByTicker[p.ticker.toUpperCase()] ?? [])
       .filter(bar => bar.date <= todayStr)
       .map(bar => bar.date)
@@ -396,16 +460,19 @@ export function computePortfolioBacktest(args: ComputePortfolioBacktestArgs): Po
   commonDates = commonDates.filter(d => d <= todayStr).sort();
 
   if (commonDates.length < MIN_COMMON_TRADING_DAYS) {
+    const thinNote = formatThinSeriesExclusion(excludedTickersThin);
+    const base = `Nur ${commonDates.length} gemeinsame Handelstage (mind. ${MIN_COMMON_TRADING_DAYS} erforderlich).`;
     return {
       status: "insufficient_data",
-      reason: `Nur ${commonDates.length} gemeinsame Handelstage (mind. ${MIN_COMMON_TRADING_DAYS} erforderlich).`,
+      reason: thinNote ? `${base} ${thinNote}` : base,
       commonTradingDays: commonDates.length,
+      excludedTickersThin,
     };
   }
 
   // Schritt: Forward-Fill-Lookups je Ticker + Benchmark ueber den gemeinsamen Kalender.
   const priceLookupByTicker = new Map<string, Map<string, number | null>>();
-  for (const p of usablePositions) {
+  for (const p of includedPositions) {
     const upper = p.ticker.toUpperCase();
     if (priceLookupByTicker.has(upper)) continue;
     priceLookupByTicker.set(upper, buildForwardFillLookup(historicalPricesByTicker[upper]!, commonDates));
@@ -413,10 +480,17 @@ export function computePortfolioBacktest(args: ComputePortfolioBacktestArgs): Po
   const benchmarkLookup = buildForwardFillLookup(benchmarkPrices, commonDates);
 
   // Schritt 2 (Variante A, Buy-and-Hold): Gewichte fix ab Entry-Datum.
-  const fixedWeights = computeEntryFixedWeights(usablePositions);
+  const fixedWeights = computeEntryFixedWeights(includedPositions);
   const tickers = Array.from(fixedWeights.keys());
   if (tickers.length === 0) {
-    return { status: "insufficient_data", reason: "Keine positiven Notional-Gewichte berechenbar.", commonTradingDays: commonDates.length };
+    return {
+      status: "insufficient_data",
+      reason: excludedTickersThin.length > 0
+        ? `Keine positiven Notional-Gewichte berechenbar. ${formatThinSeriesExclusion(excludedTickersThin)}`
+        : "Keine positiven Notional-Gewichte berechenbar.",
+      commonTradingDays: commonDates.length,
+      excludedTickersThin,
+    };
   }
 
   // Taegliche Renditen je Ticker + Benchmark.
@@ -445,7 +519,14 @@ export function computePortfolioBacktest(args: ComputePortfolioBacktestArgs): Po
 
   const effectiveDates = commonDates.slice(commonDates.length - portfolioReturns.length);
   if (portfolioReturns.length < MIN_COMMON_TRADING_DAYS) {
-    return { status: "insufficient_data", reason: "Zu wenige gueltige Renditepaare nach Bereinigung.", commonTradingDays: portfolioReturns.length };
+    return {
+      status: "insufficient_data",
+      reason: excludedTickersThin.length > 0
+        ? `Zu wenige gueltige Renditepaare nach Bereinigung. ${formatThinSeriesExclusion(excludedTickersThin)}`
+        : "Zu wenige gueltige Renditepaare nach Bereinigung.",
+      commonTradingDays: portfolioReturns.length,
+      excludedTickersThin,
+    };
   }
 
   // §2.2 Kumulative Kurven.
@@ -485,7 +566,7 @@ export function computePortfolioBacktest(args: ComputePortfolioBacktestArgs): Po
 
   // §2.7 Holdings-Attribution: pro Titel eigene Renditeserie vs. Benchmark.
   const holdings: HoldingAttribution[] = [];
-  for (const p of usablePositions) {
+  for (const p of includedPositions) {
     const upper = p.ticker.toUpperCase();
     if (holdings.some(h => h.ticker === upper)) continue; // Duplikate (mehrere Teil-Positionen) nur einmal listen
     const rSeriesRaw = returnsByTicker.get(upper)!;
@@ -572,6 +653,7 @@ export function computePortfolioBacktest(args: ComputePortfolioBacktestArgs): Po
     avgLossPct: (avgLoss ?? 0) * 100,
     holdings,
     sectorAggregates,
+    excludedTickersThin,
   };
 }
 
