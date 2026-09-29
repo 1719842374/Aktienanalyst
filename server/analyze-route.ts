@@ -118,6 +118,7 @@ import { buildScoringForAnalysis } from "./scoring-integration";
 import { applyFactPackFromFmpContext } from "./factpack-apply";
 import { attachExecSummary } from "./exec-summary-attach";
 import { getCachedRegulatoryAssessment } from "./regulatory";
+import { collectPorterNarrative, resolveEcosystem } from "./ecosystem-moat";
 import { fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq } from "./history-fallback";
 
 // Segment-Fallback-Pipeline (2026-08): SEC EDGAR fallback for when FMP's
@@ -1694,7 +1695,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       // Section 11 (MoatPorterSection) reads moatAssessment.overallRating,
       // moatSources[], porterForces[].name/.reasoning, businessModelStrength,
-      // sustainabilityRating. scoreMoat() returns { moatStrength, moatScore,
+      // sustainabilityRating, and optional hasEcosystem / ecosystemNote.
+      // scoreMoat() returns { moatStrength, moatScore,
       // sources, porterForces:{force,rating:Niedrig|Mittel|Hoch,score} }, so we
       // remap into the shared/schema.ts MoatAssessment shape here. If we don't,
       // moat.moatSources.slice() and moat.overallRating.includes() throw and
@@ -1703,6 +1705,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         Niedrig: "Low", Mittel: "Medium", Hoch: "High",
         Low: "Low", Medium: "Medium", High: "High",
       };
+      // Qualitative only: description heuristic, then Porter LLM narrative if the
+      // description is silent. Does not change moatStrength / score / Lynch / DCF.
+      const ecosystem = resolveEcosystem({
+        description,
+        llmText: collectPorterNarrative(porterForces),
+      });
       const moatAssessmentOut = {
         overallRating: moatAssessment.moatStrength ?? "None",
         moatSources: Array.isArray((moatAssessment as any).sources) ? (moatAssessment as any).sources : [],
@@ -1720,6 +1728,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         sustainabilityRating: moatRating === "Wide" ? "★★★★★"
           : moatRating === "Narrow" ? "★★★☆☆"
           : "★★☆☆☆",
+        hasEcosystem: ecosystem.hasEcosystem,
+        ...(ecosystem.hasEcosystem && ecosystem.ecosystemNote
+          ? { ecosystemNote: ecosystem.ecosystemNote }
+          : {}),
       };
 
       // Peer comparison must have the {subject, peers, peerAvg, sectorMedian, ...}

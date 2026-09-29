@@ -322,6 +322,10 @@ export interface MoatAssessment {
   porterForces: PorterForce[];
   businessModelStrength: string;
   sustainabilityRating: string; // 1-5 stars as text
+  // Qualitative chip only (§13 Moat-Quellen). false/undefined → UI renders nothing.
+  // Does not change moat score, Lynch class, or DCF.
+  hasEcosystem?: boolean;
+  ecosystemNote?: string;
 }
 
 // === Currency Conversion Info ===
