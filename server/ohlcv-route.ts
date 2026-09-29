@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { fmpHistoricalPrices, isFmpAvailable } from "./fmp";
+import { classifyFmpError, fmpHistoricalPrices, isFmpAvailable, type FmpFailure } from "./fmp";
 
 type Bar = { date: string; close: number };
 type Meta = { n: number; first: string | null; last: string | null; truncated: boolean };
@@ -38,22 +38,46 @@ function normalizeBars(raw: any): Bar[] {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-async function loadBars(ticker: string, from: string, to: string): Promise<Bar[]> {
-  const key = `ohlcv:${ticker}:${from}:${to}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.ts < TTL_MS) return hit.bars;
-  let bars: Bar[] = [];
-  try {
-    const raw = await fmpHistoricalPrices(ticker, from, to);
-    bars = normalizeBars(raw);
-  } catch {
-    bars = [];
-  }
-  cache.set(key, { ts: Date.now(), bars });
-  return bars;
+export function clearOhlcvCacheForTests(): void {
+  cache.clear();
 }
 
-export function registerOhlcvRoute(app: Express) {
+type OhlcvDeps = {
+  isAvailable: () => boolean;
+  fetchPrices: (ticker: string, from: string, to: string) => Promise<unknown>;
+};
+
+type LoadResult = { ok: true; bars: Bar[] } | { ok: false; failure: FmpFailure };
+
+// Failures are never cached: a 429 must not pin an empty series for 24h.
+async function loadBars(deps: OhlcvDeps, ticker: string, from: string, to: string): Promise<LoadResult> {
+  const key = `ohlcv:${ticker}:${from}:${to}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.ts < TTL_MS) return { ok: true, bars: hit.bars };
+  try {
+    const bars = normalizeBars(await deps.fetchPrices(ticker, from, to));
+    cache.set(key, { ts: Date.now(), bars });
+    return { ok: true, bars };
+  } catch (err) {
+    const failure = classifyFmpError(err);
+    console.warn(`[OHLCV] ${ticker} ${failure.errorCode} fmpStatus=${failure.fmpStatus ?? "-"}: ${failure.message}`);
+    return { ok: false, failure };
+  }
+}
+
+function httpStatusFor(failures: FmpFailure[]): number {
+  if (failures.some((f) => f.errorCode === "RATE_LIMITED")) return 429;
+  if (failures.some((f) => f.errorCode === "FMP_NOT_CONFIGURED")) return 503;
+  if (failures.some((f) => f.errorCode === "FMP_UPSTREAM_ERROR")) return 502;
+  return 503;
+}
+
+export function registerOhlcvRoute(app: Express, depsOverride: Partial<OhlcvDeps> = {}) {
+  const deps: OhlcvDeps = {
+    isAvailable: isFmpAvailable,
+    fetchPrices: fmpHistoricalPrices,
+    ...depsOverride,
+  };
   app.get("/api/ohlcv", async (req: Request, res: Response) => {
     const tickers = String(req.query.tickers || "")
       .split(",")
@@ -62,14 +86,25 @@ export function registerOhlcvRoute(app: Express) {
       .slice(0, 12);
     const { from, to } = clampFromTo(String(req.query.from || ""), String(req.query.to || ""));
 
-    if (!isFmpAvailable()) {
-      return res.status(503).json({ error: "FMP nicht konfiguriert", from, to, source: "fmp", bars: {}, meta: {} });
+    if (!deps.isAvailable()) {
+      return res.status(503).json({
+        error: "FMP nicht konfiguriert",
+        errorCode: "FMP_NOT_CONFIGURED",
+        fmpStatus: null,
+        from, to, source: null, bars: {}, meta: {},
+      });
     }
 
     const bars: Record<string, Bar[]> = {};
     const meta: Record<string, Meta> = {};
+    const errors: Record<string, FmpFailure> = {};
     for (const t of tickers) {
-      const series = await loadBars(t, from, to);
+      const result = await loadBars(deps, t, from, to);
+      if (!result.ok) {
+        errors[t] = result.failure;
+        continue;
+      }
+      const series = result.bars;
       bars[t] = series;
       const first = series[0]?.date ?? null;
       const last = series[series.length - 1]?.date ?? null;
@@ -77,6 +112,19 @@ export function registerOhlcvRoute(app: Express) {
       meta[t] = { n: series.length, first, last, truncated };
     }
 
-    res.json({ from, to, source: "fmp", bars, meta });
+    const failures = Object.values(errors);
+    if (failures.length > 0 && Object.keys(bars).length === 0) {
+      const primary = failures.find((f) => f.errorCode === "RATE_LIMITED") ?? failures[0];
+      return res.status(httpStatusFor(failures)).json({
+        error: primary.errorCode === "RATE_LIMITED"
+          ? `FMP Rate-Limit (HTTP 429) — ${primary.message}`
+          : `FMP-Abruf fehlgeschlagen (${primary.fmpStatus ?? primary.errorCode}) — ${primary.message}`,
+        errorCode: primary.errorCode,
+        fmpStatus: primary.fmpStatus,
+        from, to, source: null, bars: {}, meta: {}, errors,
+      });
+    }
+
+    res.json({ from, to, source: "fmp", bars, meta, ...(failures.length ? { errors } : {}) });
   });
 }
