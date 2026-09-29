@@ -93,6 +93,7 @@ import {
   generatePESTELAnalysis as generateLLMPESTEL,
   isLLMAvailable,
 } from "./llm-openrouter";
+import { requestTamNaFills } from "./tam-na-fill";
 
 import {
   isFmpAvailable,
@@ -2489,6 +2490,39 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       return res.json({ policyContext });
     } catch (err: any) {
       console.error(`[/api/policy-context] ${err?.message?.substring(0, 300)}`);
+      return res.status(500).json({ error: err?.message ?? "Internal server error" });
+    }
+  });
+
+  // ── POST /api/analyze/:ticker/tam-na-fill ────────────────────
+  // Session-only KI estimates for unmatched Segment-TAM rows.
+  // Fact coverage, quality, tamTotal, weighted CAGR and the DCF gate stay
+  // on the catalog path — this handler only returns validated fills.
+  app.post("/api/analyze/:ticker/tam-na-fill", async (req: Request, res: Response) => {
+    try {
+      const rawTicker = req.params.ticker;
+      const ticker = (Array.isArray(rawTicker) ? rawTicker[0] : rawTicker) ?? "";
+      const b = req.body ?? {};
+      const result = await requestTamNaFills({
+        ticker,
+        companyName: b.companyName,
+        sector: b.sector,
+        industry: b.industry,
+        description: b.description,
+        coveragePct: b.coveragePct,
+        segments: Array.isArray(b.segments) ? b.segments : [],
+      });
+      if (!result.ok) {
+        return res.status(result.status).json({ error: result.error, code: result.code });
+      }
+      return res.json({
+        fills: result.fills,
+        coveragePct: result.coveragePct,
+        coverageNote: result.coverageNote,
+        modelUsed: result.modelUsed,
+      });
+    } catch (err: any) {
+      console.error(`[/api/analyze/tam-na-fill] ${err?.message?.substring(0, 300)}`);
       return res.status(500).json({ error: err?.message ?? "Internal server error" });
     }
   });
