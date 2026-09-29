@@ -1,5 +1,5 @@
-import { useState, useMemo, useCallback, type CSSProperties } from "react";
-import type { StockAnalysis, MADataPoint, MACDDataPoint, OHLCVPoint } from "../../../../shared/schema";
+import { useState, useMemo, useCallback } from "react";
+import type { StockAnalysis, OHLCVPoint, TradingSignal } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import {
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis,
@@ -38,48 +38,33 @@ function clampIsoDate(value: string, minDate: string, maxDate: string): string {
 }
 
 const DATE_INPUT_CLASS =
-  "h-7 w-full min-w-0 max-w-full rounded border border-border bg-background px-1.5 text-[10px] text-foreground scheme-light dark:scheme-dark";
+  "h-9 sm:h-7 w-full min-w-0 max-w-full rounded border border-border bg-background px-1.5 text-[10px] text-foreground scheme-light dark:scheme-dark";
 
 /** Vergleichs-Strokes. Kurs A bleibt die bestehende Preis-Farbe (primary). */
 const STROKE_B = "#a78bfa";
 const STROKE_C = "#34d399";
 
-function closesInWindow(bars: OHLCVPoint[], from: string, to: string): { date: string; close: number }[] {
+/** OHLCV-Slice eines Fensters. Keine Bars außerhalb [from, to]. */
+function sliceBars(bars: OHLCVPoint[], from: string, to: string): OHLCVPoint[] {
   if (!from || !to || from > to) return [];
-  const out: { date: string; close: number }[] = [];
+  const out: OHLCVPoint[] = [];
   for (const p of bars) {
-    if (p.date >= from && p.date <= to) out.push({ date: p.date, close: p.close });
+    if (p.date >= from && p.date <= to) out.push(p);
   }
   return out;
-}
-
-/** Eigene Y-Skala eines Bandes: min–max nur der Closes dieses Fensters. */
-function yDomainFromCloses(points: { close: number }[]): [number, number] {
-  let min = Infinity;
-  let max = -Infinity;
-  for (const p of points) {
-    if (p.close < min) min = p.close;
-    if (p.close > max) max = p.close;
-  }
-  if (!isFinite(min) || !isFinite(max)) return [0, 1];
-  if (min === max) {
-    const pad = Math.abs(min) * 0.05 || 1;
-    return [min - pad, max + pad];
-  }
-  const pad = (max - min) * 0.06;
-  return [min - pad, max + pad];
 }
 
 /** Abstand zwischen gestapelten Kurs-Bändern. Klein, aber sichtbar — die Trennung ist die Bandhöhe, nicht eine gemeinsame Y. */
 const BAND_GAP_PX = 8;
 
-/** Je sichtbares Band ein fester Anteil der Preis-Zone (3 Bänder ≈ 31 %, 2 Bänder füllen die Zone). */
-function bandFrameStyle(count: number): CSSProperties {
-  const gaps = Math.max(0, count - 1) * BAND_GAP_PX;
-  return {
-    height: `calc((100% - ${gaps}px) / ${count})`,
-    flex: "0 0 auto",
-  };
+/**
+ * Preiszonen-Höhe je Band.
+ * 1 Band = bisherige Ein-Chart-Höhe. 2 Bänder teilen sie. 3 Bänder: Summe +40–70px gegenüber Eng-Desktop (380).
+ */
+function priceBandClass(count: number): string {
+  if (count >= 3) return "h-[120px] sm:h-[144px]";
+  if (count === 2) return "h-[156px] sm:h-[186px]";
+  return "h-[320px] sm:h-[380px]";
 }
 
 function bandAxisDate(date: string, from: string, to: string): string {
@@ -126,6 +111,177 @@ function calcBollinger(closes: number[], period = 20, k = 2) {
   });
 }
 
+// ─── SMA / EMA — gleiche Definition wie Server (analyze-route), nur auf dem Fenster-Slice ──
+function smaSeries(data: number[], period: number): (number | undefined)[] {
+  const out: (number | undefined)[] = new Array(data.length);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    sum += data[i];
+    if (i >= period) sum -= data[i - period];
+    out[i] = i >= period - 1 ? sum / period : undefined;
+  }
+  return out;
+}
+
+function emaSeries(data: number[], period: number): (number | undefined)[] {
+  const out: (number | undefined)[] = new Array(data.length);
+  const k = 2 / (period + 1);
+  let ema: number | undefined;
+  for (let i = 0; i < data.length; i++) {
+    if (!isFinite(data[i])) { out[i] = undefined; continue; }
+    if (ema === undefined) {
+      if (i >= period - 1) {
+        let s = 0;
+        for (let j = i - period + 1; j <= i; j++) s += data[j];
+        ema = s / period;
+        out[i] = ema;
+      } else {
+        out[i] = undefined;
+      }
+    } else {
+      ema = data[i] * k + ema * (1 - k);
+      out[i] = ema;
+    }
+  }
+  return out;
+}
+
+type WindowPoint = {
+  date: string;
+  close: number;
+  ma200?: number;
+  ma100?: number;
+  ma50?: number;
+  ma20?: number;
+  ema26?: number;
+  ema12?: number;
+  ema9?: number;
+  macd?: number;
+  signal?: number;
+  histogram?: number;
+  bbUpper?: number;
+  bbMid?: number;
+  bbLower?: number;
+  rsi?: number;
+  volume: number;
+  _volNorm: number;
+  _volUp: boolean;
+  _signals: TradingSignal[] | null;
+};
+
+type WindowSeries = { points: WindowPoint[]; signals: TradingSignal[] };
+
+/**
+ * v3.2: Close, MAs, BB, RSI, MACD und Signale nur aus den Bars dieses Fensters.
+ * Periode länger als das Fenster → Serie beginnt am ersten gültigen Index, kein Wurf.
+ */
+function buildWindowSeries(bars: OHLCVPoint[]): WindowSeries {
+  if (bars.length === 0) return { points: [], signals: [] };
+  const closes = bars.map(b => b.close);
+  const dates = bars.map(b => b.date);
+  const ma200 = smaSeries(closes, 200);
+  const ma100 = smaSeries(closes, 100);
+  const ma50 = smaSeries(closes, 50);
+  const ma20 = smaSeries(closes, 20);
+  const ema26 = emaSeries(closes, 26);
+  const ema12 = emaSeries(closes, 12);
+  const ema9 = emaSeries(closes, 9);
+
+  const macdRaw: number[] = closes.map((_, i) => {
+    const e12 = ema12[i], e26 = ema26[i];
+    return (e12 != null && e26 != null) ? e12 - e26 : NaN;
+  });
+  const firstValid = macdRaw.findIndex(v => isFinite(v));
+  const macdForEma = macdRaw.map(v => isFinite(v) ? v : 0);
+  const signalSeries = emaSeries(macdForEma, 9);
+  for (let i = 0; i < firstValid + 8; i++) if (i < bars.length) signalSeries[i] = undefined;
+
+  const bb = calcBollinger(closes);
+  const rsi = calcRSI(closes);
+
+  const macdAt = (i: number) => (isFinite(macdRaw[i]) ? macdRaw[i] : undefined);
+  const signals: TradingSignal[] = [];
+  for (let i = 1; i < bars.length; i++) {
+    const cur50 = ma50[i], prev50 = ma50[i - 1];
+    const cur200 = ma200[i], prev200 = ma200[i - 1];
+    if (cur50 != null && cur200 != null && prev50 != null && prev200 != null) {
+      if (prev50 <= prev200 && cur50 > cur200) {
+        signals.push({ date: dates[i], type: "buy", reason: "Golden Cross (MA50 > MA200)", price: closes[i] });
+      } else if (prev50 >= prev200 && cur50 < cur200) {
+        signals.push({ date: dates[i], type: "sell", reason: "Death Cross (MA50 < MA200)", price: closes[i] });
+      }
+    }
+    const curM = macdAt(i), prevM = macdAt(i - 1);
+    const curS = signalSeries[i], prevS = signalSeries[i - 1];
+    if (curM != null && prevM != null && curS != null && prevS != null) {
+      if (prevM <= prevS && curM > curS) {
+        signals.push({ date: dates[i], type: "buy", reason: "Bullish MACD Cross", price: closes[i] });
+      } else if (prevM >= prevS && curM < curS) {
+        signals.push({ date: dates[i], type: "sell", reason: "Bearish MACD Cross", price: closes[i] });
+      }
+    }
+  }
+
+  const signalsByDate = new Map<string, TradingSignal[]>();
+  for (const s of signals) {
+    const arr = signalsByDate.get(s.date) || [];
+    arr.push(s);
+    signalsByDate.set(s.date, arr);
+  }
+
+  const allVols = bars.map(b => b.volume).filter(v => v > 0);
+  const maxVol = allVols.length ? Math.max(...allVols) : 1;
+
+  const points: WindowPoint[] = bars.map((b, i) => {
+    const m = macdAt(i);
+    const sig = signalSeries[i];
+    const prevClose = i > 0 ? closes[i - 1] : closes[i];
+    return {
+      date: b.date,
+      close: b.close,
+      ma200: ma200[i], ma100: ma100[i], ma50: ma50[i],
+      ma20: ma20[i], ema26: ema26[i], ema12: ema12[i], ema9: ema9[i],
+      macd: m,
+      signal: sig,
+      histogram: (m != null && sig != null) ? m - sig : undefined,
+      bbUpper: bb[i]?.bbUpper,
+      bbMid: bb[i]?.bbMid,
+      bbLower: bb[i]?.bbLower,
+      rsi: rsi[i],
+      volume: b.volume ?? 0,
+      _volNorm: b.volume > 0 ? b.volume / maxVol : 0,
+      _volUp: b.close >= prevClose,
+      _signals: signalsByDate.get(b.date) || null,
+    };
+  });
+  return { points, signals };
+}
+
+/** Eigene Y je Band: Close + gerade sichtbare MAs/BB. Keine gemeinsame Absolute-Y. */
+function priceDomain(points: WindowPoint[], visible: Set<MAKey>, showBB: boolean): [number, number] {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const d of points) {
+    let lo = d.close;
+    let hi = d.close;
+    for (const ma of MA_LINES) {
+      if (!visible.has(ma.key)) continue;
+      const v = d[ma.key];
+      if (v != null && isFinite(v)) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    if (showBB && d.bbLower != null && d.bbLower < lo) lo = d.bbLower;
+    if (showBB && d.bbUpper != null && d.bbUpper > hi) hi = d.bbUpper;
+    if (lo < min) min = lo;
+    if (hi > max) max = hi;
+  }
+  if (!isFinite(min) || !isFinite(max)) return [0, 1];
+  const pad = min === max ? (Math.abs(min) * 0.05 || 1) : (max - min) * 0.05;
+  return [min - pad, max + pad];
+}
+
 export function TechnicalChart({ data }: Props) {
   const ti = data.technicalIndicators;
   const ohlcv = data.ohlcvData;
@@ -138,6 +294,9 @@ export function TechnicalChart({ data }: Props) {
   const [showSignals,   setShowSignals]   = useState(true);
   const [showVolume,    setShowVolume]    = useState(true);
   const [showBollinger, setShowBollinger] = useState(false);
+  // Immer an, solange der Nutzer sie nicht ausblendet — Ein-Band bleibt MACD/RSI wie nach #97.
+  const [showMacd, setShowMacd] = useState(true);
+  const [showRsi, setShowRsi] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
   // null = Preset-Slice (IST). Gesetzt, sobald Von/Bis A vom Kalender kommt.
   const [customA, setCustomA] = useState<{ from: string; to: string } | null>(null);
@@ -186,26 +345,15 @@ export function TechnicalChart({ data }: Props) {
     else if (d > maxDate) maxDate = d;
   }
 
-  // ── Time-range slice ────────────────────────────────────────────────────────
+  // ── Time-range slice (Fenster A) ────────────────────────────────────────────
   // Preset: Ende = letzter Bar, Start = cutoff (IST). Custom-A: Datum ∈ [from, to].
-  const filteredData = useMemo(() => {
-    const cutoff = TIME_RANGE_CUTOFF[timeRange];
+  const rangeCutoff = TIME_RANGE_CUTOFF[timeRange];
+  const aBars = useMemo(() => {
     if (customA && customA.from <= customA.to) {
-      const inA = (date: string) => date >= customA.from && date <= customA.to;
-      return {
-        ma: ti.maData.filter(d => inA(d.date)),
-        macd: ti.macdData.filter(d => inA(d.date)),
-        ohlcv: ohlcv.filter(d => inA(d.date)),
-        cutoff,
-      };
+      return ohlcv.filter(d => d.date >= customA.from && d.date <= customA.to);
     }
-    return {
-      ma:   ti.maData.slice(-Math.min(cutoff, ti.maData.length)),
-      macd: ti.macdData.slice(-Math.min(cutoff, ti.macdData.length)),
-      ohlcv: ohlcv.slice(-Math.min(cutoff, ohlcv.length)),
-      cutoff,
-    };
-  }, [ti.maData, ti.macdData, ohlcv, timeRange, customA]);
+    return ohlcv.slice(-Math.min(rangeCutoff, ohlcv.length));
+  }, [ohlcv, customA, rangeCutoff]);
 
   // WORK_DATA_PROVIDERS.md §4: Chart-Domain muss an tatsaechlich geladene
   // Min/Max-Daten gebunden sein, nicht an das Button-Label. Wenn der gewaehlte
@@ -219,45 +367,15 @@ export function TechnicalChart({ data }: Props) {
   // Toleranz 95%: Handelstage pro Kalenderjahr schwanken leicht (Feiertage,
   // Boersenferien), ein exaktes "< cutoff" wuerde bei z.B. 2513 von 2520
   // Punkten (99.7%, faktisch volle 10 Jahre) einen falschen Alarm ausloesen.
-  const isHistoryTruncated = !customA && ti.maData.length > 0 && ti.maData.length < filteredData.cutoff * 0.95;
+  const isHistoryTruncated = !customA && ti.maData.length > 0 && ti.maData.length < rangeCutoff * 0.95;
   const actualYearsAvailable = ti.maData.length > 0 ? +(ti.maData.length / 252).toFixed(1) : 0;
   const hasEnoughForMA200 = ti.maData.length >= 200;
 
-  // ── Bollinger + RSI (computed on FULL history, then sliced — values must not
-  //    change when the user switches the time range) ────────────────────────────
-  const { bollingerArr, rsiArr } = useMemo(() => {
-    const fullCloses = ti.maData.map(d => d.close);
-    const fullBB  = calcBollinger(fullCloses);
-    const fullRSI = calcRSI(fullCloses);
-    // Preset bleibt Suffix-Slice. Custom-A kann ein Innenfenster sein — dann nach Datum ausrichten.
-    if (!customA) {
-      const offset = ti.maData.length - filteredData.ma.length;
-      return {
-        bollingerArr: fullBB.slice(offset),
-        rsiArr:       fullRSI.slice(offset),
-      };
-    }
-    const indexByDate = new Map<string, number>();
-    ti.maData.forEach((d, i) => indexByDate.set(d.date, i));
-    return {
-      bollingerArr: filteredData.ma.map(d => {
-        const i = indexByDate.get(d.date);
-        return i == null ? { bbMid: undefined, bbUpper: undefined, bbLower: undefined } : fullBB[i];
-      }),
-      rsiArr: filteredData.ma.map(d => {
-        const i = indexByDate.get(d.date);
-        return i == null ? undefined : fullRSI[i];
-      }),
-    };
-  }, [ti.maData, filteredData.ma, customA]);
-
   const fromADisplay = customA?.from
-    ?? filteredData.ma[0]?.date
-    ?? filteredData.ohlcv[0]?.date
+    ?? aBars[0]?.date
     ?? minDate;
   const toADisplay = customA?.to
-    ?? filteredData.ma[filteredData.ma.length - 1]?.date
-    ?? filteredData.ohlcv[filteredData.ohlcv.length - 1]?.date
+    ?? aBars[aBars.length - 1]?.date
     ?? maxDate;
 
   // B/C einmal auf das aktuelle Fenster A setzen (bzw. in die OHLCV-Spanne klemmen).
@@ -285,8 +403,12 @@ export function TechnicalChart({ data }: Props) {
   const fromCValue = fromC || fromADisplay;
   const toCValue = toC || toADisplay;
 
-  const bCloses = closesInWindow(ohlcv, fromBValue, toBValue);
-  const cCloses = closesInWindow(ohlcv, fromCValue, toCValue);
+  const bBars = useMemo(() => sliceBars(ohlcv, fromBValue, toBValue), [ohlcv, fromBValue, toBValue]);
+  const cBars = useMemo(() => sliceBars(ohlcv, fromCValue, toCValue), [ohlcv, fromCValue, toCValue]);
+  // Indikatoren je Band neu auf dem OHLCV-Slice — nicht die Server-Serie von A auf B/C legen.
+  const aBuilt = useMemo(() => buildWindowSeries(aBars), [aBars]);
+  const bBuilt = useMemo(() => buildWindowSeries(bBars), [bBars]);
+  const cBuilt = useMemo(() => buildWindowSeries(cBars), [cBars]);
   const visibleKursCount = (showKursA ? 1 : 0) + (showKursB ? 1 : 0) + (showKursC ? 1 : 0);
   // ≥2 Kurse an → versetzte Bänder (else-Zweig). Nur A an → singleALayout, kein Versatz.
   const singleALayout = showKursA && !showKursB && !showKursC;
@@ -336,75 +458,14 @@ export function TechnicalChart({ data }: Props) {
     setRangeHint(null);
   };
 
-  const bWindowEmpty = showKursB && fromBValue <= toBValue && bCloses.length === 0;
-  const cWindowEmpty = showKursC && fromCValue <= toCValue && cCloses.length === 0;
+  const bWindowEmpty = showKursB && fromBValue <= toBValue && bBuilt.points.length === 0;
+  const cWindowEmpty = showKursC && fromCValue <= toCValue && cBuilt.points.length === 0;
 
-  // ── Merged chart data (date-keyed MACD + OHLCV + BB + RSI + signals) ────────
-  const chartData = useMemo(() => {
-    const macdByDate  = new Map<string, MACDDataPoint>();
-    for (const m of filteredData.macd) macdByDate.set(m.date, m);
-
-    const ohlcvByDate = new Map<string, OHLCVPoint>();
-    for (const o of filteredData.ohlcv) ohlcvByDate.set(o.date, o);
-
-    const chartDates = new Set(filteredData.ma.map(d => d.date));
-    const signalsByDate = new Map<string, typeof ti.signals>();
-    for (const s of ti.signals) {
-      let tgt = s.date;
-      if (!chartDates.has(tgt)) {
-        const st = new Date(s.date + 'T00:00:00').getTime();
-        let best = '', bestDist = Infinity;
-        for (const d of filteredData.ma) {
-          const dist = Math.abs(new Date(d.date + 'T00:00:00').getTime() - st);
-          if (dist < bestDist) { bestDist = dist; best = d.date; }
-        }
-        if (bestDist <= 3 * 86400000) tgt = best; else continue;
-      }
-      const arr = signalsByDate.get(tgt) || [];
-      arr.push(s);
-      signalsByDate.set(tgt, arr);
-    }
-
-    // Normalise volume to 0-15% of price range for overlay rendering
-    const allVols = filteredData.ohlcv.map(o => o.volume).filter(v => v > 0);
-    const maxVol = allVols.length ? Math.max(...allVols) : 1;
-
-    return filteredData.ma.map((d, i) => {
-      const macd  = macdByDate.get(d.date)  || {};
-      const ohlcvP = ohlcvByDate.get(d.date) || {} as Partial<OHLCVPoint>;
-      const bb   = bollingerArr[i] || {};
-      const rsi  = rsiArr[i];
-      const vol  = (ohlcvP as OHLCVPoint).volume ?? 0;
-      const prevClose = i > 0 ? filteredData.ma[i-1].close : d.close;
-      return {
-        date: d.date,
-        close: d.close,
-        ma200: d.ma200, ma100: d.ma100, ma50: d.ma50,
-        ma20: d.ma20, ema26: d.ema26, ema12: d.ema12, ema9: d.ema9,
-        macd:      (macd as MACDDataPoint).macd,
-        signal:    (macd as MACDDataPoint).signal,
-        histogram: (macd as MACDDataPoint).histogram,
-        bbUpper: (bb as any).bbUpper,
-        bbMid:   (bb as any).bbMid,
-        bbLower: (bb as any).bbLower,
-        rsi,
-        // Volume normalised to price-chart scale (0–15% of price range)
-        volume: vol,
-        _volNorm: vol > 0 ? vol / maxVol : 0, // 0-1
-        _volUp: d.close >= prevClose,
-        _signals: signalsByDate.get(d.date) || null,
-      };
-    });
-  }, [filteredData, ti.signals, bollingerArr, rsiArr]);
-
-  // ── Visible signals + pagination ────────────────────────────────────────────
+  // Signalliste einmal, Zeitraum A (nicht je Band eine Tabelle). Marker auf B/C nutzen deren eigene Serie.
   const allVisibleSignals = useMemo(() => {
-    if (!showSignals || chartData.length === 0) return [];
-    const startDate = chartData[0].date;
-    // Preset endet am letzten Bar — bisher nur Start-Filter. Custom-A hat ein Bis, Signale bleiben in Domain A.
-    const endDate = customA ? chartData[chartData.length - 1].date : null;
-    return [...ti.signals.filter(s => s.date >= startDate && (endDate == null || s.date <= endDate))].reverse(); // newest first
-  }, [ti.signals, chartData, showSignals, customA]);
+    if (!showSignals || aBuilt.signals.length === 0) return [];
+    return [...aBuilt.signals].reverse();
+  }, [aBuilt.signals, showSignals]);
 
   const totalSignalPages = Math.max(1, Math.ceil(allVisibleSignals.length / SIGNALS_PAGE_SIZE));
   const pagedSignals = allVisibleSignals.slice(signalPage * SIGNALS_PAGE_SIZE, (signalPage + 1) * SIGNALS_PAGE_SIZE);
@@ -439,29 +500,9 @@ export function TechnicalChart({ data }: Props) {
     : buyScore === 1 ? "1 / 4 Bedingungen – klares Warnsignal"
     : "0 / 4 Bedingungen – kein Kaufsignal";
 
-  // ── Y-axis domain for price chart (nur Fenster A: Close + sichtbare MAs/BB) ─
   // Leeres Fenster lässt die Controls stehen, damit Von/Bis korrigierbar bleiben.
-  // B/C haben eigene Domains in CloseBand — nicht in diese Achse mischen.
-  const chartEmpty = chartData.length === 0;
-  let priceMin = 0;
-  let priceMax = 1;
-  let pricePadding = 0;
-  if (!chartEmpty) {
-    priceMin = Math.min(...chartData.map(d => {
-      let min = d.close;
-      MA_LINES.forEach(ma => { const v = d[ma.key as keyof typeof d] as number|undefined; if (v && visibleMAs.has(ma.key) && v < min) min = v; });
-      if (showBollinger && d.bbLower != null && d.bbLower < min) min = d.bbLower;
-      return min;
-    }));
-    priceMax = Math.max(...chartData.map(d => {
-      let max = d.close;
-      MA_LINES.forEach(ma => { const v = d[ma.key as keyof typeof d] as number|undefined; if (v && visibleMAs.has(ma.key) && v > max) max = v; });
-      if (showBollinger && d.bbUpper != null && d.bbUpper > max) max = d.bbUpper;
-      return max;
-    }));
-    const priceRange = priceMax - priceMin;
-    pricePadding = priceRange * 0.05;
-  }
+  // Jedes Band rechnet Y aus der eigenen Serie — keine gemeinsame Absolute-Y, kein closeB.
+  const chartEmpty = aBuilt.points.length === 0;
 
   const formatDate = (date: string) => {
     const p = date.split("-");
@@ -475,106 +516,6 @@ export function TechnicalChart({ data }: Props) {
   const formatDateFull = (date: string) =>
     new Date(date + "T00:00:00").toLocaleDateString("de-DE", { day:"2-digit", month:"short", year:"numeric" });
 
-  const aChart = !chartEmpty ? (
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{top:5,right:10,left:0,bottom:5}} onClick={handleChartClick}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3}/>
-            <XAxis dataKey="date" tickFormatter={formatDate} tick={{fontSize:9,fill:"var(--muted-foreground)"}} interval={Math.floor(chartData.length/8)} axisLine={{stroke:"var(--border)"}}/>
-            <YAxis yAxisId="price" domain={[priceMin-pricePadding, priceMax+pricePadding]} tick={{fontSize:9,fill:"var(--muted-foreground)"}} tickFormatter={(v:number)=>`$${v.toFixed(0)}`} width={52} axisLine={{stroke:"var(--border)"}}/>
-            {/* Hidden right axis for volume normalisation */}
-            {/* Domain [0, 6.67]: tallest volume bar fills 1/6.67 ≈ 15% of chart height */}
-            <YAxis yAxisId="vol" hide domain={[0, 6.67]} orientation="right"/>
-
-            <Tooltip content={({ active, payload }) => {
-              if (!active||!payload?.length) return null;
-              const dp = payload[0]?.payload;
-              if (!dp) return null;
-              let sigs: any[] = [];
-              if (showSignals) {
-                const idx = chartData.findIndex(d => d.date===dp.date);
-                if (idx>=0) {
-                  for (let off=-2;off<=2;off++) {
-                    const nb = chartData[idx+off];
-                    if (nb?._signals) for (const s of nb._signals) if (!sigs.some(e=>e.date===s.date&&e.reason===s.reason)) sigs.push(s);
-                  }
-                }
-              }
-              const bbWidth = dp.bbUpper!=null&&dp.bbLower!=null ? (dp.bbUpper-dp.bbLower).toFixed(2) : null;
-              return (
-                <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px] min-w-[160px]">
-                  <div className="font-semibold mb-1">{formatDateFull(dp.date)}</div>
-                  <div className="flex justify-between gap-3"><span className="text-primary">Kurs</span><span className="font-mono">${dp.close.toFixed(2)}</span></div>
-                  {showVolume && dp.volume>0 && <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(dp.volume/1e6).toFixed(2)}M</span></div>}
-                  {showBollinger && dp.bbUpper!=null && (
-                    <>
-                      <div className="flex justify-between gap-3"><span className="text-violet-400">BB Upper</span><span className="font-mono">${dp.bbUpper.toFixed(2)}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-violet-300">BB Mid</span><span className="font-mono">${dp.bbMid?.toFixed(2)}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-violet-400">BB Lower</span><span className="font-mono">${dp.bbLower?.toFixed(2)}</span></div>
-                      {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">${bbWidth}</span></div>}
-                    </>
-                  )}
-                  {payload.filter((p:any)=>p.yAxisId==="price"&&!['close','bbUpper','bbMid','bbLower'].includes(p.dataKey)).map((p:any)=>(
-                    <div key={p.dataKey} className="flex justify-between gap-3">
-                      <span style={{color:p.color}}>{p.name}</span>
-                      <span className="font-mono">${Number(p.value).toFixed(2)}</span>
-                    </div>
-                  ))}
-                  {sigs.map((s,i) => (
-                    <div key={i} className={`mt-1 pt-1 border-t border-border font-semibold ${s.type==="buy"?"text-green-400":"text-red-400"}`}>
-                      {s.type==="buy"?"▲ BUY":"▼ SELL"}: {s.reason}
-                    </div>
-                  ))}
-                </div>
-              );
-            }}/>
-
-            {/* Volume overlay bars (normalised to 0–15% of price range) */}
-            {showVolume && (
-              <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={8}
-                shape={(props: any) => {
-                  const { x, y, width, height, payload } = props;
-                  // Scale vol bar to max 15% of chart height (chart height ~320px → 48px max)
-                  const fillColor = payload._volUp ? "rgba(34,197,94,0.35)" : "rgba(239,68,68,0.35)";
-                  return <rect x={x} y={y} width={Math.max(width,1)} height={Math.abs(height)} fill={fillColor}/>;
-                }}
-              />
-            )}
-
-            {/* Price line — Fenster A. B/C liegen in eigenen Bändern, nicht auf dieser Y-Achse. */}
-            <Line yAxisId="price" type="monotone" dataKey="close" name="Kurs" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} isAnimationActive={false}/>
-
-            {/* MA lines */}
-            {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
-              <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={1.5} dot={false} strokeDasharray={ma.key.startsWith("ema")?"4 2":undefined} connectNulls isAnimationActive={false}/>
-            ))}
-
-            {/* Bollinger Bands */}
-            {showBollinger && (
-              <>
-                <Area yAxisId="price" type="monotone" dataKey="bbUpper" name="BB Upper" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none"/>
-                <Line yAxisId="price" type="monotone" dataKey="bbMid"   name="BB Mid"   stroke="#a78bfa" strokeWidth={1} strokeDasharray="5 3" dot={false} connectNulls isAnimationActive={false}/>
-                <Area yAxisId="price" type="monotone" dataKey="bbLower" name="BB Lower" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none"/>
-              </>
-            )}
-
-            {/* Signal reference lines */}
-            {showSignals && allVisibleSignals.map((s,i) => (
-              <ReferenceLine key={`sig-${i}`} yAxisId="price" x={s.date} stroke={s.type==="buy"?"#22c55e":"#ef4444"} strokeDasharray="2 2" strokeWidth={0.8} opacity={0.5}/>
-            ))}
-
-            {/* Measurement overlay */}
-            {measurePoints.length>=1 && (
-              <ReferenceLine yAxisId="price" x={measurePoints[0].date} stroke="#f59e0b" strokeDasharray="4 3" strokeWidth={1.5} label={{value:"A",position:"top",fontSize:10,fill:"#f59e0b",fontWeight:700}}/>
-            )}
-            {measurement && (
-              <>
-                <ReferenceArea yAxisId="price" x1={measurement.a.date} x2={measurement.b.date} fill={measurement.isGain?"rgba(16,185,129,0.08)":"rgba(239,68,68,0.08)"} stroke={measurement.isGain?"#10b981":"#ef4444"} strokeDasharray="4 3" strokeWidth={1}/>
-                <ReferenceLine yAxisId="price" x={measurement.b.date} stroke="#f59e0b" strokeDasharray="4 3" strokeWidth={1.5} label={{value:"B",position:"top",fontSize:10,fill:"#f59e0b",fontWeight:700}}/>
-              </>
-            )}
-          </ComposedChart>
-        </ResponsiveContainer>
-  ) : null;
 
   return (
     <SectionCard number={12} title="Technische Analyse" subtitle="Interactive Chart – MA / MACD / RSI / BB / Volume">
@@ -620,212 +561,195 @@ export function TechnicalChart({ data }: Props) {
         <StatusPill label="MACD steigend" value={cs.macdRising}      detail={cs.signalValue!== undefined ? `Signal: ${cs.signalValue.toFixed(4)}` : ""} />
       </div>
 
-      {/* ── Controls ── */}
-      <div className="flex flex-wrap items-end gap-2 mb-3 min-w-0 max-w-full">
-        {/* Time range — setzt nur Fenster A (Ende = letzter Bar, Start = cutoff) */}
-        <div className="flex rounded-md border border-border overflow-hidden">
-          {(["3M","6M","1Y","2Y","3Y","5Y","10Y"] as const).map(r => (
-            <button key={r} type="button" onClick={() => { setTimeRange(r); setCustomA(null); setRangeHint(null); setSignalPage(0); }}
-              className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${
-                timeRange===r && !customA ? "bg-primary text-primary-foreground" : "hover:bg-muted/50"
-              }`}>
-              {r}
+      {/* ── Controls ──
+          Mobile: Preset → Kurs A/B/C → Date-Blöcke nur aktiver Kurse → Indikatoren.
+          Desktop (sm+): Zeile 1 Presets | Kurse, Zeile 2 Dates aktiver Fenster | Indikatoren. */}
+      <div className="mb-3 flex min-w-0 max-w-full flex-col gap-2 overflow-x-hidden sm:gap-3" data-testid="controls-ta">
+        <div className="flex min-w-0 max-w-full flex-col gap-2 sm:flex-row sm:items-center sm:gap-3" data-testid="controls-row-presets">
+          {/* Time range — setzt nur Fenster A (Ende = letzter Bar, Start = cutoff) */}
+          <div className="flex min-h-9 max-w-full flex-wrap gap-1" data-testid="row-presets">
+            {(["3M","6M","1Y","2Y","3Y","5Y","10Y"] as const).map(r => (
+              <button key={r} type="button" onClick={() => { setTimeRange(r); setCustomA(null); setRangeHint(null); setSignalPage(0); }}
+                className={`min-h-9 rounded-md border px-2.5 text-[10px] font-medium transition-colors ${
+                  timeRange===r && !customA ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted/50"
+                }`}>
+                {r}
+              </button>
+            ))}
+          </div>
+          <div className="flex w-full min-w-0 gap-1 sm:w-auto" data-testid="row-kurs-toggles">
+            <button
+              type="button"
+              onClick={() => setShowKursA(v => !v)}
+              data-testid="button-kurs-a"
+              aria-pressed={showKursA}
+              className={`inline-flex min-h-9 flex-1 items-center justify-center rounded border px-2.5 text-[10px] font-medium transition-colors sm:flex-none ${
+                showKursA
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border text-muted-foreground hover:bg-muted/50"
+              }`}
+            >
+              Kurs A
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setShowKursB(v => !v)}
+              data-testid="button-kurs-b"
+              aria-pressed={showKursB}
+              className={`inline-flex min-h-9 flex-1 items-center justify-center rounded border px-2.5 text-[10px] font-medium transition-colors sm:flex-none ${
+                showKursB ? "" : "border-border text-muted-foreground hover:bg-muted/50"
+              }`}
+              style={showKursB ? { backgroundColor: STROKE_B, borderColor: STROKE_B, color: "#1e1b4b" } : undefined}
+            >
+              Kurs B
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowKursC(v => !v)}
+              data-testid="button-kurs-c"
+              aria-pressed={showKursC}
+              className={`inline-flex min-h-9 flex-1 items-center justify-center rounded border px-2.5 text-[10px] font-medium transition-colors sm:flex-none ${
+                showKursC ? "" : "border-border text-muted-foreground hover:bg-muted/50"
+              }`}
+              style={showKursC ? { backgroundColor: STROKE_C, borderColor: STROKE_C, color: "#052e16" } : undefined}
+            >
+              Kurs C
+            </button>
+          </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowKursA(v => !v)}
-          data-testid="button-kurs-a"
-          aria-pressed={showKursA}
-          className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
-            showKursA
-              ? "bg-primary text-primary-foreground border-primary"
-              : "border-border text-muted-foreground hover:bg-muted/50"
-          }`}
-        >
-          Kurs A
-        </button>
-        <label className="flex flex-col gap-0.5 w-[9.5rem] max-w-full min-w-0">
-          <span className="text-[10px] text-muted-foreground leading-none">Von A</span>
-          <input
-            type="date"
-            min={minDate}
-            max={maxDate}
-            value={fromADisplay}
-            onChange={e => applyWindowA(e.target.value, toADisplay)}
-            data-testid="input-window-a-from"
-            className={DATE_INPUT_CLASS}
-          />
-        </label>
-        <label className="flex flex-col gap-0.5 w-[9.5rem] max-w-full min-w-0">
-          <span className="text-[10px] text-muted-foreground leading-none">Bis A</span>
-          <input
-            type="date"
-            min={minDate}
-            max={maxDate}
-            value={toADisplay}
-            onChange={e => applyWindowA(fromADisplay, e.target.value)}
-            data-testid="input-window-a-to"
-            className={DATE_INPUT_CLASS}
-          />
-        </label>
+        <div className="flex min-w-0 max-w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:gap-3" data-testid="controls-row-indicators">
+          <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-end sm:gap-3">
+            {showKursA && (
+              <WindowDates
+                tag="A"
+                from={fromADisplay}
+                to={toADisplay}
+                minDate={minDate}
+                maxDate={maxDate}
+                onFrom={value => applyWindowA(value, toADisplay)}
+                onTo={value => applyWindowA(fromADisplay, value)}
+                testFrom="input-window-a-from"
+                testTo="input-window-a-to"
+              />
+            )}
+            {showKursB && (
+              <WindowDates
+                tag="B"
+                from={fromBValue}
+                to={toBValue}
+                minDate={minDate}
+                maxDate={maxDate}
+                onFrom={value => applyWindowB(value, toBValue)}
+                onTo={value => applyWindowB(fromBValue, value)}
+                testFrom="input-window-b-from"
+                testTo="input-window-b-to"
+              />
+            )}
+            {showKursC && (
+              <WindowDates
+                tag="C"
+                from={fromCValue}
+                to={toCValue}
+                minDate={minDate}
+                maxDate={maxDate}
+                onFrom={value => applyWindowC(value, toCValue)}
+                onTo={value => applyWindowC(fromCValue, value)}
+                testFrom="input-window-c-from"
+                testTo="input-window-c-to"
+              />
+            )}
+          </div>
 
-        <button
-          type="button"
-          onClick={() => setShowKursB(v => !v)}
-          data-testid="button-kurs-b"
-          aria-pressed={showKursB}
-          className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
-            showKursB ? "" : "border-border text-muted-foreground hover:bg-muted/50"
-          }`}
-          style={showKursB ? { backgroundColor: STROKE_B, borderColor: STROKE_B, color: "#1e1b4b" } : undefined}
-        >
-          Kurs B
-        </button>
-        <label className="flex flex-col gap-0.5 w-[9.5rem] max-w-full min-w-0">
-          <span className="text-[10px] text-muted-foreground leading-none">Von B</span>
-          <input
-            type="date"
-            min={minDate}
-            max={maxDate}
-            value={fromBValue}
-            onChange={e => applyWindowB(e.target.value, toBValue)}
-            data-testid="input-window-b-from"
-            className={DATE_INPUT_CLASS}
-          />
-        </label>
-        <label className="flex flex-col gap-0.5 w-[9.5rem] max-w-full min-w-0">
-          <span className="text-[10px] text-muted-foreground leading-none">Bis B</span>
-          <input
-            type="date"
-            min={minDate}
-            max={maxDate}
-            value={toBValue}
-            onChange={e => applyWindowB(fromBValue, e.target.value)}
-            data-testid="input-window-b-to"
-            className={DATE_INPUT_CLASS}
-          />
-        </label>
-
-        <button
-          type="button"
-          onClick={() => setShowKursC(v => !v)}
-          data-testid="button-kurs-c"
-          aria-pressed={showKursC}
-          className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
-            showKursC ? "" : "border-border text-muted-foreground hover:bg-muted/50"
-          }`}
-          style={showKursC ? { backgroundColor: STROKE_C, borderColor: STROKE_C, color: "#052e16" } : undefined}
-        >
-          Kurs C
-        </button>
-        <label className="flex flex-col gap-0.5 w-[9.5rem] max-w-full min-w-0">
-          <span className="text-[10px] text-muted-foreground leading-none">Von C</span>
-          <input
-            type="date"
-            min={minDate}
-            max={maxDate}
-            value={fromCValue}
-            onChange={e => applyWindowC(e.target.value, toCValue)}
-            data-testid="input-window-c-from"
-            className={DATE_INPUT_CLASS}
-          />
-        </label>
-        <label className="flex flex-col gap-0.5 w-[9.5rem] max-w-full min-w-0">
-          <span className="text-[10px] text-muted-foreground leading-none">Bis C</span>
-          <input
-            type="date"
-            min={minDate}
-            max={maxDate}
-            value={toCValue}
-            onChange={e => applyWindowC(fromCValue, e.target.value)}
-            data-testid="input-window-c-to"
-            className={DATE_INPUT_CLASS}
-          />
-        </label>
+          <div className="flex min-w-0 max-w-full flex-wrap gap-1" data-testid="row-indicators">
+            {MA_LINES.map(ma => (
+              <button key={ma.key} type="button" onClick={() => toggleMA(ma.key)}
+                className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] font-mono transition-colors sm:min-h-7 ${
+                  visibleMAs.has(ma.key) ? "border-current opacity-100" : "border-border opacity-40 hover:opacity-60"
+                }`}
+                style={{ color: ma.color }}>
+                {visibleMAs.has(ma.key) ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+                {ma.label}
+              </button>
+            ))}
+            <button type="button" onClick={() => setShowBollinger(v => !v)}
+              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+                showBollinger ? "border-violet-400 text-violet-400" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showBollinger ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              BB(20,2)
+            </button>
+            <button type="button" onClick={() => setShowVolume(v => !v)}
+              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+                showVolume ? "border-sky-400 text-sky-400" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showVolume ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Volumen
+            </button>
+            <button type="button" onClick={() => setShowSignals(v => !v)}
+              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+                showSignals ? "border-primary text-primary" : "border-border text-muted-foreground opacity-50"
+              }`}>
+              {showSignals ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Signale
+            </button>
+            <button type="button" onClick={() => setShowMacd(v => !v)} data-testid="button-macd" aria-pressed={showMacd}
+              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+                showMacd ? "border-blue-500 text-blue-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showMacd ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              MACD
+            </button>
+            <button type="button" onClick={() => setShowRsi(v => !v)} data-testid="button-rsi" aria-pressed={showRsi}
+              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+                showRsi ? "border-amber-500 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showRsi ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              RSI(14)
+            </button>
+            <button type="button" onClick={() => { setMeasureMode(v => !v); setMeasurePoints([]); }}
+              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+                measureMode ? "border-amber-500 bg-amber-500/10 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              <Ruler className="w-2.5 h-2.5"/>
+              Messen
+            </button>
+          </div>
+        </div>
 
         {/* WORK_DATA_PROVIDERS.md §4: Hinweis wenn weniger Historie geladen wurde
             als der gewaehlte Timeframe verlangt — Chart-Domain bindet sich immer
             an die tatsaechlichen Daten, aber der Nutzer soll das sehen koennen. */}
-        {isHistoryTruncated && (
-          <span
-            className="px-2 py-1 rounded text-[10px] font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
-            title={`Nur ${actualYearsAvailable} Jahre Historie verfügbar (angefragt: ${timeRange}). Quelle: ${data.historyDataSource ?? "fmp"}.`}
-          >
-            Historie: {actualYearsAvailable}J verfügbar
-          </span>
+        {(isHistoryTruncated || (data.historyDataSource && data.historyDataSource !== "fmp") || data.historyTruncated) && (
+          <div className="flex min-w-0 max-w-full flex-wrap gap-1">
+            {isHistoryTruncated && (
+              <span
+                className="px-2 py-1 rounded text-[10px] font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                title={`Nur ${actualYearsAvailable} Jahre Historie verfügbar (angefragt: ${timeRange}). Quelle: ${data.historyDataSource ?? "fmp"}.`}
+              >
+                Historie: {actualYearsAvailable}J verfügbar
+              </span>
+            )}
+            {/* Sprint B1 (WORK_DATA_PROVIDERS.md §4/§7): dataSource klein sichtbar,
+                zeigt ob ein Alt-Provider (Yahoo/Stooq) die FMP-Historie ergaenzt hat. */}
+            {data.historyDataSource && data.historyDataSource !== "fmp" && (
+              <span
+                className="px-2 py-1 rounded text-[10px] font-medium bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30"
+                title="Kurshistorie kombiniert aus FMP (primär) und einem Alt-Provider (füllt ältere Lücken)."
+              >
+                Quelle: {data.historyDataSource}
+              </span>
+            )}
+            {data.historyTruncated && (
+              <span
+                className="px-2 py-1 rounded text-[10px] font-medium bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30"
+                title="Auch nach Alt-Provider-Fallback ist die angeforderte Zeitspanne nicht vollständig abgedeckt — Daten werden ehrlich angezeigt, nicht künstlich verlängert."
+              >
+                Historie unvollständig
+              </span>
+            )}
+          </div>
         )}
-
-        {/* Sprint B1 (WORK_DATA_PROVIDERS.md §4/§7): dataSource klein sichtbar,
-            zeigt ob ein Alt-Provider (Yahoo/Stooq) die FMP-Historie ergaenzt hat. */}
-        {data.historyDataSource && data.historyDataSource !== "fmp" && (
-          <span
-            className="px-2 py-1 rounded text-[10px] font-medium bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30"
-            title="Kurshistorie kombiniert aus FMP (primär) und einem Alt-Provider (füllt ältere Lücken)."
-          >
-            Quelle: {data.historyDataSource}
-          </span>
-        )}
-        {data.historyTruncated && (
-          <span
-            className="px-2 py-1 rounded text-[10px] font-medium bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30"
-            title="Auch nach Alt-Provider-Fallback ist die angeforderte Zeitspanne nicht vollständig abgedeckt — Daten werden ehrlich angezeigt, nicht künstlich verlängert."
-          >
-            Historie unvollständig
-          </span>
-        )}
-
-        {/* MA toggles */}
-        <div className="flex flex-wrap gap-1">
-          {MA_LINES.map(ma => (
-            <button key={ma.key} onClick={() => toggleMA(ma.key)}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
-                visibleMAs.has(ma.key) ? "border-current opacity-100" : "border-border opacity-40 hover:opacity-60"
-              }`}
-              style={{ color: ma.color }}>
-              {visibleMAs.has(ma.key) ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
-              {ma.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Bollinger toggle */}
-        <button onClick={() => setShowBollinger(v => !v)}
-          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
-            showBollinger ? "border-violet-400 text-violet-400" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
-          }`}>
-          {showBollinger ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
-          BB(20,2)
-        </button>
-
-        {/* Volume toggle */}
-        <button onClick={() => setShowVolume(v => !v)}
-          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
-            showVolume ? "border-sky-400 text-sky-400" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
-          }`}>
-          {showVolume ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
-          Volumen
-        </button>
-
-        {/* Signals toggle */}
-        <button onClick={() => setShowSignals(v => !v)}
-          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
-            showSignals ? "border-primary text-primary" : "border-border text-muted-foreground opacity-50"
-          }`}>
-          {showSignals ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
-          Signale
-        </button>
-
-        {/* Measure tool */}
-        <button onClick={() => { setMeasureMode(v => !v); setMeasurePoints([]); }}
-          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
-            measureMode ? "border-amber-500 text-amber-500 bg-amber-500/10" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
-          }`}>
-          <Ruler className="w-2.5 h-2.5"/>
-          Messen
-        </button>
       </div>
 
       {(rangeHint || bWindowEmpty || cWindowEmpty || (showKursA && customA && chartEmpty)) && (
@@ -922,106 +846,108 @@ export function TechnicalChart({ data }: Props) {
       ) : singleALayout && chartEmpty ? (
         <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-window-empty">{EMPTY_WINDOW_HINT}</div>
       ) : singleALayout ? (
-        <div className={`h-[320px] sm:h-[380px] w-full min-w-0 max-w-full ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma">
-          {aChart}
+        <div className="min-w-0 max-w-full">
+          <div className={`${priceBandClass(1)} w-full min-w-0 max-w-full ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma">
+            <PricePane
+              points={aBuilt.points}
+              signals={aBuilt.signals}
+              closeStroke="hsl(var(--primary))"
+              closeName="Kurs"
+              tickFormatter={formatDate}
+              formatDateFull={formatDateFull}
+              visibleMAs={visibleMAs}
+              showVolume={showVolume}
+              showBollinger={showBollinger}
+              showSignals={showSignals}
+              dense={false}
+              onPlotClick={handleChartClick}
+              measurePoints={measurePoints}
+              measurement={measurement}
+            />
+          </div>
+          {showMacd && (
+            <MacdPane points={aBuilt.points} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-macd" title="MACD(12,26,9)" hint="= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal" />
+          )}
+          {showRsi && (
+            <RsiPane points={aBuilt.points} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-rsi" title="RSI(14)" hint="| <30 überverkauft · >70 überkauft" />
+          )}
         </div>
       ) : (
         <div
-          className="h-[320px] sm:h-[380px] w-full min-w-0 max-w-full flex flex-col overflow-hidden"
+          className="w-full min-w-0 max-w-full flex flex-col overflow-x-hidden"
           style={{ gap: BAND_GAP_PX }}
           data-testid="chart-price-bands"
         >
           {showKursA && (
-            <div className={`min-w-0 flex flex-col overflow-hidden ${measureMode?'cursor-crosshair':''}`} style={bandFrameStyle(visibleKursCount)} data-testid="chart-band-a">
-              <div className="text-[10px] leading-none font-medium text-primary shrink-0">Fenster A</div>
-              <div className="flex-1 min-h-0 w-full">
-                {chartEmpty ? (
-                  <div className="h-full flex items-center justify-center text-[10px] text-amber-600 dark:text-amber-400 px-2 text-center">Fenster A: {EMPTY_WINDOW_HINT}</div>
-                ) : (
-                  aChart
-                )}
-              </div>
-            </div>
+            <BandStack
+              label="Fenster A"
+              labelClassName="text-primary"
+              series={aBuilt}
+              closeStroke="hsl(var(--primary))"
+              closeName="Kurs"
+              tickFormatter={formatDate}
+              formatDateFull={formatDateFull}
+              visibleMAs={visibleMAs}
+              showVolume={showVolume}
+              showBollinger={showBollinger}
+              showSignals={showSignals}
+              showMacd={showMacd}
+              showRsi={showRsi}
+              count={visibleKursCount}
+              testId="chart-band-a"
+              macdTestId="chart-macd"
+              rsiTestId="chart-rsi"
+              measureMode={measureMode}
+              onPlotClick={handleChartClick}
+              measurePoints={measurePoints}
+              measurement={measurement}
+            />
           )}
           {showKursB && (
-            <CloseBand label="Fenster B" stroke={STROKE_B} points={bCloses} from={fromBValue} to={toBValue} formatDateFull={formatDateFull} testId="chart-band-b" frameStyle={bandFrameStyle(visibleKursCount)} />
+            <BandStack
+              label="Fenster B"
+              labelClassName=""
+              labelColor={STROKE_B}
+              series={bBuilt}
+              closeStroke={STROKE_B}
+              closeName="Fenster B"
+              tickFormatter={(d: string) => bandAxisDate(d, fromBValue, toBValue)}
+              formatDateFull={formatDateFull}
+              visibleMAs={visibleMAs}
+              showVolume={showVolume}
+              showBollinger={showBollinger}
+              showSignals={showSignals}
+              showMacd={showMacd}
+              showRsi={showRsi}
+              count={visibleKursCount}
+              testId="chart-band-b"
+              macdTestId="chart-macd-b"
+              rsiTestId="chart-rsi-b"
+            />
           )}
           {showKursC && (
-            <CloseBand label="Fenster C" stroke={STROKE_C} points={cCloses} from={fromCValue} to={toCValue} formatDateFull={formatDateFull} testId="chart-band-c" frameStyle={bandFrameStyle(visibleKursCount)} />
+            <BandStack
+              label="Fenster C"
+              labelClassName=""
+              labelColor={STROKE_C}
+              series={cBuilt}
+              closeStroke={STROKE_C}
+              closeName="Fenster C"
+              tickFormatter={(d: string) => bandAxisDate(d, fromCValue, toCValue)}
+              formatDateFull={formatDateFull}
+              visibleMAs={visibleMAs}
+              showVolume={showVolume}
+              showBollinger={showBollinger}
+              showSignals={showSignals}
+              showMacd={showMacd}
+              showRsi={showRsi}
+              count={visibleKursCount}
+              testId="chart-band-c"
+              macdTestId="chart-macd-c"
+              rsiTestId="chart-rsi-c"
+            />
           )}
         </div>
-      )}
-
-      {/* MACD + RSI nur Fenster A (chartData). Kein zweites Panel für B/C. */}
-      {!chartEmpty && (
-      <>
-      {/* ── MACD Chart ── */}
-      <div className="mt-2 text-[10px] font-medium text-muted-foreground mb-1 flex items-center gap-1.5">
-        MACD(12,26,9) <span className="text-[9px] opacity-60">= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal</span>
-      </div>
-      <div className="h-[130px] sm:h-[150px] w-full" data-testid="chart-macd">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{top:4,right:10,left:0,bottom:4}}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3}/>
-            <XAxis dataKey="date" tickFormatter={formatDate} tick={{fontSize:9,fill:"var(--muted-foreground)"}} interval={Math.floor(chartData.length/8)} axisLine={{stroke:"var(--border)"}}/>
-            <YAxis tick={{fontSize:9,fill:"var(--muted-foreground)"}} width={52} axisLine={{stroke:"var(--border)"}} tickFormatter={(v:number)=>v.toFixed(1)}/>
-            <Tooltip content={({ active, payload, label }) => {
-              if (!active||!payload?.length) return null;
-              return (
-                <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
-                  <div className="font-semibold mb-1">{formatDateFull(label)}</div>
-                  {payload.map((p:any) => <div key={p.dataKey} className="flex justify-between gap-3"><span style={{color:p.color}}>{p.name}</span><span className="font-mono">{Number(p.value).toFixed(4)}</span></div>)}
-                </div>
-              );
-            }}/>
-            <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeWidth={0.5}/>
-            <Bar dataKey="histogram" name="Histogram" isAnimationActive={false}
-              shape={(props:any) => {
-                const {x,y,width,height,payload} = props;
-                return <rect x={x} y={y} width={Math.max(width,1)} height={Math.abs(height)} fill={(payload?.histogram??0)>=0?"rgba(34,197,94,0.5)":"rgba(239,68,68,0.5)"}/>;
-              }}
-            />
-            <Line type="monotone" dataKey="macd"   name="MACD"   stroke="#3b82f6" strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false}/>
-            <Line type="monotone" dataKey="signal" name="Signal" stroke="#f97316" strokeWidth={1} strokeDasharray="3 2" dot={false} connectNulls isAnimationActive={false}/>
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* ── RSI(14) Chart ── */}
-      <div className="mt-2 text-[10px] font-medium text-muted-foreground mb-1 flex items-center gap-1.5">
-        RSI(14)
-        <span className="text-[9px] opacity-60">
-          | &lt;30 überverkauft · &gt;70 überkauft
-        </span>
-      </div>
-      <div className="h-[110px] sm:h-[130px] w-full" data-testid="chart-rsi">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{top:4,right:10,left:0,bottom:4}}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3}/>
-            <XAxis dataKey="date" tickFormatter={formatDate} tick={{fontSize:9,fill:"var(--muted-foreground)"}} interval={Math.floor(chartData.length/8)} axisLine={{stroke:"var(--border)"}}/>
-            <YAxis domain={[0,100]} ticks={[0,30,50,70,100]} tick={{fontSize:9,fill:"var(--muted-foreground)"}} width={52} axisLine={{stroke:"var(--border)"}} tickFormatter={(v:number)=>v.toFixed(0)}/>
-            <Tooltip content={({ active, payload, label }) => {
-              if (!active||!payload?.length) return null;
-              const rsiVal = payload[0]?.value;
-              const zone = rsiVal==null ? '' : rsiVal >= 70 ? ' — überkauft 🔴' : rsiVal <= 30 ? ' — überverkauft 🟢' : '';
-              return (
-                <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
-                  <div className="font-semibold mb-1">{formatDateFull(label)}</div>
-                  <div className="flex justify-between gap-3"><span className="text-amber-400">RSI(14)</span><span className="font-mono">{Number(rsiVal).toFixed(2)}{zone}</span></div>
-                </div>
-              );
-            }}/>
-            {/* Overbought / Oversold shading */}
-            <ReferenceArea y1={70} y2={100} fill="rgba(239,68,68,0.07)" ifOverflow="hidden"/>
-            <ReferenceArea y1={0}  y2={30}  fill="rgba(34,197,94,0.07)" ifOverflow="hidden"/>
-            <ReferenceLine y={70} stroke="#ef4444" strokeDasharray="4 3" strokeWidth={0.8} opacity={0.7} label={{value:"70",position:"right",fontSize:8,fill:"#ef4444"}}/>
-            <ReferenceLine y={50} stroke="var(--muted-foreground)" strokeDasharray="4 3" strokeWidth={0.5} opacity={0.4}/>
-            <ReferenceLine y={30} stroke="#22c55e" strokeDasharray="4 3" strokeWidth={0.8} opacity={0.7} label={{value:"30",position:"right",fontSize:8,fill:"#22c55e"}}/>
-            <Line type="monotone" dataKey="rsi" name="RSI(14)" stroke="#f59e0b" strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false}/>
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-      </>
       )}
 
       {/* ── Signals Table with Pagination ── */}
@@ -1029,7 +955,7 @@ export function TechnicalChart({ data }: Props) {
         <div className="mt-4">
           <div className="flex items-center justify-between mb-2">
             <div className="text-[10px] font-medium text-muted-foreground">
-              Letzte Signale ({allVisibleSignals.length} im Zeitraum)
+              Letzte Signale Fenster A ({allVisibleSignals.length} im Zeitraum)
             </div>
             {totalSignalPages > 1 && (
               <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
@@ -1097,87 +1023,339 @@ export function TechnicalChart({ data }: Props) {
   );
 }
 
-function CloseBand({
-  label,
-  stroke,
-  points,
-  from,
-  to,
-  formatDateFull,
-  testId,
-  frameStyle,
+type MeasureHit = {
+  a: { date: string; close: number };
+  b: { date: string; close: number };
+  diff: number;
+  pct: number;
+  isGain: boolean;
+};
+
+function WindowDates({
+  tag, from, to, minDate, maxDate, onFrom, onTo, testFrom, testTo,
 }: {
-  label: string;
-  stroke: string;
-  points: { date: string; close: number }[];
+  tag: string;
   from: string;
   to: string;
-  formatDateFull: (date: string) => string;
-  testId: string;
-  frameStyle: CSSProperties;
+  minDate: string;
+  maxDate: string;
+  onFrom: (value: string) => void;
+  onTo: (value: string) => void;
+  testFrom: string;
+  testTo: string;
 }) {
-  const [yMin, yMax] = yDomainFromCloses(points);
   return (
-    <div className="min-w-0 flex flex-col overflow-hidden" style={frameStyle} data-testid={testId}>
-      <div className="text-[10px] leading-none font-medium shrink-0" style={{ color: stroke }}>{label}</div>
-      <div className="flex-1 min-h-0 w-full">
-          {points.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-[10px] text-amber-600 dark:text-amber-400 px-2 text-center">
+    <div className="w-full min-w-0 sm:w-auto" data-testid={`dates-${tag}`}>
+      <div className="mb-1 text-[10px] leading-none text-muted-foreground">{tag}</div>
+      <div className="grid min-w-0 grid-cols-2 gap-1 sm:flex sm:gap-2">
+        <label className="flex min-w-0 flex-col gap-0.5 overflow-hidden sm:w-[9.5rem]">
+          <span className="text-[10px] leading-none text-muted-foreground">Von</span>
+          <input
+            type="date"
+            min={minDate}
+            max={maxDate}
+            value={from}
+            onChange={e => onFrom(e.target.value)}
+            data-testid={testFrom}
+            className={DATE_INPUT_CLASS}
+          />
+        </label>
+        <label className="flex min-w-0 flex-col gap-0.5 overflow-hidden sm:w-[9.5rem]">
+          <span className="text-[10px] leading-none text-muted-foreground">Bis</span>
+          <input
+            type="date"
+            min={minDate}
+            max={maxDate}
+            value={to}
+            onChange={e => onTo(e.target.value)}
+            data-testid={testTo}
+            className={DATE_INPUT_CLASS}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function PricePane({
+  points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
+  visibleMAs, showVolume, showBollinger, showSignals, dense,
+  onPlotClick, measurePoints, measurement,
+}: {
+  points: WindowPoint[];
+  signals: TradingSignal[];
+  closeStroke: string;
+  closeName: string;
+  tickFormatter: (date: string) => string;
+  formatDateFull: (date: string) => string;
+  visibleMAs: Set<MAKey>;
+  showVolume: boolean;
+  showBollinger: boolean;
+  showSignals: boolean;
+  dense: boolean;
+  onPlotClick?: (e: any) => void;
+  measurePoints?: { date: string; close: number }[];
+  measurement?: MeasureHit | null;
+}) {
+  const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger);
+  const tick = { fontSize: dense ? 8 : 9, fill: "var(--muted-foreground)" };
+  const interval = Math.max(0, Math.floor(points.length / (dense ? 5 : 8)));
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart
+        data={points}
+        margin={dense ? { top: 2, right: 10, left: 0, bottom: 0 } : { top: 5, right: 10, left: 0, bottom: 5 }}
+        onClick={onPlotClick}
+      >
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+        <XAxis dataKey="date" type="category" tickFormatter={tickFormatter} tick={tick} interval={interval} axisLine={{ stroke: "var(--border)" }} padding={{ left: 0, right: 0 }} />
+        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => `$${v.toFixed(0)}`} width={52} axisLine={{ stroke: "var(--border)" }} />
+        {/* Domain [0, 6.67]: höchster Volumen-Balken ≈ 15% der Bandhöhe, eigene Achse, nicht in der Preis-Y. */}
+        <YAxis yAxisId="vol" hide domain={[0, 6.67]} orientation="right" />
+        <Tooltip content={({ active, payload }) => {
+          if (!active || !payload?.length) return null;
+          const dp = payload[0]?.payload as WindowPoint | undefined;
+          if (!dp) return null;
+          let sigs: TradingSignal[] = [];
+          if (showSignals) {
+            const idx = points.findIndex(d => d.date === dp.date);
+            if (idx >= 0) {
+              for (let off = -2; off <= 2; off++) {
+                const nb = points[idx + off];
+                if (nb?._signals) for (const s of nb._signals) if (!sigs.some(e => e.date === s.date && e.reason === s.reason)) sigs.push(s);
+              }
+            }
+          }
+          const bbWidth = dp.bbUpper != null && dp.bbLower != null ? (dp.bbUpper - dp.bbLower).toFixed(2) : null;
+          return (
+            <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px] min-w-[160px]">
+              <div className="font-semibold mb-1">{formatDateFull(dp.date)}</div>
+              <div className="flex justify-between gap-3"><span style={{ color: closeStroke }}>{closeName}</span><span className="font-mono">${dp.close.toFixed(2)}</span></div>
+              {showVolume && dp.volume > 0 && <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(dp.volume / 1e6).toFixed(2)}M</span></div>}
+              {showBollinger && dp.bbUpper != null && (
+                <>
+                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Upper</span><span className="font-mono">${dp.bbUpper.toFixed(2)}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-violet-300">BB Mid</span><span className="font-mono">${dp.bbMid?.toFixed(2)}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Lower</span><span className="font-mono">${dp.bbLower?.toFixed(2)}</span></div>
+                  {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">${bbWidth}</span></div>}
+                </>
+              )}
+              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey)).map((p: any) => (
+                <div key={p.dataKey} className="flex justify-between gap-3">
+                  <span style={{ color: p.color }}>{p.name}</span>
+                  <span className="font-mono">${Number(p.value).toFixed(2)}</span>
+                </div>
+              ))}
+              {sigs.map((s, i) => (
+                <div key={i} className={`mt-1 pt-1 border-t border-border font-semibold ${s.type === "buy" ? "text-green-400" : "text-red-400"}`}>
+                  {s.type === "buy" ? "▲ BUY" : "▼ SELL"}: {s.reason}
+                </div>
+              ))}
+            </div>
+          );
+        }} />
+        {showVolume && (
+          <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={8}
+            shape={(props: any) => {
+              const { x, y, width, height, payload } = props;
+              const fillColor = payload._volUp ? "rgba(34,197,94,0.35)" : "rgba(239,68,68,0.35)";
+              return <rect x={x} y={y} width={Math.max(width, 1)} height={Math.abs(height)} fill={fillColor} />;
+            }}
+          />
+        )}
+        <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+        {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
+          <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={1.5} dot={false} strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined} connectNulls isAnimationActive={false} />
+        ))}
+        {showBollinger && (
+          <>
+            <Area yAxisId="price" type="monotone" dataKey="bbUpper" name="BB Upper" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="bbMid" name="BB Mid" stroke="#a78bfa" strokeWidth={1} strokeDasharray="5 3" dot={false} connectNulls isAnimationActive={false} />
+            <Area yAxisId="price" type="monotone" dataKey="bbLower" name="BB Lower" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none" />
+          </>
+        )}
+        {showSignals && signals.map((s, i) => (
+          <ReferenceLine key={`sig-${s.date}-${i}`} yAxisId="price" x={s.date} stroke={s.type === "buy" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={0.8} opacity={0.5} />
+        ))}
+        {measurePoints && measurePoints.length >= 1 && (
+          <ReferenceLine yAxisId="price" x={measurePoints[0].date} stroke="#f59e0b" strokeDasharray="4 3" strokeWidth={1.5} label={{ value: "A", position: "top", fontSize: 10, fill: "#f59e0b", fontWeight: 700 }} />
+        )}
+        {measurement && (
+          <>
+            <ReferenceArea yAxisId="price" x1={measurement.a.date} x2={measurement.b.date} fill={measurement.isGain ? "rgba(16,185,129,0.08)" : "rgba(239,68,68,0.08)"} stroke={measurement.isGain ? "#10b981" : "#ef4444"} strokeDasharray="4 3" strokeWidth={1} />
+            <ReferenceLine yAxisId="price" x={measurement.b.date} stroke="#f59e0b" strokeDasharray="4 3" strokeWidth={1.5} label={{ value: "B", position: "top", fontSize: 10, fill: "#f59e0b", fontWeight: 700 }} />
+          </>
+        )}
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+function OscCaption({ title, hint, compact }: { title: string; hint?: string; compact: boolean }) {
+  return (
+    <div className={`flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground ${compact ? "mb-0.5 mt-1 text-[9px] leading-none" : "mb-1 mt-2 text-[10px]"}`}>
+      <span className="truncate">{title}</span>
+      {hint && !compact && <span className="truncate text-[9px] opacity-60">{hint}</span>}
+    </div>
+  );
+}
+
+function MacdPane({
+  points, tickFormatter, formatDateFull, compact, testId, title, hint,
+}: {
+  points: WindowPoint[];
+  tickFormatter: (date: string) => string;
+  formatDateFull: (date: string) => string;
+  compact: boolean;
+  testId: string;
+  title: string;
+  hint?: string;
+}) {
+  const tick = { fontSize: compact ? 8 : 9, fill: "var(--muted-foreground)" };
+  return (
+    <>
+      <OscCaption title={title} hint={hint} compact={compact} />
+      <div className={`${compact ? "h-[72px] sm:h-[84px]" : "h-[130px] sm:h-[150px]"} w-full min-w-0`} data-testid={testId}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={points} margin={{ top: 4, right: 10, left: 0, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+            <XAxis dataKey="date" tickFormatter={tickFormatter} tick={tick} interval={Math.max(0, Math.floor(points.length / (compact ? 4 : 8)))} axisLine={{ stroke: "var(--border)" }} />
+            <YAxis tick={tick} width={52} axisLine={{ stroke: "var(--border)" }} tickFormatter={(v: number) => v.toFixed(compact ? 0 : 1)} />
+            <Tooltip content={({ active, payload, label }) => {
+              if (!active || !payload?.length) return null;
+              return (
+                <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
+                  <div className="font-semibold mb-1">{formatDateFull(String(label ?? ""))}</div>
+                  {payload.map((p: any) => <div key={p.dataKey} className="flex justify-between gap-3"><span style={{ color: p.color }}>{p.name}</span><span className="font-mono">{Number(p.value).toFixed(4)}</span></div>)}
+                </div>
+              );
+            }} />
+            <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeWidth={0.5} />
+            <Bar dataKey="histogram" name="Histogram" isAnimationActive={false}
+              shape={(props: any) => {
+                const { x, y, width, height, payload } = props;
+                return <rect x={x} y={y} width={Math.max(width, 1)} height={Math.abs(height)} fill={(payload?.histogram ?? 0) >= 0 ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)"} />;
+              }}
+            />
+            <Line type="monotone" dataKey="macd" name="MACD" stroke="#3b82f6" strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false} />
+            <Line type="monotone" dataKey="signal" name="Signal" stroke="#f97316" strokeWidth={1} strokeDasharray="3 2" dot={false} connectNulls isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </>
+  );
+}
+
+function RsiPane({
+  points, tickFormatter, formatDateFull, compact, testId, title, hint,
+}: {
+  points: WindowPoint[];
+  tickFormatter: (date: string) => string;
+  formatDateFull: (date: string) => string;
+  compact: boolean;
+  testId: string;
+  title: string;
+  hint?: string;
+}) {
+  const tick = { fontSize: compact ? 8 : 9, fill: "var(--muted-foreground)" };
+  return (
+    <>
+      <OscCaption title={title} hint={hint} compact={compact} />
+      <div className={`${compact ? "h-[64px] sm:h-[72px]" : "h-[110px] sm:h-[130px]"} w-full min-w-0`} data-testid={testId}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={points} margin={{ top: 4, right: 10, left: 0, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+            <XAxis dataKey="date" tickFormatter={tickFormatter} tick={tick} interval={Math.max(0, Math.floor(points.length / (compact ? 4 : 8)))} axisLine={{ stroke: "var(--border)" }} />
+            <YAxis domain={[0, 100]} ticks={compact ? [30, 70] : [0, 30, 50, 70, 100]} tick={tick} width={52} axisLine={{ stroke: "var(--border)" }} tickFormatter={(v: number) => v.toFixed(0)} />
+            <Tooltip content={({ active, payload, label }) => {
+              if (!active || !payload?.length) return null;
+              const rsiVal = payload[0]?.value;
+              const zone = rsiVal == null ? "" : Number(rsiVal) >= 70 ? " — überkauft" : Number(rsiVal) <= 30 ? " — überverkauft" : "";
+              return (
+                <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
+                  <div className="font-semibold mb-1">{formatDateFull(String(label ?? ""))}</div>
+                  <div className="flex justify-between gap-3"><span className="text-amber-400">RSI(14)</span><span className="font-mono">{Number(rsiVal).toFixed(2)}{zone}</span></div>
+                </div>
+              );
+            }} />
+            <ReferenceArea y1={70} y2={100} fill="rgba(239,68,68,0.07)" ifOverflow="hidden" />
+            <ReferenceArea y1={0} y2={30} fill="rgba(34,197,94,0.07)" ifOverflow="hidden" />
+            <ReferenceLine y={70} stroke="#ef4444" strokeDasharray="4 3" strokeWidth={0.8} opacity={0.7} label={compact ? undefined : { value: "70", position: "right", fontSize: 8, fill: "#ef4444" }} />
+            <ReferenceLine y={50} stroke="var(--muted-foreground)" strokeDasharray="4 3" strokeWidth={0.5} opacity={0.4} />
+            <ReferenceLine y={30} stroke="#22c55e" strokeDasharray="4 3" strokeWidth={0.8} opacity={0.7} label={compact ? undefined : { value: "30", position: "right", fontSize: 8, fill: "#22c55e" }} />
+            <Line type="monotone" dataKey="rsi" name="RSI(14)" stroke="#f59e0b" strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </>
+  );
+}
+
+function BandStack({
+  label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
+  visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
+  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement,
+}: {
+  label: string;
+  labelClassName: string;
+  labelColor?: string;
+  series: WindowSeries;
+  closeStroke: string;
+  closeName: string;
+  tickFormatter: (date: string) => string;
+  formatDateFull: (date: string) => string;
+  visibleMAs: Set<MAKey>;
+  showVolume: boolean;
+  showBollinger: boolean;
+  showSignals: boolean;
+  showMacd: boolean;
+  showRsi: boolean;
+  count: number;
+  testId: string;
+  macdTestId: string;
+  rsiTestId: string;
+  measureMode?: boolean;
+  onPlotClick?: (e: any) => void;
+  measurePoints?: { date: string; close: number }[];
+  measurement?: MeasureHit | null;
+}) {
+  const empty = series.points.length === 0;
+  const compact = count > 1;
+  return (
+    <div className="min-w-0 max-w-full" data-testid={testId}>
+      <div className={`${priceBandClass(count)} flex min-w-0 flex-col overflow-hidden ${measureMode ? "cursor-crosshair" : ""}`}>
+        <div className={`shrink-0 text-[10px] font-medium leading-none ${labelClassName}`} style={labelColor ? { color: labelColor } : undefined}>{label}</div>
+        <div className="min-h-0 w-full flex-1">
+          {empty ? (
+            <div className="flex h-full items-center justify-center px-2 text-center text-[10px] text-amber-600 dark:text-amber-400">
               {label}: {EMPTY_WINDOW_HINT}
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={points} margin={{ top: 2, right: 10, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
-                <XAxis
-                  dataKey="date"
-                  type="category"
-                  tickFormatter={(d: string) => bandAxisDate(d, from, to)}
-                  tick={{ fontSize: 8, fill: "var(--muted-foreground)" }}
-                  interval={Math.max(0, Math.floor(points.length / 5))}
-                  axisLine={{ stroke: "var(--border)" }}
-                  padding={{ left: 0, right: 0 }}
-                />
-                <YAxis
-                  yAxisId="price"
-                  domain={[yMin, yMax]}
-                  allowDataOverflow
-                  tick={{ fontSize: 8, fill: "var(--muted-foreground)" }}
-                  tickFormatter={(v: number) => `$${v.toFixed(0)}`}
-                  width={52}
-                  axisLine={{ stroke: "var(--border)" }}
-                />
-                <Tooltip
-                  content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null;
-                    const dp = payload[0]?.payload as { date?: string; close?: number } | undefined;
-                    if (!dp?.date || dp.close == null) return null;
-                    return (
-                      <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
-                        <div className="font-semibold mb-1">{formatDateFull(dp.date)}</div>
-                        <div className="flex justify-between gap-3">
-                          <span style={{ color: stroke }}>{label}</span>
-                          <span className="font-mono">${dp.close.toFixed(2)}</span>
-                        </div>
-                      </div>
-                    );
-                  }}
-                />
-                <Line
-                  yAxisId="price"
-                  type="monotone"
-                  dataKey="close"
-                  name={label}
-                  stroke={stroke}
-                  strokeWidth={1.5}
-                  dot={false}
-                  connectNulls={false}
-                  isAnimationActive={false}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
+            <PricePane
+              points={series.points}
+              signals={series.signals}
+              closeStroke={closeStroke}
+              closeName={closeName}
+              tickFormatter={tickFormatter}
+              formatDateFull={formatDateFull}
+              visibleMAs={visibleMAs}
+              showVolume={showVolume}
+              showBollinger={showBollinger}
+              showSignals={showSignals}
+              dense={compact}
+              onPlotClick={onPlotClick}
+              measurePoints={measurePoints}
+              measurement={measurement}
+            />
           )}
+        </div>
       </div>
+      {!empty && showMacd && (
+        <MacdPane points={series.points} tickFormatter={tickFormatter} formatDateFull={formatDateFull} compact={compact} testId={macdTestId} title={`${label} · MACD(12,26,9)`} />
+      )}
+      {!empty && showRsi && (
+        <RsiPane points={series.points} tickFormatter={tickFormatter} formatDateFull={formatDateFull} compact={compact} testId={rsiTestId} title={`${label} · RSI(14)`} />
+      )}
     </div>
   );
 }
