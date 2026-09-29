@@ -1,13 +1,13 @@
 # WORK.md — Index
 
-> Stand: 29.09.2026 (Abend) | Branch: `main` @ `f0046ee9`
+> Stand: 29.09.2026 (Abend, nach #90) | Branch: `main` @ `ee5f0f8b`
 >
 > **Hub Soll vs. Ist:** [docs/Doc_Soll_vs_Ist/](./docs/Doc_Soll_vs_Ist/)
 >
 > Alt (nicht löschen): [docs/work-offen/](./docs/work-offen/) · [docs/work-dokumentation/](./docs/work-dokumentation/)
 > Root-`WORK_*.md` bleiben die Inhaltsquelle.
 
-**Ampel-Kurz 29.09. Abend:** #74 Batch A ✅ · #81–#83 ✅ · #84 Sharpe / #85 Attribution Live ✅ · #86 Tooltip / #88 Pie+360px Live ✅ · #87 thin-series 🟡 PARTIAL (healthy 251d, thin-Banner nicht repro) · #75/#76/#77 Live ✅ nach Deploy · #70/#72/#73/#69 Live ✅ · #71 4-Toggles 🟡 · Peer/ROIC intact · BL Tabelle+MC kein Scatter, Frontier ≥3 · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert. Detail: [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md).
+**Ampel-Kurz 29.09. Abend, nach #90:** #90 TAM Coverage-Lift Live ✅ (DoD: AMZN 75.2% ok, NVDA 98.2% weak, MSFT 58.5% unreliable; Queue Coverage-Lift ✅) · #74 Batch A ✅ · #81–#83 ✅ · #84 Sharpe / #85 Attribution Live ✅ · #86 Tooltip / #88 Pie+360px Live ✅ · #87 thin-series 🟡 PARTIAL (healthy 251d, thin-Banner nicht repro) · #75/#76/#77 Live ✅ nach Deploy · #70/#72/#73/#69 Live ✅ · #71 4-Toggles 🟡 · Peer/ROIC intact · BL Tabelle+MC kein Scatter, Frontier ≥3 · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert. Detail: [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md).
 
 ---
 
@@ -36,7 +36,7 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md](./docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md) | FactPack Hook+UI live (#57) |
 | [WORK_RECESSION_RSI_MACD.md](./WORK_RECESSION_RSI_MACD.md) | RSI/MACD Dashboard live |
 | [WORK_RECESSION_MARKET_CHARTS.md](./WORK_RECESSION_MARKET_CHARTS.md) | VIX/VSTOXX/realized Pane (#60/#66) |
-| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 29.09. Abend (`f0046ee9`) |
+| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 29.09. Abend, nach #90 (`ee5f0f8b`) |
 | [WORK_THESIS_LAB.md](./WORK_THESIS_LAB.md) | `/#/lab` Live PASS (#73) |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](./WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 Rang 7–9 |
 | [WORK_ANALYZE_DISK_CACHE.md](./WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch |
