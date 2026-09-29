@@ -111,10 +111,42 @@ await withServer(
   { isAvailable: () => true, fetchPrices: async () => [] },
   async (base) => {
     const { status, body } = await getJson(`${base}/api/ohlcv?tickers=ZZZZ`);
-    check("genuine empty ticker stays HTTP 200", status === 200, `status=${status}`);
-    check("genuine empty ticker source is fmp", body.source === "fmp", JSON.stringify(body.source));
-    check("genuine empty ticker has empty bars", Array.isArray(body.bars?.ZZZZ) && body.bars.ZZZZ.length === 0, JSON.stringify(body.bars));
-    check("genuine empty ticker meta n=0", body.meta?.ZZZZ?.n === 0, JSON.stringify(body.meta));
+    check("FMP empty answer is not HTTP 200", status === 404, `status=${status}`);
+    check("FMP empty answer errorCode FMP_NO_DATA", body.errorCode === "FMP_NO_DATA", JSON.stringify(body.errorCode));
+    check("FMP empty answer does not claim source fmp", body.source !== "fmp", JSON.stringify(body.source));
+    check("FMP empty answer has no empty ZZZZ bars", !Array.isArray(body.bars?.ZZZZ), JSON.stringify(body.bars));
+    check("FMP empty answer has no meta n=0", body.meta?.ZZZZ == null, JSON.stringify(body.meta));
+    check("FMP empty answer recorded per ticker", body.errors?.ZZZZ?.errorCode === "FMP_NO_DATA", JSON.stringify(body.errors));
+  },
+);
+
+let emptyCalls = 0;
+await withServer(
+  {
+    isAvailable: () => true,
+    fetchPrices: async () => {
+      emptyCalls++;
+      return emptyCalls === 1 ? [] : [{ date: "2024-06-03", close: 77 }];
+    },
+  },
+  async (base) => {
+    const first = await getJson(`${base}/api/ohlcv?tickers=AAPL`);
+    const second = await getJson(`${base}/api/ohlcv?tickers=AAPL`);
+    check("empty FMP answer is not cached", first.status === 404 && second.status === 200, `first=${first.status} second=${second.status}`);
+    check("retry after empty answer returns the real bar", second.body.bars?.AAPL?.[0]?.close === 77, JSON.stringify(second.body.bars));
+  },
+);
+
+await withServer(
+  {
+    isAvailable: () => true,
+    fetchPrices: async (ticker) => (ticker === "EMPTY" ? [] : [{ date: "2024-06-03", close: 50 }]),
+  },
+  async (base) => {
+    const { status, body } = await getJson(`${base}/api/ohlcv?tickers=GOOD,EMPTY`);
+    check("partial empty stays HTTP 200", status === 200, `status=${status}`);
+    check("partial empty omits EMPTY bars", !Array.isArray(body.bars?.EMPTY), JSON.stringify(body.bars));
+    check("partial empty records FMP_NO_DATA", body.errors?.EMPTY?.errorCode === "FMP_NO_DATA", JSON.stringify(body.errors));
   },
 );
 

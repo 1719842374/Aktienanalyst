@@ -49,13 +49,24 @@ type OhlcvDeps = {
 
 type LoadResult = { ok: true; bars: Bar[] } | { ok: false; failure: FmpFailure };
 
-// Failures are never cached: a 429 must not pin an empty series for 24h.
+// Only non-empty series are cached: a 429 or an empty FMP answer must not pin [] for 24h.
 async function loadBars(deps: OhlcvDeps, ticker: string, from: string, to: string): Promise<LoadResult> {
   const key = `ohlcv:${ticker}:${from}:${to}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.ts < TTL_MS) return { ok: true, bars: hit.bars };
   try {
-    const bars = normalizeBars(await deps.fetchPrices(ticker, from, to));
+    const raw = await deps.fetchPrices(ticker, from, to);
+    const bars = normalizeBars(raw);
+    if (bars.length === 0) {
+      const rawRows = Array.isArray(raw) ? raw.length : 0;
+      const failure: FmpFailure = {
+        errorCode: "FMP_NO_DATA",
+        fmpStatus: 200,
+        message: `FMP lieferte keine Kurse für ${ticker} ${from}..${to} (${rawRows} Rohzeilen, 0 gültig)`,
+      };
+      console.warn(`[OHLCV] ${ticker} FMP_NO_DATA: ${failure.message}`);
+      return { ok: false, failure };
+    }
     cache.set(key, { ts: Date.now(), bars });
     return { ok: true, bars };
   } catch (err) {
@@ -69,7 +80,8 @@ function httpStatusFor(failures: FmpFailure[]): number {
   if (failures.some((f) => f.errorCode === "RATE_LIMITED")) return 429;
   if (failures.some((f) => f.errorCode === "FMP_NOT_CONFIGURED")) return 503;
   if (failures.some((f) => f.errorCode === "FMP_UPSTREAM_ERROR")) return 502;
-  return 503;
+  if (failures.some((f) => f.errorCode === "FMP_UNREACHABLE")) return 503;
+  return 404;
 }
 
 export function registerOhlcvRoute(app: Express, depsOverride: Partial<OhlcvDeps> = {}) {
