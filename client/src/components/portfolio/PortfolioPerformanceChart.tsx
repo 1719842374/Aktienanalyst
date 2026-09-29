@@ -2,7 +2,7 @@
  * PortfolioPerformanceChart — Dual-Line (#70) + bench price + BTC-style Eye toggles.
  */
 import { useMemo, useState } from "react";
-import { ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as AreaTooltip, Legend } from "recharts";
+import { ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as AreaTooltip, Legend, ReferenceLine } from "recharts";
 import { Eye, EyeOff } from "lucide-react";
 import { timeframeCutoffIso, type PerformanceTimeframe } from "@/lib/portfolio/positions";
 
@@ -67,6 +67,21 @@ export default function PortfolioPerformanceChart({
     }));
   }, [series, timeframe, benchmarkHistoricalPrices]);
 
+  // Y-gradient: top = dataMax, bottom = dataMin. Offset is the share of the range above 0%.
+  const zeroOffset = useMemo(() => {
+    let dataMin = Infinity;
+    let dataMax = -Infinity;
+    for (const pt of chartData) {
+      if (!Number.isFinite(pt.pct)) continue;
+      if (pt.pct < dataMin) dataMin = pt.pct;
+      if (pt.pct > dataMax) dataMax = pt.pct;
+    }
+    if (!Number.isFinite(dataMin) || !Number.isFinite(dataMax)) return 1;
+    if (dataMax <= 0) return 0;
+    if (dataMin >= 0) return 1;
+    return dataMax / (dataMax - dataMin);
+  }, [chartData]);
+
   const windowReturnPct = series.length ? series[series.length - 1].performancePct : null;
   const comboStart = series[0]?.value ?? null;
   const comboEnd = series.length ? series[series.length - 1].value : null;
@@ -105,9 +120,17 @@ export default function PortfolioPerformanceChart({
         <ResponsiveContainer width="100%" height={224}>
           <ComposedChart data={chartData}>
             <defs>
-              <linearGradient id="portfolioPerfGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
-                <stop offset="100%" stopColor="#10b981" stopOpacity={0.02} />
+              <linearGradient id="portfolioPerfStroke" x1="0" y1="0" x2="0" y2="1">
+                {zeroOffset > 0 && <stop offset={0} stopColor="#10b981" stopOpacity={1} />}
+                {zeroOffset > 0 && <stop offset={zeroOffset} stopColor="#10b981" stopOpacity={1} />}
+                {zeroOffset < 1 && <stop offset={zeroOffset} stopColor="#ef4444" stopOpacity={1} />}
+                {zeroOffset < 1 && <stop offset={1} stopColor="#ef4444" stopOpacity={1} />}
+              </linearGradient>
+              <linearGradient id="portfolioPerfFill" x1="0" y1="0" x2="0" y2="1">
+                {zeroOffset > 0 && <stop offset={0} stopColor="#10b981" stopOpacity={0.35} />}
+                {zeroOffset > 0 && <stop offset={zeroOffset} stopColor="#10b981" stopOpacity={0.08} />}
+                {zeroOffset < 1 && <stop offset={zeroOffset} stopColor="#ef4444" stopOpacity={0.08} />}
+                {zeroOffset < 1 && <stop offset={1} stopColor="#ef4444" stopOpacity={0.35} />}
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
@@ -124,7 +147,10 @@ export default function PortfolioPerformanceChart({
             />
             <Legend wrapperStyle={{ fontSize: 10 }} />
             {visibleSeries.has("pct") && (
-              <Area yAxisId="pct" type="monotone" dataKey="pct" name="Fenster-Rendite" stroke="#10b981" strokeWidth={2} fill="url(#portfolioPerfGradient)" />
+              <Area yAxisId="pct" type="monotone" dataKey="pct" name="Fenster-Rendite" stroke="url(#portfolioPerfStroke)" strokeWidth={2} fill="url(#portfolioPerfFill)" fillOpacity={1} />
+            )}
+            {showPctAxis && (
+              <ReferenceLine yAxisId="pct" y={0} stroke="hsl(var(--border))" strokeDasharray="3 3" />
             )}
             {visibleSeries.has("benchPct") && (
               <Line yAxisId="pct" type="monotone" dataKey="benchPct" name={`${benchLabel} %`} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls />
