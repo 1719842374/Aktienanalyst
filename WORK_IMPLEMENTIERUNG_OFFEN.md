@@ -1,8 +1,10 @@
 # WORK_IMPLEMENTIERUNG_OFFEN.md — Tickets für den aktuellen Gap
 
-> Stand 01.09.2026 · HEAD `9215cee` (P1.3 Scoring-Lookahead, PR #45) · Companion `WORK_IST_VS_SOLL.md`
-> Root-`WORK.md` unverändert (Index). `Future_Work.md` = Roadmap, kein Ticket.
+> Stand 29.09.2026 · HEAD `d517611` (#77 Makro §15; davor #76 DCF Markt-β, #75 Ökosystem, #73 Lab, #72 Badges, #71 Toggles) · Companion `WORK_IST_VS_SOLL.md`
+> Index-Hinweis in `WORK.md`. Sprint-Log unten bleibt historisch (01.09.). `Future_Work.md` = Roadmap, kein Ticket.
 > Portfolio hat **keine** Server-Route. Analyze = `POST /api/analyze`.
+> **Ampel 29.09.:** #70 Dual-Line ✅ · #72 Badges ✅ · #73 Lab ✅ · #69 Exec ✅ (FMP Premium) · Peer/ROIC intact (≡ `4bdc1f8`) · #71 4-Toggles 🟡 (OHLCV Fake-OK `bars=[]`/`n=0`) · #75 Ökosystem-Chip 🟡 (Deploy/Tester, nur `hasEcosystem`) · #76 Markt-β / #77 Makro §15 Code ✅, Deploy folgt.
+> **Queue:** Batch A Search/429/OHLCV Fake-OK · TAM Coverage-Lift danach · Miner Observability (kein Delete, ≡ `b584446f`) · Ökosystem-Scoring Folge-Lane. Gated: Hormuz (B), Liquidity-Bundle, Rang 7–9.
 
 ## Sprint
 

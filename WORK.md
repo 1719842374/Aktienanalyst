@@ -1,13 +1,13 @@
 # WORK.md — Index
 
-> Stand: 13.09.2026 | Branch: `main` @ `a64cfad`
+> Stand: 29.09.2026 | Branch: `main` @ `d517611`
 >
 > **Hub Soll vs. Ist:** [docs/Doc_Soll_vs_Ist/](./docs/Doc_Soll_vs_Ist/)
 >
 > Alt (nicht löschen): [docs/work-offen/](./docs/work-offen/) · [docs/work-dokumentation/](./docs/work-dokumentation/)
 > Root-`WORK_*.md` bleiben die Inhaltsquelle.
 
-**Ampel-Kurz 13.09.:** Exec / FactPack / VIX+EU-Vol / Portfolio OHLCV §6 ✅ · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert · Backtest 🟡.
+**Ampel-Kurz 29.09.:** Dual-Line #70 / Badges #72 / Thesis Lab #73 / Exec #69 Live ✅ · 4-Toggles #71 🟡 (OHLCV Fake-OK) · Ökosystem-Chip #75 Code ✅, Live Deploy/Tester · #76 DCF Markt-β und #77 Makro §15 Code ✅, Deploy folgt · Peer/ROIC intact · FMP Premium · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert. Detail: [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md).
 
 ---
 
@@ -36,7 +36,8 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md](./docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md) | FactPack Hook+UI live (#57) |
 | [WORK_RECESSION_RSI_MACD.md](./WORK_RECESSION_RSI_MACD.md) | RSI/MACD Dashboard live |
 | [WORK_RECESSION_MARKET_CHARTS.md](./WORK_RECESSION_MARKET_CHARTS.md) | VIX/VSTOXX/realized Pane (#60/#66) |
-| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 13.09. |
+| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 29.09. (`d517611`) |
+| [WORK_THESIS_LAB.md](./WORK_THESIS_LAB.md) | `/#/lab` Live PASS (#73) |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](./WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 Rang 7–9 |
 | [WORK_ANALYZE_DISK_CACHE.md](./WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch |
 | [WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | disk-cache |

@@ -1,13 +1,15 @@
 # Doc_Soll_vs_Ist
 
-> Stand: 13.09.2026 | Ampel aus **Code + UI** (Live Render) · HEAD `a64cfad`
+> Stand: 29.09.2026 | Ampel aus **Code + UI** (Live Render) · HEAD `d517611`
 > Originale im **Repo-Root**. Dieser Ordner verlinkt nur.
 >
 > Alt: [work-offen](../work-offen/) · [work-dokumentation](../work-dokumentation/)
 
-**Regel:** `✅` nur wenn die *erwartete Anzeige* live ist. Datei + Lib ohne KPI/Serie = `🟡` oder `⬜`.
+**Regel:** `✅` nur wenn die *erwartete Anzeige* live ist. Datei + Lib ohne KPI/Serie = `🟡` oder `⬜`. „Deploy folgt“ = Code auf `main`, Live nicht geprüft → `🟡`.
 
-**Nachzug 13.09. (+ portfolio_3 PASS):** Exec / FactPack / VIX+EU-Vol / Portfolio OHLCV §6 ✅ · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert · Backtest weiter 🟡.
+**Nachzug 29.09.:** #70 Dual-Line Live ✅ · #72 Badges 1–20 Live ✅ · #73 Thesis Lab `/#/lab` Live ✅ · Exec #69 Live ✅ (XOM, FMP Premium) · Peer/ROIC Code intact ✅ (≡ `4bdc1f8`) · #71 4-Toggles 🟡 (UI ok, Chart oft leer: `/api/ohlcv` Fake-OK `bars=[]`/`n=0`) · #75 Ökosystem-Chip 🟡 (Deploy/Tester, nur `hasEcosystem`) · #76 DCF Markt-β Code ✅ Deploy folgt · #77 Makro §15 Code ✅ Deploy folgt. Docs-Hub war 13.09.
+
+**Nachzug 13.09. (+ portfolio_3 PASS):** Exec / FactPack / VIX+EU-Vol / Portfolio OHLCV §6 ✅ · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert · Backtest weiter 🟡. OHLCV §6-Code bleibt; Live 29.09. oft Fake-OK (siehe #71).
 
 ---
 
@@ -30,6 +32,10 @@
 | [WORK_RECESSION_SOURCES.md](../../WORK_RECESSION_SOURCES.md) | Quellenkatalog | Spec | `⬜` |
 | [WORK_PEER_ADAPTIVE.md](../../WORK_PEER_ADAPTIVE.md) | 2-Hop+Industry | Spec; Hardcode-Map lebt | `⬜` |
 | [WORK_PEER_PRICING_POWER.md](../../WORK_PEER_PRICING_POWER.md) | Relativ nur Low-Moat | Spec Companion | `⬜` |
+| Performance-Chart 4 Toggles (#71) | Ein/Aus + Bench-Kurs | UI da (`60aeeb2`); Chart oft leer (`/api/ohlcv` Fake-OK `bars=[]`/`n=0`) | `🟡` |
+| Moat Ökosystem-Chip (#75) | Chip nur bei `hasEcosystem` | Code `08d82b2`; Live Deploy/Tester nach Bundle-Wechsel | `🟡` |
+| DCF Default Markt-β (#76) | Default β = Markt-β, Sektor-Anker als Modus | Code `ef0f31e`; Deploy folgt | `🟡` |
+| Makro-Korrelationsmatrix §15 (#77) | volle Matrix statt 4-Faktor-Stub | Code `d517611`; Deploy folgt | `🟡` |
 
 Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPACK_LLM.md](./FACTPACK_LLM.md) · FMP/BB [FMP_GRENZEN_BLOOMBERG.md](./FMP_GRENZEN_BLOOMBERG.md)
 
@@ -39,7 +45,11 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 
 | Spec (Root) | Code / Live |
 |-------------|-------------|
-| [WORK_EXEC_SUMMARY.md](../../WORK_EXEC_SUMMARY.md) | Exec-Karte über S1 live (#58) |
+| [WORK_EXEC_SUMMARY.md](../../WORK_EXEC_SUMMARY.md) | Exec-Karte über S1 live (#58); #69 Ampel+KI+FS Live PASS (XOM, FMP Premium) |
+| Portfolio Dual-Line (#70) | `benchPct` vs Performance live (`358681a`) |
+| Dashboard-Badges 1–20 (#72) | Exec=1, FS=4, Tech=12 · Live PASS Bundle `index-PW9HgI6J.js` @ `22d4af9`+ |
+| [WORK_THESIS_LAB.md](../../WORK_THESIS_LAB.md) | `/#/lab` + 6 Fixtures Live PASS (`22d4af9`, #73) |
+| [WORK_PEER_ROIC_SANITY.md](../../WORK_PEER_ROIC_SANITY.md) | sanitizeRoic intact · Tip ≡ `4bdc1f8` (kein Delete) · wieder da nach FMP Premium |
 | [FACTPACK_LLM.md](./FACTPACK_LLM.md) | Analyze-Hook + UI live (#57) |
 | [WORK_RECESSION_RSI_MACD.md](../../WORK_RECESSION_RSI_MACD.md) | Dashboard-Wire + Pane live |
 | [WORK_RECESSION_MARKET_CHARTS.md](../../WORK_RECESSION_MARKET_CHARTS.md) | Vol-Pane: US FRED VIXCLS · EU VSTOXX STOXX `h_v2tx.txt` (#66 Live vol≈942) · AS realized20 |
@@ -66,5 +76,5 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | [WORK_TEIL7_SCORING.md](../../WORK_TEIL7_SCORING.md) | Gold |
 | [WORK2.md](../../WORK2.md) | PESTEL |
 | [WORK.md](../../WORK.md) | Index |
-| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 13.09. |
+| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 29.09. |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 geblockt |
