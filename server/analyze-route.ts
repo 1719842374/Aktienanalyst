@@ -119,7 +119,7 @@ import { buildScoringForAnalysis } from "./scoring-integration";
 import { applyFactPackFromFmpContext } from "./factpack-apply";
 import { attachExecSummary } from "./exec-summary-attach";
 import { getCachedRegulatoryAssessment } from "./regulatory";
-import { collectPorterNarrative, resolveEcosystem } from "./ecosystem-moat";
+import { assessEcosystem, collectPorterNarrative, resolveEcosystem } from "./ecosystem-moat";
 import { fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq } from "./history-fallback";
 
 // Segment-Fallback-Pipeline (2026-08): SEC EDGAR fallback for when FMP's
@@ -1427,6 +1427,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       let porterForces: any[] | null = null;
       if (useLLM) {
+        // Prompt-Evidenz vor dem LLM: Moat-Heuristik plus Ökosystem nur aus der
+        // Beschreibung. Kein Cap. Der Chip weiter unten bleibt resolveEcosystem
+        // (Beschreibung zuerst, sonst Porter-Narrative).
+        const ecosystemFromDescription = assessEcosystem(description);
         const [llmPorter] = await Promise.allSettled([
           generatePorterFiveForces({
             ticker: upperTicker, companyName, sector: effectiveSector, industry, description,
@@ -1434,6 +1438,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             topCatalysts: catalysts.slice(0, 3).map((c) => ({ name: c.name, context: c.context ?? "" })),
             recentNewsHeadlines: newsHeadlines.slice(0, 5),
             keyProjects: [],
+            moatStrength: (moatAssessment as any).moatStrength,
+            moatSources: Array.isArray((moatAssessment as any).sources) ? (moatAssessment as any).sources : [],
+            hasEcosystem: ecosystemFromDescription.hasEcosystem,
+            ...(ecosystemFromDescription.ecosystemNote
+              ? { ecosystemNote: ecosystemFromDescription.ecosystemNote }
+              : {}),
           }),
         ]);
         if (llmPorter.status === "fulfilled" && llmPorter.value) porterForces = llmPorter.value;

@@ -2,6 +2,7 @@
  * Porter Five Forces — Threat-Skala 1–5 (niedriger = geringere Bedrohung).
  * Kraft-Score = gerundeter Mittelwert der Unterpunkte, dann Clamp [1, 5].
  * Wide-Moat (scoreMoat / overallRating / moatSources) bleibt unabhängig.
+ * Moat-Stärke, Quellen und Ökosystem gehen nur als Prompt-Evidenz hinein.
  *
  * Ausfuehren: npx tsx --tsconfig script/tsconfig.jsx.json script/test-porter-score.ts
  */
@@ -14,6 +15,8 @@ import {
   porterThreatRatingEn,
   toSchemaPorterForce,
 } from "../shared/porter-score";
+import { assessEcosystem } from "../server/ecosystem-moat";
+import { buildPorterFiveForcesPrompt, type PorterFiveForceInput } from "../server/llm-openrouter";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail?: string) {
@@ -117,13 +120,92 @@ check("Heuristik klemmt 3-vs-7 über clampPorterThreat", scoreMoatSrc.includes("
 check("Payload-Map nutzt toSchemaPorterForce", routeSrc.includes("toSchemaPorterForce("));
 
 const llmSrc = readFileSync(new URL("../server/llm-openrouter.ts", import.meta.url), "utf8");
-const porterStart = llmSrc.indexOf("export async function generatePorterFiveForces");
+const porterStart = llmSrc.indexOf("export interface PorterFiveForceInput");
 const pestelStart = llmSrc.indexOf("generatePESTELAnalysis — NEW");
 const porterSrc = llmSrc.slice(porterStart, pestelStart);
 check("Porter-Prompt ohne 1-10", !/1-10|1–10/.test(porterSrc), porterSrc.match(/1[-–]10/)?.[0]);
 check("Porter-Prompt ohne /10", !porterSrc.includes("/10"));
 check("Porter-Parse klemmt nicht mehr auf 10", !porterSrc.includes(", 10)"));
 check("Porter-Prompt verlangt 1–5 und subScores", /1–5|1-5/.test(porterSrc) && porterSrc.includes("subScores"));
+check("Porter-Input führt moatStrength, moatSources, hasEcosystem, ecosystemNote", porterSrc.includes("moatStrength?:") && porterSrc.includes("moatSources?:") && porterSrc.includes("hasEcosystem?:") && porterSrc.includes("ecosystemNote?:"));
+check("Parse bleibt toSchemaPorterForce", porterSrc.includes("toSchemaPorterForce({"));
+
+const nvdaDesc =
+  "Designs graphics processors and a software ecosystem of developer tools, SDKs and third-party applications for accelerated computing.";
+const nvdaEco = assessEcosystem(nvdaDesc);
+const nvdaSources = [
+  "Hohe Bruttomarge (>60%)",
+  "Starke FCF-Marge (>20%)",
+  "Hoher ROE (>20%)",
+  "Netzwerkeffekte",
+];
+const nvdaPromptInput: PorterFiveForceInput = {
+  ticker: "NVDA",
+  companyName: "NVIDIA Corporation",
+  sector: "Technology",
+  industry: "Semiconductors",
+  description: nvdaDesc,
+  revenue: 130e9,
+  revenueGrowth: 114,
+  fcfMargin: 48,
+  grossMargin: 75,
+  marketCap: 3000e9,
+  topCatalysts: [{ name: "Blackwell", context: "Data-center ramp" }],
+  moatStrength: "Wide",
+  moatSources: nvdaSources,
+  hasEcosystem: nvdaEco.hasEcosystem,
+  ecosystemNote: nvdaEco.ecosystemNote,
+};
+const nvdaPrompt = buildPorterFiveForcesPrompt(nvdaPromptInput);
+check("NVDA-like Beschreibung trägt eigenes Ökosystem", nvdaEco.hasEcosystem === true && typeof nvdaEco.ecosystemNote === "string");
+check("NVDA-like Prompt nennt Moat-Stärke Wide", nvdaPrompt.includes("MOAT-KONTEXT") && nvdaPrompt.includes("Moat-Stärke: Wide"));
+check("NVDA-like Prompt listet jede Moat-Quelle", nvdaSources.every((source) => nvdaPrompt.includes(`- ${source}`)));
+check(
+  "NVDA-like Prompt enthält den Ökosystem-Hinweis",
+  typeof nvdaEco.ecosystemNote === "string" && nvdaPrompt.includes(`Ökosystem: ${nvdaEco.ecosystemNote}`),
+);
+check(
+  "Prompt senkt Threat bei Neueinsteiger, Rivalität, Substituten und Wechselkosten",
+  nvdaPrompt.includes("Bedrohung (Threat) zu senken")
+    && nvdaPrompt.includes("Bedrohung durch Neueinsteiger")
+    && nvdaPrompt.includes("Rivalität unter Wettbewerbern")
+    && nvdaPrompt.includes("Bedrohung durch Substitute")
+    && nvdaPrompt.includes("Wechselkosten"),
+);
+check("Prompt verbietet erfundenen Moat", nvdaPrompt.includes("Erfinde keinen Moat"));
+check(
+  "Prompt bleibt bei 1 bis 5, subScores und gerundetem Mittelwert",
+  nvdaPrompt.includes("von 1 bis 5") && nvdaPrompt.includes("subScores") && nvdaPrompt.includes("gerundete") && nvdaPrompt.includes("kein zusätzlicher Cap"),
+);
+check("gerenderter Prompt ohne 1-10", !/1-10|1–10/.test(nvdaPrompt));
+
+const nonePrompt = buildPorterFiveForcesPrompt({
+  ...nvdaPromptInput,
+  moatStrength: "None",
+  moatSources: [],
+  hasEcosystem: false,
+  ecosystemNote: undefined,
+});
+check(
+  "None ohne Ökosystem erfindet keinen Ökosystem-Satz",
+  nonePrompt.includes("Moat-Stärke: None") && nonePrompt.includes("Moat-Quellen: keine") && !nonePrompt.includes("Ökosystem:"),
+);
+
+const step15 = routeSrc.slice(routeSrc.indexOf("// ── 15. Porter + PESTEL"), routeSrc.indexOf("// ── 16. Policy context"));
+check(
+  "Schritt 15 reicht Moat und Beschreibungs-Ökosystem in generatePorterFiveForces",
+  step15.includes("assessEcosystem(description)")
+    && step15.includes("moatStrength:")
+    && step15.includes("moatSources:")
+    && step15.includes("hasEcosystem: ecosystemFromDescription.hasEcosystem")
+    && step15.includes("ecosystemNote: ecosystemFromDescription.ecosystemNote"),
+);
+check(
+  "Chip-resolveEcosystem bleibt nach dem Porter-Call",
+  routeSrc.indexOf("generatePorterFiveForces({") < routeSrc.indexOf("resolveEcosystem({")
+    && routeSrc.includes("collectPorterNarrative(porterForces)"),
+);
+check("kein Post-Clamp auf dem Porter-Ø", !routeSrc.includes("porterAvg") && !/avgScore\s*=\s*Math\.min/.test(routeSrc));
 
 function renderSection(moat: Record<string, unknown> | undefined): string {
   const el = createElement(MoatPorterSection, {
