@@ -322,7 +322,7 @@ export default function Dashboard() {
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       {/* Header */}
-      <header className="flex-shrink-0 h-12 border-b border-border bg-card flex items-center px-3 sm:px-4 z-20 gap-2">
+      <header className="flex-shrink-0 h-[5.5rem] sm:h-12 border-b border-border bg-card flex flex-wrap sm:flex-nowrap content-center items-center px-3 sm:px-4 z-20 gap-x-2 gap-y-2">
         <div className="flex items-center gap-3 shrink-0">
           <button
             className="lg:hidden p-1.5 rounded-md hover:bg-muted/50"
@@ -342,8 +342,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Search has its own slot: inside the overflow-x strip below it was clipped behind the logo. */}
-        <div className="relative z-10 shrink-0" data-testid="header-search-slot">
+        {/* Search has its own slot: inside the overflow-x strip below it was clipped behind the logo.
+            Below sm it wraps to a full-width second row so the pill strip keeps the first row. */}
+        <div className="relative z-10 order-last basis-full sm:order-none sm:basis-auto shrink-0" data-testid="header-search-slot">
           <TickerSearch
             onSearch={(ticker) => { setCurrentTicker(ticker); startAnalyze({ ticker, llm: useLLMRef.current }); }}
             isLoading={analyzeMutation.isPending}
@@ -480,7 +481,7 @@ export default function Dashboard() {
         {/* Sidebar */}
         <aside
           className={`
-            fixed lg:relative inset-y-0 left-0 top-12 lg:top-0 z-30 lg:z-0
+            fixed lg:relative inset-y-0 left-0 top-[5.5rem] sm:top-12 lg:top-0 z-30 lg:z-0
             w-52 bg-card border-r border-border
             transition-transform duration-200 ease-in-out
             ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
@@ -511,7 +512,7 @@ export default function Dashboard() {
         {/* Sidebar overlay on mobile */}
         {sidebarOpen && (
           <div
-            className="fixed inset-0 bg-black/40 z-20 lg:hidden top-12"
+            className="fixed inset-0 bg-black/40 z-20 lg:hidden top-[5.5rem] sm:top-12"
             onClick={() => setSidebarOpen(false)}
           />
         )}
