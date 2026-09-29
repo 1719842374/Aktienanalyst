@@ -76,6 +76,15 @@ export default function ValueChainDashboard() {
   const [isEnriching, setIsEnriching] = useState(false);
   const [enrichError, setEnrichError] = useState<string | null>(null);
 
+  // Deep-Link aus dem Thesis-Lab: /#/valuechain?industry=
+  useEffect(() => {
+    const hash = window.location.hash;
+    const idx = hash.indexOf("?");
+    const params = new URLSearchParams(idx >= 0 ? hash.slice(idx + 1) : window.location.search.slice(1));
+    const fromUrl = params.get("industry")?.trim();
+    if (fromUrl) setIndustry(fromUrl);
+  }, []);
+
   // Branchen-Optionen einmalig laden (Dropdown-Inhalt)
   useEffect(() => {
     (async () => {

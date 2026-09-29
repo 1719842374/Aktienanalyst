@@ -11,6 +11,7 @@ import {
   lookupByTicker,
   type Ampel,
 } from "./thesisLab";
+import { INDUSTRY_META, STAGE_TO_INDUSTRIES } from "./thesis-lab-valuechain-map";
 
 export function registerThesisLabRoutes(app: Express): void {
   app.get("/api/lab/theses", (req: Request, res: Response) => {
@@ -31,6 +32,10 @@ export function registerThesisLabRoutes(app: Express): void {
     const ticker = typeof req.query.ticker === "string" ? req.query.ticker : "";
     if (!ticker) return res.status(400).json({ error: "ticker required" });
     res.json({ ticker, items: lookupByTicker(ticker) });
+  });
+
+  app.get("/api/lab/valuechain-map", (_req: Request, res: Response) => {
+    res.json({ stageToIndustries: STAGE_TO_INDUSTRIES, industryMeta: INDUSTRY_META });
   });
 
   app.post("/api/lab/thesis", (req: Request, res: Response) => {
