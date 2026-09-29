@@ -17,6 +17,7 @@ import {
   calculateFCFFDCF,
   calculateCatalystUpside,
   selectCatalystBase,
+  marketBetaForDcf,
 } from "../client/src/lib/calculations";
 
 // IFX = Infineon (FMP nutzt .DE Suffix), VWAGY = VW ADR, andere als US-Tickers
@@ -91,14 +92,9 @@ function runChecks(ticker: string, data: any): { anomalies: Anomaly[]; summary: 
   const debtRatioS13 = data.totalDebt > 0
     ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0)
     : 10;
-  const evFracS13 = (100 - debtRatioS13) / 100;
-  const dvFracS13 = debtRatioS13 / 100;
-  const targetWACCS13 = sp.waccScenarios?.avg || 9;
-  const debtCostPartS13 = dvFracS13 * rdS13 * (1 - taxS13 / 100);
-  const impliedBetaS13 = Math.max(0.5, Math.min(1.8,
-    (targetWACCS13 - debtCostPartS13 - evFracS13 * rfS13) / (evFracS13 * erpS13)
-  ));
-  const dcfBetaS13 = +Math.min(impliedBetaS13, (data.beta5Y || 1) + 0.1).toFixed(2);
+  // DCF-β default is clamped market beta (same as buildDefaultDCFParams).
+  // Sektor-Anker is an explicit Section-5 choice, not the scan baseline.
+  const dcfBetaS13 = marketBetaForDcf(typeof data.beta5Y === "number" ? data.beta5Y : 1);
 
   const baseParams = {
     revenueBase: data.revenue,

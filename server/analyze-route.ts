@@ -39,6 +39,7 @@ import {
   generateTAMAnalysis,
   dcfGrowthCapFromTam,
 } from "./sector-data";
+import { generateMacroCorrelations } from "./macro-correlations";
 
 import {
   calcImpliedGStar,
@@ -75,9 +76,9 @@ import {
   type CatalystReasoning,
   type CurrencyInfo,
   type PESTELAnalysis,
-  type MacroCorrelations,
   type RevenueSegment,
 } from "../shared/schema";
+import { clampPorterThreat, porterThreatRatingDe, toSchemaPorterForce } from "../shared/porter-score";
 
 import {
   generateCatalystsAndMatchNews,
@@ -119,6 +120,7 @@ import { buildScoringForAnalysis } from "./scoring-integration";
 import { applyFactPackFromFmpContext } from "./factpack-apply";
 import { attachExecSummary } from "./exec-summary-attach";
 import { getCachedRegulatoryAssessment } from "./regulatory";
+import { collectPorterNarrative, resolveEcosystem } from "./ecosystem-moat";
 import { fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq } from "./history-fallback";
 
 // Segment-Fallback-Pipeline (2026-08): SEC EDGAR fallback for when FMP's
@@ -384,12 +386,17 @@ function scoreMoat(
   const moatStrength: "Wide" | "Narrow" | "None" =
     score >= 6 ? "Wide" : score >= 3 ? "Narrow" : "None";
 
+  const rivalryThreat = clampPorterThreat(hasBrandMoat || hasNetworkMoat ? 3 : 7);
+  const entrantThreat = clampPorterThreat(hasSwitchingMoat || hasPatentMoat ? 2 : 5);
+  const supplierThreat = clampPorterThreat(hasCostMoat ? 3 : 5);
+  const buyerThreat = clampPorterThreat(hasSwitchingMoat ? 2 : 5);
+  const substituteThreat = clampPorterThreat(hasNetworkMoat ? 2 : 5);
   porterForces.push(
-    { force: "Rivalität unter Wettbewerbern", rating: hasBrandMoat || hasNetworkMoat ? "Niedrig" : "Hoch", score: hasBrandMoat || hasNetworkMoat ? 3 : 7 },
-    { force: "Bedrohung durch Neueinsteiger", rating: hasSwitchingMoat || hasPatentMoat ? "Niedrig" : "Mittel", score: hasSwitchingMoat || hasPatentMoat ? 2 : 5 },
-    { force: "Verhandlungsmacht Lieferanten", rating: hasCostMoat ? "Niedrig" : "Mittel", score: hasCostMoat ? 3 : 5 },
-    { force: "Verhandlungsmacht Kunden", rating: hasSwitchingMoat ? "Niedrig" : "Mittel", score: hasSwitchingMoat ? 2 : 5 },
-    { force: "Bedrohung durch Substitute", rating: hasNetworkMoat ? "Niedrig" : "Mittel", score: hasNetworkMoat ? 2 : 5 }
+    { force: "Rivalität unter Wettbewerbern", rating: porterThreatRatingDe(rivalryThreat), score: rivalryThreat },
+    { force: "Bedrohung durch Neueinsteiger", rating: porterThreatRatingDe(entrantThreat), score: entrantThreat },
+    { force: "Verhandlungsmacht Lieferanten", rating: porterThreatRatingDe(supplierThreat), score: supplierThreat },
+    { force: "Verhandlungsmacht Kunden", rating: porterThreatRatingDe(buyerThreat), score: buyerThreat },
+    { force: "Bedrohung durch Substitute", rating: porterThreatRatingDe(substituteThreat), score: substituteThreat }
   );
 
   return { moatStrength, moatScore: Math.min(score, 10), sources, porterForces } as any;
@@ -1434,9 +1441,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       if (porterForces && porterForces.length >= 4) {
         moatAssessment.porterForces = porterForces.map((f: any) => ({
-          force: String(f.force),
-          rating: f.rating as "Hoch" | "Mittel" | "Niedrig",
-          score: Number(f.score),
+          force: String(f.force ?? ""),
+          rating: f.rating,
+          score: f.score,
+          summary: f.summary,
+          reasoning: f.reasoning,
+          subScores: f.subScores,
         }));
       }
 
@@ -1538,20 +1548,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           : 0;
 
       // ── 19. Macro correlations ──
-      const isBank =
-        effectiveSector.toLowerCase().includes("financ") ||
-        industry.toLowerCase().includes("bank") ||
-        industry.toLowerCase().includes("financ") ||
-        industry.toLowerCase().includes("insurance");
-
-      // Raw correlations remain numeric for the calculation below and are mapped
-      // to the shared MacroCorrelation union when assembling the response.
-      const macroCorrelations: Array<{ factor: string; correlation: number; description: string }> = [
-        { factor: "Fed Funds Rate", correlation: isBank ? 0.6 : beta > 1.2 ? -0.4 : -0.2, description: isBank ? "Steigende Zinsen erhöhen NIM" : "Steigende Zinsen komprimieren Multiples" },
-        { factor: "USD Stärke", correlation: country !== "US" ? -0.3 : 0.1, description: country !== "US" ? "USD-Stärke belastet Auslands-Earnings" : "Geringer USD-Einfluss (US-fokussiert)" },
-        { factor: "Ölpreis (WTI)", correlation: effectiveSector.toLowerCase().includes("energ") ? 0.7 : -0.1, description: effectiveSector.toLowerCase().includes("energ") ? "Ölpreis direkt mit Revenue korreliert" : "Indirekter Kostenfaktor" },
-        { factor: "VIX (Volatilität)", correlation: -0.5, description: "Hohe Marktvolatilität belastet Growth-Aktien" },
-      ];
+      // Full matrix (indices, VIX, ISM, rates, energy, metals, crypto, FX).
+      // Inputs match the historical call site: sector/industry already corrected
+      // by getEffectiveSector, beta stored on the payload as beta5Y.
+      const macroCorrelations = generateMacroCorrelations(
+        effectiveSector, effectiveIndustry, description, beta, reportedCurrency
+      );
 
       // ── 20. Assemble final result ──
       // IMPORTANT — the response shape here must match shared/schema.ts:StockAnalysis
@@ -1693,26 +1695,26 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       // Section 11 (MoatPorterSection) reads moatAssessment.overallRating,
-      // moatSources[], porterForces[].name/.reasoning, businessModelStrength,
-      // sustainabilityRating. scoreMoat() returns { moatStrength, moatScore,
-      // sources, porterForces:{force,rating:Niedrig|Mittel|Hoch,score} }, so we
-      // remap into the shared/schema.ts MoatAssessment shape here. If we don't,
+      // moatSources[], porterForces[].name/.reasoning/optional subScores,
+      // businessModelStrength, sustainabilityRating, and optional hasEcosystem / ecosystemNote.
+      // scoreMoat() returns { moatStrength, moatScore,
+      // sources, porterForces:{force,rating:Niedrig|Mittel|Hoch,score 1–5} }, so we
+      // remap into the shared/schema.ts MoatAssessment shape here. Threat-Scores
+      // werden auf 1–5 geklemmt (Low 1–2, Medium 3, High 4–5); leeres reasoning
+      // übernimmt die LLM-summary. If we don't remap,
       // moat.moatSources.slice() and moat.overallRating.includes() throw and
       // React unmounts the whole app (no error boundary above Section 11).
-      const _ratingMap: Record<string, "Low" | "Medium" | "High"> = {
-        Niedrig: "Low", Mittel: "Medium", Hoch: "High",
-        Low: "Low", Medium: "Medium", High: "High",
-      };
+      // Qualitative only: description heuristic, then Porter LLM narrative if the
+      // description is silent. Does not change moatStrength / score / Lynch / DCF.
+      const ecosystem = resolveEcosystem({
+        description,
+        llmText: collectPorterNarrative(porterForces),
+      });
       const moatAssessmentOut = {
         overallRating: moatAssessment.moatStrength ?? "None",
         moatSources: Array.isArray((moatAssessment as any).sources) ? (moatAssessment as any).sources : [],
         porterForces: Array.isArray(moatAssessment.porterForces)
-          ? moatAssessment.porterForces.map((f: any) => ({
-              name: f.name ?? f.force ?? "",
-              rating: _ratingMap[String(f.rating)] ?? "Medium",
-              score: Number(f.score) || 0,
-              reasoning: String(f.reasoning ?? ""),
-            }))
+          ? moatAssessment.porterForces.map((f: any) => toSchemaPorterForce(f))
           : [],
         businessModelStrength: moatRating === "Wide" ? "Starkes, differenziertes Geschäftsmodell"
           : moatRating === "Narrow" ? "Solides Geschäftsmodell mit begrenzten Moat-Quellen"
@@ -1720,6 +1722,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         sustainabilityRating: moatRating === "Wide" ? "★★★★★"
           : moatRating === "Narrow" ? "★★★☆☆"
           : "★★☆☆☆",
+        hasEcosystem: ecosystem.hasEcosystem,
+        ...(ecosystem.hasEcosystem && ecosystem.ecosystemNote
+          ? { ecosystemNote: ecosystem.ecosystemNote }
+          : {}),
       };
 
       // Peer comparison must have the {subject, peers, peerAvg, sectorMedian, ...}
@@ -1907,34 +1913,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           capitalCostImpact: `Ein Zinsanstieg von 100bps hebt die Kapitalkosten um ~${(sectorDefaults.waccScenarios.avg - sectorDefaults.waccScenarios.opt).toFixed(1)}pp; Bewertungs-Effekt sektorabhängig.`,
         },
 
-        // Section 13 — shared/schema.ts:MacroCorrelation expects {name, category,
-        // correlation:"Positiv|Neutral|Negativ|Invers", strength:"Stark|Moderat|Schwach",
-        // mechanism, currentLevel?}. Our upstream list uses {factor, correlation:number,
-        // description}. Remap so the section renders instead of crashing on .name.
-        macroCorrelations: {
-          correlations: macroCorrelations.map((c: any) => {
-            const absCorr = Math.abs(Number(c.correlation) || 0);
-            const catMap: Record<string, "Index" | "Commodity" | "Macro-Indikator" | "Währung" | "Edelmetall" | "Industriemetall" | "Crypto"> = {
-              "Fed Funds Rate": "Macro-Indikator",
-              "USD Stärke": "Währung",
-              "Ölpreis (WTI)": "Commodity",
-              "VIX (Volatilität)": "Macro-Indikator",
-            };
-            return {
-              name: String(c.factor ?? c.name ?? ""),
-              category: catMap[c.factor] ?? "Macro-Indikator",
-              correlation: (Number(c.correlation) > 0.2 ? "Positiv"
-                : Number(c.correlation) < -0.2 ? "Negativ"
-                : Number(c.correlation) < -0.5 ? "Invers"
-                : "Neutral") as "Positiv" | "Neutral" | "Negativ" | "Invers",
-              strength: (absCorr > 0.5 ? "Stark" : absCorr > 0.25 ? "Moderat" : "Schwach") as "Stark" | "Moderat" | "Schwach",
-              mechanism: String(c.description ?? c.mechanism ?? ""),
-              currentLevel: c.currentLevel,
-            };
-          }),
-          overallMacroSensitivity: (beta > 1.3 ? "Hoch" : beta < 0.7 ? "Niedrig" : "Mittel") as "Hoch" | "Mittel" | "Niedrig",
-          keyInsight: `Beta ${beta.toFixed(2)} — ${beta > 1.3 ? "höhere als der Markt" : beta < 0.7 ? "geringere als der Markt" : "marktnahe"} Konjunktursensitivität.`,
-        },
+        // Section 13 — schema-shaped MacroCorrelations (no numeric remap).
+        macroCorrelations,
 
         // Section 15
         newsItems,

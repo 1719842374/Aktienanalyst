@@ -33,6 +33,12 @@ export function MoatPorterSection({ data }: Props) {
   }
 
   const avgScore = moat.porterForces.length > 0 ? moat.porterForces.reduce((s, f) => s + f.score, 0) / moat.porterForces.length : 0;
+  const sourceChipClass = `px-2.5 py-1 text-xs rounded-md border ${
+    moat.overallRating === "Wide" ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" :
+    moat.overallRating.includes("Narrow") ? "bg-amber-500/10 text-amber-500 border-amber-500/20" :
+    "bg-muted/30 text-muted-foreground border-border/50"
+  }`;
+  const ecosystemNote = moat.hasEcosystem === true ? (moat.ecosystemNote?.trim() ?? "") : "";
 
   return (
     <SectionCard number={13} title="MOAT & PORTER'S FIVE FORCES">
@@ -86,18 +92,25 @@ export function MoatPorterSection({ data }: Props) {
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Moat-Quellen</h3>
         <div className="flex flex-wrap gap-2">
           {moat.moatSources.map((source, i) => (
-            <span
-              key={i}
-              className={`px-2.5 py-1 text-xs rounded-md border ${
-                moat.overallRating === "Wide" ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" :
-                moat.overallRating.includes("Narrow") ? "bg-amber-500/10 text-amber-500 border-amber-500/20" :
-                "bg-muted/30 text-muted-foreground border-border/50"
-              }`}
-            >
+            <span key={i} className={sourceChipClass}>
               {source}
             </span>
           ))}
+          {moat.hasEcosystem === true && (
+            <span
+              data-testid="chip-moat-ecosystem"
+              className={sourceChipClass}
+              title={ecosystemNote || undefined}
+            >
+              Ökosystem
+            </span>
+          )}
         </div>
+        {moat.hasEcosystem === true && ecosystemNote ? (
+          <p data-testid="moat-ecosystem-note" className="text-[10px] text-muted-foreground mt-1.5">
+            {ecosystemNote}
+          </p>
+        ) : null}
       </div>
 
       {/* Porter's Five Forces */}
@@ -145,6 +158,16 @@ export function MoatPorterSection({ data }: Props) {
                 {isExpanded && (
                   <div className={`px-3 pb-3 pt-0 text-xs text-foreground/80 leading-relaxed border-t ${colors.border} mx-3 mb-2 pt-2`}>
                     {force.reasoning}
+                    {force.subScores && force.subScores.length > 0 ? (
+                      <ul className="mt-2 space-y-1" data-testid={`list-porter-subscores-${i}`}>
+                        {force.subScores.map((sub, j) => (
+                          <li key={j} className="flex items-baseline justify-between gap-3">
+                            <span>{sub.label}</span>
+                            <span className="font-mono tabular-nums text-muted-foreground shrink-0">{sub.score}/5</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </div>
                 )}
               </div>

@@ -1,11 +1,11 @@
 # WORK_IST_VS_SOLL.md — Code vs. WORK-Specs
 
-> **Stand Audit:** 13.09.2026  
+> **Stand Audit:** 29.09.2026  
 > **Repo:** `1719842374/Aktienanalyst`  
-> **HEAD:** `a64cfad` (#66 STOXX TLS CA; Doc-Hub Nachzug)  
+> **HEAD:** `d517611` (#77 Makro §15; davor #76 DCF Markt-β, #75 Ökosystem, #73 Lab, #72 Badges, #71 Toggles)  
 > **Regel:** Ist nur aus Code + UI. ✅ erwartete Anzeige live · 🟡 Kern da, Spec-/UI-Zusatz fehlt · ⬜ Spec ohne Engine/UI.  
 > **Quelle Nachzug:** Doc_Soll_vs_Ist/README · Companion `WORK_IMPLEMENTIERUNG_OFFEN.md`  
-> **Delta 13.09.:** Exec/FactPack/VIX+EU/Portfolio OHLCV §6 ✅ · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert · Backtest 🟡.  
+> **Delta 29.09.:** Badges+Lab Live ✅ · 4-Toggles Code ✅ Live PARTIAL (OHLCV) · Ökosystem Chip Code ✅ · Exec Live ✅ · FMP Premium · Peer/ROIC Code intact · Docs-Hub war 13.09. → dieser Nachzug.  
 > **tsc-Baseline:** 97 Fehler (unverändert).
 
 ---
@@ -67,7 +67,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 6 | WORK_DATA_PROVIDERS.md | 5Y + Alternative | FMP + Yahoo/Stooq | ✅ | history-fallback.ts |
 | 7 | WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md | Klassen-Defaults | 6 Klassen | ✅ | lynch-dcf-defaults.ts |
 | 8 | WORK_NEWS_SENTIMENT.md | keine −100-False-Negatives | Keyword-Override | ✅ | · **nicht neu anfassen** |
-| 9 | WORK_PEER_ROIC_SANITY.md | LITB kappen | sanitizeRoic | ✅ | news-peers.ts |
+| 9 | WORK_PEER_ROIC_SANITY.md | LITB kappen | sanitizeRoic · Tip ≡ `4bdc1f8` (kein Delete) · Live wieder da nach FMP Premium | ✅ | news-peers.ts |
 | 10 | WORK_PORTFOLIO.md | F.2 + CAPM sichtbar | F.2 + Kelly + **E[r]-KPI CAPM live** (`0021be6`/`32133b4`) | ✅ | Doc-Hub 05.09. noch 🟡 CAPM — Code korrigiert |
 | 12 | WORK_RESEARCHER_BUTTONS_APPLY.md | Phase-2 Buttons | verdrahtet | ✅ | |
 | 13 | WORK_RESEARCHER_LIQUIDITY_REGIME.md | WALCL/RRP/TGA | GET `/api/researcher/liquidity` | ✅ | C2 `f0931d86` |
@@ -92,9 +92,9 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 |---|-------|------|-----|-------|
 | 28 | WORK_VALUECHAIN_SECTOR_ROTATION.md | Rang 1–9 | 1–6 + Phase 1–2 live; **Rang 7–9** xyflow | 🟡 blockiert |
 | 29 | WORK_PORTFOLIO_BACKTEST.md | Equity α/β/IR Underwater | Panel da; braucht Position+OHLCV; Rest-DoD | 🟡 |
-| 29b | WORK.md_portfolio_3 §6 | `GET /api/ohlcv` + Long-Map | Live PASS Tester AAPL 1Y/2Y @ `6a1807b` (`#61`) | ✅ |
+| 29b | WORK.md_portfolio_3 §6 | `GET /api/ohlcv` + Long-Map | Live PASS Tester AAPL 1Y/2Y @ `6a1807b` (`#61`). Stand 29.09.: Antwort oft Fake-OK `bars=[]`/`n=0` — trifft Chart #71, Code §6 nicht gelöscht | ✅ |
 | 30 | WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
-| 31 | WORK_EXEC_SUMMARY.md | Karte über S1 | Exec-Karte live `#58` | ✅ |
+| 31 | WORK_EXEC_SUMMARY.md | Karte über S1 | Exec-Karte live `#58`; `#69` Analyze Ampel+KI+FS Live PASS (XOM; FMP Premium aktiv) | ✅ |
 | 32 | WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalog + Fetch | nur Markdown | ⬜ |
 | 33 | WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), kein Kalender | noch `BESSENT_WINDOW` | ⬜ |
 | 34 | WORK_RESEARCHER_LIQUIDITY_INDEX.md | LI US/EU/ASIA | C2 nur US | ⬜ |
@@ -110,6 +110,21 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 44 | WORK_PEER_PRICING_POWER.md | Relativ nur Low-Moat | Spec Companion | ⬜ |
 | 45 | FactPack (`docs/.../FACTPACK_LLM.md`) | Validate+Hook | Hook+UI live `#57` | ✅ |
 
+### 1c. Nachzug 29.09. — #70–#77
+
+Kein `#74` in dieser Kette. Ampel folgt dem Live-Stand: ✅ nur bei bestätigter Anzeige. „Deploy folgt“ bleibt 🟡 (Code auf `main`, Live nicht geprüft).
+
+| # | Item | Soll | Ist (Code / Live) | Ampel |
+|---|------|------|-------------------|-------|
+| #70 | Portfolio Dual-Line | `benchPct` vs Performance | Code ✅ `358681a` · Live ✅ | ✅ |
+| #71 | Performance-Chart 4 Toggles | Ein/Aus + Bench-Kurs | Code ✅ `60aeeb2` · UI ok · Chart oft leer: `/api/ohlcv` Fake-OK `bars=[]`/`n=0` | 🟡 |
+| #72 | Dashboard-Badges 1–20 | Exec=1, FS=4, Tech=12 | Code ✅ `a7bfb15` · Live PASS Bundle `index-PW9HgI6J.js` @ `22d4af9`+ | ✅ |
+| #73 | WORK_THESIS_LAB.md | `/#/lab` + 6 Fixtures | Code ✅ `22d4af9` · Live PASS `/#/lab` + 6 Fixtures | ✅ |
+| #75 | Moat Ökosystem-Chip | Chip nur bei `hasEcosystem` | Code ✅ `08d82b2` · Live 🟡 Deploy/Tester nach Bundle-Wechsel | 🟡 |
+| #76 | DCF Default-β | Default = Markt-β (Sektor-Anker bleibt Modus) | Code ✅ `ef0f31e` · Live: Deploy folgt | 🟡 |
+| #77 | Makro-Korrelationsmatrix §15 | volle Matrix statt 4-Faktor-Stub | Code ✅ `d517611` · Live: Deploy folgt | 🟡 |
+
+FMP Billing: Premium aktiv (Analyze 200). OHLCV-Fake-OK ist davon getrennt (Batch A).
 
 ---
 
@@ -119,19 +134,29 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 - P1.1–P1.3: `c83e543` / `d6b41b3` / `9215cee`.
 - CAPM E[r]-KPI auf Portfolio-Übersicht live.
 - FactPack Hook+UI (`#57`), Exec-Summary UI (`#58`), VIX-Pane (`#60`), EU VSTOXX STOXX+CA (`#66` Live vol≈942).
-- Portfolio `GET /api/ohlcv` (`#61`) — Live PASS Tester AAPL 1Y/2Y @ `6a1807b`.
+- Portfolio `GET /api/ohlcv` (`#61`) — Live PASS Tester AAPL 1Y/2Y @ `6a1807b`. Stand 29.09. oft Fake-OK leer (siehe #71).
+- Dual-Line Benchmark (`#70` `358681a`) live. Dashboard-Badges 1–20 (`#72` `a7bfb15`) Live PASS. Thesis Lab `/#/lab` (`#73` `22d4af9`) Live PASS, 6 Fixtures.
+- Exec `#69` Live PASS (XOM; FMP Premium). Peer/ROIC Code intact (Tip ≡ `4bdc1f8`, kein Delete).
 
-**Nicht neu bauen / nicht anfassen:** Miner, PEG, inverted DCF, Sentiment, Portfolio F.2.
+**Nicht neu bauen / nicht anfassen:** Miner-Kern, PEG, inverted DCF Core, Sentiment, Portfolio F.2, Rang 7–9 ohne Entscheidung.
 
 ---
 
 ## 3. Offen 🟡 / ⬜ (workable, Rang 7–9 auszunehmen)
 
-**🟡 Partial:** Portfolio-Backtest Rest-DoD · Market-Charts PEG/FINRA · Hormuz (B) `recession-drivers.ts` · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`).
+**🟡 Partial:** Portfolio-Backtest Rest-DoD · Market-Charts PEG/FINRA · Hormuz (B) `recession-drivers.ts` · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`) · #71 4-Toggles (OHLCV Fake-OK) · #75 Ökosystem-Chip (Deploy/Tester) · #76/#77 Code da, Deploy folgt.
 
 **⬜ Spec (Liquidity-Bundle + Rest):** Regional LI + Books + Velocity + Data Sources · Fiscal Adaptive · Briefing regional · FRED/Sahm · Rate/Oil · Recession Sources · Peer Adaptive + Pricing-Power.
 
-Reihenfolge sinnvoll: Hormuz (B) (separates Gate) → Liquidity-Bundle → Peer → Backtest-Rest / PEG-FINRA.
+**Queue 29.09.:**
+
+1. Batch A: Search / 429-Transparenz / OHLCV Fake-OK ehrlich surface (Prompt 5) — PR ggf. noch offen.
+2. TAM Coverage-Lift (nach Batch A) — Spec `WORK_TAM_SEGMENT_MAPPING.md` Tor ok; Gap = unmatched Labels.
+3. Miner: kein Delete (≡ `b584446f`); Live 503 mempool Egress Render — Observability. Kern nicht anfassen.
+4. Ökosystem Scoring-Weichzeichnung (Zykliker-Grad) = Folge-Lane nach Chip.
+5. Gated unverändert: Hormuz (B) `recession-drivers.ts`, Liquidity-Bundle, Valuechain Rang 7–9.
+
+Reihenfolge sinnvoll: Batch A (OHLCV ehrlich) → TAM Coverage-Lift → Hormuz (B) / Liquidity-Bundle bleiben gegated.
 
 ---
 

@@ -309,11 +309,24 @@ export interface TechnicalIndicators {
   currentStatus: TechnicalStatus;
 }
 
+/** Unterpunkt einer Porter-Kraft. Threat 1–5 (1 = geringste Bedrohung, 5 = höchste). */
+export interface PorterSubScore {
+  label: string;
+  score: number;
+}
+
 export interface PorterForce {
   name: string;
+  /**
+   * Threat-Band auf der Skala 1–5 (niedriger = geringere Bedrohung):
+   * Low = 1–2, Medium = 3, High = 4–5.
+   */
   rating: "Low" | "Medium" | "High";
-  score: number; // 1-5
+  /** Threat 1–5. Mit subScores: gerundeter Mittelwert der Unterpunkte, danach Clamp. */
+  score: number;
   reasoning: string;
+  /** Optionale Unterpunkte, aus denen `score` abgeleitet wird. */
+  subScores?: PorterSubScore[];
 }
 
 export interface MoatAssessment {
@@ -322,6 +335,10 @@ export interface MoatAssessment {
   porterForces: PorterForce[];
   businessModelStrength: string;
   sustainabilityRating: string; // 1-5 stars as text
+  // Qualitative chip only (§13 Moat-Quellen). false/undefined → UI renders nothing.
+  // Does not change moat score, Lynch class, or DCF.
+  hasEcosystem?: boolean;
+  ecosystemNote?: string;
 }
 
 // === Currency Conversion Info ===

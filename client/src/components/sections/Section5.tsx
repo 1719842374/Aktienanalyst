@@ -2,7 +2,9 @@ import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
 import {
-  calculateFCFFDCF, buildDefaultDCFParams, type FCFFDCFParams, type FCFFDCFResult
+  calculateFCFFDCF, buildDefaultDCFParams,
+  sectorImpliedBetaFromAnalysis, betaForDcfSource, dcfBetaDivergedFromMarket,
+  type DcfBetaSource, type FCFFDCFParams, type FCFFDCFResult
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign } from "../../lib/formatters";
 import { useMemo, useState, useCallback, useEffect } from "react";
@@ -48,13 +50,33 @@ export function Section5({ data }: Props) {
   );
 
   const [params, setParams] = useState<FCFFDCFParams>(defaultParams);
+  // Default = Markt-β. Sektor-Anker is explicit; it does not rewrite the shared default.
+  const [betaMode, setBetaMode] = useState<DcfBetaSource>("market");
+
+  const marketBeta = defaultParams.beta;
+  const sectorBeta = useMemo(
+    () => sectorImpliedBetaFromAnalysis(data),
+    // Same refresh rule as defaultParams: recompute when the stock (or its anchor inputs) changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.ticker, data.totalDebt, data.marketCap, data.sectorProfile?.waccScenarios?.avg],
+  );
 
   const updateParam = useCallback(<K extends keyof FCFFDCFParams>(key: K, value: FCFFDCFParams[K]) => {
     setParams(prev => ({ ...prev, [key]: value }));
   }, []);
 
+  const applyBetaMode = useCallback((mode: DcfBetaSource) => {
+    setBetaMode(mode);
+    updateParam("beta", betaForDcfSource(mode, marketBeta, sectorBeta));
+  }, [updateParam, marketBeta, sectorBeta]);
+
+  const adoptMarketBeta = useCallback(() => {
+    applyBetaMode("market");
+  }, [applyBetaMode]);
+
   const resetParams = useCallback(() => {
     setParams(defaultParams);
+    setBetaMode("market");
     setWaccOverrideEnabled(false);
     setWaccOverrideValue(9.0);
   }, [defaultParams]);
@@ -64,7 +86,9 @@ export function Section5({ data }: Props) {
     resetParams();
   }, [data.ticker]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const isModified = JSON.stringify(params) !== JSON.stringify(defaultParams) || waccOverrideEnabled;
+  const isModified = JSON.stringify(params) !== JSON.stringify(defaultParams) || waccOverrideEnabled || betaMode !== "market";
+  const betaDivergedFromMarket = dcfBetaDivergedFromMarket(params.beta, marketBeta);
+  const showAdoptMarketBeta = betaMode !== "market" || betaDivergedFromMarket;
 
   // Merge WACC override into params
   const effectiveParams = useMemo(() => ({
@@ -328,8 +352,11 @@ export function Section5({ data }: Props) {
         <div className="bg-muted/30 rounded px-2 py-1 border border-border/50">
           <span className="text-muted-foreground">β (Markt): </span>
           <span className="font-mono font-semibold">{data.beta5Y.toFixed(2)}</span>
-          {Math.abs(params.beta - data.beta5Y) > 0.05 && (
-            <span className="ml-1 text-amber-500 text-[9px]" title="DCF-Beta weicht vom Markt-Beta ab (Sektor-WACC-Anker)">≠ DCF</span>
+          {Math.abs(data.beta5Y - marketBeta) > 0.01 && (
+            <span className="ml-1 text-muted-foreground text-[9px]" title="DCF-Default klemmt das Markt-β auf 0,5–1,8">→ {marketBeta.toFixed(2)}</span>
+          )}
+          {betaDivergedFromMarket && (
+            <span className="ml-1 text-amber-500 text-[9px]" title="DCF-Beta weicht vom Markt-β-Default ab">≠ DCF</span>
           )}
         </div>
         <div className="bg-muted/30 rounded px-2 py-1 border border-border/50">
@@ -342,14 +369,68 @@ export function Section5({ data }: Props) {
         </div>
       </div>
 
-      {/* Beta-Desync-Hinweis: DCF-Beta ≠ Markt-Beta */}
-      {Math.abs(params.beta - data.beta5Y) > 0.05 && (
-        <div className="flex items-start gap-2 p-2 rounded-md border border-amber-500/20 bg-amber-500/5">
+      {/* β-Quelle: Default ist Markt-β. Sektor-Anker nur auf explizite Wahl.
+          Bei WACC-Override liegen die CAPM-Felder still (gleicher Disable wie die Inputs). */}
+      <div
+        className={`flex flex-wrap items-center gap-2 ${waccOverrideEnabled ? "opacity-50 pointer-events-none" : ""}`}
+        data-testid="beta-source-toggle"
+      >
+        <span className="text-[10px] text-muted-foreground">β-Quelle</span>
+        <div className="inline-flex rounded-md border border-border overflow-hidden">
+          <button
+            type="button"
+            onClick={() => applyBetaMode("market")}
+            aria-pressed={betaMode === "market"}
+            className={`px-2 py-1 text-[10px] font-medium border-r border-border transition-colors ${
+              betaMode === "market"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-muted/50"
+            }`}
+            data-testid="toggle-beta-mode-market"
+          >
+            Markt-β
+          </button>
+          <button
+            type="button"
+            onClick={() => applyBetaMode("sector")}
+            aria-pressed={betaMode === "sector"}
+            className={`px-2 py-1 text-[10px] font-medium transition-colors ${
+              betaMode === "sector"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-muted/50"
+            }`}
+            data-testid="toggle-beta-mode-sector"
+          >
+            Sektor-Anker
+          </button>
+        </div>
+        {showAdoptMarketBeta && (
+          <button
+            type="button"
+            onClick={adoptMarketBeta}
+            className="px-2 py-1 rounded text-[10px] font-medium border border-primary/30 text-primary hover:bg-primary/10"
+            data-testid="button-adopt-market-beta"
+          >
+            Markt-β übernehmen
+          </button>
+        )}
+        <span className="text-[9px] text-muted-foreground">
+          Default ist Markt-β{waccOverrideEnabled ? " · CAPM ruht bei WACC-Override" : ""}
+        </span>
+      </div>
+
+      {/* Beta-Hinweis: nur wenn der Lauf vom Markt-Default abweicht (Modus oder Handwert). */}
+      {showAdoptMarketBeta && (
+        <div className="flex items-start gap-2 p-2 rounded-md border border-amber-500/20 bg-amber-500/5" data-testid="beta-source-hint">
           <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
           <div className="text-[10px] text-amber-500/90">
-            <span className="font-semibold">Beta-Hinweis:</span> Das DCF-Modell verwendet β = {params.beta.toFixed(2)} (am Sektor-WACC {data.sectorProfile.waccScenarios.avg}% verankert),
-            während das Markt-Beta β = {data.beta5Y.toFixed(2)} beträgt. Die WACC-Tabelle in Sektion 4 „Bewertungskennzahlen“ basiert auf dem Markt-Beta.
-            Dies ist beabsichtigt — der Sektor-Anker glättet kurzfristige Beta-Volatiliät. Manueller Override möglich.
+            <span className="font-semibold">Beta-Hinweis:</span> Default ist das Markt-β ({marketBeta.toFixed(2)}
+            {Math.abs(data.beta5Y - marketBeta) > 0.01 ? `, roh ${data.beta5Y.toFixed(2)}, geklemmt auf 0,5–1,8` : ""}).
+            {betaMode === "sector"
+              ? ` Sektor-Anker ist gewählt (implizites β = ${sectorBeta.toFixed(2)} aus Sektor-WACC ${data.sectorProfile.waccScenarios.avg}%).`
+              : " Sektor-Anker ist nicht gewählt."}
+            {betaDivergedFromMarket ? ` Das DCF rechnet aktuell mit β = ${params.beta.toFixed(2)}.` : ""}
+            {" "}Der Sektor-Anker ist keine Vorgabe und gilt nur bei expliziter Wahl. Die WACC-Tabelle in Sektion 4 „Bewertungskennzahlen“ basiert auf dem Markt-Beta.
           </div>
         </div>
       )}
@@ -561,7 +642,7 @@ export function Section5({ data }: Props) {
         Terminal Value = Gordon Growth Model: TV = FCFF₁₁ / (WACC - g) |
         WACC = E/V × Re + D/V × Rd × (1-t) | Re = Rf + β × ERP (CAPM) |
         Equity Value = EV - Net Debt - Minorities |
-        <span className="font-semibold text-primary"> β(DCF) = Sektor-WACC-Anker</span> — weicht bewusst vom Markt-β ab.
+        <span className="font-semibold text-primary"> β(DCF)-Default = Markt-β</span> (geklemmt auf 0,5–1,8). Sektor-Anker nur bei expliziter Wahl, nicht als Startwert.
       </div>
     </SectionCard>
   );

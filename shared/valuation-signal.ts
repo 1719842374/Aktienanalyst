@@ -178,17 +178,100 @@ export function invertedDcf(params: InvertedDcfParams): InvertedDcfResult {
   return { ...dcf, Dminus, gAdj, waccAdj, mode };
 }
 
+// === DCF beta: Markt-β is the default; Sektor-Anker is opt-in ===
+// CAPM inputs shared by buildDefaultDCFParams and the sector-implied helper
+// so Section 4 / Section 5 cannot drift from the FCFF default.
+const DCF_DEFAULT_RF = 4.2;
+const DCF_DEFAULT_ERP = 5.5;
+const DCF_DEFAULT_TAX = 21;
+const DCF_DEFAULT_RD = 5.0;
+export const DCF_BETA_MIN = 0.5;
+export const DCF_BETA_MAX = 1.8;
+
+/** Clamp a beta into the DCF band and round to 2 decimals (input-field precision). */
+export function clampDcfBeta(beta: number): number {
+  const n = Number.isFinite(beta) ? beta : 1;
+  return +Math.max(DCF_BETA_MIN, Math.min(DCF_BETA_MAX, n)).toFixed(2);
+}
+
+/** Default DCF β: the stock's market beta (beta5Y), clamped. Not the sector anchor. */
+export function marketBetaForDcf(beta5Y: number): number {
+  return clampDcfBeta(beta5Y);
+}
+
+/** D/V in percent, same rounding as the FCFF default (0 decimals; 10 if no debt). */
+export function dcfDebtRatioPct(data: Pick<StockAnalysis, "totalDebt" | "marketCap">): number {
+  return data.totalDebt > 0
+    ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0)
+    : 10;
+}
+
+export interface SectorImpliedBetaInput {
+  /** Sector average WACC in percent (sectorProfile.waccScenarios.avg). */
+  targetWacc: number;
+  /** D/V in percent (same scale as FCFFDCFParams.debtRatio). */
+  debtRatioPct: number;
+  riskFreeRate?: number;
+  erp?: number;
+  costOfDebt?: number;
+  /** Tax rate in percent (21, not 0.21). */
+  taxRatePct?: number;
+}
+
+/**
+ * Sector-WACC-implied beta (Sektor-Anker).
+ *
+ * implied = clamp(0.5, 1.8, (targetWACC - debtCostPart - evFrac*rf) / (evFrac*erp))
+ *
+ * The historical DCF default was min(implied, beta5Y+0.1). That cap is not
+ * applied here: Sektor-Anker is the pure implied value. Markt-β is the default.
+ */
+export function sectorImpliedBeta(input: SectorImpliedBetaInput): number {
+  const rf = input.riskFreeRate ?? DCF_DEFAULT_RF;
+  const erp = input.erp ?? DCF_DEFAULT_ERP;
+  const rd = input.costOfDebt ?? DCF_DEFAULT_RD;
+  const taxR = input.taxRatePct ?? DCF_DEFAULT_TAX;
+  const evFrac = (100 - input.debtRatioPct) / 100;
+  const dvFrac = input.debtRatioPct / 100;
+  const debtCostPart = dvFrac * rd * (1 - taxR / 100);
+  const denom = evFrac * erp;
+  if (!(denom > 0) || !Number.isFinite(input.targetWacc)) return clampDcfBeta(1);
+  const raw = (input.targetWacc - debtCostPart - evFrac * rf) / denom;
+  return clampDcfBeta(raw);
+}
+
+/** Sektor-Anker for one analysis. Same debt-ratio and CAPM constants as the DCF default. */
+export function sectorImpliedBetaFromAnalysis(data: StockAnalysis): number {
+  return sectorImpliedBeta({
+    targetWacc: data.sectorProfile?.waccScenarios?.avg,
+    debtRatioPct: dcfDebtRatioPct(data),
+  });
+}
+
+export type DcfBetaSource = "market" | "sector";
+
+/** β that belongs to a Section-5 mode. Manual edits live outside this helper. */
+export function betaForDcfSource(source: DcfBetaSource, marketBeta: number, sectorBeta: number): number {
+  return source === "sector" ? sectorBeta : marketBeta;
+}
+
+/** True when the live DCF β is not the (clamped) market beta. */
+export function dcfBetaDivergedFromMarket(currentBeta: number, marketBeta: number, epsilon = 0.01): boolean {
+  return Math.abs(currentBeta - marketBeta) > epsilon;
+}
+
 // === SINGLE SOURCE OF TRUTH: Default DCF Parameters ===
 // Both Section5 and Section6 MUST derive their defaults from this function.
 // Any change to beta or capex logic here propagates to all consumers automatically.
 // This eliminates the Zwei-Pfad-Bug (#1, #6).
+// β default = Markt-β (clamped). Sektor-Anker is an explicit Section-5 mode only.
 export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
-  const rf = 4.2;
-  const erp = 5.5;
-  const taxR = 21;
-  const rd = 5.0;
+  const rf = DCF_DEFAULT_RF;
+  const erp = DCF_DEFAULT_ERP;
+  const taxR = DCF_DEFAULT_TAX;
+  const rd = DCF_DEFAULT_RD;
 
   // EBIT margin — prefer actual operating income, fall back to EBITDA proxy
   const ebitMarginDefault =
@@ -227,22 +310,12 @@ export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
     ebitMarginPhase1: ebitMarginPhase1ForLynch,
   });
 
-  const debtRatioVal =
-    data.totalDebt > 0
-      ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0)
-      : 10;
-  const evFrac = (100 - debtRatioVal) / 100;
-  const dvFrac = debtRatioVal / 100;
+  const debtRatioVal = dcfDebtRatioPct(data);
 
-  // Implied beta anchored to sector WACC (same logic as Section5)
-  const targetWACC = sp.waccScenarios.avg;
-  const debtCostPart = dvFrac * rd * (1 - taxR / 100);
-  const impliedBeta = Math.max(
-    0.5,
-    Math.min(1.8, (targetWACC - debtCostPart - evFrac * rf) / (evFrac * erp))
-  );
-  // Cap at observed market beta + 0.1 to avoid over-anchoring
-  const dcfBeta = +Math.min(impliedBeta, data.beta5Y + 0.1).toFixed(2);
+  // Default β is the stock's market beta, clamped to 0.5–1.8.
+  // Sector-implied β stays available via sectorImpliedBetaFromAnalysis()
+  // for the explicit „Sektor-Anker“ mode in Section 5 — it is not the start value.
+  const dcfBeta = marketBetaForDcf(data.beta5Y);
 
   // RSL-Momentum (single source of truth — same prices26w slice as Section9/Section13)
   const prices26w = [...data.historicalPrices]

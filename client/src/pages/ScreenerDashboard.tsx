@@ -242,6 +242,7 @@ export default function ScreenerDashboard() {
                         onToggle={() => setExpandedRow(expandedRow === s.ticker ? null : s.ticker)}
                         formatMC={formatMC}
                         formatVal={formatVal}
+                        navigate={navigate}
                       />
                     ))}
                     {stocks.length === 0 && (
@@ -282,9 +283,10 @@ function SortHeader({ label, field, current, asc, onSort }: {
   );
 }
 
-function StockRow({ stock: s, rank, expanded, onToggle, formatMC, formatVal }: {
+function StockRow({ stock: s, rank, expanded, onToggle, formatMC, formatVal, navigate }: {
   stock: ScreenedStock; rank: number; expanded: boolean;
   onToggle: () => void; formatMC: (v: number) => string; formatVal: (v: number) => string;
+  navigate: (to: string) => void;
 }) {
   return (
     <>
@@ -325,8 +327,8 @@ function StockRow({ stock: s, rank, expanded, onToggle, formatMC, formatVal }: {
         </td>
         <td className="py-2 px-3 text-center">
           <a
-            href={`/#/?ticker=${s.ticker}`}
-            onClick={(e) => { e.preventDefault(); window.location.hash = '/'; setTimeout(() => { const inp = document.querySelector('input'); if (inp) { (inp as any).value = s.ticker; const btn = document.querySelector('[data-testid="button-analyze"]') as any; if (btn) btn.click(); } }, 100); }}
+            href={`/#/?ticker=${encodeURIComponent(s.ticker)}`}
+            onClick={(e) => { e.preventDefault(); navigate(`/?ticker=${encodeURIComponent(s.ticker)}`); }}
             className="text-primary hover:underline text-[10px]"
           >
             <ExternalLink className="w-3 h-3 inline" /> DCF
