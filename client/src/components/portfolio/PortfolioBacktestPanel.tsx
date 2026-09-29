@@ -19,7 +19,7 @@ import {
 } from "recharts";
 import { TrendingUp, TrendingDown, Info } from "lucide-react";
 import {
-  computePortfolioBacktest, toBacktestPositionInputs,
+  computePortfolioBacktest, toBacktestPositionInputs, formatThinSeriesExclusion,
   type PortfolioBacktestResult, type HoldingAttribution,
 } from "@/lib/portfolio/backtest";
 import type { PortfolioPosition } from "@/lib/portfolio/positions";
@@ -188,14 +188,18 @@ export default function PortfolioBacktestPanel({
   if (openLongCount < MIN_OPEN_LONG_POSITIONS || !result) return null;
 
   if (result.status === "insufficient_data") {
+    // Eine Kurzserie (z.B. 1 Bar) darf nicht als „1 Handelstag“-Banner erscheinen.
+    // Der Reason nennt den ausgeschlossenen Ticker.
+    const namesThinTicker = result.excludedTickersThin.length > 0;
     return (
       <div className="bg-card rounded-xl border border-border p-4">
         <h3 className="text-sm font-semibold mb-1">Performance &amp; Attribution vs. Benchmark</h3>
         <div className="flex items-start gap-2 bg-muted/30 rounded-lg p-3 mt-2">
           <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
           <p className="text-xs text-muted-foreground">
-            Noch nicht genug gemeinsame Kurshistorie für einen Backtest vs. {benchmarkTicker.toUpperCase()}
-            {" "}({result.commonTradingDays} Handelstage, {result.reason}).
+            {namesThinTicker
+              ? result.reason
+              : `Noch nicht genug gemeinsame Kurshistorie für einen Backtest vs. ${benchmarkTicker.toUpperCase()} (${result.commonTradingDays} Handelstage, ${result.reason}).`}
           </p>
         </div>
       </div>
@@ -219,6 +223,9 @@ export default function PortfolioBacktestPanel({
           <p className="text-[10px] text-muted-foreground">
             Ex-post Backtest (Buy-and-Hold, Gewichte fix ab Entry) — {r.startDate} bis {r.endDate}, {r.tradingDays} Handelstage · Benchmark {r.benchmark}
           </p>
+          {r.excludedTickersThin.length > 0 && (
+            <p className="text-[10px] text-muted-foreground mt-1">{formatThinSeriesExclusion(r.excludedTickersThin)}</p>
+          )}
         </div>
         {r.alphaAnnualPct >= 0 ? (
           <TrendingUp className="w-4 h-4 text-emerald-400 shrink-0" />
