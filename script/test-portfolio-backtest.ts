@@ -319,5 +319,120 @@ console.log("\nTest 14: frisches openedAt=heute ist kein Hard-Cut — volle geme
   );
 }
 
+console.log("\nTest 15: dünne Serie (1 Bar) wird aus der Intersection ausgeschlossen — AAPL∩SPY bleibt");
+{
+  // AAPL und SPY haben volle Historie. MSFT hat nur den letzten Bar (Stub/Race).
+  // Ohne Ausschluss kollabiert die Intersection auf diesen einen Tag.
+  const returns = Array.from({ length: 40 }, (_, i) => (i % 5 === 0 ? -0.01 : 0.004));
+  const benchmarkBars = buildSeries("2026-01-05", 100, returns);
+  const barsAapl = buildSeries("2026-01-05", 50, returns);
+  const todayStr = benchmarkBars[benchmarkBars.length - 1].date;
+  // 1 Bar <= heute plus Bars nach today: nur der eine zaehlt, die Zukunft nicht.
+  const thinMsft: PriceBar[] = [
+    { date: todayStr, close: 400 },
+    { date: "2027-01-04", close: 401 },
+    { date: "2027-01-05", close: 402 },
+    { date: "2027-01-06", close: 403 },
+  ];
+  const positions: BacktestPositionInput[] = [
+    { ticker: "AAPL", entryPrice: 50, qty: 10, openedAt: "2026-01-05", sector: "Tech" },
+    { ticker: "MSFT", entryPrice: 400, qty: 2, openedAt: todayStr, sector: "Tech" },
+  ];
+  const result = computePortfolioBacktest({
+    positions,
+    historicalPricesByTicker: { AAPL: barsAapl, MSFT: thinMsft },
+    benchmarkTicker: "SPY",
+    benchmarkPrices: benchmarkBars,
+    riskFreeRateAnnual: 0,
+    today: new Date(todayStr + "T00:00:00Z"),
+  });
+  const fullReturnDays = benchmarkBars.length - 1;
+  check(
+    "status ok trotz MSFT-Stub (Backtest auf AAPL∩SPY)",
+    result.status === "ok",
+    result.status === "insufficient_data" ? JSON.stringify(result) : `status=${result.status}`,
+  );
+  if (result.status === "ok") {
+    check("Holdings ohne MSFT", result.holdings.every(h => h.ticker !== "MSFT"), result.holdings.map(h => h.ticker).join(","));
+    check("Holdings enthalten AAPL", result.holdings.some(h => h.ticker === "AAPL"));
+    check("AAPL-Gewicht 100% (MSFT nicht in den Gewichten)", approxEqual(result.holdings.find(h => h.ticker === "AAPL")?.weightPct ?? 0, 100, 1e-4));
+    check(
+      `tradingDays = volle AAPL∩SPY-Serie (>= ${MIN_COMMON_TRADING_DAYS})`,
+      result.tradingDays === fullReturnDays,
+      String(result.tradingDays),
+    );
+    const excluded = result.excludedTickersThin ?? [];
+    check("excludedTickersThin enthält MSFT mit 1 Bar", excluded.some(e => e.ticker === "MSFT" && e.bars === 1), JSON.stringify(excluded));
+  }
+}
+
+console.log("\nTest 16: nur dünne Serie → insufficient_data nennt den Ticker, nicht stumm „1 Handelstag“");
+{
+  const returns = Array.from({ length: 40 }, (_, i) => (i % 4 === 0 ? -0.008 : 0.003));
+  const benchmarkBars = buildSeries("2026-01-05", 100, returns);
+  const todayStr = benchmarkBars[benchmarkBars.length - 1].date;
+  const positions: BacktestPositionInput[] = [
+    { ticker: "MSFT", entryPrice: 400, qty: 2, openedAt: todayStr, sector: "Tech" },
+    { ticker: "NVO", entryPrice: 80, qty: 3, openedAt: todayStr, sector: "Health" },
+  ];
+  const result = computePortfolioBacktest({
+    positions,
+    historicalPricesByTicker: {
+      MSFT: [{ date: todayStr, close: 400 }],
+      NVO: [{ date: todayStr, close: 80 }, { date: benchmarkBars[benchmarkBars.length - 2].date, close: 79 }],
+    },
+    benchmarkTicker: "SPY",
+    benchmarkPrices: benchmarkBars,
+    riskFreeRateAnnual: 0,
+    today: new Date(todayStr + "T00:00:00Z"),
+  });
+  check("status insufficient_data", result.status === "insufficient_data", JSON.stringify(result));
+  if (result.status === "insufficient_data") {
+    check("reason nennt MSFT und 1 Bar", result.reason.includes("MSFT") && result.reason.includes("1 Bar"), result.reason);
+    check("reason nennt NVO", result.reason.includes("NVO"), result.reason);
+    check(
+      "reason ist nicht die stumme „Nur 1 gemeinsame Handelstage“-Meldung",
+      !result.reason.startsWith("Nur 1 gemeinsame Handelstage"),
+      result.reason,
+    );
+  }
+}
+
+console.log("\nTest 17: zwei lange Serien mit kaum Überlappung — keine Dünn-Ausschluss, Reason nennt die kurze Schnittmenge");
+{
+  const datesA = Array.from({ length: 25 }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 0, 5 + i));
+    return d.toISOString().slice(0, 10);
+  });
+  const datesB = Array.from({ length: 25 }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 3, 1 + i));
+    return d.toISOString().slice(0, 10);
+  });
+  const overlap = datesA.filter(d => datesB.includes(d));
+  const toBars = (dates: string[], start: number): PriceBar[] => dates.map((date, i) => ({ date, close: start + i }));
+  const positions: BacktestPositionInput[] = [
+    { ticker: "AAA", entryPrice: 100, qty: 1, openedAt: datesA[0], sector: "Tech" },
+    { ticker: "BBB", entryPrice: 80, qty: 1, openedAt: datesB[0], sector: "Health" },
+  ];
+  const result = computePortfolioBacktest({
+    positions,
+    historicalPricesByTicker: { AAA: toBars(datesA, 100), BBB: toBars(datesB, 80) },
+    benchmarkTicker: "SPY",
+    benchmarkPrices: toBars([...datesA, ...datesB], 400),
+    riskFreeRateAnnual: 0,
+    today: new Date("2026-12-31T00:00:00Z"),
+  });
+  check("Überlappung der Fixtures < Mindesttage", overlap.length < MIN_COMMON_TRADING_DAYS, String(overlap.length));
+  check("status insufficient_data", result.status === "insufficient_data", JSON.stringify(result));
+  if (result.status === "insufficient_data") {
+    check(
+      "reason nennt die kurze Schnittmenge (keine Dünn-Serie)",
+      result.reason.startsWith(`Nur ${overlap.length} gemeinsame Handelstage`),
+      result.reason,
+    );
+    check("excludedTickersThin leer", result.excludedTickersThin.length === 0, JSON.stringify(result.excludedTickersThin));
+  }
+}
+
 console.log(`\n${failed === 0 ? "✅ Alle Tests bestanden" : `❌ ${failed} Test(s) fehlgeschlagen`}\n`);
 process.exit(failed === 0 ? 0 : 1);
