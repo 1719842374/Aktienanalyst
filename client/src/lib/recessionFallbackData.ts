@@ -326,7 +326,7 @@ export const RECESSION_FALLBACK_DATA = {
   ],
   "interpretation": "Hohes Risiko: Mehrere Indikatoren signalisieren erhöhte Rezessions- oder Korrekturwahrscheinlichkeit. Defensivere Positionierung empfohlen.",
   "fazit": {
-    "summary": "Gesamtbewertung: Hoches Risiko. Rezession 12M: 25%, Korrektur 12M: 75%. Die Kombination aus historisch extremen Bewertungen (Buffett 230%, CAPE 40.4), dem Iran/Hormuz-Ölpreisschock mit Stagflationspotenzial, und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, das defensives Portfoliomanagement erfordert.",
+    "summary": "Gesamtbewertung: Hohes Risiko. Rezession 12M: 25%, Korrektur 12M: 75%. Die Kombination aus historisch extremen Bewertungen (Buffett 230%, CAPE 40.4), dem Iran/Hormuz-Ölpreisschock mit Stagflationspotenzial, und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, das defensives Portfoliomanagement erfordert.",
     "riskLevel": "Hoch",
     "sections": [
       {
