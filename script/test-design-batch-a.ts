@@ -35,6 +35,9 @@ check("legacy 500 message → upstream", describeApiError(new Error("FMP 503: /s
 check("fetch TypeError → network", describeApiError(new TypeError("Failed to fetch")).kind === "network");
 check("not configured", describeApiError(new ApiError("FMP nicht konfiguriert", 503, "FMP_NOT_CONFIGURED")).kind === "not_configured");
 check("unknown fallback", describeApiError(new ApiError("Ungültige Branche", 400)).kind === "unknown");
+const GENERIC = "Daten konnten nicht geladen werden. Bitte erneut versuchen.";
+check("5xx/network/other use canonical generic copy",
+  [new ApiError("x", 502), new TypeError("Failed to fetch"), new Error("FMP 503: /x"), new ApiError("y", 400)].every(e => describeApiError(e).headline === GENERIC));
 check("no headline leaks a status code",
   [new ApiError("x", 502), new TypeError("Failed to fetch"), new ApiError("y", 400)].every(e => !/\d{3}/.test(describeApiError(e).headline)));
 

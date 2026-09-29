@@ -17,6 +17,9 @@ export async function apiErrorFromResponse(res: Response): Promise<ApiError> {
   return new ApiError(message, res.status, errorCode);
 }
 
+export const RATE_LIMITED_HEADLINE = "Datenquelle ausgelastet — bitte später erneut versuchen.";
+export const GENERIC_HEADLINE = "Daten konnten nicht geladen werden. Bitte erneut versuchen.";
+
 export type ApiErrorKind = "rate_limited" | "not_configured" | "upstream" | "network" | "unknown";
 
 export interface ApiErrorCopy {
@@ -34,16 +37,17 @@ export function describeApiError(err: unknown): ApiErrorCopy {
   const code = typeof e?.errorCode === "string" ? e.errorCode : null;
 
   if (status === 429 || code === "RATE_LIMITED" || /\b429\b|rate.?limit|RATE_LIMITED/i.test(detail)) {
-    return { kind: "rate_limited", headline: "Datenquelle ausgelastet — bitte später erneut versuchen.", detail };
+    return { kind: "rate_limited", headline: RATE_LIMITED_HEADLINE, detail };
   }
+  const headline = GENERIC_HEADLINE;
   if (code === "FMP_NOT_CONFIGURED" || /nicht konfiguriert|API_KEY not set/i.test(detail)) {
-    return { kind: "not_configured", headline: "Datenquelle nicht konfiguriert — bitte Administrator informieren.", detail };
+    return { kind: "not_configured", headline, detail };
   }
   if (code === "FMP_UNREACHABLE" || e?.name === "TypeError" || /failed to fetch|networkerror|nicht erreichbar|timeout/i.test(detail)) {
-    return { kind: "network", headline: "Datenquelle nicht erreichbar — Verbindung prüfen und erneut versuchen.", detail };
+    return { kind: "network", headline, detail };
   }
   if ((status != null && status >= 500) || code === "FMP_UPSTREAM_ERROR" || /\b5\d\d\b/.test(detail)) {
-    return { kind: "upstream", headline: "Datenquelle vorübergehend gestört — bitte erneut versuchen.", detail };
+    return { kind: "upstream", headline, detail };
   }
-  return { kind: "unknown", headline: "Daten konnten nicht geladen werden.", detail };
+  return { kind: "unknown", headline, detail };
 }
