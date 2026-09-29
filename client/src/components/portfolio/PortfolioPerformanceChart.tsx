@@ -2,12 +2,30 @@
  * PortfolioPerformanceChart — Dual-Line (#70) + bench price + BTC-style Eye toggles.
  */
 import { useMemo, useState } from "react";
-import { ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as AreaTooltip, Legend, ReferenceLine } from "recharts";
+import { ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as AreaTooltip, Legend, ReferenceLine, DefaultTooltipContent, type TooltipProps } from "recharts";
 import { Eye, EyeOff } from "lucide-react";
 import { timeframeCutoffIso, type PerformanceTimeframe } from "@/lib/portfolio/positions";
 
 type ChartSeriesKey = "pct" | "benchPct" | "combo" | "benchPrice";
 const DEFAULT_VISIBLE: ChartSeriesKey[] = ["pct", "benchPct", "combo", "benchPrice"];
+
+/** Same solid used by the Fenster-Rendite eye toggle and the green zone stop. */
+const FENSTER_RENDITE_TOOLTIP_COLOR = "#10b981";
+
+/**
+ * Recharts copies Area `stroke` into the tooltip item `color`.
+ * `url(#portfolioPerfStroke)` is not a CSS color, so that row inherits the
+ * theme foreground (near-white in dark mode) onto the white tooltip.
+ * Other series already pass solid hex strokes and stay untouched.
+ */
+function portfolioPerfTooltipContent(props: TooltipProps<number, string>) {
+  const payload = props.payload?.map(entry =>
+    typeof entry.color === "string" && entry.color.startsWith("url(")
+      ? { ...entry, color: FENSTER_RENDITE_TOOLTIP_COLOR }
+      : entry,
+  );
+  return <DefaultTooltipContent {...props} payload={payload} />;
+}
 
 function fmtPct(x: number | null | undefined, digits = 1): string {
   if (x == null || !Number.isFinite(x)) return "—";
@@ -138,6 +156,7 @@ export default function PortfolioPerformanceChart({
             {showPctAxis && <YAxis yAxisId="pct" tick={{ fontSize: 9 }} tickFormatter={(v) => `${v}%`} width={40} />}
             {showPriceAxis && <YAxis yAxisId="combo" orientation="right" tick={{ fontSize: 9 }} tickFormatter={(v) => Number(v).toFixed(0)} width={44} />}
             <AreaTooltip
+              content={portfolioPerfTooltipContent}
               formatter={(v: number, name: string) =>
                 name === "Kombinationskurs" || name.endsWith("-Kurs")
                   ? [Number(v).toFixed(2), name]
