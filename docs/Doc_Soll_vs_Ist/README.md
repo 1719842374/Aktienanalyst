@@ -1,15 +1,15 @@
 # Doc_Soll_vs_Ist
 
-> Stand: 29.09.2026 | Ampel aus **Code + UI** (Live Render) · HEAD `d517611`
+> Stand: 29.09.2026 (Abend) | Ampel aus **Code + UI** (Live Render) · HEAD `f0046ee9`
 > Originale im **Repo-Root**. Dieser Ordner verlinkt nur.
 >
 > Alt: [work-offen](../work-offen/) · [work-dokumentation](../work-dokumentation/)
 
 **Regel:** `✅` nur wenn die *erwartete Anzeige* live ist. Datei + Lib ohne KPI/Serie = `🟡` oder `⬜`. „Deploy folgt“ = Code auf `main`, Live nicht geprüft → `🟡`.
 
-**Nachzug 29.09.:** #70 Dual-Line Live ✅ · #72 Badges 1–20 Live ✅ · #73 Thesis Lab `/#/lab` Live ✅ · Exec #69 Live ✅ (XOM, FMP Premium) · Peer/ROIC Code intact ✅ (≡ `4bdc1f8`) · #71 4-Toggles 🟡 (UI ok, Chart oft leer: `/api/ohlcv` Fake-OK `bars=[]`/`n=0`) · #75 Ökosystem-Chip 🟡 (Deploy/Tester, nur `hasEcosystem`) · #76 DCF Markt-β Code ✅ Deploy folgt · #77 Makro §15 Code ✅ Deploy folgt. Docs-Hub war 13.09.
+**Nachzug 29.09. Abend (`f0046ee9`):** #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem-Chip / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution (251d AAPL+MSFT) · #86 Tooltip · #88 Pie über Performance / Chart 360px Live ✅ · #87 thin-series 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · #70/#72/#73 Live ✅ · Exec #69 Live ✅ · Peer/ROIC ≡ `4bdc1f8`. BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub-Vormittag war `d517611` (#78).
 
-**Nachzug 13.09. (+ portfolio_3 PASS):** Exec / FactPack / VIX+EU-Vol / Portfolio OHLCV §6 ✅ · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert · Backtest weiter 🟡. OHLCV §6-Code bleibt; Live 29.09. oft Fake-OK (siehe #71).
+**Nachzug 13.09. (+ portfolio_3 PASS):** Exec / FactPack / VIX+EU-Vol / Portfolio OHLCV §6 ✅ · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert · Backtest weiter 🟡. OHLCV §6-Code bleibt; #74 Fake-OK source:fmp fixed; Chart #71 oft weiter leer.
 
 ---
 
@@ -32,10 +32,8 @@
 | [WORK_RECESSION_SOURCES.md](../../WORK_RECESSION_SOURCES.md) | Quellenkatalog | Spec | `⬜` |
 | [WORK_PEER_ADAPTIVE.md](../../WORK_PEER_ADAPTIVE.md) | 2-Hop+Industry | Spec; Hardcode-Map lebt | `⬜` |
 | [WORK_PEER_PRICING_POWER.md](../../WORK_PEER_PRICING_POWER.md) | Relativ nur Low-Moat | Spec Companion | `⬜` |
-| Performance-Chart 4 Toggles (#71) | Ein/Aus + Bench-Kurs | UI da (`60aeeb2`); Chart oft leer (`/api/ohlcv` Fake-OK `bars=[]`/`n=0`) | `🟡` |
-| Moat Ökosystem-Chip (#75) | Chip nur bei `hasEcosystem` | Code `08d82b2`; Live Deploy/Tester nach Bundle-Wechsel | `🟡` |
-| DCF Default Markt-β (#76) | Default β = Markt-β, Sektor-Anker als Modus | Code `ef0f31e`; Deploy folgt | `🟡` |
-| Makro-Korrelationsmatrix §15 (#77) | volle Matrix statt 4-Faktor-Stub | Code `d517611`; Deploy folgt | `🟡` |
+| Performance-Chart 4 Toggles (#71) | Ein/Aus + Bench-Kurs | UI da (`60aeeb2`); OHLCV-Honesty #74; Chart oft weiter leer | `🟡` |
+| thin-series Prävention (#87) | dünne Serie aus Backtest-Intersection | Code `2fb8b70a`; healthy 251d OK; thin-Banner nicht repro auf Live | `🟡` PARTIAL |
 
 Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPACK_LLM.md](./FACTPACK_LLM.md) · FMP/BB [FMP_GRENZEN_BLOOMBERG.md](./FMP_GRENZEN_BLOOMBERG.md)
 
@@ -49,6 +47,17 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | Portfolio Dual-Line (#70) | `benchPct` vs Performance live (`358681a`) |
 | Dashboard-Badges 1–20 (#72) | Exec=1, FS=4, Tech=12 · Live PASS Bundle `index-PW9HgI6J.js` @ `22d4af9`+ |
 | [WORK_THESIS_LAB.md](../../WORK_THESIS_LAB.md) | `/#/lab` + 6 Fixtures Live PASS (`22d4af9`, #73) |
+| Batch A (#74) | OHLCV honesty / Search / Error-UI / Recession · `e8ebd35c` · Fake-OK `bars=[]` source:fmp fixed · Live ✅ |
+| Moat Ökosystem-Chip (#75) | Chip nur bei `hasEcosystem` · `08d82b2` · Live ✅ nach Deploy |
+| DCF Default Markt-β (#76) | Default β = Markt-β · `ef0f31e` · Live ✅ nach Deploy |
+| Makro-Korrelationsmatrix §15 (#77) | volle Matrix · `d517611` · Live ✅ nach Deploy |
+| Porter Moat/Ökosystem Prompt (#81) | Option A · `c6dc39d1` · Score-DoD PASS; Narrative via force+useLLM |
+| Exec Pro/Contra/Downside (#82) | 3 Boxen · `78c8521e` · Bundle H2cTedRt PASS |
+| Fenster-Rendite Zonen (#83) | green≥0 / red<0 + 0%-Linie · `8a7ee044` · Bundle C61GQzdr, dann Nachfolger |
+| Sharpe 5. KPI (#84) | `32466b6c` · Bundle Jx0cX7cU; Sharpe=0.947 |
+| Attribution volle Historie (#85) | `f6a6a398` · Re-DoD 251 common days AAPL+MSFT |
+| Fenster-Tooltip Kontrast (#86) | `7e9279db` · Bundle `index-Ca0V7H2h.js`; Datum #0f172a, Fenster #10b981 |
+| Pie über Performance / Chart 360px (#88) | `f0046ee9` · Bundle `index-Ca0V7H2h.js`; grid-cols-1, h-[360px] Performance |
 | [WORK_PEER_ROIC_SANITY.md](../../WORK_PEER_ROIC_SANITY.md) | sanitizeRoic intact · Tip ≡ `4bdc1f8` (kein Delete) · wieder da nach FMP Premium |
 | [FACTPACK_LLM.md](./FACTPACK_LLM.md) | Analyze-Hook + UI live (#57) |
 | [WORK_RECESSION_RSI_MACD.md](../../WORK_RECESSION_RSI_MACD.md) | Dashboard-Wire + Pane live |
@@ -61,7 +70,7 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | [WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](../../WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | Wiring |
 | [WORK_ANTIBIAS_DCF.md](../../WORK_ANTIBIAS_DCF.md) | inverted DCF |
 | [WORK_REVERSE_DCF_BRIDGE.md](../../WORK_REVERSE_DCF_BRIDGE.md) | fiscal-bridge |
-| [WORK_BIAS_FIXES_INVERSE_DCF.md](../../WORK_BIAS_FIXES_INVERSE_DCF.md) | BL + MC |
+| [WORK_BIAS_FIXES_INVERSE_DCF.md](../../WORK_BIAS_FIXES_INVERSE_DCF.md) | Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3 |
 | [WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md](../../WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md) | Defaults |
 | [WORK_RESEARCHER_PORTFOLIO.md](../../WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 Tabs |
 | [WORK_RESEARCHER_PORTFOLIO_TEIL2.md](../../WORK_RESEARCHER_PORTFOLIO_TEIL2.md) | δ/HHI |
@@ -76,5 +85,5 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | [WORK_TEIL7_SCORING.md](../../WORK_TEIL7_SCORING.md) | Gold |
 | [WORK2.md](../../WORK2.md) | PESTEL |
 | [WORK.md](../../WORK.md) | Index |
-| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 29.09. |
+| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 29.09. Abend (`f0046ee9`) |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 geblockt |

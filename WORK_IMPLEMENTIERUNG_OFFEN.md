@@ -1,10 +1,10 @@
 # WORK_IMPLEMENTIERUNG_OFFEN.md — Tickets für den aktuellen Gap
 
-> Stand 29.09.2026 · HEAD `d517611` (#77 Makro §15; davor #76 DCF Markt-β, #75 Ökosystem, #73 Lab, #72 Badges, #71 Toggles) · Companion `WORK_IST_VS_SOLL.md`
+> Stand 29.09.2026 (Abend) · HEAD `f0046ee9` (#88 Selektierte Aktien über Performance, Chart 360px) · Companion `WORK_IST_VS_SOLL.md`
 > Index-Hinweis in `WORK.md`. Sprint-Log unten bleibt historisch (01.09.). `Future_Work.md` = Roadmap, kein Ticket.
 > Portfolio hat **keine** Server-Route. Analyze = `POST /api/analyze`.
-> **Ampel 29.09.:** #70 Dual-Line ✅ · #72 Badges ✅ · #73 Lab ✅ · #69 Exec ✅ (FMP Premium) · Peer/ROIC intact (≡ `4bdc1f8`) · #71 4-Toggles 🟡 (OHLCV Fake-OK `bars=[]`/`n=0`) · #75 Ökosystem-Chip 🟡 (Deploy/Tester, nur `hasEcosystem`) · #76 Markt-β / #77 Makro §15 Code ✅, Deploy folgt.
-> **Queue:** Batch A Search/429/OHLCV Fake-OK · TAM Coverage-Lift danach · Miner Observability (kein Delete, ≡ `b584446f`) · Ökosystem-Scoring Folge-Lane. Gated: Hormuz (B), Liquidity-Bundle, Rang 7–9.
+> **Ampel 29.09. Abend:** #70 Dual-Line ✅ · #72 Badges ✅ · #73 Lab ✅ · #69 Exec ✅ (FMP Premium) · Peer/ROIC intact (≡ `4bdc1f8`) · #74 Batch A ✅ · #75/#76/#77 Live ✅ · #81–#83 ✅ · #84 Sharpe / #85 Attribution ✅ · #86 Tooltip / #88 Pie+360px ✅ · #87 🟡 PARTIAL (healthy 251d, thin-Banner nicht repro) · #71 4-Toggles 🟡 (Chart oft leer; Honesty #74).
+> **Queue:** Batch A done (`e8ebd35c`) · TAM Coverage-Lift · Miner Observability (kein Delete, ≡ `b584446f`) · Ökosystem-Scoring Folge-Lane. Gated: Hormuz (B), Liquidity-Bundle, Rang 7–9.
 
 ## Sprint
 
