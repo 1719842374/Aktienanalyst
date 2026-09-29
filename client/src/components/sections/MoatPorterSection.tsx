@@ -158,6 +158,16 @@ export function MoatPorterSection({ data }: Props) {
                 {isExpanded && (
                   <div className={`px-3 pb-3 pt-0 text-xs text-foreground/80 leading-relaxed border-t ${colors.border} mx-3 mb-2 pt-2`}>
                     {force.reasoning}
+                    {force.subScores && force.subScores.length > 0 ? (
+                      <ul className="mt-2 space-y-1" data-testid={`list-porter-subscores-${i}`}>
+                        {force.subScores.map((sub, j) => (
+                          <li key={j} className="flex items-baseline justify-between gap-3">
+                            <span>{sub.label}</span>
+                            <span className="font-mono tabular-nums text-muted-foreground shrink-0">{sub.score}/5</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </div>
                 )}
               </div>
