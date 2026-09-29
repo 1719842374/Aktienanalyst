@@ -772,12 +772,14 @@ export function TechnicalChart({ data }: Props) {
               />
             )}
 
-            {/* Price line */}
-            <Line yAxisId="price" type="monotone" dataKey="close" name="Kurs" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} isAnimationActive={false}/>
-
+            {/* Fenster B zuerst: gleiche Kurse, Stroke A+1 (#a78bfa). Liegt unter der A-Linie,
+                damit im Overlap beide Strokes sichtbar sind und A nicht blau→lila umgefärbt wirkt. */}
             {bHasOverlap && (
-              <Line yAxisId="price" type="monotone" dataKey="closeB" name="Fenster B" stroke="#a78bfa" strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false}/>
+              <Line yAxisId="price" type="monotone" dataKey="closeB" name="Fenster B" stroke="#a78bfa" strokeWidth={2.5} dot={false} connectNulls={false} isAnimationActive={false}/>
             )}
+
+            {/* Price line — Fenster A, durchgängig, unverändert */}
+            <Line yAxisId="price" type="monotone" dataKey="close" name="Kurs" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} isAnimationActive={false}/>
 
             {/* MA lines */}
             {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
