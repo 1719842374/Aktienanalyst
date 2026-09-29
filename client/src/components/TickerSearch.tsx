@@ -113,7 +113,7 @@ export function TickerSearch({ onSearch, isLoading }: TickerSearchProps) {
           onFocus={() => { if (results.length > 0) setOpen(true); }}
           onKeyDown={handleKeyDown}
           placeholder="Ticker oder Firmenname…"
-          className="h-8 w-40 sm:w-56 pl-8 pr-7 text-sm font-mono tabular-nums bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary text-foreground placeholder:text-muted-foreground"
+          className="h-8 w-36 sm:w-56 lg:w-[17rem] pl-8 pr-7 text-sm font-mono tabular-nums bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary text-foreground placeholder:text-muted-foreground"
           data-testid="input-ticker"
           maxLength={32}
           autoComplete="off"
