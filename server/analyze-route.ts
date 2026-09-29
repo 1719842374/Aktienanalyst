@@ -77,6 +77,7 @@ import {
   type PESTELAnalysis,
   type RevenueSegment,
 } from "../shared/schema";
+import { clampPorterThreat, porterThreatRatingDe, toSchemaPorterForce } from "../shared/porter-score";
 
 import {
   generateCatalystsAndMatchNews,
@@ -384,12 +385,17 @@ function scoreMoat(
   const moatStrength: "Wide" | "Narrow" | "None" =
     score >= 6 ? "Wide" : score >= 3 ? "Narrow" : "None";
 
+  const rivalryThreat = clampPorterThreat(hasBrandMoat || hasNetworkMoat ? 3 : 7);
+  const entrantThreat = clampPorterThreat(hasSwitchingMoat || hasPatentMoat ? 2 : 5);
+  const supplierThreat = clampPorterThreat(hasCostMoat ? 3 : 5);
+  const buyerThreat = clampPorterThreat(hasSwitchingMoat ? 2 : 5);
+  const substituteThreat = clampPorterThreat(hasNetworkMoat ? 2 : 5);
   porterForces.push(
-    { force: "Rivalität unter Wettbewerbern", rating: hasBrandMoat || hasNetworkMoat ? "Niedrig" : "Hoch", score: hasBrandMoat || hasNetworkMoat ? 3 : 7 },
-    { force: "Bedrohung durch Neueinsteiger", rating: hasSwitchingMoat || hasPatentMoat ? "Niedrig" : "Mittel", score: hasSwitchingMoat || hasPatentMoat ? 2 : 5 },
-    { force: "Verhandlungsmacht Lieferanten", rating: hasCostMoat ? "Niedrig" : "Mittel", score: hasCostMoat ? 3 : 5 },
-    { force: "Verhandlungsmacht Kunden", rating: hasSwitchingMoat ? "Niedrig" : "Mittel", score: hasSwitchingMoat ? 2 : 5 },
-    { force: "Bedrohung durch Substitute", rating: hasNetworkMoat ? "Niedrig" : "Mittel", score: hasNetworkMoat ? 2 : 5 }
+    { force: "Rivalität unter Wettbewerbern", rating: porterThreatRatingDe(rivalryThreat), score: rivalryThreat },
+    { force: "Bedrohung durch Neueinsteiger", rating: porterThreatRatingDe(entrantThreat), score: entrantThreat },
+    { force: "Verhandlungsmacht Lieferanten", rating: porterThreatRatingDe(supplierThreat), score: supplierThreat },
+    { force: "Verhandlungsmacht Kunden", rating: porterThreatRatingDe(buyerThreat), score: buyerThreat },
+    { force: "Bedrohung durch Substitute", rating: porterThreatRatingDe(substituteThreat), score: substituteThreat }
   );
 
   return { moatStrength, moatScore: Math.min(score, 10), sources, porterForces } as any;
@@ -1435,9 +1441,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       if (porterForces && porterForces.length >= 4) {
         moatAssessment.porterForces = porterForces.map((f: any) => ({
-          force: String(f.force),
-          rating: f.rating as "Hoch" | "Mittel" | "Niedrig",
-          score: Number(f.score),
+          force: String(f.force ?? ""),
+          rating: f.rating,
+          score: f.score,
+          summary: f.summary,
+          reasoning: f.reasoning,
+          subScores: f.subScores,
         }));
       }
 
@@ -1686,17 +1695,15 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       // Section 11 (MoatPorterSection) reads moatAssessment.overallRating,
-      // moatSources[], porterForces[].name/.reasoning, businessModelStrength,
-      // sustainabilityRating, and optional hasEcosystem / ecosystemNote.
+      // moatSources[], porterForces[].name/.reasoning/optional subScores,
+      // businessModelStrength, sustainabilityRating, and optional hasEcosystem / ecosystemNote.
       // scoreMoat() returns { moatStrength, moatScore,
-      // sources, porterForces:{force,rating:Niedrig|Mittel|Hoch,score} }, so we
-      // remap into the shared/schema.ts MoatAssessment shape here. If we don't,
+      // sources, porterForces:{force,rating:Niedrig|Mittel|Hoch,score 1–5} }, so we
+      // remap into the shared/schema.ts MoatAssessment shape here. Threat-Scores
+      // werden auf 1–5 geklemmt (Low 1–2, Medium 3, High 4–5); leeres reasoning
+      // übernimmt die LLM-summary. If we don't remap,
       // moat.moatSources.slice() and moat.overallRating.includes() throw and
       // React unmounts the whole app (no error boundary above Section 11).
-      const _ratingMap: Record<string, "Low" | "Medium" | "High"> = {
-        Niedrig: "Low", Mittel: "Medium", Hoch: "High",
-        Low: "Low", Medium: "Medium", High: "High",
-      };
       // Qualitative only: description heuristic, then Porter LLM narrative if the
       // description is silent. Does not change moatStrength / score / Lynch / DCF.
       const ecosystem = resolveEcosystem({
@@ -1707,12 +1714,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         overallRating: moatAssessment.moatStrength ?? "None",
         moatSources: Array.isArray((moatAssessment as any).sources) ? (moatAssessment as any).sources : [],
         porterForces: Array.isArray(moatAssessment.porterForces)
-          ? moatAssessment.porterForces.map((f: any) => ({
-              name: f.name ?? f.force ?? "",
-              rating: _ratingMap[String(f.rating)] ?? "Medium",
-              score: Number(f.score) || 0,
-              reasoning: String(f.reasoning ?? ""),
-            }))
+          ? moatAssessment.porterForces.map((f: any) => toSchemaPorterForce(f))
           : [],
         businessModelStrength: moatRating === "Wide" ? "Starkes, differenziertes Geschäftsmodell"
           : moatRating === "Narrow" ? "Solides Geschäftsmodell mit begrenzten Moat-Quellen"

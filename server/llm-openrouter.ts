@@ -14,7 +14,8 @@
 // production billing actually shows being used — see MODEL_FALLBACK_CHAIN).
 
 import OpenAI from "openai";
-import type { Catalyst, Risk, RiskExplanation } from "../shared/schema";
+import type { Catalyst, Risk, RiskExplanation, PorterSubScore } from "../shared/schema";
+import { porterThreatRatingDe, toSchemaPorterForce } from "../shared/porter-score";
 import { reconcileNewsSentiment } from "./news-sentiment";
 // Lazy singleton — created on first call so missing env var doesn't crash boot.
 let openrouterClient: OpenAI | null = null;
@@ -1139,10 +1140,11 @@ export interface PorterFiveForceInput {
 
 export interface PorterForceResult {
   force: string;           // e.g. "Rivalität unter Wettbewerbern"
-  rating: string;          // "Hoch" | "Mittel" | "Niedrig"
-  score: number;           // 1-10 (10 = most threatening)
+  rating: string;          // "Niedrig" (1–2) | "Mittel" (3) | "Hoch" (4–5), Threat-Skala
+  score: number;           // 1–5 Threat (1 = geringste Bedrohung). Gerundeter Mittelwert der subScores.
   summary: string;         // 1-2 German sentences, company-specific
   keyFactors: string[];    // 2-3 concrete factors
+  subScores?: PorterSubScore[]; // Unterpunkte, jeder Score ebenfalls Threat 1–5
 }
 
 export async function generatePorterFiveForces(
@@ -1181,17 +1183,19 @@ ${projCtx ? `\nKEY PROJEKTE:\n${projCtx}` : ""}
 ANALYSE-REGELN:
 1. JEDE Kraft muss ${companyName} konkret benennen — Konkurrenten namentlich, Produkte spezifisch
 2. VERBOTEN: generische Aussagen ohne Firmenbezug
-3. score: 1-10 (10 = maximale Bedrohung/Stärke)
-4. rating: "Hoch" (score 7-10) | "Mittel" (score 4-6) | "Niedrig" (score 1-3)
-5. keyFactors: 2-3 konkrete Faktoren mit Firmenbezug
-6. summary: 1-2 Sätze Deutsch, faktenbasiert, mit Zahlen wenn vorhanden
+3. Skala ist Bedrohung (Threat) von 1 bis 5. Niedriger = geringere Bedrohung = besser für ${companyName}. 1 = minimale Bedrohung, 5 = maximale Bedrohung. VERBOTEN: Zehnerskala, Scores über 5, ein Höchstwert von 10.
+4. Pro Kraft 2–4 Unterpunkte in subScores: {"label": string, "score": ganze Zahl 1–5}. Jeder Unterpunkt ist ein konkreter Treiber dieser Kraft.
+5. score der Kraft ist der gerundete arithmetische Mittelwert der Unterpunkt-Scores (ebenfalls ganze Zahl 1–5). Keinen davon abweichenden Kraft-Score erfinden.
+6. rating folgt ausschließlich dem Kraft-Score: "Niedrig" bei 1–2, "Mittel" bei 3, "Hoch" bei 4–5.
+7. keyFactors: 2-3 konkrete Faktoren mit Firmenbezug
+8. summary: 1-2 Sätze Deutsch, faktenbasiert, mit Zahlen wenn vorhanden
 
 Antworte NUR mit JSON:
-{"forces":[{"force":"Rivalität unter Wettbewerbern","rating":"Hoch|Mittel|Niedrig","score":7,"summary":"Firmenspezifische Beschreibung 1-2 Sätze.","keyFactors":["Faktor 1","Faktor 2","Faktor 3"]},{"force":"Bedrohung durch Neueinsteiger","rating":"...","score":4,"summary":"...","keyFactors":["..."]},{"force":"Verhandlungsmacht Lieferanten","rating":"...","score":5,"summary":"...","keyFactors":["..."]},{"force":"Verhandlungsmacht Kunden","rating":"...","score":6,"summary":"...","keyFactors":["..."]},{"force":"Bedrohung durch Substitute","rating":"...","score":5,"summary":"...","keyFactors":["..."]}]}`;
+{"forces":[{"force":"Rivalität unter Wettbewerbern","rating":"Mittel","score":3,"summary":"Firmenspezifische Beschreibung 1-2 Sätze.","keyFactors":["Faktor 1","Faktor 2"],"subScores":[{"label":"Treiber A","score":4},{"label":"Treiber B","score":2}]},{"force":"Bedrohung durch Neueinsteiger","rating":"Niedrig","score":2,"summary":"...","keyFactors":["..."],"subScores":[{"label":"...","score":2},{"label":"...","score":2}]},{"force":"Verhandlungsmacht Lieferanten","rating":"Mittel","score":3,"summary":"...","keyFactors":["..."],"subScores":[{"label":"...","score":3},{"label":"...","score":3}]},{"force":"Verhandlungsmacht Kunden","rating":"Hoch","score":4,"summary":"...","keyFactors":["..."],"subScores":[{"label":"...","score":4},{"label":"...","score":4}]},{"force":"Bedrohung durch Substitute","rating":"Mittel","score":3,"summary":"...","keyFactors":["..."],"subScores":[{"label":"...","score":2},{"label":"...","score":3}]}]}`;
 
   try {
     console.log(`[PORTER] Generating Porter Five Forces for ${ticker}`);
-    const result = await callLLMJson({ prompt, maxTokens: 1400, temperature: 0.3 });
+    const result = await callLLMJson({ prompt, maxTokens: 2000, temperature: 0.3 });
     if (!result) return null;
     const forces = result.data?.forces;
     if (!Array.isArray(forces) || forces.length < 4) {
@@ -1199,13 +1203,24 @@ Antworte NUR mit JSON:
       return null;
     }
     const VALID_FORCES = ["Rivalität unter Wettbewerbern", "Bedrohung durch Neueinsteiger", "Verhandlungsmacht Lieferanten", "Verhandlungsmacht Kunden", "Bedrohung durch Substitute"];
-    const validated: PorterForceResult[] = forces.slice(0, 5).map((f: any, i: number) => ({
-      force: String(f.force || VALID_FORCES[i] || `Kraft ${i+1}`),
-      rating: ["Hoch", "Mittel", "Niedrig"].includes(f.rating) ? f.rating : "Mittel",
-      score: Math.min(Math.max(Number(f.score) || 5, 1), 10),
-      summary: String(f.summary || "").slice(0, 300),
-      keyFactors: Array.isArray(f.keyFactors) ? f.keyFactors.slice(0, 3).map((x: any) => String(x).slice(0, 120)) : [],
-    }));
+    const validated: PorterForceResult[] = forces.slice(0, 5).map((f: any, i: number) => {
+      const summary = String(f.summary || "").slice(0, 300);
+      const norm = toSchemaPorterForce({
+        force: String(f.force || VALID_FORCES[i] || `Kraft ${i + 1}`),
+        score: f.score,
+        subScores: f.subScores,
+        summary,
+        reasoning: f.reasoning,
+      });
+      return {
+        force: norm.name || VALID_FORCES[i] || `Kraft ${i + 1}`,
+        rating: porterThreatRatingDe(norm.score),
+        score: norm.score,
+        summary: summary || norm.reasoning.slice(0, 300),
+        keyFactors: Array.isArray(f.keyFactors) ? f.keyFactors.slice(0, 3).map((x: any) => String(x).slice(0, 120)) : [],
+        ...(norm.subScores ? { subScores: norm.subScores } : {}),
+      };
+    });
     console.log(`[PORTER] OK for ${ticker}: ${validated.map(f => `${f.force}(${f.score})`).join(", ")}`);
     return validated;
   } catch (e: any) {
