@@ -1136,6 +1136,12 @@ export interface PorterFiveForceInput {
   topCatalysts: Array<{ name: string; context: string }>;
   recentNewsHeadlines?: string[];
   keyProjects?: string[];
+  /** scoreMoat-Heuristik als Prompt-Evidenz. Ändert weder Wide-Schwelle noch den Clamp. */
+  moatStrength?: "Wide" | "Narrow" | "None";
+  moatSources?: string[];
+  /** assessEcosystem(description) vor dem LLM. Der Chip bleibt resolveEcosystem danach. */
+  hasEcosystem?: boolean;
+  ecosystemNote?: string;
 }
 
 export interface PorterForceResult {
@@ -1147,12 +1153,32 @@ export interface PorterForceResult {
   subScores?: PorterSubScore[]; // Unterpunkte, jeder Score ebenfalls Threat 1–5
 }
 
-export async function generatePorterFiveForces(
-  input: PorterFiveForceInput
-): Promise<PorterForceResult[] | null> {
-  const client = getClient();
-  if (!client) return null;
+/** MOAT-KONTEXT für den Prompt. Kein Score, kein Cap — nur die übergebene Evidenz. */
+function porterMoatKontextBlock(input: PorterFiveForceInput): string {
+  const strength = input.moatStrength;
+  const known = strength === "Wide" || strength === "Narrow" || strength === "None";
+  const sources = (input.moatSources ?? [])
+    .filter((source): source is string => typeof source === "string")
+    .map((source) => source.trim())
+    .filter((source) => source.length > 0);
+  const note = typeof input.ecosystemNote === "string" ? input.ecosystemNote.trim() : "";
+  const showEco = input.hasEcosystem === true;
+  if (!known && sources.length === 0 && !showEco) return "";
 
+  const lines: string[] = ["MOAT-KONTEXT (vorgegebene Evidenz, nicht selbst ergänzen):"];
+  if (known) lines.push(`Moat-Stärke: ${strength}`);
+  if (sources.length > 0) {
+    lines.push("Moat-Quellen:");
+    for (const source of sources) lines.push(`- ${source}`);
+  } else if (known) {
+    lines.push("Moat-Quellen: keine");
+  }
+  if (showEco) lines.push(note ? `Ökosystem: ${note}` : "Ökosystem: ja");
+  return lines.join("\n");
+}
+
+/** Prompt-Text ohne LLM-Call. Clamp bleibt in generatePorterFiveForces via toSchemaPorterForce. */
+export function buildPorterFiveForcesPrompt(input: PorterFiveForceInput): string {
   const {
     ticker, companyName, sector, industry, description,
     revenue, revenueGrowth, fcfMargin, grossMargin, marketCap,
@@ -1170,8 +1196,9 @@ export async function generatePorterFiveForces(
     grossMargin > 0 ? `Bruttomarge ${grossMargin.toFixed(1)}%` : null,
     marketCap > 0 ? `MCap $${(marketCap / 1e9).toFixed(0)}B` : null,
   ].filter(Boolean).join(" | ");
+  const moatKontext = porterMoatKontextBlock(input);
 
-  const prompt = `Du bist Senior Equity Research Analyst. Erstelle eine firmenspezifische Porter's Five Forces Analyse für ${companyName} (${ticker}).
+  return `Du bist Senior Equity Research Analyst. Erstelle eine firmenspezifische Porter's Five Forces Analyse für ${companyName} (${ticker}).
 
 UNTERNEHMEN: ${companyName} (${ticker}) | ${sector} / ${industry}
 KENNZAHLEN: ${metrics}
@@ -1179,6 +1206,7 @@ GESCHÄFTSMODELL: ${descCore}
 ${catCtx ? `\nHAUPT-KATALYSATOREN:\n${catCtx}` : ""}
 ${newsCtx ? `\nAKTUELLE NEWS:\n${newsCtx}` : ""}
 ${projCtx ? `\nKEY PROJEKTE:\n${projCtx}` : ""}
+${moatKontext ? `\n${moatKontext}` : ""}
 
 ANALYSE-REGELN:
 1. JEDE Kraft muss ${companyName} konkret benennen — Konkurrenten namentlich, Produkte spezifisch
@@ -1189,9 +1217,21 @@ ANALYSE-REGELN:
 6. rating folgt ausschließlich dem Kraft-Score: "Niedrig" bei 1–2, "Mittel" bei 3, "Hoch" bei 4–5.
 7. keyFactors: 2-3 konkrete Faktoren mit Firmenbezug
 8. summary: 1-2 Sätze Deutsch, faktenbasiert, mit Zahlen wenn vorhanden
+9. MOAT-KONTEXT ist Evidenz, um die Bedrohung (Threat) zu senken, wo das für ${companyName} konkret gerechtfertigt ist — insbesondere bei Bedrohung durch Neueinsteiger, Rivalität unter Wettbewerbern, Bedrohung durch Substitute und bei Wechselkosten. Erfinde keinen Moat und kein Ökosystem, die nicht im MOAT-KONTEXT oder im Geschäftsmodell stehen. Weiterhin firmenspezifisch: nur mit Bezug auf ${companyName}. Ohne belegte Quelle im MOAT-KONTEXT keine Absenkung.
+10. Scores bleiben ganze Zahlen von 1 bis 5. subScores tragen die Unterpunkte; der Kraft-Score ist ihr gerundeter Mittelwert. Keine Zehnerskala und kein zusätzlicher Cap auf dem Mittelwert.
 
 Antworte NUR mit JSON:
 {"forces":[{"force":"Rivalität unter Wettbewerbern","rating":"Mittel","score":3,"summary":"Firmenspezifische Beschreibung 1-2 Sätze.","keyFactors":["Faktor 1","Faktor 2"],"subScores":[{"label":"Treiber A","score":4},{"label":"Treiber B","score":2}]},{"force":"Bedrohung durch Neueinsteiger","rating":"Niedrig","score":2,"summary":"...","keyFactors":["..."],"subScores":[{"label":"...","score":2},{"label":"...","score":2}]},{"force":"Verhandlungsmacht Lieferanten","rating":"Mittel","score":3,"summary":"...","keyFactors":["..."],"subScores":[{"label":"...","score":3},{"label":"...","score":3}]},{"force":"Verhandlungsmacht Kunden","rating":"Hoch","score":4,"summary":"...","keyFactors":["..."],"subScores":[{"label":"...","score":4},{"label":"...","score":4}]},{"force":"Bedrohung durch Substitute","rating":"Mittel","score":3,"summary":"...","keyFactors":["..."],"subScores":[{"label":"...","score":2},{"label":"...","score":3}]}]}`;
+}
+
+export async function generatePorterFiveForces(
+  input: PorterFiveForceInput
+): Promise<PorterForceResult[] | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  const ticker = input.ticker;
+  const prompt = buildPorterFiveForcesPrompt(input);
 
   try {
     console.log(`[PORTER] Generating Porter Five Forces for ${ticker}`);
