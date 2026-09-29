@@ -283,5 +283,41 @@ console.log("\nTest 13: Forward-Fill — einzelne fehlende Tage werden bis 3 Tag
   check("kein Crash, status ok oder insufficient_data", result.status === "ok" || result.status === "insufficient_data");
 }
 
+console.log("\nTest 14: frisches openedAt=heute ist kein Hard-Cut — volle gemeinsame OHLCV-Historie vs SPY");
+{
+  // 40 Tagesrenditen → 41 Bars. openedAt = letzter Bar (= heute). Der alte
+  // Filter date >= max(openedAt) lässt nur diesen einen Handelstag übrig.
+  const returns = Array.from({ length: 40 }, (_, i) => (i % 5 === 0 ? -0.01 : 0.004));
+  const benchmarkBars = buildSeries("2026-01-05", 100, returns);
+  const barsA = buildSeries("2026-01-05", 50, returns);
+  const barsB = buildSeries("2026-01-05", 30, returns.map(r => r + 0.0002));
+  const todayStr = benchmarkBars[benchmarkBars.length - 1].date;
+  const positions: BacktestPositionInput[] = [
+    { ticker: "MSFT", entryPrice: 50, qty: 10, openedAt: todayStr, sector: "Tech" },
+    { ticker: "NVO", entryPrice: 30, qty: 8, openedAt: todayStr, sector: "Health" },
+  ];
+  const result = computePortfolioBacktest({
+    positions,
+    historicalPricesByTicker: { MSFT: barsA, NVO: barsB },
+    benchmarkTicker: "SPY",
+    benchmarkPrices: benchmarkBars,
+    riskFreeRateAnnual: 0,
+    today: new Date(todayStr + "T00:00:00Z"),
+  });
+  const common = result.status === "ok" ? result.tradingDays : result.commonTradingDays;
+  const fullReturnDays = benchmarkBars.length - 1;
+  check(
+    "status ok trotz openedAt=heute",
+    result.status === "ok",
+    result.status === "insufficient_data" ? JSON.stringify(result) : `status=${result.status}`,
+  );
+  check(`gemeinsame Handelstage >= ${MIN_COMMON_TRADING_DAYS}`, common >= MIN_COMMON_TRADING_DAYS, String(common));
+  check(
+    "tradingDays = volle gemeinsame Renditeserie (openedAt ignoriert)",
+    common === fullReturnDays,
+    `${common} vs ${fullReturnDays}`,
+  );
+}
+
 console.log(`\n${failed === 0 ? "✅ Alle Tests bestanden" : `❌ ${failed} Test(s) fehlgeschlagen`}\n`);
 process.exit(failed === 0 ? 0 : 1);
