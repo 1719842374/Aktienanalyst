@@ -1,10 +1,10 @@
 # WORK_IMPLEMENTIERUNG_OFFEN.md — Tickets für den aktuellen Gap
 
-> Stand 29.09.2026 (Abend, nach #90) · HEAD `ee5f0f8b` (#90 TAM Coverage-Lift) · Companion `WORK_IST_VS_SOLL.md`
+> Stand 29.09.2026 (Abend, nach #92 Fix #94) · HEAD `1dc82683` (PR #94 #92 closeB Fix; parent `7574b12d` = #92+#93 stack) · Companion `WORK_IST_VS_SOLL.md`
 > Index-Hinweis in `WORK.md`. Sprint-Log unten bleibt historisch (01.09.). `Future_Work.md` = Roadmap, kein Ticket.
 > Portfolio hat **keine** Server-Route. Analyze = `POST /api/analyze`.
-> **Ampel 29.09. Abend:** #70 Dual-Line ✅ · #72 Badges ✅ · #73 Lab ✅ · #69 Exec ✅ (FMP Premium) · Peer/ROIC intact (≡ `4bdc1f8`) · #74 Batch A ✅ · #75/#76/#77 Live ✅ · #81–#83 ✅ · #84 Sharpe / #85 Attribution ✅ · #86 Tooltip / #88 Pie+360px ✅ · #87 🟡 PARTIAL (healthy 251d, thin-Banner nicht repro) · #71 4-Toggles 🟡 (Chart oft leer; Honesty #74).
-> **Queue:** Batch A done (`e8ebd35c`) · TAM Coverage-Lift · Miner Observability (kein Delete, ≡ `b584446f`) · Ökosystem-Scoring Folge-Lane. Gated: Hormuz (B), Liquidity-Bundle, Rang 7–9.
+> **Ampel 29.09. Abend, nach #92 Fix #94:** #92 TA Zwei-Fenster Live ✅ (`c06c835e` → Fix `1dc82683` #94; Bundle `index-JP8muGsY.js`; A close/primary/1.5 unverfärbt; closeB `#a78bfa` strokeWidth 2.5 `connectNulls=false`; Eye off = nur A; 3 normale Kurs-Plots unberührt; Zwei-Fenster Extra An/Aus; Soft Draw-Order B-unter OK) · #93 KI-N/A-Fill 🟡 PARTIAL (`7574b12d`; Behavior+API PASS; Label Soft UI „KI“ vs Spec „N/A mit KI schätzen“) · #90 TAM Coverage-Lift ✅ · #70 Dual-Line ✅ · #72 Badges ✅ · #73 Lab ✅ · #69 Exec ✅ (FMP Premium) · Peer/ROIC intact (≡ `4bdc1f8`) · #74 Batch A ✅ · #75/#76/#77 Live ✅ · #81–#83 ✅ · #84 Sharpe / #85 Attribution ✅ · #86 Tooltip / #88 Pie+360px ✅ · #87 🟡 PARTIAL (healthy 251d, thin-Banner nicht repro) · #71 4-Toggles 🟡 (Chart oft leer; Honesty #74).
+> **Queue:** Batch A done (`e8ebd35c`) · TAM Coverage-Lift done ✅ (#90, `ee5f0f8b`) · Miner Observability (kein Delete, ≡ `b584446f`) · Ökosystem-Scoring Folge-Lane. Gated: Hormuz (B), Liquidity-Bundle, Rang 7–9.
 
 ## Sprint
 
