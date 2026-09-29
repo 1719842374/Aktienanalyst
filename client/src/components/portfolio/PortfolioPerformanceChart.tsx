@@ -11,12 +11,14 @@ const DEFAULT_VISIBLE: ChartSeriesKey[] = ["pct", "benchPct", "combo", "benchPri
 
 /** Same solid used by the Fenster-Rendite eye toggle and the green zone stop. */
 const FENSTER_RENDITE_TOOLTIP_COLOR = "#10b981";
+/** Date label on the white Recharts tooltip. Dark-mode foreground is near-white and disappears. */
+const TOOLTIP_LABEL_COLOR = "#0f172a";
 
 /**
  * Recharts copies Area `stroke` into the tooltip item `color`.
- * `url(#portfolioPerfStroke)` is not a CSS color, so that row inherits the
- * theme foreground (near-white in dark mode) onto the white tooltip.
- * Other series already pass solid hex strokes and stay untouched.
+ * `url(#portfolioPerfStroke)` is not a CSS color, so that row — and the date
+ * label, which has no color of its own — inherit the theme foreground onto
+ * the white tooltip. Other series already pass solid hex strokes.
  */
 function portfolioPerfTooltipContent(props: TooltipProps<number, string>) {
   const payload = props.payload?.map(entry =>
@@ -24,7 +26,14 @@ function portfolioPerfTooltipContent(props: TooltipProps<number, string>) {
       ? { ...entry, color: FENSTER_RENDITE_TOOLTIP_COLOR }
       : entry,
   );
-  return <DefaultTooltipContent {...props} payload={payload} />;
+  return (
+    <DefaultTooltipContent
+      {...props}
+      payload={payload}
+      contentStyle={{ ...props.contentStyle, color: TOOLTIP_LABEL_COLOR }}
+      labelStyle={{ ...props.labelStyle, color: TOOLTIP_LABEL_COLOR }}
+    />
+  );
 }
 
 function fmtPct(x: number | null | undefined, digits = 1): string {
