@@ -137,8 +137,8 @@ export interface ScoringSnapshot {
   /** Freier Cashflow (TTM) zum Analysezeitpunkt T — Basis fuer dcfApplicable
    *  (§3.3: FCF_T > 0) und fuer calculateFCFFDCF()/calculateReverseDCF(). */
   fcf_T: number | null;
-  /** WACC (Modell, %) zum Analysezeitpunkt T — aus calculateFCFFDCF().wacc
-   *  bzw. dem Sektor-WACC-Szenario, das buildDefaultDCFParams() gewaehlt hat. */
+  /** WACC (Modell, %) zum Analysezeitpunkt T — aus calculateFCFFDCF().wacc.
+   *  buildDefaultDCFParams() startet mit Markt-β (nicht mit dem Sektor-Anker). */
   wacc_T: number | null;
   /** Sektor-Wachstumsannahme g1 (%) zum Analysezeitpunkt T, wie an
    *  buildDefaultDCFParams()/calculateReverseDCF() uebergeben. */
