@@ -1,7 +1,7 @@
 import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { calculateWACC } from "../../lib/calculations";
+import { calculateWACC, marketBetaForDcf, sectorImpliedBetaFromAnalysis } from "../../lib/calculations";
 import { formatPercentNoSign, formatNumber } from "../../lib/formatters";
 import { useMemo } from "react";
 
@@ -18,15 +18,10 @@ export function Section4({ data }: Props) {
   // Use sector profile WACC scenarios as reference
   const waccFromProfile = sp.waccScenarios;
 
-  // Mirror the DCF-Modell beta (sector-WACC anchored, see Section2/Section5)
-  const debtRatioVal = data.totalDebt > 0 ? +((data.totalDebt / (data.marketCap + data.totalDebt)) * 100).toFixed(0) : 10;
-  const evFrac = (100 - debtRatioVal) / 100;
-  const dvFrac = debtRatioVal / 100;
-  const debtCostPart = dvFrac * cod * (1 - taxRate);
-  const impliedBeta = Math.max(0.5, Math.min(1.8,
-    (waccFromProfile.avg - debtCostPart - evFrac * rfr) / (evFrac * mrp)
-  ));
-  const dcfBeta = +Math.min(impliedBeta, data.beta5Y + 0.1).toFixed(2);
+  // WACC-Live table below keeps market β (data.beta5Y). These two figures are
+  // only for the copy: DCF default vs optional Sektor-Anker (same helper as Section 5).
+  const dcfDefaultBeta = marketBetaForDcf(data.beta5Y);
+  const sectorAnchorBeta = sectorImpliedBetaFromAnalysis(data);
 
   const scenarios = useMemo(() => [
     { name: "Conservative", beta: data.beta5Y * 1.1, dr: debtRatio * 1.1, rfr: rfr + 0.5, profileWACC: waccFromProfile.kons },
@@ -148,21 +143,21 @@ export function Section4({ data }: Props) {
         </div>
         {/* WACC-Methoden-Erklärung */}
         <div className="text-[10px] text-muted-foreground bg-muted/20 rounded px-2 py-1.5 mt-2 space-y-0.5">
-          <div><span className="font-semibold text-foreground/70">WACC Live (CAPM)</span> — Echtzeit-Berechnung aus aktuellem Markt-Beta ({formatNumber(data.beta5Y, 2)}), Rf={rfr}%, MRP={mrp}%. Wird für die WACC-Sensitivitäts-Tabelle (unten) genutzt.</div>
-          <div><span className="font-semibold text-foreground/70">WACC Sektor-Ref.</span> — Sektor-Heuristik (Damodaran-Datenbank, sektoradjustiertes Beta). <span className="text-primary/80">Diese Werte nutzt das DCF-Modell (Section 5) und Risk Inversion (Section 8)</span> — bewusst konservativer als Markt-Beta, da implizites Beta aus Sektor-Medianrenditen abgeleitet.</div>
+          <div><span className="font-semibold text-foreground/70">WACC Live (CAPM)</span> — Echtzeit-Berechnung aus aktuellem Markt-Beta ({formatNumber(data.beta5Y, 2)}), Rf={rfr}%, MRP={mrp}%. Wird für die WACC-Sensitivitäts-Tabelle (unten) genutzt. Das DCF-Modell startet mit demselben Markt-β (geklemmt {formatNumber(dcfDefaultBeta, 2)}).</div>
+          <div><span className="font-semibold text-foreground/70">WACC Sektor-Ref.</span> — Sektor-Heuristik (Damodaran-Datenbank). <span className="text-primary/80">Risk Inversion (Section 8) nutzt das konservative Sektor-WACC.</span> Das DCF übernimmt den Sektor-Anker nicht als Default — in Section 5 nur, wenn „Sektor-Anker“ gewählt ist (implizites β = {formatNumber(sectorAnchorBeta, 2)}).</div>
           <div className="text-amber-400/70">Abweichung zwischen beiden Spalten ist methodisch, kein Fehler — aber Analyst sollte die Wahl transparent dokumentieren.</div>
         </div>
         <RechenWeg title="WACC Rechenweg" steps={[
           `WACC = E/V × Re + D/V × Rd × (1 - T)`,
           `Re (Live CAPM) = Rf + β × MRP = ${rfr}% + ${formatNumber(data.beta5Y)} × ${mrp}% = ${formatPercentNoSign(rfr + data.beta5Y * mrp, 2)}`,
-          `Re (Sektor-Ref.) = aus Damodaran-Sektordatenbank (sektoradjustiertes Beta = ${formatNumber(dcfBeta, 2)})`,
+          `Re (Sektor-Ref.) = aus Damodaran-Sektordatenbank (implizites Sektor-β = ${formatNumber(sectorAnchorBeta, 2)}; nur Referenz, nicht DCF-Default)`,
           `D/V = ${formatPercentNoSign(debtRatio * 100, 1)}`,
           `WACC Live (Avg) = ${formatPercentNoSign((1 - debtRatio) * 100, 1)} × ${formatPercentNoSign(rfr + data.beta5Y * mrp, 2)} + ${formatPercentNoSign(debtRatio * 100, 1)} × ${cod}% × (1 - ${taxRate * 100}%) = ${formatPercentNoSign(waccResults[1].wacc, 2)}`,
-          `WACC Sektor-Ref. (Avg) = ${waccFromProfile.avg}% (DCF-Basis: Section 5 startet hier)`,
+          `WACC Sektor-Ref. (Avg) = ${waccFromProfile.avg}% (Referenz — Section 5 startet mit Markt-β ${formatNumber(dcfDefaultBeta, 2)}, Sektor-Anker nur auf Wahl)`,
         ]} />
-        {dcfBeta && Math.abs(dcfBeta - data.beta5Y) > 0.1 && (
+        {Math.abs(sectorAnchorBeta - dcfDefaultBeta) > 0.1 && (
           <div className="text-[10px] text-amber-400/80 mt-1">
-            {`DCF-Modell nutzt adjustiertes β=${dcfBeta.toFixed(2)} — WACC-Tabelle zeigt Markt-β=${data.beta5Y?.toFixed(2)}`}
+            {`Optionaler Sektor-Anker β=${sectorAnchorBeta.toFixed(2)} (Section 5). DCF-Default und diese WACC-Live-Tabelle nutzen Markt-β (DCF ${dcfDefaultBeta.toFixed(2)}, Tabelle ${data.beta5Y?.toFixed(2)}).`}
           </div>
         )}
       </div>
