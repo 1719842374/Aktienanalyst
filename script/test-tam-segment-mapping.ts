@@ -106,12 +106,8 @@ expect(
 }
 
 {
-  const r = matchSegmentTAM("Data Center");
-  // Kein expliziter Alias fuer NVDA "Data Center" im neuen Katalog -> bestehende
-  // AI/Data-Center-Logik lebt in matchSegmentTAMLegacy weiter (Branchenregeln
-  // unveraendert); im neuen alias-only Pfad ist das bewusst unmatched statt
-  // eines falschen Cloud-Griffs.
-  expectTrue(r.matched === false, "matchSegmentTAM('Data Center') -> unmatched im neuen Alias-Katalog (keine falsche Cloud-Zuordnung)");
+  const r = matchSegmentTAM("Data Center", "nvidia designs gaming gpus");
+  expectTrue(r.matched === true && r.tamLabel === "Global AI/Data Center Infrastructure" && r.tamSize === 500, "matchSegmentTAM('Data Center') -> AI/Data-Center $500B (nicht Cloud, desc ignoriert)");
 }
 
 console.log("\n=== A1: normalizeSegmentKey ===");
@@ -187,6 +183,7 @@ console.log("\n=== A1: generateTAMAnalysis Fixtures ===");
   ];
   const result = generateTAMAnalysis("Technology", "Software", "Microsoft ... Azure ... cloud ...", 331.8e9, 17.8, msftSegments);
   expectTrue(result.quality === "unreliable", "MSFT Screenshot-Mix -> quality 'unreliable' (Server unmatched, Coverage < 70%)");
+  expectTrue((result.coveragePct ?? 100) < 70, `MSFT Screenshot-Mix Coverage bleibt < 70 (ist: ${result.coveragePct})`);
   expectTrue(result.tamTotal === null, "MSFT Screenshot-Mix -> tamTotal === null (kein falscher $896B mehr)");
   expectTrue(result.tamTotal !== 896, "MSFT Screenshot-Mix -> NICHT mehr 896 (Regressionsschutz gegen den alten Bug)");
   const serverSeg = result.segments?.find((s: any) => s.segmentName === "Server");
@@ -217,6 +214,8 @@ console.log("\n=== A1: generateTAMAnalysis Fixtures ===");
   const result = generateTAMAnalysis("Consumer Cyclical", "Internet Retail", "Amazon", 500e9, 10, segments);
   const aws = result.segments?.find((s: any) => s.segmentName === "Amazon Web Services");
   expectTrue(!!aws && aws.tamLabel === "Global Cloud Computing", "AMZN 'Amazon Web Services' -> CLOUD (nicht ENTERPRISE_IT)");
+  const stores = result.segments?.find((s: any) => s.segmentName === "Online Stores");
+  expectTrue(!!stores && stores.tamLabel === "Global E-Commerce" && stores.tamSize === 6300, "AMZN 'Online Stores' -> E-Commerce (nicht Cloud-desc)");
 }
 
 {
@@ -274,12 +273,12 @@ console.log("\n=== A1: Legacy-Snapshot (Regressionsanker, beweist den alten Bug)
 
 console.log("\n=== A1: Casino/Gaming-Reihenfolge (Regression) ===");
 {
-  // matchSegmentTAMLegacy behandelt Casino/Gambling ueber sector/industry/desc,
-  // nicht ueber matchSegmentTAM. Hier pruefen wir nur, dass unser neuer,
-  // alias-only matchSegmentTAM 'Casino' nicht faelschlich PC_GAMING zuordnet,
-  // weil 'gaming' als Teilstring vorkommt.
-  const r = matchSegmentTAM("Casino & Gaming Resorts");
-  expectTrue(r.matched === true && r.tamLabel === "Global PC & Gaming Market", "matchSegmentTAM('Casino & Gaming Resorts') matched (enthaelt 'gaming') -- Branchen-Sonderfall bleibt in matchSegmentTAMLegacy/generateTAMAnalysis's sector-Zweig, nicht hier");
+  // Casino-Regel steht vor PC_GAMING. "Casino & Gaming" enthaelt "gaming",
+  // darf aber nicht in den PC-Pool fallen (Spec §7).
+  const r = matchSegmentTAM("Casino & Gaming Resorts", "resort casino gambling");
+  expectTrue(r.matched === true && r.tamLabel === "Global Casino & Gaming" && r.tamSize === 700, "matchSegmentTAM('Casino & Gaming Resorts') -> Casino, nicht PC_GAMING");
+  const gaming = matchSegmentTAM("Gaming");
+  expectTrue(gaming.matched === true && gaming.tamLabel === "Global PC & Gaming Market", "matchSegmentTAM('Gaming') ohne Casino-Wort -> PC_GAMING");
 }
 
 console.log("\n=== A2: Residuum-Mix (WORK_TAM_RESIDUAL_XBOX.md) ===");
@@ -394,6 +393,81 @@ console.log("\n=== A4: Segment-Alias-Dedup (WORK_IMPLEMENTIERUNG_OFFEN.md A4) ==
   ]);
   expect(mixed.length, 1, "dedupeSegmentsByName: 'AWS' + 'Amazon Web Services' im selben Array -> 1 Zeile");
   expect(mixed[0]?.revenue, 100e9, "dedupeSegmentsByName: behaelt den Eintrag mit hoeherem Revenue (100e9 statt 90e9)");
+}
+
+console.log("\n=== Coverage-Lift: unmatched FMP-Labels (Name-only, kein desc-Fallback) ===");
+{
+  const cases: Array<{ name: string; desc?: string; label: string | null; size?: number }> = [
+    { name: "Advertising", label: "Global Digital Advertising", size: 1000 },
+    { name: "YouTube", label: "Global Digital Advertising", size: 1000 },
+    { name: "More Personal Computing", label: "Global PC & Gaming Market", size: 400 },
+    { name: "Online Stores", desc: "amazon web services cloud azure", label: "Global E-Commerce", size: 6300 },
+    { name: "E-Commerce", label: "Global E-Commerce", size: 6300 },
+    { name: "Data Center", desc: "gaming gpu", label: "Global AI/Data Center Infrastructure", size: 500 },
+    { name: "HPC (AI & Data Center)", label: "Global AI/Data Center Infrastructure", size: 500 },
+    { name: "Infrastructure Software", label: "Global AI/Data Center Infrastructure", size: 500 },
+    { name: "Foundry", label: "Global Semiconductor", size: 850 },
+    { name: "Pharmaceuticals", desc: "cloud software", label: "Global Pharmaceuticals", size: 1700 },
+    { name: "Fashion & Leather Goods", label: "Global Personal Luxury Goods", size: 380 },
+    { name: "Wines & Spirits", label: "Global Premium Wines & Spirits", size: 500 },
+    { name: "Perfumes & Cosmetics", label: "Global Prestige Beauty", size: 430 },
+    { name: "Watches & Jewelry", label: "Global Luxury Watches & Jewelry", size: 100 },
+    { name: "Selective Retailing", label: "Global Selective/Specialty Retail", size: 500 },
+    { name: "Automotive", label: "Global Automotive", size: 3000 },
+    { name: "Subscription Services", label: "Global Streaming & Digital Media", size: 700 },
+    { name: "Payment Services", label: "Global FinTech", size: 350 },
+    { name: "Devices", label: "Global PC & Gaming Market", size: 400 },
+    { name: "Server Products and Cloud Services", label: "Global Cloud Computing", size: 1500 },
+    // Bewusst unmatched: nacktes server, Services, iPhone, medical devices, bare infrastructure.
+    { name: "Server", desc: "azure cloud", label: null },
+    { name: "Services", desc: "apple cloud services", label: null },
+    { name: "iPhone", desc: "Apple ... cloud ...", label: null },
+    { name: "Medical Devices", label: null },
+    { name: "Infrastructure", label: null },
+    { name: "Third-Party Seller Services", label: null },
+  ];
+  for (const c of cases) {
+    const r = matchSegmentTAM(c.name, c.desc);
+    if (c.label == null) {
+      expectTrue(r.matched === false && r.tamSize === null, `Coverage-Lift: '${c.name}' bleibt unmatched`);
+    } else {
+      expectTrue(r.matched === true && r.tamLabel === c.label && r.tamSize === c.size, `Coverage-Lift: '${c.name}' -> ${c.label} $${c.size}B`);
+    }
+  }
+}
+
+{
+  // NVDA-artiger Mix: Data Center ist der bisher unmatched Block. Mit dem
+  // AI-Pool steigt Coverage ueber 70, Share von 80/500 = 16% < 25 -> ok.
+  const segments = [
+    { name: "Data Center", revenue: 80e9, percentage: 80, growth: 40 },
+    { name: "Gaming", revenue: 10e9, percentage: 10, growth: 5 },
+    { name: "Automotive", revenue: 5e9, percentage: 5, growth: 10 },
+    { name: "OEM and Other", revenue: 5e9, percentage: 5, growth: 0 },
+  ];
+  const result = generateTAMAnalysis("Technology", "Semiconductors", "designs gaming gpus and data center accelerators", 100e9, 30, segments);
+  const dc = result.segments?.find((s: any) => s.segmentName === "Data Center");
+  expectTrue(!!dc && dc.tamLabel === "Global AI/Data Center Infrastructure" && dc.marketShare === 16, "NVDA 'Data Center' Share 80/500 = 16% (< 25, nicht Cloud)");
+  expectTrue((result.coveragePct ?? 0) >= 70, `NVDA-Mix Coverage >= 70 (ist: ${result.coveragePct})`);
+  expect(result.quality, "ok", "NVDA-Mix mit Data Center + Gaming + Auto -> quality 'ok'");
+  expectTrue(result.tamTotal !== null && result.tamTotal !== 896, "NVDA-Mix liefert einen Segment-TAM, nicht den MSFT-896-Dummy");
+}
+
+{
+  // AMZN-Mix knackt 70 ohne Third-Party (unmatched) und ohne desc-Fallback.
+  const segments = [
+    { name: "Online Stores", revenue: 220e9, percentage: 40, growth: 8 },
+    { name: "Third-Party Seller Services", revenue: 165e9, percentage: 30, growth: 12 },
+    { name: "Amazon Web Services", revenue: 100e9, percentage: 18, growth: 19 },
+    { name: "Advertising", revenue: 65e9, percentage: 12, growth: 20 },
+  ];
+  const result = generateTAMAnalysis("Consumer Cyclical", "Internet Retail", "amazon web services cloud retail", 550e9, 11, segments);
+  expectTrue((result.coveragePct ?? 0) >= 70, `AMZN-Mix Coverage >= 70 (ist: ${result.coveragePct})`);
+  expect(result.quality, "ok", "AMZN Online Stores + AWS + Advertising -> quality 'ok'");
+  const stores = result.segments?.find((s: any) => s.segmentName === "Online Stores");
+  expectTrue(!!stores && stores.tamLabel === "Global E-Commerce", "AMZN-Mix 'Online Stores' bleibt E-Commerce trotz Cloud in der Beschreibung");
+  const third = result.segments?.find((s: any) => s.segmentName === "Third-Party Seller Services");
+  expectTrue(!!third && third.matched === false, "AMZN 'Third-Party Seller Services' bleibt unmatched (kein Services-Fallback)");
 }
 
 console.log(`\n=== Ergebnis (final): ${passed} bestanden, ${failed} fehlgeschlagen ===`);

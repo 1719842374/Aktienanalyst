@@ -260,8 +260,11 @@ export type TamQuality = 'ok' | 'weak' | 'unreliable';
  * Neue, kleine TAM-Pools fuer Segmente, die sonst faelschlich in Cloud
  * (CLOUD) oder den generischen Konzern-Fallback fallen wuerden. Bewusst
  * konservativ/klein bemessen, damit Share nicht explodiert -- lieber N/A als
- * ein falscher Mini-Markt (siehe Spec 3.2). Bestehende Branchen-Eintraege
- * (Pharma, Semi, Luxury, ...) bleiben unangetastet in matchSegmentTAMLegacy().
+ * ein falscher Mini-Markt (siehe Spec 3.2).
+ *
+ * Coverage-Lift: die uebrigen Pools sind die bestehenden Branchen-Zahlen aus
+ * matchSegmentTAMLegacy() (kein neues Research, IDs stabil). Sie gelten nur
+ * ueber den Segmentnamen. Desc-Fallback bleibt in der Legacy-Funktion.
  */
 export const TAM_CATALOG = {
   CLOUD:            { tamSize: 1500, tamCAGR: 16, tamLabel: 'Global Cloud Computing', tamSource: 'Gartner/IDC Cloud Forecast' },
@@ -271,7 +274,26 @@ export const TAM_CATALOG = {
   DIGITAL_ADS:      { tamSize: 1000, tamCAGR: 10, tamLabel: 'Global Digital Advertising', tamSource: 'eMarketer / GroupM' },
   TALENT:           { tamSize: 80,   tamCAGR: 8,  tamLabel: 'Global Talent Solutions & Professional Network', tamSource: 'Industry Estimate Recruiting/Talent' },
   ENTERPRISE_IT:    { tamSize: 250,  tamCAGR: 6,  tamLabel: 'Global Enterprise IT Infrastructure', tamSource: 'IDC Enterprise IT' },
-  // bestehende Einträge Pharma, Semi, Luxury, Energy, … unverändert lassen (matchSegmentTAMLegacy)
+  // Branchen-Pools, Zahlen identisch zu matchSegmentTAMLegacy() (Name-only).
+  CASINO:           { tamSize: 700,  tamCAGR: 6,  tamLabel: 'Global Casino & Gaming', tamSource: 'H2 Gambling Capital / Statista iGaming' },
+  ECOMMERCE:        { tamSize: 6300, tamCAGR: 11, tamLabel: 'Global E-Commerce', tamSource: 'eMarketer / Statista' },
+  SELECTIVE_RETAIL: { tamSize: 500,  tamCAGR: 6,  tamLabel: 'Global Selective/Specialty Retail', tamSource: 'Euromonitor Specialty Retail' },
+  STREAMING:        { tamSize: 700,  tamCAGR: 9,  tamLabel: 'Global Streaming & Digital Media', tamSource: 'PwC Global Entertainment & Media' },
+  AUTOMOTIVE:       { tamSize: 3000, tamCAGR: 4,  tamLabel: 'Global Automotive', tamSource: 'McKinsey Automotive' },
+  FINTECH:          { tamSize: 350,  tamCAGR: 18, tamLabel: 'Global FinTech', tamSource: 'BCG/QED FinTech' },
+  PHARMA:           { tamSize: 1700, tamCAGR: 6,  tamLabel: 'Global Pharmaceuticals', tamSource: 'IQVIA Pharma Forecast' },
+  LUXURY:           { tamSize: 380,  tamCAGR: 6,  tamLabel: 'Global Personal Luxury Goods', tamSource: 'Bain / Altagamma' },
+  WINES:            { tamSize: 500,  tamCAGR: 5,  tamLabel: 'Global Premium Wines & Spirits', tamSource: 'IWSR Drinks Market' },
+  BEAUTY:           { tamSize: 430,  tamCAGR: 7,  tamLabel: 'Global Prestige Beauty', tamSource: 'Euromonitor / NPD Beauty' },
+  WATCHES:          { tamSize: 100,  tamCAGR: 5,  tamLabel: 'Global Luxury Watches & Jewelry', tamSource: 'Bain / Deloitte Swiss Watch' },
+  SEMICONDUCTOR:    { tamSize: 850,  tamCAGR: 12, tamLabel: 'Global Semiconductor', tamSource: 'WSTS/SIA' },
+  AI_DATACENTER:    { tamSize: 500,  tamCAGR: 25, tamLabel: 'Global AI/Data Center Infrastructure', tamSource: 'Gartner/IDC AI Infrastructure' },
+  BROADBAND:        { tamSize: 300,  tamCAGR: 8,  tamLabel: 'Global Broadband & Connectivity', tamSource: "Dell'Oro / Omdia" },
+  ENERGY:           { tamSize: 4000, tamCAGR: 3,  tamLabel: 'Global Energy', tamSource: 'IEA World Energy' },
+  AEROSPACE:        { tamSize: 800,  tamCAGR: 5,  tamLabel: 'Global Aerospace & Defense', tamSource: 'Deloitte A&D' },
+  FOODSERVICE:      { tamSize: 4000, tamCAGR: 5,  tamLabel: 'Global Foodservice & Restaurants', tamSource: 'Euromonitor / NRA' },
+  HOTEL:            { tamSize: 800,  tamCAGR: 6,  tamLabel: 'Global Hotel & Lodging', tamSource: 'STR / Phocuswright' },
+  ASSET_MGMT:       { tamSize: 500,  tamCAGR: 5,  tamLabel: 'Global Asset/Property Management', tamSource: 'Industry Estimate' },
 } as const;
 
 /** Normalisiert einen Segmentnamen fuer den Alias-Regex-Vergleich. */
@@ -292,7 +314,8 @@ export function normalizeSegmentKey(name: string): string {
  * Objekt anhaengen), Default-Verhalten ohne Treffer = N/A, NICHT Cloud.
  */
 export const TAM_ALIASES: Array<{ test: RegExp; catalog: keyof typeof TAM_CATALOG }> = [
-  // Cloud / Hyperscale — nur klare Cloud-Woerter
+  // Cloud / Hyperscale — nur klare Cloud-Woerter. "infrastructure" allein
+  // erzwingt hier kein Cloud (Spec 3.3), auch nicht neben "server".
   { test: /\b(azure|aws|amazon web services|google cloud|gcp|intelligent cloud|public cloud)\b/, catalog: 'CLOUD' },
   { test: /\bcloud\b/, catalog: 'CLOUD' },
 
@@ -307,23 +330,57 @@ export const TAM_ALIASES: Array<{ test: RegExp; catalog: keyof typeof TAM_CATALO
   // Legacy server hardware / on-prem — NICHT Azure. Muss VOR der generischen
   // "windows"-Regel stehen, sonst faengt "windows" in "Windows Server" den
   // PC_GAMING/Device-Alias ab, bevor ENTERPRISE_IT drankommt (First-Match).
-  // Bewusst NICHT "server" allein -> unmatched (N/A), nicht $250B / 51%
-  // (siehe Spec 3.3).
-  { test: /\b(windows server|sql server|on[- ]prem)\b/, catalog: 'ENTERPRISE_IT' },
+  // Bewusst NICHT "server" allein, NICHT "enterprise" allein, NICHT "storage"
+  // allein -> unmatched (N/A), nicht $250B / 51% (siehe Spec 3.3).
+  { test: /\b(windows server|sql server|on[- ]prem(?:ises)?)\b/, catalog: 'ENTERPRISE_IT' },
   { test: /\b(mainframe|storage hardware)\b/, catalog: 'ENTERPRISE_IT' },
+
+  // Casino VOR PC_GAMING. "Casino & Gaming" enthaelt "gaming"; ohne diese
+  // Regel wuerde der generische Gaming-Alias den Branchen-Pool verfehlen.
+  { test: /\b(casino|gambling|wagers?|sportsbook|igaming|betting)\b|\bslots?\b/, catalog: 'CASINO' },
 
   // Gaming
   { test: /\b(xbox|playstation|nintendo|console)\b/, catalog: 'PC_GAMING' },
   { test: /\bgaming\b/, catalog: 'PC_GAMING' },
 
-  // OS / Devices
-  { test: /\b(windows|surface|personal comput|pc oem)\b/, catalog: 'PC_GAMING' },
+  // OS / Devices. "personal comput\w*" trifft "Personal Computing" (FMP),
+  // nicht nur das abgeschnittene "personal comput" + Wortgrenze.
+  // "devices" nicht nach "medical " — sonst faellt "Medical Devices" in den
+  // PC-Pool (falscher Mini-Markt, lieber N/A).
+  { test: /\b(windows|surface|personal comput\w*|pc oem|hardware)\b|(?<!medical )\bdevices?\b/, catalog: 'PC_GAMING' },
 
   // Ads vs Talent — "linked ?in" deckt sowohl "LinkedIn" als auch die
   // FMP-Schreibweise "Linked In" (mit Leerzeichen) ab.
+  // "advertis\w*" trifft das FMP-Label "Advertising" (Wortgrenze direkt nach
+  // "advertis" wuerde "advertising" verfehlen).
   { test: /\b(linked ?in|talent|recruiter|jobs network)\b/, catalog: 'TALENT' },
-  { test: /\b(advertis|search ads|youtube ads|google services)\b/, catalog: 'DIGITAL_ADS' },
+  { test: /\b(advertis\w*|search ads|youtube(?: ads)?|google services)\b/, catalog: 'DIGITAL_ADS' },
   { test: /\bsearch\b/, catalog: 'DIGITAL_ADS' },
+
+  // Coverage-Lift: Name-only Branchen-Keywords aus matchSegmentTAMLegacy().
+  // Spezifisch vor generisch. Kein desc-Fallback, kein Ticker.
+  // Bewusst nicht: nacktes "server"/"enterprise"/"storage"/"infrastructure",
+  // nacktes "management", und die desc-gegatedeten "online|digital|interactive"-
+  // Digital-Services-Zweige (wuerden "Online Stores" bzw. "Services" verschlucken).
+  { test: /\b(sephora|dfs)\b|\bselective retail/, catalog: 'SELECTIVE_RETAIL' },
+  { test: /\b(?:e commerce|ecommerce|commerce|stores)\b|\bretail/, catalog: 'ECOMMERCE' },
+  { test: /\b(?:watches?|jewel(?:ry|lery|s)?|horolog\w*)\b/, catalog: 'WATCHES' },
+  { test: /\b(?:perfumes?|cosmetics?|beauty)\b/, catalog: 'BEAUTY' },
+  { test: /\b(?:wines?|spirits?|champagne|cognac)\b/, catalog: 'WINES' },
+  { test: /\b(?:fashion|leather|luxury|couture|apparel)\b/, catalog: 'LUXURY' },
+  { test: /\b(?:pharma(?:ceuticals?)?|drugs?|oncol\w*|vaccines?|therapeutics?)\b/, catalog: 'PHARMA' },
+  { test: /\b(?:semiconductors?|chips?|wafers?|foundry|foundries)\b/, catalog: 'SEMICONDUCTOR' },
+  { test: /\b(?:data centers?|datacenters?|artificial intelligence)\b|\bai\b/, catalog: 'AI_DATACENTER' },
+  { test: /\b(?:networking|infrastructure software)\b/, catalog: 'AI_DATACENTER' },
+  { test: /\b(?:automotive|automobiles?|vehicles?|mobility|auto)\b/, catalog: 'AUTOMOTIVE' },
+  { test: /\b(?:fintech|payments?|banking|financ\w*)\b/, catalog: 'FINTECH' },
+  { test: /\b(?:stream\w*|subscriptions?|entertainment|media|content)\b/, catalog: 'STREAMING' },
+  { test: /\b(?:upstream|downstream|refin\w*|exploration)\b/, catalog: 'ENERGY' },
+  { test: /\b(?:aerospace|defense|defence|launch|space|aero)\b/, catalog: 'AEROSPACE' },
+  { test: /\b(?:food|beverages?|restaurants?|dining|catering)\b/, catalog: 'FOODSERVICE' },
+  { test: /\b(?:hotels?|lodging|hospitality|rooms?)\b/, catalog: 'HOTEL' },
+  { test: /\b(?:broadband|wireless|connectivity|fiber|fibre)\b/, catalog: 'BROADBAND' },
+  { test: /\b(?:management fees?|service fees?)\b/, catalog: 'ASSET_MGMT' },
 ];
 
 /**
