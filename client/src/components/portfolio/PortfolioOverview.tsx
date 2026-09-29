@@ -3,7 +3,7 @@
  */
 import { useMemo, useState } from "react";
 import { PieChart, Pie, Cell, Tooltip as PieTooltip, ResponsiveContainer } from "recharts";
-import { Target, Award, PiggyBank, AlertTriangle, TrendingUp } from "lucide-react";
+import { Target, Award, PiggyBank, AlertTriangle, TrendingUp, Gauge } from "lucide-react";
 import {
   computePortfolioKPIs, computePortfolioWeights, computePortfolioPerformanceSeries,
   rebasePerformanceSeries, timeframeCutoffIso,
@@ -25,6 +25,12 @@ function fmtPct(x: number | null | undefined, digits = 1): string {
   return `${x >= 0 ? "+" : ""}${(x * 100).toFixed(digits)}%`;
 }
 
+/** Gleiche Stellenzahl wie Sharpe_p in der Optimierung (§4); fehlender Wert als Gedankenstrich. */
+function fmtSharpe(x: number | null | undefined): string {
+  if (x == null || !Number.isFinite(x)) return "—";
+  return x.toFixed(3);
+}
+
 export type TimeframeFilter = PerformanceTimeframe;
 export type DirectionFilter = "all" | "long" | "short";
 
@@ -32,7 +38,7 @@ export default function PortfolioOverview({
   positions, lastPriceByTicker, historicalPricesByTicker, timeframe, direction,
   onTimeframeChange, onDirectionChange, onSelectTicker, capmWeights, solveFailed,
   sectorByTicker, benchmarkTicker, benchmarkHistoricalPrices, riskFreeRateAnnual,
-  ohlcvMetaByTicker,
+  ohlcvMetaByTicker, sharpePortfolio,
 }: {
   positions: PortfolioPosition[];
   lastPriceByTicker: Record<string, number | null | undefined>;
@@ -49,6 +55,8 @@ export default function PortfolioOverview({
   benchmarkHistoricalPrices?: Array<{ date: string; close: number }> | undefined;
   riskFreeRateAnnual?: number;
   ohlcvMetaByTicker?: Record<string, { n: number; first: string | null; last: string | null; truncated: boolean } | undefined>;
+  /** Sharpe_p aus computePortfolioFromPositions — dasselbe Feld wie Optimierung §4, keine zweite Formel. */
+  sharpePortfolio?: number | null;
 }) {
   const [pieMode, setPieMode] = useState<"market" | "capm">("market");
   const hasCapmWeights = !!capmWeights && Object.keys(capmWeights).length > 0;
@@ -126,7 +134,7 @@ export default function PortfolioOverview({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="bg-card rounded-xl border border-border p-4 flex items-center gap-3">
           <div className="w-11 h-11 rounded-full border-2 border-indigo-400/40 flex items-center justify-center shrink-0"><Target className="w-5 h-5 text-indigo-400" /></div>
           <div className="min-w-0">
@@ -157,6 +165,14 @@ export default function PortfolioOverview({
             <div className={`text-2xl font-bold tabular-nums ${(kpis.avgRealizedPerformance ?? 0) >= 0 ? "text-emerald-500" : "text-red-500"}`}>{fmtPct(kpis.avgRealizedPerformance)}</div>
             <div className="text-xs font-medium">Realisierter Profit</div>
             <div className="text-[10px] text-muted-foreground leading-tight">Durchschnittliche Performance abgeschlossener Investments</div>
+          </div>
+        </div>
+        <div className="bg-card rounded-xl border border-border p-4 flex items-center gap-3">
+          <div className="w-11 h-11 rounded-full border-2 border-violet-400/40 flex items-center justify-center shrink-0"><Gauge className="w-5 h-5 text-violet-400" /></div>
+          <div className="min-w-0">
+            <div className={`text-2xl font-bold tabular-nums ${sharpePortfolio == null || !Number.isFinite(sharpePortfolio) ? "text-muted-foreground" : sharpePortfolio >= 0 ? "text-emerald-500" : "text-red-500"}`}>{fmtSharpe(sharpePortfolio)}</div>
+            <div className="text-xs font-medium">Sharpe Ratio</div>
+            <div className="text-[10px] text-muted-foreground leading-tight">Risikoadjustierte Portfoliorendite</div>
           </div>
         </div>
       </div>

@@ -432,6 +432,7 @@ export default function PortfolioPage() {
                 benchmarkHistoricalPrices={chartPricesByTicker[((policy.benchmark || "SPY").trim() || "SPY").toUpperCase()]}
                 riskFreeRateAnnual={rfDecimal}
                 ohlcvMetaByTicker={ohlcvMetaByTicker}
+                sharpePortfolio={engineResultForOverview?.status === "ok" ? engineResultForOverview.sharpePortfolio : null}
               />
             </div>
 
