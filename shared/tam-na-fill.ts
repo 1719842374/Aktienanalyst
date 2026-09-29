@@ -1,17 +1,27 @@
 /**
- * Session-only KI fill for unmatched Segment-TAM rows.
+ * Session-only KI fill for Segment-TAM N/A cells (Spec v2).
  *
  * Pure validation + local derivation. This module does not touch
  * TAM_CATALOG, matchSegmentTAM, assessTamQuality, coveragePct, tamTotal,
- * or the DCF gate. marketShare and vs-TAM are computed from reported
- * revenue and YoY growth — never taken from the model.
+ * segmentWeightedGrowth, or the DCF gate.
+ *
+ * marketShare (Anteil am TAM) and vs-TAM (outperforming) are formula-only.
+ * They are never taken from the model.
  */
 
 export const TAM_NA_SHARE_WARN = 25; // display badge only; mirrors TAM_SHARE_WARN, not a quality input
 
+/** Section7 table header, German labels, in column order. */
+export const TAM_NA_COLUMN_HEADER = "Segment | Rev. | Anteil | Wachstum | TAM | CAGR | Anteil am TAM | vs. TAM";
+
 const TAM_SIZE_MAX_BN = 100_000;
 const CAGR_MIN = -30;
 const CAGR_MAX = 80;
+/** Spec v2: segmentGrowth outside this window is dropped, not clamped into range. */
+export const SEGMENT_GROWTH_MIN = -80;
+export const SEGMENT_GROWTH_MAX = 200;
+
+const FACT_MARK = "(Fact, nicht überschreiben)";
 
 export interface TamNaSegmentRef {
   segmentName: string;
@@ -19,28 +29,61 @@ export interface TamNaSegmentRef {
   segmentRevenue: number;
   /** Reported YoY %. null = no prior-year figure. Never defaulted to 0. */
   segmentGrowth: number | null;
+  /**
+   * false = catalog miss. TAM / CAGR / Anteil am TAM render as n/a until a KI fill.
+   * Omitted or true = fact TAM path when tamSize is a positive catalog figure.
+   */
+  matched?: boolean;
+  /** Fact catalog TAM in $B. Honoured only when the row is not unmatched. */
+  tamSize?: number | null;
+  /** Fact catalog CAGR. Honoured only when the row is not unmatched. */
+  tamCAGR?: number | null;
 }
 
 export interface TamNaFill {
   segmentName: string;
-  tamSize: number;
-  tamCAGR: number;
-  tamLabel: string;
-  tamSource: string;
-  /** Derived: segmentRevenue / tamSize, percent. */
-  marketShare: number;
-  /** Derived from reported segmentGrowth vs tamCAGR. null when growth is unknown. */
-  outperforming: boolean | null;
-  shareWarning: boolean;
+  /** Set only when the fact YoY was null and the model supplied an in-range estimate. */
+  segmentGrowth?: number;
+  /** Set only for unmatched rows. Absent when the catalog TAM stays in place. */
+  tamSize?: number;
+  tamCAGR?: number;
+  tamLabel?: string;
+  tamSource?: string;
+  /** Derived: segmentRevenue / tamSize, percent. Never copied from the model. */
+  marketShare?: number;
+  /** Derived from effective growth vs effective CAGR. null when either input is missing. */
+  outperforming?: boolean | null;
+  shareWarning?: boolean;
+  confidence: "low" | "med" | "high";
+  rationale: string;
+}
+
+export interface ScopeNaCells {
+  growth: boolean;
+  tam: boolean;
+  cagr: boolean;
+  share: boolean;
+  vs: boolean;
+}
+
+export interface TamNaMatrixCells {
+  segment: string;
+  rev: string;
+  anteil: string;
+  wachstum: string;
+  tam: string;
+  cagr: string;
+  anteilAmTam: string;
+  vsTam: string;
 }
 
 export function deriveTamShare(segmentRevenueB: number, tamSizeB: number): number {
   return Math.round((segmentRevenueB / tamSizeB) * 10000) / 100;
 }
 
-/** null when the company did not report a segment YoY — do not invent one. */
-export function deriveOutperforming(segmentGrowth: number | null, tamCAGR: number): boolean | null {
-  if (segmentGrowth === null || !Number.isFinite(segmentGrowth) || !Number.isFinite(tamCAGR)) return null;
+/** null when growth or CAGR is missing — do not invent either input. */
+export function deriveOutperforming(segmentGrowth: number | null, tamCAGR: number | null): boolean | null {
+  if (segmentGrowth === null || tamCAGR === null || !Number.isFinite(segmentGrowth) || !Number.isFinite(tamCAGR)) return null;
   return segmentGrowth > tamCAGR;
 }
 
@@ -53,6 +96,11 @@ export function catalogCoverageNote(coveragePct: number | null | undefined): str
     return "Catalog-Coverage unverändert";
   }
   return `Catalog-Coverage unverändert ${Math.round(coveragePct)}%`;
+}
+
+/** Meta line after a full-scope success. KI growth is not mixed into the fact weighted figure. */
+export function kiFillMetaLine(cellCount: number, coveragePct: number | null | undefined): string {
+  return `KI-Schätzung: ${cellCount} Zellen · ${catalogCoverageNote(coveragePct)} · Wachstum-KI zählt nicht in Segment-gew. Wachstum`;
 }
 
 function finite(v: unknown): number | null {
@@ -71,6 +119,25 @@ function growthOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+function formatPlain(n: number): string {
+  return String(Math.round(n * 100) / 100);
+}
+
+function factCell(text: string): string {
+  return `${text} ${FACT_MARK}`;
+}
+
+function parseConfidence(v: unknown): "low" | "med" | "high" {
+  return v === "low" || v === "med" || v === "high" ? v : "low";
+}
+
+/** Drop, do not clamp: values outside −80…+200 are not a Wachstum fill. */
+function parseEstimatedGrowth(v: unknown): number | null {
+  const n = finite(v);
+  if (n === null || n < SEGMENT_GROWTH_MIN || n > SEGMENT_GROWTH_MAX) return null;
+  return n;
+}
+
 function extractRawFills(llmData: unknown): unknown[] {
   if (Array.isArray(llmData)) return llmData;
   if (llmData && typeof llmData === "object") {
@@ -81,10 +148,121 @@ function extractRawFills(llmData: unknown): unknown[] {
   return [];
 }
 
+function fillByName(fills: TamNaFill[] | null | undefined): Map<string, TamNaFill> {
+  const byName = new Map<string, TamNaFill>();
+  for (const fill of fills ?? []) {
+    if (!fill || typeof fill.segmentName !== "string" || byName.has(fill.segmentName)) continue;
+    byName.set(fill.segmentName, fill);
+  }
+  return byName;
+}
+
+/** Positive catalog TAM. Unmatched rows never keep a fact TAM. */
+export function factTamSize(seg: TamNaSegmentRef): number | null {
+  if (seg.matched === false) return null;
+  const size = finite(seg.tamSize);
+  if (size === null || !(size > 0)) return null;
+  return size;
+}
+
+export function factTamCagr(seg: TamNaSegmentRef): number | null {
+  if (factTamSize(seg) === null) return null;
+  return finite(seg.tamCAGR);
+}
+
 /**
- * Keep a fill only when tamSize > 0 and the segment name is one of the
- * requested names. marketShare / outperforming / segmentGrowth on the model
- * payload are ignored.
+ * Visible n/a in Wachstum · TAM · CAGR · Anteil am TAM · vs. TAM.
+ * Fact numbers win. Anteil am TAM and vs. TAM close only through the §3 formulas
+ * once their inputs exist — the fill is not allowed to supply those strings.
+ */
+export function scopeNaCells(
+  seg: TamNaSegmentRef,
+  fill?: Pick<TamNaFill, "segmentGrowth" | "tamSize" | "tamCAGR"> | null,
+): ScopeNaCells {
+  const factGrowth = growthOrNull(seg.segmentGrowth);
+  const kiGrowth = factGrowth == null && fill ? parseEstimatedGrowth(fill.segmentGrowth) : null;
+  const growth = factGrowth ?? kiGrowth;
+  const unmatched = seg.matched === false;
+  const factTam = factTamSize(seg);
+  const factCagr = factTamCagr(seg);
+  const kiTam = unmatched && fill && finite(fill.tamSize) !== null && (fill.tamSize as number) > 0
+    ? (fill.tamSize as number)
+    : null;
+  const kiCagr = unmatched && fill && finite(fill.tamCAGR) !== null ? (fill.tamCAGR as number) : null;
+  const revenueOk = finite(seg.segmentRevenue) !== null && (seg.segmentRevenue as number) >= 0;
+  return {
+    growth: growth === null,
+    tam: unmatched && kiTam === null,
+    cagr: unmatched && kiCagr === null,
+    share: unmatched && (kiTam === null || !revenueOk),
+    vs: growth === null || (unmatched ? kiCagr === null : factCagr === null),
+  };
+}
+
+export function countScopeCells(cells: ScopeNaCells): number {
+  return Number(cells.growth) + Number(cells.tam) + Number(cells.cagr) + Number(cells.share) + Number(cells.vs);
+}
+
+/** Rest-n/a across every segment row. Success requires this to be 0. */
+export function countScopeRestNa(segments: TamNaSegmentRef[], fills: TamNaFill[] | null | undefined): number {
+  const byName = fillByName(fills);
+  let n = 0;
+  for (const seg of segments) {
+    n += countScopeCells(scopeNaCells(seg, byName.get(seg.segmentName) ?? null));
+  }
+  return n;
+}
+
+/** Cells that were n/a and are closed by this fill (KI value or §3 formula). */
+export function countKiFilledCells(segments: TamNaSegmentRef[], fills: TamNaFill[]): number {
+  const byName = fillByName(fills);
+  let n = 0;
+  for (const seg of segments) {
+    const before = scopeNaCells(seg, null);
+    const after = scopeNaCells(seg, byName.get(seg.segmentName) ?? null);
+    if (before.growth && !after.growth) n++;
+    if (before.tam && !after.tam) n++;
+    if (before.cagr && !after.cagr) n++;
+    if (before.share && !after.share) n++;
+    if (before.vs && !after.vs) n++;
+  }
+  return n;
+}
+
+export function segmentNeedsLlm(seg: TamNaSegmentRef): boolean {
+  const cells = scopeNaCells(seg, null);
+  return cells.growth || cells.tam || cells.cagr;
+}
+
+/** One Section7 row: exact segment label plus Fact or n/a per column. */
+export function describeTamNaMatrixRow(seg: TamNaSegmentRef, segmentShare?: number | null): TamNaMatrixCells {
+  const factGrowth = growthOrNull(seg.segmentGrowth);
+  const factTam = factTamSize(seg);
+  const factCagr = factTamCagr(seg);
+  const anteil = typeof segmentShare === "number" && Number.isFinite(segmentShare)
+    ? factCell(`${formatPlain(segmentShare)}%`)
+    : "n/a";
+  let vsTam = "n/a";
+  if (factGrowth !== null && factCagr !== null) {
+    vsTam = factCell(factGrowth > factCagr ? "Über" : "Unter");
+  }
+  return {
+    segment: seg.segmentName,
+    rev: factCell(formatPlain(seg.segmentRevenue)),
+    anteil,
+    wachstum: factGrowth === null ? "n/a" : factCell(`${formatPlain(factGrowth)}%`),
+    tam: factTam === null ? "n/a" : factCell(formatPlain(factTam)),
+    cagr: factCagr === null ? "n/a" : factCell(`${formatPlain(factCagr)}%`),
+    anteilAmTam: factTam === null ? "n/a" : factCell(`${formatPlain(deriveTamShare(seg.segmentRevenue, factTam))}%`),
+    vsTam,
+  };
+}
+
+/**
+ * Keep a fill only when it supplies at least one missing fact
+ * (segmentGrowth and/or tamSize) for a requested name.
+ * marketShare / outperforming / Über|Unter on the model payload are ignored.
+ * Fact YoY and a locked catalog TAM are never overwritten.
  */
 export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknown): TamNaFill[] {
   const byName = new Map<string, TamNaSegmentRef>();
@@ -94,7 +272,14 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
     if (!name || byName.has(name)) continue;
     const revenue = finite(seg.segmentRevenue);
     if (revenue === null || revenue < 0) continue;
-    byName.set(name, { segmentName: name, segmentRevenue: revenue, segmentGrowth: growthOrNull(seg.segmentGrowth) });
+    byName.set(name, {
+      segmentName: name,
+      segmentRevenue: revenue,
+      segmentGrowth: growthOrNull(seg.segmentGrowth),
+      matched: seg.matched,
+      tamSize: finite(seg.tamSize),
+      tamCAGR: finite(seg.tamCAGR),
+    });
     const key = name.toLowerCase();
     byLower.set(key, byLower.has(key) ? "" : name);
   }
@@ -115,25 +300,52 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
     const rawName = typeof rec.segmentName === "string" ? rec.segmentName.trim() : "";
     const seg = rawName ? resolve(rawName) : undefined;
     if (!seg || seen.has(seg.segmentName)) continue;
-    const tamSize = finite(rec.tamSize);
-    const tamCAGR = finite(rec.tamCAGR);
-    const tamLabel = cleanText(rec.tamLabel, 120);
-    const tamSource = cleanText(rec.tamSource, 160);
-    if (tamSize === null || !(tamSize > 0) || tamSize > TAM_SIZE_MAX_BN) continue;
-    if (tamCAGR === null || tamCAGR < CAGR_MIN || tamCAGR > CAGR_MAX) continue;
-    if (!tamLabel || !tamSource) continue;
-    const marketShare = deriveTamShare(seg.segmentRevenue, tamSize);
-    seen.add(seg.segmentName);
-    out.push({
+
+    const factGrowth = growthOrNull(seg.segmentGrowth);
+    const unmatched = seg.matched === false;
+    const lockedTam = factTamSize(seg);
+    const lockedCagr = factTamCagr(seg);
+    const estimatedGrowth = factGrowth === null ? parseEstimatedGrowth(rec.segmentGrowth) : null;
+
+    let tamSize: number | undefined;
+    let tamCAGR: number | undefined;
+    let tamLabel: string | undefined;
+    let tamSource: string | undefined;
+    if (unmatched || lockedTam === null) {
+      const size = finite(rec.tamSize);
+      const cagr = finite(rec.tamCAGR);
+      const label = cleanText(rec.tamLabel, 120);
+      const source = cleanText(rec.tamSource, 160);
+      if (size !== null && size > 0 && size <= TAM_SIZE_MAX_BN && cagr !== null && cagr >= CAGR_MIN && cagr <= CAGR_MAX) {
+        tamSize = size;
+        tamCAGR = cagr;
+        if (label) tamLabel = label;
+        if (source) tamSource = source;
+      }
+    }
+
+    if (estimatedGrowth === null && tamSize === undefined) continue;
+
+    const effectiveGrowth = factGrowth ?? estimatedGrowth;
+    const effectiveCagr = lockedCagr !== null ? lockedCagr : (tamCAGR ?? null);
+    const fill: TamNaFill = {
       segmentName: seg.segmentName,
-      tamSize,
-      tamCAGR,
-      tamLabel,
-      tamSource,
-      marketShare,
-      outperforming: deriveOutperforming(seg.segmentGrowth, tamCAGR),
-      shareWarning: marketShare > TAM_NA_SHARE_WARN,
-    });
+      confidence: parseConfidence(rec.confidence),
+      rationale: cleanText(rec.rationale, 140) ?? "",
+      outperforming: deriveOutperforming(effectiveGrowth, effectiveCagr),
+    };
+    if (estimatedGrowth !== null) fill.segmentGrowth = estimatedGrowth;
+    if (tamSize !== undefined && tamCAGR !== undefined) {
+      const marketShare = deriveTamShare(seg.segmentRevenue, tamSize);
+      fill.tamSize = tamSize;
+      fill.tamCAGR = tamCAGR;
+      if (tamLabel) fill.tamLabel = tamLabel;
+      if (tamSource) fill.tamSource = tamSource;
+      fill.marketShare = marketShare;
+      fill.shareWarning = marketShare > TAM_NA_SHARE_WARN;
+    }
+    seen.add(seg.segmentName);
+    out.push(fill);
   }
   return out;
 }

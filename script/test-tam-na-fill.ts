@@ -1,8 +1,10 @@
 // script/test-tam-na-fill.ts
 //
-// KI-N/A-Fill für Segment-TAM. Prüft Validierung, lokale Ableitung von
-// marketShare/vs-TAM, fail-closed ohne LLM, und dass der MSFT-Faktenpfad
-// (Coverage ~59%, matched Zellen) unangetastet bleibt.
+// KI-N/A-Fill v2 für Segment-TAM. Prüft die Section7-Matrix im Prompt,
+// lokale Formeln (Anteil am TAM / vs. TAM), Wachstum-Fill nur bei Fact-n/a,
+// fail-closed INCOMPLETE_FILL ohne Partial-Overlay, und dass der
+// MSFT-Faktenpfad (Coverage ~59%, Katalog, quality, tamTotal) nur geechot
+// wird.
 // Lauf: `npx tsx script/test-tam-na-fill.ts`
 
 import { generateTAMAnalysis } from "../server/sector-data";
@@ -124,14 +126,14 @@ console.log("\n=== requestTamNaFills fail-closed ===");
     ticker: "MSFT",
     coveragePct: 58.5,
     segments: [
-      { segmentName: "XBOX", segmentRevenue: 21.8, segmentGrowth: null, matched: true },
+      { segmentName: "XBOX", segmentRevenue: 21.8, segmentGrowth: 4, matched: true, tamSize: 400, tamCAGR: 3, segmentShare: 6.6 },
     ],
   }, {
     isLLMAvailable: () => true,
     callLLMJson: async () => { throw new Error("should not be called"); },
   });
-  expect(result.ok, false, "matched-only Request wird nicht an das LLM gegeben");
-  if (!result.ok) expect(result.status, 400, "matched-only -> 400");
+  expect(result.ok, false, "Zeile ohne N/A wird nicht an das LLM gegeben");
+  if (!result.ok) expect(result.status, 400, "keine N/A-Zelle -> 400");
 }
 
 console.log("\n=== MSFT fact path stays put ===");
@@ -155,33 +157,59 @@ console.log("\n=== MSFT fact path stays put ===");
   expect(catalogCoverageNote(fact.coveragePct), "Catalog-Coverage unverändert 59%", "Meta zeigt ~59% und hebt Coverage nicht an");
 
   const matchedBefore = JSON.stringify((fact.segments ?? []).filter((s: { matched?: boolean }) => s.matched !== false));
-  const unmatched = (fact.segments ?? []).filter((s: { matched?: boolean }) => s.matched === false);
+  const allRows = (fact.segments ?? []).map((s: {
+    segmentName: string;
+    segmentRevenue: number;
+    segmentGrowth: number | null;
+    segmentShare: number;
+    matched?: boolean;
+    tamSize: number | null;
+    tamCAGR: number | null;
+  }) => ({
+    segmentName: s.segmentName,
+    segmentRevenue: s.segmentRevenue,
+    segmentGrowth: s.segmentGrowth,
+    segmentShare: s.segmentShare,
+    matched: s.matched === false ? false as const : true as const,
+    tamSize: s.tamSize,
+    tamCAGR: s.tamCAGR,
+  }));
 
+  let matrixPrompt = "";
   const result = await requestTamNaFills({
     ticker: "MSFT",
     companyName: "Microsoft",
     sector: "Technology",
     industry: "Software",
     coveragePct: fact.coveragePct,
-    segments: unmatched.map((s: { segmentName: string; segmentRevenue: number; segmentGrowth: number | null; segmentShare: number; matched?: boolean }) => ({
-      segmentName: s.segmentName,
-      segmentRevenue: s.segmentRevenue,
-      segmentGrowth: s.segmentGrowth,
-      segmentShare: s.segmentShare,
-      matched: false,
-    })),
+    segments: allRows,
   }, {
     isLLMAvailable: () => true,
-    callLLMJson: async () => ({
-      modelUsed: "test-model",
-      data: {
-        fills: [
-          { segmentName: "Server", tamSize: 500, tamCAGR: 7, tamLabel: "Enterprise IT", tamSource: "IDC", marketShare: 99, segmentGrowth: 0 },
-          { segmentName: "XBOX", tamSize: 400, tamCAGR: 4, tamLabel: "Should drop", tamSource: "nope" },
-          { segmentName: "Other / nicht segmentiert", tamSize: 90, tamCAGR: 3, tamLabel: "Other", tamSource: "Schätzung", segmentGrowth: 12 },
-        ],
-      },
-    }),
+    callLLMJson: async (opts) => {
+      matrixPrompt = opts.prompt;
+      return {
+        modelUsed: "test-model",
+        data: {
+          fills: allRows.map((s) => {
+            const fill: Record<string, unknown> = {
+              segmentName: s.segmentName,
+              confidence: "med",
+              rationale: "Testschätzung",
+              marketShare: 99,
+              outperforming: false,
+            };
+            if (s.segmentGrowth == null) fill.segmentGrowth = s.segmentName === "Other / nicht segmentiert" ? 12 : 4;
+            if (s.matched === false) {
+              fill.tamSize = s.segmentName === "Server" ? 500 : 90;
+              fill.tamCAGR = s.segmentName === "Server" ? 7 : 3;
+              fill.tamLabel = "Enterprise IT";
+              fill.tamSource = "IDC";
+            }
+            return fill;
+          }),
+        },
+      };
+    },
   });
 
   expect(JSON.stringify(fact), before, "generateTAMAnalysis-Objekt wird durch den KI-Fill nicht mutiert");
@@ -194,13 +222,169 @@ console.log("\n=== MSFT fact path stays put ===");
   if (result.ok) {
     expect(result.coveragePct, fact.coveragePct, "Response-coveragePct ist der Faktwert, nicht angehoben");
     expect(result.coverageNote, catalogCoverageNote(fact.coveragePct), "coverageNote aus dem Faktwert");
-    expectTrue(!result.fills.some((f) => f.segmentName === "XBOX"), "XBOX (matched, nicht im Request) wird verworfen");
+    expectTrue(matrixPrompt.includes("Segment | Rev. | Anteil | Wachstum | TAM | CAGR | Anteil am TAM | vs. TAM"), "Prompt nennt die Section7-Spaltenköpfe");
+    for (const row of allRows) {
+      expectTrue(matrixPrompt.includes(row.segmentName), `Prompt enthält Zeile ${row.segmentName}`);
+    }
+    expectTrue(matrixPrompt.includes("Other / nicht segmentiert"), "Rest-Zeile steht mit dem UI-Label im Prompt");
+    expectTrue(!matrixPrompt.includes("Kein segmentGrowth"), "Prompt verbietet segmentGrowth nicht mehr");
+    const xbox = result.fills.find((f) => f.segmentName === "XBOX");
+    expect(xbox?.segmentGrowth, 4, "XBOX Wachstum-n/a wird geschätzt");
+    expectTrue(!xbox || xbox.tamSize === undefined, "Katalog-TAM von XBOX wird nicht überschrieben");
+    expect(xbox?.outperforming, deriveOutperforming(4, 3), "XBOX vs-TAM aus KI-Wachstum 4 gegen Fakt-CAGR 3");
     const server = result.fills.find((f) => f.segmentName === "Server");
     expectTrue(!!server && server.marketShare === deriveTamShare(129.4, 500), "Server-Share lokal aus 129.4/500");
-    expect(server?.outperforming, deriveOutperforming(31.5, 7), "Server vs-TAM aus berichtetem 31.5, nicht aus LLM-0");
+    expectTrue(!server || !("segmentGrowth" in server), "Server-Fact-YoY 31.5 wird nicht durch KI ersetzt");
+    expect(server?.outperforming, deriveOutperforming(31.5, 7), "Server vs-TAM aus berichtetem 31.5, nicht aus LLM");
+    const otherRow = allRows.find((s) => s.segmentName === "Other / nicht segmentiert");
     const other = result.fills.find((f) => f.segmentName === "Other / nicht segmentiert");
-    expect(other?.outperforming, null, "Other-YoY bleibt n/a trotz LLM-segmentGrowth 12");
+    expect(other?.segmentGrowth, 12, "Rest-Zeile Wachstum-n/a wird geschätzt");
+    expect(other?.marketShare, otherRow ? deriveTamShare(otherRow.segmentRevenue, 90) : null, "Rest Anteil am TAM ist Formel, nicht LLM-99");
+    expect(other?.outperforming, deriveOutperforming(12, 3), "Rest vs-TAM aus KI-Wachstum 12 > CAGR 3");
     expectTrue(fact.tamCAGR === null && fact.quality === "unreliable", "gewichteter CAGR und quality bleiben nach dem Fill unverändert");
+  }
+}
+
+console.log("\n=== matrix prompt + formulas + incomplete fill ===");
+
+{
+  let prompt = "";
+  const segments = [
+    { segmentName: "Server", segmentRevenue: 129.4, segmentShare: 39, segmentGrowth: 31.5, matched: false as const, tamSize: null, tamCAGR: null },
+    { segmentName: "XBOX", segmentRevenue: 21.8, segmentShare: 6.6, segmentGrowth: null, matched: true as const, tamSize: 400, tamCAGR: 3 },
+    { segmentName: "Other / nicht segmentiert", segmentRevenue: 8.3, segmentShare: 2.5, segmentGrowth: null, matched: false as const, tamSize: null, tamCAGR: null },
+  ];
+  const result = await requestTamNaFills({
+    ticker: "XOM",
+    companyName: "Exxon Mobil",
+    sector: "Energy",
+    industry: "Oil & Gas",
+    coveragePct: 40,
+    segments,
+  }, {
+    isLLMAvailable: () => true,
+    callLLMJson: async (opts) => {
+      prompt = opts.prompt;
+      return {
+        modelUsed: "test-model",
+        data: {
+          fills: [
+            { segmentName: "Server", tamSize: 400, tamCAGR: 8, tamLabel: "Energy Services", tamSource: "IEA", marketShare: 1, outperforming: false, segmentGrowth: 99 },
+            { segmentName: "XBOX", segmentGrowth: 9, tamSize: 9999, tamCAGR: 50, marketShare: 77, outperforming: false, confidence: "high", rationale: "YoY-Lücke" },
+            { segmentName: "Other / nicht segmentiert", segmentGrowth: 12, tamSize: 80, tamCAGR: 3, tamLabel: "Residual", tamSource: "Schätzung", marketShare: 5, outperforming: false },
+          ],
+        },
+      };
+    },
+  });
+  const header = "Segment | Rev. | Anteil | Wachstum | TAM | CAGR | Anteil am TAM | vs. TAM";
+  expectTrue(prompt.includes(header), "Prompt listet die UI-Spaltenköpfe");
+  expectTrue(prompt.includes("Rest-Zeile"), "Prompt markiert die Rest-Zeile, wenn sie sichtbar ist");
+  for (const name of ["Server", "XBOX", "Other / nicht segmentiert"]) {
+    expectTrue(prompt.includes(name), `Prompt-Zeile ${name}`);
+  }
+  expectTrue(prompt.includes("31.5") && prompt.includes("n/a"), "Prompt zeigt Fact-Zahl und n/a");
+  expectTrue(prompt.includes("(Fact, nicht überschreiben)"), "Fact-Zellen sind als nicht überschreibbar markiert");
+  expectTrue(!prompt.includes("Kein segmentGrowth"), "Wachstum-n/a darf im Prompt nicht verboten sein");
+  expectTrue(!/"marketShare"\s*:/.test(prompt) && !prompt.includes("outperforming"), "Formel-Spalten sind keine LLM-Felder");
+  expectTrue(result.ok === true, "vollständige Matrix schließt alle Scope-N/A");
+  if (result.ok) {
+    const server = result.fills.find((f) => f.segmentName === "Server");
+    expectTrue(!server || !("segmentGrowth" in server), "Fact-Wachstum 31.5 bleibt");
+    expect(server?.marketShare, deriveTamShare(129.4, 400), "Anteil am TAM = Rev/TAM, LLM-1 verworfen");
+    expect(server?.outperforming, true, "vs. TAM = 31.5 > 8");
+    const xbox = result.fills.find((f) => f.segmentName === "XBOX");
+    expect(xbox?.segmentGrowth, 9, "Wachstum-n/a auf gematchter Zeile");
+    expectTrue(xbox?.tamSize === undefined, "Fakt-TAM 400 wird nicht durch 9999 ersetzt");
+    expect(xbox?.outperforming, deriveOutperforming(9, 3), "vs. TAM nutzt KI-Wachstum gegen Fakt-CAGR");
+    const rest = result.fills.find((f) => f.segmentName === "Other / nicht segmentiert");
+    expect(rest?.segmentGrowth, 12, "Rest Wachstum");
+    expect(rest?.marketShare, deriveTamShare(8.3, 80), "Rest Anteil am TAM Formel");
+    expect(rest?.outperforming, true, "Rest vs. TAM 12 > 3, nicht LLM-false");
+    expect(result.coveragePct, 40, "coveragePct wird geechot, nicht angehoben");
+  }
+}
+
+{
+  const result = await requestTamNaFills({
+    ticker: "XOM",
+    coveragePct: 40,
+    segments: [
+      { segmentName: "Upstream", segmentRevenue: 100, segmentShare: 60, segmentGrowth: null, matched: false, tamSize: null, tamCAGR: null },
+      { segmentName: "Other / nicht segmentiert", segmentRevenue: 10, segmentShare: 5, segmentGrowth: null, matched: false, tamSize: null, tamCAGR: null },
+    ],
+  }, {
+    isLLMAvailable: () => true,
+    callLLMJson: async () => ({
+      modelUsed: "test-model",
+      data: {
+        fills: [
+          { segmentName: "Upstream", segmentGrowth: 5, tamSize: 200, tamCAGR: 4, tamLabel: "Oil", tamSource: "IEA", confidence: "med", rationale: "teilweise" },
+        ],
+      },
+    }),
+  });
+  expect(result.ok, false, "Teilliste ist kein Success");
+  if (!result.ok) {
+    expect(result.status, 422, "unvollständiger Fill → 422");
+    expect(result.code, "INCOMPLETE_FILL", "Code INCOMPLETE_FILL");
+    expect(result.error, "KI-Schätzung unvollständig — nichts übernommen", "kein Partial-Overlay-Text");
+    expectTrue(!("fills" in result), "Failure trägt keine fills");
+  }
+}
+
+{
+  const result = await requestTamNaFills({
+    ticker: "XOM",
+    coveragePct: 40,
+    segments: [
+      { segmentName: "XBOX", segmentRevenue: 21.8, segmentShare: 6.6, segmentGrowth: null, matched: true, tamSize: 400, tamCAGR: 3 },
+    ],
+  }, {
+    isLLMAvailable: () => true,
+    callLLMJson: async () => ({
+      modelUsed: "test-model",
+      data: { fills: [{ segmentName: "XBOX", segmentGrowth: 250, confidence: "low", rationale: "zu hoch" }] },
+    }),
+  });
+  expect(result.ok, false, "Wachstum außerhalb −80…+200 schließt die Zelle nicht");
+  if (!result.ok) expect(result.code, "INCOMPLETE_FILL", "Out-of-range Wachstum → INCOMPLETE_FILL");
+}
+
+{
+  const kept = validateTamNaFills(
+    [{ segmentName: "XBOX", segmentRevenue: 21.8, segmentGrowth: null, matched: true, tamSize: 400, tamCAGR: 3 }],
+    { fills: [{ segmentName: "XBOX", segmentGrowth: -80, confidence: "low", rationale: "unteres Ende" }] },
+  );
+  expect(kept[0]?.segmentGrowth, -80, "−80 bleibt im Wachstum-Fenster");
+  const dropped = validateTamNaFills(
+    [{ segmentName: "XBOX", segmentRevenue: 21.8, segmentGrowth: null, matched: true, tamSize: 400, tamCAGR: 3 }],
+    { fills: [{ segmentName: "XBOX", segmentGrowth: -81, confidence: "low", rationale: "darunter" }] },
+  );
+  expect(dropped.length, 0, "−81 wird gedroppt, nicht geklemmt");
+  expect(deriveOutperforming(12, 3), true, "Formel vs. TAM: Wachstum > CAGR");
+  expect(deriveOutperforming(null, 3), null, "Formel vs. TAM ohne Wachstum ist null");
+  expect(deriveTamShare(8.3, 80), Math.round((8.3 / 80) * 10000) / 100, "Formel Anteil am TAM");
+}
+
+{
+  const shared = await import("../shared/tam-na-fill.ts");
+  expectTrue(typeof shared.countScopeRestNa === "function", "countScopeRestNa ist exportiert");
+  expectTrue(typeof shared.kiFillMetaLine === "function", "kiFillMetaLine ist exportiert");
+  if (typeof shared.countScopeRestNa === "function" && typeof shared.kiFillMetaLine === "function") {
+    const rows = [
+      { segmentName: "Server", segmentRevenue: 10, segmentGrowth: 5, matched: false as const, tamSize: null, tamCAGR: null },
+    ];
+    expectTrue(shared.countScopeRestNa(rows, null) > 0, "ohne Fill bleiben Scope-N/A");
+    const closed = validateTamNaFills(rows, {
+      fills: [{ segmentName: "Server", tamSize: 100, tamCAGR: 4, tamLabel: "M", tamSource: "S", confidence: "high", rationale: "ok" }],
+    });
+    expect(shared.countScopeRestNa(rows, closed), 0, "TAM+CAGR+Formel schließen die unmatched Zeile mit Fact-Wachstum");
+    expect(
+      shared.kiFillMetaLine(3, 58.5),
+      "KI-Schätzung: 3 Zellen · Catalog-Coverage unverändert 59% · Wachstum-KI zählt nicht in Segment-gew. Wachstum",
+      "Meta-Zeile nach Success, Coverage nur geechot",
+    );
   }
 }
 
