@@ -380,12 +380,10 @@ export function computePortfolioBacktest(args: ComputePortfolioBacktestArgs): Po
   }
 
   // Schritt 1: gemeinsamer Kalender -- Intersection der Handelstage aller
-  // Positionen + Benchmark, begrenzt auf den spaetesten gemeinsamen Entry
-  // (keine Preise vor Entry der jeweiligen Position beruecksichtigen) und
-  // nie ueber "heute" hinaus (keine Look-ahead-Daten, Spec §4 Punkt 4).
-  const earliestUsablePerPosition = usablePositions.map(p => p.openedAt.slice(0, 10));
-  const latestEntryDate = earliestUsablePerPosition.reduce((a, b) => (b > a ? b : a));
-
+  // Positionen + Benchmark. openedAt ist kein Hard-Cut fuer commonTradingDays:
+  // Performance & Attribution vs. Benchmark nutzen die volle gemeinsame
+  // OHLCV-Historie (Produktentscheid). Nie ueber "heute" hinaus (keine
+  // Look-ahead-Daten, Spec §4 Punkt 4).
   const dateSets = usablePositions.map(p => new Set(
     (historicalPricesByTicker[p.ticker.toUpperCase()] ?? [])
       .filter(bar => bar.date <= todayStr)
@@ -395,7 +393,7 @@ export function computePortfolioBacktest(args: ComputePortfolioBacktestArgs): Po
 
   let commonDates = Array.from(benchmarkDateSet);
   for (const s of dateSets) commonDates = commonDates.filter(d => s.has(d));
-  commonDates = commonDates.filter(d => d >= latestEntryDate && d <= todayStr).sort();
+  commonDates = commonDates.filter(d => d <= todayStr).sort();
 
   if (commonDates.length < MIN_COMMON_TRADING_DAYS) {
     return {
