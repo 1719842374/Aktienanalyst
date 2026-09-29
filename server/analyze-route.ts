@@ -38,6 +38,7 @@ import {
   generateTAMAnalysis,
   dcfGrowthCapFromTam,
 } from "./sector-data";
+import { generateMacroCorrelations } from "./macro-correlations";
 
 import {
   calcImpliedGStar,
@@ -74,7 +75,6 @@ import {
   type CatalystReasoning,
   type CurrencyInfo,
   type PESTELAnalysis,
-  type MacroCorrelations,
   type RevenueSegment,
 } from "../shared/schema";
 
@@ -1539,20 +1539,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           : 0;
 
       // ── 19. Macro correlations ──
-      const isBank =
-        effectiveSector.toLowerCase().includes("financ") ||
-        industry.toLowerCase().includes("bank") ||
-        industry.toLowerCase().includes("financ") ||
-        industry.toLowerCase().includes("insurance");
-
-      // Raw correlations remain numeric for the calculation below and are mapped
-      // to the shared MacroCorrelation union when assembling the response.
-      const macroCorrelations: Array<{ factor: string; correlation: number; description: string }> = [
-        { factor: "Fed Funds Rate", correlation: isBank ? 0.6 : beta > 1.2 ? -0.4 : -0.2, description: isBank ? "Steigende Zinsen erhöhen NIM" : "Steigende Zinsen komprimieren Multiples" },
-        { factor: "USD Stärke", correlation: country !== "US" ? -0.3 : 0.1, description: country !== "US" ? "USD-Stärke belastet Auslands-Earnings" : "Geringer USD-Einfluss (US-fokussiert)" },
-        { factor: "Ölpreis (WTI)", correlation: effectiveSector.toLowerCase().includes("energ") ? 0.7 : -0.1, description: effectiveSector.toLowerCase().includes("energ") ? "Ölpreis direkt mit Revenue korreliert" : "Indirekter Kostenfaktor" },
-        { factor: "VIX (Volatilität)", correlation: -0.5, description: "Hohe Marktvolatilität belastet Growth-Aktien" },
-      ];
+      // Full matrix (indices, VIX, ISM, rates, energy, metals, crypto, FX).
+      // Inputs match the historical call site: sector/industry already corrected
+      // by getEffectiveSector, beta stored on the payload as beta5Y.
+      const macroCorrelations = generateMacroCorrelations(
+        effectiveSector, effectiveIndustry, description, beta, reportedCurrency
+      );
 
       // ── 20. Assemble final result ──
       // IMPORTANT — the response shape here must match shared/schema.ts:StockAnalysis
@@ -1919,34 +1911,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           capitalCostImpact: `Ein Zinsanstieg von 100bps hebt die Kapitalkosten um ~${(sectorDefaults.waccScenarios.avg - sectorDefaults.waccScenarios.opt).toFixed(1)}pp; Bewertungs-Effekt sektorabhängig.`,
         },
 
-        // Section 13 — shared/schema.ts:MacroCorrelation expects {name, category,
-        // correlation:"Positiv|Neutral|Negativ|Invers", strength:"Stark|Moderat|Schwach",
-        // mechanism, currentLevel?}. Our upstream list uses {factor, correlation:number,
-        // description}. Remap so the section renders instead of crashing on .name.
-        macroCorrelations: {
-          correlations: macroCorrelations.map((c: any) => {
-            const absCorr = Math.abs(Number(c.correlation) || 0);
-            const catMap: Record<string, "Index" | "Commodity" | "Macro-Indikator" | "Währung" | "Edelmetall" | "Industriemetall" | "Crypto"> = {
-              "Fed Funds Rate": "Macro-Indikator",
-              "USD Stärke": "Währung",
-              "Ölpreis (WTI)": "Commodity",
-              "VIX (Volatilität)": "Macro-Indikator",
-            };
-            return {
-              name: String(c.factor ?? c.name ?? ""),
-              category: catMap[c.factor] ?? "Macro-Indikator",
-              correlation: (Number(c.correlation) > 0.2 ? "Positiv"
-                : Number(c.correlation) < -0.2 ? "Negativ"
-                : Number(c.correlation) < -0.5 ? "Invers"
-                : "Neutral") as "Positiv" | "Neutral" | "Negativ" | "Invers",
-              strength: (absCorr > 0.5 ? "Stark" : absCorr > 0.25 ? "Moderat" : "Schwach") as "Stark" | "Moderat" | "Schwach",
-              mechanism: String(c.description ?? c.mechanism ?? ""),
-              currentLevel: c.currentLevel,
-            };
-          }),
-          overallMacroSensitivity: (beta > 1.3 ? "Hoch" : beta < 0.7 ? "Niedrig" : "Mittel") as "Hoch" | "Mittel" | "Niedrig",
-          keyInsight: `Beta ${beta.toFixed(2)} — ${beta > 1.3 ? "höhere als der Markt" : beta < 0.7 ? "geringere als der Markt" : "marktnahe"} Konjunktursensitivität.`,
-        },
+        // Section 13 — schema-shaped MacroCorrelations (no numeric remap).
+        macroCorrelations,
 
         // Section 15
         newsItems,
