@@ -24,6 +24,8 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocation } from "wouter";
 import { RefreshCw, Factory, Info, ArrowLeft, Sparkles, Loader2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import { apiErrorFromResponse } from "@/lib/apiError";
+import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import { StageColumn } from "@/components/valuechain/StageColumn";
 import { ValueChainKpiTiles } from "@/components/valuechain/ValueChainKpiTiles";
 import type { ValueChainResponse, Region } from "@/lib/valueChainTypes";
@@ -67,14 +69,14 @@ export default function ValueChainDashboard() {
 
   const [data, setData] = useState<ValueChainResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [showInfo, setShowInfo] = useState(false);
 
   // Sprint D6c: KI-Anreicherung (server/llm-openrouter.ts::enrichValueChainStages
   // via POST /api/valuechain/enrich). Eigener Loading-/Error-State, damit ein
   // Fehlschlag NICHT die bereits geladenen Basis-Stages (data) zerstört.
   const [isEnriching, setIsEnriching] = useState(false);
-  const [enrichError, setEnrichError] = useState<string | null>(null);
+  const [enrichError, setEnrichError] = useState<unknown>(null);
 
   // Deep-Link aus dem Thesis-Lab: /#/valuechain?industry=
   useEffect(() => {
@@ -113,14 +115,11 @@ export default function ValueChainDashboard() {
       });
       if (force) params.set("force", "1");
       const res = await apiRequest("GET", `/api/valuechain?${params.toString()}`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || `${res.status}: ${res.statusText}`);
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
       const json = await res.json();
       setData(json);
-    } catch (err: any) {
-      setError(err?.message || String(err));
+    } catch (err: unknown) {
+      setError(err ?? "unknown error");
       setData(null);
     } finally {
       setIsLoading(false);
@@ -143,13 +142,11 @@ export default function ValueChainDashboard() {
         region,
         minMarketCap,
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(json?.error || `${res.status}: ${res.statusText}`);
-      }
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      const json = await res.json();
       setData(json);
-    } catch (err: any) {
-      setEnrichError(err?.message || String(err));
+    } catch (err: unknown) {
+      setEnrichError(err ?? "unknown error");
     } finally {
       setIsEnriching(false);
     }
@@ -316,18 +313,29 @@ export default function ValueChainDashboard() {
           </div>
         )}
 
-        {error && (
-          <div className="mb-4 rounded-md border border-rose-800/60 bg-rose-950/40 px-4 py-2 text-sm text-rose-300">
-            {error}
+        {error != null && (
+          <div className="mb-4">
+            <ApiErrorBanner
+              error={error}
+              tone="dark"
+              block={!data}
+              onRetry={() => load(true)}
+              retrying={isLoading}
+              testId="text-valuechain-error"
+            />
           </div>
         )}
 
-        {enrichError && (
-          <div
-            className="mb-4 rounded-md border border-rose-800/60 bg-rose-950/40 px-4 py-2 text-sm text-rose-300"
-            data-testid="text-enrich-error"
-          >
-            KI-Anreicherung fehlgeschlagen: {enrichError}
+        {enrichError != null && (
+          <div className="mb-4">
+            <ApiErrorBanner
+              error={enrichError}
+              context="KI-Anreicherung fehlgeschlagen"
+              tone="dark"
+              onRetry={enrichWithAI}
+              retrying={isEnriching}
+              testId="text-enrich-error"
+            />
           </div>
         )}
 

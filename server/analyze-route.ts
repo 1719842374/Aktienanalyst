@@ -20,6 +20,7 @@ import {
   getFmpBudgetStatus,
   isFmpBudgetLow,
   getFmpFallbackData,
+  fmpFallbackFailureResponse,
   cacheLLMModeMatches,
   parseNumber,
   detectReportedCurrency,
@@ -550,10 +551,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // trackFmpCall runs inside fmp.ts on every outbound call — no manual
       // increment here or we'd double-count.
       const fmpData = await getFmpFallbackData(upperTicker);
-      if (!fmpData) {
-        return res.status(503).json({
-          error: `Keine Daten für ${upperTicker} verfügbar. FMP API nicht erreichbar oder Ticker ungültig.`,
-        });
+      if ("failure" in fmpData) {
+        const { status, body } = fmpFallbackFailureResponse(upperTicker, fmpData.failure);
+        return res.status(status).json(body);
       }
 
       // geoSegments was added in commit cd79678 (fmp.ts:fmpGeoSegments +

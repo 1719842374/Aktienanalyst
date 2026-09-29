@@ -97,11 +97,12 @@ export function CurrentAssessment({ data }: { data: RecessionAnalysis }) {
   return (
     <div className="space-y-4">
       {/* Probability Gauges Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {/* flex-wrap + centred last row: 5 subgroups must not leave a hole in a 3-col grid */}
+      <div className="flex flex-wrap justify-center gap-3" data-testid="grid-current-assessment">
         {keySubgroups.map((sg) => (
           <div
             key={sg.name}
-            className={`p-4 rounded-lg border ${getProbBg(sg.probability)} flex flex-col items-center`}
+            className={`basis-full sm:basis-[calc(50%-0.375rem)] lg:basis-[calc(33.333%-0.5rem)] xl:basis-[calc(20%-0.6rem)] min-w-0 p-4 rounded-lg border ${getProbBg(sg.probability)} flex flex-col items-center`}
           >
             <div className="text-xs font-medium text-muted-foreground mb-1">{sg.label}</div>
             <div className="text-[10px] text-muted-foreground/70 mb-2">Horizont: {sg.horizon}</div>

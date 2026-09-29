@@ -7,7 +7,7 @@
 import { execSync } from "child_process";
 import type { PESTELAnalysis, PESTELFactor, PESTELFactorItem, CurrencyInfo } from "../shared/schema";
 import {
-  isFmpAvailable, fmpBatchQuote, fmpProfile, fmpIncomeStatement, fmpCashFlow,
+  isFmpAvailable, fmpQuoteStrict, classifyFmpError, type FmpFailure, fmpProfile, fmpIncomeStatement, fmpCashFlow,
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
   fmpSegments, fmpGeoSegments, fmpPeers, fmpRatios, fmpKeyMetrics, convertFmpRowsToUsd,
 } from "./fmp";
@@ -245,19 +245,57 @@ export function parseCSVFromUrl(csvUrl: string): Record<string, string>[] {
 // ============================================================
 // FMP Fallback Data Fetcher
 // ============================================================
+// Quote rejection wins; otherwise any 429 among the parallel calls explains a
+// missing quote better than "invalid ticker".
+export function describeFmpFallbackFailure(
+  ticker: string,
+  quoteRes: PromiseSettledResult<unknown>,
+  others: PromiseSettledResult<unknown>[],
+): FmpFailure {
+  if (quoteRes.status === "rejected") return classifyFmpError(quoteRes.reason);
+  const rateLimited = others
+    .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+    .map((r) => classifyFmpError(r.reason))
+    .find((f) => f.errorCode === "RATE_LIMITED");
+  if (rateLimited) return rateLimited;
+  return { errorCode: "FMP_NO_DATA", fmpStatus: null, message: `no quote for ${ticker}` };
+}
+
+export function fmpFallbackFailureResponse(ticker: string, failure: FmpFailure): {
+  status: number;
+  body: { error: string; errorCode: FmpFailure["errorCode"]; fmpStatus: number | null };
+} {
+  const { errorCode, fmpStatus } = failure;
+  switch (errorCode) {
+    case "RATE_LIMITED":
+      return { status: 429, body: { error: `FMP Rate-Limit (HTTP 429) für ${ticker} — bitte später erneut versuchen.`, errorCode, fmpStatus } };
+    case "FMP_NOT_CONFIGURED":
+      return { status: 503, body: { error: "FMP nicht konfiguriert (FMP_API_KEY fehlt).", errorCode, fmpStatus } };
+    case "FMP_UPSTREAM_ERROR":
+      return { status: 502, body: { error: `FMP-Fehler HTTP ${fmpStatus} für ${ticker}.`, errorCode, fmpStatus } };
+    case "FMP_UNREACHABLE":
+      return { status: 503, body: { error: `Keine Daten für ${ticker} verfügbar. FMP API nicht erreichbar.`, errorCode, fmpStatus } };
+    case "FMP_NO_DATA":
+      return { status: 503, body: { error: `Keine Daten für ${ticker} verfügbar. Ticker ungültig oder FMP liefert keinen Kurs.`, errorCode, fmpStatus } };
+  }
+}
+
 export async function getFmpFallbackData(ticker: string): Promise<{
   quote: any; profile: any;
   financials: { income: any[]; cashflow: any[]; balanceSheet: any[] };
   analyst: { priceTarget: any; grades: any[]; estimates: any[] };
   ohlcv: any[]; segments: any[]; geoSegments: any[]; peers: any[]; ratios: any[];
   source: 'fmp';
-} | null> {
-  if (!isFmpAvailable()) { console.warn(`[FMP-FALLBACK] FMP_API_KEY not set for ${ticker}`); return null; }
+} | { failure: FmpFailure }> {
+  if (!isFmpAvailable()) {
+    console.warn(`[FMP-FALLBACK] FMP_API_KEY not set for ${ticker}`);
+    return { failure: { errorCode: "FMP_NOT_CONFIGURED", fmpStatus: null, message: "FMP_API_KEY not set" } };
+  }
   console.log(`[FMP-FALLBACK] Fetching data from FMP for ${ticker}...`);
   const t0 = Date.now();
   try {
     const settledAll = await Promise.allSettled([
-      fmpBatchQuote([ticker]),
+      fmpQuoteStrict(ticker).then((q) => (q ? [q] : [])),
       fmpProfile(ticker),
       fmpIncomeStatement(ticker, 3),
       fmpCashFlow(ticker, 3),
@@ -286,7 +324,11 @@ export async function getFmpFallbackData(ticker: string): Promise<{
     const [quoteRes, profileRes, incomeRes, cashflowRes, balanceSheetRes, priceTargetRes, gradesRes, estimatesRes, ohlcvRes, segmentsRes, peersRes, ratiosRes, , geoSegmentsRes] = settledAll;
     const quoteData = get(quoteRes);
     const quote = Array.isArray(quoteData) ? quoteData[0] : quoteData;
-    if (!quote?.price) { console.warn(`[FMP-FALLBACK] No quote data for ${ticker}`); return null; }
+    if (!quote?.price) {
+      const failure = describeFmpFallbackFailure(ticker, quoteRes, settledAll.slice(1));
+      console.warn(`[FMP-FALLBACK] No quote data for ${ticker}: ${failure.errorCode} fmpStatus=${failure.fmpStatus ?? "-"} ${failure.message}`);
+      return { failure };
+    }
     console.log(`[FMP-FALLBACK] OK for ${ticker} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     // FX normalisation — analyst-estimates for foreign filers (e.g. NVO in DKK,
     // ASML in EUR) come back in the REPORTING currency, not the trading currency.
@@ -319,7 +361,10 @@ export async function getFmpFallbackData(ticker: string): Promise<{
       ohlcv: get(ohlcvRes) || [], segments: get(segmentsRes) || [], geoSegments: get(geoSegmentsRes) || [], peers: get(peersRes) || [], ratios: get(ratiosRes) || [],
       source: 'fmp',
     };
-  } catch (err: any) { console.error(`[FMP-FALLBACK] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`); return null; }
+  } catch (err: any) {
+    console.error(`[FMP-FALLBACK] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
+    return { failure: classifyFmpError(err) };
+  }
 }
 
 // ============================================================
