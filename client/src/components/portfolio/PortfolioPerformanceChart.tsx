@@ -142,9 +142,9 @@ export default function PortfolioPerformanceChart({
         ))}
       </div>
       {series.length === 0 ? (
-        <div className="h-56 flex items-center justify-center text-xs text-muted-foreground">Keine Kursdaten verfügbar — Analyse für offene Positionen laden</div>
+        <div className="h-[360px] flex items-center justify-center text-xs text-muted-foreground">Keine Kursdaten verfügbar — Analyse für offene Positionen laden</div>
       ) : (
-        <ResponsiveContainer width="100%" height={224}>
+        <ResponsiveContainer width="100%" height={360}>
           <ComposedChart data={chartData}>
             <defs>
               <linearGradient id="portfolioPerfStroke" x1="0" y1="0" x2="0" y2="1">
