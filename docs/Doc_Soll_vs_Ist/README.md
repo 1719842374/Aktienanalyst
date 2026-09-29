@@ -1,13 +1,13 @@
 # Doc_Soll_vs_Ist
 
-> Stand: 29.09.2026 (Abend) | Ampel aus **Code + UI** (Live Render) · HEAD `f0046ee9`
+> Stand: 29.09.2026 (Abend, nach #90) | Ampel aus **Code + UI** (Live Render) · HEAD `ee5f0f8b`
 > Originale im **Repo-Root**. Dieser Ordner verlinkt nur.
 >
 > Alt: [work-offen](../work-offen/) · [work-dokumentation](../work-dokumentation/)
 
 **Regel:** `✅` nur wenn die *erwartete Anzeige* live ist. Datei + Lib ohne KPI/Serie = `🟡` oder `⬜`. „Deploy folgt“ = Code auf `main`, Live nicht geprüft → `🟡`.
 
-**Nachzug 29.09. Abend (`f0046ee9`):** #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem-Chip / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution (251d AAPL+MSFT) · #86 Tooltip · #88 Pie über Performance / Chart 360px Live ✅ · #87 thin-series 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · #70/#72/#73 Live ✅ · Exec #69 Live ✅ · Peer/ROIC ≡ `4bdc1f8`. BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub-Vormittag war `d517611` (#78).
+**Nachzug 29.09. Abend, nach #90 (`ee5f0f8b`):** #90 TAM Coverage-Lift Live ✅ (Bundle `index-Ca0V7H2h.js`; DoD: AMZN 75.2% ok, NVDA 98.2% weak, MSFT 58.5% unreliable — Server unmatched, `tamTotal` null). Queue Coverage-Lift ✅. #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem-Chip / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution (251d AAPL+MSFT) · #86 Tooltip · #88 Pie über Performance / Chart 360px Live ✅ · #87 thin-series 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · #70/#72/#73 Live ✅ · Exec #69 Live ✅ · Peer/ROIC ≡ `4bdc1f8`. BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub-Vormittag war `d517611` (#78); Hub #89 Stand Abend `f0046ee9` (`20120339`).
 
 **Nachzug 13.09. (+ portfolio_3 PASS):** Exec / FactPack / VIX+EU-Vol / Portfolio OHLCV §6 ✅ · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert · Backtest weiter 🟡. OHLCV §6-Code bleibt; #74 Fake-OK source:fmp fixed; Chart #71 oft weiter leer.
 
@@ -58,6 +58,7 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | Attribution volle Historie (#85) | `f6a6a398` · Re-DoD 251 common days AAPL+MSFT |
 | Fenster-Tooltip Kontrast (#86) | `7e9279db` · Bundle `index-Ca0V7H2h.js`; Datum #0f172a, Fenster #10b981 |
 | Pie über Performance / Chart 360px (#88) | `f0046ee9` · Bundle `index-Ca0V7H2h.js`; grid-cols-1, h-[360px] Performance |
+| TAM Coverage-Lift (#90) | `ee5f0f8b` · Live ✅ PASS Bundle `index-Ca0V7H2h.js` (same as #88 stack; Analyze path). DoD: AMZN 75.2% ok; NVDA 98.2% weak; MSFT 58.5% unreliable (Server unmatched, `tamTotal` null) |
 | [WORK_PEER_ROIC_SANITY.md](../../WORK_PEER_ROIC_SANITY.md) | sanitizeRoic intact · Tip ≡ `4bdc1f8` (kein Delete) · wieder da nach FMP Premium |
 | [FACTPACK_LLM.md](./FACTPACK_LLM.md) | Analyze-Hook + UI live (#57) |
 | [WORK_RECESSION_RSI_MACD.md](../../WORK_RECESSION_RSI_MACD.md) | Dashboard-Wire + Pane live |
@@ -85,5 +86,5 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | [WORK_TEIL7_SCORING.md](../../WORK_TEIL7_SCORING.md) | Gold |
 | [WORK2.md](../../WORK2.md) | PESTEL |
 | [WORK.md](../../WORK.md) | Index |
-| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 29.09. Abend (`f0046ee9`) |
+| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 29.09. Abend, nach #90 (`ee5f0f8b`) |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 geblockt |

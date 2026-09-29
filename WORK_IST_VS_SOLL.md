@@ -1,11 +1,11 @@
 # WORK_IST_VS_SOLL.md — Code vs. WORK-Specs
 
-> **Stand Audit:** 29.09.2026 (Abend)  
+> **Stand Audit:** 29.09.2026 (Abend, nach #90)  
 > **Repo:** `1719842374/Aktienanalyst`  
-> **HEAD:** `f0046ee9` (#88 Selektierte Aktien über Performance, Chart 360px)  
+> **HEAD:** `ee5f0f8b` (#90 TAM Coverage-Lift)  
 > **Regel:** Ist nur aus Code + UI. ✅ erwartete Anzeige live · 🟡 Kern da, Spec-/UI-Zusatz fehlt · ⬜ Spec ohne Engine/UI.  
 > **Quelle Nachzug:** Doc_Soll_vs_Ist/README · Companion `WORK_IMPLEMENTIERUNG_OFFEN.md`  
-> **Delta 29.09. Abend (#74–#88):** #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution · #86 Tooltip · #88 Pie/360px Live ✅ · #87 thin-series Code ✅ Live 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub war 29.09. / `d517611` (#78).  
+> **Delta 29.09. Abend, nach #90:** #90 TAM Coverage-Lift Live ✅ (Bundle `index-Ca0V7H2h.js`; DoD: AMZN 75.2% ok, NVDA 98.2% weak, MSFT 58.5% unreliable — Server unmatched, `tamTotal` null). Queue Coverage-Lift ✅. #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution · #86 Tooltip · #88 Pie/360px Live ✅ · #87 thin-series Code ✅ Live 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub war 29.09. / `d517611` (#78); danach Abend `f0046ee9` (#89, Docs-Tip `20120339`).  
 > **tsc-Baseline:** 97 Fehler (unverändert).
 
 ---
@@ -110,9 +110,9 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 44 | WORK_PEER_PRICING_POWER.md | Relativ nur Low-Moat | Spec Companion | ⬜ |
 | 45 | FactPack (`docs/.../FACTPACK_LLM.md`) | Validate+Hook | Hook+UI live `#57` | ✅ |
 
-### 1c. Nachzug 29.09. Abend — #70–#88
+### 1c. Nachzug 29.09. Abend — #70–#90
 
-Ampel folgt dem Live-Stand: ✅ nur bei bestätigter Anzeige. Vormittag-Hub war `d517611` (#78); Tip `f0046ee9`.
+Ampel folgt dem Live-Stand: ✅ nur bei bestätigter Anzeige. Vormittag-Hub war `d517611` (#78); Hub #89 Stand Abend `f0046ee9` (`20120339`); Tip `ee5f0f8b`.
 
 | # | Item | Soll | Ist (Code / Live) | Ampel |
 |---|------|------|-------------------|-------|
@@ -132,6 +132,7 @@ Ampel folgt dem Live-Stand: ✅ nur bei bestätigter Anzeige. Vormittag-Hub war 
 | #86 | Fenster-Tooltip Kontrast | lesbare Tooltip-Zeile | Code ✅ `7e9279db` · Live ✅ Bundle `index-Ca0V7H2h.js`; Datum #0f172a, Fenster #10b981 | ✅ |
 | #87 | thin-series Prävention | dünne Serie aus Backtest-Intersection | Code ✅ `2fb8b70a` · Live 🟡 PARTIAL: healthy 251d OK; thin-Banner nicht repro | 🟡 |
 | #88 | Pie über Performance / Chart 360px | Selektierte Aktien über Performance, Chart 360px | Code ✅ `f0046ee9` · Live ✅ Bundle `index-Ca0V7H2h.js`; grid-cols-1, h-[360px] Performance | ✅ |
+| #90 | TAM Coverage-Lift | unmatched FMP segment labels | Code ✅ `ee5f0f8b` · Live ✅ PASS Bundle `index-Ca0V7H2h.js` (same as #88 stack; Analyze path). DoD: AMZN 75.2% ok; NVDA 98.2% weak; MSFT 58.5% unreliable (Server unmatched, `tamTotal` null) | ✅ |
 
 FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live ✅. BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3 Ticker.
 
@@ -163,12 +164,12 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 **Queue 29.09. Abend:**
 
 1. Batch A: Search / 429-Transparenz / OHLCV Fake-OK ehrlich surface (Prompt 5) — **done** (`e8ebd35c`, #74 Live ✅).
-2. TAM Coverage-Lift — Spec `WORK_TAM_SEGMENT_MAPPING.md` Tor ok; Gap = unmatched Labels.
+2. TAM Coverage-Lift — Spec `WORK_TAM_SEGMENT_MAPPING.md` Tor ok; Gap = unmatched Labels — **done** ✅ (`ee5f0f8b`, #90 Live ✅). DoD: AMZN 75.2% ok; NVDA 98.2% weak; MSFT 58.5% unreliable (Server unmatched, `tamTotal` null).
 3. Miner: kein Delete (≡ `b584446f`); Live 503 mempool Egress Render — Observability. Kern nicht anfassen.
 4. Ökosystem Scoring-Weichzeichnung (Zykliker-Grad) = Folge-Lane nach Chip (#75 Live ✅).
 5. Gated unverändert: Hormuz (B) `recession-drivers.ts`, Liquidity-Bundle, Valuechain Rang 7–9.
 
-Reihenfolge sinnvoll: TAM Coverage-Lift → Hormuz (B) / Liquidity-Bundle / Rang 7–9 bleiben gegated.
+Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Hormuz (B) / Liquidity-Bundle / Rang 7–9 bleiben gegated.
 
 ---
 
