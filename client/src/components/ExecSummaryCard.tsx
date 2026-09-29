@@ -91,8 +91,8 @@ export function ExecSummaryCard({ data }: {
           </div>
         ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">Pro</div>
+          <div className="rounded-md border border-emerald-500/25 bg-emerald-500/10 p-3">
+            <div className="text-[10px] uppercase tracking-wider text-emerald-400/90 font-medium mb-1">Pro</div>
             <ul className="space-y-1 text-foreground/90">
               {(s.pro || []).map((l, i) => (
                 <li key={`pro-${i}`} className="leading-snug flex items-start gap-1.5">
@@ -106,8 +106,8 @@ export function ExecSummaryCard({ data }: {
               {(s.pro || []).length === 0 && <li className="text-muted-foreground">—</li>}
             </ul>
           </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">Contra</div>
+          <div className="rounded-md border border-red-500/25 bg-red-500/10 p-3">
+            <div className="text-[10px] uppercase tracking-wider text-red-400/90 font-medium mb-1">Contra</div>
             <ul className="space-y-1 text-foreground/90">
               {(s.contra || []).map((l, i) => (
                 <li key={`contra-${i}`} className="leading-snug flex items-start gap-1.5">
@@ -124,8 +124,8 @@ export function ExecSummaryCard({ data }: {
         </div>
 
         {(downsideRisks.length > 0 || s.riskLine) && (
-          <div data-testid="exec-summary-downside">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">Was schiefgehen kann</div>
+          <div className="rounded-md border border-red-500/25 bg-red-500/10 p-3" data-testid="exec-summary-downside">
+            <div className="text-[10px] uppercase tracking-wider text-red-400/90 font-medium mb-1">Was schiefgehen kann</div>
             {s.riskLine && <p className="text-xs text-foreground/85 mb-1">{s.riskLine}</p>}
             <ul className="space-y-0.5">
               {downsideRisks.map((r, i) => (
