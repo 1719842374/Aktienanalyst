@@ -1,13 +1,13 @@
 # Doc_Soll_vs_Ist
 
-> Stand: 29.09.2026 (Abend, nach #90) | Ampel aus **Code + UI** (Live Render) · HEAD `ee5f0f8b`
+> Stand: 29.09.2026 (Abend, nach #97 Live PASS) | Ampel aus **Code + UI** (Live Render) · HEAD `249841ab`
 > Originale im **Repo-Root**. Dieser Ordner verlinkt nur.
 >
 > Alt: [work-offen](../work-offen/) · [work-dokumentation](../work-dokumentation/)
 
 **Regel:** `✅` nur wenn die *erwartete Anzeige* live ist. Datei + Lib ohne KPI/Serie = `🟡` oder `⬜`. „Deploy folgt“ = Code auf `main`, Live nicht geprüft → `🟡`.
 
-**Nachzug 29.09. Abend, nach #90 (`ee5f0f8b`):** #90 TAM Coverage-Lift Live ✅ (Bundle `index-Ca0V7H2h.js`; DoD: AMZN 75.2% ok, NVDA 98.2% weak, MSFT 58.5% unreliable — Server unmatched, `tamTotal` null). Queue Coverage-Lift ✅. #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem-Chip / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution (251d AAPL+MSFT) · #86 Tooltip · #88 Pie über Performance / Chart 360px Live ✅ · #87 thin-series 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · #70/#72/#73 Live ✅ · Exec #69 Live ✅ · Peer/ROIC ≡ `4bdc1f8`. BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub-Vormittag war `d517611` (#78); Hub #89 Stand Abend `f0046ee9` (`20120339`).
+**Nachzug 29.09. Abend, nach #97 Live PASS (`249841ab`):** #97 TA Kurs A/B/C Spec v3.1 Live ✅ PASS (SHA `249841ab`; parent `1dc82683`; Bundle `index-C_rUCqgy.js`; 3 An/Aus Kurs A/B/C; Default nur A; ≥2 an → versetzte Bänder (eigene Y min–max je Band via `yDomainFromCloses` / `chart-price-bands`); `closeB` entfernt; absolute-Y / closeB-Overlap = FAIL; DoD AAPL Shots `/workspace/dod-97-ta-kurs/`). #92 TA Zwei-Fenster Live ✅ PASS Re-DoD (SHA `c06c835e` → Fix `1dc82683` #94; Bundle `index-JP8muGsY.js`; A close/primary/1.5 unverfärbt; closeB `#a78bfa` strokeWidth 2.5 `connectNulls=false`; Eye off = nur A; 3 normale Kurs-Plots unberührt; Zwei-Fenster Extra An/Aus; Soft Draw-Order B-unter OK). #93 KI-N/A-Fill Segment-TAM 🟡 PARTIAL (`7574b12d`; Behavior+API PASS — MSFT amber ~59%; KI nur unmatched + violet Badge; Catalog-Coverage unverändert; Clear → n/a; core 58.5%/unreliable/`tamTotal=null`; Label Soft: UI „KI“ vs Spec „N/A mit KI schätzen“). #96 KI-Fill v2 bleibt Draft Merge-Gate — nicht grün (Label Soft #93 kann nach #96 Live weg; Soft Apollo bis Philip GO). #90 TAM Coverage-Lift Live ✅ (Bundle `index-Ca0V7H2h.js`; DoD: AMZN 75.2% ok, NVDA 98.2% weak, MSFT 58.5% unreliable — Server unmatched, `tamTotal` null). Queue Coverage-Lift ✅. #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem-Chip / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution (251d AAPL+MSFT) · #86 Tooltip · #88 Pie über Performance / Chart 360px Live ✅ · #87 thin-series 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · #70/#72/#73 Live ✅ · Exec #69 Live ✅ · Peer/ROIC ≡ `4bdc1f8`. BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub-Vormittag war `d517611` (#78); Hub #89 Stand Abend `f0046ee9` (`20120339`); Hub #90 `ee5f0f8b` (Docs-Tip `9895774f`); Hub-Draft #95 Inhalt `1dc82683` (#92✅ #93🟡, noch offen).
 
 **Nachzug 13.09. (+ portfolio_3 PASS):** Exec / FactPack / VIX+EU-Vol / Portfolio OHLCV §6 ✅ · Hormuz (B) 🟡 · Liquidity-Bundle ⬜ · Rang 7–9 blockiert · Backtest weiter 🟡. OHLCV §6-Code bleibt; #74 Fake-OK source:fmp fixed; Chart #71 oft weiter leer.
 
@@ -34,6 +34,7 @@
 | [WORK_PEER_PRICING_POWER.md](../../WORK_PEER_PRICING_POWER.md) | Relativ nur Low-Moat | Spec Companion | `⬜` |
 | Performance-Chart 4 Toggles (#71) | Ein/Aus + Bench-Kurs | UI da (`60aeeb2`); OHLCV-Honesty #74; Chart oft weiter leer | `🟡` |
 | thin-series Prävention (#87) | dünne Serie aus Backtest-Intersection | Code `2fb8b70a`; healthy 251d OK; thin-Banner nicht repro auf Live | `🟡` PARTIAL |
+| KI-N/A-Fill Segment-TAM (#93) | „N/A mit KI schätzen“ | Code `7574b12d`; Behavior+API PASS (MSFT amber ~59%; KI nur unmatched + violet Badge; Catalog-Coverage unverändert; Clear → n/a; core 58.5%/unreliable/`tamTotal=null`); Label Soft: UI „KI“ vs Spec | `🟡` PARTIAL |
 
 Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPACK_LLM.md](./FACTPACK_LLM.md) · FMP/BB [FMP_GRENZEN_BLOOMBERG.md](./FMP_GRENZEN_BLOOMBERG.md)
 
@@ -59,6 +60,8 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | Fenster-Tooltip Kontrast (#86) | `7e9279db` · Bundle `index-Ca0V7H2h.js`; Datum #0f172a, Fenster #10b981 |
 | Pie über Performance / Chart 360px (#88) | `f0046ee9` · Bundle `index-Ca0V7H2h.js`; grid-cols-1, h-[360px] Performance |
 | TAM Coverage-Lift (#90) | `ee5f0f8b` · Live ✅ PASS Bundle `index-Ca0V7H2h.js` (same as #88 stack; Analyze path). DoD: AMZN 75.2% ok; NVDA 98.2% weak; MSFT 58.5% unreliable (Server unmatched, `tamTotal` null) |
+| TA Zwei-Fenster (#92) | `c06c835e` → Fix `1dc82683` (#94) · Live ✅ PASS Re-DoD Bundle `index-JP8muGsY.js`. A close/primary/1.5 unverfärbt; closeB `#a78bfa` strokeWidth 2.5 `connectNulls=false`; Eye off = nur A; 3 normale Kurs-Plots unberührt; Zwei-Fenster = Extra An/Aus. Soft Draw-Order B-unter (DoD OK). |
+| TA Kurs A/B/C Spec v3.1 (#97) | `249841ab` · Live ✅ PASS Bundle `index-C_rUCqgy.js`. 3 An/Aus Kurs A/B/C; Default nur A; ≥2 an → versetzte Bänder (eigene Y min–max je Band via `yDomainFromCloses` / `chart-price-bands`); `closeB` entfernt; absolute-Y / closeB-Overlap = FAIL. DoD AAPL Shots `/workspace/dod-97-ta-kurs/`. |
 | [WORK_PEER_ROIC_SANITY.md](../../WORK_PEER_ROIC_SANITY.md) | sanitizeRoic intact · Tip ≡ `4bdc1f8` (kein Delete) · wieder da nach FMP Premium |
 | [FACTPACK_LLM.md](./FACTPACK_LLM.md) | Analyze-Hook + UI live (#57) |
 | [WORK_RECESSION_RSI_MACD.md](../../WORK_RECESSION_RSI_MACD.md) | Dashboard-Wire + Pane live |
@@ -86,5 +89,5 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | [WORK_TEIL7_SCORING.md](../../WORK_TEIL7_SCORING.md) | Gold |
 | [WORK2.md](../../WORK2.md) | PESTEL |
 | [WORK.md](../../WORK.md) | Index |
-| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 29.09. Abend, nach #90 (`ee5f0f8b`) |
+| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 29.09. Abend, nach #97 Live PASS (`249841ab`) |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 geblockt |

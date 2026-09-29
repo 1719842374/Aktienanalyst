@@ -1,11 +1,11 @@
 # WORK_IST_VS_SOLL.md — Code vs. WORK-Specs
 
-> **Stand Audit:** 29.09.2026 (Abend, nach #90)  
+> **Stand Audit:** 29.09.2026 (Abend, nach #97 Live PASS)  
 > **Repo:** `1719842374/Aktienanalyst`  
-> **HEAD:** `ee5f0f8b` (#90 TAM Coverage-Lift)  
+> **HEAD:** `249841ab` (PR #97 TA Kurs A/B/C Spec v3.1; parent `1dc82683`)  
 > **Regel:** Ist nur aus Code + UI. ✅ erwartete Anzeige live · 🟡 Kern da, Spec-/UI-Zusatz fehlt · ⬜ Spec ohne Engine/UI.  
 > **Quelle Nachzug:** Doc_Soll_vs_Ist/README · Companion `WORK_IMPLEMENTIERUNG_OFFEN.md`  
-> **Delta 29.09. Abend, nach #90:** #90 TAM Coverage-Lift Live ✅ (Bundle `index-Ca0V7H2h.js`; DoD: AMZN 75.2% ok, NVDA 98.2% weak, MSFT 58.5% unreliable — Server unmatched, `tamTotal` null). Queue Coverage-Lift ✅. #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution · #86 Tooltip · #88 Pie/360px Live ✅ · #87 thin-series Code ✅ Live 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub war 29.09. / `d517611` (#78); danach Abend `f0046ee9` (#89, Docs-Tip `20120339`).  
+> **Delta 29.09. Abend, nach #97 Live PASS:** #97 TA Kurs A/B/C Spec v3.1 Live ✅ (SHA `249841ab`; parent `1dc82683`; Bundle `index-C_rUCqgy.js`; 3 An/Aus Kurs A/B/C; Default nur A; ≥2 an → versetzte Bänder (eigene Y min–max je Band via `yDomainFromCloses` / `chart-price-bands`); `closeB` entfernt; absolute-Y / closeB-Overlap = FAIL; DoD AAPL Shots `/workspace/dod-97-ta-kurs/`). #92 TA Zwei-Fenster Live ✅ (SHA `c06c835e` → Fix `1dc82683` #94; Bundle `index-JP8muGsY.js`; DoD: A close/primary/1.5 unverfärbt; closeB `#a78bfa` strokeWidth 2.5 `connectNulls=false`; Eye off = nur A; 3 normale Kurs-Plots unberührt; Zwei-Fenster Extra An/Aus; Soft Draw-Order B-unter OK). #93 KI-N/A-Fill Segment-TAM Live 🟡 PARTIAL (`7574b12d`; Behavior+API PASS — MSFT amber ~59%; KI nur unmatched + violet Badge; Catalog-Coverage unverändert; Clear → n/a; core 58.5%/unreliable/`tamTotal=null`; Label Soft: UI „KI“ vs Spec „N/A mit KI schätzen“). #96 KI-Fill v2 bleibt Draft Merge-Gate — nicht grün (Label Soft #93 kann nach #96 Live weg; Soft Apollo bis Philip GO). #90 TAM Coverage-Lift Live ✅ (Bundle `index-Ca0V7H2h.js`; DoD: AMZN 75.2% ok, NVDA 98.2% weak, MSFT 58.5% unreliable — Server unmatched, `tamTotal` null). Queue Coverage-Lift ✅. #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution · #86 Tooltip · #88 Pie/360px Live ✅ · #87 thin-series Code ✅ Live 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub war 29.09. / `d517611` (#78); danach Abend `f0046ee9` (#89, Docs-Tip `20120339`); danach Abend #90 `ee5f0f8b` (Docs-Tip `9895774f`); Hub-Draft #95 Inhalt `1dc82683` (#92✅ #93🟡, noch offen); Tip `249841ab`.  
 > **tsc-Baseline:** 97 Fehler (unverändert).
 
 ---
@@ -110,9 +110,9 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 44 | WORK_PEER_PRICING_POWER.md | Relativ nur Low-Moat | Spec Companion | ⬜ |
 | 45 | FactPack (`docs/.../FACTPACK_LLM.md`) | Validate+Hook | Hook+UI live `#57` | ✅ |
 
-### 1c. Nachzug 29.09. Abend — #70–#90
+### 1c. Nachzug 29.09. Abend — #70–#97
 
-Ampel folgt dem Live-Stand: ✅ nur bei bestätigter Anzeige. Vormittag-Hub war `d517611` (#78); Hub #89 Stand Abend `f0046ee9` (`20120339`); Tip `ee5f0f8b`.
+Ampel folgt dem Live-Stand: ✅ nur bei bestätigter Anzeige. Vormittag-Hub war `d517611` (#78); Hub #89 Stand Abend `f0046ee9` (`20120339`); Hub #90 `ee5f0f8b` (Docs-Tip `9895774f`); Hub-Draft #95 Inhalt `1dc82683` (#92✅ #93🟡); Tip `249841ab` (parent `1dc82683`).
 
 | # | Item | Soll | Ist (Code / Live) | Ampel |
 |---|------|------|-------------------|-------|
@@ -133,6 +133,9 @@ Ampel folgt dem Live-Stand: ✅ nur bei bestätigter Anzeige. Vormittag-Hub war 
 | #87 | thin-series Prävention | dünne Serie aus Backtest-Intersection | Code ✅ `2fb8b70a` · Live 🟡 PARTIAL: healthy 251d OK; thin-Banner nicht repro | 🟡 |
 | #88 | Pie über Performance / Chart 360px | Selektierte Aktien über Performance, Chart 360px | Code ✅ `f0046ee9` · Live ✅ Bundle `index-Ca0V7H2h.js`; grid-cols-1, h-[360px] Performance | ✅ |
 | #90 | TAM Coverage-Lift | unmatched FMP segment labels | Code ✅ `ee5f0f8b` · Live ✅ PASS Bundle `index-Ca0V7H2h.js` (same as #88 stack; Analyze path). DoD: AMZN 75.2% ok; NVDA 98.2% weak; MSFT 58.5% unreliable (Server unmatched, `tamTotal` null) | ✅ |
+| #92 | TA Zwei-Fenster | zwei Kalenderfenster, echte closeB-Linie | Code ✅ `c06c835e` → Fix `1dc82683` (#94) · Live ✅ PASS Re-DoD Bundle `index-JP8muGsY.js`. Zwei echte Linien: A close/primary/1.5 unverfärbt; eigene closeB `#a78bfa` strokeWidth 2.5 `connectNulls=false`; Eye off = nur A; 3 normale Kurs-Plots unberührt; Zwei-Fenster = Extra An/Aus. Soft Draw-Order B-unter (DoD OK). | ✅ |
+| #93 | KI-N/A-Fill Segment-TAM | KI-Schätzung unmatched Segment-TAM | Code ✅ `7574b12d` · Live 🟡 PARTIAL: Behavior+API PASS (MSFT amber ~59%; KI nur unmatched + violet Badge; Catalog-Coverage unverändert; Clear → n/a; core 58.5%/unreliable/`tamTotal=null`). Label Soft: UI „KI“ vs Spec „N/A mit KI schätzen“ — Gelb bis Philip Label. | 🟡 |
+| #97 | TA Kurs A/B/C Spec v3.1 | 3 An/Aus Kurs A/B/C; Default nur A; ≥2 an → versetzte Bänder | Code ✅ `249841ab` · Live ✅ PASS Bundle `index-C_rUCqgy.js`. 3 An/Aus Kurs A/B/C; Default nur A; ≥2 an → versetzte Bänder (eigene Y min–max je Band via `yDomainFromCloses` / `chart-price-bands`); `closeB` entfernt; absolute-Y / closeB-Overlap = FAIL. DoD AAPL Shots `/workspace/dod-97-ta-kurs/`. | ✅ |
 
 FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live ✅. BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3 Ticker.
 
@@ -148,6 +151,8 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 - Dual-Line Benchmark (`#70` `358681a`) live. Dashboard-Badges 1–20 (`#72` `a7bfb15`) Live PASS. Thesis Lab `/#/lab` (`#73` `22d4af9`) Live PASS, 6 Fixtures.
 - Exec `#69` Live PASS (XOM; FMP Premium). Peer/ROIC Code intact (Tip ≡ `4bdc1f8`, kein Delete).
 - Abend `f0046ee9`: #75/#76/#77 Live ✅ nach Deploy · #81 `c6dc39d1` · #82 `78c8521e` · #83 `8a7ee044` · #84 `32466b6c` · #85 `f6a6a398` · #86 `7e9279db` · #88 `f0046ee9` Live ✅. #87 `2fb8b70a` Code ✅, Live 🟡 PARTIAL (healthy 251d, thin-Banner nicht repro).
+- Abend nach #92 Fix #94 (`1dc82683`, parent `7574b12d`): #92 TA Zwei-Fenster Live ✅ (`c06c835e` → Fix `1dc82683` #94, Bundle `index-JP8muGsY.js`; A close/primary/1.5 unverfärbt; closeB `#a78bfa` strokeWidth 2.5 `connectNulls=false`). #93 `7574b12d` Code ✅, Live 🟡 PARTIAL (Label Soft UI „KI“ vs Spec „N/A mit KI schätzen“).
+- Abend nach #97 (`249841ab`, parent `1dc82683`): #97 TA Kurs A/B/C Spec v3.1 Live ✅ PASS (Bundle `index-C_rUCqgy.js`; 3 An/Aus Kurs A/B/C; Default nur A; ≥2 an → versetzte Bänder, eigene Y min–max je Band via `yDomainFromCloses` / `chart-price-bands`; `closeB` entfernt; absolute-Y / closeB-Overlap = FAIL; DoD AAPL Shots `/workspace/dod-97-ta-kurs/`). #96 Draft nicht grün.
 
 **Nicht neu bauen / nicht anfassen:** Miner-Kern, PEG, inverted DCF Core, Sentiment, Portfolio F.2, Rang 7–9 ohne Entscheidung.
 
@@ -155,7 +160,7 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 
 ## 3. Offen 🟡 / ⬜ (workable, Rang 7–9 auszunehmen)
 
-**🟡 Partial:** Portfolio-Backtest Rest-DoD · Market-Charts PEG/FINRA · Hormuz (B) `recession-drivers.ts` · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`) · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro).
+**🟡 Partial:** Portfolio-Backtest Rest-DoD · Market-Charts PEG/FINRA · Hormuz (B) `recession-drivers.ts` · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`) · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro) · #93 KI-N/A-Fill (Behavior+API PASS; Label Soft UI „KI“ vs Spec „N/A mit KI schätzen“). #96 KI-Fill v2 Draft — nicht grün.
 
 **⬜ Spec (Liquidity-Bundle + Rest):** Regional LI + Books + Velocity + Data Sources · Fiscal Adaptive · Briefing regional · FRED/Sahm · Rate/Oil · Recession Sources · Peer Adaptive + Pricing-Power.
 
@@ -170,6 +175,8 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 5. Gated unverändert: Hormuz (B) `recession-drivers.ts`, Liquidity-Bundle, Valuechain Rang 7–9.
 
 Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Hormuz (B) / Liquidity-Bundle / Rang 7–9 bleiben gegated.
+
+Parallel offen, nicht grün: #96 KI-Fill v2 Draft Merge-Gate (Label Soft #93 kann nach #96 Live weg; Soft Apollo bis Philip GO).
 
 ---
 
