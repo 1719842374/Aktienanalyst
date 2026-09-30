@@ -1,7 +1,8 @@
 /**
- * Sektion 14. DefiLlama-Karten bleiben. Der Politik-Button nutzt denselben
- * JSON-Call wie der Researcher, ohne dessen Textbausteine. Ohne
- * OPENROUTER_API_KEY bleibt der Button aus.
+ * Sektion 14. DefiLlama-Karten bleiben. Der violette KI-Chip ruft mit force
+ * denselben OpenRouter-Weg wie der Researcher auf, nur fuer Krypto-Regulierungen
+ * und den Liquiditaetstracker. Ohne OPENROUTER_API_KEY bleibt der Klick
+ * moeglich und zeigt den Fehler, die Karten bleiben.
  */
 import { useEffect, useState } from "react";
 import { SectionCard } from "@/components/SectionCard";
@@ -202,7 +203,7 @@ export function StablecoinLiquidityPanel() {
       disabled={scanning}
       onClick={() => runScan(true)}
       className="h-8 shrink-0 px-2 text-[11px] font-medium rounded-md transition-all flex items-center gap-1 border bg-violet-500/15 text-violet-400 border-violet-500/30 hover:bg-violet-500/25 disabled:opacity-70"
-      title={llmOn ? "Politikinstrumente mit Beleg abrufen" : "Nutzt OPENROUTER_API_KEY auf dem Server"}
+      title={llmOn ? "Krypto-Regulierungen und Liquiditätstracker abrufen" : "Nutzt OPENROUTER_API_KEY auf dem Server"}
     >
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5v1h-4v-1c-1.2-.7-2-2-2-3.5a4 4 0 0 1 4-4z"/>
@@ -220,9 +221,9 @@ export function StablecoinLiquidityPanel() {
     <SectionCard number={14} title="Krypto-Liquidität" actions={kiButton}>
       <div className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Der KI-Abruf sucht Politik, die Liquidität in Krypto ändert. On-Chain-TVL und
-          Stablecoin-Marktkapitalisierung kommen gemessen von DefiLlama. Das Modell schreibt
-          diese Zahlen nicht um.
+          Der KI-Abruf sucht nur Krypto-Regulierungen und liest den Liquiditätstracker.
+          DeFi-TVL, die 30-Tage-Änderung, Stablecoin-Marktkapitalisierung, TGA, M2 und die
+          lange Rendite bleiben gemessen. Das Modell schreibt diese Zahlen nicht um.
         </p>
 
         {loading && (
@@ -340,7 +341,13 @@ export function StablecoinLiquidityPanel() {
             </div>
 
             {scanError && (
-              <div className="text-xs text-amber-600 dark:text-amber-400">{scanError}</div>
+              <div
+                className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-md p-3"
+                data-testid="text-policy-scan-error"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <div>{scanError}</div>
+              </div>
             )}
 
             {scan && scan.effects.treasuryBuybackCapBn != null && (

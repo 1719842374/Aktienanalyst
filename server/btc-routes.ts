@@ -78,8 +78,11 @@ export function registerBTCRoutes(app: Express): void {
   app.post("/api/analyze-btc/policy-scan", async (req, res) => {
     try {
       const body = req.body ?? {};
+      const q = req.query ?? {};
       const jurisdiction = typeof body.jurisdiction === "string" ? body.jurisdiction : "US";
-      const force = body.force === true || body.force === "true";
+      const force =
+        body.force === true || body.force === "true" || body.force === "1" ||
+        q.force === "1" || q.force === "true" || q.refresh === "1" || q.refresh === "true";
       const data = await runPolicyScan({ jurisdiction, force });
       res.json(data);
     } catch (err: any) {
