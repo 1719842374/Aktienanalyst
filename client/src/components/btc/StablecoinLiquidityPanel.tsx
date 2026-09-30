@@ -51,6 +51,12 @@ export interface StablecoinLiquidityApiResponse {
     kennzeichnung: string;
     usedInDemand: false;
   };
+  defiTvl?: {
+    available: boolean;
+    tvlUsd: number | null;
+    change30dUsd: number | null;
+    error?: string;
+  };
   _servedFromDiskCacheAfterLiveFailure?: boolean;
   _liveFetchError?: string;
 }
@@ -211,17 +217,18 @@ export function StablecoinLiquidityPanel() {
   );
 
   return (
-    <SectionCard number={14} title="Stablecoin Liquidity Channel" actions={kiButton}>
+    <SectionCard number={14} title="Krypto-Liquidität" actions={kiButton}>
       <div className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Live-Marktkapitalisierung von DefiLlama. Gesetze, Fiskalprogramme und
-          Schuldenoperationen kommen nur aus einem belegten Datensatz.
+          Der KI-Abruf sucht Politik, die Liquidität in Krypto ändert. On-Chain-TVL und
+          Stablecoin-Marktkapitalisierung kommen gemessen von DefiLlama. Das Modell schreibt
+          diese Zahlen nicht um.
         </p>
 
         {loading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            Lade Stablecoin-Daten von DefiLlama…
+            Lade Krypto-Liquidität von DefiLlama…
           </div>
         )}
 
@@ -260,6 +267,13 @@ export function StablecoinLiquidityPanel() {
               <div className="text-[10px] text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-md px-2 py-1.5">
                 Live-Abruf aktuell fehlgeschlagen ({data._liveFetchError || "unbekannt"}) — zeige letzten
                 erfolgreichen Cache-Stand.
+              </div>
+            )}
+
+            {data.defiTvl?.available && (
+              <div className="grid grid-cols-2 gap-2.5">
+                <MiniCard label="DeFi-TVL" value={formatUsdCompact(data.defiTvl.tvlUsd)} sub="DefiLlama, alle Ketten" />
+                <MiniCard label="TVL-Δ (30T)" value={formatUsdCompact(data.defiTvl.change30dUsd)} sub="gemessen" />
               </div>
             )}
 

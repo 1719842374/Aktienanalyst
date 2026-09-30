@@ -18,6 +18,7 @@
  */
 
 const DEFILLAMA_STABLECOINS_URL = "https://stablecoins.llama.fi/stablecoins?includePrices=true";
+const DEFILLAMA_TVL_URL = "https://api.llama.fi/v2/historicalChainTvl";
 const FETCH_TIMEOUT_MS = 15000;
 
 export interface StablecoinAggregate {
@@ -203,6 +204,58 @@ export function estimateTBillDemand(snapshot: StablecoinMarketSnapshot): TBillDe
   };
 }
 
+export interface DefiTvlSnapshot {
+  available: boolean;
+  fetchedAt: string;
+  tvlUsd: number | null;
+  change30dUsd: number | null;
+  error?: string;
+}
+
+/** Letzter Punkt und der Stand 30 Tage davor. Reine Funktion, kein Netz. */
+export function defiTvlFromSeries(rows: { date: number; tvl: number }[], now = new Date()): DefiTvlSnapshot {
+  const fetchedAt = now.toISOString();
+  const points = rows
+    .filter(p => Number.isFinite(p.date) && Number.isFinite(p.tvl) && p.tvl > 0)
+    .sort((a, b) => a.date - b.date);
+  const last = points[points.length - 1];
+  if (!last) {
+    return { available: false, fetchedAt, tvlUsd: null, change30dUsd: null, error: "DefiLlama lieferte keine TVL-Punkte" };
+  }
+  const cutoff = last.date - 30 * 86400;
+  const prior = [...points].reverse().find(p => p.date <= cutoff);
+  return {
+    available: true,
+    fetchedAt,
+    tvlUsd: last.tvl,
+    change30dUsd: prior ? last.tvl - prior.tvl : null,
+  };
+}
+
+export async function fetchDefiTvlSnapshot(): Promise<DefiTvlSnapshot> {
+  const fetchedAt = new Date().toISOString();
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(DEFILLAMA_TVL_URL, { signal: controller.signal, headers: { Accept: "application/json" } });
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (!res.ok) {
+      return { available: false, fetchedAt, tvlUsd: null, change30dUsd: null, error: `DefiLlama TVL HTTP ${res.status}` };
+    }
+    const json: unknown = await res.json();
+    if (!Array.isArray(json)) {
+      return { available: false, fetchedAt, tvlUsd: null, change30dUsd: null, error: "DefiLlama-TVL war kein Array" };
+    }
+    return defiTvlFromSeries(json as { date: number; tvl: number }[]);
+  } catch (err: any) {
+    return { available: false, fetchedAt, tvlUsd: null, change30dUsd: null, error: err?.message?.substring(0, 200) || "TVL-Abruf fehlgeschlagen" };
+  }
+}
+
 export interface StablecoinLiquidityResponse {
   fetchedAt: string;
   stablecoins: StablecoinMarketSnapshot;
@@ -221,10 +274,14 @@ export interface StablecoinLiquidityResponse {
     kennzeichnung: string;
     usedInDemand: false;
   };
+  defiTvl: DefiTvlSnapshot;
 }
 
 export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiquidityResponse> {
-  const stablecoins = await fetchStablecoinMarketSnapshot();
+  const [stablecoins, defiTvl] = await Promise.all([
+    fetchStablecoinMarketSnapshot(),
+    fetchDefiTvlSnapshot(),
+  ]);
   const tBillDemand = estimateTBillDemand(stablecoins);
 
   return {
@@ -245,5 +302,6 @@ export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiqu
       kennzeichnung: RESERVE_SHARE_ESTIMATES.kennzeichnung,
       usedInDemand: false,
     },
+    defiTvl,
   };
 }

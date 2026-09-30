@@ -5,7 +5,7 @@
  */
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
-import { fetchStablecoinMarketSnapshot } from "./stablecoin-liquidity";
+import { fetchDefiTvlSnapshot, fetchStablecoinMarketSnapshot } from "./stablecoin-liquidity";
 import {
   activeTreasuryBuybackCapBn,
   evidencedReserveShares,
@@ -15,7 +15,7 @@ import {
   type PolicyInstrument,
 } from "./policy-instruments";
 
-const SCHEMA = "v1";
+const SCHEMA = "v2";
 const mem = new Map<string, PolicyScanResult>();
 
 export interface MeasuredPolicyContext {
@@ -25,6 +25,8 @@ export interface MeasuredPolicyContext {
   mcapChange30dUsd: number | null;
   usdtMcapUsd: number | null;
   usdcMcapUsd: number | null;
+  defiTvlUsd: number | null;
+  defiTvlChange30dUsd: number | null;
   tgaBn: number | null;
   dgs10: number | null;
   dgs10History: { date: string; value: number }[];
@@ -90,8 +92,9 @@ async function fredLatest(series: string, days: number): Promise<{ date: string;
 
 export async function loadMeasuredPolicyContext(jurisdiction: string): Promise<MeasuredPolicyContext> {
   const asOf = new Date().toISOString().slice(0, 10);
-  const [stable, dgs, tga, m2] = await Promise.all([
+  const [stable, tvl, dgs, tga, m2] = await Promise.all([
     fetchStablecoinMarketSnapshot().catch(() => null),
+    fetchDefiTvlSnapshot().catch(() => null),
     fredLatest("DGS10", 800),
     fredLatest("WTREGEN", 120),
     fredLatest("M2SL", 800),
@@ -105,6 +108,8 @@ export async function loadMeasuredPolicyContext(jurisdiction: string): Promise<M
     mcapChange30dUsd: mcap != null && prev != null ? mcap - prev : null,
     usdtMcapUsd: stable?.usdt?.circulatingUsd ?? null,
     usdcMcapUsd: stable?.usdc?.circulatingUsd ?? null,
+    defiTvlUsd: tvl?.tvlUsd ?? null,
+    defiTvlChange30dUsd: tvl?.change30dUsd ?? null,
     tgaBn: tga.length ? tga[tga.length - 1].value / 1000 : null,
     dgs10: dgs.length ? dgs[dgs.length - 1].value : null,
     dgs10History: dgs,
@@ -123,10 +128,12 @@ function observedMoveBp(history: { date: string; value: number }[], evidenceDate
 export function buildPolicyScanPrompt(measured: MeasuredPolicyContext): string {
   const m = measured;
   return `Heute ist ${m.asOf}. Jurisdiktion: ${m.jurisdiction}.
-Du lieferst nur belegte Politikinstrumente, die heute die T-Bill-Nachfrage, die lange Rendite oder M2 aendern.
+Du suchst Krypto-Liquidität, nicht ein einzelnes Stablecoin-Produkt.
+Welche Gesetze, Fiskalprogramme und Schuldenoperationen ändern heute die Liquidität, die Krypto erreicht: On-Chain-Liquidität, Stablecoin-Angebot, Dollar-Liquidität oder die lange Rendite.
+Jede Wirkung bekommt channels.cryptoLiquidity = "up", "down" oder "unclear".
+Stablecoins sind nur eine gemessene Schicht. Ein Programm, das lange Kapitalmarktzinsen senkt, ist fiscal_program mit channels.longYield = "down" und channels.cryptoLiquidity passend zur Liquiditätswirkung.
 Keine Personennamen als Schluessel. officeHolder ist optionaler Anzeigetext. Die Regel haengt am Amt.
 Ein abgelehntes oder ausgelaufenes Vorhaben hat status rejected oder expired.
-Fiskalprogramme, die die langen Kapitalmarktzinsen senken, sind fiscal_program mit channels.longYield = "down".
 Treasury-Kaeufe langer Anleihen sind debt_operation, office treasury, channels.duration = "easing", magnitude.kind = "cap_bn" in Milliarden.
 Reserveanteile nur mit Beleg: magnitude.kind = "share", issuer USDT oder USDC, Wert 0 bis 1.
 Gesetzes-Score nur mit Beleg: magnitude.kind = "score", Wert 0 bis 1.5.
@@ -134,14 +141,16 @@ expectedMoveBp ist die erwartete Aenderung der 10-Jahres-Rendite in Basispunkten
 halfLifeDays nur wenn kein decisionDate bekannt ist.
 
 Gemessene Serien, nicht veraendern:
+- DeFi-TVL USD, alle Ketten: ${m.defiTvlUsd ?? "unbekannt"}
+- DeFi-TVL Aenderung 30 Tage USD: ${m.defiTvlChange30dUsd ?? "unbekannt"}
 - Stablecoin-Marktkapitalisierung USD: ${m.stablecoinMcapUsd ?? "unbekannt"}
-- Aenderung 30 Tage USD: ${m.mcapChange30dUsd ?? "unbekannt"}
+- Stablecoin-Aenderung 30 Tage USD: ${m.mcapChange30dUsd ?? "unbekannt"}
 - TGA Mrd. USD: ${m.tgaBn ?? "unbekannt"}
 - 10Y-Rendite Prozent: ${m.dgs10 ?? "unbekannt"}
 - M2 Mrd. USD: ${m.m2Bn ?? "unbekannt"}
 
 JSON:
-{"instruments":[{"id":"kurz","jurisdiction":"${m.jurisdiction}","office":"treasury|central_bank|legislature|regulator","instrumentType":"statute|fiscal_program|debt_operation","status":"proposed|advanced|enacted|implementing|rejected|expired|uncertain","officeHolder":"","effectiveFrom":"YYYY-MM-DD","effectiveTo":"YYYY-MM-DD","decisionDate":"YYYY-MM-DD","halfLifeDays":90,"expectedMoveBp":-15,"channels":{"tBillDemand":"up|down|unclear","longYield":"up|down|unclear","m2":"up|down|unclear","duration":"easing|tightening|neutral"},"magnitude":{"kind":"cap_bn|share|score|yield_bp","value":0,"unit":"","issuer":""},"evidence":[{"source":"","url":"https://","date":"YYYY-MM-DD"}]}]}`;
+{"instruments":[{"id":"kurz","jurisdiction":"${m.jurisdiction}","office":"treasury|central_bank|legislature|regulator","instrumentType":"statute|fiscal_program|debt_operation","status":"proposed|advanced|enacted|implementing|rejected|expired|uncertain","officeHolder":"","effectiveFrom":"YYYY-MM-DD","effectiveTo":"YYYY-MM-DD","decisionDate":"YYYY-MM-DD","halfLifeDays":90,"expectedMoveBp":-15,"channels":{"cryptoLiquidity":"up|down|unclear","tBillDemand":"up|down|unclear","longYield":"up|down|unclear","m2":"up|down|unclear","duration":"easing|tightening|neutral"},"magnitude":{"kind":"cap_bn|share|score|yield_bp","value":0,"unit":"","issuer":""},"evidence":[{"source":"","url":"https://","date":"YYYY-MM-DD"}]}]}`;
 }
 
 function effectsFor(instruments: PolicyInstrument[], measured: MeasuredPolicyContext) {
