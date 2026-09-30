@@ -193,6 +193,82 @@ await fetchDailyHistory({
   check("junges Listing: sichtbare 10Y bleibt truncated", loaded.truncated === true);
 });
 
+// Production screenshot: 5Y is the last 1260 sessions and the loaded chart
+// shows 23.09.2021–30.09.2026. That span has more raw weekdays than 1260, so
+// the visible slice keeps the endpoints and drops a few sessions in between.
+// 220 older closes sit in front of 23.09.2021.
+function weekdayDates(startIso: string, endIso: string): string[] {
+  const out: string[] = [];
+  const d = new Date(`${startIso}T00:00:00Z`);
+  const end = new Date(`${endIso}T00:00:00Z`);
+  while (d <= end) {
+    const day = d.getUTCDay();
+    if (day !== 0 && day !== 6) out.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
+function barsOnDates(dates: string[], seed = 0): OHLCVPoint[] {
+  return dates.map((date, i) => {
+    const close = 180 + 70 * Math.sin((seed + i) / 28) + i * 0.08;
+    return { date, open: close - 0.6, high: close + 1.2, low: close - 1.2, close, volume: 800_000 + (i % 9) * 1000 };
+  });
+}
+const shotSpan = weekdayDates("2021-09-23", "2026-09-30");
+const shotKeep = [0];
+for (let k = 1; k < 1259; k++) shotKeep.push(Math.round(k * (shotSpan.length - 1) / 1259));
+shotKeep.push(shotSpan.length - 1);
+const shotVisibleDates = [...new Set(shotKeep)].sort((a, b) => a - b).map(i => shotSpan[i]);
+const shotVisible = barsOnDates(shotVisibleDates);
+const dayBeforeShot = new Date(`${shotVisible[0].date}T00:00:00Z`);
+dayBeforeShot.setUTCDate(dayBeforeShot.getUTCDate() - 1);
+const shotWarmup = weekdayBarsEnding(220, dayBeforeShot.toISOString().slice(0, 10));
+const shotSeries = [...shotWarmup, ...shotVisible];
+const shotCapped = shotSeries.slice(-TA_OHLCV_MAX_POINTS);
+const shotFull = buildFullSeries(shotCapped);
+const shotWindow = buildWindowSeries(shotFull, shotCapped.slice(-1260));
+const shotFullMa200 = smaSeries(shotCapped.map(b => b.close), 200);
+const shotFullMa50 = smaSeries(shotCapped.map(b => b.close), 50);
+check(
+  "Screenshot-5Y: Serie behält die 220 Bars vor dem ersten sichtbaren Tag",
+  shotCapped.length === shotSeries.length && shotCapped[0].date === shotWarmup[0].date,
+  `n=${shotCapped.length} first=${shotCapped[0]?.date}`,
+);
+check(
+  "Screenshot-5Y: sichtbares Fenster beginnt am 23.09.2021",
+  shotWindow.points[0]?.date === "2021-09-23" && shotWindow.points[shotWindow.points.length - 1]?.date === "2026-09-30",
+  `from=${shotWindow.points[0]?.date} to=${shotWindow.points[shotWindow.points.length - 1]?.date}`,
+);
+check("Screenshot-5Y: MA200 ab Index 0", firstFiniteIndex(shotWindow.points, "ma200") === 0);
+check("Screenshot-5Y: MA50 ab Index 0", firstFiniteIndex(shotWindow.points, "ma50") === 0);
+check(
+  "Screenshot-5Y: MA200 am linken Rand = SMA der Serie inkl. Warmup",
+  shotWindow.points[0].ma200 === shotFullMa200[220] && shotWindow.points[0].ma200 != null,
+  `plotted=${shotWindow.points[0].ma200} full=${shotFullMa200[220]}`,
+);
+check(
+  "Screenshot-5Y: MA50 am linken Rand = SMA der Serie inkl. Warmup",
+  shotWindow.points[0].ma50 === shotFullMa50[220] && shotWindow.points[0].ma50 != null,
+);
+const shotClose = shotWindow.points[0].close;
+const shotMa = shotWindow.points[0].ma200!;
+check(
+  "Screenshot-5Y: MA200 liegt auf derselben Preisskala wie der Kurs",
+  shotMa > shotClose * 0.25 && shotMa < shotClose * 4,
+  `close=${shotClose} ma200=${shotMa}`,
+);
+
+const tenSeries = weekdayBarsEnding(TA_VISIBLE_10Y_BARS + TA_INDICATOR_WARMUP_BARS, "2026-09-30").slice(-TA_OHLCV_MAX_POINTS);
+const tenFull = buildFullSeries(tenSeries);
+const tenWindow = buildWindowSeries(tenFull, tenSeries.slice(-TA_VISIBLE_10Y_BARS));
+const tenMa = smaSeries(tenSeries.map(b => b.close), 200);
+check("10Y nach Cap: Warmup bleibt vor den letzten 2520 Bars", tenSeries.length - TA_VISIBLE_10Y_BARS >= 200);
+check("10Y: MA200 ab Index 0", firstFiniteIndex(tenWindow.points, "ma200") === 0);
+check(
+  "10Y: MA200 am linken Rand = SMA der Serie inkl. Warmup",
+  tenWindow.points[0].ma200 === tenMa[tenSeries.length - TA_VISIBLE_10Y_BARS],
+);
+
 if (failed) {
   console.error(`\n${failed} checks failed`);
   process.exit(1);
