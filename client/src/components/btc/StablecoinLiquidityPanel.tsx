@@ -189,40 +189,34 @@ export function StablecoinLiquidityPanel() {
   const statuteScore = scan?.effects.statuteScore ?? data?.statute.score ?? null;
   const statuteResidual = scan?.effects.statuteResidual ?? null;
 
+  const kiButton = (
+    <button
+      type="button"
+      data-testid="button-policy-scan"
+      disabled={scanning}
+      onClick={() => runScan(true)}
+      className="h-8 shrink-0 px-2 text-[11px] font-medium rounded-md transition-all flex items-center gap-1 border bg-violet-500/15 text-violet-400 border-violet-500/30 hover:bg-violet-500/25 disabled:opacity-70"
+      title={llmOn ? "Politikinstrumente mit Beleg abrufen" : "Nutzt OPENROUTER_API_KEY auf dem Server"}
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5v1h-4v-1c-1.2-.7-2-2-2-3.5a4 4 0 0 1 4-4z"/>
+        <path d="M10 10.5v2.5h4v-2.5"/>
+        <path d="M10 15h4"/>
+        <path d="M11 15v2"/>
+        <path d="M13 15v2"/>
+      </svg>
+      <span>KI</span>
+      {(llmOn || scanning) && <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />}
+    </button>
+  );
+
   return (
-    <SectionCard number={14} title="Stablecoin Liquidity Channel">
+    <SectionCard number={14} title="Stablecoin Liquidity Channel" actions={kiButton}>
       <div className="space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Live-Marktkapitalisierung von DefiLlama. Gesetze, Fiskalprogramme und
-            Schuldenoperationen kommen nur aus einem belegten Datensatz. Ohne Schlüssel
-            bleibt der Button aus.
-          </p>
-          <button
-            type="button"
-            data-testid="button-policy-scan"
-            disabled={!llmOn || scanning}
-            onClick={() => runScan(true)}
-            className="h-8 shrink-0 px-2 text-[11px] font-medium rounded-md transition-all flex items-center gap-1 border bg-violet-500/15 text-violet-400 border-violet-500/30 hover:bg-violet-500/25 disabled:opacity-100 disabled:hover:bg-violet-500/15 disabled:cursor-not-allowed"
-            title={llmOn ? "Politikinstrumente mit Beleg abrufen" : "OPENROUTER_API_KEY fehlt. In Render setzen, nicht in den Chat."}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5v1h-4v-1c-1.2-.7-2-2-2-3.5a4 4 0 0 1 4-4z"/>
-              <path d="M10 10.5v2.5h4v-2.5"/>
-              <path d="M10 15h4"/>
-              <path d="M11 15v2"/>
-              <path d="M13 15v2"/>
-            </svg>
-            <span>KI</span>
-            <span className="hidden sm:inline">{scanning ? "Prüfe…" : "Politik"}</span>
-            {llmOn && <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />}
-          </button>
-        </div>
-        {data && !llmOn && (
-          <div className="text-[10px] text-muted-foreground">
-            OPENROUTER_API_KEY fehlt. Die DefiLlama-Karten bleiben.
-          </div>
-        )}
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Live-Marktkapitalisierung von DefiLlama. Gesetze, Fiskalprogramme und
+          Schuldenoperationen kommen nur aus einem belegten Datensatz.
+        </p>
 
         {loading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
