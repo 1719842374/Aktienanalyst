@@ -14,6 +14,8 @@ import { toast } from "@/hooks/use-toast";
 interface Props { data: StockAnalysis; }
 
 const MA_LINES = [
+  // Theme-Vordergrund statt Buntton: alle Farbtöne sind durch MAs, BB, Kurs B/C und Signale belegt.
+  { key: "ma200w", label: "MA200W (SMA)", color: "hsl(var(--foreground))", defaultOn: false },
   { key: "ma200", label: "MA200 (SMA)", color: "#ef4444", defaultOn: true },
   { key: "ma100", label: "MA100 (SMA)", color: "#f97316", defaultOn: false },
   { key: "ma50",  label: "MA50 (SMA)",  color: "#eab308", defaultOn: true },
@@ -152,6 +154,7 @@ function emaSeries(data: number[], period: number): (number | undefined)[] {
 type WindowPoint = {
   date: string;
   close: number;
+  ma200w?: number;
   ma200?: number;
   ma100?: number;
   ma50?: number;
@@ -192,6 +195,8 @@ function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
   if (bars.length === 0) return { points: [], signals: [], indexOf };
   const closes = bars.map(b => b.close);
   const dates = bars.map(b => b.date);
+  // 200-Wochen-Durchschnitt: 200 Wochen × 5 Handelstage = 1000 Tages-Closes.
+  const ma200w = smaSeries(closes, 1000);
   const ma200 = smaSeries(closes, 200);
   const ma100 = smaSeries(closes, 100);
   const ma50 = smaSeries(closes, 50);
@@ -249,7 +254,7 @@ function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
     return {
       date: b.date,
       close: b.close,
-      ma200: ma200[i], ma100: ma100[i], ma50: ma50[i],
+      ma200w: ma200w[i], ma200: ma200[i], ma100: ma100[i], ma50: ma50[i],
       ma20: ma20[i], ema26: ema26[i], ema12: ema12[i], ema9: ema9[i],
       macd: m,
       signal: sig,
@@ -696,7 +701,7 @@ export function TechnicalChart({ data }: Props) {
 
           <div className="flex min-w-0 max-w-full flex-wrap gap-1.5 sm:gap-1" data-testid="row-indicators">
             {MA_LINES.map(ma => (
-              <button key={ma.key} type="button" onClick={() => toggleMA(ma.key)}
+              <button key={ma.key} type="button" onClick={() => toggleMA(ma.key)} data-testid={`button-${ma.key}`} aria-pressed={visibleMAs.has(ma.key)}
                 className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-7 sm:text-[10px] ${
                   visibleMAs.has(ma.key) ? "border-current opacity-100" : "border-border opacity-40 hover:opacity-60"
                 }`}
