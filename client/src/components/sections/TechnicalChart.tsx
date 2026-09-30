@@ -190,7 +190,7 @@ export function TechnicalChart({ data }: Props) {
   // Plan-Downgrade auf Free/Starter mit nur 5 Jahren Historie, oder ein sehr
   // junger Börsengang), zeigen wir einen klaren Hinweis statt den Button-Wert
   // ("10Y") so zu tun als waere er erfuellt. Aktuell liefert der produktive
-  // FMP-Plan verifiziert 10+ Jahre (siehe yearAgo(10) in fmp-fetcher.ts) — dieser
+  // FMP-Plan verifiziert 10+ Jahre plus Indikator-Warmup (indicatorWarmupFromDate) — dieser
   // Hinweis ist ein Sicherheitsnetz fuer den Fall, dass sich das aendert, nicht
   // ein aktiv beobachtetes Problem.
   // Toleranz 95%: Handelstage pro Kalenderjahr schwanken leicht (Feiertage,
