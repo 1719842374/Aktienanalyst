@@ -72,6 +72,7 @@ interface ScanMeasured {
   realYield10y?: number | null;
   dgs10?: number | null;
   m2Bn?: number | null;
+  tgaBn?: number | null;
 }
 
 interface PolicyScanResponse {
@@ -173,6 +174,18 @@ const TYPE_LABEL: Record<string, string> = {
 
 function formatPct(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? "n/v" : `${value.toFixed(2)}%`;
+}
+
+export function MeasuredFredCards({ measured }: { measured: ScanMeasured }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2" data-testid="text-measured-rates">
+      <MiniCard label="Leitzins" value={formatPct(measured.policyRate)} sub="FRED, gemessen" />
+      <MiniCard label="Realzins 10Y" value={formatPct(measured.realYield10y)} sub="FRED, gemessen" />
+      <MiniCard label="10-Jahres-Rendite" value={formatPct(measured.dgs10)} sub="FRED, gemessen" />
+      <MiniCard label="M2" value={formatUsdCompact(measured.m2Bn == null ? null : measured.m2Bn * 1e9)} sub="FRED, gemessen" />
+      <MiniCard label="TGA" value={formatUsdCompact(measured.tgaBn == null ? null : measured.tgaBn * 1e9)} sub="FRED, gemessen" />
+    </div>
+  );
 }
 
 export function StablecoinLiquidityPanel() {
@@ -368,14 +381,7 @@ export function StablecoinLiquidityPanel() {
               {" · "}
               {scan.instruments.length} belegt
             </div>
-            {scan.measured && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="text-measured-rates">
-                <MiniCard label="Leitzins" value={formatPct(scan.measured.policyRate)} sub="FRED, gemessen" />
-                <MiniCard label="Realzins 10Y" value={formatPct(scan.measured.realYield10y)} sub="FRED, gemessen" />
-                <MiniCard label="10-Jahres-Rendite" value={formatPct(scan.measured.dgs10)} sub="FRED, gemessen" />
-                <MiniCard label="M2" value={formatUsdCompact(scan.measured.m2Bn == null ? null : scan.measured.m2Bn * 1e9)} sub="FRED, gemessen" />
-              </div>
-            )}
+            {scan.measured && <MeasuredFredCards measured={scan.measured} />}
             {scan.error && (
               <div className="text-[11px] text-amber-700 dark:text-amber-400" data-testid="text-policy-scan-error-inline">
                 {scan.error}
