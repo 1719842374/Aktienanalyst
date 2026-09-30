@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import type { StockAnalysis, OHLCVPoint, TradingSignal } from "../../../../shared/schema";
+import type { StockAnalysis, TradingSignal } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import {
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis,
@@ -7,6 +7,10 @@ import {
 } from "recharts";
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { axisTick, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
+import {
+  buildFullSeries, buildWindowSeries, firstFiniteIndex, sliceBars,
+  type WindowPoint, type WindowSeries,
+} from "@/lib/taWindowSeries";
 import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -47,16 +51,6 @@ const DATE_INPUT_CLASS =
 const STROKE_B = "#a78bfa";
 const STROKE_C = "#34d399";
 
-/** OHLCV-Slice eines Fensters. Keine Bars außerhalb [from, to]. */
-function sliceBars(bars: OHLCVPoint[], from: string, to: string): OHLCVPoint[] {
-  if (!from || !to || from > to) return [];
-  const out: OHLCVPoint[] = [];
-  for (const p of bars) {
-    if (p.date >= from && p.date <= to) out.push(p);
-  }
-  return out;
-}
-
 /** Abstand zwischen gestapelten Kurs-Bändern. Klein, aber sichtbar — die Trennung ist die Bandhöhe, nicht eine gemeinsame Y. */
 const BAND_GAP_PX = 8;
 
@@ -76,215 +70,18 @@ function bandAxisDate(date: string, from: string, to: string): string {
   return span > 400 * 86400000 ? `${p[1]}/${p[0].slice(2)}` : `${p[1]}/${p[2]}`;
 }
 
-// ─── RSI (Wilder, period=14) ────────────────────────────────────────────────
-function calcRSI(closes: number[], period = 14): (number | undefined)[] {
-  const rsi: (number | undefined)[] = [];
-  if (closes.length < period + 1) return closes.map(() => undefined);
-  let gains = 0, losses = 0;
-  for (let i = 1; i <= period; i++) {
-    const d = closes[i] - closes[i - 1];
-    if (d >= 0) gains += d; else losses -= d;
-  }
-  let avgGain = gains / period;
-  let avgLoss = losses / period;
-  for (let i = 0; i < period; i++) rsi.push(undefined);
-  const rs0 = avgLoss === 0 ? Infinity : avgGain / avgLoss;
-  rsi.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + rs0));
-  for (let i = period + 1; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1];
-    const g = d > 0 ? d : 0;
-    const l = d < 0 ? -d : 0;
-    avgGain = (avgGain * (period - 1) + g) / period;
-    avgLoss = (avgLoss * (period - 1) + l) / period;
-    const rs = avgLoss === 0 ? Infinity : avgGain / avgLoss;
-    rsi.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + rs));
-  }
-  return rsi;
-}
-
-// ─── Bollinger Bands (period=20, k=2) ───────────────────────────────────────
-function calcBollinger(closes: number[], period = 20, k = 2) {
-  return closes.map((_, i) => {
-    if (i < period - 1) return { bbMid: undefined, bbUpper: undefined, bbLower: undefined };
-    const slice = closes.slice(i - period + 1, i + 1);
-    const mean = slice.reduce((a, b) => a + b, 0) / period;
-    const variance = slice.reduce((a, b) => a + (b - mean) ** 2, 0) / period;
-    const std = Math.sqrt(variance);
-    return { bbMid: mean, bbUpper: mean + k * std, bbLower: mean - k * std };
-  });
-}
-
-// ─── SMA / EMA — gleiche Definition wie Server (analyze-route), auf der vollen OHLCV-Historie ──
-function smaSeries(data: number[], period: number): (number | undefined)[] {
-  const out: (number | undefined)[] = new Array(data.length);
-  let sum = 0;
-  for (let i = 0; i < data.length; i++) {
-    sum += data[i];
-    if (i >= period) sum -= data[i - period];
-    out[i] = i >= period - 1 ? sum / period : undefined;
-  }
-  return out;
-}
-
-function emaSeries(data: number[], period: number): (number | undefined)[] {
-  const out: (number | undefined)[] = new Array(data.length);
-  const k = 2 / (period + 1);
-  let ema: number | undefined;
-  for (let i = 0; i < data.length; i++) {
-    if (!isFinite(data[i])) { out[i] = undefined; continue; }
-    if (ema === undefined) {
-      if (i >= period - 1) {
-        let s = 0;
-        for (let j = i - period + 1; j <= i; j++) s += data[j];
-        ema = s / period;
-        out[i] = ema;
-      } else {
-        out[i] = undefined;
-      }
-    } else {
-      ema = data[i] * k + ema * (1 - k);
-      out[i] = ema;
-    }
-  }
-  return out;
-}
-
-type WindowPoint = {
-  date: string;
-  close: number;
-  ma200?: number;
-  ma100?: number;
-  ma50?: number;
-  ma20?: number;
-  ema26?: number;
-  ema12?: number;
-  ema9?: number;
-  macd?: number;
-  signal?: number;
-  histogram?: number;
-  bbUpper?: number;
-  bbMid?: number;
-  bbLower?: number;
-  rsi?: number;
-  volume: number;
-  _volNorm: number;
-  _volUp: boolean;
-  _signals: TradingSignal[] | null;
-};
-
-type WindowSeries = { points: WindowPoint[]; signals: TradingSignal[] };
-
-type FullSeries = {
-  points: Omit<WindowPoint, "_volNorm">[];
-  signals: TradingSignal[];
-  indexOf: Map<OHLCVPoint, number>;
-};
-
-/** MAs, BB, RSI, MACD und Signale einmal auf der vollen, chronologischen OHLCV-Historie. */
-function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
-  let sorted = true;
-  for (let i = 1; i < ohlcv.length; i++) {
-    if (ohlcv[i - 1].date > ohlcv[i].date) { sorted = false; break; }
-  }
-  const bars = sorted ? ohlcv : [...ohlcv].sort((a, b) => a.date.localeCompare(b.date));
-  const indexOf = new Map<OHLCVPoint, number>();
-  bars.forEach((b, i) => indexOf.set(b, i));
-  if (bars.length === 0) return { points: [], signals: [], indexOf };
-  const closes = bars.map(b => b.close);
-  const dates = bars.map(b => b.date);
-  const ma200 = smaSeries(closes, 200);
-  const ma100 = smaSeries(closes, 100);
-  const ma50 = smaSeries(closes, 50);
-  const ma20 = smaSeries(closes, 20);
-  const ema26 = emaSeries(closes, 26);
-  const ema12 = emaSeries(closes, 12);
-  const ema9 = emaSeries(closes, 9);
-
-  const macdRaw: number[] = closes.map((_, i) => {
-    const e12 = ema12[i], e26 = ema26[i];
-    return (e12 != null && e26 != null) ? e12 - e26 : NaN;
-  });
-  const firstValid = macdRaw.findIndex(v => isFinite(v));
-  const macdForEma = macdRaw.map(v => isFinite(v) ? v : 0);
-  const signalSeries = emaSeries(macdForEma, 9);
-  for (let i = 0; i < firstValid + 8; i++) if (i < bars.length) signalSeries[i] = undefined;
-
-  const bb = calcBollinger(closes);
-  const rsi = calcRSI(closes);
-
-  const macdAt = (i: number) => (isFinite(macdRaw[i]) ? macdRaw[i] : undefined);
-  const signals: TradingSignal[] = [];
-  for (let i = 1; i < bars.length; i++) {
-    const cur50 = ma50[i], prev50 = ma50[i - 1];
-    const cur200 = ma200[i], prev200 = ma200[i - 1];
-    if (cur50 != null && cur200 != null && prev50 != null && prev200 != null) {
-      if (prev50 <= prev200 && cur50 > cur200) {
-        signals.push({ date: dates[i], type: "buy", reason: "Golden Cross (MA50 > MA200)", price: closes[i] });
-      } else if (prev50 >= prev200 && cur50 < cur200) {
-        signals.push({ date: dates[i], type: "sell", reason: "Death Cross (MA50 < MA200)", price: closes[i] });
-      }
-    }
-    const curM = macdAt(i), prevM = macdAt(i - 1);
-    const curS = signalSeries[i], prevS = signalSeries[i - 1];
-    if (curM != null && prevM != null && curS != null && prevS != null) {
-      if (prevM <= prevS && curM > curS) {
-        signals.push({ date: dates[i], type: "buy", reason: "Bullish MACD Cross", price: closes[i] });
-      } else if (prevM >= prevS && curM < curS) {
-        signals.push({ date: dates[i], type: "sell", reason: "Bearish MACD Cross", price: closes[i] });
-      }
-    }
-  }
-
-  const signalsByDate = new Map<string, TradingSignal[]>();
-  for (const s of signals) {
-    const arr = signalsByDate.get(s.date) || [];
-    arr.push(s);
-    signalsByDate.set(s.date, arr);
-  }
-
-  const points: Omit<WindowPoint, "_volNorm">[] = bars.map((b, i) => {
-    const m = macdAt(i);
-    const sig = signalSeries[i];
-    const prevClose = i > 0 ? closes[i - 1] : closes[i];
-    return {
-      date: b.date,
-      close: b.close,
-      ma200: ma200[i], ma100: ma100[i], ma50: ma50[i],
-      ma20: ma20[i], ema26: ema26[i], ema12: ema12[i], ema9: ema9[i],
-      macd: m,
-      signal: sig,
-      histogram: (m != null && sig != null) ? m - sig : undefined,
-      bbUpper: bb[i]?.bbUpper,
-      bbMid: bb[i]?.bbMid,
-      bbLower: bb[i]?.bbLower,
-      rsi: rsi[i],
-      volume: b.volume ?? 0,
-      _volUp: b.close >= prevClose,
-      _signals: signalsByDate.get(b.date) || null,
-    };
-  });
-  return { points, signals, indexOf };
-}
-
-/**
- * Fenster = Ausschnitt der vollen Serie: Wert am Datum D = Wert des Gesamtcharts an D.
- * Nur wenn vor Fensterbeginn keine Historie geladen ist, fehlen lange Perioden (z.B. MA200).
- * Signale = die der vollen Serie mit Datum im Fenster. _volNorm je Fenster (Max-Volumen des Fensters).
- */
-function buildWindowSeries(full: FullSeries, bars: OHLCVPoint[]): WindowSeries {
-  if (bars.length === 0) return { points: [], signals: [] };
-  const allVols = bars.map(b => b.volume).filter(v => v > 0);
-  const maxVol = allVols.length ? Math.max(...allVols) : 1;
-  const dates = new Set<string>();
-  const points: WindowPoint[] = [];
-  for (const b of bars) {
-    const i = full.indexOf.get(b);
-    if (i === undefined) continue;
-    dates.add(b.date);
-    points.push({ ...full.points[i], _volNorm: b.volume > 0 ? b.volume / maxVol : 0 });
-  }
-  const signals = full.signals.filter(s => dates.has(s.date));
-  return { points, signals };
+function maProbeAttrs(points: WindowPoint[]): Record<string, string> {
+  const idx = (key: keyof WindowPoint) => {
+    const i = firstFiniteIndex(points, key);
+    return i < 0 ? "" : String(i);
+  };
+  return {
+    "data-n": String(points.length),
+    "data-first-ma200": idx("ma200"),
+    "data-first-ma50": idx("ma50"),
+    "data-first-ma20": idx("ma20"),
+    "data-first-ema26": idx("ema26"),
+  };
 }
 
 /** Eigene Y je Band: Close + gerade sichtbare MAs/BB. Keine gemeinsame Absolute-Y. */
@@ -881,7 +678,7 @@ export function TechnicalChart({ data }: Props) {
       ) : singleALayout ? (
         <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll">
           <div className="min-w-0 max-w-full">
-            <div className={`${priceBandClass(1)} w-full min-w-0 max-w-full ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma">
+            <div className={`${priceBandClass(1)} w-full min-w-0 max-w-full ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma" {...maProbeAttrs(aBuilt.points)}>
               <PricePane
                 points={aBuilt.points}
                 signals={aBuilt.signals}
@@ -1365,7 +1162,7 @@ function BandStack({
   const compact = count > 1;
   return (
     <TaPlotScroll minWidth={taChartMinWidth(52, 0, 10)} testId={`${testId}-scroll`}>
-    <div className="min-w-0 max-w-full" data-testid={testId}>
+    <div className="min-w-0 max-w-full" data-testid={testId} {...maProbeAttrs(series.points)}>
       <div className={`${priceBandClass(count)} flex min-w-0 flex-col overflow-hidden ${measureMode ? "cursor-crosshair" : ""}`}>
         <div className={`shrink-0 text-[10px] font-medium leading-none ${labelClassName}`} style={labelColor ? { color: labelColor } : undefined}>{label}</div>
         <div className="min-h-0 w-full flex-1">
