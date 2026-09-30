@@ -67,7 +67,7 @@ export async function apiRequest(
     return res;
   } catch (err: any) {
     clearTimeout(timer);
-    if (err?.name === 'AbortError') throw new Error('Timeout: Server hat nicht innerhalb von 90s geantwortet');
+    if (err?.name === 'AbortError') throw new Error(`Timeout: Server hat nicht innerhalb von ${Math.round(timeoutMs / 1000)}s geantwortet`);
     throw err;
   }
 }

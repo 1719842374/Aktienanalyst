@@ -154,7 +154,8 @@ export function StablecoinLiquidityPanel() {
       const json = (await res.json().catch(() => ({}))) as PolicyScanResponse & { error?: string };
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       const instruments = Array.isArray(json.instruments) ? json.instruments : [];
-      setScan({ ...json, instruments, summary: json.summary ?? null, dropped: json.dropped ?? 0 });
+      const priced = Array.isArray(json.priced) ? json.priced : [];
+      setScan({ ...json, instruments, priced, summary: typeof json.summary === "string" ? json.summary : null, dropped: json.dropped ?? 0 });
       if (json.error && instruments.length === 0) setScanError(json.error);
     } catch (err: any) {
       setScan(null);
@@ -314,7 +315,9 @@ export function StablecoinLiquidityPanel() {
             <p className="text-xs leading-relaxed" data-testid="text-policy-summary">
               {scan.summary?.trim()
                 ? scan.summary
-                : "Die Analyse ist gelaufen. Keine belegte Krypto-Regulierung wurde behalten."}
+                : scan.instruments.length === 0
+                  ? "Die Analyse ist gelaufen. Keine belegte Krypto-Regulierung wurde behalten."
+                  : "Die Analyse ist gelaufen. Eine Zusammenfassung wurde nicht geliefert."}
             </p>
             {scan.effects?.treasuryBuybackCapBn != null && (
               <div className="text-xs text-muted-foreground" data-testid="text-treasury-cap">
@@ -330,8 +333,8 @@ export function StablecoinLiquidityPanel() {
             {scan.instruments.length > 0 && (
               <div className="space-y-2" data-testid="list-policy-instruments">
                 {scan.instruments.map(inst => {
-                  const priced = scan.priced.find(p => p.id === inst.id);
-                  const channels = Object.entries(inst.channels)
+                  const priced = (scan.priced ?? []).find(p => p.id === inst.id);
+                  const channels = Object.entries(inst.channels ?? {})
                     .map(([k, v]) => `${CHANNEL_LABEL[k] ?? k}: ${v}`)
                     .join(", ");
                   return (
@@ -346,7 +349,7 @@ export function StablecoinLiquidityPanel() {
                         {" · "}Halbwertzeit {priced?.halfLifeDays == null ? "—" : `${priced.halfLifeDays} Tage`}
                         {" · "}Rest {priced?.residual == null ? "—" : priced.residual.toFixed(3)}
                       </div>
-                      {inst.evidence[0] && (
+                      {inst.evidence?.[0] && (
                         <a className="underline text-foreground/80" href={inst.evidence[0].url} target="_blank" rel="noreferrer">
                           {inst.evidence[0].source} · {inst.evidence[0].date}
                         </a>

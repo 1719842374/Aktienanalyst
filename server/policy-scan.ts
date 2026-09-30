@@ -19,7 +19,7 @@ import {
   type PolicyInstrument,
 } from "./policy-instruments";
 
-const SCHEMA = "v3";
+const SCHEMA = "v4";
 const CACHE_TAB = "crypto_regulation";
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 const RESEARCHER_TTL_MIN = 60 * 6;
@@ -54,14 +54,14 @@ function readPolicyCache(params: string): PolicyScanResult | null {
       const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as PolicyScanResult & { _cachedAt?: string; _cacheAge?: number };
       const cachedAt = parsed?._cachedAt ? new Date(parsed._cachedAt).getTime() : 0;
       const ageMin = (Date.now() - cachedAt) / 60000;
-      if (ageMin < RESEARCHER_TTL_MIN && Array.isArray(parsed.instruments) && !parsed.error) {
+      if (ageMin < RESEARCHER_TTL_MIN && Array.isArray(parsed.instruments) && !parsed.error && "summary" in parsed) {
         parsed._cacheAge = Math.round(ageMin);
         return parsed;
       }
     }
   } catch {}
   const fromDisk = diskResearcherGet(researcherDiskKey(CACHE_TAB, params)) as (PolicyScanResult & { _cacheAge?: number }) | null;
-  if (fromDisk && Array.isArray(fromDisk.instruments) && !fromDisk.error) {
+  if (fromDisk && Array.isArray(fromDisk.instruments) && !fromDisk.error && "summary" in fromDisk) {
     try {
       const file = path.join(CACHE_DIR, `${safeKey(CACHE_TAB)}__${safeKey(params)}.json`);
       fs.writeFileSync(file, JSON.stringify(fromDisk, null, 2));
