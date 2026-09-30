@@ -51,6 +51,8 @@ export interface PolicyInstrument {
     longYield?: "up" | "down" | "unclear";
     m2?: "up" | "down" | "unclear";
     cryptoLiquidity?: "up" | "down" | "unclear";
+    policyRate?: "up" | "down" | "unclear";
+    realYield?: "up" | "down" | "unclear";
     duration?: "easing" | "tightening" | "neutral";
   };
   magnitude?: PolicyMagnitude;
@@ -121,11 +123,15 @@ export function parsePolicyInstruments(raw: unknown): { instruments: PolicyInstr
     const longYield = oneOf(channelsRaw.longYield, CHANNEL_DIRECTIONS);
     const m2 = oneOf(channelsRaw.m2, CHANNEL_DIRECTIONS);
     const cryptoLiquidity = oneOf(channelsRaw.cryptoLiquidity, CHANNEL_DIRECTIONS);
+    const policyRate = oneOf(channelsRaw.policyRate, CHANNEL_DIRECTIONS);
+    const realYield = oneOf(channelsRaw.realYield, CHANNEL_DIRECTIONS);
     const duration = oneOf(channelsRaw.duration, DURATION_DIRECTIONS);
     if (tBill) channels.tBillDemand = tBill;
     if (longYield) channels.longYield = longYield;
     if (m2) channels.m2 = m2;
     if (cryptoLiquidity) channels.cryptoLiquidity = cryptoLiquidity;
+    if (policyRate) channels.policyRate = policyRate;
+    if (realYield) channels.realYield = realYield;
     if (duration) channels.duration = duration;
     const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : `${office}:${instrumentType}:${evidence[0].date}`;
     const jurisdiction = typeof row.jurisdiction === "string" && row.jurisdiction.trim() ? row.jurisdiction.trim() : "US";
@@ -161,6 +167,7 @@ export interface RegulationNote {
   status: PolicyStatus;
   /** cited nur mit https-Beleg. Sonst estimated, und der Score bleibt unberuehrt. */
   confidence: "cited" | "estimated";
+  instrumentType?: PolicyType;
   channels: PolicyInstrument["channels"];
   note?: string;
   evidence: PolicyEvidence[];
@@ -183,7 +190,7 @@ export function parseRegulationNotes(raw: unknown): { regulations: RegulationNot
   const regulations: RegulationNote[] = [];
   let dropped = 0;
   for (const item of list) {
-    if (regulations.length >= 6) { dropped++; continue; }
+    if (regulations.length >= 8) { dropped++; continue; }
     const row = asRecord(item);
     if (!row) { dropped++; continue; }
     const title = typeof row.title === "string" ? row.title.trim().slice(0, 180) : "";
@@ -200,12 +207,17 @@ export function parseRegulationNotes(raw: unknown): { regulations: RegulationNot
     const longYield = oneOf(channelsRaw.longYield, CHANNEL_DIRECTIONS);
     const m2 = oneOf(channelsRaw.m2, CHANNEL_DIRECTIONS);
     const cryptoLiquidity = oneOf(channelsRaw.cryptoLiquidity, CHANNEL_DIRECTIONS);
+    const policyRate = oneOf(channelsRaw.policyRate, CHANNEL_DIRECTIONS);
+    const realYield = oneOf(channelsRaw.realYield, CHANNEL_DIRECTIONS);
     const duration = oneOf(channelsRaw.duration, DURATION_DIRECTIONS);
     if (tBill) channels.tBillDemand = tBill;
     if (longYield) channels.longYield = longYield;
     if (m2) channels.m2 = m2;
     if (cryptoLiquidity) channels.cryptoLiquidity = cryptoLiquidity;
+    if (policyRate) channels.policyRate = policyRate;
+    if (realYield) channels.realYield = realYield;
     if (duration) channels.duration = duration;
+    const instrumentType = oneOf(row.instrumentType, POLICY_TYPES) ?? undefined;
     const note = typeof row.note === "string" ? row.note.trim().slice(0, 400) : "";
     const jurisdiction = typeof row.jurisdiction === "string" && row.jurisdiction.trim()
       ? row.jurisdiction.trim()
@@ -219,6 +231,7 @@ export function parseRegulationNotes(raw: unknown): { regulations: RegulationNot
       status,
       confidence,
       channels,
+      ...(instrumentType ? { instrumentType } : {}),
       evidence,
       ...(note ? { note } : {}),
     });

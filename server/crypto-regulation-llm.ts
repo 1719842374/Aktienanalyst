@@ -1,10 +1,10 @@
 /**
  * OpenRouter-Auftrag fuer Sektion 14.
- * Gleicher JSON-Aufruf wie der Researcher (callLLMJson, Modellkette, 6h-Cache),
- * aber nur Krypto-Regulierungen und der Liquiditaetstracker.
- * Kein Gesetzesname und keine Person im Auftrag. Gemessene Serien stehen nur
- * als Kontext. Der Score liest sie nicht aus der Modellantwort.
+ * Gleicher JSON-Client wie der Researcher, zusaetzlich mit Websuche.
+ * Der Auftrag nennt kein Gesetz. Titel kommen aus den Amtshinweisen oder
+ * aus der Websuche. Gemessene Serien schreibt das Modell nicht um.
  */
+import type { OfficialNotice } from "./crypto-regulation-sources";
 
 export interface PolicyScanMeasuredInput {
   asOf: string;
@@ -15,26 +15,39 @@ export interface PolicyScanMeasuredInput {
   defiTvlChange30dUsd: number | null;
   tgaBn: number | null;
   dgs10: number | null;
+  policyRate: number | null;
+  realYield10y: number | null;
   m2Bn: number | null;
 }
 
 export const POLICY_SCAN_SYSTEM_PROMPT =
-  "Du antwortest nur mit JSON. Erfinde keine gemessenen Zahlen und keine URLs. regulations fuellen, auch ohne URL, dann confidence estimated. instruments nur mit https und Datum.";
+  "Du antwortest nur mit JSON. Erfinde keine gemessenen Zahlen und keine URLs. Jeder Amtshinweis wird eine regulation mit genau diesem Titel. Eine Ablehnung ohne Titel ist ungueltig. confidence estimated nur ohne URL. instruments nur mit https und Datum aus den Hinweisen oder der Websuche.";
 
-export function buildPolicyScanPrompt(measured: PolicyScanMeasuredInput): string {
+function noticeBlock(notices: OfficialNotice[]): string {
+  if (notices.length === 0) return "keine";
+  return notices.map((n, i) =>
+    `${i + 1}. ${n.date} | ${n.office} | ${n.instrumentType} | ${n.title} | ${n.url} | ${n.snippet || "ohne Kurztext"}`,
+  ).join("\n");
+}
+
+export function buildPolicyScanPrompt(measured: PolicyScanMeasuredInput, notices: OfficialNotice[] = []): string {
   const m = measured;
   return `Heute ist ${m.asOf}. Jurisdiktion: ${m.jurisdiction}. Thema: Krypto-Liquidität.
-Zwei Aufgaben, nichts anderes. Der Auftrag nennt kein Gesetz und keine Person. Du suchst die aktuellen Regeln selbst.
+Zwei Aufgaben, nichts anderes. Der Auftrag nennt kein Gesetz und keine Person. Titel suchst du in den Amtshinweisen und in der Websuche.
 
-1. Krypto-Regulierungen.
-Welche Gesetze, Verordnungen und Aufsichtsregeln ändern heute die Krypto-Liquidität in dieser Jurisdiktion?
-Amt nur legislature oder regulator. instrumentType nur statute.
+1. Krypto-Regulierungen und Fiskalprogramm.
+Finde neue Gesetze, Aufsichtsregeln und Fiskalprogramme, die heute die Krypto-Liquidität, M2, den Leitzins, den Realzins oder die 10-Jahres-Rendite ändern.
+Amt: legislature, regulator, treasury oder central_bank.
+instrumentType: statute für Gesetze und Aufsichtsregeln, fiscal_program für Fiskalprogramme, debt_operation für Schuldenoperationen der Finanzverwaltung.
 Status nur proposed, advanced, enacted, implementing, rejected, expired oder uncertain.
-Jedes Vorhaben steht in regulations, auch ohne Quelle. Höchstens sechs Einträge. Ohne https-Beleg und Datum: confidence estimated. estimated ist unbestätigt und geht nicht in den Score.
-Nur mit Quelle, https-Adresse und Datum zusätzlich in instruments. Erfinde keine Belege und keine URLs.
+Jeder Amtshinweis unten wird genau eine regulation mit demselben Titel. Höchstens acht Einträge.
+Zusätzliche Titel nur aus der Websuche dieser Anfrage. Ohne https-Beleg und Datum: confidence estimated und im summary als unbestätigt.
+Erfinde keine Belege und keine URLs. Eine Ablehnung ohne Titel ist ungültig.
 officeHolder ist optionaler Anzeigetext. Die Regel hängt am Amt, nicht am Namen.
-In summary keinen Gesetzesnamen als Tatsache, wenn der Eintrag nur estimated ist. Kennzeichne ihn dann als unbestätigt.
-Leer lassen ist falsch, wenn dir Regeln zu dieser Jurisdiktion bekannt sind: dann regulations mit confidence estimated.
+Ein abgelehntes oder ausgelaufenes Vorhaben hat status rejected oder expired.
+
+Amtshinweise:
+${noticeBlock(notices)}
 
 2. Liquiditätstracker.
 Diese Serien sind gemessen. Erfinde sie nicht und überschreibe sie nicht. Gib sie nicht als eigene Zahlen zurück.
@@ -44,19 +57,21 @@ Diese Serien sind gemessen. Erfinde sie nicht und überschreibe sie nicht. Gib s
 - Stablecoin-Änderung 30 Tage USD: ${m.mcapChange30dUsd ?? "unbekannt"}
 - TGA Mrd. USD: ${m.tgaBn ?? "unbekannt"}
 - M2 Mrd. USD: ${m.m2Bn ?? "unbekannt"}
-- lange Rendite, 10Y Prozent: ${m.dgs10 ?? "unbekannt"}
+- Leitzins, Federal Funds Prozent: ${m.policyRate ?? "unbekannt"}
+- Realzins 10-Jahres Prozent: ${m.realYield10y ?? "unbekannt"}
+- 10-Jahres-Rendite Prozent: ${m.dgs10 ?? "unbekannt"}
 
-Erkläre den Druck auf diesen Liquiditätstracker nur über die Kanäle cryptoLiquidity, m2, longYield und tBillDemand, jeweils up, down oder unclear.
+Erkläre den Druck nur über die Kanäle cryptoLiquidity, m2, longYield, tBillDemand, policyRate und realYield, jeweils up, down oder unclear.
+Ein Fiskalprogramm, das die lange Rendite senkt, ist fiscal_program mit longYield down.
 Reserveanteile nur mit Beleg in instruments: magnitude.kind = "share", issuer USDT oder USDC, Wert 0 bis 1. Ohne Beleg bleibt der Anteil leer und geht nicht in die T-Bill-Nachfrage.
 Gesetzes-Score nur mit Beleg in instruments: magnitude.kind = "score", Wert 0 bis 1.5. Ohne Beleg kein Score.
 expectedMoveBp ist die erwartete Änderung der 10-Jahres-Rendite in Basispunkten, negativ wenn die Rendite sinkt.
 halfLifeDays nur wenn kein decisionDate bekannt ist.
-Ein abgelehntes oder ausgelaufenes Vorhaben hat status rejected oder expired.
 
-Schreibe summary als zwei deutsche Sätze: welche Krypto-Regulierungen die Liquidität heute ändern.
+Schreibe summary als zwei deutsche Sätze: welche Krypto-Regulierungen und Fiskalprogramme die Liquidität, M2, den Leitzins, den Realzins oder die 10-Jahres-Rendite heute ändern.
 
 JSON:
-{"summary":"","regulations":[{"id":"kurz","title":"Name der Regel","office":"legislature|regulator","status":"proposed|advanced|enacted|implementing|rejected|expired|uncertain","confidence":"cited|estimated","channels":{"cryptoLiquidity":"up|down|unclear","tBillDemand":"up|down|unclear","longYield":"up|down|unclear","m2":"up|down|unclear"},"note":"ein Satz"}],"instruments":[{"id":"kurz","title":"","jurisdiction":"${m.jurisdiction}","office":"legislature|regulator","instrumentType":"statute","status":"proposed|advanced|enacted|implementing|rejected|expired|uncertain","officeHolder":"","effectiveFrom":"YYYY-MM-DD","effectiveTo":"YYYY-MM-DD","decisionDate":"YYYY-MM-DD","halfLifeDays":90,"expectedMoveBp":0,"channels":{"cryptoLiquidity":"up|down|unclear","tBillDemand":"up|down|unclear","longYield":"up|down|unclear","m2":"up|down|unclear"},"magnitude":{"kind":"share|score","value":0,"unit":"","issuer":""},"evidence":[{"source":"","url":"https://","date":"YYYY-MM-DD"}]}]}`;
+{"summary":"","regulations":[{"id":"kurz","title":"Titel aus Amtshinweis oder Websuche","office":"legislature|regulator|treasury|central_bank","instrumentType":"statute|fiscal_program|debt_operation","status":"proposed|advanced|enacted|implementing|rejected|expired|uncertain","confidence":"cited|estimated","channels":{"cryptoLiquidity":"up|down|unclear","tBillDemand":"up|down|unclear","longYield":"up|down|unclear","m2":"up|down|unclear","policyRate":"up|down|unclear","realYield":"up|down|unclear"},"note":"ein Satz","evidence":[{"source":"","url":"https://","date":"YYYY-MM-DD"}]}],"instruments":[{"id":"kurz","title":"","jurisdiction":"${m.jurisdiction}","office":"legislature|regulator|treasury|central_bank","instrumentType":"statute|fiscal_program|debt_operation","status":"proposed|advanced|enacted|implementing|rejected|expired|uncertain","officeHolder":"","effectiveFrom":"YYYY-MM-DD","effectiveTo":"YYYY-MM-DD","decisionDate":"YYYY-MM-DD","halfLifeDays":90,"expectedMoveBp":0,"channels":{"cryptoLiquidity":"up|down|unclear","tBillDemand":"up|down|unclear","longYield":"up|down|unclear","m2":"up|down|unclear","policyRate":"up|down|unclear","realYield":"up|down|unclear"},"magnitude":{"kind":"share|score","value":0,"unit":"","issuer":""},"evidence":[{"source":"","url":"https://","date":"YYYY-MM-DD"}]}]}`;
 }
 
 export interface PolicyScanCacheShape {

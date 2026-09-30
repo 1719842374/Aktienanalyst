@@ -12,6 +12,13 @@ import {
   type PolicyInstrument,
 } from "../server/policy-instruments";
 import { buildPolicyScanPrompt, policyScanIsCacheable } from "../server/crypto-regulation-llm";
+import {
+  fallbackScanSummary,
+  isRefusalSummary,
+  mergeByTitle,
+  noticesToRegulationPayload,
+  parseFederalRegisterPage,
+} from "../server/crypto-regulation-sources";
 import { defiTvlFromSeries, estimateTBillDemand, type StablecoinMarketSnapshot } from "../server/stablecoin-liquidity";
 
 let failed = 0;
@@ -150,8 +157,19 @@ const prompt = buildPolicyScanPrompt({
   tgaBn: 5,
   dgs10: 4.1,
   dgs10History: [],
+  policyRate: 4.3,
+  realYield10y: 1.9,
   m2Bn: 6,
-});
+}, [
+  {
+    title: "Beispielregel aus der Amtssuche",
+    url: "https://example.test/notice",
+    date: "2026-09-01",
+    snippet: "Kurztext",
+    office: "regulator",
+    instrumentType: "statute",
+  },
+]);
 const banned = ["Trump", "OBBBA", "Ishiba", "Bessent", "GENIUS"];
 ok("Prompt enthaelt keine fest eingetragenen Namen", banned.every(w => !prompt.includes(w)), banned.filter(w => prompt.includes(w)).join(","));
 ok("Prompt enthaelt das Datum und die gemessene Rendite", prompt.includes("2026-09-30") && prompt.includes("4.1"));
@@ -169,9 +187,14 @@ ok(
 );
 ok("Prompt verbietet das Ueberschreiben gemessener Zahlen", prompt.includes("überschreibe"));
 ok(
-  "Prompt verlangt eine deutsche Zusammenfassung ohne unbelegten Gesetzesnamen",
-  prompt.includes("summary") && prompt.includes("zwei deutsche Sätze") && prompt.includes("keinen Gesetzesnamen"),
+  "Prompt verlangt eine deutsche Zusammenfassung und verbietet die leere Ablehnung",
+  prompt.includes("summary") && prompt.includes("zwei deutsche Sätze") && prompt.includes("Ablehnung ohne Titel ist ungültig"),
 );
+ok(
+  "Prompt sucht Fiskalprogramm, Leitzins, Realzins und die 10-Jahres-Rendite",
+  ["Fiskalprogramm", "Leitzins", "Realzins", "10-Jahres", "M2", "policyRate", "realYield"].every(w => prompt.includes(w)),
+);
+ok("Amtshinweis steht im Prompt, kein fest eingetragener Gesetzesname", prompt.includes("Beispielregel aus der Amtssuche"));
 ok(
   "Prompt verlangt regulations auch ohne URL",
   prompt.includes("regulations") && prompt.includes("estimated") && prompt.includes("unbestätigt"),
@@ -238,6 +261,59 @@ ok(
     regulations: notes.regulations,
   }) && statuteContribution(notScored.instruments, "2026-09-30", null).contribution === 0,
 );
+const refusal = "Ohne verifizierte Belege mit URLs und Daten können keine aktuellen US-Krypto-Regulierungen zur Liquiditätsänderung benannt werden.";
+ok("die leere Ablehnung wird erkannt", isRefusalSummary(refusal));
+ok("eine normale Zusammenfassung ist keine Ablehnung", !isRefusalSummary("Zwei Sätze zur Liquidität und zum Fiskalprogramm."));
+
+const page = parseFederalRegisterPage({
+  results: [
+    {
+      title: "Self-Regulatory Organizations; Example Exchange",
+      html_url: "https://www.federalregister.gov/documents/2026/01/02/example-sro",
+      publication_date: "2026-01-02",
+      abstract: "A crypto listing notice.",
+      agencies: [{ slug: "securities-and-exchange-commission" }],
+    },
+    {
+      title: "Payment Stablecoin Reserve Rule",
+      html_url: "https://www.federalregister.gov/documents/2026/09/01/example-rule",
+      publication_date: "2026-09-01",
+      abstract: "Requirements for payment stablecoin reserves.",
+      agencies: [{ slug: "federal-reserve-system" }],
+    },
+    { title: "Short", html_url: "https://www.federalregister.gov/x", publication_date: "2026-09-01", abstract: "stablecoin" },
+  ],
+}, /crypto|stablecoin|digital asset|virtual currency/i);
+const byAbstract = parseFederalRegisterPage({
+  results: [{
+    title: "Board Responsibilities Under a New Statute",
+    html_url: "https://www.federalregister.gov/documents/2026/09/29/example-new",
+    publication_date: "2026-09-29",
+    abstract: "Responsibilities for payment stablecoin issuance.",
+    agencies: [{ slug: "federal-reserve-system" }],
+  }],
+}, /crypto|stablecoin|digital asset|virtual currency/i, true);
+ok("neues Gesetz im Kurztext bleibt erhalten", byAbstract.length === 1 && byAbstract[0].office === "central_bank");
+ok(
+  "Amtssuche behaelt den Treffer und wirft Boersennotizen weg",
+  page.length === 1 && page[0].title === "Payment Stablecoin Reserve Rule" && page[0].office === "central_bank" && page[0].instrumentType === "statute",
+  JSON.stringify(page),
+);
+const fromNotices = parseRegulationNotes(noticesToRegulationPayload(page, "US"));
+ok(
+  "Treffer ohne Modell bleibt Anzeige und geht nicht in den Score",
+  fromNotices.regulations.length === 1
+    && fromNotices.regulations[0].confidence === "cited"
+    && fromNotices.regulations[0].status === "uncertain"
+    && statuteContribution([], "2026-09-30", null).contribution === 0,
+);
+const merged = mergeByTitle(
+  [{ title: "Nur Modell" }],
+  [{ title: "Payment Stablecoin Reserve Rule" }, { title: "nur modell" }],
+);
+ok("Modell und Amtssuche werden nach Titel zusammengefuehrt", merged.length === 2);
+ok("Ersatztext nennt keinen festen Gesetzesnamen", !["Trump", "OBBBA", "Ishiba", "Bessent", "GENIUS"].some(w => fallbackScanSummary(3).includes(w)));
+
 ok(
   "fehlender Schlüssel wird nicht gecacht",
   !policyScanIsCacheable({

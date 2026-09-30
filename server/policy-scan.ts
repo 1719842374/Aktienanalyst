@@ -13,6 +13,13 @@ import {
   buildPolicyScanPrompt,
   policyScanIsCacheable,
 } from "./crypto-regulation-llm";
+import {
+  fallbackScanSummary,
+  fetchOfficialNotices,
+  isRefusalSummary,
+  mergeByTitle,
+  noticesToRegulationPayload,
+} from "./crypto-regulation-sources";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 import { fetchDefiTvlSnapshot, fetchStablecoinMarketSnapshot } from "./stablecoin-liquidity";
 import {
@@ -28,7 +35,7 @@ import {
 
 export { buildPolicyScanPrompt, policyScanIsCacheable };
 
-const SCHEMA = "v5";
+const SCHEMA = "v6";
 const CACHE_TAB = "crypto_regulation";
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 const RESEARCHER_TTL_MIN = 60 * 6;
@@ -101,6 +108,8 @@ export interface MeasuredPolicyContext {
   tgaBn: number | null;
   dgs10: number | null;
   dgs10History: { date: string; value: number }[];
+  policyRate: number | null;
+  realYield10y: number | null;
   m2Bn: number | null;
 }
 
@@ -165,12 +174,14 @@ async function fredLatest(series: string, days: number): Promise<{ date: string;
 
 export async function loadMeasuredPolicyContext(jurisdiction: string): Promise<MeasuredPolicyContext> {
   const asOf = new Date().toISOString().slice(0, 10);
-  const [stable, tvl, dgs, tga, m2] = await Promise.all([
+  const [stable, tvl, dgs, tga, m2, funds, realYield] = await Promise.all([
     fetchStablecoinMarketSnapshot().catch(() => null),
     fetchDefiTvlSnapshot().catch(() => null),
     fredLatest("DGS10", 800),
     fredLatest("WTREGEN", 120),
     fredLatest("M2SL", 800),
+    fredLatest("DFF", 120),
+    fredLatest("DFII10", 120),
   ]);
   const mcap = stable?.totalMarketCapUsd ?? null;
   const prev = stable?.totalMarketCapPrevMonthUsd ?? null;
@@ -186,6 +197,8 @@ export async function loadMeasuredPolicyContext(jurisdiction: string): Promise<M
     tgaBn: tga.length ? tga[tga.length - 1].value / 1000 : null,
     dgs10: dgs.length ? dgs[dgs.length - 1].value : null,
     dgs10History: dgs,
+    policyRate: funds.length ? funds[funds.length - 1].value : null,
+    realYield10y: realYield.length ? realYield[realYield.length - 1].value : null,
     m2Bn: m2.length ? m2[m2.length - 1].value : null,
   };
 }
@@ -244,6 +257,8 @@ function effectsFor(instruments: PolicyInstrument[], measured: MeasuredPolicyCon
 async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> {
   const measured = await loadMeasuredPolicyContext(jurisdiction);
   const emptyEffects = effectsFor([], measured);
+  const notices = await fetchOfficialNotices(jurisdiction, measured.asOf);
+  const noticeNotes = parseRegulationNotes(noticesToRegulationPayload(notices, jurisdiction)).regulations;
   if (!isLLMAvailable()) {
     return {
       llmAvailable: false,
@@ -252,22 +267,23 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
       jurisdiction,
       measured,
       instruments: [],
-      regulations: [],
+      regulations: noticeNotes,
       dropped: 0,
       modelUsed: null,
-      summary: null,
+      summary: noticeNotes.length > 0 ? fallbackScanSummary(noticeNotes.length) : null,
       ...emptyEffects,
       error: "OPENROUTER_API_KEY fehlt",
       _fallback: true,
     };
   }
-  // Gleicher Client, dieselbe Modellkette und dieselben OpenRouter-Header
-  // wie der Researcher: callLLMJson -> getClient in llm-openrouter.ts.
+  // Gleicher Client und dieselbe Modellkette wie der Researcher, plus
+  // OpenRouter-Websuche nur fuer diesen Abruf.
   const llm = await callLLMJson({
-    prompt: buildPolicyScanPrompt(measured),
-    maxTokens: 2200,
+    prompt: buildPolicyScanPrompt(measured, notices),
+    maxTokens: 2800,
     temperature: 0.2,
     systemPrompt: POLICY_SCAN_SYSTEM_PROMPT,
+    online: true,
   });
   if (!llm) {
     return {
@@ -277,21 +293,25 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
       jurisdiction,
       measured,
       instruments: [],
-      regulations: [],
+      regulations: noticeNotes,
       dropped: 0,
       modelUsed: null,
-      summary: null,
+      summary: noticeNotes.length > 0 ? fallbackScanSummary(noticeNotes.length) : null,
       ...emptyEffects,
-      error: "LLM-Abruf ohne JSON",
-      _fallback: true,
+      ...(noticeNotes.length > 0 ? {} : { error: "LLM-Abruf ohne JSON", _fallback: true as const }),
     };
   }
   const summaryRaw = llm.data && typeof llm.data === "object" ? (llm.data as { summary?: unknown }).summary : null;
-  const summary = typeof summaryRaw === "string" && summaryRaw.trim() ? summaryRaw.trim().slice(0, 800) : null;
+  const modelSummary = typeof summaryRaw === "string" && summaryRaw.trim() ? summaryRaw.trim().slice(0, 800) : null;
   const notes = parseRegulationNotes(llm.data);
+  const regulations = mergeByTitle(notes.regulations, noticeNotes, 8);
+  const refused = isRefusalSummary(modelSummary);
+  const summary = refused || !modelSummary
+    ? (regulations.length > 0 ? fallbackScanSummary(regulations.length) : modelSummary)
+    : modelSummary;
   const parsed = parsePolicyInstruments(llm.data);
   const computed = effectsFor(parsed.instruments, measured);
-  const empty = notes.regulations.length === 0 && parsed.instruments.length === 0;
+  const empty = regulations.length === 0 && parsed.instruments.length === 0;
   const result: PolicyScanResult = {
     llmAvailable: true,
     fromCache: false,
@@ -299,7 +319,7 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
     jurisdiction,
     measured: { ...measured, dgs10History: measured.dgs10History.slice(-5) },
     instruments: parsed.instruments,
-    regulations: notes.regulations,
+    regulations,
     dropped: parsed.dropped,
     modelUsed: llm.modelUsed,
     summary,

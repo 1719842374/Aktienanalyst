@@ -59,11 +59,19 @@ interface RegulationNoteDto {
   id: string;
   title: string;
   office: string;
+  instrumentType?: string;
   status: string;
   confidence: "cited" | "estimated";
   channels: Record<string, string>;
   note?: string;
   evidence?: { source: string; url: string; date: string }[];
+}
+
+interface ScanMeasured {
+  policyRate?: number | null;
+  realYield10y?: number | null;
+  dgs10?: number | null;
+  m2Bn?: number | null;
 }
 
 interface PolicyScanResponse {
@@ -76,6 +84,7 @@ interface PolicyScanResponse {
   regulations?: RegulationNoteDto[];
   dropped: number;
   _fallback?: boolean;
+  measured?: ScanMeasured;
   effects: {
     treasuryBuybackCapBn: number | null;
     treasuryDurationActive: boolean;
@@ -149,10 +158,22 @@ const OFFICE_LABEL: Record<string, string> = {
 const CHANNEL_LABEL: Record<string, string> = {
   cryptoLiquidity: "Krypto-Liquidität",
   tBillDemand: "T-Bill-Nachfrage",
-  longYield: "lange Rendite",
+  longYield: "10-Jahres-Rendite",
   m2: "M2",
+  policyRate: "Leitzins",
+  realYield: "Realzins",
   duration: "Duration",
 };
+
+const TYPE_LABEL: Record<string, string> = {
+  statute: "Gesetz",
+  fiscal_program: "Fiskalprogramm",
+  debt_operation: "Schuldenoperation",
+};
+
+function formatPct(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? "n/v" : `${value.toFixed(2)}%`;
+}
 
 export function StablecoinLiquidityPanel() {
   const { data, loading, error, reload } = useStablecoinLiquidity();
@@ -220,9 +241,9 @@ export function StablecoinLiquidityPanel() {
     <SectionCard number={14} title="Krypto-Liquidität" actions={kiButton}>
       <div className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Der KI-Abruf sucht nur Krypto-Regulierungen und liest den Liquiditätstracker.
-          DeFi-TVL, die 30-Tage-Änderung, Stablecoin-Marktkapitalisierung, TGA, M2 und die
-          lange Rendite bleiben gemessen. Das Modell schreibt diese Zahlen nicht um.
+          Der KI-Abruf sucht neue Krypto-Regeln und Fiskalprogramme in den Amtshinweisen
+          und über die OpenRouter-Websuche. Leitzins, Realzins, die 10-Jahres-Rendite,
+          M2, TGA und die DefiLlama-Serien bleiben gemessen. Das Modell schreibt sie nicht um.
         </p>
 
         {loading && (
@@ -347,6 +368,19 @@ export function StablecoinLiquidityPanel() {
               {" · "}
               {scan.instruments.length} belegt
             </div>
+            {scan.measured && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="text-measured-rates">
+                <MiniCard label="Leitzins" value={formatPct(scan.measured.policyRate)} sub="FRED, gemessen" />
+                <MiniCard label="Realzins 10Y" value={formatPct(scan.measured.realYield10y)} sub="FRED, gemessen" />
+                <MiniCard label="10-Jahres-Rendite" value={formatPct(scan.measured.dgs10)} sub="FRED, gemessen" />
+                <MiniCard label="M2" value={formatUsdCompact(scan.measured.m2Bn == null ? null : scan.measured.m2Bn * 1e9)} sub="FRED, gemessen" />
+              </div>
+            )}
+            {scan.error && (
+              <div className="text-[11px] text-amber-700 dark:text-amber-400" data-testid="text-policy-scan-error-inline">
+                {scan.error}
+              </div>
+            )}
             <p className="text-xs leading-relaxed" data-testid="text-policy-summary">
               {scan.summary?.trim()
                 ? scan.summary
@@ -377,7 +411,9 @@ export function StablecoinLiquidityPanel() {
                         </span>
                       </div>
                       <div className="text-muted-foreground">
-                        {OFFICE_LABEL[reg.office] ?? reg.office} · {reg.status}
+                        {OFFICE_LABEL[reg.office] ?? reg.office}
+                        {reg.instrumentType ? ` · ${TYPE_LABEL[reg.instrumentType] ?? reg.instrumentType}` : ""}
+                        {` · ${reg.status}`}
                         {channels ? ` · ${channels}` : ""}
                       </div>
                       {reg.note && <div className="text-muted-foreground">{reg.note}</div>}
@@ -393,9 +429,11 @@ export function StablecoinLiquidityPanel() {
             )}
             {scan.instruments.length === 0 && (
               <div className="text-[11px] text-muted-foreground" data-testid="text-policy-empty">
-                {(scan.regulations ?? []).length > 0
-                  ? "Kein Eintrag mit Quelle, https-Adresse und Datum. Unbestätigte Regeln ändern den Score nicht."
-                  : "Kein Instrument mit Quelle, https-Adresse und Datum."}
+                {(scan.regulations ?? []).some(r => r.confidence === "cited")
+                  ? "Gefundene Dokumente haben noch keinen belegten Status. Sie ändern den Score nicht."
+                  : (scan.regulations ?? []).length > 0
+                    ? "Kein Eintrag mit Quelle, https-Adresse und Datum. Unbestätigte Regeln ändern den Score nicht."
+                    : "Kein Instrument mit Quelle, https-Adresse und Datum."}
               </div>
             )}
             {scan.instruments.length > 0 && (
