@@ -1,10 +1,13 @@
-import { useState, useMemo, useCallback } from "react";
+import { Fragment, useState, useMemo, useCallback } from "react";
 import type { StockAnalysis, OHLCVPoint, TradingSignal } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import {
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis,
-  Tooltip, ReferenceLine, ReferenceArea, Area, CartesianGrid,
+  Tooltip, ReferenceLine, ReferenceDot, ReferenceArea, Area, CartesianGrid,
 } from "recharts";
+import { useIsNarrow } from "@/hooks/use-mobile";
+import { TA_SIGNAL_DOT_R, axisTick, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
+import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 
@@ -283,6 +286,8 @@ function priceDomain(points: WindowPoint[], visible: Set<MAKey>, showBB: boolean
 }
 
 export function TechnicalChart({ data }: Props) {
+  const narrow = useIsNarrow();
+  const stockPlotMinWidth = taChartMinWidth(52, 0, 10);
   const ti = data.technicalIndicators;
   const ohlcv = data.ohlcvData;
 
@@ -567,23 +572,23 @@ export function TechnicalChart({ data }: Props) {
       <div className="mb-3 flex min-w-0 max-w-full flex-col gap-2 overflow-x-hidden sm:gap-3" data-testid="controls-ta">
         <div className="flex min-w-0 max-w-full flex-col gap-2 sm:flex-row sm:items-center sm:gap-3" data-testid="controls-row-presets">
           {/* Time range — setzt nur Fenster A (Ende = letzter Bar, Start = cutoff) */}
-          <div className="flex min-h-9 max-w-full flex-wrap gap-1" data-testid="row-presets">
+          <div className="flex min-h-9 max-w-full flex-wrap gap-1.5 sm:gap-1" data-testid="row-presets">
             {(["3M","6M","1Y","2Y","3Y","5Y","10Y"] as const).map(r => (
               <button key={r} type="button" onClick={() => { setTimeRange(r); setCustomA(null); setRangeHint(null); setSignalPage(0); }}
-                className={`min-h-9 rounded-md border px-2.5 text-[10px] font-medium transition-colors ${
+                className={`min-h-9 shrink-0 rounded-md border px-2.5 text-[11px] font-medium transition-colors sm:text-[10px] ${
                   timeRange===r && !customA ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted/50"
                 }`}>
                 {r}
               </button>
             ))}
           </div>
-          <div className="flex w-full min-w-0 gap-1 sm:w-auto" data-testid="row-kurs-toggles">
+          <div className="flex w-full min-w-0 gap-1.5 sm:w-auto sm:gap-1" data-testid="row-kurs-toggles">
             <button
               type="button"
               onClick={() => setShowKursA(v => !v)}
               data-testid="button-kurs-a"
               aria-pressed={showKursA}
-              className={`inline-flex min-h-9 flex-1 items-center justify-center rounded border px-2.5 text-[10px] font-medium transition-colors sm:flex-none ${
+              className={`inline-flex min-h-9 flex-1 shrink-0 items-center justify-center rounded border px-2.5 text-[11px] font-medium transition-colors sm:flex-none sm:text-[10px] ${
                 showKursA
                   ? "border-primary bg-primary text-primary-foreground"
                   : "border-border text-muted-foreground hover:bg-muted/50"
@@ -596,7 +601,7 @@ export function TechnicalChart({ data }: Props) {
               onClick={() => setShowKursB(v => !v)}
               data-testid="button-kurs-b"
               aria-pressed={showKursB}
-              className={`inline-flex min-h-9 flex-1 items-center justify-center rounded border px-2.5 text-[10px] font-medium transition-colors sm:flex-none ${
+              className={`inline-flex min-h-9 flex-1 shrink-0 items-center justify-center rounded border px-2.5 text-[11px] font-medium transition-colors sm:flex-none sm:text-[10px] ${
                 showKursB ? "" : "border-border text-muted-foreground hover:bg-muted/50"
               }`}
               style={showKursB ? { backgroundColor: STROKE_B, borderColor: STROKE_B, color: "#1e1b4b" } : undefined}
@@ -608,7 +613,7 @@ export function TechnicalChart({ data }: Props) {
               onClick={() => setShowKursC(v => !v)}
               data-testid="button-kurs-c"
               aria-pressed={showKursC}
-              className={`inline-flex min-h-9 flex-1 items-center justify-center rounded border px-2.5 text-[10px] font-medium transition-colors sm:flex-none ${
+              className={`inline-flex min-h-9 flex-1 shrink-0 items-center justify-center rounded border px-2.5 text-[11px] font-medium transition-colors sm:flex-none sm:text-[10px] ${
                 showKursC ? "" : "border-border text-muted-foreground hover:bg-muted/50"
               }`}
               style={showKursC ? { backgroundColor: STROKE_C, borderColor: STROKE_C, color: "#052e16" } : undefined}
@@ -661,10 +666,10 @@ export function TechnicalChart({ data }: Props) {
             )}
           </div>
 
-          <div className="flex min-w-0 max-w-full flex-wrap gap-1" data-testid="row-indicators">
+          <div className="flex min-w-0 max-w-full flex-wrap gap-1.5 sm:gap-1" data-testid="row-indicators">
             {MA_LINES.map(ma => (
               <button key={ma.key} type="button" onClick={() => toggleMA(ma.key)}
-                className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] font-mono transition-colors sm:min-h-7 ${
+                className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-7 sm:text-[10px] ${
                   visibleMAs.has(ma.key) ? "border-current opacity-100" : "border-border opacity-40 hover:opacity-60"
                 }`}
                 style={{ color: ma.color }}>
@@ -673,42 +678,42 @@ export function TechnicalChart({ data }: Props) {
               </button>
             ))}
             <button type="button" onClick={() => setShowBollinger(v => !v)}
-              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 showBollinger ? "border-violet-400 text-violet-400" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
               }`}>
               {showBollinger ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               BB(20,2)
             </button>
             <button type="button" onClick={() => setShowVolume(v => !v)}
-              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 showVolume ? "border-sky-400 text-sky-400" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
               }`}>
               {showVolume ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               Volumen
             </button>
             <button type="button" onClick={() => setShowSignals(v => !v)}
-              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 showSignals ? "border-primary text-primary" : "border-border text-muted-foreground opacity-50"
               }`}>
               {showSignals ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               Signale
             </button>
             <button type="button" onClick={() => setShowMacd(v => !v)} data-testid="button-macd" aria-pressed={showMacd}
-              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 showMacd ? "border-blue-500 text-blue-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
               }`}>
               {showMacd ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               MACD
             </button>
             <button type="button" onClick={() => setShowRsi(v => !v)} data-testid="button-rsi" aria-pressed={showRsi}
-              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 showRsi ? "border-amber-500 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
               }`}>
               {showRsi ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               RSI(14)
             </button>
             <button type="button" onClick={() => { setMeasureMode(v => !v); setMeasurePoints([]); }}
-              className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded border px-2 text-[10px] transition-colors sm:min-h-7 ${
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 measureMode ? "border-amber-500 bg-amber-500/10 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
               }`}>
               <Ruler className="w-2.5 h-2.5"/>
@@ -846,32 +851,37 @@ export function TechnicalChart({ data }: Props) {
       ) : singleALayout && chartEmpty ? (
         <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-window-empty">{EMPTY_WINDOW_HINT}</div>
       ) : singleALayout ? (
-        <div className="min-w-0 max-w-full">
-          <div className={`${priceBandClass(1)} w-full min-w-0 max-w-full ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma">
-            <PricePane
-              points={aBuilt.points}
-              signals={aBuilt.signals}
-              closeStroke="hsl(var(--primary))"
-              closeName="Kurs"
-              tickFormatter={formatDate}
-              formatDateFull={formatDateFull}
-              visibleMAs={visibleMAs}
-              showVolume={showVolume}
-              showBollinger={showBollinger}
-              showSignals={showSignals}
-              dense={false}
-              onPlotClick={handleChartClick}
-              measurePoints={measurePoints}
-              measurement={measurement}
-            />
+        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll">
+          <div className="min-w-0 max-w-full">
+            <div className={`${priceBandClass(1)} w-full min-w-0 max-w-full ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma">
+              <PricePane
+                points={aBuilt.points}
+                signals={aBuilt.signals}
+                closeStroke="hsl(var(--primary))"
+                closeName="Kurs"
+                tickFormatter={formatDate}
+                formatDateFull={formatDateFull}
+                visibleMAs={visibleMAs}
+                showVolume={showVolume}
+                showBollinger={showBollinger}
+                showSignals={showSignals}
+                dense={false}
+                onPlotClick={handleChartClick}
+                measurePoints={measurePoints}
+                measurement={measurement}
+              />
+            </div>
+            {narrow && showVolume && (
+              <TaVolumeBand data={aBuilt.points} leftAxisWidth={52} marginRight={10} />
+            )}
+            {showMacd && (
+              <MacdPane points={aBuilt.points} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-macd" title="MACD(12,26,9)" hint="= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal" />
+            )}
+            {showRsi && (
+              <RsiPane points={aBuilt.points} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-rsi" title="RSI(14)" hint="| <30 überverkauft · >70 überkauft" />
+            )}
           </div>
-          {showMacd && (
-            <MacdPane points={aBuilt.points} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-macd" title="MACD(12,26,9)" hint="= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal" />
-          )}
-          {showRsi && (
-            <RsiPane points={aBuilt.points} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-rsi" title="RSI(14)" hint="| <30 überverkauft · >70 überkauft" />
-          )}
-        </div>
+        </TaPlotScroll>
       ) : (
         <div
           className="w-full min-w-0 max-w-full flex flex-col overflow-x-hidden"
@@ -1097,9 +1107,10 @@ function PricePane({
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
 }) {
+  const narrow = useIsNarrow();
   const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger);
-  const tick = { fontSize: dense ? 8 : 9, fill: "var(--muted-foreground)" };
-  const interval = Math.max(0, Math.floor(points.length / (dense ? 5 : 8)));
+  const tick = axisTick(narrow, dense ? 8 : 9, "var(--muted-foreground)");
+  const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(points.length / (dense ? 5 : 8))));
   return (
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
@@ -1108,8 +1119,8 @@ function PricePane({
         onClick={onPlotClick}
       >
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
-        <XAxis dataKey="date" type="category" tickFormatter={tickFormatter} tick={tick} interval={interval} axisLine={{ stroke: "var(--border)" }} padding={{ left: 0, right: 0 }} />
-        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => `$${v.toFixed(0)}`} width={52} axisLine={{ stroke: "var(--border)" }} />
+        <XAxis dataKey="date" type="category" tickFormatter={tickFormatter} tick={tick} {...xInterval} axisLine={{ stroke: "var(--border)" }} padding={{ left: 0, right: 0 }} />
+        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => `$${v.toFixed(0)}`} width={52} axisLine={{ stroke: "var(--border)" }} {...(narrow ? { tickCount: 5 } : {})} />
         {/* Domain [0, 6.67]: höchster Volumen-Balken ≈ 15% der Bandhöhe, eigene Achse, nicht in der Preis-Y. */}
         <YAxis yAxisId="vol" hide domain={[0, 6.67]} orientation="right" />
         <Tooltip content={({ active, payload }) => {
@@ -1154,7 +1165,7 @@ function PricePane({
             </div>
           );
         }} />
-        {showVolume && (
+        {showVolume && !narrow && (
           <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={8}
             shape={(props: any) => {
               const { x, y, width, height, payload } = props;
@@ -1175,7 +1186,19 @@ function PricePane({
           </>
         )}
         {showSignals && signals.map((s, i) => (
-          <ReferenceLine key={`sig-${s.date}-${i}`} yAxisId="price" x={s.date} stroke={s.type === "buy" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={0.8} opacity={0.5} />
+          <Fragment key={`sig-${s.date}-${i}`}>
+            <ReferenceLine yAxisId="price" x={s.date} stroke={s.type === "buy" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={narrow ? 1 : 0.8} opacity={0.5} />
+            {narrow && (
+              <ReferenceDot
+                yAxisId="price"
+                x={s.date}
+                y={s.price}
+                r={TA_SIGNAL_DOT_R}
+                fill={s.type === "buy" ? "#22c55e" : "#ef4444"}
+                stroke="none"
+              />
+            )}
+          </Fragment>
         ))}
         {measurePoints && measurePoints.length >= 1 && (
           <ReferenceLine yAxisId="price" x={measurePoints[0].date} stroke="#f59e0b" strokeDasharray="4 3" strokeWidth={1.5} label={{ value: "A", position: "top", fontSize: 10, fill: "#f59e0b", fontWeight: 700 }} />
@@ -1211,16 +1234,17 @@ function MacdPane({
   title: string;
   hint?: string;
 }) {
-  const tick = { fontSize: compact ? 8 : 9, fill: "var(--muted-foreground)" };
+  const narrow = useIsNarrow();
+  const tick = axisTick(narrow, compact ? 8 : 9, "var(--muted-foreground)");
   return (
     <>
       <OscCaption title={title} hint={hint} compact={compact} />
-      <div className={`${compact ? "h-[72px] sm:h-[84px]" : "h-[130px] sm:h-[150px]"} w-full min-w-0`} data-testid={testId}>
+      <div className={`${compact ? "h-[72px] sm:h-[84px]" : "h-[130px] sm:h-[150px]"} min-h-10 w-full min-w-0`} data-testid={testId}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={points} margin={{ top: 4, right: 10, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
-            <XAxis dataKey="date" tickFormatter={tickFormatter} tick={tick} interval={Math.max(0, Math.floor(points.length / (compact ? 4 : 8)))} axisLine={{ stroke: "var(--border)" }} />
-            <YAxis tick={tick} width={52} axisLine={{ stroke: "var(--border)" }} tickFormatter={(v: number) => v.toFixed(compact ? 0 : 1)} />
+            <XAxis dataKey="date" tickFormatter={tickFormatter} tick={tick} {...xAxisIntervalProps(narrow, Math.max(0, Math.floor(points.length / (compact ? 4 : 8))))} axisLine={{ stroke: "var(--border)" }} />
+            <YAxis tick={tick} width={52} axisLine={{ stroke: "var(--border)" }} tickFormatter={(v: number) => v.toFixed(compact ? 0 : 1)} {...(narrow ? { tickCount: 5 } : {})} />
             <Tooltip content={({ active, payload, label }) => {
               if (!active || !payload?.length) return null;
               return (
@@ -1257,15 +1281,16 @@ function RsiPane({
   title: string;
   hint?: string;
 }) {
-  const tick = { fontSize: compact ? 8 : 9, fill: "var(--muted-foreground)" };
+  const narrow = useIsNarrow();
+  const tick = axisTick(narrow, compact ? 8 : 9, "var(--muted-foreground)");
   return (
     <>
       <OscCaption title={title} hint={hint} compact={compact} />
-      <div className={`${compact ? "h-[64px] sm:h-[72px]" : "h-[110px] sm:h-[130px]"} w-full min-w-0`} data-testid={testId}>
+      <div className={`${compact ? "h-[64px] sm:h-[72px]" : "h-[110px] sm:h-[130px]"} min-h-10 w-full min-w-0`} data-testid={testId}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={points} margin={{ top: 4, right: 10, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
-            <XAxis dataKey="date" tickFormatter={tickFormatter} tick={tick} interval={Math.max(0, Math.floor(points.length / (compact ? 4 : 8)))} axisLine={{ stroke: "var(--border)" }} />
+            <XAxis dataKey="date" tickFormatter={tickFormatter} tick={tick} {...xAxisIntervalProps(narrow, Math.max(0, Math.floor(points.length / (compact ? 4 : 8))))} axisLine={{ stroke: "var(--border)" }} />
             <YAxis domain={[0, 100]} ticks={compact ? [30, 70] : [0, 30, 50, 70, 100]} tick={tick} width={52} axisLine={{ stroke: "var(--border)" }} tickFormatter={(v: number) => v.toFixed(0)} />
             <Tooltip content={({ active, payload, label }) => {
               if (!active || !payload?.length) return null;
@@ -1319,9 +1344,11 @@ function BandStack({
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
 }) {
+  const narrow = useIsNarrow();
   const empty = series.points.length === 0;
   const compact = count > 1;
   return (
+    <TaPlotScroll minWidth={taChartMinWidth(52, 0, 10)} testId={`${testId}-scroll`}>
     <div className="min-w-0 max-w-full" data-testid={testId}>
       <div className={`${priceBandClass(count)} flex min-w-0 flex-col overflow-hidden ${measureMode ? "cursor-crosshair" : ""}`}>
         <div className={`shrink-0 text-[10px] font-medium leading-none ${labelClassName}`} style={labelColor ? { color: labelColor } : undefined}>{label}</div>
@@ -1350,6 +1377,9 @@ function BandStack({
           )}
         </div>
       </div>
+      {narrow && showVolume && !empty && (
+        <TaVolumeBand data={series.points} leftAxisWidth={52} marginRight={10} />
+      )}
       {!empty && showMacd && (
         <MacdPane points={series.points} tickFormatter={tickFormatter} formatDateFull={formatDateFull} compact={compact} testId={macdTestId} title={`${label} · MACD(12,26,9)`} />
       )}
@@ -1357,6 +1387,7 @@ function BandStack({
         <RsiPane points={series.points} tickFormatter={tickFormatter} formatDateFull={formatDateFull} compact={compact} testId={rsiTestId} title={`${label} · RSI(14)`} />
       )}
     </div>
+    </TaPlotScroll>
   );
 }
 
