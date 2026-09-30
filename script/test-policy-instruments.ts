@@ -167,6 +167,10 @@ ok(
   ["cryptoLiquidity", "m2", "longYield", "tBillDemand"].every(ch => prompt.includes(ch)),
 );
 ok("Prompt verbietet das Ueberschreiben gemessener Zahlen", prompt.includes("überschreibe"));
+ok(
+  "Prompt verlangt eine deutsche Zusammenfassung ohne unbelegten Gesetzesnamen",
+  prompt.includes("summary") && prompt.includes("zwei deutsche Sätze") && prompt.includes("keinen Gesetzesnamen"),
+);
 
 if (failed) {
   console.log(`\n${failed} TESTS FEHLGESCHLAGEN`);

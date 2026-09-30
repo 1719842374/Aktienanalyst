@@ -19,7 +19,7 @@ import {
   type PolicyInstrument,
 } from "./policy-instruments";
 
-const SCHEMA = "v3";
+const SCHEMA = "v4";
 const CACHE_TAB = "crypto_regulation";
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 const RESEARCHER_TTL_MIN = 60 * 6;
@@ -54,14 +54,14 @@ function readPolicyCache(params: string): PolicyScanResult | null {
       const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as PolicyScanResult & { _cachedAt?: string; _cacheAge?: number };
       const cachedAt = parsed?._cachedAt ? new Date(parsed._cachedAt).getTime() : 0;
       const ageMin = (Date.now() - cachedAt) / 60000;
-      if (ageMin < RESEARCHER_TTL_MIN && Array.isArray(parsed.instruments) && !parsed.error) {
+      if (ageMin < RESEARCHER_TTL_MIN && Array.isArray(parsed.instruments) && !parsed.error && "summary" in parsed) {
         parsed._cacheAge = Math.round(ageMin);
         return parsed;
       }
     }
   } catch {}
   const fromDisk = diskResearcherGet(researcherDiskKey(CACHE_TAB, params)) as (PolicyScanResult & { _cacheAge?: number }) | null;
-  if (fromDisk && Array.isArray(fromDisk.instruments) && !fromDisk.error) {
+  if (fromDisk && Array.isArray(fromDisk.instruments) && !fromDisk.error && "summary" in fromDisk) {
     try {
       const file = path.join(CACHE_DIR, `${safeKey(CACHE_TAB)}__${safeKey(params)}.json`);
       fs.writeFileSync(file, JSON.stringify(fromDisk, null, 2));
@@ -104,6 +104,8 @@ export interface PolicyScanResult {
   instruments: PolicyInstrument[];
   dropped: number;
   modelUsed: string | null;
+  /** Kurztext der Analyse. Kein Score und keine gemessene Zahl. */
+  summary: string | null;
   effects: {
     treasuryBuybackCapBn: number | null;
     treasuryDurationActive: boolean;
@@ -185,7 +187,7 @@ function observedMoveBp(history: { date: string; value: number }[], evidenceDate
 
 export function buildPolicyScanPrompt(measured: MeasuredPolicyContext): string {
   const m = measured;
-  return `Heute ist ${m.asOf}. Jurisdiktion: ${m.jurisdiction}.
+  return `Heute ist ${m.asOf}. Jurisdiktion: ${m.jurisdiction}. Thema: Krypto-Liquidität.
 Zwei Aufgaben, nichts anderes.
 
 1. Krypto-Regulierungen.
@@ -211,8 +213,10 @@ expectedMoveBp ist die erwartete Änderung der 10-Jahres-Rendite in Basispunkten
 halfLifeDays nur wenn kein decisionDate bekannt ist.
 Ein abgelehntes oder ausgelaufenes Vorhaben hat status rejected oder expired.
 
+Schreibe summary als zwei deutsche Sätze: welche Krypto-Regulierungen die Liquidität heute ändern. Ohne Beleg im instruments-Array keinen Gesetzesnamen als Tatsache.
+
 JSON:
-{"instruments":[{"id":"kurz","jurisdiction":"${m.jurisdiction}","office":"legislature|regulator","instrumentType":"statute","status":"proposed|advanced|enacted|implementing|rejected|expired|uncertain","officeHolder":"","effectiveFrom":"YYYY-MM-DD","effectiveTo":"YYYY-MM-DD","decisionDate":"YYYY-MM-DD","halfLifeDays":90,"expectedMoveBp":0,"channels":{"cryptoLiquidity":"up|down|unclear","tBillDemand":"up|down|unclear","longYield":"up|down|unclear","m2":"up|down|unclear"},"magnitude":{"kind":"share|score","value":0,"unit":"","issuer":""},"evidence":[{"source":"","url":"https://","date":"YYYY-MM-DD"}]}]}`;
+{"summary":"","instruments":[{"id":"kurz","jurisdiction":"${m.jurisdiction}","office":"legislature|regulator","instrumentType":"statute","status":"proposed|advanced|enacted|implementing|rejected|expired|uncertain","officeHolder":"","effectiveFrom":"YYYY-MM-DD","effectiveTo":"YYYY-MM-DD","decisionDate":"YYYY-MM-DD","halfLifeDays":90,"expectedMoveBp":0,"channels":{"cryptoLiquidity":"up|down|unclear","tBillDemand":"up|down|unclear","longYield":"up|down|unclear","m2":"up|down|unclear"},"magnitude":{"kind":"share|score","value":0,"unit":"","issuer":""},"evidence":[{"source":"","url":"https://","date":"YYYY-MM-DD"}]}]}`;
 }
 
 function effectsFor(instruments: PolicyInstrument[], measured: MeasuredPolicyContext) {
@@ -271,6 +275,7 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
       instruments: [],
       dropped: 0,
       modelUsed: null,
+      summary: null,
       ...emptyEffects,
       error: "OPENROUTER_API_KEY fehlt",
     };
@@ -293,10 +298,13 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
       instruments: [],
       dropped: 0,
       modelUsed: null,
+      summary: null,
       ...emptyEffects,
       error: "LLM-Abruf ohne JSON",
     };
   }
+  const summaryRaw = llm.data && typeof llm.data === "object" ? (llm.data as { summary?: unknown }).summary : null;
+  const summary = typeof summaryRaw === "string" && summaryRaw.trim() ? summaryRaw.trim().slice(0, 800) : null;
   const parsed = parsePolicyInstruments(llm.data);
   const computed = effectsFor(parsed.instruments, measured);
   return {
@@ -308,6 +316,7 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
     instruments: parsed.instruments,
     dropped: parsed.dropped,
     modelUsed: llm.modelUsed,
+    summary,
     ...computed,
   };
 }
