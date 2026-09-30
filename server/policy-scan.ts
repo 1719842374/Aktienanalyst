@@ -1,10 +1,14 @@
 /**
- * KI-Abruf fuer den Politikkanal. Der Prompt enthaelt kein Gesetz und keine
- * Person. Gemessene Serien bleiben unangetastet. Ohne OPENROUTER_API_KEY
- * kommt eine leere Liste zurueck.
+ * KI-Abruf fuer Krypto-Regulierungen und den Liquiditaetstracker.
+ * Aufruf, Cache und Force folgen dem Researcher (callLLMJson, gemeinsamer
+ * OpenRouter-Client, Datei- plus Disk-Cache, 6h, force loescht den Cache).
+ * Der Prompt enthaelt kein Gesetz und keine Person. Gemessene Serien bleiben
+ * unangetastet. Ohne OPENROUTER_API_KEY kommt eine klare Fehlermeldung.
  */
+import * as fs from "fs";
+import * as path from "path";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
-import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
+import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 import { fetchDefiTvlSnapshot, fetchStablecoinMarketSnapshot } from "./stablecoin-liquidity";
 import {
   activeTreasuryBuybackCapBn,
@@ -15,8 +19,66 @@ import {
   type PolicyInstrument,
 } from "./policy-instruments";
 
-const SCHEMA = "v2";
-const mem = new Map<string, PolicyScanResult>();
+const SCHEMA = "v3";
+const CACHE_TAB = "crypto_regulation";
+const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
+const RESEARCHER_TTL_MIN = 60 * 6;
+const inFlight = new Map<string, Promise<PolicyScanResult>>();
+
+if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+
+function safeKey(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_-]/g, "_").substring(0, 80);
+}
+
+function researcherDiskKey(tab: string, params: string): string {
+  return `${safeKey(tab)}__${safeKey(params)}`;
+}
+
+function cacheParams(jurisdiction: string): string {
+  return `${SCHEMA}__${jurisdiction}`;
+}
+
+function deletePolicyCache(params: string): void {
+  try {
+    const file = path.join(CACHE_DIR, `${safeKey(CACHE_TAB)}__${safeKey(params)}.json`);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  } catch {}
+  try { diskResearcherDelete(researcherDiskKey(CACHE_TAB, params)); } catch {}
+}
+
+function readPolicyCache(params: string): PolicyScanResult | null {
+  try {
+    const file = path.join(CACHE_DIR, `${safeKey(CACHE_TAB)}__${safeKey(params)}.json`);
+    if (fs.existsSync(file)) {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as PolicyScanResult & { _cachedAt?: string; _cacheAge?: number };
+      const cachedAt = parsed?._cachedAt ? new Date(parsed._cachedAt).getTime() : 0;
+      const ageMin = (Date.now() - cachedAt) / 60000;
+      if (ageMin < RESEARCHER_TTL_MIN && Array.isArray(parsed.instruments) && !parsed.error) {
+        parsed._cacheAge = Math.round(ageMin);
+        return parsed;
+      }
+    }
+  } catch {}
+  const fromDisk = diskResearcherGet(researcherDiskKey(CACHE_TAB, params)) as (PolicyScanResult & { _cacheAge?: number }) | null;
+  if (fromDisk && Array.isArray(fromDisk.instruments) && !fromDisk.error) {
+    try {
+      const file = path.join(CACHE_DIR, `${safeKey(CACHE_TAB)}__${safeKey(params)}.json`);
+      fs.writeFileSync(file, JSON.stringify(fromDisk, null, 2));
+    } catch {}
+    return fromDisk;
+  }
+  return null;
+}
+
+function writePolicyCache(params: string, data: PolicyScanResult): void {
+  const payload = { ...data, fromCache: false, _cachedAt: new Date().toISOString() };
+  try {
+    const file = path.join(CACHE_DIR, `${safeKey(CACHE_TAB)}__${safeKey(params)}.json`);
+    fs.writeFileSync(file, JSON.stringify(payload, null, 2));
+  } catch {}
+  try { diskResearcherSet(researcherDiskKey(CACHE_TAB, params), payload); } catch {}
+}
 
 export interface MeasuredPolicyContext {
   asOf: string;
@@ -59,10 +121,6 @@ export interface PolicyScanResult {
     clockStart: string | null;
   }[];
   error?: string;
-}
-
-function cacheKey(jurisdiction: string, asOf: string): string {
-  return `policy_scan__${jurisdiction}__${SCHEMA}__${asOf}`;
 }
 
 async function fredLatest(series: string, days: number): Promise<{ date: string; value: number }[]> {
@@ -128,29 +186,33 @@ function observedMoveBp(history: { date: string; value: number }[], evidenceDate
 export function buildPolicyScanPrompt(measured: MeasuredPolicyContext): string {
   const m = measured;
   return `Heute ist ${m.asOf}. Jurisdiktion: ${m.jurisdiction}.
-Du suchst Krypto-Liquidität, nicht ein einzelnes Stablecoin-Produkt.
-Welche Gesetze, Fiskalprogramme und Schuldenoperationen ändern heute die Liquidität, die Krypto erreicht: On-Chain-Liquidität, Stablecoin-Angebot, Dollar-Liquidität oder die lange Rendite.
-Jede Wirkung bekommt channels.cryptoLiquidity = "up", "down" oder "unclear".
-Stablecoins sind nur eine gemessene Schicht. Ein Programm, das lange Kapitalmarktzinsen senkt, ist fiscal_program mit channels.longYield = "down" und channels.cryptoLiquidity passend zur Liquiditätswirkung.
-Keine Personennamen als Schluessel. officeHolder ist optionaler Anzeigetext. Die Regel haengt am Amt.
-Ein abgelehntes oder ausgelaufenes Vorhaben hat status rejected oder expired.
-Treasury-Kaeufe langer Anleihen sind debt_operation, office treasury, channels.duration = "easing", magnitude.kind = "cap_bn" in Milliarden.
-Reserveanteile nur mit Beleg: magnitude.kind = "share", issuer USDT oder USDC, Wert 0 bis 1.
-Gesetzes-Score nur mit Beleg: magnitude.kind = "score", Wert 0 bis 1.5.
-expectedMoveBp ist die erwartete Aenderung der 10-Jahres-Rendite in Basispunkten, negativ wenn die Rendite sinkt.
-halfLifeDays nur wenn kein decisionDate bekannt ist.
+Zwei Aufgaben, nichts anderes.
 
-Gemessene Serien, nicht veraendern:
+1. Krypto-Regulierungen.
+Nenne nur Gesetze und Regeln, die Krypto-Liquidität ändern. Amt ist legislature oder regulator. instrumentType ist statute.
+Status nur proposed, advanced, enacted, implementing, rejected, expired oder uncertain. Ein unbekannter Status oder ein Eintrag ohne https-Beleg und Datum wird verworfen.
+Keine Personennamen als Schlüssel. officeHolder ist optionaler Anzeigetext. Die Regel hängt am Amt.
+Kein Gesetzesname aus dem Gedächtnis ohne Quelle. Erfinde keine Belege.
+
+2. Liquiditätstracker.
+Diese Serien sind gemessen. Erfinde sie nicht und überschreibe sie nicht. Gib sie nicht als eigene Zahlen zurück.
 - DeFi-TVL USD, alle Ketten: ${m.defiTvlUsd ?? "unbekannt"}
-- DeFi-TVL Aenderung 30 Tage USD: ${m.defiTvlChange30dUsd ?? "unbekannt"}
+- DeFi-TVL Änderung 30 Tage USD: ${m.defiTvlChange30dUsd ?? "unbekannt"}
 - Stablecoin-Marktkapitalisierung USD: ${m.stablecoinMcapUsd ?? "unbekannt"}
-- Stablecoin-Aenderung 30 Tage USD: ${m.mcapChange30dUsd ?? "unbekannt"}
+- Stablecoin-Änderung 30 Tage USD: ${m.mcapChange30dUsd ?? "unbekannt"}
 - TGA Mrd. USD: ${m.tgaBn ?? "unbekannt"}
-- 10Y-Rendite Prozent: ${m.dgs10 ?? "unbekannt"}
 - M2 Mrd. USD: ${m.m2Bn ?? "unbekannt"}
+- lange Rendite, 10Y Prozent: ${m.dgs10 ?? "unbekannt"}
+
+Ein Instrument darf den Druck auf diesen Liquiditätstracker erklären. Dafür nur die Kanäle cryptoLiquidity, m2, longYield und tBillDemand, jeweils up, down oder unclear.
+Reserveanteile nur mit Beleg: magnitude.kind = "share", issuer USDT oder USDC, Wert 0 bis 1. Ohne Beleg bleibt der Anteil leer und geht nicht in die T-Bill-Nachfrage.
+Gesetzes-Score nur mit Beleg: magnitude.kind = "score", Wert 0 bis 1.5. Ohne Beleg kein Score.
+expectedMoveBp ist die erwartete Änderung der 10-Jahres-Rendite in Basispunkten, negativ wenn die Rendite sinkt.
+halfLifeDays nur wenn kein decisionDate bekannt ist.
+Ein abgelehntes oder ausgelaufenes Vorhaben hat status rejected oder expired.
 
 JSON:
-{"instruments":[{"id":"kurz","jurisdiction":"${m.jurisdiction}","office":"treasury|central_bank|legislature|regulator","instrumentType":"statute|fiscal_program|debt_operation","status":"proposed|advanced|enacted|implementing|rejected|expired|uncertain","officeHolder":"","effectiveFrom":"YYYY-MM-DD","effectiveTo":"YYYY-MM-DD","decisionDate":"YYYY-MM-DD","halfLifeDays":90,"expectedMoveBp":-15,"channels":{"cryptoLiquidity":"up|down|unclear","tBillDemand":"up|down|unclear","longYield":"up|down|unclear","m2":"up|down|unclear","duration":"easing|tightening|neutral"},"magnitude":{"kind":"cap_bn|share|score|yield_bp","value":0,"unit":"","issuer":""},"evidence":[{"source":"","url":"https://","date":"YYYY-MM-DD"}]}]}`;
+{"instruments":[{"id":"kurz","jurisdiction":"${m.jurisdiction}","office":"legislature|regulator","instrumentType":"statute","status":"proposed|advanced|enacted|implementing|rejected|expired|uncertain","officeHolder":"","effectiveFrom":"YYYY-MM-DD","effectiveTo":"YYYY-MM-DD","decisionDate":"YYYY-MM-DD","halfLifeDays":90,"expectedMoveBp":0,"channels":{"cryptoLiquidity":"up|down|unclear","tBillDemand":"up|down|unclear","longYield":"up|down|unclear","m2":"up|down|unclear"},"magnitude":{"kind":"share|score","value":0,"unit":"","issuer":""},"evidence":[{"source":"","url":"https://","date":"YYYY-MM-DD"}]}]}`;
 }
 
 function effectsFor(instruments: PolicyInstrument[], measured: MeasuredPolicyContext) {
@@ -196,17 +258,8 @@ function effectsFor(instruments: PolicyInstrument[], measured: MeasuredPolicyCon
   };
 }
 
-export async function runPolicyScan(opts: { jurisdiction?: string; force?: boolean } = {}): Promise<PolicyScanResult> {
-  const jurisdiction = (opts.jurisdiction || "US").toUpperCase();
+async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> {
   const measured = await loadMeasuredPolicyContext(jurisdiction);
-  const key = cacheKey(jurisdiction, measured.asOf);
-  if (!opts.force) {
-    const hit = mem.get(key) ?? (diskResearcherGet(key) as PolicyScanResult | null);
-    if (hit?.instruments) {
-      mem.set(key, { ...hit, fromCache: true });
-      return { ...hit, fromCache: true };
-    }
-  }
   const emptyEffects = effectsFor([], measured);
   if (!isLLMAvailable()) {
     return {
@@ -222,11 +275,13 @@ export async function runPolicyScan(opts: { jurisdiction?: string; force?: boole
       error: "OPENROUTER_API_KEY fehlt",
     };
   }
+  // Gleicher Client, dieselbe Modellkette und dieselben OpenRouter-Header
+  // wie der Researcher: callLLMJson -> getClient in llm-openrouter.ts.
   const llm = await callLLMJson({
     prompt: buildPolicyScanPrompt(measured),
     maxTokens: 2200,
     temperature: 0.2,
-    systemPrompt: "Du antwortest nur mit JSON. Erfinde keine Belege. Ohne URL und Datum kein Instrument. Keine fest verdrahteten Namen als Logik.",
+    systemPrompt: "Du antwortest nur mit JSON. Erfinde keine Belege und keine gemessenen Zahlen. Ohne URL und Datum kein Instrument.",
   });
   if (!llm) {
     return {
@@ -244,7 +299,7 @@ export async function runPolicyScan(opts: { jurisdiction?: string; force?: boole
   }
   const parsed = parsePolicyInstruments(llm.data);
   const computed = effectsFor(parsed.instruments, measured);
-  const result: PolicyScanResult = {
+  return {
     llmAvailable: true,
     fromCache: false,
     fetchedAt: new Date().toISOString(),
@@ -255,15 +310,43 @@ export async function runPolicyScan(opts: { jurisdiction?: string; force?: boole
     modelUsed: llm.modelUsed,
     ...computed,
   };
-  mem.set(key, result);
-  diskResearcherSet(key, result);
-  return result;
 }
 
-/** Cap aus dem Tages-Cache. Ohne Scan bleibt der Twist aus. */
-export function cachedTreasuryBuybackCapBn(jurisdiction = "US", asOf = new Date().toISOString().slice(0, 10)): number | null {
-  const key = cacheKey(jurisdiction.toUpperCase(), asOf);
-  const hit = mem.get(key) ?? (diskResearcherGet(key) as PolicyScanResult | null);
+export async function runPolicyScan(opts: { jurisdiction?: string; force?: boolean } = {}): Promise<PolicyScanResult> {
+  const jurisdiction = (opts.jurisdiction || "US").toUpperCase();
+  const params = cacheParams(jurisdiction);
+  if (opts.force) {
+    deletePolicyCache(params);
+    console.log("[POLICY-SCAN] cache invalidated (refresh/force)");
+  } else {
+    const hit = readPolicyCache(params);
+    if (hit) {
+      console.log(`[POLICY-SCAN] cache HIT age=${(hit as PolicyScanResult & { _cacheAge?: number })._cacheAge ?? "?"}min`);
+      return { ...hit, fromCache: true };
+    }
+  }
+
+  let pending = opts.force ? undefined : inFlight.get(params);
+  if (!pending) {
+    console.log("[POLICY-SCAN] building");
+    pending = buildPolicyScan(jurisdiction)
+      .then((result) => {
+        if (result.llmAvailable && !result.error) writePolicyCache(params, result);
+        return result;
+      })
+      .finally(() => {
+        if (inFlight.get(params) === pending) inFlight.delete(params);
+      });
+    inFlight.set(params, pending);
+  } else {
+    console.log(`[POLICY-SCAN] reusing in-flight ${params}`);
+  }
+  return pending;
+}
+
+/** Cap aus dem Researcher-Cache. Ohne erfolgreichen Scan bleibt der Twist aus. */
+export function cachedTreasuryBuybackCapBn(jurisdiction = "US", _asOf = new Date().toISOString().slice(0, 10)): number | null {
+  const hit = readPolicyCache(cacheParams(jurisdiction.toUpperCase()));
   const cap = hit?.effects?.treasuryBuybackCapBn;
   return typeof cap === "number" && Number.isFinite(cap) ? cap : null;
 }

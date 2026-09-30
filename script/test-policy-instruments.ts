@@ -154,7 +154,19 @@ const prompt = buildPolicyScanPrompt({
 const banned = ["Trump", "OBBBA", "Ishiba", "Bessent", "GENIUS"];
 ok("Prompt enthaelt keine fest eingetragenen Namen", banned.every(w => !prompt.includes(w)), banned.filter(w => prompt.includes(w)).join(","));
 ok("Prompt enthaelt das Datum und die gemessene Rendite", prompt.includes("2026-09-30") && prompt.includes("4.1"));
-ok("Prompt sucht Krypto-Liquiditaet und die gemessene TVL", prompt.includes("Krypto-Liquidität") && prompt.includes("95000000000") && prompt.includes("cryptoLiquidity"));
+ok(
+  "Prompt sucht Krypto-Regulierungen und den Liquiditaetstracker",
+  prompt.includes("Krypto-Regulierungen") && prompt.includes("Liquiditätstracker") && prompt.includes("Krypto-Liquidität"),
+);
+ok(
+  "gemessene TVL steht im Prompt",
+  prompt.includes("95000000000") && prompt.includes("15000000000"),
+);
+ok(
+  "Kanaele erklaeren Druck auf den Tracker",
+  ["cryptoLiquidity", "m2", "longYield", "tBillDemand"].every(ch => prompt.includes(ch)),
+);
+ok("Prompt verbietet das Ueberschreiben gemessener Zahlen", prompt.includes("überschreibe"));
 
 if (failed) {
   console.log(`\n${failed} TESTS FEHLGESCHLAGEN`);
