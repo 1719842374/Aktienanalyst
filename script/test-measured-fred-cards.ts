@@ -1,6 +1,8 @@
 /**
  * Sec14 FRED-Messkarten: die fuenfte Karte TGA erscheint, wenn measured.tgaBn gesetzt ist.
- * Milliarden wie M2 (Wert in Mrd. USD → formatUsdCompact). Die vier bestehenden Karten bleiben gleich.
+ * Fixture ist der Live-Dump von POST /api/analyze-btc/policy-scan (DoD #118):
+ * die vier Screenshot-Werte bleiben, TGA kommt aus measured.tgaBn.
+ * Milliarden wie M2 (Wert in Mrd. USD → formatUsdCompact).
  * Run: npx tsx --tsconfig script/tsconfig.jsx.json script/test-measured-fred-cards.ts
  */
 import { readFileSync } from "node:fs";
@@ -17,13 +19,9 @@ function ok(name: string, cond: boolean, detail?: string) {
   }
 }
 
-const live = {
-  policyRate: 3.88,
-  realYield10y: 2.91,
-  dgs10: 5.26,
-  m2Bn: 23340,
-  tgaBn: 977.084,
-};
+const dump = JSON.parse(readFileSync(new URL("./fixtures/policy-scan-dod118.json", import.meta.url), "utf8"));
+const live = dump.measured;
+ok("Live-Dump enthaelt tgaBn", live?.tgaBn === 977.084 && live?.m2Bn === 23342.8 && live?.policyRate === 3.88);
 
 const html = renderToStaticMarkup(createElement(MeasuredFredCards, { measured: live }));
 
