@@ -48,6 +48,7 @@ export interface PolicyInstrument {
     tBillDemand?: "up" | "down" | "unclear";
     longYield?: "up" | "down" | "unclear";
     m2?: "up" | "down" | "unclear";
+    cryptoLiquidity?: "up" | "down" | "unclear";
     duration?: "easing" | "tightening" | "neutral";
   };
   magnitude?: PolicyMagnitude;
@@ -117,10 +118,12 @@ export function parsePolicyInstruments(raw: unknown): { instruments: PolicyInstr
     const tBill = oneOf(channelsRaw.tBillDemand, CHANNEL_DIRECTIONS);
     const longYield = oneOf(channelsRaw.longYield, CHANNEL_DIRECTIONS);
     const m2 = oneOf(channelsRaw.m2, CHANNEL_DIRECTIONS);
+    const cryptoLiquidity = oneOf(channelsRaw.cryptoLiquidity, CHANNEL_DIRECTIONS);
     const duration = oneOf(channelsRaw.duration, DURATION_DIRECTIONS);
     if (tBill) channels.tBillDemand = tBill;
     if (longYield) channels.longYield = longYield;
     if (m2) channels.m2 = m2;
+    if (cryptoLiquidity) channels.cryptoLiquidity = cryptoLiquidity;
     if (duration) channels.duration = duration;
     const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : `${office}:${instrumentType}:${evidence[0].date}`;
     const jurisdiction = typeof row.jurisdiction === "string" && row.jurisdiction.trim() ? row.jurisdiction.trim() : "US";

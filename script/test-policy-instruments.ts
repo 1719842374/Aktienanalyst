@@ -11,7 +11,7 @@ import {
   type PolicyInstrument,
 } from "../server/policy-instruments";
 import { buildPolicyScanPrompt } from "../server/policy-scan";
-import { estimateTBillDemand, type StablecoinMarketSnapshot } from "../server/stablecoin-liquidity";
+import { defiTvlFromSeries, estimateTBillDemand, type StablecoinMarketSnapshot } from "../server/stablecoin-liquidity";
 
 let failed = 0;
 function ok(name: string, cond: boolean, detail?: string) {
@@ -88,6 +88,24 @@ ok("Cap nach Ende leer", activeTreasuryBuybackCapBn([buy], "2026-06-02") === nul
 const otherOffice = inst({ office: "central_bank", instrumentType: "debt_operation", status: "enacted", channels: { duration: "easing" }, magnitude: { kind: "cap_bn", value: 9, unit: "bn" } });
 ok("anderes Amt zaehlt nicht", activeTreasuryBuybackCapBn([otherOffice], "2026-04-01") === null);
 
+const withLiquidity = parsePolicyInstruments({
+  instruments: [{
+    office: "central_bank",
+    instrumentType: "debt_operation",
+    status: "enacted",
+    channels: { cryptoLiquidity: "up", m2: "up" },
+    evidence: [evidence],
+  }],
+});
+ok("Kanal Krypto-Liquiditaet bleibt erhalten", withLiquidity.instruments[0]?.channels.cryptoLiquidity === "up" && withLiquidity.dropped === 0);
+
+const day = 86400;
+const tvl = defiTvlFromSeries([
+  { date: 1_700_000_000, tvl: 80e9 },
+  { date: 1_700_000_000 + 30 * day, tvl: 95e9 },
+]);
+ok("TVL und 30-Tage-Aenderung sind gemessen", tvl.available && tvl.tvlUsd === 95e9 && tvl.change30dUsd === 15e9, JSON.stringify(tvl));
+
 const shares = [
   inst({ id: "t", office: "regulator", instrumentType: "statute", status: "enacted", magnitude: { kind: "share", value: 0.8, unit: "share", issuer: "USDT" } }),
   inst({ id: "c", office: "regulator", instrumentType: "statute", status: "proposed", magnitude: { kind: "share", value: 0.55, unit: "share", issuer: "USDC" } }),
@@ -126,6 +144,8 @@ const prompt = buildPolicyScanPrompt({
   mcapChange30dUsd: 2,
   usdtMcapUsd: 3,
   usdcMcapUsd: 4,
+  defiTvlUsd: 95e9,
+  defiTvlChange30dUsd: 15e9,
   tgaBn: 5,
   dgs10: 4.1,
   dgs10History: [],
@@ -134,6 +154,7 @@ const prompt = buildPolicyScanPrompt({
 const banned = ["Trump", "OBBBA", "Ishiba", "Bessent", "GENIUS"];
 ok("Prompt enthaelt keine fest eingetragenen Namen", banned.every(w => !prompt.includes(w)), banned.filter(w => prompt.includes(w)).join(","));
 ok("Prompt enthaelt das Datum und die gemessene Rendite", prompt.includes("2026-09-30") && prompt.includes("4.1"));
+ok("Prompt sucht Krypto-Liquiditaet und die gemessene TVL", prompt.includes("Krypto-Liquidität") && prompt.includes("95000000000") && prompt.includes("cryptoLiquidity"));
 
 if (failed) {
   console.log(`\n${failed} TESTS FEHLGESCHLAGEN`);

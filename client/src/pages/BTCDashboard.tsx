@@ -140,7 +140,7 @@ const SECTIONS = [
   { id: 11, label: "Fear & Greed", icon: Gauge },
   { id: 12, label: "Gesamt-Fazit", icon: Scale },
   { id: 13, label: "Miner-Zone", icon: Activity },
-  { id: 14, label: "Stablecoin/Politik", icon: Layers },
+  { id: 14, label: "Krypto-Liquidität", icon: Layers },
 ];
 
 // === Helper Components ===
