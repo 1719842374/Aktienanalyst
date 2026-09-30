@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { TAM_NA_SHARE_WARN, catalogCoverageNote, deriveOutperforming, deriveTamShare, type TamNaFill } from "../../../../shared/tam-na-fill";
+import { TAM_NA_SHARE_WARN, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, kiFillMetaLine, type TamNaFill, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
 import { formatNumber } from "../../lib/formatters";
 import { apiRequest } from "../../lib/queryClient";
 import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "lucide-react";
@@ -55,10 +55,25 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
     setTamAiLoading(false);
   }, [data.ticker, tamSegmentSig]);
 
-  const unmatchedTamSegments = tam?.segments?.filter((s) => s.matched === false) ?? [];
+  const tamNaRefs = useMemo(() => {
+    const out: TamNaSegmentRef[] = [];
+    const seen = new Set<string>();
+    for (const s of tam?.segments ?? []) {
+      const ref = toTamNaRef(s);
+      if (!ref || seen.has(ref.segmentName)) continue;
+      seen.add(ref.segmentName);
+      out.push(ref);
+    }
+    return out;
+  }, [tam]);
+  const scopeNaCount = useMemo(() => countScopeRestNa(tamNaRefs, null), [tamNaRefs]);
+  const kiCellCount = useMemo(
+    () => (tamAiFills ? countKiFilledCells(tamNaRefs, Object.values(tamAiFills)) : 0),
+    [tamNaRefs, tamAiFills],
+  );
 
   async function fillTamNa() {
-    if (!tam?.segments || tamAiLoading || unmatchedTamSegments.length === 0) return;
+    if (!tam?.segments || tamAiLoading || scopeNaCount === 0 || tamAiFills) return;
     const requestId = ++tamAiRequest.current;
     setTamAiLoading(true);
     setTamAiError(null);
@@ -69,41 +84,36 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
         industry: data.industry,
         description: data.description,
         coveragePct: typeof tam.coveragePct === "number" ? tam.coveragePct : null,
-        segments: unmatchedTamSegments.map((s) => ({
+        segments: tam.segments.map((s) => ({
           segmentName: s.segmentName,
           segmentRevenue: s.segmentRevenue,
           segmentShare: s.segmentShare,
           segmentGrowth: typeof s.segmentGrowth === "number" && Number.isFinite(s.segmentGrowth) ? s.segmentGrowth : null,
-          matched: false,
+          matched: s.matched === false ? false : true,
+          tamSize: typeof s.tamSize === "number" && Number.isFinite(s.tamSize) ? s.tamSize : null,
+          tamCAGR: typeof s.tamCAGR === "number" && Number.isFinite(s.tamCAGR) ? s.tamCAGR : null,
         })),
       });
       let json: { fills?: TamNaFill[]; error?: string } | null = null;
       try { json = await res.json(); } catch { json = null; }
       if (requestId !== tamAiRequest.current) return;
+      const incomplete = "KI-Schätzung unvollständig — nichts übernommen";
       if (!res.ok || !json || !Array.isArray(json.fills) || json.fills.length === 0) {
-        setTamAiError(json?.error || "KI-Schätzung fehlgeschlagen. Tabelle unverändert.");
+        setTamAiError(json?.error || incomplete);
         return;
       }
-      const byName = new Map(unmatchedTamSegments.map((s) => [s.segmentName, s]));
+      if (countScopeRestNa(tamNaRefs, json.fills) !== 0) {
+        setTamAiError(json.error || incomplete);
+        return;
+      }
+      const known = new Set(tamNaRefs.map((s) => s.segmentName));
       const next: Record<string, TamNaFill> = {};
       for (const fill of json.fills) {
-        const seg = byName.get(fill.segmentName);
-        if (!seg || !(fill.tamSize > 0) || !Number.isFinite(fill.tamCAGR)) continue;
-        const marketShare = deriveTamShare(seg.segmentRevenue, fill.tamSize);
-        const growth = typeof seg.segmentGrowth === "number" && Number.isFinite(seg.segmentGrowth) ? seg.segmentGrowth : null;
-        next[seg.segmentName] = {
-          segmentName: seg.segmentName,
-          tamSize: fill.tamSize,
-          tamCAGR: fill.tamCAGR,
-          tamLabel: fill.tamLabel,
-          tamSource: fill.tamSource,
-          marketShare,
-          outperforming: deriveOutperforming(growth, fill.tamCAGR),
-          shareWarning: marketShare > TAM_NA_SHARE_WARN,
-        };
+        if (!fill || !known.has(fill.segmentName)) continue;
+        next[fill.segmentName] = fill;
       }
-      if (Object.keys(next).length === 0) {
-        setTamAiError("Keine gültigen KI-Schätzungen. Tabelle unverändert.");
+      if (countScopeRestNa(tamNaRefs, Object.values(next)) !== 0) {
+        setTamAiError(incomplete);
         return;
       }
       setTamAiFills(next);
@@ -236,10 +246,12 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                 <button
                   type="button"
                   onClick={() => { if (!tamAiLoading) void fillTamNa(); }}
-                  disabled={tamAiLoading || unmatchedTamSegments.length === 0}
-                  title={unmatchedTamSegments.length === 0
-                    ? "Keine N/A-Segmente"
-                    : "N/A-Segmente per KI schätzen. Catalog-Coverage bleibt unverändert."}
+                  disabled={tamAiLoading || scopeNaCount === 0 || !!tamAiFills}
+                  title={tamAiFills
+                    ? "KI ✓"
+                    : scopeNaCount === 0
+                      ? "Keine N/A-Zellen"
+                      : "N/A mit KI schätzen. Catalog-Coverage bleibt unverändert."}
                   className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal transition-colors disabled:opacity-50 ${
                     tamAiFills
                       ? "border-violet-400/40 bg-violet-500/20 text-violet-700 hover:bg-violet-500/30 dark:text-violet-200"
@@ -248,7 +260,14 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                   data-testid="button-tam-na-fill"
                 >
                   {tamAiLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                  KI
+                  {tamAiFills ? (
+                    <span>KI ✓</span>
+                  ) : (
+                    <>
+                      <span className="sm:hidden">KI-N/A</span>
+                      <span className="hidden sm:inline">N/A mit KI schätzen</span>
+                    </>
+                  )}
                 </button>
                 {tamAiFills && (
                   <button
@@ -262,9 +281,12 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                   </button>
                 )}
               </div>
+              <div className="text-[10px] text-muted-foreground" data-testid="text-tam-na-legend">
+                Violett/KI = Schätzung · Anteil am TAM & vs. TAM immer Formel
+              </div>
               {tamAiFills && (
                 <div className="text-[10px] text-violet-700 dark:text-violet-300" data-testid="text-tam-na-coverage-note">
-                  {catalogCoverageNote(tam.coveragePct)}
+                  {kiFillMetaLine(kiCellCount, tam.coveragePct)}
                 </div>
               )}
               {tamAiError && (
@@ -288,86 +310,78 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                   </thead>
                   <tbody className="divide-y divide-border/30">
                     {tam.segments.map((seg: any, i: number) => {
-                      const unmatched = seg.matched === false;
-                      const ki: TamNaFill | undefined = unmatched && tamAiFills ? tamAiFills[seg.segmentName] : undefined;
+                      const row = tamRowView(seg, tamAiFills?.[seg.segmentName]);
                       return (
                       <tr key={i} className="hover:bg-muted/10">
                         <td className="py-1.5 pr-2 font-medium">
                           {seg.segmentName}
-                          {seg.shareWarning && (
+                          {seg.shareWarning && !row.shareIsKi && (
                             <span title="Marktanteil > 25% des zugeordneten TAM — mit Vorsicht interpretieren" className="text-amber-500 ml-1">⚠</span>
                           )}
-                          {ki?.shareWarning && !seg.shareWarning && (
+                          {row.shareIsKi && row.shareWarning && (
                             <span title="Marktanteil > 25% des KI-TAM — mit Vorsicht interpretieren" className="text-amber-500 ml-1">⚠</span>
                           )}
                         </td>
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.segmentRevenue, 1)}B</td>
                         <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground">{formatNumber(seg.segmentShare, 1)}%</td>
-                        {/* Echte YoY-Segment-Wachstumsrate. null/undefined =
-                            keine Vorjahreszahl → "n/a", NIEMALS 0.0 % (war der Bug). */}
-                        {typeof seg.segmentGrowth === 'number' && isFinite(seg.segmentGrowth) ? (
-                          <td className={`py-1.5 px-1.5 text-right font-mono tabular-nums font-medium ${seg.segmentGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                            {seg.segmentGrowth >= 0 ? '+' : ''}{formatNumber(seg.segmentGrowth, 1)}%
-                          </td>
-                        ) : (
+                        {row.growth === null ? (
                           <td
                             className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60"
                             title="Keine Vorjahreszahl fuer dieses Segment berichtet"
                           >
                             n/a
                           </td>
-                        )}
-                        {unmatched ? (
-                          ki ? (
-                          <>
-                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI" data-testid={`cell-tam-ki-size-${i}`}>
-                              ${formatNumber(ki.tamSize, 0)}B
-                              <span className="ml-1 inline-flex items-center rounded border border-violet-400/40 bg-violet-500/20 px-1 align-middle text-[8px] font-bold uppercase tracking-wide text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI" data-testid={`badge-tam-ki-${i}`}>KI</span>
-                            </td>
-                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI">{ki.tamCAGR}%</td>
-                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI">{formatNumber(ki.marketShare, 1)}%</td>
-                            <td className="py-1.5 pl-1.5 text-center bg-violet-500/10" title="N/A ersetzt durch KI">
-                              {ki.outperforming === null ? (
-                                <span className="text-muted-foreground/60">n/a</span>
-                              ) : ki.outperforming ? (
-                                <span className="inline-flex items-center gap-0.5 text-emerald-500 font-medium">
-                                  <TrendingUp className="w-2.5 h-2.5" /> Über
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-0.5 text-amber-500 font-medium">
-                                  <TrendingDown className="w-2.5 h-2.5" /> Unter
-                                </span>
-                              )}
-                            </td>
-                          </>
-                          ) : (
-                          <>
-                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title="Kein TAM-Markt zugeordnet">n/a</td>
-                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60">n/a</td>
-                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60">n/a</td>
-                            <td className="py-1.5 pl-1.5 text-center text-muted-foreground/60">n/a</td>
-                          </>
-                          )
                         ) : (
-                          <>
-                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(seg.tamSize, 0)}B</td>
-                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-primary">{seg.tamCAGR}%</td>
-                            <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">{formatNumber(seg.marketShare, 1)}%</td>
-                            <td className="py-1.5 pl-1.5 text-center">
-                              {seg.outperforming === null || seg.outperforming === undefined ? (
-                                <span className="text-muted-foreground/60">n/a</span>
-                              ) : seg.outperforming ? (
-                                <span className="inline-flex items-center gap-0.5 text-emerald-500 font-medium">
-                                  <TrendingUp className="w-2.5 h-2.5" /> Über
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-0.5 text-amber-500 font-medium">
-                                  <TrendingDown className="w-2.5 h-2.5" /> Unter
-                                </span>
-                              )}
-                            </td>
-                          </>
+                          <td className={`py-1.5 px-1.5 text-right font-mono tabular-nums font-medium ${row.growth >= 0 ? 'text-emerald-500' : 'text-red-500'} ${row.growthIsKi ? 'bg-violet-500/10' : ''}`} title={row.growthIsKi ? "N/A ersetzt durch KI" : undefined}>
+                            {row.growth >= 0 ? '+' : ''}{formatNumber(row.growth, 1)}%
+                            {row.growthIsKi && <KiBadge testId={`badge-growth-ki-${i}`} />}
+                          </td>
                         )}
+                        {row.tamIsKi && row.tamSize != null ? (
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI" data-testid={`cell-tam-ki-size-${i}`}>
+                            ${formatNumber(row.tamSize, 0)}B
+                            <KiBadge testId={`badge-tam-ki-${i}`} />
+                          </td>
+                        ) : row.tamSize === null ? (
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60" title="Kein TAM-Markt zugeordnet">n/a</td>
+                        ) : (
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">${formatNumber(row.tamSize, 0)}B</td>
+                        )}
+                        {row.cagrIsKi ? (
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI">
+                            {row.tamCagr}%
+                            <KiBadge />
+                          </td>
+                        ) : row.unmatched ? (
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60">n/a</td>
+                        ) : (
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-primary">{seg.tamCAGR}%</td>
+                        )}
+                        {row.shareIsKi && row.marketShare != null ? (
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums bg-violet-500/10 text-violet-700 dark:text-violet-200" title="N/A ersetzt durch KI">
+                            {formatNumber(row.marketShare, 1)}%
+                            <KiBadge />
+                          </td>
+                        ) : row.unmatched ? (
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums text-muted-foreground/60">n/a</td>
+                        ) : (
+                          <td className="py-1.5 px-1.5 text-right font-mono tabular-nums">{formatNumber(seg.marketShare, 1)}%</td>
+                        )}
+                        <td className={`py-1.5 pl-1.5 text-center ${row.vsIsKi ? 'bg-violet-500/10' : ''}`} title={row.vsIsKi ? "N/A ersetzt durch KI" : undefined}>
+                          {row.vs === null ? (
+                            <span className="text-muted-foreground/60">n/a</span>
+                          ) : row.vs ? (
+                            <span className="inline-flex items-center gap-0.5 text-emerald-500 font-medium">
+                              <TrendingUp className="w-2.5 h-2.5" /> Über
+                              {row.vsIsKi && <KiBadge />}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-0.5 text-amber-500 font-medium">
+                              <TrendingDown className="w-2.5 h-2.5" /> Unter
+                              {row.vsIsKi && <KiBadge />}
+                            </span>
+                          )}
+                        </td>
                       </tr>
                       );
                     })}
@@ -541,6 +555,84 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
         </div>
       )}
     </SectionCard>
+  );
+}
+
+function toTamNaRef(s: {
+  segmentName?: string;
+  segmentRevenue?: number;
+  segmentGrowth?: number | null;
+  matched?: boolean;
+  tamSize?: number | null;
+  tamCAGR?: number | null;
+}): TamNaSegmentRef | null {
+  const name = typeof s.segmentName === "string" ? s.segmentName.trim() : "";
+  if (!name) return null;
+  if (!(typeof s.segmentRevenue === "number" && Number.isFinite(s.segmentRevenue) && s.segmentRevenue >= 0)) return null;
+  return {
+    segmentName: name,
+    segmentRevenue: s.segmentRevenue,
+    segmentGrowth: typeof s.segmentGrowth === "number" && Number.isFinite(s.segmentGrowth) ? s.segmentGrowth : null,
+    matched: s.matched,
+    tamSize: typeof s.tamSize === "number" && Number.isFinite(s.tamSize) ? s.tamSize : null,
+    tamCAGR: typeof s.tamCAGR === "number" && Number.isFinite(s.tamCAGR) ? s.tamCAGR : null,
+  };
+}
+
+function tamRowView(seg: {
+  segmentName: string;
+  segmentRevenue: number;
+  segmentGrowth?: number | null;
+  segmentShare?: number;
+  matched?: boolean;
+  tamSize?: number | null;
+  tamCAGR?: number | null;
+  marketShare?: number | null;
+  shareWarning?: boolean;
+}, fill: TamNaFill | undefined) {
+  const ref = toTamNaRef(seg);
+  const unmatched = seg.matched === false;
+  const factGrowth = typeof seg.segmentGrowth === "number" && Number.isFinite(seg.segmentGrowth) ? seg.segmentGrowth : null;
+  const kiGrowth = factGrowth == null && fill && typeof fill.segmentGrowth === "number" && Number.isFinite(fill.segmentGrowth)
+    ? fill.segmentGrowth
+    : null;
+  const growth = factGrowth ?? kiGrowth;
+  const factTam = ref ? factTamSize(ref) : null;
+  const factCagr = ref ? factTamCagr(ref) : null;
+  const kiTam = unmatched && fill && typeof fill.tamSize === "number" && Number.isFinite(fill.tamSize) && fill.tamSize > 0
+    ? fill.tamSize
+    : null;
+  const kiCagr = unmatched && fill && typeof fill.tamCAGR === "number" && Number.isFinite(fill.tamCAGR) ? fill.tamCAGR : null;
+  const tamSize = factTam ?? kiTam;
+  const tamCagr = factCagr ?? kiCagr;
+  const marketShare = kiTam != null ? deriveTamShare(seg.segmentRevenue, kiTam) : seg.marketShare;
+  const vs = deriveOutperforming(growth, tamCagr);
+  return {
+    unmatched,
+    growth,
+    growthIsKi: kiGrowth != null,
+    tamSize,
+    tamIsKi: kiTam != null,
+    tamCagr,
+    cagrIsKi: kiCagr != null,
+    marketShare,
+    shareIsKi: kiTam != null,
+    shareWarning: kiTam != null ? (marketShare ?? 0) > TAM_NA_SHARE_WARN : !!seg.shareWarning,
+    vs,
+    vsIsKi: vs != null && (kiGrowth != null || kiCagr != null),
+  };
+}
+
+function KiBadge({ testId }: { testId?: string }) {
+  return (
+    <span
+      className="ml-1 inline-flex items-center rounded border border-violet-500/40 bg-violet-500/15 px-1 align-middle text-[8px] font-bold uppercase tracking-wide text-violet-300"
+      title="N/A ersetzt durch KI"
+      aria-label="N/A ersetzt durch KI"
+      data-testid={testId}
+    >
+      KI
+    </span>
   );
 }
 

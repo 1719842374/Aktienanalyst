@@ -2495,9 +2495,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
   });
 
   // ── POST /api/analyze/:ticker/tam-na-fill ────────────────────
-  // Session-only KI estimates for unmatched Segment-TAM rows.
-  // Fact coverage, quality, tamTotal, weighted CAGR and the DCF gate stay
-  // on the catalog path — this handler only returns validated fills.
+  // Session-only KI estimates for Segment-TAM n/a cells (Spec v2).
+  // Success only when Rest-n/a in Wachstum·TAM·CAGR·Anteil am TAM·vs. TAM is 0;
+  // otherwise 422 INCOMPLETE_FILL and no overlay. Fact coverage, quality,
+  // tamTotal, weighted CAGR and the DCF gate are echoed, never recomputed.
+  // This handler does not write the fact cache.
   app.post("/api/analyze/:ticker/tam-na-fill", async (req: Request, res: Response) => {
     try {
       const rawTicker = req.params.ticker;
