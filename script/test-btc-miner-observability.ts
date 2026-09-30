@@ -268,6 +268,21 @@ async function main() {
     check("lastError nach Fallback leer", getMinerLastError() === null);
   }
 
+  console.log("\nfetchMinerData — längere Preishistorie rechnet Puell neu");
+  {
+    resetMinerCacheForTests();
+    installFetch(okBoth());
+    const short = await fetchMinerData([{ date: "2024-01-01", price: 50_000 }], 50_000);
+    check("kurze Historie ohne Puell, Zone trotzdem gesetzt", short?.puellMultiple == null && short?.minerZone != null);
+    const longHist = Array.from({ length: 400 }, (_, i) => {
+      const d = new Date(Date.UTC(2024, 0, 1) + i * 86400000);
+      return { date: d.toISOString().slice(0, 10), price: 50_000 };
+    });
+    const long = await fetchMinerData(longHist, 50_000);
+    check("volle Historie setzt Puell", long?.puellMultiple != null, String(long?.puellMultiple));
+    check("kein Cache-Treffer der kurzen Serie", long !== short);
+  }
+
   console.log("\nminerUnavailableBody — Fallback nur ohne lastError");
   {
     resetMinerCacheForTests();

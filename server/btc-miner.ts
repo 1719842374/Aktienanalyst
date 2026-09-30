@@ -387,6 +387,8 @@ export function calcMinerScore(
 // "unreachable".
 let _cache: MinerData | null = null;
 let _cacheTime = 0;
+/** Länge der Preishistorie, mit der `_cache` gerechnet wurde. */
+let _cacheHistoryLen = 0;
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
 export type MinerErrorCode =
@@ -441,6 +443,7 @@ export function minerUnavailableBody(): { error: string; code: string; cause?: s
 export function resetMinerCacheForTests(): void {
   _cache = null;
   _cacheTime = 0;
+  _cacheHistoryLen = 0;
   _lastError = null;
 }
 
@@ -706,9 +709,13 @@ export async function fetchMinerData(
   // Ein GET (ohne Preis) darf einem POST (mit Preis) kein Ergebnis ohne
   // Puell/minerZone unterschieben — sonst zeigt die Miner-Sektion 1h lang
   // "keine Daten" obwohl die Preishistorie mitgeschickt wurde.
-  const callHasPriceContext = (btcPriceHistory?.length ?? 0) > 0 || (btcPrice ?? 0) > 0;
+  const historyLen = btcPriceHistory?.length ?? 0;
+  const callHasPriceContext = historyLen > 0 || (btcPrice ?? 0) > 0;
   const cacheHasPriceContext = _cache != null && (_cache.puellMultiple != null || _cache.minerZone != null);
-  if (_cache && Date.now() - _cacheTime < CACHE_TTL_MS && (!callHasPriceContext || cacheHasPriceContext)) {
+  // Eine kurze Historie (Puell noch null, Zone schon gesetzt) darf den nächsten
+  // Aufruf mit der vollen BTC-Reihe nicht eine Stunde lang ohne Puell bedienen.
+  const cacheCoversHistory = historyLen <= _cacheHistoryLen && (historyLen < 365 || _cache?.puellMultiple != null);
+  if (_cache && Date.now() - _cacheTime < CACHE_TTL_MS && (!callHasPriceContext || (cacheHasPriceContext && cacheCoversHistory))) {
     return _cache;
   }
 
@@ -827,6 +834,7 @@ export async function fetchMinerData(
 
       _cache = result;
       _cacheTime = Date.now();
+      _cacheHistoryLen = historyLen;
       _lastError = null;
       console.log(
         `[BTC-MINER] OK — ${hashrateSource} ${hashrateHistory.length} HR pts | ` +
