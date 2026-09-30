@@ -8,11 +8,8 @@
  * WICHTIG (Zahlen-Prinzip, siehe stock-analyst-regression-guard):
  * - Stablecoin-Market-Cap-Zahlen (Total/USDT/USDC) sind ECHTE Live-Daten von
  *   DefiLlama — keine Schätzung.
- * - Der T-Bill-Holding-Anteil ist KEINE Live-Messung. Die Werte 75 und 55
- *   Prozent sind Schätzungen mit Datum und Quelle. Sie gehen nicht in den
- *   T-Bill-Bedarf, bis ein Bericht einen neuen Wert mit Beleg liefert.
- * - Ein Gesetzes-Score kommt nur aus einem belegten Instrument mit Status
- *   enacted oder implementing. Es gibt keinen stillen Score.
+ * - Reserveanteile und Gesetzes-Scores stehen nicht in dieser Antwort.
+ *   Sie kommen nur aus einem belegten Politik-Scan.
  * - Bei nicht erreichbarer DefiLlama-API: `null` + `available: false`-Flag,
  *   NIEMALS eine geschätzte/interpolierte Zahl zurückgeben.
  */
@@ -41,19 +38,6 @@ export interface StablecoinMarketSnapshot {
   constituentCount: number | null;
   error?: string;
 }
-
-/**
- * Reserveanteile als Schätzung mit Datum und Quelle. usedInDemand bleibt
- * false, bis ein Scan beide Anteile mit Beleg liefert.
- */
-export const RESERVE_SHARE_ESTIMATES = {
-  asOfDate: "2026-08-24",
-  source: "Tether Transparency und Circle Reserve Report, manuell gesichtet",
-  kennzeichnung: "Schätzung mit Datum und Quelle. Geht nicht in den T-Bill-Bedarf, bis ein Bericht einen neuen Wert mit Beleg liefert.",
-  tetherTBillShare: 0.75,
-  usdcTBillShare: 0.55,
-  usedInDemand: false,
-} as const;
 
 function toAggregate(entry: any): StablecoinAggregate | null {
   if (!entry) return null;
@@ -260,20 +244,6 @@ export interface StablecoinLiquidityResponse {
   fetchedAt: string;
   stablecoins: StablecoinMarketSnapshot;
   tBillDemand: TBillDemandEstimate;
-  statute: {
-    score: number | null;
-    scoreMax: number;
-    status: string;
-    kennzeichnung: string;
-  };
-  reserveEstimates: {
-    tetherTBillShare: number;
-    usdcTBillShare: number;
-    asOfDate: string;
-    source: string;
-    kennzeichnung: string;
-    usedInDemand: false;
-  };
   defiTvl: DefiTvlSnapshot;
 }
 
@@ -288,20 +258,6 @@ export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiqu
     fetchedAt: stablecoins.fetchedAt,
     stablecoins,
     tBillDemand,
-    statute: {
-      score: null,
-      scoreMax: 1.5,
-      status: "Kein stiller Score. Ein Gesetz zählt nur bei Status enacted oder implementing und mit Beleg.",
-      kennzeichnung: "Der Beitrag kommt aus dem Politik-Scan.",
-    },
-    reserveEstimates: {
-      tetherTBillShare: RESERVE_SHARE_ESTIMATES.tetherTBillShare,
-      usdcTBillShare: RESERVE_SHARE_ESTIMATES.usdcTBillShare,
-      asOfDate: RESERVE_SHARE_ESTIMATES.asOfDate,
-      source: RESERVE_SHARE_ESTIMATES.source,
-      kennzeichnung: RESERVE_SHARE_ESTIMATES.kennzeichnung,
-      usedInDemand: false,
-    },
     defiTvl,
   };
 }
