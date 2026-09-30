@@ -1,12 +1,12 @@
-import { Fragment, useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import type { StockAnalysis, OHLCVPoint, TradingSignal } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import {
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis,
-  Tooltip, ReferenceLine, ReferenceDot, ReferenceArea, Area, CartesianGrid,
+  Tooltip, ReferenceLine, ReferenceArea, Area, CartesianGrid,
 } from "recharts";
 import { useIsNarrow } from "@/hooks/use-mobile";
-import { TA_SIGNAL_DOT_R, axisTick, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
+import { axisTick, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -114,7 +114,7 @@ function calcBollinger(closes: number[], period = 20, k = 2) {
   });
 }
 
-// ─── SMA / EMA — gleiche Definition wie Server (analyze-route), nur auf dem Fenster-Slice ──
+// ─── SMA / EMA — gleiche Definition wie Server (analyze-route), auf der vollen OHLCV-Historie ──
 function smaSeries(data: number[], period: number): (number | undefined)[] {
   const out: (number | undefined)[] = new Array(data.length);
   let sum = 0;
@@ -174,12 +174,22 @@ type WindowPoint = {
 
 type WindowSeries = { points: WindowPoint[]; signals: TradingSignal[] };
 
-/**
- * v3.2: Close, MAs, BB, RSI, MACD und Signale nur aus den Bars dieses Fensters.
- * Periode länger als das Fenster → Serie beginnt am ersten gültigen Index, kein Wurf.
- */
-function buildWindowSeries(bars: OHLCVPoint[]): WindowSeries {
-  if (bars.length === 0) return { points: [], signals: [] };
+type FullSeries = {
+  points: Omit<WindowPoint, "_volNorm">[];
+  signals: TradingSignal[];
+  indexOf: Map<OHLCVPoint, number>;
+};
+
+/** MAs, BB, RSI, MACD und Signale einmal auf der vollen, chronologischen OHLCV-Historie. */
+function buildFullSeries(ohlcv: OHLCVPoint[]): FullSeries {
+  let sorted = true;
+  for (let i = 1; i < ohlcv.length; i++) {
+    if (ohlcv[i - 1].date > ohlcv[i].date) { sorted = false; break; }
+  }
+  const bars = sorted ? ohlcv : [...ohlcv].sort((a, b) => a.date.localeCompare(b.date));
+  const indexOf = new Map<OHLCVPoint, number>();
+  bars.forEach((b, i) => indexOf.set(b, i));
+  if (bars.length === 0) return { points: [], signals: [], indexOf };
   const closes = bars.map(b => b.close);
   const dates = bars.map(b => b.date);
   const ma200 = smaSeries(closes, 200);
@@ -232,10 +242,7 @@ function buildWindowSeries(bars: OHLCVPoint[]): WindowSeries {
     signalsByDate.set(s.date, arr);
   }
 
-  const allVols = bars.map(b => b.volume).filter(v => v > 0);
-  const maxVol = allVols.length ? Math.max(...allVols) : 1;
-
-  const points: WindowPoint[] = bars.map((b, i) => {
+  const points: Omit<WindowPoint, "_volNorm">[] = bars.map((b, i) => {
     const m = macdAt(i);
     const sig = signalSeries[i];
     const prevClose = i > 0 ? closes[i - 1] : closes[i];
@@ -252,11 +259,31 @@ function buildWindowSeries(bars: OHLCVPoint[]): WindowSeries {
       bbLower: bb[i]?.bbLower,
       rsi: rsi[i],
       volume: b.volume ?? 0,
-      _volNorm: b.volume > 0 ? b.volume / maxVol : 0,
       _volUp: b.close >= prevClose,
       _signals: signalsByDate.get(b.date) || null,
     };
   });
+  return { points, signals, indexOf };
+}
+
+/**
+ * Fenster = Ausschnitt der vollen Serie: Wert am Datum D = Wert des Gesamtcharts an D.
+ * Nur wenn vor Fensterbeginn keine Historie geladen ist, fehlen lange Perioden (z.B. MA200).
+ * Signale = die der vollen Serie mit Datum im Fenster. _volNorm je Fenster (Max-Volumen des Fensters).
+ */
+function buildWindowSeries(full: FullSeries, bars: OHLCVPoint[]): WindowSeries {
+  if (bars.length === 0) return { points: [], signals: [] };
+  const allVols = bars.map(b => b.volume).filter(v => v > 0);
+  const maxVol = allVols.length ? Math.max(...allVols) : 1;
+  const dates = new Set<string>();
+  const points: WindowPoint[] = [];
+  for (const b of bars) {
+    const i = full.indexOf.get(b);
+    if (i === undefined) continue;
+    dates.add(b.date);
+    points.push({ ...full.points[i], _volNorm: b.volume > 0 ? b.volume / maxVol : 0 });
+  }
+  const signals = full.signals.filter(s => dates.has(s.date));
   return { points, signals };
 }
 
@@ -410,10 +437,11 @@ export function TechnicalChart({ data }: Props) {
 
   const bBars = useMemo(() => sliceBars(ohlcv, fromBValue, toBValue), [ohlcv, fromBValue, toBValue]);
   const cBars = useMemo(() => sliceBars(ohlcv, fromCValue, toCValue), [ohlcv, fromCValue, toCValue]);
-  // Indikatoren je Band neu auf dem OHLCV-Slice — nicht die Server-Serie von A auf B/C legen.
-  const aBuilt = useMemo(() => buildWindowSeries(aBars), [aBars]);
-  const bBuilt = useMemo(() => buildWindowSeries(bBars), [bBars]);
-  const cBuilt = useMemo(() => buildWindowSeries(cBars), [cBars]);
+  // Indikatoren einmal auf der vollen Historie, je Band nur ausgeschnitten — nicht auf dem Slice neu rechnen.
+  const fullSeries = useMemo(() => buildFullSeries(ohlcv), [ohlcv]);
+  const aBuilt = useMemo(() => buildWindowSeries(fullSeries, aBars), [fullSeries, aBars]);
+  const bBuilt = useMemo(() => buildWindowSeries(fullSeries, bBars), [fullSeries, bBars]);
+  const cBuilt = useMemo(() => buildWindowSeries(fullSeries, cBars), [fullSeries, cBars]);
   const visibleKursCount = (showKursA ? 1 : 0) + (showKursB ? 1 : 0) + (showKursC ? 1 : 0);
   // ≥2 Kurse an → versetzte Bänder (else-Zweig). Nur A an → singleALayout, kein Versatz.
   const singleALayout = showKursA && !showKursB && !showKursC;
@@ -1186,19 +1214,7 @@ function PricePane({
           </>
         )}
         {showSignals && signals.map((s, i) => (
-          <Fragment key={`sig-${s.date}-${i}`}>
-            <ReferenceLine yAxisId="price" x={s.date} stroke={s.type === "buy" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={narrow ? 1 : 0.8} opacity={0.5} />
-            {narrow && (
-              <ReferenceDot
-                yAxisId="price"
-                x={s.date}
-                y={s.price}
-                r={TA_SIGNAL_DOT_R}
-                fill={s.type === "buy" ? "#22c55e" : "#ef4444"}
-                stroke="none"
-              />
-            )}
-          </Fragment>
+          <ReferenceLine key={`sig-${s.date}-${i}`} yAxisId="price" x={s.date} stroke={s.type === "buy" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={narrow ? 1 : 0.8} opacity={0.5} />
         ))}
         {measurePoints && measurePoints.length >= 1 && (
           <ReferenceLine yAxisId="price" x={measurePoints[0].date} stroke="#f59e0b" strokeDasharray="4 3" strokeWidth={1.5} label={{ value: "A", position: "top", fontSize: 10, fill: "#f59e0b", fontWeight: 700 }} />
