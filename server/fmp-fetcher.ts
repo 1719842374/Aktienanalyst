@@ -5,6 +5,7 @@ import {
   fmpSegments, fmpPeers, fmpRatios, fmpBatchQuote,
   isFmpAvailable,
 } from "./fmp";
+import { indicatorWarmupFromDate } from "./history-fallback";
 
 export interface FmpAnalysisData {
   price: number; marketCap: number; pe: number; eps: number; beta: number;
@@ -48,7 +49,7 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       fmpIncomeStatement(ticker, 6).catch(e => { console.log(`[FMP] Income error: ${e.message}`); return []; }),
       fmpBalanceSheet(ticker, 1).catch(() => []),
       fmpCashFlow(ticker, 1).catch(() => []),
-      fmpHistoricalPrices(ticker, yearAgo(10), today()).catch(() => []),
+      fmpHistoricalPrices(ticker, indicatorWarmupFromDate(), today()).catch(() => []),
       fmpAnalystEstimates(ticker, 4).catch(() => []),
       fmpGrades(ticker, 5).catch(() => []),
       fmpPriceTarget(ticker).catch(() => null),
@@ -205,4 +206,3 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
 }
 
 function today(): string { return new Date().toISOString().slice(0, 10); }
-function yearAgo(n: number): string { const d = new Date(); d.setFullYear(d.getFullYear() - n); return d.toISOString().slice(0, 10); }
