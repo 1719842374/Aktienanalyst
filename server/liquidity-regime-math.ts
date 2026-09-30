@@ -36,7 +36,8 @@ export interface LiquidityMetrics {
   regimeScoreV1: number;
   policyScore: number;
   policyRegime: PolicyRegime;
-  bessentPutActive: boolean;
+  /** Treasury kauft Dauer, Cap mindestens 4 Mrd. Kein Personenname. */
+  treasuryDurationActive: boolean;
   durationImpulse: DurationImpulse;
   asOf: string;
   source: string;
@@ -158,21 +159,14 @@ export function regimeFromScore(score: number): RegimeLabel {
 }
 
 // ─── Policy-Kanal (v2) ──────────────────────────────────────────────────────────
-// Spec: klassisches Fed-QE (Notes/Bonds-Kauf) darf NICHT mit Treasury-Twist
-// (Bessent-Buybacks) verwechselt werden — beides "easing" fuer Duration, aber
-// unterschiedliche Akteure/Mechanik. Bewusst dumm/auditierbar: Bessent-Fenster
-// ist eine Kalenderkonstante, kein PDF-Parser (siehe Spec §6).
-export const BESSENT_WINDOW = { from: "2026-09-09", to: "2026-11-04", capBn: 4 } as const;
-
-/** Kalenderkonstante — nach dem 4.11.-Refunding im Code anpassen (Spec §6). */
-export function buybackCapLongBn(asOf: string): number | null {
-  if (asOf >= BESSENT_WINDOW.from && asOf <= BESSENT_WINDOW.to) return BESSENT_WINDOW.capBn;
-  return null;
-}
+// Klassisches Fed-QE (Notes/Bonds-Kauf) und ein Treasury-Kauf langer Anleihen
+// sind beides Duration-Easing, aber verschiedene Aemter. Der Cap kommt vom
+// Aufrufer aus einem belegten Instrument (office treasury, debt_operation,
+// duration easing). Ohne diesen Cap gibt es keinen Twist.
 
 export interface PolicyClassification {
   policyRegime: PolicyRegime;
-  bessentPutActive: boolean;
+  treasuryDurationActive: boolean;
   durationImpulse: DurationImpulse;
   policyScore: number;
 }
@@ -209,7 +203,7 @@ export function classifyPolicy(input: {
   if ((input.tgaDelta4wBn ?? 0) < -50) policyScore += 10; // TGA 4W stark fallend = Drain raus, Liquiditaet rein
   policyScore = Math.max(0, Math.min(100, Math.round(policyScore)));
 
-  return { policyRegime, bessentPutActive: twist, durationImpulse, policyScore };
+  return { policyRegime, treasuryDurationActive: twist, durationImpulse, policyScore };
 }
 
 /**
@@ -258,6 +252,8 @@ export function computeLiquidityMetrics(input: {
   m2v?: FredObs[];
   gdp?: FredObs[];
   cpi?: FredObs[];
+  /** Obergrenze in Mrd. aus einem belegten Treasury-Instrument. Leer = kein Twist. */
+  treasuryBuybackCapBn?: number | null;
 }): LiquidityMetrics {
   const aligned = alignWeekly(input.walcl, input.rrp, input.tga);
   const last = aligned.length ? aligned[aligned.length - 1] : null;
@@ -293,7 +289,7 @@ export function computeLiquidityMetrics(input: {
     ? 0.40 * excessMoneyScore(excess!) + 0.30 * friedmanKorridorScore(m2.latest) + 0.20 * velocityTrendScore(velDelta) + 0.10 * pipe
     : pipe;
   const policy = classifyPolicy({
-    buybackCapLongBnValue: buybackCapLongBn(asOf),
+    buybackCapLongBnValue: input.treasuryBuybackCapBn ?? null,
     tgaDelta4wBn: tgaD4,
     asOf,
   });
@@ -316,7 +312,7 @@ export function computeLiquidityMetrics(input: {
     regimeScoreV1,
     policyScore: policy.policyScore,
     policyRegime: policy.policyRegime,
-    bessentPutActive: policy.bessentPutActive,
+    treasuryDurationActive: policy.treasuryDurationActive,
     durationImpulse: policy.durationImpulse,
     asOf,
     source: "FRED WALCL + RRPONTSYD + WTREGEN",

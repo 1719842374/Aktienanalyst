@@ -7,6 +7,7 @@ import {
   type LiquidityMetrics,
   computeLiquidityMetrics,
 } from "./liquidity-regime-math";
+import { cachedTreasuryBuybackCapBn } from "./policy-scan";
 
 export const LIQUIDITY_CACHE_TAB = "macro";
 export const LIQUIDITY_CACHE_PARAMS = "v2__US";
@@ -63,7 +64,10 @@ export async function fetchLiquidityLive(): Promise<LiquidityMetrics> {
     fetchFredSeries(SERIES.gdp),
     fetchFredSeries(SERIES.cpi),
   ]);
-  const metrics = computeLiquidityMetrics({ walcl, rrp, tga, m2, m2v, gdp, cpi });
+  const metrics = computeLiquidityMetrics({
+    walcl, rrp, tga, m2, m2v, gdp, cpi,
+    treasuryBuybackCapBn: cachedTreasuryBuybackCapBn(),
+  });
   if (!metrics.dataQuality.walcl || !metrics.dataQuality.rrp || !metrics.dataQuality.tga) {
     throw new Error("FRED WALCL/RRP/TGA unvollständig");
   }
