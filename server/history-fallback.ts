@@ -47,17 +47,41 @@ export function fromDateForTimeframe(tf: Timeframe, now: Date = new Date()): str
   return d.toISOString().slice(0, 10);
 }
 
+/** /api/analyze-Tageshistorie: 10Y-Ansicht (2520 Handelstage) + 1000 Handelstage
+ *  Vorlauf fuer den 200-Wochen-MA (200 x 5), damit alle MAs ab dem ersten
+ *  sichtbaren Tag vollstaendig sind. 5300 Kalendertage ≈ 3650 Handelstage. */
+export const ANALYZE_HISTORY_DAYS = 5300;
+
+/** Startdatum-Toleranz: faellt der Stichtag auf Wochenende/Feiertag, beginnt
+ *  die Serie erst am naechsten Handelstag -- das ist keine Luecke. */
+const ANALYZE_HISTORY_START_SLACK_DAYS = 7;
+
+export function analyzeHistoryFrom(now: Date = new Date()): string {
+  const d = new Date(now);
+  d.setUTCDate(d.getUTCDate() - ANALYZE_HISTORY_DAYS);
+  return d.toISOString().slice(0, 10);
+}
+
+export function analyzeHistoryNeedFrom(now: Date = new Date()): string {
+  const d = new Date(now);
+  d.setUTCDate(d.getUTCDate() - ANALYZE_HISTORY_DAYS + ANALYZE_HISTORY_START_SLACK_DAYS);
+  return d.toISOString().slice(0, 10);
+}
+
 /**
  * Yahoo Finance Chart-API als Alt-Provider (server-seitig, kein API-Key
  * noetig). WORK_DATA_PROVIDERS.md §3 empfiehlt Yahoo als einfachste Option
  * fuer lange Daily-Historie. Ein plausibler User-Agent-Header ist noetig,
  * sonst antwortet der Endpoint mit 429 (in der Sandbox verifiziert).
  *
- * range=10y liefert die maximal sinnvolle Spanne fuer unseren Use-Case in
- * einem einzigen Request; wir schneiden serverseitig auf [from, to] zu.
+ * period1/period2 (Unix-Sekunden) decken genau [from, to] in einem einzigen
+ * Request ab (auch > 10 Jahre, z.B. /api/analyze mit MA-Vorlauf); wir
+ * schneiden serverseitig zusaetzlich auf [from, to] zu.
  */
 export async function yahooFetch(symbol: string, from: string, to: string): Promise<DailyBar[]> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=10y&interval=1d`;
+  const period1 = Math.floor(Date.parse(`${from}T00:00:00Z`) / 1000);
+  const period2 = Math.floor(Date.parse(`${to}T00:00:00Z`) / 1000) + 86400;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d`;
   const resp = await fetch(url, {
     signal: AbortSignal.timeout(15000),
     headers: {
@@ -149,22 +173,26 @@ export async function stooqFetch(symbol: string, from: string, to: string): Prom
 export async function fetchDailyHistory(opts: {
   symbol: string;
   timeframe: Timeframe;
+  /** Optional: explizites Startdatum statt fromDateForTimeframe(timeframe). */
+  from?: string;
+  /** Optional: spaetestes akzeptiertes erstes Bar-Datum (Default = from). */
+  needFrom?: string;
   fmpFetch: (from: string, to: string) => Promise<DailyBar[]>;
   altFetch?: (from: string, to: string) => Promise<DailyBar[]>;
 }): Promise<{ bars: DailyBar[]; source: string; truncated: boolean }> {
   const to = new Date().toISOString().slice(0, 10);
-  const from = fromDateForTimeframe(opts.timeframe);
+  const from = opts.from ?? fromDateForTimeframe(opts.timeframe);
   let bars = await opts.fmpFetch(from, to);
   bars.sort((a, b) => a.date.localeCompare(b.date));
 
-  const needFrom = from;
+  const needFrom = opts.needFrom ?? from;
   const gotFrom = bars[0]?.date;
   let truncated = !gotFrom || gotFrom > needFrom;
   let source = "fmp";
 
   if (truncated && opts.altFetch) {
     try {
-      const alt = await opts.altFetch(needFrom, gotFrom ?? to);
+      const alt = await opts.altFetch(from, gotFrom ?? to);
       if (alt.length > 0) {
         const byDate = new Map(bars.map((b) => [b.date, b]));
         for (const a of alt) if (!byDate.has(a.date)) byDate.set(a.date, a);
