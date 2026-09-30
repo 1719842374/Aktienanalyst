@@ -275,6 +275,70 @@ function calcRSI14(prices: number[]): (number | null)[] {
   return rsi;
 }
 
+// === Tägliche Schlusskurs-Reihe (ein Wert pro UTC-Kalendertag) ===
+// calcSMA/calcEMA/calcRSI14 zählen Datenpunkte. blockchain.info (timespan=all)
+// liefert aber nur alle ~4 Tage einen Punkt — Perioden in Tagen brauchen daher
+// diese lückenlose Tagesreihe. Priorität je Tag: overrideDate (Live-Preis) >
+// Binance-Close > lineare Interpolation zwischen den benachbarten `points`.
+function buildDailyCloseSeries(
+  points: { date: string; price: number }[],
+  closeByDate: Map<string, number>,
+  overrideDate: string | null,
+): { dates: string[]; closes: number[] } {
+  const DAY_MS = 86400000;
+  const toMs = (d: string) => Date.parse(`${d}T00:00:00Z`);
+  const sorted = points
+    .filter(p => p.price > 0 && Number.isFinite(toMs(p.date)))
+    .map(p => ({ ms: toMs(p.date), date: p.date, price: p.price }))
+    .sort((a, b) => a.ms - b.ms);
+  const anchors: { ms: number; date: string; price: number }[] = [];
+  for (const a of sorted) {
+    if (anchors.length > 0 && anchors[anchors.length - 1].ms === a.ms) anchors[anchors.length - 1] = a;
+    else anchors.push(a);
+  }
+  const closeDates = Array.from(closeByDate.keys()).filter(d => Number.isFinite(toMs(d))).sort();
+  if (anchors.length === 0 && closeDates.length === 0) return { dates: [], closes: [] };
+
+  const startMs = Math.min(
+    anchors.length > 0 ? anchors[0].ms : Infinity,
+    closeDates.length > 0 ? toMs(closeDates[0]) : Infinity,
+  );
+  const endMs = Math.max(
+    anchors.length > 0 ? anchors[anchors.length - 1].ms : -Infinity,
+    closeDates.length > 0 ? toMs(closeDates[closeDates.length - 1]) : -Infinity,
+  );
+
+  const dates: string[] = [];
+  const closes: number[] = [];
+  let j = 0; // anchors[j].ms <= ms < anchors[j + 1].ms
+  for (let ms = startMs; ms <= endMs; ms += DAY_MS) {
+    const date = new Date(ms).toISOString().split("T")[0];
+    while (j + 1 < anchors.length && anchors[j + 1].ms <= ms) j++;
+    const a = anchors[j];
+    const exactAnchor = a && a.ms === ms ? a : null;
+
+    let value: number | null = null;
+    if (date === overrideDate && exactAnchor) {
+      value = exactAnchor.price;
+    } else if (closeByDate.has(date)) {
+      value = closeByDate.get(date)!;
+    } else if (exactAnchor) {
+      value = exactAnchor.price;
+    } else if (a && a.ms < ms && j + 1 < anchors.length) {
+      const b = anchors[j + 1];
+      value = a.price + (b.price - a.price) * ((ms - a.ms) / (b.ms - a.ms));
+    }
+
+    if (value === null || !(value > 0)) {
+      if (closes.length === 0) continue;
+      value = closes[closes.length - 1];
+    }
+    dates.push(date);
+    closes.push(value);
+  }
+  return { dates, closes };
+}
+
 // === ETF Flow fetcher (Farside Investors via GitHub) ===
 async function fetchETFFlows(): Promise<{ totalFlow: number; days: number; dailyFlows: { date: string; flow: number }[]; source: string } | null> {
   try {
@@ -443,6 +507,8 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   // === 1b. Fetch Binance OHLCV für Volume-Daten (2 Calls für ~5Y Coverage) ===
   // Binance: max 1000 Klines pro Call = ~2.7 Jahre. Zwei Calls ergänzen = ~5.4 Jahre.
   let binanceVolumeMap = new Map<string, number>(); // date → USDT-Volume
+  // date → Tages-Schlusskurs; Basis der täglichen Reihe für MAs/Indikatoren (Abschnitt 11)
+  const binanceCloseMap = new Map<string, number>();
   try {
     const now = Date.now();
     const dayMs = 86400000;
@@ -465,6 +531,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
         // k[7] = quote asset volume (USDT) — zuverlässigeres Volume als k[5] (BTC)
         const quoteVol = parseFloat(k.length > 7 ? String(k[7]) : String(k[5]));
         if (closePrice > 0 && quoteVol > 0) binanceVolumeMap.set(date, quoteVol);
+        if (closePrice > 0) binanceCloseMap.set(date, closePrice);
       }
     }
     console.log(`[BTC client] Binance volume: ${binanceVolumeMap.size} Tage (~${Math.round(binanceVolumeMap.size/365*10)/10} Jahre)`);
@@ -538,16 +605,20 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   }
 
   // If historical data doesn't include today, append current price
+  let livePriceDate: string | null = null;
   if (allPriceData.length > 0 && btcPrice > 0) {
     const today = new Date().toISOString().split("T")[0];
     const lastDate = allPriceData[allPriceData.length - 1].date;
     if (lastDate < today) {
       allPriceData.push({ date: today, price: btcPrice });
+      livePriceDate = today;
     } else if (lastDate === today) {
       allPriceData[allPriceData.length - 1].price = btcPrice;
+      livePriceDate = today;
     }
   } else if (allPriceData.length === 0 && btcPrice > 0) {
     allPriceData = [{ date: new Date().toISOString().split("T")[0], price: btcPrice }];
+    livePriceDate = allPriceData[0].date;
   }
 
   // Slice into timeframes
@@ -841,7 +912,12 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   const categories = computeCategories();
 
   // === 11. Calculate ALL moving averages & indicators ===
-  const closePrices = allPriceData.map(d => d.price);
+  // Alle Perioden hier sind Kalendertage → Berechnung auf der Tagesreihe, danach
+  // Rückprojektion auf das Datumsraster von allPriceData (Chart-Punkte).
+  const dailySeries = buildDailyCloseSeries(allPriceData, binanceCloseMap, livePriceDate);
+  const closePrices = dailySeries.closes;
+  const dailyIndexByDate = new Map<string, number>();
+  dailySeries.dates.forEach((date, idx) => dailyIndexByDate.set(date, idx));
 
   // FRED-Daten serverseitig laden: Die bestehende BTC-Preisanalyse bleibt im
   // Browser, erhaelt hier aber additiv zwei date-keyed Makroserien zum Mergen.
@@ -916,29 +992,31 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   // Build enhanced technical chart data
   const technicalChartData: TechChartPoint[] = allPriceData.map((d, i) => {
     const vol = binanceVolumeMap.get(d.date) ?? 0;
+    const k = dailyIndexByDate.get(d.date);
+    const atDay = (series: (number | null)[]): number | null => (k === undefined ? null : series[k] ?? null);
     return {
       date: d.date,
       price: d.price,
       volume: vol,
       _volNorm: vol > 0 ? vol / maxVol : 0,
       _volUp: i === 0 ? true : d.price >= allPriceData[i - 1].price,
-      ma20: ma20[i],
-      ma50: ma50[i],
-      ma100: ma100[i],
-      ma200: ma200[i],
-      ema9: ema9[i],
-      ema12: ema12[i],
-      ema26: ema26[i],
-      macd: macdLine[i],
-      signal: signalLine[i],
-      histogram: histogram[i],
-      rsi14: rsi14All[i] ?? null,
-      ma730: ma730[i],
-      ma730x5: ma730x5[i],
-      ma111: ma111[i],
-      ma350x2: ma350x2[i],
-      ma350: ma350[i],
-      ma1400: ma1400[i],
+      ma20: atDay(ma20),
+      ma50: atDay(ma50),
+      ma100: atDay(ma100),
+      ma200: atDay(ma200),
+      ema9: atDay(ema9),
+      ema12: atDay(ema12),
+      ema26: atDay(ema26),
+      macd: atDay(macdLine),
+      signal: atDay(signalLine),
+      histogram: atDay(histogram),
+      rsi14: atDay(rsi14All),
+      ma730: atDay(ma730),
+      ma730x5: atDay(ma730x5),
+      ma111: atDay(ma111),
+      ma350x2: atDay(ma350x2),
+      ma350: atDay(ma350),
+      ma1400: atDay(ma1400),
       real10y: real10yByDate[d.date] ?? null,
       m2Yoy: m2YoyByDate[d.date] ?? null,
       m2Absolute: m2AbsoluteByDate[d.date] ?? null,
