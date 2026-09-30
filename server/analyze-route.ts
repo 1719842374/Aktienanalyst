@@ -122,7 +122,7 @@ import { applyFactPackFromFmpContext } from "./factpack-apply";
 import { attachExecSummary } from "./exec-summary-attach";
 import { getCachedRegulatoryAssessment } from "./regulatory";
 import { assessEcosystem, collectPorterNarrative, resolveEcosystem } from "./ecosystem-moat";
-import { fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq } from "./history-fallback";
+import { fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq, analyzeHistoryFrom, analyzeHistoryNeedFrom } from "./history-fallback";
 
 // Segment-Fallback-Pipeline (2026-08): SEC EDGAR fallback for when FMP's
 // /revenue-product-segmentation returns [] (verified for IREN). Additive-only
@@ -678,13 +678,15 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         console.log(`[ANALYZE] FX: ${reportedCurrency} → USD = ${fxRate}`);
       }
 
-      // ── 3. OHLCV → full technical indicators (10Y) ──
+      // ── 3. OHLCV → full technical indicators (10Y + MA-Vorlauf) ──
       let ohlcvRows: any[] = Array.isArray(ohlcv) ? ohlcv : (ohlcv as any)?.historical ?? [];
       ohlcvRows = [...ohlcvRows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-      // Keep up to ~10Y of trading days (252*10 ≈ 2520 + buffer).
+      // Keep ANALYZE_HISTORY_DAYS (10Y view 2520 + 1000 bars 200W-MA warm-up).
+      // Must stay above the trading days in that window (~3660), otherwise the
+      // slice cuts the start and the fallback check below fires on every request.
       // FMP Pro delivers the full range; previous hard-cap of 504 (~2Y) blocked the client 10Y view.
-      const OHLCV_MAX_POINTS = 2600;
+      const OHLCV_MAX_POINTS = 3800;
       let ohlcvPoints: OHLCVPoint[] = ohlcvRows.slice(-OHLCV_MAX_POINTS).map((r: any) => ({
         date: String(r.date ?? "").slice(0, 10),
         open: parseFloat(String(r.open)) || 0,
@@ -703,12 +705,14 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       let historyDataSource: StockAnalysis["historyDataSource"] = "fmp";
       let historyTruncated = false;
       try {
-        const need10Y = fromDateForTimeframe("10Y");
+        const needWarmupFrom = analyzeHistoryNeedFrom();
         const gotFrom = ohlcvPoints[0]?.date;
-        if (!gotFrom || gotFrom > need10Y) {
+        if (!gotFrom || gotFrom > needWarmupFrom) {
           const { bars, source, truncated } = await fetchDailyHistory({
             symbol: upperTicker,
             timeframe: "10Y",
+            from: analyzeHistoryFrom(),
+            needFrom: needWarmupFrom,
             fmpFetch: async () => ohlcvPoints.map((p) => ({ ...p, source: "fmp" as const })),
             altFetch: (from, to) => altFetchYahooThenStooq(upperTicker, from, to),
           });
@@ -716,7 +720,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             ohlcvPoints = bars.slice(-OHLCV_MAX_POINTS).map(({ source: _s, ...bar }) => bar);
           }
           historyDataSource = (source === "fmp+alt" ? "fmp+yahoo" : "fmp") as StockAnalysis["historyDataSource"];
-          historyTruncated = truncated;
+          // UI-Flag bleibt "10Y-Ansicht nicht abgedeckt"; fehlender MA-Vorlauf allein ist keine unvollstaendige Historie.
+          historyTruncated = truncated && (!ohlcvPoints[0] || ohlcvPoints[0].date > fromDateForTimeframe("10Y"));
           console.log(`[HISTORY-FALLBACK] ${upperTicker}: source=${historyDataSource} truncated=${historyTruncated} points=${ohlcvPoints.length}`);
         }
       } catch (err) {
@@ -1573,7 +1578,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // not analystPTMedian, historicalPrices not ohlcvPoints, peRatio not pe, etc.
 
       // historicalPrices[] — Section10 (TechnicalChart) and MonteCarlo both read this.
-      const historicalPrices = ohlcvPoints.map((p) => ({ date: p.date, close: p.close }));
+      // Whole-array consumers (MonteCarlo, covariance, portfolio backtest, PDF) keep the
+      // pre-warm-up window of the last 2600 bars; only ohlcvData carries the MA warm-up.
+      const HISTORICAL_PRICES_MAX_POINTS = 2600;
+      const historicalPrices = ohlcvPoints.slice(-HISTORICAL_PRICES_MAX_POINTS).map((p) => ({ date: p.date, close: p.close }));
 
       // EPS chain — rawEpsFY was already parsed in step 6 for the CAGR; alias
       // it for clarity here.

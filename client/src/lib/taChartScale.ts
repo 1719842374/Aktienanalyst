@@ -9,8 +9,6 @@ export const TA_AXIS_FONT_PX = 10;
 export const TA_VOLUME_BAND_PX = 40;
 /** Zusätzlicher Abstand nach der gemessenen Label-Breite (Recharts minTickGap). */
 export const TA_X_MIN_TICK_GAP = 8;
-/** Durchmesser 8px — Marker-Floor der Spec (~6–8px). */
-export const TA_SIGNAL_DOT_R = 4;
 
 export function taChartMinWidth(
   leftAxisWidth: number,
