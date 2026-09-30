@@ -55,31 +55,39 @@ const MODEL_FALLBACK_CHAIN = [
   "google/gemma-3-27b-it",
 ];
 
-async function callWithFallback(client: OpenAI, params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>): Promise<{ text: string; modelUsed: string; usage?: any }> {
+async function callWithFallback(
+  client: OpenAI,
+  params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>,
+  opts?: { online?: boolean },
+): Promise<{ text: string; modelUsed: string; usage?: any }> {
   const override = process.env.OPENROUTER_MODEL;
   const chain = override ? [override] : MODEL_FALLBACK_CHAIN;
   let lastErr: any;
   for (const model of chain) {
-    try {
-      const completion = await (client.chat.completions.create as any)({
-        ...params,
-        model,
-      });
-      const text = completion.choices?.[0]?.message?.content?.trim() || '';
-      if (!text) { lastErr = new Error('Empty response'); continue; }
-      return { text, modelUsed: model, usage: completion.usage };
-    } catch (err: any) {
-      const status = err?.status || err?.response?.status;
-      // 404 = Modell von OpenRouter entfernt/umbenannt (z.B. claude-3.5-haiku
-      // am 03.08.2026) — muss wie 429/402 zur nächsten Kettenstufe durchfallen,
-      // sonst legt ein einziges entferntes Modell alle LLM-Features lahm.
-      if (status === 429 || status === 402 || status === 404) {
-        console.warn(`[LLM] ${model} nicht verfügbar (${status}) — trying next model`);
-        lastErr = err;
-        if (status !== 404) await new Promise(r => setTimeout(r, 1500));
-        continue;
+    const variants = opts?.online && !model.endsWith(":online") ? [`${model}:online`, model] : [model];
+    for (const modelId of variants) {
+      try {
+        const completion = await (client.chat.completions.create as any)({
+          ...params,
+          model: modelId,
+        });
+        const text = completion.choices?.[0]?.message?.content?.trim() || '';
+        if (!text) { lastErr = new Error('Empty response'); continue; }
+        return { text, modelUsed: modelId, usage: completion.usage };
+      } catch (err: any) {
+        const status = err?.status || err?.response?.status;
+        const onlineMiss = modelId.endsWith(":online") && (status === 400 || status === 404 || status === 422);
+        // 404 = Modell von OpenRouter entfernt/umbenannt (z.B. claude-3.5-haiku
+        // am 03.08.2026) — muss wie 429/402 zur nächsten Kettenstufe durchfallen,
+        // sonst legt ein einziges entferntes Modell alle LLM-Features lahm.
+        if (status === 429 || status === 402 || status === 404 || onlineMiss) {
+          console.warn(`[LLM] ${modelId} nicht verfügbar (${status}) — trying next model`);
+          lastErr = err;
+          if (status === 429 || status === 402) await new Promise(r => setTimeout(r, 1500));
+          continue;
+        }
+        throw err;
       }
-      throw err;
     }
   }
   throw lastErr || new Error('All LLM models exhausted');
@@ -781,6 +789,8 @@ export async function callLLMJson(opts: {
   maxTokens?: number;
   temperature?: number;
   systemPrompt?: string;
+  /** OpenRouter-Websuche nur fuer diesen Abruf. Andere Aufrufer bleiben offline. */
+  online?: boolean;
 }): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
   const client = getClient();
   if (!client) return null;
@@ -793,7 +803,7 @@ export async function callLLMJson(opts: {
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
-    });
+    }, { online: opts.online });
     if (!text) return null;
     let jsonStr = text.trim();
     if (jsonStr.startsWith("```")) {

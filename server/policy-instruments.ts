@@ -38,6 +38,8 @@ export interface PolicyInstrument {
   instrumentType: PolicyType;
   status: PolicyStatus;
   /** Anzeigetext. Die Formel liest ihn nicht. */
+  title?: string;
+  /** Anzeigetext. Die Formel liest ihn nicht. */
   officeHolder?: string;
   effectiveFrom?: string;
   effectiveTo?: string;
@@ -49,6 +51,8 @@ export interface PolicyInstrument {
     longYield?: "up" | "down" | "unclear";
     m2?: "up" | "down" | "unclear";
     cryptoLiquidity?: "up" | "down" | "unclear";
+    policyRate?: "up" | "down" | "unclear";
+    realYield?: "up" | "down" | "unclear";
     duration?: "easing" | "tightening" | "neutral";
   };
   magnitude?: PolicyMagnitude;
@@ -119,14 +123,19 @@ export function parsePolicyInstruments(raw: unknown): { instruments: PolicyInstr
     const longYield = oneOf(channelsRaw.longYield, CHANNEL_DIRECTIONS);
     const m2 = oneOf(channelsRaw.m2, CHANNEL_DIRECTIONS);
     const cryptoLiquidity = oneOf(channelsRaw.cryptoLiquidity, CHANNEL_DIRECTIONS);
+    const policyRate = oneOf(channelsRaw.policyRate, CHANNEL_DIRECTIONS);
+    const realYield = oneOf(channelsRaw.realYield, CHANNEL_DIRECTIONS);
     const duration = oneOf(channelsRaw.duration, DURATION_DIRECTIONS);
     if (tBill) channels.tBillDemand = tBill;
     if (longYield) channels.longYield = longYield;
     if (m2) channels.m2 = m2;
     if (cryptoLiquidity) channels.cryptoLiquidity = cryptoLiquidity;
+    if (policyRate) channels.policyRate = policyRate;
+    if (realYield) channels.realYield = realYield;
     if (duration) channels.duration = duration;
     const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : `${office}:${instrumentType}:${evidence[0].date}`;
     const jurisdiction = typeof row.jurisdiction === "string" && row.jurisdiction.trim() ? row.jurisdiction.trim() : "US";
+    const title = typeof row.title === "string" ? row.title.trim().slice(0, 180) : "";
     const officeHolder = typeof row.officeHolder === "string" ? row.officeHolder.trim() : undefined;
     const effectiveFrom = typeof row.effectiveFrom === "string" && DATE.test(row.effectiveFrom) ? row.effectiveFrom : undefined;
     const effectiveTo = typeof row.effectiveTo === "string" && DATE.test(row.effectiveTo) ? row.effectiveTo : undefined;
@@ -137,6 +146,7 @@ export function parsePolicyInstruments(raw: unknown): { instruments: PolicyInstr
     const magnitude = parseMagnitude(row.magnitude);
     instruments.push({
       id, jurisdiction, office, instrumentType, status, channels, evidence,
+      ...(title ? { title } : {}),
       ...(officeHolder ? { officeHolder } : {}),
       ...(effectiveFrom ? { effectiveFrom } : {}),
       ...(effectiveTo ? { effectiveTo } : {}),
@@ -147,6 +157,86 @@ export function parsePolicyInstruments(raw: unknown): { instruments: PolicyInstr
     });
   }
   return { instruments, dropped };
+}
+
+export interface RegulationNote {
+  id: string;
+  title: string;
+  jurisdiction: string;
+  office: PolicyOffice;
+  status: PolicyStatus;
+  /** cited nur mit https-Beleg. Sonst estimated, und der Score bleibt unberuehrt. */
+  confidence: "cited" | "estimated";
+  instrumentType?: PolicyType;
+  channels: PolicyInstrument["channels"];
+  note?: string;
+  evidence: PolicyEvidence[];
+}
+
+function noteId(raw: string, title: string): string {
+  const given = raw.trim();
+  if (given) return given.slice(0, 80);
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+  return slug || "regel";
+}
+
+/**
+ * Anzeige fuer den KI-Button. Ohne URL bleibt der Eintrag estimated.
+ * Diese Liste fliesst nicht in statuteContribution.
+ */
+export function parseRegulationNotes(raw: unknown): { regulations: RegulationNote[]; dropped: number } {
+  const root = asRecord(raw);
+  const list = Array.isArray(root?.regulations) ? root!.regulations as unknown[] : [];
+  const regulations: RegulationNote[] = [];
+  let dropped = 0;
+  for (const item of list) {
+    if (regulations.length >= 8) { dropped++; continue; }
+    const row = asRecord(item);
+    if (!row) { dropped++; continue; }
+    const title = typeof row.title === "string" ? row.title.trim().slice(0, 180) : "";
+    const office = oneOf(row.office, POLICY_OFFICES);
+    if (title.length < 2 || !office) { dropped++; continue; }
+    const status = oneOf(row.status, POLICY_STATUSES) ?? "uncertain";
+    const evidence = (Array.isArray(row.evidence) ? row.evidence : [])
+      .map(parseEvidence)
+      .filter((e): e is PolicyEvidence => e != null);
+    const confidence: RegulationNote["confidence"] = evidence.length > 0 ? "cited" : "estimated";
+    const channelsRaw = asRecord(row.channels) ?? {};
+    const channels: PolicyInstrument["channels"] = {};
+    const tBill = oneOf(channelsRaw.tBillDemand, CHANNEL_DIRECTIONS);
+    const longYield = oneOf(channelsRaw.longYield, CHANNEL_DIRECTIONS);
+    const m2 = oneOf(channelsRaw.m2, CHANNEL_DIRECTIONS);
+    const cryptoLiquidity = oneOf(channelsRaw.cryptoLiquidity, CHANNEL_DIRECTIONS);
+    const policyRate = oneOf(channelsRaw.policyRate, CHANNEL_DIRECTIONS);
+    const realYield = oneOf(channelsRaw.realYield, CHANNEL_DIRECTIONS);
+    const duration = oneOf(channelsRaw.duration, DURATION_DIRECTIONS);
+    if (tBill) channels.tBillDemand = tBill;
+    if (longYield) channels.longYield = longYield;
+    if (m2) channels.m2 = m2;
+    if (cryptoLiquidity) channels.cryptoLiquidity = cryptoLiquidity;
+    if (policyRate) channels.policyRate = policyRate;
+    if (realYield) channels.realYield = realYield;
+    if (duration) channels.duration = duration;
+    const instrumentType = oneOf(row.instrumentType, POLICY_TYPES) ?? undefined;
+    const note = typeof row.note === "string" ? row.note.trim().slice(0, 400) : "";
+    const jurisdiction = typeof row.jurisdiction === "string" && row.jurisdiction.trim()
+      ? row.jurisdiction.trim()
+      : "US";
+    const idRaw = typeof row.id === "string" ? row.id : "";
+    regulations.push({
+      id: noteId(idRaw, title),
+      title,
+      jurisdiction,
+      office,
+      status,
+      confidence,
+      channels,
+      ...(instrumentType ? { instrumentType } : {}),
+      evidence,
+      ...(note ? { note } : {}),
+    });
+  }
+  return { regulations, dropped };
 }
 
 function daysBetween(from: string, to: string): number {

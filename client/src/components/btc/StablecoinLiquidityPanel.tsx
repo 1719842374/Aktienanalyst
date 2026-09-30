@@ -46,12 +46,32 @@ export interface StablecoinLiquidityApiResponse {
 
 interface PolicyScanInstrument {
   id: string;
+  title?: string;
   office: string;
   instrumentType: string;
   status: string;
   officeHolder?: string;
   channels: Record<string, string>;
   evidence: { source: string; url: string; date: string }[];
+}
+
+interface RegulationNoteDto {
+  id: string;
+  title: string;
+  office: string;
+  instrumentType?: string;
+  status: string;
+  confidence: "cited" | "estimated";
+  channels: Record<string, string>;
+  note?: string;
+  evidence?: { source: string; url: string; date: string }[];
+}
+
+interface ScanMeasured {
+  policyRate?: number | null;
+  realYield10y?: number | null;
+  dgs10?: number | null;
+  m2Bn?: number | null;
 }
 
 interface PolicyScanResponse {
@@ -61,7 +81,10 @@ interface PolicyScanResponse {
   summary: string | null;
   error?: string;
   instruments: PolicyScanInstrument[];
+  regulations?: RegulationNoteDto[];
   dropped: number;
+  _fallback?: boolean;
+  measured?: ScanMeasured;
   effects: {
     treasuryBuybackCapBn: number | null;
     treasuryDurationActive: boolean;
@@ -135,10 +158,22 @@ const OFFICE_LABEL: Record<string, string> = {
 const CHANNEL_LABEL: Record<string, string> = {
   cryptoLiquidity: "Krypto-Liquidität",
   tBillDemand: "T-Bill-Nachfrage",
-  longYield: "lange Rendite",
+  longYield: "10-Jahres-Rendite",
   m2: "M2",
+  policyRate: "Leitzins",
+  realYield: "Realzins",
   duration: "Duration",
 };
+
+const TYPE_LABEL: Record<string, string> = {
+  statute: "Gesetz",
+  fiscal_program: "Fiskalprogramm",
+  debt_operation: "Schuldenoperation",
+};
+
+function formatPct(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? "n/v" : `${value.toFixed(2)}%`;
+}
 
 export function StablecoinLiquidityPanel() {
   const { data, loading, error, reload } = useStablecoinLiquidity();
@@ -149,20 +184,39 @@ export function StablecoinLiquidityPanel() {
   const runScan = async (force: boolean) => {
     setScanning(true);
     setScanError(null);
-    try {
-      const res = await apiRequest("POST", "/api/analyze-btc/policy-scan", { jurisdiction: "US", force }, 120000);
-      const json = (await res.json().catch(() => ({}))) as PolicyScanResponse & { error?: string };
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      const instruments = Array.isArray(json.instruments) ? json.instruments : [];
-      const priced = Array.isArray(json.priced) ? json.priced : [];
-      setScan({ ...json, instruments, priced, summary: typeof json.summary === "string" ? json.summary : null, dropped: json.dropped ?? 0 });
-      if (json.error && instruments.length === 0) setScanError(json.error);
-    } catch (err: any) {
-      setScan(null);
-      setScanError(err?.message || "Krypto-Regulierungsanalyse nicht verfügbar");
-    } finally {
-      setScanning(false);
+    const maxAttempts = 3;
+    let nextForce = force;
+    let lastErr = "Krypto-Regulierungsanalyse nicht verfügbar";
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const res = await apiRequest("POST", "/api/analyze-btc/policy-scan", { jurisdiction: "US", force: nextForce }, 120000);
+        const json = (await res.json().catch(() => ({}))) as PolicyScanResponse & { error?: string };
+        if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+        const instruments = Array.isArray(json.instruments) ? json.instruments : [];
+        const regulations = Array.isArray(json.regulations) ? json.regulations : [];
+        const priced = Array.isArray(json.priced) ? json.priced : [];
+        setScan({
+          ...json,
+          instruments,
+          regulations,
+          priced,
+          summary: typeof json.summary === "string" ? json.summary : null,
+          dropped: json.dropped ?? 0,
+        });
+        if (json.error && instruments.length === 0 && regulations.length === 0) setScanError(json.error);
+        setScanning(false);
+        return;
+      } catch (err: any) {
+        lastErr = err?.message || lastErr;
+        const retryable = /timeout|abort|network|fetch|503|504|408|499/i.test(lastErr);
+        if (!retryable || attempt === maxAttempts - 1) break;
+        nextForce = false;
+        await new Promise(r => setTimeout(r, attempt === 0 && force ? 4000 : 3000));
+      }
     }
+    setScan(null);
+    setScanError(lastErr);
+    setScanning(false);
   };
 
   const llmOn = data?.llmAvailable === true;
@@ -187,9 +241,9 @@ export function StablecoinLiquidityPanel() {
     <SectionCard number={14} title="Krypto-Liquidität" actions={kiButton}>
       <div className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Der KI-Abruf sucht nur Krypto-Regulierungen und liest den Liquiditätstracker.
-          DeFi-TVL, die 30-Tage-Änderung, Stablecoin-Marktkapitalisierung, TGA, M2 und die
-          lange Rendite bleiben gemessen. Das Modell schreibt diese Zahlen nicht um.
+          Der KI-Abruf sucht neue Krypto-Regeln und Fiskalprogramme in den Amtshinweisen
+          und über die OpenRouter-Websuche. Leitzins, Realzins, die 10-Jahres-Rendite,
+          M2, TGA und die DefiLlama-Serien bleiben gemessen. Das Modell schreibt sie nicht um.
         </p>
 
         {loading && (
@@ -310,8 +364,23 @@ export function StablecoinLiquidityPanel() {
               {" · "}
               verworfen {scan.dropped}
               {" · "}
+              {(scan.regulations ?? []).filter(r => r.confidence === "estimated").length} unbestätigt
+              {" · "}
               {scan.instruments.length} belegt
             </div>
+            {scan.measured && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="text-measured-rates">
+                <MiniCard label="Leitzins" value={formatPct(scan.measured.policyRate)} sub="FRED, gemessen" />
+                <MiniCard label="Realzins 10Y" value={formatPct(scan.measured.realYield10y)} sub="FRED, gemessen" />
+                <MiniCard label="10-Jahres-Rendite" value={formatPct(scan.measured.dgs10)} sub="FRED, gemessen" />
+                <MiniCard label="M2" value={formatUsdCompact(scan.measured.m2Bn == null ? null : scan.measured.m2Bn * 1e9)} sub="FRED, gemessen" />
+              </div>
+            )}
+            {scan.error && (
+              <div className="text-[11px] text-amber-700 dark:text-amber-400" data-testid="text-policy-scan-error-inline">
+                {scan.error}
+              </div>
+            )}
             <p className="text-xs leading-relaxed" data-testid="text-policy-summary">
               {scan.summary?.trim()
                 ? scan.summary
@@ -325,9 +394,46 @@ export function StablecoinLiquidityPanel() {
                 {scan.effects.treasuryDurationActive ? " · Duration an" : " · unter 4 Mrd."}
               </div>
             )}
+            {(scan.regulations ?? []).length > 0 && (
+              <div className="space-y-2" data-testid="list-policy-regulations">
+                {(scan.regulations ?? []).map(reg => {
+                  const channels = Object.entries(reg.channels ?? {})
+                    .map(([k, v]) => `${CHANNEL_LABEL[k] ?? k}: ${v}`)
+                    .join(", ");
+                  const unconfirmed = reg.confidence !== "cited";
+                  return (
+                    <div key={reg.id} className="rounded-md border border-border bg-muted/20 p-3 text-[11px] space-y-1">
+                      <div className="font-medium">
+                        {reg.title}
+                        <span className={unconfirmed ? "text-violet-400" : "text-muted-foreground"}>
+                          {" · "}
+                          {unconfirmed ? "unbestätigt" : "mit Quelle"}
+                        </span>
+                      </div>
+                      <div className="text-muted-foreground">
+                        {OFFICE_LABEL[reg.office] ?? reg.office}
+                        {reg.instrumentType ? ` · ${TYPE_LABEL[reg.instrumentType] ?? reg.instrumentType}` : ""}
+                        {` · ${reg.status}`}
+                        {channels ? ` · ${channels}` : ""}
+                      </div>
+                      {reg.note && <div className="text-muted-foreground">{reg.note}</div>}
+                      {reg.evidence?.[0] && (
+                        <a className="underline text-foreground/80" href={reg.evidence[0].url} target="_blank" rel="noreferrer">
+                          {reg.evidence[0].source} · {reg.evidence[0].date}
+                        </a>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {scan.instruments.length === 0 && (
               <div className="text-[11px] text-muted-foreground" data-testid="text-policy-empty">
-                Kein Instrument mit Quelle, https-Adresse und Datum.
+                {(scan.regulations ?? []).some(r => r.confidence === "cited")
+                  ? "Gefundene Dokumente haben noch keinen belegten Status. Sie ändern den Score nicht."
+                  : (scan.regulations ?? []).length > 0
+                    ? "Kein Eintrag mit Quelle, https-Adresse und Datum. Unbestätigte Regeln ändern den Score nicht."
+                    : "Kein Instrument mit Quelle, https-Adresse und Datum."}
               </div>
             )}
             {scan.instruments.length > 0 && (
@@ -340,6 +446,7 @@ export function StablecoinLiquidityPanel() {
                   return (
                     <div key={inst.id} className="rounded-md border border-border bg-muted/20 p-3 text-[11px] space-y-1">
                       <div className="font-medium">
+                        {inst.title ? `${inst.title} · ` : ""}
                         {OFFICE_LABEL[inst.office] ?? inst.office} · {inst.instrumentType} · {inst.status}
                         {inst.officeHolder ? ` · ${inst.officeHolder}` : ""}
                       </div>
