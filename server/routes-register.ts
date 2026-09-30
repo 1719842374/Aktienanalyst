@@ -7,6 +7,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerRegulatoryRisksHooks(app);
   const { registerRoutes: registerAllRoutes } = await import("./routes");
   await registerAllRoutes(httpServer, app);
+  const { registerCryptoRegulationRoute } = await import("./crypto-regulation-route");
+  registerCryptoRegulationRoute(app);
   registerRegulatoryRisksRoute(app);
   const { registerSectorRotationRoute } = await import("./researcher-sector-rotation-route");
   registerSectorRotationRoute(app);

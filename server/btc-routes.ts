@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { fetchBTCMacroHistory } from "./btc-macro";
 import { buildStablecoinLiquidityResponse } from "./stablecoin-liquidity";
+import { isLLMAvailable } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -12,7 +13,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 // history) plus taegliches Disk-Cache-Backstop (diskResearcherGet/Set, analog
 // zu capex__US Researcher-Cache-Muster) falls DefiLlama kurzfristig ausfaellt.
 const STABLECOIN_MEM_TTL_MS = 5 * 60 * 1000;
-const STABLECOIN_DISK_CACHE_KEY = "stablecoin_liquidity__GENIUS";
+const STABLECOIN_DISK_CACHE_KEY = "stablecoin_liquidity__measured_v3";
 let stablecoinMemCache: { expiresAt: number; data: Awaited<ReturnType<typeof buildStablecoinLiquidityResponse>> } | null = null;
 
 /**
@@ -38,11 +39,8 @@ export function registerBTCRoutes(app: Express): void {
     }
   });
 
-  // Sprint D4: Stablecoin-Market-Cap → geschätzte T-Bill-Nachfrage + GENIUS
-  // Act Impact Score. Additive Route, analog zum macro-history-Muster oben.
-  // Live-Teil (Stablecoin-MCap) kommt von DefiLlama; T-Bill-Holding-Anteile
-  // und GENIUS-Score sind klar gekennzeichnete Rule-based/manuelle
-  // Policy-Konstanten (siehe server/stablecoin-liquidity.ts).
+  // DefiLlama-Marktkapitalisierung. Keine Reserveanteile und kein Score.
+  // Der Politik-Scan liegt in crypto-regulation-route.ts.
   app.get("/api/analyze-btc/stablecoin-liquidity", async (_req, res) => {
     const now = Date.now();
     if (stablecoinMemCache && stablecoinMemCache.expiresAt > now) {
@@ -54,9 +52,10 @@ export function registerBTCRoutes(app: Express): void {
       if (data.stablecoins.available) {
         // Nur bei erfolgreichem Live-Fetch cachen (Speicher + Disk-Backstop) —
         // ein Fehlerzustand soll nie als "aktuell" zwischengespeichert werden.
-        stablecoinMemCache = { data, expiresAt: now + STABLECOIN_MEM_TTL_MS };
-        diskResearcherSet(STABLECOIN_DISK_CACHE_KEY, data);
-        return res.json(data);
+        const payload = { ...data, llmAvailable: isLLMAvailable() };
+        stablecoinMemCache = { data: payload, expiresAt: now + STABLECOIN_MEM_TTL_MS };
+        diskResearcherSet(STABLECOIN_DISK_CACHE_KEY, payload);
+        return res.json(payload);
       }
 
       // DefiLlama nicht erreichbar: Versuche taeglichen Disk-Cache-Backstop,
@@ -68,7 +67,7 @@ export function registerBTCRoutes(app: Express): void {
       }
 
       // Kein Live-Fetch, kein Cache-Backstop: transparent null+Flag statt Fehler-Seite.
-      return res.json(data);
+      return res.json({ ...data, llmAvailable: isLLMAvailable() });
     } catch (err: any) {
       console.error("[GET /api/analyze-btc/stablecoin-liquidity]", err?.message?.substring(0, 200));
       res.status(502).json({ error: "Stablecoin-Liquiditätsdaten nicht verfügbar" });

@@ -1,6 +1,6 @@
 /**
- * Stablecoin-Liquidity-Kanal (Sprint D4): Stablecoin-Market-Cap → geschätzte
- * T-Bill-Nachfrage + GENIUS Act Impact Score.
+ * Stablecoin-Liquidity-Kanal: Stablecoin-Market-Cap von DefiLlama.
+ * Der T-Bill-Bedarf kommt nur aus belegten Reserveanteilen.
  *
  * Datenquelle: DefiLlama `/stablecoins` Endpoint (kein API-Key nötig).
  * https://stablecoins.llama.fi/stablecoins?includePrices=true
@@ -8,22 +8,14 @@
  * WICHTIG (Zahlen-Prinzip, siehe stock-analyst-regression-guard):
  * - Stablecoin-Market-Cap-Zahlen (Total/USDT/USDC) sind ECHTE Live-Daten von
  *   DefiLlama — keine Schätzung.
- * - Der T-Bill-Holding-Anteil ("tetherTBillShare"/"usdcTBillShare") ist KEINE
- *   Live-Messung. Es existiert keine strukturierte, frei zugängliche Live-API
- *   für die Tether/Circle Reserve-Zusammensetzung. Die hier verwendeten Werte
- *   sind aus den zuletzt öffentlich bekannten Tether/Circle Transparency
- *   Reports entnommene, FEST DOKUMENTIERTE Policy-Konstanten (siehe
- *   RULE_BASED_POLICY_CONSTANTS unten). Sie werden in der UI klar als
- *   "Rule-based / manuell gepflegt" gekennzeichnet und NIEMALS als präziser
- *   Live-Wert dargestellt.
- * - Der GENIUS Act Impact Score ist eine manuell gepflegte Policy-Konstante
- *   (0–1.5), ebenfalls klar gekennzeichnet, da es keine verlässliche,
- *   automatisierbare Datenquelle für den "Implementation Strength"-Grad gibt.
+ * - Reserveanteile und Gesetzes-Scores stehen nicht in dieser Antwort.
+ *   Sie kommen nur aus einem belegten Politik-Scan.
  * - Bei nicht erreichbarer DefiLlama-API: `null` + `available: false`-Flag,
  *   NIEMALS eine geschätzte/interpolierte Zahl zurückgeben.
  */
 
 const DEFILLAMA_STABLECOINS_URL = "https://stablecoins.llama.fi/stablecoins?includePrices=true";
+const DEFILLAMA_TVL_URL = "https://api.llama.fi/v2/historicalChainTvl";
 const FETCH_TIMEOUT_MS = 15000;
 
 export interface StablecoinAggregate {
@@ -46,45 +38,6 @@ export interface StablecoinMarketSnapshot {
   constituentCount: number | null;
   error?: string;
 }
-
-/**
- * Rule-based / manuell gepflegte Policy-Konstanten. Diese Werte stammen NICHT
- * aus einer Live-API, sondern aus zuletzt öffentlich bekannten Tether/Circle
- * Transparency Reports bzw. der GENIUS-Act-Gesetzeslage. Sie müssen bei neuen
- * Transparency-Report-Veröffentlichungen manuell aktualisiert werden.
- *
- * Quellen:
- * - Tether Transparency Report (https://tether.to/en/transparency/): T-Bill-
- *   und T-Bill-nahe Anteile historisch ca. 70-80% der Reserven.
- * - Circle Reserve Fund / Transparency (https://www.circle.com/transparency):
- *   hoher Cash + kurzlaufende US-T-Bill-Anteil.
- * - GENIUS Act (Guiding and Establishing National Innovation for US
- *   Stablecoins Act), seit Juli 2025 in Kraft.
- */
-export const RULE_BASED_POLICY_CONSTANTS = {
-  // Stand der zuletzt gesichteten Transparency-Reports / Gesetzeslage.
-  asOfDate: "2026-08-24",
-  source: "Tether/Circle Transparency Reports (manuell gesichtet) + GENIUS Act Gesetzestext",
-  kennzeichnung: "Rule-based / manuell gepflegt — KEINE Live-Messung",
-  // Anteil der Reserven, der laut zuletzt gesichtetem Transparency Report in
-  // US-T-Bills bzw. T-Bill-nahen Instrumenten (Repo auf T-Bills, MMFs mit
-  // T-Bill-Exposure) gehalten wird. Mittelwert der dokumentierten 70-80%-Spanne.
-  tetherTBillShare: 0.75,
-  // Circle/USDC hält den überwiegenden Teil der Reserven im Circle Reserve
-  // Fund (kurzlaufende US-Treasuries) + Cash bei regulierten Banken. Konservativ
-  // niedriger angesetzt als Tether, da ein signifikanter Cash-Anteil enthalten ist.
-  usdcTBillShare: 0.55,
-  // Gewichtung für den kombinierten dynamic_multiplier (Spec Abschnitt 2/7):
-  // USDT höher gewichtet, da deutlich größerer Marktanteil.
-  weightTether: 0.7,
-  weightCircle: 0.3,
-  // GENIUS Act Impact Score: 0 = nicht aktiv, 1 = in Kraft, 1.5 = Implementation
-  // weit fortgeschritten + messbarer struktureller Effekt auf T-Bill-Nachfrage.
-  // Manuell gepflegt, da es keine automatisierbare, verlässliche Datenquelle für
-  // den "Implementation Strength"-Grad gibt (Spec Abschnitt 7 Punkt 2).
-  geniusActScore: 1.2,
-  geniusActStatus: "In Kraft seit Juli 2025, Implementation läuft (OCC/Fed-Guidance in Ausarbeitung)",
-} as const;
 
 function toAggregate(entry: any): StablecoinAggregate | null {
   if (!entry) return null;
@@ -206,7 +159,6 @@ export async function fetchStablecoinMarketSnapshot(): Promise<StablecoinMarketS
 
 export interface TBillDemandEstimate {
   available: boolean;
-  /** "Rule-based" — nutzt Policy-Konstanten aus RULE_BASED_POLICY_CONSTANTS. */
   kennzeichnung: string;
   mcapChange30dUsd: number | null;
   dynamicMultiplier: number | null;
@@ -215,95 +167,97 @@ export interface TBillDemandEstimate {
 }
 
 /**
- * Geschätzte zusätzliche T-Bill-Nachfrage (Spec Abschnitt 4, Beispiel-
- * Berechnung): (aktuelle MCap − MCap vor 30 Tagen) × dynamic_multiplier.
- *
- * dynamic_multiplier = gewichteter Durchschnitt aus den Rule-based T-Bill-
- * Holding-Anteilen von Tether/Circle (siehe RULE_BASED_POLICY_CONSTANTS).
- *
- * Diese Schätzung wird NUR berechnet, wenn sowohl aktuelle als auch 30d-MCap
- * live von DefiLlama vorliegen. Fehlt eine der beiden Größen, wird
- * `available: false` mit `null`-Werten und einer klaren Begründung
- * zurückgegeben — es wird nicht interpoliert oder geraten.
+ * Die 30-Tage-Änderung der Marktkapitalisierung ist gemessen. Der Bedarf
+ * bleibt leer, bis ein Scan beide Reserveanteile mit Beleg hat.
  */
 export function estimateTBillDemand(snapshot: StablecoinMarketSnapshot): TBillDemandEstimate {
-  const kennzeichnung = "Rule-based Schätzung (Formel: 30d-MCap-Delta × Policy-Multiplikator), NICHT live gemessen";
+  const kennzeichnung = "T-Bill-Bedarf nur aus belegten Reserveanteilen. Die Schätzungen gehen nicht in die Formel.";
+  const mcapChange30dUsd =
+    snapshot.available && snapshot.totalMarketCapUsd != null && snapshot.totalMarketCapPrevMonthUsd != null
+      ? snapshot.totalMarketCapUsd - snapshot.totalMarketCapPrevMonthUsd
+      : null;
+  return {
+    available: false,
+    kennzeichnung,
+    mcapChange30dUsd,
+    dynamicMultiplier: null,
+    estimatedTBillDemandUsd: null,
+    note: mcapChange30dUsd == null
+      ? "DefiLlama lieferte keine vollständige 30-Tage-Änderung."
+      : "Die 30-Tage-Änderung ist gemessen. Der Bedarf bleibt leer, bis beide Anteile mit Beleg vorliegen.",
+  };
+}
 
-  if (!snapshot.available || snapshot.totalMarketCapUsd === null || snapshot.totalMarketCapPrevMonthUsd === null) {
-    return {
-      available: false,
-      kennzeichnung,
-      mcapChange30dUsd: null,
-      dynamicMultiplier: null,
-      estimatedTBillDemandUsd: null,
-      note: "Nicht verfügbar: DefiLlama lieferte keine vollständigen Market-Cap-Daten (aktuell und/oder vor 30 Tagen) für diesen Abruf.",
-    };
+export interface DefiTvlSnapshot {
+  available: boolean;
+  fetchedAt: string;
+  tvlUsd: number | null;
+  change30dUsd: number | null;
+  error?: string;
+}
+
+/** Letzter Punkt und der Stand 30 Tage davor. Reine Funktion, kein Netz. */
+export function defiTvlFromSeries(rows: { date: number; tvl: number }[], now = new Date()): DefiTvlSnapshot {
+  const fetchedAt = now.toISOString();
+  const points = rows
+    .filter(p => Number.isFinite(p.date) && Number.isFinite(p.tvl) && p.tvl > 0)
+    .sort((a, b) => a.date - b.date);
+  const last = points[points.length - 1];
+  if (!last) {
+    return { available: false, fetchedAt, tvlUsd: null, change30dUsd: null, error: "DefiLlama lieferte keine TVL-Punkte" };
   }
-
-  const dynamicMultiplier =
-    RULE_BASED_POLICY_CONSTANTS.tetherTBillShare * RULE_BASED_POLICY_CONSTANTS.weightTether +
-    RULE_BASED_POLICY_CONSTANTS.usdcTBillShare * RULE_BASED_POLICY_CONSTANTS.weightCircle;
-
-  const mcapChange30d = snapshot.totalMarketCapUsd - snapshot.totalMarketCapPrevMonthUsd;
-  const estimatedDemand = mcapChange30d * dynamicMultiplier;
-
+  const cutoff = last.date - 30 * 86400;
+  const prior = [...points].reverse().find(p => p.date <= cutoff);
   return {
     available: true,
-    kennzeichnung,
-    mcapChange30dUsd: mcapChange30d,
-    dynamicMultiplier,
-    estimatedTBillDemandUsd: estimatedDemand,
-    note: "Formel: (aktuelle Stablecoin-MCap − MCap vor ~30 Tagen) × gewichteter T-Bill-Holding-Anteil (Rule-based Policy-Konstante, siehe genius.policyConstants).",
+    fetchedAt,
+    tvlUsd: last.tvl,
+    change30dUsd: prior ? last.tvl - prior.tvl : null,
   };
+}
+
+export async function fetchDefiTvlSnapshot(): Promise<DefiTvlSnapshot> {
+  const fetchedAt = new Date().toISOString();
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(DEFILLAMA_TVL_URL, { signal: controller.signal, headers: { Accept: "application/json" } });
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (!res.ok) {
+      return { available: false, fetchedAt, tvlUsd: null, change30dUsd: null, error: `DefiLlama TVL HTTP ${res.status}` };
+    }
+    const json: unknown = await res.json();
+    if (!Array.isArray(json)) {
+      return { available: false, fetchedAt, tvlUsd: null, change30dUsd: null, error: "DefiLlama-TVL war kein Array" };
+    }
+    return defiTvlFromSeries(json as { date: number; tvl: number }[]);
+  } catch (err: any) {
+    return { available: false, fetchedAt, tvlUsd: null, change30dUsd: null, error: err?.message?.substring(0, 200) || "TVL-Abruf fehlgeschlagen" };
+  }
 }
 
 export interface StablecoinLiquidityResponse {
   fetchedAt: string;
   stablecoins: StablecoinMarketSnapshot;
   tBillDemand: TBillDemandEstimate;
-  genius: {
-    score: number;
-    scoreMax: number;
-    status: string;
-    asOfDate: string;
-    source: string;
-    kennzeichnung: string;
-  };
-  policyConstants: {
-    tetherTBillShare: number;
-    usdcTBillShare: number;
-    weightTether: number;
-    weightCircle: number;
-    asOfDate: string;
-    source: string;
-    kennzeichnung: string;
-  };
+  defiTvl: DefiTvlSnapshot;
 }
 
 export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiquidityResponse> {
-  const stablecoins = await fetchStablecoinMarketSnapshot();
+  const [stablecoins, defiTvl] = await Promise.all([
+    fetchStablecoinMarketSnapshot(),
+    fetchDefiTvlSnapshot(),
+  ]);
   const tBillDemand = estimateTBillDemand(stablecoins);
 
   return {
     fetchedAt: stablecoins.fetchedAt,
     stablecoins,
     tBillDemand,
-    genius: {
-      score: RULE_BASED_POLICY_CONSTANTS.geniusActScore,
-      scoreMax: 1.5,
-      status: RULE_BASED_POLICY_CONSTANTS.geniusActStatus,
-      asOfDate: RULE_BASED_POLICY_CONSTANTS.asOfDate,
-      source: RULE_BASED_POLICY_CONSTANTS.source,
-      kennzeichnung: "Manuell gepflegter Policy-Score (0-1.5) — keine automatisierte Live-Berechnung möglich",
-    },
-    policyConstants: {
-      tetherTBillShare: RULE_BASED_POLICY_CONSTANTS.tetherTBillShare,
-      usdcTBillShare: RULE_BASED_POLICY_CONSTANTS.usdcTBillShare,
-      weightTether: RULE_BASED_POLICY_CONSTANTS.weightTether,
-      weightCircle: RULE_BASED_POLICY_CONSTANTS.weightCircle,
-      asOfDate: RULE_BASED_POLICY_CONSTANTS.asOfDate,
-      source: RULE_BASED_POLICY_CONSTANTS.source,
-      kennzeichnung: RULE_BASED_POLICY_CONSTANTS.kennzeichnung,
-    },
+    defiTvl,
   };
 }

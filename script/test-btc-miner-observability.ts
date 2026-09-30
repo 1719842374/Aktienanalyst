@@ -9,6 +9,7 @@ import {
   expireMinerCacheForTests,
   fetchMinerData,
   getMinerLastError,
+  hashrateHistoryFromBlockchainChart,
   minerUnavailableBody,
   resetMinerCacheForTests,
 } from "../server/btc-miner";
@@ -230,6 +231,56 @@ async function main() {
     check("Preis-Refresh fällt auf Stale zurück", stale?.stale === true && stale.currentHashrateEH === fresh?.currentHashrateEH);
     const cached = await fetchMinerData();
     check("gespeicherter Erfolg bleibt ohne stale", cached?.stale !== true && cached?.lastUpdated === fresh?.lastUpdated);
+  }
+
+  console.log("\nfetchMinerData — mempool.space down, blockchain.info charts");
+  {
+    resetMinerCacheForTests();
+    check(
+      "TH/s werden EH/s",
+      hashrateHistoryFromBlockchainChart({ values: [{ x: 1_700_000_000, y: 900_000_000 }] })[0]?.hashrateEH === 900,
+    );
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("mempool.space")) {
+        throw Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+        });
+      }
+      if (url.includes("/charts/hash-rate")) {
+        return jsonResponse({
+          values: Array.from({ length: 220 }, (_, i) => ({ x: 1_700_000_000 + i * 86400, y: 900_000_000 })),
+        });
+      }
+      if (url.includes("/charts/difficulty")) {
+        return jsonResponse({
+          values: Array.from({ length: 220 }, (_, i) => ({ x: 1_700_000_000 + i * 86400, y: 8e13 })),
+        });
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as typeof fetch;
+    const data = await fetchMinerData([{ date: "2024-06-01", price: 60_000 }], 63_000);
+    check("Plot-Daten trotz mempool-Ausfall", data != null && data.stale !== true);
+    check("Quelle blockchain.info", data?.hashrateSource === "blockchain.info");
+    check("Hashrate 900 EH/s", Math.abs((data?.currentHashrateEH ?? 0) - 900) < 0.01, String(data?.currentHashrateEH));
+    check("Serie lang genug für Hash Ribbon", (data?.hashrateHistory.length ?? 0) >= 200);
+    check("Difficulty für die Ribbon-Kompression", (data?.difficultyHistory.length ?? 0) >= 200);
+    check("lastError nach Fallback leer", getMinerLastError() === null);
+  }
+
+  console.log("\nfetchMinerData — längere Preishistorie rechnet Puell neu");
+  {
+    resetMinerCacheForTests();
+    installFetch(okBoth());
+    const short = await fetchMinerData([{ date: "2024-01-01", price: 50_000 }], 50_000);
+    check("kurze Historie ohne Puell, Zone trotzdem gesetzt", short?.puellMultiple == null && short?.minerZone != null);
+    const longHist = Array.from({ length: 400 }, (_, i) => {
+      const d = new Date(Date.UTC(2024, 0, 1) + i * 86400000);
+      return { date: d.toISOString().slice(0, 10), price: 50_000 };
+    });
+    const long = await fetchMinerData(longHist, 50_000);
+    check("volle Historie setzt Puell", long?.puellMultiple != null, String(long?.puellMultiple));
+    check("kein Cache-Treffer der kurzen Serie", long !== short);
   }
 
   console.log("\nminerUnavailableBody — Fallback nur ohne lastError");

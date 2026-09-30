@@ -24,7 +24,7 @@ interface LiquidityPayload {
   regimeScoreV1?: number;
   policyScore?: number;
   policyRegime?: PolicyRegime;
-  bessentPutActive?: boolean;
+  treasuryDurationActive?: boolean;
   durationImpulse?: DurationImpulse;
   asOf: string;
   source: string;
@@ -37,7 +37,7 @@ const POLICY_REGIME_LABEL: Record<PolicyRegime, string> = {
   QT: "QT aktiv",
   QT_ended_RMP: "QT beendet · Bill-RMP",
   QE: "QE aktiv",
-  twist_treasury: "Treasury-Twist (Bessent)",
+  twist_treasury: "Treasury-Twist",
 };
 
 const DURATION_LABEL: Record<DurationImpulse, string> = {
@@ -140,15 +140,12 @@ export function LiquidityPanel() {
             <Metric label="Regime" value={`${data.regimeScore}`} />
           </div>
 
-          {/* v2 (Spec WORK_RESEARCHER_LIQUIDITY_REGIME.md §5.1/§5.5): Policy-Kanal
-              — Fed-Regime (QT/RMP/QE) getrennt vom Duration-Kanal (Bessent-Twist),
-              damit ein Treasury-Buyback niemals als Fed-QE erscheint. */}
           {(data.policyRegime || data.durationImpulse) && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
               <Metric label="Fed-Regime" value={data.policyRegime ? POLICY_REGIME_LABEL[data.policyRegime] : "n/a"} />
               <Metric
-                label="Bessent"
-                value={data.bessentPutActive ? `an · Cap ≥ 4 Mrd.` : "aus"}
+                label="Treasury"
+                value={data.treasuryDurationActive ? `an · Cap ≥ 4 Mrd.` : "aus"}
               />
               <Metric
                 label="Duration"
@@ -168,7 +165,7 @@ export function LiquidityPanel() {
             {data.policyRegime === "QE"
               ? " Fed kauft aktiv Duration (QE) — klar expansiv."
               : data.policyRegime === "twist_treasury"
-                ? " Treasury-Buybacks am langen Ende (Bessent-Twist) — Duration-Impuls, aber kein Fed-QE."
+                ? " Treasury kauft am langen Ende — Duration-Impuls, aber kein Fed-QE."
                 : data.policyRegime === "QT_ended_RMP"
                   ? " Fed: QT-Runoff beendet, nur T-Bill-Reserve-Management — kein QE."
                   : data.policyRegime === "QT"
