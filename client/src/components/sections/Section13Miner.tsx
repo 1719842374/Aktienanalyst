@@ -43,6 +43,7 @@ export interface MinerApiData {
   puellHistory: { date: string; value: number }[];
   difficultyRibbonCompression: number;
   lastUpdated: string;
+  hashrateSource?: "mempool.space" | "blockchain.info";
 }
 
 /**
@@ -492,7 +493,7 @@ export function Section13Miner({
           <span className="text-emerald-500 font-medium"> Hash Ribbon Buy</span> — Bärenmarkt-Tief historisch oft nahe.
         </div>
         <div className="pt-1">
-          Quellen: Hashrate/Difficulty mempool.space · Preis: bestehende BTC-Pipeline (Blockchain.com) ·
+          Quellen: Hashrate/Difficulty {minerData.hashrateSource ?? "mempool.space"} · Preis: bestehende BTC-Pipeline (Blockchain.com) ·
           MPI (Miner-Netflows) nicht verfügbar — erfordert CryptoQuant/Glassnode-API (geht neutral in den Score ein).
           Stand: {new Date(minerData.lastUpdated).toLocaleString("de-DE")}
         </div>
