@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from "react";
+import { Fragment, useState, useRef, useCallback, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { analyzeBTC } from "@/lib/btcAnalysis";
 import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
@@ -16,6 +16,9 @@ import { RechenWeg } from "@/components/RechenWeg";
 import { formatCurrency, formatLargeNumber, formatPercent, getChangeColor } from "@/lib/formatters";
 import { gbmMonteCarlo, type GBMMonteCarloResult } from "@/lib/calculations";
 import { useLocation } from "wouter";
+import { useIsNarrow } from "@/hooks/use-mobile";
+import { TA_SIGNAL_DOT_R, axisTick, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
+import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
   LineChart as LineChartIcon, Target, Scale, BarChart3, Dice6,
@@ -26,7 +29,7 @@ import {
 import {
   LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Area, AreaChart, BarChart, Bar,
-  Cell, ReferenceLine, ReferenceArea, PieChart, Pie, ComposedChart, Legend,
+  Cell, ReferenceLine, ReferenceDot, ReferenceArea, PieChart, Pie, ComposedChart, Legend,
 } from "recharts";
 
 // === RSI(14) Wilder Smoothing (analog TechnicalChart.tsx) ===
@@ -949,6 +952,7 @@ function StatusPill({ label, value, detail }: { label: string; value: boolean; d
 function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeChange }: {
   data: BTCAnalysis; timeRange?: TimeRange; onTimeRangeChange?: (r: TimeRange) => void;
 }) {
+  const narrow = useIsNarrow();
   const [visibleMAs, setVisibleMAs] = useState<Set<MAKey>>(() => {
     const initial = new Set<MAKey>();
     MA_LINES.forEach(ma => { if (ma.defaultOn) initial.add(ma.key); });
@@ -1288,6 +1292,37 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     return lastCross ? { ...lastCross, lastCross, gapPct: undefined } : null;
   }, [fullChart]);
 
+  // Mobile: höchstens eine volle rechte Achse. Weitere Makro-Serien behalten
+  // ihre Skala (Achse versteckt) und sind über Farbe + Tooltip lesbar.
+  type MacroAxisId = "real10y" | "m2yoy" | "m2absolute";
+  const primaryMacroAxis: MacroAxisId | null = !narrow ? null
+    : showReal10y && hasReal10y ? "real10y"
+    : showM2Yoy && hasM2Yoy ? "m2yoy"
+    : ((showM2Absolute && hasM2Absolute) || (showM2AbsoluteLagged && hasM2AbsoluteLagged)) ? "m2absolute"
+    : null;
+  const macroAxisFullWidth = (id: MacroAxisId) => (id === "m2absolute" ? 54 : 44);
+  const macroAxisHidden = (id: MacroAxisId) => narrow && primaryMacroAxis !== id;
+  const visibleRightWidth = primaryMacroAxis ? macroAxisFullWidth(primaryMacroAxis) : 0;
+  const desktopRightAxes =
+    (!narrow && showReal10y && hasReal10y ? 44 : 0) +
+    (!narrow && showM2Yoy && hasM2Yoy ? 44 : 0) +
+    (!narrow && ((showM2Absolute && hasM2Absolute) || (showM2AbsoluteLagged && hasM2AbsoluteLagged)) ? 54 : 0);
+  const plotMinWidth = narrow
+    ? taChartMinWidth(55, visibleRightWidth, 8)
+    : taChartMinWidth(55, desktopRightAxes, 106);
+  const hiddenMacroSeries: { key: string; label: string; color: string }[] = [];
+  if (narrow) {
+    if (showReal10y && hasReal10y && primaryMacroAxis !== "real10y") hiddenMacroSeries.push({ key: "real10y", label: "Real10Y", color: "#38bdf8" });
+    if (showM2Yoy && hasM2Yoy && primaryMacroAxis !== "m2yoy") hiddenMacroSeries.push({ key: "m2yoy", label: "M2 YoY", color: "#a78bfa" });
+    if (showM2Absolute && hasM2Absolute && primaryMacroAxis !== "m2absolute") hiddenMacroSeries.push({ key: "m2abs", label: "M2 Absolut", color: "#e2e8f0" });
+    if (showM2AbsoluteLagged && hasM2AbsoluteLagged && primaryMacroAxis !== "m2absolute") hiddenMacroSeries.push({ key: "m2lag", label: "M2 Lag (10W)", color: "#fbbf24" });
+  }
+  const priceMargin = narrow
+    ? { top: 5, right: 8, left: 0, bottom: 5 }
+    : { top: 5, right: 106, left: 0, bottom: 5 };
+  const xTick = axisTick(narrow, 9, "var(--muted-foreground)");
+  const xInterval = xAxisIntervalProps(narrow, Math.floor(chartData.length / 8));
+
   if (fullChart.length === 0) {
     return (
       <SectionCard number={10} title="Technische Analyse">
@@ -1418,15 +1453,15 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         );
       })()}
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-2 mb-3">
+      {/* Controls — Mobile: Preset → MAs → Signale/Volumen, Chips umbrechen (min 36px). */}
+      <div className="mb-3 flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
         {/* Time range buttons */}
-        <div className="flex rounded-md border border-border overflow-hidden">
+        <div className="flex max-w-full flex-wrap gap-1.5 sm:flex-nowrap sm:gap-0 sm:overflow-hidden sm:rounded-md sm:border sm:border-border" data-testid="btc-presets">
           {(["3M", "6M", "1Y", "2Y", "3Y", "5Y"] as const).map(r => (
             <button
               key={r}
               onClick={() => setTimeRange(r)}
-              className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${
+              className={`min-h-9 shrink-0 rounded-md border border-border px-2.5 text-[11px] font-medium transition-colors sm:min-h-0 sm:rounded-none sm:border-0 sm:py-1 sm:text-[10px] ${
                 timeRange === r ? "bg-primary text-primary-foreground" : "hover:bg-muted/50"
               }`}
             >
@@ -1436,12 +1471,12 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         </div>
 
         {/* MA toggles */}
-        <div className="flex flex-wrap gap-1">
+        <div className="flex max-w-full flex-wrap gap-1.5 sm:gap-1">
           {MA_LINES.map(ma => (
             <button
               key={ma.key}
               onClick={() => toggleMA(ma.key)}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
                 visibleMAs.has(ma.key)
                   ? "border-current opacity-100"
                   : "border-border opacity-40 hover:opacity-60"
@@ -1454,10 +1489,11 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
           ))}
         </div>
 
+        <div className="flex max-w-full flex-wrap gap-1.5 sm:contents">
         {/* Signal toggle */}
         <button
           onClick={() => setShowSignals(!showSignals)}
-          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+          className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
             showSignals ? "border-primary text-primary" : "border-border text-muted-foreground opacity-50"
           }`}
         >
@@ -1468,23 +1504,25 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         {/* Volume toggle */}
         <button
           onClick={() => setShowVolume(!showVolume)}
-          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+          className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
             showVolume ? "border-sky-500 text-sky-400" : "border-border text-muted-foreground opacity-50"
           }`}
         >
           {showVolume ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
           Volumen
         </button>
+        </div>
       </div>
 
       {/* BTC-specific overlay toggles */}
-      <div className="flex flex-wrap gap-1 mb-3">
-        <span className="text-[9px] text-muted-foreground self-center mr-1">BTC-Overlays:</span>
+      <div className="mb-3 flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1">
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+        <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">BTC-Overlays:</span>
         {BTC_OVERLAYS.map(o => (
           <button
             key={o.key}
             onClick={() => toggleOverlay(o.key)}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+            className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
               visibleOverlays.has(o.key)
                 ? "border-current opacity-100"
                 : "border-border opacity-40 hover:opacity-60"
@@ -1495,15 +1533,16 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             {o.label}
           </button>
         ))}
+        </div>
 
         {(hasReal10y || hasM2Yoy || hasM2Absolute || hasM2AbsoluteLagged) && (
-          <>
-            <span className="text-muted-foreground/30 self-center mx-1">|</span>
-            <span className="text-[9px] text-muted-foreground self-center mr-1">Makro:</span>
+          <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+            <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
+            <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Makro:</span>
             {hasReal10y && (
               <button
                 onClick={() => setShowReal10y(v => !v)}
-                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
                   showReal10y ? "border-sky-400 text-sky-400" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
                 }`}
                 title="Realzins (DFII10) als rechte Achse ein-/ausblenden"
@@ -1516,7 +1555,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             {hasM2Yoy && (
               <button
                 onClick={() => setShowM2Yoy(v => !v)}
-                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
                   showM2Yoy ? "border-violet-400 text-violet-400" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
                 }`}
                 title="US-M2-Geldmengenwachstum (YoY) ein-/ausblenden"
@@ -1529,7 +1568,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             {hasM2Absolute && (
               <button
                 onClick={() => setShowM2Absolute(v => !v)}
-                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
                   showM2Absolute ? "border-slate-200 text-slate-200" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
                 }`}
                 title="Absolute US-M2-Geldmenge in Billionen USD ein-/ausblenden"
@@ -1542,7 +1581,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             {hasM2AbsoluteLagged && (
               <button
                 onClick={() => setShowM2AbsoluteLagged(v => !v)}
-                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
                   showM2AbsoluteLagged ? "border-amber-300 text-amber-300" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
                 }`}
                 title="Absolute US-M2-Geldmenge, um 10 Wochen nach vorne verschoben, ein-/ausblenden"
@@ -1552,17 +1591,18 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 M2 Lag (10W)
               </button>
             )}
-          </>
+          </div>
         )}
 
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
         {/* Measurement tool toggle */}
-        <span className="text-muted-foreground/30 self-center mx-1">|</span>
+        <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
         <button
           onClick={() => {
             if (isMeasuring) { setIsMeasuring(false); setMeasureStart(null); setMeasureEnd(null); }
             else { setIsMeasuring(true); setMeasureStart(null); setMeasureEnd(null); }
           }}
-          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+          className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
             isMeasuring
               ? "border-amber-500 text-amber-500 bg-amber-500/10"
               : "border-border text-muted-foreground opacity-60 hover:opacity-80"
@@ -1573,11 +1613,12 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         {measureStart && measureEnd && (
           <button
             onClick={() => { setMeasureStart(null); setMeasureEnd(null); }}
-            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-border text-muted-foreground opacity-60 hover:opacity-80"
+            className="inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border border-border px-2 text-[11px] text-muted-foreground opacity-60 transition-colors hover:opacity-80 sm:min-h-0 sm:py-0.5 sm:text-[10px]"
           >
             ✕ Zurücksetzen
           </button>
         )}
+        </div>
       </div>
 
       {/* Measurement result overlay */}
@@ -1606,11 +1647,12 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
       })()}
 
       {/* Price Chart with MAs + BTC overlays */}
+      <TaPlotScroll minWidth={plotMinWidth} testId="btc-ta-plot-scroll">
       <div className={`h-[320px] sm:h-[380px] w-full ${isMeasuring ? "cursor-crosshair" : ""}`}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartDataWithRSI}
-            margin={{ top: 5, right: 106, left: 0, bottom: 5 }}
+            margin={priceMargin}
             onClick={(e: any) => {
               if (!isMeasuring || !e?.activePayload?.[0]?.payload) return;
               const point = e.activePayload[0].payload;
@@ -1627,16 +1669,17 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             <XAxis
               dataKey="date"
               tickFormatter={formatDate}
-              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
-              interval={Math.floor(chartData.length / 8)}
+              tick={xTick}
+              {...xInterval}
               axisLine={{ stroke: "var(--border)" }}
             />
             <YAxis
               domain={yDomain}
-              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+              tick={xTick}
               tickFormatter={formatYAxis}
               width={55}
               axisLine={{ stroke: "var(--border)" }}
+              {...(narrow ? { tickCount: 5 } : {})}
             />
             {/* Hidden right axis for volume normalisation */}
             <YAxis yAxisId="vol" hide domain={[0, 1]} orientation="right" />
@@ -1645,10 +1688,12 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 yAxisId="real10y"
                 orientation="right"
                 domain={real10yDomain}
+                hide={macroAxisHidden("real10y")}
                 tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-                tick={{ fontSize: 9, fill: "#38bdf8" }}
-                width={44}
-                axisLine={{ stroke: "#38bdf8" }}
+                tick={{ fontSize: narrow ? 10 : 9, fill: "#38bdf8" }}
+                width={macroAxisHidden("real10y") ? 0 : macroAxisFullWidth("real10y")}
+                axisLine={macroAxisHidden("real10y") ? false : { stroke: "#38bdf8" }}
+                {...(narrow ? { tickCount: 4 } : {})}
               />
             )}
             {showM2Yoy && hasM2Yoy && (
@@ -1656,11 +1701,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 yAxisId="m2yoy"
                 orientation="right"
                 domain={m2YoyDomain}
+                hide={macroAxisHidden("m2yoy")}
                 tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-                tick={{ fontSize: 9, fill: "#a78bfa" }}
-                width={44}
+                tick={{ fontSize: narrow ? 10 : 9, fill: "#a78bfa" }}
+                width={macroAxisHidden("m2yoy") ? 0 : macroAxisFullWidth("m2yoy")}
                 axisLine={false}
                 tickLine={false}
+                {...(narrow ? { tickCount: 4 } : {})}
               />
             )}
             {(showM2Absolute && hasM2Absolute || showM2AbsoluteLagged && hasM2AbsoluteLagged) && (
@@ -1668,11 +1715,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 yAxisId="m2absolute"
                 orientation="right"
                 domain={m2AbsoluteDomain}
+                hide={macroAxisHidden("m2absolute")}
                 tickFormatter={(v: number) => `$${v.toFixed(1)}T`}
-                tick={{ fontSize: 9, fill: "#e2e8f0" }}
-                width={54}
+                tick={{ fontSize: narrow ? 10 : 9, fill: "#e2e8f0" }}
+                width={macroAxisHidden("m2absolute") ? 0 : macroAxisFullWidth("m2absolute")}
                 axisLine={false}
                 tickLine={false}
+                {...(narrow ? { tickCount: 4 } : {})}
               />
             )}
             <Tooltip
@@ -1737,8 +1786,8 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               </>
             )}
 
-            {/* Volume overlay bars — sichtbar wenn showVolume aktiv */}
-            {showVolume && (
+            {/* Volume overlay bars — Desktop im Kurs-Plot. Mobile: eigenes Band unter dem Chart. */}
+            {showVolume && !narrow && (
               <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={6}
                 shape={(props: any) => {
                   const { x, y, width, height, payload } = props;
@@ -1846,14 +1895,24 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
 
             {/* Buy/Sell signal markers */}
             {showSignals && visibleSignals.map((s, i) => (
-              <ReferenceLine
-                key={`sig-${i}`}
-                x={s.date}
-                stroke={s.type === "BUY" ? "#22c55e" : "#ef4444"}
-                strokeDasharray="2 2"
-                strokeWidth={0.8}
-                opacity={0.5}
-              />
+              <Fragment key={`sig-${i}`}>
+                <ReferenceLine
+                  x={s.date}
+                  stroke={s.type === "BUY" ? "#22c55e" : "#ef4444"}
+                  strokeDasharray="2 2"
+                  strokeWidth={narrow ? 1 : 0.8}
+                  opacity={0.5}
+                />
+                {narrow && (
+                  <ReferenceDot
+                    x={s.date}
+                    y={s.price}
+                    r={TA_SIGNAL_DOT_R}
+                    fill={s.type === "BUY" ? "#22c55e" : "#ef4444"}
+                    stroke="none"
+                  />
+                )}
+              </Fragment>
             ))}
 
             {/* Measurement markers */}
@@ -1877,29 +1936,47 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+      {narrow && showVolume && (
+        <TaVolumeBand data={chartDataWithRSI} leftAxisWidth={55} rightAxisWidth={visibleRightWidth} marginRight={8} />
+      )}
+      {hiddenMacroSeries.length > 0 && (
+        <div className="sticky left-0 mt-1 flex max-w-full flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground" data-testid="macro-axis-note">
+          <span>Ohne eigene Achse — Wert im Tooltip:</span>
+          {hiddenMacroSeries.map(series => (
+            <span key={series.key} className="inline-flex items-center gap-1 font-medium" style={{ color: series.color }}>
+              <span className="inline-block h-0.5 w-3 rounded-full" style={{ backgroundColor: series.color }} />
+              {series.label}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* MACD Chart */}
-      <div className="mt-2 text-[10px] font-medium text-muted-foreground mb-1 flex items-center gap-1.5">
+      <div className="mb-1 mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted-foreground sm:flex-nowrap">
         MACD(12,26,9)
         <span className="text-[9px] opacity-60">= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal</span>
       </div>
-      <div className="h-[140px] sm:h-[160px] w-full">
+      <div className="h-[140px] min-h-10 w-full sm:h-[160px]">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartDataWithRSI} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <ComposedChart data={chartDataWithRSI} margin={narrow ? { top: 5, right: 8, left: 0, bottom: 5 } : { top: 5, right: 10, left: 0, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
             <XAxis
               dataKey="date"
               tickFormatter={formatDate}
-              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
-              interval={Math.floor(chartData.length / 8)}
+              tick={xTick}
+              {...xInterval}
               axisLine={{ stroke: "var(--border)" }}
             />
             <YAxis
-              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+              tick={xTick}
               width={55}
               axisLine={{ stroke: "var(--border)" }}
               tickFormatter={(v: number) => v >= 1000 || v <= -1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0)}
+              {...(narrow ? { tickCount: 5 } : {})}
             />
+            {narrow && visibleRightWidth > 0 && (
+              <YAxis yAxisId="align" orientation="right" width={visibleRightWidth} tick={false} axisLine={false} tickLine={false} />
+            )}
             <Tooltip
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
@@ -1967,8 +2044,8 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
       </div>
 
       {/* RSI(14) Chart */}
-      <div className="mt-3">
-        <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-2">
+      <div className="mt-3 min-h-10">
+        <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2 text-[10px] text-muted-foreground sm:flex-nowrap">
           <span className="font-medium">RSI(14)</span>
           <span className="opacity-60">= Relative Strength Index | Überkauft &gt; 70 | Überverkauft &lt; 30 | Wilder Smoothing</span>
           {(() => {
@@ -1980,17 +2057,20 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
           })()}
         </div>
         <ResponsiveContainer width="100%" height={110}>
-          <ComposedChart data={chartDataWithRSI} margin={{ top: 2, right: 10, left: 0, bottom: 2 }}>
+          <ComposedChart data={chartDataWithRSI} margin={narrow ? { top: 2, right: 8, left: 0, bottom: 2 } : { top: 2, right: 10, left: 0, bottom: 2 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="date" tick={false} axisLine={false} tickLine={false} />
             <YAxis
               domain={[0, 100]}
               ticks={[0, 30, 50, 70, 100]}
-              tick={{ fontSize: 9, fill: "rgba(255,255,255,0.4)" }}
+              tick={{ fontSize: narrow ? 10 : 9, fill: "rgba(255,255,255,0.4)" }}
               tickLine={false}
               axisLine={false}
-              width={28}
+              width={narrow ? 55 : 28}
             />
+            {narrow && visibleRightWidth > 0 && (
+              <YAxis yAxisId="align" orientation="right" width={visibleRightWidth} tick={false} axisLine={false} tickLine={false} />
+            )}
             <Tooltip
               contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "11px" }}
               formatter={(value: number) => [value?.toFixed(1), "RSI(14)"]}
@@ -2014,6 +2094,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+      </TaPlotScroll>
 
       {/* Recent Signals Table */}
       {visibleSignals.length > 0 && (
