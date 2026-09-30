@@ -141,6 +141,12 @@ export interface MinerData {
   /** WORK_BTC_MINER §3 — nur gesetzt wenn btcPrice übergeben wurde (POST) */
   minerZone?: MinerZoneResult | null;
   lastUpdated: string;
+  /**
+   * True only when this payload is a previous successful cache served after
+   * a failed refresh. Absent on a live success. lastUpdated stays the time
+   * of the original successful fetch.
+   */
+  stale?: boolean;
 }
 
 // ─── Helper: Rolling average ──────────────────────────────────────────────────
@@ -370,10 +376,251 @@ export function calcMinerScore(
   };
 }
 
-// ─── In-memory cache (1 hour) ─────────────────────────────────────────────────
+// ─── In-memory cache (1 hour) + last failure ─────────────────────────────────
+// Frischer Erfolg: 1h TTL wie bisher. Schlägt ein Refresh fehl und liegt ein
+// früherer Erfolg im Cache, wird der ausgeliefert (stale: true, lastUpdated
+// unverändert) — auch nach Ablauf der TTL. Ohne jeden Erfolg: null + lastError,
+// damit /api/btc-miner einen spezifischen 503-Grund setzen kann statt immer
+// "unreachable".
 let _cache: MinerData | null = null;
 let _cacheTime = 0;
 const CACHE_TTL_MS = 60 * 60 * 1000;
+
+export type MinerErrorCode =
+  | "MEMPOOL_HTTP"
+  | "MEMPOOL_TIMEOUT"
+  | "MEMPOOL_NETWORK"
+  | "INSUFFICIENT_HASHRATE"
+  | "PARSE"
+  | "UNKNOWN";
+
+export interface MinerLastError {
+  code: MinerErrorCode;
+  message: string;
+  cause?: string;
+}
+
+let _lastError: MinerLastError | null = null;
+
+const RETRY_BACKOFF_MS = 400;
+const TRANSIENT_MINER_CODES = new Set<MinerErrorCode>([
+  "MEMPOOL_HTTP",
+  "MEMPOOL_TIMEOUT",
+  "MEMPOOL_NETWORK",
+]);
+
+class MinerFetchError extends Error {
+  readonly code: MinerErrorCode;
+  readonly detail?: string;
+  constructor(code: MinerErrorCode, message: string, detail?: string) {
+    super(message);
+    this.name = "MinerFetchError";
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+export function getMinerLastError(): MinerLastError | null {
+  return _lastError;
+}
+
+/** 503-Body für GET/POST /api/btc-miner. `error` ist der Text, den die UI zeigt. */
+export function minerUnavailableBody(): { error: string; code: string; cause?: string } {
+  const last = _lastError;
+  return {
+    error: last?.message ?? "Miner data unavailable — mempool.space unreachable",
+    code: last?.code ?? "UNKNOWN",
+    ...(last?.cause ? { cause: last.cause.substring(0, 200) } : {}),
+  };
+}
+
+/** Test-only: Cache und letzten Fehler leeren. */
+export function resetMinerCacheForTests(): void {
+  _cache = null;
+  _cacheTime = 0;
+  _lastError = null;
+}
+
+/** Test-only: TTL als abgelaufen markieren, ohne den erfolgreichen Payload zu löschen. */
+export function expireMinerCacheForTests(): void {
+  _cacheTime = 0;
+}
+
+function errorText(err: unknown): { name: string; message: string; code: string } {
+  if (!err || typeof err !== "object") {
+    return { name: "", message: typeof err === "string" ? err : "", code: "" };
+  }
+  const e = err as { name?: string; message?: string; code?: string };
+  return {
+    name: String(e.name ?? ""),
+    message: typeof e.message === "string" ? e.message : "",
+    code: e.code != null ? String(e.code) : "",
+  };
+}
+
+function matchesInChain(err: unknown, pred: (info: { name: string; message: string; code: string }) => boolean): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = err;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if (pred(errorText(current))) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+function classifyThrown(err: unknown): MinerFetchError {
+  if (err instanceof MinerFetchError) return err;
+  const top = errorText(err);
+  if (matchesInChain(err, (e) =>
+    e.name === "TimeoutError" ||
+    e.name === "AbortError" ||
+    /timeout|aborted due to timeout/i.test(e.message)
+  )) {
+    return new MinerFetchError(
+      "MEMPOOL_TIMEOUT",
+      "Miner data unavailable — mempool.space timed out",
+      top.message || top.name || "timeout",
+    );
+  }
+  if (matchesInChain(err, (e) =>
+    /ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ETIMEDOUT|UND_ERR|fetch failed|failed to fetch|network|socket/i.test(`${e.code} ${e.message}`)
+  )) {
+    return new MinerFetchError(
+      "MEMPOOL_NETWORK",
+      "Miner data unavailable — mempool.space network error",
+      top.message || top.code || "network",
+    );
+  }
+  if (matchesInChain(err, (e) => e.name === "SyntaxError" || /unexpected token|json/i.test(e.message))) {
+    return new MinerFetchError(
+      "PARSE",
+      "Miner data unavailable — mempool.space response could not be parsed",
+      top.message || "parse",
+    );
+  }
+  return new MinerFetchError(
+    "UNKNOWN",
+    `Miner data unavailable — ${top.message || "unknown error"}`,
+    top.message || undefined,
+  );
+}
+
+function rememberFailure(err: MinerFetchError): void {
+  _lastError = { code: err.code, message: err.message, cause: err.detail };
+  console.error(
+    `[BTC-MINER] ${err.code}: ${err.message}` +
+    (err.detail ? ` — ${err.detail.substring(0, 150)}` : "")
+  );
+}
+
+function serveStaleOrNull(err: MinerFetchError): MinerData | null {
+  rememberFailure(err);
+  if (_cache) {
+    console.warn("[BTC-MINER] Serving stale cache after fetch failure");
+    return { ..._cache, stale: true };
+  }
+  return null;
+}
+
+async function fetchMempoolSeries(): Promise<{
+  hashrateHistory: HashratePoint[];
+  difficultyHistory: { date: string; difficulty: number }[];
+}> {
+  const timeout = AbortSignal.timeout(20000);
+
+  // WICHTIG (BTC-Miner-Zone 5Y-Feature): mempool.space liefert unter
+  // /mining/hashrate/3y NUR 3 Jahre Historie (verifiziert 2026-08:
+  // 1096 Tage, erster Tag = heute-3y). Für den geforderten 5-Jahres-
+  // Zeitraum (~2021-08 bis 2026-08) wird stattdessen /mining/hashrate/all
+  // verwendet — liefert die volle mempool.space-Historie zurück bis 2009
+  // (verifiziert: 6422 Tagespunkte, erster Punkt 2009-01-03). Es werden
+  // KEINE synthetischen/erfundenen Werte für fehlende Jahre erzeugt; die
+  // tatsächlich verfügbare Historie deckt den 5Y-Zeitraum vollständig ab.
+  //
+  // Bugfix: die Difficulty-Adjustments-URL zeigte fälschlich auf
+  // /api/v1/difficulty-adjustments (404) statt /api/v1/mining/difficulty-
+  // adjustments — dadurch war difficultyHistory bisher immer leer und
+  // difficultyRibbonCompression immer 0. Response-Format ist außerdem ein
+  // Array von Tupeln [timestamp, height, difficulty, change], nicht ein
+  // Objekt-Array — Parsing unten entsprechend angepasst.
+  const [hashrateResp, difficultyResp] = await Promise.allSettled([
+    fetch(`${MEMPOOL_BASE}/mining/hashrate/all`, { signal: timeout }),
+    fetch(`${MEMPOOL_BASE}/mining/difficulty-adjustments?interval=144`, { signal: timeout }),
+  ]);
+
+  // ── Parse hashrate ────────────────────────────────────────────
+  // !ok und Rejects sind eigene Fehlerklassen. Vorher wurden beide zu einer
+  // leeren Serie und dann pauschal zu "insufficient" → "unreachable".
+  if (hashrateResp.status === "rejected") {
+    throw classifyThrown(hashrateResp.reason);
+  }
+  if (!hashrateResp.value.ok) {
+    throw new MinerFetchError(
+      "MEMPOOL_HTTP",
+      `Miner data unavailable — mempool.space HTTP ${hashrateResp.value.status}`,
+      `GET /mining/hashrate/all → ${hashrateResp.value.status}`,
+    );
+  }
+
+  let hashrateHistory: HashratePoint[] = [];
+  let raw: any;
+  try {
+    raw = await hashrateResp.value.json();
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new MinerFetchError(
+      "PARSE",
+      "Miner data unavailable — mempool.space hashrate response could not be parsed",
+      detail,
+    );
+  }
+  const items = raw?.hashrates || raw?.data?.hashrates || [];
+  hashrateHistory = items
+    .map((h: any) => ({
+      date: new Date(h.timestamp * 1000).toISOString().split('T')[0],
+      hashrateEH: h.avgHashrate / 1e18,
+    }))
+    .filter((h: HashratePoint) => h.hashrateEH > 0)
+    .sort((a: HashratePoint, b: HashratePoint) => a.date.localeCompare(b.date));
+
+  if (hashrateHistory.length < 60) {
+    console.warn(`[BTC-MINER] Insufficient hashrate data from mempool.space (${hashrateHistory.length} points)`);
+    throw new MinerFetchError(
+      "INSUFFICIENT_HASHRATE",
+      `Miner data unavailable — insufficient hashrate history (${hashrateHistory.length} points, need 60)`,
+      `points=${hashrateHistory.length}`,
+    );
+  }
+
+  // ── Parse difficulty ──────────────────────────────────────────
+  // mempool.space liefert hier ein Array von Tupeln:
+  // [timestamp(sec), blockHeight, difficulty, percentChange] — absteigend
+  // sortiert (neuester Eintrag zuerst). Objekt-Format (d.time/d.difficulty)
+  // wird zur Sicherheit weiter unterstützt, falls die API sich ändert.
+  // Difficulty-Fehler allein (HTTP !ok / Reject) lassen die Hashrate-Antwort
+  // stehen — wie bisher. Ein JSON-Parsefehler wirft weiter (PARSE).
+  let difficultyHistory: { date: string; difficulty: number }[] = [];
+  if (difficultyResp.status === 'fulfilled' && difficultyResp.value.ok) {
+    const rawDiff = await difficultyResp.value.json();
+    const diffItems = Array.isArray(rawDiff) ? rawDiff : (rawDiff?.difficultyAdjustments || rawDiff?.data || []);
+    difficultyHistory = diffItems
+      .map((d: any) => {
+        if (Array.isArray(d)) {
+          const [ts, , difficulty] = d;
+          return { date: new Date((ts || 0) * 1000).toISOString().split('T')[0], difficulty: difficulty || 0 };
+        }
+        return {
+          date: new Date((d.time || d.timestamp || 0) * 1000).toISOString().split('T')[0],
+          difficulty: d.difficulty || d.difficultyNew || 0,
+        };
+      })
+      .filter((d: { date: string; difficulty: number }) => d.difficulty > 0)
+      .sort((a: { date: string; difficulty: number }, b: { date: string; difficulty: number }) => a.date.localeCompare(b.date));
+  }
+
+  return { hashrateHistory, difficultyHistory };
+}
 
 export async function fetchMinerData(
   btcPriceHistory?: { date: string; price: number }[],
@@ -389,153 +636,105 @@ export async function fetchMinerData(
     return _cache;
   }
 
-  try {
-    const timeout = AbortSignal.timeout(20000);
+  let failure: MinerFetchError | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { hashrateHistory, difficultyHistory } = await fetchMempoolSeries();
 
-    // WICHTIG (BTC-Miner-Zone 5Y-Feature): mempool.space liefert unter
-    // /mining/hashrate/3y NUR 3 Jahre Historie (verifiziert 2026-08:
-    // 1096 Tage, erster Tag = heute-3y). Für den geforderten 5-Jahres-
-    // Zeitraum (~2021-08 bis 2026-08) wird stattdessen /mining/hashrate/all
-    // verwendet — liefert die volle mempool.space-Historie zurück bis 2009
-    // (verifiziert: 6422 Tagespunkte, erster Punkt 2009-01-03). Es werden
-    // KEINE synthetischen/erfundenen Werte für fehlende Jahre erzeugt; die
-    // tatsächlich verfügbare Historie deckt den 5Y-Zeitraum vollständig ab.
-    //
-    // Bugfix: die Difficulty-Adjustments-URL zeigte fälschlich auf
-    // /api/v1/difficulty-adjustments (404) statt /api/v1/mining/difficulty-
-    // adjustments — dadurch war difficultyHistory bisher immer leer und
-    // difficultyRibbonCompression immer 0. Response-Format ist außerdem ein
-    // Array von Tupeln [timestamp, height, difficulty, change], nicht ein
-    // Objekt-Array — Parsing unten entsprechend angepasst.
-    const [hashrateResp, difficultyResp] = await Promise.allSettled([
-      fetch(`${MEMPOOL_BASE}/mining/hashrate/all`, { signal: timeout }),
-      fetch(`${MEMPOOL_BASE}/mining/difficulty-adjustments?interval=144`, { signal: timeout }),
-    ]);
+      // ── Compute rolling averages ──────────────────────────────────
+      const hrValues = hashrateHistory.map(h => h.hashrateEH);
+      const dates = hashrateHistory.map(h => h.date);
+      const ma30 = rollingAvg(hrValues, 30);
+      const ma60 = rollingAvg(hrValues, 60);
 
-    // ── Parse hashrate ────────────────────────────────────────────
-    let hashrateHistory: HashratePoint[] = [];
-    if (hashrateResp.status === 'fulfilled' && hashrateResp.value.ok) {
-      const raw = await hashrateResp.value.json();
-      const items = raw?.hashrates || raw?.data?.hashrates || [];
-      hashrateHistory = items
-        .map((h: any) => ({
-          date: new Date(h.timestamp * 1000).toISOString().split('T')[0],
-          hashrateEH: h.avgHashrate / 1e18,
-        }))
-        .filter((h: HashratePoint) => h.hashrateEH > 0)
-        .sort((a: HashratePoint, b: HashratePoint) => a.date.localeCompare(b.date));
+      const lastMA30 = ma30[ma30.length - 1] ?? 0;
+      const lastMA60 = ma60[ma60.length - 1] ?? 0;
+      const inCapitulation = lastMA30 > 0 && lastMA60 > 0 && lastMA30 < lastMA60;
+      const crossoverSignal = detectCrossover(ma30, ma60);
+      const currentHashrateEH = hrValues[hrValues.length - 1] ?? 0;
+
+      // ── Breakeven ─────────────────────────────────────────────────
+      const breakevenPrice = calcBreakevenPrice(currentHashrateEH);
+
+      // ── Hashprice (BTC/TH/s/day) ──────────────────────────────────
+      const networkHashTH = currentHashrateEH * 1e6;
+      const hashprice = networkHashTH > 0
+        ? (BLOCK_REWARD_BTC * DAILY_BLOCKS) / networkHashTH
+        : 0;
+
+      // ── Puell Multiple ────────────────────────────────────────────
+      const { puellMultiple, puellHistory } = calcPuellMultiple(btcPriceHistory ?? []);
+
+      // ── Difficulty Ribbon Compression ─────────────────────────────
+      const difficultyRibbonCompression = calcDifficultyRibbonCompression(difficultyHistory);
+
+      // ── Composite Miner Score ─────────────────────────────────────
+      const minerScore = calcMinerScore(
+        puellMultiple,
+        inCapitulation,
+        crossoverSignal,
+        breakevenPrice,
+        btcPrice ?? 0,
+        difficultyRibbonCompression
+      );
+
+      // ── §3 Zonen-Klassifikation (nur mit Preis-Kontext sinnvoll) ─────────────
+      const minerZone = (btcPrice ?? 0) > 0
+        ? classifyMinerZone({
+            spotPrice: btcPrice!,
+            breakeven: breakevenPrice,
+            puell: puellMultiple,
+            hashRibbonSignal: crossoverSignal ? 'buy' : (inCapitulation ? 'capitulation' : 'neutral'),
+            difficultyCompression:
+              difficultyRibbonCompression > 0.7 ? 'compressed'
+              : difficultyRibbonCompression < 0.4 ? 'expanded' : 'neutral',
+            mpiZone: 'neutral',
+          })
+        : null;
+
+      const result: MinerData = {
+        hashrateHistory,
+        ma30,
+        ma60,
+        dates,
+        inCapitulation,
+        crossoverSignal,
+        currentHashrateEH,
+        breakevenPrice,
+        hashprice,
+        puellMultiple,
+        puellHistory,
+        difficultyHistory,
+        difficultyRibbonCompression,
+        minerScore,
+        minerZone,
+        lastUpdated: new Date().toISOString(),
+      };
+
+      _cache = result;
+      _cacheTime = Date.now();
+      _lastError = null;
+      console.log(
+        `[BTC-MINER] OK — ${hashrateHistory.length} HR pts | ` +
+        `Breakeven $${breakevenPrice.toFixed(0)} | ` +
+        `Puell ${puellMultiple?.toFixed(2) ?? 'N/A'} | ` +
+        `Score ${minerScore.value}`
+      );
+      return result;
+    } catch (err) {
+      failure = classifyThrown(err);
+      if (attempt === 0 && TRANSIENT_MINER_CODES.has(failure.code)) {
+        console.warn(
+          `[BTC-MINER] ${failure.code} — single retry in ${RETRY_BACKOFF_MS}ms (${failure.message})`
+        );
+        await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS));
+        continue;
+      }
+      break;
     }
-
-    if (hashrateHistory.length < 60) {
-      console.warn('[BTC-MINER] Insufficient hashrate data from mempool.space');
-      return null;
-    }
-
-    // ── Parse difficulty ──────────────────────────────────────────
-    // mempool.space liefert hier ein Array von Tupeln:
-    // [timestamp(sec), blockHeight, difficulty, percentChange] — absteigend
-    // sortiert (neuester Eintrag zuerst). Objekt-Format (d.time/d.difficulty)
-    // wird zur Sicherheit weiter unterstützt, falls die API sich ändert.
-    let difficultyHistory: { date: string; difficulty: number }[] = [];
-    if (difficultyResp.status === 'fulfilled' && difficultyResp.value.ok) {
-      const raw = await difficultyResp.value.json();
-      const items = Array.isArray(raw) ? raw : (raw?.difficultyAdjustments || raw?.data || []);
-      difficultyHistory = items
-        .map((d: any) => {
-          if (Array.isArray(d)) {
-            const [ts, , difficulty] = d;
-            return { date: new Date((ts || 0) * 1000).toISOString().split('T')[0], difficulty: difficulty || 0 };
-          }
-          return {
-            date: new Date((d.time || d.timestamp || 0) * 1000).toISOString().split('T')[0],
-            difficulty: d.difficulty || d.difficultyNew || 0,
-          };
-        })
-        .filter((d: { date: string; difficulty: number }) => d.difficulty > 0)
-        .sort((a: { date: string; difficulty: number }, b: { date: string; difficulty: number }) => a.date.localeCompare(b.date));
-    }
-
-    // ── Compute rolling averages ──────────────────────────────────
-    const hrValues = hashrateHistory.map(h => h.hashrateEH);
-    const dates = hashrateHistory.map(h => h.date);
-    const ma30 = rollingAvg(hrValues, 30);
-    const ma60 = rollingAvg(hrValues, 60);
-
-    const lastMA30 = ma30[ma30.length - 1] ?? 0;
-    const lastMA60 = ma60[ma60.length - 1] ?? 0;
-    const inCapitulation = lastMA30 > 0 && lastMA60 > 0 && lastMA30 < lastMA60;
-    const crossoverSignal = detectCrossover(ma30, ma60);
-    const currentHashrateEH = hrValues[hrValues.length - 1] ?? 0;
-
-    // ── Breakeven ─────────────────────────────────────────────────
-    const breakevenPrice = calcBreakevenPrice(currentHashrateEH);
-
-    // ── Hashprice (BTC/TH/s/day) ──────────────────────────────────
-    const networkHashTH = currentHashrateEH * 1e6;
-    const hashprice = networkHashTH > 0
-      ? (BLOCK_REWARD_BTC * DAILY_BLOCKS) / networkHashTH
-      : 0;
-
-    // ── Puell Multiple ────────────────────────────────────────────
-    const { puellMultiple, puellHistory } = calcPuellMultiple(btcPriceHistory ?? []);
-
-    // ── Difficulty Ribbon Compression ─────────────────────────────
-    const difficultyRibbonCompression = calcDifficultyRibbonCompression(difficultyHistory);
-
-    // ── Composite Miner Score ─────────────────────────────────────
-    const minerScore = calcMinerScore(
-      puellMultiple,
-      inCapitulation,
-      crossoverSignal,
-      breakevenPrice,
-      btcPrice ?? 0,
-      difficultyRibbonCompression
-    );
-
-    // ── §3 Zonen-Klassifikation (nur mit Preis-Kontext sinnvoll) ─────────────
-    const minerZone = (btcPrice ?? 0) > 0
-      ? classifyMinerZone({
-          spotPrice: btcPrice!,
-          breakeven: breakevenPrice,
-          puell: puellMultiple,
-          hashRibbonSignal: crossoverSignal ? 'buy' : (inCapitulation ? 'capitulation' : 'neutral'),
-          difficultyCompression:
-            difficultyRibbonCompression > 0.7 ? 'compressed'
-            : difficultyRibbonCompression < 0.4 ? 'expanded' : 'neutral',
-          mpiZone: 'neutral',
-        })
-      : null;
-
-    const result: MinerData = {
-      hashrateHistory,
-      ma30,
-      ma60,
-      dates,
-      inCapitulation,
-      crossoverSignal,
-      currentHashrateEH,
-      breakevenPrice,
-      hashprice,
-      puellMultiple,
-      puellHistory,
-      difficultyHistory,
-      difficultyRibbonCompression,
-      minerScore,
-      minerZone,
-      lastUpdated: new Date().toISOString(),
-    };
-
-    _cache = result;
-    _cacheTime = Date.now();
-    console.log(
-      `[BTC-MINER] OK — ${hashrateHistory.length} HR pts | ` +
-      `Breakeven $${breakevenPrice.toFixed(0)} | ` +
-      `Puell ${puellMultiple?.toFixed(2) ?? 'N/A'} | ` +
-      `Score ${minerScore.value}`
-    );
-    return result;
-  } catch (err: any) {
-    console.error(`[BTC-MINER] Failed: ${err?.message?.substring(0, 150)}`);
-    return null;
   }
+
+  return serveStaleOrNull(
+    failure ?? new MinerFetchError("UNKNOWN", "Miner data unavailable — unknown error")
+  );
 }

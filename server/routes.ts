@@ -78,7 +78,7 @@ import { registerAnalyzeRoute } from "./analyze-route";
 import { registerOhlcvRoute } from "./ohlcv-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { registerBTCRoutes } from "./btc-routes";
-import { fetchMinerData } from "./btc-miner";
+import { fetchMinerData, minerUnavailableBody } from "./btc-miner";
 import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpPeers, fmpQuote, fmpRatios, fmpAnalystEstimates } from "./fmp";
 import { assessRegulatoryExposure } from "./regulatory";
 import { computeManagementScoreForTicker } from "./management-score";
@@ -134,7 +134,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const minerData = await fetchMinerData();
       if (!minerData) {
-        return res.status(503).json({ error: "Miner data unavailable — mempool.space unreachable" });
+        return res.status(503).json(minerUnavailableBody());
       }
       res.json(minerData);
     } catch (err: any) {
@@ -153,7 +153,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         typeof btcPrice === 'number' ? btcPrice : undefined
       );
       if (!minerData) {
-        return res.status(503).json({ error: "Miner data unavailable — mempool.space unreachable" });
+        return res.status(503).json(minerUnavailableBody());
       }
       res.json(minerData);
     } catch (err: any) {

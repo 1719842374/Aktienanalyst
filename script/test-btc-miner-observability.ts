@@ -1,0 +1,253 @@
+/**
+ * BTC-Miner Observability: differenzierte Fehler, genau ein Retry,
+ * Stale-Cache wenn ein früherer Erfolg vorliegt.
+ *
+ * Ausführen: npx tsx script/test-btc-miner-observability.ts
+ * Exit-Code 0 = alle Tests bestanden, 1 = Fehler.
+ */
+import {
+  expireMinerCacheForTests,
+  fetchMinerData,
+  getMinerLastError,
+  minerUnavailableBody,
+  resetMinerCacheForTests,
+} from "../server/btc-miner";
+
+let failed = 0;
+let total = 0;
+function check(name: string, condition: boolean, detail = "") {
+  total++;
+  if (condition) console.log(`  ✅ ${name}`);
+  else {
+    failed++;
+    console.error(`  ❌ ${name}${detail ? ` — ${detail}` : ""}`);
+  }
+}
+
+const GENERIC = "Miner data unavailable — mempool.space unreachable";
+
+function hashratePayload(n: number) {
+  const start = 1_700_000_000;
+  return {
+    hashrates: Array.from({ length: n }, (_, i) => ({
+      timestamp: start + i * 86400,
+      avgHashrate: 5e20 + i * 1e18,
+    })),
+  };
+}
+
+const difficultyPayload = [[1_700_000_000, 800000, 8e13, 1.2]];
+
+type FetchHandler = (url: string, call: { hashrate: number; difficulty: number }) => Promise<Response> | Response;
+
+function installFetch(handler: FetchHandler): { counts: { hashrate: number; difficulty: number } } {
+  const counts = { hashrate: 0, difficulty: 0 };
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/mining/hashrate/")) {
+      counts.hashrate++;
+      return handler(url, counts);
+    }
+    if (url.includes("/mining/difficulty-adjustments")) {
+      counts.difficulty++;
+      return handler(url, counts);
+    }
+    throw new Error(`unexpected url ${url}`);
+  }) as typeof fetch;
+  return { counts };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function okBoth(): FetchHandler {
+  return (url) => {
+    if (url.includes("hashrate")) return jsonResponse(hashratePayload(80));
+    return jsonResponse(difficultyPayload);
+  };
+}
+
+async function main() {
+  console.log("\nfetchMinerData — Erfolg unverändert");
+  {
+    resetMinerCacheForTests();
+    const { counts } = installFetch(okBoth());
+    const data = await fetchMinerData();
+    check("liefert MinerData", data != null);
+    check("kein stale-Flag", data?.stale !== true);
+    check("Hashrate-Punkte durchgereicht", (data?.hashrateHistory.length ?? 0) === 80);
+    check("Score berechnet", typeof data?.minerScore?.value === "number");
+    check("lastError geleert", getMinerLastError() === null);
+    check("ein Versuch (kein Retry)", counts.hashrate === 1 && counts.difficulty === 1);
+
+    const again = await fetchMinerData();
+    check("frischer Cache-Hit ohne zweiten Fetch", again === data && counts.hashrate === 1);
+  }
+
+  console.log("\nfetchMinerData — HTTP-Fehler ohne Cache");
+  {
+    resetMinerCacheForTests();
+    const { counts } = installFetch((url) => {
+      if (url.includes("hashrate")) return new Response("bad gateway", { status: 502 });
+      return jsonResponse(difficultyPayload);
+    });
+    const data = await fetchMinerData();
+    const last = getMinerLastError();
+    const body = minerUnavailableBody();
+    check("null ohne Cache", data === null);
+    check("Code MEMPOOL_HTTP", last?.code === "MEMPOOL_HTTP", JSON.stringify(last));
+    check("Meldung nennt HTTP-Status", !!last?.message.includes("HTTP 502"), last?.message);
+    check("nicht die generische unreachable-Meldung", last?.message !== GENERIC);
+    check("503-Body übernimmt Meldung und Code", body.error === last?.message && body.code === "MEMPOOL_HTTP");
+    check("genau ein Retry (2 Hashrate-Calls)", counts.hashrate === 2, `hashrate=${counts.hashrate}`);
+  }
+
+  console.log("\nfetchMinerData — Netzwerkfehler");
+  {
+    resetMinerCacheForTests();
+    const { counts } = installFetch(() => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+      });
+    });
+    const data = await fetchMinerData();
+    const last = getMinerLastError();
+    check("null", data === null);
+    check("Code MEMPOOL_NETWORK", last?.code === "MEMPOOL_NETWORK", JSON.stringify(last));
+    check("Meldung nennt network error", !!last?.message.includes("network error"));
+    check("ein Retry", counts.hashrate === 2, `hashrate=${counts.hashrate}`);
+  }
+
+  console.log("\nfetchMinerData — Timeout");
+  {
+    resetMinerCacheForTests();
+    const { counts } = installFetch(() => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    });
+    const data = await fetchMinerData();
+    const last = getMinerLastError();
+    check("null", data === null);
+    check("Code MEMPOOL_TIMEOUT", last?.code === "MEMPOOL_TIMEOUT", JSON.stringify(last));
+    check("Meldung nennt timed out", !!last?.message.includes("timed out"));
+    check("ein Retry", counts.hashrate === 2, `hashrate=${counts.hashrate}`);
+  }
+
+  console.log("\nfetchMinerData — zu wenig Hashrate, kein Retry");
+  {
+    resetMinerCacheForTests();
+    const { counts } = installFetch((url) => {
+      if (url.includes("hashrate")) return jsonResponse(hashratePayload(12));
+      return jsonResponse(difficultyPayload);
+    });
+    const data = await fetchMinerData();
+    const last = getMinerLastError();
+    check("null", data === null);
+    check("Code INSUFFICIENT_HASHRATE", last?.code === "INSUFFICIENT_HASHRATE", JSON.stringify(last));
+    check("Meldung nennt Punktezahl", !!last?.message.includes("12 points"), last?.message);
+    check("kein Retry", counts.hashrate === 1, `hashrate=${counts.hashrate}`);
+  }
+
+  console.log("\nfetchMinerData — Parse-Fehler, kein Retry");
+  {
+    resetMinerCacheForTests();
+    const { counts } = installFetch((url) => {
+      if (url.includes("hashrate")) {
+        return new Response("not-json", { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return jsonResponse(difficultyPayload);
+    });
+    const data = await fetchMinerData();
+    const last = getMinerLastError();
+    check("null", data === null);
+    check("Code PARSE", last?.code === "PARSE", JSON.stringify(last));
+    check("kein Retry", counts.hashrate === 1, `hashrate=${counts.hashrate}`);
+  }
+
+  console.log("\nfetchMinerData — ein Retry, dann Erfolg");
+  {
+    resetMinerCacheForTests();
+    let hr = 0;
+    const { counts } = installFetch((url) => {
+      if (url.includes("hashrate")) {
+        hr++;
+        if (hr === 1) return new Response("unavailable", { status: 503 });
+        return jsonResponse(hashratePayload(80));
+      }
+      return jsonResponse(difficultyPayload);
+    });
+    const data = await fetchMinerData();
+    check("Erfolg nach Retry", data != null && data.stale !== true);
+    check("lastError geleert", getMinerLastError() === null);
+    check("zwei Hashrate-Versuche", counts.hashrate === 2, `hashrate=${counts.hashrate}`);
+  }
+
+  console.log("\nfetchMinerData — Difficulty-HTTP allein ist kein Fehlschlag");
+  {
+    resetMinerCacheForTests();
+    const { counts } = installFetch((url) => {
+      if (url.includes("hashrate")) return jsonResponse(hashratePayload(80));
+      return new Response("nope", { status: 500 });
+    });
+    const data = await fetchMinerData();
+    check("MinerData trotz Difficulty-500", data != null);
+    check("difficultyHistory leer", (data?.difficultyHistory.length ?? -1) === 0);
+    check("kein Retry", counts.hashrate === 1);
+  }
+
+  console.log("\nfetchMinerData — Stale-Cache nach abgelaufener TTL");
+  {
+    resetMinerCacheForTests();
+    installFetch(okBoth());
+    const fresh = await fetchMinerData();
+    const updated = fresh?.lastUpdated;
+    const hr = fresh?.currentHashrateEH;
+    expireMinerCacheForTests();
+    installFetch((url) => {
+      if (url.includes("hashrate")) return new Response("bad gateway", { status: 502 });
+      return jsonResponse(difficultyPayload);
+    });
+    const stale = await fetchMinerData();
+    check("200-äquivalent: Payload statt null", stale != null);
+    check("stale: true", stale?.stale === true);
+    check("lastUpdated unverändert", stale?.lastUpdated === updated);
+    check("Hashrate des letzten Erfolgs", stale?.currentHashrateEH === hr);
+    check("lastError trotzdem gesetzt", getMinerLastError()?.code === "MEMPOOL_HTTP");
+  }
+
+  console.log("\nfetchMinerData — Stale bei Preis-Refresh, Cache-Objekt bleibt frisch");
+  {
+    resetMinerCacheForTests();
+    installFetch(okBoth());
+    const fresh = await fetchMinerData();
+    installFetch(() => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    });
+    const stale = await fetchMinerData([{ date: "2024-01-01", price: 50_000 }], 100_000);
+    check("Preis-Refresh fällt auf Stale zurück", stale?.stale === true && stale.currentHashrateEH === fresh?.currentHashrateEH);
+    const cached = await fetchMinerData();
+    check("gespeicherter Erfolg bleibt ohne stale", cached?.stale !== true && cached?.lastUpdated === fresh?.lastUpdated);
+  }
+
+  console.log("\nminerUnavailableBody — Fallback nur ohne lastError");
+  {
+    resetMinerCacheForTests();
+    const body = minerUnavailableBody();
+    check("Fallback-Code UNKNOWN", body.code === "UNKNOWN");
+    check("Fallback-Text vorhanden", body.error === GENERIC);
+  }
+
+  console.log(`\n${total - failed}/${total} bestanden`);
+  if (failed > 0) {
+    console.error(`${failed} fehlgeschlagen`);
+    process.exit(1);
+  }
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
