@@ -122,7 +122,10 @@ import { applyFactPackFromFmpContext } from "./factpack-apply";
 import { attachExecSummary } from "./exec-summary-attach";
 import { getCachedRegulatoryAssessment } from "./regulatory";
 import { assessEcosystem, collectPorterNarrative, resolveEcosystem } from "./ecosystem-moat";
-import { fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq } from "./history-fallback";
+import {
+  fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq,
+  indicatorWarmupFromDate, needsIndicatorPrefix, TA_OHLCV_MAX_POINTS,
+} from "./history-fallback";
 
 // Segment-Fallback-Pipeline (2026-08): SEC EDGAR fallback for when FMP's
 // /revenue-product-segmentation returns [] (verified for IREN). Additive-only
@@ -682,9 +685,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       let ohlcvRows: any[] = Array.isArray(ohlcv) ? ohlcv : (ohlcv as any)?.historical ?? [];
       ohlcvRows = [...ohlcvRows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-      // Keep up to ~10Y of trading days (252*10 ≈ 2520 + buffer).
-      // FMP Pro delivers the full range; previous hard-cap of 504 (~2Y) blocked the client 10Y view.
-      const OHLCV_MAX_POINTS = 2600;
+      // Visible 10Y is 2520 sessions. Keep a warmup prefix (MA200) in front of
+      // that window, then hard-cap so a bad provider payload cannot grow unbounded.
+      // slice(-cap) keeps the newest bars — the prefix must fit under the cap.
+      const OHLCV_MAX_POINTS = TA_OHLCV_MAX_POINTS;
       let ohlcvPoints: OHLCVPoint[] = ohlcvRows.slice(-OHLCV_MAX_POINTS).map((r: any) => ({
         date: String(r.date ?? "").slice(0, 10),
         open: parseFloat(String(r.open)) || 0,
@@ -705,10 +709,16 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       try {
         const need10Y = fromDateForTimeframe("10Y");
         const gotFrom = ohlcvPoints[0]?.date;
-        if (!gotFrom || gotFrom > need10Y) {
+        // Extend left when the visible 10Y window is short OR when fewer than
+        // the shared warmup bars sit before it. truncated stays about the
+        // visible 10Y span: a listing with no older bars is an honest gap,
+        // not a synthetic series. Signals are computed on this extended series;
+        // the chart date-filters them to the preset or Kurs window on screen.
+        if (needsIndicatorPrefix(ohlcvPoints.length, gotFrom, need10Y)) {
           const { bars, source, truncated } = await fetchDailyHistory({
             symbol: upperTicker,
             timeframe: "10Y",
+            fetchFrom: indicatorWarmupFromDate(),
             fmpFetch: async () => ohlcvPoints.map((p) => ({ ...p, source: "fmp" as const })),
             altFetch: (from, to) => altFetchYahooThenStooq(upperTicker, from, to),
           });

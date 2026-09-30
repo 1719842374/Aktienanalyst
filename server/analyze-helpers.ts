@@ -11,6 +11,7 @@ import {
   fmpBalanceSheet, fmpHistoricalPrices, fmpAnalystEstimates, fmpGrades, fmpPriceTarget,
   fmpSegments, fmpGeoSegments, fmpPeers, fmpRatios, fmpKeyMetrics, convertFmpRowsToUsd,
 } from "./fmp";
+import { indicatorWarmupFromDate } from "./history-fallback";
 
 // ============================================================
 // FMP Budget Tracker (single source of truth)
@@ -310,10 +311,7 @@ export async function getFmpFallbackData(ticker: string): Promise<{
       // three FURTHEST future years (e.g. 2028/29/30) — not "next FY". With
       // limit=8 we always have the next completed FY available for consensus.
       fmpAnalystEstimates(ticker, 8),
-      fmpHistoricalPrices(ticker,
-        new Date(Date.now() - 10 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        new Date().toISOString().split('T')[0]
-      ),
+      fmpHistoricalPrices(ticker, indicatorWarmupFromDate(), new Date().toISOString().slice(0, 10)),
       fmpSegments(ticker),
       fmpPeers(ticker),
       fmpRatios(ticker, 3),

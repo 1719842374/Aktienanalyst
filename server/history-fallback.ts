@@ -37,6 +37,23 @@ export interface DailyBar {
 
 export type Timeframe = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y" | "10Y";
 
+/**
+ * Visible 10Y chart is the last 2520 trading days (client TIME_RANGE_CUTOFF).
+ * MA200 needs 199 prior closes. One shared lookback — 200 sessions plus a
+ * small buffer — is enough for MA200/100/50/20, EMA26/12/9, RSI14, BB(20,2)
+ * and MACD(12,26,9). It is not a second full history.
+ */
+export const TA_VISIBLE_10Y_BARS = 2520;
+export const TA_INDICATOR_WARMUP_BARS = 220;
+/** ~1 calendar year before the visible 10Y start (>=200 trading days, holiday slack). */
+export const TA_WARMUP_CALENDAR_DAYS = 365;
+/**
+ * Hard cap: visible 10Y + warmup + slack. slice(-cap) keeps the newest bars,
+ * so the warmup prefix is not cut off the front. Still bounded if a provider
+ * returns an unbounded history.
+ */
+export const TA_OHLCV_MAX_POINTS = TA_VISIBLE_10Y_BARS + TA_INDICATOR_WARMUP_BARS + 60;
+
 /** Wunsch-Spanne aus UI (1:1 aus WORK_DATA_PROVIDERS.md §5 uebernommen). */
 export function fromDateForTimeframe(tf: Timeframe, now: Date = new Date()): string {
   const days: Record<Timeframe, number> = {
@@ -47,17 +64,44 @@ export function fromDateForTimeframe(tf: Timeframe, now: Date = new Date()): str
   return d.toISOString().slice(0, 10);
 }
 
+/** Start of the hidden warmup prefix: visible 10Y from-date minus ~1 year. */
+export function indicatorWarmupFromDate(now: Date = new Date()): string {
+  const d = new Date(fromDateForTimeframe("10Y", now) + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - TA_WARMUP_CALENDAR_DAYS);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * True when the loaded series does not cover the visible 10Y window, or when
+ * fewer than TA_INDICATOR_WARMUP_BARS sit before that window. A young listing
+ * stays true until older bars actually exist — callers must not invent them.
+ */
+export function needsIndicatorPrefix(barCount: number, earliest: string | undefined, visibleFrom: string): boolean {
+  if (!earliest || earliest > visibleFrom) return true;
+  return Math.max(0, barCount - TA_VISIBLE_10Y_BARS) < TA_INDICATOR_WARMUP_BARS;
+}
+
 /**
  * Yahoo Finance Chart-API als Alt-Provider (server-seitig, kein API-Key
  * noetig). WORK_DATA_PROVIDERS.md §3 empfiehlt Yahoo als einfachste Option
  * fuer lange Daily-Historie. Ein plausibler User-Agent-Header ist noetig,
  * sonst antwortet der Endpoint mit 429 (in der Sandbox verifiziert).
  *
- * range=10y liefert die maximal sinnvolle Spanne fuer unseren Use-Case in
- * einem einzigen Request; wir schneiden serverseitig auf [from, to] zu.
+ * period1/period2 folgt dem angeforderten [from, to] (sichtbare 10Y plus
+ * Warmup, nicht range=max). Wir schneiden serverseitig noch einmal auf
+ * [from, to] zu.
  */
+function utcUnixDay(iso: string): number {
+  return Math.floor(Date.parse(`${iso}T00:00:00Z`) / 1000);
+}
+
 export async function yahooFetch(symbol: string, from: string, to: string): Promise<DailyBar[]> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=10y&interval=1d`;
+  const period1 = utcUnixDay(from);
+  const end = new Date(`${to}T00:00:00Z`);
+  end.setUTCDate(end.getUTCDate() + 1);
+  const period2 = Math.floor(end.getTime() / 1000);
+  if (!isFinite(period1) || !isFinite(period2) || period1 >= period2) return [];
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d`;
   const resp = await fetch(url, {
     signal: AbortSignal.timeout(15000),
     headers: {
@@ -149,22 +193,28 @@ export async function stooqFetch(symbol: string, from: string, to: string): Prom
 export async function fetchDailyHistory(opts: {
   symbol: string;
   timeframe: Timeframe;
+  /**
+   * Request start. Earlier than the timeframe from-date = indicator warmup.
+   * `truncated` stays tied to the visible timeframe, not to this prefix.
+   */
+  fetchFrom?: string;
   fmpFetch: (from: string, to: string) => Promise<DailyBar[]>;
   altFetch?: (from: string, to: string) => Promise<DailyBar[]>;
 }): Promise<{ bars: DailyBar[]; source: string; truncated: boolean }> {
   const to = new Date().toISOString().slice(0, 10);
-  const from = fromDateForTimeframe(opts.timeframe);
+  const visibleFrom = fromDateForTimeframe(opts.timeframe);
+  const from = opts.fetchFrom && opts.fetchFrom < visibleFrom ? opts.fetchFrom : visibleFrom;
   let bars = await opts.fmpFetch(from, to);
   bars.sort((a, b) => a.date.localeCompare(b.date));
 
-  const needFrom = from;
   const gotFrom = bars[0]?.date;
-  let truncated = !gotFrom || gotFrom > needFrom;
+  let truncated = !gotFrom || gotFrom > visibleFrom;
+  const wantsEarlier = !gotFrom || gotFrom > from;
   let source = "fmp";
 
-  if (truncated && opts.altFetch) {
+  if ((truncated || wantsEarlier) && opts.altFetch) {
     try {
-      const alt = await opts.altFetch(needFrom, gotFrom ?? to);
+      const alt = await opts.altFetch(from, gotFrom ?? to);
       if (alt.length > 0) {
         const byDate = new Map(bars.map((b) => [b.date, b]));
         for (const a of alt) if (!byDate.has(a.date)) byDate.set(a.date, a);
@@ -177,7 +227,7 @@ export async function fetchDailyHistory(opts: {
       // vollstaendig. Kein Interpolieren, kein Fake-Fuellen (Ticket-Regel).
       console.warn(`[HISTORY-FALLBACK] altFetch fehlgeschlagen fuer ${opts.symbol}: ${(err as Error)?.message ?? err}`);
     }
-    truncated = !bars[0] || bars[0].date > needFrom;
+    truncated = !bars[0] || bars[0].date > visibleFrom;
   }
 
   return { bars, source, truncated };
