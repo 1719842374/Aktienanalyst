@@ -203,10 +203,19 @@ export function StablecoinLiquidityPanel() {
             data-testid="button-policy-scan"
             disabled={!llmOn || scanning}
             onClick={() => runScan(true)}
-            className="h-8 shrink-0 px-2.5 text-[11px] font-medium rounded-md border border-violet-400/30 text-violet-400 hover:bg-violet-500/10 disabled:opacity-40 disabled:pointer-events-none"
-            title={llmOn ? "Politikinstrumente mit Beleg abrufen" : "OPENROUTER_API_KEY fehlt"}
+            className="h-8 shrink-0 px-2 text-[11px] font-medium rounded-md transition-all flex items-center gap-1 border bg-violet-500/15 text-violet-400 border-violet-500/30 hover:bg-violet-500/25 disabled:opacity-100 disabled:hover:bg-violet-500/15 disabled:cursor-not-allowed"
+            title={llmOn ? "Politikinstrumente mit Beleg abrufen" : "OPENROUTER_API_KEY fehlt. In Render setzen, nicht in den Chat."}
           >
-            {scanning ? "Prüfe…" : "Politik prüfen"}
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5v1h-4v-1c-1.2-.7-2-2-2-3.5a4 4 0 0 1 4-4z"/>
+              <path d="M10 10.5v2.5h4v-2.5"/>
+              <path d="M10 15h4"/>
+              <path d="M11 15v2"/>
+              <path d="M13 15v2"/>
+            </svg>
+            <span>KI</span>
+            <span className="hidden sm:inline">{scanning ? "Prüfe…" : "Politik"}</span>
+            {llmOn && <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />}
           </button>
         </div>
         {data && !llmOn && (
