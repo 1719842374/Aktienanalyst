@@ -3,6 +3,8 @@ import { fetchBTCMacroHistory } from "./btc-macro";
 import { buildStablecoinLiquidityResponse } from "./stablecoin-liquidity";
 import { isLLMAvailable } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
+import { fetchTopicNewsFromGoogleRSS } from "./news-peers";
+import { applyKeywordSentimentToNews } from "./news-sentiment";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const cache = new Map<string, { expiresAt: number; data: Awaited<ReturnType<typeof fetchBTCMacroHistory>> }>();
@@ -71,6 +73,25 @@ export function registerBTCRoutes(app: Express): void {
     } catch (err: any) {
       console.error("[GET /api/analyze-btc/stablecoin-liquidity]", err?.message?.substring(0, 200));
       res.status(502).json({ error: "Stablecoin-Liquiditätsdaten nicht verfügbar" });
+    }
+  });
+
+  // Dieselbe Google-News-RSS wie die Aktienanalyse, nur fuer Bitcoin und Krypto.
+  const NEWS_TTL_MS = 5 * 60 * 1000;
+  let newsCache: { expiresAt: number; items: unknown[] } | null = null;
+  app.get("/api/analyze-btc/news", async (_req, res) => {
+    const now = Date.now();
+    if (newsCache && newsCache.expiresAt > now) {
+      return res.json({ items: newsCache.items, source: "Google News", llmAvailable: isLLMAvailable() });
+    }
+    try {
+      const items = await fetchTopicNewsFromGoogleRSS("Bitcoin BTC crypto", "Bitcoin Krypto", "BTC");
+      applyKeywordSentimentToNews(items);
+      if (items.length > 0) newsCache = { items, expiresAt: now + NEWS_TTL_MS };
+      res.json({ items, source: "Google News", llmAvailable: isLLMAvailable() });
+    } catch (err: any) {
+      console.error("[GET /api/analyze-btc/news]", err?.message?.substring(0, 200));
+      res.status(502).json({ error: "Krypto-Nachrichten nicht verfügbar", items: [] });
     }
   });
 }

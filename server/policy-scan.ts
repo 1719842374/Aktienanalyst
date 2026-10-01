@@ -1,27 +1,34 @@
 /**
- * KI-Abruf fuer Krypto-Regulierungen und den Liquiditaetstracker.
+ * KI-Abruf fuer Sektion 14. Der Server misst die fuenf FRED-Serien zuerst,
+ * inklusive Richtung ueber ein und zwei Jahre. Das Modell schreibt danach.
  * Aufruf, Cache und Force folgen dem Researcher (callLLMJson, gemeinsamer
  * OpenRouter-Client, Datei- plus Disk-Cache, 6h, force loescht den Cache).
- * Der Prompt enthaelt kein Gesetz und keine Person. Gemessene Serien bleiben
- * unangetastet. Ohne OPENROUTER_API_KEY kommt eine klare Fehlermeldung.
+ * Ohne OPENROUTER_API_KEY kommt eine klare Fehlermeldung.
  */
 import * as fs from "fs";
 import * as path from "path";
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import {
   POLICY_SCAN_SYSTEM_PROMPT,
+  buildPolicyNote,
   buildPolicyScanPrompt,
   policyScanIsCacheable,
+  withNoticeFallback,
+  type PolicyNote,
 } from "./crypto-regulation-llm";
 import {
-  fallbackScanSummary,
   fetchOfficialNotices,
-  isRefusalSummary,
   mergeByTitle,
   noticesToRegulationPayload,
 } from "./crypto-regulation-sources";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
-import { fetchDefiTvlSnapshot, fetchStablecoinMarketSnapshot } from "./stablecoin-liquidity";
+import {
+  FRED_LOOKBACK_DAYS,
+  allowedMeasuredNumbers,
+  proseNumbersAreMeasured,
+  readingFromSeries,
+  type PolicyWindows,
+} from "./policy-scan-windows";
 import {
   activeTreasuryBuybackCapBn,
   evidencedReserveShares,
@@ -35,7 +42,7 @@ import {
 
 export { buildPolicyScanPrompt, policyScanIsCacheable };
 
-const SCHEMA = "v6";
+const SCHEMA = "v7";
 const CACHE_TAB = "crypto_regulation";
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 const RESEARCHER_TTL_MIN = 60 * 6;
@@ -99,18 +106,13 @@ function writePolicyCache(params: string, data: PolicyScanResult): void {
 export interface MeasuredPolicyContext {
   asOf: string;
   jurisdiction: string;
-  stablecoinMcapUsd: number | null;
-  mcapChange30dUsd: number | null;
-  usdtMcapUsd: number | null;
-  usdcMcapUsd: number | null;
-  defiTvlUsd: number | null;
-  defiTvlChange30dUsd: number | null;
   tgaBn: number | null;
   dgs10: number | null;
   dgs10History: { date: string; value: number }[];
   policyRate: number | null;
   realYield10y: number | null;
   m2Bn: number | null;
+  windows: PolicyWindows;
 }
 
 export interface PolicyScanResult {
@@ -126,8 +128,9 @@ export interface PolicyScanResult {
   /** Wie beim Researcher: leere oder abgelehnte Abrufe werden nicht gecacht. */
   _fallback?: boolean;
   modelUsed: string | null;
-  /** Kurztext der Analyse. Kein Score und keine gemessene Zahl. */
+  /** Analystennotiz. Zahlen darin stammen aus windows, nicht aus dem Modell. */
   summary: string | null;
+  note: PolicyNote;
   effects: {
     treasuryBuybackCapBn: number | null;
     treasuryDurationActive: boolean;
@@ -174,32 +177,30 @@ async function fredLatest(series: string, days: number): Promise<{ date: string;
 
 export async function loadMeasuredPolicyContext(jurisdiction: string): Promise<MeasuredPolicyContext> {
   const asOf = new Date().toISOString().slice(0, 10);
-  const [stable, tvl, dgs, tga, m2, funds, realYield] = await Promise.all([
-    fetchStablecoinMarketSnapshot().catch(() => null),
-    fetchDefiTvlSnapshot().catch(() => null),
-    fredLatest("DGS10", 800),
-    fredLatest("WTREGEN", 120),
-    fredLatest("M2SL", 800),
-    fredLatest("DFF", 120),
-    fredLatest("DFII10", 120),
+  const [dgs, tga, m2, funds, realYield] = await Promise.all([
+    fredLatest("DGS10", FRED_LOOKBACK_DAYS),
+    fredLatest("WTREGEN", FRED_LOOKBACK_DAYS),
+    fredLatest("M2SL", FRED_LOOKBACK_DAYS),
+    fredLatest("DFF", FRED_LOOKBACK_DAYS),
+    fredLatest("DFII10", FRED_LOOKBACK_DAYS),
   ]);
-  const mcap = stable?.totalMarketCapUsd ?? null;
-  const prev = stable?.totalMarketCapPrevMonthUsd ?? null;
+  const windows: PolicyWindows = {
+    policyRate: readingFromSeries(funds, asOf),
+    realYield10y: readingFromSeries(realYield, asOf),
+    dgs10: readingFromSeries(dgs, asOf),
+    m2Bn: readingFromSeries(m2, asOf),
+    tgaBn: readingFromSeries(tga, asOf, value => value / 1000),
+  };
   return {
     asOf,
     jurisdiction,
-    stablecoinMcapUsd: mcap,
-    mcapChange30dUsd: mcap != null && prev != null ? mcap - prev : null,
-    usdtMcapUsd: stable?.usdt?.circulatingUsd ?? null,
-    usdcMcapUsd: stable?.usdc?.circulatingUsd ?? null,
-    defiTvlUsd: tvl?.tvlUsd ?? null,
-    defiTvlChange30dUsd: tvl?.change30dUsd ?? null,
-    tgaBn: tga.length ? tga[tga.length - 1].value / 1000 : null,
-    dgs10: dgs.length ? dgs[dgs.length - 1].value : null,
+    tgaBn: windows.tgaBn.latest,
+    dgs10: windows.dgs10.latest,
     dgs10History: dgs,
-    policyRate: funds.length ? funds[funds.length - 1].value : null,
-    realYield10y: realYield.length ? realYield[realYield.length - 1].value : null,
-    m2Bn: m2.length ? m2[m2.length - 1].value : null,
+    policyRate: windows.policyRate.latest,
+    realYield10y: windows.realYield10y.latest,
+    m2Bn: windows.m2Bn.latest,
+    windows,
   };
 }
 
@@ -220,20 +221,8 @@ function effectsFor(instruments: PolicyInstrument[], measured: MeasuredPolicyCon
     return ev ? observedMoveBp(measured.dgs10History, ev) : null;
   };
   const statute = statuteContribution(instruments, asOf, observedFor);
-  const usdt = measured.usdtMcapUsd;
-  const usdc = measured.usdcMcapUsd;
-  const weightBase = usdt != null && usdc != null ? usdt + usdc : 0;
-  let tBillDemandUsd: number | null = null;
-  if (
-    measured.mcapChange30dUsd != null &&
-    shares.tether != null &&
-    shares.usdc != null &&
-    weightBase > 0
-  ) {
-    const weightT = usdt! / weightBase;
-    const weightC = usdc! / weightBase;
-    tBillDemandUsd = measured.mcapChange30dUsd * (shares.tether * weightT + shares.usdc * weightC);
-  }
+  // Stablecoin-Marktkapitalisierung ist kein Zufluss. Ohne belegten Betrag bleibt die Nachfrage leer.
+  const tBillDemandUsd: number | null = null;
   const priced = instruments.map(inst => {
     const ev = inst.evidence.map(e => e.date).sort()[0];
     const move = ev ? observedMoveBp(measured.dgs10History, ev) : null;
@@ -254,23 +243,56 @@ function effectsFor(instruments: PolicyInstrument[], measured: MeasuredPolicyCon
   };
 }
 
+function publicMeasured(measured: MeasuredPolicyContext): MeasuredPolicyContext {
+  return { ...measured, dgs10History: measured.dgs10History.slice(-5) };
+}
+
+function scrubModelRegulationNotes(
+  regulations: RegulationNote[],
+  snippets: string[],
+  measured: MeasuredPolicyContext,
+): RegulationNote[] {
+  const allowed = allowedMeasuredNumbers(measured.windows);
+  const trusted = new Set(snippets.filter(Boolean));
+  return regulations.map(reg => {
+    if (!reg.note || trusted.has(reg.note) || proseNumbersAreMeasured(reg.note, allowed)) return reg;
+    const { note: _drop, ...rest } = reg;
+    return rest;
+  });
+}
+
+function noteFromModel(measured: MeasuredPolicyContext, model: Record<string, unknown> | null, regulationCount: number): PolicyNote {
+  const built = buildPolicyNote(model, measured.windows);
+  if (built.summarySource === "measured" && regulationCount > 0) {
+    return { ...built.note, summary: withNoticeFallback(built.note.summary, regulationCount) };
+  }
+  return built.note;
+}
+
 async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> {
   const measured = await loadMeasuredPolicyContext(jurisdiction);
   const emptyEffects = effectsFor([], measured);
   const notices = await fetchOfficialNotices(jurisdiction, measured.asOf);
   const noticeNotes = parseRegulationNotes(noticesToRegulationPayload(notices, jurisdiction)).regulations;
+  const promptInput = {
+    asOf: measured.asOf,
+    jurisdiction: measured.jurisdiction,
+    ...measured.windows,
+  };
   if (!isLLMAvailable()) {
+    const note = noteFromModel(measured, null, noticeNotes.length);
     return {
       llmAvailable: false,
       fromCache: false,
       fetchedAt: new Date().toISOString(),
       jurisdiction,
-      measured,
+      measured: publicMeasured(measured),
       instruments: [],
       regulations: noticeNotes,
       dropped: 0,
       modelUsed: null,
-      summary: noticeNotes.length > 0 ? fallbackScanSummary(noticeNotes.length) : null,
+      summary: note.summary,
+      note,
       ...emptyEffects,
       error: "OPENROUTER_API_KEY fehlt",
       _fallback: true,
@@ -279,37 +301,39 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
   // Gleicher Client und dieselbe Modellkette wie der Researcher, plus
   // OpenRouter-Websuche nur fuer diesen Abruf.
   const llm = await callLLMJson({
-    prompt: buildPolicyScanPrompt(measured, notices),
+    prompt: buildPolicyScanPrompt(promptInput, notices),
     maxTokens: 2800,
     temperature: 0.2,
     systemPrompt: POLICY_SCAN_SYSTEM_PROMPT,
     online: true,
   });
   if (!llm) {
+    const note = noteFromModel(measured, null, noticeNotes.length);
     return {
       llmAvailable: true,
       fromCache: false,
       fetchedAt: new Date().toISOString(),
       jurisdiction,
-      measured,
+      measured: publicMeasured(measured),
       instruments: [],
       regulations: noticeNotes,
       dropped: 0,
       modelUsed: null,
-      summary: noticeNotes.length > 0 ? fallbackScanSummary(noticeNotes.length) : null,
+      summary: note.summary,
+      note,
       ...emptyEffects,
       ...(noticeNotes.length > 0 ? {} : { error: "LLM-Abruf ohne JSON", _fallback: true as const }),
     };
   }
-  const summaryRaw = llm.data && typeof llm.data === "object" ? (llm.data as { summary?: unknown }).summary : null;
-  const modelSummary = typeof summaryRaw === "string" && summaryRaw.trim() ? summaryRaw.trim().slice(0, 800) : null;
-  const notes = parseRegulationNotes(llm.data);
-  const regulations = mergeByTitle(notes.regulations, noticeNotes, 8);
-  const refused = isRefusalSummary(modelSummary);
-  const summary = refused || !modelSummary
-    ? (regulations.length > 0 ? fallbackScanSummary(regulations.length) : modelSummary)
-    : modelSummary;
-  const parsed = parsePolicyInstruments(llm.data);
+  const model = llm.data && typeof llm.data === "object" ? llm.data as Record<string, unknown> : null;
+  const notes = parseRegulationNotes(model);
+  const regulations = scrubModelRegulationNotes(
+    mergeByTitle(notes.regulations, noticeNotes, 8),
+    notices.map(notice => notice.snippet),
+    measured,
+  );
+  const note = noteFromModel(measured, model, regulations.length);
+  const parsed = parsePolicyInstruments(model);
   const computed = effectsFor(parsed.instruments, measured);
   const empty = regulations.length === 0 && parsed.instruments.length === 0;
   const result: PolicyScanResult = {
@@ -317,19 +341,20 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
     fromCache: false,
     fetchedAt: new Date().toISOString(),
     jurisdiction,
-    measured: { ...measured, dgs10History: measured.dgs10History.slice(-5) },
+    measured: publicMeasured(measured),
     instruments: parsed.instruments,
     regulations,
     dropped: parsed.dropped,
     modelUsed: llm.modelUsed,
-    summary,
+    summary: note.summary,
+    note,
     ...computed,
   };
   if (!empty) return result;
   return {
     ...result,
     _fallback: true,
-    ...(summary ? {} : { error: "LLM-Abruf ohne Krypto-Regulierungen" }),
+    ...(note.summary ? {} : { error: "LLM-Abruf ohne Krypto-Regulierungen" }),
   };
 }
 

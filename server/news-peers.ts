@@ -15,10 +15,11 @@ export {
   reconcileNewsSentiment,
 } from "./news-sentiment";
 
-export async function fetchNewsFromGoogleRSS(
-  ticker: string, companyName: string
+export async function fetchTopicNewsFromGoogleRSS(
+  enQuery: string,
+  deQuery: string,
+  label = "TOPIC",
 ): Promise<{ title: string; source: string; pubDate: string; url: string; relativeTime: string; lang?: string }[]> {
-  const shortName = companyName.replace(/,? (Inc|Corp|Ltd|LLC|plc|SE|NV|SA|AG|Co)\.?.*$/i, '').trim();
   function parseRssItems(xml: string, lang: string, maxItems: number) {
     const items: { title: string; source: string; pubDate: string; url: string; relativeTime: string; lang: string }[] = [];
     const itemRegex = /<item>([\s\S]*?)<\/item>/g;
@@ -58,11 +59,11 @@ export async function fetchNewsFromGoogleRSS(
     } catch (err: any) { console.log(`[NEWS] ${label} failed: ${err?.message?.substring(0, 100)}`); return ''; }
   }
   try {
-    const enQuery = encodeURIComponent(`${ticker} ${shortName} stock`);
-    const deQuery = encodeURIComponent(`${shortName} Aktie`);
+    const en = encodeURIComponent(enQuery);
+    const de = encodeURIComponent(deQuery);
     const [enXml, deXml] = await Promise.all([
-      fetchFeed(`https://news.google.com/rss/search?q=${enQuery}&hl=en-US&gl=US&ceid=US:en`, `EN-RSS ${ticker}`),
-      fetchFeed(`https://news.google.com/rss/search?q=${deQuery}&hl=de&gl=DE&ceid=DE:de`, `DE-RSS ${ticker}`),
+      fetchFeed(`https://news.google.com/rss/search?q=${en}&hl=en-US&gl=US&ceid=US:en`, `EN-RSS ${label}`),
+      fetchFeed(`https://news.google.com/rss/search?q=${de}&hl=de&gl=DE&ceid=DE:de`, `DE-RSS ${label}`),
     ]);
     const enItems = parseRssItems(enXml, 'en', 5);
     const deItems = parseRssItems(deXml, 'de', 5);
@@ -76,6 +77,13 @@ export async function fetchNewsFromGoogleRSS(
     dedupItems.sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
     return dedupItems.slice(0, 10);
   } catch { return []; }
+}
+
+export async function fetchNewsFromGoogleRSS(
+  ticker: string, companyName: string
+): Promise<{ title: string; source: string; pubDate: string; url: string; relativeTime: string; lang?: string }[]> {
+  const shortName = companyName.replace(/,? (Inc|Corp|Ltd|LLC|plc|SE|NV|SA|AG|Co)\.?.*$/i, '').trim();
+  return fetchTopicNewsFromGoogleRSS(`${ticker} ${shortName} stock`, `${shortName} Aktie`, ticker);
 }
 
 export async function matchNewsToCatalysts(
