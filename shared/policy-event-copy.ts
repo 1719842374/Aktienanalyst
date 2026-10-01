@@ -5,6 +5,9 @@
  * nur in der Quelle. Englische Abstracts und Markdown-Saetze fallen weg.
  * Ein deutscher Satz im selben Text bleibt stehen. Kein neues Makro-Narrativ.
  */
+import { isAllowedBtcCitation, isOfficialEvidenceUrl } from "./btc-source-policy";
+
+export { isOfficialEvidenceUrl };
 
 const MARKDOWN_TITLE = /^\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)?\s*$/;
 const MARKDOWN_SENTENCE = /\[[^\]]*\]\(https?:\/\//;
@@ -156,33 +159,9 @@ export function usableEventSentences(text: string | null | undefined): string | 
   return joined || null;
 }
 
-function evidenceHost(url: string): string | null {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-/** Federal Register und andere Amtsdomains. Nachrichtenseiten gehoeren nicht dazu. */
-export function isOfficialEvidenceUrl(url: string): boolean {
-  const host = evidenceHost(url);
-  if (!host) return false;
-  if (host === "federalregister.gov" || host.endsWith(".federalregister.gov")) return true;
-  if (host === "govinfo.gov" || host.endsWith(".govinfo.gov")) return true;
-  return host.endsWith(".gov");
-}
-
-/**
- * Key Events: Amtshinweis oder eine echte blocktrainer.de-Adresse.
- * tagesschau.de und andere Nachrichtenseiten fallen weg. Es wird keine
- * Ersatzkarte erfunden.
- */
+/** Key Events: Amtshinweis, Primärquelle oder ein Outlet der Quellenliste. */
 export function isAllowedKeyEventUrl(url: string): boolean {
-  const host = evidenceHost(url);
-  if (!host) return false;
-  if (isOfficialEvidenceUrl(url)) return true;
-  return host === "blocktrainer.de" || host.endsWith(".blocktrainer.de");
+  return isAllowedBtcCitation(url);
 }
 
 export function allowedKeyEventEvidence<T extends { url: string }>(evidence: T[] | undefined): T[] {

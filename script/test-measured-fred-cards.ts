@@ -338,6 +338,65 @@ const sourceFiltered = collectPolicyEvents(
     note: "Der Beitrag beschreibt den Zulassungsrahmen.",
     evidence: [{ source: "blocktrainer.de", url: "https://www.blocktrainer.de/stablecoin-rahmen", date: "2026-09-16" }],
   }, {
+    id: "reuters",
+    title: "Digital-asset desk note",
+    office: "regulator",
+    status: "proposed",
+    confidence: "cited",
+    channels: { cryptoLiquidity: "up" },
+    note: "Der Desk beschreibt die Liquidität.",
+    evidence: [{ source: "Reuters", url: "https://www.reuters.com/technology/digital-assets-example", date: "2026-09-16" }],
+  }, {
+    id: "coindesk",
+    title: "CoinDesk policy note",
+    office: "regulator",
+    status: "proposed",
+    confidence: "cited",
+    channels: { cryptoLiquidity: "up" },
+    note: "Der Beitrag bleibt auf der Quellenliste.",
+    evidence: [{ source: "CoinDesk", url: "https://www.coindesk.com/policy/example", date: "2026-09-16" }],
+  }, {
+    id: "magazine",
+    title: "Bitcoin Magazine note",
+    office: "regulator",
+    status: "proposed",
+    confidence: "cited",
+    channels: { cryptoLiquidity: "up" },
+    note: "Der Magazinbeitrag bleibt stehen.",
+    evidence: [{ source: "Bitcoin Magazine", url: "https://bitcoinmagazine.com/markets/example", date: "2026-09-16" }],
+  }, {
+    id: "cointelegraph",
+    title: "Cointelegraph rumor",
+    office: "regulator",
+    status: "uncertain",
+    confidence: "cited",
+    channels: { cryptoLiquidity: "up" },
+    evidence: [{ source: "Cointelegraph", url: "https://cointelegraph.com/news/example", date: "2026-09-16" }],
+  }, {
+    id: "newsbtc",
+    title: "NewsBTC rumor",
+    office: "regulator",
+    status: "uncertain",
+    confidence: "cited",
+    channels: { cryptoLiquidity: "up" },
+    evidence: [{ source: "NewsBTC", url: "https://www.newsbtc.com/news/example", date: "2026-09-16" }],
+  }, {
+    id: "beincrypto",
+    title: "BeInCrypto rumor",
+    office: "regulator",
+    status: "uncertain",
+    confidence: "cited",
+    channels: { cryptoLiquidity: "up" },
+    evidence: [{ source: "BeInCrypto", url: "https://beincrypto.com/example", date: "2026-09-16" }],
+  }, {
+    id: "ambcrypto",
+    title: "AMBCrypto rumor",
+    office: "regulator",
+    status: "uncertain",
+    confidence: "cited",
+    channels: { cryptoLiquidity: "up" },
+    evidence: [{ source: "AMBCrypto", url: "https://ambcrypto.com/example", date: "2026-09-16" }],
+  }, {
     id: "cip",
     title: "Permitted Payment Stablecoin Issuer Customer Identification Program",
     office: "treasury",
@@ -360,11 +419,12 @@ const cipTitleAt = cipHtml.indexOf('data-testid="policy-event-title"');
 const cipTitle = cipTitleAt < 0 ? "" : cipHtml.slice(cipTitleAt, cipHtml.indexOf("</div>", cipTitleAt));
 const cipRates = chip(cipHtml, "zinsen");
 ok(
-  "tagesschau faellt weg, blocktrainer bleibt, englischer Amtstext wird deutsch, Zinsen steigend bleibt rot",
-  sourceFiltered.length === 2
-    && !sourceFiltered.some(event => /tagesschau|Krypto Us Senat/i.test(`${event.title} ${event.note ?? ""} ${event.evidence?.map(item => item.url).join(" ")}`))
-    && sourceFiltered.some(event => event.evidence?.some(item => item.url.includes("blocktrainer.de")))
-    && !sourceFiltered.some(event => event.evidence?.some(item => item.url.includes("blocktrainer.de")) && event.title === "Krypto Us Senat 100")
+  "Quellenliste bleibt, Nachrichtenblogs fallen weg, englischer Amtstext wird deutsch, Zinsen steigend bleibt rot",
+  sourceFiltered.length === 5
+    && ["reuters.com", "coindesk.com", "bitcoinmagazine.com", "blocktrainer.de"].every(host =>
+      sourceFiltered.some(event => event.evidence?.some(item => item.url.includes(host))),
+    )
+    && !sourceFiltered.some(event => /tagesschau|cointelegraph|newsbtc|beincrypto|ambcrypto|Krypto Us Senat/i.test(`${event.title} ${event.note ?? ""} ${event.evidence?.map(item => item.url).join(" ")}`))
     && cipTitle.includes("Permitted Payment Stablecoin Issuer Customer Identification Program")
     && !cipTitle.includes("[")
     && !cipTitle.includes("](")
