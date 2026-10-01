@@ -194,6 +194,14 @@ ok(
   "Kanaele bleiben die sechs Druckkanaele",
   ["cryptoLiquidity", "m2", "longYield", "tBillDemand", "policyRate", "realYield"].every(ch => prompt.includes(ch)),
 );
+ok(
+  "Inflation und Zinsen folgen der Wirkung im Text",
+  prompt.includes("Preisdruck")
+    && prompt.includes("Zinsniveau")
+    && prompt.includes("inflation")
+    && prompt.includes("Ein Lizenz- oder Umsetzungsrahmen allein setzt inflation nicht")
+    && !prompt.includes("GENIUS"),
+);
 ok("Prompt verbietet das Ueberschreiben gemessener Zahlen", prompt.includes("überschreibe"));
 ok(
   "Prompt verlangt hoechstens vier deutsche Saetze und verbietet die leere Ablehnung",
@@ -297,6 +305,32 @@ ok(
     && effectKept.regulations[1]?.channels.cryptoLiquidity === "down"
     && !JSON.stringify(effectKept).includes("GENIUS"),
   JSON.stringify(effectKept.regulations.map(row => row.channels)),
+);
+
+const inflationKept = parseRegulationNotes({
+  regulations: [{
+    title: "Preisdruck aus dem Text",
+    office: "central_bank",
+    status: "enacted",
+    evidence: [evidence],
+    channels: { inflation: "up", policyRate: "down", inflationPad: "unclear", m2: "unclear" },
+  }, {
+    title: "Rahmen ohne Preisdruck",
+    office: "regulator",
+    status: "implementing",
+    evidence: [evidence],
+    channels: { cryptoLiquidity: "up", inflation: "unclear" },
+  }],
+});
+ok(
+  "Inflation bleibt nur die belegte Wirkung",
+  inflationKept.regulations[0]?.channels.inflation === "up"
+    && inflationKept.regulations[0]?.channels.policyRate === "down"
+    && inflationKept.regulations[0]?.channels.m2 == null
+    && inflationKept.regulations[1]?.channels.cryptoLiquidity === "up"
+    && inflationKept.regulations[1]?.channels.inflation == null
+    && !JSON.stringify(inflationKept).includes("unclear"),
+  JSON.stringify(inflationKept.regulations.map(row => row.channels)),
 );
 
 ok(

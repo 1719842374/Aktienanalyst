@@ -1,12 +1,13 @@
 /**
  * Sektion 14. Eine Flaeche: Bitcoin-Nachrichten, gemessene FRED-Richtungen
- * und die KI-Notiz. Der violette KI-Chip ruft einmal POST policy-scan auf.
+ * und die KI-Notiz. Belegte Regeln aus dem Policy-Scan stehen als Key-Event-Karten
+ * mit Inflation, Zinsen und BTC. Der violette KI-Chip ruft einmal POST policy-scan auf.
  * Muenzumlauf und gesperrte Protokollwerte sind hier keine gemessene Liquiditaet.
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import { apiRequest } from "@/lib/queryClient";
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Loader2, Minus, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Flame, Loader2, Minus, Sparkles } from "lucide-react";
 
 interface SeriesDirectionReading {
   latest: number | null;
@@ -96,13 +97,26 @@ const OFFICE_LABEL: Record<string, string> = {
   regulator: "Aufsicht",
 };
 
-const CHANNEL_LABEL: Record<string, string> = {
-  cryptoLiquidity: "Krypto-Liquidität",
+const TAG_LABEL: Record<string, string> = {
   tBillDemand: "T-Bill-Nachfrage",
-  longYield: "10-Jahres-Rendite",
   m2: "M2",
-  policyRate: "Leitzins",
-  realYield: "Realzins",
+};
+
+const CATEGORY_BADGES: Record<string, string> = {
+  "Geldpolitik": "bg-blue-500/15 text-blue-300 border-blue-400/30",
+  "Fiskalpolitik": "bg-indigo-500/15 text-indigo-300 border-indigo-400/30",
+  "Tech/Regulierung": "bg-cyan-500/15 text-cyan-300 border-cyan-400/30",
+  "Sonstiges": "bg-foreground/10 text-foreground/60 border-border/40",
+};
+
+const STATUS_DOT: Record<string, string> = {
+  enacted: "bg-emerald-400",
+  implementing: "bg-emerald-400",
+  advanced: "bg-amber-400",
+  proposed: "bg-amber-400",
+  rejected: "bg-red-400",
+  expired: "bg-red-400",
+  uncertain: "bg-foreground/30",
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -180,50 +194,167 @@ export function MeasuredFredCards({ measured }: { measured: ScanMeasured }) {
   );
 }
 
-function evidencedChannelEntries(channels: Record<string, string> | undefined): [string, "up" | "down"][] {
-  return Object.entries(channels ?? {}).filter(
-    (entry): entry is [string, "up" | "down"] =>
-      entry[0] in CHANNEL_LABEL && (entry[1] === "up" || entry[1] === "down"),
-  );
+export function eventCategory(office: string, instrumentType?: string): string {
+  if (office === "central_bank") return "Geldpolitik";
+  if (office === "treasury" || instrumentType === "fiscal_program" || instrumentType === "debt_operation") return "Fiskalpolitik";
+  if (office === "regulator" || office === "legislature") return "Tech/Regulierung";
+  return "Sonstiges";
 }
 
-function DirectionGlyph({ direction, testId }: { direction: "up" | "down"; testId?: string }) {
-  const up = direction === "up";
-  const Icon = up ? ArrowUp : ArrowDown;
-  return (
-    <Icon
-      data-testid={testId ?? (up ? "direction-up" : "direction-down")}
-      className={`w-3 h-3 shrink-0 ${up ? "text-emerald-400" : "text-red-400"}`}
-      aria-hidden
-    />
+/** Drei Briefing-Chips aus der Wirkung im Dokument. Fehlende oder widersprüchliche Kanäle bleiben neutral. */
+export function briefingImpacts(channels: Record<string, string> | undefined): {
+  inflation: "steigend" | "fallend" | "neutral";
+  rates: "steigend" | "fallend" | "neutral";
+  btc: "positiv" | "negativ" | "neutral";
+} {
+  const level = (value: string | undefined): "steigend" | "fallend" | "neutral" => {
+    if (value === "up") return "steigend";
+    if (value === "down") return "fallend";
+    return "neutral";
+  };
+  const rateVotes = [channels?.policyRate, channels?.realYield, channels?.longYield].filter(
+    (value): value is "up" | "down" => value === "up" || value === "down",
   );
-}
-
-/** Kartenpfeil nur aus cryptoLiquidity. Andere Kanäle behalten ihren eigenen Pfeil. */
-export function FactorTitle({ channels, children }: { channels: Record<string, string> | undefined; children: ReactNode }) {
+  const ups = rateVotes.filter(value => value === "up").length;
+  const downs = rateVotes.length - ups;
+  const rates = ups > 0 && downs === 0 ? "steigend" : downs > 0 && ups === 0 ? "fallend" : "neutral";
   const liquidity = channels?.cryptoLiquidity;
-  const cardDir = liquidity === "up" || liquidity === "down" ? liquidity : null;
+  const btc = liquidity === "up" ? "positiv" : liquidity === "down" ? "negativ" : "neutral";
+  return { inflation: level(channels?.inflation), rates, btc };
+}
+
+export interface PolicyEventInput {
+  id: string;
+  title: string;
+  office: string;
+  instrumentType?: string;
+  status: string;
+  channels: Record<string, string>;
+  note?: string;
+  holder?: string;
+  evidence?: { source: string; url: string; date: string }[];
+}
+
+export function collectPolicyEvents(
+  regulations: RegulationNoteDto[],
+  instruments: PolicyScanInstrument[],
+): PolicyEventInput[] {
+  const events: PolicyEventInput[] = [];
+  const seen = new Set<string>();
+  const remember = (title: string) => {
+    const key = title.trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  };
+  for (const reg of regulations) {
+    if (reg.confidence !== "cited" || !hasHttps(reg.evidence)) continue;
+    if (!remember(reg.title)) continue;
+    events.push({
+      id: reg.id,
+      title: reg.title,
+      office: reg.office,
+      instrumentType: reg.instrumentType,
+      status: reg.status,
+      channels: reg.channels,
+      note: reg.note,
+      evidence: reg.evidence,
+    });
+  }
+  for (const inst of instruments) {
+    if (!hasHttps(inst.evidence)) continue;
+    const title = inst.title?.trim()
+      || [OFFICE_LABEL[inst.office] ?? inst.office, TYPE_LABEL[inst.instrumentType] ?? inst.instrumentType, inst.status].filter(Boolean).join(" · ");
+    if (!remember(inst.title?.trim() || title)) continue;
+    events.push({
+      id: inst.id,
+      title,
+      office: inst.office,
+      instrumentType: inst.instrumentType,
+      status: inst.status,
+      channels: inst.channels,
+      evidence: inst.evidence,
+      ...(inst.officeHolder ? { holder: inst.officeHolder } : {}),
+    });
+  }
+  return events;
+}
+
+function ImpactBadge({ label, value }: { label: string; value: string }) {
+  const isUp = value === "steigend" || value === "positiv";
+  const isDown = value === "fallend" || value === "negativ";
+  const color = isUp ? "text-emerald-400" : isDown ? "text-red-400" : "text-foreground/50";
+  const Icon = isUp ? ArrowUp : isDown ? ArrowDown : Minus;
   return (
-    <div className="font-medium flex items-start gap-1">
-      {cardDir ? <DirectionGlyph direction={cardDir} testId="card-crypto-liquidity" /> : null}
-      <span>{children}</span>
+    <div className="flex items-center gap-1" data-testid={`impact-${label.toLowerCase()}`}>
+      <span className="text-[9px] uppercase tracking-wider text-foreground/40">{label}</span>
+      <Icon
+        data-testid={isUp ? "impact-up" : isDown ? "impact-down" : "impact-neutral"}
+        className={`w-2.5 h-2.5 ${color}`}
+        aria-hidden
+      />
+      <span className={`text-[10px] font-medium ${color}`}>{value}</span>
     </div>
   );
 }
 
-export function ChannelMarks({ channels }: { channels: Record<string, string> | undefined }) {
-  const items = evidencedChannelEntries(channels);
-  if (items.length === 0) return null;
+export function PolicyEventCard({ event }: { event: PolicyEventInput }) {
+  const impacts = briefingImpacts(event.channels);
+  const category = eventCategory(event.office, event.instrumentType);
+  const catClass = CATEGORY_BADGES[category] || CATEGORY_BADGES.Sonstiges;
+  const dot = STATUS_DOT[event.status] || "bg-foreground/30";
+  const link = event.evidence?.find(item => /^https:\/\//i.test(item.url || ""));
+  const tags = Object.entries(TAG_LABEL)
+    .filter(([key]) => event.channels?.[key] === "up" || event.channels?.[key] === "down")
+    .map(([, label]) => label);
   return (
-    <span className="inline-flex flex-wrap items-center gap-y-0.5" data-testid="policy-channels">
-      {items.map(([key, value], index) => (
-        <span key={key} className="inline-flex items-center gap-1">
-          {index > 0 ? <span aria-hidden>, </span> : null}
-          <DirectionGlyph direction={value} />
-          <span>{CHANNEL_LABEL[key]}: {value === "up" ? "aufwärts" : "abwärts"}</span>
-        </span>
-      ))}
-    </span>
+    <div className="rounded-md border border-border/40 bg-background/40 p-3 hover:bg-background/60 transition-colors" data-testid="policy-event-card">
+      <div className="flex items-start gap-2 mb-2">
+        <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} title={event.status} />
+        <div className="flex-1 min-w-0">
+          <div className="text-[12px] font-semibold text-foreground/90 leading-tight">{event.title}</div>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            <span className={`text-[9px] px-1.5 py-0.5 rounded border ${catClass}`}>{category}</span>
+            {link?.date && <span className="text-[9px] text-foreground/50">· {link.date}</span>}
+            {event.holder && <span className="text-[9px] text-foreground/50">· {event.holder}</span>}
+          </div>
+        </div>
+      </div>
+      {event.note && <p className="text-[11px] text-foreground/75 leading-relaxed mb-2">{event.note}</p>}
+      <div className="flex flex-wrap gap-x-3 gap-y-1 mb-2 pb-2 border-b border-border/20">
+        <ImpactBadge label="Inflation" value={impacts.inflation} />
+        <ImpactBadge label="Zinsen" value={impacts.rates} />
+        <ImpactBadge label="BTC" value={impacts.btc} />
+      </div>
+      {link && (
+        <a className="text-[10px] underline text-foreground/70" href={link.url} target="_blank" rel="noreferrer">
+          {link.source} · {link.date}
+        </a>
+      )}
+      {tags.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-2">
+          {tags.map(tag => (
+            <span key={tag} className="text-[9px] px-1.5 py-0.5 rounded bg-foreground/[0.06] text-foreground/65 border border-border/30">{tag}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function PolicyEventGrid({ events }: { events: PolicyEventInput[] }) {
+  if (events.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.04] to-orange-500/[0.02] p-4" data-testid="panel-policy-events">
+      <div className="flex items-center gap-2 mb-3">
+        <Flame className="w-3.5 h-3.5 text-amber-400" />
+        <h2 className="text-xs font-semibold text-foreground/90">Aktuelle Key Events</h2>
+        <span className="text-[10px] text-foreground/40">({events.length} aus belegten Regeln)</span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {events.map(event => <PolicyEventCard key={event.id} event={event} />)}
+      </div>
+    </div>
   );
 }
 
@@ -387,6 +518,7 @@ export function StablecoinLiquidityPanel() {
   const llmOn = news.llmAvailable === true;
   const showAnalysis = scan != null && !scanError;
   const cited = (scan?.regulations ?? []).filter(reg => reg.confidence === "cited" && hasHttps(reg.evidence));
+  const events = collectPolicyEvents(scan?.regulations ?? [], scan?.instruments ?? []);
   const note = scan?.note;
 
   const kiButton = (
@@ -497,68 +629,11 @@ export function StablecoinLiquidityPanel() {
               </div>
             )}
 
-            {cited.length > 0 && (
-              <div className="space-y-2" data-testid="list-policy-regulations">
-                {cited.map(reg => {
-                  const hasChannels = evidencedChannelEntries(reg.channels).length > 0;
-                  return (
-                    <div key={reg.id} className="rounded-md border border-border bg-muted/20 p-3 text-[11px] space-y-1">
-                      <FactorTitle channels={reg.channels}>{reg.title}</FactorTitle>
-                      <div className="text-muted-foreground flex flex-wrap items-center gap-x-1 gap-y-0.5">
-                        <span>
-                          {OFFICE_LABEL[reg.office] ?? reg.office}
-                          {reg.instrumentType ? ` · ${TYPE_LABEL[reg.instrumentType] ?? reg.instrumentType}` : ""}
-                          {` · ${reg.status}`}
-                        </span>
-                        {hasChannels && (
-                          <>
-                            <span aria-hidden>·</span>
-                            <ChannelMarks channels={reg.channels} />
-                          </>
-                        )}
-                      </div>
-                      {reg.note && <div className="text-muted-foreground">{reg.note}</div>}
-                      {reg.evidence?.[0] && (
-                        <a className="underline text-foreground/80" href={reg.evidence[0].url} target="_blank" rel="noreferrer">
-                          {reg.evidence[0].source} · {reg.evidence[0].date}
-                        </a>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <PolicyEventGrid events={events} />
 
-            {scan.instruments.length === 0 && cited.length === 0 && (
+            {events.length === 0 && (
               <div className="text-[11px] text-muted-foreground" data-testid="text-policy-empty">
                 Kein Instrument mit Quelle, https-Adresse und Datum.
-              </div>
-            )}
-
-            {scan.instruments.length > 0 && (
-              <div className="space-y-2" data-testid="list-policy-instruments">
-                {scan.instruments.map(inst => {
-                  const hasChannels = evidencedChannelEntries(inst.channels).length > 0;
-                  return (
-                    <div key={inst.id} className="rounded-md border border-border bg-muted/20 p-3 text-[11px] space-y-1">
-                      <FactorTitle channels={inst.channels}>
-                        {inst.title ? `${inst.title} · ` : ""}
-                        {OFFICE_LABEL[inst.office] ?? inst.office} · {inst.instrumentType} · {inst.status}
-                        {inst.officeHolder ? ` · ${inst.officeHolder}` : ""}
-                      </FactorTitle>
-                      {hasChannels && (
-                        <div className="text-muted-foreground">
-                          <ChannelMarks channels={inst.channels} />
-                        </div>
-                      )}
-                      {inst.evidence?.[0] && (
-                        <a className="underline text-foreground/80" href={inst.evidence[0].url} target="_blank" rel="noreferrer">
-                          {inst.evidence[0].source} · {inst.evidence[0].date}
-                        </a>
-                      )}
-                    </div>
-                  );
-                })}
               </div>
             )}
           </div>

@@ -52,6 +52,8 @@ export interface PolicyInstrument {
     longYield?: "up" | "down" | "unclear";
     m2?: "up" | "down" | "unclear";
     cryptoLiquidity?: "up" | "down" | "unclear";
+    /** Preisdruck nur aus dem Text. unclear wird nicht gespeichert. */
+    inflation?: "up" | "down" | "unclear";
     policyRate?: "up" | "down" | "unclear";
     realYield?: "up" | "down" | "unclear";
     duration?: "easing" | "tightening" | "neutral";
@@ -129,6 +131,7 @@ export function parsePolicyInstruments(raw: unknown): { instruments: PolicyInstr
     const longYield = evidencedDirection(channelsRaw.longYield);
     const m2 = evidencedDirection(channelsRaw.m2);
     const cryptoLiquidity = evidencedDirection(channelsRaw.cryptoLiquidity);
+    const inflation = evidencedDirection(channelsRaw.inflation);
     const policyRate = evidencedDirection(channelsRaw.policyRate);
     const realYield = evidencedDirection(channelsRaw.realYield);
     const duration = oneOf(channelsRaw.duration, DURATION_DIRECTIONS);
@@ -136,6 +139,7 @@ export function parsePolicyInstruments(raw: unknown): { instruments: PolicyInstr
     if (longYield) channels.longYield = longYield;
     if (m2) channels.m2 = m2;
     if (cryptoLiquidity) channels.cryptoLiquidity = cryptoLiquidity;
+    if (inflation) channels.inflation = inflation;
     if (policyRate) channels.policyRate = policyRate;
     if (realYield) channels.realYield = realYield;
     if (duration) channels.duration = duration;
@@ -213,6 +217,7 @@ export function parseRegulationNotes(raw: unknown): { regulations: RegulationNot
     const longYield = evidencedDirection(channelsRaw.longYield);
     const m2 = evidencedDirection(channelsRaw.m2);
     const cryptoLiquidity = evidencedDirection(channelsRaw.cryptoLiquidity);
+    const inflation = evidencedDirection(channelsRaw.inflation);
     const policyRate = evidencedDirection(channelsRaw.policyRate);
     const realYield = evidencedDirection(channelsRaw.realYield);
     const duration = oneOf(channelsRaw.duration, DURATION_DIRECTIONS);
@@ -220,6 +225,7 @@ export function parseRegulationNotes(raw: unknown): { regulations: RegulationNot
     if (longYield) channels.longYield = longYield;
     if (m2) channels.m2 = m2;
     if (cryptoLiquidity) channels.cryptoLiquidity = cryptoLiquidity;
+    if (inflation) channels.inflation = inflation;
     if (policyRate) channels.policyRate = policyRate;
     if (realYield) channels.realYield = realYield;
     if (duration) channels.duration = duration;
