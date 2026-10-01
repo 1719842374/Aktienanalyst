@@ -14,12 +14,14 @@ import {
 import { buildPolicyScanPrompt, policyScanIsCacheable } from "../server/crypto-regulation-llm";
 import { emptyReading, type SeriesDirectionReading } from "../server/policy-scan-windows";
 import {
+  applyNoticeTitles,
   fallbackScanSummary,
   isRefusalSummary,
   mergeByTitle,
   noticesToRegulationPayload,
   parseFederalRegisterPage,
 } from "../server/crypto-regulation-sources";
+import { canonicalDocumentTitle, usableEventSentences } from "../shared/policy-event-copy";
 import { defiTvlFromSeries, estimateTBillDemand, type StablecoinMarketSnapshot } from "../server/stablecoin-liquidity";
 
 let failed = 0;
@@ -403,6 +405,37 @@ const merged = mergeByTitle(
   [{ title: "Payment Stablecoin Reserve Rule" }, { title: "nur modell" }],
 );
 ok("Modell und Amtssuche werden nach Titel zusammengefuehrt", merged.length === 2);
+const regUrl = "https://www.federalregister.gov/documents/2026/09/30/2026-20037/regulation-d-reserve-requirements-of-depository-institutions";
+const markdownTitle = `[federalregister.gov](${regUrl})`;
+const noticeTitle = "Regulation D: Reserve Requirements of Depository Institutions";
+ok(
+  "Markdown-Titel nimmt den Amtshinweis, sonst den Slug",
+  canonicalDocumentTitle(markdownTitle, regUrl, [{ title: noticeTitle, url: regUrl }]) === noticeTitle
+    && canonicalDocumentTitle(markdownTitle, regUrl, []) === "Regulation D Reserve Requirements of Depository Institutions"
+    && !canonicalDocumentTitle(markdownTitle, regUrl, []).includes("["),
+);
+const aligned = applyNoticeTitles(
+  [{ title: markdownTitle, evidence: [{ url: regUrl }] }],
+  [{ title: noticeTitle, url: regUrl }],
+);
+const slugOnly = mergeByTitle(
+  aligned,
+  [{ title: noticeTitle }],
+);
+ok(
+  "Modell-Link und Amtshinweis fallen auf denselben Dokumenttitel",
+  aligned[0]?.title === noticeTitle && slugOnly.length === 1,
+);
+ok(
+  "englischer Abstract faellt weg, deutscher Satz bleibt",
+  usableEventSentences("The Department of the Treasury is issuing this interim final rule on behalf of the Committee.") == null
+    && usableEventSentences("Die Federal Reserve erhoeht die Verzinsung von Reserveguthaben.") === "Die Federal Reserve erhoeht die Verzinsung von Reserveguthaben."
+    && usableEventSentences("Die Federal Reserve erhoeht die Verzinsung. The Committee is adopting interim procedural regulations and forms.") === "Die Federal Reserve erhoeht die Verzinsung.",
+);
+ok(
+  "Amtshinweis ohne Modell traegt keinen englischen Abstract",
+  fromNotices.regulations[0]?.note == null,
+);
 ok("Ersatztext nennt keinen festen Gesetzesnamen", !["Trump", "OBBBA", "Ishiba", "Bessent", "GENIUS"].some(w => fallbackScanSummary(3).includes(w)));
 
 ok(

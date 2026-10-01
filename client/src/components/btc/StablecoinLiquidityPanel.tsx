@@ -7,6 +7,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import { apiRequest } from "@/lib/queryClient";
+import { canonicalDocumentTitle, usableEventSentences } from "@shared/policy-event-copy";
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Flame, Loader2, Minus, Sparkles } from "lucide-react";
 
 interface SeriesDirectionReading {
@@ -247,25 +248,33 @@ export function collectPolicyEvents(
     seen.add(key);
     return true;
   };
+  const headingFor = (title: string, evidence?: { url: string }[]) => canonicalDocumentTitle(
+    title,
+    evidence?.find(item => /^https:\/\//i.test(item.url || ""))?.url,
+  );
   for (const reg of regulations) {
     if (reg.confidence !== "cited" || !hasHttps(reg.evidence)) continue;
-    if (!remember(reg.title)) continue;
+    const title = headingFor(reg.title, reg.evidence);
+    if (!remember(title)) continue;
     events.push({
       id: reg.id,
-      title: reg.title,
+      title,
       office: reg.office,
       instrumentType: reg.instrumentType,
       status: reg.status,
       channels: reg.channels,
-      note: reg.note,
+      note: usableEventSentences(reg.note) ?? undefined,
       evidence: reg.evidence,
     });
   }
   for (const inst of instruments) {
     if (!hasHttps(inst.evidence)) continue;
-    const title = inst.title?.trim()
-      || [OFFICE_LABEL[inst.office] ?? inst.office, TYPE_LABEL[inst.instrumentType] ?? inst.instrumentType, inst.status].filter(Boolean).join(" · ");
-    if (!remember(inst.title?.trim() || title)) continue;
+    const title = headingFor(
+      inst.title?.trim()
+        || [OFFICE_LABEL[inst.office] ?? inst.office, TYPE_LABEL[inst.instrumentType] ?? inst.instrumentType, inst.status].filter(Boolean).join(" · "),
+      inst.evidence,
+    );
+    if (!remember(title)) continue;
     events.push({
       id: inst.id,
       title,
@@ -310,6 +319,8 @@ export function PolicyEventCard({ event }: { event: PolicyEventInput }) {
   const catClass = CATEGORY_BADGES[category] || CATEGORY_BADGES.Sonstiges;
   const dot = STATUS_DOT[event.status] || "bg-foreground/30";
   const link = event.evidence?.find(item => /^https:\/\//i.test(item.url || ""));
+  const heading = canonicalDocumentTitle(event.title, link?.url);
+  const body = usableEventSentences(event.note);
   const tags = Object.entries(TAG_LABEL)
     .filter(([key]) => event.channels?.[key] === "up" || event.channels?.[key] === "down")
     .map(([, label]) => label);
@@ -318,7 +329,7 @@ export function PolicyEventCard({ event }: { event: PolicyEventInput }) {
       <div className="flex items-start gap-2 mb-2">
         <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} title={event.status} />
         <div className="flex-1 min-w-0">
-          <div className="text-[12px] font-semibold text-foreground/90 leading-tight">{event.title}</div>
+          <div className="text-[12px] font-semibold text-foreground/90 leading-tight" data-testid="policy-event-title">{heading}</div>
           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
             <span className={`text-[9px] px-1.5 py-0.5 rounded border ${catClass}`}>{category}</span>
             {link?.date && <span className="text-[9px] text-foreground/50">· {link.date}</span>}
@@ -326,7 +337,7 @@ export function PolicyEventCard({ event }: { event: PolicyEventInput }) {
           </div>
         </div>
       </div>
-      {event.note && <p className="text-[11px] text-foreground/75 leading-relaxed mb-2">{event.note}</p>}
+      {body && <p className="text-[11px] text-foreground/75 leading-relaxed mb-2">{body}</p>}
       <div className="flex flex-wrap gap-x-3 gap-y-1 mb-2 pb-2 border-b border-border/20">
         <ImpactBadge label="Inflation" value={impacts.inflation} />
         <ImpactBadge label="Zinsen" value={impacts.rates} rateImpact />
