@@ -280,10 +280,16 @@ export function collectPolicyEvents(
   return events;
 }
 
-function ImpactBadge({ label, value }: { label: string; value: string }) {
+function ImpactBadge({ label, value, rateImpact = false }: { label: string; value: string; rateImpact?: boolean }) {
   const isUp = value === "steigend" || value === "positiv";
   const isDown = value === "fallend" || value === "negativ";
-  const color = isUp ? "text-emerald-400" : isDown ? "text-red-400" : "text-foreground/50";
+  // Direction stays the document's word (steigend = arrow up). Color for the rate chip
+  // is the BTC-liquidity implication: higher rates tighten liquidity, so up is red.
+  const color = !isUp && !isDown
+    ? "text-foreground/50"
+    : rateImpact
+      ? (isUp ? "rate-impact-negative text-red-400" : "rate-impact-positive text-emerald-400")
+      : (isUp ? "text-emerald-400" : "text-red-400");
   const Icon = isUp ? ArrowUp : isDown ? ArrowDown : Minus;
   return (
     <div className="flex items-center gap-1" data-testid={`impact-${label.toLowerCase()}`}>
@@ -323,7 +329,7 @@ export function PolicyEventCard({ event }: { event: PolicyEventInput }) {
       {event.note && <p className="text-[11px] text-foreground/75 leading-relaxed mb-2">{event.note}</p>}
       <div className="flex flex-wrap gap-x-3 gap-y-1 mb-2 pb-2 border-b border-border/20">
         <ImpactBadge label="Inflation" value={impacts.inflation} />
-        <ImpactBadge label="Zinsen" value={impacts.rates} />
+        <ImpactBadge label="Zinsen" value={impacts.rates} rateImpact />
         <ImpactBadge label="BTC" value={impacts.btc} />
       </div>
       {link && (

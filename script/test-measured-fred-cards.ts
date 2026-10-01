@@ -25,6 +25,15 @@ function ok(name: string, cond: boolean, detail?: string) {
   }
 }
 
+function chip(html: string, label: "inflation" | "zinsen" | "btc"): string {
+  const marker = `data-testid="impact-${label}"`;
+  const start = html.indexOf(marker);
+  if (start < 0) return "";
+  const rest = html.slice(start + marker.length);
+  const sibling = rest.search(/data-testid="impact-(?:inflation|zinsen|btc)"/);
+  return sibling < 0 ? html.slice(start) : html.slice(start, start + marker.length + sibling);
+}
+
 const dump = JSON.parse(readFileSync(new URL("./fixtures/policy-scan-dod118.json", import.meta.url), "utf8"));
 const live = dump.measured;
 ok("Live-Dump enthaelt tgaBn", live?.tgaBn === 977.084 && live?.m2Bn === 23342.8 && live?.policyRate === 3.88);
@@ -112,11 +121,16 @@ ok(
     && openingHtml.includes(">M2<"),
 );
 ok(
-  "steigend und positiv sind gruen nach oben",
+  "Inflation steigend und BTC positiv bleiben gruen, Zinsen steigend wird rot",
   openingHtml.includes(">steigend<")
     && openingHtml.includes(">positiv<")
     && (openingHtml.match(/data-testid="impact-up"/g) ?? []).length === 3
-    && (openingHtml.match(/text-emerald-400/g) ?? []).length === 6
+    && (openingHtml.match(/text-emerald-400/g) ?? []).length === 4
+    && chip(openingHtml, "zinsen").includes("rate-impact-negative")
+    && chip(openingHtml, "zinsen").includes("text-red-400")
+    && chip(openingHtml, "zinsen").includes('data-testid="impact-up"')
+    && !chip(openingHtml, "zinsen").includes("text-emerald-400")
+    && !chip(openingHtml, "inflation").includes("rate-impact-")
     && !openingHtml.includes("unclear")
     && !openingHtml.includes("aufwärts")
     && !openingHtml.includes("Krypto-Liquidität"),
@@ -133,12 +147,17 @@ const ban: PolicyEventInput = {
 };
 const banHtml = renderToStaticMarkup(createElement(PolicyEventCard, { event: ban }));
 ok(
-  "fallend und negativ sind rot nach unten",
+  "Inflation fallend und BTC negativ bleiben rot, Zinsen fallend wird gruen",
   banHtml.includes(">fallend<")
     && banHtml.includes(">negativ<")
     && (banHtml.match(/data-testid="impact-down"/g) ?? []).length === 3
-    && (banHtml.match(/text-red-400/g) ?? []).length === 6
-    && !banHtml.includes("text-emerald-400"),
+    && (banHtml.match(/text-red-400/g) ?? []).length === 4
+    && chip(banHtml, "zinsen").includes("rate-impact-positive")
+    && chip(banHtml, "zinsen").includes("text-emerald-400")
+    && chip(banHtml, "zinsen").includes('data-testid="impact-down"')
+    && chip(banHtml, "zinsen").includes(">fallend<")
+    && !chip(banHtml, "zinsen").includes("text-red-400")
+    && !chip(banHtml, "inflation").includes("rate-impact-"),
 );
 const quiet: PolicyEventInput = {
   id: "offen",
@@ -158,6 +177,64 @@ ok(
     && !quietHtml.includes("text-red-400")
     && !quietHtml.includes("impact-up")
     && !quietHtml.includes("impact-down"),
+);
+const rateHike: PolicyEventInput = {
+  id: "reg-a",
+  title: "Extensions of Credit",
+  office: "central_bank",
+  instrumentType: "statute",
+  status: "enacted",
+  channels: { policyRate: "up", realYield: "up" },
+  note: "Der Leitzins geht nach oben.",
+  evidence: [{ source: "federalregister.gov", url: "https://example.test/reg-a", date: "2026-09-30" }],
+};
+const rateHikeHtml = renderToStaticMarkup(createElement(PolicyEventCard, { event: rateHike }));
+const hikeRates = chip(rateHikeHtml, "zinsen");
+const hikeBtc = chip(rateHikeHtml, "btc");
+ok(
+  "Zinsen steigend ist rot fuer BTC-Liquiditaet, Pfeil bleibt oben, BTC neutral",
+  hikeRates.includes(">steigend<")
+    && hikeRates.includes("rate-impact-negative")
+    && hikeRates.includes("text-red-400")
+    && hikeRates.includes('data-testid="impact-up"')
+    && !hikeRates.includes("text-emerald-400")
+    && !hikeRates.includes("impact-down")
+    && hikeBtc.includes(">neutral<")
+    && hikeBtc.includes('data-testid="impact-neutral"')
+    && hikeBtc.includes("text-foreground/50")
+    && !hikeBtc.includes("text-red-400")
+    && !hikeBtc.includes("text-emerald-400")
+    && !hikeBtc.includes("rate-impact-")
+    && !chip(rateHikeHtml, "inflation").includes("rate-impact-"),
+  hikeRates,
+);
+const rateCut: PolicyEventInput = {
+  id: "reg-d-cut",
+  title: "Reserve Requirements",
+  office: "central_bank",
+  instrumentType: "statute",
+  status: "enacted",
+  channels: { longYield: "down" },
+  note: "Die Rendite geht nach unten.",
+  evidence: [{ source: "federalregister.gov", url: "https://example.test/reg-d", date: "2026-09-30" }],
+};
+const rateCutHtml = renderToStaticMarkup(createElement(PolicyEventCard, { event: rateCut }));
+const cutRates = chip(rateCutHtml, "zinsen");
+const cutBtc = chip(rateCutHtml, "btc");
+ok(
+  "Zinsen fallend ist gruen fuer BTC-Liquiditaet, Pfeil bleibt unten, BTC neutral",
+  cutRates.includes(">fallend<")
+    && cutRates.includes("rate-impact-positive")
+    && cutRates.includes("text-emerald-400")
+    && cutRates.includes('data-testid="impact-down"')
+    && !cutRates.includes("text-red-400")
+    && !cutRates.includes("impact-up")
+    && cutBtc.includes(">neutral<")
+    && cutBtc.includes('data-testid="impact-neutral"')
+    && !cutBtc.includes("text-emerald-400")
+    && !cutBtc.includes("text-red-400")
+    && !cutBtc.includes("rate-impact-"),
+  cutRates,
 );
 ok(
   "widerspruechliche Zinsen bleiben neutral, Liquiditaet bestimmt BTC",
