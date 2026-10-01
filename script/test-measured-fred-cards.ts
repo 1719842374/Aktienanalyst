@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MeasuredFredCards } from "../client/src/components/btc/StablecoinLiquidityPanel";
+import { ChannelMarks, FactorTitle, MeasuredFredCards } from "../client/src/components/btc/StablecoinLiquidityPanel";
 
 let failed = 0;
 function ok(name: string, cond: boolean, detail?: string) {
@@ -67,6 +67,55 @@ const withWindows = renderToStaticMarkup(createElement(MeasuredFredCards, {
 }));
 ok("1J- und 2J-Richtung stehen an jeder Serie", (withWindows.match(/1J /g) ?? []).length === 5 && (withWindows.match(/2J /g) ?? []).length === 5);
 ok("steigend bleibt sichtbar", withWindows.includes("1J steigend"));
+ok(
+  "steigend gruen nach oben, fallend rot nach unten, unveraendert neutral",
+  (withWindows.match(/data-testid="series-up"/g) ?? []).length === 6
+    && (withWindows.match(/data-testid="series-down"/g) ?? []).length === 2
+    && (withWindows.match(/data-testid="series-flat"/g) ?? []).length === 1
+    && (withWindows.match(/text-emerald-400/g) ?? []).length === 6
+    && (withWindows.match(/text-red-400/g) ?? []).length === 2,
+);
+ok(
+  "unbekannt hat keinen Pfeil",
+  (withWindows.match(/2J unbekannt/g) ?? []).length === 1
+    && withWindows.includes("2J unbekannt</span></span>")
+    && !withWindows.includes("1J unbekannt"),
+);
+ok("ohne Fenster kein Richtungspeil", !html.includes("series-up") && !html.includes("series-down") && !html.includes("series-flat"));
+
+const mixed = renderToStaticMarkup(createElement(ChannelMarks, {
+  channels: { m2: "up", policyRate: "down", realYield: "unclear", cryptoLiquidity: "up" },
+}));
+ok(
+  "jeder Kanal behaelt seinen Pfeil",
+  mixed.includes("M2: aufwärts")
+    && mixed.includes("Leitzins: abwärts")
+    && mixed.includes("Krypto-Liquidität: aufwärts")
+    && (mixed.match(/data-testid="direction-up"/g) ?? []).length === 2
+    && (mixed.match(/data-testid="direction-down"/g) ?? []).length === 1
+    && !mixed.includes("unclear")
+    && !mixed.includes("Realzins"),
+);
+const noLiquidity = renderToStaticMarkup(createElement(FactorTitle, {
+  channels: { m2: "up", policyRate: "down" },
+  children: "Gemischt",
+}));
+ok("ohne Krypto-Liquiditaet kein Kartenpfeil", noLiquidity.includes("Gemischt") && !noLiquidity.includes("card-crypto-liquidity"));
+const upCard = renderToStaticMarkup(createElement(FactorTitle, {
+  channels: { cryptoLiquidity: "up", policyRate: "down" },
+  children: "Rahmen",
+}));
+ok(
+  "Kartenpfeil folgt nur der Krypto-Liquiditaet",
+  upCard.includes('data-testid="card-crypto-liquidity"')
+    && upCard.includes("text-emerald-400")
+    && !upCard.includes("text-red-400"),
+);
+const downCard = renderToStaticMarkup(createElement(FactorTitle, {
+  channels: { cryptoLiquidity: "down" },
+  children: "Verbot",
+}));
+ok("Kartenpfeil abwaerts ist rot", downCard.includes("text-red-400") && downCard.includes("card-crypto-liquidity"));
 
 const bannedCards = ["DeFi-TVL", "TVL-Δ", "Stablecoin Total MCap", "USDT (Tether)", "USDC (Circle)", "Stablecoin-Δ", "Liquiditätstracker"];
 ok(
@@ -75,6 +124,10 @@ ok(
   bannedCards.filter(label => panel.includes(label)).join(", "),
 );
 ok("Nachrichten liegen in Sektion 14", panel.includes("Aktuelle Nachrichten") && panel.includes("/api/analyze-btc/news"));
+ok(
+  "Regel- und Instrumentkarten zeigen Kanalpfeile und einen Kartenpfeil nur fuer Krypto-Liquiditaet",
+  panel.includes("<FactorTitle") && panel.includes("<ChannelMarks") && panel.includes("card-crypto-liquidity"),
+);
 
 if (failed) {
   console.log(`\n${failed} failed`);
