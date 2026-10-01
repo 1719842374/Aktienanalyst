@@ -1,47 +1,45 @@
 /**
- * Sektion 14. Ruhezustand: nur gemessene DefiLlama-Karten.
- * Der violette KI-Chip ruft mit force denselben OpenRouter-Weg wie der
- * Researcher auf, nur fuer Krypto-Regulierungen und den Liquiditaetstracker.
- * Jeder Klick zeigt ein Analysefeld: Zusammenfassung, Modell, oder den Fehler.
- * Ohne OPENROUTER_API_KEY bleibt der Klick moeglich und zeigt den Fehler.
+ * Sektion 14. Eine Flaeche: Bitcoin-Nachrichten, gemessene FRED-Richtungen
+ * und die KI-Notiz. Der violette KI-Chip ruft einmal POST policy-scan auf.
+ * Muenzumlauf und gesperrte Protokollwerte sind hier keine gemessene Liquiditaet.
  */
 import { useEffect, useState } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import { apiRequest } from "@/lib/queryClient";
-import { AlertTriangle, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { AlertTriangle, ChevronRight, Loader2, Sparkles } from "lucide-react";
 
-export interface StablecoinAggregateDto {
-  symbol: string;
-  name: string;
-  circulatingUsd: number;
-  circulatingPrevDayUsd: number | null;
-  circulatingPrevWeekUsd: number | null;
-  circulatingPrevMonthUsd: number | null;
+interface SeriesDirectionReading {
+  latest: number | null;
+  level1y: number | null;
+  level2y: number | null;
+  diff1y: number | null;
+  diff2y: number | null;
+  direction1y: string;
+  direction2y: string;
 }
 
-export interface StablecoinLiquidityApiResponse {
-  fetchedAt: string;
-  llmAvailable?: boolean;
-  stablecoins: {
-    available: boolean;
-    totalMarketCapUsd: number | null;
-    totalMarketCapPrevMonthUsd: number | null;
-    usdt: StablecoinAggregateDto | null;
-    usdc: StablecoinAggregateDto | null;
-    constituentCount: number | null;
-    error?: string;
+interface ScanMeasured {
+  policyRate?: number | null;
+  realYield10y?: number | null;
+  dgs10?: number | null;
+  m2Bn?: number | null;
+  tgaBn?: number | null;
+  windows?: {
+    policyRate?: SeriesDirectionReading;
+    realYield10y?: SeriesDirectionReading;
+    dgs10?: SeriesDirectionReading;
+    m2Bn?: SeriesDirectionReading;
+    tgaBn?: SeriesDirectionReading;
   };
-  tBillDemand: {
-    mcapChange30dUsd: number | null;
-  };
-  defiTvl?: {
-    available: boolean;
-    tvlUsd: number | null;
-    change30dUsd: number | null;
-    error?: string;
-  };
-  _servedFromDiskCacheAfterLiveFailure?: boolean;
-  _liveFetchError?: string;
+}
+
+interface PolicyNote {
+  summary: string | null;
+  ratesView: string | null;
+  liquidityView: string | null;
+  fiscalView: string | null;
+  keyDrivers: string[];
+  btcImplication: string | null;
 }
 
 interface PolicyScanInstrument {
@@ -67,14 +65,6 @@ interface RegulationNoteDto {
   evidence?: { source: string; url: string; date: string }[];
 }
 
-interface ScanMeasured {
-  policyRate?: number | null;
-  realYield10y?: number | null;
-  dgs10?: number | null;
-  m2Bn?: number | null;
-  tgaBn?: number | null;
-}
-
 interface PolicyScanResponse {
   llmAvailable: boolean;
   fromCache: boolean;
@@ -86,67 +76,17 @@ interface PolicyScanResponse {
   dropped: number;
   _fallback?: boolean;
   measured?: ScanMeasured;
-  effects: {
-    treasuryBuybackCapBn: number | null;
-    treasuryDurationActive: boolean;
-  };
-  priced: {
-    id: string;
-    pricedInPct: number | null;
-    halfLifeDays: number | null;
-    residual: number | null;
-  }[];
+  note?: PolicyNote;
 }
 
-function formatUsdCompact(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "n/v";
-  const abs = Math.abs(value);
-  const sign = value < 0 ? "-" : "";
-  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)} Bio.`;
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)} Mrd.`;
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)} Mio.`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
-
-function useStablecoinLiquidity() {
-  const [dataState, setDataState] = useState<StablecoinLiquidityApiResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = () => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoading(true);
-        const res = await apiRequest("GET", "/api/analyze-btc/stablecoin-liquidity", undefined, 20000);
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body?.error || `HTTP ${res.status}`);
-        }
-        const json = (await res.json()) as StablecoinLiquidityApiResponse;
-        if (!cancelled) { setDataState(json); setError(null); }
-      } catch (err: any) {
-        if (!cancelled) setError(err?.message || "Krypto-Liquiditätsdaten nicht verfügbar");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  };
-
-  useEffect(() => load(), []);
-
-  return { data: dataState, loading, error, reload: load };
-}
-
-function MiniCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-md border border-border bg-muted/20 p-3">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="text-base font-mono font-semibold tabular-nums mt-0.5">{value}</div>
-      {sub && <div className="text-[10px] text-muted-foreground mt-0.5">{sub}</div>}
-    </div>
-  );
+interface BtcNewsItem {
+  title: string;
+  source: string;
+  url: string;
+  relativeTime: string;
+  lang?: string;
+  sentiment?: "bullish" | "bearish" | "neutral";
+  sentimentScore?: number;
 }
 
 const OFFICE_LABEL: Record<string, string> = {
@@ -163,7 +103,6 @@ const CHANNEL_LABEL: Record<string, string> = {
   m2: "M2",
   policyRate: "Leitzins",
   realYield: "Realzins",
-  duration: "Duration",
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -172,24 +111,173 @@ const TYPE_LABEL: Record<string, string> = {
   debt_operation: "Schuldenoperation",
 };
 
+function formatUsdCompact(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "n/v";
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)} Bio.`;
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)} Mrd.`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)} Mio.`;
+  return `${sign}$${abs.toFixed(0)}`;
+}
+
 function formatPct(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? "n/v" : `${value.toFixed(2)}%`;
 }
 
+function directionText(reading: SeriesDirectionReading | undefined): string {
+  const one = reading?.direction1y || "unbekannt";
+  const two = reading?.direction2y || "unbekannt";
+  return `1J ${one} · 2J ${two}`;
+}
+
+function MiniCard({ label, value, sub, detail }: { label: string; value: string; sub?: string; detail?: string }) {
+  return (
+    <div className="rounded-md border border-border bg-muted/20 p-3">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-base font-mono font-semibold tabular-nums mt-0.5">{value}</div>
+      {sub && <div className="text-[10px] text-muted-foreground mt-0.5">{sub}</div>}
+      {detail && <div className="text-[10px] text-muted-foreground mt-0.5">{detail}</div>}
+    </div>
+  );
+}
+
 export function MeasuredFredCards({ measured }: { measured: ScanMeasured }) {
+  const windows = measured.windows;
   return (
     <div className="grid grid-cols-2 sm:grid-cols-5 gap-2" data-testid="text-measured-rates">
-      <MiniCard label="Leitzins" value={formatPct(measured.policyRate)} sub="FRED, gemessen" />
-      <MiniCard label="Realzins 10Y" value={formatPct(measured.realYield10y)} sub="FRED, gemessen" />
-      <MiniCard label="10-Jahres-Rendite" value={formatPct(measured.dgs10)} sub="FRED, gemessen" />
-      <MiniCard label="M2" value={formatUsdCompact(measured.m2Bn == null ? null : measured.m2Bn * 1e9)} sub="FRED, gemessen" />
-      <MiniCard label="TGA" value={formatUsdCompact(measured.tgaBn == null ? null : measured.tgaBn * 1e9)} sub="FRED, gemessen" />
+      <MiniCard label="Leitzins" value={formatPct(measured.policyRate)} sub="FRED, gemessen" detail={directionText(windows?.policyRate)} />
+      <MiniCard label="Realzins 10Y" value={formatPct(measured.realYield10y)} sub="FRED, gemessen" detail={directionText(windows?.realYield10y)} />
+      <MiniCard label="10-Jahres-Rendite" value={formatPct(measured.dgs10)} sub="FRED, gemessen" detail={directionText(windows?.dgs10)} />
+      <MiniCard label="M2" value={formatUsdCompact(measured.m2Bn == null ? null : measured.m2Bn * 1e9)} sub="FRED, gemessen" detail={directionText(windows?.m2Bn)} />
+      <MiniCard label="TGA" value={formatUsdCompact(measured.tgaBn == null ? null : measured.tgaBn * 1e9)} sub="FRED, gemessen" detail={directionText(windows?.tgaBn)} />
+    </div>
+  );
+}
+
+function evidencedChannels(channels: Record<string, string> | undefined): string {
+  return Object.entries(channels ?? {})
+    .filter(([key, value]) => key in CHANNEL_LABEL && (value === "up" || value === "down"))
+    .map(([key, value]) => `${CHANNEL_LABEL[key]}: ${value === "up" ? "aufwärts" : "abwärts"}`)
+    .join(", ");
+}
+
+function hasHttps(evidence: { url: string }[] | undefined): boolean {
+  return (evidence ?? []).some(item => /^https:\/\//i.test(item.url || ""));
+}
+
+function NoteBlock({ label, content }: { label: string; content: string }) {
+  return (
+    <div className="rounded-md bg-background/40 border border-border/30 p-2.5">
+      <div className="text-[9px] uppercase tracking-wider text-foreground/40 mb-1">{label}</div>
+      <p className="text-[11px] text-foreground/80 leading-relaxed">{content}</p>
+    </div>
+  );
+}
+
+function useBtcNews() {
+  const [items, setItems] = useState<BtcNewsItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [llmAvailable, setLlmAvailable] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/analyze-btc/news", undefined, 20000);
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+        if (!cancelled) {
+          setItems(Array.isArray(json.items) ? json.items : []);
+          setLlmAvailable(json.llmAvailable === true);
+          setError(null);
+        }
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || "Krypto-Nachrichten nicht verfügbar");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return { items, loading, error, llmAvailable };
+}
+
+function BtcNewsPanel({ items, loading, error }: { items: BtcNewsItem[]; loading: boolean; error: string | null }) {
+  const bullish = items.filter(n => n.sentiment === "bullish").length;
+  const bearish = items.filter(n => n.sentiment === "bearish").length;
+  const neutral = items.length - bullish - bearish;
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/50 p-3" data-testid="panel-btc-news">
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-sm">📰</span>
+          <span className="text-sm font-semibold text-foreground">Aktuelle Nachrichten</span>
+          {!loading && <span className="text-xs text-foreground/50">({items.length})</span>}
+        </div>
+        {items.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {bullish > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">▲ {bullish} bullish</span>}
+            {bearish > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">▼ {bearish} bearish</span>}
+            {neutral > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/5 text-foreground/40">● {neutral} neutral</span>}
+          </div>
+        )}
+      </div>
+      {loading && <div className="text-[11px] text-muted-foreground">Lade Nachrichten…</div>}
+      {!loading && error && <div className="text-[11px] text-amber-700 dark:text-amber-400">{error}</div>}
+      {!loading && !error && items.length === 0 && (
+        <div className="text-[11px] text-muted-foreground">Keine aktuellen Meldungen.</div>
+      )}
+      <div className="space-y-1">
+        {items.map((news, idx) => {
+          const sc = news.sentiment;
+          const dotColor = sc === "bullish" ? "bg-emerald-400" : sc === "bearish" ? "bg-red-400" : "bg-foreground/30";
+          const textColor = sc === "bullish" ? "text-emerald-300/90" : sc === "bearish" ? "text-red-300/90" : "text-foreground/70";
+          const scoreStr = news.sentimentScore != null
+            ? (news.sentimentScore > 0 ? `+${(news.sentimentScore * 100).toFixed(0)}` : `${(news.sentimentScore * 100).toFixed(0)}`)
+            : "";
+          return (
+            <a
+              key={`${news.url}-${idx}`}
+              href={news.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group flex items-start gap-2 rounded-md p-1.5 hover:bg-muted/50 transition-colors cursor-pointer"
+            >
+              <span className={`shrink-0 mt-1 w-2 h-2 rounded-full ${dotColor}`} />
+              <div className="flex-1 min-w-0">
+                <p className={`text-xs leading-snug line-clamp-2 group-hover:text-primary transition-colors ${textColor}`}>
+                  {news.title}
+                </p>
+                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                  <span className="text-[10px] text-foreground/40">{news.source}</span>
+                  {news.lang && (
+                    <span className={`text-[8px] px-1 py-px rounded font-semibold uppercase ${news.lang === "de" ? "bg-amber-500/15 text-amber-400" : "bg-blue-500/15 text-blue-400"}`}>
+                      {news.lang}
+                    </span>
+                  )}
+                  <span className="text-[10px] text-foreground/30">·</span>
+                  <span className="text-[10px] text-foreground/40">{news.relativeTime}</span>
+                  {scoreStr && (
+                    <span className={`text-[9px] px-1 py-px rounded font-mono ${sc === "bullish" ? "bg-emerald-500/15 text-emerald-400" : sc === "bearish" ? "bg-red-500/15 text-red-400" : "bg-foreground/5 text-foreground/40"}`}>
+                      {scoreStr}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <span className="shrink-0 text-foreground/20 group-hover:text-primary text-xs mt-0.5">↗</span>
+            </a>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
 export function StablecoinLiquidityPanel() {
-  const { data, loading, error, reload } = useStablecoinLiquidity();
+  const news = useBtcNews();
   const [scan, setScan] = useState<PolicyScanResponse | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -207,16 +295,15 @@ export function StablecoinLiquidityPanel() {
         if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
         const instruments = Array.isArray(json.instruments) ? json.instruments : [];
         const regulations = Array.isArray(json.regulations) ? json.regulations : [];
-        const priced = Array.isArray(json.priced) ? json.priced : [];
         setScan({
           ...json,
           instruments,
           regulations,
-          priced,
-          summary: typeof json.summary === "string" ? json.summary : null,
+          summary: typeof json.summary === "string" ? json.summary : json.note?.summary ?? null,
           dropped: json.dropped ?? 0,
         });
-        if (json.error && instruments.length === 0 && regulations.length === 0) setScanError(json.error);
+        const hasBody = Boolean(json.summary || json.note?.summary || json.measured);
+        if (json.error && !hasBody && instruments.length === 0 && regulations.length === 0) setScanError(json.error);
         setScanning(false);
         return;
       } catch (err: any) {
@@ -232,8 +319,10 @@ export function StablecoinLiquidityPanel() {
     setScanning(false);
   };
 
-  const llmOn = data?.llmAvailable === true;
+  const llmOn = news.llmAvailable === true;
   const showAnalysis = scan != null && !scanError;
+  const cited = (scan?.regulations ?? []).filter(reg => reg.confidence === "cited" && hasHttps(reg.evidence));
+  const note = scan?.note;
 
   const kiButton = (
     <button
@@ -242,7 +331,7 @@ export function StablecoinLiquidityPanel() {
       disabled={scanning}
       onClick={() => runScan(true)}
       className="h-8 shrink-0 px-2.5 text-[11px] font-medium rounded-md transition-all flex items-center gap-1.5 border bg-violet-500/15 text-violet-400 border-violet-500/30 hover:bg-violet-500/25 disabled:opacity-70"
-      title={llmOn ? "Krypto-Regulierungen über OpenRouter abrufen" : "Startet den OpenRouter-Abruf. Fehlt der Schlüssel, erscheint der Fehler hier."}
+      title={llmOn ? "Makro-Notiz über OpenRouter abrufen" : "Startet den OpenRouter-Abruf. Fehlt der Schlüssel, erscheint der Fehler hier."}
     >
       {scanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
       <span>KI</span>
@@ -254,89 +343,12 @@ export function StablecoinLiquidityPanel() {
     <SectionCard number={14} title="Krypto-Liquidität" actions={kiButton}>
       <div className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Der KI-Abruf sucht neue Krypto-Regeln und Fiskalprogramme in den Amtshinweisen
-          und über die OpenRouter-Websuche. Leitzins, Realzins, die 10-Jahres-Rendite,
-          M2, TGA und die DefiLlama-Serien bleiben gemessen. Das Modell schreibt sie nicht um.
+          Nachrichten zu Bitcoin und Krypto. Der Server misst zuerst Leitzins, Realzins,
+          die 10-Jahres-Rendite, M2 und TGA über ein und zwei Jahre. Das Modell schreibt danach
+          die Notiz und darf nur diese Messung zitieren.
         </p>
 
-        {loading && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            Lade Liquiditätstracker von DefiLlama…
-          </div>
-        )}
-
-        {!loading && error && (
-          <div className="flex items-start gap-2 text-xs text-red-500 bg-red-500/10 border border-red-500/25 rounded-md p-3">
-            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            <div>
-              <div className="font-medium">Liquiditätstracker nicht verfügbar</div>
-              <div className="text-muted-foreground mt-0.5">{error}</div>
-              <button
-                onClick={reload}
-                className="mt-2 text-[11px] underline hover:no-underline text-foreground/80"
-              >
-                Erneut versuchen
-              </button>
-            </div>
-          </div>
-        )}
-
-        {!loading && !error && data && !data.stablecoins.available && (
-          <div className="flex items-start gap-2 text-xs text-red-500 bg-red-500/10 border border-red-500/25 rounded-md p-3">
-            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            <div>
-              <div className="font-medium">DefiLlama-API aktuell nicht erreichbar</div>
-              <div className="text-muted-foreground mt-0.5">
-                {data.stablecoins.error || "Unbekannter Fehler"} — es werden bewusst keine geschätzten
-                Zahlen angezeigt.
-              </div>
-            </div>
-          </div>
-        )}
-
-        {!loading && !error && data && data.stablecoins.available && (
-          <>
-            {data._servedFromDiskCacheAfterLiveFailure && (
-              <div className="text-[10px] text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-md px-2 py-1.5">
-                Live-Abruf aktuell fehlgeschlagen ({data._liveFetchError || "unbekannt"}) — zeige letzten
-                erfolgreichen Cache-Stand.
-              </div>
-            )}
-
-            <div>
-              <div className="text-xs font-medium mb-2">Liquiditätstracker</div>
-              {data.defiTvl?.available && (
-                <div className="grid grid-cols-2 gap-2.5 mb-2.5">
-                  <MiniCard label="DeFi-TVL" value={formatUsdCompact(data.defiTvl.tvlUsd)} sub="DefiLlama, alle Ketten" />
-                  <MiniCard label="TVL-Δ (30T)" value={formatUsdCompact(data.defiTvl.change30dUsd)} sub="gemessen" />
-                </div>
-              )}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                <MiniCard
-                  label="Stablecoin Total MCap"
-                  value={formatUsdCompact(data.stablecoins.totalMarketCapUsd)}
-                  sub={`${data.stablecoins.constituentCount ?? "?"} Coins (peggedUSD)`}
-                />
-                <MiniCard
-                  label="USDT (Tether)"
-                  value={formatUsdCompact(data.stablecoins.usdt?.circulatingUsd ?? null)}
-                  sub="DefiLlama, live"
-                />
-                <MiniCard
-                  label="USDC (Circle)"
-                  value={formatUsdCompact(data.stablecoins.usdc?.circulatingUsd ?? null)}
-                  sub="DefiLlama, live"
-                />
-                <MiniCard
-                  label="Stablecoin-Δ (30T)"
-                  value={formatUsdCompact(data.tBillDemand?.mcapChange30dUsd ?? null)}
-                  sub="DefiLlama, gemessen"
-                />
-              </div>
-            </div>
-          </>
-        )}
+        <BtcNewsPanel items={news.items} loading={news.loading} error={news.error} />
 
         {scanning && (
           <div
@@ -363,13 +375,45 @@ export function StablecoinLiquidityPanel() {
 
         {!scanning && !scan && !scanError && (
           <div className="text-[11px] text-muted-foreground border border-dashed border-violet-500/30 rounded-md px-3 py-2">
-            Noch keine KI-Analyse. Der violette Button startet den Abruf für Krypto-Regulierungen.
+            Noch keine KI-Analyse. Der violette Button startet die Notiz aus Messung und belegten Regeln.
           </div>
         )}
 
         {showAnalysis && scan && (
-          <div className="border-t border-border/60 pt-3 space-y-2" data-testid="panel-policy-analysis">
-            <div className="text-xs font-medium">Krypto-Regulierungen</div>
+          <div className="border-t border-border/60 pt-3 space-y-3" data-testid="panel-policy-analysis">
+            <div className="rounded-lg border border-border/40 bg-card/30 p-4" data-testid="panel-policy-note">
+              <div className="text-[10px] text-foreground/40 uppercase tracking-wider mb-2">Makro-Notiz</div>
+              <p className="text-xs text-foreground/85 leading-relaxed" data-testid="text-policy-summary">
+                {note?.summary || scan.summary || "Die Analyse ist gelaufen. Eine Zusammenfassung wurde nicht geliefert."}
+              </p>
+              {(note?.ratesView || note?.liquidityView || note?.fiscalView) && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+                  {note?.ratesView && <NoteBlock label="Zinsen" content={note.ratesView} />}
+                  {note?.liquidityView && <NoteBlock label="Liquidität" content={note.liquidityView} />}
+                  {note?.fiscalView && <NoteBlock label="Fiskal & Regulierung" content={note.fiscalView} />}
+                </div>
+              )}
+              {Array.isArray(note?.keyDrivers) && note.keyDrivers.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-[10px] text-foreground/40 uppercase tracking-wider mb-1.5">Key Drivers</div>
+                  <ul className="space-y-1">
+                    {note.keyDrivers.map((driver, i) => (
+                      <li key={i} className="text-[11px] text-foreground/75 flex gap-2">
+                        <ChevronRight className="w-3 h-3 shrink-0 mt-0.5 text-violet-400" />
+                        {driver}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {note?.btcImplication && (
+                <div className="mt-3">
+                  <div className="text-[10px] text-foreground/40 uppercase tracking-wider mb-1.5">Implikation für BTC</div>
+                  <p className="text-[11px] text-foreground/75 leading-relaxed">{note.btcImplication}</p>
+                </div>
+              )}
+            </div>
+
             <div className="text-[10px] text-muted-foreground" data-testid="text-policy-scan-meta">
               {scan.modelUsed ?? "kein Modell"}
               {" · "}
@@ -377,45 +421,24 @@ export function StablecoinLiquidityPanel() {
               {" · "}
               verworfen {scan.dropped}
               {" · "}
-              {(scan.regulations ?? []).filter(r => r.confidence === "estimated").length} unbestätigt
-              {" · "}
-              {scan.instruments.length} belegt
+              {cited.length} belegt
             </div>
+
             {scan.measured && <MeasuredFredCards measured={scan.measured} />}
+
             {scan.error && (
               <div className="text-[11px] text-amber-700 dark:text-amber-400" data-testid="text-policy-scan-error-inline">
                 {scan.error}
               </div>
             )}
-            <p className="text-xs leading-relaxed" data-testid="text-policy-summary">
-              {scan.summary?.trim()
-                ? scan.summary
-                : scan.instruments.length === 0
-                  ? "Die Analyse ist gelaufen. Keine belegte Krypto-Regulierung wurde behalten."
-                  : "Die Analyse ist gelaufen. Eine Zusammenfassung wurde nicht geliefert."}
-            </p>
-            {scan.effects?.treasuryBuybackCapBn != null && (
-              <div className="text-xs text-muted-foreground" data-testid="text-treasury-cap">
-                Treasury-Cap {scan.effects.treasuryBuybackCapBn} Mrd.
-                {scan.effects.treasuryDurationActive ? " · Duration an" : " · unter 4 Mrd."}
-              </div>
-            )}
-            {(scan.regulations ?? []).length > 0 && (
+
+            {cited.length > 0 && (
               <div className="space-y-2" data-testid="list-policy-regulations">
-                {(scan.regulations ?? []).map(reg => {
-                  const channels = Object.entries(reg.channels ?? {})
-                    .map(([k, v]) => `${CHANNEL_LABEL[k] ?? k}: ${v}`)
-                    .join(", ");
-                  const unconfirmed = reg.confidence !== "cited";
+                {cited.map(reg => {
+                  const channels = evidencedChannels(reg.channels);
                   return (
                     <div key={reg.id} className="rounded-md border border-border bg-muted/20 p-3 text-[11px] space-y-1">
-                      <div className="font-medium">
-                        {reg.title}
-                        <span className={unconfirmed ? "text-violet-400" : "text-muted-foreground"}>
-                          {" · "}
-                          {unconfirmed ? "unbestätigt" : "mit Quelle"}
-                        </span>
-                      </div>
+                      <div className="font-medium">{reg.title}</div>
                       <div className="text-muted-foreground">
                         {OFFICE_LABEL[reg.office] ?? reg.office}
                         {reg.instrumentType ? ` · ${TYPE_LABEL[reg.instrumentType] ?? reg.instrumentType}` : ""}
@@ -433,22 +456,17 @@ export function StablecoinLiquidityPanel() {
                 })}
               </div>
             )}
-            {scan.instruments.length === 0 && (
+
+            {scan.instruments.length === 0 && cited.length === 0 && (
               <div className="text-[11px] text-muted-foreground" data-testid="text-policy-empty">
-                {(scan.regulations ?? []).some(r => r.confidence === "cited")
-                  ? "Gefundene Dokumente haben noch keinen belegten Status. Sie ändern den Score nicht."
-                  : (scan.regulations ?? []).length > 0
-                    ? "Kein Eintrag mit Quelle, https-Adresse und Datum. Unbestätigte Regeln ändern den Score nicht."
-                    : "Kein Instrument mit Quelle, https-Adresse und Datum."}
+                Kein Instrument mit Quelle, https-Adresse und Datum.
               </div>
             )}
+
             {scan.instruments.length > 0 && (
               <div className="space-y-2" data-testid="list-policy-instruments">
                 {scan.instruments.map(inst => {
-                  const priced = (scan.priced ?? []).find(p => p.id === inst.id);
-                  const channels = Object.entries(inst.channels ?? {})
-                    .map(([k, v]) => `${CHANNEL_LABEL[k] ?? k}: ${v}`)
-                    .join(", ");
+                  const channels = evidencedChannels(inst.channels);
                   return (
                     <div key={inst.id} className="rounded-md border border-border bg-muted/20 p-3 text-[11px] space-y-1">
                       <div className="font-medium">
@@ -457,11 +475,6 @@ export function StablecoinLiquidityPanel() {
                         {inst.officeHolder ? ` · ${inst.officeHolder}` : ""}
                       </div>
                       {channels && <div className="text-muted-foreground">{channels}</div>}
-                      <div className="text-muted-foreground">
-                        Eingepreist {priced?.pricedInPct == null ? "—" : `${priced.pricedInPct}%`}
-                        {" · "}Halbwertzeit {priced?.halfLifeDays == null ? "—" : `${priced.halfLifeDays} Tage`}
-                        {" · "}Rest {priced?.residual == null ? "—" : priced.residual.toFixed(3)}
-                      </div>
                       {inst.evidence?.[0] && (
                         <a className="underline text-foreground/80" href={inst.evidence[0].url} target="_blank" rel="noreferrer">
                           {inst.evidence[0].source} · {inst.evidence[0].date}

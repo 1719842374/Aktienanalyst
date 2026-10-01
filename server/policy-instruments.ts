@@ -10,6 +10,7 @@ export const POLICY_STATUSES = [
   "proposed", "advanced", "enacted", "implementing", "rejected", "expired", "uncertain",
 ] as const;
 export const CHANNEL_DIRECTIONS = ["up", "down", "unclear"] as const;
+const EVIDENCED_DIRECTIONS = ["up", "down"] as const;
 export const DURATION_DIRECTIONS = ["easing", "tightening", "neutral"] as const;
 export const MAGNITUDE_KINDS = ["cap_bn", "share", "score", "yield_bp"] as const;
 
@@ -72,6 +73,11 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | nul
   return typeof value === "string" && (allowed as readonly string[]).includes(value) ? value as T : null;
 }
 
+/** unclear ist keine Richtung und wird nicht gespeichert. */
+function evidencedDirection(value: unknown): "up" | "down" | null {
+  return oneOf(value, EVIDENCED_DIRECTIONS);
+}
+
 function finite(value: unknown): number | null {
   const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   return Number.isFinite(n) ? n : null;
@@ -119,12 +125,12 @@ export function parsePolicyInstruments(raw: unknown): { instruments: PolicyInstr
     }
     const channelsRaw = asRecord(row.channels) ?? {};
     const channels: PolicyInstrument["channels"] = {};
-    const tBill = oneOf(channelsRaw.tBillDemand, CHANNEL_DIRECTIONS);
-    const longYield = oneOf(channelsRaw.longYield, CHANNEL_DIRECTIONS);
-    const m2 = oneOf(channelsRaw.m2, CHANNEL_DIRECTIONS);
-    const cryptoLiquidity = oneOf(channelsRaw.cryptoLiquidity, CHANNEL_DIRECTIONS);
-    const policyRate = oneOf(channelsRaw.policyRate, CHANNEL_DIRECTIONS);
-    const realYield = oneOf(channelsRaw.realYield, CHANNEL_DIRECTIONS);
+    const tBill = evidencedDirection(channelsRaw.tBillDemand);
+    const longYield = evidencedDirection(channelsRaw.longYield);
+    const m2 = evidencedDirection(channelsRaw.m2);
+    const cryptoLiquidity = evidencedDirection(channelsRaw.cryptoLiquidity);
+    const policyRate = evidencedDirection(channelsRaw.policyRate);
+    const realYield = evidencedDirection(channelsRaw.realYield);
     const duration = oneOf(channelsRaw.duration, DURATION_DIRECTIONS);
     if (tBill) channels.tBillDemand = tBill;
     if (longYield) channels.longYield = longYield;
@@ -203,12 +209,12 @@ export function parseRegulationNotes(raw: unknown): { regulations: RegulationNot
     const confidence: RegulationNote["confidence"] = evidence.length > 0 ? "cited" : "estimated";
     const channelsRaw = asRecord(row.channels) ?? {};
     const channels: PolicyInstrument["channels"] = {};
-    const tBill = oneOf(channelsRaw.tBillDemand, CHANNEL_DIRECTIONS);
-    const longYield = oneOf(channelsRaw.longYield, CHANNEL_DIRECTIONS);
-    const m2 = oneOf(channelsRaw.m2, CHANNEL_DIRECTIONS);
-    const cryptoLiquidity = oneOf(channelsRaw.cryptoLiquidity, CHANNEL_DIRECTIONS);
-    const policyRate = oneOf(channelsRaw.policyRate, CHANNEL_DIRECTIONS);
-    const realYield = oneOf(channelsRaw.realYield, CHANNEL_DIRECTIONS);
+    const tBill = evidencedDirection(channelsRaw.tBillDemand);
+    const longYield = evidencedDirection(channelsRaw.longYield);
+    const m2 = evidencedDirection(channelsRaw.m2);
+    const cryptoLiquidity = evidencedDirection(channelsRaw.cryptoLiquidity);
+    const policyRate = evidencedDirection(channelsRaw.policyRate);
+    const realYield = evidencedDirection(channelsRaw.realYield);
     const duration = oneOf(channelsRaw.duration, DURATION_DIRECTIONS);
     if (tBill) channels.tBillDemand = tBill;
     if (longYield) channels.longYield = longYield;

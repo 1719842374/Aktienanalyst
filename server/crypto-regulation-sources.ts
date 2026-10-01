@@ -129,9 +129,7 @@ export function noticesToRegulationPayload(notices: OfficialNotice[], jurisdicti
       office: notice.office,
       instrumentType: notice.instrumentType,
       status: "uncertain",
-      channels: notice.instrumentType === "statute"
-        ? { cryptoLiquidity: "unclear", m2: "unclear", longYield: "unclear", policyRate: "unclear", realYield: "unclear" }
-        : { m2: "unclear", longYield: "unclear", tBillDemand: "unclear", policyRate: "unclear", realYield: "unclear" },
+      channels: {},
       note: notice.snippet,
       evidence: [{ source: "Federal Register", url: notice.url, date: notice.date }],
     })),

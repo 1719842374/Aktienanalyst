@@ -12,6 +12,7 @@ import {
   type PolicyInstrument,
 } from "../server/policy-instruments";
 import { buildPolicyScanPrompt, policyScanIsCacheable } from "../server/crypto-regulation-llm";
+import { emptyReading, type SeriesDirectionReading } from "../server/policy-scan-windows";
 import {
   fallbackScanSummary,
   isRefusalSummary,
@@ -145,21 +146,18 @@ const demand = estimateTBillDemand(snapshot);
 ok("Schaetzanteile gehen nicht in den Bedarf", demand.estimatedTBillDemandUsd == null && demand.dynamicMultiplier == null);
 ok("30-Tage-Aenderung bleibt gemessen", demand.mcapChange30dUsd === 10e9);
 
+function reading(latest: number): SeriesDirectionReading {
+  return { ...emptyReading(), latest };
+}
+
 const prompt = buildPolicyScanPrompt({
   asOf: "2026-09-30",
   jurisdiction: "US",
-  stablecoinMcapUsd: 1,
-  mcapChange30dUsd: 2,
-  usdtMcapUsd: 3,
-  usdcMcapUsd: 4,
-  defiTvlUsd: 95e9,
-  defiTvlChange30dUsd: 15e9,
-  tgaBn: 5,
-  dgs10: 4.1,
-  dgs10History: [],
-  policyRate: 4.3,
-  realYield10y: 1.9,
-  m2Bn: 6,
+  policyRate: reading(4.3),
+  realYield10y: reading(1.9),
+  dgs10: reading(4.1),
+  m2Bn: reading(6),
+  tgaBn: reading(5),
 }, [
   {
     title: "Beispielregel aus der Amtssuche",
@@ -174,21 +172,25 @@ const banned = ["Trump", "OBBBA", "Ishiba", "Bessent", "GENIUS"];
 ok("Prompt enthaelt keine fest eingetragenen Namen", banned.every(w => !prompt.includes(w)), banned.filter(w => prompt.includes(w)).join(","));
 ok("Prompt enthaelt das Datum und die gemessene Rendite", prompt.includes("2026-09-30") && prompt.includes("4.1"));
 ok(
-  "Prompt sucht Krypto-Regulierungen und den Liquiditaetstracker",
-  prompt.includes("Krypto-Regulierungen") && prompt.includes("Liquiditätstracker") && prompt.includes("Krypto-Liquidität"),
+  "Prompt sucht Krypto-Liquiditaet und nicht den Liquiditaetstracker",
+  prompt.includes("Krypto-Liquidität") && !prompt.includes("Liquiditätstracker"),
 );
 ok(
-  "gemessene TVL steht im Prompt",
-  prompt.includes("95000000000") && prompt.includes("15000000000"),
+  "Prompt behandelt Stablecoin-MCap und TVL nicht als Liquiditaetsthese",
+  !/stablecoin|defi|tvl|usdt|usdc/i.test(prompt) && !prompt.includes("95000000000"),
 );
 ok(
-  "Kanaele erklaeren Druck auf den Tracker",
-  ["cryptoLiquidity", "m2", "longYield", "tBillDemand"].every(ch => prompt.includes(ch)),
+  "Kanaele bleiben die sechs Druckkanaele",
+  ["cryptoLiquidity", "m2", "longYield", "tBillDemand", "policyRate", "realYield"].every(ch => prompt.includes(ch)),
 );
 ok("Prompt verbietet das Ueberschreiben gemessener Zahlen", prompt.includes("überschreibe"));
 ok(
-  "Prompt verlangt eine deutsche Zusammenfassung und verbietet die leere Ablehnung",
-  prompt.includes("summary") && prompt.includes("zwei deutsche Sätze") && prompt.includes("Ablehnung ohne Titel ist ungültig"),
+  "Prompt verlangt hoechstens vier deutsche Saetze und verbietet die leere Ablehnung",
+  prompt.includes("summary") && prompt.includes("höchstens vier deutsche Sätze") && prompt.includes("Ablehnung ohne Titel ist ungültig"),
+);
+ok(
+  "Prompt fuellt unclear nicht auf",
+  prompt.includes("unclear nicht") && !prompt.includes("up|down|unclear"),
 );
 ok(
   "Prompt sucht Fiskalprogramm, Leitzins, Realzins und die 10-Jahres-Rendite",
@@ -196,8 +198,8 @@ ok(
 );
 ok("Amtshinweis steht im Prompt, kein fest eingetragener Gesetzesname", prompt.includes("Beispielregel aus der Amtssuche"));
 ok(
-  "Prompt verlangt regulations auch ohne URL",
-  prompt.includes("regulations") && prompt.includes("estimated") && prompt.includes("unbestätigt"),
+  "Prompt verlangt Titel mit https und Datum",
+  prompt.includes("regulations") && prompt.includes("https") && prompt.includes("Datum"),
 );
 
 const estimatedOnly = {
@@ -240,6 +242,23 @@ const cited = parseRegulationNotes({
 ok(
   "https-Beleg setzt cited",
   cited.regulations[0]?.confidence === "cited" && cited.regulations[0]?.evidence.length === 1,
+);
+
+const padded = parseRegulationNotes({
+  regulations: [{
+    title: "Regel mit Quelle",
+    office: "regulator",
+    status: "enacted",
+    evidence: [evidence],
+    channels: { cryptoLiquidity: "up", m2: "unclear", longYield: "down" },
+  }],
+});
+ok(
+  "unclear wird nicht behalten",
+  padded.regulations[0]?.channels.cryptoLiquidity === "up"
+    && padded.regulations[0]?.channels.longYield === "down"
+    && padded.regulations[0]?.channels.m2 == null,
+  JSON.stringify(padded.regulations[0]?.channels),
 );
 
 ok(
