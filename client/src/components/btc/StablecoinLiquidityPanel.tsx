@@ -7,6 +7,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import { apiRequest } from "@/lib/queryClient";
+import { btcSourceRole, filterBtcNewsItems, isAllowedBtcCitation } from "@shared/btc-source-policy";
 import { allowedKeyEventEvidence, canonicalDocumentTitle, keyEventBody } from "@shared/policy-event-copy";
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Flame, Loader2, Minus, Sparkles } from "lucide-react";
 
@@ -406,7 +407,7 @@ function useBtcNews() {
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
         if (!cancelled) {
-          setItems(Array.isArray(json.items) ? json.items : []);
+          setItems(filterBtcNewsItems(Array.isArray(json.items) ? json.items : []));
           setLlmAvailable(json.llmAvailable === true);
           setError(null);
         }
@@ -423,18 +424,19 @@ function useBtcNews() {
 }
 
 function BtcNewsPanel({ items, loading, error }: { items: BtcNewsItem[]; loading: boolean; error: string | null }) {
-  const bullish = items.filter(n => n.sentiment === "bullish").length;
-  const bearish = items.filter(n => n.sentiment === "bearish").length;
-  const neutral = items.length - bullish - bearish;
+  const shown = items.filter(item => isAllowedBtcCitation(item.url, item.source));
+  const bullish = shown.filter(n => n.sentiment === "bullish").length;
+  const bearish = shown.filter(n => n.sentiment === "bearish").length;
+  const neutral = shown.length - bullish - bearish;
   return (
     <div className="rounded-lg border border-border/50 bg-card/50 p-3" data-testid="panel-btc-news">
       <div className="flex items-center justify-between mb-2 gap-2">
         <div className="flex items-center gap-2">
           <span className="text-sm">📰</span>
           <span className="text-sm font-semibold text-foreground">Aktuelle Nachrichten</span>
-          {!loading && <span className="text-xs text-foreground/50">({items.length})</span>}
+          {!loading && <span className="text-xs text-foreground/50">({shown.length})</span>}
         </div>
-        {items.length > 0 && (
+        {shown.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap justify-end">
             {bullish > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">▲ {bullish} bullish</span>}
             {bearish > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">▼ {bearish} bearish</span>}
@@ -444,11 +446,12 @@ function BtcNewsPanel({ items, loading, error }: { items: BtcNewsItem[]; loading
       </div>
       {loading && <div className="text-[11px] text-muted-foreground">Lade Nachrichten…</div>}
       {!loading && error && <div className="text-[11px] text-amber-700 dark:text-amber-400">{error}</div>}
-      {!loading && !error && items.length === 0 && (
+      {!loading && !error && shown.length === 0 && (
         <div className="text-[11px] text-muted-foreground">Keine aktuellen Meldungen.</div>
       )}
       <div className="space-y-1">
-        {items.map((news, idx) => {
+        {shown.map((news, idx) => {
+          const role = btcSourceRole(news.url, news.source);
           const sc = news.sentiment;
           const dotColor = sc === "bullish" ? "bg-emerald-400" : sc === "bearish" ? "bg-red-400" : "bg-foreground/30";
           const textColor = sc === "bullish" ? "text-emerald-300/90" : sc === "bearish" ? "text-red-300/90" : "text-foreground/70";
@@ -470,6 +473,11 @@ function BtcNewsPanel({ items, loading, error }: { items: BtcNewsItem[]; loading
                 </p>
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                   <span className="text-[10px] text-foreground/40">{news.source}</span>
+                  {role && (
+                    <span data-testid="news-source-role" className="text-[8px] px-1 py-px rounded bg-foreground/5 text-foreground/50">
+                      {role}
+                    </span>
+                  )}
                   {news.lang && (
                     <span className={`text-[8px] px-1 py-px rounded font-semibold uppercase ${news.lang === "de" ? "bg-amber-500/15 text-amber-400" : "bg-blue-500/15 text-blue-400"}`}>
                       {news.lang}

@@ -5,6 +5,7 @@
  */
 
 import type { Catalyst } from "../shared/schema";
+import { btcMediaSiteQuery, filterBtcNewsItems } from "../shared/btc-source-policy";
 import { fmpBatchQuote, fmpRatios, fmpKeyMetrics, fmpProfile } from "./fmp";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
 
@@ -77,6 +78,17 @@ export async function fetchTopicNewsFromGoogleRSS(
     dedupItems.sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
     return dedupItems.slice(0, 10);
   } catch { return []; }
+}
+
+/** Bitcoin-Nachrichten nur von der Quellenliste. Leere Liste bleibt leer. */
+export async function fetchAllowedBtcNews(): Promise<{ title: string; source: string; pubDate: string; url: string; relativeTime: string; lang?: string }[]> {
+  const sites = btcMediaSiteQuery();
+  const items = await fetchTopicNewsFromGoogleRSS(
+    `Bitcoin crypto (${sites})`,
+    `Bitcoin Krypto (${sites})`,
+    "BTC-SRC",
+  );
+  return filterBtcNewsItems(items);
 }
 
 export async function fetchNewsFromGoogleRSS(

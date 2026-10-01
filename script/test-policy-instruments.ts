@@ -21,6 +21,7 @@ import {
   noticesToRegulationPayload,
   parseFederalRegisterPage,
 } from "../server/crypto-regulation-sources";
+import { filterBtcNewsItems, btcSourceRole } from "../shared/btc-source-policy";
 import { canonicalDocumentTitle, usableEventSentences } from "../shared/policy-event-copy";
 import { defiTvlFromSeries, estimateTBillDemand, type StablecoinMarketSnapshot } from "../server/stablecoin-liquidity";
 
@@ -223,8 +224,13 @@ ok(
   prompt.includes("regulations") && prompt.includes("https") && prompt.includes("Datum"),
 );
 ok(
-  "Prompt laesst nur blocktrainer neben dem Amtshinweis zu",
-  prompt.includes("tagesschau.de") && prompt.includes("blocktrainer.de") && prompt.includes("Erfinde keine Adresse"),
+  "Prompt nennt die zitierbaren Medien und sperrt die Nachrichtenblogs",
+  ["reuters.com", "bloomberg.com", "ft.com", "theblock.co", "coindesk.com", "bitcoinmagazine.com", "blockworks.co", "messari.io", "glassnode.com", "decrypt.co", "blocktrainer.de"]
+    .every(host => prompt.includes(host))
+    && ["tagesschau.de", "cointelegraph.com", "newsbtc.com", "beincrypto.com", "ambcrypto.com"].every(host => prompt.includes(host))
+    && prompt.includes("Erfinde keine Adresse")
+    && !prompt.includes("FTX")
+    && !prompt.includes("Alameda"),
 );
 
 const estimatedOnly = {
@@ -439,6 +445,27 @@ ok(
 ok(
   "Amtshinweis ohne Modell traegt keinen englischen Abstract",
   fromNotices.regulations[0]?.note == null,
+);
+const keptNews = filterBtcNewsItems([
+  { title: "Wire", source: "Reuters", url: "https://news.google.com/rss/articles/reuters" },
+  { title: "Desk", source: "CoinDesk", url: "https://www.coindesk.com/policy/example" },
+  { title: "Mag", source: "Bitcoin Magazine", url: "https://bitcoinmagazine.com/markets/example" },
+  { title: "DE", source: "Blocktrainer", url: "https://www.blocktrainer.de/beispiel" },
+  { title: "Tag", source: "Tagesschau", url: "https://www.tagesschau.de/wirtschaft/krypto-100.html" },
+  { title: "CT", source: "Cointelegraph", url: "https://cointelegraph.com/news/example" },
+  { title: "NB", source: "NewsBTC", url: "https://www.newsbtc.com/news/example" },
+  { title: "BI", source: "BeInCrypto", url: "https://beincrypto.com/example" },
+  { title: "AMB", source: "AMBCrypto", url: "https://ambcrypto.com/example" },
+  { title: "YT", source: "YouTube", url: "https://www.youtube.com/watch?v=abc" },
+]);
+ok(
+  "Nachrichtenfilter behaelt die Quellenliste und wirft die Blogs raus",
+  keptNews.map(item => item.source).join(",") === "Reuters,CoinDesk,Bitcoin Magazine,Blocktrainer"
+    && btcSourceRole("https://www.reuters.com/markets/example", "Reuters") === "Wire"
+    && btcSourceRole("https://www.theblock.co/news/example", "The Block") === "Institution"
+    && btcSourceRole("https://www.blocktrainer.de/beispiel", "Blocktrainer") === "Bitcoin"
+    && btcSourceRole("https://www.federalregister.gov/documents/2026/06/22/example", "Federal Register") === "Primärquelle"
+    && btcSourceRole("https://cointelegraph.com/news/example", "Cointelegraph") == null,
 );
 ok("Ersatztext nennt keinen festen Gesetzesnamen", !["Trump", "OBBBA", "Ishiba", "Bessent", "GENIUS"].some(w => fallbackScanSummary(3).includes(w)));
 
