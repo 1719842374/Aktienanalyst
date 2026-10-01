@@ -155,3 +155,93 @@ export function usableEventSentences(text: string | null | undefined): string | 
   const joined = kept.join(" ").trim();
   return joined || null;
 }
+
+function evidenceHost(url: string): string | null {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** Federal Register und andere Amtsdomains. Nachrichtenseiten gehoeren nicht dazu. */
+export function isOfficialEvidenceUrl(url: string): boolean {
+  const host = evidenceHost(url);
+  if (!host) return false;
+  if (host === "federalregister.gov" || host.endsWith(".federalregister.gov")) return true;
+  if (host === "govinfo.gov" || host.endsWith(".govinfo.gov")) return true;
+  return host.endsWith(".gov");
+}
+
+/**
+ * Key Events: Amtshinweis oder eine echte blocktrainer.de-Adresse.
+ * tagesschau.de und andere Nachrichtenseiten fallen weg. Es wird keine
+ * Ersatzkarte erfunden.
+ */
+export function isAllowedKeyEventUrl(url: string): boolean {
+  const host = evidenceHost(url);
+  if (!host) return false;
+  if (isOfficialEvidenceUrl(url)) return true;
+  return host === "blocktrainer.de" || host.endsWith(".blocktrainer.de");
+}
+
+export function allowedKeyEventEvidence<T extends { url: string }>(evidence: T[] | undefined): T[] {
+  return (evidence ?? []).filter(item => /^https:\/\//i.test(item.url || "") && isAllowedKeyEventUrl(item.url));
+}
+
+/** Kundenidentifizierung, Zulassung oder Permitted-Issuer-Rahmen. Kein einzelner Gesetzesname. */
+function isIssuanceFrameworkTitle(title: string): boolean {
+  return /customer identification|identification program|permitted payment stablecoin issuer|kundenidentifiz|zulassungsrahmen|\blizenz|\blicensing\b/i.test(title);
+}
+
+function rateDirection(channels: Record<string, string> | undefined): "up" | "down" | null {
+  const votes = [channels?.policyRate, channels?.realYield, channels?.longYield].filter(
+    (value): value is "up" | "down" => value === "up" || value === "down",
+  );
+  const ups = votes.filter(value => value === "up").length;
+  const downs = votes.length - ups;
+  if (ups > 0 && downs === 0) return "up";
+  if (downs > 0 && ups === 0) return "down";
+  return null;
+}
+
+/**
+ * Ein Satz aus dem Dokumenttitel und den Kanaelen, die schon auf der Karte stehen.
+ * Ein Zulassungs- oder Identifizierungsrahmen oeffnet die Ausgabe, solange der
+ * Kanal das nicht ausdruecklich verneint. Keine Zahl, kein Datum, kein neues Narrativ.
+ */
+export function germanNoticeBody(title: string, channels: Record<string, string> | undefined): string {
+  const label = title.trim().replace(/\s+/g, " ").replace(/[.]+$/, "");
+  const effects: string[] = [];
+  const liquidity = channels?.cryptoLiquidity;
+  if (liquidity === "down") {
+    effects.push("beschränkt die Stablecoin-Ausgabe und senkt die Krypto-Liquidität");
+  } else if (liquidity === "up" || isIssuanceFrameworkTitle(label)) {
+    effects.push("öffnet einen Zulassungsrahmen für die Stablecoin-Ausgabe und legitimiert die Krypto-Liquidität");
+  }
+  const rates = rateDirection(channels);
+  if (rates === "up") effects.push("hebt das Zinsniveau");
+  if (rates === "down") effects.push("senkt das Zinsniveau");
+  if (channels?.inflation === "up") effects.push("hebt den Preisdruck");
+  if (channels?.inflation === "down") effects.push("senkt den Preisdruck");
+  if (effects.length === 0) {
+    return `Der Amtshinweis „${label}“ liegt als belegtes Dokument vor.`;
+  }
+  const tail = effects.length === 1
+    ? effects[0]
+    : `${effects.slice(0, -1).join(", ")} und ${effects[effects.length - 1]}`;
+  return `Der Amtshinweis „${label}“ ${tail}.`;
+}
+
+/** Deutscher Modellsatz gewinnt. Sonst ein Satz nur fuer einen Amtshinweis. */
+export function keyEventBody(
+  note: string | null | undefined,
+  title: string,
+  channels: Record<string, string> | undefined,
+  evidence: { url: string }[] | undefined,
+): string | null {
+  const german = usableEventSentences(note);
+  if (german) return german;
+  if (!(evidence ?? []).some(item => isOfficialEvidenceUrl(item.url))) return null;
+  return germanNoticeBody(title, channels);
+}

@@ -252,7 +252,7 @@ const collected = collectPolicyEvents(
     status: "implementing",
     confidence: "cited",
     channels: { cryptoLiquidity: "up" },
-    evidence: [{ source: "Amtsblatt", url: "https://example.test/rahmen", date: "2026-09-01" }],
+    evidence: [{ source: "Federal Register", url: "https://www.federalregister.gov/documents/2026/09/01/example-rahmen", date: "2026-09-01" }],
   }],
   [{
     id: "dup",
@@ -261,7 +261,7 @@ const collected = collectPolicyEvents(
     instrumentType: "statute",
     status: "implementing",
     channels: { cryptoLiquidity: "down" },
-    evidence: [{ source: "Amtsblatt", url: "https://example.test/rahmen", date: "2026-09-01" }],
+    evidence: [{ source: "Federal Register", url: "https://www.federalregister.gov/documents/2026/09/01/example-rahmen", date: "2026-09-01" }],
   }, {
     id: "extra",
     title: "Schuldenoperation",
@@ -269,7 +269,7 @@ const collected = collectPolicyEvents(
     instrumentType: "debt_operation",
     status: "enacted",
     channels: { tBillDemand: "up" },
-    evidence: [{ source: "Amtsblatt", url: "https://example.test/bill", date: "2026-06-01" }],
+    evidence: [{ source: "Federal Register", url: "https://www.federalregister.gov/documents/2026/06/01/example-bill", date: "2026-06-01" }],
   }],
 );
 ok(
@@ -316,6 +316,67 @@ ok(
     && chip(markdownHtml, "btc").includes(">positiv<")
     && chip(markdownHtml, "btc").includes("text-emerald-400"),
   titleHtml,
+);
+
+const sourceFiltered = collectPolicyEvents(
+  [{
+    id: "tagesschau",
+    title: "[tagesschau.de](https://www.tagesschau.de/wirtschaft/finanzen/marktberichte/krypto-us-senat-100.html)",
+    office: "regulator",
+    status: "uncertain",
+    confidence: "cited",
+    channels: { cryptoLiquidity: "down" },
+    note: "Krypto Us Senat 100",
+    evidence: [{ source: "tagesschau.de", url: "https://www.tagesschau.de/wirtschaft/finanzen/marktberichte/krypto-us-senat-100.html", date: "2026-09-16" }],
+  }, {
+    id: "blocktrainer",
+    title: "Stablecoin-Rahmen",
+    office: "regulator",
+    status: "proposed",
+    confidence: "cited",
+    channels: { cryptoLiquidity: "up" },
+    note: "Der Beitrag beschreibt den Zulassungsrahmen.",
+    evidence: [{ source: "blocktrainer.de", url: "https://www.blocktrainer.de/stablecoin-rahmen", date: "2026-09-16" }],
+  }, {
+    id: "cip",
+    title: "Permitted Payment Stablecoin Issuer Customer Identification Program",
+    office: "treasury",
+    instrumentType: "statute",
+    status: "implementing",
+    confidence: "cited",
+    channels: { policyRate: "up" },
+    note: "The Department of the Treasury is issuing this interim final rule on behalf of the Committee.",
+    evidence: [{
+      source: "Federal Register",
+      url: "https://www.federalregister.gov/documents/2026/06/22/2026-12460/permitted-payment-stablecoin-issuer-customer-identification-program",
+      date: "2026-06-22",
+    }],
+  }],
+  [],
+);
+const cipEvent = sourceFiltered.find(event => event.id === "cip");
+const cipHtml = cipEvent ? renderToStaticMarkup(createElement(PolicyEventCard, { event: cipEvent })) : "";
+const cipTitleAt = cipHtml.indexOf('data-testid="policy-event-title"');
+const cipTitle = cipTitleAt < 0 ? "" : cipHtml.slice(cipTitleAt, cipHtml.indexOf("</div>", cipTitleAt));
+const cipRates = chip(cipHtml, "zinsen");
+ok(
+  "tagesschau faellt weg, blocktrainer bleibt, englischer Amtstext wird deutsch, Zinsen steigend bleibt rot",
+  sourceFiltered.length === 2
+    && !sourceFiltered.some(event => /tagesschau|Krypto Us Senat/i.test(`${event.title} ${event.note ?? ""} ${event.evidence?.map(item => item.url).join(" ")}`))
+    && sourceFiltered.some(event => event.evidence?.some(item => item.url.includes("blocktrainer.de")))
+    && !sourceFiltered.some(event => event.evidence?.some(item => item.url.includes("blocktrainer.de")) && event.title === "Krypto Us Senat 100")
+    && cipTitle.includes("Permitted Payment Stablecoin Issuer Customer Identification Program")
+    && !cipTitle.includes("[")
+    && !cipTitle.includes("](")
+    && !cipHtml.includes("The Department of the Treasury")
+    && cipHtml.includes("öffnet einen Zulassungsrahmen für die Stablecoin-Ausgabe und legitimiert die Krypto-Liquidität")
+    && cipHtml.includes("Federal Register")
+    && cipHtml.includes("https://www.federalregister.gov/documents/2026/06/22/2026-12460/permitted-payment-stablecoin-issuer-customer-identification-program")
+    && cipRates.includes(">steigend<")
+    && cipRates.includes("rate-impact-negative")
+    && cipRates.includes("text-red-400")
+    && cipRates.includes('data-testid="impact-up"'),
+  cipTitle || JSON.stringify(sourceFiltered.map(event => event.title)),
 );
 
 const bannedCards = ["DeFi-TVL", "TVL-Δ", "Stablecoin Total MCap", "USDT (Tether)", "USDC (Circle)", "Stablecoin-Δ", "Liquiditätstracker"];

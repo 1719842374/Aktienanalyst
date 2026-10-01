@@ -80,7 +80,7 @@ Amt: legislature, regulator, treasury oder central_bank.
 instrumentType: statute für Gesetze und Aufsichtsregeln, fiscal_program für Fiskalprogramme, debt_operation für Schuldenoperationen.
 Status nur proposed, advanced, enacted, implementing, rejected, expired oder uncertain.
 Jeder Amtshinweis wird genau eine regulation mit demselben Titel, mit https und Datum. Höchstens acht Einträge.
-Weitere Titel nur aus der Websuche dieser Anfrage, ebenfalls mit https und Datum.
+Weitere Titel nur aus der Websuche dieser Anfrage, ebenfalls mit https und Datum. Allgemeine Nachrichtenseiten, darunter tagesschau.de, sind keine Belege. Die einzige zusätzliche Krypto-Quelle ist blocktrainer.de, und nur mit einer https-Adresse, die in dieser Anfrage wirklich vorkommt. Erfinde keine Adresse und keine Schlagzeile.
 Pro Eintrag nur die Kanäle, die das Dokument stützt. Erlaubte Kanäle: cryptoLiquidity, inflation, m2, longYield, policyRate, realYield, tBillDemand. Werte nur up oder down. unclear nicht setzen und fehlende Kanäle weglassen.
 Die Richtung ist die Wirkung des Dokuments auf diesen Kanal. Eine Regel allein setzt keinen Kanal auf down.
 cryptoLiquidity ist up, wenn das Dokument einen Weg für die Stablecoin-Ausgabe, für Reserven oder für Dollar-Liquidität auf der Chain öffnet, legitimiert oder erweitert. Ein Lizenz- oder Umsetzungsrahmen ist diese Öffnung.

@@ -7,7 +7,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import { apiRequest } from "@/lib/queryClient";
-import { canonicalDocumentTitle, usableEventSentences } from "@shared/policy-event-copy";
+import { allowedKeyEventEvidence, canonicalDocumentTitle, keyEventBody } from "@shared/policy-event-copy";
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Flame, Loader2, Minus, Sparkles } from "lucide-react";
 
 interface SeriesDirectionReading {
@@ -253,8 +253,10 @@ export function collectPolicyEvents(
     evidence?.find(item => /^https:\/\//i.test(item.url || ""))?.url,
   );
   for (const reg of regulations) {
-    if (reg.confidence !== "cited" || !hasHttps(reg.evidence)) continue;
-    const title = headingFor(reg.title, reg.evidence);
+    if (reg.confidence !== "cited") continue;
+    const evidence = allowedKeyEventEvidence(reg.evidence);
+    if (evidence.length === 0) continue;
+    const title = headingFor(reg.title, evidence);
     if (!remember(title)) continue;
     events.push({
       id: reg.id,
@@ -263,16 +265,17 @@ export function collectPolicyEvents(
       instrumentType: reg.instrumentType,
       status: reg.status,
       channels: reg.channels,
-      note: usableEventSentences(reg.note) ?? undefined,
-      evidence: reg.evidence,
+      note: keyEventBody(reg.note, title, reg.channels, evidence) ?? undefined,
+      evidence,
     });
   }
   for (const inst of instruments) {
-    if (!hasHttps(inst.evidence)) continue;
+    const evidence = allowedKeyEventEvidence(inst.evidence);
+    if (evidence.length === 0) continue;
     const title = headingFor(
       inst.title?.trim()
         || [OFFICE_LABEL[inst.office] ?? inst.office, TYPE_LABEL[inst.instrumentType] ?? inst.instrumentType, inst.status].filter(Boolean).join(" · "),
-      inst.evidence,
+      evidence,
     );
     if (!remember(title)) continue;
     events.push({
@@ -282,7 +285,8 @@ export function collectPolicyEvents(
       instrumentType: inst.instrumentType,
       status: inst.status,
       channels: inst.channels,
-      evidence: inst.evidence,
+      note: keyEventBody(undefined, title, inst.channels, evidence) ?? undefined,
+      evidence,
       ...(inst.officeHolder ? { holder: inst.officeHolder } : {}),
     });
   }
@@ -320,7 +324,7 @@ export function PolicyEventCard({ event }: { event: PolicyEventInput }) {
   const dot = STATUS_DOT[event.status] || "bg-foreground/30";
   const link = event.evidence?.find(item => /^https:\/\//i.test(item.url || ""));
   const heading = canonicalDocumentTitle(event.title, link?.url);
-  const body = usableEventSentences(event.note);
+  const body = keyEventBody(event.note, heading, event.channels, event.evidence);
   const tags = Object.entries(TAG_LABEL)
     .filter(([key]) => event.channels?.[key] === "up" || event.channels?.[key] === "down")
     .map(([, label]) => label);
