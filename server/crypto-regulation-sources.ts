@@ -130,8 +130,8 @@ export function noticesToRegulationPayload(notices: OfficialNotice[], jurisdicti
       instrumentType: notice.instrumentType,
       status: "uncertain",
       // Richtung setzt das Modell aus der Wirkung des Hinweises. Hier kein Kanal ohne Textbeleg.
+      // Der englische Abstract ist kein Kartentext. Der Prompt behaelt den Kurztext.
       channels: {},
-      note: notice.snippet,
       evidence: [{ source: "Federal Register", url: notice.url, date: notice.date }],
     })),
   };
@@ -145,6 +145,8 @@ export function isRefusalSummary(summary: string | null): boolean {
 export function fallbackScanSummary(count: number): string {
   return `Die Amtssuche hat ${count} aktuelle Dokumente zu Krypto-Regeln, Fiskalprogrammen und dem Zinskanal geliefert. Leitzins, Realzins, die 10-Jahres-Rendite und M2 bleiben die gemessenen Werte. Ohne belegten Status bleibt die Wirkung unbestätigt.`;
 }
+
+export { applyNoticeTitles } from "../shared/policy-event-copy";
 
 export function mergeByTitle<T extends { title: string }>(primary: T[], extra: T[], cap = 8): T[] {
   const seen = new Set(primary.map(item => item.title.trim().toLowerCase()));

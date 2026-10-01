@@ -17,10 +17,12 @@ import {
   type PolicyNote,
 } from "./crypto-regulation-llm";
 import {
+  applyNoticeTitles,
   fetchOfficialNotices,
   mergeByTitle,
   noticesToRegulationPayload,
 } from "./crypto-regulation-sources";
+import { usableEventSentences } from "../shared/policy-event-copy";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 import {
   FRED_LOOKBACK_DAYS,
@@ -42,7 +44,7 @@ import {
 
 export { buildPolicyScanPrompt, policyScanIsCacheable };
 
-const SCHEMA = "v8";
+const SCHEMA = "v9";
 const CACHE_TAB = "crypto_regulation";
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 const RESEARCHER_TTL_MIN = 60 * 6;
@@ -249,15 +251,17 @@ function publicMeasured(measured: MeasuredPolicyContext): MeasuredPolicyContext 
 
 function scrubModelRegulationNotes(
   regulations: RegulationNote[],
-  snippets: string[],
   measured: MeasuredPolicyContext,
 ): RegulationNote[] {
   const allowed = allowedMeasuredNumbers(measured.windows);
-  const trusted = new Set(snippets.filter(Boolean));
   return regulations.map(reg => {
-    if (!reg.note || trusted.has(reg.note) || proseNumbersAreMeasured(reg.note, allowed)) return reg;
-    const { note: _drop, ...rest } = reg;
-    return rest;
+    const note = usableEventSentences(reg.note);
+    if (!note || !proseNumbersAreMeasured(note, allowed)) {
+      if (!reg.note) return reg;
+      const { note: _drop, ...rest } = reg;
+      return rest;
+    }
+    return note === reg.note ? reg : { ...reg, note };
   });
 }
 
@@ -328,12 +332,12 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
   const model = llm.data && typeof llm.data === "object" ? llm.data as Record<string, unknown> : null;
   const notes = parseRegulationNotes(model);
   const regulations = scrubModelRegulationNotes(
-    mergeByTitle(notes.regulations, noticeNotes, 8),
-    notices.map(notice => notice.snippet),
+    mergeByTitle(applyNoticeTitles(notes.regulations, notices), noticeNotes, 8),
     measured,
   );
   const note = noteFromModel(measured, model, regulations.length);
   const parsed = parsePolicyInstruments(model);
+  parsed.instruments = applyNoticeTitles(parsed.instruments, notices);
   const computed = effectsFor(parsed.instruments, measured);
   const empty = regulations.length === 0 && parsed.instruments.length === 0;
   const result: PolicyScanResult = {

@@ -279,6 +279,45 @@ ok(
     && collected[1].title === "Schuldenoperation",
 );
 
+const markdownTitle = "[federalregister.gov](https://www.federalregister.gov/documents/2026/09/30/2026-20037/regulation-d-reserve-requirements-of-depository-institutions)";
+const markdownEvent: PolicyEventInput = {
+  id: "reg-d-md",
+  title: markdownTitle,
+  office: "central_bank",
+  instrumentType: "statute",
+  status: "enacted",
+  channels: { policyRate: "up", cryptoLiquidity: "up" },
+  note: "The Department of the Treasury is issuing this interim final rule on behalf of the Committee. Die Federal Reserve erhoeht die Verzinsung von Reserveguthaben.",
+  evidence: [{
+    source: "Federal Register",
+    url: "https://www.federalregister.gov/documents/2026/09/30/2026-20037/regulation-d-reserve-requirements-of-depository-institutions",
+    date: "2026-09-30",
+  }],
+};
+const markdownHtml = renderToStaticMarkup(createElement(PolicyEventCard, { event: markdownEvent }));
+const titleAt = markdownHtml.indexOf('data-testid="policy-event-title"');
+const titleHtml = titleAt < 0 ? "" : markdownHtml.slice(titleAt, markdownHtml.indexOf("</div>", titleAt));
+const markdownRates = chip(markdownHtml, "zinsen");
+ok(
+  "Markdown-Link im Titel wird zum Dokumenttitel, Zinsen steigend bleibt rot",
+  titleHtml.includes("Regulation D Reserve Requirements of Depository Institutions")
+    && !titleHtml.includes("[")
+    && !titleHtml.includes("](")
+    && !markdownHtml.includes("[federalregister.gov]")
+    && !markdownHtml.includes("The Department of the Treasury")
+    && markdownHtml.includes("Die Federal Reserve erhoeht die Verzinsung von Reserveguthaben.")
+    && markdownHtml.includes("Federal Register")
+    && markdownHtml.includes("2026-09-30")
+    && markdownRates.includes(">steigend<")
+    && markdownRates.includes("rate-impact-negative")
+    && markdownRates.includes("text-red-400")
+    && markdownRates.includes('data-testid="impact-up"')
+    && !markdownRates.includes("text-emerald-400")
+    && chip(markdownHtml, "btc").includes(">positiv<")
+    && chip(markdownHtml, "btc").includes("text-emerald-400"),
+  titleHtml,
+);
+
 const bannedCards = ["DeFi-TVL", "TVL-Δ", "Stablecoin Total MCap", "USDT (Tether)", "USDC (Circle)", "Stablecoin-Δ", "Liquiditätstracker"];
 ok(
   "Sektion 14 rendert die sechs DefiLlama-Karten nicht",
