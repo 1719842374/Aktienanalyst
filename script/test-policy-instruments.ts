@@ -177,11 +177,30 @@ ok(
 );
 ok(
   "Prompt behandelt Stablecoin-MCap und TVL nicht als Liquiditaetsthese",
-  !/stablecoin|defi|tvl|usdt|usdc/i.test(prompt) && !prompt.includes("95000000000"),
+  !/defi|tvl|usdt|usdc/i.test(prompt)
+    && !/marktkapitalisierung|market cap|total mcap/i.test(prompt)
+    && !prompt.includes("95000000000"),
+);
+ok(
+  "Richtung folgt der Wirkung im Dokument",
+  prompt.includes("Die Richtung ist die Wirkung")
+    && prompt.includes("Stablecoin-Ausgabe")
+    && prompt.includes("Lizenz- oder Umsetzungsrahmen")
+    && prompt.includes("Eine Regel allein setzt keinen Kanal auf down")
+    && prompt.includes("verbietet, deckelt")
+    && !prompt.includes("GENIUS"),
 );
 ok(
   "Kanaele bleiben die sechs Druckkanaele",
   ["cryptoLiquidity", "m2", "longYield", "tBillDemand", "policyRate", "realYield"].every(ch => prompt.includes(ch)),
+);
+ok(
+  "Inflation und Zinsen folgen der Wirkung im Text",
+  prompt.includes("Preisdruck")
+    && prompt.includes("Zinsniveau")
+    && prompt.includes("inflation")
+    && prompt.includes("Ein Lizenz- oder Umsetzungsrahmen allein setzt inflation nicht")
+    && !prompt.includes("GENIUS"),
 );
 ok("Prompt verbietet das Ueberschreiben gemessener Zahlen", prompt.includes("überschreibe"));
 ok(
@@ -259,6 +278,59 @@ ok(
     && padded.regulations[0]?.channels.longYield === "down"
     && padded.regulations[0]?.channels.m2 == null,
   JSON.stringify(padded.regulations[0]?.channels),
+);
+
+const effectKept = parseRegulationNotes({
+  regulations: [
+    {
+      title: "Rahmen fuer Ausgabe und Reserven",
+      office: "legislature",
+      status: "enacted",
+      evidence: [evidence],
+      channels: { cryptoLiquidity: "up", policyRate: "down" },
+    },
+    {
+      title: "Verbot der Ausgabe",
+      office: "regulator",
+      status: "enacted",
+      evidence: [evidence],
+      channels: { cryptoLiquidity: "down" },
+    },
+  ],
+});
+ok(
+  "Parser dreht die Wirkung nicht um",
+  effectKept.regulations[0]?.channels.cryptoLiquidity === "up"
+    && effectKept.regulations[0]?.channels.policyRate === "down"
+    && effectKept.regulations[1]?.channels.cryptoLiquidity === "down"
+    && !JSON.stringify(effectKept).includes("GENIUS"),
+  JSON.stringify(effectKept.regulations.map(row => row.channels)),
+);
+
+const inflationKept = parseRegulationNotes({
+  regulations: [{
+    title: "Preisdruck aus dem Text",
+    office: "central_bank",
+    status: "enacted",
+    evidence: [evidence],
+    channels: { inflation: "up", policyRate: "down", inflationPad: "unclear", m2: "unclear" },
+  }, {
+    title: "Rahmen ohne Preisdruck",
+    office: "regulator",
+    status: "implementing",
+    evidence: [evidence],
+    channels: { cryptoLiquidity: "up", inflation: "unclear" },
+  }],
+});
+ok(
+  "Inflation bleibt nur die belegte Wirkung",
+  inflationKept.regulations[0]?.channels.inflation === "up"
+    && inflationKept.regulations[0]?.channels.policyRate === "down"
+    && inflationKept.regulations[0]?.channels.m2 == null
+    && inflationKept.regulations[1]?.channels.cryptoLiquidity === "up"
+    && inflationKept.regulations[1]?.channels.inflation == null
+    && !JSON.stringify(inflationKept).includes("unclear"),
+  JSON.stringify(inflationKept.regulations.map(row => row.channels)),
 );
 
 ok(

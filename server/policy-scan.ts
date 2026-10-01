@@ -42,7 +42,7 @@ import {
 
 export { buildPolicyScanPrompt, policyScanIsCacheable };
 
-const SCHEMA = "v7";
+const SCHEMA = "v8";
 const CACHE_TAB = "crypto_regulation";
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 const RESEARCHER_TTL_MIN = 60 * 6;

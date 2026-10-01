@@ -8,7 +8,13 @@
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MeasuredFredCards } from "../client/src/components/btc/StablecoinLiquidityPanel";
+import {
+  MeasuredFredCards,
+  PolicyEventCard,
+  briefingImpacts,
+  collectPolicyEvents,
+  type PolicyEventInput,
+} from "../client/src/components/btc/StablecoinLiquidityPanel";
 
 let failed = 0;
 function ok(name: string, cond: boolean, detail?: string) {
@@ -67,6 +73,134 @@ const withWindows = renderToStaticMarkup(createElement(MeasuredFredCards, {
 }));
 ok("1J- und 2J-Richtung stehen an jeder Serie", (withWindows.match(/1J /g) ?? []).length === 5 && (withWindows.match(/2J /g) ?? []).length === 5);
 ok("steigend bleibt sichtbar", withWindows.includes("1J steigend"));
+ok(
+  "steigend gruen nach oben, fallend rot nach unten, unveraendert neutral",
+  (withWindows.match(/data-testid="series-up"/g) ?? []).length === 6
+    && (withWindows.match(/data-testid="series-down"/g) ?? []).length === 2
+    && (withWindows.match(/data-testid="series-flat"/g) ?? []).length === 1
+    && (withWindows.match(/text-emerald-400/g) ?? []).length === 6
+    && (withWindows.match(/text-red-400/g) ?? []).length === 2,
+);
+ok(
+  "unbekannt hat keinen Pfeil",
+  (withWindows.match(/2J unbekannt/g) ?? []).length === 1
+    && withWindows.includes("2J unbekannt</span></span>")
+    && !withWindows.includes("1J unbekannt"),
+);
+ok("ohne Fenster kein Richtungspeil", !html.includes("series-up") && !html.includes("series-down") && !html.includes("series-flat"));
+
+const opening: PolicyEventInput = {
+  id: "rahmen",
+  title: "Rahmen fuer Ausgabe und Reserven",
+  office: "legislature",
+  instrumentType: "statute",
+  status: "implementing",
+  channels: { cryptoLiquidity: "up", inflation: "up", policyRate: "up", realYield: "unclear", m2: "up" },
+  note: "Der Text oeffnet die Ausgabe.",
+  evidence: [{ source: "Amtsblatt", url: "https://example.test/rahmen", date: "2026-09-01" }],
+};
+const openingHtml = renderToStaticMarkup(createElement(PolicyEventCard, { event: opening }));
+ok(
+  "Briefing-Karte zeigt Inflation, Zinsen und BTC",
+  openingHtml.includes("Aktuelle") === false
+    && openingHtml.includes(">Inflation<")
+    && openingHtml.includes(">Zinsen<")
+    && openingHtml.includes(">BTC<")
+    && openingHtml.includes("Tech/Regulierung")
+    && openingHtml.includes("2026-09-01")
+    && openingHtml.includes("Der Text oeffnet die Ausgabe.")
+    && openingHtml.includes(">M2<"),
+);
+ok(
+  "steigend und positiv sind gruen nach oben",
+  openingHtml.includes(">steigend<")
+    && openingHtml.includes(">positiv<")
+    && (openingHtml.match(/data-testid="impact-up"/g) ?? []).length === 3
+    && (openingHtml.match(/text-emerald-400/g) ?? []).length === 6
+    && !openingHtml.includes("unclear")
+    && !openingHtml.includes("aufwärts")
+    && !openingHtml.includes("Krypto-Liquidität"),
+);
+const ban: PolicyEventInput = {
+  id: "verbot",
+  title: "Verbot der Ausgabe",
+  office: "regulator",
+  instrumentType: "statute",
+  status: "enacted",
+  channels: { cryptoLiquidity: "down", inflation: "down", longYield: "down" },
+  note: "Der Text kappt die Ausgabe.",
+  evidence: [{ source: "Amtsblatt", url: "https://example.test/verbot", date: "2026-08-02" }],
+};
+const banHtml = renderToStaticMarkup(createElement(PolicyEventCard, { event: ban }));
+ok(
+  "fallend und negativ sind rot nach unten",
+  banHtml.includes(">fallend<")
+    && banHtml.includes(">negativ<")
+    && (banHtml.match(/data-testid="impact-down"/g) ?? []).length === 3
+    && (banHtml.match(/text-red-400/g) ?? []).length === 6
+    && !banHtml.includes("text-emerald-400"),
+);
+const quiet: PolicyEventInput = {
+  id: "offen",
+  title: "Hinweis ohne Richtung",
+  office: "treasury",
+  instrumentType: "fiscal_program",
+  status: "uncertain",
+  channels: {},
+  evidence: [{ source: "Amtsblatt", url: "https://example.test/offen", date: "2026-07-01" }],
+};
+const quietHtml = renderToStaticMarkup(createElement(PolicyEventCard, { event: quiet }));
+ok(
+  "neutral bleibt neutral und ohne Farbe",
+  (quietHtml.match(/data-testid="impact-neutral"/g) ?? []).length === 3
+    && (quietHtml.match(/>neutral</g) ?? []).length === 3
+    && !quietHtml.includes("text-emerald-400")
+    && !quietHtml.includes("text-red-400")
+    && !quietHtml.includes("impact-up")
+    && !quietHtml.includes("impact-down"),
+);
+ok(
+  "widerspruechliche Zinsen bleiben neutral, Liquiditaet bestimmt BTC",
+  briefingImpacts({ policyRate: "up", longYield: "down", cryptoLiquidity: "up" }).rates === "neutral"
+    && briefingImpacts({ policyRate: "up", longYield: "down", cryptoLiquidity: "up" }).btc === "positiv"
+    && briefingImpacts({ realYield: "down" }).rates === "fallend"
+    && briefingImpacts({ inflation: "unclear", cryptoLiquidity: "sideways" }).inflation === "neutral"
+    && briefingImpacts({ inflation: "unclear", cryptoLiquidity: "sideways" }).btc === "neutral",
+);
+const collected = collectPolicyEvents(
+  [{
+    id: "regel",
+    title: "Rahmen fuer Ausgabe und Reserven",
+    office: "legislature",
+    status: "implementing",
+    confidence: "cited",
+    channels: { cryptoLiquidity: "up" },
+    evidence: [{ source: "Amtsblatt", url: "https://example.test/rahmen", date: "2026-09-01" }],
+  }],
+  [{
+    id: "dup",
+    title: "Rahmen fuer Ausgabe und Reserven",
+    office: "legislature",
+    instrumentType: "statute",
+    status: "implementing",
+    channels: { cryptoLiquidity: "down" },
+    evidence: [{ source: "Amtsblatt", url: "https://example.test/rahmen", date: "2026-09-01" }],
+  }, {
+    id: "extra",
+    title: "Schuldenoperation",
+    office: "treasury",
+    instrumentType: "debt_operation",
+    status: "enacted",
+    channels: { tBillDemand: "up" },
+    evidence: [{ source: "Amtsblatt", url: "https://example.test/bill", date: "2026-06-01" }],
+  }],
+);
+ok(
+  "belegte Regel gewinnt vor dem doppelten Instrument",
+  collected.length === 2
+    && collected[0].channels.cryptoLiquidity === "up"
+    && collected[1].title === "Schuldenoperation",
+);
 
 const bannedCards = ["DeFi-TVL", "TVL-Δ", "Stablecoin Total MCap", "USDT (Tether)", "USDC (Circle)", "Stablecoin-Δ", "Liquiditätstracker"];
 ok(
@@ -75,6 +209,16 @@ ok(
   bannedCards.filter(label => panel.includes(label)).join(", "),
 );
 ok("Nachrichten liegen in Sektion 14", panel.includes("Aktuelle Nachrichten") && panel.includes("/api/analyze-btc/news"));
+ok(
+  "Key Events nutzen die Briefing-Karte mit Inflation, Zinsen und BTC",
+  panel.includes("<PolicyEventGrid")
+    && panel.includes("Aktuelle Key Events")
+    && panel.includes('label="Inflation"')
+    && panel.includes('label="Zinsen"')
+    && panel.includes('label="BTC"')
+    && !panel.includes("ChannelMarks")
+    && !panel.includes("Krypto-Liquidität:"),
+);
 
 if (failed) {
   console.log(`\n${failed} failed`);

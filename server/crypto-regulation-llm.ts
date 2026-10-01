@@ -34,7 +34,7 @@ export interface PolicyNote {
 }
 
 export const POLICY_SCAN_SYSTEM_PROMPT =
-  "Du antwortest nur mit JSON. Erfinde keine Zahlen und keine URLs. Jede Zahl im Text muss aus den gemessenen Niveaus und Richtungen stammen. Titel nur aus den Amtshinweisen oder der Websuche dieser Anfrage, jeweils mit https und Datum. Kanäle nur up oder down, und nur wenn das Dokument den Kanal stützt. unclear nicht setzen. instruments nur mit https und Datum. Keine Magnitude, kein Score und kein Reserveanteil ohne Beleg im Dokument.";
+  "Du antwortest nur mit JSON. Erfinde keine Zahlen und keine URLs. Jede Zahl im Text muss aus den gemessenen Niveaus und Richtungen stammen. Titel nur aus den Amtshinweisen oder der Websuche dieser Anfrage, jeweils mit https und Datum. Kanäle nur up oder down, und nur wenn das Dokument den Kanal stützt. Die Richtung ist die Wirkung auf den Kanal. Eine Regel allein setzt keinen Kanal auf down. cryptoLiquidity ist up, wenn das Dokument einen Weg für die Stablecoin-Ausgabe, für Reserven oder für Dollar-Liquidität auf der Chain öffnet, legitimiert oder erweitert, auch als Lizenz- oder Umsetzungsrahmen. cryptoLiquidity ist down, wenn das Dokument selbst verbietet, deckelt, die Verzinsung streicht oder den Zugang zu Finanzierung kappt. inflation ist up, wenn der Text selbst den Preisdruck hebt, und down, wenn er ihn senkt. Ein Lizenz- oder Umsetzungsrahmen allein setzt inflation nicht. policyRate, realYield und longYield sind up, wenn der Text das Zinsniveau hebt, und down, wenn er es senkt. Amt und Typ allein setzen keinen Kanal. unclear nicht setzen. instruments nur mit https und Datum. Keine Magnitude, kein Score und kein Reserveanteil ohne Beleg im Dokument.";
 
 function noticeBlock(notices: OfficialNotice[]): string {
   if (notices.length === 0) return "keine";
@@ -81,7 +81,13 @@ instrumentType: statute für Gesetze und Aufsichtsregeln, fiscal_program für Fi
 Status nur proposed, advanced, enacted, implementing, rejected, expired oder uncertain.
 Jeder Amtshinweis wird genau eine regulation mit demselben Titel, mit https und Datum. Höchstens acht Einträge.
 Weitere Titel nur aus der Websuche dieser Anfrage, ebenfalls mit https und Datum.
-Pro Eintrag nur die Kanäle, die das Dokument stützt. Erlaubte Kanäle: cryptoLiquidity, m2, longYield, policyRate, realYield, tBillDemand. Werte nur up oder down. unclear nicht setzen und fehlende Kanäle weglassen.
+Pro Eintrag nur die Kanäle, die das Dokument stützt. Erlaubte Kanäle: cryptoLiquidity, inflation, m2, longYield, policyRate, realYield, tBillDemand. Werte nur up oder down. unclear nicht setzen und fehlende Kanäle weglassen.
+Die Richtung ist die Wirkung des Dokuments auf diesen Kanal. Eine Regel allein setzt keinen Kanal auf down.
+cryptoLiquidity ist up, wenn das Dokument einen Weg für die Stablecoin-Ausgabe, für Reserven oder für Dollar-Liquidität auf der Chain öffnet, legitimiert oder erweitert. Ein Lizenz- oder Umsetzungsrahmen ist diese Öffnung.
+cryptoLiquidity ist down, wenn das Dokument selbst verbietet, deckelt, die Verzinsung streicht oder den Zugang zu Finanzierung kappt.
+inflation ist up, wenn der Text selbst den Preisdruck hebt, und down, wenn er ihn senkt. Ein Lizenz- oder Umsetzungsrahmen allein setzt inflation nicht.
+policyRate, realYield und longYield sind up, wenn der Text das Zinsniveau hebt, und down, wenn er es senkt.
+Für die übrigen Kanäle gilt dieselbe Regel: up oder down nur als Wirkung, die der Text selbst stützt. Amt und Typ allein setzen keinen Kanal. Lies den Hinweis.
 instruments nur mit https und Datum. Keine Magnitude, kein Score und kein Reserveanteil, wenn das Dokument sie nicht nennt.
 Eine Ablehnung ohne Titel ist ungültig.
 
