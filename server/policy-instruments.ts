@@ -73,7 +73,7 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | nul
   return typeof value === "string" && (allowed as readonly string[]).includes(value) ? value as T : null;
 }
 
-/** unclear ist keine Richtung und wird nicht gespeichert. */
+/** unclear ist keine Richtung und wird nicht gespeichert. up und down bleiben die Wirkung aus dem Dokument. */
 function evidencedDirection(value: unknown): "up" | "down" | null {
   return oneOf(value, EVIDENCED_DIRECTIONS);
 }

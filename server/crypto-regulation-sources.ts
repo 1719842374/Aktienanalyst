@@ -129,6 +129,7 @@ export function noticesToRegulationPayload(notices: OfficialNotice[], jurisdicti
       office: notice.office,
       instrumentType: notice.instrumentType,
       status: "uncertain",
+      // Richtung setzt das Modell aus der Wirkung des Hinweises. Hier kein Kanal ohne Textbeleg.
       channels: {},
       note: notice.snippet,
       evidence: [{ source: "Federal Register", url: notice.url, date: notice.date }],

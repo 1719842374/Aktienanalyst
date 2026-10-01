@@ -3,10 +3,10 @@
  * und die KI-Notiz. Der violette KI-Chip ruft einmal POST policy-scan auf.
  * Muenzumlauf und gesperrte Protokollwerte sind hier keine gemessene Liquiditaet.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import { apiRequest } from "@/lib/queryClient";
-import { AlertTriangle, ChevronRight, Loader2, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Loader2, Minus, Sparkles } from "lucide-react";
 
 interface SeriesDirectionReading {
   latest: number | null;
@@ -125,13 +125,38 @@ function formatPct(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? "n/v" : `${value.toFixed(2)}%`;
 }
 
-function directionText(reading: SeriesDirectionReading | undefined): string {
-  const one = reading?.direction1y || "unbekannt";
-  const two = reading?.direction2y || "unbekannt";
-  return `1J ${one} · 2J ${two}`;
+function SeriesMark({ direction }: { direction: string }) {
+  if (direction === "steigend") {
+    return <ArrowUp data-testid="series-up" className="w-3 h-3 shrink-0 text-emerald-400" aria-hidden />;
+  }
+  if (direction === "fallend") {
+    return <ArrowDown data-testid="series-down" className="w-3 h-3 shrink-0 text-red-400" aria-hidden />;
+  }
+  if (direction === "unverändert") {
+    return <Minus data-testid="series-flat" className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden />;
+  }
+  return null;
 }
 
-function MiniCard({ label, value, sub, detail }: { label: string; value: string; sub?: string; detail?: string }) {
+function directionDetail(reading: SeriesDirectionReading | undefined): ReactNode {
+  const one = reading?.direction1y || "unbekannt";
+  const two = reading?.direction2y || "unbekannt";
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-1">
+      <span className="inline-flex items-center gap-0.5">
+        <span>1J {one}</span>
+        <SeriesMark direction={one} />
+      </span>
+      <span aria-hidden>·</span>
+      <span className="inline-flex items-center gap-0.5">
+        <span>2J {two}</span>
+        <SeriesMark direction={two} />
+      </span>
+    </span>
+  );
+}
+
+function MiniCard({ label, value, sub, detail }: { label: string; value: string; sub?: string; detail?: ReactNode }) {
   return (
     <div className="rounded-md border border-border bg-muted/20 p-3">
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
@@ -146,20 +171,60 @@ export function MeasuredFredCards({ measured }: { measured: ScanMeasured }) {
   const windows = measured.windows;
   return (
     <div className="grid grid-cols-2 sm:grid-cols-5 gap-2" data-testid="text-measured-rates">
-      <MiniCard label="Leitzins" value={formatPct(measured.policyRate)} sub="FRED, gemessen" detail={directionText(windows?.policyRate)} />
-      <MiniCard label="Realzins 10Y" value={formatPct(measured.realYield10y)} sub="FRED, gemessen" detail={directionText(windows?.realYield10y)} />
-      <MiniCard label="10-Jahres-Rendite" value={formatPct(measured.dgs10)} sub="FRED, gemessen" detail={directionText(windows?.dgs10)} />
-      <MiniCard label="M2" value={formatUsdCompact(measured.m2Bn == null ? null : measured.m2Bn * 1e9)} sub="FRED, gemessen" detail={directionText(windows?.m2Bn)} />
-      <MiniCard label="TGA" value={formatUsdCompact(measured.tgaBn == null ? null : measured.tgaBn * 1e9)} sub="FRED, gemessen" detail={directionText(windows?.tgaBn)} />
+      <MiniCard label="Leitzins" value={formatPct(measured.policyRate)} sub="FRED, gemessen" detail={directionDetail(windows?.policyRate)} />
+      <MiniCard label="Realzins 10Y" value={formatPct(measured.realYield10y)} sub="FRED, gemessen" detail={directionDetail(windows?.realYield10y)} />
+      <MiniCard label="10-Jahres-Rendite" value={formatPct(measured.dgs10)} sub="FRED, gemessen" detail={directionDetail(windows?.dgs10)} />
+      <MiniCard label="M2" value={formatUsdCompact(measured.m2Bn == null ? null : measured.m2Bn * 1e9)} sub="FRED, gemessen" detail={directionDetail(windows?.m2Bn)} />
+      <MiniCard label="TGA" value={formatUsdCompact(measured.tgaBn == null ? null : measured.tgaBn * 1e9)} sub="FRED, gemessen" detail={directionDetail(windows?.tgaBn)} />
     </div>
   );
 }
 
-function evidencedChannels(channels: Record<string, string> | undefined): string {
-  return Object.entries(channels ?? {})
-    .filter(([key, value]) => key in CHANNEL_LABEL && (value === "up" || value === "down"))
-    .map(([key, value]) => `${CHANNEL_LABEL[key]}: ${value === "up" ? "aufwärts" : "abwärts"}`)
-    .join(", ");
+function evidencedChannelEntries(channels: Record<string, string> | undefined): [string, "up" | "down"][] {
+  return Object.entries(channels ?? {}).filter(
+    (entry): entry is [string, "up" | "down"] =>
+      entry[0] in CHANNEL_LABEL && (entry[1] === "up" || entry[1] === "down"),
+  );
+}
+
+function DirectionGlyph({ direction, testId }: { direction: "up" | "down"; testId?: string }) {
+  const up = direction === "up";
+  const Icon = up ? ArrowUp : ArrowDown;
+  return (
+    <Icon
+      data-testid={testId ?? (up ? "direction-up" : "direction-down")}
+      className={`w-3 h-3 shrink-0 ${up ? "text-emerald-400" : "text-red-400"}`}
+      aria-hidden
+    />
+  );
+}
+
+/** Kartenpfeil nur aus cryptoLiquidity. Andere Kanäle behalten ihren eigenen Pfeil. */
+export function FactorTitle({ channels, children }: { channels: Record<string, string> | undefined; children: ReactNode }) {
+  const liquidity = channels?.cryptoLiquidity;
+  const cardDir = liquidity === "up" || liquidity === "down" ? liquidity : null;
+  return (
+    <div className="font-medium flex items-start gap-1">
+      {cardDir ? <DirectionGlyph direction={cardDir} testId="card-crypto-liquidity" /> : null}
+      <span>{children}</span>
+    </div>
+  );
+}
+
+export function ChannelMarks({ channels }: { channels: Record<string, string> | undefined }) {
+  const items = evidencedChannelEntries(channels);
+  if (items.length === 0) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-y-0.5" data-testid="policy-channels">
+      {items.map(([key, value], index) => (
+        <span key={key} className="inline-flex items-center gap-1">
+          {index > 0 ? <span aria-hidden>, </span> : null}
+          <DirectionGlyph direction={value} />
+          <span>{CHANNEL_LABEL[key]}: {value === "up" ? "aufwärts" : "abwärts"}</span>
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function hasHttps(evidence: { url: string }[] | undefined): boolean {
@@ -435,15 +500,22 @@ export function StablecoinLiquidityPanel() {
             {cited.length > 0 && (
               <div className="space-y-2" data-testid="list-policy-regulations">
                 {cited.map(reg => {
-                  const channels = evidencedChannels(reg.channels);
+                  const hasChannels = evidencedChannelEntries(reg.channels).length > 0;
                   return (
                     <div key={reg.id} className="rounded-md border border-border bg-muted/20 p-3 text-[11px] space-y-1">
-                      <div className="font-medium">{reg.title}</div>
-                      <div className="text-muted-foreground">
-                        {OFFICE_LABEL[reg.office] ?? reg.office}
-                        {reg.instrumentType ? ` · ${TYPE_LABEL[reg.instrumentType] ?? reg.instrumentType}` : ""}
-                        {` · ${reg.status}`}
-                        {channels ? ` · ${channels}` : ""}
+                      <FactorTitle channels={reg.channels}>{reg.title}</FactorTitle>
+                      <div className="text-muted-foreground flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                        <span>
+                          {OFFICE_LABEL[reg.office] ?? reg.office}
+                          {reg.instrumentType ? ` · ${TYPE_LABEL[reg.instrumentType] ?? reg.instrumentType}` : ""}
+                          {` · ${reg.status}`}
+                        </span>
+                        {hasChannels && (
+                          <>
+                            <span aria-hidden>·</span>
+                            <ChannelMarks channels={reg.channels} />
+                          </>
+                        )}
                       </div>
                       {reg.note && <div className="text-muted-foreground">{reg.note}</div>}
                       {reg.evidence?.[0] && (
@@ -466,15 +538,19 @@ export function StablecoinLiquidityPanel() {
             {scan.instruments.length > 0 && (
               <div className="space-y-2" data-testid="list-policy-instruments">
                 {scan.instruments.map(inst => {
-                  const channels = evidencedChannels(inst.channels);
+                  const hasChannels = evidencedChannelEntries(inst.channels).length > 0;
                   return (
                     <div key={inst.id} className="rounded-md border border-border bg-muted/20 p-3 text-[11px] space-y-1">
-                      <div className="font-medium">
+                      <FactorTitle channels={inst.channels}>
                         {inst.title ? `${inst.title} · ` : ""}
                         {OFFICE_LABEL[inst.office] ?? inst.office} · {inst.instrumentType} · {inst.status}
                         {inst.officeHolder ? ` · ${inst.officeHolder}` : ""}
-                      </div>
-                      {channels && <div className="text-muted-foreground">{channels}</div>}
+                      </FactorTitle>
+                      {hasChannels && (
+                        <div className="text-muted-foreground">
+                          <ChannelMarks channels={inst.channels} />
+                        </div>
+                      )}
                       {inst.evidence?.[0] && (
                         <a className="underline text-foreground/80" href={inst.evidence[0].url} target="_blank" rel="noreferrer">
                           {inst.evidence[0].source} · {inst.evidence[0].date}
