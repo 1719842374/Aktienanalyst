@@ -22,7 +22,7 @@ import {
   mergeByTitle,
   noticesToRegulationPayload,
 } from "./crypto-regulation-sources";
-import { usableEventSentences } from "../shared/policy-event-copy";
+import { allowedKeyEventEvidence, germanNoticeBody, isOfficialEvidenceUrl, usableEventSentences } from "../shared/policy-event-copy";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 import {
   FRED_LOOKBACK_DAYS,
@@ -44,7 +44,7 @@ import {
 
 export { buildPolicyScanPrompt, policyScanIsCacheable };
 
-const SCHEMA = "v9";
+const SCHEMA = "v10";
 const CACHE_TAB = "crypto_regulation";
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 const RESEARCHER_TTL_MIN = 60 * 6;
@@ -254,15 +254,18 @@ function scrubModelRegulationNotes(
   measured: MeasuredPolicyContext,
 ): RegulationNote[] {
   const allowed = allowedMeasuredNumbers(measured.windows);
-  return regulations.map(reg => {
-    const note = usableEventSentences(reg.note);
-    if (!note || !proseNumbersAreMeasured(note, allowed)) {
-      if (!reg.note) return reg;
-      const { note: _drop, ...rest } = reg;
-      return rest;
+  const kept: RegulationNote[] = [];
+  for (const reg of regulations) {
+    const evidence = allowedKeyEventEvidence(reg.evidence);
+    if (evidence.length === 0) continue;
+    let note = usableEventSentences(reg.note);
+    if (note && !proseNumbersAreMeasured(note, allowed)) note = null;
+    if (!note && evidence.some(item => isOfficialEvidenceUrl(item.url))) {
+      note = germanNoticeBody(reg.title, reg.channels);
     }
-    return note === reg.note ? reg : { ...reg, note };
-  });
+    kept.push({ ...reg, evidence, ...(note ? { note } : {}) });
+  }
+  return kept;
 }
 
 function noteFromModel(measured: MeasuredPolicyContext, model: Record<string, unknown> | null, regulationCount: number): PolicyNote {
@@ -277,7 +280,10 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
   const measured = await loadMeasuredPolicyContext(jurisdiction);
   const emptyEffects = effectsFor([], measured);
   const notices = await fetchOfficialNotices(jurisdiction, measured.asOf);
-  const noticeNotes = parseRegulationNotes(noticesToRegulationPayload(notices, jurisdiction)).regulations;
+  const noticeNotes = scrubModelRegulationNotes(
+    parseRegulationNotes(noticesToRegulationPayload(notices, jurisdiction)).regulations,
+    measured,
+  );
   const promptInput = {
     asOf: measured.asOf,
     jurisdiction: measured.jurisdiction,
@@ -337,7 +343,10 @@ async function buildPolicyScan(jurisdiction: string): Promise<PolicyScanResult> 
   );
   const note = noteFromModel(measured, model, regulations.length);
   const parsed = parsePolicyInstruments(model);
-  parsed.instruments = applyNoticeTitles(parsed.instruments, notices);
+  parsed.instruments = applyNoticeTitles(parsed.instruments, notices).flatMap(inst => {
+    const evidence = allowedKeyEventEvidence(inst.evidence);
+    return evidence.length === 0 ? [] : [{ ...inst, evidence }];
+  });
   const computed = effectsFor(parsed.instruments, measured);
   const empty = regulations.length === 0 && parsed.instruments.length === 0;
   const result: PolicyScanResult = {

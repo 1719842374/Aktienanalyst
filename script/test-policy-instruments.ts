@@ -222,6 +222,10 @@ ok(
   "Prompt verlangt Titel mit https und Datum",
   prompt.includes("regulations") && prompt.includes("https") && prompt.includes("Datum"),
 );
+ok(
+  "Prompt laesst nur blocktrainer neben dem Amtshinweis zu",
+  prompt.includes("tagesschau.de") && prompt.includes("blocktrainer.de") && prompt.includes("Erfinde keine Adresse"),
+);
 
 const estimatedOnly = {
   regulations: [{
