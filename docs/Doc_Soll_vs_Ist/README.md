@@ -1,11 +1,13 @@
 # Doc_Soll_vs_Ist
 
-> Stand: 30.09.2026 (Vormittag, nach #103 Miner Observability Live PASS) | Ampel aus **Code + UI** (Live Render) · HEAD `e2bc69a2` · Bundle `index-MIF1Ml5X.js`
+> Stand: 03.10.2026 (nach #128 Miner-Zone vor Gesamt-Fazit, Tester 16:17 Europe/Berlin) | Ampel aus **Code + UI** (Live Render) · HEAD `6fedbf4e` · Bundle `index-CsbicERe.js`
 > Originale im **Repo-Root**. Dieser Ordner verlinkt nur.
 >
 > Alt: [work-offen](../work-offen/) · [work-dokumentation](../work-dokumentation/)
 
 **Regel:** `✅` nur wenn die *erwartete Anzeige* live ist. Datei + Lib ohne KPI/Serie = `🟡` oder `⬜`. „Deploy folgt“ = Code auf `main`, Live nicht geprüft → `🟡`.
+
+**Nachzug 03.10.2026, nach #128 Miner-Zone vor Gesamt-Fazit (`6fedbf4e`, Bundle `index-CsbicERe.js`; URL https://aktienanalyst.onrender.com/#/btc; Tester 16:17 Europe/Berlin; Parent `5fc64114`):** #128 Reihenfolge ✅. Squash-Merge, client-only `BTCDashboard.tsx` und `Section13Miner.tsx`. `POST /api/btc-miner` unverändert. `#/btc` weiter genau 14 Sektionen, Sidebar 1–14. Badges 1–12 unverändert, Badge 3 bleibt Krypto-Liquidität. Badge 13 ist Miner-Zone, direkt vor Badge 14 Umfassendes Gesamt-Fazit. Live: Puell 1.05, Miner-Breakeven $61,351.89. #126 Reihenfolge vor diesem Tausch bleibt ✅ (tip `556c8f02`, Bundle `index-CnW1MmWd.js`: Krypto-Liquidität als 3; damals Gesamt-Fazit 13 und Miner-Zone 14 — das ist der Stand vor #128, nicht die Live-Reihenfolge auf `6fedbf4e`). #118 TGA ✅ bleibt. #119–#125 News/FRED ✅ bleiben. #106 bleibt HOLD. Branch `cursor/docs-ampel-nachzug-102-c7fe` nicht anfassen. #127 ist nicht dieser Nachzug und beschreibt nicht die aktuelle Reihenfolge (dort stand Miner-Zone noch auf 14). main trägt die `fertig_`/`Offen_`-Präfixe aus #129 (`839d954`) und #130 (`5fc64114`); die drei Index-Dateien bleiben ohne Präfix.
 
 **Nachzug 30.09. Vormittag, nach #103 Miner Observability Live PASS (`e2bc69a2`, Bundle `index-MIF1Ml5X.js` unverändert — Client unverändert, #103 server-only; DoD PASS):** #103 Miner Observability Live ✅ (tip `e2bc69a2` = `e2bc69a233166a3242d13e9ddc78373adc19f68c`; parent `58bec00c` #101 Docs ← `c365c945` #100 ← `4c615eb3` #99). Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry transient (400ms); Stale-Cache-on-Error → 200 + `stale:true` wenn Prior-Success, sonst 503 mit `error`+`code`(+`cause`). Dateien `server/btc-miner.ts`, `server/routes.ts` (+`minerUnavailableBody`), `script/test-btc-miner-observability.ts` 43/43. UI `Section13Miner` unverändert. Soft-Note: Live Soft-Probe `POST /api/btc-miner` → 503 `code=MEMPOOL_NETWORK` `cause=fetch failed` = **Render→mempool Egress**, kein fehlender/gelöschter Code. Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt. #99✅ #100✅ #93 Label✅ #97✅ #92✅ bleiben. #96 closed ohne Merge — nicht reopen, nicht grün. #101 Docs Ampel Nachzug #99/#100 ✅ merged (`58bec00c`, MD-only).
 
@@ -69,6 +71,12 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | KI-N/A matrix Section7 (#100) | `c365c945` · Live ✅ PASS Bundle `index-MIF1Ml5X.js`. Spalten Segment\|Rev.\|Anteil\|Wachstum\|TAM\|CAGR\|Anteil am TAM\|vs.TAM; Idle-Button exakt „N/A mit KI schätzen“; fail-closed UI: Fill → „KI-Schätzung unvollständig — nichts übernommen“, kein Overlay/Badge, N/A unverändert. Soft: Success-Badge `KI ✓` in Dual-DoD nicht geübt. Soft-Note API: Body `{}` → HTTP 400 `BAD_REQUEST` „Keine N/A-Zellen“ — erwartet (keine Segments/keine N/A); 422 `INCOMPLETE_FILL` nur nach LLM mit Rest-n/a ≠ 0. Shots+Probe `/workspace/dod-100-ki-na/`. |
 | KI-N/A-Fill Segment-TAM (#93) | `7574b12d` · Label Soft → ✅ via #100: Idle-Label Spec „N/A mit KI schätzen“. Behavior+API war schon PASS (MSFT amber ~59%; KI nur unmatched + violet Badge; Catalog-Coverage unverändert; Clear → n/a; core 58.5%/unreliable/`tamTotal=null`). Soft: violet KI-Badge Success-Pfad nicht in Dual-DoD geübt. |
 | Miner Observability (#103) | `e2bc69a2` · Live ✅ PASS (server-only; Bundle `index-MIF1Ml5X.js` unverändert). Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry transient 400ms; Stale-Cache-on-Error → 200 + `stale:true` wenn Prior-Success, sonst 503 mit `error`+`code`(+`cause`). Dateien `server/btc-miner.ts`, `server/routes.ts` (+`minerUnavailableBody`), `script/test-btc-miner-observability.ts` 43/43. UI `Section13Miner` unverändert. Soft-Note: Live Soft-Probe `POST /api/btc-miner` → 503 `code=MEMPOOL_NETWORK` `cause=fetch failed` = Render→mempool Egress, kein Code-Delete. Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt. |
+| Miner-Zone vor Gesamt-Fazit (#128) | `6fedbf4e` · Live ✅ Bundle `index-CsbicERe.js` · https://aktienanalyst.onrender.com/#/btc · Tester 16:17 Europe/Berlin 2026-10-03. Sidebar 1–14. Badges 1–12 unverändert, Badge 3 Krypto-Liquidität. Badge 13 Miner-Zone direkt vor Badge 14 Umfassendes Gesamt-Fazit. Puell 1.05, Miner-Breakeven $61,351.89. Squash-Merge, client-only `BTCDashboard.tsx` und `Section13Miner.tsx`. `POST /api/btc-miner` unverändert. Parent `5fc64114`. |
+| BTC-Reihenfolge vor dem Tausch (#126) | bleibt ✅. Tip `556c8f02`, Bundle `index-CnW1MmWd.js`. Krypto-Liquidität Badge 3. Damals Gesamt-Fazit 13 und Miner-Zone 14 — Stand vor #128, nicht die Live-Reihenfolge auf `6fedbf4e`. |
+| TGA (#118) | bleibt ✅ |
+| News/FRED (#119–#125) | bleiben ✅ (News, FRED-Richtungen inkl. TGA, Key-Events, Zinsen-Chip, Quellenliste) |
+| Docs-Ampel (#106) | HOLD. Branch `cursor/docs-ampel-nachzug-102-c7fe` nicht anfassen. |
+| Nachzug (#127) | nicht dieser Nachzug. Dort stand Miner-Zone noch auf 14; das ist nicht die Reihenfolge auf Tip `6fedbf4e`. |
 | [fertig_WORK_PEER_ROIC_SANITY.md](../../fertig_WORK_PEER_ROIC_SANITY.md) | sanitizeRoic intact · Tip ≡ `4bdc1f8` (kein Delete) · wieder da nach FMP Premium |
 | [FACTPACK_LLM.md](./FACTPACK_LLM.md) | Analyze-Hook + UI live (#57) |
 | [fertig_WORK_RECESSION_RSI_MACD.md](../../fertig_WORK_RECESSION_RSI_MACD.md) | Dashboard-Wire + Pane live |
@@ -92,9 +100,9 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | [fertig_WORK_DATA_PROVIDERS.md](../../fertig_WORK_DATA_PROVIDERS.md) | FMP/Yahoo |
 | [fertig_WORK_SCORING_VORLAGE.md](../../fertig_WORK_SCORING_VORLAGE.md) | Gates |
 | [fertig_WORK_SIGNAL_BACKTEST.md](../../fertig_WORK_SIGNAL_BACKTEST.md) | server/backtest |
-| [fertig_WORK_BTC_MINER.md](../../fertig_WORK_BTC_MINER.md) | Observability live (#103 `e2bc69a2`); Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt |
+| [fertig_WORK_BTC_MINER.md](../../fertig_WORK_BTC_MINER.md) | Observability live (#103 `e2bc69a2`); Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt. Badge 13 nach #128 (`6fedbf4e`) |
 | [fertig_WORK_TEIL7_SCORING.md](../../fertig_WORK_TEIL7_SCORING.md) | Gold |
 | [fertig_WORK2.md](../../fertig_WORK2.md) | PESTEL |
 | [WORK.md](../../WORK.md) | Index |
-| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 30.09. Vormittag, nach #103 Miner Observability Live PASS (`e2bc69a2`, Bundle `index-MIF1Ml5X.js`) |
+| [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 03.10.2026, nach #128 Miner-Zone 13 vor Gesamt-Fazit 14 (`6fedbf4e`, Bundle `index-CsbicERe.js`) |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 geblockt |
