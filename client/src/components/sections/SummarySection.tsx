@@ -471,6 +471,16 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             {" "}min(rohScore, strengster aktiver Gate-Cap) = {data.scoring.finalScore}
           </div>
 
+          {data.peerSet?.banner && (
+            <div
+              className="text-[11px] text-amber-700 dark:text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5"
+              role="status"
+              data-testid="scoring-peer-set-banner"
+            >
+              {data.peerSet.banner}
+            </div>
+          )}
+
           {/* Gates */}
           <div className="space-y-1">
             {data.scoring.gates.map(g => (

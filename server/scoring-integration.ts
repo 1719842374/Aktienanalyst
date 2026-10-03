@@ -153,6 +153,11 @@ export interface AnalysisScoringContext {
   subjectRevenueGrowth: number | null;
   /** Peer-Umsatzwachstumsraten in % (peerComparison.peers[].revenueGrowth). */
   peerRevenueGrowths: Array<number | null> | null;
+  /**
+   * false = RELATIVE_GROWTH aus (peerMaterial && |Peers|≥3 nicht erfüllt).
+   * undefined = Aufrufer ohne Peer-Set, bisheriges Modell.
+   */
+  relativeScoreApplies?: boolean;
   /** Punkt 1 (HOCH-Ticket 05.08.2026): bereits fertiges REGULATORY_EXPOSURE-Gate
    *  aus regulatory.ts (WORK2.md §8), 1:1 durchgereicht an buildGates(). null,
    *  wenn fuer diesen Ticker noch keine Regulatory-Analyse gelaufen ist — das
@@ -234,6 +239,7 @@ export function deriveGateInputs(ctx: AnalysisScoringContext): GateInputs & {
     realizedGrowth8QPercent: r8.realizedGrowth8Q,
     marginDeltaYoYPp,
     relativeGrowthDeltaYoYPp,
+    relativeScoreApplies: ctx.relativeScoreApplies,
     inventoryDaysDeltaYoYPct,
     // 1:1 durchgereicht, keine eigene Berechnung hier — buildGates() haengt
     // dieses fertige Gate nur an, falls vorhanden (siehe Punkt 1 oben).
@@ -259,6 +265,7 @@ export interface AnalysisScoringResult {
     realizedGrowthQuartersUsed: number;
     marginDeltaYoYPp: number | null;
     relativeGrowthDeltaYoYPp: number | null;
+    relativeScoreApplies?: boolean;
     inventoryDaysDeltaYoYPct: number | null;
   };
   fiscal: { qualifies: boolean; evPercent: number; reasons: string[] };

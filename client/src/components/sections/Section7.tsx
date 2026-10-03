@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { TAM_NA_SHARE_WARN, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, kiFillMetaLine, type TamNaFill, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
+import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
 import { formatNumber } from "../../lib/formatters";
 import { apiRequest } from "../../lib/queryClient";
 import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "lucide-react";
@@ -41,6 +42,12 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
   const [tamAiLoading, setTamAiLoading] = useState(false);
   const [tamAiError, setTamAiError] = useState<string | null>(null);
   const tamAiRequest = useRef(0);
+  const [peerKiFills, setPeerKiFills] = useState<PeerNaFill[] | null>(null);
+  const [peerKiLoading, setPeerKiLoading] = useState(false);
+  const [peerKiError, setPeerKiError] = useState<string | null>(null);
+  const peerKiRequest = useRef(0);
+  const factPeerCount = data.peerSet?.peerCount ?? data.peerComparison?.peers?.length ?? 0;
+  const peerGap = peersNeeded(factPeerCount);
 
   const tamSegmentSig = useMemo(() => {
     const segs = tam?.segments;
@@ -54,6 +61,13 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
     setTamAiError(null);
     setTamAiLoading(false);
   }, [data.ticker, tamSegmentSig]);
+
+  useEffect(() => {
+    peerKiRequest.current += 1;
+    setPeerKiFills(null);
+    setPeerKiError(null);
+    setPeerKiLoading(false);
+  }, [data.ticker, factPeerCount]);
 
   const tamNaRefs = useMemo(() => {
     const out: TamNaSegmentRef[] = [];
@@ -123,6 +137,45 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
       setTamAiError(msg || "KI-Schätzung fehlgeschlagen. Tabelle unverändert.");
     } finally {
       if (requestId === tamAiRequest.current) setTamAiLoading(false);
+    }
+  }
+
+  async function fillPeerNa() {
+    if (peerKiLoading || peerGap === 0 || peerKiFills) return;
+    const requestId = ++peerKiRequest.current;
+    setPeerKiLoading(true);
+    setPeerKiError(null);
+    const existingPeers = (data.peerComparison?.peers ?? []).map((p) => p.ticker);
+    try {
+      const res = await apiRequest("POST", `/api/analyze/${encodeURIComponent(data.ticker)}/peer-na-fill`, {
+        companyName: data.companyName,
+        sector: data.sector,
+        industry: data.industry,
+        description: data.description,
+        existingPeers,
+        relativeApplies: data.peerSet?.relativeApplies ?? null,
+      });
+      let json: { fills?: PeerNaFill[]; error?: string; note?: string } | null = null;
+      try { json = await res.json(); } catch { json = null; }
+      if (requestId !== peerKiRequest.current) return;
+      const fills = Array.isArray(json?.fills) ? json.fills : [];
+      if (!res.ok || fills.length === 0 || !peerFillClosesGap(fills, existingPeers.length)) {
+        setPeerKiError(json?.error || PEER_NA_INCOMPLETE_ERROR);
+        return;
+      }
+      const known = new Set(existingPeers.map((t) => t.toUpperCase()));
+      const next = fills.filter((row) => row?.ticker && !known.has(row.ticker.toUpperCase()) && row.suggestedBy === "ki");
+      if (!peerFillClosesGap(next, existingPeers.length)) {
+        setPeerKiError(PEER_NA_INCOMPLETE_ERROR);
+        return;
+      }
+      setPeerKiFills(next.slice(0, peerGap));
+    } catch (err: unknown) {
+      if (requestId !== peerKiRequest.current) return;
+      const msg = err instanceof Error ? err.message : "";
+      setPeerKiError(msg || "KI-Schätzung fehlgeschlagen. Tabelle unverändert.");
+    } finally {
+      if (requestId === peerKiRequest.current) setPeerKiLoading(false);
     }
   }
 
@@ -547,11 +600,74 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
         </div>
       )}
 
-      {/* Peer Comparison Table */}
-      {data.peerComparison && data.peerComparison.peers.length > 0 && (
+      {/* Peer Comparison. Banner und KI-Ticker kommen vom Server. Kennzahlen der KI-Zeilen sind FMP. */}
+      {(data.peerSet?.banner || peerGap > 0 || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
         <div className="mt-4 pt-4 border-t border-border">
-          <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Peer-Vergleich (Wettbewerber)</h3>
-          <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} />
+          <div className="flex flex-wrap items-center gap-1.5 mb-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Peer-Vergleich (Wettbewerber)</h3>
+            <button
+              type="button"
+              onClick={() => { if (!peerKiLoading) void fillPeerNa(); }}
+              disabled={peerKiLoading || peerGap === 0 || !!peerKiFills}
+              title={peerKiFills
+                ? "KI ✓"
+                : peerGap === 0
+                  ? "Keine N/A-Zellen"
+                  : "N/A mit KI schätzen. Nur Ticker. Kennzahlen kommen von FMP."}
+              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal transition-colors disabled:opacity-50 ${
+                peerKiFills
+                  ? "border-violet-400/40 bg-violet-500/20 text-violet-700 hover:bg-violet-500/30 dark:text-violet-200"
+                  : "border-violet-500/30 bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-300"
+              }`}
+              data-testid="button-peer-na-fill"
+            >
+              {peerKiLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {peerKiFills ? (
+                <span>KI ✓</span>
+              ) : (
+                <>
+                  <span className="sm:hidden">KI-N/A</span>
+                  <span className="hidden sm:inline">N/A mit KI schätzen</span>
+                </>
+              )}
+            </button>
+            {peerKiFills && (
+              <button
+                type="button"
+                onClick={() => { setPeerKiFills(null); setPeerKiError(null); }}
+                className="inline-flex items-center rounded-md border border-border/60 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground hover:bg-muted/40"
+                title="KI-Vorschläge aus dieser Sitzung entfernen"
+                data-testid="button-peer-na-fill-clear"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="text-[10px] text-muted-foreground mb-2" data-testid="text-peer-na-legend">
+            Violett/KI = vorgeschlagener Ticker · Kennzahlen nur FMP · zählt nicht in den Relativ-Score
+          </div>
+          {peerKiFills && (
+            <div className="text-[10px] text-violet-700 dark:text-violet-300 mb-2" data-testid="text-peer-na-note">
+              {`KI-Vorschlag: ${peerKiFills.length} Ticker · ${PEER_NA_NOTE}`}
+            </div>
+          )}
+          {peerKiError && (
+            <div className="text-[10px] text-red-500 mb-2" data-testid="text-peer-na-fill-error">
+              {peerKiError}
+            </div>
+          )}
+          {data.peerSet?.banner && (
+            <div
+              className="mb-2 text-[11px] text-amber-700 dark:text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5"
+              role="status"
+              data-testid="peer-set-incomplete-banner"
+            >
+              {data.peerSet.banner}
+            </div>
+          )}
+          {((data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
+            <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} />
+          )}
         </div>
       )}
     </SectionCard>
