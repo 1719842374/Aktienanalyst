@@ -57,8 +57,8 @@ import {
   reconcileNewsSentiment,
   fetchPeerComparisonFromTickers,
   fetchPeerComparison,
-  filterAndSelectPeers,
 } from "./news-peers";
+import { loadFmpPeerProfile, resolveAdaptivePeerTickers } from "./peer-adaptive";
 
 import {
   analyzeRequestSchema,
@@ -1215,19 +1215,29 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const tamAnalysis = generateTAMAnalysis(effectiveSector, industry, description, revenue, revenueGrowth, revenueSegments);
 
       // ── 9. Peers ──
-      // Auftrag 05.08.2026: FMP /stock-peers liefert Kandidaten rein aus
-      // Kursbewegungs-/Marktkap-Aehnlichkeit, NICHT aus Sector/Industry. Live-
-      // Beispiel BYDDY: FMP mischt Richemont/Dior (Luxury Goods) unter die
-      // "Peers" eines Auto-Herstellers. filterAndSelectPeers() prueft jeden
-      // Kandidaten gegen die Subjekt-Industry (sector/industry aus Schritt 2
-      // oben bereits verfuegbar) und greift bei Bedarf auf eine kuratierte
-      // Fallback-Liste zurueck (nur fuer bekannte Problemfaelle, nur wenn die
-      // FMP-Peers den Filter nicht bestehen). ROIC-Berechnung, Scoring-Gate-
-      // Logik und alle anderen Peer-Spalten bleiben unveraendert.
+      // Offen_WORK_PEER_ADAPTIVE.md: Seeds = fmpPeers aus dem Analyze-Bundle.
+      // Die ersten 5 Seeds werden höchstens alle 7 Tage gehopt (peers2hop:{TICKER}).
+      // D: gleiche Industry oder gleicher Sector, Cap-Band 5 %–20×, bestehende
+      // Luxury-vs-Auto-Regel. Rang: exakte Industry, dann |log Cap|, dann
+      // Token-Überlapp aus Beschreibung und Segmentnamen. Take 5.
+      // CURATED_PEER_FALLBACK nur wenn F leer ist, die Map wächst nicht.
+      // +/- Overrides bleiben danach, Deckel 8.
       const rawPeerTickers: string[] = Array.isArray(peers) ? peers.map((p: any) => String(p.symbol ?? p ?? "")).filter(Boolean) : [];
       let peerTickers: string[] = rawPeerTickers.slice(0, 5);
       try {
-        peerTickers = await filterAndSelectPeers(upperTicker, sector, industry, rawPeerTickers, 5);
+        const resolved = await resolveAdaptivePeerTickers({
+          subject: upperTicker,
+          subjectSector: sector,
+          subjectIndustry: industry,
+          subjectMarketCap: marketCap,
+          subjectDescription: description,
+          subjectSegmentNames: revenueSegments.map(segment => segment.name).filter(Boolean),
+          seeds: rawPeerTickers,
+          fmpPeers,
+          loadProfile: loadFmpPeerProfile,
+        });
+        peerTickers = resolved.tickers;
+        console.log(`[PEERS-2HOP] ticker=${upperTicker} hopCalls=${resolved.hopCalls} F=[${peerTickers.join(",")}]`);
       } catch (peerFilterErr: any) {
         console.warn(`[ANALYZE] Peer-Filter fehlgeschlagen fuer ${upperTicker}, verwende ungefilterte FMP-Peers: ${peerFilterErr?.message?.substring(0, 100)}`);
       }
