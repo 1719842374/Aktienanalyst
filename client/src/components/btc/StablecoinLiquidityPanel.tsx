@@ -566,7 +566,7 @@ export function StablecoinLiquidityPanel() {
   );
 
   return (
-    <SectionCard number={14} title="Krypto-Liquidität" actions={kiButton}>
+    <SectionCard number={3} title="Krypto-Liquidität" actions={kiButton}>
       <div className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
           Nachrichten zu Bitcoin und Krypto. Der Server misst zuerst Leitzins, Realzins,

@@ -129,18 +129,18 @@ interface BTCAnalysis {
 const SECTIONS = [
   { id: 1, label: "Status & Preis", icon: Bitcoin },
   { id: 2, label: "Halving-Zyklus", icon: Activity },
-  { id: 3, label: "Indikatoren", icon: BarChart3 },
-  { id: 4, label: "Power-Law", icon: Calculator },
-  { id: 5, label: "GWS", icon: Target },
-  { id: 6, label: "Monte Carlo", icon: Dice6 },
-  { id: 7, label: "Kategorien A-E", icon: Layers },
-  { id: 8, label: "Zyklus-Einsch.", icon: TrendingUp },
-  { id: 9, label: "Finale Schätzung", icon: Scale },
-  { id: 10, label: "Technische Analyse", icon: LineChartIcon },
-  { id: 11, label: "Fear & Greed", icon: Gauge },
-  { id: 12, label: "Gesamt-Fazit", icon: Scale },
-  { id: 13, label: "Miner-Zone", icon: Activity },
-  { id: 14, label: "Krypto-Liquidität", icon: Layers },
+  { id: 3, label: "Krypto-Liquidität", icon: Layers },
+  { id: 4, label: "Indikatoren", icon: BarChart3 },
+  { id: 5, label: "Power-Law", icon: Calculator },
+  { id: 6, label: "GWS", icon: Target },
+  { id: 7, label: "Monte Carlo", icon: Dice6 },
+  { id: 8, label: "Kategorien A-E", icon: Layers },
+  { id: 9, label: "Zyklus-Einsch.", icon: TrendingUp },
+  { id: 10, label: "Finale Schätzung", icon: Scale },
+  { id: 11, label: "Technische Analyse", icon: LineChartIcon },
+  { id: 12, label: "Fear & Greed", icon: Gauge },
+  { id: 13, label: "Gesamt-Fazit", icon: Scale },
+  { id: 14, label: "Miner-Zone", icon: Activity },
 ];
 
 // === Helper Components ===
@@ -255,7 +255,7 @@ function Section2Halving({ data }: { data: BTCAnalysis }) {
 
 function Section3Indicators({ data }: { data: BTCAnalysis }) {
   return (
-    <SectionCard number={3} title="Indikatoren-Scoring">
+    <SectionCard number={4} title="Indikatoren-Scoring">
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -311,7 +311,7 @@ function Section4PowerLaw({ data }: { data: BTCAnalysis }) {
   ].sort((a, b) => a.value - b.value);
 
   return (
-    <SectionCard number={4} title="Power-Law Bewertung">
+    <SectionCard number={5} title="Power-Law Bewertung">
       <div className="space-y-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <MetricCard label="Tage seit Genesis" value={pl.daysSinceGenesis.toLocaleString()} subValue="03.01.2009" />
@@ -388,7 +388,7 @@ function Section5GWS({ data }: { data: BTCAnalysis }) {
   ];
 
   return (
-    <SectionCard number={5} title="GWS (Gesamt-Weighted-Score)">
+    <SectionCard number={6} title="GWS (Gesamt-Weighted-Score)">
       <div className="space-y-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <MetricCard label="GIS" value={g.gis.toFixed(4)} />
@@ -499,7 +499,7 @@ function Section6MonteCarlo({ data }: { data: BTCAnalysis }) {
     : `${Math.round(horizonDays / 365 * 10) / 10} Jahre (T=${horizonDays})`;
 
   return (
-    <SectionCard number={6} title="Monte Carlo Simulation">
+    <SectionCard number={7} title="Monte Carlo Simulation">
       <div className="space-y-4">
         {/* Historical Volatility Panel */}
         {hv && (hv.vol30d > 0 || hv.vol90d > 0) && (
@@ -753,7 +753,7 @@ function Section7Categories({ data }: { data: BTCAnalysis }) {
   };
 
   return (
-    <SectionCard number={7} title="Wahrscheinlichkeits-Kategorien (3M)">
+    <SectionCard number={8} title="Wahrscheinlichkeits-Kategorien (3M)">
       <div className="space-y-4">
         <div className="space-y-2">
           {data.categories.map((cat) => (
@@ -826,7 +826,7 @@ function Section7Categories({ data }: { data: BTCAnalysis }) {
 
 function Section8CycleAssessment({ data }: { data: BTCAnalysis }) {
   return (
-    <SectionCard number={8} title="Zyklus-Einschätzung">
+    <SectionCard number={9} title="Zyklus-Einschätzung">
       <div className="space-y-3">
         <div className="bg-muted/20 rounded-lg p-3 border border-border">
           <div className="flex items-center gap-2 mb-2">
@@ -862,7 +862,7 @@ function Section9FinalEstimate({ data }: { data: BTCAnalysis }) {
     : "text-amber-500 bg-amber-500/10 border-amber-500/30";
 
   return (
-    <SectionCard number={9} title="Finale Preis-Schätzung">
+    <SectionCard number={10} title="Finale Preis-Schätzung">
       <div className="space-y-4">
         <div className={`inline-flex items-center px-3 py-1.5 rounded-lg border text-sm font-bold ${outlookColor}`}>
           {data.finalEstimate.outlook}
@@ -1325,14 +1325,14 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
 
   if (fullChart.length === 0) {
     return (
-      <SectionCard number={10} title="Technische Analyse">
+      <SectionCard number={11} title="Technische Analyse">
         <div className="text-xs text-muted-foreground text-center py-8">Keine Chart-Daten verfügbar</div>
       </SectionCard>
     );
   }
 
   return (
-    <SectionCard number={10} title="Technische Analyse">
+    <SectionCard number={11} title="Technische Analyse">
       {/* Status bar — 4 pills */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
         <StatusPill
@@ -2280,7 +2280,7 @@ function Section11FearGreed({ data }: { data: BTCAnalysis }) {
   }, [fgh, fgRangeDays]);
 
   return (
-    <SectionCard number={11} title="Fear & Greed Index">
+    <SectionCard number={12} title="Fear & Greed Index">
       <div className="space-y-4">
         {/* Gauge */}
         <FearGreedGauge value={data.fearGreedIndex} label={data.fearGreedLabel} />
@@ -2566,7 +2566,7 @@ function Section12Fazit({ data }: { data: BTCAnalysis }) {
   const overallColor = bullCount <= 1 ? "text-red-500" : bullCount === 2 ? "text-amber-500" : bullCount === 3 ? "text-emerald-400" : "text-emerald-500";
 
   return (
-    <SectionCard number={12} title="Umfassendes Gesamt-Fazit">
+    <SectionCard number={13} title="Umfassendes Gesamt-Fazit">
       <div className="space-y-4">
         {/* Overall verdict banner */}
         <div className={`rounded-lg p-4 border ${
@@ -2776,18 +2776,18 @@ export default function BTCDashboard() {
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
               <div ref={setSectionRef(1)}><Section1Status data={data} /></div>
               <div ref={setSectionRef(2)}><Section2Halving data={data} /></div>
-              <div ref={setSectionRef(3)}><Section3Indicators data={data} /></div>
-              <div ref={setSectionRef(4)}><Section4PowerLaw data={data} /></div>
-              <div ref={setSectionRef(5)}><Section5GWS data={data} /></div>
-              <div ref={setSectionRef(6)}><Section6MonteCarlo data={data} /></div>
-              <div ref={setSectionRef(7)}><Section7Categories data={data} /></div>
-              <div ref={setSectionRef(8)}><Section8CycleAssessment data={data} /></div>
-              <div ref={setSectionRef(9)}><Section9FinalEstimate data={data} /></div>
-              <div ref={setSectionRef(10)}><Section10TechnicalChart data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
-              <div ref={setSectionRef(11)}><Section11FearGreed data={data} /></div>
-              <div ref={setSectionRef(12)}><Section12Fazit data={data} /></div>
-              <div ref={setSectionRef(13)}><Section13Miner data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
-              <div ref={setSectionRef(14)}><StablecoinLiquidityPanel /></div>
+              <div ref={setSectionRef(3)}><StablecoinLiquidityPanel /></div>
+              <div ref={setSectionRef(4)}><Section3Indicators data={data} /></div>
+              <div ref={setSectionRef(5)}><Section4PowerLaw data={data} /></div>
+              <div ref={setSectionRef(6)}><Section5GWS data={data} /></div>
+              <div ref={setSectionRef(7)}><Section6MonteCarlo data={data} /></div>
+              <div ref={setSectionRef(8)}><Section7Categories data={data} /></div>
+              <div ref={setSectionRef(9)}><Section8CycleAssessment data={data} /></div>
+              <div ref={setSectionRef(10)}><Section9FinalEstimate data={data} /></div>
+              <div ref={setSectionRef(11)}><Section10TechnicalChart data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
+              <div ref={setSectionRef(12)}><Section11FearGreed data={data} /></div>
+              <div ref={setSectionRef(13)}><Section12Fazit data={data} /></div>
+              <div ref={setSectionRef(14)}><Section13Miner data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
               <div className="pb-8" />
             </div>
           ) : null}
