@@ -45,14 +45,15 @@ async function main() {
     check("Ergebnis nicht leer", result.length > 0, "Peer-Filter darf niemals 0 Peers liefern, wenn ein Fallback existiert");
     check("Mindestens 3 Peers", result.length >= 3, `nur ${result.length} Peers`);
 
-    // Owner-Entscheidung 05.08.2026: kuratierte NEV-Pure-Plays haben Vorrang
-    // vor generischen FMP-Industry-Treffern (BMW/Mercedes) fuer Subjekte mit
-    // kuratierter Fallback-Liste — auch wenn BAMXF/MBGAF/MBGYY den reinen
-    // Industry-Filter technisch bestehen wuerden.
-    check("Enthaelt echte EV-Pure-Plays aus der kuratierten Liste (TSLA/NIO/LI/XPEV/GELYF)",
-      result.some(t => ["TSLA", "NIO", "LI", "XPEV", "GELYF"].includes(t)), JSON.stringify(result));
-    check("BMW (BAMXF) hat KEINEN Vorrang vor der kuratierten NEV-Liste",
-      result[0] !== "BAMXF", JSON.stringify(result));
+    // Offen_WORK_PEER_ADAPTIVE.md: die kuratierte Map ist nur noch der leere
+    // Notnagel. Industry-Treffer (BMW/Mercedes) bleiben, Luxury fliegt in D.
+    const curatedHead = ["TSLA", "NIO", "LI", "XPEV", "GELYF"];
+    const industrySurvivor = ["BAMXF", "MBGAF", "MBGYY"].filter(t => result.includes(t));
+    check("Industry-Treffer bleiben sichtbar; die Map wird nicht davorgeschoben",
+      industrySurvivor.length > 0
+        ? JSON.stringify(result.slice(0, curatedHead.length)) !== JSON.stringify(curatedHead)
+        : result.includes("TSLA"),
+      JSON.stringify(result));
   }
 
   console.log("\n=== TSLA: positiver Kontrollfall (Auto/EV-Peers muessen bestehen bleiben) ===");

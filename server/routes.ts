@@ -367,7 +367,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const vectorFields: Array<[string, number | null]> = [["revenueCagr3to5y",revenueCagr3to5y],["earningsVolatility",earningsVolatility],["fcfMarginTrend",fcfMarginTrend],["leverageTrend",leverageTrend],["marginInflectionStrength",marginInflectionStrength],["growthGap",gStar != null && realizedGrowth != null ? gStar-realizedGrowth : null]];
       vectorFields.forEach(([name,value])=>{if(value==null)missingFeatures.push(name);});
       const rawPeerTickers = Array.isArray(rawPeers) ? rawPeers.map((p:any)=>String(p?.symbol ?? p ?? "")).filter(Boolean) : [];
-      const peers = await filterAndSelectPeers(ticker, String(b.sector ?? ""), String(b.industry ?? ""), rawPeerTickers, 5).catch(()=>[]);
+      const subjectMarketCap = number(b.marketCap);
+      const peerSegmentNames = Array.isArray(b.segments) ? b.segments.map((s: any) => String(s?.name ?? "")).filter(Boolean) : [];
+      const peers = await filterAndSelectPeers(ticker, String(b.sector ?? ""), String(b.industry ?? ""), rawPeerTickers, 5, {
+        ...(subjectMarketCap != null ? { subjectMarketCap } : {}),
+        subjectSegmentNames: peerSegmentNames,
+      }).catch(()=>[]);
       const peerStatements = await Promise.all(peers.map(async p => {
         const [i,c,bs,ratios] = await Promise.all([fmpIncomeStatement(p,3).catch(()=>[]),fmpCashFlow(p,3).catch(()=>[]),fmpBalanceSheet(p,3).catch(()=>[]),fmpRatios(p,1).catch(()=>[])]);
         const it=deriveStatementTrends({incomeRows:i,cashflowRows:c,balanceRows:bs}); const r0=number(i[0]?.revenue),r1=number(i[1]?.revenue);

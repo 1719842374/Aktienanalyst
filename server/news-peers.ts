@@ -6,7 +6,8 @@
 
 import type { Catalyst } from "../shared/schema";
 import { btcMediaSiteQuery, filterBtcNewsItems } from "../shared/btc-source-policy";
-import { fmpBatchQuote, fmpRatios, fmpKeyMetrics, fmpProfile } from "./fmp";
+import { fmpBatchQuote, fmpRatios, fmpKeyMetrics } from "./fmp";
+import type { PeerAdaptiveCallOptions } from "./peer-adaptive";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
 
 // Re-export so analyze-route can import sentiment helpers from news-peers
@@ -114,6 +115,17 @@ const CURATED_PEER_FALLBACK: Record<string, string[]> = {
   XPEV: ["BYDDY", "NIO", "LI", "TSLA", "GELYF"],
   GELYF: ["BYDDY", "TSLA", "NIO", "LI", "XPEV"],
 };
+
+/** Subjects that still have a last-resort list. The map does not grow (no NVO). */
+export function curatedPeerFallbackSubjects(): string[] {
+  return Object.keys(CURATED_PEER_FALLBACK);
+}
+
+export function curatedPeerFallbackFor(subjectTicker: string): string[] {
+  const list = CURATED_PEER_FALLBACK[subjectTicker.trim().toUpperCase()];
+  return list ? [...list] : [];
+}
+
 function normaliseIndustry(s: string): string {
   return s.toLowerCase().replace(/[-–—]/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -124,7 +136,13 @@ function isAutoEvIndustry(industry: string): boolean {
 function isLuxuryIndustry(industry: string): boolean {
   return LUXURY_INDUSTRY_BLOCKLIST.some(l => normaliseIndustry(industry).includes(l));
 }
-function isIndustryCompatible(subjectSector: string, subjectIndustry: string, candidateSector: string, candidateIndustry: string): { ok: boolean; reason: string } {
+export function isExactPeerIndustry(subjectIndustry: string, candidateIndustry: string): boolean {
+  const subject = normaliseIndustry(subjectIndustry);
+  const candidate = normaliseIndustry(candidateIndustry);
+  return subject.length > 0 && subject === candidate;
+}
+
+export function isIndustryCompatible(subjectSector: string, subjectIndustry: string, candidateSector: string, candidateIndustry: string): { ok: boolean; reason: string } {
   if (isAutoEvIndustry(subjectIndustry)) {
     if (isLuxuryIndustry(candidateIndustry)) return { ok: false, reason: "Luxury vs Auto/EV" };
     if (!isAutoEvIndustry(candidateIndustry)) return { ok: false, reason: "Industry mismatch Auto/EV" };
@@ -141,38 +159,18 @@ function isIndustryCompatible(subjectSector: string, subjectIndustry: string, ca
 
 export async function filterAndSelectPeers(
   subjectTicker: string, subjectSector: string, subjectIndustry: string,
-  rawPeerTickers: string[], maxPeers: number = 5
+  rawPeerTickers: string[], maxPeers: number = 5,
+  options?: PeerAdaptiveCallOptions,
 ): Promise<string[]> {
-  const upperSubject = subjectTicker.toUpperCase();
-  const candidates = rawPeerTickers.slice(0, 10);
-  if (candidates.length === 0) return CURATED_PEER_FALLBACK[upperSubject]?.slice(0, maxPeers) ?? [];
-  let candidateProfiles: Array<{ symbol: string; sector: string; industry: string } | null>;
-  try {
-    candidateProfiles = await Promise.all(candidates.map(async (sym) => {
-      try {
-        const p = await fmpProfile(sym);
-        if (!p) return null;
-        return { symbol: sym, sector: String(p.sector ?? ""), industry: String(p.industry ?? "") };
-      } catch { return null; }
-    }));
-  } catch { candidateProfiles = candidates.map(() => null); }
-  const filtered: string[] = [];
-  for (let i = 0; i < candidates.length; i++) {
-    const sym = candidates[i];
-    const prof = candidateProfiles[i];
-    if (!prof) continue;
-    if (isIndustryCompatible(subjectSector, subjectIndustry, prof.sector, prof.industry).ok) filtered.push(sym);
-  }
-  const curated = CURATED_PEER_FALLBACK[upperSubject];
-  if (curated) {
-    const combined = [...curated];
-    for (const sym of filtered) {
-      if (combined.length >= maxPeers) break;
-      if (!combined.includes(sym)) combined.push(sym);
-    }
-    return combined.slice(0, maxPeers);
-  }
-  return filtered.slice(0, maxPeers);
+  const { resolveAdaptivePeers } = await import("./peer-adaptive");
+  return resolveAdaptivePeers({
+    subjectTicker,
+    subjectSector,
+    subjectIndustry,
+    rawPeerTickers,
+    maxPeers,
+    ...options,
+  });
 }
 
 export interface RoicPoint {
@@ -187,6 +185,8 @@ const MAX_ROIC_5Y_YEARS = 5;
 export const ROIC_ABS_CAP = 100;
 const PEER_CAP_MIN_FACTOR = 0.05;
 const PEER_CAP_MAX_FACTOR = 20;
+/** Auto-take is 5. User overrides after that may reach 8. peerAvg uses this same set. */
+export const PEER_COMPARE_CAP = 8;
 
 /**
  * Removes implausible FMP ROIC observations instead of clipping them. A tiny
@@ -307,7 +307,7 @@ export async function fetchPeerComparisonFromTickers(
         roic5YYearsUsed: peerRoic?.roic5YYearsUsed ?? 0,
       });
     });
-    const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null).slice(0, 6);
+    const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null).slice(0, PEER_COMPARE_CAP);
     if (validPeers.length === 0) return null;
     const avg = (arr: (number | null)[], lo = -1000, hi = 1000): number | null => {
       const valid = arr.filter((v): v is number => v !== null && !isNaN(v) && isFinite(v) && v > lo && v < hi);

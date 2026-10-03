@@ -1164,19 +1164,22 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const tamAnalysis = generateTAMAnalysis(effectiveSector, industry, description, revenue, revenueGrowth, revenueSegments);
 
       // ── 9. Peers ──
-      // Auftrag 05.08.2026: FMP /stock-peers liefert Kandidaten rein aus
-      // Kursbewegungs-/Marktkap-Aehnlichkeit, NICHT aus Sector/Industry. Live-
-      // Beispiel BYDDY: FMP mischt Richemont/Dior (Luxury Goods) unter die
-      // "Peers" eines Auto-Herstellers. filterAndSelectPeers() prueft jeden
-      // Kandidaten gegen die Subjekt-Industry (sector/industry aus Schritt 2
-      // oben bereits verfuegbar) und greift bei Bedarf auf eine kuratierte
-      // Fallback-Liste zurueck (nur fuer bekannte Problemfaelle, nur wenn die
-      // FMP-Peers den Filter nicht bestehen). ROIC-Berechnung, Scoring-Gate-
-      // Logik und alle anderen Peer-Spalten bleiben unveraendert.
+      // FMP /stock-peers is price/cap similarity, not industry. Seeds are the
+      // bundle call. filterAndSelectPeers adds a cached 2-hop over the first
+      // five seeds, then keeps same industry or sector, the 5%–20× cap band,
+      // and the existing luxury-vs-auto rule. The curated map is only used
+      // when that set is empty. Overrides below run after F.
       const rawPeerTickers: string[] = Array.isArray(peers) ? peers.map((p: any) => String(p.symbol ?? p ?? "")).filter(Boolean) : [];
+      const peerSegmentNames = (Array.isArray(revenueSegments) ? revenueSegments : [])
+        .map((s) => String(s?.name ?? ""))
+        .filter(Boolean);
       let peerTickers: string[] = rawPeerTickers.slice(0, 5);
       try {
-        peerTickers = await filterAndSelectPeers(upperTicker, sector, industry, rawPeerTickers, 5);
+        peerTickers = await filterAndSelectPeers(upperTicker, sector, industry, rawPeerTickers, 5, {
+          subjectMarketCap: marketCap > 0 ? marketCap : undefined,
+          subjectDescription: description,
+          subjectSegmentNames: peerSegmentNames,
+        });
       } catch (peerFilterErr: any) {
         console.warn(`[ANALYZE] Peer-Filter fehlgeschlagen fuer ${upperTicker}, verwende ungefilterte FMP-Peers: ${peerFilterErr?.message?.substring(0, 100)}`);
       }
