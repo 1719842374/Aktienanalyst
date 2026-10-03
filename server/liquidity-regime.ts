@@ -28,7 +28,7 @@ function monthsAgoISO(n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function parseFredCsv(csv: string): FredObs[] {
+export function parseFredCsv(csv: string): FredObs[] {
   if (!csv || csv.includes("<html") || csv.includes("<!DOCTYPE")) return [];
   const lines = csv.trim().split(/\r?\n/);
   const out: FredObs[] = [];
@@ -43,8 +43,9 @@ function parseFredCsv(csv: string): FredObs[] {
   return out;
 }
 
-async function fetchFredSeries(series: string): Promise<FredObs[]> {
-  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${series}&cosd=${monthsAgoISO(30)}`;
+/** C2 bleibt bei 30 Monaten. Fiskal-Frontend zieht DFF ab 5y und SOMA ab 2y über cosd. */
+export async function fetchFredSeriesSince(series: string, cosd: string): Promise<FredObs[]> {
+  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${series}&cosd=${cosd}`;
   try {
     const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return [];
@@ -52,6 +53,10 @@ async function fetchFredSeries(series: string): Promise<FredObs[]> {
   } catch {
     return [];
   }
+}
+
+async function fetchFredSeries(series: string): Promise<FredObs[]> {
+  return fetchFredSeriesSince(series, monthsAgoISO(30));
 }
 
 export async function fetchLiquidityLive(): Promise<LiquidityMetrics> {

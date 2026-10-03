@@ -96,7 +96,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 30 | fertig_WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
 | 31 | fertig_WORK_EXEC_SUMMARY.md | Karte über S1 | Exec-Karte live `#58`; `#69` Analyze Ampel+KI+FS Live PASS (XOM; FMP Premium aktiv) | ✅ |
 | 32 | WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalog + Fetch | nur Markdown | ⬜ |
-| 33 | WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), kein Kalender | noch `BESSENT_WINDOW` | ⬜ |
+| 33 | WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), kein Kalender | Route + Karten im Code; GIS-Slot in `btcAnalysis.ts` unverändert; nicht live | 🟡 |
 | 34 | WORK_RESEARCHER_LIQUIDITY_INDEX.md | LI US/EU/ASIA | C2 nur US | ⬜ |
 | 35 | WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md | Buch M/F EZ/JP | kein Katalog | ⬜ |
 | 36 | WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md | r, V, π, T½ | Spec; M2V-Teil | ⬜ |
@@ -168,7 +168,7 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 
 **🟡 Partial:** Portfolio-Backtest Rest-DoD · Market-Charts PEG/FINRA · Hormuz (B) `recession-drivers.ts` · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`) · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
 
-**⬜ Spec (Liquidity-Bundle + Rest):** Regional LI + Books + Velocity + Data Sources · Fiscal Adaptive · Briefing regional · FRED/Sahm · Rate/Oil · Recession Sources · Peer Adaptive + Pricing-Power.
+**⬜ Spec (Liquidity-Bundle + Rest):** Regional LI + Books + Velocity + Data Sources · Fiscal Adaptive 🟡 (Route im Code, GIS offen, nicht live) · Briefing regional · FRED/Sahm · Rate/Oil · Recession Sources · Peer Adaptive + Pricing-Power.
 
 **Kein Gap:** Black-Litterman §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter/Chart-Soll. Efficient Frontier ≥3 Ticker.
 
@@ -208,7 +208,7 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 - `Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md` — die Route-Hunks (Force löscht L1+L2, Disk-Hit nach RAM-Miss, Schreiben nach Assemble) fehlen in `analyze-route.ts`.
 - `Offen_WORK_BIAS_FIXES_INVERSE_DCF.md` — `computeHardenedCRV` läuft im Signal-Snapshot, der Schalter „mindestens zwei Trigger, dann Inverse-DCF als Entscheidungsbasis“ samt WACC-Uplift und Ausschluss negativer Katalysatoren aus der GB-Summe ist nicht verdrahtet.
 - `Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — EZ-M3, BoJ-M2 und der asiatische Realzins sind nicht als Fetch für Velocity oder Briefing im Code.
-- `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — die s(z)-Schicht auf TGA, SOMA Bills gegen Notes und ΔDFF ist kein Score-Pfad.
+- `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — `GET /api/analyze-btc/fiscal-frontend` rechnet N^b, FE und s(z). Der GIS-Slot in `btcAnalysis.ts` bleibt das FFR-Niveau.
 - `Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md` — keine Cache-Keys `liqidx_EU__*` oder `liqidx_ASIA__*` und kein EZB- oder BoJ-Buch.
 - `Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — kein Regions-Widget für Debt/GDP, Realzins, Velocity und Halbwertszeit.
 - `Offen_WORK_PEER_ADAPTIVE.md` — kein 2-Hop (`peers2hop`); `CURATED_PEER_FALLBACK` in `server/news-peers.ts` bleibt der Fallback.

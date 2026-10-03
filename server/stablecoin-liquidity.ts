@@ -240,11 +240,18 @@ export async function fetchDefiTvlSnapshot(): Promise<DefiTvlSnapshot> {
   }
 }
 
+/** L_GENIUS = 1 seit 07/2025. Wirkung nur über D_30. Der Score 1.2 entfällt. */
+export const GENIUS_LEGAL = {
+  legal: 1 as const,
+  rulemakingNote: "L_GENIUS = 1, in Kraft seit 07/2025. Wirkung nur über D_30. Der Score 1.2 entfällt.",
+};
+
 export interface StablecoinLiquidityResponse {
   fetchedAt: string;
   stablecoins: StablecoinMarketSnapshot;
   tBillDemand: TBillDemandEstimate;
   defiTvl: DefiTvlSnapshot;
+  genius: typeof GENIUS_LEGAL;
 }
 
 export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiquidityResponse> {
@@ -259,5 +266,6 @@ export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiqu
     stablecoins,
     tBillDemand,
     defiTvl,
+    genius: GENIUS_LEGAL,
   };
 }
