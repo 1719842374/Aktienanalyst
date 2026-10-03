@@ -6,6 +6,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection";
+import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
 import type { RecessionAnalysis } from "@/components/recession/recessionDashboardShared";
@@ -112,15 +113,16 @@ export default function RecessionDashboard() {
               <ProbabilityEstimates subgroups={data.subgroups} />
             </SectionCard>
             <RecessionRsiSection number={8} />
-            <SectionCard number={9} title="Zusammenfassung & Top-3 Treiber">
+            <RecessionMarketChartsSection number={9} />
+            <SectionCard number={10} title="Zusammenfassung & Top-3 Treiber">
               <Summary data={data} />
             </SectionCard>
             {data.fazit && (
-              <SectionCard number={10} title="Fazit & Makro-Risikobewertung">
+              <SectionCard number={11} title="Fazit & Makro-Risikobewertung">
                 <FazitSection fazit={data.fazit} />
               </SectionCard>
             )}
-            <SectionCard number={data.fazit ? 11 : 10} title="Quellenliste">
+            <SectionCard number={data.fazit ? 12 : 11} title="Quellenliste">
               <SourcesList sources={data.sources} />
             </SectionCard>
             <div className="pb-4">
