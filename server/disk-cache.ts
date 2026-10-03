@@ -217,6 +217,12 @@ export function diskCacheList(): Array<{ ticker: string; cachedAt: string; ageMi
   }
 }
 
+function researcherTtlMs(key: string): number {
+  // peers2hop:{TICKER} is the 2-hop peer graph, not capex. 7 days, not the 1-day researcher TTL.
+  if (key.startsWith("peers2hop:")) return 7 * 24 * 60 * 60 * 1000;
+  return RESEARCHER_CACHE_TTL_MS;
+}
+
 export function diskResearcherGet(key: string): any | null {
   const d = getDb();
   if (!d) return null;
@@ -224,7 +230,7 @@ export function diskResearcherGet(key: string): any | null {
     const row = d.prepare("SELECT data, updated_at FROM researcher_cache WHERE cache_key = ?").get(key) as any;
     if (!row) return null;
     const age = Date.now() - row.updated_at;
-    if (age > RESEARCHER_CACHE_TTL_MS) {
+    if (age > researcherTtlMs(key)) {
       d.prepare("DELETE FROM researcher_cache WHERE cache_key = ?").run(key);
       return null;
     }
