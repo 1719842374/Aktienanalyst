@@ -45,7 +45,7 @@ function parseClose(row: any): { date: string; close: number; volume?: number } 
 }
 
 /** FRED CSV — same public fredgraph path as recession.ts (no API key). */
-async function fetchFredVolSeries(seriesId: string, cosd: string): Promise<VolPoint[]> {
+export async function fetchFredVolSeries(seriesId: string, cosd: string): Promise<VolPoint[]> {
   const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(seriesId)}&cosd=${cosd}`;
   try {
     const resp = await fetch(url, { signal: AbortSignal.timeout(20000) });
@@ -197,7 +197,7 @@ async function fetchStoxxOfficialV2tx(
 }
 
 /** VSTOXX: FMP first, then STOXX official h_v2tx.txt (Yahoo delisted / Stooq bot-wall). */
-async function fetchVstoxxVol(
+export async function fetchVstoxxVol(
   from: string,
   to: string,
 ): Promise<{ vol: VolPoint[]; source: "fmp" | "stoxx" | null; stoxxErr: string | null }> {
@@ -379,6 +379,11 @@ const TTL_MS = 6 * 60 * 60 * 1000;
 
 export function registerRecessionMarketRoutes(app: Express) {
   app.get("/api/analyze-recession/markets", async (req: Request, res: Response) => {
+    // Charts contract (?window= / ?date=) lives next to this handler.
+    // ?region= without date keeps the RSI/MACD payload below.
+    const { tryHandleRecessionMarketCharts } = await import("./recession-market-charts");
+    if (await tryHandleRecessionMarketCharts(req, res)) return;
+
     const regionRaw = String(req.query.region || "US").toUpperCase();
     const region = (regionRaw === "EU" || regionRaw === "AS" ? regionRaw : "US") as RegionId;
     const windowRaw = String(req.query.window || "5Y").toUpperCase();
