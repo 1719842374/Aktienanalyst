@@ -2,12 +2,7 @@ import type { Express } from "express";
 import { execSync } from "child_process";
 import { fetchMacroSnapshot } from "./fmp-macro";
 import { riskLevelPhrase } from "../shared/risk-level-label";
-
-// ============================================================
-// Geopolitical Analysis Metadata
-// Update quarterly when reviewing the static geopolitical narrative below.
-// ============================================================
-const GEO_ANALYSIS = { lastUpdated: "April 2026" };
+import { fetchBridge, shockGeopoliticsSection, type RecessionBridge } from "./recession-bridge";
 
 // ============================================================
 // Generic Data Helpers
@@ -771,6 +766,7 @@ export interface RecessionAnalysis {
   topDrivers: string[];
   interpretation: string;
   sources: { name: string; url: string }[];
+  bridge: RecessionBridge;
 }
 
 function clampAndRound(p: number): number {
@@ -780,6 +776,8 @@ function clampAndRound(p: number): number {
 
 export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   console.log("[RECESSION] Starting recession analysis...");
+
+  const bridgePromise = fetchBridge();
 
   const indicators: IndicatorResult[] = await Promise.all([
     scoreSahm(),
@@ -949,7 +947,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   ];
 
   // ====== FAZIT: Comprehensive assessment ======
-  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers);
+  const bridge = await bridgePromise;
+  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers, bridge);
 
   console.log("[RECESSION] Analysis complete.");
   console.log(`[RECESSION] Probabilities: Rez-3M=${pCoincident}%, Rez-6M=${pLeading}%, Rez-12M=${pRezFull}%, Korr-3-6M=${pSentiment}%, Korr-12M=${pCorrFull}%`);
@@ -964,6 +963,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     interpretation,
     fazit,
     sources,
+    bridge,
   };
 }
 
@@ -983,6 +983,7 @@ function generateFazit(
   pRez3M: number, pRez6M: number, pRez12M: number,
   pKorr3_6M: number, pKorr12M: number,
   topDrivers: string[],
+  bridge: RecessionBridge,
 ): { summary: string; riskLevel: string; sections: FazitSection[] } {
   // Extract key indicator values
   const get = (name: string) => indicators.find(i => i.name.includes(name));
@@ -1030,13 +1031,8 @@ function generateFazit(
     valuationText += `Die NYSE Margin Debt (${marginDebt.value}) zeigt erhöhte Hebelwirkung im Markt — ein klassischer Vorlauf-Indikator für abrupte Sell-Offs.`;
   }
 
-  // Section 3: Geopolitical/Macro Risks (Inflation + Rates)
-  // NOTE: Static analysis from GEO_ANALYSIS.lastUpdated. Update this constant quarterly.
-  let geoText = `[Stand: ${GEO_ANALYSIS.lastUpdated}] `;
-  geoText += `Exogene Energie- und Lieferkettenrisiken bleiben ein unauffälliger, aber relevanter Makro-Faktor für Inflation und Wachstum. `;
-  geoText += `Die Fed steht vor einem Stagflations-Dilemma: Zinssenkungen würden die Inflation anheizen, Zinserhöhungen die Konjunktur belasten. `;
-  geoText += `Marktkonsens sieht die Fed-Funds-Rate nahe 3,50-3,75%, mit Bias Richtung keine Senkung in 2026 oder sogar mögliche Zinserhöhungen. `;
-  geoText += `Für den Aktienmarkt bedeutet das: Höhere Kapitalmarktzinsen drücken Equity-Bewertungen durch steigende Diskontierungsraten — besonders bei Growth-Aktien mit langer Duration.`;
+  // Section 3: Geopolitics — only the WTI→CPI→BE→DGS10 chain, and only when shock.
+  const geoSection = shockGeopoliticsSection(bridge);
 
   // Section 4: Private Credit / Systemic Risk
   let creditText = "";
@@ -1074,7 +1070,7 @@ function generateFazit(
   const sections: FazitSection[] = [
     { title: "Quantitative Bewertung", emoji: "📊", text: quantSummary },
     { title: "Bewertungsrisiko", emoji: "⚠️", text: valuationText },
-    { title: "Geopolitik & Makro: Inflation, Zinsen", emoji: "🌍", text: geoText },
+    ...(geoSection ? [geoSection] : []),
     { title: "Private Credit & Systemisches Risiko", emoji: "🏦", text: creditText },
     { title: "Handlungsempfehlung", emoji: "🎯", text: actionText },
   ];
