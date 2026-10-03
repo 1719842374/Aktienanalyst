@@ -139,8 +139,8 @@ const SECTIONS = [
   { id: 10, label: "Finale Schätzung", icon: Scale },
   { id: 11, label: "Technische Analyse", icon: LineChartIcon },
   { id: 12, label: "Fear & Greed", icon: Gauge },
-  { id: 13, label: "Gesamt-Fazit", icon: Scale },
-  { id: 14, label: "Miner-Zone", icon: Activity },
+  { id: 13, label: "Miner-Zone", icon: Activity },
+  { id: 14, label: "Gesamt-Fazit", icon: Scale },
 ];
 
 // === Helper Components ===
@@ -2566,7 +2566,7 @@ function Section12Fazit({ data }: { data: BTCAnalysis }) {
   const overallColor = bullCount <= 1 ? "text-red-500" : bullCount === 2 ? "text-amber-500" : bullCount === 3 ? "text-emerald-400" : "text-emerald-500";
 
   return (
-    <SectionCard number={13} title="Umfassendes Gesamt-Fazit">
+    <SectionCard number={14} title="Umfassendes Gesamt-Fazit">
       <div className="space-y-4">
         {/* Overall verdict banner */}
         <div className={`rounded-lg p-4 border ${
@@ -2786,8 +2786,8 @@ export default function BTCDashboard() {
               <div ref={setSectionRef(10)}><Section9FinalEstimate data={data} /></div>
               <div ref={setSectionRef(11)}><Section10TechnicalChart data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
               <div ref={setSectionRef(12)}><Section11FearGreed data={data} /></div>
-              <div ref={setSectionRef(13)}><Section12Fazit data={data} /></div>
-              <div ref={setSectionRef(14)}><Section13Miner data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
+              <div ref={setSectionRef(13)}><Section13Miner data={data} timeRange={sharedTimeRange} onTimeRangeChange={setSharedTimeRange} /></div>
+              <div ref={setSectionRef(14)}><Section12Fazit data={data} /></div>
               <div className="pb-8" />
             </div>
           ) : null}

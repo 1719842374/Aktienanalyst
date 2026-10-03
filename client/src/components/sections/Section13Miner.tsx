@@ -255,7 +255,7 @@ export function Section13Miner({
   // ── Render ──
   if (loading) {
     return (
-      <SectionCard number={14} title="Miner-Zone: Profitabilität & Kapitulation">
+      <SectionCard number={13} title="Miner-Zone: Profitabilität & Kapitulation">
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
           <RefreshCw className="w-4 h-4 animate-spin" />
           Lade Miner-Daten von mempool.space …
@@ -266,7 +266,7 @@ export function Section13Miner({
 
   if (error || !minerData || !latest) {
     return (
-      <SectionCard number={14} title="Miner-Zone: Profitabilität & Kapitulation">
+      <SectionCard number={13} title="Miner-Zone: Profitabilität & Kapitulation">
         <div className="flex items-center gap-2 text-sm text-amber-500 py-4">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           Miner-Daten aktuell nicht verfügbar{error ? ` — ${error}` : ""}. Quelle: mempool.space.
@@ -282,7 +282,7 @@ export function Section13Miner({
       : { text: "Expansion", color: "text-emerald-500" };
 
   return (
-    <SectionCard number={14} title="Miner-Zone: Profitabilität & Kapitulation">
+    <SectionCard number={13} title="Miner-Zone: Profitabilität & Kapitulation">
       {/* Zone-Badge + Score */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
