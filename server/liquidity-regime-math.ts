@@ -207,6 +207,56 @@ export function classifyPolicy(input: {
 }
 
 /**
+ * Anzeige-Hinweis aus der letzten veröffentlichten Cap. Kein Input von
+ * classifyPolicy und kein Input von S.
+ */
+export const BESSENT_WINDOW = {
+  from: "2026-09-09",
+  to: "2026-11-04",
+  capBn: 4,
+} as const;
+
+export function bessentWindowHint(asOf: string): string | null {
+  if (asOf > BESSENT_WINDOW.to) return null;
+  return "letzte Veröffentlichung Cap=4 ab 09.09.";
+}
+
+export interface PolicyOpsClassification {
+  qe: boolean;
+  rmp: boolean;
+  desk: 0 | 1;
+  calendarHint: string | null;
+}
+
+/**
+ * Twin von classifyPolicy. QE/RMP nur über z(ΔB^n) und z(ΔWSHOBL),
+ * Desk nur über das vom Aufrufer gereichte Ops-Flag. Das Kalenderfenster
+ * bleibt der Hint.
+ */
+export function classifyPolicyFromOps(input: {
+  asOf: string;
+  zNotes13w: number | null;
+  notesDelta13wBn: number | null;
+  zBills13w: number | null;
+  desk: 0 | 1;
+}): PolicyOpsClassification {
+  const qe = input.zNotes13w != null
+    && input.notesDelta13wBn != null
+    && input.zNotes13w > 1.5
+    && input.notesDelta13wBn > 0;
+  const rmp = input.zBills13w != null
+    && input.zNotes13w != null
+    && input.zBills13w > 1.5
+    && input.zNotes13w <= 0.5;
+  return {
+    qe,
+    rmp,
+    desk: input.desk,
+    calendarHint: bessentWindowHint(input.asOf),
+  };
+}
+
+/**
  * YoY-Berechnung, periodenrobust: erkennt anhand des Datumsabstands zwischen
  * den letzten beiden Beobachtungen, ob die Serie monatlich (z.B. M2SL,
  * CPIAUCSL) oder quartalsweise (z.B. GDPC1) ist, und schaut entsprechend

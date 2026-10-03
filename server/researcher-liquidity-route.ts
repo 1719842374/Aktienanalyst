@@ -7,6 +7,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 import { fetchLiquidityLive, LIQUIDITY_CACHE_TAB, LIQUIDITY_CACHE_PARAMS } from "./liquidity-regime";
+import { bessentWindowHint } from "./liquidity-regime-math";
+import { fetchBuybackDesk } from "./fiscal-frontend";
 
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -78,8 +80,14 @@ export function registerLiquidityRoute(app: Express): void {
     console.log("[RESEARCHER/liquidity] building");
     try {
       const result = await fetchLiquidityLive();
-      writeCache(tab, cacheParams, result);
-      res.json(result);
+      const buybackDesk = await fetchBuybackDesk(result.asOf);
+      const payload = {
+        ...result,
+        calendarHint: bessentWindowHint(result.asOf),
+        ...(buybackDesk ? { buybackDesk } : {}),
+      };
+      writeCache(tab, cacheParams, payload);
+      res.json(payload);
     } catch (err: any) {
       const message = err?.message || "liquidity failed";
       console.error("[RESEARCHER/liquidity] failed:", message);

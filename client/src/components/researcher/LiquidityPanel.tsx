@@ -29,6 +29,8 @@ interface LiquidityPayload {
   asOf: string;
   source: string;
   dataQuality?: { walcl: boolean; rrp: boolean; tga: boolean; m2: boolean };
+  calendarHint?: string | null;
+  buybackDesk?: { flag: 0 | 1; source: "ops"; calendarHint: string | null };
   _cached?: boolean;
   _cacheAge?: number;
 }
@@ -142,10 +144,17 @@ export function LiquidityPanel() {
 
           {(data.policyRegime || data.durationImpulse) && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
-              <Metric label="Fed-Regime" value={data.policyRegime ? POLICY_REGIME_LABEL[data.policyRegime] : "n/a"} />
               <Metric
-                label="Treasury"
-                value={data.treasuryDurationActive ? `an · Cap ≥ 4 Mrd.` : "aus"}
+                label="Fed-Regime"
+                value={
+                  data.policyRegime === "twist_treasury" && data.buybackDesk
+                    ? "Treasury Buyback-Desk (Ops-API)"
+                    : data.policyRegime ? POLICY_REGIME_LABEL[data.policyRegime] : "n/a"
+                }
+              />
+              <Metric
+                label={data.buybackDesk ? "Treasury Buyback-Desk (Ops-API)" : "Treasury"}
+                value={data.buybackDesk ? `1_desk = ${data.buybackDesk.flag}` : data.treasuryDurationActive ? `an · Cap ≥ 4 Mrd.` : "aus"}
               />
               <Metric
                 label="Duration"
@@ -172,6 +181,11 @@ export function LiquidityPanel() {
                     ? " Fed: aktiver Bilanzabbau (QT) — restriktiv fuer Duration."
                     : ""}
           </p>
+          {(data.buybackDesk?.calendarHint || data.calendarHint) && (
+            <div className="text-[10px] text-foreground/40" data-testid="text-buyback-calendar-hint">
+              {data.buybackDesk?.calendarHint || data.calendarHint}
+            </div>
+          )}
           <div className="text-[10px] text-foreground/40" data-testid="text-liquidity-source">
             {data.source} · Stand {data.asOf}
           </div>

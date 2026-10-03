@@ -183,6 +183,126 @@ function MiniCard({ label, value, sub, detail }: { label: string; value: string;
   );
 }
 
+interface FiscalSlotDto {
+  score: number | null;
+  display: number;
+  available: boolean;
+}
+
+interface FiscalFrontendDto {
+  d30: { d30Bn: number | null; available: boolean; kennzeichnung: string };
+  netBillSupply: {
+    n30Bn: number | null;
+    nMonthBn: number | null;
+    source: "MSPD" | "Auctions" | "scaled-from-monthly" | null;
+    available: boolean;
+    qra30Bn: number;
+  };
+  fedBills: { deltaBn: number | null; kennzeichnung: string };
+  frontEndImpulse: { fe30Bn: number | null; available: boolean };
+  adaptiveScore: {
+    display: number;
+    available: boolean;
+    sM: FiscalSlotDto;
+    sFStar: FiscalSlotDto;
+    sD: FiscalSlotDto;
+  };
+  qra: { asOf: string; impliedBillChangeBn: number; identityHolds: boolean };
+  genius: { legal: number };
+  desk: { flag: 0 | 1; calendarHint: string | null };
+}
+
+function formatBn(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "n/v";
+  const sign = value < 0 ? "-" : "";
+  return `${sign}${Math.abs(value).toFixed(1)} Mrd.`;
+}
+
+function YellowBadge({ text }: { text: string }) {
+  return (
+    <span className="text-[9px] px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-400/30">
+      {text}
+    </span>
+  );
+}
+
+function billSourceLabel(source: FiscalFrontendDto["netBillSupply"]["source"]): string {
+  if (source === "scaled-from-monthly") return "scaled";
+  return source ?? "n/v";
+}
+
+function slotLine(name: string, slot: FiscalSlotDto): string {
+  const shown = slot.available && slot.score != null ? slot.score : slot.display;
+  return `${name} ${shown.toFixed(1)} · available: ${slot.available ? "true" : "false"}`;
+}
+
+export function FiscalFrontendCards({ data }: { data: FiscalFrontendDto }) {
+  const scaled = data.netBillSupply.source === "scaled-from-monthly";
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" data-testid="panel-fiscal-frontend">
+      <MiniCard
+        label="D_30"
+        value={formatBn(data.d30.d30Bn)}
+        sub={data.d30.kennzeichnung}
+        detail={<YellowBadge text="Policy" />}
+      />
+      <MiniCard
+        label="Netto Bill-Angebot (30T / Monat)"
+        value={formatBn(data.netBillSupply.n30Bn)}
+        sub={`Quelle ${billSourceLabel(data.netBillSupply.source)} · Monat ${formatBn(data.netBillSupply.nMonthBn)} · Live vs. ${data.netBillSupply.qra30Bn.toFixed(1)}`}
+        detail={scaled ? <YellowBadge text="scaled" /> : undefined}
+      />
+      <MiniCard label="Fed SOMA-Bills Δ ~28T" value={formatBn(data.fedBills.deltaBn)} sub="WSHOBL" />
+      {data.frontEndImpulse.available ? (
+        <MiniCard label="Front-End-Impuls" value={formatBn(data.frontEndImpulse.fe30Bn)} sub="FE_30" />
+      ) : (
+        <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3" data-testid="fiscal-fe-unavailable">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Front-End-Impuls</div>
+          <div className="text-base font-mono font-semibold tabular-nums mt-0.5">n/v</div>
+          <div className="text-[10px] text-red-700 dark:text-red-300 mt-0.5">available: false</div>
+        </div>
+      )}
+      <MiniCard
+        label="Adaptive Note S / S_M / S_F* / S_D"
+        value={data.adaptiveScore.display.toFixed(1)}
+        sub={`available: ${data.adaptiveScore.available ? "true" : "false"}`}
+        detail={(
+          <span className="block">
+            {slotLine("S_M", data.adaptiveScore.sM)}
+            <br />
+            {slotLine("S_F*", data.adaptiveScore.sFStar)}
+            <br />
+            {slotLine("S_D", data.adaptiveScore.sD)}
+          </span>
+        )}
+      />
+      {data.qra.identityHolds ? (
+        <MiniCard
+          label="QRA-Anker"
+          value={`Implied ${data.qra.impliedBillChangeBn}`}
+          sub={`Stand ${data.qra.asOf}, nicht Live`}
+          detail={<YellowBadge text="QRA" />}
+        />
+      ) : (
+        <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3" data-testid="fiscal-qra-unavailable">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">QRA-Anker</div>
+          <div className="text-base font-mono font-semibold tabular-nums mt-0.5">n/v</div>
+          <div className="text-[10px] text-red-700 dark:text-red-300 mt-0.5">available: false</div>
+        </div>
+      )}
+      <MiniCard label="GENIUS Legal" value={`L=${data.genius.legal}`} sub="kein 1.2" />
+      <MiniCard
+        label="Desk-Flag"
+        value={`1_desk = ${data.desk.flag}`}
+        sub="aus Ops, nicht aus Kalender"
+        detail={data.desk.calendarHint
+          ? <span data-testid="text-fiscal-calendar-hint">{data.desk.calendarHint}</span>
+          : undefined}
+      />
+    </div>
+  );
+}
+
 export function MeasuredFredCards({ measured }: { measured: ScanMeasured }) {
   const windows = measured.windows;
   return (
@@ -503,9 +623,25 @@ function BtcNewsPanel({ items, loading, error }: { items: BtcNewsItem[]; loading
 
 export function StablecoinLiquidityPanel() {
   const news = useBtcNews();
+  const [fiscal, setFiscal] = useState<FiscalFrontendDto | null>(null);
   const [scan, setScan] = useState<PolicyScanResponse | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/analyze-btc/fiscal-frontend", undefined, 30000);
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json || cancelled) return;
+        setFiscal(json as FiscalFrontendDto);
+      } catch {
+        if (!cancelled) setFiscal(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const runScan = async (force: boolean) => {
     setScanning(true);
@@ -667,6 +803,8 @@ export function StablecoinLiquidityPanel() {
             )}
           </div>
         )}
+
+        {fiscal && <FiscalFrontendCards data={fiscal} />}
       </div>
     </SectionCard>
   );
