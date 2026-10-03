@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { TickerAddButtons, bulkAddToWatchlist } from "@/components/portfolio/TickerAddButtons";
 import { MacroPanel } from "@/components/researcher/MacroPanel";
+import { LiquidityBriefingPanel } from "@/components/researcher/LiquidityBriefingPanel";
 import { SectorsPanel } from "@/components/researcher/SectorsPanel";
 import { ScreenerPanel } from "@/components/researcher/ScreenerPanel";
 import { CapexPanel } from "@/components/researcher/CapexPanel";
@@ -257,6 +258,11 @@ export default function Researcher() {
       </header>
 
       <main className="max-w-6xl mx-auto p-3 sm:p-4">
+        {activeTab === "macro" && (
+          <div className="mb-4">
+            <LiquidityBriefingPanel />
+          </div>
+        )}
         <div className="flex items-start justify-between gap-3 mb-4 p-3 rounded-lg bg-muted/20 border border-border/30">
           <div className="flex-1">
             <div className="text-xs font-semibold text-foreground/80">

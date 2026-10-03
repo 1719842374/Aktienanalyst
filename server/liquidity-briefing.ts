@@ -1,0 +1,447 @@
+/**
+ * Live-Fetch für EZ-Velocity (NGDP/M3), JP-Velocity (NGDP/M2) und APP/PEPP.
+ * Spec: Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md
+ *
+ * US-M2V wird hier nicht geholt. Ein vorhandener C2-Wert darf nur durchgereicht
+ * werden. Tote FRED-Spiegel aus §0 werden nicht angefragt.
+ */
+import {
+  CACHE_KEYS,
+  EXISTING_US_LIQUIDITY_CACHE_KEY,
+  LIVE_FRED_SERIES,
+  TTL_MS,
+  type AppMonth,
+  type DatedValue,
+  type PeppMonth,
+  type QuarterVelocity,
+  isForbiddenFredSeries,
+  median,
+  parseAppBreakdown,
+  parseBojMoneyStock,
+  parseBojSeries,
+  parseEcbCsv,
+  parseFredCsv,
+  parsePeppPurchases,
+  quarterVelocity,
+  roundTo,
+  xBotInvalidationKeys,
+  yoyPercent,
+  bojHundredMillionYenToBillion,
+} from "./liquidity-briefing-math";
+
+export const ECB_M3_KEY = "M.U2.Y.V.M30.X.1.U2.2300.Z01.E";
+export const ECB_M3_YOY_KEY = "M.U2.Y.V.M30.X.I.U2.2300.Z01.A";
+export const ECB_NGDP_KEY = "Q.Y.I10.W2.S1.S1.B.B1GQ._Z._Z._Z.EUR.V.N";
+export const BOJ_M2_CODE = "MAM1NAM2M2MO";
+export const BOJ_M2_YOY_CODE = "MAM1YAM2M2MO";
+
+const APP_CSV_URL = "https://www.ecb.europa.eu/mopo/pdf/APP_breakdown_history.csv";
+const PEPP_CSV_URL = "https://www.ecb.europa.eu/mopo/pdf/PEPP_purchase_history.csv";
+
+export interface BriefingCache {
+  get(key: string): { value: unknown; storedAt: number } | null;
+  set(key: string, value: unknown, storedAt: number): void;
+  delete(key: string): void;
+}
+
+export interface RegionVelocity {
+  stockBn: number | null;
+  yoy: number | null;
+  stockAsOf: string | null;
+  ngdpAnnualizedBn: number | null;
+  ngdpQuarter: string | null;
+  velocity: number | null;
+  velocityMedian10y: number | null;
+}
+
+export interface ProgramLatest {
+  period: string | null;
+  netBn: number | null;
+  holdingsBn: number | null;
+  psppNetBn: number | null;
+  psppHoldingsBn: number | null;
+  cumulativeNetPurchasesBn: number | null;
+}
+
+export interface LiquidityBriefing {
+  asOf: string;
+  eurozone: RegionVelocity;
+  japan: RegionVelocity;
+  app: ProgramLatest;
+  pepp: ProgramLatest;
+  us: { velocity: number | null; source: "liquidity-regime" | null };
+  sources: {
+    m3: string;
+    ngdpEa: string;
+    m2: string;
+    ngdpJp: string;
+    app: string;
+    pepp: string;
+  };
+  cache: { eu: string; m3: string; asia: string; briefing: string };
+  available: { ez: boolean; jp: boolean; app: boolean; pepp: boolean };
+}
+
+interface EuBundle {
+  m3: DatedValue[];
+  m3Yoy: DatedValue[];
+  ngdp: DatedValue[];
+  app: AppMonth[];
+  pepp: PeppMonth[];
+}
+
+interface AsiaBundle {
+  m2Raw: DatedValue[];
+  m2Yoy: DatedValue[];
+  ngdp: DatedValue[];
+}
+
+export function berlinDate(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+export function briefingCacheKey(now = new Date()): string {
+  return `briefing_v2__${berlinDate(now)}`;
+}
+
+function yearsAgoIso(now: Date, years: number): string {
+  const d = new Date(now.getTime());
+  d.setUTCFullYear(d.getUTCFullYear() - years);
+  return d.toISOString().slice(0, 10);
+}
+
+export function briefingSourceUrls(now = new Date()): { id: string; url: string }[] {
+  const start = yearsAgoIso(now, 12);
+  const startPeriod = start.slice(0, 7);
+  const startCompact = start.slice(0, 4) + start.slice(5, 7);
+  const ngdpStart = `${start.slice(0, 4)}-Q1`;
+  for (const id of LIVE_FRED_SERIES) {
+    if (isForbiddenFredSeries(id)) {
+      throw new Error(`Verbotene FRED-Serie im Briefing-Fetch: ${id}`);
+    }
+  }
+  return [
+    {
+      id: "ECB_M3",
+      url: `https://data-api.ecb.europa.eu/service/data/BSI/${ECB_M3_KEY}?startPeriod=${startPeriod}&format=csvdata&detail=dataonly`,
+    },
+    {
+      id: "ECB_M3_YOY",
+      url: `https://data-api.ecb.europa.eu/service/data/BSI/${ECB_M3_YOY_KEY}?startPeriod=${startPeriod}&format=csvdata&detail=dataonly`,
+    },
+    {
+      id: "ECB_NGDP",
+      url: `https://data-api.ecb.europa.eu/service/data/MNA/${ECB_NGDP_KEY}?startPeriod=${ngdpStart}&format=csvdata&detail=dataonly`,
+    },
+    { id: "APP", url: APP_CSV_URL },
+    { id: "PEPP", url: PEPP_CSV_URL },
+    {
+      id: "BOJ_M2",
+      url: `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_CODE},${BOJ_M2_YOY_CODE}&startDate=${startCompact}`,
+    },
+    {
+      id: "JPNNGDP",
+      url: `https://fred.stlouisfed.org/graph/fredgraph.csv?id=JPNNGDP&cosd=${start}`,
+    },
+  ];
+}
+
+async function diskCache(): Promise<BriefingCache> {
+  const { diskResearcherDelete, diskResearcherGet, diskResearcherSet } = await import("./disk-cache");
+  return {
+    get(key) {
+      const row = diskResearcherGet(key);
+      if (!row || typeof row.storedAt !== "number") return null;
+      return { value: row.value, storedAt: row.storedAt };
+    },
+    set(key, value, storedAt) {
+      diskResearcherSet(key, { value, storedAt });
+    },
+    delete(key) {
+      diskResearcherDelete(key);
+    },
+  };
+}
+
+export function memoryBriefingCache(): BriefingCache {
+  const map = new Map<string, { value: unknown; storedAt: number }>();
+  return {
+    get(key) {
+      return map.get(key) ?? null;
+    },
+    set(key, value, storedAt) {
+      map.set(key, { value, storedAt });
+    },
+    delete(key) {
+      map.delete(key);
+    },
+  };
+}
+
+function fresh(entry: { storedAt: number } | null, ttl: number, nowMs: number): boolean {
+  return !!entry && nowMs - entry.storedAt < ttl;
+}
+
+async function fetchText(url: string, fetchImpl: typeof fetch): Promise<string> {
+  if (/[?&]id=([^&]+)/.test(url)) {
+    const id = decodeURIComponent(url.match(/[?&]id=([^&]+)/)![1]);
+    if (isForbiddenFredSeries(id)) throw new Error(`Fetch blockiert: ${id}`);
+  }
+  let lastError = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetchImpl(url, {
+        signal: AbortSignal.timeout(20000),
+        headers: { Accept: "text/csv,text/plain;q=0.9,*/*;q=0.8" },
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const text = await resp.text();
+      if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) {
+        throw new Error("HTML statt CSV");
+      }
+      return text;
+    } catch (err: any) {
+      lastError = err?.message || "fetch failed";
+    }
+  }
+  console.warn(`[liquidity-briefing] ${lastError} ${url}`);
+  return "";
+}
+
+function emptyRegion(): RegionVelocity {
+  return {
+    stockBn: null, yoy: null, stockAsOf: null,
+    ngdpAnnualizedBn: null, ngdpQuarter: null,
+    velocity: null, velocityMedian10y: null,
+  };
+}
+
+function velocityBlock(
+  series: QuarterVelocity[],
+  stockBn: number | null,
+  yoy: number | null,
+  stockAsOf: string | null,
+): RegionVelocity {
+  const latest = series.length ? series[series.length - 1] : null;
+  const tail = series.slice(-40).map(p => p.velocity);
+  const med = median(tail);
+  return {
+    stockBn,
+    yoy,
+    stockAsOf,
+    ngdpAnnualizedBn: latest ? roundTo(latest.ngdpAnnualized, 1) : null,
+    ngdpQuarter: latest?.quarter ?? null,
+    velocity: latest ? roundTo(latest.velocity, 3) : null,
+    velocityMedian10y: med == null ? null : roundTo(med, 3),
+  };
+}
+
+function latestApp(rows: AppMonth[]): ProgramLatest {
+  const last = rows.length ? rows[rows.length - 1] : null;
+  if (!last) {
+    return { period: null, netBn: null, holdingsBn: null, psppNetBn: null, psppHoldingsBn: null, cumulativeNetPurchasesBn: null };
+  }
+  return {
+    period: last.period,
+    netBn: roundTo(last.netBn, 3),
+    holdingsBn: roundTo(last.holdingsBn, 3),
+    psppNetBn: roundTo(last.psppNetBn, 3),
+    psppHoldingsBn: roundTo(last.psppHoldingsBn, 3),
+    cumulativeNetPurchasesBn: null,
+  };
+}
+
+function latestPepp(rows: PeppMonth[]): ProgramLatest {
+  const last = rows.length ? rows[rows.length - 1] : null;
+  if (!last) {
+    return { period: null, netBn: null, holdingsBn: null, psppNetBn: null, psppHoldingsBn: null, cumulativeNetPurchasesBn: null };
+  }
+  return {
+    period: last.period,
+    netBn: roundTo(last.netBn, 3),
+    holdingsBn: null,
+    psppNetBn: null,
+    psppHoldingsBn: null,
+    cumulativeNetPurchasesBn: roundTo(last.cumulativeNetPurchasesBn, 3),
+  };
+}
+
+function m3ToBn(points: DatedValue[]): DatedValue[] {
+  return points.map(p => ({ period: p.period, value: p.value / 1000 }));
+}
+
+function ngdpMillionsToBn(points: DatedValue[]): DatedValue[] {
+  return points.map(p => ({ period: p.period, value: p.value / 1000 }));
+}
+
+async function readExistingUsVelocity(): Promise<number | null> {
+  const { diskResearcherGet } = await import("./disk-cache");
+  const row = diskResearcherGet(EXISTING_US_LIQUIDITY_CACHE_KEY);
+  const v = row?.velocity;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+export async function applyXBotPing(
+  account: string,
+  text: string,
+  cache?: BriefingCache,
+): Promise<string[]> {
+  const store = cache ?? await diskCache();
+  const keys = xBotInvalidationKeys(account, text);
+  for (const key of keys) store.delete(key);
+  return keys;
+}
+
+export async function fetchLiquidityBriefing(opts: {
+  fetchImpl?: typeof fetch;
+  now?: Date;
+  cache?: BriefingCache;
+  refresh?: boolean;
+  readUsVelocity?: () => number | null | Promise<number | null>;
+} = {}): Promise<LiquidityBriefing> {
+  const now = opts.now ?? new Date();
+  const nowMs = now.getTime();
+  const cache = opts.cache ?? await diskCache();
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const readUs = opts.readUsVelocity ?? readExistingUsVelocity;
+  const briefingKey = briefingCacheKey(now);
+
+  if (opts.refresh) {
+    cache.delete(briefingKey);
+    cache.delete(CACHE_KEYS.eu);
+    cache.delete(CACHE_KEYS.euM3);
+    cache.delete(CACHE_KEYS.asia);
+  }
+
+  const cachedBriefing = cache.get(briefingKey);
+  if (!opts.refresh && fresh(cachedBriefing, TTL_MS.briefing, nowMs) && cachedBriefing) {
+    return cachedBriefing.value as LiquidityBriefing;
+  }
+
+  const urls = briefingSourceUrls(now);
+  const byId = Object.fromEntries(urls.map(u => [u.id, u.url]));
+
+  let eu = cache.get(CACHE_KEYS.eu);
+  if (!fresh(eu, TTL_MS.euAppPep, nowMs)) eu = null;
+  let m3Entry = cache.get(CACHE_KEYS.euM3);
+  if (!fresh(m3Entry, TTL_MS.euM3, nowMs)) m3Entry = null;
+  let asia = cache.get(CACHE_KEYS.asia);
+  if (!fresh(asia, TTL_MS.asia, nowMs)) asia = null;
+
+  if (!eu || !m3Entry) {
+    const [m3Csv, m3YoyCsv, ngdpCsv, appCsv, peppCsv] = await Promise.all([
+      fetchText(byId.ECB_M3, fetchImpl).catch(() => ""),
+      fetchText(byId.ECB_M3_YOY, fetchImpl).catch(() => ""),
+      fetchText(byId.ECB_NGDP, fetchImpl).catch(() => ""),
+      fetchText(byId.APP, fetchImpl).catch(() => ""),
+      fetchText(byId.PEPP, fetchImpl).catch(() => ""),
+    ]);
+    const bundle: EuBundle = {
+      m3: parseEcbCsv(m3Csv).sort((a, b) => a.period.localeCompare(b.period)),
+      m3Yoy: parseEcbCsv(m3YoyCsv).sort((a, b) => a.period.localeCompare(b.period)),
+      ngdp: parseEcbCsv(ngdpCsv).sort((a, b) => a.period.localeCompare(b.period)),
+      app: parseAppBreakdown(appCsv).sort((a, b) => a.period.localeCompare(b.period)),
+      pepp: parsePeppPurchases(peppCsv).sort((a, b) => a.period.localeCompare(b.period)),
+    };
+    eu = { value: bundle, storedAt: nowMs };
+    if (bundle.m3.length) {
+      cache.set(CACHE_KEYS.eu, bundle, nowMs);
+      cache.set(CACHE_KEYS.euM3, { m3: bundle.m3, ngdp: bundle.ngdp, m3Yoy: bundle.m3Yoy }, nowMs);
+    }
+  }
+
+  if (!asia) {
+    const [m2Csv, ngdpCsv] = await Promise.all([
+      fetchText(byId.BOJ_M2, fetchImpl).catch(() => ""),
+      fetchText(byId.JPNNGDP, fetchImpl).catch(() => ""),
+    ]);
+    const bundle: AsiaBundle = {
+      m2Raw: parseBojMoneyStock(m2Csv),
+      m2Yoy: parseBojSeries(m2Csv, BOJ_M2_YOY_CODE),
+      ngdp: parseFredCsv(ngdpCsv).sort((a, b) => a.period.localeCompare(b.period)),
+    };
+    asia = { value: bundle, storedAt: nowMs };
+    if (bundle.m2Raw.length) cache.set(CACHE_KEYS.asia, bundle, nowMs);
+  }
+
+  const euBundle: EuBundle = (eu?.value as EuBundle) || { m3: [], m3Yoy: [], ngdp: [], app: [], pepp: [] };
+  const asiaBundle: AsiaBundle = (asia?.value as AsiaBundle) || { m2Raw: [], m2Yoy: [], ngdp: [] };
+
+  const m3Bn = m3ToBn(euBundle.m3 || []);
+  const ezNgdpBn = ngdpMillionsToBn(euBundle.ngdp || []);
+  const ezSeries = quarterVelocity({ ngdp: ezNgdpBn, moneyMonthly: m3Bn, annualizeNgdp: true });
+  const m3Last = m3Bn.length ? m3Bn[m3Bn.length - 1] : null;
+  const m3Official = euBundle.m3Yoy?.length ? euBundle.m3Yoy[euBundle.m3Yoy.length - 1].value : null;
+  const m3Yoy = m3Official ?? yoyPercent(m3Bn)?.latest ?? null;
+  const eurozone = velocityBlock(
+    ezSeries,
+    m3Last ? roundTo(m3Last.value, 1) : null,
+    m3Yoy == null ? null : roundTo(m3Yoy, 2),
+    m3Last?.period ?? null,
+  );
+
+  const m2Bn = (asiaBundle.m2Raw || []).map(p => ({
+    period: p.period,
+    value: bojHundredMillionYenToBillion(p.value),
+  }));
+  const jpSeries = quarterVelocity({
+    ngdp: asiaBundle.ngdp || [],
+    moneyMonthly: m2Bn,
+    annualizeNgdp: false,
+  });
+  const m2Last = m2Bn.length ? m2Bn[m2Bn.length - 1] : null;
+  const m2Official = asiaBundle.m2Yoy?.length ? asiaBundle.m2Yoy[asiaBundle.m2Yoy.length - 1].value : null;
+  const m2Yoy = m2Official ?? yoyPercent(m2Bn)?.latest ?? null;
+  const japan = velocityBlock(
+    jpSeries,
+    m2Last ? roundTo(m2Last.value, 1) : null,
+    m2Yoy == null ? null : roundTo(m2Yoy, 2),
+    m2Last?.period ?? null,
+  );
+
+  const app = latestApp(euBundle.app || []);
+  const pepp = latestPepp(euBundle.pepp || []);
+  const usVelocity = await readUs();
+
+  const payload: LiquidityBriefing = {
+    asOf: berlinDate(now),
+    eurozone,
+    japan,
+    app,
+    pepp,
+    us: {
+      velocity: usVelocity,
+      source: usVelocity == null ? null : "liquidity-regime",
+    },
+    sources: {
+      m3: "ECB BSI M.U2.Y.V.M30 outstanding",
+      ngdpEa: "ECB MNA nominal GDP EA21",
+      m2: "BoJ MD02 MAM1NAM2M2MO",
+      ngdpJp: "FRED JPNNGDP",
+      app: APP_CSV_URL,
+      pepp: PEPP_CSV_URL,
+    },
+    cache: {
+      eu: CACHE_KEYS.eu,
+      m3: CACHE_KEYS.euM3,
+      asia: CACHE_KEYS.asia,
+      briefing: briefingKey,
+    },
+    available: {
+      ez: eurozone.velocity != null,
+      jp: japan.velocity != null,
+      app: app.netBn != null,
+      pepp: pepp.netBn != null,
+    },
+  };
+
+  if (payload.available.ez && payload.available.jp && payload.available.app && payload.available.pepp) {
+    cache.set(briefingKey, payload, nowMs);
+  }
+  return payload;
+}
