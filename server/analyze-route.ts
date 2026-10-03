@@ -131,7 +131,7 @@ import {
 // /revenue-product-segmentation returns [] (verified for IREN). Additive-only
 // module, see server/sec-segments.ts for the full fallback-chain rationale.
 import { fetchSecBusinessSegments } from "./sec-segments";
-import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
+import { diskResearcherGet, diskResearcherSet, diskCacheGet, diskCacheSet, diskCacheDelete } from "./disk-cache";
 import {
   findFiscalResearchMatches,
   allocateProgramToFcf,
@@ -523,6 +523,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // (oder umgekehrt: der naechste User ohne Override erhaelt versehentlich
       // die mit LLY angereicherte Version).
       const cacheKey = buildAnalyzeCacheKey(upperTicker, useLLM, peerAddList, peerRemoveList);
+      // force=true: L1 (20 min) und L2 (7 Tage, gleicher cacheKey) verwerfen, dann voller Lauf.
+      if (forceRefresh) {
+        analysisCache.delete(cacheKey);
+        diskCacheDelete(cacheKey);
+        console.log(`[ANALYZE] Force refresh — dropped L1+L2 for ${cacheKey}`);
+      }
       if (!forceRefresh) {
         const cached = analysisCache.get(cacheKey);
         const cacheHit = !!(cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cacheLLMModeMatches(cached.usedLLM, useLLM));
@@ -532,6 +538,51 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         if (cacheHit) {
           console.log(`[ANALYZE] Cache hit for ${upperTicker}`);
           return res.json(cached!.result);
+        }
+        // RAM-Miss: 7-Tage-Disk (gleicher Key). KI-Blöcke bleiben, kurze HP wird einmal nachgeladen.
+        const diskHit = diskCacheGet(cacheKey);
+        if (diskHit) {
+          const {
+            _cached, _cacheAge, _cacheDate, _diskCache, _schemaVersion, _needsOhlcv,
+            ...diskResult
+          } = diskHit;
+          let served: any = diskResult;
+          const hpLen = Array.isArray(diskResult.historicalPrices) ? diskResult.historicalPrices.length : 0;
+          if (_needsOhlcv || hpLen < 50) {
+            try {
+              const rawHp = await fmpHistoricalPrices(upperTicker);
+              const rows: any[] = Array.isArray(rawHp) ? rawHp : (rawHp as any)?.historical ?? [];
+              const sorted = [...rows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+              const ohlcvPoints = sorted.slice(-TA_OHLCV_MAX_POINTS).map((r: any) => ({
+                date: String(r.date ?? "").slice(0, 10),
+                open: parseFloat(String(r.open)) || 0,
+                high: parseFloat(String(r.high)) || 0,
+                low: parseFloat(String(r.low)) || 0,
+                close: parseFloat(String(r.close)) || 0,
+                volume: parseFloat(String(r.volume ?? 0)) || 0,
+              })).filter((pt: any) => pt.close > 0 && pt.date.length === 10);
+              if (ohlcvPoints.length >= 50) {
+                const px = Number(served.currentPrice) || ohlcvPoints[ohlcvPoints.length - 1].close;
+                served = {
+                  ...served,
+                  historicalPrices: ohlcvPoints.map((pt: any) => ({ date: pt.date, close: pt.close })),
+                  ohlcvData: ohlcvPoints,
+                  technicalIndicators: buildTechnicalIndicators(ohlcvPoints, px),
+                };
+                diskCacheSet(cacheKey, served);
+                console.log(`[ANALYZE] Disk hit ${upperTicker}: OHLCV refreshed (${ohlcvPoints.length} pts), KI reused`);
+              }
+            } catch (ohlcvErr: any) {
+              console.warn(`[ANALYZE] Disk hit OHLCV refresh failed for ${upperTicker}: ${ohlcvErr?.message?.substring(0, 80)}`);
+            }
+          }
+          analysisCache.set(cacheKey, {
+            result: served,
+            timestamp: Date.now(),
+            usedLLM: !!(served.llmMode ?? served._useLLM ?? useLLM),
+          });
+          console.log(`[ANALYZE] Disk cache hit for ${upperTicker} (age=${_cacheAge}min)`);
+          return res.json(served);
         }
       }
 
@@ -2224,6 +2275,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       attachExecSummary(analysis);
+      // Nach Assemble (CRV-Felder + ExecSummary): L2 hält dieselbe Payload wie die Response. L1 zeigt schon auf dasselbe Objekt.
+      diskCacheSet(cacheKey, analysis);
       return res.json(analysis);
     } catch (err: any) {
       console.error(`[/api/analyze] Unhandled error: ${err?.message?.substring(0, 300)}`);
@@ -2437,6 +2490,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       updated = attachExecSummary(updated);
 
       analysisCache.set(cacheKeyUsed, { ...cached, result: updated });
+      // Enrich überlebt die 20-min-RAM-TTL und einen Restart (gleicher Analyze-Key).
+      diskCacheSet(cacheKeyUsed, updated);
       invalidateThesisStrengthCache(ticker);
 
       return res.json({
