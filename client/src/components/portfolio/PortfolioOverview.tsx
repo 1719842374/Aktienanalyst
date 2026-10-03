@@ -14,6 +14,7 @@ import { computeCapmExpectedReturn } from "@/lib/portfolio/capmExpectedReturn";
 import EfficientFrontierPanel from "./EfficientFrontierPanel";
 import PortfolioBacktestPanel from "./PortfolioBacktestPanel";
 import PortfolioPerformanceChart from "./PortfolioPerformanceChart";
+import TargetVsActualWeights from "./TargetVsActualWeights";
 
 const PIE_COLORS = [
   "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4",
@@ -246,6 +247,13 @@ export default function PortfolioOverview({
           benchmarkHistoricalPrices={benchmarkHistoricalPrices}
         />
       </div>
+
+      <TargetVsActualWeights
+        target={capmWeights ?? {}}
+        actual={marketWeightsForDelta}
+        nav={weights.reduce((s, w) => s + (w.marketValue ?? 0), 0)}
+        onSelectTicker={onSelectTicker}
+      />
 
       <EfficientFrontierPanel tickers={frontierTickers} historicalPricesByTicker={historicalPricesByTicker} currentWeights={frontierCurrentWeights} />
 
