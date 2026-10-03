@@ -5,11 +5,13 @@
  * Sechs Fixtures: Summe≠1, Union, Cash-Mix, Cash auf beiden Seiten,
  * Schwellen 25/100 bp, Trade-Vorzeichen. Dazu CDNS §2 gegen positions.ts.
  */
-import { computeMarketValue, computePositionPerformance } from "../client/src/lib/portfolio/positions";
+import { computeMarketValue, computePositionPerformance, makePosition } from "../client/src/lib/portfolio/positions";
+import { computeMarketWeights } from "../client/src/lib/portfolio/engine";
 import {
   COMPARE_POLICY,
   TARGET_SUM_BANNER_ABS,
   compareTargetActual,
+  openLongTradeBook,
 } from "../client/src/lib/portfolio/compareTargetActual";
 
 let failed = 0;
@@ -159,6 +161,32 @@ console.log("\nFixture 6: Trade = (Soll − Ist) × NAV, Vorzeichen");
   check("unter displayFloor nicht im Chart", tiny.chartRows.every(r => r.ticker !== "TINY"));
   check("unter displayFloor bleibt in der Tabelle", tiny.rows.some(r => r.ticker === "TINY"));
   check("Chart renormiert BIG nicht", approx(tiny.chartRows.find(r => r.ticker === "BIG")?.target ?? NaN, 0.5));
+}
+
+console.log("\nOffene Longs: gleicher Nenner, fehlender Kurs ist nicht Ist=0");
+{
+  const prices = { AAA: 120, BBB: 40, CCC: 10 };
+  const book = openLongTradeBook([
+    { ticker: "AAA", qty: 10, side: "long", status: "open" },
+    { ticker: "BBB", qty: 40, side: "long", status: "open" },
+    { ticker: "CCC", qty: 100, side: "short", status: "open" },
+  ], prices);
+  check("NAV ohne Short", approx(book.nav, 10 * 120 + 40 * 40));
+  check("Short nicht im Ist", book.actual != null && book.actual.CCC == null);
+  const market = computeMarketWeights([
+    makePosition({ ticker: "AAA", qty: 10, side: "long", status: "open" }),
+    makePosition({ ticker: "BBB", qty: 40, side: "long", status: "open" }),
+  ], prices);
+  check("Ist stimmt mit computeMarketWeights", book.actual != null && approx(book.actual.AAA, market.AAA) && approx(book.actual.BBB, market.BBB));
+  const compared = compareTargetActual({ AAA: 0.5, BBB: 0.5 }, book.actual ?? {}, book.nav);
+  const aaa = compared.rows.find(r => r.ticker === "AAA");
+  check("Trade gegen Long-NAV", aaa != null && approx(aaa.trade, (0.5 - (book.actual?.AAA ?? 0)) * book.nav));
+  const missing = openLongTradeBook([
+    { ticker: "AAA", qty: 10, side: "long" },
+    { ticker: "DDD", qty: 5, side: "long" },
+  ], prices);
+  check("fehlender Kurs → actual null", missing.actual === null && missing.nav === 0);
+  check("keine Longs → leeres Ist, nicht null", openLongTradeBook([{ ticker: "CCC", qty: 1, side: "short" }], prices).actual !== null);
 }
 
 console.log("\n§2 CDNS — MktVal / P&L / P&L% auf 1 USD / 1 bp");

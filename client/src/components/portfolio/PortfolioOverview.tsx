@@ -10,6 +10,7 @@ import {
   type PortfolioPosition, type PerformanceTimeframe,
 } from "@/lib/portfolio/positions";
 import { computeMarketWeights } from "@/lib/portfolio/engine";
+import { openLongTradeBook } from "@/lib/portfolio/compareTargetActual";
 import { computeCapmExpectedReturn } from "@/lib/portfolio/capmExpectedReturn";
 import EfficientFrontierPanel from "./EfficientFrontierPanel";
 import PortfolioBacktestPanel from "./PortfolioBacktestPanel";
@@ -133,6 +134,10 @@ export default function PortfolioOverview({
     return map;
   }, [frontierTickers, marketWeightsForDelta, capmWeights]);
 
+  // Soll (CAPM) gilt für alle offenen Longs. Der Richtungsfilter und Shorts
+  // bleiben aus NAV und Ist draußen, sonst mischt die Karte zwei Nenner.
+  const sollIstBook = useMemo(() => openLongTradeBook(positions, lastPriceByTicker), [positions, lastPriceByTicker]);
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -250,8 +255,8 @@ export default function PortfolioOverview({
 
       <TargetVsActualWeights
         target={capmWeights ?? {}}
-        actual={marketWeightsForDelta}
-        nav={weights.reduce((s, w) => s + (w.marketValue ?? 0), 0)}
+        actual={sollIstBook.actual}
+        nav={sollIstBook.nav}
         onSelectTicker={onSelectTicker}
       />
 

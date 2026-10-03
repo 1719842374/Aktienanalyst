@@ -196,3 +196,45 @@ export function compareTargetActual(
     targetSumOff,
   };
 }
+
+export interface OpenLongLeg {
+  ticker: string;
+  qty: number;
+  side?: "long" | "short";
+  status?: "open" | "closed";
+}
+
+/**
+ * Ist-Gewichte und NAV nur aus offenen Longs.
+ * `actual === null`: mindestens ein Long hat keinen gültigen Kurs. Das ist kein
+ * leeres Buch — Aufrufer dürfen die Namen nicht als Ist = 0 behandeln.
+ * Shorts und geschlossene Positionen zählen nicht in den Nenner.
+ */
+export function openLongTradeBook(
+  legs: OpenLongLeg[],
+  lastPriceByTicker: Record<string, number | null | undefined>,
+): { nav: number; actual: Record<string, number> | null } {
+  const openLongs = legs.filter(leg => (leg.status ?? "open") === "open" && (leg.side ?? "long") === "long");
+  if (openLongs.length === 0) return { nav: 0, actual: {} };
+
+  const valueByTicker: Record<string, number> = {};
+  const unique = new Set<string>();
+  for (const leg of openLongs) {
+    const ticker = leg.ticker.trim().toUpperCase();
+    if (!ticker) continue;
+    unique.add(ticker);
+    const px = lastPriceByTicker[ticker];
+    if (px == null || !Number.isFinite(px) || px <= 0) continue;
+    if (!Number.isFinite(leg.qty) || leg.qty <= 0) continue;
+    valueByTicker[ticker] = (valueByTicker[ticker] ?? 0) + leg.qty * px;
+  }
+  if (Object.keys(valueByTicker).length !== unique.size) return { nav: 0, actual: null };
+
+  let nav = 0;
+  for (const value of Object.values(valueByTicker)) nav += value;
+  if (!(nav > 0)) return { nav: 0, actual: null };
+
+  const actual: Record<string, number> = {};
+  for (const [ticker, value] of Object.entries(valueByTicker)) actual[ticker] = value / nav;
+  return { nav, actual };
+}

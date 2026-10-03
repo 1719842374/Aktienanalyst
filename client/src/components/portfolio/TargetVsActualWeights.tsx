@@ -66,6 +66,17 @@ function weightTooltip(value: number) {
   return fmtWeight(value);
 }
 
+function EmptySoll() {
+  return (
+    <div className="bg-card rounded-xl border border-border p-4" data-testid="panel-target-vs-actual">
+      <h3 className="text-sm font-semibold mb-2">Soll vs. Ist</h3>
+      <div className="h-56 flex items-center justify-center text-xs text-muted-foreground" data-testid="status-target-vs-actual-empty">
+        Optimierung muss Soll liefern
+      </div>
+    </div>
+  );
+}
+
 export default function TargetVsActualWeights({
   target,
   actual,
@@ -73,21 +84,25 @@ export default function TargetVsActualWeights({
   onSelectTicker,
 }: {
   target: Record<string, number> | null;
-  actual: Record<string, number>;
+  /** null: Ist-Vektor wurde verweigert (Kurs fehlt). Nicht dasselbe wie {}. */
+  actual: Record<string, number> | null;
   nav: number;
   onSelectTicker?: (ticker: string) => void;
 }) {
+  const hasTarget = !!target && Object.keys(target).length > 0;
   const result = useMemo(
-    () => compareTargetActual(target, actual, nav),
+    () => (actual == null ? null : compareTargetActual(target, actual, nav)),
     [target, actual, nav],
   );
 
-  if (!result.hasTarget) {
+  if (!hasTarget || (result != null && !result.hasTarget)) return <EmptySoll />;
+
+  if (actual == null || result == null) {
     return (
       <div className="bg-card rounded-xl border border-border p-4" data-testid="panel-target-vs-actual">
         <h3 className="text-sm font-semibold mb-2">Soll vs. Ist</h3>
-        <div className="h-56 flex items-center justify-center text-xs text-muted-foreground" data-testid="status-target-vs-actual-empty">
-          Optimierung muss Soll liefern
+        <div className="h-56 flex items-center justify-center text-xs text-muted-foreground text-center px-4" data-testid="status-target-vs-actual-no-price">
+          Ist-Gewichte fehlen — für mindestens einen offenen Long liegt kein Kurs vor.
         </div>
       </div>
     );
