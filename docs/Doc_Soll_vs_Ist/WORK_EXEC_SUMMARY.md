@@ -1,6 +1,6 @@
 # WORK_EXEC_SUMMARY — Hub-Kopie
 
-Kanonisch: [../../WORK_EXEC_SUMMARY.md](../../WORK_EXEC_SUMMARY.md)
+Kanonisch: [../../fertig_WORK_EXEC_SUMMARY.md](../../fertig_WORK_EXEC_SUMMARY.md)
 
 Fazit ist **Fließtext**, drei Absätze:
 

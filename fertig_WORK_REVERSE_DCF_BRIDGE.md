@@ -17,7 +17,7 @@ Zweiter Zweig: `realized8Q ≤ 0 UND g* > 0` → Gate wieder aktiv.
 
 Ökonomie unverändert: keine Preissetzungsmacht → PRICING_POWER Cap **55** bindet.  
 DCF_REALITY 65 ändert das Fazit „nicht attraktiv“ nicht.  
-Ausführlich mit Rechenweg: [WORK_SCORING_VORLAGE.md](./WORK_SCORING_VORLAGE.md) §19.
+Ausführlich mit Rechenweg: [fertig_WORK_SCORING_VORLAGE.md](./fertig_WORK_SCORING_VORLAGE.md) §19.
 
 Fiscal ändert g* **nicht**. Fiscal mildert nur den DCF_REALITY-Cap, nie PP/SHARE/Inventar.
 
@@ -63,5 +63,5 @@ Rüstungs-Beispiel: volume 20 Mrd. USD, 2025–2028, share 8 %, FCF-Marge 12 %, 
 
 Checkliste: Overlay + Cap; Forward base vs fiscal; Reverse ohne Overlay; NKE-Zweig ohne Buy-Label; PP 55 bleibt hart.
 
-**Weiter:** [WORK_SCORING_VORLAGE.md](./WORK_SCORING_VORLAGE.md) §17 und §19  
+**Weiter:** [fertig_WORK_SCORING_VORLAGE.md](./fertig_WORK_SCORING_VORLAGE.md) §17 und §19  
 **Regel:** Dokumentation. Implementierung lokal → PR → Review.

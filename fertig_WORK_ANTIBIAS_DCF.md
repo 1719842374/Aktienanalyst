@@ -199,6 +199,6 @@ Achsen nur als Suchhilfe. JSON → `BiasCatalyst[]` → PoS, pricedIn, GB → `i
 [ ] Tests: D−=0 → FV_inv=FV_base; mode nicht beides
 ```
 
-**Weiter:** [WORK_REVERSE_DCF_BRIDGE.md](./WORK_REVERSE_DCF_BRIDGE.md) · [WORK2.md](./WORK2.md)
+**Weiter:** [fertig_WORK_REVERSE_DCF_BRIDGE.md](./fertig_WORK_REVERSE_DCF_BRIDGE.md) · [fertig_WORK2.md](./fertig_WORK2.md)
 
 **Regel:** Design-Dokumentation. Implementierung lokal → PR → Review.

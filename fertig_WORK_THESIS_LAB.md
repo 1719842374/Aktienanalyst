@@ -2,7 +2,7 @@
 
 > **Stand: 16.09.2026 22:56 CEST**  
 > Status: MVP + Value-Chain-Lookup-Spec  
-> Lookup-Details: `WORK_VALUECHAIN_LAB_LOOKUP.md`
+> Lookup-Details: `fertig_WORK_VALUECHAIN_LAB_LOOKUP.md`
 
 ## 0) Entscheidung
 
@@ -12,8 +12,8 @@ Lab = eigene Route `/#/lab`. Value Chain = Lookup-Ziel, kein Index. Rotation-Rat
 
 | Pfad | Rolle |
 |---|---|
-| `WORK_THESIS_LAB.md` | Lab-Spec |
-| `WORK_VALUECHAIN_LAB_LOOKUP.md` | Lookup-Spec, Mapping, Acceptance |
+| `fertig_WORK_THESIS_LAB.md` | Lab-Spec |
+| `fertig_WORK_VALUECHAIN_LAB_LOOKUP.md` | Lookup-Spec, Mapping, Acceptance |
 | `server/thesisLab.ts` | Engine + Fixtures |
 | `server/thesis-lab-valuechain-map.ts` | Stage → industryKey |
 | `server/thesis-lab-routes.ts` | `/api/lab/*` inkl. lookup |
@@ -59,4 +59,4 @@ HBM Rot 87%. SaaS Gelb 45%. VAT Gelb 59%. Strain-Wave Gelb 61%. DE Farm-OS Rot 8
 | agent_liability | payments-market-infra |
 
 Deep-Links: `/#/valuechain?industry=` und `/#/lab?ticker=`.
-Vollständige Tabelle, GB-Zahlen, Acceptance: `WORK_VALUECHAIN_LAB_LOOKUP.md`.
+Vollständige Tabelle, GB-Zahlen, Acceptance: `fertig_WORK_VALUECHAIN_LAB_LOOKUP.md`.

@@ -2,7 +2,7 @@
 
 > **Stand: 16.09.2026 22:56 CEST**
 > Feature: Value-Chain-Lookup
-> Parent: WORK_THESIS_LAB.md · Catalog: server/valuechain-catalog.ts
+> Parent: fertig_WORK_THESIS_LAB.md · Catalog: server/valuechain-catalog.ts
 
 Lab-Stufe zu Catalog-industryKey ist eine feste Tabelle, kein LLM.
 

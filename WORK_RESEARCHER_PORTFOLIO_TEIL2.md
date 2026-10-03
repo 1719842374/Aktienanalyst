@@ -1,6 +1,6 @@
 # WORK_RESEARCHER_PORTFOLIO — Teil 2 (Kapitel J–Q)
 
-> Fortsetzung von `WORK_RESEARCHER_PORTFOLIO.md`  
+> Fortsetzung von `fertig_WORK_RESEARCHER_PORTFOLIO.md`  
 > Zahlen, Daten, Fakten: File-Map, Kapitalgewichtung, Risiko, Shrinkage, Frontier, Ist-Gewichte
 
 # Kapitel J — File-Map, Routing & Kommunikation (verbindlich)

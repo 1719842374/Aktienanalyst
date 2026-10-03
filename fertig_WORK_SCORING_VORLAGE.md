@@ -246,5 +246,5 @@ absoluter Reality-Check, kein Relativ-z.
 
 ---
 
-**Weiter:** [WORK_REVERSE_DCF_BRIDGE.md](./WORK_REVERSE_DCF_BRIDGE.md) Teil 1  
+**Weiter:** [fertig_WORK_REVERSE_DCF_BRIDGE.md](./fertig_WORK_REVERSE_DCF_BRIDGE.md) Teil 1  
 **Regel:** Dokumentation. Implementierung lokal → PR → Review.

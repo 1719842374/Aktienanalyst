@@ -1,7 +1,7 @@
 # WORK_TAM_RESIDUAL_XBOX.md — Residuum-Mix + Xbox-Wachstum
 
 > **Stand:** 28.08.2026
-> **Status:** Spec-Addendum zu [WORK_TAM_SEGMENT_MAPPING.md](./WORK_TAM_SEGMENT_MAPPING.md)
+> **Status:** Spec-Addendum zu [fertig_WORK_TAM_SEGMENT_MAPPING.md](./fertig_WORK_TAM_SEGMENT_MAPPING.md)
 > **Repro:** MSFT Section-7 Screenshot (Mix 97.5 %, Xbox Wachstum n/a, Coverage 91 %)
 
 **Regel:** Dokumentation. Implementierung lokal → PR → Review.

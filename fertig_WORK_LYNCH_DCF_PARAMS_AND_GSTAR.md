@@ -337,7 +337,7 @@ g* wird bereits für den Einpreisungsgrad von Katalysatoren genutzt. Ansonsten p
 
 ### 4.3 Guardrails
 
-- g* bleibt **clean** (kein Fiscal-Overlay) – Regel aus WORK_REVERSE_DCF_BRIDGE.md bleibt unangetastet.
+- g* bleibt **clean** (kein Fiscal-Overlay) – Regel aus fertig_WORK_REVERSE_DCF_BRIDGE.md bleibt unangetastet.
 - Keine automatische Überschreibung der User-Wachstumsannahmen – nur Hinweise + Score-Einfluss.
 
 ---
@@ -385,6 +385,6 @@ Gesamt: ca. **2–3 Tage** fokussierte Arbeit.
 
 **Regel:** Dokumentation. Implementierung lokal → PR → Review.  
 **Verwandte Docs:**  
-- [WORK_REVERSE_DCF_BRIDGE.md](./WORK_REVERSE_DCF_BRIDGE.md)  
-- [WORK_ANTIBIAS_DCF.md](./WORK_ANTIBIAS_DCF.md)  
-- [WORK_SCORING_VORLAGE.md](./WORK_SCORING_VORLAGE.md)
+- [fertig_WORK_REVERSE_DCF_BRIDGE.md](./fertig_WORK_REVERSE_DCF_BRIDGE.md)  
+- [fertig_WORK_ANTIBIAS_DCF.md](./fertig_WORK_ANTIBIAS_DCF.md)  
+- [fertig_WORK_SCORING_VORLAGE.md](./fertig_WORK_SCORING_VORLAGE.md)

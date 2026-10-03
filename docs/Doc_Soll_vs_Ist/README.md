@@ -47,10 +47,10 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 
 | Spec (Root) | Code / Live |
 |-------------|-------------|
-| [WORK_EXEC_SUMMARY.md](../../WORK_EXEC_SUMMARY.md) | Exec-Karte über S1 live (#58); #69 Ampel+KI+FS Live PASS (XOM, FMP Premium) |
+| [fertig_WORK_EXEC_SUMMARY.md](../../fertig_WORK_EXEC_SUMMARY.md) | Exec-Karte über S1 live (#58); #69 Ampel+KI+FS Live PASS (XOM, FMP Premium) |
 | Portfolio Dual-Line (#70) | `benchPct` vs Performance live (`358681a`) |
 | Dashboard-Badges 1–20 (#72) | Exec=1, FS=4, Tech=12 · Live PASS Bundle `index-PW9HgI6J.js` @ `22d4af9`+ |
-| [WORK_THESIS_LAB.md](../../WORK_THESIS_LAB.md) | `/#/lab` + 6 Fixtures Live PASS (`22d4af9`, #73) |
+| [fertig_WORK_THESIS_LAB.md](../../fertig_WORK_THESIS_LAB.md) | `/#/lab` + 6 Fixtures Live PASS (`22d4af9`, #73) |
 | Batch A (#74) | OHLCV honesty / Search / Error-UI / Recession · `e8ebd35c` · Fake-OK `bars=[]` source:fmp fixed · Live ✅ |
 | Moat Ökosystem-Chip (#75) | Chip nur bei `hasEcosystem` · `08d82b2` · Live ✅ nach Deploy |
 | DCF Default Markt-β (#76) | Default β = Markt-β · `ef0f31e` · Live ✅ nach Deploy |
@@ -69,32 +69,32 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | KI-N/A matrix Section7 (#100) | `c365c945` · Live ✅ PASS Bundle `index-MIF1Ml5X.js`. Spalten Segment\|Rev.\|Anteil\|Wachstum\|TAM\|CAGR\|Anteil am TAM\|vs.TAM; Idle-Button exakt „N/A mit KI schätzen“; fail-closed UI: Fill → „KI-Schätzung unvollständig — nichts übernommen“, kein Overlay/Badge, N/A unverändert. Soft: Success-Badge `KI ✓` in Dual-DoD nicht geübt. Soft-Note API: Body `{}` → HTTP 400 `BAD_REQUEST` „Keine N/A-Zellen“ — erwartet (keine Segments/keine N/A); 422 `INCOMPLETE_FILL` nur nach LLM mit Rest-n/a ≠ 0. Shots+Probe `/workspace/dod-100-ki-na/`. |
 | KI-N/A-Fill Segment-TAM (#93) | `7574b12d` · Label Soft → ✅ via #100: Idle-Label Spec „N/A mit KI schätzen“. Behavior+API war schon PASS (MSFT amber ~59%; KI nur unmatched + violet Badge; Catalog-Coverage unverändert; Clear → n/a; core 58.5%/unreliable/`tamTotal=null`). Soft: violet KI-Badge Success-Pfad nicht in Dual-DoD geübt. |
 | Miner Observability (#103) | `e2bc69a2` · Live ✅ PASS (server-only; Bundle `index-MIF1Ml5X.js` unverändert). Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry transient 400ms; Stale-Cache-on-Error → 200 + `stale:true` wenn Prior-Success, sonst 503 mit `error`+`code`(+`cause`). Dateien `server/btc-miner.ts`, `server/routes.ts` (+`minerUnavailableBody`), `script/test-btc-miner-observability.ts` 43/43. UI `Section13Miner` unverändert. Soft-Note: Live Soft-Probe `POST /api/btc-miner` → 503 `code=MEMPOOL_NETWORK` `cause=fetch failed` = Render→mempool Egress, kein Code-Delete. Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt. |
-| [WORK_PEER_ROIC_SANITY.md](../../WORK_PEER_ROIC_SANITY.md) | sanitizeRoic intact · Tip ≡ `4bdc1f8` (kein Delete) · wieder da nach FMP Premium |
+| [fertig_WORK_PEER_ROIC_SANITY.md](../../fertig_WORK_PEER_ROIC_SANITY.md) | sanitizeRoic intact · Tip ≡ `4bdc1f8` (kein Delete) · wieder da nach FMP Premium |
 | [FACTPACK_LLM.md](./FACTPACK_LLM.md) | Analyze-Hook + UI live (#57) |
-| [WORK_RECESSION_RSI_MACD.md](../../WORK_RECESSION_RSI_MACD.md) | Dashboard-Wire + Pane live |
+| [fertig_WORK_RECESSION_RSI_MACD.md](../../fertig_WORK_RECESSION_RSI_MACD.md) | Dashboard-Wire + Pane live |
 | [WORK_RECESSION_MARKET_CHARTS.md](../../WORK_RECESSION_MARKET_CHARTS.md) | Vol-Pane: US FRED VIXCLS · EU VSTOXX STOXX `h_v2tx.txt` (#66 Live vol≈942) · AS realized20 |
-| [WORK_PORTFOLIO.md](../../WORK_PORTFOLIO.md) | CAPM/Kelly + E[r]-KPI |
+| [fertig_WORK_PORTFOLIO.md](../../fertig_WORK_PORTFOLIO.md) | CAPM/Kelly + E[r]-KPI |
 | [WORK.md_portfolio_3](../../WORK.md_portfolio_3) §6 | `GET /api/ohlcv` + Long-Map live — Tester AAPL 1Y/2Y PASS @ `6a1807b` (#61) |
-| [WORK_RESEARCHER_LIQUIDITY_REGIME.md](../../WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 US GET `/api/researcher/liquidity` |
+| [fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md](../../fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 US GET `/api/researcher/liquidity` |
 | [WORK_STABLECOIN_TBILL_GENIUS.md](../../WORK_STABLECOIN_TBILL_GENIUS.md) | DefiLlama live; GENIUS-Score manuell |
 | [WORK_ANALYZE_DISK_CACHE.md](../../WORK_ANALYZE_DISK_CACHE.md) | L1+L2 |
 | [WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](../../WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | Wiring |
-| [WORK_ANTIBIAS_DCF.md](../../WORK_ANTIBIAS_DCF.md) | inverted DCF |
-| [WORK_REVERSE_DCF_BRIDGE.md](../../WORK_REVERSE_DCF_BRIDGE.md) | fiscal-bridge |
+| [fertig_WORK_ANTIBIAS_DCF.md](../../fertig_WORK_ANTIBIAS_DCF.md) | inverted DCF |
+| [fertig_WORK_REVERSE_DCF_BRIDGE.md](../../fertig_WORK_REVERSE_DCF_BRIDGE.md) | fiscal-bridge |
 | [WORK_BIAS_FIXES_INVERSE_DCF.md](../../WORK_BIAS_FIXES_INVERSE_DCF.md) | Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3 |
-| [WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md](../../WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md) | Defaults |
-| [WORK_RESEARCHER_PORTFOLIO.md](../../WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 Tabs |
+| [fertig_WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md](../../fertig_WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md) | Defaults |
+| [fertig_WORK_RESEARCHER_PORTFOLIO.md](../../fertig_WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 Tabs |
 | [WORK_RESEARCHER_PORTFOLIO_TEIL2.md](../../WORK_RESEARCHER_PORTFOLIO_TEIL2.md) | δ/HHI |
-| [WORK_RESEARCHER_BUTTONS_APPLY.md](../../WORK_RESEARCHER_BUTTONS_APPLY.md) | Add-Buttons |
-| [WORK_NEWS_SENTIMENT.md](../../WORK_NEWS_SENTIMENT.md) | news-sentiment |
-| [WORK_SEGMENT_DEDUP.md](../../WORK_SEGMENT_DEDUP.md) | fmp |
-| [WORK_TAM_SEGMENT_MAPPING.md](../../WORK_TAM_SEGMENT_MAPPING.md) | TAM-Tor |
-| [WORK_DATA_PROVIDERS.md](../../WORK_DATA_PROVIDERS.md) | FMP/Yahoo |
-| [WORK_SCORING_VORLAGE.md](../../WORK_SCORING_VORLAGE.md) | Gates |
-| [WORK_SIGNAL_BACKTEST.md](../../WORK_SIGNAL_BACKTEST.md) | server/backtest |
-| [WORK_BTC_MINER.md](../../WORK_BTC_MINER.md) | Observability live (#103 `e2bc69a2`); Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt |
-| [WORK_TEIL7_SCORING.md](../../WORK_TEIL7_SCORING.md) | Gold |
-| [WORK2.md](../../WORK2.md) | PESTEL |
+| [fertig_WORK_RESEARCHER_BUTTONS_APPLY.md](../../fertig_WORK_RESEARCHER_BUTTONS_APPLY.md) | Add-Buttons |
+| [fertig_WORK_NEWS_SENTIMENT.md](../../fertig_WORK_NEWS_SENTIMENT.md) | news-sentiment |
+| [fertig_WORK_SEGMENT_DEDUP.md](../../fertig_WORK_SEGMENT_DEDUP.md) | fmp |
+| [fertig_WORK_TAM_SEGMENT_MAPPING.md](../../fertig_WORK_TAM_SEGMENT_MAPPING.md) | TAM-Tor |
+| [fertig_WORK_DATA_PROVIDERS.md](../../fertig_WORK_DATA_PROVIDERS.md) | FMP/Yahoo |
+| [fertig_WORK_SCORING_VORLAGE.md](../../fertig_WORK_SCORING_VORLAGE.md) | Gates |
+| [fertig_WORK_SIGNAL_BACKTEST.md](../../fertig_WORK_SIGNAL_BACKTEST.md) | server/backtest |
+| [fertig_WORK_BTC_MINER.md](../../fertig_WORK_BTC_MINER.md) | Observability live (#103 `e2bc69a2`); Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt |
+| [fertig_WORK_TEIL7_SCORING.md](../../fertig_WORK_TEIL7_SCORING.md) | Gold |
+| [fertig_WORK2.md](../../fertig_WORK2.md) | PESTEL |
 | [WORK.md](../../WORK.md) | Index |
 | [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 30.09. Vormittag, nach #103 Miner Observability Live PASS (`e2bc69a2`, Bundle `index-MIF1Ml5X.js`) |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 geblockt |

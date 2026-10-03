@@ -7,7 +7,7 @@
 > **Ampel:** ⬜ Spec + Drop-in fertig, **noch nicht auf `main` verdrahtet**  
 > **Nicht anfassen:** inverted DCF, PEG, Miner, Sentiment, Portfolio F.2 Kern.
 
-Companion: [WORK_PORTFOLIO.md](./WORK_PORTFOLIO.md) · [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) · [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md)
+Companion: [fertig_WORK_PORTFOLIO.md](./fertig_WORK_PORTFOLIO.md) · [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) · [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md)
 
 ---
 

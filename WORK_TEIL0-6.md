@@ -2,7 +2,7 @@
 
 > Restore aus Commit 975dbe93 + dokumentiertem Stand  
 > Stand: 28.07.2026  
-> Zugehörig: WORK.md (Index) · WORK_TEIL7_SCORING.md (TEIL 7) · WORK2.md (TEIL 8)
+> Zugehörig: WORK.md (Index) · fertig_WORK_TEIL7_SCORING.md (TEIL 7) · fertig_WORK2.md (TEIL 8)
 
 ---
 
@@ -356,4 +356,4 @@ Alle (oder die meisten) gleichzeitig:
 
 ---
 
-**Weiter:** TEIL 7 → [WORK_TEIL7_SCORING.md](./WORK_TEIL7_SCORING.md) · TEIL 8 → [WORK2.md](./WORK2.md)
+**Weiter:** TEIL 7 → [fertig_WORK_TEIL7_SCORING.md](./fertig_WORK_TEIL7_SCORING.md) · TEIL 8 → [fertig_WORK2.md](./fertig_WORK2.md)

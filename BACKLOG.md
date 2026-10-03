@@ -13,7 +13,7 @@ mehrere dort als offen markierte Punkte sind inzwischen umgesetzt.
 
 ## Arbeiten vom 03.–05.08.2026
 
-### Scoring-Pipeline (WORK_SCORING_VORLAGE.md)
+### Scoring-Pipeline (fertig_WORK_SCORING_VORLAGE.md)
 
 **Umsetzungsstand: ✅ UMGESETZT (03.–05.08.2026)**
 - `server/scoring-gates.ts` — `buildGates()`, `runScoringPipeline()`,
@@ -73,7 +73,7 @@ Cron `0f0e9984` (Researcher Morning Refresh) läuft täglich Mo-Fr 06:45 CEST.
 
 **Umsetzungsstand: ✅ UMGESETZT** — Test: `test-inverted-dcf.ts` grün.
 Symmetrische Einpreisung via `calcImpliedGStar`/`calcEinpreisungsgrad`,
-keine hardcodierte Downside-Tabelle (siehe auch WORK_ANTIBIAS_DCF.md,
+keine hardcodierte Downside-Tabelle (siehe auch fertig_WORK_ANTIBIAS_DCF.md,
 bereits seit Juli erledigt).
 
 ### Fiscal-Bridge-Modul
@@ -126,7 +126,7 @@ verhindert falsches Signal). Tests: `test-gold-realyield-model.ts` (8 Checks,
 Modell-Mathematik) + `test-gold-realyield-wiring.ts` (13 Checks, neue
 Verdrahtung) — beide grün.
 
-### Regulatory-Exposure-Modell (WORK2.md §8)
+### Regulatory-Exposure-Modell (fertig_WORK2.md §8)
 
 **Umsetzungsstand: ✅ UMGESETZT (03.08.2026), Gate-Verdrahtung 05.08.2026** —
 9 generische Achsen (`server/regulatory.ts:32-36`), LLM-Discovery ohne
@@ -139,7 +139,7 @@ Scoring-Pipeline-Abschnitt oben (Punkt 1 dieses Tickets).
 
 ## Ältere Arbeiten (vor 03.08.2026) — weiterhin gültig, ungeändert
 
-### BTC-Miner-Sektion (MINER_INTEGRATION.md, WORK_BTC_MINER.md)
+### BTC-Miner-Sektion (MINER_INTEGRATION.md, fertig_WORK_BTC_MINER.md)
 
 **Umsetzungsstand: ✅ UMGESETZT** — Section 13, Hash Ribbons, Puell,
 Breakeven, Difficulty Ribbon, Kapitulationszonen. `classifyMinerZone()`
@@ -158,12 +158,12 @@ angehoben, FMP-Fallback greift wenn `closingPrices2Y.length < 100`.
 Alt-Provider-Fallback (Yahoo/Tiingo) weiterhin nicht umgesetzt — nicht
 nötig solange FMP Pro läuft.
 
-### Anti-Bias Inverted DCF (WORK_ANTIBIAS_DCF.md)
+### Anti-Bias Inverted DCF (fertig_WORK_ANTIBIAS_DCF.md)
 
 **Umsetzungsstand: ✅ UMGESETZT** — `calcImpliedGStar`, `calcEinpreisungsgrad`,
 generische LLM-Risiken, `posOriginal`/`posAdjustment`-Trennung.
 
-### Fiscal Bridge Reverse-DCF (WORK_REVERSE_DCF_BRIDGE.md)
+### Fiscal Bridge Reverse-DCF (fertig_WORK_REVERSE_DCF_BRIDGE.md)
 
 **Umsetzungsstand: ✅ Kern umgesetzt** — Reverse-DCF-Sektion 14, 20min-TTL-
 Cache. Fiskal-Bridge-Modul selbst siehe oben (unwired, bewusst offen).
@@ -183,7 +183,7 @@ Impact-Erklärtext im UI.
 | PortfolioPage an `/api/analyze`/Analyse-Cache anbinden | ~0,5–1 Tag | ⬜ offen | Bewusst nicht in diesem Ticket — Mathematik fertig, nur UI-Anbindung fehlt |
 | `inCapitulation` vs. `minerZone.zone` Namensklärung | ~2h | ⬜ offen | Bewusst nicht in diesem Ticket — dokumentierte Inkonsistenz, kein Crash |
 | Alt-Provider-Fallback für 10Y-OHLCV (Yahoo/Tiingo) | 1-2h | 🚫 zurückgestellt | Nicht nötig solange FMP Pro läuft |
-| Screener-Gates + Backtesting (WORK_SCORING_VORLAGE.md, Vollversion) | 2-3 Tage | 🟡 teilweise | Kern-Gate-System läuft (siehe oben); Backtesting-Layer noch offen |
+| Screener-Gates + Backtesting (fertig_WORK_SCORING_VORLAGE.md, Vollversion) | 2-3 Tage | 🟡 teilweise | Kern-Gate-System läuft (siehe oben); Backtesting-Layer noch offen |
 | Gold Multi-Faktor-Modell Phase 2 (WALCL, DXY, Multi-OLS) | 1-2 Tage | ⬜ offen | Explizit in `gold-realyield-model.ts` als TODO vermerkt, nicht Teil dieses Tickets |
 | Regulatory-Impact auch in Risks/PESTEL-Sektion direkt integrieren (statt nur PESTEL-KI-Panel) | ~3-4h | 🟡 teilweise | Fest verdrahtete PESTEL-Kategorie "Legal" existiert bereits als einfacherer Pfad |
 
