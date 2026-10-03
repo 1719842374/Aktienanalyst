@@ -116,6 +116,17 @@ export interface EpsDataPoint {
   isEstimate: boolean; // true for forward estimates
 }
 
+/**
+ * Relativ-Scoring (RELATIVE_GROWTH) nur bei peerMaterial und |Peers| ≥ 3.
+ * banner ist der sichtbare Hinweis „Peer-Set unvollständig“, sonst null.
+ */
+export interface PeerSetStatus {
+  peerMaterial: boolean;
+  peerCount: number;
+  relativeApplies: boolean;
+  banner: string | null;
+}
+
 export interface PeerComparison {
   subject: PeerCompany; // The analyzed stock itself
   peers: PeerCompany[]; // 4-6 competitor peers
@@ -532,6 +543,8 @@ export interface StockAnalysis {
       realizedGrowthQuartersUsed: number;
       marginDeltaYoYPp: number | null;
       relativeGrowthDeltaYoYPp: number | null;
+      /** false = RELATIVE_GROWTH nicht score-wirksam (peerMaterial-Gate). Fehlt bei älteren Einträgen. */
+      relativeScoreApplies?: boolean;
       inventoryDaysDeltaYoYPct: number | null;
     };
     fiscal: { qualifies: boolean; evPercent: number; reasons: string[] };
@@ -628,6 +641,8 @@ export interface StockAnalysis {
   // NEW: Structured news items from Google News RSS
   newsItems?: NewsItem[];
   peerComparison?: PeerComparison;
+  /** Server-Ergebnis des peerMaterial-Gates. Die UI zeigt banner, sie berechnet es nicht. */
+  peerSet?: PeerSetStatus;
   // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): spiegelt die tatsaechlich
   // angewendeten User-Overrides zurueck, damit die UI den Add/Remove-Zustand
   // korrekt vorbelegen kann (z.B. nach einem Seiten-Reload mit demselben Request).

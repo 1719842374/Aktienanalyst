@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import type { StockAnalysis, PeerCompany } from "@shared/schema";
+import type { PeerNaFill } from "@shared/peer-na-fill";
 import { ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 
 function fmt(v: number | null | undefined, decimals = 1): string {
@@ -44,7 +45,12 @@ function findBest(values: (number | null)[], lowerIsBetter: boolean): number | n
 // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): onOverridesChange ist optional
 // -- Aufrufer ohne den Callback (falls je vorhanden) sehen weiterhin nur die
 // reine Tabelle, keine Verhaltensaenderung. Additiv, kein Ersatz bestehender Props.
-export default function PeerComparison({ data, onOverridesChange }: { data: StockAnalysis; onOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void }) {
+export default function PeerComparison({ data, onOverridesChange, kiPeers = [] }: {
+  data: StockAnalysis;
+  onOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void;
+  /** Session-only KI tickers. Numbers on these rows are FMP, not model estimates. */
+  kiPeers?: PeerNaFill[];
+}) {
   const pc = data.peerComparison;
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -55,7 +61,10 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
   const activeAdd = data.activePeerOverrides?.add ?? [];
   const activeRemove = data.activePeerOverrides?.remove ?? [];
 
-  if (!pc || !pc.peers || pc.peers.length === 0) return null;
+  if (!pc || !pc.peers || pc.peers.length === 0) {
+    if (kiPeers.length === 0) return null;
+    return <KiOnlyPeerTable peers={kiPeers} />;
+  }
 
   const { subject, peers, peerAvg, sectorMedian } = pc;
 
@@ -263,6 +272,10 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
               </tr>
             ))}
 
+            {kiPeers.map((p) => (
+              <KiPeerRow key={`ki-${p.ticker}`} peer={p} cols={cols} trailingCell={!!onOverridesChange} />
+            ))}
+
             {/* Peer Average row */}
             <tr className="border-t-2 border-border bg-muted/10 font-medium">
               <td className="py-1.5 px-1.5 text-muted-foreground">Ø Peers</td>
@@ -352,6 +365,74 @@ export default function PeerComparison({ data, onOverridesChange }: { data: Stoc
           );
         })}
       </div>
+    </div>
+  );
+}
+
+type PeerCol = { key: SortKey; label: string; lowerIsBetter: boolean; decimals: number; suffix: string };
+
+function KiBadge({ testId }: { testId?: string }) {
+  return (
+    <span
+      className="ml-1 inline-flex items-center rounded border border-violet-500/40 bg-violet-500/15 px-1 align-middle text-[8px] font-bold uppercase tracking-wide text-violet-700 dark:text-violet-200"
+      title="KI-Vorschlag. Kennzahlen von FMP, nicht vom Modell."
+      aria-label="KI-Vorschlag"
+      data-testid={testId}
+    >
+      KI
+    </span>
+  );
+}
+
+function KiPeerRow({ peer, cols, trailingCell }: { peer: PeerNaFill; cols: PeerCol[]; trailingCell: boolean }) {
+  return (
+    <tr className="bg-violet-500/5" data-testid={`row-peer-ki-${peer.ticker}`}>
+      <td className="py-1.5 px-1.5 text-violet-700 dark:text-violet-200">
+        {peer.ticker}
+        <KiBadge testId={`badge-peer-ki-${peer.ticker}`} />
+      </td>
+      <td className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px]">{fmtCap(peer.marketCap)}</td>
+      {cols.map(c => {
+        const val = (peer as unknown as Record<string, number | null | undefined>)[c.key];
+        return (
+          <td key={c.key} className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px]">
+            {fmtMetric(c.key, val, c.decimals, c.suffix)}
+          </td>
+        );
+      })}
+      {trailingCell ? <td></td> : null}
+    </tr>
+  );
+}
+
+const KI_ONLY_COLS: PeerCol[] = [
+  { key: "pe", label: "P/E", lowerIsBetter: true, decimals: 1, suffix: "" },
+  { key: "peg", label: "PEG", lowerIsBetter: true, decimals: 2, suffix: "" },
+  { key: "ps", label: "P/S", lowerIsBetter: true, decimals: 1, suffix: "" },
+  { key: "pb", label: "P/B", lowerIsBetter: true, decimals: 1, suffix: "" },
+  { key: "epsGrowth1Y", label: "EPS 1Y", lowerIsBetter: false, decimals: 1, suffix: "%" },
+  { key: "epsGrowth5Y", label: "EPS 5Y", lowerIsBetter: false, decimals: 1, suffix: "%" },
+  { key: "roic", label: "ROIC (FY)", lowerIsBetter: false, decimals: 1, suffix: "%" },
+  { key: "roic5Y", label: "ROIC 5Y Ø", lowerIsBetter: false, decimals: 1, suffix: "%" },
+];
+
+function KiOnlyPeerTable({ peers }: { peers: PeerNaFill[] }) {
+  return (
+    <div className="overflow-x-auto -mx-1">
+      <table className="w-full text-[11px]">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-left py-1.5 px-1.5 text-muted-foreground font-medium">Ticker</th>
+            <th className="text-right py-1.5 px-1 text-muted-foreground font-medium">Mkt Cap</th>
+            {KI_ONLY_COLS.map(c => (
+              <th key={c.key} className="text-right py-1.5 px-1 text-muted-foreground font-medium">{c.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/40">
+          {peers.map(p => <KiPeerRow key={p.ticker} peer={p} cols={KI_ONLY_COLS} trailingCell={false} />)}
+        </tbody>
+      </table>
     </div>
   );
 }

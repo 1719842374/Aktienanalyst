@@ -285,6 +285,13 @@ export interface GateInputs {
   /** YoY-Delta des relativen Wachstums vs. Sektor/Peer-Median in Prozentpunkten
    *  (negativ = Share-Loss). z.B. aus Section7 Segment-TAM outperforming-Delta. */
   relativeGrowthDeltaYoYPp: number | null;
+  /**
+   * Offen_WORK_PEER_PRICING_POWER.md: RELATIVE_GROWTH nur score-wirksam wenn
+   * peerMaterial (Moat None/Narrow oder Rivalität hoch) und |Peers| ≥ 3.
+   * false schaltet das Gate aus. undefined lässt das bisherige Modell
+   * (Aufrufer ohne Peer-Set, bestehende Fixtures).
+   */
+  relativeScoreApplies?: boolean;
   /** Lagerbestand/Inventory-Tage YoY-Delta in % (positiv = Aufbau/Risiko). null
    *  wenn nicht anwendbar (z.B. Software-/Dienstleistungsunternehmen ohne Inventory). */
   inventoryDaysDeltaYoYPct: number | null;
@@ -342,14 +349,19 @@ export function buildGates(inputs: GateInputs): Gate[] {
       : 'Reverse-DCF-Wachstumsannahme wird durch die 8Q-Historie hinreichend gestützt',
   });
 
-  // RELATIVE_GROWTH — "Realized 8Q schwach" UND/ODER "Share-Loss" (§17.8)
-  const weakGrowth =
+  // RELATIVE_GROWTH — "Realized 8Q schwach" UND/ODER "Share-Loss" (§17.8).
+  // peerMaterial-Gate: beide Schenkel nur wenn relativeScoreApplies nicht false ist.
+  const realizedWeak =
     inputs.realizedGrowth8QPercent != null &&
     inputs.realizedGrowth8QPercent < GATE_THRESHOLDS.WEAK_REALIZED_GROWTH_PCT;
-  const shareLoss =
+  const shareLossRaw =
     inputs.relativeGrowthDeltaYoYPp != null &&
     inputs.relativeGrowthDeltaYoYPp <= -GATE_THRESHOLDS.SHARE_LOSS_PP;
+  const peerGateOpen = inputs.relativeScoreApplies !== false;
+  const weakGrowth = peerGateOpen && realizedWeak;
+  const shareLoss = peerGateOpen && shareLossRaw;
   const relativeGrowthActive = weakGrowth || shareLoss;
+  const relativeSuppressed = !peerGateOpen && (realizedWeak || shareLossRaw);
   gates.push({
     id: 'RELATIVE_GROWTH',
     active: relativeGrowthActive,
@@ -360,7 +372,9 @@ export function buildGates(inputs: GateInputs): Gate[] {
           weakGrowth ? `Realized-8Q schwach (${inputs.realizedGrowth8QPercent?.toFixed(1)}% < ${GATE_THRESHOLDS.WEAK_REALIZED_GROWTH_PCT}%)` : null,
           shareLoss ? `Share-Loss (${inputs.relativeGrowthDeltaYoYPp?.toFixed(1)}pp ≤ -${GATE_THRESHOLDS.SHARE_LOSS_PP}pp)` : null,
         ].filter(Boolean).join(' · ')
-      : 'Relatives Wachstum ggü. Sektor/Historie unauffällig',
+      : relativeSuppressed
+        ? 'Relativ nicht score-wirksam (peerMaterial)'
+        : 'Relatives Wachstum ggü. Sektor/Historie unauffällig',
   });
 
   // PRICING_POWER — "Marge bricht" (§17.8, Rüstungsbeispiel Zeile 4)

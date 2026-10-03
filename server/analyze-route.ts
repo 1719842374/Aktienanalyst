@@ -79,6 +79,7 @@ import {
   type RevenueSegment,
 } from "../shared/schema";
 import { clampPorterThreat, porterThreatRatingDe, toSchemaPorterForce } from "../shared/porter-score";
+import { assessPeerSet } from "../shared/peer-material";
 
 import {
   generateCatalystsAndMatchNews,
@@ -94,6 +95,7 @@ import {
   isLLMAvailable,
 } from "./llm-openrouter";
 import { requestTamNaFills } from "./tam-na-fill";
+import { requestPeerNaFills } from "./peer-na-fill";
 
 import {
   isFmpAvailable,
@@ -1672,6 +1674,16 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Moat rating — legacy string form used by Section2 / Summary.
       const moatRating = moatAssessment.moatStrength ?? "None";
 
+      // peerMaterial (Moat None/Narrow oder Rivalität hoch) und |F|≥3.
+      // Sonst ist RELATIVE_GROWTH nicht score-wirksam. Unvollständiges
+      // materiales Set setzt den Banner „Peer-Set unvollständig“.
+      const peerCount = Array.isArray(peerComparison?.peers) ? peerComparison.peers.length : 0;
+      const peerSet = assessPeerSet({
+        moatRating,
+        porterForces: Array.isArray(moatAssessment?.porterForces) ? moatAssessment.porterForces : [],
+        peerCount,
+      });
+
       // ── Scoring-Pipeline (WORK_SCORING_VORLAGE.md §0 + §17) ──
       // Verdrahtet mit ECHTEN Analyse-Daten: g* (calcImpliedGStar, oben),
       // FMP-Quartalsumsaetze (Realized-8Q), Jahres-Statements (Margen-Delta,
@@ -1701,6 +1713,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               ? (peerComparison.peers as any[]).map(p => p?.revenueGrowth ?? null)
               : null,
             regulatoryGate,
+            relativeScoreApplies: peerSet.relativeApplies,
           },
           health,
           moatRating,
@@ -1950,6 +1963,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         revenueSegmentsSource,
         revenueSegmentsMessage,
         peerComparison: peerComparisonOut,
+        peerSet,
         activePeerOverrides: hasPeerOverrides ? { add: peerAddList, remove: peerRemoveList } : { add: [], remove: [] },
         catalystDeepDives: catalystDeepDives ?? [],
 
@@ -2190,6 +2204,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
               ? (peerComparison.peers as any[]).map(p => p?.revenueGrowth ?? null)
               : null,
             regulatoryGate,
+            relativeScoreApplies: peerSet.relativeApplies,
           },
           health,
           moatRating,
@@ -2535,6 +2550,42 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       });
     } catch (err: any) {
       console.error(`[/api/analyze/tam-na-fill] ${err?.message?.substring(0, 300)}`);
+      return res.status(500).json({ error: err?.message ?? "Internal server error" });
+    }
+  });
+
+  // ── POST /api/analyze/:ticker/peer-na-fill ───────────────────
+  // OpenRouter names missing peer tickers only. Kennzahlen come from FMP.
+  // A ticker without FMP data is not filled with invented numbers. Success
+  // only when enough FMP-backed rows close the gap to 3; otherwise 422
+  // INCOMPLETE_FILL and no overlay. Does not write the cache or the score.
+  app.post("/api/analyze/:ticker/peer-na-fill", async (req: Request, res: Response) => {
+    try {
+      const rawTicker = req.params.ticker;
+      const ticker = (Array.isArray(rawTicker) ? rawTicker[0] : rawTicker) ?? "";
+      const b = req.body ?? {};
+      const result = await requestPeerNaFills({
+        ticker,
+        companyName: b.companyName,
+        sector: b.sector,
+        industry: b.industry,
+        description: b.description,
+        existingPeers: Array.isArray(b.existingPeers) ? b.existingPeers : [],
+        relativeApplies: typeof b.relativeApplies === "boolean" ? b.relativeApplies : null,
+      });
+      if (!result.ok) {
+        return res.status(result.status).json({ error: result.error, code: result.code });
+      }
+      return res.json({
+        fills: result.fills,
+        needed: result.needed,
+        factPeerCount: result.factPeerCount,
+        relativeApplies: result.relativeApplies,
+        note: result.note,
+        modelUsed: result.modelUsed,
+      });
+    } catch (err: any) {
+      console.error(`[/api/analyze/peer-na-fill] ${err?.message?.substring(0, 300)}`);
       return res.status(500).json({ error: err?.message ?? "Internal server error" });
     }
   });
