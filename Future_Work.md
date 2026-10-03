@@ -14,7 +14,7 @@ Die folgenden Punkte aus der ursprünglichen Feature-Liste sind **bereits umgese
 | Feature | Status | Referenz / Code |
 |---------|--------|-----------------|
 | **18-Sektionen Aktien-Analyse** (DCF, CRV-Härtung, Reverse DCF, Monte Carlo, Thesis Strength, Management Score, PESTEL, Porter, Technical Chart 10Y, etc.) | ✅ | `client/src/components/sections/*`, `server/analyze-route.ts`, README „Die 18 Sektionen“ |
-| **Virtuelles Portfolio** + CAPM / Kelly / Sharpe / Gewichtungsmodi A/B/C + Pie-Chart + Positions-Tracker + „Aus Analyse übernehmen“ + Watchlist + Researcher-Portfolios | ✅ (stark erweitert seit BACKLOG 05.08.) | `client/src/pages/PortfolioPage.tsx`, `client/src/lib/portfolio/*`, `WORK_PORTFOLIO.md` |
+| **Virtuelles Portfolio** + CAPM / Kelly / Sharpe / Gewichtungsmodi A/B/C + Pie-Chart + Positions-Tracker + „Aus Analyse übernehmen“ + Watchlist + Researcher-Portfolios | ✅ (stark erweitert seit BACKLOG 05.08.) | `client/src/pages/PortfolioPage.tsx`, `client/src/lib/portfolio/*`, `fertig_WORK_PORTFOLIO.md` |
 | **Equity Researcher** (4 Tabs: Macro, Sectors, Screener, Capex) + Daily Briefing + Caching | ✅ | `server/researcher.ts`, `client/src/pages/Researcher.tsx` |
 | **13F / Screener** + Ticker-Links | ✅ | `server/screener.ts`, ScreenerDashboard |
 | **BTC-Dashboard 12 Sektionen** inkl. Miner-Sektion (Hash Ribbons, Puell, Breakeven, Difficulty Ribbon, Kapitulationszonen) | ✅ (Kern) | `client/src/pages/BTCDashboard.tsx`, `server/btc-miner.ts`, `MINER_INTEGRATION.md` |
@@ -67,7 +67,7 @@ Im **Undervalued Screener** und im **Daily Briefing** funktioniert der Add einwa
 `SectorsPanel.tsx` rendert die Ticker nur als statische `<span>`-Tags. Der Import und die Verwendung von `TickerAddButtons` + `bulkAddToWatchlist` fehlen komplett (im Gegensatz zu `ScreenerPanel.tsx` und `BriefingChangeCard`).
 
 **Detail-Dokumentation + Fix-Vorschlag:**  
-→ [WORK_RESEARCHER_SECTOR_ADD.md](./WORK_RESEARCHER_SECTOR_ADD.md)
+→ [fertig_WORK_RESEARCHER_SECTOR_ADD.md](./fertig_WORK_RESEARCHER_SECTOR_ADD.md)
 
 **Aufwand:** ~30–60 Minuten (UI-only, keine Backend-Änderung).
 
@@ -192,7 +192,7 @@ Das Portfolio-Modul ist aktuell stark forward-looking (CAPM/Kelly/Sharpe). Es fe
   2. Sofort nach Laden auf `revenueSegments` und `geoSegments` anwenden.  
   3. Optional Cross-Dedup: Name, der in beiden Listen vorkommt, nur in der Produktliste behalten.  
   **Aufwand:** ~1–2 h.  
-  **Detail-Spec:** [WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md)  
+  **Detail-Spec:** [fertig_WORK_SEGMENT_DEDUP.md](./fertig_WORK_SEGMENT_DEDUP.md)  
   **Referenz:** Chat 17.08.2026 (Amazon-Screenshot + Analyse der Segment-Pipeline).
 
 ### 7. Rezessions-Dashboard
@@ -240,7 +240,7 @@ Das Portfolio-Modul ist aktuell stark forward-looking (CAPM/Kelly/Sharpe). Es fe
 | **Mittel**| Bilanzen-Red-Flag-Screener                 | offen                                   |
 | **Mittel**| Rezession: Google Trends + KI-Fazit        | offen                                   |
 | **Mittel**| Konfliktmatrix im Fazit                    | teilweise                               |
-| **Mittel**| Segment-Deduplizierung (Produkt/Geo)       | offen (Quick-Win ~1–2 h) → [WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md) |
+| **Mittel**| Segment-Deduplizierung (Produkt/Geo)       | offen (Quick-Win ~1–2 h) → [fertig_WORK_SEGMENT_DEDUP.md](./fertig_WORK_SEGMENT_DEDUP.md) |
 | **Niedrig**| Content / Overview-Ideen 2026             | rein konzeptionell                      |
 
 ---
@@ -264,8 +264,8 @@ Diese Punkte aus dem vorherigen Backlog bleiben relevant und sind hier der Volls
 1. **Priorisierte Umsetzungs-Roadmap** mit Aufwandsschätzung und Abhängigkeiten erstellen.
 2. Detaillierte Specs für die Hoch-Priorität-Items (i18n, Wertschöpfungskette, Sektorrotation, BTC M2/Fiscal, **Gold/BTC WALCL-QE-QT Phase 2**, Gold AISC).
 3. Konsistenz-Fixes (`inCapitulation` / `minerZone`) als Quick-Win.
-4. **Segment-Deduplizierung** als Quick-Win (~1–2 h) – verhindert doppelte AWS-/Cloud-Balken bei AMZN, MSFT etc. → [WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md)
-5. **Researcher Sector Opportunity Add-Buttons** als Quick-Win (~30–60 min) → [WORK_RESEARCHER_SECTOR_ADD.md](./WORK_RESEARCHER_SECTOR_ADD.md)
+4. **Segment-Deduplizierung** als Quick-Win (~1–2 h) – verhindert doppelte AWS-/Cloud-Balken bei AMZN, MSFT etc. → [fertig_WORK_SEGMENT_DEDUP.md](./fertig_WORK_SEGMENT_DEDUP.md)
+5. **Researcher Sector Opportunity Add-Buttons** als Quick-Win (~30–60 min) → [fertig_WORK_RESEARCHER_SECTOR_ADD.md](./fertig_WORK_RESEARCHER_SECTOR_ADD.md)
 6. **Portfolio Performance Attribution (erster Backtesting-Block)** → [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md)
 
 ---

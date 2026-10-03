@@ -4,7 +4,7 @@
 > Klärung nach UI-Screenshot (Portfolio mit MSFT / NVDA / NVO / LLY) und User-Feedback
 
 **Regel:** Design-Dokumentation. Implementierung lokal → PR → Review.  
-Baut auf `WORK_PORTFOLIO.md` + bestehendem Positions-Tracker (`positions.ts`, `handleAddPosition`) auf.
+Baut auf `fertig_WORK_PORTFOLIO.md` + bestehendem Positions-Tracker (`positions.ts`, `handleAddPosition`) auf.
 
 ---
 

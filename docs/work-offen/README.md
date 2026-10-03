@@ -6,7 +6,7 @@ Neu nach UI-Check 05.09. (nicht nur Commit):
 
 | Spec | Warum offen/gelb |
 |------|------------------|
-| [WORK_PORTFOLIO.md](../../WORK_PORTFOLIO.md) | kein CAPM-E[r] auf Übersicht |
+| [fertig_WORK_PORTFOLIO.md](../../fertig_WORK_PORTFOLIO.md) | kein CAPM-E[r] auf Übersicht |
 | [WORK_PORTFOLIO_BACKTEST.md](../../WORK_PORTFOLIO_BACKTEST.md) | Panel existiert, Gate leer ohne Position+OHLCV; §8 unchecked |
 | [WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](../../WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | nur Katalog |
 | [WORK_FISCAL_FRONTEND_ADAPTIVE.md](../../WORK_FISCAL_FRONTEND_ADAPTIVE.md) | `BESSENT_WINDOW` |
@@ -15,4 +15,4 @@ Neu nach UI-Check 05.09. (nicht nur Commit):
 | [WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | |
 | [WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../WORK_RESEARCHER_BRIEFING_REGIONAL.md) | |
 | [WORK_RECESSION_MARKET_CHARTS.md](../../WORK_RECESSION_MARKET_CHARTS.md) | VIX-Pane, PEG-Click, FINRA |
-| [WORK_RECESSION_RSI_MACD.md](../../WORK_RECESSION_RSI_MACD.md) | Engine+GET+Panel; Dashboard-Sektion / VIX/PEG offen |
+| [fertig_WORK_RECESSION_RSI_MACD.md](../../fertig_WORK_RECESSION_RSI_MACD.md) | Engine+GET+Panel; Dashboard-Sektion / VIX/PEG offen |

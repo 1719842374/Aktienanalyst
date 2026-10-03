@@ -3,7 +3,7 @@
 > **Stand: 26.08.2026**
 > Spezifikation für den fehlenden Backtesting-Layer der Scoring-Pipeline.
 > Kein zweites Score-Modell. Live-Code = Replay-Code.
-> Ergänzt `WORK_PORTFOLIO_BACKTEST.md` (ex-post Depot-Attribution) und `WORK_SCORING_VORLAGE.md` (§17 Lookahead).
+> Ergänzt `WORK_PORTFOLIO_BACKTEST.md` (ex-post Depot-Attribution) und `fertig_WORK_SCORING_VORLAGE.md` (§17 Lookahead).
 
 **Ziel:** Belegen oder widerlegen, dass Avoid/Gates *typischerweise* schlechtere Forward-Returns haben als Buy — point-in-time, ohne Lookahead, ohne Siegerkorb, ohne überlappende Schein-n.
 
@@ -14,7 +14,7 @@
 | Dokument | Fragt | Status |
 |---|---|---|
 | `WORK_PORTFOLIO_BACKTEST.md` | Wie lief *mein* Depot vs. Benchmark? | Spezifiziert, Engine/UI offen |
-| `WORK_SCORING_VORLAGE.md` §17 | Lookahead-Sperre Fiscal, Gate-Caps | Live in `scoring-gates.ts` |
+| `fertig_WORK_SCORING_VORLAGE.md` §17 | Lookahead-Sperre Fiscal, Gate-Caps | Live in `scoring-gates.ts` |
 | **dieses Dokument** | Hätte das Scoring an T Avoid gesagt — und war das richtig? | **offen** (BACKLOG: Screener-Gates + Backtesting) |
 
 Drei Tests, nicht einer:

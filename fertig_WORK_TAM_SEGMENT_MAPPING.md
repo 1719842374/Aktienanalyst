@@ -4,7 +4,7 @@
 > **Status:** Spec fertig · Implementierung offen
 > **Referenz:** MSFT Section-7 Screenshot (Server $250B / 51,8 % Share, fünf Segmente auf $1.500B Cloud, Karte $896B)
 > **Dateien:** `server/sector-data.ts` (`matchSegmentTAM`, `generateTAMAnalysis`), `client/src/components/sections/Section7.tsx`
-> **Verwandt:** [WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md) (andere Schicht: Name-Duplikate Produkt vs. Geo)
+> **Verwandt:** [fertig_WORK_SEGMENT_DEDUP.md](./fertig_WORK_SEGMENT_DEDUP.md) (andere Schicht: Name-Duplikate Produkt vs. Geo)
 > **Eintrag in:** [WORK.md](./WORK.md)
 
 **Regel:** Dokumentation. Implementierung lokal → PR → Review. Keine Research-API, kein LLM im Hot Path.
@@ -410,7 +410,7 @@ Unit-Tests in `script/test-tam-segment-mapping.ts` (kein Live-FMP nötig): reine
 | `script/test-tam-segment-mapping.ts` | Fixtures oben |
 | `WORK.md` | Link auf diese Datei |
 
-`Section2` unverändert (andere Segment-Liste). Dedup bleibt [WORK_SEGMENT_DEDUP.md](./WORK_SEGMENT_DEDUP.md).
+`Section2` unverändert (andere Segment-Liste). Dedup bleibt [fertig_WORK_SEGMENT_DEDUP.md](./fertig_WORK_SEGMENT_DEDUP.md).
 
 ---
 

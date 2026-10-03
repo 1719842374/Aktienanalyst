@@ -43,7 +43,7 @@ Die generische Komponente `TickerAddButtons` (aus `client/src/components/portfol
 
 ## Erwartetes Verhalten (Soll)
 
-Laut `WORK_RESEARCHER_PORTFOLIO.md` (Kapitel 0.2):
+Laut `fertig_WORK_RESEARCHER_PORTFOLIO.md` (Kapitel 0.2):
 
 > Researcher **jeder Tab** + Briefing → pro Ticker + Bulk „Alle sichtbaren …“
 
