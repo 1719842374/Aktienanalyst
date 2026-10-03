@@ -40,6 +40,7 @@ Scoreboard Feature-Docs (ohne Index `WORK.md`; Ampel nach Doc-Hub + Code-Check):
 | GET | `/api/researcher/sector-rotation` | 6 h (C1 P0–P3, additiv) |
 | GET | `/api/researcher/liquidity` | 6 h (C2, `macro_v2__US`) |
 | GET | `/api/analyze-btc/stablecoin-liquidity` | 5 min RAM + Disk (D4) |
+| GET | `/api/analyze-btc/fiscal-frontend` | Serien-TTL 6–24 h (`fiscal__*`), Request-Cache |
 | GET | `/api/analyze-gold` | 1-Faktor + optionales Multi-Faktor (D5) |
 | GET | `/api/valuechain` | 18-24h Disk (D6a + Phase 1–2) |
 | POST | `/api/valuechain/enrich` | 7 d Disk, LLM (D6c) |
@@ -96,7 +97,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 30 | fertig_WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
 | 31 | fertig_WORK_EXEC_SUMMARY.md | Karte über S1 | Exec-Karte live `#58`; `#69` Analyze Ampel+KI+FS Live PASS (XOM; FMP Premium aktiv) | ✅ |
 | 32 | WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalog + Fetch | nur Markdown | ⬜ |
-| 33 | WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), kein Kalender | noch `BESSENT_WINDOW` | ⬜ |
+| 33 | Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), N^b, FE, QRA-Anker | Route + Karten im Code; GIS-Slot (Step 6) und Cron/QRA-LLM (Step 7) ausgelassen; Live nicht geprüft | 🟡 |
 | 34 | WORK_RESEARCHER_LIQUIDITY_INDEX.md | LI US/EU/ASIA | C2 nur US | ⬜ |
 | 35 | WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md | Buch M/F EZ/JP | kein Katalog | ⬜ |
 | 36 | WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md | r, V, π, T½ | Spec; M2V-Teil | ⬜ |
@@ -208,7 +209,7 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 - `Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md` — die Route-Hunks (Force löscht L1+L2, Disk-Hit nach RAM-Miss, Schreiben nach Assemble) fehlen in `analyze-route.ts`.
 - `Offen_WORK_BIAS_FIXES_INVERSE_DCF.md` — `computeHardenedCRV` läuft im Signal-Snapshot, der Schalter „mindestens zwei Trigger, dann Inverse-DCF als Entscheidungsbasis“ samt WACC-Uplift und Ausschluss negativer Katalysatoren aus der GB-Summe ist nicht verdrahtet.
 - `Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — EZ-M3, BoJ-M2 und der asiatische Realzins sind nicht als Fetch für Velocity oder Briefing im Code.
-- `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — die s(z)-Schicht auf TGA, SOMA Bills gegen Notes und ΔDFF ist kein Score-Pfad.
+- `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — `GET /api/analyze-btc/fiscal-frontend` rechnet s(z) für N^b, SOMA und ΔDFF. `S_F*` bleibt `available: false`, solange keine 12 Monats-FE-Punkte da sind. Der Macro-Slot in `btcAnalysis.ts` ist nicht ersetzt. Cron und QRA-LLM fehlen.
 - `Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md` — keine Cache-Keys `liqidx_EU__*` oder `liqidx_ASIA__*` und kein EZB- oder BoJ-Buch.
 - `Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — kein Regions-Widget für Debt/GDP, Realzins, Velocity und Halbwertszeit.
 - `Offen_WORK_PEER_ADAPTIVE.md` — kein 2-Hop (`peers2hop`); `CURATED_PEER_FALLBACK` in `server/news-peers.ts` bleibt der Fallback.

@@ -15,7 +15,7 @@
 
 | Datei | Inhalt |
 |-------|--------|
-| [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](./Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z) Bills/TGA/SOMA — Ist `BESSENT_WINDOW` |
+| [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](./Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z), N^b, FE, QRA — Code 🟡; GIS-Slot und Cron/QRA-LLM ausgelassen |
 | [Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md](./Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA |
 | [Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F |
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ |
@@ -25,6 +25,8 @@
 | [Offen_WORK_PORTFOLIO_SOLL_IST.md](./Offen_WORK_PORTFOLIO_SOLL_IST.md) | Target vs Actual · Active Weight · Nenner A/B · Feng-Feng-Zahlen 2026-08-28 · Drop-in noch nicht verdrahtet |
 
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
+
+**Ampel Fiscal-Frontend 2026-10-03:** `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE` 🟡. Route `GET /api/analyze-btc/fiscal-frontend`, Karten in `StablecoinLiquidityPanel`, Ops-Label im LiquidityPanel. Step 6 (`btcAnalysis.ts`, erst wenn `FE.available`, nicht im selben PR wie der Fetch) und Step 7 (Cron / QRA-LLM) sind ausgelassen. Live-Render nicht geprüft.
 
 ---
 

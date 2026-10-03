@@ -501,8 +501,133 @@ function BtcNewsPanel({ items, loading, error }: { items: BtcNewsItem[]; loading
   );
 }
 
+interface FiscalSlotView {
+  available: boolean;
+  display: number;
+}
+
+interface FiscalFrontendPayload {
+  genius: { legal: number; rulemakingNote: string };
+  d30: { bn: number | null; kennzeichnung: "Policy" };
+  netBillSupply: {
+    available: boolean;
+    nb30Bn: number | null;
+    nbMonthBn: number | null;
+    source: string | null;
+    kennzeichnung: "scaled-from-monthly" | null;
+  };
+  fedBills: { available: boolean; deltaBn: number | null; kennzeichnung: string };
+  frontEndImpulse: { available: boolean; fe30Bn: number | null };
+  qra: {
+    asOf: string;
+    kennzeichnung: string;
+    impliedBillChangeBn: number;
+    anchor30Bn: number;
+  };
+  adaptiveScore: {
+    available: boolean;
+    displayS: number;
+    deskFlag: 0 | 1 | null;
+    deskFromOps: boolean;
+    sM: FiscalSlotView;
+    sF: FiscalSlotView;
+    sD: FiscalSlotView;
+  };
+}
+
+function formatBn(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "n/v";
+  return `${value.toFixed(3)} Mrd. $`;
+}
+
+function YellowBadge({ text }: { text: string }) {
+  return (
+    <span className="text-[9px] px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-300 border-amber-400/30">
+      {text}
+    </span>
+  );
+}
+
+function slotLine(label: string, slot: FiscalSlotView): string {
+  return `${label} ${slot.available ? slot.display.toFixed(1) : "50"}${slot.available ? "" : " available: false"}`;
+}
+
+function useFiscalFrontend() {
+  const [data, setData] = useState<FiscalFrontendPayload | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/analyze-btc/fiscal-frontend", undefined, 45000);
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json || cancelled) return;
+        setData(json as FiscalFrontendPayload);
+      } catch {
+        if (!cancelled) setData(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  return data;
+}
+
+function FiscalFrontendCards({ data }: { data: FiscalFrontendPayload }) {
+  const score = data.adaptiveScore;
+  const live = formatBn(data.netBillSupply.nb30Bn);
+  return (
+    <div className="space-y-2" data-testid="fiscal-frontend">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <MiniCard label="D_30" value={formatBn(data.d30.bn)} sub="Quoten Policy" detail={<YellowBadge text="Policy" />} />
+        <MiniCard
+          label="Netto Bill-Angebot (30T / Monat)"
+          value={live}
+          sub={[data.netBillSupply.source, data.netBillSupply.nbMonthBn == null ? null : `Monat ${formatBn(data.netBillSupply.nbMonthBn)}`].filter(Boolean).join(" · ")}
+          detail={data.netBillSupply.kennzeichnung === "scaled-from-monthly" ? <YellowBadge text="scaled-from-monthly" /> : undefined}
+        />
+        <MiniCard label="Fed SOMA-Bills Δ ~28T" value={data.fedBills.available ? formatBn(data.fedBills.deltaBn) : "n/v"} sub="WSHOBL" />
+        <MiniCard
+          label="Adaptive Note S / S_M / S_F* / S_D"
+          value={score.available ? score.displayS.toFixed(1) : "50"}
+          sub={[slotLine("S_M", score.sM), slotLine("S_F*", score.sF), slotLine("S_D", score.sD)].join(" · ")}
+          detail={score.available ? undefined : <span className="text-rose-300">available: false</span>}
+        />
+        <MiniCard
+          label="QRA-Anker"
+          value={`Implied ${data.qra.impliedBillChangeBn}`}
+          sub={`Live ${live} vs ${data.qra.anchor30Bn.toFixed(1)} · Stand ${data.qra.asOf}, nicht Live`}
+          detail={<YellowBadge text="QRA" />}
+        />
+        <MiniCard label="GENIUS Legal" value={data.genius.legal === 1 ? "L=1" : "n/v"} sub="kein 1.2" />
+        <MiniCard
+          label="Desk-Flag"
+          value={score.deskFromOps ? (score.deskFlag === 1 ? "1_desk" : "0") : "n/v"}
+          sub="aus Ops, nicht aus Kalender"
+        />
+      </div>
+      {data.frontEndImpulse.available ? (
+        <MiniCard
+          label="Front-End-Impuls"
+          value={formatBn(data.frontEndImpulse.fe30Bn)}
+          sub="FE_30"
+          detail={(
+            <span className="inline-flex gap-1">
+              <YellowBadge text="Policy" />
+              {data.netBillSupply.kennzeichnung === "scaled-from-monthly" && <YellowBadge text="scaled-from-monthly" />}
+            </span>
+          )}
+        />
+      ) : (
+        <div className="rounded-md border border-rose-500/40 bg-rose-500/10 text-rose-300 text-[11px] p-2" data-testid="fiscal-fe-unavailable">
+          Front-End-Impuls n/v
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function StablecoinLiquidityPanel() {
   const news = useBtcNews();
+  const fiscal = useFiscalFrontend();
   const [scan, setScan] = useState<PolicyScanResponse | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -573,6 +698,8 @@ export function StablecoinLiquidityPanel() {
           die 10-Jahres-Rendite, M2 und TGA über ein und zwei Jahre. Das Modell schreibt danach
           die Notiz und darf nur diese Messung zitieren.
         </p>
+
+        {fiscal && <FiscalFrontendCards data={fiscal} />}
 
         <BtcNewsPanel items={news.items} loading={news.loading} error={news.error} />
 

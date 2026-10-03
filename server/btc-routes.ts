@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { fetchBTCMacroHistory } from "./btc-macro";
 import { buildStablecoinLiquidityResponse } from "./stablecoin-liquidity";
+import { buildFiscalFrontendResponse } from "./fiscal-frontend";
 import { isLLMAvailable } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
 import { fetchAllowedBtcNews } from "./news-peers";
@@ -73,6 +74,17 @@ export function registerBTCRoutes(app: Express): void {
     } catch (err: any) {
       console.error("[GET /api/analyze-btc/stablecoin-liquidity]", err?.message?.substring(0, 200));
       res.status(502).json({ error: "Stablecoin-Liquiditätsdaten nicht verfügbar" });
+    }
+  });
+
+  // Netto-Bills, Front-End, QRA-Anker, adaptives s(z). GIS bleibt unangetastet.
+  app.get("/api/analyze-btc/fiscal-frontend", async (_req, res) => {
+    try {
+      const data = await buildFiscalFrontendResponse();
+      res.json(data);
+    } catch (err: any) {
+      console.error("[GET /api/analyze-btc/fiscal-frontend]", err?.message?.substring(0, 200));
+      res.status(502).json({ error: "Fiscal-Frontend nicht verfügbar" });
     }
   });
 
