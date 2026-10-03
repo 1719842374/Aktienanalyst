@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { fmpHistoricalPrices, isFmpAvailable } from "./fmp";
 import { rsiWilder, rsiZone, macd1269, combineRsiMacd, detectRsiDivergence } from "../shared/tech-rsi";
+import { handleMarketCharts, handleMarketFactpack } from "./recession-market-charts";
 
 export const MARKET_BOOKS = {
   US: { etf: "SPY", volId: "VIXCLS", volKind: "implied" as const, label: "S&P 500 (SPY)" },
@@ -197,7 +198,7 @@ async function fetchStoxxOfficialV2tx(
 }
 
 /** VSTOXX: FMP first, then STOXX official h_v2tx.txt (Yahoo delisted / Stooq bot-wall). */
-async function fetchVstoxxVol(
+export async function fetchVstoxxVol(
   from: string,
   to: string,
 ): Promise<{ vol: VolPoint[]; source: "fmp" | "stoxx" | null; stoxxErr: string | null }> {
@@ -377,12 +378,28 @@ export async function buildRegionMarket(region: RegionId, window: string) {
 let marketCache: { key: string; ts: number; data: any } | null = null;
 const TTL_MS = 6 * 60 * 60 * 1000;
 
+function queryString(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (Array.isArray(v) && typeof v[0] === "string") return v[0];
+  return "";
+}
+
 export function registerRecessionMarketRoutes(app: Express) {
   app.get("/api/analyze-recession/markets", async (req: Request, res: Response) => {
-    const regionRaw = String(req.query.region || "US").toUpperCase();
-    const region = (regionRaw === "EU" || regionRaw === "AS" ? regionRaw : "US") as RegionId;
     const windowRaw = String(req.query.window || "5Y").toUpperCase();
     const window = WINDOW_DAYS[windowRaw] ? windowRaw : "5Y";
+    const dateQ = queryString(req.query.date).slice(0, 10);
+    // Chart grid + lazy factpack (WORK_RECESSION_MARKET_CHARTS). region= keeps the RSI panel.
+    if (dateQ) {
+      await handleMarketFactpack(res, window, dateQ, queryString(req.query.id) || queryString(req.query.etf));
+      return;
+    }
+    if (queryString(req.query.region) === "") {
+      await handleMarketCharts(res, window);
+      return;
+    }
+    const regionRaw = String(req.query.region || "US").toUpperCase();
+    const region = (regionRaw === "EU" || regionRaw === "AS" ? regionRaw : "US") as RegionId;
     // v10: AbortController + Docker ca-certificates / use-openssl-ca
     const key = `v10:${region}:${window}`;
 
