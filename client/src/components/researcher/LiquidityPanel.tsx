@@ -31,6 +31,8 @@ interface LiquidityPayload {
   dataQuality?: { walcl: boolean; rrp: boolean; tga: boolean; m2: boolean };
   _cached?: boolean;
   _cacheAge?: number;
+  buybackDesk?: { flag: 0 | 1; source: "ops" };
+  bessentHint?: string | null;
 }
 
 const POLICY_REGIME_LABEL: Record<PolicyRegime, string> = {
@@ -144,8 +146,8 @@ export function LiquidityPanel() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
               <Metric label="Fed-Regime" value={data.policyRegime ? POLICY_REGIME_LABEL[data.policyRegime] : "n/a"} />
               <Metric
-                label="Treasury"
-                value={data.treasuryDurationActive ? `an · Cap ≥ 4 Mrd.` : "aus"}
+                label={data.buybackDesk ? "Treasury Buyback-Desk (Ops-API)" : "Treasury"}
+                value={data.buybackDesk ? (data.buybackDesk.flag === 1 ? "1_desk" : "0") : (data.treasuryDurationActive ? "an · Cap ≥ 4 Mrd." : "aus")}
               />
               <Metric
                 label="Duration"
@@ -155,6 +157,9 @@ export function LiquidityPanel() {
             </div>
           )}
 
+          {data.buybackDesk && data.bessentHint && (
+            <p className="text-[10px] text-foreground/40" data-testid="text-buyback-calendar-hint">{data.bessentHint}</p>
+          )}
           <p className="text-[11px] text-foreground/75 leading-relaxed">
             Aktuelles Liquiditätsregime: {data.regimeLabel} (Score {data.regimeScore}).
             {data.excessMoneyGrowth != null && data.excessMoneyGrowth > 0

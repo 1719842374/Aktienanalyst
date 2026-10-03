@@ -23,7 +23,7 @@
 |-------------|------|---------------|-------|
 | [fertig_WORK_PORTFOLIO_BACKTEST.md](../../fertig_WORK_PORTFOLIO_BACKTEST.md) | Equity, α/β/IR, Underwater, Capture | Panel da; braucht Positionen+OHLCV; Rest-DoD | `🟡` |
 | [Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](../../Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Katalog + Fetch | nur Markdown | `⬜` |
-| [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](../../Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z), kein Kalender | `BESSENT_WINDOW` in `liquidity-regime-math.ts` | `⬜` |
+| [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](../../Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z), N^b, FE, QRA-Anker | Route + Karten im Code; GIS-Slot und Cron/QRA-LLM ausgelassen; Live nicht geprüft | `🟡` |
 | [Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md](../../Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA | C2 nur US | `⬜` |
 | [Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](../../Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F EZ/JP | kein Katalog | `⬜` |
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ | M2V US + Eimer 0.02 | `⬜` |

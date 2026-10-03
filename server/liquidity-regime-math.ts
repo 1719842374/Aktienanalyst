@@ -325,6 +325,41 @@ export function computeLiquidityMetrics(input: {
   };
 }
 
+/**
+ * Display-Hint der letzten Cap-Veröffentlichung. Kein Input von classifyPolicy und kein Input von S.
+ * Spec: „letzte Veröffentlichung Cap=4 ab 09.09.“, Fenster bis 04.11.2026.
+ */
+export const BESSENT_WINDOW = {
+  from: "2026-09-09",
+  to: "2026-11-04",
+  capBn: 4,
+} as const;
+
+export function bessentWindowHint(asOf: string): string | null {
+  if (asOf > BESSENT_WINDOW.to) return null;
+  return "letzte Veröffentlichung Cap=4 ab 09.09.";
+}
+
+/**
+ * Twin von classifyPolicy. QE/RMP sind Labels aus z(ΔB^n) und z(ΔWSHOBL), nicht aus dem Kalender.
+ * Das Desk-Flag kommt von der Operations-API. Ohne Historie: available false, kein Regime.
+ */
+export function classifyPolicyFromOps(input: {
+  zNotes13w: number | null;
+  notesDelta13wBn: number | null;
+  zBills13w: number | null;
+  deskFlag: 0 | 1;
+}): { available: boolean; qe: boolean; rmp: boolean; deskFlag: 0 | 1; label: "QE" | "RMP" | null } {
+  const ready = input.zNotes13w != null && input.notesDelta13wBn != null && input.zBills13w != null
+    && Number.isFinite(input.zNotes13w) && Number.isFinite(input.notesDelta13wBn) && Number.isFinite(input.zBills13w);
+  if (!ready) {
+    return { available: false, qe: false, rmp: false, deskFlag: input.deskFlag, label: null };
+  }
+  const qe = input.zNotes13w > 1.5 && input.notesDelta13wBn > 0;
+  const rmp = input.zBills13w > 1.5 && input.zNotes13w <= 0.5;
+  return { available: true, qe, rmp, deskFlag: input.deskFlag, label: qe ? "QE" : rmp ? "RMP" : null };
+}
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }

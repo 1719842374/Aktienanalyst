@@ -8,6 +8,7 @@ import {
   computeLiquidityMetrics,
 } from "./liquidity-regime-math";
 import { cachedTreasuryBuybackCapBn } from "./policy-scan";
+import { fiscalRegimeAttachment, type FiscalRegimeFields } from "./fiscal-frontend";
 
 export const LIQUIDITY_CACHE_TAB = "macro";
 export const LIQUIDITY_CACHE_PARAMS = "v2__US";
@@ -54,7 +55,7 @@ async function fetchFredSeries(series: string): Promise<FredObs[]> {
   }
 }
 
-export async function fetchLiquidityLive(): Promise<LiquidityMetrics> {
+export async function fetchLiquidityLive(): Promise<LiquidityMetrics & Partial<FiscalRegimeFields>> {
   const [walcl, rrp, tga, m2, m2v, gdp, cpi] = await Promise.all([
     fetchFredSeries(SERIES.walcl),
     fetchFredSeries(SERIES.rrp),
@@ -71,5 +72,12 @@ export async function fetchLiquidityLive(): Promise<LiquidityMetrics> {
   if (!metrics.dataQuality.walcl || !metrics.dataQuality.rrp || !metrics.dataQuality.tga) {
     throw new Error("FRED WALCL/RRP/TGA unvollständig");
   }
-  return metrics;
+  // DFF 5y und SOMA 2y plus Ops-Flag. Fehlschlag lässt den C2-Score unverändert.
+  try {
+    const extra = await fiscalRegimeAttachment(metrics.asOf);
+    return { ...metrics, ...extra };
+  } catch (err: any) {
+    console.error("[liquidity] fiscal attachment", err?.message?.substring(0, 200));
+    return metrics;
+  }
 }

@@ -9,7 +9,7 @@ Neu nach UI-Check 05.09. (nicht nur Commit):
 | [fertig_WORK_PORTFOLIO.md](../../fertig_WORK_PORTFOLIO.md) | kein CAPM-E[r] auf Übersicht |
 | [fertig_WORK_PORTFOLIO_BACKTEST.md](../../fertig_WORK_PORTFOLIO_BACKTEST.md) | Panel existiert, Gate leer ohne Position+OHLCV; §8 unchecked |
 | [Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](../../Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | nur Katalog |
-| [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](../../Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | `BESSENT_WINDOW` |
+| [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](../../Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | Code 🟡, Live offen; Step 6/7 ausgelassen |
 | [Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md](../../Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md) | kein regionaler Index |
 | [Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](../../Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | |
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | |
