@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { execSync } from "child_process";
 import { fetchMacroSnapshot } from "./fmp-macro";
 import { riskLevelPhrase } from "../shared/risk-level-label";
-import { cleanFredMonthly, sahmIndicatorFromLevels, SAHM_HISTORY_YEARS } from "./recession-sahm";
+import { sahmIndicatorFromScore, scoreSahmFromUnemployment, SAHM_HISTORY_YEARS } from "./recession-sahm";
 
 // ============================================================
 // Geopolitical Analysis Metadata
@@ -141,11 +141,16 @@ export interface IndicatorResult {
 // RECESSION INDICATORS (7)
 // ============================================================
 
-// 1. Sahm Rule. Score is s(z) of SAHMREALTIME over 20 years.
-// The 0.50pp mark stays a label on the existing card and does not set rawScore.
+// 1. Sahm Rule. S is computed from UNRATE (k=0..11), then s(z).
+// SAHMREALTIME is the ±0.02 control only. A blank month or a missed control
+// fails the slot closed. The 0.50pp mark stays a label on the existing card.
 function scoreSahm(): IndicatorResult {
-  const rows = fetchFredRows("SAHMREALTIME", getDateYearsAgo(SAHM_HISTORY_YEARS));
-  const scored = sahmIndicatorFromLevels(cleanFredMonthly(rows));
+  const cosd = getDateYearsAgo(SAHM_HISTORY_YEARS);
+  const evaluated = scoreSahmFromUnemployment(
+    fetchFredRows("UNRATE", cosd),
+    fetchFredRows("SAHMREALTIME", cosd),
+  );
+  const scored = sahmIndicatorFromScore(evaluated.score);
   return {
     name: "Sahm-Regel",
     group: "recession", subgroup: "coincident",
@@ -155,7 +160,7 @@ function scoreSahm(): IndicatorResult {
     weightedScore: scored.weightedScore,
     maxWeighted: scored.maxWeighted,
     zone: scored.zone,
-    source: "FRED SAHMREALTIME",
+    source: "FRED UNRATE",
     description: "3-Monats-Durchschnitt der Arbeitslosenquote vs. 12-Monats-Tief",
     available: scored.available,
   };

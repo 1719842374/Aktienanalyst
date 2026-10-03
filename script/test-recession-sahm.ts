@@ -4,11 +4,16 @@
  * n < 24 months fails closed: available false, slot score 50, raw 0.
  * Run: npx tsx script/test-recession-sahm.ts
  */
+import { readFileSync } from "node:fs";
 import {
+  SAHM_CONTROL_TOLERANCE,
   SAHM_HISTORY_MONTHS,
   SAHM_MIN_MONTHS,
   SAHM_Z_EPSILON,
   cleanFredMonthly,
+  sahmIndicatorFromScore,
+  sahmLevelsFromUnemployment,
+  scoreSahmFromUnemployment,
   scoreSahmLevels,
   sahmIndicatorFromLevels,
   type FredPoint,
@@ -111,9 +116,38 @@ console.log("\n=== n<24 months fails closed ===");
   check("missing level renders N/A", missing.value === "N/A" && missing.zone === "N/A" && missing.rawScore === 0);
 }
 
-console.log("\n=== written UNRATE window vs SAHMREALTIME ===");
+console.log("\n=== UNRATE self-compute, then s(z), with the ±0.02 control ===");
 {
-  // Public FRED vintages pulled 2026-10-03. October 2025 unemployment is blank.
+  const unemployment = months(40, 5, "2018-01-01");
+  const series = sahmLevelsFromUnemployment(unemployment);
+  const defined = series.filter(point => point.value != null);
+  check("constant unemployment builds S = 0 once the 12-month window exists", defined.length >= SAHM_MIN_MONTHS && defined.every(point => point.value === 0), `n=${defined.length}`);
+  const last12 = defined.slice(-12).map(point => ({ date: point.date, value: 0 }));
+  const matched = scoreSahmFromUnemployment(unemployment, last12);
+  check("matching control scores the computed S, not the 0.5 threshold", matched.controlOk === true && matched.score.available === true && matched.score.level === 0 && matched.score.raw === 0 && matched.score.s === 50, `raw=${matched.score.raw}`);
+  check("control tolerance is 0.02", SAHM_CONTROL_TOLERANCE === 0.02 && matched.control.every(row => row.absDiff === 0));
+
+  const missed = scoreSahmFromUnemployment(unemployment, last12.map(point => ({ ...point, value: 0.1 })));
+  check("a 0.10 miss fails closed and still reports the computed S", missed.controlOk === false && missed.score.available === false && missed.score.raw === 0 && missed.score.s === 50 && missed.control.every(row => row.computed === 0 && row.absDiff != null && Math.abs(row.absDiff - 0.1) < 1e-12), `diff=${missed.control[0]?.absDiff}`);
+
+  const gapped = unemployment.map(point => point.date === "2020-12-01" ? { ...point, value: null } : point);
+  const blanked = scoreSahmFromUnemployment(gapped, last12);
+  check("a blank UNRATE month fails closed instead of skipping the gap", blanked.controlOk === false && blanked.score.available === false && blanked.score.raw === 0 && blanked.control.some(row => row.computed == null), `blanks=${blanked.control.filter(row => row.computed == null).map(row => row.date).join(",")}`);
+}
+
+console.log("\n=== EZ Sahm is the same unemployment formula, no ticker ===");
+{
+  const ezUnemployment = months(40, 7.5, "2010-01-01");
+  const ezLevels = sahmLevelsFromUnemployment(ezUnemployment).filter(point => point.value != null);
+  const ez = scoreSahmFromUnemployment(ezUnemployment, ezLevels.slice(-12).map(point => ({ date: point.date, value: point.value as number })));
+  check("EZ score comes from the unemployment path alone", ez.controlOk && ez.score.level === 0 && ez.score.raw === 0, `level=${ez.score.level}`);
+  const math = readFileSync(new URL("../server/recession-sahm.ts", import.meta.url), "utf8");
+  check("the Sahm formula module has no series id", !/["'](UNRATE|SAHMREALTIME|SAHM|une_rt_m|LRUNTTTTJPM156S)["']/.test(math));
+}
+
+console.log("\n=== fixture: last 12 SAHMREALTIME months, k=0..11 ===");
+{
+  // Public FRED prints pulled 2026-10-03. October 2025 unemployment is blank.
   const unrate: Array<{ date: string; value: number | null }> = [
     ["2024-06-01", 4.1], ["2024-07-01", 4.2], ["2024-08-01", 4.2], ["2024-09-01", 4.1],
     ["2024-10-01", 4.1], ["2024-11-01", 4.2], ["2024-12-01", 4.1], ["2025-01-01", 4.0],
@@ -123,45 +157,23 @@ console.log("\n=== written UNRATE window vs SAHMREALTIME ===");
     ["2026-02-01", 4.4], ["2026-03-01", 4.3], ["2026-04-01", 4.3], ["2026-05-01", 4.3],
     ["2026-06-01", 4.2], ["2026-07-01", 4.1], ["2026-08-01", 4.1], ["2026-09-01", 4.2],
   ].map(([date, value]) => ({ date: date as string, value: value as number | null }));
-  const sahmRealtime: Record<string, number> = {
-    "2025-09-01": 0.23, "2025-11-01": 0.43, "2025-12-01": 0.35, "2026-01-01": 0.30,
-    "2026-02-01": 0.27, "2026-03-01": 0.20, "2026-04-01": 0.13, "2026-05-01": 0.10,
-    "2026-06-01": 0.07, "2026-07-01": -0.03, "2026-08-01": -0.07, "2026-09-01": 0.00,
-  };
-  const byDate = new Map(unrate.filter(p => p.value != null).map(p => [p.date, p.value as number]));
-  function addMonths(date: string, k: number): string {
-    let y = Number(date.slice(0, 4));
-    let m = Number(date.slice(5, 7)) + k;
-    while (m <= 0) { m += 12; y -= 1; }
-    while (m > 12) { m -= 12; y += 1; }
-    return `${y}-${String(m).padStart(2, "0")}-01`;
-  }
-  function u3(date: string): number | null {
-    const pts = [0, -1, -2].map(k => byDate.get(addMonths(date, k)));
-    if (pts.some(v => v == null)) return null;
-    return ((pts[0] as number) + (pts[1] as number) + (pts[2] as number)) / 3;
-  }
-  // Spec text: min over k=0..11, which includes the current 3-month average.
-  function sahmSpec(date: string): number | null {
-    const cur = u3(date);
-    if (cur == null) return null;
-    const window: number[] = [];
-    for (let k = 0; k <= 11; k++) {
-      const v = u3(addMonths(date, -k));
-      if (v == null) return null;
-      window.push(v);
-    }
-    return cur - Math.min(...window);
-  }
-  const sep = sahmSpec("2025-09-01");
-  check("a complete k=0..11 window cannot be negative", sep != null && sep >= 0, `S=${sep}`);
-  const aug = sahmSpec("2026-08-01");
-  check("August 2026 has no complete k=0..11 window, so it cannot equal -0.07", aug == null && sahmRealtime["2026-08-01"] === -0.07, `S=${aug}`);
-  check("November 2025 has no 3-month average because UNRATE 2025-10 is blank", u3("2025-11-01") == null && u3("2025-12-01") == null);
-  const comparable = Object.keys(sahmRealtime).map(date => ({ date, calc: sahmSpec(date), fred: sahmRealtime[date] }));
-  const formed = comparable.filter(row => row.calc != null) as Array<{ date: string; calc: number; fred: number }>;
-  const maxDiff = formed.reduce((m, row) => Math.max(m, Math.abs(row.calc - row.fred)), 0);
-  check("written window does not satisfy the 12-month 0.02 control", formed.length < 12 || maxDiff > 0.02, `formed=${formed.length} max=${maxDiff}`);
+  const realtime = [
+    ["2025-09-01", 0.23], ["2025-11-01", 0.43], ["2025-12-01", 0.35], ["2026-01-01", 0.30],
+    ["2026-02-01", 0.27], ["2026-03-01", 0.20], ["2026-04-01", 0.13], ["2026-05-01", 0.10],
+    ["2026-06-01", 0.07], ["2026-07-01", -0.03], ["2026-08-01", -0.07], ["2026-09-01", 0.00],
+  ].map(([date, value]) => ({ date: date as string, value: value as number }));
+  const evaluated = scoreSahmFromUnemployment(unrate, realtime);
+  const sep = evaluated.control.find(row => row.date === "2025-09-01");
+  const aug = evaluated.control.find(row => row.date === "2026-08-01");
+  check("2025-09 S is built and within 0.02 of SAHMREALTIME", sep?.computed != null && Math.abs(sep.computed - (7 / 30)) < 1e-9 && sep.absDiff != null && sep.absDiff <= 0.02, `S=${sep?.computed} diff=${sep?.absDiff}`);
+  check("2026-08 cannot be built because UNRATE 2025-10 is blank", aug?.computed == null && aug?.fred === -0.07);
+  const blanks = evaluated.control.filter(row => row.computed == null);
+  check("11 of the last 12 control months are blank under k=0..11", blanks.length === 11, blanks.map(row => row.date).join(","));
+  check("blank control fails closed at slot score 50, raw 0", evaluated.controlOk === false && evaluated.score.available === false && evaluated.score.s === 50 && evaluated.score.raw === 0 && evaluated.score.level == null);
+  const card = sahmIndicatorFromScore(evaluated.score);
+  check("failed control does not put a published-series score on the card", card.available === false && card.rawScore === 0 && card.value === "N/A" && card.zone === "N/A");
+  const route = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
+  check("the live slot fetches UNRATE and SAHMREALTIME", route.includes('fetchFredRows("UNRATE"') && route.includes('fetchFredRows("SAHMREALTIME"') && route.includes("scoreSahmFromUnemployment"));
 }
 
 console.log(`\n${total - failed}/${total} checks passed.`);
