@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { execSync } from "child_process";
 import { fetchMacroSnapshot } from "./fmp-macro";
 import { riskLevelPhrase } from "../shared/risk-level-label";
+import { cleanFredMonthly, sahmIndicatorFromLevels, SAHM_HISTORY_YEARS } from "./recession-sahm";
 
 // ============================================================
 // Geopolitical Analysis Metadata
@@ -65,6 +66,28 @@ function getDateNMonthsAgo(n: number): string {
   return d.toISOString().split("T")[0];
 }
 
+function getDateYearsAgo(years: number): string {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - years);
+  return d.toISOString().split("T")[0];
+}
+
+/** FRED CSV rows for one series, keeping gaps as null so the cleaner can drop them. */
+function fetchFredRows(seriesId: string, cosd: string): Array<{ date: string; value: number | null }> {
+  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}&cosd=${cosd}`;
+  const csv = fetchUrl(url);
+  if (!csv || csv.includes("<html") || csv.includes("<!DOCTYPE")) return [];
+  return csv.trim().split("\n").slice(1).flatMap(line => {
+    const [date, valStr] = line.split(",");
+    const trimmedDate = date?.trim() ?? "";
+    if (!trimmedDate) return [];
+    const raw = valStr?.trim() ?? "";
+    const parsed = raw === "" || raw === "." ? null : Number(raw);
+    const value = parsed != null && Number.isFinite(parsed) ? parsed : null;
+    return [{ date: trimmedDate, value }];
+  });
+}
+
 /** Generic macro data fetcher via FRED (see server/fmp-macro.ts) */
 async function getMacroValue(keywords: string[], country = "United States"): Promise<{ value: number; date: string; category: string } | null> {
   try {
@@ -110,25 +133,31 @@ export interface IndicatorResult {
   zone: string;
   source: string;
   description: string;
+  /** False when the slot has fewer than H_min observations. Absent on untouched indicators. */
+  available?: boolean;
 }
 
 // ============================================================
 // RECESSION INDICATORS (7)
 // ============================================================
 
-// 1. Sahm Rule (FRED: SAHMREALTIME)
+// 1. Sahm Rule. Score is s(z) of SAHMREALTIME over 20 years.
+// The 0.50pp mark stays a label on the existing card and does not set rawScore.
 function scoreSahm(): IndicatorResult {
-  const val = getLatestFredValue("SAHMREALTIME");
-  const triggered = !isNaN(val) && val >= 0.5;
-  const rawScore = triggered ? 4 : -3;
+  const rows = fetchFredRows("SAHMREALTIME", getDateYearsAgo(SAHM_HISTORY_YEARS));
+  const scored = sahmIndicatorFromLevels(cleanFredMonthly(rows));
   return {
     name: "Sahm-Regel",
     group: "recession", subgroup: "coincident",
-    value: isNaN(val) ? "N/A" : `${val.toFixed(2)} pp`,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 4,
-    zone: triggered ? "Ausgelöst (≥0.5pp)" : "Normal (<0.5pp)",
+    value: scored.value,
+    rawScore: scored.rawScore,
+    weight: scored.weight,
+    weightedScore: scored.weightedScore,
+    maxWeighted: scored.maxWeighted,
+    zone: scored.zone,
     source: "FRED SAHMREALTIME",
     description: "3-Monats-Durchschnitt der Arbeitslosenquote vs. 12-Monats-Tief",
+    available: scored.available,
   };
 }
 
