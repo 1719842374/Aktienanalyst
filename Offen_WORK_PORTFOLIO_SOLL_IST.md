@@ -7,7 +7,7 @@
 > **Ampel:** ⬜ Spec + Drop-in fertig, **noch nicht auf `main` verdrahtet**  
 > **Nicht anfassen:** inverted DCF, PEG, Miner, Sentiment, Portfolio F.2 Kern.
 
-Companion: [fertig_WORK_PORTFOLIO.md](./fertig_WORK_PORTFOLIO.md) · [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) · [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md)
+Companion: [fertig_WORK_PORTFOLIO.md](./fertig_WORK_PORTFOLIO.md) · [fertig_WORK_PORTFOLIO_BACKTEST.md](./fertig_WORK_PORTFOLIO_BACKTEST.md) · [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md)
 
 ---
 
@@ -325,7 +325,7 @@ renormalizeDisplay = false
 
 ## 6. Backtest-Metriken (Formeln, falls Block später an Display-Karten andockt)
 
-Nicht Gegenstand dieses Tickets (liegt bei `WORK_PORTFOLIO_BACKTEST.md`). Nur damit die Referenzzahlen nicht verlorengehen.
+Nicht Gegenstand dieses Tickets (liegt bei `fertig_WORK_PORTFOLIO_BACKTEST.md`). Nur damit die Referenzzahlen nicht verlorengehen.
 
 CAGR:
 

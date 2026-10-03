@@ -15,14 +15,14 @@
 
 | Datei | Inhalt |
 |-------|--------|
-| [WORK_FISCAL_FRONTEND_ADAPTIVE.md](./WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z) Bills/TGA/SOMA — Ist `BESSENT_WINDOW` |
-| [WORK_RESEARCHER_LIQUIDITY_INDEX.md](./WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA |
-| [WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F |
-| [WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ |
-| [WORK_RESEARCHER_BRIEFING_REGIONAL.md](./WORK_RESEARCHER_BRIEFING_REGIONAL.md) | Briefing 3 Regionen |
-| [WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Serien-IDs + Prints |
-| [WORK_RECESSION_2008_DRIVERS_LLM.md](./WORK_RECESSION_2008_DRIVERS_LLM.md) | Hormuz (B) — `recession-drivers.ts` fehlt |
-| [WORK_PORTFOLIO_SOLL_IST.md](./WORK_PORTFOLIO_SOLL_IST.md) | Target vs Actual · Active Weight · Nenner A/B · Feng-Feng-Zahlen 2026-08-28 · Drop-in noch nicht verdrahtet |
+| [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](./Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z) Bills/TGA/SOMA — Ist `BESSENT_WINDOW` |
+| [Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md](./Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA |
+| [Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F |
+| [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ |
+| [Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md](./Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md) | Briefing 3 Regionen |
+| [Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Serien-IDs + Prints |
+| [Offen_WORK_RECESSION_2008_DRIVERS_LLM.md](./Offen_WORK_RECESSION_2008_DRIVERS_LLM.md) | Hormuz (B) — `recession-drivers.ts` fehlt |
+| [Offen_WORK_PORTFOLIO_SOLL_IST.md](./Offen_WORK_PORTFOLIO_SOLL_IST.md) | Target vs Actual · Active Weight · Nenner A/B · Feng-Feng-Zahlen 2026-08-28 · Drop-in noch nicht verdrahtet |
 
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 
@@ -35,29 +35,29 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [fertig_WORK_EXEC_SUMMARY.md](./fertig_WORK_EXEC_SUMMARY.md) | Exec vor S1 live (#58) |
 | [docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md](./docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md) | FactPack Hook+UI live (#57) |
 | [fertig_WORK_RECESSION_RSI_MACD.md](./fertig_WORK_RECESSION_RSI_MACD.md) | RSI/MACD Dashboard live |
-| [WORK_RECESSION_MARKET_CHARTS.md](./WORK_RECESSION_MARKET_CHARTS.md) | VIX/VSTOXX/realized Pane (#60/#66) |
+| [Offen_WORK_RECESSION_MARKET_CHARTS.md](./Offen_WORK_RECESSION_MARKET_CHARTS.md) | VIX/VSTOXX/realized Pane (#60/#66) |
 | [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 30.09. Vormittag, nach #103 Miner Observability Live PASS (`e2bc69a2`, Bundle `index-MIF1Ml5X.js`) |
 | [fertig_WORK_THESIS_LAB.md](./fertig_WORK_THESIS_LAB.md) | `/#/lab` Live PASS (#73) |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](./WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 Rang 7–9 |
-| [WORK_ANALYZE_DISK_CACHE.md](./WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch |
-| [WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | disk-cache |
+| [Offen_WORK_ANALYZE_DISK_CACHE.md](./Offen_WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch |
+| [Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | disk-cache |
 | [fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md](./fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 US-only |
-| [WORK_STABLECOIN_TBILL_GENIUS.md](./WORK_STABLECOIN_TBILL_GENIUS.md) | BTC Sektion 14 |
+| [Offen_WORK_STABLECOIN_TBILL_GENIUS.md](./Offen_WORK_STABLECOIN_TBILL_GENIUS.md) | BTC Sektion 14 |
 | [fertig_WORK_ANTIBIAS_DCF.md](./fertig_WORK_ANTIBIAS_DCF.md) | Inverted DCF |
 | [fertig_WORK_REVERSE_DCF_BRIDGE.md](./fertig_WORK_REVERSE_DCF_BRIDGE.md) | Fiscal Bridge |
 | [fertig_WORK_PORTFOLIO.md](./fertig_WORK_PORTFOLIO.md) | Portfolio |
-| [WORK.md_portfolio_3](./WORK.md_portfolio_3) | §6 OHLCV Charts live — Tester AAPL 1Y/2Y PASS @ `6a1807b` |
-| [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) | Equity α/β/IR Underwater |
-| [WORK_PORTFOLIO_SOLL_IST.md](./WORK_PORTFOLIO_SOLL_IST.md) | Soll/Ist-Tracking Spec + Zahlen |
+| [fertig_WORK.md_portfolio_3](./fertig_WORK.md_portfolio_3) | §6 OHLCV Charts live — Tester AAPL 1Y/2Y PASS @ `6a1807b` |
+| [fertig_WORK_PORTFOLIO_BACKTEST.md](./fertig_WORK_PORTFOLIO_BACKTEST.md) | Equity α/β/IR Underwater |
+| [Offen_WORK_PORTFOLIO_SOLL_IST.md](./Offen_WORK_PORTFOLIO_SOLL_IST.md) | Soll/Ist-Tracking Spec + Zahlen |
 | [fertig_WORK_RESEARCHER_PORTFOLIO.md](./fertig_WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 |
-| [WORK_RESEARCHER_PORTFOLIO_TEIL2.md](./WORK_RESEARCHER_PORTFOLIO_TEIL2.md) | Zahlen P2 |
+| [fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md](./fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md) | Zahlen P2 |
 | [fertig_WORK_NEWS_SENTIMENT.md](./fertig_WORK_NEWS_SENTIMENT.md) | Sentiment |
 | [fertig_WORK_SEGMENT_DEDUP.md](./fertig_WORK_SEGMENT_DEDUP.md) | Dedup |
 | [fertig_WORK_TAM_SEGMENT_MAPPING.md](./fertig_WORK_TAM_SEGMENT_MAPPING.md) | Segment-TAM |
 | [fertig_WORK_TAM_RESIDUAL_XBOX.md](./fertig_WORK_TAM_RESIDUAL_XBOX.md) | Xbox |
 | [fertig_WORK_DATA_PROVIDERS.md](./fertig_WORK_DATA_PROVIDERS.md) | FMP |
 | [fertig_WORK_SCORING_VORLAGE.md](./fertig_WORK_SCORING_VORLAGE.md) | Gates |
-| [WORK_TEIL0-6.md](./WORK_TEIL0-6.md) | Platform/BTC |
+| [fertig_WORK_TEIL0-6.md](./fertig_WORK_TEIL0-6.md) | Platform/BTC |
 | [fertig_WORK_BTC_MINER.md](./fertig_WORK_BTC_MINER.md) | Miner |
 | [fertig_WORK_TEIL7_SCORING.md](./fertig_WORK_TEIL7_SCORING.md) | Gold |
 | [fertig_WORK2.md](./fertig_WORK2.md) | PESTEL |

@@ -252,7 +252,7 @@ Cache: **6–24 h** (wie Researcher), manuell refreshbar.
 | Datei | Inhalt | Relation |
 |-------|--------|----------|
 | `Future_Work.md` | Idee + Priorität Hoch | **Parent** |
-| `WORK_VALUECHAIN_SECTOR_ROTATION.md` | Wertschöpfungskette, React-Flow, CAPEX, Backoff | **parallel**, nicht dasselbe UI |
+| `Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md` | Wertschöpfungskette, React-Flow, CAPEX, Backoff | **parallel**, nicht dasselbe UI |
 | `fertig_WORK_SEKTORROTATIONS_RAT.md` (diese) | Design-Board, Scores, Radar, Datenquellen | **dieses Feature** |
 | `SectorsPanel.tsx` | Sector Opportunity / Trends / Top Picks | **Host** für Panel |
 | `recession.ts` | Makro-Score | **Phase-Input** |

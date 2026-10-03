@@ -1,6 +1,6 @@
 # WORK_RESEARCHER_BRIEFING_REGIONAL.md
 
-> Kopie 04.09.2026 nach `docs/work-offen/`. Original bleibt `./WORK_RESEARCHER_BRIEFING_REGIONAL.md` bis SHA-Check.
+> Kopie 04.09.2026 nach `docs/work-offen/`. Original bleibt `./Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md` bis SHA-Check.
 > Stand: 04.09.2026 | Status: **SPEC** — Live-Briefing bleibt ein Block, US-lastig
 > Route: `POST /api/researcher/daily-briefing` | UI: BriefingModal in `Researcher.tsx`
 > Code: `server/researcher.ts` ab ~Z.1000

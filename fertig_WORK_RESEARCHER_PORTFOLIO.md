@@ -71,7 +71,7 @@ Siehe Commit-Historie / vollständige Spec: Datenfluss, WatchlistEntry, Buttons,
 
 # Kapitel J–Q — Zahlen, Daten, Fakten (vollständig)
 
-→ **[WORK_RESEARCHER_PORTFOLIO_TEIL2.md](./WORK_RESEARCHER_PORTFOLIO_TEIL2.md)**
+→ **[fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md](./fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md)**
 
 | Kap | Inhalt mit Zahlen |
 |-----|-------------------|
