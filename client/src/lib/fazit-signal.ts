@@ -24,6 +24,7 @@ import {
   computeDcfVsMarketDivergence,
 } from "./calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign } from "./formatters";
+import { buildBiasDecision, type BiasFixPayload } from "../../../shared/bias-fixes";
 
 export type FazitSignalMetrics = {
   conservativeDCF: FCFFDCFResult;
@@ -38,6 +39,7 @@ export type FazitSignalMetrics = {
   mcResult: GBMMonteCarloResult;
   totalExpDmg: number;
   worstCase: number;
+  bias: BiasFixPayload;
 };
 
 export type FazitSignalInput = FazitSignalMetrics & {
@@ -78,10 +80,12 @@ export function prepareFazitMetrics(
     terminalG: Math.max(1, baseParams.terminalG - 0.5),
   });
 
+  const bias = buildBiasDecision(data);
+  const decisionPerShare = Number.isFinite(bias.decisionPerShare) ? bias.decisionPerShare : conservativeDCF.perShare;
   const catalysts = data.catalysts;
-  const rawTotalUpside = catalysts.reduce((sum, c) => sum + c.gb, 0);
+  const rawTotalUpside = bias.positiveGbSum;
   const catalystBaseInfo = selectCatalystBase(
-    conservativeDCF.perShare,
+    decisionPerShare,
     rawTotalUpside,
     data.currentPrice,
     data.analystPT.median,
@@ -109,14 +113,14 @@ export function prepareFazitMetrics(
     epsGrowthNext5Y: data.epsGrowth5Y ?? 0,
   });
 
-  const crvConservative = calculateCRV(conservativeDCF.perShare, worstCase, data.currentPrice);
-  const dcfBeiCRV3 = (conservativeDCF.perShare + 2 * worstCase) / 3;
-  const conservativeUpside = ((conservativeDCF.perShare / data.currentPrice - 1) * 100);
+  const crvConservative = calculateCRV(decisionPerShare, worstCase, data.currentPrice);
+  const dcfBeiCRV3 = (decisionPerShare + 2 * worstCase) / 3;
+  const conservativeUpside = ((decisionPerShare / data.currentPrice - 1) * 100);
   const stressDownside = ((stressDCF.perShare / data.currentPrice - 1) * 100);
 
   const totalExpDmg = (data.risks || []).reduce((s, r) => s + r.expectedDamage, 0);
   const raCrvCons = calculateRiskAdjustedCRV(
-    conservativeDCF.perShare,
+    decisionPerShare,
     worstCase,
     data.currentPrice,
     totalExpDmg,
@@ -150,6 +154,7 @@ export function prepareFazitMetrics(
     mcResult,
     totalExpDmg,
     worstCase,
+    bias,
   };
 }
 
@@ -168,7 +173,9 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     stressDownside,
     conservativeDCF,
     totalExpDmg,
+    bias,
   } = input;
+  const dcfLabel = bias?.switched ? "Gehärteter Inverse-DCF" : "Kons. DCF";
 
   const catalysts = data.catalysts;
   const techStatus = data.technicalIndicators?.currentStatus;
@@ -190,7 +197,7 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   }
 
   // S2: Catalysts
-  if (totalUpside > 10) positive.push(`Katalysatoren-Upside +${formatNumber(totalUpside, 1)}% (${catalysts.length} Treiber)`);
+  if (totalUpside > 10) positive.push(`Katalysatoren-Upside +${formatNumber(totalUpside, 1)}% (${bias?.modeLabel ?? "positive GB"})`);
   else if (totalUpside < 3) neutral.push(`Begrenzte Katalysatoren (+${formatNumber(totalUpside, 1)}%)`);
 
   // S3: Cycle
@@ -203,9 +210,9 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   else if (data.pegRatio > 2) negative.push(`PEG ${formatNumber(data.pegRatio, 2)} > 2 \u2014 hohes Bewertungsniveau`);
 
   // S5: DCF
-  if (conservativeUpside > 30) positive.push(`Kons. DCF deutet auf ${formatNumber(conservativeUpside, 0)}% Upside`);
-  else if (conservativeUpside > 10) positive.push(`Kons. DCF mit ${formatNumber(conservativeUpside, 0)}% moderatem Upside`);
-  else if (conservativeUpside < -10) negative.push(`Kons. DCF zeigt ${formatNumber(conservativeUpside, 0)}% Downside \u2014 \u00dcberbewertung`);
+  if (conservativeUpside > 30) positive.push(`${dcfLabel} deutet auf ${formatNumber(conservativeUpside, 0)}% Upside`);
+  else if (conservativeUpside > 10) positive.push(`${dcfLabel} mit ${formatNumber(conservativeUpside, 0)}% moderatem Upside`);
+  else if (conservativeUpside < -10) negative.push(`${dcfLabel} zeigt ${formatNumber(conservativeUpside, 0)}% Downside \u2014 \u00dcberbewertung`);
   else neutral.push(`DCF nahe am Kurs (${formatNumber(conservativeUpside, 0)}%)`);
 
   // S6: CRV
@@ -350,12 +357,20 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   } else if (score <= -2) {
     fazitSatz = `${data.companyName} (${data.ticker}) bietet aktuell ein ung\u00fcnstiges Chance-Risiko-Verh\u00e4ltnis. Die Hauptrisiken (${topRisks}) dr\u00fccken den risikoadjustierten Fair Value auf ${formatCurrency(conservativeDCF.perShare * riskDiscountFactor)}. ${isTechWeak ? 'Technisch fehlt ein Buy-Signal.' : ''} Kurs liegt ${formatNumber(Math.abs(((data.currentPrice / dcfBeiCRV3) - 1) * 100), 0)}% \u00fcber dem Max-Einstiegskurs.`;
   } else if (score >= 2) {
-    fazitSatz = `${data.companyName} (${data.ticker}) zeigt fundamental solide Kennzahlen mit ${formatNumber(conservativeUpside, 0)}% DCF-Upside und CRV ${formatNumber(crvConservative, 1)}:1. ${!techStatus?.buySignal ? 'Allerdings fehlt ein technisches Buy-Signal \u2014 Timing abwarten.' : 'Technisch ebenfalls positiv.'} ${isHighRisk ? `Erh\u00f6hte Risiken (${topRisks}) beachten.` : ''}`;
+    fazitSatz = `${data.companyName} (${data.ticker}) zeigt fundamental solide Kennzahlen mit ${formatNumber(conservativeUpside, 0)}% Upside auf Basis ${bias?.valuationBaseLabel ?? "Conservative DCF"} und CRV ${formatNumber(crvConservative, 1)}:1. ${!techStatus?.buySignal ? 'Allerdings fehlt ein technisches Buy-Signal \u2014 Timing abwarten.' : 'Technisch ebenfalls positiv.'} ${isHighRisk ? `Erh\u00f6hte Risiken (${topRisks}) beachten.` : ''}`;
   } else {
     fazitSatz = `${data.companyName} (${data.ticker}) befindet sich in einer neutralen Zone. Das Base-CRV von ${formatNumber(crvConservative, 1)}:1 wirkt zwar ${crvConservative >= 2.0 ? 'akzeptabel' : 'schwach'}, wird aber durch ${formatNumber(totalExpDmg, 1)}% Expected Damage auf risikoadjustiert ${formatNumber(raCrvCons, 1)}:1 reduziert. ${isTechWeak ? 'Technisch kein Kaufsignal.' : 'Technisch gemischte Signale.'} ${topRisks ? `Hauptrisiken: ${topRisks}.` : ''} Empfehlung: Abwarten.`;
   }
   // CRV-Haerte-Guard: Divergenz-Hinweis additiv anhaengen, damit der
   // Rating-Downgrade auch textuell nachvollziehbar ist.
+  if (bias?.switched) {
+    fazitSatz += ` Entscheidungsbasis: ${bias.valuationBaseLabel} (${formatCurrency(bias.decisionPerShare)}). Unadjusted / Extrapolative: ${formatCurrency(bias.unadjustedPerShare)}. ${bias.modeLabel}.`;
+  } else if (bias?.modeLabel) {
+    fazitSatz += ` ${bias.modeLabel}. Basis: ${bias.valuationBaseLabel}.`;
+  }
+  if (bias?.politicalGovMention) {
+    fazitSatz += " Political ist hoch und Government Exposure liegt bei mindestens 25%.";
+  }
   if (dcfMarketDivergence.divergenceFlag) {
     fazitSatz += ` \u26a0 DCF-Upside (${formatNumber(dcfMarketDivergence.dcfUpsidePct, 0)}%) weicht stark vom Analysten-Konsens (${formatNumber(dcfMarketDivergence.analystUpsidePct, 0)}%) ab \u2014 der Base-DCF k\u00f6nnte durch niedrigen WACC/hohen Terminal-Value-Anteil optimistisch extrapoliert sein (siehe geh\u00e4rtetes CRV in Sektion 6).`;
   }

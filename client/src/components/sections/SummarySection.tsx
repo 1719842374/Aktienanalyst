@@ -8,6 +8,7 @@ import {
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, formatRatio, getCRVColor } from "../../lib/formatters";
 import { buildFazitSignal } from "../../lib/fazit-signal";
+import { buildBiasDecision, isNegativeCatalyst } from "../../../../shared/bias-fixes";
 import { useMemo } from "react";
 
 interface Props { data: StockAnalysis; sharedMonteCarlo?: GBMMonteCarloResult | null }
@@ -24,6 +25,8 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   const baseParams: FCFFDCFParams = useMemo(() => buildDefaultDCFParams(data), [data.ticker]);
 
   const conservativeDCF = useMemo(() => calculateFCFFDCF(baseParams), [baseParams]);
+  const bias = useMemo(() => buildBiasDecision(data), [data]);
+  const decisionPerShare = Number.isFinite(bias.decisionPerShare) ? bias.decisionPerShare : conservativeDCF.perShare;
 
   const optimisticDCF = useMemo(() => calculateFCFFDCF({
     ...baseParams,
@@ -46,9 +49,10 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
 
   // Use backend catalysts
   const catalysts = data.catalysts;
-  const rawTotalUpside = catalysts.reduce((sum, c) => sum + c.gb, 0);
+  const upsideCatalysts = catalysts.filter(c => !isNegativeCatalyst(c));
+  const rawTotalUpside = bias.positiveGbSum;
   const catalystBaseInfo = selectCatalystBase(
-    conservativeDCF.perShare,
+    decisionPerShare,
     rawTotalUpside,
     data.currentPrice,
     data.analystPT.median
@@ -83,15 +87,16 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   });
 
   // CRVs
-  const crvConservative = calculateCRV(conservativeDCF.perShare, worstCase, data.currentPrice);
+  const crvConservative = calculateCRV(decisionPerShare, worstCase, data.currentPrice);
   const crvOptimistic = calculateCRV(optimisticDCF.perShare, worstCase, data.currentPrice);
 
   // DCF bei CRV 3:1 = max acceptable entry price for exactly 3:1 reward/risk
   // CRV = (FV - WC) / (P - WC) = 3 aufgelöst nach P: P = (FV + 2·WC) / 3
-  const dcfBeiCRV3 = (conservativeDCF.perShare + 2 * worstCase) / 3;
+  const dcfBeiCRV3 = (decisionPerShare + 2 * worstCase) / 3;
 
   // Upside/Downside % for DCF scenarios
-  const conservativeUpside = ((conservativeDCF.perShare / data.currentPrice - 1) * 100);
+  const conservativeUpside = ((decisionPerShare / data.currentPrice - 1) * 100);
+  const unadjustedUpside = ((conservativeDCF.perShare / data.currentPrice - 1) * 100);
   const optimisticUpside = ((optimisticDCF.perShare / data.currentPrice - 1) * 100);
   const stressDownside = ((stressDCF.perShare / data.currentPrice - 1) * 100);
 
@@ -117,18 +122,27 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   const mcResult = (sharedMonteCarlo ?? localMC)!;
 
   return (
-    <SectionCard number={19} title="ZUSAMMENFASSUNGSTABELLE">
+    <SectionCard number={20} title="ZUSAMMENFASSUNGSTABELLE">
       {/* DCF Upside/Downside Visual */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">DCF Szenarien — Upside / Downside (FCFF)</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <ScenarioCard
-            label="Conservative DCF"
+            label={bias.switched ? "Unadjusted / Extrapolative" : "Conservative DCF"}
             value={conservativeDCF.perShare}
             currentPrice={data.currentPrice}
-            pct={conservativeUpside}
+            pct={unadjustedUpside}
             wacc={conservativeDCF.wacc}
           />
+          {bias.switched && (
+            <ScenarioCard
+              label="Gehärteter Inverse-DCF"
+              value={bias.decisionPerShare}
+              currentPrice={data.currentPrice}
+              pct={bias.decisionUpsidePct}
+              wacc={bias.decisionWacc}
+            />
+          )}
           <ScenarioCard
             label="Optimistic DCF"
             value={optimisticDCF.perShare}
@@ -293,7 +307,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {catalysts.map((c, i) => (
+              {upsideCatalysts.map((c, i) => (
                 <tr key={i}>
                   <td className="py-1.5 px-2">{c.name}</td>
                   <td className={`py-1.5 px-2 text-right font-mono tabular-nums ${c.gb >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
@@ -336,10 +350,18 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
       <div className="bg-muted/30 rounded-md p-3 border border-border/50 text-xs space-y-1">
         <div className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px]">Control Calculation (FCFF-Based)</div>
         <div className="font-mono tabular-nums">
-          WACC = E/V × Re + D/V × Rd × (1-t) = {formatPercentNoSign(conservativeDCF.wacc)}
+          WACC = E/V × Re + D/V × Rd × (1-t) = {formatPercentNoSign(bias.switched ? bias.decisionWacc : conservativeDCF.wacc)}
+          {bias.switched ? ` (Uplift +${formatNumber(bias.waccUpliftPp, 3)} pp auf Unadjusted ${formatPercentNoSign(bias.unadjustedWacc)})` : ""}
         </div>
         <div className="font-mono tabular-nums">
-          Kat.-adj. Zielwert = {catalystBaseFallback ? 'Analyst PT' : 'Kons. DCF'} × (1 + Σ GB / 100)
+          Basis: {bias.valuationBaseLabel} · {bias.modeLabel}
+          {bias.switched ? ` · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare)}` : ""}
+        </div>
+        <div className="font-mono tabular-nums">
+          Gesamtscore {formatNumber(bias.overallScore, 2)} ({bias.overallRating}) · PESTEL-Faktor {formatNumber(bias.pestelFactor, 2)} · Moat-Multiplikator {formatNumber(bias.moatMultiplier, 3)}
+        </div>
+        <div className="font-mono tabular-nums">
+          Kat.-adj. Zielwert = {catalystBaseFallback ? 'Analyst PT' : bias.valuationBaseLabel} × (1 + Σ positive GB / 100)
         </div>
         <div className="font-mono tabular-nums">
           = {formatCurrency(catalystDCFBase)} × (1 + {formatNumber(totalUpside, 2)}%) = {formatCurrency(adjustedTarget)}
@@ -350,10 +372,10 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           </div>
         )}
         <div className="font-mono tabular-nums">
-          CRV = (Fair Value - Worst Case) / (Kurs - Worst Case) = ({formatCurrency(conservativeDCF.perShare)} - {formatCurrency(worstCase)}) / ({formatCurrency(data.currentPrice)} - {formatCurrency(worstCase)}) = {formatNumber(crvConservative, 2)}:1
+          CRV = (Fair Value - Worst Case) / (Kurs - Worst Case) = ({formatCurrency(decisionPerShare)} - {formatCurrency(worstCase)}) / ({formatCurrency(data.currentPrice)} - {formatCurrency(worstCase)}) = {formatNumber(crvConservative, 2)}:1
         </div>
         <div className="font-mono tabular-nums">
-          DCF bei CRV 3:1 = (Kons. DCF + 2 × WC) / 3 = ({formatCurrency(conservativeDCF.perShare)} + 2 × {formatCurrency(worstCase)}) / 3 = {formatCurrency(dcfBeiCRV3)}
+          DCF bei CRV 3:1 = ({bias.valuationBaseLabel} + 2 × WC) / 3 = ({formatCurrency(decisionPerShare)} + 2 × {formatCurrency(worstCase)}) / 3 = {formatCurrency(dcfBeiCRV3)}
         </div>
       </div>
 
@@ -361,7 +383,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
       {(() => {
         const risks = data.risks;
         const totalExpDmg = risks.reduce((s, r) => s + r.expectedDamage, 0);
-        const raCrvCons = calculateRiskAdjustedCRV(conservativeDCF.perShare, worstCase, data.currentPrice, totalExpDmg);
+        const raCrvCons = calculateRiskAdjustedCRV(decisionPerShare, worstCase, data.currentPrice, totalExpDmg);
         const {
           positive, negative, neutral, rating, ratingColor, ratingBg, fazitSatz,
         } = buildFazitSignal({
@@ -378,13 +400,14 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           mcResult,
           totalExpDmg,
           worstCase,
+          bias,
         });
 
         return (
           <div className={`rounded-lg border-2 p-4 ${ratingBg}`}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Fazit</h3>
-              <span className={`text-sm font-bold ${ratingColor}`}>{rating}</span>
+              <span className={`text-sm font-bold ${ratingColor}`}>{bias.overallRating} · {rating}</span>
             </div>
 
             <div className="mb-3 text-xs text-foreground/90 leading-relaxed bg-background/30 rounded-md p-2.5 border border-border/30">

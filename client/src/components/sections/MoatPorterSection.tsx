@@ -3,6 +3,7 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { Shield, ShieldAlert, ShieldCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 import { PolicyContextPanel } from "./PolicyContextPanel";
+import { ruleMoatFromAnalysis, moatMultiplier } from "../../../../shared/bias-fixes";
 
 interface Props { data: StockAnalysis }
 
@@ -33,6 +34,7 @@ export function MoatPorterSection({ data }: Props) {
   }
 
   const avgScore = moat.porterForces.length > 0 ? moat.porterForces.reduce((s, f) => s + f.score, 0) / moat.porterForces.length : 0;
+  const ruleMoat = ruleMoatFromAnalysis(data);
   const sourceChipClass = `px-2.5 py-1 text-xs rounded-md border ${
     moat.overallRating === "Wide" ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" :
     moat.overallRating.includes("Narrow") ? "bg-amber-500/10 text-amber-500 border-amber-500/20" :
@@ -65,6 +67,10 @@ export function MoatPorterSection({ data }: Props) {
               moat.overallRating.includes("Narrow") ? "text-amber-500" :
               "text-red-500"
             }`}>{moat.overallRating}</span>
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">
+            Regel-Moat {ruleMoat.rating} ({ruleMoat.score.toFixed(1)}) · Multiplikator {moatMultiplier(ruleMoat.rating).toFixed(3)}
+            {ruleMoat.kiDelta !== 0 ? ` · KI ${ruleMoat.kiDelta > 0 ? "+" : ""}${ruleMoat.kiDelta.toFixed(1)}` : ""}
           </div>
         </div>
 

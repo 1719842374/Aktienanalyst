@@ -9,6 +9,7 @@ import {
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, getCRVColor, getCRVBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
+import { buildBiasDecision } from "../../../../shared/bias-fixes";
 
 interface Props { data: StockAnalysis }
 
@@ -56,8 +57,10 @@ export function Section6({ data }: Props) {
 
   // Catalyst-adj target
   const catalysts = data.catalysts;
-  const _rawUpsideS6 = (catalysts || []).reduce((s, c) => s + c.gb, 0);
-  const _baseInfoS6 = selectCatalystBase(conservativeDCF.perShare, _rawUpsideS6, data.currentPrice, data.analystPT.median);
+  const bias = useMemo(() => buildBiasDecision(data), [data]);
+  const _rawUpsideS6 = bias.positiveGbSum;
+  const _decisionS6 = Number.isFinite(bias.decisionPerShare) ? bias.decisionPerShare : conservativeDCF.perShare;
+  const _baseInfoS6 = selectCatalystBase(_decisionS6, _rawUpsideS6, data.currentPrice, data.analystPT.median);
   const catalystDCFBase = _baseInfoS6.base;
   const { adjustedTarget } = calculateCatalystUpside(catalysts, catalystDCFBase);
   const raAdjustedTarget = adjustedTarget * riskDiscountFactor;
@@ -228,6 +231,11 @@ export function Section6({ data }: Props) {
             <div className="font-mono font-semibold">{hardenedCRV.structuralFloorPct > 0 ? `${formatNumber(hardenedCRV.structuralFloorPct, 0)}%` : "—"}</div>
           </div>
         </div>
+        {bias.switched && (
+          <div className="mt-2 text-[10px] text-amber-500 bg-amber-500/10 rounded-md p-2 border border-amber-500/20">
+            Entscheidungsrelevante Basis: {bias.valuationBaseLabel} {formatCurrency(bias.decisionPerShare)} (WACC {formatNumber(bias.decisionWacc, 2)}%, {bias.triggerCount} Trigger). Unadjusted / Extrapolative: {formatCurrency(bias.unadjustedPerShare)}. {bias.modeLabel}.
+          </div>
+        )}
         {hardenedCRV.divergenceFlag && (
           <div className="mt-2 text-[10px] text-red-400 bg-red-500/10 rounded-md p-2 border border-red-500/20">
             <span className="font-semibold">DCF vs. Markt Divergenz:</span> DCF-Upside {formatNumber(hardenedCRV.dcfUpsidePct, 0)}% vs. Analyst-Upside {formatNumber(hardenedCRV.analystUpsidePct, 0)}% — das Fazit darf nicht allein auf dem unbereinigten Base-CRV beruhen.

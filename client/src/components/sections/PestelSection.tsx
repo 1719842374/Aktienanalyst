@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp, TrendingUp, TrendingDown, Minus, ArrowUpRight, 
 import { useState } from "react";
 import { PolicyContextPanel } from "./PolicyContextPanel";
 import { apiRequest } from "@/lib/queryClient";
+import { pestelDampeningFactor } from "../../../../shared/bias-fixes";
 
 interface Props { data: StockAnalysis }
 
@@ -110,6 +111,7 @@ export function PestelSection({ data }: Props) {
       <div className="bg-muted/20 rounded-lg p-3 border border-border/50">
         <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">Makro-Zusammenfassung</div>
         <div className="text-xs text-foreground/80 leading-relaxed">{pestel.macroSummary}</div>
+        <div className="text-[10px] text-muted-foreground mt-1">Dämpfungsfaktor auf den Quant-Score: {pestelDampeningFactor(pestel.geopoliticalScore).toFixed(2)} (Exposure {pestel.geopoliticalScore}/10)</div>
       </div>
 
       {/* Interest Rate & Capital Costs */}

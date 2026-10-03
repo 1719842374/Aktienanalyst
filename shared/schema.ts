@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { BiasFixPayload, CatalystSource } from "./bias-fixes";
 
 // === Request Schema ===
 export const analyzeRequestSchema = z.object({
@@ -212,6 +213,10 @@ export interface Catalyst {
   // (generateCatalysts()), false = firmenspezifischer LLM-Output
   // (generateCatalystsAndMatchNews()).
   generic?: boolean;
+  /** Bias-Fix K5: "negative" schließt den Katalysator aus der positiven GB-Summe aus. */
+  direction?: "positive" | "negative" | string;
+  /** "▼" = Downside-Katalysator (Variante A), "▲" = Upside. */
+  flag?: string;
 }
 
 export interface Risk {
@@ -648,6 +653,16 @@ export interface StockAnalysis {
   // korrekt vorbelegen kann (z.B. nach einem Seiten-Reload mit demselben Request).
   activePeerOverrides?: { add: string[]; remove: string[] };
   llmMode?: boolean; // Whether LLM-powered catalysts were used
+  /** Zwei-Pfad: generische Sektor-Katalysatoren vs. KI-firmenspezifisch. */
+  catalystsSource?: CatalystSource;
+  /** Regelbasierte Bias-Entscheidung (Inverse/Hardened DCF als Basis bei ≥2 Triggern). */
+  biasFix?: BiasFixPayload;
+  /** 1–10, gesetzt nach dem Management-Score-Lauf (Variante B). */
+  managementScore?: number | null;
+  /** 0–10, gesetzt nach dem Thesis-Strength-Lauf (Variante B). */
+  thesisStrengthScore?: number | null;
+  /** Reverse-DCF g* in Prozent, serverseitig an der Analyse. */
+  impliedGStar?: number;
   consistencyWarnings?: ConsistencyWarning[];
   dataTimestamp?: string; // ISO date when data was fetched
   _cached?: boolean; // True if served from server cache
