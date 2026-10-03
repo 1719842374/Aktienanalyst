@@ -18,6 +18,12 @@ const DEFILLAMA_STABLECOINS_URL = "https://stablecoins.llama.fi/stablecoins?incl
 const DEFILLAMA_TVL_URL = "https://api.llama.fi/v2/historicalChainTvl";
 const FETCH_TIMEOUT_MS = 15000;
 
+/** L_GENIUS = 1 seit 07/2025. Wirkung nur über D_30. Kein Score 1.2. */
+export const GENIUS_LEGAL = {
+  legal: 1 as const,
+  rulemakingNote: "L=1 seit 07/2025. Wirkung nur über D_30. Kein Score 1.2.",
+};
+
 export interface StablecoinAggregate {
   symbol: string;
   name: string;
@@ -245,6 +251,7 @@ export interface StablecoinLiquidityResponse {
   stablecoins: StablecoinMarketSnapshot;
   tBillDemand: TBillDemandEstimate;
   defiTvl: DefiTvlSnapshot;
+  genius: typeof GENIUS_LEGAL;
 }
 
 export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiquidityResponse> {
@@ -259,5 +266,6 @@ export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiqu
     stablecoins,
     tBillDemand,
     defiTvl,
+    genius: GENIUS_LEGAL,
   };
 }
