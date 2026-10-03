@@ -83,7 +83,7 @@ Das Portfolio-Modul ist aktuell stark forward-looking (CAPM/Kelly/Sharpe). Es fe
 - Contribution-Attribution pro Titel und Sektor
 
 **Vollständige Spec (Formeln, Datenmodell, Rechenschritte, Chart-Design, UI-Platzierung, Acceptance):**  
-→ [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md)
+→ [fertig_WORK_PORTFOLIO_BACKTEST.md](./fertig_WORK_PORTFOLIO_BACKTEST.md)
 
 **Aufwand v1:** ≈ 1,5–2 Tage  
 **Priorität:** Hoch (starke Differenzierung + direkter Nutzen für Diagnose und Bewerbungen)
@@ -235,7 +235,7 @@ Das Portfolio-Modul ist aktuell stark forward-looking (CAPM/Kelly/Sharpe). Es fe
 | **Hoch**  | **BTC + Gold: WALCL / QE-QT Regime + Overlay + Scoring (Phase 2)** | neu detailliert 19.08.2026 |
 | **Hoch**  | Gold AISC + Realzins-Kombination           | teilweise (Realyield schon da)          |
 | **Hoch**  | **Researcher Sector Opportunity — fehlende Add-Buttons** | neu 19.08.2026 (Quick-Win ~30–60 min) |
-| **Hoch**  | **Portfolio Performance Attribution / Backtesting vs. Benchmark** | neu 19.08.2026 → [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md) |
+| **Hoch**  | **Portfolio Performance Attribution / Backtesting vs. Benchmark** | neu 19.08.2026 → [fertig_WORK_PORTFOLIO_BACKTEST.md](./fertig_WORK_PORTFOLIO_BACKTEST.md) |
 | **Mittel**| Monte-Carlo flexibel                       | offen                                   |
 | **Mittel**| Bilanzen-Red-Flag-Screener                 | offen                                   |
 | **Mittel**| Rezession: Google Trends + KI-Fazit        | offen                                   |
@@ -266,7 +266,7 @@ Diese Punkte aus dem vorherigen Backlog bleiben relevant und sind hier der Volls
 3. Konsistenz-Fixes (`inCapitulation` / `minerZone`) als Quick-Win.
 4. **Segment-Deduplizierung** als Quick-Win (~1–2 h) – verhindert doppelte AWS-/Cloud-Balken bei AMZN, MSFT etc. → [fertig_WORK_SEGMENT_DEDUP.md](./fertig_WORK_SEGMENT_DEDUP.md)
 5. **Researcher Sector Opportunity Add-Buttons** als Quick-Win (~30–60 min) → [fertig_WORK_RESEARCHER_SECTOR_ADD.md](./fertig_WORK_RESEARCHER_SECTOR_ADD.md)
-6. **Portfolio Performance Attribution (erster Backtesting-Block)** → [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md)
+6. **Portfolio Performance Attribution (erster Backtesting-Block)** → [fertig_WORK_PORTFOLIO_BACKTEST.md](./fertig_WORK_PORTFOLIO_BACKTEST.md)
 
 ---
 

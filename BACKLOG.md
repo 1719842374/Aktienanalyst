@@ -168,7 +168,7 @@ generische LLM-Risiken, `posOriginal`/`posAdjustment`-Trennung.
 **Umsetzungsstand: ✅ Kern umgesetzt** — Reverse-DCF-Sektion 14, 20min-TTL-
 Cache. Fiskal-Bridge-Modul selbst siehe oben (unwired, bewusst offen).
 
-### Halving/Hashrate-Zyklus (WORK_TEIL0-6.md)
+### Halving/Hashrate-Zyklus (fertig_WORK_TEIL0-6.md)
 
 **Umsetzungsstand: ✅ UMGESETZT** — Breakeven-Formel, Halving→Hashrate-
 Impact-Erklärtext im UI.

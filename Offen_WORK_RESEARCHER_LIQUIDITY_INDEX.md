@@ -2,7 +2,7 @@
 
 > Stand: 04.09.2026 | Status: **SPEC** — Index nicht live
 > Ort: Researcher → Tab *Country Macro Pulse* → Widget statt nur US-C2
-> Companion: `fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md` (Ist US), `WORK_FISCAL_FRONTEND_ADAPTIVE.md` (US-Bill-Detail)
+> Companion: `fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md` (Ist US), `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (US-Bill-Detail)
 
 ---
 

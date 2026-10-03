@@ -195,3 +195,39 @@ Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Hormuz (B) / Liquidity
 - **D6 Rang 7–9** — Custom Edges / Animation / Redis. Nur nach Entscheidung `@xyflow/react`. CSS-Karten bleiben. **Kein workable Ticket.**
 
 `Future_Work.md` = Roadmap, kein Ticket. Siehe `WORK_IMPLEMENTIERUNG_OFFEN.md` und `docs/Doc_Soll_vs_Ist/`.
+
+---
+
+## 5. Dateinamen 2026-10-03 (tip `839d954`)
+
+Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben ohne Präfix: `WORK.md`, `WORK_IST_VS_SOLL.md`, `WORK_IMPLEMENTIERUNG_OFFEN.md`. Bestehende `fertig_*`-Namen sind unverändert.
+
+### Offen
+
+- `Offen_WORK_ANALYZE_DISK_CACHE.md` — `server/disk-cache.ts` hat die 7-Tage-Schicht, aber `server/analyze-route.ts` ruft `diskCacheGet` / `diskCacheSet` / `diskCacheDelete` nicht auf.
+- `Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md` — die Route-Hunks (Force löscht L1+L2, Disk-Hit nach RAM-Miss, Schreiben nach Assemble) fehlen in `analyze-route.ts`.
+- `Offen_WORK_BIAS_FIXES_INVERSE_DCF.md` — `computeHardenedCRV` läuft im Signal-Snapshot, der Schalter „mindestens zwei Trigger, dann Inverse-DCF als Entscheidungsbasis“ samt WACC-Uplift und Ausschluss negativer Katalysatoren aus der GB-Summe ist nicht verdrahtet.
+- `Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — EZ-M3, BoJ-M2 und der asiatische Realzins sind nicht als Fetch für Velocity oder Briefing im Code.
+- `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — die s(z)-Schicht auf TGA, SOMA Bills gegen Notes und ΔDFF ist kein Score-Pfad.
+- `Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md` — keine Cache-Keys `liqidx_EU__*` oder `liqidx_ASIA__*` und kein EZB- oder BoJ-Buch.
+- `Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — kein Regions-Widget für Debt/GDP, Realzins, Velocity und Halbwertszeit.
+- `Offen_WORK_PEER_ADAPTIVE.md` — kein 2-Hop (`peers2hop`); `CURATED_PEER_FALLBACK` in `server/news-peers.ts` bleibt der Fallback.
+- `Offen_WORK_PEER_PRICING_POWER.md` — kein `peerMaterial`-Gate und kein Banner „Peer-Set unvollständig“.
+- `Offen_WORK_PORTFOLIO_SOLL_IST.md` — keine gruppierten Soll/Ist-Balken, kein Active Weight und kein Trade-Notional.
+- `Offen_WORK_RECESSION_2008_DRIVERS_LLM.md` — `server/recession-drivers.ts` fehlt; `generateFazit` bleibt ein fester Text statt z-Matrix plus LLM nur auf Menge A.
+- `Offen_WORK_RECESSION_FRED_SAHM.md` — `scoreSahm` in `server/recession.ts` ist weiter `>= 0.5 ? 4 : -3`, nicht s(z) über 20 Jahre.
+- `Offen_WORK_RECESSION_MARKET_CHARTS.md` — `GET /api/analyze-recession/markets` liefert SPY, VGK und ASHR mit Vol und RSI/MACD, aber kein QQQ/VXN, kein PEG-Klick-Factpack und kein FINRA-Streifen.
+- `Offen_WORK_RECESSION_RATE_OIL_BRIDGE.md` — `server/recession-bridge.ts` und die Flags `rateTight` und Öl-Schock fehlen.
+- `Offen_WORK_RECESSION_SOURCES.md` — der NY-Fed-Anker wird mit ×10 gebildet, Sahm und Kurve bleiben Schwellen-Scores, PMI nutzt Chicago als ISM-Proxy, und die Response hat kein `schemaVersion`.
+- `Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md` — ein `briefing-result.json` und ein globales `topChanges`, keine drei Blöcke money, fiscal und trade.
+- `Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — `LiquidityPanel` holt immer `GET /api/researcher/liquidity` ohne Region.
+- `Offen_WORK_SECTION4_DATA_BUGS.md` — Trailing-PEG in `Section4.tsx` ist `peRatio / epsGrowth5Y`; FCF bleibt eine Cashflow-Zeile (`cashflow?.[0]`) in `server/fmp-fetcher.ts`.
+- `Offen_WORK_STABLECOIN_TBILL_GENIUS.md` — DefiLlama-Marktkapitalisierung liegt in `server/stablecoin-liquidity.ts`; Z-Score, dynamischer T-Bill-Multiplikator und GENIUS-Stärke-Score fehlen.
+- `Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md` — `client/src/lib/withBackoff.ts` und die CAPEX-Farbhelfer sind da; Branchen-Selector, Custom Edges und Redis-Limit fehlen.
+
+### Neu fertig
+
+- `fertig_WORK.md_portfolio_3` — `server/ohlcv-route.ts` (`GET /api/ohlcv`) und die Long-Map in `client/src/pages/PortfolioPage.tsx`, Badge in `PortfolioOverview.tsx`.
+- `fertig_WORK_PORTFOLIO_BACKTEST.md` — `client/src/lib/portfolio/backtest.ts` und `client/src/components/portfolio/PortfolioBacktestPanel.tsx`.
+- `fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md` — `client/src/lib/portfolio/engine.ts` mit `weighting.ts` und `frontier.ts`, Ist/Ziel-Toggle in `PortfolioOverview.tsx`.
+- `fertig_WORK_TEIL0-6.md` — `client/src/pages/BTCDashboard.tsx` und `server/btc-miner.ts` (`calcBreakevenPrice`, `calcPuellMultiple`, `classifyMinerZone`).

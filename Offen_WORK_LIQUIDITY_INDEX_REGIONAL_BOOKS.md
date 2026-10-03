@@ -1,6 +1,6 @@
 # WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md
 
-> Stand: 04.09.2026 | Addendum zu WORK_RESEARCHER_LIQUIDITY_INDEX.md
+> Stand: 04.09.2026 | Addendum zu Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md
 > Regel: **gleiche zwei Bücher überall**. Nur Behörde + Serie wechselt. Cache der Zeitreihe, nicht der Rede.
 
 ---

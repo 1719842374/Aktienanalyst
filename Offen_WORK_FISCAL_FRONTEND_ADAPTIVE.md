@@ -1,7 +1,7 @@
 # WORK_FISCAL_FRONTEND_ADAPTIVE.md
 
 > Stand: 03.09.2026 | Status: **SPEC / SOLL** — Adaptive Schicht **nicht** live
-> Companion: `WORK_STABLECOIN_TBILL_GENIUS.md` (D4 Basis live), `fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md` (C2 live)
+> Companion: `Offen_WORK_STABLECOIN_TBILL_GENIUS.md` (D4 Basis live), `fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md` (C2 live)
 > Live-Demo: https://aktienanalyst.onrender.com/#/btc Sektion 14
 > Repo: `server/stablecoin-liquidity.ts`, `server/liquidity-regime-math.ts`, `client/src/lib/btcAnalysis.ts`
 
@@ -413,7 +413,7 @@ Altes `FFR ≧ 5` in `btcAnalysis.ts` wird erst ersetzt, wenn `FE.available === 
 | `client/src/components/researcher/LiquidityPanel.tsx` | Researcher C2 UI, Label `Treasury-Twist (Bessent)` |
 | `server/disk-cache.ts` | `diskResearcherGet/Set` |
 | `script/test-liquidity-regime.ts` | C2 + Bessent-Fenster-Fixtures |
-| `WORK_STABLECOIN_TBILL_GENIUS.md` | D4 Spec (Kopf „adaptiv“, Code = Basis) |
+| `Offen_WORK_STABLECOIN_TBILL_GENIUS.md` | D4 Spec (Kopf „adaptiv“, Code = Basis) |
 | `fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md` | C2 Spec |
 
 Datenfluss Ist:

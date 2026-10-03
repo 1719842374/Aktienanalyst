@@ -3,7 +3,7 @@
 > **Stand:** 09.09.2026 (Update 09:37 CEST — 1Y/2Y OHLCV-Fetch Spec)
 > **Status:** Phase 0 (Rebase + 6M/1Y/2Y UI) auf `main`. Nächster Schritt: langer OHLCV-Fetch.
 > **Live:** https://aktienanalyst.onrender.com/#/portfolio
-> **Verwandt:** [WORK_DATA_PROVIDERS.md](./WORK_DATA_PROVIDERS.md) · [WORK_PORTFOLIO_BACKTEST.md](./WORK_PORTFOLIO_BACKTEST.md)
+> **Verwandt:** [fertig_WORK_DATA_PROVIDERS.md](./fertig_WORK_DATA_PROVIDERS.md) · [fertig_WORK_PORTFOLIO_BACKTEST.md](./fertig_WORK_PORTFOLIO_BACKTEST.md)
 
 ---
 
@@ -46,7 +46,7 @@ Darum: **separater OHLCV-Fetch**, Analyse-Cache nicht als 1Y/2Y-Quelle.
 | Stelle | Was passiert | Folge |
 | --- | --- | --- |
 | `PortfolioPage.tsx` | `historicalPricesByTicker = analysis.historicalPrices` aus `POST /api/analyze` | Portfolio sieht nur, was die Analyse mitgibt |
-| `WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md` | Seed-Export `historicalPrices.slice(-252)` | manche Seeds max. 1Y, oft kürzer |
+| `Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md` | Seed-Export `historicalPrices.slice(-252)` | manche Seeds max. 1Y, oft kürzer |
 | `server/disk-cache.ts` | HP < 50 → Flag `_needsOhlcv`, Payload trotzdem ausgeliefert | kurze Serie kann die UI erreichen |
 | `scripts/validate-msft.mjs` | RSL will `historicalPrices.length >= 200` | Analyse-Soll ≥ 200, Live-Portfolio hatte ~119 |
 | `server/fmp-fetcher.ts` | Fetch intern `yearAgo(10)` , danach `ohlcvData.slice(-252)` für 52w-High | Server holt 10Y, nutzt 1Y-Slice für Kennzahlen |
