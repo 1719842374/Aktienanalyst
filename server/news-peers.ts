@@ -107,14 +107,14 @@ export async function matchNewsToCatalysts(
 }
 
 const LUXURY_INDUSTRY_BLOCKLIST = ["luxury goods", "apparel", "jewelry", "watches", "footwear", "fashion", "textile"];
-const CURATED_PEER_FALLBACK: Record<string, string[]> = {
+export const CURATED_PEER_FALLBACK: Record<string, string[]> = {
   BYDDY: ["TSLA", "NIO", "LI", "XPEV", "GELYF"],
   NIO: ["BYDDY", "LI", "XPEV", "TSLA", "GELYF"],
   LI: ["BYDDY", "NIO", "XPEV", "TSLA", "GELYF"],
   XPEV: ["BYDDY", "NIO", "LI", "TSLA", "GELYF"],
   GELYF: ["BYDDY", "TSLA", "NIO", "LI", "XPEV"],
 };
-function normaliseIndustry(s: string): string {
+export function normaliseIndustry(s: string): string {
   return s.toLowerCase().replace(/[-–—]/g, " ").replace(/\s+/g, " ").trim();
 }
 const AUTO_EV_KEYWORDS = ["auto", "vehicle", "ev ", " ev", "electric vehicle"];
@@ -124,7 +124,7 @@ function isAutoEvIndustry(industry: string): boolean {
 function isLuxuryIndustry(industry: string): boolean {
   return LUXURY_INDUSTRY_BLOCKLIST.some(l => normaliseIndustry(industry).includes(l));
 }
-function isIndustryCompatible(subjectSector: string, subjectIndustry: string, candidateSector: string, candidateIndustry: string): { ok: boolean; reason: string } {
+export function isIndustryCompatible(subjectSector: string, subjectIndustry: string, candidateSector: string, candidateIndustry: string): { ok: boolean; reason: string } {
   if (isAutoEvIndustry(subjectIndustry)) {
     if (isLuxuryIndustry(candidateIndustry)) return { ok: false, reason: "Luxury vs Auto/EV" };
     if (!isAutoEvIndustry(candidateIndustry)) return { ok: false, reason: "Industry mismatch Auto/EV" };
@@ -307,7 +307,8 @@ export async function fetchPeerComparisonFromTickers(
         roic5YYearsUsed: peerRoic?.roic5YYearsUsed ?? 0,
       });
     });
-    const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null).slice(0, 6);
+    // F is already capped (5, or 8 after +/- overrides). peerAvg uses that set.
+    const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null);
     if (validPeers.length === 0) return null;
     const avg = (arr: (number | null)[], lo = -1000, hi = 1000): number | null => {
       const valid = arr.filter((v): v is number => v !== null && !isNaN(v) && isFinite(v) && v > lo && v < hi);
