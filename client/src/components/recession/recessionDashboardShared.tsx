@@ -32,6 +32,35 @@ export interface FazitSection {
   text: string;
 }
 
+/** Mirrors server/recession-bridge.ts. Rendered only through fazit.sections. */
+export interface RecessionBridgeView {
+  rates: {
+    dgs10: number | null;
+    dfii10: number | null;
+    t10yie: number | null;
+    dff: number | null;
+    zReal: number | null;
+    zBe: number | null;
+    zWei: number | null;
+    identityGap: number | null;
+  };
+  oil: {
+    wti: number | null;
+    deltaWti4w: number | null;
+    zOil: number | null;
+    corr20d: number | null;
+    deltaGas8w: number | null;
+    passCPI: number | null;
+    passBE: number | null;
+    shock: boolean;
+  };
+  flags: {
+    rateTight: boolean;
+    stagflationWedge: boolean;
+    shock: boolean;
+  };
+}
+
 export interface RecessionAnalysis {
   date: string;
   indicators: IndicatorResult[];
@@ -42,6 +71,7 @@ export interface RecessionAnalysis {
   interpretation: string;
   fazit?: { summary: string; riskLevel: string; sections: FazitSection[] };
   sources: { name: string; url: string }[];
+  bridge?: RecessionBridgeView;
 }
 
 // Color helpers
