@@ -234,6 +234,28 @@ export function diskResearcherGet(key: string): any | null {
   }
 }
 
+/**
+ * Same table as diskResearcherGet, but the caller picks the TTL.
+ * peers2hop uses 7 days. The 1-day getter would delete that row on read.
+ */
+export function diskResearcherGetWithTtl(key: string, ttlMs: number, now = Date.now()): { data: any; storedAt: number } | null {
+  const d = getDb();
+  if (!d) return null;
+  try {
+    const row = d.prepare("SELECT data, updated_at FROM researcher_cache WHERE cache_key = ?").get(key) as any;
+    if (!row) return null;
+    const storedAt = Number(row.updated_at);
+    const age = now - storedAt;
+    if (!(ttlMs > 0) || !Number.isFinite(age) || age > ttlMs) {
+      d.prepare("DELETE FROM researcher_cache WHERE cache_key = ?").run(key);
+      return null;
+    }
+    return { data: JSON.parse(row.data), storedAt };
+  } catch {
+    return null;
+  }
+}
+
 export function diskResearcherSet(key: string, data: any): void {
   const d = getDb();
   if (!d) return;
