@@ -149,7 +149,11 @@ export function assembleCatalog(texts: CatalogTexts, ctx: CatalogContext): Brief
   const jpReal = jpNominal && jpCpi ? exPostRealPercent(jpNominal.value, jpCpi.latest) : null;
   const usReal = rateOf(fred.DFII10, "FRED DFII10");
   const us10y = rateOf(fred.DGS10, "FRED DGS10");
-  const cn10y = rateOf(fred.IRLTLT01CNM156N, "FRED IRLTLT01CNM156N");
+  const cn10y: LiquidityBriefingRate = {
+    value: null,
+    asOf: null,
+    source: "Markt/Bloomberg — kein robustes FRED",
+  };
   const cnCpi = yoyOnIndex(fred.CHNCPIALLMINMEI || []);
   const de10y = rateOf(fred.IRLTLT01DEM156N, "FRED IRLTLT01DEM156N");
 
@@ -173,7 +177,7 @@ export function assembleCatalog(texts: CatalogTexts, ctx: CatalogContext): Brief
     addedToLi: false,
   };
 
-  const carry = spreadSeriesPoints(fred.DGS10 || [], fred.IRLTLT01CNM156N || [], 100);
+  const carry: DatedValue[] = [];
   const usEz = spreadSeriesPoints(fred.DFII10 || [], fred.IRLTLT01DEM156N || [], 1);
   const qt = qtNetSeries(ctx.app, ctx.pepp);
   const latestCarry = us10y.value != null && cn10y.value != null ? carryBp(us10y.value, cn10y.value) : null;
@@ -232,7 +236,7 @@ export function assembleCatalog(texts: CatalogTexts, ctx: CatalogContext): Brief
       weightCap: EM_INDEX_WEIGHT_CAP,
       cnM2Yoy: null,
       cnRr7d: null,
-      cn10y: cn10y.value,
+      cn10y: null,
       in2y: null,
       tradeNote: "KR/TW Semi und Exportregeln sind ein Handel-Filter, keine Serie.",
     },

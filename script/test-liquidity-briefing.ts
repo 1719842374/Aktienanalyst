@@ -35,6 +35,8 @@ import {
   xBotInvalidationKeys,
   zOfLatest,
   bojHundredMillionYenToBillion,
+  bojHundredMillionYenToTrillion,
+  parseBojSeries,
 } from "../server/liquidity-briefing-math";
 import { assembleCatalog } from "../server/liquidity-briefing-catalog";
 import {
@@ -67,6 +69,10 @@ ok("kein Fetch der toten IDs", DEAD_FRED_SERIES.every(id => !urlBlob.includes(id
 ok("kein M2V in den Briefing-URLs", !urlBlob.includes("M2V") && !urlBlob.includes("M2SL"));
 ok("EZ-M3 kommt von der EZB", urls.some(u => u.id === "ECB_M3" && u.url.includes("data-api.ecb.europa.eu")));
 ok("JP-M2 kommt von der BoJ", urls.some(u => u.id === "BOJ_M2" && u.url.includes("stat-search.boj.or.jp")));
+ok("EZ-M1 kommt von der EZB", urls.some(u => u.id === "ECB_M1" && u.url.includes("M10.X.1.")));
+ok("EZ-M2 kommt von der EZB", urls.some(u => u.id === "ECB_M2" && u.url.includes("M20.X.1.")));
+ok("BoJ-Geldbasis ist MD01", urls.some(u => u.id === "BOJ_MB" && u.url.includes("db=MD01") && u.url.includes("MABS1AN11")));
+ok("kein CN-10y auf FRED", !urlBlob.includes("IRLTLT01CNM156N"));
 ok("APP-CSV ist die EZB-Tabelle", urls.some(u => u.url.includes("APP_breakdown_history.csv")));
 ok("PEPP-CSV ist die EZB-Tabelle", urls.some(u => u.url.includes("PEPP_purchase_history.csv")));
 
@@ -139,6 +145,14 @@ const boj = parseBojMoneyStock([
   "MAM1NAM2M2MO,M2/Average Amounts Outstanding/Money Stock,100 million yen,MONTHLY,Money Stock,20260909,202607,12966394",
 ].join("\n"));
 ok("BoJ Juli 2026 geparst", boj.length === 1 && boj[0].period === "2026-07" && boj[0].value === 12966394);
+const mbCsv = [
+  "MABS1AN11,Monetary Base,100 million yen,MONTHLY,Monetary Base,20261002,202607,5549259",
+  "MABS1AN11@,Monetary Base YoY,%,MONTHLY,Monetary Base,20261002,202607,-13.8",
+].join("\n");
+const mb = parseBojSeries(mbCsv, "MABS1AN11");
+const mbYoy = parseBojSeries(mbCsv, "MABS1AN11@");
+ok("Geldbasis Juli → Bio. Yen", mb.length === 1 && near(Math.round(bojHundredMillionYenToTrillion(mb[0].value) * 1000) / 1000, 554.926, 1e-9), String(mb[0]?.value));
+ok("Geldbasis YoY ist schon Prozent", mbYoy.length === 1 && mbYoy[0].value === -13.8);
 
 console.log("X-Bot");
 const pingCache = memoryBriefingCache();
@@ -229,11 +243,16 @@ const fakeFetch: typeof fetch = async (input) => {
   const url = String(input);
   seen.push(url);
   let body = "";
-  if (url.includes("M30.X.I.")) body = "TIME_PERIOD,OBS_VALUE\n2026-07,3.374812706145436\n2026-08,3.489572442704003\n";
+  if (url.includes("M10.X.I.")) body = "TIME_PERIOD,OBS_VALUE\n2026-07,3.139514565864854\n";
+  else if (url.includes("M20.X.I.")) body = "TIME_PERIOD,OBS_VALUE\n2026-07,3.325985827488509\n";
+  else if (url.includes("M30.X.I.")) body = "TIME_PERIOD,OBS_VALUE\n2026-07,3.374812706145436\n2026-08,3.489572442704003\n";
+  else if (url.includes("M10.")) body = "TIME_PERIOD,OBS_VALUE\n2026-07,11291831\n";
+  else if (url.includes("M20.")) body = "TIME_PERIOD,OBS_VALUE\n2026-07,16434747\n";
   else if (url.includes("/BSI/")) body = m3Body;
   else if (url.includes("/MNA/")) body = ngdpBody;
   else if (url.includes("APP_breakdown_history")) body = appCsv;
   else if (url.includes("PEPP_purchase_history")) body = peppCsv;
+  else if (url.includes("db=MD01")) body = mbCsv;
   else if (url.includes("stat-search.boj.or.jp")) body = bojBody;
   else if (url.includes("id=JPNNGDP")) body = fredBody;
   else if (url.includes("id=DFII10")) body = "observation_date,DFII10\n2026-08-27,2.34\n2026-08-28,2.42\n";
@@ -260,6 +279,10 @@ ok("US-Velocity nur durchgereicht", briefing.us.velocity === 1.415 && briefing.u
 ok("EZ-Velocity gesetzt", briefing.eurozone.velocity != null && briefing.available.ez, String(briefing.eurozone.velocity));
 ok("EZ YoY ist die EZB-Wachstumsrate", briefing.eurozone.yoy === 3.49, String(briefing.eurozone.yoy));
 ok("JP YoY ist die BoJ-Rate", briefing.japan.yoy === 2, String(briefing.japan.yoy));
+ok("EZ M1 Jul aus der Tabelle", briefing.eurozone.m1StockBn === 11291.8 && briefing.eurozone.m1Yoy === 3.14, String(briefing.eurozone.m1StockBn));
+ok("EZ M2 Jul aus der Tabelle", briefing.eurozone.m2StockBn === 16434.7 && briefing.eurozone.m2Yoy === 3.33, String(briefing.eurozone.m2StockBn));
+ok("JP Geldbasis aus MD01", briefing.japan.monetaryBaseTn === 554.926 && briefing.japan.monetaryBaseYoy === -13.8, String(briefing.japan.monetaryBaseTn));
+ok("CN 10y bleibt leer", briefing.rates.cn10y.value == null && briefing.em.cn10y == null && !String(briefing.rates.cn10y.value).includes("1.69"));
 const jpMoney = bojHundredMillionYenToBillion((12900000 + 12900000 + 12970074) / 3);
 ok("JP-Velocity = NGDP / Quartalsmittel M2", briefing.japan.velocity != null && Math.abs(briefing.japan.velocity - (689219.1 / jpMoney)) < 0.002, String(briefing.japan.velocity));
 ok("Fetch-APP ist Juli-Netto aus der Tabelle", briefing.app.netBn === -27.17, String(briefing.app.netBn));
@@ -306,6 +329,30 @@ const catalogOnly = assembleCatalog({
   nowIso: "2026-09-04",
 });
 ok("Katalog nimmt MoF vor FRED", catalogOnly.rates.jp10y.source === "MoF constant-maturity" && catalogOnly.rates.jp10y.value === 1.7);
+const cnIgnored = assembleCatalog({
+  fred: {
+    DGS10: "observation_date,DGS10\n2026-09-02,4.81\n",
+    IRLTLT01CNM156N: "observation_date,IRLTLT01CNM156N\n2026-09-02,1.69\n",
+  },
+  mof: "",
+  mspd: "",
+  wfs: "",
+}, {
+  usVelocity: null,
+  usVelocityMedian: null,
+  jpVelocity: null,
+  jpVelocityMedian: null,
+  ezVelocity: null,
+  ezVelocityMedian: null,
+  jpMoneyBn: null,
+  fRestBn: null,
+  deltaMBn: null,
+  app: [],
+  pepp: [],
+  nowIso: "2026-09-04",
+});
+ok("CN 10y wird nicht aus FRED gefüllt", cnIgnored.rates.cn10y.value == null && cnIgnored.em.cn10y == null);
+ok("Carry ohne CN-Serie bleibt leer", cnIgnored.spillover.find(row => row.id === "us-asia-carry")?.latest == null);
 
 const ecbOnly = parseEcbCsv(m3Body);
 ok("EZB-CSV TIME_PERIOD", ecbOnly.length === 6 && ecbOnly[5].period === "2026-06");

@@ -18,7 +18,8 @@ export const DEAD_FRED_SERIES = [
 
 /**
  * FRED-Serien, die der Briefing-Fetch wirklich anfragt.
- * Kein M2V (der bleibt im C2-Pfad) und kein DFII* außer DFII10.
+ * Kein M2V (der bleibt im C2-Pfad), kein DFII* außer DFII10,
+ * und kein CN-10y: die Spec hat dafür keine robuste FRED-Serie.
  */
 export const LIVE_FRED_SERIES = [
   "JPNNGDP",
@@ -29,7 +30,6 @@ export const LIVE_FRED_SERIES = [
   "JPNCPIALLMINMEI",
   "FPCPITOTLZGJPN",
   "CHNCPIALLMINMEI",
-  "IRLTLT01CNM156N",
   "IRLTLT01DEM156N",
   "DEXJPUS",
   "DEXUSEU",
@@ -138,6 +138,11 @@ export function millionToBillion(million: number): number {
 /** BoJ-Einheit „100 million yen“ → Mrd. Yen. */
 export function bojHundredMillionYenToBillion(raw: number): number {
   return raw / 10;
+}
+
+/** BoJ-Einheit „100 million yen“ → Bio. Yen. */
+export function bojHundredMillionYenToTrillion(raw: number): number {
+  return raw / 10_000;
 }
 
 export function median(values: number[]): number | null {

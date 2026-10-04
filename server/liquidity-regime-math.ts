@@ -29,6 +29,8 @@ export interface LiquidityMetrics {
   tgaDelta4wBn: number | null;
   m2YoY: number | null;
   velocity: number | null;
+  /** Median der letzten 40 Quartale M2V. Kürzer als 10 Jahre bleibt null. */
+  velocityMedian10y: number | null;
   excessMoneyGrowth: number | null;
   regimeScore: number;
   regimeLabel: RegimeLabel;
@@ -270,6 +272,14 @@ export function latestLevel(obs: FredObs[]): { value: number; date: string } | n
   return { value: last.value, date: last.date };
 }
 
+/** Median der letzten 40 Quartale. Weniger als 10 Jahre bleibt null, kein kürzeres Fenster. */
+export function velocityMedian10y(obs: FredObs[] | undefined): number | null {
+  const sorted = finiteSortedObs(obs);
+  if (sorted.length < 40) return null;
+  const tail = sorted.slice(-40).map(p => p.value).sort((a, b) => a - b);
+  return (tail[19] + tail[20]) / 2;
+}
+
 export function velocityDelta(obs: FredObs[]): number | null {
   const o = [...obs].filter(p => Number.isFinite(p.value)).sort((a, b) => a.date.localeCompare(b.date));
   if (o.length < 5) return null;
@@ -296,6 +306,7 @@ export function computeLiquidityMetrics(input: {
   const gdp = input.gdp ? yoyFromMonthly(input.gdp) : null;
   const cpi = input.cpi ? yoyFromMonthly(input.cpi) : null;
   const vel = input.m2v ? latestLevel(input.m2v) : null;
+  const velMedian = velocityMedian10y(input.m2v);
   const velDelta = input.m2v ? velocityDelta(input.m2v) : null;
 
   const windowOk = emgHistoryOk(input);
@@ -339,6 +350,7 @@ export function computeLiquidityMetrics(input: {
     tgaDelta4wBn: tgaD4 == null ? null : round1(tgaD4),
     m2YoY: m2 ? round2(m2.latest) : null,
     velocity: vel ? round3(vel.value) : null,
+    velocityMedian10y: velMedian == null ? null : round3(velMedian),
     excessMoneyGrowth: excess == null ? null : round2(excess),
     regimeScore,
     regimeLabel: regimeFromScore(regimeScore),

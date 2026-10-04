@@ -773,6 +773,21 @@ export interface LiquidityBriefingRegion {
   velocityMedian10y: number | null;
 }
 
+export interface EurozoneAggregates {
+  m1StockBn: number | null;
+  m1Yoy: number | null;
+  m1AsOf: string | null;
+  m2StockBn: number | null;
+  m2Yoy: number | null;
+  m2AsOf: string | null;
+}
+
+export interface JapanMonetaryBase {
+  monetaryBaseTn: number | null;
+  monetaryBaseYoy: number | null;
+  monetaryBaseAsOf: string | null;
+}
+
 export interface LiquidityBriefingProgram {
   period: string | null;
   netBn: number | null;
@@ -784,11 +799,16 @@ export interface LiquidityBriefingProgram {
 
 export interface LiquidityBriefing {
   asOf: string;
-  eurozone: LiquidityBriefingRegion;
-  japan: LiquidityBriefingRegion;
+  eurozone: LiquidityBriefingRegion & EurozoneAggregates;
+  japan: LiquidityBriefingRegion & JapanMonetaryBase;
   app: LiquidityBriefingProgram;
   pepp: LiquidityBriefingProgram;
-  us: { velocity: number | null; emg: number | null; source: "liquidity-regime" | null };
+  us: {
+    velocity: number | null;
+    emg: number | null;
+    velocityMedian10y: number | null;
+    source: "liquidity-regime" | null;
+  };
   sources: {
     m3: string;
     ngdpEa: string;

@@ -46,6 +46,8 @@ function parseFredCsv(csv: string): FredObs[] {
 
 const MONTHLY_LOOKBACK = 30;
 const QUARTERLY_LOOKBACK = 66;
+/** 10 Jahre plus ein Quartal, damit der Median 40 M2V-Punkte sehen kann. */
+const M2V_LOOKBACK_MONTHS = 126;
 
 async function fetchFredSeries(series: string, months: number): Promise<FredObs[]> {
   const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${series}&cosd=${monthsAgoISO(months)}`;
@@ -64,7 +66,7 @@ export async function fetchLiquidityLive(): Promise<LiquidityMetrics & Partial<F
     fetchFredSeries(SERIES.rrp, MONTHLY_LOOKBACK),
     fetchFredSeries(SERIES.tga, MONTHLY_LOOKBACK),
     fetchFredSeries(SERIES.m2, MONTHLY_LOOKBACK),
-    fetchFredSeries(SERIES.m2v, QUARTERLY_LOOKBACK),
+    fetchFredSeries(SERIES.m2v, M2V_LOOKBACK_MONTHS),
     fetchFredSeries(SERIES.gdp, QUARTERLY_LOOKBACK),
     fetchFredSeries(SERIES.cpi, MONTHLY_LOOKBACK),
   ]);

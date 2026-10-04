@@ -29,13 +29,20 @@ import {
   xBotInvalidationKeys,
   yoyPercent,
   bojHundredMillionYenToBillion,
+  bojHundredMillionYenToTrillion,
 } from "./liquidity-briefing-math";
 
 export const ECB_M3_KEY = "M.U2.Y.V.M30.X.1.U2.2300.Z01.E";
 export const ECB_M3_YOY_KEY = "M.U2.Y.V.M30.X.I.U2.2300.Z01.A";
+export const ECB_M2_KEY = "M.U2.Y.V.M20.X.1.U2.2300.Z01.E";
+export const ECB_M2_YOY_KEY = "M.U2.Y.V.M20.X.I.U2.2300.Z01.A";
+export const ECB_M1_KEY = "M.U2.Y.V.M10.X.1.U2.2300.Z01.E";
+export const ECB_M1_YOY_KEY = "M.U2.Y.V.M10.X.I.U2.2300.Z01.A";
 export const ECB_NGDP_KEY = "Q.Y.I10.W2.S1.S1.B.B1GQ._Z._Z._Z.EUR.V.N";
 export const BOJ_M2_CODE = "MAM1NAM2M2MO";
 export const BOJ_M2_YOY_CODE = "MAM1YAM2M2MO";
+export const BOJ_MB_CODE = "MABS1AN11";
+export const BOJ_MB_YOY_CODE = "MABS1AN11@";
 
 const APP_CSV_URL = "https://www.ecb.europa.eu/mopo/pdf/APP_breakdown_history.csv";
 const PEPP_CSV_URL = "https://www.ecb.europa.eu/mopo/pdf/PEPP_purchase_history.csv";
@@ -70,6 +77,10 @@ export type { LiquidityBriefing };
 interface EuBundle {
   m3: DatedValue[];
   m3Yoy: DatedValue[];
+  m2: DatedValue[];
+  m2Yoy: DatedValue[];
+  m1: DatedValue[];
+  m1Yoy: DatedValue[];
   ngdp: DatedValue[];
   app: AppMonth[];
   pepp: PeppMonth[];
@@ -79,6 +90,8 @@ interface AsiaBundle {
   m2Raw: DatedValue[];
   m2Yoy: DatedValue[];
   ngdp: DatedValue[];
+  monetaryBase: DatedValue[];
+  monetaryBaseYoy: DatedValue[];
 }
 
 export function berlinDate(now = new Date()): string {
@@ -140,6 +153,22 @@ export function briefingSourceUrls(now = new Date()): { id: string; url: string 
       url: `https://data-api.ecb.europa.eu/service/data/BSI/${ECB_M3_YOY_KEY}?startPeriod=${startPeriod}&format=csvdata&detail=dataonly`,
     },
     {
+      id: "ECB_M2",
+      url: `https://data-api.ecb.europa.eu/service/data/BSI/${ECB_M2_KEY}?startPeriod=${startPeriod}&format=csvdata&detail=dataonly`,
+    },
+    {
+      id: "ECB_M2_YOY",
+      url: `https://data-api.ecb.europa.eu/service/data/BSI/${ECB_M2_YOY_KEY}?startPeriod=${startPeriod}&format=csvdata&detail=dataonly`,
+    },
+    {
+      id: "ECB_M1",
+      url: `https://data-api.ecb.europa.eu/service/data/BSI/${ECB_M1_KEY}?startPeriod=${startPeriod}&format=csvdata&detail=dataonly`,
+    },
+    {
+      id: "ECB_M1_YOY",
+      url: `https://data-api.ecb.europa.eu/service/data/BSI/${ECB_M1_YOY_KEY}?startPeriod=${startPeriod}&format=csvdata&detail=dataonly`,
+    },
+    {
       id: "ECB_NGDP",
       url: `https://data-api.ecb.europa.eu/service/data/MNA/${ECB_NGDP_KEY}?startPeriod=${ngdpStart}&format=csvdata&detail=dataonly`,
     },
@@ -148,6 +177,10 @@ export function briefingSourceUrls(now = new Date()): { id: string; url: string 
     {
       id: "BOJ_M2",
       url: `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_CODE},${BOJ_M2_YOY_CODE}&startDate=${startCompact}`,
+    },
+    {
+      id: "BOJ_MB",
+      url: `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD01&code=${BOJ_MB_CODE},${encodeURIComponent(BOJ_MB_YOY_CODE)}&startDate=${startCompact}`,
     },
     {
       id: "JPNNGDP",
@@ -191,6 +224,15 @@ export function memoryBriefingCache(): BriefingCache {
 
 function fresh(entry: { storedAt: number } | null, ttl: number, nowMs: number): boolean {
   return !!entry && nowMs - entry.storedAt < ttl;
+}
+
+function cachedHasList(value: unknown, key: string): boolean {
+  return !!value && typeof value === "object" && Array.isArray((value as Record<string, unknown>)[key]);
+}
+
+function lastPoint(points: DatedValue[] | undefined): DatedValue | null {
+  const sorted = [...(points ?? [])].filter(p => Number.isFinite(p.value)).sort((a, b) => a.period.localeCompare(b.period));
+  return sorted.length ? sorted[sorted.length - 1] : null;
 }
 
 async function fetchText(url: string, fetchImpl: typeof fetch): Promise<string> {
@@ -290,12 +332,13 @@ function ngdpMillionsToBn(points: DatedValue[]): DatedValue[] {
   return points.map(p => ({ period: p.period, value: p.value / 1000 }));
 }
 
-async function readExistingUsLiquidity(): Promise<{ velocity: number | null; emg: number | null }> {
+async function readExistingUsLiquidity(): Promise<{ velocity: number | null; emg: number | null; velocityMedian10y: number | null }> {
   const { diskResearcherGet } = await import("./disk-cache");
   const row = diskResearcherGet(EXISTING_US_LIQUIDITY_CACHE_KEY);
   const velocity = typeof row?.velocity === "number" && Number.isFinite(row.velocity) ? row.velocity : null;
   const emg = typeof row?.excessMoneyGrowth === "number" && Number.isFinite(row.excessMoneyGrowth) ? row.excessMoneyGrowth : null;
-  return { velocity, emg };
+  const velocityMedian10y = typeof row?.velocityMedian10y === "number" && Number.isFinite(row.velocityMedian10y) ? row.velocityMedian10y : null;
+  return { velocity, emg, velocityMedian10y };
 }
 
 export async function applyXBotPing(
@@ -318,7 +361,7 @@ export async function fetchLiquidityBriefing(opts: {
   now?: Date;
   cache?: BriefingCache;
   refresh?: boolean;
-  readUsLiquidity?: () => { velocity: number | null; emg: number | null } | Promise<{ velocity: number | null; emg: number | null }>;
+  readUsLiquidity?: () => { velocity: number | null; emg: number | null; velocityMedian10y?: number | null } | Promise<{ velocity: number | null; emg: number | null; velocityMedian10y?: number | null }>;
 } = {}): Promise<LiquidityBriefing> {
   const now = opts.now ?? new Date();
   const nowMs = now.getTime();
@@ -344,16 +387,20 @@ export async function fetchLiquidityBriefing(opts: {
   const byId = Object.fromEntries(urls.map(u => [u.id, u.url]));
 
   let eu = cache.get(CACHE_KEYS.eu);
-  if (!fresh(eu, TTL_MS.euAppPep, nowMs)) eu = null;
+  if (!fresh(eu, TTL_MS.euAppPep, nowMs) || !cachedHasList(eu?.value, "m1")) eu = null;
   let m3Entry = cache.get(CACHE_KEYS.euM3);
   if (!fresh(m3Entry, TTL_MS.euM3, nowMs)) m3Entry = null;
   let asia = cache.get(CACHE_KEYS.asia);
-  if (!fresh(asia, TTL_MS.asia, nowMs)) asia = null;
+  if (!fresh(asia, TTL_MS.asia, nowMs) || !cachedHasList(asia?.value, "monetaryBase")) asia = null;
 
   if (!eu || !m3Entry) {
-    const [m3Csv, m3YoyCsv, ngdpCsv, appCsv, peppCsv] = await Promise.all([
+    const [m3Csv, m3YoyCsv, m2Csv, m2YoyCsv, m1Csv, m1YoyCsv, ngdpCsv, appCsv, peppCsv] = await Promise.all([
       fetchText(byId.ECB_M3, fetchImpl).catch(() => ""),
       fetchText(byId.ECB_M3_YOY, fetchImpl).catch(() => ""),
+      fetchText(byId.ECB_M2, fetchImpl).catch(() => ""),
+      fetchText(byId.ECB_M2_YOY, fetchImpl).catch(() => ""),
+      fetchText(byId.ECB_M1, fetchImpl).catch(() => ""),
+      fetchText(byId.ECB_M1_YOY, fetchImpl).catch(() => ""),
       fetchText(byId.ECB_NGDP, fetchImpl).catch(() => ""),
       fetchText(byId.APP, fetchImpl).catch(() => ""),
       fetchText(byId.PEPP, fetchImpl).catch(() => ""),
@@ -361,6 +408,10 @@ export async function fetchLiquidityBriefing(opts: {
     const bundle: EuBundle = {
       m3: parseEcbCsv(m3Csv).sort((a, b) => a.period.localeCompare(b.period)),
       m3Yoy: parseEcbCsv(m3YoyCsv).sort((a, b) => a.period.localeCompare(b.period)),
+      m2: parseEcbCsv(m2Csv).sort((a, b) => a.period.localeCompare(b.period)),
+      m2Yoy: parseEcbCsv(m2YoyCsv).sort((a, b) => a.period.localeCompare(b.period)),
+      m1: parseEcbCsv(m1Csv).sort((a, b) => a.period.localeCompare(b.period)),
+      m1Yoy: parseEcbCsv(m1YoyCsv).sort((a, b) => a.period.localeCompare(b.period)),
       ngdp: parseEcbCsv(ngdpCsv).sort((a, b) => a.period.localeCompare(b.period)),
       app: parseAppBreakdown(appCsv).sort((a, b) => a.period.localeCompare(b.period)),
       pepp: parsePeppPurchases(peppCsv).sort((a, b) => a.period.localeCompare(b.period)),
@@ -373,21 +424,28 @@ export async function fetchLiquidityBriefing(opts: {
   }
 
   if (!asia) {
-    const [m2Csv, ngdpCsv] = await Promise.all([
+    const [m2Csv, ngdpCsv, mbCsv] = await Promise.all([
       fetchText(byId.BOJ_M2, fetchImpl).catch(() => ""),
       fetchText(byId.JPNNGDP, fetchImpl).catch(() => ""),
+      fetchText(byId.BOJ_MB, fetchImpl).catch(() => ""),
     ]);
     const bundle: AsiaBundle = {
       m2Raw: parseBojMoneyStock(m2Csv),
       m2Yoy: parseBojSeries(m2Csv, BOJ_M2_YOY_CODE),
       ngdp: parseFredCsv(ngdpCsv).sort((a, b) => a.period.localeCompare(b.period)),
+      monetaryBase: parseBojSeries(mbCsv, BOJ_MB_CODE),
+      monetaryBaseYoy: parseBojSeries(mbCsv, BOJ_MB_YOY_CODE),
     };
     asia = { value: bundle, storedAt: nowMs };
     if (bundle.m2Raw.length) cache.set(CACHE_KEYS.asia, bundle, nowMs);
   }
 
-  const euBundle: EuBundle = (eu?.value as EuBundle) || { m3: [], m3Yoy: [], ngdp: [], app: [], pepp: [] };
-  const asiaBundle: AsiaBundle = (asia?.value as AsiaBundle) || { m2Raw: [], m2Yoy: [], ngdp: [] };
+  const euBundle: EuBundle = (eu?.value as EuBundle) || {
+    m3: [], m3Yoy: [], m2: [], m2Yoy: [], m1: [], m1Yoy: [], ngdp: [], app: [], pepp: [],
+  };
+  const asiaBundle: AsiaBundle = (asia?.value as AsiaBundle) || {
+    m2Raw: [], m2Yoy: [], ngdp: [], monetaryBase: [], monetaryBaseYoy: [],
+  };
 
   const m3Bn = m3ToBn(euBundle.m3 || []);
   const ezNgdpBn = ngdpMillionsToBn(euBundle.ngdp || []);
@@ -395,12 +453,24 @@ export async function fetchLiquidityBriefing(opts: {
   const m3Last = m3Bn.length ? m3Bn[m3Bn.length - 1] : null;
   const m3Official = euBundle.m3Yoy?.length ? euBundle.m3Yoy[euBundle.m3Yoy.length - 1].value : null;
   const m3Yoy = m3Official ?? yoyPercent(m3Bn)?.latest ?? null;
-  const eurozone = velocityBlock(
-    ezSeries,
-    m3Last ? roundTo(m3Last.value, 1) : null,
-    m3Yoy == null ? null : roundTo(m3Yoy, 2),
-    m3Last?.period ?? null,
-  );
+  const m1Last = lastPoint(m3ToBn(euBundle.m1 || []));
+  const m2EzLast = lastPoint(m3ToBn(euBundle.m2 || []));
+  const m1YoyLast = lastPoint(euBundle.m1Yoy || []);
+  const m2YoyLast = lastPoint(euBundle.m2Yoy || []);
+  const eurozone = {
+    ...velocityBlock(
+      ezSeries,
+      m3Last ? roundTo(m3Last.value, 1) : null,
+      m3Yoy == null ? null : roundTo(m3Yoy, 2),
+      m3Last?.period ?? null,
+    ),
+    m1StockBn: m1Last ? roundTo(m1Last.value, 1) : null,
+    m1Yoy: m1YoyLast ? roundTo(m1YoyLast.value, 2) : null,
+    m1AsOf: m1Last?.period ?? null,
+    m2StockBn: m2EzLast ? roundTo(m2EzLast.value, 1) : null,
+    m2Yoy: m2YoyLast ? roundTo(m2YoyLast.value, 2) : null,
+    m2AsOf: m2EzLast?.period ?? null,
+  };
 
   const m2Bn = (asiaBundle.m2Raw || []).map(p => ({
     period: p.period,
@@ -414,19 +484,26 @@ export async function fetchLiquidityBriefing(opts: {
   const m2Last = m2Bn.length ? m2Bn[m2Bn.length - 1] : null;
   const m2Official = asiaBundle.m2Yoy?.length ? asiaBundle.m2Yoy[asiaBundle.m2Yoy.length - 1].value : null;
   const m2Yoy = m2Official ?? yoyPercent(m2Bn)?.latest ?? null;
-  const japan = velocityBlock(
-    jpSeries,
-    m2Last ? roundTo(m2Last.value, 1) : null,
-    m2Yoy == null ? null : roundTo(m2Yoy, 2),
-    m2Last?.period ?? null,
-  );
+  const mbLast = lastPoint(asiaBundle.monetaryBase || []);
+  const mbYoyLast = lastPoint(asiaBundle.monetaryBaseYoy || []);
+  const japan = {
+    ...velocityBlock(
+      jpSeries,
+      m2Last ? roundTo(m2Last.value, 1) : null,
+      m2Yoy == null ? null : roundTo(m2Yoy, 2),
+      m2Last?.period ?? null,
+    ),
+    monetaryBaseTn: mbLast ? roundTo(bojHundredMillionYenToTrillion(mbLast.value), 3) : null,
+    monetaryBaseYoy: mbYoyLast ? roundTo(mbYoyLast.value, 1) : null,
+    monetaryBaseAsOf: mbLast?.period ?? null,
+  };
 
   const app = latestApp(euBundle.app || []);
   const pepp = latestPepp(euBundle.pepp || []);
   const usLiquidity = await readUs();
   const catalog = await loadBriefingCatalog(now, {
     usVelocity: usLiquidity.velocity,
-    usVelocityMedian: null,
+    usVelocityMedian: usLiquidity.velocityMedian10y ?? null,
     jpVelocity: japan.velocity,
     jpVelocityMedian: japan.velocityMedian10y,
     ezVelocity: eurozone.velocity,
@@ -461,10 +538,11 @@ export async function fetchLiquidityBriefing(opts: {
     us: {
       velocity: usLiquidity.velocity,
       emg: usLiquidity.emg,
+      velocityMedian10y: usLiquidity.velocityMedian10y ?? null,
       source: usLiquidity.velocity == null ? null : "liquidity-regime",
     },
     sources: {
-      m3: "ECB BSI M.U2.Y.V.M30 outstanding",
+      m3: "ECB BSI M1/M2/M3 outstanding",
       ngdpEa: "ECB MNA nominal GDP EA21",
       m2: "BoJ MD02 MAM1NAM2M2MO",
       ngdpJp: "FRED JPNNGDP",

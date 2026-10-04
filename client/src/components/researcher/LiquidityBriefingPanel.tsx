@@ -76,12 +76,17 @@ export function LiquidityBriefingPanel() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
             <Metric label="EZ M3" value={fmt(data.eurozone.stockBn, 0, " Mrd. €")} />
             <Metric label="EZ M3 YoY" value={fmt(data.eurozone.yoy, 2, " %")} />
+            <Metric label="EZ M2" value={fmt(data.eurozone.m2StockBn, 0, " Mrd. €")} testId="text-ez-m2" />
+            <Metric label="EZ M1" value={fmt(data.eurozone.m1StockBn, 0, " Mrd. €")} testId="text-ez-m1" />
             <Metric label="Velocity EZ" value={fmt(data.eurozone.velocity, 3)} testId="text-ez-velocity" />
             <Metric label="NGDP-Quartal EZ" value={data.eurozone.ngdpQuarter || "n/a"} />
             <Metric label="JP M2" value={fmt(data.japan.stockBn, 0, " Mrd. ¥")} />
             <Metric label="JP M2 YoY" value={fmt(data.japan.yoy, 2, " %")} />
+            <Metric label="JP Geldbasis" value={fmt(data.japan.monetaryBaseTn, 3, " Bio. ¥")} testId="text-jp-mb" />
+            <Metric label="JP Geldbasis YoY" value={fmt(data.japan.monetaryBaseYoy, 1, " %")} testId="text-jp-mb-yoy" />
             <Metric label="Velocity JP" value={fmt(data.japan.velocity, 3)} testId="text-jp-velocity" />
             <Metric label="NGDP-Quartal JP" value={data.japan.ngdpQuarter || "n/a"} />
+            <Metric label="US M2V" value={fmt(data.us.velocity, 3)} testId="text-us-velocity" />
             <Metric label={`APP Netto ${data.app.period || ""}`.trim()} value={fmt(data.app.netBn, 3, " Mrd. €")} testId="text-app-net" />
             <Metric label="APP Bestand" value={fmt(data.app.holdingsBn, 3, " Mrd. €")} />
             <Metric label={`PEPP Netto ${data.pepp.period || ""}`.trim()} value={fmt(data.pepp.netBn, 3, " Mrd. €")} testId="text-pepp-net" />
@@ -104,6 +109,21 @@ export function LiquidityBriefingPanel() {
             <Metric label="EZ QT Δ" value={fmt(data.books.eu.qtNetBn, 1, " Mrd. €")} testId="text-qt-net" />
           </div>
 
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+            <Metric label="WALCL" value={fmt(data.books.us.walclBn, 0, " Mrd. $")} testId="text-walcl" />
+            <Metric label="RRP" value={fmt(data.books.us.rrpBn, 1, " Mrd. $")} />
+            <Metric label="TGA" value={fmt(data.books.us.tgaBn, 0, " Mrd. $")} />
+            <Metric label="DFF Δ90T" value={fmt(data.books.us.dffDelta90, 2, " pp")} testId="text-dff-delta" />
+            <Metric label="SOMA Bills" value={fmt(data.books.us.somaBillsMn, 0, " Mio. $")} />
+            <Metric label="SOMA Notes" value={fmt(data.books.us.somaNotesBn, 0, " Mrd. $")} />
+            <Metric label="MSPD Δ Bills" value={fmt(data.books.us.billsDiffBn, 1, " Mrd. $")} />
+            <Metric label="Debt/GDP" value={fmt(data.books.us.debtGdp, 1, " %")} />
+            <Metric label="WFS Einlagen" value={fmt(data.books.eu.wfsDepositsBn, 1, " Mrd. €")} testId="text-wfs" />
+            <Metric label="BoJ Assets" value={fmt(data.books.jp.assetsTn, 2, " Bio. ¥")} testId="text-boj-assets" />
+            <Metric label="PSPP Netto" value={fmt(data.app.psppNetBn, 3, " Mrd. €")} />
+            <Metric label="US EMG" value={fmt(data.us.emg, 2, " pp")} />
+          </div>
+
           <div className="text-[11px] text-foreground/70" data-testid="text-spillover">
             {data.spillover.map(row => (
               <span key={row.id} className="mr-3 inline-block">
@@ -114,7 +134,7 @@ export function LiquidityBriefingPanel() {
           </div>
 
           <div className="text-[10px] text-foreground/50" data-testid="text-em-note">
-            EM {data.em.tradeNote} CN-M2 {fmt(data.em.cnM2Yoy, 1, " %")} · IN 2y {fmt(data.em.in2y, 2, " %")}
+            EM {data.em.tradeNote} CN-M2 {fmt(data.em.cnM2Yoy, 1, " %")} · IN 2y {fmt(data.em.in2y, 2, " %")} · CN 10y {data.rates.cn10y.source}
           </div>
           <div className="text-[10px] text-foreground/40" data-testid="text-liquidity-briefing-source">
             {data.sources.m3} · {data.sources.m2} · {data.sources.rates}

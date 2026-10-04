@@ -10,6 +10,7 @@ import {
   delta13w,
   excessMoneyGrowth,
   emgHistoryOk,
+  velocityMedian10y,
   excessMoneyScore,
   friedmanKorridorScore,
   netLiquidityBn,
@@ -189,6 +190,9 @@ const m2vLong = quarterly(20, 1.3, 0.001);
 ok("20 Quartale und 24 Monate decken EMG", emgHistoryOk({ m2: m2Long, cpi: cpiLong, gdp: gdpLong, m2v: m2vLong }));
 const wide = computeLiquidityMetrics({ walcl, rrp, tga, m2: m2Long, cpi: cpiLong, gdp: gdpLong, m2v: m2vLong });
 ok("langes Fenster: EMG ist eine Zahl", wide.excessMoneyGrowth != null && Number.isFinite(wide.excessMoneyGrowth), String(wide.excessMoneyGrowth));
+ok("20 Quartale sind kein 10y-Median", wide.velocityMedian10y == null && velocityMedian10y(m2vLong) == null);
+const m2vTen = quarterly(40, 1.2, 0.001);
+ok("40 Quartale liefern den M2V-Median", velocityMedian10y(m2vTen) != null && Math.abs((velocityMedian10y(m2vTen) as number) - 1.2195) < 1e-9, String(velocityMedian10y(m2vTen)));
 
 if (failed) {
   console.log(`\n${failed} TESTS FEHLGESCHLAGEN`);
