@@ -16,8 +16,36 @@ export const DEAD_FRED_SERIES = [
   "MABMM301EZM189S",
 ] as const;
 
-/** FRED-Serien, die der Briefing-Fetch wirklich anfragt. Kein M2V, kein DFII*. */
-export const LIVE_FRED_SERIES = ["JPNNGDP"] as const;
+/**
+ * FRED-Serien, die der Briefing-Fetch wirklich anfragt.
+ * Kein M2V (der bleibt im C2-Pfad) und kein DFII* außer DFII10.
+ */
+export const LIVE_FRED_SERIES = [
+  "JPNNGDP",
+  "DFII10",
+  "DGS10",
+  "T10YIE",
+  "IRLTLT01JPM156N",
+  "JPNCPIALLMINMEI",
+  "FPCPITOTLZGJPN",
+  "CHNCPIALLMINMEI",
+  "IRLTLT01CNM156N",
+  "IRLTLT01DEM156N",
+  "DEXJPUS",
+  "DEXUSEU",
+  "DEXCHUS",
+  "DFF",
+  "JPNASSETS",
+  "WALCL",
+  "RRPONTSYD",
+  "WTREGEN",
+  "WSHOBL",
+  "WSHOTSL",
+  "GFDEGDQ188S",
+] as const;
+
+export const EM_INDEX_WEIGHT_CAP = 0.10;
+export const SPILLOVER_ABS_Z = 1;
 
 export const CACHE_KEYS = {
   us: "liqidx_v1__US",
@@ -32,7 +60,10 @@ export const EXISTING_US_LIQUIDITY_CACHE_KEY = "macro__v2__US";
 export const TTL_MS = {
   euM3: 24 * 60 * 60 * 1000,
   euAppPep: 24 * 60 * 60 * 1000,
+  euWfs: 6 * 60 * 60 * 1000,
   asia: 24 * 60 * 60 * 1000,
+  us: 6 * 60 * 60 * 1000,
+  h41: 24 * 60 * 60 * 1000,
   briefing: 6 * 60 * 60 * 1000,
 } as const;
 
@@ -321,4 +352,280 @@ export function yoyPercent(points: DatedValue[]): { latest: number; period: stri
   const prev = monthly.find(p => p.period === ago);
   if (!prev || prev.value === 0) return null;
   return { latest: ((last.value - prev.value) / prev.value) * 100, period: last.period };
+}
+
+/** FRED-Prozent (2.42) → Dezimal für T½ (0.0242). */
+export function percentToDecimal(pct: number): number | null {
+  if (!Number.isFinite(pct)) return null;
+  return pct / 100;
+}
+
+/** r^JP = i_10 − π_CPI, beide in Prozent, ex post. */
+export function exPostRealPercent(nominalPct: number, cpiYoyPct: number): number | null {
+  if (!Number.isFinite(nominalPct) || !Number.isFinite(cpiYoyPct)) return null;
+  return nominalPct - cpiYoyPct;
+}
+
+export function carryBp(leftPct: number, rightPct: number): number | null {
+  if (!Number.isFinite(leftPct) || !Number.isFinite(rightPct)) return null;
+  return (leftPct - rightPct) * 100;
+}
+
+export function qtNetBn(appNet: number, peppNet: number): number | null {
+  if (!Number.isFinite(appNet) || !Number.isFinite(peppNet)) return null;
+  return Math.round((appNet + peppNet) * 10) / 10;
+}
+
+/** WSHOTSL − WSHOBL, beide in Mio. $, Ergebnis in Mrd. $. */
+export function somaNotesBn(totalMillions: number, billsMillions: number): number | null {
+  if (!Number.isFinite(totalMillions) || !Number.isFinite(billsMillions)) return null;
+  return (totalMillions - billsMillions) / 1000;
+}
+
+function monthKey(period: string): string | null {
+  const m = /^(\d{4}-\d{2})/.exec(period.trim());
+  return m ? m[1] : null;
+}
+
+/** Letzte Beobachtung je YYYY-MM. Tages- und Monatswerte landen auf demselben Schlüssel. */
+export function lastInMonth(points: DatedValue[]): DatedValue[] {
+  const map = new Map<string, DatedValue>();
+  const sorted = [...points]
+    .filter(p => Number.isFinite(p.value) && monthKey(p.period))
+    .sort((a, b) => a.period.localeCompare(b.period));
+  for (const p of sorted) {
+    const key = monthKey(p.period);
+    if (key) map.set(key, { period: key, value: p.value });
+  }
+  return [...map.values()];
+}
+
+export function yoyOnIndex(points: DatedValue[]): { latest: number; period: string } | null {
+  return yoyPercent(lastInMonth(points));
+}
+
+export function spreadSeries(left: DatedValue[], right: DatedValue[], scale = 1): DatedValue[] {
+  const rightByMonth = new Map(lastInMonth(right).map(p => [p.period, p.value]));
+  const out: DatedValue[] = [];
+  for (const p of lastInMonth(left)) {
+    const other = rightByMonth.get(p.period);
+    if (other == null) continue;
+    out.push({ period: p.period, value: (p.value - other) * scale });
+  }
+  return out;
+}
+
+export function deltaSeries(points: DatedValue[], lag: number): DatedValue[] {
+  const sorted = [...points].filter(p => Number.isFinite(p.value)).sort((a, b) => a.period.localeCompare(b.period));
+  const out: DatedValue[] = [];
+  for (let i = lag; i < sorted.length; i++) {
+    out.push({ period: sorted[i].period, value: sorted[i].value - sorted[i - lag].value });
+  }
+  return out;
+}
+
+export function seriesInTrailingYears(points: DatedValue[], years: number): DatedValue[] {
+  const sorted = [...points]
+    .filter(p => Number.isFinite(p.value) && p.period)
+    .sort((a, b) => a.period.localeCompare(b.period));
+  if (sorted.length === 0) return [];
+  const lastRaw = sorted[sorted.length - 1].period.slice(0, 10);
+  const lastIso = lastRaw.length === 7 ? `${lastRaw}-01` : lastRaw;
+  const end = new Date(`${lastIso}T00:00:00.000Z`);
+  if (Number.isNaN(end.getTime())) return sorted;
+  end.setUTCFullYear(end.getUTCFullYear() - years);
+  const cutoff = end.toISOString().slice(0, 10);
+  return sorted.filter(p => p.period.slice(0, 10) >= cutoff);
+}
+
+/** z der letzten Beobachtung gegen die eigene 5-Jahres-Historie. Zu wenig Punkte → null, kein Event. */
+export function zOfLatest(points: DatedValue[], minPoints = 24): { latest: number; z: number; asOf: string } | null {
+  const xs = seriesInTrailingYears(points, 5);
+  if (xs.length < minPoints) return null;
+  const last = xs[xs.length - 1];
+  const sample = xs.slice(0, -1).map(p => p.value);
+  if (sample.length < 2) return null;
+  const mean = sample.reduce((sum, x) => sum + x, 0) / sample.length;
+  const variance = sample.reduce((sum, x) => sum + (x - mean) ** 2, 0) / (sample.length - 1);
+  const sd = Math.sqrt(variance);
+  if (!(sd > 0)) return null;
+  return { latest: last.value, z: (last.value - mean) / sd, asOf: last.period };
+}
+
+export function spilloverEvent(z: number | null): boolean {
+  return z != null && Number.isFinite(z) && Math.abs(z) >= SPILLOVER_ABS_Z;
+}
+
+/** 1_{z(Δr)} — 1 sobald |z| ≥ 1, sonst 0. Ohne z kein Kanal. */
+export function indicatorOfZ(z: number | null): number | null {
+  if (z == null || !Number.isFinite(z)) return null;
+  return Math.abs(z) >= SPILLOVER_ABS_Z ? 1 : 0;
+}
+
+/** A = clip(ΔM / max(φ F/M, ε), 0, 1). Fehlendes F → null. */
+export function absorptionShare(deltaM: number, fRest: number, money: number, phi = PHI): number | null {
+  if (![deltaM, fRest, money, phi].every(Number.isFinite)) return null;
+  if (!(money > 0) || !(phi > 0) || !(fRest > 0)) return null;
+  const denom = Math.max(phi * (fRest / money), 1e-9);
+  return Math.min(1, Math.max(0, deltaM / denom));
+}
+
+/**
+ * π = 0.6 · 1_{z(Δr)} + 0.4 · A. Nicht in LI addieren.
+ * Ein fehlender Kanal lässt π null.
+ */
+export function pricedInPi(
+  zDeltaR: number | null,
+  deltaM: number | null,
+  fRest: number | null,
+  money: number | null,
+): number | null {
+  const indicator = indicatorOfZ(zDeltaR);
+  if (indicator == null || deltaM == null || fRest == null || money == null) return null;
+  const absorbed = absorptionShare(deltaM, fRest, money);
+  if (absorbed == null) return null;
+  return 0.6 * indicator + 0.4 * absorbed;
+}
+
+export function preferNominal(
+  daily: DatedValue[],
+  monthly: DatedValue[],
+): { value: number; asOf: string; source: "mof-daily" | "fred-monthly" } | null {
+  const sortedDaily = [...daily].filter(p => Number.isFinite(p.value)).sort((a, b) => a.period.localeCompare(b.period));
+  const dailyLast = sortedDaily.length ? sortedDaily[sortedDaily.length - 1] : null;
+  if (dailyLast) return { value: dailyLast.value, asOf: dailyLast.period, source: "mof-daily" };
+  const sortedMonthly = [...monthly].filter(p => Number.isFinite(p.value)).sort((a, b) => a.period.localeCompare(b.period));
+  const monthlyLast = sortedMonthly.length ? sortedMonthly[sortedMonthly.length - 1] : null;
+  if (monthlyLast) return { value: monthlyLast.value, asOf: monthlyLast.period, source: "fred-monthly" };
+  return null;
+}
+
+export function qtNetSeries(app: AppMonth[], pepp: PeppMonth[]): DatedValue[] {
+  const peppByPeriod = new Map(pepp.map(row => [row.period, row.netBn]));
+  const out: DatedValue[] = [];
+  for (const row of app) {
+    const peppNet = peppByPeriod.get(row.period);
+    if (peppNet == null) continue;
+    const net = qtNetBn(row.netBn, peppNet);
+    if (net == null) continue;
+    out.push({ period: row.period, value: net });
+  }
+  return out;
+}
+
+export function latestOnOrBefore(points: DatedValue[], date: string): DatedValue | null {
+  let hit: DatedValue | null = null;
+  for (const point of [...points].sort((a, b) => a.period.localeCompare(b.period))) {
+    if (point.period.slice(0, 10) <= date.slice(0, 10)) hit = point;
+    else break;
+  }
+  return hit;
+}
+
+export function deltaOverDays(points: DatedValue[], days: number): number | null {
+  const sorted = [...points].filter(p => Number.isFinite(p.value) && /^\d{4}-\d{2}-\d{2}/.test(p.period))
+    .sort((a, b) => a.period.localeCompare(b.period));
+  if (sorted.length < 2) return null;
+  const last = sorted[sorted.length - 1];
+  const end = new Date(`${last.period.slice(0, 10)}T00:00:00.000Z`);
+  if (Number.isNaN(end.getTime())) return null;
+  end.setUTCDate(end.getUTCDate() - days);
+  const target = end.toISOString().slice(0, 10);
+  const prev = latestOnOrBefore(sorted, target);
+  if (!prev) return null;
+  return last.value - prev.value;
+}
+
+function normalizeMofDate(raw: string): string | null {
+  const iso = raw.trim().replace(/\//g, "-").replace(/\./g, "-");
+  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(iso);
+  if (!match) return null;
+  return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+}
+
+/** MoF constant-maturity CSV. Bevorzugter Live-Input für den JP-10y, nicht der FRED-Monat. */
+export function parseMofJgb10(csv: string): DatedValue[] {
+  const text = csv.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) return [];
+  const lines = text.split("\n").filter(line => line.trim());
+  if (lines.length < 2) return [];
+  const header = splitCsvLine(lines[0]).map(cell => cell.trim().toLowerCase());
+  let idx = header.findIndex(cell => cell === "10y" || cell === "10-year" || cell === "10 year" || cell === "10");
+  if (idx < 0) idx = header.length > 10 ? 10 : -1;
+  if (idx < 0) return [];
+  const out: DatedValue[] = [];
+  for (const line of lines.slice(1)) {
+    const cols = splitCsvLine(line);
+    const period = normalizeMofDate(cols[0] || "");
+    const value = parseNum(cols[idx]);
+    if (period && value != null) out.push({ period, value });
+  }
+  return out.sort((a, b) => a.period.localeCompare(b.period));
+}
+
+/** FiscalData MSPD, total_mil_amt in Mio. $ → Mrd. $. */
+export function parseMspdBillStockBn(jsonText: string): DatedValue[] {
+  let parsed: { data?: { record_date?: string; total_mil_amt?: string }[] };
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return [];
+  }
+  const out: DatedValue[] = [];
+  for (const row of parsed.data ?? []) {
+    const date = row.record_date ?? "";
+    const millions = parseNum(row.total_mil_amt);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || millions == null) continue;
+    out.push({ period: date, value: millions / 1000 });
+  }
+  return out.sort((a, b) => a.period.localeCompare(b.period));
+}
+
+export function monthStockDiff(points: DatedValue[]): number | null {
+  const months = lastInMonth(points);
+  if (months.length < 2) return null;
+  return billsStockDiff(months[months.length - 1].value, months[months.length - 2].value);
+}
+
+const OFFICIAL_URL = /https?:\/\/[^\s<>"')\]]+/gi;
+
+export function textHasOfficialReleaseUrl(text: string): boolean {
+  const matches = text.match(OFFICIAL_URL) || [];
+  return matches.some(raw => {
+    try {
+      const host = new URL(raw).hostname.toLowerCase();
+      if (host === "boj.or.jp" || host.endsWith(".boj.or.jp")) return true;
+      if (host === "ecb.europa.eu" || host.endsWith(".ecb.europa.eu")) return true;
+      if (host === "mof.go.jp" || host.endsWith(".mof.go.jp")) return true;
+      if (host.endsWith(".gov")) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * X ist die Klingel. Ohne Amts-URL keine Keys.
+ * Der Post-Text wird nicht als V, r, π oder s(z) gelesen und nicht nach Personen benannt.
+ */
+export function xBotInvalidationKeys(account: string, text: string): string[] {
+  if (!textHasOfficialReleaseUrl(text)) return [];
+  const name = account.trim().toLowerCase().replace(/^@/, "");
+  switch (name) {
+    case "federalreserve":
+    case "newyorkfed":
+    case "ustreasury":
+      return [CACHE_KEYS.us, EXISTING_US_LIQUIDITY_CACHE_KEY];
+    case "ecb":
+      return [CACHE_KEYS.eu, CACHE_KEYS.euM3];
+    case "eu_commission":
+      return [CACHE_KEYS.eu];
+    case "bank_of_japan_e":
+    case "mof_japan_eng":
+    case "rbi":
+      return [CACHE_KEYS.asia];
+    default:
+      return [];
+  }
 }

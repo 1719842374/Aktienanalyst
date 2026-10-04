@@ -9,6 +9,7 @@ import {
   computeLiquidityMetrics,
   delta13w,
   excessMoneyGrowth,
+  emgHistoryOk,
   excessMoneyScore,
   friedmanKorridorScore,
   netLiquidityBn,
@@ -116,6 +117,7 @@ ok("netLiquidity set", metrics.netLiquidityBn != null && metrics.netLiquidityBn 
 ok("delta13w set", metrics.netLiquidityDelta13wBn != null);
 ok("WALCL/RRP/TGA quality", metrics.dataQuality.walcl && metrics.dataQuality.rrp && metrics.dataQuality.tga);
 ok("m2 overlay quality", metrics.dataQuality.m2);
+ok("kurzes Fenster: EMG null", metrics.excessMoneyGrowth == null);
 ok("score 0–100", metrics.regimeScore >= 0 && metrics.regimeScore <= 100);
 ok("label is enum", ["expansiv", "neutral", "restriktiv"].includes(metrics.regimeLabel));
 ok("source names FRED series", /WALCL/.test(metrics.source) && /RRPONTSYD/.test(metrics.source) && /WTREGEN/.test(metrics.source));
@@ -169,6 +171,24 @@ const duringQt = classifyPolicy({ asOf: "2025-06-01" });
 ok("vor QT-Ende (1.12.2025): policyRegime=QT", duringQt.policyRegime === "QT");
 ok("vor QT-Ende: durationImpulse=tightening", duringQt.durationImpulse === "tightening");
 ok("vor QT-Ende: policyScore=25", duringQt.policyScore === 25);
+
+function quarterly(n: number, startVal: number, step: number, start = "2021-01-01"): FredObs[] {
+  const out: FredObs[] = [];
+  const d = new Date(`${start}T00:00:00.000Z`);
+  for (let i = 0; i < n; i++) {
+    out.push({ date: d.toISOString().slice(0, 10), value: startVal + i * step });
+    d.setUTCMonth(d.getUTCMonth() + 3);
+  }
+  return out;
+}
+
+const m2Long = monthly(24, 100, 1, "2024-07-01");
+const cpiLong = monthly(24, 100, 0.2, "2024-07-01");
+const gdpLong = quarterly(20, 100, 1);
+const m2vLong = quarterly(20, 1.3, 0.001);
+ok("20 Quartale und 24 Monate decken EMG", emgHistoryOk({ m2: m2Long, cpi: cpiLong, gdp: gdpLong, m2v: m2vLong }));
+const wide = computeLiquidityMetrics({ walcl, rrp, tga, m2: m2Long, cpi: cpiLong, gdp: gdpLong, m2v: m2vLong });
+ok("langes Fenster: EMG ist eine Zahl", wide.excessMoneyGrowth != null && Number.isFinite(wide.excessMoneyGrowth), String(wide.excessMoneyGrowth));
 
 if (failed) {
   console.log(`\n${failed} TESTS FEHLGESCHLAGEN`);

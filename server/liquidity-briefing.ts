@@ -5,6 +5,8 @@
  * US-M2V wird hier nicht geholt. Ein vorhandener C2-Wert darf nur durchgereicht
  * werden. Tote FRED-Spiegel aus §0 werden nicht angefragt.
  */
+import type { LiquidityBriefing } from "@shared/schema";
+import { catalogSourceUrls, loadBriefingCatalog } from "./liquidity-briefing-catalog";
 import {
   CACHE_KEYS,
   EXISTING_US_LIQUIDITY_CACHE_KEY,
@@ -24,6 +26,7 @@ import {
   parsePeppPurchases,
   quarterVelocity,
   roundTo,
+  xBotInvalidationKeys,
   yoyPercent,
   bojHundredMillionYenToBillion,
 } from "./liquidity-briefing-math";
@@ -62,24 +65,7 @@ export interface ProgramLatest {
   cumulativeNetPurchasesBn: number | null;
 }
 
-export interface LiquidityBriefing {
-  asOf: string;
-  eurozone: RegionVelocity;
-  japan: RegionVelocity;
-  app: ProgramLatest;
-  pepp: ProgramLatest;
-  us: { velocity: number | null; source: "liquidity-regime" | null };
-  sources: {
-    m3: string;
-    ngdpEa: string;
-    m2: string;
-    ngdpJp: string;
-    app: string;
-    pepp: string;
-  };
-  cache: { eu: string; m3: string; asia: string; briefing: string };
-  available: { ez: boolean; jp: boolean; app: boolean; pepp: boolean };
-}
+export type { LiquidityBriefing };
 
 interface EuBundle {
   m3: DatedValue[];
@@ -106,6 +92,26 @@ export function berlinDate(now = new Date()): string {
 
 export function briefingCacheKey(now = new Date()): string {
   return `briefing_v2__${berlinDate(now)}`;
+}
+
+export function berlinHour(now = new Date()): number {
+  const hour = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Berlin",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).format(now);
+  return Number(hour);
+}
+
+/** Frisch bis 18:00 Berlin am selben Tag, sonst 6 Stunden. */
+export function briefingCacheFresh(storedAt: number, now: Date, value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const row = value as { rates?: unknown; spillover?: unknown };
+  if (!row.rates || !row.spillover) return false;
+  if (now.getTime() < storedAt) return false;
+  const saved = new Date(storedAt);
+  if (berlinDate(saved) === berlinDate(now) && berlinHour(now) < 18) return true;
+  return now.getTime() - storedAt < TTL_MS.briefing;
 }
 
 function yearsAgoIso(now: Date, years: number): string {
@@ -147,6 +153,7 @@ export function briefingSourceUrls(now = new Date()): { id: string; url: string 
       id: "JPNNGDP",
       url: `https://fred.stlouisfed.org/graph/fredgraph.csv?id=JPNNGDP&cosd=${start}`,
     },
+    ...catalogSourceUrls(now),
   ];
 }
 
@@ -278,11 +285,27 @@ function ngdpMillionsToBn(points: DatedValue[]): DatedValue[] {
   return points.map(p => ({ period: p.period, value: p.value / 1000 }));
 }
 
-async function readExistingUsVelocity(): Promise<number | null> {
+async function readExistingUsLiquidity(): Promise<{ velocity: number | null; emg: number | null }> {
   const { diskResearcherGet } = await import("./disk-cache");
   const row = diskResearcherGet(EXISTING_US_LIQUIDITY_CACHE_KEY);
-  const v = row?.velocity;
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
+  const velocity = typeof row?.velocity === "number" && Number.isFinite(row.velocity) ? row.velocity : null;
+  const emg = typeof row?.excessMoneyGrowth === "number" && Number.isFinite(row.excessMoneyGrowth) ? row.excessMoneyGrowth : null;
+  return { velocity, emg };
+}
+
+export async function applyXBotPing(
+  account: string,
+  text: string,
+  cache?: BriefingCache,
+  now = new Date(),
+): Promise<string[]> {
+  const store = cache ?? await diskCache();
+  const keys = xBotInvalidationKeys(account, text);
+  if (keys.length === 0) return [];
+  const briefingKey = briefingCacheKey(now);
+  for (const key of keys) store.delete(key);
+  store.delete(briefingKey);
+  return [...keys, briefingKey];
 }
 
 export async function fetchLiquidityBriefing(opts: {
@@ -290,24 +313,25 @@ export async function fetchLiquidityBriefing(opts: {
   now?: Date;
   cache?: BriefingCache;
   refresh?: boolean;
-  readUsVelocity?: () => number | null | Promise<number | null>;
+  readUsLiquidity?: () => { velocity: number | null; emg: number | null } | Promise<{ velocity: number | null; emg: number | null }>;
 } = {}): Promise<LiquidityBriefing> {
   const now = opts.now ?? new Date();
   const nowMs = now.getTime();
   const cache = opts.cache ?? await diskCache();
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const readUs = opts.readUsVelocity ?? readExistingUsVelocity;
+  const readUs = opts.readUsLiquidity ?? readExistingUsLiquidity;
   const briefingKey = briefingCacheKey(now);
 
   if (opts.refresh) {
     cache.delete(briefingKey);
+    cache.delete(CACHE_KEYS.us);
     cache.delete(CACHE_KEYS.eu);
     cache.delete(CACHE_KEYS.euM3);
     cache.delete(CACHE_KEYS.asia);
   }
 
   const cachedBriefing = cache.get(briefingKey);
-  if (!opts.refresh && fresh(cachedBriefing, TTL_MS.briefing, nowMs) && cachedBriefing) {
+  if (!opts.refresh && cachedBriefing && briefingCacheFresh(cachedBriefing.storedAt, now, cachedBriefing.value)) {
     return cachedBriefing.value as LiquidityBriefing;
   }
 
@@ -394,7 +418,34 @@ export async function fetchLiquidityBriefing(opts: {
 
   const app = latestApp(euBundle.app || []);
   const pepp = latestPepp(euBundle.pepp || []);
-  const usVelocity = await readUs();
+  const usLiquidity = await readUs();
+  const catalog = await loadBriefingCatalog(now, {
+    usVelocity: usLiquidity.velocity,
+    usVelocityMedian: null,
+    jpVelocity: japan.velocity,
+    jpVelocityMedian: japan.velocityMedian10y,
+    ezVelocity: eurozone.velocity,
+    ezVelocityMedian: eurozone.velocityMedian10y,
+    jpMoneyBn: japan.stockBn,
+    fRestBn: null,
+    deltaMBn: null,
+    app: euBundle.app || [],
+    pepp: euBundle.pepp || [],
+  }, url => fetchText(url, fetchImpl));
+
+  cache.set(CACHE_KEYS.us, {
+    rates: catalog.rates,
+    books: catalog.books.us,
+    qra: catalog.qra,
+  }, nowMs);
+  const euRow = cache.get(CACHE_KEYS.eu);
+  if (euRow && euRow.value && typeof euRow.value === "object") {
+    cache.set(CACHE_KEYS.eu, { ...(euRow.value as object), wfsDepositsBn: catalog.books.eu.wfsDepositsBn }, euRow.storedAt);
+  }
+  const asiaRow = cache.get(CACHE_KEYS.asia);
+  if (asiaRow && asiaRow.value && typeof asiaRow.value === "object") {
+    cache.set(CACHE_KEYS.asia, { ...(asiaRow.value as object), assetsTn: catalog.books.jp.assetsTn }, asiaRow.storedAt);
+  }
 
   const payload: LiquidityBriefing = {
     asOf: berlinDate(now),
@@ -403,8 +454,9 @@ export async function fetchLiquidityBriefing(opts: {
     app,
     pepp,
     us: {
-      velocity: usVelocity,
-      source: usVelocity == null ? null : "liquidity-regime",
+      velocity: usLiquidity.velocity,
+      emg: usLiquidity.emg,
+      source: usLiquidity.velocity == null ? null : "liquidity-regime",
     },
     sources: {
       m3: "ECB BSI M.U2.Y.V.M30 outstanding",
@@ -413,8 +465,13 @@ export async function fetchLiquidityBriefing(opts: {
       ngdpJp: "FRED JPNNGDP",
       app: APP_CSV_URL,
       pepp: PEPP_CSV_URL,
+      rates: "FRED DFII10 DGS10 T10YIE IRLTLT01JPM156N JPNCPIALLMINMEI",
+      mof: "MoF jgbcm.csv",
+      mspd: "FiscalData MSPD marketable bills",
+      wfs: "ECB ILM government deposits",
     },
     cache: {
+      us: CACHE_KEYS.us,
       eu: CACHE_KEYS.eu,
       m3: CACHE_KEYS.euM3,
       asia: CACHE_KEYS.asia,
@@ -426,6 +483,7 @@ export async function fetchLiquidityBriefing(opts: {
       app: app.netBn != null,
       pepp: pepp.netBn != null,
     },
+    ...catalog,
   };
 
   if (payload.available.ez && payload.available.jp && payload.available.app && payload.available.pepp) {

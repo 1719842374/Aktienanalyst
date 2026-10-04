@@ -123,6 +123,38 @@ export function excessMoneyGrowth(m2YoY: number, realGdpYoY: number, cpiYoY: num
   return m2YoY - realGdpYoY - cpiYoY;
 }
 
+/** Spec Quellenkatalog §1: darunter bleibt EMG null (historischer Offset bei zu kurzem Fenster). */
+export const EMG_MIN_MONTHLY = 24;
+export const EMG_MIN_QUARTERLY = 20;
+
+function finiteSortedObs(obs: FredObs[] | undefined): FredObs[] {
+  return [...(obs ?? [])].filter(p => Number.isFinite(p.value)).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function seriesIsQuarterly(obs: FredObs[]): boolean {
+  if (obs.length < 2) return false;
+  const last = obs[obs.length - 1];
+  const prev = obs[obs.length - 2];
+  const gapDays = (new Date(last.date).getTime() - new Date(prev.date).getTime()) / 86_400_000;
+  return gapDays > 45;
+}
+
+export function emgHistoryOk(input: {
+  m2?: FredObs[];
+  cpi?: FredObs[];
+  gdp?: FredObs[];
+  m2v?: FredObs[];
+}): boolean {
+  const m2 = finiteSortedObs(input.m2);
+  const cpi = finiteSortedObs(input.cpi);
+  const gdp = finiteSortedObs(input.gdp);
+  const m2v = finiteSortedObs(input.m2v);
+  if (m2.length < EMG_MIN_MONTHLY || cpi.length < EMG_MIN_MONTHLY) return false;
+  if (!seriesIsQuarterly(gdp) || gdp.length < EMG_MIN_QUARTERLY) return false;
+  if (!seriesIsQuarterly(m2v) || m2v.length < EMG_MIN_QUARTERLY) return false;
+  return true;
+}
+
 export function excessMoneyScore(excess: number): number {
   if (excess > 3) return Math.min(100, 90 + (excess - 3) * 2);
   if (excess >= 1) return 70 + ((excess - 1) / 2) * 19;
@@ -266,9 +298,10 @@ export function computeLiquidityMetrics(input: {
   const vel = input.m2v ? latestLevel(input.m2v) : null;
   const velDelta = input.m2v ? velocityDelta(input.m2v) : null;
 
+  const windowOk = emgHistoryOk(input);
   let excess: number | null = null;
   let scoreV1 = pipe;
-  if (m2 && gdp && cpi) {
+  if (m2 && gdp && cpi && windowOk) {
     excess = excessMoneyGrowth(m2.latest, gdp.latest, cpi.latest);
     const spec =
       0.40 * excessMoneyScore(excess) +
@@ -285,8 +318,8 @@ export function computeLiquidityMetrics(input: {
   // notesBondsDelta13wBn wird bewusst nicht separat von FRED bezogen (kein
   // eigenes SOMA-Notes/Bonds-Signal in diesem Modul) -> Classifier faellt auf
   // twist/QT_ended_RMP/QT zurueck, nie automatisch QE ohne explizites Signal.
-  const specV2Component = (m2 && gdp && cpi)
-    ? 0.40 * excessMoneyScore(excess!) + 0.30 * friedmanKorridorScore(m2.latest) + 0.20 * velocityTrendScore(velDelta) + 0.10 * pipe
+  const specV2Component = (m2 && gdp && cpi && windowOk && excess != null)
+    ? 0.40 * excessMoneyScore(excess) + 0.30 * friedmanKorridorScore(m2.latest) + 0.20 * velocityTrendScore(velDelta) + 0.10 * pipe
     : pipe;
   const policy = classifyPolicy({
     buybackCapLongBnValue: input.treasuryBuybackCapBn ?? null,
