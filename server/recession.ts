@@ -131,7 +131,8 @@ export interface IndicatorResult {
   description: string;
   /**
    * False: the slot is not in the net or the max.
-   * Sahm sets this when history is shorter than H_min.
+   * Sahm sets this when H_min is missed, UNRATE has a gap in the current
+   * S window, or the realtime control fails. The zone then carries the reason.
    * Absent on older slots, which stay scored.
    */
   available?: boolean;
@@ -143,7 +144,8 @@ export interface IndicatorResult {
 
 // 1. Sahm Rule. S is computed from UNRATE (k=0..11), then s(z).
 // SAHMREALTIME is the ±0.02 control only. A blank month or a missed control
-// fails the slot closed. The 0.50pp mark stays a label on the existing card.
+// leaves the slot available:false. The last defined S and the reason stay on
+// the card. The 0.50pp mark stays a label when the slot is scored.
 function scoreSahm(): IndicatorResult {
   const cosd = getDateYearsAgo(SAHM_HISTORY_YEARS);
   const evaluated = scoreSahmFromUnemployment(
@@ -151,6 +153,7 @@ function scoreSahm(): IndicatorResult {
     fetchFredRows("SAHMREALTIME", cosd),
   );
   const scored = sahmIndicatorFromScore(evaluated.score);
+  const base = "3-Monats-Durchschnitt der Arbeitslosenquote vs. 12-Monats-Tief";
   return {
     name: "Sahm-Regel",
     group: "recession", subgroup: "coincident",
@@ -161,7 +164,7 @@ function scoreSahm(): IndicatorResult {
     maxWeighted: scored.maxWeighted,
     zone: scored.zone,
     source: "FRED UNRATE",
-    description: "3-Monats-Durchschnitt der Arbeitslosenquote vs. 12-Monats-Tief",
+    description: scored.reason ? `${base}. ${scored.reason}` : base,
     available: scored.available,
   };
 }

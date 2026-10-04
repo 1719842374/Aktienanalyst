@@ -128,11 +128,18 @@ console.log("\n=== UNRATE self-compute, then s(z), with the ±0.02 control ===")
   check("control tolerance is 0.02", SAHM_CONTROL_TOLERANCE === 0.02 && matched.control.every(row => row.absDiff === 0));
 
   const missed = scoreSahmFromUnemployment(unemployment, last12.map(point => ({ ...point, value: 0.1 })));
-  check("a 0.10 miss fails closed and still reports the computed S", missed.controlOk === false && missed.score.available === false && missed.score.raw === 0 && missed.score.s === 50 && missed.control.every(row => row.computed === 0 && row.absDiff != null && Math.abs(row.absDiff - 0.1) < 1e-12), `diff=${missed.control[0]?.absDiff}`);
+  check("a 0.10 miss fails closed and still reports the computed S", missed.controlOk === false && missed.score.available === false && missed.score.raw === 0 && missed.score.s === 50 && missed.score.level === 0 && missed.control.every(row => row.computed === 0 && row.absDiff != null && Math.abs(row.absDiff - 0.1) < 1e-12), `diff=${missed.control[0]?.absDiff}`);
+  const missedCard = sahmIndicatorFromScore(missed.score);
+  check("a control miss keeps the computed S and names the control", missedCard.value === "0.00 pp" && missedCard.zone.includes("SAHMREALTIME") && missedCard.zone !== "N/A" && missedCard.available === false, missedCard.zone);
 
   const gapped = unemployment.map(point => point.date === "2020-12-01" ? { ...point, value: null } : point);
   const blanked = scoreSahmFromUnemployment(gapped, last12);
   check("a blank UNRATE month fails closed instead of skipping the gap", blanked.controlOk === false && blanked.score.available === false && blanked.score.raw === 0 && blanked.control.some(row => row.computed == null), `blanks=${blanked.control.filter(row => row.computed == null).map(row => row.date).join(",")}`);
+  check("a blank month names the gap instead of a silent N/A", typeof blanked.score.reason === "string" && blanked.score.reason.includes("2020-12") && blanked.score.level != null, blanked.score.reason ?? "");
+
+  const emptyFeed = scoreSahmFromUnemployment([], []);
+  const emptyCard = sahmIndicatorFromScore(emptyFeed.score);
+  check("an empty UNRATE feed says the series was not delivered", emptyFeed.score.available === false && emptyFeed.score.level == null && emptyCard.value === "N/A" && emptyCard.zone === "FRED UNRATE nicht geliefert" && emptyCard.rawScore === 0, emptyCard.zone);
 }
 
 console.log("\n=== EZ Sahm is the same unemployment formula, no ticker ===");
@@ -169,9 +176,9 @@ console.log("\n=== fixture: last 12 SAHMREALTIME months, k=0..11 ===");
   check("2026-08 cannot be built because UNRATE 2025-10 is blank", aug?.computed == null && aug?.fred === -0.07);
   const blanks = evaluated.control.filter(row => row.computed == null);
   check("11 of the last 12 control months are blank under k=0..11", blanks.length === 11, blanks.map(row => row.date).join(","));
-  check("blank control fails closed at slot score 50, raw 0", evaluated.controlOk === false && evaluated.score.available === false && evaluated.score.s === 50 && evaluated.score.raw === 0 && evaluated.score.level == null);
+  check("blank control fails closed at slot score 50, raw 0, and keeps the last defined S", evaluated.controlOk === false && evaluated.score.available === false && evaluated.score.s === 50 && evaluated.score.raw === 0 && evaluated.score.level != null && Math.abs(evaluated.score.level - (7 / 30)) < 1e-9, `level=${evaluated.score.level}`);
   const card = sahmIndicatorFromScore(evaluated.score);
-  check("failed control does not put a published-series score on the card", card.available === false && card.rawScore === 0 && card.value === "N/A" && card.zone === "N/A");
+  check("the card shows that S and names the UNRATE gap", card.available === false && card.rawScore === 0 && card.value === "0.23 pp" && card.zone.includes("2025-10") && card.zone.includes("2025-09") && card.zone !== "N/A" && card.rawScore !== -3 && card.rawScore !== 4, card.zone);
   const route = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
   check("the live slot fetches UNRATE and SAHMREALTIME", route.includes('fetchFredRows("UNRATE"') && route.includes('fetchFredRows("SAHMREALTIME"') && route.includes("scoreSahmFromUnemployment"));
 }
