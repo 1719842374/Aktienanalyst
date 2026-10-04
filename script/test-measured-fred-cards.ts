@@ -442,8 +442,15 @@ ok(
 const bannedCards = ["DeFi-TVL", "TVL-Δ", "Stablecoin Total MCap", "USDT (Tether)", "USDC (Circle)", "Stablecoin-Δ", "Liquiditätstracker"];
 ok(
   "Sektion 14 rendert die sechs DefiLlama-Karten nicht",
-  bannedCards.every(label => !panel.includes(label)) && !panel.includes("/api/analyze-btc/stablecoin-liquidity"),
+  bannedCards.every(label => !panel.includes(label)),
   bannedCards.filter(label => panel.includes(label)).join(", "),
+);
+ok(
+  "Sektion 14 zeigt den Z-Score aus der bestehenden Stablecoin-Antwort",
+  panel.includes("/api/analyze-btc/stablecoin-liquidity")
+    && panel.includes("Stablecoin-Z-Score")
+    && panel.includes("Geschätzte T-Bill-Nachfrage")
+    && panel.includes("GENIUS-Stärke"),
 );
 ok("Nachrichten liegen in Sektion 14", panel.includes("Aktuelle Nachrichten") && panel.includes("/api/analyze-btc/news"));
 ok(

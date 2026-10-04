@@ -172,9 +172,9 @@ function directionDetail(reading: SeriesDirectionReading | undefined): ReactNode
   );
 }
 
-function MiniCard({ label, value, sub, detail }: { label: string; value: string; sub?: string; detail?: ReactNode }) {
+function MiniCard({ label, value, sub, detail, testId }: { label: string; value: string; sub?: string; detail?: ReactNode; testId?: string }) {
   return (
-    <div className="rounded-md border border-border bg-muted/20 p-3">
+    <div className="rounded-md border border-border bg-muted/20 p-3" data-testid={testId}>
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className="text-base font-mono font-semibold tabular-nums mt-0.5">{value}</div>
       {sub && <div className="text-[10px] text-muted-foreground mt-0.5">{sub}</div>}
@@ -625,6 +625,91 @@ function FiscalFrontendCards({ data }: { data: FiscalFrontendPayload }) {
   );
 }
 
+interface StablecoinChannelDto {
+  growthZ?: {
+    available?: boolean;
+    zScore?: number | null;
+    scorePoints?: number | null;
+    sampleCount?: number | null;
+  };
+  tBillAdaptive?: {
+    available?: boolean;
+    percentile?: number | null;
+    percentileScore?: number | null;
+    dynamicMultiplier?: number | null;
+    estimatedTBillDemandUsd?: number | null;
+  };
+  geniusStrength?: {
+    available?: boolean;
+    strength?: number | null;
+    scorePoints?: number | null;
+  };
+}
+
+function formatChannelNumber(value: number | null | undefined, available: boolean | undefined, digits: number): string {
+  if (available !== true || value == null || !Number.isFinite(value)) return "n/v";
+  return value.toFixed(digits);
+}
+
+function formatScorePoints(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value === 0) return "0";
+  return value.toFixed(1);
+}
+
+function useStablecoinChannel() {
+  const [data, setData] = useState<StablecoinChannelDto | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/analyze-btc/stablecoin-liquidity", undefined, 20000);
+        const json = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+        if (!cancelled) setData(json ?? null);
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || "Stablecoin-Kanal nicht verfügbar");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return { data, error };
+}
+
+function StablecoinChannelReadout() {
+  const { data, error } = useStablecoinChannel();
+  const growth = data?.growthZ;
+  const bills = data?.tBillAdaptive;
+  const genius = data?.geniusStrength;
+  const samples = typeof growth?.sampleCount === "number"
+    ? `${growth.sampleCount} ${growth.sampleCount === 1 ? "Änderung" : "Änderungen"}`
+    : undefined;
+  const demand = bills?.available === true ? bills.estimatedTBillDemandUsd ?? null : null;
+
+  return (
+    <div className="space-y-2" data-testid="panel-stablecoin-channel">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Stablecoin-Kanal</div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <MiniCard testId="stablecoin-zscore" label="Stablecoin-Z-Score" value={formatChannelNumber(growth?.zScore, growth?.available, 2)} sub={samples} />
+        <MiniCard testId="stablecoin-zscore-points" label="Z-Score-Punkte" value={formatScorePoints(growth?.scorePoints)} />
+        <MiniCard testId="tbill-percentile" label="T-Bill-Perzentil" value={formatChannelNumber(bills?.percentile, bills?.available, 1)} />
+        <MiniCard testId="tbill-percentile-points" label="Perzentil-Punkte" value={formatScorePoints(bills?.percentileScore)} />
+        <MiniCard testId="tbill-multiplier" label="T-Bill-Multiplikator" value={formatChannelNumber(bills?.dynamicMultiplier, bills?.available, 2)} />
+        <MiniCard testId="tbill-demand" label="Geschätzte T-Bill-Nachfrage" value={formatUsdCompact(demand)} />
+        <MiniCard testId="genius-strength" label="GENIUS-Stärke" value={formatChannelNumber(genius?.strength, genius?.available, 2)} />
+        <MiniCard testId="genius-points" label="GENIUS-Punkte" value={formatScorePoints(genius?.scorePoints)} />
+      </div>
+      {error && (
+        <div className="text-[11px] text-amber-700 dark:text-amber-400" data-testid="text-stablecoin-channel-error">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function StablecoinLiquidityPanel() {
   const news = useBtcNews();
   const fiscal = useFiscalFrontend();
@@ -700,6 +785,8 @@ export function StablecoinLiquidityPanel() {
         </p>
 
         {fiscal && <FiscalFrontendCards data={fiscal} />}
+
+        <StablecoinChannelReadout />
 
         <BtcNewsPanel items={news.items} loading={news.loading} error={news.error} />
 

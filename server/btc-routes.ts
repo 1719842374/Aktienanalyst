@@ -16,7 +16,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 // history) plus taegliches Disk-Cache-Backstop (diskResearcherGet/Set, analog
 // zu capex__US Researcher-Cache-Muster) falls DefiLlama kurzfristig ausfaellt.
 const STABLECOIN_MEM_TTL_MS = 5 * 60 * 1000;
-const STABLECOIN_DISK_CACHE_KEY = "stablecoin_liquidity__measured_v3";
+const STABLECOIN_DISK_CACHE_KEY = "stablecoin_liquidity__measured_v4";
 let stablecoinMemCache: { expiresAt: number; data: Awaited<ReturnType<typeof buildStablecoinLiquidityResponse>> } | null = null;
 
 /**
@@ -42,7 +42,8 @@ export function registerBTCRoutes(app: Express): void {
     }
   });
 
-  // DefiLlama-Marktkapitalisierung. Keine Reserveanteile und kein Score.
+  // DefiLlama-Marktkapitalisierung plus Z-Score aus der gespeicherten Reihe.
+  // Perzentil, Multiplikator und GENIUS-Stärke bleiben leer ohne Belegreihe.
   // Der Politik-Scan liegt in crypto-regulation-route.ts.
   app.get("/api/analyze-btc/stablecoin-liquidity", async (_req, res) => {
     const now = Date.now();
