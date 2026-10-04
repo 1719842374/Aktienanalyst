@@ -2,15 +2,19 @@
  * Sahm slot score for Offen_WORK_RECESSION_FRED_SAHM.md.
  *
  * S is computed from an unemployment series:
- *   U3m_t = (U_t + U_{t-1} + U_{t-2}) / 3
- *   S_t = U3m_t - min_{k=0..11} U3m_{t-k}
- * A missing calendar month leaves that S undefined. No imputation and no
- * two-month average. The card shows the realtime series when any print
- * arrived: blanks are dropped, the latest delivered print is the level,
- * and s(z) uses only those prints. The self-computed S is the backup only
- * when the realtime series was not delivered. That backup is not given a
- * 20-year z across the gap. The 0.50pp mark is the trigger on the
- * displayed level.
+ *   U3m_t = mean of the delivered prints among U_t, U_{t-1}, U_{t-2}
+ *   S_t = U3m_t - min_{k=1..12} U3m_{t-k}
+ * A missing unemployment print is left missing. It is not stored as a number.
+ * The 3-month mean uses the prints that exist, and only when at least two of
+ * the three months were delivered. The minimum is the previous 12 months.
+ * The spec text writes k=0..11, which includes the current average and cannot
+ * be negative. SAHMREALTIME prints such as -0.07 are the prior-12 minimum.
+ *
+ * The US card shows the realtime series when any print arrived: blanks are
+ * dropped, the latest delivered print is the level, and s(z) uses only those
+ * prints. The self-computed S is the backup when that series was not
+ * delivered, and that backup is scored with the same s(z). The 0.50pp mark
+ * is the trigger on the displayed level.
  *
  * The spec writes σ_{t,H}+ε without a numeric expansion. μ/σ here are the
  * trailing window excluding x_t, sample divisor n-1, ε=1e-9. H is 240 months.
@@ -138,7 +142,10 @@ export interface SahmControlRow {
 }
 
 export interface SahmUnemploymentScore {
+  /** Card score. Realtime s(z) when that series arrived, otherwise the scored S. */
   score: SahmScore;
+  /** s(z) of the self-computed S. Same object as `score` when realtime is empty. */
+  computedScore: SahmScore;
   control: SahmControlRow[];
   controlOk: boolean;
 }
@@ -187,21 +194,29 @@ function unemploymentAt(byMonth: Map<string, number | null>, month: string): num
   return byMonth.get(month) ?? null;
 }
 
+/** Mean of the delivered prints in the trailing three months. Null below two prints. */
 function threeMonthAverage(byMonth: Map<string, number | null>, month: string): number | null {
-  const points = [0, -1, -2].map(lag => unemploymentAt(byMonth, addMonths(month, lag)));
-  if (points.some(value => value == null)) return null;
-  return ((points[0] as number) + (points[1] as number) + (points[2] as number)) / 3;
+  const present = [0, -1, -2]
+    .map(lag => unemploymentAt(byMonth, addMonths(month, lag)))
+    .filter((value): value is number => value != null);
+  if (present.length < 2) return null;
+  return present.reduce((sum, value) => sum + value, 0) / present.length;
 }
 
-/** S_t from unemployment. Null when any required calendar month is blank. */
+/**
+ * S_t from unemployment. Null when the current mean or any of the previous
+ * 12 means is missing. A single blank month does not erase the window.
+ */
 export function sahmAtMonth(byMonth: Map<string, number | null>, month: string): number | null {
+  const current = threeMonthAverage(byMonth, month);
+  if (current == null) return null;
   const window: number[] = [];
-  for (let k = 0; k <= 11; k++) {
+  for (let k = 1; k <= 12; k++) {
     const value = threeMonthAverage(byMonth, addMonths(month, -k));
     if (value == null) return null;
     window.push(value);
   }
-  return window[0] - Math.min(...window);
+  return current - Math.min(...window);
 }
 
 export function sahmLevelsFromUnemployment(rows: Array<{ date: string; value: number | null }>): Array<{ date: string; value: number | null }> {
@@ -225,10 +240,24 @@ function closedScore(level: number | null, n: number, reason: string, backup = f
   };
 }
 
+function scoreComputedSeries(series: Array<{ date: string; value: number | null }>): SahmScore {
+  const finite = series.filter((point): point is FredPoint => point.value != null);
+  if (finite.length === 0) {
+    return closedScore(null, 0, "Realtime-Serie nicht geliefert");
+  }
+  const scored = scoreSahmLevels(finite);
+  const lastMonth = finite[finite.length - 1].date.slice(0, 7);
+  if (!scored.available) {
+    return { ...scored, backup: true, reason: `eigener Backup ${lastMonth}, nicht Claudias Serie` };
+  }
+  return { ...scored, backup: true };
+}
+
 /**
  * Card level is the realtime series when any print arrived (blanks dropped,
- * not filled). The unemployment S is only the backup when that series is empty.
- * `control` still compares the self-computed S to the realtime prints.
+ * not filled). That series is s(z). The unemployment S is scored with the
+ * same s(z), and it is the card only when the realtime series is empty.
+ * `control` compares the self-computed S to the realtime prints.
  * The formula module does not name a series id; callers pass the observations.
  */
 export function scoreSahmFromUnemployment(
@@ -238,6 +267,7 @@ export function scoreSahmFromUnemployment(
   const series = sahmLevelsFromUnemployment(unemployment);
   const byMonth = new Map(series.map(point => [point.date.slice(0, 7), point.value]));
   const realtimePoints = cleanFredMonthly(realtime);
+  const computedScore = scoreComputedSeries(series);
   const control = realtimePoints.slice(-SAHM_CONTROL_MONTHS).map(point => {
     const month = point.date.slice(0, 7);
     const computed = byMonth.has(month) ? byMonth.get(month) ?? null : null;
@@ -251,17 +281,62 @@ export function scoreSahmFromUnemployment(
   const controlOk = control.length === SAHM_CONTROL_MONTHS && control.every(row =>
     row.computed != null && row.absDiff != null && row.absDiff <= SAHM_CONTROL_TOLERANCE);
   if (realtimePoints.length > 0) {
-    return { controlOk, control, score: scoreSahmLevels(realtimePoints) };
+    return { controlOk, control, computedScore, score: scoreSahmLevels(realtimePoints) };
   }
-  const finite = series.filter((point): point is FredPoint => point.value != null);
-  const lastDefined = finite.length > 0 ? finite[finite.length - 1] : null;
-  if (lastDefined == null) {
-    return { controlOk: false, control, score: closedScore(null, finite.length, "Realtime-Serie nicht geliefert") };
+  return { controlOk: false, control, computedScore, score: computedScore };
+}
+
+export interface EurostatDataset {
+  id?: string[];
+  size?: number[];
+  value?: Record<string, number | null>;
+  dimension?: Record<string, {
+    category?: {
+      index?: Record<string, number>;
+      label?: Record<string, string>;
+    };
+  }>;
+}
+
+function euroAreaGeneration(code: string): number {
+  const match = /^EA(\d+)$/.exec(code);
+  return match ? Number(match[1]) : -1;
+}
+
+/**
+ * Euro-area unemployment from a statistics dataset cube.
+ * The aggregate is the geo whose label starts with "Euro area".
+ * When several compositions are published, the highest EA generation is used.
+ * No geo code is chosen in this module.
+ */
+export function euroAreaUnemploymentFromEurostat(payload: EurostatDataset): {
+  geo: string | null;
+  rows: Array<{ date: string; value: number | null }>;
+} {
+  const ids = payload.id ?? [];
+  const size = payload.size ?? [];
+  const geoPos = ids.indexOf("geo");
+  const timePos = ids.indexOf("time");
+  const geoIndex = payload.dimension?.geo?.category?.index ?? {};
+  const geoLabel = payload.dimension?.geo?.category?.label ?? {};
+  const timeIndex = payload.dimension?.time?.category?.index ?? {};
+  if (geoPos < 0 || timePos < 0 || size.length !== ids.length) return { geo: null, rows: [] };
+  if (size.some((length, index) => index !== geoPos && index !== timePos && length !== 1)) {
+    return { geo: null, rows: [] };
   }
-  const lastMonth = lastDefined.date.slice(0, 7);
-  return {
-    controlOk: false,
-    control,
-    score: closedScore(lastDefined.value, finite.length, `eigener Backup ${lastMonth}, nicht Claudias Serie`, true),
-  };
+  const candidates = Object.keys(geoIndex).filter(code => /^Euro area\b/i.test(geoLabel[code] ?? ""));
+  if (candidates.length === 0) return { geo: null, rows: [] };
+  const geo = candidates.slice().sort((a, b) => euroAreaGeneration(b) - euroAreaGeneration(a) || a.localeCompare(b))[0];
+  const stride: number[] = new Array(size.length).fill(1);
+  for (let i = size.length - 2; i >= 0; i--) stride[i] = stride[i + 1] * size[i + 1];
+  const geoAt = geoIndex[geo];
+  const values = payload.value ?? {};
+  const rows = Object.entries(timeIndex)
+    .sort((a, b) => a[1] - b[1])
+    .map(([period, timeAt]) => {
+      const raw = values[String(geoAt * stride[geoPos] + timeAt * stride[timePos])];
+      const value = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+      return { date: period.length === 7 ? `${period}-01` : period, value };
+    });
+  return { geo, rows };
 }

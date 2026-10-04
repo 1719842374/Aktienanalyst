@@ -6,6 +6,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection";
+import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
@@ -105,6 +106,7 @@ export default function RecessionDashboard() {
             </SectionCard>
             <SectionCard number={5} title="Indikatoren-Tabelle (17 Indikatoren)">
               <IndicatorTable indicators={data.indicators} />
+              <SahmRegions regions={data.sahmRegions} />
             </SectionCard>
             <SectionCard number={6} title="Score-Übersicht (5 Untergruppen)">
               <SubgroupOverview subgroups={data.subgroups} />

@@ -75,6 +75,35 @@ export interface RecessionDrivers {
   cards: RecessionDriverCard[];
 }
 
+export interface SahmControlRowView {
+  date: string;
+  computed: number | null;
+  fred: number;
+  absDiff: number | null;
+}
+
+/** Regional Sahm board. These rows are not part of the 17-indicator net. */
+export interface SahmRegionBoard {
+  region: "US" | "EZ" | "JP";
+  label: string;
+  source: string;
+  value: string;
+  zone: string;
+  level: number | null;
+  s: number;
+  raw: number;
+  available: boolean;
+  triggered: boolean;
+  n: number;
+  controlOk?: boolean;
+  control?: SahmControlRowView[];
+  computedLevel: number | null;
+  computedS: number;
+  computedRaw: number;
+  computedAvailable: boolean;
+  computedValue: string;
+}
+
 export interface RecessionAnalysis {
   date: string;
   asOf?: string;
@@ -89,6 +118,7 @@ export interface RecessionAnalysis {
   fazit?: { summary: string; riskLevel: string; sections: FazitSection[] };
   sources: { name: string; url: string }[];
   bridge?: RecessionBridgeView;
+  sahmRegions?: SahmRegionBoard[];
 }
 
 /** „Stand“ only when the response day is this UTC day. */

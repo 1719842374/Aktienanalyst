@@ -11,7 +11,7 @@ import {
 
 export function ScoringRules() {
   const recessionRules = [
-    { name: "Sahm-Regel (≥0.5pp)", scorePositive: "+4", scoreNegative: "-3", weight: "×1", max: "4" },
+    { name: "Sahm-Regel (s(z), 0,50 pp nur Label)", scorePositive: "−4 bis +4", scoreNegative: "", weight: "×1", max: "4" },
     { name: "Inv. Zinskurve (10Y-2Y <0)", scorePositive: "+4", scoreNegative: "-3", weight: "×1", max: "4" },
     { name: "Aktivität (IP / Auslastung)", scorePositive: "kein Score", scoreNegative: "", weight: "—", max: "0" },
     { name: "Durable Goods (YoY >-5%)", scorePositive: "+3", scoreNegative: "-2", weight: "×1", max: "3" },
