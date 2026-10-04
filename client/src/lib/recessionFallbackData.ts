@@ -3,6 +3,8 @@
 // Indicators: 17/17 with data
 export const RECESSION_FALLBACK_DATA = {
   "date": "20.04.2026",
+  "asOf": "2026-04-20",
+  "schemaVersion": 1,
   "indicators": [
     {
       "name": "Sahm-Regel",
@@ -31,17 +33,18 @@ export const RECESSION_FALLBACK_DATA = {
       "description": "Spread zwischen 10-Jahres- und 2-Jahres-US-Staatsanleihen"
     },
     {
-      "name": "PMI (Mfg+Serv Ø)",
+      "name": "Aktivität (IP / Auslastung)",
       "group": "recession",
       "subgroup": "coincident",
-      "value": "53.4 (Mfg: 52.8, Svc: 54.0)",
-      "rawScore": -3,
-      "weight": 1,
-      "weightedScore": -3,
-      "maxWeighted": 3,
-      "zone": "Expansion (≥45)",
-      "source": "ISM / Finance API",
-      "description": "Durchschnitt ISM Manufacturing + Services PMI"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "FRED INDPRO / TCU",
+      "description": "Industrieproduktion Jahr-über-Jahr (INDPRO) und Kapazitätsauslastung (TCU).",
+      "available": false
     },
     {
       "name": "Durable Goods (YoY)",
@@ -234,12 +237,12 @@ export const RECESSION_FALLBACK_DATA = {
       "indicators": [
         "Sahm-Regel",
         "Inv. Zinskurve (10Y-2Y)",
-        "PMI (Mfg+Serv Ø)"
+        "Aktivität (IP / Auslastung)"
       ],
-      "netScore": -9,
-      "maxScore": 11,
-      "probability": 10,
-      "formula": "50% + (-9.0/11.0) × 50% = 9.1% → 10%"
+      "netScore": -6,
+      "maxScore": 8,
+      "probability": 15,
+      "formula": "50% + (-6.0/8.0) × 50% = 12.5% → 15%"
     },
     {
       "name": "recession_leading",
@@ -248,15 +251,15 @@ export const RECESSION_FALLBACK_DATA = {
       "indicators": [
         "Sahm-Regel",
         "Inv. Zinskurve (10Y-2Y)",
-        "PMI (Mfg+Serv Ø)",
+        "Aktivität (IP / Auslastung)",
         "Durable Goods (YoY)",
         "M2 Geldmenge (YoY)",
         "Kreditspreads (BAA-Trs)"
       ],
-      "netScore": -11,
-      "maxScore": 20,
-      "probability": 20,
-      "formula": "50% + (-11.0/20.0) × 50% = 22.5% → 20%"
+      "netScore": -8,
+      "maxScore": 17,
+      "probability": 25,
+      "formula": "50% + (-8.0/17.0) × 50% = 26.5% → 25%"
     },
     {
       "name": "recession_full",
@@ -265,17 +268,17 @@ export const RECESSION_FALLBACK_DATA = {
       "indicators": [
         "Sahm-Regel",
         "Inv. Zinskurve (10Y-2Y)",
-        "PMI (Mfg+Serv Ø)",
+        "Aktivität (IP / Auslastung)",
         "Durable Goods (YoY)",
         "M2 Geldmenge (YoY)",
         "Kreditspreads (BAA-Trs)",
         "Konsumklima (CSI)"
       ],
-      "netScore": -8,
-      "maxScore": 23,
+      "netScore": -5,
+      "maxScore": 20,
       "probability": 25,
-      "formula": "Formel: 50% + (-8.0/23.0) × 50% = 32.6% | NY-Fed-Anker: 4.8% | Final: 32.6%×0.7 + 4.8%×0.3 = 25%",
-      "nyFedAnchor": 4.8,
+      "formula": "Formel: 50% + (-5.0/20.0) × 50% = 37.5% | NY-Fed-Anker: 0.5% | Final: 37.5%×0.7 + 0.5%×0.3 = 25%",
+      "nyFedAnchor": 0.48,
       "finalProbability": 25
     },
     {
@@ -332,7 +335,7 @@ export const RECESSION_FALLBACK_DATA = {
       {
         "title": "Quantitative Bewertung",
         "emoji": "📊",
-        "text": "Von 17 Indikatoren signalisieren 8 ein erhöhtes Risiko (bearish), 5 sind positiv (bullish) und 4 neutral. Die Rezessionswahrscheinlichkeit liegt bei 10% (3M), 20% (6M) und 25% (12M). Die Korrekturwahrscheinlichkeit beträgt 65% (Sentiment, 3-6M) und 75% (Vollständig, 12M). Die hohe Korrekturwahrscheinlichkeit von 75% wird maßgeblich durch extreme Bewertungsniveaus getrieben: Buffett Indikator (TMC/GDP): +16 (Extrem überbewertet (230% >200%)); Shiller CAPE: +12.6 (Extrem hoch (40.4 >35)); Margin Debt: +4 (Erhöht / Überbewertet)."
+        "text": "Von 17 Indikatoren signalisieren 8 ein erhöhtes Risiko (bearish), 4 sind positiv (bullish) und 5 neutral. Die Rezessionswahrscheinlichkeit liegt bei 15% (3M), 25% (6M) und 25% (12M). Die Korrekturwahrscheinlichkeit beträgt 65% (Sentiment, 3-6M) und 75% (Vollständig, 12M). Die hohe Korrekturwahrscheinlichkeit von 75% wird maßgeblich durch extreme Bewertungsniveaus getrieben: Buffett Indikator (TMC/GDP): +16 (Extrem überbewertet (230% >200%)); Shiller CAPE: +12.6 (Extrem hoch (40.4 >35)); Margin Debt: +4 (Erhöht / Überbewertet)."
       },
       {
         "title": "Bewertungsrisiko",
@@ -352,7 +355,7 @@ export const RECESSION_FALLBACK_DATA = {
       {
         "title": "Handlungsempfehlung",
         "emoji": "🎯",
-        "text": "Angesichts einer Korrekturwahrscheinlichkeit von 75% und einer Rezessionswahrscheinlichkeit von 25% empfiehlt sich eine defensive Positionierung: (1) Reduktion der Aktienquote zugunsten von Cash und kurzlaufenden Staatsanleihen. (2) Underweight bei Growth/Tech zugunsten von Value und defensiven Sektoren (Healthcare, Utilities, Consumer Staples). (3) Goldallokation als Absicherung gegen Stagflation und geopolitisches Risiko. (4) Kritische Prüfung von Private-Credit-Exposure — Liquiditätsrisiken werden in Stressphasen typischerweise unterschätzt. (5) VIX-Hedge (Optionen, VIX-Calls) bei VIX unter 25 als günstige Absicherung."
+        "text": "P_korr12 75%, P_rez12 25%: Beta/Duration runter; kein volles Rezessions-Portfolio"
       }
     ]
   },
@@ -380,10 +383,6 @@ export const RECESSION_FALLBACK_DATA = {
     {
       "name": "CBOE Market Statistics",
       "url": "https://www.cboe.com/us/options/market_statistics/daily/"
-    },
-    {
-      "name": "ISM Reports",
-      "url": "https://www.ismworld.org"
     },
     {
       "name": "University of Michigan Consumer Sentiment",

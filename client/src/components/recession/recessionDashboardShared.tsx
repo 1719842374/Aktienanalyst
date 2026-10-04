@@ -11,6 +11,7 @@ export interface IndicatorResult {
   zone: string;
   source: string;
   description: string;
+  available?: boolean;
 }
 
 export interface SubgroupResult {
@@ -63,6 +64,8 @@ export interface RecessionBridgeView {
 
 export interface RecessionAnalysis {
   date: string;
+  asOf?: string;
+  schemaVersion?: number;
   indicators: IndicatorResult[];
   subgroups: SubgroupResult[];
   nyFedValue: number | null;
@@ -72,6 +75,21 @@ export interface RecessionAnalysis {
   fazit?: { summary: string; riskLevel: string; sections: FazitSection[] };
   sources: { name: string; url: string }[];
   bridge?: RecessionBridgeView;
+}
+
+/** „Stand“ only when the response day is this UTC day. */
+export function showRecessionStand(asOf: string | null | undefined, todayIso: string): boolean {
+  return typeof asOf === "string" && asOf.length > 0 && asOf === todayIso;
+}
+
+/**
+ * RECPROUSM156N is already percent. Prefer the series over a stored anchor so a
+ * stale ×10 figure cannot override the live print.
+ */
+export function displayedNyFedAnchorPct(nyFedValue: number | null, nyFedAnchor?: number): number | null {
+  if (typeof nyFedValue === "number" && Number.isFinite(nyFedValue)) return nyFedValue;
+  if (typeof nyFedAnchor === "number" && Number.isFinite(nyFedAnchor)) return nyFedAnchor;
+  return null;
 }
 
 // Color helpers

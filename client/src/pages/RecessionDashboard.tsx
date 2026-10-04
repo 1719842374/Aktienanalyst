@@ -9,7 +9,7 @@ import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection"
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
-import type { RecessionAnalysis } from "@/components/recession/recessionDashboardShared";
+import { showRecessionStand, type RecessionAnalysis } from "@/components/recession/recessionDashboardShared";
 import {
   WelcomeScreen, LoadingScreen, ErrorScreen,
   CurrentAssessment, NYFedReference, ScoringRules, ScoringZones,
@@ -68,9 +68,9 @@ export default function RecessionDashboard() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {data && (
-            <span className="hidden sm:inline text-xs text-muted-foreground">
-              Stand: {data.date}
+          {data && showRecessionStand(data.asOf, new Date().toISOString().slice(0, 10)) && (
+            <span className="hidden sm:inline text-xs text-muted-foreground" data-testid="text-recession-stand">
+              Stand: {data.asOf}
             </span>
           )}
           <button
