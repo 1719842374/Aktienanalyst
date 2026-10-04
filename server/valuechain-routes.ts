@@ -40,6 +40,7 @@ import {
   classifyStageForChain,
   type IndustryDef as CatalogIndustryDef,
 } from "./valuechain-catalog";
+import { valueChainRateLimitMode } from "./valuechain-redis-ratelimit";
 
 const FMP_BASE = "https://financialmodelingprep.com/stable";
 
@@ -359,6 +360,10 @@ function gateStatusCacheKey(industryKey: string): string {
 // ---------------------------------------------------------------------------
 // Route registration
 // ---------------------------------------------------------------------------
+function stampRateLimit<T extends object>(body: T): T & { rateLimitMode: ReturnType<typeof valueChainRateLimitMode> } {
+  return { ...body, rateLimitMode: valueChainRateLimitMode() };
+}
+
 export function registerValueChainRoutes(app: Express): void {
   app.get("/api/valuechain", async (req, res) => {
     try {
@@ -389,7 +394,7 @@ export function registerValueChainRoutes(app: Express): void {
         if (cached) {
           const age = Date.now() - new Date(cached.generatedAt || 0).getTime();
           if (Number.isFinite(age) && age < RESPONSE_CACHE_TTL_MS) {
-            return res.json({ ...cached, cacheHit: true } as ValueChainResponse);
+            return res.json(stampRateLimit({ ...cached, cacheHit: true }));
           }
         }
       }
@@ -412,7 +417,7 @@ export function registerValueChainRoutes(app: Express): void {
           llmValidated: false,
           notes: ["Keine Firmen von FMP company-screener zurückgegeben (API-Key fehlt, Branche zu eng gefiltert, oder minMarketCap zu hoch)."],
         };
-        return res.json(empty);
+        return res.json(stampRateLimit(empty));
       }
 
       // Rang 5: FMP-Enrichment (CAPEX/Revenue TTM/marketCap) durch die
@@ -492,7 +497,7 @@ export function registerValueChainRoutes(app: Express): void {
               "Kette angelegt, Coverage unter Gate -- nicht gelistet.",
             ],
           };
-          return res.json({ ...gateFailResponse, gate });
+          return res.json(stampRateLimit({ ...gateFailResponse, gate }));
         }
       }
 
@@ -539,7 +544,7 @@ export function registerValueChainRoutes(app: Express): void {
         /* best-effort */
       }
 
-      return res.json(gate ? { ...response, gate } : response);
+      return res.json(stampRateLimit(gate ? { ...response, gate } : response));
     } catch (err: any) {
       console.error("[ValueChain] /api/valuechain failed:", err?.message || err);
       return res.status(500).json({ error: err?.message || "valuechain failed" });
@@ -613,7 +618,7 @@ export function registerValueChainRoutes(app: Express): void {
         if (cachedEnrich) {
           const age = Date.now() - new Date(cachedEnrich.generatedAt || 0).getTime();
           if (Number.isFinite(age) && age < ENRICH_CACHE_TTL_MS) {
-            return res.json({ ...cachedEnrich, cacheHit: true });
+            return res.json(stampRateLimit({ ...cachedEnrich, cacheHit: true }));
           }
         }
       }
@@ -686,7 +691,7 @@ export function registerValueChainRoutes(app: Express): void {
         /* best-effort */
       }
 
-      return res.json(response);
+      return res.json(stampRateLimit(response));
     } catch (err: any) {
       console.error("[ValueChain] /api/valuechain/enrich failed:", err?.message || err);
       return res.status(500).json({ error: err?.message || "valuechain enrich failed", llmValidated: false });

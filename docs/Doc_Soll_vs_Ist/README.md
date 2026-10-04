@@ -28,7 +28,7 @@
 | [fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](../../fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F EZ/JP | `CATALOG` + `?region=` `books.M`/`books.F`; Panel offen | `🟡` |
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ | M2V US + Eimer 0.02 | `⬜` |
 | [Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md) | 3 Regionen + Spillover | ein Prompt, NEW=`high` | `⬜` |
-| [Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md](../../Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–9 | 1–6 live; **Rang 7–9** xyflow blockiert | `🟡` blockiert |
+| [Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md](../../Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–9 | 1–6 live; **Rang 7–9** Code (xyflow, Redis optional); Live dieses Rangs offen | `🟡` |
 | [Offen_WORK_RECESSION_FRED_SAHM.md](../../Offen_WORK_RECESSION_FRED_SAHM.md) | adaptive FRED + Sahm s(z) | Spec | `⬜` |
 | [Offen_WORK_RECESSION_SOURCES.md](../../Offen_WORK_RECESSION_SOURCES.md) | Quellenkatalog | Spec | `⬜` |
 | Performance-Chart 4 Toggles (#71) | Ein/Aus + Bench-Kurs | UI da (`60aeeb2`); OHLCV-Honesty #74; Chart oft weiter leer | `🟡` |
@@ -97,4 +97,4 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | [fertig_WORK2.md](../../fertig_WORK2.md) | PESTEL |
 | [WORK.md](../../WORK.md) | Index |
 | [WORK_IST_VS_SOLL.md](../../WORK_IST_VS_SOLL.md) | Audit 30.09. Vormittag, nach #103 Miner Observability Live PASS (`e2bc69a2`, Bundle `index-MIF1Ml5X.js`) |
-| [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 geblockt |
+| [WORK_IMPLEMENTIERUNG_OFFEN.md](../../WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 7–9 Code, Redis optional |

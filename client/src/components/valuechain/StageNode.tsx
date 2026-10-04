@@ -1,15 +1,9 @@
 /**
  * StageNode.tsx
  * -------------
- * Statische Karte (KEIN React-Flow-Node mehr — Sprint D6a, Ticket
- * tickets/SPRINT_D6A_VALUECHAIN_DATEN.md, "Explizit NICHT in diesem Ticket":
- * kein Graph-Canvas/React-Flow-Renderer, @xyflow/react wird NICHT installiert).
- *
- * Vorher importierte diese Datei `Handle`/`Position`/`NodeProps` aus
- * `@xyflow/react` — ein Paket, das nie in package.json installiert wurde
- * (tsc-Fehler TS2307 seit Erstellung, bereits Teil der 100-Fehler-Baseline).
- * Diese Umstellung auf eine reine Anzeige-Karte behebt diesen vorbestehenden
- * Fehler zusätzlich, ohne dass eine neue Abhängigkeit hinzukommt.
+ * @xyflow/react stage node (Rang 1 Karte, Rang 7 Handles).
+ * Die vollständige Kette bleibt die CSS-Spalte in StageColumn.tsx.
+ * Dieser Knoten hängt im additiven Stufenfluss (ValueChainFlow).
  *
  * Zeigt: Stage-Name, Typ, Firmenanzahl, aggregierte Marktkapitalisierung,
  * und CAPEX-Intensity-Badge mit Farbe (capexColorClass/capexBorderClass,
@@ -17,8 +11,11 @@
  */
 
 import { memo } from "react";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import type { StageNodeData } from "@/lib/valueChainTypes";
 import { formatCapexIntensity, capexColorClass, capexBorderClass } from "@/lib/valueChainTypes";
+
+export type StageFlowNode = Node<StageNodeData, "stage">;
 
 function formatMarketCap(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "–";
@@ -34,11 +31,7 @@ const stageTypeColors: Record<string, string> = {
   downstream: "bg-emerald-950/40",
 };
 
-interface StageNodeProps {
-  data: StageNodeData;
-}
-
-function StageNodeComponent({ data }: StageNodeProps) {
+function StageNodeComponent({ data }: NodeProps<StageFlowNode>) {
   const bgClass = stageTypeColors[data.stageType] ?? "bg-slate-900/40";
   // CAPEX-Rahmenfarbe hat Vorrang vor der reinen Stage-Typ-Hintergrundfarbe,
   // sobald avgCapexIntensity befüllt ist (Rang 6 Akzeptanzkriterium: Badge
@@ -48,7 +41,9 @@ function StageNodeComponent({ data }: StageNodeProps) {
   return (
     <div
       className={`min-w-[220px] max-w-[280px] rounded-xl border-2 ${borderClass} ${bgClass} px-4 py-3 shadow-lg backdrop-blur-sm`}
+      data-testid={`flow-stage-${data.stageType}`}
     >
+      <Handle type="target" position={Position.Left} id="in" className="!h-2 !w-2 !border-slate-950 !bg-cyan-300" />
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="text-[10px] uppercase tracking-wider text-slate-400">
@@ -76,6 +71,8 @@ function StageNodeComponent({ data }: StageNodeProps) {
         <span className="text-slate-500">·</span>
         <span>{formatMarketCap(data.aggregatedMarketCap)}</span>
       </div>
+      <Handle type="source" position={Position.Right} id="out" className="!h-2 !w-2 !border-slate-950 !bg-cyan-300" />
+      <Handle type="source" position={Position.Bottom} id="members" className="!h-2 !w-2 !border-slate-950 !bg-slate-400" />
     </div>
   );
 }

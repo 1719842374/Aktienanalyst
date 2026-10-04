@@ -64,6 +64,9 @@ export interface ValueChainRequest {
   includeCapex?: boolean;
 }
 
+/** Rang 9. "redis" only when a Redis URL is configured and the client is up. */
+export type ValueChainRateLimitMode = "redis" | "in-process";
+
 export interface ValueChainResponse {
   industry: string;
   region: string;
@@ -72,6 +75,8 @@ export interface ValueChainResponse {
   cacheHit: boolean;
   llmValidated: boolean;
   notes?: string[];
+  /** Stamped by the route from the live limiter, including cache hits. */
+  rateLimitMode?: ValueChainRateLimitMode;
 }
 
 // ---------------------------------------------------------------------------
