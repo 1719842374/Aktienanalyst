@@ -476,6 +476,8 @@ export interface StockAnalysis {
    * OCF-|capex| in irgendeiner der bis zu 3 Cashflow-Perioden einen
    * plausiblen (!=0) Wert ergaben -- UI kann dann n/a statt $0 anzeigen. */
   fcfAvailable?: boolean;
+  /** Infra / Alternatives / RE / Asset Management: GAAP-FCF is capex-distorted. */
+  fcfCapexHint?: string;
   /** Datenaktualität Section 1: nächster bestätigter FMP-Earnings-Termin. */
   nextEarningsDate?: string | null;
   nextEarningsTime?: string;
@@ -672,6 +674,8 @@ export interface StockAnalysis {
   _useLLM?: boolean; // LLM mode of the cached entry
   // NEW: Geographic segments (Umsatzanteil nach Regionen)
   geoSegments?: RevenueSegment[];
+  /** Set when a business segment was removed from the geographic list. */
+  geoSegmentsNote?: string;
 
   // NEW (Segment-Fallback-Pipeline, 2026-08): explains WHERE revenueSegments came
   // from and what to render when it's empty. Additive-only, see server/sec-segments.ts

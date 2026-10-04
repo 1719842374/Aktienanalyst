@@ -94,12 +94,23 @@ export function FinancialStatements({ data }: Props) {
           <div className="space-y-1.5 text-[10px]">
             <Row label="Operating CF" value={fmt(cf.operatingCashFlow)} />
             <Row label="CapEx" value={`-${fmt(Math.abs(cf.capex))}`} subColor="text-red-500" />
-            <Row label="Free Cash Flow" value={fmt(cf.fcf)} sub={`${cf.fcfMargin.toFixed(1)}% Marge`} subColor={cf.fcf > 0 ? 'text-emerald-500' : 'text-red-500'} bold />
-            <Row label="FCF / Share" value={`$${cf.fcfPerShare.toFixed(2)}`} />
+            <Row
+              label="Free Cash Flow"
+              value={data.fcfAvailable === false ? "n/a" : fmt(cf.fcf)}
+              sub={data.fcfAvailable === false ? "n/a" : `${cf.fcfMargin.toFixed(1)}% Marge`}
+              subColor={data.fcfAvailable === false ? "text-muted-foreground" : cf.fcf > 0 ? "text-emerald-500" : "text-red-500"}
+              bold
+            />
+            {data.fcfCapexHint && (
+              <p className="text-[9px] text-muted-foreground leading-snug pt-1" data-testid="fcf-capex-hint">
+                {data.fcfCapexHint}
+              </p>
+            )}
+            <Row label="FCF / Share" value={data.fcfAvailable === false ? "n/a" : `$${cf.fcfPerShare.toFixed(2)}`} />
             <div className="pt-1 border-t border-border/20 mt-1">
               <div className="text-[9px] text-muted-foreground">
-                FCF Yield: {data.marketCap > 0 ? ((cf.fcf / data.marketCap) * 100).toFixed(1) : 'N/A'}%
-                {data.marketCap > 0 && (cf.fcf / data.marketCap) * 100 > 5 && ' (Attraktiv)'}
+                FCF Yield: {data.fcfAvailable === false || !(data.marketCap > 0) ? "n/a" : `${((cf.fcf / data.marketCap) * 100).toFixed(1)}%`}
+                {data.fcfAvailable !== false && data.marketCap > 0 && (cf.fcf / data.marketCap) * 100 > 5 && " (Attraktiv)"}
               </div>
             </div>
           </div>

@@ -5,7 +5,11 @@ import {
   fmpSegments, fmpPeers, fmpRatios, fmpBatchQuote,
   isFmpAvailable,
 } from "./fmp";
+import { computeFcfTTM, highCapexFcfHint } from "./analyze-helpers";
 import { indicatorWarmupFromDate } from "./history-fallback";
+
+/** Annual cash-flow rows. More than one period so a zero latest row can fall through to a signed older GAAP FCF. */
+export const FMP_ANALYSIS_CASHFLOW_LIMIT = 4;
 
 export interface FmpAnalysisData {
   price: number; marketCap: number; pe: number; eps: number; beta: number;
@@ -15,6 +19,8 @@ export interface FmpAnalysisData {
   revenue: number; revenueGrowth: number; operatingIncome: number; netIncome: number;
   ebitda: number; grossProfit: number; totalDebt: number; cashEquivalents: number;
   totalEquity: number; totalAssets: number; fcfTTM: number; capex: number; operatingCashFlow: number;
+  /** Set for Infra / Alternatives / RE / Asset Management. Null otherwise. */
+  fcfCapexHint: string | null;
   epsTTM: number;
   /** Last completed fiscal year EPS (diluted). Distinct from epsTTM which is
    *  trailing 12 months. For Q2-reporting companies these can differ by >10%. */
@@ -48,7 +54,7 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       fmpProfile(ticker).catch(() => null),
       fmpIncomeStatement(ticker, 6).catch(e => { console.log(`[FMP] Income error: ${e.message}`); return []; }),
       fmpBalanceSheet(ticker, 1).catch(() => []),
-      fmpCashFlow(ticker, 1).catch(() => []),
+      fmpCashFlow(ticker, FMP_ANALYSIS_CASHFLOW_LIMIT).catch(() => []),
       fmpHistoricalPrices(ticker, indicatorWarmupFromDate(), today()).catch(() => []),
       fmpAnalystEstimates(ticker, 4).catch(() => []),
       fmpGrades(ticker, 5).catch(() => []),
@@ -127,6 +133,9 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
 
     const lb = balance?.[0] || {} as any;
     const lc = cashflow?.[0] || {} as any;
+    // Walk every fetched annual row. A negative GAAP freeCashFlow stays negative.
+    // Only a run of empty periods becomes 0 here, because this snapshot type is a number.
+    const fcfResolved = computeFcfTTM(Array.isArray(cashflow) ? cashflow : []);
 
     // Analyst grades
     let analystBuy = 0, analystHold = 0, analystSell = 0;
@@ -186,7 +195,8 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       netIncome: li.netIncome || 0, ebitda: li.ebitda || 0, grossProfit: li.grossProfit || 0,
       totalDebt: lb.totalDebt || 0, cashEquivalents: lb.cashAndCashEquivalents || lb.cashAndShortTermInvestments || 0,
       totalEquity: lb.totalStockholdersEquity || 0, totalAssets: lb.totalAssets || 0,
-      fcfTTM: lc.freeCashFlow || (lc.operatingCashFlow || 0) - Math.abs(lc.capitalExpenditure || 0),
+      fcfTTM: fcfResolved ?? 0,
+      fcfCapexHint: highCapexFcfHint(profile.sector, profile.industry),
       capex: Math.abs(lc.capitalExpenditure || 0), operatingCashFlow: lc.operatingCashFlow || 0,
       epsTTM: ttmEps,
       epsAdjFY: fyEps,

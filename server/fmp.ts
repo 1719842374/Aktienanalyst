@@ -362,6 +362,103 @@ export function dedupeSegmentsByName<T extends { name: string; revenue: number }
   );
 }
 
+// Offen_WORK_SECTION4_DATA_BUGS.md §5. Cross-list rule, ticker-agnostic.
+// 1) same normalized name and revenue within 1%
+// 2) NON_GEO_PATTERN (a business line sitting in the geographic bucket)
+export const NON_GEO_PATTERN =
+  /web services|aws|cloud|advertising|subscription|asset management|private equity|infrastructure fund|wealth solutions|fee.?related|corporate (activities)?/i;
+
+export const GEO_SEGMENT_DEDUP_NOTE =
+  "Einige reportable Segments (z. B. globale Geschäftsbereiche) sind unter Business Segments geführt, nicht unter Regionen.";
+
+export function normSegmentDisplayName(name: string): string {
+  return name.toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+export function geographicDedupNote(removedCount: number): string | null {
+  return removedCount > 0 ? GEO_SEGMENT_DEDUP_NOTE : null;
+}
+
+/**
+ * Drops geographic rows that repeat a business segment.
+ * Rule 1: normalized name matches and revenue is within 1%.
+ * Rule 2: the geographic name matches NON_GEO_PATTERN.
+ * Does not mutate the inputs and does not rewrite the business list.
+ */
+export function filterGeographicDuplicates<T extends { name: string; revenue: number }>(
+  businessSegments: readonly T[] | null | undefined,
+  geographicSegments: readonly T[] | null | undefined,
+): { geographic: T[]; removedCount: number } {
+  const business = Array.isArray(businessSegments) ? businessSegments : [];
+  const geographic = Array.isArray(geographicSegments) ? geographicSegments : [];
+  const kept: T[] = [];
+  let removedCount = 0;
+
+  for (const g of geographic) {
+    if (!g || typeof g.name !== "string" || !g.name.trim()) continue;
+
+    const gNorm = normSegmentDisplayName(g.name);
+    const sameNameAndRevenue = business.some((b) => {
+      if (!b || typeof b.name !== "string") return false;
+      if (normSegmentDisplayName(b.name) !== gNorm) return false;
+      const revenue = Number(b.revenue);
+      const base = Math.max(Number.isFinite(revenue) ? revenue : 0, 1);
+      const geoRevenue = Number(g.revenue);
+      const diff = Math.abs((Number.isFinite(revenue) ? revenue : 0) - (Number.isFinite(geoRevenue) ? geoRevenue : 0));
+      return diff / base < 0.01;
+    });
+
+    if (sameNameAndRevenue || NON_GEO_PATTERN.test(g.name)) {
+      removedCount++;
+      continue;
+    }
+    kept.push(g);
+  }
+
+  return { geographic: kept, removedCount };
+}
+
+/**
+ * Alias pass after filterGeographicDuplicates. Drops a geographic row only
+ * when a business row shares normalizeSegmentAliasKey AND revenue is within
+ * 1%. A same-name row outside that band stays, matching the name+revenue rule.
+ */
+export function dropAliasRevenueDuplicates<T extends { name: string; revenue: number }>(
+  businessSegments: readonly T[] | null | undefined,
+  geographicSegments: readonly T[] | null | undefined,
+): { geographic: T[]; removedCount: number } {
+  const business = Array.isArray(businessSegments) ? businessSegments : [];
+  const geographic = Array.isArray(geographicSegments) ? geographicSegments : [];
+  const kept: T[] = [];
+  let removedCount = 0;
+  for (const g of geographic) {
+    if (!g || typeof g.name !== "string") {
+      kept.push(g);
+      continue;
+    }
+    const key = normalizeSegmentAliasKey(g.name);
+    if (!key) {
+      kept.push(g);
+      continue;
+    }
+    const geoRevenue = Number(g.revenue);
+    const match = business.some((b) => {
+      if (!b || typeof b.name !== "string") return false;
+      if (normalizeSegmentAliasKey(b.name) !== key) return false;
+      const revenue = Number(b.revenue);
+      const base = Math.max(Number.isFinite(revenue) ? revenue : 0, 1);
+      const diff = Math.abs((Number.isFinite(revenue) ? revenue : 0) - (Number.isFinite(geoRevenue) ? geoRevenue : 0));
+      return diff / base < 0.01;
+    });
+    if (match) {
+      removedCount++;
+      continue;
+    }
+    kept.push(g);
+  }
+  return { geographic: kept, removedCount };
+}
+
 /**
  * Fetches revenue-product-segmentation from FMP /stable and normalises the
  * response into a consistent { name, revenue, percentage }[] array.

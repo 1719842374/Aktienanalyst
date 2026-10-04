@@ -241,7 +241,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
               <tr>
                 <td className="py-1.5 px-2 text-muted-foreground">FCF Margin</td>
                 <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium text-foreground">
-                  {formatPercentNoSign(data.fcfMargin)}
+                  {data.fcfAvailable === false ? "n/a" : formatPercentNoSign(data.fcfMargin)}
                   {data.fcfMarginYoyAvailable && data.fcfMarginYoyPp != null && (
                     <span className={`ml-1.5 ${Math.abs(data.fcfMarginYoyPp) < 0.05 ? "text-muted-foreground" : data.fcfMarginYoyPp > 0 ? "text-emerald-400" : "text-red-400"}`}>
                       (YoY {data.fcfMarginYoyPp > 0 ? "+" : ""}{data.fcfMarginYoyPp.toFixed(1)} pp)
@@ -252,6 +252,11 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
               </tr>
             </tbody>
           </table>
+          {data.fcfCapexHint && (
+            <p className="mt-2 text-[10px] text-muted-foreground leading-snug" data-testid="fcf-capex-hint-valuation">
+              {data.fcfCapexHint}
+            </p>
+          )}
         </div>
       </div>
 
