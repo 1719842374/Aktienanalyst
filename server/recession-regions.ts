@@ -137,6 +137,17 @@ function yearsAgo(today: string, years: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** One retry. The CSV is real, and a burst of US fetches can drop the first response. */
+async function ecbM3Yoy(): Promise<number | null> {
+  const url = `${ECB_M3_YOY}?format=csvdata&startPeriod=2005-01&detail=dataonly`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const text = await getText(url, 25000);
+    const series = parseEcbCsv(text).sort((a, b) => a.period.localeCompare(b.period));
+    if (series.length > 0) return series[series.length - 1].value;
+  }
+  return null;
+}
+
 export function emptyRegionalPrints(): RegionalPrints {
   return {
     ezUnemployment: { geo: "EA20", points: [] },
@@ -161,7 +172,7 @@ export function emptyRegionalPrints(): RegionalPrints {
 export async function fetchRegionalPrints(today = new Date().toISOString().slice(0, 10)): Promise<RegionalPrints> {
   const cosd = yearsAgo(today, 20);
   const bojStart = yearsAgo(today, 20).slice(0, 4) + yearsAgo(today, 20).slice(5, 7);
-  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIp, ecbText, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
+  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIp, ezM3Yoy, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
     eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     eurostat("sts_inpr_m", "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     fred("IRLTLT01EZM156N", cosd),
@@ -170,13 +181,12 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     fred("LRUNTTTTJPM156S", cosd),
     fred("IRLTLT01JPM156N", cosd),
     fred("JPNPROINDMISMEI", cosd),
-    getText(`${ECB_M3_YOY}?format=csvdata&startPeriod=2005-01&detail=dataonly`),
+    ecbM3Yoy(),
     getText(`https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_YOY}&startDate=${bojStart}`),
     indexPe(["^STOXX"]),
     indexPe(["^TPX"]),
     fetchVstoxxVol(cosd, today).catch(() => ({ vol: [] as { date: string; value: number }[] })),
   ]);
-  const m3 = parseEcbCsv(ecbText).sort((a, b) => a.period.localeCompare(b.period));
   const m2 = parseBojSeries(bojText, BOJ_M2_YOY);
   const vol = [...vstoxx.vol].sort((a, b) => a.date.localeCompare(b.date));
   return {
@@ -184,7 +194,7 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     ezLong,
     ezShort,
     ezIp,
-    ezM3Yoy: m3.length ? m3[m3.length - 1].value : null,
+    ezM3Yoy,
     ezHy: latestFinite(ezHyPoints),
     ezPe: ezPe?.value ?? null,
     ezPeSource: ezPe?.source ?? "STOXX 600 PE (FMP leer)",
