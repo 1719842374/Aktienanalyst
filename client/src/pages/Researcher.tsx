@@ -260,8 +260,9 @@ export default function Researcher() {
 
       <main className="max-w-6xl mx-auto p-3 sm:p-4">
         {activeTab === "macro" && (
-          <div className="mb-4">
+          <div className="mb-4 space-y-4">
             <LiquidityBriefingPanel />
+            <MacroPanel data={null} region={region} />
           </div>
         )}
         <div className="flex items-start justify-between gap-3 mb-4 p-3 rounded-lg bg-muted/20 border border-border/30">
@@ -351,7 +352,9 @@ export default function Researcher() {
         )}
 
         <div className={loadingForCurrentView && currentData ? "relative opacity-60 transition-opacity" : "relative"}>
-          {currentData && activeTab === "macro" && <MacroPanel data={currentData} />}
+          {currentData && activeTab === "macro" && (
+            <MacroPanel data={currentData} region={region} showIndex={false} />
+          )}
           {activeTab === "sectors" && <SectorsPanel data={currentData} region={region} />}
           {currentData && activeTab === "screener" && <ScreenerPanel data={currentData} region={region} />}
           {currentData && activeTab === "capex" && <CapexPanel data={currentData} region={region} />}

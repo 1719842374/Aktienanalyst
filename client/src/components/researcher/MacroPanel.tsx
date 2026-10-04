@@ -1,10 +1,13 @@
 /**
- * MacroPanel (unchanged logic, extracted).
+ * Country Macro Pulse. The liquidity index follows the region toggle.
+ * US C2 stays in the analysis block.
  */
 import {
   ChevronRight, Flame, ArrowUp, ArrowDown, Minus, Activity
 } from "lucide-react";
 import { LiquidityPanel } from "./LiquidityPanel";
+import { LiquidityIndexPanel } from "./LiquidityIndexPanel";
+import type { LiquidityRegion } from "./liquidity-index-panel";
 
 const ACTION_COLORS: Record<string, string> = {
   Buy: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -16,11 +19,22 @@ const ACTION_COLORS: Record<string, string> = {
 // Tab 1: Macro Pulse
 // ============================================================
 
-export function MacroPanel({ data }: { data: any }) {
-  const llm = data.llmSynthesis;
-  const indicators = data.indicators || [];
+export function MacroPanel({
+  data,
+  region,
+  showIndex = true,
+}: {
+  data: any;
+  region: LiquidityRegion;
+  showIndex?: boolean;
+}) {
+  const llm = data?.llmSynthesis;
+  const indicators = data?.indicators || [];
   return (
     <div className="space-y-4">
+      {showIndex && <LiquidityIndexPanel region={region} />}
+      {data && (
+      <>
       <LiquidityPanel />
       {llm && (
         <div className="rounded-lg border border-border/40 bg-card/30 p-4">
@@ -109,6 +123,8 @@ export function MacroPanel({ data }: { data: any }) {
             </table>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );
