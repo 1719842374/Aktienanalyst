@@ -98,7 +98,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 32 | WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalog + Fetch | nur Markdown | ⬜ |
 | 33 | WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), kein Kalender | noch `BESSENT_WINDOW` | ⬜ |
 | 34 | WORK_RESEARCHER_LIQUIDITY_INDEX.md | LI US/EU/ASIA | C2 nur US | ⬜ |
-| 35 | WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md | Buch M/F EZ/JP | kein Katalog | ⬜ |
+| 35 | fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md | Buch M/F EZ/JP | `CATALOG` + `GET ?region=` `books.M`/`books.F`; Panel bleibt offen | 🟡 |
 | 36 | WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md | r, V, π, T½ | Spec; M2V-Teil | ⬜ |
 | 37 | WORK_RESEARCHER_BRIEFING_REGIONAL.md | 3 Regionen + Spillover | ein Prompt, US-lastig | ⬜ |
 | 38 | WORK_RECESSION_MARKET_CHARTS.md | VIX-Pane + PEG-Click + FINRA | Vol-Pane live US/EU/AS (`#60`/`#66`); PEG+FINRA offen | 🟡 |
@@ -209,7 +209,6 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 - `Offen_WORK_BIAS_FIXES_INVERSE_DCF.md` — `computeHardenedCRV` läuft im Signal-Snapshot, der Schalter „mindestens zwei Trigger, dann Inverse-DCF als Entscheidungsbasis“ samt WACC-Uplift und Ausschluss negativer Katalysatoren aus der GB-Summe ist nicht verdrahtet.
 - `Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — EZ-M3, BoJ-M2 und der asiatische Realzins sind nicht als Fetch für Velocity oder Briefing im Code.
 - `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — die s(z)-Schicht auf TGA, SOMA Bills gegen Notes und ΔDFF ist kein Score-Pfad.
-- `Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md` — keine Cache-Keys `liqidx_EU__*` oder `liqidx_ASIA__*` und kein EZB- oder BoJ-Buch.
 - `Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — kein Regions-Widget für Debt/GDP, Realzins, Velocity und Halbwertszeit.
 - `Offen_WORK_PEER_ADAPTIVE.md` — kein 2-Hop (`peers2hop`); `CURATED_PEER_FALLBACK` in `server/news-peers.ts` bleibt der Fallback.
 - `Offen_WORK_PEER_PRICING_POWER.md` — kein `peerMaterial`-Gate und kein Banner „Peer-Set unvollständig“.
@@ -227,6 +226,7 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 
 ### Neu fertig
 
+- `fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md` — `server/liquidity-index-catalog.ts` (`CATALOG.US` / `.EU` / `.ASIA`), `server/liquidity-index.ts`, `GET /api/researcher/liquidity?region=` mit `books.M` und `books.F`.
 - `fertig_WORK.md_portfolio_3` — `server/ohlcv-route.ts` (`GET /api/ohlcv`) und die Long-Map in `client/src/pages/PortfolioPage.tsx`, Badge in `PortfolioOverview.tsx`.
 - `fertig_WORK_PORTFOLIO_BACKTEST.md` — `client/src/lib/portfolio/backtest.ts` und `client/src/components/portfolio/PortfolioBacktestPanel.tsx`.
 - `fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md` — `client/src/lib/portfolio/engine.ts` mit `weighting.ts` und `frontier.ts`, Ist/Ziel-Toggle in `PortfolioOverview.tsx`.

@@ -25,7 +25,7 @@
 | [Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](../../Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Katalog + Fetch | nur Markdown | `⬜` |
 | [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](../../Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | s(z), kein Kalender | `BESSENT_WINDOW` in `liquidity-regime-math.ts` | `⬜` |
 | [Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md](../../Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md) | LI US/EU/ASIA | C2 nur US | `⬜` |
-| [Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](../../Offen_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F EZ/JP | kein Katalog | `⬜` |
+| [fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](../../fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | Buch M/F EZ/JP | `CATALOG` + `?region=` `books.M`/`books.F`; Panel offen | `🟡` |
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ | M2V US + Eimer 0.02 | `⬜` |
 | [Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md) | 3 Regionen + Spillover | ein Prompt, NEW=`high` | `⬜` |
 | [Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md](../../Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–9 | 1–6 live; **Rang 7–9** xyflow blockiert | `🟡` blockiert |
