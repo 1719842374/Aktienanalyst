@@ -10,9 +10,14 @@
  *   DefiLlama — keine Schätzung.
  * - Reserveanteile und Gesetzes-Scores stehen nicht in dieser Antwort.
  *   Sie kommen nur aus einem belegten Politik-Scan.
+ * - Der Z-Score nutzt die gespeicherte Reihe der 30-Tage-Änderungen.
+ *   Perzentil, Multiplikator und GENIUS-Stärke bleiben leer, solange keine
+ *   Belegreihe im Repo liegt.
  * - Bei nicht erreichbarer DefiLlama-API: `null` + `available: false`-Flag,
  *   NIEMALS eine geschätzte/interpolierte Zahl zurückgeben.
  */
+
+import { composeStablecoinChannel, type AdaptiveTBillSlots, type GeniusStrengthSlot, type GrowthZScore } from "./stablecoin-channel-math";
 
 const DEFILLAMA_STABLECOINS_URL = "https://stablecoins.llama.fi/stablecoins?includePrices=true";
 const DEFILLAMA_TVL_URL = "https://api.llama.fi/v2/historicalChainTvl";
@@ -252,6 +257,9 @@ export interface StablecoinLiquidityResponse {
   tBillDemand: TBillDemandEstimate;
   defiTvl: DefiTvlSnapshot;
   genius: typeof GENIUS_LEGAL;
+  growthZ: GrowthZScore;
+  tBillAdaptive: AdaptiveTBillSlots;
+  geniusStrength: GeniusStrengthSlot;
 }
 
 export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiquidityResponse> {
@@ -260,6 +268,12 @@ export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiqu
     fetchDefiTvlSnapshot(),
   ]);
   const tBillDemand = estimateTBillDemand(stablecoins);
+  const { readStablecoinDailyCaps, writeStablecoinDailyCaps } = await import("./stablecoin-cap-history");
+  const storedCaps = readStablecoinDailyCaps();
+  const channel = composeStablecoinChannel(stablecoins, storedCaps);
+  if (stablecoins.available && channel.caps.length > 0) {
+    writeStablecoinDailyCaps(channel.caps);
+  }
 
   return {
     fetchedAt: stablecoins.fetchedAt,
@@ -267,5 +281,8 @@ export async function buildStablecoinLiquidityResponse(): Promise<StablecoinLiqu
     tBillDemand,
     defiTvl,
     genius: GENIUS_LEGAL,
+    growthZ: channel.growthZ,
+    tBillAdaptive: channel.tBillAdaptive,
+    geniusStrength: channel.geniusStrength,
   };
 }
