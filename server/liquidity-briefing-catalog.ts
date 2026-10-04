@@ -23,6 +23,7 @@ import {
   deltaSeries,
   exPostRealPercent,
   halfLifeYears,
+  japanCpiYoy,
   lastInMonth,
   latestOnOrBefore,
   monthStockDiff,
@@ -42,7 +43,7 @@ import {
   zOfLatest,
 } from "./liquidity-briefing-math";
 
-export const MOF_JGB_URL = "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/jgbcm.csv";
+export const MOF_JGB_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv";
 export const MSPD_URL =
   "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/debt/mspd/mspd_table_1" +
   "?filter=security_class_desc:eq:Bills,security_type_desc:eq:Marketable" +
@@ -144,7 +145,7 @@ export function assembleCatalog(texts: CatalogTexts, ctx: CatalogContext): Brief
   const wfsBn = millionsToBn(wfsRaw);
 
   const jpNominal = preferNominal(mof, fred.IRLTLT01JPM156N || []);
-  const jpCpi = yoyOnIndex(fred.JPNCPIALLMINMEI || []) ?? yoyOnIndex(fred.FPCPITOTLZGJPN || []);
+  const jpCpi = japanCpiYoy(fred.JPNCPIALLMINMEI || [], fred.FPCPITOTLZGJPN || [], jpNominal?.asOf ?? null);
   const jpReal = jpNominal && jpCpi ? exPostRealPercent(jpNominal.value, jpCpi.latest) : null;
   const usReal = rateOf(fred.DFII10, "FRED DFII10");
   const us10y = rateOf(fred.DGS10, "FRED DGS10");
@@ -214,7 +215,7 @@ export function assembleCatalog(texts: CatalogTexts, ctx: CatalogContext): Brief
         }
         : { value: null, asOf: null, source: "MoF constant-maturity" },
       jpCpiYoy: jpCpi
-        ? { value: roundTo(jpCpi.latest, 2), asOf: jpCpi.period, source: "FRED JPNCPIALLMINMEI" }
+        ? { value: roundTo(jpCpi.latest, 2), asOf: jpCpi.period, source: jpCpi.source }
         : { value: null, asOf: null, source: "FRED JPNCPIALLMINMEI" },
       jpRealExPost: jpReal == null ? null : roundTo(jpReal, 3),
       cn10y,

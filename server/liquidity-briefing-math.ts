@@ -397,7 +397,7 @@ export function lastInMonth(points: DatedValue[]): DatedValue[] {
     const key = monthKey(p.period);
     if (key) map.set(key, { period: key, value: p.value });
   }
-  return [...map.values()];
+  return Array.from(map.values());
 }
 
 export function yoyOnIndex(points: DatedValue[]): { latest: number; period: string } | null {
@@ -536,8 +536,23 @@ export function deltaOverDays(points: DatedValue[], days: number): number | null
   return last.value - prev.value;
 }
 
+function isTenYearHeader(cell: string): boolean {
+  const t = cell.trim();
+  const lower = t.toLowerCase();
+  if (lower === "10y" || lower === "10-year" || lower === "10 year" || t === "10年") return true;
+  return /^10[^\d]/.test(t);
+}
+
 function normalizeMofDate(raw: string): string | null {
-  const iso = raw.trim().replace(/\//g, "-").replace(/\./g, "-");
+  const trimmed = raw.trim();
+  const era = /^([RHS])(\d+)\.(\d+)\.(\d+)$/i.exec(trimmed);
+  if (era) {
+    const year = Number(era[2]);
+    const letter = era[1].toUpperCase();
+    const base = letter === "R" ? 2018 : letter === "H" ? 1988 : 1925;
+    return `${base + year}-${era[3].padStart(2, "0")}-${era[4].padStart(2, "0")}`;
+  }
+  const iso = trimmed.replace(/\//g, "-").replace(/\./g, "-");
   const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(iso);
   if (!match) return null;
   return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
@@ -548,19 +563,59 @@ export function parseMofJgb10(csv: string): DatedValue[] {
   const text = csv.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) return [];
   const lines = text.split("\n").filter(line => line.trim());
-  if (lines.length < 2) return [];
-  const header = splitCsvLine(lines[0]).map(cell => cell.trim().toLowerCase());
-  let idx = header.findIndex(cell => cell === "10y" || cell === "10-year" || cell === "10 year" || cell === "10");
-  if (idx < 0) idx = header.length > 10 ? 10 : -1;
-  if (idx < 0) return [];
+  let headerIdx = -1;
+  let idx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const cells = splitCsvLine(lines[i]).map(cell => cell.trim());
+    const found = cells.findIndex(isTenYearHeader);
+    if (found >= 0) {
+      headerIdx = i;
+      idx = found;
+      break;
+    }
+  }
+  if (headerIdx < 0 || idx < 0) return [];
   const out: DatedValue[] = [];
-  for (const line of lines.slice(1)) {
+  for (const line of lines.slice(headerIdx + 1)) {
     const cols = splitCsvLine(line);
     const period = normalizeMofDate(cols[0] || "");
     const value = parseNum(cols[idx]);
     if (period && value != null) out.push({ period, value });
   }
   return out.sort((a, b) => a.period.localeCompare(b.period));
+}
+
+function monthsApart(older: string, newer: string): number | null {
+  const toIso = (period: string) => /^\d{4}-\d{2}$/.test(period) ? `${period}-01` : period.slice(0, 10);
+  const a = new Date(`${toIso(older)}T00:00:00.000Z`);
+  const b = new Date(`${toIso(newer)}T00:00:00.000Z`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+  return (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth());
+}
+
+/**
+ * Monatlicher Index → YoY. Die Jahresreihe FPCPITOTLZGJPN ist schon Prozent
+ * und nur der Fallback, wenn der Monatsindex mehr als 18 Monate hinter dem Nominalzins liegt.
+ */
+export function japanCpiYoy(
+  monthlyIndex: DatedValue[],
+  annualPercent: DatedValue[],
+  nominalAsOf: string | null,
+): { latest: number; period: string; source: "FRED JPNCPIALLMINMEI" | "FRED FPCPITOTLZGJPN" } | null {
+  const monthly = yoyOnIndex(monthlyIndex);
+  const annualSorted = [...annualPercent].filter(p => Number.isFinite(p.value)).sort((a, b) => a.period.localeCompare(b.period));
+  const annual = annualSorted.length ? annualSorted[annualSorted.length - 1] : null;
+  const anchor = nominalAsOf || annual?.period || null;
+  const age = monthly && anchor ? monthsApart(monthly.period, anchor) : null;
+  const monthlyFresh = monthly != null && (age == null || age <= 18);
+  if (monthly && monthlyFresh) {
+    return { latest: monthly.latest, period: monthly.period, source: "FRED JPNCPIALLMINMEI" };
+  }
+  if (annual) {
+    return { latest: annual.value, period: annual.period.slice(0, 7), source: "FRED FPCPITOTLZGJPN" };
+  }
+  if (monthly) return { latest: monthly.latest, period: monthly.period, source: "FRED JPNCPIALLMINMEI" };
+  return null;
 }
 
 /** FiscalData MSPD, total_mil_amt in Mio. $ → Mrd. $. */

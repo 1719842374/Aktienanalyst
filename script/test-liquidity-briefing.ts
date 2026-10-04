@@ -21,6 +21,7 @@ import {
   parseBojMoneyStock,
   parseEcbCsv,
   parseFredCsv,
+  japanCpiYoy,
   parseMofJgb10,
   parseMspdBillStockBn,
   parsePeppPurchases,
@@ -166,6 +167,18 @@ ok("π wird nicht als LI zurückgegeben", pricedInPi(2, 10, 30, 100) != null && 
 
 const mof = parseMofJgb10("Date,1Y,2Y,10Y\n2026/9/1,0.8,0.9,1.55\n");
 ok("MoF 10y ist der Tageswert", mof.length === 1 && mof[0].period === "2026-09-01" && mof[0].value === 1.55);
+const mofEra = parseMofJgb10([
+  "タイトル",
+  "基準日,1年,2年,3年,4年,5年,6年,7年,8年,9年,10年,15年",
+  "R8.10.1,1.1,1.2,1.3,1.4,1.5,1.6,1.7,1.8,1.9,2.05,2.40",
+].join("\n"));
+ok("MoF Reiwa-Datum und Spalte 10年", mofEra.length === 1 && mofEra[0].period === "2026-10-01" && mofEra[0].value === 2.05, String(mofEra[0]?.value));
+const cpiFallback = japanCpiYoy(
+  [{ period: "2020-06", value: 100 }, { period: "2021-06", value: 101 }],
+  [{ period: "2025-01-01", value: 3.17 }],
+  "2026-08-01",
+);
+ok("Jahres-CPI ist schon Prozent", cpiFallback != null && cpiFallback.source === "FRED FPCPITOTLZGJPN" && near(cpiFallback.latest, 3.17, 1e-9), String(cpiFallback?.latest));
 ok("MoF schlägt den FRED-Monat", preferNominal(mof, [{ period: "2026-06", value: 2.67 }])?.source === "mof-daily");
 
 const mspd = parseMspdBillStockBn(JSON.stringify({

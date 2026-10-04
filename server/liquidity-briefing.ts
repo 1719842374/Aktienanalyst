@@ -206,7 +206,12 @@ async function fetchText(url: string, fetchImpl: typeof fetch): Promise<string> 
         headers: { Accept: "text/csv,text/plain;q=0.9,*/*;q=0.8" },
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const text = await resp.text();
+      const buf = await resp.arrayBuffer();
+      let text = new TextDecoder("utf-8").decode(buf);
+      if (url.includes("jgbcm")) {
+        const sjis = new TextDecoder("shift_jis").decode(buf);
+        if (sjis.includes("10年")) text = sjis;
+      }
       if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) {
         throw new Error("HTML statt CSV");
       }
