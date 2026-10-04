@@ -7,6 +7,7 @@
 > **Quelle Nachzug:** Doc_Soll_vs_Ist/README · Companion `WORK_IMPLEMENTIERUNG_OFFEN.md`  
 > **Delta 30.09. Vormittag, nach #103 Miner Observability Live PASS:** #103 Miner Observability Live ✅ (tip `e2bc69a2` = `e2bc69a233166a3242d13e9ddc78373adc19f68c`; parent `58bec00c` #101 Docs ← `c365c945` #100 ← `4c615eb3` #99; Bundle `index-MIF1Ml5X.js` unverändert — Client unverändert, #103 server-only). Error-Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry transient (400ms); Stale-Cache-on-Error → 200 + `stale:true` wenn Prior-Success, sonst 503 mit `error`+`code`(+`cause`). Dateien: `server/btc-miner.ts`, `server/routes.ts` (+`minerUnavailableBody`), `script/test-btc-miner-observability.ts` 43/43. UI `Section13Miner` unverändert. Soft-Note: Live Soft-Probe `POST /api/btc-miner` → 503 `code=MEMPOOL_NETWORK` `cause=fetch failed` = **Render→mempool Egress**, kein Code-Delete/Stub. Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt. #99✅ #100✅ #93 Label✅ #97✅ #92✅ bleiben. #96 closed ohne Merge — nicht reopen, nicht grün. **Delta 30.09. Morgen, nach #99+#100 Live PASS:** #99 TA Spec v3.2 Live ✅ (SHA `4c615eb3` → stack tip `c365c945`; Bundle `index-MIF1Ml5X.js`; Default nur Kurs A; A+B gestapelte Bänder/Y; MACD/RSI unter A und B; Desktop-Controls ok, Mobile soft-skip; Shots `/workspace/dod-99-ta-v32/`). #100 KI-N/A matrix (Relativ Bewertung / Section7) Live ✅ (tip `c365c945`; Spalten Segment|Rev.|Anteil|Wachstum|TAM|CAGR|Anteil am TAM|vs.TAM; Idle-Button exakt „N/A mit KI schätzen“; fail-closed UI: Fill → „KI-Schätzung unvollständig — nichts übernommen“, kein Overlay/Badge, N/A unverändert; Soft: Success-Badge `KI ✓` in Dual-DoD nicht geübt; Soft-Note API: Body `{}` → HTTP 400 `BAD_REQUEST` „Keine N/A-Zellen“ — erwartet, keine Segments/keine N/A; 422 `INCOMPLETE_FILL` nur nach LLM mit Rest-n/a ≠ 0; Shots+Probe `/workspace/dod-100-ki-na/`). #93 KI-N/A-Fill Segment-TAM Label Soft → ✅ (Idle-Label jetzt Spec „N/A mit KI schätzen“ via #100 Live; Behavior+API war schon PASS @ `7574b12d`; Soft: violet KI-Badge Success-Pfad nicht in Dual-DoD geübt). #97 bleibt ✅ (superseded by v3.2 live on same chart stack). #92 bleibt ✅. #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün. **Delta 29.09. Abend, nach #97 Live PASS:** #97 TA Kurs A/B/C Spec v3.1 Live ✅ (SHA `249841ab`; parent `1dc82683`; Bundle `index-C_rUCqgy.js`; 3 An/Aus Kurs A/B/C; Default nur A; ≥2 an → versetzte Bänder (eigene Y min–max je Band via `yDomainFromCloses` / `chart-price-bands`); `closeB` entfernt; absolute-Y / closeB-Overlap = FAIL; DoD AAPL Shots `/workspace/dod-97-ta-kurs/`). #92 TA Zwei-Fenster Live ✅ (SHA `c06c835e` → Fix `1dc82683` #94; Bundle `index-JP8muGsY.js`; DoD: A close/primary/1.5 unverfärbt; closeB `#a78bfa` strokeWidth 2.5 `connectNulls=false`; Eye off = nur A; 3 normale Kurs-Plots unberührt; Zwei-Fenster Extra An/Aus; Soft Draw-Order B-unter OK). #93 KI-N/A-Fill Segment-TAM Live 🟡 PARTIAL (`7574b12d`; Behavior+API PASS — MSFT amber ~59%; KI nur unmatched + violet Badge; Catalog-Coverage unverändert; Clear → n/a; core 58.5%/unreliable/`tamTotal=null`; Label Soft: UI „KI“ vs Spec „N/A mit KI schätzen“). #96 KI-Fill v2 bleibt Draft Merge-Gate — nicht grün (Label Soft #93 kann nach #96 Live weg; Soft Apollo bis Philip GO). #90 TAM Coverage-Lift Live ✅ (Bundle `index-Ca0V7H2h.js`; DoD: AMZN 75.2% ok, NVDA 98.2% weak, MSFT 58.5% unreliable — Server unmatched, `tamTotal` null). Queue Coverage-Lift ✅. #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution · #86 Tooltip · #88 Pie/360px Live ✅ · #87 thin-series Code ✅ Live 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub war 29.09. / `d517611` (#78); danach Abend `f0046ee9` (#89, Docs-Tip `20120339`); danach Abend #90 `ee5f0f8b` (Docs-Tip `9895774f`); Hub-Draft #95 Inhalt `1dc82683` (#92✅ #93🟡, noch offen); Tip `249841ab`.  
 > **tsc-Baseline:** 97 Fehler (unverändert).
+> **Nachzug 2026-10-04 #159 (nur Value-Chain Ränge 7–9):** Live PASS (tip `9b874e9e` = `9b874e9eb878a0772bea1e7180c253140d85bdf3`; Bundle `index-CatPJ-E8.js`; https://aktienanalyst.onrender.com/#/valuechain?industry=semiconductors; Flow mit Edges und Animation plus bestehende CSS-Karten; rateLimitMode in-process; 20 Ketten). Zeile 28 bleibt 🟡. Spec `Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md`: Ränge 4–6 bleiben offen (Branchen-Selector + API-Contract, FMP Enrichment + Rate-Limit-Schichten, CAPEX live). Ränge 7–9 waren nicht die letzte Lücke — kein Rename auf `fertig_`. Vorherige grüne Zeilen unverändert.
 
 ---
 
@@ -91,7 +92,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 
 | # | Datei | Soll | Ist | Ampel |
 |---|-------|------|-----|-------|
-| 28 | WORK_VALUECHAIN_SECTOR_ROTATION.md | Rang 1–9 | 1–6 + Phase 1–2 live; **Rang 7–9** Code (xyflow, Redis optional); Live dieses Rangs offen | 🟡 |
+| 28 | Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md | Rang 1–9 | Rang 7–9 Live PASS @ tip `9b874e9e` (Bundle `index-CatPJ-E8.js`; https://aktienanalyst.onrender.com/#/valuechain?industry=semiconductors; Flow mit Edges und Animation plus bestehende CSS-Karten; rateLimitMode in-process; 20 Ketten). Ränge 4–6 bleiben in der Spec offen (Branchen-Selector + API-Contract, FMP Enrichment + Rate-Limit-Schichten, CAPEX live). Dateiname bleibt `Offen_` | 🟡 |
 | 29 | WORK_PORTFOLIO_BACKTEST.md | Equity α/β/IR Underwater | Panel da; braucht Position+OHLCV; Rest-DoD | 🟡 |
 | 29b | WORK.md_portfolio_3 §6 | `GET /api/ohlcv` + Long-Map | Live PASS Tester AAPL 1Y/2Y @ `6a1807b` (`#61`). #74: Fake-OK `bars=[]` source:fmp fixed (Live ✅); Code §6 nicht gelöscht. Chart #71 oft weiter leer | ✅ |
 | 30 | fertig_WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
@@ -161,13 +162,13 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 - Morgen 30.09. (`c365c945`, parent `4c615eb3`): #99 TA Spec v3.2 Live ✅ PASS (Bundle `index-MIF1Ml5X.js`; Default nur Kurs A; A+B gestapelte Bänder/Y; MACD/RSI unter A und B; Desktop-Controls ok, Mobile soft-skip; Shots `/workspace/dod-99-ta-v32/`). #100 KI-N/A matrix Live ✅ PASS (Section7 Spalten Segment|Rev.|Anteil|Wachstum|TAM|CAGR|Anteil am TAM|vs.TAM; Idle „N/A mit KI schätzen“; fail-closed UI; Soft Success-Badge `KI ✓` nicht geübt; Soft-Note `{}` → 400 `BAD_REQUEST` erwartet, 422 `INCOMPLETE_FILL` nur nach LLM Rest-n/a ≠ 0; Shots+Probe `/workspace/dod-100-ki-na/`). #93 Label Soft → ✅ via #100. #97 und #92 bleiben ✅. #96 closed ohne Merge — nicht reopen, nicht grün.
 - Vormittag 30.09. (`e2bc69a2`, parent `58bec00c` #101 Docs): #103 Miner Observability Live ✅ PASS (Bundle `index-MIF1Ml5X.js` unverändert, server-only; Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry 400ms; Stale-Cache → 200 + `stale:true` bei Prior-Success, sonst 503 `error`+`code`(+`cause`); Unit `script/test-btc-miner-observability.ts` 43/43; UI `Section13Miner` unverändert; Soft-Note `MEMPOOL_NETWORK` / `fetch failed` = Render→mempool Egress, kein Code-Delete). Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt. #99/#100/#93/#97/#92 bleiben ✅. #96 closed ohne Merge — nicht reopen, nicht grün.
 
-**Nicht neu bauen / nicht anfassen:** Miner-Kern, PEG, inverted DCF Core, Sentiment, Portfolio F.2, Valuechain Rang 1–9 (CSS-Karten plus xyflow-Stufenfluss).
+**Nicht neu bauen / nicht anfassen:** Miner-Kern, PEG, inverted DCF Core, Sentiment, Portfolio F.2, Valuechain Rang 1–9 (CSS-Karten plus xyflow-Stufenfluss; Ränge 7–9 Live PASS #159, nicht neu bauen; Spec bleibt `Offen_` weil Ränge 4–6 offen).
 
 ---
 
-## 3. Offen 🟡 / ⬜ (workable; Rang 7–9 nicht neu bauen)
+## 3. Offen 🟡 / ⬜ (workable; Rang 7–9 Live PASS #159, nicht neu bauen; Ränge 4–6 in der Spec offen)
 
-**🟡 Partial:** Portfolio-Backtest Rest-DoD · Valuechain Rang 7–9 (Code da, Live offen; Redis optional) · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
+**🟡 Partial:** Portfolio-Backtest Rest-DoD · Valuechain Rang 7–9 Live PASS #159 (`9b874e9e`, Bundle `index-CatPJ-E8.js`, https://aktienanalyst.onrender.com/#/valuechain?industry=semiconductors; Flow + CSS-Karten; rateLimitMode in-process; 20 Ketten; Spec bleibt 🟡 weil Ränge 4–6 offen) · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
 
 **⬜ Spec (Liquidity-Bundle + Rest):** Regional LI + Books + Velocity + Data Sources · Fiscal Adaptive · Briefing regional · FRED/Sahm · Recession Sources.
 
@@ -179,9 +180,9 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 2. TAM Coverage-Lift — Spec `fertig_WORK_TAM_SEGMENT_MAPPING.md` Tor ok; Gap = unmatched Labels — **done** ✅ (`ee5f0f8b`, #90 Live ✅). DoD: AMZN 75.2% ok; NVDA 98.2% weak; MSFT 58.5% unreliable (Server unmatched, `tamTotal` null).
 3. Miner Observability — **done** ✅ (#103 `e2bc69a2`; kein Delete, ≡ `b584446f` Kern). Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry transient 400ms; Stale-Cache-on-Error → 200 + `stale:true` wenn Prior-Success, sonst 503 mit `error`+`code`(+`cause`). Soft-Note: Live Soft-Probe `POST /api/btc-miner` → 503 `code=MEMPOOL_NETWORK` `cause=fetch failed` = Render→mempool Egress, kein Code-Delete. Kernformeln Breakeven/Puell/Hash Ribbons unberührt. UI `Section13Miner` unverändert.
 4. Ökosystem Scoring-Weichzeichnung (Zykliker-Grad) = Folge-Lane nach Chip (#75 Live ✅).
-5. Ziel+z-Treiber liegen auf main (`fertig_WORK_RECESSION_2008_DRIVERS_LLM.md`). Gated unverändert: Liquidity-Bundle. Valuechain Rang 7–9 ist Code, nicht neu bauen.
+5. Ziel+z-Treiber liegen auf main (`fertig_WORK_RECESSION_2008_DRIVERS_LLM.md`). Gated unverändert: Liquidity-Bundle. Valuechain Rang 7–9 Live PASS #159, nicht neu bauen; Spec bleibt `Offen_` (Ränge 4–6).
 
-Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Liquidity-Bundle bleibt gegated. Valuechain Rang 7–9 nicht neu bauen.
+Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Liquidity-Bundle bleibt gegated. Valuechain Rang 7–9 Live PASS #159, nicht neu bauen; Ränge 4–6 in der Spec offen.
 
 **Queue 30.09. Morgen:** #99 TA Spec v3.2 Live ✅ (`4c615eb3`, Bundle `index-MIF1Ml5X.js`) · #100 KI-N/A matrix Live ✅ (`c365c945`) · #93 Label ✅ via #100 · #96 nicht reopen.
 
@@ -193,7 +194,9 @@ Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Liquidity-Bundle bleib
 
 ## 4. Blockiert
 
-- **D6 Rang 7–9** — Custom Edges / Animation / optionales Redis sind im Code (`@xyflow/react`). CSS-Karten bleiben. Ohne Redis-URL: In-Process. Nicht neu bauen. Live-Deploy nicht behauptet.
+Nachzug 2026-10-04 #159: D6 Rang 7–9 ist für diesen Rang nicht mehr blockiert (Live PASS). Ränge 4–6 bleiben in der Spec offen; die Datei bleibt `Offen_`.
+
+- **D6 Rang 7–9** — Live PASS #159 (tip `9b874e9e`; Bundle `index-CatPJ-E8.js`; https://aktienanalyst.onrender.com/#/valuechain?industry=semiconductors). Flow mit Edges und Animation plus bestehende CSS-Karten. rateLimitMode in-process. 20 Ketten. Spec `Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md` bleibt 🟡: Ränge 4–6 offen (Branchen-Selector + API-Contract, FMP Enrichment + Rate-Limit-Schichten, CAPEX live). Nicht neu bauen.
 
 `Future_Work.md` = Roadmap, kein Ticket. Siehe `WORK_IMPLEMENTIERUNG_OFFEN.md` und `docs/Doc_Soll_vs_Ist/`.
 
@@ -214,7 +217,7 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 - `Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — `LiquidityPanel` holt immer `GET /api/researcher/liquidity` ohne Region.
 - `Offen_WORK_SECTION4_DATA_BUGS.md` — Trailing-PEG in `Section4.tsx` ist `peRatio / epsGrowth5Y`; FCF bleibt eine Cashflow-Zeile (`cashflow?.[0]`) in `server/fmp-fetcher.ts`.
 - `Offen_WORK_STABLECOIN_TBILL_GENIUS.md` — DefiLlama-Marktkapitalisierung liegt in `server/stablecoin-liquidity.ts`; Z-Score, dynamischer T-Bill-Multiplikator und GENIUS-Stärke-Score fehlen.
-- `Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md` — CSS-Karten bleiben. Rang 7–9: `@xyflow/react` Custom Edges und Animation im Stufenfluss; Redis optional, ohne URL In-Process. Dateiname bleibt `Offen_`.
+- `Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md` — Dateiname bleibt `Offen_` (Ränge 4–6 offen: Branchen-Selector + API-Contract, FMP Enrichment + Rate-Limit-Schichten, CAPEX live). Rang 7–9 Live PASS #159 (tip `9b874e9e`; Bundle `index-CatPJ-E8.js`; https://aktienanalyst.onrender.com/#/valuechain?industry=semiconductors; Flow mit Edges und Animation plus bestehende CSS-Karten; rateLimitMode in-process; 20 Ketten).
 
 ### Neu fertig
 
