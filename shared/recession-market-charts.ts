@@ -653,12 +653,13 @@ export interface ConstituentAggregateResult {
 }
 
 /**
- * Forward net income is per name on analyst-estimates (`netIncomeAvg`).
- * The stable catalog has no analyst-estimates bulk and no index-level estimate.
- * Hundreds of per-name calls are not fired.
+ * Forward earnings are documented per symbol, not as a bulk field, and not beside price.
+ * Financial Estimates carries `epsAvg` and `netIncomeAvg` and no `price`.
+ * Quote, index quote, and the earnings report carry no forward EPS next to `price`.
+ * N-PORT carries no `netIncomeAvg`. Hundreds of per-name calls are not fired.
  */
 export const ANALYST_ESTIMATES_BULK_MISSING =
-  "GET /stable/analyst-estimates?symbol={Name}&period=annual Feld netIncomeAvg; kein GET /stable/analyst-estimates-bulk und keine Index-Schätzung";
+  "Playground Financial Estimates https://site.financialmodelingprep.com/developer/docs/stable/financial-estimates GET /stable/analyst-estimates?symbol=AAPL&period=annual&page=0&limit=10 Felder epsAvg und netIncomeAvg ohne price und ohne Bulk; Playground Quote https://site.financialmodelingprep.com/developer/docs/stable/quote und Index Quote GET /stable/quote?symbol=^VIX Feld price ohne Forward-EPS; Playground Earnings Report GET /stable/earnings?symbol=AAPL Feld epsEstimated ohne price; Playground Mutual Fund Disclosures GET /stable/funds/disclosure ohne netIncomeAvg. Fehlendes Feld neben price: Forward-EPS";
 
 export interface AggregateLine {
   label: string;
@@ -1173,8 +1174,8 @@ function coverageSentence(label: string, total: number, used: number, holes: { s
  * One income statement per company: share classes that share a cik contribute
  * one net income and the sum of their market caps. Averaging constituent P/Es is not this ratio.
  * EPS YoY and PEG use that same covered set. Forward PE is Σ market cap / Σ netIncomeAvg
- * on the names that have netIncomeAvg. There is no estimates bulk, so an unloaded
- * forward stays empty and names that endpoint.
+ * on the names that have netIncomeAvg. Quote price and that forward EPS are not on one
+ * object, and there is no estimates bulk, so an unloaded forward names that playground page.
  */
 export function valuationFromConstituentAggregates(input: ConstituentAggregateInput): ConstituentAggregateResult {
   void input.etfClose;
@@ -1531,11 +1532,11 @@ export function assembleValuationMissing(input: ValuationGapInput): string | nul
     else gaps.push(`PEG fehlt: ${input.pe == null ? "kein PE derselben Deckung" : "kein EPS-YoY derselben Deckung"}`);
   }
   if (input.allowForward && input.peFwd == null) {
-    gaps.push(`fwd fehlt: ${input.fwdNote ?? "Feld netIncomeAvg"}`);
+    gaps.push(`Forward-PE: ${input.fwdNote ?? ANALYST_ESTIMATES_BULK_MISSING}`);
   }
   if (input.allowForward && input.pegFwd == null) {
-    if (input.gCons != null && input.gCons <= 0) gaps.push("PEG fwd fehlt: g<=0");
-    else gaps.push(`PEG fwd fehlt: ${input.fwdNote ?? "Feld netIncomeAvg"}`);
+    if (input.gCons != null && input.gCons <= 0) gaps.push("Forward-PEG: g<=0");
+    else gaps.push(`Forward-PEG: ${input.fwdNote ?? ANALYST_ESTIMATES_BULK_MISSING}`);
   }
   return gaps.length ? gaps.join(" · ") : null;
 }

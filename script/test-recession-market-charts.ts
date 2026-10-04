@@ -468,7 +468,7 @@ function blankInstrument(symbol: string, role: "etf" | "fallback", price: number
 
 console.log("\n=== Live-Payloads 2026-10-02 ===");
 {
-  check("Cache-Key ist nicht mehr v3 bis v6", MARKETS_CHART_CACHE_VERSION === "v7", MARKETS_CHART_CACHE_VERSION);
+  check("Cache-Key ist nicht mehr v3 bis v7", MARKETS_CHART_CACHE_VERSION === "v8", MARKETS_CHART_CACHE_VERSION);
   const prior = closeFromPriceRows(
     [{ date: "2026-10-03", close: 99999 }, { date: "2026-10-01", price: 6700 }],
     "2026-10-02",
@@ -848,7 +848,7 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
     useCurrentMarketCap: true,
     marketCapUnavailable: null,
   });
-  check("ohne netIncomeAvg bleibt Forward n/a und nennt den Bulk-Endpunkt", epsOnly.core.pe === 18.75 && epsOnly.core.peFwd == null && epsOnly.fwdReason != null && epsOnly.fwdReason.includes("analyst-estimates?symbol={Name}&period=annual") && epsOnly.fwdReason.includes("analyst-estimates-bulk"), epsOnly.fwdReason ?? "");
+  check("ohne netIncomeAvg bleibt Forward leer und nennt die Playground-Seite", epsOnly.core.pe === 18.75 && epsOnly.core.peFwd == null && epsOnly.core.pegFwd == null && epsOnly.fwdReason != null && epsOnly.fwdReason.includes("financial-estimates") && epsOnly.fwdReason.includes("netIncomeAvg") && epsOnly.fwdReason.includes("Feld price ohne Forward-EPS") && !epsOnly.fwdReason.includes("fwd fehlt") && !epsOnly.fwdReason.includes("n/a"), epsOnly.fwdReason ?? "");
   const partialFwd = valuationFromConstituentAggregates({
     constituents: [
       fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, netIncomeFwd: 12 }),
@@ -1040,12 +1040,12 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
     fallbackNotes: [],
     priceNote: null,
     extraNotes: [],
-    fwdNote: "GET /stable/analyst-estimates?symbol={Name}&period=annual Feld netIncomeAvg; kein GET /stable/analyst-estimates-bulk und keine Index-Schätzung",
+    fwdNote: "Playground Financial Estimates https://site.financialmodelingprep.com/developer/docs/stable/financial-estimates GET /stable/analyst-estimates?symbol=AAPL&period=annual&page=0&limit=10 Felder epsAvg und netIncomeAvg ohne price und ohne Bulk; Playground Quote https://site.financialmodelingprep.com/developer/docs/stable/quote und Index Quote GET /stable/quote?symbol=^VIX Feld price ohne Forward-EPS",
     methodNote: spy.methodNote,
   });
   check("Aggregat-Zeile sagt die Summe, nicht Kurs/EPS", gap != null && gap.includes("Summe Marktkapitalisierung / Summe netIncome") && gap.includes("funds/disclosure?symbol=SPY") && !gap.includes("Kurs und EPS") && !gap.includes("sp500-constituent"), gap ?? "");
-  check("Forward und Forward-PEG nennen netIncomeAvg und sagen nicht n/a", gap != null && gap.includes("fwd fehlt:") && gap.includes("PEG fwd fehlt:") && gap.includes("netIncomeAvg") && !gap.includes("n/a"), gap ?? "");
-  check("die Zeile zeigt die Zahl und sonst das benannte Feld", valuationGapText(gap, "fwd fehlt:").includes("netIncomeAvg") && valuationGapText(gap, "PE fehlt:") === "PE fehlt" && !valuationGapText(gap, "fwd fehlt:").includes("n/a"));
+  check("Forward und Forward-PEG nennen die Playground-Seite und sagen nicht fwd fehlt", gap != null && gap.includes("Forward-PE:") && gap.includes("Forward-PEG:") && gap.includes("financial-estimates") && gap.includes("netIncomeAvg") && !gap.includes("fwd fehlt") && !gap.includes("n/a"), gap ?? "");
+  check("die Zeile zeigt die Zahl und sonst das benannte Feld", valuationGapText(gap, "Forward-PE:").includes("netIncomeAvg") && valuationGapText(gap, "Forward-PE:").includes("Forward-EPS") && valuationGapText(gap, "PE fehlt:") === "PE fehlt" && !valuationGapText(gap, "Forward-PE:").includes("n/a"));
   const shaped = marketsResponseSchema.safeParse({
     asOf: "2026-10-02",
     window: "10Y",

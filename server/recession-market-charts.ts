@@ -49,8 +49,8 @@ import {
   type VolPoint,
 } from "../shared/recession-market-charts";
 
-/** v3–v6 cached a blocked or all-or-nothing line. v7 uses NPORT membership and partial coverage. */
-export const MARKETS_CHART_CACHE_VERSION = "v7";
+/** v3–v7 left forward as fwd fehlt. v8 names the playground page when Forward-EPS is not beside price. */
+export const MARKETS_CHART_CACHE_VERSION = "v8";
 const TTL_MS = 6 * 60 * 60 * 1000;
 const FINRA_XLSX_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
 
@@ -323,7 +323,8 @@ async function loadValuation(
     members,
     prints,
     marketCaps,
-    // analyst-estimates is per symbol. No bulk and no index estimate, so netIncomeAvg stays unloaded.
+    // Financial Estimates is per symbol and has no price. Quote has price and no Forward-EPS.
+    // Those are not the same object, and there is no estimates bulk, so netIncomeAvg stays unloaded.
     estimateRows: [],
     asOf: bar.date,
   });

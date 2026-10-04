@@ -118,9 +118,9 @@ function SnapshotRow({ market }: { market: MarketChart }) {
   return (
     <>
       <p className="text-[11px] text-muted-foreground font-mono break-words" data-testid="market-snapshot">
-        {market.valuationLabel} · PE {valuationFigure(s.pe, 1, s.missing, "PE fehlt:")} · fwd {valuationFigure(s.peFwd, 1, s.missing, "fwd fehlt:")} · EPS YoY {yoy} · PEG {valuationFigure(s.peg, 2, s.missing, "PEG fehlt:")}
+        {market.valuationLabel} · PE {valuationFigure(s.pe, 1, s.missing, "PE fehlt:")} · fwd {valuationFigure(s.peFwd, 1, s.missing, "Forward-PE:")} · EPS YoY {yoy} · PEG {valuationFigure(s.peg, 2, s.missing, "PEG fehlt:")}
         {pegDisplaySuffix(s.pegKind)}
-        {pegNote} · PEG fwd {valuationFigure(s.pegFwd, 2, s.missing, "PEG fwd fehlt:")}
+        {pegNote} · PEG fwd {valuationFigure(s.pegFwd, 2, s.missing, "Forward-PEG:")}
         {pegDisplaySuffix(s.pegFwdKind)} · RSI {fmt(s.rsi, 1)} · MACD H {fmt(s.macdHist, 2)}
       </p>
       {s.missing && (
@@ -138,10 +138,10 @@ function FactpackBody({ pack, loading, error }: { pack: MarketFactpack | undefin
   if (!pack) return null;
   const rows: { label: string; value: string; warn?: boolean }[] = [
     { label: "PE ttm", value: valuationFigure(pack.pe, 2, pack.note, "PE fehlt:") },
-    { label: "PE fwd", value: valuationFigure(pack.peFwd, 2, pack.note, "fwd fehlt:") },
+    { label: "PE fwd", value: valuationFigure(pack.peFwd, 2, pack.note, "Forward-PE:") },
     { label: "EPS YoY", value: pack.epsYoy == null ? valuationGapText(pack.note, "EPS YoY fehlt:") : `${fmt(pack.epsYoy, 2)} %` },
     { label: "PEG ttm", value: `${valuationFigure(pack.peg, 2, pack.note, "PEG fehlt:")}${pegDisplaySuffix(pack.pegKind)}`, warn: pack.pegExpensive },
-    { label: "PEG fwd", value: `${valuationFigure(pack.pegFwd, 2, pack.note, "PEG fwd fehlt:")}${pegDisplaySuffix(pack.pegFwdKind)}`, warn: pack.pegFwdExpensive },
+    { label: "PEG fwd", value: `${valuationFigure(pack.pegFwd, 2, pack.note, "Forward-PEG:")}${pegDisplaySuffix(pack.pegFwdKind)}`, warn: pack.pegFwdExpensive },
     { label: "Konsens-Wachstum", value: pack.gCons == null ? "n/a" : `${fmt(pack.gCons, 2)} %` },
     { label: "RSI(14)", value: fmt(pack.rsi, 1) },
     { label: "MACD", value: fmt(pack.macd, 3) },
