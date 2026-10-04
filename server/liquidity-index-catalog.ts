@@ -43,6 +43,8 @@ export const CATALOG: Record<Region, SeriesSpec[]> = {
     // RRP lives in the C2 bundle as a level. The index caches the series on its
     // own key so a regional read does not rebuild the US M2V path.
     { book: "M", role: "drain", id: "RRPONTSYD", unit: "bnUSD", sign: -1, ttlHours: 6, cacheKey: "liqidx_US__rrp" },
+    { book: "M", role: "rate", id: "DFF", unit: "pct", sign: -1, ttlHours: 12, cacheKey: "liqidx_US__dff" },
+    { book: "C", role: "money", id: "M2SL", unit: "bnUSD", sign: 1, ttlHours: 24, cacheKey: "liqidx_US__m2" },
     { book: "F", role: "govCash", id: "WTREGEN", unit: "bnUSD", sign: -1, ttlHours: 12, cacheKey: "liqidx_US__tga" },
     { book: "F", role: "netIssuance", id: "MSPD_BILLS", unit: "bnUSD", sign: -1, ttlHours: 24, cacheKey: "liqidx_US__mspd" },
     { book: "F", role: "buybacks", id: "BUYBACK_OPS", unit: "bnUSD", sign: 1, ttlHours: 12, cacheKey: "liqidx_US__buybacks" },

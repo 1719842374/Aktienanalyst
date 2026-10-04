@@ -343,6 +343,10 @@ async function fetchDefaultBundle(spec: SeriesSpec, now: Date): Promise<SeriesBu
       return { points: dropStale(await fetchFred("RRPONTSYD", now, v => v), now) };
     case "liqidx_US__tga":
       return { points: dropStale(await fetchFred("WTREGEN", now, v => v / 1000), now) };
+    case "liqidx_US__dff":
+      return { points: dropStale(await fetchFred("DFF", now, v => v), now) };
+    case "liqidx_US__m2":
+      return { points: dropStale(await fetchFred("M2SL", now, v => v), now) };
     case "liqidx_US__mspd":
       return { points: dropStale(await fetchMspd(), now) };
     case "liqidx_US__buybacks": {
