@@ -131,8 +131,8 @@ export interface IndicatorResult {
   description: string;
   /**
    * False: the slot is not in the net or the max.
-   * Sahm sets this when H_min is missed, UNRATE has a gap in the current
-   * S window, or the realtime control fails. The zone then carries the reason.
+   * Sahm sets this when the realtime history is shorter than H_min, or when
+   * the card is the unemployment backup (no z across a gap).
    * Absent on older slots, which stay scored.
    */
   available?: boolean;
@@ -142,10 +142,10 @@ export interface IndicatorResult {
 // RECESSION INDICATORS (7)
 // ============================================================
 
-// 1. Sahm Rule. S is computed from UNRATE (k=0..11), then s(z).
-// SAHMREALTIME is the ±0.02 control only. A blank month or a missed control
-// leaves the slot available:false. The last defined S and the reason stay on
-// the card. The 0.50pp mark stays a label when the slot is scored.
+// 1. Sahm Rule. The card shows the realtime print. A blank month stays blank.
+// The UNRATE S (k=0..11) is only the backup when that print is missing, and
+// then it is not given a 20-year z. The 0.50pp mark is the trigger on the
+// displayed level.
 function scoreSahm(): IndicatorResult {
   const cosd = getDateYearsAgo(SAHM_HISTORY_YEARS);
   const evaluated = scoreSahmFromUnemployment(
@@ -163,7 +163,7 @@ function scoreSahm(): IndicatorResult {
     weightedScore: scored.weightedScore,
     maxWeighted: scored.maxWeighted,
     zone: scored.zone,
-    source: "FRED UNRATE",
+    source: evaluated.score.backup ? "FRED UNRATE" : "FRED SAHMREALTIME",
     description: scored.reason ? `${base}. ${scored.reason}` : base,
     available: scored.available,
   };

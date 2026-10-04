@@ -1,7 +1,11 @@
 /**
  * Offen_WORK_RECESSION_FRED_SAHM.md
- * Sahm slot score is s(z) over up to 20 years, not `>= 0.5 ? 4 : -3`.
+ * The card shows the realtime prints. A blank month stays blank.
+ * The self-computed unemployment S is only the backup when realtime is empty,
+ * and that backup is not given a 20-year z.
+ * A delivered series is s(z) over up to 20 years, not `>= 0.5 ? 4 : -3`.
  * n < 24 months fails closed: available false, slot score 50, raw 0.
+ * The 0.50pp mark is the trigger on the displayed level.
  * Run: npx tsx script/test-recession-sahm.ts
  */
 import { readFileSync } from "node:fs";
@@ -116,38 +120,107 @@ console.log("\n=== n<24 months fails closed ===");
   check("missing level renders N/A", missing.value === "N/A" && missing.zone === "N/A" && missing.rawScore === 0);
 }
 
-console.log("\n=== UNRATE self-compute, then s(z), with the ±0.02 control ===");
+console.log("\n=== realtime print is the card; unemployment S is the backup ===");
 {
   const unemployment = months(40, 5, "2018-01-01");
   const series = sahmLevelsFromUnemployment(unemployment);
-  const defined = series.filter(point => point.value != null);
+  const defined = series.filter((point): point is FredPoint => point.value != null);
   check("constant unemployment builds S = 0 once the 12-month window exists", defined.length >= SAHM_MIN_MONTHS && defined.every(point => point.value === 0), `n=${defined.length}`);
-  const last12 = defined.slice(-12).map(point => ({ date: point.date, value: 0 }));
-  const matched = scoreSahmFromUnemployment(unemployment, last12);
-  check("matching control scores the computed S, not the 0.5 threshold", matched.controlOk === true && matched.score.available === true && matched.score.level === 0 && matched.score.raw === 0 && matched.score.s === 50, `raw=${matched.score.raw}`);
+  const matchingRealtime = defined.slice(-SAHM_MIN_MONTHS).map(point => ({ date: point.date, value: 0 }));
+  const matched = scoreSahmFromUnemployment(unemployment, matchingRealtime);
+  check(
+    "a long matching realtime print is the card level, and s(z) stays 50",
+    matched.controlOk === true && matched.score.backup !== true && matched.score.available === true && matched.score.level === 0 && matched.score.raw === 0 && matched.score.s === 50,
+    `raw=${matched.score.raw} level=${matched.score.level}`,
+  );
   check("control tolerance is 0.02", SAHM_CONTROL_TOLERANCE === 0.02 && matched.control.every(row => row.absDiff === 0));
 
-  const missed = scoreSahmFromUnemployment(unemployment, last12.map(point => ({ ...point, value: 0.1 })));
-  check("a 0.10 miss fails closed and still reports the computed S", missed.controlOk === false && missed.score.available === false && missed.score.raw === 0 && missed.score.s === 50 && missed.score.level === 0 && missed.control.every(row => row.computed === 0 && row.absDiff != null && Math.abs(row.absDiff - 0.1) < 1e-12), `diff=${missed.control[0]?.absDiff}`);
+  const missed = scoreSahmFromUnemployment(unemployment, matchingRealtime.map(point => ({ ...point, value: 0.1 })));
   const missedCard = sahmIndicatorFromScore(missed.score);
-  check("a control miss keeps the computed S and names the control", missedCard.value === "0.00 pp" && missedCard.zone.includes("SAHMREALTIME") && missedCard.zone !== "N/A" && missedCard.available === false, missedCard.zone);
+  check(
+    "a 0.10 control miss does not replace the realtime print",
+    missed.controlOk === false
+      && missed.control.every(row => row.computed === 0 && row.absDiff != null && Math.abs(row.absDiff - 0.1) < 1e-12)
+      && missed.score.backup !== true
+      && missed.score.level === 0.1
+      && missed.score.available === true
+      && missed.score.raw === 0
+      && missed.score.s === 50
+      && missed.score.triggered === false
+      && missedCard.value === "0.10 pp"
+      && missedCard.zone === "Normal (<0.5pp)",
+    `value=${missedCard.value} zone=${missedCard.zone} diff=${missed.control[0]?.absDiff}`,
+  );
 
+  const last12 = defined.slice(-12).map(point => ({ date: point.date, value: 0 }));
   const gapped = unemployment.map(point => point.date === "2020-12-01" ? { ...point, value: null } : point);
   const blanked = scoreSahmFromUnemployment(gapped, last12);
-  check("a blank UNRATE month fails closed instead of skipping the gap", blanked.controlOk === false && blanked.score.available === false && blanked.score.raw === 0 && blanked.control.some(row => row.computed == null), `blanks=${blanked.control.filter(row => row.computed == null).map(row => row.date).join(",")}`);
-  check("a blank month names the gap instead of a silent N/A", typeof blanked.score.reason === "string" && blanked.score.reason.includes("2020-12") && blanked.score.level != null, blanked.score.reason ?? "");
+  const blankedCard = sahmIndicatorFromScore(blanked.score);
+  check(
+    "a blank unemployment month leaves those S values undefined",
+    blanked.controlOk === false && blanked.control.some(row => row.computed == null),
+    `blanks=${blanked.control.filter(row => row.computed == null).map(row => row.date).join(",")}`,
+  );
+  check(
+    "a delivered realtime print stays on the card across that gap",
+    blanked.score.backup !== true && blanked.score.level === 0 && blanked.score.raw === 0 && blankedCard.value === "0.00 pp" && blankedCard.zone === "Normal (<0.5pp)" && !(blanked.score.reason ?? "").includes("2020-12"),
+    blankedCard.zone,
+  );
 
   const emptyFeed = scoreSahmFromUnemployment([], []);
   const emptyCard = sahmIndicatorFromScore(emptyFeed.score);
-  check("an empty UNRATE feed says the series was not delivered", emptyFeed.score.available === false && emptyFeed.score.level == null && emptyCard.value === "N/A" && emptyCard.zone === "FRED UNRATE nicht geliefert" && emptyCard.rawScore === 0, emptyCard.zone);
+  check(
+    "no realtime and no unemployment S stays N/A without a placeholder score",
+    emptyFeed.score.available === false && emptyFeed.score.backup !== true && emptyFeed.score.level == null && emptyFeed.score.raw === 0 && emptyFeed.score.s === 50 && emptyCard.value === "N/A" && emptyCard.zone === "Realtime-Serie nicht geliefert" && emptyCard.rawScore === 0,
+    emptyCard.zone,
+  );
+
+  const hist = [...Array(10).fill(0), ...Array(10).fill(2), ...Array(3).fill(1)];
+  const mu = 1;
+  const sigma = Math.sqrt(20 / 22);
+  const x = mu + 2 * (sigma + SAHM_Z_EPSILON);
+  const delivered = scoreSahmFromUnemployment(
+    [],
+    [...hist.map((value, i) => ({ date: months(23)[i].date, value })), { date: "2001-12-01", value: x }],
+  );
+  check(
+    "a delivered realtime series is z-scored when unemployment is empty",
+    delivered.controlOk === false && delivered.score.backup !== true && delivered.score.available === true && delivered.score.raw === 4 && delivered.score.s === 100,
+    `raw=${delivered.score.raw}`,
+  );
+
+  const spiked = months(60, 4, "2015-01-01").map((point, i, all) => i >= all.length - 6 ? { ...point, value: 10 } : point);
+  const spikedLevels = sahmLevelsFromUnemployment(spiked).filter((point): point is FredPoint => point.value != null);
+  const counterfactual = scoreSahmLevels(spikedLevels);
+  const backupOnly = scoreSahmFromUnemployment(spiked, []);
+  const backupCard = sahmIndicatorFromScore(backupOnly.score);
+  check(
+    "the same spike would be raw +4 if it were the scored series",
+    counterfactual.available === true && counterfactual.raw === 4 && counterfactual.level === 6,
+    `raw=${counterfactual.raw} level=${counterfactual.level}`,
+  );
+  check(
+    "the unemployment backup keeps that level and does not invent the z",
+    backupOnly.score.backup === true
+      && backupOnly.score.available === false
+      && backupOnly.score.raw === 0
+      && backupOnly.score.s === 50
+      && backupOnly.score.level === 6
+      && backupOnly.score.triggered === true
+      && backupCard.value === "6.00 pp"
+      && backupCard.rawScore === 0
+      && backupCard.zone.includes("eigener Backup")
+      && backupCard.zone.includes("Claudia")
+      && backupCard.zone.includes("2019-12"),
+    backupCard.zone,
+  );
 }
 
-console.log("\n=== EZ Sahm is the same unemployment formula, no ticker ===");
+console.log("\n=== unemployment formula, no series id ===");
 {
-  const ezUnemployment = months(40, 7.5, "2010-01-01");
-  const ezLevels = sahmLevelsFromUnemployment(ezUnemployment).filter(point => point.value != null);
-  const ez = scoreSahmFromUnemployment(ezUnemployment, ezLevels.slice(-12).map(point => ({ date: point.date, value: point.value as number })));
-  check("EZ score comes from the unemployment path alone", ez.controlOk && ez.score.level === 0 && ez.score.raw === 0, `level=${ez.score.level}`);
+  const unemployment = months(40, 7.5, "2010-01-01");
+  const levels = sahmLevelsFromUnemployment(unemployment).filter(point => point.value != null);
+  check("the formula builds S = 0 from the unemployment path alone", levels.length >= SAHM_MIN_MONTHS && levels.every(point => point.value === 0), `n=${levels.length}`);
   const math = readFileSync(new URL("../server/recession-sahm.ts", import.meta.url), "utf8");
   check("the Sahm formula module has no series id", !/["'](UNRATE|SAHMREALTIME|SAHM|une_rt_m|LRUNTTTTJPM156S)["']/.test(math));
 }
@@ -169,18 +242,64 @@ console.log("\n=== fixture: last 12 SAHMREALTIME months, k=0..11 ===");
     ["2026-02-01", 0.27], ["2026-03-01", 0.20], ["2026-04-01", 0.13], ["2026-05-01", 0.10],
     ["2026-06-01", 0.07], ["2026-07-01", -0.03], ["2026-08-01", -0.07], ["2026-09-01", 0.00],
   ].map(([date, value]) => ({ date: date as string, value: value as number }));
-  const evaluated = scoreSahmFromUnemployment(unrate, realtime);
+  const withBlankOctober = [
+    realtime[0],
+    { date: "2025-10-01", value: null },
+    ...realtime.slice(1),
+  ];
+  const evaluated = scoreSahmFromUnemployment(unrate, withBlankOctober);
   const sep = evaluated.control.find(row => row.date === "2025-09-01");
   const aug = evaluated.control.find(row => row.date === "2026-08-01");
   check("2025-09 S is built and within 0.02 of SAHMREALTIME", sep?.computed != null && Math.abs(sep.computed - (7 / 30)) < 1e-9 && sep.absDiff != null && sep.absDiff <= 0.02, `S=${sep?.computed} diff=${sep?.absDiff}`);
   check("2026-08 cannot be built because UNRATE 2025-10 is blank", aug?.computed == null && aug?.fred === -0.07);
   const blanks = evaluated.control.filter(row => row.computed == null);
   check("11 of the last 12 control months are blank under k=0..11", blanks.length === 11, blanks.map(row => row.date).join(","));
-  check("blank control fails closed at slot score 50, raw 0, and keeps the last defined S", evaluated.controlOk === false && evaluated.score.available === false && evaluated.score.s === 50 && evaluated.score.raw === 0 && evaluated.score.level != null && Math.abs(evaluated.score.level - (7 / 30)) < 1e-9, `level=${evaluated.score.level}`);
+  check("October 2025 is dropped and is not the 0.25 imputation", !cleanFredMonthly(withBlankOctober).some(point => point.date.startsWith("2025-10")) && !withBlankOctober.some(point => point.value === 0.25));
   const card = sahmIndicatorFromScore(evaluated.score);
-  check("the card shows that S and names the UNRATE gap", card.available === false && card.rawScore === 0 && card.value === "0.23 pp" && card.zone.includes("2025-10") && card.zone.includes("2025-09") && card.zone !== "N/A" && card.rawScore !== -3 && card.rawScore !== 4, card.zone);
+  check(
+    "the card shows the latest realtime print, not the September S and not 0.25",
+    evaluated.controlOk === false
+      && evaluated.score.backup !== true
+      && evaluated.score.level === 0
+      && evaluated.score.triggered === false
+      && evaluated.score.raw === 0
+      && card.value === "0.00 pp"
+      && card.zone === "Normal (<0.5pp)"
+      && card.value !== "0.23 pp"
+      && card.value !== "0.25 pp"
+      && Math.abs((evaluated.score.level ?? 0) - (0.23 + 0.43) / 2) > 0.02,
+    `value=${card.value} zone=${card.zone} level=${evaluated.score.level}`,
+  );
+  const backup = scoreSahmFromUnemployment(unrate, []);
+  const backupCard = sahmIndicatorFromScore(backup.score);
+  check(
+    "without realtime the card is the September 2025 UNRATE S and says it is the backup",
+    backup.score.backup === true
+      && backup.score.available === false
+      && backup.score.s === 50
+      && backup.score.raw === 0
+      && backup.score.triggered === false
+      && backup.score.level != null
+      && Math.abs(backup.score.level - (7 / 30)) < 1e-9
+      && backupCard.value === "0.23 pp"
+      && backupCard.value !== "0.25 pp"
+      && backupCard.rawScore === 0
+      && backupCard.zone.includes("eigener Backup")
+      && backupCard.zone.includes("2025-09")
+      && backupCard.zone.includes("Claudia"),
+    backupCard.zone,
+  );
   const route = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
+  const sahmFn = route.slice(route.indexOf("function scoreSahm"), route.indexOf("function scoreYieldCurve"));
   check("the live slot fetches UNRATE and SAHMREALTIME", route.includes('fetchFredRows("UNRATE"') && route.includes('fetchFredRows("SAHMREALTIME"') && route.includes("scoreSahmFromUnemployment"));
+  check(
+    "the card source is SAHMREALTIME unless the score is the unemployment backup",
+    sahmFn.includes('evaluated.score.backup ? "FRED UNRATE" : "FRED SAHMREALTIME"'),
+  );
+  check(
+    "the Sahm slot does not fill from SAHMCURRENT, FMP, or Google Trends",
+    !sahmFn.includes("SAHMCURRENT") && !/fmp|Trends|google/i.test(sahmFn),
+  );
 }
 
 console.log(`\n${total - failed}/${total} checks passed.`);
