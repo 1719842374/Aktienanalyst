@@ -12,8 +12,9 @@ import {
 export function ScoringRules() {
   const recessionRules = [
     { name: "Sahm-Regel (s(z), 0,50 pp nur Label)", scorePositive: "−4 bis +4", scoreNegative: "", weight: "×1", max: "4" },
-    { name: "Inv. Zinskurve (10Y-2Y <0)", scorePositive: "+4", scoreNegative: "-3", weight: "×1", max: "4" },
+    { name: "Zinskurve T10Y2Y (0 ist nur das Label)", scorePositive: "s(z) 20J", scoreNegative: "", weight: "×1", max: "4" },
     { name: "Aktivität (IP / Auslastung)", scorePositive: "kein Score", scoreNegative: "", weight: "—", max: "0" },
+    { name: "Weekly Nowcast (WEI)", scorePositive: "kein Score", scoreNegative: "", weight: "—", max: "0" },
     { name: "Durable Goods (YoY >-5%)", scorePositive: "+3", scoreNegative: "-2", weight: "×1", max: "3" },
     { name: "M2 Wachstum (Zonen)", scorePositive: "+3 bis -2", scoreNegative: "", weight: "×1", max: "3" },
     { name: "Kreditspreads BAA-Trs (Zonen)", scorePositive: "+3 bis -2", scoreNegative: "", weight: "×1", max: "3" },
@@ -23,14 +24,10 @@ export function ScoringRules() {
   const correctionRules = [
     { name: "Buffett Ind. (TMC/GDP)", scorePositive: "+8 bis -8", scoreNegative: "", weight: "×2", max: "16" },
     { name: "Shiller CAPE", scorePositive: "+7 bis -9", scoreNegative: "", weight: "×1.8", max: "12.6" },
-    { name: "Margin Debt", scorePositive: "+4", scoreNegative: "-2", weight: "×1", max: "4" },
-    { name: "Google Trends \"Recession\"", scorePositive: "+7 bis -6.8", scoreNegative: "", weight: "×1.7", max: "11.9" },
+    { name: "Margin Debt (YoY vs 5J-z, Mrd. $)", scorePositive: "s(z5y)", scoreNegative: "", weight: "×1", max: "4" },
+    { name: "Google Trends \"Recession\"", scorePositive: "+7 bis -6.8", scoreNegative: "N/A = 0", weight: "×1.7", max: "11.9" },
     { name: "VIX", scorePositive: "+4 bis -3", scoreNegative: "", weight: "×1", max: "4" },
-    { name: "Advance-Decline-Line", scorePositive: "+3 bis -2", scoreNegative: "", weight: "×1", max: "3" },
-    { name: "CNN Fear & Greed", scorePositive: "+6 bis -8", scoreNegative: "", weight: "×1.6", max: "9.6" },
-    { name: "AAII Sentiment", scorePositive: "+4", scoreNegative: "-4", weight: "×1", max: "4" },
-    { name: "CBOE Put/Call Ratio", scorePositive: "+4", scoreNegative: "-4", weight: "×1", max: "4" },
-    { name: "Investors Intelligence", scorePositive: "+4", scoreNegative: "-4", weight: "×1", max: "4" },
+    { name: "Crowd: CNN oder ein VIX-Proxy", scorePositive: "ein Bein", scoreNegative: "", weight: "×1.6 / ×1", max: "9.6 / 4" },
   ];
 
   return (
@@ -38,7 +35,7 @@ export function ScoringRules() {
       <div>
         <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center gap-2">
           <TrendingDown className="w-3.5 h-3.5 text-red-500" />
-          Rezessions-Indikatoren (7)
+          Rezessions-Indikatoren ({recessionRules.length})
         </h3>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -67,7 +64,7 @@ export function ScoringRules() {
       <div>
         <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center gap-2">
           <BarChart3 className="w-3.5 h-3.5 text-orange-500" />
-          Korrektur-Indikatoren (10)
+          Korrektur-Indikatoren ({correctionRules.length})
         </h3>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -107,8 +104,9 @@ export function ScoringZones() {
     { indicator: "Google (0-100)", zones: ">75: +11.9 | 60-75: +6.8 | 30-60: 0 | <30: -6.8" },
     { indicator: "Buffett", zones: ">200%: +16 | 165-200%: +10 | 140-165%: +4 | <140%: -8" },
     { indicator: "Shiller CAPE", zones: ">35: +12.6 | 30-35: +5.4 | 15-30: 0 | <15: -9" },
-    { indicator: "CNN F&G", zones: ">75: +9.6 | 55-75: +3.2 | 45-55: 0 | 25-45: -3.2 | <25: -8" },
-    { indicator: "AD-Line", zones: "Divergenz: +3 | Schwäche: 0 | Parallel: -2" },
+    { indicator: "CNN F&G", zones: ">75: +9.6 | 55-75: +3.2 | 45-55: 0 | 25-45: -3.2 | <25: -8. Sonst ein VIX-Proxy, Gewicht 1" },
+    { indicator: "Zinskurve", zones: "s(z) über 20J von −T10Y2Y. <0 bleibt nur das Label. Zusatz T10Y3M und 12M-Δ" },
+    { indicator: "Margin", zones: "FINRA Debit in Mrd. $. Score aus YoY gegen 5J-z. $2026T zählt nicht" },
   ];
 
   return (

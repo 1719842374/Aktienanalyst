@@ -23,20 +23,19 @@ export function WelcomeScreen({ onStart }: { onStart: () => void }) {
         <div>
           <h1 className="text-xl font-semibold">Rezessions- & Korrektur-Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-            Objektive Analyse basierend auf 17 definierten Indikatoren.
-            Berechnet Wahrscheinlichkeiten für Rezession und Marktkorrektur
-            über 3, 6 und 12 Monate.
+            Zwei Bücher: Rezession der Realwirtschaft und Korrektur der Finanzmärkte.
+            Berechnet Wahrscheinlichkeiten über 3, 6 und 12 Monate.
           </p>
         </div>
 
         <div className="grid grid-cols-2 gap-3 text-left text-xs">
           <div className="p-3 rounded-lg bg-card border border-card-border">
-            <div className="font-semibold text-foreground mb-1">7 Rezessions-Indikatoren</div>
-            <div className="text-muted-foreground">Sahm, Zinskurve, Aktivität (IP), Durable Goods, M2, Kredit, Konsum</div>
+            <div className="font-semibold text-foreground mb-1">Rezessions-Buch</div>
+            <div className="text-muted-foreground">Sahm, Zinskurve, Aktivität (IP), WEI, Durable Goods, M2, Kredit, Konsum</div>
           </div>
           <div className="p-3 rounded-lg bg-card border border-card-border">
-            <div className="font-semibold text-foreground mb-1">10 Korrektur-Indikatoren</div>
-            <div className="text-muted-foreground">Buffett, CAPE, VIX, CNN F&G, AAII, Put/Call, AD-Line u.a.</div>
+            <div className="font-semibold text-foreground mb-1">Korrektur-Buch</div>
+            <div className="text-muted-foreground">Buffett, CAPE, Margin, VIX und ein Crowd-Bein (CNN oder VIX-Proxy)</div>
           </div>
         </div>
 
@@ -62,8 +61,8 @@ export function LoadingScreen() {
       <div className="text-center space-y-4">
         <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto" />
         <div>
-          <div className="text-sm font-medium">Analysiere 17 Indikatoren...</div>
-          <div className="text-xs text-muted-foreground mt-1">FRED, CNN, AAII und weitere Quellen werden abgefragt</div>
+          <div className="text-sm font-medium">Analysiere die beiden Bücher...</div>
+          <div className="text-xs text-muted-foreground mt-1">FRED, CNN, Shiller und FINRA werden abgefragt</div>
         </div>
       </div>
     </div>

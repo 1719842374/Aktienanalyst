@@ -12,6 +12,8 @@ export interface IndicatorResult {
   source: string;
   description: string;
   available?: boolean;
+  /** Set when the crowd leg is the VIX substitute or a crypto print, not live CNN. */
+  proxy?: boolean;
 }
 
 export interface SubgroupResult {

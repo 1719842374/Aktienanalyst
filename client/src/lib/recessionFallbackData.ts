@@ -128,14 +128,15 @@ export const RECESSION_FALLBACK_DATA = {
       "name": "Margin Debt",
       "group": "correction",
       "subgroup": "valuation",
-      "value": "$2025T",
-      "rawScore": 4,
-      "weight": 1,
-      "weightedScore": 4,
-      "maxWeighted": 4,
-      "zone": "Erhöht / Überbewertet",
-      "source": "currentmarketvaluation.com",
-      "description": "NYSE Margin Debt (Wertpapierkredite)"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "FINRA",
+      "description": "NYSE Margin Debt aus der FINRA-Statistik, Einheit Mrd. $",
+      "available": false
     },
     {
       "name": "Google Trends \"Recession\"",
@@ -167,14 +168,15 @@ export const RECESSION_FALLBACK_DATA = {
       "name": "Advance-Decline-Line",
       "group": "correction",
       "subgroup": "sentiment",
-      "value": "Parallel",
-      "rawScore": -2,
-      "weight": 1,
-      "weightedScore": -2,
-      "maxWeighted": 3,
-      "zone": "Parallel (AD↑ ≥ Index↑)",
-      "source": "NYSE / Finance API",
-      "description": "NYSE Advance-Decline-Linie vs. S&P 500 Divergenz"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "NYSE",
+      "description": "NYSE Advance-Decline-Linie vs. S&P 500 Divergenz",
+      "available": false
     },
     {
       "name": "CNN Fear & Greed",
@@ -193,40 +195,43 @@ export const RECESSION_FALLBACK_DATA = {
       "name": "AAII Sentiment",
       "group": "correction",
       "subgroup": "sentiment",
-      "value": "Bullish (Proxy)",
-      "rawScore": 2,
-      "weight": 1,
-      "weightedScore": 2,
-      "maxWeighted": 4,
-      "zone": "Bullish (Sentiment-Proxy)",
-      "source": "Finance API (Sentiment-Proxy)",
-      "description": "American Association of Individual Investors Sentiment Survey"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "AAII",
+      "description": "American Association of Individual Investors Sentiment Survey",
+      "available": false
     },
     {
       "name": "CBOE Put/Call Ratio",
       "group": "correction",
       "subgroup": "sentiment",
-      "value": "Niedrig (Proxy)",
-      "rawScore": 2,
-      "weight": 1,
-      "weightedScore": 2,
-      "maxWeighted": 4,
-      "zone": "Niedrig (Sentiment-Proxy: Bullish)",
-      "source": "Finance API (Sentiment-Proxy)",
-      "description": "Equity Put/Call Ratio (Absicherungsindikator)"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "CBOE",
+      "description": "Equity Put/Call Ratio (Absicherungsindikator)",
+      "available": false
     },
     {
       "name": "Investors Intelligence",
       "group": "correction",
       "subgroup": "sentiment",
-      "value": "Bullish (Proxy)",
-      "rawScore": 2,
-      "weight": 1,
-      "weightedScore": 2,
-      "maxWeighted": 4,
-      "zone": "Optimistisch (Sentiment-Proxy)",
-      "source": "Finance API (Sentiment-Proxy)",
-      "description": "Newsletter-Berater Bull/Bear Ratio"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "Advisor Perspectives",
+      "description": "Newsletter-Berater Bull/Bear Ratio",
+      "available": false
     }
   ],
   "subgroups": [
@@ -293,10 +298,10 @@ export const RECESSION_FALLBACK_DATA = {
         "CBOE Put/Call Ratio",
         "Investors Intelligence"
       ],
-      "netScore": 7.2,
-      "maxScore": 28.6,
-      "probability": 65,
-      "formula": "50% + (7.2/28.6) × 50% = 62.6% → 65%"
+      "netScore": 3.2,
+      "maxScore": 13.6,
+      "probability": 60,
+      "formula": "50% + (3.2/13.6) × 50% = 61.8% → 60%"
     },
     {
       "name": "correction_full",
@@ -314,10 +319,10 @@ export const RECESSION_FALLBACK_DATA = {
         "Margin Debt",
         "Google Trends \"Recession\""
       ],
-      "netScore": 39.8,
-      "maxScore": 73.1,
-      "probability": 75,
-      "formula": "50% + (39.8/73.1) × 50% = 77.2% → 75%"
+      "netScore": 31.8,
+      "maxScore": 54.1,
+      "probability": 80,
+      "formula": "50% + (31.8/54.1) × 50% = 79.4% → 80%"
     }
   ],
   "nyFedValue": 0.48,
@@ -325,22 +330,22 @@ export const RECESSION_FALLBACK_DATA = {
   "topDrivers": [
     "Buffett Indikator (TMC/GDP): +16 (Extrem überbewertet (230% >200%))",
     "Shiller CAPE: +12.6 (Extrem hoch (40.4 >35))",
-    "Margin Debt: +4 (Erhöht / Überbewertet)"
+    "CNN Fear & Greed: +3.2 (Greed (55-75))"
   ],
   "interpretation": "Hohes Risiko: Mehrere Indikatoren signalisieren erhöhte Rezessions- oder Korrekturwahrscheinlichkeit. Defensivere Positionierung empfohlen.",
   "fazit": {
-    "summary": "Gesamtbewertung: Hohes Risiko. Rezession 12M: 25%, Korrektur 12M: 75%. Die Kombination aus historisch extremen Bewertungen (Buffett 230%, CAPE 40.4) und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, das defensives Portfoliomanagement erfordert.",
+    "summary": "Gesamtbewertung: Hohes Risiko. Rezession 12M: 25%, Korrektur 12M: 80%. Die Kombination aus historisch extremen Bewertungen (Buffett 230%, CAPE 40.4) und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, das defensives Portfoliomanagement erfordert.",
     "riskLevel": "Hoch",
     "sections": [
       {
         "title": "Quantitative Bewertung",
         "emoji": "📊",
-        "text": "Von 17 Indikatoren signalisieren 8 ein erhöhtes Risiko (bearish), 4 sind positiv (bullish) und 5 neutral. Die Rezessionswahrscheinlichkeit liegt bei 15% (3M), 25% (6M) und 25% (12M). Die Korrekturwahrscheinlichkeit beträgt 65% (Sentiment, 3-6M) und 75% (Vollständig, 12M). Die hohe Korrekturwahrscheinlichkeit von 75% wird maßgeblich durch extreme Bewertungsniveaus getrieben: Buffett Indikator (TMC/GDP): +16 (Extrem überbewertet (230% >200%)); Shiller CAPE: +12.6 (Extrem hoch (40.4 >35)); Margin Debt: +4 (Erhöht / Überbewertet)."
+        "text": "Von 17 Indikatoren signalisieren 4 ein erhöhtes Risiko (bearish), 3 sind positiv (bullish) und 10 neutral. Die Rezessionswahrscheinlichkeit liegt bei 15% (3M), 25% (6M) und 25% (12M). Die Korrekturwahrscheinlichkeit beträgt 60% (Sentiment, 3-6M) und 80% (Vollständig, 12M). Die hohe Korrekturwahrscheinlichkeit von 80% wird maßgeblich durch extreme Bewertungsniveaus getrieben: Buffett Indikator (TMC/GDP): +16 (Extrem überbewertet (230% >200%)); Shiller CAPE: +12.6 (Extrem hoch (40.4 >35)); CNN Fear & Greed: +3.2 (Greed (55-75))."
       },
       {
         "title": "Bewertungsrisiko",
         "emoji": "⚠️",
-        "text": "Der Buffett-Indikator steht bei 230% — das höchste Niveau seit der Dotcom-Blase. Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. Das Shiller CAPE-Ratio von 40.4 liegt über dem Durchschnitt der letzten 140 Jahre (ca. 17) und signalisiert, dass zukünftige Aktienrenditen (10J) mit hoher Wahrscheinlichkeit unterdurchschnittlich ausfallen. Die NYSE Margin Debt ($2025T) zeigt erhöhte Hebelwirkung im Markt — ein klassischer Vorlauf-Indikator für abrupte Sell-Offs."
+        "text": "Der Buffett-Indikator steht bei 230% — das höchste Niveau seit der Dotcom-Blase. Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. Das Shiller CAPE-Ratio von 40.4 liegt über dem Durchschnitt der letzten 140 Jahre (ca. 17) und signalisiert, dass zukünftige Aktienrenditen (10J) mit hoher Wahrscheinlichkeit unterdurchschnittlich ausfallen."
       },
       {
         "title": "Private Credit & Systemisches Risiko",
@@ -350,7 +355,7 @@ export const RECESSION_FALLBACK_DATA = {
       {
         "title": "Handlungsempfehlung",
         "emoji": "🎯",
-        "text": "P_korr12 75%, P_rez12 25%: Beta/Duration runter; kein volles Rezessions-Portfolio"
+        "text": "P_korr12 80%, P_rez12 25%: Beta/Duration runter; kein volles Rezessions-Portfolio"
       }
     ]
   },

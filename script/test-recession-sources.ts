@@ -12,12 +12,27 @@ import {
   activityIndicator,
   anchoredRecessionProbability,
   blendWithNyFedAnchor,
+  briefingEssayAllowed,
+  buffettReading,
+  capeReading,
+  latestShillerCape,
   correctionAction,
+  creditReading,
+  crowdReading,
+  csiReading,
+  durableReading,
+  googleReading,
+  m2Reading,
+  marginDebtReading,
   nyFedAnchorPct,
   oilShockFromZ,
+  privateCreditEssay,
   probabilityFromNet,
   recessionAsOf,
   scoredTotals,
+  vixReading,
+  weiReading,
+  yieldCurveReading,
   yoyPercent,
 } from "../server/recession";
 import { RECESSION_FALLBACK_DATA } from "../client/src/lib/recessionFallbackData";
@@ -171,6 +186,144 @@ console.log("\n=== Fallback snapshot follows the same rules ===");
   const action = fb.fazit?.sections.find(s => s.title === "Handlungsempfehlung")?.text ?? "";
   check("fallback action is the two-book branch", action.includes("Beta/Duration runter") && !action.includes("Goldallokation"));
   check("fallback summary still says Hohes Risiko", String(fb.fazit?.summary).includes("Hohes Risiko"));
+}
+
+console.log("\n=== Kurve: s(z) über 20J, 0 ist nur das Label ===");
+{
+  const flat = (n: number, value: number) => Array.from({ length: n }, (_, i) => ({
+    date: `2000-${String((i % 12) + 1).padStart(2, "0")}-01`.replace(
+      /^(\d{4})/,
+      String(2000 + Math.floor(i / 12)),
+    ),
+    value,
+  }));
+  const normal = yieldCurveReading(flat(24, 0.4), null);
+  check("a flat positive curve is not the old −3", normal.available !== false && normal.rawScore === 0, `raw=${normal.rawScore}`);
+  check("zero is a label on a positive curve", normal.zone.includes("Normal"));
+  const inverted = yieldCurveReading(flat(24, -0.2), -0.15);
+  check("a flat inversion is not the old +4", inverted.rawScore === 0 && inverted.maxWeighted === 4, `raw=${inverted.rawScore}`);
+  check("zero stays the inversion label", inverted.zone.includes("Invertiert"));
+  check("T10Y3M is shown beside the 10Y-2Y", inverted.value.includes("T10Y3M -0.15%"), inverted.value);
+  const short = yieldCurveReading(flat(23, -0.2), null);
+  check("short curve history is not a regime", short.available === false && short.rawScore === 0 && short.maxWeighted === 0);
+  const stress = flat(24, 1);
+  stress[stress.length - 1] = { ...stress[stress.length - 1], value: -2 };
+  const stressed = yieldCurveReading(stress, null);
+  check("an unusually low curve raises the recession score", stressed.rawScore === 4, `raw=${stressed.rawScore}`);
+  const steep = flat(24, 1);
+  steep[steep.length - 1] = { ...steep[steep.length - 1], value: 3 };
+  check("an unusually high curve lowers the recession score", yieldCurveReading(steep, null).rawScore === -4);
+  const delta = flat(24, 0.5);
+  delta[delta.length - 1] = { ...delta[delta.length - 1], value: 0.1 };
+  const moved = yieldCurveReading(delta, null);
+  check("the slot shows the level and the 12M change", moved.value.includes("T10Y2Y 0.10%") && moved.value.includes("12M Δ -0.40 pp"), moved.value);
+  check("a missing 3M tenor is not invented", !moved.value.includes("T10Y3M"));
+}
+
+console.log("\n=== Missing readings add neither net nor max ===");
+{
+  for (const slot of [durableReading(Number.NaN), m2Reading(Number.NaN), creditReading(Number.NaN), csiReading(Number.NaN), vixReading(Number.NaN), buffettReading(Number.NaN), capeReading(Number.NaN), googleReading(null)]) {
+    check(`${slot.name} N/A is withheld`, slot.available === false && slot.rawScore === 0 && slot.weightedScore === 0 && slot.maxWeighted === 0, slot.name);
+  }
+  check("durable below −5% still scores", durableReading(-6).rawScore === 3 && durableReading(-6).maxWeighted === 3);
+  check("CSI under 60 still scores", csiReading(50).rawScore === 3);
+  check("VIX above 30 still scores", vixReading(31).rawScore === 4);
+  check("Buffett above 200% still scores", buffettReading(230).rawScore === 8 && buffettReading(230).weightedScore === 16);
+  check("CAPE above 35 still scores", capeReading(40).rawScore === 7);
+  check(
+    "Shiller CAPE is the last numeric CAPE cell",
+    latestShillerCape([
+      ["Date", "P", "CAPE"],
+      [2023.08, 1, 30.47],
+      [2023.09, 1, 30.81],
+      ["Sept price is a note", "", "NA"],
+    ]) === 30.81,
+  );
+  check(
+    "the P/E10 CAPE wins over the excess-yield column that is also named CAPE",
+    latestShillerCape([
+      ["", "Excess", "CAPE", "P/E10 or", "CAPE"],
+      [2023.09, "", 0.0187, "", 30.81],
+    ]) === 30.81,
+  );
+  check("Google without a print is not in the max", googleReading(null).maxWeighted === 0);
+  check("a real Google print still scores", googleReading(80).rawScore === 7 && googleReading(80).maxWeighted === 11.9);
+  const wei = weiReading(2.4);
+  check("WEI is a leading reading without a score", wei.value.includes("2.4") && wei.available === false && wei.maxWeighted === 0 && wei.source.includes("WEI"));
+  check("missing WEI is N/A", weiReading(null).value === "N/A" && weiReading(null).available === false);
+}
+
+console.log("\n=== Sentiment is VIX plus one crowd leg ===");
+{
+  const cnn = crowdReading(65, 18, false);
+  check("a live CNN print is the crowd leg", cnn.name === "CNN Fear & Greed" && cnn.proxy !== true && cnn.weight === 1.6, cnn.name);
+  const proxy = crowdReading(20, 12, true);
+  check("crypto does not keep the CNN score", proxy.name === "VIX-Proxy" && proxy.proxy === true && proxy.weight === 1 && !proxy.value.includes("20"), `${proxy.name} ${proxy.value}`);
+  const vixOnly = crowdReading(null, 12, false);
+  check("without CNN there is one VIX proxy", vixOnly.name === "VIX-Proxy" && vixOnly.weight === 1 && vixOnly.maxWeighted === 4);
+  const none = crowdReading(null, null, false);
+  check("no crowd print is withheld", none.available === false && none.maxWeighted === 0);
+  const server = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
+  check("AAII, put/call and II are not scored again", !server.includes("scoreAAII()") && !server.includes("scorePutCallRatio()") && !server.includes("scoreInvestorsIntelligence()"));
+  check("the AD default of −2 is gone", !server.includes("default: parallel/healthy") && !server.includes("scoreADLine()"));
+}
+
+console.log("\n=== FINRA margin is billions and a 5Y z, never $2026T ===");
+{
+  const levels = Array.from({ length: 24 }, () => 1022548);
+  levels[levels.length - 1] = 1417225;
+  const points = levels.map((debitMillions, i) => ({ date: `2024-${String((i % 12) + 1).padStart(2, "0")}-01`, debitMillions }));
+  points.forEach((p, i) => {
+    const year = 2024 + Math.floor(i / 12);
+    const month = (i % 12) + 1;
+    p.date = `${year}-${String(month).padStart(2, "0")}-01`;
+  });
+  const margin = marginDebtReading(points);
+  check("Jul-26 debit is billions", margin.value.includes("1417.2 Mrd. $"), margin.value);
+  check("YoY vs Jul-25 is +38.6%", margin.value.includes("YoY +38.6%"), margin.value);
+  check("the year is not a trillions token", !/\$\d{4}T/i.test(margin.value) && !margin.value.toLowerCase().includes("overvalued"));
+  check("the score uses the 5Y z", margin.rawScore > 0 && margin.rawScore <= 4 && margin.maxWeighted === 4, `raw=${margin.rawScore}`);
+  const thin = Array.from({ length: 13 }, (_, i) => ({ date: `2025-${String(i + 1).padStart(2, "0")}-01`, debitMillions: i === 12 ? 1100000 : 1000000 }));
+  const partial = marginDebtReading(thin);
+  check("YoY without a 5Y z is shown and not scored", partial.available === false && partial.maxWeighted === 0 && partial.value.includes("Mrd. $") && !/\$\d{4}T/i.test(partial.value));
+  const server = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
+  check("Buffett reads the FRED ratio", server.includes("DDDM01USA156NWDB") && !server.includes('content.includes("overvalued")'));
+  const csiFn = server.slice(server.indexOf("function scoreConsumerConfidence"), server.indexOf("function scoreBuffett"));
+  check("CSI asks UMCSENT before the macro fallback", csiFn.indexOf("UMCSENT") !== -1 && csiFn.indexOf("UMCSENT") < csiFn.indexOf("getMacroValue"));
+}
+
+console.log("\n=== Geo/PC essay only while the briefing cache is inside 30 days ===");
+{
+  const now = Date.parse("2026-10-04T00:00:00.000Z");
+  const day = 24 * 60 * 60 * 1000;
+  check("29 days is still the essay", briefingEssayAllowed(now - 29 * day, now) === true);
+  check("30 days is still the essay", briefingEssayAllowed(now - 30 * day, now) === true);
+  check("31 days turns the essay off", briefingEssayAllowed(now - 31 * day, now) === false);
+  check("a missing updated_at turns the essay off", briefingEssayAllowed(null, now) === false);
+  const on = privateCreditEssay(true);
+  const off = privateCreditEssay(false);
+  check("a fresh cache keeps the private-credit section", on?.title === "Private Credit & Systemisches Risiko" && (on?.text.length ?? 0) > 40);
+  check("a stale cache drops the section", off === null);
+}
+
+console.log("\n=== Fallback no longer scores the forbidden defaults ===");
+{
+  const fb = RECESSION_FALLBACK_DATA as {
+    indicators: Array<{ name: string; value: string; available?: boolean; weightedScore: number; maxWeighted: number }>;
+    fazit?: { sections: Array<{ title: string; text: string }> };
+  };
+  const margin = fb.indicators.find(i => i.name === "Margin Debt");
+  check("fallback margin is not a year-trillions token", margin != null && !/\$\d{4}T/i.test(margin.value));
+  const forbidden = ["Advance-Decline-Line", "AAII Sentiment", "CBOE Put/Call Ratio", "Investors Intelligence"];
+  check(
+    "fallback does not score AD or the triple proxy",
+    forbidden.every(name => {
+      const row = fb.indicators.find(i => i.name === name);
+      return row == null || (row.available === false && row.weightedScore === 0 && row.maxWeighted === 0);
+    }),
+  );
+  const scoredSentiment = fb.indicators.filter(i => i.name === "VIX" || i.name === "CNN Fear & Greed" || i.name === "VIX-Proxy");
+  check("fallback crowd is one leg beside VIX", scoredSentiment.length <= 2);
 }
 
 console.log(`\n${total - failed}/${total} Checks grün.`);

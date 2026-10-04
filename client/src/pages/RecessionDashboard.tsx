@@ -104,7 +104,7 @@ export default function RecessionDashboard() {
             <SectionCard number={4} title="Scoring-Zonen">
               <ScoringZones />
             </SectionCard>
-            <SectionCard number={5} title="Indikatoren-Tabelle (17 Indikatoren)">
+            <SectionCard number={5} title="Indikatoren-Tabelle">
               <IndicatorTable indicators={data.indicators} />
               <SahmRegions regions={data.sahmRegions} />
             </SectionCard>

@@ -1,7 +1,12 @@
 import type { Express } from "express";
 import { execSync } from "child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { inflateRawSync } from "node:zlib";
+import * as XLSX from "xlsx";
 import { fetchMacroSnapshot } from "./fmp-macro";
 import { riskLevelPhrase } from "../shared/risk-level-label";
+import { marginYoYAndZ, parseFinraMarginSheetXml } from "../shared/recession-market-charts";
 import {
   euroAreaUnemploymentFromEurostat,
   sahmIndicatorFromScore,
@@ -12,6 +17,8 @@ import {
 } from "./recession-sahm";
 import { fetchBridge, shockGeopoliticsSection, type RecessionBridge } from "./recession-bridge";
 import { driverFazitSections, loadDriverAssessment, type DriverView } from "./recession-drivers";
+import { diskBriefingUpdatedAt } from "./disk-cache";
+import { sOfZ } from "./fiscal-frontend-math";
 
 // ============================================================
 // Generic Data Helpers
@@ -140,9 +147,11 @@ export interface IndicatorResult {
    * False: the slot is not in the net or the max.
    * Sahm sets this when fewer than 24 months are available.
    * The unemployment backup is scored with s(z) once that history exists.
-   * Absent on older slots, which stay scored.
+   * A missing print on any other slot does the same. Absent means the slot is scored.
    */
   available?: boolean;
+  /** Crypto Fear & Greed and the single VIX substitute are a flag, not a second CNN score. */
+  proxy?: boolean;
 }
 
 // ============================================================
@@ -263,20 +272,13 @@ function scoreJapanSahm(cosd: string): SahmRegionBoard {
   );
 }
 
-// 2. Inverted Yield Curve (FRED: T10Y2Y)
+// 2. Yield curve. s(z) over 20 years of T10Y2Y. The zero line is only the label.
+// T10Y3M is the extra tenor. The 12-month change is shown beside the level.
 function scoreYieldCurve(): IndicatorResult {
-  const val = getLatestFredValue("T10Y2Y");
-  const inverted = !isNaN(val) && val < 0;
-  const rawScore = inverted ? 4 : -3;
-  return {
-    name: "Inv. Zinskurve (10Y-2Y)",
-    group: "recession", subgroup: "coincident",
-    value: isNaN(val) ? "N/A" : `${val.toFixed(2)}%`,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 4,
-    zone: inverted ? "Invertiert (<0)" : "Normal (≥0)",
-    source: "FRED T10Y2Y",
-    description: "Spread zwischen 10-Jahres- und 2-Jahres-US-Staatsanleihen",
-  };
+  const rows = fetchFredRows("T10Y2Y", getDateYearsAgo(20));
+  const points = rows.flatMap(row => row.value == null ? [] : [{ date: row.date, value: row.value }]);
+  const t10y3m = getLatestFredValue("T10Y3M");
+  return yieldCurveReading(points, Number.isFinite(t10y3m) ? t10y3m : null);
 }
 
 // 3. Aktivität — FRED INDPRO YoY + TCU. The spec names the series and forbids
@@ -290,54 +292,12 @@ function scoreActivity(): IndicatorResult {
 
 // 4. Durable Goods Orders (YoY)
 function scoreDurableGoods(): IndicatorResult {
-  const obs = fetchFredSeries("DGORDER");
-  let yoy = NaN;
-  if (obs.length >= 13) {
-    const latest = obs[obs.length - 1].value;
-    const yearAgo = obs[obs.length - 13].value;
-    if (yearAgo !== 0) yoy = ((latest - yearAgo) / yearAgo) * 100;
-  }
-  const decline = !isNaN(yoy) && yoy < -5;
-  const rawScore = decline ? 3 : -2;
-  return {
-    name: "Durable Goods (YoY)",
-    group: "recession", subgroup: "leading",
-    value: isNaN(yoy) ? "N/A" : `${yoy.toFixed(1)}%`,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 3,
-    zone: decline ? "Starker Rückgang (>-5%)" : "Stabil",
-    source: "FRED DGORDER",
-    description: "Auftragseingang langlebige Güter, Jahr-über-Jahr",
-  };
+  return durableReading(yoyPercent(fetchFredSeries("DGORDER")));
 }
 
-// 5. M2 Money Supply Growth (YoY)
+// 5. M2 Money Supply Growth (YoY). A missing print is not a neutral regime.
 function scoreM2(): IndicatorResult {
-  const obs = fetchFredSeries("M2SL");
-  let yoy = NaN;
-  if (obs.length >= 13) {
-    const latest = obs[obs.length - 1].value;
-    const yearAgo = obs[obs.length - 13].value;
-    if (yearAgo !== 0) yoy = ((latest - yearAgo) / yearAgo) * 100;
-  }
-
-  let rawScore = 0;
-  let zone = "Neutral (4-10%)";
-  if (!isNaN(yoy)) {
-    if (yoy < 0) { rawScore = 3; zone = "Kontraktion (<0%)"; }
-    else if (yoy < 2) { rawScore = 3; zone = "Sehr niedrig (<2%)"; }
-    else if (yoy < 4) { rawScore = 1; zone = "Niedrig (2-4%)"; }
-    else if (yoy <= 10) { rawScore = 0; zone = "Normal (4-10%)"; }
-    else { rawScore = -2; zone = "Expansiv (>10%)"; }
-  }
-
-  return {
-    name: "M2 Geldmenge (YoY)",
-    group: "recession", subgroup: "leading",
-    value: isNaN(yoy) ? "N/A" : `${yoy.toFixed(1)}%`,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 3, zone,
-    source: "FRED M2SL",
-    description: "US M2-Geldmengenwachstum Jahr-über-Jahr",
-  };
+  return m2Reading(yoyPercent(fetchFredSeries("M2SL")));
 }
 
 // 6. Credit Spreads (BAA - 10Y Treasury)
@@ -350,187 +310,41 @@ function scoreCreditSpreads(): IndicatorResult {
     if (!isNaN(baa) && !isNaN(gs10)) val = baa - gs10;
   }
 
-  let rawScore = 0;
-  let zone = "Normal (1.5-2.0%)";
-  if (!isNaN(val)) {
-    if (val > 2.5) { rawScore = 3; zone = "Stress (>2.5%)"; }
-    else if (val >= 2.0) { rawScore = 2; zone = "Erhöht (2.0-2.5%)"; }
-    else if (val >= 1.5) { rawScore = 0; zone = "Normal (1.5-2.0%)"; }
-    else if (val >= 1.0) { rawScore = -1; zone = "Eng (1.0-1.5%)"; }
-    else { rawScore = -2; zone = "Sehr eng (<1.0%)"; }
-  }
-
-  return {
-    name: "Kreditspreads (BAA-Trs)",
-    group: "recession", subgroup: "leading",
-    value: isNaN(val) ? "N/A" : `${val.toFixed(2)}%`,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 3, zone,
-    source: "FRED BAA10Y",
-    description: "Moody's BAA Corporate Bond Spread über 10Y Treasury",
-  };
+  return creditReading(val);
 }
 
 // 7. Consumer Confidence (Michigan CSI)
 async function scoreConsumerConfidence(): Promise<IndicatorResult> {
-  // Primary: macro snapshot
-  let csi = NaN;
+  // FRED is the series. The macro snapshot is only the fallback.
+  let csi = getLatestFredValue("UMCSENT");
   let source = "FRED UMCSENT";
-  const macro = await getMacroValue(["Consumer Confidence"]);
-  if (macro) {
-    csi = macro.value;
-    source = "U of Michigan";
+  if (isNaN(csi)) {
+    const macro = await getMacroValue(["Consumer Confidence"]);
+    if (macro) {
+      csi = macro.value;
+      source = "U of Michigan";
+    }
   }
-  // Fallback: FRED
-  if (isNaN(csi)) csi = getLatestFredValue("UMCSENT");
-
-  const triggered = !isNaN(csi) && csi < 60;
-  const rawScore = triggered ? 3 : -2;
-  return {
-    name: "Konsumklima (CSI)",
-    group: "recession", subgroup: "full",
-    value: isNaN(csi) ? "N/A" : `${csi.toFixed(1)}`,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 3,
-    zone: triggered ? "Pessimistisch (<60)" : "Normal (≥60)",
-    source,
-    description: "University of Michigan Consumer Sentiment Index",
-  };
+  return csiReading(csi, source);
 }
 
 // ============================================================
-// CORRECTION INDICATORS (10)
+// CORRECTION INDICATORS
 // ============================================================
 
-// 8. Buffett Indicator (TMC/GDP) — CRITICAL: must be ~200%+ range
+// 8. Buffett Indicator — FRED market-cap / GDP. No page scrape.
 function scoreBuffett(): IndicatorResult {
-  let ratio = NaN;
-  let source = "currentmarketvaluation.com";
-
-  // PRIMARY: Scrape from currentmarketvaluation.com meta description
-  try {
-    const html = fetchUrl("https://www.currentmarketvaluation.com/models/buffett-indicator.php");
-    if (html) {
-      // Meta description contains: "calculate the Buffett Indicator as 230%"
-      const metaMatch = html.match(/calculate the Buffett Indicator as (\d{2,3})%/i);
-      if (metaMatch) {
-        ratio = parseFloat(metaMatch[1]);
-        console.log(`[RECESSION] Buffett from CMV meta: ${ratio}%`);
-      }
-      // Fallback: look for the value in page content
-      if (isNaN(ratio)) {
-        const altMatch = html.match(/Buffett Indicator.*?(\d{3})%/i);
-        if (altMatch) ratio = parseFloat(altMatch[1]);
-      }
-    }
-  } catch {}
-
-  // SECONDARY: GuruFocus
-  if (isNaN(ratio)) {
-    try {
-      const html = fetchUrl("https://www.gurufocus.com/stock-market-valuations.php");
-      if (html) {
-        const match = html.match(/(\d{3})%\s*(?:ratio|of GDP)/i);
-        if (match) { ratio = parseFloat(match[1]); source = "GuruFocus"; }
-      }
-    } catch {}
-  }
-
-  let rawScore = 0;
-  let zone = "N/A";
-  if (!isNaN(ratio)) {
-    if (ratio > 200) { rawScore = 8; zone = `Extrem überbewertet (${ratio.toFixed(0)}% >200%)`; }
-    else if (ratio >= 165) { rawScore = 5; zone = `Stark überbewertet (165-200%)`; }
-    else if (ratio >= 140) { rawScore = 2; zone = `Überbewertet (140-165%)`; }
-    else { rawScore = -4; zone = `Fair/unterbewertet (<140%)`; }
-  }
-
-  return {
-    name: "Buffett Indikator (TMC/GDP)",
-    group: "correction", subgroup: "valuation",
-    value: isNaN(ratio) ? "N/A" : `${ratio.toFixed(0)}%`,
-    rawScore, weight: 2, weightedScore: rawScore * 2, maxWeighted: 16, zone,
-    source,
-    description: "Gesamtmarktkapitalisierung / BIP Verhältnis",
-  };
+  return buffettReading(latestFred("DDDM01USA156NWDB", 40));
 }
 
-// 9. Shiller CAPE
-function scoreCAPE(): IndicatorResult {
-  let cape = NaN;
-  let source = "multpl.com";
-
-  // Primary: multpl.com
-  try {
-    const html = fetchUrl("https://www.multpl.com/shiller-pe");
-    if (html) {
-      const match = html.match(/Current\s+Shiller\s+PE\s+Ratio.*?(\d{1,3}\.\d{1,2})/is);
-      if (match) cape = parseFloat(match[1]);
-    }
-  } catch {}
-
-  // Fallback: currentmarketvaluation.com
-  if (isNaN(cape)) {
-    try {
-      const html = fetchUrl("https://www.currentmarketvaluation.com/models/price-earnings.php");
-      if (html) {
-        const match = html.match(/CAPE.*?(\d{2,3}\.\d)/i);
-        if (match) { cape = parseFloat(match[1]); source = "currentmarketvaluation.com"; }
-      }
-    } catch {}
-  }
-
-  let rawScore = 0;
-  let zone = "N/A";
-  if (!isNaN(cape)) {
-    if (cape > 35) { rawScore = 7; zone = `Extrem hoch (${cape.toFixed(1)} >35)`; }
-    else if (cape >= 30) { rawScore = 3; zone = `Hoch (30-35)`; }
-    else if (cape >= 15) { rawScore = 0; zone = `Normal (15-30)`; }
-    else { rawScore = -5; zone = `Günstig (<15)`; }
-  }
-
-  return {
-    name: "Shiller CAPE",
-    group: "correction", subgroup: "valuation",
-    value: isNaN(cape) ? "N/A" : `${cape.toFixed(1)}`,
-    rawScore, weight: 1.8,
-    weightedScore: Math.round(rawScore * 1.8 * 10) / 10,
-    maxWeighted: 12.6, zone, source,
-    description: "Cyclically Adjusted Price-to-Earnings Ratio (Shiller PE)",
-  };
+// 9. Shiller CAPE from ie_data.xls. A failed workbook is N/A, not a scraped stand-in.
+async function scoreCAPE(): Promise<IndicatorResult> {
+  return capeReading(await fetchShillerCape());
 }
 
-// 10. Margin Debt
-function scoreMarginDebt(): IndicatorResult {
-  let elevated = false;
-  let valueStr = "N/A";
-  let source = "FINRA";
-
-  // Try currentmarketvaluation.com margin debt page
-  try {
-    const html = fetchUrl("https://www.currentmarketvaluation.com/models/margin-debt.php");
-    if (html) {
-      const meta = html.match(/meta name="description" content="([^"]+)"/i);
-      if (meta) {
-        const content = meta[1].toLowerCase();
-        elevated = content.includes("overvalued") || content.includes("elevated") || content.includes("above");
-        const valMatch = meta[1].match(/\$?([\d,.]+)\s*(billion|B|trillion|T)/i);
-        if (valMatch) {
-          valueStr = `$${valMatch[1]}${valMatch[2].charAt(0).toUpperCase()}`;
-        }
-        source = "currentmarketvaluation.com";
-      }
-    }
-  } catch {}
-
-  const rawScore = elevated ? 4 : -2;
-  return {
-    name: "Margin Debt",
-    group: "correction", subgroup: "valuation",
-    value: valueStr,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 4,
-    zone: elevated ? "Erhöht / Überbewertet" : "Normal / Rückläufig",
-    source,
-    description: "NYSE Margin Debt (Wertpapierkredite)",
-  };
+// 10. Margin Debt — FINRA xlsx, billions, YoY against the 5-year z.
+async function scoreMarginDebt(): Promise<IndicatorResult> {
+  return marginDebtReading(await fetchFinraDebitPoints());
 }
 
 // 11. Google Trends "Recession"
@@ -572,75 +386,12 @@ function scoreGoogleTrends(): IndicatorResult {
     console.log("  Google Trends: SERPAPI_KEY not set — reporting N/A");
   }
 
-  // Scoring per methodology: Google(0-100): >75:+7 | 60-75:+4 | 30-60:0 | <30:-4
-  let rawScore = 0;
-  let zone = "N/A (Daten nicht verfügbar)";
-  if (!isNaN(trendValue)) {
-    if (trendValue > 75) { rawScore = 7; zone = `Extrem hoch (${trendValue} >75) → Panik-Suchen`; }
-    else if (trendValue >= 60) { rawScore = 4; zone = `Hoch (${trendValue} 60-75) → Erhöhtes Interesse`; }
-    else if (trendValue >= 30) { rawScore = 0; zone = `Normal (${trendValue} 30-60)`; }
-    else { rawScore = -4; zone = `Niedrig (${trendValue} <30) → Sorglosigkeit`; }
-  }
-
-  return {
-    name: "Google Trends \"Recession\"",
-    group: "correction", subgroup: "sentiment_ext",
-    value: isNaN(trendValue) ? "N/A" : `${trendValue.toFixed(0)} (7d Ø)`,
-    rawScore, weight: 1.7,
-    weightedScore: Math.round(rawScore * 1.7 * 10) / 10,
-    maxWeighted: 11.9, zone,
-    source: isNaN(trendValue) ? "Google Trends (N/A)" : source,
-    description: "Google-Suchinteresse für 'Recession' (0-100 Index)",
-  };
+  return googleReading(Number.isFinite(trendValue) ? trendValue : null, source);
 }
 
-// 12. VIX
-function scoreVIX(): IndicatorResult {
-  // FRED VIXCLS (daily close) — no external finance tool needed.
-  let vix = getLatestFredValue("VIXCLS");
-  let source = "FRED VIXCLS";
-
-  let rawScore = 0;
-  let zone = "N/A";
-  if (!isNaN(vix)) {
-    if (vix > 30) { rawScore = 4; zone = `Panik (${vix.toFixed(1)} >30)`; }
-    else if (vix >= 20) { rawScore = 1; zone = `Erhöht (20-30)`; }
-    else if (vix >= 15) { rawScore = 0; zone = `Normal (15-20)`; }
-    else { rawScore = -3; zone = `Sorglosigkeit (<15)`; }
-  }
-
-  return {
-    name: "VIX",
-    group: "correction", subgroup: "sentiment",
-    value: isNaN(vix) ? "N/A" : `${vix.toFixed(1)}`,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 4, zone, source,
-    description: "CBOE Volatility Index (Angstbarometer)",
-  };
-}
-
-// 13. Advance-Decline Line
-function scoreADLine(): IndicatorResult {
-  // No free real-time breadth source — default to parallel/healthy.
-  const rawScore = -2; // default: parallel/healthy
-  const zone = "Parallel (AD↑ ≥ Index↑)";
-  const valueStr = "Parallel";
-
-  return {
-    name: "Advance-Decline-Line",
-    group: "correction", subgroup: "sentiment",
-    value: valueStr,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 3, zone,
-    source: "NYSE (Proxy)",
-    description: "NYSE Advance-Decline-Linie vs. S&P 500 Divergenz",
-  };
-}
-
-// 14. CNN Fear & Greed Index
-function scoreCNNFearGreed(): IndicatorResult {
-  let fgValue = NaN;
-  let source = "CNN Business";
-
-  // Primary: CNN API — needs browser-like headers (Origin/Referer) to bypass bot block
+// One crowd leg: live CNN, otherwise a single VIX proxy. Crypto is only the proxy flag.
+function scoreCrowdLeg(vix: number): IndicatorResult {
+  let cnn: number | null = null;
   try {
     const json = fetchUrl(
       "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
@@ -648,187 +399,22 @@ function scoreCNNFearGreed(): IndicatorResult {
       {
         "Origin": "https://www.cnn.com",
         "Referer": "https://www.cnn.com/markets/fear-and-greed",
-      }
+      },
     );
     if (json && !json.includes("<html") && !json.includes("teapot")) {
       const parsed = JSON.parse(json);
-      if (parsed?.fear_and_greed?.score) {
-        fgValue = parseFloat(parsed.fear_and_greed.score);
-        source = "CNN Fear & Greed (Live)";
-        console.log(`  CNN F&G: ${fgValue}`);
-      }
+      const score = parseFloat(parsed?.fear_and_greed?.score);
+      if (Number.isFinite(score)) cnn = score;
     }
   } catch (err: any) {
     console.log(`  CNN F&G primary failed: ${err?.message?.substring(0, 100)}`);
   }
-
-  // Secondary fallback: alternative-me crypto F&G has high correlation in low-VIX environments
-  // (not perfect proxy but better than N/A)
-  if (isNaN(fgValue)) {
-    try {
-      const json = fetchUrl("https://api.alternative.me/fng/?limit=1", 10000);
-      if (json) {
-        const parsed = JSON.parse(json);
-        const v = parsed?.data?.[0]?.value;
-        if (v != null) {
-          fgValue = parseFloat(v);
-          source = `alternative.me Crypto F&G (Proxy: ${parsed.data[0].value_classification})`;
-          console.log(`  CNN F&G fallback (crypto): ${fgValue}`);
-        }
-      }
-    } catch {}
-  }
-
-  let rawScore = 0;
-  let zone = "N/A";
-  if (!isNaN(fgValue)) {
-    // Methodology: >75:+9.6 | 55-75:+3.2 | 45-55:0 | 25-45:-3.2 | <25:-8
-    if (fgValue > 75) { rawScore = 6; zone = `Extreme Greed (${Math.round(fgValue)} >75)`; }
-    else if (fgValue > 55) { rawScore = 2; zone = `Greed (55-75)`; }
-    else if (fgValue >= 45) { rawScore = 0; zone = `Neutral (45-55)`; }
-    else if (fgValue >= 25) { rawScore = -2; zone = `Fear (25-45)`; }
-    else { rawScore = -5; zone = `Extreme Fear (${Math.round(fgValue)} <25)`; }
-  }
-
-  return {
-    name: "CNN Fear & Greed",
-    group: "correction", subgroup: "sentiment",
-    value: isNaN(fgValue) ? "N/A" : `${Math.round(fgValue)}`,
-    rawScore, weight: 1.6,
-    weightedScore: Math.round(rawScore * 1.6 * 10) / 10,
-    maxWeighted: 9.6, zone, source,
-    description: "CNN Fear & Greed Index (0=Extreme Fear, 100=Extreme Greed)",
-  };
+  return crowdReading(cnn, Number.isFinite(vix) ? vix : null, false);
 }
 
-// Helper: derive sentiment proxy from VIX level. Used as last-resort fallback
-// for AAII / Put-Call / Investors Intelligence when their direct sources
-// (which all aggressively bot-block) cannot be reached.
-function sentimentProxyFromVix(): { rawScore: number; zone: string; valueStr: string; available: boolean } {
-  // Pull VIX directly via FRED — the same series VIX scoring already uses.
-  const vix = getLatestFredValue("VIXCLS");
-  if (isNaN(vix)) {
-    return { rawScore: 0, zone: "N/A", valueStr: "N/A", available: false };
-  }
-  // VIX > 30  => Panic    => crowd is bearish/fearful (bullish for contrarian)
-  // VIX 20-30 => Elevated  => moderately fearful
-  // VIX 15-20 => Normal    => neutral
-  // VIX < 15  => Calm      => crowd is greedy/complacent (bearish for contrarian)
-  let rawScore = 0;
-  let zone = "";
-  if (vix > 30) { rawScore = -3; zone = `Extreme Angst (VIX ${vix.toFixed(1)} > 30)`; }
-  else if (vix > 22) { rawScore = -1; zone = `Angst (VIX ${vix.toFixed(1)} 22-30)`; }
-  else if (vix >= 15) { rawScore = 0; zone = `Neutral (VIX ${vix.toFixed(1)} 15-22)`; }
-  else if (vix >= 12) { rawScore = 2; zone = `Sorglosigkeit (VIX ${vix.toFixed(1)} 12-15)`; }
-  else { rawScore = 4; zone = `Extreme Sorglosigkeit (VIX ${vix.toFixed(1)} < 12)`; }
-  return { rawScore, zone, valueStr: `VIX-Proxy ${vix.toFixed(1)}`, available: true };
-}
-
-// 15. AAII Sentiment Survey
-function scoreAAII(): IndicatorResult {
-  const bullPct = NaN;
-  const bearPct = NaN;
-  let rawScore = 0;
-  let zone = "N/A";
-  let valueStr = "N/A";
-
-  if (!isNaN(bullPct) && !isNaN(bearPct) && bearPct > 0) {
-    const ratio = bullPct / bearPct;
-    valueStr = `Bull: ${bullPct.toFixed(0)}%, Bear: ${bearPct.toFixed(0)}%`;
-    if (ratio > 2) { rawScore = 4; zone = "Extreme Euphorie (Bull/Bear >2)"; }
-    else if (ratio < 0.5) { rawScore = -4; zone = "Extreme Angst (Bull/Bear <0.5)"; }
-    else { rawScore = 0; zone = `Neutral (Ratio: ${ratio.toFixed(2)})`; }
-  }
-
-  // Last-resort: VIX-based proxy if direct sources + LLM sentiment all failed.
-  // AAII has high inverse correlation with VIX (high VIX -> bears overweight).
-  if (valueStr === "N/A") {
-    const proxy = sentimentProxyFromVix();
-    if (proxy.available) {
-      rawScore = proxy.rawScore;
-      zone = proxy.zone;
-      valueStr = proxy.valueStr;
-    }
-  }
-  return {
-    name: "AAII Sentiment",
-    group: "correction", subgroup: "sentiment",
-    value: valueStr,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 4, zone,
-    source: valueStr.includes("VIX-Proxy") ? "VIX-basierter Proxy (AAII direkt blockiert)"
-          : valueStr.includes("Proxy") ? "Finance API (Sentiment-Proxy)" : "AAII",
-    description: "American Association of Individual Investors Sentiment Survey",
-  };
-}
-
-// 16. CBOE Put/Call Ratio
-function scorePutCallRatio(): IndicatorResult {
-  const pcr = NaN;
-
-  let rawScore = 0;
-  let zone = "N/A";
-  let valueStr = isNaN(pcr) ? "N/A" : `${pcr.toFixed(2)}`;
-  let source = "CBOE";
-  if (!isNaN(pcr)) {
-    if (pcr > 1.0) { rawScore = -4; zone = `Hohe Absicherung (${pcr.toFixed(2)} >1.0) → bullish`; }
-    else if (pcr < 0.6) { rawScore = 4; zone = `Sorglosigkeit (${pcr.toFixed(2)} <0.6) → bearish`; }
-    else { rawScore = 0; zone = `Neutral (0.6-1.0)`; }
-  }
-
-  // Last-resort: VIX-based proxy. Put/Call ratio rises with VIX (more hedging).
-  if (valueStr === "N/A") {
-    const proxy = sentimentProxyFromVix();
-    if (proxy.available) {
-      rawScore = proxy.rawScore;
-      zone = proxy.zone;
-      valueStr = proxy.valueStr;
-      source = "VIX-basierter Proxy (CBOE direkt blockiert)";
-    }
-  }
-  return {
-    name: "CBOE Put/Call Ratio",
-    group: "correction", subgroup: "sentiment",
-    value: valueStr,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 4, zone,
-    source,
-    description: "Equity Put/Call Ratio (Absicherungsindikator)",
-  };
-}
-
-// 17. Investors Intelligence
-function scoreInvestorsIntelligence(): IndicatorResult {
-  const bullPct = NaN;
-  const bearPct = NaN;
-  let rawScore = 0;
-  let zone = "N/A";
-  let valueStr = "N/A";
-
-  if (!isNaN(bullPct) && !isNaN(bearPct) && bearPct > 0) {
-    const ratio = bullPct / bearPct;
-    valueStr = `Bull: ${bullPct.toFixed(0)}%, Bear: ${bearPct.toFixed(0)}% (Ratio: ${ratio.toFixed(2)})`;
-    rawScore = ratio > 1.5 ? 4 : -4;
-    zone = ratio > 1.5 ? `Euphorie (Ratio ${ratio.toFixed(2)} >1.5)` : `Vorsichtig (Ratio ${ratio.toFixed(2)} ≤1.5)`;
-  }
-
-  // Last-resort: VIX-based proxy. Investor Intelligence newsletters track
-  // crowd sentiment which inversely correlates with VIX.
-  if (valueStr === "N/A") {
-    const proxy = sentimentProxyFromVix();
-    if (proxy.available) {
-      rawScore = proxy.rawScore;
-      zone = proxy.zone;
-      valueStr = proxy.valueStr;
-    }
-  }
-  return {
-    name: "Investors Intelligence",
-    group: "correction", subgroup: "sentiment",
-    value: valueStr,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 4, zone,
-    source: valueStr.includes("VIX-Proxy") ? "VIX-basierter Proxy (II direkt blockiert)"
-          : valueStr.includes("Proxy") ? "Finance API (Sentiment-Proxy)" : "Advisor Perspectives",
-    description: "Newsletter-Berater Bull/Bear Ratio",
-  };
+function scoreWei(): IndicatorResult {
+  const wei = getLatestFredValue("WEI");
+  return weiReading(Number.isFinite(wei) ? wei : null);
 }
 
 // ============================================================
@@ -867,6 +453,7 @@ export interface RecessionAnalysis {
   topDrivers: string[];
   interpretation: string;
   drivers: DriverView;
+  fazit: { summary: string; riskLevel: string; sections: FazitSection[] };
   sources: { name: string; url: string }[];
   bridge: RecessionBridge;
   /** US card plus scored Eurozone and Japan unemployment S. Not in the 17-indicator net. */
@@ -990,6 +577,529 @@ export function correctionAction(pKorr12: number, pRez12: number, oilShock: bool
   return `${head}Standard-Risiko`;
 }
 
+const CURVE_MIN_MONTHS = 24;
+const CURVE_HISTORY_MONTHS = 240;
+const BRIEFING_ESSAY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const FINRA_MARGIN_XLSX = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
+const SHILLER_XLS_URLS = [
+  "https://www.econ.yale.edu/~shiller/data/ie_data.xls",
+  "http://www.econ.yale.edu/~shiller/data/ie_data.xls",
+];
+const PRIVATE_CREDIT_ESSAY =
+  "Der $3-Billionen-Private-Credit-Markt steht vor seinem ersten echten Stresstest seit 2008. Morgan Stanley warnt vor Default-Raten von bis zu 8% (vs. historisch 2-2,5%). "
+  + "40% der Private-Credit-Kreditnehmer haben laut IWF negativen freien Cashflow — ein Anstieg von 25% in 2021. "
+  + "Mehrere Fonds (Blue Owl Capital, Cliffwater) haben bereits Rücknahmen eingeschränkt oder gestoppt. Die Parallelen zu den Vorboten der 2008-Krise (Rating-Arbitrage, Illiquidität, unrealistische Bewertungen) werden von UBS-Chairman Kelleher und der BIS explizit gezogen. "
+  + "Bankkredite an Non-Bank Financial Institutions (NBFIs) sind auf $1,92 Billionen gestiegen (+66% seit Ende 2024), was eine potenzielle Ansteckungsgefahr für das regulierte Bankensystem darstellt. "
+  + "Anders als 2023 bei der Silicon Valley Bank (konzentriertes VC-Exposure, Zinsrisiko bei Anleiheportfolios) ist das heutige Risiko breiter gestreut: Private Credit, Leveraged Loans, AI-Datacenter-Finanzierungen und covenant-lite Strukturen bilden ein Cluster eng korrelierter Risiken.";
+
+function closedIndicator(
+  base: Pick<IndicatorResult, "name" | "group" | "subgroup" | "source" | "description">,
+  value = "N/A",
+): IndicatorResult {
+  return {
+    ...base,
+    value,
+    rawScore: 0,
+    weight: 0,
+    weightedScore: 0,
+    maxWeighted: 0,
+    zone: "N/A",
+    available: false,
+  };
+}
+
+function latestFred(seriesId: string, years: number): number {
+  const rows = fetchFredRows(seriesId, getDateYearsAgo(years));
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const value = rows[i].value;
+    if (value != null && Number.isFinite(value)) return value;
+  }
+  return NaN;
+}
+
+function monthEndPoints(rows: { date: string; value: number }[]): { date: string; value: number }[] {
+  const sorted = rows
+    .filter(row => Boolean(row.date) && Number.isFinite(row.value))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const byMonth = new Map<string, { date: string; value: number }>();
+  for (const row of sorted) byMonth.set(row.date.slice(0, 7), row);
+  return Array.from(byMonth.values());
+}
+
+function rawFromS(s: number): number {
+  return Math.max(-4, Math.min(4, Math.round((s - 50) / 12.5)));
+}
+
+/** s(z) like the fiscal front end. History excludes the current print. n < 24 fails closed. */
+function scoreSeriesStress(levels: number[]): { available: boolean; raw: number; s: number } {
+  if (levels.length < CURVE_MIN_MONTHS) return { available: false, raw: 0, s: 50 };
+  const level = levels[levels.length - 1];
+  const history = levels.slice(Math.max(0, levels.length - 1 - CURVE_HISTORY_MONTHS), levels.length - 1);
+  if (history.length < 2) return { available: false, raw: 0, s: 50 };
+  const mu = history.reduce((sum, value) => sum + value, 0) / history.length;
+  const variance = history.reduce((sum, value) => sum + (value - mu) ** 2, 0) / (history.length - 1);
+  const sigma = Math.sqrt(variance);
+  const deviation = level - mu;
+  const flat = sigma <= 1e-12;
+  const onMean = Math.abs(deviation) <= 1e-8 * Math.max(1, Math.abs(mu));
+  const z = flat
+    ? (onMean ? 0 : Math.sign(deviation) * Number.POSITIVE_INFINITY)
+    : deviation / (sigma + 1e-9);
+  const s = sOfZ(z);
+  return { available: true, raw: rawFromS(s), s };
+}
+
+/**
+ * Recession-book score of T10Y2Y. A low curve is the stress, so z is taken on
+ * the negated spread. The sign of the spread itself stays the label only.
+ */
+export function yieldCurveReading(
+  t10y2y: { date: string; value: number }[],
+  t10y3m: number | null,
+): IndicatorResult {
+  const monthly = monthEndPoints(t10y2y);
+  const level = monthly.length ? monthly[monthly.length - 1].value : null;
+  const delta = monthly.length >= 13 && level != null ? level - monthly[monthly.length - 13].value : null;
+  const base = {
+    name: "Inv. Zinskurve (10Y-2Y)",
+    group: "recession" as const,
+    subgroup: "coincident",
+    source: "FRED T10Y2Y / T10Y3M",
+    description: "T10Y2Y-Niveau und 12M-Änderung, Zusatz T10Y3M. Score ist s(z) über 20 Jahre, nicht der Sprung an 0.",
+  };
+  if (level == null) return closedIndicator(base);
+  const deltaText = delta == null ? "n/a" : `${delta > 0 ? "+" : ""}${delta.toFixed(2)} pp`;
+  const parts = [`T10Y2Y ${level.toFixed(2)}%`, `12M Δ ${deltaText}`];
+  if (t10y3m != null && Number.isFinite(t10y3m)) parts.push(`T10Y3M ${t10y3m.toFixed(2)}%`);
+  const value = parts.join(" · ");
+  const label = level < 0 ? "Invertiert (<0)" : "Normal (≥0)";
+  const scored = scoreSeriesStress(monthly.map(point => -point.value));
+  if (!scored.available) {
+    return { ...closedIndicator(base, value), zone: `${label}, keine 20J-Historie` };
+  }
+  return {
+    ...base,
+    value,
+    rawScore: scored.raw,
+    weight: 1,
+    weightedScore: scored.raw,
+    maxWeighted: 4,
+    zone: label,
+  };
+}
+
+export function durableReading(yoy: number): IndicatorResult {
+  const base = {
+    name: "Durable Goods (YoY)",
+    group: "recession" as const,
+    subgroup: "leading",
+    source: "FRED DGORDER",
+    description: "Auftragseingang langlebige Güter, Jahr-über-Jahr",
+  };
+  if (!Number.isFinite(yoy)) return closedIndicator(base);
+  const decline = yoy < -5;
+  const rawScore = decline ? 3 : -2;
+  return {
+    ...base,
+    value: `${yoy.toFixed(1)}%`,
+    rawScore,
+    weight: 1,
+    weightedScore: rawScore,
+    maxWeighted: 3,
+    zone: decline ? "Starker Rückgang (>-5%)" : "Stabil",
+  };
+}
+
+export function m2Reading(yoy: number): IndicatorResult {
+  const base = {
+    name: "M2 Geldmenge (YoY)",
+    group: "recession" as const,
+    subgroup: "leading",
+    source: "FRED M2SL",
+    description: "US M2-Geldmengenwachstum Jahr-über-Jahr",
+  };
+  if (!Number.isFinite(yoy)) return closedIndicator(base);
+  let rawScore = 0;
+  let zone = "Normal (4-10%)";
+  if (yoy < 0) { rawScore = 3; zone = "Kontraktion (<0%)"; }
+  else if (yoy < 2) { rawScore = 3; zone = "Sehr niedrig (<2%)"; }
+  else if (yoy < 4) { rawScore = 1; zone = "Niedrig (2-4%)"; }
+  else if (yoy <= 10) { rawScore = 0; zone = "Normal (4-10%)"; }
+  else { rawScore = -2; zone = "Expansiv (>10%)"; }
+  return {
+    ...base,
+    value: `${yoy.toFixed(1)}%`,
+    rawScore,
+    weight: 1,
+    weightedScore: rawScore,
+    maxWeighted: 3,
+    zone,
+  };
+}
+
+export function creditReading(val: number): IndicatorResult {
+  const base = {
+    name: "Kreditspreads (BAA-Trs)",
+    group: "recession" as const,
+    subgroup: "leading",
+    source: "FRED BAA10Y",
+    description: "Moody's BAA Corporate Bond Spread über 10Y Treasury",
+  };
+  if (!Number.isFinite(val)) return closedIndicator(base);
+  let rawScore = 0;
+  let zone = "Normal (1.5-2.0%)";
+  if (val > 2.5) { rawScore = 3; zone = "Stress (>2.5%)"; }
+  else if (val >= 2.0) { rawScore = 2; zone = "Erhöht (2.0-2.5%)"; }
+  else if (val >= 1.5) { rawScore = 0; zone = "Normal (1.5-2.0%)"; }
+  else if (val >= 1.0) { rawScore = -1; zone = "Eng (1.0-1.5%)"; }
+  else { rawScore = -2; zone = "Sehr eng (<1.0%)"; }
+  return {
+    ...base,
+    value: `${val.toFixed(2)}%`,
+    rawScore,
+    weight: 1,
+    weightedScore: rawScore,
+    maxWeighted: 3,
+    zone,
+  };
+}
+
+export function csiReading(csi: number, source = "FRED UMCSENT"): IndicatorResult {
+  const base = {
+    name: "Konsumklima (CSI)",
+    group: "recession" as const,
+    subgroup: "full",
+    source,
+    description: "University of Michigan Consumer Sentiment Index",
+  };
+  if (!Number.isFinite(csi)) return closedIndicator(base);
+  const triggered = csi < 60;
+  const rawScore = triggered ? 3 : -2;
+  return {
+    ...base,
+    value: `${csi.toFixed(1)}`,
+    rawScore,
+    weight: 1,
+    weightedScore: rawScore,
+    maxWeighted: 3,
+    zone: triggered ? "Pessimistisch (<60)" : "Normal (≥60)",
+  };
+}
+
+export function weiReading(value: number | null): IndicatorResult {
+  const base = {
+    name: "Weekly Nowcast (WEI)",
+    group: "recession" as const,
+    subgroup: "leading",
+    source: "FRED WEI",
+    description: "Lewis-Mertens-Stock Weekly Economic Index. Leading-Zusatz, kein Score.",
+  };
+  if (value == null || !Number.isFinite(value)) return closedIndicator(base);
+  return { ...closedIndicator(base, value.toFixed(2)), zone: "Ablesung, kein Score" };
+}
+
+export function buffettReading(ratio: number): IndicatorResult {
+  const base = {
+    name: "Buffett Indikator (TMC/GDP)",
+    group: "correction" as const,
+    subgroup: "valuation",
+    source: "FRED DDDM01USA156NWDB",
+    description: "Marktkapitalisierung / BIP, FRED DDDM01USA156NWDB",
+  };
+  if (!Number.isFinite(ratio)) return closedIndicator(base);
+  let rawScore = -4;
+  let zone = `Fair/unterbewertet (${ratio.toFixed(0)}% <140%)`;
+  if (ratio > 200) { rawScore = 8; zone = `Extrem überbewertet (${ratio.toFixed(0)}% >200%)`; }
+  else if (ratio >= 165) { rawScore = 5; zone = "Stark überbewertet (165-200%)"; }
+  else if (ratio >= 140) { rawScore = 2; zone = "Überbewertet (140-165%)"; }
+  return {
+    ...base,
+    value: `${ratio.toFixed(0)}%`,
+    rawScore,
+    weight: 2,
+    weightedScore: rawScore * 2,
+    maxWeighted: 16,
+    zone,
+  };
+}
+
+/** Last P/E10 CAPE. The workbook also labels the excess-yield column "CAPE"; that print is near 0. */
+export function latestShillerCape(rows: unknown[][]): number {
+  const candidates: number[] = [];
+  rows.forEach((row, rowIndex) => {
+    if (!Array.isArray(row)) return;
+    row.forEach((cell, col) => {
+      if (String(cell ?? "").trim() !== "CAPE") return;
+      let latest = NaN;
+      for (let i = rowIndex + 1; i < rows.length; i++) {
+        const below = rows[i];
+        const value = Array.isArray(below) ? below[col] : undefined;
+        if (typeof value === "number" && Number.isFinite(value) && value > 0) latest = value;
+      }
+      if (Number.isFinite(latest)) candidates.push(latest);
+    });
+  });
+  const ratio = candidates.find(value => value >= 5);
+  return ratio ?? NaN;
+}
+
+export function capeReading(cape: number): IndicatorResult {
+  const base = {
+    name: "Shiller CAPE",
+    group: "correction" as const,
+    subgroup: "valuation",
+    source: "Shiller ie_data.xls",
+    description: "Cyclically Adjusted Price-to-Earnings Ratio (Shiller PE)",
+  };
+  if (!Number.isFinite(cape)) return closedIndicator(base);
+  let rawScore = -5;
+  let zone = `Günstig (${cape.toFixed(1)} <15)`;
+  if (cape > 35) { rawScore = 7; zone = `Extrem hoch (${cape.toFixed(1)} >35)`; }
+  else if (cape >= 30) { rawScore = 3; zone = "Hoch (30-35)"; }
+  else if (cape >= 15) { rawScore = 0; zone = "Normal (15-30)"; }
+  return {
+    ...base,
+    value: cape.toFixed(1),
+    rawScore,
+    weight: 1.8,
+    weightedScore: Math.round(rawScore * 1.8 * 10) / 10,
+    maxWeighted: 12.6,
+    zone,
+  };
+}
+
+export function marginDebtReading(points: { date: string; debitMillions: number }[]): IndicatorResult {
+  const base = {
+    name: "Margin Debt",
+    group: "correction" as const,
+    subgroup: "valuation",
+    source: "FINRA",
+    description: "NYSE Margin Debt aus der FINRA-Statistik, Einheit Mrd. $",
+  };
+  const clean = points
+    .filter(point => Number.isFinite(point.debitMillions) && point.debitMillions > 0)
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  if (clean.length < 13) return closedIndicator(base);
+  const stats = marginYoYAndZ(clean.map(point => point.debitMillions));
+  const billions = clean[clean.length - 1].debitMillions / 1000;
+  const yoy = stats.yoyPct;
+  const z = stats.z5y;
+  const yoyText = yoy == null || !Number.isFinite(yoy) ? "" : ` · YoY ${yoy >= 0 ? "+" : ""}${yoy.toFixed(1)}%`;
+  const zText = z == null || !Number.isFinite(z) ? "" : ` · z5y ${z >= 0 ? "+" : ""}${z.toFixed(2)}`;
+  const value = `${billions.toFixed(1)} Mrd. $${yoyText}${zText}`;
+  if (/\$\d{4}T/i.test(value)) return closedIndicator(base);
+  if (z == null || !Number.isFinite(z)) return { ...closedIndicator(base), value };
+  const raw = rawFromS(sOfZ(z));
+  return {
+    ...base,
+    value,
+    rawScore: raw,
+    weight: 1,
+    weightedScore: raw,
+    maxWeighted: 4,
+    zone: `YoY ${yoy == null ? "n/a" : `${yoy.toFixed(1)}%`}, z5y ${z.toFixed(2)}`,
+  };
+}
+
+export function googleReading(trend: number | null, source = "Google Trends"): IndicatorResult {
+  const base = {
+    name: "Google Trends \"Recession\"",
+    group: "correction" as const,
+    subgroup: "sentiment_ext",
+    source: trend == null ? "Google Trends (N/A)" : source,
+    description: "Google-Suchinteresse für 'Recession' (0-100 Index)",
+  };
+  if (trend == null || !Number.isFinite(trend)) return closedIndicator(base);
+  let rawScore = -4;
+  let zone = `Niedrig (${trend} <30) → Sorglosigkeit`;
+  if (trend > 75) { rawScore = 7; zone = `Extrem hoch (${trend} >75) → Panik-Suchen`; }
+  else if (trend >= 60) { rawScore = 4; zone = `Hoch (${trend} 60-75) → Erhöhtes Interesse`; }
+  else if (trend >= 30) { rawScore = 0; zone = `Normal (${trend} 30-60)`; }
+  return {
+    ...base,
+    value: `${trend.toFixed(0)} (7d Ø)`,
+    rawScore,
+    weight: 1.7,
+    weightedScore: Math.round(rawScore * 1.7 * 10) / 10,
+    maxWeighted: 11.9,
+    zone,
+  };
+}
+
+export function vixReading(vix: number): IndicatorResult {
+  const base = {
+    name: "VIX",
+    group: "correction" as const,
+    subgroup: "sentiment",
+    source: "FRED VIXCLS",
+    description: "CBOE Volatility Index (Angstbarometer)",
+  };
+  if (!Number.isFinite(vix)) return closedIndicator(base);
+  let rawScore = -3;
+  let zone = `Sorglosigkeit (${vix.toFixed(1)} <15)`;
+  if (vix > 30) { rawScore = 4; zone = `Panik (${vix.toFixed(1)} >30)`; }
+  else if (vix >= 20) { rawScore = 1; zone = "Erhöht (20-30)"; }
+  else if (vix >= 15) { rawScore = 0; zone = "Normal (15-20)"; }
+  return {
+    ...base,
+    value: vix.toFixed(1),
+    rawScore,
+    weight: 1,
+    weightedScore: rawScore,
+    maxWeighted: 4,
+    zone,
+  };
+}
+
+export function crowdReading(cnn: number | null, vix: number | null, cnnIsProxy: boolean): IndicatorResult {
+  const cnnOk = cnn != null && Number.isFinite(cnn) && !cnnIsProxy;
+  if (cnnOk) {
+    const fgValue = cnn as number;
+    let rawScore = -5;
+    let zone = `Extreme Fear (${Math.round(fgValue)} <25)`;
+    if (fgValue > 75) { rawScore = 6; zone = `Extreme Greed (${Math.round(fgValue)} >75)`; }
+    else if (fgValue > 55) { rawScore = 2; zone = "Greed (55-75)"; }
+    else if (fgValue >= 45) { rawScore = 0; zone = "Neutral (45-55)"; }
+    else if (fgValue >= 25) { rawScore = -2; zone = "Fear (25-45)"; }
+    return {
+      name: "CNN Fear & Greed",
+      group: "correction",
+      subgroup: "sentiment",
+      value: `${Math.round(fgValue)}`,
+      rawScore,
+      weight: 1.6,
+      weightedScore: Math.round(rawScore * 1.6 * 10) / 10,
+      maxWeighted: 9.6,
+      zone,
+      source: "CNN Fear & Greed (Live)",
+      description: "CNN Fear & Greed Index (0=Extreme Fear, 100=Extreme Greed)",
+    };
+  }
+  if (vix != null && Number.isFinite(vix)) {
+    let rawScore = 4;
+    let zone = `Extreme Sorglosigkeit (VIX ${vix.toFixed(1)} < 12)`;
+    if (vix > 30) { rawScore = -3; zone = `Extreme Angst (VIX ${vix.toFixed(1)} > 30)`; }
+    else if (vix > 22) { rawScore = -1; zone = `Angst (VIX ${vix.toFixed(1)} 22-30)`; }
+    else if (vix >= 15) { rawScore = 0; zone = `Neutral (VIX ${vix.toFixed(1)} 15-22)`; }
+    else if (vix >= 12) { rawScore = 2; zone = `Sorglosigkeit (VIX ${vix.toFixed(1)} 12-15)`; }
+    return {
+      name: "VIX-Proxy",
+      group: "correction",
+      subgroup: "sentiment",
+      value: `VIX-Proxy ${vix.toFixed(1)}`,
+      rawScore,
+      weight: 1,
+      weightedScore: rawScore,
+      maxWeighted: 4,
+      zone,
+      source: "FRED VIXCLS",
+      description: "Ein Crowd-Bein als VIX-Proxy. Nicht AAII, Put/Call und Investors Intelligence zugleich.",
+      proxy: true,
+    };
+  }
+  return closedIndicator({
+    name: "CNN Fear & Greed",
+    group: "correction",
+    subgroup: "sentiment",
+    source: "CNN Fear & Greed",
+    description: "CNN Fear & Greed Index (0=Extreme Fear, 100=Extreme Greed)",
+  });
+}
+
+export function briefingEssayAllowed(updatedAtMs: number | null, now = Date.now()): boolean {
+  if (updatedAtMs == null || !Number.isFinite(updatedAtMs)) return false;
+  const age = now - updatedAtMs;
+  return age >= 0 && age <= BRIEFING_ESSAY_MAX_AGE_MS;
+}
+
+export function briefingCacheUpdatedAt(): number | null {
+  const stamps: number[] = [];
+  const sql = diskBriefingUpdatedAt();
+  if (sql != null) stamps.push(sql);
+  const dir = path.join(process.cwd(), ".cache", "researcher");
+  try {
+    if (fs.existsSync(dir)) {
+      for (const name of fs.readdirSync(dir)) {
+        if (name !== "briefing-result.json" && !name.startsWith("briefing_v2__")) continue;
+        try {
+          const raw = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as { savedAt?: string; updated_at?: string };
+          const saved = Date.parse(raw?.savedAt ?? raw?.updated_at ?? "");
+          if (Number.isFinite(saved)) stamps.push(saved);
+        } catch { /* unreadable cache is not a fresh essay */ }
+      }
+    }
+  } catch { /* no cache directory */ }
+  if (!stamps.length) return null;
+  return Math.max(...stamps);
+}
+
+export function privateCreditEssay(allowed: boolean): { title: string; emoji: string; text: string } | null {
+  if (!allowed) return null;
+  return { title: "Private Credit & Systemisches Risiko", emoji: "🏦", text: PRIVATE_CREDIT_ESSAY };
+}
+
+function unzipEntry(buf: Buffer, name: string): Buffer | null {
+  let offset = 0;
+  while (offset + 30 <= buf.length) {
+    const sig = buf.readUInt32LE(offset);
+    if (sig !== 0x04034b50) break;
+    const method = buf.readUInt16LE(offset + 8);
+    const compSize = buf.readUInt32LE(offset + 18);
+    const nameLen = buf.readUInt16LE(offset + 26);
+    const extraLen = buf.readUInt16LE(offset + 28);
+    const fileName = buf.slice(offset + 30, offset + 30 + nameLen).toString("utf8");
+    const dataStart = offset + 30 + nameLen + extraLen;
+    const dataEnd = dataStart + compSize;
+    if (dataEnd > buf.length) return null;
+    const data = buf.slice(dataStart, dataEnd);
+    if (fileName === name) {
+      if (method === 0) return Buffer.from(data);
+      if (method === 8) return inflateRawSync(data);
+      return null;
+    }
+    offset = dataEnd;
+  }
+  return null;
+}
+
+async function fetchFinraDebitPoints(): Promise<{ date: string; debitMillions: number }[]> {
+  try {
+    const resp = await fetch(FINRA_MARGIN_XLSX, {
+      signal: AbortSignal.timeout(20000),
+      headers: { "User-Agent": "Aktienanalyst/1.0" },
+    });
+    if (!resp.ok) return [];
+    const xml = unzipEntry(Buffer.from(await resp.arrayBuffer()), "xl/worksheets/sheet1.xml");
+    if (!xml) return [];
+    return parseFinraMarginSheetXml(xml.toString("utf8"));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchShillerCape(): Promise<number> {
+  for (const url of SHILLER_XLS_URLS) {
+    try {
+      const resp = await fetch(url, {
+        signal: AbortSignal.timeout(25000),
+        headers: { "User-Agent": "Aktienanalyst/1.0" },
+      });
+      if (!resp.ok) continue;
+      const buf = Buffer.from(await resp.arrayBuffer());
+      const workbook = XLSX.read(buf, { type: "buffer" });
+      const sheetName = workbook.SheetNames.includes("Data") ? "Data" : workbook.SheetNames[workbook.SheetNames.length - 1];
+      const sheet = workbook.Sheets[sheetName];
+      if (!sheet) continue;
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true });
+      const cape = latestShillerCape(rows);
+      if (Number.isFinite(cape)) return cape;
+    } catch {
+      continue;
+    }
+  }
+  return NaN;
+}
+
 function groupFormula(net: number, max: number, rounded: number): string {
   if (!(max > 0)) return `keine gewerteten Indikatoren → ${rounded}%`;
   const raw = 50 + (net / max) * 50;
@@ -1003,6 +1113,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   const cosdSahm = getDateYearsAgo(SAHM_HISTORY_YEARS);
   const usSahm = scoreSahm();
 
+  const vixValue = getLatestFredValue("VIXCLS");
   const indicators: IndicatorResult[] = await Promise.all([
     Promise.resolve(usSahm.indicator),
     scoreYieldCurve(),
@@ -1015,12 +1126,9 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     scoreCAPE(),
     scoreMarginDebt(),
     scoreGoogleTrends(),
-    scoreVIX(),
-    scoreADLine(),
-    scoreCNNFearGreed(),
-    scoreAAII(),
-    scorePutCallRatio(),
-    scoreInvestorsIntelligence(),
+    vixReading(vixValue),
+    scoreCrowdLeg(vixValue),
+    scoreWei(),
   ]);
 
   console.log("[RECESSION] All indicators scored:");
@@ -1052,18 +1160,17 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   const rezFullNet = rezFullTotals.net;
   const rezFullMax = rezFullTotals.max;
 
-  // 4. Korrektur Sentiment (3-6M): VIX + AD + CNN + AAII + Put/Call + II → Max 28.6
+  // 4. Korrektur Sentiment: VIX plus one crowd leg. A missing print adds neither net nor max.
   const sentimentInds = indicators.filter(i => i.subgroup === "sentiment");
   const sentimentTotals = scoredTotals(sentimentInds);
   const sentimentNet = sentimentTotals.net;
   const sentimentMax = sentimentTotals.max;
 
-  // 5. Korrektur Vollständig (12M): + Buffett + CAPE + Margin + Google → Max 73.1 (or 61.2)
+  // 5. Korrektur Vollständig (12M): valuation slots. Google N/A stays out via available:false.
   const valuationInds = indicators.filter(i => i.subgroup === "valuation" || i.subgroup === "sentiment_ext");
   const valuationTotals = scoredTotals(valuationInds);
   const corrFullNet = sentimentNet + valuationTotals.net;
-  const corrFullMaxBase = sentimentMax + valuationTotals.max;
-  const corrFullMax = googleAvailable ? corrFullMaxBase : 61.2;
+  const corrFullMax = sentimentMax + valuationTotals.max;
 
   // Compute probabilities
   const pCoincident = probabilityFromNet(coincidentNet, coincidentMax);
@@ -1135,7 +1242,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
       netScore: Math.round(corrFullNet * 10) / 10,
       maxScore: Math.round(corrFullMax * 10) / 10,
       probability: pCorrFull,
-      formula: `${groupFormula(corrFullNet, corrFullMax, pCorrFull)}${!googleAvailable ? " (Google N/A, Max=61.2)" : ""}`,
+      formula: groupFormula(corrFullNet, corrFullMax, pCorrFull),
     },
   ];
 
@@ -1162,14 +1269,11 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
 
   const sources = [
     { name: "FRED (Federal Reserve Economic Data)", url: "https://fred.stlouisfed.org" },
-    { name: "Current Market Valuation", url: "https://www.currentmarketvaluation.com" },
-    { name: "GuruFocus Buffett Indicator", url: "https://www.gurufocus.com/stock-market-valuations.php" },
+    { name: "FRED DDDM01USA156NWDB", url: "https://fred.stlouisfed.org/series/DDDM01USA156NWDB" },
+    { name: "Shiller CAPE (ie_data.xls)", url: "http://www.econ.yale.edu/~shiller/data/ie_data.xls" },
+    { name: "FINRA Margin Statistics", url: "https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics" },
     { name: "CNN Fear & Greed Index", url: "https://www.cnn.com/markets/fear-and-greed" },
-    { name: "AAII Sentiment Survey", url: "https://www.aaii.com/sentimentsurvey" },
-    { name: "CBOE Market Statistics", url: "https://www.cboe.com/us/options/market_statistics/daily/" },
     { name: "University of Michigan Consumer Sentiment", url: "https://data.sca.isr.umich.edu" },
-    { name: "Multpl.com (Shiller CAPE)", url: "https://www.multpl.com/shiller-pe" },
-    { name: "Advisor Perspectives (Investors Intelligence)", url: "https://www.advisorperspectives.com" },
     { name: "Google Trends", url: "https://trends.google.com" },
     { name: "Eurostat une_rt_m (Eurozone ALQ)", url: "https://ec.europa.eu/eurostat/databrowser/view/une_rt_m/default/table" },
   ];
@@ -1249,7 +1353,7 @@ function generateFazit(
   const bearCount = indicators.filter(i => i.weightedScore > 0).length;
   const neutralCount = indicators.filter(i => i.weightedScore === 0).length;
 
-  let quantSummary = `Von 17 Indikatoren signalisieren ${bearCount} ein erhöhtes Risiko (bearish), ${bullCount} sind positiv (bullish) und ${neutralCount} neutral. `;
+  let quantSummary = `Von ${indicators.length} Indikatoren signalisieren ${bearCount} ein erhöhtes Risiko (bearish), ${bullCount} sind positiv (bullish) und ${neutralCount} neutral. `;
   quantSummary += `Die Rezessionswahrscheinlichkeit liegt bei ${pRez3M}% (3M), ${pRez6M}% (6M) und ${pRez12M}% (12M). `;
   quantSummary += `Die Korrekturwahrscheinlichkeit beträgt ${pKorr3_6M}% (Sentiment, 3-6M) und ${pKorr12M}% (Vollständig, 12M). `;
   if (pKorr12M >= 65) {
@@ -1277,13 +1381,9 @@ function generateFazit(
   // Section 3: Geopolitics — only the WTI→CPI→BE→DGS10 chain, and only when shock.
   const geoSection = shockGeopoliticsSection(bridge);
 
-  // Section 4: Private Credit / Systemic Risk
-  let creditText = "";
-  creditText += `Der $3-Billionen-Private-Credit-Markt steht vor seinem ersten echten Stresstest seit 2008. Morgan Stanley warnt vor Default-Raten von bis zu 8% (vs. historisch 2-2,5%). `;
-  creditText += `40% der Private-Credit-Kreditnehmer haben laut IWF negativen freien Cashflow — ein Anstieg von 25% in 2021. `;
-  creditText += `Mehrere Fonds (Blue Owl Capital, Cliffwater) haben bereits Rücknahmen eingeschränkt oder gestoppt. Die Parallelen zu den Vorboten der 2008-Krise (Rating-Arbitrage, Illiquidität, unrealistische Bewertungen) werden von UBS-Chairman Kelleher und der BIS explizit gezogen. `;
-  creditText += `Bankkredite an Non-Bank Financial Institutions (NBFIs) sind auf $1,92 Billionen gestiegen (+66% seit Ende 2024), was eine potenzielle Ansteckungsgefahr für das regulierte Bankensystem darstellt. `;
-  creditText += `Anders als 2023 bei der Silicon Valley Bank (konzentriertes VC-Exposure, Zinsrisiko bei Anleiheportfolios) ist das heutige Risiko breiter gestreut: Private Credit, Leveraged Loans, AI-Datacenter-Finanzierungen und covenant-lite Strukturen bilden ein Cluster eng korrelierter Risiken.`;
+  // The shock channel stays on the oil bridge. The private-credit essay needs a briefing cache ≤ 30 days.
+  const essayOn = briefingEssayAllowed(briefingCacheUpdatedAt());
+  const creditSection = privateCreditEssay(essayOn);
 
   // Section 5: Handlung aus P_korr12 und P_rez12.
   // The oil bridge already measured z(Δ WTI 4w). A missing z is not a shock.
@@ -1292,7 +1392,7 @@ function generateFazit(
   // Build summary
   let summary = `Gesamtbewertung: ${riskLevelPhrase(riskLevel)}. `;
   summary += `Rezession 12M: ${pRez12M}%, Korrektur 12M: ${pKorr12M}%. `;
-  if (pKorr12M >= 65) {
+  if (pKorr12M >= 65 && essayOn) {
     summary += `Die Kombination aus historisch extremen Bewertungen (Buffett ${buffett?.value}, CAPE ${cape?.value}) `;
     summary += `und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, `;
     summary += `das defensives Portfoliomanagement erfordert.`;
@@ -1303,7 +1403,7 @@ function generateFazit(
     { title: "Bewertungsrisiko", emoji: "⚠️", text: valuationText },
     ...(geoSection ? [geoSection] : []),
     ...driverFazitSections(drivers),
-    { title: "Private Credit & Systemisches Risiko", emoji: "🏦", text: creditText },
+    ...(creditSection ? [creditSection] : []),
     { title: "Handlungsempfehlung", emoji: "🎯", text: actionText },
   ];
 
