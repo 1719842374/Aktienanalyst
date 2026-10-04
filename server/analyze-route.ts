@@ -28,6 +28,7 @@ import {
   convertFinancials,
   generatePESTELAnalysis,
   computeFcfTTM,
+  highCapexFcfHint,
 } from "./analyze-helpers";
 
 import {
@@ -117,7 +118,9 @@ import {
   fmpEarningsCalendar,
   convertFmpRowsToUsd,
   dedupeSegmentsByName,
-  normalizeSegmentAliasKey,
+  filterGeographicDuplicates,
+  dropAliasRevenueDuplicates,
+  geographicDedupNote,
 } from "./fmp";
 import { buildScoringForAnalysis } from "./scoring-integration";
 import { applyFactPackFromFmpContext } from "./factpack-apply";
@@ -1848,20 +1851,21 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         };
       }
 
-      // A4 (WORK_IMPLEMENTIERUNG_OFFEN.md "A4 Segment-Dedup Rest"): beide
-      // Vergleichsseiten (Produkt-Segmente vs. Geo-Segmente) nutzen denselben
-      // normalizeSegmentAliasKey() aus fmp.ts, damit z.B. "AWS" (Produkt) und
-      // "Amazon Web Services" (Geo, falls FMP das so liefert) als dasselbe
-      // Segment erkannt und aus geoWithoutOverlap herausgefiltert werden.
+      // Geographic duplicates are removed before the response:
+      // name + revenue (±1%), NON_GEO_PATTERN, then alias keys at the same
+      // revenue band (AWS / Amazon Web Services, Azure, GCP).
       const rawGeo = Array.isArray(geoSegments) ? geoSegments : [];
       const geoSegmentsClean = dedupeSegmentsByName(rawGeo);
-      const productKeys = new Set(
-        revenueSegments.map(s => normalizeSegmentAliasKey(s.name))
-      );
-      const geoWithoutOverlap = geoSegmentsClean.filter(g => {
-        const key = normalizeSegmentAliasKey(g.name);
-        return !productKeys.has(key);
-      });
+      // Name + revenue (±1%) and NON_GEO_PATTERN run before the UI.
+      // Alias pairs (AWS / Amazon Web Services, Azure, GCP) still drop, but
+      // only when revenue is within 1% — the same gate as the name match —
+      // so a different-sized row is not treated as a duplicate.
+      const specGeo = filterGeographicDuplicates(revenueSegments, geoSegmentsClean);
+      const aliasGeo = dropAliasRevenueDuplicates(revenueSegments, specGeo.geographic);
+      const geoWithoutOverlap = aliasGeo.geographic;
+      const geoCrossRemoved = specGeo.removedCount + aliasGeo.removedCount;
+      const geoSegmentsNote = geographicDedupNote(geoCrossRemoved);
+      const fcfCapexHint = highCapexFcfHint(sector, industry) ?? highCapexFcfHint(effectiveSector, effectiveIndustry);
 
       // NOTE: Cast to any at the end because we intentionally include a few
       // legacy-compatible extras (analystPTMedian etc.) alongside the canonical
@@ -1908,6 +1912,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         fcfTTM,
         fcfMargin,
         fcfAvailable,
+        ...(fcfCapexHint ? { fcfCapexHint } : {}),
         nextEarningsDate,
         ...(nextEarningsTime ? { nextEarningsTime } : {}),
         ...(nextEarningsIsEstimate !== undefined ? { nextEarningsIsEstimate } : {}),
@@ -2019,6 +2024,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         // Section 17 / Peer view
         revenueSegments,
         geoSegments: geoWithoutOverlap,
+        ...(geoSegmentsNote ? { geoSegmentsNote } : {}),
         // Segment-Fallback-Pipeline (2026-08): lets the UI show "Quelle: FMP"
         // vs. "Quelle: 10-K FY2025" vs. a clear "not available" message instead
         // of a silent/empty block. See step 7b above for the fallback chain.

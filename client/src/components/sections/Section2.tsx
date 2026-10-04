@@ -328,14 +328,13 @@ export function Section2({ data }: Props) {
           )
         )}
 
-        {/* Geographic Segments (Umsatz nach Regionen) — funktioniert bereits über
-            fmpGeoSegments() für praktisch jeden Ticker, daher hier NUR additive
-            Änderungen (Titel-Text an Anforderung #3B angeglichen, absolute
-            Umsatzzahl ergänzt, explizit absteigend sortiert). Render-Logik/Struktur
-            unverändert — "NICHT KAPUTT MACHEN" (siehe Task-Vorgabe). */}
-        {data.geoSegments && data.geoSegments.length > 0 && (
+        {/* Geographic Segments. The server already removed name+revenue and
+            non-geo duplicates. geoSegmentsNote is the spelled footnote when
+            that removal happened. */}
+        {((data.geoSegments && data.geoSegments.length > 0) || data.geoSegmentsNote) && (
           <div>
             <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Umsatz nach Regionen (Geographic Segments)</h3>
+            {data.geoSegments && data.geoSegments.length > 0 && (
             <div className="space-y-1.5">
               {[...data.geoSegments].sort((a, b) => b.percentage - a.percentage).map((seg, i) => (
                 <div key={i} className="relative">
@@ -362,6 +361,12 @@ export function Section2({ data }: Props) {
                 </div>
               ))}
             </div>
+            )}
+            {data.geoSegmentsNote && (
+              <p className="mt-1.5 text-[10px] text-muted-foreground italic" data-testid="geo-segment-dedup-note">
+                {data.geoSegmentsNote}
+              </p>
+            )}
           </div>
         )}
 
@@ -410,7 +415,7 @@ export function Section2({ data }: Props) {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <MiniCard label="Moat Assessment" value={data.moatRating} badge />
-          <MiniCard label="FCF Strength" value={`${formatPercentNoSign(data.fcfMargin)} margin • ${formatLargeNumber(data.fcfTTM)} TTM`} />
+          <MiniCard label="FCF Strength" value={data.fcfAvailable === false ? "n/a" : `${formatPercentNoSign(data.fcfMargin)} margin • ${formatLargeNumber(data.fcfTTM)} TTM`} />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

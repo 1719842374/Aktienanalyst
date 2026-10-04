@@ -206,7 +206,25 @@ export function computeFcfTTM(cashflowRows: any[] | undefined | null): number | 
     }
   }
   // 3. Keine der bis zu 3 Perioden lieferte einen plausiblen (!= 0) Wert.
+  // Ein echtes negatives GAAP-FCF (freeCashFlow < 0 oder OCF - |capex| < 0)
+  // faellt unter Schritt 1/2 und wird mit Vorzeichen zurueckgegeben, nie als 0.
   return null;
+}
+
+/** Spelled hint when sector or industry is Infra, Alternatives, RE, or Asset Management. */
+const HIGH_CAPEX_FCF_HINT =
+  "GAAP-FCF durch Investitions-CapEx verzerrt; FRE/DE/AFFO beachten";
+
+const HIGH_CAPEX_SECTOR =
+  /infrastructure|\binfra\b|alternatives?|real estate|\breit\b|\bre\b|asset management/i;
+
+export function highCapexFcfHint(
+  sector: string | null | undefined,
+  industry: string | null | undefined,
+): string | null {
+  const blob = `${sector ?? ""} ${industry ?? ""}`;
+  if (!HIGH_CAPEX_SECTOR.test(blob)) return null;
+  return HIGH_CAPEX_FCF_HINT;
 }
 
 export function parseNumber(s: string | undefined): number {
