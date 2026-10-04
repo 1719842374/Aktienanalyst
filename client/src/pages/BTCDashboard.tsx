@@ -17,7 +17,7 @@ import { formatCurrency, formatLargeNumber, formatPercent, getChangeColor } from
 import { gbmMonteCarlo, type GBMMonteCarloResult } from "@/lib/calculations";
 import { useLocation } from "wouter";
 import { useIsNarrow } from "@/hooks/use-mobile";
-import { TA_SIGNAL_DOT_R, axisTick, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
+import { axisTick, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
@@ -29,7 +29,7 @@ import {
 import {
   LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Area, AreaChart, BarChart, Bar,
-  Cell, ReferenceLine, ReferenceDot, ReferenceArea, PieChart, Pie, ComposedChart, Legend,
+  Cell, ReferenceLine, ReferenceArea, PieChart, Pie, ComposedChart, Legend,
 } from "recharts";
 
 // === RSI(14) Wilder Smoothing (analog TechnicalChart.tsx) ===
@@ -1893,7 +1893,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               />
             )}
 
-            {/* Buy/Sell signal markers */}
+            {/* Buy/Sell signal markers — senkrechte Linien, keine Kreise auf dem Kurs. */}
             {showSignals && visibleSignals.map((s, i) => (
               <Fragment key={`sig-${i}`}>
                 <ReferenceLine
@@ -1903,15 +1903,6 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                   strokeWidth={narrow ? 1 : 0.8}
                   opacity={0.5}
                 />
-                {narrow && (
-                  <ReferenceDot
-                    x={s.date}
-                    y={s.price}
-                    r={TA_SIGNAL_DOT_R}
-                    fill={s.type === "BUY" ? "#22c55e" : "#ef4444"}
-                    stroke="none"
-                  />
-                )}
               </Fragment>
             ))}
 
