@@ -129,7 +129,7 @@ export function inverseVolMix(parts: { score: number; sigma: number }[]): number
   return num / den;
 }
 
-/** score_MacroFiscal = clip((S − 50) / 25, −1, 1). GIS-Verdrahtung ist ein späterer Schritt. */
+/** score_MacroFiscal = clip((S − 50) / 25, −1, 1). Der BTC-GIS-Slot liest das, sobald FE_30 available ist. */
 export function macroFiscalGis(s: number): number {
   return clip((s - 50) / 25, -1, 1);
 }
