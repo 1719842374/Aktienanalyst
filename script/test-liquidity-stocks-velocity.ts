@@ -343,9 +343,31 @@ const proseCache = {
   programmes: [{ amountUSD: "$369B", timeline: "2022-2032" }],
   totalCapexEstimate: "about $3-4T",
 };
-ok("capex prose budgets are not F", fiscalRestFromCache(proseCache).fiscalRestBn == null);
-ok("capex text explains the missing rest", fiscalRestGap(proseCache) === "capex cache stores budget text, not fiscalRestBn");
+const parsedRest = fiscalRestFromCache(proseCache, { region: "US", now: NOW });
+ok("a single amountUSD magnitude is F", parsedRest.fiscalRestBn === 369, String(parsedRest.fiscalRestBn));
+ok("the range in totalCapexEstimate is not added", parsedRest.fiscalRestBn === 369);
+ok("timeline midpoint is the remaining half-life input", parsedRest.tMidYears != null && parsedRest.tMidYears > 2.6 && parsedRest.tMidYears < 2.7, String(parsedRest.tMidYears));
+ok("parsed amountUSD clears the gap", fiscalRestGap(proseCache, { region: "US", now: NOW }) == null);
+const rangeOnly = { programmes: [{ amountUSD: "about $3-4T" }], totalCapexEstimate: "about $3-4T" };
+ok("a range is not F", fiscalRestFromCache(rangeOnly, { region: "US", now: NOW }).fiscalRestBn == null);
+ok("an unusable amountUSD names the missing field",
+  fiscalRestGap(rangeOnly, { region: "US", now: NOW }) === "missing fiscalRestBn; amountUSD is not a single home-currency magnitude");
+ok("a missing capex row names capex__REGION.fiscalRestBn",
+  fiscalRestGap(null, { region: "EU" }) === "missing capex__EU.fiscalRestBn");
+ok("euro amount is F for EU and dollars are not",
+  fiscalRestFromCache({ programmes: [{ amountUSD: "€80bn" }, { amountUSD: "$10bn" }] }, { region: "EU", now: NOW }).fiscalRestBn === 80);
+ok("yen amount is F for ASIA",
+  fiscalRestFromCache({ programmes: [{ amountUSD: "¥1200bn" }] }, { region: "ASIA", now: NOW }).fiscalRestBn === 1200);
+ok("a finished timeline is not remaining F",
+  fiscalRestFromCache({
+    programmes: [
+      { amountUSD: "$10bn", timeline: "2018-2020" },
+      { amountUSD: "$20bn", timeline: "2026-2030" },
+    ],
+  }, { region: "US", now: NOW }).fiscalRestBn === 20);
 ok("a numeric rest clears the gap", fiscalRestGap({ fiscalRestBn: 40, tMidYears: 0 }) == null);
+ok("a numeric rest wins over amountUSD text",
+  fiscalRestFromCache({ fiscalRestBn: 40, programmes: [{ amountUSD: "$369B" }] }, { region: "US", now: NOW }).fiscalRestBn === 40);
 ok("numeric capex rest is F", fiscalRestFromCache({ fiscalRestBn: 40, tMidYears: 0 }).fiscalRestBn === 40
   && fiscalRestFromCache({ fiscalRestBn: 40, tMidYears: 0 }).tMidYears === 0);
 const withRest = applyCapexRest(

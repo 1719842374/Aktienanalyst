@@ -8,8 +8,10 @@
  * EZ HICP is Eurostat CP00 annual rate (the spec's CP HP). EZ velocity is
  * NGDP/M3 and JP velocity is NGDP/M2, same parsers as the briefing.
  * JP bond outstanding is BoJ FM05 SMBIT1OG (ordinary government securities).
- * Capex prose budgets are not parsed into F. researcher.ts stores amountUSD
- * and totalCapexEstimate as text, so fiscalRestBn stays absent.
+ * F comes from capex__REGION. A numeric fiscalRestBn wins. Otherwise a
+ * programme amountUSD that is one home-currency magnitude is the rest.
+ * Ranges, sentences, and other currencies are not F. This does not feed
+ * the DCF overlay.
  */
 import { diskResearcherGet } from "./disk-cache";
 import type { Region } from "./liquidity-index-catalog";
@@ -94,31 +96,131 @@ export function bojJgbUrl(now: Date): string {
   return `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=FM05&code=${BOJ_JGB_CODE}&startDate=${compact}`;
 }
 
-export function fiscalRestFromCache(raw: unknown): { fiscalRestBn: number | null; tMidYears: number | null } {
-  if (!raw || typeof raw !== "object") return { fiscalRestBn: null, tMidYears: null };
-  const row = raw as Record<string, unknown>;
+type HomeCcy = "USD" | "EUR" | "JPY";
+
+function homeCurrency(region: Region): HomeCcy {
+  if (region === "EU") return "EUR";
+  if (region === "ASIA") return "JPY";
+  return "USD";
+}
+
+function currencyOf(prefix?: string, suffix?: string): HomeCcy | null {
+  const token = `${prefix ?? ""} ${suffix ?? ""}`.toLowerCase();
+  if (/\$|usd|dollar/.test(token)) return "USD";
+  if (/€|eur|euro/.test(token)) return "EUR";
+  if (/¥|jpy|yen|円/.test(token)) return "JPY";
+  return null;
+}
+
+function scaleOf(token?: string): number | null {
+  if (!token) return null;
+  const t = token.toLowerCase().replace(/\.$/, "");
+  if (t === "m" || t === "mn" || t === "million" || t === "millions") return 0.001;
+  if (t === "b" || t === "bn" || t === "bio" || t === "billion" || t === "billions" || t === "mrd") return 1;
+  if (t === "t" || t === "tn" || t === "trillion" || t === "trillions") return 1000;
+  return null;
+}
+
+/** One magnitude only. "$369B" is 369. "$3-4T" and "about $369B" are not. */
+export function parseBudgetMagnitude(text: string): { bn: number; currency: HomeCcy } | null {
+  const s = text.trim().replace(/\s+/g, " ");
+  if (!s || /[+~]|about|approx|ungefähr|circa|\bca\./i.test(s)) return null;
+  if (/\d\s*[-–—]\s*\d/.test(s)) return null;
+  const m = /^(?:(USD|EUR|JPY|US\$|\$|€|¥)\s*)?(\d+(?:[.,]\d+)?)\s*(million|millions|billion|billions|trillion|trillions|bn|tn|mrd\.?|mn|bio|m|b|t)\s*(USD|EUR|JPY|dollars?|euros?|yen|円)?$/i.exec(s);
+  if (!m) return null;
+  const currency = currencyOf(m[1], m[4]);
+  if (!currency) return null;
+  if (m[2].includes(",") && m[2].includes(".")) return null;
+  const num = Number(m[2].replace(",", "."));
+  const scale = scaleOf(m[3]);
+  if (!Number.isFinite(num) || num < 0 || scale == null) return null;
+  return { bn: num * scale, currency };
+}
+
+function yearFraction(now: Date): number {
+  const start = Date.UTC(now.getUTCFullYear(), 0, 1);
+  const next = Date.UTC(now.getUTCFullYear() + 1, 0, 1);
+  return now.getUTCFullYear() + (now.getTime() - start) / (next - start);
+}
+
+/** Years from `now` to the midpoint of the remaining named window. A finished window is null. */
+function timelineMidYears(timeline: string, now: Date): number | null {
+  const years = timeline.match(/\b(?:19|20)\d{2}\b/g);
+  if (!years || years.length < 2) return null;
+  const start = Number(years[0]);
+  const end = Number(years[years.length - 1]);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  const today = yearFraction(now);
+  if (end < today) return null;
+  const remainStart = Math.max(start, today);
+  return Math.max(0, (remainStart + end) / 2 - today);
+}
+
+function programmeBudgets(raw: Record<string, unknown>, region: Region, now: Date): { fiscalRestBn: number | null; tMidYears: number | null } {
+  const programmes = Array.isArray(raw.programmes) ? raw.programmes : [];
+  const home = homeCurrency(region);
+  let sum = 0;
+  let counted = 0;
+  let midWeight = 0;
+  let midSum = 0;
+  for (const item of programmes) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as { amountUSD?: unknown; timeline?: unknown };
+    if (typeof row.amountUSD !== "string") continue;
+    const mag = parseBudgetMagnitude(row.amountUSD);
+    if (!mag || mag.currency !== home) continue;
+    const timeline = typeof row.timeline === "string" ? row.timeline : "";
+    if (timeline && /\b(?:19|20)\d{2}\b/.test(timeline) && timelineMidYears(timeline, now) == null) continue;
+    sum += mag.bn;
+    counted += 1;
+    const mid = timeline ? timelineMidYears(timeline, now) : null;
+    if (mid != null) {
+      midWeight += mag.bn;
+      midSum += mag.bn * mid;
+    }
+  }
+  if (!counted && typeof raw.totalCapexEstimate === "string") {
+    const mag = parseBudgetMagnitude(raw.totalCapexEstimate);
+    if (mag && mag.currency === home) return { fiscalRestBn: mag.bn, tMidYears: null };
+  }
+  if (!counted) return { fiscalRestBn: null, tMidYears: null };
   return {
-    fiscalRestBn: finiteNonNegative(row.fiscalRestBn),
-    tMidYears: finiteNonNegative(row.tMidYears),
+    fiscalRestBn: sum,
+    tMidYears: midWeight > 0 ? midSum / midWeight : null,
   };
 }
 
+export function fiscalRestFromCache(
+  raw: unknown,
+  opts: { region?: Region; now?: Date } = {},
+): { fiscalRestBn: number | null; tMidYears: number | null } {
+  if (!raw || typeof raw !== "object") return { fiscalRestBn: null, tMidYears: null };
+  const row = raw as Record<string, unknown>;
+  const numeric = finiteNonNegative(row.fiscalRestBn);
+  if (numeric != null) {
+    return { fiscalRestBn: numeric, tMidYears: finiteNonNegative(row.tMidYears) };
+  }
+  if (!opts.region) return { fiscalRestBn: null, tMidYears: null };
+  return programmeBudgets(row, opts.region, opts.now ?? new Date());
+}
+
 /**
- * Why π has no F. The capex writer stores programme budgets and
- * totalCapexEstimate as strings. Those strings are not read as numbers.
- * Returns null only when a numeric fiscalRestBn is already present.
+ * Names the missing F field. Null when a numeric rest is already present
+ * or a single home-currency amountUSD parsed.
  */
-export function fiscalRestGap(raw: unknown): string | null {
-  if (fiscalRestFromCache(raw).fiscalRestBn != null) return null;
-  if (!raw || typeof raw !== "object") return "capex cache missing";
+export function fiscalRestGap(raw: unknown, opts: { region?: Region; now?: Date } = {}): string | null {
+  if (fiscalRestFromCache(raw, opts).fiscalRestBn != null) return null;
+  if (!raw || typeof raw !== "object") {
+    return opts.region ? `missing capex__${opts.region}.fiscalRestBn` : "missing fiscalRestBn";
+  }
   const row = raw as Record<string, unknown>;
   const programmes = Array.isArray(row.programmes) ? row.programmes : [];
   const hasBudgetText = programmes.some(item => {
     if (!item || typeof item !== "object") return false;
     return typeof (item as { amountUSD?: unknown }).amountUSD === "string";
   }) || typeof row.totalCapexEstimate === "string";
-  if (hasBudgetText) return "capex cache stores budget text, not fiscalRestBn";
-  return "capex cache has no numeric fiscalRestBn";
+  if (hasBudgetText) return "missing fiscalRestBn; amountUSD is not a single home-currency magnitude";
+  return "missing fiscalRestBn";
 }
 
 function finiteNonNegative(value: unknown): number | null {
@@ -537,9 +639,9 @@ async function loadPoints(
   return points;
 }
 
-function defaultFiscalRest(region: Region): { fiscalRestBn: number | null; tMidYears: number | null } {
+function defaultFiscalRest(region: Region, now: Date): { fiscalRestBn: number | null; tMidYears: number | null } {
   try {
-    return fiscalRestFromCache(diskResearcherGet(`capex__${region}`));
+    return fiscalRestFromCache(diskResearcherGet(`capex__${region}`), { region, now });
   } catch {
     return { fiscalRestBn: null, tMidYears: null };
   }
@@ -623,6 +725,6 @@ export async function fetchRegionalStockInputs(
     series.BOJ_M2 = m2;
     series.BOJ_JGB = jgb;
   }
-  const rest = (opts.readFiscalRest ?? defaultFiscalRest)(region);
+  const rest = (opts.readFiscalRest ?? ((r: Region) => defaultFiscalRest(r, now)))(region);
   return applyCapexRest(stocksFromSeries(region, series, now), rest);
 }
