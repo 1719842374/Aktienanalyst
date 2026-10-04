@@ -538,6 +538,11 @@ export async function fmpRatios(symbol: string, limit = 10) {
   return fmpFetch(`/ratios`, { symbol, limit: String(limit) });
 }
 
+export async function fmpRatiosTtm(symbol: string) {
+  // GET /stable/ratios-ttm?symbol=AAPL — priceToEarningsRatioTTM
+  return fmpFetch(`/ratios-ttm`, { symbol });
+}
+
 export async function fmpKeyMetrics(symbol: string, limit = 5) {
   // GET /stable/key-metrics?symbol=AAPL&limit=5
   return fmpFetch(`/key-metrics`, { symbol, limit: String(limit) });

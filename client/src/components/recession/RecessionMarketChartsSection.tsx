@@ -103,10 +103,17 @@ function SnapshotRow({ market }: { market: MarketChart }) {
   const s = market.snapshot;
   const pegNote = s.peg != null && s.peg > 3 ? " · teuer je Wachstumseinheit" : "";
   return (
-    <p className="text-[11px] text-muted-foreground font-mono" data-testid="market-snapshot">
-      ETF-Proxy · PE {fmt(s.pe, 1)} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
-      {pegNote} · PEG fwd {fmt(s.pegFwd, 2)} · RSI {fmt(s.rsi, 1)} · MACD H {fmt(s.macdHist, 2)}
-    </p>
+    <>
+      <p className="text-[11px] text-muted-foreground font-mono" data-testid="market-snapshot">
+        ETF-Proxy · PE {fmt(s.pe, 1)} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
+        {pegNote} · PEG fwd {fmt(s.pegFwd, 2)} · RSI {fmt(s.rsi, 1)} · MACD H {fmt(s.macdHist, 2)}
+      </p>
+      {s.missing && (
+        <p className="text-[10px] text-muted-foreground break-words" data-testid="snapshot-missing">
+          {s.missing}
+        </p>
+      )}
+    </>
   );
 }
 

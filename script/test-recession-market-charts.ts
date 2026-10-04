@@ -7,6 +7,7 @@ import {
   CHART_BOOKS,
   SERIES_FLOOR,
   VOL_Y_MAX,
+  epsPrintFromRow,
   epsYoyPercent,
   finraLeverage,
   leverageForMarket,
@@ -14,10 +15,12 @@ import {
   marginYoYAndZ,
   maxWindowStart,
   parseFinraMarginSheetXml,
+  peFromMetricsRow,
   pegFromPeAndGrowth,
   realizedVol20,
   sliceByWindow,
   ttmEpsAt,
+  valuationFromFmpRows,
   valuationFromParts,
   volBandLabel,
 } from "../shared/recession-market-charts";
@@ -147,6 +150,93 @@ console.log("\n=== FINRA nur SPY ===");
   check("QQQ ohne Streifen", leverageForMarket("QQQ", strip) === null);
   check("VGK ohne Streifen", leverageForMarket("VGK", strip) === null);
   check("ASHR ohne Streifen", leverageForMarket("ASHR", strip) === null);
+  const monthly = Array.from({ length: 140 }, (_, i) => {
+    const d = new Date(Date.UTC(2014, 0, 1));
+    d.setUTCMonth(d.getUTCMonth() + i);
+    return { date: d.toISOString().slice(0, 10), debitMillions: i === 139 ? 5_000_000 : 1_000_000 + i * 1000 };
+  });
+  const ten = finraLeverage(monthly, "10Y");
+  const one = finraLeverage(monthly, "1Y");
+  const three = finraLeverage(monthly, "3Y");
+  const five = finraLeverage(monthly, "5Y");
+  const max = finraLeverage(monthly, "MAX");
+  check("10Y mehr als 60 Margin-Punkte", ten != null && ten.points.length > 60, String(ten?.points.length));
+  check("10Y nimmt 120 Monate wenn die Serie länger ist", ten != null && ten.points.length === 120, String(ten?.points.length));
+  check("1Y Margin sind 12 Monate", one != null && one.points.length === 12, String(one?.points.length));
+  check("3Y Margin sind 36 Monate", three != null && three.points.length === 36, String(three?.points.length));
+  check("5Y Margin bleiben 60 Monate", five != null && five.points.length === 60, String(five?.points.length));
+  check("MAX Margin nimmt die Serie ab 1999", max != null && max.points.length === 140, String(max?.points.length));
+  check("z5y bleibt die 5-Jahres-Statistik in jedem Fenster", one?.z5y === ten?.z5y && one?.z5y === three?.z5y && one?.z5y === five?.z5y && one?.z5y === max?.z5y, `${one?.z5y} ${ten?.z5y}`);
+}
+
+console.log("\n=== FMP-Felder, kein erfundener PE ===");
+{
+  check("ratios priceToEarningsRatio wird PE", peFromMetricsRow({ priceToEarningsRatio: 27.4 }) === 27.4);
+  check("key-metrics peRatio bleibt gültig", peFromMetricsRow({ peRatio: 21.5 }) === 21.5);
+  check("priceEarningsRatio Alias", peFromMetricsRow({ priceEarningsRatio: 18.2 }) === 18.2);
+  check("0 und leeres Objekt bleiben n/a", peFromMetricsRow({ priceToEarningsRatio: 0, pe: 0 }) === null && peFromMetricsRow({}) === null);
+  check("epsDiluted ist ein Quartalsprint", epsPrintFromRow({ date: "2024-12-31", epsDiluted: 1.2 })?.eps === 1.2);
+  check("epsdiluted kleingeschrieben bleibt lesbar", epsPrintFromRow({ date: "2024-09-30", epsdiluted: 1.1 })?.eps === 1.1);
+  const fromRatios = valuationFromFmpRows({
+    price: 670,
+    asOf: "2026-10-02",
+    allowForward: true,
+    incomeRows: [],
+    earningsRows: [],
+    ratiosRow: { priceToEarningsRatio: 27.4, priceToEarningsGrowthRatio: 1.82, forwardPriceToEarningsGrowthRatio: 1.64 },
+    keyMetricsRow: { peRatio: null, returnOnInvestedCapital: 0.2 },
+    estimateRows: [{ date: "2027-09-30", epsAvg: 32.5 }],
+  });
+  check("ratios-Payload mit PE wird nicht n/a", fromRatios.pe === 27.4, String(fromRatios.pe));
+  check("epsAvg wird Forward-PE", fromRatios.peFwd != null && Math.abs(fromRatios.peFwd - 670 / 32.5) < 0.02, String(fromRatios.peFwd));
+  check("PEG aus Ratio nur wenn Formel fehlt", fromRatios.peg === 1.82, String(fromRatios.peg));
+  const fromIncome = valuationFromFmpRows({
+    price: 400,
+    asOf: "2024-12-31",
+    allowForward: true,
+    incomeRows: [1, 1, 1, 1, 1.2, 1.2, 1.2, 1.2].map((eps, i) => ({
+      date: `202${i < 4 ? 3 : 4}-${String(((i % 4) * 3) + 3).padStart(2, "0")}-28`,
+      epsDiluted: eps,
+    })),
+    earningsRows: [],
+    ratiosRow: { peRatio: null },
+    keyMetricsRow: {},
+    estimateRows: [{ date: "2025-12-31", estimatedEpsDiluted: 6 }],
+  });
+  check("epsDiluted liefert PE und EPS YoY", fromIncome.pe != null && fromIncome.epsYoy === 20, `pe=${fromIncome.pe} yoy=${fromIncome.epsYoy}`);
+  check("historisches key-metrics-PE überschreibt den Kurs nicht", fromIncome.pe === 83.33, String(fromIncome.pe));
+  const hist = valuationFromFmpRows({
+    price: 400,
+    asOf: "2024-12-31",
+    allowForward: false,
+    incomeRows: [1, 1, 1, 1, 1.2, 1.2, 1.2, 1.2].map((eps, i) => ({
+      date: `202${i < 4 ? 3 : 4}-${String(((i % 4) * 3) + 3).padStart(2, "0")}-28`,
+      epsDiluted: eps,
+    })),
+    earningsRows: [],
+    ratiosRow: { priceToEarningsRatio: 99 },
+    keyMetricsRow: { peRatio: 88 },
+    estimateRows: [{ date: "2025-12-31", epsAvg: 6 }],
+  });
+  check("historischer Klick ignoriert heutige Ratio-PE", hist.pe === 83.33 && hist.peFwd === null, `pe=${hist.pe} fwd=${hist.peFwd}`);
+  const indexOnly = [200, 200, 200, 200, 220, 220, 220, 220].map((eps, i) => ({
+    date: `202${i < 4 ? 3 : 4}-${String(((i % 4) * 3) + 3).padStart(2, "0")}-28`,
+    epsDiluted: eps,
+  }));
+  const mixed = valuationFromFmpRows({
+    price: 670,
+    asOf: "2024-12-31",
+    allowForward: true,
+    incomeRows: [],
+    earningsRows: [],
+    indexIncomeRows: indexOnly,
+    ratiosRow: { priceToEarningsRatio: 27.4 },
+    keyMetricsRow: null,
+    estimateRows: [],
+  });
+  check("Index-EPS wird nicht durch den ETF-Preis geteilt", mixed.pe === 27.4, String(mixed.pe));
+  check("Index-EPS liefert YoY", mixed.epsYoy === 10, String(mixed.epsYoy));
+  check("ohne ETF-Schätzung bleibt Forward-PE n/a", mixed.peFwd == null, String(mixed.peFwd));
 }
 
 console.log("\n=== xlsx unzip ===");

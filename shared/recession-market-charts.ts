@@ -21,6 +21,14 @@ export const WINDOW_TRADING_DAYS: Record<Exclude<MarketWindow, "MAX">, number> =
   "10Y": 2520,
 };
 
+/** Monthly FINRA points that belong on the selected chart. 5Y stays 60 months. */
+export const WINDOW_MONTHS: Record<Exclude<MarketWindow, "MAX">, number> = {
+  "1Y": 12,
+  "3Y": 36,
+  "5Y": 60,
+  "10Y": 120,
+};
+
 export const CHART_BOOKS = [
   {
     id: "SPY",
@@ -256,9 +264,168 @@ export function valuationFromParts(input: ValuationInput): ValuationCore {
     pegFwd: roundTo(pegFwdRaw, 2),
     epsYoy: roundTo(epsYoyRaw, 2),
     gCons: roundTo(gConsRaw, 2),
-    pegExpensive: pegRaw != null && pegRaw > 3,
-    pegFwdExpensive: pegFwdRaw != null && pegFwdRaw > 3,
-    note,
+  pegExpensive: pegRaw != null && pegRaw > 3,
+  pegFwdExpensive: pegFwdRaw != null && pegFwdRaw > 3,
+  note,
+};
+}
+
+function finiteNum(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return Number(v);
+  return null;
+}
+
+function positiveNum(v: unknown): number | null {
+  const n = finiteNum(v);
+  return n != null && n > 0 ? n : null;
+}
+
+/**
+ * Stable ratios use priceToEarningsRatio. Stable key-metrics often has no peRatio.
+ * 0 and missing fields stay null — they are not a valuation.
+ */
+export function peFromMetricsRow(row: unknown): number | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as Record<string, unknown>;
+  return positiveNum(r.priceToEarningsRatio)
+    ?? positiveNum(r.priceEarningsRatio)
+    ?? positiveNum(r.priceToEarningsRatioTTM)
+    ?? positiveNum(r.peRatio)
+    ?? positiveNum(r.pe)
+    ?? positiveNum(r.peRatioTTM);
+}
+
+/** PEG and forward PE only when the payload actually carries those fields. */
+export function pegFieldsFromMetricsRow(row: unknown): { peg: number | null; pegFwd: number | null; peFwd: number | null } {
+  if (!row || typeof row !== "object") return { peg: null, pegFwd: null, peFwd: null };
+  const r = row as Record<string, unknown>;
+  return {
+    peg: positiveNum(r.priceToEarningsGrowthRatio) ?? positiveNum(r.priceToEarningsGrowthRatioTTM),
+    pegFwd: positiveNum(r.forwardPriceToEarningsGrowthRatio) ?? positiveNum(r.forwardPriceToEarningsGrowthRatioTTM),
+    peFwd: positiveNum(r.forwardPE) ?? positiveNum(r.forwardPriceToEarningsRatio),
+  };
+}
+
+/** Quarterly income EPS. Stable rows use epsDiluted; older rows use epsdiluted. */
+export function epsPrintFromRow(row: unknown): EpsPrint | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as Record<string, unknown>;
+  const date = String(r.date ?? r.fillingDate ?? r.filingDate ?? "").slice(0, 10);
+  const eps = finiteNum(r.epsDiluted) ?? finiteNum(r.epsdiluted) ?? finiteNum(r.eps) ?? finiteNum(r.netIncomePerShare);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) return null;
+  return { date, eps };
+}
+
+/** Reported quarter from /stable/earnings. Estimates are not treated as actuals. */
+export function epsPrintFromEarningsRow(row: unknown): EpsPrint | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as Record<string, unknown>;
+  const date = String(r.date ?? "").slice(0, 10);
+  const eps = finiteNum(r.epsActual) ?? finiteNum(r.actualEarningResult);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) return null;
+  return { date, eps };
+}
+
+export function ntmEpsFromEstimateRows(raw: unknown, asOf: string): number | null {
+  if (!Array.isArray(raw)) return null;
+  const rows: { date: string; eps: number }[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const date = String(r.date ?? "").slice(0, 10);
+    const eps = positiveNum(r.epsAvg)
+      ?? positiveNum(r.estimatedEpsAvg)
+      ?? positiveNum(r.estimatedEpsDiluted)
+      ?? positiveNum(r.estimatedEps);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || eps == null) continue;
+    rows.push({ date, eps });
+  }
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+  const upcoming = rows.find((r) => r.date >= asOf);
+  return (upcoming ?? rows[rows.length - 1])?.eps ?? null;
+}
+
+export interface FmpValuationRows {
+  price: number | null;
+  asOf: string;
+  allowForward: boolean;
+  /** ETF share EPS. Safe to divide into the ETF price. */
+  incomeRows: unknown[];
+  earningsRows: unknown[];
+  /**
+   * Index EPS is not in ETF-share dollars. It may supply YoY only.
+   * It is never divided into the ETF price.
+   */
+  indexIncomeRows?: unknown[];
+  indexEarningsRows?: unknown[];
+  ratiosRow: unknown;
+  keyMetricsRow: unknown;
+  estimateRows: unknown[];
+}
+
+function printsFrom(rows: unknown[] | undefined, fromEarnings: boolean): EpsPrint[] {
+  const list = rows ?? [];
+  return fromEarnings
+    ? list.map(epsPrintFromEarningsRow).filter((x): x is EpsPrint => x != null)
+    : list.map(epsPrintFromRow).filter((x): x is EpsPrint => x != null);
+}
+
+function preferIncome(income: EpsPrint[], earnings: EpsPrint[]): EpsPrint[] {
+  if (income.length >= 8) return income;
+  return earnings.length > income.length ? earnings : income;
+}
+
+/**
+ * Latest-bar valuation. ETF income TTM wins over a current ratio.
+ * Today's ratio PE is not applied to an older click.
+ * Index EPS never becomes the denominator under the ETF price.
+ */
+export function valuationFromFmpRows(input: FmpValuationRows): ValuationCore {
+  const etfPrints = preferIncome(printsFrom(input.incomeRows, false), printsFrom(input.earningsRows, true));
+  const indexPrints = preferIncome(
+    printsFrom(input.indexIncomeRows, false),
+    printsFrom(input.indexEarningsRows, true),
+  );
+  const priced = ttmEpsAt(etfPrints, input.asOf);
+  const growthSource = etfPrints.length >= 8 ? etfPrints : indexPrints.length >= 8 ? indexPrints : etfPrints;
+  const growth = ttmEpsAt(growthSource, input.asOf);
+  const ntm = input.allowForward ? ntmEpsFromEstimateRows(input.estimateRows, input.asOf) : null;
+  const directPe = input.allowForward
+    ? peFromMetricsRow(input.ratiosRow) ?? peFromMetricsRow(input.keyMetricsRow)
+    : null;
+  const core = valuationFromParts({
+    price: input.price,
+    ttmEps: priced.ttm,
+    prevTtmEps: priced.prevTtm,
+    epsNtm: ntm,
+    allowForward: input.allowForward,
+    keyMetricsPe: directPe,
+  });
+  const epsYoy = core.epsYoy ?? epsYoyPercent(growth.ttm, growth.prevTtm);
+  const peg = core.peg ?? pegFromPeAndGrowth(core.pe, epsYoy);
+  if (!input.allowForward) {
+    return {
+      ...core,
+      epsYoy: roundTo(epsYoy, 2),
+      peg: roundTo(peg, 2),
+      pegExpensive: peg != null && peg > 3,
+    };
+  }
+  const extra = pegFieldsFromMetricsRow(input.ratiosRow);
+  const keyExtra = pegFieldsFromMetricsRow(input.keyMetricsRow);
+  const pegFilled = peg ?? extra.peg ?? keyExtra.peg;
+  const peFwd = core.peFwd ?? extra.peFwd ?? keyExtra.peFwd;
+  const gCons = core.gCons;
+  const pegFwd = core.pegFwd ?? pegFromPeAndGrowth(peFwd, gCons) ?? extra.pegFwd ?? keyExtra.pegFwd;
+  return {
+    ...core,
+    peFwd: roundTo(peFwd, 2),
+    peg: roundTo(pegFilled, 2),
+    pegFwd: roundTo(pegFwd, 2),
+    epsYoy: roundTo(epsYoy, 2),
+    pegExpensive: pegFilled != null && pegFilled > 3,
+    pegFwdExpensive: pegFwd != null && pegFwd > 3,
   };
 }
 
@@ -299,13 +466,25 @@ export const leverageSchema = z.object({
 
 export type LeverageStrip = z.infer<typeof leverageSchema>;
 
-export function finraLeverage(pointsAsc: MarginPoint[]): LeverageStrip | null {
+/** Chart points follow the selected window. z5y below stays a 5-year YoY statistic. */
+export function marginPointsForWindow(pointsAsc: MarginPoint[], window: MarketWindow): MarginPoint[] {
+  const floored = pointsAsc.filter((p) => p.date >= SERIES_FLOOR);
+  if (window === "MAX") return floored;
+  return floored.slice(-WINDOW_MONTHS[window]);
+}
+
+export function finraLeverage(pointsAsc: MarginPoint[], window: MarketWindow = "5Y"): LeverageStrip | null {
   if (pointsAsc.length < 13) return null;
   const levels = pointsAsc.map((p) => p.debitMillions);
   const raw = marginYoYAndZ(levels);
   const last = pointsAsc[pointsAsc.length - 1];
   const billions = roundTo(last.debitMillions / 1000, 3);
   if (billions == null) return null;
+  const points = marginPointsForWindow(pointsAsc, window).flatMap((p) => {
+    const value = roundTo(p.debitMillions / 1000, 3);
+    if (value == null) return [];
+    return [{ date: p.date.slice(0, 7), billions: value }];
+  });
   return {
     seriesId: "FINRA_MARGIN_DEBIT",
     unit: "Mrd. $",
@@ -314,10 +493,7 @@ export function finraLeverage(pointsAsc: MarginPoint[]): LeverageStrip | null {
     yoyPct: roundTo(raw.yoyPct, 2),
     z5y: roundTo(raw.z5y, 2),
     high: raw.z5y != null && raw.z5y > 1,
-    points: pointsAsc.slice(-60).map((p) => ({
-      date: p.date.slice(0, 7),
-      billions: roundTo(p.debitMillions / 1000, 3) ?? 0,
-    })),
+    points,
   };
 }
 
@@ -364,6 +540,8 @@ export const snapshotSchema = z.object({
   epsYoy: z.number().nullable(),
   rsi: z.number().nullable(),
   macdHist: z.number().nullable(),
+  /** Named FMP calls that came back empty for a field that is still n/a. */
+  missing: z.string().nullable(),
 });
 
 export const marketChartSchema = z.object({
