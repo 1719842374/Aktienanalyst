@@ -373,7 +373,7 @@ export default function Researcher() {
   );
 }
 
-function BriefingModal({ loading, data, error, onClose, onRetry, onForceRefresh }: {
+export function BriefingModal({ loading, data, error, onClose, onRetry, onForceRefresh }: {
   loading: boolean;
   data: any;
   error: string | null;
@@ -385,9 +385,23 @@ function BriefingModal({ loading, data, error, onClose, onRetry, onForceRefresh 
   const diag = data?.diagnostics;
   const isCached = !!data?._cached;
   const cacheAge = data?._cacheAgeMin;
+  const regions = Array.isArray(data?.regions)
+    ? data.regions
+    : Array.isArray(briefing?.regions)
+      ? briefing.regions
+      : null;
+  const isV2 = Array.isArray(regions) && regions.length === 3;
+  const cross = Array.isArray(data?.cross)
+    ? data.cross
+    : Array.isArray(briefing?.cross)
+      ? briefing.cross
+      : [];
+  const headline = briefing?.headline || data?.headline || "";
+  const tacticalStance = data?.tacticalStance || briefing?.tacticalStance || "";
+  const stanceRationale = data?.stanceRationale || briefing?.stanceRationale || "";
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8 bg-black/60 backdrop-blur-sm overflow-y-auto">
-      <div className="w-full max-w-3xl bg-card border border-border/50 rounded-lg shadow-2xl">
+      <div className={`w-full ${isV2 ? "max-w-5xl" : "max-w-3xl"} bg-card border border-border/50 rounded-lg shadow-2xl`}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border/40 bg-gradient-to-r from-amber-500/10 to-orange-500/5">
           <Flame className="w-4 h-4 text-amber-400" />
           <h2 className="text-sm font-semibold text-foreground/95">Pre-Market Briefing</h2>
@@ -427,7 +441,7 @@ function BriefingModal({ loading, data, error, onClose, onRetry, onForceRefresh 
             </div>
           )}
 
-          {briefing && !loading && (
+          {briefing && !loading && !isV2 && (
             <>
               <div className="rounded-lg bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.04] border border-amber-500/30 p-3">
                 <div className="text-[10px] uppercase tracking-wider text-amber-400/70 mb-1">Headline</div>
@@ -458,6 +472,59 @@ function BriefingModal({ loading, data, error, onClose, onRetry, onForceRefresh 
                 <div className="rounded border border-violet-400/30 bg-violet-500/[0.06] p-3">
                   <div className="text-[10px] uppercase tracking-wider text-violet-300/80 mb-1">Pre-Market Action</div>
                   <p className="text-[12px] text-foreground/85 leading-relaxed">{briefing.recommendation}</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {isV2 && !loading && (
+            <>
+              <div className="rounded-lg bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.04] border border-amber-500/30 p-3">
+                <div className="text-[10px] uppercase tracking-wider text-amber-400/70 mb-1">Headline</div>
+                <div className="text-sm font-semibold text-foreground">{headline}</div>
+              </div>
+
+              <div data-testid="briefing-cross" className="rounded border border-border/40 bg-background/40 p-3">
+                <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-1">Cross</div>
+                <div className="space-y-1">
+                  {cross.slice(0, 3).map((line: string, i: number) => (
+                    <p key={i} className="text-[12px] text-foreground/80 leading-relaxed">{line}</p>
+                  ))}
+                </div>
+              </div>
+
+              <div data-testid="briefing-regions" className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                {regions.map((r: any) => (
+                  <div key={r.region} data-testid={`briefing-region-${r.region}`} className="rounded border border-border/40 bg-background/40 p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[12px] font-semibold text-foreground">{r.region}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/[0.06] text-foreground/70">{r.stance}</span>
+                    </div>
+                    <p className="text-[11px] text-foreground/80 leading-relaxed"><span className="text-foreground/45">Geld </span>{r.money}</p>
+                    <p className="text-[11px] text-foreground/80 leading-relaxed"><span className="text-foreground/45">Fiskal </span>{r.fiscal}</p>
+                    <p className="text-[11px] text-foreground/80 leading-relaxed"><span className="text-foreground/45">Handel </span>{r.trade}</p>
+                    <p className="text-[10px] font-mono text-foreground/60">
+                      LI {fmtBriefingNum(r.li)} · r {fmtBriefingNum(r.realRatePct)} · V {fmtBriefingNum(r.velocity)} · π {fmtBriefingNum(r.pricedIn)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {Array.isArray(briefing?.topChanges) && briefing.topChanges.length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-2">Top Changes</div>
+                  <div className="space-y-2">
+                    {briefing.topChanges.map((c: any, i: number) => (
+                      <BriefingChangeCard key={`${c.region}-${c.title}-${i}`} change={c} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(tacticalStance || stanceRationale) && (
+                <div className="rounded border border-violet-400/30 bg-violet-500/[0.06] p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-violet-300/80 mb-1">Tactical Stance</div>
+                  <p className="text-[12px] text-foreground/85 leading-relaxed">{tacticalStance}{stanceRationale ? `: ${stanceRationale}` : ""}</p>
                 </div>
               )}
             </>
@@ -517,6 +584,10 @@ function BriefingChangeCard({ change }: { change: any }) {
       </div>
     </div>
   );
+}
+
+function fmtBriefingNum(n: number | null | undefined): string {
+  return typeof n === "number" && Number.isFinite(n) ? String(n) : "n/v";
 }
 
 function MetricShift({ label, value }: { label: string; value: string }) {
