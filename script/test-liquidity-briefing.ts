@@ -1,0 +1,197 @@
+/**
+ * DoD Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md
+ * Run: npx tsx script/test-liquidity-briefing.ts
+ *
+ * Snapshot-Prints sind Testhaken. Der Live-Fetch hardcodet sie nicht
+ * und legt keinen zweiten US-M2V-Pfad an.
+ */
+import {
+  CACHE_KEYS,
+  DEAD_FRED_SERIES,
+  LIVE_FRED_SERIES,
+  PHI,
+  billsStockDiff,
+  halfLifeYears,
+  isForbiddenFredSeries,
+  observationOn,
+  parseAppBreakdown,
+  parseBojMoneyStock,
+  parseEcbCsv,
+  parseFredCsv,
+  parsePeppPurchases,
+  quarterVelocity,
+  velocity,
+  bojHundredMillionYenToBillion,
+} from "../server/liquidity-briefing-math";
+import {
+  briefingSourceUrls,
+  fetchLiquidityBriefing,
+  memoryBriefingCache,
+} from "../server/liquidity-briefing";
+
+let failed = 0;
+function ok(name: string, cond: boolean, detail?: string) {
+  if (cond) console.log(`  OK  ${name}`);
+  else {
+    failed++;
+    console.log(`  FAIL ${name}${detail ? " — " + detail : ""}`);
+  }
+}
+
+const near = (a: number | null, b: number, tol = 1e-9) => a != null && Math.abs(a - b) < tol;
+
+console.log("Liquidity briefing — tote Serien");
+for (const id of DEAD_FRED_SERIES) ok(`tot: ${id}`, isForbiddenFredSeries(id));
+ok("DFII5 verboten", isForbiddenFredSeries("DFII5"));
+ok("DFII10 erlaubt", !isForbiddenFredSeries("DFII10"));
+ok("Live-FRED ohne M2V", !LIVE_FRED_SERIES.includes("M2V" as never));
+ok("Live-FRED schneidet §0 nicht", LIVE_FRED_SERIES.every(id => !isForbiddenFredSeries(id)));
+const urls = briefingSourceUrls(new Date("2026-09-04T12:00:00Z"));
+const urlBlob = urls.map(u => u.url).join("\n");
+ok("kein Fetch der toten IDs", DEAD_FRED_SERIES.every(id => !urlBlob.includes(id)));
+ok("kein M2V in den Briefing-URLs", !urlBlob.includes("M2V") && !urlBlob.includes("M2SL"));
+ok("EZ-M3 kommt von der EZB", urls.some(u => u.id === "ECB_M3" && u.url.includes("data-api.ecb.europa.eu")));
+ok("JP-M2 kommt von der BoJ", urls.some(u => u.id === "BOJ_M2" && u.url.includes("stat-search.boj.or.jp")));
+ok("APP-CSV ist die EZB-Tabelle", urls.some(u => u.url.includes("APP_breakdown_history.csv")));
+ok("PEPP-CSV ist die EZB-Tabelle", urls.some(u => u.url.includes("PEPP_purchase_history.csv")));
+
+console.log("Fixtures §9");
+const m2v = parseFredCsv("observation_date,M2V\n2026-01-01,1.413\n2026-04-01,1.415\n");
+ok("Fixture M2V Q2 2026 = 1.415", near(observationOn(m2v, "2026-04-01"), 1.415, 0.001));
+
+const appCsv = [
+  "2026,June,-172,-2317,-5457,-17964,-3,-32,-121,-417,2093,192857,219429,1706087",
+  ",July,-73,-1554,-1237,-24306,0,0,0,0,2019,191303,218192,1681781",
+].join("\n");
+const app = parseAppBreakdown(appCsv);
+const julApp = app.find(r => r.period === "2026-07");
+ok("Fixture APP Jul Netto = -27.170", julApp != null && julApp.netBn.toFixed(3) === "-27.170", String(julApp?.netBn));
+ok("APP Jul Bestand 2093.295", julApp != null && julApp.holdingsBn.toFixed(3) === "2093.295", String(julApp?.holdingsBn));
+ok("PSPP Jul Netto -24.306", julApp != null && julApp.psppNetBn.toFixed(3) === "-24.306", String(julApp?.psppNetBn));
+const junApp = app.find(r => r.period === "2026-06");
+ok("APP Jun Bestand 2120.466", junApp != null && junApp.holdingsBn.toFixed(3) === "2120.466", String(junApp?.holdingsBn));
+
+const peppCsv = [
+  "2026,June,-11703,1394194",
+  ",July,-24821,1369373",
+].join("\n");
+const pepp = parsePeppPurchases(peppCsv);
+const julPepp = pepp.find(r => r.period === "2026-07");
+ok("Fixture PEPP Jul Netto = -24.821", julPepp != null && julPepp.netBn.toFixed(3) === "-24.821", String(julPepp?.netBn));
+
+const dfii = parseFredCsv("observation_date,DFII10\n2026-08-27,2.34\n2026-08-28,2.42\n");
+ok("Fixture DFII10 28.08.2026 = 2.42", near(observationOn(dfii, "2026-08-28"), 2.42, 1e-9));
+
+const jgb = parseFredCsv("observation_date,IRLTLT01JPM156N\n2026-06-01,2.670\n");
+ok("Fixture IRLTLT01JPM156N Jun 2026 = 2.670", near(observationOn(jgb, "2026-06-01"), 2.670, 1e-9));
+
+ok("Fixture Bills-MSPD Jul Diff = 298.202", near(billsStockDiff(6988.891, 6690.689), 298.202, 1e-6));
+
+const t8 = halfLifeYears(0.08);
+ok("T½(0.08) in [8.99, 9.01]", t8 != null && t8 >= 8.99 && t8 <= 9.01, String(t8));
+const t242 = halfLifeYears(0.0242);
+ok("T½(0.0242) ≈ 29.0", t242 != null && t242 >= 28.9 && t242 <= 29.1, String(t242));
+const tJp = halfLifeYears(0.009);
+ok("T½(0.009) ≈ 77", tJp != null && tJp >= 76.5 && tJp <= 78, String(tJp));
+const clippedHi = halfLifeYears(0.08, 0.1, 1);
+ok("V-Faktor Clip oben 2", clippedHi != null && t8 != null && Math.abs(clippedHi - t8 * 2) < 1e-9, String(clippedHi));
+const clippedLo = halfLifeYears(0.08, 10, 1);
+ok("V-Faktor Clip unten 0.5", clippedLo != null && t8 != null && Math.abs(clippedLo - t8 * 0.5) < 1e-9, String(clippedLo));
+ok("φ = 0.3", PHI === 0.3);
+
+console.log("Velocity V = NGDP / M");
+ok("V = 16/17.6", near(velocity(16, 17.6), 16 / 17.6));
+const ez = quarterVelocity({
+  ngdp: [{ period: "2026-Q2", value: 4100 }],
+  moneyMonthly: [
+    { period: "2026-04", value: 17600 },
+    { period: "2026-05", value: 17610 },
+    { period: "2026-06", value: 17620 },
+  ],
+  annualizeNgdp: true,
+});
+ok("EZ annualisiert NGDP/M3", ez.length === 1 && near(ez[0].velocity, (4100 * 4) / ((17600 + 17610 + 17620) / 3), 1e-9), String(ez[0]?.velocity));
+ok("BoJ 100 Mio. Yen → Mrd.", near(bojHundredMillionYenToBillion(12970074), 1297007.4, 1e-6));
+
+const boj = parseBojMoneyStock([
+  "SERIES_CODE,NAME,UNIT",
+  "MAM1NAM2M2MO,M2/Average Amounts Outstanding/Money Stock,100 million yen,MONTHLY,Money Stock,20260909,202607,12966394",
+].join("\n"));
+ok("BoJ Juli 2026 geparst", boj.length === 1 && boj[0].period === "2026-07" && boj[0].value === 12966394);
+
+console.log("Fetch mit Fixture-Körpern, ohne Netz");
+const m3Body = [
+  "KEY,TIME_PERIOD,OBS_VALUE",
+  "k,2025-04,17000000",
+  "k,2025-05,17000000",
+  "k,2025-06,17000000",
+  "k,2026-04,17600000",
+  "k,2026-05,17600000",
+  "k,2026-06,17614000",
+].join("\n");
+const ngdpBody = [
+  "TIME_PERIOD,OBS_VALUE",
+  "2025-Q2,3900000",
+  "2026-Q2,4118504",
+].join("\n");
+const bojBody = [
+  "MAM1NAM2M2MO,M2,100 million yen,MONTHLY,Money Stock,20260909,202504,12000000",
+  "MAM1NAM2M2MO,M2,100 million yen,MONTHLY,Money Stock,20260909,202505,12000000",
+  "MAM1NAM2M2MO,M2,100 million yen,MONTHLY,Money Stock,20260909,202506,12000000",
+  "MAM1NAM2M2MO,M2,100 million yen,MONTHLY,Money Stock,20260909,202604,12900000",
+  "MAM1NAM2M2MO,M2,100 million yen,MONTHLY,Money Stock,20260909,202605,12900000",
+  "MAM1NAM2M2MO,M2,100 million yen,MONTHLY,Money Stock,20260909,202606,12970074",
+  "MAM1YAM2M2MO,M2 YoY,%,MONTHLY,Money Stock,20260909,202608,2",
+].join("\n");
+const fredBody = "observation_date,JPNNGDP\n2025-04-01,650000\n2026-04-01,689219.1\n";
+let calls = 0;
+const seen: string[] = [];
+const fakeFetch: typeof fetch = async (input) => {
+  calls++;
+  const url = String(input);
+  seen.push(url);
+  let body = "";
+  if (url.includes("M30.X.I.")) body = "TIME_PERIOD,OBS_VALUE\n2026-07,3.374812706145436\n2026-08,3.489572442704003\n";
+  else if (url.includes("/BSI/")) body = m3Body;
+  else if (url.includes("/MNA/")) body = ngdpBody;
+  else if (url.includes("APP_breakdown_history")) body = appCsv;
+  else if (url.includes("PEPP_purchase_history")) body = peppCsv;
+  else if (url.includes("stat-search.boj.or.jp")) body = bojBody;
+  else if (url.includes("id=JPNNGDP")) body = fredBody;
+  else body = "";
+  return new Response(body, { status: 200 });
+};
+const mem = memoryBriefingCache();
+const briefing = await fetchLiquidityBriefing({
+  fetchImpl: fakeFetch,
+  cache: mem,
+  now: new Date("2026-09-04T16:00:00Z"),
+  readUsVelocity: () => 1.415,
+});
+ok("sieben Quellen, kein M2V-Request", calls === 7 && seen.every(u => !u.includes("M2V") && !DEAD_FRED_SERIES.some(id => u.includes(id))), `${calls} ${seen.join(" | ")}`);
+ok("US-Velocity nur durchgereicht", briefing.us.velocity === 1.415 && briefing.us.source === "liquidity-regime");
+ok("EZ-Velocity gesetzt", briefing.eurozone.velocity != null && briefing.available.ez, String(briefing.eurozone.velocity));
+ok("EZ YoY ist die EZB-Wachstumsrate", briefing.eurozone.yoy === 3.49, String(briefing.eurozone.yoy));
+ok("JP YoY ist die BoJ-Rate", briefing.japan.yoy === 2, String(briefing.japan.yoy));
+const jpMoney = bojHundredMillionYenToBillion((12900000 + 12900000 + 12970074) / 3);
+ok("JP-Velocity = NGDP / Quartalsmittel M2", briefing.japan.velocity != null && Math.abs(briefing.japan.velocity - (689219.1 / jpMoney)) < 0.002, String(briefing.japan.velocity));
+ok("Fetch-APP ist Juli-Netto aus der Tabelle", briefing.app.netBn === -27.17, String(briefing.app.netBn));
+ok("Fetch-PEPP ist Juli-Netto aus der Tabelle", briefing.pepp.netBn === -24.821, String(briefing.pepp.netBn));
+ok("Briefing-Key schreibt nicht die Quell-Keys um", mem.get(CACHE_KEYS.eu) != null && mem.get("briefing_v2__2026-09-04") != null);
+const callsAfter = calls;
+await fetchLiquidityBriefing({
+  fetchImpl: fakeFetch,
+  cache: mem,
+  now: new Date("2026-09-04T18:00:00Z"),
+  readUsVelocity: () => 1.415,
+});
+ok("zweiter Lesen trifft den Briefing-Cache", calls === callsAfter);
+
+const ecbOnly = parseEcbCsv(m3Body);
+ok("EZB-CSV TIME_PERIOD", ecbOnly.length === 6 && ecbOnly[5].period === "2026-06");
+
+if (failed) {
+  console.log(`\n${failed} TESTS FEHLGESCHLAGEN`);
+  process.exit(1);
+}
+console.log("\nALLE TESTS BESTANDEN");
