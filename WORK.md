@@ -20,8 +20,6 @@
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ |
 | [Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md](./Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md) | Briefing 3 Regionen |
 | [Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Serien-IDs + Prints |
-| [Offen_WORK_RECESSION_2008_DRIVERS_LLM.md](./Offen_WORK_RECESSION_2008_DRIVERS_LLM.md) | Ziel+z-Matrix auf diesem Branch, nicht auf main |
-| [Offen_WORK_PORTFOLIO_SOLL_IST.md](./Offen_WORK_PORTFOLIO_SOLL_IST.md) | Target vs Actual · Active Weight · Nenner A/B · Feng-Feng-Zahlen 2026-08-28 · Drop-in noch nicht verdrahtet |
 
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 
@@ -36,12 +34,12 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [fertig_WORK_EXEC_SUMMARY.md](./fertig_WORK_EXEC_SUMMARY.md) | Exec vor S1 live (#58) |
 | [docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md](./docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md) | FactPack Hook+UI live (#57) |
 | [fertig_WORK_RECESSION_RSI_MACD.md](./fertig_WORK_RECESSION_RSI_MACD.md) | RSI/MACD Dashboard live |
-| [Offen_WORK_RECESSION_MARKET_CHARTS.md](./Offen_WORK_RECESSION_MARKET_CHARTS.md) | VIX/VSTOXX/realized Pane (#60/#66) |
+| [fertig_WORK_RECESSION_MARKET_CHARTS.md](./fertig_WORK_RECESSION_MARKET_CHARTS.md) | Vier Märkte, Klick-Factpack, FINRA nur unter SPY |
 | [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 30.09. Vormittag, nach #103 Miner Observability Live PASS (`e2bc69a2`, Bundle `index-MIF1Ml5X.js`) |
 | [fertig_WORK_THESIS_LAB.md](./fertig_WORK_THESIS_LAB.md) | `/#/lab` Live PASS (#73) |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](./WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 Rang 7–9 |
-| [Offen_WORK_ANALYZE_DISK_CACHE.md](./Offen_WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch |
-| [Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | disk-cache |
+| [fertig_WORK_ANALYZE_DISK_CACHE.md](./fertig_WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch, L1+L2, force löscht beide |
+| [fertig_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./fertig_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | Analyze-Route an die 7-Tage-Disk gehängt |
 | [fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md](./fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 US-only |
 | [fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | CATALOG.US/EU/ASIA, `?region=` books.M/F |
 | [Offen_WORK_STABLECOIN_TBILL_GENIUS.md](./Offen_WORK_STABLECOIN_TBILL_GENIUS.md) | BTC Sektion 14 |
@@ -50,7 +48,12 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [fertig_WORK_PORTFOLIO.md](./fertig_WORK_PORTFOLIO.md) | Portfolio |
 | [fertig_WORK.md_portfolio_3](./fertig_WORK.md_portfolio_3) | §6 OHLCV Charts live — Tester AAPL 1Y/2Y PASS @ `6a1807b` |
 | [fertig_WORK_PORTFOLIO_BACKTEST.md](./fertig_WORK_PORTFOLIO_BACKTEST.md) | Equity α/β/IR Underwater |
-| [Offen_WORK_PORTFOLIO_SOLL_IST.md](./Offen_WORK_PORTFOLIO_SOLL_IST.md) | Soll/Ist-Tracking Spec + Zahlen |
+| [fertig_WORK_PORTFOLIO_SOLL_IST.md](./fertig_WORK_PORTFOLIO_SOLL_IST.md) | Soll vs. Ist, Active Weight, Trade-Notional |
+| [fertig_WORK_BIAS_FIXES_INVERSE_DCF.md](./fertig_WORK_BIAS_FIXES_INVERSE_DCF.md) | Inverse-DCF als Basis ab zwei Triggern |
+| [fertig_WORK_PEER_ADAPTIVE.md](./fertig_WORK_PEER_ADAPTIVE.md) | 2-Hop-Peers, kuratierte Map nur Notnagel |
+| [fertig_WORK_PEER_PRICING_POWER.md](./fertig_WORK_PEER_PRICING_POWER.md) | Relativ nur bei peerMaterial, sonst Banner |
+| [fertig_WORK_RECESSION_2008_DRIVERS_LLM.md](./fertig_WORK_RECESSION_2008_DRIVERS_LLM.md) | Ziel+z, LLM nur bei Menge A |
+| [fertig_WORK_RECESSION_RATE_OIL_BRIDGE.md](./fertig_WORK_RECESSION_RATE_OIL_BRIDGE.md) | Zins- und Öl-Brücke neben den 17 Indikatoren |
 | [fertig_WORK_RESEARCHER_PORTFOLIO.md](./fertig_WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 |
 | [fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md](./fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md) | Zahlen P2 |
 | [fertig_WORK_NEWS_SENTIMENT.md](./fertig_WORK_NEWS_SENTIMENT.md) | Sentiment |
