@@ -62,6 +62,19 @@ export interface RecessionBridgeView {
   };
 }
 
+export interface RecessionDriverCard {
+  id: string;
+  title: string;
+  text: string;
+  reason: string;
+}
+
+export interface RecessionDrivers {
+  status: "unauffällig" | "drivers" | "empty";
+  lines: string[];
+  cards: RecessionDriverCard[];
+}
+
 export interface RecessionAnalysis {
   date: string;
   asOf?: string;
@@ -72,6 +85,7 @@ export interface RecessionAnalysis {
   googleTrendsAvailable: boolean;
   topDrivers: string[];
   interpretation: string;
+  drivers?: RecessionDrivers;
   fazit?: { summary: string; riskLevel: string; sections: FazitSection[] };
   sources: { name: string; url: string }[];
   bridge?: RecessionBridgeView;

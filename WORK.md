@@ -20,7 +20,7 @@
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ |
 | [Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md](./Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md) | Briefing 3 Regionen |
 | [Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Serien-IDs + Prints |
-| [Offen_WORK_RECESSION_2008_DRIVERS_LLM.md](./Offen_WORK_RECESSION_2008_DRIVERS_LLM.md) | Hormuz (B) — `recession-drivers.ts` fehlt |
+| [Offen_WORK_RECESSION_2008_DRIVERS_LLM.md](./Offen_WORK_RECESSION_2008_DRIVERS_LLM.md) | Ziel+z-Matrix auf diesem Branch, nicht auf main |
 | [Offen_WORK_PORTFOLIO_SOLL_IST.md](./Offen_WORK_PORTFOLIO_SOLL_IST.md) | Target vs Actual · Active Weight · Nenner A/B · Feng-Feng-Zahlen 2026-08-28 · Drop-in noch nicht verdrahtet |
 
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)

@@ -4,6 +4,7 @@ import { fetchMacroSnapshot } from "./fmp-macro";
 import { riskLevelPhrase } from "../shared/risk-level-label";
 import { sahmIndicatorFromScore, scoreSahmFromUnemployment, SAHM_HISTORY_YEARS } from "./recession-sahm";
 import { fetchBridge, shockGeopoliticsSection, type RecessionBridge } from "./recession-bridge";
+import { driverFazitSections, loadDriverAssessment, type DriverView } from "./recession-drivers";
 
 // ============================================================
 // Generic Data Helpers
@@ -768,6 +769,7 @@ export interface RecessionAnalysis {
   googleTrendsAvailable: boolean;
   topDrivers: string[];
   interpretation: string;
+  drivers: DriverView;
   sources: { name: string; url: string }[];
   bridge: RecessionBridge;
 }
@@ -1072,7 +1074,13 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
 
   // ====== FAZIT: Comprehensive assessment ======
   const bridge = await bridgePromise;
-  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers, bridge);
+  const driverAssessment = await loadDriverAssessment();
+  const drivers: DriverView = {
+    status: driverAssessment.status,
+    lines: driverAssessment.lines,
+    cards: driverAssessment.cards,
+  };
+  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers, bridge, drivers);
 
   console.log("[RECESSION] Analysis complete.");
   console.log(`[RECESSION] Probabilities: Rez-3M=${pCoincident}%, Rez-6M=${pLeading}%, Rez-12M=${pRezFull}%, Korr-3-6M=${pSentiment}%, Korr-12M=${pCorrFull}%`);
@@ -1087,6 +1095,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     googleTrendsAvailable: googleAvailable,
     topDrivers,
     interpretation,
+    drivers,
     fazit,
     sources,
     bridge,
@@ -1110,6 +1119,7 @@ function generateFazit(
   pKorr3_6M: number, pKorr12M: number,
   topDrivers: string[],
   bridge: RecessionBridge,
+  drivers: DriverView,
 ): { summary: string; riskLevel: string; sections: FazitSection[] } {
   // Extract key indicator values
   const get = (name: string) => indicators.find(i => i.name.includes(name));
@@ -1176,8 +1186,7 @@ function generateFazit(
   let summary = `Gesamtbewertung: ${riskLevelPhrase(riskLevel)}. `;
   summary += `Rezession 12M: ${pRez12M}%, Korrektur 12M: ${pKorr12M}%. `;
   if (pKorr12M >= 65) {
-    summary += `Die Kombination aus historisch extremen Bewertungen (Buffett ${buffett?.value}, CAPE ${cape?.value}), `;
-    summary += `anhaltendem Inflations- und Zinsdruck mit Stagflationspotenzial, `;
+    summary += `Die Kombination aus historisch extremen Bewertungen (Buffett ${buffett?.value}, CAPE ${cape?.value}) `;
     summary += `und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, `;
     summary += `das defensives Portfoliomanagement erfordert.`;
   }
@@ -1186,6 +1195,7 @@ function generateFazit(
     { title: "Quantitative Bewertung", emoji: "📊", text: quantSummary },
     { title: "Bewertungsrisiko", emoji: "⚠️", text: valuationText },
     ...(geoSection ? [geoSection] : []),
+    ...driverFazitSections(drivers),
     { title: "Private Credit & Systemisches Risiko", emoji: "🏦", text: creditText },
     { title: "Handlungsempfehlung", emoji: "🎯", text: actionText },
   ];

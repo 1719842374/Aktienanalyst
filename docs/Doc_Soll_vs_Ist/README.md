@@ -30,7 +30,7 @@
 | [Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md) | 3 Regionen + Spillover | ein Prompt, NEW=`high` | `⬜` |
 | [Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md](../../Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–9 | 1–6 live; **Rang 7–9** xyflow blockiert | `🟡` blockiert |
 | [Offen_WORK_RECESSION_MARKET_CHARTS.md](../../Offen_WORK_RECESSION_MARKET_CHARTS.md) | VIX-Pane + PEG-Click + FINRA | VIX/VSTOXX/realized live (US/EU/AS); PEG-Click + FINRA offen | `🟡` |
-| [Offen_WORK_RECESSION_2008_DRIVERS_LLM.md](../../Offen_WORK_RECESSION_2008_DRIVERS_LLM.md) | SLOOS/Price-Rent/TED + OpenRouter-Driver | Hormuz-(A) Essay gelöscht (#59); **`recession-drivers.ts` fehlt** (B) | `🟡` |
+| [Offen_WORK_RECESSION_2008_DRIVERS_LLM.md](../../Offen_WORK_RECESSION_2008_DRIVERS_LLM.md) | SLOOS/Price-Rent/TED + OpenRouter-Driver | Ziel+z-Matrix auf diesem Branch, nicht auf main | `🟡` |
 | [Offen_WORK_RECESSION_FRED_SAHM.md](../../Offen_WORK_RECESSION_FRED_SAHM.md) | adaptive FRED + Sahm s(z) | Spec | `⬜` |
 | [Offen_WORK_RECESSION_RATE_OIL_BRIDGE.md](../../Offen_WORK_RECESSION_RATE_OIL_BRIDGE.md) | Zins-Brücke + Öl | Spec | `⬜` |
 | [Offen_WORK_RECESSION_SOURCES.md](../../Offen_WORK_RECESSION_SOURCES.md) | Quellenkatalog | Spec | `⬜` |
