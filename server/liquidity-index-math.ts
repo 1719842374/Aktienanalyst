@@ -261,6 +261,19 @@ function scoreSpec(spec: SeriesSpec, bundle: SeriesBundle | undefined): Scored {
   return base;
 }
 
+function moneyTrendFromSlots(scored: Scored[]): number | null {
+  return mixInverseVol(scored.filter(s =>
+    (s.slot.role === "rate" || s.slot.role === "policyPortfolio")
+    && s.slot.available
+    && s.sigma != null
+    && s.slot.score != null
+  ).map(s => ({
+    score: s.slot.score as number,
+    sigma: s.sigma as number,
+    weightCap: s.weightCap,
+  })));
+}
+
 function zOf(points: Obs[] | undefined, role: Role): { z: number; x: number } | null {
   if (!points?.length) return null;
   const window = windowDays(role);
@@ -293,6 +306,8 @@ export function scoreCatalog(
   const booksF = scored.filter(s => s.slot.book === "F").map(s => s.slot);
   const money = scored.filter(s => s.slot.book === "C").map(s => s.slot);
   const asOfs = [...booksM, ...booksF, ...money].map(s => s.asOf).filter((d): d is string => !!d).sort();
+  const stocks = buildRegionalStocks(stocksInput);
+  if (stocks.moneyTrend == null) stocks.moneyTrend = moneyTrendFromSlots(scored);
   return {
     region,
     asOf: asOfs[0] ?? null,
@@ -309,7 +324,7 @@ export function scoreCatalog(
       assetsZ: assets?.rawZ ?? null,
       assetsDelta: assets?.rawX ?? null,
     }),
-    stocks: buildRegionalStocks(stocksInput),
+    stocks,
     source: `liqidx ${region} ${specs.map(s => s.cacheKey).join(" ")}`,
   };
 }

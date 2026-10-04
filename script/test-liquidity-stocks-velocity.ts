@@ -19,6 +19,14 @@ import {
   velocityFactor,
 } from "../server/liquidity-stocks-velocity";
 import { registerLiquidityRoute } from "../server/researcher-liquidity-route";
+import { buildLiquidityIndex } from "../server/liquidity-index";
+import {
+  fetchRegionalStockInputs,
+  parseMarketableTotal,
+  spelledFredIds,
+  stocksFromSeries,
+  MSPD_MARKETABLE_URL,
+} from "../server/liquidity-stocks-series";
 
 let failed = 0;
 function ok(name: string, cond: boolean, detail?: string) {
@@ -148,6 +156,201 @@ await withServer(async (base) => {
   ok("regional route keeps books.M and books.F", Array.isArray(body.books?.M) && Array.isArray(body.books?.F));
   ok("π stays unavailable without F", body.stocks?.available?.pi === false);
 });
+
+console.log("spelled series ids");
+const NOW = new Date("2026-10-03T00:00:00.000Z");
+const usIds = spelledFredIds("US");
+ok("US ids are the spelled FRED set",
+  JSON.stringify(usIds) === JSON.stringify(["GFDEGDQ188S", "DFII10", "DGS10", "CPIAUCSL", "M2V", "M2SL", "GDP"]),
+  usIds.join(","));
+ok("EU id is only GGGDTPEZA188N", JSON.stringify(spelledFredIds("EU")) === JSON.stringify(["GGGDTPEZA188N"]));
+ok("ASIA has no spelled id", spelledFredIds("ASIA").length === 0);
+ok("no invented real-GDP or JP or EZ yield id",
+  !["GDPC1", "IRLTLT01EZM156N", "JPNASSETS"].some(id => usIds.includes(id) || spelledFredIds("EU").includes(id) || spelledFredIds("ASIA").includes(id)));
+ok("MSPD marketable url is not the bills book",
+  MSPD_MARKETABLE_URL.includes("security_type_desc:eq:Marketable") && !MSPD_MARKETABLE_URL.includes("security_class_desc:eq:Bills"));
+
+function fredCsv(rows: [string, string][]): string {
+  return ["observation_date,VALUE", ...rows.map(r => r.join(","))].join("\n");
+}
+
+console.log("series → existing StockInputs");
+const flatM2v = [
+  { date: "2024-06-01", value: 1.4 },
+  { date: "2025-06-01", value: 1.4 },
+  { date: "2026-06-01", value: 1.4 },
+];
+const fromDfii = stocksFromSeries("US", {
+  GFDEGDQ188S: [{ date: "2026-07-01", value: 120 }],
+  DFII10: [{ date: "2026-09-01", value: 2 }],
+  DGS10: [{ date: "2026-09-01", value: 9 }],
+  CPIAUCSL: [{ date: "2025-09-01", value: 100 }, { date: "2026-09-01", value: 104 }],
+  M2V: flatM2v,
+}, NOW);
+ok("GFDEGDQ188S 120 is the debt level", fromDfii.debtGdpPct === 120);
+ok("DFII10 2.00 is decimal 0.02, not the nominal fallback", fromDfii.realRate === 0.02, String(fromDfii.realRate));
+ok("flat M2V is V and its own history", fromDfii.velocity === 1.4 && fromDfii.velocityHistory?.every(v => v === 1.4) === true);
+const dfiiRow = buildRegionalStocks(fromDfii);
+ok("wired r=0.02 uses the existing T½", near(dfiiRow.tHalfYears, 34.9, 35.1), String(dfiiRow.tHalfYears));
+ok("flat M2V keeps the velocity factor at 1", dfiiRow.tHalfYears != null && Math.abs(dfiiRow.tHalfYears - (t2 ?? NaN)) < 1e-9);
+
+const halfM2v = stocksFromSeries("US", {
+  DFII10: [{ date: "2026-09-01", value: 2 }],
+  M2V: [
+    { date: "2024-06-01", value: 2 },
+    { date: "2025-06-01", value: 2 },
+    { date: "2025-12-01", value: 2 },
+    { date: "2026-06-01", value: 1 },
+  ],
+}, NOW);
+const halfRow = buildRegionalStocks(halfM2v);
+ok("M2V at half its median stretches T½ by 2", halfRow.tHalfYears != null && t2 != null && Math.abs(halfRow.tHalfYears - t2 * 2) < 1e-9, String(halfRow.tHalfYears));
+
+const fallback = stocksFromSeries("US", {
+  DGS10: [{ date: "2026-09-01", value: 6 }],
+  CPIAUCSL: [{ date: "2025-09-01", value: 100 }, { date: "2026-09-01", value: 104 }],
+}, NOW);
+ok("missing DFII10 uses (DGS10 − CPI YoY) / 100", fallback.realRate === 0.02, String(fallback.realRate));
+const nominalOnly = stocksFromSeries("US", { DGS10: [{ date: "2026-09-01", value: 6 }] }, NOW);
+ok("nominal yield alone is not a real rate", nominalOnly.realRate == null);
+
+const ratio = stocksFromSeries("US", {
+  GDP: [{ date: "2024-01-01", value: 20000 }, { date: "2026-01-01", value: 28000 }],
+  M2SL: [{ date: "2024-01-01", value: 20000 }, { date: "2026-01-01", value: 20000 }],
+}, NOW);
+ok("without M2V, V is GDP/M2SL", ratio.velocity === 1.4, String(ratio.velocity));
+ok("ratio history keeps both aligned points", JSON.stringify(ratio.velocityHistory) === JSON.stringify([1, 1.4]));
+const m2vWins = stocksFromSeries("US", {
+  M2V: [{ date: "2026-06-01", value: 1.1 }],
+  GDP: [{ date: "2026-01-01", value: 28000 }],
+  M2SL: [{ date: "2026-01-01", value: 20000 }],
+}, NOW);
+ok("official M2V wins over NGDP/M", m2vWins.velocity === 1.1);
+
+const marketable = parseMarketableTotal(JSON.stringify({
+  data: [
+    { record_date: "2026-08-31", security_class_desc: "Bills", total_mil_amt: "6000000" },
+    { record_date: "2026-08-31", security_class_desc: "Notes", total_mil_amt: "14000000" },
+    { record_date: "2026-07-31", security_class_desc: "Bonds", total_mil_amt: "9000000" },
+  ],
+}));
+ok("marketable total sums the latest date in bn", marketable?.bn === 20000 && marketable.date === "2026-08-31", JSON.stringify(marketable));
+const bonds = stocksFromSeries("US", {
+  MSPD_MARKETABLE: [{ date: "2026-08-31", value: 20000 }],
+  GDP: [{ date: "2026-07-01", value: 25000 }],
+}, NOW);
+ok("bond size is bn and percent of GDP", bonds.bondMarketBn === 20000 && bonds.bondMarketGdpPct === 80, JSON.stringify(bonds));
+
+function quarterly(n: number, valueAt: (i: number) => number): Obs[] {
+  const out: Obs[] = [];
+  const d = new Date("2020-07-01T00:00:00.000Z");
+  for (let i = 0; i < n; i++) {
+    out.push({ date: d.toISOString().slice(0, 10), value: valueAt(i) });
+    d.setUTCMonth(d.getUTCMonth() + 3);
+  }
+  return out;
+}
+const debtPath = quarterly(24, i => (i < 20 ? 100 : [110, 130, 160, 200][i - 20]));
+const trending = stocksFromSeries("US", { GFDEGDQ188S: debtPath }, NOW);
+ok("4q debt deltas become a fiscal s(z)", trending.fiscalTrend != null && trending.fiscalTrend > 50, String(trending.fiscalTrend));
+ok("debt level stays on the row", trending.debtGdpPct === 200);
+const shortDebt = stocksFromSeries("US", {
+  GFDEGDQ188S: [{ date: "2025-07-01", value: 118 }, { date: "2026-07-01", value: 120 }],
+}, NOW);
+ok("short debt history shows the level and leaves the trend empty", shortDebt.debtGdpPct === 120 && shortDebt.fiscalTrend == null);
+ok("stale debt is dropped", stocksFromSeries("US", { GFDEGDQ188S: [{ date: "2020-01-01", value: 120 }] }, NOW).debtGdpPct == null);
+
+const euDebt = stocksFromSeries("EU", {
+  GGGDTPEZA188N: [{ date: "2026-01-01", value: 88 }],
+  IRLTLT01EZM156N: [{ date: "2026-09-01", value: 3 }],
+}, NOW);
+ok("EZ debt uses GGGDTPEZA188N", euDebt.debtGdpPct === 88);
+ok("unnamed EZ yield is not stored as r", euDebt.realRate == null && euDebt.velocity == null);
+ok("ASIA does not borrow the US debt id", stocksFromSeries("ASIA", { GFDEGDQ188S: [{ date: "2026-07-01", value: 250 }] }, NOW).debtGdpPct == null);
+
+const trendLevels = monthly(H_MIN + 8, 100, 110);
+const mixed = scoreCatalog("EU", {
+  "liqidx_EU__ecbdfr": { points: trendLevels },
+  "liqidx_EU__app_pepp": { points: trendLevels },
+});
+const pinned = scoreCatalog("EU", {
+  "liqidx_EU__ecbdfr": { points: trendLevels },
+  "liqidx_EU__app_pepp": { points: trendLevels },
+}, { moneyTrend: 12 });
+ok("money trend mixes the existing rate and policy scores", mixed.stocks.moneyTrend != null && mixed.stocks.moneyTrend >= 0 && mixed.stocks.moneyTrend <= 100, String(mixed.stocks.moneyTrend));
+ok("a passed money trend is kept", pinned.stocks.moneyTrend === 12);
+ok("money trend does not move li or books", mixed.li === pinned.li && JSON.stringify(mixed.books) === JSON.stringify(pinned.books));
+
+console.log("fetch wires spelled urls into the payload");
+const seenUrls: string[] = [];
+const seenKeys: string[] = [];
+const fetched = await fetchRegionalStockInputs("US", {
+  now: NOW,
+  cache: { get: () => null, set: (key) => seenKeys.push(key) },
+  fetchText: async (url) => {
+    seenUrls.push(url);
+    if (url.includes("id=GFDEGDQ188S")) return fredCsv([["2026-07-01", "120"]]);
+    if (url.includes("id=DFII10")) return fredCsv([["2026-09-01", "2.00"]]);
+    if (url.includes("id=M2V")) return fredCsv([["2025-06-01", "1.4"], ["2026-06-01", "1.4"]]);
+    if (url.includes("id=GDP")) return fredCsv([["2026-07-01", "25000"]]);
+    if (url.includes("mspd_table_1")) return JSON.stringify({
+      data: [
+        { record_date: "2026-08-31", total_mil_amt: "6000000" },
+        { record_date: "2026-08-31", total_mil_amt: "14000000" },
+      ],
+    });
+    return fredCsv([]);
+  },
+});
+ok("fetch asks for each spelled US series",
+  ["GFDEGDQ188S", "DFII10", "DGS10", "CPIAUCSL", "M2V", "M2SL", "GDP"].every(id => seenUrls.some(u => u.includes(`id=${id}`)))
+  && seenUrls.some(u => u.includes("security_type_desc:eq:Marketable") && !u.includes("security_class_desc:eq:Bills")));
+ok("fetch does not invent GDPC1 or a JP id", !seenUrls.some(u => u.includes("GDPC1") || u.includes("JPN")));
+ok("fetch cache keys stay off the catalog", seenKeys.every(k => k.startsWith("liqidx_stocks_US__")) && !seenKeys.some(k => k.includes("WALCL")));
+ok("fetched debt, rate, M2V and bonds", fetched.debtGdpPct === 120 && fetched.realRate === 0.02 && fetched.velocity === 1.4 && fetched.bondMarketBn === 20000,
+  JSON.stringify(fetched));
+const fetchedRow = buildRegionalStocks(fetched);
+ok("fetched r=0.02 still uses the existing T½", near(fetchedRow.tHalfYears, 34.9, 35.1), String(fetchedRow.tHalfYears));
+
+const euUrls: string[] = [];
+await fetchRegionalStockInputs("EU", {
+  now: NOW,
+  cache: { get: () => null, set: () => {} },
+  fetchText: async (url) => {
+    euUrls.push(url);
+    if (url.includes("GGGDTPEZA188N")) return fredCsv([["2026-01-01", "88.4"]]);
+    return null;
+  },
+});
+ok("EZ fetch is only the spelled debt id", euUrls.length === 1 && euUrls[0].includes("GGGDTPEZA188N"));
+const asiaUrls: string[] = [];
+const asiaFetched = await fetchRegionalStockInputs("ASIA", {
+  now: NOW,
+  cache: { get: () => null, set: () => {} },
+  fetchText: async (url) => {
+    asiaUrls.push(url);
+    return null;
+  },
+});
+ok("ASIA fetch invents nothing", asiaUrls.length === 0 && asiaFetched.debtGdpPct == null && asiaFetched.realRate == null);
+
+const walcl = monthly(H_MIN + 8, 100, 140);
+const bundle = async (s: { cacheKey: string }) => s.cacheKey === "liqidx_US__WALCL" ? { points: walcl } : { points: [] };
+const indexed = await buildLiquidityIndex("US", {
+  now: NOW,
+  cache: { get: () => null, set: () => {} },
+  fetchBundle: bundle,
+  fetchStocks: async () => fetched,
+});
+const bare = await buildLiquidityIndex("US", {
+  now: NOW,
+  cache: { get: () => null, set: () => {} },
+  fetchBundle: bundle,
+  fetchStocks: async () => ({}),
+});
+ok("stock inputs do not move li", indexed.li === bare.li, `${indexed.li} vs ${bare.li}`);
+ok("stock inputs do not move books", JSON.stringify(indexed.books) === JSON.stringify(bare.books));
+ok("builder passes spelled inputs through", indexed.stocks.debtGdpPct === 120 && near(indexed.stocks.tHalfYears, 34.9, 35.1), String(indexed.stocks.tHalfYears));
 
 if (failed) {
   console.log(`\n${failed} failed`);

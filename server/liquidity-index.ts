@@ -1,6 +1,7 @@
 /**
  * Fetch layer for CATALOG[region]. Disk hit on the spec cache key, otherwise
- * fetch that series and diskResearcherSet. Does not call the US M2V path.
+ * fetch that series and diskResearcherSet. The catalog fetch does not call
+ * the US C2 M2V path. Spelled stock series are read separately.
  */
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
 import { CATALOG, type Region, type SeriesSpec } from "./liquidity-index-catalog";
@@ -11,6 +12,8 @@ import {
   type Obs,
   type SeriesBundle,
 } from "./liquidity-index-math";
+import { fetchRegionalStockInputs } from "./liquidity-stocks-series";
+import type { StockInputs } from "./liquidity-stocks-velocity";
 
 export interface SeriesCache {
   get(key: string): unknown;
@@ -22,6 +25,8 @@ export interface BuildIndexOptions {
   now?: Date;
   cache?: SeriesCache;
   fetchBundle?: (spec: SeriesSpec) => Promise<SeriesBundle>;
+  /** Spelled §5 inputs. Defaults to the stock reader, not the C2 path. */
+  fetchStocks?: (region: Region, now: Date) => Promise<StockInputs>;
 }
 
 const FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv";
@@ -308,5 +313,16 @@ export async function buildLiquidityIndex(region: Region, opts: BuildIndexOption
     bundles[spec.cacheKey] = bundle;
     cache.set(spec.cacheKey, { fetchedAt: now.toISOString(), points: bundle.points, parts: bundle.parts });
   }));
-  return scoreCatalog(region, bundles);
+  let stocks: StockInputs = {};
+  try {
+    const fetchStocks = opts.fetchStocks ?? ((r: Region, n: Date) => fetchRegionalStockInputs(r, {
+      now: n,
+      cache,
+      force: opts.force,
+    }));
+    stocks = await fetchStocks(region, now) ?? {};
+  } catch {
+    stocks = {};
+  }
+  return scoreCatalog(region, bundles, stocks);
 }

@@ -153,6 +153,7 @@ const indexed = await buildLiquidityIndex("US", {
     if (s.cacheKey === "liqidx_US__WALCL") return { points: sameLevels };
     return { points: [] };
   },
+  fetchStocks: async () => ({}),
 });
 ok("builder does not fetch M2V", !seen.some(s => s.includes("M2V") || s.includes("M2SL")));
 ok("builder writes catalog cache keys only", indexed.books.M.some(s => s.cacheKey === "liqidx_US__WALCL" && s.available));

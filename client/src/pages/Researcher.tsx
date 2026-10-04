@@ -324,7 +324,7 @@ export default function Researcher() {
 
         {activeTab === "macro" && (
           <div className="mb-4">
-            <RegionalStocksStrip region={region} />
+            <RegionalStocksStrip key={region} region={region} />
           </div>
         )}
 

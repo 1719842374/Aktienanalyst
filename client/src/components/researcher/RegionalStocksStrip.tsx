@@ -43,6 +43,8 @@ export function RegionalStocksStrip({ region }: { region: Region }) {
 
   useEffect(() => {
     let cancelled = false;
+    setData(null);
+    setError(null);
     async function load() {
       setLoading(true);
       setError(null);
