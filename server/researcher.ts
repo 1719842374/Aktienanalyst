@@ -1036,11 +1036,13 @@ function writeBriefingResultCache(result: DailyBriefingResult) {
 }
 
 function briefingV2DiskKey(): string {
-  return `briefing_v2__${getBerlinDateKey()}`;
+  // sqlite key briefing_v2__{date} is the EZ/JP liquidity briefing (#147).
+  // The daily briefing keeps the file name from the spec and uses its own disk key.
+  return `daily_briefing_v2__${getBerlinDateKey()}`;
 }
 
 function briefingV2Path(): string {
-  return path.join(CACHE_DIR, `${briefingV2DiskKey()}.json`);
+  return path.join(CACHE_DIR, `briefing_v2__${getBerlinDateKey()}.json`);
 }
 
 function decorateBriefingCache(result: DailyBriefingResult, savedAt: string): DailyBriefingResult {
@@ -1101,6 +1103,8 @@ function readLiquidityIndexReadonly(region: string): unknown {
   const disk = diskResearcherGet(`liqidx_v1__${region}`);
   if (!disk) return null;
   if (typeof disk._cacheAge === "number" && disk._cacheAge >= RESEARCHER_TTL_MIN) return null;
+  // #147 stores { value, storedAt } under liqidx_v1__EU / liqidx_v1__ASIA. Read the value, never write the key.
+  if (disk.value && typeof disk.value === "object" && typeof disk.storedAt === "number") return disk.value;
   return disk;
 }
 
