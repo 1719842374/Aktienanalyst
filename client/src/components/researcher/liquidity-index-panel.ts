@@ -49,3 +49,40 @@ export function fiscalOfferLine(slots: IndexSlot[]): string {
 export function listedSeries(payload: IndexBooks): string[] {
   return [...payload.books.M, ...payload.books.F, ...payload.money].flatMap(s => s.series);
 }
+
+export type ChannelId = "A" | "B" | "C" | "D";
+
+export interface ChannelView {
+  id: ChannelId;
+  title: string;
+  available: boolean;
+  slots: IndexSlot[];
+}
+
+const CHANNEL_TITLE: Record<ChannelId, string> = {
+  A: "A Plumbing",
+  B: "B Zins",
+  C: "C Geldmenge",
+  D: "D Fiskal-Angebot",
+};
+
+/** Books payload on the existing route, shown as the spec's four channels. */
+export function channelOf(role: string): ChannelId {
+  if (role === "rate") return "B";
+  if (role === "money") return "C";
+  if (role === "netIssuance" || role === "buybacks") return "D";
+  return "A";
+}
+
+export function channelsFromBooks(payload: IndexBooks): ChannelView[] {
+  const slots = [...payload.books.M, ...payload.books.F, ...payload.money];
+  return (["A", "B", "C", "D"] as const).map(id => {
+    const group = slots.filter(s => channelOf(s.role) === id);
+    return {
+      id,
+      title: CHANNEL_TITLE[id],
+      available: group.some(s => s.available),
+      slots: group,
+    };
+  });
+}

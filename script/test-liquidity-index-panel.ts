@@ -4,6 +4,7 @@
  */
 import { readFileSync } from "node:fs";
 import {
+  channelsFromBooks,
   fiscalOfferLine,
   formatLi,
   liquidityIndexPath,
@@ -59,6 +60,26 @@ ok("US series list contains WALCL", usSeries.includes("WALCL") && usSeries.inclu
 ok("EU series list contains ECBDFR and M3", euSeries.includes("ECBDFR") && euSeries.includes("MABMM301"));
 ok("US and EU series lists differ", usSeries.join("|") !== euSeries.join("|"));
 
+const channels = channelsFromBooks({
+  books: {
+    M: [
+      { role: "assets", available: true, series: ["WALCL"], score: 54, x: 18.5 },
+      { role: "policyPortfolio", available: true, series: ["WSHOBL/WSHOTSL"], score: 51, x: -0.2 },
+      { role: "rate", available: true, series: ["ECBDFR"], score: 43, x: 0.3 },
+    ],
+    F: [
+      { role: "govCash", available: true, series: ["WTREGEN"], score: 41, x: 68.4 },
+      { role: "netIssuance", available: false, series: ["EU_BONDS"], score: null, x: null },
+    ],
+  },
+  money: [{ role: "money", available: true, series: ["MABMM301"], score: 40, x: 3.5 }],
+});
+ok("four channels A–D", channels.map(c => c.id).join("") === "ABCD");
+ok("A is plumbing assets, policy book, and gov cash", channels[0].slots.flatMap(s => s.series).join("|") === "WALCL|WSHOBL/WSHOTSL|WTREGEN");
+ok("B is the rate slot", channels[1].available && channels[1].slots[0]?.series[0] === "ECBDFR");
+ok("C is money", channels[2].available && channels[2].slots[0]?.series[0] === "MABMM301");
+ok("D down stays unavailable", channels[3].available === false);
+
 const panel = readFileSync(new URL("../client/src/components/researcher/LiquidityIndexPanel.tsx", import.meta.url), "utf8");
 const macro = readFileSync(new URL("../client/src/components/researcher/MacroPanel.tsx", import.meta.url), "utf8");
 const page = readFileSync(new URL("../client/src/pages/Researcher.tsx", import.meta.url), "utf8");
@@ -69,6 +90,7 @@ ok("panel has no Bessent", !panel.includes("Bessent"));
 ok("panel has no GENIUS", !panel.includes("GENIUS"));
 ok("panel has no hardcoded 298", !panel.includes("298"));
 ok("panel test id", panel.includes('data-testid="panel-liquidity-index"'));
+ok("panel renders channels A–D", panel.includes("channelsFromBooks(") && panel.includes("channel-${channel.id}"));
 ok("MacroPanel renders LiquidityIndexPanel with region", macro.includes("<LiquidityIndexPanel region={region} />"));
 ok(
   "macro tab mounts the index with region before analysis data exists",

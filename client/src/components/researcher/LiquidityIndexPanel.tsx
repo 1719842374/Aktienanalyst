@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import {
+  channelsFromBooks,
   fiscalOfferLine,
   formatLi,
   liquidityIndexPath,
@@ -87,7 +88,9 @@ export function LiquidityIndexPanel({ region }: { region: LiquidityRegion }) {
   useEffect(() => { void load(false); }, [region]);
 
   const money = data?.money ?? [];
-  const series = data ? listedSeries({ books: data.books, money }) : [];
+  const books = data ? { books: data.books, money } : null;
+  const series = books ? listedSeries(books) : [];
+  const channels = books ? channelsFromBooks(books) : [];
   const fiscal = data ? fiscalOfferLine(data.books.F) : "";
 
   return (
@@ -136,10 +139,16 @@ export function LiquidityIndexPanel({ region }: { region: LiquidityRegion }) {
           <div className="text-[10px] text-foreground/45" data-testid="text-liquidity-index-series">
             {series.join(" · ") || "keine Serie"}
           </div>
-          <SlotGroup title="Buch M" slots={data.books.M} />
-          <SlotGroup title="Buch F" slots={data.books.F} />
+          {channels.map(channel => (
+            <SlotGroup
+              key={channel.id}
+              title={channel.title}
+              slots={channel.slots}
+              available={channel.available}
+              testId={`channel-${channel.id}`}
+            />
+          ))}
           <div className="text-[11px] text-foreground/70" data-testid="text-fiscal-offer">{fiscal}</div>
-          {money.length > 0 && <SlotGroup title="Geld" slots={money} />}
           {data.discovered && (
             <div className="flex flex-wrap gap-2 text-[10px]" data-testid="row-liquidity-discovered">
               <Flag name="QT" on={!!data.discovered.qtLike} />
@@ -156,11 +165,18 @@ export function LiquidityIndexPanel({ region }: { region: LiquidityRegion }) {
   );
 }
 
-function SlotGroup({ title, slots }: { title: string; slots: Slot[] }) {
-  if (!slots.length) return null;
+function SlotGroup({ title, slots, available, testId }: { title: string; slots: Slot[]; available: boolean; testId: string }) {
   return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wider text-foreground/40 mb-1">{title}</div>
+    <div data-testid={testId}>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="text-[10px] uppercase tracking-wider text-foreground/40">{title}</div>
+        <div className={`text-[9px] px-1.5 py-0.5 rounded border ${available ? "text-emerald-300 border-emerald-500/30" : "text-foreground/45 border-border/40"}`}>
+          {available ? "available" : "n/v"}
+        </div>
+      </div>
+      {slots.length === 0 && (
+        <div className="text-[11px] text-foreground/45">n/v</div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {slots.map(slot => (
           <div
