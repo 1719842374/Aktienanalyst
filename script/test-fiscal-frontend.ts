@@ -9,6 +9,7 @@ import {
   adaptiveFiscal,
   frontEndImpulse,
   macroFiscalGis,
+  monthlyFrontEndBn,
   netBillSupplyFromStock,
   qraBillAnchor30,
   sOfZ,
@@ -71,6 +72,48 @@ ok(
     && before.sD.score === after.sD.score
     && before.deskFlag === 0,
   JSON.stringify({ before, after }),
+);
+
+const feMonth = monthlyFrontEndBn(
+  [
+    { date: "2026-06-30", value: 6690.689 },
+    { date: "2026-07-31", value: 6988.891 },
+  ],
+  [
+    { date: "2026-07-03", value: 521995 },
+    { date: "2026-07-31", value: 541995 },
+  ],
+);
+ok(
+  "FE_Δm Juli = 20 − 298.202, ohne D_30",
+  feMonth.length === 1 && Math.abs(feMonth[0] - (20 - 298.202)) < 1e-6,
+  JSON.stringify(feMonth),
+);
+
+const shortFe = adaptiveFiscal({
+  asOf: "2026-09-08",
+  ...empty,
+  feMonthly: Array.from({ length: 12 }, (_, i) => i),
+  tga4w: Array.from({ length: 27 }, (_, i) => i),
+});
+ok("S_F* bleibt zu bei 11 Vormonaten", shortFe.sF.available === false && shortFe.sF.display === 50);
+
+const longFe = adaptiveFiscal({
+  asOf: "2026-09-08",
+  ...empty,
+  feMonthly: Array.from({ length: 13 }, (_, i) => i - 6),
+  tga4w: Array.from({ length: 27 }, (_, i) => (i % 5) - 2),
+});
+const longFeNext = adaptiveFiscal({
+  asOf: "2026-09-09",
+  ...empty,
+  feMonthly: Array.from({ length: 13 }, (_, i) => i - 6),
+  tga4w: Array.from({ length: 27 }, (_, i) => (i % 5) - 2),
+});
+ok("S_F* verfügbar ab 12 Vormonaten und 26 TGA-Punkten", longFe.sF.available === true && longFe.sF.score != null);
+ok(
+  "S_F* ändert sich nicht, wenn asOf ohne Ops springt",
+  longFe.sF.score === longFeNext.sF.score && longFe.s === longFeNext.s && longFe.deskFlag === 0,
 );
 
 if (failed) {

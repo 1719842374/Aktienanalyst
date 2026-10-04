@@ -16,6 +16,7 @@ import {
   isTenToThirtyYearBucket,
   locfAt,
   buybackDeskFlag,
+  monthlyFrontEndBn,
   netBillSupplyFromFlows,
   netBillSupplyFromStock,
   policyD30Bn,
@@ -398,13 +399,14 @@ function scoreFrom(series: LoadedSeries) {
   const notes13w = rollingIndexDelta(soma.notesBn, 13);
   const bills13w = rollingIndexDelta(soma.billsBn, 13);
   const di90 = series.dff ? calendarDelta(series.dff, 90) : [];
+  const feMonthly = series.mspd && series.wshobl ? monthlyFrontEndBn(series.mspd, series.wshobl) : [];
   return adaptiveFiscal({
     asOf: series.asOf,
     nl13w,
     di90,
     notes13w,
     bills13w,
-    feMonthly: [],
+    feMonthly,
     tga4w,
     buybackK30: series.buybackK30 ?? [],
   });

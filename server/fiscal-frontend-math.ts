@@ -178,6 +178,35 @@ export function deltaOverWeeks(series: DatedLevel[], weeks: number): { delta: nu
   return { delta: last.value - prior, asOf: last.date, priorDate };
 }
 
+/**
+ * F^{Fed,b} über ~28 Tage, Ende an `asOf`. Serie in Mio. $, Ergebnis in Mrd. $.
+ * Gleicher Abstand wie `deltaOverWeeks(..., 4)`.
+ */
+export function somaBillDeltaBn(seriesMio: DatedLevel[], asOf: string, days = 28): number | null {
+  const ordered = seriesMio.filter(p => Number.isFinite(p.value)).sort((a, b) => a.date.localeCompare(b.date));
+  const now = locfAt(ordered, asOf);
+  const prior = locfAt(ordered, addIsoDays(asOf, -days));
+  if (now == null || prior == null) return null;
+  return (now - prior) / 1000;
+}
+
+/**
+ * s(z_FE) über MSPD-Monate: FE_Δm = F^{Fed,b}_{~28T} − N^b_Δm.
+ * D_30 bleibt im Live-FE_30. Die DefiLlama-Quelle der Spec hat kein 24-Monats-ΔM,
+ * deshalb wird fehlendes D nicht als 0 eingesetzt.
+ */
+export function monthlyFrontEndBn(stocksBn: DatedLevel[], somaBillsMio: DatedLevel[]): number[] {
+  const stocks = [...stocksBn].filter(p => Number.isFinite(p.value)).sort((a, b) => a.date.localeCompare(b.date));
+  const out: number[] = [];
+  for (let i = 1; i < stocks.length; i++) {
+    const net = netBillSupplyFromStock(stocks[i].value, stocks[i - 1].value);
+    const fed = somaBillDeltaBn(somaBillsMio, stocks[i].date, 28);
+    if (fed == null || !Number.isFinite(net)) continue;
+    out.push(fed - net);
+  }
+  return out;
+}
+
 /** Index-Abstand wie C2 delta13w: 13 Wochen = 13 Schritte. */
 export function rollingIndexDelta(values: number[], steps: number): number[] {
   const out: number[] = [];

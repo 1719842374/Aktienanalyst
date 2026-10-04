@@ -523,6 +523,7 @@ interface FiscalFrontendPayload {
     kennzeichnung: string;
     impliedBillChangeBn: number;
     anchor30Bn: number;
+    stale?: boolean;
   };
   adaptiveScore: {
     available: boolean;
@@ -595,7 +596,12 @@ function FiscalFrontendCards({ data }: { data: FiscalFrontendPayload }) {
           label="QRA-Anker"
           value={`Implied ${data.qra.impliedBillChangeBn}`}
           sub={`Live ${live} vs ${data.qra.anchor30Bn.toFixed(1)} · Stand ${data.qra.asOf}, nicht Live`}
-          detail={<YellowBadge text="QRA" />}
+          detail={(
+            <span className="inline-flex gap-1">
+              <YellowBadge text="QRA" />
+              {data.qra.stale ? <YellowBadge text="stale" /> : null}
+            </span>
+          )}
         />
         <MiniCard label="GENIUS Legal" value={data.genius.legal === 1 ? "L=1" : "n/v"} sub="kein 1.2" />
         <MiniCard

@@ -210,7 +210,7 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 ### Offen
 
 - `Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — EZ-M3, BoJ-M2 und der asiatische Realzins sind nicht als Fetch für Velocity oder Briefing im Code.
-- `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — `GET /api/analyze-btc/fiscal-frontend` rechnet s(z) für N^b, SOMA und ΔDFF. `S_F*` bleibt `available: false`, solange keine 12 Monats-FE-Punkte da sind. Der Macro-Slot in `btcAnalysis.ts` ist nicht ersetzt. Cron und QRA-LLM fehlen.
+- `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — `GET /api/analyze-btc/fiscal-frontend` rechnet s(z) für N^b, SOMA und ΔDFF. `S_F*` nutzt MSPD-Monats-FE (`ΔWSHOBL` ~28T − `N^b_Δm`) plus `s(−z_ΔTGA)`, sobald mindestens 12 Vormonate und die TGA-Historie da sind. `D_30` bleibt im Live-`FE_30`; die Spec-Quelle DefiLlama hat keine 24-Monats-Reihe. Der Macro-Slot in `btcAnalysis.ts` ist nicht ersetzt. Cron und QRA-LLM fehlen.
 - `Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — kein Regions-Widget für Debt/GDP, Realzins, Velocity und Halbwertszeit.
 - `Offen_WORK_RECESSION_FRED_SAHM.md` — `scoreSahm` in `server/recession.ts` ist weiter `>= 0.5 ? 4 : -3`, nicht s(z) über 20 Jahre.
 - `Offen_WORK_RECESSION_SOURCES.md` — der NY-Fed-Anker wird mit ×10 gebildet, Sahm und Kurve bleiben Schwellen-Scores, PMI nutzt Chicago als ISM-Proxy, und die Response hat kein `schemaVersion`.
