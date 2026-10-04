@@ -45,6 +45,8 @@ export interface StockInputs {
   deltaMObs?: number | null;
   /** F / M, same units as deltaMObs. */
   fiscalOverMoney?: number | null;
+  /** Money stock in bn of home currency. Used only to form F/M. Not part of the payload. */
+  moneyStockBn?: number | null;
   m2YoY?: number | null;
   realGdpYoY?: number | null;
   cpiYoY?: number | null;

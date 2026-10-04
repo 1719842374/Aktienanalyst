@@ -95,13 +95,14 @@ export function RegionalStocksStrip({ region }: { region: Region }) {
             <Cell label="Fiscal trend" value={fmt(stocks.fiscalTrend, 0)} />
             <Cell label="Geldtrend" value={fmt(stocks.moneyTrend, 0)} />
           </div>
-          <div className="grid grid-cols-3 gap-2 text-[11px]" data-testid="row-regional-pi">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]" data-testid="row-regional-pi">
             <Cell
               label="π"
               value={stocks.pricedIn == null ? "n/a" : fmt(stocks.pricedIn, 2)}
               warn={piMissing}
               testId="text-priced-in"
             />
+            <Cell label="F unpriced" value={fmt(stocks.unpricedPvBn, 0)} testId="text-unpriced-pv" />
             <Cell label="T½" value={fmt(stocks.tHalfYears, 1, " J")} testId="text-thalf" />
             <Cell label="V" value={fmt(stocks.velocity, 3)} testId="text-velocity" />
           </div>
