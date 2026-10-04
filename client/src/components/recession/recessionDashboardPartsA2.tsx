@@ -13,7 +13,7 @@ export function ScoringRules() {
   const recessionRules = [
     { name: "Sahm-Regel (s(z), 0,50 pp nur Label)", scorePositive: "−4 bis +4", scoreNegative: "", weight: "×1", max: "4" },
     { name: "Zinskurve T10Y2Y (0 ist nur das Label)", scorePositive: "s(z) 20J", scoreNegative: "", weight: "×1", max: "4" },
-    { name: "Aktivität (IP / Auslastung)", scorePositive: "kein Score", scoreNegative: "", weight: "—", max: "0" },
+    { name: "Aktivität (IP / Auslastung)", scorePositive: "+3", scoreNegative: "-2", weight: "×1", max: "3" },
     { name: "Weekly Nowcast (WEI)", scorePositive: "kein Score", scoreNegative: "", weight: "—", max: "0" },
     { name: "Durable Goods (YoY >-5%)", scorePositive: "+3", scoreNegative: "-2", weight: "×1", max: "3" },
     { name: "M2 Wachstum (Zonen)", scorePositive: "+3 bis -2", scoreNegative: "", weight: "×1", max: "3" },
@@ -98,6 +98,7 @@ export function ScoringRules() {
 // ============================================================
 export function ScoringZones() {
   const zones = [
+    { indicator: "Aktivität", zones: "INDPRO YoY <-5%: +3 | sonst -2. TCU steht im Wert" },
     { indicator: "M2", zones: "Kontraktion/<2%: +3 | 2-4%: +1 | 4-10%: 0 | >10%: -2" },
     { indicator: "Kreditspreads", zones: ">2.5%: +3 | 2.0-2.5%: +2 | 1.5-2.0%: 0 | 1.0-1.5%: -1 | <1.0%: -2" },
     { indicator: "VIX", zones: ">30: +4 | 20-30: +1 | 15-20: 0 | <15: -3" },

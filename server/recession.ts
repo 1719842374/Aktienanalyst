@@ -282,8 +282,8 @@ function scoreYieldCurve(): IndicatorResult {
 }
 
 // 3. Aktivität — FRED INDPRO YoY + TCU. The spec names the series and forbids
-// an ISM label without an ISM print. It does not define score bands, so a
-// missing or present reading stays out of net and max rather than a fake score.
+// an ISM label without an ISM print. The YoY score is the durable-goods branch
+// already on this page. TCU stays on the value. A missing YoY stays unscored.
 function scoreActivity(): IndicatorResult {
   const indpro = fetchFredSeries("INDPRO");
   const tcu = getLatestFredValue("TCU");
@@ -539,19 +539,33 @@ export function activityIndicator(
   const sources: string[] = [];
   if (yoyOk) sources.push("FRED INDPRO");
   if (tcuOk) sources.push("FRED TCU");
-  return {
+  const base = {
     name: ACTIVITY_SLOT_NAME,
-    group: "recession",
+    group: "recession" as const,
     subgroup: "coincident",
     value: parts.length > 0 ? parts.join(", ") : "N/A",
-    rawScore: 0,
-    weight: 0,
-    weightedScore: 0,
-    maxWeighted: 0,
-    zone: parts.length > 0 ? "Ablesung, kein Score" : "N/A",
     source: sources.length > 0 ? sources.join(", ") : "FRED INDPRO / TCU",
     description: "Industrieproduktion Jahr-über-Jahr (INDPRO) und Kapazitätsauslastung (TCU).",
-    available: false,
+  };
+  if (!yoyOk) {
+    return {
+      ...base,
+      rawScore: 0,
+      weight: 0,
+      weightedScore: 0,
+      maxWeighted: 0,
+      zone: parts.length > 0 ? "Ablesung, kein Score" : "N/A",
+      available: false,
+    };
+  }
+  const scored = realActivityYoyScore(yoy);
+  return {
+    ...base,
+    rawScore: scored.rawScore,
+    weight: 1,
+    weightedScore: scored.rawScore,
+    maxWeighted: 3,
+    zone: scored.zone,
   };
 }
 
@@ -688,6 +702,15 @@ export function yieldCurveReading(
   };
 }
 
+/** YoY branch shared by durable goods and industrial production. Weight 1, max 3. */
+function realActivityYoyScore(yoy: number): { rawScore: number; zone: string } {
+  const decline = yoy < -5;
+  return {
+    rawScore: decline ? 3 : -2,
+    zone: decline ? "Starker Rückgang (>-5%)" : "Stabil",
+  };
+}
+
 export function durableReading(yoy: number): IndicatorResult {
   const base = {
     name: "Durable Goods (YoY)",
@@ -697,16 +720,15 @@ export function durableReading(yoy: number): IndicatorResult {
     description: "Auftragseingang langlebige Güter, Jahr-über-Jahr",
   };
   if (!Number.isFinite(yoy)) return closedIndicator(base);
-  const decline = yoy < -5;
-  const rawScore = decline ? 3 : -2;
+  const scored = realActivityYoyScore(yoy);
   return {
     ...base,
     value: `${yoy.toFixed(1)}%`,
-    rawScore,
+    rawScore: scored.rawScore,
     weight: 1,
-    weightedScore: rawScore,
+    weightedScore: scored.rawScore,
     maxWeighted: 3,
-    zone: decline ? "Starker Rückgang (>-5%)" : "Stabil",
+    zone: scored.zone,
   };
 }
 

@@ -82,7 +82,7 @@ console.log("\n=== NY Fed anchor is the series percent, weight 0.30 ===");
   check("missing series has no anchor", displayedNyFedAnchorPct(null) === null);
 }
 
-console.log("\n=== Aktivität is INDPRO / TCU, missing source is not a score ===");
+console.log("\n=== Aktivität scores INDPRO YoY with the durable-goods branch ===");
 {
   const months = Array.from({ length: 13 }, (_, i) => ({
     date: `2025-${String(i + 1).padStart(2, "0")}-01`,
@@ -101,20 +101,48 @@ console.log("\n=== Aktivität is INDPRO / TCU, missing source is not a score ===
   check("missing slot does not say ISM", ![missing.name, missing.source, missing.description, missing.zone, missing.value].some(ism));
 
   const live = activityIndicator(months, 78.2);
+  const calmDurable = durableReading(10);
   check("live reading shows INDPRO YoY", live.value.includes("INDPRO YoY +10.0%"), live.value);
   check("live reading shows TCU", live.value.includes("TCU 78.2%"), live.value);
   check("live source names the FRED series", live.source.includes("INDPRO") && live.source.includes("TCU"), live.source);
-  check("a real reading still has no invented score", live.rawScore === 0 && live.weightedScore === 0 && live.maxWeighted === 0 && live.available === false);
+  check(
+    "a calculated IP YoY uses the durable-goods score, weight, and max",
+    live.rawScore === calmDurable.rawScore
+      && live.weightedScore === calmDurable.weightedScore
+      && live.weight === calmDurable.weight
+      && live.maxWeighted === calmDurable.maxWeighted
+      && live.zone === calmDurable.zone
+      && live.available !== false,
+    `raw=${live.rawScore} w=${live.weight} max=${live.maxWeighted} zone=${live.zone}`,
+  );
   check("live slot does not say ISM", ![live.name, live.source, live.description, live.zone, live.value].some(ism));
+
+  const weakMonths = months.map((row, index) => ({ ...row, value: index === months.length - 1 ? 94 : 100 }));
+  const weak = activityIndicator(weakMonths, 78.2);
+  const weakDurable = durableReading(-6);
+  check(
+    "IP YoY below -5 takes the same contraction score",
+    weak.rawScore === weakDurable.rawScore && weak.weightedScore === 3 && weak.maxWeighted === 3 && weak.zone === weakDurable.zone,
+    `raw=${weak.rawScore} zone=${weak.zone}`,
+  );
 
   const tcuOnly = activityIndicator([], 77);
   check("TCU alone is shown and still unscored", tcuOnly.value === "TCU 77.0%" && tcuOnly.available === false && tcuOnly.maxWeighted === 0);
 
   const scored = scoredTotals([
     { ...missing, available: true, weightedScore: -3, maxWeighted: 3 },
-    live,
+    tcuOnly,
   ]);
   check("available:false adds neither net nor max", scored.net === -3 && scored.max === 3, `net=${scored.net} max=${scored.max}`);
+  const withIp = scoredTotals([tcuOnly, live]);
+  check("a scored IP reading enters net and max", withIp.net === live.weightedScore && withIp.max === live.maxWeighted);
+
+  const rules = readFileSync(new URL("../client/src/components/recession/recessionDashboardPartsA2.tsx", import.meta.url), "utf8");
+  check(
+    "scoring-rules row shows the YoY score, weight, and max",
+    rules.includes('{ name: "Aktivität (IP / Auslastung)", scorePositive: "+3", scoreNegative: "-2", weight: "×1", max: "3" }'),
+  );
+  check("scoring-rules row does not withhold the activity score", !rules.includes('Aktivität (IP / Auslastung)", scorePositive: "kein Score"'));
 }
 
 console.log("\n=== asOf + schemaVersion; Stand only for today ===");
