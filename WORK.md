@@ -27,7 +27,7 @@
 
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 
-**Ampel Fiscal-Frontend 2026-10-04:** `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE` bleibt `Offen_` und 🟡. Route `GET /api/analyze-btc/fiscal-frontend`, Karten in `StablecoinLiquidityPanel`, Ops-Label im LiquidityPanel. `S_F*` aus MSPD-Monats-FE (`ΔWSHOBL` ~28T − `N^b`) plus TGA, sobald die Historie reicht. `D_30` nur im Live-`FE_30`. Step 6: der Macro-Slot in `btcAnalysis.ts` nimmt `score_MacroFiscal`, sobald `FE.available`. Step 7 (Cron 22:00 ET / QRA-PDF) ist in der Spec optional und bleibt aus. Live-Render nicht geprüft.
+**Ampel Fiscal-Frontend 2026-10-04:** `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE` bleibt `Offen_` und 🟡. Route `GET /api/analyze-btc/fiscal-frontend`, Karten in `StablecoinLiquidityPanel`, Ops-Label im LiquidityPanel. `S_F*` aus MSPD-Monats-FE (`ΔWSHOBL` ~28T − `N^b`) plus TGA, sobald die Historie reicht. `D_30` nur im Live-`FE_30`. Step 6: der Macro-Slot in `btcAnalysis.ts` nimmt `score_MacroFiscal`, sobald `FE.available`. Step 7 (Cron 22:00 ET / QRA-PDF) ist in der Spec optional und bleibt aus. Auf `#/btc` zeigt der Slot bei `FE.available` den Wert `S` aus `GET /api/analyze-btc/fiscal-frontend`.
 
 **Ampel 05.10.2026 (Tip `191792c5`, nur Code, kein Deploy):** Fiscal bleibt 🟡 und `Offen_` — `S_F*` aus MSPD-Monats-FE (`ΔWSHOBL` ~28T − `N^b`) plus TGA, sobald die Historie reicht; der Macro-Slot nimmt `score_MacroFiscal`, sobald `FE.available`. Cron 22:00 ET / QRA-PDF bleiben optional und aus. Die übrigen sechs offenen Specs stehen in der Soll-Tabelle.
 

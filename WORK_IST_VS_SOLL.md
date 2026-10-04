@@ -99,7 +99,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 30 | fertig_WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
 | 31 | fertig_WORK_EXEC_SUMMARY.md | Karte über S1 | Exec-Karte live `#58`; `#69` Analyze Ampel+KI+FS Live PASS (XOM; FMP Premium aktiv) | ✅ |
 | 32 | Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalog + Fetch | EZ-M3, BoJ-M2, APP/PEPP und JP-NGDP auf dem Tip; MoF-CSV, Realzins-Live und X-Bot fehlen. Siehe Abschnitt 6 | 🟡 |
-| 33 | Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), N^b, FE, QRA-Anker | Route + Karten; `S_F*` aus MSPD-Monats-FE sobald die Historie reicht; GIS-Slot bei `FE.available`; Cron/QRA-LLM optional, nicht gebaut; Datei bleibt `Offen_`. Siehe Abschnitt 6 | 🟡 |
+| 33 | Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), N^b, FE, QRA-Anker | Route + Karten; `S_F*` aus MSPD-Monats-FE sobald die Historie reicht; GIS-Slot bei `FE.available`; Cron/QRA-LLM optional, nicht gebaut; Datei bleibt `Offen_`; Macro-Slot auf #/btc geprüft. Siehe Abschnitt 6 | 🟡 |
 | 34 | Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md | LI US/EU/ASIA | `?region=` liefert `li` + Bücher; `LiquidityPanel` ohne Region. Siehe Abschnitt 6 | 🟡 |
 | 35 | fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md | Buch M/F EZ/JP | `CATALOG` + `GET ?region=` `books.M`/`books.F`; Panel bleibt offen | 🟡 |
 | 36 | Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md | r, V, π, T½ | kein Regions-Widget auf dem Tip. Siehe Abschnitt 6 | ⬜ |
