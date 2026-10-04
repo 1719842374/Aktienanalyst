@@ -3,6 +3,7 @@
  * s(z) = 50 + 50 * clip(z/2, -1, 1). Weights are inverse vol.
  */
 import { CATALOG, type CatalogBook, type Region, type Role, type SeriesSpec } from "./liquidity-index-catalog";
+import { buildRegionalStocks, type RegionalStocks, type StockInputs } from "./liquidity-stocks-velocity";
 
 export const H_MIN = 12;
 
@@ -46,6 +47,8 @@ export interface LiquidityBooksPayload {
   books: { M: BookSlot[]; F: BookSlot[] };
   money: BookSlot[];
   discovered: Discovered;
+  /** Additive stocks row. Levels here do not enter `li` or books M/F. */
+  stocks: RegionalStocks;
   source: string;
 }
 
@@ -268,7 +271,11 @@ function zOf(points: Obs[] | undefined, role: Role): { z: number; x: number } | 
   return { z: (impulse.x - mu) / (sigma + 1e-9), x: impulse.x };
 }
 
-export function scoreCatalog(region: Region, bundles: Record<string, SeriesBundle | undefined>): LiquidityBooksPayload {
+export function scoreCatalog(
+  region: Region,
+  bundles: Record<string, SeriesBundle | undefined>,
+  stocksInput?: StockInputs,
+): LiquidityBooksPayload {
   const specs = CATALOG[region];
   const scored = specs.map(spec => scoreSpec(spec, bundles[spec.cacheKey]));
   const li = mixInverseVol(scored.filter(s => s.slot.available && s.sigma != null && s.slot.score != null).map(s => ({
@@ -302,6 +309,7 @@ export function scoreCatalog(region: Region, bundles: Record<string, SeriesBundl
       assetsZ: assets?.rawZ ?? null,
       assetsDelta: assets?.rawX ?? null,
     }),
+    stocks: buildRegionalStocks(stocksInput),
     source: `liqidx ${region} ${specs.map(s => s.cacheKey).join(" ")}`,
   };
 }
