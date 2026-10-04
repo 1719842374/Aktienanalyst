@@ -67,7 +67,12 @@ export function FinancialStatements({ data }: Props) {
             <Row label="Operating Income" value={fmt(is.operatingIncome)} sub={`${is.operatingMargin.toFixed(1)}% Marge`} subColor={is.operatingMargin > 20 ? 'text-emerald-500' : is.operatingMargin > 10 ? 'text-amber-500' : 'text-red-500'} />
             <Row label="Net Income" value={fmt(is.netIncome)} sub={`${is.netMargin.toFixed(1)}% Marge`} subColor={is.netMargin > 15 ? 'text-emerald-500' : is.netMargin > 5 ? 'text-amber-500' : 'text-red-500'} />
             <Row label="EBITDA" value={fmt(is.ebitda)} sub={`${is.ebitdaMargin.toFixed(1)}% Marge`} subColor={is.ebitdaMargin > 25 ? 'text-emerald-500' : 'text-muted-foreground'} />
-            <Row label="EPS" value={`$${is.eps.toFixed(2)}`} sub={`5Y CAGR ${is.epsGrowth.toFixed(1)}%`} subColor={pctColor(is.epsGrowth)} />
+            <Row
+              label="EPS"
+              value={`$${is.eps.toFixed(2)}`}
+              sub={data.epsCagrFromIncome === false ? "EPS-CAGR 5Y n/a" : `EPS-CAGR 5Y ${is.epsGrowth.toFixed(1)}%`}
+              subColor={data.epsCagrFromIncome === false ? "text-muted-foreground" : pctColor(is.epsGrowth)}
+            />
           </div>
         </div>
 

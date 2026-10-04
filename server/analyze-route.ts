@@ -29,6 +29,10 @@ import {
   generatePESTELAnalysis,
   computeFcfTTM,
   highCapexFcfHint,
+  applyScalePermanentCapitalMoat,
+  alternativesMetricsNote,
+  tallyAnalystGrades,
+  lastReportedQuarterLabel,
 } from "./analyze-helpers";
 
 import {
@@ -121,6 +125,8 @@ import {
   filterGeographicDuplicates,
   dropAliasRevenueDuplicates,
   geographicDedupNote,
+  geographicOnlyMessage,
+  promoteNonGeoRowsToBusiness,
 } from "./fmp";
 import { buildScoringForAnalysis } from "./scoring-integration";
 import { applyFactPackFromFmpContext } from "./factpack-apply";
@@ -811,8 +817,13 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         : undefined;
       const latestFiscalYear = String(incomeLatest?.fiscalYear ?? incomeLatest?.calendarYear ?? "").trim();
       const latestPeriodRaw = String(incomeLatest?.period ?? "FY").trim();
-      const latestPeriod = /^fy$/i.test(latestPeriodRaw) ? "Q4" : latestPeriodRaw;
-      const lastReportedQuarter = latestFiscalYear ? `${latestPeriod} FY${latestFiscalYear}` : null;
+      // Annual FY is not Q4. The label is replaced once quarterly rows exist.
+      let lastReportedQuarter = lastReportedQuarterLabel({
+        todayIso,
+        earningsRows,
+        annualPeriod: latestPeriodRaw,
+        annualFiscalYear: latestFiscalYear,
+      });
 
       // Definition: FCF-Yield = FCF / Market Cap. Für die Vorjahresbasis wird
       // der historische Kurs am/kurz vor FY-Ende mit den damals gemeldeten
@@ -848,7 +859,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const analystPTMedian = parseNumber(String(analyst.priceTarget?.targetMedian ?? analyst.priceTarget?.priceTarget ?? 0));
       const analystPTHigh = parseNumber(String(analyst.priceTarget?.targetHigh ?? 0));
       const analystPTLow = parseNumber(String(analyst.priceTarget?.targetLow ?? 0));
-      const analystCount = Number(analyst.priceTarget?.numberOfAnalysts ?? analyst.grades?.length ?? 0);
+      let analystCount = Number(analyst.priceTarget?.numberOfAnalysts ?? 0);
 
       const latestGrade = analyst.grades?.[0];
       const analystConsensus = String(latestGrade?.recommendationMean ?? latestGrade?.action ?? "Hold");
@@ -905,12 +916,14 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // though EPS CAGR is still ~11%.
       const _rawEpsFY = parseNumber(String(incomeLatest.epsDiluted ?? incomeLatest.eps ?? 0));
       let epsGrowth5Y = revenueGrowth;
+      let epsCagrFromIncome = false;
       if (financials.income.length >= 3) {
         const oldest = financials.income[financials.income.length - 1] ?? {};
         const oldEps = parseNumber(String((oldest as any).epsDiluted ?? (oldest as any).eps ?? 0));
         if (oldEps > 0 && _rawEpsFY > 0) {
           const n = financials.income.length - 1;
           epsGrowth5Y = ((Math.pow(_rawEpsFY / oldEps, 1 / n) - 1) * 100);
+          epsCagrFromIncome = true;
         }
       }
       const lynchClass = classifyLynch({ epsGrowth5Y, revenueGrowth, sector: effectiveSector, industry, dividendYield, fcfMargin, pe, forwardPE, pbRatio });
@@ -1202,14 +1215,21 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           secFiscalYearLabel = secResultFinal.fiscalYear;
           console.log(`[SEGMENTS] SEC EDGAR fallback succeeded for ${upperTicker}: ${secResultFinal.formType ?? "10-K/20-F"} (${secResultFinal.fiscalYear ?? "unknown FY"}), ${secResultFinal.segments.length} segments`);
         } else {
-          // (d) Nothing found anywhere — clear message, NEVER a fake/generic fallback.
-          // Distinguish "company only reports geographically" (geoSegments present)
-          // from "no segment data at all" (neither present) per hard requirement #1.
-          revenueSegmentsSource = "none";
-          revenueSegmentsMessage = (Array.isArray(geoSegments) && geoSegments.length > 0)
-            ? "Unternehmen berichtet nur geografisch — kein separates Geschäftssegment-Reporting im letzten 10-K/20-F gefunden."
-            : "Segmentreporting nicht in den letzten 10-K/20-F enthalten.";
-          console.log(`[SEGMENTS] No business-segment data found for ${upperTicker} via FMP, curated map, or SEC EDGAR`);
+          // (d) Nothing found in FMP product segmentation, the curated map, or SEC.
+          // A non-geo name sitting in the geographic feed is still business data:
+          // promote it and do not say the company reports only geographically.
+          const promoted = promoteNonGeoRowsToBusiness(revenueSegments, geoSegments);
+          if (promoted.length > 0) {
+            revenueSegments = promoted;
+            revenueSegmentsSource = "fmp";
+            console.log(`[SEGMENTS] Promoted ${promoted.length} non-geo geographic rows into business segments for ${upperTicker}`);
+          } else {
+            revenueSegmentsSource = "none";
+            const onlyGeo = geographicOnlyMessage(0, geoSegments);
+            revenueSegmentsMessage = onlyGeo
+              ?? "Segmentreporting nicht in den letzten 10-K/20-F enthalten.";
+            console.log(`[SEGMENTS] No business-segment data found for ${upperTicker} via FMP, curated map, or SEC EDGAR`);
+          }
         }
       }
 
@@ -1456,7 +1476,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Abhaengigkeit) -- vorher lief scoreMoat() erst in Schritt 15, NACH
       // der These. Die urspruengliche Zeile in Schritt 15 referenziert jetzt
       // dieselbe Variable statt sie neu zu berechnen (kein doppelter Call).
-      const moatAssessment = scoreMoat(grossMargin, fcfMargin, returnOnEquity, revenueGrowth, description);
+      const moatAssessment = applyScalePermanentCapitalMoat(
+        scoreMoat(grossMargin, fcfMargin, returnOnEquity, revenueGrowth, description) as any,
+        description,
+        effectiveSector,
+        effectiveIndustry,
+      );
 
       let growthThesis: string | null = null;
       let growthThesisFingerprintValue: string | null = null;
@@ -1571,9 +1596,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Quartalsumsaetze fuer Realized-8Q (Scoring-Pipeline, §17.8) — 16 Quartale,
       // FMP liefert newest-first, calcRealizedGrowth8QServer erwartet chronologisch.
       let quarterlyRevenueChronological: number[] | null = null;
+      let quarterlyIncomeRows: any[] = [];
       try {
         const qRows: any[] = await fmpIncomeStatementQuarterly(upperTicker, 16);
         if (Array.isArray(qRows) && qRows.length > 0) {
+          quarterlyIncomeRows = qRows;
           quarterlyRevenueChronological = qRows
             .map(r => Number(r?.revenue))
             .filter(v => isFinite(v) && v > 0)
@@ -1582,6 +1609,14 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       } catch (qErr: any) {
         console.warn(`[ANALYZE] Quarterly revenue fetch failed: ${qErr?.message?.substring(0, 80)}`);
       }
+      const reportedQuarter = lastReportedQuarterLabel({
+        todayIso,
+        quarterlyRows: quarterlyIncomeRows,
+        earningsRows,
+        annualPeriod: latestPeriodRaw,
+        annualFiscalYear: latestFiscalYear,
+      });
+      if (reportedQuarter) lastReportedQuarter = reportedQuarter;
 
       let peerComparison: any = null;
       if (peerTickers.length > 0) {
@@ -1666,10 +1701,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // epsGrowth5Y was computed earlier from the income-statement history
       // (see step 6 — needed for classifyLynch). No refinement needed here.
 
-      // Ratings — map buy/hold/sell distribution from analyst.grades.
-      const ratingsBuy = analyst.grades.filter((g: any) => /buy|outperform|overweight/i.test(String(g.newGrade ?? g.gradeCompany ?? ""))).length;
-      const ratingsSell = analyst.grades.filter((g: any) => /sell|underperform|underweight/i.test(String(g.newGrade ?? g.gradeCompany ?? ""))).length;
-      const ratingsHold = Math.max(0, analyst.grades.length - ratingsBuy - ratingsSell);
+      // Ratings — one row per analyst firm when every grade names a firm.
+      // Otherwise the counts are grade events and the UI says so.
+      const gradeTally = tallyAnalystGrades(analyst.grades);
+      if (!(analystCount > 0) && gradeTally.basis === "analysts") {
+        analystCount = gradeTally.buy + gradeTally.hold + gradeTally.sell;
+      }
 
       // Sector profile — the shape Section5/Section6 depend on.
       const sectorProfile = {
@@ -1697,10 +1734,6 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const totalLiab = parseNumber(String(bsLatest.totalLiabilities ?? Math.max(0, totalAssets - totalEquity)));
       const ebitdaMargin = revenue > 0 ? (ebitda / revenue) * 100 : 0;
       const fcfPerShare = sharesOutstanding > 0 ? fcfTTM / sharesOutstanding : 0;
-      const rawEpsGrowth = (() => {
-        const prevEps = parseNumber(String((incomeY1 as any).epsDiluted ?? (incomeY1 as any).eps ?? 0));
-        return prevEps > 0 && rawEpsFY > 0 ? ((rawEpsFY / prevEps - 1) * 100) : 0;
-      })();
       const healthReasons: string[] = [];
       if (fcfMargin > 15) healthReasons.push("Starke FCF-Marge > 15%");
       else if (fcfMargin < 5 && fcfMargin > 0) healthReasons.push("Schwache FCF-Marge < 5%");
@@ -1721,7 +1754,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           operatingIncome, operatingMargin,
           netIncome, netMargin,
           ebitda, ebitdaMargin,
-          eps: epsTTM, epsGrowth: rawEpsGrowth,
+          eps: epsTTM, epsGrowth: epsGrowth5Y,
         },
         balanceSheet: {
           totalAssets, totalLiabilities: totalLiab, totalEquity,
@@ -1866,6 +1899,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const geoCrossRemoved = specGeo.removedCount + aliasGeo.removedCount;
       const geoSegmentsNote = geographicDedupNote(geoCrossRemoved);
       const fcfCapexHint = highCapexFcfHint(sector, industry) ?? highCapexFcfHint(effectiveSector, effectiveIndustry);
+      const alternativesNote = alternativesMetricsNote(description, effectiveSector, effectiveIndustry);
 
       // NOTE: Cast to any at the end because we intentionally include a few
       // legacy-compatible extras (analystPTMedian etc.) alongside the canonical
@@ -1892,13 +1926,19 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           low: analystPTLow,
           count: analystCount,
         },
-        ratings: { buy: ratingsBuy, hold: ratingsHold, sell: ratingsSell },
+        ratings: {
+          buy: gradeTally.buy,
+          hold: gradeTally.hold,
+          sell: gradeTally.sell,
+          basis: gradeTally.basis,
+        },
 
         // Earnings (schema: peRatio, forwardPE, pegRatio — NOT pe)
         epsTTM,
         epsAdjFY,
         epsConsensusNextFY,
         epsGrowth5Y,
+        epsCagrFromIncome,
 
         peRatio: pe,
         forwardPE,
@@ -1913,6 +1953,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         fcfMargin,
         fcfAvailable,
         ...(fcfCapexHint ? { fcfCapexHint } : {}),
+        ...(alternativesNote ? { alternativesMetricsNote: alternativesNote } : {}),
         nextEarningsDate,
         ...(nextEarningsTime ? { nextEarningsTime } : {}),
         ...(nextEarningsIsEstimate !== undefined ? { nextEarningsIsEstimate } : {}),

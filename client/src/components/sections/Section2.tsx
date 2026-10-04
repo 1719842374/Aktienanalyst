@@ -417,6 +417,11 @@ export function Section2({ data }: Props) {
           <MiniCard label="Moat Assessment" value={data.moatRating} badge />
           <MiniCard label="FCF Strength" value={data.fcfAvailable === false ? "n/a" : `${formatPercentNoSign(data.fcfMargin)} margin • ${formatLargeNumber(data.fcfTTM)} TTM`} />
         </div>
+        {data.alternativesMetricsNote && (
+          <p className="text-[10px] text-muted-foreground leading-snug" data-testid="alternatives-metrics-note">
+            {data.alternativesMetricsNote}
+          </p>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="bg-muted/30 rounded-md p-3 border border-border/50">

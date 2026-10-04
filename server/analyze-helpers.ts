@@ -227,6 +227,205 @@ export function highCapexFcfHint(
   return HIGH_CAPEX_FCF_HINT;
 }
 
+/**
+ * Offen_WORK_SECTION4_DATA_BUGS.md §9. Scale or permanent-capital language
+ * lifts a None moat to Narrow. No ticker list. Wide and Narrow stay as scored.
+ */
+export const SCALE_PERMANENT_CAPITAL_SOURCE = "Scale oder Permanent Capital";
+
+const PERMANENT_CAPITAL_PATTERN =
+  /permanent capital|perpetual capital|fee-related earnings|fee related earnings/i;
+const SCALE_PHRASE_PATTERN = /economies of scale/i;
+const ALTERNATIVES_LINE_PATTERN =
+  /asset management|alternative asset|private equity|infrastructure fund|\binfrastructure\b/i;
+const SCALE_WORD_PATTERN = /\b(scale|scaled|franchise|assets under management|\baum\b)\b/i;
+
+export function hasScaleOrPermanentCapital(
+  description: string | null | undefined,
+  sector?: string | null,
+  industry?: string | null,
+): boolean {
+  const blob = `${description ?? ""} ${sector ?? ""} ${industry ?? ""}`;
+  if (PERMANENT_CAPITAL_PATTERN.test(blob) || SCALE_PHRASE_PATTERN.test(blob)) return true;
+  return ALTERNATIVES_LINE_PATTERN.test(blob) && SCALE_WORD_PATTERN.test(blob);
+}
+
+export function applyScalePermanentCapitalMoat<
+  T extends { moatStrength: "Wide" | "Narrow" | "None"; sources?: string[] },
+>(
+  assessment: T,
+  description: string | null | undefined,
+  sector?: string | null,
+  industry?: string | null,
+): T {
+  if (assessment.moatStrength !== "None") return assessment;
+  if (!hasScaleOrPermanentCapital(description, sector, industry)) return assessment;
+  const sources = Array.isArray(assessment.sources) ? assessment.sources : [];
+  if (sources.includes(SCALE_PERMANENT_CAPITAL_SOURCE)) {
+    return { ...assessment, moatStrength: "Narrow", sources };
+  }
+  return {
+    ...assessment,
+    moatStrength: "Narrow",
+    sources: [...sources, SCALE_PERMANENT_CAPITAL_SOURCE],
+  };
+}
+
+/** §6. Interpretation order for alternatives managers. Not a GAAP-FCF replacement figure. */
+export const ALTERNATIVES_METRICS_NOTE =
+  "Für Alternatives zählen FRE, DE, FBC, Fundraising und Deployable Capital vor GAAP-FCF und GAAP-P/E.";
+
+export function alternativesMetricsNote(
+  description: string | null | undefined,
+  sector?: string | null,
+  industry?: string | null,
+): string | null {
+  const blob = `${sector ?? ""} ${industry ?? ""} ${description ?? ""}`;
+  if (!/asset management|alternative asset|\balternatives\b|permanent capital|private equity|infrastructure/i.test(blob)) {
+    return null;
+  }
+  return ALTERNATIVES_METRICS_NOTE;
+}
+
+export interface AnalystGradeTally {
+  buy: number;
+  hold: number;
+  sell: number;
+  /** "analysts" after one row per firm. "grade-events" when a row has no firm key. */
+  basis: "analysts" | "grade-events";
+}
+
+function classifyAnalystGrade(text: string): "buy" | "hold" | "sell" {
+  const grade = text.toLowerCase();
+  if (grade.includes("buy") || grade.includes("outperform") || grade.includes("overweight")) return "buy";
+  if (grade.includes("sell") || grade.includes("underperform") || grade.includes("underweight")) return "sell";
+  return "hold";
+}
+
+/**
+ * §9 Analyst Grades. Same firm on two dates counts once (latest grade).
+ * Rows without an analyst or firm name stay events and must be labeled as such.
+ */
+export function tallyAnalystGrades(grades: unknown): AnalystGradeTally {
+  const rows = Array.isArray(grades) ? grades : [];
+  const parsed: { grade: string; analyst: string | null; date: string }[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const gradeRaw = record.newGrade ?? record.grade;
+    const grade = typeof gradeRaw === "string" ? gradeRaw : "";
+    const nameRaw = record.analystName ?? record.analyst ?? record.gradingCompany ?? record.gradingCompanyName;
+    const analyst = typeof nameRaw === "string" && nameRaw.trim() ? nameRaw.trim().toLowerCase() : null;
+    const date = typeof record.date === "string" ? record.date.slice(0, 10) : "";
+    parsed.push({ grade, analyst, date });
+  }
+
+  const canUnique = parsed.length > 0 && parsed.every((row) => row.analyst != null);
+  const byAnalyst = new Map<string, { grade: string; analyst: string | null; date: string }>();
+  if (canUnique) {
+    for (const row of parsed) {
+      const key = row.analyst as string;
+      const prev = byAnalyst.get(key);
+      if (!prev || row.date >= prev.date) byAnalyst.set(key, row);
+    }
+  }
+  const chosen: { grade: string; analyst: string | null; date: string }[] = [];
+  if (canUnique) byAnalyst.forEach((row) => chosen.push(row));
+  else parsed.forEach((row) => chosen.push(row));
+
+  let buy = 0;
+  let hold = 0;
+  let sell = 0;
+  for (const row of chosen) {
+    const bucket = classifyAnalystGrade(row.grade);
+    if (bucket === "buy") buy++;
+    else if (bucket === "sell") sell++;
+    else hold++;
+  }
+  return {
+    buy,
+    hold,
+    sell,
+    basis: parsed.length === 0 || canUnique ? "analysts" : "grade-events",
+  };
+}
+
+function isoDatePrefix(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+}
+
+function quarterToken(period: unknown): string | null {
+  const token = String(period ?? "").trim().toUpperCase();
+  return /^Q[1-4]$/.test(token) ? token : null;
+}
+
+function fiscalYearToken(row: Record<string, unknown>): string | null {
+  const year = String(row.fiscalYear ?? row.calendarYear ?? "").trim();
+  if (/^\d{4}$/.test(year)) return year;
+  const date = isoDatePrefix(row.date);
+  return date ? date.slice(0, 4) : null;
+}
+
+/**
+ * §9 Earnings-Datum. Latest reported quarter from quarterly statements, then
+ * a past /stable/earnings row that has actuals. An annual FY row is not
+ * relabeled Q4 — that showed "Q4 FY2025" after Q1/Q2 of the next year.
+ */
+export function lastReportedQuarterLabel(input: {
+  todayIso: string;
+  quarterlyRows?: unknown[] | null;
+  earningsRows?: unknown[] | null;
+  annualPeriod?: string | null;
+  annualFiscalYear?: string | null;
+}): string | null {
+  const today = isoDatePrefix(input.todayIso) ?? String(input.todayIso ?? "").slice(0, 10);
+  const quarterly = Array.isArray(input.quarterlyRows) ? input.quarterlyRows : [];
+  let bestQuarter: { date: string; label: string } | null = null;
+  let firstUndatedQuarter: string | null = null;
+  for (const row of quarterly) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const period = quarterToken(record.period);
+    const year = fiscalYearToken(record);
+    if (!period || !year) continue;
+    const label = `${period} FY${year}`;
+    const date = isoDatePrefix(record.date);
+    if (!date) {
+      if (!firstUndatedQuarter) firstUndatedQuarter = label;
+      continue;
+    }
+    if (today && date > today) continue;
+    if (!bestQuarter || date > bestQuarter.date) bestQuarter = { date, label };
+  }
+  const earnings = Array.isArray(input.earningsRows) ? input.earningsRows : [];
+  let bestEarnings: { date: string; label: string } | null = null;
+  for (const row of earnings) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const date = isoDatePrefix(record.date);
+    if (!date || (today && date > today)) continue;
+    if (record.epsActual == null && record.revenueActual == null) continue;
+    const period = quarterToken(record.period);
+    const year = fiscalYearToken(record);
+    const label = period && year ? `${period} FY${year}` : date;
+    if (!bestEarnings || date > bestEarnings.date) bestEarnings = { date, label };
+  }
+  if (bestQuarter && bestEarnings) {
+    return bestEarnings.date > bestQuarter.date ? bestEarnings.label : bestQuarter.label;
+  }
+  if (bestQuarter) return bestQuarter.label;
+  if (bestEarnings) return bestEarnings.label;
+  if (firstUndatedQuarter) return firstUndatedQuarter;
+
+  const year = String(input.annualFiscalYear ?? "").trim();
+  if (!/^\d{4}$/.test(year)) return null;
+  const period = quarterToken(input.annualPeriod);
+  if (period) return `${period} FY${year}`;
+  return `FY${year}`;
+}
+
 export function parseNumber(s: string | undefined): number {
   if (!s) return 0;
   let cleaned = s.replace(/,/g, "").replace(/\$/g, "").replace(/%/g, "").trim();

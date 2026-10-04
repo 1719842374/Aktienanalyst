@@ -459,6 +459,58 @@ export function dropAliasRevenueDuplicates<T extends { name: string; revenue: nu
   return { geographic: kept, removedCount };
 }
 
+export const ONLY_GEOGRAPHIC_SEGMENT_MESSAGE =
+  "Unternehmen berichtet nur geografisch — kein separates Geschäftssegment-Reporting im letzten 10-K/20-F gefunden.";
+
+/**
+ * §10 "nur geo" copy. Allowed only when the business list is empty and every
+ * geographic name is a region. A NON_GEO_PATTERN name is business data.
+ */
+export function geographicOnlyMessage(
+  businessCount: number,
+  geographic: readonly { name?: string | null }[] | null | undefined,
+): string | null {
+  if (businessCount > 0) return null;
+  const rows = Array.isArray(geographic) ? geographic : [];
+  if (rows.length === 0) return null;
+  const hasBusinessLine = rows.some((row) =>
+    typeof row?.name === "string" && NON_GEO_PATTERN.test(row.name),
+  );
+  if (hasBusinessLine) return null;
+  return ONLY_GEOGRAPHIC_SEGMENT_MESSAGE;
+}
+
+/**
+ * When product segmentation is empty, a geographic row whose name matches
+ * NON_GEO_PATTERN is the business line (AWS, asset management, …). Copy it
+ * into the business list so the UI does not say the company reports only
+ * geographically. Percentages are recomputed on the promoted rows only.
+ */
+export function promoteNonGeoRowsToBusiness<T extends { name: string; revenue: number; percentage?: number }>(
+  business: readonly T[] | null | undefined,
+  geographic: readonly T[] | null | undefined,
+): T[] {
+  const existing = Array.isArray(business) ? business : [];
+  if (existing.length > 0) return [...existing];
+  const geo = Array.isArray(geographic) ? geographic : [];
+  const promoted = geo.filter((row) => {
+    if (!row || typeof row.name !== "string" || !row.name.trim()) return false;
+    if (!NON_GEO_PATTERN.test(row.name)) return false;
+    const revenue = Number(row.revenue);
+    return Number.isFinite(revenue) && revenue > 0;
+  });
+  if (promoted.length === 0) return [];
+  const total = promoted.reduce((sum, row) => sum + Number(row.revenue), 0);
+  return promoted.map((row) => {
+    const revenue = Number(row.revenue);
+    const existing = Number(row.percentage);
+    const percentage = Number.isFinite(existing) && existing > 0
+      ? existing
+      : (total > 0 ? Math.round((revenue / total) * 1000) / 10 : 0);
+    return { ...row, percentage };
+  });
+}
+
 /**
  * Fetches revenue-product-segmentation from FMP /stable and normalises the
  * response into a consistent { name, revenue, percentage }[] array.
