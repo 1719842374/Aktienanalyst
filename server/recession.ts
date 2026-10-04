@@ -128,7 +128,11 @@ export interface IndicatorResult {
   zone: string;
   source: string;
   description: string;
-  /** False when the slot has fewer than H_min observations. Absent on untouched indicators. */
+  /**
+   * False: the slot is not in the net or the max.
+   * Sahm sets this when history is shorter than H_min.
+   * Absent on older slots, which stay scored.
+   */
   available?: boolean;
 }
 
@@ -177,51 +181,13 @@ function scoreYieldCurve(): IndicatorResult {
   };
 }
 
-// 3. PMI (Manufacturing + Services average)
-async function scorePMI(): Promise<IndicatorResult> {
-  // Primary: macro snapshot for Non Manufacturing PMI + Manufacturing proxy
-  let mfgPmi = NaN;
-  let svcPmi = NaN;
-
-  const svc = await getMacroValue(["Non Manufacturing PMI"]);
-  if (svc) svcPmi = svc.value;
-
-  // ISM Manufacturing not directly available — use Chicago PMI as proxy
-  const mfg = await getMacroValue(["Chicago PMI"]);
-  if (mfg) mfgPmi = mfg.value;
-
-  // Fallback: FRED NAPM (ISM Manufacturing proxy) — series discontinued in 2001, always empty.
-  // Kept as a no-op safety net; ISM PMI is proprietary and unavailable via FRED or this FMP plan
-  // (verified 2026-07-15: /stable/economic and /stable/economic-indicators both reject "ISM*" names).
-  // Result: mfgPmi/svcPmi correctly stay NaN -> valueStr renders "N/A" below, never a fake number.
-  if (isNaN(mfgPmi)) {
-    mfgPmi = getLatestFredValue("NAPM");
-  }
-
-  let avgPmi = NaN;
-  let valueStr = "N/A";
-  if (!isNaN(mfgPmi) && !isNaN(svcPmi)) {
-    avgPmi = (mfgPmi + svcPmi) / 2;
-    valueStr = `${avgPmi.toFixed(1)} (Mfg: ${mfgPmi.toFixed(1)}, Svc: ${svcPmi.toFixed(1)})`;
-  } else if (!isNaN(svcPmi)) {
-    avgPmi = svcPmi;
-    valueStr = `${svcPmi.toFixed(1)} (Services)`;
-  } else if (!isNaN(mfgPmi)) {
-    avgPmi = mfgPmi;
-    valueStr = `${mfgPmi.toFixed(1)} (Mfg)`;
-  }
-
-  const below45 = !isNaN(avgPmi) && avgPmi < 45;
-  const rawScore = below45 ? 3 : -3;
-  return {
-    name: "PMI (Mfg+Serv Ø)",
-    group: "recession", subgroup: "coincident",
-    value: valueStr,
-    rawScore, weight: 1, weightedScore: rawScore, maxWeighted: 3,
-    zone: below45 ? "Kontraktion (<45)" : `Expansion (≥45)`,
-    source: "ISM / Finance API",
-    description: "Durchschnitt ISM Manufacturing + Services PMI",
-  };
+// 3. Aktivität — FRED INDPRO YoY + TCU. The spec names the series and forbids
+// an ISM label without an ISM print. It does not define score bands, so a
+// missing or present reading stays out of net and max rather than a fake score.
+function scoreActivity(): IndicatorResult {
+  const indpro = fetchFredSeries("INDPRO");
+  const tcu = getLatestFredValue("TCU");
+  return activityIndicator(indpro, Number.isFinite(tcu) ? tcu : null);
 }
 
 // 4. Durable Goods Orders (YoY)
@@ -793,6 +759,9 @@ export interface SubgroupResult {
 
 export interface RecessionAnalysis {
   date: string;
+  /** UTC day the response was built. UI shows „Stand“ only when this is today. */
+  asOf: string;
+  schemaVersion: number;
   indicators: IndicatorResult[];
   subgroups: SubgroupResult[];
   nyFedValue: number | null;
@@ -808,6 +777,124 @@ function clampAndRound(p: number): number {
   return Math.round(clamped / 5) * 5;
 }
 
+export const RECESSION_SCHEMA_VERSION = 1;
+/** Model weight on the NY Fed series. The other 0.70 stays on the indicator formula. */
+export const NY_FED_ANCHOR_WEIGHT = 0.3;
+export const ACTIVITY_SLOT_NAME = "Aktivität (IP / Auslastung)";
+
+export function recessionAsOf(now = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+/** FRED RECPROUSM156N is already a percent. 0.76 stays 0.76. */
+export function nyFedAnchorPct(seriesPercent: number): number {
+  return seriesPercent;
+}
+
+export function blendWithNyFedAnchor(formulaPct: number, anchorPct: number): number {
+  return formulaPct * (1 - NY_FED_ANCHOR_WEIGHT) + anchorPct * NY_FED_ANCHOR_WEIGHT;
+}
+
+function rawGroupProbability(net: number, max: number): number {
+  if (!(max > 0) || !Number.isFinite(net)) return 50;
+  return 50 + (net / max) * 50;
+}
+
+export function probabilityFromNet(net: number, max: number): number {
+  return clampAndRound(rawGroupProbability(net, max));
+}
+
+export function anchoredRecessionProbability(net: number, max: number, nyFedSeries: number | null): {
+  formulaPct: number;
+  anchorPct: number | null;
+  probability: number;
+} {
+  const formulaPct = rawGroupProbability(net, max);
+  if (nyFedSeries == null || !Number.isFinite(nyFedSeries)) {
+    return { formulaPct, anchorPct: null, probability: clampAndRound(formulaPct) };
+  }
+  const anchorPct = nyFedAnchorPct(nyFedSeries);
+  return {
+    formulaPct,
+    anchorPct,
+    probability: clampAndRound(blendWithNyFedAnchor(formulaPct, anchorPct)),
+  };
+}
+
+/** Same 13-observation lag the other monthly FRED slots already use. */
+export function yoyPercent(obs: { date: string; value: number }[]): number {
+  if (obs.length < 13) return NaN;
+  const latest = obs[obs.length - 1].value;
+  const yearAgo = obs[obs.length - 13].value;
+  if (yearAgo === 0 || !Number.isFinite(latest) || !Number.isFinite(yearAgo)) return NaN;
+  return ((latest - yearAgo) / yearAgo) * 100;
+}
+
+export function scoredTotals(indicators: Array<Pick<IndicatorResult, "weightedScore" | "maxWeighted" | "available">>): { net: number; max: number } {
+  const scored = indicators.filter(i => i.available !== false);
+  return {
+    net: scored.reduce((s, i) => s + i.weightedScore, 0),
+    max: scored.reduce((s, i) => s + i.maxWeighted, 0),
+  };
+}
+
+export function activityIndicator(
+  indpro: { date: string; value: number }[],
+  tcu: number | null,
+): IndicatorResult {
+  const yoy = yoyPercent(indpro);
+  const yoyOk = Number.isFinite(yoy);
+  const tcuOk = tcu != null && Number.isFinite(tcu);
+  const parts: string[] = [];
+  if (yoyOk) parts.push(`INDPRO YoY ${yoy >= 0 ? "+" : ""}${yoy.toFixed(1)}%`);
+  if (tcuOk) parts.push(`TCU ${tcu!.toFixed(1)}%`);
+  const sources: string[] = [];
+  if (yoyOk) sources.push("FRED INDPRO");
+  if (tcuOk) sources.push("FRED TCU");
+  return {
+    name: ACTIVITY_SLOT_NAME,
+    group: "recession",
+    subgroup: "coincident",
+    value: parts.length > 0 ? parts.join(", ") : "N/A",
+    rawScore: 0,
+    weight: 0,
+    weightedScore: 0,
+    maxWeighted: 0,
+    zone: parts.length > 0 ? "Ablesung, kein Score" : "N/A",
+    source: sources.length > 0 ? sources.join(", ") : "FRED INDPRO / TCU",
+    description: "Industrieproduktion Jahr-über-Jahr (INDPRO) und Kapazitätsauslastung (TCU).",
+    available: false,
+  };
+}
+
+/** z(Δ WTI 4w) > 1.5. A missing z stays unknown — it is not a shock and not a calm print. */
+export function oilShockFromZ(zWti4w: number | null): boolean | null {
+  if (zWti4w == null || !Number.isFinite(zWti4w)) return null;
+  return zWti4w > 1.5;
+}
+
+export function correctionAction(pKorr12: number, pRez12: number, oilShock: boolean | null): string {
+  const head = `P_korr12 ${pKorr12}%, P_rez12 ${pRez12}%: `;
+  if (pKorr12 >= 65 && pRez12 < 40) {
+    return `${head}Beta/Duration runter; kein volles Rezessions-Portfolio`;
+  }
+  if (pKorr12 >= 65 && pRez12 >= 40) {
+    if (oilShock === true) return `${head}defensiv + Cash/Bills + Gold-Kanal`;
+    if (oilShock === false) return `${head}defensiv + Cash/Bills`;
+    return `${head}defensiv + Cash/Bills. Öl-Schock-Flag nicht verfügbar`;
+  }
+  if (pKorr12 < 50 && pRez12 >= 40) {
+    return `${head}Konjunktur weich, Multiples nicht das Problem → Quality/Value`;
+  }
+  return `${head}Standard-Risiko`;
+}
+
+function groupFormula(net: number, max: number, rounded: number): string {
+  if (!(max > 0)) return `keine gewerteten Indikatoren → ${rounded}%`;
+  const raw = 50 + (net / max) * 50;
+  return `50% + (${net.toFixed(1)}/${max.toFixed(1)}) × 50% = ${raw.toFixed(1)}% → ${rounded}%`;
+}
+
 export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   console.log("[RECESSION] Starting recession analysis...");
 
@@ -816,7 +903,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   const indicators: IndicatorResult[] = await Promise.all([
     scoreSahm(),
     scoreYieldCurve(),
-    scorePMI(),
+    scoreActivity(),
     scoreDurableGoods(),
     scoreM2(),
     scoreCreditSpreads(),
@@ -844,49 +931,53 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
 
   // === Build subgroups per methodology ===
 
-  // 1. Rezession Coincident (3M): Sahm + Zinskurve + PMI → Max 11
+  // 1. Rezession Coincident (3M): Sahm + Zinskurve + Aktivität. Unscored slots add neither net nor max.
   const coincidentInds = indicators.filter(i => i.subgroup === "coincident");
-  const coincidentNet = coincidentInds.reduce((s, i) => s + i.weightedScore, 0);
-  const coincidentMax = coincidentInds.reduce((s, i) => s + i.maxWeighted, 0);
+  const coincidentTotals = scoredTotals(coincidentInds);
+  const coincidentNet = coincidentTotals.net;
+  const coincidentMax = coincidentTotals.max;
 
-  // 2. Rezession Leading (6M): + Durable + M2 + Kredit → Max 20
+  // 2. Rezession Leading (6M): + Durable + M2 + Kredit
   const leadingInds = indicators.filter(i => i.subgroup === "leading");
-  const rezLeadingNet = coincidentNet + leadingInds.reduce((s, i) => s + i.weightedScore, 0);
-  const rezLeadingMax = coincidentMax + leadingInds.reduce((s, i) => s + i.maxWeighted, 0);
+  const rezLeadingTotals = scoredTotals([...coincidentInds, ...leadingInds]);
+  const rezLeadingNet = rezLeadingTotals.net;
+  const rezLeadingMax = rezLeadingTotals.max;
 
-  // 3. Rezession Vollständig (12M): + Konsumklima → Max 23
+  // 3. Rezession Vollständig (12M): + Konsumklima
   const fullInds = indicators.filter(i => i.subgroup === "full");
-  const rezFullNet = rezLeadingNet + fullInds.reduce((s, i) => s + i.weightedScore, 0);
-  const rezFullMax = rezLeadingMax + fullInds.reduce((s, i) => s + i.maxWeighted, 0);
+  const rezFullTotals = scoredTotals([...coincidentInds, ...leadingInds, ...fullInds]);
+  const rezFullNet = rezFullTotals.net;
+  const rezFullMax = rezFullTotals.max;
 
   // 4. Korrektur Sentiment (3-6M): VIX + AD + CNN + AAII + Put/Call + II → Max 28.6
   const sentimentInds = indicators.filter(i => i.subgroup === "sentiment");
-  const sentimentNet = sentimentInds.reduce((s, i) => s + i.weightedScore, 0);
-  const sentimentMax = sentimentInds.reduce((s, i) => s + i.maxWeighted, 0);
+  const sentimentTotals = scoredTotals(sentimentInds);
+  const sentimentNet = sentimentTotals.net;
+  const sentimentMax = sentimentTotals.max;
 
   // 5. Korrektur Vollständig (12M): + Buffett + CAPE + Margin + Google → Max 73.1 (or 61.2)
   const valuationInds = indicators.filter(i => i.subgroup === "valuation" || i.subgroup === "sentiment_ext");
-  const corrFullNet = sentimentNet + valuationInds.reduce((s, i) => s + i.weightedScore, 0);
-  const corrFullMaxBase = sentimentMax + valuationInds.reduce((s, i) => s + i.maxWeighted, 0);
+  const valuationTotals = scoredTotals(valuationInds);
+  const corrFullNet = sentimentNet + valuationTotals.net;
+  const corrFullMaxBase = sentimentMax + valuationTotals.max;
   const corrFullMax = googleAvailable ? corrFullMaxBase : 61.2;
 
   // Compute probabilities
-  const pCoincident = clampAndRound(50 + (coincidentNet / coincidentMax) * 50);
-  const pLeading = clampAndRound(50 + (rezLeadingNet / rezLeadingMax) * 50);
+  const pCoincident = probabilityFromNet(coincidentNet, coincidentMax);
+  const pLeading = probabilityFromNet(rezLeadingNet, rezLeadingMax);
 
-  // 12M Recession with NY Fed anchor
-  const pRezFormula = 50 + (rezFullNet / rezFullMax) * 50;
-  let pRezFull: number;
-  let nyFedAnchorPct: number | undefined;
-  if (!isNaN(nyFedValue)) {
-    nyFedAnchorPct = nyFedValue * 10;
-    pRezFull = clampAndRound(pRezFormula * 0.7 + nyFedAnchorPct * 0.3);
-  } else {
-    pRezFull = clampAndRound(pRezFormula);
-  }
+  // 12M Recession with NY Fed anchor. The series is already percent — no ×10.
+  const anchored = anchoredRecessionProbability(
+    rezFullNet,
+    rezFullMax,
+    Number.isFinite(nyFedValue) ? nyFedValue : null,
+  );
+  const pRezFormula = anchored.formulaPct;
+  const pRezFull = anchored.probability;
+  const anchorPct = anchored.anchorPct;
 
-  const pSentiment = clampAndRound(50 + (sentimentNet / sentimentMax) * 50);
-  const pCorrFull = clampAndRound(50 + (corrFullNet / corrFullMax) * 50);
+  const pSentiment = probabilityFromNet(sentimentNet, sentimentMax);
+  const pCorrFull = probabilityFromNet(corrFullNet, corrFullMax);
 
   const subgroups: SubgroupResult[] = [
     {
@@ -897,7 +988,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
       netScore: Math.round(coincidentNet * 10) / 10,
       maxScore: Math.round(coincidentMax * 10) / 10,
       probability: pCoincident,
-      formula: `50% + (${coincidentNet.toFixed(1)}/${coincidentMax.toFixed(1)}) × 50% = ${(50 + (coincidentNet / coincidentMax) * 50).toFixed(1)}% → ${pCoincident}%`,
+      formula: groupFormula(coincidentNet, coincidentMax, pCoincident),
     },
     {
       name: "recession_leading",
@@ -907,7 +998,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
       netScore: Math.round(rezLeadingNet * 10) / 10,
       maxScore: Math.round(rezLeadingMax * 10) / 10,
       probability: pLeading,
-      formula: `50% + (${rezLeadingNet.toFixed(1)}/${rezLeadingMax.toFixed(1)}) × 50% = ${(50 + (rezLeadingNet / rezLeadingMax) * 50).toFixed(1)}% → ${pLeading}%`,
+      formula: groupFormula(rezLeadingNet, rezLeadingMax, pLeading),
     },
     {
       name: "recession_full",
@@ -917,10 +1008,10 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
       netScore: Math.round(rezFullNet * 10) / 10,
       maxScore: Math.round(rezFullMax * 10) / 10,
       probability: pRezFull,
-      formula: !isNaN(nyFedValue)
-        ? `Formel: 50% + (${rezFullNet.toFixed(1)}/${rezFullMax.toFixed(1)}) × 50% = ${pRezFormula.toFixed(1)}% | NY-Fed-Anker: ${(nyFedValue * 10).toFixed(1)}% | Final: ${pRezFormula.toFixed(1)}%×0.7 + ${nyFedAnchorPct!.toFixed(1)}%×0.3 = ${pRezFull}%`
-        : `50% + (${rezFullNet.toFixed(1)}/${rezFullMax.toFixed(1)}) × 50% = ${pRezFormula.toFixed(1)}% → ${pRezFull}%`,
-      nyFedAnchor: nyFedAnchorPct,
+      formula: anchorPct != null
+        ? `Formel: ${rezFullMax > 0 ? `50% + (${rezFullNet.toFixed(1)}/${rezFullMax.toFixed(1)}) × 50% = ${pRezFormula.toFixed(1)}%` : `keine gewerteten Indikatoren = ${pRezFormula.toFixed(1)}%`} | NY-Fed-Anker: ${anchorPct.toFixed(1)}% | Final: ${pRezFormula.toFixed(1)}%×0.7 + ${anchorPct.toFixed(1)}%×0.3 = ${pRezFull}%`
+        : groupFormula(rezFullNet, rezFullMax, pRezFull),
+      nyFedAnchor: anchorPct ?? undefined,
       finalProbability: pRezFull,
     },
     {
@@ -931,7 +1022,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
       netScore: Math.round(sentimentNet * 10) / 10,
       maxScore: Math.round(sentimentMax * 10) / 10,
       probability: pSentiment,
-      formula: `50% + (${sentimentNet.toFixed(1)}/${sentimentMax.toFixed(1)}) × 50% = ${(50 + (sentimentNet / sentimentMax) * 50).toFixed(1)}% → ${pSentiment}%`,
+      formula: groupFormula(sentimentNet, sentimentMax, pSentiment),
     },
     {
       name: "correction_full",
@@ -941,7 +1032,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
       netScore: Math.round(corrFullNet * 10) / 10,
       maxScore: Math.round(corrFullMax * 10) / 10,
       probability: pCorrFull,
-      formula: `50% + (${corrFullNet.toFixed(1)}/${corrFullMax.toFixed(1)}) × 50% = ${(50 + (corrFullNet / corrFullMax) * 50).toFixed(1)}% → ${pCorrFull}%${!googleAvailable ? " (Google N/A, Max=61.2)" : ""}`,
+      formula: `${groupFormula(corrFullNet, corrFullMax, pCorrFull)}${!googleAvailable ? " (Google N/A, Max=61.2)" : ""}`,
     },
   ];
 
@@ -973,7 +1064,6 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     { name: "CNN Fear & Greed Index", url: "https://www.cnn.com/markets/fear-and-greed" },
     { name: "AAII Sentiment Survey", url: "https://www.aaii.com/sentimentsurvey" },
     { name: "CBOE Market Statistics", url: "https://www.cboe.com/us/options/market_statistics/daily/" },
-    { name: "ISM Reports", url: "https://www.ismworld.org" },
     { name: "University of Michigan Consumer Sentiment", url: "https://data.sca.isr.umich.edu" },
     { name: "Multpl.com (Shiller CAPE)", url: "https://www.multpl.com/shiller-pe" },
     { name: "Advisor Perspectives (Investors Intelligence)", url: "https://www.advisorperspectives.com" },
@@ -989,6 +1079,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
 
   return {
     date: today,
+    asOf: recessionAsOf(),
+    schemaVersion: RECESSION_SCHEMA_VERSION,
     indicators,
     subgroups,
     nyFedValue: isNaN(nyFedValue) ? null : nyFedValue,
@@ -1076,20 +1168,9 @@ function generateFazit(
   creditText += `Bankkredite an Non-Bank Financial Institutions (NBFIs) sind auf $1,92 Billionen gestiegen (+66% seit Ende 2024), was eine potenzielle Ansteckungsgefahr für das regulierte Bankensystem darstellt. `;
   creditText += `Anders als 2023 bei der Silicon Valley Bank (konzentriertes VC-Exposure, Zinsrisiko bei Anleiheportfolios) ist das heutige Risiko breiter gestreut: Private Credit, Leveraged Loans, AI-Datacenter-Finanzierungen und covenant-lite Strukturen bilden ein Cluster eng korrelierter Risiken.`;
 
-  // Section 5: Handlungsempfehlung
-  let actionText = "";
-  if (pKorr12M >= 65 || pRez12M >= 40) {
-    actionText += `Angesichts einer Korrekturwahrscheinlichkeit von ${pKorr12M}% und einer Rezessionswahrscheinlichkeit von ${pRez12M}% empfiehlt sich eine defensive Positionierung: `;
-    actionText += `(1) Reduktion der Aktienquote zugunsten von Cash und kurzlaufenden Staatsanleihen. `;
-    actionText += `(2) Underweight bei Growth/Tech zugunsten von Value und defensiven Sektoren (Healthcare, Utilities, Consumer Staples). `;
-    actionText += `(3) Goldallokation als Absicherung gegen Stagflation und geopolitisches Risiko. `;
-    actionText += `(4) Kritische Prüfung von Private-Credit-Exposure — Liquiditätsrisiken werden in Stressphasen typischerweise unterschätzt. `;
-    actionText += `(5) VIX-Hedge (Optionen, VIX-Calls) bei VIX unter 25 als günstige Absicherung.`;
-  } else if (pKorr12M >= 50) {
-    actionText += `Die Indikatoren mahnen zur Vorsicht. Eine moderate Risikoreduzierung und Diversifikation über Anlageklassen ist sinnvoll. Besonders Positionen mit hoher Zins- und Ölpreissensitivität sollten überprüft werden.`;
-  } else {
-    actionText += `Die aktuelle Indikatorenlage zeigt keine akute Bedrohung. Standardmäßiges Risikomanagement ist ausreichend, wobei die geopolitischen Risiken engmaschig beobachtet werden sollten.`;
-  }
+  // Section 5: Handlung aus P_korr12 und P_rez12.
+  // The oil bridge already measured z(Δ WTI 4w). A missing z is not a shock.
+  const actionText = correctionAction(pKorr12M, pRez12M, oilShockFromZ(bridge.oil.zOil));
 
   // Build summary
   let summary = `Gesamtbewertung: ${riskLevelPhrase(riskLevel)}. `;

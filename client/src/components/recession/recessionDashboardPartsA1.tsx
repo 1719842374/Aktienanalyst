@@ -6,6 +6,7 @@ import {
 } from "recharts";
 import {
   type RecessionAnalysis, type IndicatorResult,
+  displayedNyFedAnchorPct,
   getProbColor, getProbBg, getProbLabel, getScoreColor, getScoreBg, getGaugeColor,
 } from "./recessionDashboardShared";
 
@@ -31,7 +32,7 @@ export function WelcomeScreen({ onStart }: { onStart: () => void }) {
         <div className="grid grid-cols-2 gap-3 text-left text-xs">
           <div className="p-3 rounded-lg bg-card border border-card-border">
             <div className="font-semibold text-foreground mb-1">7 Rezessions-Indikatoren</div>
-            <div className="text-muted-foreground">Sahm, Zinskurve, PMI, Durable Goods, M2, Kredit, Konsum</div>
+            <div className="text-muted-foreground">Sahm, Zinskurve, Aktivität (IP), Durable Goods, M2, Kredit, Konsum</div>
           </div>
           <div className="p-3 rounded-lg bg-card border border-card-border">
             <div className="font-semibold text-foreground mb-1">10 Korrektur-Indikatoren</div>
@@ -62,7 +63,7 @@ export function LoadingScreen() {
         <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto" />
         <div>
           <div className="text-sm font-medium">Analysiere 17 Indikatoren...</div>
-          <div className="text-xs text-muted-foreground mt-1">FRED, CNN, AAII, ISM und weitere Quellen werden abgefragt</div>
+          <div className="text-xs text-muted-foreground mt-1">FRED, CNN, AAII und weitere Quellen werden abgefragt</div>
         </div>
       </div>
     </div>
@@ -178,6 +179,10 @@ export function GaugeMini({ value }: { value: number }) {
 // Section 2: NY Fed Reference
 // ============================================================
 export function NYFedReference({ data }: { data: RecessionAnalysis }) {
+  const anchorPct = displayedNyFedAnchorPct(
+    data.nyFedValue,
+    data.subgroups.find(s => s.name === "recession_full")?.nyFedAnchor,
+  );
   return (
     <div className="space-y-3">
       <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30 border border-border">
@@ -185,8 +190,8 @@ export function NYFedReference({ data }: { data: RecessionAnalysis }) {
         <div>
           <div className="text-sm font-medium">NY Fed Rezessionswahrscheinlichkeit (RECPROUSM156N)</div>
           <div className="text-xs text-muted-foreground mt-1">
-            {data.nyFedValue !== null
-              ? `Aktueller Wert: ${data.nyFedValue.toFixed(2)}% — Anker: ${(data.nyFedValue * 10).toFixed(1)}%`
+            {data.nyFedValue !== null && anchorPct != null
+              ? `Aktueller Wert: ${data.nyFedValue.toFixed(2)}% — Anker: ${anchorPct.toFixed(2)}%`
               : "Daten nicht verfügbar"
             }
           </div>

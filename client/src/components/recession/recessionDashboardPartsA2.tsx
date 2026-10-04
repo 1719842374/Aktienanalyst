@@ -13,7 +13,7 @@ export function ScoringRules() {
   const recessionRules = [
     { name: "Sahm-Regel (≥0.5pp)", scorePositive: "+4", scoreNegative: "-3", weight: "×1", max: "4" },
     { name: "Inv. Zinskurve (10Y-2Y <0)", scorePositive: "+4", scoreNegative: "-3", weight: "×1", max: "4" },
-    { name: "PMI (Mfg+Serv Ø <45)", scorePositive: "+3", scoreNegative: "-3", weight: "×1", max: "3" },
+    { name: "Aktivität (IP / Auslastung)", scorePositive: "kein Score", scoreNegative: "", weight: "—", max: "0" },
     { name: "Durable Goods (YoY >-5%)", scorePositive: "+3", scoreNegative: "-2", weight: "×1", max: "3" },
     { name: "M2 Wachstum (Zonen)", scorePositive: "+3 bis -2", scoreNegative: "", weight: "×1", max: "3" },
     { name: "Kreditspreads BAA-Trs (Zonen)", scorePositive: "+3 bis -2", scoreNegative: "", weight: "×1", max: "3" },
