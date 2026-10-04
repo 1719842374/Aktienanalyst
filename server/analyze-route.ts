@@ -1233,6 +1233,15 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         }
       }
 
+      const mergedNonGeo = promoteNonGeoRowsToBusiness(revenueSegments, geoSegments);
+      if (mergedNonGeo.length > revenueSegments.length) {
+        const added = mergedNonGeo.length - revenueSegments.length;
+        revenueSegments = mergedNonGeo;
+        if (revenueSegmentsSource === "none") revenueSegmentsSource = "fmp";
+        revenueSegmentsMessage = undefined;
+        console.log(`[SEGMENTS] Merged ${added} missing non-geo geographic rows into business segments for ${upperTicker}`);
+      }
+
       revenueSegments = dedupeSegmentsByName(revenueSegments);
 
       // ── 8. TAM analysis ──

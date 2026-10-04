@@ -281,7 +281,7 @@ export function alternativesMetricsNote(
   industry?: string | null,
 ): string | null {
   const blob = `${sector ?? ""} ${industry ?? ""} ${description ?? ""}`;
-  if (!/asset management|alternative asset|\balternatives\b|permanent capital|private equity|infrastructure/i.test(blob)) {
+  if (!/asset management|alternative asset|\balternatives\b|permanent capital|private equity/i.test(blob)) {
     return null;
   }
   return ALTERNATIVES_METRICS_NOTE;

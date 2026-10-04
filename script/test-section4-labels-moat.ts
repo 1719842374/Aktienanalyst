@@ -148,6 +148,11 @@ console.log("\n=== P2 moat scale / permanent capital ===");
     null,
     "retail does not get the alternatives note",
   );
+  expect(
+    alternativesMetricsNote("Toll roads and ports.", "Industrials", "Infrastructure Operations"),
+    null,
+    "infrastructure without an alternatives business does not get the FRE/FBC note",
+  );
 }
 
 console.log("\n=== P1 nur-geo text ===");
@@ -180,9 +185,31 @@ console.log("\n=== P1 nur-geo text ===");
 
   const kept = promoteNonGeoRowsToBusiness(
     [{ name: "Online Stores", revenue: 50, percentage: 100 }],
-    [{ name: "Advertising", revenue: 10, percentage: 5 }],
+    [{ name: "Advertising", revenue: 10, percentage: 5 }, { name: "Germany", revenue: 20, percentage: 10 }],
   );
-  expect(kept.map((row) => row.name), ["Online Stores"], "a non-empty business list is not replaced");
+  expect(kept.map((row) => row.name), ["Online Stores", "Advertising"], "a missing non-geo row is appended; regions stay out");
+  expect(kept[0].percentage, 100, "the existing business percentage is kept");
+
+  const sameName = promoteNonGeoRowsToBusiness(
+    [{ name: "Amazon Web Services", revenue: 120, percentage: 18 }],
+    [{ name: "Amazon Web Services", revenue: 120, percentage: 18 }],
+  );
+  expect(sameName.map((row) => row.name), ["Amazon Web Services"], "a name already in business is not copied again");
+
+  const alternativesLines = promoteNonGeoRowsToBusiness(
+    [],
+    [
+      { name: "United States", revenue: 27, percentage: 30 },
+      { name: "Infrastructure", revenue: 20, percentage: 22 },
+      { name: "Energy", revenue: 15, percentage: 16 },
+      { name: "Real Estate", revenue: 12, percentage: 13 },
+    ],
+  );
+  expect(
+    alternativesLines.map((row) => row.name),
+    ["Infrastructure", "Energy", "Real Estate"],
+    "section-6 business lines are not left in the geographic bucket",
+  );
 }
 
 if (failed > 0) {

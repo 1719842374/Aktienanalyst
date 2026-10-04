@@ -366,7 +366,7 @@ export function dedupeSegmentsByName<T extends { name: string; revenue: number }
 // 1) same normalized name and revenue within 1%
 // 2) NON_GEO_PATTERN (a business line sitting in the geographic bucket)
 export const NON_GEO_PATTERN =
-  /web services|aws|cloud|advertising|subscription|asset management|private equity|infrastructure fund|wealth solutions|fee.?related|corporate (activities)?/i;
+  /web services|aws|cloud|advertising|subscription|asset management|private equity|infrastructure|real estate|wealth solutions|fee.?related|corporate( activities)?|\benergy\b/i;
 
 export const GEO_SEGMENT_DEDUP_NOTE =
   "Einige reportable Segments (z. B. globale Geschäftsbereiche) sind unter Business Segments geführt, nicht unter Regionen.";
@@ -481,34 +481,48 @@ export function geographicOnlyMessage(
 }
 
 /**
- * When product segmentation is empty, a geographic row whose name matches
- * NON_GEO_PATTERN is the business line (AWS, asset management, …). Copy it
- * into the business list so the UI does not say the company reports only
- * geographically. Percentages are recomputed on the promoted rows only.
+ * Copies a geographic row into the business list when its name matches
+ * NON_GEO_PATTERN and that name is not already there. Existing business rows
+ * stay. A later geographic filter then drops the copy so the line is not
+ * shown twice and is not deleted from both lists.
  */
 export function promoteNonGeoRowsToBusiness<T extends { name: string; revenue: number; percentage?: number }>(
   business: readonly T[] | null | undefined,
   geographic: readonly T[] | null | undefined,
 ): T[] {
-  const existing = Array.isArray(business) ? business : [];
-  if (existing.length > 0) return [...existing];
+  const existing = Array.isArray(business) ? [...business] : [];
+  const seen = new Set(
+    existing
+      .filter((row) => row && typeof row.name === "string")
+      .map((row) => normSegmentDisplayName(row.name)),
+  );
   const geo = Array.isArray(geographic) ? geographic : [];
-  const promoted = geo.filter((row) => {
-    if (!row || typeof row.name !== "string" || !row.name.trim()) return false;
-    if (!NON_GEO_PATTERN.test(row.name)) return false;
+  const promoted: T[] = [];
+  for (const row of geo) {
+    if (!row || typeof row.name !== "string" || !row.name.trim()) continue;
+    if (!NON_GEO_PATTERN.test(row.name)) continue;
     const revenue = Number(row.revenue);
-    return Number.isFinite(revenue) && revenue > 0;
-  });
-  if (promoted.length === 0) return [];
+    if (!Number.isFinite(revenue) || !(revenue > 0)) continue;
+    const key = normSegmentDisplayName(row.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const stated = Number(row.percentage);
+    const percentage = Number.isFinite(stated) && stated > 0 ? stated : 0;
+    promoted.push({ ...row, percentage });
+  }
+  if (promoted.length === 0) return existing;
+  const needShare = promoted.some((row) => !(Number(row.percentage) > 0));
+  if (!needShare) return [...existing, ...promoted];
   const total = promoted.reduce((sum, row) => sum + Number(row.revenue), 0);
-  return promoted.map((row) => {
+  const withShare = promoted.map((row) => {
+    if (Number(row.percentage) > 0) return row;
     const revenue = Number(row.revenue);
-    const existing = Number(row.percentage);
-    const percentage = Number.isFinite(existing) && existing > 0
-      ? existing
-      : (total > 0 ? Math.round((revenue / total) * 1000) / 10 : 0);
-    return { ...row, percentage };
+    return {
+      ...row,
+      percentage: total > 0 ? Math.round((revenue / total) * 1000) / 10 : 0,
+    };
   });
+  return [...existing, ...withShare];
 }
 
 /**
