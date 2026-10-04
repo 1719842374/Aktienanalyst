@@ -39,6 +39,25 @@ export function Summary({ data }: { data: RecessionAnalysis }) {
         </div>
       </div>
 
+      {data.drivers?.status === "unauffällig" && (
+        <div className="text-xs p-2 rounded bg-muted/20" data-testid="text-recession-drivers">
+          <div>unauffällig</div>
+          {data.drivers.lines.length > 0 && (
+            <div className="mt-1 font-mono tabular-nums">{data.drivers.lines.join(" · ")}</div>
+          )}
+        </div>
+      )}
+      {data.drivers?.status === "drivers" && (
+        <div className="space-y-1.5" data-testid="text-recession-drivers">
+          {data.drivers.cards.map(card => (
+            <div key={card.id} className="text-xs p-2 rounded bg-muted/20">
+              <div className="font-semibold">{card.title}</div>
+              <p className="mt-1 leading-relaxed">{card.text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Google Trends Note */}
       {!data.googleTrendsAvailable && (
         <div className="flex items-start gap-2 p-2 rounded bg-yellow-500/10 border border-yellow-500/20 text-xs">

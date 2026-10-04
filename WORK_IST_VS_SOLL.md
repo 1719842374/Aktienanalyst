@@ -103,7 +103,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 36 | WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md | r, V, π, T½ | Spec; M2V-Teil | ⬜ |
 | 37 | WORK_RESEARCHER_BRIEFING_REGIONAL.md | 3 Regionen + Spillover | ein Prompt, US-lastig | ⬜ |
 | 38 | WORK_RECESSION_MARKET_CHARTS.md | VIX-Pane + PEG-Click + FINRA | Vol-Pane live US/EU/AS (`#60`/`#66`); PEG+FINRA offen | 🟡 |
-| 39 | WORK_RECESSION_2008_DRIVERS_LLM.md | s(z)+OpenRouter-Driver | Hormuz-(A) weg `#59`; **`recession-drivers.ts` fehlt** (B) | 🟡 |
+| 39 | WORK_RECESSION_2008_DRIVERS_LLM.md | s(z)+OpenRouter-Driver | Ziel+z-Matrix auf diesem Branch, nicht auf main | 🟡 |
 | 40 | WORK_RECESSION_FRED_SAHM.md | adaptive FRED + Sahm s(z) | Spec | ⬜ |
 | 41 | WORK_RECESSION_RATE_OIL_BRIDGE.md | Zins-Brücke + Öl | Spec | ⬜ |
 | 42 | WORK_RECESSION_SOURCES.md | Quellenkatalog | Spec | ⬜ |
@@ -167,7 +167,7 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 
 ## 3. Offen 🟡 / ⬜ (workable, Rang 7–9 auszunehmen)
 
-**🟡 Partial:** Portfolio-Backtest Rest-DoD · Market-Charts PEG/FINRA · Hormuz (B) `recession-drivers.ts` · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`) · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
+**🟡 Partial:** Portfolio-Backtest Rest-DoD · Market-Charts PEG/FINRA · Hormuz (B) auf diesem Branch, nicht auf main · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`) · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
 
 **⬜ Spec (Liquidity-Bundle + Rest):** Regional LI + Books + Velocity + Data Sources · Fiscal Adaptive · Briefing regional · FRED/Sahm · Rate/Oil · Recession Sources · Peer Adaptive + Pricing-Power.
 
@@ -179,9 +179,9 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 2. TAM Coverage-Lift — Spec `fertig_WORK_TAM_SEGMENT_MAPPING.md` Tor ok; Gap = unmatched Labels — **done** ✅ (`ee5f0f8b`, #90 Live ✅). DoD: AMZN 75.2% ok; NVDA 98.2% weak; MSFT 58.5% unreliable (Server unmatched, `tamTotal` null).
 3. Miner Observability — **done** ✅ (#103 `e2bc69a2`; kein Delete, ≡ `b584446f` Kern). Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry transient 400ms; Stale-Cache-on-Error → 200 + `stale:true` wenn Prior-Success, sonst 503 mit `error`+`code`(+`cause`). Soft-Note: Live Soft-Probe `POST /api/btc-miner` → 503 `code=MEMPOOL_NETWORK` `cause=fetch failed` = Render→mempool Egress, kein Code-Delete. Kernformeln Breakeven/Puell/Hash Ribbons unberührt. UI `Section13Miner` unverändert.
 4. Ökosystem Scoring-Weichzeichnung (Zykliker-Grad) = Folge-Lane nach Chip (#75 Live ✅).
-5. Gated unverändert: Hormuz (B) `recession-drivers.ts`, Liquidity-Bundle, Valuechain Rang 7–9.
+5. Hormuz (B) liegt auf diesem Branch, nicht auf main. Gated unverändert: Liquidity-Bundle, Valuechain Rang 7–9.
 
-Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Hormuz (B) / Liquidity-Bundle / Rang 7–9 bleiben gegated.
+Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Hormuz (B) liegt auf diesem Branch, nicht auf main · Liquidity-Bundle / Rang 7–9 bleiben gegated.
 
 **Queue 30.09. Morgen:** #99 TA Spec v3.2 Live ✅ (`4c615eb3`, Bundle `index-MIF1Ml5X.js`) · #100 KI-N/A matrix Live ✅ (`c365c945`) · #93 Label ✅ via #100 · #96 nicht reopen.
 
@@ -214,7 +214,7 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 - `Offen_WORK_PEER_ADAPTIVE.md` — kein 2-Hop (`peers2hop`); `CURATED_PEER_FALLBACK` in `server/news-peers.ts` bleibt der Fallback.
 - `Offen_WORK_PEER_PRICING_POWER.md` — kein `peerMaterial`-Gate und kein Banner „Peer-Set unvollständig“.
 - `Offen_WORK_PORTFOLIO_SOLL_IST.md` — keine gruppierten Soll/Ist-Balken, kein Active Weight und kein Trade-Notional.
-- `Offen_WORK_RECESSION_2008_DRIVERS_LLM.md` — `server/recession-drivers.ts` fehlt; `generateFazit` bleibt ein fester Text statt z-Matrix plus LLM nur auf Menge A.
+- `Offen_WORK_RECESSION_2008_DRIVERS_LLM.md` — Ziel+z-Matrix und `callLLMJson` nur bei Menge A ≠ ∅ liegen auf diesem Branch, nicht auf main.
 - `Offen_WORK_RECESSION_FRED_SAHM.md` — `scoreSahm` in `server/recession.ts` ist weiter `>= 0.5 ? 4 : -3`, nicht s(z) über 20 Jahre.
 - `Offen_WORK_RECESSION_MARKET_CHARTS.md` — `GET /api/analyze-recession/markets` liefert SPY, VGK und ASHR mit Vol und RSI/MACD, aber kein QQQ/VXN, kein PEG-Klick-Factpack und kein FINRA-Streifen.
 - `Offen_WORK_RECESSION_RATE_OIL_BRIDGE.md` — `server/recession-bridge.ts` und die Flags `rateTight` und Öl-Schock fehlen.

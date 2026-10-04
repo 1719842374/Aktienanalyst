@@ -329,7 +329,7 @@ export const RECESSION_FALLBACK_DATA = {
   ],
   "interpretation": "Hohes Risiko: Mehrere Indikatoren signalisieren erhöhte Rezessions- oder Korrekturwahrscheinlichkeit. Defensivere Positionierung empfohlen.",
   "fazit": {
-    "summary": "Gesamtbewertung: Hohes Risiko. Rezession 12M: 25%, Korrektur 12M: 75%. Die Kombination aus historisch extremen Bewertungen (Buffett 230%, CAPE 40.4), dem Iran/Hormuz-Ölpreisschock mit Stagflationspotenzial, und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, das defensives Portfoliomanagement erfordert.",
+    "summary": "Gesamtbewertung: Hohes Risiko. Rezession 12M: 25%, Korrektur 12M: 75%. Die Kombination aus historisch extremen Bewertungen (Buffett 230%, CAPE 40.4) und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, das defensives Portfoliomanagement erfordert.",
     "riskLevel": "Hoch",
     "sections": [
       {
@@ -341,11 +341,6 @@ export const RECESSION_FALLBACK_DATA = {
         "title": "Bewertungsrisiko",
         "emoji": "⚠️",
         "text": "Der Buffett-Indikator steht bei 230% — das höchste Niveau seit der Dotcom-Blase. Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. Das Shiller CAPE-Ratio von 40.4 liegt über dem Durchschnitt der letzten 140 Jahre (ca. 17) und signalisiert, dass zukünftige Aktienrenditen (10J) mit hoher Wahrscheinlichkeit unterdurchschnittlich ausfallen. Die NYSE Margin Debt ($2025T) zeigt erhöhte Hebelwirkung im Markt — ein klassischer Vorlauf-Indikator für abrupte Sell-Offs."
-      },
-      {
-        "title": "Geopolitik & Makro: Iran/Hormuz, Inflation, Zinsen",
-        "emoji": "🌍",
-        "text": "Die Sperrung der Straße von Hormuz durch den Iran-Konflikt stellt den gravierendsten exogenen Schock dar. Rund 20% der globalen Ölversorgung und ein Fünftel des weltweiten LNG-Handels fließen durch diese Meerenge. Die Dallas Fed schätzt einen WTI-Ölpreis von $98-132/Barrel bei andauernder Sperrung, mit einem BIP-Wachstumsrückgang von bis zu 2,9 Prozentpunkten. Goldman Sachs rechnet mit einem Inflationsanstieg um ~1 Prozentpunkt und hat die US-Rezessionswahrscheinlichkeit auf 30% angehoben. Die Fed steht vor einem Stagflations-Dilemma: Zinssenkungen würden die Inflation anheizen, Zinserhöhungen die Konjunktur belasten. Natixis prognostiziert, dass die Fed-Funds-Rate bei 3,50-3,75% verharrt, mit einem Bias Richtung \"keine Senkung in 2026\" oder sogar mögliche Zinserhöhungen. Für den Aktienmarkt bedeutet das: Höhere Kapitalmarktzinsen drücken Equity-Bewertungen durch steigende Diskontierungsraten — besonders bei Growth-Aktien mit langer Duration."
       },
       {
         "title": "Private Credit & Systemisches Risiko",
