@@ -1,4 +1,6 @@
 // Types matching the backend response
+import type { RegionalCatalogs } from "@shared/recession-regions";
+
 export interface IndicatorResult {
   name: string;
   group: "recession" | "correction";
@@ -121,6 +123,7 @@ export interface RecessionAnalysis {
   sources: { name: string; url: string }[];
   bridge?: RecessionBridgeView;
   sahmRegions?: SahmRegionBoard[];
+  regions?: RegionalCatalogs;
 }
 
 /** „Stand“ only when the response day is this UTC day. */

@@ -19,6 +19,8 @@ import { fetchBridge, shockGeopoliticsSection, type RecessionBridge } from "./re
 import { driverFazitSections, loadDriverAssessment, type DriverView } from "./recession-drivers";
 import { diskBriefingUpdatedAt } from "./disk-cache";
 import { sOfZ } from "./fiscal-frontend-math";
+import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
+import type { RegionalCatalogs } from "../shared/recession-regions";
 
 // ============================================================
 // Generic Data Helpers
@@ -458,6 +460,7 @@ export interface RecessionAnalysis {
   bridge: RecessionBridge;
   /** US card plus scored Eurozone and Japan unemployment S. Not in the 17-indicator net. */
   sahmRegions: SahmRegionBoard[];
+  regions: RegionalCatalogs;
 }
 
 function clampAndRound(p: number): number {
@@ -645,7 +648,7 @@ function rawFromS(s: number): number {
 }
 
 /** s(z) like the fiscal front end. History excludes the current print. n < 24 fails closed. */
-function scoreSeriesStress(levels: number[]): { available: boolean; raw: number; s: number } {
+export function scoreSeriesStress(levels: number[]): { available: boolean; raw: number; s: number } {
   if (levels.length < CURVE_MIN_MONTHS) return { available: false, raw: 0, s: 50 };
   const level = levels[levels.length - 1];
   const history = levels.slice(Math.max(0, levels.length - 1 - CURVE_HISTORY_MONTHS), levels.length - 1);
@@ -1134,6 +1137,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   const bridgePromise = fetchBridge();
   const cosdSahm = getDateYearsAgo(SAHM_HISTORY_YEARS);
   const usSahm = scoreSahm();
+  const regionalPromise = fetchRegionalPrints().catch(() => null);
 
   const vixValue = getLatestFredValue("VIXCLS");
   const indicators: IndicatorResult[] = await Promise.all([
@@ -1332,6 +1336,24 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
       scoreEuroAreaSahm(cosdSahm),
       scoreJapanSahm(cosdSahm),
     ],
+    regions: scoreRegionalCatalogs({
+      prints: await regionalPromise ?? emptyRegionalPrints(),
+      usSlots: usSlotsFromIndicators(indicators),
+      usRecession12m: pRezFull,
+      usCorrection12m: pCorrFull,
+      today: recessionAsOf(),
+      scorers: {
+        money: yoy => m2Reading(yoy),
+        credit: spread => creditReading(spread),
+        vol: level => vixReading(level),
+        valuation: ratio => capeReading(ratio),
+        activity: yoy => realActivityYoyScore(yoy),
+        curve: (levels, stressWhenLow) => {
+          const scored = scoreSeriesStress(stressWhenLow ? levels.map(value => -value) : levels);
+          return { available: scored.available, raw: scored.raw };
+        },
+      },
+    }),
   };
 }
 
