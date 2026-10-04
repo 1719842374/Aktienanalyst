@@ -30,6 +30,17 @@ import * as path from "path";
 import { callLLMJson } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 import { fetchMacroSnapshot } from "./fmp-macro";
+import {
+  briefingSchema,
+  briefingV2CacheFresh,
+  buildRegionalBriefingPrompt,
+  composeRegionalBriefing,
+  indexPromptLine,
+  parseIndexCache,
+  selectRegionalEvents,
+  type ComposeRegionInput,
+  type RegionId,
+} from "./researcher-briefing-regional";
 
 // ============================================================
 // Cache Layer (mirrors main dashboard 7-day TTL)
@@ -884,6 +895,28 @@ JSON-Format (kein Flie\u00dftext, nur JSON):
 interface DailyBriefingResult {
   asOf: string;
   generatedAt: string;
+  _schema?: "v1" | "v2";
+  headline?: string;
+  cross?: string[];
+  regions?: Array<{
+    region: string;
+    stance: string;
+    money: string;
+    fiscal: string;
+    trade: string;
+    li: number | null;
+    realRatePct: number | null;
+    velocity: number | null;
+    pricedIn: number | null;
+  }>;
+  topChanges?: Array<{
+    region: string;
+    category: string;
+    title: string;
+    changeType: string;
+  }>;
+  tacticalStance?: string;
+  stanceRationale?: string;
   briefing: {
     headline: string;
     summary: string;
@@ -891,8 +924,9 @@ interface DailyBriefingResult {
       rank: number;
       title: string;
       region: string;
+      category?: string;
       severity: "high" | "medium" | "low";
-      changeType: "NEW" | "ESCALATED" | "DIRECTION_FLIP";
+      changeType: "NEW" | "ESCALATED" | "DIRECTION_FLIP" | "UNCHANGED";
       description: string;
       dcfImplications: {
         waccDeltaBps: string; // e.g. "+15 bps" or "-8 bps"
@@ -907,6 +941,11 @@ interface DailyBriefingResult {
       equityView: string;
     };
     recommendation: string;
+    cross?: string[];
+    regions?: DailyBriefingResult["regions"];
+    tacticalStance?: string;
+    stanceRationale?: string;
+    _schema?: "v1" | "v2";
   } | null;
   diagnostics: {
     eventsScanned: number;
@@ -926,20 +965,29 @@ type EventFingerprint = {
   equityImpact: string;
 };
 
-function readBriefingSnapshot(): EventFingerprint[] {
+function readBriefingSnapshot(): {
+  events: EventFingerprint[];
+  indexLevels: Record<string, { li: number | null; realRatePct: number | null }>;
+} {
   try {
     const file = path.join(CACHE_DIR, "briefing-snapshot.json");
-    if (!fs.existsSync(file)) return [];
+    if (!fs.existsSync(file)) return { events: [], indexLevels: {} };
     const data = JSON.parse(fs.readFileSync(file, "utf-8"));
-    return Array.isArray(data?.events) ? data.events : [];
-  } catch { return []; }
+    return {
+      events: Array.isArray(data?.events) ? data.events : [],
+      indexLevels: data?.indexLevels && typeof data.indexLevels === "object" ? data.indexLevels : {},
+    };
+  } catch { return { events: [], indexLevels: {} }; }
 }
 
-function writeBriefingSnapshot(events: EventFingerprint[]) {
+function writeBriefingSnapshot(
+  events: EventFingerprint[],
+  indexLevels: Record<string, { li: number | null; realRatePct: number | null }> = {},
+) {
   try {
     if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
     const file = path.join(CACHE_DIR, "briefing-snapshot.json");
-    fs.writeFileSync(file, JSON.stringify({ savedAt: new Date().toISOString(), events }, null, 2));
+    fs.writeFileSync(file, JSON.stringify({ savedAt: new Date().toISOString(), events, indexLevels }, null, 2));
   } catch (e: any) {
     console.error("[BRIEFING] snapshot write failed:", e?.message);
   }
@@ -987,18 +1035,81 @@ function writeBriefingResultCache(result: DailyBriefingResult) {
   }
 }
 
-function normalizeTitle(t: string): string {
-  return String(t || "").toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+function briefingV2DiskKey(): string {
+  return `briefing_v2__${getBerlinDateKey()}`;
+}
+
+function briefingV2Path(): string {
+  return path.join(CACHE_DIR, `${briefingV2DiskKey()}.json`);
+}
+
+function decorateBriefingCache(result: DailyBriefingResult, savedAt: string): DailyBriefingResult {
+  const ageMin = Math.round((Date.now() - new Date(savedAt).getTime()) / 60000);
+  return { ...result, _cached: true, _cacheAgeMin: ageMin, _cachedAt: savedAt } as DailyBriefingResult;
+}
+
+function readBriefingV2Cache(): DailyBriefingResult | null {
+  try {
+    const file = briefingV2Path();
+    if (fs.existsSync(file)) {
+      const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
+      if (raw?.dateKey === getBerlinDateKey() && raw?.savedAt && briefingV2CacheFresh(raw.savedAt) && briefingSchema(raw.result) === "v2") {
+        return decorateBriefingCache(raw.result as DailyBriefingResult, raw.savedAt);
+      }
+    }
+  } catch (e: any) {
+    console.error("[BRIEFING] v2 cache read failed:", e?.message);
+  }
+  try {
+    const disk = diskResearcherGet(briefingV2DiskKey());
+    const savedAt = disk?._cachedAt || disk?.savedAt;
+    if (!disk || !savedAt || !briefingV2CacheFresh(savedAt)) return null;
+    if (briefingSchema(disk) !== "v2") return null;
+    const { _cacheAge, ...result } = disk;
+    void _cacheAge;
+    return decorateBriefingCache(result as DailyBriefingResult, savedAt);
+  } catch {
+    return null;
+  }
+}
+
+function writeBriefingV2Cache(result: DailyBriefingResult) {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    const savedAt = new Date().toISOString();
+    fs.writeFileSync(briefingV2Path(), JSON.stringify({
+      dateKey: getBerlinDateKey(),
+      savedAt,
+      result,
+    }, null, 2));
+    diskResearcherSet(briefingV2DiskKey(), { ...result, _cachedAt: savedAt });
+  } catch (e: any) {
+    console.error("[BRIEFING] v2 cache write failed:", e?.message);
+  }
+}
+
+// Read liqidx_v1__US/EU/ASIA. Never writes the index and never starts a FRED round-trip.
+function readLiquidityIndexReadonly(region: string): unknown {
+  try {
+    const file = path.join(CACHE_DIR, `liqidx_v1__${region}.json`);
+    if (fs.existsSync(file)) {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
+      const cachedAt = parsed?._cachedAt ? new Date(parsed._cachedAt).getTime() : 0;
+      if (!cachedAt || (Date.now() - cachedAt) / 60000 < RESEARCHER_TTL_MIN) return parsed;
+    }
+  } catch {}
+  const disk = diskResearcherGet(`liqidx_v1__${region}`);
+  if (!disk) return null;
+  if (typeof disk._cacheAge === "number" && disk._cacheAge >= RESEARCHER_TTL_MIN) return null;
+  return disk;
 }
 
 async function buildDailyBriefing(): Promise<DailyBriefingResult> {
-  const regions = ["US", "EU", "ASIA"];
+  const regions: RegionId[] = ["US", "EU", "ASIA"];
   const lastSnapshot = readBriefingSnapshot();
-  const lastByKey = new Map<string, EventFingerprint>();
-  for (const fp of lastSnapshot) lastByKey.set(`${fp.region}|${normalizeTitle(fp.title)}`, fp);
 
-  // Load macro data: prefer cache (fast, no LLM cost), fall back to fresh build
-  // Cache TTL for briefing purposes: 6 hours (briefing runs daily, cache is fresh enough)
+  // Load macro data: prefer cache (fast, no LLM cost), fall back to fresh build.
+  // Cache TTL for briefing purposes: 6 hours (briefing runs daily, cache is fresh enough).
   const BRIEFING_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
   const macroResults: Array<{ region: string; data: MacroPulseResult }> = [];
   const macroSettled = await Promise.all(regions.map(async (region) => {
@@ -1015,7 +1126,7 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
       // Cache miss or stale — run fresh
       console.log(`[BRIEFING] macro ${region}: cache miss, building fresh`);
       const data = await buildMacroPulse(region);
-      if (!data.llmSynthesis?._fallback) writeResearcherCache("macro", region, data);
+      if (!(data.llmSynthesis as { _fallback?: boolean } | null)?._fallback) writeResearcherCache("macro", region, data);
       return { region, data } as { region: string; data: MacroPulseResult };
     } catch (e: any) {
       console.error(`[BRIEFING] macro ${region} failed:`, e?.message);
@@ -1027,252 +1138,128 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
   }));
   for (const r of macroSettled) { if (r) macroResults.push(r); }
 
-  // Diff: net-new = (a) title not in last snapshot, OR (b) severity=high, OR (c) impact direction flipped
-  type DiffedEvent = EventFingerprint & {
-    description: string;
-    rationale: string;
-    affectedSectors: string[];
-    changeType: "NEW" | "ESCALATED" | "DIRECTION_FLIP";
-  };
-  const diffed: DiffedEvent[] = [];
-  const newSnapshot: EventFingerprint[] = [];
+  const inputs: ComposeRegionInput[] = regions.map((region) => {
+    const data = macroResults.find(r => r.region === region)?.data;
+    const events = ((data?.llmSynthesis?.keyEvents || []) as any[]).map((ev) => ({
+      region,
+      title: String(ev?.title || ""),
+      category: ev?.category ? String(ev.category) : undefined,
+      severity: ev?.severity ? String(ev.severity) : undefined,
+      description: ev?.description ? String(ev.description) : undefined,
+      inflationImpact: ev?.inflationImpact ? String(ev.inflationImpact) : undefined,
+      rateImpact: ev?.rateImpact ? String(ev.rateImpact) : undefined,
+      equityImpact: ev?.equityImpact ? String(ev.equityImpact) : undefined,
+      affectedSectors: Array.isArray(ev?.affectedSectors) ? ev.affectedSectors.map(String) : [],
+    }));
+    const synthesis = data?.llmSynthesis as { _fallback?: boolean } | null | undefined;
+    // A fallback stub is not a regional source. Empty slots stay empty.
+    const hasMacro = !!data && synthesis?._fallback !== true && !!synthesis;
+    return {
+      region,
+      hasMacro,
+      macroAction: data?.llmSynthesis?.actionRecommendation || null,
+      events,
+      prior: lastSnapshot.events.filter(fp => fp.region === region),
+      index: readLiquidityIndexReadonly(region),
+      priorIndex: lastSnapshot.indexLevels[region] || null,
+    };
+  });
 
-  for (const { region, data } of macroResults) {
-    const events = (data?.llmSynthesis?.keyEvents || []) as any[];
-    for (const ev of events) {
-      const fp: EventFingerprint = {
-        title: String(ev.title || ""),
-        region,
+  const fingerprints: EventFingerprint[] = [];
+  const indexLevels: Record<string, { li: number | null; realRatePct: number | null }> = {};
+  for (const input of inputs) {
+    for (const ev of input.events) {
+      fingerprints.push({
+        title: ev.title,
+        region: input.region,
         severity: String(ev.severity || "low"),
         inflationImpact: String(ev.inflationImpact || "neutral"),
         rateImpact: String(ev.rateImpact || "neutral"),
         equityImpact: String(ev.equityImpact || "neutral"),
-      };
-      newSnapshot.push(fp);
-
-      const key = `${region}|${normalizeTitle(fp.title)}`;
-      const last = lastByKey.get(key);
-      let changeType: "NEW" | "ESCALATED" | "DIRECTION_FLIP" | null = null;
-
-      if (!last) {
-        if (fp.severity === "high") changeType = "NEW";
-        // Skip net-new low/medium events to keep briefing focused
-      } else {
-        const flipped =
-          last.inflationImpact !== fp.inflationImpact ||
-          last.rateImpact !== fp.rateImpact ||
-          last.equityImpact !== fp.equityImpact;
-        const escalated = last.severity !== "high" && fp.severity === "high";
-        if (escalated) changeType = "ESCALATED";
-        else if (flipped) changeType = "DIRECTION_FLIP";
-      }
-
-      if (changeType) {
-        diffed.push({
-          ...fp,
-          description: String(ev.description || ""),
-          rationale: String(ev.rationale || ""),
-          affectedSectors: Array.isArray(ev.affectedSectors) ? ev.affectedSectors : [],
-          changeType,
-        });
-      }
-    }
-  }
-
-  // Persist new snapshot for next diff
-  writeBriefingSnapshot(newSnapshot);
-
-  const totalScanned = newSnapshot.length;
-  const netNew = diffed.length;
-
-  // No material changes — still show full briefing from cached macro data (don't return empty stub)
-  // Collect key events and macro stance from all regions for display
-  const allEvents = macroResults.flatMap(({ region, data }) =>
-    (data?.llmSynthesis?.keyEvents || []).map((ev: any) => ({ ...ev, region }))
-  );
-  const macroStances = macroResults.map(({ region, data }) => ({
-    region,
-    action: data?.llmSynthesis?.actionRecommendation || 'Watch',
-    summary: data?.llmSynthesis?.summary || '',
-    keyDrivers: data?.llmSynthesis?.keyDrivers || [],
-  }));
-
-  if (netNew === 0) {
-    // Build a substantive no-change briefing from the actual macro data
-    const stanceStr = macroStances.map(s => `${s.region}: ${s.action}`).join(' | ');
-    const topEventsForDisplay = allEvents
-      .filter((e: any) => e.severity === 'high' || e.equityImpact !== 'neutral')
-      .slice(0, 3)
-      .map((e: any, idx: number) => ({
-        rank: idx + 1,
-        title: String(e.title || ''),
-        category: String(e.category || 'Makro'),
-        impact: String(e.equityImpact === 'positiv' ? 'positiv' : e.equityImpact === 'negativ' ? 'negativ' : 'neutral'),
-        severity: String(e.severity || 'medium'),
-        description: String(e.description || ''),
-        dcfImplication: e.rateImpact === 'steigend'
-          ? 'Höhere Zinsen erhöhen WACC und belasten DCF-Bewertungen.'
-          : e.equityImpact === 'negativ'
-          ? 'Negatives Equity-Umfeld erhöht Risikoprämien und drückt Multiples.'
-          : 'Stabiles Umfeld — keine akute DCF-Korrektur erforderlich.',
-        affectedTickers: [],
-      }));
-
-    const driverSummary = macroStances
-      .flatMap(s => s.keyDrivers.slice(0, 1))
-      .slice(0, 2)
-      .join(' | ');
-
-    return {
-      asOf: new Date().toISOString(),
-      generatedAt: new Date().toISOString(),
-      briefing: {
-        headline: `Marktlage stabil — ${stanceStr}`,
-        summary: `Keine materiellen Lageänderungen seit gestern. Aktuelle Makro-Stance: ${stanceStr}.${driverSummary ? ' Treiber: ' + driverSummary + '.' : ''} Bestehende Positionierung kann beibehalten werden.`,
-        topChanges: topEventsForDisplay,
-        keyMetricsShift: {
-          inflationView: allEvents.find((e: any) => e.inflationImpact === 'steigend') ? 'steigend-Tendenz' : 'stabil',
-          rateView: allEvents.find((e: any) => e.rateImpact === 'steigend') ? 'steigend-Tendenz' : 'stabil',
-          equityView: macroStances.some(s => s.action === 'Buy') ? 'konstruktiv' : macroStances.some(s => s.action === 'Avoid') ? 'vorsichtig' : 'neutral',
-        },
-        recommendation: macroStances.some(s => s.action === 'Buy')
-          ? 'Selektiv opportunistisch. Sektoren mit Fiskal-Rückenwind bevorzugen.'
-          : macroStances.some(s => s.action === 'Avoid')
-          ? 'Vorsichtig. Risikopositionen reduzieren oder hedgen.'
-          : 'Beobachten. Bestehende Positionierung beibehalten.',
-      },
-      diagnostics: { eventsScanned: totalScanned, netNewEvents: 0, regionsAnalyzed: regions },
-    };
-  }
-
-  // LLM-Briefing-Prompt — hedge-fund style, < 600 tokens, DCF-focused
-  const today = new Date().toISOString().slice(0, 10);
-  const eventBlock = diffed.map(e =>
-    `- [${e.region}/${e.changeType}/${e.severity}] ${e.title}\n  Inflation: ${e.inflationImpact} | Rate: ${e.rateImpact} | Equity: ${e.equityImpact}\n  Sektoren: ${e.affectedSectors.join(", ") || "—"}\n  ${e.description}\n  Mechanismus: ${e.rationale}`
-  ).join("\n\n");
-
-  const contextStr = eventBlock;
-
-  const prompt = `Du bist täglicher Marktstratege bei einem Hedge-Fund.
-
-Erstelle ein kompaktes Pre-Market Briefing für heute (${today}).
-
-Berücksichtige:
-- Wichtige geld- und fiskalpolitische Neuigkeiten der letzten 24-48 Stunden
-- Relevante geopolitische oder politische Entwicklungen
-- Bedeutende Unternehmensnachrichten mit Markteinordnung
-- Aktuelle Marktstimmung und mögliche Risiken für die nächsten Handelstage
-
-Kontext der letzten Sessions: ${contextStr || "Keine Vordaten — freie Einschätzung"}
-
-Gib am Ende eine klare taktische Einschätzung: "Vorsichtig" | "Neutral" | "Opportunistisch"
-
-JSON:
-{"headline":"1 prägnanter Satz","summary":"2-3 Sätze Gesamtbild","tacticalStance":"Neutral","stanceRationale":"1 Satz Begründung","topChanges":[{"rank":1,"title":"Event-Titel","category":"Makro|Geopolitik|Earnings|Fed|Regulierung","impact":"positiv|neutral|negativ","severity":"high|medium|low","description":"2 konkrete Sätze","dcfImplication":"1 Satz Auswirkung auf DCF/Bewertung","affectedTickers":["AAPL","MSFT"]}],"riskRadar":["Risiko 1","Risiko 2","Risiko 3"],"watchlist":["Ticker1 — Grund","Ticker2 — Grund"]}`;
-
-  let llm: Awaited<ReturnType<typeof callLLMJson>> = null;
-  try {
-    // 1500 was too tight for the full schema (headline/summary/stance + up to
-    // 3 topChanges each with title/category/impact/severity/2-sentence
-    // description/dcfImplication/affectedTickers + riskRadar + watchlist) —
-    // same truncation class as the Sectors 1500→4000 fix above.
-    llm = await callLLMJson({ prompt, maxTokens: 2200 });
-  } catch (llmErr: any) {
-    console.warn(`[RESEARCHER/briefing] LLM threw: ${llmErr?.message?.substring(0, 100)}`);
-  }
-  const briefing: any = llm?.data || null;
-
-  if (!briefing) {
-    // LLM failed — return a minimal stub so the frontend doesn't crash
-    const stanceStr = macroStances.map(s => `${s.region}: ${s.action}`).join(' | ');
-    return {
-      asOf: new Date().toISOString(),
-      generatedAt: new Date().toISOString(),
-      briefing: {
-        headline: `Marktlage — ${stanceStr}`,
-        summary: `LLM-Briefing nicht verfügbar (${today}). Macro Stance: ${stanceStr}. Bitte OpenRouter-Guthaben prüfen.`,
-        topChanges: allEvents
-          .filter((e: any) => e.severity === 'high')
-          .slice(0, 3)
-          .map((e: any, idx: number) => ({
-            rank: idx + 1,
-            title: String(e.title || ''),
-            category: String(e.category || 'Makro'),
-            impact: String(e.equityImpact === 'positiv' ? 'positiv' : e.equityImpact === 'negativ' ? 'negativ' : 'neutral'),
-            severity: String(e.severity || 'medium'),
-            description: String(e.description || ''),
-            dcfImplication: 'Stabiles Umfeld — keine akute DCF-Korrektur erforderlich.',
-            affectedTickers: [],
-          })),
-        keyMetricsShift: {
-          inflationView: allEvents.find((e: any) => e.inflationImpact === 'steigend') ? 'steigend' : 'stabil',
-          rateView: allEvents.find((e: any) => e.rateImpact === 'steigend') ? 'steigend' : 'stabil',
-          equityView: macroStances.some(s => s.action === 'Buy') ? 'konstruktiv' : 'neutral',
-        },
-        recommendation: 'Beobachten — LLM nicht verfügbar.',
-        _llmSkipped: true,
-      },
-      diagnostics: { eventsScanned: totalScanned, netNewEvents: netNew, regionsAnalyzed: regions },
-    };
-  }
-
-  // Adapt new prompt shape to existing FE shape: derive keyMetricsShift +
-  // recommendation from tacticalStance / stanceRationale so the BriefingModal
-  // keeps rendering.
-  if (briefing) {
-    if (Array.isArray(briefing.topChanges)) {
-      briefing.topChanges = briefing.topChanges.slice(0, 3).map((c: any, idx: number) => {
-        // Map dcfImplication (string) → dcfImplications (object) for FE compatibility.
-        const dcfStr = c.dcfImplication ? String(c.dcfImplication) : "";
-        const dcfObj = c.dcfImplications || {};
-        const impactStr = String(c.impact || "").toLowerCase();
-        const exposure = impactStr === "positiv" ? "long"
-          : impactStr === "negativ" ? "short"
-          : (dcfObj.exposureType || "hedge");
-        return {
-          rank: c.rank || idx + 1,
-          title: String(c.title || ""),
-          region: c.region || "",
-          severity: c.severity || "medium",
-          changeType: c.changeType || "NEW",
-          description: String(c.description || ""),
-          category: c.category,
-          impact: c.impact,
-          dcfImplications: {
-            waccDeltaBps: dcfObj.waccDeltaBps || "~0 bps",
-            affectedSectors: Array.isArray(dcfObj.affectedSectors) ? dcfObj.affectedSectors
-              : Array.isArray(c.affectedTickers) ? c.affectedTickers.slice(0, 4) : [],
-            exposureType: exposure,
-          },
-          dcfImplication: dcfStr,
-          affectedTickers: Array.isArray(c.affectedTickers) ? c.affectedTickers : undefined,
-          action: c.action || dcfStr || "",
-        };
       });
     }
-    // Derive keyMetricsShift if missing — keeps the FE MetricShift cards populated.
-    if (!briefing.keyMetricsShift) {
-      const stance = String(briefing.tacticalStance || "Neutral");
-      briefing.keyMetricsShift = {
-        inflationView: briefing.stanceRationale ? `Stance: ${stance} — ${briefing.stanceRationale}` : `Marktstimmung: ${stance}`,
-        rateView: "Siehe Kontext zu geld-/fiskalpolitischen Entwicklungen oben.",
-        equityView: stance === "Opportunistisch" ? "Risk-On — selektive Long-Exposure"
-          : stance === "Vorsichtig" ? "Risk-Off — defensive Rotation"
-          : "Risk-Neutral — Positionierung beibehalten",
-      };
-    }
-    if (!briefing.recommendation) {
-      briefing.recommendation = briefing.stanceRationale
-        ? `${briefing.tacticalStance || "Neutral"}: ${briefing.stanceRationale}`
-        : `Taktische Einschätzung: ${briefing.tacticalStance || "Neutral"}.`;
+    const idx = parseIndexCache(input.index);
+    indexLevels[input.region] = {
+      li: idx.available ? idx.li : null,
+      realRatePct: idx.available ? idx.realRatePct : null,
+    };
+  }
+  writeBriefingSnapshot(fingerprints, indexLevels);
+
+  const selected = selectRegionalEvents(inputs);
+  const today = new Date().toISOString().slice(0, 10);
+  const prompt = buildRegionalBriefingPrompt({
+    today,
+    indexLines: inputs.map(input => indexPromptLine(input.region, parseIndexCache(input.index))),
+    eventBlock: selected.map(e =>
+      `- [${e.region}/${e.changeType}/${e.category}] ${e.title}${e.description ? `\n  ${e.description}` : ""}`
+    ).join("\n"),
+    catalogHint: "REGION_CONTEXT_2025 bleibt Katalog der Programme. Filter sind die drei Bücher Geld, Fiskal, Handel.",
+  });
+
+  let llm: Awaited<ReturnType<typeof callLLMJson>> = null;
+  const anySource = inputs.some(input => input.hasMacro || parseIndexCache(input.index).available);
+  if (anySource) {
+    try {
+      llm = await callLLMJson({ prompt, maxTokens: 2800 });
+    } catch (llmErr: any) {
+      console.warn(`[RESEARCHER/briefing] LLM threw: ${llmErr?.message?.substring(0, 100)}`);
     }
   }
 
-  return {
+  const composed = composeRegionalBriefing({
     asOf: new Date().toISOString(),
+    regions: inputs,
+    llm: (llm?.data || null) as any,
+  });
+
+  const briefing: DailyBriefingResult["briefing"] = {
+    headline: composed.headline,
+    summary: composed.stanceRationale,
+    topChanges: composed.topChanges.map((c, idx) => ({
+      rank: idx + 1,
+      title: c.title,
+      region: c.region,
+      category: c.category,
+      severity: "medium" as const,
+      changeType: c.changeType,
+      description: c.title === "none" ? "none" : c.title,
+      dcfImplications: {
+        waccDeltaBps: c.dcfImplications?.waccDeltaBps || "n/v",
+        affectedSectors: c.dcfImplications?.affectedSectors || [],
+        exposureType: "hedge" as const,
+      },
+      action: "",
+    })),
+    keyMetricsShift: {
+      inflationView: "n/v",
+      rateView: composed.regions.map(r => `${r.region} r=${r.realRatePct ?? "n/v"}`).join(" | "),
+      equityView: composed.tacticalStance,
+    },
+    recommendation: `${composed.tacticalStance}: ${composed.stanceRationale}`,
+    cross: composed.cross,
+    regions: composed.regions,
+    tacticalStance: composed.tacticalStance,
+    stanceRationale: composed.stanceRationale,
+    _schema: "v2",
+  };
+
+  return {
+    asOf: composed.asOf,
     generatedAt: new Date().toISOString(),
+    _schema: "v2",
+    headline: composed.headline,
+    cross: composed.cross,
+    regions: composed.regions,
+    topChanges: composed.topChanges,
+    tacticalStance: composed.tacticalStance,
+    stanceRationale: composed.stanceRationale,
     briefing,
-    diagnostics: { eventsScanned: totalScanned, netNewEvents: netNew, regionsAnalyzed: regions },
+    diagnostics: {
+      eventsScanned: fingerprints.length,
+      netNewEvents: selected.filter(e => e.changeType !== "UNCHANGED" || e.numeric).length,
+      regionsAnalyzed: regions,
+    },
     modelUsed: llm?.modelUsed,
   };
 }
@@ -1480,28 +1467,39 @@ export function registerResearcherRoutes(app: Express) {
     );
   });
 
-  // Daily Briefing — cross-region net-new event detection (manual + cron)
-  // Now parallel (3 regions) + withProxyGuard (was ~90s sequential, now ~30s parallel)
+  // Daily Briefing — three regional books (US, EU, ASIA) plus cross lines.
+  // Parallel macro load + withProxyGuard. Index caches are read, never written.
   app.post("/api/researcher/daily-briefing", async (req, res) => {
     const force = req.body?.force === true;
+    if (force) {
+      try { fs.unlinkSync(briefingV2Path()); } catch {}
+      try { diskResearcherDelete(briefingV2DiskKey()); } catch {}
+    }
     if (!force) {
-      const cached = readBriefingResultCache();
+      const cached = readBriefingV2Cache();
       if (cached && (cached.briefing === null || (cached as any).modelUsed === "fallback")) {
         console.log(`[BRIEFING] cache STALE (null briefing) — invalidating`);
-        try { fs.unlinkSync(path.join(CACHE_DIR, "briefing-result.json")); } catch {}
-      } else if (cached) {
-        console.log(`[BRIEFING] cache HIT (Berlin-date) age=${(cached as any)._cacheAgeMin}min`);
+        try { fs.unlinkSync(briefingV2Path()); } catch {}
+        try { diskResearcherDelete(briefingV2DiskKey()); } catch {}
+      } else if (cached && briefingSchema(cached) === "v2") {
+        console.log(`[BRIEFING] cache HIT briefing_v2 age=${(cached as any)._cacheAgeMin}min`);
         return res.json(cached);
+      }
+      // Legacy briefing-result.json has no regions. Leave the file in place.
+      // A payload without regions still renders the v1 modal; this request builds v2.
+      const legacy = readBriefingResultCache();
+      if (legacy && briefingSchema(legacy) === "v1") {
+        console.log(`[BRIEFING] legacy v1 cache on disk — building briefing_v2`);
       }
     }
     console.log(`[BRIEFING] starting daily briefing build (force=${force})...`);
     await withProxyGuard(res, "daily", "briefing",
       async () => {
         const result = await buildDailyBriefing();
-        console.log(`[BRIEFING] complete: ${result.diagnostics.netNewEvents} net-new of ${result.diagnostics.eventsScanned} events`);
+        console.log(`[BRIEFING] complete: ${result.diagnostics.netNewEvents} net-new of ${result.diagnostics.eventsScanned} events, regions=${result.regions?.length ?? 0}`);
         return result;
       },
-      (r) => { if (r.briefing !== null && (r as any).modelUsed !== "fallback") writeBriefingResultCache(r); },
+      (r) => { if (r.briefing !== null && (r as any).modelUsed !== "fallback" && briefingSchema(r) === "v2") writeBriefingV2Cache(r); },
       force,
     );
   });
