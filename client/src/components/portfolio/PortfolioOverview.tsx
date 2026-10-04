@@ -10,10 +10,12 @@ import {
   type PortfolioPosition, type PerformanceTimeframe,
 } from "@/lib/portfolio/positions";
 import { computeMarketWeights } from "@/lib/portfolio/engine";
+import { openLongTradeBook } from "@/lib/portfolio/compareTargetActual";
 import { computeCapmExpectedReturn } from "@/lib/portfolio/capmExpectedReturn";
 import EfficientFrontierPanel from "./EfficientFrontierPanel";
 import PortfolioBacktestPanel from "./PortfolioBacktestPanel";
 import PortfolioPerformanceChart from "./PortfolioPerformanceChart";
+import TargetVsActualWeights from "./TargetVsActualWeights";
 
 const PIE_COLORS = [
   "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4",
@@ -132,6 +134,10 @@ export default function PortfolioOverview({
     return map;
   }, [frontierTickers, marketWeightsForDelta, capmWeights]);
 
+  // Soll (CAPM) gilt für alle offenen Longs. Der Richtungsfilter und Shorts
+  // bleiben aus NAV und Ist draußen, sonst mischt die Karte zwei Nenner.
+  const sollIstBook = useMemo(() => openLongTradeBook(positions, lastPriceByTicker), [positions, lastPriceByTicker]);
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -246,6 +252,13 @@ export default function PortfolioOverview({
           benchmarkHistoricalPrices={benchmarkHistoricalPrices}
         />
       </div>
+
+      <TargetVsActualWeights
+        target={capmWeights ?? {}}
+        actual={sollIstBook.actual}
+        nav={sollIstBook.nav}
+        onSelectTicker={onSelectTicker}
+      />
 
       <EfficientFrontierPanel tickers={frontierTickers} historicalPricesByTicker={historicalPricesByTicker} currentWeights={frontierCurrentWeights} />
 
