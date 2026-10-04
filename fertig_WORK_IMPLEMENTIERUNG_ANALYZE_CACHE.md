@@ -1,7 +1,7 @@
 # WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md — Wiring L1 RAM + L2 SQLite
 
 > **Stand:** 29.08.2026  
-> **Spec:** `Offen_WORK_ANALYZE_DISK_CACHE.md`  
+> **Spec:** `fertig_WORK_ANALYZE_DISK_CACHE.md`  
 > **Status:** disk-cache L2 + Schema v2 auf `main`. Route-Hunks in `patches/0001-analyze-l2-disk-cache.patch`.
 
 ---

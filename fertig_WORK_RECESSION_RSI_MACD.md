@@ -4,7 +4,7 @@ Stand Doku: **05.09.2026 11:48 CEST**.
 Vorhaben: drei Regionen-Charts im bestehenden `#/recession` mit Wilder-RSI, MACD 12/26/9, Kombi-Label und Swing-Divergenz.
 **Nicht** Teil der 17 Indikatoren / fünf P-Kacheln.
 
-Eltern-Spec Charts/VIX/PEG: [Offen_WORK_RECESSION_MARKET_CHARTS.md](./Offen_WORK_RECESSION_MARKET_CHARTS.md).
+Eltern-Spec Charts/VIX/PEG: [fertig_WORK_RECESSION_MARKET_CHARTS.md](./fertig_WORK_RECESSION_MARKET_CHARTS.md).
 Hub: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md).
 
 ---
@@ -169,9 +169,9 @@ OHLCV: `fmpHistoricalPrices(etf, from, to)` — `/historical-price-eod/full`.
 
 | Datei | Bezug |
 |-------|-------|
-| [Offen_WORK_RECESSION_MARKET_CHARTS.md](./Offen_WORK_RECESSION_MARKET_CHARTS.md) | VIX-Pane, PEG-Click, FINRA |
+| [fertig_WORK_RECESSION_MARKET_CHARTS.md](./fertig_WORK_RECESSION_MARKET_CHARTS.md) | VIX-Pane, PEG-Click, FINRA |
 | [Offen_WORK_RECESSION_FRED_SAHM.md](./Offen_WORK_RECESSION_FRED_SAHM.md) | Sahm \(s(z)\), nicht RSI |
-| [Offen_WORK_RECESSION_RATE_OIL_BRIDGE.md](./Offen_WORK_RECESSION_RATE_OIL_BRIDGE.md) | Zins/Öl, anderes Buch |
+| [fertig_WORK_RECESSION_RATE_OIL_BRIDGE.md](./fertig_WORK_RECESSION_RATE_OIL_BRIDGE.md) | Zins/Öl, anderes Buch |
 | Aktien-Sektion 9 / BTC-Technicals | RSI+MACD-UI-Vorbild |
 
 ---

@@ -29,13 +29,8 @@
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | r, V, π, T½ | M2V US + Eimer 0.02 | `⬜` |
 | [Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md) | 3 Regionen + Spillover | ein Prompt, NEW=`high` | `⬜` |
 | [Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md](../../Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md) | Rang 1–9 | 1–6 live; **Rang 7–9** xyflow blockiert | `🟡` blockiert |
-| [Offen_WORK_RECESSION_MARKET_CHARTS.md](../../Offen_WORK_RECESSION_MARKET_CHARTS.md) | VIX-Pane + PEG-Click + FINRA | VIX/VSTOXX/realized live (US/EU/AS); PEG-Click + FINRA offen | `🟡` |
-| [Offen_WORK_RECESSION_2008_DRIVERS_LLM.md](../../Offen_WORK_RECESSION_2008_DRIVERS_LLM.md) | SLOOS/Price-Rent/TED + OpenRouter-Driver | Ziel+z-Matrix auf diesem Branch, nicht auf main | `🟡` |
 | [Offen_WORK_RECESSION_FRED_SAHM.md](../../Offen_WORK_RECESSION_FRED_SAHM.md) | adaptive FRED + Sahm s(z) | Spec | `⬜` |
-| [Offen_WORK_RECESSION_RATE_OIL_BRIDGE.md](../../Offen_WORK_RECESSION_RATE_OIL_BRIDGE.md) | Zins-Brücke + Öl | Spec | `⬜` |
 | [Offen_WORK_RECESSION_SOURCES.md](../../Offen_WORK_RECESSION_SOURCES.md) | Quellenkatalog | Spec | `⬜` |
-| [Offen_WORK_PEER_ADAPTIVE.md](../../Offen_WORK_PEER_ADAPTIVE.md) | 2-Hop+Industry | Spec; Hardcode-Map lebt | `⬜` |
-| [Offen_WORK_PEER_PRICING_POWER.md](../../Offen_WORK_PEER_PRICING_POWER.md) | Relativ nur Low-Moat | Spec Companion | `⬜` |
 | Performance-Chart 4 Toggles (#71) | Ein/Aus + Bench-Kurs | UI da (`60aeeb2`); OHLCV-Honesty #74; Chart oft weiter leer | `🟡` |
 | thin-series Prävention (#87) | dünne Serie aus Backtest-Intersection | Code `2fb8b70a`; healthy 251d OK; thin-Banner nicht repro auf Live | `🟡` PARTIAL |
 
@@ -72,16 +67,21 @@ Detail Exec: [WORK_EXEC_SUMMARY.md](./WORK_EXEC_SUMMARY.md) · FactPack [FACTPAC
 | [fertig_WORK_PEER_ROIC_SANITY.md](../../fertig_WORK_PEER_ROIC_SANITY.md) | sanitizeRoic intact · Tip ≡ `4bdc1f8` (kein Delete) · wieder da nach FMP Premium |
 | [FACTPACK_LLM.md](./FACTPACK_LLM.md) | Analyze-Hook + UI live (#57) |
 | [fertig_WORK_RECESSION_RSI_MACD.md](../../fertig_WORK_RECESSION_RSI_MACD.md) | Dashboard-Wire + Pane live |
-| [Offen_WORK_RECESSION_MARKET_CHARTS.md](../../Offen_WORK_RECESSION_MARKET_CHARTS.md) | Vol-Pane: US FRED VIXCLS · EU VSTOXX STOXX `h_v2tx.txt` (#66 Live vol≈942) · AS realized20 |
+| [fertig_WORK_RECESSION_MARKET_CHARTS.md](../../fertig_WORK_RECESSION_MARKET_CHARTS.md) | SPY/QQQ/VGK/ASHR, Klick-Factpack, FINRA nur unter SPY |
+| [fertig_WORK_RECESSION_2008_DRIVERS_LLM.md](../../fertig_WORK_RECESSION_2008_DRIVERS_LLM.md) | Ziel+z auf main, LLM nur wenn Menge A nicht leer |
+| [fertig_WORK_RECESSION_RATE_OIL_BRIDGE.md](../../fertig_WORK_RECESSION_RATE_OIL_BRIDGE.md) | Zins- und Öl-Brücke, nicht in der 17er-Summe |
+| [fertig_WORK_PEER_ADAPTIVE.md](../../fertig_WORK_PEER_ADAPTIVE.md) | 2-Hop `peers2hop`, kuratierte Map nur Notnagel |
+| [fertig_WORK_PEER_PRICING_POWER.md](../../fertig_WORK_PEER_PRICING_POWER.md) | Relativ nur bei `peerMaterial`, sonst Banner |
 | [fertig_WORK_PORTFOLIO.md](../../fertig_WORK_PORTFOLIO.md) | CAPM/Kelly + E[r]-KPI |
 | [fertig_WORK.md_portfolio_3](../../fertig_WORK.md_portfolio_3) §6 | `GET /api/ohlcv` + Long-Map live — Tester AAPL 1Y/2Y PASS @ `6a1807b` (#61) |
 | [fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md](../../fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 US GET `/api/researcher/liquidity` |
 | [Offen_WORK_STABLECOIN_TBILL_GENIUS.md](../../Offen_WORK_STABLECOIN_TBILL_GENIUS.md) | DefiLlama live; GENIUS-Score manuell |
-| [Offen_WORK_ANALYZE_DISK_CACHE.md](../../Offen_WORK_ANALYZE_DISK_CACHE.md) | L1+L2 |
-| [Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](../../Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | Wiring |
+| [fertig_WORK_ANALYZE_DISK_CACHE.md](../../fertig_WORK_ANALYZE_DISK_CACHE.md) | L1 20 min + L2 7 Tage, force löscht beide |
+| [fertig_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](../../fertig_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | Dieselben Hunks in `analyze-route.ts` |
 | [fertig_WORK_ANTIBIAS_DCF.md](../../fertig_WORK_ANTIBIAS_DCF.md) | inverted DCF |
 | [fertig_WORK_REVERSE_DCF_BRIDGE.md](../../fertig_WORK_REVERSE_DCF_BRIDGE.md) | fiscal-bridge |
-| [Offen_WORK_BIAS_FIXES_INVERSE_DCF.md](../../Offen_WORK_BIAS_FIXES_INVERSE_DCF.md) | Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3 |
+| [fertig_WORK_BIAS_FIXES_INVERSE_DCF.md](../../fertig_WORK_BIAS_FIXES_INVERSE_DCF.md) | Inverse-DCF als Entscheidungsbasis ab zwei Triggern |
+| [fertig_WORK_PORTFOLIO_SOLL_IST.md](../../fertig_WORK_PORTFOLIO_SOLL_IST.md) | Soll vs. Ist, Active Weight, Trade-Notional |
 | [fertig_WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md](../../fertig_WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md) | Defaults |
 | [fertig_WORK_RESEARCHER_PORTFOLIO.md](../../fertig_WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 Tabs |
 | [fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md](../../fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md) | δ/HHI |

@@ -13,5 +13,4 @@ Neu nach UI-Check 05.09. (nicht nur Commit):
 | [Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md](../../Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md) | kein regionaler Index |
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](../../Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | |
 | [Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md](../../Offen_WORK_RESEARCHER_BRIEFING_REGIONAL.md) | |
-| [Offen_WORK_RECESSION_MARKET_CHARTS.md](../../Offen_WORK_RECESSION_MARKET_CHARTS.md) | VIX-Pane, PEG-Click, FINRA |
 | [fertig_WORK_RECESSION_RSI_MACD.md](../../fertig_WORK_RECESSION_RSI_MACD.md) | Engine+GET+Panel; Dashboard-Sektion / VIX/PEG offen |
