@@ -1011,6 +1011,27 @@ export async function fmpEtfHoldings(symbol: string): Promise<unknown[]> {
 }
 
 /**
+ * GET /stable/funds/disclosure?symbol=&year=&quarter=
+ * N-PORT holdings for that fund. Documented on an ETF symbol (VWO).
+ * `cik` is the fund filer. `valUsd` and `pctVal` are the position.
+ * `balance` is the share count. There is no netIncome and no netIncomeAvg.
+ */
+export async function fmpFundDisclosure(symbol: string, year: number, quarter: number): Promise<unknown[]> {
+  const data = await fmpFetch(`/funds/disclosure`, {
+    symbol,
+    year: String(year),
+    quarter: String(quarter),
+  });
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    const rec = data as Record<string, unknown>;
+    if (Array.isArray(rec.data)) return rec.data;
+    if (Array.isArray(rec.holdings)) return rec.holdings;
+  }
+  return [];
+}
+
+/**
  * GET /stable/income-statement-bulk?year=&period=Q1|Q2|Q3|Q4
  * Every company's statement for that fiscal period. Body may be JSON or CSV.
  * Callers filter to index members. This is not an ETF income statement.

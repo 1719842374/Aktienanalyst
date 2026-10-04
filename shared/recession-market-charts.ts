@@ -648,7 +648,17 @@ export interface ConstituentAggregateResult {
   pegReason: string | null;
   /** Without the "fwd n/a:" prefix. */
   fwdReason: string | null;
+  /** Who entered the sum, and who was left out. Present even when the ratio is a number. */
+  coverageNote: string | null;
 }
+
+/**
+ * Forward net income is per name on analyst-estimates (`netIncomeAvg`).
+ * The stable catalog has no analyst-estimates bulk and no index-level estimate.
+ * Hundreds of per-name calls are not fired.
+ */
+export const ANALYST_ESTIMATES_BULK_MISSING =
+  "GET /stable/analyst-estimates?symbol={Name}&period=annual Feld netIncomeAvg; kein GET /stable/analyst-estimates-bulk und keine Index-Schätzung";
 
 export interface AggregateLine {
   label: string;
@@ -657,36 +667,25 @@ export interface AggregateLine {
   blocked: string | null;
 }
 
-/** What the Vier-Märkte line computed, or why that book has no index. */
+/**
+ * N-PORT position fields are not the ratio.
+ * `valUsd` / `pctVal` are the fund's holding. `balance` is a share count.
+ * `cik` on every row is the fund filer.
+ */
+export const NPORT_POSITION_NOTE =
+  "valUsd und pctVal sind die Fondsposition, nicht die Marktkapitalisierung; balance ist die Stückzahl, nicht netIncome; cik ist der Fonds, nicht der Emittent; nur assetCat EC";
+
+function nportAggregateLine(id: string): AggregateLine {
+  return {
+    label: `Aggregat NPORT ${id}`,
+    methodNote: `Mitglieder aus GET /stable/funds/disclosure?symbol=${id}. ${NPORT_POSITION_NOTE}`,
+    blocked: null,
+  };
+}
+
+/** What the Vier-Märkte line computed. Membership is the ETF's N-PORT filing. */
 export function aggregateLineForBook(id: string): AggregateLine {
-  if (id === "SPY") {
-    return {
-      label: "Aggregat ^GSPC",
-      methodNote: "Mitglieder aus GET /stable/sp500-constituent",
-      blocked: null,
-    };
-  }
-  if (id === "QQQ") {
-    return {
-      label: "Aggregat ^NDX",
-      methodNote: "Symbole aus GET /stable/etf/holdings?symbol=QQQ; nasdaq-constituent ist die Nasdaq-Börse, kein Nasdaq-100",
-      blocked: null,
-    };
-  }
-  if (id === "VGK") {
-    return {
-      label: "kein Index VGK",
-      methodNote: null,
-      blocked: "kein Index-Constituent-Endpunkt für STOXX Europe 600; FEZ ist ein ETF",
-    };
-  }
-  if (id === "ASHR") {
-    return {
-      label: "kein Index ASHR",
-      methodNote: null,
-      blocked: "kein Index-Constituent-Endpunkt für CSI 300",
-    };
-  }
+  if (id === "SPY" || id === "QQQ" || id === "VGK" || id === "ASHR") return nportAggregateLine(id);
   return { label: "ETF-Proxy", methodNote: null, blocked: null };
 }
 
@@ -736,7 +735,64 @@ export function membersFromHoldingRows(rows: unknown[], fundSymbol: string): Ind
   return out;
 }
 
-/** Company market cap. An ETF holding's marketValue is not this field. */
+/**
+ * Two most recently ended calendar quarters.
+ * A filing for the quarter that just ended may not be in yet, so the caller tries the prior one too.
+ */
+export function nportQuartersFor(asOf: string): { year: number; quarter: 1 | 2 | 3 | 4 }[] {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(asOf);
+  if (!match) return [];
+  let year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  let qIndex = Math.floor((month - 1) / 3);
+  const endMonth = (qIndex + 1) * 3;
+  const endDay = new Date(Date.UTC(year, endMonth, 0)).getUTCDate();
+  if (Date.UTC(year, month - 1, day) < Date.UTC(year, endMonth - 1, endDay)) {
+    qIndex -= 1;
+    if (qIndex < 0) {
+      qIndex = 3;
+      year -= 1;
+    }
+  }
+  const out: { year: number; quarter: 1 | 2 | 3 | 4 }[] = [];
+  for (let i = 0; i < 2; i++) {
+    out.push({ year, quarter: (qIndex + 1) as 1 | 2 | 3 | 4 });
+    qIndex -= 1;
+    if (qIndex < 0) {
+      qIndex = 3;
+      year -= 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * Equity tickers from an N-PORT holding list.
+ * The row's `cik` is the fund and is not copied. `valUsd`, `pctVal`, and `balance` are not read.
+ */
+export function membersFromNportRows(rows: unknown[], fundSymbol: string): IndexMember[] {
+  const fund = fundSymbol.trim().toUpperCase();
+  const out: IndexMember[] = [];
+  const seen = new Set<string>();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const assetCat = String(r.assetCat ?? "").trim().toUpperCase();
+    if (assetCat !== "EC") continue;
+    const payoff = String(r.payoffProfile ?? "").trim().toUpperCase();
+    if (payoff === "SHORT") continue;
+    const collateral = String(r.isCashCollateral ?? "").trim().toUpperCase();
+    if (collateral === "Y" || r.isCashCollateral === true) continue;
+    const symbol = tickerSymbol(r.symbol);
+    if (!symbol || symbol === fund || seen.has(symbol)) continue;
+    seen.add(symbol);
+    out.push({ symbol, cik: null });
+  }
+  return out;
+}
+
+/** Company market cap. An ETF holding's marketValue, valUsd, or balance is not this field. */
 export function marketCapFromRow(row: unknown): { symbol: string; marketCap: number } | null {
   if (!row || typeof row !== "object") return null;
   const r = row as Record<string, unknown>;
@@ -1084,17 +1140,48 @@ function companyBuckets(constituents: ConstituentFacts[]): CompanyBucket[] {
   return buckets;
 }
 
+function modalCurrency(buckets: CompanyBucket[]): { currency: string | null; tied: string[] | null } {
+  const counts: Record<string, number> = {};
+  for (const bucket of buckets) {
+    if (!bucket.reportedCurrency) continue;
+    counts[bucket.reportedCurrency] = (counts[bucket.reportedCurrency] ?? 0) + 1;
+  }
+  const keys = Object.keys(counts);
+  if (!keys.length) return { currency: null, tied: null };
+  let top = 0;
+  for (const key of keys) if (counts[key] > top) top = counts[key];
+  const leaders = keys.filter((key) => counts[key] === top).sort();
+  if (leaders.length > 1) return { currency: null, tied: leaders };
+  return { currency: leaders[0], tied: null };
+}
+
+function holeList(items: { symbols: string[]; reason: string }[]): string {
+  const shown = items.slice(0, 8).map((item) => `${item.symbols.join(", ")} (${item.reason})`);
+  const more = items.length > 8 ? `, +${items.length - 8}` : "";
+  return `${shown.join("; ")}${more}`;
+}
+
+function coverageSentence(label: string, total: number, used: number, holes: { symbols: string[]; reason: string }[]): string {
+  const ohne = holes.length ? ` Ohne ${holeList(holes)}.` : "";
+  return `${label} ${used}/${total}.${ohne}`;
+}
+
 /**
- * Index PE = Σ constituent market cap / Σ constituent net income.
+ * Index PE = Σ covered market cap / Σ covered net income.
+ * A name that lacks a cap, a TTM, a prior TTM, or the set's currency is left out and named.
+ * It does not blank the other names, and it is not filled with a guess.
  * One income statement per company: share classes that share a cik contribute
  * one net income and the sum of their market caps. Averaging constituent P/Es is not this ratio.
- * EPS YoY uses the prior TTM of that same sum. Forward PE uses Σ netIncomeAvg.
+ * EPS YoY and PEG use that same covered set. Forward PE is Σ market cap / Σ netIncomeAvg
+ * on the names that have netIncomeAvg. There is no estimates bulk, so an unloaded
+ * forward stays empty and names that endpoint.
  */
 export function valuationFromConstituentAggregates(input: ConstituentAggregateInput): ConstituentAggregateResult {
   void input.etfClose;
   void input.indexLevel;
   void input.vendorPe;
   const buckets = companyBuckets(input.constituents);
+  const total = input.constituents.length;
   const peReasons: string[] = [];
   let peRaw: number | null = null;
   let yoyRaw: number | null = null;
@@ -1102,70 +1189,153 @@ export function valuationFromConstituentAggregates(input: ConstituentAggregateIn
   let peFwdRaw: number | null = null;
   let gConsRaw: number | null = null;
   let fwdReason: string | null = null;
+  let coverageNote: string | null = null;
+  const capsReady = input.useCurrentMarketCap && !input.marketCapUnavailable;
 
-  const broken = buckets.filter((b) => b.broken).map((b) => b.broken as string);
-  const currencies = uniqueStrings(buckets.map((b) => b.reportedCurrency).filter((c): c is string => Boolean(c)));
-  const currencyReason = currencies.length > 1
-    ? `reportedCurrency gemischt (${currencies.slice().sort().join(", ")})`
-    : null;
-
-  if (!input.constituents.length) peReasons.push("keine Constituents");
-  else if (broken.length) peReasons.push(...broken);
-  else if (currencyReason) peReasons.push(currencyReason);
-  else if (input.marketCapUnavailable || !input.useCurrentMarketCap) {
-    peReasons.push(input.marketCapUnavailable ?? "Marktkapitalisierung zum Stichtag fehlt");
+  if (!total) {
+    peReasons.push("keine Constituents");
+    yoyReason = "keine Constituents";
+    if (input.allowForward) fwdReason = "keine Constituents";
   } else {
-    const missingCap = buckets.flatMap((b) => b.missingCap);
-    const missingTtm = buckets.flatMap((b) => b.missingTtm);
-    if (missingCap.length) peReasons.push(missingNames("Marktkapitalisierung", missingCap));
-    else if (missingTtm.length) peReasons.push(missingNames("netIncome TTM", missingTtm));
-    else {
-      const sumCap = buckets.reduce((s, b) => s + (b.marketCap as number), 0);
-      const sumTtm = buckets.reduce((s, b) => s + (b.netIncomeTtm as number), 0);
+    const earningsReady = (bucket: CompanyBucket) =>
+      !bucket.broken && bucket.netIncomeTtm != null && bucket.netIncomePrevTtm != null;
+    const capReady = (bucket: CompanyBucket) =>
+      earningsReady(bucket) && bucket.missingCap.length === 0 && bucket.marketCap != null && bucket.marketCap > 0;
+    const trailingCandidates = buckets.filter((bucket) => capsReady ? capReady(bucket) : earningsReady(bucket));
+    const trailingMode = modalCurrency(trailingCandidates);
+    const trailingHoles: { symbols: string[]; reason: string }[] = [];
+    const trailing: CompanyBucket[] = [];
+    for (const bucket of buckets) {
+      if (bucket.broken) {
+        trailingHoles.push({ symbols: bucket.symbols, reason: bucket.broken });
+        continue;
+      }
+      if (capsReady && (bucket.missingCap.length || bucket.marketCap == null || !(bucket.marketCap > 0))) {
+        trailingHoles.push({
+          symbols: bucket.symbols,
+          reason: missingNames("Marktkapitalisierung", bucket.missingCap.length ? bucket.missingCap : bucket.symbols),
+        });
+        continue;
+      }
+      if (bucket.netIncomeTtm == null) {
+        trailingHoles.push({
+          symbols: bucket.symbols,
+          reason: missingNames("netIncome TTM", bucket.missingTtm.length ? bucket.missingTtm : bucket.symbols),
+        });
+        continue;
+      }
+      if (bucket.netIncomePrevTtm == null) {
+        trailingHoles.push({
+          symbols: bucket.symbols,
+          reason: missingNames("Vorjahres-netIncome", bucket.missingPrev.length ? bucket.missingPrev : bucket.symbols),
+        });
+        continue;
+      }
+      if (trailingMode.tied) {
+        trailingHoles.push({ symbols: bucket.symbols, reason: `reportedCurrency gemischt (${trailingMode.tied.join(", ")})` });
+        continue;
+      }
+      if (trailingMode.currency && bucket.reportedCurrency && bucket.reportedCurrency !== trailingMode.currency) {
+        trailingHoles.push({ symbols: bucket.symbols, reason: `reportedCurrency ${bucket.reportedCurrency}` });
+        continue;
+      }
+      trailing.push(bucket);
+    }
+
+    const usedSymbols = trailing.reduce((sum, bucket) => sum + bucket.symbols.length, 0);
+    if (!capsReady) {
+      peReasons.push(input.marketCapUnavailable ?? "Marktkapitalisierung zum Stichtag fehlt");
+    } else if (trailingMode.tied) {
+      const mixed = `reportedCurrency gemischt (${trailingMode.tied.join(", ")})`;
+      peReasons.push(mixed);
+      yoyReason = mixed;
+    } else if (!trailing.length) {
+      peReasons.push("keine Deckung");
+      yoyReason = "keine Deckung";
+    } else {
+      const sumCap = trailing.reduce((sum, bucket) => sum + (bucket.marketCap as number), 0);
+      const sumTtm = trailing.reduce((sum, bucket) => sum + (bucket.netIncomeTtm as number), 0);
+      const sumPrev = trailing.reduce((sum, bucket) => sum + (bucket.netIncomePrevTtm as number), 0);
       if (!(sumCap > 0) || !(sumTtm > 0)) peReasons.push("Summe netIncome <= 0");
       else peRaw = sumCap / sumTtm;
-    }
-  }
-
-  if (!input.constituents.length) yoyReason = "keine Constituents";
-  else if (broken.length) yoyReason = broken[0];
-  else if (currencyReason) yoyReason = currencyReason;
-  else {
-    const missingTtm = buckets.flatMap((b) => b.missingTtm);
-    const missingPrev = buckets.flatMap((b) => b.missingPrev);
-    if (missingTtm.length) yoyReason = missingNames("netIncome TTM", missingTtm);
-    else if (missingPrev.length) yoyReason = missingNames("Vorjahres-netIncome", missingPrev);
-    else {
-      const sumTtm = buckets.reduce((s, b) => s + (b.netIncomeTtm as number), 0);
-      const sumPrev = buckets.reduce((s, b) => s + (b.netIncomePrevTtm as number), 0);
       if (sumPrev === 0) yoyReason = "Summe Vorjahres-netIncome ist 0";
       else yoyRaw = ((sumTtm - sumPrev) / sumPrev) * 100;
     }
-  }
+    if (!capsReady && trailingMode.tied) {
+      yoyReason = `reportedCurrency gemischt (${trailingMode.tied.join(", ")})`;
+    }
+    if (!capsReady && !trailingMode.tied && trailing.length) {
+      const sumTtm = trailing.reduce((sum, bucket) => sum + (bucket.netIncomeTtm as number), 0);
+      const sumPrev = trailing.reduce((sum, bucket) => sum + (bucket.netIncomePrevTtm as number), 0);
+      if (sumPrev === 0) yoyReason = "Summe Vorjahres-netIncome ist 0";
+      else yoyRaw = ((sumTtm - sumPrev) / sumPrev) * 100;
+    }
+    coverageNote = coverageSentence("Deckung", total, usedSymbols, trailingHoles);
 
-  if (input.allowForward) {
-    if (!input.constituents.length) fwdReason = "keine Constituents";
-    else if (broken.length) fwdReason = broken[0];
-    else if (currencyReason) fwdReason = currencyReason;
-    else if (input.marketCapUnavailable || !input.useCurrentMarketCap) {
-      fwdReason = input.marketCapUnavailable ?? "Marktkapitalisierung zum Stichtag fehlt";
-    } else {
-      const missingCap = buckets.flatMap((b) => b.missingCap);
-      const missingFwd = buckets.flatMap((b) => b.missingFwd);
-      const anyFwd = buckets.some((b) => b.netIncomeFwd != null);
-      if (missingCap.length) fwdReason = missingNames("Marktkapitalisierung", missingCap);
-      else if (!anyFwd) fwdReason = "kein Bulk für analyst-estimates; netIncomeAvg nicht geladen";
-      else if (missingFwd.length) fwdReason = missingNames("netIncomeAvg", missingFwd);
+    if (input.allowForward) {
+      const anyFwd = buckets.some((bucket) => bucket.netIncomeFwd != null);
+      if (!capsReady) fwdReason = input.marketCapUnavailable ?? "Marktkapitalisierung zum Stichtag fehlt";
+      else if (!anyFwd) fwdReason = ANALYST_ESTIMATES_BULK_MISSING;
       else {
-        const sumCap = buckets.reduce((s, b) => s + (b.marketCap as number), 0);
-        const sumFwd = buckets.reduce((s, b) => s + (b.netIncomeFwd as number), 0);
-        const sumTtm = buckets.every((b) => b.netIncomeTtm != null)
-          ? buckets.reduce((s, b) => s + (b.netIncomeTtm as number), 0)
-          : null;
-        if (!(sumCap > 0) || !(sumFwd > 0)) fwdReason = "Summe netIncomeAvg <= 0";
+        const forwardCandidates = buckets.filter((bucket) =>
+          !bucket.broken
+          && bucket.missingCap.length === 0
+          && bucket.marketCap != null
+          && bucket.marketCap > 0
+          && bucket.netIncomeTtm != null
+          && bucket.netIncomeFwd != null);
+        const forwardMode = modalCurrency(forwardCandidates);
+        const forwardHoles: { symbols: string[]; reason: string }[] = [];
+        const forward: CompanyBucket[] = [];
+        for (const bucket of buckets) {
+          if (bucket.broken) {
+            forwardHoles.push({ symbols: bucket.symbols, reason: bucket.broken });
+            continue;
+          }
+          if (bucket.missingCap.length || bucket.marketCap == null || !(bucket.marketCap > 0)) {
+            forwardHoles.push({
+              symbols: bucket.symbols,
+              reason: missingNames("Marktkapitalisierung", bucket.missingCap.length ? bucket.missingCap : bucket.symbols),
+            });
+            continue;
+          }
+          if (bucket.netIncomeTtm == null) {
+            forwardHoles.push({
+              symbols: bucket.symbols,
+              reason: missingNames("netIncome TTM", bucket.missingTtm.length ? bucket.missingTtm : bucket.symbols),
+            });
+            continue;
+          }
+          if (bucket.netIncomeFwd == null) {
+            forwardHoles.push({
+              symbols: bucket.symbols,
+              reason: missingNames("netIncomeAvg", bucket.missingFwd.length ? bucket.missingFwd : bucket.symbols),
+            });
+            continue;
+          }
+          if (forwardMode.tied) {
+            forwardHoles.push({ symbols: bucket.symbols, reason: `reportedCurrency gemischt (${forwardMode.tied.join(", ")})` });
+            continue;
+          }
+          if (forwardMode.currency && bucket.reportedCurrency && bucket.reportedCurrency !== forwardMode.currency) {
+            forwardHoles.push({ symbols: bucket.symbols, reason: `reportedCurrency ${bucket.reportedCurrency}` });
+            continue;
+          }
+          forward.push(bucket);
+        }
+        const forwardUsed = forward.reduce((sum, bucket) => sum + bucket.symbols.length, 0);
+        coverageNote += ` ${coverageSentence("Forward-Deckung", total, forwardUsed, forwardHoles)}`;
+        if (forwardMode.tied) fwdReason = `reportedCurrency gemischt (${forwardMode.tied.join(", ")})`;
+        else if (!forward.length) fwdReason = "keine Forward-Deckung";
         else {
-          peFwdRaw = sumCap / sumFwd;
-          if (sumTtm != null && sumTtm > 0) gConsRaw = ((sumFwd - sumTtm) / sumTtm) * 100;
+          const sumCap = forward.reduce((sum, bucket) => sum + (bucket.marketCap as number), 0);
+          const sumFwd = forward.reduce((sum, bucket) => sum + (bucket.netIncomeFwd as number), 0);
+          const sumTtm = forward.reduce((sum, bucket) => sum + (bucket.netIncomeTtm as number), 0);
+          if (!(sumCap > 0) || !(sumFwd > 0)) fwdReason = "Summe netIncomeAvg <= 0";
+          else {
+            peFwdRaw = sumCap / sumFwd;
+            if (sumTtm > 0) gConsRaw = ((sumFwd - sumTtm) / sumTtm) * 100;
+          }
         }
       }
     }
@@ -1173,7 +1343,13 @@ export function valuationFromConstituentAggregates(input: ConstituentAggregateIn
 
   const pegRaw = pegFromPeAndGrowth(peRaw, yoyRaw);
   const pegFwdRaw = pegFromPeAndGrowth(peFwdRaw, gConsRaw);
-  const pegReason = peRaw != null && yoyRaw == null ? (yoyReason ?? "kein EPS-YoY derselben Einheit") : null;
+  let pegReason: string | null = null;
+  if (pegRaw == null) {
+    if (peRaw != null && yoyRaw != null && !(yoyRaw > 0)) pegReason = "g<=0";
+    else if (peRaw != null && yoyRaw == null) pegReason = yoyReason ?? "kein EPS-YoY derselben Einheit";
+    else if (peRaw == null && yoyRaw != null) pegReason = "kein PE derselben Deckung";
+    else pegReason = yoyReason ?? peReasons[0] ?? "kein PE und kein EPS-YoY derselben Deckung";
+  }
   const note = input.allowForward ? null : "Forward-Konsens nur am letzten Handelstag (kein Punkt-in-Zeit-Schätzer).";
   return {
     core: {
@@ -1193,6 +1369,7 @@ export function valuationFromConstituentAggregates(input: ConstituentAggregateIn
     yoyReason,
     pegReason,
     fwdReason,
+    coverageNote,
   };
 }
 
@@ -1316,6 +1493,8 @@ export interface ValuationGapInput {
   pegNote?: string | null;
   /** How an aggregate was formed. Shown with the sum, not as Kurs/EPS. */
   methodNote?: string | null;
+  /** Covered names and the names left out. Shown even when PE is a number. */
+  coverageNote?: string | null;
 }
 
 /** Names every empty same-unit call, including a fallback that could not form a PE. */
@@ -1333,26 +1512,42 @@ export function assembleValuationMissing(input: ValuationGapInput): string | nul
   } else if (usedFallback && !noIndex) {
     gaps.push(`Formel auf ${input.chosenSymbol} (Kurs und EPS), nicht auf ${input.chartEtf}`);
   }
+  if (input.coverageNote) gaps.push(input.coverageNote);
+  if (input.pe != null && sourceNotes.length) gaps.push(sourceNotes.join("; "));
   if (input.pe == null) {
     const why = [...sourceNotes, ...input.extraNotes, input.priceNote].filter((x): x is string => Boolean(x));
-    gaps.push(why.length ? `PE n/a: ${why.join("; ")}` : "PE n/a: kein Kurs und EPS derselben Einheit");
+    gaps.push(why.length ? `PE fehlt: ${why.join("; ")}` : "PE fehlt: kein Kurs und EPS derselben Einheit");
   }
   if (input.epsYoy == null && input.yoyNote) {
     gaps.push(input.yoyNote);
   } else if (input.epsYoy == null && input.pe != null) {
-    gaps.push("EPS YoY n/a: weniger als 8 Quartalsdrucke derselben Einheit");
+    gaps.push("EPS YoY fehlt: weniger als 8 Quartalsdrucke derselben Einheit");
   } else if (input.epsYoy == null && sourceNotes.length) {
-    gaps.push(`EPS YoY n/a: ${sourceNotes.join("; ")}`);
+    gaps.push(`EPS YoY fehlt: ${sourceNotes.join("; ")}`);
   }
-  if (input.peg == null && input.pegNote) gaps.push(input.pegNote);
-  if (input.allowForward && input.peFwd == null && input.fwdNote) gaps.push(`fwd n/a: ${input.fwdNote}`);
-  if (input.allowForward && input.peg == null && input.epsYoy != null && input.epsYoy <= 0) {
-    gaps.push("PEG n/a: g<=0");
+  if (input.peg == null) {
+    if (input.pegNote) gaps.push(input.pegNote);
+    else if (input.epsYoy != null && input.epsYoy <= 0) gaps.push("PEG fehlt: g<=0");
+    else gaps.push(`PEG fehlt: ${input.pe == null ? "kein PE derselben Deckung" : "kein EPS-YoY derselben Deckung"}`);
   }
-  if (input.allowForward && input.pegFwd == null && input.gCons != null && input.gCons <= 0) {
-    gaps.push("PEG fwd n/a: g<=0");
+  if (input.allowForward && input.peFwd == null) {
+    gaps.push(`fwd fehlt: ${input.fwdNote ?? "Feld netIncomeAvg"}`);
+  }
+  if (input.allowForward && input.pegFwd == null) {
+    if (input.gCons != null && input.gCons <= 0) gaps.push("PEG fwd fehlt: g<=0");
+    else gaps.push(`PEG fwd fehlt: ${input.fwdNote ?? "Feld netIncomeAvg"}`);
   }
   return gaps.length ? gaps.join(" · ") : null;
+}
+
+/** Text for one snapshot field. A number stays a number. A gap names the missing input and does not say n/a. */
+export function valuationGapText(missing: string | null | undefined, marker: string): string {
+  const fallback = marker.replace(/:\s*$/, "");
+  if (!missing) return fallback;
+  const hit = missing.split(" · ").find((part) => part.startsWith(marker));
+  if (!hit) return fallback;
+  const body = hit.slice(marker.length).trim();
+  return body || fallback;
 }
 
 export interface MarginPoint {

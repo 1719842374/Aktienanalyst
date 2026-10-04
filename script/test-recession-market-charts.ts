@@ -35,7 +35,10 @@ import {
   marketCapFromRow,
   marketsResponseSchema,
   membersFromHoldingRows,
+  membersFromNportRows,
   membersFromSp500Rows,
+  nportQuartersFor,
+  valuationGapText,
   pickValuationInstrument,
   quarterlyNetIncomeFromRow,
   valuationLabelFor,
@@ -465,7 +468,7 @@ function blankInstrument(symbol: string, role: "etf" | "fallback", price: number
 
 console.log("\n=== Live-Payloads 2026-10-02 ===");
 {
-  check("Cache-Key ist nicht mehr v3, v4 oder v5", MARKETS_CHART_CACHE_VERSION === "v6", MARKETS_CHART_CACHE_VERSION);
+  check("Cache-Key ist nicht mehr v3 bis v6", MARKETS_CHART_CACHE_VERSION === "v7", MARKETS_CHART_CACHE_VERSION);
   const prior = closeFromPriceRows(
     [{ date: "2026-10-03", close: 99999 }, { date: "2026-10-01", price: 6700 }],
     "2026-10-02",
@@ -739,10 +742,10 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
   const qqq = aggregateLineForBook("QQQ");
   const vgk = aggregateLineForBook("VGK");
   const ashr = aggregateLineForBook("ASHR");
-  check("SPY heißt Aggregat ^GSPC", spy.label === "Aggregat ^GSPC" && spy.blocked == null);
-  check("QQQ heißt Aggregat ^NDX und nennt die Holdings", qqq.label === "Aggregat ^NDX" && qqq.methodNote != null && qqq.methodNote.includes("etf/holdings?symbol=QQQ") && qqq.methodNote.includes("nasdaq-constituent"));
-  check("VGK: FEZ ist kein Index", vgk.label === "kein Index VGK" && vgk.blocked != null && vgk.blocked.includes("FEZ ist ein ETF") && !vgk.blocked.includes("^"));
-  check("ASHR ohne erfundenes Indexsymbol", ashr.label === "kein Index ASHR" && ashr.blocked != null && ashr.blocked.includes("CSI 300") && !ashr.blocked.includes("^"));
+  check("SPY heißt Aggregat NPORT und liest funds/disclosure", spy.label === "Aggregat NPORT SPY" && spy.blocked == null && spy.methodNote != null && spy.methodNote.includes("funds/disclosure?symbol=SPY") && spy.methodNote.includes("valUsd") && spy.methodNote.includes("balance"));
+  check("QQQ heißt Aggregat NPORT und liest funds/disclosure", qqq.label === "Aggregat NPORT QQQ" && qqq.blocked == null && qqq.methodNote != null && qqq.methodNote.includes("funds/disclosure?symbol=QQQ") && !qqq.methodNote.includes("nasdaq-constituent"));
+  check("VGK liest die NPORT-Datei, nicht FEZ", vgk.label === "Aggregat NPORT VGK" && vgk.blocked == null && vgk.methodNote != null && vgk.methodNote.includes("funds/disclosure?symbol=VGK") && !vgk.methodNote.includes("FEZ") && !vgk.methodNote.includes("^"));
+  check("ASHR liest die NPORT-Datei und erfindet kein Indexsymbol", ashr.label === "Aggregat NPORT ASHR" && ashr.blocked == null && ashr.methodNote != null && ashr.methodNote.includes("funds/disclosure?symbol=ASHR") && !ashr.methodNote.includes("^") && !ashr.methodNote.includes("CSI"));
 
   const three = [
     fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, netIncomeFwd: 12 }),
@@ -819,7 +822,8 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
     useCurrentMarketCap: true,
     marketCapUnavailable: null,
   });
-  check("fehlende Marktkapitalisierung lässt PE n/a und nennt C", missingCap.core.pe == null && missingCap.peReasons.some((r) => r.includes("C")), missingCap.peReasons.join(" | "));
+  check("fehlende Marktkapitalisierung bleibt draußen, A bleibt eine Zahl", missingCap.core.pe === 10 && missingCap.core.epsYoy === 25 && missingCap.core.peg === 0.4, `pe=${missingCap.core.pe} yoy=${missingCap.core.epsYoy} peg=${missingCap.core.peg}`);
+  check("Deckung nennt C und verwirft den Vendor-pe", missingCap.coverageNote != null && missingCap.coverageNote.includes("C") && missingCap.coverageNote.includes("Marktkapitalisierung") && missingCap.core.pe !== 22, missingCap.coverageNote ?? "");
   const missingPrev = valuationFromConstituentAggregates({
     constituents: [
       fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8 }),
@@ -832,8 +836,8 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
     useCurrentMarketCap: true,
     marketCapUnavailable: null,
   });
-  check("ein TTM ohne Vorjahr hat PE, aber kein YoY und kein PEG", missingPrev.core.pe === 13.33 && missingPrev.core.epsYoy == null && missingPrev.core.peg == null, `pe=${missingPrev.core.pe} yoy=${missingPrev.core.epsYoy}`);
-  check("YoY nennt das fehlende Vorjahres-netIncome", missingPrev.yoyReason != null && missingPrev.yoyReason.includes("B"), missingPrev.yoyReason ?? "");
+  check("ein fehlendes Vorjahr bleibt draußen, A hat PE, YoY und PEG", missingPrev.core.pe === 10 && missingPrev.core.epsYoy === 25 && missingPrev.core.peg === 0.4, `pe=${missingPrev.core.pe} yoy=${missingPrev.core.epsYoy} peg=${missingPrev.core.peg}`);
+  check("Deckung nennt das fehlende Vorjahres-netIncome", missingPrev.coverageNote != null && missingPrev.coverageNote.includes("B") && missingPrev.coverageNote.includes("Vorjahres-netIncome"), missingPrev.coverageNote ?? "");
 
   const epsOnly = valuationFromConstituentAggregates({
     constituents: three.map((row) => ({ ...row, netIncomeFwd: null })),
@@ -844,10 +848,26 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
     useCurrentMarketCap: true,
     marketCapUnavailable: null,
   });
-  check("ohne netIncomeAvg bleibt Forward n/a", epsOnly.core.pe === 18.75 && epsOnly.core.peFwd == null && epsOnly.fwdReason != null && epsOnly.fwdReason.includes("netIncomeAvg"), epsOnly.fwdReason ?? "");
+  check("ohne netIncomeAvg bleibt Forward n/a und nennt den Bulk-Endpunkt", epsOnly.core.pe === 18.75 && epsOnly.core.peFwd == null && epsOnly.fwdReason != null && epsOnly.fwdReason.includes("analyst-estimates?symbol={Name}&period=annual") && epsOnly.fwdReason.includes("analyst-estimates-bulk"), epsOnly.fwdReason ?? "");
+  const partialFwd = valuationFromConstituentAggregates({
+    constituents: [
+      fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, netIncomeFwd: 12 }),
+      fact({ symbol: "B", marketCap: 100, netIncomeTtm: 5, netIncomePrevTtm: 4, netIncomeFwd: 6 }),
+      fact({ symbol: "C", marketCap: 100, netIncomeTtm: 1, netIncomePrevTtm: 1, netIncomeFwd: null }),
+    ],
+    etfClose: null,
+    indexLevel: null,
+    vendorPe: 27.4,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("Forward-Deckung lässt C draußen und bildet PE fwd aus A und B", partialFwd.core.pe === 18.75 && partialFwd.core.peFwd === 11.11 && partialFwd.core.pegFwd === 0.56, `pe=${partialFwd.core.pe} fwd=${partialFwd.core.peFwd} pegFwd=${partialFwd.core.pegFwd}`);
+  check("Forward-Deckung nennt C, Vendor-pe bleibt draußen", partialFwd.coverageNote != null && partialFwd.coverageNote.includes("Forward-Deckung 2/3") && partialFwd.coverageNote.includes("C") && partialFwd.core.peFwd !== 27.4, partialFwd.coverageNote ?? "");
   const mixedFx = valuationFromConstituentAggregates({
     constituents: [
       fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, reportedCurrency: "USD" }),
+      fact({ symbol: "D", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, reportedCurrency: "USD" }),
       fact({ symbol: "B", marketCap: 100, netIncomeTtm: 5, netIncomePrevTtm: 4, reportedCurrency: "EUR" }),
     ],
     etfClose: null,
@@ -857,7 +877,20 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
     useCurrentMarketCap: true,
     marketCapUnavailable: null,
   });
-  check("gemischte reportedCurrency ist kein Aggregat", mixedFx.core.pe == null && mixedFx.peReasons.some((r) => r.includes("USD") && r.includes("EUR")), mixedFx.peReasons.join(" | "));
+  check("fremde Währung bleibt draußen, die Mehrheit bleibt die Summe", mixedFx.core.pe === 10 && mixedFx.core.epsYoy === 25 && mixedFx.coverageNote != null && mixedFx.coverageNote.includes("B") && mixedFx.coverageNote.includes("EUR"), `${mixedFx.core.pe} ${mixedFx.coverageNote}`);
+  const tiedFx = valuationFromConstituentAggregates({
+    constituents: [
+      fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, reportedCurrency: "USD" }),
+      fact({ symbol: "B", marketCap: 100, netIncomeTtm: 5, netIncomePrevTtm: 4, reportedCurrency: "EUR" }),
+    ],
+    etfClose: null,
+    indexLevel: null,
+    vendorPe: null,
+    allowForward: false,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("Währungs-Gleichstand bleibt n/a", tiedFx.core.pe == null && tiedFx.peReasons.some((r) => r.includes("USD") && r.includes("EUR")), tiedFx.peReasons.join(" | "));
   const classes = valuationFromConstituentAggregates({
     constituents: [
       fact({ symbol: "GOOG", cik: "1652044", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, netIncomeFwd: 12 }),
@@ -896,6 +929,60 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
   ], "QQQ");
   check("Holdings liefern Tickers, nicht marketValue", holdings.map((m) => m.symbol).join(",") === "AAPL,MSFT");
   check("Holding-marketValue ist keine Marktkapitalisierung", marketCapFromRow({ symbol: "AAPL", marketValue: 999, weightPercentage: 9 }) == null);
+  const documentedNport = {
+    cik: "0000857489",
+    date: "2023-10-31",
+    acceptedDate: "2023-12-28 09:26:13",
+    symbol: "000089.SZ",
+    name: "Shenzhen Airport Co Ltd",
+    lei: "3003009W045RIKRBZI44",
+    title: "SHENZ AIRPORT-A",
+    cusip: "N/A",
+    isin: "CNE000000VK1",
+    balance: 2438784,
+    units: "NS",
+    cur_cd: "CNY",
+    valUsd: 2255873.6,
+    pctVal: 0.0023838966190458206,
+    payoffProfile: "Long",
+    assetCat: "EC",
+    issuerCat: "CORP",
+    invCountry: "CN",
+    isRestrictedSec: "N",
+    fairValLevel: "2",
+    isCashCollateral: "N",
+    isNonCashCollateral: "N",
+    isLoanByFund: "N",
+  };
+  const nportMembers = membersFromNportRows([
+    documentedNport,
+    { ...documentedNport, symbol: "B", valUsd: 800, pctVal: 0.01, balance: 10 },
+    { ...documentedNport, symbol: "SPY", valUsd: 1, balance: 1 },
+    { ...documentedNport, symbol: "CASH", assetCat: "EC" },
+    { ...documentedNport, symbol: "BOND", assetCat: "DBT", payoffProfile: "Long" },
+    { ...documentedNport, symbol: "SHORT", assetCat: "EC", payoffProfile: "Short", valUsd: -100, balance: -5 },
+  ], "SPY");
+  check("NPORT nimmt nur assetCat EC und kopiert den Fonds-cik nicht", nportMembers.length === 2 && nportMembers.every((m) => m.cik == null) && nportMembers.map((m) => m.symbol).join(",") === "000089.SZ,B");
+  check("valUsd, pctVal und balance sind keine Marktkapitalisierung", marketCapFromRow(documentedNport) == null);
+  const quarters = nportQuartersFor("2026-10-02");
+  check("NPORT sucht die zwei letzten abgeschlossenen Quartale", quarters.length === 2 && quarters[0]?.year === 2026 && quarters[0]?.quarter === 3 && quarters[1]?.year === 2026 && quarters[1]?.quarter === 2, JSON.stringify(quarters));
+  const fromNport = valuationFromConstituentAggregates({
+    constituents: [
+      fact({ symbol: "000089.SZ", cik: null, marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8 }),
+      fact({ symbol: "B", cik: null, marketCap: 100, netIncomeTtm: 5, netIncomePrevTtm: 4 }),
+    ],
+    etfClose: 670,
+    indexLevel: 6700,
+    vendorPe: 27.4,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  const positionOverShares = documentedNport.valUsd / documentedNport.balance;
+  const invertedWeight = 1 / documentedNport.pctVal;
+  const invertedAggregate = 15 / 200;
+  check("gleicher Fonds-cik bleibt zwei Firmen: 200/15", fromNport.core.pe === 13.33, String(fromNport.core.pe));
+  check("valUsd/balance, 1/pctVal und netIncome/Cap sind nicht der PE", fromNport.core.pe !== positionOverShares && fromNport.core.pe !== invertedWeight && fromNport.core.pe !== invertedAggregate && fromNport.core.pe !== 27.4);
   check("marketCap-Batch-Feld ist die Marktkapitalisierung", marketCapFromRow({ symbol: "AAPL", date: "2026-10-02", marketCap: 3_000 })?.marketCap === 3000);
   check("FY-netIncome ist kein Quartal", quarterlyNetIncomeFromRow({ symbol: "AAPL", date: "2024-12-31", period: "FY", netIncome: 99, reportedCurrency: "USD" }) == null);
 
@@ -940,8 +1027,8 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
 
   const gap = assembleValuationMissing({
     chartEtf: "SPY",
-    chosenSymbol: "^GSPC",
-    valuationLabel: "Aggregat ^GSPC",
+    chosenSymbol: "SPY",
+    valuationLabel: "Aggregat NPORT SPY",
     pe: 18.75,
     peFwd: null,
     epsYoy: 23.08,
@@ -953,10 +1040,12 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
     fallbackNotes: [],
     priceNote: null,
     extraNotes: [],
-    fwdNote: "kein Bulk für analyst-estimates; netIncomeAvg nicht geladen",
+    fwdNote: "GET /stable/analyst-estimates?symbol={Name}&period=annual Feld netIncomeAvg; kein GET /stable/analyst-estimates-bulk und keine Index-Schätzung",
     methodNote: spy.methodNote,
   });
-  check("Aggregat-Zeile sagt die Summe, nicht Kurs/EPS", gap != null && gap.includes("Summe Marktkapitalisierung / Summe netIncome") && gap.includes("sp500-constituent") && !gap.includes("Kurs und EPS"), gap ?? "");
+  check("Aggregat-Zeile sagt die Summe, nicht Kurs/EPS", gap != null && gap.includes("Summe Marktkapitalisierung / Summe netIncome") && gap.includes("funds/disclosure?symbol=SPY") && !gap.includes("Kurs und EPS") && !gap.includes("sp500-constituent"), gap ?? "");
+  check("Forward und Forward-PEG nennen netIncomeAvg und sagen nicht n/a", gap != null && gap.includes("fwd fehlt:") && gap.includes("PEG fwd fehlt:") && gap.includes("netIncomeAvg") && !gap.includes("n/a"), gap ?? "");
+  check("die Zeile zeigt die Zahl und sonst das benannte Feld", valuationGapText(gap, "fwd fehlt:").includes("netIncomeAvg") && valuationGapText(gap, "PE fehlt:") === "PE fehlt" && !valuationGapText(gap, "fwd fehlt:").includes("n/a"));
   const shaped = marketsResponseSchema.safeParse({
     asOf: "2026-10-02",
     window: "10Y",

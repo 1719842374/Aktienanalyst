@@ -6,11 +6,10 @@
 import type { Request, Response } from "express";
 import { inflateRawSync } from "node:zlib";
 import {
-  fmpEtfHoldings,
+  fmpFundDisclosure,
   fmpHistoricalPrices,
   fmpIncomeStatementBulk,
   fmpMarketCapBatch,
-  fmpSp500Constituents,
   isFmpAvailable,
 } from "./fmp";
 import { fetchFredVolSeries, fetchVstoxxVol } from "./recession-markets";
@@ -32,8 +31,9 @@ import {
   localVolMaxima,
   marketCapFromRow,
   marketsResponseSchema,
-  membersFromHoldingRows,
-  membersFromSp500Rows,
+  membersFromNportRows,
+  nportQuartersFor,
+  NPORT_POSITION_NOTE,
   ohlcvFetchFrom,
   parseFinraMarginSheetXml,
   parseMarketWindow,
@@ -49,8 +49,8 @@ import {
   type VolPoint,
 } from "../shared/recession-market-charts";
 
-/** v3–v5 cached an empty or index-quote line. A deploy must miss those keys. */
-export const MARKETS_CHART_CACHE_VERSION = "v6";
+/** v3–v6 cached a blocked or all-or-nothing line. v7 uses NPORT membership and partial coverage. */
+export const MARKETS_CHART_CACHE_VERSION = "v7";
 const TTL_MS = 6 * 60 * 60 * 1000;
 const FINRA_XLSX_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
 
@@ -255,8 +255,8 @@ async function loadValuation(
       priceNote: null,
       extraNotes: [],
       fwdNote: allowForward ? line.blocked : null,
-      yoyNote: `EPS YoY n/a: ${line.blocked}`,
-      pegNote: `PEG n/a: ${line.blocked}`,
+      yoyNote: `EPS YoY fehlt: ${line.blocked}`,
+      pegNote: `PEG fehlt: ${line.blocked}`,
     });
     return {
       core: { ...core, pe: null, peFwd: null, peg: null, pegFwd: null, pegKind: null, pegFwdKind: null, epsYoy: null, gCons: null },
@@ -266,17 +266,25 @@ async function loadValuation(
   }
 
   const fetchNotes: string[] = [];
-  let members: ReturnType<typeof membersFromSp500Rows> = [];
-  const membershipCall = book.id === "SPY"
-    ? "GET /stable/sp500-constituent"
-    : "GET /stable/etf/holdings?symbol=QQQ";
-  try {
-    members = book.id === "SPY"
-      ? membersFromSp500Rows(await fmpSp500Constituents())
-      : membersFromHoldingRows(await fmpEtfHoldings(book.etf), book.etf);
-    if (!members.length) fetchNotes.push(`${membershipCall} leer`);
-  } catch {
-    fetchNotes.push(`${membershipCall} fehlgeschlagen`);
+  let members: ReturnType<typeof membersFromNportRows> = [];
+  let filingCall: string | null = null;
+  const slots = nportQuartersFor(bar.date);
+  if (!slots.length) fetchNotes.push(`GET /stable/funds/disclosure?symbol=${book.etf} ohne Quartal`);
+  for (const slot of slots) {
+    const call = `GET /stable/funds/disclosure?symbol=${book.etf}&year=${slot.year}&quarter=${slot.quarter}`;
+    try {
+      const rows = await fmpFundDisclosure(book.etf, slot.year, slot.quarter);
+      const parsed = membersFromNportRows(rows, book.etf);
+      if (parsed.length) {
+        members = parsed;
+        filingCall = call;
+        fetchNotes.length = 0;
+        break;
+      }
+      fetchNotes.push(Array.isArray(rows) && rows.length ? `${call} ohne assetCat EC` : `${call} leer`);
+    } catch {
+      fetchNotes.push(`${call} fehlgeschlagen`);
+    }
   }
 
   const prints: ReturnType<typeof incomePrintsFromBulkBody> = [];
@@ -315,7 +323,7 @@ async function loadValuation(
     members,
     prints,
     marketCaps,
-    // No analyst-estimates bulk. Per-name calls are not fanned out; epsAvg is not net income.
+    // analyst-estimates is per symbol. No bulk and no index estimate, so netIncomeAvg stays unloaded.
     estimateRows: [],
     asOf: bar.date,
   });
@@ -328,9 +336,10 @@ async function loadValuation(
     useCurrentMarketCap,
     marketCapUnavailable,
   });
+  const named = (reason: string) => (fetchNotes.length ? `${fetchNotes.join("; ")}; ${reason}` : reason);
   const missing = assembleValuationMissing({
     chartEtf: book.etf,
-    chosenSymbol: book.id === "SPY" ? "^GSPC" : "^NDX",
+    chosenSymbol: book.etf,
     valuationLabel,
     pe: result.core.pe,
     peFwd: result.core.peFwd,
@@ -343,10 +352,11 @@ async function loadValuation(
     fallbackNotes: [...fetchNotes, ...result.peReasons],
     priceNote: null,
     extraNotes: [],
-    fwdNote: result.fwdReason,
-    yoyNote: result.core.epsYoy == null && result.yoyReason ? `EPS YoY n/a: ${result.yoyReason}` : null,
-    pegNote: result.core.peg == null && result.pegReason ? `PEG n/a: ${result.pegReason}` : null,
-    methodNote: line.methodNote,
+    fwdNote: result.fwdReason ? named(result.fwdReason) : null,
+    yoyNote: result.core.epsYoy == null && result.yoyReason ? `EPS YoY fehlt: ${named(result.yoyReason)}` : null,
+    pegNote: result.core.peg == null && result.pegReason ? `PEG fehlt: ${named(result.pegReason)}` : null,
+    methodNote: filingCall ? `${filingCall}. ${NPORT_POSITION_NOTE}` : line.methodNote,
+    coverageNote: result.coverageNote,
   });
   return { core: result.core, missing, valuationLabel };
 }
