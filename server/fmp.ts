@@ -1069,3 +1069,67 @@ export async function fmpMarketCapBatch(symbols: string[]): Promise<unknown[]> {
   }
   return out;
 }
+
+export interface AnalystEstimateBatch {
+  rows: unknown[];
+  loaded: string[];
+  skipped: string[];
+  failed: string[];
+  keyMissing: boolean;
+  stoppedEarly: boolean;
+}
+
+/**
+ * GET /stable/analyst-estimates?symbol=&period=annual
+ * One symbol per call. There is no bulk and no comma-joined symbol list.
+ * Dedupe matches market-capitalization-batch, then `cap` stops the walk.
+ * The first call goes through fmpFetch. A missing key throws there and the loop stops.
+ * One symbol's HTTP failure is recorded and does not drop the rows already loaded.
+ */
+export async function fmpAnalystEstimatesBatch(symbols: string[], cap: number): Promise<AnalystEstimateBatch> {
+  const seen: Record<string, true> = {};
+  const unique: string[] = [];
+  for (const raw of symbols) {
+    const symbol = raw.trim().toUpperCase();
+    if (!symbol || seen[symbol]) continue;
+    seen[symbol] = true;
+    unique.push(symbol);
+  }
+  const limit = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+  const load = unique.slice(0, limit);
+  const skipped = unique.slice(limit);
+  const rows: unknown[] = [];
+  const loaded: string[] = [];
+  const failed: string[] = [];
+  for (let i = 0; i < load.length; i++) {
+    const symbol = load[i];
+    try {
+      const data = await fmpAnalystEstimates(symbol, 4);
+      const list = Array.isArray(data) ? data : data && typeof data === "object" ? [data] : [];
+      let kept = 0;
+      for (const row of list) {
+        if (!row || typeof row !== "object") continue;
+        const rec = row as Record<string, unknown>;
+        rows.push(rec.symbol ? row : { ...rec, symbol });
+        kept += 1;
+      }
+      if (kept) loaded.push(symbol);
+      else failed.push(symbol);
+    } catch (err) {
+      const failure = classifyFmpError(err);
+      failed.push(symbol);
+      if (failure.errorCode === "FMP_NOT_CONFIGURED" || failure.errorCode === "RATE_LIMITED") {
+        for (let j = i + 1; j < load.length; j++) skipped.push(load[j]);
+        return {
+          rows,
+          loaded,
+          skipped,
+          failed,
+          keyMissing: failure.errorCode === "FMP_NOT_CONFIGURED",
+          stoppedEarly: true,
+        };
+      }
+    }
+  }
+  return { rows, loaded, skipped, failed, keyMissing: false, stoppedEarly: false };
+}

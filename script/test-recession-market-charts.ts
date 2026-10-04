@@ -12,15 +12,20 @@ import {
   epsPrintFromRow,
   epsYoyPercent,
   finraLeverage,
+  forwardEstimateFieldNote,
+  forwardNetIncomeFromEstimateRows,
   leverageForMarket,
   localVolMaxima,
   marginYoYAndZ,
   maxWindowStart,
+  planAnalystEstimateCalls,
   parseFinraMarginSheetXml,
   peFromMetricsRow,
   pegDisplaySuffix,
   pegFromPeAndGrowth,
+  ANALYST_ESTIMATES_CALL_CAP,
   aggregateLineForBook,
+  analystEstimatesCapPerBook,
   assembleValuationMissing,
   bulkQuarterWindow,
   closeFromPriceRows,
@@ -53,6 +58,7 @@ import {
   type ConstituentFacts,
 } from "../shared/recession-market-charts";
 import { MARKETS_CHART_CACHE_VERSION, unzipEntry } from "../server/recession-market-charts";
+import { fmpAnalystEstimatesBatch } from "../server/fmp";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail?: string) {
@@ -468,7 +474,8 @@ function blankInstrument(symbol: string, role: "etf" | "fallback", price: number
 
 console.log("\n=== Live-Payloads 2026-10-02 ===");
 {
-  check("Cache-Key ist nicht mehr v3 bis v7", MARKETS_CHART_CACHE_VERSION === "v8", MARKETS_CHART_CACHE_VERSION);
+  check("Cache-Key ist nicht mehr v3 bis v8", MARKETS_CHART_CACHE_VERSION === "v9", MARKETS_CHART_CACHE_VERSION);
+  check("Analyst-Schätzungen: 20 je Buch, 80 je Anfrage", analystEstimatesCapPerBook(4) === 20 && ANALYST_ESTIMATES_CALL_CAP === 80 && analystEstimatesCapPerBook(4) * 4 === ANALYST_ESTIMATES_CALL_CAP);
   const prior = closeFromPriceRows(
     [{ date: "2026-10-03", close: 99999 }, { date: "2026-10-01", price: 6700 }],
     "2026-10-02",
@@ -848,7 +855,7 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
     useCurrentMarketCap: true,
     marketCapUnavailable: null,
   });
-  check("ohne netIncomeAvg bleibt Forward leer und nennt die Playground-Seite", epsOnly.core.pe === 18.75 && epsOnly.core.peFwd == null && epsOnly.core.pegFwd == null && epsOnly.fwdReason != null && epsOnly.fwdReason.includes("financial-estimates") && epsOnly.fwdReason.includes("netIncomeAvg") && epsOnly.fwdReason.includes("Feld price ohne Forward-EPS") && !epsOnly.fwdReason.includes("fwd fehlt") && !epsOnly.fwdReason.includes("n/a"), epsOnly.fwdReason ?? "");
+  check("ohne netIncomeAvg bleibt Forward leer und nennt analyst-estimates", epsOnly.core.pe === 18.75 && epsOnly.core.peFwd == null && epsOnly.core.pegFwd == null && epsOnly.fwdReason != null && epsOnly.fwdReason.includes("analyst-estimates") && epsOnly.fwdReason.includes("netIncomeAvg") && epsOnly.fwdReason.includes("Deckel") && !epsOnly.fwdReason.includes("Forward-EPS") && !epsOnly.fwdReason.includes("fwd fehlt") && !epsOnly.fwdReason.includes("n/a"), epsOnly.fwdReason ?? "");
   const partialFwd = valuationFromConstituentAggregates({
     constituents: [
       fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, netIncomeFwd: 12 }),
@@ -1025,6 +1032,64 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
   const window8 = bulkQuarterWindow("2026-10-02");
   check("acht abgeschlossene Bulk-Quartale bis Q3 2026", window8.length === 8 && window8[0]?.period === "Q4" && window8[0]?.year === 2024 && window8[7]?.period === "Q3" && window8[7]?.year === 2026, JSON.stringify(window8));
 
+  const quoteRows = [
+    { symbol: "A", price: 50, marketCap: 100, pe: 27.4 },
+    { symbol: "B", price: 40, marketCap: 100, pe: 22 },
+    { symbol: "C", price: 10, marketCap: 100, pe: 9 },
+  ];
+  check("Quote-price allein ist keine Marktkapitalisierung", marketCapFromRow({ symbol: "A", price: 50, pe: 27.4 }) == null);
+  const quoteCaps = quoteRows.flatMap((row) => {
+    const cap = marketCapFromRow(row);
+    return cap ? [cap] : [];
+  });
+  check("Quote-marketCap wird gelesen und price nicht als Cap", quoteCaps.length === 3 && quoteCaps[0]?.marketCap === 100 && quoteCaps[1]?.marketCap === 100);
+  const estimatePlan = planAnalystEstimateCalls(["A", "B", "A", "C"], 2);
+  check("Schätz-Plan dedupliziert und lässt den Rest unter dem Deckel", estimatePlan.load.join(",") === "A,B" && estimatePlan.skipped.join(",") === "C");
+  const quarterDates = ["2024-12-31", "2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
+  const quarterPrints = (symbol: string, prevEach: number, ttmEach: number) => quarterDates.map((date, i) => ({
+    symbol,
+    date,
+    period: `Q${(i % 4) + 1}`,
+    reportedCurrency: "USD",
+    netIncome: i < 4 ? prevEach : ttmEach,
+  }));
+  const estimateRows = [
+    { symbol: "A", date: "2027-09-27", period: "annual", epsAvg: 5, netIncomeAvg: 12 },
+    { symbol: "B", date: "2027-09-27", period: "annual", epsAvg: 4, netIncomeAvg: 6 },
+    { symbol: "C", date: "2027-09-27", period: "annual", epsAvg: 1, netIncomeAvg: 3 },
+  ].filter((row) => estimatePlan.load.indexOf(row.symbol) >= 0);
+  const joined = constituentFactsFromSources({
+    members: [
+      { symbol: "A", cik: null },
+      { symbol: "B", cik: null },
+      { symbol: "C", cik: null },
+    ],
+    prints: [
+      ...quarterPrints("A", 2, 2.5),
+      ...quarterPrints("B", 1, 1.25),
+      ...quarterPrints("C", 0.25, 0.25),
+    ],
+    marketCaps: quoteCaps,
+    estimateRows,
+    asOf: "2026-10-02",
+  });
+  const joinedVal = valuationFromConstituentAggregates({
+    constituents: joined,
+    etfClose: 670,
+    indexLevel: 6700,
+    vendorPe: 27.4,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+    unloadedForwardSymbols: estimatePlan.skipped,
+    estimatesCap: 2,
+  });
+  const priceOverEps = (50 + 40) / (5 + 4);
+  check("Quote-Cap / netIncomeAvg ist das Forward-PE", joinedVal.core.peFwd === 11.11 && joinedVal.core.pegFwd === 0.56, `fwd=${joinedVal.core.peFwd} pegFwd=${joinedVal.core.pegFwd}`);
+  check("price/epsAvg, Vendor-pe und ETF-Close sind nicht das Forward-PE", joinedVal.core.peFwd !== priceOverEps && joinedVal.core.peFwd !== 27.4 && joinedVal.core.peFwd !== 670 / 9 && joinedVal.core.peFwd !== 5);
+  check("der Deckel lässt C draußen und löscht A und B nicht", joinedVal.core.pe === 18.75 && joinedVal.coverageNote != null && joinedVal.coverageNote.includes("Forward-Deckung 2/3") && joinedVal.coverageNote.includes("nicht geladen (Deckel 2)") && joinedVal.coverageNote.includes("C"), joinedVal.coverageNote ?? "");
+  check("epsAvg ohne netIncomeAvg bleibt kein Forward-Gewinn", forwardNetIncomeFromEstimateRows([{ symbol: "A", date: "2027-09-27", period: "annual", epsAvg: 5 }], "2026-10-02") == null);
+
   const gap = assembleValuationMissing({
     chartEtf: "SPY",
     chosenSymbol: "SPY",
@@ -1040,12 +1105,12 @@ console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
     fallbackNotes: [],
     priceNote: null,
     extraNotes: [],
-    fwdNote: "Playground Financial Estimates https://site.financialmodelingprep.com/developer/docs/stable/financial-estimates GET /stable/analyst-estimates?symbol=AAPL&period=annual&page=0&limit=10 Felder epsAvg und netIncomeAvg ohne price und ohne Bulk; Playground Quote https://site.financialmodelingprep.com/developer/docs/stable/quote und Index Quote GET /stable/quote?symbol=^VIX Feld price ohne Forward-EPS",
+    fwdNote: forwardEstimateFieldNote(20),
     methodNote: spy.methodNote,
   });
   check("Aggregat-Zeile sagt die Summe, nicht Kurs/EPS", gap != null && gap.includes("Summe Marktkapitalisierung / Summe netIncome") && gap.includes("funds/disclosure?symbol=SPY") && !gap.includes("Kurs und EPS") && !gap.includes("sp500-constituent"), gap ?? "");
-  check("Forward und Forward-PEG nennen die Playground-Seite und sagen nicht fwd fehlt", gap != null && gap.includes("Forward-PE:") && gap.includes("Forward-PEG:") && gap.includes("financial-estimates") && gap.includes("netIncomeAvg") && !gap.includes("fwd fehlt") && !gap.includes("n/a"), gap ?? "");
-  check("die Zeile zeigt die Zahl und sonst das benannte Feld", valuationGapText(gap, "Forward-PE:").includes("netIncomeAvg") && valuationGapText(gap, "Forward-PE:").includes("Forward-EPS") && valuationGapText(gap, "PE fehlt:") === "PE fehlt" && !valuationGapText(gap, "Forward-PE:").includes("n/a"));
+  check("Forward und Forward-PEG nennen analyst-estimates und sagen nicht fwd fehlt", gap != null && gap.includes("Forward-PE:") && gap.includes("Forward-PEG:") && gap.includes("analyst-estimates") && gap.includes("netIncomeAvg") && gap.includes("Deckel 20") && !gap.includes("Forward-EPS") && !gap.includes("fwd fehlt") && !gap.includes("n/a"), gap ?? "");
+  check("die Zeile zeigt die Zahl und sonst das benannte Feld", valuationGapText(gap, "Forward-PE:").includes("netIncomeAvg") && valuationGapText(gap, "Forward-PE:").includes("Deckel") && !valuationGapText(gap, "Forward-PE:").includes("Forward-EPS") && valuationGapText(gap, "PE fehlt:") === "PE fehlt" && !valuationGapText(gap, "Forward-PE:").includes("n/a"));
   const shaped = marketsResponseSchema.safeParse({
     asOf: "2026-10-02",
     window: "10Y",
@@ -1098,8 +1163,28 @@ console.log("\n=== xlsx unzip ===");
   check("deflate entry", out?.toString("utf8") === payload.toString("utf8"));
 }
 
-if (failed) {
-  console.error(`\n${failed} fehlgeschlagen`);
-  process.exit(1);
+async function proveEstimateBatchWithoutKey(): Promise<void> {
+  if (process.env.FMP_API_KEY) {
+    console.log("  (FMP_API_KEY ist gesetzt — der Fixture-Pfad bleibt der Beweis, kein Live-Abruf)");
+    return;
+  }
+  const started = Date.now();
+  const batch = await fmpAnalystEstimatesBatch(["AAPL", "MSFT", "NVDA"], ANALYST_ESTIMATES_CALL_CAP);
+  const elapsed = Date.now() - started;
+  check(
+    "ohne Key ruft analyst-estimates an und stoppt nach dem ersten Fehler",
+    batch.keyMissing && batch.stoppedEarly && batch.rows.length === 0 && batch.loaded.length === 0 && batch.failed.join(",") === "AAPL" && batch.skipped.join(",") === "MSFT,NVDA" && elapsed < 2000,
+    `failed=${batch.failed.join(",")} skipped=${batch.skipped.join(",")} elapsed=${elapsed}`,
+  );
 }
-console.log("\nalles grün");
+
+proveEstimateBatchWithoutKey().then(() => {
+  if (failed) {
+    console.error(`\n${failed} fehlgeschlagen`);
+    process.exit(1);
+  }
+  console.log("\nalles grün");
+}).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

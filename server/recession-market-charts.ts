@@ -6,6 +6,7 @@
 import type { Request, Response } from "express";
 import { inflateRawSync } from "node:zlib";
 import {
+  fmpAnalystEstimatesBatch,
   fmpFundDisclosure,
   fmpHistoricalPrices,
   fmpIncomeStatementBulk,
@@ -19,6 +20,7 @@ import {
   SERIES_FLOOR,
   VOL_Y_MAX,
   aggregateLineForBook,
+  analystEstimatesCapPerBook,
   assembleValuationMissing,
   bulkQuarterWindow,
   chartBarSchema,
@@ -26,6 +28,7 @@ import {
   constituentFactsFromSources,
   factpackSchema,
   finraLeverage,
+  forwardEstimateFieldNote,
   incomePrintsFromBulkBody,
   leverageForMarket,
   localVolMaxima,
@@ -49,8 +52,8 @@ import {
   type VolPoint,
 } from "../shared/recession-market-charts";
 
-/** v3–v7 left forward as fwd fehlt. v8 names the playground page when Forward-EPS is not beside price. */
-export const MARKETS_CHART_CACHE_VERSION = "v8";
+/** v8 named a missing forward EPS and did not load netIncomeAvg. v9 sums capped analyst-estimates. */
+export const MARKETS_CHART_CACHE_VERSION = "v9";
 const TTL_MS = 6 * 60 * 60 * 1000;
 const FINRA_XLSX_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
 
@@ -319,13 +322,28 @@ async function loadValuation(
     }
   }
 
+  let estimateRows: unknown[] = [];
+  let unloadedForwardSymbols: string[] = [];
+  let estimatesNote: string | null = null;
+  const estimatesCap = analystEstimatesCapPerBook(CHART_BOOKS.length);
+  if (allowForward && members.length) {
+    const batch = await fmpAnalystEstimatesBatch(members.map((m) => m.symbol), estimatesCap);
+    estimateRows = batch.rows;
+    unloadedForwardSymbols = batch.skipped.slice();
+    if (batch.keyMissing || (batch.stoppedEarly && batch.rows.length === 0)) {
+      unloadedForwardSymbols = unloadedForwardSymbols.concat(batch.failed);
+    }
+    if (batch.keyMissing) {
+      estimatesNote = `${forwardEstimateFieldNote(estimatesCap)}; FMP_API_KEY not set`;
+    } else if (batch.stoppedEarly && batch.rows.length === 0) {
+      estimatesNote = `${forwardEstimateFieldNote(estimatesCap)}; Rate-Limit`;
+    }
+  }
   const constituents = constituentFactsFromSources({
     members,
     prints,
     marketCaps,
-    // Financial Estimates is per symbol and has no price. Quote has price and no Forward-EPS.
-    // Those are not the same object, and there is no estimates bulk, so netIncomeAvg stays unloaded.
-    estimateRows: [],
+    estimateRows,
     asOf: bar.date,
   });
   const result = valuationFromConstituentAggregates({
@@ -336,6 +354,9 @@ async function loadValuation(
     allowForward,
     useCurrentMarketCap,
     marketCapUnavailable,
+    unloadedForwardSymbols,
+    estimatesCap,
+    estimatesNote,
   });
   const named = (reason: string) => (fetchNotes.length ? `${fetchNotes.join("; ")}; ${reason}` : reason);
   const missing = assembleValuationMissing({

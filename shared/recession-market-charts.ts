@@ -637,6 +637,12 @@ export interface ConstituentAggregateInput {
   useCurrentMarketCap: boolean;
   /** When set, PE stays empty and this sentence is the reason. */
   marketCapUnavailable: string | null;
+  /** Names past the analyst-estimates cap, or a call that failed. They are not a zero. */
+  unloadedForwardSymbols?: string[];
+  /** Cap applied to this book. The missing-field sentence quotes it. */
+  estimatesCap?: number;
+  /** Set when the batch stopped before a usable netIncomeAvg (no key, or 429). */
+  estimatesNote?: string | null;
 }
 
 export interface ConstituentAggregateResult {
@@ -653,13 +659,34 @@ export interface ConstituentAggregateResult {
 }
 
 /**
- * Forward earnings are documented per symbol, not as a bulk field, and not beside price.
- * Financial Estimates carries `epsAvg` and `netIncomeAvg` and no `price`.
- * Quote, index quote, and the earnings report carry no forward EPS next to `price`.
- * N-PORT carries no `netIncomeAvg`. Hundreds of per-name calls are not fired.
+ * analyst-estimates is one symbol per call. There is no bulk.
+ * 80 matches one market-capitalization-batch chunk. Four books share that budget.
  */
-export const ANALYST_ESTIMATES_BULK_MISSING =
-  "Playground Financial Estimates https://site.financialmodelingprep.com/developer/docs/stable/financial-estimates GET /stable/analyst-estimates?symbol=AAPL&period=annual&page=0&limit=10 Felder epsAvg und netIncomeAvg ohne price und ohne Bulk; Playground Quote https://site.financialmodelingprep.com/developer/docs/stable/quote und Index Quote GET /stable/quote?symbol=^VIX Feld price ohne Forward-EPS; Playground Earnings Report GET /stable/earnings?symbol=AAPL Feld epsEstimated ohne price; Playground Mutual Fund Disclosures GET /stable/funds/disclosure ohne netIncomeAvg. Fehlendes Feld neben price: Forward-EPS";
+export const ANALYST_ESTIMATES_CALL_CAP = 80;
+
+export function analystEstimatesCapPerBook(bookCount: number): number {
+  if (!(bookCount > 0)) return ANALYST_ESTIMATES_CALL_CAP;
+  return Math.max(1, Math.floor(ANALYST_ESTIMATES_CALL_CAP / bookCount));
+}
+
+/** Dedupe, keep order, then take at most `cap` symbols. The rest are named, not fetched. */
+export function planAnalystEstimateCalls(symbols: string[], cap: number): { load: string[]; skipped: string[] } {
+  const seen: Record<string, true> = {};
+  const unique: string[] = [];
+  for (const raw of symbols) {
+    const symbol = String(raw ?? "").trim().toUpperCase();
+    if (!symbol || seen[symbol]) continue;
+    seen[symbol] = true;
+    unique.push(symbol);
+  }
+  const limit = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+  return { load: unique.slice(0, limit), skipped: unique.slice(limit) };
+}
+
+/** Names the call and the field that was not summed. epsAvg is not that field. */
+export function forwardEstimateFieldNote(cap: number): string {
+  return `GET /stable/analyst-estimates?symbol={Name}&period=annual Feld netIncomeAvg (Deckel ${cap}). epsAvg ist kein netIncome`;
+}
 
 export interface AggregateLine {
   label: string;
@@ -1013,6 +1040,23 @@ export function constituentFactsFromSources(input: {
   });
 }
 
+function symbolFlagSet(symbols: string[] | undefined): Record<string, true> {
+  const seen: Record<string, true> = {};
+  for (const raw of symbols ?? []) {
+    const symbol = String(raw).trim().toUpperCase();
+    if (symbol) seen[symbol] = true;
+  }
+  return seen;
+}
+
+function unloadedForwardLabel(symbols: string[], cap: number): string {
+  const unique = uniqueStrings(symbols);
+  const shown = unique.slice(0, 5).join(", ");
+  const more = unique.length > 5 ? `, +${unique.length - 5}` : "";
+  if (unique.length === 1) return `netIncomeAvg nicht geladen (Deckel ${cap}) für ${shown}`;
+  return `netIncomeAvg nicht geladen (Deckel ${cap}) für ${unique.length} Namen (${shown}${more})`;
+}
+
 function uniqueStrings(values: string[]): string[] {
   const seen: Record<string, true> = {};
   const out: string[] = [];
@@ -1174,8 +1218,9 @@ function coverageSentence(label: string, total: number, used: number, holes: { s
  * One income statement per company: share classes that share a cik contribute
  * one net income and the sum of their market caps. Averaging constituent P/Es is not this ratio.
  * EPS YoY and PEG use that same covered set. Forward PE is Σ market cap / Σ netIncomeAvg
- * on the names that have netIncomeAvg. Quote price and that forward EPS are not on one
- * object, and there is no estimates bulk, so an unloaded forward names that playground page.
+ * on the names that have a cap, a TTM, netIncomeAvg, and the set's currency.
+ * A name past the analyst-estimates cap is left out and named. It does not blank the rest.
+ * epsAvg is not forward net income. Quote price is not the numerator.
  */
 export function valuationFromConstituentAggregates(input: ConstituentAggregateInput): ConstituentAggregateResult {
   void input.etfClose;
@@ -1274,9 +1319,9 @@ export function valuationFromConstituentAggregates(input: ConstituentAggregateIn
     coverageNote = coverageSentence("Deckung", total, usedSymbols, trailingHoles);
 
     if (input.allowForward) {
-      const anyFwd = buckets.some((bucket) => bucket.netIncomeFwd != null);
+      const cap = input.estimatesCap ?? ANALYST_ESTIMATES_CALL_CAP;
+      const unloaded = symbolFlagSet(input.unloadedForwardSymbols);
       if (!capsReady) fwdReason = input.marketCapUnavailable ?? "Marktkapitalisierung zum Stichtag fehlt";
-      else if (!anyFwd) fwdReason = ANALYST_ESTIMATES_BULK_MISSING;
       else {
         const forwardCandidates = buckets.filter((bucket) =>
           !bucket.broken
@@ -1308,9 +1353,14 @@ export function valuationFromConstituentAggregates(input: ConstituentAggregateIn
             continue;
           }
           if (bucket.netIncomeFwd == null) {
+            const skipped = bucket.symbols.filter((symbol) => unloaded[symbol]);
+            const absent = (bucket.missingFwd.length ? bucket.missingFwd : bucket.symbols).filter((symbol) => !unloaded[symbol]);
+            const parts: string[] = [];
+            if (skipped.length) parts.push(unloadedForwardLabel(skipped, cap));
+            if (absent.length) parts.push(missingNames("netIncomeAvg", absent));
             forwardHoles.push({
               symbols: bucket.symbols,
-              reason: missingNames("netIncomeAvg", bucket.missingFwd.length ? bucket.missingFwd : bucket.symbols),
+              reason: parts.join("; ") || missingNames("netIncomeAvg", bucket.symbols),
             });
             continue;
           }
@@ -1327,7 +1377,7 @@ export function valuationFromConstituentAggregates(input: ConstituentAggregateIn
         const forwardUsed = forward.reduce((sum, bucket) => sum + bucket.symbols.length, 0);
         coverageNote += ` ${coverageSentence("Forward-Deckung", total, forwardUsed, forwardHoles)}`;
         if (forwardMode.tied) fwdReason = `reportedCurrency gemischt (${forwardMode.tied.join(", ")})`;
-        else if (!forward.length) fwdReason = "keine Forward-Deckung";
+        else if (!forward.length) fwdReason = input.estimatesNote ?? forwardEstimateFieldNote(cap);
         else {
           const sumCap = forward.reduce((sum, bucket) => sum + (bucket.marketCap as number), 0);
           const sumFwd = forward.reduce((sum, bucket) => sum + (bucket.netIncomeFwd as number), 0);
@@ -1532,11 +1582,11 @@ export function assembleValuationMissing(input: ValuationGapInput): string | nul
     else gaps.push(`PEG fehlt: ${input.pe == null ? "kein PE derselben Deckung" : "kein EPS-YoY derselben Deckung"}`);
   }
   if (input.allowForward && input.peFwd == null) {
-    gaps.push(`Forward-PE: ${input.fwdNote ?? ANALYST_ESTIMATES_BULK_MISSING}`);
+    gaps.push(`Forward-PE: ${input.fwdNote ?? forwardEstimateFieldNote(ANALYST_ESTIMATES_CALL_CAP)}`);
   }
   if (input.allowForward && input.pegFwd == null) {
     if (input.gCons != null && input.gCons <= 0) gaps.push("Forward-PEG: g<=0");
-    else gaps.push(`Forward-PEG: ${input.fwdNote ?? ANALYST_ESTIMATES_BULK_MISSING}`);
+    else gaps.push(`Forward-PEG: ${input.fwdNote ?? forwardEstimateFieldNote(ANALYST_ESTIMATES_CALL_CAP)}`);
   }
   return gaps.length ? gaps.join(" · ") : null;
 }
