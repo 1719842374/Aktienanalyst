@@ -4,9 +4,13 @@
  * S is computed from an unemployment series:
  *   U3m_t = (U_t + U_{t-1} + U_{t-2}) / 3
  *   S_t = U3m_t - min_{k=0..11} U3m_{t-k}
- * A missing calendar month leaves that S undefined. The slot is then scored
- * with s(z) only when the last 12 realtime prints all exist and sit within
- * ±0.02. Otherwise the slot fails closed at score 50. No other window is used.
+ * A missing calendar month leaves that S undefined. No imputation and no
+ * two-month average. The card shows the realtime series when any print
+ * arrived: blanks are dropped, the latest delivered print is the level,
+ * and s(z) uses only those prints. The self-computed S is the backup only
+ * when the realtime series was not delivered. That backup is not given a
+ * 20-year z across the gap. The 0.50pp mark is the trigger on the
+ * displayed level.
  *
  * The spec writes σ_{t,H}+ε without a numeric expansion. μ/σ here are the
  * trailing window excluding x_t, sample divisor n-1, ε=1e-9. H is 240 months.
@@ -33,6 +37,10 @@ export interface SahmScore {
   s: number;
   raw: number;
   triggered: boolean;
+  /** Why the slot is not the realtime print. Absent when the card shows that series. */
+  reason?: string | null;
+  /** True when the level is the self-computed unemployment S, not the realtime print. */
+  backup?: boolean;
 }
 
 export function cleanFredMonthly(rows: Array<{ date: string; value: number | null }>): FredPoint[] {
@@ -98,16 +106,23 @@ export function sahmIndicatorFromScore(scored: SahmScore): {
   zone: string;
   available: boolean;
   triggered: boolean;
+  reason: string | null;
 } {
+  const reason = scored.reason ?? null;
   return {
     value: scored.level == null ? "N/A" : `${scored.level.toFixed(2)} pp`,
     rawScore: scored.raw,
     weightedScore: scored.raw,
     weight: 1,
     maxWeighted: 4,
-    zone: scored.level == null ? "N/A" : scored.triggered ? "Ausgelöst (≥0.5pp)" : "Normal (<0.5pp)",
+    zone: reason
+      ? reason
+      : scored.level == null
+        ? "N/A"
+        : scored.triggered ? "Ausgelöst (≥0.5pp)" : "Normal (<0.5pp)",
     available: scored.available,
     triggered: scored.triggered,
+    reason,
   };
 }
 
@@ -197,7 +212,7 @@ export function sahmLevelsFromUnemployment(rows: Array<{ date: string; value: nu
   }));
 }
 
-function closedScore(level: number | null, n: number): SahmScore {
+function closedScore(level: number | null, n: number, reason: string, backup = false): SahmScore {
   return {
     available: false,
     n,
@@ -205,11 +220,15 @@ function closedScore(level: number | null, n: number): SahmScore {
     s: 50,
     raw: 0,
     triggered: level != null && level >= SAHM_TRIGGER_PP,
+    reason,
+    backup,
   };
 }
 
 /**
- * Score S computed from unemployment. `realtime` is only the ±0.02 control.
+ * Card level is the realtime series when any print arrived (blanks dropped,
+ * not filled). The unemployment S is only the backup when that series is empty.
+ * `control` still compares the self-computed S to the realtime prints.
  * The formula module does not name a series id; callers pass the observations.
  */
 export function scoreSahmFromUnemployment(
@@ -218,7 +237,8 @@ export function scoreSahmFromUnemployment(
 ): SahmUnemploymentScore {
   const series = sahmLevelsFromUnemployment(unemployment);
   const byMonth = new Map(series.map(point => [point.date.slice(0, 7), point.value]));
-  const control = cleanFredMonthly(realtime).slice(-SAHM_CONTROL_MONTHS).map(point => {
+  const realtimePoints = cleanFredMonthly(realtime);
+  const control = realtimePoints.slice(-SAHM_CONTROL_MONTHS).map(point => {
     const month = point.date.slice(0, 7);
     const computed = byMonth.has(month) ? byMonth.get(month) ?? null : null;
     return {
@@ -230,10 +250,18 @@ export function scoreSahmFromUnemployment(
   });
   const controlOk = control.length === SAHM_CONTROL_MONTHS && control.every(row =>
     row.computed != null && row.absDiff != null && row.absDiff <= SAHM_CONTROL_TOLERANCE);
-  const finite = series.filter((point): point is FredPoint => point.value != null);
-  const latest = series.length > 0 ? series[series.length - 1].value : null;
-  if (!controlOk) {
-    return { controlOk: false, control, score: closedScore(latest, finite.length) };
+  if (realtimePoints.length > 0) {
+    return { controlOk, control, score: scoreSahmLevels(realtimePoints) };
   }
-  return { controlOk: true, control, score: scoreSahmLevels(finite) };
+  const finite = series.filter((point): point is FredPoint => point.value != null);
+  const lastDefined = finite.length > 0 ? finite[finite.length - 1] : null;
+  if (lastDefined == null) {
+    return { controlOk: false, control, score: closedScore(null, finite.length, "Realtime-Serie nicht geliefert") };
+  }
+  const lastMonth = lastDefined.date.slice(0, 7);
+  return {
+    controlOk: false,
+    control,
+    score: closedScore(lastDefined.value, finite.length, `eigener Backup ${lastMonth}, nicht Claudias Serie`, true),
+  };
 }
