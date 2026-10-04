@@ -351,6 +351,51 @@ export function ttmEpsFromRatiosTtmRow(row: unknown): number | null {
   return positiveNum((raw as Record<string, unknown>).netIncomePerShareTTM);
 }
 
+function rowSymbol(row: unknown): string {
+  if (!row || typeof row !== "object") return "";
+  return String((row as Record<string, unknown>).symbol ?? "");
+}
+
+/** An ETF symbol is not an index EPS. A missing symbol stays usable for the index call that fetched the row. */
+function isIndexRow(row: unknown): boolean {
+  const symbol = rowSymbol(row);
+  if (!symbol) return true;
+  return symbol.startsWith("^");
+}
+
+/**
+ * TTM EPS from GET /stable/key-metrics-ttm on the same index symbol as the price.
+ * peRatioTTM and earningsYieldTTM are vendor multiples, not an EPS.
+ * A row whose symbol is an ETF is ignored.
+ */
+export function ttmEpsFromKeyMetricsTtmRow(row: unknown): number | null {
+  const raw = Array.isArray(row) ? row[0] : row;
+  if (!raw || typeof raw !== "object" || !isIndexRow(raw)) return null;
+  return positiveNum((raw as Record<string, unknown>).netIncomePerShareTTM);
+}
+
+/**
+ * Index Quote field `eps` on the same object as `price`.
+ * GET /stable/quote. The vendor field `pe` is not an EPS.
+ * `eps` on an ETF quote is not a share EPS.
+ */
+export function epsFromIndexQuote(quote: unknown): number | null {
+  const raw = Array.isArray(quote) ? quote[0] : quote;
+  if (!raw || typeof raw !== "object" || !isIndexRow(raw)) return null;
+  return positiveNum((raw as Record<string, unknown>).eps);
+}
+
+/** Documented ETF info is expense ratio, AUM and NAV. Those are not a share EPS. */
+export function etfInfoHasShareEps(info: unknown): boolean {
+  const raw = Array.isArray(info) ? info[0] : info;
+  if (!raw || typeof raw !== "object") return false;
+  const r = raw as Record<string, unknown>;
+  return positiveNum(r.eps) != null
+    || positiveNum(r.epsDiluted) != null
+    || positiveNum(r.netIncomePerShare) != null
+    || positiveNum(r.netIncomePerShareTTM) != null;
+}
+
 /** Reported quarter from /stable/earnings. Estimates are not treated as actuals. */
 export function epsPrintFromEarningsRow(row: unknown): EpsPrint | null {
   if (!row || typeof row !== "object") return null;
@@ -494,6 +539,77 @@ export function valuationFromFmpRows(input: FmpValuationRows): ValuationCore {
   };
 }
 
+export interface IndexValuationInput {
+  /** Price of the index, never the ETF close. */
+  indexPrice: number | null;
+  /** Present so a caller cannot silently divide it into the index EPS. Ignored. */
+  etfPrice: number | null;
+  quote: unknown;
+  keyMetricsTtmRow: unknown;
+  estimateRows: unknown[];
+  /** Sector or industry snapshot `{ pe }`. A vendor multiple. Ignored. */
+  sectorPeRow: unknown;
+  asOf: string;
+  allowForward: boolean;
+}
+
+/**
+ * PE = index price / EPS of that same index.
+ * EPS is key-metrics-ttm `netIncomePerShareTTM`, or Index Quote `eps` when that row has none.
+ * Quote `pe`, key-metrics `peRatioTTM` and sector-pe `pe` are not the result.
+ * One TTM has no prior year, so EPS YoY and PEG stay empty unless a forward EPS exists.
+ */
+export function valuationFromIndexSources(input: IndexValuationInput): ValuationCore {
+  void input.etfPrice;
+  void input.sectorPeRow;
+  const fromMetrics = ttmEpsFromKeyMetricsTtmRow(input.keyMetricsTtmRow);
+  const fromQuote = epsFromIndexQuote(input.quote);
+  const ttm = fromMetrics ?? fromQuote;
+  const indexEstimates = input.estimateRows.filter((row) => {
+    if (!row || typeof row !== "object") return false;
+    const symbol = String((row as Record<string, unknown>).symbol ?? "");
+    return !symbol || symbol.startsWith("^");
+  });
+  const ntm = input.allowForward ? ntmEpsFromEstimateRows(indexEstimates, input.asOf) : null;
+  return valuationFromParts({
+    price: input.indexPrice,
+    ttmEps: ttm,
+    prevTtmEps: null,
+    epsNtm: ntm,
+    allowForward: input.allowForward,
+    keyMetricsPe: peFromMetricsRow(input.keyMetricsTtmRow) ?? peFromMetricsRow(input.quote) ?? peFromMetricsRow(input.sectorPeRow),
+  });
+}
+
+/** Names the index calls that did not yield a same-unit EPS. A vendor `pe` is named and not used. */
+export function indexValuationNotes(symbol: string, quote: unknown, keyMetricsTtmRow: unknown): string[] {
+  const notes: string[] = [];
+  const quoteCall = `GET /stable/quote?symbol=${symbol}`;
+  if (quote == null) notes.push(`${quoteCall} leer`);
+  else if (epsFromIndexQuote(quote) == null) {
+    notes.push(`${quoteCall} ohne eps`);
+    if (peFromMetricsRow(quote) != null) notes.push(`${quoteCall} pe ist kein Kurs/EPS`);
+  }
+  const kmCall = `GET /stable/key-metrics-ttm?symbol=${symbol}`;
+  if (ttmEpsFromKeyMetricsTtmRow(keyMetricsTtmRow) == null) {
+    notes.push(keyMetricsTtmRow ? `${kmCall} ohne netIncomePerShareTTM` : `${kmCall} leer`);
+  }
+  return notes;
+}
+
+/** ETF info and an ETF quote are not an index EPS. Company statements are not named here. */
+export function etfValuationNotes(etf: string, fallbackSymbol: string | null, info: unknown): string[] {
+  const infoCall = `GET /stable/etf/info?symbol=${etf}`;
+  const notes = [
+    etfInfoHasShareEps(info)
+      ? `${infoCall} eps wird nicht als Share-EPS gelesen`
+      : `${infoCall} ohne EPS`,
+  ];
+  const quoteSymbol = fallbackSymbol && !fallbackSymbol.startsWith("^") ? fallbackSymbol : etf;
+  notes.push(`GET /stable/quote?symbol=${quoteSymbol} ist ETF-Kurs, kein Index-EPS`);
+  return notes;
+}
+
 export interface ValuationInstrument {
   symbol: string;
   role: "etf" | "fallback";
@@ -515,16 +631,20 @@ function quarterPrintCount(inst: ValuationInstrument): number {
   return Math.max(income, earnings, ratios);
 }
 
-/** True when this symbol has a price and share-level EPS in that same unit. */
+/**
+ * True when this symbol is an index and has a price plus EPS in that same unit.
+ * An ETF has no share EPS. Company statements on SPY, QQQ, VGK, ASHR or FEZ do not count.
+ */
 export function instrumentCanPriceEps(inst: ValuationInstrument): boolean {
+  if (!inst.symbol.startsWith("^")) return false;
   if (inst.price == null || !(inst.price > 0)) return false;
   if (quarterPrintCount(inst) >= 4) return true;
   return ttmEpsFromRatiosTtmRow(inst.ratiosTtmRow) != null;
 }
 
 /**
- * ETF share EPS wins. Otherwise the fallback, but only with its own price.
- * An index EPS is never paired with the ETF price.
+ * An index with its own price and EPS wins.
+ * An ETF never wins on company-statement EPS, and an index EPS is never paired with the ETF price.
  */
 export function pickValuationInstrument(
   etf: ValuationInstrument,
@@ -592,6 +712,9 @@ export interface ValuationGapInput {
   priceNote: string | null;
   extraNotes: string[];
   fwdNote: string | null;
+  /** Replaces the generic YoY gap when the source is a single index TTM. */
+  yoyNote?: string | null;
+  pegNote?: string | null;
 }
 
 /** Names every empty same-unit call, including a fallback that could not form a PE. */
@@ -608,11 +731,14 @@ export function assembleValuationMissing(input: ValuationGapInput): string | nul
     const why = [...sourceNotes, ...input.extraNotes, input.priceNote].filter((x): x is string => Boolean(x));
     gaps.push(why.length ? `PE n/a: ${why.join("; ")}` : "PE n/a: kein Kurs und EPS derselben Einheit");
   }
-  if (input.epsYoy == null && input.pe != null) {
+  if (input.epsYoy == null && input.yoyNote) {
+    gaps.push(input.yoyNote);
+  } else if (input.epsYoy == null && input.pe != null) {
     gaps.push("EPS YoY n/a: weniger als 8 Quartalsdrucke derselben Einheit");
   } else if (input.epsYoy == null && sourceNotes.length) {
     gaps.push(`EPS YoY n/a: ${sourceNotes.join("; ")}`);
   }
+  if (input.peg == null && input.pegNote) gaps.push(input.pegNote);
   if (input.allowForward && input.peFwd == null && input.fwdNote) gaps.push(`fwd n/a: ${input.fwdNote}`);
   if (input.allowForward && input.peg == null && input.epsYoy != null && input.epsYoy <= 0) {
     gaps.push("PEG n/a: g<=0");

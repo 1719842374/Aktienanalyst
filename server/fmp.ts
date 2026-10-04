@@ -554,6 +554,17 @@ export async function fmpKeyMetrics(symbol: string, limit = 5) {
   return fmpFetch(`/key-metrics`, { symbol, limit: String(limit) });
 }
 
+export async function fmpKeyMetricsTtm(symbol: string) {
+  // GET /stable/key-metrics-ttm?symbol=^GSPC
+  // netIncomePerShareTTM is one TTM EPS. peRatioTTM is a vendor multiple.
+  return fmpFetch(`/key-metrics-ttm`, { symbol });
+}
+
+export async function fmpEtfInfo(symbol: string) {
+  // GET /stable/etf/info?symbol=SPY — expense ratio, AUM, NAV. No share EPS.
+  return fmpFetch(`/etf/info`, { symbol });
+}
+
 export async function fmpBatchQuote(symbols: string[]) {
   if (symbols.length === 0) return [];
   // /stable has no comma-separated batch quote — fetch each symbol in parallel.

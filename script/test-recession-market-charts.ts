@@ -23,6 +23,10 @@ import {
   assembleValuationMissing,
   closeFromPriceRows,
   closeFromQuote,
+  epsFromIndexQuote,
+  etfInfoHasShareEps,
+  etfValuationNotes,
+  indexValuationNotes,
   instrumentCanPriceEps,
   pickValuationInstrument,
   valuationLabelFor,
@@ -30,6 +34,7 @@ import {
   sliceByWindow,
   ttmEpsAt,
   valuationFromFmpRows,
+  valuationFromIndexSources,
   valuationFromParts,
   volBandLabel,
 } from "../shared/recession-market-charts";
@@ -395,20 +400,19 @@ console.log("\n=== Gleiche Einheit, ehrliches Label ===");
     ratioQuarterRows: quartersOf("^GSPC", 55),
   };
   const picked = pickValuationInstrument(etf, index);
-  check("ETF-Quartals-EPS schlägt den Index", picked.symbol === "SPY" && picked.price === 670);
-  check("ETF-Zeile bleibt ETF-Proxy", valuationLabelFor(picked, "SPY") === "ETF-Proxy");
+  check("ETF-Quartals-EPS füllt die Zeile nicht", picked.symbol === "^GSPC" && picked.price === 5800);
+  check("Index-Zeile heißt Index ^GSPC", valuationLabelFor(picked, "SPY") === "Index ^GSPC");
   const emptyEtf = { ...etf, ratioQuarterRows: [] as unknown[] };
   const indexPick = pickValuationInstrument(emptyEtf, index);
   check("ohne ETF-EPS nimmt Indexkurs und Index-EPS", indexPick.symbol === "^GSPC" && indexPick.price === 5800);
-  check("Index-Zeile heißt Index ^GSPC", valuationLabelFor(indexPick, "SPY") === "Index ^GSPC");
+  check("leerer ETF bleibt beim Index-Label", valuationLabelFor(indexPick, "SPY") === "Index ^GSPC");
   const unlabeled = pickValuationInstrument(emptyEtf, { ...index, price: null });
   check("Index ohne Kurs wird nicht mit dem ETF-Preis gepaart", unlabeled.symbol === "SPY");
   const fez = pickValuationInstrument(
     { ...emptyEtf, symbol: "VGK", price: 70 },
     { ...index, symbol: "FEZ", role: "fallback" as const, price: 52, ratioQuarterRows: quartersOf("FEZ", 1.1) },
   );
-  check("FEZ bleibt FEZ, nicht VGK", fez.symbol === "FEZ" && fez.price === 52);
-  check("FEZ-Zeile heißt ETF FEZ", valuationLabelFor(fez, "VGK") === "ETF FEZ");
+  check("FEZ-Quartale füllen VGK nicht", fez.symbol === "VGK" && fez.price === 70);
   const zeroEtf = {
     ...emptyEtf,
     incomeRows: [0, 0, 0, 0, 0, 0, 0, 0].map((eps, i) => ({
@@ -450,7 +454,7 @@ function blankInstrument(symbol: string, role: "etf" | "fallback", price: number
 
 console.log("\n=== Live-Payloads 2026-10-02 ===");
 {
-  check("Cache-Key ist nicht mehr v3", MARKETS_CHART_CACHE_VERSION === "v4", MARKETS_CHART_CACHE_VERSION);
+  check("Cache-Key ist nicht mehr v3 oder v4", MARKETS_CHART_CACHE_VERSION === "v5", MARKETS_CHART_CACHE_VERSION);
   const prior = closeFromPriceRows(
     [{ date: "2026-10-03", close: 99999 }, { date: "2026-10-01", price: 6700 }],
     "2026-10-02",
@@ -567,18 +571,17 @@ console.log("\n=== Live-Payloads 2026-10-02 ===");
     ratioQuarterRows: quartersOf("FEZ", 1.1),
   };
   const vgkChosen = pickValuationInstrument(vgk, fezLive);
-  const vgkPe = valuationFromFmpRows({
-    price: vgkChosen.price,
+  const vgkMixed = valuationFromIndexSources({
+    indexPrice: 52,
+    etfPrice: 70,
+    quote: { symbol: "FEZ", price: 52, eps: 4.4, pe: 11.8 },
+    keyMetricsTtmRow: { symbol: "FEZ", netIncomePerShareTTM: 4.4, peRatioTTM: 11.8 },
+    estimateRows: [{ date: "2027-09-30", symbol: "FEZ", epsAvg: 5 }],
+    sectorPeRow: { date: "2026-10-02", sector: "Financial Services", exchange: "NYSE", pe: 14 },
     asOf: "2026-10-02",
-    allowForward: false,
-    incomeRows: [],
-    earningsRows: [],
-    ratioQuarterRows: vgkChosen.ratioQuarterRows,
-    ratiosRow: null,
-    keyMetricsRow: null,
-    estimateRows: [],
+    allowForward: true,
   });
-  check("VGK-Preis wird nicht durch FEZ-EPS geteilt", valuationLabelFor(vgkChosen, "VGK") === "ETF FEZ" && vgkPe.pe === 11.82, String(vgkPe.pe));
+  check("VGK-Preis wird nicht durch FEZ-EPS geteilt", vgkChosen.symbol === "VGK" && vgkMixed.pe == null && vgkMixed.peFwd == null, String(vgkMixed.pe));
 
   const ashrGap = assembleValuationMissing({
     chartEtf: "ASHR",
@@ -603,6 +606,107 @@ console.log("\n=== Live-Payloads 2026-10-02 ===");
     fwdNote: "GET /stable/analyst-estimates?symbol=ASHR&period=annual leer",
   });
   check("ASHR bleibt n/a ohne Index", ashrGap != null && ashrGap.includes("symbol=ASHR") && !ashrGap.includes("^"), ashrGap ?? "");
+}
+
+console.log("\n=== Index-Quote und key-metrics-ttm, kein ETF-Share-EPS ===");
+{
+  const documentedQuote = {
+    symbol: "^GSPC",
+    name: "S&P 500",
+    price: 6700,
+    changePercentage: 0.1,
+    change: 6,
+    volume: 0,
+    dayLow: 6680,
+    dayHigh: 6710,
+    yearHigh: 6900,
+    yearLow: 5100,
+    marketCap: null,
+    priceAvg50: 6500,
+    priceAvg200: 6100,
+    exchange: "INDEX",
+    open: 6690,
+    previousClose: 6694,
+    timestamp: Date.parse("2026-10-02T20:00:00Z") / 1000,
+    pe: 27.4,
+  };
+  check("dokumentiertes Quote ohne eps ist kein EPS", epsFromIndexQuote(documentedQuote) == null);
+  const quoteOnly = valuationFromIndexSources({
+    indexPrice: 6700,
+    etfPrice: 670,
+    quote: documentedQuote,
+    keyMetricsTtmRow: null,
+    estimateRows: [],
+    sectorPeRow: { date: "2026-10-02", sector: "Technology", exchange: "NASDAQ", pe: 32.1 },
+    asOf: "2026-10-02",
+    allowForward: true,
+  });
+  check("Quote-pe und Sector-pe bleiben n/a", quoteOnly.pe == null && quoteOnly.peFwd == null, String(quoteOnly.pe));
+  const emptyNotes = indexValuationNotes("^GSPC", documentedQuote, null);
+  check("leeres Quote nennt ohne eps und verwirft pe", emptyNotes.some((n) => n.includes("quote?symbol=^GSPC ohne eps")) && emptyNotes.some((n) => n.includes("pe ist kein Kurs/EPS")), emptyNotes.join(" | "));
+  check("leeres key-metrics-ttm bleibt genannt", emptyNotes.some((n) => n.includes("key-metrics-ttm?symbol=^GSPC leer")));
+
+  const withEps = valuationFromIndexSources({
+    indexPrice: 6700,
+    etfPrice: 670,
+    quote: { ...documentedQuote, eps: 180 },
+    keyMetricsTtmRow: { symbol: "^GSPC", netIncomePerShareTTM: 220, peRatioTTM: 27.4, earningsYieldTTM: 0.036 },
+    estimateRows: [{ date: "2027-09-30", symbol: "^GSPC", epsAvg: 250 }],
+    sectorPeRow: { date: "2026-10-02", sector: "Technology", exchange: "NASDAQ", pe: 32.1 },
+    asOf: "2026-10-02",
+    allowForward: true,
+  });
+  check("PE ist Indexkurs / key-metrics-ttm EPS", withEps.pe === 30.45, String(withEps.pe));
+  check("ETF-Kurs 670 wird nicht durch Index-EPS geteilt", withEps.pe !== 3.05);
+  check("peRatioTTM 27.4 ist nicht der PE", withEps.pe !== 27.4);
+  check("Forward-PE ist Indexkurs / epsAvg", withEps.peFwd === 26.8, String(withEps.peFwd));
+  check("ein TTM hat kein EPS YoY und kein PEG", withEps.epsYoy == null && withEps.peg == null);
+  check("Forward-PEG kommt aus epsAvg gegen das TTM", withEps.pegFwd === 1.97 && withEps.pegFwdKind === "formula", String(withEps.pegFwd));
+
+  const quoteEps = valuationFromIndexSources({
+    indexPrice: closeFromQuote({ ...documentedQuote, eps: 220 }, "2026-10-02"),
+    etfPrice: 670,
+    quote: { ...documentedQuote, eps: 220 },
+    keyMetricsTtmRow: null,
+    estimateRows: [],
+    sectorPeRow: null,
+    asOf: "2026-10-02",
+    allowForward: true,
+  });
+  check("Quote-eps derselben Zeile ergibt PE, Quote-pe nicht", quoteEps.pe === 30.45 && quoteEps.peFwd == null, String(quoteEps.pe));
+
+  const spyInfo = {
+    symbol: "SPY",
+    name: "SPDR S&P 500 ETF Trust",
+    expenseRatio: 0.000945,
+    assetsUnderManagement: 500000000000,
+    nav: 670,
+    navCurrency: "USD",
+    holdingsCount: 503,
+  };
+  check("ETF-Info NAV ist kein EPS", etfInfoHasShareEps(spyInfo) === false);
+  const ashrNotes = etfValuationNotes("ASHR", null, { symbol: "ASHR", expenseRatio: 0.0065, nav: 28, holdingsCount: 300 });
+  check("ASHR nennt etf/info und den ETF-Kurs", ashrNotes.some((n) => n.includes("etf/info?symbol=ASHR ohne EPS")) && ashrNotes.some((n) => n.includes("quote?symbol=ASHR ist ETF-Kurs")), ashrNotes.join(" | "));
+  const vgkNotes = etfValuationNotes("VGK", "FEZ", spyInfo);
+  check("VGK nennt FEZ als ETF, nicht als Index", vgkNotes.some((n) => n.includes("quote?symbol=FEZ ist ETF-Kurs")) && !vgkNotes.some((n) => n.includes("^")), vgkNotes.join(" | "));
+  const gap = assembleValuationMissing({
+    chartEtf: "SPY",
+    chosenSymbol: "^GSPC",
+    valuationLabel: "Index ^GSPC",
+    pe: null,
+    peFwd: null,
+    epsYoy: null,
+    peg: null,
+    pegFwd: null,
+    gCons: null,
+    allowForward: true,
+    etfNotes: [],
+    fallbackNotes: emptyNotes,
+    priceNote: null,
+    extraNotes: [],
+    fwdNote: "GET /stable/analyst-estimates?symbol=^GSPC&period=annual leer",
+  });
+  check("SPY-Lücke nennt ^GSPC-Quote und key-metrics-ttm, nicht die ETF-GuV", gap != null && gap.includes("Formel auf ^GSPC") && gap.includes("key-metrics-ttm") && !gap.includes("income-statement?symbol=SPY"), gap ?? "");
 }
 
 console.log("\n=== xlsx unzip ===");
