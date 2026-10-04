@@ -22,8 +22,10 @@ import { registerLiquidityRoute } from "../server/researcher-liquidity-route";
 import { buildLiquidityIndex } from "../server/liquidity-index";
 import {
   applyCapexRest,
+  bojJgbUrl,
   fetchRegionalStockInputs,
   fiscalRestFromCache,
+  fiscalRestGap,
   parseEurostatJson,
   parseMarketableTotal,
   spelledFredIds,
@@ -323,6 +325,13 @@ const jpFallback = stocksFromSeries("ASIA", {
 ok("stale JP monthly CPI falls back to the annual percent", jpFallback.realRate != null && Math.abs(jpFallback.realRate - (2.94 - 3) / 100) < 1e-12, String(jpFallback.realRate));
 ok("JP V is NGDP / M2 without a second annualization", jpRow.velocity === 1.2, String(jpRow.velocity));
 ok("JP debt level stays off the score inputs", jpRow.debtGdpPct === 250 && jpRow.fiscalTrend == null);
+const jpBonds = stocksFromSeries("ASIA", {
+  BOJ_JGB: [{ date: "2026-08-01", value: 500 }],
+  JPNNGDP: [{ date: "2026-04-01", value: 600 }],
+}, NOW);
+ok("JP bond market is ordinary government securities over annual NGDP",
+  jpBonds.bondMarketBn === 500 && jpBonds.bondMarketGdpPct != null && Math.abs(jpBonds.bondMarketGdpPct - (500 / 600) * 100) < 1e-9,
+  JSON.stringify(jpBonds));
 
 const eurostat = parseEurostatJson(JSON.stringify({
   value: { "0": 87.4, "1": 88.6 },
@@ -330,7 +339,13 @@ const eurostat = parseEurostatJson(JSON.stringify({
 }));
 ok("Eurostat JSON keeps quarter starts", eurostat[1]?.date === "2026-01-01" && eurostat[1]?.value === 88.6, JSON.stringify(eurostat));
 
-ok("capex prose budgets are not F", fiscalRestFromCache({ programmes: [{ amountUSD: "$369B" }] }).fiscalRestBn == null);
+const proseCache = {
+  programmes: [{ amountUSD: "$369B", timeline: "2022-2032" }],
+  totalCapexEstimate: "about $3-4T",
+};
+ok("capex prose budgets are not F", fiscalRestFromCache(proseCache).fiscalRestBn == null);
+ok("capex text explains the missing rest", fiscalRestGap(proseCache) === "capex cache stores budget text, not fiscalRestBn");
+ok("a numeric rest clears the gap", fiscalRestGap({ fiscalRestBn: 40, tMidYears: 0 }) == null);
 ok("numeric capex rest is F", fiscalRestFromCache({ fiscalRestBn: 40, tMidYears: 0 }).fiscalRestBn === 40
   && fiscalRestFromCache({ fiscalRestBn: 40, tMidYears: 0 }).tMidYears === 0);
 const withRest = applyCapexRest(
@@ -417,6 +432,9 @@ const asiaFetched = await fetchRegionalStockInputs("ASIA", {
     if (url.includes("id=IRLTLT01JPM156N")) return fredCsv([["2026-09-01", "4"]]);
     if (url.includes("id=JPNCPIALLMINMEI")) return fredCsv([["2025-09-01", "100"], ["2026-09-01", "102"]]);
     if (url.includes("id=JPNNGDP")) return fredCsv([["2026-04-01", "600"]]);
+    if (url.includes("code=SMBIT1OG")) {
+      return "SMBIT1OG,Ordinary Government Securities,100 million yen,MONTHLY,FM05,20260908,202608,5000";
+    }
     if (url.includes("stat-search.boj.or.jp")) {
       return [
         "MAM1NAM2M2MO,M2,100 million yen,MONTHLY,Money Stock,20260909,202604,5000",
@@ -427,12 +445,15 @@ const asiaFetched = await fetchRegionalStockInputs("ASIA", {
     return null;
   },
 });
-ok("ASIA fetch asks for debt, JGB10, CPI, NGDP and BoJ M2",
+ok("ASIA fetch asks for debt, JGB10, CPI, NGDP, BoJ M2 and JGB outstanding",
   ["GGGDTAJPA188N", "IRLTLT01JPM156N", "JPNCPIALLMINMEI", "FPCPITOTLZGJPN", "JPNNGDP"].every(id => asiaUrls.some(u => u.includes(`id=${id}`)))
-  && asiaUrls.some(u => u.includes("stat-search.boj.or.jp"))
+  && asiaUrls.some(u => u.includes("stat-search.boj.or.jp") && u.includes("db=MD02"))
+  && asiaUrls.some(u => u === bojJgbUrl(NOW))
   && asiaUrls.every(u => !DEAD_FRED_SERIES.some(id => u.includes(id))));
-ok("ASIA fetch maps debt, r and V",
-  asiaFetched.debtGdpPct === 239.971 && asiaFetched.realRate === 0.02 && asiaFetched.velocity === 1.2,
+ok("ASIA fetch maps debt, r, V and JGB outstanding",
+  asiaFetched.debtGdpPct === 239.971 && asiaFetched.realRate === 0.02 && asiaFetched.velocity === 1.2
+  && asiaFetched.bondMarketBn === 500 && asiaFetched.bondMarketGdpPct != null
+  && Math.abs(asiaFetched.bondMarketGdpPct - (500 / 600) * 100) < 1e-9,
   JSON.stringify(asiaFetched));
 
 const walcl = monthly(H_MIN + 8, 100, 140);

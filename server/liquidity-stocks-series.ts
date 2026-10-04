@@ -7,7 +7,9 @@
  * The FRED mirror GGGDTPEZA188N stops in 2016, so it is only a fallback.
  * EZ HICP is Eurostat CP00 annual rate (the spec's CP HP). EZ velocity is
  * NGDP/M3 and JP velocity is NGDP/M2, same parsers as the briefing.
- * Capex prose budgets are not parsed into F.
+ * JP bond outstanding is BoJ FM05 SMBIT1OG (ordinary government securities).
+ * Capex prose budgets are not parsed into F. researcher.ts stores amountUSD
+ * and totalCapexEstimate as text, so fiscalRestBn stays absent.
  */
 import { diskResearcherGet } from "./disk-cache";
 import type { Region } from "./liquidity-index-catalog";
@@ -15,6 +17,7 @@ import { BOJ_M2_CODE, ECB_M3_KEY, ECB_NGDP_KEY } from "./liquidity-briefing";
 import {
   bojHundredMillionYenToBillion,
   parseBojMoneyStock,
+  parseBojSeries,
   parseEcbCsv,
   quarterVelocity,
 } from "./liquidity-briefing-math";
@@ -81,6 +84,16 @@ export function bojM2Url(now: Date): string {
   return `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_CODE}&startDate=${compact}`;
 }
 
+/** Ordinary government securities outstanding. Unit on the wire is 100 million yen. */
+export const BOJ_JGB_CODE = "SMBIT1OG";
+
+export function bojJgbUrl(now: Date): string {
+  const start = new Date(now.getTime());
+  start.setUTCFullYear(start.getUTCFullYear() - 12);
+  const compact = start.toISOString().slice(0, 7).replace("-", "");
+  return `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=FM05&code=${BOJ_JGB_CODE}&startDate=${compact}`;
+}
+
 export function fiscalRestFromCache(raw: unknown): { fiscalRestBn: number | null; tMidYears: number | null } {
   if (!raw || typeof raw !== "object") return { fiscalRestBn: null, tMidYears: null };
   const row = raw as Record<string, unknown>;
@@ -88,6 +101,24 @@ export function fiscalRestFromCache(raw: unknown): { fiscalRestBn: number | null
     fiscalRestBn: finiteNonNegative(row.fiscalRestBn),
     tMidYears: finiteNonNegative(row.tMidYears),
   };
+}
+
+/**
+ * Why π has no F. The capex writer stores programme budgets and
+ * totalCapexEstimate as strings. Those strings are not read as numbers.
+ * Returns null only when a numeric fiscalRestBn is already present.
+ */
+export function fiscalRestGap(raw: unknown): string | null {
+  if (fiscalRestFromCache(raw).fiscalRestBn != null) return null;
+  if (!raw || typeof raw !== "object") return "capex cache missing";
+  const row = raw as Record<string, unknown>;
+  const programmes = Array.isArray(row.programmes) ? row.programmes : [];
+  const hasBudgetText = programmes.some(item => {
+    if (!item || typeof item !== "object") return false;
+    return typeof (item as { amountUSD?: unknown }).amountUSD === "string";
+  }) || typeof row.totalCapexEstimate === "string";
+  if (hasBudgetText) return "capex cache stores budget text, not fiscalRestBn";
+  return "capex cache has no numeric fiscalRestBn";
 }
 
 function finiteNonNegative(value: unknown): number | null {
@@ -444,6 +475,13 @@ function fillAsia(input: StockInputs, series: Record<string, Obs[] | undefined>,
   }
   if (cpiYoy.length) input.cpiYoY = cpiYoy[cpiYoy.length - 1].value;
   if (m2.length) input.moneyStockBn = m2[m2.length - 1].value;
+
+  const bond = latest(series.BOJ_JGB, now);
+  const ngdpLevel = ngdp.length ? ngdp[ngdp.length - 1].value : null;
+  if (bond != null) {
+    input.bondMarketBn = bond;
+    if (ngdpLevel != null && ngdpLevel !== 0) input.bondMarketGdpPct = (bond / ngdpLevel) * 100;
+  }
 }
 
 export function parseFredLevels(csv: string): Obs[] {
@@ -564,14 +602,26 @@ export async function fetchRegionalStockInputs(
     series.ECB_NGDP = ngdp;
   }
   if (region === "ASIA") {
-    series.BOJ_M2 = await loadPoints(region, "BOJ_M2", now, opts, async () => {
-      const text = await fetchText(bojM2Url(now));
-      if (!text) return [];
-      return parseBojMoneyStock(text).flatMap(row => {
-        const date = periodToIso(row.period);
-        return date ? [{ date, value: bojHundredMillionYenToBillion(row.value) }] : [];
-      });
-    });
+    const [m2, jgb] = await Promise.all([
+      loadPoints(region, "BOJ_M2", now, opts, async () => {
+        const text = await fetchText(bojM2Url(now));
+        if (!text) return [];
+        return parseBojMoneyStock(text).flatMap(row => {
+          const date = periodToIso(row.period);
+          return date ? [{ date, value: bojHundredMillionYenToBillion(row.value) }] : [];
+        });
+      }),
+      loadPoints(region, "BOJ_JGB", now, opts, async () => {
+        const text = await fetchText(bojJgbUrl(now));
+        if (!text) return [];
+        return parseBojSeries(text, BOJ_JGB_CODE).flatMap(row => {
+          const date = periodToIso(row.period);
+          return date ? [{ date, value: bojHundredMillionYenToBillion(row.value) }] : [];
+        });
+      }),
+    ]);
+    series.BOJ_M2 = m2;
+    series.BOJ_JGB = jgb;
   }
   const rest = (opts.readFiscalRest ?? defaultFiscalRest)(region);
   return applyCapexRest(stocksFromSeries(region, series, now), rest);
