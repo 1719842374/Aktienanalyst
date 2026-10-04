@@ -541,6 +541,88 @@ export function valuationLabelFor(inst: ValuationInstrument, chartEtf: string): 
   return `ETF ${inst.symbol}`;
 }
 
+function barOnOrBefore(row: unknown, asOf: string): { date: string; close: number } | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as Record<string, unknown>;
+  const date = String(r.date ?? r.Date ?? "").slice(0, 10);
+  const close = finiteNum(r.close) ?? finiteNum(r.adjClose) ?? finiteNum(r.price);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > asOf || close == null || !(close > 0)) return null;
+  return { date, close };
+}
+
+/** Last positive close/adjClose/price on or before asOf. A later session is ignored. */
+export function closeFromPriceRows(rows: unknown[], asOf: string): number | null {
+  const bars = (Array.isArray(rows) ? rows : [])
+    .map((row) => barOnOrBefore(row, asOf))
+    .filter((x): x is { date: string; close: number } => x != null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return bars.length ? bars[bars.length - 1].close : null;
+}
+
+/** Quote `price` for the same symbol. A dated quote after asOf is not that session. */
+export function closeFromQuote(quote: unknown, asOf: string): number | null {
+  if (!quote || typeof quote !== "object") return null;
+  const r = quote as Record<string, unknown>;
+  const price = finiteNum(r.price);
+  if (price == null || !(price > 0)) return null;
+  let date = String(r.date ?? "").slice(0, 10);
+  const ts = finiteNum(r.timestamp);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) && ts != null) {
+    const ms = ts > 1e12 ? ts : ts * 1000;
+    date = new Date(ms).toISOString().slice(0, 10);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date) && date > asOf) return null;
+  return price;
+}
+
+export interface ValuationGapInput {
+  chartEtf: string;
+  chosenSymbol: string;
+  valuationLabel: string;
+  pe: number | null;
+  peFwd: number | null;
+  epsYoy: number | null;
+  peg: number | null;
+  pegFwd: number | null;
+  gCons: number | null;
+  allowForward: boolean;
+  etfNotes: string[];
+  /** Null when no fallback was loaded. Empty calls still belong in the line. */
+  fallbackNotes: string[] | null;
+  priceNote: string | null;
+  extraNotes: string[];
+  fwdNote: string | null;
+}
+
+/** Names every empty same-unit call, including a fallback that could not form a PE. */
+export function assembleValuationMissing(input: ValuationGapInput): string | null {
+  const usedFallback = input.valuationLabel !== "ETF-Proxy";
+  const sourceNotes = usedFallback
+    ? (input.fallbackNotes ?? [])
+    : [...input.etfNotes, ...(input.fallbackNotes ?? [])];
+  const gaps: string[] = [];
+  if (usedFallback) {
+    gaps.push(`Formel auf ${input.chosenSymbol} (Kurs und EPS), nicht auf ${input.chartEtf}`);
+  }
+  if (input.pe == null) {
+    const why = [...sourceNotes, ...input.extraNotes, input.priceNote].filter((x): x is string => Boolean(x));
+    gaps.push(why.length ? `PE n/a: ${why.join("; ")}` : "PE n/a: kein Kurs und EPS derselben Einheit");
+  }
+  if (input.epsYoy == null && input.pe != null) {
+    gaps.push("EPS YoY n/a: weniger als 8 Quartalsdrucke derselben Einheit");
+  } else if (input.epsYoy == null && sourceNotes.length) {
+    gaps.push(`EPS YoY n/a: ${sourceNotes.join("; ")}`);
+  }
+  if (input.allowForward && input.peFwd == null && input.fwdNote) gaps.push(`fwd n/a: ${input.fwdNote}`);
+  if (input.allowForward && input.peg == null && input.epsYoy != null && input.epsYoy <= 0) {
+    gaps.push("PEG n/a: g<=0");
+  }
+  if (input.allowForward && input.pegFwd == null && input.gCons != null && input.gCons <= 0) {
+    gaps.push("PEG fwd n/a: g<=0");
+  }
+  return gaps.length ? gaps.join(" · ") : null;
+}
+
 export interface MarginPoint {
   date: string;
   debitMillions: number;

@@ -11,6 +11,7 @@ import {
   fmpHistoricalPrices,
   fmpIncomeStatementQuarterly,
   fmpKeyMetrics,
+  fmpQuote,
   fmpRatiosQuarterly,
   fmpRatiosTtm,
   isFmpAvailable,
@@ -22,8 +23,11 @@ import {
   SERIES_FLOOR,
   VOL_Y_MAX,
   addDaysIso,
+  assembleValuationMissing,
   chartBarSchema,
   chartBookById,
+  closeFromPriceRows,
+  closeFromQuote,
   factpackSchema,
   epsPrintFromEarningsRow,
   epsPrintFromRatioQuarter,
@@ -54,6 +58,8 @@ import {
   type VolPoint,
 } from "../shared/recession-market-charts";
 
+/** v3 cached the empty ETF-Proxy line. A deploy must miss that entry. */
+export const MARKETS_CHART_CACHE_VERSION = "v4";
 const TTL_MS = 6 * 60 * 60 * 1000;
 const FINRA_XLSX_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
 
@@ -335,18 +341,30 @@ function instrumentFrom(
   };
 }
 
-async function closeOnOrBefore(symbol: string, asOf: string): Promise<number | null> {
+async function fallbackPrice(
+  symbol: string,
+  asOf: string,
+  allowForward: boolean,
+): Promise<{ price: number | null; note: string | null }> {
   const from = addDaysIso(asOf, -21);
+  const call = `GET /stable/historical-price-eod/full?symbol=${symbol}`;
+  let note = `${call} ohne Kurs am ${asOf}`;
   try {
     const raw = await fmpHistoricalPrices(symbol, from, asOf);
-    const bars = (Array.isArray(raw) ? raw : [])
-      .map(parseBar)
-      .filter((x): x is RawBar => x != null && x.date <= asOf)
-      .sort((a, b) => a.date.localeCompare(b.date));
-    return bars.length ? bars[bars.length - 1].close : null;
+    const close = closeFromPriceRows(Array.isArray(raw) ? raw : [], asOf);
+    if (close != null) return { price: close, note: null };
   } catch {
-    return null;
+    note = `${call} fehlgeschlagen`;
   }
+  if (allowForward) {
+    try {
+      const quoted = closeFromQuote(await fmpQuote(symbol), asOf);
+      if (quoted != null) return { price: quoted, note: null };
+    } catch {
+      /* quote is a second read of the same symbol */
+    }
+  }
+  return { price: null, note };
 }
 
 function rowsFor(inst: ValuationInstrument, allowForward: boolean) {
@@ -374,13 +392,12 @@ async function loadValuation(
   let fallback: ValuationInstrument | null = null;
   let fallbackSources: PrintSources | null = null;
   const priceNotes: string[] = [];
+  let priceNote: string | null = null;
   if (!instrumentCanPriceEps(etfInst) && book.indexFallback) {
     fallbackSources = await loadPrintSources(book.indexFallback);
-    const price = await closeOnOrBefore(book.indexFallback, bar.date);
-    if (price == null) {
-      priceNotes.push(`GET /stable/historical-price-eod/full?symbol=${book.indexFallback} ohne Kurs am ${bar.date}`);
-    }
-    fallback = instrumentFrom(book.indexFallback, "fallback", price, fallbackSources, allowForward);
+    const priced = await fallbackPrice(book.indexFallback, bar.date, allowForward);
+    priceNote = priced.note;
+    fallback = instrumentFrom(book.indexFallback, "fallback", priced.price, fallbackSources, allowForward);
   }
 
   const chosen = pickValuationInstrument(etfInst, fallback);
@@ -411,28 +428,24 @@ async function loadValuation(
 
   const core = valuationFromFmpRows({ ...rowsFor(chosen, allowForward), asOf: bar.date });
   const valuationLabel = valuationLabelFor(chosen, book.etf);
-  const sourceNotes = (chosen.symbol === book.etf ? etfSources.notes : fallbackSources?.notes ?? etfSources.notes);
-  const gaps: string[] = [];
-  if (valuationLabel !== "ETF-Proxy") {
-    gaps.push(`Formel auf ${chosen.symbol} (Kurs und EPS), nicht auf ${book.etf}`);
-  }
-  if (core.pe == null) {
-    const why = [...sourceNotes, ...priceNotes].filter(Boolean);
-    gaps.push(why.length ? `PE n/a: ${why.join("; ")}` : "PE n/a: kein Kurs und EPS derselben Einheit");
-  }
-  if (core.epsYoy == null && core.pe != null) {
-    gaps.push("EPS YoY n/a: weniger als 8 Quartalsdrucke derselben Einheit");
-  } else if (core.epsYoy == null && sourceNotes.length) {
-    gaps.push(`EPS YoY n/a: ${sourceNotes.join("; ")}`);
-  }
-  if (allowForward && core.peFwd == null && fwdNote) gaps.push(`fwd n/a: ${fwdNote}`);
-  if (allowForward && core.peg == null && core.epsYoy != null && core.epsYoy <= 0) {
-    gaps.push("PEG n/a: g<=0");
-  }
-  if (allowForward && core.pegFwd == null && core.gCons != null && core.gCons <= 0) {
-    gaps.push("PEG fwd n/a: g<=0");
-  }
-  return { core, missing: gaps.length ? gaps.join(" · ") : null, valuationLabel };
+  const missing = assembleValuationMissing({
+    chartEtf: book.etf,
+    chosenSymbol: chosen.symbol,
+    valuationLabel,
+    pe: core.pe,
+    peFwd: core.peFwd,
+    epsYoy: core.epsYoy,
+    peg: core.peg,
+    pegFwd: core.pegFwd,
+    gCons: core.gCons,
+    allowForward,
+    etfNotes: etfSources.notes,
+    fallbackNotes: fallbackSources ? fallbackSources.notes : null,
+    priceNote,
+    extraNotes: priceNotes,
+    fwdNote,
+  });
+  return { core, missing, valuationLabel };
 }
 
 export async function buildChartMarket(
@@ -636,7 +649,7 @@ export async function tryHandleRecessionMarketCharts(req: Request, res: Response
       res.status(400).json({ error: "etf muss SPY, QQQ, VGK oder ASHR sein" });
       return true;
     }
-    const key = `v3:${window}:${etf}:${date}`;
+    const key = `${MARKETS_CHART_CACHE_VERSION}:${window}:${etf}:${date}`;
     const cached = cacheGet(factpackCache, key);
     if (cached) {
       res.json(cached);
@@ -658,7 +671,7 @@ export async function tryHandleRecessionMarketCharts(req: Request, res: Response
     return true;
   }
 
-  const key = `v3:${window}`;
+  const key = `${MARKETS_CHART_CACHE_VERSION}:${window}`;
   const cached = cacheGet(bundleCache, key);
   if (cached) {
     res.json(cached);

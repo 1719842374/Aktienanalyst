@@ -20,6 +20,10 @@ import {
   peFromMetricsRow,
   pegDisplaySuffix,
   pegFromPeAndGrowth,
+  assembleValuationMissing,
+  closeFromPriceRows,
+  closeFromQuote,
+  instrumentCanPriceEps,
   pickValuationInstrument,
   valuationLabelFor,
   realizedVol20,
@@ -29,7 +33,7 @@ import {
   valuationFromParts,
   volBandLabel,
 } from "../shared/recession-market-charts";
-import { unzipEntry } from "../server/recession-market-charts";
+import { MARKETS_CHART_CACHE_VERSION, unzipEntry } from "../server/recession-market-charts";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail?: string) {
@@ -413,6 +417,192 @@ console.log("\n=== Gleiche Einheit, ehrliches Label ===");
     })),
   };
   check("Income-Nullen sind kein Share-EPS", pickValuationInstrument(zeroEtf, index).symbol === "^GSPC");
+}
+
+const SPY_EARNINGS_NOTE = "GET /stable/earnings?symbol=SPY hat 1 EPS-Drucke, TTM braucht 4";
+const SPY_EMPTY_NOTES = [
+  "GET /stable/income-statement?symbol=SPY&period=quarter leer",
+  SPY_EARNINGS_NOTE,
+  "GET /stable/ratios?symbol=SPY&period=quarter leer",
+  "GET /stable/ratios-ttm?symbol=SPY leer",
+];
+const GSPC_EMPTY_NOTES = [
+  "GET /stable/income-statement?symbol=^GSPC&period=quarter leer",
+  "GET /stable/earnings?symbol=^GSPC leer",
+  "GET /stable/ratios?symbol=^GSPC&period=quarter leer",
+  "GET /stable/ratios-ttm?symbol=^GSPC leer",
+];
+
+function blankInstrument(symbol: string, role: "etf" | "fallback", price: number | null) {
+  return {
+    symbol,
+    role,
+    price,
+    incomeRows: [] as unknown[],
+    earningsRows: [] as unknown[],
+    ratioQuarterRows: [] as unknown[],
+    ratiosTtmRow: null,
+    vendorRatiosRow: null,
+    keyMetricsRow: null,
+    estimateRows: [] as unknown[],
+  };
+}
+
+console.log("\n=== Live-Payloads 2026-10-02 ===");
+{
+  check("Cache-Key ist nicht mehr v3", MARKETS_CHART_CACHE_VERSION === "v4", MARKETS_CHART_CACHE_VERSION);
+  const prior = closeFromPriceRows(
+    [{ date: "2026-10-03", close: 99999 }, { date: "2026-10-01", price: 6700 }],
+    "2026-10-02",
+  );
+  check("^NDX-Kurs vom Vortag zählt, der Folgetag nicht", prior === 6700, String(prior));
+  check("Indexzeile nur mit price-Feld", closeFromPriceRows([{ date: "2026-10-02", price: 20000 }], "2026-10-02") === 20000);
+  check("Kurs nach dem ETF-Tag bleibt draußen", closeFromPriceRows([{ date: "2026-10-03", close: 1 }], "2026-10-02") == null);
+  check("Quote-Preis am selben Tag", closeFromQuote({ price: 20100, timestamp: Date.parse("2026-10-02T20:00:00Z") / 1000 }, "2026-10-02") === 20100);
+  check("Quote nach dem ETF-Tag bleibt draußen", closeFromQuote({ price: 20100, date: "2026-10-03" }, "2026-10-02") == null);
+
+  const spyOne = {
+    ...blankInstrument("SPY", "etf", 670),
+    earningsRows: [{ date: "2026-09-30", epsActual: 1.84, epsEstimated: null }],
+  };
+  check("ein Earnings-Druck ist kein TTM", instrumentCanPriceEps(spyOne) === false);
+  const gspcPrice = closeFromPriceRows([{ date: "2026-10-01", price: 6700 }], "2026-10-02");
+  const gspc = {
+    ...blankInstrument("^GSPC", "fallback", gspcPrice),
+    ratioQuarterRows: quartersOf("^GSPC", 55),
+  };
+  const spyChosen = pickValuationInstrument(spyOne, gspc);
+  check("SPY mit einem Druck nimmt ^GSPC", spyChosen.symbol === "^GSPC" && spyChosen.price === 6700);
+  check("SPY-Fallback heißt nicht ETF-Proxy", valuationLabelFor(spyChosen, "SPY") === "Index ^GSPC");
+  const spyPe = valuationFromFmpRows({
+    price: spyChosen.price,
+    asOf: "2026-10-02",
+    allowForward: false,
+    incomeRows: [],
+    earningsRows: [],
+    ratioQuarterRows: spyChosen.ratioQuarterRows,
+    ratiosRow: { priceToEarningsRatio: 27.4 },
+    keyMetricsRow: null,
+    estimateRows: [],
+  });
+  check("PE ist ^GSPC-Kurs / ^GSPC-EPS", spyPe.pe === 30.45, String(spyPe.pe));
+
+  const spyGap = assembleValuationMissing({
+    chartEtf: "SPY",
+    chosenSymbol: "SPY",
+    valuationLabel: "ETF-Proxy",
+    pe: null,
+    peFwd: null,
+    epsYoy: null,
+    peg: null,
+    pegFwd: null,
+    gCons: null,
+    allowForward: true,
+    etfNotes: SPY_EMPTY_NOTES,
+    fallbackNotes: GSPC_EMPTY_NOTES,
+    priceNote: null,
+    extraNotes: ["GET /stable/key-metrics?symbol=SPY leer"],
+    fwdNote: "GET /stable/analyst-estimates?symbol=SPY&period=annual leer",
+  });
+  check("leeres ^GSPC bleibt in der SPY-Lücke", spyGap != null && spyGap.includes(SPY_EARNINGS_NOTE) && spyGap.includes("symbol=^GSPC"), spyGap ?? "");
+
+  const qqq = {
+    ...blankInstrument("QQQ", "etf", 500),
+    earningsRows: [{ date: "2026-09-30", epsActual: null, epsEstimated: 3.2 }],
+  };
+  const ndxPrice = closeFromPriceRows([{ date: "2026-10-02", price: 20000 }], "2026-10-02");
+  const ndx = {
+    ...blankInstrument("^NDX", "fallback", ndxPrice),
+    incomeRows: [40, 40, 40, 40, 50, 50, 50, 50].map((eps, i) => ({
+      date: `202${i < 4 ? 3 : 4}-${String(((i % 4) * 3) + 3).padStart(2, "0")}-28`,
+      epsDiluted: eps,
+    })),
+  };
+  const qqqChosen = pickValuationInstrument(qqq, ndx);
+  check("QQQ ohne epsActual nimmt ^NDX", qqqChosen.symbol === "^NDX" && valuationLabelFor(qqqChosen, "QQQ") === "Index ^NDX");
+  const qqqPe = valuationFromFmpRows({
+    price: qqqChosen.price,
+    asOf: "2026-10-02",
+    allowForward: true,
+    incomeRows: qqqChosen.incomeRows,
+    earningsRows: [],
+    ratiosRow: null,
+    keyMetricsRow: null,
+    estimateRows: [{ date: "2027-09-30", epsAvg: 220 }],
+  });
+  check("QQQ-Fallback PE ist eine Zahl", qqqPe.pe === 100 && qqqPe.peFwd === 90.91, `pe=${qqqPe.pe} fwd=${qqqPe.peFwd}`);
+
+  const qqqEmpty = assembleValuationMissing({
+    chartEtf: "QQQ",
+    chosenSymbol: "QQQ",
+    valuationLabel: "ETF-Proxy",
+    pe: null,
+    peFwd: null,
+    epsYoy: null,
+    peg: null,
+    pegFwd: null,
+    gCons: null,
+    allowForward: true,
+    etfNotes: [
+      "GET /stable/income-statement?symbol=QQQ&period=quarter leer",
+      "GET /stable/earnings?symbol=QQQ ohne epsActual",
+      "GET /stable/ratios?symbol=QQQ&period=quarter leer",
+      "GET /stable/ratios-ttm?symbol=QQQ leer",
+    ],
+    fallbackNotes: [
+      "GET /stable/income-statement?symbol=^NDX&period=quarter leer",
+      "GET /stable/earnings?symbol=^NDX leer",
+      "GET /stable/ratios?symbol=^NDX&period=quarter leer",
+      "GET /stable/ratios-ttm?symbol=^NDX leer",
+    ],
+    priceNote: "GET /stable/historical-price-eod/full?symbol=^NDX ohne Kurs am 2026-10-02",
+    extraNotes: ["GET /stable/key-metrics?symbol=QQQ leer"],
+    fwdNote: "GET /stable/analyst-estimates?symbol=QQQ&period=annual leer",
+  });
+  check("QQQ ohne Kurs nennt ^NDX", qqqEmpty != null && qqqEmpty.includes("ohne Kurs am 2026-10-02") && qqqEmpty.includes("ohne epsActual"), qqqEmpty ?? "");
+
+  const vgk = blankInstrument("VGK", "etf", 70);
+  const fezLive = {
+    ...blankInstrument("FEZ", "fallback", 52),
+    ratioQuarterRows: quartersOf("FEZ", 1.1),
+  };
+  const vgkChosen = pickValuationInstrument(vgk, fezLive);
+  const vgkPe = valuationFromFmpRows({
+    price: vgkChosen.price,
+    asOf: "2026-10-02",
+    allowForward: false,
+    incomeRows: [],
+    earningsRows: [],
+    ratioQuarterRows: vgkChosen.ratioQuarterRows,
+    ratiosRow: null,
+    keyMetricsRow: null,
+    estimateRows: [],
+  });
+  check("VGK-Preis wird nicht durch FEZ-EPS geteilt", valuationLabelFor(vgkChosen, "VGK") === "ETF FEZ" && vgkPe.pe === 11.82, String(vgkPe.pe));
+
+  const ashrGap = assembleValuationMissing({
+    chartEtf: "ASHR",
+    chosenSymbol: "ASHR",
+    valuationLabel: "ETF-Proxy",
+    pe: null,
+    peFwd: null,
+    epsYoy: null,
+    peg: null,
+    pegFwd: null,
+    gCons: null,
+    allowForward: true,
+    etfNotes: [
+      "GET /stable/income-statement?symbol=ASHR&period=quarter leer",
+      "GET /stable/earnings?symbol=ASHR leer",
+      "GET /stable/ratios?symbol=ASHR&period=quarter leer",
+      "GET /stable/ratios-ttm?symbol=ASHR leer",
+    ],
+    fallbackNotes: null,
+    priceNote: null,
+    extraNotes: ["GET /stable/key-metrics?symbol=ASHR leer"],
+    fwdNote: "GET /stable/analyst-estimates?symbol=ASHR&period=annual leer",
+  });
+  check("ASHR bleibt n/a ohne Index", ashrGap != null && ashrGap.includes("symbol=ASHR") && !ashrGap.includes("^"), ashrGap ?? "");
 }
 
 console.log("\n=== xlsx unzip ===");
