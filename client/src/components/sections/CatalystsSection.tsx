@@ -2,6 +2,7 @@ import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { formatNumber, formatCurrency } from "../../lib/formatters";
 import { calculateFCFFDCF, buildDefaultDCFParams, selectCatalystBase } from "../../lib/calculations";
+import { buildBiasDecision, isNegativeCatalyst, sumUpsideGb } from "../../../../shared/bias-fixes";
 import React from "react";
 import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, TrendingUp, Globe, AlertTriangle, Sparkles, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
@@ -52,6 +53,13 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
   const [llmEnrichedCatalysts, setLlmEnrichedCatalysts] = useState<any[] | null>(null);
 
   const catalysts = (llmEnrichedCatalysts ?? data.catalysts) as typeof data.catalysts;
+  const biasInput = useMemo(() => {
+    if (!llmEnrichedCatalysts) return data;
+    return { ...data, catalysts: llmEnrichedCatalysts, llmMode: true, catalystsSource: "llm" as const };
+  }, [data, llmEnrichedCatalysts]);
+  const bias = useMemo(() => buildBiasDecision(biasInput), [biasInput]);
+  const upsideCatalysts = catalysts.filter(c => !isNegativeCatalyst(c));
+  const downsideCatalysts = catalysts.filter(c => isNegativeCatalyst(c));
   const showGenericBanner = llmEnrichedCatalysts === null && hasGenericCatalysts(data.catalysts as any);
 
   async function triggerKI() {
@@ -109,8 +117,9 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
 
   // Smart Catalyst-Base-Selektor (Plausibilitäts-Gate — verhindert unsinnige
   // negative Catalyst-Targets bei Aktien mit verzerrt-niedrigem DCF)
-  const totalGB = catalysts.reduce((sum, c) => sum + c.gb, 0);
-  const _baseInfoS11 = selectCatalystBase(conservativeDCF.perShare, totalGB, data.currentPrice, data.analystPT.median);
+  const totalGB = sumUpsideGb(catalysts);
+  const decisionBase = Number.isFinite(bias.decisionPerShare) ? bias.decisionPerShare : conservativeDCF.perShare;
+  const _baseInfoS11 = selectCatalystBase(decisionBase, totalGB, data.currentPrice, data.analystPT.median);
   const catalystDCFBase = _baseInfoS11.base;
   const catalystBaseFallback = _baseInfoS11.source !== "dcf";
   const catalystAdjTarget = catalystDCFBase * (1 + totalGB / 100);
@@ -162,6 +171,14 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
           ⚠ {llmError}
         </div>
       )}
+
+      <div className="text-[11px] text-foreground/70 bg-muted/30 border border-border/50 rounded px-3 py-2" data-testid="catalyst-mode-label">
+        {bias.modeLabel}
+        {bias.switched
+          ? ` · Basis: ${bias.valuationBaseLabel} ${formatCurrency(bias.decisionPerShare)} · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare)}`
+          : ` · Basis: ${bias.valuationBaseLabel}`}
+        {downsideCatalysts.length > 0 ? ` · ${downsideCatalysts.length} ▼ aus der positiven GB-Summe ausgeschlossen` : ""}
+      </div>
 
       {showGenericBanner && !llmError && (
         <div className="text-[11px] text-amber-500 bg-amber-500/5 border border-amber-500/20 rounded px-3 py-2">
@@ -229,7 +246,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
             </tr>
           </thead>
           <tbody>
-            {catalysts.map((c, i) => {
+            {upsideCatalysts.map((c, i) => {
               const isExpanded = expandedRow === i;
               return (
                 <tr
@@ -435,7 +452,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
                 <div className="text-[9px] text-muted-foreground font-normal">(vor PoS-Gewichtung)</div>
               </td>
               <td className="py-2 pr-2 text-center font-mono tabular-nums font-bold text-emerald-500">
-                {formatNumber(catalysts.reduce((s, c) => s + c.nettoUpside, 0), 2)}%
+                {formatNumber(upsideCatalysts.reduce((s, c) => s + c.nettoUpside, 0), 2)}%
               </td>
               <td className="py-2 text-right">
                 <div className="font-mono tabular-nums font-bold text-emerald-500 text-sm">+{formatNumber(totalGB, 2)}</div>
@@ -446,7 +463,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
         </table>
         <div className="text-[9px] text-muted-foreground/60 mt-1 px-1">
           Σ Netto-Upside = Summe aller Katalysatoren vor PoS-Gewichtung (Zwischenwert, nicht Kursziel-Inkrement).
-          GB-Summe = Σ(Netto-Upside × PoS%) = tatsächlicher Kurszielbeitrag.
+          GB-Summe = Σ positiver Beiträge (Netto-Upside × PoS%). Katalysatoren mit ▼ oder negativer Richtung zählen 0.
         </div>
       </div>
 
@@ -467,7 +484,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
                   )}
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-0.5">
-                  = {catalystBaseFallback ? 'Analyst PT' : 'Kons. DCF'} × (1 + GB-Summe {formatNumber(totalGB, 2)}%)
+                  = {catalystBaseFallback ? 'Analyst PT' : bias.valuationBaseLabel} × (1 + positive GB {formatNumber(totalGB, 2)}%) · {bias.modeLabel}
                 </div>
                 {/* Analyst PT Upside vs. current price — shown when PT is the basis */}
                 {catalystBaseFallback && data.analystPT?.median > 0 && (() => {
@@ -515,7 +532,8 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
             </div>
             {catalystBaseFallback && (
               <div className="text-[10px] text-amber-500 bg-amber-500/5 rounded-md p-2 border border-amber-500/20">
-                ⚠ DCF-Basis zu niedrig ({formatCurrency(conservativeDCF.perShare)}), verwende Analyst PT Median als Basis
+                ⚠ DCF-Basis zu niedrig ({formatCurrency(decisionBase)}), verwende Analyst PT Median als Basis
+                {bias.switched ? ` · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare)}` : ""}
               </div>
             )}
           </>
@@ -552,6 +570,24 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
             </tbody>
           </table>
         </div>
+        {downsideCatalysts.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-[10px]">
+              <tbody>
+                {downsideCatalysts.map((c, i) => (
+                  <tr key={`down-${i}`} className="border-b border-border/30">
+                    <td className="py-1.5 pr-2 font-mono text-muted-foreground">▼</td>
+                    <td className="py-1.5 pr-2 font-medium">{c.name}</td>
+                    <td className="py-1.5 pr-2 text-center font-mono text-muted-foreground">{c.timeline}</td>
+                    <td className="py-1.5 pr-2 text-center font-mono text-amber-500">{c.pos}%</td>
+                    <td className="py-1.5 pr-2 text-right font-mono text-red-500">{formatNumber(c.bruttoUpside, 1)}%</td>
+                    <td className="py-1.5 text-right font-mono text-muted-foreground">GB Upside 0</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </SectionCard>
   );

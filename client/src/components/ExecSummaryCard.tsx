@@ -7,6 +7,7 @@ import { useMemo } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import type { StockAnalysis } from "../../../shared/schema";
 import { buildFazitSignal, prepareFazitMetrics } from "@/lib/fazit-signal";
+import { buildBiasDecision } from "../../../shared/bias-fixes";
 
 export type ExecSummaryView = {
   headline?: string;
@@ -22,6 +23,8 @@ export type ExecSummaryView = {
   thesisLine?: string;
   upsideLine?: string;
   riskLine?: string;
+  modeLine?: string;
+  redFlags?: string[];
 };
 
 export function ExecSummaryCard({ data }: {
@@ -32,6 +35,10 @@ export function ExecSummaryCard({ data }: {
   };
 }) {
   const s = data?.execSummary;
+
+  const bias = useMemo(() => {
+    try { return buildBiasDecision(data); } catch { return null; }
+  }, [data]);
 
   const fazit = useMemo(() => {
     if (!data) return null;
@@ -66,7 +73,7 @@ export function ExecSummaryCard({ data }: {
       <div className="space-y-3 text-sm" data-testid="exec-summary-card">
         <div className={`rounded-md border px-3 py-2 flex items-center justify-between gap-2 ${fazit.ratingBg}`}>
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Ampel (S17)</span>
-          <span className={`text-sm font-bold ${fazit.ratingColor}`} data-testid="exec-summary-ampel">{fazit.rating}</span>
+          <span className={`text-sm font-bold ${fazit.ratingColor}`} data-testid="exec-summary-ampel">{bias?.overallRating ?? fazit.rating}</span>
         </div>
 
         {s.headline && (
@@ -74,8 +81,27 @@ export function ExecSummaryCard({ data }: {
             {s.headline}
           </p>
         )}
-        {s.upsideLine && (
-          <p className="text-xs text-emerald-400/90 font-medium" data-testid="exec-summary-upside">{s.upsideLine}</p>
+        {(bias?.modeLabel || s.modeLine) && (
+          <p className="text-[11px] text-muted-foreground" data-testid="exec-summary-mode">{bias?.modeLabel ?? s.modeLine}</p>
+        )}
+        {bias?.narrative && bias.narrative.length > 0 && (
+          <div className="space-y-1" data-testid="exec-summary-bias">
+            {bias.narrative.map((line, i) => (
+              <p key={`bias-${i}`} className="text-xs text-foreground/85 leading-relaxed">{line}</p>
+            ))}
+          </div>
+        )}
+        {(bias?.redFlags?.length || s.redFlags?.length) ? (
+          <p className="text-xs text-red-400" data-testid="exec-summary-red-flags">
+            Red Flags: {(bias?.redFlags ?? s.redFlags ?? []).join(" · ")}
+          </p>
+        ) : null}
+        {(bias?.modeLabel || s.upsideLine) && (
+          <p className="text-xs text-emerald-400/90 font-medium" data-testid="exec-summary-upside">
+            {bias
+              ? `${bias.modeLabel} · Basis: ${bias.valuationBaseLabel} ${bias.decisionPerShare.toFixed(2)} · positive GB ${bias.positiveGbSum >= 0 ? "+" : ""}${bias.positiveGbSum.toFixed(1)}% · Upside ${bias.decisionUpsidePct >= 0 ? "+" : ""}${bias.decisionUpsidePct.toFixed(1)}%`
+              : s.upsideLine}
+          </p>
         )}
         {thesis ? (
           <div className="rounded-md border border-border/50 bg-muted/20 p-3" data-testid="exec-summary-thesis">

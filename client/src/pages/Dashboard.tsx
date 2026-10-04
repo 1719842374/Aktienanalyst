@@ -53,16 +53,17 @@ const SECTIONS = [
   { id: 16, label: "Reverse DCF", icon: RotateCcw },
   { id: 17, label: "Katalysatoren", icon: Zap },
   { id: 18, label: "Monte Carlo", icon: Dice6 },
-  { id: 19, label: "Zusammenfassung", icon: Table2 },
-  { id: 20, label: "Management-Score", icon: UserCheck },
+  { id: 19, label: "Management-Score", icon: UserCheck },
+  { id: 20, label: "Zusammenfassung", icon: Table2 },
 ];
 
 export default function Dashboard() {
   const { theme, toggleTheme } = useTheme();
   const [data, setData] = useState<StockAnalysis | null>(null);
-  // Canonical Monte Carlo run — computed once and shared by Section18 (display)
-  // and Section19 (summary) so both show identical figures instead of two
-  // independent random runs with divergent probabilities.
+  // Canonical Monte Carlo run — computed once and shared by Monte Carlo (18)
+  // and the Fazit so both show identical figures instead of two independent runs.
+  // Management-Score (19) steht vor der Zusammenfassung (20), damit der Score
+  // in die Ampel einfließen kann (WORK_BIAS_FIXES §13).
   const sharedMonteCarlo = useMemo<GBMMonteCarloResult | null>(() => {
     if (!data || !data.historicalPrices?.length) return null;
     const prices = data.historicalPrices.map(p => p.close);
@@ -553,7 +554,9 @@ export default function Dashboard() {
                   unmount the entire dashboard and leave the user with a black
                   screen. Without this, one bad field → whole app unmounts. */}
               <div ref={setSectionRef(1)}><ExecSummaryCard data={data} /></div>
-              <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} onThesisScore={(score) => {
+                setData(prev => prev && prev.thesisStrengthScore !== score ? { ...prev, thesisStrengthScore: score } : prev);
+              }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese"><Section2 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="Zyklusanalyse"><Section3 data={data} /></SectionErrorBoundary></div>
@@ -583,14 +586,18 @@ export default function Dashboard() {
                   // spezifisch aktualisiert wird.
                   setData(prev => prev ? {
                     ...prev, catalysts: enriched,
+                    llmMode: true,
+                    catalystsSource: "llm",
                     ...(growthThesis ? { growthThesis, growthThesisGeneratedAt: growthThesisGeneratedAt ?? prev.growthThesisGeneratedAt } : {}),
                     ...(execSummary ? { execSummary } : {}),
                   } : prev);
                 }}
               /></SectionErrorBoundary></div>
               <div ref={setSectionRef(18)}><SectionErrorBoundary sectionId={18} sectionLabel="Monte Carlo"><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(19)}><SectionErrorBoundary sectionId={19} sectionLabel="Zusammenfassung"><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Management-Score"><ManagementScoreSection data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(19)}><SectionErrorBoundary sectionId={19} sectionLabel="Management-Score"><ManagementScoreSection data={data} onScore={(score) => {
+                setData(prev => prev && prev.managementScore !== score ? { ...prev, managementScore: score } : prev);
+              }} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Zusammenfassung"><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></SectionErrorBoundary></div>
               <div className="pb-8" />
             </div>
           ) : (

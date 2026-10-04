@@ -7,9 +7,9 @@ import { formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } 
 import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus } from "lucide-react";
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 
-interface Props { data: StockAnalysis; onRefresh?: () => void }
+interface Props { data: StockAnalysis; onRefresh?: () => void; onThesisScore?: (score: number) => void }
 
-export function Section1({ data, onRefresh }: Props) {
+export function Section1({ data, onRefresh, onThesisScore }: Props) {
   const [, setLocation] = useLocation();
   const [flash, setFlash] = useState<string | null>(null);
 
@@ -255,7 +255,7 @@ export function Section1({ data, onRefresh }: Props) {
         </div>
       </div>
 
-      <ThesisStrengthPanel data={data} />
+      <ThesisStrengthPanel data={data} onScore={onThesisScore} />
     </SectionCard>
   );
 }

@@ -4,6 +4,7 @@
  * Flow: Analysis data → Claude generates structured HTML → Playwright renders to PDF
  */
 import { chromium } from 'playwright-core';
+import { sumUpsideGb } from '../shared/bias-fixes';
 
 // ===== Formatting helpers =====
 function f(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? v.toFixed(d) : "—"; }
@@ -38,7 +39,7 @@ function buildFazit(data: any) {
   const stressDCF = wS ? dcfCalc(data, wS.kons * 1.2, g * 0.3) : 0;
   const konsUpside = data.currentPrice ? (konsDCF / data.currentPrice - 1) * 100 : 0;
   const stressDown = data.currentPrice ? (stressDCF / data.currentPrice - 1) * 100 : 0;
-  const totalGB = data.catalysts?.reduce((s: number, c: any) => s + c.gb, 0) || 0;
+  const totalGB = sumUpsideGb(data.catalysts) || 0;
   const totalExpDmg = data.risks?.reduce((s: number, r: any) => s + (r.expectedDamage || 0), 0) || 0;
   const riskFactor = 1 - totalExpDmg / 100;
   const ddPct = parseFloat(String(data.maxDrawdownHistory)) || 30;

@@ -1648,7 +1648,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
 
       {/* Price Chart with MAs + BTC overlays */}
       <TaPlotScroll minWidth={plotMinWidth} testId="btc-ta-plot-scroll">
-      <div className={`h-[320px] sm:h-[380px] w-full ${isMeasuring ? "cursor-crosshair" : ""}`}>
+      <div className={`h-[380px] sm:h-[420px] md:h-[460px] w-full ${isMeasuring ? "cursor-crosshair" : ""}`}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartDataWithRSI}
@@ -1956,7 +1956,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         MACD(12,26,9)
         <span className="text-[9px] opacity-60">= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal</span>
       </div>
-      <div className="h-[140px] min-h-10 w-full sm:h-[160px]">
+      <div className="h-[160px] min-h-10 w-full sm:h-[180px]">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={chartDataWithRSI} margin={narrow ? { top: 5, right: 8, left: 0, bottom: 5 } : { top: 5, right: 10, left: 0, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
@@ -2056,7 +2056,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
             return <span className={`ml-auto font-mono font-semibold ${color}`}>{lastRSI.toFixed(1)} — {label}</span>;
           })()}
         </div>
-        <ResponsiveContainer width="100%" height={110}>
+        <ResponsiveContainer width="100%" height={130}>
           <ComposedChart data={chartDataWithRSI} margin={narrow ? { top: 2, right: 8, left: 0, bottom: 2 } : { top: 2, right: 10, left: 0, bottom: 2 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="date" tick={false} axisLine={false} tickLine={false} />

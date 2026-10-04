@@ -2,21 +2,20 @@
  * ManagementScoreSection.tsx
  *
  * Management-Execution-Score (1-10) — Auftrag 05.08.2026.
- * Lazy-Load-Panel analog zum bestehenden Regulatory-Exposure-Muster in
- * PestelSection.tsx: eigener KI-Button, eigener Request, kein automatischer
- * Aufruf bei jedem /api/analyze (spart teure Executive-Comp/Insider-Trading/
- * LLM-Calls).
+ * Variante B: nach Analyze-Success startet der Score im Hintergrund (Mount),
+ * force=false, damit der 24h-Server-Cache FMP-Kontingente schont.
+ * Der Button bleibt für einen erzwungenen Neulauf.
  *
  * Score_1-10 = 10 × (0.30·S_Delivery + 0.25·S_Segment + 0.20·S_Capital
  *              + 0.15·S_Credibility + 0.10·S_QualNews)
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { RefreshCw, TrendingUp, TrendingDown, Minus, AlertTriangle, Info, Loader2, Sparkles } from "lucide-react";
 
-interface Props { data: StockAnalysis }
+interface Props { data: StockAnalysis; onScore?: (score: number) => void }
 
 interface SubScoreResult {
   score: number;
@@ -142,7 +141,7 @@ function DeltaBadge({ label, value, suffix = "pp" }: { label: string; value: num
   );
 }
 
-export function ManagementScoreSection({ data }: Props) {
+export function ManagementScoreSection({ data, onScore }: Props) {
   const [result, setResult] = useState<ManagementScoreResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -219,13 +218,21 @@ export function ManagementScoreSection({ data }: Props) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error || `HTTP ${res.status}`);
       }
-      setResult(await res.json());
+      const json = await res.json();
+      setResult(json);
+      if (typeof json?.breakdown?.score1to10 === "number") onScore?.(json.breakdown.score1to10);
     } catch (err: any) {
       setError(err?.message || "Analyse fehlgeschlagen");
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    void run(false);
+    // Variante B: einmal pro Ticker, Cache 24h. run schließt die aktuellen Daten.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.ticker]);
 
   async function triggerInterpretation() {
     if (!result) return;
@@ -257,7 +264,7 @@ export function ManagementScoreSection({ data }: Props) {
   }
 
   return (
-    <SectionCard number={20} title="MANAGEMENT-EXECUTION-SCORE">
+    <SectionCard number={19} title="MANAGEMENT-EXECUTION-SCORE">
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <p className="text-xs text-muted-foreground max-w-2xl">

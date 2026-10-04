@@ -2,6 +2,7 @@ import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, RevenueSegment } from "../../../../shared/schema";
 import { calculateFCFFDCF, buildDefaultDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
+import { buildBiasDecision } from "../../../../shared/bias-fixes";
 import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber } from "../../lib/formatters";
 import { useMemo } from "react";
 
@@ -58,11 +59,12 @@ export function Section2({ data }: Props) {
   const params = useMemo(() => buildDefaultDCFParams(data), [data.ticker]);
 
   const baseDCF = useMemo(() => calculateFCFFDCF(params), [params]);
+  const bias = useMemo(() => buildBiasDecision(data), [data]);
 
-  // Smart Catalyst-Base-Selektor (Plausibilitäts-Gate — verhindert unsinnige
-  // negative Catalyst-Targets bei Aktien mit verzerrt-niedrigem DCF)
-  const _rawUpsideS2 = (data.catalysts || []).reduce((s, c) => s + c.gb, 0);
-  const _baseInfoS2 = selectCatalystBase(baseDCF.perShare, _rawUpsideS2, data.currentPrice, data.analystPT.median);
+  // Smart Catalyst-Base-Selektor auf der entscheidungsrelevanten DCF-Basis.
+  const _rawUpsideS2 = bias.positiveGbSum;
+  const _decisionS2 = Number.isFinite(bias.decisionPerShare) ? bias.decisionPerShare : baseDCF.perShare;
+  const _baseInfoS2 = selectCatalystBase(_decisionS2, _rawUpsideS2, data.currentPrice, data.analystPT.median);
   const catalystDCFBase = _baseInfoS2.base;
   const catalystBaseFallback = _baseInfoS2.source !== "dcf";
 

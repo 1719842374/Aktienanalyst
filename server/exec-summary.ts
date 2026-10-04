@@ -3,6 +3,7 @@
  * Keine MSFT-Konstanten. Alles aus der Analyze-Response / Cache.
  * UI-Hook: Response-Feld execSummary + Karte über Sektion 1.
  */
+import { catalystsModeLabel, isNegativeCatalyst, type CatalystSource } from "../shared/bias-fixes";
 
 export interface ExecLine {
   text: string;
@@ -40,7 +41,14 @@ export interface ExecSummaryInput {
   catalysts?: Array<{
     name: string; pos?: number; einpreisungsgrad?: number;
     gb?: number; nettoUpside?: number; generic?: boolean;
+    direction?: string; flag?: string; newsSentiment?: string; bruttoUpside?: number;
   }>;
+  catalystsSource?: CatalystSource;
+  catalystsTimestamp?: string | null;
+  valuationBaseLabel?: string | null;
+  biasSwitched?: boolean;
+  biasNarrative?: string[];
+  redFlags?: string[];
   downside?: Array<{ name: string; impactPct?: number }>;
   risks?: Array<{
     name: string; expectedDamagePct?: number; underestimated?: boolean;
@@ -71,8 +79,13 @@ export interface ExecSummary {
   crossLine: string;
   /** S2 growthThesis 1:1 when present */
   thesisLine?: string;
-  /** S15 GB-Summe + Kat.-Ziel + vs Kurs */
+  /** S15 GB-Summe + Kat.-Ziel + vs Kurs, nur positive GB nach K5 */
   upsideLine?: string;
+  /** Zwei-Pfad-Kennzeichnung Daten-Modus vs. KI-Modus */
+  modeLine?: string;
+  /** 3–5 Sätze: Moat, gehärtete Bewertung, Technik */
+  biasNarrative?: string[];
+  redFlags?: string[];
   /** S8 top ED names + total ED */
   riskLine?: string;
 }
@@ -128,7 +141,7 @@ export function formatEarningsCall(
 
 function topCatalysts(input: ExecSummaryInput) {
   return [...(input.catalysts || [])]
-    .filter(c => finite(c.gb) && (c.pos == null || c.pos >= 40))
+    .filter(c => !isNegativeCatalyst(c) && finite(c.gb) && c.gb > 0 && (c.pos == null || c.pos >= 40))
     .sort((a, b) => (b.gb || 0) - (a.gb || 0));
 }
 
@@ -292,17 +305,21 @@ export function buildThesisLine(input: ExecSummaryInput): string {
   return raw;
 }
 
-/** Mirror calculateCatalystUpside: Σ GB (PoS≥40) → Ziel = DCF×(1+Σ/100), vs Kurs. */
+/** Mirror calculateCatalystUpside: Σ positive GB (PoS≥40, ▼ ausgeschlossen) → Ziel = Entscheidungs-DCF×(1+Σ/100). */
 export function buildUpsideLine(input: ExecSummaryInput): string {
+  const source = input.catalystsSource === "llm" ? "llm" : "generic";
+  const mode = catalystsModeLabel(source, input.catalystsTimestamp);
+  const base = input.valuationBaseLabel
+    || (input.biasSwitched ? "Gehärteter Inverse-DCF" : "Conservative DCF");
   const ranked = [...(input.catalysts || [])]
-    .filter(c => finite(c.gb) && (c.pos == null || c.pos >= 40));
+    .filter(c => !isNegativeCatalyst(c) && finite(c.gb) && (c.pos == null || c.pos >= 40));
   if (ranked.length === 0) {
-    return "Katalysator-Upside n/v — keine Katalysatoren mit GB und PoS ≥ 40.";
+    return `${mode} · Basis: ${base} · Katalysator-Upside n/v — keine positiven Katalysatoren mit GB und PoS ≥ 40.`;
   }
   const sumGb = ranked.reduce((s, c) => s + (c.gb as number), 0);
   const fv = finite(input.dcfConservative) ? input.dcfConservative : null;
   const px = finite(input.price) && input.price > 0 ? input.price : null;
-  const bits: string[] = [`Katalysator-Upside +${sumGb.toFixed(1)}%`];
+  const bits: string[] = [`${mode} · Basis: ${base}`, `Katalysator-Upside +${sumGb.toFixed(1)}%`];
   if (fv != null) {
     const ziel = fv * (1 + sumGb / 100);
     bits.push(`Ziel ${fmtPx(ziel)}`);
@@ -353,5 +370,8 @@ export function buildExecSummary(input: ExecSummaryInput): ExecSummary {
     thesisLine: buildThesisLine(input),
     upsideLine: buildUpsideLine(input),
     riskLine: buildRiskLine(input),
+    modeLine: catalystsModeLabel(input.catalystsSource === "llm" ? "llm" : "generic", input.catalystsTimestamp),
+    biasNarrative: input.biasNarrative,
+    redFlags: input.redFlags,
   };
 }

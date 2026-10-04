@@ -122,6 +122,7 @@ import {
 import { buildScoringForAnalysis } from "./scoring-integration";
 import { applyFactPackFromFmpContext } from "./factpack-apply";
 import { attachExecSummary } from "./exec-summary-attach";
+import { applyBiasFix } from "../shared/bias-fixes";
 import { getCachedRegulatoryAssessment } from "./regulatory";
 import { assessEcosystem, collectPorterNarrative, resolveEcosystem } from "./ecosystem-moat";
 import {
@@ -2299,6 +2300,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         console.warn(`[ANALYZE] Scoring-Snapshot (Backtest) fehlgeschlagen fuer ${upperTicker}: ${snapErr?.message?.substring(0, 150)}`);
       }
 
+      applyBiasFix(analysis);
       attachExecSummary(analysis);
       // Nach Assemble (CRV-Felder + ExecSummary): L2 hält dieselbe Payload wie die Response. L1 zeigt schon auf dasselbe Objekt.
       diskCacheSet(cacheKey, analysis);
@@ -2512,6 +2514,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // invertedDcf, die sich durch Enrichment NICHT aendern) -- ein
       // erneuter Aufruf auf "updated" zieht automatisch die neuen
       // Katalysatoren mit ein, ohne Logik zu duplizieren.
+      updated = applyBiasFix(updated);
       updated = attachExecSummary(updated);
 
       analysisCache.set(cacheKeyUsed, { ...cached, result: updated });

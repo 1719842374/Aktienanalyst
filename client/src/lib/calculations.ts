@@ -1,4 +1,5 @@
 import type { Catalyst, Risk, StockAnalysis } from "../../../shared/schema";
+import { sumUpsideGb } from "../../../shared/bias-fixes";
 import {
   calculateDCF,
   type DCFParams,
@@ -290,7 +291,7 @@ export function calculateCatalystUpside(
   catalysts: Catalyst[],
   conservativeDCFPerShare: number
 ): { totalUpside: number; adjustedTarget: number } {
-  const totalUpside = catalysts.reduce((sum, c) => sum + c.gb, 0);
+  const totalUpside = sumUpsideGb(catalysts);
   const adjustedTarget = conservativeDCFPerShare * (1 + totalUpside / 100);
   return { totalUpside, adjustedTarget };
 }

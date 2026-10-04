@@ -35,8 +35,11 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
   // (live an AAPL verifiziert: dcfFairValue=120.21 vorhanden, aber keiner
   // der alten Feldnamen). dcfFairValue zuerst pruefen, alte Namen als
   // Fallback fuer etwaige andere Aufrufer/Altdaten belassen.
+  const bias = a?.biasFix;
+  const decisionFv = bias?.switched && finite(bias?.decisionPerShare) ? bias.decisionPerShare : null;
   const fv =
-    finite(a?.dcfFairValue) ? a.dcfFairValue
+    decisionFv != null ? decisionFv
+    : finite(a?.dcfFairValue) ? a.dcfFairValue
     : finite(a?.conservativeDcfPerShare) ? a.conservativeDcfPerShare
     : finite(a?.dcfConservative) ? a.dcfConservative
     : finite(scoring?.dcfConservative) ? scoring.dcfConservative
@@ -97,6 +100,10 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
           gb: finite(c?.gb) ? c.gb : undefined,
           nettoUpside: finite(c?.nettoUpside) ? c.nettoUpside : finite(c?.netUpside) ? c.netUpside : undefined,
           generic: typeof c?.generic === "boolean" ? c.generic : undefined,
+          direction: typeof c?.direction === "string" ? c.direction : undefined,
+          flag: typeof c?.flag === "string" ? c.flag : undefined,
+          newsSentiment: typeof c?.newsSentiment === "string" ? c.newsSentiment : undefined,
+          bruttoUpside: finite(c?.bruttoUpside) ? c.bruttoUpside : undefined,
         }))
       : [],
     risks: Array.isArray(a?.risks)
@@ -109,7 +116,13 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
         }))
       : [],
     growthThesis: typeof a?.growthThesis === "string" ? a.growthThesis : null,
-    moat: a?.moatRating ?? a?.moatAssessment?.rating ?? null,
+    moat: bias?.moatRating ?? a?.moatRating ?? a?.moatAssessment?.overallRating ?? a?.moatAssessment?.rating ?? null,
+    catalystsSource: a?.catalystsSource === "llm" || a?.llmMode ? "llm" : "generic",
+    catalystsTimestamp: a?.growthThesisGeneratedAt ?? a?.dataTimestamp ?? null,
+    valuationBaseLabel: bias?.valuationBaseLabel ?? null,
+    biasSwitched: Boolean(bias?.switched),
+    biasNarrative: Array.isArray(bias?.narrative) ? bias.narrative : undefined,
+    redFlags: Array.isArray(bias?.redFlags) ? bias.redFlags : undefined,
     porterHighForces: highForces,
     pestel: pestelFactors,
   };

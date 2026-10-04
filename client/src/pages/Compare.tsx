@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "../lib/queryClient";
 import type { StockAnalysis } from "@shared/schema";
+import { sumUpsideGb } from "@shared/bias-fixes";
 import { Link } from "wouter";
 import { ArrowLeft, ArrowUpDown, TrendingUp, TrendingDown, Minus } from "lucide-react";
 
@@ -166,7 +167,7 @@ export default function Compare() {
 
                   {/* Katalysatoren */}
                   <tr><td colSpan={4} className="py-1.5 px-2 text-[9px] text-foreground/30 uppercase tracking-wider bg-muted/10 font-semibold">Katalysatoren & Upside</td></tr>
-                  <CompareRow label="Catalyst Upside (Σ GB)" v1={data1.catalysts?.reduce((s, c) => s + c.gb, 0)} v2={data2.catalysts?.reduce((s, c) => s + c.gb, 0)} suffix="%" dec={2} />
+                  <CompareRow label="Catalyst Upside (Σ GB)" v1={sumUpsideGb(data1.catalysts)} v2={sumUpsideGb(data2.catalysts)} suffix="%" dec={2} />
                   <CompareRow label="Analyst PT Upside" v1={data1.analystPT?.median && data1.currentPrice ? ((data1.analystPT.median - data1.currentPrice) / data1.currentPrice) * 100 : null} v2={data2.analystPT?.median && data2.currentPrice ? ((data2.analystPT.median - data2.currentPrice) / data2.currentPrice) * 100 : null} suffix="%" />
                 </tbody>
               </table>
