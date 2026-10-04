@@ -22,6 +22,9 @@ interface RegionalStocks {
   moneyTrend: number | null;
   pricedIn: number | null;
   unpricedPvBn: number | null;
+  velocityOverMedian: number | null;
+  programAgeYears: number | null;
+  piNote: string | null;
   available: { debt: boolean; bonds: boolean; real: boolean; vel: boolean; pi: boolean };
 }
 
@@ -67,7 +70,13 @@ export function RegionalStocksStrip({ region }: { region: Region }) {
   }, [region]);
 
   const stocks = data?.stocks;
-  const piMissing = stocks != null && stocks.available.pi === false;
+  const piText = stocks == null
+    ? "n/a"
+    : stocks.pricedIn != null
+      ? fmt(stocks.pricedIn, 2)
+      : stocks.piNote === "program start unknown"
+        ? "start unknown"
+        : "n/a";
 
   return (
     <div className="rounded-lg border border-border/40 bg-card/30 p-4 space-y-2" data-testid="panel-regional-stocks">
@@ -96,13 +105,8 @@ export function RegionalStocksStrip({ region }: { region: Region }) {
             <Cell label="Geldtrend" value={fmt(stocks.moneyTrend, 0)} />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]" data-testid="row-regional-pi">
-            <Cell
-              label="π"
-              value={stocks.pricedIn == null ? "n/a" : fmt(stocks.pricedIn, 2)}
-              warn={piMissing}
-              testId="text-priced-in"
-            />
-            <Cell label="F unpriced" value={fmt(stocks.unpricedPvBn, 0)} testId="text-unpriced-pv" />
+            <Cell label="π" value={piText} testId="text-priced-in" />
+            <Cell label="V/V̄" value={fmt(stocks.velocityOverMedian, 2)} testId="text-velocity-ratio" />
             <Cell label="T½" value={fmt(stocks.tHalfYears, 1, " J")} testId="text-thalf" />
             <Cell label="V" value={fmt(stocks.velocity, 3)} testId="text-velocity" />
           </div>

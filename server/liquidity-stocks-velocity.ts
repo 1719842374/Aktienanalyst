@@ -4,12 +4,16 @@
  *
  * T½^rate = ln(2) / ln(1 + max(r, 0.001)), r as a decimal (0.08 = 8 %).
  * T½ = T½^rate · clip(V̄ / V, 0.5, 2). V̄ is the median of the region's own series.
- * π is the regional Einpreisungsgrad. This file does not import equity g* or EPR.
+ * π does not wait on a dollar fiscal rest and does not read a price or a PE.
+ * A program is priced in after at most 2 years. Velocity only says whether
+ * that impulse is already circulating in NGDP/M versus its own median.
  * EMG is the same function as liquidity-regime-math.excessMoneyGrowth.
  */
 import { excessMoneyGrowth } from "./liquidity-regime-math";
 
 export const PHI = 0.3;
+export const PI_CAP_YEARS = 2;
+export const PROGRAM_START_UNKNOWN = "program start unknown";
 const VELOCITY_FLOOR = 0.5;
 const VELOCITY_CAP = 2;
 
@@ -26,6 +30,10 @@ export interface RegionalStocks {
   moneyTrend: number | null;
   pricedIn: number | null;
   unpricedPvBn: number | null;
+  /** V / V̄. Above 1 means velocity is above its own median. */
+  velocityOverMedian: number | null;
+  programAgeYears: number | null;
+  piNote: string | null;
   available: { debt: boolean; bonds: boolean; real: boolean; vel: boolean; pi: boolean };
 }
 
@@ -47,6 +55,8 @@ export interface StockInputs {
   fiscalOverMoney?: number | null;
   /** Money stock in bn of home currency. Used only to form F/M. Not part of the payload. */
   moneyStockBn?: number | null;
+  /** Years since the newest program timeline on the capex cache. Null when that date is absent. */
+  programAgeYears?: number | null;
   m2YoY?: number | null;
   realGdpYoY?: number | null;
   cpiYoY?: number | null;
@@ -90,9 +100,34 @@ export function absorptionShare(deltaMObs: number, fiscalOverMoney: number, phi 
   return Math.min(1, Math.max(0, deltaMObs / denom));
 }
 
+/** min(age / 2, 1). Age of 2 years is fully priced in. A future start is 0. */
+export function timePricedShare(ageYears: number): number | null {
+  if (!Number.isFinite(ageYears)) return null;
+  return Math.min(1, Math.max(0, ageYears) / PI_CAP_YEARS);
+}
+
+/** clip(V / V̄, 0, 1). At the region's own median the impulse is circulating. */
+export function circulationShare(v: number, vBar: number): number | null {
+  if (!Number.isFinite(v) || !Number.isFinite(vBar) || !(vBar > 0) || v < 0) return null;
+  return Math.min(1, v / vBar);
+}
+
+/** π = time share × circulation. Missing age or velocity leaves it empty. */
+export function pricedInFromAgeAndVelocity(
+  ageYears: number | null,
+  v: number | null,
+  vBar: number | null,
+): number | null {
+  if (ageYears == null || v == null || vBar == null) return null;
+  const time = timePricedShare(ageYears);
+  const circ = circulationShare(v, vBar);
+  if (time == null || circ == null) return null;
+  return time * circ;
+}
+
 /**
+ * Older rate-channel mix. The payload no longer uses it. F is not required.
  * π = 0.6·s_to_unit(z_r) + 0.4·A.
- * A missing channel is dropped and the remaining channel is used on its own.
  */
 export function pricedInPi(input: { zR: number | null; absorption: number | null }): number | null {
   const hasR = input.zR != null && Number.isFinite(input.zR);
@@ -130,21 +165,10 @@ export function buildRegionalStocks(input: StockInputs = {}): RegionalStocks {
   const history = input.velocityHistory?.filter(n => Number.isFinite(n)) ?? [];
   const vBar = history.length ? median(history) : null;
   const tHalf = realRate == null ? null : tHalfYears(realRate, velocity, vBar);
-  const fiscalRest = finiteOrNull(input.fiscalRestBn);
-  const deltaR = finiteOrNull(input.deltaR);
-  const sigmaR = finiteOrNull(input.sigmaDeltaR);
-  const zR = deltaR != null && sigmaR != null && sigmaR > 0 ? deltaR / sigmaR : null;
-  const deltaM = finiteOrNull(input.deltaMObs);
-  const fOverM = finiteOrNull(input.fiscalOverMoney);
-  const absorption = deltaM != null && fOverM != null ? absorptionShare(deltaM, fOverM) : null;
-  const piAvailable = fiscalRest != null;
-  const pricedIn = piAvailable ? pricedInPi({ zR, absorption }) : null;
-  const tMid = finiteOrNull(input.tMidYears);
-  let unpricedPvBn: number | null = null;
-  if (piAvailable && pricedIn != null && tHalf != null && tHalf !== 0 && tMid != null && fiscalRest != null) {
-    const pv = fiscalRest * Math.pow(2, -tMid / tHalf);
-    unpricedPvBn = pv * (1 - pricedIn);
-  }
+  const age = finiteOrNull(input.programAgeYears);
+  const velocityOverMedian = velocity != null && vBar != null && vBar !== 0 ? velocity / vBar : null;
+  const pricedIn = pricedInFromAgeAndVelocity(age, velocity, vBar);
+  const piNote = age == null ? PROGRAM_START_UNKNOWN : null;
   const m2 = finiteOrNull(input.m2YoY);
   const gdp = finiteOrNull(input.realGdpYoY);
   const cpi = finiteOrNull(input.cpiYoY);
@@ -163,13 +187,16 @@ export function buildRegionalStocks(input: StockInputs = {}): RegionalStocks {
     fiscalTrend: finiteOrNull(input.fiscalTrend),
     moneyTrend: finiteOrNull(input.moneyTrend),
     pricedIn,
-    unpricedPvBn,
+    unpricedPvBn: null,
+    velocityOverMedian,
+    programAgeYears: age,
+    piNote,
     available: {
       debt: debt != null,
       bonds: bondsBn != null || bondsGdp != null,
       real: realRate != null,
       vel: velocity != null,
-      pi: piAvailable,
+      pi: pricedIn != null,
     },
   };
 }

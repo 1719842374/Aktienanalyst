@@ -12,6 +12,7 @@ import {
   PHI,
   absorptionShare,
   buildRegionalStocks,
+  pricedInFromAgeAndVelocity,
   pricedInPi,
   rateHalfLifeYears,
   sToUnit,
@@ -27,6 +28,7 @@ import {
   fiscalRestFromCache,
   fiscalRestGap,
   parseEurostatJson,
+  programAgeFromCache,
   parseMarketableTotal,
   spelledFredIds,
   stocksFromSeries,
@@ -105,34 +107,29 @@ ok("JP debt level does not change LI", plain.li === withDebt.li, `${plain.li} vs
 ok("JP debt level does not change books.M", JSON.stringify(plain.books.M) === JSON.stringify(withDebt.books.M));
 ok("JP debt level does not change books.F", JSON.stringify(plain.books.F) === JSON.stringify(withDebt.books.F));
 ok("debt level is display only", withDebt.stocks.debtGdpPct === 250);
-ok("empty stocks have pi unavailable", plain.stocks.available.pi === false && plain.stocks.pricedIn == null);
+ok("empty stocks have pi unavailable", plain.stocks.available.pi === false && plain.stocks.pricedIn == null && plain.stocks.piNote === "program start unknown");
 
 const priced = scoreCatalog("US", {}, {
   realRate: 0.08,
   velocity: 1.4,
   velocityHistory: [1.2, 1.4, 1.6],
-  fiscalRestBn: 100,
-  tMidYears: 0,
-  deltaR: 0.004,
-  sigmaDeltaR: 0.002,
-  deltaMObs: 0.02,
-  fiscalOverMoney: 0.1,
+  programAgeYears: 2,
 });
 ok("payload T½ at r=0.08 and V=V̄", near(priced.stocks.tHalfYears, 8.99, 9.01), String(priced.stocks.tHalfYears));
-ok("payload π is set when F is present", priced.stocks.pricedIn != null && priced.stocks.available.pi === true, String(priced.stocks.pricedIn));
-ok("t_mid 0 leaves PV at F", priced.stocks.unpricedPvBn != null && priced.stocks.pricedIn != null
-  && Math.abs(priced.stocks.unpricedPvBn - 100 * (1 - priced.stocks.pricedIn)) < 1e-9,
-  String(priced.stocks.unpricedPvBn));
+ok("π at 2 years and V=V̄ is 1 without a dollar rest", priced.stocks.pricedIn === 1 && priced.stocks.available.pi === true && priced.stocks.unpricedPvBn == null, String(priced.stocks.pricedIn));
 ok("books stay empty objects' shape", Array.isArray(priced.books.M) && Array.isArray(priced.books.F));
+ok("a dollar rest does not move li", priced.li === scoreCatalog("US", {}, { debtGdpPct: 250, fiscalRestBn: 500 }).li);
 
-const noF = buildRegionalStocks({
+const noAge = buildRegionalStocks({
   realRate: 0.02,
   velocity: 1,
   velocityHistory: [1],
-  fiscalRestBn: null,
+  fiscalRestBn: 40,
 });
-ok("no capex F → π unavailable", noF.available.pi === false && noF.pricedIn == null && noF.unpricedPvBn == null);
-ok("no F still reports T½^rate for r=0.02", near(noF.tHalfYears, 34.9, 35.1), String(noF.tHalfYears));
+ok("missing program start leaves π empty and names the gap", noAge.available.pi === false && noAge.pricedIn == null && noAge.piNote === "program start unknown" && noAge.unpricedPvBn == null);
+ok("missing start still reports V/V̄ and T½", noAge.velocityOverMedian === 1 && near(noAge.tHalfYears, 34.9, 35.1), String(noAge.tHalfYears));
+ok("one year at the velocity median is half priced in", pricedInFromAgeAndVelocity(1, 1.4, 1.4) === 0.5);
+ok("velocity below its median scales π down", pricedInFromAgeAndVelocity(2, 0.7, 1.4) === 0.5);
 
 const src = fs.readFileSync(new URL("../server/liquidity-stocks-velocity.ts", import.meta.url), "utf8");
 ok("does not import g* or equity EPR", !src.includes("calcImpliedGStar") && !src.includes("calcEinpreisungsgrad") && !src.includes("catalyst-engine"));
@@ -160,7 +157,7 @@ await withServer(async (base) => {
   ok("regional route carries stocks", eu.status === 200 && body.stocks?.debtGdpPct === 90, JSON.stringify(body.stocks));
   ok("regional route carries T½", near(body.stocks?.tHalfYears, 34.9, 35.1), String(body.stocks?.tHalfYears));
   ok("regional route keeps books.M and books.F", Array.isArray(body.books?.M) && Array.isArray(body.books?.F));
-  ok("π stays unavailable without F", body.stocks?.available?.pi === false);
+  ok("π names an unknown program start instead of waiting on F", body.stocks?.pricedIn == null && body.stocks?.piNote === "program start unknown");
 });
 
 console.log("spelled series ids");
@@ -368,6 +365,15 @@ ok("a finished timeline is not remaining F",
 ok("a numeric rest clears the gap", fiscalRestGap({ fiscalRestBn: 40, tMidYears: 0 }) == null);
 ok("a numeric rest wins over amountUSD text",
   fiscalRestFromCache({ fiscalRestBn: 40, programmes: [{ amountUSD: "$369B" }] }, { region: "US", now: NOW }).fiscalRestBn === 40);
+ok("a timeline year is the program age", programAgeFromCache(proseCache, NOW) != null && (programAgeFromCache(proseCache, NOW) as number) > 2);
+ok("a missing capex row has no program start", programAgeFromCache(null, NOW) == null);
+ok("a timeline without a year is not a start date", programAgeFromCache({ programmes: [{ timeline: "12-24M" }] }, NOW) == null);
+const aged = applyCapexRest(
+  { velocity: 1.4, velocityHistory: [1.2, 1.4, 1.6] },
+  { fiscalRestBn: null, tMidYears: null, programAgeYears: programAgeFromCache({ programmes: [{ timeline: "2020-2030" }] }, NOW) },
+);
+const agedRow = buildRegionalStocks(aged);
+ok("age from a timeline prices π without a dollar stock", agedRow.pricedIn === 1 && agedRow.unpricedPvBn == null, String(agedRow.pricedIn));
 ok("numeric capex rest is F", fiscalRestFromCache({ fiscalRestBn: 40, tMidYears: 0 }).fiscalRestBn === 40
   && fiscalRestFromCache({ fiscalRestBn: 40, tMidYears: 0 }).tMidYears === 0);
 const withRest = applyCapexRest(
@@ -376,7 +382,7 @@ const withRest = applyCapexRest(
 );
 ok("F/M uses the money stock", withRest.fiscalOverMoney === 40 / 20000, String(withRest.fiscalOverMoney));
 const pricedRest = buildRegionalStocks(withRest);
-ok("numeric F turns π on", pricedRest.available.pi === true && pricedRest.pricedIn != null, String(pricedRest.pricedIn));
+ok("a dollar rest alone does not turn π on", pricedRest.available.pi === false && pricedRest.piNote === "program start unknown");
 
 const trendLevels = monthly(H_MIN + 8, 100, 110);
 const mixed = scoreCatalog("EU", {

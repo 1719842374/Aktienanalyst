@@ -143,6 +143,30 @@ function yearFraction(now: Date): number {
   return now.getUTCFullYear() + (now.getTime() - start) / (next - start);
 }
 
+/**
+ * Years since the newest program timeline on the capex cache.
+ * A missing row or a timeline with no year is null. No date is invented.
+ */
+export function programAgeFromCache(raw: unknown, now: Date): number | null {
+  if (!raw || typeof raw !== "object") return null;
+  const programmes = Array.isArray((raw as { programmes?: unknown }).programmes)
+    ? (raw as { programmes: unknown[] }).programmes
+    : [];
+  const starts: number[] = [];
+  for (const item of programmes) {
+    if (!item || typeof item !== "object") continue;
+    const timeline = (item as { timeline?: unknown }).timeline;
+    if (typeof timeline !== "string") continue;
+    const years = timeline.match(/\b(?:19|20)\d{2}\b/g);
+    if (!years?.length) continue;
+    const start = Number(years[0]);
+    if (Number.isFinite(start)) starts.push(start);
+  }
+  if (!starts.length) return null;
+  const age = yearFraction(now) - Math.max(...starts);
+  return age > 0 ? age : 0;
+}
+
 /** Years from `now` to the midpoint of the remaining named window. A finished window is null. */
 function timelineMidYears(timeline: string, now: Date): number | null {
   const years = timeline.match(/\b(?:19|20)\d{2}\b/g);
@@ -229,10 +253,12 @@ function finiteNonNegative(value: unknown): number | null {
 
 export function applyCapexRest(
   input: StockInputs,
-  rest: { fiscalRestBn: number | null; tMidYears: number | null },
+  rest: { fiscalRestBn: number | null; tMidYears: number | null; programAgeYears?: number | null },
 ): StockInputs {
-  if (rest.fiscalRestBn == null) return input;
-  const next: StockInputs = { ...input, fiscalRestBn: rest.fiscalRestBn };
+  const next: StockInputs = { ...input };
+  if (rest.programAgeYears != null && Number.isFinite(rest.programAgeYears)) next.programAgeYears = rest.programAgeYears;
+  if (rest.fiscalRestBn == null) return next;
+  next.fiscalRestBn = rest.fiscalRestBn;
   if (rest.tMidYears != null) next.tMidYears = rest.tMidYears;
   const money = input.moneyStockBn;
   if (money != null && Number.isFinite(money) && money > 0) next.fiscalOverMoney = rest.fiscalRestBn / money;
@@ -639,11 +665,12 @@ async function loadPoints(
   return points;
 }
 
-function defaultFiscalRest(region: Region, now: Date): { fiscalRestBn: number | null; tMidYears: number | null } {
+function defaultFiscalRest(region: Region, now: Date): { fiscalRestBn: number | null; tMidYears: number | null; programAgeYears: number | null } {
   try {
-    return fiscalRestFromCache(diskResearcherGet(`capex__${region}`), { region, now });
+    const raw = diskResearcherGet(`capex__${region}`);
+    return { ...fiscalRestFromCache(raw, { region, now }), programAgeYears: programAgeFromCache(raw, now) };
   } catch {
-    return { fiscalRestBn: null, tMidYears: null };
+    return { fiscalRestBn: null, tMidYears: null, programAgeYears: null };
   }
 }
 
@@ -654,7 +681,7 @@ export async function fetchRegionalStockInputs(
     cache?: StockFetchCache;
     force?: boolean;
     fetchText?: (url: string) => Promise<string | null>;
-    readFiscalRest?: (region: Region) => { fiscalRestBn: number | null; tMidYears: number | null };
+    readFiscalRest?: (region: Region) => { fiscalRestBn: number | null; tMidYears: number | null; programAgeYears?: number | null };
   } = {},
 ): Promise<StockInputs> {
   const now = opts.now ?? new Date();
