@@ -1,6 +1,6 @@
 # WORK.md — Index
 
-> Stand: 30.09.2026 (Vormittag, nach #103 Miner Observability Live PASS) | Branch: `main` @ `e2bc69a2` | Bundle `index-MIF1Ml5X.js`
+> Stand: 2026-10-04 — open/fertig lists match tip `bc72953a`
 >
 > **Hub Soll vs. Ist:** [docs/Doc_Soll_vs_Ist/](./docs/Doc_Soll_vs_Ist/)
 >
@@ -11,7 +11,7 @@
 
 ---
 
-## Soll (nicht live / partial)
+## Soll (offiziell offen — `Offen_`)
 
 | Datei | Inhalt |
 |-------|--------|
@@ -22,6 +22,18 @@
 | [Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | Serien-IDs + Prints |
 | [Offen_WORK_RECESSION_2008_DRIVERS_LLM.md](./Offen_WORK_RECESSION_2008_DRIVERS_LLM.md) | Ziel+z-Matrix auf diesem Branch, nicht auf main |
 | [Offen_WORK_PORTFOLIO_SOLL_IST.md](./Offen_WORK_PORTFOLIO_SOLL_IST.md) | Target vs Actual · Active Weight · Nenner A/B · Feng-Feng-Zahlen 2026-08-28 · Drop-in noch nicht verdrahtet |
+| [Offen_WORK_RECESSION_MARKET_CHARTS.md](./Offen_WORK_RECESSION_MARKET_CHARTS.md) | VIX/VSTOXX/realized Pane (#60/#66) |
+| [Offen_WORK_ANALYZE_DISK_CACHE.md](./Offen_WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch |
+| [Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | disk-cache |
+| [Offen_WORK_STABLECOIN_TBILL_GENIUS.md](./Offen_WORK_STABLECOIN_TBILL_GENIUS.md) | BTC Sektion 14 |
+| [Offen_WORK_BIAS_FIXES_INVERSE_DCF.md](./Offen_WORK_BIAS_FIXES_INVERSE_DCF.md) | Bias-Fixes Inverse-DCF |
+| [Offen_WORK_PEER_ADAPTIVE.md](./Offen_WORK_PEER_ADAPTIVE.md) | Peer Adaptive |
+| [Offen_WORK_PEER_PRICING_POWER.md](./Offen_WORK_PEER_PRICING_POWER.md) | Peer Pricing Power |
+| [Offen_WORK_RECESSION_FRED_SAHM.md](./Offen_WORK_RECESSION_FRED_SAHM.md) | Recession FRED Sahm |
+| [Offen_WORK_RECESSION_RATE_OIL_BRIDGE.md](./Offen_WORK_RECESSION_RATE_OIL_BRIDGE.md) | Recession Rate-Oil-Bridge |
+| [Offen_WORK_RECESSION_SOURCES.md](./Offen_WORK_RECESSION_SOURCES.md) | Recession Sources |
+| [Offen_WORK_SECTION4_DATA_BUGS.md](./Offen_WORK_SECTION4_DATA_BUGS.md) | Section 4 Data Bugs |
+| [Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md](./Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md) | Valuechain Sector Rotation |
 
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 
@@ -29,28 +41,20 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 
 ---
 
-## Ist (Kern im Code)
+## Ist (offiziell fertig — `fertig_`)
 
 | Datei | Inhalt |
 |-------|--------|
 | [fertig_WORK_EXEC_SUMMARY.md](./fertig_WORK_EXEC_SUMMARY.md) | Exec vor S1 live (#58) |
-| [docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md](./docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md) | FactPack Hook+UI live (#57) |
 | [fertig_WORK_RECESSION_RSI_MACD.md](./fertig_WORK_RECESSION_RSI_MACD.md) | RSI/MACD Dashboard live |
-| [Offen_WORK_RECESSION_MARKET_CHARTS.md](./Offen_WORK_RECESSION_MARKET_CHARTS.md) | VIX/VSTOXX/realized Pane (#60/#66) |
-| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 30.09. Vormittag, nach #103 Miner Observability Live PASS (`e2bc69a2`, Bundle `index-MIF1Ml5X.js`) |
 | [fertig_WORK_THESIS_LAB.md](./fertig_WORK_THESIS_LAB.md) | `/#/lab` Live PASS (#73) |
-| [WORK_IMPLEMENTIERUNG_OFFEN.md](./WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 Rang 7–9 |
-| [Offen_WORK_ANALYZE_DISK_CACHE.md](./Offen_WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch |
-| [Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./Offen_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | disk-cache |
 | [fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md](./fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 US-only |
 | [fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | CATALOG.US/EU/ASIA, `?region=` books.M/F |
-| [Offen_WORK_STABLECOIN_TBILL_GENIUS.md](./Offen_WORK_STABLECOIN_TBILL_GENIUS.md) | BTC Sektion 14 |
 | [fertig_WORK_ANTIBIAS_DCF.md](./fertig_WORK_ANTIBIAS_DCF.md) | Inverted DCF |
 | [fertig_WORK_REVERSE_DCF_BRIDGE.md](./fertig_WORK_REVERSE_DCF_BRIDGE.md) | Fiscal Bridge |
 | [fertig_WORK_PORTFOLIO.md](./fertig_WORK_PORTFOLIO.md) | Portfolio |
 | [fertig_WORK.md_portfolio_3](./fertig_WORK.md_portfolio_3) | §6 OHLCV Charts live — Tester AAPL 1Y/2Y PASS @ `6a1807b` |
 | [fertig_WORK_PORTFOLIO_BACKTEST.md](./fertig_WORK_PORTFOLIO_BACKTEST.md) | Equity α/β/IR Underwater |
-| [Offen_WORK_PORTFOLIO_SOLL_IST.md](./Offen_WORK_PORTFOLIO_SOLL_IST.md) | Soll/Ist-Tracking Spec + Zahlen |
 | [fertig_WORK_RESEARCHER_PORTFOLIO.md](./fertig_WORK_RESEARCHER_PORTFOLIO.md) | P1/P2/P3 |
 | [fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md](./fertig_WORK_RESEARCHER_PORTFOLIO_TEIL2.md) | Zahlen P2 |
 | [fertig_WORK_NEWS_SENTIMENT.md](./fertig_WORK_NEWS_SENTIMENT.md) | Sentiment |
@@ -63,4 +67,12 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [fertig_WORK_BTC_MINER.md](./fertig_WORK_BTC_MINER.md) | Miner |
 | [fertig_WORK_TEIL7_SCORING.md](./fertig_WORK_TEIL7_SCORING.md) | Gold |
 | [fertig_WORK2.md](./fertig_WORK2.md) | PESTEL |
-| [Future_Work.md](./Future_Work.md) | Roadmap |
+| [fertig_WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md](./fertig_WORK_LYNCH_DCF_PARAMS_AND_GSTAR.md) | Lynch-DCF-Params und GSTAR |
+| [fertig_WORK_PEER_ROIC_SANITY.md](./fertig_WORK_PEER_ROIC_SANITY.md) | Peer-ROIC-Sanity |
+| [fertig_WORK_RESEARCHER_BUTTONS_APPLY.md](./fertig_WORK_RESEARCHER_BUTTONS_APPLY.md) | Researcher Buttons Apply |
+| [fertig_WORK_RESEARCHER_SECTOR_ADD.md](./fertig_WORK_RESEARCHER_SECTOR_ADD.md) | Researcher Sector Add |
+| [fertig_WORK_SEKTORROTATIONS_RAT.md](./fertig_WORK_SEKTORROTATIONS_RAT.md) | Sektorrotations-Rat |
+| [fertig_WORK_SIGNAL_BACKTEST.md](./fertig_WORK_SIGNAL_BACKTEST.md) | Signal-Backtest |
+| [fertig_WORK_VALUECHAIN_LAB_LOOKUP.md](./fertig_WORK_VALUECHAIN_LAB_LOOKUP.md) | Valuechain Lab Lookup |
+
+Index und Roadmap (keine Specs): [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) — Audit 30.09. Vormittag, nach #103 Miner Observability Live PASS (`e2bc69a2`, Bundle `index-MIF1Ml5X.js`) · [WORK_IMPLEMENTIERUNG_OFFEN.md](./WORK_IMPLEMENTIERUNG_OFFEN.md) — D6 Rang 7–9 · [Future_Work.md](./Future_Work.md) — Roadmap · [docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md](./docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md) — FactPack Hook+UI live (#57)
