@@ -446,11 +446,17 @@ ok(
   bannedCards.filter(label => panel.includes(label)).join(", "),
 );
 ok(
-  "Sektion 14 zeigt den Z-Score aus der bestehenden Stablecoin-Antwort",
-  panel.includes("/api/analyze-btc/stablecoin-liquidity")
-    && panel.includes("Stablecoin-Z-Score")
-    && panel.includes("Geschätzte T-Bill-Nachfrage")
-    && panel.includes("GENIUS-Stärke"),
+  "Sektion 14 zeigt den Stablecoin-Kanal nicht",
+  !panel.includes("/api/analyze-btc/stablecoin-liquidity")
+    && !panel.includes("Stablecoin-Kanal")
+    && !panel.includes("Stablecoin-Z-Score")
+    && !panel.includes("T-Bill-Perzentil")
+    && !panel.includes("T-Bill-Multiplikator")
+    && !panel.includes("Geschätzte T-Bill-Nachfrage")
+    && !panel.includes("GENIUS-Stärke")
+    && !panel.includes("GENIUS-Punkte")
+    && !panel.includes("USDT (Tether)")
+    && !panel.includes("USDC (Circle)"),
 );
 ok("Nachrichten liegen in Sektion 14", panel.includes("Aktuelle Nachrichten") && panel.includes("/api/analyze-btc/news"));
 ok(
