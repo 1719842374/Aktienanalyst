@@ -7,6 +7,8 @@ import {
   CHART_BOOKS,
   SERIES_FLOOR,
   VOL_Y_MAX,
+  epsPrintFromEarningsRow,
+  epsPrintFromRatioQuarter,
   epsPrintFromRow,
   epsYoyPercent,
   finraLeverage,
@@ -16,7 +18,10 @@ import {
   maxWindowStart,
   parseFinraMarginSheetXml,
   peFromMetricsRow,
+  pegDisplaySuffix,
   pegFromPeAndGrowth,
+  pickValuationInstrument,
+  valuationLabelFor,
   realizedVol20,
   sliceByWindow,
   ttmEpsAt,
@@ -128,6 +133,15 @@ console.log("\n=== PEG / EPS (kein Lynch-Scorer) ===");
   check("historischer Klick ohne Forward", hist.peFwd === null && hist.pegFwd === null);
   check("historisch kein aktuelles key-metrics-PE", hist.pe === 40);
   check("ETF-Proxy Schwelle", hist.pegExpensive === true);
+  const vendorOnly = valuationFromParts({
+    price: null,
+    ttmEps: null,
+    prevTtmEps: null,
+    epsNtm: null,
+    allowForward: true,
+    keyMetricsPe: 27.4,
+  });
+  check("Vendor-PE ist kein PE", vendorOnly.pe === null, String(vendorOnly.pe));
 }
 
 console.log("\n=== FINRA nur SPY ===");
@@ -187,9 +201,10 @@ console.log("\n=== FMP-Felder, kein erfundener PE ===");
     keyMetricsRow: { peRatio: null, returnOnInvestedCapital: 0.2 },
     estimateRows: [{ date: "2027-09-30", epsAvg: 32.5 }],
   });
-  check("ratios-Payload mit PE wird nicht n/a", fromRatios.pe === 27.4, String(fromRatios.pe));
+  check("Vendor priceToEarningsRatio allein bleibt n/a", fromRatios.pe === null, String(fromRatios.pe));
   check("epsAvg wird Forward-PE", fromRatios.peFwd != null && Math.abs(fromRatios.peFwd - 670 / 32.5) < 0.02, String(fromRatios.peFwd));
-  check("PEG aus Ratio nur wenn Formel fehlt", fromRatios.peg === 1.82, String(fromRatios.peg));
+  check("Vendor-PEG füllt nur die Lücke und ist markiert", fromRatios.peg === 1.82 && fromRatios.pegKind === "vendor", `${fromRatios.peg} ${fromRatios.pegKind}`);
+  check("Vendor-PEG fwd nur ohne Konsens-g", fromRatios.pegFwd === 1.64 && fromRatios.pegFwdKind === "vendor", `${fromRatios.pegFwd} ${fromRatios.pegFwdKind}`);
   const fromIncome = valuationFromFmpRows({
     price: 400,
     asOf: "2024-12-31",
@@ -234,9 +249,170 @@ console.log("\n=== FMP-Felder, kein erfundener PE ===");
     keyMetricsRow: null,
     estimateRows: [],
   });
-  check("Index-EPS wird nicht durch den ETF-Preis geteilt", mixed.pe === 27.4, String(mixed.pe));
-  check("Index-EPS liefert YoY", mixed.epsYoy === 10, String(mixed.epsYoy));
+  check("Index-EPS wird nicht durch den ETF-Preis geteilt", mixed.pe == null, String(mixed.pe));
+  check("Index-YoY wird nicht an den ETF-Proxy gehängt", mixed.epsYoy == null, String(mixed.epsYoy));
   check("ohne ETF-Schätzung bleibt Forward-PE n/a", mixed.peFwd == null, String(mixed.peFwd));
+  check("Null-epsActual ist kein Druck", epsPrintFromEarningsRow({ date: "2024-09-30", epsActual: null, epsEstimated: 1.2 }) == null);
+  check("Jahres-netIncomePerShare ist kein Quartal", epsPrintFromRatioQuarter({ date: "2024-12-31", period: "FY", netIncomePerShare: 10 }) == null);
+
+  const quarters = [2, 2, 2, 2, 2.5, 2.5, 2.5, 2.5].map((eps, i) => ({
+    date: `202${i < 4 ? 3 : 4}-${String(((i % 4) * 3) + 3).padStart(2, "0")}-28`,
+    period: i % 4 === 3 ? "Q4" : `Q${(i % 4) + 1}`,
+    netIncomePerShare: eps,
+    priceToEarningsRatio: 99,
+  }));
+  const fromQuarterRatios = valuationFromFmpRows({
+    price: 250,
+    asOf: "2024-12-31",
+    allowForward: true,
+    incomeRows: [],
+    earningsRows: [{ date: "2024-12-31", epsActual: null, epsEstimated: 3 }],
+    ratioQuarterRows: quarters,
+    ratiosRow: { priceToEarningsRatio: 99, priceToEarningsGrowthRatio: 9.9, forwardPriceToEarningsGrowthRatio: 8.8 },
+    keyMetricsRow: { peRatio: 88 },
+    estimateRows: [{ date: "2025-12-31", epsAvg: 12 }],
+  });
+  check("Quartals-netIncomePerShare: PE = Preis / Summe", fromQuarterRatios.pe === 25, String(fromQuarterRatios.pe));
+  check("Quartals-netIncomePerShare: EPS YoY", fromQuarterRatios.epsYoy === 25, String(fromQuarterRatios.epsYoy));
+  check("Quartals-netIncomePerShare: PEG = PE/g", fromQuarterRatios.peg === 1 && fromQuarterRatios.pegKind === "formula", `${fromQuarterRatios.peg} ${fromQuarterRatios.pegKind}`);
+  check("Forward-PE = Preis / epsAvg", fromQuarterRatios.peFwd === 20.83, String(fromQuarterRatios.peFwd));
+  check("Forward-PEG = PE fwd / g Konsens", fromQuarterRatios.pegFwd === 1.04 && fromQuarterRatios.pegFwdKind === "formula", `${fromQuarterRatios.pegFwd} ${fromQuarterRatios.pegFwdKind}`);
+
+  const incomeWins = valuationFromFmpRows({
+    price: 96,
+    asOf: "2024-12-31",
+    allowForward: false,
+    incomeRows: [1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2].map((eps, i) => ({
+      date: `202${i < 4 ? 3 : 4}-${String(((i % 4) * 3) + 3).padStart(2, "0")}-28`,
+      epsDiluted: eps,
+    })),
+    earningsRows: [],
+    ratioQuarterRows: quarters,
+    ratiosRow: { priceToEarningsRatio: 99 },
+    keyMetricsRow: null,
+    estimateRows: [],
+  });
+  check("epsDiluted schlägt ratios-EPS", incomeWins.pe === 20, String(incomeWins.pe));
+  const zeroIncome = valuationFromFmpRows({
+    price: 250,
+    asOf: "2024-12-31",
+    allowForward: false,
+    incomeRows: [0, 0, 0, 0, 0, 0, 0, 0].map((eps, i) => ({
+      date: `202${i < 4 ? 3 : 4}-${String(((i % 4) * 3) + 3).padStart(2, "0")}-28`,
+      epsDiluted: eps,
+    })),
+    earningsRows: [],
+    ratioQuarterRows: quarters,
+    ratiosRow: null,
+    keyMetricsRow: null,
+    estimateRows: [],
+  });
+  check("Income-Nullen fallen auf Quartals-EPS", zeroIncome.pe === 25, String(zeroIncome.pe));
+
+  const shrunk = valuationFromFmpRows({
+    price: 160,
+    asOf: "2024-12-31",
+    allowForward: true,
+    incomeRows: [3, 3, 3, 3, 2, 2, 2, 2].map((eps, i) => ({
+      date: `202${i < 4 ? 3 : 4}-${String(((i % 4) * 3) + 3).padStart(2, "0")}-28`,
+      epsDiluted: eps,
+    })),
+    earningsRows: [],
+    ratiosRow: { priceToEarningsGrowthRatio: 1.5, forwardPriceToEarningsGrowthRatio: 1.2 },
+    keyMetricsRow: null,
+    estimateRows: [{ date: "2025-12-31", epsAvg: 7 }],
+  });
+  check("g<=0 bleibt n/a trotz Vendor-PEG", shrunk.pe === 20 && shrunk.epsYoy != null && shrunk.epsYoy < 0 && shrunk.peg == null && shrunk.pegKind == null, `pe=${shrunk.pe} yoy=${shrunk.epsYoy} peg=${shrunk.peg}`);
+  check("g Konsens <=0 bleibt n/a trotz Vendor-PEG fwd", shrunk.pegFwd == null && shrunk.pegFwdKind == null, String(shrunk.pegFwd));
+
+  const ttmOnly = valuationFromFmpRows({
+    price: 500,
+    asOf: "2026-10-02",
+    allowForward: true,
+    incomeRows: [],
+    earningsRows: [],
+    ratioQuarterRows: [{ date: "2026-06-30", netIncomePerShareTTM: 10, period: "Q2" }],
+    ratiosTtmRow: { netIncomePerShareTTM: 25, priceToEarningsRatioTTM: 40 },
+    ratiosRow: { priceToEarningsGrowthRatioTTM: 2.1 },
+    keyMetricsRow: null,
+    estimateRows: [{ date: "2027-09-30", epsAvg: 30 }],
+  });
+  check("ratios-ttm EPS ist ein TTM, keine Summe", ttmOnly.pe === 20, String(ttmOnly.pe));
+  check("ratios-ttm ohne Vorquartale lässt YoY n/a", ttmOnly.epsYoy == null, String(ttmOnly.epsYoy));
+  check("Forward aus demselben Kurs und epsAvg", ttmOnly.peFwd === 16.67 && ttmOnly.pegFwdKind === "formula", `${ttmOnly.peFwd} ${ttmOnly.pegFwdKind}`);
+
+  const indexPriced = valuationFromFmpRows({
+    price: 5280,
+    asOf: "2024-12-31",
+    allowForward: true,
+    incomeRows: [50, 50, 50, 50, 55, 55, 55, 55].map((eps, i) => ({
+      date: `202${i < 4 ? 3 : 4}-${String(((i % 4) * 3) + 3).padStart(2, "0")}-28`,
+      epsDiluted: eps,
+    })),
+    earningsRows: [],
+    ratiosRow: null,
+    keyMetricsRow: null,
+    estimateRows: [{ date: "2025-12-31", epsAvg: 242 }],
+  });
+  check("Indexkurs / Index-EPS ist PE", indexPriced.pe === 24, String(indexPriced.pe));
+  check("Indexkurs / Index-EPS liefert YoY", indexPriced.epsYoy === 10, String(indexPriced.epsYoy));
+  check("Formel-PEG ohne Zusatz", pegDisplaySuffix("formula") === "");
+  check("Vendor-PEG sagt Vendor-Ratio", pegDisplaySuffix("vendor") === " (Vendor-Ratio)");
+}
+
+function quartersOf(symbol: string, eps: number) {
+  return [1, 2, 3, 4, 5, 6, 7, 8].map((q) => ({
+    date: `202${q < 5 ? 3 : 4}-0${((q - 1) % 4) + 1}-28`,
+    symbol,
+    netIncomePerShare: eps,
+    period: "Q1",
+  }));
+}
+
+console.log("\n=== Gleiche Einheit, ehrliches Label ===");
+{
+  const etf = {
+    symbol: "SPY",
+    role: "etf" as const,
+    price: 670,
+    incomeRows: [] as unknown[],
+    earningsRows: [] as unknown[],
+    ratioQuarterRows: quartersOf("SPY", 2),
+    ratiosTtmRow: null,
+    vendorRatiosRow: null,
+    keyMetricsRow: null,
+    estimateRows: [] as unknown[],
+  };
+  const index = {
+    ...etf,
+    symbol: "^GSPC",
+    role: "fallback" as const,
+    price: 5800,
+    ratioQuarterRows: quartersOf("^GSPC", 55),
+  };
+  const picked = pickValuationInstrument(etf, index);
+  check("ETF-Quartals-EPS schlägt den Index", picked.symbol === "SPY" && picked.price === 670);
+  check("ETF-Zeile bleibt ETF-Proxy", valuationLabelFor(picked, "SPY") === "ETF-Proxy");
+  const emptyEtf = { ...etf, ratioQuarterRows: [] as unknown[] };
+  const indexPick = pickValuationInstrument(emptyEtf, index);
+  check("ohne ETF-EPS nimmt Indexkurs und Index-EPS", indexPick.symbol === "^GSPC" && indexPick.price === 5800);
+  check("Index-Zeile heißt Index ^GSPC", valuationLabelFor(indexPick, "SPY") === "Index ^GSPC");
+  const unlabeled = pickValuationInstrument(emptyEtf, { ...index, price: null });
+  check("Index ohne Kurs wird nicht mit dem ETF-Preis gepaart", unlabeled.symbol === "SPY");
+  const fez = pickValuationInstrument(
+    { ...emptyEtf, symbol: "VGK", price: 70 },
+    { ...index, symbol: "FEZ", role: "fallback" as const, price: 52, ratioQuarterRows: quartersOf("FEZ", 1.1) },
+  );
+  check("FEZ bleibt FEZ, nicht VGK", fez.symbol === "FEZ" && fez.price === 52);
+  check("FEZ-Zeile heißt ETF FEZ", valuationLabelFor(fez, "VGK") === "ETF FEZ");
+  const zeroEtf = {
+    ...emptyEtf,
+    incomeRows: [0, 0, 0, 0, 0, 0, 0, 0].map((eps, i) => ({
+      date: `2024-0${(i % 8) + 1}-28`,
+      epsDiluted: eps,
+    })),
+  };
+  check("Income-Nullen sind kein Share-EPS", pickValuationInstrument(zeroEtf, index).symbol === "^GSPC");
 }
 
 console.log("\n=== xlsx unzip ===");

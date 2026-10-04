@@ -538,6 +538,12 @@ export async function fmpRatios(symbol: string, limit = 10) {
   return fmpFetch(`/ratios`, { symbol, limit: String(limit) });
 }
 
+export async function fmpRatiosQuarterly(symbol: string, limit = 40) {
+  // GET /stable/ratios?symbol=X&period=quarter&limit=40
+  // netIncomePerShare on this period is one quarter, not TTM.
+  return fmpFetch(`/ratios`, { symbol, period: "quarter", limit: String(limit) });
+}
+
 export async function fmpRatiosTtm(symbol: string) {
   // GET /stable/ratios-ttm?symbol=AAPL — priceToEarningsRatioTTM
   return fmpFetch(`/ratios-ttm`, { symbol });

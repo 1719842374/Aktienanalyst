@@ -16,6 +16,7 @@ import {
   CHART_BOOKS,
   MARKET_WINDOWS,
   VOL_Y_MAX,
+  pegDisplaySuffix,
   volBandLabel,
   type ChartMarketId,
   type MarketChart,
@@ -101,12 +102,14 @@ function chartClickDate(state: { activeLabel?: string | number } | null): string
 
 function SnapshotRow({ market }: { market: MarketChart }) {
   const s = market.snapshot;
-  const pegNote = s.peg != null && s.peg > 3 ? " · teuer je Wachstumseinheit" : "";
+  const pegNote = s.pegKind === "formula" && s.peg != null && s.peg > 3 ? " · teuer je Wachstumseinheit" : "";
   return (
     <>
       <p className="text-[11px] text-muted-foreground font-mono" data-testid="market-snapshot">
-        ETF-Proxy · PE {fmt(s.pe, 1)} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
-        {pegNote} · PEG fwd {fmt(s.pegFwd, 2)} · RSI {fmt(s.rsi, 1)} · MACD H {fmt(s.macdHist, 2)}
+        {market.valuationLabel} · PE {fmt(s.pe, 1)} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
+        {pegDisplaySuffix(s.pegKind)}
+        {pegNote} · PEG fwd {fmt(s.pegFwd, 2)}
+        {pegDisplaySuffix(s.pegFwdKind)} · RSI {fmt(s.rsi, 1)} · MACD H {fmt(s.macdHist, 2)}
       </p>
       {s.missing && (
         <p className="text-[10px] text-muted-foreground break-words" data-testid="snapshot-missing">
@@ -125,8 +128,8 @@ function FactpackBody({ pack, loading, error }: { pack: MarketFactpack | undefin
     { label: "PE ttm", value: fmt(pack.pe, 2) },
     { label: "PE fwd", value: fmt(pack.peFwd, 2) },
     { label: "EPS YoY", value: pack.epsYoy == null ? "n/a" : `${fmt(pack.epsYoy, 2)} %` },
-    { label: "PEG ttm", value: fmt(pack.peg, 2), warn: pack.pegExpensive },
-    { label: "PEG fwd", value: fmt(pack.pegFwd, 2), warn: pack.pegFwdExpensive },
+    { label: "PEG ttm", value: `${fmt(pack.peg, 2)}${pegDisplaySuffix(pack.pegKind)}`, warn: pack.pegExpensive },
+    { label: "PEG fwd", value: `${fmt(pack.pegFwd, 2)}${pegDisplaySuffix(pack.pegFwdKind)}`, warn: pack.pegFwdExpensive },
     { label: "Konsens-Wachstum", value: pack.gCons == null ? "n/a" : `${fmt(pack.gCons, 2)} %` },
     { label: "RSI(14)", value: fmt(pack.rsi, 1) },
     { label: "MACD", value: fmt(pack.macd, 3) },
