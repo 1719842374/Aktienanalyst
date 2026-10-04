@@ -12,9 +12,9 @@ import type { CompanyNodeData, StageNodeData, ValueChainStage } from "./valueCha
 
 export const VALUE_CHAIN_FLOW_COMPANY_CAP = 3;
 
-const COLUMN_X = 320;
-const COMPANY_Y0 = 168;
-const COMPANY_DY = 96;
+const COLUMN_X = 520;
+const COMPANY_Y0 = 240;
+const COMPANY_DY = 110;
 
 export type ValueChainEdgeKind = "flow" | "member";
 
