@@ -20,13 +20,10 @@ import {
   parseFredCsv,
   parsePeppPurchases,
   quarterVelocity,
-  textHasOfficialReleaseUrl,
   velocity,
-  xBotInvalidationKeys,
   bojHundredMillionYenToBillion,
 } from "../server/liquidity-briefing-math";
 import {
-  applyXBotPing,
   briefingSourceUrls,
   fetchLiquidityBriefing,
   memoryBriefingCache,
@@ -121,24 +118,6 @@ const boj = parseBojMoneyStock([
   "MAM1NAM2M2MO,M2/Average Amounts Outstanding/Money Stock,100 million yen,MONTHLY,Money Stock,20260909,202607,12966394",
 ].join("\n"));
 ok("BoJ Juli 2026 geparst", boj.length === 1 && boj[0].period === "2026-07" && boj[0].value === 12966394);
-
-console.log("X-Bot");
-const cache = memoryBriefingCache();
-cache.set(CACHE_KEYS.asia, { m2: 1 }, 1);
-cache.set(CACHE_KEYS.eu, { app: 1 }, 1);
-const noUrl = await applyXBotPing("@Bank_of_Japan_e", "Money Stock (July) ohne Link", cache);
-ok("Tweet ohne Amts-URL ändert keinen Cache", noUrl.length === 0 && cache.get(CACHE_KEYS.asia) != null);
-ok("example.com ist keine Amts-URL", !textHasOfficialReleaseUrl("siehe https://example.com/ms.pdf"));
-const withUrl = await applyXBotPing(
-  "@Bank_of_Japan_e",
-  "Money Stock (July) https://www.boj.or.jp/en/statistics/money/ms/ms2607.pdf",
-  cache,
-);
-ok("BoJ-URL invalidiert ASIA", withUrl.includes(CACHE_KEYS.asia) && cache.get(CACHE_KEYS.asia) == null, withUrl.join(","));
-ok("BoJ-Ping lässt EU stehen", cache.get(CACHE_KEYS.eu) != null);
-ok("Tweet-Text ist keine Key-Liste aus Zahlen", xBotInvalidationKeys("@ecb", "M3 +3.4%").length === 0);
-const ecbKeys = xBotInvalidationKeys("@ecb", "https://www.ecb.europa.eu/press/pr/stats/md/");
-ok("EZB-URL invalidiert EU und M3", ecbKeys.includes(CACHE_KEYS.eu) && ecbKeys.includes(CACHE_KEYS.euM3));
 
 console.log("Fetch mit Fixture-Körpern, ohne Netz");
 const m3Body = [

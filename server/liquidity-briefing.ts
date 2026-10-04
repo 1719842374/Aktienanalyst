@@ -24,7 +24,6 @@ import {
   parsePeppPurchases,
   quarterVelocity,
   roundTo,
-  xBotInvalidationKeys,
   yoyPercent,
   bojHundredMillionYenToBillion,
 } from "./liquidity-briefing-math";
@@ -284,17 +283,6 @@ async function readExistingUsVelocity(): Promise<number | null> {
   const row = diskResearcherGet(EXISTING_US_LIQUIDITY_CACHE_KEY);
   const v = row?.velocity;
   return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-export async function applyXBotPing(
-  account: string,
-  text: string,
-  cache?: BriefingCache,
-): Promise<string[]> {
-  const store = cache ?? await diskCache();
-  const keys = xBotInvalidationKeys(account, text);
-  for (const key of keys) store.delete(key);
-  return keys;
 }
 
 export async function fetchLiquidityBriefing(opts: {
