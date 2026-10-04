@@ -48,7 +48,7 @@ function findBest(values: (number | null)[], lowerIsBetter: boolean): number | n
 export default function PeerComparison({ data, onOverridesChange, kiPeers = [] }: {
   data: StockAnalysis;
   onOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void;
-  /** Session-only KI tickers. Numbers on these rows are FMP, not model estimates. */
+  /** Session-only KI names. FMP metrics stay on the side list, not in the scored table. */
   kiPeers?: PeerNaFill[];
 }) {
   const pc = data.peerComparison;
@@ -62,11 +62,12 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [] }
   const activeRemove = data.activePeerOverrides?.remove ?? [];
 
   if (!pc || !pc.peers || pc.peers.length === 0) {
-    if (kiPeers.length === 0) return null;
-    return <KiOnlyPeerTable peers={kiPeers} />;
+    return <KiSideList peers={kiPeers} />;
   }
 
   const { subject, peers, peerAvg, sectorMedian } = pc;
+  const scoredTickers = new Set(peers.map((p) => p.ticker.toUpperCase()));
+  const sideKi = kiPeers.filter((row) => !scoredTickers.has(row.ticker.toUpperCase()));
 
   const handleRemove = (ticker: string) => {
     if (!onOverridesChange) return;
@@ -213,7 +214,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [] }
       </div>
 
       <div className="overflow-x-auto -mx-1">
-        <table className="w-full text-[11px]">
+        <table className="w-full text-[11px]" data-testid="peer-scored-table">
           <thead>
             <tr className="border-b border-border">
               <th className="text-left py-1.5 px-1.5 text-muted-foreground font-medium cursor-pointer select-none hover:text-foreground/80 transition-colors" onClick={() => handleSort("ticker")}>
@@ -270,10 +271,6 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [] }
                   </td>
                 )}
               </tr>
-            ))}
-
-            {kiPeers.map((p) => (
-              <KiPeerRow key={`ki-${p.ticker}`} peer={p} cols={cols} trailingCell={!!onOverridesChange} />
             ))}
 
             {/* Peer Average row */}
@@ -365,6 +362,8 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [] }
           );
         })}
       </div>
+
+      <KiSideList peers={sideKi} />
     </div>
   );
 }
@@ -415,6 +414,18 @@ const KI_ONLY_COLS: PeerCol[] = [
   { key: "roic", label: "ROIC (FY)", lowerIsBetter: false, decimals: 1, suffix: "%" },
   { key: "roic5Y", label: "ROIC 5Y Ø", lowerIsBetter: false, decimals: 1, suffix: "%" },
 ];
+
+function KiSideList({ peers }: { peers: PeerNaFill[] }) {
+  if (peers.length === 0) return null;
+  return (
+    <div className="space-y-1" data-testid="peer-ki-side-list">
+      <div className="text-[10px] text-violet-700 dark:text-violet-300">
+        KI-Namen · nicht in der Peer-Tabelle · Kennzahlen von FMP
+      </div>
+      <KiOnlyPeerTable peers={peers} />
+    </div>
+  );
+}
 
 function KiOnlyPeerTable({ peers }: { peers: PeerNaFill[] }) {
   return (
