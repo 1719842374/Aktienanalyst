@@ -43,7 +43,11 @@ async function spaceOutgoingCall(): Promise<void> {
   _lastFmpCallAt = Date.now();
 }
 
-async function fmpFetch(path: string, params: Record<string, string> = {}): Promise<any> {
+async function fmpFetch(
+  path: string,
+  params: Record<string, string> = {},
+  opts: { timeoutMs?: number; asText?: boolean } = {},
+): Promise<any> {
   const key = getApiKey();
   if (!key) throw new Error("FMP_API_KEY not set");
   const url = new URL(`${FMP_BASE}${path}`);
@@ -57,7 +61,7 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
     trackFmpCall(1);
     try {
       const resp = await fetch(url.toString(), {
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 15000),
         headers: { "User-Agent": "StockAnalystPro/1.0" },
       });
       if (resp.status === 429 || resp.status === 503) {
@@ -70,7 +74,7 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
         }
       }
       if (!resp.ok) throw Object.assign(new Error(`FMP ${resp.status}: ${path}`), { fmpStatus: resp.status });
-      return resp.json();
+      return opts.asText ? resp.text() : resp.json();
     } catch (err: any) {
       lastErr = err;
       // Retry only on network/timeout errors (AbortError), not on client errors.
@@ -984,4 +988,63 @@ export async function fmpHistoricalMarketCap(symbol: string, from?: string, to?:
     const data = await fmpFetch(`/historical-market-capitalization`, params);
     return Array.isArray(data) ? data : [];
   } catch { return []; }
+}
+
+/**
+ * GET /stable/sp500-constituent
+ * Current S&P 500 membership. Fields include symbol, name, sector, subSector,
+ * headQuarter, dateFirstAdded, cik, founded. No weight and no earnings.
+ */
+export async function fmpSp500Constituents(): Promise<unknown[]> {
+  const data = await fmpFetch(`/sp500-constituent`);
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * GET /stable/etf/holdings?symbol=
+ * Fund positions. `asset` / `symbol` name the holding. `marketValue` and
+ * `weightPercentage` are the fund's position, not the company's market cap.
+ */
+export async function fmpEtfHoldings(symbol: string): Promise<unknown[]> {
+  const data = await fmpFetch(`/etf/holdings`, { symbol });
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * GET /stable/income-statement-bulk?year=&period=Q1|Q2|Q3|Q4
+ * Every company's statement for that fiscal period. Body may be JSON or CSV.
+ * Callers filter to index members. This is not an ETF income statement.
+ */
+export async function fmpIncomeStatementBulk(year: number, period: string): Promise<string> {
+  const body = await fmpFetch(
+    `/income-statement-bulk`,
+    { year: String(year), period },
+    { timeoutMs: 60000, asText: true },
+  );
+  return typeof body === "string" ? body : JSON.stringify(body ?? []);
+}
+
+/**
+ * GET /stable/market-capitalization-batch?symbols=
+ * Company market cap (price × shares). Chunked so the query string stays short.
+ * `marketCap` is not an ETF holding's `marketValue`.
+ */
+export async function fmpMarketCapBatch(symbols: string[]): Promise<unknown[]> {
+  const seen: Record<string, true> = {};
+  const unique: string[] = [];
+  for (const raw of symbols) {
+    const symbol = raw.trim().toUpperCase();
+    if (!symbol || seen[symbol]) continue;
+    seen[symbol] = true;
+    unique.push(symbol);
+  }
+  const out: unknown[] = [];
+  const chunk = 80;
+  for (let i = 0; i < unique.length; i += chunk) {
+    const symbolsParam = unique.slice(i, i + chunk).join(",");
+    const data = await fmpFetch(`/market-capitalization-batch`, { symbols: symbolsParam });
+    if (Array.isArray(data)) out.push(...data);
+    else if (data && typeof data === "object") out.push(data);
+  }
+  return out;
 }

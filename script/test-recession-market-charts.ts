@@ -20,23 +20,34 @@ import {
   peFromMetricsRow,
   pegDisplaySuffix,
   pegFromPeAndGrowth,
+  aggregateLineForBook,
   assembleValuationMissing,
+  bulkQuarterWindow,
   closeFromPriceRows,
   closeFromQuote,
+  constituentFactsFromSources,
   epsFromIndexQuote,
   etfInfoHasShareEps,
   etfValuationNotes,
+  incomePrintsFromBulkBody,
   indexValuationNotes,
   instrumentCanPriceEps,
+  marketCapFromRow,
+  marketsResponseSchema,
+  membersFromHoldingRows,
+  membersFromSp500Rows,
   pickValuationInstrument,
+  quarterlyNetIncomeFromRow,
   valuationLabelFor,
   realizedVol20,
   sliceByWindow,
   ttmEpsAt,
+  valuationFromConstituentAggregates,
   valuationFromFmpRows,
   valuationFromIndexSources,
   valuationFromParts,
   volBandLabel,
+  type ConstituentFacts,
 } from "../shared/recession-market-charts";
 import { MARKETS_CHART_CACHE_VERSION, unzipEntry } from "../server/recession-market-charts";
 
@@ -454,7 +465,7 @@ function blankInstrument(symbol: string, role: "etf" | "fallback", price: number
 
 console.log("\n=== Live-Payloads 2026-10-02 ===");
 {
-  check("Cache-Key ist nicht mehr v3 oder v4", MARKETS_CHART_CACHE_VERSION === "v5", MARKETS_CHART_CACHE_VERSION);
+  check("Cache-Key ist nicht mehr v3, v4 oder v5", MARKETS_CHART_CACHE_VERSION === "v6", MARKETS_CHART_CACHE_VERSION);
   const prior = closeFromPriceRows(
     [{ date: "2026-10-03", close: 99999 }, { date: "2026-10-01", price: 6700 }],
     "2026-10-02",
@@ -707,6 +718,278 @@ console.log("\n=== Index-Quote und key-metrics-ttm, kein ETF-Share-EPS ===");
     fwdNote: "GET /stable/analyst-estimates?symbol=^GSPC&period=annual leer",
   });
   check("SPY-Lücke nennt ^GSPC-Quote und key-metrics-ttm, nicht die ETF-GuV", gap != null && gap.includes("Formel auf ^GSPC") && gap.includes("key-metrics-ttm") && !gap.includes("income-statement?symbol=SPY"), gap ?? "");
+}
+
+function fact(partial: Partial<ConstituentFacts> & Pick<ConstituentFacts, "symbol">): ConstituentFacts {
+  return {
+    cik: null,
+    marketCap: null,
+    netIncomeTtm: null,
+    netIncomePrevTtm: null,
+    netIncomeFwd: null,
+    reportedCurrency: "USD",
+    broken: null,
+    ...partial,
+  };
+}
+
+console.log("\n=== Index-Aggregat, keine Durchschnitts-P/Es ===");
+{
+  const spy = aggregateLineForBook("SPY");
+  const qqq = aggregateLineForBook("QQQ");
+  const vgk = aggregateLineForBook("VGK");
+  const ashr = aggregateLineForBook("ASHR");
+  check("SPY heißt Aggregat ^GSPC", spy.label === "Aggregat ^GSPC" && spy.blocked == null);
+  check("QQQ heißt Aggregat ^NDX und nennt die Holdings", qqq.label === "Aggregat ^NDX" && qqq.methodNote != null && qqq.methodNote.includes("etf/holdings?symbol=QQQ") && qqq.methodNote.includes("nasdaq-constituent"));
+  check("VGK: FEZ ist kein Index", vgk.label === "kein Index VGK" && vgk.blocked != null && vgk.blocked.includes("FEZ ist ein ETF") && !vgk.blocked.includes("^"));
+  check("ASHR ohne erfundenes Indexsymbol", ashr.label === "kein Index ASHR" && ashr.blocked != null && ashr.blocked.includes("CSI 300") && !ashr.blocked.includes("^"));
+
+  const three = [
+    fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, netIncomeFwd: 12 }),
+    fact({ symbol: "B", marketCap: 100, netIncomeTtm: 5, netIncomePrevTtm: 4, netIncomeFwd: 6 }),
+    fact({ symbol: "C", marketCap: 100, netIncomeTtm: 1, netIncomePrevTtm: 1, netIncomeFwd: 2 }),
+  ];
+  const agg = valuationFromConstituentAggregates({
+    constituents: three,
+    etfClose: 670,
+    indexLevel: 6700,
+    vendorPe: 27.4,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("PE ist Summe Cap / Summe netIncome, nicht der Mittelwert", agg.core.pe === 18.75, String(agg.core.pe));
+  check("arithmetisches Mittel der P/Es ist nicht das Ergebnis", agg.core.pe !== 43.33);
+  check("ETF-Close und Indexstand ändern das Aggregat nicht", agg.core.pe !== 670 / 16 && agg.core.pe !== 6700 / 16);
+  check("Vendor-pe 27.4 ist nicht der PE", agg.core.pe !== 27.4);
+  check("EPS YoY aus demselben Constituenten-Set", agg.core.epsYoy === 23.08, String(agg.core.epsYoy));
+  check("PEG = Aggregat-PE / Aggregat-g", agg.core.peg === 0.81 && agg.core.pegKind === "formula", String(agg.core.peg));
+  check("Forward-PE ist Summe Cap / Summe netIncomeAvg", agg.core.peFwd === 15, String(agg.core.peFwd));
+  check("Forward-PEG aus demselben Aggregat", agg.core.pegFwd === 0.6 && agg.core.pegFwdKind === "formula", String(agg.core.pegFwd));
+
+  const loss = valuationFromConstituentAggregates({
+    constituents: [
+      fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 10 }),
+      fact({ symbol: "B", marketCap: 100, netIncomeTtm: -2, netIncomePrevTtm: 1 }),
+    ],
+    etfClose: null,
+    indexLevel: null,
+    vendorPe: null,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("negatives netIncome bleibt in der Summe", loss.core.pe === 25, String(loss.core.pe));
+  const wiped = valuationFromConstituentAggregates({
+    constituents: [
+      fact({ symbol: "A", marketCap: 100, netIncomeTtm: -5, netIncomePrevTtm: 4 }),
+      fact({ symbol: "B", marketCap: 100, netIncomeTtm: 4, netIncomePrevTtm: 4 }),
+    ],
+    etfClose: null,
+    indexLevel: null,
+    vendorPe: null,
+    allowForward: false,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("Summe netIncome <= 0 lässt PE n/a", wiped.core.pe == null && wiped.peReasons.some((r) => r.includes("Summe netIncome <= 0")), wiped.peReasons.join(" | "));
+  const zeroNi = valuationFromConstituentAggregates({
+    constituents: [
+      fact({ symbol: "A", marketCap: 100, netIncomeTtm: 0, netIncomePrevTtm: 1 }),
+      fact({ symbol: "B", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8 }),
+    ],
+    etfClose: null,
+    indexLevel: null,
+    vendorPe: null,
+    allowForward: false,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("netIncome 0 ist eine Zahl und fehlt nicht", zeroNi.core.pe === 20, String(zeroNi.core.pe));
+
+  const missingCap = valuationFromConstituentAggregates({
+    constituents: [
+      fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8 }),
+      fact({ symbol: "C", marketCap: null, netIncomeTtm: 1, netIncomePrevTtm: 1 }),
+    ],
+    etfClose: 670,
+    indexLevel: 6700,
+    vendorPe: 22,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("fehlende Marktkapitalisierung lässt PE n/a und nennt C", missingCap.core.pe == null && missingCap.peReasons.some((r) => r.includes("C")), missingCap.peReasons.join(" | "));
+  const missingPrev = valuationFromConstituentAggregates({
+    constituents: [
+      fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8 }),
+      fact({ symbol: "B", marketCap: 100, netIncomeTtm: 5, netIncomePrevTtm: null }),
+    ],
+    etfClose: null,
+    indexLevel: null,
+    vendorPe: null,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("ein TTM ohne Vorjahr hat PE, aber kein YoY und kein PEG", missingPrev.core.pe === 13.33 && missingPrev.core.epsYoy == null && missingPrev.core.peg == null, `pe=${missingPrev.core.pe} yoy=${missingPrev.core.epsYoy}`);
+  check("YoY nennt das fehlende Vorjahres-netIncome", missingPrev.yoyReason != null && missingPrev.yoyReason.includes("B"), missingPrev.yoyReason ?? "");
+
+  const epsOnly = valuationFromConstituentAggregates({
+    constituents: three.map((row) => ({ ...row, netIncomeFwd: null })),
+    etfClose: null,
+    indexLevel: null,
+    vendorPe: null,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("ohne netIncomeAvg bleibt Forward n/a", epsOnly.core.pe === 18.75 && epsOnly.core.peFwd == null && epsOnly.fwdReason != null && epsOnly.fwdReason.includes("netIncomeAvg"), epsOnly.fwdReason ?? "");
+  const mixedFx = valuationFromConstituentAggregates({
+    constituents: [
+      fact({ symbol: "A", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, reportedCurrency: "USD" }),
+      fact({ symbol: "B", marketCap: 100, netIncomeTtm: 5, netIncomePrevTtm: 4, reportedCurrency: "EUR" }),
+    ],
+    etfClose: null,
+    indexLevel: null,
+    vendorPe: null,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("gemischte reportedCurrency ist kein Aggregat", mixedFx.core.pe == null && mixedFx.peReasons.some((r) => r.includes("USD") && r.includes("EUR")), mixedFx.peReasons.join(" | "));
+  const classes = valuationFromConstituentAggregates({
+    constituents: [
+      fact({ symbol: "GOOG", cik: "1652044", marketCap: 100, netIncomeTtm: 10, netIncomePrevTtm: 8, netIncomeFwd: 12 }),
+      fact({ symbol: "GOOGL", cik: "1652044", marketCap: 80, netIncomeTtm: 10, netIncomePrevTtm: 8, netIncomeFwd: 12 }),
+    ],
+    etfClose: null,
+    indexLevel: null,
+    vendorPe: null,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("zwei Klassen, ein netIncome: Cap-Summe / ein Gewinn", classes.core.pe === 18 && classes.core.peFwd === 15, `pe=${classes.core.pe} fwd=${classes.core.peFwd}`);
+  const hist = valuationFromConstituentAggregates({
+    constituents: three,
+    etfClose: 670,
+    indexLevel: null,
+    vendorPe: null,
+    allowForward: false,
+    useCurrentMarketCap: false,
+    marketCapUnavailable: "GET /stable/historical-market-capitalization je Name nicht geladen",
+  });
+  check("heutige Caps werden am Stichtag nicht zum PE", hist.core.pe == null && hist.core.peFwd == null && hist.peReasons.some((r) => r.includes("historical-market-capitalization")), hist.peReasons.join(" | "));
+  check("Vorjahres-Summe bleibt am Stichtag ein YoY", hist.core.epsYoy === 23.08, String(hist.core.epsYoy));
+
+  const members = membersFromSp500Rows([
+    { symbol: "AAPL", name: "Apple", sector: "Technology", subSector: "Consumer Electronics", headQuarter: "Cupertino", dateFirstAdded: "1982-11-30", cik: "320193", founded: "1976" },
+    { symbol: "AAPL", cik: "320193" },
+    { symbol: "MSFT", cik: "789019" },
+  ]);
+  check("sp500-constituent liest symbol und cik, ohne Doppel", members.length === 2 && members[0]?.cik === "320193");
+  const holdings = membersFromHoldingRows([
+    { symbol: "QQQ", asset: "AAPL", weightPercentage: 9, marketValue: 999 },
+    { symbol: "QQQ", asset: "CASH", weightPercentage: 0.2, marketValue: 10 },
+    { symbol: "MSFT", weightPercentage: 8, marketValue: 800 },
+  ], "QQQ");
+  check("Holdings liefern Tickers, nicht marketValue", holdings.map((m) => m.symbol).join(",") === "AAPL,MSFT");
+  check("Holding-marketValue ist keine Marktkapitalisierung", marketCapFromRow({ symbol: "AAPL", marketValue: 999, weightPercentage: 9 }) == null);
+  check("marketCap-Batch-Feld ist die Marktkapitalisierung", marketCapFromRow({ symbol: "AAPL", date: "2026-10-02", marketCap: 3_000 })?.marketCap === 3000);
+  check("FY-netIncome ist kein Quartal", quarterlyNetIncomeFromRow({ symbol: "AAPL", date: "2024-12-31", period: "FY", netIncome: 99, reportedCurrency: "USD" }) == null);
+
+  const csv = [
+    "symbol,date,period,reportedCurrency,netIncome,eps",
+    "AAPL,2023-03-31,Q1,USD,1,0.1",
+    "AAPL,2023-06-30,Q2,USD,1,0.1",
+    "AAPL,2023-09-30,Q3,USD,1,0.1",
+    "AAPL,2023-12-31,Q4,USD,1,0.1",
+    "AAPL,2024-03-31,Q1,USD,2,0.2",
+    "AAPL,2024-06-30,Q2,USD,2,0.2",
+    "AAPL,2024-09-30,Q3,USD,2,0.2",
+    "AAPL,2024-12-31,Q4,USD,2,0.2",
+    "AAPL,2024-12-31,FY,USD,99,9",
+    "MSFT,2024-12-31,Q4,USD,50,1",
+  ].join("\n");
+  const prints = incomePrintsFromBulkBody(csv, new Set(["AAPL"]));
+  const built = constituentFactsFromSources({
+    members: [{ symbol: "AAPL", cik: "320193" }],
+    prints,
+    marketCaps: [{ symbol: "AAPL", marketCap: 80 }],
+    estimateRows: [
+      { symbol: "AAPL", date: "2025-12-31", epsAvg: 9, period: "annual" },
+      { symbol: "AAPL", date: "2025-12-31", netIncomeAvg: 12, period: "annual" },
+    ],
+    asOf: "2024-12-31",
+  });
+  check("Bulk filtert auf Mitglieder und verwirft FY", prints.length === 8 && prints.every((p) => p.symbol === "AAPL"));
+  const fromBulk = valuationFromConstituentAggregates({
+    constituents: built,
+    etfClose: 670,
+    indexLevel: 6700,
+    vendorPe: 27.4,
+    allowForward: true,
+    useCurrentMarketCap: true,
+    marketCapUnavailable: null,
+  });
+  check("acht Quartale: TTM 8, Vorjahr 4, PE 10", fromBulk.core.pe === 10 && fromBulk.core.epsYoy === 100, `pe=${fromBulk.core.pe} yoy=${fromBulk.core.epsYoy}`);
+  check("epsAvg wird nicht zum Forward-Gewinn; netIncomeAvg schon", fromBulk.core.peFwd === 6.67, String(fromBulk.core.peFwd));
+  const window8 = bulkQuarterWindow("2026-10-02");
+  check("acht abgeschlossene Bulk-Quartale bis Q3 2026", window8.length === 8 && window8[0]?.period === "Q4" && window8[0]?.year === 2024 && window8[7]?.period === "Q3" && window8[7]?.year === 2026, JSON.stringify(window8));
+
+  const gap = assembleValuationMissing({
+    chartEtf: "SPY",
+    chosenSymbol: "^GSPC",
+    valuationLabel: "Aggregat ^GSPC",
+    pe: 18.75,
+    peFwd: null,
+    epsYoy: 23.08,
+    peg: 0.81,
+    pegFwd: null,
+    gCons: null,
+    allowForward: true,
+    etfNotes: [],
+    fallbackNotes: [],
+    priceNote: null,
+    extraNotes: [],
+    fwdNote: "kein Bulk für analyst-estimates; netIncomeAvg nicht geladen",
+    methodNote: spy.methodNote,
+  });
+  check("Aggregat-Zeile sagt die Summe, nicht Kurs/EPS", gap != null && gap.includes("Summe Marktkapitalisierung / Summe netIncome") && gap.includes("sp500-constituent") && !gap.includes("Kurs und EPS"), gap ?? "");
+  const shaped = marketsResponseSchema.safeParse({
+    asOf: "2026-10-02",
+    window: "10Y",
+    markets: ["SPY", "QQQ", "VGK", "ASHR"].map((id) => ({
+      id,
+      etf: id,
+      name: id,
+      volId: id === "ASHR" ? "realized20" : "VIXCLS",
+      volKind: id === "ASHR" ? "realized" : "implied",
+      bandsAnalog: id === "VGK" || id === "ASHR",
+      volYMax: 90,
+      volNote: null,
+      ohlcv: [],
+      vol: [],
+      marks: [],
+      snapshot: {
+        pe: id === "SPY" ? 18.75 : null,
+        peFwd: null,
+        peg: id === "SPY" ? 0.81 : null,
+        pegFwd: null,
+        pegKind: id === "SPY" ? "formula" : null,
+        pegFwdKind: null,
+        epsYoy: id === "SPY" ? 23.08 : null,
+        rsi: 54.5,
+        macdHist: -0.06,
+        missing: null,
+      },
+      leverage: null,
+      leverageNote: null,
+      valuationLabel: aggregateLineForBook(id).label,
+    })),
+  });
+  check("Antwortform bleibt am UI-Schema", shaped.success, shaped.success ? "" : JSON.stringify(shaped.error.issues[0]));
 }
 
 console.log("\n=== xlsx unzip ===");
