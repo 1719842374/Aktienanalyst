@@ -1,12 +1,20 @@
 /**
  * Additive C2 route. Mounted from routes-register.ts so researcher.ts stays untouched.
  * GET /api/researcher/liquidity — 6h cache tab macro params v2__US, ?refresh=1 invalidates.
+ * GET /api/researcher/liquidity?region=US|EU|ASIA — regional books M/F, catalog cache keys only.
  */
 import type { Express } from "express";
 import * as fs from "fs";
 import * as path from "path";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 import { fetchLiquidityLive, LIQUIDITY_CACHE_TAB, LIQUIDITY_CACHE_PARAMS } from "./liquidity-regime";
+import type { Region } from "./liquidity-index-catalog";
+import { buildLiquidityIndex, parseLiquidityRegion } from "./liquidity-index";
+
+export interface LiquidityRouteDeps {
+  buildIndex?: (region: Region, opts?: { force?: boolean }) => Promise<unknown>;
+  fetchC2?: () => Promise<unknown>;
+}
 
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -58,10 +66,29 @@ function writeCache(tab: string, params: string, data: any): void {
   try { diskResearcherSet(researcherDiskKey(tab, params), payload); } catch {}
 }
 
-export function registerLiquidityRoute(app: Express): void {
+export function registerLiquidityRoute(app: Express, deps?: LiquidityRouteDeps): void {
+  const buildIndex = deps?.buildIndex ?? ((region: Region, opts?: { force?: boolean }) => buildLiquidityIndex(region, opts));
+  const fetchC2 = deps?.fetchC2 ?? fetchLiquidityLive;
   app.get("/api/researcher/liquidity", async (req, res) => {
     const q = req.query || {};
     const force = q.refresh === "1" || q.force === "1" || q.force === "true" || q.refresh === "true";
+    const region = parseLiquidityRegion(q.region);
+    if (region === "invalid") {
+      res.status(400).json({ error: "region must be US, EU, or ASIA" });
+      return;
+    }
+    if (region) {
+      console.log(`[RESEARCHER/liquidity] books region=${region}`);
+      try {
+        const result = await buildIndex(region, { force });
+        res.json(result);
+      } catch (err: any) {
+        const message = err?.message || "liquidity failed";
+        console.error("[RESEARCHER/liquidity] failed:", message);
+        res.status(500).json({ error: message });
+      }
+      return;
+    }
     const tab = LIQUIDITY_CACHE_TAB;
     const cacheParams = LIQUIDITY_CACHE_PARAMS;
     if (force) {
@@ -77,7 +104,7 @@ export function registerLiquidityRoute(app: Express): void {
     }
     console.log("[RESEARCHER/liquidity] building");
     try {
-      const result = await fetchLiquidityLive();
+      const result = await fetchC2();
       writeCache(tab, cacheParams, result);
       res.json(result);
     } catch (err: any) {
