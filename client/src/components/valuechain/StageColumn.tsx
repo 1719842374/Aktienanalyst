@@ -6,7 +6,7 @@
  * Nutzer vorgegebene Referenzbild ("KI-Wertschöpfungskette"-Dashboard) —
  * ABER adaptiv aus den echten API-Stages generiert, NICHT die 7 fixen
  * KI-Stufen aus dem Referenzbild. Reines CSS/Tailwind, kein SVG-Canvas,
- * keine neue Abhängigkeit (kein @xyflow/react, kein Animations-Framework).
+ * keine Abhängigkeit in dieser Spalte. Der Stufenfluss daneben nutzt @xyflow/react.
  *
  * Stufen-Effekt: jede Spalte erhält einen index-abhängigen `translateY`
  * (via inline style, da Tailwind keine dynamischen arbitrary values aus

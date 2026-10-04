@@ -1,9 +1,9 @@
 /**
  * CompanyNode.tsx
  * ---------------
- * Statische Karte für eine einzelne Firma innerhalb einer Value-Chain-Stage
- * (KEIN React-Flow-Node — Sprint D6a, siehe Kommentar in StageNode.tsx für
- * die Begründung/Vorgeschichte der @xyflow/react-Entfernung).
+ * @xyflow/react company node inside the additive stage flow (Rang 7).
+ * Klick läuft über React Flow onNodeClick im ValueChainFlow.
+ * Die vollständige Firmenliste bleibt in StageColumn.
  *
  * Zeigt: Ticker, Name, Marktkapitalisierung, 1J-Performance, Valuation-Flag,
  * 13F-Badge, sowie CAPEX-Intensity mit Farbe (capexColorClass, unverändert
@@ -11,8 +11,11 @@
  */
 
 import { memo } from "react";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import type { CompanyNodeData, ValuationFlag } from "@/lib/valueChainTypes";
 import { formatCapexIntensity, capexColorClass, capexBorderClass } from "@/lib/valueChainTypes";
+
+export type CompanyFlowNode = Node<CompanyNodeData, "company">;
 
 function formatMarketCap(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "–";
@@ -35,13 +38,7 @@ const valuationColors: Record<ValuationFlag, string> = {
   "n/a": "bg-slate-700/40 text-slate-500",
 };
 
-interface CompanyNodeProps {
-  data: CompanyNodeData;
-  /** Optionaler Klick-Handler (z.B. Navigation zu /#/?ticker=XYZ) */
-  onClick?: (ticker: string) => void;
-}
-
-function CompanyNodeComponent({ data, onClick }: CompanyNodeProps) {
+function CompanyNodeComponent({ data }: NodeProps<CompanyFlowNode>) {
   const perfColor =
     data.performance1Y == null
       ? "text-slate-400"
@@ -55,8 +52,9 @@ function CompanyNodeComponent({ data, onClick }: CompanyNodeProps) {
   return (
     <div
       className={`min-w-[160px] max-w-[220px] rounded-lg border ${capexBorder} bg-slate-900/80 px-3 py-2 shadow-md backdrop-blur-sm hover:border-cyan-500/60 transition-colors cursor-pointer`}
-      onClick={() => onClick?.(data.ticker)}
+      data-testid={`flow-company-${data.ticker}`}
     >
+      <Handle type="target" position={Position.Top} id="in" className="!h-2 !w-2 !border-slate-950 !bg-slate-400" />
       <div className="flex items-center gap-2">
         {data.logoUrl ? (
           <img

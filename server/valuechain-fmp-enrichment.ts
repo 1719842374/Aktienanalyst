@@ -12,6 +12,7 @@
  *
  *   Request
  *     → Cache Hit? → fertig
+ *     → Redis Fixed-Window + Concurrency (optional, Rang 9; ohne URL skip)
  *     → Concurrency Gate (max 5–8, In-Process Semaphore)
  *     → wouldExceedBudget()
  *     → withExponentialBackoff(fn, { jitter: "equal" })   [reused from
@@ -31,6 +32,7 @@ import { fmpProfile, fmpCashFlow, fmpIncomeStatement, wouldExceedBudget } from "
 // Kopie der Logik. withBackoff.ts bleibt unveraendert.
 import { withExponentialBackoff } from "../client/src/lib/withBackoff";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
+import { acquireValueChainRedisPermit } from "./valuechain-redis-ratelimit";
 
 // ---------------------------------------------------------------------------
 // Layer 1: Concurrency Gate (In-Process Semaphore, 5-8 parallel — Spec §2)
@@ -121,6 +123,27 @@ async function enrichOne(ticker: string): Promise<ValueChainFmpEnrichment> {
   const cached = readCache(ticker);
   if (cached) return cached;
 
+  // Rang 9: optionaler Redis-Zähler vor dem lokalen Gate. Ohne URL oder
+  // bei einem toten Redis ist das ein No-Op (in-process). Ein Limit
+  // schreibt bewusst NICHT in den Cache.
+  const redisPermit = await acquireValueChainRedisPermit();
+  if (redisPermit.limited) {
+    console.warn(`[ValueChain-FMP] Redis-Limit — überspringe Enrichment für ${ticker}`);
+    await redisPermit.release();
+    return {
+      ticker,
+      marketCap: null,
+      capex: null,
+      revenueTTM: null,
+      description: null,
+      sector: null,
+      industry: null,
+      fetchedAt: new Date().toISOString(),
+      cacheHit: false,
+      dataMissing: true,
+    };
+  }
+
   // Schicht 2: Concurrency-Gate
   const release = await gate.acquire();
   try {
@@ -182,6 +205,7 @@ async function enrichOne(ticker: string): Promise<ValueChainFmpEnrichment> {
     return entry;
   } finally {
     release();
+    await redisPermit.release();
   }
 }
 

@@ -16,9 +16,9 @@
 | 4 | Branchen-Selector + API-Contract | offen |
 | 5 | FMP Enrichment + Rate-Limit-Schichten | offen |
 | 6 | CAPEX live berechnen + Badge/Farbe | offen |
-| 7 | Custom Edges (MVP) | offen |
-| 8 | Edge-Animationen | Nice-to-have |
-| 9 | Redis-basiertes Rate Limiting (optional) | offen / später |
+| 7 | Custom Edges (MVP) | ✅ |
+| 8 | Edge-Animationen | ✅ |
+| 9 | Redis-basiertes Rate Limiting (optional) | ✅ optional (ohne URL: In-Process) |
 
 ---
 
@@ -132,3 +132,19 @@ Optional später: Redis als zentraler Token-Bucket / Concurrency-Gate vor dem lo
 ---
 
 *Aktualisiert 17.08.2026: withBackoff.ts (Equal + Decorrelated Jitter), CAPEX Color Helpers, Redis Rate-Limiting Spec.*
+
+## 4. Custom Edges und Animation (Rang 7–8)
+
+Additiv zum CSS-Kartenlayout (`StageColumn`). Der Stufenfluss nutzt `@xyflow/react` und ersetzt die Karten nicht:
+
+- `client/src/lib/valueChainFlow.ts` — Knoten und Kanten aus den bestehenden Stages
+- `client/src/components/valuechain/ValueChainFlow.tsx`
+- `client/src/components/valuechain/ValueChainFlowEdge.tsx` — eigene Kante, Animation in Flussrichtung
+
+Der Graph zeigt die Stufen plus die drei größten Firmen je Stufe. Die Karten bleiben die vollständige Kette.
+
+## 5. Redis-Limit (Rang 9, optional)
+
+`server/valuechain-redis-ratelimit.ts` — Fixed Window `fmp:ratelimit:{minute}` plus Concurrency-Gate `fmp:concurrency`, vor dem lokalen Backoff.
+
+Aktiv nur mit `VALUECHAIN_REDIS_URL` oder `REDIS_URL`. Ohne URL, oder wenn Redis nicht erreichbar ist, bleibt das In-Process-Limit (`Semaphore` + `wouldExceedBudget` + `withExponentialBackoff`). Kein Pflicht-Secret.

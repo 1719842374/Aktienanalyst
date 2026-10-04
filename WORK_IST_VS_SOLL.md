@@ -25,7 +25,7 @@ Scoreboard Feature-Docs (ohne Index `WORK.md`; Ampel nach Doc-Hub + Code-Check):
 | Ampel | Bedeutung |
 |-------|-----------|
 | ✅ | Kern + erwartete UI live |
-| 🟡 | Engine/Partial da, Wire oder Spec-Zusatz fehlt · oder Rang 7–9 geblockt |
+| 🟡 | Engine/Partial da, Wire oder Spec-Zusatz fehlt |
 | ⬜ | Spec ohne Engine/UI |
 
 ---
@@ -91,7 +91,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 
 | # | Datei | Soll | Ist | Ampel |
 |---|-------|------|-----|-------|
-| 28 | WORK_VALUECHAIN_SECTOR_ROTATION.md | Rang 1–9 | 1–6 + Phase 1–2 live; **Rang 7–9** xyflow | 🟡 blockiert |
+| 28 | WORK_VALUECHAIN_SECTOR_ROTATION.md | Rang 1–9 | 1–6 + Phase 1–2 live; **Rang 7–9** Code (xyflow, Redis optional); Live dieses Rangs offen | 🟡 |
 | 29 | WORK_PORTFOLIO_BACKTEST.md | Equity α/β/IR Underwater | Panel da; braucht Position+OHLCV; Rest-DoD | 🟡 |
 | 29b | WORK.md_portfolio_3 §6 | `GET /api/ohlcv` + Long-Map | Live PASS Tester AAPL 1Y/2Y @ `6a1807b` (`#61`). #74: Fake-OK `bars=[]` source:fmp fixed (Live ✅); Code §6 nicht gelöscht. Chart #71 oft weiter leer | ✅ |
 | 30 | fertig_WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
@@ -161,13 +161,13 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 - Morgen 30.09. (`c365c945`, parent `4c615eb3`): #99 TA Spec v3.2 Live ✅ PASS (Bundle `index-MIF1Ml5X.js`; Default nur Kurs A; A+B gestapelte Bänder/Y; MACD/RSI unter A und B; Desktop-Controls ok, Mobile soft-skip; Shots `/workspace/dod-99-ta-v32/`). #100 KI-N/A matrix Live ✅ PASS (Section7 Spalten Segment|Rev.|Anteil|Wachstum|TAM|CAGR|Anteil am TAM|vs.TAM; Idle „N/A mit KI schätzen“; fail-closed UI; Soft Success-Badge `KI ✓` nicht geübt; Soft-Note `{}` → 400 `BAD_REQUEST` erwartet, 422 `INCOMPLETE_FILL` nur nach LLM Rest-n/a ≠ 0; Shots+Probe `/workspace/dod-100-ki-na/`). #93 Label Soft → ✅ via #100. #97 und #92 bleiben ✅. #96 closed ohne Merge — nicht reopen, nicht grün.
 - Vormittag 30.09. (`e2bc69a2`, parent `58bec00c` #101 Docs): #103 Miner Observability Live ✅ PASS (Bundle `index-MIF1Ml5X.js` unverändert, server-only; Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry 400ms; Stale-Cache → 200 + `stale:true` bei Prior-Success, sonst 503 `error`+`code`(+`cause`); Unit `script/test-btc-miner-observability.ts` 43/43; UI `Section13Miner` unverändert; Soft-Note `MEMPOOL_NETWORK` / `fetch failed` = Render→mempool Egress, kein Code-Delete). Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt. #99/#100/#93/#97/#92 bleiben ✅. #96 closed ohne Merge — nicht reopen, nicht grün.
 
-**Nicht neu bauen / nicht anfassen:** Miner-Kern, PEG, inverted DCF Core, Sentiment, Portfolio F.2, Rang 7–9 ohne Entscheidung.
+**Nicht neu bauen / nicht anfassen:** Miner-Kern, PEG, inverted DCF Core, Sentiment, Portfolio F.2, Valuechain Rang 1–9 (CSS-Karten plus xyflow-Stufenfluss).
 
 ---
 
-## 3. Offen 🟡 / ⬜ (workable, Rang 7–9 auszunehmen)
+## 3. Offen 🟡 / ⬜ (workable; Rang 7–9 nicht neu bauen)
 
-**🟡 Partial:** Portfolio-Backtest Rest-DoD · Valuechain Rang 7–9 (**blockiert**, `@xyflow/react`) · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
+**🟡 Partial:** Portfolio-Backtest Rest-DoD · Valuechain Rang 7–9 (Code da, Live offen; Redis optional) · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
 
 **⬜ Spec (Liquidity-Bundle + Rest):** Regional LI + Books + Velocity + Data Sources · Fiscal Adaptive · Briefing regional · FRED/Sahm · Recession Sources.
 
@@ -179,9 +179,9 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 2. TAM Coverage-Lift — Spec `fertig_WORK_TAM_SEGMENT_MAPPING.md` Tor ok; Gap = unmatched Labels — **done** ✅ (`ee5f0f8b`, #90 Live ✅). DoD: AMZN 75.2% ok; NVDA 98.2% weak; MSFT 58.5% unreliable (Server unmatched, `tamTotal` null).
 3. Miner Observability — **done** ✅ (#103 `e2bc69a2`; kein Delete, ≡ `b584446f` Kern). Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry transient 400ms; Stale-Cache-on-Error → 200 + `stale:true` wenn Prior-Success, sonst 503 mit `error`+`code`(+`cause`). Soft-Note: Live Soft-Probe `POST /api/btc-miner` → 503 `code=MEMPOOL_NETWORK` `cause=fetch failed` = Render→mempool Egress, kein Code-Delete. Kernformeln Breakeven/Puell/Hash Ribbons unberührt. UI `Section13Miner` unverändert.
 4. Ökosystem Scoring-Weichzeichnung (Zykliker-Grad) = Folge-Lane nach Chip (#75 Live ✅).
-5. Ziel+z-Treiber liegen auf main (`fertig_WORK_RECESSION_2008_DRIVERS_LLM.md`). Gated unverändert: Liquidity-Bundle, Valuechain Rang 7–9.
+5. Ziel+z-Treiber liegen auf main (`fertig_WORK_RECESSION_2008_DRIVERS_LLM.md`). Gated unverändert: Liquidity-Bundle. Valuechain Rang 7–9 ist Code, nicht neu bauen.
 
-Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Liquidity-Bundle / Rang 7–9 bleiben gegated.
+Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Liquidity-Bundle bleibt gegated. Valuechain Rang 7–9 nicht neu bauen.
 
 **Queue 30.09. Morgen:** #99 TA Spec v3.2 Live ✅ (`4c615eb3`, Bundle `index-MIF1Ml5X.js`) · #100 KI-N/A matrix Live ✅ (`c365c945`) · #93 Label ✅ via #100 · #96 nicht reopen.
 
@@ -193,7 +193,7 @@ Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Liquidity-Bundle / Ran
 
 ## 4. Blockiert
 
-- **D6 Rang 7–9** — Custom Edges / Animation / Redis. Nur nach Entscheidung `@xyflow/react`. CSS-Karten bleiben. **Kein workable Ticket.**
+- **D6 Rang 7–9** — Custom Edges / Animation / optionales Redis sind im Code (`@xyflow/react`). CSS-Karten bleiben. Ohne Redis-URL: In-Process. Nicht neu bauen. Live-Deploy nicht behauptet.
 
 `Future_Work.md` = Roadmap, kein Ticket. Siehe `WORK_IMPLEMENTIERUNG_OFFEN.md` und `docs/Doc_Soll_vs_Ist/`.
 
@@ -214,7 +214,7 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 - `Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md` — `LiquidityPanel` holt immer `GET /api/researcher/liquidity` ohne Region.
 - `Offen_WORK_SECTION4_DATA_BUGS.md` — Trailing-PEG in `Section4.tsx` ist `peRatio / epsGrowth5Y`; FCF bleibt eine Cashflow-Zeile (`cashflow?.[0]`) in `server/fmp-fetcher.ts`.
 - `Offen_WORK_STABLECOIN_TBILL_GENIUS.md` — DefiLlama-Marktkapitalisierung liegt in `server/stablecoin-liquidity.ts`; Z-Score, dynamischer T-Bill-Multiplikator und GENIUS-Stärke-Score fehlen.
-- `Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md` — `client/src/lib/withBackoff.ts` und die CAPEX-Farbhelfer sind da; Branchen-Selector, Custom Edges und Redis-Limit fehlen.
+- `Offen_WORK_VALUECHAIN_SECTOR_ROTATION.md` — CSS-Karten bleiben. Rang 7–9: `@xyflow/react` Custom Edges und Animation im Stufenfluss; Redis optional, ohne URL In-Process. Dateiname bleibt `Offen_`.
 
 ### Neu fertig
 

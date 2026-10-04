@@ -7,8 +7,9 @@
  * und KPI-Kacheln unten (siehe ValueChainKpiTiles.tsx) — angelehnt an das
  * vom Nutzer vorgegebene "KI-Wertschöpfungskette"-Referenzbild, ABER
  * adaptiv aus den echten API-Stages generiert statt der 7 fixen KI-Stufen
- * aus der Vorlage. KEIN Graph-Canvas, KEIN React-Flow, KEINE neue
- * npm-Abhängigkeit — reines CSS/Tailwind/SVG.
+ * aus der Vorlage. Die CSS-Karten (StageColumn) bleiben die vollständige
+ * Kette. Rang 7–9 ergänzen darüber einen @xyflow/react-Stufenfluss
+ * (Custom Edges, Animation, optionales Redis-Limit).
  *
  * Datenquelle (unverändert, bereits vollständig funktionierend):
  * GET /api/valuechain?industry=&region=&minMarketCap=
@@ -27,6 +28,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { apiErrorFromResponse } from "@/lib/apiError";
 import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import { StageColumn } from "@/components/valuechain/StageColumn";
+import { ValueChainFlow } from "@/components/valuechain/ValueChainFlow";
 import { ValueChainKpiTiles } from "@/components/valuechain/ValueChainKpiTiles";
 import type { ValueChainResponse, Region } from "@/lib/valueChainTypes";
 
@@ -357,6 +359,15 @@ export default function ValueChainDashboard() {
           </div>
         )}
 
+        {/* Rang 7–9: additiver Stufenfluss. Die Karten darunter bleiben. */}
+        {data && data.stages.length > 0 && (
+          <ValueChainFlow
+            stages={data.stages}
+            rateLimitMode={data.rateLimitMode}
+            onCompanyClick={(ticker) => navigate(`/?ticker=${ticker}`)}
+          />
+        )}
+
         {/* Haupt-Visualisierung: gestufte Kartenreihe, adaptiv aus echten
             API-Stages (upstream → midstream → downstream), NICHT die 7
             fixen KI-Stufen aus dem Referenzbild. Desktop: Stufen-Layout via
@@ -394,6 +405,10 @@ export default function ValueChainDashboard() {
             <span>{data.cacheHit ? "aus Cache" : "live geladen"}</span>
             <span>·</span>
             <span>llmValidated: {String(data.llmValidated)}</span>
+            <span>·</span>
+            <span data-testid="valuechain-rate-limit">
+              Rate-Limit: {data.rateLimitMode === "redis" ? "Redis" : "In-Process"}
+            </span>
           </div>
         )}
       </div>
