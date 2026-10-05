@@ -1,11 +1,13 @@
 # WORK.md — Index
 
-> Stand: 05.10.2026 | Branch: `main` @ `191792c5b09e67658641d49fc73991df14be3bbc` (#169 Docs-Renames; Doublecheck GO) | Keep-Alive CI rot auf main (leeres `RENDER_URL`) ist bekannt und **kein Ampel-ROT** für diesen Tip.
+> Stand: 05.10.2026 | Branch: `main` @ `e817196142c408cc90005afd24407251d793ce73` (#145 Fiscal adaptiv, Squash auf `f0e3b499`; Tester PASS; Bundle `index-CDLHYWlv.js`) | Keep-Alive CI rot auf main (leeres `RENDER_URL`) ist bekannt und **kein Ampel-ROT** für diesen Tip.
 >
 > **Hub Soll vs. Ist:** [docs/Doc_Soll_vs_Ist/](./docs/Doc_Soll_vs_Ist/)
 >
 > Alt (nicht löschen): [docs/work-offen/](./docs/work-offen/) · [docs/work-dokumentation/](./docs/work-dokumentation/)
 > Root-`WORK_*.md` bleiben die Inhaltsquelle. Wahrheit für das regionale Briefing ist Root [`fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md`](./fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md). `docs/work-offen/README.md` verlinkt dafür noch `Offen_`; die Dublette `docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` bleibt liegen.
+
+**Ampel-Kurz 05.10.2026, Tip `e8171961` (#145 Fiscal adaptiv, Tester PASS, Bundle `index-CDLHYWlv.js`):** Fiscal 🟢 und `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md`. Adaptives Frontend `s(z)` für Bills, TGA und SOMA auf main; GIS `macroFiscal` (Tester: GIS `S 55.6` = API `macroFiscal`); Stablecoin-Kanal sowie Karten `D_30` und GENIUS entfernt. Soft, blockieren `fertig_` nicht: Score-Badge ungerundet; FFR-Fallback nicht live reproduziert; BTC-News-RSS Nebenbefund im selben PR. Sechs offene Root-Specs (Drafts zählen nicht): Liquidity-Briefing-Quellen 🟡 · Velocity-Stocks ⬜ · Sahm 🟡 · Recession-Sources 🟡 · Researcher-LI 🟡 · Section4 🟡. Detail: [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) Abschnitt 05.10.2026 Tip `e8171961`.
 
 **Ampel-Kurz 05.10.2026, Tip `191792c5` (#169 Docs-Renames, kein Live-Deploy):** Auf dem Tip bereits `fertig_`: Value-Chain, Researcher-Briefing regional, Stablecoin/T-Bill, `Fertig_MINER_INTEGRATION.md`. Sahm bleibt `Offen_WORK_RECESSION_FRED_SAHM.md`. Sieben offene Root-Specs (Code auf dem Tip, Drafts zählen nicht): Liquidity-Briefing-Quellen 🟡 · Fiscal-Frontend 🟡 · Velocity-Stocks ⬜ · Sahm 🟡 · Recession-Sources 🟡 · Researcher-LI 🟡 · Section4 🟡. Detail: [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) Abschnitt 05.10.2026.
 
@@ -17,7 +19,6 @@
 
 | Datei | Inhalt |
 |-------|--------|
-| [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](./Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | 🟡 Route + Karten; `S_F*` aus MSPD-Monats-FE sobald die Historie reicht; GIS-Slot bei `FE.available`; Cron/QRA-LLM optional, nicht gebaut |
 | [Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md](./Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md) | 🟡 `?region=` liefert `li` + Bücher; `LiquidityPanel` holt weiter ohne Region |
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | ⬜ kein Regions-Widget für r, V, π, T½ |
 | [Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | 🟡 EZ-M3 / BoJ-M2 / APP / PEPP; MoF-CSV, Realzins-Live und X-Bot fehlen |
@@ -26,6 +27,8 @@
 | [Offen_WORK_SECTION4_DATA_BUGS.md](./Offen_WORK_SECTION4_DATA_BUGS.md) | 🟡 Trailing-PEG, signed FCF, Geo-Dedup; Earnings, Analysten, Growth, Moat offen |
 
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
+
+**Ampel Fiscal-Frontend 05.10.2026 (Tip `e8171961`, main + Tester PASS):** `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE` 🟢. Adaptives `s(z)` für Bills, TGA und SOMA liegt auf main. GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Stablecoin-Kanal sowie die Karten `D_30` und GENIUS sind entfernt. Soft, blockieren `fertig_` nicht: Score-Badge ungerundet; FFR-Fallback nicht live reproduziert; BTC-News-RSS Nebenbefund im selben PR. Cron 22:00 ET / QRA-PDF bleiben optional. Die übrigen sechs `Offen_`-Specs stehen in der Soll-Tabelle.
 
 **Ampel Fiscal-Frontend 2026-10-04:** `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE` bleibt `Offen_` und 🟡. Route `GET /api/analyze-btc/fiscal-frontend`, Karten in `StablecoinLiquidityPanel`, Ops-Label im LiquidityPanel. `S_F*` aus MSPD-Monats-FE (`ΔWSHOBL` ~28T − `N^b`) plus TGA, sobald die Historie reicht. `D_30` nur im Live-`FE_30`. Step 6: der Macro-Slot in `btcAnalysis.ts` nimmt `score_MacroFiscal`, sobald `FE.available`. Step 7 (Cron 22:00 ET / QRA-PDF) ist in der Spec optional und bleibt aus. Auf `#/btc` zeigt der Slot bei `FE.available` den Wert `S` aus `GET /api/analyze-btc/fiscal-frontend`.
 
@@ -41,7 +44,7 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md](./docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md) | FactPack Hook+UI live (#57) |
 | [fertig_WORK_RECESSION_RSI_MACD.md](./fertig_WORK_RECESSION_RSI_MACD.md) | RSI/MACD Dashboard live |
 | [fertig_WORK_RECESSION_MARKET_CHARTS.md](./fertig_WORK_RECESSION_MARKET_CHARTS.md) | Vier Märkte, Klick-Factpack, FINRA nur unter SPY |
-| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 05.10.2026 Tip `191792c5` (#169 Docs-Renames; Keep-Alive kein Ampel-ROT) |
+| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 05.10.2026 Tip `e8171961` (#145 Fiscal 🟢; Keep-Alive kein Ampel-ROT) |
 | [fertig_WORK_THESIS_LAB.md](./fertig_WORK_THESIS_LAB.md) | `/#/lab` Live PASS (#73) |
 | [WORK_IMPLEMENTIERUNG_OFFEN.md](./WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 Rang 7–9, Dateiname jetzt `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md`; Sahm bleibt offen |
 | [fertig_WORK_ANALYZE_DISK_CACHE.md](./fertig_WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch, L1+L2, force löscht beide |
@@ -49,6 +52,7 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md](./fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 US-only |
 | [fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md](./fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md) | CATALOG.US/EU/ASIA, `?region=` books.M/F |
 | [fertig_WORK_STABLECOIN_TBILL_GENIUS.md](./fertig_WORK_STABLECOIN_TBILL_GENIUS.md) | BTC Sektion 14 (#165, bereits `fertig_` auf dem Tip) |
+| [fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md](./fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | 🟢 adaptives `s(z)` Bills/TGA/SOMA (#145, Tester PASS, Bundle `index-CDLHYWlv.js`); GIS `macroFiscal`; Softs blockieren nicht |
 | [fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md](./fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md) | Value-Chain (#169 Docs-Rename; kein Live-Deploy aus diesem Commit) |
 | [fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md](./fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md) | Briefing 3 Regionen (#169 Docs-Rename; kein Live-Deploy aus diesem Commit) |
 | [fertig_WORK_ANTIBIAS_DCF.md](./fertig_WORK_ANTIBIAS_DCF.md) | Inverted DCF |

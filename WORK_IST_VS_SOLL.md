@@ -2,11 +2,12 @@
 
 > **Stand Audit:** 05.10.2026  
 > **Repo:** `1719842374/Aktienanalyst`  
-> **HEAD:** `191792c5b09e67658641d49fc73991df14be3bbc` (#169 Docs-Renames; Doublecheck GO; parent `b952469d` `Fertig_MINER_INTEGRATION.md`; davor `f2a59b9` #165 Stablecoin-Rename)  
-> **Keep-Alive:** CI rot auf main wegen leerem `RENDER_URL` ist bekannt und kein Ampel-ROT für diesen Tip. Die Renames sind kein Live-Deploy.  
-> **Regel:** Ist nur aus Code + UI auf diesem Tip. Draft-PRs zählen nicht. ✅ erwartete Anzeige live · 🟡 Kern da, Spec-/UI-Zusatz fehlt · ⬜ Spec ohne Engine/UI.  
+> **HEAD:** `e817196142c408cc90005afd24407251d793ce73` (#145 Fiscal adaptiv, Tester PASS, Bundle `index-CDLHYWlv.js`; parent `f0e3b499` #171 Docs auf `191792c5`)  
+> **Keep-Alive:** CI rot auf main wegen leerem `RENDER_URL` ist bekannt und kein Ampel-ROT für diesen Tip. Dieser Nachzug ist kein Deploy.  
+> **Regel:** Ist nur aus Code + UI auf diesem Tip. Draft-PRs zählen nicht. 🟢 auf main und Tester PASS (Soft-Notes blockieren `fertig_` nicht) · ✅ erwartete Anzeige live · 🟡 Kern da, Spec-/UI-Zusatz fehlt · ⬜ Spec ohne Engine/UI.  
 > **Quelle Nachzug:** Doc_Soll_vs_Ist/README · Companion `WORK_IMPLEMENTIERUNG_OFFEN.md`  
-> **Delta 05.10.2026, Tip `191792c5`:** Dateinamen `fertig_` für Value-Chain, Researcher-Briefing regional und Stablecoin/T-Bill liegen schon auf dem Tip. Sahm bleibt `Offen_`. Sieben Soll-Ist-Blöcke stehen in Abschnitt 6. Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `e8171961`:** Fiscal 🟢 `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (main + Tester PASS). Adaptives `s(z)` für Bills, TGA und SOMA; GIS `macroFiscal` (GIS `S 55.6` = API); Stablecoin-Kanal/`D_30`/GENIUS-Karten entfernt. Softs blockieren `fertig_` nicht. Sechs `Offen_`-Specs bleiben in Abschnitt 6. Kein App-Code in diesem Nachzug.  
+> **Delta 05.10.2026, Tip `191792c5`:** Dateinamen `fertig_` für Value-Chain, Researcher-Briefing regional und Stablecoin/T-Bill liegen schon auf dem Tip. Sahm bleibt `Offen_`. Damals sieben Soll-Ist-Blöcke, Fiscal noch `Offen_` 🟡; Abschnitt 6 ist seit Tip `e8171961` der aktuelle Stand. Kein App-Code in diesem Nachzug.  
 > **Delta 30.09. Vormittag, nach #103 Miner Observability Live PASS:** #103 Miner Observability Live ✅ (tip `e2bc69a2` = `e2bc69a233166a3242d13e9ddc78373adc19f68c`; parent `58bec00c` #101 Docs ← `c365c945` #100 ← `4c615eb3` #99; Bundle `index-MIF1Ml5X.js` unverändert — Client unverändert, #103 server-only). Error-Codes `MEMPOOL_HTTP`/`MEMPOOL_TIMEOUT`/`MEMPOOL_NETWORK`/`INSUFFICIENT_HASHRATE`/`PARSE`/`UNKNOWN`; 1× Retry transient (400ms); Stale-Cache-on-Error → 200 + `stale:true` wenn Prior-Success, sonst 503 mit `error`+`code`(+`cause`). Dateien: `server/btc-miner.ts`, `server/routes.ts` (+`minerUnavailableBody`), `script/test-btc-miner-observability.ts` 43/43. UI `Section13Miner` unverändert. Soft-Note: Live Soft-Probe `POST /api/btc-miner` → 503 `code=MEMPOOL_NETWORK` `cause=fetch failed` = **Render→mempool Egress**, kein Code-Delete/Stub. Kernformeln Breakeven/Puell/Hash Ribbons/`classifyMinerZone` unberührt. #99✅ #100✅ #93 Label✅ #97✅ #92✅ bleiben. #96 closed ohne Merge — nicht reopen, nicht grün. **Delta 30.09. Morgen, nach #99+#100 Live PASS:** #99 TA Spec v3.2 Live ✅ (SHA `4c615eb3` → stack tip `c365c945`; Bundle `index-MIF1Ml5X.js`; Default nur Kurs A; A+B gestapelte Bänder/Y; MACD/RSI unter A und B; Desktop-Controls ok, Mobile soft-skip; Shots `/workspace/dod-99-ta-v32/`). #100 KI-N/A matrix (Relativ Bewertung / Section7) Live ✅ (tip `c365c945`; Spalten Segment|Rev.|Anteil|Wachstum|TAM|CAGR|Anteil am TAM|vs.TAM; Idle-Button exakt „N/A mit KI schätzen“; fail-closed UI: Fill → „KI-Schätzung unvollständig — nichts übernommen“, kein Overlay/Badge, N/A unverändert; Soft: Success-Badge `KI ✓` in Dual-DoD nicht geübt; Soft-Note API: Body `{}` → HTTP 400 `BAD_REQUEST` „Keine N/A-Zellen“ — erwartet, keine Segments/keine N/A; 422 `INCOMPLETE_FILL` nur nach LLM mit Rest-n/a ≠ 0; Shots+Probe `/workspace/dod-100-ki-na/`). #93 KI-N/A-Fill Segment-TAM Label Soft → ✅ (Idle-Label jetzt Spec „N/A mit KI schätzen“ via #100 Live; Behavior+API war schon PASS @ `7574b12d`; Soft: violet KI-Badge Success-Pfad nicht in Dual-DoD geübt). #97 bleibt ✅ (superseded by v3.2 live on same chart stack). #92 bleibt ✅. #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün. **Delta 29.09. Abend, nach #97 Live PASS:** #97 TA Kurs A/B/C Spec v3.1 Live ✅ (SHA `249841ab`; parent `1dc82683`; Bundle `index-C_rUCqgy.js`; 3 An/Aus Kurs A/B/C; Default nur A; ≥2 an → versetzte Bänder (eigene Y min–max je Band via `yDomainFromCloses` / `chart-price-bands`); `closeB` entfernt; absolute-Y / closeB-Overlap = FAIL; DoD AAPL Shots `/workspace/dod-97-ta-kurs/`). #92 TA Zwei-Fenster Live ✅ (SHA `c06c835e` → Fix `1dc82683` #94; Bundle `index-JP8muGsY.js`; DoD: A close/primary/1.5 unverfärbt; closeB `#a78bfa` strokeWidth 2.5 `connectNulls=false`; Eye off = nur A; 3 normale Kurs-Plots unberührt; Zwei-Fenster Extra An/Aus; Soft Draw-Order B-unter OK). #93 KI-N/A-Fill Segment-TAM Live 🟡 PARTIAL (`7574b12d`; Behavior+API PASS — MSFT amber ~59%; KI nur unmatched + violet Badge; Catalog-Coverage unverändert; Clear → n/a; core 58.5%/unreliable/`tamTotal=null`; Label Soft: UI „KI“ vs Spec „N/A mit KI schätzen“). #96 KI-Fill v2 bleibt Draft Merge-Gate — nicht grün (Label Soft #93 kann nach #96 Live weg; Soft Apollo bis Philip GO). #90 TAM Coverage-Lift Live ✅ (Bundle `index-Ca0V7H2h.js`; DoD: AMZN 75.2% ok, NVDA 98.2% weak, MSFT 58.5% unreliable — Server unmatched, `tamTotal` null). Queue Coverage-Lift ✅. #74 Batch A Live ✅ (Fake-OK `bars=[]` source:fmp fixed) · #75 Ökosystem / #76 DCF Markt-β / #77 Makro §15 Live ✅ nach Deploy · #81 Porter Prompt · #82 Exec-Boxen · #83 Fenster-Zonen · #84 Sharpe · #85 Attribution · #86 Tooltip · #88 Pie/360px Live ✅ · #87 thin-series Code ✅ Live 🟡 PARTIAL (healthy 251d OK, thin-Banner nicht repro) · #71 4-Toggles weiter 🟡 · BL §4 = Tabelle Π / E[R]_BL + MC-Cards, kein Scatter; Frontier ≥3. Hub war 29.09. / `d517611` (#78); danach Abend `f0046ee9` (#89, Docs-Tip `20120339`); danach Abend #90 `ee5f0f8b` (Docs-Tip `9895774f`); Hub-Draft #95 Inhalt `1dc82683` (#92✅ #93🟡, noch offen); Tip `249841ab`.  
 > **tsc-Baseline:** 97 Fehler (unverändert).
 
@@ -26,6 +27,7 @@ Scoreboard Feature-Docs (ohne Index `WORK.md`; Ampel nach Doc-Hub + Code-Check):
 
 | Ampel | Bedeutung |
 |-------|-----------|
+| 🟢 | auf main und Tester PASS; Soft-Notes blockieren `fertig_` nicht |
 | ✅ | Kern + erwartete UI live |
 | 🟡 | Engine/Partial da, Wire oder Spec-Zusatz fehlt |
 | ⬜ | Spec ohne Engine/UI |
@@ -99,7 +101,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 30 | fertig_WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
 | 31 | fertig_WORK_EXEC_SUMMARY.md | Karte über S1 | Exec-Karte live `#58`; `#69` Analyze Ampel+KI+FS Live PASS (XOM; FMP Premium aktiv) | ✅ |
 | 32 | Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalog + Fetch | EZ-M3, BoJ-M2, APP/PEPP und JP-NGDP auf dem Tip; MoF-CSV, Realzins-Live und X-Bot fehlen. Siehe Abschnitt 6 | 🟡 |
-| 33 | Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), N^b, FE, QRA-Anker | Route + Karten; `S_F*` aus MSPD-Monats-FE sobald die Historie reicht; GIS-Slot bei `FE.available`; Cron/QRA-LLM optional, nicht gebaut; Datei bleibt `Offen_`; Macro-Slot auf #/btc geprüft. Siehe Abschnitt 6 | 🟡 |
+| 33 | fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), N^b, FE, QRA-Anker | adaptives `s(z)` für Bills, TGA und SOMA auf main; GIS `macroFiscal`; Stablecoin-Kanal/`D_30`/GENIUS-Karten entfernt; Softs blockieren nicht. Siehe Abschnitt 6 | 🟢 |
 | 34 | Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md | LI US/EU/ASIA | `?region=` liefert `li` + Bücher; `LiquidityPanel` ohne Region. Siehe Abschnitt 6 | 🟡 |
 | 35 | fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md | Buch M/F EZ/JP | `CATALOG` + `GET ?region=` `books.M`/`books.F`; Panel bleibt offen | 🟡 |
 | 36 | Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md | r, V, π, T½ | kein Regions-Widget auf dem Tip. Siehe Abschnitt 6 | ⬜ |
@@ -169,7 +171,9 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 
 ## 3. Offen 🟡 / ⬜ (workable; Rang 7–9 nicht neu bauen)
 
-**🟡 Partial:** Portfolio-Backtest Rest-DoD · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro) · Fiscal-Frontend (`S_F*` bei Historie, GIS bei `FE.available`, Cron/QRA optional) · Liquidity-Briefing-Quellen (MoF/Realzins/X-Bot offen) · Researcher-LI (Panel ohne Region) · Sahm (letzte 12 nicht ±0.02, EZ/JP fehlen) · Recession-Sources (Kurve/AD/Sentiment/FINRA/EZ-JP) · Section4 (Earnings/Analysten/Growth/Moat). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
+**🟢 Fertig (Softs blockieren nicht):** Fiscal-Frontend (`fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md`, #145, Tester PASS: GIS `S 55.6` = API `macroFiscal`; Score-Badge ungerundet; FFR-Fallback nicht live reproduziert; BTC-News-RSS Nebenbefund).
+
+**🟡 Partial:** Portfolio-Backtest Rest-DoD · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro) · Liquidity-Briefing-Quellen (MoF/Realzins/X-Bot offen) · Researcher-LI (Panel ohne Region) · Sahm (letzte 12 nicht ±0.02, EZ/JP fehlen) · Recession-Sources (Kurve/AD/Sentiment/FINRA/EZ-JP) · Section4 (Earnings/Analysten/Growth/Moat). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
 
 **⬜ Spec:** Velocity-Stocks (kein Regions-Widget r/V/π/T½). Value-Chain und Briefing regional sind auf dem Tip `fertig_` (#169), kein Live-Deploy aus dem Rename. Sahm bleibt `Offen_`.
 
@@ -195,7 +199,7 @@ Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Liquidity-Bundle bleib
 
 ## 4. Blockiert
 
-- **D6 Rang 7–9** — Dateiname `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` auf Tip `191792c5` (#169 Docs-Rename). Custom Edges / Animation / optionales Redis sind im Code (`@xyflow/react`). CSS-Karten bleiben. Ohne Redis-URL: In-Process. Nicht neu bauen. Live-Deploy nicht behauptet. Sahm bleibt `Offen_WORK_RECESSION_FRED_SAHM.md`.
+- **D6 Rang 7–9** — Dateiname `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` auf Tip `e8171961` (#169 Docs-Rename). Custom Edges / Animation / optionales Redis sind im Code (`@xyflow/react`). CSS-Karten bleiben. Ohne Redis-URL: In-Process. Nicht neu bauen. Live-Deploy nicht behauptet. Sahm bleibt `Offen_WORK_RECESSION_FRED_SAHM.md`. Fiscal-Frontend ist 🟢 `fertig_` (#145), kein Blocker.
 
 `Future_Work.md` = Roadmap, kein Ticket. Siehe `WORK_IMPLEMENTIERUNG_OFFEN.md` und `docs/Doc_Soll_vs_Ist/`.
 
@@ -203,7 +207,7 @@ Reihenfolge sinnvoll: TAM Coverage-Lift done ✅ (#90) · Liquidity-Bundle bleib
 
 ## 5. Dateinamen 2026-10-03 (tip `839d954`)
 
-Historischer Snapshot. Dateinamen auf Tip `191792c5` stehen in Abschnitt 6. Diese Liste nicht als aktuellen Stand lesen.
+Historischer Snapshot. Dateinamen auf Tip `e8171961` stehen in Abschnitt 6. Diese Liste nicht als aktuellen Stand lesen.
 
 Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben ohne Präfix: `WORK.md`, `WORK_IST_VS_SOLL.md`, `WORK_IMPLEMENTIERUNG_OFFEN.md`. Bestehende `fertig_*`-Namen sind unverändert.
 
@@ -239,11 +243,11 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 
 ---
 
-## 6. 05.10.2026 Tip 191792c5
+## 6. 05.10.2026 Tip e8171961
 
-Gelesen am Tip `191792c5b09e67658641d49fc73991df14be3bbc`. Draft-PRs zählen nicht. Keep-Alive (leeres `RENDER_URL`) ist kein Ampel-ROT. Kein Live-Deploy aus den Docs-Renames.
+Gelesen am Tip `e817196142c408cc90005afd24407251d793ce73` (#145, parent `f0e3b499`). Draft-PRs zählen nicht. Keep-Alive (leeres `RENDER_URL`) ist kein Ampel-ROT. Dieser Nachzug ändert keine App-Dateien. Bundle live `index-CDLHYWlv.js`. Tester PASS.
 
-Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`). Sahm bleibt `Offen_WORK_RECESSION_FRED_SAHM.md`.
+Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOIN_TBILL_GENIUS.md` (#165), `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md` (#169), `fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md` (#169), `Fertig_MINER_INTEGRATION.md` (parent `b952469d`), `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` (#145, Tester PASS). Sahm bleibt `Offen_WORK_RECESSION_FRED_SAHM.md`.
 
 ### 1. `Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — 🟡
 
@@ -251,11 +255,11 @@ Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOI
 
 **Ist:** `server/liquidity-briefing.ts` holt sieben Quellen (EZB-M3, M3-YoY, EZ-NGDP, APP-CSV, PEPP-CSV, BoJ-M2, FRED `JPNNGDP`). Tote Serien aus §0 stehen in `DEAD_FRED_SERIES` und fehlen in den URLs. `GET /api/researcher/liquidity-briefing` und `LiquidityBriefingPanel` zeigen EZ/JP-Velocity und APP/PEPP. `halfLifeYears` und die Fixtures M2V, APP −27.170, PEPP −24.821, `DFII10` 2.42, `IRLTLT01JPM156N` 2.670, Bills-Diff 298.202 liegen im Parser-Test, nicht als Live-Fetch. `LIVE_FRED_SERIES` ist nur `JPNNGDP`. Keine MoF-CSV (`mof.go.jp`), kein Live-`DFII10`, kein X-Bot. Spec bleibt `Offen_`.
 
-### 2. `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — 🟡
+### 2. `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — 🟢
 
 **Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
 
-**Ist:** `GET /api/analyze-btc/fiscal-frontend`, `fiscal-frontend-math.ts`, `qra-snapshot.ts` und die Karten in `StablecoinLiquidityPanel`. `S_F*` nutzt MSPD-Monats-FE (`ΔWSHOBL` ~28T − `N^b`) plus TGA, sobald mindestens 12 Vormonate und die TGA-Historie da sind. Der Macro-Slot in `btcAnalysis.ts` nimmt `score_MacroFiscal`, sobald `FE.available`; sonst bleibt `FFR > 5` → −1 und `< 3` → +1. Cron 22:00 ET und der QRA-PDF-Extrakt sind optional; `QRA_SNAPSHOT` bleibt statisches JSON. Spec bleibt `Offen_`.
+**Ist:** Adaptives Frontend `s(z)` für Bills, TGA und SOMA liegt auf main (`GET /api/analyze-btc/fiscal-frontend`, `fiscal-frontend-math.ts`, `qra-snapshot.ts`, Karten in `StablecoinLiquidityPanel`). GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Stablecoin-Kanal sowie die Karten `D_30` und GENIUS sind entfernt. Soft, blockieren `fertig_` nicht: Score-Badge ungerundet; FFR-Fallback nicht live reproduziert (Code behält `FFR > 5` → −1 und `< 3` → +1, solange `FE.available` fehlt); BTC-News-RSS Nebenbefund im selben PR. Cron 22:00 ET und der QRA-PDF-Extrakt bleiben optional; `QRA_SNAPSHOT` bleibt statisches JSON. Dateiname `fertig_`.
 
 ### 3. `Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — ⬜
 
