@@ -5,9 +5,10 @@ import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import {
   CartesianGrid, Customized, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import { axisTicks, tickLabel, type BuffettRangeId } from "./buffettChartScale";
 
 type RegionId = "US" | "EU" | "CN";
-type RangeId = "6M" | "1Y" | "2Y" | "3Y" | "5Y" | "10Y" | "Max";
+type RangeId = BuffettRangeId;
 
 interface TrendPoint {
   date: string;
@@ -94,48 +95,35 @@ function yTicksFor(domain: [number, number], range: RangeId): number[] {
   return ticks;
 }
 
-function axisTicks(rows: TrendPoint[], range: RangeId, wide: boolean): number[] {
-  if (rows.length === 0) return [];
-  const startYear = Number(rows[0].date.slice(0, 4));
-  const endYear = Number(rows[rows.length - 1].date.slice(0, 4));
-  const endMonth = Number(rows[rows.length - 1].date.slice(5, 7));
-  const stamps: number[] = [];
-  const push = (iso: string) => {
-    const stamp = Date.parse(`${iso}T00:00:00Z`);
-    const first = Date.parse(`${rows[0].date}T00:00:00Z`);
-    const last = Date.parse(`${rows[rows.length - 1].date}T00:00:00Z`);
-    if (stamp >= first - 86_400_000 && stamp <= last + 86_400_000) stamps.push(stamp);
-  };
-  if (range === "Max") {
-    const step = wide ? 5 : 10;
-    stamps.push(Date.parse(`${rows[0].date}T00:00:00Z`));
-    const first = Math.ceil((startYear + 1) / step) * step;
-    for (let year = first; year <= endYear; year += step) push(`${year}-01-01`);
-  } else if (range === "10Y" || range === "5Y" || range === "3Y") {
-    for (let year = startYear; year <= endYear; year += 1) push(`${year}-01-01`);
-  } else {
-    const step = range === "6M" ? 1 : range === "1Y" ? 2 : 6;
-    let year = startYear;
-    let month = Number(rows[0].date.slice(5, 7));
-    while (year < endYear || (year === endYear && month <= endMonth)) {
-      push(`${year}-${String(month).padStart(2, "0")}-01`);
-      month += step;
-      while (month > 12) {
-        month -= 12;
-        year += 1;
-      }
-    }
-  }
-  return stamps;
-}
-
-function tickLabel(value: number, range: RangeId): string {
-  const date = new Date(value);
-  const year = date.getUTCFullYear();
-  if (range === "6M" || range === "1Y" || range === "2Y") {
-    return `${String(date.getUTCMonth() + 1).padStart(2, "0")}.${String(year).slice(2)}`;
-  }
-  return String(year);
+function AxisTick({
+  x = 0,
+  y = 0,
+  payload,
+  index = 0,
+  visibleTicksCount = 0,
+  range,
+}: {
+  x?: number;
+  y?: number;
+  payload?: { value: number };
+  index?: number;
+  visibleTicksCount?: number;
+  range: RangeId;
+}) {
+  if (!payload) return null;
+  const last = index === visibleTicksCount - 1;
+  return (
+    <text
+      x={x}
+      y={y}
+      dy={14}
+      textAnchor={last ? "end" : "middle"}
+      fill="#6b7280"
+      fontSize={11}
+    >
+      {tickLabel(payload.value, range)}
+    </text>
+  );
 }
 
 interface AxisMap {
@@ -357,17 +345,16 @@ export function BuffettRatioPanel() {
               )}
             <div className="h-[360px] w-full rounded-md border border-neutral-200 bg-white p-1 sm:h-[460px]" data-testid="chart-buffett">
               <ResponsiveContainer>
-                <LineChart data={chart} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+                <LineChart data={chart} margin={{ top: 10, right: 4, left: 0, bottom: 4 }}>
                   <CartesianGrid stroke="#e5e7eb" />
                   <XAxis
                     dataKey="t"
                     type="number"
                     scale="time"
-                    domain={["dataMin", "dataMax"]}
+                    domain={chart.length > 1 ? [chart[0].t, chart[chart.length - 1].t] : ["dataMin", "dataMax"]}
                     ticks={ticks}
                     interval={0}
-                    tickFormatter={value => tickLabel(Number(value), range)}
-                    tick={{ fontSize: 11, fill: "#6b7280" }}
+                    tick={(props) => <AxisTick {...props} range={range} />}
                     axisLine={{ stroke: "#9ca3af" }}
                     tickLine={{ stroke: "#9ca3af" }}
                     minTickGap={8}
