@@ -26,6 +26,7 @@ import {
   crowdReading,
   csiReading,
   durableReading,
+  generateFazit,
   googleReading,
   m2Reading,
   marginDebtReading,
@@ -40,6 +41,7 @@ import {
   yieldCurveReading,
   yoyPercent,
 } from "../server/recession";
+import { emptyBridge } from "../server/recession-bridge";
 import { RECESSION_FALLBACK_DATA } from "../client/src/lib/recessionFallbackData";
 import {
   displayedNyFedAnchorPct,
@@ -353,6 +355,60 @@ console.log("\n=== Buffett: fresh Wilshire/GDP, stale World Bank print is not li
   check("scoreBuffett goes through the observation gate", scoreFn.includes("buffettFromMarketCapGdp") && scoreFn.includes("buffettFromObservation"));
   const fazitFn = server.slice(server.indexOf("function generateFazit"), server.indexOf("function registerRecessionRoutes"));
   check("fazit cites Buffett only through the live-value gate", fazitFn.includes("liveBuffettValue") && fazitFn.includes("buffettFazitClause"));
+}
+
+console.log("\n=== Fazit ≥65% names the actual drivers, not a closed valuation book ===");
+{
+  const quiet = { status: "unauffällig" as const, lines: [] as string[], cards: [] };
+  const driverLine = (i: { name: string; weightedScore: number; zone: string }) =>
+    `${i.name}: ${i.weightedScore > 0 ? "+" : ""}${i.weightedScore} (${i.zone})`;
+
+  const google = googleReading(90);
+  const closedBuffett = buffettReading(Number.NaN);
+  const closedCape = capeReading(Number.NaN);
+  const closedMargin = marginDebtReading([]);
+  const trendsFazit = generateFazit(
+    [closedBuffett, closedCape, closedMargin, google],
+    [],
+    15, 20, 25, 50, 75,
+    [driverLine(google)],
+    emptyBridge(),
+    quiet,
+  );
+  const trendsQuant = trendsFazit.sections.find(s => s.title === "Quantitative Bewertung")?.text ?? "";
+  const trendsValuation = trendsFazit.sections.find(s => s.title === "Bewertungsrisiko");
+  check("Trends-driven 75% does not say extreme Bewertungsniveaus", !trendsQuant.includes("extreme Bewertungsniveaus"), trendsQuant);
+  check("Trends-driven 75% names Google Trends", trendsQuant.includes("Google") && trendsQuant.includes("75%"), trendsQuant);
+  check(
+    "Bewertungsrisiko keeps a closed-slot hint instead of an empty box",
+    trendsValuation != null
+      && trendsValuation.text.trim().length > 0
+      && !/Buffett-Indikator steht bei/i.test(trendsValuation.text)
+      && /nicht gewertet/i.test(trendsValuation.text),
+    trendsValuation == null ? "omitted" : trendsValuation.text,
+  );
+
+  const liveBuffett = buffettReading(230);
+  const valuationFazit = generateFazit(
+    [liveBuffett, closedCape, closedMargin],
+    [],
+    15, 20, 25, 50, 75,
+    [driverLine(liveBuffett)],
+    emptyBridge(),
+    quiet,
+  );
+  const valuationQuant = valuationFazit.sections.find(s => s.title === "Quantitative Bewertung")?.text ?? "";
+  const valuationSection = valuationFazit.sections.find(s => s.title === "Bewertungsrisiko");
+  check(
+    "a live Buffett 230% still names extreme Bewertungsniveaus",
+    valuationQuant.includes("extreme Bewertungsniveaus") && valuationQuant.includes("Buffett"),
+    valuationQuant,
+  );
+  check(
+    "Bewertungsrisiko still quotes the live Dotcom clause",
+    (valuationSection?.text ?? "").includes("230%") && (valuationSection?.text ?? "").includes("Dotcom"),
+    valuationSection?.text,
+  );
 }
 
 console.log("\n=== Sentiment is VIX plus one crowd leg ===");
