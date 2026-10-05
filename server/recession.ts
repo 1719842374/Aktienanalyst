@@ -18,7 +18,7 @@ import { driverFazitSections, loadDriverAssessment, type DriverView } from "./re
 import { diskBriefingUpdatedAt } from "./disk-cache";
 import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
-import type { RegionalCatalogs } from "../shared/recession-regions";
+import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
 
 // ============================================================
 // Generic Data Helpers
@@ -332,9 +332,17 @@ async function scoreConsumerConfidence(): Promise<IndicatorResult> {
 // CORRECTION INDICATORS
 // ============================================================
 
-// 8. Buffett Indicator — FRED market-cap / GDP. No page scrape.
+// 8. Buffett Indicator. Spec prefers Wilshire/GDP over the World Bank annual
+// ratio, which lags. A print outside the Japan window is shown and not scored.
 function scoreBuffett(): IndicatorResult {
-  return buffettReading(latestFred("DDDM01USA156NWDB", 40));
+  const today = recessionAsOf();
+  const computed = buffettFromMarketCapGdp(
+    latestFredPoint("WILL5000PR", 5),
+    latestFredPoint("GDP", 5),
+    today,
+  );
+  if (computed) return computed;
+  return buffettFromObservation(latestFredPoint("DDDM01USA156NWDB", 40), today);
 }
 
 // 9. Shiller CAPE. The ratio is only in ie_data.xls. That workbook is not parsed,
@@ -630,13 +638,13 @@ function closedIndicator(
   };
 }
 
-function latestFred(seriesId: string, years: number): number {
+function latestFredPoint(seriesId: string, years: number): { date: string; value: number } | null {
   const rows = fetchFredRows(seriesId, getDateYearsAgo(years));
   for (let i = rows.length - 1; i >= 0; i--) {
     const value = rows[i].value;
-    if (value != null && Number.isFinite(value)) return value;
+    if (value != null && Number.isFinite(value) && rows[i].date) return { date: rows[i].date, value };
   }
-  return NaN;
+  return null;
 }
 
 function monthEndPoints(rows: { date: string; value: number }[]): { date: string; value: number }[] {
@@ -851,6 +859,80 @@ export function buffettReading(ratio: number): IndicatorResult {
     maxWeighted: 16,
     zone,
   };
+}
+
+/**
+ * WILL5000PR points are the market-cap billions the index was built on.
+ * GDP is billions. The result is the Buffett ratio in percent.
+ */
+export function buffettMarketCapGdpPercent(wilshire: number, gdpBillions: number): number {
+  if (!Number.isFinite(wilshire) || !Number.isFinite(gdpBillions) || gdpBillions === 0) return NaN;
+  return (wilshire / gdpBillions) * 100;
+}
+
+/** A dated ratio. The Japan activity window (STALE_MONTHS) keeps an old print out of net and max. */
+export function buffettFromObservation(
+  point: { date: string; value: number } | null,
+  today: string,
+  meta: { source?: string; description?: string } = {},
+): IndicatorResult {
+  const base = {
+    name: "Buffett Indikator (TMC/GDP)",
+    group: "correction" as const,
+    subgroup: "valuation",
+    source: meta.source ?? "FRED DDDM01USA156NWDB",
+    description: meta.description ?? "Marktkapitalisierung / BIP, FRED DDDM01USA156NWDB",
+  };
+  if (!point || !Number.isFinite(point.value) || !point.date) return closedIndicator(base);
+  if (isStale(point.date, today)) {
+    return closedIndicator(base, `${point.value.toFixed(0)}% (${point.date.slice(0, 7)})`);
+  }
+  return {
+    ...buffettReading(point.value),
+    source: base.source,
+    description: base.description,
+  };
+}
+
+/**
+ * Wilshire / GDP when both prints are inside the Japan window.
+ * A missing or stale leg is not a ratio — the caller uses the World Bank series.
+ */
+export function buffettFromMarketCapGdp(
+  market: { date: string; value: number } | null,
+  gdp: { date: string; value: number } | null,
+  today: string,
+): IndicatorResult | null {
+  if (!market || !gdp) return null;
+  if (isStale(market.date, today) || isStale(gdp.date, today)) return null;
+  const ratio = buffettMarketCapGdpPercent(market.value, gdp.value);
+  if (!Number.isFinite(ratio)) return null;
+  const asOf = market.date < gdp.date ? market.date : gdp.date;
+  return buffettFromObservation(
+    { date: asOf, value: ratio },
+    today,
+    {
+      source: "FRED WILL5000PR / GDP",
+      description: "Wilshire 5000 / BIP (FRED WILL5000PR / GDP).",
+    },
+  );
+}
+
+/** Value string only when the slot is scored. A closed print is not the live level. */
+export function liveBuffettValue(indicator: Pick<IndicatorResult, "value" | "available"> | undefined): string | null {
+  if (!indicator || indicator.available === false) return null;
+  const parsed = parseFloat(String(indicator.value).replace("%", ""));
+  if (!Number.isFinite(parsed)) return null;
+  return indicator.value;
+}
+
+export function buffettFazitClause(indicator: Pick<IndicatorResult, "value" | "available"> | undefined): string {
+  const value = liveBuffettValue(indicator);
+  if (value == null) return "";
+  const buffettVal = parseFloat(String(value).replace("%", ""));
+  if (!Number.isFinite(buffettVal) || buffettVal <= 180) return "";
+  return `Der Buffett-Indikator steht bei ${value} — das höchste Niveau seit der Dotcom-Blase. `
+    + `Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. `;
 }
 
 /** Last P/E10 in an in-memory grid. The excess-yield column is also labeled CAPE and stays near 0. */
@@ -1216,7 +1298,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   ];
 
   // Top 3 drivers
-  const sortedByImpact = [...indicators].sort((a, b) => Math.abs(b.weightedScore) - Math.abs(a.weightedScore));
+  const sortedByImpact = indicators.filter(i => i.available !== false).sort((a, b) => Math.abs(b.weightedScore) - Math.abs(a.weightedScore));
   const topDrivers = sortedByImpact.slice(0, 3).map(i =>
     `${i.name}: ${i.weightedScore > 0 ? "+" : ""}${i.weightedScore} (${i.zone})`
   );
@@ -1238,6 +1320,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
 
   const sources = [
     { name: "FRED (Federal Reserve Economic Data)", url: "https://fred.stlouisfed.org" },
+    { name: "FRED WILL5000PR / GDP", url: "https://fred.stlouisfed.org/series/WILL5000PR" },
     { name: "FRED DDDM01USA156NWDB", url: "https://fred.stlouisfed.org/series/DDDM01USA156NWDB" },
     { name: "CNN Fear & Greed Index", url: "https://www.cnn.com/markets/fear-and-greed" },
     { name: "University of Michigan Consumer Sentiment", url: "https://data.sca.isr.umich.edu" },
@@ -1350,12 +1433,8 @@ function generateFazit(
 
   // Section 2: Valuation Risk
   let valuationText = "";
-  const buffettVal = buffett ? parseFloat(String(buffett.value).replace("%", "")) : NaN;
+  valuationText += buffettFazitClause(buffett);
   const capeVal = cape ? parseFloat(String(cape.value)) : NaN;
-  if (!isNaN(buffettVal) && buffettVal > 180) {
-    valuationText += `Der Buffett-Indikator steht bei ${buffett!.value} — das höchste Niveau seit der Dotcom-Blase. `;
-    valuationText += `Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. `;
-  }
   if (!isNaN(capeVal) && capeVal > 30) {
     valuationText += `Das Shiller CAPE-Ratio von ${capeVal} liegt über dem Durchschnitt der letzten 140 Jahre (ca. 17) und signalisiert, dass zukünftige Aktienrenditen (10J) mit hoher Wahrscheinlichkeit unterdurchschnittlich ausfallen. `;
   }
@@ -1377,8 +1456,9 @@ function generateFazit(
   // Build summary
   let summary = `Gesamtbewertung: ${riskLevelPhrase(riskLevel)}. `;
   summary += `Rezession 12M: ${pRez12M}%, Korrektur 12M: ${pKorr12M}%. `;
-  if (pKorr12M >= 65 && essayOn) {
-    summary += `Die Kombination aus historisch extremen Bewertungen (Buffett ${buffett?.value}, CAPE ${cape?.value}) `;
+  const buffettText = liveBuffettValue(buffett);
+  if (pKorr12M >= 65 && essayOn && buffettText) {
+    summary += `Die Kombination aus historisch extremen Bewertungen (Buffett ${buffettText}, CAPE ${cape?.value}) `;
     summary += `und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, `;
     summary += `das defensives Portfoliomanagement erfordert.`;
   }

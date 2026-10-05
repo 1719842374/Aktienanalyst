@@ -13,7 +13,12 @@ import {
   anchoredRecessionProbability,
   blendWithNyFedAnchor,
   briefingEssayAllowed,
+  buffettFazitClause,
+  buffettFromMarketCapGdp,
+  buffettFromObservation,
+  buffettMarketCapGdpPercent,
   buffettReading,
+  liveBuffettValue,
   capeReading,
   latestShillerCape,
   correctionAction,
@@ -281,6 +286,75 @@ console.log("\n=== Missing readings add neither net nor max ===");
   check("missing WEI is N/A", weiReading(null).value === "N/A" && weiReading(null).available === false);
 }
 
+console.log("\n=== Buffett: fresh Wilshire/GDP, stale World Bank print is not live ===");
+{
+  const today = "2026-10-05";
+  const stale = buffettFromObservation({ date: "2020-01-01", value: 194.889 }, today);
+  check("2020-01-01 rounds to the 195% print the UI was treating as live", parseFloat(stale.value) === 195, stale.value);
+  check(
+    "that print is N/A with contribution 0",
+    stale.available === false && stale.zone === "N/A" && stale.rawScore === 0 && stale.weight === 0 && stale.weightedScore === 0 && stale.maxWeighted === 0,
+    `w=${stale.weight} score=${stale.weightedScore} max=${stale.maxWeighted} zone=${stale.zone}`,
+  );
+  check("the month stays on the value", stale.value === "195% (2020-01)", stale.value);
+  const staleText = [stale.value, stale.zone, stale.source, stale.description].join(" ");
+  check("stale Buffett does not say aktuell", !staleText.toLowerCase().includes("aktuell"));
+  check("the stale clause is empty", buffettFazitClause(stale) === "" && liveBuffettValue(stale) === null);
+  check("a live ratio above 180 still names the dotcom high", buffettFazitClause(buffettReading(230)).includes("230%") && buffettFazitClause(buffettReading(230)).includes("Dotcom"));
+  check("the live clause does not say aktuell", !buffettFazitClause(buffettReading(230)).toLowerCase().includes("aktuell"));
+
+  const justInside = buffettFromObservation({ date: "2025-04-01", value: 150 }, today);
+  check(
+    "18 months is still the Japan window and still scores",
+    justInside.available !== false && justInside.weight === 2 && justInside.rawScore === 2 && justInside.weightedScore === 4 && justInside.maxWeighted === 16,
+    `${justInside.value} raw=${justInside.rawScore}`,
+  );
+  const justOutside = buffettFromObservation({ date: "2025-03-01", value: 194.9 }, today);
+  check(
+    "19 months is outside the window and is not +10",
+    justOutside.available === false && justOutside.weightedScore === 0 && justOutside.maxWeighted === 0 && justOutside.value === "195% (2025-03)",
+    justOutside.value,
+  );
+
+  const vix = vixReading(16);
+  const staleTotals = scoredTotals([stale, vix]);
+  const liveTotals = scoredTotals([buffettReading(194.9), vix]);
+  check("stale Buffett stays out of the correction total", staleTotals.net === 0 && staleTotals.max === vix.maxWeighted, `${staleTotals.net}/${staleTotals.max}`);
+  check("the same 194.9 counted live is +10 on a max of 20", liveTotals.net === 10 && liveTotals.max === 20, `${liveTotals.net}/${liveTotals.max}`);
+  const pStale = probabilityFromNet(staleTotals.net, staleTotals.max);
+  const pLive = probabilityFromNet(liveTotals.net, liveTotals.max);
+  check("counting the stale 195% is what lifts P_korr12 to 75", pLive === 75 && pStale === 50, `live=${pLive} stale=${pStale}`);
+
+  check("Wilshire points over GDP billions are the percent", Math.abs(buffettMarketCapGdpPercent(63000, 30000) - 210) < 1e-9);
+  check("a zero GDP is not a ratio", Number.isNaN(buffettMarketCapGdpPercent(63000, 0)));
+  const freshRatio = buffettFromMarketCapGdp(
+    { date: "2026-09-30", value: 63000 },
+    { date: "2026-04-01", value: 30000 },
+    today,
+  )!;
+  check(
+    "a fresh Wilshire/GDP pair scores and names both series",
+    freshRatio.available !== false && freshRatio.rawScore === 8 && freshRatio.weightedScore === 16 && freshRatio.weight === 2 && freshRatio.value === "210%" && freshRatio.source === "FRED WILL5000PR / GDP",
+    `${freshRatio.value} ${freshRatio.source} raw=${freshRatio.rawScore}`,
+  );
+  check(
+    "a stale Wilshire leg is not turned into a ratio",
+    buffettFromMarketCapGdp({ date: "2020-01-01", value: 35000 }, { date: "2026-04-01", value: 30000 }, today) === null,
+  );
+  check("a missing Wilshire leg is not a ratio", buffettFromMarketCapGdp(null, { date: "2026-04-01", value: 30000 }, today) === null);
+  check("a missing observation is N/A", buffettFromObservation(null, today).available === false && buffettFromObservation(null, today).value === "N/A");
+
+  const server = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
+  const scoreFn = server.slice(server.indexOf("function scoreBuffett"), server.indexOf("function scoreCAPE"));
+  check(
+    "scoreBuffett tries Wilshire/GDP before the World Bank series",
+    scoreFn.indexOf("WILL5000PR") !== -1 && scoreFn.indexOf("WILL5000PR") < scoreFn.indexOf("DDDM01USA156NWDB"),
+  );
+  check("scoreBuffett goes through the observation gate", scoreFn.includes("buffettFromMarketCapGdp") && scoreFn.includes("buffettFromObservation"));
+  const fazitFn = server.slice(server.indexOf("function generateFazit"), server.indexOf("function registerRecessionRoutes"));
+  check("fazit cites Buffett only through the live-value gate", fazitFn.includes("liveBuffettValue") && fazitFn.includes("buffettFazitClause"));
+}
+
 console.log("\n=== Sentiment is VIX plus one crowd leg ===");
 {
   const cnn = crowdReading(65, 18, false);
@@ -315,7 +389,10 @@ console.log("\n=== FINRA margin is billions and a 5Y z, never $2026T ===");
   const partial = marginDebtReading(thin);
   check("YoY without a 5Y z is shown and not scored", partial.available === false && partial.maxWeighted === 0 && partial.value.includes("Mrd. $") && !/\$\d{4}T/i.test(partial.value));
   const server = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
-  check("Buffett reads the FRED ratio", server.includes("DDDM01USA156NWDB") && !server.includes('content.includes("overvalued")'));
+  check(
+    "Buffett names Wilshire/GDP and the World Bank series, and does not scrape a page",
+    server.includes("WILL5000PR") && server.includes("DDDM01USA156NWDB") && server.includes("isStale") && !server.includes('content.includes("overvalued")'),
+  );
   const pkg = readFileSync(new URL("../package.json", import.meta.url), "utf8");
   const lock = readFileSync(new URL("../package-lock.json", import.meta.url), "utf8");
   check(
