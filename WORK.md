@@ -1,11 +1,13 @@
 # WORK.md — Index
 
-> Stand: 05.10.2026 | Branch: `main` @ `1937d3898ab299336e9639c8c0a86ab4bdb137d6` (#149 Velocity Stocks, Squash auf `87151cb3`; Tester PASS; Bundle `index-0g2LG3IP.js`) | Keep-Alive CI rot auf main (leeres `RENDER_URL`) ist bekannt und **kein Ampel-ROT** für diesen Tip.
+> Stand: 05.10.2026 | Branch: `main` @ `edbec6e6a3319997746422d40b4e1f2f506d6d0a` (#170 Sahm EZ/JP, Squash auf `17d08326`; Tester PASS; Doublecheck GO; Bundle `index-BMeEs2YH.js`) | Keep-Alive CI rot auf main (leeres `RENDER_URL`) ist bekannt und **kein Ampel-ROT** für diesen Tip.
 >
 > **Hub Soll vs. Ist:** [docs/Doc_Soll_vs_Ist/](./docs/Doc_Soll_vs_Ist/)
 >
 > Alt (nicht löschen): [docs/work-offen/](./docs/work-offen/) · [docs/work-dokumentation/](./docs/work-dokumentation/)
 > Root-`WORK_*.md` bleiben die Inhaltsquelle. Wahrheit für das regionale Briefing ist Root [`fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md`](./fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md). `docs/work-offen/README.md` verlinkt dafür noch `Offen_`; die Dublette `docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` bleibt liegen.
+
+**Ampel-Kurz 05.10.2026, Tip `edbec6e6` (#170 Sahm EZ/JP, Tester PASS, Doublecheck GO, Bundle `index-BMeEs2YH.js`):** Sahm 🟢 und `fertig_WORK_RECESSION_FRED_SAHM.md`. Route `#/recession` Abschnitt 5. Soll = US `SAHMREALTIME` s(z), 0,50-pp-Label, regional Sahm US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`, EZ/JP nicht in der 17er-Summe, fehlende Monate leer. Soft, blockieren `fertig_` nicht: `controlOk` false, 2025-11 Δ=0.08 (Tester soft, kein FAIL); fehlende Monate leer (2025-10 fehlt in der US-Kontrolle, erwartet); Hinweis „nicht in der 17er-Summe“ für EZ/JP bestätigt (API: EZ/JP nur unter `sahmRegions`). Fiscal bleibt 🟢 `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md`. Liquidity Briefing bleibt 🟢 `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md`. Velocity Stocks bleibt 🟢 `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md`. Drei offene Root-Specs (Drafts zählen nicht): Recession-Sources 🟡 · Researcher-LI 🟡 · Section4 🟡. Detail: [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) Abschnitt 05.10.2026 Tip `edbec6e6`.
 
 **Ampel-Kurz 05.10.2026, Tip `1937d389` (#149 Velocity Stocks, Tester PASS, Bundle `index-0g2LG3IP.js`):** Velocity Stocks 🟢 und `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md`. Route `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`. π ehrlich „start unknown“. T½/V/V̄ konsistent. Debt/GDP bewegt `li` nicht. Soft, blockieren `fertig_` nicht: π-Zelle im Strip nicht gelb trotz `available.pi=false` (Spec sagt Gelb; Briefing-Panel ist gelb); US V 1.418 vs Briefing M2V n/a; ASIA `li` 0.1; JP T½ 683 J durch 0.1%-Boden; Capex-Cache fehlt → π „start unknown“ (kein Hardcode). Fiscal bleibt 🟢 `fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md`. Liquidity Briefing bleibt 🟢 `fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md`. Vier offene Root-Specs (Drafts zählen nicht): Sahm 🟡 · Recession-Sources 🟡 · Researcher-LI 🟡 · Section4 🟡. Detail: [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) Abschnitt 05.10.2026 Tip `1937d389`.
 
@@ -24,11 +26,12 @@
 | Datei | Inhalt |
 |-------|--------|
 | [Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md](./Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md) | 🟡 `?region=` liefert `li` + Bücher; `LiquidityPanel` holt weiter ohne Region |
-| [Offen_WORK_RECESSION_FRED_SAHM.md](./Offen_WORK_RECESSION_FRED_SAHM.md) | 🟡 US-Karte `SAHMREALTIME` + s(z); letzte-12-Kontrolle nicht ±0.02; EZ/JP fehlen |
 | [Offen_WORK_RECESSION_SOURCES.md](./Offen_WORK_RECESSION_SOURCES.md) | 🟡 NY-Fed ohne ×10 und `schemaVersion`; Kurve, AD, Sentiment, FINRA, EZ/JP offen |
 | [Offen_WORK_SECTION4_DATA_BUGS.md](./Offen_WORK_SECTION4_DATA_BUGS.md) | 🟡 Trailing-PEG, signed FCF, Geo-Dedup; Earnings, Analysten, Growth, Moat offen |
 
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
+
+**Ampel Sahm 05.10.2026 (Tip `edbec6e6`, main + Tester PASS, Doublecheck GO):** `fertig_WORK_RECESSION_FRED_SAHM` 🟢. Soll = Spec `Offen_WORK_RECESSION_FRED_SAHM` (US `SAHMREALTIME` s(z), 0,50-pp-Label, regional Sahm US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S`, EZ/JP nicht in der 17er-Summe, fehlende Monate leer). Ist = Tip `edbec6e6` plus live `#/recession` Abschnitt 5, Bundle `index-BMeEs2YH.js`. Soft, blockieren `fertig_` nicht: `controlOk` false, 2025-11 Δ=0.08 (Tester soft, kein FAIL); fehlende Monate leer (2025-10 fehlt in der US-Kontrolle, erwartet); Hinweis „nicht in der 17er-Summe“ für EZ/JP bestätigt (API: EZ/JP nur unter `sahmRegions`). Fiscal bleibt 🟢 `fertig_`. Liquidity Briefing bleibt 🟢 `fertig_`. Velocity Stocks bleibt 🟢 `fertig_`. Die übrigen drei `Offen_`-Specs stehen in der Soll-Tabelle. Dublette `docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` bleibt liegen.
 
 **Ampel Velocity-Stocks 05.10.2026 (Tip `1937d389`, main + Tester PASS):** `fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY` 🟢. Soll = Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest) laut der Spec. Ist = Tip `1937d389` plus live `#/researcher` `panel-regional-stocks` US/EU/ASIA / `GET /api/researcher/liquidity?region=`. π ehrlich „start unknown“. T½/V/V̄ konsistent. Debt/GDP bewegt `li` nicht. Soft, blockieren `fertig_` nicht: π-Zelle im Strip nicht gelb trotz `available.pi=false` (Spec sagt Gelb; Briefing-Panel ist gelb); US V 1.418 vs Briefing M2V n/a; ASIA `li` 0.1; JP T½ 683 J durch 0.1%-Boden; Capex-Cache fehlt → π „start unknown“ (kein Hardcode). Fiscal bleibt 🟢 `fertig_`. Liquidity Briefing bleibt 🟢 `fertig_`. Die übrigen vier `Offen_`-Specs stehen in der Soll-Tabelle. Dublette `docs/work-offen/WORK_RESEARCHER_BRIEFING_REGIONAL.md` bleibt liegen.
 
@@ -50,9 +53,9 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md](./docs/Doc_Soll_vs_Ist/FACTPACK_LLM.md) | FactPack Hook+UI live (#57) |
 | [fertig_WORK_RECESSION_RSI_MACD.md](./fertig_WORK_RECESSION_RSI_MACD.md) | RSI/MACD Dashboard live |
 | [fertig_WORK_RECESSION_MARKET_CHARTS.md](./fertig_WORK_RECESSION_MARKET_CHARTS.md) | Vier Märkte, Klick-Factpack, FINRA nur unter SPY |
-| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 05.10.2026 Tip `1937d389` (#149 Velocity Stocks 🟢; Keep-Alive kein Ampel-ROT) |
+| [WORK_IST_VS_SOLL.md](./WORK_IST_VS_SOLL.md) | Audit 05.10.2026 Tip `edbec6e6` (#170 Sahm 🟢; Keep-Alive kein Ampel-ROT) |
 | [fertig_WORK_THESIS_LAB.md](./fertig_WORK_THESIS_LAB.md) | `/#/lab` Live PASS (#73) |
-| [WORK_IMPLEMENTIERUNG_OFFEN.md](./WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 Rang 7–9, Dateiname jetzt `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md`; Sahm bleibt offen; Liquidity-Briefing `fertig_` 🟢 (#166); Velocity-Stocks `fertig_` 🟢 (#149) |
+| [WORK_IMPLEMENTIERUNG_OFFEN.md](./WORK_IMPLEMENTIERUNG_OFFEN.md) | D6 Rang 7–9, Dateiname jetzt `fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md`; Sahm `fertig_` 🟢 (#170); Liquidity-Briefing `fertig_` 🟢 (#166); Velocity-Stocks `fertig_` 🟢 (#149) |
 | [fertig_WORK_ANALYZE_DISK_CACHE.md](./fertig_WORK_ANALYZE_DISK_CACHE.md) | 7-Tage-KI-Catch, L1+L2, force löscht beide |
 | [fertig_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md](./fertig_WORK_IMPLEMENTIERUNG_ANALYZE_CACHE.md) | Analyze-Route an die 7-Tage-Disk gehängt |
 | [fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md](./fertig_WORK_RESEARCHER_LIQUIDITY_REGIME.md) | C2 US-only |
@@ -61,6 +64,7 @@ Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 | [fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md](./fertig_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | 🟢 adaptives `s(z)` Bills/TGA/SOMA (#145, Tester PASS, Bundle `index-CDLHYWlv.js`); GIS `macroFiscal`; Softs blockieren nicht |
 | [fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./fertig_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | 🟢 Katalogquellen/Serien im Briefing (#166, Tester PASS, Bundle `index-BGJ8ARaM.js`); 40 Kacheln live; Soft-n/a CN 10y, π, US M2V/EMG, veraltete CPI; T½ JP ~683 Jahre; Inflation JP/CN 2025; Cold-Start ~37s |
 | [fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./fertig_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | 🟢 Stocks-Zeilen, T½, V/V̄, π (Philip: age×V/V̄, kein F-Rest) (#149, Tester PASS, Bundle `index-0g2LG3IP.js`); `#/researcher` `panel-regional-stocks` US/EU/ASIA = `GET /api/researcher/liquidity?region=`; π „start unknown“; Softs blockieren nicht |
+| [fertig_WORK_RECESSION_FRED_SAHM.md](./fertig_WORK_RECESSION_FRED_SAHM.md) | 🟢 US `SAHMREALTIME` s(z), 0,50-pp-Label, regional Sahm US / EZ `une_rt_m` EA21 / JP `LRUNTTTTJPM156S` (#170, Tester PASS, Doublecheck GO, Bundle `index-BMeEs2YH.js`); `#/recession` Abschnitt 5; EZ/JP nicht in der 17er-Summe; fehlende Monate leer; Softs blockieren nicht |
 | [fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md](./fertig_WORK_VALUECHAIN_SECTOR_ROTATION.md) | Value-Chain (#169 Docs-Rename; kein Live-Deploy aus diesem Commit) |
 | [fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md](./fertig_WORK_RESEARCHER_BRIEFING_REGIONAL.md) | Briefing 3 Regionen (#169 Docs-Rename; kein Live-Deploy aus diesem Commit) |
 | [fertig_WORK_ANTIBIAS_DCF.md](./fertig_WORK_ANTIBIAS_DCF.md) | Inverted DCF |
