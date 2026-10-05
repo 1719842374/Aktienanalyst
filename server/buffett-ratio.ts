@@ -170,3 +170,134 @@ export function buildBuffettSeries(rows: BuffettObservation[]): BuffettPoint[] {
     };
   });
 }
+
+/**
+ * Langfristiger Trend der Marktquote.
+ * log(Quote) = a + b·t über die ganze Historie.
+ * Die Bänder sind diese Trendlinie mal (1 ± k·σ), σ ist die
+ * Standardabweichung von Quote/Trend − 1. Ein Fenster schneidet
+ * die fertige Reihe, es schätzt den Trend nicht neu.
+ */
+export interface RatioObs {
+  date: string;
+  ratio: number;
+}
+
+export interface TrendModel {
+  origin: string;
+  intercept: number;
+  slopePerYear: number;
+  sigmaPct: number;
+}
+
+export interface TrendPoint {
+  date: string;
+  ratio: number;
+  trend: number;
+  plus1: number;
+  plus2: number;
+  minus1: number;
+  minus2: number;
+  premiumPct: number;
+  zScore: number;
+}
+
+const YEAR_MS = 365.25 * 24 * 60 * 60 * 1000;
+
+function yearFraction(origin: string, date: string): number {
+  return (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${origin}T00:00:00Z`)) / YEAR_MS;
+}
+
+function finiteRatios(points: RatioObs[]): RatioObs[] {
+  return points
+    .filter(point => Number.isFinite(point.ratio) && point.ratio > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Letzter Wert je Quartal. Darauf wird der Trend geschätzt, nicht auf jedem Handelstag. */
+export function quarterlyFitSample(points: RatioObs[]): RatioObs[] {
+  const byQuarter = new Map<string, RatioObs>();
+  for (const point of finiteRatios(points)) {
+    const month = Number(point.date.slice(5, 7));
+    const quarter = Math.floor((month - 1) / 3) + 1;
+    byQuarter.set(`${point.date.slice(0, 4)}-Q${quarter}`, point);
+  }
+  return [...byQuarter.values()];
+}
+
+/**
+ * Hängt die börsennotierte Reihe an eine frühere Quote.
+ * Die frühere Quote wird so skaliert, dass sie am ersten gemeinsamen Rand
+ * auf dem ersten börsennotierten Wert liegt.
+ */
+export function spliceAtListedStart(early: RatioObs[], listed: RatioObs[]): RatioObs[] {
+  const listedSorted = finiteRatios(listed);
+  const earlySorted = finiteRatios(early);
+  if (listedSorted.length === 0) return earlySorted;
+  const start = listedSorted[0].date;
+  const prior = earlySorted.filter(point => point.date <= start);
+  const anchor = prior[prior.length - 1];
+  if (!anchor) return listedSorted;
+  const scale = listedSorted[0].ratio / anchor.ratio;
+  const head = prior
+    .filter(point => point.date < start)
+    .map(point => ({ date: point.date, ratio: point.ratio * scale }));
+  return [...head, ...listedSorted];
+}
+
+export function fitLogTrend(points: RatioObs[]): TrendModel | null {
+  const rows = finiteRatios(points);
+  if (rows.length < 8) return null;
+  const origin = rows[0].date;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const row of rows) {
+    xs.push(yearFraction(origin, row.date));
+    ys.push(Math.log(row.ratio));
+  }
+  const n = xs.length;
+  const meanX = xs.reduce((sum, value) => sum + value, 0) / n;
+  const meanY = ys.reduce((sum, value) => sum + value, 0) / n;
+  let varX = 0;
+  let cov = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - meanX;
+    varX += dx * dx;
+    cov += dx * (ys[i] - meanY);
+  }
+  if (varX === 0) return null;
+  const slopePerYear = cov / varX;
+  const intercept = meanY - slopePerYear * meanX;
+  let sse = 0;
+  for (let i = 0; i < n; i++) {
+    const trend = Math.exp(intercept + slopePerYear * xs[i]);
+    const residual = rows[i].ratio / trend - 1;
+    sse += residual * residual;
+  }
+  return {
+    origin,
+    intercept,
+    slopePerYear,
+    sigmaPct: Math.sqrt(sse / (n - 2)),
+  };
+}
+
+export function applyTrend(model: TrendModel, points: RatioObs[]): TrendPoint[] {
+  return finiteRatios(points).map(point => {
+    const trend = Math.exp(model.intercept + model.slopePerYear * yearFraction(model.origin, point.date));
+    const premium = point.ratio / trend - 1;
+    const zScore = model.sigmaPct > 1e-9 ? premium / model.sigmaPct : 0;
+    const band = (k: number) => Math.max(0, trend * (1 + k * model.sigmaPct));
+    return {
+      date: point.date,
+      ratio: round1(point.ratio),
+      trend: round1(trend),
+      plus1: round1(band(1)),
+      plus2: round1(band(2)),
+      minus1: round1(band(-1)),
+      minus2: round1(band(-2)),
+      premiumPct: round1(premium * 100),
+      zScore: Math.round(zScore * 10) / 10,
+    };
+  });
+}

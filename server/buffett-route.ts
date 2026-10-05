@@ -1,30 +1,38 @@
 /**
- * Buffett-Quote für das Rezessions-Dashboard.
- * US: Financial Accounts plus VGR-Gewinne. Europa und China: die Weltbank-Quote,
- * solange keine Gewinnreihe mit demselben Rand vorliegt.
+ * Buffett-Indikator für das Rezessions-Dashboard.
+ * USA: Wilshire 5000 zum nominalen BIP, davor die Financial-Accounts-Quote
+ * auf den ersten Indexwert skaliert. Trend und Standardabweichungsbänder
+ * werden einmal über die gesamte Reihe geschätzt.
+ * Europa und China: die Weltbank-Quote, solange sie reicht, mit demselben Trend.
  */
 import type { Express, Request, Response } from "express";
 import {
-  buildBuffettSeries,
-  type BuffettObservation,
-  type BuffettPoint,
+  applyTrend,
+  fitLogTrend,
+  quarterlyFitSample,
+  spliceAtListedStart,
+  type RatioObs,
+  type TrendPoint,
 } from "./buffett-ratio";
 
 const REGIONS = ["US", "EU", "CN"] as const;
 type RegionId = (typeof REGIONS)[number];
 
+/**
+ * Wilshire-Konvention: ein Indexpunkt entsprach 1 Mrd. $ Kapitalisierung
+ * und ist bis etwa 1,05 Mrd. $ je Punkt gedriftet. Das ist die Umrechnung
+ * des Index in Dollar, keine Bewertungsschwelle.
+ */
+export const WILSHIRE_DOLLARS_PER_POINT_BN = 1.05;
+
 const CACHE_MS = 6 * 60 * 60 * 1000;
 const cache = new Map<string, { at: number; body: unknown }>();
 
 const US_SOURCES = [
-  { id: "NCBEILQ027S", role: "Marktwert, nichtfinanzielle Kapitalgesellschaften, Mio. $" },
-  { id: "FBCELLQ027S", role: "Marktwert, finanzielle Kapitalgesellschaften, Mio. $" },
+  { id: "^W5000", role: "Wilshire 5000, täglicher Schlusskurs" },
   { id: "GDP", role: "nominales BIP, Mrd. $, Jahresrate" },
-  { id: "CPATAX", role: "Unternehmensgewinn nach Steuern, Mrd. $" },
-  { id: "A445RC1Q027SBEA", role: "Unternehmensgewinn Inland, Mrd. $" },
-  { id: "B394RC1Q027SBEA", role: "Unternehmensgewinn Ausland, Mrd. $" },
-  { id: "DIVIDEND", role: "Nettodividenden, Mrd. $" },
-  { id: "DGS10", role: "zehnjährige US-Rendite" },
+  { id: "NCBEILQ027S", role: "Marktwert nichtfinanzieller Firmen bis zum Indexstart, Mio. $" },
+  { id: "FBCELLQ027S", role: "Marktwert finanzieller Firmen bis zum Indexstart, Mio. $" },
 ];
 
 interface FredPoint {
@@ -57,99 +65,119 @@ function asMap(points: FredPoint[]): Map<string, number> {
   return new Map(points.map(point => [point.date, point.value]));
 }
 
-function quarterStart(iso: string): string {
-  const [year, month] = iso.split("-").map(Number);
-  const quarterMonth = Math.floor((month - 1) / 3) * 3 + 1;
-  return `${year}-${String(quarterMonth).padStart(2, "0")}-01`;
+function valueAt(points: FredPoint[], date: string): number | null {
+  if (points.length === 0) return null;
+  if (date <= points[0].date) return points[0].value;
+  if (date >= points[points.length - 1].date) return points[points.length - 1].value;
+  let lo = 0;
+  let hi = points.length - 1;
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    if (points[mid].date <= date) lo = mid;
+    else hi = mid;
+  }
+  const left = points[lo];
+  const right = points[hi];
+  const span = Date.parse(`${right.date}T00:00:00Z`) - Date.parse(`${left.date}T00:00:00Z`);
+  if (span <= 0) return left.value;
+  const t = (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${left.date}T00:00:00Z`)) / span;
+  return left.value + (right.value - left.value) * t;
 }
 
-function quarterYield(daily: FredPoint[]): Map<string, number> {
-  const buckets = new Map<string, number[]>();
-  for (const point of daily) {
-    const key = quarterStart(point.date);
-    const list = buckets.get(key) ?? [];
-    list.push(point.value);
-    buckets.set(key, list);
+interface YahooBar {
+  date: string;
+  close: number;
+}
+
+async function fetchWilshire(): Promise<YahooBar[]> {
+  const period2 = Math.floor(Date.now() / 1000) + 86_400;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/%5EW5000?period1=599817600&period2=${period2}&interval=1d`;
+  const response = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+    signal: AbortSignal.timeout(25000),
+  });
+  if (!response.ok) throw new Error(`Wilshire ${response.status}`);
+  const body = await response.json() as {
+    chart?: {
+      result?: Array<{
+        timestamp?: number[];
+        indicators?: { quote?: Array<{ close?: Array<number | null> }> };
+      }>;
+    };
+  };
+  const result = body.chart?.result?.[0];
+  const stamps = result?.timestamp ?? [];
+  const closes = result?.indicators?.quote?.[0]?.close ?? [];
+  const out: YahooBar[] = [];
+  for (let i = 0; i < stamps.length; i++) {
+    const close = closes[i];
+    if (close == null || !Number.isFinite(close) || close <= 0) continue;
+    out.push({ date: new Date(stamps[i] * 1000).toISOString().slice(0, 10), close });
   }
-  const out = new Map<string, number>();
-  for (const [key, values] of buckets) {
-    out.set(key, values.reduce((sum, value) => sum + value, 0) / values.length);
-  }
+  if (out.length < 500) throw new Error("Wilshire-Reihe zu kurz");
   return out;
 }
 
-async function buildUnitedStates(): Promise<{ points: BuffettPoint[]; note: string }> {
-  const [nfc, financial, gdp, profits, domestic, foreign, dividends, yields] = await Promise.all([
-    fetchFred("NCBEILQ027S", "1952-01-01"),
-    fetchFred("FBCELLQ027S", "1952-01-01"),
-    fetchFred("GDP", "1952-01-01"),
-    fetchFred("CPATAX", "1947-01-01"),
-    fetchFred("A445RC1Q027SBEA", "1947-01-01"),
-    fetchFred("B394RC1Q027SBEA", "1947-01-01"),
-    fetchFred("DIVIDEND", "1947-01-01"),
-    fetchFred("DGS10", "1962-01-01"),
+function withTrend(points: RatioObs[]): TrendPoint[] {
+  const model = fitLogTrend(quarterlyFitSample(points));
+  if (!model) throw new Error("Trend nicht schätzbar");
+  return applyTrend(model, points);
+}
+
+async function buildUnitedStates(): Promise<{ points: TrendPoint[]; note: string }> {
+  const [gdp, nfc, financial, bars] = await Promise.all([
+    fetchFred("GDP", "1947-01-01"),
+    fetchFred("NCBEILQ027S", "1947-01-01"),
+    fetchFred("FBCELLQ027S", "1947-01-01"),
+    fetchWilshire(),
   ]);
+  if (gdp.length < 8) throw new Error("BIP-Reihe leer");
   const nfcMap = asMap(nfc);
   const financialMap = asMap(financial);
-  const gdpMap = asMap(gdp);
-  const profitMap = asMap(profits);
-  const domesticMap = asMap(domestic);
-  const foreignMap = asMap(foreign);
-  const dividendMap = asMap(dividends);
-  const yieldMap = quarterYield(yields);
-  const dates = [...nfcMap.keys()].filter(date => financialMap.has(date) && gdpMap.has(date)).sort();
-  const observations: BuffettObservation[] = dates.map(date => ({
-    date,
-    marketCapBn: ((nfcMap.get(date) ?? 0) + (financialMap.get(date) ?? 0)) / 1000,
-    gdpBn: gdpMap.get(date) ?? 0,
-    afterTaxProfitBn: profitMap.get(date) ?? null,
-    domesticProfitBn: domesticMap.get(date) ?? null,
-    foreignProfitBn: foreignMap.get(date) ?? null,
-    dividendBn: dividendMap.get(date) ?? null,
-    yieldPct: yieldMap.get(date) ?? null,
-  }));
+  const earlyDates = [...nfcMap.keys()]
+    .filter(date => date >= "1950-01-01" && financialMap.has(date))
+    .sort();
+  const early: RatioObs[] = [];
+  for (const date of earlyDates) {
+    const gdpBn = valueAt(gdp, date);
+    if (gdpBn == null || gdpBn <= 0) continue;
+    const marketCapBn = ((nfcMap.get(date) ?? 0) + (financialMap.get(date) ?? 0)) / 1000;
+    early.push({ date, ratio: (marketCapBn / gdpBn) * 100 });
+  }
+  const listed: RatioObs[] = [];
+  for (const bar of bars) {
+    const gdpBn = valueAt(gdp, bar.date);
+    if (gdpBn == null || gdpBn <= 0) continue;
+    listed.push({
+      date: bar.date,
+      ratio: (bar.close * WILSHIRE_DOLLARS_PER_POINT_BN / gdpBn) * 100,
+    });
+  }
+  if (listed.length < 500) throw new Error("Wilshire-Quote leer");
+  const spliced = spliceAtListedStart(early, listed);
   return {
-    points: buildBuffettSeries(observations),
-    note: "Der Zähler ist der Marktwert aller Unternehmensanteile aus den Financial Accounts, börsennotiert und nicht börsennotiert. Der Auslandsanteil ist der VGR-Gewinn aus dem Ausland geteilt durch Inland- plus Auslandsgewinn, jeweils über zehn Jahre. Das ist nicht die Umsatzquote des S&P.",
+    points: withTrend(spliced),
+    note: "Der Zähler ist der Wilshire 5000. Ein Indexpunkt wird mit 1,05 Mrd. $ Kapitalisierung angesetzt und durch das nominale BIP geteilt. Bis 1950 zurück wird die Quote der Financial Accounts auf den ersten Indexwert skaliert. Die Trendlinie und die Bänder von einer und zwei Standardabweichungen gelten für die gesamte Reihe. Die Zeitfenster zeigen davon nur einen Ausschnitt.",
   };
 }
 
-async function buildAnnualRatio(seriesId: string): Promise<BuffettPoint[]> {
+async function buildAnnualRatio(seriesId: string): Promise<TrendPoint[]> {
   const points = await fetchFred(seriesId, "1975-01-01");
-  return points.map(point => ({
-    date: point.date,
-    rawPct: Math.round(point.value * 10) / 10,
-    geoPct: null,
-    justifiedPct: null,
-    foreignShare: null,
-    multiple: null,
-    qStar: null,
-    gapPct: null,
-    yieldPct: null,
-    profitCagrPct: null,
-    payout: null,
-    gordonMultiple: null,
-    gordonPct: null,
-  }));
+  const ratios = points.map(point => ({ date: point.date, ratio: point.value }));
+  if (ratios.length < 8) return [];
+  return withTrend(ratios);
 }
 
 const ANNUAL_REGIONS: Record<Exclude<RegionId, "US">, { id: string; note: string }> = {
   EU: {
     id: "DDDM01EZA156NWDB",
-    note: "Euroraum, börsennotierte Inlandsfirmen in Prozent des BIP (Weltbank über FRED). Die Reihe endet mit dem letzten veröffentlichten Jahr. Gewinn, Auslandsanteil und Zinsmodell bleiben leer, bis eine Gewinnreihe denselben Rand hat.",
+    note: "Euroraum, börsennotierte Inlandsfirmen in Prozent des BIP (Weltbank über FRED). Die Reihe endet mit dem letzten veröffentlichten Jahr. Trend und Bänder werden auf dieser Reihe geschätzt.",
   },
   CN: {
     id: "DDDM01CNA156NWDB",
-    note: "China, börsennotierte Inlandsfirmen in Prozent des BIP (Weltbank über FRED). Die Reihe endet mit dem letzten veröffentlichten Jahr. Gewinn, Auslandsanteil und Zinsmodell bleiben leer, bis eine Gewinnreihe denselben Rand hat.",
+    note: "China, börsennotierte Inlandsfirmen in Prozent des BIP (Weltbank über FRED). Die Reihe endet mit dem letzten veröffentlichten Jahr. Trend und Bänder werden auf dieser Reihe geschätzt.",
   },
 };
-
-function latestDefined(points: BuffettPoint[]): BuffettPoint | null {
-  for (let i = points.length - 1; i >= 0; i--) {
-    if (points[i].rawPct != null) return points[i];
-  }
-  return null;
-}
 
 export function registerBuffettRatioRoute(app: Express): void {
   app.get("/api/analyze-recession/buffett", async (req: Request, res: Response) => {
@@ -167,7 +195,7 @@ export function registerBuffettRatioRoute(app: Express): void {
             points: await buildAnnualRatio(annual!.id),
             note: annual!.note,
           };
-      const latest = latestDefined(built.points);
+      const latest = built.points.length > 0 ? built.points[built.points.length - 1] : null;
       const body = {
         region,
         asOf: latest?.date ?? null,

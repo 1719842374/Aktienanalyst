@@ -1,4 +1,11 @@
-import { buildBuffettSeries, type BuffettObservation } from "../server/buffett-ratio";
+import {
+  applyTrend,
+  buildBuffettSeries,
+  fitLogTrend,
+  quarterlyFitSample,
+  spliceAtListedStart,
+  type BuffettObservation,
+} from "../server/buffett-ratio";
 
 function quarters(from: string, to: string): string[] {
   const out: string[] = [];
@@ -90,6 +97,37 @@ const stuck = quarters("1990-01-01", "2024-01-01").map(date => row(date, 200, 10
   yieldPct: 0,
 }));
 ok("ohne positiven Abstand zwischen Rendite und Wachstum bleibt Gordon leer", buildBuffettSeries(stuck).at(-1)!.gordonMultiple == null);
+
+const flatYears = Array.from({ length: 12 }, (_, index) => {
+  const year = 2000 + index;
+  return { date: `${year}-01-01`, ratio: 100 * Math.exp(0.02 * index) };
+});
+const fitted = fitLogTrend(flatYears);
+ok("Exponentialreihe hat Steigung 0,02", fitted != null && Math.abs(fitted.slopePerYear - 0.02) < 0.002, JSON.stringify(fitted));
+ok("rauscharme Reihe hat eine kleine Standardabweichung", fitted != null && fitted.sigmaPct < 0.01, JSON.stringify(fitted));
+const evaluated = applyTrend(fitted!, flatYears);
+const windowed = applyTrend(fitted!, flatYears.slice(-3));
+ok("ein Fenster benutzt denselben Trend wie die volle Reihe", windowed[2].trend === evaluated[evaluated.length - 1].trend, JSON.stringify(windowed[2]));
+
+const hand = applyTrend(
+  { origin: "2000-01-01", intercept: Math.log(100), slopePerYear: 0, sigmaPct: 0.2 },
+  [{ date: "2000-01-01", ratio: 140 }],
+)[0];
+ok("Bänder sind der Trend mal eins plus k Standardabweichungen", hand.trend === 100 && hand.plus1 === 120 && hand.plus2 === 140 && hand.minus1 === 80 && hand.minus2 === 60, JSON.stringify(hand));
+ok("Abstand und Standardabweichung folgen aus Quote durch Trend", hand.premiumPct === 40 && hand.zScore === 2, JSON.stringify(hand));
+
+const spliced = spliceAtListedStart(
+  [{ date: "1980-01-01", ratio: 100 }, { date: "1988-01-01", ratio: 200 }],
+  [{ date: "1989-01-03", ratio: 50 }, { date: "1989-04-01", ratio: 55 }],
+);
+ok("frühe Quote trifft den ersten Börsenwert", spliced[0].ratio === 25 && spliced[1].ratio === 50 && spliced[2].ratio === 50 && spliced[3].ratio === 55, JSON.stringify(spliced));
+
+const quartersFit = quarterlyFitSample([
+  { date: "2020-01-02", ratio: 10 },
+  { date: "2020-03-31", ratio: 12 },
+  { date: "2020-04-01", ratio: 14 },
+]);
+ok("je Quartal bleibt der letzte Wert für den Trend", quartersFit.length === 2 && quartersFit[0].ratio === 12 && quartersFit[1].ratio === 14, JSON.stringify(quartersFit));
 
 if (failed) {
   console.log(`\n${failed} TESTS FEHLGESCHLAGEN`);

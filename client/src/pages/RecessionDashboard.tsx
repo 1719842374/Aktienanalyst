@@ -133,7 +133,7 @@ export default function RecessionDashboard() {
             )}
             <RecessionRsiSection number={regions ? 9 : 8} />
             <RecessionMarketChartsSection number={regions ? 10 : 9} />
-            <SectionCard number={regions ? 11 : 10} title="Marktquote zum BIP">
+            <SectionCard number={regions ? 11 : 10} title="Buffett-Indikator: Marktwert zum BIP">
               <BuffettRatioPanel />
             </SectionCard>
             <SectionCard number={regions ? 12 : 11} title="Zusammenfassung & Top-3 Treiber">
