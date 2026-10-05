@@ -6,7 +6,7 @@ import {
   Tooltip, ReferenceLine, ReferenceArea, Area, CartesianGrid,
 } from "recharts";
 import { useIsNarrow } from "@/hooks/use-mobile";
-import { axisTick, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
+import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import {
   buildFullSeries, buildWindowSeries, firstFiniteIndex, sliceBars,
   type WindowPoint, type WindowSeries,
@@ -677,8 +677,8 @@ export function TechnicalChart({ data }: Props) {
         <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-window-empty">{EMPTY_WINDOW_HINT}</div>
       ) : singleALayout ? (
         <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll">
-          <div className="min-w-0 max-w-full">
-            <div className={`${priceBandClass(1)} w-full min-w-0 max-w-full ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma" {...maProbeAttrs(aBuilt.points)}>
+          <div className="w-full">
+            <div className={`${priceBandClass(1)} w-full shrink-0 ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma" {...maProbeAttrs(aBuilt.points)}>
               <PricePane
                 points={aBuilt.points}
                 signals={aBuilt.signals}
@@ -945,7 +945,7 @@ function PricePane({
       >
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
         <XAxis dataKey="date" type="category" tickFormatter={tickFormatter} tick={tick} {...xInterval} axisLine={{ stroke: "var(--border)" }} padding={{ left: 0, right: 0 }} />
-        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => `$${v.toFixed(0)}`} width={52} axisLine={{ stroke: "var(--border)" }} {...(narrow ? { tickCount: 5 } : {})} />
+        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => `$${v.toFixed(0)}`} width={52} axisLine={{ stroke: "var(--border)" }} {...(narrow ? { ticks: narrowPriceTicks(yMin, yMax, 5) } : {})} />
         {/* Domain [0, 6.67]: höchster Volumen-Balken ≈ 15% der Bandhöhe, eigene Achse, nicht in der Preis-Y. */}
         <YAxis yAxisId="vol" hide domain={[0, 6.67]} orientation="right" />
         <Tooltip content={({ active, payload }) => {
@@ -1052,7 +1052,7 @@ function MacdPane({
   return (
     <>
       <OscCaption title={title} hint={hint} compact={compact} />
-      <div className={`${compact ? "h-[72px] sm:h-[84px]" : "h-[130px] sm:h-[150px]"} min-h-10 w-full min-w-0`} data-testid={testId}>
+      <div className={`${compact ? "h-[72px] sm:h-[84px]" : "h-[130px] sm:h-[150px]"} min-h-10 w-full shrink-0`} style={{ minHeight: TA_OSC_MIN_PX }} data-testid={testId}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={points} margin={{ top: 4, right: 10, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
@@ -1099,7 +1099,7 @@ function RsiPane({
   return (
     <>
       <OscCaption title={title} hint={hint} compact={compact} />
-      <div className={`${compact ? "h-[64px] sm:h-[72px]" : "h-[110px] sm:h-[130px]"} min-h-10 w-full min-w-0`} data-testid={testId}>
+      <div className={`${compact ? "h-[64px] sm:h-[72px]" : "h-[110px] sm:h-[130px]"} min-h-10 w-full shrink-0`} style={{ minHeight: TA_OSC_MIN_PX }} data-testid={testId}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={points} margin={{ top: 4, right: 10, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
@@ -1162,8 +1162,8 @@ function BandStack({
   const compact = count > 1;
   return (
     <TaPlotScroll minWidth={taChartMinWidth(52, 0, 10)} testId={`${testId}-scroll`}>
-    <div className="min-w-0 max-w-full" data-testid={testId} {...maProbeAttrs(series.points)}>
-      <div className={`${priceBandClass(count)} flex min-w-0 flex-col overflow-hidden ${measureMode ? "cursor-crosshair" : ""}`}>
+    <div className="w-full" data-testid={testId} {...maProbeAttrs(series.points)}>
+      <div className={`${priceBandClass(count)} flex shrink-0 flex-col overflow-hidden ${measureMode ? "cursor-crosshair" : ""}`}>
         <div className={`shrink-0 text-[10px] font-medium leading-none ${labelClassName}`} style={labelColor ? { color: labelColor } : undefined}>{label}</div>
         <div className="min-h-0 w-full flex-1">
           {empty ? (
