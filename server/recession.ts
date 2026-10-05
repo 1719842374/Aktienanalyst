@@ -1442,7 +1442,7 @@ export function generateFazit(
     quantSummary += `Die erhöhte Rezessionswahrscheinlichkeit reflektiert eine Kombination aus schwächelnden Konjunkturdaten und geopolitischem Stress.`;
   }
 
-  // Section 2: Valuation Risk — omit when Buffett/CAPE/Margin produced no clause.
+  // Section 2: Valuation Risk — never an empty heading; closed slots get an honest hint.
   let valuationText = "";
   valuationText += buffettFazitClause(buffett);
   const capeVal = cape ? parseFloat(String(cape.value)) : NaN;
@@ -1451,6 +1451,9 @@ export function generateFazit(
   }
   if (marginDebt && marginDebt.rawScore > 0) {
     valuationText += `Die NYSE Margin Debt (${marginDebt.value}) zeigt erhöhte Hebelwirkung im Markt — ein klassischer Vorlauf-Indikator für abrupte Sell-Offs.`;
+  }
+  if (!valuationText.trim()) {
+    valuationText = "Buffett, Shiller CAPE und Margin Debt sind nicht gewertet (N/A oder außerhalb des Fensters). Dieser Abschnitt nennt deshalb kein Bewertungsniveau; P_korr12 kommt in diesem Lauf nicht aus der Bewertungsseite.";
   }
 
   // Section 3: Geopolitics — only the WTI→CPI→BE→DGS10 chain, and only when shock.
@@ -1476,9 +1479,7 @@ export function generateFazit(
 
   const sections: FazitSection[] = [
     { title: "Quantitative Bewertung", emoji: "📊", text: quantSummary },
-    ...(valuationText.trim()
-      ? [{ title: "Bewertungsrisiko", emoji: "⚠️", text: valuationText }]
-      : []),
+    { title: "Bewertungsrisiko", emoji: "⚠️", text: valuationText },
     ...(geoSection ? [geoSection] : []),
     ...driverFazitSections(drivers),
     ...(creditSection ? [creditSection] : []),

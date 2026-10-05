@@ -380,11 +380,11 @@ console.log("\n=== Fazit ≥65% names the actual drivers, not a closed valuation
   check("Trends-driven 75% does not say extreme Bewertungsniveaus", !trendsQuant.includes("extreme Bewertungsniveaus"), trendsQuant);
   check("Trends-driven 75% names Google Trends", trendsQuant.includes("Google") && trendsQuant.includes("75%"), trendsQuant);
   check(
-    "empty Bewertungsrisiko is omitted or honest",
-    trendsValuation == null
-      || (trendsValuation.text.trim().length > 0
-        && !/Buffett-Indikator steht bei/i.test(trendsValuation.text)
-        && /nicht (verfügbar|bewertet|gewertet)|N\/A|kein Druck/i.test(trendsValuation.text)),
+    "Bewertungsrisiko keeps a closed-slot hint instead of an empty box",
+    trendsValuation != null
+      && trendsValuation.text.trim().length > 0
+      && !/Buffett-Indikator steht bei/i.test(trendsValuation.text)
+      && /nicht gewertet/i.test(trendsValuation.text),
     trendsValuation == null ? "omitted" : trendsValuation.text,
   );
 
