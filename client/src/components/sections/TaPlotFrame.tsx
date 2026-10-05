@@ -2,7 +2,12 @@ import type { ReactNode } from "react";
 import { Bar, ComposedChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { TA_VOLUME_BAND_PX } from "@/lib/taChartScale";
 
-/** Chart-Fläche: unter der Mindestbreite horizontal scrollen, nicht quetschen. */
+/**
+ * Chart-Fläche: unter der Mindestbreite horizontal scrollen, nicht quetschen.
+ * `width: max(100%, min)` setzt die benutzte Breite (nicht nur min-width).
+ * Safari lässt min-width allein oft nicht in die scrollWidth einfließen —
+ * der Plot bleibt dann auf der Viewport-Breite und wird gequetscht.
+ */
 export function TaPlotScroll({
   minWidth,
   children,
@@ -12,13 +17,15 @@ export function TaPlotScroll({
   children: ReactNode;
   testId?: string;
 }) {
+  const width = minWidth ? `max(100%, ${minWidth}px)` : "100%";
   return (
     <div
       className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
+      style={{ WebkitOverflowScrolling: "touch" }}
       data-testid={testId}
       data-min-width={minWidth ?? undefined}
     >
-      <div className="w-full" style={minWidth ? { minWidth } : undefined}>
+      <div data-testid={`${testId}-inner`} style={{ width, minWidth: minWidth || undefined }}>
         {children}
       </div>
     </div>
@@ -55,7 +62,7 @@ export function TaVolumeBand<T extends { _volUp?: boolean }>({
   marginRight: number;
 }) {
   return (
-    <div className="w-full" style={{ height: TA_VOLUME_BAND_PX }} data-testid="ta-volume-band">
+    <div className="w-full shrink-0" style={{ height: TA_VOLUME_BAND_PX, minHeight: TA_VOLUME_BAND_PX }} data-testid="ta-volume-band">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={data} margin={{ top: 0, right: marginRight, left: 0, bottom: 0 }}>
           <XAxis dataKey="date" hide />

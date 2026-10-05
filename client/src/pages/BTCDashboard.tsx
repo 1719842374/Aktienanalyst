@@ -17,7 +17,7 @@ import { formatCurrency, formatLargeNumber, formatPercent, getChangeColor } from
 import { gbmMonteCarlo, type GBMMonteCarloResult } from "@/lib/calculations";
 import { useLocation } from "wouter";
 import { useIsNarrow } from "@/hooks/use-mobile";
-import { axisTick, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
+import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
@@ -1648,7 +1648,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
 
       {/* Price Chart with MAs + BTC overlays */}
       <TaPlotScroll minWidth={plotMinWidth} testId="btc-ta-plot-scroll">
-      <div className={`h-[380px] sm:h-[420px] md:h-[460px] w-full ${isMeasuring ? "cursor-crosshair" : ""}`}>
+      <div className={`h-[380px] sm:h-[420px] md:h-[460px] w-full shrink-0 ${isMeasuring ? "cursor-crosshair" : ""}`}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartDataWithRSI}
@@ -1679,7 +1679,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               tickFormatter={formatYAxis}
               width={55}
               axisLine={{ stroke: "var(--border)" }}
-              {...(narrow ? { tickCount: 5 } : {})}
+              {...(narrow ? { ticks: narrowPriceTicks(yDomain[0], yDomain[1], 5) } : {})}
             />
             {/* Hidden right axis for volume normalisation */}
             <YAxis yAxisId="vol" hide domain={[0, 1]} orientation="right" />
@@ -1690,7 +1690,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 domain={real10yDomain}
                 hide={macroAxisHidden("real10y")}
                 tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-                tick={{ fontSize: narrow ? 10 : 9, fill: "#38bdf8" }}
+                tick={macroAxisHidden("real10y") ? false : { fontSize: narrow ? 10 : 9, fill: "#38bdf8" }}
                 width={macroAxisHidden("real10y") ? 0 : macroAxisFullWidth("real10y")}
                 axisLine={macroAxisHidden("real10y") ? false : { stroke: "#38bdf8" }}
                 {...(narrow ? { tickCount: 4 } : {})}
@@ -1703,7 +1703,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 domain={m2YoyDomain}
                 hide={macroAxisHidden("m2yoy")}
                 tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-                tick={{ fontSize: narrow ? 10 : 9, fill: "#a78bfa" }}
+                tick={macroAxisHidden("m2yoy") ? false : { fontSize: narrow ? 10 : 9, fill: "#a78bfa" }}
                 width={macroAxisHidden("m2yoy") ? 0 : macroAxisFullWidth("m2yoy")}
                 axisLine={false}
                 tickLine={false}
@@ -1717,7 +1717,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 domain={m2AbsoluteDomain}
                 hide={macroAxisHidden("m2absolute")}
                 tickFormatter={(v: number) => `$${v.toFixed(1)}T`}
-                tick={{ fontSize: narrow ? 10 : 9, fill: "#e2e8f0" }}
+                tick={macroAxisHidden("m2absolute") ? false : { fontSize: narrow ? 10 : 9, fill: "#e2e8f0" }}
                 width={macroAxisHidden("m2absolute") ? 0 : macroAxisFullWidth("m2absolute")}
                 axisLine={false}
                 tickLine={false}
@@ -1947,7 +1947,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         MACD(12,26,9)
         <span className="text-[9px] opacity-60">= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal</span>
       </div>
-      <div className="h-[160px] min-h-10 w-full sm:h-[180px]">
+      <div className="h-[160px] min-h-10 w-full shrink-0 sm:h-[180px]" style={{ minHeight: TA_OSC_MIN_PX }}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={chartDataWithRSI} margin={narrow ? { top: 5, right: 8, left: 0, bottom: 5 } : { top: 5, right: 10, left: 0, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
@@ -2035,7 +2035,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
       </div>
 
       {/* RSI(14) Chart */}
-      <div className="mt-3 min-h-10">
+      <div className="mt-3 min-h-10 shrink-0" style={{ minHeight: TA_OSC_MIN_PX }}>
         <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2 text-[10px] text-muted-foreground sm:flex-nowrap">
           <span className="font-medium">RSI(14)</span>
           <span className="opacity-60">= Relative Strength Index | Überkauft &gt; 70 | Überverkauft &lt; 30 | Wilder Smoothing</span>
@@ -2756,7 +2756,7 @@ export default function BTCDashboard() {
         )}
 
         {/* Main content */}
-        <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar">
+        <main ref={mainRef} className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar">
           {!data && !analyzeMutation.isPending ? (
             <BTCWelcomeScreen onAnalyze={() => analyzeMutation.mutate(undefined)} />
           ) : analyzeMutation.isPending ? (
