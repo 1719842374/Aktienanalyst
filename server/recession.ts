@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { execSync } from "child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { inflateRawSync } from "node:zlib";
 import { fetchMacroSnapshot } from "./fmp-macro";
 import { riskLevelPhrase } from "../shared/risk-level-label";
 import { marginYoYAndZ } from "../shared/recession-market-charts";
@@ -19,6 +20,7 @@ import { diskBriefingUpdatedAt } from "./disk-cache";
 import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
+import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
 
 // ============================================================
 // Generic Data Helpers
@@ -373,12 +375,15 @@ const WILSHIRE_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/%5EW50
 
 function scoreBuffett(): IndicatorResult {
   const today = recessionAsOf();
-  const market = latestYahooChartClose(readJson(fetchUrl(WILSHIRE_CHART, 20000, { "User-Agent": "Mozilla/5.0" })));
+  const close = latestYahooChartClose(readJson(fetchUrl(WILSHIRE_CHART, 20000, { "User-Agent": "Mozilla/5.0" })));
+  const market = close
+    ? { date: close.date, value: close.value * WILSHIRE_DOLLARS_PER_POINT_BN }
+    : null;
   const gdp = latestFredPoint("GDP", 5);
   const computed = buffettFromMarketCapGdp(market, gdp, today, {
     source: "Yahoo ^W5000 / FRED GDP",
     description: market && gdp
-      ? `Wilshire 5000 Total Market Index ${market.date} / FRED GDP ${gdp.date}. asOf ist das ältere Bein.`
+      ? `Wilshire 5000 Total Market Index ${market.date} × ${WILSHIRE_DOLLARS_PER_POINT_BN} Mrd. $ je Punkt / FRED GDP ${gdp.date}. asOf ist das ältere Bein.`
       : "Wilshire 5000 Total Market Index / FRED GDP.",
   });
   if (computed) return computed;
@@ -393,13 +398,102 @@ function scoreCAPE(): IndicatorResult {
   return capeFromPoint(latestMultplCape(html), recessionAsOf());
 }
 
-// 10. Margin debt. FINRA history is an xlsx and is not parsed. A single public
-// debit print is shown and not scored: the 5-year z needs the monthly series.
+// 10. Margin debt. FINRA Rule 4521 publishes the monthly debit series as xlsx.
+// The score is the year-over-year change against the 5-year z of that series.
+// A single CMV sentence is only the fallback and stays unscored.
 const CMV_MARGIN = "https://www.currentmarketvaluation.com/models/margin-debt.php";
+const FINRA_MARGIN_XLSX = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
 
 function scoreMarginDebt(): IndicatorResult {
+  try {
+    const points = finraMarginPoints(fetchBinary(FINRA_MARGIN_XLSX));
+    const today = recessionAsOf();
+    const last = points[points.length - 1];
+    if (points.length >= 13 && last && !isStale(last.date, today)) {
+      const scored = marginDebtReading(points);
+      if (scored.available !== false) {
+        return {
+          ...scored,
+          source: "FINRA margin-statistics",
+          description: "Debit Balances in Customers' Securities Margin Accounts, Mio. $. Der Score ist das Jahreswachstum gegen den 5-Jahres-z derselben Reihe.",
+        };
+      }
+    }
+  } catch {
+    // A broken workbook falls through to the unscored spot reading.
+  }
   const html = fetchUrl(CMV_MARGIN, 20000, { "User-Agent": "Mozilla/5.0" });
   return marginSpotReading(marginDebitFromCmv(html));
+}
+
+function fetchBinary(url: string, timeoutMs = 20000): Buffer {
+  try {
+    return execSync(`curl -sL --max-time ${Math.floor(timeoutMs / 1000)} "${url}"`, {
+      timeout: timeoutMs + 5000,
+      maxBuffer: 50 * 1024 * 1024,
+    });
+  } catch {
+    return Buffer.alloc(0);
+  }
+}
+
+/** One ZIP local-file entry. A data descriptor (flag bit 3) is refused. */
+export function zipEntry(buf: Buffer, entryName: string): Buffer | null {
+  let offset = 0;
+  while (offset + 30 <= buf.length) {
+    const sig = buf.readUInt32LE(offset);
+    if (sig !== 0x04034b50) return null;
+    const flags = buf.readUInt16LE(offset + 6);
+    const method = buf.readUInt16LE(offset + 8);
+    const compSize = buf.readUInt32LE(offset + 18);
+    const nameLen = buf.readUInt16LE(offset + 26);
+    const extraLen = buf.readUInt16LE(offset + 28);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLen + extraLen;
+    if (nameStart + nameLen > buf.length || dataStart > buf.length) return null;
+    const name = buf.toString("utf8", nameStart, nameStart + nameLen);
+    if (flags & 0x08) return null;
+    if (dataStart + compSize > buf.length) return null;
+    if (name === entryName) {
+      const payload = buf.subarray(dataStart, dataStart + compSize);
+      if (method === 0) return Buffer.from(payload);
+      if (method === 8) {
+        try {
+          return inflateRawSync(payload);
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+    offset = dataStart + compSize;
+  }
+  return null;
+}
+
+/** Column A is YYYY-MM, column B is debit balances in millions of dollars. */
+export function finraMarginFromSheetXml(xml: string): { date: string; debitMillions: number }[] {
+  const points: { date: string; debitMillions: number }[] = [];
+  const rowRe = /<row\b[^>]*>([\s\S]*?)<\/row>/g;
+  let rowMatch: RegExpExecArray | null;
+  while ((rowMatch = rowRe.exec(xml))) {
+    const row = rowMatch[1];
+    const month = row.match(/<c\b[^>]*\br="A\d+"[^>]*>[\s\S]*?<t>(\d{4}-\d{2})<\/t>/);
+    const debit = row.match(/<c\b[^>]*\br="B\d+"[^>]*>\s*<v>(\d+(?:\.\d+)?)<\/v>/);
+    if (!month || !debit) continue;
+    const debitMillions = Number(debit[1]);
+    if (!Number.isFinite(debitMillions) || debitMillions <= 0) continue;
+    points.push({ date: `${month[1]}-01`, debitMillions });
+  }
+  points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return points;
+}
+
+export function finraMarginPoints(buf: Buffer): { date: string; debitMillions: number }[] {
+  if (!buf || buf.length < 30) return [];
+  const xml = zipEntry(buf, "xl/worksheets/sheet1.xml");
+  if (!xml) return [];
+  return finraMarginFromSheetXml(xml.toString("utf8"));
 }
 
 // 11. Google Trends "Recession"
@@ -1038,7 +1132,7 @@ export function marginSpotReading(spot: { date: string; billions: number } | nul
       {
         ...closed,
         source: "Current Market Valuation (FINRA-Debit, ein Druck)",
-        description: "Ein öffentlicher Debit-Druck in Mrd. $. Die FINRA-xlsx wird nicht gelesen, deshalb kein 5J-z und kein Score.",
+        description: "Ein öffentlicher Debit-Druck in Mrd. $. Ohne die Monatsreihe gibt es keinen 5J-z und keinen Score.",
       },
       `${spot.billions.toFixed(1)} Mrd. $ (${spot.date.slice(0, 7)})`,
     ),
