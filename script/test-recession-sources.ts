@@ -5,6 +5,7 @@
  * Run: npx tsx script/test-recession-sources.ts
  */
 import { readFileSync } from "node:fs";
+import { deflateRawSync } from "node:zlib";
 import {
   ACTIVITY_SLOT_NAME,
   NY_FED_ANCHOR_WEIGHT,
@@ -36,6 +37,9 @@ import {
   googleReading,
   m2Reading,
   marginDebtReading,
+  finraMarginFromSheetXml,
+  finraMarginPoints,
+  zipEntry,
   nyFedAnchorPct,
   oilShockFromZ,
   privateCreditEssay,
@@ -360,6 +364,10 @@ console.log("\n=== Buffett: fresh Wilshire/GDP, stale World Bank print is not li
     scoreFn.slice(0, 240),
   );
   check("scoreBuffett goes through the observation gate", scoreFn.includes("buffettFromMarketCapGdp") && scoreFn.includes("buffettFromObservation"));
+  check(
+    "scoreBuffett scales the index by the listed-cap dollars per point",
+    scoreFn.includes("WILSHIRE_DOLLARS_PER_POINT_BN"),
+  );
   const chart = latestYahooChartClose({
     chart: { result: [{ timestamp: [1760000000, 1760086400], indicators: { quote: [{ close: [76000, null] }] } }] },
   });
@@ -371,9 +379,20 @@ console.log("\n=== Buffett: fresh Wilshire/GDP, stale World Bank print is not li
     { source: "Yahoo ^W5000 / FRED GDP", description: "Wilshire chart / GDP" },
   )!;
   check(
-    "a fresh chart/GDP pair scores in the >200 zone and names the chart",
+    "an unscaled index over GDP is 236 percent",
     liveRatio.available !== false && liveRatio.rawScore === 8 && liveRatio.weightedScore === 16 && liveRatio.value === "236%" && liveRatio.source === "Yahoo ^W5000 / FRED GDP",
     `${liveRatio.value} ${liveRatio.source} raw=${liveRatio.rawScore}`,
+  );
+  const scaledRatio = buffettFromMarketCapGdp(
+    { date: "2026-10-02", value: 76776.84375 * 1.05 },
+    { date: "2026-04-01", value: 32563.03 },
+    today,
+    { source: "Yahoo ^W5000 / FRED GDP", description: "Wilshire × 1.05" },
+  )!;
+  check(
+    "the listed-cap scale prints 248 percent and stays in the >200 zone",
+    scaledRatio.available !== false && scaledRatio.rawScore === 8 && scaledRatio.weightedScore === 16 && scaledRatio.value === "248%",
+    scaledRatio.value,
   );
   const fazitFn = server.slice(server.indexOf("function generateFazit"), server.indexOf("function registerRecessionRoutes"));
   check("fazit cites Buffett only through the live-value gate", fazitFn.includes("liveBuffettValue") && fazitFn.includes("buffettFazitClause"));
@@ -479,15 +498,56 @@ console.log("\n=== FINRA margin is billions and a 5Y z, never $2026T ===");
   const pkg = readFileSync(new URL("../package.json", import.meta.url), "utf8");
   const lock = readFileSync(new URL("../package-lock.json", import.meta.url), "utf8");
   check(
-    "xlsx is not a dependency and the scorer does not parse a workbook",
+    "xlsx is not an npm dependency; the debit workbook is inflated with zlib",
     !/"xlsx"\s*:/.test(pkg)
       && !lock.includes("node_modules/xlsx")
       && !server.includes('from "xlsx"')
       && !server.includes("XLSX.read")
-      && !server.includes("margin-statistics.xlsx")
+      && server.includes("margin-statistics.xlsx")
+      && server.includes("inflateRawSync")
+      && server.includes("finraMarginPoints")
       && !server.includes("fetchShillerCape")
       && !server.includes("fetchFinraDebitPoints"),
   );
+  const sheetRows = Array.from({ length: 36 }, (_, i) => {
+    const year = 2023 + Math.floor(i / 12);
+    const month = (i % 12) + 1;
+    const ym = `${year}-${String(month).padStart(2, "0")}`;
+    const debit = 1_000_000 + i * 10_000;
+    return `<row r="${i + 2}"><c r="A${i + 2}" t="inlineStr"><is><t>${ym}</t></is></c><c r="B${i + 2}"><v>${debit}</v></c></row>`;
+  }).join("");
+  const sheetXml = `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Year-Month</t></is></c></row>${sheetRows}</sheetData></worksheet>`;
+  const parsedSheet = finraMarginFromSheetXml(sheetXml);
+  check(
+    "the debit sheet keeps month and millions",
+    parsedSheet.length === 36 && parsedSheet[0].date === "2023-01-01" && parsedSheet[35].debitMillions === 1_350_000,
+    `${parsedSheet.length} ${parsedSheet[0]?.date} ${parsedSheet.at(-1)?.debitMillions}`,
+  );
+  const sheetScore = marginDebtReading(parsedSheet);
+  check(
+    "thirty-six debit months score with a finite 5-year z",
+    sheetScore.available !== false && sheetScore.maxWeighted === 4 && sheetScore.value.includes("Mrd. $") && sheetScore.value.includes("z5y"),
+    `${sheetScore.value} max=${sheetScore.maxWeighted}`,
+  );
+  const name = Buffer.from("xl/worksheets/sheet1.xml");
+  const compressed = deflateRawSync(Buffer.from(sheetXml));
+  const header = Buffer.alloc(30);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(8, 8);
+  header.writeUInt32LE(compressed.length, 18);
+  header.writeUInt32LE(Buffer.byteLength(sheetXml), 22);
+  header.writeUInt16LE(name.length, 26);
+  const zipped = Buffer.concat([header, name, compressed]);
+  const unpacked = zipEntry(zipped, "xl/worksheets/sheet1.xml");
+  check("a deflated sheet entry inflates back to the xml", unpacked?.toString("utf8") === sheetXml);
+  check(
+    "the workbook reader returns the same debit points",
+    finraMarginPoints(zipped).length === 36 && finraMarginPoints(zipped)[35].debitMillions === 1_350_000,
+  );
+  const described = Buffer.from(header);
+  described.writeUInt16LE(0x08, 6);
+  check("a data-descriptor entry is refused", zipEntry(Buffer.concat([described, name, compressed]), "xl/worksheets/sheet1.xml") === null);
   check(
     "closed CAPE and margin add neither net nor max",
     capeReading(Number.NaN).available === false
