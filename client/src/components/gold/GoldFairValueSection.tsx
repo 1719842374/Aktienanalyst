@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { GoldAnalysis } from "../../../../shared/gold-schema";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Props { data: GoldAnalysis }
 
@@ -208,6 +209,223 @@ function StepRow({ step, label, value, highlight }: { step: number; label: strin
   );
 }
 
+/**
+ * B2 — Fair-Value label collision.
+ * S2/S1/FV/R1/R2 share the bottom edge of the corridor. When two prices land
+ * on nearly the same x (FV ≈ R1, …) those labels used to paint on top of each
+ * other. Pack them into up to three rows; if a fourth label still overlaps,
+ * merge the tightest pair into one label and keep every price in the tooltip.
+ * Spot stays on the top edge (its own row) and only slides inward when the
+ * pill would clip the track. Zone bands are not part of this layout.
+ */
+export const CORRIDOR_LABEL_GAP_PX = 6;
+export const CORRIDOR_LABEL_MAX_LANES = 3;
+export const CORRIDOR_LABEL_LANE_PITCH_PX = 14;
+
+const LEVEL_CHAR_PX = 5;
+const SPOT_CHAR_PX = 6.2;
+const SPOT_PAD_PX = 12;
+
+const LEVEL_ORDER: Record<string, number> = { S2: 0, S1: 1, FV: 2, R1: 3, R2: 4 };
+
+export type CorridorLevelInput = {
+  id: string;
+  tag: string;
+  priceLabel: string;
+  pct: number;
+  colorClass: string;
+};
+
+export type PlacedCorridorLabel = {
+  id: string;
+  text: string;
+  tooltip: string;
+  colorClass: string;
+  lane: number;
+  leftPct: number;
+  widthPx: number;
+  combined: boolean;
+};
+
+type LevelGroup = {
+  parts: CorridorLevelInput[];
+};
+
+export function estimateLevelLabelWidthPx(text: string): number {
+  return Math.ceil(text.length * LEVEL_CHAR_PX + 2);
+}
+
+export function estimateSpotLabelWidthPx(text: string): number {
+  return Math.ceil(text.length * SPOT_CHAR_PX + SPOT_PAD_PX);
+}
+
+export function clampMarkerPct(pct: number): number {
+  return Math.min(98, Math.max(2, pct));
+}
+
+/** Horizontal center in pixels so a label of `labelWidth` stays inside the track. */
+export function clampLabelCenterPx(markerPct: number, trackWidth: number, labelWidth: number): number {
+  const raw = (clampMarkerPct(markerPct) / 100) * trackWidth;
+  if (trackWidth <= labelWidth) return trackWidth / 2;
+  const half = labelWidth / 2;
+  return Math.min(trackWidth - half, Math.max(half, raw));
+}
+
+function rangesOverlap(
+  a: { left: number; right: number },
+  b: { left: number; right: number },
+  gap: number,
+): boolean {
+  return a.left < b.right + gap && b.left < a.right + gap;
+}
+
+function rangeSeparation(a: { left: number; right: number }, b: { left: number; right: number }): number {
+  if (a.right < b.left) return b.left - a.right;
+  if (b.right < a.left) return a.left - b.right;
+  return -(Math.min(a.right, b.right) - Math.max(a.left, b.left));
+}
+
+function orderParts(parts: CorridorLevelInput[]): CorridorLevelInput[] {
+  return [...parts].sort((a, b) => (LEVEL_ORDER[a.tag] ?? 9) - (LEVEL_ORDER[b.tag] ?? 9) || a.tag.localeCompare(b.tag));
+}
+
+function groupColor(parts: CorridorLevelInput[]): string {
+  if (parts.some((part) => part.tag === "FV")) return "text-amber-500";
+  const colors = new Set(parts.map((part) => part.colorClass));
+  return colors.size === 1 ? parts[0].colorClass : "text-foreground";
+}
+
+function presentGroup(group: LevelGroup, trackWidth: number): {
+  text: string;
+  tooltip: string;
+  colorClass: string;
+  widthPx: number;
+  combined: boolean;
+  pct: number;
+} {
+  const parts = orderParts(group.parts);
+  const tooltip = parts.map((part) => `${part.tag}: ${part.priceLabel}`).join("\n");
+  const colorClass = groupColor(parts);
+  const pct = parts.reduce((sum, part) => sum + part.pct, 0) / parts.length;
+  if (parts.length === 1) {
+    const text = `${parts[0].tag}: ${parts[0].priceLabel}`;
+    return { text, tooltip, colorClass, widthPx: estimateLevelLabelWidthPx(text), combined: false, pct };
+  }
+  const prices: string[] = [];
+  for (const part of parts) {
+    if (!prices.includes(part.priceLabel)) prices.push(part.priceLabel);
+  }
+  const tags = parts.map((part) => part.tag);
+  const full = prices.length === 1
+    ? `${tags.join("·")}: ${prices[0]}`
+    : parts.map((part) => `${part.tag} ${part.priceLabel}`).join(" · ");
+  const short = tags.join("·");
+  const fullWidth = estimateLevelLabelWidthPx(full);
+  const text = fullWidth > trackWidth * 0.9 ? short : full;
+  return {
+    text,
+    tooltip,
+    colorClass,
+    widthPx: estimateLevelLabelWidthPx(text),
+    combined: true,
+    pct,
+  };
+}
+
+function packGroups(groups: LevelGroup[], trackWidth: number): PlacedCorridorLabel[] | null {
+  const displays = groups.map((group) => {
+    const shown = presentGroup(group, trackWidth);
+    const center = clampLabelCenterPx(shown.pct, trackWidth, shown.widthPx);
+    return { shown, center, group };
+  }).sort((a, b) => a.center - b.center || a.shown.text.localeCompare(b.shown.text));
+
+  const lanes: { left: number; right: number }[][] = [];
+  const placed: PlacedCorridorLabel[] = [];
+
+  for (const item of displays) {
+    const box = { left: item.center - item.shown.widthPx / 2, right: item.center + item.shown.widthPx / 2 };
+    let lane = -1;
+    for (let i = 0; i < lanes.length; i++) {
+      if (lanes[i].every((existing) => !rangesOverlap(existing, box, CORRIDOR_LABEL_GAP_PX))) {
+        lane = i;
+        break;
+      }
+    }
+    if (lane === -1 && lanes.length < CORRIDOR_LABEL_MAX_LANES) {
+      lane = lanes.length;
+      lanes.push([]);
+    }
+    if (lane === -1) return null;
+    lanes[lane].push(box);
+    const parts = orderParts(item.group.parts);
+    placed.push({
+      id: parts.map((part) => part.id).join("-"),
+      text: item.shown.text,
+      tooltip: item.shown.tooltip,
+      colorClass: item.shown.colorClass,
+      lane,
+      leftPct: (item.center / trackWidth) * 100,
+      widthPx: item.shown.widthPx,
+      combined: item.shown.combined,
+    });
+  }
+
+  return placed;
+}
+
+function mergeTightestGroups(groups: LevelGroup[], trackWidth: number): LevelGroup[] | null {
+  if (groups.length < 2) return null;
+  const boxes = groups.map((group) => {
+    const shown = presentGroup(group, trackWidth);
+    const center = clampLabelCenterPx(shown.pct, trackWidth, shown.widthPx);
+    return { left: center - shown.widthPx / 2, right: center + shown.widthPx / 2 };
+  });
+  let bestI = 0;
+  let bestJ = 1;
+  let bestSep = Infinity;
+  for (let i = 0; i < groups.length; i++) {
+    for (let j = i + 1; j < groups.length; j++) {
+      const sep = rangeSeparation(boxes[i], boxes[j]);
+      if (sep < bestSep) {
+        bestSep = sep;
+        bestI = i;
+        bestJ = j;
+      }
+    }
+  }
+  const merged: LevelGroup = { parts: [...groups[bestI].parts, ...groups[bestJ].parts] };
+  return groups.filter((_, index) => index !== bestI && index !== bestJ).concat(merged);
+}
+
+export function layoutCorridorLabels(levels: CorridorLevelInput[], trackWidthPx: number): PlacedCorridorLabel[] {
+  if (levels.length === 0) return [];
+  if (trackWidthPx <= 0) {
+    return levels.map((level) => {
+      const text = `${level.tag}: ${level.priceLabel}`;
+      return {
+        id: level.id,
+        text,
+        tooltip: text,
+        colorClass: level.colorClass,
+        lane: 0,
+        leftPct: clampMarkerPct(level.pct),
+        widthPx: estimateLevelLabelWidthPx(text),
+        combined: false,
+      };
+    });
+  }
+
+  let groups: LevelGroup[] = levels.map((level) => ({ parts: [level] }));
+  for (let attempt = 0; attempt < levels.length; attempt++) {
+    const packed = packGroups(groups, trackWidthPx);
+    if (packed) return packed;
+    const next = mergeTightestGroups(groups, trackWidthPx);
+    if (!next) break;
+    groups = next;
+  }
+  return packGroups(groups, trackWidthPx) ?? [];
+}
+
 function FairValueBar({
   spotPrice,
   support1,
@@ -229,53 +447,131 @@ function FairValueBar({
   // Fix 4: guard against division by zero when all values are equal
   const pct = (v: number) => range > 0 ? Math.min(100, Math.max(0, ((v - min) / range) * 100)) : 50;
 
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [trackWidth, setTrackWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const measure = () => setTrackWidth(el.clientWidth);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const placed = layoutCorridorLabels(
+    [
+      { id: "S2", tag: "S2", priceLabel: `$${support2}`, pct: pct(support2), colorClass: "text-red-400" },
+      { id: "S1", tag: "S1", priceLabel: `$${support1}`, pct: pct(support1), colorClass: "text-red-400" },
+      { id: "FV", tag: "FV", priceLabel: `$${fairValue}`, pct: pct(fairValue), colorClass: "text-amber-500" },
+      { id: "R1", tag: "R1", priceLabel: `$${resistance1}`, pct: pct(resistance1), colorClass: "text-emerald-400" },
+      { id: "R2", tag: "R2", priceLabel: `$${resistance2}`, pct: pct(resistance2), colorClass: "text-emerald-400" },
+    ],
+    trackWidth,
+  );
+  const extraLanes = placed.reduce((maxLane, label) => Math.max(maxLane, label.lane), 0);
+  const spotText = `$${spotPrice.toFixed(0)}`;
+  const spotMarkerPct = Math.min(98, Math.max(2, pct(spotPrice)));
+  const spotNudgePx = trackWidth > 0
+    ? clampLabelCenterPx(spotMarkerPct, trackWidth, estimateSpotLabelWidthPx(spotText)) - (spotMarkerPct / 100) * trackWidth
+    : 0;
+  const spotNudge = Math.abs(spotNudgePx) < 0.5 ? 0 : spotNudgePx;
+
   return (
-    <div className="relative h-12 bg-muted/30 rounded-lg border border-border">
-      {/* Support zone */}
-      <div
-        className="absolute h-full bg-red-500/10 rounded-l-lg"
-        style={{ left: `${pct(min)}%`, width: `${pct(support1) - pct(min)}%` }}
-      />
-      {/* Fair Value zone */}
-      <div
-        className="absolute h-full bg-emerald-500/10"
-        style={{ left: `${pct(support1)}%`, width: `${pct(resistance1) - pct(support1)}%` }}
-      />
-      {/* Resistance zone */}
-      <div
-        className="absolute h-full bg-red-500/10 rounded-r-lg"
-        style={{ left: `${pct(resistance1)}%`, width: `${pct(max) - pct(resistance1)}%` }}
-      />
+    <TooltipProvider delayDuration={250}>
+      <div style={{ paddingBottom: extraLanes * CORRIDOR_LABEL_LANE_PITCH_PX }}>
+        <div ref={trackRef} className="relative h-12 bg-muted/30 rounded-lg border border-border" data-testid="gold-fv-corridor">
+          {/* Support zone */}
+          <div
+            className="absolute h-full bg-red-500/10 rounded-l-lg"
+            style={{ left: `${pct(min)}%`, width: `${pct(support1) - pct(min)}%` }}
+          />
+          {/* Fair Value zone */}
+          <div
+            className="absolute h-full bg-emerald-500/10"
+            style={{ left: `${pct(support1)}%`, width: `${pct(resistance1) - pct(support1)}%` }}
+          />
+          {/* Resistance zone */}
+          <div
+            className="absolute h-full bg-red-500/10 rounded-r-lg"
+            style={{ left: `${pct(resistance1)}%`, width: `${pct(max) - pct(resistance1)}%` }}
+          />
 
-      {/* Markers */}
-      <Marker pct={pct(support2)} label={`S2: $${support2}`} color="text-red-400" />
-      <Marker pct={pct(support1)} label={`S1: $${support1}`} color="text-red-400" />
-      <Marker pct={pct(fairValue)} label={`FV: $${fairValue}`} color="text-amber-500" thick />
-      <Marker pct={pct(resistance1)} label={`R1: $${resistance1}`} color="text-emerald-400" />
-      <Marker pct={pct(resistance2)} label={`R2: $${resistance2}`} color="text-emerald-400" />
+          {/* Markers — lines only; labels are placed underneath so bands stay put. */}
+          <MarkerLine pct={pct(support2)} />
+          <MarkerLine pct={pct(support1)} />
+          <MarkerLine pct={pct(fairValue)} thick />
+          <MarkerLine pct={pct(resistance1)} />
+          <MarkerLine pct={pct(resistance2)} />
 
-      {/* Spot Price marker */}
-      <div
-        className="absolute top-0 h-full flex flex-col items-center z-10"
-        style={{ left: `${Math.min(98, Math.max(2, pct(spotPrice)))}%` }}
-      >
-        <div className="w-0.5 h-full bg-amber-500" />
-        <div className="absolute -top-5 bg-amber-500 text-[9px] font-bold text-black px-1.5 py-0.5 rounded whitespace-nowrap">
-          ${spotPrice.toFixed(0)}
+          {placed.map((label) => (
+            <CorridorLevelLabel key={label.id} label={label} />
+          ))}
+
+          {/* Spot Price marker */}
+          <div
+            className="absolute top-0 h-full flex flex-col items-center z-10"
+            style={{ left: `${spotMarkerPct}%` }}
+          >
+            <div className="w-0.5 h-full bg-amber-500" />
+            <div
+              className="absolute -top-5 bg-amber-500 text-[9px] font-bold text-black px-1.5 py-0.5 rounded whitespace-nowrap"
+              style={spotNudge !== 0 ? { transform: `translateX(${spotNudge}px)` } : undefined}
+              data-testid="gold-fv-spot-label"
+            >
+              {spotText}
+            </div>
+          </div>
         </div>
       </div>
+    </TooltipProvider>
+  );
+}
+
+function MarkerLine({ pct, thick }: { pct: number; thick?: boolean }) {
+  return (
+    <div
+      className="absolute top-0 h-full"
+      style={{ left: `${Math.min(98, Math.max(2, pct))}%` }}
+    >
+      <div className={`${thick ? "w-0.5" : "w-px"} h-full ${thick ? "bg-amber-500/50" : "bg-border"}`} />
     </div>
   );
 }
 
-function Marker({ pct, label, color, thick }: { pct: number; label: string; color: string; thick?: boolean }) {
+function CorridorLevelLabel({ label }: { label: PlacedCorridorLabel }) {
+  const className = `absolute z-20 text-[8px] font-mono tabular-nums whitespace-nowrap leading-[12px] ${label.colorClass}`;
+  const style = {
+    left: `${label.leftPct}%`,
+    bottom: -(label.lane * CORRIDOR_LABEL_LANE_PITCH_PX),
+    transform: "translateX(-50%)",
+  };
+  if (!label.combined) {
+    return (
+      <div className={className} style={style} data-testid={`gold-fv-label-${label.id}`} data-lane={label.lane}>
+        {label.text}
+      </div>
+    );
+  }
   return (
-    <div
-      className="absolute top-0 h-full flex flex-col items-center"
-      style={{ left: `${Math.min(98, Math.max(2, pct))}%` }}
-    >
-      <div className={`${thick ? "w-0.5" : "w-px"} h-full ${thick ? "bg-amber-500/50" : "bg-border"}`} />
-      <div className={`absolute bottom-0 text-[8px] font-mono tabular-nums whitespace-nowrap ${color}`}>{label}</div>
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className={`${className} cursor-help border-0 bg-transparent p-0`}
+          style={style}
+          data-testid={`gold-fv-label-${label.id}`}
+          data-lane={label.lane}
+          aria-label={label.tooltip}
+        >
+          {label.text}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="whitespace-pre-line font-mono text-[11px]">
+        {label.tooltip}
+      </TooltipContent>
+    </Tooltip>
   );
 }
