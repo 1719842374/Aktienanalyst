@@ -7,6 +7,9 @@
  *
  * marketShare (Anteil am TAM) and vs-TAM (outperforming) are formula-only.
  * They are never taken from the model.
+ *
+ * Rows with revenue null or 0 are outside the table and the fill scope.
+ * A fill is applied when it closes at least one in-scope cell. Other cells stay n/a.
  */
 
 export const TAM_NA_SHARE_WARN = 25; // display badge only; mirrors TAM_SHARE_WARN, not a quality input
@@ -77,6 +80,11 @@ export interface TamNaMatrixCells {
   vsTam: string;
 }
 
+/** Known revenue above zero. null, NaN and 0 stay out of the table and the fill scope. */
+export function hasPositiveSegmentRevenue(revenue: unknown): revenue is number {
+  return typeof revenue === "number" && Number.isFinite(revenue) && revenue > 0;
+}
+
 export function deriveTamShare(segmentRevenueB: number, tamSizeB: number): number {
   return Math.round((segmentRevenueB / tamSizeB) * 10000) / 100;
 }
@@ -98,7 +106,7 @@ export function catalogCoverageNote(coveragePct: number | null | undefined): str
   return `Catalog-Coverage unverändert ${Math.round(coveragePct)}%`;
 }
 
-/** Meta line after a full-scope success. KI growth is not mixed into the fact weighted figure. */
+/** Meta line after applied KI cells. KI growth is not mixed into the fact weighted figure. */
 export function kiFillMetaLine(cellCount: number, coveragePct: number | null | undefined): string {
   return `KI-Schätzung: ${cellCount} Zellen · ${catalogCoverageNote(coveragePct)} · Wachstum-KI zählt nicht in Segment-gew. Wachstum`;
 }
@@ -203,11 +211,12 @@ export function countScopeCells(cells: ScopeNaCells): number {
   return Number(cells.growth) + Number(cells.tam) + Number(cells.cagr) + Number(cells.share) + Number(cells.vs);
 }
 
-/** Rest-n/a across every segment row. Success requires this to be 0. */
+/** Open scope cells on rows with revenue > 0. Revenue null or 0 is not counted. */
 export function countScopeRestNa(segments: TamNaSegmentRef[], fills: TamNaFill[] | null | undefined): number {
   const byName = fillByName(fills);
   let n = 0;
   for (const seg of segments) {
+    if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) continue;
     n += countScopeCells(scopeNaCells(seg, byName.get(seg.segmentName) ?? null));
   }
   return n;
@@ -218,6 +227,7 @@ export function countKiFilledCells(segments: TamNaSegmentRef[], fills: TamNaFill
   const byName = fillByName(fills);
   let n = 0;
   for (const seg of segments) {
+    if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) continue;
     const before = scopeNaCells(seg, null);
     const after = scopeNaCells(seg, byName.get(seg.segmentName) ?? null);
     if (before.growth && !after.growth) n++;
@@ -229,7 +239,22 @@ export function countKiFilledCells(segments: TamNaSegmentRef[], fills: TamNaFill
   return n;
 }
 
+/** Fills that close at least one cell on a row with revenue > 0. Empty when nothing usable remains. */
+export function applicableTamNaFills(segments: TamNaSegmentRef[], fills: TamNaFill[] | null | undefined): TamNaFill[] {
+  const byName = fillByName(fills);
+  const out: TamNaFill[] = [];
+  for (const seg of segments) {
+    if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) continue;
+    const fill = byName.get(seg.segmentName);
+    if (!fill) continue;
+    if (countKiFilledCells([seg], [fill]) === 0) continue;
+    out.push(fill);
+  }
+  return out;
+}
+
 export function segmentNeedsLlm(seg: TamNaSegmentRef): boolean {
+  if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) return false;
   const cells = scopeNaCells(seg, null);
   return cells.growth || cells.tam || cells.cagr;
 }
@@ -270,8 +295,8 @@ export function validateTamNaFills(requested: TamNaSegmentRef[], llmData: unknow
   for (const seg of requested) {
     const name = typeof seg.segmentName === "string" ? seg.segmentName.trim() : "";
     if (!name || byName.has(name)) continue;
-    const revenue = finite(seg.segmentRevenue);
-    if (revenue === null || revenue < 0) continue;
+    if (!hasPositiveSegmentRevenue(seg.segmentRevenue)) continue;
+    const revenue = seg.segmentRevenue;
     byName.set(name, {
       segmentName: name,
       segmentRevenue: revenue,
