@@ -2645,9 +2645,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
   // ── POST /api/analyze/:ticker/tam-na-fill ────────────────────
   // Session-only KI estimates for Segment-TAM n/a cells (Spec v2).
-  // Success only when Rest-n/a in Wachstum·TAM·CAGR·Anteil am TAM·vs. TAM is 0;
-  // otherwise 422 INCOMPLETE_FILL and no overlay. Fact coverage, quality,
-  // tamTotal, weighted CAGR and the DCF gate are echoed, never recomputed.
+  // Partial-apply: valid fills are returned when at least one in-scope cell closes.
+  // Other cells stay n/a. 422 INCOMPLETE_FILL only when nothing usable comes back.
+  // Revenue null/0 is out of scope. Fact coverage, quality, tamTotal, weighted CAGR
+  // and the DCF gate are echoed, never recomputed.
   // This handler does not write the fact cache.
   app.post("/api/analyze/:ticker/tam-na-fill", async (req: Request, res: Response) => {
     try {
