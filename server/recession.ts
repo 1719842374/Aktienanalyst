@@ -82,6 +82,40 @@ function getDateYearsAgo(years: number): string {
   return d.toISOString().split("T")[0];
 }
 
+function readJson(text: string): unknown {
+  if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+const MONTH_ABBR: Record<string, string> = {
+  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+};
+
+/** "Oct 2, 2026" → 2026-10-02. Anything else is not a date. */
+export function englishLongDate(text: string): string | null {
+  const match = text.trim().match(/^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})$/);
+  if (!match) return null;
+  const month = MONTH_ABBR[match[1]];
+  const day = Number(match[2]);
+  if (!month || day < 1 || day > 31) return null;
+  return `${match[3]}-${month}-${String(day).padStart(2, "0")}`;
+}
+
+function htmlCell(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(Number(num)))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** FRED CSV rows for one series, keeping gaps as null so the cleaner can drop them. */
 function fetchFredRows(seriesId: string, cosd: string): Array<{ date: string; value: number | null }> {
   const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}&cosd=${cosd}`;
@@ -332,39 +366,40 @@ async function scoreConsumerConfidence(): Promise<IndicatorResult> {
 // CORRECTION INDICATORS
 // ============================================================
 
-// 8. Buffett Indicator. Spec prefers Wilshire/GDP over the World Bank annual
-// ratio, which lags. A print outside the Japan window is shown and not scored.
+// 8. Buffett Indicator. The live leg is the Wilshire 5000 chart over FRED GDP.
+// The discontinued FRED full-cap series is not requested. The World Bank annual
+// ratio is only the fallback, and a print outside the Japan window is shown and not scored.
+const WILSHIRE_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/%5EW5000?range=10d&interval=1d";
+
 function scoreBuffett(): IndicatorResult {
   const today = recessionAsOf();
-  const computed = buffettFromMarketCapGdp(
-    latestFredPoint("WILL5000PR", 5),
-    latestFredPoint("GDP", 5),
-    today,
-  );
+  const market = latestYahooChartClose(readJson(fetchUrl(WILSHIRE_CHART, 20000, { "User-Agent": "Mozilla/5.0" })));
+  const gdp = latestFredPoint("GDP", 5);
+  const computed = buffettFromMarketCapGdp(market, gdp, today, {
+    source: "Yahoo ^W5000 / FRED GDP",
+    description: market && gdp
+      ? `Wilshire 5000 Total Market Index ${market.date} / FRED GDP ${gdp.date}. asOf ist das ältere Bein.`
+      : "Wilshire 5000 Total Market Index / FRED GDP.",
+  });
   if (computed) return computed;
   return buffettFromObservation(latestFredPoint("DDDM01USA156NWDB", 40), today);
 }
 
-// 9. Shiller CAPE. The ratio is only in ie_data.xls. That workbook is not parsed,
-// and this repo has no FRED series for it, so the US slot stays closed.
+// 9. Shiller CAPE. ie_data.xls is not parsed. The public monthly table is the series.
+const MULTPL_CAPE = "https://www.multpl.com/shiller-pe/table/by-month";
+
 function scoreCAPE(): IndicatorResult {
-  const closed = capeReading(Number.NaN);
-  return {
-    ...closed,
-    source: "Shiller ie_data.xls nicht gelesen",
-    description: "CAPE steht nur im Shiller-Workbook. Ohne .xls bleibt der Slot zu.",
-  };
+  const html = fetchUrl(MULTPL_CAPE, 20000, { "User-Agent": "Mozilla/5.0" });
+  return capeFromPoint(latestMultplCape(html), recessionAsOf());
 }
 
-// 10. Margin debt. FINRA publishes the debit only as an xlsx. That file is not parsed.
-// marginDebtReading still scores a numeric series when one is already in hand.
+// 10. Margin debt. FINRA history is an xlsx and is not parsed. A single public
+// debit print is shown and not scored: the 5-year z needs the monthly series.
+const CMV_MARGIN = "https://www.currentmarketvaluation.com/models/margin-debt.php";
+
 function scoreMarginDebt(): IndicatorResult {
-  const closed = marginDebtReading([]);
-  return {
-    ...closed,
-    source: "FINRA xlsx nicht gelesen",
-    description: "Debit steht nur in der FINRA-xlsx. Ohne die Datei bleibt der Slot zu.",
-  };
+  const html = fetchUrl(CMV_MARGIN, 20000, { "User-Agent": "Mozilla/5.0" });
+  return marginSpotReading(marginDebitFromCmv(html));
 }
 
 // 11. Google Trends "Recession"
@@ -902,6 +937,7 @@ export function buffettFromMarketCapGdp(
   market: { date: string; value: number } | null,
   gdp: { date: string; value: number } | null,
   today: string,
+  meta: { source?: string; description?: string } = {},
 ): IndicatorResult | null {
   if (!market || !gdp) return null;
   if (isStale(market.date, today) || isStale(gdp.date, today)) return null;
@@ -912,10 +948,102 @@ export function buffettFromMarketCapGdp(
     { date: asOf, value: ratio },
     today,
     {
-      source: "FRED WILL5000PR / GDP",
-      description: "Wilshire 5000 / BIP (FRED WILL5000PR / GDP).",
+      source: meta.source ?? "FRED WILL5000PR / GDP",
+      description: meta.description ?? "Wilshire 5000 / BIP (FRED WILL5000PR / GDP).",
     },
   );
+}
+
+/** Last finite daily close. A null bar (the session still printing) is skipped. */
+export function latestYahooChartClose(payload: unknown): { date: string; value: number } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const result = (payload as { chart?: { result?: Array<{ timestamp?: unknown; indicators?: { quote?: Array<{ close?: unknown }> } }> } }).chart?.result?.[0];
+  const stamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const closes = Array.isArray(result?.indicators?.quote?.[0]?.close) ? result.indicators.quote[0].close : [];
+  let found: { date: string; value: number } | null = null;
+  const n = Math.min(stamps.length, closes.length);
+  for (let i = 0; i < n; i++) {
+    const raw = closes[i];
+    if (raw == null || raw === "") continue;
+    const value = typeof raw === "number" ? raw : Number(raw);
+    const stamp = typeof stamps[i] === "number" ? stamps[i] : Number(stamps[i]);
+    if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(stamp)) continue;
+    found = { date: new Date(stamp * 1000).toISOString().slice(0, 10), value };
+  }
+  return found;
+}
+
+/** Newest row of the public Shiller PE monthly table. The workbook is not read. */
+export function latestMultplCape(html: string): { date: string; value: number } | null {
+  if (!html || html.includes("Just a moment")) return null;
+  const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
+  for (const row of rows) {
+    const cells = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(match => htmlCell(match[1]));
+    if (cells.length < 2) continue;
+    const date = englishLongDate(cells[0]);
+    const value = Number(cells[1].replace(/,/g, ""));
+    if (!date || !Number.isFinite(value) || value < 5 || value > 80) continue;
+    return { date, value };
+  }
+  return null;
+}
+
+export function capeFromPoint(point: { date: string; value: number } | null, today: string): IndicatorResult {
+  const description = "Shiller CAPE (PE10) aus der öffentlichen Monatstabelle. ie_data.xls wird nicht gelesen.";
+  if (!point || !Number.isFinite(point.value) || point.value < 5 || point.value > 80 || !point.date) {
+    return {
+      ...capeReading(Number.NaN),
+      source: "Multpl Shiller-PE leer",
+      description: "Kein CAPE-Druck. ie_data.xls wird nicht gelesen.",
+    };
+  }
+  if (isStale(point.date, today)) {
+    return {
+      ...capeReading(Number.NaN),
+      value: `${point.value.toFixed(1)} (${point.date.slice(0, 7)})`,
+      source: "Multpl Shiller PE",
+      description,
+    };
+  }
+  return { ...capeReading(point.value), source: "Multpl Shiller PE", description };
+}
+
+/**
+ * One public debit sentence. The broken meta line ("$1,416%") does not match,
+ * because the level has to be named in billions.
+ */
+export function marginDebitFromCmv(html: string): { date: string; billions: number } | null {
+  if (!html) return null;
+  const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const match = text.match(/As of ([A-Z][a-z]+ \d{1,2}, \d{4}) \(the latest data available\), total US margin debt was \$([0-9][0-9,]*(?:\.\d+)?) billion/i);
+  if (!match) return null;
+  const date = englishLongDate(match[1]);
+  const billions = Number(match[2].replace(/,/g, ""));
+  if (!date || !Number.isFinite(billions) || billions < 100 || billions > 5000) return null;
+  return { date, billions };
+}
+
+/** A single debit is shown. Without a monthly history there is no 5-year z and no score. */
+export function marginSpotReading(spot: { date: string; billions: number } | null): IndicatorResult {
+  const closed = {
+    name: "Margin Debt",
+    group: "correction" as const,
+    subgroup: "valuation",
+    source: "FINRA-Historie nur als xlsx",
+    description: "Die Debit-Historie steht nur in der FINRA-xlsx. Ohne Monatsreihe bleibt der Slot zu.",
+  };
+  if (!spot) return closedIndicator(closed);
+  return {
+    ...closedIndicator(
+      {
+        ...closed,
+        source: "Current Market Valuation (FINRA-Debit, ein Druck)",
+        description: "Ein öffentlicher Debit-Druck in Mrd. $. Die FINRA-xlsx wird nicht gelesen, deshalb kein 5J-z und kein Score.",
+      },
+      `${spot.billions.toFixed(1)} Mrd. $ (${spot.date.slice(0, 7)})`,
+    ),
+    zone: "Ablesung, kein 5J-z",
+  };
 }
 
 /** Value string only when the slot is scored. A closed print is not the live level. */
