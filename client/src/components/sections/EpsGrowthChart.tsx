@@ -255,10 +255,9 @@ export default function EpsGrowthChart({ data }: { data: StockAnalysis }) {
         )}
       </div>
 
-      {Math.abs((histGrowth ?? 0) - (data.epsGrowth5Y ?? 0)) > 15 && (
-        <div className="text-[10px] text-muted-foreground bg-muted/30 rounded px-2 py-1 mt-1">
-          ℹ️ Hist. EPS-CAGR ({histGrowth?.toFixed(1)}%) weicht vom 5Y-Konsens ({data.epsGrowth5Y?.toFixed(1)}%) ab —
-          möglicherweise durch Basiseffekte (Verlustjahr → Gewinnjahr). PEG-Berechnung basiert auf Konsens-Schätzung.
+      {histGrowth != null && data.epsCagrFromIncome !== false && Math.abs(histGrowth - (data.epsGrowth5Y ?? 0)) > 15 && (
+        <div className="text-[10px] text-muted-foreground bg-muted/30 rounded px-2 py-1 mt-1" data-testid="eps-cagr-source-gap">
+          Chart-Fenster-CAGR ({histGrowth.toFixed(1)}%) und EPS-CAGR 5Y aus der Income-Statement-Historie ({data.epsGrowth5Y.toFixed(1)}%) sind zwei Fenster derselben Quelle. PEG in den Bewertungskennzahlen nutzt die Income-Statement-CAGR.
         </div>
       )}
     </div>

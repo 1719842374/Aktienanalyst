@@ -31,6 +31,8 @@ export interface Ratings {
   buy: number;
   hold: number;
   sell: number;
+  /** "grade-events" when a grade row has no analyst or firm name. */
+  basis?: "analysts" | "grade-events";
 }
 
 export interface HistoricalPrice {
@@ -460,6 +462,8 @@ export interface StockAnalysis {
   epsAdjFY: number;
   epsConsensusNextFY: number;
   epsGrowth5Y: number;
+  /** False when epsGrowth5Y fell back to revenue growth because EPS history could not form a CAGR. */
+  epsCagrFromIncome?: boolean;
 
   // Valuation metrics
   peRatio: number;
@@ -478,6 +482,8 @@ export interface StockAnalysis {
   fcfAvailable?: boolean;
   /** Infra / Alternatives / RE / Asset Management: GAAP-FCF is capex-distorted. */
   fcfCapexHint?: string;
+  /** Alternatives: FRE, DE, FBC, fundraising and deployable capital outrank GAAP-FCF and GAAP-P/E. */
+  alternativesMetricsNote?: string;
   /** Datenaktualität Section 1: nächster bestätigter FMP-Earnings-Termin. */
   nextEarningsDate?: string | null;
   nextEarningsTime?: string;

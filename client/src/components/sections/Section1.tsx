@@ -189,18 +189,30 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
             <Row label="EPS TTM" value={`$${formatNumber(data.epsTTM)}`} />
             <Row label="EPS adj. FY" value={`$${formatNumber(data.epsAdjFY)}`} />
             <Row label="EPS Consensus Next FY" value={`$${formatNumber(data.epsConsensusNextFY)}`} />
-            <Row label="EPS Growth 5Y" value={formatPercentNoSign(data.epsGrowth5Y)} />
+            <Row label="EPS-CAGR 5Y" value={data.epsCagrFromIncome === false ? "n/a" : formatPercentNoSign(data.epsGrowth5Y)} />
           </tbody>
         </table>
+        <p className="text-[10px] text-muted-foreground mt-1" data-testid="eps-cagr-source">
+          {data.epsCagrFromIncome === false
+            ? "Keine EPS-CAGR aus der Income-Statement-Historie."
+            : "EPS-CAGR 5Y aus der Income-Statement-Historie. Nicht der Forward-Konsens und nicht das EPS-YoY."}
+        </p>
       </div>
 
       <div>
-        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Analyst Ratings</h3>
+        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
+          Analyst Ratings{data.ratings.basis === "grade-events" ? " (Grade-Events)" : ""}
+        </h3>
         <div className="flex items-center gap-4 mb-2">
           <RatingBadge label="Buy" count={data.ratings.buy} color="bg-emerald-500/15 text-emerald-500" />
           <RatingBadge label="Hold" count={data.ratings.hold} color="bg-amber-500/15 text-amber-500" />
           <RatingBadge label="Sell" count={data.ratings.sell} color="bg-red-500/15 text-red-500" />
         </div>
+        {data.ratings.basis === "grade-events" && (
+          <p className="text-[10px] text-muted-foreground mb-2" data-testid="grade-events-note">
+            Buy/Hold/Sell zählen Grade-Events, nicht eindeutige Analysten.
+          </p>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <tbody className="divide-y divide-border/50">
@@ -208,7 +220,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
               <Row label="High PT" value={formatCurrency(data.analystPT.high)} />
               <Row label="Low PT" value={formatCurrency(data.analystPT.low)} />
               <Row label="PT Upside" value={`${ptUpside >= 0 ? "+" : ""}${ptUpside.toFixed(1)}%`} valueClass={ptUpside >= 0 ? "text-emerald-500" : "text-red-500"} />
-              <Row label="# Analysts" value={data.analystPT.count.toString()} />
+              <Row label="# Analysts" value={data.analystPT.count > 0 ? data.analystPT.count.toString() : "n/a"} />
             </tbody>
           </table>
         </div>
