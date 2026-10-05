@@ -304,7 +304,11 @@ console.log("\n=== Files stay on the named boundaries ===");
   check("money scorer is m2Reading", server.includes("money: yoy => m2Reading(yoy)"));
   check("dashboard reads catalogs through the hook", dashboard.includes("useRecessionCatalog"));
   check("spec file stays Offen_", existsSync(new URL("../Offen_WORK_RECESSION_SOURCES.md", import.meta.url)));
-  check("Sahm spec file is still present", existsSync(new URL("../Offen_WORK_RECESSION_FRED_SAHM.md", import.meta.url)));
+  check(
+    "Sahm spec stays fertig_ and is not turned back to Offen_",
+    existsSync(new URL("../fertig_WORK_RECESSION_FRED_SAHM.md", import.meta.url))
+      && !existsSync(new URL("../Offen_WORK_RECESSION_FRED_SAHM.md", import.meta.url)),
+  );
 }
 
 console.log(`\n${total - failed}/${total} passed`);
