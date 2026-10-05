@@ -70,38 +70,55 @@ function sliceWindow(points: TrendPoint[], range: RangeId): TrendPoint[] {
 }
 
 function yDomain(rows: TrendPoint[], range: RangeId): [number, number] {
-  const maxRatio = Math.max(...rows.map(row => row.ratio));
-  if (range === "Max" && maxRatio >= 180) {
-    const peak = Math.max(...rows.map(row => Math.max(row.ratio, row.plus2)));
-    return [0, Math.max(250, Math.ceil(peak / 50) * 50)];
-  }
-  const values = rows.flatMap(row => [row.ratio, row.plus2, row.minus2]);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const pad = Math.max(4, (max - min) * 0.08);
+  const ratios = rows.map(row => row.ratio);
+  const maxRatio = Math.max(...ratios);
+  const minRatio = Math.min(...ratios);
+  if (range === "Max" && maxRatio >= 180) return [0, 250];
+  const near = rows
+    .flatMap(row => [row.ratio, row.plus1, row.plus2, row.trend, row.minus1, row.minus2])
+    .filter(value => value >= minRatio - 25 && value <= maxRatio + 25);
+  const min = Math.min(...near);
+  const max = Math.max(...near);
+  const pad = Math.max(3, (max - min) * 0.12);
   const low = Math.max(0, Math.floor((min - pad) / 10) * 10);
   const high = Math.ceil((max + pad) / 10) * 10;
-  return [low, high === low ? low + 10 : high];
+  return [low, high === low ? low + 20 : high];
 }
 
-function axisTicks(rows: TrendPoint[], range: RangeId, wide: boolean): string[] {
+function yTicksFor(domain: [number, number], range: RangeId): number[] {
+  if (range === "Max" && domain[0] === 0 && domain[1] === 250) return [0, 50, 100, 150, 200, 250];
+  const span = domain[1] - domain[0];
+  const step = span <= 40 ? 5 : span <= 90 ? 10 : span <= 180 ? 20 : 50;
+  const ticks: number[] = [];
+  for (let value = domain[0]; value <= domain[1] + 0.001; value += step) ticks.push(value);
+  return ticks;
+}
+
+function axisTicks(rows: TrendPoint[], range: RangeId, wide: boolean): number[] {
   if (rows.length === 0) return [];
   const startYear = Number(rows[0].date.slice(0, 4));
   const endYear = Number(rows[rows.length - 1].date.slice(0, 4));
   const endMonth = Number(rows[rows.length - 1].date.slice(5, 7));
-  const targets: string[] = [];
+  const stamps: number[] = [];
+  const push = (iso: string) => {
+    const stamp = Date.parse(`${iso}T00:00:00Z`);
+    const first = Date.parse(`${rows[0].date}T00:00:00Z`);
+    const last = Date.parse(`${rows[rows.length - 1].date}T00:00:00Z`);
+    if (stamp >= first - 86_400_000 && stamp <= last + 86_400_000) stamps.push(stamp);
+  };
   if (range === "Max") {
     const step = wide ? 5 : 10;
-    const first = Math.ceil(startYear / step) * step;
-    for (let year = first; year <= endYear; year += step) targets.push(`${year}-01-01`);
+    stamps.push(Date.parse(`${rows[0].date}T00:00:00Z`));
+    const first = Math.ceil((startYear + 1) / step) * step;
+    for (let year = first; year <= endYear; year += step) push(`${year}-01-01`);
   } else if (range === "10Y" || range === "5Y" || range === "3Y") {
-    for (let year = startYear; year <= endYear; year += 1) targets.push(`${year}-01-01`);
+    for (let year = startYear; year <= endYear; year += 1) push(`${year}-01-01`);
   } else {
     const step = range === "6M" ? 1 : range === "1Y" ? 2 : 6;
     let year = startYear;
     let month = Number(rows[0].date.slice(5, 7));
     while (year < endYear || (year === endYear && month <= endMonth)) {
-      targets.push(`${year}-${String(month).padStart(2, "0")}-01`);
+      push(`${year}-${String(month).padStart(2, "0")}-01`);
       month += step;
       while (month > 12) {
         month -= 12;
@@ -109,19 +126,16 @@ function axisTicks(rows: TrendPoint[], range: RangeId, wide: boolean): string[] 
       }
     }
   }
-  const ticks: string[] = [];
-  for (const target of targets) {
-    const hit = rows.find(row => row.date >= target);
-    if (hit && !ticks.includes(hit.date)) ticks.push(hit.date);
-  }
-  return ticks;
+  return stamps;
 }
 
-function tickLabel(date: string, range: RangeId): string {
+function tickLabel(value: number, range: RangeId): string {
+  const date = new Date(value);
+  const year = date.getUTCFullYear();
   if (range === "6M" || range === "1Y" || range === "2Y") {
-    return `${date.slice(5, 7)}.${date.slice(2, 4)}`;
+    return `${String(date.getUTCMonth() + 1).padStart(2, "0")}.${String(year).slice(2)}`;
   }
-  return date.slice(0, 4);
+  return String(year);
 }
 
 interface AxisMap {
@@ -140,13 +154,14 @@ function ChartOverlay(props: {
   const rows = props.rows;
   if (!xAxis?.scale || !yAxis?.scale || rows.length < 2) return null;
   const last = rows[rows.length - 1];
-  const x = xAxis.scale(last.date);
-  const y = yAxis.scale(last.ratio);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const x = xAxis.scale(Date.parse(`${last.date}T00:00:00Z`));
+  const rawY = yAxis.scale(last.ratio);
+  const y = Math.max(6, rawY);
+  if (!Number.isFinite(x) || !Number.isFinite(rawY)) return null;
 
-  const boxW = props.wide ? 292 : 214;
+  const boxW = props.wide ? 292 : 236;
   const boxH = 62;
-  const boxX = Math.max(8, x - boxW - (props.wide ? 72 : 28));
+  const boxX = Math.max(8, x - boxW - (props.wide ? 128 : 16));
   const boxY = 8;
   const ratioText = `${Math.round(last.ratio)}% Marktwert zum BIP,`;
   const side = last.premiumPct >= 0 ? "über" : "unter";
@@ -157,12 +172,22 @@ function ChartOverlay(props: {
     : `${Math.abs(last.zScore).toFixed(1)} Standardabweichungen ${zSide} der Trendlinie`;
   const x1 = boxX + boxW - 2;
   const y1 = boxY + 18;
-  const midX = (x1 + x) / 2;
-  const midY = (y1 + y) / 2;
+  const showCallout = props.range === "Max";
 
   const showLabels = props.range !== "6M" && props.range !== "1Y";
-  const anchor = rows[Math.min(rows.length - 1, Math.floor(rows.length * 0.58))];
-  const labelX = xAxis.scale(anchor.date);
+  const startStamp = Date.parse(`${rows[0].date}T00:00:00Z`);
+  const endStamp = Date.parse(`${rows[rows.length - 1].date}T00:00:00Z`);
+  const labelStamp = startStamp + (endStamp - startStamp) * 0.46;
+  let anchor = rows[0];
+  let bestGap = Infinity;
+  for (const row of rows) {
+    const gap = Math.abs(Date.parse(`${row.date}T00:00:00Z`) - labelStamp);
+    if (gap < bestGap) {
+      bestGap = gap;
+      anchor = row;
+    }
+  }
+  const labelX = xAxis.scale(Date.parse(`${anchor.date}T00:00:00Z`));
   const labels: { key: keyof TrendPoint; text: string; fill: string; pill?: boolean }[] = [
     { key: "plus2", text: "+ 2 Std.-Abw.", fill: PLUS_2 },
     { key: "plus1", text: "+ 1 Std.-Abw.", fill: PLUS_1 },
@@ -208,29 +233,30 @@ function ChartOverlay(props: {
           </text>
         );
       })}
-      <line x1={x1} y1={y1} x2={x - 8} y2={y} stroke={RATIO} strokeWidth={1.6} />
-      <polygon
-        points={`${x},${y} ${x - 9},${y - 4} ${x - 9},${y + 4}`}
-        fill={RATIO}
-      />
-      <g data-testid="text-buffett-callout">
-        <rect x={boxX} y={boxY} width={boxW} height={boxH} rx={2} fill="#ffffff" stroke={RATIO} strokeWidth={1.6} />
-        <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={12} fontWeight={700}>{longDate(last.date)}</text>
-        <text x={boxX + 10} y={boxY + 33} fill={RATIO} fontSize={12}>{ratioText}</text>
-        <text x={boxX + 10} y={boxY + 50} fill={RATIO} fontSize={12}>{premiumText}</text>
-      </g>
-      <text
-        x={midX}
-        y={midY - 6}
-        textAnchor="middle"
-        fill={RATIO}
-        fontSize={11}
-        stroke="#ffffff"
-        strokeWidth={3}
-        paintOrder="stroke"
-      >
-        {zText}
-      </text>
+      {showCallout && (
+        <g>
+          <line x1={x1} y1={y1} x2={x - 8} y2={y} stroke={RATIO} strokeWidth={1.6} />
+          <polygon points={`${x},${y} ${x - 9},${y - 4} ${x - 9},${y + 4}`} fill={RATIO} />
+          <g data-testid="text-buffett-callout">
+            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx={2} fill="#ffffff" stroke={RATIO} strokeWidth={1.6} />
+            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}</text>
+            <text x={boxX + 10} y={boxY + 33} fill={RATIO} fontSize={props.wide ? 12 : 11}>{ratioText}</text>
+            <text x={boxX + 10} y={boxY + 50} fill={RATIO} fontSize={props.wide ? 12 : 11}>{premiumText}</text>
+          </g>
+          <text
+            x={boxX + 10}
+            y={boxY + boxH + 16}
+            textAnchor="start"
+            fill={RATIO}
+            fontSize={props.wide ? 12 : 10}
+            stroke="#ffffff"
+            strokeWidth={3}
+            paintOrder="stroke"
+          >
+            {zText}
+          </text>
+        </g>
+      )}
     </g>
   );
 }
@@ -257,12 +283,13 @@ export function BuffettRatioPanel() {
   });
 
   const all = query.data?.points ?? [];
-  const chart = sliceWindow(all, range);
+  const chart = sliceWindow(all, range).map(point => ({
+    ...point,
+    t: Date.parse(`${point.date}T00:00:00Z`),
+  }));
   const domain = chart.length > 0 ? yDomain(chart, range) : [0, 250] as [number, number];
   const ticks = axisTicks(chart, range, wide);
-  const yTicks = range === "Max" && domain[0] === 0 && domain[1] === 250
-    ? [0, 50, 100, 150, 200, 250]
-    : undefined;
+  const yTicks = yTicksFor(domain, range);
 
   return (
     <div className="space-y-3">
@@ -271,7 +298,7 @@ export function BuffettRatioPanel() {
           <button
             key={item.id}
             type="button"
-            onClick={() => setRegion(item.id)}
+            onClick={() => { setRegion(item.id); setRange("Max"); }}
             data-testid={`button-buffett-${item.id}`}
             className={`px-2.5 py-1 text-[11px] rounded-md border ${
               region === item.id
@@ -314,15 +341,29 @@ export function BuffettRatioPanel() {
       {query.data && (
         <>
           {chart.length > 1 ? (
+            <div>
+              {range !== "Max" && (
+                <p className="mb-1 text-[12px] leading-snug text-[#1473fc]" data-testid="text-buffett-callout">
+                  {longDate(chart[chart.length - 1].date)}
+                  {" · "}
+                  {Math.round(chart[chart.length - 1].ratio)}% Marktwert zum BIP,{" "}
+                  {Math.abs(Math.round(chart[chart.length - 1].premiumPct))}% {chart[chart.length - 1].premiumPct >= 0 ? "über" : "unter"} der langfristigen Trendlinie
+                  {" · "}
+                  {Math.abs(chart[chart.length - 1].zScore).toFixed(1)} Standardabweichungen {chart[chart.length - 1].zScore >= 0 ? "über" : "unter"} der Trendlinie
+                </p>
+              )}
             <div className="h-[360px] w-full rounded-md border border-neutral-200 bg-white p-1 sm:h-[460px]" data-testid="chart-buffett">
               <ResponsiveContainer>
                 <LineChart data={chart} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
                   <CartesianGrid stroke="#e5e7eb" />
                   <XAxis
-                    dataKey="date"
+                    dataKey="t"
+                    type="number"
+                    scale="time"
+                    domain={["dataMin", "dataMax"]}
                     ticks={ticks}
                     interval={0}
-                    tickFormatter={value => tickLabel(String(value), range)}
+                    tickFormatter={value => tickLabel(Number(value), range)}
                     tick={{ fontSize: 11, fill: "#6b7280" }}
                     axisLine={{ stroke: "#9ca3af" }}
                     tickLine={{ stroke: "#9ca3af" }}
@@ -331,6 +372,7 @@ export function BuffettRatioPanel() {
                   <YAxis
                     domain={domain}
                     ticks={yTicks}
+                    allowDataOverflow
                     tickFormatter={value => `${value}%`}
                     tick={{ fontSize: 11, fill: "#6b7280" }}
                     axisLine={{ stroke: "#9ca3af" }}
@@ -339,7 +381,7 @@ export function BuffettRatioPanel() {
                   />
                   <Tooltip
                     contentStyle={{ fontSize: 11, borderColor: "#d1d5db" }}
-                    labelFormatter={value => longDate(String(value))}
+                    labelFormatter={value => longDate(new Date(Number(value)).toISOString().slice(0, 10))}
                     formatter={(value: number, name: string) => [`${Number(value).toFixed(1)}%`, name]}
                   />
                   <Line type="linear" dataKey="plus2" name="+ 2 Std.-Abw." stroke={PLUS_2} dot={false} strokeWidth={1.4} strokeDasharray="6 4" isAnimationActive={false} />
@@ -353,6 +395,7 @@ export function BuffettRatioPanel() {
                   )} />
                 </LineChart>
               </ResponsiveContainer>
+            </div>
             </div>
           ) : (
             <p className="text-xs text-muted-foreground" data-testid="text-buffett-empty">
