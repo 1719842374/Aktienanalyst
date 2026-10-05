@@ -10,6 +10,7 @@ import {
 import { TickerAddButtons, bulkAddToWatchlist } from "@/components/portfolio/TickerAddButtons";
 import { MacroPanel } from "@/components/researcher/MacroPanel";
 import { LiquidityBriefingPanel } from "@/components/researcher/LiquidityBriefingPanel";
+import { RegionalStocksStrip } from "@/components/researcher/RegionalStocksStrip";
 import { SectorsPanel } from "@/components/researcher/SectorsPanel";
 import { ScreenerPanel } from "@/components/researcher/ScreenerPanel";
 import { CapexPanel } from "@/components/researcher/CapexPanel";
@@ -320,6 +321,12 @@ export default function Researcher() {
             )}
           </div>
         </div>
+
+        {activeTab === "macro" && (
+          <div className="mb-4">
+            <RegionalStocksStrip key={region} region={region} />
+          </div>
+        )}
 
         {error && (
           <div className="mb-4 p-3 rounded-lg border border-rose-500/30 bg-rose-500/10 text-[11px] text-rose-300 flex items-start gap-2">

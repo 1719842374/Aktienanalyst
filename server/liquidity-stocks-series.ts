@@ -1,0 +1,757 @@
+/**
+ * Reads the series named in WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY §5 and
+ * maps them onto StockInputs. T½, the velocity clip, and π stay in
+ * liquidity-stocks-velocity.ts.
+ *
+ * EZ debt %GDP and debt securities come from Eurostat EDP (gov_10q_ggdebt).
+ * The FRED mirror GGGDTPEZA188N stops in 2016, so it is only a fallback.
+ * EZ HICP is Eurostat CP00 annual rate (the spec's CP HP). EZ velocity is
+ * NGDP/M3 and JP velocity is NGDP/M2, same parsers as the briefing.
+ * JP bond outstanding is BoJ FM05 SMBIT1OG (ordinary government securities).
+ * F comes from capex__REGION. A numeric fiscalRestBn wins. Otherwise a
+ * programme amountUSD that is one home-currency magnitude is the rest.
+ * Ranges, sentences, and other currencies are not F. This does not feed
+ * the DCF overlay.
+ */
+import { diskResearcherGet } from "./disk-cache";
+import type { Region } from "./liquidity-index-catalog";
+import { BOJ_M2_CODE, ECB_M3_KEY, ECB_NGDP_KEY } from "./liquidity-briefing";
+import {
+  bojHundredMillionYenToBillion,
+  parseBojMoneyStock,
+  parseBojSeries,
+  parseEcbCsv,
+  quarterVelocity,
+} from "./liquidity-briefing-math";
+import { H_MIN, sOfZ, type Obs } from "./liquidity-index-math";
+import type { StockInputs } from "./liquidity-stocks-velocity";
+
+const STALE_DAYS = 450;
+/** Annual IMF debt prints lag. Five years still shows Japan 2023 in 2026. */
+const DEBT_STALE_DAYS = 365 * 5;
+const STOCK_TTL_H = 6;
+const FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv";
+const ECB_DATA = "https://data-api.ecb.europa.eu/service/data";
+
+export const MSPD_MARKETABLE_URL =
+  "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/debt/mspd/mspd_table_1" +
+  "?filter=security_type_desc:eq:Marketable" +
+  "&sort=-record_date&page[size]=100&fields=record_date,security_class_desc,total_mil_amt";
+
+const US_IDS = ["GFDEGDQ188S", "DFII10", "DGS10", "CPIAUCSL", "M2V", "M2SL", "GDP", "GDPC1"] as const;
+const EU_IDS = ["GGGDTPEZA188N", "IRLTLT01EZM156N"] as const;
+const ASIA_IDS = ["GGGDTAJPA188N", "IRLTLT01JPM156N", "JPNCPIALLMINMEI", "FPCPITOTLZGJPN", "JPNNGDP"] as const;
+
+export interface StockFetchCache {
+  get(key: string): unknown;
+  set(key: string, value: unknown): void;
+}
+
+export function spelledFredIds(region: Region): string[] {
+  if (region === "US") return [...US_IDS];
+  if (region === "EU") return [...EU_IDS];
+  return [...ASIA_IDS];
+}
+
+export function eurostatDebtGdpUrl(now: Date): string {
+  return eurostatUrl("gov_10q_ggdebt", "geo=EA20&na_item=GD&sector=S13&unit=PC_GDP", `${now.getUTCFullYear() - 12}-Q1`);
+}
+
+export function eurostatDebtSecUrl(now: Date): string {
+  return eurostatUrl("gov_10q_ggdebt", "geo=EA20&na_item=F3&sector=S13&unit=MIO_EUR", `${now.getUTCFullYear() - 12}-Q1`);
+}
+
+/** CP00 all-items HICP, annual rate of change. That is the spec's CP HP. */
+export function eurostatHicpUrl(now: Date): string {
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+  return eurostatUrl("prc_hicp_manr", "geo=EA&coicop=CP00&unit=RCH_A", `${now.getUTCFullYear() - 12}-${month}`);
+}
+
+function eurostatUrl(dataset: string, query: string, since: string): string {
+  return `https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/${dataset}?${query}&sinceTimePeriod=${since}&format=JSON&lang=EN`;
+}
+
+export function ecbM3Url(now: Date): string {
+  return `${ECB_DATA}/BSI/${ECB_M3_KEY}?startPeriod=${now.getUTCFullYear() - 12}-01&format=csvdata&detail=dataonly`;
+}
+
+export function ecbNgdpUrl(now: Date): string {
+  return `${ECB_DATA}/MNA/${ECB_NGDP_KEY}?startPeriod=${now.getUTCFullYear() - 12}-Q1&format=csvdata&detail=dataonly`;
+}
+
+export function bojM2Url(now: Date): string {
+  const start = new Date(now.getTime());
+  start.setUTCFullYear(start.getUTCFullYear() - 12);
+  const compact = start.toISOString().slice(0, 7).replace("-", "");
+  return `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_CODE}&startDate=${compact}`;
+}
+
+/** Ordinary government securities outstanding. Unit on the wire is 100 million yen. */
+export const BOJ_JGB_CODE = "SMBIT1OG";
+
+export function bojJgbUrl(now: Date): string {
+  const start = new Date(now.getTime());
+  start.setUTCFullYear(start.getUTCFullYear() - 12);
+  const compact = start.toISOString().slice(0, 7).replace("-", "");
+  return `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=FM05&code=${BOJ_JGB_CODE}&startDate=${compact}`;
+}
+
+type HomeCcy = "USD" | "EUR" | "JPY";
+
+function homeCurrency(region: Region): HomeCcy {
+  if (region === "EU") return "EUR";
+  if (region === "ASIA") return "JPY";
+  return "USD";
+}
+
+function currencyOf(prefix?: string, suffix?: string): HomeCcy | null {
+  const token = `${prefix ?? ""} ${suffix ?? ""}`.toLowerCase();
+  if (/\$|usd|dollar/.test(token)) return "USD";
+  if (/€|eur|euro/.test(token)) return "EUR";
+  if (/¥|jpy|yen|円/.test(token)) return "JPY";
+  return null;
+}
+
+function scaleOf(token?: string): number | null {
+  if (!token) return null;
+  const t = token.toLowerCase().replace(/\.$/, "");
+  if (t === "m" || t === "mn" || t === "million" || t === "millions") return 0.001;
+  if (t === "b" || t === "bn" || t === "bio" || t === "billion" || t === "billions" || t === "mrd") return 1;
+  if (t === "t" || t === "tn" || t === "trillion" || t === "trillions") return 1000;
+  return null;
+}
+
+/** One magnitude only. "$369B" is 369. "$3-4T" and "about $369B" are not. */
+export function parseBudgetMagnitude(text: string): { bn: number; currency: HomeCcy } | null {
+  const s = text.trim().replace(/\s+/g, " ");
+  if (!s || /[+~]|about|approx|ungefähr|circa|\bca\./i.test(s)) return null;
+  if (/\d\s*[-–—]\s*\d/.test(s)) return null;
+  const m = /^(?:(USD|EUR|JPY|US\$|\$|€|¥)\s*)?(\d+(?:[.,]\d+)?)\s*(million|millions|billion|billions|trillion|trillions|bn|tn|mrd\.?|mn|bio|m|b|t)\s*(USD|EUR|JPY|dollars?|euros?|yen|円)?$/i.exec(s);
+  if (!m) return null;
+  const currency = currencyOf(m[1], m[4]);
+  if (!currency) return null;
+  if (m[2].includes(",") && m[2].includes(".")) return null;
+  const num = Number(m[2].replace(",", "."));
+  const scale = scaleOf(m[3]);
+  if (!Number.isFinite(num) || num < 0 || scale == null) return null;
+  return { bn: num * scale, currency };
+}
+
+function yearFraction(now: Date): number {
+  const start = Date.UTC(now.getUTCFullYear(), 0, 1);
+  const next = Date.UTC(now.getUTCFullYear() + 1, 0, 1);
+  return now.getUTCFullYear() + (now.getTime() - start) / (next - start);
+}
+
+/**
+ * Years since the newest program timeline on the capex cache.
+ * A missing row or a timeline with no year is null. No date is invented.
+ */
+export function programAgeFromCache(raw: unknown, now: Date): number | null {
+  if (!raw || typeof raw !== "object") return null;
+  const programmes = Array.isArray((raw as { programmes?: unknown }).programmes)
+    ? (raw as { programmes: unknown[] }).programmes
+    : [];
+  const starts: number[] = [];
+  for (const item of programmes) {
+    if (!item || typeof item !== "object") continue;
+    const timeline = (item as { timeline?: unknown }).timeline;
+    if (typeof timeline !== "string") continue;
+    const years = timeline.match(/\b(?:19|20)\d{2}\b/g);
+    if (!years?.length) continue;
+    const start = Number(years[0]);
+    if (Number.isFinite(start)) starts.push(start);
+  }
+  if (!starts.length) return null;
+  const age = yearFraction(now) - Math.max(...starts);
+  return age > 0 ? age : 0;
+}
+
+/** Years from `now` to the midpoint of the remaining named window. A finished window is null. */
+function timelineMidYears(timeline: string, now: Date): number | null {
+  const years = timeline.match(/\b(?:19|20)\d{2}\b/g);
+  if (!years || years.length < 2) return null;
+  const start = Number(years[0]);
+  const end = Number(years[years.length - 1]);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  const today = yearFraction(now);
+  if (end < today) return null;
+  const remainStart = Math.max(start, today);
+  return Math.max(0, (remainStart + end) / 2 - today);
+}
+
+function programmeBudgets(raw: Record<string, unknown>, region: Region, now: Date): { fiscalRestBn: number | null; tMidYears: number | null } {
+  const programmes = Array.isArray(raw.programmes) ? raw.programmes : [];
+  const home = homeCurrency(region);
+  let sum = 0;
+  let counted = 0;
+  let midWeight = 0;
+  let midSum = 0;
+  for (const item of programmes) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as { amountUSD?: unknown; timeline?: unknown };
+    if (typeof row.amountUSD !== "string") continue;
+    const mag = parseBudgetMagnitude(row.amountUSD);
+    if (!mag || mag.currency !== home) continue;
+    const timeline = typeof row.timeline === "string" ? row.timeline : "";
+    if (timeline && /\b(?:19|20)\d{2}\b/.test(timeline) && timelineMidYears(timeline, now) == null) continue;
+    sum += mag.bn;
+    counted += 1;
+    const mid = timeline ? timelineMidYears(timeline, now) : null;
+    if (mid != null) {
+      midWeight += mag.bn;
+      midSum += mag.bn * mid;
+    }
+  }
+  if (!counted && typeof raw.totalCapexEstimate === "string") {
+    const mag = parseBudgetMagnitude(raw.totalCapexEstimate);
+    if (mag && mag.currency === home) return { fiscalRestBn: mag.bn, tMidYears: null };
+  }
+  if (!counted) return { fiscalRestBn: null, tMidYears: null };
+  return {
+    fiscalRestBn: sum,
+    tMidYears: midWeight > 0 ? midSum / midWeight : null,
+  };
+}
+
+export function fiscalRestFromCache(
+  raw: unknown,
+  opts: { region?: Region; now?: Date } = {},
+): { fiscalRestBn: number | null; tMidYears: number | null } {
+  if (!raw || typeof raw !== "object") return { fiscalRestBn: null, tMidYears: null };
+  const row = raw as Record<string, unknown>;
+  const numeric = finiteNonNegative(row.fiscalRestBn);
+  if (numeric != null) {
+    return { fiscalRestBn: numeric, tMidYears: finiteNonNegative(row.tMidYears) };
+  }
+  if (!opts.region) return { fiscalRestBn: null, tMidYears: null };
+  return programmeBudgets(row, opts.region, opts.now ?? new Date());
+}
+
+/**
+ * Names the missing F field. Null when a numeric rest is already present
+ * or a single home-currency amountUSD parsed.
+ */
+export function fiscalRestGap(raw: unknown, opts: { region?: Region; now?: Date } = {}): string | null {
+  if (fiscalRestFromCache(raw, opts).fiscalRestBn != null) return null;
+  if (!raw || typeof raw !== "object") {
+    return opts.region ? `missing capex__${opts.region}.fiscalRestBn` : "missing fiscalRestBn";
+  }
+  const row = raw as Record<string, unknown>;
+  const programmes = Array.isArray(row.programmes) ? row.programmes : [];
+  const hasBudgetText = programmes.some(item => {
+    if (!item || typeof item !== "object") return false;
+    return typeof (item as { amountUSD?: unknown }).amountUSD === "string";
+  }) || typeof row.totalCapexEstimate === "string";
+  if (hasBudgetText) return "missing fiscalRestBn; amountUSD is not a single home-currency magnitude";
+  return "missing fiscalRestBn";
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+export function applyCapexRest(
+  input: StockInputs,
+  rest: { fiscalRestBn: number | null; tMidYears: number | null; programAgeYears?: number | null },
+): StockInputs {
+  const next: StockInputs = { ...input };
+  if (rest.programAgeYears != null && Number.isFinite(rest.programAgeYears)) next.programAgeYears = rest.programAgeYears;
+  if (rest.fiscalRestBn == null) return next;
+  next.fiscalRestBn = rest.fiscalRestBn;
+  if (rest.tMidYears != null) next.tMidYears = rest.tMidYears;
+  const money = input.moneyStockBn;
+  if (money != null && Number.isFinite(money) && money > 0) next.fiscalOverMoney = rest.fiscalRestBn / money;
+  return next;
+}
+
+export function parseEurostatJson(text: string, scale = 1): Obs[] {
+  try {
+    const parsed = JSON.parse(text) as {
+      value?: Record<string, number>;
+      dimension?: { time?: { category?: { index?: Record<string, number> } } };
+    };
+    const index = parsed.dimension?.time?.category?.index;
+    if (!index || !parsed.value) return [];
+    const out: Obs[] = [];
+    for (const [label, idx] of Object.entries(index)) {
+      const date = periodToIso(label);
+      const value = Number(parsed.value[String(idx)]);
+      if (!date || !Number.isFinite(value)) continue;
+      out.push({ date, value: value * scale });
+    }
+    return out.sort((a, b) => a.date.localeCompare(b.date));
+  } catch {
+    return [];
+  }
+}
+
+function periodToIso(token: string): string | null {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(token)) return token;
+  const quarter = /^(\d{4})-Q([1-4])$/i.exec(token.trim());
+  if (quarter) {
+    const month = (Number(quarter[2]) - 1) * 3 + 1;
+    return `${quarter[1]}-${String(month).padStart(2, "0")}-01`;
+  }
+  if (/^\d{4}-\d{2}$/.test(token)) return `${token}-01`;
+  if (/^\d{4}$/.test(token)) return `${token}-01-01`;
+  return null;
+}
+
+function datedFromEcb(csv: string, scale: number): Obs[] {
+  return parseEcbCsv(csv).flatMap(row => {
+    const date = periodToIso(row.period);
+    return date ? [{ date, value: row.value * scale }] : [];
+  });
+}
+
+export function parseMarketableTotal(text: string): { date: string; bn: number } | null {
+  try {
+    const parsed = JSON.parse(text) as { data?: { record_date?: string; total_mil_amt?: string }[] };
+    let latest = "";
+    let mil = 0;
+    let count = 0;
+    for (const row of parsed.data ?? []) {
+      const date = row.record_date ?? "";
+      const amt = Number(row.total_mil_amt);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(amt)) continue;
+      if (date > latest) {
+        latest = date;
+        mil = amt;
+        count = 1;
+      } else if (date === latest) {
+        mil += amt;
+        count += 1;
+      }
+    }
+    if (!count) return null;
+    return { date: latest, bn: mil / 1000 };
+  } catch {
+    return null;
+  }
+}
+
+function addDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function monthsAgo(n: number, now: Date): string {
+  const d = new Date(now.getTime());
+  d.setUTCMonth(d.getUTCMonth() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+function sorted(points: Obs[] | undefined): Obs[] {
+  return (points ?? [])
+    .filter(p => /^\d{4}-\d{2}-\d{2}$/.test(p.date) && Number.isFinite(p.value))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function fresh(points: Obs[] | undefined, now: Date, staleDays = STALE_DAYS): Obs[] {
+  const pts = sorted(points);
+  if (!pts.length) return [];
+  const cutoff = addDays(now.toISOString().slice(0, 10), -staleDays);
+  if (pts[pts.length - 1].date < cutoff) return [];
+  return pts;
+}
+
+function latest(points: Obs[] | undefined, now: Date, staleDays = STALE_DAYS): number | null {
+  const pts = fresh(points, now, staleDays);
+  return pts.length ? pts[pts.length - 1].value : null;
+}
+
+function atOrBefore(pts: Obs[], iso: string): Obs | null {
+  let hit: Obs | null = null;
+  for (const p of pts) {
+    if (p.date <= iso) hit = p;
+    else break;
+  }
+  return hit;
+}
+
+function yoyPercent(points: Obs[] | undefined, now: Date): number | null {
+  const pts = fresh(points, now);
+  if (!pts.length) return null;
+  const last = pts[pts.length - 1];
+  const prev = atOrBefore(pts, addDays(last.date, -365));
+  if (!prev || prev.date === last.date || prev.value === 0) return null;
+  return ((last.value - prev.value) / Math.abs(prev.value)) * 100;
+}
+
+function last10y(points: Obs[]): Obs[] {
+  const start = addDays(points[points.length - 1].date, -365 * 10);
+  const window = points.filter(p => p.date >= start);
+  return window.length ? window : [points[points.length - 1]];
+}
+
+function mean(xs: number[]): number {
+  return xs.reduce((a, b) => a + b, 0) / xs.length;
+}
+
+function sampleStdev(xs: number[]): number {
+  if (xs.length < 2) return 0;
+  const m = mean(xs);
+  return Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / (xs.length - 1));
+}
+
+function fiscalTrendOf(points: Obs[] | undefined, now: Date, staleDays = STALE_DAYS): number | null {
+  const pts = fresh(points, now, staleDays);
+  const deltas: number[] = [];
+  for (const p of pts) {
+    const prev = atOrBefore(pts, addDays(p.date, -365));
+    if (!prev || prev.date === p.date) continue;
+    deltas.push(p.value - prev.value);
+  }
+  if (deltas.length < H_MIN) return null;
+  const x = deltas[deltas.length - 1];
+  const mu = mean(deltas);
+  const sigma = sampleStdev(deltas);
+  return sOfZ((x - mu) / (sigma + 1e-9));
+}
+
+function velocityFrom(series: Record<string, Obs[] | undefined>, now: Date): { velocity: number | null; history: number[] | null } {
+  const official = fresh(series.M2V, now);
+  const source = official.length
+    ? last10y(official)
+    : ratioPoints(fresh(series.GDP, now), fresh(series.M2SL, now));
+  if (!source.length) return { velocity: null, history: null };
+  return { velocity: source[source.length - 1].value, history: source.map(p => p.value) };
+}
+
+function yoySeries(points: Obs[] | undefined, now: Date): Obs[] {
+  const pts = fresh(points, now);
+  const out: Obs[] = [];
+  for (const p of pts) {
+    const prev = atOrBefore(pts, addDays(p.date, -365));
+    if (!prev || prev.date === p.date || prev.value === 0) continue;
+    out.push({ date: p.date, value: ((p.value - prev.value) / Math.abs(prev.value)) * 100 });
+  }
+  return out;
+}
+
+function realFromNominal(nominalPct: Obs[], inflationPct: Obs[]): Obs[] {
+  const out: Obs[] = [];
+  for (const y of nominalPct) {
+    const infl = atOrBefore(inflationPct, y.date);
+    if (!infl) continue;
+    out.push({ date: y.date, value: y.value - infl.value });
+  }
+  return out;
+}
+
+function annualChangeStats(levelsPct: Obs[]): { delta: number; sigma: number } | null {
+  const deltas: number[] = [];
+  for (const p of levelsPct) {
+    const prev = atOrBefore(levelsPct, addDays(p.date, -365));
+    if (!prev || prev.date === p.date) continue;
+    deltas.push((p.value - prev.value) / 100);
+  }
+  if (deltas.length < 2) return null;
+  const sigma = sampleStdev(deltas);
+  if (!(sigma > 0)) return null;
+  return { delta: deltas[deltas.length - 1], sigma };
+}
+
+function quarterStart(token: string): string | null {
+  const quarter = /^(\d{4})-Q([1-4])$/.exec(token);
+  if (!quarter) return null;
+  const month = (Number(quarter[2]) - 1) * 3 + 1;
+  return `${quarter[1]}-${String(month).padStart(2, "0")}-01`;
+}
+
+function velocityNgdpOverM(ngdp: Obs[], money: Obs[], annualizeNgdp: boolean): { velocity: number | null; history: number[] | null } {
+  const series = quarterVelocity({
+    ngdp: ngdp.map(p => ({ period: p.date, value: p.value })),
+    moneyMonthly: money.map(p => ({ period: p.date, value: p.value })),
+    annualizeNgdp,
+  });
+  if (!series.length) return { velocity: null, history: null };
+  const dated = series.flatMap(row => {
+    const date = quarterStart(row.quarter);
+    return date ? [{ date, value: row.velocity }] : [];
+  });
+  const window = last10y(dated);
+  if (!window.length) return { velocity: null, history: null };
+  return { velocity: window[window.length - 1].value, history: window.map(p => p.value) };
+}
+
+function attachRealRate(input: StockInputs, realPct: Obs[]): void {
+  if (!realPct.length) return;
+  input.realRate = realPct[realPct.length - 1].value / 100;
+  const stats = annualChangeStats(realPct);
+  if (!stats) return;
+  input.deltaR = stats.delta;
+  input.sigmaDeltaR = stats.sigma;
+}
+
+function debtObs(region: Region, series: Record<string, Obs[] | undefined>, now: Date): Obs[] {
+  if (region === "EU") {
+    const live = fresh(series.EZ_DEBT_GDP, now, STALE_DAYS);
+    if (live.length) return live;
+    return fresh(series.GGGDTPEZA188N, now, DEBT_STALE_DAYS);
+  }
+  if (region === "ASIA") return fresh(series.GGGDTAJPA188N, now, DEBT_STALE_DAYS);
+  return fresh(series.GFDEGDQ188S, now, STALE_DAYS);
+}
+
+function ratioPoints(gdp: Obs[], money: Obs[]): Obs[] {
+  if (!gdp.length || !money.length) return [];
+  const out: Obs[] = [];
+  for (const g of gdp) {
+    const level = atOrBefore(money, g.date);
+    if (!level || level.value === 0) continue;
+    out.push({ date: g.date, value: g.value / level.value });
+  }
+  return out;
+}
+
+export function stocksFromSeries(
+  region: Region,
+  series: Record<string, Obs[] | undefined>,
+  now: Date,
+): StockInputs {
+  const debtPts = debtObs(region, series, now);
+  const debtWindow = region === "US" ? STALE_DAYS : region === "EU" && fresh(series.EZ_DEBT_GDP, now).length ? STALE_DAYS : DEBT_STALE_DAYS;
+  const input: StockInputs = {
+    debtGdpPct: debtPts.length ? debtPts[debtPts.length - 1].value : null,
+    fiscalTrend: debtPts.length ? fiscalTrendOf(debtPts, now, debtWindow) : null,
+  };
+  if (region === "US") fillUs(input, series, now);
+  else if (region === "EU") fillEu(input, series, now);
+  else fillAsia(input, series, now);
+  return input;
+}
+
+function fillUs(input: StockInputs, series: Record<string, Obs[] | undefined>, now: Date): void {
+  const dfii = fresh(series.DFII10, now);
+  const dgs = latest(series.DGS10, now);
+  const cpi = yoyPercent(series.CPIAUCSL, now);
+  if (dfii.length) attachRealRate(input, dfii);
+  else if (dgs != null && cpi != null) input.realRate = (dgs - cpi) / 100;
+
+  const vel = velocityFrom(series, now);
+  input.velocity = vel.velocity;
+  input.velocityHistory = vel.history;
+
+  const bond = latest(series.MSPD_MARKETABLE, now);
+  const gdp = latest(series.GDP, now);
+  if (bond != null) {
+    input.bondMarketBn = bond;
+    if (gdp != null && gdp !== 0) input.bondMarketGdpPct = (bond / gdp) * 100;
+  }
+
+  const m2 = yoyPercent(series.M2SL, now);
+  const realGdp = yoyPercent(series.GDPC1, now);
+  if (m2 != null) {
+    input.m2YoY = m2;
+    input.deltaMObs = m2 / 100;
+  }
+  if (realGdp != null) input.realGdpYoY = realGdp;
+  if (cpi != null) input.cpiYoY = cpi;
+  const money = latest(series.M2SL, now);
+  if (money != null) input.moneyStockBn = money;
+}
+
+function fillEu(input: StockInputs, series: Record<string, Obs[] | undefined>, now: Date): void {
+  const realPct = realFromNominal(fresh(series.IRLTLT01EZM156N, now), fresh(series.EZ_HICP_YOY, now));
+  attachRealRate(input, realPct);
+
+  const m3 = fresh(series.ECB_M3, now);
+  const ngdp = fresh(series.ECB_NGDP, now);
+  const vel = velocityNgdpOverM(ngdp, m3, true);
+  input.velocity = vel.velocity;
+  input.velocityHistory = vel.history;
+
+  const bond = latest(series.EZ_DEBT_SEC, now);
+  const ngdpLevel = ngdp.length ? ngdp[ngdp.length - 1].value : null;
+  if (bond != null) {
+    input.bondMarketBn = bond;
+    if (ngdpLevel != null && ngdpLevel !== 0) input.bondMarketGdpPct = (bond / (ngdpLevel * 4)) * 100;
+  }
+  const m3Yoy = yoyPercent(series.ECB_M3, now);
+  if (m3Yoy != null) {
+    input.m2YoY = m3Yoy;
+    input.deltaMObs = m3Yoy / 100;
+  }
+  if (m3.length) input.moneyStockBn = m3[m3.length - 1].value;
+}
+
+function japanInflationPct(series: Record<string, Obs[] | undefined>, now: Date): Obs[] {
+  const monthly = yoySeries(series.JPNCPIALLMINMEI, now);
+  if (monthly.length) return monthly;
+  // JPNCPIALLMINMEI stops in 2021. FPCPITOTLZGJPN is the annual percent fallback.
+  return fresh(series.FPCPITOTLZGJPN, now, DEBT_STALE_DAYS);
+}
+
+function fillAsia(input: StockInputs, series: Record<string, Obs[] | undefined>, now: Date): void {
+  const cpiYoy = japanInflationPct(series, now);
+  const realPct = realFromNominal(fresh(series.IRLTLT01JPM156N, now), cpiYoy);
+  attachRealRate(input, realPct);
+
+  const m2 = fresh(series.BOJ_M2, now);
+  const ngdp = fresh(series.JPNNGDP, now);
+  const vel = velocityNgdpOverM(ngdp, m2, false);
+  input.velocity = vel.velocity;
+  input.velocityHistory = vel.history;
+
+  const m2Yoy = yoyPercent(series.BOJ_M2, now);
+  if (m2Yoy != null) {
+    input.m2YoY = m2Yoy;
+    input.deltaMObs = m2Yoy / 100;
+  }
+  if (cpiYoy.length) input.cpiYoY = cpiYoy[cpiYoy.length - 1].value;
+  if (m2.length) input.moneyStockBn = m2[m2.length - 1].value;
+
+  const bond = latest(series.BOJ_JGB, now);
+  const ngdpLevel = ngdp.length ? ngdp[ngdp.length - 1].value : null;
+  if (bond != null) {
+    input.bondMarketBn = bond;
+    if (ngdpLevel != null && ngdpLevel !== 0) input.bondMarketGdpPct = (bond / ngdpLevel) * 100;
+  }
+}
+
+export function parseFredLevels(csv: string): Obs[] {
+  const out: Obs[] = [];
+  for (const line of csv.trim().split(/\r?\n/).slice(1)) {
+    const [date, raw] = line.split(",");
+    if (!date || raw == null || raw.trim() === ".") continue;
+    const value = Number(raw.trim());
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim()) || !Number.isFinite(value)) continue;
+    out.push({ date: date.trim(), value });
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function pointsFromCache(raw: unknown, now: Date): Obs[] | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as { fetchedAt?: string; points?: Obs[] };
+  if (!row.fetchedAt || !Array.isArray(row.points)) return null;
+  const ageH = (now.getTime() - Date.parse(row.fetchedAt)) / 3_600_000;
+  if (!Number.isFinite(ageH) || ageH > STOCK_TTL_H) return null;
+  return row.points;
+}
+
+async function defaultFetchText(url: string, timeoutMs = 20000): Promise<string | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!resp.ok) return null;
+      const text = await resp.text();
+      if (!text || text.includes("<!DOCTYPE") || text.includes("<html")) return null;
+      return text;
+    } catch {
+      if (attempt === 1) return null;
+    }
+  }
+  return null;
+}
+
+async function loadPoints(
+  region: Region,
+  id: string,
+  now: Date,
+  opts: { cache?: StockFetchCache; force?: boolean },
+  load: () => Promise<Obs[]>,
+): Promise<Obs[]> {
+  const key = `liqidx_stocks_${region}__${id}`;
+  if (!opts.force && opts.cache) {
+    const hit = pointsFromCache(opts.cache.get(key), now);
+    if (hit) return hit;
+  }
+  const points = await load();
+  opts.cache?.set(key, { fetchedAt: now.toISOString(), points });
+  return points;
+}
+
+function defaultFiscalRest(region: Region, now: Date): { fiscalRestBn: number | null; tMidYears: number | null; programAgeYears: number | null } {
+  try {
+    const raw = diskResearcherGet(`capex__${region}`);
+    return { ...fiscalRestFromCache(raw, { region, now }), programAgeYears: programAgeFromCache(raw, now) };
+  } catch {
+    return { fiscalRestBn: null, tMidYears: null, programAgeYears: null };
+  }
+}
+
+export async function fetchRegionalStockInputs(
+  region: Region,
+  opts: {
+    now?: Date;
+    cache?: StockFetchCache;
+    force?: boolean;
+    fetchText?: (url: string) => Promise<string | null>;
+    readFiscalRest?: (region: Region) => { fiscalRestBn: number | null; tMidYears: number | null; programAgeYears?: number | null };
+  } = {},
+): Promise<StockInputs> {
+  const now = opts.now ?? new Date();
+  const fetchText = opts.fetchText ?? defaultFetchText;
+  const series: Record<string, Obs[]> = {};
+  const fredStart = monthsAgo(30 * 12, now);
+  await Promise.all(spelledFredIds(region).map(async id => {
+    series[id] = await loadPoints(region, id, now, opts, async () => {
+      const csv = await fetchText(`${FRED_CSV}?id=${encodeURIComponent(id)}&cosd=${fredStart}`);
+      return csv ? parseFredLevels(csv) : [];
+    });
+  }));
+  if (region === "US") {
+    series.MSPD_MARKETABLE = await loadPoints(region, "MSPD_MARKETABLE", now, opts, async () => {
+      const text = await fetchText(MSPD_MARKETABLE_URL);
+      const total = text ? parseMarketableTotal(text) : null;
+      return total ? [{ date: total.date, value: total.bn }] : [];
+    });
+  }
+  if (region === "EU") {
+    const [debt, bonds, hicp, m3, ngdp] = await Promise.all([
+      loadPoints(region, "EZ_DEBT_GDP", now, opts, async () => {
+        const text = await fetchText(eurostatDebtGdpUrl(now));
+        return text ? parseEurostatJson(text) : [];
+      }),
+      loadPoints(region, "EZ_DEBT_SEC", now, opts, async () => {
+        const text = await fetchText(eurostatDebtSecUrl(now));
+        return text ? parseEurostatJson(text, 1 / 1000) : [];
+      }),
+      loadPoints(region, "EZ_HICP_YOY", now, opts, async () => {
+        const text = await fetchText(eurostatHicpUrl(now));
+        return text ? parseEurostatJson(text) : [];
+      }),
+      loadPoints(region, "ECB_M3", now, opts, async () => {
+        const text = await fetchText(ecbM3Url(now));
+        return text ? datedFromEcb(text, 1 / 1000) : [];
+      }),
+      loadPoints(region, "ECB_NGDP", now, opts, async () => {
+        const text = await fetchText(ecbNgdpUrl(now));
+        return text ? datedFromEcb(text, 1 / 1000) : [];
+      }),
+    ]);
+    series.EZ_DEBT_GDP = debt;
+    series.EZ_DEBT_SEC = bonds;
+    series.EZ_HICP_YOY = hicp;
+    series.ECB_M3 = m3;
+    series.ECB_NGDP = ngdp;
+  }
+  if (region === "ASIA") {
+    const [m2, jgb] = await Promise.all([
+      loadPoints(region, "BOJ_M2", now, opts, async () => {
+        const text = await fetchText(bojM2Url(now));
+        if (!text) return [];
+        return parseBojMoneyStock(text).flatMap(row => {
+          const date = periodToIso(row.period);
+          return date ? [{ date, value: bojHundredMillionYenToBillion(row.value) }] : [];
+        });
+      }),
+      loadPoints(region, "BOJ_JGB", now, opts, async () => {
+        const text = await fetchText(bojJgbUrl(now));
+        if (!text) return [];
+        return parseBojSeries(text, BOJ_JGB_CODE).flatMap(row => {
+          const date = periodToIso(row.period);
+          return date ? [{ date, value: bojHundredMillionYenToBillion(row.value) }] : [];
+        });
+      }),
+    ]);
+    series.BOJ_M2 = m2;
+    series.BOJ_JGB = jgb;
+  }
+  const rest = (opts.readFiscalRest ?? ((r: Region) => defaultFiscalRest(r, now)))(region);
+  return applyCapexRest(stocksFromSeries(region, series, now), rest);
+}
