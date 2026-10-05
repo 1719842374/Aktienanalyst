@@ -275,6 +275,9 @@ export function BuffettRatioPanel() {
 
   const query = useQuery({
     queryKey: ["recession-buffett", region],
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 15 * 60 * 1000,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       const res = await fetch(`/api/analyze-recession/buffett?region=${region}`);
       if (!res.ok) throw await apiErrorFromResponse(res);
