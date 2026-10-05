@@ -2,7 +2,14 @@ import type { Express } from "express";
 import { execSync } from "child_process";
 import { fetchMacroSnapshot } from "./fmp-macro";
 import { riskLevelPhrase } from "../shared/risk-level-label";
-import { sahmIndicatorFromScore, scoreSahmFromUnemployment, SAHM_HISTORY_YEARS } from "./recession-sahm";
+import {
+  euroAreaUnemploymentFromEurostat,
+  sahmIndicatorFromScore,
+  scoreSahmFromUnemployment,
+  SAHM_HISTORY_YEARS,
+  type EurostatDataset,
+  type SahmUnemploymentScore,
+} from "./recession-sahm";
 import { fetchBridge, shockGeopoliticsSection, type RecessionBridge } from "./recession-bridge";
 import { driverFazitSections, loadDriverAssessment, type DriverView } from "./recession-drivers";
 
@@ -131,8 +138,8 @@ export interface IndicatorResult {
   description: string;
   /**
    * False: the slot is not in the net or the max.
-   * Sahm sets this when the realtime history is shorter than H_min, or when
-   * the card is the unemployment backup (no z across a gap).
+   * Sahm sets this when fewer than 24 months are available.
+   * The unemployment backup is scored with s(z) once that history exists.
    * Absent on older slots, which stay scored.
    */
   available?: boolean;
@@ -142,11 +149,33 @@ export interface IndicatorResult {
 // RECESSION INDICATORS (7)
 // ============================================================
 
-// 1. Sahm Rule. The card shows the realtime print. A blank month stays blank.
-// The UNRATE S (k=0..11) is only the backup when that print is missing, and
-// then it is not given a 20-year z. The 0.50pp mark is the trigger on the
-// displayed level.
-function scoreSahm(): IndicatorResult {
+export interface SahmRegionBoard {
+  region: "US" | "EZ" | "JP";
+  label: string;
+  source: string;
+  value: string;
+  zone: string;
+  level: number | null;
+  s: number;
+  raw: number;
+  available: boolean;
+  triggered: boolean;
+  n: number;
+  /** US realtime control. Absent for regions that have no realtime series. */
+  controlOk?: boolean;
+  control?: Array<{ date: string; computed: number | null; fred: number; absDiff: number | null }>;
+  computedLevel: number | null;
+  computedS: number;
+  computedRaw: number;
+  computedAvailable: boolean;
+  computedValue: string;
+}
+
+// 1. Sahm Rule. The card shows the realtime print and s(z) of that series.
+// A blank unemployment month is not filled. The self-computed S is scored
+// with the same s(z), and it is the card only when the realtime series is
+// absent. The 0.50pp mark is the trigger on the displayed level.
+function scoreSahm(): { indicator: IndicatorResult; evaluated: SahmUnemploymentScore } {
   const cosd = getDateYearsAgo(SAHM_HISTORY_YEARS);
   const evaluated = scoreSahmFromUnemployment(
     fetchFredRows("UNRATE", cosd),
@@ -155,18 +184,83 @@ function scoreSahm(): IndicatorResult {
   const scored = sahmIndicatorFromScore(evaluated.score);
   const base = "3-Monats-Durchschnitt der Arbeitslosenquote vs. 12-Monats-Tief";
   return {
-    name: "Sahm-Regel",
-    group: "recession", subgroup: "coincident",
-    value: scored.value,
-    rawScore: scored.rawScore,
-    weight: scored.weight,
-    weightedScore: scored.weightedScore,
-    maxWeighted: scored.maxWeighted,
-    zone: scored.zone,
-    source: evaluated.score.backup ? "FRED UNRATE" : "FRED SAHMREALTIME",
-    description: scored.reason ? `${base}. ${scored.reason}` : base,
-    available: scored.available,
+    evaluated,
+    indicator: {
+      name: "Sahm-Regel",
+      group: "recession", subgroup: "coincident",
+      value: scored.value,
+      rawScore: scored.rawScore,
+      weight: scored.weight,
+      weightedScore: scored.weightedScore,
+      maxWeighted: scored.maxWeighted,
+      zone: scored.zone,
+      source: evaluated.score.backup ? "FRED UNRATE" : "FRED SAHMREALTIME",
+      description: scored.reason ? `${base}. ${scored.reason}` : base,
+      available: scored.available,
+    },
   };
+}
+
+/** ALQ dataflow. The euro-area geo is resolved from the dataset, not a ticker. */
+const EURO_AREA_UNEMPLOYMENT_DATAFLOW = "une_rt_m";
+
+function fetchEuroAreaUnemployment(cosd: string): { geo: string | null; rows: Array<{ date: string; value: number | null }> } {
+  const start = cosd.slice(0, 7);
+  const url = `https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/${EURO_AREA_UNEMPLOYMENT_DATAFLOW}?lang=en&s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=${start}`;
+  const raw = fetchUrl(url, 30000);
+  if (!raw || raw.includes("<html") || raw.includes("<!DOCTYPE")) return { geo: null, rows: [] };
+  try {
+    return euroAreaUnemploymentFromEurostat(JSON.parse(raw) as EurostatDataset);
+  } catch {
+    return { geo: null, rows: [] };
+  }
+}
+
+function sahmRegionBoard(
+  region: SahmRegionBoard["region"],
+  label: string,
+  source: string,
+  evaluated: SahmUnemploymentScore,
+  withControl: boolean,
+): SahmRegionBoard {
+  const card = sahmIndicatorFromScore(evaluated.score);
+  const computed = sahmIndicatorFromScore(evaluated.computedScore);
+  return {
+    region,
+    label,
+    source,
+    value: card.value,
+    zone: card.zone,
+    level: evaluated.score.level,
+    s: evaluated.score.s,
+    raw: evaluated.score.raw,
+    available: evaluated.score.available,
+    triggered: evaluated.score.triggered,
+    n: evaluated.score.n,
+    controlOk: withControl ? evaluated.controlOk : undefined,
+    control: withControl ? evaluated.control : undefined,
+    computedLevel: evaluated.computedScore.level,
+    computedS: evaluated.computedScore.s,
+    computedRaw: evaluated.computedScore.raw,
+    computedAvailable: evaluated.computedScore.available,
+    computedValue: computed.value,
+  };
+}
+
+function scoreEuroAreaSahm(cosd: string): SahmRegionBoard {
+  const loaded = fetchEuroAreaUnemployment(cosd);
+  const source = loaded.geo ? `Eurostat une_rt_m ${loaded.geo}` : "Eurostat une_rt_m";
+  return sahmRegionBoard("EZ", "Eurozone", source, scoreSahmFromUnemployment(loaded.rows, []), false);
+}
+
+function scoreJapanSahm(cosd: string): SahmRegionBoard {
+  return sahmRegionBoard(
+    "JP",
+    "Japan",
+    "FRED LRUNTTTTJPM156S",
+    scoreSahmFromUnemployment(fetchFredRows("LRUNTTTTJPM156S", cosd), []),
+    false,
+  );
 }
 
 // 2. Inverted Yield Curve (FRED: T10Y2Y)
@@ -775,6 +869,8 @@ export interface RecessionAnalysis {
   drivers: DriverView;
   sources: { name: string; url: string }[];
   bridge: RecessionBridge;
+  /** US card plus scored Eurozone and Japan unemployment S. Not in the 17-indicator net. */
+  sahmRegions: SahmRegionBoard[];
 }
 
 function clampAndRound(p: number): number {
@@ -904,9 +1000,11 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   console.log("[RECESSION] Starting recession analysis...");
 
   const bridgePromise = fetchBridge();
+  const cosdSahm = getDateYearsAgo(SAHM_HISTORY_YEARS);
+  const usSahm = scoreSahm();
 
   const indicators: IndicatorResult[] = await Promise.all([
-    scoreSahm(),
+    Promise.resolve(usSahm.indicator),
     scoreYieldCurve(),
     scoreActivity(),
     scoreDurableGoods(),
@@ -1073,6 +1171,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     { name: "Multpl.com (Shiller CAPE)", url: "https://www.multpl.com/shiller-pe" },
     { name: "Advisor Perspectives (Investors Intelligence)", url: "https://www.advisorperspectives.com" },
     { name: "Google Trends", url: "https://trends.google.com" },
+    { name: "Eurostat une_rt_m (Eurozone ALQ)", url: "https://ec.europa.eu/eurostat/databrowser/view/une_rt_m/default/table" },
   ];
 
   // ====== FAZIT: Comprehensive assessment ======
@@ -1102,6 +1201,11 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     fazit,
     sources,
     bridge,
+    sahmRegions: [
+      sahmRegionBoard("US", "Vereinigte Staaten", usSahm.indicator.source, usSahm.evaluated, true),
+      scoreEuroAreaSahm(cosdSahm),
+      scoreJapanSahm(cosdSahm),
+    ],
   };
 }
 
