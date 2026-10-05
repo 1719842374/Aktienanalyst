@@ -99,7 +99,7 @@ Kein Portfolio-Backend — `/#/portfolio` ist `localStorage`. D2 client-seitig.
 | 30 | fertig_WORK_RECESSION_RSI_MACD.md | RSI+MACD+Div in `#/recession` | Dashboard-Wire + Pane live | ✅ |
 | 31 | fertig_WORK_EXEC_SUMMARY.md | Karte über S1 | Exec-Karte live `#58`; `#69` Analyze Ampel+KI+FS Live PASS (XOM; FMP Premium aktiv) | ✅ |
 | 32 | Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md | Katalog + Fetch | EZ-M3, BoJ-M2, APP/PEPP und JP-NGDP auf dem Tip; MoF-CSV, Realzins-Live und X-Bot fehlen. Siehe Abschnitt 6 | 🟡 |
-| 33 | Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), N^b, FE, QRA-Anker | Route + Karten; `feMonthly: []` hält `S_F*` zu; GIS weiter FFR-Niveau; Cron/QRA-LLM fehlt. Siehe Abschnitt 6 | 🟡 |
+| 33 | Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md | s(z), N^b, FE, QRA-Anker | Route + Karten; `S_F*` aus MSPD-Monats-FE sobald die Historie reicht; GIS-Slot bei `FE.available`; Cron/QRA-LLM optional, nicht gebaut; Datei bleibt `Offen_`; Macro-Slot auf #/btc geprüft. Siehe Abschnitt 6 | 🟡 |
 | 34 | Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md | LI US/EU/ASIA | `?region=` liefert `li` + Bücher; `LiquidityPanel` ohne Region. Siehe Abschnitt 6 | 🟡 |
 | 35 | fertig_WORK_LIQUIDITY_INDEX_REGIONAL_BOOKS.md | Buch M/F EZ/JP | `CATALOG` + `GET ?region=` `books.M`/`books.F`; Panel bleibt offen | 🟡 |
 | 36 | Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md | r, V, π, T½ | kein Regions-Widget auf dem Tip. Siehe Abschnitt 6 | ⬜ |
@@ -169,7 +169,7 @@ FMP Billing: Premium aktiv (Analyze 200). Peer/ROIC ≡ `4bdc1f8`. Exec #69 Live
 
 ## 3. Offen 🟡 / ⬜ (workable; Rang 7–9 nicht neu bauen)
 
-**🟡 Partial:** Portfolio-Backtest Rest-DoD · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro) · Fiscal-Frontend (`S_F*` zu, GIS offen) · Liquidity-Briefing-Quellen (MoF/Realzins/X-Bot offen) · Researcher-LI (Panel ohne Region) · Sahm (letzte 12 nicht ±0.02, EZ/JP fehlen) · Recession-Sources (Kurve/AD/Sentiment/FINRA/EZ-JP) · Section4 (Earnings/Analysten/Growth/Moat). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
+**🟡 Partial:** Portfolio-Backtest Rest-DoD · #71 4-Toggles (Chart oft leer; OHLCV-Honesty #74) · #87 thin-series (healthy 251d OK, thin-Banner nicht repro) · Fiscal-Frontend (`S_F*` bei Historie, GIS bei `FE.available`, Cron/QRA optional) · Liquidity-Briefing-Quellen (MoF/Realzins/X-Bot offen) · Researcher-LI (Panel ohne Region) · Sahm (letzte 12 nicht ±0.02, EZ/JP fehlen) · Recession-Sources (Kurve/AD/Sentiment/FINRA/EZ-JP) · Section4 (Earnings/Analysten/Growth/Moat). #93 KI-N/A-Fill Label Soft → ✅ via #100 (nicht mehr Partial). #96 KI-Fill v2 closed ohne Merge — nicht reopen, nicht grün.
 
 **⬜ Spec:** Velocity-Stocks (kein Regions-Widget r/V/π/T½). Value-Chain und Briefing regional sind auf dem Tip `fertig_` (#169), kein Live-Deploy aus dem Rename. Sahm bleibt `Offen_`.
 
@@ -210,7 +210,7 @@ Gelesen am Code von `839d954`, nicht an Dateialter. Drei Index-Dateien bleiben o
 ### Offen
 
 - `Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md` — EZ-M3, BoJ-M2 und der asiatische Realzins sind nicht als Fetch für Velocity oder Briefing im Code.
-- `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — `GET /api/analyze-btc/fiscal-frontend` rechnet s(z) für N^b, SOMA und ΔDFF. `S_F*` bleibt `available: false`, solange keine 12 Monats-FE-Punkte da sind. Der Macro-Slot in `btcAnalysis.ts` ist nicht ersetzt. Cron und QRA-LLM fehlen.
+- `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md` — `GET /api/analyze-btc/fiscal-frontend` rechnet s(z) für N^b, SOMA und ΔDFF. `S_F*` nutzt MSPD-Monats-FE (`ΔWSHOBL` ~28T − `N^b_Δm`) plus `s(−z_ΔTGA)`, sobald mindestens 12 Vormonate und die TGA-Historie da sind. `D_30` bleibt im Live-`FE_30`; die Spec-Quelle DefiLlama hat keine 24-Monats-Reihe. Der Macro-Slot in `btcAnalysis.ts` wird `score_MacroFiscal`, sobald `FE.available`. Cron 22:00 ET und der QRA-PDF-Extrakt sind optional und nicht gebaut. Die Datei bleibt `Offen_`.
 - `Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — kein Regions-Widget für Debt/GDP, Realzins, Velocity und Halbwertszeit.
 - `Offen_WORK_RECESSION_FRED_SAHM.md` — `scoreSahm` in `server/recession.ts` ist weiter `>= 0.5 ? 4 : -3`, nicht s(z) über 20 Jahre.
 - `Offen_WORK_RECESSION_SOURCES.md` — der NY-Fed-Anker wird mit ×10 gebildet, Sahm und Kurve bleiben Schwellen-Scores, PMI nutzt Chicago als ISM-Proxy, und die Response hat kein `schemaVersion`.
@@ -255,7 +255,7 @@ Bereits `fertig_` auf diesem Tip, nicht wieder geöffnet: `fertig_WORK_STABLECOI
 
 **Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
 
-**Ist:** `GET /api/analyze-btc/fiscal-frontend`, `fiscal-frontend-math.ts`, `qra-snapshot.ts` und die Karten in `StablecoinLiquidityPanel` sind auf dem Tip. `scoreFrom` übergibt `feMonthly: []`. `S_F*` wird nur gemischt, wenn FE- und TGA-Historie beide da sind, sonst `available: false`. `client/src/lib/btcAnalysis.ts` setzt den Macro-Slot weiter über `fedFundsRate > 5` → −1 und `< 3` → +1, ohne `FE.available`. Ein Cron oder ein QRA-LLM-Extrakt fehlt; `QRA_SNAPSHOT` ist statisches JSON. Live-Deploy nicht geprüft. Spec bleibt `Offen_`.
+**Ist:** `GET /api/analyze-btc/fiscal-frontend`, `fiscal-frontend-math.ts`, `qra-snapshot.ts` und die Karten in `StablecoinLiquidityPanel`. `S_F*` nutzt MSPD-Monats-FE (`ΔWSHOBL` ~28T − `N^b`) plus TGA, sobald mindestens 12 Vormonate und die TGA-Historie da sind. Der Macro-Slot in `btcAnalysis.ts` nimmt `score_MacroFiscal`, sobald `FE.available`; sonst bleibt `FFR > 5` → −1 und `< 3` → +1. Cron 22:00 ET und der QRA-PDF-Extrakt sind optional; `QRA_SNAPSHOT` bleibt statisches JSON. Spec bleibt `Offen_`.
 
 ### 3. `Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md` — ⬜
 

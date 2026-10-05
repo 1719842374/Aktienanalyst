@@ -235,6 +235,35 @@ async function fetchText(url: string, timeoutMs = 30000): Promise<string> {
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+export interface FiscalMacroSlotInput {
+  frontEndImpulse?: { available?: boolean };
+  adaptiveScore?: { macroFiscal?: number | null; displayS?: number | null };
+}
+
+/**
+ * Macro-Slot, Gewicht bleibt 0.15.
+ * FFR ≧ 5 → −1 und FFR < 3 → +1 bleiben, bis FE_30 available ist.
+ * Dann score_MacroFiscal ∈ [−1, 1] aus GET /api/analyze-btc/fiscal-frontend.
+ */
+export function macroIndicatorFromFiscal(
+  fedFundsRate: number,
+  fiscal: FiscalMacroSlotInput | null,
+): { score: number; value: string; source: string; fromFiscal: boolean } {
+  const raw = fiscal?.adaptiveScore?.macroFiscal;
+  if (fiscal?.frontEndImpulse?.available === true && typeof raw === "number" && Number.isFinite(raw)) {
+    const score = Math.min(1, Math.max(-1, raw));
+    const shown = fiscal.adaptiveScore?.displayS;
+    const value = typeof shown === "number" && Number.isFinite(shown)
+      ? `S ${shown.toFixed(1)}`
+      : `MacroFiscal ${score.toFixed(2)}`;
+    return { score, value, source: "GET /api/analyze-btc/fiscal-frontend", fromFiscal: true };
+  }
+  let score = 0;
+  if (fedFundsRate > 5.0) score = -1;
+  else if (fedFundsRate < 3.0) score = 1;
+  return { score, value: `FFR ${fedFundsRate.toFixed(2)}%`, source: "", fromFiscal: false };
+}
+
 // === Historical Volatility (annualized) ===
 function calcHistoricalVol(prices: number[], lookbackDays: number): number {
   if (prices.length < lookbackDays + 1) return 0;
@@ -365,7 +394,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   let hashrateChange = 0; // percent change over 90 days
   let hashrateValue = "";
 
-  const [fngResult, fngHistResult, fredResult, blockchainResult, eurusdResult, hashrateResult, etfFlowResult] = await Promise.allSettled([
+  const [fngResult, fngHistResult, fredResult, blockchainResult, eurusdResult, hashrateResult, etfFlowResult, fiscalResult] = await Promise.allSettled([
     fetchJSON("https://api.alternative.me/fng/?limit=1"),
     fetchJSON("https://api.alternative.me/fng/?limit=2000&format=json"),
     fetchText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"),
@@ -373,6 +402,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     fetchJSON("https://data-api.binance.vision/api/v3/ticker/24hr?symbol=EURUSDT"),
     fetchJSON("https://mempool.space/api/v1/mining/hashrate/3m"),
     fetchETFFlows(),
+    fetchJSON("/api/analyze-btc/fiscal-frontend", 45000),
   ]);
 
   if (fngResult.status === "fulfilled" && fngResult.value?.data?.[0]) {
@@ -707,9 +737,13 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     hashrateScore = 0;
   }
 
-  let macroScore = 0;
-  if (fedFundsRate > 5.0) macroScore = -1;
-  else if (fedFundsRate < 3.0) macroScore = 1;
+  const fiscalPayload = fiscalResult.status === "fulfilled" ? fiscalResult.value as FiscalMacroSlotInput : null;
+  const macroSlot = macroIndicatorFromFiscal(fedFundsRate, fiscalPayload);
+  const macroScore = macroSlot.score;
+  const macroValue = macroSlot.fromFiscal ? macroSlot.value : `FFR ${fedFundsRate.toFixed(2)}%`;
+  const macroSource = macroSlot.fromFiscal
+    ? macroSlot.source
+    : (fredResult.status === "fulfilled" ? "FRED (live)" : "FRED (Stand: Feb 2026)");
 
   let dxyScore = 0;
   if (dxy < 100) dxyScore = 1;
@@ -723,7 +757,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     { name: "Fear & Greed", value: `${fearGreedIndex} (${fearGreedLabel})`, score: fgScore, weight: 0.10, source: "alternative.me", weighted: 0 },
     { name: "Hashrate Trend", value: hashrateValue || "Stable", score: hashrateScore, weight: 0.10, source: hashrateValue ? "mempool.space" : "Default", weighted: 0 },
     { name: "ETF Net Flows", value: etfFlowValue || "N/A", score: etfFlowScore, weight: 0.15, source: etfFlowSource, weighted: 0 },
-    { name: "Macro (Fed/M2)", value: `FFR ${fedFundsRate.toFixed(2)}%`, score: macroScore, weight: 0.15, source: fredResult.status === "fulfilled" ? "FRED (live)" : "FRED (Stand: Feb 2026)", weighted: 0 },
+    { name: "Macro (Fed/M2)", value: macroValue, score: macroScore, weight: 0.15, source: macroSource, weighted: 0 },
     { name: "DXY", value: `${dxy.toFixed(2)}`, score: dxyScore, weight: 0.15, source: dxySource, weighted: 0 },
   ].map(ind => ({ ...ind, weighted: ind.score * ind.weight }));
 

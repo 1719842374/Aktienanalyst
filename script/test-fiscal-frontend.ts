@@ -3,12 +3,15 @@
  * Spec: Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md Abschnitt 8.
  * Run: bun script/test-fiscal-frontend.ts
  */
+import { readFileSync } from "node:fs";
+import { macroIndicatorFromFiscal } from "../client/src/lib/btcAnalysis";
 import { qraIdentityHolds, QRA_SNAPSHOT } from "../server/qra-snapshot";
 import {
   WSHOBL_FIXTURE_2026_08_26_MIO,
   adaptiveFiscal,
   frontEndImpulse,
   macroFiscalGis,
+  monthlyFrontEndBn,
   netBillSupplyFromStock,
   qraBillAnchor30,
   sOfZ,
@@ -71,6 +74,74 @@ ok(
     && before.sD.score === after.sD.score
     && before.deskFlag === 0,
   JSON.stringify({ before, after }),
+);
+
+const feMonth = monthlyFrontEndBn(
+  [
+    { date: "2026-06-30", value: 6690.689 },
+    { date: "2026-07-31", value: 6988.891 },
+  ],
+  [
+    { date: "2026-07-03", value: 521995 },
+    { date: "2026-07-31", value: 541995 },
+  ],
+);
+ok(
+  "FE_Δm Juli = 20 − 298.202, ohne D_30",
+  feMonth.length === 1 && Math.abs(feMonth[0] - (20 - 298.202)) < 1e-6,
+  JSON.stringify(feMonth),
+);
+
+const shortFe = adaptiveFiscal({
+  asOf: "2026-09-08",
+  ...empty,
+  feMonthly: Array.from({ length: 12 }, (_, i) => i),
+  tga4w: Array.from({ length: 27 }, (_, i) => i),
+});
+ok("S_F* bleibt zu bei 11 Vormonaten", shortFe.sF.available === false && shortFe.sF.display === 50);
+
+const longFe = adaptiveFiscal({
+  asOf: "2026-09-08",
+  ...empty,
+  feMonthly: Array.from({ length: 13 }, (_, i) => i - 6),
+  tga4w: Array.from({ length: 27 }, (_, i) => (i % 5) - 2),
+});
+const longFeNext = adaptiveFiscal({
+  asOf: "2026-09-09",
+  ...empty,
+  feMonthly: Array.from({ length: 13 }, (_, i) => i - 6),
+  tga4w: Array.from({ length: 27 }, (_, i) => (i % 5) - 2),
+});
+ok("S_F* verfügbar ab 12 Vormonaten und 26 TGA-Punkten", longFe.sF.available === true && longFe.sF.score != null);
+ok(
+  "S_F* ändert sich nicht, wenn asOf ohne Ops springt",
+  longFe.sF.score === longFeNext.sF.score && longFe.s === longFeNext.s && longFe.deskFlag === 0,
+);
+
+const ffrHigh = macroIndicatorFromFiscal(5.1, { frontEndImpulse: { available: false }, adaptiveScore: { macroFiscal: 1 } });
+const ffrLow = macroIndicatorFromFiscal(2.5, null);
+const ffrMid = macroIndicatorFromFiscal(4, { frontEndImpulse: { available: true }, adaptiveScore: { macroFiscal: null } });
+const fiscalOn = macroIndicatorFromFiscal(5.5, {
+  frontEndImpulse: { available: true },
+  adaptiveScore: { macroFiscal: 0.5, displayS: 62.5 },
+});
+const clipped = macroIndicatorFromFiscal(2, {
+  frontEndImpulse: { available: true },
+  adaptiveScore: { macroFiscal: 2, displayS: 100 },
+});
+ok("ohne FE bleibt FFR > 5 bei −1", ffrHigh.fromFiscal === false && ffrHigh.score === -1 && ffrHigh.value.startsWith("FFR "));
+ok("ohne FE bleibt FFR < 3 bei +1", ffrLow.fromFiscal === false && ffrLow.score === 1);
+ok("FE ohne MacroFiscal lässt das FFR-Niveau stehen", ffrMid.fromFiscal === false && ffrMid.score === 0);
+ok("FE.available ersetzt den Slot durch score_MacroFiscal", fiscalOn.fromFiscal === true && fiscalOn.score === 0.5 && fiscalOn.value === "S 62.5");
+ok("GIS-Overlay bleibt in [−1, 1]", clipped.score === 1 && clipped.score >= -1 && clipped.score <= 1);
+
+const analysisSrc = readFileSync(new URL("../client/src/lib/btcAnalysis.ts", import.meta.url), "utf8");
+ok(
+  "Macro-Gewicht bleibt 0.15, GWS und Monte Carlo unverändert",
+  analysisSrc.includes('name: "Macro (Fed/M2)"')
+    && analysisSrc.includes("weight: 0.15")
+    && analysisSrc.includes("const gwsValue = gis * 0.30 + powerSignal * 0.50 + cycleSignal * 0.20")
+    && analysisSrc.includes("const ST = S0 * Math.exp((mu - (sigmaAdj * sigmaAdj) / 2) * T + sigmaAdj * Math.sqrt(T) * Z)"),
 );
 
 if (failed) {

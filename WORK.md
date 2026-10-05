@@ -17,7 +17,7 @@
 
 | Datei | Inhalt |
 |-------|--------|
-| [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](./Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | 🟡 Route + Karten; `feMonthly` leer hält `S_F*` zu; GIS-Slot (FFR-Niveau) und Cron/QRA-LLM fehlen |
+| [Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md](./Offen_WORK_FISCAL_FRONTEND_ADAPTIVE.md) | 🟡 Route + Karten; `S_F*` aus MSPD-Monats-FE sobald die Historie reicht; GIS-Slot bei `FE.available`; Cron/QRA-LLM optional, nicht gebaut |
 | [Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md](./Offen_WORK_RESEARCHER_LIQUIDITY_INDEX.md) | 🟡 `?region=` liefert `li` + Bücher; `LiquidityPanel` holt weiter ohne Region |
 | [Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md](./Offen_WORK_LIQUIDITY_INDEX_STOCKS_VELOCITY.md) | ⬜ kein Regions-Widget für r, V, π, T½ |
 | [Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md](./Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md) | 🟡 EZ-M3 / BoJ-M2 / APP / PEPP; MoF-CSV, Realzins-Live und X-Bot fehlen |
@@ -27,9 +27,9 @@
 
 Ampel: [docs/Doc_Soll_vs_Ist/README.md](./docs/Doc_Soll_vs_Ist/README.md)
 
-**Ampel Fiscal-Frontend 2026-10-03:** `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE` 🟡. Route `GET /api/analyze-btc/fiscal-frontend`, Karten in `StablecoinLiquidityPanel`, Ops-Label im LiquidityPanel. Step 6 (`btcAnalysis.ts`, erst wenn `FE.available`, nicht im selben PR wie der Fetch) und Step 7 (Cron / QRA-LLM) sind ausgelassen. Live-Render nicht geprüft.
+**Ampel Fiscal-Frontend 2026-10-04:** `Offen_WORK_FISCAL_FRONTEND_ADAPTIVE` bleibt `Offen_` und 🟡. Route `GET /api/analyze-btc/fiscal-frontend`, Karten in `StablecoinLiquidityPanel`, Ops-Label im LiquidityPanel. `S_F*` aus MSPD-Monats-FE (`ΔWSHOBL` ~28T − `N^b`) plus TGA, sobald die Historie reicht. `D_30` nur im Live-`FE_30`. Step 6: der Macro-Slot in `btcAnalysis.ts` nimmt `score_MacroFiscal`, sobald `FE.available`. Step 7 (Cron 22:00 ET / QRA-PDF) ist in der Spec optional und bleibt aus. Auf `#/btc` zeigt der Slot bei `FE.available` den Wert `S` aus `GET /api/analyze-btc/fiscal-frontend`.
 
-**Ampel 05.10.2026 (Tip `191792c5`, nur Code, kein Deploy):** Fiscal bleibt 🟡 — `scoreFrom` übergibt `feMonthly: []`, dadurch bleibt `S_F*` `available: false`; `btcAnalysis.ts` setzt den Score weiter über `FFR > 5` / `< 3`. Die übrigen sechs offenen Specs stehen in der Soll-Tabelle.
+**Ampel 05.10.2026 (Tip `191792c5`, nur Code, kein Deploy):** Fiscal bleibt 🟡 und `Offen_` — `S_F*` aus MSPD-Monats-FE (`ΔWSHOBL` ~28T − `N^b`) plus TGA, sobald die Historie reicht; der Macro-Slot nimmt `score_MacroFiscal`, sobald `FE.available`. Cron 22:00 ET / QRA-PDF bleiben optional und aus. Die übrigen sechs offenen Specs stehen in der Soll-Tabelle.
 
 ---
 

@@ -4,7 +4,7 @@ import { buildStablecoinLiquidityResponse } from "./stablecoin-liquidity";
 import { buildFiscalFrontendResponse } from "./fiscal-frontend";
 import { isLLMAvailable } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
-import { fetchAllowedBtcNews } from "./news-peers";
+import { fetchTopicNewsFromGoogleRSS } from "./news-peers";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -89,22 +89,45 @@ export function registerBTCRoutes(app: Express): void {
     }
   });
 
-  // Bitcoin-Nachrichten nur von der Quellenliste. Kein Auffuellen mit anderen Hosts.
+  // Dieselbe Google-News-RSS wie die Aktienanalyse, nur fuer Bitcoin und Krypto.
+  // Wiederhergestellt aus 867edcf: nicht-leere Treffer bleiben im RAM und auf der Disk.
+  // Eine leere Live-Antwort wird nicht als Nachrichtenliste festgeschrieben.
   const NEWS_TTL_MS = 5 * 60 * 1000;
+  const NEWS_DISK_KEY = "btc_news__google_rss";
   let newsCache: { expiresAt: number; items: unknown[] } | null = null;
+  const rememberNews = (items: unknown[], now: number) => {
+    newsCache = { items, expiresAt: now + NEWS_TTL_MS };
+    try { diskResearcherSet(NEWS_DISK_KEY, { items, source: "Google News" }); } catch { /* Disk ist der Backstop */ }
+  };
+  const newsFromDisk = (): unknown[] | null => {
+    const disked = diskResearcherGet(NEWS_DISK_KEY) as { items?: unknown[] } | null;
+    return Array.isArray(disked?.items) && disked.items.length > 0 ? disked.items : null;
+  };
   app.get("/api/analyze-btc/news", async (_req, res) => {
     const now = Date.now();
-    if (newsCache && newsCache.expiresAt > now) {
-      return res.json({ items: newsCache.items, source: "Quellenliste", llmAvailable: isLLMAvailable() });
+    if (newsCache && newsCache.expiresAt > now && newsCache.items.length > 0) {
+      return res.json({ items: newsCache.items, source: "Google News", llmAvailable: isLLMAvailable() });
     }
     try {
-      const items = await fetchAllowedBtcNews();
+      const items = await fetchTopicNewsFromGoogleRSS("Bitcoin BTC crypto", "Bitcoin Krypto", "BTC");
       applyKeywordSentimentToNews(items);
-      if (items.length > 0) newsCache = { items, expiresAt: now + NEWS_TTL_MS };
-      res.json({ items, source: "Quellenliste", llmAvailable: isLLMAvailable() });
+      if (items.length > 0) {
+        rememberNews(items, now);
+        return res.json({ items, source: "Google News", llmAvailable: isLLMAvailable() });
+      }
+      const cached = newsFromDisk();
+      if (cached) {
+        newsCache = { items: cached, expiresAt: now + NEWS_TTL_MS };
+        return res.json({ items: cached, source: "Google News", llmAvailable: isLLMAvailable() });
+      }
+      res.status(502).json({ error: "Krypto-Nachrichten nicht verfügbar" });
     } catch (err: any) {
+      const cached = newsFromDisk();
+      if (cached) {
+        return res.json({ items: cached, source: "Google News", llmAvailable: isLLMAvailable() });
+      }
       console.error("[GET /api/analyze-btc/news]", err?.message?.substring(0, 200));
-      res.status(502).json({ error: "Krypto-Nachrichten nicht verfügbar", items: [] });
+      res.status(502).json({ error: "Krypto-Nachrichten nicht verfügbar" });
     }
   });
 }
