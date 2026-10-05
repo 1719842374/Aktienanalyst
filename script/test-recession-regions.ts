@@ -311,6 +311,43 @@ console.log("\n=== Public adapters: iShares KGV, OECD IP, newer series ===");
   const pe = isharesPriceEarnings(html);
   check("iShares KGV keeps the comma as a decimal and the as-of day", pe?.value === 18.36 && pe.date === "2026-10-02", JSON.stringify(pe));
   check("a page without the priceEarnings block is not a PE", isharesPriceEarnings("<html>no ratio</html>") === null);
+  const reversed = isharesPriceEarnings(`{"priceEarnings":{"name":"priceEarnings","sortOrder":35}}{"priceEarnings":{"formattedValue":"18,36","label":"KGV","asOfDate":20261002,"value":18.36309}}`);
+  const reversedCape = capeReading(18.36);
+  const reversedCatalog = scoreRegionalCatalogs({
+    prints: prints({
+      ezPe: reversed?.value ?? null,
+      ezPeSource: reversed ? `iShares EXSA KGV ${reversed.date}` : "STOXX 600 PE (FMP leer, iShares ohne KGV)",
+    }),
+    usSlots: [],
+    usRecession12m: 40,
+    usCorrection12m: 35,
+    today: TODAY,
+    scorers: scorers(),
+  });
+  const reversedSlot = reversedCatalog.regions.find(region => region.id === "EZ")!.slots.find(item => item.name === "STOXX 600 PE")!;
+  check(
+    "EXSA KGV still scores when formattedValue precedes asOfDate",
+    reversedSlot.available
+      && reversedSlot.value === "18.4"
+      && reversedSlot.source === "iShares EXSA KGV 2026-10-02"
+      && reversedSlot.rawScore === reversedCape.rawScore
+      && reversedSlot.weight === reversedCape.weight
+      && reversedSlot.maxWeighted === reversedCape.maxWeighted
+      && reversedSlot.zone === reversedCape.zone,
+    `${reversedSlot.value} ${reversedSlot.source} ${reversedSlot.rawScore} ${reversedSlot.zone}`,
+  );
+  const numeric = isharesPriceEarnings(`{"priceEarnings":{"asOfDate":20261002,"formattedValue":"-","value":18.36309,"label":"KGV"}}`);
+  check("a dash formattedValue falls back to the numeric KGV", numeric?.value === 18.36309 && numeric.date === "2026-10-02", JSON.stringify(numeric));
+  const cell = isharesPriceEarnings(`<td data-id="fundamentalsAndRisk-priceEarnings-data">18,36</td><div data-id="fundamentalsAndRisk-priceEarnings-asOf">Per 02.Okt.2026</div>`);
+  check("the visible EXSA KGV cell is a print when the JSON block is missing", cell?.value === 18.36 && cell.date === "2026-10-02", JSON.stringify(cell));
+  const regionsSrc = readFileSync(new URL("../server/recession-regions.ts", import.meta.url), "utf8");
+  const dataApi = regionsSrc.indexOf("get-product-data");
+  const productPage = regionsSrc.indexOf("ishares-stoxx-europe-600-ucits-etf-de-fund");
+  check(
+    "STOXX PE fetches the EXSA product-data API before the full product page",
+    dataApi !== -1 && productPage !== -1 && dataApi < productPage && regionsSrc.includes("portfolioId=251931") && regionsSrc.includes("fundamentalsAndRisk"),
+    `api=${dataApi} page=${productPage}`,
+  );
   const points = parseDbNomicsSeries({
     series: { docs: [{ period: ["2025-04", "2026-04"], value: [91.46056, 93.37358] }] },
   });

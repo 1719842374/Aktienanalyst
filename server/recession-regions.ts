@@ -67,11 +67,11 @@ export interface ScoreInput {
   scorers: RegionScorers;
 }
 
-async function getText(url: string, timeoutMs = 20000): Promise<string> {
+async function getText(url: string, timeoutMs = 20000, headers: Record<string, string> = {}): Promise<string> {
   try {
     const resp = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { "User-Agent": "Aktienanalyst/1.0", Accept: "application/json,text/csv,*/*" },
+      headers: { "User-Agent": "Aktienanalyst/1.0", Accept: "application/json,text/csv,*/*", ...headers },
     });
     if (!resp.ok) return "";
     return await resp.text();
@@ -132,21 +132,93 @@ async function indexPe(symbols: string[]): Promise<{ value: number; source: stri
   return null;
 }
 
+const EXSA_DATA_QUERY = "portfolioId=251931&component=fundamentalsAndRisk&targetSite=de-ishares-v2&locale=de_DE&userType=individual&appType=PRODUCT_PAGE&appSubType=ISHARES";
+/** Same KGV block the product page embeds, without the 2.7MB document. */
+const ISHARES_EXSA_DATA = [
+  `https://www.blackrock.com/varnish-api/uk-retail01-product-data/product-data/api/v2/get-product-data?${EXSA_DATA_QUERY}`,
+  `https://www.ishares.com/varnish-api/uk-retail01-product-data/product-data/api/v2/get-product-data?${EXSA_DATA_QUERY}`,
+];
 const ISHARES_EXSA = "https://www.ishares.com/de/privatanleger/de/produkte/251931/ishares-stoxx-europe-600-ucits-etf-de-fund";
+const STOXX_PE_URLS = [...ISHARES_EXSA_DATA, ISHARES_EXSA];
 const OECD_JP_IP = "https://api.db.nomics.world/v22/series/OECD/DSD_STES@DF_INDSERV/JPN.M.PRVM.IX.BTE.Y._Z._Z.N?observations=1";
 
-/** iShares priceEarnings block. German pages use a decimal comma. */
+const GERMAN_MONTH: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", mrz: "03", mär: "03", apr: "04",
+  mai: "05", jun: "06", jul: "07", aug: "08", sep: "09", okt: "10",
+  nov: "11", dez: "12",
+};
+
+function peInRange(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && value <= 80;
+}
+
+function compactDate(raw: string): string | null {
+  if (!/^\d{8}$/.test(raw)) return null;
+  const date = `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) return null;
+  return date;
+}
+
+/** Brace slice that stays inside strings, so a `}` in the KGV hint does not end the object. */
+function objectSlice(text: string, open: number): string | null {
+  let depth = 0;
+  let quoted = false;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === "\\") { i += 1; continue; }
+      if (ch === "\"") quoted = false;
+      continue;
+    }
+    if (ch === "\"") { quoted = true; continue; }
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(open, i + 1);
+    }
+  }
+  return null;
+}
+
+function ratioFromBlock(block: string): { date: string; value: number } | null {
+  const dateMatch = block.match(/"asOfDate"\s*:\s*"?(\d{8})"?/);
+  if (!dateMatch) return null;
+  const date = compactDate(dateMatch[1]);
+  if (!date) return null;
+  const formatted = block.match(/"formattedValue"\s*:\s*"([0-9]+(?:[.,][0-9]+)?)"/);
+  const numeric = block.match(/"value"\s*:\s*(-?[0-9]+(?:\.[0-9]+)?)/);
+  const formattedValue = formatted ? Number(formatted[1].replace(",", ".")) : NaN;
+  const numericValue = numeric ? Number(numeric[1]) : NaN;
+  const value = peInRange(formattedValue) ? formattedValue : numericValue;
+  if (!peInRange(value)) return null;
+  return { date, value };
+}
+
+/**
+ * iShares EXSA KGV. The product-data JSON and the product page use the same
+ * priceEarnings object. German pages print a decimal comma. Field order varies.
+ * A page that only rendered the table still has the cell and „Per TT.Mon.JJJJ“.
+ */
 export function isharesPriceEarnings(html: string): { date: string; value: number } | null {
   if (!html) return null;
   const text = html.replace(/&quot;/g, "\"").replace(/&#39;/g, "'");
-  const match = text.match(/"priceEarnings"\s*:\s*\{[^}]*?"asOfDate"\s*:\s*(\d{8})[^}]*?"formattedValue"\s*:\s*"([0-9]+(?:[.,][0-9]+)?)"/);
-  if (!match) return null;
-  const compact = match[1];
-  const date = `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-  const value = Number(match[2].replace(",", "."));
-  if (!Number.isFinite(value) || value <= 0 || value > 80) return null;
-  return { date, value };
+  const marker = /"priceEarnings"\s*:\s*\{/g;
+  let found: RegExpExecArray | null;
+  while ((found = marker.exec(text))) {
+    const block = objectSlice(text, found.index + found[0].length - 1);
+    if (!block) continue;
+    const ratio = ratioFromBlock(block);
+    if (ratio) return ratio;
+  }
+  const valueMatch = text.match(/data-id="fundamentalsAndRisk-priceEarnings-data"[^>]*>\s*([0-9]+(?:[.,][0-9]+)?)\s*</);
+  const dateMatch = text.match(/data-id="fundamentalsAndRisk-priceEarnings-asOf"[^>]*>\s*(?:Per\s+)?(\d{1,2})\.([A-Za-zÄÖÜäöü]{3})\.(\d{4})/);
+  if (!valueMatch || !dateMatch) return null;
+  const value = Number(valueMatch[1].replace(",", "."));
+  const month = GERMAN_MONTH[dateMatch[2].toLowerCase()];
+  const day = Number(dateMatch[1]);
+  if (!month || day < 1 || day > 31 || !peInRange(value)) return null;
+  return { date: `${dateMatch[3]}-${month}-${String(day).padStart(2, "0")}`, value };
 }
 
 /** DBnomics series.docs[0] period/value pairs. YYYY-MM becomes the month start. */
@@ -187,12 +259,15 @@ export function newerSeries(primary: DatedPoint[], fallback: DatedPoint[]): { po
 async function stoxxPe(today: string): Promise<{ value: number | null; source: string }> {
   const fmp = await indexPe(["^STOXX", "^SXXP", "EXSA.DE"]);
   if (fmp) return { value: fmp.value, source: fmp.source };
-  const pe = isharesPriceEarnings(await getText(ISHARES_EXSA, 25000));
-  if (!pe) return { value: null, source: "STOXX 600 PE (FMP leer, iShares ohne KGV)" };
-  if (isStale(pe.date, today)) {
-    return { value: null, source: `iShares EXSA KGV ${pe.date.slice(0, 7)} außerhalb des 18-Monats-Fensters` };
+  for (const url of STOXX_PE_URLS) {
+    const pe = isharesPriceEarnings(await getText(url, 25000, { "User-Agent": "Mozilla/5.0" }));
+    if (!pe) continue;
+    if (isStale(pe.date, today)) {
+      return { value: null, source: `iShares EXSA KGV ${pe.date.slice(0, 7)} außerhalb des 18-Monats-Fensters` };
+    }
+    return { value: pe.value, source: `iShares EXSA KGV ${pe.date}` };
   }
-  return { value: pe.value, source: `iShares EXSA KGV ${pe.date}` };
+  return { value: null, source: "STOXX 600 PE (FMP leer, iShares ohne KGV)" };
 }
 
 async function topixPe(): Promise<{ value: number | null; source: string }> {
