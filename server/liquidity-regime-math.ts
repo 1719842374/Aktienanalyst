@@ -29,6 +29,8 @@ export interface LiquidityMetrics {
   tgaDelta4wBn: number | null;
   m2YoY: number | null;
   velocity: number | null;
+  /** Median der letzten 40 Quartale M2V. Kürzer als 10 Jahre bleibt null. */
+  velocityMedian10y: number | null;
   excessMoneyGrowth: number | null;
   regimeScore: number;
   regimeLabel: RegimeLabel;
@@ -121,6 +123,38 @@ export function plumbingScore(delta13wBn: number | null): number {
 
 export function excessMoneyGrowth(m2YoY: number, realGdpYoY: number, cpiYoY: number): number {
   return m2YoY - realGdpYoY - cpiYoY;
+}
+
+/** Spec Quellenkatalog §1: darunter bleibt EMG null (historischer Offset bei zu kurzem Fenster). */
+export const EMG_MIN_MONTHLY = 24;
+export const EMG_MIN_QUARTERLY = 20;
+
+function finiteSortedObs(obs: FredObs[] | undefined): FredObs[] {
+  return [...(obs ?? [])].filter(p => Number.isFinite(p.value)).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function seriesIsQuarterly(obs: FredObs[]): boolean {
+  if (obs.length < 2) return false;
+  const last = obs[obs.length - 1];
+  const prev = obs[obs.length - 2];
+  const gapDays = (new Date(last.date).getTime() - new Date(prev.date).getTime()) / 86_400_000;
+  return gapDays > 45;
+}
+
+export function emgHistoryOk(input: {
+  m2?: FredObs[];
+  cpi?: FredObs[];
+  gdp?: FredObs[];
+  m2v?: FredObs[];
+}): boolean {
+  const m2 = finiteSortedObs(input.m2);
+  const cpi = finiteSortedObs(input.cpi);
+  const gdp = finiteSortedObs(input.gdp);
+  const m2v = finiteSortedObs(input.m2v);
+  if (m2.length < EMG_MIN_MONTHLY || cpi.length < EMG_MIN_MONTHLY) return false;
+  if (!seriesIsQuarterly(gdp) || gdp.length < EMG_MIN_QUARTERLY) return false;
+  if (!seriesIsQuarterly(m2v) || m2v.length < EMG_MIN_QUARTERLY) return false;
+  return true;
 }
 
 export function excessMoneyScore(excess: number): number {
@@ -238,6 +272,14 @@ export function latestLevel(obs: FredObs[]): { value: number; date: string } | n
   return { value: last.value, date: last.date };
 }
 
+/** Median der letzten 40 Quartale. Weniger als 10 Jahre bleibt null, kein kürzeres Fenster. */
+export function velocityMedian10y(obs: FredObs[] | undefined): number | null {
+  const sorted = finiteSortedObs(obs);
+  if (sorted.length < 40) return null;
+  const tail = sorted.slice(-40).map(p => p.value).sort((a, b) => a - b);
+  return (tail[19] + tail[20]) / 2;
+}
+
 export function velocityDelta(obs: FredObs[]): number | null {
   const o = [...obs].filter(p => Number.isFinite(p.value)).sort((a, b) => a.date.localeCompare(b.date));
   if (o.length < 5) return null;
@@ -264,11 +306,13 @@ export function computeLiquidityMetrics(input: {
   const gdp = input.gdp ? yoyFromMonthly(input.gdp) : null;
   const cpi = input.cpi ? yoyFromMonthly(input.cpi) : null;
   const vel = input.m2v ? latestLevel(input.m2v) : null;
+  const velMedian = velocityMedian10y(input.m2v);
   const velDelta = input.m2v ? velocityDelta(input.m2v) : null;
 
+  const windowOk = emgHistoryOk(input);
   let excess: number | null = null;
   let scoreV1 = pipe;
-  if (m2 && gdp && cpi) {
+  if (m2 && gdp && cpi && windowOk) {
     excess = excessMoneyGrowth(m2.latest, gdp.latest, cpi.latest);
     const spec =
       0.40 * excessMoneyScore(excess) +
@@ -285,8 +329,8 @@ export function computeLiquidityMetrics(input: {
   // notesBondsDelta13wBn wird bewusst nicht separat von FRED bezogen (kein
   // eigenes SOMA-Notes/Bonds-Signal in diesem Modul) -> Classifier faellt auf
   // twist/QT_ended_RMP/QT zurueck, nie automatisch QE ohne explizites Signal.
-  const specV2Component = (m2 && gdp && cpi)
-    ? 0.40 * excessMoneyScore(excess!) + 0.30 * friedmanKorridorScore(m2.latest) + 0.20 * velocityTrendScore(velDelta) + 0.10 * pipe
+  const specV2Component = (m2 && gdp && cpi && windowOk && excess != null)
+    ? 0.40 * excessMoneyScore(excess) + 0.30 * friedmanKorridorScore(m2.latest) + 0.20 * velocityTrendScore(velDelta) + 0.10 * pipe
     : pipe;
   const policy = classifyPolicy({
     buybackCapLongBnValue: input.treasuryBuybackCapBn ?? null,
@@ -306,6 +350,7 @@ export function computeLiquidityMetrics(input: {
     tgaDelta4wBn: tgaD4 == null ? null : round1(tgaD4),
     m2YoY: m2 ? round2(m2.latest) : null,
     velocity: vel ? round3(vel.value) : null,
+    velocityMedian10y: velMedian == null ? null : round3(velMedian),
     excessMoneyGrowth: excess == null ? null : round2(excess),
     regimeScore,
     regimeLabel: regimeFromScore(regimeScore),

@@ -44,8 +44,13 @@ function parseFredCsv(csv: string): FredObs[] {
   return out;
 }
 
-async function fetchFredSeries(series: string): Promise<FredObs[]> {
-  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${series}&cosd=${monthsAgoISO(30)}`;
+const MONTHLY_LOOKBACK = 30;
+const QUARTERLY_LOOKBACK = 66;
+/** 10 Jahre plus ein Quartal, damit der Median 40 M2V-Punkte sehen kann. */
+const M2V_LOOKBACK_MONTHS = 126;
+
+async function fetchFredSeries(series: string, months: number): Promise<FredObs[]> {
+  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${series}&cosd=${monthsAgoISO(months)}`;
   try {
     const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return [];
@@ -57,13 +62,13 @@ async function fetchFredSeries(series: string): Promise<FredObs[]> {
 
 export async function fetchLiquidityLive(): Promise<LiquidityMetrics & Partial<FiscalRegimeFields>> {
   const [walcl, rrp, tga, m2, m2v, gdp, cpi] = await Promise.all([
-    fetchFredSeries(SERIES.walcl),
-    fetchFredSeries(SERIES.rrp),
-    fetchFredSeries(SERIES.tga),
-    fetchFredSeries(SERIES.m2),
-    fetchFredSeries(SERIES.m2v),
-    fetchFredSeries(SERIES.gdp),
-    fetchFredSeries(SERIES.cpi),
+    fetchFredSeries(SERIES.walcl, MONTHLY_LOOKBACK),
+    fetchFredSeries(SERIES.rrp, MONTHLY_LOOKBACK),
+    fetchFredSeries(SERIES.tga, MONTHLY_LOOKBACK),
+    fetchFredSeries(SERIES.m2, MONTHLY_LOOKBACK),
+    fetchFredSeries(SERIES.m2v, M2V_LOOKBACK_MONTHS),
+    fetchFredSeries(SERIES.gdp, QUARTERLY_LOOKBACK),
+    fetchFredSeries(SERIES.cpi, MONTHLY_LOOKBACK),
   ]);
   const metrics = computeLiquidityMetrics({
     walcl, rrp, tga, m2, m2v, gdp, cpi,

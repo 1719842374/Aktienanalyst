@@ -747,3 +747,125 @@ export interface WatchlistEntry {
   /** Nur für P3-/Researcher-Einträge relevant. */
   region?: "US" | "EU" | "ASIA" | "MIXED";
 }
+
+/** GET /api/researcher/liquidity-briefing — Quellenkatalog, keine LI-Summe. */
+export interface LiquidityBriefingRate {
+  value: number | null;
+  asOf: string | null;
+  source: string;
+}
+
+export interface LiquidityBriefingChannel {
+  id: "us-asia-carry" | "us-ez" | "ez-qt" | "fx-jpy" | "fx-eur" | "fx-cny";
+  latest: number | null;
+  unit: string;
+  z: number | null;
+  event: boolean;
+}
+
+export interface LiquidityBriefingRegion {
+  stockBn: number | null;
+  yoy: number | null;
+  stockAsOf: string | null;
+  ngdpAnnualizedBn: number | null;
+  ngdpQuarter: string | null;
+  velocity: number | null;
+  velocityMedian10y: number | null;
+}
+
+export interface EurozoneAggregates {
+  m1StockBn: number | null;
+  m1Yoy: number | null;
+  m1AsOf: string | null;
+  m2StockBn: number | null;
+  m2Yoy: number | null;
+  m2AsOf: string | null;
+}
+
+export interface JapanMonetaryBase {
+  monetaryBaseTn: number | null;
+  monetaryBaseYoy: number | null;
+  monetaryBaseAsOf: string | null;
+}
+
+export interface LiquidityBriefingProgram {
+  period: string | null;
+  netBn: number | null;
+  holdingsBn: number | null;
+  psppNetBn: number | null;
+  psppHoldingsBn: number | null;
+  cumulativeNetPurchasesBn: number | null;
+}
+
+export interface LiquidityBriefing {
+  asOf: string;
+  eurozone: LiquidityBriefingRegion & EurozoneAggregates;
+  japan: LiquidityBriefingRegion & JapanMonetaryBase;
+  app: LiquidityBriefingProgram;
+  pepp: LiquidityBriefingProgram;
+  us: {
+    velocity: number | null;
+    emg: number | null;
+    velocityMedian10y: number | null;
+    source: "liquidity-regime" | null;
+  };
+  sources: {
+    m3: string;
+    ngdpEa: string;
+    m2: string;
+    ngdpJp: string;
+    app: string;
+    pepp: string;
+    rates: string;
+    mof: string;
+    mspd: string;
+    wfs: string;
+  };
+  cache: { us: string; eu: string; m3: string; asia: string; briefing: string };
+  available: { ez: boolean; jp: boolean; app: boolean; pepp: boolean };
+  rates: {
+    usReal: LiquidityBriefingRate;
+    us10y: LiquidityBriefingRate;
+    usBei: LiquidityBriefingRate;
+    jp10y: LiquidityBriefingRate;
+    jpCpiYoy: LiquidityBriefingRate;
+    jpRealExPost: number | null;
+    cn10y: LiquidityBriefingRate;
+    cnCpiYoy: LiquidityBriefingRate;
+    de10y: LiquidityBriefingRate;
+    in2y: LiquidityBriefingRate;
+  };
+  halfLife: { usYears: number | null; jpYears: number | null; ezYears: number | null };
+  pricedIn: { pi: number | null; available: boolean; phi: number; addedToLi: false };
+  spillover: LiquidityBriefingChannel[];
+  em: {
+    weightCap: number;
+    cnM2Yoy: number | null;
+    cnRr7d: number | null;
+    cn10y: number | null;
+    in2y: number | null;
+    tradeNote: string;
+  };
+  books: {
+    us: {
+      walclBn: number | null;
+      rrpBn: number | null;
+      tgaBn: number | null;
+      dff: number | null;
+      dffDelta90: number | null;
+      somaBillsMn: number | null;
+      somaNotesBn: number | null;
+      debtGdp: number | null;
+      billsDiffBn: number | null;
+    };
+    eu: {
+      wfsDepositsBn: number | null;
+      appNetBn: number | null;
+      peppNetBn: number | null;
+      qtNetBn: number | null;
+    };
+    jp: { assetsTn: number | null; m2Bn: number | null };
+  };
+  qra: { nextRelease: string; stale: boolean; usFrontendOnly: true };
+  nakajima: { cached: false };
+}
