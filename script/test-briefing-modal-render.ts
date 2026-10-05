@@ -1,5 +1,5 @@
 /**
- * Renders BriefingModal: v1 when regions are missing, v2 as three columns plus cross.
+ * Renders BriefingModal: v1 and v2 both as Key-Event cards (Macro Impuls layout).
  * Run: npx tsx script/test-briefing-modal-render.ts
  */
 import { createElement } from "react";
@@ -49,8 +49,8 @@ const v2 = renderToStaticMarkup(createElement(BriefingModal, {
   data: {
     headline: "Cross US EU ASIA",
     cross: ["US→EZ: US USTR | EU n/v", "US→Asia: n/v", "EZ→Asia: n/v"],
-    tacticalStance: "Neutral",
-    stanceRationale: "US Neutral, EU Neutral, ASIA Neutral",
+    tacticalStance: "Vorsichtig",
+    stanceRationale: "US Neutral, EU Vorsichtig, ASIA Neutral",
     regions: [
       { region: "US", stance: "Neutral", money: "Fed", fiscal: "QRA", trade: "USTR", li: 62, realRatePct: 1.8, velocity: 1.41, pricedIn: 0.2 },
       { region: "EU", stance: "Vorsichtig", money: "Index n/v", fiscal: "n/v", trade: "n/v", li: null, realRatePct: null, velocity: null, pricedIn: null },
@@ -59,7 +59,19 @@ const v2 = renderToStaticMarkup(createElement(BriefingModal, {
     briefing: {
       headline: "Cross US EU ASIA",
       summary: "should-not-show-as-v1-summary",
-      topChanges: [{ rank: 1, title: "none", region: "ASIA", description: "none" }],
+      topChanges: [{
+        rank: 1,
+        title: "OBBBA verabschiedet",
+        region: "US",
+        category: "Fiskalpolitik",
+        timeframe: "2025-Q3",
+        description: "Capex-Anreize für Manufacturing.",
+        inflationImpact: "steigend",
+        rateImpact: "steigend",
+        equityImpact: "positiv",
+        rationale: "Fiskale Expansion treibt Demand.",
+        affectedSectors: ["Technology", "Defense"],
+      }],
       recommendation: "v1-only",
     },
   },
@@ -69,12 +81,18 @@ const checks: Record<string, boolean> = {
   v1Headline: v1.includes("Alt") && v1.includes("ein Block"),
   v1NoColumns: !v1.includes('data-testid="briefing-regions"'),
   v1Action: v1.includes("Beobachten"),
-  v2Cols: ["US", "EU", "ASIA"].every((r) => v2.includes(`data-testid="briefing-region-${r}"`)),
-  v2Cross: v2.includes("US→EZ") && v2.includes("US→Asia") && v2.includes("EZ→Asia"),
-  v2Numbers: v2.includes("LI 62") && v2.includes("LI n/v"),
+  v1Card: v1.includes('data-testid="briefing-event-card"') && v1.includes("Fed"),
+  v1ImpactRow: v1.includes("Inflation") && v1.includes("Zinsen") && v1.includes("Aktien"),
+  v1NoBars: !v1.includes(">Headline<") && !v1.includes(">Cross<") && !v1.includes(">Top Changes<"),
+  v2NoColumns: !v2.includes('data-testid="briefing-regions"') && !v2.includes('data-testid="briefing-cross"'),
+  v2Cards: v2.includes('data-testid="briefing-events"') && v2.includes("OBBBA verabschiedet"),
+  v2Category: v2.includes("Fiskalpolitik") && v2.includes("2025-Q3"),
+  v2ImpactRow: v2.includes("Inflation") && v2.includes("steigend") && v2.includes("Zinsen") && v2.includes("Aktien"),
+  v2Rationale: v2.includes("Fiskale Expansion treibt Demand."),
+  v2Sectors: v2.includes("Technology") && v2.includes("Defense"),
   v2NoV1Summary: !v2.includes("should-not-show-as-v1-summary") && !v2.includes("v1-only"),
   v2Stance: v2.includes("Vorsichtig"),
-  v2EmptyTrade: v2.includes("n/v"),
+  v2NoBars: !v2.includes(">Headline<") && !v2.includes(">Cross<") && !v2.includes(">Top Changes<") && !v2.includes(">Tactical Stance<"),
 };
 let failed = 0;
 for (const [name, ok] of Object.entries(checks)) {
