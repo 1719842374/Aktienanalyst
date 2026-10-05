@@ -11,6 +11,8 @@ import { RecessionMarketChartsSection } from "@/components/recession/RecessionMa
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
 import { showRecessionStand, type RecessionAnalysis } from "@/components/recession/recessionDashboardShared";
+import { RegionalCatalogSection } from "@/components/recession/RegionalCatalogSection";
+import { useRecessionCatalog } from "@/hooks/useRecessionCatalog";
 import {
   WelcomeScreen, LoadingScreen, ErrorScreen,
   CurrentAssessment, NYFedReference, ScoringRules, ScoringZones,
@@ -28,12 +30,19 @@ export default function RecessionDashboard() {
   const analyzeMutation = useMutation({
     mutationFn: async () => {
       try {
-        const res = await apiRequest("POST", "/api/analyze-recession", {});
-        const json = await res.json();
-        if (!json || !json.indicators || !Array.isArray(json.indicators)) {
-          throw new Error("Invalid response format");
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const res = await apiRequest("POST", "/api/analyze-recession", {});
+          const json = await res.json();
+          if (json?.__building) {
+            await new Promise(resolve => setTimeout(resolve, json.retryAfterMs ?? 9000));
+            continue;
+          }
+          if (!json || !json.indicators || !Array.isArray(json.indicators)) {
+            throw new Error("Invalid response format");
+          }
+          return json as RecessionAnalysis;
         }
-        return json as RecessionAnalysis;
+        throw new Error("Recession analysis still building");
       } catch {
         return RECESSION_FALLBACK_DATA as RecessionAnalysis;
       }
@@ -42,6 +51,8 @@ export default function RecessionDashboard() {
       setData(result);
     },
   });
+
+  const regions = useRecessionCatalog(data);
 
   const startAnalysis = useCallback(() => {
     analyzeMutation.mutate();
@@ -104,7 +115,7 @@ export default function RecessionDashboard() {
             <SectionCard number={4} title="Scoring-Zonen">
               <ScoringZones />
             </SectionCard>
-            <SectionCard number={5} title="Indikatoren-Tabelle (17 Indikatoren)">
+            <SectionCard number={5} title="Indikatoren-Tabelle">
               <IndicatorTable indicators={data.indicators} />
               <SahmRegions regions={data.sahmRegions} />
             </SectionCard>
@@ -114,17 +125,22 @@ export default function RecessionDashboard() {
             <SectionCard number={7} title="Prozentschätzungen">
               <ProbabilityEstimates subgroups={data.subgroups} />
             </SectionCard>
-            <RecessionRsiSection number={8} />
-            <RecessionMarketChartsSection number={9} />
-            <SectionCard number={10} title="Zusammenfassung & Top-3 Treiber">
+            {regions && (
+              <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Japan)">
+                <RegionalCatalogSection catalogs={regions} />
+              </SectionCard>
+            )}
+            <RecessionRsiSection number={regions ? 9 : 8} />
+            <RecessionMarketChartsSection number={regions ? 10 : 9} />
+            <SectionCard number={regions ? 11 : 10} title="Zusammenfassung & Top-3 Treiber">
               <Summary data={data} />
             </SectionCard>
             {data.fazit && (
-              <SectionCard number={11} title="Fazit & Makro-Risikobewertung">
+              <SectionCard number={regions ? 12 : 11} title="Fazit & Makro-Risikobewertung">
                 <FazitSection fazit={data.fazit} />
               </SectionCard>
             )}
-            <SectionCard number={data.fazit ? 12 : 11} title="Quellenliste">
+            <SectionCard number={regions ? (data.fazit ? 13 : 12) : (data.fazit ? 12 : 11)} title="Quellenliste">
               <SourcesList sources={data.sources} />
             </SectionCard>
             <div className="pb-4">

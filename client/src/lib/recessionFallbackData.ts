@@ -115,27 +115,29 @@ export const RECESSION_FALLBACK_DATA = {
       "name": "Shiller CAPE",
       "group": "correction",
       "subgroup": "valuation",
-      "value": "40.4",
-      "rawScore": 7,
-      "weight": 1.8,
-      "weightedScore": 12.6,
-      "maxWeighted": 12.6,
-      "zone": "Extrem hoch (40.4 >35)",
-      "source": "multpl.com",
-      "description": "Cyclically Adjusted Price-to-Earnings Ratio (Shiller PE)"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "Shiller ie_data.xls nicht gelesen",
+      "description": "CAPE steht nur im Shiller-Workbook. Ohne .xls bleibt der Slot zu.",
+      "available": false
     },
     {
       "name": "Margin Debt",
       "group": "correction",
       "subgroup": "valuation",
-      "value": "$2025T",
-      "rawScore": 4,
-      "weight": 1,
-      "weightedScore": 4,
-      "maxWeighted": 4,
-      "zone": "Erhöht / Überbewertet",
-      "source": "currentmarketvaluation.com",
-      "description": "NYSE Margin Debt (Wertpapierkredite)"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "FINRA xlsx nicht gelesen",
+      "description": "Debit steht nur in der FINRA-xlsx. Ohne die Datei bleibt der Slot zu.",
+      "available": false
     },
     {
       "name": "Google Trends \"Recession\"",
@@ -167,14 +169,15 @@ export const RECESSION_FALLBACK_DATA = {
       "name": "Advance-Decline-Line",
       "group": "correction",
       "subgroup": "sentiment",
-      "value": "Parallel",
-      "rawScore": -2,
-      "weight": 1,
-      "weightedScore": -2,
-      "maxWeighted": 3,
-      "zone": "Parallel (AD↑ ≥ Index↑)",
-      "source": "NYSE / Finance API",
-      "description": "NYSE Advance-Decline-Linie vs. S&P 500 Divergenz"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "NYSE",
+      "description": "NYSE Advance-Decline-Linie vs. S&P 500 Divergenz",
+      "available": false
     },
     {
       "name": "CNN Fear & Greed",
@@ -193,40 +196,43 @@ export const RECESSION_FALLBACK_DATA = {
       "name": "AAII Sentiment",
       "group": "correction",
       "subgroup": "sentiment",
-      "value": "Bullish (Proxy)",
-      "rawScore": 2,
-      "weight": 1,
-      "weightedScore": 2,
-      "maxWeighted": 4,
-      "zone": "Bullish (Sentiment-Proxy)",
-      "source": "Finance API (Sentiment-Proxy)",
-      "description": "American Association of Individual Investors Sentiment Survey"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "AAII",
+      "description": "American Association of Individual Investors Sentiment Survey",
+      "available": false
     },
     {
       "name": "CBOE Put/Call Ratio",
       "group": "correction",
       "subgroup": "sentiment",
-      "value": "Niedrig (Proxy)",
-      "rawScore": 2,
-      "weight": 1,
-      "weightedScore": 2,
-      "maxWeighted": 4,
-      "zone": "Niedrig (Sentiment-Proxy: Bullish)",
-      "source": "Finance API (Sentiment-Proxy)",
-      "description": "Equity Put/Call Ratio (Absicherungsindikator)"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "CBOE",
+      "description": "Equity Put/Call Ratio (Absicherungsindikator)",
+      "available": false
     },
     {
       "name": "Investors Intelligence",
       "group": "correction",
       "subgroup": "sentiment",
-      "value": "Bullish (Proxy)",
-      "rawScore": 2,
-      "weight": 1,
-      "weightedScore": 2,
-      "maxWeighted": 4,
-      "zone": "Optimistisch (Sentiment-Proxy)",
-      "source": "Finance API (Sentiment-Proxy)",
-      "description": "Newsletter-Berater Bull/Bear Ratio"
+      "value": "N/A",
+      "rawScore": 0,
+      "weight": 0,
+      "weightedScore": 0,
+      "maxWeighted": 0,
+      "zone": "N/A",
+      "source": "Advisor Perspectives",
+      "description": "Newsletter-Berater Bull/Bear Ratio",
+      "available": false
     }
   ],
   "subgroups": [
@@ -293,10 +299,10 @@ export const RECESSION_FALLBACK_DATA = {
         "CBOE Put/Call Ratio",
         "Investors Intelligence"
       ],
-      "netScore": 7.2,
-      "maxScore": 28.6,
-      "probability": 65,
-      "formula": "50% + (7.2/28.6) × 50% = 62.6% → 65%"
+      "netScore": 3.2,
+      "maxScore": 13.6,
+      "probability": 60,
+      "formula": "50% + (3.2/13.6) × 50% = 61.8% → 60%"
     },
     {
       "name": "correction_full",
@@ -314,33 +320,32 @@ export const RECESSION_FALLBACK_DATA = {
         "Margin Debt",
         "Google Trends \"Recession\""
       ],
-      "netScore": 39.8,
-      "maxScore": 73.1,
+      "netScore": 19.2,
+      "maxScore": 41.5,
       "probability": 75,
-      "formula": "50% + (39.8/73.1) × 50% = 77.2% → 75%"
+      "formula": "50% + (19.2/41.5) × 50% = 73.1% → 75%"
     }
   ],
   "nyFedValue": 0.48,
   "googleTrendsAvailable": true,
   "topDrivers": [
     "Buffett Indikator (TMC/GDP): +16 (Extrem überbewertet (230% >200%))",
-    "Shiller CAPE: +12.6 (Extrem hoch (40.4 >35))",
-    "Margin Debt: +4 (Erhöht / Überbewertet)"
+    "CNN Fear & Greed: +3.2 (Greed (55-75))"
   ],
   "interpretation": "Hohes Risiko: Mehrere Indikatoren signalisieren erhöhte Rezessions- oder Korrekturwahrscheinlichkeit. Defensivere Positionierung empfohlen.",
   "fazit": {
-    "summary": "Gesamtbewertung: Hohes Risiko. Rezession 12M: 25%, Korrektur 12M: 75%. Die Kombination aus historisch extremen Bewertungen (Buffett 230%, CAPE 40.4) und systemischen Risiken im $3T-Private-Credit-Markt bildet ein Dreifach-Risiko-Cluster, das defensives Portfoliomanagement erfordert.",
+    "summary": "Gesamtbewertung: Hohes Risiko. Rezession 12M: 25%, Korrektur 12M: 75%. Die Kombination aus der Buffett-Bewertung (230%) und systemischen Risiken im $3T-Private-Credit-Markt erfordert defensives Portfoliomanagement. CAPE und Margin Debt sind ohne Workbook zu.",
     "riskLevel": "Hoch",
     "sections": [
       {
         "title": "Quantitative Bewertung",
         "emoji": "📊",
-        "text": "Von 17 Indikatoren signalisieren 8 ein erhöhtes Risiko (bearish), 4 sind positiv (bullish) und 5 neutral. Die Rezessionswahrscheinlichkeit liegt bei 15% (3M), 25% (6M) und 25% (12M). Die Korrekturwahrscheinlichkeit beträgt 65% (Sentiment, 3-6M) und 75% (Vollständig, 12M). Die hohe Korrekturwahrscheinlichkeit von 75% wird maßgeblich durch extreme Bewertungsniveaus getrieben: Buffett Indikator (TMC/GDP): +16 (Extrem überbewertet (230% >200%)); Shiller CAPE: +12.6 (Extrem hoch (40.4 >35)); Margin Debt: +4 (Erhöht / Überbewertet)."
+        "text": "Von 17 Indikatoren signalisieren 3 ein erhöhtes Risiko (bearish), 3 sind positiv (bullish) und 11 neutral. Die Rezessionswahrscheinlichkeit liegt bei 15% (3M), 25% (6M) und 25% (12M). Die Korrekturwahrscheinlichkeit beträgt 60% (Sentiment, 3-6M) und 75% (Vollständig, 12M). Die Korrektur wird durch Buffett Indikator (TMC/GDP): +16 (Extrem überbewertet (230% >200%)) und CNN Fear & Greed: +3.2 (Greed (55-75)) getrieben. Shiller CAPE und Margin Debt sind ohne Workbook zu."
       },
       {
         "title": "Bewertungsrisiko",
         "emoji": "⚠️",
-        "text": "Der Buffett-Indikator steht bei 230% — das höchste Niveau seit der Dotcom-Blase. Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. Das Shiller CAPE-Ratio von 40.4 liegt über dem Durchschnitt der letzten 140 Jahre (ca. 17) und signalisiert, dass zukünftige Aktienrenditen (10J) mit hoher Wahrscheinlichkeit unterdurchschnittlich ausfallen. Die NYSE Margin Debt ($2025T) zeigt erhöhte Hebelwirkung im Markt — ein klassischer Vorlauf-Indikator für abrupte Sell-Offs."
+        "text": "Der Buffett-Indikator steht bei 230% — das höchste Niveau seit der Dotcom-Blase. Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. Shiller CAPE liegt nur als Workbook vor und wird nicht gelesen."
       },
       {
         "title": "Private Credit & Systemisches Risiko",
@@ -382,10 +387,6 @@ export const RECESSION_FALLBACK_DATA = {
     {
       "name": "University of Michigan Consumer Sentiment",
       "url": "https://data.sca.isr.umich.edu"
-    },
-    {
-      "name": "Multpl.com (Shiller CAPE)",
-      "url": "https://www.multpl.com/shiller-pe"
     },
     {
       "name": "Advisor Perspectives (Investors Intelligence)",

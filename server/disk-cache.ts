@@ -269,6 +269,22 @@ export function diskResearcherSet(key: string, data: any): void {
   } catch {}
 }
 
+/** Newest briefing-cache updated_at. Does not delete a row that is older than the 1-day researcher TTL. */
+export function diskBriefingUpdatedAt(): number | null {
+  const d = getDb();
+  if (!d) return null;
+  try {
+    const row = d.prepare(
+      `SELECT MAX(updated_at) AS updated_at FROM researcher_cache
+       WHERE cache_key LIKE 'daily_briefing_v2__%' OR cache_key LIKE 'briefing_v2__%'`,
+    ).get() as { updated_at: number | null } | undefined;
+    const value = row?.updated_at;
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export function diskResearcherDelete(key: string): void {
   const d = getDb();
   if (!d) return;

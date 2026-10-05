@@ -1,4 +1,6 @@
 // Types matching the backend response
+import type { RegionalCatalogs } from "@shared/recession-regions";
+
 export interface IndicatorResult {
   name: string;
   group: "recession" | "correction";
@@ -12,6 +14,8 @@ export interface IndicatorResult {
   source: string;
   description: string;
   available?: boolean;
+  /** Set when the crowd leg is the VIX substitute or a crypto print, not live CNN. */
+  proxy?: boolean;
 }
 
 export interface SubgroupResult {
@@ -119,6 +123,7 @@ export interface RecessionAnalysis {
   sources: { name: string; url: string }[];
   bridge?: RecessionBridgeView;
   sahmRegions?: SahmRegionBoard[];
+  regions?: RegionalCatalogs;
 }
 
 /** „Stand“ only when the response day is this UTC day. */

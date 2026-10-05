@@ -40,7 +40,7 @@ export function IndicatorTable({ indicators }: { indicators: IndicatorResult[] }
               <tr key={ind.name} className="border-b border-border/50 hover:bg-muted/20">
                 <td className="py-1.5 px-2">
                   <div className="font-medium">{ind.name}</div>
-                  <div className="text-[10px] text-muted-foreground/70">{ind.source}</div>
+                  <div className="text-[10px] text-muted-foreground/70">{ind.source}{ind.proxy ? " · Proxy" : ""}</div>
                 </td>
                 <td className="py-1.5 px-2 text-right font-mono tabular-nums font-semibold">{ind.value}</td>
                 <td className="py-1.5 px-2">
@@ -76,8 +76,8 @@ export function IndicatorTable({ indicators }: { indicators: IndicatorResult[] }
 
   return (
     <div className="space-y-4">
-      {renderTable(recession, "Rezessions-Indikatoren (7)", <TrendingDown className="w-3.5 h-3.5 text-red-500" />)}
-      {renderTable(correction, "Korrektur-Indikatoren (10)", <BarChart3 className="w-3.5 h-3.5 text-orange-500" />)}
+      {renderTable(recession, `Rezessions-Indikatoren (${recession.length})`, <TrendingDown className="w-3.5 h-3.5 text-red-500" />)}
+      {renderTable(correction, `Korrektur-Indikatoren (${correction.length})`, <BarChart3 className="w-3.5 h-3.5 text-orange-500" />)}
 
       {/* Heatmap visualization */}
       <div>

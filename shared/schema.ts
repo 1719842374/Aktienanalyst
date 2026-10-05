@@ -869,3 +869,5 @@ export interface LiquidityBriefing {
   qra: { nextRelease: string; stale: boolean; usFrontendOnly: true };
   nakajima: { cached: false };
 }
+
+export type { RegionalCatalogs, RegionCatalog, RegionSlot } from "./recession-regions";
