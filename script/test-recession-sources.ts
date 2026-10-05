@@ -316,6 +316,25 @@ console.log("\n=== FINRA margin is billions and a 5Y z, never $2026T ===");
   check("YoY without a 5Y z is shown and not scored", partial.available === false && partial.maxWeighted === 0 && partial.value.includes("Mrd. $") && !/\$\d{4}T/i.test(partial.value));
   const server = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
   check("Buffett reads the FRED ratio", server.includes("DDDM01USA156NWDB") && !server.includes('content.includes("overvalued")'));
+  const pkg = readFileSync(new URL("../package.json", import.meta.url), "utf8");
+  const lock = readFileSync(new URL("../package-lock.json", import.meta.url), "utf8");
+  check(
+    "xlsx is not a dependency and the scorer does not parse a workbook",
+    !/"xlsx"\s*:/.test(pkg)
+      && !lock.includes("node_modules/xlsx")
+      && !server.includes('from "xlsx"')
+      && !server.includes("XLSX.read")
+      && !server.includes("margin-statistics.xlsx")
+      && !server.includes("fetchShillerCape")
+      && !server.includes("fetchFinraDebitPoints"),
+  );
+  check(
+    "closed CAPE and margin add neither net nor max",
+    capeReading(Number.NaN).available === false
+      && capeReading(Number.NaN).maxWeighted === 0
+      && marginDebtReading([]).available === false
+      && marginDebtReading([]).maxWeighted === 0,
+  );
   const csiFn = server.slice(server.indexOf("function scoreConsumerConfidence"), server.indexOf("function scoreBuffett"));
   check("CSI asks UMCSENT before the macro fallback", csiFn.indexOf("UMCSENT") !== -1 && csiFn.indexOf("UMCSENT") < csiFn.indexOf("getMacroValue"));
 }

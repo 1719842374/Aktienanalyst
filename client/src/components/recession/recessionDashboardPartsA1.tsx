@@ -35,7 +35,7 @@ export function WelcomeScreen({ onStart }: { onStart: () => void }) {
           </div>
           <div className="p-3 rounded-lg bg-card border border-card-border">
             <div className="font-semibold text-foreground mb-1">Korrektur-Buch</div>
-            <div className="text-muted-foreground">Buffett, CAPE, Margin, VIX und ein Crowd-Bein (CNN oder VIX-Proxy)</div>
+            <div className="text-muted-foreground">Buffett, VIX und ein Crowd-Bein (CNN oder VIX-Proxy). CAPE und Margin bleiben zu ohne Workbook</div>
           </div>
         </div>
 
@@ -62,7 +62,7 @@ export function LoadingScreen() {
         <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto" />
         <div>
           <div className="text-sm font-medium">Analysiere die beiden Bücher...</div>
-          <div className="text-xs text-muted-foreground mt-1">FRED, CNN, Shiller und FINRA werden abgefragt</div>
+          <div className="text-xs text-muted-foreground mt-1">FRED und CNN werden abgefragt. CAPE und Margin lesen kein Workbook</div>
         </div>
       </div>
     </div>

@@ -2,11 +2,9 @@ import type { Express } from "express";
 import { execSync } from "child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { inflateRawSync } from "node:zlib";
-import * as XLSX from "xlsx";
 import { fetchMacroSnapshot } from "./fmp-macro";
 import { riskLevelPhrase } from "../shared/risk-level-label";
-import { marginYoYAndZ, parseFinraMarginSheetXml } from "../shared/recession-market-charts";
+import { marginYoYAndZ } from "../shared/recession-market-charts";
 import {
   euroAreaUnemploymentFromEurostat,
   sahmIndicatorFromScore,
@@ -339,14 +337,26 @@ function scoreBuffett(): IndicatorResult {
   return buffettReading(latestFred("DDDM01USA156NWDB", 40));
 }
 
-// 9. Shiller CAPE from ie_data.xls. A failed workbook is N/A, not a scraped stand-in.
-async function scoreCAPE(): Promise<IndicatorResult> {
-  return capeReading(await fetchShillerCape());
+// 9. Shiller CAPE. The ratio is only in ie_data.xls. That workbook is not parsed,
+// and this repo has no FRED series for it, so the US slot stays closed.
+function scoreCAPE(): IndicatorResult {
+  const closed = capeReading(Number.NaN);
+  return {
+    ...closed,
+    source: "Shiller ie_data.xls nicht gelesen",
+    description: "CAPE steht nur im Shiller-Workbook. Ohne .xls bleibt der Slot zu.",
+  };
 }
 
-// 10. Margin Debt — FINRA xlsx, billions, YoY against the 5-year z.
-async function scoreMarginDebt(): Promise<IndicatorResult> {
-  return marginDebtReading(await fetchFinraDebitPoints());
+// 10. Margin debt. FINRA publishes the debit only as an xlsx. That file is not parsed.
+// marginDebtReading still scores a numeric series when one is already in hand.
+function scoreMarginDebt(): IndicatorResult {
+  const closed = marginDebtReading([]);
+  return {
+    ...closed,
+    source: "FINRA xlsx nicht gelesen",
+    description: "Debit steht nur in der FINRA-xlsx. Ohne die Datei bleibt der Slot zu.",
+  };
 }
 
 // 11. Google Trends "Recession"
@@ -597,11 +607,6 @@ export function correctionAction(pKorr12: number, pRez12: number, oilShock: bool
 const CURVE_MIN_MONTHS = 24;
 const CURVE_HISTORY_MONTHS = 240;
 const BRIEFING_ESSAY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const FINRA_MARGIN_XLSX = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
-const SHILLER_XLS_URLS = [
-  "https://www.econ.yale.edu/~shiller/data/ie_data.xls",
-  "http://www.econ.yale.edu/~shiller/data/ie_data.xls",
-];
 const PRIVATE_CREDIT_ESSAY =
   "Der $3-Billionen-Private-Credit-Markt steht vor seinem ersten echten Stresstest seit 2008. Morgan Stanley warnt vor Default-Raten von bis zu 8% (vs. historisch 2-2,5%). "
   + "40% der Private-Credit-Kreditnehmer haben laut IWF negativen freien Cashflow — ein Anstieg von 25% in 2021. "
@@ -848,7 +853,7 @@ export function buffettReading(ratio: number): IndicatorResult {
   };
 }
 
-/** Last P/E10 CAPE. The workbook also labels the excess-yield column "CAPE"; that print is near 0. */
+/** Last P/E10 in an in-memory grid. The excess-yield column is also labeled CAPE and stays near 0. */
 export function latestShillerCape(rows: unknown[][]): number {
   const candidates: number[] = [];
   rows.forEach((row, rowIndex) => {
@@ -873,7 +878,7 @@ export function capeReading(cape: number): IndicatorResult {
     name: "Shiller CAPE",
     group: "correction" as const,
     subgroup: "valuation",
-    source: "Shiller ie_data.xls",
+    source: "CAPE-Ratio",
     description: "Cyclically Adjusted Price-to-Earnings Ratio (Shiller PE)",
   };
   if (!Number.isFinite(cape)) return closedIndicator(base);
@@ -1063,68 +1068,6 @@ export function privateCreditEssay(allowed: boolean): { title: string; emoji: st
   return { title: "Private Credit & Systemisches Risiko", emoji: "🏦", text: PRIVATE_CREDIT_ESSAY };
 }
 
-function unzipEntry(buf: Buffer, name: string): Buffer | null {
-  let offset = 0;
-  while (offset + 30 <= buf.length) {
-    const sig = buf.readUInt32LE(offset);
-    if (sig !== 0x04034b50) break;
-    const method = buf.readUInt16LE(offset + 8);
-    const compSize = buf.readUInt32LE(offset + 18);
-    const nameLen = buf.readUInt16LE(offset + 26);
-    const extraLen = buf.readUInt16LE(offset + 28);
-    const fileName = buf.slice(offset + 30, offset + 30 + nameLen).toString("utf8");
-    const dataStart = offset + 30 + nameLen + extraLen;
-    const dataEnd = dataStart + compSize;
-    if (dataEnd > buf.length) return null;
-    const data = buf.slice(dataStart, dataEnd);
-    if (fileName === name) {
-      if (method === 0) return Buffer.from(data);
-      if (method === 8) return inflateRawSync(data);
-      return null;
-    }
-    offset = dataEnd;
-  }
-  return null;
-}
-
-async function fetchFinraDebitPoints(): Promise<{ date: string; debitMillions: number }[]> {
-  try {
-    const resp = await fetch(FINRA_MARGIN_XLSX, {
-      signal: AbortSignal.timeout(20000),
-      headers: { "User-Agent": "Aktienanalyst/1.0" },
-    });
-    if (!resp.ok) return [];
-    const xml = unzipEntry(Buffer.from(await resp.arrayBuffer()), "xl/worksheets/sheet1.xml");
-    if (!xml) return [];
-    return parseFinraMarginSheetXml(xml.toString("utf8"));
-  } catch {
-    return [];
-  }
-}
-
-async function fetchShillerCape(): Promise<number> {
-  for (const url of SHILLER_XLS_URLS) {
-    try {
-      const resp = await fetch(url, {
-        signal: AbortSignal.timeout(25000),
-        headers: { "User-Agent": "Aktienanalyst/1.0" },
-      });
-      if (!resp.ok) continue;
-      const buf = Buffer.from(await resp.arrayBuffer());
-      const workbook = XLSX.read(buf, { type: "buffer" });
-      const sheetName = workbook.SheetNames.includes("Data") ? "Data" : workbook.SheetNames[workbook.SheetNames.length - 1];
-      const sheet = workbook.Sheets[sheetName];
-      if (!sheet) continue;
-      const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true });
-      const cape = latestShillerCape(rows);
-      if (Number.isFinite(cape)) return cape;
-    } catch {
-      continue;
-    }
-  }
-  return NaN;
-}
-
 function groupFormula(net: number, max: number, rounded: number): string {
   if (!(max > 0)) return `keine gewerteten Indikatoren → ${rounded}%`;
   const raw = 50 + (net / max) * 50;
@@ -1296,8 +1239,6 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   const sources = [
     { name: "FRED (Federal Reserve Economic Data)", url: "https://fred.stlouisfed.org" },
     { name: "FRED DDDM01USA156NWDB", url: "https://fred.stlouisfed.org/series/DDDM01USA156NWDB" },
-    { name: "Shiller CAPE (ie_data.xls)", url: "http://www.econ.yale.edu/~shiller/data/ie_data.xls" },
-    { name: "FINRA Margin Statistics", url: "https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics" },
     { name: "CNN Fear & Greed Index", url: "https://www.cnn.com/markets/fear-and-greed" },
     { name: "University of Michigan Consumer Sentiment", url: "https://data.sca.isr.umich.edu" },
     { name: "Google Trends", url: "https://trends.google.com" },
