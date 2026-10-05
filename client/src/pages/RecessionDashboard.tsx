@@ -6,6 +6,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection";
+import { BuffettRatioPanel } from "@/components/recession/BuffettRatioPanel";
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
 import { useLocation } from "wouter";
@@ -132,15 +133,18 @@ export default function RecessionDashboard() {
             )}
             <RecessionRsiSection number={regions ? 9 : 8} />
             <RecessionMarketChartsSection number={regions ? 10 : 9} />
-            <SectionCard number={regions ? 11 : 10} title="Zusammenfassung & Top-3 Treiber">
+            <SectionCard number={regions ? 11 : 10} title="Marktquote zum BIP">
+              <BuffettRatioPanel />
+            </SectionCard>
+            <SectionCard number={regions ? 12 : 11} title="Zusammenfassung & Top-3 Treiber">
               <Summary data={data} />
             </SectionCard>
             {data.fazit && (
-              <SectionCard number={regions ? 12 : 11} title="Fazit & Makro-Risikobewertung">
+              <SectionCard number={regions ? 13 : 12} title="Fazit & Makro-Risikobewertung">
                 <FazitSection fazit={data.fazit} />
               </SectionCard>
             )}
-            <SectionCard number={regions ? (data.fazit ? 13 : 12) : (data.fazit ? 12 : 11)} title="Quellenliste">
+            <SectionCard number={regions ? (data.fazit ? 14 : 13) : (data.fazit ? 13 : 12)} title="Quellenliste">
               <SourcesList sources={data.sources} />
             </SectionCard>
             <div className="pb-4">
