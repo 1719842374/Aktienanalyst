@@ -1391,7 +1391,7 @@ interface FazitSection {
   text: string;
 }
 
-function generateFazit(
+export function generateFazit(
   indicators: IndicatorResult[],
   subgroups: any[],
   pRez3M: number, pRez6M: number, pRez12M: number,
@@ -1424,14 +1424,25 @@ function generateFazit(
   let quantSummary = `Von ${indicators.length} Indikatoren signalisieren ${bearCount} ein erhöhtes Risiko (bearish), ${bullCount} sind positiv (bullish) und ${neutralCount} neutral. `;
   quantSummary += `Die Rezessionswahrscheinlichkeit liegt bei ${pRez3M}% (3M), ${pRez6M}% (6M) und ${pRez12M}% (12M). `;
   quantSummary += `Die Korrekturwahrscheinlichkeit beträgt ${pKorr3_6M}% (Sentiment, 3-6M) und ${pKorr12M}% (Vollständig, 12M). `;
+  const driverList = topDrivers.slice(0, 3).join("; ");
+  // Google Trends sits in sentiment_ext and still enters P_korr12. That is not a valuation print.
+  const valuationLiftsCorrection = indicators.some(i =>
+    i.available !== false && i.subgroup === "valuation" && i.weightedScore > 0,
+  );
   if (pKorr12M >= 65) {
-    quantSummary += `Die hohe Korrekturwahrscheinlichkeit von ${pKorr12M}% wird maßgeblich durch extreme Bewertungsniveaus getrieben: `;
-    quantSummary += topDrivers.slice(0, 3).join("; ") + ".";
+    if (valuationLiftsCorrection) {
+      quantSummary += `Die hohe Korrekturwahrscheinlichkeit von ${pKorr12M}% wird maßgeblich durch extreme Bewertungsniveaus getrieben: `;
+      quantSummary += driverList + ".";
+    } else if (driverList) {
+      quantSummary += `Die hohe Korrekturwahrscheinlichkeit von ${pKorr12M}% wird durch folgende Treiber getrieben: ${driverList}.`;
+    } else {
+      quantSummary += `Die hohe Korrekturwahrscheinlichkeit von ${pKorr12M}% kommt nicht aus gewerteten Bewertungs-Slots.`;
+    }
   } else if (pRez12M >= 40) {
     quantSummary += `Die erhöhte Rezessionswahrscheinlichkeit reflektiert eine Kombination aus schwächelnden Konjunkturdaten und geopolitischem Stress.`;
   }
 
-  // Section 2: Valuation Risk
+  // Section 2: Valuation Risk — omit when Buffett/CAPE/Margin produced no clause.
   let valuationText = "";
   valuationText += buffettFazitClause(buffett);
   const capeVal = cape ? parseFloat(String(cape.value)) : NaN;
@@ -1465,7 +1476,9 @@ function generateFazit(
 
   const sections: FazitSection[] = [
     { title: "Quantitative Bewertung", emoji: "📊", text: quantSummary },
-    { title: "Bewertungsrisiko", emoji: "⚠️", text: valuationText },
+    ...(valuationText.trim()
+      ? [{ title: "Bewertungsrisiko", emoji: "⚠️", text: valuationText }]
+      : []),
     ...(geoSection ? [geoSection] : []),
     ...driverFazitSections(drivers),
     ...(creditSection ? [creditSection] : []),
