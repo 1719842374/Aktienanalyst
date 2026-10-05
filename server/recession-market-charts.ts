@@ -6,13 +6,11 @@
 import type { Request, Response } from "express";
 import { inflateRawSync } from "node:zlib";
 import {
-  fmpAnalystEstimates,
-  fmpEarningsCalendar,
+  fmpAnalystEstimatesBatch,
+  fmpFundDisclosure,
   fmpHistoricalPrices,
-  fmpIncomeStatementQuarterly,
-  fmpKeyMetrics,
-  fmpRatiosQuarterly,
-  fmpRatiosTtm,
+  fmpIncomeStatementBulk,
+  fmpMarketCapBatch,
   isFmpAvailable,
 } from "./fmp";
 import { fetchFredVolSeries, fetchVstoxxVol } from "./recession-markets";
@@ -21,39 +19,41 @@ import {
   CHART_BOOKS,
   SERIES_FLOOR,
   VOL_Y_MAX,
-  addDaysIso,
+  aggregateLineForBook,
+  analystEstimatesCapPerBook,
+  assembleValuationMissing,
+  bulkQuarterWindow,
   chartBarSchema,
   chartBookById,
+  constituentFactsFromSources,
   factpackSchema,
-  epsPrintFromEarningsRow,
-  epsPrintFromRatioQuarter,
-  epsPrintFromRow,
   finraLeverage,
-  instrumentCanPriceEps,
+  forwardEstimateFieldNote,
+  incomePrintsFromBulkBody,
   leverageForMarket,
   localVolMaxima,
+  marketCapFromRow,
   marketsResponseSchema,
-  ntmEpsFromEstimateRows,
+  membersFromNportRows,
+  nportQuartersFor,
+  NPORT_POSITION_NOTE,
   ohlcvFetchFrom,
   parseFinraMarginSheetXml,
   parseMarketWindow,
-  pegFieldsFromMetricsRow,
-  pickValuationInstrument,
   realizedVol20,
   sliceByWindow,
-  ttmEpsFromRatiosTtmRow,
-  valuationFromFmpRows,
-  valuationLabelFor,
+  valuationFromConstituentAggregates,
   type ChartBar,
   type LeverageStrip,
   type MarketChart,
   type MarketFactpack,
   type MarketsResponse,
   type MarketWindow,
-  type ValuationInstrument,
   type VolPoint,
 } from "../shared/recession-market-charts";
 
+/** v8 named a missing forward EPS and did not load netIncomeAvg. v9 sums capped analyst-estimates. */
+export const MARKETS_CHART_CACHE_VERSION = "v9";
 const TTL_MS = 6 * 60 * 60 * 1000;
 const FINRA_XLSX_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx";
 
@@ -120,21 +120,6 @@ async function loadBars(etf: string, from: string, to: string): Promise<RawBar[]
     .filter((x): x is RawBar => x != null)
     .sort((a, b) => a.date.localeCompare(b.date));
   return rows;
-}
-
-function asRows(raw: unknown): unknown[] {
-  return Array.isArray(raw) ? raw : [];
-}
-
-function firstRow(raw: unknown): unknown {
-  if (Array.isArray(raw)) return raw[0] ?? null;
-  if (raw && typeof raw === "object") return raw;
-  return null;
-}
-
-function rowHasVendorPeg(row: unknown): boolean {
-  const extra = pegFieldsFromMetricsRow(row);
-  return extra.peg != null || extra.pegFwd != null;
 }
 
 async function loadVol(
@@ -236,203 +221,166 @@ async function loadLeverage(window: MarketWindow): Promise<{ strip: LeverageStri
   }
 }
 
-interface PrintSources {
-  incomeRows: unknown[];
-  earningsRows: unknown[];
-  ratioQuarterRows: unknown[];
-  ratiosTtmRow: unknown;
-  notes: string[];
-}
-
-function noteShortPrints(notes: string[], call: string, rows: unknown[], parsed: number, emptyField: string) {
-  if (parsed >= 4) return;
-  if (rows.length === 0) notes.push(`${call} leer`);
-  else if (parsed === 0) notes.push(`${call} ohne ${emptyField}`);
-  else notes.push(`${call} hat ${parsed} EPS-Drucke, TTM braucht 4`);
-}
-
-async function loadPrintSources(symbol: string): Promise<PrintSources> {
-  const notes: string[] = [];
-  let incomeRows: unknown[] = [];
-  let earningsRows: unknown[] = [];
-  let ratioQuarterRows: unknown[] = [];
-  let ratiosTtmRow: unknown = null;
-
-  const incomeCall = `GET /stable/income-statement?symbol=${symbol}&period=quarter`;
-  try {
-    const rows = asRows(await fmpIncomeStatementQuarterly(symbol, 80));
-    const parsed = rows.map(epsPrintFromRow).filter((x) => x != null).length;
-    if (parsed > 0) incomeRows = rows;
-    noteShortPrints(notes, incomeCall, rows, parsed, "epsDiluted/eps");
-  } catch {
-    notes.push(`${incomeCall} fehlgeschlagen`);
-  }
-
-  const incomeN = incomeRows.map(epsPrintFromRow).filter((x) => x != null).length;
-  if (incomeN < 8) {
-    const call = `GET /stable/earnings?symbol=${symbol}`;
-    try {
-      const rows = asRows(await fmpEarningsCalendar(symbol));
-      const parsed = rows.map(epsPrintFromEarningsRow).filter((x) => x != null).length;
-      if (parsed > 0) earningsRows = rows;
-      noteShortPrints(notes, call, rows, parsed, "epsActual");
-    } catch {
-      notes.push(`${call} fehlgeschlagen`);
-    }
-  }
-
-  const earningsN = earningsRows.map(epsPrintFromEarningsRow).filter((x) => x != null).length;
-  if (Math.max(incomeN, earningsN) < 8) {
-    const call = `GET /stable/ratios?symbol=${symbol}&period=quarter`;
-    try {
-      const rows = asRows(await fmpRatiosQuarterly(symbol, 40));
-      const parsed = rows.map(epsPrintFromRatioQuarter).filter((x) => x != null).length;
-      if (parsed > 0) ratioQuarterRows = rows;
-      noteShortPrints(notes, call, rows, parsed, "netIncomePerShare");
-    } catch {
-      notes.push(`${call} fehlgeschlagen`);
-    }
-  }
-
-  const ratioN = ratioQuarterRows.map(epsPrintFromRatioQuarter).filter((x) => x != null).length;
-  if (Math.max(incomeN, earningsN, ratioN) < 8) {
-    const call = `GET /stable/ratios-ttm?symbol=${symbol}`;
-    try {
-      const row = firstRow(await fmpRatiosTtm(symbol));
-      ratiosTtmRow = row;
-      if (ttmEpsFromRatiosTtmRow(row) == null && Math.max(incomeN, earningsN, ratioN) < 4) {
-        notes.push(row ? `${call} ohne netIncomePerShareTTM` : `${call} leer`);
-      }
-    } catch {
-      notes.push(`${call} fehlgeschlagen`);
-    }
-  }
-
-  return { incomeRows, earningsRows, ratioQuarterRows, ratiosTtmRow, notes };
-}
-
-function instrumentFrom(
-  symbol: string,
-  role: ValuationInstrument["role"],
-  price: number | null,
-  sources: PrintSources,
-  allowForward: boolean,
-): ValuationInstrument {
-  const vendor = rowHasVendorPeg(sources.ratiosTtmRow)
-    ? sources.ratiosTtmRow
-    : sources.ratioQuarterRows.find((row) => rowHasVendorPeg(row)) ?? sources.ratiosTtmRow;
-  return {
-    symbol,
-    role,
-    price,
-    incomeRows: sources.incomeRows,
-    earningsRows: sources.earningsRows,
-    ratioQuarterRows: sources.ratioQuarterRows,
-    ratiosTtmRow: allowForward ? sources.ratiosTtmRow : null,
-    vendorRatiosRow: allowForward ? vendor : null,
-    keyMetricsRow: null,
-    estimateRows: [],
-  };
-}
-
-async function closeOnOrBefore(symbol: string, asOf: string): Promise<number | null> {
-  const from = addDaysIso(asOf, -21);
-  try {
-    const raw = await fmpHistoricalPrices(symbol, from, asOf);
-    const bars = (Array.isArray(raw) ? raw : [])
-      .map(parseBar)
-      .filter((x): x is RawBar => x != null && x.date <= asOf)
-      .sort((a, b) => a.date.localeCompare(b.date));
-    return bars.length ? bars[bars.length - 1].close : null;
-  } catch {
-    return null;
-  }
-}
-
-function rowsFor(inst: ValuationInstrument, allowForward: boolean) {
-  return {
-    price: inst.price,
-    asOf: "",
-    allowForward,
-    incomeRows: inst.incomeRows,
-    earningsRows: inst.earningsRows,
-    ratioQuarterRows: inst.ratioQuarterRows,
-    ratiosTtmRow: inst.ratiosTtmRow,
-    ratiosRow: inst.vendorRatiosRow,
-    keyMetricsRow: inst.keyMetricsRow,
-    estimateRows: inst.estimateRows,
-  };
+function valuationLabelForBook(book: (typeof CHART_BOOKS)[number]): string {
+  return aggregateLineForBook(book.id).label;
 }
 
 async function loadValuation(
   book: (typeof CHART_BOOKS)[number],
   bar: ChartBar,
   allowForward: boolean,
-): Promise<{ core: ReturnType<typeof valuationFromFmpRows>; missing: string | null; valuationLabel: string }> {
-  const etfSources = await loadPrintSources(book.etf);
-  const etfInst = instrumentFrom(book.etf, "etf", bar.close, etfSources, allowForward);
-  let fallback: ValuationInstrument | null = null;
-  let fallbackSources: PrintSources | null = null;
-  const priceNotes: string[] = [];
-  if (!instrumentCanPriceEps(etfInst) && book.indexFallback) {
-    fallbackSources = await loadPrintSources(book.indexFallback);
-    const price = await closeOnOrBefore(book.indexFallback, bar.date);
-    if (price == null) {
-      priceNotes.push(`GET /stable/historical-price-eod/full?symbol=${book.indexFallback} ohne Kurs am ${bar.date}`);
-    }
-    fallback = instrumentFrom(book.indexFallback, "fallback", price, fallbackSources, allowForward);
+): Promise<{ core: ReturnType<typeof valuationFromConstituentAggregates>["core"]; missing: string | null; valuationLabel: string }> {
+  const line = aggregateLineForBook(book.id);
+  const valuationLabel = line.label;
+  if (line.blocked) {
+    const core = valuationFromConstituentAggregates({
+      constituents: [],
+      etfClose: bar.close,
+      indexLevel: null,
+      vendorPe: null,
+      allowForward,
+      useCurrentMarketCap: false,
+      marketCapUnavailable: line.blocked,
+    }).core;
+    const missing = assembleValuationMissing({
+      chartEtf: book.etf,
+      chosenSymbol: book.etf,
+      valuationLabel,
+      pe: null,
+      peFwd: null,
+      epsYoy: null,
+      peg: null,
+      pegFwd: null,
+      gCons: null,
+      allowForward,
+      etfNotes: [],
+      fallbackNotes: [line.blocked],
+      priceNote: null,
+      extraNotes: [],
+      fwdNote: allowForward ? line.blocked : null,
+      yoyNote: `EPS YoY fehlt: ${line.blocked}`,
+      pegNote: `PEG fehlt: ${line.blocked}`,
+    });
+    return {
+      core: { ...core, pe: null, peFwd: null, peg: null, pegFwd: null, pegKind: null, pegFwdKind: null, epsYoy: null, gCons: null },
+      missing,
+      valuationLabel,
+    };
   }
 
-  const chosen = pickValuationInstrument(etfInst, fallback);
-  let fwdNote: string | null = null;
-  if (allowForward) {
-    const estimateCall = `GET /stable/analyst-estimates?symbol=${chosen.symbol}&period=annual`;
+  const fetchNotes: string[] = [];
+  let members: ReturnType<typeof membersFromNportRows> = [];
+  let filingCall: string | null = null;
+  const slots = nportQuartersFor(bar.date);
+  if (!slots.length) fetchNotes.push(`GET /stable/funds/disclosure?symbol=${book.etf} ohne Quartal`);
+  for (const slot of slots) {
+    const call = `GET /stable/funds/disclosure?symbol=${book.etf}&year=${slot.year}&quarter=${slot.quarter}`;
     try {
-      const rows = asRows(await fmpAnalystEstimates(chosen.symbol, 8));
-      if (ntmEpsFromEstimateRows(rows, bar.date) != null) chosen.estimateRows = rows;
-      else fwdNote = rows.length ? `${estimateCall} ohne epsAvg` : `${estimateCall} leer`;
+      const rows = await fmpFundDisclosure(book.etf, slot.year, slot.quarter);
+      const parsed = membersFromNportRows(rows, book.etf);
+      if (parsed.length) {
+        members = parsed;
+        filingCall = call;
+        fetchNotes.length = 0;
+        break;
+      }
+      fetchNotes.push(Array.isArray(rows) && rows.length ? `${call} ohne assetCat EC` : `${call} leer`);
     } catch {
-      fwdNote = `${estimateCall} fehlgeschlagen`;
+      fetchNotes.push(`${call} fehlgeschlagen`);
     }
-    const preview = valuationFromFmpRows({ ...rowsFor(chosen, true), asOf: bar.date });
-    if (preview.pegKind == null || preview.pegFwdKind == null) {
-      const call = `GET /stable/key-metrics?symbol=${chosen.symbol}`;
+  }
+
+  const prints: ReturnType<typeof incomePrintsFromBulkBody> = [];
+  if (members.length) {
+    const wanted = new Set(members.map((m) => m.symbol));
+    for (const slot of bulkQuarterWindow(bar.date)) {
+      const call = `GET /stable/income-statement-bulk?year=${slot.year}&period=${slot.period}`;
       try {
-        const row = firstRow(await fmpKeyMetrics(chosen.symbol, 1));
-        if (rowHasVendorPeg(row)) chosen.keyMetricsRow = row;
-        else if (preview.pegKind == null && preview.epsYoy == null) {
-          priceNotes.push(row ? `${call} ohne priceToEarningsGrowthRatio` : `${call} leer`);
-        }
+        const body = await fmpIncomeStatementBulk(slot.year, slot.period);
+        prints.push(...incomePrintsFromBulkBody(body, wanted));
       } catch {
-        priceNotes.push(`${call} fehlgeschlagen`);
+        fetchNotes.push(`${call} fehlgeschlagen`);
       }
     }
   }
 
-  const core = valuationFromFmpRows({ ...rowsFor(chosen, allowForward), asOf: bar.date });
-  const valuationLabel = valuationLabelFor(chosen, book.etf);
-  const sourceNotes = (chosen.symbol === book.etf ? etfSources.notes : fallbackSources?.notes ?? etfSources.notes);
-  const gaps: string[] = [];
-  if (valuationLabel !== "ETF-Proxy") {
-    gaps.push(`Formel auf ${chosen.symbol} (Kurs und EPS), nicht auf ${book.etf}`);
+  let marketCaps: { symbol: string; marketCap: number }[] = [];
+  let marketCapUnavailable: string | null = null;
+  let useCurrentMarketCap = false;
+  if (!allowForward) {
+    marketCapUnavailable = "GET /stable/historical-market-capitalization je Name nicht geladen";
+  } else if (members.length) {
+    try {
+      const rows = await fmpMarketCapBatch(members.map((m) => m.symbol));
+      marketCaps = rows.flatMap((row) => {
+        const parsed = marketCapFromRow(row);
+        return parsed ? [parsed] : [];
+      });
+      useCurrentMarketCap = true;
+    } catch {
+      marketCapUnavailable = "GET /stable/market-capitalization-batch fehlgeschlagen";
+    }
   }
-  if (core.pe == null) {
-    const why = [...sourceNotes, ...priceNotes].filter(Boolean);
-    gaps.push(why.length ? `PE n/a: ${why.join("; ")}` : "PE n/a: kein Kurs und EPS derselben Einheit");
+
+  let estimateRows: unknown[] = [];
+  let unloadedForwardSymbols: string[] = [];
+  let estimatesNote: string | null = null;
+  const estimatesCap = analystEstimatesCapPerBook(CHART_BOOKS.length);
+  if (allowForward && members.length) {
+    const batch = await fmpAnalystEstimatesBatch(members.map((m) => m.symbol), estimatesCap);
+    estimateRows = batch.rows;
+    unloadedForwardSymbols = batch.skipped.slice();
+    if (batch.keyMissing || (batch.stoppedEarly && batch.rows.length === 0)) {
+      unloadedForwardSymbols = unloadedForwardSymbols.concat(batch.failed);
+    }
+    if (batch.keyMissing) {
+      estimatesNote = `${forwardEstimateFieldNote(estimatesCap)}; FMP_API_KEY not set`;
+    } else if (batch.stoppedEarly && batch.rows.length === 0) {
+      estimatesNote = `${forwardEstimateFieldNote(estimatesCap)}; Rate-Limit`;
+    }
   }
-  if (core.epsYoy == null && core.pe != null) {
-    gaps.push("EPS YoY n/a: weniger als 8 Quartalsdrucke derselben Einheit");
-  } else if (core.epsYoy == null && sourceNotes.length) {
-    gaps.push(`EPS YoY n/a: ${sourceNotes.join("; ")}`);
-  }
-  if (allowForward && core.peFwd == null && fwdNote) gaps.push(`fwd n/a: ${fwdNote}`);
-  if (allowForward && core.peg == null && core.epsYoy != null && core.epsYoy <= 0) {
-    gaps.push("PEG n/a: g<=0");
-  }
-  if (allowForward && core.pegFwd == null && core.gCons != null && core.gCons <= 0) {
-    gaps.push("PEG fwd n/a: g<=0");
-  }
-  return { core, missing: gaps.length ? gaps.join(" · ") : null, valuationLabel };
+  const constituents = constituentFactsFromSources({
+    members,
+    prints,
+    marketCaps,
+    estimateRows,
+    asOf: bar.date,
+  });
+  const result = valuationFromConstituentAggregates({
+    constituents,
+    etfClose: bar.close,
+    indexLevel: null,
+    vendorPe: null,
+    allowForward,
+    useCurrentMarketCap,
+    marketCapUnavailable,
+    unloadedForwardSymbols,
+    estimatesCap,
+    estimatesNote,
+  });
+  const named = (reason: string) => (fetchNotes.length ? `${fetchNotes.join("; ")}; ${reason}` : reason);
+  const missing = assembleValuationMissing({
+    chartEtf: book.etf,
+    chosenSymbol: book.etf,
+    valuationLabel,
+    pe: result.core.pe,
+    peFwd: result.core.peFwd,
+    epsYoy: result.core.epsYoy,
+    peg: result.core.peg,
+    pegFwd: result.core.pegFwd,
+    gCons: result.core.gCons,
+    allowForward,
+    etfNotes: [],
+    fallbackNotes: [...fetchNotes, ...result.peReasons],
+    priceNote: null,
+    extraNotes: [],
+    fwdNote: result.fwdReason ? named(result.fwdReason) : null,
+    yoyNote: result.core.epsYoy == null && result.yoyReason ? `EPS YoY fehlt: ${named(result.yoyReason)}` : null,
+    pegNote: result.core.peg == null && result.pegReason ? `PEG fehlt: ${named(result.pegReason)}` : null,
+    methodNote: filingCall ? `${filingCall}. ${NPORT_POSITION_NOTE}` : line.methodNote,
+    coverageNote: result.coverageNote,
+  });
+  return { core: result.core, missing, valuationLabel };
 }
 
 export async function buildChartMarket(
@@ -451,7 +399,7 @@ export async function buildChartMarket(
   const marks = localVolMaxima(vol);
   const last = ohlcv[ohlcv.length - 1] ?? null;
   let snapshot = emptySnapshot(last?.rsi ?? null, last?.hist ?? null);
-  let valuationLabel = "ETF-Proxy";
+  let valuationLabel = valuationLabelForBook(book);
   if (withValuation && last) {
     try {
       const loaded = await loadValuation(book, last, true);
@@ -509,7 +457,7 @@ function failedMarket(book: (typeof CHART_BOOKS)[number], message: string): Mark
     snapshot: emptySnapshot(null, null),
     leverage: null,
     leverageNote: book.id === "SPY" ? "FINRA Margin Debit nicht lieferbar" : null,
-    valuationLabel: "ETF-Proxy",
+    valuationLabel: valuationLabelForBook(book),
   };
 }
 
@@ -563,23 +511,22 @@ async function buildFactpack(
     cacheable = false;
     console.error(`[RECESSION-CHARTS] factpack ${book.etf}`, err instanceof Error ? err.message : err);
   }
-  const v = loaded?.core ?? valuationFromFmpRows({
-    price: bar.close,
-    asOf: bar.date,
+  const v = loaded?.core ?? valuationFromConstituentAggregates({
+    constituents: [],
+    etfClose: bar.close,
+    indexLevel: null,
+    vendorPe: null,
     allowForward: false,
-    incomeRows: [],
-    earningsRows: [],
-    ratiosRow: null,
-    keyMetricsRow: null,
-    estimateRows: [],
-  });
+    useCurrentMarketCap: false,
+    marketCapUnavailable: null,
+  }).core;
   const note = [v.note, loaded?.missing].filter(Boolean).join(" ") || null;
   const pack = factpackSchema.parse({
     id: book.id,
     etf: book.etf,
     date: bar.date,
     close: bar.close,
-    valuationLabel: loaded?.valuationLabel ?? "ETF-Proxy",
+    valuationLabel: loaded?.valuationLabel ?? valuationLabelForBook(book),
     pe: v.pe,
     peFwd: v.peFwd,
     peg: v.peg,
@@ -636,7 +583,7 @@ export async function tryHandleRecessionMarketCharts(req: Request, res: Response
       res.status(400).json({ error: "etf muss SPY, QQQ, VGK oder ASHR sein" });
       return true;
     }
-    const key = `v3:${window}:${etf}:${date}`;
+    const key = `${MARKETS_CHART_CACHE_VERSION}:${window}:${etf}:${date}`;
     const cached = cacheGet(factpackCache, key);
     if (cached) {
       res.json(cached);
@@ -658,7 +605,7 @@ export async function tryHandleRecessionMarketCharts(req: Request, res: Response
     return true;
   }
 
-  const key = `v3:${window}`;
+  const key = `${MARKETS_CHART_CACHE_VERSION}:${window}`;
   const cached = cacheGet(bundleCache, key);
   if (cached) {
     res.json(cached);

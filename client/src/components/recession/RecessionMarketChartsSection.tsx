@@ -17,6 +17,7 @@ import {
   MARKET_WINDOWS,
   VOL_Y_MAX,
   pegDisplaySuffix,
+  valuationGapText,
   volBandLabel,
   type ChartMarketId,
   type MarketChart,
@@ -100,15 +101,26 @@ function chartClickDate(state: { activeLabel?: string | number } | null): string
   return typeof label === "string" && label ? label : null;
 }
 
+function valuationFigure(
+  n: number | null | undefined,
+  digits: number,
+  missing: string | null | undefined,
+  marker: string,
+): string {
+  if (n != null && Number.isFinite(n)) return fmt(n, digits);
+  return valuationGapText(missing, marker);
+}
+
 function SnapshotRow({ market }: { market: MarketChart }) {
   const s = market.snapshot;
   const pegNote = s.pegKind === "formula" && s.peg != null && s.peg > 3 ? " · teuer je Wachstumseinheit" : "";
+  const yoy = s.epsYoy == null ? valuationGapText(s.missing, "EPS YoY fehlt:") : `${fmt(s.epsYoy, 1)}%`;
   return (
     <>
-      <p className="text-[11px] text-muted-foreground font-mono" data-testid="market-snapshot">
-        {market.valuationLabel} · PE {fmt(s.pe, 1)} · fwd {fmt(s.peFwd, 1)} · EPS YoY {fmt(s.epsYoy, 1)}% · PEG {fmt(s.peg, 2)}
+      <p className="text-[11px] text-muted-foreground font-mono break-words" data-testid="market-snapshot">
+        {market.valuationLabel} · PE {valuationFigure(s.pe, 1, s.missing, "PE fehlt:")} · fwd {valuationFigure(s.peFwd, 1, s.missing, "Forward-PE:")} · EPS YoY {yoy} · PEG {valuationFigure(s.peg, 2, s.missing, "PEG fehlt:")}
         {pegDisplaySuffix(s.pegKind)}
-        {pegNote} · PEG fwd {fmt(s.pegFwd, 2)}
+        {pegNote} · PEG fwd {valuationFigure(s.pegFwd, 2, s.missing, "Forward-PEG:")}
         {pegDisplaySuffix(s.pegFwdKind)} · RSI {fmt(s.rsi, 1)} · MACD H {fmt(s.macdHist, 2)}
       </p>
       {s.missing && (
@@ -125,11 +137,11 @@ function FactpackBody({ pack, loading, error }: { pack: MarketFactpack | undefin
   if (error) return <p className="text-xs text-red-500">{error instanceof Error ? error.message : "Factpack fehlgeschlagen"}</p>;
   if (!pack) return null;
   const rows: { label: string; value: string; warn?: boolean }[] = [
-    { label: "PE ttm", value: fmt(pack.pe, 2) },
-    { label: "PE fwd", value: fmt(pack.peFwd, 2) },
-    { label: "EPS YoY", value: pack.epsYoy == null ? "n/a" : `${fmt(pack.epsYoy, 2)} %` },
-    { label: "PEG ttm", value: `${fmt(pack.peg, 2)}${pegDisplaySuffix(pack.pegKind)}`, warn: pack.pegExpensive },
-    { label: "PEG fwd", value: `${fmt(pack.pegFwd, 2)}${pegDisplaySuffix(pack.pegFwdKind)}`, warn: pack.pegFwdExpensive },
+    { label: "PE ttm", value: valuationFigure(pack.pe, 2, pack.note, "PE fehlt:") },
+    { label: "PE fwd", value: valuationFigure(pack.peFwd, 2, pack.note, "Forward-PE:") },
+    { label: "EPS YoY", value: pack.epsYoy == null ? valuationGapText(pack.note, "EPS YoY fehlt:") : `${fmt(pack.epsYoy, 2)} %` },
+    { label: "PEG ttm", value: `${valuationFigure(pack.peg, 2, pack.note, "PEG fehlt:")}${pegDisplaySuffix(pack.pegKind)}`, warn: pack.pegExpensive },
+    { label: "PEG fwd", value: `${valuationFigure(pack.pegFwd, 2, pack.note, "Forward-PEG:")}${pegDisplaySuffix(pack.pegFwdKind)}`, warn: pack.pegFwdExpensive },
     { label: "Konsens-Wachstum", value: pack.gCons == null ? "n/a" : `${fmt(pack.gCons, 2)} %` },
     { label: "RSI(14)", value: fmt(pack.rsi, 1) },
     { label: "MACD", value: fmt(pack.macd, 3) },

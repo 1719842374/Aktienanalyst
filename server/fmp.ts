@@ -43,7 +43,11 @@ async function spaceOutgoingCall(): Promise<void> {
   _lastFmpCallAt = Date.now();
 }
 
-async function fmpFetch(path: string, params: Record<string, string> = {}): Promise<any> {
+async function fmpFetch(
+  path: string,
+  params: Record<string, string> = {},
+  opts: { timeoutMs?: number; asText?: boolean } = {},
+): Promise<any> {
   const key = getApiKey();
   if (!key) throw new Error("FMP_API_KEY not set");
   const url = new URL(`${FMP_BASE}${path}`);
@@ -57,7 +61,7 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
     trackFmpCall(1);
     try {
       const resp = await fetch(url.toString(), {
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 15000),
         headers: { "User-Agent": "StockAnalystPro/1.0" },
       });
       if (resp.status === 429 || resp.status === 503) {
@@ -70,7 +74,7 @@ async function fmpFetch(path: string, params: Record<string, string> = {}): Prom
         }
       }
       if (!resp.ok) throw Object.assign(new Error(`FMP ${resp.status}: ${path}`), { fmpStatus: resp.status });
-      return resp.json();
+      return opts.asText ? resp.text() : resp.json();
     } catch (err: any) {
       lastErr = err;
       // Retry only on network/timeout errors (AbortError), not on client errors.
@@ -620,6 +624,17 @@ export async function fmpKeyMetrics(symbol: string, limit = 5) {
   return fmpFetch(`/key-metrics`, { symbol, limit: String(limit) });
 }
 
+export async function fmpKeyMetricsTtm(symbol: string) {
+  // GET /stable/key-metrics-ttm?symbol=^GSPC
+  // netIncomePerShareTTM is one TTM EPS. peRatioTTM is a vendor multiple.
+  return fmpFetch(`/key-metrics-ttm`, { symbol });
+}
+
+export async function fmpEtfInfo(symbol: string) {
+  // GET /stable/etf/info?symbol=SPY — expense ratio, AUM, NAV. No share EPS.
+  return fmpFetch(`/etf/info`, { symbol });
+}
+
 export async function fmpBatchQuote(symbols: string[]) {
   if (symbols.length === 0) return [];
   // /stable has no comma-separated batch quote — fetch each symbol in parallel.
@@ -1039,4 +1054,148 @@ export async function fmpHistoricalMarketCap(symbol: string, from?: string, to?:
     const data = await fmpFetch(`/historical-market-capitalization`, params);
     return Array.isArray(data) ? data : [];
   } catch { return []; }
+}
+
+/**
+ * GET /stable/sp500-constituent
+ * Current S&P 500 membership. Fields include symbol, name, sector, subSector,
+ * headQuarter, dateFirstAdded, cik, founded. No weight and no earnings.
+ */
+export async function fmpSp500Constituents(): Promise<unknown[]> {
+  const data = await fmpFetch(`/sp500-constituent`);
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * GET /stable/etf/holdings?symbol=
+ * Fund positions. `asset` / `symbol` name the holding. `marketValue` and
+ * `weightPercentage` are the fund's position, not the company's market cap.
+ */
+export async function fmpEtfHoldings(symbol: string): Promise<unknown[]> {
+  const data = await fmpFetch(`/etf/holdings`, { symbol });
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * GET /stable/funds/disclosure?symbol=&year=&quarter=
+ * N-PORT holdings for that fund. Documented on an ETF symbol (VWO).
+ * `cik` is the fund filer. `valUsd` and `pctVal` are the position.
+ * `balance` is the share count. There is no netIncome and no netIncomeAvg.
+ */
+export async function fmpFundDisclosure(symbol: string, year: number, quarter: number): Promise<unknown[]> {
+  const data = await fmpFetch(`/funds/disclosure`, {
+    symbol,
+    year: String(year),
+    quarter: String(quarter),
+  });
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    const rec = data as Record<string, unknown>;
+    if (Array.isArray(rec.data)) return rec.data;
+    if (Array.isArray(rec.holdings)) return rec.holdings;
+  }
+  return [];
+}
+
+/**
+ * GET /stable/income-statement-bulk?year=&period=Q1|Q2|Q3|Q4
+ * Every company's statement for that fiscal period. Body may be JSON or CSV.
+ * Callers filter to index members. This is not an ETF income statement.
+ */
+export async function fmpIncomeStatementBulk(year: number, period: string): Promise<string> {
+  const body = await fmpFetch(
+    `/income-statement-bulk`,
+    { year: String(year), period },
+    { timeoutMs: 60000, asText: true },
+  );
+  return typeof body === "string" ? body : JSON.stringify(body ?? []);
+}
+
+/**
+ * GET /stable/market-capitalization-batch?symbols=
+ * Company market cap (price × shares). Chunked so the query string stays short.
+ * `marketCap` is not an ETF holding's `marketValue`.
+ */
+export async function fmpMarketCapBatch(symbols: string[]): Promise<unknown[]> {
+  const seen: Record<string, true> = {};
+  const unique: string[] = [];
+  for (const raw of symbols) {
+    const symbol = raw.trim().toUpperCase();
+    if (!symbol || seen[symbol]) continue;
+    seen[symbol] = true;
+    unique.push(symbol);
+  }
+  const out: unknown[] = [];
+  const chunk = 80;
+  for (let i = 0; i < unique.length; i += chunk) {
+    const symbolsParam = unique.slice(i, i + chunk).join(",");
+    const data = await fmpFetch(`/market-capitalization-batch`, { symbols: symbolsParam });
+    if (Array.isArray(data)) out.push(...data);
+    else if (data && typeof data === "object") out.push(data);
+  }
+  return out;
+}
+
+export interface AnalystEstimateBatch {
+  rows: unknown[];
+  loaded: string[];
+  skipped: string[];
+  failed: string[];
+  keyMissing: boolean;
+  stoppedEarly: boolean;
+}
+
+/**
+ * GET /stable/analyst-estimates?symbol=&period=annual
+ * One symbol per call. There is no bulk and no comma-joined symbol list.
+ * Dedupe matches market-capitalization-batch, then `cap` stops the walk.
+ * The first call goes through fmpFetch. A missing key throws there and the loop stops.
+ * One symbol's HTTP failure is recorded and does not drop the rows already loaded.
+ */
+export async function fmpAnalystEstimatesBatch(symbols: string[], cap: number): Promise<AnalystEstimateBatch> {
+  const seen: Record<string, true> = {};
+  const unique: string[] = [];
+  for (const raw of symbols) {
+    const symbol = raw.trim().toUpperCase();
+    if (!symbol || seen[symbol]) continue;
+    seen[symbol] = true;
+    unique.push(symbol);
+  }
+  const limit = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+  const load = unique.slice(0, limit);
+  const skipped = unique.slice(limit);
+  const rows: unknown[] = [];
+  const loaded: string[] = [];
+  const failed: string[] = [];
+  for (let i = 0; i < load.length; i++) {
+    const symbol = load[i];
+    try {
+      const data = await fmpAnalystEstimates(symbol, 4);
+      const list = Array.isArray(data) ? data : data && typeof data === "object" ? [data] : [];
+      let kept = 0;
+      for (const row of list) {
+        if (!row || typeof row !== "object") continue;
+        const rec = row as Record<string, unknown>;
+        rows.push(rec.symbol ? row : { ...rec, symbol });
+        kept += 1;
+      }
+      if (kept) loaded.push(symbol);
+      else failed.push(symbol);
+    } catch (err) {
+      const failure = classifyFmpError(err);
+      failed.push(symbol);
+      if (failure.errorCode === "FMP_NOT_CONFIGURED" || failure.errorCode === "RATE_LIMITED") {
+        for (let j = i + 1; j < load.length; j++) skipped.push(load[j]);
+        return {
+          rows,
+          loaded,
+          skipped,
+          failed,
+          keyMissing: failure.errorCode === "FMP_NOT_CONFIGURED",
+          stoppedEarly: true,
+        };
+      }
+    }
+  }
+  return { rows, loaded, skipped, failed, keyMissing: false, stoppedEarly: false };
 }
