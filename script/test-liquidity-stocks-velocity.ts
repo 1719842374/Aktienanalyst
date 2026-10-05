@@ -107,7 +107,7 @@ ok("JP debt level does not change LI", plain.li === withDebt.li, `${plain.li} vs
 ok("JP debt level does not change books.M", JSON.stringify(plain.books.M) === JSON.stringify(withDebt.books.M));
 ok("JP debt level does not change books.F", JSON.stringify(plain.books.F) === JSON.stringify(withDebt.books.F));
 ok("debt level is display only", withDebt.stocks.debtGdpPct === 250);
-ok("empty stocks have pi unavailable", plain.stocks.available.pi === false && plain.stocks.pricedIn == null && plain.stocks.piNote === "program start unknown");
+ok("empty stocks have pi unavailable without V", plain.stocks.available.pi === false && plain.stocks.pricedIn == null && (plain.stocks.piNote || "").includes("2y cap"));
 
 const priced = scoreCatalog("US", {}, {
   realRate: 0.08,
@@ -116,7 +116,7 @@ const priced = scoreCatalog("US", {}, {
   programAgeYears: 2,
 });
 ok("payload T½ at r=0.08 and V=V̄", near(priced.stocks.tHalfYears, 8.99, 9.01), String(priced.stocks.tHalfYears));
-ok("π at 2 years and V=V̄ is 1 without a dollar rest", priced.stocks.pricedIn === 1 && priced.stocks.available.pi === true && priced.stocks.unpricedPvBn == null, String(priced.stocks.pricedIn));
+ok("π at 2 years and V=V̄ is 1 without a dollar rest", priced.stocks.pricedIn === 1 && priced.stocks.available.pi === true && priced.stocks.unpricedPvBn === 0, String(priced.stocks.pricedIn));
 ok("books stay empty objects' shape", Array.isArray(priced.books.M) && Array.isArray(priced.books.F));
 ok("a dollar rest does not move li", priced.li === scoreCatalog("US", {}, { debtGdpPct: 250, fiscalRestBn: 500 }).li);
 
@@ -126,7 +126,7 @@ const noAge = buildRegionalStocks({
   velocityHistory: [1],
   fiscalRestBn: 40,
 });
-ok("missing program start leaves π empty and names the gap", noAge.available.pi === false && noAge.pricedIn == null && noAge.piNote === "program start unknown" && noAge.unpricedPvBn == null);
+ok("missing program start uses the 2y cap", noAge.available.pi === true && noAge.pricedIn === 1 && (noAge.piNote || "").includes("2y cap") && noAge.unpricedPvBn === 0);
 ok("missing start still reports V/V̄ and T½", noAge.velocityOverMedian === 1 && near(noAge.tHalfYears, 34.9, 35.1), String(noAge.tHalfYears));
 ok("one year at the velocity median is half priced in", pricedInFromAgeAndVelocity(1, 1.4, 1.4) === 0.5);
 ok("velocity below its median scales π down", pricedInFromAgeAndVelocity(2, 0.7, 1.4) === 0.5);
@@ -157,7 +157,7 @@ await withServer(async (base) => {
   ok("regional route carries stocks", eu.status === 200 && body.stocks?.debtGdpPct === 90, JSON.stringify(body.stocks));
   ok("regional route carries T½", near(body.stocks?.tHalfYears, 34.9, 35.1), String(body.stocks?.tHalfYears));
   ok("regional route keeps books.M and books.F", Array.isArray(body.books?.M) && Array.isArray(body.books?.F));
-  ok("π names an unknown program start instead of waiting on F", body.stocks?.pricedIn == null && body.stocks?.piNote === "program start unknown");
+  ok("π without V stays empty and names the 2y cap", body.stocks?.pricedIn == null && String(body.stocks?.piNote || "").includes("2y cap"));
 });
 
 console.log("spelled series ids");
@@ -169,7 +169,7 @@ ok("US ids are the spelled FRED set",
 ok("EU FRED ids are debt and the long yield",
   JSON.stringify(spelledFredIds("EU")) === JSON.stringify(["GGGDTPEZA188N", "IRLTLT01EZM156N"]));
 ok("ASIA FRED ids are debt, JGB10, CPI, the annual CPI fallback and NGDP",
-  JSON.stringify(spelledFredIds("ASIA")) === JSON.stringify(["GGGDTAJPA188N", "IRLTLT01JPM156N", "JPNCPIALLMINMEI", "FPCPITOTLZGJPN", "JPNNGDP"]));
+  JSON.stringify(spelledFredIds("ASIA")) === JSON.stringify(["GGGDTAJPA188N", "IRLTLT01JPM156N", "JPNCPIALLMINMEI", "FPCPITOTLZGJPN", "JPNNGDP", "JPNRGDPEXP"]));
 ok("dead FRED mirrors are not spelled ids",
   DEAD_FRED_SERIES.every(id => !usIds.includes(id) && !spelledFredIds("EU").includes(id) && !spelledFredIds("ASIA").includes(id)));
 ok("MSPD marketable url is not the bills book",
@@ -373,7 +373,7 @@ const aged = applyCapexRest(
   { fiscalRestBn: null, tMidYears: null, programAgeYears: programAgeFromCache({ programmes: [{ timeline: "2020-2030" }] }, NOW) },
 );
 const agedRow = buildRegionalStocks(aged);
-ok("age from a timeline prices π without a dollar stock", agedRow.pricedIn === 1 && agedRow.unpricedPvBn == null, String(agedRow.pricedIn));
+ok("age from a timeline prices π without a dollar stock", agedRow.pricedIn === 1 && agedRow.unpricedPvBn === 0, String(agedRow.pricedIn));
 ok("numeric capex rest is F", fiscalRestFromCache({ fiscalRestBn: 40, tMidYears: 0 }).fiscalRestBn === 40
   && fiscalRestFromCache({ fiscalRestBn: 40, tMidYears: 0 }).tMidYears === 0);
 const withRest = applyCapexRest(
@@ -382,7 +382,7 @@ const withRest = applyCapexRest(
 );
 ok("F/M uses the money stock", withRest.fiscalOverMoney === 40 / 20000, String(withRest.fiscalOverMoney));
 const pricedRest = buildRegionalStocks(withRest);
-ok("a dollar rest alone does not turn π on", pricedRest.available.pi === false && pricedRest.piNote === "program start unknown");
+ok("a dollar rest alone does not turn π on", pricedRest.available.pi === false && String(pricedRest.piNote || "").includes("2y cap"));
 
 const trendLevels = monthly(H_MIN + 8, 100, 110);
 const mixed = scoreCatalog("EU", {

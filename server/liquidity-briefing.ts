@@ -2,8 +2,8 @@
  * Live-Fetch für EZ-Velocity (NGDP/M3), JP-Velocity (NGDP/M2) und APP/PEPP.
  * Spec: Offen_WORK_DATA_SOURCES_LIQUIDITY_BRIEFING.md
  *
- * US-M2V wird hier nicht geholt. Ein vorhandener C2-Wert darf nur durchgereicht
- * werden. Tote FRED-Spiegel aus §0 werden nicht angefragt.
+ * US-M2V: C2-Cache zuerst, sonst FRED M2V bzw. GDP/M2SL. Tote FRED-Spiegel
+ * aus §0 werden nicht angefragt.
  */
 import type { LiquidityBriefing } from "@shared/schema";
 import { catalogSourceUrls, loadBriefingCatalog } from "./liquidity-briefing-catalog";
@@ -25,6 +25,7 @@ import {
   parseFredCsv,
   parsePeppPurchases,
   quarterVelocity,
+  appCumulativeNetBn,
   roundTo,
   xBotInvalidationKeys,
   yoyPercent,
@@ -305,7 +306,10 @@ function latestApp(rows: AppMonth[]): ProgramLatest {
     holdingsBn: roundTo(last.holdingsBn, 3),
     psppNetBn: roundTo(last.psppNetBn, 3),
     psppHoldingsBn: roundTo(last.psppHoldingsBn, 3),
-    cumulativeNetPurchasesBn: null,
+    cumulativeNetPurchasesBn: (() => {
+      const sum = appCumulativeNetBn(rows);
+      return sum == null ? null : roundTo(sum, 3);
+    })(),
   };
 }
 
@@ -317,7 +321,7 @@ function latestPepp(rows: PeppMonth[]): ProgramLatest {
   return {
     period: last.period,
     netBn: roundTo(last.netBn, 3),
-    holdingsBn: null,
+    holdingsBn: roundTo(last.cumulativeNetPurchasesBn, 3),
     psppNetBn: null,
     psppHoldingsBn: null,
     cumulativeNetPurchasesBn: roundTo(last.cumulativeNetPurchasesBn, 3),
@@ -514,6 +518,7 @@ export async function fetchLiquidityBriefing(opts: {
     app: euBundle.app || [],
     pepp: euBundle.pepp || [],
   }, url => fetchText(url, fetchImpl));
+  const { usFill, ...catalogRest } = catalog;
 
   cache.set(CACHE_KEYS.us, {
     rates: catalog.rates,
@@ -536,10 +541,10 @@ export async function fetchLiquidityBriefing(opts: {
     app,
     pepp,
     us: {
-      velocity: usLiquidity.velocity,
-      emg: usLiquidity.emg,
-      velocityMedian10y: usLiquidity.velocityMedian10y ?? null,
-      source: usLiquidity.velocity == null ? null : "liquidity-regime",
+      velocity: usLiquidity.velocity ?? usFill.velocity,
+      emg: usLiquidity.emg ?? usFill.emg,
+      velocityMedian10y: usLiquidity.velocityMedian10y ?? usFill.velocityMedian10y,
+      source: usLiquidity.velocity != null ? "liquidity-regime" : usFill.source,
     },
     sources: {
       m3: "ECB BSI M1/M2/M3 outstanding",
@@ -566,7 +571,7 @@ export async function fetchLiquidityBriefing(opts: {
       app: app.netBn != null,
       pepp: pepp.netBn != null,
     },
-    ...catalog,
+    ...catalogRest,
   };
 
   if (payload.available.ez && payload.available.jp && payload.available.app && payload.available.pepp) {
