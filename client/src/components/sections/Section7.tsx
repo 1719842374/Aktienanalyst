@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { TAM_NA_SHARE_WARN, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, kiFillMetaLine, type TamNaFill, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
+import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, hasPositiveSegmentRevenue, kiFillMetaLine, type TamNaFill, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
 import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
 import { formatNumber } from "../../lib/formatters";
 import { apiRequest } from "../../lib/queryClient";
@@ -69,17 +69,22 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
     setPeerKiLoading(false);
   }, [data.ticker, factPeerCount]);
 
+  const visibleTamSegments = useMemo(
+    () => (tam?.segments ?? []).filter((s) => hasPositiveSegmentRevenue(s.segmentRevenue)),
+    [tam],
+  );
+
   const tamNaRefs = useMemo(() => {
     const out: TamNaSegmentRef[] = [];
     const seen = new Set<string>();
-    for (const s of tam?.segments ?? []) {
+    for (const s of visibleTamSegments) {
       const ref = toTamNaRef(s);
       if (!ref || seen.has(ref.segmentName)) continue;
       seen.add(ref.segmentName);
       out.push(ref);
     }
     return out;
-  }, [tam]);
+  }, [visibleTamSegments]);
   const scopeNaCount = useMemo(() => countScopeRestNa(tamNaRefs, null), [tamNaRefs]);
   const kiCellCount = useMemo(
     () => (tamAiFills ? countKiFilledCells(tamNaRefs, Object.values(tamAiFills)) : 0),
@@ -98,7 +103,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
         industry: data.industry,
         description: data.description,
         coveragePct: typeof tam.coveragePct === "number" ? tam.coveragePct : null,
-        segments: tam.segments.map((s) => ({
+        segments: visibleTamSegments.map((s) => ({
           segmentName: s.segmentName,
           segmentRevenue: s.segmentRevenue,
           segmentShare: s.segmentShare,
@@ -112,24 +117,17 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
       try { json = await res.json(); } catch { json = null; }
       if (requestId !== tamAiRequest.current) return;
       const incomplete = "KI-Schätzung unvollständig — nichts übernommen";
-      if (!res.ok || !json || !Array.isArray(json.fills) || json.fills.length === 0) {
+      if (!res.ok || !json || !Array.isArray(json.fills)) {
         setTamAiError(json?.error || incomplete);
         return;
       }
-      if (countScopeRestNa(tamNaRefs, json.fills) !== 0) {
+      const applied = applicableTamNaFills(tamNaRefs, json.fills);
+      if (applied.length === 0) {
         setTamAiError(json.error || incomplete);
         return;
       }
-      const known = new Set(tamNaRefs.map((s) => s.segmentName));
       const next: Record<string, TamNaFill> = {};
-      for (const fill of json.fills) {
-        if (!fill || !known.has(fill.segmentName)) continue;
-        next[fill.segmentName] = fill;
-      }
-      if (countScopeRestNa(tamNaRefs, Object.values(next)) !== 0) {
-        setTamAiError(incomplete);
-        return;
-      }
+      for (const fill of applied) next[fill.segmentName] = fill;
       setTamAiFills(next);
     } catch (err: unknown) {
       if (requestId !== tamAiRequest.current) return;
@@ -362,7 +360,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
-                    {tam.segments.map((seg: any, i: number) => {
+                    {visibleTamSegments.map((seg: any, i: number) => {
                       const row = tamRowView(seg, tamAiFills?.[seg.segmentName]);
                       return (
                       <tr key={i} className="hover:bg-muted/10">
@@ -684,7 +682,7 @@ function toTamNaRef(s: {
 }): TamNaSegmentRef | null {
   const name = typeof s.segmentName === "string" ? s.segmentName.trim() : "";
   if (!name) return null;
-  if (!(typeof s.segmentRevenue === "number" && Number.isFinite(s.segmentRevenue) && s.segmentRevenue >= 0)) return null;
+  if (!hasPositiveSegmentRevenue(s.segmentRevenue)) return null;
   return {
     segmentName: name,
     segmentRevenue: s.segmentRevenue,
