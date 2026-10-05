@@ -3,7 +3,19 @@
  * fetch that series and diskResearcherSet. The catalog fetch does not call
  * the US C2 M2V path. Spelled stock series are read separately.
  */
+import { gunzipSync } from "node:zlib";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
+import { EU_BONDS_SNAPSHOT } from "./eu-bonds-snapshot";
+import { BOJ_M2_CODE, BOJ_M2_YOY_CODE } from "./liquidity-briefing";
+import {
+  WORLD_BANK_CN_M2_URL,
+  bojHundredMillionYenToBillion,
+  parseAppBreakdown,
+  parseBojMoneyStock,
+  parseBojSeries,
+  parsePeppPurchases,
+  parseWorldBankLevels,
+} from "./liquidity-briefing-math";
 import { CATALOG, type Region, type SeriesSpec } from "./liquidity-index-catalog";
 import {
   jpnAssetsToTn,
@@ -12,8 +24,10 @@ import {
   type Obs,
   type SeriesBundle,
 } from "./liquidity-index-math";
+import { BOJ_JGB_CODE, parseEurostatJson } from "./liquidity-stocks-series";
 import { fetchRegionalStockInputs } from "./liquidity-stocks-series";
 import type { StockInputs } from "./liquidity-stocks-velocity";
+import { QRA_SNAPSHOT } from "./qra-snapshot";
 
 export interface SeriesCache {
   get(key: string): unknown;
@@ -39,6 +53,9 @@ const BUYBACK_URLS = [
   "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/treasury_buyback_operations?page[size]=40&sort=-record_date",
   "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/buybacks?page[size]=40&sort=-record_date",
 ];
+const APP_CSV_URL = "https://www.ecb.europa.eu/mopo/pdf/APP_breakdown_history.csv";
+const PEPP_CSV_URL = "https://www.ecb.europa.eu/mopo/pdf/PEPP_purchase_history.csv";
+const ECB_WFS_ASSETS = "ILM/W.U2.C.A070000.U2.EUR";
 const STALE_DAYS = 450;
 
 export function parseLiquidityRegion(value: unknown): Region | "invalid" | null {
@@ -77,11 +94,30 @@ function isoWeekToDate(token: string): string | null {
   return null;
 }
 
+function decodeFetched(buf: ArrayBuffer, url: string): string {
+  const bytes = new Uint8Array(buf);
+  const unzipped = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b
+    ? gunzipSync(Buffer.from(bytes))
+    : Buffer.from(bytes);
+  if (url.includes("jgbcm") || url.includes("boj.or.jp")) {
+    try {
+      const sjis = new TextDecoder("shift_jis").decode(unzipped);
+      if (sjis.includes("10年") || /SERIES|MAM1|SMBIT|MABS/i.test(sjis)) return sjis;
+    } catch {
+      /* utf-8 below */
+    }
+  }
+  return new TextDecoder("utf-8").decode(unzipped);
+}
+
 async function fetchText(url: string, timeoutMs = 12000): Promise<string | null> {
   try {
-    const resp = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    const resp = await fetch(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { Accept: "text/csv,application/json,text/plain;q=0.9,*/*;q=0.8" },
+    });
     if (!resp.ok) return null;
-    const text = await resp.text();
+    const text = decodeFetched(await resp.arrayBuffer(), url);
     if (!text || text.includes("<!DOCTYPE") || text.includes("<html")) return null;
     return text;
   } catch {
@@ -194,6 +230,100 @@ async function fetchBuybacks(): Promise<Obs[]> {
   return [];
 }
 
+function dated(period: string, value: number): Obs | null {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(period)) return { date: period, value };
+  if (/^\d{4}-\d{2}$/.test(period)) return { date: `${period}-01`, value };
+  if (/^\d{4}$/.test(period)) return { date: `${period}-01-01`, value };
+  return null;
+}
+
+async function fetchAppPeppHoldings(): Promise<Obs[]> {
+  const [appCsv, peppCsv] = await Promise.all([fetchText(APP_CSV_URL, 20000), fetchText(PEPP_CSV_URL, 20000)]);
+  const app = parseAppBreakdown(appCsv || "");
+  const pepp = parsePeppPurchases(peppCsv || "");
+  const peppBy = new Map(pepp.map(row => [row.period, row.cumulativeNetPurchasesBn]));
+  const out: Obs[] = [];
+  for (const row of app) {
+    const peppHold = peppBy.get(row.period);
+    const point = dated(row.period, row.holdingsBn + (peppHold ?? 0));
+    if (point) out.push(point);
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function fetchBundOutstanding(now: Date): Promise<Obs[]> {
+  const start = `${now.getUTCFullYear() - 12}-Q1`;
+  const url = `https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/gov_10q_ggdebt?geo=DE&na_item=F3&sector=S13&unit=MIO_EUR&sinceTimePeriod=${start}&format=JSON&lang=EN`;
+  const text = await fetchText(url, 20000);
+  if (!text) return [];
+  return parseEurostatJson(text, 1 / 1000);
+}
+
+async function fetchBojCsv(url: string): Promise<string> {
+  return (await fetchText(url, 20000)) || "";
+}
+
+function bojStart(now: Date): string {
+  const d = new Date(now.getTime());
+  d.setUTCFullYear(d.getUTCFullYear() - 12);
+  return d.toISOString().slice(0, 7).replace("-", "");
+}
+
+async function fetchBojJgbTn(now: Date): Promise<Obs[]> {
+  const url = `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=FM05&code=${BOJ_JGB_CODE}&startDate=${bojStart(now)}`;
+  const rows = parseBojSeries(await fetchBojCsv(url), BOJ_JGB_CODE);
+  return rows.flatMap(row => {
+    const point = dated(row.period, jpnAssetsToTn(row.value));
+    return point ? [point] : [];
+  });
+}
+
+async function fetchBojM2Yoy(now: Date): Promise<Obs[]> {
+  const url = `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_CODE},${BOJ_M2_YOY_CODE}&startDate=${bojStart(now)}`;
+  const csv = await fetchBojCsv(url);
+  const official = parseBojSeries(csv, BOJ_M2_YOY_CODE);
+  if (official.length) {
+    return official.flatMap(row => {
+      const point = dated(row.period, row.value);
+      return point ? [point] : [];
+    });
+  }
+  const levels = parseBojMoneyStock(csv).map(row => {
+    const point = dated(row.period, bojHundredMillionYenToBillion(row.value));
+    return point;
+  }).filter((p): p is Obs => !!p);
+  return yoyPercent(levels);
+}
+
+async function fetchBojGovDepTn(now: Date): Promise<Obs[]> {
+  const codes = ["BSLGV", "BSLGV1", "MAABGDEPT"];
+  for (const code of codes) {
+    const url = `https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD01&code=${code}&startDate=${bojStart(now)}`;
+    const rows = parseBojSeries(await fetchBojCsv(url), code);
+    if (rows.length) {
+      return rows.flatMap(row => {
+        const point = dated(row.period, jpnAssetsToTn(row.value));
+        return point ? [point] : [];
+      });
+    }
+  }
+  return [];
+}
+
+async function fetchCnM2Yoy(): Promise<Obs[]> {
+  const text = await fetchText(`${WORLD_BANK_CN_M2_URL.replace("mrnev=8", "mrnev=20")}`, 20000);
+  const levels = parseWorldBankLevels(text || "");
+  const out: Obs[] = [];
+  for (let i = 1; i < levels.length; i++) {
+    const prev = levels[i - 1];
+    const last = levels[i];
+    if (!(prev.value > 0)) continue;
+    const point = dated(last.period, ((last.value - prev.value) / prev.value) * 100);
+    if (point) out.push(point);
+  }
+  return out;
+}
+
 async function fetchDefaultBundle(spec: SeriesSpec, now: Date): Promise<SeriesBundle> {
   if (spec.validUntil && now.toISOString().slice(0, 10) > spec.validUntil) return { points: [] };
   switch (spec.cacheKey) {
@@ -215,16 +345,20 @@ async function fetchDefaultBundle(spec: SeriesSpec, now: Date): Promise<SeriesBu
       return { points: dropStale(await fetchFred("WTREGEN", now, v => v / 1000), now) };
     case "liqidx_US__mspd":
       return { points: dropStale(await fetchMspd(), now) };
-    case "liqidx_US__buybacks":
-      return { points: dropStale(await fetchBuybacks(), now) };
+    case "liqidx_US__buybacks": {
+      const live = dropStale(await fetchBuybacks(), now);
+      if (live.length) return { points: live };
+      return {
+        points: [{ date: QRA_SNAPSHOT.asOf, value: QRA_SNAPSHOT.assumedBuybacksBn }],
+        impulse: "level",
+      };
+    }
     case "fiscal__qra_2026Q3":
-      return { points: [{ date: "2026-08-05", value: 409 }] };
+      return { points: [{ date: QRA_SNAPSHOT.asOf, value: QRA_SNAPSHOT.impliedBillChangeBn }] };
     case "liqidx_EU__assets":
-      // WFS total-assets has no stable fast EDP key here. An empty slot stays
-      // unavailable instead of scoring a different balance-sheet line.
-      return { points: [] };
+      return { points: dropStale(await fetchEcb(ECB_WFS_ASSETS, 1 / 1000), now) };
     case "liqidx_EU__app_pepp":
-      return { points: [] };
+      return { points: dropStale(await fetchAppPeppHoldings(), now) };
     case "liqidx_EU__df":
       return { points: dropStale(await fetchEcb("ILM/W.U2.C.L020200.U2.EUR", 1 / 1000), now) };
     case "liqidx_EU__ecbdfr":
@@ -235,26 +369,23 @@ async function fetchDefaultBundle(spec: SeriesSpec, now: Date): Promise<SeriesBu
       // ILM WFS 5.1 — general government liabilities at the Eurosystem, EUR millions.
       return { points: dropStale(await fetchEcb("ILM/W.U2.C.L050100.U2.EUR", 1 / 1000), now) };
     case "liqidx_EU__eubonds":
-      return { points: [{ date: "2026-07-01", value: 80 }] };
+      return { points: [{ date: EU_BONDS_SNAPSHOT.asOf, value: EU_BONDS_SNAPSHOT.netBondBn }] };
     case "liqidx_EU__bund":
-      return { points: [] };
+      return { points: dropStale(await fetchBundOutstanding(now), now) };
     case "liqidx_ASIA__jpnassets":
       return { points: dropStale(await fetchFred("JPNASSETS", now, jpnAssetsToTn), now) };
     case "liqidx_ASIA__jgb_px":
-      return { points: [] };
+      return { points: dropStale(await fetchBojJgbTn(now), now) };
     case "liqidx_ASIA__rate":
       return { points: dropStale(await fetchFred("IRSTCI01JPM156N", now, v => v), now) };
     case "liqidx_ASIA__m2":
-      return { points: [] };
+      return { points: dropStale(await fetchBojM2Yoy(now), now) };
     case "liqidx_ASIA__jgb_iss":
-      return { points: [] };
+      return { points: dropStale(await fetchBojJgbTn(now), now) };
     case "liqidx_ASIA__govdep":
-      return { points: [] };
-    case "liqidx_ASIA__cn_m2": {
-      const raw = await fetchFred("MYAGM2CNM189N", now, v => v);
-      const yoy = yoyPercent(raw);
-      return { points: dropStale(yoy, now) };
-    }
+      return { points: dropStale(await fetchBojGovDepTn(now), now) };
+    case "liqidx_ASIA__cn_m2":
+      return { points: await fetchCnM2Yoy() };
     default:
       return { points: [] };
   }

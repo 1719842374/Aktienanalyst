@@ -807,7 +807,7 @@ export interface LiquidityBriefing {
     velocity: number | null;
     emg: number | null;
     velocityMedian10y: number | null;
-    source: "liquidity-regime" | null;
+    source: "liquidity-regime" | "FRED M2V" | "NGDP/M2" | null;
   };
   sources: {
     m3: string;
@@ -836,14 +836,20 @@ export interface LiquidityBriefing {
     in2y: LiquidityBriefingRate;
   };
   halfLife: { usYears: number | null; jpYears: number | null; ezYears: number | null };
-  pricedIn: { pi: number | null; available: boolean; phi: number; addedToLi: false };
+  pricedIn: { pi: number | null; available: boolean; phi: number; addedToLi: false; note?: string | null };
   spillover: LiquidityBriefingChannel[];
   em: {
     weightCap: number;
     cnM2Yoy: number | null;
+    cnM2AsOf: string | null;
+    cnM2Source: string;
     cnRr7d: number | null;
+    cnRrAsOf: string | null;
+    cnRrSource: string;
     cn10y: number | null;
     in2y: number | null;
+    in2yAsOf: string | null;
+    in2ySource: string;
     tradeNote: string;
   };
   books: {

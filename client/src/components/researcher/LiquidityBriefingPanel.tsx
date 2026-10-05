@@ -89,7 +89,9 @@ export function LiquidityBriefingPanel() {
             <Metric label="US M2V" value={fmt(data.us.velocity, 3)} testId="text-us-velocity" />
             <Metric label={`APP Netto ${data.app.period || ""}`.trim()} value={fmt(data.app.netBn, 3, " Mrd. €")} testId="text-app-net" />
             <Metric label="APP Bestand" value={fmt(data.app.holdingsBn, 3, " Mrd. €")} />
+            <Metric label="APP kumuliert" value={fmt(data.app.cumulativeNetPurchasesBn, 1, " Mrd. €")} />
             <Metric label={`PEPP Netto ${data.pepp.period || ""}`.trim()} value={fmt(data.pepp.netBn, 3, " Mrd. €")} testId="text-pepp-net" />
+            <Metric label="PEPP Bestand" value={fmt(data.pepp.holdingsBn, 1, " Mrd. €")} />
             <Metric label="PEPP kumuliert" value={fmt(data.pepp.cumulativeNetPurchasesBn, 1, " Mrd. €")} />
           </div>
 
@@ -100,6 +102,9 @@ export function LiquidityBriefingPanel() {
             <Metric label="EM-Gewicht" value={`≤ ${data.em.weightCap.toFixed(2)}`} testId="text-em-weight" />
             <Metric label="T½ US" value={fmt(data.halfLife.usYears, 1, " J")} testId="text-thalf-us" />
             <Metric label="T½ JP" value={fmt(data.halfLife.jpYears, 1, " J")} testId="text-thalf-jp" />
+            <Metric label="T½ EZ" value={fmt(data.halfLife.ezYears, 1, " J")} testId="text-thalf-ez" />
+            <Metric label="IN 2y" value={fmt(data.rates.in2y.value, 2, " %")} testId="text-in-2y" />
+            <Metric label="CN 7d/Policy" value={fmt(data.em.cnRr7d, 2, " %")} testId="text-cn-rr" />
             <Metric
               label="π"
               value={data.pricedIn.available ? fmt(data.pricedIn.pi, 2) : "n/a"}
@@ -121,6 +126,7 @@ export function LiquidityBriefingPanel() {
             <Metric label="WFS Einlagen" value={fmt(data.books.eu.wfsDepositsBn, 1, " Mrd. €")} testId="text-wfs" />
             <Metric label="BoJ Assets" value={fmt(data.books.jp.assetsTn, 2, " Bio. ¥")} testId="text-boj-assets" />
             <Metric label="PSPP Netto" value={fmt(data.app.psppNetBn, 3, " Mrd. €")} />
+            <Metric label="PSPP Bestand" value={fmt(data.app.psppHoldingsBn, 1, " Mrd. €")} />
             <Metric label="US EMG" value={fmt(data.us.emg, 2, " pp")} />
           </div>
 
@@ -134,10 +140,13 @@ export function LiquidityBriefingPanel() {
           </div>
 
           <div className="text-[10px] text-foreground/50" data-testid="text-em-note">
-            EM {data.em.tradeNote} CN-M2 {fmt(data.em.cnM2Yoy, 1, " %")} · IN 2y {fmt(data.em.in2y, 2, " %")} · CN 10y {data.rates.cn10y.source}
+            EM {data.em.tradeNote} CN-M2 {fmt(data.em.cnM2Yoy, 1, " %")} {data.em.cnM2AsOf || ""} · {data.em.cnM2Source}
+            {" · "}IN 2y {fmt(data.em.in2y, 2, " %")} {data.em.in2yAsOf || ""} · {data.em.in2ySource}
+            {" · "}CN policy {fmt(data.em.cnRr7d, 2, " %")} {data.em.cnRrAsOf || ""} · {data.em.cnRrSource}
+            {" · "}CN 10y {data.rates.cn10y.source}
           </div>
           <div className="text-[10px] text-foreground/40" data-testid="text-liquidity-briefing-source">
-            {data.sources.m3} · {data.sources.m2} · {data.sources.rates}
+            {data.sources.m3} · {data.sources.m2} · {data.sources.rates} · US V {data.us.source || "n/a"}
             {data.qra.usFrontendOnly ? ` · QRA bis ${data.qra.nextRelease}` : ""}
           </div>
         </>

@@ -32,6 +32,8 @@ export interface SeriesSpec {
   weightCap?: number;
   /** Static plan cache expires on this date (QRA next release). */
   validUntil?: string;
+  /** Plan prints (QRA, EU funding) score the level, not a 30-day Δ. */
+  impulse?: "level";
 }
 
 export const CATALOG: Record<Region, SeriesSpec[]> = {
@@ -53,6 +55,7 @@ export const CATALOG: Record<Region, SeriesSpec[]> = {
       ttlHours: 24 * 91,
       cacheKey: "fiscal__qra_2026Q3",
       validUntil: "2026-11-04",
+      impulse: "level",
     },
   ],
   EU: [
@@ -62,7 +65,7 @@ export const CATALOG: Record<Region, SeriesSpec[]> = {
     { book: "M", role: "rate", id: "ECBDFR", unit: "pct", sign: -1, ttlHours: 12, cacheKey: "liqidx_EU__ecbdfr" },
     { book: "C", role: "money", id: "MABMM301", unit: "pct", sign: 1, ttlHours: 24, cacheKey: "liqidx_EU__m3" },
     { book: "F", role: "govCash", id: "ECB_GOVDEP", unit: "bnEUR", sign: -1, ttlHours: 6, cacheKey: "liqidx_EU__govdep" },
-    { book: "F", role: "netIssuance", id: "EU_BONDS", unit: "bnEUR", sign: -1, ttlHours: 24 * 180, cacheKey: "liqidx_EU__eubonds" },
+    { book: "F", role: "netIssuance", id: "EU_BONDS", unit: "bnEUR", sign: -1, ttlHours: 24 * 180, cacheKey: "liqidx_EU__eubonds", impulse: "level" },
     { book: "F", role: "netIssuance", id: "BUND", unit: "bnEUR", sign: -1, ttlHours: 24, cacheKey: "liqidx_EU__bund" },
   ],
   ASIA: [

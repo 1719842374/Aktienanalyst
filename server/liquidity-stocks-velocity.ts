@@ -113,6 +113,13 @@ export function circulationShare(v: number, vBar: number): number | null {
 }
 
 /** π = time share × circulation. Missing age or velocity leaves it empty. */
+/** Remaining dollar impulse. No F and π known → 0 (Philip: π does not wait on F). */
+export function unpricedPvBn(pi: number | null, fiscalRestBn: number | null): number | null {
+  if (pi == null || !Number.isFinite(pi)) return null;
+  if (fiscalRestBn == null || !Number.isFinite(fiscalRestBn)) return 0;
+  return (1 - Math.max(0, Math.min(1, pi))) * fiscalRestBn;
+}
+
 export function pricedInFromAgeAndVelocity(
   ageYears: number | null,
   v: number | null,
@@ -165,10 +172,13 @@ export function buildRegionalStocks(input: StockInputs = {}): RegionalStocks {
   const history = input.velocityHistory?.filter(n => Number.isFinite(n)) ?? [];
   const vBar = history.length ? median(history) : null;
   const tHalf = realRate == null ? null : tHalfYears(realRate, velocity, vBar);
-  const age = finiteOrNull(input.programAgeYears);
+  const ageRaw = finiteOrNull(input.programAgeYears);
+  const age = ageRaw ?? PI_CAP_YEARS;
   const velocityOverMedian = velocity != null && vBar != null && vBar !== 0 ? velocity / vBar : null;
   const pricedIn = pricedInFromAgeAndVelocity(age, velocity, vBar);
-  const piNote = age == null ? PROGRAM_START_UNKNOWN : null;
+  const piNote = ageRaw == null
+    ? "π = 2y cap × V/V̄ (Philip; program start unknown)"
+    : null;
   const m2 = finiteOrNull(input.m2YoY);
   const gdp = finiteOrNull(input.realGdpYoY);
   const cpi = finiteOrNull(input.cpiYoY);
@@ -187,7 +197,7 @@ export function buildRegionalStocks(input: StockInputs = {}): RegionalStocks {
     fiscalTrend: finiteOrNull(input.fiscalTrend),
     moneyTrend: finiteOrNull(input.moneyTrend),
     pricedIn,
-    unpricedPvBn: null,
+    unpricedPvBn: unpricedPvBn(pricedIn, finiteOrNull(input.fiscalRestBn)),
     velocityOverMedian,
     programAgeYears: age,
     piNote,

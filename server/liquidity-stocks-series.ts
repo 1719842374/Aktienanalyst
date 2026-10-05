@@ -40,7 +40,7 @@ export const MSPD_MARKETABLE_URL =
 
 const US_IDS = ["GFDEGDQ188S", "DFII10", "DGS10", "CPIAUCSL", "M2V", "M2SL", "GDP", "GDPC1"] as const;
 const EU_IDS = ["GGGDTPEZA188N", "IRLTLT01EZM156N"] as const;
-const ASIA_IDS = ["GGGDTAJPA188N", "IRLTLT01JPM156N", "JPNCPIALLMINMEI", "FPCPITOTLZGJPN", "JPNNGDP"] as const;
+const ASIA_IDS = ["GGGDTAJPA188N", "IRLTLT01JPM156N", "JPNCPIALLMINMEI", "FPCPITOTLZGJPN", "JPNNGDP", "JPNRGDPEXP"] as const;
 
 export interface StockFetchCache {
   get(key: string): unknown;
@@ -65,6 +65,10 @@ export function eurostatDebtSecUrl(now: Date): string {
 export function eurostatHicpUrl(now: Date): string {
   const month = String(now.getUTCMonth() + 1).padStart(2, "0");
   return eurostatUrl("prc_hicp_manr", "geo=EA&coicop=CP00&unit=RCH_A", `${now.getUTCFullYear() - 12}-${month}`);
+}
+
+export function eurostatRealGdpUrl(now: Date): string {
+  return eurostatUrl("namq_10_gdp", "geo=EA&na_item=B1GQ&unit=CLV10_MEUR&s_adj=SCA", `${now.getUTCFullYear() - 12}-Q1`);
 }
 
 function eurostatUrl(dataset: string, query: string, since: string): string {
@@ -575,6 +579,10 @@ function fillEu(input: StockInputs, series: Record<string, Obs[] | undefined>, n
     input.m2YoY = m3Yoy;
     input.deltaMObs = m3Yoy / 100;
   }
+  const hicp = latest(series.EZ_HICP_YOY, now);
+  if (hicp != null) input.cpiYoY = hicp;
+  const realGdp = yoyPercent(series.EZ_REAL_GDP, now);
+  if (realGdp != null) input.realGdpYoY = realGdp;
   if (m3.length) input.moneyStockBn = m3[m3.length - 1].value;
 }
 
@@ -602,6 +610,8 @@ function fillAsia(input: StockInputs, series: Record<string, Obs[] | undefined>,
     input.deltaMObs = m2Yoy / 100;
   }
   if (cpiYoy.length) input.cpiYoY = cpiYoy[cpiYoy.length - 1].value;
+  const realGdp = yoyPercent(series.JPNRGDPEXP, now);
+  if (realGdp != null) input.realGdpYoY = realGdp;
   if (m2.length) input.moneyStockBn = m2[m2.length - 1].value;
 
   const bond = latest(series.BOJ_JGB, now);
@@ -702,7 +712,7 @@ export async function fetchRegionalStockInputs(
     });
   }
   if (region === "EU") {
-    const [debt, bonds, hicp, m3, ngdp] = await Promise.all([
+    const [debt, bonds, hicp, m3, ngdp, realGdp] = await Promise.all([
       loadPoints(region, "EZ_DEBT_GDP", now, opts, async () => {
         const text = await fetchText(eurostatDebtGdpUrl(now));
         return text ? parseEurostatJson(text) : [];
@@ -723,12 +733,17 @@ export async function fetchRegionalStockInputs(
         const text = await fetchText(ecbNgdpUrl(now));
         return text ? datedFromEcb(text, 1 / 1000) : [];
       }),
+      loadPoints(region, "EZ_REAL_GDP", now, opts, async () => {
+        const text = await fetchText(eurostatRealGdpUrl(now));
+        return text ? parseEurostatJson(text) : [];
+      }),
     ]);
     series.EZ_DEBT_GDP = debt;
     series.EZ_DEBT_SEC = bonds;
     series.EZ_HICP_YOY = hicp;
     series.ECB_M3 = m3;
     series.ECB_NGDP = ngdp;
+    series.EZ_REAL_GDP = realGdp;
   }
   if (region === "ASIA") {
     const [m2, jgb] = await Promise.all([
