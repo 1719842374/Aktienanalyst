@@ -14,6 +14,9 @@ import {
 } from "../server/recession";
 import {
   emptyRegionalPrints,
+  isharesPriceEarnings,
+  newerSeries,
+  parseDbNomicsSeries,
   scoreRegionalCatalogs,
   usSlotsFromIndicators,
   type RegionalPrints,
@@ -226,6 +229,7 @@ console.log("\n=== Catalog scores reuse the US readers ===");
     !jpActivity.available && jpActivity.value === "92.3 (2024-03)" && jpActivity.maxWeighted === 0 && jpActivity.source === "FRED JPNPROINDMISMEI",
     jpActivity.value,
   );
+  check("fresh activity keeps the month on the value", calmActivity.value.includes("(2026-08)"), calmActivity.value);
   const jpCurve = slot(jp, "Kurve JP 10J");
   check(
     "short Japan curve keeps the level and fails closed",
@@ -234,13 +238,13 @@ console.log("\n=== Catalog scores reuse the US readers ===");
   );
   const jpSpreads = slot(jp, "Spreads JP");
   check(
-    "JGB-Corp stays N/A without a free series",
-    !jpSpreads.available && jpSpreads.value === "N/A" && jpSpreads.source === "JGB-Corp (keine freie Serie)" && jpSpreads.maxWeighted === 0,
+    "JGB-Corp stays N/A without a free OAS series",
+    !jpSpreads.available && jpSpreads.value === "N/A" && jpSpreads.source === "JGB-Corp (keine freie OAS-Serie)" && jpSpreads.maxWeighted === 0,
   );
   const jpVol = slot(jp, "JNVI");
-  check("JNVI stays closed", !jpVol.available && jpVol.value === "N/A" && jpVol.source === "JNVI");
+  check("JNVI stays closed without a free series", !jpVol.available && jpVol.value === "N/A" && jpVol.source === "JNVI (keine freie Serie)");
   const jpPe = slot(jp, "TOPIX/CAPE JP");
-  check("missing TOPIX PE is not invented", !jpPe.available && jpPe.source === "TOPIX/CAPE JP (FMP leer)");
+  check("missing TOPIX PE is not invented", !jpPe.available && jpPe.source === "TOPIX/CAPE JP (FMP leer; JPX-PER nur xlsx)");
   const jpMoney = slot(jp, "Geld JP M2");
   check("BoJ M2 uses m2Reading", jpMoney.source === "BoJ M2" && jpMoney.rawScore === m2Reading(2).rawScore && jpMoney.available);
 
@@ -301,6 +305,46 @@ console.log("\n=== Blend drops a null region; US slots do not invent a max ===")
   check("missing EZ unemployment names EA20 and stays closed", emptyLabor.source === "Eurostat une_rt_m EA20" && !emptyLabor.available);
 }
 
+console.log("\n=== Public adapters: iShares KGV, OECD IP, newer series ===");
+{
+  const html = `{"priceEarnings&quot;:{&quot;asOfDate&quot;:20261002,&quot;formattedValue&quot;:&quot;18,36&quot;,&quot;label&quot;:&quot;KGV&quot;}`;
+  const pe = isharesPriceEarnings(html);
+  check("iShares KGV keeps the comma as a decimal and the as-of day", pe?.value === 18.36 && pe.date === "2026-10-02", JSON.stringify(pe));
+  check("a page without the priceEarnings block is not a PE", isharesPriceEarnings("<html>no ratio</html>") === null);
+  const points = parseDbNomicsSeries({
+    series: { docs: [{ period: ["2025-04", "2026-04"], value: [91.46056, 93.37358] }] },
+  });
+  check(
+    "DBnomics months become month-start points",
+    points.length === 2 && points[0].date === "2025-04-01" && points[1].value === 93.37358,
+    JSON.stringify(points),
+  );
+  check("a payload without docs is empty", parseDbNomicsSeries({ series: {} }).length === 0);
+  const picked = newerSeries(points, [{ date: "2024-03-01", value: 92.3 }]);
+  check("the newer OECD print wins over the 2024 FRED tail", picked.usedPrimary && picked.points.at(-1)?.date === "2026-04-01");
+  const fredWins = newerSeries([{ date: "2023-11-01", value: 90 }], [{ date: "2024-03-01", value: 92.3 }]);
+  check("an older primary loses to the FRED tail", !fredWins.usedPrimary && fredWins.points[0].date === "2024-03-01");
+
+  const fresh = scoreRegionalCatalogs({
+    prints: prints({
+      jpIp: points,
+      jpIpSource: "OECD STES DF_INDSERV JPN.M.PRVM.IX.BTE.Y",
+    }),
+    usSlots: [],
+    usRecession12m: 40,
+    usCorrection12m: 35,
+    today: TODAY,
+    scorers: scorers(),
+  });
+  const jpActivity = fresh.regions.find(region => region.id === "JP")!.slots.find(item => item.name === "Aktivität JP")!;
+  const yoy = ((93.37358 - 91.46056) / 91.46056) * 100;
+  check(
+    "a 2026-04 Japan IP print is scored and keeps the month",
+    jpActivity.available && jpActivity.value.startsWith(`YoY +${yoy.toFixed(1)}%`) && jpActivity.value.includes("(2026-04)") && jpActivity.source.includes("OECD") && jpActivity.zone === "Stabil" && jpActivity.maxWeighted === 3,
+    `${jpActivity.value} ${jpActivity.zone} ${jpActivity.source}`,
+  );
+}
+
 console.log("\n=== Files stay on the named boundaries ===");
 {
   const serverRegions = readFileSync(new URL("../server/recession-regions.ts", import.meta.url), "utf8");
@@ -312,7 +356,11 @@ console.log("\n=== Files stay on the named boundaries ===");
   check("activity scorer is the existing YoY function", server.includes("activity: yoy => realActivityYoyScore(yoy)"));
   check("money scorer is m2Reading", server.includes("money: yoy => m2Reading(yoy)"));
   check("dashboard reads catalogs through the hook", dashboard.includes("useRecessionCatalog"));
-  check("spec file stays Offen_", existsSync(new URL("../Offen_WORK_RECESSION_SOURCES.md", import.meta.url)));
+  check(
+    "sources spec stays Fertig_ and is not turned back to Offen_",
+    existsSync(new URL("../Fertig_WORK_RECESSION_SOURCES.md", import.meta.url))
+      && !existsSync(new URL("../Offen_WORK_RECESSION_SOURCES.md", import.meta.url)),
+  );
   check(
     "Sahm spec stays fertig_ and is not turned back to Offen_",
     existsSync(new URL("../fertig_WORK_RECESSION_FRED_SAHM.md", import.meta.url))

@@ -23,8 +23,8 @@ export function ScoringRules() {
 
   const correctionRules = [
     { name: "Buffett Ind. (TMC/GDP)", scorePositive: "+8 bis -8", scoreNegative: "", weight: "×2", max: "16" },
-    { name: "Shiller CAPE (Workbook nicht gelesen)", scorePositive: "N/A", scoreNegative: "", weight: "—", max: "0" },
-    { name: "Margin Debt (xlsx nicht gelesen)", scorePositive: "N/A", scoreNegative: "", weight: "—", max: "0" },
+    { name: "Shiller CAPE (Multpl PE10)", scorePositive: "+7 bis -5", scoreNegative: "", weight: "×1.8", max: "12.6" },
+    { name: "Margin Debt (ein Druck, kein 5J-z)", scorePositive: "kein Score", scoreNegative: "", weight: "—", max: "0" },
     { name: "Google Trends \"Recession\"", scorePositive: "+7 bis -6.8", scoreNegative: "N/A = 0", weight: "×1.7", max: "11.9" },
     { name: "VIX", scorePositive: "+4 bis -3", scoreNegative: "", weight: "×1", max: "4" },
     { name: "Crowd: CNN oder ein VIX-Proxy", scorePositive: "ein Bein", scoreNegative: "", weight: "×1.6 / ×1", max: "9.6 / 4" },
@@ -103,11 +103,11 @@ export function ScoringZones() {
     { indicator: "Kreditspreads", zones: ">2.5%: +3 | 2.0-2.5%: +2 | 1.5-2.0%: 0 | 1.0-1.5%: -1 | <1.0%: -2" },
     { indicator: "VIX", zones: ">30: +4 | 20-30: +1 | 15-20: 0 | <15: -3" },
     { indicator: "Google (0-100)", zones: ">75: +11.9 | 60-75: +6.8 | 30-60: 0 | <30: -6.8" },
-    { indicator: "Buffett", zones: ">200%: +16 | 165-200%: +10 | 140-165%: +4 | <140%: -8" },
-    { indicator: "Shiller CAPE", zones: "US-Slot zu: ie_data.xls wird nicht gelesen. Eine schon vorhandene Zahl nutzt >35 / 30-35 / 15-30 / <15" },
+    { indicator: "Buffett", zones: "Wilshire/GDP im 18-Monats-Fenster: >200%: +16 | 165-200%: +10 | 140-165%: +4 | <140%: -8. Älter bleibt N/A" },
+    { indicator: "Shiller CAPE", zones: "Multpl PE10. >35: +12.6 | 30-35: +5.4 | 15-30: 0 | <15: -9. Älter als 18 Monate bleibt draußen. ie_data.xls wird nicht gelesen" },
     { indicator: "CNN F&G", zones: ">75: +9.6 | 55-75: +3.2 | 45-55: 0 | 25-45: -3.2 | <25: -8. Sonst ein VIX-Proxy, Gewicht 1" },
     { indicator: "Zinskurve", zones: "s(z) über 20J von −T10Y2Y. <0 bleibt nur das Label. Zusatz T10Y3M und 12M-Δ" },
-    { indicator: "Margin", zones: "US-Slot zu: die FINRA-xlsx wird nicht gelesen. Eine schon vorhandene Serie nutzt YoY gegen 5J-z" },
+    { indicator: "Margin", zones: "Ein Debit-Druck ohne Monatsreihe: kein Score. Eine schon vorhandene Serie nutzt YoY gegen 5J-z. xlsx wird nicht gelesen" },
   ];
 
   return (

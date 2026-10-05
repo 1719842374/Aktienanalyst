@@ -19,8 +19,14 @@ import {
   buffettMarketCapGdpPercent,
   buffettReading,
   liveBuffettValue,
+  capeFromPoint,
   capeReading,
+  englishLongDate,
+  latestMultplCape,
   latestShillerCape,
+  latestYahooChartClose,
+  marginDebitFromCmv,
+  marginSpotReading,
   correctionAction,
   creditReading,
   crowdReading,
@@ -349,10 +355,26 @@ console.log("\n=== Buffett: fresh Wilshire/GDP, stale World Bank print is not li
   const server = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
   const scoreFn = server.slice(server.indexOf("function scoreBuffett"), server.indexOf("function scoreCAPE"));
   check(
-    "scoreBuffett tries Wilshire/GDP before the World Bank series",
-    scoreFn.indexOf("WILL5000PR") !== -1 && scoreFn.indexOf("WILL5000PR") < scoreFn.indexOf("DDDM01USA156NWDB"),
+    "scoreBuffett tries the live Wilshire chart before the World Bank series",
+    scoreFn.indexOf("^W5000") !== -1 && scoreFn.indexOf("^W5000") < scoreFn.indexOf("DDDM01USA156NWDB") && !scoreFn.includes("WILL5000PR"),
+    scoreFn.slice(0, 240),
   );
   check("scoreBuffett goes through the observation gate", scoreFn.includes("buffettFromMarketCapGdp") && scoreFn.includes("buffettFromObservation"));
+  const chart = latestYahooChartClose({
+    chart: { result: [{ timestamp: [1760000000, 1760086400], indicators: { quote: [{ close: [76000, null] }] } }] },
+  });
+  check("a trailing null bar is not the close", chart?.date === "2025-10-09" && chart.value === 76000, JSON.stringify(chart));
+  const liveRatio = buffettFromMarketCapGdp(
+    { date: "2026-10-02", value: 76776.84375 },
+    { date: "2026-04-01", value: 32563.03 },
+    today,
+    { source: "Yahoo ^W5000 / FRED GDP", description: "Wilshire chart / GDP" },
+  )!;
+  check(
+    "a fresh chart/GDP pair scores in the >200 zone and names the chart",
+    liveRatio.available !== false && liveRatio.rawScore === 8 && liveRatio.weightedScore === 16 && liveRatio.value === "236%" && liveRatio.source === "Yahoo ^W5000 / FRED GDP",
+    `${liveRatio.value} ${liveRatio.source} raw=${liveRatio.rawScore}`,
+  );
   const fazitFn = server.slice(server.indexOf("function generateFazit"), server.indexOf("function registerRecessionRoutes"));
   check("fazit cites Buffett only through the live-value gate", fazitFn.includes("liveBuffettValue") && fazitFn.includes("buffettFazitClause"));
 }
@@ -446,8 +468,13 @@ console.log("\n=== FINRA margin is billions and a 5Y z, never $2026T ===");
   check("YoY without a 5Y z is shown and not scored", partial.available === false && partial.maxWeighted === 0 && partial.value.includes("Mrd. $") && !/\$\d{4}T/i.test(partial.value));
   const server = readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8");
   check(
-    "Buffett names Wilshire/GDP and the World Bank series, and does not scrape a page",
-    server.includes("WILL5000PR") && server.includes("DDDM01USA156NWDB") && server.includes("isStale") && !server.includes('content.includes("overvalued")'),
+    "Buffett keeps the World Bank fallback and does not request the dead FRED id or scrape a valuation page",
+    server.includes("DDDM01USA156NWDB")
+      && server.includes("^W5000")
+      && server.includes("isStale")
+      && server.includes("FRED WILL5000PR / GDP")
+      && !server.includes("latestFredPoint(\"WILL5000PR\"")
+      && !server.includes('content.includes("overvalued")'),
   );
   const pkg = readFileSync(new URL("../package.json", import.meta.url), "utf8");
   const lock = readFileSync(new URL("../package-lock.json", import.meta.url), "utf8");
@@ -468,6 +495,36 @@ console.log("\n=== FINRA margin is billions and a 5Y z, never $2026T ===");
       && marginDebtReading([]).available === false
       && marginDebtReading([]).maxWeighted === 0,
   );
+  const capeTable = `<table><tr><th>Date</th><th>Value</th></tr><tr><td>Oct 2, 2026</td><td>&#x2002; 41.38</td></tr><tr><td>Sep 1, 2026</td><td>40.90</td></tr></table>`;
+  const capePoint = latestMultplCape(capeTable);
+  check("the monthly table's first row is the CAPE print", capePoint?.date === "2026-10-02" && capePoint.value === 41.38, JSON.stringify(capePoint));
+  check("english dates parse", englishLongDate("May 31, 2026") === "2026-05-31");
+  const liveCape = capeFromPoint(capePoint, "2026-10-05");
+  check(
+    "a fresh CAPE above 35 scores and names Multpl",
+    liveCape.available !== false && liveCape.rawScore === 7 && liveCape.weightedScore === 12.6 && liveCape.value === "41.4" && liveCape.source === "Multpl Shiller PE" && liveCape.zone.includes("Extrem hoch"),
+    `${liveCape.value} ${liveCape.zone} raw=${liveCape.rawScore}`,
+  );
+  const staleCape = capeFromPoint({ date: "2024-03-01", value: 32.2 }, "2026-10-05");
+  check(
+    "a CAPE print outside 18 months is shown and not scored",
+    staleCape.available === false && staleCape.maxWeighted === 0 && staleCape.value === "32.2 (2024-03)" && staleCape.zone === "N/A",
+    staleCape.value,
+  );
+  check("an empty CAPE page stays closed", capeFromPoint(null, "2026-10-05").value === "N/A" && capeFromPoint(null, "2026-10-05").source === "Multpl Shiller-PE leer");
+  const cmv = `meta $1,416% should not count. As of May 31, 2026 (the latest data available), total US margin debt was $1,416 billion, which represents a increase of $455 billion year-over-year.`;
+  const debit = marginDebitFromCmv(cmv);
+  check("the billion sentence is the debit, not the percent meta", debit?.date === "2026-05-31" && debit.billions === 1416, JSON.stringify(debit));
+  check("a percent-only line is not a debit", marginDebitFromCmv("As of May 31, 2026 total margin debt is $1,416%.") === null);
+  const spot = marginSpotReading(debit);
+  check(
+    "one debit print is shown and stays out of net and max",
+    spot.value === "1416.0 Mrd. $ (2026-05)" && spot.zone === "Ablesung, kein 5J-z" && spot.available === false && spot.maxWeighted === 0 && spot.weightedScore === 0 && !/\$\d{4}T/i.test(spot.value),
+    `${spot.value} ${spot.zone}`,
+  );
+  const spotTotals = scoredTotals([spot, vixReading(16)]);
+  check("the spot debit adds neither net nor max", spotTotals.net === 0 && spotTotals.max === vixReading(16).maxWeighted, `${spotTotals.net}/${spotTotals.max}`);
+  check("a missing debit page stays N/A", marginSpotReading(null).value === "N/A" && marginSpotReading(null).source === "FINRA-Historie nur als xlsx");
   const csiFn = server.slice(server.indexOf("function scoreConsumerConfidence"), server.indexOf("function scoreBuffett"));
   check("CSI asks UMCSENT before the macro fallback", csiFn.indexOf("UMCSENT") !== -1 && csiFn.indexOf("UMCSENT") < csiFn.indexOf("getMacroValue"));
 }
