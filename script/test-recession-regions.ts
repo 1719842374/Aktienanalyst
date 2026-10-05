@@ -275,6 +275,15 @@ console.log("\n=== Blend drops a null region; US slots do not invent a max ===")
   check("available:false credit does not enter the max", !credit.available && credit.maxWeighted === 0 && credit.weightedScore === 0);
   check("VIX is taken before the VIX proxy", vol.source === "FRED VIXCLS" && vol.rawScore === 0);
   check("Buffett and CAPE both stay, keyed by name", us.filter(slot => slot.id === "valuation").map(slot => slot.name).join("|") === "Buffett-Indikator|Shiller CAPE");
+  const staleUs = usSlotsFromIndicators([
+    { name: "Buffett Indikator (TMC/GDP)", group: "correction", value: "195% (2020-01)", rawScore: 5, weight: 2, weightedScore: 10, maxWeighted: 16, zone: "Stark überbewertet (165-200%)", source: "FRED DDDM01USA156NWDB", available: false },
+  ]);
+  const staleSlot = staleUs.find(slot => slot.name.includes("Buffett"))!;
+  check(
+    "stale Buffett stays in the catalog and adds neither net nor max",
+    staleSlot != null && !staleSlot.available && staleSlot.weight === 0 && staleSlot.weightedScore === 0 && staleSlot.maxWeighted === 0 && staleSlot.value === "195% (2020-01)",
+    `${staleSlot?.weight} ${staleSlot?.weightedScore} ${staleSlot?.maxWeighted}`,
+  );
 
   const catalog = scoreRegionalCatalogs({
     prints: prints(),
