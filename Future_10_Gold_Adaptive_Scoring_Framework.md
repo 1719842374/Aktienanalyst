@@ -32,6 +32,7 @@ Adaptives Scoring für Gold analog zur 1–20-Aktienanalyse und dem Makro-Framew
 | **Supply** | AISC-Margin, Kapitulationszone | Aggregate / Berichte | Preis << AISC = Stress |
 | **Technical** | RSI, MA200-Abweichung, Golden/Death Cross, Volumen | Preisdaten | Cross = Bestätigung |
 | **Macro** | DXY-Trend | FRED DTWEXBGS / Yahoo | Fallend = bullish |
+| **News** | LLM-Flag aus Gold-News | RSS / API + OpenRouter | Leichtes Flag |
 
 ### Datenpunkte
 
@@ -46,6 +47,7 @@ Adaptives Scoring für Gold analog zur 1–20-Aktienanalyse und dem Makro-Framew
 | Gold Preis | GCUSD / Yahoo | Täglich |
 | Volumen | GCUSD / Yahoo | Täglich |
 | AISC | Unternehmensaggregate | Quartalsweise |
+| Gold-News | Kitco, Reuters, WGC, Fed | Laufend |
 
 ---
 
@@ -174,7 +176,63 @@ function detectMACross(prices: number[]): {
 
 ---
 
-## 9. Gesamtfluss
+## 9. Gold-News-Sektion (analog BTC-Liquidität)
+
+### Zweck
+Qualitative News und Catalysts für Gold erfassen und als leichtes Flag in den Score einfließen lassen – analog zur BTC-Liquiditätssektion.
+
+### Quellen
+- Kitco, Reuters, World Gold Council (WGC)
+- Fed-Statements, Zentralbank-Käufe
+- Minen-News (große Produzenten)
+- Geopolitische Ereignisse
+
+### LLM-Integration (OpenRouter)
+
+```typescript
+async function getGoldNewsImpact(newsItems: string[]): Promise<{
+  flag: number; // -1 bis +1
+  summary: string;
+}> {
+  const prompt = `
+Aktuelle Gold-relevante News:
+${newsItems.slice(0, 8).map((n, i) => `${i + 1}. ${n}`).join("\n")}
+
+Bewerte den Gesamteinfluss auf Gold:
+- flag: -1 (bearish) bis +1 (bullish), 0 = neutral
+- summary: 1-2 Sätze Begründung
+
+Antworte nur als JSON:
+{ "flag": 0.3, "summary": "..." }
+`;
+
+  const response = await openrouter.chat.completions.create({
+    model: "anthropic/claude-3.5-sonnet",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.2,
+  });
+
+  const parsed = JSON.parse(response.choices[0].message.content || "{}");
+  return {
+    flag: Math.max(-1, Math.min(1, parsed.flag ?? 0)),
+    summary: parsed.summary ?? "Keine klare Richtung",
+  };
+}
+```
+
+### Einbindung in den Score
+- News-Flag (±0.3 bis ±1) als leichte Anpassung der Policy- oder Supply-Dimension
+- Oder als separater Hinweis im Dashboard (nicht als harter Score-Bestandteil)
+- Cache: 6–12h, um API-Kosten zu begrenzen
+
+### Dashboard-Anzeige
+- Kurze News-Zusammenfassung
+- Flag (bullish / neutral / bearish)
+- Timestamp der letzten Aktualisierung
+
+---
+
+## 10. Gesamtfluss
 
 1. Daten laden (FRED + Preis + Volumen)
 2. Adaptive Signale berechnen (z-Score / Stärke)
@@ -182,20 +240,23 @@ function detectMACross(prices: number[]): {
 4. Layer-Gewichtung anwenden
 5. Technical (MA-Cross, Volumen, RSI) einbeziehen
 6. Supply-Signale (AISC) ergänzen
-7. Score aggregieren
-8. Gates als Warnungen anzeigen
-9. Chart mit Makro-Overlays + 50/200-MA + Volumen
+7. Optional: Gold-News-Flag via LLM einholen
+8. Score aggregieren
+9. Gates als Warnungen anzeigen
+10. Chart mit Makro-Overlays + 50/200-MA + Volumen
+11. News-Sektion im Dashboard anzeigen
 
 ---
 
-## 10. Offene Punkte
+## 11. Offene Punkte
 
 - AISC-Zeitreihe beschaffen
 - Kapitulationszone definieren
 - Volumen-Daten zuverlässig anbinden
+- Gold-News-Quellen anbinden (RSS/API)
 - Backtest der MA-Cross-Signale auf Gold
 - Europa-/globale Zentralbank-Käufe (LLM)
 
 ---
 
-**Status:** Konzept dokumentiert inkl. detaillierter technischer Signale (Death/Golden Cross, Volumen) analog BTC.
+**Status:** Konzept dokumentiert inkl. detaillierter technischer Signale (Death/Golden Cross, Volumen) und Gold-News-Sektion (analog BTC-Liquidität).
