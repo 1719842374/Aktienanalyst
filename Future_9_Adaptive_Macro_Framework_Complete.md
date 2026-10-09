@@ -135,3 +135,118 @@ Negativer Score erhöht Korrektur-Wahrscheinlichkeit.
 ---
 
 **Status:** Konzept vollständig dokumentiert. Umsetzung über Analyse-Button mit adaptiver Gewichtung und optionalem LLM-Call vorgesehen.
+
+---
+
+## 9. OpenRouter LLM-Call (Implementierung)
+
+### Zweck
+Leichte Kalibrierung der Gewichte und Frühwarn-Hinweise über OpenRouter.
+
+### Code-Schema
+
+```typescript
+import OpenAI from "openai";
+
+const openrouter = new OpenAI({
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: process.env.OPENROUTER_API_KEY,
+});
+
+async function getAIWeightSuggestion(
+  habitat: Habitat,
+  signals: Signal[],
+  currentWeights: Record<string, number>
+): Promise<Record<string, number> | null> {
+  const prompt = `
+Du bist ein Makro-Analyst. Analysiere das aktuelle Habitat und schlage leichte Gewichtungsanpassungen vor.
+
+Habitat: ${habitat.regime}
+Konzentration (Cap-Equal RSL): ${habitat.concentration.toFixed(2)}
+Gewinnmomentum (z-Score): ${habitat.growthMomentum.toFixed(2)}
+
+Aktuelle Signale:
+${signals.slice(0, 10).map(s => 
+  `- ${s.indicator}: z=${s.zScore.toFixed(2)}, strength=${s.strength.toFixed(2)}, direction=${s.direction}`
+).join("\n")}
+
+Aktuelle Gewichte:
+${JSON.stringify(currentWeights, null, 2)}
+
+Aufgabe:
+1. Liegt ein struktureller Regime-Wechsel oder erhöhtes Risiko vor?
+2. Schlage angepasste Gewichte vor (max ±25% Abweichung von den aktuellen Werten).
+3. Gib eine kurze Begründung (1-2 Sätze).
+
+Antworte ausschließlich im folgenden JSON-Format:
+{
+  "adjustedWeights": { "bewertung": 1.9, "managing": 1.6, ... },
+  "riskFlag": 0,
+  "reason": "Kurze Begründung"
+}
+`;
+
+  try {
+    const response = await openrouter.chat.completions.create({
+      model: "anthropic/claude-3.5-sonnet", // oder anderes Modell
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      max_tokens: 500,
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) return null;
+
+    const parsed = JSON.parse(content);
+    
+    // Validierung: max ±25%
+    const validated: Record<string, number> = {};
+    for (const [key, value] of Object.entries(parsed.adjustedWeights || {})) {
+      const current = currentWeights[key] ?? 1;
+      const clamped = Math.max(current * 0.75, Math.min(current * 1.25, value as number));
+      validated[key] = clamped;
+    }
+
+    return validated;
+  } catch (err) {
+    console.warn("[OpenRouter] Weight suggestion failed:", err);
+    return null; // Fallback auf quantitative Gewichte
+  }
+}
+```
+
+### Integration beim Analyse-Button
+
+```typescript
+// Nach Berechnung der quantitativen Gewichte
+const quantWeights = calculateAdaptiveWeights(habitat, signals);
+
+// Optional: OpenRouter-Call
+const aiWeights = await getAIWeightSuggestion(habitat, signals, quantWeights);
+
+// Finale Gewichte (AI oder Fallback)
+const finalWeights = aiWeights ?? quantWeights;
+
+// Scores berechnen
+const scores = computeSubgroupScores(signals, finalWeights);
+```
+
+### Hinweise
+- API-Key über `OPENROUTER_API_KEY` (Umgebungsvariable)
+- Modell frei wählbar (Claude, GPT-4o, Gemini etc.)
+- Bei Fehler oder Timeout: automatischer Fallback auf quantitative Gewichte
+- Output wird validiert (max ±25% Abweichung)
+- Empfehlung: Response cachen (z. B. 6–12h), um Kosten und Latenz zu reduzieren
+
+### Beispiel-Response
+```json
+{
+  "adjustedWeights": {
+    "bewertung": 2.1,
+    "managing": 1.8,
+    "kredit": 1.1
+  },
+  "riskFlag": 1,
+  "reason": "Restriktives Habitat mit steigenden Realzinsen. Bewertung und Managing sollten höher gewichtet werden."
+}
+```
