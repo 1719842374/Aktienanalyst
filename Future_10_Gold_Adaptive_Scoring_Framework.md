@@ -30,7 +30,7 @@ Adaptives Scoring für Gold analog zur 1–20-Aktienanalyse und dem Makro-Framew
 | **Liquidity** | M2 YoY, WALCL, Netto-Liquidität | FRED M2SL, WALCL | Steigend = bullish |
 | **Inflation** | Breakeven (T10YIE) | FRED T10YIE | Steigend = bullish (bedingt) |
 | **Supply** | AISC-Margin, Kapitulationszone | Aggregate / Berichte | Preis << AISC = Stress |
-| **Technical** | RSI, MA200-Abweichung, Golden/Death Cross | Preisdaten | Cross = Bestätigung |
+| **Technical** | RSI, MA200-Abweichung, Golden/Death Cross, Volumen | Preisdaten | Cross = Bestätigung |
 | **Macro** | DXY-Trend | FRED DTWEXBGS / Yahoo | Fallend = bullish |
 
 ### Datenpunkte
@@ -44,6 +44,7 @@ Adaptives Scoring für Gold analog zur 1–20-Aktienanalyse und dem Makro-Framew
 | DXY | DTWEXBGS | Täglich |
 | Fed Funds | FEDFUNDS | Monatlich |
 | Gold Preis | GCUSD / Yahoo | Täglich |
+| Volumen | GCUSD / Yahoo | Täglich |
 | AISC | Unternehmensaggregate | Quartalsweise |
 
 ---
@@ -72,14 +73,56 @@ effectiveWeight = baseWeight * (0.7 + strength * 0.6);
 
 ---
 
-## 4. Technische Analyse (analog BTC)
+## 4. Technische Analyse (analog BTC) – detailliert
+
+### MA-Crosses
+
+| Signal | Definition | Score | Chart-Overlay |
+|--------|------------|-------|---------------|
+| **Golden Cross** | 50-Tage-MA kreuzt 200-Tage-MA von unten | +1 (bullish) | 50-MA + 200-MA |
+| **Death Cross** | 50-Tage-MA kreuzt 200-Tage-MA von oben | -1 (bearish) | 50-MA + 200-MA |
+| Preis > 200-MA | Aktueller Preis über 200-MA | positiv | 200-MA |
+| Preis < 200-MA | Aktueller Preis unter 200-MA | negativ | 200-MA |
+
+### Volumen
 
 | Signal | Definition | Einbindung |
 |--------|------------|------------|
-| Golden Cross | 50-MA kreuzt 200-MA von unten | Technical +1 |
-| Death Cross | 50-MA kreuzt 200-MA von oben | Technical -1 |
-| Preis vs 200-MA | Abweichung als z-Score | Technical Stärke |
-| RSI | Relativ zur eigenen Historie | Technical |
+| Volumen-Spike | Volumen > 1.5× 20-Tage-Durchschnitt | Bestätigung von Crosses |
+| Volumen-Trend | Steigendes Volumen bei Aufwärtsbewegung | Bullish-Bestätigung |
+| Volumen-Divergenz | Preis steigt, Volumen fällt | Warnung |
+
+### Weitere technische Signale
+
+| Signal | Definition | Analog BTC |
+|--------|------------|------------|
+| RSI(14) | Relativ zur eigenen 1–2-Jahres-Historie | Ja |
+| MACD | 12/26/9 Cross | Ja |
+| Bollinger Band | Preis außerhalb Band | Optional |
+| ATR | Volatilität für Stops | Optional |
+
+### Code-Schema MA-Cross
+
+```typescript
+function detectMACross(prices: number[]): {
+  golden: boolean;
+  death: boolean;
+  ma50: number;
+  ma200: number;
+} {
+  if (prices.length < 200) return { golden: false, death: false, ma50: 0, ma200: 0 };
+  const ma50 = sma(prices, 50);
+  const ma200 = sma(prices, 200);
+  const prevMa50 = sma(prices.slice(0, -1), 50);
+  const prevMa200 = sma(prices.slice(0, -1), 200);
+  return {
+    golden: prevMa50 <= prevMa200 && ma50 > ma200,
+    death: prevMa50 >= prevMa200 && ma50 < ma200,
+    ma50,
+    ma200,
+  };
+}
+```
 
 ---
 
@@ -108,12 +151,13 @@ effectiveWeight = baseWeight * (0.7 + strength * 0.6);
 
 | Overlay | Quelle | Priorität | Begründung |
 |---------|--------|-----------|------------|
-| Real10Y (DFII10) | FRED | **Sehr hoch** | Bereits teilweise da, Kern-Treiber |
+| Real10Y (DFII10) | FRED | **Sehr hoch** | Kern-Treiber |
 | M2 YoY | FRED M2SL | Hoch | Liquidität |
 | DXY | FRED / Yahoo | Hoch | Inverser Treiber |
 | Breakeven (T10YIE) | FRED | Mittel | Inflationserwartungen |
 | WALCL | FRED | Mittel | Fed-Bilanz |
-| 50/200 MA | Berechnet | Mittel | Golden/Death Cross |
+| **50-MA / 200-MA** | Berechnet | **Hoch** | Golden/Death Cross |
+| Volumen | Preisdaten | Mittel | Bestätigung |
 | AISC-Linie | Aggregate | Niedrig–Mittel | Angebotsseite |
 
 ---
@@ -126,30 +170,32 @@ effectiveWeight = baseWeight * (0.7 + strength * 0.6);
 | GOLD_AISC_STRESS | Preis < AISC × 1.15 | Warnung |
 | Decoupling | corr > -0.25 | Modell unzuverlässig |
 | Neu: Policy-Mismatch | Hoher Preis bei steigendem Realzins | Warnung |
+| Neu: Death Cross aktiv | 50-MA < 200-MA | Technische Warnung |
 
 ---
 
 ## 9. Gesamtfluss
 
-1. Daten laden (FRED + Preis)
+1. Daten laden (FRED + Preis + Volumen)
 2. Adaptive Signale berechnen (z-Score / Stärke)
 3. Regime / Habitat bestimmen
 4. Layer-Gewichtung anwenden
-5. Technical (inkl. MA-Cross) einbeziehen
+5. Technical (MA-Cross, Volumen, RSI) einbeziehen
 6. Supply-Signale (AISC) ergänzen
 7. Score aggregieren
 8. Gates als Warnungen anzeigen
-9. Chart mit Makro-Overlays (Real10Y, M2, DXY, MA)
+9. Chart mit Makro-Overlays + 50/200-MA + Volumen
 
 ---
 
 ## 10. Offene Punkte
 
-- AISC-Zeitreihe beschaffen (Aggregate oder große Minen)
+- AISC-Zeitreihe beschaffen
 - Kapitulationszone definieren
-- Europa-/globale Zentralbank-Käufe (qualitativ / LLM)
-- Backtest der adaptiven Gewichtung auf historische Gold-Bewegungen
+- Volumen-Daten zuverlässig anbinden
+- Backtest der MA-Cross-Signale auf Gold
+- Europa-/globale Zentralbank-Käufe (LLM)
 
 ---
 
-**Status:** Konzept dokumentiert. Umsetzung als Erweiterung von gold-realyield-model.ts und gold-routes.ts vorgesehen.
+**Status:** Konzept dokumentiert inkl. detaillierter technischer Signale (Death/Golden Cross, Volumen) analog BTC.
