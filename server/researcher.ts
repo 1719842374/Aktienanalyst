@@ -928,6 +928,12 @@ interface DailyBriefingResult {
       severity: "high" | "medium" | "low";
       changeType: "NEW" | "ESCALATED" | "DIRECTION_FLIP" | "UNCHANGED";
       description: string;
+      timeframe?: string;
+      rationale?: string;
+      inflationImpact?: string;
+      rateImpact?: string;
+      equityImpact?: string;
+      affectedSectors?: string[];
       dcfImplications: {
         waccDeltaBps: string; // e.g. "+15 bps" or "-8 bps"
         affectedSectors: string[];
@@ -1150,6 +1156,8 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
       category: ev?.category ? String(ev.category) : undefined,
       severity: ev?.severity ? String(ev.severity) : undefined,
       description: ev?.description ? String(ev.description) : undefined,
+      timeframe: ev?.timeframe ? String(ev.timeframe) : undefined,
+      rationale: ev?.rationale ? String(ev.rationale) : undefined,
       inflationImpact: ev?.inflationImpact ? String(ev.inflationImpact) : undefined,
       rateImpact: ev?.rateImpact ? String(ev.rateImpact) : undefined,
       equityImpact: ev?.equityImpact ? String(ev.equityImpact) : undefined,
@@ -1220,21 +1228,38 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
   const briefing: DailyBriefingResult["briefing"] = {
     headline: composed.headline,
     summary: composed.stanceRationale,
-    topChanges: composed.topChanges.map((c, idx) => ({
-      rank: idx + 1,
-      title: c.title,
-      region: c.region,
-      category: c.category,
-      severity: "medium" as const,
-      changeType: c.changeType,
-      description: c.title === "none" ? "none" : c.title,
-      dcfImplications: {
-        waccDeltaBps: c.dcfImplications?.waccDeltaBps || "n/v",
-        affectedSectors: c.dcfImplications?.affectedSectors || [],
-        exposureType: "hedge" as const,
-      },
-      action: "",
-    })),
+    topChanges: composed.topChanges.map((c, idx) => {
+      const src = inputs
+        .find(input => input.region === c.region)
+        ?.events.find(ev => ev.title === c.title);
+      const sectors = (src?.affectedSectors && src.affectedSectors.length
+        ? src.affectedSectors
+        : c.dcfImplications?.affectedSectors) || [];
+      const severity = src?.severity === "high" || src?.severity === "low" || src?.severity === "medium"
+        ? src.severity
+        : "medium" as const;
+      return {
+        rank: idx + 1,
+        title: c.title,
+        region: c.region,
+        category: c.category,
+        severity,
+        changeType: c.changeType,
+        description: src?.description || (c.title === "none" ? "none" : ""),
+        timeframe: src?.timeframe,
+        rationale: src?.rationale,
+        inflationImpact: src?.inflationImpact || "neutral",
+        rateImpact: src?.rateImpact || "neutral",
+        equityImpact: src?.equityImpact || "neutral",
+        affectedSectors: sectors,
+        dcfImplications: {
+          waccDeltaBps: c.dcfImplications?.waccDeltaBps || "n/v",
+          affectedSectors: sectors,
+          exposureType: "hedge" as const,
+        },
+        action: src?.rationale || "",
+      };
+    }),
     keyMetricsShift: {
       inflationView: "n/v",
       rateView: composed.regions.map(r => `${r.region} r=${r.realRatePct ?? "n/v"}`).join(" | "),
