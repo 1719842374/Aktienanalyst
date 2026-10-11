@@ -5,7 +5,7 @@ import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import {
   CartesianGrid, Customized, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { axisTicks, tickLabel, type BuffettRangeId } from "./buffettChartScale";
+import { axisTicks, lastPointLabel, tickLabel, type BuffettRangeId } from "./buffettChartScale";
 
 type RegionId = "US" | "EU" | "CN";
 type RangeId = BuffettRangeId;
@@ -221,6 +221,25 @@ function ChartOverlay(props: {
           </text>
         );
       })}
+      {/* JOB 18: Punkt + Kurzlabel am letzten Datenpunkt (alle Zeitfenster; Max zusätzlich mit Callout) */}
+      <g data-testid="buffett-last-point">
+        <circle cx={x} cy={y} r={4} fill={RATIO} stroke="#ffffff" strokeWidth={1.5} />
+        {!showCallout && lastPointLabel(last) && (
+          <text
+            x={x - 8}
+            y={y < 24 ? y + 18 : y - 9}
+            textAnchor="end"
+            fill={RATIO}
+            fontSize={props.wide ? 12 : 11}
+            fontWeight={700}
+            stroke="#ffffff"
+            strokeWidth={3}
+            paintOrder="stroke"
+          >
+            {lastPointLabel(last)}
+          </text>
+        )}
+      </g>
       {showCallout && (
         <g>
           <line x1={x1} y1={y1} x2={x - 8} y2={y} stroke={RATIO} strokeWidth={1.6} />

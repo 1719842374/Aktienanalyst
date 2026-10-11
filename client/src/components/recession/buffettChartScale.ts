@@ -70,3 +70,13 @@ export function tickLabel(value: number, range: BuffettRangeId): string {
   }
   return String(year);
 }
+
+/**
+ * JOB 18: kurze Beschriftung am letzten Datenpunkt („211 % · 05.10.26“), in allen Zeitfenstern.
+ * Datum = Datum des letzten Punkts (ggf. per Sitzungs-Proxy fortgeschrieben, siehe buffett-route).
+ */
+export function lastPointLabel(last: { date: string; ratio: number } | null | undefined): string | null {
+  if (!last || !Number.isFinite(last.ratio) || !/^\d{4}-\d{2}-\d{2}$/.test(last.date)) return null;
+  const [y, m, d] = last.date.split("-");
+  return `${Math.round(last.ratio)} % · ${d}.${m}.${y.slice(2)}`;
+}
