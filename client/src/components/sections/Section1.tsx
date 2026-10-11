@@ -7,6 +7,7 @@ import { formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } 
 import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus } from "lucide-react";
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 import { useDividendKpi } from "@/lib/useDividendHistory";
+import { listingFxWarning } from "@shared/listing-units";
 
 interface Props { data: StockAnalysis; onRefresh?: () => void; onThesisScore?: (score: number) => void }
 
@@ -53,6 +54,12 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
 
   return (
     <SectionCard number={2} title="DATENAKTUALITÄT & PLAUSIBILITÄT">
+      {listingFxWarning(data.currency) && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3 text-xs text-amber-400 break-words" data-testid="fx-partial-warning">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span>{listingFxWarning(data.currency)}</span>
+        </div>
+      )}
       {isStaleCache && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />

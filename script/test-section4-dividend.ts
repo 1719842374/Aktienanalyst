@@ -28,7 +28,7 @@ for (const t of ["KO", "NVO", "AMZN"]) {
   if (tile.kind === "ttm") check(`${t}: Section-4-Wert = Kachel-TTM ${tile.yieldPct.toFixed(2)}%`, disp?.value === `${tile.yieldPct.toFixed(2)}%`);
   else check(`${t}: ohne TTM → GJ (FMP) oder null`, disp == null ? !(f.dividendYieldFY > 0) : disp.sub === "GJ (FMP)");
   const qc = new QueryClient();
-  qc.setQueryData(["dividends", t], f.dividends);
+  qc.setQueryData(["dividends", "v2", t], f.dividends); // #244: query key v2 (pence fix)
   const html = renderToStaticMarkup(React.createElement(QueryClientProvider, { client: qc }, React.createElement(FinancialStatements, { data })));
   const m = html.match(/data-testid="fs-div-yield">Div\. Yield: <span class="font-mono">([^<]+)</);
   out.push(`| ${t} | ${disp?.value ?? "n/a"} | ${m?.[1]} |`);
@@ -37,6 +37,7 @@ for (const t of ["KO", "NVO", "AMZN"]) {
 const s1 = readFileSync("client/src/components/sections/Section1.tsx", "utf8");
 const s4 = readFileSync("client/src/components/sections/FinancialStatements.tsx", "utf8");
 check("Section 1 und Section 4 nutzen denselben Hook", s1.includes("useDividendKpi(data)") && s4.includes("useDividendKpi(data)"));
+check("eine Query mit Key [\"dividends\",\"v2\",ticker]", /queryKey: \["dividends", "v2", ticker\]/.test(readFileSync("client/src/lib/useDividendHistory.ts", "utf8")));
 check("kein eigener Rechenweg in Section 4", !/dividendYield\s*[*/]|dividendKpiFromHistory/.test(s4));
 console.log("| Ticker | Kachel Section 1 | Section 4 |\n|---|---|---|\n" + out.join("\n"));
 console.log(fail ? `\n${fail} Fehler` : "\nalle grün");
