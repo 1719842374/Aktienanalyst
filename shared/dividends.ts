@@ -23,6 +23,8 @@ export interface DividendYieldPoint {
   date: string;
   /** Trailing-12-month dividends / close, in %. null before a full 12M of history or without a close. */
   yieldPct: number | null;
+  /** Σ dividends with ex-date in the trailing 12 months, per share in the source's currency. null like yieldPct. */
+  ttmDividend?: number | null;
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -77,7 +79,7 @@ export function trailingDividendYield(
   bars: Array<{ date: string; close: number }>,
   events: DividendEvent[],
 ): DividendYieldPoint[] {
-  if (events.length === 0) return bars.map(b => ({ date: b.date, yieldPct: null }));
+  if (events.length === 0) return bars.map(b => ({ date: b.date, yieldPct: null, ttmDividend: null }));
   const firstEx = events[0].date;
   let lo = 0;
   let hi = 0;
@@ -89,7 +91,12 @@ export function trailingDividendYield(
     while (lo < hi && events[lo].date <= from) { sum -= events[lo].amount; lo++; }
     const covered = from >= firstEx;
     const ok = covered && Number.isFinite(bar.close) && bar.close > 0;
-    out.push({ date: bar.date, yieldPct: ok ? Math.round((Math.max(sum, 0) / bar.close) * 10000) / 100 : null });
+    const ttm = Math.max(sum, 0);
+    out.push({
+      date: bar.date,
+      yieldPct: ok ? Math.round((ttm / bar.close) * 10000) / 100 : null,
+      ttmDividend: ok ? Math.round(ttm * 10000) / 10000 : null,
+    });
   }
   return out;
 }
