@@ -14,6 +14,9 @@ import {
 import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { useQuery } from "@tanstack/react-query";
+import type { DividendHistoryResponse } from "@shared/dividends";
+import { DividendYieldPane } from "./DividendYieldPane";
 
 interface Props { data: StockAnalysis; }
 
@@ -142,6 +145,18 @@ export function TechnicalChart({ data }: Props) {
   const [measureMode,   setMeasureMode]   = useState(false);
   const [measurePoints, setMeasurePoints] = useState<{date:string;close:number}[]>([]);
   const [signalPage,    setSignalPage]    = useState(0);
+  // Dividend overlay (Future_1 §11.1): fetched only while the toggle is on.
+  const [showDividend, setShowDividend] = useState(false);
+  const dividendQuery = useQuery<DividendHistoryResponse>({
+    queryKey: ["dividends", data.ticker],
+    enabled: showDividend && !!data.ticker,
+    staleTime: 12 * 60 * 60 * 1000,
+    queryFn: async () => {
+      const res = await fetch(`/api/dividends/${encodeURIComponent(data.ticker)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  });
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -537,6 +552,13 @@ export function TechnicalChart({ data }: Props) {
               {showRsi ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               RSI(14)
             </button>
+            <button type="button" onClick={() => setShowDividend(v => !v)} data-testid="button-dividend" aria-pressed={showDividend}
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showDividend ? "border-teal-500 text-teal-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showDividend ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Div. Yield
+            </button>
             <button type="button" onClick={() => { setMeasureMode(v => !v); setMeasurePoints([]); }}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 measureMode ? "border-amber-500 bg-amber-500/10 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
@@ -783,6 +805,17 @@ export function TechnicalChart({ data }: Props) {
             />
           )}
         </div>
+      )}
+
+      {showDividend && showKursA && !chartEmpty && (
+        <DividendYieldPane
+          bars={aBuilt.points}
+          history={dividendQuery.data}
+          tickFormatter={formatDate}
+          formatDateFull={formatDateFull}
+          loading={dividendQuery.isLoading}
+          failed={dividendQuery.isError}
+        />
       )}
 
       {/* ── Signals Table with Pagination ── */}

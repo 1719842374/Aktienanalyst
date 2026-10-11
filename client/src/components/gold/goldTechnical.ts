@@ -19,6 +19,10 @@ export interface GoldTechPoint {
   rsi14: number | null;
   real10y: number | null; m2Yoy: number | null; dxy: number | null; t10yie: number | null; walcl: number | null;
   cross?: "golden" | "death";
+  /** Future_10 §4: Volumen > 1,5× Ø der 20 Vortage (nur echte Prints, sonst undefined). */
+  volSpike?: boolean;
+  /** Future_10 §4: Beginn einer Divergenz — Preis 20T hoeher, Ø-Volumen 20T unter den 20T davor. */
+  volDivergence?: boolean;
 }
 
 export interface GoldTechSignal { date: string; type: "BUY" | "SELL"; reason: string; price: number }
@@ -31,6 +35,26 @@ export interface GoldTechnical {
   currentMA200: number | null;
   currentMACD: number | null;
   currentSignal: number | null;
+  /** RSI-Perzentil (0–100) gegen die eigene RSI-Historie (252–504 Tage). null bei < 252 Werten. */
+  rsiPercentile: number | null;
+  rsiHistoryDays: number;
+}
+
+export const VOLUME_SPIKE_MULTIPLE = 1.5; // wie server/gold-adaptive-score.ts
+const VOLUME_AVERAGE_DAYS = 20;
+const RSI_HISTORY_MIN = 252;
+const RSI_HISTORY_MAX = 504;
+
+/** Mittel der `n` Volumina vor bzw. bis Index `end` — nur wenn alle n echte positive Prints sind. */
+function realMean(vols: (number | undefined)[], end: number, n: number): number | null {
+  if (end - n + 1 < 0) return null;
+  let sum = 0;
+  for (let j = end - n + 1; j <= end; j++) {
+    const v = vols[j];
+    if (v == null || !(v > 0)) return null;
+    sum += v;
+  }
+  return sum / n;
 }
 
 /** EMA mit SMA-Seed — identisch zu calcEMA in btcAnalysis.ts. */
@@ -125,6 +149,29 @@ export function buildGoldTechnical(history: GoldPricePoint[]): GoldTechnical {
     }
   }
 
+  // Volumen-Marker (nur echte Volumina; fehlt ein Print im Fenster, kein Marker).
+  const vols = points.map(p => p.volume);
+  let prevDiv = false;
+  for (let i = 0; i < points.length; i++) {
+    const v = vols[i];
+    const avg = realMean(vols, i - 1, VOLUME_AVERAGE_DAYS);
+    if (v != null && v > 0 && avg != null && v > VOLUME_SPIKE_MULTIPLE * avg) points[i].volSpike = true;
+    const recent = realMean(vols, i, VOLUME_AVERAGE_DAYS);
+    const prior = realMean(vols, i - VOLUME_AVERAGE_DAYS, VOLUME_AVERAGE_DAYS);
+    const priorClose = i >= VOLUME_AVERAGE_DAYS ? points[i - VOLUME_AVERAGE_DAYS].price : null;
+    const div = recent != null && prior != null && priorClose != null && points[i].price > priorClose && recent < prior;
+    if (div && !prevDiv) points[i].volDivergence = true;
+    prevDiv = div;
+  }
+
+  // RSI relativ zur eigenen Historie: Perzentil des letzten RSI in den letzten 252–504 Werten.
+  const rsiHist = rsi.filter((v): v is number => v != null && Number.isFinite(v)).slice(-RSI_HISTORY_MAX);
+  let rsiPercentile: number | null = null;
+  if (rsiHist.length >= RSI_HISTORY_MIN) {
+    const cur = rsiHist[rsiHist.length - 1];
+    rsiPercentile = Math.round((rsiHist.filter(v => v <= cur).length / rsiHist.length) * 100);
+  }
+
   const last = points.length > 0 ? points[points.length - 1] : null;
   const prev = points.length > 1 ? points[points.length - 2] : null;
   const bullConditions = {
@@ -143,5 +190,46 @@ export function buildGoldTechnical(history: GoldPricePoint[]): GoldTechnical {
     currentMA200: last?.ma200 ?? null,
     currentMACD: last?.macd ?? null,
     currentSignal: last?.signal ?? null,
+    rsiPercentile,
+    rsiHistoryDays: rsiHist.length,
   };
+}
+
+/**
+ * #214-Fix: Relativer RSI. Das Server-Signal `technical.rsi` traegt die
+ * Richtung (positiv = bullisch) und speichert deshalb z = −(RSI-z). Der alte
+ * Titel zeigte diese Richtungs-z neben dem festen Satz „hoch gegen die eigene
+ * Historie = bärisch“ — bei niedrigem RSI (P15) stand dort „z=0,98 … hoch“.
+ * Hier werden Perzentil, RSI-z (Vorzeichen zurueckgedreht) und Text aus
+ * denselben Zahlen gebaut.
+ */
+export function describeRelativeRsi(
+  percentile: number | null,
+  historyDays: number,
+  serverDirectionZ: number | null | undefined,
+): { label: string; title: string; rsiZ: number | null; consistent: boolean } {
+  if (percentile == null) {
+    return { label: "Rel. RSI: N/A (< 1 Jahr Historie)", title: "Weniger als 1 Jahr RSI-Historie — kein relativer RSI.", rsiZ: null, consistent: true };
+  }
+  const years = (historyDays / 252).toFixed(1);
+  const rsiZ = serverDirectionZ == null || !Number.isFinite(serverDirectionZ) ? null : -serverDirectionZ;
+  const level = percentile >= 50 ? "hoch" : "niedrig";
+  const reading = percentile >= 50 ? "hoch gegen die eigene Historie = bärisch" : "niedrig gegen die eigene Historie = bullisch";
+  const zPart = rsiZ == null ? "RSI-z: N/A" : `RSI-z=${rsiZ.toFixed(2)}`;
+  // Perzentil (Client, 252–504 Werte inkl. heute) und z (Server, Historie ohne heute) duerfen
+  // nur in der Mitte auseinanderlaufen; an den Raendern muessen sie dieselbe Seite zeigen.
+  const consistent = rsiZ == null || Math.abs(percentile - 50) < 15 || (percentile >= 50) === (rsiZ >= 0);
+  return {
+    label: `Rel. ${years}J: P${percentile} (${level})`,
+    title: `RSI liegt im ${percentile}. Perzentil der letzten ${years} Jahre, ${zPart}: ${reading}.`,
+    rsiZ,
+    consistent,
+  };
+}
+
+/** #214-Fix: Server-Detail beginnt schon mit „Volumen-Spike:“ — Praefix nur einmal zeigen. */
+export function volumeLegendText(label: string, serverDetail: string | null | undefined): string {
+  if (!serverDetail) return label;
+  const stripped = serverDetail.replace(/^Volumen-(Spike|Divergenz)\s*:\s*/, "");
+  return `${label}: ${stripped}`;
 }

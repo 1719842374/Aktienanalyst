@@ -24,4 +24,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerBuffettRatioRoute(app);
   const { registerThesisLabRoutes } = await import("./thesis-lab-routes");
   registerThesisLabRoutes(app);
+  const { registerDividendRoute } = await import("./dividend-route");
+  registerDividendRoute(app);
 }

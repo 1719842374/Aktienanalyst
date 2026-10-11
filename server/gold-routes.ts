@@ -15,6 +15,7 @@ import { execSync } from "child_process";
 import { fmpQuote, fmpHistoricalPrices } from "./fmp";
 import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield-model";
 import { enrichGoldChartSeries } from "./gold-chart-series";
+import { createFredHistoryMemo } from "./gold-fred-memo";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -284,7 +285,10 @@ export function registerGoldRoutes(server: Server, app: Express) {
       // das Modell bereits enthaelt. Das Modell wurde aber nie an diese Route
       // angebunden. Real10Y-Historie ueber denselben Zeitraum wie der Gold-Chart,
       // damit beide Achsen dieselbe Zeitspanne (bis zu 10Y) abdecken.
-      const real10yHistory = fetchFREDSeriesHistory("DFII10", startDate);
+      // Ein Memo je Request: jede FRED-Historie wird nur einmal geladen und an
+      // Chart-Overlays, Multi-Faktor-Modell und adaptive Schicht weitergereicht.
+      const fredHistory = createFredHistoryMemo(fetchFREDSeriesHistory);
+      const real10yHistory = fredHistory.get("DFII10", startDate);
       console.log(`[GOLD] Real10Y (DFII10) history points: ${real10yHistory.length}`);
 
       // === Parse gold quote ===
@@ -373,10 +377,10 @@ export function registerGoldRoutes(server: Server, app: Express) {
       try {
         const m2Start = new Date(new Date(startDate).getTime() - 400 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
         historicalPrices = enrichGoldChartSeries(historicalPrices, {
-          dxy: fetchFREDSeriesHistory("DTWEXBGS", startDate),
-          t10yie: fetchFREDSeriesHistory("T10YIE", startDate),
-          walcl: fetchFREDSeriesHistory("WALCL", startDate),
-          m2: fetchFREDSeriesHistory("M2SL", m2Start),
+          dxy: fredHistory.get("DTWEXBGS", startDate),
+          t10yie: fredHistory.get("T10YIE", startDate),
+          walcl: fredHistory.get("WALCL", startDate),
+          m2: fredHistory.get("M2SL", m2Start),
           volumes: ohlcvRows.map(row => ({
             date: String(row.date || "").slice(0, 10),
             volume: parseFloat(String(row.volume ?? "")),
@@ -425,8 +429,8 @@ export function registerGoldRoutes(server: Server, app: Express) {
       try {
         if (historicalPrices.length > 0 && real10yHistory.length >= 5) {
           const [dxyHistory, walclHistory] = await Promise.all([
-            Promise.resolve(fetchFREDSeriesHistory("DTWEXBGS", startDate)),
-            Promise.resolve(fetchFREDSeriesHistory("WALCL", startDate)),
+            Promise.resolve(fredHistory.get("DTWEXBGS", startDate)),
+            Promise.resolve(fredHistory.get("WALCL", startDate)),
           ]);
           console.log(`[GOLD] Multi-Faktor: DTWEXBGS-Punkte=${dxyHistory.length}, WALCL-Punkte=${walclHistory.length}`);
           if (dxyHistory.length > 0 && walclHistory.length > 0) {
@@ -740,13 +744,13 @@ export function registerGoldRoutes(server: Server, app: Express) {
           volumes: volumePoints,
           volumeSource,
           real10Y: real10yHistory,
-          fedFunds: fetchFREDSeriesHistory("FEDFUNDS", startDate),
-          m2: fetchFREDSeriesHistory("M2SL", startDate),
-          walcl: fetchFREDSeriesHistory("WALCL", startDate),
-          tga: fetchFREDSeriesHistory("WTREGEN", startDate),
-          rrpBillions: fetchFREDSeriesHistory("RRPONTSYD", startDate),
-          breakeven: fetchFREDSeriesHistory("T10YIE", startDate),
-          dxy: fetchFREDSeriesHistory("DTWEXBGS", startDate),
+          fedFunds: fredHistory.get("FEDFUNDS", startDate),
+          m2: fredHistory.get("M2SL", startDate),
+          walcl: fredHistory.get("WALCL", startDate),
+          tga: fredHistory.get("WTREGEN", startDate),
+          rrpBillions: fredHistory.get("RRPONTSYD", startDate),
+          breakeven: fredHistory.get("T10YIE", startDate),
+          dxy: fredHistory.get("DTWEXBGS", startDate),
           aisc: null,
           regime: realYieldModel?.regime?.regime ?? null,
           newsFlag: goldNews?.flag ?? null,
@@ -854,6 +858,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         technicalSignals,
       };
 
+      console.log(`[GOLD] FRED-Historien: ${fredHistory.fetches} Abrufe fuer ${fredHistory.requests} Anfragen`);
       console.log(`[GOLD] Analysis complete: $${spotPrice}, GIS=${gis.toFixed(2)}, Sentiment=${sentiment}`);
       res.json(analysis);
     } catch (error: any) {
