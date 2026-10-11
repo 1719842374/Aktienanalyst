@@ -286,6 +286,9 @@ export interface GoldAnalysis {
   adaptiveScore?: GoldAdaptiveScore | null;
   // Future_10 §9. null, wenn der News-Abruf nicht lief. flag darin bleibt null ohne Key.
   goldNews?: GoldNewsImpact | null;
+  /** JOB 16: nur gesetzt, wenn interne Ersatzwerte (Teilausfall FMP/FRED) genutzt wurden. Fehlt bei vollständigen Antworten. */
+  partial?: true;
+  partialReasons?: string[];
   // Dieselben Werte noch einmal an der Wurzel, damit der Chart sie ohne Layer-Lauf lesen kann.
   /** Adaptiver Score minus GIS. null, wenn die Schicht fehlt. */
   scoreDelta?: number | null;

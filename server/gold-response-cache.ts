@@ -7,6 +7,8 @@
  * - bypass (z. B. ?fresh=1) lädt neu und ersetzt den Eintrag, teilt aber einen laufenden Ladevorgang.
  */
 export const GOLD_ANALYSIS_CACHE_TTL_MS = 10 * 60 * 1000;
+/** JOB 16: Antworten mit internen Ersatzwerten (partial:true) höchstens 2 min. */
+export const GOLD_ANALYSIS_PARTIAL_TTL_MS = 2 * 60 * 1000;
 
 export type GoldCacheStatus = "miss" | "hit" | "shared" | "bypass";
 
@@ -16,8 +18,12 @@ export interface GoldResponseCache<T> {
   readonly loads: number;
 }
 
-export function createGoldResponseCache<T>(ttlMs: number, now: () => number = Date.now): GoldResponseCache<T> {
-  let entry: { at: number; value: T } | null = null;
+export function createGoldResponseCache<T>(
+  ttlMs: number,
+  now: () => number = Date.now,
+  ttlFor: (value: T) => number = () => ttlMs,
+): GoldResponseCache<T> {
+  let entry: { at: number; value: T; ttl: number } | null = null;
   let inFlight: Promise<T> | null = null;
   let loads = 0;
 
@@ -26,7 +32,7 @@ export function createGoldResponseCache<T>(ttlMs: number, now: () => number = Da
     const p = (async () => {
       try {
         const value = await loader();
-        entry = { at: now(), value };
+        entry = { at: now(), value, ttl: ttlFor(value) };
         return value;
       } finally {
         inFlight = null;
@@ -42,7 +48,7 @@ export function createGoldResponseCache<T>(ttlMs: number, now: () => number = Da
         const value = await inFlight;
         return { value, status: "shared", ageMs: entry ? now() - entry.at : 0 };
       }
-      if (!opts?.bypass && entry && now() - entry.at < ttlMs) {
+      if (!opts?.bypass && entry && now() - entry.at < entry.ttl) {
         return { value: entry.value, status: "hit", ageMs: now() - entry.at };
       }
       const value = await start(loader);
