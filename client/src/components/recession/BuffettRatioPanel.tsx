@@ -5,9 +5,10 @@ import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import {
   CartesianGrid, Customized, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import { axisTicks, lastPointLabel, proxySuffix, tickLabel, type BuffettRangeId } from "./buffettChartScale";
 
 type RegionId = "US" | "EU" | "CN";
-type RangeId = "6M" | "1Y" | "2Y" | "3Y" | "5Y" | "10Y" | "Max";
+type RangeId = BuffettRangeId;
 
 interface TrendPoint {
   date: string;
@@ -19,6 +20,8 @@ interface TrendPoint {
   minus2: number;
   premiumPct: number;
   zScore: number;
+  /** #245: Proxy-Symbol bei fortgeschriebenen Punkten */
+  proxy?: string;
 }
 
 interface BuffettPayload {
@@ -94,48 +97,35 @@ function yTicksFor(domain: [number, number], range: RangeId): number[] {
   return ticks;
 }
 
-function axisTicks(rows: TrendPoint[], range: RangeId, wide: boolean): number[] {
-  if (rows.length === 0) return [];
-  const startYear = Number(rows[0].date.slice(0, 4));
-  const endYear = Number(rows[rows.length - 1].date.slice(0, 4));
-  const endMonth = Number(rows[rows.length - 1].date.slice(5, 7));
-  const stamps: number[] = [];
-  const push = (iso: string) => {
-    const stamp = Date.parse(`${iso}T00:00:00Z`);
-    const first = Date.parse(`${rows[0].date}T00:00:00Z`);
-    const last = Date.parse(`${rows[rows.length - 1].date}T00:00:00Z`);
-    if (stamp >= first - 86_400_000 && stamp <= last + 86_400_000) stamps.push(stamp);
-  };
-  if (range === "Max") {
-    const step = wide ? 5 : 10;
-    stamps.push(Date.parse(`${rows[0].date}T00:00:00Z`));
-    const first = Math.ceil((startYear + 1) / step) * step;
-    for (let year = first; year <= endYear; year += step) push(`${year}-01-01`);
-  } else if (range === "10Y" || range === "5Y" || range === "3Y") {
-    for (let year = startYear; year <= endYear; year += 1) push(`${year}-01-01`);
-  } else {
-    const step = range === "6M" ? 1 : range === "1Y" ? 2 : 6;
-    let year = startYear;
-    let month = Number(rows[0].date.slice(5, 7));
-    while (year < endYear || (year === endYear && month <= endMonth)) {
-      push(`${year}-${String(month).padStart(2, "0")}-01`);
-      month += step;
-      while (month > 12) {
-        month -= 12;
-        year += 1;
-      }
-    }
-  }
-  return stamps;
-}
-
-function tickLabel(value: number, range: RangeId): string {
-  const date = new Date(value);
-  const year = date.getUTCFullYear();
-  if (range === "6M" || range === "1Y" || range === "2Y") {
-    return `${String(date.getUTCMonth() + 1).padStart(2, "0")}.${String(year).slice(2)}`;
-  }
-  return String(year);
+function AxisTick({
+  x = 0,
+  y = 0,
+  payload,
+  index = 0,
+  visibleTicksCount = 0,
+  range,
+}: {
+  x?: number;
+  y?: number;
+  payload?: { value: number };
+  index?: number;
+  visibleTicksCount?: number;
+  range: RangeId;
+}) {
+  if (!payload) return null;
+  const last = index === visibleTicksCount - 1;
+  return (
+    <text
+      x={x}
+      y={y}
+      dy={14}
+      textAnchor={last ? "end" : "middle"}
+      fill="#6b7280"
+      fontSize={11}
+    >
+      {tickLabel(payload.value, range)}
+    </text>
+  );
 }
 
 interface AxisMap {
@@ -233,13 +223,32 @@ function ChartOverlay(props: {
           </text>
         );
       })}
+      {/* JOB 18: Punkt + Kurzlabel am letzten Datenpunkt (alle Zeitfenster; Max zusätzlich mit Callout) */}
+      <g data-testid="buffett-last-point">
+        <circle cx={x} cy={y} r={4} fill={RATIO} stroke="#ffffff" strokeWidth={1.5} />
+        {!showCallout && lastPointLabel(last) && (
+          <text
+            x={x - 8}
+            y={y < 24 ? y + 18 : y - 9}
+            textAnchor="end"
+            fill={RATIO}
+            fontSize={props.wide ? 12 : 11}
+            fontWeight={700}
+            stroke="#ffffff"
+            strokeWidth={3}
+            paintOrder="stroke"
+          >
+            {lastPointLabel(last)}
+          </text>
+        )}
+      </g>
       {showCallout && (
         <g>
           <line x1={x1} y1={y1} x2={x - 8} y2={y} stroke={RATIO} strokeWidth={1.6} />
           <polygon points={`${x},${y} ${x - 9},${y - 4} ${x - 9},${y + 4}`} fill={RATIO} />
           <g data-testid="text-buffett-callout">
             <rect x={boxX} y={boxY} width={boxW} height={boxH} rx={2} fill="#ffffff" stroke={RATIO} strokeWidth={1.6} />
-            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}</text>
+            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}{last.proxy ? ` (via ${last.proxy})` : ""}</text>
             <text x={boxX + 10} y={boxY + 33} fill={RATIO} fontSize={props.wide ? 12 : 11}>{ratioText}</text>
             <text x={boxX + 10} y={boxY + 50} fill={RATIO} fontSize={props.wide ? 12 : 11}>{premiumText}</text>
           </g>
@@ -275,6 +284,9 @@ export function BuffettRatioPanel() {
 
   const query = useQuery({
     queryKey: ["recession-buffett", region],
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 15 * 60 * 1000,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       const res = await fetch(`/api/analyze-recession/buffett?region=${region}`);
       if (!res.ok) throw await apiErrorFromResponse(res);
@@ -344,7 +356,7 @@ export function BuffettRatioPanel() {
             <div>
               {range !== "Max" && (
                 <p className="mb-1 text-[12px] leading-snug text-[#1473fc]" data-testid="text-buffett-callout">
-                  {longDate(chart[chart.length - 1].date)}
+                  {longDate(chart[chart.length - 1].date)}{proxySuffix(chart[chart.length - 1])}
                   {" · "}
                   {Math.round(chart[chart.length - 1].ratio)}% Marktwert zum BIP,{" "}
                   {Math.abs(Math.round(chart[chart.length - 1].premiumPct))}% {chart[chart.length - 1].premiumPct >= 0 ? "über" : "unter"} der langfristigen Trendlinie
@@ -354,17 +366,16 @@ export function BuffettRatioPanel() {
               )}
             <div className="h-[360px] w-full rounded-md border border-neutral-200 bg-white p-1 sm:h-[460px]" data-testid="chart-buffett">
               <ResponsiveContainer>
-                <LineChart data={chart} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+                <LineChart data={chart} margin={{ top: 10, right: 4, left: 0, bottom: 4 }}>
                   <CartesianGrid stroke="#e5e7eb" />
                   <XAxis
                     dataKey="t"
                     type="number"
                     scale="time"
-                    domain={["dataMin", "dataMax"]}
+                    domain={chart.length > 1 ? [chart[0].t, chart[chart.length - 1].t] : ["dataMin", "dataMax"]}
                     ticks={ticks}
                     interval={0}
-                    tickFormatter={value => tickLabel(Number(value), range)}
-                    tick={{ fontSize: 11, fill: "#6b7280" }}
+                    tick={(props) => <AxisTick {...props} range={range} />}
                     axisLine={{ stroke: "#9ca3af" }}
                     tickLine={{ stroke: "#9ca3af" }}
                     minTickGap={8}
@@ -381,7 +392,11 @@ export function BuffettRatioPanel() {
                   />
                   <Tooltip
                     contentStyle={{ fontSize: 11, borderColor: "#d1d5db" }}
-                    labelFormatter={value => longDate(new Date(Number(value)).toISOString().slice(0, 10))}
+                    labelFormatter={(value, payload) => {
+                      const iso = new Date(Number(value)).toISOString().slice(0, 10);
+                      const row = (payload?.[0]?.payload ?? null) as TrendPoint | null;
+                      return `${longDate(iso)}${proxySuffix(row)}`;
+                    }}
                     formatter={(value: number, name: string) => [`${Number(value).toFixed(1)}%`, name]}
                   />
                   <Line type="linear" dataKey="plus2" name="+ 2 Std.-Abw." stroke={PLUS_2} dot={false} strokeWidth={1.4} strokeDasharray="6 4" isAnimationActive={false} />
