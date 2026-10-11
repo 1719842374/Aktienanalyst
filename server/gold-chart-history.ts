@@ -145,3 +145,36 @@ export function createChartHistoryCache<T extends { incomplete?: boolean; shortC
     },
   };
 }
+
+/* ---------- Antwort je Zeitfenster kuerzen (#225-Follow-up) ---------- */
+
+export type ChartHistoryRange = "10Y" | "Max";
+/** Unbekannt/fehlend = Max (alte Clients ohne ?range bekommen weiter die volle Reihe). */
+export function parseChartHistoryRange(raw: unknown): ChartHistoryRange {
+  return String(raw ?? "").toUpperCase() === "10Y" ? "10Y" : "Max";
+}
+/** 10Y = 3653 Tage wie GOLD_RANGE_DAYS im Client. */
+export const CHART_RANGE_DAYS_10Y = 3653;
+/**
+ * Vorlauf vor dem Fensterbeginn, damit der Client MA20/50/100, EMA9/12/26, MACD(12,26,9) und RSI(14)
+ * ab dem ersten sichtbaren Tag eingeschwungen rechnet (laengste Kette MA100 bzw. EMA26+Signal9).
+ * MA200 kommt fertig vom Server (auf der vollen Reihe gerechnet). 300 > 200 als Reserve.
+ */
+export const CHART_WARMUP_POINTS = 300;
+
+/** Punkte fuer `range` plus Vorlauf; coverage passend zur gekuerzten Reihe. Max = unveraendert. */
+export function trimChartHistory<B extends { points: GoldPricePoint[]; coverage?: unknown }>(
+  body: B,
+  range: ChartHistoryRange,
+  today: Date = new Date(),
+): B & { range: ChartHistoryRange; warmupPoints: number } {
+  if (range === "Max") return { ...body, range, warmupPoints: 0 };
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() - CHART_RANGE_DAYS_10Y);
+  const cutoffStr = cutoff.toISOString().split("T")[0];
+  let first = body.points.findIndex(p => p.date >= cutoffStr);
+  if (first < 0) first = body.points.length;
+  const startIdx = Math.max(0, first - CHART_WARMUP_POINTS);
+  const points = body.points.slice(startIdx);
+  return { ...body, points, coverage: seriesCoverage(points), range, warmupPoints: first - startIdx };
+}
