@@ -7,14 +7,11 @@ import { chromium } from 'playwright-core';
 import { sumUpsideGb } from '../shared/bias-fixes';
 import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
 import { reverseDcfFromAnalysis, isEtfOrFund } from '../shared/conflict-matrix';
-import { companyDcfWaccPct } from '../shared/valuation-signal';
+import { companyDcfWaccPct, safeCompanyDcfWaccPct, waccSuffix } from '../shared/valuation-signal';
 
-const finiteNum = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 /** " (WACC x.xx%)" next to g* — omitted when beta5Y/marketCap/totalDebt are missing so the PDF never prints "WACC NaN%". */
 export function pdfWaccSuffix(d: any): string {
-  if (!finiteNum(d?.beta5Y) || !finiteNum(d?.marketCap) || d.marketCap <= 0 || !finiteNum(d?.totalDebt)) return '';
-  const w = companyDcfWaccPct({ beta5Y: d.beta5Y, totalDebt: d.totalDebt, marketCap: d.marketCap, lynchClass: d.lynchClass });
-  return finiteNum(w) ? ` (WACC ${w.toFixed(2)}%)` : '';
+  return waccSuffix(safeCompanyDcfWaccPct(d), 2);
 }
 
 // ===== Formatting helpers =====
@@ -569,7 +566,7 @@ ${data.macroCorrelations.correlations.slice(0,8).map((c: any) => `<tr><td>${esc(
 <!-- S14: REVERSE DCF -->
 <div class="sec-header"><span>14 &nbsp; REVERSE DCF</span></div>
 ${rdcf && rdcf.rating !== 'n/a' ? `
-<div class="row"><span class="row-label">Implied Growth Rate g*</span><span class="row-val">${f(rdcf.impliedGrowth,2)}% ${pdfWaccSuffix(rawData)}</span></div>
+<div class="row"><span class="row-label">Implied Growth Rate g*</span><span class="row-val">${f(rdcf.impliedGrowth,2)}%${pdfWaccSuffix(rawData)}</span></div>
 <div class="row"><span class="row-label">Bewertung</span><span class="row-val">${esc(rdcf.rating)} (Ref: ${f(rdcf.referenceGrowth,1)}%)</span></div>
 <div class="para" style="font-size:7px;color:#7a8296">Gleiche Formel wie die App (shared/valuation-signal.ts, WACC aus buildDefaultDCFParams).</div>
 ` : `<div class="row"><span class="row-label">Implied Growth Rate g*</span><span class="row-val">n/a${isEtfOrFund(rawData) ? ' (ETF/Fonds — Reverse DCF nicht anwendbar)' : ''}</span></div>`}

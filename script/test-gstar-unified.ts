@@ -39,3 +39,24 @@ import { pdfWaccSuffix } from "../server/pdf-export";
   }
   console.log("test-gstar-unified (pdf WACC guard): OK", ok);
 }
+
+// ── #238 tester soft: no "WACC NaN%" / "0.00 %" in the client either ──
+import { safeCompanyDcfWaccPct, waccSuffix } from "../shared/valuation-signal";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+{
+  assert.equal(safeCompanyDcfWaccPct({ beta5Y: 1.1, totalDebt: 6e10 } as any), null, "missing marketCap");
+  assert.equal(safeCompanyDcfWaccPct({ beta5Y: 1.1, totalDebt: 6e10, marketCap: 0 }), null, "marketCap 0");
+  assert.equal(safeCompanyDcfWaccPct({ beta5Y: NaN, totalDebt: 0, marketCap: 1e12 }), null);
+  assert.equal(safeCompanyDcfWaccPct(null), null);
+  assert.ok(safeCompanyDcfWaccPct({ beta5Y: 1.1, totalDebt: 6e10, marketCap: 3e12 })! > 0);
+  assert.equal(waccSuffix(null), ""); assert.equal(waccSuffix(NaN), ""); assert.equal(waccSuffix(10.064), " (WACC 10.1%)");
+  const sum = fs.readFileSync("client/src/components/sections/SummarySection.tsx", "utf8");
+  const rdcf = fs.readFileSync("client/src/components/sections/ReverseDCFSection.tsx", "utf8");
+  const att = fs.readFileSync("server/exec-summary-attach.ts", "utf8");
+  assert.doesNotMatch(sum, /[^e]companyDcfWaccPct\(data\)/, "Summary uses only the guarded helper");
+  assert.equal((sum.match(/safeCompanyDcfWaccPct\(data\)/g) || []).length >= 3, true);
+  assert.match(rdcf, /Number\.isFinite\(dcfWacc\) \? formatPercentNoSign\(dcfWacc\) : "—"/);
+  assert.match(att, /: safeCompanyDcfWaccPct\(a\),/);
+  console.log("test-gstar-unified (client WACC guard): OK");
+}
