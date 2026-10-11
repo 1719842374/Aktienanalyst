@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { resolveVixLevel, vixReading } from "../server/recession";
+import { crowdReading, resolveVixLevel, vixReading } from "../server/recession";
 
 const yahoo = (closes: Array<number | null>) => () => ({
   chart: { result: [{ timestamp: closes.map((_, i) => 1760000000 + i * 86400), indicators: { quote: [{ close: closes }] } }] },
@@ -30,4 +30,10 @@ assert.ok(Number.isNaN(bad.value));
 
 assert.equal(vixReading(16).source, "FRED VIXCLS");
 assert.equal(vixReading(16).rawScore, 0);
+const crowdFb = crowdReading(null, fb.value, false, fb.source);
+assert.equal(crowdFb.name, "VIX-Proxy");
+assert.equal(crowdFb.source, fb.source);
+assert.match(crowdFb.source, /^Yahoo \^VIX/);
+assert.equal(crowdReading(null, 18, false).source, "FRED VIXCLS");
+assert.equal(crowdReading(65, 18, false).source, "CNN Fear & Greed (Live)");
 console.log("test-vix-yahoo-fallback: OK");

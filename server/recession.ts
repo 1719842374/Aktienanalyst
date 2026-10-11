@@ -553,7 +553,7 @@ function scoreGoogleTrends(): IndicatorResult {
 }
 
 // One crowd leg: live CNN, otherwise a single VIX proxy. Crypto is only the proxy flag.
-function scoreCrowdLeg(vix: number): IndicatorResult {
+function scoreCrowdLeg(vix: number, vixSource = "FRED VIXCLS"): IndicatorResult {
   let cnn: number | null = null;
   try {
     const json = fetchUrl(
@@ -572,7 +572,7 @@ function scoreCrowdLeg(vix: number): IndicatorResult {
   } catch (err: any) {
     console.log(`  CNN F&G primary failed: ${err?.message?.substring(0, 100)}`);
   }
-  return crowdReading(cnn, Number.isFinite(vix) ? vix : null, false);
+  return crowdReading(cnn, Number.isFinite(vix) ? vix : null, false, vixSource);
 }
 
 function scoreWei(): IndicatorResult {
@@ -1320,7 +1320,12 @@ export function vixReading(vix: number, source = "FRED VIXCLS"): IndicatorResult
   };
 }
 
-export function crowdReading(cnn: number | null, vix: number | null, cnnIsProxy: boolean): IndicatorResult {
+export function crowdReading(
+  cnn: number | null,
+  vix: number | null,
+  cnnIsProxy: boolean,
+  vixSource = "FRED VIXCLS",
+): IndicatorResult {
   const cnnOk = cnn != null && Number.isFinite(cnn) && !cnnIsProxy;
   if (cnnOk) {
     const fgValue = cnn as number;
@@ -1361,7 +1366,7 @@ export function crowdReading(cnn: number | null, vix: number | null, cnnIsProxy:
       weightedScore: rawScore,
       maxWeighted: 4,
       zone,
-      source: "FRED VIXCLS",
+      source: vixSource,
       description: "Ein Crowd-Bein als VIX-Proxy. Nicht AAII, Put/Call und Investors Intelligence zugleich.",
       proxy: true,
     };
@@ -1439,7 +1444,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     scoreMarginDebt(),
     scoreGoogleTrends(),
     vixReading(vixValue, vix.source),
-    scoreCrowdLeg(vixValue),
+    scoreCrowdLeg(vixValue, vix.source),
     scoreWei(),
   ]);
 
