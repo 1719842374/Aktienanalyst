@@ -227,7 +227,15 @@ export const CORRIDOR_LABEL_LANE_PITCH_PX = 14;
 export const CORRIDOR_LABEL_LINE_PX = 12;
 /** Spot pill is shifted up by this many pixels (was the Tailwind class `-top-5`). */
 export const CORRIDOR_SPOT_PILL_OVERHANG_PX = 20;
-export const CORRIDOR_SPOT_HEADING_CLEARANCE_PX = 4;
+export const CORRIDOR_SPOT_HEADING_CLEARANCE_PX = 8;
+/**
+ * B2-Folge: Labels landen nur dann in einem gemeinsamen Stapel, wenn ihre
+ * PREISE nah beieinander liegen (relativer Abstand ≤ 3 %). Ein Label mit
+ * grosser Preisluecke wird nie gestapelt, auch wenn es optisch nah liegt —
+ * dann zeigt es nur sein Kuerzel (Preis im Tap-Tooltip) oder bekommt eine
+ * eigene Zeile.
+ */
+export const CORRIDOR_PILE_MAX_PRICE_GAP = 0.03;
 
 /** Top padding so the spot pill stays below the corridor heading, including at 375px. */
 export function corridorSpotTopPadPx(): number {
@@ -257,6 +265,8 @@ export type PlacedCorridorLabel = {
   leftPct: number;
   widthPx: number;
   combined: boolean;
+  /** Einzel-Label nur mit Kuerzel (Platzmangel, Preis zu weit fuer einen Stapel). Preis im Tooltip. */
+  compact?: boolean;
 };
 
 type LevelGroup = {
@@ -320,12 +330,13 @@ function groupColor(parts: CorridorLevelInput[]): string {
   return colors.size === 1 ? parts[0].colorClass : "text-foreground";
 }
 
-function presentGroup(group: LevelGroup, trackWidth: number): {
+function presentGroup(group: LevelGroup, trackWidth: number, compact = false): {
   text: string;
   tooltip: string;
   colorClass: string;
   widthPx: number;
   combined: boolean;
+  compact?: boolean;
   pct: number;
 } {
   const parts = orderParts(group.parts);
@@ -333,8 +344,8 @@ function presentGroup(group: LevelGroup, trackWidth: number): {
   const colorClass = groupColor(parts);
   const pct = parts.reduce((sum, part) => sum + part.pct, 0) / parts.length;
   if (parts.length === 1) {
-    const text = `${parts[0].tag}: ${parts[0].priceLabel}`;
-    return { text, tooltip, colorClass, widthPx: estimateLevelLabelWidthPx(text), combined: false, pct };
+    const text = compact ? parts[0].tag : `${parts[0].tag}: ${parts[0].priceLabel}`;
+    return { text, tooltip, colorClass, widthPx: estimateLevelLabelWidthPx(text), combined: false, compact: compact || undefined, pct };
   }
   const prices: string[] = [];
   for (const part of parts) {
@@ -357,9 +368,14 @@ function presentGroup(group: LevelGroup, trackWidth: number): {
   };
 }
 
-function packGroups(groups: LevelGroup[], trackWidth: number): PlacedCorridorLabel[] | null {
+function packGroups(
+  groups: LevelGroup[],
+  trackWidth: number,
+  opts: { compact?: boolean; maxLanes?: number } = {},
+): PlacedCorridorLabel[] | null {
+  const maxLanes = opts.maxLanes ?? CORRIDOR_LABEL_MAX_LANES;
   const displays = groups.map((group) => {
-    const shown = presentGroup(group, trackWidth);
+    const shown = presentGroup(group, trackWidth, !!opts.compact);
     const center = clampLabelCenterPx(shown.pct, trackWidth, shown.widthPx);
     return { shown, center, group, price: groupMinPrice(group) };
   }).sort((a, b) => a.price - b.price || a.center - b.center || a.shown.text.localeCompare(b.shown.text));
@@ -375,7 +391,7 @@ function packGroups(groups: LevelGroup[], trackWidth: number): PlacedCorridorLab
         lane = Math.max(lane, existing.lane + 1);
       }
     }
-    if (lane >= CORRIDOR_LABEL_MAX_LANES) return null;
+    if (lane >= maxLanes) return null;
     placedBoxes.push({ ...box, lane });
     const parts = orderParts(item.group.parts);
     placed.push({
@@ -387,10 +403,18 @@ function packGroups(groups: LevelGroup[], trackWidth: number): PlacedCorridorLab
       leftPct: (item.center / trackWidth) * 100,
       widthPx: item.shown.widthPx,
       combined: item.shown.combined,
+      ...(item.shown.compact ? { compact: true } : {}),
     });
   }
 
   return placed;
+}
+
+/** Relativer Preisabstand zweier Nachbarn ≤ CORRIDOR_PILE_MAX_PRICE_GAP. */
+export function pricesClose(a: number, b: number): boolean {
+  const lo = Math.min(a, b);
+  if (!(lo > 0)) return Math.abs(a - b) < 1e-9;
+  return Math.abs(b - a) / lo <= CORRIDOR_PILE_MAX_PRICE_GAP + 1e-9;
 }
 
 /** Merge only neighbors in price order. Visual overlap is the tie-break, not a reason to skip a level in between. */
@@ -411,11 +435,13 @@ function mergePriceAdjacentGroups(groups: LevelGroup[], trackWidth: number): Lev
     boxes.set(item.index, { left: center - shown.widthPx / 2, right: center + shown.widthPx / 2 });
   }
 
-  let best = 0;
+  let best = -1;
   let bestGap = Infinity;
   let bestSep = Infinity;
   for (let i = 0; i < indexed.length - 1; i++) {
     const gap = indexed[i + 1].minPrice - indexed[i].maxPrice;
+    // Nur preisnahe Nachbarn duerfen einen Stapel bilden.
+    if (!pricesClose(indexed[i].maxPrice, indexed[i + 1].minPrice)) continue;
     const sep = rangeSeparation(boxes.get(indexed[i].index)!, boxes.get(indexed[i + 1].index)!);
     if (gap < bestGap - 1e-6 || (Math.abs(gap - bestGap) <= 1e-6 && sep < bestSep)) {
       bestGap = gap;
@@ -424,6 +450,7 @@ function mergePriceAdjacentGroups(groups: LevelGroup[], trackWidth: number): Lev
     }
   }
 
+  if (best < 0) return null;
   const left = indexed[best];
   const right = indexed[best + 1];
   const merged: LevelGroup = { parts: [...left.group.parts, ...right.group.parts] };
@@ -456,7 +483,11 @@ export function layoutCorridorLabels(levels: CorridorLevelInput[], trackWidthPx:
     if (!next) break;
     groups = next;
   }
-  return packGroups(groups, trackWidthPx) ?? [];
+  // Kein preisnahes Paar mehr: nicht stapeln, sondern Kuerzel (Preis im Tooltip),
+  // notfalls zusaetzliche Zeilen. Nie ein Label weglassen.
+  return packGroups(groups, trackWidthPx, { compact: true })
+    ?? packGroups(groups, trackWidthPx, { compact: true, maxLanes: Infinity })
+    ?? [];
 }
 
 export type ComboTooltipState = { open: boolean; pinned: boolean };
@@ -635,7 +666,7 @@ function CorridorLevelLabel({ label }: { label: PlacedCorridorLabel }) {
     transform: "translateX(-50%)",
     lineHeight: `${CORRIDOR_LABEL_LINE_PX}px`,
   };
-  if (!label.combined) {
+  if (!label.combined && !label.compact) {
     return (
       <div className={className} style={style} data-testid={`gold-fv-label-${label.id}`} data-lane={label.lane}>
         {label.text}
@@ -656,8 +687,13 @@ function CorridorLevelLabel({ label }: { label: PlacedCorridorLabel }) {
           style={style}
           data-testid={`gold-fv-label-${label.id}`}
           data-lane={label.lane}
-          aria-label={label.tooltip}
+          aria-label={`${label.combined ? "Gestapelte Marken" : "Marke"} — ${label.tooltip.replace(/\n/g, ", ")}. Tippen zeigt die Preise.`}
           aria-expanded={tip.open}
+          aria-haspopup="true"
+          data-combined={label.combined ? "true" : undefined}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setTip((current) => reduceComboTooltip(current, "dismiss"));
+          }}
           onClick={(event) => {
             event.preventDefault();
             setTip((current) => reduceComboTooltip(current, "tap"));
