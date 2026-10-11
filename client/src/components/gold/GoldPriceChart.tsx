@@ -19,6 +19,9 @@ import {
   type GoldTechPoint, type GoldTimeRange,
 } from "./goldTechnical";
 import type { GoldPricePoint } from "../../../../shared/gold-schema";
+import {
+  GOLD_AISC_QUARTERLY, GOLD_AISC_SOURCE_LABEL, GOLD_AISC_STRESS_HIGH, GOLD_AISC_STRESS_LOW, goldAiscAt, goldAiscStress,
+} from "../../../../shared/data/gold-aisc-quarterly";
 
 /**
  * Gold Section 2 im Design von BTC Section 11 „Technische Analyse“
@@ -46,7 +49,7 @@ const MACRO = [
   { key: "real10y", label: "Real10Y", name: "Real10Y (DFII10)", color: "#38bdf8", defaultOn: true, unit: "%", width: 44, step: false, title: "Realzins (DFII10, FRED)" },
   { key: "m2Yoy", label: "M2 YoY", name: "M2 YoY (M2SL)", color: "#a78bfa", defaultOn: false, unit: "%", width: 44, step: true, title: "US-M2-Wachstum YoY (FRED M2SL)" },
   { key: "dxy", label: "DXY", name: "DXY (DTWEXBGS)", color: "#34d399", defaultOn: false, unit: "", width: 44, step: false, title: "Broad Dollar Index (FRED DTWEXBGS)" },
-  { key: "t10yie", label: "Breakeven", name: "Breakeven (T10YIE)", color: "#f472b6", defaultOn: false, unit: "%", width: 44, step: false, title: "10J-Breakeven-Inflation (FRED T10YIE)" },
+  { key: "t10yie", label: "Inflations-BE (T10YIE)", name: "Inflations-BE (T10YIE)", color: "#f472b6", defaultOn: false, unit: "%", width: 44, step: false, title: "10J-Breakeven-Inflation (FRED T10YIE) — Inflationserwartung in %, nicht der Minen-Breakeven (siehe Chip AISC)" },
   { key: "walcl", label: "WALCL", name: "Fed-Bilanz (WALCL)", color: "#e2e8f0", defaultOn: false, unit: "T", width: 54, step: true, title: "Fed-Bilanzsumme in Bio. USD (FRED WALCL)" },
 ] as const;
 
@@ -68,6 +71,8 @@ export function GoldPriceChart({ data }: Props) {
   const [visibleMacro, setVisibleMacro] = useState<Set<MacroKey>>(() => new Set(MACRO.filter(m => m.defaultOn).map(m => m.key)));
   const [showSignals, setShowSignals] = useState(true);
   const [showVolume, setShowVolume] = useState(true);
+  // AISC (Minen-Breakeven): Quartals-AISC als Stufe auf der Preisachse, dieselbe Reihe wie Supply-Layer/GOLD_AISC_STRESS.
+  const [showAisc, setShowAisc] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [measureStart, setMeasureStart] = useState<{ date: string; price: number } | null>(null);
@@ -139,12 +144,32 @@ export function GoldPriceChart({ data }: Props) {
   const chartDataWithVol = useMemo(() => {
     const rawVols = chartData.map(d => d.volume ?? 0);
     const maxVol = Math.max(...rawVols, 0);
-    return chartData.map((d, i) => ({
-      ...d,
-      _volNorm: maxVol > 0 ? (d.volume ?? 0) / maxVol : 0,
-      _volUp: i === 0 ? true : d.price >= chartData[i - 1].price,
-    }));
+    return chartData.map((d, i) => {
+      const q = goldAiscAt(d.date);
+      return {
+        ...d,
+        _volNorm: maxVol > 0 ? (d.volume ?? 0) / maxVol : 0,
+        _volUp: i === 0 ? true : d.price >= chartData[i - 1].price,
+        aisc: q?.aisc ?? undefined,
+        _aiscQ: q?.quarter ?? undefined,
+      };
+    });
   }, [chartData]);
+  const hasAisc = chartDataWithVol.some(d => d.aisc != null);
+  const aiscOn = showAisc && hasAisc;
+  // Stresszonen je AISC-Stufe: [AISC, AISC×1,10] Stress, [AISC×1,10, AISC×1,15] Vorwarnung.
+  const aiscBands = useMemo(() => {
+    const out: { quarter: string; x1: string; x2: string; aisc: number }[] = [];
+    for (const d of chartDataWithVol) {
+      if (d.aisc == null || !d._aiscQ) continue;
+      const last = out[out.length - 1];
+      if (last && last.quarter === d._aiscQ) last.x2 = d.date;
+      else out.push({ quarter: d._aiscQ, x1: d.date, x2: d.date, aisc: d.aisc });
+    }
+    return out;
+  }, [chartDataWithVol]);
+  const latestAiscQ = goldAiscAt(chartData[chartData.length - 1]?.date ?? "");
+  const aiscState = goldAiscStress(chartData[chartData.length - 1]?.price ?? 0, latestAiscQ?.aisc ?? null);
   const hasVolume = chartDataWithVol.some(d => d._volNorm > 0);
 
   // #208 Server-Signale (technicalSignals). Marker nur, wenn das Server-Signal
@@ -181,11 +206,16 @@ export function GoldPriceChart({ data }: Props) {
         const v = d[ma.key];
         if (v && v > 0) { minVal = Math.min(minVal, v); maxVal = Math.max(maxVal, v); }
       }
+      // AISC-Chip an: Stufe und Stresszone (bis AISC×1,15) muessen im Bild liegen.
+      if (aiscOn) {
+        const a = goldAiscAt(d.date)?.aisc;
+        if (a && a > 0) { minVal = Math.min(minVal, a); maxVal = Math.max(maxVal, a * GOLD_AISC_STRESS_HIGH); }
+      }
     }
     if (!isFinite(minVal) || !isFinite(maxVal) || maxVal <= 0) return [0, 5000] as [number, number];
     const padding = (maxVal - minVal) * 0.05;
     return [Math.max(0, minVal - padding), maxVal + padding] as [number, number];
-  }, [chartData, visibleMAs]);
+  }, [chartData, visibleMAs, aiscOn]);
 
   const formatDate = (date: string) => {
     const parts = date.split("-");
@@ -390,6 +420,25 @@ export function GoldPriceChart({ data }: Props) {
             {showVolume && hasVolume ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
             Volumen{hasVolume ? "" : " (N/A)"}
           </button>
+          {hasAisc ? (
+            <button
+              onClick={() => setShowAisc(!showAisc)}
+              title={`AISC (Minen-Breakeven) ein-/ausblenden — ${GOLD_AISC_SOURCE_LABEL}. Kostenniveau in USD/oz, nicht die Inflationserwartung T10YIE`}
+              className={`${chipCls} font-mono ${aiscOn ? "border-red-400 text-red-400" : "border-border text-muted-foreground opacity-50"}`}
+              data-testid="toggle-gold-aisc"
+            >
+              {aiscOn ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              AISC (Minen-Breakeven)
+            </button>
+          ) : (
+            <span
+              className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`}
+              title="Keine belegten Quartals-AISC im gewählten Zeitraum (erst ab 2024-Q3, Ø nur ab 2 Firmenwerten)"
+              data-testid="gold-aisc-na"
+            >
+              AISC n/a
+            </span>
+          )}
         </div>
       </div>
 
@@ -513,7 +562,7 @@ export function GoldPriceChart({ data }: Props) {
                   return (
                     <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
                       <div className="font-semibold mb-1">{formatDateFull(String(label))}</div>
-                      {payload.filter((p: any) => p.dataKey !== "_volNorm").map((p: any) => {
+                      {payload.filter((p: any) => p.dataKey !== "_volNorm" && p.dataKey !== "aisc").map((p: any) => {
                         const macro = MACRO.find(m => m.key === p.dataKey);
                         return (
                           <div key={p.dataKey} className="flex justify-between gap-3">
@@ -524,6 +573,23 @@ export function GoldPriceChart({ data }: Props) {
                           </div>
                         );
                       })}
+                      {aiscOn && pt?.aisc != null && (() => {
+                        const q = GOLD_AISC_QUARTERLY.find(x => x.quarter === pt._aiscQ);
+                        return (
+                          <div className="mt-1 pt-1 border-t border-border" data-testid="gold-aisc-tooltip">
+                            <div className="flex justify-between gap-3">
+                              <span className="text-red-400">AISC {pt._aiscQ} (Ø {q?.count ?? 0})</span>
+                              <span className="font-mono tabular-nums">${pt.aisc.toLocaleString("en-US")}</span>
+                            </div>
+                            {q?.companies.map(c => (
+                              <div key={c.company} className="flex justify-between gap-3 text-muted-foreground">
+                                <span>{c.company}</span><span className="font-mono tabular-nums">${c.aisc.toLocaleString("en-US")} · {c.publishedAt}</span>
+                              </div>
+                            ))}
+                            <div className="text-muted-foreground">Kurs/AISC: {(pt.price / pt.aisc).toFixed(2)}× · Quelle: Quartalsberichte (SEC)</div>
+                          </div>
+                        );
+                      })()}
                       {(pt?.volume ?? 0) > 0 && (
                         <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(pt!.volume ?? 0).toLocaleString("en-US")}</span></div>
                       )}
@@ -586,6 +652,16 @@ export function GoldPriceChart({ data }: Props) {
                   isAnimationActive={false}
                 />
               ))}
+
+              {aiscOn && aiscBands.map(b => (
+                <Fragment key={`aisc-${b.quarter}`}>
+                  <ReferenceArea x1={b.x1} x2={b.x2} y1={b.aisc} y2={b.aisc * GOLD_AISC_STRESS_LOW} fill="#ef4444" fillOpacity={0.14} stroke="none" ifOverflow="hidden" />
+                  <ReferenceArea x1={b.x1} x2={b.x2} y1={b.aisc * GOLD_AISC_STRESS_LOW} y2={b.aisc * GOLD_AISC_STRESS_HIGH} fill="#f59e0b" fillOpacity={0.08} stroke="none" ifOverflow="hidden" />
+                </Fragment>
+              ))}
+              {aiscOn && (
+                <Line type="stepAfter" dataKey="aisc" name="AISC (Minen-Breakeven)" stroke="#f87171" strokeWidth={1.5} strokeDasharray="6 3" dot={false} connectNulls={false} isAnimationActive={false} />
+              )}
 
               {activeMacro.map(m => (
                 <Line
@@ -767,6 +843,19 @@ export function GoldPriceChart({ data }: Props) {
         <span className="flex items-center gap-1">
           <span className="w-3 h-0.5 rounded-full" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value (adj.)
         </span>
+        {aiscOn && (
+          <span className="flex flex-wrap items-center gap-1" data-testid="gold-aisc-legend">
+            <span className="w-3 h-0.5 rounded-full" style={{ borderTop: "1px dashed #f87171" }} /> AISC (Minen-Breakeven)
+            <span className="inline-block h-2 w-3 rounded-sm" style={{ background: "rgba(239,68,68,0.35)" }} /> &lt; ×{GOLD_AISC_STRESS_LOW.toFixed(2).replace(".", ",")}
+            <span className="inline-block h-2 w-3 rounded-sm" style={{ background: "rgba(245,158,11,0.3)" }} /> &lt; ×{GOLD_AISC_STRESS_HIGH.toFixed(2).replace(".", ",")}
+            {latestAiscQ && (
+              <span className="font-mono">
+                · {latestAiscQ.quarter}: ${latestAiscQ.aisc!.toLocaleString("en-US")} · Kurs {(chartData[chartData.length - 1].price / latestAiscQ.aisc!).toFixed(2)}× AISC
+                {aiscState === "ok" ? " (keine Stresszone)" : aiscState === "watch" ? " (Vorwarnung)" : aiscState === "stress" ? " (Stresszone)" : aiscState === "below" ? " (unter AISC)" : ""}
+              </span>
+            )}
+          </span>
+        )}
       </div>
 
       {visibleSignals.length > 0 && (
@@ -809,6 +898,7 @@ export function GoldPriceChart({ data }: Props) {
         Bei MA200-Break: historischen Max-Drawdown +15-20% (defensiv) bzw. +35-50% (Beta &gt;1.5) als Downside einplanen.
         MACD = EMA₁₂ − EMA₂₆, Signal = EMA₉(MACD), Histogram = MACD − Signal; α = 2/(Period+1).
         Makro-Overlays nur aus FRED (DFII10, M2SL, DTWEXBGS, T10YIE, WALCL); fehlt eine Reihe, fehlt ihr Chip; hat sie im Zeitraum keine Werte, steht „n/a“.
+        AISC (Minen-Breakeven) = Ø Quartals-AISC Newmont/Barrick/Agnico Eagle (by-product, nur bei ≥ 2 Werten, sonst n/a), aus den Quartalsberichten; wirksam ab Quartalsende + 45 Tage. Dieselbe Reihe speist den Supply-Layer und GOLD_AISC_STRESS. „Inflations-BE (T10YIE)“ ist die Inflationserwartung, kein Kostenniveau.
         10Y/Max laden die lange Historie separat (Indikatoren auf voller Reihe, Anzeige ausgedünnt auf ~500 Punkte). Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
       </div>
       </div>

@@ -277,3 +277,43 @@ Antworte nur als JSON:
 ---
 
 **Status:** Konzept dokumentiert inkl. detaillierter technischer Signale, Gold-News-Sektion und klarer Trennung zwischen Inflations-BE (T10YIE) und Miner-AISC.
+
+---
+
+## 12. AISC-Linie (Minen-Breakeven) – Umsetzung (Branch `feat/gold-aisc-line`, Basis `2172856`)
+
+### Was die Linie zeigt
+- **AISC (Minen-Breakeven):** Ø der Quartals-AISC (All-in Sustaining Cost, USD/oz, by-product) von Newmont, Barrick und Agnico Eagle. Gestufte Linie auf der **Preisachse**, eigener Chip „AISC (Minen-Breakeven)“ im Gold-Chart (Section 2), standardmäßig aus.
+- **Stresszone:** schattiert je Quartalsstufe: rot zwischen AISC und AISC × 1,10 (Stress), gelb zwischen AISC × 1,10 und × 1,15 (Vorwarnung). Ist der Chip an, erweitert sich die Preisachse bis zur Zone.
+- **Tooltip:** Quartal, Ø-Wert, Anzahl Firmen, Einzelwerte je Firma mit Veröffentlichungsdatum, Kurs/AISC-Verhältnis. Die Legende nennt das jüngste Quartal und den Abstand.
+
+### Unterschied zu T10YIE
+- Der frühere Chip „Breakeven“ heißt jetzt **„Inflations-BE (T10YIE)“**. Er zeigt die 10J-Breakeven-Inflation (FRED T10YIE) in Prozent auf einer rechten Achse, also eine **Inflationserwartung**.
+- AISC ist ein **Kostenniveau der Minen in USD/oz**. Beide Größen haben nichts miteinander zu tun; die Funktion des T10YIE-Chips bleibt unverändert.
+
+### Quelle und Regeln
+- Datei: `shared/data/gold-aisc-quarterly.ts`. Jeder Eintrag hat Firma, Quartal, AISC, Quelle-URL (SEC-Exhibit des Quartalsberichts) und Veröffentlichungsdatum.
+- Quartale 2024-Q3 bis 2026-Q2. Newmont erst ab 2025-Q1 (By-Product-AISC aus der Übersicht im Q2-2026-Bericht; 2024 nicht in dieser Basis belegt). Barrick und Agnico Eagle ab 2024-Q3.
+- Ø nur bei mindestens 2 Firmenwerten, sonst **n/a**. Nichts wird geschätzt oder interpoliert; ein n/a-Quartal beendet die Stufe.
+- Wirksam ab Quartalsende + 45 Tage (`availableFrom`). Alle zitierten Berichte erschienen innerhalb dieser Frist, damit gibt es im Score keinen Lookahead.
+- Agnico Eagle hat 2026 die Zusammensetzung von AISC revidiert (Meadowbank/Nunavut). Für 2025-Q1/Q2 steht der Wert in der alten Zusammensetzung, ab 2026 in der neuen (FY2025: 1.313 neu vs. 1.339 alt).
+- WGC/Metals Focus (globale AISC) bleibt eine mögliche spätere Ergänzung, ist aber nicht frei als Zeitreihe verfügbar.
+
+### Eine Reihe für Chart, Supply-Layer und Gate
+| Verbraucher | Datei | Eingang |
+|---|---|---|
+| Chart-Linie und Stresszone | `client/src/components/gold/GoldPriceChart.tsx` | `goldAiscAt(date)` |
+| Supply-Layer (AISC-Margin, z-Score) | `server/gold-routes.ts` → `scoreGoldAdaptive({ aisc: goldAiscSteps() })` | vorher `aisc: null` |
+| Gate `GOLD_AISC_STRESS` (Preis < AISC × 1,15) | `server/gold-routes.ts` → `runRealYieldGoldModel(…, goldAiscByDate(…), goldAiscAt(letztes Kursdatum))` | vorher ohne AISC |
+
+### Gewollte Score-Änderung
+- Vorher: Supply-Layer n/a („AISC-Quelle fehlt“), Gate `GOLD_AISC_STRESS` inaktiv („AISC-Daten nicht verfügbar“).
+- Nachher: Supply-Layer mit AISC-Margin-z-Score. Das Gate wertet den Abstand zum jüngsten Quartal aus (2026-Q2: Ø 1.649 USD/oz).
+- Test: `script/test-gold-aisc-line.ts` (Datenvalidierung, Stresszone, n/a-Pfad, Verdrahtung).
+
+| Signal | Status |
+|---|---|
+| AISC-Linie | Umgesetzt (Branch, PR offen) |
+| Kapitulationszone | Umgesetzt als Stresszone × 1,10 / × 1,15 |
+| AISC-Margin im Supply-Layer | Umgesetzt |
+| Angebotsreaktion (Minenproduktion) | Fehlt weiterhin |

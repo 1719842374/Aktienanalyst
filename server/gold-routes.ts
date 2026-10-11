@@ -16,6 +16,7 @@ import { fmpQuote, fmpHistoricalPrices } from "./fmp";
 import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield-model";
 import { enrichGoldChartSeries } from "./gold-chart-series";
 import { createFredHistoryMemo } from "./gold-fred-memo";
+import { GOLD_AISC_QUARTERLY, GOLD_AISC_SOURCE_LABEL, goldAiscAt, goldAiscByDate, goldAiscSteps } from "../shared/data/gold-aisc-quarterly";
 import { buildGoldChartHistoryPoints, createChartHistoryCache, fetchFmpChunks, historyWindows, mergeGoldRows, pickLongerSource, seriesCoverage } from "./gold-chart-history";
 
 function parseNumber(s: string | undefined | null): number {
@@ -404,7 +405,15 @@ export function registerGoldRoutes(server: Server, app: Express) {
       try {
         if (historicalPrices.length > 0 && real10yHistory.length >= 5) {
           const goldPricesForModel = historicalPrices.map(p => ({ date: p.date, close: p.close }));
-          const modelResult = runRealYieldGoldModel(goldPricesForModel, real10yHistory);
+          // AISC-Linie (shared/data/gold-aisc-quarterly.ts): dieselbe Quartalsreihe wie Chart und
+          // Supply-Layer. GOLD_AISC_STRESS liest das zum letzten Kursdatum gueltige Quartal (n/a → inaktiv).
+          const lastGoldDate = goldPricesForModel[goldPricesForModel.length - 1]?.date ?? endDate;
+          const modelResult = runRealYieldGoldModel(
+            goldPricesForModel,
+            real10yHistory,
+            goldAiscByDate(goldPricesForModel.map(p => p.date)),
+            goldAiscAt(lastGoldDate)?.aisc ?? null,
+          );
           realYieldModel = {
             fairValue: modelResult.fairValue,
             inverseScore: modelResult.inverseScore,
@@ -716,7 +725,8 @@ export function registerGoldRoutes(server: Server, app: Express) {
       };
 
       // Future_10 §2–§3, §8, §10. GIS, OLS, Multi-Faktor, Monte Carlo und getTechnicalScore bleiben.
-      // AISC hat keine Quelle — die Supply-Dimension wird N/A, nicht 0.
+      // AISC: belegte Quartals-AISC (Newmont/Barrick/Agnico, Ø ab 2 Werten) aus
+      // shared/data/gold-aisc-quarterly.ts — fehlt ein Quartal, bleibt es n/a (keine Schaetzung).
       let adaptiveScore: import("../shared/gold-schema").GoldAdaptiveScore | null = null;
       let goldNews: import("../shared/gold-schema").GoldNewsImpact | null = null;
       try {
@@ -752,7 +762,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
           rrpBillions: fredHistory.get("RRPONTSYD", startDate),
           breakeven: fredHistory.get("T10YIE", startDate),
           dxy: fredHistory.get("DTWEXBGS", startDate),
-          aisc: null,
+          aisc: goldAiscSteps(),
           regime: realYieldModel?.regime?.regime ?? null,
           newsFlag: goldNews?.flag ?? null,
           gis: gisRounded,
@@ -847,6 +857,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
           "Technisch: RSI/200-DMA aus OHLCV, Investing.com, Barchart",
           "CPI: BLS (Feb 2026: 326,785)",
           "Volatilität: GVZ ~42, σ=0.20 (konservativ)",
+          `AISC (Minen-Breakeven): ${GOLD_AISC_SOURCE_LABEL}, ${GOLD_AISC_QUARTERLY.filter(q => q.aisc != null).length} Quartale, Quartalsberichte (SEC)`,
         ],
         historicalPrices,
         rsi14,
