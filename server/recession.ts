@@ -460,8 +460,68 @@ function scoreBuffett(): IndicatorResult {
       ? `Wilshire 5000 Total Market Index ${market.date} × ${WILSHIRE_DOLLARS_PER_POINT_BN} Mrd. $ je Punkt / FRED GDP ${gdp.date}. asOf ist das ältere Bein.`
       : "Wilshire 5000 Total Market Index / FRED GDP.",
   });
-  if (computed) return computed;
+  if (computed) {
+    // Future_7/8: 20J-Perzentil nur als Zusatzzeile. Score-Felder bleiben unveraendert.
+    const ratio = market && gdp ? buffettMarketCapGdpPercent(market.value, gdp.value) : NaN;
+    if (!Number.isFinite(ratio)) return computed;
+    const history = buffettMonthlyHistory(
+      readJson(fetchUrl(WILSHIRE_MONTHLY_CHART, 20000, { "User-Agent": "Mozilla/5.0" })),
+      fetchFredRows("GDP", getDateYearsAgo(ADAPTIVE_PERCENTILE_WINDOW_YEARS + 2)),
+    );
+    const asOf = market!.date < gdp!.date ? market!.date : gdp!.date;
+    return withBuffettPercentile(computed, history, { date: asOf, value: ratio });
+  }
+  // Weltbank-Fallback: Jahreswerte reichen nicht fuer 60 Monatspunkte, kein Perzentil.
   return buffettFromObservation(latestFredPoint("DDDM01USA156NWDB", 40), today);
+}
+
+/** Monatsbalken ^W5000 ueber 22 Jahre. Nur fuer die Perzentil-Zeile, nicht fuer den Score. */
+const WILSHIRE_MONTHLY_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/%5EW5000?range=22y&interval=1mo";
+
+/**
+ * Monatliche Buffett-Quote: Wilshire-Monatsschluss × 1,05 Mrd. $ / letztes
+ * veroeffentlichtes GDP-Quartal zu diesem Datum (as-of, keine Interpolation).
+ * Monate ohne GDP davor fallen weg.
+ */
+export function buffettMonthlyHistory(
+  yahooPayload: unknown,
+  gdpRows: Array<{ date: string; value: number | null }>,
+): { date: string; value: number }[] {
+  const gdp = gdpRows
+    .filter((row): row is { date: string; value: number } => row.value != null && Number.isFinite(row.value) && row.value > 0 && Boolean(row.date))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  if (gdp.length === 0 || !yahooPayload || typeof yahooPayload !== "object") return [];
+  const result = (yahooPayload as { chart?: { result?: Array<{ timestamp?: unknown; indicators?: { quote?: Array<{ close?: unknown }> } }> } }).chart?.result?.[0];
+  const stamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const closes = Array.isArray(result?.indicators?.quote?.[0]?.close) ? result.indicators.quote[0].close : [];
+  const byMonth = new Map<string, { date: string; value: number }>();
+  let g = 0;
+  const n = Math.min(stamps.length, closes.length);
+  for (let i = 0; i < n; i++) {
+    const close = typeof closes[i] === "number" ? closes[i] as number : Number(closes[i]);
+    const stamp = typeof stamps[i] === "number" ? stamps[i] as number : Number(stamps[i]);
+    if (closes[i] == null || !Number.isFinite(close) || close <= 0 || !Number.isFinite(stamp)) continue;
+    const date = new Date(stamp * 1000).toISOString().slice(0, 10);
+    while (g + 1 < gdp.length && gdp[g + 1].date <= date) g++;
+    if (gdp[g].date > date) continue;
+    const ratio = buffettMarketCapGdpPercent(close * WILSHIRE_DOLLARS_PER_POINT_BN, gdp[g].value);
+    if (Number.isFinite(ratio)) byMonth.set(date.slice(0, 7), { date, value: ratio });
+  }
+  return Array.from(byMonth.values()).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+/**
+ * Haengt das Perzentil an den gescorten Buffett-Slot. Der heutige Score-Wert
+ * ersetzt den letzten Monatspunkt, damit Perzentil und Tabellenwert dieselbe Zahl meinen.
+ */
+export function withBuffettPercentile(
+  indicator: IndicatorResult,
+  history: { date: string; value: number }[],
+  current: { date: string; value: number },
+): IndicatorResult {
+  const month = current.date.slice(0, 7);
+  const merged = history.filter(p => p.date.slice(0, 7) !== month && p.date < current.date).concat(current);
+  return withAdaptivePercentile(indicator, merged);
 }
 
 // 9. Shiller CAPE. ie_data.xls is not parsed. The public monthly table is the series.
