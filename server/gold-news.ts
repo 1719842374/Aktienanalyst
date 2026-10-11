@@ -294,6 +294,21 @@ export function enrichGoldNewsItems(items: GoldNewsItem[]): GoldNewsItem[] {
   });
 }
 
+/** Stabschef 11.10.: ein letzter guter Wert älter als 24 h zählt nicht mehr für den Score. */
+export const GOLD_NEWS_LAST_GOOD_SCORE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Flag für die Score-Berechnung. Aktuelle Werte unverändert; ein letzter guter Wert nur bis
+ * einschließlich 24 h nach updatedAt, danach null (Anzeige bleibt „Letzter guter Stand vom …“).
+ */
+export function goldNewsScoreFlag(impact: GoldNewsImpact | null | undefined, now: number): number | null {
+  if (!impact || impact.flag == null) return null;
+  if (!impact.lastGood) return impact.flag;
+  const t = impact.updatedAt ? Date.parse(impact.updatedAt) : NaN;
+  if (!Number.isFinite(t)) return null;
+  return now - t <= GOLD_NEWS_LAST_GOOD_SCORE_MAX_AGE_MS ? impact.flag : null;
+}
+
 let memoryCache: GoldNewsCacheEntry | null = null;
 let memoryLastGood: GoldNewsCacheEntry | null = null;
 

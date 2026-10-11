@@ -9,7 +9,7 @@ import type {
   GoldPricePoint,
 } from "../shared/gold-schema";
 import { scoreGoldAdaptive, volumeReadingsAreReal } from "./gold-adaptive-score";
-import { getGoldNewsImpact } from "./gold-news";
+import { goldNewsScoreFlag, getGoldNewsImpact } from "./gold-news";
 import { yahooFetch } from "./history-fallback";
 import { execSync, execFile } from "child_process";
 import { fmpQuote, fmpHistoricalPrices } from "./fmp";
@@ -800,7 +800,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
           dxy: fredHistory.get("DTWEXBGS", startDate),
           aisc: null,
           regime: realYieldModel?.regime?.regime ?? null,
-          newsFlag: goldNews?.flag ?? null,
+          newsFlag: goldNewsScoreFlag(goldNews, Date.now()), // lastGood > 24 h zählt nicht (#241)
           gis: gisRounded,
           now: now.toISOString(),
         });

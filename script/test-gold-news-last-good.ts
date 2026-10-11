@@ -2,7 +2,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "fs";
-import { loadGoldNewsImpact, type GoldNewsCacheEntry } from "../server/gold-news";
+import { loadGoldNewsImpact, goldNewsScoreFlag, GOLD_NEWS_LAST_GOOD_SCORE_MAX_AGE_MS, type GoldNewsCacheEntry } from "../server/gold-news";
 import { GoldNewsCard } from "../client/src/components/gold/GoldNewsCard";
 
 let fail = 0;
@@ -69,6 +69,24 @@ const src = readFileSync(new URL("../server/gold-news.ts", import.meta.url), "ut
 check("lastGood auf Disk (überlebt Neustart)", src.includes("diskResearcherSet(LAST_GOOD_KEY, entry)") && src.includes("diskResearcherGetWithTtl(LAST_GOOD_KEY"));
 const chart = readFileSync(new URL("../client/src/components/gold/GoldPriceChart.tsx", import.meta.url), "utf8");
 check("Sektion-2-Kopf: kurzer Titel + Untertitel (kein Umbruch bei 375 px)", (chart.match(/title="Gold-Preis-Chart" subtitle="Technische Analyse"/g) || []).length === 2);
+
+// Stabschef: lastGood > 24 h zählt nicht für den Score, Anzeige bleibt
+{
+  const T = Date.parse("2026-10-11T18:00:00Z");
+  const lg = { flag: 0.35, summary: "x", updatedAt: "2026-10-11T18:00:00Z", llmAvailable: true, unavailableReason: null, items: [], cacheTtlHours: 12, lastGood: true as const, lastGoodReason: "keine Gold-Meldungen" };
+  const H = 60 * 60 * 1000;
+  check("Grenze 24 h", GOLD_NEWS_LAST_GOOD_SCORE_MAX_AGE_MS === 24 * H);
+  check("lastGood < 24 h zählt", goldNewsScoreFlag(lg, T + 23 * H) === 0.35);
+  check("lastGood genau 24 h zählt", goldNewsScoreFlag(lg, T + 24 * H) === 0.35);
+  check("lastGood > 24 h → null für Score", goldNewsScoreFlag(lg, T + 24 * H + 1) === null);
+  check("lastGood ohne Datum → null", goldNewsScoreFlag({ ...lg, updatedAt: null }, T) === null);
+  check("aktueller Wert zählt unabhängig vom Alter", goldNewsScoreFlag({ ...lg, lastGood: undefined } as any, T + 100 * H) === 0.35);
+  check("kein Flag → null", goldNewsScoreFlag(null, T) === null);
+  const old = renderToStaticMarkup(React.createElement(GoldNewsCard, { data: { goldNews: lg } as any }));
+  check("UI zeigt alten Wert weiter als 'Letzter guter Stand'", old.includes("Letzter guter Stand vom") && old.includes("Flag +0.35"));
+  const routesSrc = readFileSync(new URL("../server/gold-routes.ts", import.meta.url), "utf8");
+  check("Route nutzt goldNewsScoreFlag", routesSrc.includes("newsFlag: goldNewsScoreFlag(goldNews, Date.now())"));
+}
 
 console.log(fail ? `\n${fail} Fehler` : "\nalle grün");
 process.exit(fail ? 1 : 0);

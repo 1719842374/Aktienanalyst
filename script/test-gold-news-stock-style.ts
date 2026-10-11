@@ -52,7 +52,7 @@ const s2 = readFileSync(new URL("../client/src/components/sections/Section2.tsx"
 check("Section2 nutzt dieselbe SentimentNewsList", s2.includes('from "../news/SentimentNewsList"') && s2.includes("<SentimentNewsList items={data.newsItems} />"));
 
 const routes = readFileSync(new URL("../server/gold-routes.ts", import.meta.url), "utf8");
-check("Score-Eingang bleibt nur goldNews.flag", routes.includes("newsFlag: goldNews?.flag ?? null") && !/goldNews\??\.items/.test(routes));
+check("Score-Eingang bleibt nur goldNews.flag", routes.includes("newsFlag: goldNewsScoreFlag(goldNews, Date.now())") && !/goldNews\??\.items/.test(routes));
 const newsSrc = readFileSync(new URL("../server/gold-news.ts", import.meta.url), "utf8");
 check("LLM-Prompt bekommt weiter nur Titel", newsSrc.includes("deps.complete(items.slice(0, 8).map(item => item.title))"));
 
