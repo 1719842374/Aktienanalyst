@@ -8,12 +8,12 @@ import type {
   GoldCycleAssessment,
   GoldPricePoint,
 } from "../shared/gold-schema";
-import { execSync } from "child_process";
-import { fmpQuote, fmpHistoricalPrices } from "./fmp";
-import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield-model";
 import { scoreGoldAdaptive, volumeReadingsAreReal } from "./gold-adaptive-score";
 import { getGoldNewsImpact } from "./gold-news";
 import { yahooFetch } from "./history-fallback";
+import { execSync } from "child_process";
+import { fmpQuote, fmpHistoricalPrices } from "./fmp";
+import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield-model";
 import { enrichGoldChartSeries } from "./gold-chart-series";
 
 function parseNumber(s: string | undefined | null): number {
