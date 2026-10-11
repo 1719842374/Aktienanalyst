@@ -146,6 +146,7 @@ export function ReverseDCFSection({ data }: Props) {
           <div className={`text-3xl font-bold font-mono tabular-nums ${ratingColor}`}>
             {formatPercentNoSign(result.impliedGrowth)}
           </div>
+          <div className="text-[10px] text-muted-foreground font-mono" data-testid="reverse-dcf-wacc">WACC {formatPercentNoSign(dcfWacc)} (Unternehmens-WACC, wie Sektion 5)</div>
           <div className={`inline-block mt-2 px-2.5 py-1 rounded-md text-xs font-semibold border ${ratingBg} ${ratingColor}`}>
             {ratingLabel}
           </div>
