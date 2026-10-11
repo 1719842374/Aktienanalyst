@@ -9,12 +9,14 @@ import {
   CORRIDOR_LABEL_GAP_PX,
   CORRIDOR_LABEL_LINE_PX,
   CORRIDOR_LABEL_MAX_LANES,
+  CORRIDOR_PILE_MAX_PRICE_GAP,
   CORRIDOR_SPOT_HEADING_CLEARANCE_PX,
   CORRIDOR_SPOT_PILL_OVERHANG_PX,
   clampLabelCenterPx,
   corridorSpotTopPadPx,
   fvMarkerBottomInsetPx,
   layoutCorridorLabels,
+  pricesClose,
   reduceComboTooltip,
   type ComboTooltipState,
   type CorridorLevelInput,
@@ -230,7 +232,8 @@ console.log("\n375px spot pill vs FAIR-VALUE-KORRIDOR heading");
 {
   const pad = corridorSpotTopPadPx();
   check("top pad covers the pill overhang plus clearance", pad >= CORRIDOR_SPOT_PILL_OVERHANG_PX + CORRIDOR_SPOT_HEADING_CLEARANCE_PX);
-  check("pad is the value the track uses", pad === 24);
+  check("pad is the value the track uses (B2-Folge: 8px Abstand)", pad === 28);
+  check("clearance at least 8px at 375", CORRIDOR_SPOT_HEADING_CLEARANCE_PX >= 8);
 }
 
 console.log("\nCombo-label tooltip opens on tap");
@@ -266,6 +269,64 @@ console.log("\nFV marker line stops above lane-0 text");
       label: fv ? { ...fv, lane: 1 } : undefined,
     }) === 0,
   );
+}
+
+console.log("\nB2-Folge — Stapel nur bei nahen PREISEN");
+{
+  check("3 % threshold constant", CORRIDOR_PILE_MAX_PRICE_GAP === 0.03);
+  check("4900 vs 4950 counts as close", pricesClose(4900, 4950));
+  check("4050 vs 4467 is not close", !pricesClose(4050, 4467));
+
+  // FV ≈ R1 at 375 px track (~320): FV/R1 may share a pile, nothing else joins it.
+  const fvR1 = levels([
+    ["S2", 8, "$3080"],
+    ["S1", 36, "$4050"],
+    ["FV", 66.8, "$4900"],
+    ["R1", 68.5, "$4950"],
+    ["R2", 90, "$5600"],
+  ]);
+  for (const width of [320, 1100]) {
+    const placed = layoutCorridorLabels(fvR1, width);
+    const bad = placed.filter((l) => l.combined).find((l) => {
+      const p = pricesOf(l).sort((a, b) => a - b);
+      return p.some((v, i) => i > 0 && !pricesClose(p[i - 1], v));
+    });
+    check(`FV≈R1 width ${width}: piles only hold price-close levels`, !bad, bad?.text);
+    check(`FV≈R1 width ${width}: every tag kept`, ["S2", "S1", "FV", "R1", "R2"].every((t) => tagsOf(placed).includes(t)));
+    const ov = sameLaneOverlap(placed, width);
+    check(`FV≈R1 width ${width}: no same-lane overlap`, ov === null, ov ?? "");
+  }
+
+  // Wide spread: never piles, at 1440-ish and 375-ish widths.
+  for (const width of [320, 1100]) {
+    const placed = layoutCorridorLabels(spread, width);
+    check(`wide spread width ${width}: no pile`, placed.every((l) => !l.combined), JSON.stringify(placed.map((l) => l.text)));
+    check(`wide spread width ${width}: five labels`, placed.length === 5);
+    const ov = sameLaneOverlap(placed, width);
+    check(`wide spread width ${width}: no same-lane overlap`, ov === null, ov ?? "");
+  }
+
+  // Five-level pile (all within 1 %) still piles at 320.
+  const pile5 = levels([
+    ["S2", 50, "$4400"], ["S1", 50.4, "$4410"], ["FV", 50.8, "$4420"], ["R1", 51.1, "$4430"], ["R2", 51.3, "$4440"],
+  ]);
+  const p5 = layoutCorridorLabels(pile5, 320);
+  check("five-level pile: combined at 320", p5.some((l) => l.combined));
+  check("five-level pile: every tag kept", ["S2", "S1", "FV", "R1", "R2"].every((t) => tagsOf(p5).includes(t)));
+
+  // Large price gap: S2 sits visually next to the pile (pct 49) but costs far less.
+  const gap = levels([
+    ["S2", 49, "$1000"], ["S1", 50, "$4400"], ["FV", 50.4, "$4410"], ["R1", 50.8, "$4420"], ["R2", 51.2, "$4430"],
+  ]);
+  for (const width of [200, 320]) {
+    const placed = layoutCorridorLabels(gap, width);
+    const s2 = placed.find((l) => l.tooltip.split("\n").some((line) => line.startsWith("S2:")));
+    check(`large gap width ${width}: S2 kept`, !!s2);
+    check(`large gap width ${width}: S2 never in a pile`, !!s2 && !s2.combined && pricesOf(s2).length === 1, s2?.text);
+    check(`large gap width ${width}: S2 price stays reachable`, !!s2 && s2.tooltip.includes("$1000"));
+    const ov = sameLaneOverlap(placed, width);
+    check(`large gap width ${width}: no same-lane overlap`, ov === null, ov ?? "");
+  }
 }
 
 if (failed > 0) {
