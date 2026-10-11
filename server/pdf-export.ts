@@ -6,7 +6,7 @@
 import { chromium } from 'playwright-core';
 import { sumUpsideGb } from '../shared/bias-fixes';
 import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
-import { reverseDcfFromAnalysis, isEtfOrFund } from '../shared/conflict-matrix';
+import { reverseDcfFromAnalysis } from '../shared/conflict-matrix';
 
 // ===== Formatting helpers =====
 function f(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? v.toFixed(d) : "—"; }
@@ -551,7 +551,7 @@ ${rdcf && rdcf.rating !== 'n/a' ? `
 <div class="row"><span class="row-label">Implied Growth Rate g*</span><span class="row-val">${f(rdcf.impliedGrowth,2)}%</span></div>
 <div class="row"><span class="row-label">Bewertung</span><span class="row-val">${esc(rdcf.rating)} (Ref: ${f(rdcf.referenceGrowth,1)}%)</span></div>
 <div class="para" style="font-size:7px;color:#7a8296">Gleiche Formel wie die App (shared/valuation-signal.ts, WACC aus buildDefaultDCFParams).</div>
-` : `<div class="row"><span class="row-label">Implied Growth Rate g*</span><span class="row-val">n/a${isEtfOrFund(rawData) ? ' (ETF/Fonds — Reverse DCF nicht anwendbar)' : ''}</span></div>`}
+` : '<div class="para">Reverse DCF nicht verfügbar.</div>'}
 
 <!-- S15: DOWNSIDE-KATALYSATOREN (Anti-Bias) -->
 <div class="sec-header"><span>15 &nbsp; DOWNSIDE-KATALYSATOREN (Anti-Bias)</span></div>
