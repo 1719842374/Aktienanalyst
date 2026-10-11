@@ -16,6 +16,7 @@ import { fmpQuote, fmpHistoricalPrices } from "./fmp";
 import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield-model";
 import { enrichGoldChartSeries } from "./gold-chart-series";
 import { createFredHistoryMemo } from "./gold-fred-memo";
+import { buildGoldChartHistoryPoints, historyWindows, mergeGoldRows, pickLongerSource, seriesCoverage } from "./gold-chart-history";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -864,6 +865,66 @@ export function registerGoldRoutes(server: Server, app: Express) {
     } catch (error: any) {
       console.error("[GOLD] Error:", error?.message);
       res.status(500).json({ error: error?.message || "Gold analysis failed" });
+    }
+  });
+
+  // Gold-Chart (Section 2) 10Y/Max: lange Chart-Historie, nur auf Anforderung (lazy im Client).
+  // Reine Chart-Daten — /api/analyze-gold, Scores und Gates bleiben unberuehrt.
+  let chartHistoryCache: { at: number; body: any } | null = null;
+  app.get("/api/gold-chart-history", async (_req, res) => {
+    try {
+      if (chartHistoryCache && Date.now() - chartHistoryCache.at < 6 * 60 * 60 * 1000) {
+        return res.json(chartHistoryCache.body);
+      }
+      const t0 = Date.now();
+      const endDate = new Date().toISOString().split("T")[0];
+      // FMP: max. 5000 Zeilen je Abruf -> 15-Jahres-Fenster rueckwaerts, Stopp beim ersten leeren Fenster.
+      const fmpChunks: any[][] = [];
+      for (const w of historyWindows(endDate, 60, 15)) {
+        let rows: any[] = [];
+        try { rows = await fmpHistoricalPrices("GCUSD", w.from, w.to); } catch (e: any) {
+          console.warn(`[GOLD-HIST] FMP ${w.from}..${w.to} fehlgeschlagen: ${e?.message?.substring(0, 120)}`);
+        }
+        if (!rows || rows.length === 0) break;
+        fmpChunks.push(rows);
+      }
+      const fmpRows = mergeGoldRows(fmpChunks);
+      let yahooRows: ReturnType<typeof mergeGoldRows> = [];
+      try {
+        const bars = await yahooFetch("GC=F", "1970-01-01", endDate);
+        yahooRows = mergeGoldRows([bars.map(b => ({ date: b.date, close: b.close, volume: b.volume }))]);
+      } catch (e: any) {
+        console.warn(`[GOLD-HIST] Yahoo GC=F fehlgeschlagen: ${e?.message?.substring(0, 120)}`);
+      }
+      const picked = pickLongerSource(fmpRows, yahooRows);
+      if (picked.rows.length === 0) return res.status(502).json({ error: "Keine Gold-Historie von FMP oder Yahoo" });
+      const start = picked.rows[0].date;
+      // Eigenes Memo je Anfrage (#223): jede FRED-Serie einmal, ab dem ersten Gold-Datum.
+      const fred = createFredHistoryMemo(fetchFREDSeriesHistory);
+      const m2Start = new Date(new Date(start).getTime() - 400 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+      const points = buildGoldChartHistoryPoints(picked.rows, {
+        real10y: fred.get("DFII10", start),
+        dxy: fred.get("DTWEXBGS", start),
+        t10yie: fred.get("T10YIE", start),
+        walcl: fred.get("WALCL", start),
+        m2: fred.get("M2SL", m2Start),
+      });
+      const body = {
+        generatedAt: new Date().toISOString(),
+        source: picked.source,
+        sourceDepth: {
+          fmp: fmpRows.length ? { from: fmpRows[0].date, to: fmpRows[fmpRows.length - 1].date, count: fmpRows.length } : null,
+          yahoo: yahooRows.length ? { from: yahooRows[0].date, to: yahooRows[yahooRows.length - 1].date, count: yahooRows.length } : null,
+        },
+        coverage: seriesCoverage(points),
+        points,
+      };
+      chartHistoryCache = { at: Date.now(), body };
+      console.log(`[GOLD-HIST] ${picked.source}: ${points.length} Punkte ab ${start}, FMP ${fmpRows.length}, Yahoo ${yahooRows.length}, FRED ${fred.fetches} Abrufe, ${Date.now() - t0} ms`);
+      res.json(body);
+    } catch (error: any) {
+      console.error("[GOLD-HIST] Error:", error?.message);
+      res.status(500).json({ error: error?.message || "Gold chart history failed" });
     }
   });
 }
