@@ -216,6 +216,9 @@ export interface GoldNewsImpact {
   unavailableReason: string | null;
   items: GoldNewsItem[];
   cacheTtlHours: number;
+  /** JOB 16b: gesetzt, wenn der aktuelle Lauf leer/gescheitert war und der letzte gute Wert gezeigt wird. */
+  lastGood?: true;
+  lastGoodReason?: string;
 }
 
 export interface GoldAnalysis {
