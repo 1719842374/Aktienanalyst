@@ -24,7 +24,7 @@ import {
   type GBMMonteCarloResult,
   computeDcfVsMarketDivergence,
 } from "./calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign } from "./formatters";
+import { formatCurrency, formatNumber, formatPercentNoSign, statementCurrency } from "./formatters";
 import { buildBiasDecision, type BiasFixPayload } from "../../../shared/bias-fixes";
 
 export type FazitSignalMetrics = {
@@ -177,6 +177,8 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     bias,
   } = input;
   const dcfLabel = bias?.switched ? "Gehärteter Inverse-DCF" : "Kons. DCF";
+  // JOB 23: DCF-Werte (Max-Entry, Fair Value) in Statement-Währung, nur der Kurs in Listing-Währung.
+  const dcfCcy = statementCurrency(data);
 
   const catalysts = data.catalysts;
   const techStatus = data.technicalIndicators?.currentStatus;
@@ -224,8 +226,8 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   if (raCrvCons < 1.5) negative.push(`CRV Risikoadj. nur ${formatNumber(raCrvCons, 1)}:1 \u2014 Risiken nicht eingepreist`);
   else if (raCrvCons >= 2.5) positive.push(`CRV Risikoadj. ${formatNumber(raCrvCons, 1)}:1 \u2014 auch nach Risikoabschlag attraktiv`);
 
-  if (data.currentPrice <= dcfBeiCRV3) positive.push(`Kurs UNTER Max-Entry (${formatCurrency(dcfBeiCRV3, 2, data.currency)})`);
-  else negative.push(`Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}) \u00dcBER Max-Entry (${formatCurrency(dcfBeiCRV3, 2, data.currency)}) bei CRV 3:1`);
+  if (data.currentPrice <= dcfBeiCRV3) positive.push(`Kurs UNTER Max-Entry (${formatCurrency(dcfBeiCRV3, 2, dcfCcy)})`);
+  else negative.push(`Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}) \u00dcBER Max-Entry (${formatCurrency(dcfBeiCRV3, 2, dcfCcy)}) bei CRV 3:1`);
 
   // S8: Risk
   if (totalExpDmg > 15) negative.push(`Expected Damage ${formatNumber(totalExpDmg, 1)}% \u2014 erhebliche Risiko-Exposition`);
@@ -357,9 +359,9 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   if (isBuy) {
     fazitSatz = `${data.companyName} (${data.ticker}) erscheint auf Basis der Gesamtanalyse attraktiv bewertet. Fundamental unterst\u00fctzt durch ${data.moatRating}-Moat, ein CRV von ${formatNumber(crvConservative, 1)}:1 und technisches Buy-Signal (Kurs > MA200, MA50 > MA200, MACD > 0). Der Einstieg ist bei aktuellem Kurs vertretbar.`;
   } else if (isOvervalued) {
-    fazitSatz = `${data.companyName} (${data.ticker}) ist auf aktuellem Kursniveau ${rating === 'STARK UNATTRAKTIV' ? 'deutlich ' : ''}\u00fcberbewertet. Das risikoadjustierte CRV von nur ${formatNumber(raCrvCons, 1)}:1 zeigt, dass die Risiken (${topRisks}) nicht ausreichend eingepreist sind.${isTechWeak ? ' Technisch liegt der Kurs unter den gleitenden Durchschnitten \u2014 kein Kaufsignal.' : ''} Abwarten bis ${formatCurrency(dcfBeiCRV3, 2, data.currency)} oder tiefer.`;
+    fazitSatz = `${data.companyName} (${data.ticker}) ist auf aktuellem Kursniveau ${rating === 'STARK UNATTRAKTIV' ? 'deutlich ' : ''}\u00fcberbewertet. Das risikoadjustierte CRV von nur ${formatNumber(raCrvCons, 1)}:1 zeigt, dass die Risiken (${topRisks}) nicht ausreichend eingepreist sind.${isTechWeak ? ' Technisch liegt der Kurs unter den gleitenden Durchschnitten \u2014 kein Kaufsignal.' : ''} Abwarten bis ${formatCurrency(dcfBeiCRV3, 2, dcfCcy)} oder tiefer.`;
   } else if (score <= -2) {
-    fazitSatz = `${data.companyName} (${data.ticker}) bietet aktuell ein ung\u00fcnstiges Chance-Risiko-Verh\u00e4ltnis. Die Hauptrisiken (${topRisks}) dr\u00fccken den risikoadjustierten Fair Value auf ${formatCurrency(conservativeDCF.perShare * riskDiscountFactor, 2, data.currency)}. ${isTechWeak ? 'Technisch fehlt ein Buy-Signal.' : ''} Kurs liegt ${formatNumber(Math.abs(((data.currentPrice / dcfBeiCRV3) - 1) * 100), 0)}% \u00fcber dem Max-Einstiegskurs.`;
+    fazitSatz = `${data.companyName} (${data.ticker}) bietet aktuell ein ung\u00fcnstiges Chance-Risiko-Verh\u00e4ltnis. Die Hauptrisiken (${topRisks}) dr\u00fccken den risikoadjustierten Fair Value auf ${formatCurrency(conservativeDCF.perShare * riskDiscountFactor, 2, dcfCcy)}. ${isTechWeak ? 'Technisch fehlt ein Buy-Signal.' : ''} Kurs liegt ${formatNumber(Math.abs(((data.currentPrice / dcfBeiCRV3) - 1) * 100), 0)}% \u00fcber dem Max-Einstiegskurs.`;
   } else if (score >= 2) {
     fazitSatz = `${data.companyName} (${data.ticker}) zeigt fundamental solide Kennzahlen mit ${formatNumber(conservativeUpside, 0)}% Upside auf Basis ${bias?.valuationBaseLabel ?? "Conservative DCF"} und CRV ${formatNumber(crvConservative, 1)}:1. ${!techStatus?.buySignal ? 'Allerdings fehlt ein technisches Buy-Signal \u2014 Timing abwarten.' : 'Technisch ebenfalls positiv.'} ${isHighRisk ? `Erh\u00f6hte Risiken (${topRisks}) beachten.` : ''}`;
   } else {
@@ -368,7 +370,7 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   // CRV-Haerte-Guard: Divergenz-Hinweis additiv anhaengen, damit der
   // Rating-Downgrade auch textuell nachvollziehbar ist.
   if (bias?.switched) {
-    fazitSatz += ` Entscheidungsbasis: ${bias.valuationBaseLabel} (${formatCurrency(bias.decisionPerShare, 2, data.currency)}). Unadjusted / Extrapolative: ${formatCurrency(bias.unadjustedPerShare, 2, data.currency)}. ${bias.modeLabel}.`;
+    fazitSatz += ` Entscheidungsbasis: ${bias.valuationBaseLabel} (${formatCurrency(bias.decisionPerShare, 2, dcfCcy)}). Unadjusted / Extrapolative: ${formatCurrency(bias.unadjustedPerShare, 2, dcfCcy)}. ${bias.modeLabel}.`;
   } else if (bias?.modeLabel) {
     fazitSatz += ` ${bias.modeLabel}. Basis: ${bias.valuationBaseLabel}.`;
   }

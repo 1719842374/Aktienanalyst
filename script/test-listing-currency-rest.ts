@@ -18,6 +18,7 @@ check("Kursziel 0/null/NaN → n/a", formatTarget(0, "GBP") === "n/a" && formatT
 check("Kursziel > 0 → £45.00", formatTarget(45, "GBP") === "£45.00");
 check("statementCurrency: .L → Listing-Währung (GBP, #244)", statementCurrency({ ticker: "SHEL.L", currency: "GBP" }) === "GBP");
 check("statementCurrency: SAP.DE (Kurs €) → USD, weil der Server Statements nach USD umrechnet", statementCurrency({ ticker: "SAP.DE", currency: "EUR" }) === "USD" && statementCurrency({ ticker: "MSFT", currency: "USD" }) === "USD");
+check("statementCurrency: .L/.JO/.TA ohne FX (GBp/GBX/ZAc/ILA) → USD", ["GBp", "GBX", "ZAc", "ILA"].every(c => statementCurrency({ ticker: c === "ZAc" ? "NPN.JO" : c === "ILA" ? "TEVA.TA" : "SHEL.L", currency: c }) === "USD"));
 
 // (a) keine Ein-Argument-Aufrufe (= festes $) mehr in den Sektionen
 const files = ["Section2", "Section5", "Section6", "Section8", "MonteCarloSection", "SummarySection", "FinancialStatements"].map(f => `client/src/components/sections/${f}.tsx`).concat("client/src/lib/fazit-signal.ts");
@@ -58,6 +59,25 @@ check("Section5 (DCF aus USD-Statements): DCF-Werte in statementCurrency, nur Ku
 const sum = readFileSync("client/src/components/sections/SummarySection.tsx", "utf8");
 check("Summary: Analyst PT Median über formatTarget", sum.includes('label="Analyst PT Median" value={formatTarget(data.analystPT.median, data.currency)}'));
 check("Monte Carlo: Histogramm-Achse ohne festes $", readFileSync("client/src/components/sections/MonteCarloSection.tsx", "utf8").includes("tickFormatter={(b: string) => String(b).replace(/^\\$/, currencySymbol(data.currency))}"));
+
+// Delta: alle DCF-/Per-Share-Werte in statementCurrency → bei SAP.DE-artigen Daten (Kurs €, Statements $) darf
+// derselbe Betrag nie einmal mit $ und einmal mit € erscheinen; nur Kurs (und kursbasierte Werte) in €.
+const sap = { ...shel, ticker: "SAP.DE", currency: "EUR", analystPT: { ...shel.analystPT, median: 0 } };
+const amounts = new Map<string, Set<string>>();
+let sapHtml = "";
+for (const mod of ["Section2", "Section5", "Section6", "Section8", "SummarySection"]) {
+  try {
+    const M: any = await import(`../client/src/components/sections/${mod}`);
+    const html = wrap(React.createElement(M[mod], { data: sap }));
+    sapHtml += html;
+    for (const m of html.matchAll(/([$€])([0-9][0-9,]*\.[0-9]{2})/g)) { if (!amounts.has(m[2])) amounts.set(m[2], new Set()); amounts.get(m[2])!.add(m[1]); }
+  } catch (e: any) { check(`${mod} rendert mit SAP.DE-Daten (${e?.message})`, false); }
+}
+const both = [...amounts].filter(([, s]) => s.size > 1).map(([a]) => a);
+check(`SAP.DE: kein Betrag mit $ und € zugleich (${both.join(", ") || "keiner"})`, both.length === 0 && sapHtml.includes("$") && sapHtml.includes("€"));
+check(`SAP.DE: Kurs in € (${formatCurrency(sap.currentPrice, 2, "EUR")})`, sapHtml.includes(formatCurrency(sap.currentPrice, 2, "EUR")));
+const dcfSrc = ["Section2", "Section6", "Section8", "SummarySection"].map(f => readFileSync(`client/src/components/sections/${f}.tsx`, "utf8")).join("\n") + readFileSync("client/src/lib/fazit-signal.ts", "utf8");
+check("DCF-Werte (perShare, dcfBeiCRV3, raConservativeFV, decision/unadjusted, invertedDCF) nie mit data.currency", !/formatCurrency\((?:[\w.]*perShare|r?a?[dD]cfBeiCRV3|raConservativeFV|decisionPerShare|bias\.\w+PerShare)[^)]*, 2, data\.currency\)/.test(dcfSrc));
 
 // (c) Buffett Max 375 px
 const bp = readFileSync("client/src/components/recession/BuffettRatioPanel.tsx", "utf8");
