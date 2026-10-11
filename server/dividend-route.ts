@@ -3,6 +3,8 @@ import { fmpDividends } from "./fmp";
 import {
   parseFmpDividends,
   parseYahooDividends,
+  parseFmpDividendCurrency,
+  parseYahooDividendCurrency,
   type DividendEvent,
   type DividendHistoryResponse,
 } from "../shared/dividends";
@@ -21,12 +23,17 @@ export function normalizeDividendTicker(raw: unknown): string | null {
   return TICKER_RE.test(t) ? t : null;
 }
 
-async function yahooDividends(ticker: string): Promise<DividendEvent[]> {
+type YahooDivs = DividendEvent[] & { currency?: string | null };
+
+async function yahooDividends(ticker: string): Promise<YahooDivs> {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=max&interval=1mo&events=div`;
     const resp = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": "Mozilla/5.0" } });
     if (!resp.ok) return [];
-    return parseYahooDividends(await resp.json());
+    const json = await resp.json();
+    const out: YahooDivs = parseYahooDividends(json);
+    out.currency = parseYahooDividendCurrency(json);
+    return out;
   } catch {
     return [];
   }
@@ -34,21 +41,22 @@ async function yahooDividends(ticker: string): Promise<DividendEvent[]> {
 
 export async function loadDividendHistory(
   ticker: string,
-  deps: { fmp: (t: string) => Promise<unknown>; yahoo: (t: string) => Promise<DividendEvent[]> } = {
+  deps: { fmp: (t: string) => Promise<unknown>; yahoo: (t: string) => Promise<YahooDivs> } = {
     fmp: fmpDividends,
     yahoo: yahooDividends,
   },
 ): Promise<DividendHistoryResponse> {
   let fmpNote: string | null = null;
   try {
-    const events = parseFmpDividends(await deps.fmp(ticker));
-    if (events.length > 0) return { ticker, source: "fmp", events, note: null };
+    const raw = await deps.fmp(ticker);
+    const events = parseFmpDividends(raw);
+    if (events.length > 0) return { ticker, source: "fmp", events, note: null, currency: parseFmpDividendCurrency(raw) };
     fmpNote = "FMP ohne Dividenden";
   } catch (err: any) {
     fmpNote = `FMP-Fehler${err?.fmpStatus ? ` HTTP ${err.fmpStatus}` : ""}`;
   }
   const y = await deps.yahoo(ticker);
-  if (y.length > 0) return { ticker, source: "yahoo", events: y, note: `${fmpNote}, Yahoo-Fallback` };
+  if (y.length > 0) return { ticker, source: "yahoo", events: [...y], note: `${fmpNote}, Yahoo-Fallback`, currency: y.currency ?? null };
   return { ticker, source: "none", events: [], note: `${fmpNote}, Yahoo ohne Dividenden` };
 }
 

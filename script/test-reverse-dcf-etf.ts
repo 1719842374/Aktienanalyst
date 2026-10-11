@@ -30,7 +30,7 @@ console.log(rows.join("\n"));
 // SPY → n/a everywhere
 assert.equal(reverseDcfFromAnalysis(SPY)!.rating, "n/a");
 const spyCell = conflictMatrixFromAnalysis(SPY).cells.find(c => c.id === "reverseDcf")!;
-assert.equal(spyCell.signal, "n/a"); assert.equal(spyCell.value, "n/a");
+assert.equal(spyCell.signal, "n/a"); assert.equal(spyCell.value, "n/a — ETF/Fonds, Reverse DCF nicht anwendbar");
 // UI path: SummarySection passes its own calculateReverseDCF result → still n/a for ETF
 const uiRdcf = calculateReverseDCF({ currentPrice: 660, fcfBase: 30e9, wacc: 9, sharesOutstanding: 1e9, netDebt: 0, sectorG1: 5 });
 assert.notEqual(uiRdcf.rating, "n/a");
