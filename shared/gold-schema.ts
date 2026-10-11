@@ -199,6 +199,12 @@ export interface GoldNewsItem {
   source: string;
   url: string;
   pubDate: string;
+  /** Sprache des Feeds (alle Gold-Feeds sind englische Ausgaben). Fehlt bei alten Cache-Einträgen. */
+  lang?: "de" | "en" | null;
+  /** Keyword-Sentiment je Schlagzeile (server/news-sentiment.ts), nur Anzeige, kein Score. */
+  sentiment?: "bullish" | "bearish" | "neutral";
+  sentimentScore?: number;
+  sentimentSource?: "keyword";
 }
 
 /** Future_10 §9. Flag nur aus OpenRouter. Ohne Key bleibt flag null. */
