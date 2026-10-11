@@ -68,7 +68,7 @@ assert.match(ui, /dividend=\{dividendOverlay\}/);
 assert.match(ui, /data-testid="button-dividend"/);
 assert.match(ui, /Div\. Yield: n\/a — keine Dividendenhistorie/);
 assert.match(ui, /Dividende 12M je Aktie/);
-assert.match(ui, /geglättet: roh/);
+assert.match(ui, /dividendMarkerLines\(/);
 const s1 = readFileSync("client/src/components/sections/Section1.tsx", "utf8");
 assert.match(s1, /<KPI label="Div\. Yield" value=\{divKpi\.value\} sub=\{divKpi\.sub\} \/>/);
 console.log("test-dividend-price-overlay: OK");
@@ -107,3 +107,19 @@ const ui2 = readFileSync("client/src/components/sections/TechnicalChart.tsx", "u
 assert.match(ui2, /dividendCcy !== "mismatch"/);
 assert.match(ui2, /keine FX-Umrechnung/);
 console.log("test-dividend-price-overlay (currency guard): OK");
+
+// ── Tester softs #227: default off per ticker + raw value in tooltip ──
+import { dividendMarkerLines } from "../shared/dividends";
+{
+  const ui3 = readFileSync("client/src/components/sections/TechnicalChart.tsx", "utf8");
+  assert.match(ui3, /useState\(false\);[\s\S]{0,400}useEffect\(\(\) => \{ setShowDividend\(false\); \}, \[data\.ticker\]\);/, "chip resets to off on ticker switch");
+  const nv = dividendOverlaySeries(nvoBars, NVO).points[1];
+  assert.deepEqual(dividendMarkerLines(nv).map(l => l.text), ["geglättet 5.11 % · roh 8.34 % (Ex-Tag 2025-03-31 doppelt im 12M-Fenster)"]);
+  const dip = dividendOverlaySeries([{ date: "2025-09-14", close: 68 }], KO).points[0];
+  console.log(dividendMarkerLines(dip).map(l => l.text));
+  assert.equal(dividendMarkerLines(dip).length, 1); assert.match(dividendMarkerLines(dip)[0].text, /^aufgefüllt 2\.93 % · roh 2\.21 % \(Ex-Tag 2024-09-13/);
+  const spc = dividendOverlaySeries([{ date: "2026-10-09", close: 69.86 }], SPEC).points[0];
+  assert.deepEqual(dividendMarkerLines(spc).map(l => l.text), ["inkl. Sonderdividende (Ex-Tag 2026-04-01)"]);
+  assert.deepEqual(dividendMarkerLines(dividendOverlaySeries([{ date: "2026-10-09", close: 38.64 }], NVO).points[0]), [], "regular point: no marker");
+  console.log("test-dividend-price-overlay (softs): OK");
+}

@@ -260,3 +260,22 @@ export function dividendKpiFromHistory(
   if (!p || p.yieldPct == null || p.ttmDividend == null) return { kind: "none" };
   return { kind: "ttm", yieldPct: p.yieldPct, ttmDividend: p.ttmDividend, date: p.date, smoothed: p.rawYieldPct != null };
 }
+
+/** Tooltip marker lines for one overlay point: corrected and raw value side by side, plus the ex-date(s). */
+export function dividendMarkerLines(
+  p: { yieldPct?: number | null; rawYieldPct?: number | null; droppedExDates?: string[]; addedExDates?: string[]; specialExDates?: string[] },
+  fmtDate: (iso: string) => string = d => d,
+): Array<{ text: string; cls: string }> {
+  const out: Array<{ text: string; cls: string }> = [];
+  const pct = (v: number) => `${v.toFixed(2)} %`;
+  if (p.yieldPct != null && p.rawYieldPct != null && p.droppedExDates?.length) {
+    out.push({ cls: "text-amber-500", text: `geglättet ${pct(p.yieldPct)} · roh ${pct(p.rawYieldPct)} (Ex-Tag ${p.droppedExDates.map(fmtDate).join(", ")} doppelt im 12M-Fenster)` });
+  }
+  if (p.yieldPct != null && p.rawYieldPct != null && p.addedExDates?.length) {
+    out.push({ cls: "text-amber-500", text: `aufgefüllt ${pct(p.yieldPct)} · roh ${pct(p.rawYieldPct)} (Ex-Tag ${p.addedExDates.map(fmtDate).join(", ")} mitgezählt, Folgezahlung noch nicht ex)` });
+  }
+  if (p.specialExDates?.length) {
+    out.push({ cls: "text-violet-400", text: `inkl. Sonderdividende (Ex-Tag ${p.specialExDates.map(fmtDate).join(", ")})` });
+  }
+  return out;
+}
