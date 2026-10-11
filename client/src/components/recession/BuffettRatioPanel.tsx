@@ -153,7 +153,9 @@ function ChartOverlay(props: {
   const boxH = 62;
   const boxX = Math.max(8, x - boxW - (props.wide ? 128 : 16));
   const boxY = 8;
-  const ratioText = `${Math.round(last.ratio)}% Marktwert zum BIP,`;
+  // #245/JOB 22: Leerzeichen am Zeilenende, damit der Callout-Text (textContent, Screenreader) nicht
+  // „2026250%“ bzw. „BIP,86%“ zusammenklebt; sichtbar ändert sich nichts.
+  const ratioText = `${Math.round(last.ratio)}% Marktwert zum BIP, `;
   const side = last.premiumPct >= 0 ? "über" : "unter";
   const premiumText = `${Math.abs(Math.round(last.premiumPct))}% ${side} der langfristigen Trendlinie`;
   const zSide = last.zScore > 0.05 ? "über" : last.zScore < -0.05 ? "unter" : "auf";
@@ -226,10 +228,12 @@ function ChartOverlay(props: {
       {/* JOB 18: Punkt + Kurzlabel am letzten Datenpunkt (alle Zeitfenster; Max zusätzlich mit Callout) */}
       <g data-testid="buffett-last-point">
         <circle cx={x} cy={y} r={4} fill={RATIO} stroke="#ffffff" strokeWidth={1.5} />
-        {!showCallout && lastPointLabel(last) && (
+        {/* #245/JOB 22: Label auch im Max-Fenster; dort unter dem Punkt, damit es nicht in den Callout-Pfeil läuft. */}
+        {lastPointLabel(last) && (
           <text
+            data-testid="buffett-last-point-label"
             x={x - 8}
-            y={y < 24 ? y + 18 : y - 9}
+            y={showCallout || y < 24 ? y + 18 : y - 9}
             textAnchor="end"
             fill={RATIO}
             fontSize={props.wide ? 12 : 11}
@@ -248,9 +252,9 @@ function ChartOverlay(props: {
           <polygon points={`${x},${y} ${x - 9},${y - 4} ${x - 9},${y + 4}`} fill={RATIO} />
           <g data-testid="text-buffett-callout">
             <rect x={boxX} y={boxY} width={boxW} height={boxH} rx={2} fill="#ffffff" stroke={RATIO} strokeWidth={1.6} />
-            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}{last.proxy ? ` (via ${last.proxy})` : ""}</text>
+            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}{last.proxy ? ` (via ${last.proxy})` : ""}{" "}</text>
             <text x={boxX + 10} y={boxY + 33} fill={RATIO} fontSize={props.wide ? 12 : 11}>{ratioText}</text>
-            <text x={boxX + 10} y={boxY + 50} fill={RATIO} fontSize={props.wide ? 12 : 11}>{premiumText}</text>
+            <text x={boxX + 10} y={boxY + 50} fill={RATIO} fontSize={props.wide ? 12 : 11}>{premiumText}{" "}</text>
           </g>
           <text
             x={boxX + 10}
