@@ -89,8 +89,52 @@ export function normalizeMinorUnitListing<T extends MinorUnitInput>(data: T, maj
     return { ...scaleFields(r, fields, 1 / fx), reportedCurrency: mu.major, _fxToListing: { from: "USD", to: mu.major, rate: 1 / fx } };
   });
   const financials = { income: toMajor(data.financials?.income), cashflow: toMajor(data.financials?.cashflow), balanceSheet: toMajor(data.financials?.balanceSheet) };
-  const analyst = { ...data.analyst, estimates: toMajor(data.analyst?.estimates) };
+  const analyst = { ...data.analyst, estimates: toMajor(data.analyst?.estimates), priceTarget: priceTargetToListingUnit(data.analyst?.priceTarget, quote?.price ?? profile?.price, mu.factor) };
   return { ...data, quote, profile, ohlcv, financials, analyst };
+}
+
+/**
+ * Analyst price targets (FMP /price-target-consensus) of a minor-unit listing. FMP does not state their unit:
+ * a .L consensus can come in pence (3200) or pounds (32). The price next to it is already in the major unit
+ * after normalisation, so the target is accepted only in the ONE scale (as-is, ÷factor, ×factor) whose
+ * reference target lands within 0.2×–5× of the price. No price, no target, or no / more than one plausible
+ * scale → every target field null (UI/route show n/a), never a guessed unit. Returns the input unchanged when
+ * it carries no target at all.
+ */
+export const PRICE_TARGET_FIELDS = ["targetHigh", "targetLow", "targetConsensus", "targetMedian", "priceTarget"];
+const PT_MIN_RATIO = 0.2;
+const PT_MAX_RATIO = 5;
+
+export function priceTargetToListingUnit(pt: any, price: unknown, factor: number): any {
+  if (!pt || typeof pt !== "object") return pt;
+  const ref = [pt.targetMedian, pt.targetConsensus, pt.priceTarget, pt.targetHigh, pt.targetLow].map(Number).find(v => Number.isFinite(v) && v > 0);
+  if (ref == null) return pt;
+  const px = Number(price);
+  const nulled = () => {
+    const out: any = { ...pt };
+    for (const f of PRICE_TARGET_FIELDS) if (f in out) out[f] = null;
+    return { ...out, _unit: { ensured: false, reason: Number.isFinite(px) && px > 0 ? "Kursziel-Einheit nicht eindeutig" : "Kurs fehlt" } };
+  };
+  if (!(Number.isFinite(px) && px > 0)) return nulled();
+  const scales = [1, 1 / factor, factor].filter(m => { const r = (ref * m) / px; return r >= PT_MIN_RATIO && r <= PT_MAX_RATIO; });
+  if (scales.length !== 1) return nulled();
+  return { ...scaleFields(pt, PRICE_TARGET_FIELDS, scales[0]), _unit: { ensured: true, scale: scales[0] } };
+}
+
+/**
+ * Stooq symbol + quote unit. Stooq lists LSE shares as "<ticker>.uk" (not ".l") and quotes them in pence
+ * (GBX), like Yahoo's "GBp" — so .L history is normalised by the same factor as #244 (minorUnitInfo).
+ * Other symbols keep the previous mapping (dotted → lower case, plain US ticker → ".us").
+ */
+const STOOQ_SUFFIX: Record<string, { stooq: string; quoteCurrency: string }> = {
+  L: { stooq: "uk", quoteCurrency: "GBp" },
+};
+
+export function stooqListing(symbol: string): { stooqSymbol: string; quoteCurrency: string | null } {
+  const m = symbol.match(/^(.+)\.([A-Za-z]+)$/);
+  const hit = m ? STOOQ_SUFFIX[m[2].toUpperCase()] : undefined;
+  if (m && hit) return { stooqSymbol: `${m[1].toLowerCase()}.${hit.stooq}`, quoteCurrency: hit.quoteCurrency };
+  return { stooqSymbol: symbol.includes(".") ? symbol.toLowerCase() : `${symbol.toLowerCase()}.us`, quoteCurrency: null };
 }
 
 /** Dividend amounts of a minor-unit listing (FMP/Yahoo .L dividends are in pence) → major unit, currency stated. */

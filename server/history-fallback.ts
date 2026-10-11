@@ -22,7 +22,7 @@
  * Additiv: Diese Datei ist komplett neu und aendert keine bestehende Datei.
  * Der einzige Call-Site-Eingriff erfolgt minimal-invasiv in analyze-route.ts.
  */
-import { yahooBarsToMajor } from "../shared/listing-units";
+import { stooqListing, yahooBarsToMajor } from "../shared/listing-units";
 
 export type HistoryProvider = "fmp" | "yahoo" | "stooq";
 
@@ -150,7 +150,8 @@ export async function yahooFetch(symbol: string, from: string, to: string): Prom
  * zuverlaessig erreichbar ist (z.B. Rate-Limit/429 ohne Retry-Erfolg).
  */
 export async function stooqFetch(symbol: string, from: string, to: string): Promise<DailyBar[]> {
-  const stooqSymbol = symbol.includes(".") ? symbol.toLowerCase() : `${symbol.toLowerCase()}.us`;
+  // .L → "<ticker>.uk" (Stooq's LSE suffix), quoted in pence; other symbols as before.
+  const { stooqSymbol, quoteCurrency } = stooqListing(symbol);
   const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
   const resp = await fetch(url, {
     signal: AbortSignal.timeout(15000),
@@ -180,7 +181,23 @@ export async function stooqFetch(symbol: string, from: string, to: string): Prom
       source: "stooq",
     });
   }
-  return bars;
+  // LSE pence → pounds via the same path as Yahoo/FMP (#244, shared/listing-units). No-op for other symbols.
+  return yahooBarsToMajor(bars, quoteCurrency);
+}
+
+/**
+ * Unit guard at the merge seam: alt bars only extend FMP to the left, so the newest alt close before FMP's
+ * first bar must be on the same scale. A ×100 jump (pence vs pounds) means a unit mismatch → alt dropped,
+ * series stays honest (truncated) instead of a chart/MA200 with a 100× cliff. Factor-2 band tolerates real moves.
+ */
+export function altSeamUnitMismatch(fmpBars: DailyBar[], alt: DailyBar[]): boolean {
+  const first = fmpBars[0];
+  if (!first || !(first.close > 0)) return false;
+  const before = alt.filter((a) => a.date < first.date && a.close > 0);
+  const seam = before.length ? before[before.length - 1] : undefined;
+  if (!seam) return false;
+  const r = seam.close / first.close;
+  return r > 2 || r < 0.5;
 }
 
 /**
@@ -217,7 +234,9 @@ export async function fetchDailyHistory(opts: {
   if ((truncated || wantsEarlier) && opts.altFetch) {
     try {
       const alt = await opts.altFetch(from, gotFrom ?? to);
-      if (alt.length > 0) {
+      if (alt.length > 0 && altSeamUnitMismatch(bars, alt)) {
+        console.warn(`[HISTORY-FALLBACK] ${opts.symbol}: Alt-Provider-Einheit passt nicht zu FMP (Sprung an der Nahtstelle) -- verworfen`);
+      } else if (alt.length > 0) {
         const byDate = new Map(bars.map((b) => [b.date, b]));
         for (const a of alt) if (!byDate.has(a.date)) byDate.set(a.date, a);
         bars = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
