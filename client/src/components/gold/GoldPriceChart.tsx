@@ -291,6 +291,8 @@ export function GoldPriceChart({ data }: Props) {
                 dataKey="close"
                 fill="url(#goldGradient)"
                 stroke="none"
+                // Fill only. The Line below carries the single Gold tooltip row.
+                tooltipType="none"
               />
               <Line
                 yAxisId="left"
