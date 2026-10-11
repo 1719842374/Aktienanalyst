@@ -57,4 +57,9 @@ assert.match(schema, /revenueSegmentsMessage\?: string;\n  isEtf\?: boolean;\n  
 const pdf = readFileSync("server/pdf-export.ts", "utf8");
 assert.match(pdf, /ETF\/Fonds — Reverse DCF nicht anwendbar/);
 assert.match(pdf, /const fazit = buildFazit\(data\);/);
+// Summary table row "Reverse DCF g*": n/a for ETF/Fonds, like the matrix and PDF section 14
+const ui = readFileSync("client/src/components/sections/SummarySection.tsx", "utf8");
+assert.match(ui, /value=\{isEtfOrFund\(data\) \? "n\/a" : formatPercentNoSign\(reverseDCF\.impliedGrowth\)\}/);
+assert.match(ui, /note=\{isEtfOrFund\(data\) \? "ETF\/Fonds — Reverse DCF nicht anwendbar" :/);
+assert.match(ui, /import \{ buildConflictMatrix, conflictInputsFromAnalysis, isEtfOrFund \} from "..\/..\/lib\/conflictMatrix";/);
 console.log("test-reverse-dcf-etf: OK");
