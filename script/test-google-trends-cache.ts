@@ -142,7 +142,7 @@ console.log("\n=== One memory layer, wired in front of SerpApi ===");
 
   const note = readFileSync(new URL("../client/src/components/recession/recessionDashboardPartsB2.tsx", import.meta.url), "utf8");
   check("the 61.2 sentence is gone", !note.includes("61.2") && !note.includes("Score auf 0 gesetzt"));
-  check("the summary shows the age and the stale mark", note.includes("letzter Wert von vor") && note.includes("(veraltet)") && note.includes("text-google-trends-age"));
+  check("the summary shows the age and the stale mark", note.includes("letzter Wert {formatAgeHours(ageHours)}") && note.includes("(veraltet)") && note.includes("text-google-trends-age"));
   check("a closed slot is described as closed", note.includes("Der Slot bleibt geschlossen"));
   check("the driver block is untouched", note.includes('data-testid="text-recession-drivers"') && note.includes("unauffällig"));
 

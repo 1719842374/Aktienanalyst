@@ -145,6 +145,19 @@ export function displayedNyFedAnchorPct(nyFedValue: number | null, nyFedAnchor?:
   return null;
 }
 
+/**
+ * Readable age for the Google Trends print: "vor <1 h", "vor 3 h", "vor 1 T 2 h".
+ * Display only. ageHours, zones and scores stay unchanged.
+ */
+export function formatAgeHours(ageHours: number): string {
+  if (!Number.isFinite(ageHours) || ageHours < 1) return "vor <1 h";
+  const total = Math.floor(ageHours);
+  const days = Math.floor(total / 24);
+  const hours = total % 24;
+  if (days === 0) return `vor ${hours} h`;
+  return hours === 0 ? `vor ${days} T` : `vor ${days} T ${hours} h`;
+}
+
 // Color helpers
 export function getProbColor(p: number): string {
   if (p >= 70) return "text-red-500";

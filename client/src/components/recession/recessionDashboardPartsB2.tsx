@@ -7,7 +7,7 @@ import {
 } from "recharts";
 import {
   type RecessionAnalysis, type IndicatorResult, type SubgroupResult, type FazitSection,
-  getProbColor, getProbBg, getScoreColor, getScoreBg, getGaugeColor,
+  getProbColor, getProbBg, getScoreColor, getScoreBg, getGaugeColor, formatAgeHours,
 } from "./recessionDashboardShared";
 import { riskLevelPhrase } from "@shared/risk-level-label";
 
@@ -69,7 +69,7 @@ export function Summary({ data }: { data: RecessionAnalysis }) {
         >
           <Info className={`w-3.5 h-3.5 flex-shrink-0 mt-0.5 ${googleStale ? "text-yellow-500" : "text-muted-foreground"}`} />
           <span className="text-muted-foreground">
-            Google Trends: letzter Wert von vor {ageHours.toFixed(1)} Stunden{googleStale ? " (veraltet)" : ""}.
+            Google Trends: letzter Wert {formatAgeHours(ageHours)}{googleStale ? " (veraltet)" : ""}.
           </span>
         </div>
       )}
