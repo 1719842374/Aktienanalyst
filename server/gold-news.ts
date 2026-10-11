@@ -16,6 +16,9 @@ import { scoreHeadlineSentiment } from "./news-sentiment";
 export const GOLD_NEWS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 export const GOLD_NEWS_CACHE_HOURS = 12;
 const CACHE_KEY = "gold_news_impact_v1";
+// JOB 16b: letzter guter Wert (Flag aus OpenRouter + Meldungen), überlebt Neustarts über die Disk.
+const LAST_GOOD_KEY = "gold_news_last_good_v1";
+export const GOLD_NEWS_LAST_GOOD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Alle vier Feeds sind englische Ausgaben (gold.org, federalreserve.gov, Google News hl=en-US).
 const FEEDS: { id: string; url: string; source: string; goldOnly: boolean; lang: "en" }[] = [
@@ -55,6 +58,9 @@ export interface GoldNewsDeps {
   complete: (headlines: string[]) => Promise<unknown>;
   cacheGet: () => GoldNewsCacheEntry | null;
   cacheSet: (entry: GoldNewsCacheEntry) => void;
+  /** JOB 16b: letzter guter Wert (nur Läufe mit Meldungen und belastbarem Flag). */
+  lastGoodGet?: () => GoldNewsCacheEntry | null;
+  lastGoodSet?: (entry: GoldNewsCacheEntry) => void;
 }
 
 export function interpretGoldNewsLlm(
@@ -217,7 +223,24 @@ export async function loadGoldNewsImpact(deps: GoldNewsDeps): Promise<GoldNewsIm
     return emptyImpact("OPENROUTER_API_KEY fehlt", false, items);
   }
 
-  if (items.length === 0) return emptyImpact("keine Gold-Meldungen", true, items);
+  // JOB 16b: leere oder gescheiterte Läufe werden nie gecacht; stattdessen letzter guter Wert.
+  const lastGoodOr = (reason: string, fallback: GoldNewsImpact): GoldNewsImpact => {
+    const good = deps.lastGoodGet?.() ?? null;
+    if (!good || good.flag == null) return fallback;
+    return {
+      flag: good.flag,
+      summary: good.summary,
+      updatedAt: good.updatedAt,
+      llmAvailable: true,
+      unavailableReason: null,
+      items: good.items,
+      cacheTtlHours: GOLD_NEWS_CACHE_HOURS,
+      lastGood: true,
+      lastGoodReason: reason,
+    };
+  };
+
+  if (items.length === 0) return lastGoodOr("keine Gold-Meldungen", emptyImpact("keine Gold-Meldungen", true, items));
 
   let flag: number | null = null;
   let summary: string | null = null;
@@ -233,14 +256,21 @@ export async function loadGoldNewsImpact(deps: GoldNewsDeps): Promise<GoldNewsIm
   }
 
   const updatedAt = flag != null ? new Date(deps.now).toISOString() : null;
-  deps.cacheSet({
+  if (flag == null) {
+    return lastGoodOr(reason ?? "OpenRouter ohne belastbares Flag", {
+      flag, summary, updatedAt, llmAvailable: true, unavailableReason: reason, items, cacheTtlHours: GOLD_NEWS_CACHE_HOURS,
+    });
+  }
+  const entry: GoldNewsCacheEntry = {
     storedAt: fresh?.storedAt ?? deps.now,
     items,
     attempted: true,
     flag,
     summary,
     updatedAt,
-  });
+  };
+  deps.cacheSet(entry);
+  deps.lastGoodSet?.({ ...entry, storedAt: deps.now });
   return {
     flag,
     summary,
@@ -265,6 +295,7 @@ export function enrichGoldNewsItems(items: GoldNewsItem[]): GoldNewsItem[] {
 }
 
 let memoryCache: GoldNewsCacheEntry | null = null;
+let memoryLastGood: GoldNewsCacheEntry | null = null;
 
 export async function getGoldNewsImpact(): Promise<GoldNewsImpact> {
   const impact = await loadGoldNewsImpact({
@@ -282,6 +313,17 @@ export async function getGoldNewsImpact(): Promise<GoldNewsImpact> {
     cacheSet: entry => {
       memoryCache = entry;
       try { diskResearcherSet(CACHE_KEY, entry); } catch { /* Disk ist der Backstop */ }
+    },
+    lastGoodGet: () => {
+      if (memoryLastGood) return memoryLastGood;
+      const disk = diskResearcherGetWithTtl(LAST_GOOD_KEY, GOLD_NEWS_LAST_GOOD_TTL_MS);
+      if (!disk || !disk.data || !Array.isArray(disk.data.items)) return null;
+      memoryLastGood = { ...(disk.data as GoldNewsCacheEntry), storedAt: disk.storedAt };
+      return memoryLastGood;
+    },
+    lastGoodSet: entry => {
+      memoryLastGood = entry;
+      try { diskResearcherSet(LAST_GOOD_KEY, entry); } catch { /* Disk ist der Backstop */ }
     },
   });
   return { ...impact, items: enrichGoldNewsItems(impact.items) };
