@@ -14,6 +14,9 @@ import { riskLevelPhrase } from "@shared/risk-level-label";
 // Section 5: Indicator Table (full 17 indicators)
 
 export function Summary({ data }: { data: RecessionAnalysis }) {
+  const google = data.indicators.find(i => i.name.includes("Google"));
+  const ageHours = typeof google?.ageHours === "number" && Number.isFinite(google.ageHours) ? google.ageHours : null;
+  const googleStale = ageHours != null && google?.isStale === true;
   return (
     <div className="space-y-4">
       {/* Interpretation */}
@@ -58,12 +61,23 @@ export function Summary({ data }: { data: RecessionAnalysis }) {
         </div>
       )}
 
-      {/* Google Trends Note */}
-      {!data.googleTrendsAvailable && (
-        <div className="flex items-start gap-2 p-2 rounded bg-yellow-500/10 border border-yellow-500/20 text-xs">
+      {/* Google Trends age. A closed slot stays out of net and max. */}
+      {ageHours != null && (
+        <div
+          className={`flex items-start gap-2 p-2 rounded border text-xs ${googleStale ? "bg-yellow-500/10 border-yellow-500/20" : "bg-muted/20 border-border"}`}
+          data-testid="text-google-trends-age"
+        >
+          <Info className={`w-3.5 h-3.5 flex-shrink-0 mt-0.5 ${googleStale ? "text-yellow-500" : "text-muted-foreground"}`} />
+          <span className="text-muted-foreground">
+            Google Trends: letzter Wert von vor {ageHours.toFixed(1)} Stunden{googleStale ? " (veraltet)" : ""}.
+          </span>
+        </div>
+      )}
+      {ageHours == null && !data.googleTrendsAvailable && (
+        <div className="flex items-start gap-2 p-2 rounded bg-yellow-500/10 border border-yellow-500/20 text-xs" data-testid="text-google-trends-age">
           <Info className="w-3.5 h-3.5 text-yellow-500 flex-shrink-0 mt-0.5" />
           <span className="text-muted-foreground">
-            Google Trends nicht verfügbar. Score auf 0 gesetzt, effektiver Max-Score für Korrektur Vollständig auf 61.2 reduziert.
+            Google Trends nicht verfügbar. Der Slot bleibt geschlossen und zählt nicht in Netto oder Max.
           </span>
         </div>
       )}
