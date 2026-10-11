@@ -1,6 +1,7 @@
 import type { StockAnalysis } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, Shield, DollarSign } from "lucide-react";
+import { useDividendKpi } from "@/lib/useDividendHistory";
 
 interface Props { data: StockAnalysis }
 
@@ -19,6 +20,8 @@ const pctColor = (v: number, invert = false) => {
 
 export function FinancialStatements({ data }: Props) {
   const fs = data.financialStatements;
+  // JOB 20: dieselbe Div.-Yield wie die Kachel in Section 1 (Hook vor dem frühen return)
+  const divKpi = useDividendKpi(data);
   if (!fs) return null;
 
   const { incomeStatement: is, balanceSheet: bs, cashFlow: cf, health, healthReasons } = fs;
@@ -116,6 +119,10 @@ export function FinancialStatements({ data }: Props) {
               <div className="text-[9px] text-muted-foreground">
                 FCF Yield: {data.fcfAvailable === false || !(data.marketCap > 0) ? "n/a" : `${((cf.fcf / data.marketCap) * 100).toFixed(1)}%`}
                 {data.fcfAvailable !== false && data.marketCap > 0 && (cf.fcf / data.marketCap) * 100 > 5 && " (Attraktiv)"}
+              </div>
+              <div className="text-[9px] text-muted-foreground" data-testid="fs-div-yield">
+                Div. Yield: <span className="font-mono">{divKpi ? divKpi.value : "n/a"}</span>
+                {divKpi && <span className="ml-1">({divKpi.sub})</span>}
               </div>
             </div>
           </div>
