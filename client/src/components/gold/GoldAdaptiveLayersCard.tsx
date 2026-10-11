@@ -1,7 +1,5 @@
 import React from "react";
-import type { GoldAnalysis, GoldModelGate } from "../../../../shared/gold-schema";
-
-type AdaptiveData = Pick<GoldAnalysis, "adaptiveScore" | "goldNews" | "realYieldModel" | "multiFactorModel">;
+import type { GoldAnalysis } from "../../../../shared/gold-schema";
 
 function num(value: number | null | undefined, digits = 2): string {
   if (value == null || !Number.isFinite(value)) return "N/A";
@@ -14,32 +12,8 @@ function plain(value: number | null | undefined, digits = 2): string {
   return value.toFixed(digits);
 }
 
-function stamp(iso: string | null | undefined): string {
-  if (!iso) return "N/A";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "N/A";
-  return date.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function flagWord(flag: number | null | undefined): string {
-  if (flag == null || !Number.isFinite(flag)) return "N/A";
-  if (flag > 0) return "bullish";
-  if (flag < 0) return "bearish";
-  return "neutral";
-}
-
-function gateList(data: AdaptiveData): GoldModelGate[] {
-  const gates: GoldModelGate[] = [];
-  for (const gate of data.realYieldModel?.gates ?? []) gates.push(gate);
-  if (data.multiFactorModel?.gate) gates.push(data.multiFactorModel.gate);
-  for (const gate of data.adaptiveScore?.gates ?? []) gates.push(gate);
-  return gates;
-}
-
-export function GoldAdaptiveSection({ data }: { data: AdaptiveData }) {
+export function GoldAdaptiveLayersCard({ data }: { data: Pick<GoldAnalysis, "adaptiveScore"> }) {
   const score = data.adaptiveScore;
-  const news = data.goldNews;
-  const gates = gateList(data);
   const scoreText = score?.score == null ? "N/A" : num(score.score);
   const scoreClass = score?.score == null
     ? "text-muted-foreground bg-muted/40 border-border"
@@ -50,7 +24,7 @@ export function GoldAdaptiveSection({ data }: { data: AdaptiveData }) {
         : "text-amber-500 bg-amber-500/10 border-amber-500/20";
 
   return (
-    <div className="bg-card border border-card-border rounded-lg overflow-hidden" data-testid="gold-adaptive-section">
+    <div className="bg-card border border-card-border rounded-lg overflow-hidden" data-testid="gold-adaptive-layers">
       <div className="px-4 py-3 border-b border-border">
         <div className="flex items-center gap-3">
           <span className="flex items-center justify-center w-7 h-7 rounded-md bg-amber-500/10 text-amber-500 text-xs font-bold tabular-nums">9</span>
@@ -65,6 +39,9 @@ export function GoldAdaptiveSection({ data }: { data: AdaptiveData }) {
           GIS bleibt der bestehende Indikator-Score. Diese Schicht gewichtet Real Yield, Policy, Liquidität, Inflation, Angebot, Technik und Makro mit Stärke.
           Fehlt eine Quelle, steht N/A. Das News-Flag ist ein Hinweis und kein Summand.
         </p>
+        <div className="text-[11px] font-mono text-muted-foreground" data-testid="gold-score-delta">
+          Δ GIS {num(score?.scoreDelta)}
+        </div>
 
         {score ? (
           <div className="overflow-x-auto">
@@ -107,57 +84,6 @@ export function GoldAdaptiveSection({ data }: { data: AdaptiveData }) {
             <div className="text-[11px] text-muted-foreground">Volumen: {score.volumeSource ?? "N/A"}</div>
           </div>
         )}
-
-        <div className="space-y-1" data-testid="gold-adaptive-gates">
-          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Gates</div>
-          {gates.length === 0 && <div className="text-[11px] text-muted-foreground">N/A</div>}
-          {gates.map(gate => (
-            <div
-              key={gate.id}
-              data-testid={`gold-gate-${gate.id}`}
-              className={`text-[10px] px-2 py-1 rounded border ${
-                gate.active
-                  ? "bg-red-500/10 border-red-500/20 text-red-400"
-                  : "bg-muted/30 border-border text-muted-foreground"
-              }`}
-            >
-              {gate.id}: {gate.active ? "aktiv" : "inaktiv"} — {gate.rationale}
-            </div>
-          ))}
-        </div>
-
-        <div className="rounded-lg border border-border/50 bg-card/50 p-3 space-y-2" data-testid="gold-news-card">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-sm font-semibold text-foreground">Gold-News</div>
-            <div className="text-[10px] font-mono tabular-nums text-muted-foreground" data-testid="gold-news-flag">
-              Flag {news?.flag == null ? "N/A" : `${num(news.flag)} ${flagWord(news.flag)}`}
-            </div>
-          </div>
-          <p className="text-[11px] text-muted-foreground leading-relaxed" data-testid="gold-news-summary">
-            {news?.summary || "N/A"}
-          </p>
-          <div className="text-[10px] text-muted-foreground">
-            Stand {stamp(news?.updatedAt)}
-            {news?.unavailableReason ? ` · ${news.unavailableReason}` : ""}
-            {news ? ` · Cache ${news.cacheTtlHours} h` : ""}
-          </div>
-          {news && news.items.length > 0 && (
-            <div className="space-y-1">
-              {news.items.slice(0, 8).map((item, index) => (
-                <a
-                  key={`${item.url}-${index}`}
-                  href={item.url || undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block text-xs text-foreground/80 hover:text-amber-500"
-                >
-                  {item.title}
-                  <span className="text-[10px] text-muted-foreground"> · {item.source || "N/A"}</span>
-                </a>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

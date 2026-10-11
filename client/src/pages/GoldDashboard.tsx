@@ -11,12 +11,14 @@ import { GoldFairValueSection } from "@/components/gold/GoldFairValueSection";
 import { GoldMonteCarloSection } from "@/components/gold/GoldMonteCarloSection";
 import { GoldCycleSection } from "@/components/gold/GoldCycleSection";
 import { GoldSummarySection } from "@/components/gold/GoldSummarySection";
-import { GoldAdaptiveSection } from "@/components/gold/GoldAdaptiveSection";
+import { GoldAdaptiveLayersCard } from "@/components/gold/GoldAdaptiveLayersCard";
+import { GoldAdaptiveGatesCard } from "@/components/gold/GoldAdaptiveGatesCard";
+import { GoldNewsCard } from "@/components/gold/GoldNewsCard";
 import { GoldPriceChart } from "@/components/gold/GoldPriceChart";
 import {
   Sun, Moon, TrendingUp, BarChart3, Calculator,
   Dice6, Activity, Table2, Menu, X, LineChart, Target,
-  RefreshCw, Loader2, ArrowLeft, Scale, Layers,
+  RefreshCw, Loader2, ArrowLeft, Scale,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -29,7 +31,6 @@ const SECTIONS = [
   { id: 6, label: "Preisschätzung", icon: Target },
   { id: 7, label: "Zyklus", icon: Activity },
   { id: 8, label: "Zusammenfassung", icon: Table2 },
-  { id: 9, label: "Adaptive Schicht", icon: Layers },
 ];
 
 export default function GoldDashboard() {
@@ -187,7 +188,9 @@ export default function GoldDashboard() {
               <div ref={setSectionRef(6)}><GoldPriceEstimateSection data={data} /></div>
               <div ref={setSectionRef(7)}><GoldCycleSection data={data} /></div>
               <div ref={setSectionRef(8)}><GoldSummarySection data={data} /></div>
-              <div ref={setSectionRef(9)}><GoldAdaptiveSection data={data} /></div>
+              <GoldAdaptiveLayersCard data={data} />
+              <GoldAdaptiveGatesCard data={data} />
+              <GoldNewsCard data={data} />
               <div className="pb-8" />
             </div>
           ) : null}

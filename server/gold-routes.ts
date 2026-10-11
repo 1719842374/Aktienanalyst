@@ -623,6 +623,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         `(${ind.score > 0 ? "+" : ""}${ind.score} × ${ind.weight.toFixed(2)})`
       ).join(" + ") + ` = ${gis.toFixed(2)}`;
 
+      const gisRounded = Math.round(gis * 100) / 100;
       console.log(`[GOLD] GIS = ${gis.toFixed(3)}`);
 
       // === Fair Value (10 steps) ===
@@ -729,12 +730,21 @@ export function registerGoldRoutes(server: Server, app: Express) {
           aisc: null,
           regime: realYieldModel?.regime?.regime ?? null,
           newsFlag: goldNews?.flag ?? null,
+          gis: gisRounded,
           now: now.toISOString(),
         });
         console.log(`[GOLD] Adaptiver Score=${adaptiveScore.score == null ? "N/A" : adaptiveScore.score.toFixed(2)}, Volumen=${volumeSource ?? "N/A"}, News-Flag=${goldNews?.flag ?? "N/A"}`);
       } catch (adaptiveErr: any) {
         console.warn(`[GOLD] Adaptive Schicht fehlgeschlagen: ${adaptiveErr?.message?.substring(0, 180)}`);
       }
+
+      const scoreDelta = adaptiveScore?.scoreDelta ?? null;
+      const technicalSignals = adaptiveScore?.technicalSignals ?? [];
+      const gates = [
+        ...(realYieldModel?.gates ?? []),
+        ...(multiFactorModel?.gate ? [multiFactorModel.gate] : []),
+        ...(adaptiveScore?.gates ?? []),
+      ];
 
       // === Summary Table ===
       const sentiment: "Bullish" | "Neutral" | "Bearish" = gis >= 0.30 ? "Bullish" : gis >= 0 ? "Neutral" : "Bearish";
@@ -745,6 +755,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         { metric: "RSI (14)", value: rsi14.toFixed(1) },
         { metric: "GIS (Gold Indicator Score)", value: gis.toFixed(2) },
         { metric: "Adaptiver Layer-Score", value: adaptiveScore?.score == null ? "N/A" : adaptiveScore.score.toFixed(2) },
+        { metric: "Score-Delta (adaptiv − GIS)", value: scoreDelta == null ? "N/A" : `${scoreDelta >= 0 ? "+" : ""}${scoreDelta.toFixed(2)}` },
         { metric: "Sentiment", value: sentiment },
         { metric: "Fair Value (adj.)", value: `$${fvAdj.toFixed(0)}` },
         { metric: "30d Volatilität (ann.)", value: `${(sigma * 100).toFixed(1)}%` },
@@ -788,7 +799,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         deviationFromMA200,
         plausibilityChecks,
         indicators,
-        gis: Math.round(gis * 100) / 100,
+        gis: gisRounded,
         gisCalculation,
         fairValue,
         monteCarlo3M: mc3M,
@@ -818,6 +829,9 @@ export function registerGoldRoutes(server: Server, app: Express) {
         multiFactorModel,
         adaptiveScore,
         goldNews,
+        scoreDelta,
+        gates,
+        technicalSignals,
       };
 
       console.log(`[GOLD] Analysis complete: $${spotPrice}, GIS=${gis.toFixed(2)}, Sentiment=${sentiment}`);

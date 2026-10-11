@@ -77,6 +77,8 @@ export interface GoldAdaptiveInput {
   aisc: { date: string; aisc: number }[] | null;
   regime: "stress" | "tailwind" | "neutral" | null;
   newsFlag: number | null;
+  /** Bereits gerundeter GIS. Nur für scoreDelta, nicht für die Schicht. */
+  gis?: number | null;
   now?: string;
 }
 
@@ -123,6 +125,12 @@ export function adaptiveZ(current: number, history: number[]): number | null {
   const z = (current - mean) / sigma;
   if (!Number.isFinite(z)) return null;
   return Math.max(-Z_CAP, Math.min(Z_CAP, z));
+}
+
+/** Adaptiver Score minus GIS. null, wenn eine Seite fehlt. */
+export function goldScoreDelta(adaptive: number | null, gis: number | null): number | null {
+  if (adaptive == null || gis == null || !Number.isFinite(adaptive) || !Number.isFinite(gis)) return null;
+  return adaptive - gis;
 }
 
 export function aggregateAdaptiveLayers(layers: GoldAdaptiveLayer[]): number | null {
@@ -739,10 +747,14 @@ export function scoreGoldAdaptive(input: GoldAdaptiveInput): GoldAdaptiveScore {
   }
   if (habitatNotes.length === 0) habitatNotes.push("kein Habitat-Multiplikator");
 
+  const score = aggregateAdaptiveLayers(layers);
+  const technicalLayer = layers.find(layer => layer.id === "technical");
   return {
-    score: aggregateAdaptiveLayers(layers),
+    score,
+    scoreDelta: goldScoreDelta(score, input.gis ?? null),
     formula: "Summe(Richtung × effectiveWeight) / Summe(effectiveWeight), nur Dimensionen mit Quelle",
     layers,
+    technicalSignals: technicalLayer?.signals ?? [],
     gates: buildGates(closeValues, realValues),
     habitatNotes,
     newsFlag: input.newsFlag,

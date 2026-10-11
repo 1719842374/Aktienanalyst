@@ -14,6 +14,7 @@ import {
   aggregateAdaptiveLayers,
   effectiveWeight,
   habitatMultipliers,
+  goldScoreDelta,
   scoreGoldAdaptive,
   volumeReadingsAreReal,
   type GoldAdaptiveInput,
@@ -26,7 +27,9 @@ import {
   parseGoldRssItems,
   type GoldNewsCacheEntry,
 } from "../server/gold-news";
-import { GoldAdaptiveSection } from "../client/src/components/gold/GoldAdaptiveSection";
+import { GoldAdaptiveLayersCard } from "../client/src/components/gold/GoldAdaptiveLayersCard";
+import { GoldAdaptiveGatesCard } from "../client/src/components/gold/GoldAdaptiveGatesCard";
+import { GoldNewsCard } from "../client/src/components/gold/GoldNewsCard";
 import type { GoldAdaptiveLayer } from "../shared/gold-schema";
 
 let failed = 0;
@@ -120,6 +123,8 @@ console.log("\nFehlende Quellen bleiben N/A");
 {
   const empty = scoreGoldAdaptive(baseInput());
   check("leerer Input → Score null", empty.score === null);
+  check("ohne Score bleibt das Delta null", empty.scoreDelta === null && goldScoreDelta(null, 0.55) === null);
+  check("Technik-Signale liegen auch ohne Quelle flach", empty.technicalSignals.some(item => item.id === "technical.volumeSpike" && item.available === false));
   check("News-Flag ist nicht Teil des Scores", empty.newsInScore === false);
   check("Supply ohne AISC ist N/A", signal(empty, "supply", "supply.aisc")?.available === false);
   check("Supply-Beitrag ist null", empty.layers.find(layer => layer.id === "supply")?.contribution == null);
@@ -262,44 +267,88 @@ console.log("\nNews-Flag ohne Key ist N/A, kein Fake");
   check("nach 12 h wird neu bewertet", completes === 2 && fetches === 2);
 }
 
+function renderCards(data: {
+  adaptiveScore?: ReturnType<typeof scoreGoldAdaptive> | null;
+  goldNews?: {
+    flag: number | null;
+    summary: string | null;
+    updatedAt: string | null;
+    llmAvailable: boolean;
+    unavailableReason: string | null;
+    items: [];
+    cacheTtlHours: number;
+  } | null;
+  gates?: { id: string; active: boolean; cap: number; severity: "warn" | "hard"; rationale: string }[];
+  realYieldModel?: {
+    fairValue: null;
+    inverseScore: { windowUsed: number; correlation: null; score: 0; details: string };
+    scenarios: [];
+    regime: null;
+    gates: { id: string; active: boolean; cap: number; severity: "warn"; rationale: string }[];
+    generatedAt: string;
+  };
+}): string {
+  return [
+    renderToStaticMarkup(React.createElement(GoldAdaptiveLayersCard, { data })),
+    renderToStaticMarkup(React.createElement(GoldAdaptiveGatesCard, { data })),
+    renderToStaticMarkup(React.createElement(GoldNewsCard, { data })),
+  ].join("");
+}
+
 console.log("\nUI zeigt Gewicht, Stärke, Beitrag, Gates und News");
 {
-  const emptyHtml = renderToStaticMarkup(React.createElement(GoldAdaptiveSection, { data: {} }));
+  const emptyHtml = renderCards({});
   check("ohne Schicht steht N/A", emptyHtml.includes("N/A"));
   check("News-Karte ist da", emptyHtml.includes("gold-news-card") && emptyHtml.includes("Flag N/A"));
-  const scored = scoreGoldAdaptive(baseInput({
-    dxy: [
-      ...Array.from({ length: 180 }, (_, i) => ({ date: day(i), value: 110 + Math.sin(i / 5) * 0.4 })),
-      ...Array.from({ length: 70 }, (_, i) => ({ date: day(180 + i), value: 110 - i * 0.2 })),
-    ],
-  }));
-  const html = renderToStaticMarkup(React.createElement(GoldAdaptiveSection, {
+  const dxy = [
+    ...Array.from({ length: 180 }, (_, i) => ({ date: day(i), value: 110 + Math.sin(i / 5) * 0.4 })),
+    ...Array.from({ length: 70 }, (_, i) => ({ date: day(180 + i), value: 110 - i * 0.2 })),
+  ];
+  const scored = scoreGoldAdaptive(baseInput({ gis: 0.55, dxy }));
+  check(
+    "scoreDelta ist adaptiv minus GIS",
+    scored.score != null && scored.scoreDelta != null && Math.abs(scored.scoreDelta - (scored.score - 0.55)) < 1e-12,
+    String(scored.scoreDelta),
+  );
+  check(
+    "technicalSignals gleichen der Technik-Schicht",
+    scored.technicalSignals.length > 0
+      && scored.technicalSignals.every((item, index) => item.id === scored.layers.find(layer => layer.id === "technical")?.signals[index]?.id),
+  );
+  const aiscGate = { id: "GOLD_AISC_STRESS", active: false, cap: 100, severity: "warn" as const, rationale: "AISC-Daten nicht verfügbar" };
+  const html = renderCards({
+    adaptiveScore: scored,
+    gates: [aiscGate, ...scored.gates],
+    goldNews: {
+      flag: null,
+      summary: null,
+      updatedAt: null,
+      llmAvailable: false,
+      unavailableReason: "OPENROUTER_API_KEY fehlt",
+      items: [],
+      cacheTtlHours: 12,
+    },
+  });
+  check("Spalten Gewicht, Stärke, Beitrag", html.includes("Gewicht") && html.includes("Stärke") && html.includes("Beitrag"));
+  check("Makro-Zeile ist gerendert", html.includes("gold-adaptive-layer-macro"));
+  check("Score-Delta steht auf der Layer-Karte", html.includes("gold-score-delta") && html.includes("Δ GIS"));
+  check("bestehendes AISC-Gate bleibt sichtbar", html.includes("GOLD_AISC_STRESS"));
+  check("Death-Cross-Gate ist sichtbar", html.includes("GOLD_DEATH_CROSS_ACTIVE"));
+  check("News ohne Key zeigt N/A und den Grund", html.includes("Flag N/A") && html.includes("OPENROUTER_API_KEY fehlt"));
+  const fromModels = renderToStaticMarkup(React.createElement(GoldAdaptiveGatesCard, {
     data: {
-      adaptiveScore: scored,
-      goldNews: {
-        flag: null,
-        summary: null,
-        updatedAt: null,
-        llmAvailable: false,
-        unavailableReason: "OPENROUTER_API_KEY fehlt",
-        items: [],
-        cacheTtlHours: 12,
-      },
       realYieldModel: {
         fairValue: null,
         inverseScore: { windowUsed: 0, correlation: null, score: 0, details: "" },
         scenarios: [],
         regime: null,
-        gates: [{ id: "GOLD_AISC_STRESS", active: false, cap: 100, severity: "warn", rationale: "AISC-Daten nicht verfügbar" }],
+        gates: [aiscGate],
         generatedAt: "2026-10-11T00:00:00.000Z",
       },
+      adaptiveScore: scored,
     },
   }));
-  check("Spalten Gewicht, Stärke, Beitrag", html.includes("Gewicht") && html.includes("Stärke") && html.includes("Beitrag"));
-  check("Makro-Zeile ist gerendert", html.includes("gold-adaptive-layer-macro"));
-  check("bestehendes AISC-Gate bleibt sichtbar", html.includes("GOLD_AISC_STRESS"));
-  check("Death-Cross-Gate ist sichtbar", html.includes("GOLD_DEATH_CROSS_ACTIVE"));
-  check("News ohne Key zeigt N/A und den Grund", html.includes("Flag N/A") && html.includes("OPENROUTER_API_KEY fehlt"));
+  check("ohne Wurzel-Feld bleiben Modell-Gates sichtbar", fromModels.includes("GOLD_AISC_STRESS") && fromModels.includes("GOLD_DEATH_CROSS_ACTIVE"));
 }
 
 console.log("\nRoute lässt GIS, OLS, Multi-Faktor und Monte Carlo stehen");
@@ -316,7 +365,18 @@ console.log("\nRoute lässt GIS, OLS, Multi-Faktor und Monte Carlo stehen");
   check("adaptive Schicht ist angebunden", routes.includes("scoreGoldAdaptive("));
   check("AISC wird nicht erfunden", /aisc:\s*null/.test(routes));
   check("Yahoo GC=F ist die Volumen-Reserve", routes.includes('yahooFetch("GC=F"'));
+  check("GIS fließt nur ins Score-Delta", routes.includes("gis: gisRounded"));
+  check("Response liefert scoreDelta, gates und technicalSignals", /scoreDelta,\s*gates,\s*technicalSignals,/.test(routes));
   const schema = readFileSync(new URL("../shared/gold-schema.ts", import.meta.url), "utf8");
+  check("Schema hat scoreDelta und technicalSignals", schema.includes("scoreDelta: number | null") && schema.includes("technicalSignals: GoldAdaptiveSignal[]") && schema.includes("technicalSignals?: GoldAdaptiveSignal[]"));
+  const dash = readFileSync(new URL("../client/src/pages/GoldDashboard.tsx", import.meta.url), "utf8");
+  check(
+    "Dashboard bindet die drei Karten nur ein",
+    dash.includes("<GoldAdaptiveLayersCard data={data} />")
+      && dash.includes("<GoldAdaptiveGatesCard data={data} />")
+      && dash.includes("<GoldNewsCard data={data} />")
+      && !dash.includes("GoldAdaptiveSection"),
+  );
   const point = schema.match(/export interface GoldPricePoint \{[\s\S]*?\n\}/)?.[0] ?? "";
   check("GoldPricePoint hat weiter kein volume", point.length > 0 && !/volume/.test(point));
   check("Chart-Datei ist nicht Teil dieser Schicht", !routes.includes("GoldPriceChart"));
