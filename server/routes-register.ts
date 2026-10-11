@@ -26,4 +26,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerThesisLabRoutes(app);
   const { registerDividendRoute } = await import("./dividend-route");
   registerDividendRoute(app);
+  // POST /api/export-pdf (lost from routes.ts in 57189dd, see pdf-export-route.ts)
+  const { registerPdfExportRoute } = await import("./pdf-export-route");
+  registerPdfExportRoute(app);
 }

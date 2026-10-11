@@ -609,7 +609,12 @@ ${fazit.neut.length ? `<div class="sub">Neutral (${fazit.neut.length})</div><ul 
 
 // ===== Render HTML to PDF with Playwright =====
 export async function renderHTMLtoPDF(html: string): Promise<Buffer> {
-  const browserPath = '/home/user/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome';
+  // Old sandbox path kept as first choice; the Docker image installs Chromium under
+  // PLAYWRIGHT_BROWSERS_PATH instead, so fall back to Playwright's own lookup (or
+  // PDF_CHROMIUM_PATH) when that file does not exist.
+  const legacyPath = '/home/user/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome';
+  const { existsSync } = await import('node:fs');
+  const browserPath = process.env.PDF_CHROMIUM_PATH || (existsSync(legacyPath) ? legacyPath : undefined);
   const browser = await chromium.launch({
     executablePath: browserPath,
     headless: true,
