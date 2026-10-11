@@ -5,6 +5,7 @@
  */
 import { chromium } from 'playwright-core';
 import { sumUpsideGb } from '../shared/bias-fixes';
+import { prepareFazitMetrics, buildFazitSignal } from '../client/src/lib/fazit-signal';
 import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
 import { reverseDcfFromAnalysis, isEtfOrFund } from '../shared/conflict-matrix';
 import { companyDcfWaccPct, safeCompanyDcfWaccPct, waccSuffix } from '../shared/valuation-signal';
@@ -42,75 +43,38 @@ function dcfCalc(data: any, wacc: number, gr: number): number {
   return (pv - nd) / shares;
 }
 
-// ===== Build Fazit signals (same logic as Section13.tsx) =====
-function buildFazit(data: any) {
-  const sp = data.sectorProfile;
-  const wS = sp?.waccScenarios;
-  const g = data.epsGrowth5Y || 5;
-  const konsDCF = wS ? dcfCalc(data, wS.kons, g * 0.7) : 0;
-  const stressDCF = wS ? dcfCalc(data, wS.kons * 1.2, g * 0.3) : 0;
-  const konsUpside = data.currentPrice ? (konsDCF / data.currentPrice - 1) * 100 : 0;
-  const stressDown = data.currentPrice ? (stressDCF / data.currentPrice - 1) * 100 : 0;
-  const totalGB = sumUpsideGb(data.catalysts) || 0;
-  const totalExpDmg = data.risks?.reduce((s: number, r: any) => s + (r.expectedDamage || 0), 0) || 0;
-  const riskFactor = 1 - totalExpDmg / 100;
-  const ddPct = parseFloat(String(data.maxDrawdownHistory)) || 30;
-  const sectorDD = data.sectorMaxDrawdown || 35;
-  const price = data.currentPrice || 0;
-  const worstCase = price ? Math.min(
-    price * (1 - Math.min(0.9, (data.beta5Y || 1) * 0.5)),
-    price * (1 - sectorDD / 100),
-    price * (1 - ddPct / 100)
-  ) : 0;
-  const crvCons = price && (price - worstCase) > 0 ? (konsDCF - worstCase) / (price - worstCase) : 0;
-  const raCrvCons = price && (price - worstCase) > 0 ? (konsDCF * riskFactor - worstCase) / (price - worstCase) : 0;
-  const dcfBeiCRV3 = (konsDCF + 3 * worstCase) / 4;
-  const rsl = data.rsl?.value || 0;
+// ===== Build Fazit signals: dieselbe Logik wie die App (SummarySection S17) =====
+// Vorher eigene PDF-Kopie mit anderem DCF/Thresholds -> NVO App ATTRAKTIV vs. PDF STARK UNATTRAKTIV.
+// Jetzt: prepareFazitMetrics + buildFazitSignal (client/src/lib/fazit-signal.ts) und der
+// Gesamtscore aus buildBiasDecision (shared/bias-fixes.ts) — eine Quelle für App und PDF.
+function buildFazit(rawData: any, data: any) {
   const t = data.technicals || {};
-  const allBuy = t.priceAboveMA200 && t.ma50AboveMA200 && t.macdAboveZero && t.macdRising;
+  const allBuy = !!(t.priceAboveMA200 && t.ma50AboveMA200 && t.macdAboveZero && t.macdRising);
+  const price = data.currentPrice || 0;
   const ptUp = data.analystPT?.median && price ? ((data.analystPT.median - price) / price * 100) : 0;
-
-  const pos: string[] = [], neg: string[] = [], neut: string[] = [];
-
-  // S1: P/E
-  if (data.peRatio > 0 && data.sectorAvgPE > 0) {
-    const prem = ((data.peRatio / data.sectorAvgPE) - 1) * 100;
-    if (prem < -20) pos.push(`P/E ${f(data.peRatio)} vs Sektor ${f(data.sectorAvgPE)} — ${f(Math.abs(prem),0)}% Discount`);
-    else if (prem > 30) neg.push(`P/E ${f(data.peRatio)} vs Sektor ${f(data.sectorAvgPE)} — ${f(prem,0)}% Premium`);
+  try {
+    const m = prepareFazitMetrics(rawData);
+    const s = buildFazitSignal({ data: rawData, ...m });
+    return {
+      available: true,
+      pos: s.positive, neg: s.negative, neut: s.neutral, score: s.score, verdict: s.rating,
+      overallScore: m.bias.overallScore as number | null, overallRating: m.bias.overallRating as string,
+      technicalComponent: m.bias.technicalComponent as number | null,
+      fazitSatz: s.fazitSatz,
+      konsDCF: Number.isFinite(m.bias.decisionPerShare) ? m.bias.decisionPerShare : m.conservativeDCF.perShare,
+      worstCase: m.worstCase, crvCons: m.crvConservative, raCrvCons: m.raCrvCons, dcfBeiCRV3: m.dcfBeiCRV3,
+      totalGB: sumUpsideGb(data.catalysts) || 0, totalExpDmg: m.totalExpDmg, allBuy, ptUp,
+    };
+  } catch (err: any) {
+    console.log(`[PDF] Fazit n/a for ${data?.ticker}: ${err?.message?.substring(0, 100)}`);
+    const totalExpDmg = data.risks?.reduce((s: number, r: any) => s + (r.expectedDamage || 0), 0) || 0;
+    return {
+      available: false, pos: [] as string[], neg: [] as string[], neut: [] as string[], score: 0, verdict: 'n/a',
+      overallScore: null, overallRating: 'n/a', technicalComponent: null, fazitSatz: '',
+      konsDCF: NaN, worstCase: NaN, crvCons: NaN, raCrvCons: NaN, dcfBeiCRV3: NaN,
+      totalGB: sumUpsideGb(data.catalysts) || 0, totalExpDmg, allBuy, ptUp,
+    };
   }
-  if (totalGB > 10) pos.push(`Katalysatoren-Upside +${f(totalGB,1)}% (${data.catalysts?.length||0} Treiber)`);
-  if (data.cycleClassification) neut.push(`Zyklusklassifikation: ${data.cycleClassification}`);
-  if (data.pegRatio && data.pegRatio < 1) pos.push(`PEG ${f(data.pegRatio,2)} < 1 — unterbewertet`);
-  else if (data.pegRatio && data.pegRatio > 2) neg.push(`PEG ${f(data.pegRatio,2)} > 2 — teuer`);
-  if (konsUpside > 30) pos.push(`Kons. DCF +${f(konsUpside,0)}% Upside`);
-  else if (konsUpside < -10) neg.push(`Kons. DCF zeigt ${f(konsUpside,0)}% Downside — Überbewertung`);
-  if (crvCons >= 2.5) pos.push(`CRV Base ${f(crvCons,1)}:1 — attraktiv`);
-  else if (crvCons < 2.0) neg.push(`CRV Base nur ${f(crvCons,1)}:1 — unzureichend`);
-  if (raCrvCons < 1.5) neg.push(`CRV Risikoadj. nur ${f(raCrvCons,1)}:1 — Risiken nicht eingepreist`);
-  if (price && price <= dcfBeiCRV3) pos.push(`Kurs UNTER Max-Entry ($${f(dcfBeiCRV3,2)})`);
-  else if (price) neg.push(`Kurs ($${price.toFixed(2)}) ÜBER Max-Entry ($${f(dcfBeiCRV3,2)}) bei CRV 3:1`);
-  if (totalExpDmg > 15) neg.push(`Expected Damage ${f(totalExpDmg,1)}% — erhebliche Risiko-Exposition`);
-  else if (totalExpDmg < 8) pos.push(`Expected Damage nur ${f(totalExpDmg,1)}%`);
-  if (rsl > 110) pos.push(`RSL ${f(rsl,0)} — starkes Momentum`);
-  else if (rsl > 0 && rsl < 105) neg.push(`RSL ${f(rsl,0)} — schwaches Momentum`);
-  if (allBuy) pos.push(`Technisch: BUY-Signal`);
-  else {
-    const bears: string[] = [];
-    if (!t.priceAboveMA200) bears.push('Kurs < MA200');
-    if (!t.ma50AboveMA200) bears.push('Death Cross');
-    if (bears.length >= 2) neg.push(`Technisch: KEIN Buy-Signal (${bears.join(', ')})`);
-  }
-  if (data.moatAssessment?.overallRating === 'Wide') pos.push(`Breiter Moat — Wettbewerbsvorteil`);
-  if (data.fcfMargin && data.fcfMargin > 20) pos.push(`Starke FCF-Marge ${f(data.fcfMargin,1)}%`);
-  if (ptUp > 20) pos.push(`Analysten sehen ${f(ptUp,0)}% Upside`);
-  if (data.macroCorrelations?.overallMacroSensitivity === 'Hoch') neg.push(`Hohe Makro-Sensitivität`);
-  if (data.governmentExposure > 20) neg.push(`Staatsabhängigkeit ${data.governmentExposure}% — FCF-Haircut`);
-  if (stressDown < -30) neg.push(`Macro-Stress: ${f(stressDown,0)}% Downside`);
-
-  const score = pos.length - neg.length;
-  let verdict = score >= 4 ? "ATTRAKTIV" : score >= 2 ? "LEICHT ATTRAKTIV" : score >= -1 ? "NEUTRAL" : score >= -3 ? "UNATTRAKTIV" : "STARK UNATTRAKTIV";
-
-  return { pos, neg, neut, score, verdict, konsDCF, worstCase, crvCons, raCrvCons, dcfBeiCRV3, totalGB, totalExpDmg, allBuy, ptUp };
 }
 
 // ===== Normalize data (fill computed fields the frontend calculates) =====
@@ -229,7 +193,7 @@ TECHNISCH:
 
 MONTE CARLO: ${data.monteCarloResults ? 'Mean $' + data.monteCarloResults.mean + ', P(Verlust) ' + data.monteCarloResults.probLoss + '%' : 'N/A'}
 
-FAZIT: ${fazit.verdict} (${fazit.pos.length} positiv, ${fazit.neg.length} negativ)
+FAZIT: Gesamtscore ${fazit.overallRating} · Signal ${fazit.verdict} (${fazit.pos.length} positiv, ${fazit.neg.length} negativ; Technik nur weich)
 
 Schreibe ZWEI Abschnitte im JSON-Format:
 {
@@ -267,7 +231,7 @@ export async function generateAnalysisHTML(rawData: any): Promise<string> {
   const inc = fs.incomeStatement || {};
   const bal = fs.balanceSheet || {};
   const cf = fs.cashFlow || {};
-  const fazit = buildFazit(data);
+  const fazit = buildFazit(rawData, data);
   // Reverse DCF: same formula as the UI and the Konfliktmatrix (one g* in the whole PDF)
   const rdcf = reverseDcfFromAnalysis(rawData);
   const nd = (data.totalDebt || 0) - (data.cashEquivalents || 0);
@@ -599,9 +563,11 @@ ${data.monteCarloResults?.mean ? `<table>
 ${conflictMatrixHtmlForAnalysis(rawData)}
 <!-- FAZIT BOX -->
 <div class="verdict-box">
-  <div class="verdict-text">FAZIT: ${fazit.verdict}</div>
+  <div class="verdict-text">FAZIT: ${fazit.overallRating} · ${fazit.verdict}</div>
   <div class="verdict-sub">${esc(data.companyName)} (${data.ticker}) — ${fazit.pos.length} positive, ${fazit.neg.length} negative, ${fazit.neut.length} neutrale Faktoren</div>
+  <div class="verdict-sub" data-testid="pdf-gesamtscore">Gesamtscore ${fazit.overallScore != null ? f(fazit.overallScore, 2) : 'n/a'} (${fazit.overallRating}) · Technik-Komponente ${fazit.technicalComponent != null ? f(fazit.technicalComponent, 1) : 'n/a'} (weich)</div>
 </div>
+${fazit.fazitSatz ? `<div class="para">${esc(fazit.fazitSatz)}</div>` : ''}
 
 <div class="row"><span class="row-label">Signal-Score</span><span class="row-val">${fazit.pos.length} positiv / ${fazit.neg.length} negativ / ${fazit.neut.length} neutral = ${fazit.verdict}</span></div>
 

@@ -27,6 +27,9 @@ import {
 import { formatCurrency, formatNumber, formatPercentNoSign } from "./formatters";
 import { buildBiasDecision, type BiasFixPayload } from "../../../shared/bias-fixes";
 
+/** Prefix for S9/S10 timing hints that are listed but not counted in the Signal-Score. */
+export const TIMING_PREFIX = "Timing (weich, nicht gez\u00e4hlt): ";
+
 export type FazitSignalMetrics = {
   conservativeDCF: FCFFDCFResult;
   totalUpside: number;
@@ -232,10 +235,14 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   else if (totalExpDmg < 8) positive.push(`Expected Damage nur ${formatNumber(totalExpDmg, 1)}% \u2014 moderates Risikoprofil`);
 
   // S9: RSL (null = keine ausreichende Kurshistorie \u2192 neutral, kein Score-Beitrag)
+  // RSL und Technik (S9/S10) sind Timing: fertig_WORK_BIAS_FIXES_INVERSE_DCF.md §6
+  // "Technical analysis remains a separate soft component" — sie wirken im Gesamtscore
+  // nur über technicalComponent (±0,5, shared/bias-fixes.ts). Im Signal-Score stehen sie
+  // deshalb als neutral (Hinweis), nicht als ±1 — sonst zählt Technik doppelt (generisch).
   if (rsl == null) neutral.push(`RSL n/a \u2014 keine ausreichende Kurshistorie`);
-  else if (rsl > 110) positive.push(`RSL ${formatNumber(rsl, 0)} \u2014 starkes Momentum`);
+  else if (rsl > 110) neutral.push(`${TIMING_PREFIX}RSL ${formatNumber(rsl, 0)} \u2014 starkes Momentum`);
   else if (rsl >= 105) neutral.push(`RSL ${formatNumber(rsl, 0)} \u2014 neutrales Momentum`);
-  else negative.push(`RSL ${formatNumber(rsl, 0)} \u2014 schwaches Momentum, Growth-Adj. -5% bis -10%`);
+  else neutral.push(`${TIMING_PREFIX}RSL ${formatNumber(rsl, 0)} \u2014 schwaches Momentum, Growth-Adj. -5% bis -10%`);
 
   // S10: Technical
   if (techStatus) {
@@ -249,9 +256,9 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     else if (!techStatus.macdAboveZero) techBear.push('MACD < 0');
 
     if (techStatus.buySignal) {
-      positive.push(`Technisch: BUY-Signal (${techBull.join(', ')})`);
+      neutral.push(`${TIMING_PREFIX}Technisch: BUY-Signal (${techBull.join(', ')})`);
     } else if (techBear.length >= 2) {
-      negative.push(`Technisch: KEIN Buy-Signal (${techBear.join(', ')})`);
+      neutral.push(`${TIMING_PREFIX}Technisch: KEIN Buy-Signal (${techBear.join(', ')})`);
     } else {
       neutral.push(`Technisch gemischt: ${[...techBull, ...techBear].join(', ')}`);
     }

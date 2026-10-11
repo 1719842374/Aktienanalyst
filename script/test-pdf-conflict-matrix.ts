@@ -34,7 +34,7 @@ const src = readFileSync("server/pdf-export.ts", "utf8");
 const at = src.indexOf("${conflictMatrixHtmlForAnalysis(rawData)}");
 assert.ok(at > 0 && at < src.indexOf("<!-- FAZIT BOX -->"), "matrix sits above the FAZIT box");
 assert.ok(at > src.indexOf("17 &nbsp; ZUSAMMENFASSUNG & FAZIT"), "inside section 17");
-assert.match(src, /const fazit = buildFazit\(data\);/);
+assert.match(src, /const fazit = buildFazit\(rawData, data\);/); // W5: Fazit aus der App-Logik (fazit-signal)
 
 // One g* in the whole PDF: section 14 and the matrix both use reverseDcfFromAnalysis (UI formula)
 const fx: any = {
