@@ -199,6 +199,69 @@ export interface IndicatorResult {
   ageHours?: number;
   /** True when the Google Trends print is over 24h. The zone weight stays ×1.7. */
   isStale?: boolean;
+  /**
+   * Future_7/8 (Mini-PR 10, erster Schritt): adaptive Ablesung neben der festen Zone.
+   * Nur Anzeige. Geht NICHT in rawScore, weightedScore, Netto oder Max.
+   */
+  adaptive?: AdaptivePercentileReading;
+}
+
+export interface AdaptivePercentileReading {
+  method: "percentile";
+  windowYears: number;
+  /** Anteil der Fensterwerte ≤ aktueller Wert, 0–100. */
+  percentile: number;
+  n: number;
+  from: string;
+  to: string;
+  /** Future_8 percentileScore (>90 → +4, >75 → +2, <10 → −4, <25 → −2), nur Vergleich. */
+  compareRaw: number;
+  note: string;
+}
+
+export const ADAPTIVE_PERCENTILE_MIN_POINTS = 60;
+export const ADAPTIVE_PERCENTILE_WINDOW_YEARS = 20;
+
+/** Future_8 §3 percentileScore. Nur Vergleichswert, kein Score-Input. */
+export function percentileCompareRaw(percentile: number): number {
+  if (percentile > 90) return 4;
+  if (percentile > 75) return 2;
+  if (percentile < 10) return -4;
+  if (percentile < 25) return -2;
+  return 0;
+}
+
+/**
+ * Perzentil des letzten Punkts gegen die letzten `windowYears` Jahre derselben Reihe.
+ * Unter 60 Punkten: null (zu wenig Historie, kein erfundener Wert).
+ */
+export function adaptivePercentileReading(
+  points: { date: string; value: number }[],
+  windowYears = ADAPTIVE_PERCENTILE_WINDOW_YEARS,
+): AdaptivePercentileReading | null {
+  const sorted = points
+    .filter(p => Boolean(p.date) && Number.isFinite(p.value))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const last = sorted[sorted.length - 1];
+  if (!last) return null;
+  const start = new Date(`${last.date.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(start.getTime())) return null;
+  start.setUTCFullYear(start.getUTCFullYear() - windowYears);
+  const from = start.toISOString().slice(0, 10);
+  const window = sorted.filter(p => p.date.slice(0, 10) > from);
+  if (window.length < ADAPTIVE_PERCENTILE_MIN_POINTS) return null;
+  const atOrBelow = window.filter(p => p.value <= last.value).length;
+  const percentile = Math.round((atOrBelow / window.length) * 1000) / 10;
+  return {
+    method: "percentile",
+    windowYears,
+    percentile,
+    n: window.length,
+    from: window[0].date.slice(0, 10),
+    to: last.date.slice(0, 10),
+    compareRaw: percentileCompareRaw(percentile),
+    note: "Vergleich, kein Score",
+  };
 }
 
 // ============================================================
@@ -406,7 +469,9 @@ const MULTPL_CAPE = "https://www.multpl.com/shiller-pe/table/by-month";
 
 function scoreCAPE(): IndicatorResult {
   const html = fetchUrl(MULTPL_CAPE, 20000, { "User-Agent": "Mozilla/5.0" });
-  return capeFromPoint(latestMultplCape(html), recessionAsOf());
+  const scored = capeFromPoint(latestMultplCape(html), recessionAsOf());
+  // Future_7/8: Perzentil nur als Zusatzzeile. Die Tabelle ist schon geladen, kein zweiter Fetch.
+  return withAdaptivePercentile(scored, multplCapeHistory(html));
 }
 
 // 10. Margin debt. FINRA Rule 4521 publishes the monthly debit series as xlsx.
@@ -1082,6 +1147,35 @@ export function latestYahooChartClose(payload: unknown): { date: string; value: 
 }
 
 /** Newest row of the public Shiller PE monthly table. The workbook is not read. */
+/** Alle Monatszeilen der Multpl-Tabelle, aufsteigend. Gleiche Filter wie latestMultplCape. */
+export function multplCapeHistory(html: string): { date: string; value: number }[] {
+  if (!html || html.includes("Just a moment")) return [];
+  const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
+  const out = new Map<string, { date: string; value: number }>();
+  for (const row of rows) {
+    const cells = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(match => htmlCell(match[1]));
+    if (cells.length < 2) continue;
+    const date = englishLongDate(cells[0]);
+    const value = Number(cells[1].replace(/,/g, ""));
+    if (!date || !Number.isFinite(value) || value < 5 || value > 80) continue;
+    if (!out.has(date)) out.set(date, { date, value });
+  }
+  return Array.from(out.values()).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+/**
+ * Haengt die 20J-Perzentil-Ablesung an einen gescorten CAPE-Slot. Score-Felder
+ * bleiben byte-gleich. Geschlossene Slots und zu kurze Historie: unveraendert.
+ */
+export function withAdaptivePercentile(
+  indicator: IndicatorResult,
+  history: { date: string; value: number }[],
+): IndicatorResult {
+  if (indicator.available === false) return indicator;
+  const adaptive = adaptivePercentileReading(history);
+  return adaptive ? { ...indicator, adaptive } : indicator;
+}
+
 export function latestMultplCape(html: string): { date: string; value: number } | null {
   if (!html || html.includes("Just a moment")) return null;
   const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
