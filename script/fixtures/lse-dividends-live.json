@@ -1,0 +1,904 @@
+{
+ "SHEL.L": {
+  "currency": "GBP",
+  "dividendYieldFY": 3.98,
+  "bars": [
+   {
+    "date": "2026-10-07",
+    "close": 36.480000000000004
+   },
+   {
+    "date": "2026-10-08",
+    "close": 37.805
+   },
+   {
+    "date": "2026-10-09",
+    "close": 37.935
+   }
+  ],
+  "dividends": {
+   "ticker": "SHEL.L",
+   "source": "fmp",
+   "events": [
+    {
+     "date": "2023-02-16",
+     "amount": 0.24109999999999998
+    },
+    {
+     "date": "2023-05-18",
+     "amount": 0.2299
+    },
+    {
+     "date": "2023-08-10",
+     "amount": 0.2612
+    },
+    {
+     "date": "2023-11-16",
+     "amount": 0.2631
+    },
+    {
+     "date": "2024-02-15",
+     "amount": 0.26899999999999996
+    },
+    {
+     "date": "2024-05-16",
+     "amount": 0.344
+    },
+    {
+     "date": "2024-08-15",
+     "amount": 0.2615
+    },
+    {
+     "date": "2024-11-14",
+     "amount": 0.2703
+    },
+    {
+     "date": "2025-02-13",
+     "amount": 0.2779
+    },
+    {
+     "date": "2025-05-15",
+     "amount": 0.2641
+    },
+    {
+     "date": "2025-08-14",
+     "amount": 0.2662
+    },
+    {
+     "date": "2025-11-13",
+     "amount": 0.2685
+    },
+    {
+     "date": "2026-02-19",
+     "amount": 0.2787
+    },
+    {
+     "date": "2026-05-21",
+     "amount": 0.2918
+    },
+    {
+     "date": "2026-08-13",
+     "amount": 0.2892
+    }
+   ],
+   "note": "Betr\u00e4ge GBp \u2192 GBP",
+   "currency": "GBP"
+  },
+  "_source": "prod aktienanalyst.onrender.com 2026-10-11 (main 582844ef): /api/analyze + /api/dividends"
+ },
+ "AZN.L": {
+  "currency": "GBP",
+  "dividendYieldFY": 1.73,
+  "bars": [
+   {
+    "date": "2026-10-07",
+    "close": 121.8
+   },
+   {
+    "date": "2026-10-08",
+    "close": 118.92
+   },
+   {
+    "date": "2026-10-09",
+    "close": 119.98
+   }
+  ],
+  "dividends": {
+   "ticker": "AZN.L",
+   "source": "fmp",
+   "events": [
+    {
+     "date": "2023-02-23",
+     "amount": 1.3530144999999998
+    },
+    {
+     "date": "2023-08-10",
+     "amount": 0.5653532
+    },
+    {
+     "date": "2024-02-22",
+     "amount": 1.2325325999999999
+    },
+    {
+     "date": "2024-08-08",
+     "amount": 0.6081512
+    },
+    {
+     "date": "2025-02-20",
+     "amount": 1.68
+    },
+    {
+     "date": "2025-08-07",
+     "amount": 0.7670001000000001
+    },
+    {
+     "date": "2026-02-19",
+     "amount": 1.595
+    },
+    {
+     "date": "2026-08-06",
+     "amount": 0.795
+    }
+   ],
+   "note": "Betr\u00e4ge GBp \u2192 GBP",
+   "currency": "GBP"
+  },
+  "_source": "prod aktienanalyst.onrender.com 2026-10-11 (main 582844ef): /api/analyze + /api/dividends"
+ },
+ "ULVR.L": {
+  "currency": "GBP",
+  "dividendYieldFY": 3.59,
+  "bars": [
+   {
+    "date": "2026-10-07",
+    "close": 46.230000000000004
+   },
+   {
+    "date": "2026-10-08",
+    "close": 46.26
+   },
+   {
+    "date": "2026-10-09",
+    "close": 46.735
+   }
+  ],
+  "dividends": {
+   "ticker": "ULVR.L",
+   "source": "fmp",
+   "events": [
+    {
+     "date": "2023-02-23",
+     "amount": 0.42884999999999995
+    },
+    {
+     "date": "2023-05-18",
+     "amount": 0.4255875
+    },
+    {
+     "date": "2023-08-03",
+     "amount": 0.41625
+    },
+    {
+     "date": "2023-11-16",
+     "amount": 0.4179375
+    },
+    {
+     "date": "2024-02-22",
+     "amount": 0.4102875
+    },
+    {
+     "date": "2024-05-16",
+     "amount": 0.41332500000000005
+    },
+    {
+     "date": "2024-08-08",
+     "amount": 0.4158
+    },
+    {
+     "date": "2024-11-07",
+     "amount": 0.41208799999999995
+    },
+    {
+     "date": "2025-02-27",
+     "amount": 0.424688
+    },
+    {
+     "date": "2025-05-15",
+     "amount": 0.437288
+    },
+    {
+     "date": "2025-08-14",
+     "amount": 0.44055
+    },
+    {
+     "date": "2025-11-06",
+     "amount": 0.44189999999999996
+    },
+    {
+     "date": "2026-02-26",
+     "amount": 0.4052
+    },
+    {
+     "date": "2026-05-14",
+     "amount": 0.4046
+    },
+    {
+     "date": "2026-08-06",
+     "amount": 0.3982
+    }
+   ],
+   "note": "Betr\u00e4ge GBp \u2192 GBP",
+   "currency": "GBP"
+  },
+  "_source": "prod aktienanalyst.onrender.com 2026-10-11 (main 582844ef): /api/analyze + /api/dividends"
+ },
+ "_analyzeSHEL": {
+  "ticker": "SHEL.L",
+  "companyName": "Shell plc",
+  "exchange": "LSE",
+  "sector": "Energy",
+  "industry": "Oil & Gas Integrated",
+  "isEtf": false,
+  "isFund": false,
+  "description": "Shell plc is a global energy and petrochemical enterprise with operations spanning across Europe, Asia, Oceania, Africa, and the entirety of the Americas. Its diverse activities are structured into key divisions: Integrated Gas, Upstream, Marketing, Chemicals and Products, and Renewables and Energy Solutions. The company's upstream endeavors include the exploration and extraction of crude oil, natural gas, and associated liquids. It also handles the marketing and transportation of these resources, producing gas-to-liquids fuels, and maintaining the vital infrastructure required to bring gas to consumers. Beyond extraction, Shell actively engages in trading and marketing natural gas, liquefied natural gas (LNG), crude oil, electricity, and carbon credits. A significant focus is also placed on supplying LNG as a fuel source for heavy transportation and marine applications. Its downstream operations involve the trading and refinement of crude oil and various feedstocks, yielding a broad array of products such as low-carbon fuels, lubricants, bitumen, sulphur, gasoline, diesel, heating oil, aviation fuel, and marine fuel. Shell further produces and sells petrochemicals for industrial applications and oversees oil sands operations. Within its chemical division, Shell manufactures foundational chemicals like ethylene, propylene, and aromatics, alongside a range of intermediate chemicals including styrene monomer, propylene oxide, solvents, detergent alcohols, ethylene oxide, and ethylene glycol. In its commitment to energy transition, the firm generates electricity from renewable sources such as wind and solar, produces and distributes hydrogen, offers electric vehicle charging infrastructure, and develops electricity storage solutions. Founded in 1907, Shell plc, originally incorporated as Royal Dutch Shell plc before adopting its current name in January 2022, maintains its headquarters in London, United Kingdom.",
+  "currentPrice": 37.935,
+  "priceTimestamp": "2026-10-11T21:18:19.878Z",
+  "currency": "GBP",
+  "marketCap": 209917009668.195,
+  "sharesOutstanding": 5533597197,
+  "analystPT": {
+   "median": 0,
+   "high": 0,
+   "low": 0,
+   "count": 5
+  },
+  "ratings": {
+   "buy": 4,
+   "hold": 1,
+   "sell": 0,
+   "basis": "analysts"
+  },
+  "epsTTM": 2.3139395955899036,
+  "epsAdjFY": 2.3139395955899036,
+  "epsConsensusNextFY": 4.577948004416146,
+  "epsGrowth5Y": 3.618734335366014,
+  "epsCagrFromIncome": true,
+  "peRatio": 11.931325566343043,
+  "forwardPE": 8.286463708938102,
+  "pegRatio": 0.08,
+  "peg": 0.08,
+  "lynchClass": "cyclical",
+  "lynchPEGBasis": "Norm. P/E (Mid-Cycle) \u00f7 Fwd EPS Growth",
+  "evEbitda": 5.194659802062386,
+  "beta5Y": -0.22,
+  "beta": -0.22,
+  "fcfTTM": 16806082031.427233,
+  "fcfMargin": 8.156291338231577,
+  "fcfAvailable": true,
+  "nextEarningsDate": "2026-10-29",
+  "nextEarningsIsEstimate": false,
+  "lastReportedQuarter": "2026-07-30",
+  "fcfYield": 8.00606013680918,
+  "fcfYieldYoyPp": -8.83,
+  "fcfYieldYoyAvailable": true,
+  "fcfMarginYoyPp": -4.18,
+  "fcfMarginYoyAvailable": true,
+  "revenue": 206050536138.29193,
+  "ebitda": 42443695648.88613,
+  "operatingIncome": 23712881686.604862,
+  "netIncome": 13771908319.595892,
+  "totalDebt": 79108072321.9552,
+  "cashEquivalents": 22857343355.36365,
+  "enterpriseValue": 266167738634.78656,
+  "sectorAvgPE": 12,
+  "sectorAvgForwardPE": 11,
+  "sectorAvgEVEBITDA": 6,
+  "sectorAvgPEG": 1,
+  "financialStatements": {
+   "incomeStatement": {
+    "revenue": 206050536138.29193,
+    "revenueGrowth": -4.1597435212020555,
+    "grossProfit": 34349476716.92806,
+    "grossMargin": 16.6704136571012,
+    "operatingIncome": 23712881686.604862,
+    "operatingMargin": 11.508284390335113,
+    "netIncome": 13771908319.595892,
+    "netMargin": 6.683752722852806,
+    "ebitda": 42443695648.88613,
+    "ebitdaMargin": 20.598682461277274,
+    "eps": 2.3139395955899036,
+    "epsGrowth": 3.618734335366014
+   },
+   "balanceSheet": {
+    "totalAssets": 280157527865.5798,
+    "totalLiabilities": 195102050000,
+    "totalEquity": 131921425114.5627,
+    "cashEquivalents": 22857343355.36365,
+    "totalDebt": 79108072321.9552,
+    "netDebt": 56250728966.59155,
+    "debtToEquity": 0.5996605346952284,
+    "currentRatio": 1.3004064745011172
+   },
+   "cashFlow": {
+    "operatingCashFlow": 31434198666.081882,
+    "capex": 14628116634.654648,
+    "fcf": 16806082031.427233,
+    "fcfMargin": 8.156291338231577,
+    "fcfPerShare": 3.0370989128985624
+   },
+   "health": "Moderate",
+   "healthReasons": [
+    "Keine kritischen Signale"
+   ]
+  },
+  "tamAnalysis": {
+   "tamTotal": 1200,
+   "tamLabel": "Global Renewable Energy",
+   "tamCAGR": 17,
+   "companyGrowth": -4.1597435212020555,
+   "companyRevenue": 206.1,
+   "marketShare": 17.17,
+   "tamSource": "BloombergNEF Energy Transition",
+   "outperforming": false,
+   "quality": "weak",
+   "distinctLabels": 1,
+   "coveragePct": 100,
+   "shareWarning": false
+  },
+  "scoring": {
+   "finalScore": 60,
+   "rawScore": 60.5,
+   "qualityScore": 55,
+   "trendMultiplier": 1.1,
+   "cappedBy": "RELATIVE_GROWTH",
+   "gates": [
+    {
+     "id": "DCF_REALITY_CHECK",
+     "active": false,
+     "cap": 65,
+     "severity": "hard",
+     "rationale": "Reverse-DCF-Wachstumsannahme wird durch die 8Q-Historie hinreichend gest\u00fctzt"
+    },
+    {
+     "id": "RELATIVE_GROWTH",
+     "active": true,
+     "cap": 60,
+     "severity": "hard",
+     "rationale": "Realized-8Q schwach (-14.1% < 5%) \u00b7 Share-Loss (-4.1pp \u2264 -2pp)"
+    },
+    {
+     "id": "PRICING_POWER",
+     "active": false,
+     "cap": 55,
+     "severity": "hard",
+     "rationale": "Keine materielle Margenkompression erkennbar"
+    },
+    {
+     "id": "INVENTORY",
+     "active": false,
+     "cap": 70,
+     "severity": "warn",
+     "rationale": "Kein auff\u00e4lliger Lageraufbau"
+    }
+   ],
+   "gateInputs": {
+    "impliedGrowthPercent": -0.1740943067060248,
+    "realizedGrowth8QPercent": -14.09959083395397,
+    "marginDeltaYoYPp": 0.96,
+    "relativeGrowthDeltaYoYPp": -4.11,
+    "relativeScoreApplies": true,
+    "inventoryDaysDeltaYoYPct": -5.1,
+    "regulatoryGate": null,
+    "realizedGrowthMethod": "yoy_8q",
+    "realizedGrowthQuartersUsed": 16
+   },
+   "fiscal": {
+    "qualifies": false,
+    "evPercent": 0,
+    "reasons": [
+     "no_high_confidence_fiscal"
+    ]
+   },
+   "conflictTexts": []
+  },
+  "moatRating": "None",
+  "governmentExposure": 5,
+  "growthThesis": "",
+  "structuralTrends": [],
+  "cycleClassification": "Deep Cyclical \u2013 Commodity Linked",
+  "politicalCycle": "Very High \u2013 energy policy, ESG mandates",
+  "sectorMaxDrawdown": 55,
+  "sectorProfile": {
+   "sector": "Energy",
+   "cycleClass": "Deep Cyclical \u2013 Commodity Linked",
+   "politicalCycle": "Very High \u2013 energy policy, ESG mandates",
+   "waccScenarios": {
+    "kons": 12,
+    "avg": 10,
+    "opt": 8.5
+   },
+   "growthAssumptions": {
+    "g1": 5,
+    "g2": 3,
+    "terminal": 2
+   },
+   "macroSensitivity": {
+    "interestUp": {
+     "wacc": "+50\u2013100bps",
+     "dcf": "-5\u2013-12%"
+    },
+    "interestDown": {
+     "wacc": "-50\u2013100bps",
+     "dcf": "+5\u2013+12%"
+    },
+    "fiscalUp": "Positiv \u2014 h\u00f6here \u00f6ff. Aufwendungen bei govExposure > 20%",
+    "fiscalDown": "Neutral bis leicht negativ",
+    "geoUp": "Negativ f\u00fcr grenz\u00fcberschreitende Umsatz-Exposition",
+    "geoDown": "Neutral"
+   },
+   "regulatoryNotes": "Very High \u2013 energy policy, ESG mandates"
+  },
+  "catalysts": [
+   {
+    "name": "Revenue Growth Acceleration",
+    "timeline": "12-18M",
+    "pos": 32,
+    "bruttoUpside": 2,
+    "einpreisungsgrad": 70,
+    "nettoUpside": 0.6,
+    "gb": 0.19,
+    "context": "Produktionsvolumen und Commodity-Preise m\u00fcssen Revenue-Wachstum \u00fcber -4.2% erm\u00f6glichen. Voraussetzung: Stabile/steigende \u00d6lpreise und Effizienzgewinne in der F\u00f6rderung.",
+    "generic": true,
+    "direction": "positive",
+    "flag": "\u25b2"
+   },
+   {
+    "name": "Margin Expansion / Operating Leverage",
+    "timeline": "12-24M",
+    "pos": 35,
+    "bruttoUpside": 15,
+    "einpreisungsgrad": 25,
+    "nettoUpside": 11.25,
+    "gb": 3.94,
+    "context": "Operative Effizienz und Skaleneffekte m\u00fcssen FCF-Marge (aktuell 8.2%) verbessern. Hebel: Fixkostendegression bei Umsatzwachstum, Automatisierung und Supply-Chain-Optimierung.",
+    "generic": true,
+    "direction": "positive",
+    "flag": "\u25b2"
+   },
+   {
+    "name": "Commodity Price Recovery",
+    "timeline": "6-18M",
+    "pos": 40,
+    "bruttoUpside": 20,
+    "einpreisungsgrad": 18,
+    "nettoUpside": 16.4,
+    "gb": 6.56,
+    "context": "Commodity-Preise m\u00fcssen sich stabilisieren oder erholen. Voraussetzung: Globale Nachfrage-Erholung, Angebotsverknappung oder geopolitische Risikopremien. Breakeven-Analyse als Schl\u00fcssel.",
+    "generic": true,
+    "direction": "positive",
+    "flag": "\u25b2"
+   },
+   {
+    "name": "Energy Transition Investment",
+    "timeline": "12-36M",
+    "pos": 45,
+    "bruttoUpside": 15,
+    "einpreisungsgrad": 25,
+    "nettoUpside": 11.25,
+    "gb": 5.06,
+    "context": "Investments in Renewables, Carbon Capture oder LNG m\u00fcssen langfristiges Wachstum jenseits fossiler Brennstoffe sichern. Voraussetzung: Regulatorische Klarheit und wettbewerbsf\u00e4hige Projektrenditen.",
+    "generic": true,
+    "direction": "positive",
+    "flag": "\u25b2"
+   }
+  ],
+  "risks": [
+   {
+    "name": "Macro Recession / Demand Shock",
+    "category": "Correlated",
+    "ew": 20,
+    "impact": 14,
+    "expectedDamage": 2.8
+   },
+   {
+    "name": "Earnings Miss / Guidance Cut",
+    "category": "Binary",
+    "ew": 25,
+    "impact": 15,
+    "expectedDamage": 3.75
+   },
+   {
+    "name": "Multiple Compression (Rising Rates)",
+    "category": "Gradual",
+    "ew": 30,
+    "impact": 9,
+    "expectedDamage": 2.7
+   },
+   {
+    "name": "Commodity Price Collapse",
+    "category": "Binary",
+    "ew": 20,
+    "impact": 35,
+    "expectedDamage": 7
+   }
+  ],
+  "govExposureDetail": "Minimal direct government revenue dependency",
+  "fcfHaircut": 0,
+  "maxDrawdownHistory": "\u2014",
+  "maxDrawdownYear": "\u2014",
+  "historyDataSource": "fmp",
+  "historyTruncated": false,
+  "moatAssessment": {
+   "overallRating": "None",
+   "moatSources": [],
+   "porterForces": [
+    {
+     "name": "Rivalit\u00e4t unter Wettbewerbern",
+     "rating": "High",
+     "score": 5,
+     "reasoning": ""
+    },
+    {
+     "name": "Bedrohung durch Neueinsteiger",
+     "rating": "High",
+     "score": 5,
+     "reasoning": ""
+    },
+    {
+     "name": "Verhandlungsmacht Lieferanten",
+     "rating": "High",
+     "score": 5,
+     "reasoning": ""
+    },
+    {
+     "name": "Verhandlungsmacht Kunden",
+     "rating": "High",
+     "score": 5,
+     "reasoning": ""
+    },
+    {
+     "name": "Bedrohung durch Substitute",
+     "rating": "High",
+     "score": 5,
+     "reasoning": ""
+    }
+   ],
+   "businessModelStrength": "Kompetitives Gesch\u00e4ftsmodell ohne strukturellen Vorteil",
+   "sustainabilityRating": "\u2605\u2605\u2606\u2606\u2606",
+   "hasEcosystem": false
+  },
+  "newsHeadlines": [
+   "Shell-Aktie: Brasilien verklagt \u00d6lkonzern wegen \u00dcberschwemmungen auf 108 Millionen Dollar",
+   "Shell Aktie: Pearl-Lieferungen bleiben unsicher",
+   "Shell Aktie: Klimaklage aus Brasilien?",
+   "Shell (ex Royal Dutch Shell) A-Aktie mit neuem All-Time-High",
+   "Should Value Investors Buy Shell (SHEL) Stock?",
+   "Shell-Aktie freundlich: Raffineriemarge erreicht im 3. Quartal Rekordhoch",
+   "Shell (SHEL) Beats Stock Market Upswing: What Investors Need to Know",
+   "Can Shell (LSE:SHEL) Stay Undervalued After Its 187% Run?",
+   "Shell (SHEL) Stock Sinks As Market Gains: Here's Why",
+   "Shell (SHEL) is a Top-Ranked Value Stock: Should You Buy?"
+  ],
+  "revenueSegments": [],
+  "geoSegments": [],
+  "revenueSegmentsSource": "none",
+  "revenueSegmentsMessage": "Segmentreporting nicht in den letzten 10-K/20-F enthalten.",
+  "peerComparison": {
+   "subject": {
+    "ticker": "SHEL.L",
+    "name": "SHEL.L",
+    "pe": 11.9,
+    "peg": 0.08,
+    "ps": 1,
+    "pb": 1.2,
+    "epsGrowth1Y": 20.9,
+    "epsGrowth5Y": 3.6,
+    "marketCap": 209917009668.195,
+    "revenueGrowth": -4.2,
+    "roic": 6.4,
+    "roicFiscalYear": "2025",
+    "roic5Y": 7,
+    "roic5YYearsUsed": 5
+   },
+   "peers": [
+    {
+     "ticker": "TTE",
+     "name": "TotalEnergies SE",
+     "pe": 11.2,
+     "peg": 3.1,
+     "ps": 0.8,
+     "pb": 1.2,
+     "epsGrowth1Y": -11.1,
+     "epsGrowth5Y": null,
+     "marketCap": 191767223852,
+     "revenueGrowth": -0.5,
+     "roic": 5.6,
+     "roicFiscalYear": "2025",
+     "roic5Y": 8.1,
+     "roic5YYearsUsed": 5
+    },
+    {
+     "ticker": "SHEL",
+     "name": "Shell plc",
+     "pe": 12.1,
+     "peg": 0.66,
+     "ps": 0.8,
+     "pb": 1.2,
+     "epsGrowth1Y": 18.5,
+     "epsGrowth5Y": null,
+     "marketCap": 279311357100,
+     "revenueGrowth": 0.4,
+     "roic": 5.7,
+     "roicFiscalYear": "2025",
+     "roic5Y": 6.9,
+     "roic5YYearsUsed": 5
+    },
+    {
+     "ticker": "PCCYF",
+     "name": "PetroChina Company Limited",
+     "pe": 8.7,
+     "peg": 0.17,
+     "ps": 0.5,
+     "pb": 0.9,
+     "epsGrowth1Y": -4.4,
+     "epsGrowth5Y": 52.6,
+     "marketCap": 295639662972,
+     "revenueGrowth": -2.5,
+     "roic": 7.9,
+     "roicFiscalYear": "2025",
+     "roic5Y": 7.7,
+     "roic5YYearsUsed": 5
+    },
+    {
+     "ticker": "SU.TO",
+     "name": "Suncor Energy Inc.",
+     "pe": 12.6,
+     "peg": 4.49,
+     "ps": 1.5,
+     "pb": 1.6,
+     "epsGrowth1Y": 2.8,
+     "epsGrowth5Y": null,
+     "marketCap": 121664480000,
+     "revenueGrowth": 0.8,
+     "roic": 7.3,
+     "roicFiscalYear": "2025",
+     "roic5Y": 8.8,
+     "roic5YYearsUsed": 5
+    }
+   ],
+   "peerAvg": {
+    "pe": 11.15,
+    "peg": 2.1,
+    "ps": 0.9,
+    "pb": 1.23,
+    "epsGrowth1Y": 1.45,
+    "epsGrowth5Y": 52.6,
+    "roic": 6.63,
+    "roic5Y": 7.88
+   },
+   "sectorMedian": {
+    "pe": 12,
+    "peg": 1,
+    "ps": 1.2,
+    "pb": 1.8,
+    "epsGrowth": 5,
+    "epsGrowth1Y": 5,
+    "epsGrowth5Y": 5,
+    "sectorName": "Energy"
+   }
+  },
+  "peerSet": {
+   "peerMaterial": true,
+   "peerCount": 4,
+   "relativeApplies": true,
+   "banner": null
+  },
+  "activePeerOverrides": {
+   "add": [],
+   "remove": []
+  },
+  "catalystDeepDives": [],
+  "llmMode": false,
+  "llmModelUsed": "",
+  "dataSource": "fmp",
+  "dataTimestamp": "2026-10-11T21:18:19.878Z",
+  "_useLLM": false,
+  "analystPTMedian": 0,
+  "analystPTHigh": 0,
+  "analystPTLow": 0,
+  "analystCount": 5,
+  "analystConsensus": "maintain",
+  "policyContext": null,
+  "dividendYield": 3.98,
+  "returnOnEquity": 0,
+  "wacc": 10,
+  "dcfFairValue": 20.91,
+  "upsidePotential": -44.9,
+  "impliedGStar": -0.1740943067060248,
+  "pbRatio": 1.2449064322116563,
+  "yearHigh": 38.065,
+  "yearLow": 25.5377,
+  "totalEquity": 131921425114.5627,
+  "totalAssets": 280157527865.5798,
+  "netDebt": 56250728966.59155,
+  "grossMargin": 16.6704136571012,
+  "operatingMargin": 11.508284390335113,
+  "netMargin": 6.683752722852806,
+  "grossProfit": 34349476716.92806,
+  "website": "https://www.shell.com",
+  "image": "https://images.financialmodelingprep.com/symbol/SHEL.L.png",
+  "country": "GB",
+  "reportedCurrency": "GBP",
+  "crvBase": 1.8874107724053204,
+  "crvRiskAdj": 1.4477519764349103,
+  "maxEntryCrv3": 30.197220069385903,
+  "catalystsSource": "generic",
+  "biasFix": {
+   "switched": true,
+   "triggerCount": 3,
+   "triggers": [
+    {
+     "id": "expected_damage",
+     "label": "Total Expected Damage",
+     "active": false,
+     "detail": "ED 16.3% (Schwelle 25%)"
+    },
+    {
+     "id": "moat",
+     "label": "Moat Rating",
+     "active": true,
+     "detail": "Moat Narrow"
+    },
+    {
+     "id": "government",
+     "label": "Government Exposure",
+     "active": false,
+     "detail": "Gov 5.0% (Schwelle 25%)"
+    },
+    {
+     "id": "dcf_divergence",
+     "label": "DCF vs Analyst",
+     "active": true,
+     "detail": "\u0394 161.3 Pp (Schwelle 80)"
+    },
+    {
+     "id": "gates",
+     "label": "Existing Gates",
+     "active": false,
+     "detail": "keine Inventory-/Pricing-Power-/SEC-Gates"
+    },
+    {
+     "id": "reverse_g",
+     "label": "Reverse DCF g*",
+     "active": true,
+     "detail": "g* -0.2% vs Modell 3.0%"
+    }
+   ],
+   "unadjustedPerShare": 61.19446224720527,
+   "unadjustedWacc": 6.140000000000001,
+   "unadjustedLabel": "Unadjusted / Extrapolative",
+   "decisionPerShare": 46.456057607501414,
+   "decisionWacc": 7.19,
+   "decisionGrowthP1": 3,
+   "decisionTerminalG": 2,
+   "decisionUpsidePct": 22.46225809279403,
+   "valuationBaseLabel": "Geh\u00e4rteter Inverse-DCF",
+   "waccUpliftPp": 1.05,
+   "waccFloorPct": null,
+   "growthFactor": 1,
+   "positiveGbSum": 15.75,
+   "catalystsSource": "generic",
+   "modeLabel": "Katalysatoren: generisch (Sektor)",
+   "moatRating": "Narrow",
+   "moatScore": 1,
+   "moatMultiplier": 1.075,
+   "pestelFactor": 0.88,
+   "pestelExposureScore": 7,
+   "quantitativeBase": 6.123112904639702,
+   "managementAdjustment": 0,
+   "thesisAdjustment": 0,
+   "technicalComponent": 0.5,
+   "catalystAdjustment": 1.575,
+   "overallScore": 7.463339356082938,
+   "overallRating": "LEICHT ATTRAKTIV",
+   "redFlags": [
+    "DCF-Extrapolationsrisiko \u2014 Basis ist geh\u00e4rtet",
+    "DCF-Upside weicht stark vom Analysten-Upside ab"
+   ],
+   "narrative": [
+    "Shell plc (SHEL.L): Moat Narrow (Score 1.0; Immaterielle Assets).",
+    "Die entscheidungsrelevante Bewertung ist der geh\u00e4rtete Inverse-DCF bei 46.46 (WACC 7.19%, g1 3.0%). Der unadjustierte Conservative DCF (61.19) ist Unadjusted / Extrapolative und treibt das Upside nicht.",
+    "Technisch liegt ein Buy-Signal (Kurs \u00fcber MA200, MA50 \u00fcber MA200, MACD positiv).",
+    "Katalysatoren: generisch (Sektor)",
+    "Gr\u00f6\u00dfte Red Flags: DCF-Extrapolationsrisiko \u2014 Basis ist geh\u00e4rtet; DCF-Upside weicht stark vom Analysten-Upside ab."
+   ],
+   "politicalGovMention": false
+  },
+  "execSummary": {
+   "ticker": "SHEL.L",
+   "headline": "SHEL.L \u00b7 37,94 \u00b7 g* -0.2 % (WACC 6.1 %) \u00b7 Call 29.10.2026",
+   "callLine": "Der n\u00e4chste Earnings Call ist am 29. Oktober 2026; zuletzt gemeldet wurde 2026-07-30.",
+   "callAvailable": true,
+   "porterLine": "Moat Narrow",
+   "pestelLine": "P:N \u00b7 E:N \u00b7 S:N \u00b7 T:N \u00b7 E:N \u00b7 L:N",
+   "pro": [
+    {
+     "src": "S15",
+     "value": 6.56,
+     "text": "Commodity Price Recovery \u00b7 GB 6.56 % \u00b7 generisch"
+    },
+    {
+     "src": "S15",
+     "value": 5.06,
+     "text": "Energy Transition Investment \u00b7 GB 5.06 % \u00b7 generisch"
+    },
+    {
+     "src": "S11",
+     "text": "Moat Narrow"
+    }
+   ],
+   "contra": [
+    {
+     "src": "S8",
+     "value": 7,
+     "text": "Commodity Price Collapse \u00b7 ED 7.00 %"
+    },
+    {
+     "src": "S15",
+     "text": "Revenue Growth Acceleration eher Bremse (PoS 32 %, Einpr. 70 %)"
+    }
+   ],
+   "fazit": {
+    "lage": "Shell plc ist neutral. Das konservative DCF sitzt bei 46,46 Dollar gegen\u00fcber 37,94 Dollar Kurs. Das Analystenziel liegt bei 0 Dollar.",
+    "bruch": "Was nicht im Preis steckt, ist der Risikoabschlag. Commodity Price Collapse wird zu klein gerechnet.",
+    "handlung": "Deshalb warten. Nachkaufen erst unter 30,2 Dollar."
+   },
+   "crvLine": "3 zu 1 ist am Kurs nicht erf\u00fcllt (jetzt 1.9:1, risikoadjustiert 1.4:1). Daf\u00fcr erst unter 30,2.",
+   "posLine": "Commodity Price Recovery, Energy Transition Investment stehen bei 40, 45 Prozent. Dass alle kommen, sind unter Unabh\u00e4ngigkeit knapp 18 Prozent. Der bindende Fall ist Commodity Price Recovery mit 40 Prozent.",
+   "crossLine": "50-Tage \u00fcber 200-Tage (Golden-Cross-Lage), Kurs \u00fcber der 200-Tage.",
+   "thesisLine": "",
+   "upsideLine": "Katalysatoren: generisch (Sektor) \u00b7 Basis: Geh\u00e4rteter Inverse-DCF \u00b7 Katalysator-Upside +11.6% \u00b7 Ziel 51,85 \u00b7 vs Kurs +36.7%",
+   "riskLine": "Was schiefgehen kann: Commodity Price Collapse, Earnings Miss / Guidance Cut \u00b7 Total ED 16.3%",
+   "modeLine": "Katalysatoren: generisch (Sektor)",
+   "biasNarrative": [
+    "Shell plc (SHEL.L): Moat Narrow (Score 1.0; Immaterielle Assets).",
+    "Die entscheidungsrelevante Bewertung ist der geh\u00e4rtete Inverse-DCF bei 46.46 (WACC 7.19%, g1 3.0%). Der unadjustierte Conservative DCF (61.19) ist Unadjusted / Extrapolative und treibt das Upside nicht.",
+    "Technisch liegt ein Buy-Signal (Kurs \u00fcber MA200, MA50 \u00fcber MA200, MACD positiv).",
+    "Katalysatoren: generisch (Sektor)",
+    "Gr\u00f6\u00dfte Red Flags: DCF-Extrapolationsrisiko \u2014 Basis ist geh\u00e4rtet; DCF-Upside weicht stark vom Analysten-Upside ab."
+   ],
+   "redFlags": [
+    "DCF-Extrapolationsrisiko \u2014 Basis ist geh\u00e4rtet",
+    "DCF-Upside weicht stark vom Analysten-Upside ab"
+   ]
+  },
+  "ohlcvData": [
+   {
+    "date": "2026-10-07",
+    "close": 36.480000000000004
+   },
+   {
+    "date": "2026-10-08",
+    "close": 37.805
+   },
+   {
+    "date": "2026-10-09",
+    "close": 37.935
+   }
+  ],
+  "historicalPrices": [
+   {
+    "date": "2026-10-07",
+    "close": 36.480000000000004
+   },
+   {
+    "date": "2026-10-08",
+    "close": 37.805
+   },
+   {
+    "date": "2026-10-09",
+    "close": 37.935
+   }
+  ]
+ }
+}

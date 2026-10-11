@@ -10,7 +10,8 @@ const rows = [{ date: "2026-04-06" }, { date: "2026-10-05" }];
 check("Achse endet auf dem letzten Punkt (Branch-Logik bleibt)", axisTicks(rows, "6M", true).at(-1) === Date.parse("2026-10-05T00:00:00Z"));
 const src = readFileSync(new URL("../client/src/components/recession/BuffettRatioPanel.tsx", import.meta.url), "utf8");
 check("Punkt am letzten Datenpunkt in allen Fenstern", src.includes('data-testid="buffett-last-point"') && src.includes("<circle cx={x} cy={y} r={4}"));
-check("Kurzlabel nur ohne Max-Callout (keine Doppelung)", src.includes("{!showCallout && lastPointLabel(last) && ("));
+// JOB 22 (#245-Follow-up): Label jetzt auch im Max-Fenster (Tester: fehlte am letzten Punkt), dort unter dem Punkt.
+check("Kurzlabel in allen Fenstern inkl. Max (unter dem Punkt)", src.includes("{lastPointLabel(last) && (") && src.includes("y={showCallout || y < 24 ? y + 18 : y - 9}"));
 check("Max-Callout aus dem Branch unverändert", src.includes('data-testid="text-buffett-callout"') && src.includes("const showCallout = props.range === \"Max\";"));
 // #245: Proxy-Flag, Label/Tooltip, max. 30 Tage
 check("Proxy-Label: '211 % · 05.10.26 (fortgeschrieben via VTI)'", lastPointLabel({ date: "2026-10-05", ratio: 211.2, proxy: "VTI" }) === "211 % · 05.10.26 (fortgeschrieben via VTI)");
