@@ -29,4 +29,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // POST /api/export-pdf (lost from routes.ts in 57189dd, see pdf-export-route.ts)
   const { registerPdfExportRoute } = await import("./pdf-export-route");
   registerPdfExportRoute(app);
+  // GET /api/watchlist + GET /api/cache from the disk cache (lost in 57189dd, see watchlist-route.ts)
+  const { registerWatchlistRoutes } = await import("./watchlist-route");
+  registerWatchlistRoutes(app);
 }
