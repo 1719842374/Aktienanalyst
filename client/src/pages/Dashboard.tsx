@@ -495,12 +495,12 @@ export default function Dashboard() {
                 key={s.id}
                 onClick={() => scrollToSection(s.id)}
                 disabled={!data}
-                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-xs hover:bg-muted/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-left group"
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-xs text-sidebar-foreground enabled:hover:bg-muted/50 disabled:opacity-[0.55] disabled:cursor-not-allowed transition-colors text-left group"
                 data-testid={`nav-section-${s.id}`}
               >
-                <s.icon className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 group-hover:text-primary transition-colors" />
+                <s.icon className="w-3.5 h-3.5 text-sidebar-foreground flex-shrink-0 group-enabled:group-hover:text-primary transition-colors" />
                 <span className="flex-1 truncate">{s.label}</span>
-                <span className="text-[10px] font-mono tabular-nums text-muted-foreground/50">{s.id}</span>
+                <span className="text-[10px] font-mono tabular-nums text-sidebar-foreground">{s.id}</span>
               </button>
             ))}
           </nav>
