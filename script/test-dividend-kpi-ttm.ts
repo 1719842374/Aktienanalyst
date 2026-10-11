@@ -34,9 +34,12 @@ assert.equal(dividendKpiFromHistory(undefined, fx.KO.bars.at(-1), "USD").kind, "
 // UI wiring
 const s1 = readFileSync("client/src/components/sections/Section1.tsx", "utf8");
 const tc = readFileSync("client/src/components/sections/TechnicalChart.tsx", "utf8");
-assert.match(s1, /useDividendHistory\(data\.ticker\)/); assert.match(tc, /useDividendHistory\(data\.ticker, showDividend\)/);
+// JOB 20: Section 1 + Section 4 lesen die Kachel über useDividendKpi (eine Query, eine Funktion)
+const kpiSrc = readFileSync("client/src/lib/dividendKpi.ts", "utf8");
+const hookSrc = readFileSync("client/src/lib/useDividendHistory.ts", "utf8");
+assert.match(s1, /useDividendKpi\(data\)/); assert.match(hookSrc, /useDividendHistory\(data\.ticker\)/); assert.match(tc, /useDividendHistory\(data\.ticker, showDividend\)/);
 assert.doesNotMatch(tc, /fetch\(`\/api\/dividends/, "no duplicated fetch");
-assert.match(s1, /sub: `TTM\$\{divFy \? ` · GJ \(FMP\) \$\{divFy\}` : ""\}`/);
-assert.match(s1, /: divFy \? \{ value: divFy, sub: "GJ \(FMP\)" \}/);
+assert.match(kpiSrc, /sub: `TTM\$\{divFy \? ` · GJ \(FMP\) \$\{divFy\}` : ""\}`/);
+assert.match(kpiSrc, /: divFy \? \{ value: divFy, sub: "GJ \(FMP\)" \}/);
 console.log("| Ticker | Kachel (TTM) | Linie letzter Punkt | GJ (FMP) |\n|---|---|---|---|\n" + rows.join("\n"));
 console.log("test-dividend-kpi-ttm: OK");
