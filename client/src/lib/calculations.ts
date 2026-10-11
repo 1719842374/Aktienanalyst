@@ -272,7 +272,7 @@ export function calculateGBMParams(prices: number[]): { mu: number; sigma: numbe
 }
 
 // === WACC Calculation === (moved to shared/valuation-signal.ts, one implementation for client and server)
-export { calculateWACC, capmWaccPct, dcfWaccInputs, companyDcfWaccPct } from "../../../shared/valuation-signal";
+export { calculateWACC, capmWaccPct, dcfWaccInputs, companyDcfWaccPct, safeCompanyDcfWaccPct, waccSuffix } from "../../../shared/valuation-signal";
 
 // === Catalyst Calculations ===
 export function calculateCatalystUpside(

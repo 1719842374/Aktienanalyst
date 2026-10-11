@@ -307,6 +307,18 @@ export function companyDcfWaccPct(data: { beta5Y: number; totalDebt: number; mar
   return capmWaccPct(dcfWaccInputs(data)).wacc;
 }
 
+const finiteNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+/** Company WACC, or null when beta5Y / marketCap (> 0) / totalDebt are missing — never NaN in the UI/PDF. */
+export function safeCompanyDcfWaccPct(data: { beta5Y?: unknown; totalDebt?: unknown; marketCap?: unknown; lynchClass?: string | null } | null | undefined): number | null {
+  if (!data || !finiteNum(data.beta5Y) || !finiteNum(data.marketCap) || data.marketCap <= 0 || !finiteNum(data.totalDebt)) return null;
+  const w = companyDcfWaccPct({ beta5Y: data.beta5Y, totalDebt: data.totalDebt, marketCap: data.marketCap, lynchClass: data.lynchClass });
+  return finiteNum(w) ? w : null;
+}
+/** " (WACC x.x%)" or "" when the WACC is unavailable. */
+export function waccSuffix(w: number | null | undefined, digits = 1): string {
+  return finiteNum(w) ? ` (WACC ${w.toFixed(digits)}%)` : "";
+}
+
 export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;

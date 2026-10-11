@@ -146,7 +146,7 @@ export function ReverseDCFSection({ data }: Props) {
           <div className={`text-3xl font-bold font-mono tabular-nums ${ratingColor}`}>
             {formatPercentNoSign(result.impliedGrowth)}
           </div>
-          <div className="text-[10px] text-muted-foreground font-mono" data-testid="reverse-dcf-wacc">WACC {formatPercentNoSign(dcfWacc)} (Unternehmens-WACC, wie Sektion 5)</div>
+          <div className="text-[10px] text-muted-foreground font-mono" data-testid="reverse-dcf-wacc">WACC {Number.isFinite(dcfWacc) ? formatPercentNoSign(dcfWacc) : "—"} (Unternehmens-WACC, wie Sektion 5)</div>
           <div className={`inline-block mt-2 px-2.5 py-1 rounded-md text-xs font-semibold border ${ratingBg} ${ratingColor}`}>
             {ratingLabel}
           </div>
@@ -223,7 +223,7 @@ export function ReverseDCFSection({ data }: Props) {
         `EV = $${formatNumber(data.currentPrice)} × ${formatNumber(data.sharesOutstanding / 1e9, 2)}B + $${formatNumber(netDebt / 1e9, 2)}B`,
         `EV = $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
         ...(data.fcfHaircut ? [`FCF (nach ${data.fcfHaircut}% Haircut) = $${formatNumber(data.fcfTTM * (1 - (data.fcfHaircut ?? 0) / 100) / 1e9, 2)}B`] : []),
-        `WACC = ${formatPercentNoSign(dcfWacc)} (CAPM-WACC des DCF-Modells, Sektion 5 — identisch mit Sektion 17)`,
+        `WACC = ${Number.isFinite(dcfWacc) ? formatPercentNoSign(dcfWacc) : "—"} (CAPM-WACC des DCF-Modells, Sektion 5 — identisch mit Sektion 17)`,
         `g* = WACC - FCF/EV = ${formatPercentNoSign(dcfWacc)} - $${formatNumber(data.fcfTTM * (1 - (data.fcfHaircut ?? 0) / 100) / 1e9, 2)}B / $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
         `g* = ${formatPercentNoSign(result.impliedGrowth)}`,
         `Referenzwachstum = max(Sektor g1 ${formatPercentNoSign(sp.growthAssumptions?.g1 ?? 0)}, EPS-5J ${formatPercentNoSign(data.epsGrowth5Y ?? 0)}, 3%) = ${formatPercentNoSign(result.referenceGrowth)}`,
