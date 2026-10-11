@@ -46,9 +46,19 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
   const FRESH_CACHE_LIMIT_MIN = 60 * 24 * 7;
   const isFreshCache = !!data._cached && (data._cacheAge != null) && data._cacheAge < FRESH_CACHE_LIMIT_MIN;
   const isStaleCache = !!data._cached && !isFreshCache;
+  const partialYahoo = data.quoteCoverage === "yahoo-quote-history";
 
   return (
     <SectionCard number={2} title="DATENAKTUALITÄT & PLAUSIBILITÄT">
+      {partialYahoo && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3" data-testid="yahoo-quote-coverage">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
+          <div>
+            <p className="text-xs font-semibold text-amber-400 leading-relaxed">{data.quoteCoverageNote ?? "Plan-Limit, Yahoo-Kurs/History. Teilabdeckung: nur Kurs, Market Cap, PE, EPS und History."}</p>
+          </div>
+        </div>
+      )}
+
       {isStaleCache && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
@@ -150,10 +160,10 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <KPI label="Price" value={formatCurrency(data.currentPrice)} sub={new Date(data.priceTimestamp).toLocaleString()} />
-        <KPI label="Market Cap" value={formatLargeNumber(data.marketCap)} />
-        <KPI label="Beta (5Y)" value={formatNumber(data.beta5Y)} />
-        <KPI label="P/E" value={formatNumber(data.peRatio, 1)} sub={`Fwd: ${formatNumber(data.forwardPE, 1)}`} />
-        <KPI label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
+        <KPI label="Market Cap" value={partialYahoo && !(data.marketCap > 0) ? "n/a" : formatLargeNumber(data.marketCap)} />
+        <KPI label="Beta (5Y)" value={partialYahoo ? "n/a" : formatNumber(data.beta5Y)} />
+        <KPI label="P/E" value={partialYahoo && !(data.peRatio > 0) ? "n/a" : formatNumber(data.peRatio, 1)} sub={partialYahoo ? "Fwd: n/a" : `Fwd: ${formatNumber(data.forwardPE, 1)}`} />
+        <KPI label="EV/EBITDA" value={partialYahoo ? "n/a" : formatNumber(data.evEbitda, 1)} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-2.5 text-xs">
@@ -186,9 +196,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
-            <Row label="EPS TTM" value={`$${formatNumber(data.epsTTM)}`} />
-            <Row label="EPS adj. FY" value={`$${formatNumber(data.epsAdjFY)}`} />
-            <Row label="EPS Consensus Next FY" value={`$${formatNumber(data.epsConsensusNextFY)}`} />
+            <Row label="EPS TTM" value={partialYahoo && !(Number.isFinite(data.epsTTM) && data.epsTTM !== 0) ? "n/a" : `$${formatNumber(data.epsTTM)}`} />
+            <Row label="EPS adj. FY" value={partialYahoo ? "n/a" : `$${formatNumber(data.epsAdjFY)}`} />
+            <Row label="EPS Consensus Next FY" value={partialYahoo ? "n/a" : `$${formatNumber(data.epsConsensusNextFY)}`} />
             <Row label="EPS-CAGR 5Y" value={data.epsCagrFromIncome === false ? "n/a" : formatPercentNoSign(data.epsGrowth5Y)} />
           </tbody>
         </table>
@@ -203,6 +213,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
           Analyst Ratings{data.ratings.basis === "grade-events" ? " (Grade-Events)" : ""}
         </h3>
+        {partialYahoo && (
+          <p className="text-[10px] text-amber-400 mb-2" data-testid="yahoo-no-analysts">Keine Analysten-Daten. Teilabdeckung nur Kurs, Market Cap, PE, EPS und History.</p>
+        )}
         <div className="flex items-center gap-4 mb-2">
           <RatingBadge label="Buy" count={data.ratings.buy} color="bg-emerald-500/15 text-emerald-500" />
           <RatingBadge label="Hold" count={data.ratings.hold} color="bg-amber-500/15 text-amber-500" />
@@ -219,7 +232,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
               <Row label="Median PT" value={formatCurrency(data.analystPT.median)} />
               <Row label="High PT" value={formatCurrency(data.analystPT.high)} />
               <Row label="Low PT" value={formatCurrency(data.analystPT.low)} />
-              <Row label="PT Upside" value={`${ptUpside >= 0 ? "+" : ""}${ptUpside.toFixed(1)}%`} valueClass={ptUpside >= 0 ? "text-emerald-500" : "text-red-500"} />
+              <Row label="PT Upside" value={partialYahoo ? "n/a" : `${ptUpside >= 0 ? "+" : ""}${ptUpside.toFixed(1)}%`} valueClass={partialYahoo ? undefined : ptUpside >= 0 ? "text-emerald-500" : "text-red-500"} />
               <Row label="# Analysts" value={data.analystPT.count > 0 ? data.analystPT.count.toString() : "n/a"} />
             </tbody>
           </table>

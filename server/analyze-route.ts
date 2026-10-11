@@ -138,6 +138,13 @@ import {
   fetchDailyHistory, fromDateForTimeframe, altFetchYahooThenStooq,
   indicatorWarmupFromDate, needsIndicatorPrefix, TA_OHLCV_MAX_POINTS,
 } from "./history-fallback";
+import {
+  fetchYahooAnalysisData,
+  isYahooQuoteHistoryFallback,
+  mapYahooToFmpFallback,
+  YAHOO_COVERAGE_NOTE,
+  YAHOO_PLAN_LIMIT_LABEL,
+} from "./yahoo-fetcher";
 
 // Segment-Fallback-Pipeline (2026-08): SEC EDGAR fallback for when FMP's
 // /revenue-product-segmentation returns [] (verified for IREN). Additive-only
@@ -617,10 +624,25 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // ── 1. Fetch FMP data ──
       // trackFmpCall runs inside fmp.ts on every outbound call — no manual
       // increment here or we'd double-count.
-      const fmpData = await getFmpFallbackData(upperTicker);
-      if ("failure" in fmpData) {
-        const { status, body } = fmpFallbackFailureResponse(upperTicker, fmpData.failure);
-        return res.status(status).json(body);
+      const fmpResult = await getFmpFallbackData(upperTicker);
+      let quoteFromYahoo = false;
+      let fmpData: any;
+      if ("failure" in fmpResult) {
+        if (!isYahooQuoteHistoryFallback(fmpResult.failure)) {
+          const { status, body } = fmpFallbackFailureResponse(upperTicker, fmpResult.failure);
+          return res.status(status).json(body);
+        }
+        const mapped = mapYahooToFmpFallback(await fetchYahooAnalysisData(upperTicker));
+        if (!mapped) {
+          const { status, body } = fmpFallbackFailureResponse(upperTicker, fmpResult.failure);
+          body.error = `${YAHOO_PLAN_LIMIT_LABEL}. ${body.error} Yahoo lieferte keinen Kurs.`;
+          return res.status(status).json(body);
+        }
+        fmpData = mapped;
+        quoteFromYahoo = true;
+        console.log(`[ANALYZE] Yahoo quote/history for ${upperTicker} (fmp ${fmpResult.failure.errorCode} ${fmpResult.failure.fmpStatus ?? "-"})`);
+      } else {
+        fmpData = fmpResult;
       }
 
       // geoSegments was added in commit cd79678 (fmp.ts:fmpGeoSegments +
@@ -795,6 +817,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       } catch (err) {
         console.warn(`[HISTORY-FALLBACK] Fallback-Versuch fehlgeschlagen fuer ${upperTicker}: ${(err as Error)?.message ?? err}`);
       }
+      if (quoteFromYahoo) historyDataSource = "yahoo";
 
       const technicalIndicators: TechnicalIndicators = buildTechnicalIndicators(ohlcvPoints, price);
 
@@ -804,7 +827,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Nur echte zukünftige Kalendertermine werden gezeigt. Fehlt FMPs Termin,
       // bleibt das Feld null; die UI zeigt transparent "n/a" statt einer Schätzung.
       const todayIso = new Date().toISOString().slice(0, 10);
-      const earningsRows = await fmpEarningsCalendar(upperTicker).catch(() => []);
+      const earningsRows = quoteFromYahoo ? [] : await fmpEarningsCalendar(upperTicker).catch(() => []);
       const nextEarnings = earningsRows
         .filter((r: any) => (!r?.symbol || String(r.symbol).toUpperCase() === upperTicker) && typeof r?.date === "string" && r.date.slice(0, 10) > todayIso)
         .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))[0] ?? null;
@@ -1606,17 +1629,19 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // FMP liefert newest-first, calcRealizedGrowth8QServer erwartet chronologisch.
       let quarterlyRevenueChronological: number[] | null = null;
       let quarterlyIncomeRows: any[] = [];
-      try {
-        const qRows: any[] = await fmpIncomeStatementQuarterly(upperTicker, 16);
-        if (Array.isArray(qRows) && qRows.length > 0) {
-          quarterlyIncomeRows = qRows;
-          quarterlyRevenueChronological = qRows
-            .map(r => Number(r?.revenue))
-            .filter(v => isFinite(v) && v > 0)
-            .reverse();
+      if (!quoteFromYahoo) {
+        try {
+          const qRows: any[] = await fmpIncomeStatementQuarterly(upperTicker, 16);
+          if (Array.isArray(qRows) && qRows.length > 0) {
+            quarterlyIncomeRows = qRows;
+            quarterlyRevenueChronological = qRows
+              .map(r => Number(r?.revenue))
+              .filter(v => isFinite(v) && v > 0)
+              .reverse();
+          }
+        } catch (qErr: any) {
+          console.warn(`[ANALYZE] Quarterly revenue fetch failed: ${qErr?.message?.substring(0, 80)}`);
         }
-      } catch (qErr: any) {
-        console.warn(`[ANALYZE] Quarterly revenue fetch failed: ${qErr?.message?.substring(0, 80)}`);
       }
       const reportedQuarter = lastReportedQuarterLabel({
         todayIso,
@@ -2023,6 +2048,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         ohlcvData: ohlcvPoints,
         historyDataSource,
         historyTruncated,
+        ...(quoteFromYahoo ? { quoteCoverage: "yahoo-quote-history" as const, quoteCoverageNote: YAHOO_COVERAGE_NOTE } : {}),
         technicalIndicators,
 
         // Section 11 — use schema-conformed moatAssessment (see build above).
@@ -2088,7 +2114,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         // KI mode signalling for Dashboard state
         llmMode: useLLM,
         llmModelUsed,
-        dataSource: "fmp" as const,
+        dataSource: (quoteFromYahoo ? "yahoo" : "fmp") as "yahoo" | "fmp",
         dataTimestamp: new Date().toISOString(),
         _useLLM: useLLM,
 
