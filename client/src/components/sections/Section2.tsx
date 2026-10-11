@@ -538,7 +538,7 @@ export function Section2({ data }: Props) {
             <>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">Conservative DCF (base, WACC {baseDCF.wacc.toFixed(1)}%)</span>
-                <span className="font-mono tabular-nums font-semibold">{formatCurrency(baseDCF.perShare, 2, data.currency)}</span>
+                <span className="font-mono tabular-nums font-semibold">{formatCurrency(baseDCF.perShare, 2, statementCurrency(data))}</span>
               </div>
               <div className="flex items-center justify-between text-xs mt-1">
                 <span className="text-muted-foreground">
@@ -546,7 +546,7 @@ export function Section2({ data }: Props) {
                   {catalystBaseFallback && <span className="text-amber-500 ml-1">⚠</span>}
                 </span>
                 <span className={`font-mono tabular-nums font-semibold ${isBelowKurs ? 'text-red-500' : 'text-primary'}`}>
-                  {formatCurrency(adjustedTarget, 2, data.currency)}
+                  {formatCurrency(adjustedTarget, 2, catalystBaseFallback ? data.currency : statementCurrency(data))}
                 </span>
               </div>
               <div className={`flex items-center justify-between text-[10px] mt-0.5 ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>

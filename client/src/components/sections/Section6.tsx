@@ -7,7 +7,7 @@ import {
   calculateCRV, calculateRiskAdjustedCRV, calculateCatalystUpside, selectCatalystBase,
   computeHardenedCRV, LYNCH_CLASS_BASE_DRAWDOWN,
 } from "../../lib/calculations";
-import { formatCurrency, formatNumber, getCRVColor, getCRVBgColor } from "../../lib/formatters";
+import { formatCurrency, formatNumber, statementCurrency, getCRVColor, getCRVBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
 import { buildBiasDecision } from "../../../../shared/bias-fixes";
 
@@ -62,6 +62,9 @@ export function Section6({ data }: Props) {
   const _decisionS6 = Number.isFinite(bias.decisionPerShare) ? bias.decisionPerShare : conservativeDCF.perShare;
   const _baseInfoS6 = selectCatalystBase(_decisionS6, _rawUpsideS6, data.currentPrice, data.analystPT.median);
   const catalystDCFBase = _baseInfoS6.base;
+  // JOB 23: DCF-Werte in Statement-Währung; Kurs, Worst Case (aus dem Kurs) und Analyst-PT in Listing-Währung.
+  const dcfCcy = statementCurrency(data);
+  const catalystCcy = _baseInfoS6.source === "dcf" ? dcfCcy : data.currency;
   const { adjustedTarget } = calculateCatalystUpside(catalysts, catalystDCFBase);
   const raAdjustedTarget = adjustedTarget * riskDiscountFactor;
 
@@ -80,15 +83,15 @@ export function Section6({ data }: Props) {
   const raDcfBeiCRV3 = (raConservativeFV + 2 * worstCase) / 3;
 
   const baseCRVs = [
-    { label: "Conservative", value: crvConservative, fairValue: conservativeDCF.perShare },
-    { label: "Optimistic", value: crvOptimistic, fairValue: optimisticDCF.perShare },
-    { label: "Catalyst-Adjusted", value: crvCatalyst, fairValue: adjustedTarget },
+    { label: "Conservative", value: crvConservative, fairValue: conservativeDCF.perShare, fairCurrency: dcfCcy },
+    { label: "Optimistic", value: crvOptimistic, fairValue: optimisticDCF.perShare, fairCurrency: dcfCcy },
+    { label: "Catalyst-Adjusted", value: crvCatalyst, fairValue: adjustedTarget, fairCurrency: catalystCcy },
   ];
 
   const riskAdjCRVs = [
-    { label: "Conservative", value: raCrvConservative, fairValue: raConservativeFV },
-    { label: "Optimistic", value: raCrvOptimistic, fairValue: raOptimisticFV },
-    { label: "Catalyst-Adjusted", value: raCrvCatalyst, fairValue: raAdjustedTarget },
+    { label: "Conservative", value: raCrvConservative, fairValue: raConservativeFV, fairCurrency: dcfCcy },
+    { label: "Optimistic", value: raCrvOptimistic, fairValue: raOptimisticFV, fairCurrency: dcfCcy },
+    { label: "Catalyst-Adjusted", value: raCrvCatalyst, fairValue: raAdjustedTarget, fairCurrency: catalystCcy },
   ];
 
   // === CRV-Härtung gegen DCF-Extrapolation (Auftrag 09.08.2026, "NVO-Muster") ===
@@ -171,7 +174,7 @@ export function Section6({ data }: Props) {
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">CRV — Base (ohne Risiko-Abschlag)</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {baseCRVs.map((crv, i) => (
-            <CRVCard currency={data.currency} key={i} label={crv.label} value={crv.value} fairValue={crv.fairValue} worstCase={worstCase} />
+            <CRVCard currency={data.currency} fairCurrency={crv.fairCurrency} key={i} label={crv.label} value={crv.value} fairValue={crv.fairValue} worstCase={worstCase} />
           ))}
         </div>
       </div>
@@ -186,7 +189,7 @@ export function Section6({ data }: Props) {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {riskAdjCRVs.map((crv, i) => (
-            <CRVCard currency={data.currency} key={i} label={crv.label} value={crv.value} fairValue={crv.fairValue} worstCase={worstCase} riskAdj />
+            <CRVCard currency={data.currency} fairCurrency={crv.fairCurrency} key={i} label={crv.label} value={crv.value} fairValue={crv.fairValue} worstCase={worstCase} riskAdj />
           ))}
         </div>
       </div>
@@ -200,9 +203,9 @@ export function Section6({ data }: Props) {
           Entscheidungsrelevante CRV nach Härtung gegen DCF-Extrapolation — schützt vor optisch attraktiven CRVs bei Low-Beta/Low-WACC/High-Terminal-Value-Setups.
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <CRVCard currency={data.currency} label="Raw (unbereinigt)" value={hardenedCRV.crvRaw} fairValue={hardenedCRV.fvRaw} worstCase={data.currentPrice * (1 - Math.min((1 - m1 / data.currentPrice) * 100, sectorDD) / 100)} />
-          <CRVCard currency={data.currency} label="Gehärtet" value={hardenedCRV.crvHardened} fairValue={hardenedCRV.fvHardened} worstCase={hardenedCRV.wcUsed} />
-          <CRVCard currency={data.currency} label="Stress (+ Margin-Stress)" value={hardenedCRV.crvStress} fairValue={hardenedCRV.fvStress} worstCase={hardenedCRV.wcUsed} />
+          <CRVCard currency={data.currency} fairCurrency={dcfCcy} label="Raw (unbereinigt)" value={hardenedCRV.crvRaw} fairValue={hardenedCRV.fvRaw} worstCase={data.currentPrice * (1 - Math.min((1 - m1 / data.currentPrice) * 100, sectorDD) / 100)} />
+          <CRVCard currency={data.currency} fairCurrency={dcfCcy} label="Gehärtet" value={hardenedCRV.crvHardened} fairValue={hardenedCRV.fvHardened} worstCase={hardenedCRV.wcUsed} />
+          <CRVCard currency={data.currency} fairCurrency={dcfCcy} label="Stress (+ Margin-Stress)" value={hardenedCRV.crvStress} fairValue={hardenedCRV.fvStress} worstCase={hardenedCRV.wcUsed} />
         </div>
         {hardenedCRV.flags.length > 0 && (
           <div className="mt-2 flex flex-col gap-1">
@@ -233,7 +236,7 @@ export function Section6({ data }: Props) {
         </div>
         {bias.switched && (
           <div className="mt-2 text-[10px] text-amber-500 bg-amber-500/10 rounded-md p-2 border border-amber-500/20">
-            Entscheidungsrelevante Basis: {bias.valuationBaseLabel} {formatCurrency(bias.decisionPerShare, 2, data.currency)} (WACC {formatNumber(bias.decisionWacc, 2)}%, {bias.triggerCount} Trigger). Unadjusted / Extrapolative: {formatCurrency(bias.unadjustedPerShare, 2, data.currency)}. {bias.modeLabel}.
+            Entscheidungsrelevante Basis: {bias.valuationBaseLabel} {formatCurrency(bias.decisionPerShare, 2, dcfCcy)} (WACC {formatNumber(bias.decisionWacc, 2)}%, {bias.triggerCount} Trigger). Unadjusted / Extrapolative: {formatCurrency(bias.unadjustedPerShare, 2, dcfCcy)}. {bias.modeLabel}.
           </div>
         )}
         {hardenedCRV.divergenceFlag && (
@@ -247,22 +250,22 @@ export function Section6({ data }: Props) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className={`rounded-lg p-3 border-2 ${data.currentPrice <= dcfBeiCRV3 ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
           <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">DCF bei CRV 3:1 — Base</div>
-          <div className="text-lg font-bold font-mono tabular-nums mt-0.5">{formatCurrency(dcfBeiCRV3, 2, data.currency)}</div>
+          <div className="text-lg font-bold font-mono tabular-nums mt-0.5">{formatCurrency(dcfBeiCRV3, 2, dcfCcy)}</div>
           <div className={`text-xs font-bold mt-0.5 ${data.currentPrice <= dcfBeiCRV3 ? 'text-emerald-500' : 'text-red-500'}`}>
             {data.currentPrice <= dcfBeiCRV3 ? 'Kurs UNTER Max-Entry ✔' : 'Kurs ÜBER Max-Entry ⚠'}
           </div>
           <div className="text-[10px] text-muted-foreground mt-1 font-mono">
-            = ({formatCurrency(conservativeDCF.perShare, 2, data.currency)} + 2 × {formatCurrency(worstCase, 2, data.currency)}) / 3
+            = ({formatCurrency(conservativeDCF.perShare, 2, dcfCcy)} + 2 × {formatCurrency(worstCase, 2, data.currency)}) / 3
           </div>
         </div>
         <div className={`rounded-lg p-3 border-2 ${data.currentPrice <= raDcfBeiCRV3 ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
           <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">DCF bei CRV 3:1 — Risikoadj.</div>
-          <div className="text-lg font-bold font-mono tabular-nums mt-0.5">{formatCurrency(raDcfBeiCRV3, 2, data.currency)}</div>
+          <div className="text-lg font-bold font-mono tabular-nums mt-0.5">{formatCurrency(raDcfBeiCRV3, 2, dcfCcy)}</div>
           <div className={`text-xs font-bold mt-0.5 ${data.currentPrice <= raDcfBeiCRV3 ? 'text-emerald-500' : 'text-red-500'}`}>
             {data.currentPrice <= raDcfBeiCRV3 ? 'Kurs UNTER Max-Entry ✔' : 'Kurs ÜBER Max-Entry ⚠'}
           </div>
           <div className="text-[10px] text-muted-foreground mt-1 font-mono">
-            = ({formatCurrency(raConservativeFV, 2, data.currency)} + 2 × {formatCurrency(worstCase, 2, data.currency)}) / 3
+            = ({formatCurrency(raConservativeFV, 2, dcfCcy)} + 2 × {formatCurrency(worstCase, 2, data.currency)}) / 3
           </div>
         </div>
       </div>
@@ -270,15 +273,15 @@ export function Section6({ data }: Props) {
       <RechenWeg title="CRV Rechenweg (FCFF-basiert)" steps={[
         `=== BASE CRV ===`,
         `CRV = (Fair Value - Worst Case) / (Kurs - Worst Case)`,
-        `Conservative CRV = (${formatCurrency(conservativeDCF.perShare, 2, data.currency)} - ${formatCurrency(worstCase, 2, data.currency)}) / (${formatCurrency(data.currentPrice, 2, data.currency)} - ${formatCurrency(worstCase, 2, data.currency)}) = ${formatNumber(crvConservative, 2)}:1`,
+        `Conservative CRV = (${formatCurrency(conservativeDCF.perShare, 2, dcfCcy)} - ${formatCurrency(worstCase, 2, data.currency)}) / (${formatCurrency(data.currentPrice, 2, data.currency)} - ${formatCurrency(worstCase, 2, data.currency)}) = ${formatNumber(crvConservative, 2)}:1`,
         ``,
         `=== RISIKOADJUSTIERT ===`,
         `Total Expected Damage = ${formatNumber(totalExpectedDamage, 2)}%`,
-        `Risk-Adj. Fair Value = ${formatCurrency(conservativeDCF.perShare, 2, data.currency)} × (1 - ${formatNumber(totalExpectedDamage, 1)}%) = ${formatCurrency(raConservativeFV, 2, data.currency)}`,
-        `Risk-Adj. CRV = (${formatCurrency(raConservativeFV, 2, data.currency)} - ${formatCurrency(worstCase, 2, data.currency)}) / (${formatCurrency(data.currentPrice, 2, data.currency)} - ${formatCurrency(worstCase, 2, data.currency)}) = ${formatNumber(raCrvConservative, 2)}:1`,
+        `Risk-Adj. Fair Value = ${formatCurrency(conservativeDCF.perShare, 2, dcfCcy)} × (1 - ${formatNumber(totalExpectedDamage, 1)}%) = ${formatCurrency(raConservativeFV, 2, dcfCcy)}`,
+        `Risk-Adj. CRV = (${formatCurrency(raConservativeFV, 2, dcfCcy)} - ${formatCurrency(worstCase, 2, data.currency)}) / (${formatCurrency(data.currentPrice, 2, data.currency)} - ${formatCurrency(worstCase, 2, data.currency)}) = ${formatNumber(raCrvConservative, 2)}:1`,
         ``,
-        `DCF bei CRV 3:1 (Base) = (${formatCurrency(conservativeDCF.perShare, 2, data.currency)} + 2 × ${formatCurrency(worstCase, 2, data.currency)}) / 3 = ${formatCurrency(dcfBeiCRV3, 2, data.currency)}`,
-        `DCF bei CRV 3:1 (Risk-Adj.) = (${formatCurrency(raConservativeFV, 2, data.currency)} + 2 × ${formatCurrency(worstCase, 2, data.currency)}) / 3 = ${formatCurrency(raDcfBeiCRV3, 2, data.currency)}`,
+        `DCF bei CRV 3:1 (Base) = (${formatCurrency(conservativeDCF.perShare, 2, dcfCcy)} + 2 × ${formatCurrency(worstCase, 2, data.currency)}) / 3 = ${formatCurrency(dcfBeiCRV3, 2, dcfCcy)}`,
+        `DCF bei CRV 3:1 (Risk-Adj.) = (${formatCurrency(raConservativeFV, 2, dcfCcy)} + 2 × ${formatCurrency(worstCase, 2, data.currency)}) / 3 = ${formatCurrency(raDcfBeiCRV3, 2, dcfCcy)}`,
         ``,
         `=== M1 FORMEL (Implementierung) ===`,
         `effectiveDrawdown = min(beta × sectorDD, sectorDD × 1.5), gecapped bei 65%`,
@@ -288,8 +291,8 @@ export function Section6({ data }: Props) {
   );
 }
 
-function CRVCard({ label, value, fairValue, worstCase, riskAdj, currency }: {
-  label: string; value: number; fairValue: number; worstCase: number; riskAdj?: boolean; currency?: string | null;
+function CRVCard({ label, value, fairValue, worstCase, riskAdj, currency, fairCurrency }: {
+  label: string; value: number; fairValue: number; worstCase: number; riskAdj?: boolean; currency?: string | null; fairCurrency?: string | null;
 }) {
   return (
     <div className={`rounded-lg p-3 border ${getCRVBgColor(value)}`}>
@@ -300,7 +303,7 @@ function CRVCard({ label, value, fairValue, worstCase, riskAdj, currency }: {
         {isFinite(value) && !isNaN(value) ? `${formatNumber(value, 1)}:1` : "n/a"}
       </div>
       <div className="text-[10px] text-muted-foreground mt-1">
-        Fair: {formatCurrency(fairValue, 2, currency)} | WC: {formatCurrency(worstCase, 2, currency)}
+        Fair: {formatCurrency(fairValue, 2, fairCurrency ?? currency)} | WC: {formatCurrency(worstCase, 2, currency)}
       </div>
       <div className={`text-[10px] mt-1 font-medium ${
         value >= 2.5 ? "text-emerald-500" :

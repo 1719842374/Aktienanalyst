@@ -29,9 +29,14 @@ export function currencySymbol(currency?: string | null): string {
  * reportedCurrency ≠ USD immer nach USD um (fmp.ts convertFmpRowsToUsd; currencyInfo wird dabei nicht gesetzt).
  * Nur Minor-Unit-Listings (.L/.JO/.TA) werden danach per #244 in die Major-Listing-Währung (GBP …) gebracht.
  * Also: USD, außer bei Minor-Unit-Listings → Listing-Währung. (SAP.DE: Kurs €, Statements $.)
+ * Steht die Listing-Währung noch auf der Minor Unit (GBp/GBX/ZAc/ILA = keine FX, #244 nicht angewandt), sind die
+ * Statements unverändert USD.
+ * Gilt für ALLE DCF- und daraus abgeleiteten Per-Share-Werte, damit dieselbe Zahl nie einmal mit $ und einmal mit € erscheint.
  */
+const UNCONVERTED_MINOR_UNITS = new Set(["GBp", "GBX", "ZAc", "ILA"]);
 export function statementCurrency(data: { ticker?: string | null; currency?: string | null }): string {
-  return isMinorUnitListingTicker(data.ticker) && data.currency ? data.currency : "USD";
+  const c = data.currency?.trim();
+  return isMinorUnitListingTicker(data.ticker) && c && !UNCONVERTED_MINOR_UNITS.has(c) ? c : "USD";
 }
 
 /** JOB 23: Kursziel — 0/null/nicht endlich heißt „kein Ziel“ (FMP ohne .L-Targets) → "n/a" statt "£0.00". */

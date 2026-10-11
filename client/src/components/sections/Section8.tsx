@@ -3,7 +3,7 @@ import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, Risk } from "../../../../shared/schema";
 import { calculateDCF, invertedDcf } from "../../lib/calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign, formatTarget } from "../../lib/formatters";
+import { formatCurrency, formatNumber, formatPercentNoSign, formatTarget, statementCurrency } from "../../lib/formatters";
 import { useMemo, useState, useEffect, useRef } from "react";
 import {
   ChevronDown, ChevronUp,
@@ -158,6 +158,9 @@ export function Section8({ data, useLLM = false }: Props) {
   const riskAdjVsPrice = (riskAdjTarget / data.currentPrice - 1) * 100;
   const riskAdjVsPT = hasPT ? (riskAdjTarget / analystPT - 1) * 100 : 0;
   const belowReference = riskAdjTarget < data.currentPrice;
+  // JOB 23: Inverted DCF in Statement-Währung; das Risk-Adj. Target nur dann, wenn es auf den DCF zurückfällt (kein PT).
+  const dcfCcy = statementCurrency(data);
+  const targetCcy = hasPT ? data.currency : dcfCcy;
 
   // Legacy: DCF vs Reference (für Rechenweg-Anzeige)
   const dcfVsReference = hasPT
@@ -226,8 +229,8 @@ export function Section8({ data, useLLM = false }: Props) {
             </div>
             <div className="text-[11px] text-red-400 mt-0.5">
               {hasPT
-                ? `Analyst PT (${formatCurrency(analystPT, 2, data.currency)}) × (1−${totalExpectedDamage.toFixed(1)}% Risiko) = ${formatCurrency(riskAdjTarget, 2, data.currency)} — ${Math.abs(riskAdjVsPrice).toFixed(1)}% unter Kurs.`
-                : `Risikoadjustierter Fair Value (${formatCurrency(riskAdjTarget, 2, data.currency)}) unter Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}).`
+                ? `Analyst PT (${formatCurrency(analystPT, 2, data.currency)}) × (1−${totalExpectedDamage.toFixed(1)}% Risiko) = ${formatCurrency(riskAdjTarget, 2, targetCcy)} — ${Math.abs(riskAdjVsPrice).toFixed(1)}% unter Kurs.`
+                : `Risikoadjustierter Fair Value (${formatCurrency(riskAdjTarget, 2, targetCcy)}) unter Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}).`
               } Anti-Bias: Erhöhte Vorsicht geboten.
             </div>
           </div>
@@ -445,7 +448,7 @@ export function Section8({ data, useLLM = false }: Props) {
             {hasPT && (
               <>
                 <div className="text-[10px] text-muted-foreground/60 mt-1 font-mono">
-                  = {formatCurrency(analystPT, 2, data.currency)} × {(1 - totalExpectedDamage / 100).toFixed(4)} = {formatCurrency(riskAdjTarget, 2, data.currency)}
+                  = {formatCurrency(analystPT, 2, data.currency)} × {(1 - totalExpectedDamage / 100).toFixed(4)} = {formatCurrency(riskAdjTarget, 2, targetCcy)}
                 </div>
                 <div className="text-[9px] text-amber-500/60 mt-0.5">
                   Hinweis: Basis ist Analysten-Konsensus (potenziell optimistisch) — nicht der unabhängige DCF Fair Value.
@@ -454,7 +457,7 @@ export function Section8({ data, useLLM = false }: Props) {
             )}
           </div>
           <div className="text-right shrink-0">
-            <div className="text-xl font-bold font-mono tabular-nums">{formatCurrency(riskAdjTarget, 2, data.currency)}</div>
+            <div className="text-xl font-bold font-mono tabular-nums">{formatCurrency(riskAdjTarget, 2, targetCcy)}</div>
             <div className={`text-sm font-mono tabular-nums font-semibold ${
               riskAdjVsPrice >= 0 ? 'text-emerald-400' : 'text-red-400'
             }`}>
@@ -482,7 +485,7 @@ export function Section8({ data, useLLM = false }: Props) {
             </div>
             <div className="space-y-0.5">
               <div className="text-muted-foreground">Konservativer Inverted DCF</div>
-              <div className="font-mono font-semibold text-sm text-foreground/50">{formatCurrency(invertedDCF.perShare, 2, data.currency)}</div>
+              <div className="font-mono font-semibold text-sm text-foreground/50">{formatCurrency(invertedDCF.perShare, 2, dcfCcy)}</div>
               <div className="text-muted-foreground/50 font-mono">
                 {dcfVsReference.toFixed(1)}% vs Analyst PT
               </div>
@@ -524,13 +527,13 @@ export function Section8({ data, useLLM = false }: Props) {
         invertedDCF.mode === 'growth'
           ? `Growth_adj = Base Growth × (1 − D−) = ${formatPercentNoSign(baseGrowth, 1)} × (1 − ${formatPercentNoSign(invertedDCF.Dminus * 100, 1)}) = ${formatPercentNoSign(invertedDCF.gAdj, 2)} (WACC bleibt Base — nur eine Adjustierung)`
           : `WACC_adj = Base WACC + λ × D− = ${formatPercentNoSign(baseWACC)} + 0.02 × ${formatPercentNoSign(invertedDCF.Dminus * 100, 1)} = ${formatPercentNoSign(invertedDCF.waccAdj, 2)} (Growth bleibt Base — nur eine Adjustierung)`,
-        `Inverted DCF (konservativ, ${invertedDCF.mode === 'growth' ? 'Growth_adj' : 'WACC_adj'} — einzige Adjustierung) → ${formatCurrency(invertedDCF.perShare, 2, data.currency)} per share`,
+        `Inverted DCF (konservativ, ${invertedDCF.mode === 'growth' ? 'Growth_adj' : 'WACC_adj'} — einzige Adjustierung) → ${formatCurrency(invertedDCF.perShare, 2, dcfCcy)} per share`,
         hasPT
-          ? `Risk-Adjusted Target = Analyst PT × (1 − Risiko%) = ${formatCurrency(analystPT, 2, data.currency)} × ${(1 - totalExpectedDamage / 100).toFixed(4)} = ${formatCurrency(riskAdjTarget, 2, data.currency)}`
-          : `Risk-Adjusted Target = Inverted DCF = ${formatCurrency(riskAdjTarget, 2, data.currency)}`,
+          ? `Risk-Adjusted Target = Analyst PT × (1 − Risiko%) = ${formatCurrency(analystPT, 2, data.currency)} × ${(1 - totalExpectedDamage / 100).toFixed(4)} = ${formatCurrency(riskAdjTarget, 2, targetCcy)}`
+          : `Risk-Adjusted Target = Inverted DCF = ${formatCurrency(riskAdjTarget, 2, targetCcy)}`,
         belowReference
-          ? `⚠ WARNUNG: Risk-Adjusted Target (${formatCurrency(riskAdjTarget, 2, data.currency)}) = ${riskAdjVsPrice.toFixed(1)}% vs Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}) → Abschlag dominiert`
-          : `✓ Risk-Adjusted Target (${formatCurrency(riskAdjTarget, 2, data.currency)}) = +${riskAdjVsPrice.toFixed(1)}% vs Kurs → Risiko eingepreist`,
+          ? `⚠ WARNUNG: Risk-Adjusted Target (${formatCurrency(riskAdjTarget, 2, targetCcy)}) = ${riskAdjVsPrice.toFixed(1)}% vs Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}) → Abschlag dominiert`
+          : `✓ Risk-Adjusted Target (${formatCurrency(riskAdjTarget, 2, targetCcy)}) = +${riskAdjVsPrice.toFixed(1)}% vs Kurs → Risiko eingepreist`,
       ]} />
     </SectionCard>
   );
