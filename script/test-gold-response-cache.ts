@@ -89,6 +89,7 @@ for (const r of ["FMP-Quote GCUSD fehlt", "FMP-Historie GCUSD leer", "Spot-Preis
 check("Route wählt TTL nach partial", srcAll.includes("value.analysis.partial ? GOLD_ANALYSIS_PARTIAL_TTL_MS : GOLD_ANALYSIS_CACHE_TTL_MS"));
 const dash = readFileSync(new URL("../client/src/pages/GoldDashboard.tsx", import.meta.url), "utf8");
 check("Aktualisieren-Button sendet ?fresh=1", dash.includes('onClick={() => { freshRef.current = true; refetch(); }}') && dash.includes('fresh ? "/api/analyze-gold?fresh=1" : "/api/analyze-gold"'));
+check("UI-Hinweis bei partial", dash.includes("{data.partial && (") && dash.includes("Teilweise Ersatzwerte: {(data.partialReasons ?? []).join(\" · \")"));
 const schema = readFileSync(new URL("../shared/gold-schema.ts", import.meta.url), "utf8");
 check("Schema: partial/partialReasons optional", schema.includes("partial?: true;") && schema.includes("partialReasons?: string[];"));
 
