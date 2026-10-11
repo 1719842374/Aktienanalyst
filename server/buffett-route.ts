@@ -192,10 +192,14 @@ async function buildUnitedStates(): Promise<{
   if (listed.length < 500) throw new Error("Wilshire-Quote leer");
   const spliced = spliceAtListedStart(early, listed);
   const carried = extended && proxy
-    ? ` Fehlt der Wilshire-Schluss, läuft der Kurs mit der Tagesrendite des ${proxy.name} bis zur letzten US-Sitzung weiter.`
+    ? ` Fehlt der Wilshire-Schluss, läuft der Kurs mit der Tagesrendite des ${proxy.name} bis zur letzten US-Sitzung weiter (höchstens 30 Tage, Punkte als „fortgeschrieben“ markiert).`
     : "";
+  // #245: fortgeschriebene Punkte tragen das Proxy-Symbol
+  const proxyDates = new Set(bars.filter(bar => (bar as { proxy?: true }).proxy).map(bar => bar.date));
+  const points = withTrend(spliced).map(point =>
+    proxy && proxyDates.has(point.date) ? { ...point, proxy: proxy.id } : point);
   return {
-    points: withTrend(spliced),
+    points,
     note: `Der Zähler ist der Wilshire 5000. Ein Indexpunkt wird mit 1,05 Mrd. $ Kapitalisierung angesetzt und durch das nominale BIP geteilt. Bis 1950 zurück wird die Quote der Financial Accounts auf den ersten Indexwert skaliert. Die Trendlinie und die Bänder von einer und zwei Standardabweichungen gelten für die gesamte Reihe. Die Zeitfenster zeigen davon nur einen Ausschnitt.${carried}`,
     sources: extended && proxy
       ? [...US_SOURCES, { id: proxy.id, role: `${proxy.name}, Tagesrendite nach dem letzten Wilshire-Schluss` }]

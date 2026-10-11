@@ -200,6 +200,8 @@ export interface TrendPoint {
   minus2: number;
   premiumPct: number;
   zScore: number;
+  /** Proxy-Symbol (z. B. VTI, ^DWCF), wenn der Punkt fortgeschrieben ist; fehlt sonst. */
+  proxy?: string;
 }
 
 const YEAR_MS = 365.25 * 24 * 60 * 60 * 1000;
@@ -285,7 +287,12 @@ export function fitLogTrend(points: RatioObs[]): TrendModel | null {
 export interface CloseBar {
   date: string;
   close: number;
+  /** gesetzt, wenn der Schluss per Proxy-Rendite fortgeschrieben wurde */
+  proxy?: true;
 }
+
+/** Fortschreibung höchstens 30 Kalendertage nach dem letzten Primärschluss; danach endet die Linie. */
+export const ROLL_FORWARD_MAX_DAYS = 30;
 
 /**
  * Schreibt die Primärreihe bis zur letzten Proxy-Sitzung fort.
@@ -293,7 +300,7 @@ export interface CloseBar {
  * Proxy-Schluss an oder vor diesem Tag skaliert. Tage ohne Proxy-Schluss,
  * also Wochenenden, bleiben leer.
  */
-export function rollClosesForward(primary: CloseBar[], proxy: CloseBar[]): CloseBar[] {
+export function rollClosesForward(primary: CloseBar[], proxy: CloseBar[], maxDays = ROLL_FORWARD_MAX_DAYS): CloseBar[] {
   const base = primary
     .filter(bar => Number.isFinite(bar.close) && bar.close > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -309,13 +316,15 @@ export function rollClosesForward(primary: CloseBar[], proxy: CloseBar[]): Close
   }
   if (!anchor) return base;
   const scaleFrom = anchor;
-  const extra = tail.filter(bar => bar.date > last.date);
+  const limit = Date.parse(`${last.date}T00:00:00Z`) + maxDays * 86_400_000;
+  const extra = tail.filter(bar => bar.date > last.date && Date.parse(`${bar.date}T00:00:00Z`) <= limit);
   if (extra.length === 0) return base;
   return [
     ...base,
     ...extra.map(bar => ({
       date: bar.date,
       close: last.close * (bar.close / scaleFrom.close),
+      proxy: true as const,
     })),
   ];
 }
