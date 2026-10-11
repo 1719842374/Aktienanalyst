@@ -359,3 +359,125 @@ Im Peer-Vergleich (Sektion 7 / `PeerComparison.tsx`) funktioniert das manuelle H
 
 **Aufwand:** 1–2 Tage (Daten-Fetch, Chart-Overlay, Scoring-Verdrahtung, Tests mit ORCL).
 **Priorität:** Mittel–Hoch (starker Early-Warning-Indikator für Kreditrisiken).
+
+### NEU (11.10.2026) — Volle Adaptivität im Aktien-Scoring (Philip-Vorschlag)
+
+> Quelle: Philip, 11.10.2026 22:37 (Europe/Berlin), Inhalt wörtlich übernommen. Hier ist er nur strukturiert, die Formeln sind unverändert.
+
+**Ziel:** Der Score soll generisch und vollständig adaptiv sein, ohne feste Schwellen. Dazu kommen relative Stärke für alle Signale, dynamische Basisgewichte und ein kalibrierter Dämpfungsfaktor. Low-Beta ist kein automatischer Kaufgrund. Das Fazit kommt aus einem gewichteten Score statt aus einer Zählung.
+
+**NVO-Erwartung:** **negativ (rot).**
+
+#### 1. Relative Stärke für alle Signale (z-Score / Perzentil)
+
+```ts
+interface Signal {
+  id: string;
+  direction: 1 | -1 | 0;
+  strength: number; // 0–1
+}
+
+function toStrength(z: number): number {
+  return Math.min(1, Math.abs(z) / 2.5);
+}
+
+function technicalStrength(t: { deathCross: number; belowMA200: number; macdNeg: number; rslWeak: number }): Signal {
+  const raw = t.deathCross * 0.4 + t.belowMA200 * 0.3 + t.macdNeg * 0.2 + t.rslWeak * 0.1;
+  return { id: "technical", direction: raw > 0.5 ? -1 : 1, strength: Math.min(1, raw) };
+}
+
+function moatStrength(moat: number): Signal {
+  const z = (moat - 2.5) / 1.5;
+  return { id: "moat", direction: z > 0 ? 1 : -1, strength: toStrength(z) };
+}
+```
+
+**Datenbedarf:** historische Verteilung von RSL, MA-Lage und Moat pro Aktie bzw. Sektor. Fallback ist ein rollierendes Fenster von 2–5 Jahren.
+
+#### 2. Basisgewichte aus relativer Stärke
+
+Keine festen Gewichte wie 1,6 / 1,4 mehr. Das Gewicht liegt etwa bei 0,8–1,5.
+
+```ts
+function deriveBaseWeights(signals: Signal[]): Record<string, number> {
+  const weights: Record<string, number> = {};
+  for (const s of signals) weights[s.id] = 0.8 + s.strength * 0.7;
+  return weights;
+}
+```
+
+#### 3. Dämpfungsfaktor kalibrieren statt fest 0,45
+
+```ts
+function calibrateDamping(historicalCases: { techStrength: number; subsequentReturn: number }[]): number {
+  // Grid f = 0.2 .. 0.6, step 0.05 → das f mit maximaler Korrelation
+  // (gedämpfte Valuation vs. subsequentReturn) gewinnt.
+  let best = 0.2, bestCorr = -Infinity;
+  for (let f = 0.2; f <= 0.6 + 1e-9; f += 0.05) {
+    const corr = correlationFor(historicalCases, f); // Hilfsfunktion, offline
+    if (corr > bestCorr) { bestCorr = corr; best = f; }
+  }
+  return best;
+}
+
+// online:
+const effectiveValuation = baseValuation * (1 - techStrength * dampingFactor);
+```
+
+Zum Start gilt ein fester Wert von 0,35–0,45. Die Kalibrierung läuft parallel (Offline-Skript plus Config).
+
+#### 4. Low-Beta relativ
+
+```ts
+function lowBetaSignal(beta: number, techStrength: number): Signal | null {
+  if (!(beta < 0.7)) return null;
+  return { id: "lowBeta", direction: techStrength > 0.6 ? -1 : 1, strength: 0.3 };
+}
+```
+
+#### 5. Gesamtfluss
+
+```ts
+function computeAdaptiveScore(signals: Signal[]): number {
+  const baseWeights = deriveBaseWeights(signals);
+  const tech = signals.find(s => s.id === "technical");
+  let net = 0, max = 0;
+  for (const s of signals) {
+    let w = baseWeights[s.id];
+    if (s.id === "valuation" && tech && tech.strength > 0.5) w *= (1 - tech.strength * 0.4);
+    net += s.direction * s.strength * w;
+    max += w;
+  }
+  return max > 0 ? net / max : 0;
+}
+```
+
+#### 6. Umsetzungsschritte
+
+| Schritt | Datei | Aufwand |
+|---|---|---|
+| Relative Stärke für Technical & Moat | `server/scoring-integration.ts` oder neu `adaptive-signals.ts` | mittel |
+| Basisgewichte dynamisch | neu | niedrig |
+| Dämpfung kalibrieren | Offline-Skript + Config | mittel |
+| Low-Beta relativ | Summary / Scoring | niedrig |
+| Fazit aus gewichtetem Score statt Zählung | `client/src/components/sections/SummarySection.tsx` | mittel |
+| Tests: NVO + weitere | `script/` | mittel |
+
+#### 7. NVO qualitativ
+
+- Die Technical-Stärke ist hoch. Damit steigt ihr Gewicht, und die Valuation wird gedämpft.
+- Moat ist negativ und bekommt ein eigenes Gewicht.
+- Low-Beta gibt kein Plus.
+- Der Gesamtscore fällt defensiver aus als die 9/6-Zählung. Erwartung: **negativ (rot)**.
+
+**Fazit (Philip):** Relative Stärke, dynamische Basisgewichte und ein kalibrierter Dämpfungsfaktor machen den Score vollständig adaptiv und generisch, ohne feste Schwellen. Low-Beta ist kein automatischer Kaufgrund.
+
+#### Bezug zum Ist-Stand (Befunde W5, main `4d4dd00`)
+
+- **Gesamtscore:** Technik wirkt nur als weiche Komponente, maximal ±0,5 (`technicalComponentOf` in `shared/bias-fixes.ts`). Das entspricht `fertig_WORK_BIAS_FIXES_INVERSE_DCF.md` §6 („Technical analysis remains a separate soft component“). NVO kam so auf 8,17 ATTRAKTIV, die Technik kostete nur −0,5.
+- **PDF:** `server/pdf-export.ts` `buildFazit` hatte eine eigene, veraltete Fazit-Logik: anderer DCF ohne gehärteten Inverse-DCF, andere Schwellen, Max-Entry `/4` statt `/3`. Daher stand im PDF für NVO STARK UNATTRAKTIV, in der App ATTRAKTIV.
+- **Doppelzählung:** RSL und Technik zählten im Signal-Score (`client/src/lib/fazit-signal.ts`) zusätzlich je ±1, also doppelt neben der ±0,5-Komponente.
+- **Low-Beta-Plus:** Beta < 0,8 ergibt pauschal einen Positivpunkt („Niedrige Volatilität – defensiv“), auch bei schwacher Technik. Punkt 4 oben ersetzt das.
+- **W5** (Branch `werki/w5-ta-weight`: Technik weich im Signal-Score, PDF = App-Logik) ist **zurückgestellt (ON HOLD)**. Mit W5 käme NVO auf ATTRAKTIV und nicht auf negativ, das widerspricht der Erwartung oben. Die Umsetzung folgt diesem Abschnitt.
+
+**Priorität:** Hoch (Konsistenz von Fazit, App und PDF, NVO-Erwartung).
