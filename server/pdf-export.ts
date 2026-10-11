@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core';
 import { sumUpsideGb } from '../shared/bias-fixes';
 import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
 import { reverseDcfFromAnalysis, isEtfOrFund } from '../shared/conflict-matrix';
+import { creditStressHint, type CreditStressSignal } from '../shared/credit';
 
 // ===== Formatting helpers =====
 function f(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? v.toFixed(d) : "—"; }
@@ -252,7 +253,7 @@ Nur JSON, keine Erklärung. Professioneller Ton, keine Floskeln.`;
 }
 
 // ===== Generate HTML =====
-export async function generateAnalysisHTML(rawData: any): Promise<string> {
+export async function generateAnalysisHTML(rawData: any, opts: { creditStress?: CreditStressSignal | null } = {}): Promise<string> {
   const data = normalizeData(rawData);
   const sp = data.sectorProfile;
   const wS = sp?.waccScenarios;
@@ -262,6 +263,8 @@ export async function generateAnalysisHTML(rawData: any): Promise<string> {
   const bal = fs.balanceSheet || {};
   const cf = fs.cashFlow || {};
   const fazit = buildFazit(data);
+  // Kreditmarkt-Hinweis (W1): nur Text, zählt nicht in pos/neg → Verdict unverändert.
+  const creditHint = creditStressHint(opts.creditStress);
   // Reverse DCF: same formula as the UI and the Konfliktmatrix (one g* in the whole PDF)
   const rdcf = reverseDcfFromAnalysis(rawData);
   const nd = (data.totalDebt || 0) - (data.cashEquivalents || 0);
@@ -597,6 +600,7 @@ ${conflictMatrixHtmlForAnalysis(rawData)}
   <div class="verdict-sub">${esc(data.companyName)} (${data.ticker}) — ${fazit.pos.length} positive, ${fazit.neg.length} negative, ${fazit.neut.length} neutrale Faktoren</div>
 </div>
 
+${creditHint ? `<div class="warn" data-testid="pdf-credit-stress">⚠ ${esc(creditHint)}</div>` : ''}
 <div class="row"><span class="row-label">Signal-Score</span><span class="row-val">${fazit.pos.length} positiv / ${fazit.neg.length} negativ / ${fazit.neut.length} neutral = ${fazit.verdict}</span></div>
 
 ${narrative.recommendation ? `

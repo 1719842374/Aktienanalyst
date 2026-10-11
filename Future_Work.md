@@ -359,3 +359,22 @@ Im Peer-Vergleich (Sektion 7 / `PeerComparison.tsx`) funktioniert das manuelle H
 
 **Aufwand:** 1–2 Tage (Daten-Fetch, Chart-Overlay, Scoring-Verdrahtung, Tests mit ORCL).
 **Priorität:** Mittel–Hoch (starker Early-Warning-Indikator für Kreditrisiken).
+
+**Präzisierung nach Quellenprüfung (JOB W1, 11.10.2026)** — Belege: Live-Requests von der Box, Details im PR zu W1
+- **Sofort umgesetzt (Option b): aggregierter FRED-Spread.** `BAA10Y` (Moody's Baa − 10Y Treasury, ist bereits ein Spread, es wird keine Treasury abgezogen). Abruf über `fredgraph.csv` ohne Key, Historie ab 02.01.1986, täglich. Chip „Markt-Spread Baa“ in Sektion 12, standardmäßig aus, eigene rechte Achse in % (Tooltip zusätzlich in bp, mit FRED-Datum). Beschriftung: „Markt-Spread Baa (alle US-Unternehmen) – keine Anleihe von &lt;Ticker&gt;“. Datenfluss: `TechnicalChart.tsx` → `GET /api/credit-spread/market` → `server/credit-route.ts` (12h-Cache) → FRED. Logik in `shared/credit.ts`.
+- **Kein Score-Einfluss.** Ein pauschaler Abzug über BAA10Y ist ausgeschlossen (NO-GO), weil der Wert für alle Titel gleich ist. Es gibt nur einen Fazit-Hinweis „Kreditmarkt-Stress steigt“ in der App (Sektion 20) und im PDF. Er erscheint, wenn die aktuelle 3M-Änderung (63 Beobachtungen) über P80 aller rollierenden 3M-Änderungen der letzten 20 Jahre liegt und positiv ist. Der Hinweis zählt nicht in die positiven oder negativen Faktoren. Test: `script/test-credit-overlay.ts`.
+- **Einzelanleihe je Emittent: derzeit nicht frei machbar.** In Overlay und Tooltip steht: „Unternehmensspezifische Anleiherendite: n/a – keine freie Kursquelle (TRACE/Bloomberg kostenpflichtig)“.
+  - Mapping Ticker→Emittent→Anleihen funktioniert dynamisch über **OpenFIGI** `/v3/search` (`marketSecDes: Corp`, ohne Key). Treffer: ORCL, MSFT 87, KO 100+, NOVO NORDISK 44, SAP SE 61. Die Antwort enthält **keine ISIN** (CUSIP/ISIN-Lizenz).
+  - Kurse und Renditen: **FINRA TRACE** liefert ohne Firm-Credential HTTP 401. Historic TRACE kostet 2.000 $ Setup plus 2.000 $ pro Jahr pro Datensatz, mit 6 Monaten Verzögerung (FINRA Regulatory Notices 13-09/17-23, TRACE-FAQ).
+  - **FMP** `company-notes` und `search-isin` liefern keine Preis- oder Renditehistorie.
+  - **Yahoo**: Suche per ISIN ergibt 0 Treffer.
+  - **Börse Frankfurt** hat keine dokumentierte öffentliche API, Scraping-Erlaubnis nicht belegt. **Börse Stuttgart** antwortet mit 403.
+  - **CDS** sind nicht frei als Zeitreihe verfügbar (ICE zeigt nur den Tageswert öffentlich, Markit/S&P sind kostenpflichtig).
+- **Erst mit bezahlter Kursquelle** (TRACE-Vendor, Deutsche-Börse-Datenlizenz, Cbonds, EODHD Bonds o. ä.):
+  1. OpenFIGI liefert die Anleihen des Emittenten. Filter: Senior Unsecured, fester Kupon, Restlaufzeit 3–10 Jahre, Währung = Emittentenwährung.
+  2. Die ISIN kommt aus der Kursquelle.
+  3. Aus dem Kurs wird die Rendite bis Fälligkeit (YTM) berechnet.
+  4. Davon wird die Staatsanleihe gleicher Laufzeit und Währung abgezogen: USD aus FRED `DGS1…DGS30` (oder FMP `/stable/treasury-rates`), EUR aus der Bundesbank-SDMX-Zinsstruktur (live HTTP 200; der EZB-YC-Endpunkt lief von der Box in einen Timeout). Ergebnis ist der Spread in bp.
+  5. Tooltip: Datum, Rendite, Spread in bp, ISIN, Quelle.
+  6. Ohne Kurs gilt n/a, es wird kein Ersatzwert eingesetzt, und der Score bleibt unverändert. Erst dann kann ein emittenteneigenes Scoring (z-Score/3M-Anstieg, Gate `CREDIT_SPREAD_STRESS`) entschieden werden.
+- Die ICE-BofA-Klassen-OAS auf FRED (`BAMLC0A1CAAA` … `BAMLH0A0HYM2`) gibt es nur **rollierend für 3 Jahre**. Außerdem fehlt eine freie Agentur-Rating-Quelle für das Mapping (FMP `ratings-snapshot` ist ein Aktien-Score, kein Kreditrating). Deshalb ist das in W1 nicht umgesetzt.

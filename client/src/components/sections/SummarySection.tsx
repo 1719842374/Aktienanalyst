@@ -12,6 +12,8 @@ import { buildBiasDecision, isNegativeCatalyst } from "../../../../shared/bias-f
 import { useMemo } from "react";
 import { buildConflictMatrix, conflictInputsFromAnalysis, isEtfOrFund } from "../../lib/conflictMatrix";
 import { ConflictMatrixPanel } from "./ConflictMatrixPanel";
+import { useQuery } from "@tanstack/react-query";
+import { creditStressHint, type CreditSpreadResponse } from "../../../../shared/credit";
 
 interface Props { data: StockAnalysis; sharedMonteCarlo?: GBMMonteCarloResult | null }
 
@@ -28,6 +30,18 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
 
   const conservativeDCF = useMemo(() => calculateFCFFDCF(baseParams), [baseParams]);
   const bias = useMemo(() => buildBiasDecision(data), [data]);
+  // Fazit-Hinweis Kreditmarkt (JOB W1): FRED BAA10Y, gleicher Cache-Key wie das Overlay in Sektion 12.
+  // Nur Text unter den Faktoren — ändert weder Score noch Rating noch Signal-Zählung.
+  const creditQuery = useQuery<CreditSpreadResponse>({
+    queryKey: ["credit-spread", "market"],
+    staleTime: 12 * 60 * 60 * 1000,
+    queryFn: async () => {
+      const res = await fetch("/api/credit-spread/market");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  });
+  const creditHint = creditStressHint(creditQuery.data?.stress);
   const decisionPerShare = Number.isFinite(bias.decisionPerShare) ? bias.decisionPerShare : conservativeDCF.perShare;
 
   const optimisticDCF = useMemo(() => calculateFCFFDCF({
@@ -458,6 +472,12 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+
+            {creditHint && (
+              <div className="mb-2 text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5" role="status" data-testid="fazit-credit-stress">
+                {"\u26a0"} {creditHint}
               </div>
             )}
 

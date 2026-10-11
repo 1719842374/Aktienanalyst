@@ -17,6 +17,7 @@ import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useDividendHistory } from "@/lib/useDividendHistory";
 import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
+import { creditOverlaySeries, marketSpreadLabel, ISSUER_BOND_NA_NOTE, type CreditOverlayPoint, type CreditSpreadResponse } from "@shared/credit";
 
 interface Props { data: StockAnalysis; }
 
@@ -151,6 +152,20 @@ export function TechnicalChart({ data }: Props) {
   // "on" from the previous ticker leaked into the next one. Reset per ticker → default always off.
   useEffect(() => { setShowDividend(false); }, [data.ticker]);
   const dividendQuery = useDividendHistory(data.ticker, showDividend);
+
+  // Credit overlay (JOB W1): Markt-Spread Baa (FRED BAA10Y), nur geladen solange der Chip an ist. Kein Score-Einfluss.
+  const [showCredit, setShowCredit] = useState(false);
+  useEffect(() => { setShowCredit(false); }, [data.ticker]);
+  const creditQuery = useQuery<CreditSpreadResponse>({
+    queryKey: ["credit-spread", "market"],
+    enabled: showCredit,
+    staleTime: 12 * 60 * 60 * 1000,
+    queryFn: async () => {
+      const res = await fetch("/api/credit-spread/market");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  });
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -350,6 +365,12 @@ export function TechnicalChart({ data }: Props) {
   // Currency guard: dividend currency (stated by FMP/Yahoo) vs analysis price currency. Mismatch → n/a, no FX.
   const dividendCcy = dividendCurrencyCheck(dividendQuery.data?.currency, data.currency);
   const dividendOverlay = dividendCcy !== "mismatch" && dividendSeries && dividendSeries.points.some(p => p.yieldPct != null) ? dividendSeries : null;
+  const creditSeries = useMemo<CreditOverlayPoint[] | null>(
+    () => (showCredit && creditQuery.data && creditQuery.data.points.length > 0 ? creditOverlaySeries(aBuilt.points, creditQuery.data.points) : null),
+    [showCredit, creditQuery.data, aBuilt.points],
+  );
+  const creditOverlay = creditSeries && creditSeries.some(p => p.spreadPct != null) ? creditSeries : null;
+  const creditLabel = marketSpreadLabel(data.ticker);
 
   const formatDate = (date: string) => {
     const p = date.split("-");
@@ -561,6 +582,14 @@ export function TechnicalChart({ data }: Props) {
               {showDividend ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               Div. Yield
             </button>
+            <button type="button" onClick={() => setShowCredit(v => !v)} data-testid="button-credit" aria-pressed={showCredit}
+              title={`${creditLabel}. ${ISSUER_BOND_NA_NOTE}`}
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showCredit ? "border-rose-500 text-rose-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showCredit ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Markt-Spread Baa
+            </button>
             <button type="button" onClick={() => { setMeasureMode(v => !v); setMeasurePoints([]); }}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 measureMode ? "border-amber-500 bg-amber-500/10 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
@@ -719,6 +748,8 @@ export function TechnicalChart({ data }: Props) {
                 measurePoints={measurePoints}
                 measurement={measurement}
                 dividend={dividendOverlay}
+                credit={creditOverlay}
+                creditLabel={creditLabel}
               />
             </div>
             {narrow && showVolume && (
@@ -758,6 +789,8 @@ export function TechnicalChart({ data }: Props) {
               macdTestId="chart-macd"
               rsiTestId="chart-rsi"
               dividend={dividendOverlay}
+              credit={creditOverlay}
+              creditLabel={creditLabel}
               measureMode={measureMode}
               onPlotClick={handleChartClick}
               measurePoints={measurePoints}
@@ -820,6 +853,17 @@ export function TechnicalChart({ data }: Props) {
           formatDateFull={formatDateFull}
           currencyCheck={dividendCcy}
           priceCurrency={data.currency}
+        />
+      )}
+
+      {showCredit && showKursA && !chartEmpty && (
+        <CreditOverlayStatus
+          series={creditOverlay}
+          response={creditQuery.data}
+          loading={creditQuery.isLoading}
+          failed={creditQuery.isError}
+          label={creditLabel}
+          formatDateFull={formatDateFull}
         />
       )}
 
@@ -953,7 +997,7 @@ function WindowDates({
 function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
-  onPlotClick, measurePoints, measurement, dividend,
+  onPlotClick, measurePoints, measurement, dividend, credit, creditLabel,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -970,10 +1014,14 @@ function PricePane({
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
   dividend?: DividendOverlaySeries | null;
+  credit?: CreditOverlayPoint[] | null;
+  creditLabel?: string;
 }) {
   const narrow = useIsNarrow();
   const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger);
-  const chartData = useMemo(() => withDividendOverlay(points, dividend), [points, dividend]);
+  const chartData = useMemo(() => withCreditOverlay(withDividendOverlay(points, dividend), credit), [points, dividend, credit]);
+  const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
+  const rightAxis = !!dividend || !!credit;
   const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0)) : 0;
   const tick = axisTick(narrow, dense ? 8 : 9, "var(--muted-foreground)");
   const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(points.length / (dense ? 5 : 8))));
@@ -981,7 +1029,7 @@ function PricePane({
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
         data={chartData}
-        margin={dense ? { top: 2, right: dividend ? 0 : 10, left: 0, bottom: 0 } : { top: 5, right: dividend ? 0 : 10, left: 0, bottom: 5 }}
+        margin={dense ? { top: 2, right: rightAxis ? 0 : 10, left: 0, bottom: 0 } : { top: 5, right: rightAxis ? 0 : 10, left: 0, bottom: 5 }}
         onClick={onPlotClick}
       >
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
@@ -998,6 +1046,19 @@ function PricePane({
             tick={{ fontSize: narrow ? 10 : 9, fill: DIV_COLOR }}
             tickFormatter={(v: number) => `${v.toFixed(v < 10 ? 1 : 0)}%`}
             axisLine={{ stroke: DIV_COLOR }}
+            tickLine={false}
+            tickCount={narrow ? 4 : 5}
+          />
+        )}
+        {credit && (
+          <YAxis
+            yAxisId="credit"
+            orientation="right"
+            domain={[0, Math.max(1, Math.ceil(creditMax * 1.15))]}
+            width={CREDIT_AXIS_W}
+            tick={{ fontSize: narrow ? 10 : 9, fill: CREDIT_COLOR }}
+            tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+            axisLine={{ stroke: CREDIT_COLOR }}
             tickLine={false}
             tickCount={narrow ? 4 : 5}
           />
@@ -1032,6 +1093,7 @@ function PricePane({
                 </>
               )}
               {dividend && <DividendTooltipRows p={dv} formatDateFull={formatDateFull} />}
+              {credit && <CreditTooltipRows p={dp as WindowPoint & CreditFields} label={creditLabel} formatDateFull={formatDateFull} />}
               {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
@@ -1083,6 +1145,9 @@ function PricePane({
               return <circle key={props.key} cx={props.cx} cy={props.cy} r={2.5} fill={pl._divSpecial?.length ? "#a855f7" : "#f59e0b"} stroke="none" />;
             }}
           />
+        )}
+        {credit && (
+          <Line yAxisId="credit" type="stepAfter" dataKey="_credit" name="Markt-Spread Baa" stroke={CREDIT_COLOR} strokeWidth={1.5} strokeDasharray="5 2" dot={false} connectNulls={false} isAnimationActive={false} />
         )}
         {showSignals && signals.map((s, i) => (
           <ReferenceLine key={`sig-${s.date}-${i}`} yAxisId="price" x={s.date} stroke={s.type === "buy" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={narrow ? 1 : 0.8} opacity={0.5} />
@@ -1206,7 +1271,7 @@ function RsiPane({
 function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
-  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend,
+  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel,
 }: {
   label: string;
   labelClassName: string;
@@ -1231,6 +1296,8 @@ function BandStack({
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
   dividend?: DividendOverlaySeries | null;
+  credit?: CreditOverlayPoint[] | null;
+  creditLabel?: string;
 }) {
   const narrow = useIsNarrow();
   const empty = series.points.length === 0;
@@ -1262,6 +1329,8 @@ function BandStack({
               measurePoints={measurePoints}
               measurement={measurement}
               dividend={dividend}
+              credit={credit}
+              creditLabel={creditLabel}
             />
           )}
         </div>
@@ -1361,6 +1430,60 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
       {series.correctedBars > 0 && <> · <span className="text-amber-500">{series.correctedBars} Punkt(e) geglättet</span> (Ex-Tag-Verschiebung, Rohwert im Tooltip)</>}
       {series.specialExDates.length > 0 && <> · <span className="text-violet-400">Sonderdividende {series.specialExDates.map(formatDateFull).join(", ")}</span></>}
       {" "}· KPI „Div. Yield“ in Sektion 1 zeigt denselben TTM-Wert (GJ-Wert von FMP als Zusatzzeile).
+    </div>
+  );
+}
+
+// ─── Credit overlay helpers (JOB W1) ───
+
+const CREDIT_COLOR = "#f43f5e";
+const CREDIT_AXIS_W = 40;
+
+type CreditFields = { _credit?: number | null; _creditDate?: string | null };
+
+/** Adds the Baa market spread to each price point by date. No series → points unchanged. */
+export function withCreditOverlay<T extends WindowPoint>(points: T[], series: CreditOverlayPoint[] | null | undefined): Array<T & CreditFields> {
+  if (!series) return points;
+  const byDate = new Map(series.map(p => [p.date, p]));
+  return points.map(pt => {
+    const c = byDate.get(pt.date);
+    return { ...pt, _credit: c?.spreadPct ?? null, _creditDate: c?.spreadDate ?? null };
+  });
+}
+
+function CreditTooltipRows({ p, label, formatDateFull }: { p: CreditFields; label?: string; formatDateFull: (d: string) => string }) {
+  return (
+    <div className="mt-1 pt-1 border-t border-border max-w-[240px] whitespace-normal">
+      <div className="flex justify-between gap-3">
+        <span style={{ color: CREDIT_COLOR }}>Markt-Spread Baa</span>
+        <span className="font-mono">{p._credit != null ? `${p._credit.toFixed(2)}% (${Math.round(p._credit * 100)} bp)` : "n/a"}</span>
+      </div>
+      {p._creditDate && <div className="text-muted-foreground">FRED-Datum {formatDateFull(p._creditDate)} · FRED BAA10Y</div>}
+      {label && <div className="text-muted-foreground">{label}</div>}
+      <div className="text-muted-foreground">{ISSUER_BOND_NA_NOTE}</div>
+    </div>
+  );
+}
+
+function CreditOverlayStatus({ series, response, loading, failed, label, formatDateFull }: {
+  series: CreditOverlayPoint[] | null;
+  response: CreditSpreadResponse | undefined;
+  loading: boolean;
+  failed: boolean;
+  label: string;
+  formatDateFull: (d: string) => string;
+}) {
+  const base = "mt-1 text-[10px] text-muted-foreground break-words";
+  if (loading) return <div className={base} data-testid="credit-overlay-loading">Markt-Spread Baa: FRED wird geladen …</div>;
+  if (failed || !response || response.points.length === 0) return <div className={base} data-testid="credit-overlay-empty">Markt-Spread Baa: n/a — FRED BAA10Y nicht erreichbar. {ISSUER_BOND_NA_NOTE}</div>;
+  if (!series) return <div className={base} data-testid="credit-overlay-empty">Markt-Spread Baa: n/a — FRED-Historie deckt dieses Fenster nicht ab. {ISSUER_BOND_NA_NOTE}</div>;
+  const last = [...series].reverse().find(p => p.spreadPct != null);
+  return (
+    <div className={base} data-testid="credit-overlay-status">
+      <span style={{ color: CREDIT_COLOR }} className="font-medium">{label}</span> (rechte Achse, %)
+      {last && last.spreadDate && <> · aktuell <span className="font-mono">{last.spreadPct!.toFixed(2)}% ({Math.round(last.spreadPct! * 100)} bp)</span> per {formatDateFull(last.spreadDate)}</>}
+      {" "}· Quelle <a className="underline" href={response.sourceUrl} target="_blank" rel="noreferrer">{response.source}</a> · kein Score-Einfluss
+      {" "}· {ISSUER_BOND_NA_NOTE}
     </div>
   );
 }
