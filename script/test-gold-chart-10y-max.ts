@@ -86,6 +86,9 @@ console.log("\nClient: Indikatoren auf voller Reihe, dann Fenster");
   const noteMax = goldRangeNote("Max", filterGoldRange(long.points, "Max", today), "Yahoo GC=F (Futures)", labels) ?? "";
   check("Max-Hinweis nennt Start, Jahre, Quelle", noteMax.startsWith("Max = ab 2000-08-30 (26,1 J, Yahoo GC=F (Futures))"), noteMax);
   check("Max-Hinweis nennt spaete Overlays", noteMax.includes("DXY ab 2006") && noteMax.includes("Real10Y ab 2003"), noteMax);
+  check("Max-Hinweis nennt auch M2s Startjahr (beginnt mit Gold)", noteMax.includes("M2 YoY ab 2000"), noteMax);
+  const w10note = goldRangeNote("10Y", filterGoldRange(long.points, "10Y", today), "FMP GCUSD", labels) ?? "";
+  check("10Y nennt weiter nur spaete Reihen (kein M2-Rauschen)", !w10note.includes("M2 YoY"), w10note);
   const short = filterGoldRange(long.points, "10Y", today).filter(p => p.date >= "2020-01-01");
   check("10Y kuerzer -> ehrlich 'nur X J'", (goldRangeNote("10Y", short, "FMP GCUSD", labels) ?? "").startsWith("10Y: nur 6,8 J"), goldRangeNote("10Y", short, "FMP GCUSD", labels));
   check("kurze Fenster ohne Hinweis", goldRangeNote("5Y", w10, null, labels) === null);
@@ -100,7 +103,10 @@ console.log("\nScore/Gates unberuehrt");
   const analyze = src.slice(src.indexOf('app.get("/api/analyze-gold"'), histStart);
   check("analyze-gold-Handler nutzt keine 10Y/Max-Helfer", !/historyWindows|mergeGoldRows|pickLongerSource|buildGoldChartHistoryPoints|seriesCoverage/.test(analyze));
   check("analyze-gold bleibt bei 10 Jahren", analyze.includes("10 * 365.25 * 24 * 60 * 60 * 1000"));
-  check("neue Route nutzt das FRED-Memo (#223)", src.slice(histStart).includes("createFredHistoryMemo(fetchFREDSeriesHistory)"));
+  // #225-Follow-up: die Chart-Route laedt jede FRED-Serie genau einmal, aber nicht blockierend (execFile statt execSync).
+  const hist = src.slice(histStart);
+  check("Chart-Route laedt FRED async, je Serie einmal", hist.includes("fredKeys.map(id => fetchFREDSeriesHistoryAsync(id, GOLD_HISTORY_FRED_FLOOR))") && !/fetchFREDSeriesHistory\(|execSync/.test(hist));
+  check("analyze-gold behaelt das FRED-Memo (#223)", analyze.includes("createFredHistoryMemo(fetchFREDSeriesHistory)"));
 }
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
