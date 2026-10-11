@@ -61,7 +61,7 @@ function buildFazit(rawData: any, data: any) {
       adaptiveScore: s.adaptive.score as number | null, dampened: s.adaptive.dampened,
       overallScore: m.bias.overallScore as number | null, overallRating: m.bias.overallRating as string,
       technicalComponent: m.bias.technicalComponent as number | null,
-      fazitSatz: s.fazitSatz,
+      fazitSatz: s.fazitSatz, dampingReason: s.dampingReason,
       konsDCF: Number.isFinite(m.bias.decisionPerShare) ? m.bias.decisionPerShare : m.conservativeDCF.perShare,
       worstCase: m.worstCase, crvCons: m.crvConservative, raCrvCons: m.raCrvCons, dcfBeiCRV3: m.dcfBeiCRV3,
       totalGB: sumUpsideGb(data.catalysts) || 0, totalExpDmg: m.totalExpDmg, allBuy, ptUp,
@@ -71,7 +71,7 @@ function buildFazit(rawData: any, data: any) {
     const totalExpDmg = data.risks?.reduce((s: number, r: any) => s + (r.expectedDamage || 0), 0) || 0;
     return {
       available: false, pos: [] as string[], neg: [] as string[], neut: [] as string[], score: 0, verdict: 'n/a',
-      adaptiveScore: null, dampened: false, overallScore: null, overallRating: 'n/a', technicalComponent: null, fazitSatz: '',
+      adaptiveScore: null, dampened: false, overallScore: null, overallRating: 'n/a', technicalComponent: null, fazitSatz: '', dampingReason: null as string | null,
       konsDCF: NaN, worstCase: NaN, crvCons: NaN, raCrvCons: NaN, dcfBeiCRV3: NaN,
       totalGB: sumUpsideGb(data.catalysts) || 0, totalExpDmg, allBuy, ptUp,
     };
@@ -569,6 +569,7 @@ ${conflictMatrixHtmlForAnalysis(rawData)}
   <div class="verdict-sub" data-testid="pdf-gesamtscore">Adaptiver Score ${fazit.adaptiveScore != null ? f(fazit.adaptiveScore, 3) : 'n/a'} (gewichtet, −1…+1${fazit.dampened ? ', Valuation gedämpft' : ''}) · Gesamtscore ${fazit.overallScore != null ? f(fazit.overallScore, 2) : 'n/a'} (${fazit.overallRating})</div>
 </div>
 ${fazit.fazitSatz ? `<div class="para">${esc(fazit.fazitSatz)}</div>` : ''}
+${fazit.dampingReason ? `<div class="warn" data-testid="pdf-damping-reason">${esc(fazit.dampingReason)}</div>` : ''}
 
 <div class="row"><span class="row-label">Zählung (nur Anzeige)</span><span class="row-val">${fazit.pos.length} positiv / ${fazit.neg.length} negativ / ${fazit.neut.length} neutral</span></div>
 

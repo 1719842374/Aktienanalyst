@@ -26,9 +26,12 @@ import {
 } from "./calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign } from "./formatters";
 import { buildBiasDecision, type BiasFixPayload } from "../../../shared/bias-fixes";
+import { ADAPTIVE_CONFIG } from "../../../shared/adaptive-signals";
+const ADAPTIVE_CONFIG_FALLBACK = ADAPTIVE_CONFIG.binaryFallbackStrength;
 import {
-  type Signal, type AdaptiveScore, technicalStrength, moatStrength, lowBetaSignal, binarySignal,
-  computeAdaptiveScore, adaptiveRating,
+  type Signal, type AdaptiveScore, moatStrength, lowBetaSignal,
+  computeAdaptiveScore, adaptiveRating, adaptiveTechnicalStrength, moatNegStrength, valuationDamping,
+  adaptiveCap, dampingReason, ADAPTIVE_NEUTRAL_BAND,
 } from "../../../shared/adaptive-signals";
 
 /** Prefix for S9/S10 timing hints that are listed but not counted in the Signal-Score. */
@@ -67,6 +70,9 @@ export type FazitSignal = {
   /** W7: Rating/Farbe kommen aus dem gewichteten Score, nicht aus der Zählung. */
   signals: Signal[];
   adaptive: AdaptiveScore;
+  /** W7b: „Valuation gedämpft, weil …“ bzw. Cap-Grund, sonst null. */
+  dampingReason: string | null;
+  adaptiveCap: number | null;
   totalExpDmg: number;
   raCrvCons: number;
 };
@@ -331,8 +337,12 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
 
   // === Overall rating (W7: gewichteter adaptiver Score, Future_Work.md „Volle Adaptivit\u00e4t“) ===
   const score = positive.length - negative.length; // Z\u00e4hlung bleibt nur als Anzeige
-  const signals = buildAdaptiveSignals(data, positive, negative, rsl, bias);
-  const adaptive = computeAdaptiveScore(signals);
+  const built = buildAdaptiveSignals(data, positive, negative, bias);
+  const signals = built.signals;
+  const adaptive = computeAdaptiveScore(signals, undefined, built.damping);
+  const capR = adaptiveCap(ADAPTIVE_NEUTRAL_BAND, built.tech, bias?.moatScore);
+  if (capR.cap != null && adaptive.score > capR.cap) adaptive.score = capR.cap;
+  const reason = [built.reason, capR.cap != null && capR.reasons.length ? `Ampel höchstens NEUTRAL: ${capR.reasons.join("; ")}.` : null].filter(Boolean).join(" ") || null;
   let rating = adaptiveRating(adaptive.score).rating;
   let ratingColor: string;
   let ratingBg: string;
@@ -413,12 +423,14 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     dcfDivergenceDowngraded,
     signals,
     adaptive,
+    dampingReason: reason,
+    adaptiveCap: capR.cap,
     totalExpDmg,
     raCrvCons,
   };
 }
 
-/** Fazit-Faktor-Text → Signal-Gruppe (Valuation wird bei starker Technik ged\u00e4mpft). */
+/** Fazit-Faktor-Text → Signal-Gruppe (Valuation wird bei negativer Technik/Moat gedämpft). */
 function groupOf(text: string): Signal["group"] {
   if (/^(P\/E|PEG|Kons\. DCF|Geh\u00e4rteter|DCF|CRV|Kurs|Reverse-DCF|Analysten|Katalysatoren)/.test(text)) return "valuation";
   if (/^(Expected Damage|Hohe Volatilit|Macro-Stress|MC-Simulation|PESTEL|Hohe Makro|Niedrige Makro|Staatsabh)/.test(text)) return "risk";
@@ -427,31 +439,39 @@ function groupOf(text: string): Signal["group"] {
 }
 
 /**
- * Signale f\u00fcr computeAdaptiveScore: Technik (Spec \u00a71), Moat (\u00a71), Low-Beta (\u00a74) als eigene Signale;
- * \u00fcbrige gez\u00e4hlte Fazit-Faktoren als bin\u00e4re Signale (Fallback-St\u00e4rke, keine Historie im Analyse-JSON).
- * Moat-/Technik-Zeilen der Liste werden nicht doppelt gez\u00e4hlt.
+ * Signale für computeAdaptiveScore (W7b):
+ *  - Valuation: alle Bewertungsfaktoren gebündelt zu EINEM Signal (Richtung = Vorzeichen von pos−neg,
+ *    Stärke = |pos−neg| / Anzahl) — zählt nicht mehr siebenfach.
+ *  - Technik: adaptiveTechnicalStrength (Perzentile der eigenen Kurshistorie; Fallback binär).
+ *  - Moat: moatStrength auf den regelbasierten Moat-Score (keine Moat-Historie → z aus dem Score).
+ *  - Low-Beta relativ (Spec §4). Übrige Faktoren je ein Signal; Stärke = Anteil ihrer Gruppe
+ *    (Fallback ohne eigene Verteilung: ADAPTIVE_CONFIG.binaryFallbackStrength).
  */
 export function buildAdaptiveSignals(
-  data: StockAnalysis, positive: string[], negative: string[], rsl: number | null, bias: BiasFixPayload | undefined,
-): Signal[] {
+  data: StockAnalysis, positive: string[], negative: string[], bias: BiasFixPayload | undefined,
+): { signals: Signal[]; tech: ReturnType<typeof adaptiveTechnicalStrength>; damping: number; reason: string | null } {
   const out: Signal[] = [];
   const skip = (t: string) => /Moat|^Timing|^Technisch|^RSL/.test(t);
-  positive.forEach((t, i) => { if (!skip(t)) out.push(binarySignal(`pos${i}`, groupOf(t), 1, t)); });
-  negative.forEach((t, i) => { if (!skip(t)) out.push(binarySignal(`neg${i}`, groupOf(t), -1, t)); });
-  const cs = data.technicalIndicators?.currentStatus;
-  let techStr = 0;
-  if (cs) {
-    const tech = technicalStrength({
-      deathCross: !cs.ma50AboveMA200,
-      belowMA200: !cs.priceAboveMA200,
-      macdNeg: !cs.macdAboveZero,
-      rslWeak: rsl != null && rsl < 105, // gleiche Schwelle wie S9 \u201eschwaches Momentum\u201c
+  const valPos = positive.filter(t => !skip(t) && groupOf(t) === "valuation");
+  const valNeg = negative.filter(t => !skip(t) && groupOf(t) === "valuation");
+  const nVal = valPos.length + valNeg.length;
+  if (nVal > 0) {
+    const net = valPos.length - valNeg.length;
+    out.push({
+      id: "valuation", group: "valuation", direction: net > 0 ? 1 : net < 0 ? -1 : 0,
+      strength: Math.abs(net) / nVal,
+      label: `Valuation gebündelt: ${valPos.length} positiv / ${valNeg.length} negativ`,
     });
-    techStr = tech.strength;
-    out.push(tech);
   }
-  if (bias && Number.isFinite(bias.moatScore) && bias.moatRating !== undefined) out.push(moatStrength(bias.moatScore));
-  const lb = lowBetaSignal(data.beta5Y, techStr);
+  positive.forEach((t, i) => { if (!skip(t) && groupOf(t) !== "valuation") out.push({ id: `pos${i}`, group: groupOf(t), direction: 1, strength: ADAPTIVE_CONFIG_FALLBACK, label: t }); });
+  negative.forEach((t, i) => { if (!skip(t) && groupOf(t) !== "valuation") out.push({ id: `neg${i}`, group: groupOf(t), direction: -1, strength: ADAPTIVE_CONFIG_FALLBACK, label: t }); });
+  const closes = [...(data.historicalPrices ?? [])].sort((a, b) => String(a.date).localeCompare(String(b.date))).map(p => p.close);
+  const tech = adaptiveTechnicalStrength(closes, data.technicalIndicators?.currentStatus);
+  if (tech) out.push(tech);
+  const moatScore = bias && Number.isFinite(bias.moatScore) ? bias.moatScore : null;
+  if (moatScore != null) out.push(moatStrength(moatScore));
+  const lb = lowBetaSignal(data.beta5Y, tech?.negStrength ?? 0);
   if (lb) out.push(lb);
-  return out;
+  const damping = valuationDamping(tech?.negStrength ?? 0, moatNegStrength(moatScore));
+  return { signals: out, tech, damping, reason: dampingReason(tech, moatScore, damping) };
 }

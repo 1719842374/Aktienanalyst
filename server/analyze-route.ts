@@ -1823,6 +1823,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           // Trend-Booleans liegen in currentStatus (TechnicalStatus), nicht am
           // TechnicalIndicators-Objekt selbst.
           technicalIndicators: technicalIndicators?.currentStatus ?? null,
+          // W7b: Kurshistorie für TECHNICAL_NEGATIVE (Technik relativ zur eigenen Historie).
+          historicalCloses: historicalPrices.map((p) => p.close),
           catalysts,
           price,
           asOfDate: new Date().toISOString().slice(0, 10),

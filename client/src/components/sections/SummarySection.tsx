@@ -391,7 +391,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         const totalExpDmg = risks.reduce((s, r) => s + r.expectedDamage, 0);
         const raCrvCons = calculateRiskAdjustedCRV(decisionPerShare, worstCase, data.currentPrice, totalExpDmg);
         const {
-          positive, negative, neutral, rating, ratingColor, ratingBg, fazitSatz, adaptive,
+          positive, negative, neutral, rating, ratingColor, ratingBg, fazitSatz, adaptive, dampingReason,
         } = buildFazitSignal({
           data,
           conservativeDCF,
@@ -419,6 +419,9 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             <div className="mb-3 text-xs text-foreground/90 leading-relaxed bg-background/30 rounded-md p-2.5 border border-border/30">
               {fazitSatz}
             </div>
+            {dampingReason && (
+              <div className="mb-3 text-[11px] text-amber-400" data-testid="fazit-damping-reason">{dampingReason}</div>
+            )}
 
             {positive.length > 0 && (
               <div className="mb-2">
