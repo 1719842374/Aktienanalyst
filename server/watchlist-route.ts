@@ -14,6 +14,8 @@ export type WatchlistEntry = { ticker: string; addedAt: string; lastPrice?: numb
 type ListRow = { ticker: string; cachedAt: string; ageMinutes: number; sizeKB: number };
 
 export const WATCHLIST_MAX = 20;
+/** GET /api/cache lists at most this many entries (newest first). */
+export const CACHE_LIST_MAX = 50;
 const MEMO_MS = 60_000;
 
 /** Cache key → bare ticker. Plain keys ("MSFT") and analyze keys ("analyze:MSFT:…"); peer and other keys are skipped. */
@@ -74,10 +76,11 @@ export function registerWatchlistRoutes(
 
   app.get("/api/cache", (_req, res) => {
     try {
-      const items = list().slice().sort((a, b) => a.ageMinutes - b.ageMinutes);
-      res.json({ cached: items.length, items });
+      const all = list().slice().sort((a, b) => a.ageMinutes - b.ageMinutes);
+      // cached = total number of entries; items = the newest CACHE_LIST_MAX only
+      res.json({ cached: all.length, limit: CACHE_LIST_MAX, items: all.slice(0, CACHE_LIST_MAX) });
     } catch {
-      res.json({ cached: 0, items: [] });
+      res.json({ cached: 0, limit: CACHE_LIST_MAX, items: [] });
     }
   });
 }

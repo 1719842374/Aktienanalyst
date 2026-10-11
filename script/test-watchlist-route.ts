@@ -35,11 +35,21 @@ async function serve(deps: any) {
 { const t = await serve({ list: () => [], get: () => null });
   const r = await t.get("/api/watchlist");
   assert.equal(r.status, 200); assert.match(r.type, /json/); assert.deepEqual(r.json, { tickers: [] });
-  assert.deepEqual((await t.get("/api/cache")).json, { cached: 0, items: [] }); t.close(); }
+  assert.deepEqual((await t.get("/api/cache")).json, { cached: 0, limit: 50, items: [] }); t.close(); }
 { const t = await serve({ list: () => { throw new Error("db"); }, get: () => null });
   assert.deepEqual((await t.get("/api/watchlist")).json, { tickers: [] }); t.close(); }
 { let calls = 0; const t = await serve({ list: () => { calls++; return rows; }, get: (k: string) => data[k] ?? null });
   const r = await t.get("/api/watchlist"); await t.get("/api/watchlist");
   assert.equal(r.json.tickers[0].ticker, "MSFT"); assert.equal(calls, 1, "60 s memo");
   const c = await t.get("/api/cache"); assert.equal(c.json.cached, 5); assert.equal(c.json.items[0].ticker, "analyze:MSFT:peers:x"); t.close(); }
+{ const many = Array.from({ length: 80 }, (_, i) => row(`T${i}`, 80 - i));
+  const t = await serve({ list: () => many, get: () => null });
+  const c = (await t.get("/api/cache")).json;
+  assert.equal(c.cached, 80, "cached = total"); assert.equal(c.limit, 50);
+  assert.equal(c.items.length, 50, "/api/cache capped at 50");
+  assert.equal(c.items[0].ticker, "T79", "newest first"); assert.equal(c.items[49].ticker, "T30");
+  t.close(); }
+// both blocks registered after the merge with main
+const rr = readFileSync("server/routes-register.ts", "utf8");
+assert.ok(rr.indexOf("registerRefreshRisksRoute(app)") > 0 && rr.indexOf("registerWatchlistRoutes(app)") > rr.indexOf("registerRefreshRisksRoute(app)"));
 console.log("test-watchlist-route: OK");
