@@ -40,7 +40,7 @@ const MACRO = [
   { key: "real10y", label: "Real10Y", name: "Real10Y (DFII10)", color: "#38bdf8", defaultOn: true, unit: "%", width: 44, step: false, title: "Realzins (DFII10, FRED)" },
   { key: "m2Yoy", label: "M2 YoY", name: "M2 YoY (M2SL)", color: "#a78bfa", defaultOn: false, unit: "%", width: 44, step: true, title: "US-M2-Wachstum YoY (FRED M2SL)" },
   { key: "dxy", label: "DXY", name: "DXY (DTWEXBGS)", color: "#34d399", defaultOn: false, unit: "", width: 44, step: false, title: "Broad Dollar Index (FRED DTWEXBGS)" },
-  { key: "t10yie", label: "T10YIE", name: "Breakeven (T10YIE)", color: "#f472b6", defaultOn: false, unit: "%", width: 44, step: false, title: "10J-Breakeven-Inflation (FRED T10YIE)" },
+  { key: "t10yie", label: "Breakeven", name: "Breakeven (T10YIE)", color: "#f472b6", defaultOn: false, unit: "%", width: 44, step: false, title: "10J-Breakeven-Inflation (FRED T10YIE)" },
   { key: "walcl", label: "WALCL", name: "Fed-Bilanz (WALCL)", color: "#e2e8f0", defaultOn: false, unit: "T", width: 54, step: true, title: "Fed-Bilanzsumme in Bio. USD (FRED WALCL)" },
 ] as const;
 
@@ -79,7 +79,7 @@ export function GoldPriceChart({ data }: Props) {
   const chartData = useMemo(() => {
     if (filteredData.length <= 500) return filteredData;
     const step = Math.ceil(filteredData.length / 500);
-    const result = filteredData.filter((d, i) => i % step === 0 || d.cross);
+    const result = filteredData.filter((d, i) => i % step === 0 || d.cross || d.volSpike || d.volDivergence);
     if (result[result.length - 1] !== filteredData[filteredData.length - 1]) result.push(filteredData[filteredData.length - 1]);
     return result;
   }, [filteredData]);
@@ -114,6 +114,18 @@ export function GoldPriceChart({ data }: Props) {
     }));
   }, [chartData]);
   const hasVolume = chartDataWithVol.some(d => d._volNorm > 0);
+
+  // #208 Server-Signale (technicalSignals). Marker nur, wenn das Server-Signal
+  // verfuegbar ist UND echtes Volumen im Chart liegt — sonst N/A-Hinweis.
+  const serverSig = (id: string) => data.technicalSignals?.find(s => s.id === id) ?? null;
+  const sigSpike = serverSig("technical.volumeSpike");
+  const sigDiv = serverSig("technical.volumeDivergence");
+  const sigRsi = serverSig("technical.rsi");
+  const spikeOn = hasVolume && !!sigSpike?.available;
+  const divOn = hasVolume && !!sigDiv?.available;
+  const volMarkers = chartDataWithVol.filter(d => (spikeOn && d.volSpike) || (divOn && d.volDivergence));
+  const sigNote = (label: string, sig: typeof sigSpike, on: boolean) =>
+    on ? `${label}: ${sig!.detail}` : `${label}: N/A — ${!hasVolume ? "kein echtes Volumen" : sig ? sig.detail : "Server-Signal fehlt"}`;
 
   const visibleSignals = useMemo(() => {
     if (!showSignals || chartData.length === 0) return [];
@@ -486,6 +498,21 @@ export function GoldPriceChart({ data }: Props) {
                 />
               )}
 
+              {/* Volumen-Spike/-Divergenz-Marker als Grundlinie im Volumenband (Desktop), nicht auf dem Kurs. */}
+              {showVolume && !narrow && volMarkers.map(d => (
+                <ReferenceDot
+                  key={`vm-${d.date}`}
+                  yAxisId="vol"
+                  x={d.date}
+                  y={0.02}
+                  r={3}
+                  fill={d.volSpike && spikeOn ? "#f59e0b" : "#c084fc"}
+                  stroke="#0a0a0a"
+                  strokeWidth={0.5}
+                  ifOverflow="discard"
+                />
+              ))}
+
               <Line type="monotone" dataKey="price" name="Gold Kurs" stroke="#f59e0b" strokeWidth={1.5} dot={false} isAnimationActive={false} />
 
               {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
@@ -554,6 +581,26 @@ export function GoldPriceChart({ data }: Props) {
         </div>
         {narrow && showVolume && hasVolume && (
           <TaVolumeBand data={chartDataWithVol} leftAxisWidth={55} rightAxisWidth={visibleRightWidth} marginRight={8} />
+        )}
+        {narrow && showVolume && volMarkers.length > 0 && (
+          <div className="h-[14px] w-full" data-testid="gold-vol-marker-strip">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartDataWithVol} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
+                <XAxis dataKey="date" hide />
+                <YAxis width={55} tick={false} axisLine={false} tickLine={false} domain={[0, 1]} />
+                {visibleRightWidth > 0 && <YAxis yAxisId="align" orientation="right" width={visibleRightWidth} tick={false} axisLine={false} tickLine={false} />}
+                {volMarkers.map(d => (
+                  <ReferenceDot key={`vmm-${d.date}`} x={d.date} y={0.5} r={2.5} fill={d.volSpike && spikeOn ? "#f59e0b" : "#c084fc"} stroke="none" ifOverflow="discard" />
+                ))}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        {showVolume && (
+          <div className="sticky left-0 mt-1 flex max-w-full flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground" data-testid="gold-vol-signals">
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: spikeOn ? "#f59e0b" : "transparent", border: "1px solid #f59e0b" }} />{sigNote("Volumen-Spike (>1,5× Ø20T)", sigSpike, spikeOn)}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: divOn ? "#c084fc" : "transparent", border: "1px solid #c084fc" }} />{sigNote("Volumen-Divergenz", sigDiv, divOn)}</span>
+          </div>
         )}
         {hiddenMacroSeries.length > 0 && (
           <div className="sticky left-0 mt-1 flex max-w-full flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground" data-testid="gold-macro-axis-note">
@@ -626,6 +673,11 @@ export function GoldPriceChart({ data }: Props) {
               const label = lastRSI > 70 ? "Überkauft" : lastRSI < 30 ? "Überverkauft" : "Neutral";
               return <span className={`ml-auto font-mono font-semibold ${color}`}>{lastRSI.toFixed(1)} — {label}</span>;
             })()}
+            <span className="font-mono text-[10px] text-indigo-300" data-testid="gold-rsi-relative" title={sigRsi?.detail ?? undefined}>
+              {tech.rsiPercentile != null
+                ? `Rel. ${(tech.rsiHistoryDays / 252).toFixed(1)}J: P${tech.rsiPercentile}`
+                : "Rel. RSI: N/A (< 1 Jahr Historie)"}
+            </span>
           </div>
           <ResponsiveContainer width="100%" height={130}>
             <ComposedChart data={chartDataWithVol} margin={narrow ? { top: 2, right: 8, left: 0, bottom: 2 } : { top: 2, right: 10, left: 0, bottom: 2 }}>
