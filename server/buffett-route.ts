@@ -179,33 +179,57 @@ const ANNUAL_REGIONS: Record<Exclude<RegionId, "US">, { id: string; note: string
   },
 };
 
+interface BuffettBody {
+  region: RegionId;
+  asOf: string | null;
+  latest: TrendPoint | null;
+  note: string;
+  sources: { id: string; role: string }[];
+  points: TrendPoint[];
+}
+
+async function loadRegion(region: RegionId): Promise<BuffettBody> {
+  const hit = cache.get(region);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.body as BuffettBody;
+  const annual = region === "US" ? null : ANNUAL_REGIONS[region];
+  const built = region === "US"
+    ? await buildUnitedStates()
+    : {
+        points: await buildAnnualRatio(annual!.id),
+        note: annual!.note,
+      };
+  const latest = built.points.length > 0 ? built.points[built.points.length - 1] : null;
+  const body: BuffettBody = {
+    region,
+    asOf: latest?.date ?? null,
+    latest,
+    note: built.note,
+    sources: region === "US" ? US_SOURCES : [{ id: annual!.id, role: "Börsenkapitalisierung in Prozent des BIP" }],
+    points: built.points,
+  };
+  if (built.points.length > 0) cache.set(region, { at: Date.now(), body });
+  return body;
+}
+
+/** US chart series for the fazit. A failed load is an empty series, not a named peak. */
+export async function loadUsBuffettRatios(): Promise<{ date: string; ratio: number }[]> {
+  try {
+    const body = await loadRegion("US");
+    return body.points.map(point => ({ date: point.date, ratio: point.ratio }));
+  } catch (err: any) {
+    console.error("[buffett] US series", err?.message?.substring(0, 200));
+    return [];
+  }
+}
+
 export function registerBuffettRatioRoute(app: Express): void {
   app.get("/api/analyze-recession/buffett", async (req: Request, res: Response) => {
     const region = String(req.query.region || "US").toUpperCase();
     if (!isRegion(region)) {
       return res.status(400).json({ error: "Region muss US, EU oder CN sein" });
     }
-    const hit = cache.get(region);
-    if (hit && Date.now() - hit.at < CACHE_MS) return res.json(hit.body);
     try {
-      const annual = region === "US" ? null : ANNUAL_REGIONS[region];
-      const built = region === "US"
-        ? await buildUnitedStates()
-        : {
-            points: await buildAnnualRatio(annual!.id),
-            note: annual!.note,
-          };
-      const latest = built.points.length > 0 ? built.points[built.points.length - 1] : null;
-      const body = {
-        region,
-        asOf: latest?.date ?? null,
-        latest,
-        note: built.note,
-        sources: region === "US" ? US_SOURCES : [{ id: annual!.id, role: "Börsenkapitalisierung in Prozent des BIP" }],
-        points: built.points,
-      };
-      if (built.points.length > 0) cache.set(region, { at: Date.now(), body });
-      res.json(body);
+      res.json(await loadRegion(region));
     } catch (err: any) {
       console.error("[GET /api/analyze-recession/buffett]", err?.message?.substring(0, 200));
       res.status(502).json({ error: "Buffett-Quote nicht verfügbar" });

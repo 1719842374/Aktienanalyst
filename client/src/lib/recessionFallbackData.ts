@@ -345,7 +345,7 @@ export const RECESSION_FALLBACK_DATA = {
       {
         "title": "Bewertungsrisiko",
         "emoji": "⚠️",
-        "text": "Der Buffett-Indikator steht bei 230% — das höchste Niveau seit der Dotcom-Blase. Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. Shiller CAPE liegt nur als Workbook vor und wird nicht gelesen."
+        "text": "Der Buffett-Indikator steht bei 230%. Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. Shiller CAPE liegt nur als Workbook vor und wird nicht gelesen."
       },
       {
         "title": "Private Credit & Systemisches Risiko",
