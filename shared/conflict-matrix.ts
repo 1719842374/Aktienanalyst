@@ -135,11 +135,6 @@ export function conflictInputsFromAnalysis(
 }
 
 /**
- * Server path (PDF export): rebuild the same inputs the Summary UI uses from the raw analysis.
- * Reverse DCF = calculateReverseDCF with the WACC of calculateFCFFDCF(buildDefaultDCFParams(data)),
- * identical to SummarySection. Catalysts = sumUpsideGb (same as calculateCatalystUpside). Any failure → n/a.
- */
-/**
  * Reverse DCF exactly like SummarySection: calculateReverseDCF with the WACC of
  * calculateFCFFDCF(buildDefaultDCFParams(data)). Shared by the matrix and PDF section 14. Failure → null.
  */
