@@ -12,7 +12,7 @@ import { TaStatusPill } from "@/components/sections/TaStatusPill";
 import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
-import { buildGoldTechnical, type GoldTechPoint } from "./goldTechnical";
+import { buildGoldTechnical, describeRelativeRsi, volumeLegendText, type GoldTechPoint } from "./goldTechnical";
 
 /**
  * Gold Section 2 im Design von BTC Section 11 „Technische Analyse“
@@ -125,7 +125,8 @@ export function GoldPriceChart({ data }: Props) {
   const divOn = hasVolume && !!sigDiv?.available;
   const volMarkers = chartDataWithVol.filter(d => (spikeOn && d.volSpike) || (divOn && d.volDivergence));
   const sigNote = (label: string, sig: typeof sigSpike, on: boolean) =>
-    on ? `${label}: ${sig!.detail}` : `${label}: N/A — ${!hasVolume ? "kein echtes Volumen" : sig ? sig.detail : "Server-Signal fehlt"}`;
+    on ? volumeLegendText(label, sig!.detail) : `${label}: N/A — ${!hasVolume ? "kein echtes Volumen" : sig ? volumeLegendText("", sig.detail).replace(/^: /, "") : "Server-Signal fehlt"}`;
+  const relRsi = describeRelativeRsi(tech.rsiPercentile, tech.rsiHistoryDays, sigRsi?.available ? sigRsi.z : null);
 
   const visibleSignals = useMemo(() => {
     if (!showSignals || chartData.length === 0) return [];
@@ -597,9 +598,9 @@ export function GoldPriceChart({ data }: Props) {
           </div>
         )}
         {showVolume && (
-          <div className="sticky left-0 mt-1 flex max-w-full flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground" data-testid="gold-vol-signals">
-            <span className="inline-flex items-center gap-1"><span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: spikeOn ? "#f59e0b" : "transparent", border: "1px solid #f59e0b" }} />{sigNote("Volumen-Spike (>1,5× Ø20T)", sigSpike, spikeOn)}</span>
-            <span className="inline-flex items-center gap-1"><span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: divOn ? "#c084fc" : "transparent", border: "1px solid #c084fc" }} />{sigNote("Volumen-Divergenz", sigDiv, divOn)}</span>
+          <div className="sticky left-0 mt-1 flex max-w-full flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground" style={narrow ? { maxWidth: "calc(100vw - 3rem)" } : undefined} data-testid="gold-vol-signals">
+            <span className="inline-flex min-w-0 max-w-full items-start gap-1 break-words"><span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: spikeOn ? "#f59e0b" : "transparent", border: "1px solid #f59e0b" }} />{sigNote("Volumen-Spike (>1,5× Ø20T)", sigSpike, spikeOn)}</span>
+            <span className="inline-flex min-w-0 max-w-full items-start gap-1 break-words"><span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: divOn ? "#c084fc" : "transparent", border: "1px solid #c084fc" }} />{sigNote("Volumen-Divergenz", sigDiv, divOn)}</span>
           </div>
         )}
         {hiddenMacroSeries.length > 0 && (
@@ -673,10 +674,8 @@ export function GoldPriceChart({ data }: Props) {
               const label = lastRSI > 70 ? "Überkauft" : lastRSI < 30 ? "Überverkauft" : "Neutral";
               return <span className={`ml-auto font-mono font-semibold ${color}`}>{lastRSI.toFixed(1)} — {label}</span>;
             })()}
-            <span className="font-mono text-[10px] text-indigo-300" data-testid="gold-rsi-relative" title={sigRsi?.detail ?? undefined}>
-              {tech.rsiPercentile != null
-                ? `Rel. ${(tech.rsiHistoryDays / 252).toFixed(1)}J: P${tech.rsiPercentile}`
-                : "Rel. RSI: N/A (< 1 Jahr Historie)"}
+            <span className="font-mono text-[10px] text-indigo-300" data-testid="gold-rsi-relative" title={relRsi.title}>
+              {relRsi.label}
             </span>
           </div>
           <ResponsiveContainer width="100%" height={130}>

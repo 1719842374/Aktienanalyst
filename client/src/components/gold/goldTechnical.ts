@@ -194,3 +194,42 @@ export function buildGoldTechnical(history: GoldPricePoint[]): GoldTechnical {
     rsiHistoryDays: rsiHist.length,
   };
 }
+
+/**
+ * #214-Fix: Relativer RSI. Das Server-Signal `technical.rsi` traegt die
+ * Richtung (positiv = bullisch) und speichert deshalb z = −(RSI-z). Der alte
+ * Titel zeigte diese Richtungs-z neben dem festen Satz „hoch gegen die eigene
+ * Historie = bärisch“ — bei niedrigem RSI (P15) stand dort „z=0,98 … hoch“.
+ * Hier werden Perzentil, RSI-z (Vorzeichen zurueckgedreht) und Text aus
+ * denselben Zahlen gebaut.
+ */
+export function describeRelativeRsi(
+  percentile: number | null,
+  historyDays: number,
+  serverDirectionZ: number | null | undefined,
+): { label: string; title: string; rsiZ: number | null; consistent: boolean } {
+  if (percentile == null) {
+    return { label: "Rel. RSI: N/A (< 1 Jahr Historie)", title: "Weniger als 1 Jahr RSI-Historie — kein relativer RSI.", rsiZ: null, consistent: true };
+  }
+  const years = (historyDays / 252).toFixed(1);
+  const rsiZ = serverDirectionZ == null || !Number.isFinite(serverDirectionZ) ? null : -serverDirectionZ;
+  const level = percentile >= 50 ? "hoch" : "niedrig";
+  const reading = percentile >= 50 ? "hoch gegen die eigene Historie = bärisch" : "niedrig gegen die eigene Historie = bullisch";
+  const zPart = rsiZ == null ? "RSI-z: N/A" : `RSI-z=${rsiZ.toFixed(2)}`;
+  // Perzentil (Client, 252–504 Werte inkl. heute) und z (Server, Historie ohne heute) duerfen
+  // nur in der Mitte auseinanderlaufen; an den Raendern muessen sie dieselbe Seite zeigen.
+  const consistent = rsiZ == null || Math.abs(percentile - 50) < 15 || (percentile >= 50) === (rsiZ >= 0);
+  return {
+    label: `Rel. ${years}J: P${percentile} (${level})`,
+    title: `RSI liegt im ${percentile}. Perzentil der letzten ${years} Jahre, ${zPart}: ${reading}.`,
+    rsiZ,
+    consistent,
+  };
+}
+
+/** #214-Fix: Server-Detail beginnt schon mit „Volumen-Spike:“ — Praefix nur einmal zeigen. */
+export function volumeLegendText(label: string, serverDetail: string | null | undefined): string {
+  if (!serverDetail) return label;
+  const stripped = serverDetail.replace(/^Volumen-(Spike|Divergenz)\s*:\s*/, "");
+  return `${label}: ${stripped}`;
+}
