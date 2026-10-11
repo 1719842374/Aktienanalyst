@@ -271,20 +271,8 @@ export function calculateGBMParams(prices: number[]): { mu: number; sigma: numbe
   return { mu: +mu.toFixed(4), sigma: +sigma.toFixed(4) };
 }
 
-// === WACC Calculation ===
-export function calculateWACC(
-  beta: number,
-  riskFreeRate: number,
-  marketPremium: number,
-  debtRatio: number,
-  costOfDebt: number,
-  taxRate: number
-): number {
-  const equityRatio = 1 - debtRatio;
-  const costOfEquity = riskFreeRate + beta * marketPremium;
-  const wacc = equityRatio * costOfEquity + debtRatio * costOfDebt * (1 - taxRate);
-  return wacc;
-}
+// === WACC Calculation === (moved to shared/valuation-signal.ts, one implementation for client and server)
+export { calculateWACC, capmWaccPct, dcfWaccInputs, companyDcfWaccPct } from "../../../shared/valuation-signal";
 
 // === Catalyst Calculations ===
 export function calculateCatalystUpside(
