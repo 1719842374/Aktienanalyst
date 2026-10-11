@@ -693,6 +693,8 @@ export interface StockAnalysis {
   // (e.g. "Segmentreporting nicht in den letzten 10-K/20-F enthalten" or
   // "Unternehmen berichtet nur geografisch"). Never a generic "N/A".
   revenueSegmentsMessage?: string;
+  isEtf?: boolean;
+  isFund?: boolean;
 }
 
 // ─── NEW (WORK_PORTFOLIO.md — Virtuelles Portfolio, additive-only) ─────────────
