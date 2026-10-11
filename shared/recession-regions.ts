@@ -216,3 +216,42 @@ export function alignSpread(longRates: DatedPoint[], shortRates: DatedPoint[]): 
     }))
     .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
 }
+
+/** Share of unscored slots above which the region view shows a thin-data hint instead of pretending full coverage. */
+export const REGION_SPARSE_SHARE = 0.5;
+
+export interface RegionGaugeView {
+  id: RegionId;
+  label: string;
+  recessionProbability: number | null;
+  correctionProbability: number | null;
+  scoredSlots: number;
+  totalSlots: number;
+  sparse: boolean;
+  topDrivers: RegionSlot[];
+}
+
+/**
+ * Display view for the Section-1 region buttons (Offen_FUTURE_SOLL_IST PR 6).
+ * Reads the catalog P the server already computed. No new score, no blend, no US action change.
+ */
+export function regionGaugeView(catalogs: RegionalCatalogs | null | undefined, id: RegionId): RegionGaugeView | null {
+  const region = catalogs?.regions.find(r => r.id === id);
+  if (!region) return null;
+  const scored = region.slots.filter(slot => slot.available);
+  const totalSlots = region.slots.length;
+  const topDrivers = [...scored]
+    .filter(slot => slot.weightedScore !== 0)
+    .sort((a, b) => Math.abs(b.weightedScore) - Math.abs(a.weightedScore))
+    .slice(0, 3);
+  return {
+    id: region.id,
+    label: region.label,
+    recessionProbability: region.recessionProbability,
+    correctionProbability: region.correctionProbability,
+    scoredSlots: scored.length,
+    totalSlots,
+    sparse: totalSlots === 0 || (totalSlots - scored.length) / totalSlots > REGION_SPARSE_SHARE,
+    topDrivers,
+  };
+}
