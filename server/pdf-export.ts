@@ -177,7 +177,13 @@ function normalizeData(data: any): any {
 }
 
 // ===== Generate Executive Summary via Claude LLM =====
-async function generateNarrativeSummary(data: any, fazit: any): Promise<{ execSummary: string; recommendation: string }> {
+export const NARRATIVE_NA_NOTE = 'KI-Zusammenfassung n/a — kein ANTHROPIC_API_KEY konfiguriert; alle Zahlen unten sind regelbasiert.';
+async function generateNarrativeSummary(data: any, fazit: any): Promise<{ execSummary: string; recommendation: string; unavailable?: string }> {
+  // Without a key the SDK would only throw; skip the call and say so in the PDF instead.
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.log(`[PDF] LLM narrative skipped for ${data?.ticker}: ANTHROPIC_API_KEY not set`);
+    return { execSummary: '', recommendation: '', unavailable: NARRATIVE_NA_NOTE };
+  }
   try {
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const client = new Anthropic();
@@ -237,7 +243,7 @@ Nur JSON, keine Erklärung. Professioneller Ton, keine Floskeln.`;
     return { execSummary: result.execSummary || '', recommendation: result.recommendation || '' };
   } catch (err: any) {
     console.log(`[PDF] LLM narrative failed: ${err?.message?.substring(0, 100)}`);
-    return { execSummary: '', recommendation: '' };
+    return { execSummary: '', recommendation: '', unavailable: 'KI-Zusammenfassung n/a — LLM nicht erreichbar; alle Zahlen unten sind regelbasiert.' };
   }
 }
 
@@ -316,7 +322,7 @@ ${narrative.execSummary ? `
 <div style="background:#111b2e;border:1px solid #243050;border-radius:6px;padding:8px 10px;margin:6px 0;">
   <div style="font-size:9px;font-weight:700;color:#6495cc;margin-bottom:4px;">Executive Summary</div>
   <div style="font-size:8.5px;color:#c0c5d5;line-height:1.5;">${esc(narrative.execSummary)}</div>
-</div>` : ''}
+</div>` : narrative.unavailable ? `<div class="para" data-testid="pdf-narrative-na" style="font-size:7.5px;color:#7a8296">${esc(narrative.unavailable)}</div>` : ''}
 
 <!-- S1: DATENAKTUALITÄT -->
 <div class="sec-header"><span>1 &nbsp; DATENAKTUALITÄT & PLAUSIBILITÄT</span></div>
@@ -607,14 +613,28 @@ ${fazit.neut.length ? `<div class="sub">Neutral (${fazit.neut.length})</div><ul 
 </body></html>`;
 }
 
+// ===== Chromium lookup =====
+// Order: PDF_CHROMIUM_PATH → @sparticuz/chromium (bundled, Chromium 147 = playwright-core 1.59)
+// → Playwright default (PLAYWRIGHT_BROWSERS_PATH, as the Dockerfile installs it).
+const BASE_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
+export async function resolvePdfChromium(): Promise<{ executablePath?: string; args: string[]; source: string }> {
+  if (process.env.PDF_CHROMIUM_PATH) return { executablePath: process.env.PDF_CHROMIUM_PATH, args: BASE_ARGS, source: 'PDF_CHROMIUM_PATH' };
+  try {
+    const sparticuz: any = (await import('@sparticuz/chromium')).default;
+    const executablePath = await sparticuz.executablePath();
+    if (executablePath) return { executablePath, args: Array.from(new Set([...(sparticuz.args || []), ...BASE_ARGS])), source: '@sparticuz/chromium' };
+  } catch (err: any) {
+    console.log(`[PDF] @sparticuz/chromium unavailable: ${err?.message?.substring(0, 100)}`);
+  }
+  return { executablePath: undefined, args: BASE_ARGS, source: 'playwright-default' };
+}
+
 // ===== Render HTML to PDF with Playwright =====
 export async function renderHTMLtoPDF(html: string): Promise<Buffer> {
-  const browserPath = '/home/user/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome';
-  const browser = await chromium.launch({
-    executablePath: browserPath,
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  });
+  const { executablePath, args, source } = await resolvePdfChromium();
+  const t0 = Date.now();
+  const browser = await chromium.launch({ executablePath, headless: true, args });
+  console.log(`[PDF] Chromium (${source}) started in ${Date.now() - t0}ms`);
 
   try {
     const page = await browser.newPage();
