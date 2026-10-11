@@ -13,6 +13,7 @@ import { getGoldNewsImpact } from "./gold-news";
 import { yahooFetch } from "./history-fallback";
 import { execSync, execFile } from "child_process";
 import { fmpQuote, fmpHistoricalPrices } from "./fmp";
+import { computeM2YoyFromCsv } from "./gold-m2-yoy";
 import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield-model";
 import { enrichGoldChartSeries } from "./gold-chart-series";
 import { createFredHistoryMemo } from "./gold-fred-memo";
@@ -522,15 +523,13 @@ export function registerGoldRoutes(server: Server, app: Express) {
       // (current + 12 months ago) to compute a proper YoY rate.
       let m2YoY = 4.88; // fallback: Feb 2026 YCharts estimate
       try {
-        const m2Csv = await m2YoyCsvPromise;
-        const m2Lines = m2Csv.trim().split('\n').filter(l => l && !l.startsWith('DATE'));
-        if (m2Lines.length >= 13) {
-          const newest = parseFloat(m2Lines[0].split(',')[1]);
-          const yearAgo = parseFloat(m2Lines[12].split(',')[1]);
-          if (newest > 0 && yearAgo > 0 && isFinite(newest / yearAgo)) {
-            m2YoY = ((newest / yearAgo) - 1) * 100;
-            console.log(`[GOLD] M2 YoY computed: ${m2YoY.toFixed(2)}% (${m2Lines[0].split(',')[0]} vs ${m2Lines[12].split(',')[0]})`);
-          }
+        // JOB 19: nach Datum (letzte Beobachtung vs. 12 Monate früher), unabhängig von Sortierung/Kopf
+        const m2 = computeM2YoyFromCsv(await m2YoyCsvPromise);
+        if (m2) {
+          m2YoY = m2.yoy;
+          console.log(`[GOLD] M2 YoY computed: ${m2YoY.toFixed(2)}% (${m2.date} vs ${m2.yearAgoDate})`);
+        } else {
+          console.warn(`[GOLD] M2 YoY: keine auswertbare M2SL-Reihe — using fallback ${m2YoY}%`);
         }
       } catch (m2Err: any) {
         console.warn(`[GOLD] M2 YoY FRED fetch failed: ${m2Err?.message?.substring(0, 100)} — using fallback ${m2YoY}%`);
