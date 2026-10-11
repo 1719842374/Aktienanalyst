@@ -5,6 +5,8 @@
  */
 import { chromium } from 'playwright-core';
 import { sumUpsideGb } from '../shared/bias-fixes';
+import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
+import { reverseDcfFromAnalysis } from '../shared/conflict-matrix';
 
 // ===== Formatting helpers =====
 function f(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? v.toFixed(d) : "—"; }
@@ -132,16 +134,7 @@ function normalizeData(data: any): any {
     }
   }
 
-  // Compute Reverse DCF if missing
-  if (!d.reverseDCF && d.fcfTTM && d.enterpriseValue) {
-    const wacc = d.sectorProfile?.waccScenarios?.avg || 9;
-    const ev = d.enterpriseValue || (d.marketCap + (d.totalDebt || 0) - (d.cashEquivalents || 0));
-    const impliedG = +(wacc - (d.fcfTTM / ev) * 100).toFixed(2);
-    d.reverseDCF = {
-      impliedGrowth: impliedG,
-      assessment: impliedG > 8 ? 'Ambitious (sportlich)' : impliedG > 5 ? 'Moderat' : impliedG > 0 ? 'Konservativ' : 'Negativ',
-    };
-  }
+  // Reverse DCF: no PDF-only approximation any more; section 14 uses reverseDcfFromAnalysis (UI formula).
 
   // Compute Monte Carlo (simplified GBM) if missing
   if (!d.monteCarloResults && d.historicalPrices?.length > 252) {
@@ -259,6 +252,8 @@ export async function generateAnalysisHTML(rawData: any): Promise<string> {
   const bal = fs.balanceSheet || {};
   const cf = fs.cashFlow || {};
   const fazit = buildFazit(data);
+  // Reverse DCF: same formula as the UI and the Konfliktmatrix (one g* in the whole PDF)
+  const rdcf = reverseDcfFromAnalysis(rawData);
   const nd = (data.totalDebt || 0) - (data.cashEquivalents || 0);
   const ptUp = data.analystPT?.median && data.currentPrice ? ((data.analystPT.median - data.currentPrice) / data.currentPrice * 100) : null;
 
@@ -552,9 +547,10 @@ ${data.macroCorrelations.correlations.slice(0,8).map((c: any) => `<tr><td>${esc(
 
 <!-- S14: REVERSE DCF -->
 <div class="sec-header"><span>14 &nbsp; REVERSE DCF</span></div>
-${data.reverseDCF ? `
-<div class="row"><span class="row-label">Implied Growth Rate g*</span><span class="row-val">${f(data.reverseDCF.impliedGrowth,2)}%</span></div>
-<div class="row"><span class="row-label">Bewertung</span><span class="row-val">${data.reverseDCF.assessment||'—'}</span></div>
+${rdcf && rdcf.rating !== 'n/a' ? `
+<div class="row"><span class="row-label">Implied Growth Rate g*</span><span class="row-val">${f(rdcf.impliedGrowth,2)}%</span></div>
+<div class="row"><span class="row-label">Bewertung</span><span class="row-val">${esc(rdcf.rating)} (Ref: ${f(rdcf.referenceGrowth,1)}%)</span></div>
+<div class="para" style="font-size:7px;color:#7a8296">Gleiche Formel wie die App (shared/valuation-signal.ts, WACC aus buildDefaultDCFParams).</div>
 ` : '<div class="para">Reverse DCF nicht verfügbar.</div>'}
 
 <!-- S15: DOWNSIDE-KATALYSATOREN (Anti-Bias) -->
@@ -582,6 +578,7 @@ ${data.monteCarloResults?.mean ? `<table>
 <tr><td class="row-label">Kaufsignal</td><td class="row-val">${fazit.allBuy ? 'JA ✓' : 'NEIN ✗'}</td><td class="row-label">Kat. Upside</td><td class="row-val">+${f(fazit.totalGB,2)}%</td></tr>
 </table>
 
+${conflictMatrixHtmlForAnalysis(rawData)}
 <!-- FAZIT BOX -->
 <div class="verdict-box">
   <div class="verdict-text">FAZIT: ${fazit.verdict}</div>
