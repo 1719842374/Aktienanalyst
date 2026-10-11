@@ -145,6 +145,62 @@ export interface GoldMultiFactorModelSummary {
   generatedAt: string;
 }
 
+/** Future_10 §2–§3. Eine Zeile der adaptiven Schicht. Fehlende Quelle: available false, keine 0. */
+export interface GoldAdaptiveSignal {
+  id: string;
+  available: boolean;
+  z: number | null;
+  strength: number | null;
+  direction: number | null;
+  detail: string;
+}
+
+export interface GoldAdaptiveLayer {
+  id: "realYield" | "policy" | "liquidity" | "inflation" | "supply" | "technical" | "macro";
+  label: string;
+  available: boolean;
+  baseWeight: number;
+  habitatMultiplier: number;
+  strength: number | null;
+  effectiveWeight: number | null;
+  direction: number | null;
+  contribution: number | null;
+  detail: string;
+  signals: GoldAdaptiveSignal[];
+}
+
+export interface GoldAdaptiveScore {
+  /** Gewichtetes Mittel der Richtungen. null, wenn keine Dimension eine Quelle hat. */
+  score: number | null;
+  formula: string;
+  layers: GoldAdaptiveLayer[];
+  gates: GoldModelGate[];
+  habitatNotes: string[];
+  /** Echo des News-Flags. Geht nicht in `score` ein. */
+  newsFlag: number | null;
+  newsInScore: false;
+  volumeSource: string | null;
+  generatedAt: string;
+}
+
+export interface GoldNewsItem {
+  title: string;
+  source: string;
+  url: string;
+  pubDate: string;
+}
+
+/** Future_10 §9. Flag nur aus OpenRouter. Ohne Key bleibt flag null. */
+export interface GoldNewsImpact {
+  flag: number | null;
+  summary: string | null;
+  updatedAt: string | null;
+  llmAvailable: boolean;
+  unavailableReason: string | null;
+  items: GoldNewsItem[];
+  cacheTtlHours: number;
+}
+
 export interface GoldAnalysis {
   // Section 1: Status
   timestamp: string;
@@ -214,4 +270,9 @@ export interface GoldAnalysis {
   // realYieldModel (1-Faktor bleibt Default-Anzeige). null/undefined bei fehlenden
   // WALCL/DXY-Daten oder < 30 vollständigen Datenpunkten (kein Fake-Default).
   multiFactorModel?: GoldMultiFactorModelSummary | null;
+
+  // Future_10 §2–§3 und §8–§10. Additiv zum GIS. null, wenn die Schicht nicht lief.
+  adaptiveScore?: GoldAdaptiveScore | null;
+  // Future_10 §9. null, wenn der News-Abruf nicht lief. flag darin bleibt null ohne Key.
+  goldNews?: GoldNewsImpact | null;
 }

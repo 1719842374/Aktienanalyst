@@ -11,6 +11,9 @@ import type {
 import { execSync } from "child_process";
 import { fmpQuote, fmpHistoricalPrices } from "./fmp";
 import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield-model";
+import { scoreGoldAdaptive, volumeReadingsAreReal } from "./gold-adaptive-score";
+import { getGoldNewsImpact } from "./gold-news";
+import { yahooFetch } from "./history-fallback";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -251,6 +254,11 @@ export function registerGoldRoutes(server: Server, app: Express) {
       // oder ALL zeigte der Chart schlicht keine Daten vor "heute − 2 Jahre",
       // unabhaengig vom Button. 10 Jahre analog zur Aktien-TA (yearAgo(10)).
       const startDate = new Date(Date.now() - 10 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+      // Future_10 §9. Läuft parallel zu den Sync-FRED-Abrufen. Ohne Key bleibt das Flag null.
+      const goldNewsPromise = getGoldNewsImpact().catch((err: any) => {
+        console.warn(`[GOLD] News-Abruf fehlgeschlagen: ${err?.message?.substring(0, 150)}`);
+        return null;
+      });
 
       // === Parallel data fetching (FMP + FRED) ===
       const [goldQuoteResult, goldOHLCVResult, dxyQuoteResult] = await Promise.all([
@@ -294,6 +302,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       // Fallback: if no price from quote, try from OHLCV
       let historicalPrices: GoldPricePoint[] = [];
       let closePrices: number[] = [];
+      const fmpVolumes: { date: string; volume: number }[] = [];
 
       // FMP historical-price-eod/full returns { symbol, historical:[...] } or a bare array.
       const ohlcvRows: any[] = Array.isArray(goldOHLCVResult)
@@ -308,6 +317,8 @@ export function registerGoldRoutes(server: Server, app: Express) {
           if (/\d{4}-\d{2}-\d{2}/.test(dateStr) && isFinite(close) && close > 0) {
             closePrices.push(close);
             historicalPrices.push({ date: dateStr, close });
+            const volumeRaw = parseFloat(String(row.volume ?? row.Volume ?? ""));
+            if (Number.isFinite(volumeRaw)) fmpVolumes.push({ date: dateStr, volume: volumeRaw });
           }
         }
       }
@@ -678,6 +689,53 @@ export function registerGoldRoutes(server: Server, app: Express) {
             : `Negativer GIS (${gis.toFixed(2)}). Kurzfristiger Gegenwind dominiert.`,
       };
 
+      // Future_10 §2–§3, §8, §10. GIS, OLS, Multi-Faktor, Monte Carlo und getTechnicalScore bleiben.
+      // AISC hat keine Quelle — die Supply-Dimension wird N/A, nicht 0.
+      let adaptiveScore: import("../shared/gold-schema").GoldAdaptiveScore | null = null;
+      let goldNews: import("../shared/gold-schema").GoldNewsImpact | null = null;
+      try {
+        goldNews = await goldNewsPromise;
+        let volumePoints: { date: string; volume: number }[] | null = null;
+        let volumeSource: string | null = null;
+        if (volumeReadingsAreReal(fmpVolumes.map(point => point.volume))) {
+          volumePoints = fmpVolumes;
+          volumeSource = "FMP GCUSD";
+        } else {
+          try {
+            const bars = await yahooFetch("GC=F", startDate, endDate);
+            const yahooVolumes = bars.map(bar => ({ date: bar.date, volume: bar.volume }));
+            if (volumeReadingsAreReal(yahooVolumes.map(point => point.volume))) {
+              volumePoints = yahooVolumes;
+              volumeSource = "Yahoo GC=F";
+            } else {
+              console.log("[GOLD] Volumen N/A: FMP GCUSD und Yahoo GC=F ohne echte positive Prints");
+            }
+          } catch (volErr: any) {
+            console.warn(`[GOLD] Yahoo-Volumen fehlgeschlagen: ${volErr?.message?.substring(0, 150)}`);
+          }
+        }
+        adaptiveScore = scoreGoldAdaptive({
+          closes: historicalPrices.map(point => ({ date: point.date, close: point.close })),
+          volumes: volumePoints,
+          volumeSource,
+          real10Y: real10yHistory,
+          fedFunds: fetchFREDSeriesHistory("FEDFUNDS", startDate),
+          m2: fetchFREDSeriesHistory("M2SL", startDate),
+          walcl: fetchFREDSeriesHistory("WALCL", startDate),
+          tga: fetchFREDSeriesHistory("WTREGEN", startDate),
+          rrpBillions: fetchFREDSeriesHistory("RRPONTSYD", startDate),
+          breakeven: fetchFREDSeriesHistory("T10YIE", startDate),
+          dxy: fetchFREDSeriesHistory("DTWEXBGS", startDate),
+          aisc: null,
+          regime: realYieldModel?.regime?.regime ?? null,
+          newsFlag: goldNews?.flag ?? null,
+          now: now.toISOString(),
+        });
+        console.log(`[GOLD] Adaptiver Score=${adaptiveScore.score == null ? "N/A" : adaptiveScore.score.toFixed(2)}, Volumen=${volumeSource ?? "N/A"}, News-Flag=${goldNews?.flag ?? "N/A"}`);
+      } catch (adaptiveErr: any) {
+        console.warn(`[GOLD] Adaptive Schicht fehlgeschlagen: ${adaptiveErr?.message?.substring(0, 180)}`);
+      }
+
       // === Summary Table ===
       const sentiment: "Bullish" | "Neutral" | "Bearish" = gis >= 0.30 ? "Bullish" : gis >= 0 ? "Neutral" : "Bearish";
       const summaryTable = [
@@ -686,6 +744,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         { metric: "Abweichung 200-DMA", value: `${deviationFromMA200 >= 0 ? "+" : ""}${deviationFromMA200.toFixed(1)}%` },
         { metric: "RSI (14)", value: rsi14.toFixed(1) },
         { metric: "GIS (Gold Indicator Score)", value: gis.toFixed(2) },
+        { metric: "Adaptiver Layer-Score", value: adaptiveScore?.score == null ? "N/A" : adaptiveScore.score.toFixed(2) },
         { metric: "Sentiment", value: sentiment },
         { metric: "Fair Value (adj.)", value: `$${fvAdj.toFixed(0)}` },
         { metric: "30d Volatilität (ann.)", value: `${(sigma * 100).toFixed(1)}%` },
@@ -757,6 +816,8 @@ export function registerGoldRoutes(server: Server, app: Express) {
         rsi14,
         realYieldModel,
         multiFactorModel,
+        adaptiveScore,
+        goldNews,
       };
 
       console.log(`[GOLD] Analysis complete: $${spotPrice}, GIS=${gis.toFixed(2)}, Sentiment=${sentiment}`);
