@@ -553,7 +553,7 @@ function scoreGoogleTrends(): IndicatorResult {
 }
 
 // One crowd leg: live CNN, otherwise a single VIX proxy. Crypto is only the proxy flag.
-function scoreCrowdLeg(vix: number): IndicatorResult {
+function scoreCrowdLeg(vix: number, vixSource = "FRED VIXCLS"): IndicatorResult {
   let cnn: number | null = null;
   try {
     const json = fetchUrl(
@@ -572,7 +572,7 @@ function scoreCrowdLeg(vix: number): IndicatorResult {
   } catch (err: any) {
     console.log(`  CNN F&G primary failed: ${err?.message?.substring(0, 100)}`);
   }
-  return crowdReading(cnn, Number.isFinite(vix) ? vix : null, false);
+  return crowdReading(cnn, Number.isFinite(vix) ? vix : null, false, vixSource);
 }
 
 function scoreWei(): IndicatorResult {
@@ -1279,12 +1279,28 @@ export function googleReading(
   };
 }
 
-export function vixReading(vix: number): IndicatorResult {
+const VIX_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=10d&interval=1d";
+
+/**
+ * VIX level for the score. FRED VIXCLS stays first. Yahoo ^VIX is read only when the
+ * FRED print is not finite (Future_2 / Offen_FUTURE_SOLL_IST PR 5). Both empty → NaN, slot stays closed.
+ */
+export function resolveVixLevel(
+  fredValue: number,
+  yahooPayload: () => unknown,
+): { value: number; source: string } {
+  if (Number.isFinite(fredValue)) return { value: fredValue, source: "FRED VIXCLS" };
+  const close = latestYahooChartClose(yahooPayload());
+  if (close) return { value: close.value, source: `Yahoo ^VIX ${close.date} (Fallback, FRED VIXCLS leer)` };
+  return { value: NaN, source: "FRED VIXCLS" };
+}
+
+export function vixReading(vix: number, source = "FRED VIXCLS"): IndicatorResult {
   const base = {
     name: "VIX",
     group: "correction" as const,
     subgroup: "sentiment",
-    source: "FRED VIXCLS",
+    source,
     description: "CBOE Volatility Index (Angstbarometer)",
   };
   if (!Number.isFinite(vix)) return closedIndicator(base);
@@ -1304,7 +1320,12 @@ export function vixReading(vix: number): IndicatorResult {
   };
 }
 
-export function crowdReading(cnn: number | null, vix: number | null, cnnIsProxy: boolean): IndicatorResult {
+export function crowdReading(
+  cnn: number | null,
+  vix: number | null,
+  cnnIsProxy: boolean,
+  vixSource = "FRED VIXCLS",
+): IndicatorResult {
   const cnnOk = cnn != null && Number.isFinite(cnn) && !cnnIsProxy;
   if (cnnOk) {
     const fgValue = cnn as number;
@@ -1345,7 +1366,7 @@ export function crowdReading(cnn: number | null, vix: number | null, cnnIsProxy:
       weightedScore: rawScore,
       maxWeighted: 4,
       zone,
-      source: "FRED VIXCLS",
+      source: vixSource,
       description: "Ein Crowd-Bein als VIX-Proxy. Nicht AAII, Put/Call und Investors Intelligence zugleich.",
       proxy: true,
     };
@@ -1405,7 +1426,11 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   const usSahm = scoreSahm();
   const regionalPromise = fetchRegionalPrints().catch(() => null);
 
-  const vixValue = getLatestFredValue("VIXCLS");
+  const vix = resolveVixLevel(
+    getLatestFredValue("VIXCLS"),
+    () => readJson(fetchUrl(VIX_YAHOO_CHART, 20000, { "User-Agent": "Mozilla/5.0" })),
+  );
+  const vixValue = vix.value;
   const indicators: IndicatorResult[] = await Promise.all([
     Promise.resolve(usSahm.indicator),
     scoreYieldCurve(),
@@ -1418,8 +1443,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     scoreCAPE(),
     scoreMarginDebt(),
     scoreGoogleTrends(),
-    vixReading(vixValue),
-    scoreCrowdLeg(vixValue),
+    vixReading(vixValue, vix.source),
+    scoreCrowdLeg(vixValue, vix.source),
     scoreWei(),
   ]);
 
