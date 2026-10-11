@@ -113,6 +113,8 @@ export function buildConflictMatrix(i: ConflictInputs): ConflictMatrix {
 
 /** Loose view of the analysis: old cache entries can lack scoring, gateInputs or technicalIndicators. */
 export interface ConflictSource {
+  isEtf?: boolean | null;
+  isFund?: boolean | null;
   scoring?: { qualityScore?: number | null; gateInputs?: { marginDeltaYoYPp?: number | null; relativeGrowthDeltaYoYPp?: number | null } | null } | null;
   technicalIndicators?: { currentStatus?: ConflictInputs["technical"] } | null;
 }
@@ -123,6 +125,8 @@ export function conflictInputsFromAnalysis(
   reverseDcf: { rating?: string | null; impliedGrowth?: number | null } | null | undefined,
   catalystUpsidePct: number | null | undefined,
 ): ConflictInputs {
+  // Reverse DCF has no meaning for ETFs / funds → n/a (also when the UI passes its own reverseDCF).
+  if (isEtfOrFund(data)) reverseDcf = null;
   return {
     qualityScore: data?.scoring?.qualityScore,
     marginDeltaYoYPp: data?.scoring?.gateInputs?.marginDeltaYoYPp,
@@ -139,11 +143,17 @@ export function conflictInputsFromAnalysis(
  * Reverse DCF = calculateReverseDCF with the WACC of calculateFCFFDCF(buildDefaultDCFParams(data)),
  * identical to SummarySection. Catalysts = sumUpsideGb (same as calculateCatalystUpside). Any failure → n/a.
  */
+/** FMP profile isEtf / isFund, passed through analyze-route (StockAnalysis.isEtf / isFund). Missing → false. */
+export function isEtfOrFund(data: { isEtf?: boolean | null; isFund?: boolean | null } | null | undefined): boolean {
+  return data?.isEtf === true || data?.isFund === true;
+}
+
 /**
  * Reverse DCF exactly like SummarySection: calculateReverseDCF with the WACC of
  * calculateFCFFDCF(buildDefaultDCFParams(data)). Shared by the matrix and PDF section 14. Failure → null.
  */
 export function reverseDcfFromAnalysis(data: any): { impliedGrowth: number; rating: string; referenceGrowth: number } | null {
+  if (isEtfOrFund(data)) return { impliedGrowth: 0, rating: "n/a", referenceGrowth: 0 };
   try {
     const wacc = calculateFCFFDCF(buildDefaultDCFParams(data)).wacc;
     return calculateReverseDCF({
