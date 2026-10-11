@@ -15,7 +15,7 @@ import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
-import { dividendOverlaySeries, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
+import { dividendOverlaySeries, dividendCurrencyCheck, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
 
 interface Props { data: StockAnalysis; }
 
@@ -352,7 +352,9 @@ export function TechnicalChart({ data }: Props) {
     () => (showDividend && dividendQuery.data && dividendQuery.data.events.length > 0 ? dividendOverlaySeries(aBuilt.points, dividendQuery.data.events) : null),
     [showDividend, dividendQuery.data, aBuilt.points],
   );
-  const dividendOverlay = dividendSeries && dividendSeries.points.some(p => p.yieldPct != null) ? dividendSeries : null;
+  // Currency guard: dividend currency (stated by FMP/Yahoo) vs analysis price currency. Mismatch → n/a, no FX.
+  const dividendCcy = dividendCurrencyCheck(dividendQuery.data?.currency, data.currency);
+  const dividendOverlay = dividendCcy !== "mismatch" && dividendSeries && dividendSeries.points.some(p => p.yieldPct != null) ? dividendSeries : null;
 
   const formatDate = (date: string) => {
     const p = date.split("-");
@@ -821,6 +823,8 @@ export function TechnicalChart({ data }: Props) {
           loading={dividendQuery.isLoading}
           failed={dividendQuery.isError}
           formatDateFull={formatDateFull}
+          currencyCheck={dividendCcy}
+          priceCurrency={data.currency}
         />
       )}
 
@@ -1346,7 +1350,9 @@ function DividendTooltipRows({ p, formatDateFull }: { p: DividendFields; formatD
   );
 }
 
-function DividendOverlayStatus({ series, history, loading, failed, formatDateFull }: {
+function DividendOverlayStatus({ series, history, loading, failed, formatDateFull, currencyCheck = "unknown", priceCurrency }: {
+  currencyCheck?: "ok" | "mismatch" | "unknown";
+  priceCurrency?: string;
   series: DividendOverlaySeries | null;
   history: DividendHistoryResponse | undefined;
   loading: boolean;
@@ -1357,6 +1363,7 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
   if (loading) return <div className={base} data-testid="dividend-overlay-loading">Div. Yield: Dividendenhistorie wird geladen …</div>;
   if (failed) return <div className={base} data-testid="dividend-overlay-empty">Div. Yield: n/a — Dividendenhistorie nicht erreichbar.</div>;
   if (!history || history.events.length === 0) return <div className={base} data-testid="dividend-overlay-empty">Div. Yield: n/a — keine Dividendenhistorie (FMP/Yahoo), z. B. kein Dividendenzahler.</div>;
+  if (currencyCheck === "mismatch") return <div className={base} data-testid="dividend-overlay-currency">Div. Yield: n/a — Dividende in {history.currency}, Kurs in {priceCurrency}; keine FX-Umrechnung.</div>;
   if (!series) return <div className={base} data-testid="dividend-overlay-empty">Div. Yield: n/a — Dividendenhistorie deckt dieses Fenster nicht mit 12 Monaten ab.</div>;
   const last = [...series.points].reverse().find(p => p.yieldPct != null);
   const src = history.source === "fmp" ? "FMP" : "Yahoo (Fallback)";
@@ -1365,6 +1372,7 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
       <span style={{ color: DIV_COLOR }} className="font-medium">Div. Yield TTM</span> (rechte Achse) = Σ Dividenden 12M / Kurs
       {last && <> · aktuell <span className="font-mono">{last.yieldPct!.toFixed(2)}%</span> ({last.ttmDividend?.toFixed(2)} je Aktie)</>}
       {" "}· {series.paymentsPerYear}× jährlich · Quelle {src}
+      {currencyCheck === "ok" ? <> · Währung {history.currency} = Kurs</> : <> · Dividendenwährung von der Quelle nicht angegeben (Annahme: Kurswährung)</>}
       {series.correctedBars > 0 && <> · <span className="text-amber-500">{series.correctedBars} Punkt(e) geglättet</span> (Ex-Tag-Verschiebung, Rohwert im Tooltip)</>}
       {series.specialExDates.length > 0 && <> · <span className="text-violet-400">Sonderdividende {series.specialExDates.map(formatDateFull).join(", ")}</span></>}
       {" "}· KPI „Div. Yield“ in Sektion 1 = Geschäftsjahreswert (FMP), daher abweichend.

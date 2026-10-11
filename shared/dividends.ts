@@ -17,6 +17,36 @@ export interface DividendHistoryResponse {
   source: DividendSource;
   events: DividendEvent[];
   note: string | null;
+  /** ISO currency the source states for the amounts (FMP row `currency`/`reportedCurrency`, Yahoo meta.currency). null = source states none. */
+  currency?: string | null;
+}
+
+const CCY = /^[A-Z]{3}$/;
+function ccy(v: unknown): string | null {
+  const c = typeof v === "string" ? v.trim().toUpperCase() : "";
+  return CCY.test(c) ? c : null;
+}
+
+/** Currency stated in FMP dividend rows, if any (first non-empty `currency` / `reportedCurrency`). */
+export function parseFmpDividendCurrency(payload: unknown): string | null {
+  const rows = Array.isArray(payload) ? payload : Array.isArray((payload as any)?.historical) ? (payload as any).historical : [];
+  for (const r of rows) { const c = ccy(r?.currency) ?? ccy(r?.reportedCurrency); if (c) return c; }
+  return null;
+}
+
+/** Yahoo v8 chart meta.currency (currency of price and dividend amounts of that listing). */
+export function parseYahooDividendCurrency(payload: unknown): string | null {
+  return ccy((payload as any)?.chart?.result?.[0]?.meta?.currency);
+}
+
+/**
+ * Guard for the yield line: dividend and price must be in the same currency. Known and different → mismatch
+ * (no FX conversion, nothing guessed). Unknown on either side → "unknown" (line shown, note says so).
+ */
+export function dividendCurrencyCheck(dividendCcy: string | null | undefined, priceCcy: string | null | undefined): "ok" | "mismatch" | "unknown" {
+  const d = ccy(dividendCcy), p = ccy(priceCcy);
+  if (!d || !p) return "unknown";
+  return d === p ? "ok" : "mismatch";
 }
 
 export interface DividendYieldPoint {

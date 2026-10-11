@@ -82,3 +82,28 @@ assert.deepEqual(koDip.points[1].addedExDates, []); assert.equal(koDip.points[1]
 // NVO 4.65 % last point untouched by the dip rule
 assert.equal(dividendOverlaySeries([{ date: "2026-10-09", close: 38.64 }], NVO).points[0].yieldPct, 4.65);
 console.log("test-dividend-price-overlay (dip): OK");
+
+// ── Currency guard (Doublecheck soft #227) ──
+import { dividendCurrencyCheck, parseFmpDividendCurrency, parseYahooDividendCurrency } from "../shared/dividends";
+import { loadDividendHistory } from "../server/dividend-route";
+// NVO: Yahoo NVO listing states USD; amounts per ADR (1 ADR = 1 B share) in USD → ok, 4.65 % stays.
+assert.equal(dividendCurrencyCheck("USD", "USD"), "ok");
+assert.equal(parseYahooDividendCurrency({ chart: { result: [{ meta: { currency: "USD" } }] } }), "USD");
+// Mismatch fixture: Copenhagen line (DKK 7.95/3.75) against the USD ADR price → n/a, no FX.
+assert.equal(dividendCurrencyCheck("DKK", "USD"), "mismatch");
+assert.equal(dividendCurrencyCheck("usd", "EUR"), "mismatch");
+// FMP rows without a currency field (current live payload) → unknown, line shown with note.
+assert.equal(parseFmpDividendCurrency([{ date: "2026-08-17", adjDividend: 0.57919 }]), null);
+assert.equal(parseFmpDividendCurrency([{ date: "2026-08-17", dividend: 3.75, currency: "DKK" }]), "DKK");
+assert.equal(dividendCurrencyCheck(null, "USD"), "unknown");
+// KO
+assert.equal(dividendCurrencyCheck("USD", "USD"), "ok");
+const yy = Object.assign([{ date: "2026-08-14", amount: 3.75 }], { currency: "DKK" });
+const r = await loadDividendHistory("NOVO-B.CO", { fmp: async () => [], yahoo: async () => yy });
+assert.equal(r.currency, "DKK"); assert.equal(dividendCurrencyCheck(r.currency, "USD"), "mismatch");
+const rf = await loadDividendHistory("KO", { fmp: async () => [{ date: "2026-09-15", adjDividend: 0.53, currency: "USD" }], yahoo: async () => [] });
+assert.equal(rf.currency, "USD");
+const ui2 = readFileSync("client/src/components/sections/TechnicalChart.tsx", "utf8");
+assert.match(ui2, /dividendCcy !== "mismatch"/);
+assert.match(ui2, /keine FX-Umrechnung/);
+console.log("test-dividend-price-overlay (currency guard): OK");
