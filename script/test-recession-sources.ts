@@ -15,6 +15,7 @@ import {
   blendWithNyFedAnchor,
   briefingEssayAllowed,
   buffettFazitClause,
+  buffettSeriesNote,
   buffettFromMarketCapGdp,
   buffettFromObservation,
   buffettMarketCapGdpPercent,
@@ -231,6 +232,15 @@ console.log("\n=== Fallback snapshot follows the same rules ===");
   const action = fb.fazit?.sections.find(s => s.title === "Handlungsempfehlung")?.text ?? "";
   check("fallback action is the two-book branch", action.includes("Beta/Duration runter") && !action.includes("Goldallokation"));
   check("fallback summary still says Hohes Risiko", String(fb.fazit?.summary).includes("Hohes Risiko"));
+  const valuation = fb.fazit?.sections.find(s => s.title === "Bewertungsrisiko")?.text ?? "";
+  check("fallback fazit does not name a fixed market peak", !valuation.includes("Dotcom") && valuation.includes("230%"));
+  const panel = readFileSync(new URL("../client/src/components/recession/BuffettRatioPanel.tsx", import.meta.url), "utf8");
+  check(
+    "buffett chart uses theme tokens instead of a white slab",
+    panel.includes("hsl(var(--card))") && panel.includes("hsl(var(--border))") && panel.includes("hsl(var(--foreground))") && panel.includes("bg-card") && !panel.includes("bg-white"),
+  );
+  const snapshot = readFileSync(new URL("../client/public/recession-data.json", import.meta.url), "utf8");
+  check("public recession snapshot does not name a fixed market peak", !snapshot.includes("Dotcom"));
 }
 
 console.log("\n=== Kurve: s(z) über 20J, 0 ist nur das Label ===");
@@ -312,8 +322,38 @@ console.log("\n=== Buffett: fresh Wilshire/GDP, stale World Bank print is not li
   const staleText = [stale.value, stale.zone, stale.source, stale.description].join(" ");
   check("stale Buffett does not say aktuell", !staleText.toLowerCase().includes("aktuell"));
   check("the stale clause is empty", buffettFazitClause(stale) === "" && liveBuffettValue(stale) === null);
-  check("a live ratio above 180 still names the dotcom high", buffettFazitClause(buffettReading(230)).includes("230%") && buffettFazitClause(buffettReading(230)).includes("Dotcom"));
-  check("the live clause does not say aktuell", !buffettFazitClause(buffettReading(230)).toLowerCase().includes("aktuell"));
+  const atMax = [
+    { date: "1950-03-31", ratio: 40 },
+    { date: "2000-03-24", ratio: 150 },
+    { date: "2026-10-02", ratio: 230 },
+  ];
+  const atMaxClause = buffettFazitClause(buffettReading(230), atMax);
+  check(
+    "a live ratio at the series max names that max since the series start",
+    atMaxClause.includes("230%") && atMaxClause.includes("höchster Wert der Reihe seit 1950") && !atMaxClause.includes("Dotcom"),
+    atMaxClause,
+  );
+  const underPrior = [
+    { date: "1950-03-31", ratio: 40 },
+    { date: "2000-03-24", ratio: 151.4 },
+    { date: "2021-11-08", ratio: 260 },
+    { date: "2021-12-01", ratio: 260 },
+    { date: "2026-10-02", ratio: 230 },
+  ];
+  const priorClause = buffettFazitClause(buffettReading(230), underPrior);
+  check(
+    "a live ratio under a prior print names the later of the tied highs and its date",
+    priorClause.includes("230%") && priorClause.includes("2021-12-01") && priorClause.includes("260%") && !priorClause.includes("höchster Wert") && !priorClause.includes("Dotcom"),
+    priorClause,
+  );
+  check(
+    "without a series the clause states the level and does not invent a peak",
+    buffettFazitClause(buffettReading(230)).includes("230%")
+      && !buffettFazitClause(buffettReading(230)).includes("höchster Wert")
+      && !buffettFazitClause(buffettReading(230)).includes("Dotcom")
+      && buffettSeriesNote(230, []) === null,
+  );
+  check("the live clause does not say aktuell", !buffettFazitClause(buffettReading(230), atMax).toLowerCase().includes("aktuell"));
 
   const justInside = buffettFromObservation({ date: "2025-04-01", value: 150 }, today);
   check(
@@ -396,6 +436,10 @@ console.log("\n=== Buffett: fresh Wilshire/GDP, stale World Bank print is not li
   );
   const fazitFn = server.slice(server.indexOf("function generateFazit"), server.indexOf("function registerRecessionRoutes"));
   check("fazit cites Buffett only through the live-value gate", fazitFn.includes("liveBuffettValue") && fazitFn.includes("buffettFazitClause"));
+  check(
+    "the fazit source has no fixed peak sentence",
+    !server.includes("Dotcom-Blase") && !server.includes("höchste Niveau seit der") && fazitFn.includes("buffettSeries"),
+  );
 }
 
 console.log("\n=== Fazit ≥65% names the actual drivers, not a closed valuation book ===");
@@ -430,6 +474,11 @@ console.log("\n=== Fazit ≥65% names the actual drivers, not a closed valuation
   );
 
   const liveBuffett = buffettReading(230);
+  const seriesHigh = [
+    { date: "1950-03-31", ratio: 40 },
+    { date: "2000-03-24", ratio: 150 },
+    { date: "2026-10-02", ratio: 230 },
+  ];
   const valuationFazit = generateFazit(
     [liveBuffett, closedCape, closedMargin],
     [],
@@ -437,6 +486,7 @@ console.log("\n=== Fazit ≥65% names the actual drivers, not a closed valuation
     [driverLine(liveBuffett)],
     emptyBridge(),
     quiet,
+    seriesHigh,
   );
   const valuationQuant = valuationFazit.sections.find(s => s.title === "Quantitative Bewertung")?.text ?? "";
   const valuationSection = valuationFazit.sections.find(s => s.title === "Bewertungsrisiko");
@@ -446,8 +496,10 @@ console.log("\n=== Fazit ≥65% names the actual drivers, not a closed valuation
     valuationQuant,
   );
   check(
-    "Bewertungsrisiko still quotes the live Dotcom clause",
-    (valuationSection?.text ?? "").includes("230%") && (valuationSection?.text ?? "").includes("Dotcom"),
+    "Bewertungsrisiko quotes the series high and not a fixed peak name",
+    (valuationSection?.text ?? "").includes("230%")
+      && (valuationSection?.text ?? "").includes("höchster Wert der Reihe seit 1950")
+      && !(valuationSection?.text ?? "").includes("Dotcom"),
     valuationSection?.text,
   );
 }

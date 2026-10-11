@@ -56,6 +56,25 @@ const PLUS_1 = "#f47c12";
 const PLUS_2 = "#d12b3e";
 const MINUS_1 = "#8fc97a";
 const MINUS_2 = "#1c7b54";
+const CHART_CARD = "hsl(var(--card))";
+const CHART_BORDER = "hsl(var(--border))";
+const CHART_FOREGROUND = "hsl(var(--foreground))";
+
+/** Recharts default tooltip is an opaque white box. Theme tokens follow light and dark. */
+const chartTooltipStyle = {
+  fontSize: 11,
+  backgroundColor: CHART_CARD,
+  border: `1px solid ${CHART_BORDER}`,
+  borderRadius: 8,
+  color: CHART_FOREGROUND,
+};
+
+const chartTooltipLabelStyle = {
+  color: CHART_FOREGROUND,
+};
+
+const axisTick = { fontSize: 11, fill: CHART_FOREGROUND };
+const axisLine = { stroke: CHART_FOREGROUND };
 
 function longDate(iso: string): string {
   const [year, month, day] = iso.split("-").map(Number);
@@ -191,7 +210,7 @@ function ChartOverlay(props: {
   const labels: { key: keyof TrendPoint; text: string; fill: string; pill?: boolean }[] = [
     { key: "plus2", text: "+ 2 Std.-Abw.", fill: PLUS_2 },
     { key: "plus1", text: "+ 1 Std.-Abw.", fill: PLUS_1 },
-    { key: "trend", text: "Langfristiger Trend", fill: "#4b5563", pill: true },
+    { key: "trend", text: "Langfristiger Trend", fill: CHART_FOREGROUND, pill: true },
     { key: "minus1", text: "− 1 Std.-Abw.", fill: "#4d7c0f" },
     { key: "minus2", text: "− 2 Std.-Abw.", fill: MINUS_2 },
   ];
@@ -209,7 +228,7 @@ function ChartOverlay(props: {
         if (label.pill) {
           return (
             <g key={label.key}>
-              <rect x={labelX - 62} y={ly - 9} width={124} height={16} rx={2} fill="#f3f4f6" stroke="#d1d5db" />
+              <rect x={labelX - 62} y={ly - 9} width={124} height={16} rx={2} fill={CHART_CARD} stroke={CHART_BORDER} />
               <text x={labelX} y={ly + 3} textAnchor="middle" fill={label.fill} fontSize={10} fontWeight={600}>
                 {text}
               </text>
@@ -225,7 +244,7 @@ function ChartOverlay(props: {
             fill={label.fill}
             fontSize={11}
             fontWeight={600}
-            stroke="#ffffff"
+            stroke={CHART_CARD}
             strokeWidth={3}
             paintOrder="stroke"
           >
@@ -238,7 +257,7 @@ function ChartOverlay(props: {
           <line x1={x1} y1={y1} x2={x - 8} y2={y} stroke={RATIO} strokeWidth={1.6} />
           <polygon points={`${x},${y} ${x - 9},${y - 4} ${x - 9},${y + 4}`} fill={RATIO} />
           <g data-testid="text-buffett-callout">
-            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx={2} fill="#ffffff" stroke={RATIO} strokeWidth={1.6} />
+            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx={2} fill={CHART_CARD} stroke={RATIO} strokeWidth={1.6} />
             <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}</text>
             <text x={boxX + 10} y={boxY + 33} fill={RATIO} fontSize={props.wide ? 12 : 11}>{ratioText}</text>
             <text x={boxX + 10} y={boxY + 50} fill={RATIO} fontSize={props.wide ? 12 : 11}>{premiumText}</text>
@@ -249,7 +268,7 @@ function ChartOverlay(props: {
             textAnchor="start"
             fill={RATIO}
             fontSize={props.wide ? 12 : 10}
-            stroke="#ffffff"
+            stroke={CHART_CARD}
             strokeWidth={3}
             paintOrder="stroke"
           >
@@ -352,10 +371,10 @@ export function BuffettRatioPanel() {
                   {Math.abs(chart[chart.length - 1].zScore).toFixed(1)} Standardabweichungen {chart[chart.length - 1].zScore >= 0 ? "über" : "unter"} der Trendlinie
                 </p>
               )}
-            <div className="h-[360px] w-full rounded-md border border-neutral-200 bg-white p-1 sm:h-[460px]" data-testid="chart-buffett">
+            <div className="h-[360px] w-full rounded-md border border-border bg-card p-1 text-foreground sm:h-[460px]" data-testid="chart-buffett">
               <ResponsiveContainer>
                 <LineChart data={chart} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke="#e5e7eb" />
+                  <CartesianGrid stroke={CHART_FOREGROUND} strokeOpacity={0.22} />
                   <XAxis
                     dataKey="t"
                     type="number"
@@ -364,9 +383,9 @@ export function BuffettRatioPanel() {
                     ticks={ticks}
                     interval={0}
                     tickFormatter={value => tickLabel(Number(value), range)}
-                    tick={{ fontSize: 11, fill: "#6b7280" }}
-                    axisLine={{ stroke: "#9ca3af" }}
-                    tickLine={{ stroke: "#9ca3af" }}
+                    tick={axisTick}
+                    axisLine={axisLine}
+                    tickLine={axisLine}
                     minTickGap={8}
                   />
                   <YAxis
@@ -374,13 +393,14 @@ export function BuffettRatioPanel() {
                     ticks={yTicks}
                     allowDataOverflow
                     tickFormatter={value => `${value}%`}
-                    tick={{ fontSize: 11, fill: "#6b7280" }}
-                    axisLine={{ stroke: "#9ca3af" }}
-                    tickLine={{ stroke: "#9ca3af" }}
+                    tick={axisTick}
+                    axisLine={axisLine}
+                    tickLine={axisLine}
                     width={48}
                   />
                   <Tooltip
-                    contentStyle={{ fontSize: 11, borderColor: "#d1d5db" }}
+                    contentStyle={chartTooltipStyle}
+                    labelStyle={chartTooltipLabelStyle}
                     labelFormatter={value => longDate(new Date(Number(value)).toISOString().slice(0, 10))}
                     formatter={(value: number, name: string) => [`${Number(value).toFixed(1)}%`, name]}
                   />

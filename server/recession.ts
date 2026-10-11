@@ -20,7 +20,7 @@ import { diskBriefingUpdatedAt } from "./disk-cache";
 import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
-import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
+import { WILSHIRE_DOLLARS_PER_POINT_BN, loadUsBuffettRatios } from "./buffett-route";
 
 // ============================================================
 // Generic Data Helpers
@@ -1148,12 +1148,48 @@ export function liveBuffettValue(indicator: Pick<IndicatorResult, "value" | "ava
   return indicator.value;
 }
 
-export function buffettFazitClause(indicator: Pick<IndicatorResult, "value" | "available"> | undefined): string {
+/** Half a displayed percent. The live slot is an integer, the chart series is one decimal. */
+const BUFFETT_PEAK_TOLERANCE = 0.5;
+
+function formatSeriesPct(ratio: number): string {
+  const rounded = Math.round(ratio * 10) / 10;
+  return Number.isInteger(rounded) ? `${rounded}%` : `${rounded.toFixed(1)}%`;
+}
+
+/**
+ * Rank of the live print against the chart series.
+ * At the maximum, name the first year of that series.
+ * Otherwise name the higher print and its date.
+ * An empty series makes no historical claim.
+ */
+export function buffettSeriesNote(
+  currentPct: number,
+  series: { date: string; ratio: number }[],
+): string | null {
+  const points = series
+    .filter(point => /^\d{4}-\d{2}-\d{2}$/.test(point.date) && Number.isFinite(point.ratio))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  if (points.length === 0 || !Number.isFinite(currentPct)) return null;
+  const higher = points.filter(point => point.ratio > currentPct + BUFFETT_PEAK_TOLERANCE);
+  if (higher.length === 0) return `höchster Wert der Reihe seit ${points[0].date.slice(0, 4)}`;
+  let peak = higher[0];
+  for (const point of higher) {
+    if (point.ratio > peak.ratio || (point.ratio === peak.ratio && point.date > peak.date)) peak = point;
+  }
+  return `der vorherige höhere Wert lag am ${peak.date} bei ${formatSeriesPct(peak.ratio)}`;
+}
+
+export function buffettFazitClause(
+  indicator: Pick<IndicatorResult, "value" | "available"> | undefined,
+  series: { date: string; ratio: number }[] = [],
+): string {
   const value = liveBuffettValue(indicator);
   if (value == null) return "";
   const buffettVal = parseFloat(String(value).replace("%", ""));
   if (!Number.isFinite(buffettVal) || buffettVal <= 180) return "";
-  return `Der Buffett-Indikator steht bei ${value} — das höchste Niveau seit der Dotcom-Blase. `
+  const note = buffettSeriesNote(buffettVal, series);
+  const rank = note ? ` — ${note}` : "";
+  return `Der Buffett-Indikator steht bei ${value}${rank}. `
     + `Historisch führten Bewertungen über 200% zu durchschnittlichen Drawdowns von 30-50% innerhalb von 18 Monaten. `;
 }
 
@@ -1382,6 +1418,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   console.log("[RECESSION] Starting recession analysis...");
 
   const bridgePromise = fetchBridge();
+  const buffettSeriesPromise = loadUsBuffettRatios();
   const cosdSahm = getDateYearsAgo(SAHM_HISTORY_YEARS);
   const usSahm = scoreSahm();
   const regionalPromise = fetchRegionalPrints().catch(() => null);
@@ -1558,7 +1595,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     lines: driverAssessment.lines,
     cards: driverAssessment.cards,
   };
-  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers, bridge, drivers);
+  const buffettSeries = await buffettSeriesPromise;
+  const fazit = generateFazit(indicators, subgroups, pCoincident, pLeading, pRezFull, pSentiment, pCorrFull, topDrivers, bridge, drivers, buffettSeries);
 
   console.log("[RECESSION] Analysis complete.");
   console.log(`[RECESSION] Probabilities: Rez-3M=${pCoincident}%, Rez-6M=${pLeading}%, Rez-12M=${pRezFull}%, Korr-3-6M=${pSentiment}%, Korr-12M=${pCorrFull}%`);
@@ -1621,6 +1659,7 @@ export function generateFazit(
   topDrivers: string[],
   bridge: RecessionBridge,
   drivers: DriverView,
+  buffettSeries: { date: string; ratio: number }[] = [],
 ): { summary: string; riskLevel: string; sections: FazitSection[] } {
   // Extract key indicator values
   const get = (name: string) => indicators.find(i => i.name.includes(name));
@@ -1666,7 +1705,7 @@ export function generateFazit(
 
   // Section 2: Valuation Risk — never an empty heading; closed slots get an honest hint.
   let valuationText = "";
-  valuationText += buffettFazitClause(buffett);
+  valuationText += buffettFazitClause(buffett, buffettSeries);
   const capeVal = cape ? parseFloat(String(cape.value)) : NaN;
   if (!isNaN(capeVal) && capeVal > 30) {
     valuationText += `Das Shiller CAPE-Ratio von ${capeVal} liegt über dem Durchschnitt der letzten 140 Jahre (ca. 17) und signalisiert, dass zukünftige Aktienrenditen (10J) mit hoher Wahrscheinlichkeit unterdurchschnittlich ausfallen. `;
