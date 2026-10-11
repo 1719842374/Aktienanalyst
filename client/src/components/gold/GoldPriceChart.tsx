@@ -1,5 +1,7 @@
 import type { GoldAnalysis } from "../../../../shared/gold-schema";
 import { Fragment, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import {
   Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, ReferenceArea, ReferenceDot, ComposedChart, Bar,
@@ -12,12 +14,16 @@ import { TaStatusPill } from "@/components/sections/TaStatusPill";
 import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
-import { buildGoldTechnical, describeRelativeRsi, volumeLegendText, type GoldTechPoint } from "./goldTechnical";
+import {
+  buildGoldTechnical, describeRelativeRsi, volumeLegendText, filterGoldRange, goldRangeNote, macroRangeState, needsLongHistory,
+  type GoldTechPoint, type GoldTimeRange,
+} from "./goldTechnical";
+import type { GoldPricePoint } from "../../../../shared/gold-schema";
 
 /**
  * Gold Section 2 im Design von BTC Section 11 „Technische Analyse“
  * (Future_10 §4 / §7, Philip LOCKED): vier JA/NEIN-Karten, Kaufsignal-Box,
- * MA200-Break-Warnung, Cross-Banner, Zeitfenster 3M–5Y, MA/EMA-Chips,
+ * MA200-Break-Warnung, Cross-Banner, Zeitfenster 3M–5Y, 10Y, Max, MA/EMA-Chips,
  * Signale, Volumen, Makro-Overlays (nur echte FRED-Daten), Messen, MACD, RSI.
  * 50-DMA und Golden/Death-Marker aus #201 (goldChartMa.ts) bleiben.
  */
@@ -46,7 +52,9 @@ const MACRO = [
 
 type MAKey = typeof MA_LINES[number]["key"];
 type MacroKey = typeof MACRO[number]["key"];
-type TimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y";
+type TimeRange = GoldTimeRange;
+
+interface GoldChartHistory { source: string; points: GoldPricePoint[]; incomplete?: boolean; incompleteReason?: string | null }
 
 const fmtMacro = (key: MacroKey, v: number) =>
   key === "walcl" ? `$${v.toFixed(2)}T` : key === "dxy" ? v.toFixed(1) : `${v.toFixed(2)}%`;
@@ -65,30 +73,54 @@ export function GoldPriceChart({ data }: Props) {
   const [measureStart, setMeasureStart] = useState<{ date: string; price: number } | null>(null);
   const [measureEnd, setMeasureEnd] = useState<{ date: string; price: number } | null>(null);
 
+  // 10Y/Max: lange Historie lazy laden (nur Chart-Daten, kein Score). Indikatoren laufen auf der
+  // vollen Reihe, danach Fenster + Ausduennung. Pills, Cross-Banner und Rel. RSI bleiben auf `tech`.
+  const longRange = needsLongHistory(timeRange);
+  const historyQuery = useQuery<GoldChartHistory>({
+    queryKey: ["/api/gold-chart-history"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/gold-chart-history");
+      if (!res.ok) throw new Error(`Gold-Historie ${res.status}`);
+      return res.json();
+    },
+    enabled: longRange,
+    // Unvollstaendige Historie (FMP-Fehler mitten in der Reihe) nicht 6 h halten, sondern nach 10 min neu laden.
+    staleTime: query => (query.state.data?.incomplete ? 10 * 60 * 1000 : 6 * 60 * 60 * 1000),
+    retry: 1,
+  });
+  const longTech = useMemo(
+    () => (historyQuery.data?.points?.length ? buildGoldTechnical(historyQuery.data.points) : null),
+    [historyQuery.data],
+  );
+  const rangeTech = longRange && longTech ? longTech : tech;
+  const rangeSource = longRange && longTech ? historyQuery.data!.source : "FMP GCUSD";
+
   const filteredData = useMemo(() => {
-    if (fullChart.length === 0) return [];
-    const daysCutoff: Record<TimeRange, number> = { "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825 };
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - daysCutoff[timeRange]);
-    const cutoffStr = cutoff.toISOString().split("T")[0];
-    return fullChart.filter(d => d.date >= cutoffStr);
-  }, [fullChart, timeRange]);
+    if (rangeTech.points.length === 0) return [];
+    return filterGoldRange(rangeTech.points, timeRange);
+  }, [rangeTech, timeRange]);
 
   // Downsampling wie BTC (max ~500 Punkte). Cross-Tage bleiben erhalten,
   // damit die #201-Marker nicht aus dem Plot fallen.
   const chartData = useMemo(() => {
     if (filteredData.length <= 500) return filteredData;
     const step = Math.ceil(filteredData.length / 500);
-    const result = filteredData.filter((d, i) => i % step === 0 || d.cross || d.volSpike || d.volDivergence);
+    // 10Y/Max: nur Cross-Tage zusaetzlich behalten — Volumen-Marker-Tage wuerden sonst bei
+    // Jahrzehnten Historie hunderte Extra-Punkte erzwingen und die Ausduennung aushebeln.
+    const result = filteredData.filter((d, i) => i % step === 0 || d.cross || (!longRange && (d.volSpike || d.volDivergence)));
     if (result[result.length - 1] !== filteredData[filteredData.length - 1]) result.push(filteredData[filteredData.length - 1]);
     return result;
-  }, [filteredData]);
+  }, [filteredData, longRange]);
 
   const hasMacro = useMemo(() => {
     const out = {} as Record<MacroKey, boolean>;
     for (const m of MACRO) out[m.key] = chartData.some(d => d[m.key] != null);
     return out;
   }, [chartData]);
+  // Reihe existiert in der Historie, hat aber im Fenster keine Werte -> Chip "n/a", keine Linie.
+  const macroNa = useMemo(() => MACRO.filter(m => macroRangeState(rangeTech.points, chartData, m.key) === "na"), [rangeTech, chartData]);
+  const rangeNote = goldRangeNote(timeRange, filteredData, rangeSource,
+    Object.fromEntries(MACRO.map(m => [m.key, m.label])) as Record<MacroKey, string>);
 
   const macroDomain = useMemo(() => {
     const out = {} as Record<MacroKey, [number, number]>;
@@ -131,8 +163,8 @@ export function GoldPriceChart({ data }: Props) {
   const visibleSignals = useMemo(() => {
     if (!showSignals || chartData.length === 0) return [];
     const startDate = chartData[0].date;
-    return tech.signals.filter(s => s.date >= startDate);
-  }, [tech.signals, chartData, showSignals]);
+    return rangeTech.signals.filter(s => s.date >= startDate);
+  }, [rangeTech.signals, chartData, showSignals]);
 
   const toggleSet = <K,>(setter: React.Dispatch<React.SetStateAction<Set<K>>>, key: K) =>
     setter(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
@@ -157,7 +189,7 @@ export function GoldPriceChart({ data }: Props) {
 
   const formatDate = (date: string) => {
     const parts = date.split("-");
-    if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y") return `${parts[1]}/${parts[0].slice(2)}`;
+    if (timeRange === "2Y" || timeRange === "3Y" || timeRange === "5Y" || timeRange === "10Y" || timeRange === "Max") return `${parts[1]}/${parts[0].slice(2)}`;
     return `${parts[1]}/${parts[2]}`;
   };
   const formatDateFull = (date: string) =>
@@ -300,7 +332,7 @@ export function GoldPriceChart({ data }: Props) {
       {/* Controls — Preset → MAs → Signale/Volumen */}
       <div className="mb-3 flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
         <div className="flex max-w-full flex-wrap gap-1.5 sm:flex-nowrap sm:gap-0 sm:overflow-hidden sm:rounded-md sm:border sm:border-border" data-testid="gold-presets">
-          {(["3M", "6M", "1Y", "2Y", "3Y", "5Y"] as const).map(r => (
+          {(["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y", "Max"] as const).map(r => (
             <button
               key={r}
               onClick={() => { setTimeRange(r); setMeasureStart(null); setMeasureEnd(null); }}
@@ -312,6 +344,20 @@ export function GoldPriceChart({ data }: Props) {
             </button>
           ))}
         </div>
+        {longRange && (
+          <div className="w-full basis-full text-[10px] text-muted-foreground" data-testid="gold-range-note">
+            {historyQuery.isLoading
+              ? "Lade volle Historie …"
+              : historyQuery.isError
+                ? `Lange Historie nicht abrufbar — zeige die ${tech.points.length ? "vorhandenen 10 Jahre" : "vorhandenen Daten"}`
+                : rangeNote}
+            {longRange && longTech && historyQuery.data?.incomplete && (
+              <span className="ml-1 font-medium text-amber-400" data-testid="gold-range-incomplete" title={historyQuery.data.incompleteReason ?? undefined}>
+                · unvollständig{historyQuery.data.incompleteReason ? ` (${historyQuery.data.incompleteReason})` : ""}
+              </span>
+            )}
+          </div>
+        )}
         <div className="flex max-w-full flex-wrap gap-1.5 sm:gap-1">
           {MA_LINES.map(ma => (
             <button
@@ -349,7 +395,7 @@ export function GoldPriceChart({ data }: Props) {
 
       {/* Makro-Overlays (nur Serien mit echten FRED-Werten) + Messen */}
       <div className="mb-3 flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1">
-        {MACRO.some(m => hasMacro[m.key]) && (
+        {(MACRO.some(m => hasMacro[m.key]) || macroNa.length > 0) && (
           <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
             <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Makro:</span>
             {MACRO.filter(m => hasMacro[m.key]).map(m => {
@@ -368,6 +414,16 @@ export function GoldPriceChart({ data }: Props) {
                 </button>
               );
             })}
+            {macroNa.map(m => (
+              <span
+                key={`na-${m.key}`}
+                className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`}
+                title={`${m.title}: keine Werte im gewählten Zeitraum`}
+                data-testid={`gold-macro-na-${m.key.toLowerCase()}`}
+              >
+                {m.label} n/a
+              </span>
+            ))}
           </div>
         )}
         <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
@@ -752,7 +808,8 @@ export function GoldPriceChart({ data }: Props) {
         <span className="font-semibold">Anti-Bias Protokoll:</span> Kauf nur wenn: Kurs &gt; MA200 AND MA50 &gt; MA200 AND MACD &gt; 0 + steigend.
         Bei MA200-Break: historischen Max-Drawdown +15-20% (defensiv) bzw. +35-50% (Beta &gt;1.5) als Downside einplanen.
         MACD = EMA₁₂ − EMA₂₆, Signal = EMA₉(MACD), Histogram = MACD − Signal; α = 2/(Period+1).
-        Makro-Overlays nur aus FRED (DFII10, M2SL, DTWEXBGS, T10YIE, WALCL); fehlt eine Reihe, fehlt ihr Chip. Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
+        Makro-Overlays nur aus FRED (DFII10, M2SL, DTWEXBGS, T10YIE, WALCL); fehlt eine Reihe, fehlt ihr Chip; hat sie im Zeitraum keine Werte, steht „n/a“.
+        10Y/Max laden die lange Historie separat (Indikatoren auf voller Reihe, Anzeige ausgedünnt auf ~500 Punkte). Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
       </div>
       </div>
     </SectionCard>
