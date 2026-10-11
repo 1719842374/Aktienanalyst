@@ -1921,6 +1921,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         exchange,
         sector: effectiveSector,
         industry: effectiveIndustry,
+        isEtf: profile?.isEtf === true,
+        isFund: profile?.isFund === true,
         description,
         currentPrice: price,
         priceTimestamp: new Date().toISOString(),
