@@ -7,6 +7,9 @@ import { formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } 
 import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus } from "lucide-react";
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 import { useDividendKpi } from "@/lib/useDividendHistory";
+import { dividendYieldKpi } from "../../lib/dividendKpi";
+import { useDividendHistory } from "@/lib/useDividendHistory";
+import { dividendKpiFromHistory } from "@shared/dividends";
 import { listingFxWarning } from "@shared/listing-units";
 
 interface Props { data: StockAnalysis; onRefresh?: () => void; onThesisScore?: (score: number) => void }
