@@ -45,6 +45,7 @@ import {
   dcfGrowthCapFromTam,
 } from "./sector-data";
 import { generateMacroCorrelations } from "./macro-correlations";
+import { normalizeDividendYieldPct } from "./dividend-yield-normalize";
 
 import {
   calcImpliedGStar,
@@ -702,21 +703,16 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       const pbRatio = parseNumber(String(ratioLatest.priceToBookRatio ?? 0));
       const evEbitda = parseNumber(String(ratioLatest.enterpriseValueMultiple ?? ratioLatest.evToEbitda ?? 0));
-      // dividendYield: FMP inconsistently returns either a decimal (0.036 = 3.6%)
-      // or an already-percent value (3.6 = 3.6%). Detect by magnitude: any value
-      // < 1 must be decimal form, so multiply by 100. This replaces the older
-      // check `> 1 ? 0.01 : 1` which mis-scaled 0.036 to 0.036% instead of 3.6%.
-      const _divRaw = parseNumber(String(quote?.dividendYield ?? ratioLatest.dividendYield ?? profile?.lastAnnualDividend ?? 0));
-      const _divYield = (() => {
-        if (_divRaw <= 0) return 0;
-        // Value < 1 is definitely a decimal (0.036 → 3.6%). Value ≥ 1 is already
-        // in percent (3.6 stays 3.6). Yields > 25% are implausible for equities
-        // so treat those as raw dividend-per-share divided by price.
-        if (_divRaw < 1) return _divRaw * 100;
-        if (_divRaw > 25 && price > 0) return (_divRaw / price) * 100;
-        return _divRaw;
-      })();
-      const dividendYield = _divYield;
+      // dividendYield in PERCENT. Unit per FMP field, verified against DPS / price:
+      // see server/dividend-yield-normalize.ts. Unclear → 0 (N/A), never a guess.
+      const dividendYield = normalizeDividendYieldPct({
+        price,
+        ratioDividendYield: ratioLatest.dividendYield,
+        ratioDividendYieldPercentage: ratioLatest.dividendYieldPercentage,
+        ratioDividendPerShare: ratioLatest.dividendPerShare,
+        profileLastDividend: profile?.lastDividend ?? profile?.lastAnnualDividend,
+        quoteDividendYield: quote?.dividendYield,
+      }).pct;
       const returnOnEquity = parseNumber(String(ratioLatest.returnOnEquity ?? 0));
       const beta = parseNumber(String(profile?.beta ?? quote?.beta ?? 1));
 
@@ -1921,6 +1917,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         exchange,
         sector: effectiveSector,
         industry: effectiveIndustry,
+        isEtf: profile?.isEtf === true,
+        isFund: profile?.isFund === true,
         description,
         currentPrice: price,
         priceTimestamp: new Date().toISOString(),

@@ -6,6 +6,7 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
 import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus } from "lucide-react";
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
+import { dividendYieldKpi } from "../../lib/dividendKpi";
 
 interface Props { data: StockAnalysis; onRefresh?: () => void; onThesisScore?: (score: number) => void }
 
@@ -34,6 +35,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
     else if (r.reason === "duplicate") showFlash(`${data.ticker} ist bereits auf der Watchlist`);
   }
 
+  const divKpi = dividendYieldKpi(data.dividendYield);
   const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
 
   function fmtAge(mins: number): string {
@@ -148,12 +150,13 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         {flash && <span className="text-[10px] text-emerald-400 ml-auto">{flash}</span>}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className={`grid grid-cols-2 sm:grid-cols-3 ${divKpi ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-3`}>
         <KPI label="Price" value={formatCurrency(data.currentPrice)} sub={new Date(data.priceTimestamp).toLocaleString()} />
         <KPI label="Market Cap" value={formatLargeNumber(data.marketCap)} />
         <KPI label="Beta (5Y)" value={formatNumber(data.beta5Y)} />
         <KPI label="P/E" value={formatNumber(data.peRatio, 1)} sub={`Fwd: ${formatNumber(data.forwardPE, 1)}`} />
         <KPI label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
+        {divKpi && <KPI label="Div. Yield" value={divKpi} sub="GJ (FMP)" />}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-2.5 text-xs">

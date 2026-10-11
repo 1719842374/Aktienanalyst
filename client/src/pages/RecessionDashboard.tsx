@@ -14,9 +14,10 @@ import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
 import { showRecessionStand, type RecessionAnalysis } from "@/components/recession/recessionDashboardShared";
 import { RegionalCatalogSection } from "@/components/recession/RegionalCatalogSection";
 import { useRecessionCatalog } from "@/hooks/useRecessionCatalog";
+import { RegionGaugeSwitch } from "@/components/recession/RegionGaugeSwitch";
 import {
   WelcomeScreen, LoadingScreen, ErrorScreen,
-  CurrentAssessment, NYFedReference, ScoringRules, ScoringZones,
+  NYFedReference, ScoringRules, ScoringZones,
 } from "@/components/recession/recessionDashboardPartsA";
 import {
   IndicatorTable, SubgroupOverview, ProbabilityEstimates,
@@ -105,7 +106,7 @@ export default function RecessionDashboard() {
         ) : data ? (
           <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
             <SectionCard number={1} title={`Aktuelle Bewertung zum ${data.date}`}>
-              <CurrentAssessment data={data} />
+              <RegionGaugeSwitch data={data} regions={regions} />
             </SectionCard>
             <SectionCard number={2} title="NY Fed / FRED Referenz">
               <NYFedReference data={data} />

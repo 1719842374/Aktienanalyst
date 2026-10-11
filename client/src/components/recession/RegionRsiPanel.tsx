@@ -110,6 +110,19 @@ function volTitle(data: MarketPayload) {
   return "VIX (FRED VIXCLS), Index";
 }
 
+/** Recharts default tooltip is an opaque white box. Theme tokens follow light and dark. */
+const chartTooltipStyle = {
+  fontSize: 11,
+  backgroundColor: "hsl(var(--card))",
+  border: "1px solid hsl(var(--border))",
+  borderRadius: 8,
+  color: "hsl(var(--foreground))",
+};
+
+const chartTooltipLabelStyle = {
+  color: "hsl(var(--foreground))",
+};
+
 export function RegionRsiPanel() {
   const [region, setRegion] = useState<RegionId>("US");
   const [window, setWindow] = useState<WindowId>("5Y");
@@ -222,7 +235,8 @@ export function RegionRsiPanel() {
                     <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={48} />
                     <YAxis domain={[0, yMax]} tick={{ fontSize: 10 }} width={32} />
                     <Tooltip
-                      contentStyle={{ fontSize: 11 }}
+                      contentStyle={chartTooltipStyle}
+                      labelStyle={chartTooltipLabelStyle}
                       formatter={(v: number) => [Number(v).toFixed(2), q.data?.volId || "Vol"]}
                     />
                     <ReferenceLine y={40} stroke="#ef4444" strokeDasharray="4 4" />
@@ -246,7 +260,11 @@ export function RegionRsiPanel() {
                 <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={48} />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} width={32} />
-                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => [Number(v).toFixed(1), "RSI(14)"]} />
+                <Tooltip
+                  contentStyle={chartTooltipStyle}
+                  labelStyle={chartTooltipLabelStyle}
+                  formatter={(v: number) => [Number(v).toFixed(1), "RSI(14)"]}
+                />
                 <ReferenceLine y={70} stroke="#ef4444" strokeDasharray="4 4" />
                 <ReferenceLine y={30} stroke="#10b981" strokeDasharray="4 4" />
                 <Line type="monotone" dataKey="rsi" stroke="#f97316" dot={false} strokeWidth={1.5} />
@@ -260,7 +278,11 @@ export function RegionRsiPanel() {
                 <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={48} />
                 <YAxis tick={{ fontSize: 10 }} width={40} />
-                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number, name: string) => [Number(v).toFixed(3), name]} />
+                <Tooltip
+                  contentStyle={chartTooltipStyle}
+                  labelStyle={chartTooltipLabelStyle}
+                  formatter={(v: number, name: string) => [Number(v).toFixed(3), name]}
+                />
                 <ReferenceLine y={0} stroke="#888" />
                 <Bar dataKey="hist" name="Hist">
                   {macdSeries.map((p, i) => (

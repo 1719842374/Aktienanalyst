@@ -5,6 +5,8 @@
  */
 import { chromium } from 'playwright-core';
 import { sumUpsideGb } from '../shared/bias-fixes';
+import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
+import { reverseDcfFromAnalysis, isEtfOrFund } from '../shared/conflict-matrix';
 
 // ===== Formatting helpers =====
 function f(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? v.toFixed(d) : "—"; }
@@ -17,6 +19,10 @@ function fB(v: number | null | undefined): string {
 }
 function pct(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(d)}%` : "—"; }
 function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+/** JOB 12: sichtbares n/a statt einer Sektion, die nur aus der Ueberschrift besteht. */
+export function sectionNa(section: number, what: string): string {
+  return `<div class="para" data-testid="pdf-s${section}-na" style="color:#7a8296">n/a — ${esc(what)}</div>`;
+}
 
 // ===== DCF calculator =====
 function dcfCalc(data: any, wacc: number, gr: number): number {
@@ -132,16 +138,7 @@ function normalizeData(data: any): any {
     }
   }
 
-  // Compute Reverse DCF if missing
-  if (!d.reverseDCF && d.fcfTTM && d.enterpriseValue) {
-    const wacc = d.sectorProfile?.waccScenarios?.avg || 9;
-    const ev = d.enterpriseValue || (d.marketCap + (d.totalDebt || 0) - (d.cashEquivalents || 0));
-    const impliedG = +(wacc - (d.fcfTTM / ev) * 100).toFixed(2);
-    d.reverseDCF = {
-      impliedGrowth: impliedG,
-      assessment: impliedG > 8 ? 'Ambitious (sportlich)' : impliedG > 5 ? 'Moderat' : impliedG > 0 ? 'Konservativ' : 'Negativ',
-    };
-  }
+  // Reverse DCF: no PDF-only approximation any more; section 14 uses reverseDcfFromAnalysis (UI formula).
 
   // Compute Monte Carlo (simplified GBM) if missing
   if (!d.monteCarloResults && d.historicalPrices?.length > 252) {
@@ -184,7 +181,13 @@ function normalizeData(data: any): any {
 }
 
 // ===== Generate Executive Summary via Claude LLM =====
-async function generateNarrativeSummary(data: any, fazit: any): Promise<{ execSummary: string; recommendation: string }> {
+export const NARRATIVE_NA_NOTE = 'KI-Zusammenfassung n/a — kein ANTHROPIC_API_KEY konfiguriert; alle Zahlen unten sind regelbasiert.';
+async function generateNarrativeSummary(data: any, fazit: any): Promise<{ execSummary: string; recommendation: string; unavailable?: string }> {
+  // Without a key the SDK would only throw; skip the call and say so in the PDF instead.
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.log(`[PDF] LLM narrative skipped for ${data?.ticker}: ANTHROPIC_API_KEY not set`);
+    return { execSummary: '', recommendation: '', unavailable: NARRATIVE_NA_NOTE };
+  }
   try {
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const client = new Anthropic();
@@ -244,7 +247,7 @@ Nur JSON, keine Erklärung. Professioneller Ton, keine Floskeln.`;
     return { execSummary: result.execSummary || '', recommendation: result.recommendation || '' };
   } catch (err: any) {
     console.log(`[PDF] LLM narrative failed: ${err?.message?.substring(0, 100)}`);
-    return { execSummary: '', recommendation: '' };
+    return { execSummary: '', recommendation: '', unavailable: 'KI-Zusammenfassung n/a — LLM nicht erreichbar; alle Zahlen unten sind regelbasiert.' };
   }
 }
 
@@ -259,6 +262,8 @@ export async function generateAnalysisHTML(rawData: any): Promise<string> {
   const bal = fs.balanceSheet || {};
   const cf = fs.cashFlow || {};
   const fazit = buildFazit(data);
+  // Reverse DCF: same formula as the UI and the Konfliktmatrix (one g* in the whole PDF)
+  const rdcf = reverseDcfFromAnalysis(rawData);
   const nd = (data.totalDebt || 0) - (data.cashEquivalents || 0);
   const ptUp = data.analystPT?.median && data.currentPrice ? ((data.analystPT.median - data.currentPrice) / data.currentPrice * 100) : null;
 
@@ -284,7 +289,7 @@ export async function generateAnalysisHTML(rawData: any): Promise<string> {
   .page { page-break-after: always; }
   h1 { font-size: 18px; color: #50a0f0; margin-bottom: 2px; }
   .subtitle { font-size: 9px; color: #646e82; margin-bottom: 10px; }
-  .sec-header { background: #141e32; padding: 4px 8px; margin: 10px 0 6px; border-left: 3px solid #50a0f0; }
+  .sec-header { background: #141e32; padding: 4px 8px; margin: 10px 0 6px; border-left: 3px solid #50a0f0; break-after: avoid; page-break-after: avoid; }
   .sec-header span { font-size: 10px; font-weight: 700; color: #50a0f0; }
   .sub { font-size: 9px; font-weight: 700; color: #6490be; margin: 6px 0 3px; }
   .row { display: flex; justify-content: space-between; padding: 1.5px 0; border-bottom: 1px solid #1a2540; }
@@ -321,7 +326,7 @@ ${narrative.execSummary ? `
 <div style="background:#111b2e;border:1px solid #243050;border-radius:6px;padding:8px 10px;margin:6px 0;">
   <div style="font-size:9px;font-weight:700;color:#6495cc;margin-bottom:4px;">Executive Summary</div>
   <div style="font-size:8.5px;color:#c0c5d5;line-height:1.5;">${esc(narrative.execSummary)}</div>
-</div>` : ''}
+</div>` : narrative.unavailable ? `<div class="para" data-testid="pdf-narrative-na" style="font-size:7.5px;color:#7a8296">${esc(narrative.unavailable)}</div>` : ''}
 
 <!-- S1: DATENAKTUALITÄT -->
 <div class="sec-header"><span>1 &nbsp; DATENAKTUALITÄT & PLAUSIBILITÄT</span></div>
@@ -369,9 +374,10 @@ ${data.newsItems.slice(0,10).map((n: any, i: number) => `<tr><td>${i+1}</td><td>
 
 <!-- S3: ZYKLUSANALYSE -->
 <div class="sec-header"><span>3 &nbsp; ZYKLUS- & STRUKTURANALYSE</span></div>
-<div class="row"><span class="row-label">Zyklusklassifikation</span><span class="row-val">${data.cycleClassification || '—'}</span></div>
-<div class="row"><span class="row-label">Politischer Zyklus</span><span class="row-val">${data.politicalCycle || '—'}</span></div>
-${data.structuralTrends?.length ? `<div class="sub">Strukturelle Trends</div>${data.structuralTrends.map((t: any) => `<div class="para">· ${typeof t === 'string' ? esc(t) : esc(t.name || '')}</div>`).join('')}` : ''}
+${data.cycleClassification || data.politicalCycle || data.structuralTrends?.length ? `
+<div class="row"><span class="row-label">Zyklusklassifikation</span><span class="row-val">${data.cycleClassification ? esc(String(data.cycleClassification)) : 'n/a'}</span></div>
+<div class="row"><span class="row-label">Politischer Zyklus</span><span class="row-val">${data.politicalCycle ? esc(String(data.politicalCycle)) : 'n/a'}</span></div>
+${data.structuralTrends?.length ? `<div class="sub">Strukturelle Trends</div>${data.structuralTrends.map((t: any) => `<div class="para">· ${typeof t === 'string' ? esc(t) : esc(t.name || '')}</div>`).join('')}` : ''}` : sectionNa(3, 'keine Zyklus-/Strukturdaten in der Analyse (cycleClassification, politicalCycle, structuralTrends fehlen)')}
 
 <!-- S4: BEWERTUNG -->
 <div class="sec-header"><span>4 &nbsp; BEWERTUNGSKENNZAHLEN</span></div>
@@ -424,7 +430,7 @@ ${data.risks?.length ? `<table>
 <tr><th>Risiko</th><th>Kategorie</th><th>EW%</th><th>Impact%</th><th>Exp. Damage</th></tr>
 ${data.risks.map((r: any) => `<tr><td>${esc(r.name)}</td><td>${r.category}</td><td>${r.ew||r.probability}%</td><td>${r.impact}%</td><td>${f(r.expectedDamage,2)}%</td></tr>`).join('')}
 </table>
-<div class="row"><span class="row-label">Total Expected Damage</span><span class="row-val neg">${f(fazit.totalExpDmg,2)}%</span></div>` : ''}
+<div class="row"><span class="row-label">Total Expected Damage</span><span class="row-val neg">${f(fazit.totalExpDmg,2)}%</span></div>` : sectionNa(8, 'keine Risiken in der Analyse')}
 
 <!-- S9: RSL -->
 <div class="sec-header"><span>9 &nbsp; RSL-MOMENTUM</span></div>
@@ -527,6 +533,7 @@ ${(() => {
 ${data.moatAssessment?.moatSources?.length ? `<div class="sub">Moat-Quellen</div>${data.moatAssessment.moatSources.slice(0,5).map((s: string) => `<div class="para">· ${esc(s)}</div>`).join('')}` : ''}
 ${data.moatAssessment?.porterForces?.length ? `<div class="sub">Porter's Five Forces</div><table><tr><th>Force</th><th>Bewertung</th><th>Score</th></tr>
 ${data.moatAssessment.porterForces.map((pf: any) => `<tr><td>${esc(pf.name||'')}</td><td>${pf.rating||'—'}</td><td>${pf.score||'—'}/5</td></tr>`).join('')}</table>` : ''}
+${!data.moatRating && !data.moatAssessment?.moatSources?.length && !data.moatAssessment?.porterForces?.length ? sectionNa(11, 'keine Moat-/Porter-Daten') : ''}
 
 <!-- S12: PESTEL -->
 <div class="sec-header"><span>12 &nbsp; PESTEL-ANALYSE</span></div>
@@ -540,7 +547,7 @@ ${data.pestelAnalysis.factors.slice(0,6).map((cat: any) => {
   const label = (cat.categoryDE || cat.category || '').replace(/[^\x20-\x7E\u00C0-\u024F\u00DF]/g, '').trim();
   return `<div style="margin:3px 0"><strong style="color:#6490be">[${label.charAt(0)}] ${label}</strong></div>
 ${(cat.factors||[]).slice(0,3).map((ff: any) => `<div class="para">${esc(ff.name||'')}: ${esc(ff.description||ff.stockCorrelationNote||'')} [Impact: ${ff.impact}, Severity: ${ff.severity}]</div>`).join('')}`;
-}).join('')}` : ''}` : ''}
+}).join('')}` : ''}` : sectionNa(12, 'keine PESTEL-Analyse')}
 
 <!-- S13: MAKRO-KORRELATIONEN -->
 <div class="sec-header"><span>13 &nbsp; MAKRO-KORRELATIONEN</span></div>
@@ -548,14 +555,15 @@ ${data.macroCorrelations ? `
 <div class="row"><span class="row-label">Makro-Sensitivität</span><span class="row-val">${data.macroCorrelations.overallMacroSensitivity||'—'}</span></div>
 <div class="para">${esc(data.macroCorrelations.keyInsight||'')}</div>
 ${data.macroCorrelations.correlations?.length ? `<table><tr><th>Indikator</th><th>Korrelation</th><th>Stärke</th></tr>
-${data.macroCorrelations.correlations.slice(0,8).map((c: any) => `<tr><td>${esc(c.indicator||c.name||'')}</td><td>${c.correlation||c.direction||''}</td><td>${c.strength||''}</td></tr>`).join('')}</table>` : ''}` : ''}
+${data.macroCorrelations.correlations.slice(0,8).map((c: any) => `<tr><td>${esc(c.indicator||c.name||'')}</td><td>${c.correlation||c.direction||''}</td><td>${c.strength||''}</td></tr>`).join('')}</table>` : ''}` : sectionNa(13, 'keine Makro-Korrelationen')}
 
 <!-- S14: REVERSE DCF -->
 <div class="sec-header"><span>14 &nbsp; REVERSE DCF</span></div>
-${data.reverseDCF ? `
-<div class="row"><span class="row-label">Implied Growth Rate g*</span><span class="row-val">${f(data.reverseDCF.impliedGrowth,2)}%</span></div>
-<div class="row"><span class="row-label">Bewertung</span><span class="row-val">${data.reverseDCF.assessment||'—'}</span></div>
-` : '<div class="para">Reverse DCF nicht verfügbar.</div>'}
+${rdcf && rdcf.rating !== 'n/a' ? `
+<div class="row"><span class="row-label">Implied Growth Rate g*</span><span class="row-val">${f(rdcf.impliedGrowth,2)}%</span></div>
+<div class="row"><span class="row-label">Bewertung</span><span class="row-val">${esc(rdcf.rating)} (Ref: ${f(rdcf.referenceGrowth,1)}%)</span></div>
+<div class="para" style="font-size:7px;color:#7a8296">Gleiche Formel wie die App (shared/valuation-signal.ts, WACC aus buildDefaultDCFParams).</div>
+` : `<div class="row"><span class="row-label">Implied Growth Rate g*</span><span class="row-val">n/a${isEtfOrFund(rawData) ? ' (ETF/Fonds — Reverse DCF nicht anwendbar)' : ''}</span></div>`}
 
 <!-- S15: DOWNSIDE-KATALYSATOREN (Anti-Bias) -->
 <div class="sec-header"><span>15 &nbsp; DOWNSIDE-KATALYSATOREN (Anti-Bias)</span></div>
@@ -563,7 +571,7 @@ ${data.reverseDCF ? `
 ${data.risks?.length ? `<table>
 <tr><th>ID</th><th>Risiko</th><th>EW%</th><th>Impact%</th><th>Exp. Damage</th></tr>
 ${data.risks.map((r: any, i: number) => `<tr><td>D${i+1}</td><td>${esc(r.name)}</td><td>${r.ew||r.probability}%</td><td>-${r.impact}%</td><td class="neg">${f(r.expectedDamage,2)}%</td></tr>`).join('')}
-</table>` : ''}
+</table>` : sectionNa(15, 'keine Downside-Katalysatoren in der Analyse')}
 
 <!-- S16: MONTE CARLO -->
 <div class="sec-header"><span>16 &nbsp; MONTE CARLO SIMULATION (GBM)</span></div>
@@ -582,6 +590,7 @@ ${data.monteCarloResults?.mean ? `<table>
 <tr><td class="row-label">Kaufsignal</td><td class="row-val">${fazit.allBuy ? 'JA ✓' : 'NEIN ✗'}</td><td class="row-label">Kat. Upside</td><td class="row-val">+${f(fazit.totalGB,2)}%</td></tr>
 </table>
 
+${conflictMatrixHtmlForAnalysis(rawData)}
 <!-- FAZIT BOX -->
 <div class="verdict-box">
   <div class="verdict-text">FAZIT: ${fazit.verdict}</div>
@@ -610,14 +619,28 @@ ${fazit.neut.length ? `<div class="sub">Neutral (${fazit.neut.length})</div><ul 
 </body></html>`;
 }
 
+// ===== Chromium lookup =====
+// Order: PDF_CHROMIUM_PATH → @sparticuz/chromium (bundled, Chromium 147 = playwright-core 1.59)
+// → Playwright default (PLAYWRIGHT_BROWSERS_PATH, as the Dockerfile installs it).
+const BASE_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
+export async function resolvePdfChromium(): Promise<{ executablePath?: string; args: string[]; source: string }> {
+  if (process.env.PDF_CHROMIUM_PATH) return { executablePath: process.env.PDF_CHROMIUM_PATH, args: BASE_ARGS, source: 'PDF_CHROMIUM_PATH' };
+  try {
+    const sparticuz: any = (await import('@sparticuz/chromium')).default;
+    const executablePath = await sparticuz.executablePath();
+    if (executablePath) return { executablePath, args: Array.from(new Set([...(sparticuz.args || []), ...BASE_ARGS])), source: '@sparticuz/chromium' };
+  } catch (err: any) {
+    console.log(`[PDF] @sparticuz/chromium unavailable: ${err?.message?.substring(0, 100)}`);
+  }
+  return { executablePath: undefined, args: BASE_ARGS, source: 'playwright-default' };
+}
+
 // ===== Render HTML to PDF with Playwright =====
 export async function renderHTMLtoPDF(html: string): Promise<Buffer> {
-  const browserPath = '/home/user/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome';
-  const browser = await chromium.launch({
-    executablePath: browserPath,
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  });
+  const { executablePath, args, source } = await resolvePdfChromium();
+  const t0 = Date.now();
+  const browser = await chromium.launch({ executablePath, headless: true, args });
+  console.log(`[PDF] Chromium (${source}) started in ${Date.now() - t0}ms`);
 
   try {
     const page = await browser.newPage();

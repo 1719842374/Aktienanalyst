@@ -321,3 +321,41 @@ Im Peer-Vergleich (Sektion 7 / `PeerComparison.tsx`) funktioniert das manuelle H
 **Aufwand:** 2–4 Stunden (Frontend-Trigger + Cache-Prüfung + Test).
 
 **Priorität:** Hoch (Peer-Vergleich ist Kern der relativen Bewertung).
+
+### NEU (11.10.2026) — Credit Spread / CDS-Overlay in der Technischen Analyse
+
+**Ziel:** Unternehmens-Anleihenrenditen oder Credit Spreads (bzw. CDS) als Overlay im technischen Chart plotten, um Kreditwürdigkeitsrisiken sichtbar zu machen. Steigende Risk Premia signalisieren höhere Ausfallwahrscheinlichkeit.
+
+**Oracle als aktuelles Beispiel (Stand 2026):**
+- 5Y CDS von ~50–60 bp auf 198–260 bp gestiegen (Allzeithoch).
+- Langfristige Anleihenrenditen ~7,5–8,1 % (deutlich über Treasury).
+- S&P-Rating auf BBB- (unterste Investment-Grade-Stufe).
+- Aktienkurs unter Druck, während der Bond-/CDS-Markt die Verschlechterung früher und klarer zeigte.
+- Interpretation: Steigender Credit Spread / CDS = Markt verlangt mehr Entschädigung für höheres Ausfallrisiko.
+
+**1. Datenquelle**
+| Serie | Quelle | Verfügbarkeit | Hinweis |
+|-------|--------|---------------|---------|
+| Credit Spread (Bond Yield – Treasury) | FMP / Yahoo Bonds / Trace | Teilweise | Für liquide Titel (ORCL, META, AVGO etc.) machbar |
+| CDS Spread (5Y) | Markit / ICE / Anbieter | Eingeschränkt | Oft nicht frei; Fallback auf Bond Spread |
+| Bond Yield (langfristig) | Unternehmensanleihe | Mittel | Absolute Finanzierungskosten |
+
+**2. Chart-Overlay (Technische Analyse)**
+- Dual-Axis oder eigener Unterchart unter dem Preis.
+- Steigender Spread als Warnband oder Overlay markieren.
+- Toggle „Credit Spread / CDS“ analog zu bestehenden Makro-Overlays.
+- Tooltip: aktueller Spread in bp, Veränderung, Quelle.
+
+**3. Scoring-Integration**
+- Spread-Anstieg (z-Score oder relative Veränderung über 3–6 Monate) als negatives Signal in der Risk-/Credit-Dimension.
+- Bei starkem Anstieg (z. B. z > 1,5 oder +100 bp) Gewicht der Valuation dämpfen (analog zu Death Cross / Technical-Stärke).
+- Optionaler Gate `CREDIT_SPREAD_STRESS` (Warnung, kein harter Cap).
+- Integration in die adaptive Layer-Gewichtung: Credit-Stärke erhöht das Gewicht der Risk-Dimension und dämpft Valuation bei Extremen.
+
+**Einschränkungen**
+- CDS-Daten sind oft nicht frei verfügbar.
+- Bond-Yields über FMP/Yahoo sind machbar, aber nicht für alle Titel liquide.
+- Relevant vor allem für große, hochverschuldete Titel (Oracle, Meta, Broadcom etc.).
+
+**Aufwand:** 1–2 Tage (Daten-Fetch, Chart-Overlay, Scoring-Verdrahtung, Tests mit ORCL).
+**Priorität:** Mittel–Hoch (starker Early-Warning-Indikator für Kreditrisiken).

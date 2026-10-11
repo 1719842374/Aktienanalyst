@@ -14,6 +14,8 @@ import {
 import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { useQuery } from "@tanstack/react-query";
+import { dividendOverlaySeries, dividendCurrencyCheck, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
 
 interface Props { data: StockAnalysis; }
 
@@ -142,6 +144,18 @@ export function TechnicalChart({ data }: Props) {
   const [measureMode,   setMeasureMode]   = useState(false);
   const [measurePoints, setMeasurePoints] = useState<{date:string;close:number}[]>([]);
   const [signalPage,    setSignalPage]    = useState(0);
+  // Dividend overlay (Future_1 §11.1): fetched only while the toggle is on.
+  const [showDividend, setShowDividend] = useState(false);
+  const dividendQuery = useQuery<DividendHistoryResponse>({
+    queryKey: ["dividends", data.ticker],
+    enabled: showDividend && !!data.ticker,
+    staleTime: 12 * 60 * 60 * 1000,
+    queryFn: async () => {
+      const res = await fetch(`/api/dividends/${encodeURIComponent(data.ticker)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  });
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -333,6 +347,14 @@ export function TechnicalChart({ data }: Props) {
   // Leeres Fenster lässt die Controls stehen, damit Von/Bis korrigierbar bleiben.
   // Jedes Band rechnet Y aus der eigenen Serie — keine gemeinsame Absolute-Y, kein closeB.
   const chartEmpty = aBuilt.points.length === 0;
+  // Dividend yield TTM as overlay in the window-A price chart (own right % axis), not a separate pane.
+  const dividendSeries = useMemo<DividendOverlaySeries | null>(
+    () => (showDividend && dividendQuery.data && dividendQuery.data.events.length > 0 ? dividendOverlaySeries(aBuilt.points, dividendQuery.data.events) : null),
+    [showDividend, dividendQuery.data, aBuilt.points],
+  );
+  // Currency guard: dividend currency (stated by FMP/Yahoo) vs analysis price currency. Mismatch → n/a, no FX.
+  const dividendCcy = dividendCurrencyCheck(dividendQuery.data?.currency, data.currency);
+  const dividendOverlay = dividendCcy !== "mismatch" && dividendSeries && dividendSeries.points.some(p => p.yieldPct != null) ? dividendSeries : null;
 
   const formatDate = (date: string) => {
     const p = date.split("-");
@@ -537,6 +559,13 @@ export function TechnicalChart({ data }: Props) {
               {showRsi ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               RSI(14)
             </button>
+            <button type="button" onClick={() => setShowDividend(v => !v)} data-testid="button-dividend" aria-pressed={showDividend}
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showDividend ? "border-teal-500 text-teal-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showDividend ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Div. Yield
+            </button>
             <button type="button" onClick={() => { setMeasureMode(v => !v); setMeasurePoints([]); }}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 measureMode ? "border-amber-500 bg-amber-500/10 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
@@ -694,6 +723,7 @@ export function TechnicalChart({ data }: Props) {
                 onPlotClick={handleChartClick}
                 measurePoints={measurePoints}
                 measurement={measurement}
+                dividend={dividendOverlay}
               />
             </div>
             {narrow && showVolume && (
@@ -732,6 +762,7 @@ export function TechnicalChart({ data }: Props) {
               testId="chart-band-a"
               macdTestId="chart-macd"
               rsiTestId="chart-rsi"
+              dividend={dividendOverlay}
               measureMode={measureMode}
               onPlotClick={handleChartClick}
               measurePoints={measurePoints}
@@ -783,6 +814,18 @@ export function TechnicalChart({ data }: Props) {
             />
           )}
         </div>
+      )}
+
+      {showDividend && showKursA && !chartEmpty && (
+        <DividendOverlayStatus
+          series={dividendOverlay}
+          history={dividendQuery.data}
+          loading={dividendQuery.isLoading}
+          failed={dividendQuery.isError}
+          formatDateFull={formatDateFull}
+          currencyCheck={dividendCcy}
+          priceCurrency={data.currency}
+        />
       )}
 
       {/* ── Signals Table with Pagination ── */}
@@ -915,7 +958,7 @@ function WindowDates({
 function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
-  onPlotClick, measurePoints, measurement,
+  onPlotClick, measurePoints, measurement, dividend,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -931,16 +974,19 @@ function PricePane({
   onPlotClick?: (e: any) => void;
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
+  dividend?: DividendOverlaySeries | null;
 }) {
   const narrow = useIsNarrow();
   const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger);
+  const chartData = useMemo(() => withDividendOverlay(points, dividend), [points, dividend]);
+  const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0)) : 0;
   const tick = axisTick(narrow, dense ? 8 : 9, "var(--muted-foreground)");
   const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(points.length / (dense ? 5 : 8))));
   return (
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
-        data={points}
-        margin={dense ? { top: 2, right: 10, left: 0, bottom: 0 } : { top: 5, right: 10, left: 0, bottom: 5 }}
+        data={chartData}
+        margin={dense ? { top: 2, right: dividend ? 0 : 10, left: 0, bottom: 0 } : { top: 5, right: dividend ? 0 : 10, left: 0, bottom: 5 }}
         onClick={onPlotClick}
       >
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
@@ -948,6 +994,19 @@ function PricePane({
         <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => `$${v.toFixed(0)}`} width={52} axisLine={{ stroke: "var(--border)" }} {...(narrow ? { ticks: narrowPriceTicks(yMin, yMax, 5) } : {})} />
         {/* Domain [0, 6.67]: höchster Volumen-Balken ≈ 15% der Bandhöhe, eigene Achse, nicht in der Preis-Y. */}
         <YAxis yAxisId="vol" hide domain={[0, 6.67]} orientation="right" />
+        {dividend && (
+          <YAxis
+            yAxisId="div"
+            orientation="right"
+            domain={[0, Math.max(1, Math.ceil(divMax * 1.15))]}
+            width={DIV_AXIS_W}
+            tick={{ fontSize: narrow ? 10 : 9, fill: DIV_COLOR }}
+            tickFormatter={(v: number) => `${v.toFixed(v < 10 ? 1 : 0)}%`}
+            axisLine={{ stroke: DIV_COLOR }}
+            tickLine={false}
+            tickCount={narrow ? 4 : 5}
+          />
+        )}
         <Tooltip content={({ active, payload }) => {
           if (!active || !payload?.length) return null;
           const dp = payload[0]?.payload as WindowPoint | undefined;
@@ -963,6 +1022,7 @@ function PricePane({
             }
           }
           const bbWidth = dp.bbUpper != null && dp.bbLower != null ? (dp.bbUpper - dp.bbLower).toFixed(2) : null;
+          const dv = dp as WindowPoint & DividendFields;
           return (
             <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px] min-w-[160px]">
               <div className="font-semibold mb-1">{formatDateFull(dp.date)}</div>
@@ -976,6 +1036,7 @@ function PricePane({
                   {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">${bbWidth}</span></div>}
                 </>
               )}
+              {dividend && <DividendTooltipRows p={dv} formatDateFull={formatDateFull} />}
               {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
@@ -1009,6 +1070,24 @@ function PricePane({
             <Line yAxisId="price" type="monotone" dataKey="bbMid" name="BB Mid" stroke="#a78bfa" strokeWidth={1} strokeDasharray="5 3" dot={false} connectNulls isAnimationActive={false} />
             <Area yAxisId="price" type="monotone" dataKey="bbLower" name="BB Lower" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none" />
           </>
+        )}
+        {dividend && (
+          <Line
+            yAxisId="div"
+            type="stepAfter"
+            dataKey="_divYield"
+            name="Div. Yield TTM"
+            stroke={DIV_COLOR}
+            strokeWidth={1.5}
+            connectNulls={false}
+            isAnimationActive={false}
+            dot={(props: any) => {
+              const pl = props?.payload as DividendFields | undefined;
+              if (!pl?._divRaw && !pl?._divSpecial?.length) return <g key={props.key} />;
+              // Marks a visibly corrected point (amber) or a window with a special dividend (violet).
+              return <circle key={props.key} cx={props.cx} cy={props.cy} r={2.5} fill={pl._divSpecial?.length ? "#a855f7" : "#f59e0b"} stroke="none" />;
+            }}
+          />
         )}
         {showSignals && signals.map((s, i) => (
           <ReferenceLine key={`sig-${s.date}-${i}`} yAxisId="price" x={s.date} stroke={s.type === "buy" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={narrow ? 1 : 0.8} opacity={0.5} />
@@ -1132,7 +1211,7 @@ function RsiPane({
 function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
-  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement,
+  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend,
 }: {
   label: string;
   labelClassName: string;
@@ -1156,6 +1235,7 @@ function BandStack({
   onPlotClick?: (e: any) => void;
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
+  dividend?: DividendOverlaySeries | null;
 }) {
   const narrow = useIsNarrow();
   const empty = series.points.length === 0;
@@ -1186,6 +1266,7 @@ function BandStack({
               onPlotClick={onPlotClick}
               measurePoints={measurePoints}
               measurement={measurement}
+              dividend={dividend}
             />
           )}
         </div>
@@ -1215,6 +1296,86 @@ function StatusPill({ label, value, detail }: { label: string; value: boolean; d
       </div>
       <div className="text-[9px] font-medium">{label}</div>
       {detail && <div className="text-[8px] text-muted-foreground mt-0.5 font-mono tabular-nums">{detail}</div>}
+    </div>
+  );
+}
+
+// ─── Dividend overlay helpers ───
+
+const DIV_COLOR = "#14b8a6";
+const DIV_AXIS_W = 36;
+
+type DividendFields = {
+  _divYield?: number | null;
+  _divTtm?: number | null;
+  _divRaw?: number | null;
+  _divDropped?: string[];
+  _divSpecial?: string[];
+  _divAdded?: string[];
+};
+
+/** Adds the overlay fields to each price point by date. No dividend series → points unchanged. */
+export function withDividendOverlay(points: WindowPoint[], series: DividendOverlaySeries | null | undefined): Array<WindowPoint & DividendFields> {
+  if (!series) return points;
+  const byDate = new Map(series.points.map(p => [p.date, p]));
+  return points.map(pt => {
+    const d = byDate.get(pt.date);
+    if (!d) return { ...pt, _divYield: null };
+    return { ...pt, _divYield: d.yieldPct, _divTtm: d.ttmDividend, _divRaw: d.rawYieldPct, _divDropped: d.droppedExDates, _divSpecial: d.specialExDates, _divAdded: d.addedExDates };
+  });
+}
+
+function DividendTooltipRows({ p, formatDateFull }: { p: DividendFields; formatDateFull: (d: string) => string }) {
+  if (p._divYield == null) {
+    return <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">n/a</span></div>;
+  }
+  return (
+    <>
+      <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">{p._divYield.toFixed(2)}%</span></div>
+      {p._divTtm != null && <div className="flex justify-between gap-3"><span className="text-muted-foreground">Dividende 12M je Aktie</span><span className="font-mono">{p._divTtm.toFixed(2)}</span></div>}
+      {p._divRaw != null && !!p._divDropped?.length && (
+        <div className="text-amber-500 max-w-[220px] whitespace-normal">
+          geglättet: roh {p._divRaw.toFixed(2)}% — Ex-Tag {p._divDropped.map(formatDateFull).join(", ")} lag noch im 12M-Fenster, obwohl die Folgezahlung schon gezählt ist (Ex-Tag-Verschiebung)
+        </div>
+      )}
+      {p._divRaw != null && !!p._divAdded?.length && (
+        <div className="text-amber-500 max-w-[220px] whitespace-normal">
+          geglättet: roh {p._divRaw.toFixed(2)}% — Ex-Tag {p._divAdded.map(formatDateFull).join(", ")} mitgezählt, weil die Folgezahlung noch nicht ex ist (Ex-Tag-Verschiebung)
+        </div>
+      )}
+      {!!p._divSpecial?.length && (
+        <div className="text-violet-400 max-w-[220px] whitespace-normal">inkl. Sonderdividende ({p._divSpecial.map(formatDateFull).join(", ")})</div>
+      )}
+    </>
+  );
+}
+
+function DividendOverlayStatus({ series, history, loading, failed, formatDateFull, currencyCheck = "unknown", priceCurrency }: {
+  currencyCheck?: "ok" | "mismatch" | "unknown";
+  priceCurrency?: string;
+  series: DividendOverlaySeries | null;
+  history: DividendHistoryResponse | undefined;
+  loading: boolean;
+  failed: boolean;
+  formatDateFull: (d: string) => string;
+}) {
+  const base = "mt-1 text-[10px] text-muted-foreground break-words";
+  if (loading) return <div className={base} data-testid="dividend-overlay-loading">Div. Yield: Dividendenhistorie wird geladen …</div>;
+  if (failed) return <div className={base} data-testid="dividend-overlay-empty">Div. Yield: n/a — Dividendenhistorie nicht erreichbar.</div>;
+  if (!history || history.events.length === 0) return <div className={base} data-testid="dividend-overlay-empty">Div. Yield: n/a — keine Dividendenhistorie (FMP/Yahoo), z. B. kein Dividendenzahler.</div>;
+  if (currencyCheck === "mismatch") return <div className={base} data-testid="dividend-overlay-currency">Div. Yield: n/a — Dividende in {history.currency}, Kurs in {priceCurrency}; keine FX-Umrechnung.</div>;
+  if (!series) return <div className={base} data-testid="dividend-overlay-empty">Div. Yield: n/a — Dividendenhistorie deckt dieses Fenster nicht mit 12 Monaten ab.</div>;
+  const last = [...series.points].reverse().find(p => p.yieldPct != null);
+  const src = history.source === "fmp" ? "FMP" : "Yahoo (Fallback)";
+  return (
+    <div className={base} data-testid="dividend-overlay-status">
+      <span style={{ color: DIV_COLOR }} className="font-medium">Div. Yield TTM</span> (rechte Achse) = Σ Dividenden 12M / Kurs
+      {last && <> · aktuell <span className="font-mono">{last.yieldPct!.toFixed(2)}%</span> ({last.ttmDividend?.toFixed(2)} je Aktie)</>}
+      {" "}· {series.paymentsPerYear}× jährlich · Quelle {src}
+      {currencyCheck === "ok" ? <> · Währung {history.currency} = Kurs</> : <> · Dividendenwährung von der Quelle nicht angegeben (Annahme: Kurswährung)</>}
+      {series.correctedBars > 0 && <> · <span className="text-amber-500">{series.correctedBars} Punkt(e) geglättet</span> (Ex-Tag-Verschiebung, Rohwert im Tooltip)</>}
+      {series.specialExDates.length > 0 && <> · <span className="text-violet-400">Sonderdividende {series.specialExDates.map(formatDateFull).join(", ")}</span></>}
+      {" "}· KPI „Div. Yield“ in Sektion 1 = Geschäftsjahreswert (FMP), daher abweichend.
     </div>
   );
 }

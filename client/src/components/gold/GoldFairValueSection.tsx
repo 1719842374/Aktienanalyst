@@ -213,14 +213,34 @@ function StepRow({ step, label, value, highlight }: { step: number; label: strin
  * B2 — Fair-Value label collision.
  * S2/S1/FV/R1/R2 share the bottom edge of the corridor. When two prices land
  * on nearly the same x (FV ≈ R1, …) those labels used to paint on top of each
- * other. Pack them into up to three rows; if a fourth label still overlaps,
- * merge the tightest pair into one label and keep every price in the tooltip.
- * Spot stays on the top edge (its own row) and only slides inward when the
- * pill would clip the track. Zone bands are not part of this layout.
+ * other. Pack them into up to three rows in price order (cheaper label closer
+ * to the bar). If a fourth label still overlaps, merge only the closest
+ * price-adjacent pair and keep every price in the tooltip. Spot stays on the
+ * top edge (its own row) and only slides inward when the pill would clip the
+ * track. The track has top padding so the pill clears the "Fair-Value-Korridor"
+ * heading. The FV marker stops above a lane-0 FV label so the line does not
+ * run through that text. Zone bands are not part of this layout.
  */
 export const CORRIDOR_LABEL_GAP_PX = 6;
 export const CORRIDOR_LABEL_MAX_LANES = 3;
 export const CORRIDOR_LABEL_LANE_PITCH_PX = 14;
+export const CORRIDOR_LABEL_LINE_PX = 12;
+/** Spot pill is shifted up by this many pixels (was the Tailwind class `-top-5`). */
+export const CORRIDOR_SPOT_PILL_OVERHANG_PX = 20;
+export const CORRIDOR_SPOT_HEADING_CLEARANCE_PX = 8;
+/**
+ * B2-Folge: Labels landen nur dann in einem gemeinsamen Stapel, wenn ihre
+ * PREISE nah beieinander liegen (relativer Abstand ≤ 3 %). Ein Label mit
+ * grosser Preisluecke wird nie gestapelt, auch wenn es optisch nah liegt —
+ * dann zeigt es nur sein Kuerzel (Preis im Tap-Tooltip) oder bekommt eine
+ * eigene Zeile.
+ */
+export const CORRIDOR_PILE_MAX_PRICE_GAP = 0.03;
+
+/** Top padding so the spot pill stays below the corridor heading, including at 375px. */
+export function corridorSpotTopPadPx(): number {
+  return CORRIDOR_SPOT_PILL_OVERHANG_PX + CORRIDOR_SPOT_HEADING_CLEARANCE_PX;
+}
 
 const LEVEL_CHAR_PX = 5;
 const SPOT_CHAR_PX = 6.2;
@@ -245,6 +265,8 @@ export type PlacedCorridorLabel = {
   leftPct: number;
   widthPx: number;
   combined: boolean;
+  /** Einzel-Label nur mit Kuerzel (Platzmangel, Preis zu weit fuer einen Stapel). Preis im Tooltip. */
+  compact?: boolean;
 };
 
 type LevelGroup = {
@@ -285,8 +307,21 @@ function rangeSeparation(a: { left: number; right: number }, b: { left: number; 
   return -(Math.min(a.right, b.right) - Math.max(a.left, b.left));
 }
 
+function levelPrice(level: CorridorLevelInput): number {
+  const parsed = Number(String(level.priceLabel).replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : level.pct;
+}
+
 function orderParts(parts: CorridorLevelInput[]): CorridorLevelInput[] {
-  return [...parts].sort((a, b) => (LEVEL_ORDER[a.tag] ?? 9) - (LEVEL_ORDER[b.tag] ?? 9) || a.tag.localeCompare(b.tag));
+  return [...parts].sort((a, b) => levelPrice(a) - levelPrice(b) || (LEVEL_ORDER[a.tag] ?? 9) - (LEVEL_ORDER[b.tag] ?? 9) || a.tag.localeCompare(b.tag));
+}
+
+function groupMinPrice(group: LevelGroup): number {
+  return Math.min(...group.parts.map(levelPrice));
+}
+
+function groupMaxPrice(group: LevelGroup): number {
+  return Math.max(...group.parts.map(levelPrice));
 }
 
 function groupColor(parts: CorridorLevelInput[]): string {
@@ -295,12 +330,13 @@ function groupColor(parts: CorridorLevelInput[]): string {
   return colors.size === 1 ? parts[0].colorClass : "text-foreground";
 }
 
-function presentGroup(group: LevelGroup, trackWidth: number): {
+function presentGroup(group: LevelGroup, trackWidth: number, compact = false): {
   text: string;
   tooltip: string;
   colorClass: string;
   widthPx: number;
   combined: boolean;
+  compact?: boolean;
   pct: number;
 } {
   const parts = orderParts(group.parts);
@@ -308,8 +344,8 @@ function presentGroup(group: LevelGroup, trackWidth: number): {
   const colorClass = groupColor(parts);
   const pct = parts.reduce((sum, part) => sum + part.pct, 0) / parts.length;
   if (parts.length === 1) {
-    const text = `${parts[0].tag}: ${parts[0].priceLabel}`;
-    return { text, tooltip, colorClass, widthPx: estimateLevelLabelWidthPx(text), combined: false, pct };
+    const text = compact ? parts[0].tag : `${parts[0].tag}: ${parts[0].priceLabel}`;
+    return { text, tooltip, colorClass, widthPx: estimateLevelLabelWidthPx(text), combined: false, compact: compact || undefined, pct };
   }
   const prices: string[] = [];
   for (const part of parts) {
@@ -332,31 +368,31 @@ function presentGroup(group: LevelGroup, trackWidth: number): {
   };
 }
 
-function packGroups(groups: LevelGroup[], trackWidth: number): PlacedCorridorLabel[] | null {
+function packGroups(
+  groups: LevelGroup[],
+  trackWidth: number,
+  opts: { compact?: boolean; maxLanes?: number } = {},
+): PlacedCorridorLabel[] | null {
+  const maxLanes = opts.maxLanes ?? CORRIDOR_LABEL_MAX_LANES;
   const displays = groups.map((group) => {
-    const shown = presentGroup(group, trackWidth);
+    const shown = presentGroup(group, trackWidth, !!opts.compact);
     const center = clampLabelCenterPx(shown.pct, trackWidth, shown.widthPx);
-    return { shown, center, group };
-  }).sort((a, b) => a.center - b.center || a.shown.text.localeCompare(b.shown.text));
+    return { shown, center, group, price: groupMinPrice(group) };
+  }).sort((a, b) => a.price - b.price || a.center - b.center || a.shown.text.localeCompare(b.shown.text));
 
-  const lanes: { left: number; right: number }[][] = [];
+  const placedBoxes: { left: number; right: number; lane: number }[] = [];
   const placed: PlacedCorridorLabel[] = [];
 
   for (const item of displays) {
     const box = { left: item.center - item.shown.widthPx / 2, right: item.center + item.shown.widthPx / 2 };
-    let lane = -1;
-    for (let i = 0; i < lanes.length; i++) {
-      if (lanes[i].every((existing) => !rangesOverlap(existing, box, CORRIDOR_LABEL_GAP_PX))) {
-        lane = i;
-        break;
+    let lane = 0;
+    for (const existing of placedBoxes) {
+      if (rangesOverlap(existing, box, CORRIDOR_LABEL_GAP_PX)) {
+        lane = Math.max(lane, existing.lane + 1);
       }
     }
-    if (lane === -1 && lanes.length < CORRIDOR_LABEL_MAX_LANES) {
-      lane = lanes.length;
-      lanes.push([]);
-    }
-    if (lane === -1) return null;
-    lanes[lane].push(box);
+    if (lane >= maxLanes) return null;
+    placedBoxes.push({ ...box, lane });
     const parts = orderParts(item.group.parts);
     placed.push({
       id: parts.map((part) => part.id).join("-"),
@@ -367,34 +403,58 @@ function packGroups(groups: LevelGroup[], trackWidth: number): PlacedCorridorLab
       leftPct: (item.center / trackWidth) * 100,
       widthPx: item.shown.widthPx,
       combined: item.shown.combined,
+      ...(item.shown.compact ? { compact: true } : {}),
     });
   }
 
   return placed;
 }
 
-function mergeTightestGroups(groups: LevelGroup[], trackWidth: number): LevelGroup[] | null {
+/** Relativer Preisabstand zweier Nachbarn ≤ CORRIDOR_PILE_MAX_PRICE_GAP. */
+export function pricesClose(a: number, b: number): boolean {
+  const lo = Math.min(a, b);
+  if (!(lo > 0)) return Math.abs(a - b) < 1e-9;
+  return Math.abs(b - a) / lo <= CORRIDOR_PILE_MAX_PRICE_GAP + 1e-9;
+}
+
+/** Merge only neighbors in price order. Visual overlap is the tie-break, not a reason to skip a level in between. */
+function mergePriceAdjacentGroups(groups: LevelGroup[], trackWidth: number): LevelGroup[] | null {
   if (groups.length < 2) return null;
-  const boxes = groups.map((group) => {
-    const shown = presentGroup(group, trackWidth);
+  const indexed = groups.map((group, index) => ({
+    group,
+    index,
+    minPrice: groupMinPrice(group),
+    maxPrice: groupMaxPrice(group),
+  }));
+  indexed.sort((a, b) => a.minPrice - b.minPrice || a.index - b.index);
+
+  const boxes = new Map<number, { left: number; right: number }>();
+  for (const item of indexed) {
+    const shown = presentGroup(item.group, trackWidth);
     const center = clampLabelCenterPx(shown.pct, trackWidth, shown.widthPx);
-    return { left: center - shown.widthPx / 2, right: center + shown.widthPx / 2 };
-  });
-  let bestI = 0;
-  let bestJ = 1;
+    boxes.set(item.index, { left: center - shown.widthPx / 2, right: center + shown.widthPx / 2 });
+  }
+
+  let best = -1;
+  let bestGap = Infinity;
   let bestSep = Infinity;
-  for (let i = 0; i < groups.length; i++) {
-    for (let j = i + 1; j < groups.length; j++) {
-      const sep = rangeSeparation(boxes[i], boxes[j]);
-      if (sep < bestSep) {
-        bestSep = sep;
-        bestI = i;
-        bestJ = j;
-      }
+  for (let i = 0; i < indexed.length - 1; i++) {
+    const gap = indexed[i + 1].minPrice - indexed[i].maxPrice;
+    // Nur preisnahe Nachbarn duerfen einen Stapel bilden.
+    if (!pricesClose(indexed[i].maxPrice, indexed[i + 1].minPrice)) continue;
+    const sep = rangeSeparation(boxes.get(indexed[i].index)!, boxes.get(indexed[i + 1].index)!);
+    if (gap < bestGap - 1e-6 || (Math.abs(gap - bestGap) <= 1e-6 && sep < bestSep)) {
+      bestGap = gap;
+      bestSep = sep;
+      best = i;
     }
   }
-  const merged: LevelGroup = { parts: [...groups[bestI].parts, ...groups[bestJ].parts] };
-  return groups.filter((_, index) => index !== bestI && index !== bestJ).concat(merged);
+
+  if (best < 0) return null;
+  const left = indexed[best];
+  const right = indexed[best + 1];
+  const merged: LevelGroup = { parts: [...left.group.parts, ...right.group.parts] };
+  return groups.filter((_, index) => index !== left.index && index !== right.index).concat(merged);
 }
 
 export function layoutCorridorLabels(levels: CorridorLevelInput[], trackWidthPx: number): PlacedCorridorLabel[] {
@@ -419,11 +479,52 @@ export function layoutCorridorLabels(levels: CorridorLevelInput[], trackWidthPx:
   for (let attempt = 0; attempt < levels.length; attempt++) {
     const packed = packGroups(groups, trackWidthPx);
     if (packed) return packed;
-    const next = mergeTightestGroups(groups, trackWidthPx);
+    const next = mergePriceAdjacentGroups(groups, trackWidthPx);
     if (!next) break;
     groups = next;
   }
-  return packGroups(groups, trackWidthPx) ?? [];
+  // Kein preisnahes Paar mehr: nicht stapeln, sondern Kuerzel (Preis im Tooltip),
+  // notfalls zusaetzliche Zeilen. Nie ein Label weglassen.
+  return packGroups(groups, trackWidthPx, { compact: true })
+    ?? packGroups(groups, trackWidthPx, { compact: true, maxLanes: Infinity })
+    ?? [];
+}
+
+export type ComboTooltipState = { open: boolean; pinned: boolean };
+export type ComboTooltipEvent = "tap" | "hover-in" | "hover-out" | "dismiss";
+
+/** Tap opens a combined-label tooltip and pins it. A second tap closes it. Hover-out does not dismiss a pin. */
+export function reduceComboTooltip(state: ComboTooltipState, event: ComboTooltipEvent): ComboTooltipState {
+  if (event === "tap") {
+    if (!state.open || !state.pinned) return { open: true, pinned: true };
+    return { open: false, pinned: false };
+  }
+  if (event === "hover-in") {
+    if (state.open) return state;
+    return { open: true, pinned: false };
+  }
+  if (event === "hover-out") {
+    if (state.pinned || !state.open) return state;
+    return { open: false, pinned: false };
+  }
+  if (!state.open && !state.pinned) return state;
+  return { open: false, pinned: false };
+}
+
+/** Lane-0 labels sit in the bottom strip of the track, so the FV line stops above that text. */
+export function fvMarkerBottomInsetPx(args: {
+  markerPct: number;
+  trackWidth: number;
+  label: Pick<PlacedCorridorLabel, "lane" | "leftPct" | "widthPx" | "tooltip"> | undefined;
+}): number {
+  const { label, trackWidth, markerPct } = args;
+  if (!label || trackWidth <= 0 || label.lane > 0) return 0;
+  if (!label.tooltip.split("\n").some((line) => line.startsWith("FV:"))) return 0;
+  const center = (label.leftPct / 100) * trackWidth;
+  const marker = (clampMarkerPct(markerPct) / 100) * trackWidth;
+  const half = label.widthPx / 2;
+  if (marker < center - half - 0.01 || marker > center + half + 0.01) return 0;
+  return CORRIDOR_LABEL_LINE_PX;
 }
 
 function FairValueBar({
@@ -478,10 +579,17 @@ function FairValueBar({
     ? clampLabelCenterPx(spotMarkerPct, trackWidth, estimateSpotLabelWidthPx(spotText)) - (spotMarkerPct / 100) * trackWidth
     : 0;
   const spotNudge = Math.abs(spotNudgePx) < 0.5 ? 0 : spotNudgePx;
+  const spotTopPad = corridorSpotTopPadPx();
+  const fvLabel = placed.find((label) => label.tooltip.split("\n").some((line) => line.startsWith("FV:")));
+  const fvInset = fvMarkerBottomInsetPx({ markerPct: pct(fairValue), trackWidth, label: fvLabel });
 
   return (
     <TooltipProvider delayDuration={250}>
-      <div style={{ paddingBottom: extraLanes * CORRIDOR_LABEL_LANE_PITCH_PX }}>
+      <div
+        style={{ paddingTop: spotTopPad, paddingBottom: extraLanes * CORRIDOR_LABEL_LANE_PITCH_PX }}
+        data-testid="gold-fv-corridor-pad"
+        data-spot-pad={spotTopPad}
+      >
         <div ref={trackRef} className="relative h-12 bg-muted/30 rounded-lg border border-border" data-testid="gold-fv-corridor">
           {/* Support zone */}
           <div
@@ -502,7 +610,7 @@ function FairValueBar({
           {/* Markers — lines only; labels are placed underneath so bands stay put. */}
           <MarkerLine pct={pct(support2)} />
           <MarkerLine pct={pct(support1)} />
-          <MarkerLine pct={pct(fairValue)} thick />
+          <MarkerLine pct={pct(fairValue)} thick bottomInset={fvInset} />
           <MarkerLine pct={pct(resistance1)} />
           <MarkerLine pct={pct(resistance2)} />
 
@@ -517,8 +625,11 @@ function FairValueBar({
           >
             <div className="w-0.5 h-full bg-amber-500" />
             <div
-              className="absolute -top-5 bg-amber-500 text-[9px] font-bold text-black px-1.5 py-0.5 rounded whitespace-nowrap"
-              style={spotNudge !== 0 ? { transform: `translateX(${spotNudge}px)` } : undefined}
+              className="absolute bg-amber-500 text-[9px] font-bold text-black px-1.5 py-0.5 rounded whitespace-nowrap"
+              style={{
+                top: -CORRIDOR_SPOT_PILL_OVERHANG_PX,
+                ...(spotNudge !== 0 ? { transform: `translateX(${spotNudge}px)` } : {}),
+              }}
               data-testid="gold-fv-spot-label"
             >
               {spotText}
@@ -530,11 +641,16 @@ function FairValueBar({
   );
 }
 
-function MarkerLine({ pct, thick }: { pct: number; thick?: boolean }) {
+function MarkerLine({ pct, thick, bottomInset = 0 }: { pct: number; thick?: boolean; bottomInset?: number }) {
   return (
     <div
-      className="absolute top-0 h-full"
-      style={{ left: `${Math.min(98, Math.max(2, pct))}%` }}
+      className="absolute top-0"
+      style={{
+        left: `${Math.min(98, Math.max(2, pct))}%`,
+        height: bottomInset > 0 ? `calc(100% - ${bottomInset}px)` : "100%",
+      }}
+      data-testid={thick ? "gold-fv-marker-fv" : undefined}
+      data-inset={thick ? bottomInset : undefined}
     >
       <div className={`${thick ? "w-0.5" : "w-px"} h-full ${thick ? "bg-amber-500/50" : "bg-border"}`} />
     </div>
@@ -542,13 +658,15 @@ function MarkerLine({ pct, thick }: { pct: number; thick?: boolean }) {
 }
 
 function CorridorLevelLabel({ label }: { label: PlacedCorridorLabel }) {
-  const className = `absolute z-20 text-[8px] font-mono tabular-nums whitespace-nowrap leading-[12px] ${label.colorClass}`;
+  const [tip, setTip] = useState<ComboTooltipState>({ open: false, pinned: false });
+  const className = `absolute z-20 text-[8px] font-mono tabular-nums whitespace-nowrap ${label.colorClass}`;
   const style = {
     left: `${label.leftPct}%`,
     bottom: -(label.lane * CORRIDOR_LABEL_LANE_PITCH_PX),
     transform: "translateX(-50%)",
+    lineHeight: `${CORRIDOR_LABEL_LINE_PX}px`,
   };
-  if (!label.combined) {
+  if (!label.combined && !label.compact) {
     return (
       <div className={className} style={style} data-testid={`gold-fv-label-${label.id}`} data-lane={label.lane}>
         {label.text}
@@ -556,7 +674,12 @@ function CorridorLevelLabel({ label }: { label: PlacedCorridorLabel }) {
     );
   }
   return (
-    <Tooltip>
+    <Tooltip
+      open={tip.open}
+      onOpenChange={(next) => {
+        setTip((current) => reduceComboTooltip(current, next ? "hover-in" : "hover-out"));
+      }}
+    >
       <TooltipTrigger asChild>
         <button
           type="button"
@@ -564,12 +687,27 @@ function CorridorLevelLabel({ label }: { label: PlacedCorridorLabel }) {
           style={style}
           data-testid={`gold-fv-label-${label.id}`}
           data-lane={label.lane}
-          aria-label={label.tooltip}
+          aria-label={`${label.combined ? "Gestapelte Marken" : "Marke"} — ${label.tooltip.replace(/\n/g, ", ")}. Tippen zeigt die Preise.`}
+          aria-expanded={tip.open}
+          aria-haspopup="true"
+          data-combined={label.combined ? "true" : undefined}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setTip((current) => reduceComboTooltip(current, "dismiss"));
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            setTip((current) => reduceComboTooltip(current, "tap"));
+          }}
         >
           {label.text}
         </button>
       </TooltipTrigger>
-      <TooltipContent side="top" className="whitespace-pre-line font-mono text-[11px]">
+      <TooltipContent
+        side="top"
+        className="whitespace-pre-line font-mono text-[11px]"
+        onPointerDownOutside={() => setTip((current) => reduceComboTooltip(current, "dismiss"))}
+        onEscapeKeyDown={() => setTip((current) => reduceComboTooltip(current, "dismiss"))}
+      >
         {label.tooltip}
       </TooltipContent>
     </Tooltip>

@@ -16,6 +16,10 @@ export interface IndicatorResult {
   available?: boolean;
   /** Set when the crowd leg is the VIX substitute or a crypto print, not live CNN. */
   proxy?: boolean;
+  /** Hours since the Google Trends print was stored. Other slots leave this unset. */
+  ageHours?: number;
+  /** True when the Google Trends print is over 24h. Zone weights stay unchanged. */
+  isStale?: boolean;
 }
 
 export interface SubgroupResult {

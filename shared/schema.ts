@@ -493,6 +493,8 @@ export interface StockAnalysis {
   fcfYield?: number | null;
   fcfYieldYoyPp?: number | null;
   fcfYieldYoyAvailable?: boolean;
+  /** Trailing Dividendenrendite in % (FMP quote/ratios, in analyze-route schon auf % normiert). 0 = keine Dividende. */
+  dividendYield?: number | null;
   fcfMarginYoyPp?: number | null;
   fcfMarginYoyAvailable?: boolean;
   revenue: number;
@@ -691,6 +693,8 @@ export interface StockAnalysis {
   // (e.g. "Segmentreporting nicht in den letzten 10-K/20-F enthalten" or
   // "Unternehmen berichtet nur geografisch"). Never a generic "N/A".
   revenueSegmentsMessage?: string;
+  isEtf?: boolean;
+  isFund?: boolean;
 }
 
 // ─── NEW (WORK_PORTFOLIO.md — Virtuelles Portfolio, additive-only) ─────────────

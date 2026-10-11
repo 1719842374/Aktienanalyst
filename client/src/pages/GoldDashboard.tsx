@@ -11,6 +11,9 @@ import { GoldFairValueSection } from "@/components/gold/GoldFairValueSection";
 import { GoldMonteCarloSection } from "@/components/gold/GoldMonteCarloSection";
 import { GoldCycleSection } from "@/components/gold/GoldCycleSection";
 import { GoldSummarySection } from "@/components/gold/GoldSummarySection";
+import { GoldAdaptiveLayersCard } from "@/components/gold/GoldAdaptiveLayersCard";
+import { GoldAdaptiveGatesCard } from "@/components/gold/GoldAdaptiveGatesCard";
+import { GoldNewsCard } from "@/components/gold/GoldNewsCard";
 import { GoldPriceChart } from "@/components/gold/GoldPriceChart";
 import {
   Sun, Moon, TrendingUp, BarChart3, Calculator,
@@ -43,6 +46,9 @@ export default function GoldDashboard() {
       // Try live API first, fallback to bundled static data
       try {
         const res = await apiRequest("GET", "/api/analyze-gold");
+        // apiRequest does not throw on HTTP errors. A 500 body is not a GoldAnalysis
+        // (missing FMP key → { error }) and used to crash the page on spotPrice.toFixed.
+        if (!res.ok) throw new Error(`Gold-API ${res.status}`);
         return res.json();
       } catch {
         // Return pre-computed data bundled at build time
@@ -182,6 +188,9 @@ export default function GoldDashboard() {
               <div ref={setSectionRef(6)}><GoldPriceEstimateSection data={data} /></div>
               <div ref={setSectionRef(7)}><GoldCycleSection data={data} /></div>
               <div ref={setSectionRef(8)}><GoldSummarySection data={data} /></div>
+              <GoldAdaptiveLayersCard data={data} />
+              <GoldAdaptiveGatesCard data={data} />
+              <GoldNewsCard data={data} />
               <div className="pb-8" />
             </div>
           ) : null}

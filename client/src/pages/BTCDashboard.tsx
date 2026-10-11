@@ -19,6 +19,7 @@ import { useLocation } from "wouter";
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
+import { TaStatusPill } from "@/components/sections/TaStatusPill";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
   LineChart as LineChartIcon, Target, Scale, BarChart3, Dice6,
@@ -921,27 +922,8 @@ type MAKey = typeof MA_LINES[number]["key"];
 type BTCOverlayKey = typeof BTC_OVERLAYS[number]["key"];
 type TimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y";
 
-// StatusPill component matching TechnicalChart reference
-function StatusPill({ label, value, detail }: { label: string; value: boolean; detail: string }) {
-  return (
-    <div className={`rounded-lg p-2 border text-center ${
-      value ? "bg-green-500/10 border-green-500/30" : "bg-red-500/10 border-red-500/30"
-    }`}>
-      <div className="flex items-center justify-center gap-1 mb-0.5">
-        {value ? (
-          <CheckCircle2 className="w-3 h-3 text-green-500" />
-        ) : (
-          <XCircle className="w-3 h-3 text-red-500" />
-        )}
-        <span className={`text-[10px] font-semibold ${value ? "text-green-500" : "text-red-500"}`}>
-          {value ? "JA" : "NEIN"}
-        </span>
-      </div>
-      <div className="text-[9px] font-medium">{label}</div>
-      {detail && <div className="text-[8px] text-muted-foreground mt-0.5 font-mono tabular-nums">{detail}</div>}
-    </div>
-  );
-}
+// StatusPill: ausgelagert nach TaStatusPill (Markup unveraendert), Gold nutzt dieselbe Karte.
+const StatusPill = TaStatusPill;
 
 /**
  * timeRange/onTimeRangeChange sind OPTIONAL (additiv): werden sie vom Parent
