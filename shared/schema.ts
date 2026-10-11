@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { BiasFixPayload, CatalystSource } from "./bias-fixes";
 
+export { YAHOO_SECTION_HINT } from "./yahoo-hint";
+
 // === Request Schema ===
 export const analyzeRequestSchema = z.object({
   ticker: z.string().min(1).max(32).toUpperCase(),  // 32 deckt internationale Ticker ab: BAJAJ-AUTO.NS, 600519.SS, 0700.HK, etc.
@@ -620,13 +622,18 @@ export interface StockAnalysis {
    *  gefuellt/nach links verlaengert (z.B. weil der FMP-Plan nur 5 Jahre
    *  liefert, der UI-Timeframe aber 10Y anfordert). Optional: fehlt bei
    *  alten Cache-Eintraegen vor diesem Ticket. */
-  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt';
+  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt' | 'yahoo';
 
   /** true, wenn selbst nach Alt-Provider-Fallback nicht genug Historie fuer
    *  den urspruenglich gewuenschten Zeitraum vorhanden war (ehrliche
    *  Kennzeichnung statt Kuenstlich-Verlaengern/Interpolieren, siehe Ticket-
    *  Regel "Zahlen-Prinzip"). Optional, additiv. */
   historyTruncated?: boolean;
+
+  /** Mini-PR 4: set only when FMP 402 / upstream fail and Yahoo supplied quote + history. */
+  quoteCoverage?: "yahoo-quote-history";
+  /** Starts with "Plan-Limit, Yahoo-Kurs/History" and states the missing fundamentals. */
+  quoteCoverageNote?: string;
 
   // NEW: Technical indicators (MAs, MACD, signals)
   technicalIndicators?: TechnicalIndicators;
