@@ -15,6 +15,7 @@ import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
+import { useDividendHistory } from "@/lib/useDividendHistory";
 import { dividendOverlaySeries, dividendCurrencyCheck, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
 
 interface Props { data: StockAnalysis; }
@@ -146,16 +147,7 @@ export function TechnicalChart({ data }: Props) {
   const [signalPage,    setSignalPage]    = useState(0);
   // Dividend overlay (Future_1 §11.1): fetched only while the toggle is on.
   const [showDividend, setShowDividend] = useState(false);
-  const dividendQuery = useQuery<DividendHistoryResponse>({
-    queryKey: ["dividends", data.ticker],
-    enabled: showDividend && !!data.ticker,
-    staleTime: 12 * 60 * 60 * 1000,
-    queryFn: async () => {
-      const res = await fetch(`/api/dividends/${encodeURIComponent(data.ticker)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    },
-  });
+  const dividendQuery = useDividendHistory(data.ticker, showDividend);
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -1375,7 +1367,7 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
       {currencyCheck === "ok" ? <> · Währung {history.currency} = Kurs</> : <> · Dividendenwährung von der Quelle nicht angegeben (Annahme: Kurswährung)</>}
       {series.correctedBars > 0 && <> · <span className="text-amber-500">{series.correctedBars} Punkt(e) geglättet</span> (Ex-Tag-Verschiebung, Rohwert im Tooltip)</>}
       {series.specialExDates.length > 0 && <> · <span className="text-violet-400">Sonderdividende {series.specialExDates.map(formatDateFull).join(", ")}</span></>}
-      {" "}· KPI „Div. Yield“ in Sektion 1 = Geschäftsjahreswert (FMP), daher abweichend.
+      {" "}· KPI „Div. Yield“ in Sektion 1 zeigt denselben TTM-Wert (GJ-Wert von FMP als Zusatzzeile).
     </div>
   );
 }

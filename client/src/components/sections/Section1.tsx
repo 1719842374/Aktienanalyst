@@ -7,6 +7,8 @@ import { formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } 
 import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus } from "lucide-react";
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 import { dividendYieldKpi } from "../../lib/dividendKpi";
+import { useDividendHistory } from "@/lib/useDividendHistory";
+import { dividendKpiFromHistory } from "@shared/dividends";
 
 interface Props { data: StockAnalysis; onRefresh?: () => void; onThesisScore?: (score: number) => void }
 
@@ -35,7 +37,17 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
     else if (r.reason === "duplicate") showFlash(`${data.ticker} ist bereits auf der Watchlist`);
   }
 
-  const divKpi = dividendYieldKpi(data.dividendYield);
+  const divFy = dividendYieldKpi(data.dividendYield);
+  // TTM from /api/dividends on the chart's last bar (same function + smoothing as the overlay's last point).
+  const divQuery = useDividendHistory(data.ticker);
+  const bars = data.ohlcvData?.length ? data.ohlcvData : data.historicalPrices; // TechnicalChart plots ohlcvData
+  const lastBar = bars?.length ? bars[bars.length - 1] : null;
+  const divTtm = dividendKpiFromHistory(divQuery.data, lastBar ? { date: lastBar.date, close: lastBar.close } : null, data.currency);
+  const divKpi: { value: string; sub: string } | null =
+    divTtm.kind === "ttm" ? { value: `${divTtm.yieldPct.toFixed(2)}%`, sub: `TTM${divFy ? ` · GJ (FMP) ${divFy}` : ""}` }
+    : divTtm.kind === "mismatch" ? { value: "n/a", sub: `TTM: Dividende ${divTtm.dividendCurrency} ≠ Kurs ${divTtm.priceCurrency}` }
+    : divFy ? { value: divFy, sub: "GJ (FMP)" }
+    : null;
   const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
 
   function fmtAge(mins: number): string {
@@ -156,7 +168,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         <KPI label="Beta (5Y)" value={formatNumber(data.beta5Y)} />
         <KPI label="P/E" value={formatNumber(data.peRatio, 1)} sub={`Fwd: ${formatNumber(data.forwardPE, 1)}`} />
         <KPI label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
-        {divKpi && <KPI label="Div. Yield" value={divKpi} sub="GJ (FMP)" />}
+        {divKpi && <KPI label="Div. Yield" value={divKpi.value} sub={divKpi.sub} />}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-2.5 text-xs">

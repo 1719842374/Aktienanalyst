@@ -235,3 +235,28 @@ export function dividendOverlaySeries(
   });
   return { points, paymentsPerYear: f, specialExDates: Array.from(specials), correctedBars: corrected };
 }
+
+// ─── Section-1 KPI tile: same value as the last point of the price-chart overlay ───
+
+export type DividendKpi =
+  | { kind: "ttm"; yieldPct: number; ttmDividend: number; date: string; smoothed: boolean }
+  | { kind: "mismatch"; dividendCurrency: string; priceCurrency: string }
+  | { kind: "none" };
+
+/**
+ * TTM yield for the KPI tile. Uses dividendOverlaySeries (incl. ex-date smoothing) on the SAME last bar the chart
+ * ends on, so tile == last overlay point. Same currency guard as the overlay. No history / no 12M → "none".
+ */
+export function dividendKpiFromHistory(
+  history: DividendHistoryResponse | null | undefined,
+  lastBar: { date: string; close: number } | null | undefined,
+  priceCurrency: string | null | undefined,
+): DividendKpi {
+  if (!history || history.events.length === 0 || !lastBar) return { kind: "none" };
+  if (dividendCurrencyCheck(history.currency, priceCurrency) === "mismatch") {
+    return { kind: "mismatch", dividendCurrency: String(history.currency), priceCurrency: String(priceCurrency) };
+  }
+  const p = dividendOverlaySeries([lastBar], history.events).points[0];
+  if (!p || p.yieldPct == null || p.ttmDividend == null) return { kind: "none" };
+  return { kind: "ttm", yieldPct: p.yieldPct, ttmDividend: p.ttmDividend, date: p.date, smoothed: p.rawYieldPct != null };
+}
