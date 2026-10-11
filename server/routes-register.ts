@@ -29,4 +29,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // POST /api/export-pdf (lost from routes.ts in 57189dd, see pdf-export-route.ts)
   const { registerPdfExportRoute } = await import("./pdf-export-route");
   registerPdfExportRoute(app);
+  // POST /api/refresh-risks (Section 8; lost from routes.ts in 57189dd, see refresh-risks-route.ts)
+  const { registerRefreshRisksRoute } = await import("./refresh-risks-route");
+  registerRefreshRisksRoute(app);
 }

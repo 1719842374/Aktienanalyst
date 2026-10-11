@@ -530,7 +530,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
 
           {/* Gate-Inputs (Transparenz: welche echten Zahlen die Gates gesteuert haben) */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-[10px] text-muted-foreground border-t border-border/30 pt-2">
-            <div>g* (Reverse-DCF): <span className="font-mono text-foreground/70">{data.scoring.gateInputs.impliedGrowthPercent != null ? `${data.scoring.gateInputs.impliedGrowthPercent.toFixed(1)}%` : "n/a"}</span></div>
+            <div>g* (Reverse-DCF): <span className="font-mono text-foreground/70">{isEtfOrFund(data) ? "n/a (ETF/Fonds)" : data.scoring.gateInputs.impliedGrowthPercent != null ? `${data.scoring.gateInputs.impliedGrowthPercent.toFixed(1)}%` : "n/a"}</span></div>
             <div>Realized 8Q: <span className="font-mono text-foreground/70">{data.scoring.gateInputs.realizedGrowth8QPercent != null ? `${data.scoring.gateInputs.realizedGrowth8QPercent.toFixed(1)}%` : "n/a"}</span>{data.scoring.gateInputs.realizedGrowth8QPercent != null && <span className="text-muted-foreground/50"> ({data.scoring.gateInputs.realizedGrowthQuartersUsed}Q)</span>}</div>
             <div>Margen-Δ YoY: <span className="font-mono text-foreground/70">{data.scoring.gateInputs.marginDeltaYoYPp != null ? `${data.scoring.gateInputs.marginDeltaYoYPp > 0 ? "+" : ""}${data.scoring.gateInputs.marginDeltaYoYPp.toFixed(1)}pp` : "n/a"}</span></div>
             <div>Rel. Wachstum vs. Peers: <span className="font-mono text-foreground/70">{data.scoring.gateInputs.relativeGrowthDeltaYoYPp != null ? `${data.scoring.gateInputs.relativeGrowthDeltaYoYPp > 0 ? "+" : ""}${data.scoring.gateInputs.relativeGrowthDeltaYoYPp.toFixed(1)}pp` : "n/a"}</span></div>

@@ -17,6 +17,36 @@ export interface DividendHistoryResponse {
   source: DividendSource;
   events: DividendEvent[];
   note: string | null;
+  /** ISO currency the source states for the amounts (FMP row `currency`/`reportedCurrency`, Yahoo meta.currency). null = source states none. */
+  currency?: string | null;
+}
+
+const CCY = /^[A-Z]{3}$/;
+function ccy(v: unknown): string | null {
+  const c = typeof v === "string" ? v.trim().toUpperCase() : "";
+  return CCY.test(c) ? c : null;
+}
+
+/** Currency stated in FMP dividend rows, if any (first non-empty `currency` / `reportedCurrency`). */
+export function parseFmpDividendCurrency(payload: unknown): string | null {
+  const rows = Array.isArray(payload) ? payload : Array.isArray((payload as any)?.historical) ? (payload as any).historical : [];
+  for (const r of rows) { const c = ccy(r?.currency) ?? ccy(r?.reportedCurrency); if (c) return c; }
+  return null;
+}
+
+/** Yahoo v8 chart meta.currency (currency of price and dividend amounts of that listing). */
+export function parseYahooDividendCurrency(payload: unknown): string | null {
+  return ccy((payload as any)?.chart?.result?.[0]?.meta?.currency);
+}
+
+/**
+ * Guard for the yield line: dividend and price must be in the same currency. Known and different → mismatch
+ * (no FX conversion, nothing guessed). Unknown on either side → "unknown" (line shown, note says so).
+ */
+export function dividendCurrencyCheck(dividendCcy: string | null | undefined, priceCcy: string | null | undefined): "ok" | "mismatch" | "unknown" {
+  const d = ccy(dividendCcy), p = ccy(priceCcy);
+  if (!d || !p) return "unknown";
+  return d === p ? "ok" : "mismatch";
 }
 
 export interface DividendYieldPoint {
@@ -99,4 +129,109 @@ export function trailingDividendYield(
     });
   }
   return out;
+}
+
+// ─── Price-chart overlay (TA section): TTM yield with honest handling of window artefacts ───
+
+export interface DividendOverlayPoint {
+  date: string;
+  /** TTM yield in % after the ex-date-drift correction. null = no full 12M history or no close. */
+  yieldPct: number | null;
+  /** TTM dividends per share used for yieldPct (source currency). */
+  ttmDividend: number | null;
+  /** Raw (date − 1y, date] value when it differs from yieldPct (window held one payment too many). */
+  rawYieldPct: number | null;
+  /** Ex-dates excluded from this point because a newer payment of the same slot is already in the window. */
+  droppedExDates: string[];
+  /** Special dividends inside this window (counted in full, labelled). */
+  specialExDates: string[];
+  /** Ex-dates added from just before the window because this year's payment of the same slot is not yet ex (later drift). */
+  addedExDates?: string[];
+}
+
+export interface DividendOverlaySeries {
+  points: DividendOverlayPoint[];
+  /** Regular payments per year, from the median gap between ex-dates. */
+  paymentsPerYear: number;
+  specialExDates: string[];
+  /** Number of bars whose raw window value was corrected. */
+  correctedBars: number;
+}
+
+const DAY_MS = 86400000;
+const isoMs = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
+
+/** Regular payments per year from the median gap of the last (up to) 12 ex-dates; 1..12. */
+export function paymentsPerYear(events: DividendEvent[]): number {
+  const recent = events.slice(-13);
+  if (recent.length < 2) return 1;
+  const gaps = recent.slice(1).map((e, i) => (isoMs(e.date) - isoMs(recent[i].date)) / DAY_MS).sort((a, b) => a - b);
+  const mid = gaps[Math.floor(gaps.length / 2)];
+  return Math.min(12, Math.max(1, Math.round(365 / Math.max(mid, 1))));
+}
+
+/**
+ * Special dividend = amount more than 2× the median of the SAME payment slot in neighbouring years
+ * (events i ± f, i ± 2f with f = payments per year). Same-slot, because semi-annual payers (NVO) pay a final
+ * that is ~2× the interim — that is regular. Only flags; amounts are never changed.
+ */
+export function specialDividendDates(events: DividendEvent[], f = paymentsPerYear(events)): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i < events.length; i++) {
+    const nb = [i - 2 * f, i - f, i + f, i + 2 * f].filter(j => j >= 0 && j < events.length).map(j => events[j].amount).sort((a, b) => a - b);
+    if (nb.length < 2) continue;
+    const med = (nb[Math.floor((nb.length - 1) / 2)] + nb[Math.ceil((nb.length - 1) / 2)]) / 2;
+    if (med > 0 && events[i].amount > 2 * med) out.add(events[i].date);
+  }
+  return out;
+}
+
+/**
+ * Per bar: payments with ex-date in (date − 1y, date]. When an ex-date drifts a few days earlier than a year
+ * before (NVO 30.03.2026 vs 31.03.2025), the plain window holds one regular payment too many for a few days and
+ * the line spikes (NVO ≈ 8.3 %). Then the oldest surplus regular payment is excluded and the point is marked
+ * (rawYieldPct + droppedExDates), so the correction is visible. Special dividends are always counted and labelled.
+ */
+export function dividendOverlaySeries(
+  bars: Array<{ date: string; close: number }>,
+  events: DividendEvent[],
+): DividendOverlaySeries {
+  const empty = (b: { date: string }): DividendOverlayPoint => ({ date: b.date, yieldPct: null, ttmDividend: null, rawYieldPct: null, droppedExDates: [], specialExDates: [] });
+  if (events.length === 0) return { points: bars.map(empty), paymentsPerYear: 0, specialExDates: [], correctedBars: 0 };
+  const f = paymentsPerYear(events);
+  const specials = specialDividendDates(events, f);
+  const firstEx = events[0].date;
+  let corrected = 0;
+  const points = bars.map(bar => {
+    const from = minusOneYear(bar.date);
+    if (!(from >= firstEx) || !Number.isFinite(bar.close) || bar.close <= 0) return empty(bar);
+    const win = events.filter(e => e.date > from && e.date <= bar.date);
+    const regular = win.filter(e => !specials.has(e.date));
+    const special = win.filter(e => specials.has(e.date));
+    const surplus = Math.max(0, regular.length - f);
+    const dropped = regular.slice(0, surplus);
+    // Opposite drift (KO 15.09.2025 vs 13.09.2024): the window misses one regular payment for a few days and the
+    // line dips. Re-add the newest regular payment(s) that left the window less than half a payment period ago.
+    const deficit = Math.max(0, f - regular.length);
+    const graceFrom = new Date(isoMs(from) - (365 / f / 2) * DAY_MS).toISOString().slice(0, 10);
+    const added = deficit > 0 && regular.length > 0
+      ? events.filter(e => !specials.has(e.date) && e.date <= from && e.date > graceFrom).slice(-deficit)
+      : [];
+    const kept = added.concat(regular.slice(surplus), special);
+    const rawSum = win.reduce((s, e) => s + e.amount, 0);
+    const sum = kept.reduce((s, e) => s + e.amount, 0);
+    const pct = (v: number) => Math.round((v / bar.close) * 10000) / 100;
+    const changed = dropped.length > 0 || added.length > 0;
+    if (changed) corrected++;
+    return {
+      date: bar.date,
+      yieldPct: pct(sum),
+      ttmDividend: Math.round(sum * 10000) / 10000,
+      rawYieldPct: changed ? pct(rawSum) : null,
+      droppedExDates: dropped.map(e => e.date),
+      specialExDates: special.map(e => e.date),
+      addedExDates: added.map(e => e.date),
+    };
+  });
+  return { points, paymentsPerYear: f, specialExDates: Array.from(specials), correctedBars: corrected };
 }

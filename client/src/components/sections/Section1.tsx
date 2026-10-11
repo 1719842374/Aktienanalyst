@@ -156,7 +156,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         <KPI label="Beta (5Y)" value={formatNumber(data.beta5Y)} />
         <KPI label="P/E" value={formatNumber(data.peRatio, 1)} sub={`Fwd: ${formatNumber(data.forwardPE, 1)}`} />
         <KPI label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
-        {divKpi && <KPI label="Div. Yield" value={divKpi} sub="TTM" />}
+        {divKpi && <KPI label="Div. Yield" value={divKpi} sub="GJ (FMP)" />}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-2.5 text-xs">

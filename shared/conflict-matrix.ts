@@ -34,6 +34,8 @@ export interface ConflictInputs {
   impliedGrowth: number | null | undefined;
   technical: { priceAboveMA200?: boolean; ma50AboveMA200?: boolean; macdAboveZero?: boolean; macdRising?: boolean } | null | undefined;
   catalystUpsidePct: number | null | undefined;
+  /** ETF / fund (FMP isEtf / isFund): Reverse DCF not applicable, cell shows the ETF note. */
+  etfOrFund?: boolean;
 }
 
 const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -92,7 +94,7 @@ export function buildConflictMatrix(i: ConflictInputs): ConflictMatrix {
     { id: "trend", label: "Trend / Delta", signal: trendSignal(i.marginDeltaYoYPp, i.relativeGrowthDeltaYoYPp),
       value: trendParts.length ? trendParts.join(" · ") : "n/a", basis: "Margen-Δ YoY und Wachstum vs. Peers, beide gleichgerichtet" },
     { id: "reverseDcf", label: "Reverse DCF", signal: reverseDcfSignal(i.reverseDcfRating),
-      value: i.reverseDcfRating && i.reverseDcfRating !== "n/a" ? `g* ${fin(i.impliedGrowth) ? i.impliedGrowth.toFixed(1) : "?"}% · ${i.reverseDcfRating}` : "n/a",
+      value: i.etfOrFund ? ETF_RDCF_NOTE : i.reverseDcfRating && i.reverseDcfRating !== "n/a" ? `g* ${fin(i.impliedGrowth) ? i.impliedGrowth.toFixed(1) : "?"}% · ${i.reverseDcfRating}` : "n/a",
       basis: "eingepreistes Wachstum g* vs. Referenz" },
     { id: "technical", label: "Technik-Regime", signal: tech.signal,
       value: tech.score == null ? "n/a" : `${tech.score}/4`, basis: "Kurs>MA200, MA50>MA200, MACD>0, MACD↑" },
@@ -135,8 +137,12 @@ export function conflictInputsFromAnalysis(
     impliedGrowth: reverseDcf?.impliedGrowth,
     technical: data?.technicalIndicators?.currentStatus,
     catalystUpsidePct,
+    etfOrFund: isEtfOrFund(data),
   };
 }
+
+/** Same note everywhere (matrix, Summary row, Fazit, section 16, PDF). */
+export const ETF_RDCF_NOTE = "n/a — ETF/Fonds, Reverse DCF nicht anwendbar";
 
 /** FMP profile isEtf / isFund, passed through analyze-route (StockAnalysis.isEtf / isFund). Missing → false. */
 export function isEtfOrFund(data: { isEtf?: boolean | null; isFund?: boolean | null } | null | undefined): boolean {
