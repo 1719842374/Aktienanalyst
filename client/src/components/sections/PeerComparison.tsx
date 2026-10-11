@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import type { StockAnalysis, PeerCompany } from "@shared/schema";
 import type { PeerNaFill } from "@shared/peer-na-fill";
-import { ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from "lucide-react";
 
 function fmt(v: number | null | undefined, decimals = 1): string {
   if (v == null || isNaN(v) || !isFinite(v)) return "—";
@@ -45,11 +45,13 @@ function findBest(values: (number | null)[], lowerIsBetter: boolean): number | n
 // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): onOverridesChange ist optional
 // -- Aufrufer ohne den Callback (falls je vorhanden) sehen weiterhin nur die
 // reine Tabelle, keine Verhaltensaenderung. Additiv, kein Ersatz bestehender Props.
-export default function PeerComparison({ data, onOverridesChange, kiPeers = [] }: {
+export default function PeerComparison({ data, onOverridesChange, kiPeers = [], peerBusy = false }: {
   data: StockAnalysis;
   onOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void;
   /** Session-only KI names. FMP metrics stay on the side list, not in the scored table. */
   kiPeers?: PeerNaFill[];
+  /** True while the parent re-runs /api/analyze with the new peer overrides. */
+  peerBusy?: boolean;
 }) {
   const pc = data.peerComparison;
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
@@ -319,14 +321,23 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [] }
             placeholder="Ticker hinzufügen (z.B. LLY)"
             className="text-[11px] bg-muted/30 border border-border/50 rounded-md px-2 py-1 w-40 focus:outline-none focus:ring-1 focus:ring-primary/40"
             maxLength={12}
+            disabled={peerBusy}
+            data-testid="input-peer-add"
           />
           <button
             onClick={handleAdd}
-            disabled={!addInput.trim() || activeAdd.length + peers.length >= 8}
+            disabled={peerBusy || !addInput.trim() || activeAdd.length + peers.length >= 8}
             className="text-[11px] px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            data-testid="button-peer-add"
           >
             + Peer hinzufügen
           </button>
+          {peerBusy && (
+            <span className="text-[10px] text-primary flex items-center gap-1" data-testid="peer-add-loading" role="status">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Peer wird geladen…
+            </span>
+          )}
           {(activeAdd.length > 0 || activeRemove.length > 0) && (
             <button
               onClick={handleResetDefaults}

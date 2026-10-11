@@ -3,6 +3,7 @@
  * Keeps analyze-route surgical (import + one call before res.json).
  * Spec: WORK_EXEC_SUMMARY.md
  */
+import { safeCompanyDcfWaccPct } from "../shared/valuation-signal";
 import { buildExecSummary, type ExecSummary, type ExecSummaryInput } from "./exec-summary";
 
 function finite(n: unknown): n is number {
@@ -72,7 +73,8 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
     revenueGrowthPct: finite(a?.financialStatements?.incomeStatement?.revenueGrowth)
       ? a.financialStatements.incomeStatement.revenueGrowth
       : finite(a?.revenueGrowthPct) ? a.revenueGrowthPct : null,
-    waccPct: finite(a?.waccPct) ? a.waccPct : finite(scoring?.waccPct) ? scoring.waccPct : null,
+    waccPct: finite(a?.waccPct) ? a.waccPct : finite(scoring?.waccPct) ? scoring.waccPct
+      : safeCompanyDcfWaccPct(a),
     gStarPct: finite(a?.impliedGStar) ? a.impliedGStar : finite(a?.gStarPct) ? a.gStarPct : null,
     g1Pct: finite(a?.g1Pct) ? a.g1Pct : finite(scoring?.g1Pct) ? scoring.g1Pct : null,
     pe: finite(a?.peRatio) ? a.peRatio : null,

@@ -11,25 +11,29 @@
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { diskResearcherGetWithTtl, diskResearcherSet } from "./disk-cache";
 import type { GoldNewsImpact, GoldNewsItem } from "../shared/gold-schema";
+import { scoreHeadlineSentiment } from "./news-sentiment";
 
 export const GOLD_NEWS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 export const GOLD_NEWS_CACHE_HOURS = 12;
 const CACHE_KEY = "gold_news_impact_v1";
 
-const FEEDS: { id: string; url: string; source: string; goldOnly: boolean }[] = [
-  { id: "wgc", url: "https://www.gold.org/rss.xml", source: "World Gold Council", goldOnly: false },
-  { id: "fed", url: "https://www.federalreserve.gov/feeds/press_all.xml", source: "Federal Reserve", goldOnly: true },
+// Alle vier Feeds sind englische Ausgaben (gold.org, federalreserve.gov, Google News hl=en-US).
+const FEEDS: { id: string; url: string; source: string; goldOnly: boolean; lang: "en" }[] = [
+  { id: "wgc", url: "https://www.gold.org/rss.xml", source: "World Gold Council", goldOnly: false, lang: "en" },
+  { id: "fed", url: "https://www.federalreserve.gov/feeds/press_all.xml", source: "Federal Reserve", goldOnly: true, lang: "en" },
   {
     id: "kitco",
     url: "https://news.google.com/rss/search?q=gold+site:kitco.com&hl=en-US&gl=US&ceid=US:en",
     source: "Kitco",
     goldOnly: false,
+    lang: "en",
   },
   {
     id: "reuters",
     url: "https://news.google.com/rss/search?q=gold+site:reuters.com&hl=en-US&gl=US&ceid=US:en",
     source: "Reuters",
     goldOnly: false,
+    lang: "en",
   },
 ];
 
@@ -120,7 +124,7 @@ export async function fetchGoldNewsItems(): Promise<GoldNewsItem[]> {
   const batches = await Promise.all(FEEDS.map(async feed => {
     try {
       const xml = await fetchFeed(feed.url);
-      let items = parseGoldRssItems(xml, feed.source, 5);
+      let items = parseGoldRssItems(xml, feed.source, 5).map(item => ({ ...item, lang: feed.lang }));
       if (feed.goldOnly) items = items.filter(item => FED_GOLD_PATTERN.test(`${item.title} ${item.source}`));
       return items;
     } catch (err: any) {
@@ -248,10 +252,22 @@ export async function loadGoldNewsImpact(deps: GoldNewsDeps): Promise<GoldNewsIm
   };
 }
 
+/**
+ * Anzeige-Felder je Meldung: Keyword-Sentiment (gleiche Logik wie Aktien-News) und Sprache.
+ * Ändert weder das LLM-Flag noch die Schlagzeilen für den Prompt; das Flag bleibt der einzige
+ * News-Wert, der in die adaptive Schicht geht. Fehlende Sprache bleibt null (n/a), nicht geraten.
+ */
+export function enrichGoldNewsItems(items: GoldNewsItem[]): GoldNewsItem[] {
+  return items.map(item => {
+    const { sentiment, sentimentScore } = scoreHeadlineSentiment(item.title);
+    return { ...item, lang: item.lang ?? null, sentiment, sentimentScore, sentimentSource: "keyword" as const };
+  });
+}
+
 let memoryCache: GoldNewsCacheEntry | null = null;
 
 export async function getGoldNewsImpact(): Promise<GoldNewsImpact> {
-  return loadGoldNewsImpact({
+  const impact = await loadGoldNewsImpact({
     now: Date.now(),
     llmAvailable: isLLMAvailable(),
     fetchItems: fetchGoldNewsItems,
@@ -268,4 +284,5 @@ export async function getGoldNewsImpact(): Promise<GoldNewsImpact> {
       try { diskResearcherSet(CACHE_KEY, entry); } catch { /* Disk ist der Backstop */ }
     },
   });
+  return { ...impact, items: enrichGoldNewsItems(impact.items) };
 }

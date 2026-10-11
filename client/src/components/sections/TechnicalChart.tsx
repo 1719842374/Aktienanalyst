@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import type { StockAnalysis, TradingSignal } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import {
@@ -15,7 +15,8 @@ import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
-import { dividendOverlaySeries, dividendCurrencyCheck, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
+import { useDividendHistory } from "@/lib/useDividendHistory";
+import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
 
 interface Props { data: StockAnalysis; }
 
@@ -146,16 +147,10 @@ export function TechnicalChart({ data }: Props) {
   const [signalPage,    setSignalPage]    = useState(0);
   // Dividend overlay (Future_1 §11.1): fetched only while the toggle is on.
   const [showDividend, setShowDividend] = useState(false);
-  const dividendQuery = useQuery<DividendHistoryResponse>({
-    queryKey: ["dividends", data.ticker],
-    enabled: showDividend && !!data.ticker,
-    staleTime: 12 * 60 * 60 * 1000,
-    queryFn: async () => {
-      const res = await fetch(`/api/dividends/${encodeURIComponent(data.ticker)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    },
-  });
+  // Toggles are component state; Dashboard keeps <TechnicalChart> mounted across ticker switches (no key), so
+  // "on" from the previous ticker leaked into the next one. Reset per ticker → default always off.
+  useEffect(() => { setShowDividend(false); }, [data.ticker]);
+  const dividendQuery = useDividendHistory(data.ticker, showDividend);
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -1333,19 +1328,9 @@ function DividendTooltipRows({ p, formatDateFull }: { p: DividendFields; formatD
     <>
       <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">{p._divYield.toFixed(2)}%</span></div>
       {p._divTtm != null && <div className="flex justify-between gap-3"><span className="text-muted-foreground">Dividende 12M je Aktie</span><span className="font-mono">{p._divTtm.toFixed(2)}</span></div>}
-      {p._divRaw != null && !!p._divDropped?.length && (
-        <div className="text-amber-500 max-w-[220px] whitespace-normal">
-          geglättet: roh {p._divRaw.toFixed(2)}% — Ex-Tag {p._divDropped.map(formatDateFull).join(", ")} lag noch im 12M-Fenster, obwohl die Folgezahlung schon gezählt ist (Ex-Tag-Verschiebung)
-        </div>
-      )}
-      {p._divRaw != null && !!p._divAdded?.length && (
-        <div className="text-amber-500 max-w-[220px] whitespace-normal">
-          geglättet: roh {p._divRaw.toFixed(2)}% — Ex-Tag {p._divAdded.map(formatDateFull).join(", ")} mitgezählt, weil die Folgezahlung noch nicht ex ist (Ex-Tag-Verschiebung)
-        </div>
-      )}
-      {!!p._divSpecial?.length && (
-        <div className="text-violet-400 max-w-[220px] whitespace-normal">inkl. Sonderdividende ({p._divSpecial.map(formatDateFull).join(", ")})</div>
-      )}
+      {dividendMarkerLines({ yieldPct: p._divYield, rawYieldPct: p._divRaw, droppedExDates: p._divDropped, addedExDates: p._divAdded, specialExDates: p._divSpecial }, formatDateFull).map(l => (
+        <div key={l.text} className={`${l.cls} max-w-[240px] whitespace-normal`} data-testid="dividend-tooltip-marker">{l.text}</div>
+      ))}
     </>
   );
 }
@@ -1375,7 +1360,7 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
       {currencyCheck === "ok" ? <> · Währung {history.currency} = Kurs</> : <> · Dividendenwährung von der Quelle nicht angegeben (Annahme: Kurswährung)</>}
       {series.correctedBars > 0 && <> · <span className="text-amber-500">{series.correctedBars} Punkt(e) geglättet</span> (Ex-Tag-Verschiebung, Rohwert im Tooltip)</>}
       {series.specialExDates.length > 0 && <> · <span className="text-violet-400">Sonderdividende {series.specialExDates.map(formatDateFull).join(", ")}</span></>}
-      {" "}· KPI „Div. Yield“ in Sektion 1 = Geschäftsjahreswert (FMP), daher abweichend.
+      {" "}· KPI „Div. Yield“ in Sektion 1 zeigt denselben TTM-Wert (GJ-Wert von FMP als Zusatzzeile).
     </div>
   );
 }

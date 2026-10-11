@@ -5,10 +5,29 @@
  */
 
 import type { Catalyst } from "../shared/schema";
+import { calculateReverseDCF, safeCompanyDcfWaccPct } from "../shared/valuation-signal";
 
 // === Reverse-DCF helpers ===
-export function calcImpliedGStar(params: { price: number; sharesOutstanding: number; netDebt: number; fcf: number; wacc: number }): number | null {
-  const { price, sharesOutstanding, netDebt, fcf, wacc } = params;
+/**
+ * g* = WACC − FCF/EV. With `company` given, the WACC is the company's own DCF WACC (companyDcfWaccPct, same function
+ * as Section 5/16 on the client) and the value comes from calculateReverseDCF — one g* everywhere. Without it
+ * (calcEinpreisungsgrad) the passed sector WACC is used, unchanged.
+ */
+export function calcImpliedGStar(params: {
+  price: number; sharesOutstanding: number; netDebt: number; fcf: number; wacc: number;
+  company?: { beta5Y: number; totalDebt: number; marketCap: number; lynchClass?: string | null };
+}): number | null {
+  const { price, sharesOutstanding, netDebt, fcf } = params;
+  if (params.company) {
+    const ev0 = price * sharesOutstanding + netDebt;
+    if (!(ev0 > 0) || !isFinite(ev0)) return null;
+    // Missing beta5Y / marketCap / totalDebt → no company WACC → g* n/a (null), never NaN.
+    const cw = safeCompanyDcfWaccPct(params.company);
+    if (cw == null) return null;
+    const r = calculateReverseDCF({ currentPrice: price, fcfBase: fcf, wacc: cw, sharesOutstanding, netDebt });
+    return r.rating === "n/a" || !isFinite(r.impliedGrowth) ? null : r.impliedGrowth;
+  }
+  const wacc = params.wacc;
   const ev = price * sharesOutstanding + netDebt;
   if (!(ev > 0) || !isFinite(ev) || !(wacc > 0)) return null;
   const impliedGrowth = (wacc / 100 - fcf / ev) * 100;

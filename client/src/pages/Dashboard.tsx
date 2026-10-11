@@ -1,6 +1,18 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import {
+  analyzePostBody,
+  hasPeerOverrideLists,
+  normalizeStoredOverrides,
+  readLastTicker,
+  readOverrides,
+  safeLocalStorage,
+  shouldRestoreLastTicker,
+  writeLastTicker,
+  writeOverrides,
+  type PeerOverrideLists,
+} from "@shared/peer-override-persist";
 import type { StockAnalysis } from "../../../shared/schema";
 import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "@/lib/calculations";
 import { TickerSearch } from "@/components/TickerSearch";
@@ -136,9 +148,18 @@ export default function Dashboard() {
   // Tagged mutate: assigns a fresh reqId on every kick-off so onSuccess can
   // reject stale responses. Use this everywhere instead of mutation.mutate().
   const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean; peerOverrides?: { add: string[]; remove: string[] } }) => {
+    const storage = safeLocalStorage();
+    const explicit = args.peerOverrides;
+    const resolved: PeerOverrideLists = explicit
+      ? normalizeStoredOverrides(explicit)
+      : (storage ? readOverrides(storage, args.ticker) : { add: [], remove: [] });
+    if (storage) {
+      if (explicit) writeOverrides(storage, args.ticker, resolved);
+      writeLastTicker(storage, args.ticker);
+    }
     requestIdRef.current += 1;
     const reqId = requestIdRef.current;
-    analyzeMutationRef.current.mutate({ ...args, reqId });
+    analyzeMutationRef.current.mutate({ ticker: args.ticker, llm: args.llm, force: args.force, peerOverrides: resolved, reqId });
   }, []);
   // Forward-decl ref so startAnalyze can reference the mutation before it's declared
   const analyzeMutationRef = useRef<any>(null);
@@ -154,7 +175,7 @@ export default function Dashboard() {
           // On last attempt: always use force=false to hit cache if available
           // This prevents blank screen when server is warming up but cache has data
           const useForce = attempt < maxRetries ? (force === true) : false;
-          const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: useForce, ...(peerOverrides && (peerOverrides.add.length > 0 || peerOverrides.remove.length > 0) ? { peerOverrides } : {}) });
+          const res = await apiRequest("POST", "/api/analyze", analyzePostBody({ ticker, useLLM: llm, force: useForce, peerOverrides }));
           if (!res.ok) {
             const errJson = await res.json().catch(() => ({}));
             const errMsg = errJson?.error || errJson?.message || `HTTP ${res.status}`;
@@ -178,7 +199,7 @@ export default function Dashboard() {
               console.log(`[Analyze] _pending — warte 30s dann poll ${poll}/3`);
               setRetryInfo({ attempt: poll, maxRetries: 3, isPending: true });
               await new Promise(r => setTimeout(r, 30000));
-              const pollRes = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: false });
+              const pollRes = await apiRequest("POST", "/api/analyze", analyzePostBody({ ticker, useLLM: llm, force: false, peerOverrides }));
               if (!pollRes.ok) {
                 console.log(`[Analyze] Poll ${poll}/3: HTTP ${pollRes.status}`);
                 continue;
@@ -303,8 +324,13 @@ export default function Dashboard() {
     const hashParams = hashQueryIdx >= 0 ? new URLSearchParams(window.location.hash.slice(hashQueryIdx + 1)) : null;
     const searchParams = new URLSearchParams(window.location.search);
     const deepLinkTicker = (hashParams?.get("ticker") ?? searchParams.get("ticker"))?.trim().toUpperCase();
-    if (deepLinkTicker) {
-      startAnalyze({ ticker: deepLinkTicker, llm: useLLMRef.current, force: false });
+    const storage = safeLocalStorage();
+    const tickerToOpen = shouldRestoreLastTicker({
+      urlTicker: deepLinkTicker,
+      lastTicker: storage ? readLastTicker(storage) : null,
+    });
+    if (tickerToOpen) {
+      startAnalyze({ ticker: tickerToOpen, llm: useLLMRef.current, force: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -571,7 +597,7 @@ export default function Dashboard() {
               <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung"><Section4 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="DCF-Modell"><Section5 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="CRV"><Section6 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerBusy={analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides)} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion"><Section8 data={data} useLLM={useLLM} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>
