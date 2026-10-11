@@ -282,6 +282,44 @@ export function fitLogTrend(points: RatioObs[]): TrendModel | null {
   };
 }
 
+export interface CloseBar {
+  date: string;
+  close: number;
+}
+
+/**
+ * Schreibt die Primärreihe bis zur letzten Proxy-Sitzung fort.
+ * Der letzte Primärschluss wird mit der Proxy-Rendite ab dem letzten
+ * Proxy-Schluss an oder vor diesem Tag skaliert. Tage ohne Proxy-Schluss,
+ * also Wochenenden, bleiben leer.
+ */
+export function rollClosesForward(primary: CloseBar[], proxy: CloseBar[]): CloseBar[] {
+  const base = primary
+    .filter(bar => Number.isFinite(bar.close) && bar.close > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const tail = proxy
+    .filter(bar => Number.isFinite(bar.close) && bar.close > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (base.length === 0 || tail.length === 0) return base;
+  const last = base[base.length - 1];
+  let anchor: CloseBar | null = null;
+  for (const bar of tail) {
+    if (bar.date <= last.date) anchor = bar;
+    else break;
+  }
+  if (!anchor) return base;
+  const scaleFrom = anchor;
+  const extra = tail.filter(bar => bar.date > last.date);
+  if (extra.length === 0) return base;
+  return [
+    ...base,
+    ...extra.map(bar => ({
+      date: bar.date,
+      close: last.close * (bar.close / scaleFrom.close),
+    })),
+  ];
+}
+
 export function applyTrend(model: TrendModel, points: RatioObs[]): TrendPoint[] {
   return finiteRatios(points).map(point => {
     const trend = Math.exp(model.intercept + model.slopePerYear * yearFraction(model.origin, point.date));

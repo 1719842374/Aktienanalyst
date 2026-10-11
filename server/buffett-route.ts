@@ -10,6 +10,7 @@ import {
   applyTrend,
   fitLogTrend,
   quarterlyFitSample,
+  rollClosesForward,
   spliceAtListedStart,
   type RatioObs,
   type TrendPoint,
@@ -25,7 +26,7 @@ type RegionId = (typeof REGIONS)[number];
  */
 export const WILSHIRE_DOLLARS_PER_POINT_BN = 1.05;
 
-const CACHE_MS = 6 * 60 * 60 * 1000;
+const CACHE_MS = 15 * 60 * 1000;
 const cache = new Map<string, { at: number; body: unknown }>();
 
 const US_SOURCES = [
@@ -89,14 +90,14 @@ interface YahooBar {
   close: number;
 }
 
-async function fetchWilshire(): Promise<YahooBar[]> {
+async function fetchYahooDaily(symbol: string, period1: number): Promise<YahooBar[]> {
   const period2 = Math.floor(Date.now() / 1000) + 86_400;
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/%5EW5000?period1=599817600&period2=${period2}&interval=1d`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d`;
   const response = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0" },
     signal: AbortSignal.timeout(25000),
   });
-  if (!response.ok) throw new Error(`Wilshire ${response.status}`);
+  if (!response.ok) throw new Error(`${symbol} ${response.status}`);
   const body = await response.json() as {
     chart?: {
       result?: Array<{
@@ -114,8 +115,36 @@ async function fetchWilshire(): Promise<YahooBar[]> {
     if (close == null || !Number.isFinite(close) || close <= 0) continue;
     out.push({ date: new Date(stamps[i] * 1000).toISOString().slice(0, 10), close });
   }
+  return out;
+}
+
+async function fetchWilshire(): Promise<YahooBar[]> {
+  const out = await fetchYahooDaily("^W5000", 599817600);
   if (out.length < 500) throw new Error("Wilshire-Reihe zu kurz");
   return out;
+}
+
+/**
+ * Yahoo lässt den Wilshire-Tag oft leer, während der US-Gesamtmarkt schon
+ * einen Schluss hat. Die fehlenden Sitzungen laufen mit dessen Rendite weiter,
+ * damit der letzte Punkt der aktuelle Handelstag ist.
+ */
+const SESSION_PROXIES = [
+  { id: "^DWCF", name: "Dow Jones U.S. Total Stock Market" },
+  { id: "VTI", name: "Vanguard Total Stock Market" },
+] as const;
+
+async function fetchSessionProxy(): Promise<{ id: string; name: string; bars: YahooBar[] } | null> {
+  const period1 = Math.floor(Date.now() / 1000) - 400 * 86_400;
+  for (const proxy of SESSION_PROXIES) {
+    try {
+      const bars = await fetchYahooDaily(proxy.id, period1);
+      if (bars.length >= 5) return { id: proxy.id, name: proxy.name, bars };
+    } catch (err: any) {
+      console.warn(`[buffett] ${proxy.id}`, err?.message?.substring(0, 120));
+    }
+  }
+  return null;
 }
 
 function withTrend(points: RatioObs[]): TrendPoint[] {
@@ -124,13 +153,20 @@ function withTrend(points: RatioObs[]): TrendPoint[] {
   return applyTrend(model, points);
 }
 
-async function buildUnitedStates(): Promise<{ points: TrendPoint[]; note: string }> {
-  const [gdp, nfc, financial, bars] = await Promise.all([
+async function buildUnitedStates(): Promise<{
+  points: TrendPoint[];
+  note: string;
+  sources: { id: string; role: string }[];
+}> {
+  const [gdp, nfc, financial, wilshire, proxy] = await Promise.all([
     fetchFred("GDP", "1947-01-01"),
     fetchFred("NCBEILQ027S", "1947-01-01"),
     fetchFred("FBCELLQ027S", "1947-01-01"),
     fetchWilshire(),
+    fetchSessionProxy(),
   ]);
+  const bars = proxy ? rollClosesForward(wilshire, proxy.bars) : wilshire;
+  const extended = bars.length > wilshire.length;
   if (gdp.length < 8) throw new Error("BIP-Reihe leer");
   const nfcMap = asMap(nfc);
   const financialMap = asMap(financial);
@@ -155,9 +191,15 @@ async function buildUnitedStates(): Promise<{ points: TrendPoint[]; note: string
   }
   if (listed.length < 500) throw new Error("Wilshire-Quote leer");
   const spliced = spliceAtListedStart(early, listed);
+  const carried = extended && proxy
+    ? ` Fehlt der Wilshire-Schluss, läuft der Kurs mit der Tagesrendite des ${proxy.name} bis zur letzten US-Sitzung weiter.`
+    : "";
   return {
     points: withTrend(spliced),
-    note: "Der Zähler ist der Wilshire 5000. Ein Indexpunkt wird mit 1,05 Mrd. $ Kapitalisierung angesetzt und durch das nominale BIP geteilt. Bis 1950 zurück wird die Quote der Financial Accounts auf den ersten Indexwert skaliert. Die Trendlinie und die Bänder von einer und zwei Standardabweichungen gelten für die gesamte Reihe. Die Zeitfenster zeigen davon nur einen Ausschnitt.",
+    note: `Der Zähler ist der Wilshire 5000. Ein Indexpunkt wird mit 1,05 Mrd. $ Kapitalisierung angesetzt und durch das nominale BIP geteilt. Bis 1950 zurück wird die Quote der Financial Accounts auf den ersten Indexwert skaliert. Die Trendlinie und die Bänder von einer und zwei Standardabweichungen gelten für die gesamte Reihe. Die Zeitfenster zeigen davon nur einen Ausschnitt.${carried}`,
+    sources: extended && proxy
+      ? [...US_SOURCES, { id: proxy.id, role: `${proxy.name}, Tagesrendite nach dem letzten Wilshire-Schluss` }]
+      : US_SOURCES,
   };
 }
 
@@ -194,6 +236,7 @@ export function registerBuffettRatioRoute(app: Express): void {
         : {
             points: await buildAnnualRatio(annual!.id),
             note: annual!.note,
+            sources: [{ id: annual!.id, role: "Börsenkapitalisierung in Prozent des BIP" }],
           };
       const latest = built.points.length > 0 ? built.points[built.points.length - 1] : null;
       const body = {
@@ -201,7 +244,7 @@ export function registerBuffettRatioRoute(app: Express): void {
         asOf: latest?.date ?? null,
         latest,
         note: built.note,
-        sources: region === "US" ? US_SOURCES : [{ id: annual!.id, role: "Börsenkapitalisierung in Prozent des BIP" }],
+        sources: built.sources,
         points: built.points,
       };
       if (built.points.length > 0) cache.set(region, { at: Date.now(), body });
