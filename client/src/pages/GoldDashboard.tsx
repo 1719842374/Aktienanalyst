@@ -43,6 +43,9 @@ export default function GoldDashboard() {
       // Try live API first, fallback to bundled static data
       try {
         const res = await apiRequest("GET", "/api/analyze-gold");
+        // apiRequest does not throw on HTTP errors. A 500 body is not a GoldAnalysis
+        // (missing FMP key → { error }) and used to crash the page on spotPrice.toFixed.
+        if (!res.ok) throw new Error(`Gold-API ${res.status}`);
         return res.json();
       } catch {
         // Return pre-computed data bundled at build time
