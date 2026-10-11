@@ -233,3 +233,53 @@ export function volumeLegendText(label: string, serverDetail: string | null | un
   const stripped = serverDetail.replace(/^Volumen-(Spike|Divergenz)\s*:\s*/, "");
   return `${label}: ${stripped}`;
 }
+
+/* ---------- 10Y / Max (lange Chart-Historie, /api/gold-chart-history) ---------- */
+
+export type GoldTimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y" | "10Y" | "Max";
+export const GOLD_RANGE_DAYS: Record<GoldTimeRange, number | null> = {
+  "3M": 90, "6M": 180, "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825, "10Y": 3653, Max: null,
+};
+/** Diese Fenster brauchen mehr als die 10 Jahre aus /api/analyze-gold (MA200-Vorlauf bzw. volle Historie). */
+export const needsLongHistory = (r: GoldTimeRange) => r === "10Y" || r === "Max";
+
+/** Fenster auf die (bereits voll berechneten) Punkte anwenden. Max = alles. */
+export function filterGoldRange<T extends { date: string }>(points: T[], range: GoldTimeRange, today: Date = new Date()): T[] {
+  const days = GOLD_RANGE_DAYS[range];
+  if (days == null) return points;
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutoffStr = cutoff.toISOString().split("T")[0];
+  return points.filter(d => d.date >= cutoffStr);
+}
+
+export type GoldMacroKey = "real10y" | "m2Yoy" | "dxy" | "t10yie" | "walcl";
+/** "on" = Werte im Fenster, "na" = Reihe existiert, aber nicht im Fenster (Chip n/a, keine Linie), "absent" = Quelle fehlt ganz. */
+export function macroRangeState(all: Array<Partial<Record<GoldMacroKey, number | null>>>, inRange: Array<Partial<Record<GoldMacroKey, number | null>>>, key: GoldMacroKey): "on" | "na" | "absent" {
+  if (inRange.some(d => d[key] != null)) return "on";
+  return all.some(d => d[key] != null) ? "na" : "absent";
+}
+
+/** Ehrlicher Hinweis, wenn eine Reihe spaeter beginnt als das Fenster oder die Historie kuerzer ist als 10Y. */
+export function goldRangeNote(
+  range: GoldTimeRange,
+  inRange: Array<{ date: string } & Partial<Record<GoldMacroKey, number | null>>>,
+  source: string | null,
+  labels: Record<GoldMacroKey, string>,
+): string | null {
+  if (!needsLongHistory(range) || inRange.length === 0) return null;
+  const first = inRange[0].date;
+  const last = inRange[inRange.length - 1].date;
+  const years = (Date.parse(last) - Date.parse(first)) / (365.25 * 864e5);
+  const yr = years.toFixed(1).replace(".", ",");
+  const head = range === "Max"
+    ? `Max = ab ${first} (${yr} J${source ? `, ${source}` : ""})`
+    : years < 9.9 ? `10Y: nur ${yr} J verfügbar (ab ${first})` : `10Y ab ${first}${source ? ` (${source})` : ""}`;
+  const late: string[] = [];
+  for (const key of Object.keys(labels) as GoldMacroKey[]) {
+    const hit = inRange.find(d => d[key] != null);
+    if (!hit) late.push(`${labels[key]} n/a`);
+    else if (Date.parse(hit.date) - Date.parse(first) > 60 * 864e5) late.push(`${labels[key]} ab ${hit.date.slice(0, 4)}`);
+  }
+  return late.length ? `${head} · ${late.join(" · ")}` : head;
+}
