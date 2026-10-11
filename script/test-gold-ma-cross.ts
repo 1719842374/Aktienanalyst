@@ -63,7 +63,8 @@ console.log("\nScore path and volume stay out of this chart math");
   );
   const schema = readFileSync(new URL("../shared/gold-schema.ts", import.meta.url), "utf8");
   const point = schema.match(/export interface GoldPricePoint \{[\s\S]*?\n\}/)?.[0] ?? "";
-  check("GoldPricePoint has no volume field", point.length > 0 && !/volume/.test(point));
+  // #209: volume is optional and only set from real positive prints (gold-chart-series.ts).
+  check("GoldPricePoint volume is optional, never zero-filled", point.length > 0 && (!/volume/.test(point) || /volume\?:/.test(point)) && readFileSync(new URL("../server/gold-chart-series.ts", import.meta.url), "utf8").includes("v.volume > 0"));
 }
 
 if (failed > 0) {
