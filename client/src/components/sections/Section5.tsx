@@ -177,7 +177,7 @@ export function Section5({ data }: Props) {
           <div>
             <div className="text-xs font-bold text-red-500">AUTOMATISCHE WARNUNG: Inverted DCF &lt; aktueller Kurs</div>
             <div className="text-[11px] text-red-400 mt-0.5">
-              Risk-adj. DCF ({formatCurrency(riskAdjDCF, 2, data.currency)}) liegt unter dem aktuellen Kurs ({formatCurrency(data.currentPrice, 2, data.currency)}). Anti-Bias-Protokoll: Symmetrische Downside-Betrachtung notwendig.
+              Risk-adj. DCF ({formatCurrency(riskAdjDCF, 2, statementCurrency(data))}) liegt unter dem aktuellen Kurs ({formatCurrency(data.currentPrice, 2, data.currency)}). Anti-Bias-Protokoll: Symmetrische Downside-Betrachtung notwendig.
             </div>
           </div>
         </div>
@@ -503,15 +503,15 @@ export function Section5({ data }: Props) {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">PV(FCFF)</span>
-                <span className="font-mono tabular-nums">{formatCurrency(result.pvExplicit, 2, data.currency)}</span>
+                <span className="font-mono tabular-nums">{formatCurrency(result.pvExplicit, 2, statementCurrency(data))}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">PV(TV)</span>
-                <span className="font-mono tabular-nums">{formatCurrency(result.pvTerminal, 2, data.currency)}</span>
+                <span className="font-mono tabular-nums">{formatCurrency(result.pvTerminal, 2, statementCurrency(data))}</span>
               </div>
               <div className="flex justify-between pt-1 border-t border-border/50">
                 <span className="font-medium">Fair Value</span>
-                <span className="font-mono tabular-nums font-bold text-sm">{formatCurrency(result.perShare, 2, data.currency)}</span>
+                <span className="font-mono tabular-nums font-bold text-sm">{formatCurrency(result.perShare, 2, statementCurrency(data))}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">vs. Current</span>
@@ -528,12 +528,12 @@ export function Section5({ data }: Props) {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-muted/30 rounded-md p-3 border border-border/50">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider">30% Safety Margin DCF</div>
-          <div className="text-base font-bold font-mono tabular-nums mt-1">{formatCurrency(safetyMarginDCF, 2, data.currency)}</div>
+          <div className="text-base font-bold font-mono tabular-nums mt-1">{formatCurrency(safetyMarginDCF, 2, statementCurrency(data))}</div>
           <div className="text-[10px] text-muted-foreground mt-0.5">= Conservative DCF × 0.70</div>
         </div>
         <div className={`rounded-md p-3 border ${invertedBelowPrice ? "bg-red-500/10 border-red-500/20" : "bg-muted/30 border-border/50"}`}>
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Risk-Adj. DCF (Inverted)</div>
-          <div className="text-base font-bold font-mono tabular-nums mt-1">{formatCurrency(riskAdjDCF, 2, data.currency)}</div>
+          <div className="text-base font-bold font-mono tabular-nums mt-1">{formatCurrency(riskAdjDCF, 2, statementCurrency(data))}</div>
           {invertedBelowPrice && (
             <div className="text-[10px] text-red-500 mt-0.5">⚠ Below current price — WARNUNG</div>
           )}
@@ -622,7 +622,7 @@ export function Section5({ data }: Props) {
                           isAbove ? "text-emerald-500 bg-emerald-500/5" : "text-red-500 bg-red-500/5"
                         }`}
                       >
-                        {formatCurrency(val, 2, data.currency)}
+                        {formatCurrency(val, 2, statementCurrency(data))}
                       </td>
                     );
                   })}

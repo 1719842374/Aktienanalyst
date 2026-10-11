@@ -3,7 +3,7 @@ import { SectionCard } from "../SectionCard";
 import { addTickerToManualPortfolio, addTickerToWatchlist } from "@/lib/portfolio/portfolioBridge";
 import { useLocation } from "wouter";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { currencySymbol, formatCurrency, formatTarget, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
+import { currencySymbol, formatCurrency, formatTarget, statementCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
 import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus } from "lucide-react";
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 import { useDividendKpi } from "@/lib/useDividendHistory";
@@ -39,9 +39,10 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
   // TTM from /api/dividends on the chart's last bar (same function + smoothing as the overlay's last point).
   // JOB 20: shared with Section 4 (Financial Statements) via useDividendKpi, so both show the same value.
   const divKpi = useDividendKpi(data);
-  // JOB 22: Symbol aus der Listing-Währung (SHEL.L → £). Statement-Werte nur dann in USD, wenn der Server sie nach USD umgerechnet hat.
+  // JOB 22: Symbol aus der Listing-Währung (SHEL.L → £). JOB 23: Statement-Werte (EPS, FCF) über statementCurrency —
+  // USD (Server rechnet nach USD um), nur Minor-Unit-Listings (.L) in Listing-Währung.
   const priceCcy = data.currency;
-  const stmtCcy = data.currencyInfo?.converted ? "USD" : data.currency;
+  const stmtCcy = statementCurrency(data);
   const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
 
   function fmtAge(mins: number): string {

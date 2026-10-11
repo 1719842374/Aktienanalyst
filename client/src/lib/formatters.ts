@@ -1,3 +1,5 @@
+import { isMinorUnitListingTicker } from "@shared/listing-units";
+
 // === Numeric Safety Guard ===
 // Fix 6: all formatters guard against NaN, Infinity, null, undefined
 // so price=0 or division-by-zero never shows "Infinity%" in the UI
@@ -23,11 +25,13 @@ export function currencySymbol(currency?: string | null): string {
 }
 
 /**
- * JOB 23: Währung für Statement-Aggregate (Umsatz, FCF, DCF-Summen). Hat der Server die Finanzdaten nach USD
- * umgerechnet (currencyInfo.converted), sind sie USD — sonst Listing-Währung (nach #244 auch .L in GBP).
+ * JOB 23: Währung für Statement-Werte (Umsatz, FCF, EPS, Bilanz, DCF). Der Server rechnet Finanzdaten mit
+ * reportedCurrency ≠ USD immer nach USD um (fmp.ts convertFmpRowsToUsd; currencyInfo wird dabei nicht gesetzt).
+ * Nur Minor-Unit-Listings (.L/.JO/.TA) werden danach per #244 in die Major-Listing-Währung (GBP …) gebracht.
+ * Also: USD, außer bei Minor-Unit-Listings → Listing-Währung. (SAP.DE: Kurs €, Statements $.)
  */
-export function statementCurrency(data: { currency?: string | null; currencyInfo?: { converted?: boolean } | null }): string | null | undefined {
-  return data.currencyInfo?.converted ? "USD" : data.currency;
+export function statementCurrency(data: { ticker?: string | null; currency?: string | null }): string {
+  return isMinorUnitListingTicker(data.ticker) && data.currency ? data.currency : "USD";
 }
 
 /** JOB 23: Kursziel — 0/null/nicht endlich heißt „kein Ziel“ (FMP ohne .L-Targets) → "n/a" statt "£0.00". */
