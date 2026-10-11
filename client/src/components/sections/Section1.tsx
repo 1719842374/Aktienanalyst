@@ -3,7 +3,7 @@ import { SectionCard } from "../SectionCard";
 import { addTickerToManualPortfolio, addTickerToWatchlist } from "@/lib/portfolio/portfolioBridge";
 import { useLocation } from "wouter";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { currencySymbol, formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
+import { currencySymbol, formatCurrency, formatTarget, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
 import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus } from "lucide-react";
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 import { useDividendKpi } from "@/lib/useDividendHistory";
@@ -231,9 +231,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <tbody className="divide-y divide-border/50">
-              <Row label="Median PT" value={formatCurrency(data.analystPT.median, 2, priceCcy)} />
-              <Row label="High PT" value={formatCurrency(data.analystPT.high, 2, priceCcy)} />
-              <Row label="Low PT" value={formatCurrency(data.analystPT.low, 2, priceCcy)} />
+              <Row label="Median PT" value={formatTarget(data.analystPT.median, priceCcy)} />
+              <Row label="High PT" value={formatTarget(data.analystPT.high, priceCcy)} />
+              <Row label="Low PT" value={formatTarget(data.analystPT.low, priceCcy)} />
               <Row label="PT Upside" value={`${ptUpside >= 0 ? "+" : ""}${ptUpside.toFixed(1)}%`} valueClass={ptUpside >= 0 ? "text-emerald-500" : "text-red-500"} />
               <Row label="# Analysts" value={data.analystPT.count > 0 ? data.analystPT.count.toString() : "n/a"} />
             </tbody>

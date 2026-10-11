@@ -12,11 +12,28 @@ function safeNum(v: number, fallback = 0): number {
  * (bisheriges Verhalten), unbekannte Codes erscheinen als "CHF " usw. statt eines falschen "$".
  */
 // Minor Units (GBp = Pence, nur bei fehlender FX, siehe listingFxWarning) bleiben als Code sichtbar, nicht als "£".
-const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", GBP: "£", EUR: "€", JPY: "¥", GBp: "GBp ", GBX: "GBX ", ZAc: "ZAc ", ILA: "ILA " };
+// JOB 23: Codes ohne Symbol mit geschütztem Leerzeichen (U+00A0): recharts <Text> trennt an normalen Leerzeichen
+// in Wörter und setzt sie ohne Abstand zusammen → Achse zeigte „CAD171“ statt „CAD 171“.
+const CODE_SEP = "\u00A0";
+const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", GBP: "£", EUR: "€", JPY: "¥", GBp: `GBp${CODE_SEP}`, GBX: `GBX${CODE_SEP}`, ZAc: `ZAc${CODE_SEP}`, ILA: `ILA${CODE_SEP}` };
 export function currencySymbol(currency?: string | null): string {
   if (!currency) return "$";
   const c = currency.trim();
-  return CURRENCY_SYMBOLS[c] ?? `${c} `;
+  return CURRENCY_SYMBOLS[c] ?? `${c}${CODE_SEP}`;
+}
+
+/**
+ * JOB 23: Währung für Statement-Aggregate (Umsatz, FCF, DCF-Summen). Hat der Server die Finanzdaten nach USD
+ * umgerechnet (currencyInfo.converted), sind sie USD — sonst Listing-Währung (nach #244 auch .L in GBP).
+ */
+export function statementCurrency(data: { currency?: string | null; currencyInfo?: { converted?: boolean } | null }): string | null | undefined {
+  return data.currencyInfo?.converted ? "USD" : data.currency;
+}
+
+/** JOB 23: Kursziel — 0/null/nicht endlich heißt „kein Ziel“ (FMP ohne .L-Targets) → "n/a" statt "£0.00". */
+export function formatTarget(value: number | null | undefined, currency?: string | null): string {
+  if (value == null || typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "n/a";
+  return formatCurrency(value, 2, currency);
 }
 
 export function formatCurrency(value: number, decimals: number = 2, currency?: string | null): string {

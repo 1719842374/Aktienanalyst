@@ -3,7 +3,7 @@ import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, RevenueSegment } from "../../../../shared/schema";
 import { calculateFCFFDCF, buildDefaultDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
 import { buildBiasDecision } from "../../../../shared/bias-fixes";
-import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber } from "../../lib/formatters";
+import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber, statementCurrency } from "../../lib/formatters";
 import { useMemo } from "react";
 import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from "../news/SentimentNewsList";
 
@@ -215,7 +215,7 @@ export function Section2({ data }: Props) {
               <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
                 <span className="text-xs font-semibold">Pure Play: 100% {data.revenueSegments[0].name}</span>
                 {data.revenueSegments[0].revenue > 0 && (
-                  <span className="text-[10px] text-muted-foreground ml-2 font-mono">({formatLargeNumber(data.revenueSegments[0].revenue)})</span>
+                  <span className="text-[10px] text-muted-foreground ml-2 font-mono">({formatLargeNumber(data.revenueSegments[0].revenue, statementCurrency(data))})</span>
                 )}
               </div>
             ) : (
@@ -226,7 +226,7 @@ export function Section2({ data }: Props) {
                       <span className="font-medium truncate mr-2">{seg.name}</span>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {seg.revenue > 0 && (
-                          <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
+                          <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue, statementCurrency(data))}</span>
                         )}
                         {(seg.growth !== undefined && seg.growth !== null) || (seg.yoyChangePercent !== undefined && seg.yoyChangePercent !== null) ? (
                           <span className={`text-[10px] font-mono tabular-nums ${(seg.growth ?? seg.yoyChangePercent ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
@@ -277,7 +277,7 @@ export function Section2({ data }: Props) {
                     <span className="font-medium truncate mr-2">{seg.name}</span>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {seg.revenue > 0 && (
-                        <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue)}</span>
+                        <span className="text-[10px] font-mono tabular-nums text-muted-foreground/70">{formatLargeNumber(seg.revenue, statementCurrency(data))}</span>
                       )}
                       {seg.growth !== undefined && seg.growth !== null && (
                         <span className={`text-[10px] font-mono tabular-nums ${seg.growth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
@@ -350,7 +350,7 @@ export function Section2({ data }: Props) {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <MiniCard label="Moat Assessment" value={data.moatRating} badge />
-          <MiniCard label="FCF Strength" value={data.fcfAvailable === false ? "n/a" : `${formatPercentNoSign(data.fcfMargin)} margin • ${formatLargeNumber(data.fcfTTM)} TTM`} />
+          <MiniCard label="FCF Strength" value={data.fcfAvailable === false ? "n/a" : `${formatPercentNoSign(data.fcfMargin)} margin • ${formatLargeNumber(data.fcfTTM, statementCurrency(data))} TTM`} />
         </div>
         {data.alternativesMetricsNote && (
           <p className="text-[10px] text-muted-foreground leading-snug" data-testid="alternatives-metrics-note">
@@ -538,7 +538,7 @@ export function Section2({ data }: Props) {
             <>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">Conservative DCF (base, WACC {baseDCF.wacc.toFixed(1)}%)</span>
-                <span className="font-mono tabular-nums font-semibold">{formatCurrency(baseDCF.perShare)}</span>
+                <span className="font-mono tabular-nums font-semibold">{formatCurrency(baseDCF.perShare, 2, data.currency)}</span>
               </div>
               <div className="flex items-center justify-between text-xs mt-1">
                 <span className="text-muted-foreground">
@@ -546,11 +546,11 @@ export function Section2({ data }: Props) {
                   {catalystBaseFallback && <span className="text-amber-500 ml-1">⚠</span>}
                 </span>
                 <span className={`font-mono tabular-nums font-semibold ${isBelowKurs ? 'text-red-500' : 'text-primary'}`}>
-                  {formatCurrency(adjustedTarget)}
+                  {formatCurrency(adjustedTarget, 2, data.currency)}
                 </span>
               </div>
               <div className={`flex items-center justify-between text-[10px] mt-0.5 ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>
-                <span>vs. Kurs ({formatCurrency(data.currentPrice)})</span>
+                <span>vs. Kurs ({formatCurrency(data.currentPrice, 2, data.currency)})</span>
                 <span className="font-mono font-medium">{catVsKurs >= 0 ? '+' : ''}{formatNumber(catVsKurs, 1)}%</span>
               </div>
             </>
