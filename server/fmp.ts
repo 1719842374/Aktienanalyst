@@ -758,7 +758,7 @@ export async function getFxRateToUsd(currency: string): Promise<number> {
 // Converts the numeric financial-statement fields of a FMP income/cashflow/balance-sheet
 // row from its reportedCurrency into USD. EPS-like per-share fields and aggregate
 // currency fields are converted; ratios, percentages, share counts and dates are left as-is.
-const FX_CONVERTIBLE_FIELDS = new Set([
+export const FX_CONVERTIBLE_FIELDS = new Set([
   "revenue", "costOfRevenue", "grossProfit", "operatingIncome", "netIncome", "ebit", "ebitda",
   "eps", "epsDiluted", "operatingExpenses", "researchAndDevelopmentExpenses",
   // /stable/analyst-estimates response fields for foreign-currency filers
