@@ -8,6 +8,7 @@ import {
 } from "../../lib/calculations";
 import { formatNumber, formatPercentNoSign } from "../../lib/formatters";
 import { useMemo } from "react";
+import { isEtfOrFund, ETF_RDCF_NOTE } from "../../../../shared/conflict-matrix";
 
 interface Props { data: StockAnalysis }
 
@@ -113,6 +114,16 @@ export function ReverseDCFSection({ data }: Props) {
 
     return { base, withFiscal, programCount: fiscalCatalysts.length };
   }, [data.catalysts, data.fcfTTM, data.fcfHaircut, data.sharesOutstanding, sp, dcfWacc, netDebt]);
+
+  if (isEtfOrFund(data)) {
+    return (
+      <SectionCard number={16} title="REVERSE DCF">
+        <div className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">Implied Perpetual Growth Rate g*</div>
+        <div className="text-3xl font-bold font-mono text-muted-foreground" data-testid="reverse-dcf-etf-na">n/a</div>
+        <div className="text-xs text-muted-foreground mt-1">{ETF_RDCF_NOTE}: ein ETF/Fonds hat keinen eigenen Free Cash Flow, das eingepreiste Wachstum g* ist fachlich nicht definiert.</div>
+      </SectionCard>
+    );
+  }
 
   return (
     <SectionCard number={16} title="REVERSE DCF">
