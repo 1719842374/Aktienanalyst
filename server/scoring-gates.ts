@@ -39,6 +39,12 @@ export const GATE_CAPS = {
   INVENTORY: 70,
 } as const;
 
+/**
+ * W7b: Ampel-Bänder des 0–100-Scores (bisher nur in SummarySection als Farbschwellen ≥65 grün,
+ * ≥50 amber). NEUTRAL = [50, 65). Technik-/Moat-Caps leiten sich relativ daraus ab.
+ */
+export const SCORE_NEUTRAL_BAND_100 = { low: 50, high: 65 } as const;
+
 export type GateId =
   | 'PRICING_POWER'
   | 'RELATIVE_GROWTH'
@@ -299,6 +305,8 @@ export interface GateInputs {
    *  (strukturell kompatibel: id/active/cap/severity/rationale). Wird 1:1 durchgereicht,
    *  falls vorhanden — diese Datei berechnet es nicht neu. */
   regulatoryGate?: Gate | null;
+  /** W7b: adaptive Technik-/Moat-Gates (TECHNICAL_NEGATIVE, MOAT_NEGATIVE), relativ gedeckelt. */
+  adaptiveGates?: Gate[] | null;
 }
 
 /**
@@ -414,6 +422,7 @@ export function buildGates(inputs: GateInputs): Gate[] {
   if (inputs.regulatoryGate) {
     gates.push(inputs.regulatoryGate);
   }
+  for (const g of inputs.adaptiveGates ?? []) gates.push(g);
 
   return gates;
 }

@@ -15,6 +15,7 @@
  */
 import type { Catalyst, StockAnalysis } from "./schema";
 import { buildDefaultDCFParams, calculateFCFFDCF, calculateReverseDCF } from "./valuation-signal";
+import { adaptiveTechnicalStrength, moatNegStrength, valuationDamping, adaptiveCap, dampingReason } from "./adaptive-signals";
 
 export const WACC_UPLIFT_PP_2 = 0.625;
 export const WACC_UPLIFT_PP_3 = 1.05;
@@ -128,6 +129,16 @@ export interface BiasFixPayload {
   catalystAdjustment: number;
   overallScore: number;
   overallRating: string;
+  /** W7b: Score vor Valuation-Dämpfung und Cap (Transparenz). */
+  overallScoreUndamped?: number;
+  /** W7b: Dämpfung 0–1 auf (Quant × PESTEL), aus Technik-/Moat-Negativstärke. */
+  valuationDamping?: number;
+  /** W7b: relativer Cap (0–10) oder null. */
+  adaptiveCap?: number | null;
+  adaptiveCapReasons?: string[];
+  /** W7b: „Valuation gedämpft, weil …“ */
+  dampingReason?: string | null;
+  technicalMethod?: "history" | "binary" | null;
   redFlags: string[];
   narrative: string[];
   politicalGovMention: boolean;
@@ -220,10 +231,13 @@ export function catalystsModeLabel(source: CatalystSource, timestamp?: string | 
   return "Katalysatoren: generisch (Sektor)";
 }
 
+/** Rating-Bänder des Gesamtscores (0–10); NEUTRAL = [4,5; 6,5). W7b-Caps leiten sich daraus ab. */
+export const OVERALL_NEUTRAL_BAND = { low: 4.5, high: 6.5 } as const;
+
 export function overallRatingFromScore(score: number): string {
   if (score >= 8) return "ATTRAKTIV";
-  if (score >= 6.5) return "LEICHT ATTRAKTIV";
-  if (score >= 4.5) return "NEUTRAL";
+  if (score >= OVERALL_NEUTRAL_BAND.high) return "LEICHT ATTRAKTIV";
+  if (score >= OVERALL_NEUTRAL_BAND.low) return "NEUTRAL";
   if (score >= 3) return "UNATTRAKTIV";
   return "STARK UNATTRAKTIV";
 }
@@ -641,6 +655,15 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
     technicalComponent: facts.technicalComponent,
     positiveGbPct: positiveGbSum,
   });
+  // W7b Technical Override (Philip 11.10.2026): Valuation-Dämpfung + relativer Cap aus Technik-/Moat-Stärke.
+  const sortedPrices = [...data.historicalPrices].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const techA = adaptiveTechnicalStrength(sortedPrices.map(p => p.close), data.technicalIndicators?.currentStatus);
+  const damp = valuationDamping(techA?.negStrength ?? 0, moatNegStrength(moat.score));
+  const valuationPart = quant * pestelFactor;
+  const damped = score.overallScore - valuationPart * damp;
+  const capR = adaptiveCap(OVERALL_NEUTRAL_BAND, techA, moat.score);
+  const finalOverall = capR.cap == null ? damped : Math.min(damped, capR.cap);
+  const dReason = dampingReason(techA, moat.score, damp);
   const politicalGovMention = facts.politicalExposureHigh && facts.governmentExposurePct >= 25;
   const redFlags: string[] = [];
   if (moat.rating === "None") redFlags.push("Kein Moat");
@@ -661,7 +684,9 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
     : `Die entscheidungsrelevante Bewertung ist der Conservative DCF bei ${unadjusted.perShare.toFixed(2)} (WACC ${unadjusted.wacc.toFixed(2)}%). Ein Wechsel auf den gehärteten Inverse-DCF ist nicht ausgelöst (${adj.triggerCount} Trigger).`;
   const business = `${data.companyName || data.ticker} (${data.ticker}): Moat ${moat.rating} (Score ${moat.score.toFixed(1)}${moat.notes.length ? `; ${moat.notes.slice(0, 3).join(", ")}` : ""}).`;
   const mode = catalystsModeLabel(source, timestamp);
-  const narrative = [business, valuationSentence, techSentence, mode];
+  const capSentence = capR.cap != null && finalOverall < damped + 1e-9 && capR.cap < damped
+    ? ` Gesamtscore gedeckelt auf ${capR.cap.toFixed(2)} (${capR.reasons.join("; ")}).` : "";
+  const narrative = [business, valuationSentence, dReason ? `${techSentence} ${dReason}${capSentence}` : `${techSentence}${capSentence}`, mode];
   if (redFlags.length > 0 || politicalGovMention) {
     const bits = [...redFlags];
     if (politicalGovMention) bits.push("Political ist hoch und Government Exposure liegt bei mindestens 25%");
@@ -697,8 +722,14 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
     thesisAdjustment: score.thesisAdjustment,
     technicalComponent: score.technicalComponent,
     catalystAdjustment: score.catalystAdjustment,
-    overallScore: score.overallScore,
-    overallRating: score.overallRating,
+    overallScore: finalOverall,
+    overallRating: overallRatingFromScore(finalOverall),
+    overallScoreUndamped: score.overallScore,
+    valuationDamping: damp,
+    adaptiveCap: capR.cap,
+    adaptiveCapReasons: capR.reasons,
+    dampingReason: dReason,
+    technicalMethod: techA?.method ?? null,
     redFlags,
     narrative: narrative.slice(0, 5),
     politicalGovMention,

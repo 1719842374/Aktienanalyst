@@ -50,6 +50,47 @@ import {
   type Gate,
 } from "./scoring-gates";
 import type { Catalyst } from "../shared/schema";
+import { SCORE_NEUTRAL_BAND_100 } from "./scoring-gates";
+import { adaptiveTechnicalStrength, moatNegStrength, MOAT_SOLID_MIN, type NeutralBand, type TechStatusLike } from "../shared/adaptive-signals";
+
+/**
+ * W7b: Moat-Score aus dem Rating (Untergrenzen der Repo-Buckets in computeRuleBasedMoat:
+ * Wide ≥ 3, Narrow ≥ 1, None < 1). Der regelbasierte Score selbst entsteht erst in applyBiasFix.
+ */
+export function moatScoreFromRating(rating: string | undefined): number | null {
+  if (rating === "Wide") return MOAT_SOLID_MIN;
+  if (rating === "Narrow") return 1;
+  if (rating === "None") return 0;
+  return null;
+}
+
+/**
+ * W7b: TECHNICAL_NEGATIVE (Death Cross + RSL schwach) und MOAT_NEGATIVE (Moat < 3) als Gates,
+ * Cap relativ im NEUTRAL-Band: high − (high − low)·Negativstärke. Nicht durch Valuation überschreibbar
+ * (applyGates nimmt min). Fehlt Kurshistorie/Status → Gate inaktiv.
+ */
+export function buildAdaptiveGates(
+  closesChrono: number[] | null | undefined, status: TechStatusLike, moatScore: number | null,
+  band: NeutralBand = SCORE_NEUTRAL_BAND_100,
+): Gate[] {
+  const span = band.high - band.low;
+  const tech = closesChrono ? adaptiveTechnicalStrength(closesChrono, status) : null;
+  const techActive = !!tech && tech.deathCross && tech.rslWeak;
+  const mNeg = moatNegStrength(moatScore);
+  const moatActive = moatScore != null && moatScore < MOAT_SOLID_MIN;
+  return [
+    {
+      id: "TECHNICAL_NEGATIVE", active: techActive, severity: "hard",
+      cap: Math.round((band.high - span * (tech?.negStrength ?? 0)) * 10) / 10,
+      rationale: techActive ? `Death Cross + RSL schwach — ${tech!.label}` : tech ? "Kein Death Cross mit schwachem RSL" : "Technik nicht belegt",
+    },
+    {
+      id: "MOAT_NEGATIVE", active: moatActive, severity: "warn",
+      cap: Math.round((band.high - span * Math.max(mNeg, 1e-3)) * 10) / 10,
+      rationale: moatActive ? `Moat-Score ${moatScore} < ${MOAT_SOLID_MIN} (nicht Wide)` : "Moat solide oder nicht belegt",
+    },
+  ];
+}
 
 // ─── qualityScore-Mapping (dokumentierte Uebersetzungstabelle) ─────────────────
 // Basis: financialStatements.health (5 Stufen, bereits produktiv berechnet aus
@@ -276,13 +317,19 @@ export function buildScoringForAnalysis(params: {
   ctx: AnalysisScoringContext;
   health: string | undefined;
   moatRating: string | undefined;
-  technicalIndicators: { priceAboveMA200?: boolean; ma50AboveMA200?: boolean } | null | undefined;
+  technicalIndicators: { priceAboveMA200?: boolean; ma50AboveMA200?: boolean; macdAboveZero?: boolean } | null | undefined;
+  /** W7b: Schlusskurse chronologisch (für Technik-Stärke relativ zur eigenen Historie). */
+  historicalCloses?: number[] | null;
   catalysts: Catalyst[];
   price: number;
   asOfDate: string;
 }): AnalysisScoringResult {
   const gateInputsFull = deriveGateInputs(params.ctx);
-  const { realizedGrowthMethod, realizedGrowthQuartersUsed, ...gateInputs } = gateInputsFull;
+  const { realizedGrowthMethod, realizedGrowthQuartersUsed, ...gateInputsBase } = gateInputsFull;
+  const gateInputs = {
+    ...gateInputsBase,
+    adaptiveGates: buildAdaptiveGates(params.historicalCloses, params.technicalIndicators, moatScoreFromRating(params.moatRating)),
+  };
 
   const qualityScore = mapQualityScore(params.health, params.moatRating);
   const trendMultiplier = mapTrendMultiplier(params.technicalIndicators);
@@ -313,7 +360,7 @@ export function buildScoringForAnalysis(params: {
       id: g.id, active: g.active, cap: g.cap, severity: g.severity, rationale: g.rationale,
     })),
     gateInputs: {
-      ...gateInputs,
+      ...gateInputsBase,
       realizedGrowthMethod,
       realizedGrowthQuartersUsed,
     },
