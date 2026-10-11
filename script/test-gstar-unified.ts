@@ -27,3 +27,15 @@ assert.equal(calculateWACC(1, 0.04, 0.05, 0.2, 0.05, 0.21).toFixed(4), "0.0799")
 const ar = readFileSync("server/analyze-route.ts", "utf8");
 assert.match(ar, /const impliedGStar = calcImpliedGStar\(\{ price, sharesOutstanding, netDebt, fcf: fcfTTM, wacc, company: \{ beta5Y: beta, totalDebt, marketCap, lynchClass \} \}\);/);
 console.log("test-gstar-unified: OK (MSFT WACC 10.06 %, g* 8.42 % server = UI)");
+
+// ── #238 soft: PDF never prints "WACC NaN%" ──
+import { pdfWaccSuffix } from "../server/pdf-export";
+{
+  const ok = pdfWaccSuffix({ beta5Y: 1.1, marketCap: 3e12, totalDebt: 6e10 });
+  if (!/^ \(WACC \d+\.\d{2}%\)$/.test(ok)) throw new Error("WACC suffix with inputs: " + ok);
+  for (const bad of [{}, { beta5Y: 1.1 }, { beta5Y: NaN, marketCap: 3e12, totalDebt: 0 }, { beta5Y: 1, marketCap: 0, totalDebt: 1 }, { beta5Y: 1, marketCap: 3e12 }, null]) {
+    const s = pdfWaccSuffix(bad);
+    if (s !== "" || /NaN/.test(s)) throw new Error("missing inputs must omit WACC: " + JSON.stringify(bad) + " -> " + s);
+  }
+  console.log("test-gstar-unified (pdf WACC guard): OK", ok);
+}
