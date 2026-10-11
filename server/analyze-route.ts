@@ -924,7 +924,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
       const lynchClass = classifyLynch({ epsGrowth5Y, revenueGrowth, sector: effectiveSector, industry, dividendYield, fcfMargin, pe, forwardPE, pbRatio });
       const { peg, pegBasis } = calcLynchPEG({ lynchClass, pe, forwardPE, epsGrowth5Y, epsGrowthFwd, revenueGrowth, dividendYield });
-      const impliedGStar = calcImpliedGStar({ price, sharesOutstanding, netDebt, fcf: fcfTTM, wacc });
+      const impliedGStar = calcImpliedGStar({ price, sharesOutstanding, netDebt, fcf: fcfTTM, wacc, company: { beta5Y: beta, totalDebt, marketCap, lynchClass } });
 
       // ── 7. Revenue segments ──
       // fmpSegments() (called upstream in getFmpFallbackData) already returns a

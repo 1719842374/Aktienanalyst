@@ -265,6 +265,60 @@ export function dcfBetaDivergedFromMarket(currentBeta: number, marketBeta: numbe
 // Any change to beta or capex logic here propagates to all consumers automatically.
 // This eliminates the Zwei-Pfad-Bug (#1, #6).
 // β default = Markt-β (clamped). Sektor-Anker is an explicit Section-5 mode only.
+// === WACC — single implementation for client (Section 4/5/16) and server (impliedGStar) ===
+
+/** Simple WACC (decimal inputs), used by Section 4 sensitivity. Moved from client/src/lib/calculations.ts. */
+export function calculateWACC(beta: number, riskFreeRate: number, marketPremium: number, debtRatio: number, costOfDebt: number, taxRate: number): number {
+  const equityRatio = 1 - debtRatio;
+  const costOfEquity = riskFreeRate + beta * marketPremium;
+  return equityRatio * costOfEquity + debtRatio * costOfDebt * (1 - taxRate);
+}
+
+export interface CapmWaccInputs {
+  riskFreeRate: number; beta: number; erp: number; costOfDebt: number;
+  /** D/V in percent. */ debtRatio: number; /** percent */ taxRate: number;
+  waccOverride?: number | null; waccFloorAddon?: number;
+}
+
+/** FCFF-DCF WACC in percent: CAPM, D/V capped at 60 %, sanity bounds (floor + Lynch addon, ceil) unless overridden. */
+export function capmWaccPct(p: CapmWaccInputs): { wacc: number; rawRe: number; rawWacc: number; dv: number; ev: number; waccWasCapped: boolean; floor: number; useOverride: boolean } {
+  const rawRe = p.riskFreeRate + p.beta * p.erp;
+  const dv = Math.min(p.debtRatio, 60) / 100;
+  const ev = 1 - dv;
+  const rawWacc = ev * rawRe + dv * p.costOfDebt * (1 - p.taxRate / 100);
+  const useOverride = p.waccOverride != null && p.waccOverride > 0;
+  const floor = WACC_FLOOR + Math.max(0, p.waccFloorAddon ?? 0);
+  const wacc = useOverride ? p.waccOverride! : Math.max(floor, Math.min(WACC_CEIL, rawWacc));
+  return { wacc, rawRe, rawWacc, dv, ev, waccWasCapped: !useOverride && Math.abs(wacc - rawWacc) > 0.01, floor, useOverride };
+}
+
+/** Company WACC inputs exactly as buildDefaultDCFParams sets them (market beta clamped, D/V, Lynch floor addon). */
+export function dcfWaccInputs(data: { beta5Y: number; totalDebt: number; marketCap: number; lynchClass?: string | null }): CapmWaccInputs {
+  const lc = (data.lynchClass ?? null) as LynchClass | null;
+  return {
+    riskFreeRate: DCF_DEFAULT_RF, beta: marketBetaForDcf(data.beta5Y), erp: DCF_DEFAULT_ERP, costOfDebt: DCF_DEFAULT_RD,
+    debtRatio: dcfDebtRatioPct(data), taxRate: DCF_DEFAULT_TAX, waccOverride: null,
+    waccFloorAddon: lc && lc in LYNCH_DCF_DEFAULTS ? LYNCH_DCF_DEFAULTS[lc].waccFloorAddon : 0,
+  };
+}
+
+/** The company's own DCF WACC in percent (= calculateFCFFDCF(buildDefaultDCFParams(data)).wacc). */
+export function companyDcfWaccPct(data: { beta5Y: number; totalDebt: number; marketCap: number; lynchClass?: string | null }): number {
+  return capmWaccPct(dcfWaccInputs(data)).wacc;
+}
+
+const finiteNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+/** Company WACC, or null when beta5Y / marketCap (> 0) / totalDebt are missing — never NaN in the UI/PDF. */
+export function safeCompanyDcfWaccPct(data: { beta5Y?: unknown; totalDebt?: unknown; marketCap?: unknown; lynchClass?: string | null } | null | undefined): number | null {
+  if (!data || !finiteNum(data.beta5Y) || !finiteNum(data.marketCap) || data.marketCap <= 0 || !finiteNum(data.totalDebt)) return null;
+  const w = companyDcfWaccPct({ beta5Y: data.beta5Y, totalDebt: data.totalDebt, marketCap: data.marketCap, lynchClass: data.lynchClass });
+  return finiteNum(w) ? w : null;
+}
+/** " (WACC x.x%)" or "" when the WACC is unavailable. */
+export function waccSuffix(w: number | null | undefined, digits = 1): string {
+  return finiteNum(w) ? ` (WACC ${w.toFixed(digits)}%)` : "";
+}
+
 export function buildDefaultDCFParams(data: StockAnalysis): FCFFDCFParams {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
@@ -449,28 +503,9 @@ export function calculateFCFFDCF(params: FCFFDCFParams): FCFFDCFResult {
   const steps: string[] = [];
 
   // 1. Compute WACC via CAPM, or use manual override
-  const rawRe = params.riskFreeRate + params.beta * params.erp;
+  // Sprint D1 §1.3: Lynch-Klassen-WACC-Floor-Addon wirkt nur ohne manuellen waccOverride (capmWaccPct).
   const Rd = params.costOfDebt;
-  const cappedDebtRatio = Math.min(params.debtRatio, 60);
-  const dv = cappedDebtRatio / 100;
-  const ev = 1 - dv;
-  const rawWacc = ev * rawRe + dv * Rd * (1 - params.taxRate / 100);
-
-  const useOverride = params.waccOverride != null && params.waccOverride > 0;
-  let wacc: number;
-  let waccWasCapped = false;
-
-  // Sprint D1 §1.3: Lynch-Klassen-WACC-Floor-Addon (cyclical +0.5, turnaround +1.0) wird auf
-  // den bestehenden Sanity-Floor addiert — wirkt NUR wenn kein manueller waccOverride aktiv ist
-  // (User-Override hat weiterhin absolute Prioritaet, siehe Ticket-Regel).
-  const effectiveWaccFloor = WACC_FLOOR + Math.max(0, params.waccFloorAddon ?? 0);
-
-  if (useOverride) {
-    wacc = params.waccOverride!;
-  } else {
-    wacc = Math.max(effectiveWaccFloor, Math.min(WACC_CEIL, rawWacc));
-    waccWasCapped = Math.abs(wacc - rawWacc) > 0.01;
-  }
+  const { wacc, rawRe, rawWacc, dv, ev, waccWasCapped, floor: effectiveWaccFloor, useOverride } = capmWaccPct(params);
 
   steps.push(`=== WACC-Berechnung ===`);
   if (useOverride) {
