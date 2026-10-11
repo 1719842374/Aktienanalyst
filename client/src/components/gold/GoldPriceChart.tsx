@@ -2,9 +2,10 @@ import type { GoldAnalysis } from "../../../../shared/gold-schema";
 import { useMemo, useState, useCallback } from "react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  ReferenceLine, ReferenceArea, Area, ComposedChart,
+  ReferenceLine, ReferenceArea, ReferenceDot, Area, ComposedChart,
 } from "recharts";
 import { Ruler, X } from "lucide-react";
+import { detectMaCrosses, withClientMa50 } from "./goldChartMa";
 
 interface Props { data: GoldAnalysis }
 
@@ -47,9 +48,21 @@ export function GoldPriceChart({ data }: Props) {
   const formatDateFull = (d: string) =>
     new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
 
+  // MA50 from the full close series (not the visible window) so a 3M slice
+  // still has a 50-day average when older closes exist. MA200 stays the
+  // server field. Crosses are markers only — they do not feed the score.
+  const series = useMemo(
+    () => withClientMa50(data.historicalPrices ?? []),
+    [data.historicalPrices],
+  );
+  const crossByDate = useMemo(() => {
+    const map = new Map<string, "golden" | "death">();
+    for (const cross of detectMaCrosses(series)) map.set(cross.date, cross.type);
+    return map;
+  }, [series]);
+
   const chartData = useMemo(() => {
-    const prices = data.historicalPrices;
-    if (!prices || prices.length === 0) return [];
+    if (series.length === 0) return [];
 
     const now = new Date();
     let cutoff: Date;
@@ -62,22 +75,25 @@ export function GoldPriceChart({ data }: Props) {
       case "ALL": cutoff = new Date(0); break;
     }
 
-    return prices
+    return series
       .filter(p => new Date(p.date) >= cutoff)
       .map(p => ({
         date: p.date,
         close: p.close,
         ma200: p.ma200,
+        ma50: p.ma50,
         real10y: p.real10y,
+        cross: crossByDate.get(p.date),
         dateLabel: new Date(p.date).toLocaleDateString("de-DE", { day: "2-digit", month: "short" }),
       }));
-  }, [data.historicalPrices, timeRange]);
+  }, [series, crossByDate, timeRange]);
 
   const yDomain = useMemo(() => {
     if (chartData.length === 0) return [0, 100];
     const prices = chartData.map(d => d.close).filter(Boolean);
     const ma200s = chartData.map(d => d.ma200).filter(Boolean) as number[];
-    const allValues = [...prices, ...ma200s];
+    const ma50s = chartData.map(d => d.ma50).filter((v): v is number => v != null);
+    const allValues = [...prices, ...ma200s, ...ma50s];
     const min = Math.min(...allValues);
     const max = Math.max(...allValues);
     const padding = (max - min) * 0.05;
@@ -249,10 +265,16 @@ export function GoldPriceChart({ data }: Props) {
                   fontSize: "11px",
                 }}
                 labelFormatter={(d: string) => new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" })}
-                formatter={(value: number, name: string) => {
-                  if (name === "real10y") return [`${value.toFixed(2)}%`, "Real10Y (DFII10)"];
-                  const label = name === "close" ? "Gold" : "200-DMA";
-                  return [`$${value.toFixed(2)}`, label];
+                formatter={(value: number, name: string, item: { payload?: { cross?: "golden" | "death" } }) => {
+                  if (name === "real10y") return [`${Number(value).toFixed(2)}%`, "Real10Y (DFII10)"];
+                  const cross = item?.payload?.cross;
+                  const crossNote = name === "close" && cross === "golden"
+                    ? " · Golden Cross"
+                    : name === "close" && cross === "death"
+                      ? " · Death Cross"
+                      : "";
+                  const label = name === "close" ? "Gold" : name === "ma50" ? "50-DMA" : "200-DMA";
+                  return [`$${Number(value).toFixed(2)}${crossNote}`, label];
                 }}
               />
               {/* Fair Value reference */}
@@ -282,6 +304,16 @@ export function GoldPriceChart({ data }: Props) {
               <Line
                 yAxisId="left"
                 type="monotone"
+                dataKey="ma50"
+                stroke="#84cc16"
+                strokeWidth={1.25}
+                dot={false}
+                name="ma50"
+                connectNulls
+              />
+              <Line
+                yAxisId="left"
+                type="monotone"
                 dataKey="ma200"
                 stroke="#ef4444"
                 strokeWidth={1}
@@ -290,6 +322,26 @@ export function GoldPriceChart({ data }: Props) {
                 name="ma200"
                 connectNulls
               />
+              {chartData.filter((point) => point.cross && point.ma50 != null).map((point) => (
+                <ReferenceDot
+                  key={`${point.cross}-${point.date}`}
+                  yAxisId="left"
+                  x={point.date}
+                  y={point.ma50 as number}
+                  r={4}
+                  fill={point.cross === "golden" ? "#10b981" : "#ef4444"}
+                  stroke="#0a0a0a"
+                  strokeWidth={1}
+                  ifOverflow="discard"
+                  label={{
+                    value: point.cross === "golden" ? "GC" : "DC",
+                    position: "top",
+                    fontSize: 8,
+                    fill: point.cross === "golden" ? "#10b981" : "#ef4444",
+                    fontWeight: 700,
+                  }}
+                />
+              ))}
               {showReal10y && hasReal10y && (
                 <Line
                   yAxisId="right"
@@ -341,12 +393,19 @@ export function GoldPriceChart({ data }: Props) {
           </ResponsiveContainer>
         </div>
         {/* Legend */}
-        <div className="flex items-center justify-center gap-4 mt-2 text-[10px] text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 mt-2 text-[10px] text-muted-foreground">
           <span className="flex items-center gap-1">
             <span className="w-3 h-0.5 bg-amber-500 rounded-full" /> Gold
           </span>
+          <span className="flex items-center gap-1" data-testid="gold-ma50-legend">
+            <span className="w-3 h-0.5 rounded-full" style={{ background: "#84cc16" }} /> 50-DMA
+          </span>
           <span className="flex items-center gap-1">
             <span className="w-3 h-0.5 bg-red-500 rounded-full border-dashed" style={{ borderTop: "1px dashed #ef4444" }} /> 200-DMA
+          </span>
+          <span className="flex items-center gap-1" data-testid="gold-cross-legend">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Golden
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500" /> Death
           </span>
           <span className="flex items-center gap-1">
             <span className="w-3 h-0.5 bg-purple-500 rounded-full border-dashed" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value
