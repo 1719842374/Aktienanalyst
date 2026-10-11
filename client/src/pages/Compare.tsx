@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "../lib/queryClient";
-import type { StockAnalysis } from "@shared/schema";
+import { YAHOO_SECTION_HINT, type StockAnalysis } from "@shared/schema";
+import { formatCurrency } from "../lib/formatters";
 import { sumUpsideGb } from "@shared/bias-fixes";
 import { Link } from "wouter";
 import { ArrowLeft, ArrowUpDown, TrendingUp, TrendingDown, Minus } from "lucide-react";
@@ -109,13 +110,16 @@ export default function Compare() {
         {/* Results */}
         {data1 && data2 && !compareMutation.isPending && (
           <div className="space-y-4">
+            {(data1.quoteCoverage === "yahoo-quote-history" || data2.quoteCoverage === "yahoo-quote-history") && (
+              <p className="text-xs font-semibold text-amber-500" data-testid="yahoo-plan-limit-section">{YAHOO_SECTION_HINT}</p>
+            )}
             {/* Company Header */}
             <div className="grid grid-cols-2 gap-4">
               {[data1, data2].map((d, i) => (
                 <div key={i} className="rounded-xl bg-card/50 border border-border p-4 text-center">
                   <div className="text-lg font-bold text-primary">{d.ticker}</div>
                   <div className="text-xs text-foreground/50 mt-1">{d.companyName}</div>
-                  <div className="text-xl font-mono font-bold mt-2">${d.currentPrice?.toFixed(2)}</div>
+                  <div className="text-xl font-mono font-bold mt-2">{d.quoteCoverage === "yahoo-quote-history" ? formatCurrency(d.currentPrice, 2, d.currency) : `$${d.currentPrice?.toFixed(2)}`}</div>
                   <div className="text-[10px] text-foreground/40">{d.sector} / {d.industry}</div>
                   <div className="text-[10px] text-foreground/40 mt-1">Mkt Cap: {fmtB(d.marketCap)}</div>
                 </div>

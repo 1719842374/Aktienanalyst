@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { BiasFixPayload, CatalystSource } from "./bias-fixes";
 
+export { YAHOO_SECTION_HINT } from "./yahoo-hint";
+
 // === Request Schema ===
 export const analyzeRequestSchema = z.object({
   ticker: z.string().min(1).max(32).toUpperCase(),  // 32 deckt internationale Ticker ab: BAJAJ-AUTO.NS, 600519.SS, 0700.HK, etc.

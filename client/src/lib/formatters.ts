@@ -7,12 +7,28 @@ function safeNum(v: number, fallback = 0): number {
 }
 
 // === Currency Formatters ===
-export function formatCurrency(value: number, decimals: number = 2): string {
+export function formatCurrency(value: number, decimals: number = 2, currency?: string): string {
   const v = safeNum(value);
-  return `$${v.toLocaleString("en-US", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  })}`;
+  const code = typeof currency === "string" ? currency.trim().toUpperCase() : "";
+  if (!code || code === "USD") {
+    return `$${v.toLocaleString("en-US", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    })}`;
+  }
+  try {
+    return new Intl.NumberFormat("de-DE", {
+      style: "currency",
+      currency: code,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(v);
+  } catch {
+    return `${v.toLocaleString("en-US", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    })} ${code}`;
+  }
 }
 
 export function formatLargeNumber(value: number): string {

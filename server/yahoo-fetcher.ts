@@ -11,7 +11,9 @@
  * plus crumb. No yahoo-finance2 dependency.
  */
 import type { FmpFailure } from "./fmp";
+import { parseNumber } from "./analyze-helpers";
 import { indicatorWarmupFromDate } from "./history-fallback";
+export { YAHOO_SECTION_HINT } from "../shared/yahoo-hint";
 
 export const YAHOO_PLAN_LIMIT_LABEL = "Plan-Limit, Yahoo-Kurs/History";
 export const YAHOO_COVERAGE_NOTE =
@@ -158,6 +160,102 @@ export function mapYahooToFmpFallback(data: YahooBasicData | null): YahooFmpShap
     ratios: [],
     source: "yahoo",
   };
+}
+
+/**
+ * FMP path: same parse as before (`profile.beta ?? quote.beta ?? 1`).
+ * Yahoo path: no measured beta, so null — never the placeholder 1.
+ */
+export function betaForQuoteSource(
+  quoteFromYahoo: boolean,
+  profileBeta: unknown,
+  quoteBeta: unknown,
+): number | null {
+  if (quoteFromYahoo) return null;
+  return parseNumber(String(profileBeta ?? quoteBeta ?? 1));
+}
+
+/**
+ * Yahoo quote/history responses must not carry scores derived from a default
+ * beta, empty financials, analysts, segments, peers or ratios.
+ * Any other payload, including a normal FMP analysis, is returned untouched.
+ */
+export function stripYahooFundamentalScores<T extends { quoteCoverage?: string }>(analysis: T): T {
+  if (analysis.quoteCoverage !== YAHOO_QUOTE_COVERAGE) return analysis;
+  Object.assign(analysis, {
+    beta: null,
+    beta5Y: null,
+    lynchClass: null,
+    lynchPEGBasis: null,
+    peg: null,
+    pegRatio: null,
+    forwardPE: null,
+    evEbitda: null,
+    scoring: null,
+    impliedGStar: null,
+    dcfFairValue: null,
+    upsidePotential: null,
+    wacc: null,
+    risks: [],
+    catalysts: [],
+    growthThesis: "",
+    growthThesisFingerprint: undefined,
+    moatRating: null,
+    moatAssessment: null,
+    pestelAnalysis: null,
+    macroCorrelations: null,
+    peerComparison: null,
+    peerSet: null,
+    revenueSegments: [],
+    geoSegments: [],
+    financialStatements: null,
+    tamAnalysis: null,
+    governmentExposure: null,
+    sectorMaxDrawdown: null,
+    cycleClassification: null,
+    politicalCycle: null,
+    epsGrowth5Y: null,
+    epsAdjFY: null,
+    epsConsensusNextFY: null,
+    crvBase: null,
+    crvRiskAdj: null,
+    maxEntryCrv3: null,
+    execSummary: null,
+    sectorAvgPE: null,
+    sectorAvgForwardPE: null,
+    sectorAvgEVEBITDA: null,
+    sectorAvgPEG: null,
+    sectorProfile: null,
+    fcfMargin: null,
+    fcfTTM: null,
+    fcfAvailable: false,
+    fcfYield: null,
+    revenue: null,
+    ebitda: null,
+    operatingIncome: null,
+    netIncome: null,
+    totalDebt: null,
+    cashEquivalents: null,
+    enterpriseValue: null,
+    dividendYield: null,
+    returnOnEquity: null,
+    pbRatio: null,
+    grossMargin: null,
+    operatingMargin: null,
+    netMargin: null,
+    grossProfit: null,
+    govExposureDetail: null,
+    catalystDeepDives: [],
+    policyContext: null,
+    fiscalOverlay: null,
+    analystPT: { median: null, high: null, low: null, count: 0 },
+    analystPTMedian: null,
+    analystPTHigh: null,
+    analystPTLow: null,
+    analystCount: 0,
+    analystConsensus: null,
+  });
+  return analysis;
 }
 
 export function clearYahooFetcherCacheForTests(): void {

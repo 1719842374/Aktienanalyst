@@ -139,9 +139,11 @@ import {
   indicatorWarmupFromDate, needsIndicatorPrefix, TA_OHLCV_MAX_POINTS,
 } from "./history-fallback";
 import {
+  betaForQuoteSource,
   fetchYahooAnalysisData,
   isYahooQuoteHistoryFallback,
   mapYahooToFmpFallback,
+  stripYahooFundamentalScores,
   YAHOO_COVERAGE_NOTE,
   YAHOO_PLAN_LIMIT_LABEL,
 } from "./yahoo-fetcher";
@@ -740,7 +742,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       })();
       const dividendYield = _divYield;
       const returnOnEquity = parseNumber(String(ratioLatest.returnOnEquity ?? 0));
-      const beta = parseNumber(String(profile?.beta ?? quote?.beta ?? 1));
+      const beta = betaForQuoteSource(quoteFromYahoo, profile?.beta, quote?.beta);
 
       // sharesOutstanding: FMP /stable/profile field is `sharesOutstanding` in the
       // legacy API but `mktCap / price` in newer responses. Fall back to derived.
@@ -1185,7 +1187,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             // weiterhin besser als kein Ergebnis; die UI zeigt dann weiterhin n/a.
           }
         }
-      } else {
+      } else if (!quoteFromYahoo) {
         const secCacheKey = `segments__${upperTicker}`;
         let secResult = diskResearcherGet(secCacheKey) as
           | { segments: RevenueSegment[]; fiscalYear?: string; formType?: string; filingUrl?: string; _empty?: boolean }
@@ -1281,6 +1283,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const rawPeerTickers: string[] = Array.isArray(peers) ? peers.map((p: any) => String(p.symbol ?? p ?? "")).filter(Boolean) : [];
       let peerTickers: string[] = rawPeerTickers.slice(0, 5);
       try {
+        if (!quoteFromYahoo) {
         const resolved = await resolveAdaptivePeerTickers({
           subject: upperTicker,
           subjectSector: sector,
@@ -1294,6 +1297,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         });
         peerTickers = resolved.tickers;
         console.log(`[PEERS-2HOP] ticker=${upperTicker} hopCalls=${resolved.hopCalls} F=[${peerTickers.join(",")}]`);
+        }
       } catch (peerFilterErr: any) {
         console.warn(`[ANALYZE] Peer-Filter fehlgeschlagen fuer ${upperTicker}, verwende ungefilterte FMP-Peers: ${peerFilterErr?.message?.substring(0, 100)}`);
       }
@@ -1327,7 +1331,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       let llmModelUsed = "";
       let capexContext: CapexTailwindContext | null = null;
 
-      if (useLLM) {
+      if (useLLM && !quoteFromYahoo) {
         try {
           const llmResult = await generateCatalystsAndMatchNews({
             ticker: upperTicker,
@@ -1372,7 +1376,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       // Fallback: template catalysts
-      if (catalysts.length < 3) {
+      if (!quoteFromYahoo && catalysts.length < 3) {
         catalysts = generateCatalysts(
           effectiveSector, industry, revenueGrowth, fcfMargin, description,
           revenue, price, sharesOutstanding, netDebt, fcfTTM, wacc, revenueGrowth
@@ -1450,7 +1454,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // ── 12. Risks ──
       let risks: Risk[] = [];
 
-      if (useLLM) {
+      if (useLLM && beta != null) {
         try {
           const llmRisks = await generateCompanySpecificRisks({
             ticker: upperTicker, companyName, description, sector: effectiveSector, industry,
@@ -1471,11 +1475,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         }
       }
 
-      if (risks.length < 3) {
+      if (risks.length < 3 && beta != null) {
         risks = generateRisks(effectiveSector, beta, govExposure);
       }
 
-      if (useLLM && risks.length > 0) {
+      if (useLLM && beta != null && risks.length > 0) {
         try {
           const enriched = await generateRiskExplanations({
             ticker: upperTicker, companyName, sector: effectiveSector, industry, description,
@@ -1518,7 +1522,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       let growthThesis: string | null = null;
       let growthThesisFingerprintValue: string | null = null;
       let growthThesisGeneratedAt: string | null = null;
-      if (useLLM) {
+      if (useLLM && !quoteFromYahoo) {
         try {
           // Auftrag 08.08.2026 ("These-Refresh + Peer-Gap"): Peer-Gap/Sektor-
           // Median sind an dieser Stelle (Schritt 14) noch NICHT verfuegbar --
@@ -1556,9 +1560,12 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       // ── 15. Porter + PESTEL ──
 
-      let pestelAnalysis: PESTELAnalysis = generatePESTELAnalysis(
-        effectiveSector, industry, description, beta, govExposure, reportedCurrency
-      );
+      let pestelAnalysis: PESTELAnalysis | undefined;
+      if (beta != null) {
+        pestelAnalysis = generatePESTELAnalysis(
+          effectiveSector, industry, description, beta, govExposure, reportedCurrency
+        );
+      }
 
       let porterForces: any[] | null = null;
       if (useLLM) {
@@ -1653,7 +1660,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       if (reportedQuarter) lastReportedQuarter = reportedQuarter;
 
       let peerComparison: any = null;
-      if (peerTickers.length > 0) {
+      if (!quoteFromYahoo && peerTickers.length > 0) {
         try {
           peerComparison = await fetchPeerComparisonFromTickers(
             upperTicker, peerTickers, pe, peg ?? 0, revenue, marketCap, revenueGrowth, epsGrowth5Y,
@@ -1663,7 +1670,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           console.warn(`[ANALYZE] Peer comparison failed: ${peerErr?.message?.substring(0, 80)}`);
         }
       }
-      if (!peerComparison) {
+      if (!quoteFromYahoo && !peerComparison) {
         try {
           peerComparison = await fetchPeerComparison(
             upperTicker, companyName, pe, peg ?? 0, revenue, marketCap, revenueGrowth, epsGrowth5Y, peerTickers
@@ -1708,9 +1715,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Full matrix (indices, VIX, ISM, rates, energy, metals, crypto, FX).
       // Inputs match the historical call site: sector/industry already corrected
       // by getEffectiveSector, beta stored on the payload as beta5Y.
-      const macroCorrelations = generateMacroCorrelations(
+      const macroCorrelations = beta != null ? generateMacroCorrelations(
         effectiveSector, effectiveIndustry, description, beta, reportedCurrency
-      );
+      ) : undefined;
 
       // ── 20. Assemble final result ──
       // IMPORTANT — the response shape here must match shared/schema.ts:StockAnalysis
@@ -1833,6 +1840,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const regulatoryGate = cachedRegulatory?.gate ?? null;
 
       let scoring: StockAnalysis["scoring"] = undefined;
+      if (!quoteFromYahoo) {
       try {
         scoring = buildScoringForAnalysis({
           ctx: {
@@ -1858,6 +1866,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         });
       } catch (scErr: any) {
         console.warn(`[ANALYZE] Scoring pipeline failed: ${scErr?.message?.substring(0, 120)}`);
+      }
       }
 
       // Section 11 (MoatPorterSection) reads moatAssessment.overallRating,
@@ -2059,7 +2068,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         // doesn't crash on .icon / .factors[].name / .severity being undefined.
         pestelAnalysis: {
           factors: Array.isArray(pestelAnalysis?.factors)
-            ? pestelAnalysis.factors.map((f: any) => {
+            ? pestelAnalysis!.factors.map((f: any) => {
                 const categoryDEMap: Record<string, string> = {
                   Political: "Politisch", Economic: "Ökonomisch", Social: "Sozial",
                   Technological: "Technologisch", Environmental: "Ökologisch", Legal: "Rechtlich",
@@ -2233,6 +2242,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // legt die Grundlage fuer Phase 2 (PIT-Universum). Laeuft NIEMALS auf
       // dem kritischen Antwortpfad: try/catch, kein Effekt auf `analysis`
       // oder die Response, falls SQLite/Scoring hier fehlschlaegt.
+      if (!quoteFromYahoo) {
       try {
         // Sprint B3 Phase 1b (Ticket: tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md;
         // Nutzer-Praezisierung 30.08.2026): invDcf/CRV jetzt ECHT serverseitig
@@ -2384,6 +2394,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       applyBiasFix(analysis);
       attachExecSummary(analysis);
+      }
+      if (quoteFromYahoo) stripYahooFundamentalScores(analysis);
       // Nach Assemble (CRV-Felder + ExecSummary): L2 hält dieselbe Payload wie die Response. L1 zeigt schon auf dasselbe Objekt.
       diskCacheSet(cacheKey, analysis);
       return res.json(analysis);

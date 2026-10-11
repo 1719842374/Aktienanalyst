@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import type { StockAnalysis } from "../../../shared/schema";
+import { YAHOO_SECTION_HINT, type StockAnalysis } from "../../../shared/schema";
+import { formatCurrency } from "@/lib/formatters";
 import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "@/lib/calculations";
 import { TickerSearch } from "@/components/TickerSearch";
 import { useTheme } from "@/components/ThemeProvider";
@@ -65,7 +66,7 @@ export default function Dashboard() {
   // Management-Score (19) steht vor der Zusammenfassung (20), damit der Score
   // in die Ampel einfließen kann (WORK_BIAS_FIXES §13).
   const sharedMonteCarlo = useMemo<GBMMonteCarloResult | null>(() => {
-    if (!data || !data.historicalPrices?.length) return null;
+    if (!data || data.quoteCoverage === "yahoo-quote-history" || !data.historicalPrices?.length) return null;
     const prices = data.historicalPrices.map(p => p.close);
     const params = calculateGBMParams(prices);
     return gbmMonteCarlo({
@@ -357,7 +358,7 @@ export default function Dashboard() {
             <span className="font-mono tabular-nums font-bold text-primary shrink-0">{data.ticker}</span>
             <span className="text-muted-foreground truncate">{data.companyName}</span>
             <span className="text-muted-foreground shrink-0">•</span>
-            <span className="font-mono tabular-nums font-semibold shrink-0">${data.currentPrice.toFixed(2)}</span>
+            <span className="font-mono tabular-nums font-semibold shrink-0">{data.quoteCoverage === "yahoo-quote-history" ? formatCurrency(data.currentPrice, 2, data.currency) : `$${data.currentPrice.toFixed(2)}`}</span>
           </div>
         )}
 
@@ -365,7 +366,7 @@ export default function Dashboard() {
         <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide" data-testid="header-nav-strip">
           <div className="flex w-max ml-auto items-center gap-2 sm:gap-3">
           {/* PDF Export */}
-          {data && (
+          {data && data.quoteCoverage !== "yahoo-quote-history" && (
             <button
               onClick={async () => {
                 const { exportAnalysisPdf } = await import('../lib/exportPdf');
@@ -490,7 +491,7 @@ export default function Dashboard() {
           `}
         >
           <nav className="py-2 px-2 space-y-0.5" data-testid="nav-sidebar">
-            {SECTIONS.map((s) => (
+            {(data?.quoteCoverage === "yahoo-quote-history" ? SECTIONS.filter((s) => s.id === 2 || s.id === 12) : SECTIONS).map((s) => (
               <button
                 key={s.id}
                 onClick={() => scrollToSection(s.id)}
@@ -553,10 +554,14 @@ export default function Dashboard() {
                   single component crash (e.g. .slice on undefined) can no longer
                   unmount the entire dashboard and leave the user with a black
                   screen. Without this, one bad field → whole app unmounts. */}
-              <div ref={setSectionRef(1)}><ExecSummaryCard data={data} /></div>
+              {data.quoteCoverage === "yahoo-quote-history" ? null : <div ref={setSectionRef(1)}><ExecSummaryCard data={data} /></div>}
               <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} onThesisScore={(score) => {
                 setData(prev => prev && prev.thesisStrengthScore !== score ? { ...prev, thesisStrengthScore: score } : prev);
               }} /></SectionErrorBoundary></div>
+              {data.quoteCoverage === "yahoo-quote-history" ? (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs font-semibold text-amber-400" data-testid="yahoo-plan-limit-section">{YAHOO_SECTION_HINT}</div>
+              ) : null}
+              {data.quoteCoverage === "yahoo-quote-history" ? null : <>
               <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese"><Section2 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="Zyklusanalyse"><Section3 data={data} /></SectionErrorBoundary></div>
@@ -566,7 +571,9 @@ export default function Dashboard() {
               <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion"><Section8 data={data} useLLM={useLLM} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
+              </>}
               <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>
+              {data.quoteCoverage === "yahoo-quote-history" ? null : <>
               <div ref={setSectionRef(13)}><SectionErrorBoundary sectionId={13} sectionLabel="Moat / Porter"><MoatPorterSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="PESTEL"><PestelSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(15)}><SectionErrorBoundary sectionId={15} sectionLabel="Makro-Korr."><MacroCorrelationsSection data={data} /></SectionErrorBoundary></div>
@@ -598,6 +605,7 @@ export default function Dashboard() {
                 setData(prev => prev && prev.managementScore !== score ? { ...prev, managementScore: score } : prev);
               }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Zusammenfassung"><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></SectionErrorBoundary></div>
+              </>}
               <div className="pb-8" />
             </div>
           ) : (

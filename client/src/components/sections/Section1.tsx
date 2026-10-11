@@ -159,7 +159,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <KPI label="Price" value={formatCurrency(data.currentPrice)} sub={new Date(data.priceTimestamp).toLocaleString()} />
+        <KPI label="Price" value={formatCurrency(data.currentPrice, 2, partialYahoo ? data.currency : undefined)} sub={new Date(data.priceTimestamp).toLocaleString()} />
         <KPI label="Market Cap" value={partialYahoo && !(data.marketCap > 0) ? "n/a" : formatLargeNumber(data.marketCap)} />
         <KPI label="Beta (5Y)" value={partialYahoo ? "n/a" : formatNumber(data.beta5Y)} />
         <KPI label="P/E" value={partialYahoo && !(data.peRatio > 0) ? "n/a" : formatNumber(data.peRatio, 1)} sub={partialYahoo ? "Fwd: n/a" : `Fwd: ${formatNumber(data.forwardPE, 1)}`} />
@@ -196,7 +196,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
-            <Row label="EPS TTM" value={partialYahoo && !(Number.isFinite(data.epsTTM) && data.epsTTM !== 0) ? "n/a" : `$${formatNumber(data.epsTTM)}`} />
+            <Row label="EPS TTM" value={partialYahoo && !(Number.isFinite(data.epsTTM) && data.epsTTM !== 0) ? "n/a" : partialYahoo ? formatCurrency(data.epsTTM, 2, data.currency) : `$${formatNumber(data.epsTTM)}`} />
             <Row label="EPS adj. FY" value={partialYahoo ? "n/a" : `$${formatNumber(data.epsAdjFY)}`} />
             <Row label="EPS Consensus Next FY" value={partialYahoo ? "n/a" : `$${formatNumber(data.epsConsensusNextFY)}`} />
             <Row label="EPS-CAGR 5Y" value={data.epsCagrFromIncome === false ? "n/a" : formatPercentNoSign(data.epsGrowth5Y)} />
@@ -229,9 +229,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <tbody className="divide-y divide-border/50">
-              <Row label="Median PT" value={formatCurrency(data.analystPT.median)} />
-              <Row label="High PT" value={formatCurrency(data.analystPT.high)} />
-              <Row label="Low PT" value={formatCurrency(data.analystPT.low)} />
+              <Row label="Median PT" value={partialYahoo ? "n/a" : formatCurrency(data.analystPT.median)} />
+              <Row label="High PT" value={partialYahoo ? "n/a" : formatCurrency(data.analystPT.high)} />
+              <Row label="Low PT" value={partialYahoo ? "n/a" : formatCurrency(data.analystPT.low)} />
               <Row label="PT Upside" value={partialYahoo ? "n/a" : `${ptUpside >= 0 ? "+" : ""}${ptUpside.toFixed(1)}%`} valueClass={partialYahoo ? undefined : ptUpside >= 0 ? "text-emerald-500" : "text-red-500"} />
               <Row label="# Analysts" value={data.analystPT.count > 0 ? data.analystPT.count.toString() : "n/a"} />
             </tbody>
@@ -245,11 +245,11 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
           <table className="w-full text-xs">
             <tbody className="divide-y divide-border/50">
               <Row label="P/E" value={formatNumber(data.peRatio, 1)} />
-              <Row label="Forward P/E" value={formatNumber(data.forwardPE, 1)} />
+              <Row label="Forward P/E" value={partialYahoo ? "n/a" : formatNumber(data.forwardPE, 1)} />
               <tr className="border-b border-border/50">
                 <td className="py-1.5 px-2 text-muted-foreground">PEG</td>
                 <td className="py-1.5 px-2 text-right font-mono">
-                  <span>{formatNumber(data.pegRatio)}</span>
+                  <span>{partialYahoo ? "n/a" : formatNumber(data.pegRatio)}</span>
                   {data.lynchClass && (
                     <span title={data.lynchPEGBasis || data.lynchClass}
                       className={`ml-2 text-[9px] px-1.5 py-0.5 rounded font-medium cursor-help ${
@@ -261,7 +261,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
                   )}
                 </td>
               </tr>
-              <Row label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
+              <Row label="EV/EBITDA" value={partialYahoo ? "n/a" : formatNumber(data.evEbitda, 1)} />
               <Row label="FCF TTM" value={data.fcfAvailable === false ? "n/a" : formatLargeNumber(data.fcfTTM)} />
               <tr>
                 <td className="py-1.5 px-2 text-muted-foreground">FCF Margin</td>
@@ -285,7 +285,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         </div>
       </div>
 
-      <ThesisStrengthPanel data={data} onScore={onThesisScore} />
+      {partialYahoo ? null : <ThesisStrengthPanel data={data} onScore={onThesisScore} />}
     </SectionCard>
   );
 }
