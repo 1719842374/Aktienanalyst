@@ -96,10 +96,11 @@ console.log("\nClient: Indikatoren auf voller Reihe, dann Fenster");
 console.log("\nScore/Gates unberuehrt");
 {
   const src = readFileSync(new URL("../server/gold-routes.ts", import.meta.url), "utf-8");
-  const analyze = src.slice(src.indexOf('app.get("/api/analyze-gold"'), src.indexOf('app.get("/api/gold-chart-history"'));
+  const histStart = src.indexOf("// Gold-Chart (Section 2) 10Y/Max");
+  const analyze = src.slice(src.indexOf('app.get("/api/analyze-gold"'), histStart);
   check("analyze-gold-Handler nutzt keine 10Y/Max-Helfer", !/historyWindows|mergeGoldRows|pickLongerSource|buildGoldChartHistoryPoints|seriesCoverage/.test(analyze));
   check("analyze-gold bleibt bei 10 Jahren", analyze.includes("10 * 365.25 * 24 * 60 * 60 * 1000"));
-  check("neue Route nutzt das FRED-Memo (#223)", src.slice(src.indexOf('"/api/gold-chart-history"')).includes("createFredHistoryMemo(fetchFREDSeriesHistory)"));
+  check("neue Route nutzt das FRED-Memo (#223)", src.slice(histStart).includes("createFredHistoryMemo(fetchFREDSeriesHistory)"));
 }
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
