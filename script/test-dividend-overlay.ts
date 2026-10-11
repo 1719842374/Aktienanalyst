@@ -49,7 +49,7 @@ assert.ok(trailingDividendYield(bars, []).every(p => p.yieldPct === null), "no e
   assert.equal(normalizeDividendTicker(""), null);
 
   const ui = readFileSync("client/src/components/sections/TechnicalChart.tsx", "utf8");
-  assert.match(ui, /enabled: showDividend && !!data\.ticker/, "fetch only while the overlay is on");
+  assert.match(ui, /useDividendHistory\(data\.ticker, showDividend\)/, "chart enables the shared query only while the overlay is on (Section-1 KPI uses the same cached query)");
   assert.match(ui, /useState\(false\);\n\s+const dividendQuery/, "overlay default off");
   assert.ok(ui.indexOf("const dividendQuery") < ui.indexOf("if (!ti || !ohlcv"), "hook before the early return");
   const reg = readFileSync("server/routes-register.ts", "utf8");

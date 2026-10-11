@@ -70,7 +70,7 @@ assert.match(ui, /Div\. Yield: n\/a — keine Dividendenhistorie/);
 assert.match(ui, /Dividende 12M je Aktie/);
 assert.match(ui, /geglättet: roh/);
 const s1 = readFileSync("client/src/components/sections/Section1.tsx", "utf8");
-assert.match(s1, /<KPI label="Div\. Yield" value=\{divKpi\} sub="GJ \(FMP\)" \/>/);
+assert.match(s1, /<KPI label="Div\. Yield" value=\{divKpi\.value\} sub=\{divKpi\.sub\} \/>/);
 console.log("test-dividend-price-overlay: OK");
 
 // ── Opposite drift: KO 14.09.2025 window misses the 13.09.2024 payment → re-added, marked ──
