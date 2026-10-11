@@ -84,18 +84,17 @@ export function writeLastTicker(storage: KeyValueStore, ticker: string): void {
 }
 
 /**
- * URL-Ticker gewinnt (Deep-Link). Sonst nur nach einem echten Reload den letzten
- * Ticker wieder öffnen, damit die Startseite bei einem frischen Besuch leer bleibt.
+ * URL-Ticker gewinnt (Deep-Link `?ticker=`). `/` und `#/` tragen keinen Ticker:
+ * dann den zuletzt analysierten Ticker öffnen, sofern einer gespeichert ist.
+ * Ohne gespeicherten Ticker bleibt die Startseite leer.
  */
 export function shouldRestoreLastTicker(args: {
   urlTicker: string | null | undefined;
-  navigationType: string;
   lastTicker: string | null;
 }): string | null {
   const url = args.urlTicker?.trim().toUpperCase() || null;
   if (url) return url;
-  if (args.navigationType === "reload" && args.lastTicker) return args.lastTicker;
-  return null;
+  return args.lastTicker;
 }
 
 export function safeLocalStorage(): KeyValueStore | null {

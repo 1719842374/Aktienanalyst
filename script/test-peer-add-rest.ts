@@ -30,6 +30,17 @@ function check(name: string, cond: boolean, detail?: string) {
   }
 }
 
+/** Dieselbe Lesart wie Dashboard: Ticker nur aus `?ticker=` im Hash oder in location.search. `/` und `#/` haben keinen. */
+function tickerFromBareHome(hashOrPath: string): string | null {
+  const hash = hashOrPath.startsWith("#") ? hashOrPath : "";
+  const hashQueryIdx = hash.indexOf("?");
+  const hashParams = hashQueryIdx >= 0 ? new URLSearchParams(hash.slice(hashQueryIdx + 1)) : null;
+  const search = !hash && hashOrPath.includes("?") ? hashOrPath.slice(hashOrPath.indexOf("?") + 1) : "";
+  const searchParams = new URLSearchParams(search);
+  const ticker = (hashParams?.get("ticker") ?? searchParams.get("ticker"))?.trim().toUpperCase();
+  return ticker || null;
+}
+
 class MemoryStore implements KeyValueStore {
   private map = new Map<string, string>();
   getItem(key: string): string | null {
@@ -66,14 +77,17 @@ check("serialize ist normalisiert", serializeOverrides({ add: ["lly", "lly"], re
 
 writeLastTicker(store, "nvo");
 check("letzter Ticker übersteht den Reload", readLastTicker(store) === "NVO");
-check("Reload ohne URL stellt den letzten Ticker wieder her", shouldRestoreLastTicker({ urlTicker: null, navigationType: "reload", lastTicker: "NVO" }) === "NVO");
-check("frischer Besuch stellt nichts her", shouldRestoreLastTicker({ urlTicker: null, navigationType: "navigate", lastTicker: "NVO" }) === null);
-check("URL-Ticker gewinnt vor dem letzten Ticker", shouldRestoreLastTicker({ urlTicker: "msft", navigationType: "reload", lastTicker: "NVO" }) === "MSFT");
+check("Reload ohne URL stellt den letzten Ticker wieder her", shouldRestoreLastTicker({ urlTicker: null, lastTicker: "NVO" }) === "NVO");
+check("nackte URL / ohne Ticker stellt den letzten Ticker wieder her", shouldRestoreLastTicker({ urlTicker: tickerFromBareHome("/"), lastTicker: "NVO" }) === "NVO");
+check("Hash #/ ohne Ticker stellt den letzten Ticker wieder her", shouldRestoreLastTicker({ urlTicker: tickerFromBareHome("#/"), lastTicker: "NVO" }) === "NVO");
+check("ohne gespeicherten Ticker bleibt / leer", shouldRestoreLastTicker({ urlTicker: null, lastTicker: null }) === null);
+check("URL-Ticker gewinnt vor dem letzten Ticker", shouldRestoreLastTicker({ urlTicker: "msft", lastTicker: "NVO" }) === "MSFT");
 
 const dash = readFileSync(new URL("../client/src/pages/Dashboard.tsx", import.meta.url), "utf8");
 check("Dashboard-Poll nutzt analyzePostBody", dash.includes("analyzePostBody({ ticker, useLLM: llm, force: false, peerOverrides })"));
 check("alter Poll ohne peerOverrides ist weg", !dash.includes('apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: false })'));
 check("Dashboard schreibt Overrides vor dem Request", dash.includes("writeOverrides(storage, args.ticker, resolved)"));
+check("Dashboard hängt die Wiederherstellung nicht an navigationType=reload", !dash.includes("navigationType"));
 check("Section7 reicht peerBusy durch", readFileSync(new URL("../client/src/components/sections/Section7.tsx", import.meta.url), "utf8").includes("peerBusy={peerBusy}"));
 check("Peer-Zeile zeigt Loading", readFileSync(new URL("../client/src/components/sections/PeerComparison.tsx", import.meta.url), "utf8").includes('data-testid="peer-add-loading"'));
 

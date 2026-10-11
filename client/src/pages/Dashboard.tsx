@@ -324,10 +324,8 @@ export default function Dashboard() {
     const searchParams = new URLSearchParams(window.location.search);
     const deepLinkTicker = (hashParams?.get("ticker") ?? searchParams.get("ticker"))?.trim().toUpperCase();
     const storage = safeLocalStorage();
-    const navEntry = typeof performance !== "undefined" ? performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined : undefined;
     const tickerToOpen = shouldRestoreLastTicker({
       urlTicker: deepLinkTicker,
-      navigationType: navEntry?.type ?? "",
       lastTicker: storage ? readLastTicker(storage) : null,
     });
     if (tickerToOpen) {
