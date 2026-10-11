@@ -106,7 +106,7 @@ console.log("\nScore/Gates unberuehrt");
   // #225-Follow-up: die Chart-Route laedt jede FRED-Serie genau einmal, aber nicht blockierend (execFile statt execSync).
   const hist = src.slice(histStart);
   check("Chart-Route laedt FRED async, je Serie einmal", hist.includes("fredKeys.map(id => fetchFREDSeriesHistoryAsync(id, GOLD_HISTORY_FRED_FLOOR))") && !/fetchFREDSeriesHistory\(|execSync/.test(hist));
-  check("analyze-gold behaelt das FRED-Memo (#223)", analyze.includes("createFredHistoryMemo(fetchFREDSeriesHistory)"));
+  check("analyze-gold behaelt das FRED-Memo (#223, seit JOB 11 mit Prefetch)", analyze.includes("createFredHistoryMemo(fredFetcher)"));
 }
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }

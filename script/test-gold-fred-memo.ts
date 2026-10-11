@@ -8,6 +8,7 @@
  */
 import { readFileSync } from "node:fs";
 import { createFredHistoryMemo, sliceLikeCosd, type FredHistoryPoint } from "../server/gold-fred-memo";
+import { analyzeGoldHistoryPlan, prefetchHistories, prefetchedFetcher, tail5, parseFredLatest } from "../server/gold-fred-prefetch";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail?: string) {
@@ -105,9 +106,37 @@ console.log("\nFehlerpfad wie vorher");
 console.log("\nRoute nutzt das Memo");
 {
   const src = readFileSync(new URL("../server/gold-routes.ts", import.meta.url), "utf-8");
-  check("createFredHistoryMemo eingebunden", src.includes("createFredHistoryMemo(fetchFREDSeriesHistory)"));
+  // JOB 11: Memo bekommt die parallel vorab geladenen Reihen, Sync-Abruf nur als Nachlade-Fallback
+  check("createFredHistoryMemo eingebunden (mit Prefetch)", src.includes("prefetchedFetcher(await fredHistoryPromise, fetchFREDSeriesHistory)") && src.includes("createFredHistoryMemo(fredFetcher)"));
+  const handler = src.slice(src.indexOf('app.get("/api/analyze-gold"'), src.indexOf("// Gold-Chart (Section 2) 10Y/Max"));
+  check("analyze-gold ohne execSync / Sync-fetchFREDSeries", !/execSync|fetchFREDSeries\(/.test(handler));
   const direct = (src.match(/fetchFREDSeriesHistory\("/g) ?? []).length;
   check("keine direkten Historien-Abrufe mehr im Handler", direct === 0, String(direct));
+}
+
+console.log("\nJOB 11: paralleler Prefetch, gleiche Memo-Semantik");
+{
+  const plan = analyzeGoldHistoryPlan(startDate, m2Start);
+  const firstSeen: Array<[string, string]> = [];
+  for (const [id, s] of ROUTE_CALLS) if (!firstSeen.some(([i]) => i === id)) firstSeen.push([id, s]);
+  check("Plan = erster Aufruf je Serie in Route-Reihenfolge", JSON.stringify(plan) === JSON.stringify(firstSeen), JSON.stringify(plan));
+  directCalls = 0;
+  const before = ROUTE_CALLS.map(([id, s]) => createFredHistoryMemo(fred).get(id, s));
+  directCalls = 0;
+  const pre = await prefetchHistories(plan, async (id, s) => fred(id, s));
+  const f = prefetchedFetcher(pre, () => { throw new Error("darf nicht synchron nachladen"); });
+  const memo = createFredHistoryMemo(f);
+  const after = ROUTE_CALLS.map(([id, s]) => memo.get(id, s));
+  check("alle 14 Aufrufer byte-gleich", JSON.stringify(before) === JSON.stringify(after));
+  check("8 Abrufe, alle parallel vorab, 0 synchron", directCalls === 8 && f.served() === 8 && f.fallbacks() === 0, `${directCalls}/${f.served()}/${f.fallbacks()}`);
+  // leerer Vorab-Abruf -> naechster Aufrufer laedt wie bisher erneut (synchron)
+  let sync = 0;
+  const pre2 = await prefetchHistories([["WALCL", startDate]], async () => { throw new Error("FRED down"); });
+  const memo2 = createFredHistoryMemo(prefetchedFetcher(pre2, (id, s) => { sync++; return fred(id, s); }));
+  check("Fehler im Prefetch -> [] (wie Sync-Variante)", memo2.get("WALCL", startDate).length === 0);
+  check("zweiter Aufruf laedt wie bisher erneut", memo2.get("WALCL", startDate).length > 0 && sync === 1);
+  check("tail -5 nachgebaut", tail5("a\nb\nc\nd\ne\nf\ng\n") === "c\nd\ne\nf\ng\n" && tail5("x") === "x\n" && tail5("") === "");
+  check("letzter Wert wie fetchFREDSeries", JSON.stringify(parseFredLatest("2026-10-07,2.1\n2026-10-08,.\n")) === JSON.stringify({ date: "2026-10-07", value: 2.1 }));
 }
 
 if (failed > 0) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
