@@ -3,6 +3,7 @@
  * Extracted 1:1 from SummarySection Fazit IIFE (positive/negative/neutral → rating).
  * Do NOT rename to buildSummaryFazit (spec-only name).
  */
+import { isEtfOrFund, ETF_RDCF_NOTE } from "../../../shared/conflict-matrix";
 import type { StockAnalysis } from "../../../shared/schema";
 import {
   calculateFCFFDCF,
@@ -269,7 +270,10 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
 
   // S14: Reverse DCF — relative Schwellen (identisch mit Section10)
   const rdRef = reverseDCF.referenceGrowth;
-  if (reverseDCF.rating === "unrealistic") {
+  if (isEtfOrFund(data)) {
+    // ETF / fund: g* has no meaning → note only, in neutral (does not count for the Fazit score).
+    neutral.push(`Reverse-DCF ${ETF_RDCF_NOTE}`);
+  } else if (reverseDCF.rating === "unrealistic") {
     negative.push(`Reverse-DCF g* ${formatPercentNoSign(reverseDCF.impliedGrowth)} \u2014 \u00fcber 1,5\u00d7 Referenz (${formatPercentNoSign(rdRef * 1.5)}), hohes Wachstum eingepreist`);
   } else if (reverseDCF.rating === "sportlich") {
     neutral.push(`Reverse-DCF g* ${formatPercentNoSign(reverseDCF.impliedGrowth)} \u2014 sportlich (Ref: ${formatPercentNoSign(rdRef)})`);
