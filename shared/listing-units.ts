@@ -99,3 +99,13 @@ export function dividendsToMajor<E extends { amount: number }>(events: E[], list
   if (!mu) return null;
   return { events: events.map(e => ({ ...e, amount: e.amount / mu.factor })), currency: mu.major };
 }
+
+/**
+ * UI note for an analysis whose currency is still a minor unit. After #244 a converted .L analysis says "GBP";
+ * "GBp" in the response means the FX rate was missing and nothing was converted (partial). The flag reaches the
+ * client through the existing `currency` field (analyze-route passes profile.currency through) — no route change.
+ */
+export function listingFxWarning(currency: unknown): string | null {
+  const mu = minorUnitInfo(currency);
+  return mu ? `FX ${mu.major}USD fehlt – Werte unkonvertiert (Kurs in ${mu.minor}, Bilanz in USD)` : null;
+}

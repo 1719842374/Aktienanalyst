@@ -16,6 +16,9 @@ import {
  */
 
 const CACHE_MS = 12 * 60 * 60 * 1000;
+// v2 (#244): .L amounts are now converted pence → GBP; old v1 entries (pence) must not be served.
+const CACHE_VERSION = "v2";
+const cacheKey = (t: string) => `${CACHE_VERSION}:${t}`;
 const cache = new Map<string, { at: number; body: DividendHistoryResponse }>();
 const TICKER_RE = /^[A-Z0-9.\-^=]{1,15}$/;
 
@@ -82,11 +85,11 @@ export function registerDividendRoute(app: Express): void {
   app.get("/api/dividends/:ticker", async (req: Request, res: Response) => {
     const ticker = normalizeDividendTicker(req.params.ticker);
     if (!ticker) return res.status(400).json({ error: "Ungültiger Ticker" });
-    const hit = cache.get(ticker);
+    const hit = cache.get(cacheKey(ticker));
     if (hit && Date.now() - hit.at < CACHE_MS) return res.json(hit.body);
     const body = await loadDividendHistory(ticker);
     // Empty results are not cached, so a transient upstream miss does not stick for 12 h.
-    if (body.events.length > 0) cache.set(ticker, { at: Date.now(), body });
+    if (body.events.length > 0) cache.set(cacheKey(ticker), { at: Date.now(), body });
     res.json(body);
   });
 }
