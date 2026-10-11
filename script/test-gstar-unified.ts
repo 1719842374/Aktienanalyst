@@ -42,7 +42,6 @@ import { pdfWaccSuffix } from "../server/pdf-export";
 
 // ── #238 tester soft: no "WACC NaN%" / "0.00 %" in the client either ──
 import { safeCompanyDcfWaccPct, waccSuffix } from "../shared/valuation-signal";
-import assert from "node:assert/strict";
 import * as fs from "node:fs";
 {
   assert.equal(safeCompanyDcfWaccPct({ beta5Y: 1.1, totalDebt: 6e10 } as any), null, "missing marketCap");
@@ -59,4 +58,15 @@ import * as fs from "node:fs";
   assert.match(rdcf, /Number\.isFinite\(dcfWacc\) \? formatPercentNoSign\(dcfWacc\) : "—"/);
   assert.match(att, /: safeCompanyDcfWaccPct\(a\),/);
   console.log("test-gstar-unified (client WACC guard): OK");
+}
+
+// ── server: calcImpliedGStar with missing company inputs → null, never NaN ──
+{
+  const base = { price: 400, sharesOutstanding: 7.4e9, netDebt: 0, fcf: 7e10, wacc: 9 };
+  assert.equal(calcImpliedGStar({ ...base, company: { beta5Y: 1.1, totalDebt: 6e10, marketCap: NaN } }), null);
+  assert.equal(calcImpliedGStar({ ...base, company: { beta5Y: NaN, totalDebt: 6e10, marketCap: 3e12 } }), null);
+  assert.equal(calcImpliedGStar({ ...base, company: { beta5Y: 1.1, totalDebt: undefined as any, marketCap: 3e12 } }), null);
+  assert.ok(Number.isFinite(calcImpliedGStar({ ...base, company: { beta5Y: 1.1, totalDebt: 6e10, marketCap: 3e12 } })!));
+  assert.match(readFileSync("server/catalyst-engine.ts", "utf8"), /const cw = safeCompanyDcfWaccPct\(params\.company\);/);
+  console.log("test-gstar-unified (server WACC guard): OK");
 }

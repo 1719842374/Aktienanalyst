@@ -5,7 +5,7 @@
  */
 
 import type { Catalyst } from "../shared/schema";
-import { calculateReverseDCF, companyDcfWaccPct } from "../shared/valuation-signal";
+import { calculateReverseDCF, safeCompanyDcfWaccPct } from "../shared/valuation-signal";
 
 // === Reverse-DCF helpers ===
 /**
@@ -21,8 +21,11 @@ export function calcImpliedGStar(params: {
   if (params.company) {
     const ev0 = price * sharesOutstanding + netDebt;
     if (!(ev0 > 0) || !isFinite(ev0)) return null;
-    const r = calculateReverseDCF({ currentPrice: price, fcfBase: fcf, wacc: companyDcfWaccPct(params.company), sharesOutstanding, netDebt });
-    return r.rating === "n/a" ? null : r.impliedGrowth;
+    // Missing beta5Y / marketCap / totalDebt → no company WACC → g* n/a (null), never NaN.
+    const cw = safeCompanyDcfWaccPct(params.company);
+    if (cw == null) return null;
+    const r = calculateReverseDCF({ currentPrice: price, fcfBase: fcf, wacc: cw, sharesOutstanding, netDebt });
+    return r.rating === "n/a" || !isFinite(r.impliedGrowth) ? null : r.impliedGrowth;
   }
   const wacc = params.wacc;
   const ev = price * sharesOutstanding + netDebt;
