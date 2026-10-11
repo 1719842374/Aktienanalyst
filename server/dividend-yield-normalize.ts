@@ -12,6 +12,8 @@
  * readings v and v × 100, the one within a factor 2.5 of the reference wins (the readings are 100× apart, so this
  * never matches both). A field that matches neither reading is dropped. Without a reference, only the named
  * percent / decimal ratio fields are used, by schema. The legacy quote field is used only when verified.
+ * If the named percent field exists but no reading matches DPS / price (e.g. DPS in reporting currency DKK vs USD ADR price),
+ * the named percent field ratios.dividendYieldPercentage wins (its unit is fixed by schema).
  * Nothing usable → 0 (the existing "no dividend / N/A" value). No guessing from magnitude.
  */
 
@@ -69,6 +71,12 @@ export function normalizeDividendYieldPct(input: DividendYieldInputs): DividendY
     if (pctField != null) { const v = verified(pctField, refPct); if (v != null) return { pct: round2(v), basis: "ratios.dividendYieldPercentage" }; }
     if (decField != null) { const v = verified(decField, refPct); if (v != null) return { pct: round2(v), basis: "ratios.dividendYield" }; }
     if (quoteField != null) { const v = verified(quoteField, refPct); if (v != null) return { pct: round2(v), basis: "quote.dividendYield" }; }
+    // No yield field matches DPS / price: the reference itself may be cross-currency.
+    // Typical case: ADR / foreign filer (NVO) — ratios.dividendPerShare is in the REPORTING currency (DKK),
+    // the price is the USD listing price → 11.64 DKK / 38.64 USD = "30.12 %". FMP computes the ratio yield
+    // fields within one currency, so the named PERCENT field (unit fixed by schema, no ×100 ambiguity) wins.
+    if (pctField != null) return { pct: round2(pctField), basis: "ratios.dividendYieldPercentage" };
+    // The decimal field alone stays ambiguous (v or v × 100) → keep the dollar reference (unchanged #215 rule).
     return { pct: round2(refPct), basis: "dividendPerShare/price" };
   }
   if (pctField != null) return { pct: round2(pctField), basis: "ratios.dividendYieldPercentage" };

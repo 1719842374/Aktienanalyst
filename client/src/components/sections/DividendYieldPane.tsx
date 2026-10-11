@@ -59,6 +59,9 @@ export function DividendYieldPane({
                 <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
                   <div className="font-semibold mb-1">{formatDateFull(String(label ?? ""))}</div>
                   <div className="flex justify-between gap-3"><span className="text-teal-400">Div. Yield TTM</span><span className="font-mono">{Number(payload[0].value).toFixed(2)}%</span></div>
+                  {typeof (payload[0].payload as any)?.ttmDividend === "number" && (
+                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Σ Dividenden 12M</span><span className="font-mono">{(payload[0].payload as any).ttmDividend.toFixed(2)} je Aktie (Kurswährung)</span></div>
+                  )}
                 </div>
               );
             }} />
