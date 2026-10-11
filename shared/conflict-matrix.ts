@@ -138,11 +138,6 @@ export function conflictInputsFromAnalysis(
   };
 }
 
-/**
- * Server path (PDF export): rebuild the same inputs the Summary UI uses from the raw analysis.
- * Reverse DCF = calculateReverseDCF with the WACC of calculateFCFFDCF(buildDefaultDCFParams(data)),
- * identical to SummarySection. Catalysts = sumUpsideGb (same as calculateCatalystUpside). Any failure → n/a.
- */
 /** FMP profile isEtf / isFund, passed through analyze-route (StockAnalysis.isEtf / isFund). Missing → false. */
 export function isEtfOrFund(data: { isEtf?: boolean | null; isFund?: boolean | null } | null | undefined): boolean {
   return data?.isEtf === true || data?.isFund === true;

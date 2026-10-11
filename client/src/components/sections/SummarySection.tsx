@@ -10,7 +10,7 @@ import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, f
 import { buildFazitSignal } from "../../lib/fazit-signal";
 import { buildBiasDecision, isNegativeCatalyst } from "../../../../shared/bias-fixes";
 import { useMemo } from "react";
-import { buildConflictMatrix, conflictInputsFromAnalysis } from "../../lib/conflictMatrix";
+import { buildConflictMatrix, conflictInputsFromAnalysis, isEtfOrFund } from "../../lib/conflictMatrix";
 import { ConflictMatrixPanel } from "./ConflictMatrixPanel";
 
 interface Props { data: StockAnalysis; sharedMonteCarlo?: GBMMonteCarloResult | null }
@@ -280,8 +280,8 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             />
             <SummaryRow
               label="Reverse DCF g*"
-              value={formatPercentNoSign(reverseDCF.impliedGrowth)}
-              note={`${reverseDCF.rating} (Ref: ${formatPercentNoSign(reverseDCF.referenceGrowth)})`}
+              value={isEtfOrFund(data) ? "n/a" : formatPercentNoSign(reverseDCF.impliedGrowth)}
+              note={isEtfOrFund(data) ? "ETF/Fonds — Reverse DCF nicht anwendbar" : `${reverseDCF.rating} (Ref: ${formatPercentNoSign(reverseDCF.referenceGrowth)})`}
             />
             <tr className={mcResult.downsideProb > 0.5 ? "bg-red-500/5" : ""}>
               <td className="py-2 px-2 font-semibold">Downside-Wahrscheinlichkeit</td>
