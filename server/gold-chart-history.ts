@@ -91,3 +91,57 @@ export function seriesCoverage(points: GoldPricePoint[]): Record<GoldSeriesKey, 
   }
   return out;
 }
+
+/**
+ * FMP-Fenster nacheinander laden. Ein leeres Fenster ist das normale Ende der
+ * Historie; ein Fehler mitten in der Reihe heisst: was davor kam, ist gueltig,
+ * aber die Historie ist UNVOLLSTAENDIG (darf nicht 6 h gecacht werden).
+ */
+export async function fetchFmpChunks(
+  windows: Array<{ from: string; to: string }>,
+  fetchWindow: (from: string, to: string) => Promise<any[]>,
+): Promise<{ chunks: any[][]; failedWindow: { from: string; to: string; error: string } | null }> {
+  const chunks: any[][] = [];
+  for (const w of windows) {
+    let rows: any[];
+    try {
+      rows = await fetchWindow(w.from, w.to);
+    } catch (e: any) {
+      return { chunks, failedWindow: { ...w, error: String(e?.message ?? e).substring(0, 120) } };
+    }
+    if (!rows || rows.length === 0) break;
+    chunks.push(rows);
+  }
+  return { chunks, failedWindow: null };
+}
+
+export const CHART_HISTORY_TTL_MS = 6 * 60 * 60 * 1000;
+/** Unvollstaendige Historie hoechstens 10 min halten, dann neu versuchen. */
+export const CHART_HISTORY_INCOMPLETE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Cache mit In-Flight-Sperre: gleichzeitige erste Anfragen teilen sich EINEN
+ * Ladevorgang. Vollstaendige Antworten gelten 6 h, unvollstaendige (oder mit
+ * `shortCache`, z. B. FMP-Fehler bei Yahoo-Anzeige) 10 min,
+ * Fehler werden nicht gecacht.
+ */
+export function createChartHistoryCache<T extends { incomplete?: boolean; shortCache?: boolean }>(
+  load: () => Promise<T>,
+  now: () => number = Date.now,
+) {
+  let cached: { at: number; body: T } | null = null;
+  let inFlight: Promise<T> | null = null;
+  return {
+    get(): Promise<T> {
+      if (cached) {
+        const ttl = cached.body.incomplete || cached.body.shortCache ? CHART_HISTORY_INCOMPLETE_TTL_MS : CHART_HISTORY_TTL_MS;
+        if (now() - cached.at < ttl) return Promise.resolve(cached.body);
+      }
+      if (inFlight) return inFlight;
+      inFlight = load()
+        .then(body => { cached = { at: now(), body }; return body; })
+        .finally(() => { inFlight = null; });
+      return inFlight;
+    },
+  };
+}

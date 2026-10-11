@@ -54,7 +54,7 @@ type MAKey = typeof MA_LINES[number]["key"];
 type MacroKey = typeof MACRO[number]["key"];
 type TimeRange = GoldTimeRange;
 
-interface GoldChartHistory { source: string; points: GoldPricePoint[] }
+interface GoldChartHistory { source: string; points: GoldPricePoint[]; incomplete?: boolean; incompleteReason?: string | null }
 
 const fmtMacro = (key: MacroKey, v: number) =>
   key === "walcl" ? `$${v.toFixed(2)}T` : key === "dxy" ? v.toFixed(1) : `${v.toFixed(2)}%`;
@@ -84,7 +84,8 @@ export function GoldPriceChart({ data }: Props) {
       return res.json();
     },
     enabled: longRange,
-    staleTime: 6 * 60 * 60 * 1000,
+    // Unvollstaendige Historie (FMP-Fehler mitten in der Reihe) nicht 6 h halten, sondern nach 10 min neu laden.
+    staleTime: query => (query.state.data?.incomplete ? 10 * 60 * 1000 : 6 * 60 * 60 * 1000),
     retry: 1,
   });
   const longTech = useMemo(
@@ -350,6 +351,11 @@ export function GoldPriceChart({ data }: Props) {
               : historyQuery.isError
                 ? `Lange Historie nicht abrufbar — zeige die ${tech.points.length ? "vorhandenen 10 Jahre" : "vorhandenen Daten"}`
                 : rangeNote}
+            {longRange && longTech && historyQuery.data?.incomplete && (
+              <span className="ml-1 font-medium text-amber-400" data-testid="gold-range-incomplete" title={historyQuery.data.incompleteReason ?? undefined}>
+                · unvollständig{historyQuery.data.incompleteReason ? ` (${historyQuery.data.incompleteReason})` : ""}
+              </span>
+            )}
           </div>
         )}
         <div className="flex max-w-full flex-wrap gap-1.5 sm:gap-1">
