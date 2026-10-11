@@ -139,11 +139,14 @@ export function conflictInputsFromAnalysis(
  * Reverse DCF = calculateReverseDCF with the WACC of calculateFCFFDCF(buildDefaultDCFParams(data)),
  * identical to SummarySection. Catalysts = sumUpsideGb (same as calculateCatalystUpside). Any failure → n/a.
  */
-export function conflictMatrixFromAnalysis(data: any): ConflictMatrix {
-  let reverseDcf: { rating?: string | null; impliedGrowth?: number | null } | null = null;
+/**
+ * Reverse DCF exactly like SummarySection: calculateReverseDCF with the WACC of
+ * calculateFCFFDCF(buildDefaultDCFParams(data)). Shared by the matrix and PDF section 14. Failure → null.
+ */
+export function reverseDcfFromAnalysis(data: any): { impliedGrowth: number; rating: string; referenceGrowth: number } | null {
   try {
     const wacc = calculateFCFFDCF(buildDefaultDCFParams(data)).wacc;
-    reverseDcf = calculateReverseDCF({
+    return calculateReverseDCF({
       currentPrice: data.currentPrice,
       fcfBase: data.fcfTTM,
       wacc,
@@ -154,8 +157,12 @@ export function conflictMatrixFromAnalysis(data: any): ConflictMatrix {
       epsGrowthNext5Y: data.epsGrowth5Y ?? 0,
     });
   } catch {
-    reverseDcf = null;
+    return null;
   }
+}
+
+export function conflictMatrixFromAnalysis(data: any): ConflictMatrix {
+  const reverseDcf = reverseDcfFromAnalysis(data);
   const catalysts = Array.isArray(data?.catalysts) ? sumUpsideGb(data.catalysts) : null;
   return buildConflictMatrix(conflictInputsFromAnalysis(data, reverseDcf, catalysts));
 }
