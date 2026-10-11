@@ -3,7 +3,7 @@
  * Treffer liefern exakt dieselben Bytes; Fehler werden nicht gecacht; ?fresh=1 umgeht den Cache.
  */
 import { readFileSync } from "fs";
-import { createGoldResponseCache, GOLD_ANALYSIS_CACHE_TTL_MS } from "../server/gold-response-cache";
+import { createGoldResponseCache, GOLD_ANALYSIS_CACHE_TTL_MS, GOLD_ANALYSIS_PARTIAL_TTL_MS } from "../server/gold-response-cache";
 
 let fail = 0;
 const check = (name: string, ok: boolean) => { console.log(`${ok ? "✅" : "❌"} ${name}`); if (!ok) fail++; };
@@ -60,6 +60,37 @@ check("Builder gibt das Analyse-Objekt zurück (vorher res.json(analysis))", han
 check("Fehler werden geworfen, nicht gecacht", /console\.error\("\[GOLD\] Error:", error\?\.message\);\s*throw error;/.test(handler));
 check("Score-Eingänge unverändert (newsFlag, gis)", handler.includes("newsFlag: goldNews?.flag ?? null") && handler.includes("gis: gisRounded,"));
 check("Timing-Header + Cache-Header", handler.includes('"X-Gold-Cache"') && handler.includes('"X-Gold-Timing"'));
+
+// JOB 16: Teilausfall -> 2 min statt 10 min
+{
+  let clock = 0;
+  const ttlFor = (v: { partial?: true }) => (v.partial ? GOLD_ANALYSIS_PARTIAL_TTL_MS : GOLD_ANALYSIS_CACHE_TTL_MS);
+  const cache = createGoldResponseCache<{ partial?: true; n: number }>(GOLD_ANALYSIS_CACHE_TTL_MS, () => clock, ttlFor);
+  let n = 0;
+  let partialNext = true;
+  const loader = async () => ({ n: ++n, ...(partialNext ? { partial: true as const } : {}) });
+  await cache.get(loader);
+  clock += 90 * 1000;
+  check("partial: nach 90 s noch Treffer", (await cache.get(loader)).status === "hit" && n === 1);
+  clock += 31 * 1000;
+  partialNext = false;
+  const r = await cache.get(loader);
+  check("partial: nach >2 min neu geladen", r.status === "miss" && n === 2 && r.value.partial === undefined);
+  clock += 9 * 60 * 1000;
+  check("vollständig: nach 9 min weiter Treffer", (await cache.get(loader)).status === "hit" && n === 2);
+  check("Partial-TTL 2 min", GOLD_ANALYSIS_PARTIAL_TTL_MS === 120000);
+}
+
+const srcAll = readFileSync(new URL("../server/gold-routes.ts", import.meta.url), "utf8");
+check("partial nur bei Ersatzwerten gespreizt (vollständig = gleiche Bytes)", srcAll.includes("...(partialReasons.length > 0 ? { partial: true as const, partialReasons } : {}),"));
+for (const r of ["FMP-Quote GCUSD fehlt", "FMP-Historie GCUSD leer", "Spot-Preis Ersatzwert 4500", "FRED DFII10-Historie leer", "FMP-Quote DXY fehlt", "FRED-Wert fehlt/unplausibel", "FRED M2SL-YoY fehlt", "FRED CPIAUCSL fehlt"]) {
+  check(`Grund erfasst: ${r}`, srcAll.includes(r));
+}
+check("Route wählt TTL nach partial", srcAll.includes("value.analysis.partial ? GOLD_ANALYSIS_PARTIAL_TTL_MS : GOLD_ANALYSIS_CACHE_TTL_MS"));
+const dash = readFileSync(new URL("../client/src/pages/GoldDashboard.tsx", import.meta.url), "utf8");
+check("Aktualisieren-Button sendet ?fresh=1", dash.includes('onClick={() => { freshRef.current = true; refetch(); }}') && dash.includes('fresh ? "/api/analyze-gold?fresh=1" : "/api/analyze-gold"'));
+const schema = readFileSync(new URL("../shared/gold-schema.ts", import.meta.url), "utf8");
+check("Schema: partial/partialReasons optional", schema.includes("partial?: true;") && schema.includes("partialReasons?: string[];"));
 
 console.log(fail ? `\n${fail} Fehler` : "\nalle grün");
 process.exit(fail ? 1 : 0);

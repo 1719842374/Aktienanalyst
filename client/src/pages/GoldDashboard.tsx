@@ -39,13 +39,17 @@ export default function GoldDashboard() {
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const [, navigate] = useLocation();
+  // JOB 16: der Aktualisieren-Button umgeht den 10-min-Servercache (?fresh=1); Auto-Laden nicht.
+  const freshRef = useRef(false);
 
   const { data, isLoading, isError, error, refetch } = useQuery<GoldAnalysis>({
     queryKey: ["/api/analyze-gold"],
     queryFn: async () => {
       // Try live API first, fallback to bundled static data
       try {
-        const res = await apiRequest("GET", "/api/analyze-gold");
+        const fresh = freshRef.current;
+        freshRef.current = false;
+        const res = await apiRequest("GET", fresh ? "/api/analyze-gold?fresh=1" : "/api/analyze-gold");
         // apiRequest does not throw on HTTP errors. A 500 body is not a GoldAnalysis
         // (missing FMP key → { error }) and used to crash the page on spotPrice.toFixed.
         if (!res.ok) throw new Error(`Gold-API ${res.status}`);
@@ -103,8 +107,9 @@ export default function GoldDashboard() {
             </div>
           )}
           <button
-            onClick={() => refetch()}
+            onClick={() => { freshRef.current = true; refetch(); }}
             disabled={isLoading}
+            data-testid="gold-refresh"
             className="h-8 px-3 text-xs font-medium bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
           >
             {isLoading ? (
