@@ -2,7 +2,7 @@ import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "../../lib/calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign, formatTarget } from "../../lib/formatters";
+import { currencySymbol, formatCurrency, formatNumber, formatPercentNoSign, formatTarget } from "../../lib/formatters";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
 import { Settings2, RotateCcw, Play, AlertTriangle } from "lucide-react";
@@ -328,6 +328,8 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
               <BarChart data={result.histogram} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                 <XAxis
                   dataKey="bin"
+                  // JOB 23: Bin-Labels kommen aus gbmMonteCarlo als "$<start>" (dort fürs Parsen genutzt) — nur die Anzeige auf die Listing-Währung umstellen.
+                  tickFormatter={(b: string) => String(b).replace(/^\$/, currencySymbol(data.currency))}
                   tick={{ fontSize: 9, fill: 'hsl(215 20% 65%)' }}
                   interval={Math.floor(result.histogram.length / 6)}
                   axisLine={{ stroke: 'hsl(215 20% 25%)' }}

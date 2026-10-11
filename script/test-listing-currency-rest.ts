@@ -16,13 +16,16 @@ check("Symbole unverändert: £/$/€", currencySymbol("GBP") === "£" && curren
 // (b) Kursziel
 check("Kursziel 0/null/NaN → n/a", formatTarget(0, "GBP") === "n/a" && formatTarget(null, "GBP") === "n/a" && formatTarget(NaN, "GBP") === "n/a");
 check("Kursziel > 0 → £45.00", formatTarget(45, "GBP") === "£45.00");
-check("statementCurrency: USD nur nach Server-Umrechnung", statementCurrency({ currency: "GBP" }) === "GBP" && statementCurrency({ currency: "EUR", currencyInfo: { converted: true } }) === "USD");
+check("statementCurrency: .L → Listing-Währung (GBP, #244)", statementCurrency({ ticker: "SHEL.L", currency: "GBP" }) === "GBP");
+check("statementCurrency: SAP.DE (Kurs €) → USD, weil der Server Statements nach USD umrechnet", statementCurrency({ ticker: "SAP.DE", currency: "EUR" }) === "USD" && statementCurrency({ ticker: "MSFT", currency: "USD" }) === "USD");
 
 // (a) keine Ein-Argument-Aufrufe (= festes $) mehr in den Sektionen
 const files = ["Section2", "Section5", "Section6", "Section8", "MonteCarloSection", "SummarySection", "FinancialStatements"].map(f => `client/src/components/sections/${f}.tsx`).concat("client/src/lib/fazit-signal.ts");
 for (const f of files) {
   const src = readFileSync(f, "utf8");
-  const bare = [...src.matchAll(/formatCurrency\(([^(),]|\([^()]*\))+\)/g)].length + [...src.matchAll(/formatLargeNumber\(([^(),]|\([^()]*\))+\)/g)].length;
+  // Ausnahme Section2-Segmente: FMP/SEC-Segmentumsätze werden serverseitig weder nach USD noch per #244 normalisiert
+  // (Berichtswährung unbekannt) → bewusst ohne Listing-Währung (bisheriges Verhalten), siehe PR-Text.
+  const bare = [...src.matchAll(/formatCurrency\(([^(),]|\([^()]*\))+\)/g)].length + [...src.matchAll(/formatLargeNumber\(([^(),]|\([^()]*\))+\)/g)].filter(m => !/seg\.revenue|revenueSegments\[0\]\.revenue/.test(m[0])).length;
   const fixedDollar = /`\$\$\{/.test(src);
   check(`${f.split("/").pop()}: kein festes $ (Ein-Argument-Formatter: ${bare}, \`$\${…}: ${fixedDollar})`, bare === 0 && !fixedDollar);
 }
@@ -48,6 +51,13 @@ for (const [name, mod, comp] of [["Section6 (CRV)", "Section6", "Section6"], ["S
     check(`${name} SHEL.L: £ und kein $Betrag`, html.includes("£") && !/\$[0-9]/.test(html));
   } catch (e: any) { check(`${name} rendert (${e?.message})`, false); }
 }
+
+// Audit-Fixes
+const s5 = readFileSync("client/src/components/sections/Section5.tsx", "utf8");
+check("Section5 (DCF aus USD-Statements): DCF-Werte in statementCurrency, nur Kurs in Listing-Währung", !/formatCurrency\((?!data\.currentPrice)[^)]*data\.currency\)/.test(s5) && s5.includes("formatCurrency(data.currentPrice, 2, data.currency)"));
+const sum = readFileSync("client/src/components/sections/SummarySection.tsx", "utf8");
+check("Summary: Analyst PT Median über formatTarget", sum.includes('label="Analyst PT Median" value={formatTarget(data.analystPT.median, data.currency)}'));
+check("Monte Carlo: Histogramm-Achse ohne festes $", readFileSync("client/src/components/sections/MonteCarloSection.tsx", "utf8").includes("tickFormatter={(b: string) => String(b).replace(/^\\$/, currencySymbol(data.currency))}"));
 
 // (c) Buffett Max 375 px
 const bp = readFileSync("client/src/components/recession/BuffettRatioPanel.tsx", "utf8");

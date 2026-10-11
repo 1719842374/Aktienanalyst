@@ -6,7 +6,7 @@ import {
   worstCaseM1, worstCaseM2, worstCaseM3, calculateCatalystUpside, selectCatalystBase,
   gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult,
 } from "../../lib/calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, formatRatio, getCRVColor, statementCurrency } from "../../lib/formatters";
+import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, formatRatio, getCRVColor, formatTarget } from "../../lib/formatters";
 import { buildFazitSignal } from "../../lib/fazit-signal";
 import { buildBiasDecision, isNegativeCatalyst } from "../../../../shared/bias-fixes";
 import { useMemo } from "react";
@@ -232,7 +232,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             <SummaryRow label="FCF Margin" value={formatPercentNoSign(data.fcfMargin)} />
             <SummaryRow label="FCF Haircut" value={`${haircut}%`} note={haircut > 0 ? `Gov. exposure: ${formatPercentNoSign(data.governmentExposure)}` : "N/A"} />
             <SummaryRow label="Moat" value={data.moatRating} note={data.moatRating === "Wide" ? "Strong" : data.moatRating === "Narrow" ? "Moderate" : "Weak"} />
-            <SummaryRow label="Analyst PT Median" value={formatCurrency(data.analystPT.median, 2, data.currency)} note={`${ptUpside >= 0 ? "+" : ""}${formatNumber(ptUpside, 1)}% upside`} />
+            <SummaryRow label="Analyst PT Median" value={formatTarget(data.analystPT.median, data.currency)} note={`${ptUpside >= 0 ? "+" : ""}${formatNumber(ptUpside, 1)}% upside`} />
             <SummaryRow label="WACC (CAPM)" value={formatPercentNoSign(conservativeDCF.wacc)} note={`Re=${formatPercentNoSign(conservativeDCF.costOfEquity)}, β=${formatNumber(data.beta5Y, 2)}`} />
             <tr className="bg-primary/5">
               <td className="py-2 px-2 font-semibold">Conservative DCF (FCFF)</td>
