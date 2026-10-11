@@ -61,6 +61,13 @@ export interface GoldPricePoint {
    * WORK_TEIL7_SCORING.md §7.8.3 ("Gold links vs Real10Y rechts"). Optional,
    * da FRED nur Handelstage liefert und Wochenenden/Feiertage lücken können. */
   real10y?: number;
+  /** Future_10 §4/§7 Chart-Overlays (server/gold-chart-series.ts). Nur echte
+   * FRED-/FMP-Werte; fehlt die Quelle, bleibt das Feld weg (kein Fake). */
+  m2Yoy?: number;   // FRED M2SL, YoY in %
+  dxy?: number;     // FRED DTWEXBGS (Broad Dollar Index)
+  t10yie?: number;  // FRED T10YIE, %
+  walcl?: number;   // FRED WALCL, Billionen USD
+  volume?: number;  // FMP GCUSD, nur echte positive Prints
 }
 
 // Punkt 2 (HOCH-Ticket 05.08.2026): gold-realyield-model.ts an gold-routes.ts
