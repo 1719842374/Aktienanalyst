@@ -9,12 +9,16 @@
  * Same handler as before, now its own module like the other route files.
  */
 import type { Express } from "express";
+import { isEtfOrFund } from "../shared/conflict-matrix";
 
 export function registerPdfExportRoute(app: Express): void {
   app.post("/api/export-pdf", async (req, res) => {
     try {
       const analysisData = req.body;
       if (!analysisData?.ticker) return res.status(400).json({ error: "No analysis data provided" });
+      if (isEtfOrFund(analysisData)) {
+        return res.status(422).json({ error: "ETF/Index – nicht im Aktien-Dashboard, kein PDF-Export", errorCode: "ETF_NOT_SUPPORTED", ticker: String(analysisData.ticker) });
+      }
       console.log(`[PDF] Generating PDF for ${analysisData.ticker}...`);
       const { generateAnalysisHTML, renderHTMLtoPDF } = await import("./pdf-export");
       const html = await generateAnalysisHTML(analysisData);

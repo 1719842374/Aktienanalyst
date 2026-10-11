@@ -8,6 +8,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
 import { ExecSummaryCard } from "@/components/ExecSummaryCard";
+import { isEtfOrFund } from "@shared/conflict-matrix";
 import { Section1 } from "@/components/sections/Section1";
 import { Section2 } from "@/components/sections/Section2";
 import { FinancialStatements } from "@/components/sections/FinancialStatements";
@@ -364,8 +365,8 @@ export default function Dashboard() {
         {/* justify-end on an overflow container clips the start unreachably; w-max + ml-auto keeps it scrollable. */}
         <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide" data-testid="header-nav-strip">
           <div className="flex w-max ml-auto items-center gap-2 sm:gap-3">
-          {/* PDF Export */}
-          {data && (
+          {/* PDF Export — not for ETFs/funds (not part of the stock dashboard) */}
+          {data && !isEtfOrFund(data) && (
             <button
               onClick={async () => {
                 const { exportAnalysisPdf } = await import('../lib/exportPdf');
@@ -494,7 +495,7 @@ export default function Dashboard() {
               <button
                 key={s.id}
                 onClick={() => scrollToSection(s.id)}
-                disabled={!data}
+                disabled={!data || isEtfOrFund(data)}
                 className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-xs hover:bg-muted/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-left group"
                 data-testid={`nav-section-${s.id}`}
               >
@@ -538,6 +539,13 @@ export default function Dashboard() {
           ) : !data && analyzeMutation.isPending ? (
             // No previous data — show full loading screen
             <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTickerRef.current || ""} retryInfo={retryInfo} />
+          ) : data && isEtfOrFund(data) ? (
+            // ETF / Index / Fonds (FMP isEtf/isFund): no stock analysis here — no score, DCF, matrix, sections.
+            <div className="max-w-5xl mx-auto p-3 sm:p-4">
+              <div className="rounded-lg border border-border/60 bg-muted/20 p-4 text-sm break-words" data-testid="etf-not-supported">
+                <div className="font-semibold">{data.ticker}: ETF/Index – nicht im Aktien-Dashboard</div>
+              </div>
+            </div>
           ) : data ? (
             // data exists — show sections even while re-analyzing (optimistic: keep old content visible)
             <div className="relative max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
