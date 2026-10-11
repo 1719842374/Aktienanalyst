@@ -19,5 +19,6 @@ export function useDividendHistory(ticker: string | null | undefined, enabled = 
 /** JOB 20: Div.-Yield-Anzeige aus derselben Query + Funktion für Section 1 und Section 4. */
 export function useDividendKpi(data: Parameters<typeof dividendKpiDisplay>[0] & { ticker: string }) {
   const q = useDividendHistory(data.ticker);
-  return dividendKpiDisplay(data, q.data);
+  // JOB 22: pending → Platzhalter statt GJ-Zwischenwert (deterministisch, unabhängig vom Lade-Timing).
+  return dividendKpiDisplay(data, q.data, { pending: q.isPending && q.fetchStatus !== "idle" });
 }

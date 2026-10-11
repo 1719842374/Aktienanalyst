@@ -7,23 +7,36 @@ function safeNum(v: number, fallback = 0): number {
 }
 
 // === Currency Formatters ===
-export function formatCurrency(value: number, decimals: number = 2): string {
+/**
+ * JOB 22: Symbol aus der Listing-Währung der Analyse (data.currency). Ohne/unbekannte Währung bleibt es "$"
+ * (bisheriges Verhalten), unbekannte Codes erscheinen als "CHF " usw. statt eines falschen "$".
+ */
+// Minor Units (GBp = Pence, nur bei fehlender FX, siehe listingFxWarning) bleiben als Code sichtbar, nicht als "£".
+const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", GBP: "£", EUR: "€", JPY: "¥", GBp: "GBp ", GBX: "GBX ", ZAc: "ZAc ", ILA: "ILA " };
+export function currencySymbol(currency?: string | null): string {
+  if (!currency) return "$";
+  const c = currency.trim();
+  return CURRENCY_SYMBOLS[c] ?? `${c} `;
+}
+
+export function formatCurrency(value: number, decimals: number = 2, currency?: string | null): string {
   const v = safeNum(value);
-  return `$${v.toLocaleString("en-US", {
+  return `${currencySymbol(currency)}${v.toLocaleString("en-US", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   })}`;
 }
 
-export function formatLargeNumber(value: number): string {
+export function formatLargeNumber(value: number, currency?: string | null): string {
   const v = safeNum(value);
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "";
-  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
-  return `${sign}$${abs.toFixed(2)}`;
+  const s = currencySymbol(currency);
+  if (abs >= 1e12) return `${sign}${s}${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}${s}${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}${s}${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}${s}${(abs / 1e3).toFixed(1)}K`;
+  return `${sign}${s}${abs.toFixed(2)}`;
 }
 
 export function formatPercent(value: number, decimals: number = 2): string {

@@ -145,6 +145,17 @@ export function dividendsToMajor<E extends { amount: number }>(events: E[], list
 }
 
 /**
+ * JOB 22: Ticker-Suffixe der Börsen, die in Minor Units quoten (LSE .L in GBp, JSE .JO in ZAc, TASE .TA in ILA).
+ * Nach #244 steht data.currency dort schon auf der Major-Währung, daher Erkennung über den Ticker.
+ */
+const MINOR_UNIT_SUFFIXES = ["L", "JO", "TA"];
+export function isMinorUnitListingTicker(ticker: unknown): boolean {
+  if (typeof ticker !== "string") return false;
+  const m = /\.([A-Za-z]+)$/.exec(ticker.trim());
+  return !!m && MINOR_UNIT_SUFFIXES.includes(m[1].toUpperCase());
+}
+
+/**
  * UI note for an analysis whose currency is still a minor unit. After #244 a converted .L analysis says "GBP";
  * "GBp" in the response means the FX rate was missing and nothing was converted (partial). The flag reaches the
  * client through the existing `currency` field (analyze-route passes profile.currency through) — no route change.
