@@ -16,6 +16,7 @@ import {
 import type { StockAnalysis } from "../../../shared/schema";
 import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "@/lib/calculations";
 import { TickerSearch } from "@/components/TickerSearch";
+import { formatCurrency } from "@/lib/formatters";
 import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
@@ -384,7 +385,7 @@ export default function Dashboard() {
             <span className="font-mono tabular-nums font-bold text-primary shrink-0">{data.ticker}</span>
             <span className="text-muted-foreground truncate">{data.companyName}</span>
             <span className="text-muted-foreground shrink-0">•</span>
-            <span className="font-mono tabular-nums font-semibold shrink-0">${data.currentPrice.toFixed(2)}</span>
+            <span className="font-mono tabular-nums font-semibold shrink-0" data-testid="header-price">{formatCurrency(data.currentPrice, 2, data.currency)}</span>
           </div>
         )}
 

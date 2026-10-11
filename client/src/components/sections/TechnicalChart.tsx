@@ -17,6 +17,7 @@ import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useDividendHistory } from "@/lib/useDividendHistory";
 import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
+import { currencySymbol } from "@/lib/formatters";
 
 interface Props { data: StockAnalysis; }
 
@@ -316,6 +317,8 @@ export function TechnicalChart({ data }: Props) {
   });
 
   const cs = ti.currentStatus;
+  // JOB 22: Kurs-Symbol aus der Listing-Währung (SHEL.L → £), nicht fest "$".
+  const ccy = currencySymbol(data.currency);
 
   // ── Buy-signal score (0-4) ──────────────────────────────────────────────────
   const buyScore = [
@@ -402,8 +405,8 @@ export function TechnicalChart({ data }: Props) {
 
       {/* ── Status pills (4 Bedingungen) ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-        <StatusPill label="Kurs > MA200" value={cs.priceAboveMA200} detail={cs.ma200Value ? `MA200: $${cs.ma200Value.toFixed(2)}` : ""} />
-        <StatusPill label="MA50 > MA200"  value={cs.ma50AboveMA200}  detail={cs.ma50Value  ? `MA50: $${cs.ma50Value.toFixed(2)}`   : ""} />
+        <StatusPill label="Kurs > MA200" value={cs.priceAboveMA200} detail={cs.ma200Value ? `MA200: ${ccy}${cs.ma200Value.toFixed(2)}` : ""} />
+        <StatusPill label="MA50 > MA200"  value={cs.ma50AboveMA200}  detail={cs.ma50Value  ? `MA50: ${ccy}${cs.ma50Value.toFixed(2)}`   : ""} />
         <StatusPill label="MACD > 0"      value={cs.macdAboveZero}   detail={cs.macdValue  !== undefined ? `MACD: ${cs.macdValue.toFixed(4)}`    : ""} />
         <StatusPill label="MACD steigend" value={cs.macdRising}      detail={cs.signalValue!== undefined ? `Signal: ${cs.signalValue.toFixed(4)}` : ""} />
       </div>
@@ -627,7 +630,7 @@ export function TechnicalChart({ data }: Props) {
             {!measurement ? (
               <span className="text-muted-foreground">
                 {measurePoints.length===0 ? "Klicke auf den Chart um Punkt A zu setzen" : "Klicke auf den Chart um Punkt B zu setzen"}
-                {measurePoints.length===1 && <span className="ml-1.5 font-mono text-foreground">A: {formatDateFull(measurePoints[0].date)} — ${measurePoints[0].close.toFixed(2)}</span>}
+                {measurePoints.length===1 && <span className="ml-1.5 font-mono text-foreground">A: {formatDateFull(measurePoints[0].date)} — {ccy}{measurePoints[0].close.toFixed(2)}</span>}
               </span>
             ) : (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -635,7 +638,7 @@ export function TechnicalChart({ data }: Props) {
                 <span className={`font-bold font-mono text-sm ${measurement.isGain?"text-emerald-500":"text-red-500"}`}>
                   {measurement.isGain?"+":""}{measurement.diff.toFixed(2)} ({measurement.isGain?"+":""}{measurement.pct.toFixed(2)}%) {measurement.isGain?"↑":"↓"}
                 </span>
-                <span className="text-muted-foreground font-mono">${measurement.a.close.toFixed(2)} → ${measurement.b.close.toFixed(2)}</span>
+                <span className="text-muted-foreground font-mono">{ccy}{measurement.a.close.toFixed(2)} → {ccy}{measurement.b.close.toFixed(2)}</span>
               </div>
             )}
           </div>
@@ -719,6 +722,7 @@ export function TechnicalChart({ data }: Props) {
                 measurePoints={measurePoints}
                 measurement={measurement}
                 dividend={dividendOverlay}
+                ccy={ccy}
               />
             </div>
             {narrow && showVolume && (
@@ -754,6 +758,7 @@ export function TechnicalChart({ data }: Props) {
               showMacd={showMacd}
               showRsi={showRsi}
               count={visibleKursCount}
+              ccy={ccy}
               testId="chart-band-a"
               macdTestId="chart-macd"
               rsiTestId="chart-rsi"
@@ -781,6 +786,7 @@ export function TechnicalChart({ data }: Props) {
               showMacd={showMacd}
               showRsi={showRsi}
               count={visibleKursCount}
+              ccy={ccy}
               testId="chart-band-b"
               macdTestId="chart-macd-b"
               rsiTestId="chart-rsi-b"
@@ -803,6 +809,7 @@ export function TechnicalChart({ data }: Props) {
               showMacd={showMacd}
               showRsi={showRsi}
               count={visibleKursCount}
+              ccy={ccy}
               testId="chart-band-c"
               macdTestId="chart-macd-c"
               rsiTestId="chart-rsi-c"
@@ -876,7 +883,7 @@ export function TechnicalChart({ data }: Props) {
                       : s.reason.includes('Bearish')      ? 'text-red-500'
                       : s.reason.includes('Bullish')      ? 'text-emerald-500' : ''
                     }`}>{s.reason}</td>
-                    <td className="py-1 text-right font-mono tabular-nums">${s.price.toFixed(2)}</td>
+                    <td className="py-1 text-right font-mono tabular-nums">{ccy}{s.price.toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -953,7 +960,7 @@ function WindowDates({
 function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
-  onPlotClick, measurePoints, measurement, dividend,
+  onPlotClick, measurePoints, measurement, dividend, ccy = "$",
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -970,6 +977,8 @@ function PricePane({
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
   dividend?: DividendOverlaySeries | null;
+  /** JOB 22: Kurs-Symbol (Listing-Währung). */
+  ccy?: string;
 }) {
   const narrow = useIsNarrow();
   const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger);
@@ -986,7 +995,7 @@ function PricePane({
       >
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
         <XAxis dataKey="date" type="category" tickFormatter={tickFormatter} tick={tick} {...xInterval} axisLine={{ stroke: "var(--border)" }} padding={{ left: 0, right: 0 }} />
-        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => `$${v.toFixed(0)}`} width={52} axisLine={{ stroke: "var(--border)" }} {...(narrow ? { ticks: narrowPriceTicks(yMin, yMax, 5) } : {})} />
+        <YAxis yAxisId="price" domain={[yMin, yMax]} tick={tick} tickFormatter={(v: number) => `${ccy}${v.toFixed(0)}`} width={52} axisLine={{ stroke: "var(--border)" }} {...(narrow ? { ticks: narrowPriceTicks(yMin, yMax, 5) } : {})} />
         {/* Domain [0, 6.67]: höchster Volumen-Balken ≈ 15% der Bandhöhe, eigene Achse, nicht in der Preis-Y. */}
         <YAxis yAxisId="vol" hide domain={[0, 6.67]} orientation="right" />
         {dividend && (
@@ -1021,21 +1030,21 @@ function PricePane({
           return (
             <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px] min-w-[160px]">
               <div className="font-semibold mb-1">{formatDateFull(dp.date)}</div>
-              <div className="flex justify-between gap-3"><span style={{ color: closeStroke }}>{closeName}</span><span className="font-mono">${dp.close.toFixed(2)}</span></div>
+              <div className="flex justify-between gap-3"><span style={{ color: closeStroke }}>{closeName}</span><span className="font-mono">{ccy}{dp.close.toFixed(2)}</span></div>
               {showVolume && dp.volume > 0 && <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(dp.volume / 1e6).toFixed(2)}M</span></div>}
               {showBollinger && dp.bbUpper != null && (
                 <>
-                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Upper</span><span className="font-mono">${dp.bbUpper.toFixed(2)}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-violet-300">BB Mid</span><span className="font-mono">${dp.bbMid?.toFixed(2)}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Lower</span><span className="font-mono">${dp.bbLower?.toFixed(2)}</span></div>
-                  {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">${bbWidth}</span></div>}
+                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Upper</span><span className="font-mono">{ccy}{dp.bbUpper.toFixed(2)}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-violet-300">BB Mid</span><span className="font-mono">{ccy}{dp.bbMid?.toFixed(2)}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-violet-400">BB Lower</span><span className="font-mono">{ccy}{dp.bbLower?.toFixed(2)}</span></div>
+                  {bbWidth && <div className="flex justify-between gap-3"><span className="text-muted-foreground">BB Breite</span><span className="font-mono">{ccy}{bbWidth}</span></div>}
                 </>
               )}
               {dividend && <DividendTooltipRows p={dv} formatDateFull={formatDateFull} />}
               {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
-                  <span className="font-mono">${Number(p.value).toFixed(2)}</span>
+                  <span className="font-mono">{ccy}{Number(p.value).toFixed(2)}</span>
                 </div>
               ))}
               {sigs.map((s, i) => (
@@ -1206,7 +1215,7 @@ function RsiPane({
 function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
-  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend,
+  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, ccy,
 }: {
   label: string;
   labelClassName: string;
@@ -1231,6 +1240,7 @@ function BandStack({
   measurePoints?: { date: string; close: number }[];
   measurement?: MeasureHit | null;
   dividend?: DividendOverlaySeries | null;
+  ccy?: string;
 }) {
   const narrow = useIsNarrow();
   const empty = series.points.length === 0;
@@ -1262,6 +1272,7 @@ function BandStack({
               measurePoints={measurePoints}
               measurement={measurement}
               dividend={dividend}
+              ccy={ccy}
             />
           )}
         </div>

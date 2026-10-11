@@ -3,7 +3,7 @@ import { SectionCard } from "../SectionCard";
 import { addTickerToManualPortfolio, addTickerToWatchlist } from "@/lib/portfolio/portfolioBridge";
 import { useLocation } from "wouter";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
+import { currencySymbol, formatCurrency, formatLargeNumber, formatPercentNoSign, formatNumber } from "../../lib/formatters";
 import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus } from "lucide-react";
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 import { useDividendKpi } from "@/lib/useDividendHistory";
@@ -39,6 +39,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
   // TTM from /api/dividends on the chart's last bar (same function + smoothing as the overlay's last point).
   // JOB 20: shared with Section 4 (Financial Statements) via useDividendKpi, so both show the same value.
   const divKpi = useDividendKpi(data);
+  // JOB 22: Symbol aus der Listing-Währung (SHEL.L → £). Statement-Werte nur dann in USD, wenn der Server sie nach USD umgerechnet hat.
+  const priceCcy = data.currency;
+  const stmtCcy = data.currencyInfo?.converted ? "USD" : data.currency;
   const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
 
   function fmtAge(mins: number): string {
@@ -160,8 +163,8 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
       </div>
 
       <div className={`grid grid-cols-2 sm:grid-cols-3 ${divKpi ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-3`}>
-        <KPI label="Price" value={formatCurrency(data.currentPrice)} sub={new Date(data.priceTimestamp).toLocaleString()} />
-        <KPI label="Market Cap" value={formatLargeNumber(data.marketCap)} />
+        <KPI label="Price" value={formatCurrency(data.currentPrice, 2, priceCcy)} sub={new Date(data.priceTimestamp).toLocaleString()} />
+        <KPI label="Market Cap" value={formatLargeNumber(data.marketCap, priceCcy)} />
         <KPI label="Beta (5Y)" value={formatNumber(data.beta5Y)} />
         <KPI label="P/E" value={formatNumber(data.peRatio, 1)} sub={`Fwd: ${formatNumber(data.forwardPE, 1)}`} />
         <KPI label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
@@ -198,9 +201,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
-            <Row label="EPS TTM" value={`$${formatNumber(data.epsTTM)}`} />
-            <Row label="EPS adj. FY" value={`$${formatNumber(data.epsAdjFY)}`} />
-            <Row label="EPS Consensus Next FY" value={`$${formatNumber(data.epsConsensusNextFY)}`} />
+            <Row label="EPS TTM" value={`${currencySymbol(stmtCcy)}${formatNumber(data.epsTTM)}`} />
+            <Row label="EPS adj. FY" value={`${currencySymbol(stmtCcy)}${formatNumber(data.epsAdjFY)}`} />
+            <Row label="EPS Consensus Next FY" value={`${currencySymbol(stmtCcy)}${formatNumber(data.epsConsensusNextFY)}`} />
             <Row label="EPS-CAGR 5Y" value={data.epsCagrFromIncome === false ? "n/a" : formatPercentNoSign(data.epsGrowth5Y)} />
           </tbody>
         </table>
@@ -228,9 +231,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <tbody className="divide-y divide-border/50">
-              <Row label="Median PT" value={formatCurrency(data.analystPT.median)} />
-              <Row label="High PT" value={formatCurrency(data.analystPT.high)} />
-              <Row label="Low PT" value={formatCurrency(data.analystPT.low)} />
+              <Row label="Median PT" value={formatCurrency(data.analystPT.median, 2, priceCcy)} />
+              <Row label="High PT" value={formatCurrency(data.analystPT.high, 2, priceCcy)} />
+              <Row label="Low PT" value={formatCurrency(data.analystPT.low, 2, priceCcy)} />
               <Row label="PT Upside" value={`${ptUpside >= 0 ? "+" : ""}${ptUpside.toFixed(1)}%`} valueClass={ptUpside >= 0 ? "text-emerald-500" : "text-red-500"} />
               <Row label="# Analysts" value={data.analystPT.count > 0 ? data.analystPT.count.toString() : "n/a"} />
             </tbody>
@@ -261,7 +264,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
                 </td>
               </tr>
               <Row label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
-              <Row label="FCF TTM" value={data.fcfAvailable === false ? "n/a" : formatLargeNumber(data.fcfTTM)} />
+              <Row label="FCF TTM" value={data.fcfAvailable === false ? "n/a" : formatLargeNumber(data.fcfTTM, stmtCcy)} />
               <tr>
                 <td className="py-1.5 px-2 text-muted-foreground">FCF Margin</td>
                 <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium text-foreground">
