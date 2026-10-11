@@ -1279,12 +1279,28 @@ export function googleReading(
   };
 }
 
-export function vixReading(vix: number): IndicatorResult {
+const VIX_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=10d&interval=1d";
+
+/**
+ * VIX level for the score. FRED VIXCLS stays first. Yahoo ^VIX is read only when the
+ * FRED print is not finite (Future_2 / Offen_FUTURE_SOLL_IST PR 5). Both empty → NaN, slot stays closed.
+ */
+export function resolveVixLevel(
+  fredValue: number,
+  yahooPayload: () => unknown,
+): { value: number; source: string } {
+  if (Number.isFinite(fredValue)) return { value: fredValue, source: "FRED VIXCLS" };
+  const close = latestYahooChartClose(yahooPayload());
+  if (close) return { value: close.value, source: `Yahoo ^VIX ${close.date} (Fallback, FRED VIXCLS leer)` };
+  return { value: NaN, source: "FRED VIXCLS" };
+}
+
+export function vixReading(vix: number, source = "FRED VIXCLS"): IndicatorResult {
   const base = {
     name: "VIX",
     group: "correction" as const,
     subgroup: "sentiment",
-    source: "FRED VIXCLS",
+    source,
     description: "CBOE Volatility Index (Angstbarometer)",
   };
   if (!Number.isFinite(vix)) return closedIndicator(base);
@@ -1405,7 +1421,11 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   const usSahm = scoreSahm();
   const regionalPromise = fetchRegionalPrints().catch(() => null);
 
-  const vixValue = getLatestFredValue("VIXCLS");
+  const vix = resolveVixLevel(
+    getLatestFredValue("VIXCLS"),
+    () => readJson(fetchUrl(VIX_YAHOO_CHART, 20000, { "User-Agent": "Mozilla/5.0" })),
+  );
+  const vixValue = vix.value;
   const indicators: IndicatorResult[] = await Promise.all([
     Promise.resolve(usSahm.indicator),
     scoreYieldCurve(),
@@ -1418,7 +1438,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     scoreCAPE(),
     scoreMarginDebt(),
     scoreGoogleTrends(),
-    vixReading(vixValue),
+    vixReading(vixValue, vix.source),
     scoreCrowdLeg(vixValue),
     scoreWei(),
   ]);
