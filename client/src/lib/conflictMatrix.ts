@@ -107,3 +107,26 @@ export function buildConflictMatrix(i: ConflictInputs): ConflictMatrix {
     : "Kein klares Signal.";
   return { cells, positives, negatives, divergent, summary };
 }
+
+/** Loose view of the analysis: old cache entries can lack scoring, gateInputs or technicalIndicators. */
+export interface ConflictSource {
+  scoring?: { qualityScore?: number | null; gateInputs?: { marginDeltaYoYPp?: number | null; relativeGrowthDeltaYoYPp?: number | null } | null } | null;
+  technicalIndicators?: { currentStatus?: ConflictInputs["technical"] } | null;
+}
+
+/** One place that reads the analysis, with ?. along every chain. Shared by UI and PDF export. */
+export function conflictInputsFromAnalysis(
+  data: ConflictSource | null | undefined,
+  reverseDcf: { rating?: string | null; impliedGrowth?: number | null } | null | undefined,
+  catalystUpsidePct: number | null | undefined,
+): ConflictInputs {
+  return {
+    qualityScore: data?.scoring?.qualityScore,
+    marginDeltaYoYPp: data?.scoring?.gateInputs?.marginDeltaYoYPp,
+    relativeGrowthDeltaYoYPp: data?.scoring?.gateInputs?.relativeGrowthDeltaYoYPp,
+    reverseDcfRating: reverseDcf?.rating,
+    impliedGrowth: reverseDcf?.impliedGrowth,
+    technical: data?.technicalIndicators?.currentStatus,
+    catalystUpsidePct,
+  };
+}

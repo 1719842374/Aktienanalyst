@@ -1,7 +1,7 @@
 /** Future_Work §8 Konfliktmatrix — Run: npx tsx script/test-conflict-matrix.ts */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildConflictMatrix, reverseDcfSignal, technicalSignal, trendSignal, qualitySignal, catalystSignal } from "../client/src/lib/conflictMatrix";
+import { conflictInputsFromAnalysis, buildConflictMatrix, reverseDcfSignal, technicalSignal, trendSignal, qualitySignal, catalystSignal } from "../client/src/lib/conflictMatrix";
 
 assert.equal(qualitySignal(72), "positiv"); assert.equal(qualitySignal(55), "neutral"); assert.equal(qualitySignal(42), "negativ"); assert.equal(qualitySignal(undefined), "n/a");
 assert.equal(trendSignal(1, 2), "positiv"); assert.equal(trendSignal(-1, -2), "negativ"); assert.equal(trendSignal(1, -2), "neutral"); assert.equal(trendSignal(null, -0.5), "negativ"); assert.equal(trendSignal(null, undefined), "n/a");
@@ -26,7 +26,18 @@ assert.ok(empty.cells.every(c => c.signal === "n/a" && c.value === "n/a")); asse
 const aligned = buildConflictMatrix({ qualityScore: 80, marginDeltaYoYPp: 1, relativeGrowthDeltaYoYPp: 2, reverseDcfRating: "realistic", impliedGrowth: 3, technical: { priceAboveMA200: true, ma50AboveMA200: true, macdAboveZero: true, macdRising: true }, catalystUpsidePct: 15 });
 assert.equal(aligned.summary, "Gleichgerichtet positiv (5/5)."); assert.equal(aligned.divergent, false);
 
+// Missing gateInputs / scoring / technicalIndicators → no crash, n/a
+const noGate = conflictInputsFromAnalysis({ scoring: { qualityScore: 70 } }, { rating: "sportlich", impliedGrowth: 8 }, 4);
+assert.equal(noGate.marginDeltaYoYPp, undefined); assert.equal(noGate.relativeGrowthDeltaYoYPp, undefined);
+const mg = buildConflictMatrix(noGate);
+assert.equal(mg.cells.find(c => c.id === "trend")!.signal, "n/a"); assert.equal(mg.cells.find(c => c.id === "quality")!.signal, "positiv");
+assert.equal(mg.cells.find(c => c.id === "technical")!.signal, "n/a");
+assert.doesNotThrow(() => buildConflictMatrix(conflictInputsFromAnalysis({ scoring: { gateInputs: null } }, null, null)));
+assert.doesNotThrow(() => buildConflictMatrix(conflictInputsFromAnalysis(undefined, undefined, undefined)));
+
 const ui = readFileSync("client/src/components/sections/SummarySection.tsx", "utf8");
 assert.ok(ui.indexOf("<ConflictMatrixPanel") < ui.indexOf("=== FAZIT"), "matrix sits above the Fazit");
+assert.match(ui, /conflictInputsFromAnalysis\(data, reverseDCF, totalUpside\)/);
+assert.doesNotMatch(ui, /scoring\?\.gateInputs\./, "no unguarded gateInputs chain");
 assert.match(ui, /buildFazitSignal\(\{/, "Fazit rating path untouched");
 console.log("test-conflict-matrix: OK");

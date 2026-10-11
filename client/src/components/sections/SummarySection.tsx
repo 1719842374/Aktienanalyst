@@ -10,7 +10,7 @@ import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, f
 import { buildFazitSignal } from "../../lib/fazit-signal";
 import { buildBiasDecision, isNegativeCatalyst } from "../../../../shared/bias-fixes";
 import { useMemo } from "react";
-import { buildConflictMatrix } from "../../lib/conflictMatrix";
+import { buildConflictMatrix, conflictInputsFromAnalysis } from "../../lib/conflictMatrix";
 import { ConflictMatrixPanel } from "./ConflictMatrixPanel";
 
 interface Props { data: StockAnalysis; sharedMonteCarlo?: GBMMonteCarloResult | null }
@@ -382,15 +382,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
       </div>
 
       {/* Konfliktmatrix (Future_Work §8) — Anzeige, ändert das Fazit-Rating nicht */}
-      <ConflictMatrixPanel matrix={buildConflictMatrix({
-        qualityScore: data.scoring?.qualityScore,
-        marginDeltaYoYPp: data.scoring?.gateInputs.marginDeltaYoYPp,
-        relativeGrowthDeltaYoYPp: data.scoring?.gateInputs.relativeGrowthDeltaYoYPp,
-        reverseDcfRating: reverseDCF.rating,
-        impliedGrowth: reverseDCF.impliedGrowth,
-        technical: data.technicalIndicators?.currentStatus,
-        catalystUpsidePct: totalUpside,
-      })} />
+      <ConflictMatrixPanel matrix={buildConflictMatrix(conflictInputsFromAnalysis(data, reverseDCF, totalUpside))} />
 
       {/* === FAZIT (Big Picture — all 13 sections integrated) === */}
       {(() => {
