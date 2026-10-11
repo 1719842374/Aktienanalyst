@@ -54,7 +54,7 @@ type MAKey = typeof MA_LINES[number]["key"];
 type MacroKey = typeof MACRO[number]["key"];
 type TimeRange = GoldTimeRange;
 
-interface GoldChartHistory { source: string; points: GoldPricePoint[]; incomplete?: boolean; incompleteReason?: string | null }
+interface GoldChartHistory { source: string; points: GoldPricePoint[]; incomplete?: boolean; incompleteReason?: string | null; range?: "10Y" | "Max"; warmupPoints?: number }
 
 const fmtMacro = (key: MacroKey, v: number) =>
   key === "walcl" ? `$${v.toFixed(2)}T` : key === "dxy" ? v.toFixed(1) : `${v.toFixed(2)}%`;
@@ -76,10 +76,12 @@ export function GoldPriceChart({ data }: Props) {
   // 10Y/Max: lange Historie lazy laden (nur Chart-Daten, kein Score). Indikatoren laufen auf der
   // vollen Reihe, danach Fenster + Ausduennung. Pills, Cross-Banner und Rel. RSI bleiben auf `tech`.
   const longRange = needsLongHistory(timeRange);
+  // Je Fenster eigene Antwort: 10Y = Fenster + 300 Punkte Vorlauf (MA/EMA/MACD eingeschwungen), Max = volle Reihe.
+  const historyRange = timeRange === "10Y" ? "10Y" : "Max";
   const historyQuery = useQuery<GoldChartHistory>({
-    queryKey: ["/api/gold-chart-history"],
+    queryKey: ["/api/gold-chart-history", historyRange],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/gold-chart-history");
+      const res = await apiRequest("GET", `/api/gold-chart-history?range=${historyRange}`);
       if (!res.ok) throw new Error(`Gold-Historie ${res.status}`);
       return res.json();
     },

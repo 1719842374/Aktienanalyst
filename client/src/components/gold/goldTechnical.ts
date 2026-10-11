@@ -260,7 +260,11 @@ export function macroRangeState(all: Array<Partial<Record<GoldMacroKey, number |
   return all.some(d => d[key] != null) ? "na" : "absent";
 }
 
-/** Ehrlicher Hinweis, wenn eine Reihe spaeter beginnt als das Fenster oder die Historie kuerzer ist als 10Y. */
+/**
+ * Ehrlicher Hinweis, wenn eine Reihe spaeter beginnt als das Fenster oder die Historie kuerzer ist als 10Y.
+ * Max nennt fuer JEDE vorhandene Reihe das Startjahr — auch wenn sie mit dem Gold-Start beginnt (M2 YoY
+ * fehlte sonst als einzige in der Zeile und wirkte wie verloren).
+ */
 export function goldRangeNote(
   range: GoldTimeRange,
   inRange: Array<{ date: string } & Partial<Record<GoldMacroKey, number | null>>>,
@@ -279,7 +283,7 @@ export function goldRangeNote(
   for (const key of Object.keys(labels) as GoldMacroKey[]) {
     const hit = inRange.find(d => d[key] != null);
     if (!hit) late.push(`${labels[key]} n/a`);
-    else if (Date.parse(hit.date) - Date.parse(first) > 60 * 864e5) late.push(`${labels[key]} ab ${hit.date.slice(0, 4)}`);
+    else if (range === "Max" || Date.parse(hit.date) - Date.parse(first) > 60 * 864e5) late.push(`${labels[key]} ab ${hit.date.slice(0, 4)}`);
   }
   return late.length ? `${head} · ${late.join(" · ")}` : head;
 }
