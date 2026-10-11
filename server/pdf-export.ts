@@ -19,6 +19,10 @@ function fB(v: number | null | undefined): string {
 }
 function pct(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(d)}%` : "—"; }
 function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+/** JOB 12: sichtbares n/a statt einer Sektion, die nur aus der Ueberschrift besteht. */
+export function sectionNa(section: number, what: string): string {
+  return `<div class="para" data-testid="pdf-s${section}-na" style="color:#7a8296">n/a — ${esc(what)}</div>`;
+}
 
 // ===== DCF calculator =====
 function dcfCalc(data: any, wacc: number, gr: number): number {
@@ -285,7 +289,7 @@ export async function generateAnalysisHTML(rawData: any): Promise<string> {
   .page { page-break-after: always; }
   h1 { font-size: 18px; color: #50a0f0; margin-bottom: 2px; }
   .subtitle { font-size: 9px; color: #646e82; margin-bottom: 10px; }
-  .sec-header { background: #141e32; padding: 4px 8px; margin: 10px 0 6px; border-left: 3px solid #50a0f0; }
+  .sec-header { background: #141e32; padding: 4px 8px; margin: 10px 0 6px; border-left: 3px solid #50a0f0; break-after: avoid; page-break-after: avoid; }
   .sec-header span { font-size: 10px; font-weight: 700; color: #50a0f0; }
   .sub { font-size: 9px; font-weight: 700; color: #6490be; margin: 6px 0 3px; }
   .row { display: flex; justify-content: space-between; padding: 1.5px 0; border-bottom: 1px solid #1a2540; }
@@ -370,9 +374,10 @@ ${data.newsItems.slice(0,10).map((n: any, i: number) => `<tr><td>${i+1}</td><td>
 
 <!-- S3: ZYKLUSANALYSE -->
 <div class="sec-header"><span>3 &nbsp; ZYKLUS- & STRUKTURANALYSE</span></div>
-<div class="row"><span class="row-label">Zyklusklassifikation</span><span class="row-val">${data.cycleClassification || '—'}</span></div>
-<div class="row"><span class="row-label">Politischer Zyklus</span><span class="row-val">${data.politicalCycle || '—'}</span></div>
-${data.structuralTrends?.length ? `<div class="sub">Strukturelle Trends</div>${data.structuralTrends.map((t: any) => `<div class="para">· ${typeof t === 'string' ? esc(t) : esc(t.name || '')}</div>`).join('')}` : ''}
+${data.cycleClassification || data.politicalCycle || data.structuralTrends?.length ? `
+<div class="row"><span class="row-label">Zyklusklassifikation</span><span class="row-val">${data.cycleClassification ? esc(String(data.cycleClassification)) : 'n/a'}</span></div>
+<div class="row"><span class="row-label">Politischer Zyklus</span><span class="row-val">${data.politicalCycle ? esc(String(data.politicalCycle)) : 'n/a'}</span></div>
+${data.structuralTrends?.length ? `<div class="sub">Strukturelle Trends</div>${data.structuralTrends.map((t: any) => `<div class="para">· ${typeof t === 'string' ? esc(t) : esc(t.name || '')}</div>`).join('')}` : ''}` : sectionNa(3, 'keine Zyklus-/Strukturdaten in der Analyse (cycleClassification, politicalCycle, structuralTrends fehlen)')}
 
 <!-- S4: BEWERTUNG -->
 <div class="sec-header"><span>4 &nbsp; BEWERTUNGSKENNZAHLEN</span></div>
@@ -425,7 +430,7 @@ ${data.risks?.length ? `<table>
 <tr><th>Risiko</th><th>Kategorie</th><th>EW%</th><th>Impact%</th><th>Exp. Damage</th></tr>
 ${data.risks.map((r: any) => `<tr><td>${esc(r.name)}</td><td>${r.category}</td><td>${r.ew||r.probability}%</td><td>${r.impact}%</td><td>${f(r.expectedDamage,2)}%</td></tr>`).join('')}
 </table>
-<div class="row"><span class="row-label">Total Expected Damage</span><span class="row-val neg">${f(fazit.totalExpDmg,2)}%</span></div>` : ''}
+<div class="row"><span class="row-label">Total Expected Damage</span><span class="row-val neg">${f(fazit.totalExpDmg,2)}%</span></div>` : sectionNa(8, 'keine Risiken in der Analyse')}
 
 <!-- S9: RSL -->
 <div class="sec-header"><span>9 &nbsp; RSL-MOMENTUM</span></div>
@@ -528,6 +533,7 @@ ${(() => {
 ${data.moatAssessment?.moatSources?.length ? `<div class="sub">Moat-Quellen</div>${data.moatAssessment.moatSources.slice(0,5).map((s: string) => `<div class="para">· ${esc(s)}</div>`).join('')}` : ''}
 ${data.moatAssessment?.porterForces?.length ? `<div class="sub">Porter's Five Forces</div><table><tr><th>Force</th><th>Bewertung</th><th>Score</th></tr>
 ${data.moatAssessment.porterForces.map((pf: any) => `<tr><td>${esc(pf.name||'')}</td><td>${pf.rating||'—'}</td><td>${pf.score||'—'}/5</td></tr>`).join('')}</table>` : ''}
+${!data.moatRating && !data.moatAssessment?.moatSources?.length && !data.moatAssessment?.porterForces?.length ? sectionNa(11, 'keine Moat-/Porter-Daten') : ''}
 
 <!-- S12: PESTEL -->
 <div class="sec-header"><span>12 &nbsp; PESTEL-ANALYSE</span></div>
@@ -541,7 +547,7 @@ ${data.pestelAnalysis.factors.slice(0,6).map((cat: any) => {
   const label = (cat.categoryDE || cat.category || '').replace(/[^\x20-\x7E\u00C0-\u024F\u00DF]/g, '').trim();
   return `<div style="margin:3px 0"><strong style="color:#6490be">[${label.charAt(0)}] ${label}</strong></div>
 ${(cat.factors||[]).slice(0,3).map((ff: any) => `<div class="para">${esc(ff.name||'')}: ${esc(ff.description||ff.stockCorrelationNote||'')} [Impact: ${ff.impact}, Severity: ${ff.severity}]</div>`).join('')}`;
-}).join('')}` : ''}` : ''}
+}).join('')}` : ''}` : sectionNa(12, 'keine PESTEL-Analyse')}
 
 <!-- S13: MAKRO-KORRELATIONEN -->
 <div class="sec-header"><span>13 &nbsp; MAKRO-KORRELATIONEN</span></div>
@@ -549,7 +555,7 @@ ${data.macroCorrelations ? `
 <div class="row"><span class="row-label">Makro-Sensitivität</span><span class="row-val">${data.macroCorrelations.overallMacroSensitivity||'—'}</span></div>
 <div class="para">${esc(data.macroCorrelations.keyInsight||'')}</div>
 ${data.macroCorrelations.correlations?.length ? `<table><tr><th>Indikator</th><th>Korrelation</th><th>Stärke</th></tr>
-${data.macroCorrelations.correlations.slice(0,8).map((c: any) => `<tr><td>${esc(c.indicator||c.name||'')}</td><td>${c.correlation||c.direction||''}</td><td>${c.strength||''}</td></tr>`).join('')}</table>` : ''}` : ''}
+${data.macroCorrelations.correlations.slice(0,8).map((c: any) => `<tr><td>${esc(c.indicator||c.name||'')}</td><td>${c.correlation||c.direction||''}</td><td>${c.strength||''}</td></tr>`).join('')}</table>` : ''}` : sectionNa(13, 'keine Makro-Korrelationen')}
 
 <!-- S14: REVERSE DCF -->
 <div class="sec-header"><span>14 &nbsp; REVERSE DCF</span></div>
@@ -565,7 +571,7 @@ ${rdcf && rdcf.rating !== 'n/a' ? `
 ${data.risks?.length ? `<table>
 <tr><th>ID</th><th>Risiko</th><th>EW%</th><th>Impact%</th><th>Exp. Damage</th></tr>
 ${data.risks.map((r: any, i: number) => `<tr><td>D${i+1}</td><td>${esc(r.name)}</td><td>${r.ew||r.probability}%</td><td>-${r.impact}%</td><td class="neg">${f(r.expectedDamage,2)}%</td></tr>`).join('')}
-</table>` : ''}
+</table>` : sectionNa(15, 'keine Downside-Katalysatoren in der Analyse')}
 
 <!-- S16: MONTE CARLO -->
 <div class="sec-header"><span>16 &nbsp; MONTE CARLO SIMULATION (GBM)</span></div>
