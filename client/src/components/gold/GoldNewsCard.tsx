@@ -83,6 +83,11 @@ export function GoldNewsCard({ data, now }: { data: Pick<GoldAnalysis, "goldNews
           {news ? ` · Cache ${news.cacheTtlHours} h` : ""}
           {items.length > 0 ? " · Sentiment je Meldung: Keyword (Anzeige)" : ""}
         </div>
+        {news?.lastGood && (
+          <div className="text-[10px] text-amber-400 mt-1" data-testid="gold-news-last-good">
+            Letzter guter Stand vom {stamp(news.updatedAt)} · aktueller Abruf: {news.lastGoodReason || "n/a"}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -239,7 +239,7 @@ export function GoldPriceChart({ data }: Props) {
 
   if (fullChart.length === 0) {
     return (
-      <SectionCard number={2} title="Gold-Preis-Chart · Technische Analyse">
+      <SectionCard number={2} title="Gold-Preis-Chart" subtitle="Technische Analyse">
         <div className="text-xs text-muted-foreground text-center py-8">Keine Preisdaten verfügbar</div>
       </SectionCard>
     );
@@ -248,7 +248,7 @@ export function GoldPriceChart({ data }: Props) {
   const usd = (v: number | null) => (v != null ? `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "");
 
   return (
-    <SectionCard number={2} title="Gold-Preis-Chart · Technische Analyse">
+    <SectionCard number={2} title="Gold-Preis-Chart" subtitle="Technische Analyse">
       <div data-testid="gold-ta">
       {/* Status bar — 4 pills (BTC-Komponente) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4" data-testid="gold-ta-pills">

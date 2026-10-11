@@ -5,7 +5,7 @@ import { dividendKpiDisplay } from "./dividendKpi";
 /** One query for /api/dividends/:ticker, shared by the TA overlay (Section 12) and the Div.-Yield KPI (Section 1 + Section 4). */
 export function useDividendHistory(ticker: string | null | undefined, enabled = true) {
   return useQuery<DividendHistoryResponse>({
-    queryKey: ["dividends", ticker],
+    queryKey: ["dividends", "v2", ticker],
     enabled: enabled && !!ticker,
     staleTime: 12 * 60 * 60 * 1000,
     queryFn: async () => {
