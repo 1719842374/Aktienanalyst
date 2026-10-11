@@ -58,7 +58,7 @@ check("Route nutzt den Cache mit ?fresh=1-Bypass", handler.includes('analysisCac
 check("Route liefert die Analyse unverändert aus", handler.includes("res.json(value.analysis)"));
 check("Builder gibt das Analyse-Objekt zurück (vorher res.json(analysis))", handler.includes("return { analysis, timing: timing.join(\" \") };") && !handler.includes("res.json(analysis)"));
 check("Fehler werden geworfen, nicht gecacht", /console\.error\("\[GOLD\] Error:", error\?\.message\);\s*throw error;/.test(handler));
-check("Score-Eingänge unverändert (newsFlag, gis)", handler.includes("newsFlag: goldNews?.flag ?? null") && handler.includes("gis: gisRounded,"));
+check("Score-Eingänge unverändert (newsFlag, gis)", handler.includes("newsFlag: goldNewsScoreFlag(goldNews, Date.now())") && handler.includes("gis: gisRounded,"));
 check("Timing-Header + Cache-Header", handler.includes('"X-Gold-Cache"') && handler.includes('"X-Gold-Timing"'));
 
 // JOB 16: Teilausfall -> 2 min statt 10 min
