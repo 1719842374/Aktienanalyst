@@ -14,6 +14,7 @@ import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield
 import { scoreGoldAdaptive, volumeReadingsAreReal } from "./gold-adaptive-score";
 import { getGoldNewsImpact } from "./gold-news";
 import { yahooFetch } from "./history-fallback";
+import { enrichGoldChartSeries } from "./gold-chart-series";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -364,6 +365,25 @@ export function registerGoldRoutes(server: Server, app: Express) {
           const r = real10yByDate.get(p.date);
           return r != null ? { ...p, real10y: r } : p;
         });
+      }
+
+      // Future_10 §4/§7: Makro-Overlays (M2 YoY, DXY, T10YIE, WALCL) und Volumen
+      // fuer den Gold-Chart im BTC-Design. Nur echte FRED-/FMP-Werte, keine
+      // Defaults. M2SL braucht 13 Monate Vorlauf fuer die erste YoY-Rate.
+      try {
+        const m2Start = new Date(new Date(startDate).getTime() - 400 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+        historicalPrices = enrichGoldChartSeries(historicalPrices, {
+          dxy: fetchFREDSeriesHistory("DTWEXBGS", startDate),
+          t10yie: fetchFREDSeriesHistory("T10YIE", startDate),
+          walcl: fetchFREDSeriesHistory("WALCL", startDate),
+          m2: fetchFREDSeriesHistory("M2SL", m2Start),
+          volumes: ohlcvRows.map(row => ({
+            date: String(row.date || "").slice(0, 10),
+            volume: parseFloat(String(row.volume ?? "")),
+          })),
+        });
+      } catch (seriesErr: any) {
+        console.warn(`[GOLD] Chart-Overlays fehlgeschlagen: ${seriesErr?.message?.substring(0, 150)}`);
       }
 
       // Punkt 2 (HOCH-Ticket 05.08.2026): gold-realyield-model.ts produktiv

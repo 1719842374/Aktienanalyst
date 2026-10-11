@@ -378,7 +378,8 @@ console.log("\nRoute lässt GIS, OLS, Multi-Faktor und Monte Carlo stehen");
       && !dash.includes("GoldAdaptiveSection"),
   );
   const point = schema.match(/export interface GoldPricePoint \{[\s\S]*?\n\}/)?.[0] ?? "";
-  check("GoldPricePoint hat weiter kein volume", point.length > 0 && !/volume/.test(point));
+  // #209: volume ist optional und wird nur bei echten positiven Prints gesetzt (gold-chart-series.ts).
+  check("GoldPricePoint.volume nur optional, keine 0-Fuellung", point.length > 0 && (!/volume/.test(point) || /volume\?:/.test(point)) && readFileSync(new URL("../server/gold-chart-series.ts", import.meta.url), "utf8").includes("v.volume > 0"));
   check("Chart-Datei ist nicht Teil dieser Schicht", !routes.includes("GoldPriceChart"));
 }
 
