@@ -1,0 +1,91 @@
+/**
+ * Minor-unit listings (LSE ".L" quotes in pence "GBp"/"GBX", JSE "ZAc", TASE "ILA").
+ *
+ * FMP quote/profile price, 52W range, moving averages and OHLCV come in the MINOR unit
+ * (SHEL.L 3793.5 = £37.935), while profile.mktCap is already in the MAJOR unit (£209.9 bn)
+ * and the financial statements / estimates arrive in the filer's reporting currency, which
+ * getFmpFallbackData converts to USD. Mixed, that gave sharesOutstanding = mktCap / pence
+ * (100× too few shares), forward P/E = pence / EPS (SHEL 627, AZN 1170, ULVR 1331),
+ * dividend yield = DPS / pence (0.04 %) and EV = GBP market cap + USD net debt.
+ *
+ * Normalisation (one place, before analyze-route reads anything): market side ÷ factor into
+ * the major unit, profile.currency → major, statements/estimates USD → major via the same
+ * live FX rate the USD conversion uses. Afterwards every amount is in GBP (ZAR, ILS).
+ */
+export const MINOR_UNITS: Record<string, { major: string; factor: number }> = {
+  GBp: { major: "GBP", factor: 100 },
+  GBX: { major: "GBP", factor: 100 },
+  ZAc: { major: "ZAR", factor: 100 },
+  ZAC: { major: "ZAR", factor: 100 },
+  ILA: { major: "ILS", factor: 100 },
+};
+
+export function minorUnitInfo(currency: unknown): { minor: string; major: string; factor: number } | null {
+  if (typeof currency !== "string") return null;
+  const hit = MINOR_UNITS[currency.trim()];
+  return hit ? { minor: currency.trim(), ...hit } : null;
+}
+
+const QUOTE_PRICE_FIELDS = ["price", "open", "dayHigh", "dayLow", "yearHigh", "yearLow", "previousClose", "change", "priceAvg50", "priceAvg200"];
+const PROFILE_PRICE_FIELDS = ["price", "changes", "change"];
+const BAR_FIELDS = ["open", "high", "low", "close", "adjClose", "vwap", "change"];
+
+function scaleFields<T extends Record<string, any>>(row: T, fields: string[], mul: number): T {
+  if (!row || typeof row !== "object") return row;
+  const out: any = { ...row };
+  for (const f of fields) if (typeof out[f] === "number" && Number.isFinite(out[f])) out[f] = out[f] * mul;
+  return out;
+}
+
+/** Profile "range" string "2553.77-3806.5" → "25.5377-38.065". */
+function scaleRange(r: unknown, mul: number): unknown {
+  if (typeof r !== "string") return r;
+  const m = r.match(/^\s*([\d.]+)\s*-\s*([\d.]+)\s*$/);
+  return m ? `${+(+m[1] * mul).toFixed(6)}-${+(+m[2] * mul).toFixed(6)}` : r;
+}
+
+/** Yahoo chart bars: meta.currency "GBp" → divide OHLC by 100 (volume untouched). */
+export function yahooBarsToMajor<B extends { open: number; high: number; low: number; close: number }>(bars: B[], metaCurrency: unknown): B[] {
+  const mu = minorUnitInfo(metaCurrency);
+  return mu ? bars.map(b => scaleFields(b, ["open", "high", "low", "close"], 1 / mu.factor)) : bars;
+}
+
+export interface MinorUnitInput {
+  quote: any; profile: any;
+  financials: { income: any[]; cashflow: any[]; balanceSheet: any[] };
+  analyst: { priceTarget: any; grades: any; estimates: any[] };
+  ohlcv: any;
+  [k: string]: any;
+}
+
+/**
+ * @param majorToUsd live FX rate major→USD (e.g. GBPUSD 1.27); statements stay USD when it's missing/1
+ *                   (no guessed FX), but the pence fix on the market side still applies.
+ * @param statementFields numeric statement/estimate fields to convert (fmp.ts FX_CONVERTIBLE_FIELDS).
+ */
+export function normalizeMinorUnitListing<T extends MinorUnitInput>(data: T, majorToUsd: number | null | undefined, statementFields: Iterable<string>): T {
+  const mu = minorUnitInfo(data?.profile?.currency ?? data?.quote?.currency);
+  if (!mu) return data;
+  const k = 1 / mu.factor;
+  const quote = scaleFields(data.quote, QUOTE_PRICE_FIELDS, k);
+  let profile = scaleFields(data.profile, PROFILE_PRICE_FIELDS, k);
+  if (profile) profile = { ...profile, range: scaleRange(profile.range, k), currency: mu.major, _minorUnit: { from: mu.minor, factor: mu.factor } };
+  const rows = Array.isArray(data.ohlcv) ? data.ohlcv : data.ohlcv?.historical;
+  const scaledBars = Array.isArray(rows) ? rows.map((r: any) => scaleFields(r, BAR_FIELDS, k)) : rows;
+  const ohlcv = Array.isArray(data.ohlcv) ? scaledBars : data.ohlcv?.historical ? { ...data.ohlcv, historical: scaledBars } : data.ohlcv;
+
+  let financials = data.financials, analyst = data.analyst;
+  const fx = Number(majorToUsd);
+  if (Number.isFinite(fx) && fx > 0 && fx !== 1) {
+    const fields = Array.from(statementFields);
+    const toMajor = (arr: any[]) => (Array.isArray(arr) ? arr : []).map(r => {
+      // Rows are USD here: either reported in USD, or converted by convertFmpRowsToUsd.
+      const cur = r?._fxConverted ? "USD" : r?.reportedCurrency;
+      if (cur && cur !== "USD") return r;
+      return { ...scaleFields(r, fields, 1 / fx), reportedCurrency: mu.major, _fxToListing: { from: "USD", to: mu.major, rate: 1 / fx } };
+    });
+    financials = { income: toMajor(data.financials?.income), cashflow: toMajor(data.financials?.cashflow), balanceSheet: toMajor(data.financials?.balanceSheet) };
+    analyst = { ...data.analyst, estimates: toMajor(data.analyst?.estimates) };
+  }
+  return { ...data, quote, profile, ohlcv, financials, analyst };
+}

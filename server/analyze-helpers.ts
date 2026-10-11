@@ -12,6 +12,8 @@ import {
   fmpSegments, fmpGeoSegments, fmpPeers, fmpRatios, fmpKeyMetrics, convertFmpRowsToUsd,
 } from "./fmp";
 import { indicatorWarmupFromDate } from "./history-fallback";
+import { FX_CONVERTIBLE_FIELDS, getFxRateToUsd } from "./fmp";
+import { minorUnitInfo, normalizeMinorUnitListing } from "../shared/listing-units";
 
 // ============================================================
 // FMP Budget Tracker (single source of truth)
@@ -569,13 +571,22 @@ export async function getFmpFallbackData(ticker: string): Promise<{
       convertFmpRowsToUsd(get(balanceSheetRes) || []),
       convertFmpRowsToUsd(estimatesTagged),
     ]);
-    return {
+    const out = {
       quote, profile: get(profileRes),
       financials: { income: incomeUsd, cashflow: cashflowUsd, balanceSheet: balanceSheetUsd },
       analyst: { priceTarget: get(priceTargetRes), grades: get(gradesRes) || [], estimates: estimatesUsd },
       ohlcv: get(ohlcvRes) || [], segments: get(segmentsRes) || [], geoSegments: get(geoSegmentsRes) || [], peers: get(peersRes) || [], ratios: get(ratiosRes) || [],
-      source: 'fmp',
+      source: 'fmp' as const,
     };
+    // Minor-unit listings (LSE GBp etc.): price/OHLCV pence → pounds, statements USD → GBP,
+    // so price, market cap and balance sheet share one unit (shared/listing-units.ts).
+    const minor = minorUnitInfo(out.profile?.currency ?? quote?.currency);
+    if (minor) {
+      const majorToUsd = await getFxRateToUsd(minor.major).catch(() => 1);
+      console.log(`[FMP-FALLBACK] ${ticker}: ${minor.minor} → ${minor.major} (÷${minor.factor}), statements USD → ${minor.major} @ ${majorToUsd}`);
+      return normalizeMinorUnitListing(out, majorToUsd, FX_CONVERTIBLE_FIELDS);
+    }
+    return out;
   } catch (err: any) {
     console.error(`[FMP-FALLBACK] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
     return { failure: classifyFmpError(err) };

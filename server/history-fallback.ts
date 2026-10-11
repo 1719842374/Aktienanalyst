@@ -22,6 +22,7 @@
  * Additiv: Diese Datei ist komplett neu und aendert keine bestehende Datei.
  * Der einzige Call-Site-Eingriff erfolgt minimal-invasiv in analyze-route.ts.
  */
+import { yahooBarsToMajor } from "../shared/listing-units";
 
 export type HistoryProvider = "fmp" | "yahoo" | "stooq";
 
@@ -138,7 +139,8 @@ export async function yahooFetch(symbol: string, from: string, to: string): Prom
       source: "yahoo",
     });
   }
-  return bars;
+  // LSE etc. quote in pence (meta.currency "GBp"); FMP bars are normalised to pounds upstream.
+  return yahooBarsToMajor(bars, result.meta?.currency);
 }
 
 /**
