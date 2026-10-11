@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core';
 import { sumUpsideGb } from '../shared/bias-fixes';
 import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
 import { reverseDcfFromAnalysis } from '../shared/conflict-matrix';
+import { adaptiveScoreFromAnalysis } from '../shared/adaptive-signals';
 
 // ===== Formatting helpers =====
 function f(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? v.toFixed(d) : "—"; }
@@ -99,8 +100,12 @@ function buildFazit(data: any) {
 
   const score = pos.length - neg.length;
   let verdict = score >= 4 ? "ATTRAKTIV" : score >= 2 ? "LEICHT ATTRAKTIV" : score >= -1 ? "NEUTRAL" : score >= -3 ? "UNATTRAKTIV" : "STARK UNATTRAKTIV";
+  // Adaptiver, gewichteter Score — dieselbe Funktion wie das UI-Fazit (shared/adaptive-signals.ts).
+  // verdict/score oben bleiben die alte Zählung (Breaking-Change-Schutz).
+  const adaptiveScore = adaptiveScoreFromAnalysis(data);
+  const displayVerdict = adaptiveScore.score != null ? adaptiveScore.rating : verdict;
 
-  return { pos, neg, neut, score, verdict, konsDCF, worstCase, crvCons, raCrvCons, dcfBeiCRV3, totalGB, totalExpDmg, allBuy, ptUp };
+  return { pos, neg, neut, score, verdict, adaptiveScore, displayVerdict, konsDCF, worstCase, crvCons, raCrvCons, dcfBeiCRV3, totalGB, totalExpDmg, allBuy, ptUp };
 }
 
 // ===== Normalize data (fill computed fields the frontend calculates) =====
@@ -213,7 +218,8 @@ TECHNISCH:
 
 MONTE CARLO: ${data.monteCarloResults ? 'Mean $' + data.monteCarloResults.mean + ', P(Verlust) ' + data.monteCarloResults.probLoss + '%' : 'N/A'}
 
-FAZIT: ${fazit.verdict} (${fazit.pos.length} positiv, ${fazit.neg.length} negativ)
+FAZIT (adaptiv, gewichtet): ${fazit.displayVerdict}${fazit.adaptiveScore.score != null ? ` (Score ${fazit.adaptiveScore.score.toFixed(2)})` : ''}
+Zählung (alt): ${fazit.verdict} (${fazit.pos.length} positiv, ${fazit.neg.length} negativ)
 
 Schreibe ZWEI Abschnitte im JSON-Format:
 {
@@ -266,7 +272,7 @@ export async function generateAnalysisHTML(rawData: any): Promise<string> {
   const optFV = wS ? dcfCalc(data, wS.opt, g * 1.2) : 0;
 
   // CRITICAL: 'UNATTRAKTIV' and 'STARK UNATTRAKTIV' must be RED, not green
-  const verdictColor = (fazit.verdict === 'ATTRAKTIV' || fazit.verdict === 'LEICHT ATTRAKTIV') ? '#22c55e' : fazit.verdict === 'NEUTRAL' ? '#eab308' : '#ef4444';
+  const verdictColor = (fazit.displayVerdict === 'ATTRAKTIV' || fazit.displayVerdict === 'LEICHT ATTRAKTIV') ? '#22c55e' : fazit.displayVerdict === 'NEUTRAL' ? '#eab308' : '#ef4444';
 
   return `<!DOCTYPE html>
 <html lang="de">
@@ -581,11 +587,13 @@ ${data.monteCarloResults?.mean ? `<table>
 ${conflictMatrixHtmlForAnalysis(rawData)}
 <!-- FAZIT BOX -->
 <div class="verdict-box">
-  <div class="verdict-text">FAZIT: ${fazit.verdict}</div>
+  <div class="verdict-text">FAZIT: ${fazit.displayVerdict}${fazit.adaptiveScore.score != null ? ' <span style="font-size:9px;font-weight:400;color:#a0a5b5">(adaptiv)</span>' : ''}</div>
   <div class="verdict-sub">${esc(data.companyName)} (${data.ticker}) — ${fazit.pos.length} positive, ${fazit.neg.length} negative, ${fazit.neut.length} neutrale Faktoren</div>
 </div>
 
-<div class="row"><span class="row-label">Signal-Score</span><span class="row-val">${fazit.pos.length} positiv / ${fazit.neg.length} negativ / ${fazit.neut.length} neutral = ${fazit.verdict}</span></div>
+${fazit.adaptiveScore.score != null ? `<div class="row"><span class="row-label">Adaptiver Score</span><span class="row-val">${fazit.adaptiveScore.score.toFixed(2)} (net/max) = ${fazit.adaptiveScore.rating}</span></div>
+<div class="para">${fazit.adaptiveScore.signals.filter(s => s.weight > 0).map(s => `${esc(s.label)} ${s.direction > 0 ? '+' : s.direction < 0 ? '−' : '±'}${s.strength.toFixed(2)} (w ${s.weight.toFixed(2)}${s.damped ? ', gedämpft' : ''})`).join(' · ')}${fazit.adaptiveScore.signals.some(s => !s.available) ? ` · n/a: ${fazit.adaptiveScore.signals.filter(s => !s.available).map(s => esc(s.label)).join(', ')}` : ''}</div>` : ''}
+<div class="row"><span class="row-label">${fazit.adaptiveScore.score != null ? 'Zählung (alt)' : 'Signal-Score'}</span><span class="row-val">${fazit.pos.length} positiv / ${fazit.neg.length} negativ / ${fazit.neut.length} neutral = ${fazit.verdict}</span></div>
 
 ${narrative.recommendation ? `
 <div style="background:#111b2e;border:1px solid #243050;border-radius:6px;padding:8px 10px;margin:6px 0;">

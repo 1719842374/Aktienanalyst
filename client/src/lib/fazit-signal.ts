@@ -25,6 +25,7 @@ import {
 } from "./calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign } from "./formatters";
 import { buildBiasDecision, type BiasFixPayload } from "../../../shared/bias-fixes";
+import { adaptiveScoreFromAnalysis, type AdaptiveScoreResult } from "../../../shared/adaptive-signals";
 
 export type FazitSignalMetrics = {
   conservativeDCF: FCFFDCFResult;
@@ -58,6 +59,8 @@ export type FazitSignal = {
   dcfDivergenceDowngraded: boolean;
   totalExpDmg: number;
   raCrvCons: number;
+  /** Zusatzfeld (adaptiv, gewichtet). rating/score oben bleiben die alte Zählung. */
+  adaptiveScore: AdaptiveScoreResult;
 };
 
 /** Prepare the same metrics SummarySection feeds into the Fazit Ampel. */
@@ -393,5 +396,6 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     dcfDivergenceDowngraded,
     totalExpDmg,
     raCrvCons,
+    adaptiveScore: adaptiveScoreFromAnalysis(data),
   };
 }

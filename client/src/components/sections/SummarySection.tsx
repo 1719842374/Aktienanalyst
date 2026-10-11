@@ -390,7 +390,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         const totalExpDmg = risks.reduce((s, r) => s + r.expectedDamage, 0);
         const raCrvCons = calculateRiskAdjustedCRV(decisionPerShare, worstCase, data.currentPrice, totalExpDmg);
         const {
-          positive, negative, neutral, rating, ratingColor, ratingBg, fazitSatz,
+          positive, negative, neutral, rating, ratingColor, ratingBg, fazitSatz, adaptiveScore,
         } = buildFazitSignal({
           data,
           conservativeDCF,
@@ -408,11 +408,24 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           bias,
         });
 
+        // Fazit-Rating aus dem gewichteten adaptiven Score (shared/adaptive-signals.ts).
+        // Fallback auf die alte Zählung nur, wenn kein Block verfügbar ist (score null).
+        const hasAdaptive = adaptiveScore.score != null;
+        const fazitRating = hasAdaptive ? adaptiveScore.rating : rating;
+        const fazitColor = !hasAdaptive ? ratingColor
+          : fazitRating.includes("UNATTRAKTIV") ? "text-red-400"
+          : fazitRating === "NEUTRAL" ? "text-amber-400" : "text-emerald-400";
+        const fazitBg = !hasAdaptive ? ratingBg
+          : fazitRating.includes("UNATTRAKTIV") ? "bg-red-500/10 border-red-500/20"
+          : fazitRating === "NEUTRAL" ? "bg-amber-500/10 border-amber-500/20" : "bg-emerald-500/10 border-emerald-500/20";
+
         return (
-          <div className={`rounded-lg border-2 p-4 ${ratingBg}`}>
+          <div className={`rounded-lg border-2 p-4 ${fazitBg}`}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Fazit</h3>
-              <span className={`text-sm font-bold ${ratingColor}`}>{bias.overallRating} · {rating}</span>
+              <span className={`text-sm font-bold ${fazitColor}`} data-testid="fazit-adaptive-rating">
+                {bias.overallRating} · {fazitRating}{hasAdaptive && <span className="ml-1 text-[10px] font-normal text-muted-foreground">(adaptiv)</span>}
+              </span>
             </div>
 
             <div className="mb-3 text-xs text-foreground/90 leading-relaxed bg-background/30 rounded-md p-2.5 border border-border/30">
@@ -461,9 +474,19 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
               </div>
             )}
 
-            <div className="border-t border-border/30 pt-2 mt-2">
+            <div className="border-t border-border/30 pt-2 mt-2 space-y-1">
+              {hasAdaptive && (
+                <div className="text-[10px] text-muted-foreground" data-testid="fazit-adaptive-score">
+                  Adaptiver Score (gewichtet, net/max): <span className={`font-semibold font-mono ${fazitColor}`}>{adaptiveScore.score!.toFixed(2)}</span> = <span className={`font-semibold ${fazitColor}`}>{adaptiveScore.rating}</span>
+                  {" — "}
+                  {adaptiveScore.signals.filter(s => s.weight > 0).map(s =>
+                    `${s.label} ${s.direction > 0 ? "+" : s.direction < 0 ? "\u2212" : "\u00b1"}${s.strength.toFixed(2)} (w ${s.weight.toFixed(2)}${s.damped ? ", gedämpft" : ""})`
+                  ).join(" · ")}
+                  {adaptiveScore.signals.some(s => !s.available) && ` · n/a: ${adaptiveScore.signals.filter(s => !s.available).map(s => s.label).join(", ")}`}
+                </div>
+              )}
               <div className="text-[10px] text-muted-foreground">
-                Signal-Score: {positive.length} positiv / {negative.length} negativ / {neutral.length} neutral = <span className={`font-semibold ${ratingColor}`}>{rating}</span>
+                {hasAdaptive ? "Zählung (alt): " : "Signal-Score: "}{positive.length} positiv / {negative.length} negativ / {neutral.length} neutral = <span className={`font-semibold ${ratingColor}`}>{rating}</span>
               </div>
             </div>
           </div>
