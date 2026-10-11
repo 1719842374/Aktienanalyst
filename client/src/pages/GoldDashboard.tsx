@@ -18,12 +18,15 @@ import { GoldPriceChart } from "@/components/gold/GoldPriceChart";
 import {
   Sun, Moon, TrendingUp, BarChart3, Calculator,
   Dice6, Activity, Table2, Menu, X, LineChart, Target,
-  RefreshCw, Loader2, ArrowLeft, Scale,
+  RefreshCw, Loader2, ArrowLeft, Scale, Newspaper,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
-const SECTIONS = [
+const NEWS_SECTION_ID = 100;
+
+const SECTIONS: { id: number; label: string; icon: typeof TrendingUp; badge?: string }[] = [
   { id: 1, label: "Preis & Status", icon: TrendingUp },
+  { id: 100, label: "Gold-News", icon: Newspaper, badge: "📰" },
   { id: 2, label: "Preis-Chart", icon: LineChart },
   { id: 3, label: "Indikatoren", icon: BarChart3 },
   { id: 4, label: "Fair Value", icon: Calculator },
@@ -156,7 +159,7 @@ export default function GoldDashboard() {
               >
                 <s.icon className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 group-hover:text-amber-500 transition-colors" />
                 <span className="flex-1 truncate">{s.label}</span>
-                <span className="text-[10px] font-mono tabular-nums text-muted-foreground/50">{s.id}</span>
+                <span className="text-[10px] font-mono tabular-nums text-muted-foreground/50">{s.badge ?? s.id}</span>
               </button>
             ))}
           </nav>
@@ -186,6 +189,8 @@ export default function GoldDashboard() {
           ) : data ? (
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
               <div ref={setSectionRef(1)}><GoldPriceSection data={data} /></div>
+              {/* JOB 14: Gold-News an zweiter Stelle, im Stil der Aktien-News */}
+              <div ref={setSectionRef(NEWS_SECTION_ID)}><GoldNewsCard data={data} /></div>
               <div ref={setSectionRef(2)}><GoldPriceChart data={data} /></div>
               <div ref={setSectionRef(3)}><GoldIndicatorsSection data={data} /></div>
               <div ref={setSectionRef(4)}><GoldFairValueSection data={data} /></div>
@@ -195,7 +200,6 @@ export default function GoldDashboard() {
               <div ref={setSectionRef(8)}><GoldSummarySection data={data} /></div>
               <GoldAdaptiveLayersCard data={data} />
               <GoldAdaptiveGatesCard data={data} />
-              <GoldNewsCard data={data} />
               <div className="pb-8" />
             </div>
           ) : null}

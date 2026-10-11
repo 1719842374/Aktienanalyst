@@ -9,9 +9,14 @@ import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "l
 import PeerComparison from "./PeerComparison";
 import EpsGrowthChart from "./EpsGrowthChart";
 
-interface Props { data: StockAnalysis; onPeerOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void }
+interface Props {
+  data: StockAnalysis;
+  onPeerOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void;
+  /** True while the in-flight analyze carries peer overrides. */
+  peerBusy?: boolean;
+}
 
-export function Section7({ data, onPeerOverridesChange }: Props) {
+export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Props) {
   // Use TTM sector avg for TTM stock P/E, and forward sector avg for forward stock P/E
   // Fallback: if backend didn't ship sectorAvgForwardPE (older cached payloads), fall back to TTM to avoid NaN
   const sectorFwdPE = data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE;
@@ -664,7 +669,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
             </div>
           )}
           {((data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
-            <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} />
+            <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} peerBusy={peerBusy} />
           )}
         </div>
       )}

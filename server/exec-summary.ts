@@ -354,7 +354,7 @@ export function buildExecSummary(input: ExecSummaryInput): ExecSummary {
       input.ticker,
       fmtPx(input.price),
       finite(input.scoreCapped) ? String(input.scoreCapped) : null,
-      finite(input.gStarPct) ? `g* ${input.gStarPct.toFixed(1)} %` : null,
+      finite(input.gStarPct) ? `g* ${input.gStarPct.toFixed(1)} %${finite(input.waccPct) ? ` (WACC ${input.waccPct.toFixed(1)} %)` : ""}` : null,
       call.headlineBit,
     ].filter(Boolean).join(" · "),
     callLine: call.callLine,
