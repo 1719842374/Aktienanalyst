@@ -10,6 +10,8 @@ import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, f
 import { buildFazitSignal } from "../../lib/fazit-signal";
 import { buildBiasDecision, isNegativeCatalyst } from "../../../../shared/bias-fixes";
 import { useMemo } from "react";
+import { buildConflictMatrix } from "../../lib/conflictMatrix";
+import { ConflictMatrixPanel } from "./ConflictMatrixPanel";
 
 interface Props { data: StockAnalysis; sharedMonteCarlo?: GBMMonteCarloResult | null }
 
@@ -378,6 +380,17 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           DCF bei CRV 3:1 = ({bias.valuationBaseLabel} + 2 × WC) / 3 = ({formatCurrency(decisionPerShare)} + 2 × {formatCurrency(worstCase)}) / 3 = {formatCurrency(dcfBeiCRV3)}
         </div>
       </div>
+
+      {/* Konfliktmatrix (Future_Work §8) — Anzeige, ändert das Fazit-Rating nicht */}
+      <ConflictMatrixPanel matrix={buildConflictMatrix({
+        qualityScore: data.scoring?.qualityScore,
+        marginDeltaYoYPp: data.scoring?.gateInputs.marginDeltaYoYPp,
+        relativeGrowthDeltaYoYPp: data.scoring?.gateInputs.relativeGrowthDeltaYoYPp,
+        reverseDcfRating: reverseDCF.rating,
+        impliedGrowth: reverseDCF.impliedGrowth,
+        technical: data.technicalIndicators?.currentStatus,
+        catalystUpsidePct: totalUpside,
+      })} />
 
       {/* === FAZIT (Big Picture — all 13 sections integrated) === */}
       {(() => {
