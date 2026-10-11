@@ -5,6 +5,7 @@
  */
 import { chromium } from 'playwright-core';
 import { sumUpsideGb } from '../shared/bias-fixes';
+import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
 
 // ===== Formatting helpers =====
 function f(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? v.toFixed(d) : "—"; }
@@ -582,6 +583,7 @@ ${data.monteCarloResults?.mean ? `<table>
 <tr><td class="row-label">Kaufsignal</td><td class="row-val">${fazit.allBuy ? 'JA ✓' : 'NEIN ✗'}</td><td class="row-label">Kat. Upside</td><td class="row-val">+${f(fazit.totalGB,2)}%</td></tr>
 </table>
 
+${conflictMatrixHtmlForAnalysis(rawData)}
 <!-- FAZIT BOX -->
 <div class="verdict-box">
   <div class="verdict-text">FAZIT: ${fazit.verdict}</div>
