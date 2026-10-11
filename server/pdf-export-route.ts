@@ -21,7 +21,10 @@ export function registerPdfExportRoute(app: Express): void {
       }
       console.log(`[PDF] Generating PDF for ${analysisData.ticker}...`);
       const { generateAnalysisHTML, renderHTMLtoPDF } = await import("./pdf-export");
-      const html = await generateAnalysisHTML(analysisData);
+      // Fazit-Hinweis Kreditmarkt (FRED BAA10Y, gecacht). Fehler → kein Hinweis, PDF läuft weiter.
+      const { getMarketCreditSpread } = await import("./credit-route");
+      const credit = await getMarketCreditSpread().catch(() => null);
+      const html = await generateAnalysisHTML(analysisData, { creditStress: credit?.stress ?? null });
       const pdfBuffer = await renderHTMLtoPDF(html);
       console.log(`[PDF] Generated ${(pdfBuffer.length / 1024).toFixed(0)}KB PDF for ${analysisData.ticker}`);
       const safeTicker = String(analysisData.ticker).replace(/[^A-Za-z0-9._-]/g, "_");
