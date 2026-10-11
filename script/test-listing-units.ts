@@ -39,10 +39,18 @@ assert.ok(Math.abs(n.quote.price / n.analyst.estimates[0].epsAvg - 8.29) < 0.05)
 // dividend yield sane: 1.43 / 37.935 ≈ 3.8 % (before 0.04 %)
 assert.ok(Math.abs(n.profile.lastDividend / n.quote.price * 100 - 3.77) < 0.01);
 
-// No FX (fetch failed → 1): pence fix still applies, statements stay USD (no guessed FX)
-const nf = normalizeMinorUnitListing(shel(), 1, FIELDS);
-assert.equal(nf.quote.price, 37.935);
-assert.equal(nf.financials.balanceSheet[0].totalDebt, 104614097000);
+// No FX (fetch failed → 1 / NaN / null): NO conversion at all — price, OHLCV, statements exactly as before, flagged partial
+for (const bad of [1, NaN, null, undefined, 0, -1]) {
+  const raw = shel();
+  const nf = normalizeMinorUnitListing(raw, bad as any, FIELDS);
+  assert.equal(nf.quote.price, 3793.5, `fx=${bad}: price unchanged (pence)`);
+  assert.equal(nf.ohlcv[0].close, 3793.5);
+  assert.equal(nf.profile.currency, "GBp", "currency unchanged");
+  assert.equal(nf.financials.balanceSheet[0].totalDebt, 104614097000, "statements unchanged (USD)");
+  assert.equal(nf.analyst.estimates[0].epsAvg, 6.05397);
+  assert.deepEqual(nf.profile._minorUnit, { from: "GBp", factor: 100, partial: true, warning: "FX GBPUSD fehlt" });
+}
+assert.equal(n.profile._minorUnit.partial, false);
 // Row whose USD conversion failed (still EUR, no _fxConverted) is not touched
 const eur = shel(); eur.financials.income = [{ reportedCurrency: "EUR", revenue: 100, eps: 1, epsDiluted: 1 }];
 assert.equal(normalizeMinorUnitListing(eur, GBPUSD, FIELDS).financials.income[0].revenue, 100);
@@ -62,4 +70,15 @@ assert.equal(yahooBarsToMajor([{ open: 1, high: 1, low: 1, close: 1 }], "USD")[0
 const helpers = readFileSync("server/analyze-helpers.ts", "utf8");
 assert.match(helpers, /normalizeMinorUnitListing\(out, majorToUsd, FX_CONVERTIBLE_FIELDS\)/);
 assert.match(readFileSync("server/history-fallback.ts", "utf8"), /return yahooBarsToMajor\(bars, result\.meta\?\.currency\);/);
+// Dividends of a pence listing → pounds (FMP .L amounts are pence; price is pounds after normalisation)
+import { dividendsToMajor } from "../shared/listing-units";
+import { loadDividendHistory } from "../server/dividend-route";
+assert.deepEqual(dividendsToMajor([{ date: "2026-08-13", amount: 28.92 }], "GBp"), { events: [{ date: "2026-08-13", amount: 0.2892 }], currency: "GBP" });
+assert.equal(dividendsToMajor([{ date: "x", amount: 1 }], "USD"), null);
+const shelDiv = await loadDividendHistory("SHEL.L", { fmp: async () => [{ date: "2026-08-13", dividend: 28.92 }, { date: "2026-05-21", dividend: 29.18 }], yahoo: async () => [] as any, listingCurrency: async () => "GBp" });
+assert.equal(shelDiv.currency, "GBP"); assert.equal(shelDiv.events.find(e => e.date === "2026-08-13")!.amount, 0.2892);
+const koDiv = await loadDividendHistory("KO", { fmp: async () => [{ date: "2026-09-15", dividend: 0.53 }], yahoo: async () => [] as any, listingCurrency: async () => { throw new Error("must not be called for US tickers"); } });
+assert.equal(koDiv.events[0].amount, 0.53);
+const yDiv = await loadDividendHistory("AZN.L", { fmp: async () => [], yahoo: async () => Object.assign([{ date: "2026-08-06", amount: 79.5 }], { currency: "GBP", rawCurrency: "GBp" }) as any, listingCurrency: async () => null });
+assert.equal(yDiv.currency, "GBP"); assert.equal(yDiv.events[0].amount, 0.795);
 console.log("test-listing-units: OK");

@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
-import { fmpDividends } from "./fmp";
+import { fmpDividends, fmpProfile } from "./fmp";
+import { dividendsToMajor } from "../shared/listing-units";
 import {
   parseFmpDividends,
   parseYahooDividends,
@@ -23,7 +24,7 @@ export function normalizeDividendTicker(raw: unknown): string | null {
   return TICKER_RE.test(t) ? t : null;
 }
 
-type YahooDivs = DividendEvent[] & { currency?: string | null };
+type YahooDivs = DividendEvent[] & { currency?: string | null; rawCurrency?: string | null };
 
 async function yahooDividends(ticker: string): Promise<YahooDivs> {
   try {
@@ -33,30 +34,47 @@ async function yahooDividends(ticker: string): Promise<YahooDivs> {
     const json = await resp.json();
     const out: YahooDivs = parseYahooDividends(json);
     out.currency = parseYahooDividendCurrency(json);
+    out.rawCurrency = (json as any)?.chart?.result?.[0]?.meta?.currency ?? null; // case-sensitive: "GBp" = pence
     return out;
   } catch {
     return [];
   }
 }
 
+async function listingCurrencyOf(ticker: string): Promise<string | null> {
+  const p: any = await fmpProfile(ticker);
+  return typeof p?.currency === "string" ? p.currency : null;
+}
+
 export async function loadDividendHistory(
   ticker: string,
-  deps: { fmp: (t: string) => Promise<unknown>; yahoo: (t: string) => Promise<YahooDivs> } = {
+  deps: { fmp: (t: string) => Promise<unknown>; yahoo: (t: string) => Promise<YahooDivs>; listingCurrency?: (t: string) => Promise<string | null> } = {
     fmp: fmpDividends,
     yahoo: yahooDividends,
+    listingCurrency: listingCurrencyOf,
   },
 ): Promise<DividendHistoryResponse> {
   let fmpNote: string | null = null;
   try {
     const raw = await deps.fmp(ticker);
     const events = parseFmpDividends(raw);
-    if (events.length > 0) return { ticker, source: "fmp", events, note: null, currency: parseFmpDividendCurrency(raw) };
+    if (events.length > 0) {
+      // Minor-unit listings (LSE .L): FMP amounts are in pence while the analysis price is now in pounds (#244).
+      const lc = ticker.includes(".") && deps.listingCurrency ? await deps.listingCurrency(ticker).catch(() => null) : null;
+      const major = dividendsToMajor(events, lc);
+      if (major) return { ticker, source: "fmp", events: major.events, note: `Beträge ${lc} → ${major.currency}`, currency: major.currency };
+      return { ticker, source: "fmp", events, note: null, currency: parseFmpDividendCurrency(raw) };
+    }
     fmpNote = "FMP ohne Dividenden";
   } catch (err: any) {
     fmpNote = `FMP-Fehler${err?.fmpStatus ? ` HTTP ${err.fmpStatus}` : ""}`;
   }
   const y = await deps.yahoo(ticker);
-  if (y.length > 0) return { ticker, source: "yahoo", events: [...y], note: `${fmpNote}, Yahoo-Fallback`, currency: y.currency ?? null };
+  if (y.length > 0) {
+    const major = dividendsToMajor([...y], y.rawCurrency);
+    if (major) return { ticker, source: "yahoo", events: major.events, note: `${fmpNote}, Yahoo-Fallback, Beträge ${y.rawCurrency} → ${major.currency}`, currency: major.currency };
+    return { ticker, source: "yahoo", events: [...y], note: `${fmpNote}, Yahoo-Fallback`, currency: y.currency ?? null };
+  }
   return { ticker, source: "none", events: [], note: `${fmpNote}, Yahoo ohne Dividenden` };
 }
 

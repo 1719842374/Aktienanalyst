@@ -583,8 +583,10 @@ export async function getFmpFallbackData(ticker: string): Promise<{
     const minor = minorUnitInfo(out.profile?.currency ?? quote?.currency);
     if (minor) {
       const majorToUsd = await getFxRateToUsd(minor.major).catch(() => 1);
-      console.log(`[FMP-FALLBACK] ${ticker}: ${minor.minor} → ${minor.major} (÷${minor.factor}), statements USD → ${minor.major} @ ${majorToUsd}`);
-      return normalizeMinorUnitListing(out, majorToUsd, FX_CONVERTIBLE_FIELDS);
+      const norm = normalizeMinorUnitListing(out, majorToUsd, FX_CONVERTIBLE_FIELDS);
+      if ((norm.profile as any)?._minorUnit?.partial) console.warn(`[FMP-FALLBACK] ${ticker}: ${(norm.profile as any)._minorUnit.warning} — keine Einheiten-Normalisierung (Kurs ${minor.minor}, Statements USD wie bisher)`);
+      else console.log(`[FMP-FALLBACK] ${ticker}: ${minor.minor} → ${minor.major} (÷${minor.factor}), statements USD → ${minor.major} @ ${majorToUsd}`);
+      return norm;
     }
     return out;
   } catch (err: any) {

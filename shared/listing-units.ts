@@ -63,29 +63,39 @@ export interface MinorUnitInput {
  *                   (no guessed FX), but the pence fix on the market side still applies.
  * @param statementFields numeric statement/estimate fields to convert (fmp.ts FX_CONVERTIBLE_FIELDS).
  */
+export const FX_MISSING_WARNING = (major: string) => `FX ${major}USD fehlt`;
+
 export function normalizeMinorUnitListing<T extends MinorUnitInput>(data: T, majorToUsd: number | null | undefined, statementFields: Iterable<string>): T {
   const mu = minorUnitInfo(data?.profile?.currency ?? data?.quote?.currency);
   if (!mu) return data;
+  const fx = Number(majorToUsd);
+  // No FX rate → no conversion at all (never a GBP price next to USD statements). Data stays exactly as before,
+  // only flagged as partial so the caller/logs can surface "FX GBPUSD fehlt".
+  if (!(Number.isFinite(fx) && fx > 0 && fx !== 1)) {
+    return { ...data, profile: data.profile ? { ...data.profile, _minorUnit: { from: mu.minor, factor: mu.factor, partial: true, warning: FX_MISSING_WARNING(mu.major) } } : data.profile };
+  }
   const k = 1 / mu.factor;
   const quote = scaleFields(data.quote, QUOTE_PRICE_FIELDS, k);
   let profile = scaleFields(data.profile, PROFILE_PRICE_FIELDS, k);
-  if (profile) profile = { ...profile, range: scaleRange(profile.range, k), currency: mu.major, _minorUnit: { from: mu.minor, factor: mu.factor } };
+  if (profile) profile = { ...profile, range: scaleRange(profile.range, k), currency: mu.major, _minorUnit: { from: mu.minor, factor: mu.factor, partial: false } };
   const rows = Array.isArray(data.ohlcv) ? data.ohlcv : data.ohlcv?.historical;
   const scaledBars = Array.isArray(rows) ? rows.map((r: any) => scaleFields(r, BAR_FIELDS, k)) : rows;
   const ohlcv = Array.isArray(data.ohlcv) ? scaledBars : data.ohlcv?.historical ? { ...data.ohlcv, historical: scaledBars } : data.ohlcv;
-
-  let financials = data.financials, analyst = data.analyst;
-  const fx = Number(majorToUsd);
-  if (Number.isFinite(fx) && fx > 0 && fx !== 1) {
-    const fields = Array.from(statementFields);
-    const toMajor = (arr: any[]) => (Array.isArray(arr) ? arr : []).map(r => {
-      // Rows are USD here: either reported in USD, or converted by convertFmpRowsToUsd.
-      const cur = r?._fxConverted ? "USD" : r?.reportedCurrency;
-      if (cur && cur !== "USD") return r;
-      return { ...scaleFields(r, fields, 1 / fx), reportedCurrency: mu.major, _fxToListing: { from: "USD", to: mu.major, rate: 1 / fx } };
-    });
-    financials = { income: toMajor(data.financials?.income), cashflow: toMajor(data.financials?.cashflow), balanceSheet: toMajor(data.financials?.balanceSheet) };
-    analyst = { ...data.analyst, estimates: toMajor(data.analyst?.estimates) };
-  }
+  const fields = Array.from(statementFields);
+  const toMajor = (arr: any[]) => (Array.isArray(arr) ? arr : []).map(r => {
+    // Rows are USD here: either reported in USD, or converted by convertFmpRowsToUsd.
+    const cur = r?._fxConverted ? "USD" : r?.reportedCurrency;
+    if (cur && cur !== "USD") return r;
+    return { ...scaleFields(r, fields, 1 / fx), reportedCurrency: mu.major, _fxToListing: { from: "USD", to: mu.major, rate: 1 / fx } };
+  });
+  const financials = { income: toMajor(data.financials?.income), cashflow: toMajor(data.financials?.cashflow), balanceSheet: toMajor(data.financials?.balanceSheet) };
+  const analyst = { ...data.analyst, estimates: toMajor(data.analyst?.estimates) };
   return { ...data, quote, profile, ohlcv, financials, analyst };
+}
+
+/** Dividend amounts of a minor-unit listing (FMP/Yahoo .L dividends are in pence) → major unit, currency stated. */
+export function dividendsToMajor<E extends { amount: number }>(events: E[], listingCurrency: unknown): { events: E[]; currency: string | null } | null {
+  const mu = minorUnitInfo(listingCurrency);
+  if (!mu) return null;
+  return { events: events.map(e => ({ ...e, amount: e.amount / mu.factor })), currency: mu.major };
 }
