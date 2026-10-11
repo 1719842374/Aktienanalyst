@@ -363,7 +363,8 @@ console.log("\nRoute lässt GIS, OLS, Multi-Faktor und Monte Carlo stehen");
   check("Multi-Faktor bleibt angebunden", routes.includes("runMultiFactorGoldModel("));
   check("Monte Carlo bleibt angebunden", routes.includes("runMonteCarlo("));
   check("adaptive Schicht ist angebunden", routes.includes("scoreGoldAdaptive("));
-  check("AISC wird nicht erfunden", /aisc:\s*null/.test(routes));
+  // Future_10 AISC-Linie: statt `aisc: null` belegte Quartalsreihe aus shared/data (keine Schaetzung).
+  check("AISC kommt aus der belegten Quartalsreihe", /aisc:\s*goldAiscSteps\(\)/.test(routes) && !/aisc:\s*null/.test(routes));
   check("Yahoo GC=F ist die Volumen-Reserve", routes.includes('yahooFetch("GC=F"'));
   check("GIS fließt nur ins Score-Delta", routes.includes("gis: gisRounded"));
   check("Response liefert scoreDelta, gates und technicalSignals", /scoreDelta,\s*gates,\s*technicalSignals,/.test(routes));
