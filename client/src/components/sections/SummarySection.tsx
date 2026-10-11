@@ -391,7 +391,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         const totalExpDmg = risks.reduce((s, r) => s + r.expectedDamage, 0);
         const raCrvCons = calculateRiskAdjustedCRV(decisionPerShare, worstCase, data.currentPrice, totalExpDmg);
         const {
-          positive, negative, neutral, rating, ratingColor, ratingBg, fazitSatz,
+          positive, negative, neutral, rating, ratingColor, ratingBg, fazitSatz, adaptive,
         } = buildFazitSignal({
           data,
           conservativeDCF,
@@ -413,7 +413,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           <div className={`rounded-lg border-2 p-4 ${ratingBg}`}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Fazit</h3>
-              <span className={`text-sm font-bold ${ratingColor}`}>{bias.overallRating} · {rating}</span>
+              <span className={`text-sm font-bold ${ratingColor}`} data-testid="fazit-adaptive-rating">{rating}</span>
             </div>
 
             <div className="mb-3 text-xs text-foreground/90 leading-relaxed bg-background/30 rounded-md p-2.5 border border-border/30">
@@ -464,7 +464,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
 
             <div className="border-t border-border/30 pt-2 mt-2">
               <div className="text-[10px] text-muted-foreground">
-                Signal-Score: {positive.length} positiv / {negative.length} negativ / {neutral.length} neutral = <span className={`font-semibold ${ratingColor}`}>{rating}</span>
+                Adaptiver Score {formatNumber(adaptive.score, 3)} (gewichtet, −1…+1{adaptive.dampened ? ", Valuation gedämpft" : ""}) = <span className={`font-semibold ${ratingColor}`}>{rating}</span> · Zählung {positive.length} positiv / {negative.length} negativ / {neutral.length} neutral · Gesamtscore {formatNumber(bias.overallScore, 2)} ({bias.overallRating})
               </div>
             </div>
           </div>

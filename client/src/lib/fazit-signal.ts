@@ -26,6 +26,13 @@ import {
 } from "./calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign } from "./formatters";
 import { buildBiasDecision, type BiasFixPayload } from "../../../shared/bias-fixes";
+import {
+  type Signal, type AdaptiveScore, technicalStrength, moatStrength, lowBetaSignal, binarySignal,
+  computeAdaptiveScore, adaptiveRating,
+} from "../../../shared/adaptive-signals";
+
+/** Prefix for S9/S10 timing hints that are listed but not counted in the Signal-Score. */
+export const TIMING_PREFIX = "Timing (weich, nicht gez\u00e4hlt): ";
 
 export type FazitSignalMetrics = {
   conservativeDCF: FCFFDCFResult;
@@ -57,6 +64,9 @@ export type FazitSignal = {
   ratingBg: string;
   fazitSatz: string;
   dcfDivergenceDowngraded: boolean;
+  /** W7: Rating/Farbe kommen aus dem gewichteten Score, nicht aus der Zählung. */
+  signals: Signal[];
+  adaptive: AdaptiveScore;
   totalExpDmg: number;
   raCrvCons: number;
 };
@@ -232,10 +242,14 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   else if (totalExpDmg < 8) positive.push(`Expected Damage nur ${formatNumber(totalExpDmg, 1)}% \u2014 moderates Risikoprofil`);
 
   // S9: RSL (null = keine ausreichende Kurshistorie \u2192 neutral, kein Score-Beitrag)
+  // RSL und Technik (S9/S10) sind Timing: fertig_WORK_BIAS_FIXES_INVERSE_DCF.md §6
+  // "Technical analysis remains a separate soft component" — sie wirken im Gesamtscore
+  // nur über technicalComponent (±0,5, shared/bias-fixes.ts). Im Signal-Score stehen sie
+  // deshalb als neutral (Hinweis), nicht als ±1 — sonst zählt Technik doppelt (generisch).
   if (rsl == null) neutral.push(`RSL n/a \u2014 keine ausreichende Kurshistorie`);
-  else if (rsl > 110) positive.push(`RSL ${formatNumber(rsl, 0)} \u2014 starkes Momentum`);
+  else if (rsl > 110) neutral.push(`${TIMING_PREFIX}RSL ${formatNumber(rsl, 0)} \u2014 starkes Momentum`);
   else if (rsl >= 105) neutral.push(`RSL ${formatNumber(rsl, 0)} \u2014 neutrales Momentum`);
-  else negative.push(`RSL ${formatNumber(rsl, 0)} \u2014 schwaches Momentum, Growth-Adj. -5% bis -10%`);
+  else neutral.push(`${TIMING_PREFIX}RSL ${formatNumber(rsl, 0)} \u2014 schwaches Momentum, Growth-Adj. -5% bis -10%`);
 
   // S10: Technical
   if (techStatus) {
@@ -249,9 +263,9 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     else if (!techStatus.macdAboveZero) techBear.push('MACD < 0');
 
     if (techStatus.buySignal) {
-      positive.push(`Technisch: BUY-Signal (${techBull.join(', ')})`);
+      neutral.push(`${TIMING_PREFIX}Technisch: BUY-Signal (${techBull.join(', ')})`);
     } else if (techBear.length >= 2) {
-      negative.push(`Technisch: KEIN Buy-Signal (${techBear.join(', ')})`);
+      neutral.push(`${TIMING_PREFIX}Technisch: KEIN Buy-Signal (${techBear.join(', ')})`);
     } else {
       neutral.push(`Technisch gemischt: ${[...techBull, ...techBear].join(', ')}`);
     }
@@ -285,7 +299,7 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
 
   // Beta / Risk
   if (data.beta5Y > 1.5) negative.push(`Hohe Volatilit\u00e4t (Beta ${formatNumber(data.beta5Y, 2)}) \u2014 \u00fcberdurchschnittliches Risiko`);
-  else if (data.beta5Y < 0.8) positive.push(`Niedrige Volatilit\u00e4t (Beta ${formatNumber(data.beta5Y, 2)}) \u2014 defensiv`);
+  // W7: pauschales Beta<0,8-Plus entfernt; Low-Beta nur relativ (beta<0,7, abh\u00e4ngig von Technik) \u2014 lowBetaSignal unten.
 
   // FCF Margin
   if (data.fcfMargin > 20) positive.push(`Starke FCF-Marge von ${formatNumber(data.fcfMargin, 1)}%`);
@@ -315,21 +329,23 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   else if (ptUps > 0) neutral.push(`Analysten-Kursziel +${formatNumber(ptUps, 0)}% \u00fcber Kurs`);
   else if (ptUps < -5) negative.push(`Analysten-Kursziel ${formatNumber(ptUps, 0)}% unter Kurs`);
 
-  // === Overall rating ===
-  const score = positive.length - negative.length;
-  let rating: string;
+  // === Overall rating (W7: gewichteter adaptiver Score, Future_Work.md „Volle Adaptivit\u00e4t“) ===
+  const score = positive.length - negative.length; // Z\u00e4hlung bleibt nur als Anzeige
+  const signals = buildAdaptiveSignals(data, positive, negative, rsl, bias);
+  const adaptive = computeAdaptiveScore(signals);
+  let rating = adaptiveRating(adaptive.score).rating;
   let ratingColor: string;
   let ratingBg: string;
-  if (score >= 4) {
-    rating = "ATTRAKTIV"; ratingColor = "text-emerald-400"; ratingBg = "bg-emerald-500/10 border-emerald-500/30";
-  } else if (score >= 2) {
-    rating = "LEICHT ATTRAKTIV"; ratingColor = "text-emerald-400"; ratingBg = "bg-emerald-500/10 border-emerald-500/20";
-  } else if (score >= -1) {
-    rating = "NEUTRAL"; ratingColor = "text-amber-400"; ratingBg = "bg-amber-500/10 border-amber-500/20";
-  } else if (score >= -3) {
-    rating = "UNATTRAKTIV"; ratingColor = "text-red-400"; ratingBg = "bg-red-500/10 border-red-500/20";
+  if (rating === "ATTRAKTIV") {
+    ratingColor = "text-emerald-400"; ratingBg = "bg-emerald-500/10 border-emerald-500/30";
+  } else if (rating === "LEICHT ATTRAKTIV") {
+    ratingColor = "text-emerald-400"; ratingBg = "bg-emerald-500/10 border-emerald-500/20";
+  } else if (rating === "NEUTRAL") {
+    ratingColor = "text-amber-400"; ratingBg = "bg-amber-500/10 border-amber-500/20";
+  } else if (rating === "UNATTRAKTIV") {
+    ratingColor = "text-red-400"; ratingBg = "bg-red-500/10 border-red-500/20";
   } else {
-    rating = "STARK UNATTRAKTIV"; ratingColor = "text-red-500"; ratingBg = "bg-red-500/10 border-red-500/30";
+    ratingColor = "text-red-500"; ratingBg = "bg-red-500/10 border-red-500/30";
   }
 
   // CRV-Haerte-Guard (Auftrag 09.08.2026, "NVO-Muster"): ein ATTRAKTIV/
@@ -395,7 +411,47 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     ratingBg,
     fazitSatz,
     dcfDivergenceDowngraded,
+    signals,
+    adaptive,
     totalExpDmg,
     raCrvCons,
   };
+}
+
+/** Fazit-Faktor-Text → Signal-Gruppe (Valuation wird bei starker Technik ged\u00e4mpft). */
+function groupOf(text: string): Signal["group"] {
+  if (/^(P\/E|PEG|Kons\. DCF|Geh\u00e4rteter|DCF|CRV|Kurs|Reverse-DCF|Analysten|Katalysatoren)/.test(text)) return "valuation";
+  if (/^(Expected Damage|Hohe Volatilit|Macro-Stress|MC-Simulation|PESTEL|Hohe Makro|Niedrige Makro|Staatsabh)/.test(text)) return "risk";
+  if (/FCF-Marge/.test(text)) return "quality";
+  return "other";
+}
+
+/**
+ * Signale f\u00fcr computeAdaptiveScore: Technik (Spec \u00a71), Moat (\u00a71), Low-Beta (\u00a74) als eigene Signale;
+ * \u00fcbrige gez\u00e4hlte Fazit-Faktoren als bin\u00e4re Signale (Fallback-St\u00e4rke, keine Historie im Analyse-JSON).
+ * Moat-/Technik-Zeilen der Liste werden nicht doppelt gez\u00e4hlt.
+ */
+export function buildAdaptiveSignals(
+  data: StockAnalysis, positive: string[], negative: string[], rsl: number | null, bias: BiasFixPayload | undefined,
+): Signal[] {
+  const out: Signal[] = [];
+  const skip = (t: string) => /Moat|^Timing|^Technisch|^RSL/.test(t);
+  positive.forEach((t, i) => { if (!skip(t)) out.push(binarySignal(`pos${i}`, groupOf(t), 1, t)); });
+  negative.forEach((t, i) => { if (!skip(t)) out.push(binarySignal(`neg${i}`, groupOf(t), -1, t)); });
+  const cs = data.technicalIndicators?.currentStatus;
+  let techStr = 0;
+  if (cs) {
+    const tech = technicalStrength({
+      deathCross: !cs.ma50AboveMA200,
+      belowMA200: !cs.priceAboveMA200,
+      macdNeg: !cs.macdAboveZero,
+      rslWeak: rsl != null && rsl < 105, // gleiche Schwelle wie S9 \u201eschwaches Momentum\u201c
+    });
+    techStr = tech.strength;
+    out.push(tech);
+  }
+  if (bias && Number.isFinite(bias.moatScore) && bias.moatRating !== undefined) out.push(moatStrength(bias.moatScore));
+  const lb = lowBetaSignal(data.beta5Y, techStr);
+  if (lb) out.push(lb);
+  return out;
 }
