@@ -5,7 +5,7 @@ import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import {
   CartesianGrid, Customized, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { axisTicks, lastPointLabel, tickLabel, type BuffettRangeId } from "./buffettChartScale";
+import { axisTicks, lastPointLabel, proxySuffix, tickLabel, type BuffettRangeId } from "./buffettChartScale";
 
 type RegionId = "US" | "EU" | "CN";
 type RangeId = BuffettRangeId;
@@ -20,6 +20,8 @@ interface TrendPoint {
   minus2: number;
   premiumPct: number;
   zScore: number;
+  /** #245: Proxy-Symbol bei fortgeschriebenen Punkten */
+  proxy?: string;
 }
 
 interface BuffettPayload {
@@ -246,7 +248,7 @@ function ChartOverlay(props: {
           <polygon points={`${x},${y} ${x - 9},${y - 4} ${x - 9},${y + 4}`} fill={RATIO} />
           <g data-testid="text-buffett-callout">
             <rect x={boxX} y={boxY} width={boxW} height={boxH} rx={2} fill="#ffffff" stroke={RATIO} strokeWidth={1.6} />
-            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}</text>
+            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}{last.proxy ? ` (via ${last.proxy})` : ""}</text>
             <text x={boxX + 10} y={boxY + 33} fill={RATIO} fontSize={props.wide ? 12 : 11}>{ratioText}</text>
             <text x={boxX + 10} y={boxY + 50} fill={RATIO} fontSize={props.wide ? 12 : 11}>{premiumText}</text>
           </g>
@@ -354,7 +356,7 @@ export function BuffettRatioPanel() {
             <div>
               {range !== "Max" && (
                 <p className="mb-1 text-[12px] leading-snug text-[#1473fc]" data-testid="text-buffett-callout">
-                  {longDate(chart[chart.length - 1].date)}
+                  {longDate(chart[chart.length - 1].date)}{proxySuffix(chart[chart.length - 1])}
                   {" · "}
                   {Math.round(chart[chart.length - 1].ratio)}% Marktwert zum BIP,{" "}
                   {Math.abs(Math.round(chart[chart.length - 1].premiumPct))}% {chart[chart.length - 1].premiumPct >= 0 ? "über" : "unter"} der langfristigen Trendlinie
@@ -390,7 +392,11 @@ export function BuffettRatioPanel() {
                   />
                   <Tooltip
                     contentStyle={{ fontSize: 11, borderColor: "#d1d5db" }}
-                    labelFormatter={value => longDate(new Date(Number(value)).toISOString().slice(0, 10))}
+                    labelFormatter={(value, payload) => {
+                      const iso = new Date(Number(value)).toISOString().slice(0, 10);
+                      const row = (payload?.[0]?.payload ?? null) as TrendPoint | null;
+                      return `${longDate(iso)}${proxySuffix(row)}`;
+                    }}
                     formatter={(value: number, name: string) => [`${Number(value).toFixed(1)}%`, name]}
                   />
                   <Line type="linear" dataKey="plus2" name="+ 2 Std.-Abw." stroke={PLUS_2} dot={false} strokeWidth={1.4} strokeDasharray="6 4" isAnimationActive={false} />
