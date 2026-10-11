@@ -81,4 +81,15 @@ const koDiv = await loadDividendHistory("KO", { fmp: async () => [{ date: "2026-
 assert.equal(koDiv.events[0].amount, 0.53);
 const yDiv = await loadDividendHistory("AZN.L", { fmp: async () => [], yahoo: async () => Object.assign([{ date: "2026-08-06", amount: 79.5 }], { currency: "GBP", rawCurrency: "GBp" }) as any, listingCurrency: async () => null });
 assert.equal(yDiv.currency, "GBP"); assert.equal(yDiv.events[0].amount, 0.795);
+// UI warning + cache invalidation wiring
+import { listingFxWarning } from "../shared/listing-units";
+assert.equal(listingFxWarning("GBp"), "FX GBPUSD fehlt – Werte unkonvertiert (Kurs in GBp, Bilanz in USD)");
+assert.equal(listingFxWarning("GBP"), null); assert.equal(listingFxWarning("USD"), null); assert.equal(listingFxWarning(undefined), null);
+const s1 = readFileSync("client/src/components/sections/Section1.tsx", "utf8");
+assert.match(s1, /\{listingFxWarning\(data\.currency\) && \([\s\S]{0,300}data-testid="fx-partial-warning"/);
+assert.match(readFileSync("server/analyze-route.ts", "utf8"), /currency: reportedCurrency \|\| "USD",/, "flag path: profile.currency → response.currency (route unchanged)");
+const dr = readFileSync("server/dividend-route.ts", "utf8");
+assert.match(dr, /const CACHE_VERSION = "v2";/); assert.match(dr, /cache\.get\(cacheKey\(ticker\)\)/); assert.match(dr, /cache\.set\(cacheKey\(ticker\),/);
+assert.match(readFileSync("client/src/lib/useDividendHistory.ts", "utf8"), /queryKey: \["dividends", "v2", ticker\]/);
+assert.match(readFileSync("server/disk-cache.ts", "utf8"), /if \(minorUnitInfo\(data\.currency\)\) \{/);
 console.log("test-listing-units: OK");

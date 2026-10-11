@@ -4,6 +4,7 @@
 // Falls back to a no-op if SQLite cannot open (e.g. read-only FS).
 import Database from "better-sqlite3";
 import path from "path";
+import { minorUnitInfo } from "../shared/listing-units";
 
 const DB_PATH = path.resolve(process.cwd(), "data.db");
 const CACHE_TTL_DAYS = 7;
@@ -129,6 +130,13 @@ export function diskCacheGet(ticker: string): any | null {
     if (data._schemaVersion && data._schemaVersion !== CACHE_SCHEMA_VERSION) {
       d.prepare("DELETE FROM analysis_cache WHERE ticker = ?").run(ticker);
       console.log(`[DiskCache] Invalidated ${ticker}: schema ${data._schemaVersion} ≠ ${CACHE_SCHEMA_VERSION}`);
+      return null;
+    }
+    // #244: analyses cached before the pence/pound fix still carry a minor-unit currency (GBp prices, USD statements).
+    // Drop them so they are rebuilt normalised; a fresh partial (FX missing) result is retried the same way.
+    if (minorUnitInfo(data.currency)) {
+      d.prepare("DELETE FROM analysis_cache WHERE ticker = ?").run(ticker);
+      console.log(`[DiskCache] Invalidated ${ticker}: minor-unit currency ${data.currency} (pre-#244 or FX missing)`);
       return null;
     }
     const hp = data.historicalPrices;
