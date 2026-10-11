@@ -17,6 +17,7 @@ import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield
 import { enrichGoldChartSeries } from "./gold-chart-series";
 import { createFredHistoryMemo } from "./gold-fred-memo";
 import { analyzeGoldHistoryPlan, parseFredLatest, prefetchHistories, prefetchedFetcher, tail5 } from "./gold-fred-prefetch";
+import { createGoldResponseCache, GOLD_ANALYSIS_CACHE_TTL_MS } from "./gold-response-cache";
 import { buildGoldChartHistoryPoints, createChartHistoryCache, fetchFmpChunks, historyWindows, mergeGoldRows, parseChartHistoryRange, pickLongerSource, seriesCoverage, trimChartHistory } from "./gold-chart-history";
 
 function parseNumber(s: string | undefined | null): number {
@@ -290,7 +291,28 @@ function getTechnicalScore(rsi: number, deviationPct: number): { score: -1 | 0 |
 }
 
 export function registerGoldRoutes(server: Server, app: Express) {
-  app.get("/api/analyze-gold", async (_req, res) => {
+  // JOB 15: Antwort-Cache (10 min) mit Dedupe paralleler Anfragen. Die Berechnung selbst
+  // (buildGoldAnalysis) ist unverändert; ein Cache-Treffer liefert exakt dieselbe Antwort.
+  // ?fresh=1 umgeht den Cache. Header X-Gold-Cache: miss|hit|shared|bypass, X-Gold-Timing: Phasen in ms.
+  const analysisCache = createGoldResponseCache<{ analysis: GoldAnalysis; timing: string }>(GOLD_ANALYSIS_CACHE_TTL_MS);
+  app.get("/api/analyze-gold", async (req, res) => {
+    try {
+      const t0 = Date.now();
+      const { value, status, ageMs } = await analysisCache.get(() => buildGoldAnalysis(), { bypass: req.query.fresh === "1" });
+      res.setHeader("X-Gold-Cache", status);
+      res.setHeader("X-Gold-Cache-Age", String(Math.round(ageMs / 1000)));
+      res.setHeader("X-Gold-Timing", value.timing);
+      console.log(`[GOLD] Cache ${status} (Alter ${Math.round(ageMs / 1000)} s) in ${Date.now() - t0} ms`);
+      res.json(value.analysis);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Gold analysis failed" });
+    }
+  });
+
+  const buildGoldAnalysis = async (): Promise<{ analysis: GoldAnalysis; timing: string }> => {
+    const tStart = Date.now();
+    const timing: string[] = [];
+    const mark = (label: string) => timing.push(`${label}=${Date.now() - tStart}`);
     try {
       console.log("[GOLD] Starting gold analysis...");
       const now = new Date();
@@ -324,9 +346,11 @@ export function registerGoldRoutes(server: Server, app: Express) {
         // 3. DXY (FMP)
         fmpQuote("DX-Y.NYB"),
       ]);
+      mark("fmp");
 
       // Also fetch FRED data for more precise indicators (letzter Wert je Serie)
       const [fredBreakeven, fredRealRate, fredM2, fredCPI] = await fredLatestPromise;
+      mark("fredLatest");
 
       // WORK_TEIL7_SCORING.md §7.8.3: "Chart: Gold (links) vs Real10Y (rechts)" —
       // bisher komplett fehlend, obwohl server/gold-realyield-model.ts (§7.8.8/9)
@@ -336,6 +360,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       // Ein Memo je Request: jede FRED-Historie wird nur einmal geladen und an
       // Chart-Overlays, Multi-Faktor-Modell und adaptive Schicht weitergereicht.
       const fredFetcher = prefetchedFetcher(await fredHistoryPromise, fetchFREDSeriesHistory);
+      mark("fredHist");
       const fredHistory = createFredHistoryMemo(fredFetcher);
       const real10yHistory = fredHistory.get("DFII10", startDate);
       console.log(`[GOLD] Real10Y (DFII10) history points: ${real10yHistory.length}`);
@@ -523,6 +548,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       let m2YoY = 4.88; // fallback: Feb 2026 YCharts estimate
       try {
         const m2Csv = await m2YoyCsvPromise;
+        mark("m2yoy");
         const m2Lines = m2Csv.trim().split('\n').filter(l => l && !l.startsWith('DATE'));
         if (m2Lines.length >= 13) {
           const newest = parseFloat(m2Lines[0].split(',')[1]);
@@ -767,6 +793,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       let goldNews: import("../shared/gold-schema").GoldNewsImpact | null = null;
       try {
         goldNews = await goldNewsPromise;
+        mark("news");
         let volumePoints: { date: string; volume: number }[] | null = null;
         let volumeSource: string | null = null;
         if (volumeReadingsAreReal(fmpVolumes.map(point => point.volume))) {
@@ -775,6 +802,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         } else {
           try {
             const bars = await yahooFetch("GC=F", startDate, endDate);
+            mark("yahooVol");
             const yahooVolumes = bars.map(bar => ({ date: bar.date, volume: bar.volume }));
             if (volumeReadingsAreReal(yahooVolumes.map(point => point.volume))) {
               volumePoints = yahooVolumes;
@@ -907,12 +935,14 @@ export function registerGoldRoutes(server: Server, app: Express) {
 
       console.log(`[GOLD] FRED-Historien: ${fredHistory.fetches} Abrufe fuer ${fredHistory.requests} Anfragen (${fredFetcher.served()} parallel vorab, ${fredFetcher.fallbacks()} synchron nachgeladen)`);
       console.log(`[GOLD] Analysis complete: $${spotPrice}, GIS=${gis.toFixed(2)}, Sentiment=${sentiment}`);
-      res.json(analysis);
+      mark("total");
+      console.log(`[GOLD] Timing (ms ab Start): ${timing.join(" ")}`);
+      return { analysis, timing: timing.join(" ") };
     } catch (error: any) {
       console.error("[GOLD] Error:", error?.message);
-      res.status(500).json({ error: error?.message || "Gold analysis failed" });
+      throw error;
     }
-  });
+  };
 
   // Gold-Chart (Section 2) 10Y/Max: lange Chart-Historie, nur auf Anforderung (lazy im Client).
   // Reine Chart-Daten — /api/analyze-gold, Scores und Gates bleiben unberuehrt.
