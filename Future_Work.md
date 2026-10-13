@@ -349,3 +349,42 @@ Professionell (teuer): Bloomberg, Refinitiv/LSEG, ICE, S&P Markit (volle OAS + A
 
 **Nächster Schritt:**  
 FRED ICE BofA OAS als ersten Overlay-Prototyp in Sektion 10 einbauen (kostenlos, sofort nutzbar). Parallel Leeway Free-Tier für 1–2 Emittenten (z. B. ORCL) testen.
+
+---
+
+### Klarstellung: Unternehmensspezifische Anleihen (ticker-bezogen)
+
+**Ja – mit Einschränkung je nach Anbieter.**
+
+#### Was company-spezifisch (ticker-bezogen) ist
+
+| Anbieter | Company-spezifisch? | Wie an den Ticker gekoppelt? |
+|----------|---------------------|------------------------------|
+| **Leeway** | **Ja** | Über ISIN der Anleihe des Emittenten (z. B. ORCL-Bond → Ticker ORCL) |
+| **Terrapin** | **Ja** | Über ISIN / Issuer-LEI / Suche nach Emittent → direkt dem Equity-Ticker zuordenbar |
+| **FINRA** | **Ja** (US) | Über CUSIP / TRACE-Symbol der konkreten Anleihe des Unternehmens |
+| **Cbonds** | **Ja** | Über ISIN / Emittentensuche |
+| **FRED** | **Nein** | Nur Aggregate (Rating-Buckets oder HQM-Kurve), kein einzelner Emittent |
+
+#### Praktischer Ablauf für einen Ticker (z. B. ORCL)
+
+1. **FMP** `/stable/company-notes?symbol=ORCL`  
+   → Liste der emittierten Notes (oft mit Coupon + Fälligkeit im Titel).
+
+2. **ISIN/CUSIP** der relevanten Anleihe ermitteln  
+   (manuell, OpenFIGI, oder über Leeway/Terrapin-Suche).
+
+3. **Leeway / Terrapin** mit dieser ISIN abfragen  
+   → bekommst Preis + **YTM** genau dieser Anleihe.
+
+4. **Spread** rechnen:  
+   \[
+   \text{Credit Spread} = \text{YTM}_\text{Bond} - \text{Treasury}_\text{gleiche Laufzeit}
+   \]
+   (Treasury aus FMP `/treasury-rates`).
+
+5. Im Chart von **ORCL** als Overlay anzeigen.
+
+**Kurz:**  
+- **FRED** = nur Proxy (nicht company-spezifisch).  
+- **Leeway / Terrapin / FINRA / Cbonds** = echte **unternehmensspezifische** Anleihenrenditen, die du dem jeweiligen Equity-Ticker zuordnen kannst.
