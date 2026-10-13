@@ -6,7 +6,7 @@ import {
   worstCaseM1, worstCaseM2, worstCaseM3, calculateCatalystUpside, selectCatalystBase,
   gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult,
 } from "../../lib/calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, formatRatio, getCRVColor } from "../../lib/formatters";
+import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, formatRatio, getCRVColor, formatTarget, statementCurrency } from "../../lib/formatters";
 import { buildFazitSignal } from "../../lib/fazit-signal";
 import { buildBiasDecision, isNegativeCatalyst } from "../../../../shared/bias-fixes";
 import { useMemo } from "react";
@@ -62,6 +62,9 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   );
   const catalystDCFBase = catalystBaseInfo.base;
   const catalystBaseFallback = catalystBaseInfo.source !== "dcf";
+  // JOB 23: DCF-Werte in Statement-Währung; Kurs, Worst Case, Analyst-PT in Listing-Währung.
+  const dcfCcy = statementCurrency(data);
+  const catalystCcy = catalystBaseFallback ? data.currency : dcfCcy;
   const { totalUpside, adjustedTarget } = calculateCatalystUpside(catalysts, catalystDCFBase);
 
   const m1 = worstCaseM1(data.currentPrice, data.beta5Y, data.sectorMaxDrawdown || 35);
@@ -130,7 +133,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">DCF Szenarien — Upside / Downside (FCFF)</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <ScenarioCard
+          <ScenarioCard currency={dcfCcy}
             label={bias.switched ? "Unadjusted / Extrapolative" : "Conservative DCF"}
             value={conservativeDCF.perShare}
             currentPrice={data.currentPrice}
@@ -138,7 +141,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             wacc={conservativeDCF.wacc}
           />
           {bias.switched && (
-            <ScenarioCard
+            <ScenarioCard currency={dcfCcy}
               label="Gehärteter Inverse-DCF"
               value={bias.decisionPerShare}
               currentPrice={data.currentPrice}
@@ -146,14 +149,14 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
               wacc={bias.decisionWacc}
             />
           )}
-          <ScenarioCard
+          <ScenarioCard currency={dcfCcy}
             label="Optimistic DCF"
             value={optimisticDCF.perShare}
             currentPrice={data.currentPrice}
             pct={optimisticUpside}
             wacc={optimisticDCF.wacc}
           />
-          <ScenarioCard
+          <ScenarioCard currency={dcfCcy}
             label="Macro-Stress DCF"
             value={stressDCF.perShare}
             currentPrice={data.currentPrice}
@@ -220,8 +223,8 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
-            <SummaryRow label="Current Price" value={formatCurrency(data.currentPrice)} />
-            <SummaryRow label="Market Cap" value={formatLargeNumber(data.marketCap)} />
+            <SummaryRow label="Current Price" value={formatCurrency(data.currentPrice, 2, data.currency)} />
+            <SummaryRow label="Market Cap" value={formatLargeNumber(data.marketCap, data.currency)} />
             <SummaryRow label="Sector / Industry" value={`${data.sector} — ${data.industry}`} />
             <SummaryRow label="Cycle Class" value={sp.cycleClass} note={`Political: ${sp.politicalCycle}`} />
             <SummaryRow label="P/E (TTM)" value={formatNumber(data.peRatio, 1)} note={`Sector: ${formatNumber(data.sectorAvgPE, 1)}`} />
@@ -232,31 +235,31 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             <SummaryRow label="FCF Margin" value={formatPercentNoSign(data.fcfMargin)} />
             <SummaryRow label="FCF Haircut" value={`${haircut}%`} note={haircut > 0 ? `Gov. exposure: ${formatPercentNoSign(data.governmentExposure)}` : "N/A"} />
             <SummaryRow label="Moat" value={data.moatRating} note={data.moatRating === "Wide" ? "Strong" : data.moatRating === "Narrow" ? "Moderate" : "Weak"} />
-            <SummaryRow label="Analyst PT Median" value={formatCurrency(data.analystPT.median)} note={`${ptUpside >= 0 ? "+" : ""}${formatNumber(ptUpside, 1)}% upside`} />
+            <SummaryRow label="Analyst PT Median" value={formatTarget(data.analystPT.median, data.currency)} note={`${ptUpside >= 0 ? "+" : ""}${formatNumber(ptUpside, 1)}% upside`} />
             <SummaryRow label="WACC (CAPM)" value={formatPercentNoSign(conservativeDCF.wacc)} note={`Re=${formatPercentNoSign(conservativeDCF.costOfEquity)}, β=${formatNumber(data.beta5Y, 2)}`} />
             <tr className="bg-primary/5">
               <td className="py-2 px-2 font-semibold">Conservative DCF (FCFF)</td>
-              <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(conservativeDCF.perShare)}</td>
+              <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(conservativeDCF.perShare, 2, dcfCcy)}</td>
               <td className={`py-2 px-2 font-mono tabular-nums font-medium ${conservativeUpside >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
                 {conservativeUpside >= 0 ? '+' : ''}{formatNumber(conservativeUpside, 1)}% {conservativeUpside >= 0 ? 'Upside' : 'Downside'}
               </td>
             </tr>
             <tr className="bg-emerald-500/5">
               <td className="py-2 px-2 font-semibold">Optimistic DCF (FCFF)</td>
-              <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(optimisticDCF.perShare)}</td>
+              <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(optimisticDCF.perShare, 2, dcfCcy)}</td>
               <td className={`py-2 px-2 font-mono tabular-nums font-medium ${optimisticUpside >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
                 {optimisticUpside >= 0 ? '+' : ''}{formatNumber(optimisticUpside, 1)}% {optimisticUpside >= 0 ? 'Upside' : 'Downside'}
               </td>
             </tr>
             <tr className="bg-red-500/5">
               <td className="py-2 px-2 font-semibold">Macro-Stress DCF (FCFF)</td>
-              <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(stressDCF.perShare)}</td>
+              <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(stressDCF.perShare, 2, dcfCcy)}</td>
               <td className={`py-2 px-2 font-mono tabular-nums font-medium ${stressDownside >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
                 {stressDownside >= 0 ? '+' : ''}{formatNumber(stressDownside, 1)}% {stressDownside >= 0 ? 'Upside' : 'Downside'}
               </td>
             </tr>
-            <SummaryRow label="Safety Margin DCF (30%)" value={formatCurrency(conservativeDCF.perShare * 0.7)} />
-            <SummaryRow label="Worst Case" value={formatCurrency(worstCase)} note="min(M1, M2, M3)" />
+            <SummaryRow label="Safety Margin DCF (30%)" value={formatCurrency(conservativeDCF.perShare * 0.7, 2, dcfCcy)} />
+            <SummaryRow label="Worst Case" value={formatCurrency(worstCase, 2, data.currency)} note="min(M1, M2, M3)" />
             <tr className={crvConservative >= 2.5 ? "bg-emerald-500/5" : crvConservative >= 2.0 ? "bg-amber-500/5" : "bg-red-500/5"}>
               <td className="py-2 px-2 font-semibold">CRV (Conservative)</td>
               <td className={`py-2 px-2 text-right font-mono tabular-nums font-bold ${getCRVColor(crvConservative)}`}>{formatRatio(crvConservative)}</td>
@@ -269,7 +272,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             </tr>
             <tr className={data.currentPrice <= dcfBeiCRV3 ? "bg-emerald-500/5" : "bg-red-500/5"}>
               <td className="py-2 px-2 font-semibold">DCF bei CRV 3:1</td>
-              <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(dcfBeiCRV3)}</td>
+              <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(dcfBeiCRV3, 2, dcfCcy)}</td>
               <td className={`py-2 px-2 font-medium ${data.currentPrice <= dcfBeiCRV3 ? 'text-emerald-500' : 'text-red-500'}`}>
                 {data.currentPrice <= dcfBeiCRV3 ? 'Kurs UNTER Max-Entry' : 'Kurs ÜBER Max-Entry'}
               </td>
@@ -339,7 +342,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
                       </span>
                     </td>
                     <td className={`py-2 px-2 text-right font-mono tabular-nums ${isBelowKurs ? 'text-red-500' : 'text-primary'}`}>
-                      {formatCurrency(adjustedTarget)}
+                      {formatCurrency(adjustedTarget, 2, catalystCcy)}
                     </td>
                   </tr>
                 );
@@ -358,7 +361,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         </div>
         <div className="font-mono tabular-nums">
           Basis: {bias.valuationBaseLabel} · {bias.modeLabel}
-          {bias.switched ? ` · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare)}` : ""}
+          {bias.switched ? ` · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare, 2, dcfCcy)}` : ""}
         </div>
         <div className="font-mono tabular-nums">
           Gesamtscore {formatNumber(bias.overallScore, 2)} ({bias.overallRating}) · PESTEL-Faktor {formatNumber(bias.pestelFactor, 2)} · Moat-Multiplikator {formatNumber(bias.moatMultiplier, 3)}
@@ -367,18 +370,18 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           Kat.-adj. Zielwert = {catalystBaseFallback ? 'Analyst PT' : bias.valuationBaseLabel} × (1 + Σ positive GB / 100)
         </div>
         <div className="font-mono tabular-nums">
-          = {formatCurrency(catalystDCFBase)} × (1 + {formatNumber(totalUpside, 2)}%) = {formatCurrency(adjustedTarget)}
+          = {formatCurrency(catalystDCFBase, 2, catalystCcy)} × (1 + {formatNumber(totalUpside, 2)}%) = {formatCurrency(adjustedTarget, 2, catalystCcy)}
         </div>
         {catalystBaseFallback && (
           <div className="text-amber-500 text-[10px]">
-            ⚠ DCF-Basis zu niedrig ({formatCurrency(conservativeDCF.perShare)}), verwende Analyst PT Median als Basis
+            ⚠ DCF-Basis zu niedrig ({formatCurrency(conservativeDCF.perShare, 2, dcfCcy)}), verwende Analyst PT Median als Basis
           </div>
         )}
         <div className="font-mono tabular-nums">
-          CRV = (Fair Value - Worst Case) / (Kurs - Worst Case) = ({formatCurrency(decisionPerShare)} - {formatCurrency(worstCase)}) / ({formatCurrency(data.currentPrice)} - {formatCurrency(worstCase)}) = {formatNumber(crvConservative, 2)}:1
+          CRV = (Fair Value - Worst Case) / (Kurs - Worst Case) = ({formatCurrency(decisionPerShare, 2, dcfCcy)} - {formatCurrency(worstCase, 2, data.currency)}) / ({formatCurrency(data.currentPrice, 2, data.currency)} - {formatCurrency(worstCase, 2, data.currency)}) = {formatNumber(crvConservative, 2)}:1
         </div>
         <div className="font-mono tabular-nums">
-          DCF bei CRV 3:1 = ({bias.valuationBaseLabel} + 2 × WC) / 3 = ({formatCurrency(decisionPerShare)} + 2 × {formatCurrency(worstCase)}) / 3 = {formatCurrency(dcfBeiCRV3)}
+          DCF bei CRV 3:1 = ({bias.valuationBaseLabel} + 2 × WC) / 3 = ({formatCurrency(decisionPerShare, 2, dcfCcy)} + 2 × {formatCurrency(worstCase, 2, data.currency)}) / 3 = {formatCurrency(dcfBeiCRV3, 2, dcfCcy)}
         </div>
       </div>
 
@@ -571,8 +574,8 @@ function SummaryRow({ label, value, note }: { label: string; value: string; note
   );
 }
 
-function ScenarioCard({ label, value, currentPrice, pct, wacc, isStress }: {
-  label: string; value: number; currentPrice: number; pct: number; wacc: number; isStress?: boolean;
+function ScenarioCard({ label, value, currentPrice, pct, wacc, isStress, currency }: {
+  label: string; value: number; currentPrice: number; pct: number; wacc: number; isStress?: boolean; currency?: string | null;
 }) {
   const isUp = pct >= 0;
   return (
@@ -582,7 +585,7 @@ function ScenarioCard({ label, value, currentPrice, pct, wacc, isStress }: {
       'bg-red-500/5 border-red-500/20'
     }`}>
       <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">{label}</div>
-      <div className="text-base font-bold font-mono tabular-nums mt-1">{formatCurrency(value)}</div>
+      <div className="text-base font-bold font-mono tabular-nums mt-1">{formatCurrency(value, 2, currency)}</div>
       <div className={`text-sm font-bold font-mono tabular-nums ${isUp && !isStress ? 'text-emerald-500' : 'text-red-500'}`}>
         {isUp ? '+' : ''}{formatNumber(pct, 1)}%
         <span className="text-[10px] font-normal text-muted-foreground ml-1">{isUp && !isStress ? 'Upside' : 'Downside'}</span>
