@@ -20,6 +20,17 @@ export interface IndicatorResult {
   ageHours?: number;
   /** True when the Google Trends print is over 24h. Zone weights stay unchanged. */
   isStale?: boolean;
+  /** Future_7/8: adaptive Perzentil-Ablesung, nur Anzeige (nicht im Score). */
+  adaptive?: {
+    method: "percentile";
+    windowYears: number;
+    percentile: number;
+    n: number;
+    from: string;
+    to: string;
+    compareRaw: number;
+    note: string;
+  };
 }
 
 export interface SubgroupResult {

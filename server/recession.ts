@@ -199,6 +199,69 @@ export interface IndicatorResult {
   ageHours?: number;
   /** True when the Google Trends print is over 24h. The zone weight stays ×1.7. */
   isStale?: boolean;
+  /**
+   * Future_7/8 (Mini-PR 10, erster Schritt): adaptive Ablesung neben der festen Zone.
+   * Nur Anzeige. Geht NICHT in rawScore, weightedScore, Netto oder Max.
+   */
+  adaptive?: AdaptivePercentileReading;
+}
+
+export interface AdaptivePercentileReading {
+  method: "percentile";
+  windowYears: number;
+  /** Anteil der Fensterwerte ≤ aktueller Wert, 0–100. */
+  percentile: number;
+  n: number;
+  from: string;
+  to: string;
+  /** Future_8 percentileScore (>90 → +4, >75 → +2, <10 → −4, <25 → −2), nur Vergleich. */
+  compareRaw: number;
+  note: string;
+}
+
+export const ADAPTIVE_PERCENTILE_MIN_POINTS = 60;
+export const ADAPTIVE_PERCENTILE_WINDOW_YEARS = 20;
+
+/** Future_8 §3 percentileScore. Nur Vergleichswert, kein Score-Input. */
+export function percentileCompareRaw(percentile: number): number {
+  if (percentile > 90) return 4;
+  if (percentile > 75) return 2;
+  if (percentile < 10) return -4;
+  if (percentile < 25) return -2;
+  return 0;
+}
+
+/**
+ * Perzentil des letzten Punkts gegen die letzten `windowYears` Jahre derselben Reihe.
+ * Unter 60 Punkten: null (zu wenig Historie, kein erfundener Wert).
+ */
+export function adaptivePercentileReading(
+  points: { date: string; value: number }[],
+  windowYears = ADAPTIVE_PERCENTILE_WINDOW_YEARS,
+): AdaptivePercentileReading | null {
+  const sorted = points
+    .filter(p => Boolean(p.date) && Number.isFinite(p.value))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const last = sorted[sorted.length - 1];
+  if (!last) return null;
+  const start = new Date(`${last.date.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(start.getTime())) return null;
+  start.setUTCFullYear(start.getUTCFullYear() - windowYears);
+  const from = start.toISOString().slice(0, 10);
+  const window = sorted.filter(p => p.date.slice(0, 10) > from);
+  if (window.length < ADAPTIVE_PERCENTILE_MIN_POINTS) return null;
+  const atOrBelow = window.filter(p => p.value <= last.value).length;
+  const percentile = Math.round((atOrBelow / window.length) * 1000) / 10;
+  return {
+    method: "percentile",
+    windowYears,
+    percentile,
+    n: window.length,
+    from: window[0].date.slice(0, 10),
+    to: last.date.slice(0, 10),
+    compareRaw: percentileCompareRaw(percentile),
+    note: "Vergleich, kein Score",
+  };
 }
 
 // ============================================================
@@ -397,8 +460,68 @@ function scoreBuffett(): IndicatorResult {
       ? `Wilshire 5000 Total Market Index ${market.date} × ${WILSHIRE_DOLLARS_PER_POINT_BN} Mrd. $ je Punkt / FRED GDP ${gdp.date}. asOf ist das ältere Bein.`
       : "Wilshire 5000 Total Market Index / FRED GDP.",
   });
-  if (computed) return computed;
+  if (computed) {
+    // Future_7/8: 20J-Perzentil nur als Zusatzzeile. Score-Felder bleiben unveraendert.
+    const ratio = market && gdp ? buffettMarketCapGdpPercent(market.value, gdp.value) : NaN;
+    if (!Number.isFinite(ratio)) return computed;
+    const history = buffettMonthlyHistory(
+      readJson(fetchUrl(WILSHIRE_MONTHLY_CHART, 20000, { "User-Agent": "Mozilla/5.0" })),
+      fetchFredRows("GDP", getDateYearsAgo(ADAPTIVE_PERCENTILE_WINDOW_YEARS + 2)),
+    );
+    const asOf = market!.date < gdp!.date ? market!.date : gdp!.date;
+    return withBuffettPercentile(computed, history, { date: asOf, value: ratio });
+  }
+  // Weltbank-Fallback: Jahreswerte reichen nicht fuer 60 Monatspunkte, kein Perzentil.
   return buffettFromObservation(latestFredPoint("DDDM01USA156NWDB", 40), today);
+}
+
+/** Monatsbalken ^W5000 ueber 22 Jahre. Nur fuer die Perzentil-Zeile, nicht fuer den Score. */
+const WILSHIRE_MONTHLY_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/%5EW5000?range=22y&interval=1mo";
+
+/**
+ * Monatliche Buffett-Quote: Wilshire-Monatsschluss × 1,05 Mrd. $ / letztes
+ * veroeffentlichtes GDP-Quartal zu diesem Datum (as-of, keine Interpolation).
+ * Monate ohne GDP davor fallen weg.
+ */
+export function buffettMonthlyHistory(
+  yahooPayload: unknown,
+  gdpRows: Array<{ date: string; value: number | null }>,
+): { date: string; value: number }[] {
+  const gdp = gdpRows
+    .filter((row): row is { date: string; value: number } => row.value != null && Number.isFinite(row.value) && row.value > 0 && Boolean(row.date))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  if (gdp.length === 0 || !yahooPayload || typeof yahooPayload !== "object") return [];
+  const result = (yahooPayload as { chart?: { result?: Array<{ timestamp?: unknown; indicators?: { quote?: Array<{ close?: unknown }> } }> } }).chart?.result?.[0];
+  const stamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const closes = Array.isArray(result?.indicators?.quote?.[0]?.close) ? result.indicators.quote[0].close : [];
+  const byMonth = new Map<string, { date: string; value: number }>();
+  let g = 0;
+  const n = Math.min(stamps.length, closes.length);
+  for (let i = 0; i < n; i++) {
+    const close = typeof closes[i] === "number" ? closes[i] as number : Number(closes[i]);
+    const stamp = typeof stamps[i] === "number" ? stamps[i] as number : Number(stamps[i]);
+    if (closes[i] == null || !Number.isFinite(close) || close <= 0 || !Number.isFinite(stamp)) continue;
+    const date = new Date(stamp * 1000).toISOString().slice(0, 10);
+    while (g + 1 < gdp.length && gdp[g + 1].date <= date) g++;
+    if (gdp[g].date > date) continue;
+    const ratio = buffettMarketCapGdpPercent(close * WILSHIRE_DOLLARS_PER_POINT_BN, gdp[g].value);
+    if (Number.isFinite(ratio)) byMonth.set(date.slice(0, 7), { date, value: ratio });
+  }
+  return Array.from(byMonth.values()).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+/**
+ * Haengt das Perzentil an den gescorten Buffett-Slot. Der heutige Score-Wert
+ * ersetzt den letzten Monatspunkt, damit Perzentil und Tabellenwert dieselbe Zahl meinen.
+ */
+export function withBuffettPercentile(
+  indicator: IndicatorResult,
+  history: { date: string; value: number }[],
+  current: { date: string; value: number },
+): IndicatorResult {
+  const month = current.date.slice(0, 7);
+  const merged = history.filter(p => p.date.slice(0, 7) !== month && p.date < current.date).concat(current);
+  return withAdaptivePercentile(indicator, merged);
 }
 
 // 9. Shiller CAPE. ie_data.xls is not parsed. The public monthly table is the series.
@@ -406,7 +529,9 @@ const MULTPL_CAPE = "https://www.multpl.com/shiller-pe/table/by-month";
 
 function scoreCAPE(): IndicatorResult {
   const html = fetchUrl(MULTPL_CAPE, 20000, { "User-Agent": "Mozilla/5.0" });
-  return capeFromPoint(latestMultplCape(html), recessionAsOf());
+  const scored = capeFromPoint(latestMultplCape(html), recessionAsOf());
+  // Future_7/8: Perzentil nur als Zusatzzeile. Die Tabelle ist schon geladen, kein zweiter Fetch.
+  return withAdaptivePercentile(scored, multplCapeHistory(html));
 }
 
 // 10. Margin debt. FINRA Rule 4521 publishes the monthly debit series as xlsx.
@@ -1082,6 +1207,35 @@ export function latestYahooChartClose(payload: unknown): { date: string; value: 
 }
 
 /** Newest row of the public Shiller PE monthly table. The workbook is not read. */
+/** Alle Monatszeilen der Multpl-Tabelle, aufsteigend. Gleiche Filter wie latestMultplCape. */
+export function multplCapeHistory(html: string): { date: string; value: number }[] {
+  if (!html || html.includes("Just a moment")) return [];
+  const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
+  const out = new Map<string, { date: string; value: number }>();
+  for (const row of rows) {
+    const cells = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(match => htmlCell(match[1]));
+    if (cells.length < 2) continue;
+    const date = englishLongDate(cells[0]);
+    const value = Number(cells[1].replace(/,/g, ""));
+    if (!date || !Number.isFinite(value) || value < 5 || value > 80) continue;
+    if (!out.has(date)) out.set(date, { date, value });
+  }
+  return Array.from(out.values()).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+/**
+ * Haengt die 20J-Perzentil-Ablesung an einen gescorten CAPE-Slot. Score-Felder
+ * bleiben byte-gleich. Geschlossene Slots und zu kurze Historie: unveraendert.
+ */
+export function withAdaptivePercentile(
+  indicator: IndicatorResult,
+  history: { date: string; value: number }[],
+): IndicatorResult {
+  if (indicator.available === false) return indicator;
+  const adaptive = adaptivePercentileReading(history);
+  return adaptive ? { ...indicator, adaptive } : indicator;
+}
+
 export function latestMultplCape(html: string): { date: string; value: number } | null {
   if (!html || html.includes("Just a moment")) return null;
   const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
