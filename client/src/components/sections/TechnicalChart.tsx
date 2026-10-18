@@ -168,7 +168,7 @@ export function TechnicalChart({ data }: Props) {
   const [showT10y, setShowT10y] = useState(false);
   useEffect(() => { setShowT10y(false); }, [data.ticker]);
   const t10yQuery = useMarketTreasury10Y(showT10y);
-  // Real10Y-Overlay (FRED DFII10): 1:1 der BTC-Chip „Makro → Real10Y“ (Quelle /api/analyze-btc/macro-history,
+  // Real10Y-Overlay (FRED DFII10): 1:1 der BTC-Chip „Makro → Real10Y“ (Quelle /api/analyze-btc/real10y-history, nur DFII10,
   // Farbe/Achse/Domain aus lib/real10yOverlay). Reine Anzeige, kein Score. Default aus, Reset je Ticker (wie 10J-Treasury).
   const [showReal10y, setShowReal10y] = useState(false);
   useEffect(() => { setShowReal10y(false); }, [data.ticker]);

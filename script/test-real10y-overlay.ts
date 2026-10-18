@@ -1,10 +1,15 @@
 /**
  * Real10Y-Overlay (FRED DFII10) in der Technischen Analyse (Sektion 12): 1:1 der BTC-Chip „Makro → Real10Y“.
- * Prüft: (1) BTC/Gold unverändert (Helper == alter BTC-Code von main 35ead515, Gold-Datei unberührt),
- * (2) Datenpfad UI → useMarketReal10Y → GET /api/analyze-btc/macro-history → server/btc-macro.ts → FRED (curl),
- *     mit echtem Express-Route-Handler und echtem Server-Fetcher; nur das curl-Binary ist durch ein Skript
- *     ersetzt, das den echten FRED-Snapshot ausgibt bzw. scheitert,
- * (3) n/a-Pfad (502, HTML, Fenster nicht abgedeckt) ohne Ersatzwert, (4) Score unverändert.
+ * Prüft: (1) BTC/Gold unverändert (Helper == alter BTC-Code der PR-Basis 35ead515, wörtlich ausgeführt;
+ *     fetchBTCMacroHistory alt vs. neu deepEqual; Gold/btcAnalysis von #267 nicht berührt),
+ * (2) Datenpfad UI → useMarketReal10Y → GET /api/analyze-btc/real10y-history → server/btc-macro.ts
+ *     fetchReal10YHistory → FRED DFII10 (curl), mit echtem Express-Route-Handler und echtem Server-Fetcher; nur das
+ *     curl-Binary ist durch ein Skript ersetzt, das den echten FRED-Snapshot ausgibt bzw. scheitert,
+ * (3) n/a-Pfad (502, HTML, Fenster nicht abgedeckt) ohne Ersatzwert; M2SL-Ausfall → Real10Y bleibt da, BTC wie bisher 502,
+ * (4) Score unverändert.
+ * Merge-fest: Datei-/Diff-Prüfungen vergleichen mit dem zuletzt hereingemergten main-Stand (zweiter Elternteil des
+ * jüngsten Merge-Commits), sonst mit der PR-Basis; keine Zeilenzählung, Formeln funktional.
+ * Die PR-Basis 35ead515 wird nur gelesen (alter BTC-Code), sie ist Vorfahre jedes Merge-Stands.
  * Fixtures (alle echt, abgerufen 18.10.2026): script/fixtures/real10y/DFII10-2026-10-18.csv
  * (fredgraph.csv?id=DFII10&cosd=2015-01-01), M2SL-2026-10-18.csv (id=M2SL&cosd=2014-01-01),
  * MSFT-ohlcv-2y-2026-10-18.json (Yahoo v8 chart MSFT range=2y interval=1d); analysis-MSFT.json (bestehend).
@@ -22,11 +27,26 @@ import { installFakeDom, findByTestId, reactPropsOf, fiberOf, FakeElement, FakeT
 (globalThis as any).React = React;
 let n = 0;
 const ok = (name: string) => { n++; console.log(`  ✅ ${name}`); };
-const MAIN = "35ead515c4c4380e8a194b9e3f4d6195fa0ec399";
+const BASE = "35ead515c4c4380e8a194b9e3f4d6195fa0ec399"; // PR-Basis von #267 (Vorfahre, nur gelesen)
 const FIX = resolve("script/fixtures/real10y");
 const DFII10_CSV = readFileSync(join(FIX, "DFII10-2026-10-18.csv"), "utf8");
 const MSFT_OHLCV = JSON.parse(readFileSync(join(FIX, "MSFT-ohlcv-2y-2026-10-18.json"), "utf8")).ohlcvData as Array<{ date: string; close: number }>;
 const git = (...a: string[]) => execFileSync("git", a, { encoding: "utf8" });
+// Eigener Anteil von #267, merge-fest: Vergleichsbasis ist der zuletzt in den Branch gemergte main-Stand (zweiter
+// Elternteil des jüngsten Merge-Commits auf der first-parent-Kette), sonst die PR-Basis. So zählen Änderungen anderer
+// PRs, die über main hereinkommen (#264, #266 …), nie als eigene. Dateiliste: nur Dateien, die sich gegenüber JEDER
+// dieser Basen unterscheiden. Läuft der Test auf einem squash-gemergten main-Commit („… (#NNN)“ ohne Merge-Kette),
+// gibt es keinen eigenen Anteil mehr → Datei-/Diff-Prüfungen werden übersprungen, die funktionalen Prüfungen bleiben.
+const mergedMains = git("log", "--first-parent", "--merges", "--format=%P", `${BASE}..HEAD`).trim().split("\n").filter(Boolean)
+  .map(l => l.split(" ")[1]).filter(Boolean);
+const DIFF_BASE = mergedMains[0] ?? BASE;
+const onSquashedMain = mergedMains.length === 0 && /\(#\d+\)$/.test(git("log", "-1", "--format=%s", "HEAD").trim()) && !git("log", "--format=%s", `${BASE}..HEAD`).includes("Real10Y");
+const filesVs = (b: string) => new Set([
+  ...git("diff", "--name-only", b).trim().split("\n"),
+  ...git("ls-files", "--others", "--exclude-standard").trim().split("\n"),
+].filter(Boolean));
+const ownFiles = onSquashedMain ? [] : [...[DIFF_BASE, BASE, ...mergedMains].map(filesVs).reduce((acc, set) => new Set([...acc].filter(f => set.has(f))))].sort();
+const ownDiffLines = (path: string) => onSquashedMain ? [] : git("diff", "--unified=0", DIFF_BASE, "--", path).split("\n").filter(l => /^[+-][^+-]/.test(l));
 
 const { doc } = installFakeDom();
 // Recharts (CartesianAxis.componentDidMount) fragt getElementsByClassName ab; fake-dom kennt es nicht → leer (nur hier im Test).
@@ -37,7 +57,7 @@ async function main() {
   const { parseFredCsv } = await import("../server/btc-macro");
 
   // ── 1. BTC/Gold unverändert ──
-  const oldBtc = git("show", `${MAIN}:client/src/pages/BTCDashboard.tsx`);
+  const oldBtc = git("show", `${BASE}:client/src/pages/BTCDashboard.tsx`);
   const m = /const real10yDomain = useMemo\(\(\) => \{\n([\s\S]*?)\n  \}, \[chartData\]\);/.exec(oldBtc);
   assert.ok(m, "alter real10yDomain-Block auf main gefunden");
   // Alter BTC-Code von main wörtlich ausgeführt (nur TS-Typannotationen entfernt).
@@ -46,7 +66,7 @@ async function main() {
   const cases: Array<Array<number | null>> = [[], [null, null], [1.5], [2.1, 2.1], [-1.08, -0.5, 0.3, null, 1.2], real.map(p => p.value),
     real.filter(p => p.date >= "2020-03-01" && p.date <= "2021-12-31").map(p => p.value), real.slice(-252).map(p => p.value), [0.04, 0.05, 0.06]];
   for (const c of cases) assert.deepEqual(real10yDomain(c), oldDomain(c.map(v => ({ real10y: v }))), JSON.stringify(c.slice(0, 5)));
-  ok(`real10yDomain == alter BTC-Code (main ${MAIN.slice(0, 8)} BTCDashboard.tsx:1047-1054, wörtlich ausgeführt) für ${cases.length} Fälle inkl. echter DFII10-Historie, negativer Zinsen, leer`);
+  ok(`real10yDomain == alter BTC-Code (PR-Basis ${BASE.slice(0, 8)} BTCDashboard.tsx:1047-1054, wörtlich ausgeführt) für ${cases.length} Fälle inkl. echter DFII10-Historie, negativer Zinsen, leer`);
 
   for (const lit of ['name="Real10Y (DFII10)"', 'stroke="#38bdf8"', "strokeWidth={1.25}", 'title="Realzins (DFII10) als rechte Achse ein-/ausblenden"', '"border-sky-400 text-sky-400"', "tickFormatter={(v: number) => `${v.toFixed(1)}%`}", '{ key: "real10y", label: "Real10Y", color: "#38bdf8" }']) {
     assert.ok(oldBtc.includes(lit), `main-BTC enthält ${lit}`);
@@ -65,26 +85,30 @@ async function main() {
   assert.ok(!btc.includes("#38bdf8") && !btc.includes('"Real10Y (DFII10)"'), "BTC nutzt keine eigenen Real10Y-Literale mehr");
   assert.ok(btc.includes("real10yDomainOf(chartData.map(d => d.real10y))"));
   assert.ok(btc.includes('tick={macroAxisHidden("real10y") ? false : { fontSize: narrow ? 10 : 9, fill: REAL10Y_OVERLAY.color }}'));
-  assert.ok(btc.includes('const macroAxisFullWidth = (id: MacroAxisId) => (id === "m2absolute" ? 54 : 44);'));
+  // Achsbreite: Real10Y bleibt bei der Standardbreite 44 (= REAL10Y_OVERLAY.axisWidth); andere PRs (#266: walcl)
+  // dürfen weitere breite Achsen ergänzen, ohne dass der Test bricht.
+  const widthLine = /const macroAxisFullWidth = \(id: MacroAxisId\) => \((.*) \? 54 : 44\);/.exec(btc);
+  assert.ok(widthLine, "macroAxisFullWidth vorhanden");
+  assert.ok(widthLine![1].includes('id === "m2absolute"') && !widthLine![1].includes("real10y"), widthLine![0]);
   assert.ok(btc.includes("const [showReal10y, setShowReal10y] = useState(true);"), "BTC-Default weiter AN");
-  // Jede geänderte BTC-Zeile ist eine reine Literal→Konstante-Ersetzung bzw. der Import.
-  const diff = git("diff", MAIN, "--", "client/src/pages/BTCDashboard.tsx").split("\n").filter(l => /^[+-][^+-]/.test(l));
+  // Jede von #267 geänderte BTC-Zeile ist eine reine Literal→Konstante-Ersetzung bzw. der Import
+  // (Diff gegen den hereingemergten main-Stand → Änderungen anderer PRs an BTCDashboard stören nicht).
+  const diff = ownDiffLines("client/src/pages/BTCDashboard.tsx");
   const added = diff.filter(l => l.startsWith("+")), removed = diff.filter(l => l.startsWith("-"));
   assert.ok(added.every(l => /REAL10Y_OVERLAY|real10yDomainOf|formatReal10yTick/.test(l)), added.join("\n"));
   assert.ok(removed.every(l => /#38bdf8|Real10Y|border-sky-400|toFixed\(1\)}%|real10yDomain|const vals = chartData|vals\.length === 0|Math\.(min|max)\(\.\.\.vals\)|const padding|return \[\+\(min|\}, \[chartData\]\);|strokeWidth=\{1\.25\}|Realzins \(DFII10\)|\$\{v\.toFixed/.test(l)), removed.join("\n"));
-  assert.ok(added.length === 12 && removed.length === 18, `${added.length}+/${removed.length}-`);
   ok(`BTCDashboard: nur Literal→Konstante + Domain-Aufruf (${added.length}+/${removed.length}- Zeilen), Default AN, Achsbreite/Mobile-Logik unverändert`);
 
-  assert.equal(git("diff", "--stat", MAIN, "--", "client/src/components/gold", "client/src/pages/GoldDashboard.tsx", "server/gold-routes.ts", "client/src/lib/btcAnalysis.ts", "server/btc-macro.ts", "server/btc-routes.ts"), "");
+  for (const f of ownFiles) assert.ok(!f.startsWith("client/src/components/gold") && !["client/src/pages/GoldDashboard.tsx", "server/gold-routes.ts", "client/src/lib/btcAnalysis.ts"].includes(f), `#267 ändert ${f}`);
   const gold = readFileSync("client/src/components/gold/GoldPriceChart.tsx", "utf8");
   assert.ok(gold.includes(`{ key: "real10y", label: "${REAL10Y_OVERLAY.label}", name: "${REAL10Y_OVERLAY.lineName}", color: "${REAL10Y_OVERLAY.color}", defaultOn: true, unit: "%", width: ${REAL10Y_OVERLAY.axisWidth},`));
-  ok("Gold (GoldPriceChart/-Dashboard/gold-routes), btcAnalysis, btc-macro, btc-routes byte-gleich zu main; Gold-Real10Y-Werte == gemeinsame Konstanten");
+  ok("Gold (GoldPriceChart/-Dashboard/gold-routes) und btcAnalysis von #267 nicht berührt; Gold-Real10Y-Werte == gemeinsame Konstanten");
 
   const btcA = readFileSync("client/src/lib/btcAnalysis.ts", "utf8");
   assert.ok(btcA.includes("fetchJSON(`/api/analyze-btc/macro-history?startDate=${encodeURIComponent(startDate)}`, 30000)"));
   assert.equal(macroHistoryPath("2024-10-17"), "/api/analyze-btc/macro-history?startDate=2024-10-17");
   assert.ok(btcA.includes("real10y: real10yByDate[d.date] ?? null,"));
-  ok("Aktien-TA nutzt dieselbe URL wie btcAnalysis.ts:889 und dieselbe Datums-Zuordnung wie btcAnalysis.ts:976");
+  ok("macroHistoryPath == BTC-URL btcAnalysis.ts:889; Aktien-TA nutzt real10y-history (gleicher Fetcher, nur DFII10) und dieselbe Datums-Zuordnung wie btcAnalysis.ts:976");
 
   // ── 2. Datenpfad: echter Route-Handler + echter Server-Fetcher, curl = FRED-Snapshot ──
   const bin = mkdtempSync(join(tmpdir(), "real10y-curl-"));
@@ -93,6 +117,7 @@ async function main() {
 url=""; for a in "$@"; do url="$a"; done
 echo "$url" >> "${curlLog}"
 [ "$REAL10Y_FAKE_FRED" = "fail" ] && { echo "curl: (22) The requested URL returned error: 503" >&2; exit 22; }
+case "$url" in *id=M2SL*) [ "$REAL10Y_FAKE_FRED" = "m2fail" ] && { echo "curl: (22) The requested URL returned error: 503" >&2; exit 22; } ;; esac
 case "$url" in
   *id=DFII10*) cat "${join(FIX, "DFII10-2026-10-18.csv")}" ;;
   *id=M2SL*) cat "${join(FIX, "M2SL-2026-10-18.csv")}" ;;
@@ -121,6 +146,7 @@ esac
   const { createRoot } = await import("react-dom/client");
   const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
   const { TechnicalChart, real10yOverlaySeries, withReal10YOverlay, oldestOhlcvDate } = await import("../client/src/components/sections/TechnicalChart");
+  const { real10yHistoryPath } = await import("../client/src/lib/real10yOverlay");
   const act = (React as any).act as (cb: () => Promise<void> | void) => Promise<void>;
   const settle = async (ms = 60) => { await act(async () => { await new Promise(r => setTimeout(r, ms)); }); };
   const fixture = JSON.parse(readFileSync("script/fixtures/analysis-MSFT.json", "utf8"));
@@ -152,9 +178,10 @@ esac
   assert.equal(start, MSFT_OHLCV[0].date);
   const live = await mountAndToggle(/Quelle FRED DFII10|n\/a/);
   assert.equal(live.chip!.attributes["aria-pressed"], "true");
-  assert.deepEqual(live.newRequests, [macroHistoryPath(start)], "Hook ruft genau die BTC-Route mit startDate = ältester Kurstag");
+  assert.deepEqual(live.newRequests, [real10yHistoryPath(start)], "Hook ruft genau die DFII10-Route mit startDate = ältester Kurstag");
   const calls = readFileSync(curlLog, "utf8").trim().split("\n");
   assert.ok(calls.some(u => u === `https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10&cosd=${start}`), calls.join(" | "));
+  assert.ok(!calls.some(u => u.includes("id=M2SL")), "Aktien-TA lädt kein M2SL");
   const status = findByTestId(live.c, "real10y-overlay-status");
   assert.ok(status, textOf(live.c).slice(-300));
   const statusText = textOf(status);
@@ -176,15 +203,61 @@ esac
   assert.deepEqual(axis.memoizedProps.domain, real10yDomain(chartRows.map(r => r._real10y)));
   console.log(`     MSFT 1Y-Fenster: ${chartRows.length} Kurstage, ${withVal} mit DFII10, ${chartRows.length - withVal} ohne (null, kein Ersatzwert); Achse ${JSON.stringify(axis.memoizedProps.domain)}; zuletzt ${formatReal10yValue(lastVal)} am ${lastBarInFred.date}`);
   quiet(); await act(async () => { live.root.unmount(); }); loud();
-  ok("Datenpfad UI-Chip → useMarketReal10Y → GET /api/analyze-btc/macro-history → fetchBTCMacroHistory → curl FRED DFII10 (Snapshot): Achse/Linie mit BTC-Props, Werte je Kurstag exakt aus FRED, sonst null");
+  ok("Datenpfad UI-Chip → useMarketReal10Y → GET /api/analyze-btc/real10y-history → fetchReal10YHistory → curl FRED DFII10 (Snapshot): Achse/Linie mit BTC-Props, Werte je Kurstag exakt aus FRED, sonst null");
+
+  // ── 2b. M2SL-Ausfall entkoppelt (C); BTC-Ausgabe identisch zur PR-Basis ──
+  const oldMacroFile = join(bin, "btc-macro-base.ts");
+  writeFileSync(oldMacroFile, git("show", `${BASE}:server/btc-macro.ts`));
+  const oldMacro = await import(oldMacroFile);
+  const newMacro = await import("../server/btc-macro");
+  const END = "2026-10-18";
+  for (const sd of [start, "2015-01-02", "2024-10-18"]) assert.deepEqual(await newMacro.fetchBTCMacroHistory(sd, END), await oldMacro.fetchBTCMacroHistory(sd, END), `fetchBTCMacroHistory ${sd}`);
+  const handler = (src: string) => /app\.get\("\/api\/analyze-btc\/macro-history"[\s\S]*?\n  \}\);\n/.exec(src)?.[0];
+  assert.ok(handler(readFileSync("server/btc-routes.ts", "utf8")));
+  assert.equal(handler(readFileSync("server/btc-routes.ts", "utf8")), handler(git("show", `${BASE}:server/btc-routes.ts`)), "BTC-Route macro-history wörtlich wie PR-Basis");
+  for (const f of ["server/btc-macro.ts", "server/btc-routes.ts"]) assert.ok(ownDiffLines(f).every(l => l.startsWith("+")), `${f}: #267 nur Ergänzungen`);
+  const m2Start = "2024-11-01"; // eigener Cache-Schlüssel
+  const btcOk = await (await realFetch(base + macroHistoryPath(m2Start))).json();
+  const r10Ok = await (await realFetch(base + real10yHistoryPath(m2Start))).json();
+  assert.deepEqual(r10Ok, { real10yByDate: btcOk.real10yByDate, latestReal10y: btcOk.latestReal10y }, "real10y-history == Real10Y-Teil von macro-history");
+  process.env.REAL10Y_FAKE_FRED = "m2fail";
+  quiet();
+  const m2Start2 = "2024-11-04";
+  const btcM2 = await realFetch(base + macroHistoryPath(m2Start2));
+  const r10M2 = await realFetch(base + real10yHistoryPath(m2Start2));
+  loud();
+  assert.equal(btcM2.status, 502, "BTC bei M2SL-Ausfall wie bisher 502"); assert.deepEqual(await btcM2.json(), { error: "FRED-Makrodaten nicht verfügbar" });
+  await assert.rejects(oldMacro.fetchBTCMacroHistory(m2Start2, END), "auch der alte BTC-Code scheitert bei M2SL-Ausfall");
+  assert.equal(r10M2.status, 200);
+  const r10M2Body = await r10M2.json();
+  // curl-Ersatz liefert den ganzen DFII10-Snapshot → erwartet exakt dessen Werte, keine Ersatzwerte.
+  assert.deepEqual(r10M2Body, { real10yByDate: Object.fromEntries(real.map(p => [p.date, p.value])), latestReal10y: real[real.length - 1] }, "Real10Y trotz M2SL-Ausfall vollständig");
+  {
+    // UI: M2SL weg → Real10Y wird trotzdem gezeichnet (kein n/a)
+    const data3 = { ...data, ticker: "MSFT3", ohlcvData: MSFT_OHLCV.filter(b => b.date >= "2024-11-05") };
+    const c = doc.createElement("div"); doc.body.appendChild(c);
+    const root = createRoot(c as any);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    quiet();
+    await act(async () => { root.render(React.createElement(QueryClientProvider, { client: qc }, React.createElement(TechnicalChart, { data: data3 }))); });
+    await act(async () => { reactPropsOf(findByTestId(c, "button-real10y"))!.onClick(); });
+    loud();
+    for (let i = 0; i < 100 && !findByTestId(c, "real10y-overlay-status") && !findByTestId(c, "real10y-overlay-empty"); i++) await settle();
+    assert.ok(findByTestId(c, "real10y-overlay-status") && !findByTestId(c, "real10y-overlay-empty"), textOf(c).slice(-200));
+    quiet(); await act(async () => { root.unmount(); }); loud();
+  }
+  delete process.env.REAL10Y_FAKE_FRED;
+  ok("M2SL-Ausfall: Aktien-TA zeigt Real10Y weiter (real10y-history 200, UI-Status statt n/a); BTC macro-history wie bisher 502; fetchBTCMacroHistory alt == neu (3 Startdaten), Route macro-history wörtlich wie Basis, server/ nur Ergänzungen");
 
   // ── 3. n/a-Pfade ──
   process.env.REAL10Y_FAKE_FRED = "fail";
   quiet(); // erwartete Route-Fehlerlogs (console.error in btc-routes.ts) ausblenden
   const data2Start = "2024-10-18"; // anderer Cache-Schlüssel der Route (5-min-Cache je startDate)
   const data2 = { ...data, ticker: "MSFT2", ohlcvData: MSFT_OHLCV.filter(b => b.date >= data2Start) };
-  const resp502 = await realFetch(base + macroHistoryPath(data2Start));
-  assert.equal(resp502.status, 502); assert.deepEqual(await resp502.json(), { error: "FRED-Makrodaten nicht verfügbar" });
+  const resp502 = await realFetch(base + real10yHistoryPath(data2Start));
+  assert.equal(resp502.status, 502); assert.deepEqual(await resp502.json(), { error: "FRED DFII10 nicht verfügbar" });
+  const btc502 = await realFetch(base + macroHistoryPath(data2Start));
+  assert.equal(btc502.status, 502); assert.deepEqual(await btc502.json(), { error: "FRED-Makrodaten nicht verfügbar" });
   // UI mit scheiterndem FRED (neuer startDate → kein Cache-Treffer; Route-Cache je startDate)
   {
     const c = doc.createElement("div"); doc.body.appendChild(c);
@@ -246,11 +319,13 @@ esac
   // ── 4. Score unverändert ──
   const { buildBiasDecision } = await import("../shared/bias-fixes");
   const { generateAnalysisHTML } = await import("../server/pdf-export");
-  const changed = [...git("diff", "--name-only", MAIN).trim().split("\n"), ...git("ls-files", "--others", "--exclude-standard").trim().split("\n")].filter(Boolean).sort();
+  const changed = ownFiles;
   const scoreFiles = ["shared/bias-fixes.ts", "server/scoring-integration.ts", "server/pdf-export.ts", "server/analyze-route.ts", "client/src/components/sections/SummarySection.tsx", "shared/schema.ts"];
-  assert.ok(changed.every(f => !scoreFiles.includes(f) && !f.startsWith("server/") && !f.startsWith("shared/")), changed.join(","));
+  // Server nur die zwei Ergänzungen aus (C) (btc-macro fetchReal10YHistory, btc-routes real10y-history), nichts in shared/.
+  const serverAllowed = ["server/btc-macro.ts", "server/btc-routes.ts"];
+  assert.ok(changed.every(f => !scoreFiles.includes(f) && !f.startsWith("shared/") && (!f.startsWith("server/") || serverAllowed.includes(f))), changed.join(","));
   for (const f of scoreFiles) assert.ok(!/real10y|DFII10|macro-history/i.test(readFileSync(f, "utf8")), f);
-  const macro = await (await realFetch(base + macroHistoryPath(start))).json();
+  const macro = await (await realFetch(base + real10yHistoryPath(start))).json();
   const before = buildBiasDecision(fixture);
   const after = buildBiasDecision({ ...fixture, ohlcvData: MSFT_OHLCV, real10y: macro } as any);
   const beforeOhlcv = buildBiasDecision({ ...fixture, ohlcvData: MSFT_OHLCV } as any);
@@ -259,8 +334,8 @@ esac
   const h0 = await generateAnalysisHTML(fixture); const h1 = await generateAnalysisHTML({ ...fixture, real10y: macro });
   assert.equal(verdict(h1), verdict(h0)); assert.ok(!h1.includes("DFII10"));
   console.log(`     MSFT (Fixture): Score ${before.overallScore.toFixed(4)} ${before.overallRating}; mit Real10Y-Daten ${after.overallScore.toFixed(4)} ${after.overallRating} (== ohne: ${beforeOhlcv.overallScore.toFixed(4)}); PDF-Fazit ${verdict(h0)} = ${verdict(h1)}`);
-  console.log(`     geänderte Dateien ggü. main: ${changed.join(", ")}`);
-  ok("Keine server/-, shared/- oder Score-Datei geändert; Score/Rating deepEqual, PDF-Fazit identisch");
+  console.log(`     eigener Anteil ggü. ${DIFF_BASE.slice(0, 8)}${onSquashedMain ? " (squash-main: übersprungen)" : ""}: ${changed.join(", ")}`);
+  ok("Keine shared/- oder Score-Datei geändert, server/ nur btc-macro/btc-routes-Ergänzung; Score/Rating deepEqual, PDF-Fazit identisch");
 
   server.close();
   console.log(`\n${n} Checks grün`);
