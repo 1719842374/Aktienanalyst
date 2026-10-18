@@ -21,6 +21,8 @@ import { useTheme } from "@/components/ThemeProvider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
 import { ExecSummaryCard } from "@/components/ExecSummaryCard";
+import { YahooNoValuationCard } from "@/components/YahooNoValuationCard";
+import { isYahooOnly } from "@shared/data-source";
 import { isEtfOrFund } from "@shared/conflict-matrix";
 import { Section1 } from "@/components/sections/Section1";
 import { Section2 } from "@/components/sections/Section2";
@@ -588,16 +590,16 @@ export default function Dashboard() {
                   single component crash (e.g. .slice on undefined) can no longer
                   unmount the entire dashboard and leave the user with a black
                   screen. Without this, one bad field → whole app unmounts. */}
-              <div ref={setSectionRef(1)}><ExecSummaryCard data={data} /></div>
+              <div ref={setSectionRef(1)}>{isYahooOnly(data) ? <YahooNoValuationCard number={1} title="Executive Summary" data={data} /> : <ExecSummaryCard data={data} />}</div>
               <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} onThesisScore={(score) => {
                 setData(prev => prev && prev.thesisStrengthScore !== score ? { ...prev, thesisStrengthScore: score } : prev);
               }} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese"><Section2 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese">{isYahooOnly(data) ? <YahooNoValuationCard number={3} title="INVESTMENTTHESE & KATALYSATOREN" data={data} /> : <Section2 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="Zyklusanalyse"><Section3 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung"><Section4 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="DCF-Modell"><Section5 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="CRV"><Section6 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="DCF-Modell">{isYahooOnly(data) ? <YahooNoValuationCard number={7} title="DCF-MODELL (FCFF)" data={data} /> : <Section5 data={data} />}</SectionErrorBoundary></div>
+              <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="CRV">{isYahooOnly(data) ? <YahooNoValuationCard number={8} title="RISIKOADJUSTIERTES CRV" data={data} /> : <Section6 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerBusy={analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides)} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion"><Section8 data={data} useLLM={useLLM} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
@@ -605,8 +607,8 @@ export default function Dashboard() {
               <div ref={setSectionRef(13)}><SectionErrorBoundary sectionId={13} sectionLabel="Moat / Porter"><MoatPorterSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="PESTEL"><PestelSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(15)}><SectionErrorBoundary sectionId={15} sectionLabel="Makro-Korr."><MacroCorrelationsSection data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(16)}><SectionErrorBoundary sectionId={16} sectionLabel="Reverse DCF"><ReverseDCFSection data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(17)}><SectionErrorBoundary sectionId={17} sectionLabel="Katalysatoren"><CatalystsSection
+              <div ref={setSectionRef(16)}><SectionErrorBoundary sectionId={16} sectionLabel="Reverse DCF">{isYahooOnly(data) ? <YahooNoValuationCard number={16} title="REVERSE DCF" data={data} /> : <ReverseDCFSection data={data} />}</SectionErrorBoundary></div>
+              <div ref={setSectionRef(17)}><SectionErrorBoundary sectionId={17} sectionLabel="Katalysatoren">{isYahooOnly(data) ? <YahooNoValuationCard number={17} title="KURSANSTIEG-KATALYSATOREN (Anti-Bias)" data={data} /> : <CatalystsSection
                 data={data}
                 onCatalystsEnriched={(enriched, growthThesis, growthThesisGeneratedAt, execSummary) => {
                   // Auftrag 08.08.2026 ("These direkt nach KI-Enrich aktualisieren"):
@@ -627,12 +629,12 @@ export default function Dashboard() {
                     ...(execSummary ? { execSummary } : {}),
                   } : prev);
                 }}
-              /></SectionErrorBoundary></div>
+              />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(18)}><SectionErrorBoundary sectionId={18} sectionLabel="Monte Carlo"><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(19)}><SectionErrorBoundary sectionId={19} sectionLabel="Management-Score"><ManagementScoreSection data={data} onScore={(score) => {
                 setData(prev => prev && prev.managementScore !== score ? { ...prev, managementScore: score } : prev);
               }} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Zusammenfassung"><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Zusammenfassung">{isYahooOnly(data) ? <YahooNoValuationCard number={20} title="ZUSAMMENFASSUNGSTABELLE" data={data} /> : <SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} />}</SectionErrorBoundary></div>
               <div className="pb-8" />
             </div>
           ) : (
