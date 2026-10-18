@@ -115,7 +115,7 @@ for (const t of ["TM", "LVMUY", "VWAPY", "VWAGY", "SAP", "NSRGY", "ASML"]) {
 }
 
 // ─── Fetch-Stub ─────────────────────────────────────────────────────────────
-type Mode = { ts?: "ok" | "429"; mcapK?: number; tmUnit?: "ordinary" };
+type Mode = { ts?: "ok" | "429"; mcapK?: number; tmUnit?: "ordinary"; crumb?: "ok" };
 const realFetch = globalThis.fetch;
 let calls: string[] = [];
 const jsonResp = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -156,7 +156,13 @@ function install(mode: Mode = {}) {
       return jsonResp(fmpMock(sym, ep.replace(/^historical-price-eod$/, "hist"), mode));
     }
     if (url.startsWith("https://fc.yahoo.com")) return new Response("", { status: 404, headers: { "set-cookie": "A3=test; Domain=.yahoo.com" } });
-    if (url.includes("/v1/test/getcrumb")) return new Response("Too Many Requests", { status: 429 }); // wie Render
+    if (url.includes("/v1/test/getcrumb")) return mode.crumb === "ok" ? new Response("testCrumb123", { status: 200 }) : new Response("Too Many Requests", { status: 429 }); // Standard wie Render
+    if (url.includes("/v10/finance/quoteSummary/")) {
+      // MOCK der quoteSummary-Antwort, nur aus quoteSummaryRef der #264-Fixture (echte Yahoo-Werte); nur bei crumb "ok" erreichbar.
+      const qs = YTS[decodeURIComponent((url.match(/quoteSummary\/([^?]+)/) ?? [])[1] ?? "")]?.quoteSummaryRef;
+      if (!qs) return new Response("nf", { status: 404 });
+      return jsonResp({ quoteSummary: { result: [{ price: { regularMarketPrice: { raw: qs.price }, currency: qs.currency, marketCap: { raw: qs.marketCap }, longName: qs.name }, summaryDetail: { trailingPE: { raw: qs.pe } }, defaultKeyStatistics: { trailingEps: { raw: qs.eps } } }], error: null } });
+    }
     const sym = decodeURIComponent((url.match(/\/(?:chart|timeseries)\/([^?]+)/) ?? [])[1] ?? "");
     const fx = YTS[sym];
     if (url.includes("/v8/finance/chart/")) return fx ? jsonResp({ chart: fx.chart }) : new Response("nf", { status: 404 });
@@ -226,10 +232,13 @@ try {
   const b = await quiet(() => H.getFmpFallbackData("BMW.DE"));
   check("BMW.DE: BMWKY ohne FMP-Kurs → Yahoo-Fallback (kein BAMXF/BMWYY)", (b.v as any).source === "yahoo" && !calls.some(u => /symbol=(BAMXF|BMWYY)/.test(u)));
   install(); reset();
+  const tmR = await quiet(() => H.getFmpFallbackData("7203.T"));
+  check("7203.T, getcrumb 429 (Render): #264 ergänzt nur .DE → keine Währung/MCap → Yahoo-Fallback, kein TM-Bundle", (tmR.v as any).source === "yahoo" && !("fmpSymbol" in (tmR.v as any)), tmR.lines.filter(l => l.includes("[FMP-ADR]")).join(" | "));
+  install({ crumb: "ok" }); reset();
   const tm = await quiet(() => H.getFmpFallbackData("7203.T"));
   const tmPx = Number(YTS["7203.T"].chart.result[0].indicators.quote[0].close.filter((x: any) => x != null).at(-1));
-  check(`7203.T → TM: EPS ÷ 10 = ${(PROD.adr.TM.epsAdjFY / 10).toFixed(4)}, Kurs ${tmPx} JPY × ${FX.JPY}`, (tm.v as any).fmpSymbol === "TM" && close((tm.v as any).financials.income[0].epsDiluted, PROD.adr.TM.epsAdjFY / 10) && close((tm.v as any).quote.price, tmPx * FX.JPY), tm.lines.filter(l => l.includes("[FMP-ADR]")).join(" | "));
-  check("7203.T → TM: Kursziel ÷ 10", close((tm.v as any).analyst.priceTarget.targetMedian, PROD.adr.TM.analystPT.median / 10));
+  check(`7203.T (quoteSummary ok) → TM: EPS ÷ 10 = ${(PROD.adr.TM.epsAdjFY / 10).toFixed(4)}, Kurs ${tmPx} JPY × ${FX.JPY}`, (tm.v as any).fmpSymbol === "TM" && close((tm.v as any).financials.income[0].epsDiluted, PROD.adr.TM.epsAdjFY / 10) && close((tm.v as any).quote.price, tmPx * FX.JPY), tm.lines.filter(l => l.includes("[FMP-ADR]")).join(" | "));
+  check("7203.T (quoteSummary ok) → TM: Kursziel ÷ 10", close((tm.v as any).analyst.priceTarget.targetMedian, PROD.adr.TM.analystPT.median / 10));
 
   console.log("\n=== /api/analyze (VOW3.DE über VWAPY) ===");
   const express = (await import("express")).default;
