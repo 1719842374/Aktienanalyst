@@ -22,6 +22,8 @@ import { useMarketCreditSpread } from "@/lib/useMarketCreditSpread";
 import { creditOverlaySeries, creditStressHint, marketSpreadLabel, ISSUER_BOND_NA_NOTE, CREDIT_STRESS_HINT, type CreditOverlayPoint, type CreditSpreadResponse } from "@shared/credit";
 import { useMarketTreasury10Y } from "@/lib/useMarketTreasury10Y";
 import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, type Treasury10YOverlayPoint, type Treasury10YResponse } from "@shared/treasury10y";
+import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
+import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 
 interface Props { data: StockAnalysis; }
 
@@ -166,6 +168,13 @@ export function TechnicalChart({ data }: Props) {
   const [showT10y, setShowT10y] = useState(false);
   useEffect(() => { setShowT10y(false); }, [data.ticker]);
   const t10yQuery = useMarketTreasury10Y(showT10y);
+  // Real10Y-Overlay (FRED DFII10): 1:1 der BTC-Chip „Makro → Real10Y“ (Quelle /api/analyze-btc/macro-history,
+  // Farbe/Achse/Domain aus lib/real10yOverlay). Reine Anzeige, kein Score. Default aus, Reset je Ticker (wie 10J-Treasury).
+  const [showReal10y, setShowReal10y] = useState(false);
+  useEffect(() => { setShowReal10y(false); }, [data.ticker]);
+  // Startdatum = ältester Kurstag der Historie (stabil je Ticker → ein Abruf, unabhängig vom Fenster).
+  const real10yStart = useMemo(() => oldestOhlcvDate(ohlcv), [ohlcv]);
+  const real10yQuery = useMarketReal10Y(real10yStart, showReal10y);
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -378,6 +387,11 @@ export function TechnicalChart({ data }: Props) {
     [showT10y, t10yQuery.data, aBuilt.points],
   );
   const t10yOverlay = t10ySeries && t10ySeries.some(p => p.yieldPct != null) ? t10ySeries : null;
+  const real10ySeries = useMemo<Real10YOverlayPoint[] | null>(
+    () => (showReal10y ? real10yOverlaySeries(aBuilt.points, real10yQuery.data) : null),
+    [showReal10y, real10yQuery.data, aBuilt.points],
+  );
+  const real10yOverlay = real10ySeries && real10ySeries.some(p => p.real10y != null) ? real10ySeries : null;
 
   const formatDate = (date: string) => {
     const p = date.split("-");
@@ -607,6 +621,15 @@ export function TechnicalChart({ data }: Props) {
               {showT10y ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               10J-Treasury
             </button>
+            <button type="button" onClick={() => setShowReal10y(v => !v)} data-testid="button-real10y" aria-pressed={showReal10y}
+              aria-label={REAL10Y_OVERLAY.lineName}
+              title={`${REAL10Y_OVERLAY.chipTitle}. ${REAL10Y_OVERLAY.sourceLabel}, kein Score-Einfluss.`}
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-7 sm:text-[10px] ${
+                showReal10y ? REAL10Y_OVERLAY.chipOnClass : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showReal10y ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              {REAL10Y_OVERLAY.label}
+            </button>
             <button type="button" onClick={() => { setMeasureMode(v => !v); setMeasurePoints([]); }}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 measureMode ? "border-amber-500 bg-amber-500/10 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
@@ -768,6 +791,7 @@ export function TechnicalChart({ data }: Props) {
                 credit={creditOverlay}
                 creditLabel={creditLabel}
                 t10y={t10yOverlay}
+                real10y={real10yOverlay}
                 ccy={ccy}
               />
             </div>
@@ -812,6 +836,7 @@ export function TechnicalChart({ data }: Props) {
               credit={creditOverlay}
               creditLabel={creditLabel}
               t10y={t10yOverlay}
+              real10y={real10yOverlay}
               measureMode={measureMode}
               onPlotClick={handleChartClick}
               measurePoints={measurePoints}
@@ -896,6 +921,16 @@ export function TechnicalChart({ data }: Props) {
           response={t10yQuery.data ?? undefined}
           loading={t10yQuery.isLoading}
           failed={t10yQuery.isError}
+          formatDateFull={formatDateFull}
+        />
+      )}
+
+      {showReal10y && showKursA && !chartEmpty && (
+        <Real10YOverlayStatus
+          series={real10yOverlay}
+          response={real10yQuery.data ?? undefined}
+          loading={real10yQuery.isLoading}
+          failed={real10yQuery.isError}
           formatDateFull={formatDateFull}
         />
       )}
@@ -1030,7 +1065,7 @@ function WindowDates({
 function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
-  onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, ccy = "$",
+  onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy = "$",
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1052,15 +1087,18 @@ function PricePane({
   creditLabel?: string;
   /** A3: 10J-Treasury-Rendite (FRED DGS10) je Kurstag (eigene rechte %-Achse). */
   t10y?: Treasury10YOverlayPoint[] | null;
+  /** Real10Y (FRED DFII10) je Kurstag, wie BTC-Chart (eigene rechte %-Achse). */
+  real10y?: Real10YOverlayPoint[] | null;
   /** JOB 22: Kurs-Symbol (Listing-Währung). */
   ccy?: string;
 }) {
   const narrow = useIsNarrow();
   const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger);
-  const chartData = useMemo(() => withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend), credit), t10y), [points, dividend, credit, t10y]);
+  const chartData = useMemo(() => withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend), credit), t10y), real10y), [points, dividend, credit, t10y, real10y]);
+  const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
-  const rightAxis = !!dividend || !!credit || !!t10y;
+  const rightAxis = !!dividend || !!credit || !!t10y || !!real10y;
   const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0)) : 0;
   const tick = axisTick(narrow, dense ? 8 : 9, "var(--muted-foreground)");
   const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(points.length / (dense ? 5 : 8))));
@@ -1115,6 +1153,18 @@ function PricePane({
             tickCount={narrow ? 4 : 5}
           />
         )}
+        {real10y && (
+          <YAxis
+            yAxisId="real10y"
+            orientation="right"
+            domain={real10yAxisDomain}
+            tickFormatter={formatReal10yTick}
+            tick={{ fontSize: narrow ? 10 : 9, fill: REAL10Y_OVERLAY.color }}
+            width={REAL10Y_OVERLAY.axisWidth}
+            axisLine={{ stroke: REAL10Y_OVERLAY.color }}
+            {...(narrow ? { tickCount: 4 } : {})}
+          />
+        )}
         <Tooltip content={({ active, payload }) => {
           if (!active || !payload?.length) return null;
           const dp = payload[0]?.payload as WindowPoint | undefined;
@@ -1147,6 +1197,7 @@ function PricePane({
               {dividend && <DividendTooltipRows p={dv} formatDateFull={formatDateFull} />}
               {credit && <CreditTooltipRows p={dp as WindowPoint & CreditFields} label={creditLabel} formatDateFull={formatDateFull} />}
               {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
+              {real10y && <Real10YTooltipRow p={dp as WindowPoint & Real10YFields} />}
               {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
@@ -1204,6 +1255,19 @@ function PricePane({
         )}
         {t10y && (
           <Line yAxisId="t10y" type="stepAfter" dataKey="_t10y" name={TREASURY10Y_LABEL} stroke={T10Y_COLOR} strokeWidth={1.5} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} />
+        )}
+        {real10y && (
+          <Line
+            yAxisId="real10y"
+            type="monotone"
+            dataKey="_real10y"
+            name={REAL10Y_OVERLAY.lineName}
+            stroke={REAL10Y_OVERLAY.color}
+            strokeWidth={REAL10Y_OVERLAY.strokeWidth}
+            dot={false}
+            connectNulls
+            isAnimationActive={false}
+          />
         )}
         {showSignals && signals.map((s, i) => (
           <ReferenceLine key={`sig-${s.date}-${i}`} yAxisId="price" x={s.date} stroke={s.type === "buy" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={narrow ? 1 : 0.8} opacity={0.5} />
@@ -1327,7 +1391,7 @@ function RsiPane({
 function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
-  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, ccy,
+  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy,
 }: {
   label: string;
   labelClassName: string;
@@ -1355,6 +1419,7 @@ function BandStack({
   credit?: CreditOverlayPoint[] | null;
   creditLabel?: string;
   t10y?: Treasury10YOverlayPoint[] | null;
+  real10y?: Real10YOverlayPoint[] | null;
   ccy?: string;
 }) {
   const narrow = useIsNarrow();
@@ -1390,6 +1455,7 @@ function BandStack({
               credit={credit}
               creditLabel={creditLabel}
               t10y={t10y}
+              real10y={real10y}
               ccy={ccy}
             />
           )}
@@ -1606,6 +1672,70 @@ function Treasury10YOverlayStatus({ series, response, loading, failed, formatDat
         <> · im Fenster <span className="font-mono" data-testid="t10y-window-change">{chg.changeBp >= 0 ? "+" : ""}{chg.changeBp} bp</span> ({chg.direction}, {chg.first.toFixed(2)}% → {chg.last.toFixed(2)}%)</>
       )}
       {" "}· Quelle <a className="underline" href={response.sourceUrl} target="_blank" rel="noreferrer">{response.source}</a> · kein Score-Einfluss
+    </div>
+  );
+}
+
+// ─── Real10Y overlay helpers (FRED DFII10, aus dem BTC-Chart übernommen) ───
+
+export type Real10YOverlayPoint = { date: string; real10y: number | null };
+type Real10YFields = { _real10y?: number | null };
+
+/** Ältester Kurstag der Historie (YYYY-MM-DD) als startDate der Makro-Route; keine Historie → null (kein Abruf). */
+export function oldestOhlcvDate(ohlcv: ReadonlyArray<{ date: string }> | null | undefined): string | null {
+  let min: string | null = null;
+  for (const b of ohlcv ?? []) if (b?.date && /^\d{4}-\d{2}-\d{2}/.test(b.date) && (min == null || b.date < min)) min = b.date.slice(0, 10);
+  return min;
+}
+
+/**
+ * Real10Y je Kurstag: exakter Datums-Treffer in `real10yByDate`, sonst null — dieselbe Zuordnung wie der BTC-Chart
+ * (client/src/lib/btcAnalysis.ts: `real10y: real10yByDate[d.date] ?? null`). Keine Antwort → null (n/a).
+ */
+export function real10yOverlaySeries(points: ReadonlyArray<{ date: string }>, macro: Real10YMacroHistory | null | undefined): Real10YOverlayPoint[] | null {
+  const byDate = macro?.real10yByDate;
+  if (!byDate || Object.keys(byDate).length === 0) return null;
+  return points.map(p => {
+    const v = byDate[p.date];
+    return { date: p.date, real10y: typeof v === "number" && Number.isFinite(v) ? v : null };
+  });
+}
+
+/** Adds Real10Y to each price point by date (`_real10y`). No series → points unchanged. */
+export function withReal10YOverlay<T extends WindowPoint>(points: T[], series: Real10YOverlayPoint[] | null | undefined): Array<T & Real10YFields> {
+  if (!series) return points;
+  const byDate = new Map(series.map(p => [p.date, p.real10y]));
+  return points.map(pt => ({ ...pt, _real10y: byDate.get(pt.date) ?? null }));
+}
+
+function Real10YTooltipRow({ p }: { p: Real10YFields }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <span style={{ color: REAL10Y_OVERLAY.color }}>{REAL10Y_OVERLAY.lineName}</span>
+      <span className="font-mono">{p._real10y != null ? formatReal10yValue(p._real10y) : "n/a"}</span>
+    </div>
+  );
+}
+
+function Real10YOverlayStatus({ series, response, loading, failed, formatDateFull }: {
+  series: Real10YOverlayPoint[] | null;
+  response: Real10YMacroHistory | undefined;
+  loading: boolean;
+  failed: boolean;
+  formatDateFull: (d: string) => string;
+}) {
+  const base = "mt-1 text-[10px] text-muted-foreground break-words";
+  if (loading) return <div className={base} data-testid="real10y-overlay-loading">Real10Y: FRED wird geladen …</div>;
+  if (failed || !response?.real10yByDate || Object.keys(response.real10yByDate).length === 0) {
+    return <div className={base} data-testid="real10y-overlay-empty">Real10Y: n/a — {REAL10Y_OVERLAY.sourceLabel} nicht erreichbar.</div>;
+  }
+  if (!series) return <div className={base} data-testid="real10y-overlay-empty">Real10Y: n/a — FRED-Historie deckt dieses Fenster nicht ab.</div>;
+  const last = [...series].reverse().find(p => p.real10y != null);
+  return (
+    <div className={base} data-testid="real10y-overlay-status">
+      <span style={{ color: REAL10Y_OVERLAY.color }} className="font-medium">{REAL10Y_OVERLAY.lineName}</span> (rechte Achse, %)
+      {last && <> · im Fenster zuletzt <span className="font-mono">{formatReal10yValue(last.real10y!)}</span> am {formatDateFull(last.date)}</>}
+      {" "}· Quelle <a className="underline" href={REAL10Y_OVERLAY.sourceUrl} target="_blank" rel="noreferrer">{REAL10Y_OVERLAY.sourceLabel}</a> · kein Score-Einfluss
     </div>
   );
 }
