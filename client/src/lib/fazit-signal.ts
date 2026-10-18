@@ -57,6 +57,8 @@ export type FazitSignal = {
   ratingBg: string;
   fazitSatz: string;
   dcfDivergenceDowngraded: boolean;
+  /** A2/A3 TECH_MOAT_OVERRIDE: Rating von ATTRAKTIV/LEICHT ATTRAKTIV auf NEUTRAL gesetzt. */
+  techMoatDowngraded: boolean;
   totalExpDmg: number;
   raCrvCons: number;
 };
@@ -349,6 +351,18 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     if (dcfDivergenceDowngraded) { ratingColor = "text-amber-400"; ratingBg = "bg-amber-500/10 border-amber-500/20"; }
   }
 
+  // TECH_MOAT_OVERRIDE (A2/A3, Philip 18.10.2026): Death Cross + RSL < 105 +
+  // schwacher Moat (min aus Regel- und KI-Moat) gleichzeitig → Fazit höchstens
+  // NEUTRAL. Single Source ist bias.techMoatOverride (shared/bias-fixes.ts),
+  // generisch, kein Ticker-Hardcode. Schlechtere Ratings bleiben unverändert.
+  const techMoat = bias?.techMoatOverride;
+  let techMoatDowngraded = false;
+  if (techMoat?.active && (rating === "ATTRAKTIV" || rating === "LEICHT ATTRAKTIV")) {
+    rating = "NEUTRAL";
+    techMoatDowngraded = true;
+    ratingColor = "text-amber-400"; ratingBg = "bg-amber-500/10 border-amber-500/20";
+  }
+
   const isBuy = score >= 2 && techStatus?.buySignal && data.currentPrice <= dcfBeiCRV3;
   const isOvervalued = conservativeUpside < -5 || (raCrvCons < 1.5 && rsl != null && rsl < 100);
   const isTechWeak = !techStatus?.priceAboveMA200 || !techStatus?.ma50AboveMA200;
@@ -377,6 +391,9 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   if (bias?.politicalGovMention) {
     fazitSatz += " Political ist hoch und Government Exposure liegt bei mindestens 25%.";
   }
+  if (techMoat?.active) {
+    fazitSatz += ` \u26a0 Tech-Moat-Override: ${techMoat.detail}. Das Rating bleibt h\u00f6chstens NEUTRAL, bis sich Death Cross, RSL oder Moat aufl\u00f6sen.`;
+  }
   if (dcfMarketDivergence.divergenceFlag) {
     fazitSatz += ` \u26a0 DCF-Upside (${formatNumber(dcfMarketDivergence.dcfUpsidePct, 0)}%) weicht stark vom Analysten-Konsens (${formatNumber(dcfMarketDivergence.analystUpsidePct, 0)}%) ab \u2014 der Base-DCF k\u00f6nnte durch niedrigen WACC/hohen Terminal-Value-Anteil optimistisch extrapoliert sein (siehe geh\u00e4rtetes CRV in Sektion 6).`;
   }
@@ -397,6 +414,7 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
     ratingBg,
     fazitSatz,
     dcfDivergenceDowngraded,
+    techMoatDowngraded,
     totalExpDmg,
     raCrvCons,
   };

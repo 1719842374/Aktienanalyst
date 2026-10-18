@@ -367,6 +367,15 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
         <div className="font-mono tabular-nums">
           Gesamtscore {formatNumber(bias.overallScore, 2)} ({bias.overallRating}) · PESTEL-Faktor {formatNumber(bias.pestelFactor, 2)} · Moat-Multiplikator {formatNumber(bias.moatMultiplier, 3)}
         </div>
+        {bias.techMoatOverride && (
+          <div className={`font-mono tabular-nums ${bias.techMoatOverride.active ? "text-amber-500" : ""}`} data-testid="tech-moat-override">
+            Tech-Moat-Override {bias.techMoatOverride.active ? "aktiv" : "nicht aktiv"} · Moat Regel {bias.techMoatOverride.ruleMoatRating} ({formatNumber(bias.techMoatOverride.ruleMoatScore, 1)}) / KI {bias.techMoatOverride.llmMoatRating ?? "n/v"} → wirksam {bias.techMoatOverride.effectiveMoatRating}
+            {" "}· RSL {bias.techMoatOverride.rsl != null ? formatNumber(bias.techMoatOverride.rsl, 1) : "n/a"}
+            {bias.techMoatOverride.rslPercentile != null ? ` (Perzentil eigene Historie ${formatNumber(bias.techMoatOverride.rslPercentile * 100, 0)} %, z ${bias.techMoatOverride.rslZScore != null ? formatNumber(bias.techMoatOverride.rslZScore, 2) : "n/a"})` : " (Perzentil n/a)"}
+            {" "}· {bias.techMoatOverride.deathCross == null ? "Technik n/a" : bias.techMoatOverride.deathCross ? "Death Cross" : "kein Death Cross"}
+            {bias.techMoatOverride.active && bias.techMoatOverride.capScore != null ? ` · Deckel ${formatNumber(bias.techMoatOverride.capScore, 2)} (ohne Deckel ${formatNumber(bias.overallScoreUncapped, 2)})` : ""}
+          </div>
+        )}
         <div className="font-mono tabular-nums">
           Kat.-adj. Zielwert = {catalystBaseFallback ? 'Analyst PT' : bias.valuationBaseLabel} × (1 + Σ positive GB / 100)
         </div>
