@@ -63,7 +63,7 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 
 | # | Zeile | Soll (wörtlich-knapp) | Ist (Datei:Zeile/SHA) | Status | Nächster Schritt |
 |---|---|---|---|---|---|
-| F1-01 | Z.108–114, 253–258 | Kette „FMP → Yahoo (nur bei FMP-Fehler, besonders 402) → Fehler an Frontend“ | `server/analyze-helpers.ts:552–555` (nur bei `fmpStatus === 402`), `:614–642` `yahooFallbackData`; `server/analyze-route.ts:631–632` `yahooOnly`. SHA `093cdd0` (#252). Tester auf Prod 18.10.: VOW3.DE/SAP.DE liefern Marktkapitalisierung, KGV und EPS = 0 (Yahoo verlangt dort einen „Crumb“ und antwortet 429) | 🟡 | **In Arbeit #264** (Draft, Head `1036ec9`: Name/Währung aus Chart-Daten, MCap/EPS/KGV aus fundamentals-timeseries). Danach Tester auf Prod. Parallel: ADR-Weg über FMP (dr eggbot, noch kein PR) |
+| F1-01 | Z.108–114, 253–258 | Kette „FMP → Yahoo (nur bei FMP-Fehler, besonders 402) → Fehler an Frontend“ | `server/analyze-helpers.ts:552–555` (nur bei `fmpStatus === 402`), `:614–642` `yahooFallbackData`; `server/analyze-route.ts:631–632` `yahooOnly`. SHA `093cdd0` (#252). Tester auf Prod 18.10.: VOW3.DE/SAP.DE liefern Marktkapitalisierung, KGV und EPS = 0 (Yahoo verlangt dort einen „Crumb“ und antwortet 429) | 🟡 | **In Arbeit #264** (Draft, Head `5b244253`: Name/Währung aus Chart-Daten, MCap/EPS/KGV aus fundamentals-timeseries). Danach Tester auf Prod. Parallel: ADR-Weg über FMP (dr eggbot, noch kein PR) |
 | F1-02 | Z.116–179, 255–256 | Neue Datei `server/yahoo-fetcher.ts` mit Kurs, Währung, MCap, KGV, EPS, Historie | `server/yahoo-fetcher.ts:167–247` (`getYahooSnapshot`). Abweichung: Bibliothek `yahoo-finance2` ist nicht installiert (`package.json`), eigener `fetch` auf Yahoo. SHA `093cdd0` | ✅ | Keiner (Prod-Lücke siehe F1-01) |
 | F1-03 | Z.203–205, 258 | Nur Minimal-Felder mappen (Kurs, MCap, KGV, Historie), keine Fundamentals erfinden | `server/analyze-helpers.ts:614–642`; `server/analyze-route.ts:2095–2112` (DCF, Upside, Score = null bei Yahoo); `client/src/components/YahooNoValuationCard.tsx:13–33`. SHA `093cdd0`, Rest n/a statt 0 `2b3bf0e` (#257) | ✅ | Keiner |
 | F1-04 | Z.214, 259 | Klarere Fehlermeldung bei 402 („Plan deckt Symbol nicht ab – Fallback aktiv“) | `server/yahoo-fetcher.ts:261` `YAHOO_402_NOTICE`; `server/analyze-helpers.ts:496–498` (402 ohne Yahoo-Kurs); `YahooNoValuationCard.tsx:19`. SHA `093cdd0` | ✅ | Keiner |
@@ -402,7 +402,7 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 
 | Punkt | Wer | PR | Stand |
 |---|---|---|---|
-| F1-01, F1-11 Yahoo-Ersatz auf Prod (MCap/KGV/EPS = 0) | GitHub-Lane / Builder | **#264** (Draft, Head `1036ec9`) | offen |
+| F1-01, F1-11 Yahoo-Ersatz auf Prod (MCap/KGV/EPS = 0) | GitHub-Lane / Builder | **#264** (Draft, Head `5b244253`) | offen |
 | F1-01, F1-05 Nicht-US-Titel über ADR bei FMP | dr eggbot | noch kein PR | Philip-Entscheidung 18.10. |
 | FW-13, FW-14, FW-15 BTC-Score mit WALCL, T-Bill, Zinsen + WALCL-Linie | Werki | noch kein PR | Philip JA 18.10.; Merge erst nach Vorher/Nachher-Tabelle |
 | F7-01, F8-04, F8-05 Buffett/CAPE-Perzentil als Zusatzzeile | – | **#220**, **#219** (Drafts seit 11.10.) | Ersetzen der Zonen braucht Philip |
