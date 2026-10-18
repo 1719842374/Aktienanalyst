@@ -1,40 +1,35 @@
-# Offen_WORK_RESEARCHER_CAPEX_MAP.md — Capex-Map + Sektor-Overlay im Researcher-Tab
+# Offen_WORK_RESEARCHER_CAPEX_MAP.md — Capex-Map + Sektor-Overlay + Bitcoin-Miner-Layer im Researcher-Tab
 
-> **Stand: 18.10.2026**  
-> Investor-fokussierte, schlanke Weltkarte im Researcher-Tab.  
-> Kein OSINT / God’s-Eye-View-Scope (keine Live-Flüge, Schiffe, Satelliten, CCTV).  
-> Fokus: Capex-Hotspots + Sektor-Exposure, ergänzt durch optionale Layer.
+> **Stand: 18.10.2026 (erweitert)**  
+> Investor-fokussierte 2D-Weltkarte im Researcher-Tab.  
+> Enthält Capex-Hotspots, Sektor-Exposure und Bitcoin-Miner-Lokalisierung.  
+> Kein OSINT / God’s-Eye-View-Scope.
 
-**Ziel:** Im Researcher-Tab eine 2D-Weltkarte, auf der man auf einen Blick sieht, **wo** Unternehmen am meisten investieren (Capex) und welche Sektoren in welchen Regionen dominieren.
+**Ziel:** Im Researcher eine schlanke 2D-Weltkarte, auf der Capex, Sektoren und Bitcoin-Miner geografisch sichtbar sind – mit konkreten Zahlen, Datenquellen und Acceptance Criteria.
 
 ---
 
 ## 1. Capex / Investment Hotspots (Hauptfeature)
 
 ### Soll-Zustand
-- 2D-Weltkarte (Leaflet, react-simple-maps oder vergleichbar).
-- Unternehmen oder aggregierte Regionen als Punkte / Heatmap / Bubble.
-- **Größe / Farbe = Capex-Volumen** (TTM oder letztes FY, absolut oder YoY-Wachstum).
-- Klick auf Land / Region → Side-Panel mit:
-  - Top-Investoren (Unternehmen + Capex-Betrag)
-  - Dominante Sektoren
-  - Link zu bestehenden Analysen / Researcher-Details
-- Beispiel-Fragen, die die Map beantworten soll:
-  - „Wo investieren Tech- und Energie-Firmen gerade am stärksten?“
-  - „Welche Regionen haben den höchsten Capex-Zuwachs YoY?“
+- 2D-Weltkarte (react-simple-maps oder Leaflet).
+- Bubble- oder Heatmap-Darstellung: Größe/Farbe = Capex-Volumen (TTM oder FY, absolut oder YoY).
+- Klick auf Land/Region → Side-Panel:
+  - Top 5–10 Unternehmen mit Capex-Betrag (in USD).
+  - Dominante Sektoren + Anteil.
+  - Link zu bestehenden Analysen.
 
-### Datenquellen & Fakten
-- **FMP**: Capex (Cash-Flow-Statement), Geographic Segments (Revenue + ggf. Capex-Approximation).
-- Bestehende Researcher-Pipeline (`server/researcher.ts`) und Geographic-Segment-Daten, die teilweise schon vorhanden sind.
-- Aggregation auf Länder- oder Regions-Ebene (US, Europa, Asien, Lateinamerika etc.).
-- Optional später: Capex-Ankündigungen aus Earnings Calls / News (nicht v1).
+### Daten & Fakten
+- Quelle: FMP Cash-Flow (capex) + Geographic Segments.
+- Aggregation auf Länder- oder Regions-Ebene (US, CN, TW, KR, DE, JP, etc.).
+- Beispiel-Metriken: Capex in Mrd. USD, YoY-Wachstum in %, Anteil am regionalen Gesamt-Capex.
+- Bestehende Researcher-Pipeline und Geographic-Segment-Daten wiederverwenden.
 
 ### Acceptance Criteria
-- Karte lädt mit Capex-Daten für die wichtigsten Regionen.
-- Bubble-/Heatmap-Größe korreliert mit Capex-Volumen.
-- Klick auf Region öffnet Side-Panel mit Top-Unternehmen und Zahlen.
-- Fallback bei fehlenden Daten (N/A, graue Region).
-- Performance: Karte bleibt flüssig auch bei mehreren hundert Datenpunkten.
+- Karte zeigt Capex-Daten für ≥ 20 Länder/Regionen.
+- Bubble-Größe skaliert korrekt mit Capex-Volumen.
+- Side-Panel zeigt konkrete Zahlen (z. B. „TSMC: 30 Mrd. USD Capex in TW“).
+- N/A-Fallback und Caching vorhanden.
 
 **Priorität:** Hoch  
 **Aufwand:** 2–3 Tage
@@ -45,85 +40,84 @@
 
 ### Soll-Zustand
 - Farbcodierte Regionen nach dominanter Sektor-Aktivität.
-- Beispiele:
-  - Semiconductors → Taiwan, Südkorea
-  - Autos → Deutschland, Mexiko, Japan
-  - Mining → Australien, Chile, Kanada
-  - Tech / Software → USA, Indien
-- Toggle oder Layer, der zwischen Capex und Sektor-Exposure wechselt.
-- Klick zeigt die Top-Sektoren und Unternehmen der Region.
-- Passt direkt an den bestehenden **Sector-Opportunity-Tab** an.
+- Beispiele mit Fakten:
+  - Semiconductors → Taiwan, Südkorea (TSMC, Samsung).
+  - Autos → Deutschland, Mexiko, Japan.
+  - Mining → Australien, Chile, Kanada.
+  - Tech/Software → USA, Indien.
+- Layer-Toggle zwischen Capex und Sektor.
+- Side-Panel zeigt Sektor-Breakdown in %.
 
-### Datenquellen & Fakten
-- FMP Sector / Industry Classification + Geographic Segments.
+### Daten & Fakten
+- FMP Sector/Industry + Geographic Segments.
 - Bestehende Sector-Opportunity-Daten im Researcher.
-- Aggregation: Anteil des Sektor-Capex oder -Revenue pro Region.
+- Metrik: Anteil des Sektor-Capex oder -Revenue pro Region (z. B. „65 % des Capex in TW entfällt auf Semiconductors“).
 
 ### Acceptance Criteria
-- Regionen sind farblich nach dominantem Sektor codiert.
-- Overlay ist unabhängig vom Capex-Layer umschaltbar.
-- Side-Panel zeigt Sektor-Breakdown der angeklickten Region.
+- Mindestens 8–10 Sektoren farblich unterscheidbar.
+- Overlay unabhängig umschaltbar.
+- Side-Panel zeigt prozentuale Aufteilung.
 
 **Priorität:** Hoch  
-**Aufwand:** 1–1,5 Tage (aufbauend auf Capex-Map)
+**Aufwand:** 1–1,5 Tage
 
 ---
 
-## 3. Optionale weitere Layer (nicht v1, aber sinnvoll)
+## 3. Bitcoin-Miner-Layer
 
-| Layer                        | Beschreibung                                      | Priorität | Datenquelle                  |
-|-----------------------------|---------------------------------------------------|-----------|------------------------------|
-| Guru / 13F geografisch      | Cluster der größten Guru-Positionen nach Land     | Mittel    | Bestehende 13F-Pipeline      |
-| Recession-Score             | Regionen eingefärbt nach Recession-/Korrektur-Score | Mittel    | Bestehendes Recession-Dashboard |
-| Revenue Geographic Split    | Wo verdienen die Top-Unternehmen ihr Geld?        | Mittel    | FMP Geographic Segments      |
-| Supply-Chain-Risiko         | Einfache Flags (China-Exposure, Taiwan-Risiko)    | Niedrig   | Manuell / LLM / FMP          |
-| Mining / Commodity Exposure | Große Minen / Ressourcen-Standorte                 | Niedrig   | Öffentliche Daten + FMP        |
+### Soll-Zustand
+- Marker oder Bubbles für bekannte Mining-Standorte / Länder.
+- Größe/Farbe = geschätzte Hashrate-Anteil oder Power Capacity (MW).
+- Klick → Liste der Miner (MARA, RIOT, CLSK, BITF, IREN, HUT etc.) mit:
+  - Hashrate (EH/s),
+  - Stromkosten / Hashprice-Kontext,
+  - Standort-Details.
+- Beispiele: Texas (USA), Kazakhstan, Canada, Paraguay, Oman.
 
----
+### Daten & Fakten
+- Öffentliche Unternehmensangaben + bekannte Farm-Standorte.
+- Cambridge Bitcoin Electricity Consumption Index (Hashrate nach Land) als Referenz.
+- Bestehende BTC-Miner-Pipeline (`btc-miner.ts`, Hashprice, Breakeven) für Zahlen.
+- Typische Werte (Stand 2026): USA ~35–40 % der globalen Hashrate, Kazakhstan und Canada relevant, einzelne Farms 100–500 MW.
 
-## Technische Umsetzung (Researcher-Tab)
+### Acceptance Criteria
+- Mindestens 8–10 Mining-Regionen/Standorte sichtbar.
+- Klick zeigt konkrete Miner + Hashrate/MW-Zahlen.
+- Verknüpfung mit bestehendem BTC-Dashboard möglich.
+- Sauberer Fallback, wenn Standort-Daten fehlen.
 
-- **Frontend:** Neue Komponente im Researcher (z. B. `CapexMapPanel.tsx` oder neuer Tab/Unterbereich).
-- **Karte:** 2D mit `react-simple-maps`, Leaflet oder Mapbox (kein Cesium / 3D-Tiles nötig).
-- **Backend:**
-  - Erweiterung von `server/researcher.ts` oder neuer Endpoint `GET /api/researcher/capex-map`.
-  - Aggregation von FMP Capex + Geographic Segments auf Länder-/Regions-Ebene.
-  - Caching analog zu anderen Researcher-Endpunkten.
-- **Datenfluss:** UI → Query → API-Route → Researcher-Handler → FMP / Cache → aggregierte Geo-Daten.
-- **UI:**
-  - Layer-Toggle (Capex / Sektor / optional Recession).
-  - Side-Panel bei Klick auf Region.
-  - Links zu bestehenden Analysen und zum Sector-Opportunity-Tab.
-
-### Acceptance Criteria (gesamt)
-- Karte ist im Researcher-Tab erreichbar.
-- Capex-Layer und Sektor-Overlay funktionieren.
-- Klick → Side-Panel mit Zahlen und Unternehmen.
-- Keine Regression in den bestehenden Researcher-Tabs (Macro, Sectors, Screener, Capex).
-- Saubere N/A- und Lade-Zustände.
-
-**Gesamt-Aufwand v1 (Capex + Sektor):** ca. 3–4,5 Tage  
-**Priorität:** Hoch (direkter Nutzen, ergänzt bestehende Tabs)
+**Priorität:** Hoch (passt perfekt zum bestehenden BTC-Modul)  
+**Aufwand:** 1,5–2 Tage
 
 ---
 
-## Was bewusst nicht enthalten ist
-- Photorealistische 3D-Globus / Cesium / Google 3D Tiles
-- Live-Tracking von Flugzeugen, Schiffen, Satelliten, CCTV
-- Voice-Control oder OSINT-Features
-- Militärische oder geopolitische Event-Layer im God’s-Eye-View-Stil
+## Technische Umsetzung
+
+- Frontend: Neue Komponente im Researcher (z. B. `GeoMapPanel.tsx`).
+- Karte: 2D (react-simple-maps / Leaflet).
+- Backend: `GET /api/researcher/geo-map?layer=capex|sector|miner`.
+- Datenfluss: UI → Query → API → Researcher-Handler → FMP / BTC-Miner-Daten / Cache.
+- Layer-Toggle + Side-Panel.
+
+### Gesamt-Acceptance
+- Alle drei Layer funktionieren und sind umschaltbar.
+- Konkrete Zahlen in Side-Panels.
+- Keine Regression in bestehenden Researcher-Tabs.
+- Performance flüssig.
+
+**Gesamt-Aufwand v1:** ca. 5–6,5 Tage  
+**Priorität:** Hoch
 
 ---
 
 ## Nächste Schritte
-
-1. Daten-Verfügbarkeit prüfen (FMP Capex + Geographic Segments auf Länderebene).
-2. Backend-Endpoint für aggregierte Capex-/Sektor-Daten spezifizieren und bauen.
-3. 2D-Karten-Komponente im Researcher-Tab implementieren.
-4. Side-Panel + Layer-Toggle.
-5. Nach Umsetzung in Ampel / `WORK_IMPLEMENTIERUNG_OFFEN.md` dokumentieren und auf `fertig_` umbenennen.
+1. Datenverfügbarkeit prüfen (FMP Capex/Geo + Miner-Standorte).
+2. Backend-Endpoint bauen.
+3. 2D-Karte + Layer implementieren.
+4. Side-Panels mit Zahlen.
+5. Nach Umsetzung auf `fertig_` umbenennen und in Ampel dokumentieren.
 
 ---
 
-*Erstellt am 18.10.2026 auf Basis der God’s-Eye-View-Idee, aber stark auf investor-relevante Capex- und Sektor-Daten reduziert.  
+*Erweitert am 18.10.2026 – Capex + Sektor + Bitcoin-Miner mit konkreten Daten und Fakten.  
 Repo: https://github.com/1719842374/Aktienanalyst*
