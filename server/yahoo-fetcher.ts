@@ -49,22 +49,112 @@ export function spaceYahooCall(): Promise<void> {
   return next;
 }
 
+// ─── Diagnose-Logging (Prod: quoteSummary null) ───
+// Pro Stufe (cookie / crumb / quoteSummary, bei Reject auch chart) genau eine Zeile mit Präfix
+// [YAHOO-DIAG]: Ticker, Stufe, HTTP-Status, Text ≤ 200 Zeichen. Cookie- und Crumb-Werte werden
+// nie geloggt: bekannte Werte und typische Muster (crumb=…, Cookie-Paare) werden zu *** maskiert.
+// Nur Logging — Rückgabewerte und Ablauf bleiben unverändert (kein Retry, kein neuer Header).
+export const YAHOO_DIAG_PREFIX = "[YAHOO-DIAG]";
+export type YahooDiagStage = "cookie" | "crumb" | "quoteSummary" | "chart";
+
+/** Ersetzt Geheimnisse (Cookie-/Crumb-Werte) und typische Muster durch ***. */
+export function maskYahooSecrets(text: string, secrets: Array<string | null | undefined> = []): string {
+  let out = String(text ?? "");
+  const known = [...secrets, _crumb?.crumb, _crumb?.cookie]
+    .flatMap((v) => (v ? [v, ...v.split(/;\s*/).flatMap((pair) => {
+      const eq = pair.indexOf("=");
+      return eq >= 0 ? [pair.slice(eq + 1)] : [];
+    })] : []))
+    .filter((v) => v.length >= 4)
+    .sort((a, b) => b.length - a.length);
+  for (const v of known) out = out.split(v).join("***");
+  out = out.replace(/(crumb=)[^&\s"']+/gi, "$1***");
+  out = out.replace(/(cookie["']?\s*[:=]\s*)[^\n"']+/gi, "$1***");
+  out = out.replace(/\b([A-Za-z][A-Za-z0-9_]{0,15}=)[A-Za-z0-9_\-.%~&]{16,}/g, "$1***");
+  return out;
+}
+
+function yahooDiag(ticker: string, stage: YahooDiagStage, status: number | null, text: string, secrets: Array<string | null | undefined> = []): void {
+  const msg = maskYahooSecrets(text, secrets).replace(/\s+/g, " ").trim().slice(0, 200);
+  console.warn(`${YAHOO_DIAG_PREFIX} ${ticker} stage=${stage} status=${status ?? "-"} ${msg}`);
+}
+
+function errText(err: unknown): string {
+  const e = err as any;
+  const name = e?.name && e.name !== "Error" ? `${e.name}: ` : "";
+  const cause = e?.cause?.code ? ` (${e.cause.code})` : "";
+  return `${name}${String(e?.message ?? e)}${cause}`;
+}
+
+/**
+ * Wohin Yahoo umgeleitet hat (nur Host + Pfad, nie Query/Fragment), z. B. Consent-Wall
+ * (consent.yahoo.com / guce.yahoo.com) statt Cookie. Leer, wenn keine Umleitung.
+ */
+function redirectNote(resp: Response): string {
+  let target = "";
+  try {
+    const loc = resp.headers?.get?.("location");
+    if (loc && resp.status >= 300 && resp.status < 400) target = loc;
+    else if ((resp as any).redirected && (resp as any).url) target = (resp as any).url;
+    if (!target) return "";
+    const u = new URL(target, "https://fc.yahoo.com");
+    const consent = /(^|\.)(consent|guce)\.yahoo\.com$/i.test(u.hostname);
+    return ` → ${u.hostname}${u.pathname}${consent ? " [Consent-Wall]" : ""}`;
+  } catch {
+    return "";
+  }
+}
+
+/** Kurzer Hinweis zur Unterscheidung im Log: Auth (Cookie/Crumb) / Rate-Limit / Zugriff verweigert. Kein Abo nötig für diese Endpunkte. */
+function statusHint(status: number): string {
+  if (status === 401) return " [401 Auth: Cookie/Crumb abgelehnt]";
+  if (status === 403) return " [403 Zugriff verweigert]";
+  if (status === 429) return " [429 Rate-Limit]";
+  return "";
+}
+
+/** Body für die Diagnosezeile; Lesefehler ergeben einen Hinweis statt eines Throws. */
+async function bodySnippet(resp: Response): Promise<string> {
+  try {
+    return (await resp.text()).slice(0, 400);
+  } catch (err) {
+    return `Body nicht lesbar: ${errText(err)}`;
+  }
+}
+
 let _crumb: { cookie: string; crumb: string; at: number } | null = null;
-async function getCrumb(): Promise<{ cookie: string; crumb: string } | null> {
+async function getCrumb(ticker = "-"): Promise<{ cookie: string; crumb: string } | null> {
   if (_crumb && Date.now() - _crumb.at < 60 * 60 * 1000) return _crumb;
+  let stage: "cookie" | "crumb" = "cookie";
+  let cookie = "";
+  let crumb = "";
   try {
     await spaceYahooCall();
     const r1 = await fetch("https://fc.yahoo.com", { signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA }, redirect: "manual" });
     const setCookie = (r1.headers as any).getSetCookie?.() ?? [r1.headers.get("set-cookie") ?? ""];
-    const cookie = (setCookie as string[]).map((c) => c.split(";")[0]).filter(Boolean).join("; ");
-    if (!cookie) return null;
+    cookie = (setCookie as string[]).map((c) => c.split(";")[0]).filter(Boolean).join("; ");
+    if (!cookie) {
+      yahooDiag(ticker, "cookie", r1.status, `kein Set-Cookie von fc.yahoo.com${redirectNote(r1)} → quoteSummary null`);
+      return null;
+    }
+    yahooDiag(ticker, "cookie", r1.status, `ok (${(setCookie as string[]).filter(Boolean).length} Set-Cookie)${redirectNote(r1)}`, [cookie]);
+    stage = "crumb";
     await spaceYahooCall();
     const r2 = await fetch("https://query2.finance.yahoo.com/v1/test/getcrumb", { signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA, Cookie: cookie } });
-    const crumb = (await r2.text()).trim();
-    if (!r2.ok || !crumb || crumb.length > 40 || /[<{ ]/.test(crumb)) return null;
+    crumb = (await r2.text()).trim();
+    if (!r2.ok || !crumb || crumb.length > 40 || /[<{ ]/.test(crumb)) {
+      // Crumb-förmiger Text wird nie gezeigt; nur ein offensichtlicher Fehlertext/HTML-Body (Leerzeichen, <, {, > 40) erscheint maskiert.
+      const looksLikeBody = /[<{ ]/.test(crumb) || crumb.length > 40;
+      const shown = looksLikeBody ? crumb : (crumb ? "***" : "");
+      const reason = !r2.ok ? "getcrumb nicht ok" : !crumb ? "Crumb leer" : "Crumb ungültig";
+      yahooDiag(ticker, "crumb", r2.status, `${reason}${statusHint(r2.status)}${redirectNote(r2)} (Länge ${crumb.length}): ${shown}`, looksLikeBody ? [cookie] : [cookie, crumb]);
+      return null;
+    }
     _crumb = { cookie, crumb, at: Date.now() };
+    yahooDiag(ticker, "crumb", r2.status, `ok (Länge ${crumb.length})`, [cookie, crumb]);
     return _crumb;
-  } catch {
+  } catch (err) {
+    yahooDiag(ticker, stage, null, `Fehler: ${errText(err)}`, [cookie, crumb]);
     return null;
   }
 }
@@ -76,16 +166,27 @@ const num = (v: any): number | null => {
 
 /** Kurs/Market Cap/PE/EPS aus quoteSummary. null, wenn Yahoo nichts liefert. */
 async function fetchQuoteSummary(symbol: string): Promise<Partial<YahooSnapshot> | null> {
-  const auth = await getCrumb();
-  if (!auth) return null;
+  const auth = await getCrumb(symbol);
+  if (!auth) {
+    yahooDiag(symbol, "quoteSummary", null, "übersprungen: kein Cookie/Crumb (siehe stage=cookie/crumb)");
+    return null;
+  }
   await spaceYahooCall();
   const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=price,summaryDetail,defaultKeyStatistics&crumb=${encodeURIComponent(auth.crumb)}`;
   const resp = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": UA, Cookie: auth.cookie, Accept: "application/json" } });
   if (resp.status === 401) _crumb = null;
-  if (!resp.ok) return null;
+  if (!resp.ok) {
+    yahooDiag(symbol, "quoteSummary", resp.status, `nicht ok${statusHint(resp.status)}${redirectNote(resp)}: ${await bodySnippet(resp)}`, [auth.cookie, auth.crumb]);
+    return null;
+  }
   const json: any = await resp.json();
   const r = json?.quoteSummary?.result?.[0];
-  if (!r) return null;
+  if (!r) {
+    const err = json?.quoteSummary?.error;
+    yahooDiag(symbol, "quoteSummary", resp.status, `result leer${redirectNote(resp)}${err ? `: ${JSON.stringify(err)}` : ""}`, [auth.cookie, auth.crumb]);
+    return null;
+  }
+  yahooDiag(symbol, "quoteSummary", resp.status, "ok", [auth.cookie, auth.crumb]);
   const price = num(r.price?.regularMarketPrice);
   const eps = num(r.defaultKeyStatistics?.trailingEps);
   let pe = num(r.summaryDetail?.trailingPE);
@@ -122,6 +223,9 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
       fetchQuoteSummary(key),
       spaceYahooCall().then(() => yahooFetch(key, indicatorWarmupFromDate(), to)),
     ]);
+    // Rejected-Gründe loggen (z. B. Timeout/JSON-Fehler in quoteSummary, Chart-HTTP-Fehler). Werte unverändert.
+    if (qsRes.status === "rejected") yahooDiag(key, "quoteSummary", null, `rejected: ${errText(qsRes.reason)}`);
+    if (barsRes.status === "rejected") yahooDiag(key, "chart", null, `rejected: ${errText(barsRes.reason)}`);
     const qs = qsRes.status === "fulfilled" ? qsRes.value : null;
     const bars = barsRes.status === "fulfilled" ? barsRes.value : [];
     const lastClose = bars.length ? bars[bars.length - 1].close : null;
