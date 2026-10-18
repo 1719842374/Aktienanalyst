@@ -44,4 +44,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // GET /api/gold-silver-ratio (JOB 17, nur Anzeige auf /gold, kein Score)
   const { registerGoldSilverRatioRoute } = await import("./gold-silver-ratio");
   registerGoldSilverRatioRoute(app);
+  // POST /api/recession/macro-layer (F9 Makro-Ebene, Zusatzobjekt auf /recession, kein Score-Einfluss)
+  const { registerMacroLayerRoute } = await import("./macro-layer");
+  registerMacroLayerRoute(app);
 }
