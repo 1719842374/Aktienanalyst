@@ -7,8 +7,9 @@
  *   - VOW3.DE/SAP.DE, getcrumb 429: currency EUR, Name, Börse aus Meta; marketCap/pe/eps null; metaSource "Yahoo chart meta";
  *     alle übrigen Felder (Kurs, Bars, fundamentalsAvailable) deepEqual zur Version auf main (LEGACY_REF).
  *   - quoteSummary ok (EUR wie USD): Rückgabe deepEqual main, kein zusätzlicher Chart-Call.
- *   - USD (AAPL) ohne quoteSummary: Kurs/Bars/MCap/KGV/EPS deepEqual main, Währung USD (= bisheriger Default in analyze-route).
- *   - VOD.L: Kurs aus Bars ist schon Pfund (history-fallback) → Währung GBP, nicht GBp.
+ *   - Gate nur .DE (Philip 18.10.2026 22:27): AAPL und VOD.L ohne quoteSummary → Rückgabe deepEqual main (inkl.
+ *     currency/name/exchange null), kein Meta-Call, keine zusätzliche Log-/DIAG-Zeile.
+ *   - applyChartMetaFallback direkt mit VOD.L-Snapshot: unverändert (Gate auch in der exportierten Stufe).
  *   - Meta-Call scheitert / Meta fehlt: Rückgabe deepEqual main. Cache + parallele Aufrufe: ein Meta-Call.
  * Teil B (echte /api/analyze-Route, FMP 402 → Yahoo): currency EUR, companyName, exchange kommen an; MCap/KGV/EPS
  *   werden in analyze-route zu 0 (dokumentiert, Fix siehe /workspace/yahoo-meta-proposed-analyze-route.patch).
@@ -104,17 +105,25 @@ try {
     check(`${t} mit quoteSummary: Rückgabe deepEqual main, kein Meta-Call`, same && mc === 0 && s?.metaSource === undefined, `metaCalls ${mc}`);
   }
 
-  {
-    const { alt: a, neu: s } = await both("AAPL", { qs: "crumb429" });
-    let same = true; try { assert.deepEqual(strip(s), strip(a)); } catch { same = false; }
-    check("AAPL (USD) ohne quoteSummary: Kurs/Bars/MCap/KGV/EPS deepEqual main", same, `price ${s?.price} = ${a?.price}`);
-    check("AAPL: Währung USD (main null → analyze-route-Default \"USD\", effektiv gleich)", s?.currency === "USD" && a?.currency === null);
-    check("AAPL: keine Umrechnung (Kurs = main)", s?.price === a?.price);
+  console.log("--- Gate nur .DE (Philip 18.10.2026 22:27): andere Ticker exakt wie main ---");
+  check("isGermanXetraTicker: VOW3.DE/sap.de/BMW.DE ja; AAPL, VOD.L, ASML.AS, NESN.SW, 7203.T, MC.PA, DE, X.DEX nein",
+    ["VOW3.DE", "sap.de", "BMW.DE"].every((t) => neu.isGermanXetraTicker(t)) &&
+    !["AAPL", "VOD.L", "ASML.AS", "NESN.SW", "7203.T", "MC.PA", "DE", "X.DEX"].some((t) => neu.isGermanXetraTicker(t)));
+  for (const t of ["AAPL", "VOD.L"] as const) {
+    install({ qs: "crumb429" }); alt.clearYahooCache();
+    const a = await silence(() => alt.getYahooSnapshot(t))();
+    const callsAlt = [...calls];
+    const { neu: s, lines, metaCalls: mc } = await both(t, { qs: "crumb429" });
+    let same = true; try { assert.deepEqual(s, a.v); } catch { same = false; }
+    check(`${t} ohne quoteSummary: Rückgabe deepEqual main (currency/name/exchange null wie main)`, same && s?.currency === null && s?.name === null && s?.metaSource === undefined, `currency ${s?.currency}`);
+    check(`${t}: kein Meta-Call, gleiche Calls wie main, gleiche Log-/DIAG-Zeilen wie main`, mc === 0 && JSON.stringify(calls) === JSON.stringify(callsAlt) && JSON.stringify(lines) === JSON.stringify(a.lines), `metaCalls ${mc}, calls ${calls.length}/${callsAlt.length}`);
   }
   {
-    const { alt: a, neu: s } = await both("VOD.L", { qs: "crumb429" });
-    const m = FIX["VOD.L"].chart.result[0].meta;
-    check(`VOD.L: Meta GBp, Kurs aus Bars schon Pfund (${s?.price} = main ${a?.price}) → Währung GBP`, m.currency === "GBp" && s?.currency === "GBP" && s?.price === a?.price && s!.price < 10, `${m.regularMarketPrice} GBp`);
+    install({ qs: "crumb429" }); alt.clearYahooCache();
+    const base = await silence(() => alt.getYahooSnapshot("VOD.L"))().then((r) => r.v);
+    install({ qs: "crumb429" });
+    const r = await silence(() => neu.applyChartMetaFallback(base))();
+    check("applyChartMetaFallback(VOD.L-Snapshot) direkt: unverändert, kein Call", r.v === base && calls.length === 0);
   }
   for (const mode of ["500", "nometa"] as const) {
     const { alt: a, neu: s, lines } = await both("VOW3.DE", { qs: "crumb429", meta: mode });
