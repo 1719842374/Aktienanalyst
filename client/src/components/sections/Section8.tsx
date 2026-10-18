@@ -11,6 +11,7 @@ import {
   Sparkles, Loader2,
 } from "lucide-react";
 import { apiRequest } from "../../lib/queryClient";
+import { CreditRiskCard } from "./CreditRiskCard";
 
 interface Props {
   data: StockAnalysis;
@@ -420,6 +421,10 @@ export function Section8({ data, useLLM = false }: Props) {
           </tfoot>
         </table>
       </div>
+
+      {/* Kreditrisiko-Karte (F1-21/F1-20): FRED BAA10Y + FMP-Verschuldung/Zinsdeckung. Nur Anzeige — fließt nicht in
+          Total Expected Damage, Risk-Adjusted Target oder Inverted DCF oben/unten. */}
+      <CreditRiskCard data={data} />
 
       {/* Adjusted Parameters */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
