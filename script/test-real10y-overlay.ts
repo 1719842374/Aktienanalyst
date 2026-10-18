@@ -158,25 +158,25 @@ esac
   const loud = () => { console.error = origErr; console.warn = origWarn; };
   function findFiber(f: any, pred: (f: any) => boolean): any { for (let x = f; x; x = x.sibling) { if (pred(x)) return x; const r = findFiber(x.child, pred); if (r) return r; } return null; }
 
-  async function mountAndToggle(waitFor: RegExp) {
+  // Default AN (Philip 18.10.): ohne Klick lädt der Hook sofort.
+  async function mountDefault(waitFor: RegExp) {
     const c = doc.createElement("div"); doc.body.appendChild(c);
     const root = createRoot(c as any);
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const before = requests.length;
     quiet();
     await act(async () => { root.render(React.createElement(QueryClientProvider, { client: qc }, React.createElement(TechnicalChart, { data }))); });
     loud();
     const chip = findByTestId(c, "button-real10y");
     assert.ok(chip, "Chip Real10Y gerendert");
-    assert.equal(chip!.attributes["aria-pressed"], "false", "Default aus");
-    const before = requests.length;
-    quiet(); await act(async () => { reactPropsOf(chip)!.onClick(); }); loud();
+    assert.equal(chip!.attributes["aria-pressed"], "true", "Default AN");
     for (let i = 0; i < 100; i++) { await settle(); if (waitFor.test(textOf(c))) break; }
-    return { c, root, chip, newRequests: requests.slice(before) };
+    return { c, root, qc, chip: findByTestId(c, "button-real10y"), newRequests: requests.slice(before) };
   }
 
   const start = oldestOhlcvDate(MSFT_OHLCV)!;
   assert.equal(start, MSFT_OHLCV[0].date);
-  const live = await mountAndToggle(/Quelle FRED DFII10|n\/a/);
+  const live = await mountDefault(/Quelle FRED DFII10|n\/a/);
   assert.equal(live.chip!.attributes["aria-pressed"], "true");
   assert.deepEqual(live.newRequests, [real10yHistoryPath(start)], "Hook ruft genau die DFII10-Route mit startDate = ältester Kurstag");
   const calls = readFileSync(curlLog, "utf8").trim().split("\n");
@@ -202,8 +202,18 @@ esac
   const withVal = chartRows.filter(r => r._real10y != null).length;
   assert.deepEqual(axis.memoizedProps.domain, real10yDomain(chartRows.map(r => r._real10y)));
   console.log(`     MSFT 1Y-Fenster: ${chartRows.length} Kurstage, ${withVal} mit DFII10, ${chartRows.length - withVal} ohne (null, kein Ersatzwert); Achse ${JSON.stringify(axis.memoizedProps.domain)}; zuletzt ${formatReal10yValue(lastVal)} am ${lastBarInFred.date}`);
+  // Aus-/Einschalten und Reset je Ticker: Klick → AUS (keine Linie), Tickerwechsel → wieder AN.
+  quiet(); await act(async () => { reactPropsOf(findByTestId(live.c, "button-real10y"))!.onClick(); }); loud();
+  assert.equal(findByTestId(live.c, "button-real10y")!.attributes["aria-pressed"], "false", "Klick schaltet aus");
+  assert.ok(!findByTestId(live.c, "real10y-overlay-status") && !findFiber(fiberOf(findByTestId(live.c, "chart-price-ma")), f => f.memoizedProps?.yAxisId === "real10y"), "aus → keine Achse/Status");
+  quiet();
+  await act(async () => { live.root.render(React.createElement(QueryClientProvider, { client: live.qc }, React.createElement(TechnicalChart, { data: { ...data, ticker: "MSFT-RESET" } }))); });
+  loud();
+  for (let i = 0; i < 100 && !findByTestId(live.c, "real10y-overlay-status"); i++) await settle();
+  assert.equal(findByTestId(live.c, "button-real10y")!.attributes["aria-pressed"], "true", "Tickerwechsel → wieder AN");
+  assert.ok(findByTestId(live.c, "real10y-overlay-status"), "nach Tickerwechsel wieder gezeichnet");
   quiet(); await act(async () => { live.root.unmount(); }); loud();
-  ok("Datenpfad UI-Chip → useMarketReal10Y → GET /api/analyze-btc/real10y-history → fetchReal10YHistory → curl FRED DFII10 (Snapshot): Achse/Linie mit BTC-Props, Werte je Kurstag exakt aus FRED, sonst null");
+  ok("Default AN, Klick aus, Tickerwechsel wieder AN; Datenpfad UI-Chip → useMarketReal10Y → GET /api/analyze-btc/real10y-history → fetchReal10YHistory → curl FRED DFII10 (Snapshot): Achse/Linie mit BTC-Props, Werte je Kurstag exakt aus FRED, sonst null");
 
   // ── 2b. M2SL-Ausfall entkoppelt (C); BTC-Ausgabe identisch zur PR-Basis ──
   const oldMacroFile = join(bin, "btc-macro-base.ts");
@@ -240,7 +250,6 @@ esac
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     quiet();
     await act(async () => { root.render(React.createElement(QueryClientProvider, { client: qc }, React.createElement(TechnicalChart, { data: data3 }))); });
-    await act(async () => { reactPropsOf(findByTestId(c, "button-real10y"))!.onClick(); });
     loud();
     for (let i = 0; i < 100 && !findByTestId(c, "real10y-overlay-status") && !findByTestId(c, "real10y-overlay-empty"); i++) await settle();
     assert.ok(findByTestId(c, "real10y-overlay-status") && !findByTestId(c, "real10y-overlay-empty"), textOf(c).slice(-200));
@@ -265,7 +274,6 @@ esac
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     quiet();
     await act(async () => { root.render(React.createElement(QueryClientProvider, { client: qc }, React.createElement(TechnicalChart, { data: data2 }))); });
-    await act(async () => { reactPropsOf(findByTestId(c, "button-real10y"))!.onClick(); });
     loud();
     for (let i = 0; i < 100 && !findByTestId(c, "real10y-overlay-empty"); i++) await settle();
     assert.equal(textOf(findByTestId(c, "real10y-overlay-empty")), "Real10Y: n/a — FRED DFII10 nicht erreichbar.");
@@ -286,7 +294,6 @@ esac
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     quiet();
     await act(async () => { root.render(React.createElement(QueryClientProvider, { client: qc }, React.createElement(TechnicalChart, { data }))); });
-    await act(async () => { reactPropsOf(findByTestId(c, "button-real10y"))!.onClick(); });
     loud();
     for (let i = 0; i < 100 && !findByTestId(c, "real10y-overlay-empty"); i++) await settle();
     assert.equal(textOf(findByTestId(c, "real10y-overlay-empty")), "Real10Y: n/a — FRED DFII10 nicht erreichbar.");
@@ -311,10 +318,10 @@ esac
 
   // #263-Chip und andere Overlays unverändert vorhanden
   for (const s of ['const [showT10y, setShowT10y] = useState(false);', 'data-testid="button-t10y" aria-pressed={showT10y}', 'const t10yQuery = useMarketTreasury10Y(showT10y);', 'const creditQuery = useMarketCreditSpread(showCredit);',
-    'const [showReal10y, setShowReal10y] = useState(false);', 'useEffect(() => { setShowReal10y(false); }, [data.ticker]);', 'const real10yQuery = useMarketReal10Y(real10yStart, showReal10y);']) assert.ok(ui.includes(s), s);
+    'const [showReal10y, setShowReal10y] = useState(true);', 'useEffect(() => { setShowReal10y(true); }, [data.ticker]);', 'const real10yQuery = useMarketReal10Y(real10yStart, showReal10y);']) assert.ok(ui.includes(s), s);
   assert.equal((ui.match(/real10y=\{real10yOverlay\}/g) ?? []).length, 2, "nur Fenster A (Einzel + Band A), wie 10J-Treasury");
   assert.equal((ui.match(/t10y=\{t10yOverlay\}/g) ?? []).length, 2);
-  ok("10J-Treasury (#263), Credit, Dividende unverändert verdrahtet; Real10Y daneben, Default aus, Reset je Ticker, nur Fenster A");
+  ok("10J-Treasury (#263), Credit, Dividende unverändert verdrahtet; Real10Y daneben, Default AN (Philip 18.10.), Reset je Ticker auf AN, nur Fenster A");
 
   // ── 4. Score unverändert ──
   const { buildBiasDecision } = await import("../shared/bias-fixes");

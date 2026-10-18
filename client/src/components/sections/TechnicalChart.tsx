@@ -169,9 +169,10 @@ export function TechnicalChart({ data }: Props) {
   useEffect(() => { setShowT10y(false); }, [data.ticker]);
   const t10yQuery = useMarketTreasury10Y(showT10y);
   // Real10Y-Overlay (FRED DFII10): 1:1 der BTC-Chip „Makro → Real10Y“ (Quelle /api/analyze-btc/real10y-history, nur DFII10,
-  // Farbe/Achse/Domain aus lib/real10yOverlay). Reine Anzeige, kein Score. Default aus, Reset je Ticker (wie 10J-Treasury).
-  const [showReal10y, setShowReal10y] = useState(false);
-  useEffect(() => { setShowReal10y(false); }, [data.ticker]);
+  // Farbe/Achse/Domain aus lib/real10yOverlay). Reine Anzeige, kein Score. Default AN (Philip 18.10.: Overlay auf dem
+  // Aktien-Dashboard immer sichtbar), bei Tickerwechsel wieder AN; Fehler/fehlende Daten → n/a-Zeile, kein Ersatzwert.
+  const [showReal10y, setShowReal10y] = useState(true);
+  useEffect(() => { setShowReal10y(true); }, [data.ticker]);
   // Startdatum = ältester Kurstag der Historie (stabil je Ticker → ein Abruf, unabhängig vom Fenster).
   const real10yStart = useMemo(() => oldestOhlcvDate(ohlcv), [ohlcv]);
   const real10yQuery = useMarketReal10Y(real10yStart, showReal10y);
