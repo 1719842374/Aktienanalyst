@@ -451,7 +451,7 @@ export interface StockAnalysis {
   currentPrice: number;
   priceTimestamp: string;
   currency: string;
-  marketCap: number;
+  marketCap: number; // DCF-FX/Tester #252-Prod: bei dataSource "yahoo" zur Laufzeit auch null (= n/a); Typ bewusst number, Leser geprüft
   sharesOutstanding: number;
 
   // Analyst data

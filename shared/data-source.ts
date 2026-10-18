@@ -15,3 +15,12 @@ export const YAHOO_NO_VALUATION_NOTICE = "Yahoo-Daten – keine Bewertung";
 export function isYahooOnly(a: { dataSource?: unknown } | null | undefined): boolean {
   return a?.dataSource === "yahoo";
 }
+
+/**
+ * DCF-FX / Tester #252-Prod (VOW3.DE): Im Yahoo-Fallback fehlen Market Cap, KGV, EPS, Fwd-KGV, wenn quoteSummary leer
+ * ist. Der Server schickt dann null (ältere Payloads/Cache: 0). Beides gilt bei Yahoo als „fehlt“ → UI zeigt n/a.
+ * FMP-Analysen: immer false (Anzeige bit-gleich wie bisher).
+ */
+export function yahooValueMissing(a: { dataSource?: unknown } | null | undefined, v: unknown): boolean {
+  return isYahooOnly(a) && !(typeof v === "number" && Number.isFinite(v) && v !== 0);
+}
