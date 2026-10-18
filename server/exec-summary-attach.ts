@@ -4,10 +4,22 @@
  * Spec: WORK_EXEC_SUMMARY.md
  */
 import { safeCompanyDcfWaccPct } from "../shared/valuation-signal";
+import { isMinorUnitListingTicker } from "../shared/listing-units";
 import { buildExecSummary, type ExecSummary, type ExecSummaryInput } from "./exec-summary";
 
 function finite(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n);
+}
+
+/**
+ * JOB D: Statement-Währung wie client/src/lib/formatters.ts statementCurrency (JOB 23): Der Server rechnet
+ * Statements nach USD um; nur Minor-Unit-Listings (.L/.JO/.TA) mit konvertierter Listing-Währung (GBP …) bleiben
+ * in Listing-Währung. Gleiche Regel, damit der Fazit-Text dieselbe Währung zeigt wie Sektion 17.
+ */
+const UNCONVERTED_MINOR_UNITS = new Set(["GBp", "GBX", "ZAc", "ILA"]);
+export function statementCurrencyForExec(a: { ticker?: unknown; currency?: unknown }): string {
+  const c = typeof a?.currency === "string" ? a.currency.trim() : "";
+  return isMinorUnitListingTicker(a?.ticker) && c && !UNCONVERTED_MINOR_UNITS.has(c) ? c : "USD";
 }
 
 /** CRV 3:1 max entry: P = (FV + 2·WC) / 3 (Section6). */
@@ -37,7 +49,10 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
   // der alten Feldnamen). dcfFairValue zuerst pruefen, alte Namen als
   // Fallback fuer etwaige andere Aufrufer/Altdaten belassen.
   const bias = a?.biasFix;
-  const decisionFv = bias?.switched && finite(bias?.decisionPerShare) ? bias.decisionPerShare : null;
+  // JOB D3: Bias-Entscheidungswert immer nutzen, wenn vorhanden (auch nicht-switched = konservativer DCF des
+  // Bias-Fix, derselbe Wert wie im Client-Fazit), statt auf den Server-Einfach-DCF dcfFairValue zu fallen.
+  // > 0: emptyPayload (bias-fixes.ts) liefert decisionPerShare 0 → dann bestehender Fallback.
+  const decisionFv = finite(bias?.decisionPerShare) && bias.decisionPerShare > 0 ? bias.decisionPerShare : null;
   const fv =
     decisionFv != null ? decisionFv
     : finite(a?.dcfFairValue) ? a.dcfFairValue
@@ -82,6 +97,8 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
     peg: finite(a?.pegRatio) ? a.pegRatio : finite(a?.peg) ? a.peg : null,
     dcfConservative: fv,
     analystPtMedian: finite(a?.analystPT?.median) ? a.analystPT.median : null,
+    currency: typeof a?.currency === "string" && a.currency.trim() ? a.currency.trim() : null,
+    statementCurrency: typeof a?.currency === "string" && a.currency.trim() ? statementCurrencyForExec(a) : null,
     riskAdjTarget: finite(a?.riskAdjTarget) ? a.riskAdjTarget : null,
     invertedDcf: finite(a?.invertedDcf) ? a.invertedDcf : null,
     crvBase,
