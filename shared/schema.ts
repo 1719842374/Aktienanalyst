@@ -650,6 +650,15 @@ export interface StockAnalysis {
   // NEW: Currency conversion info (for non-USD reporting companies)
   currencyInfo?: CurrencyInfo;
 
+  /** FMP-ADR (18.10.2026): gesetzt, wenn ein Nicht-US-Listing (FMP 402) seine Fundamentaldaten von FMP über das
+   *  US-/ADR-Symbol bekommt. Kurs und Chart bleiben vom lokalen Listing (in USD), Per-Share-Werte je lokaler Aktie.
+   *  Fehlt bei allen anderen Analysen. Shape: server/fmp-adr-map.ts AdrSourceInfo. */
+  adrSource?: {
+    fmpSymbol: string; sharesPerAdr: number; impliedSharesPerAdr: number; ratioDeviationPct: number;
+    mcapDeviationPct: number; origin: "map" | "search"; localCurrency: string; fxToUsd: number;
+    perShareUnit: "adr" | "ordinary"; note: string;
+  };
+
   // NEW: PESTEL analysis
   pestelAnalysis?: PESTELAnalysis;
 
