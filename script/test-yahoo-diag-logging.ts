@@ -131,8 +131,12 @@ try {
     const neuVal = await neu.getYahooSnapshot(ticker);
     console.warn = realWarn; console.log = realLog; console.error = realError;
 
-    // (a) Rückgabe unverändert
-    assert.deepEqual(neuVal, altVal, `${s.name}: Rückgabe weicht ab`);
+    // (a) Rückgabe unverändert — außer den DCF-FX-Feldern (currency/name/exchange: Ersatz aus Chart-Meta bzw.
+    // Börsen-Suffix, wenn quoteSummary fehlt; currencySource neu). Die prüft script/test-dcf-fx.ts.
+    const dcfFx = (v: any) => { if (!v) return v; const { currency: _c, name: _n, exchange: _e, currencySource: _s, ...rest } = v; return rest; };
+    assert.deepEqual(dcfFx(neuVal), dcfFx(altVal), `${s.name}: Rückgabe weicht ab`);
+    if (neuVal && altVal?.currency) assert.equal(neuVal.currency, altVal.currency, `${s.name}: Währung aus quoteSummary weicht ab`);
+    if (neuVal && !altVal?.currency) assert.equal(neuVal.currency, "EUR", `${s.name}: Ersatzwährung (.DE → EUR) erwartet`);
     assert.equal(neuVal === null, s.expectNull, `${s.name}: null erwartet=${s.expectNull}`);
     if (!s.expectNull) assert.equal(neuVal!.fundamentalsAvailable, s.name === "Erfolg");
 
