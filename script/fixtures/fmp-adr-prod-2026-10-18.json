@@ -1,0 +1,198 @@
+{
+ "_fixture": "Echte Prod-Antworten POST https://aktienanalyst.onrender.com/api/analyze {useLLM:false}, 18.10.2026 22:09–22:11 Europe/Berlin (FMP über US-/ADR-Symbol). Nur Felder extrahiert, Werte unverändert. FX: Yahoo EURUSD=X/CHFUSD=X/JPYUSD=X 18.10.2026 (mcap-research/adr.json).",
+ "fx": {
+  "EUR": 1.1196954,
+  "CHF": 1.2113284,
+  "JPY": 0.0063289935
+ },
+ "adr": {
+  "TM": {
+   "currentPrice": 194.61,
+   "marketCap": 231812639332.56003,
+   "sharesOutstanding": 1191165096,
+   "netIncome": 25209938325,
+   "epsTTM": 19.7978825,
+   "epsAdjFY": 19.7978825,
+   "epsConsensusNextFY": 19.873196805,
+   "peRatio": 10.449746011309545,
+   "analystPT": {
+    "median": 179.41,
+    "high": 179.41,
+    "low": 179.41,
+    "count": 16
+   },
+   "dcfFairValue": -144.34,
+   "overallScore": 2.817956444690836,
+   "overallRating": "STARK UNATTRAKTIV",
+   "finalScore": 49.5,
+   "dataSource": "fmp",
+   "lastBarDate": "2026-10-16",
+   "dataTimestamp": "2026-10-18T20:09:10.402Z"
+  },
+  "LVMUY": {
+   "currentPrice": 88.31,
+   "marketCap": 219330782233.95,
+   "sharesOutstanding": 2483646045,
+   "netIncome": 12170523960,
+   "epsTTM": 4.699044,
+   "epsAdjFY": 4.699044,
+   "epsConsensusNextFY": 4.8331681416,
+   "peRatio": 30.560569285714283,
+   "analystPT": {
+    "median": 0,
+    "high": 0,
+    "low": 0,
+    "count": 1
+   },
+   "dcfFairValue": 75.53,
+   "overallScore": 4.6065261958997725,
+   "overallRating": "NEUTRAL",
+   "finalScore": 60,
+   "dataSource": "fmp",
+   "lastBarDate": "2026-10-16",
+   "dataTimestamp": "2026-10-18T20:09:14.001Z"
+  },
+  "VWAPY": {
+   "currentPrice": 7.64,
+   "marketCap": 38298955770.64,
+   "sharesOutstanding": 5012952326,
+   "netIncome": 7869758622.419999,
+   "epsTTM": 1.4320895999999999,
+   "epsAdjFY": 1.4320895999999999,
+   "epsConsensusNextFY": 1.8217857941999998,
+   "peRatio": 8.057790916209868,
+   "analystPT": {
+    "median": 0,
+    "high": 0,
+    "low": 0,
+    "count": 1
+   },
+   "dcfFairValue": 0,
+   "overallScore": 4.756871678056188,
+   "overallRating": "NEUTRAL",
+   "finalScore": 37.8,
+   "dataSource": "fmp",
+   "lastBarDate": "2026-10-16",
+   "dataTimestamp": "2026-10-18T20:09:23.106Z"
+  },
+  "VWAGY": {
+   "currentPrice": 7.7,
+   "marketCap": 38599733241.3,
+   "sharesOutstanding": 5012952369,
+   "netIncome": 7869758622.419999,
+   "epsTTM": 1.4320895999999999,
+   "epsAdjFY": 1.4320895999999999,
+   "epsConsensusNextFY": 1.8216739121999999,
+   "peRatio": 8.124439310884886,
+   "analystPT": {
+    "median": 18,
+    "high": 18,
+    "low": 18,
+    "count": 1
+   },
+   "dcfFairValue": 0,
+   "overallScore": 4.710030372057707,
+   "overallRating": "NEUTRAL",
+   "finalScore": 37.8,
+   "dataSource": "fmp",
+   "lastBarDate": "2026-10-16",
+   "dataTimestamp": "2026-10-18T20:09:30.995Z"
+  },
+  "SAP": {
+   "currentPrice": 224.29,
+   "marketCap": 261350594933.56,
+   "sharesOutstanding": 1165235164,
+   "netIncome": 8011870019.999999,
+   "epsTTM": 6.9814368,
+   "epsAdjFY": 6.9814368,
+   "epsConsensusNextFY": 8.0176207548,
+   "peRatio": 32.920493789808916,
+   "analystPT": {
+    "median": 260,
+    "high": 265,
+    "low": 235,
+    "count": 43
+   },
+   "dcfFairValue": 159,
+   "overallScore": 5.3509063300109405,
+   "overallRating": "NEUTRAL",
+   "finalScore": 96.8,
+   "dataSource": "fmp",
+   "lastBarDate": "2026-10-16",
+   "dataTimestamp": "2026-10-18T20:09:35.993Z"
+  },
+  "BMWYY": {
+   "currentPrice": 29.21,
+   "marketCap": 18662627669.59,
+   "sharesOutstanding": 638912279,
+   "netIncome": 12631477800,
+   "epsTTM": 6.5898498,
+   "epsAdjFY": 6.5898498,
+   "epsConsensusNextFY": 6.456520020599999,
+   "peRatio": 5.716966723259762,
+   "analystPT": {
+    "median": 0,
+    "high": 0,
+    "low": 0,
+    "count": 2
+   },
+   "dcfFairValue": 129.59,
+   "overallScore": 5.104439252336449,
+   "overallRating": "NEUTRAL",
+   "finalScore": 49.5,
+   "dataSource": "fmp",
+   "lastBarDate": "2024-10-25",
+   "dataTimestamp": "2026-10-18T20:09:48.394Z"
+  },
+  "NSRGY": {
+   "currentPrice": 99.65,
+   "marketCap": 256342450997.2,
+   "sharesOutstanding": 2572428008,
+   "netIncome": 10453649710.25,
+   "epsTTM": 4.059362500000001,
+   "epsAdjFY": 4.059362500000001,
+   "epsConsensusNextFY": 5.299019102500001,
+   "peRatio": 23.317665773809527,
+   "analystPT": {
+    "median": 85,
+    "high": 85,
+    "low": 85,
+    "count": 3
+   },
+   "dcfFairValue": 49.36,
+   "overallScore": 5.506583931604617,
+   "overallRating": "NEUTRAL",
+   "finalScore": 60,
+   "dataSource": "fmp",
+   "lastBarDate": "2026-10-16",
+   "dataTimestamp": "2026-10-18T20:10:11.298Z"
+  },
+  "ASML": {
+   "currentPrice": 1641.52,
+   "marketCap": 633148267807.12,
+   "sharesOutstanding": 385708531,
+   "netIncome": 10751188908,
+   "epsTTM": 27.6460422,
+   "epsAdjFY": 27.6460422,
+   "epsConsensusNextFY": 45.8854262388,
+   "peRatio": 36.81996951071573,
+   "analystPT": {
+    "median": 2300,
+    "high": 2623,
+    "low": 2100,
+    "count": 45
+   },
+   "dcfFairValue": 896.9,
+   "overallScore": 2.4151242573791416,
+   "overallRating": "STARK UNATTRAKTIV",
+   "finalScore": 92.4,
+   "dataSource": "fmp",
+   "lastBarDate": "2026-10-16",
+   "dataTimestamp": "2026-10-18T20:10:03.696Z"
+  },
+  "BMWKY": {
+   "error": "FMP_NO_DATA",
+   "message": "Keine Daten für BMWKY verfügbar. Ticker ungültig oder FMP liefert keinen Kurs."
+  }
+ }
+}
