@@ -42,13 +42,26 @@ export function latestFredCsvValue(csv: string | null | undefined): number {
   return obs[obs.length - 1].value;
 }
 
-/** Asynchroner Abruf (für Express-Routen; blockiert den Event-Loop nicht). null = nicht erreichbar. */
-export async function fetchFredCsv(seriesId: string, cosd?: string, timeoutMs = 20000): Promise<string | null> {
-  try {
-    const resp = await fetch(fredCsvUrl(seriesId, cosd), { signal: AbortSignal.timeout(timeoutMs) });
-    if (!resp.ok) return null;
-    return await resp.text();
-  } catch {
-    return null;
+/**
+ * Asynchroner Abruf (für Express-Routen; blockiert den Event-Loop nicht). null = nicht erreichbar.
+ * Bewusst Node-fetch statt des curl-Wegs aus recession.ts (fetchUrl = execSync, blockiert den ganzen
+ * Server bis zu 25 s je Abruf). Messung + Begründung: PR #253, Abschnitt „Nachzug“.
+ * Keine Zusatz-Header (wie recession.ts: FRED lehnt z. B. curl mit „User-Agent: Mozilla/5.0“ ab).
+ * Ein Wiederholungsversuch fängt die beobachteten sofortigen Socket-Abbrüche (UND_ERR_SOCKET, wenige ms) ab.
+ * timeoutMs ist das Gesamtbudget über alle Versuche inkl. Body-Lesen — kein Aufruf hängt länger.
+ */
+export async function fetchFredCsv(seriesId: string, cosd?: string, timeoutMs = 20000, attempts = 2): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (let i = 0; i < attempts; i++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    try {
+      const resp = await fetch(fredCsvUrl(seriesId, cosd), { signal: AbortSignal.timeout(remaining) });
+      if (!resp.ok) continue;
+      return await resp.text();
+    } catch {
+      // Socket-Abbruch, DNS, Timeout → nächster Versuch im Restbudget, sonst null.
+    }
   }
+  return null;
 }
