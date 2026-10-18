@@ -1,5 +1,5 @@
 {
-  "_comment": "Future_10 §5 (Ticket B1): Quartals-AISC (USD/oz, by-product) von Newmont, Barrick, Agnico Eagle. Jeder Wert aus dem offiziellen Quartalsbericht (SEC-Exhibit), sourceDate = SEC-Einreichungsdatum. Nichts geschätzt oder interpoliert: fehlt ein Quartal, fehlt der Eintrag. Neue Quartale per Daten-PR anhängen. Nur Chart-Anzeige, kein Score (B2).",
+  "_comment": "Future_10 §5 (Ticket B1): Quartals-AISC (USD/oz, by-product) von Newmont, Barrick, Agnico Eagle. Jeder Wert aus dem offiziellen Quartalsbericht (SEC-Exhibit), sourceDate = SEC-Einreichungsdatum. Nichts geschätzt oder interpoliert: fehlt ein Quartal, fehlt der Eintrag. Neue Quartale per Daten-PR anhängen. Nur Chart-Anzeige, kein Score (B2). Lookahead: 15 von 30 Werten (alle 2024er NEM/B/AEM aus Vorjahresspalten, NEM 2025-Q1–Q3 aus dem Release vom 19.02.2026) sind nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung (je Wert in note).",
   "unit": "USD/oz",
   "basis": "by-product",
   "retrievedAt": "2026-10-18",
@@ -27,7 +27,8 @@
       "aisc": 1373,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
       "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
-      "sourceDate": "2026-02-19"
+      "sourceDate": "2026-02-19",
+      "note": "Lookahead: Quelle eingereicht 2026-02-19, nach der Chart-Stufe ab 2024-05-30 (aus der Rückschau-Tabelle des Newmont-Q4/FY2025-Release vom 19.02.2026). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "NEM",
@@ -35,7 +36,8 @@
       "aisc": 1412,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
       "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
-      "sourceDate": "2026-02-19"
+      "sourceDate": "2026-02-19",
+      "note": "Lookahead: Quelle eingereicht 2026-02-19, nach der Chart-Stufe ab 2024-08-29 (aus der Rückschau-Tabelle des Newmont-Q4/FY2025-Release vom 19.02.2026). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "NEM",
@@ -43,7 +45,8 @@
       "aisc": 1542,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
       "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
-      "sourceDate": "2026-02-19"
+      "sourceDate": "2026-02-19",
+      "note": "Lookahead: Quelle eingereicht 2026-02-19, nach der Chart-Stufe ab 2024-11-29 (aus der Rückschau-Tabelle des Newmont-Q4/FY2025-Release vom 19.02.2026). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "NEM",
@@ -51,7 +54,8 @@
       "aisc": 1319,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
       "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
-      "sourceDate": "2026-02-19"
+      "sourceDate": "2026-02-19",
+      "note": "Lookahead: Quelle eingereicht 2026-02-19, nach der Chart-Stufe ab 2025-03-01 (aus der Rückschau-Tabelle des Newmont-Q4/FY2025-Release vom 19.02.2026). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "NEM",
@@ -59,7 +63,8 @@
       "aisc": 1447,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
       "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
-      "sourceDate": "2026-02-19"
+      "sourceDate": "2026-02-19",
+      "note": "Lookahead: Quelle eingereicht 2026-02-19, nach der Chart-Stufe ab 2025-05-30 (aus der Rückschau-Tabelle des Newmont-Q4/FY2025-Release vom 19.02.2026). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "NEM",
@@ -67,7 +72,8 @@
       "aisc": 1375,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
       "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
-      "sourceDate": "2026-02-19"
+      "sourceDate": "2026-02-19",
+      "note": "Lookahead: Quelle eingereicht 2026-02-19, nach der Chart-Stufe ab 2025-08-29 (aus der Rückschau-Tabelle des Newmont-Q4/FY2025-Release vom 19.02.2026). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "NEM",
@@ -75,7 +81,8 @@
       "aisc": 1303,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
       "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
-      "sourceDate": "2026-02-19"
+      "sourceDate": "2026-02-19",
+      "note": "Lookahead: Quelle eingereicht 2026-02-19, nach der Chart-Stufe ab 2025-11-29 (aus der Rückschau-Tabelle des Newmont-Q4/FY2025-Release vom 19.02.2026). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "NEM",
@@ -107,7 +114,8 @@
       "aisc": 1474,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312525114445/d936939dex992.htm",
       "sourceTitle": "Barrick Q1 2025 Report (6-K Ex. 99.2), Gold AISC ($/oz), Spalten 3/31/25 und 3/31/24",
-      "sourceDate": "2025-05-07"
+      "sourceDate": "2025-05-07",
+      "note": "Lookahead: Quelle eingereicht 2025-05-07, nach der Chart-Stufe ab 2024-05-30 (aus der Vorjahresspalte des 2025er-Berichts). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "B",
@@ -115,7 +123,8 @@
       "aisc": 1498,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312525178085/d30477dex991.htm",
       "sourceTitle": "Barrick Q2 2025 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalten 6/30/25 und 6/30/24",
-      "sourceDate": "2025-08-11"
+      "sourceDate": "2025-08-11",
+      "note": "Lookahead: Quelle eingereicht 2025-08-11, nach der Chart-Stufe ab 2024-08-29 (aus der Vorjahresspalte des 2025er-Berichts). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "B",
@@ -123,7 +132,8 @@
       "aisc": 1507,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312525274144/d922379dex991.htm",
       "sourceTitle": "Barrick Q3 2025 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalten 9/30/25 und 9/30/24",
-      "sourceDate": "2025-11-10"
+      "sourceDate": "2025-11-10",
+      "note": "Lookahead: Quelle eingereicht 2025-11-10, nach der Chart-Stufe ab 2024-11-29 (aus der Vorjahresspalte des 2025er-Berichts). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "B",
@@ -131,7 +141,8 @@
       "aisc": 1451,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312526039501/d10712dex991.htm",
       "sourceTitle": "Barrick Q4/FY2025 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalten 12/31/25 und 12/31/24",
-      "sourceDate": "2026-02-05"
+      "sourceDate": "2026-02-05",
+      "note": "Lookahead: Quelle eingereicht 2026-02-05, nach der Chart-Stufe ab 2025-03-01 (aus der Vorjahresspalte des 2025er-Berichts). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "B",
@@ -187,7 +198,8 @@
       "aisc": 1190,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465925039916/tm2512606d3_ex99-1.htm",
       "sourceTitle": "Agnico Eagle Q1 2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce 2025 und 2024",
-      "sourceDate": "2025-04-28"
+      "sourceDate": "2025-04-28",
+      "note": "Lookahead: Quelle eingereicht 2025-04-28, nach der Chart-Stufe ab 2024-05-30 (aus der Vorjahresspalte des 2025er-Berichts). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "AEM",
@@ -195,7 +207,8 @@
       "aisc": 1169,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465925072613/tm2519744d3_ex99-1.htm",
       "sourceTitle": "Agnico Eagle Q2 2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce 2025 und 2024",
-      "sourceDate": "2025-07-31"
+      "sourceDate": "2025-07-31",
+      "note": "Lookahead: Quelle eingereicht 2025-07-31, nach der Chart-Stufe ab 2024-08-29 (aus der Vorjahresspalte des 2025er-Berichts). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "AEM",
@@ -203,7 +216,8 @@
       "aisc": 1286,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465925104746/tm2525021d3_ex99-1.htm",
       "sourceTitle": "Agnico Eagle Q3 2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce 2025 und 2024",
-      "sourceDate": "2025-10-31"
+      "sourceDate": "2025-10-31",
+      "note": "Lookahead: Quelle eingereicht 2025-10-31, nach der Chart-Stufe ab 2024-11-29 (aus der Vorjahresspalte des 2025er-Berichts). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "AEM",
@@ -211,7 +225,8 @@
       "aisc": 1316,
       "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465926014451/aem-20251231xex99d1.htm",
       "sourceTitle": "Agnico Eagle Q4/FY2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce Q4 2025 und Q4 2024",
-      "sourceDate": "2026-02-13"
+      "sourceDate": "2026-02-13",
+      "note": "Lookahead: Quelle eingereicht 2026-02-13, nach der Chart-Stufe ab 2025-03-01 (aus der Vorjahresspalte des 2025er-Berichts). Wert nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung."
     },
     {
       "company": "AEM",
