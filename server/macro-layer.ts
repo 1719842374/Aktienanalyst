@@ -30,6 +30,12 @@ export const MACRO_FED_FUNDS_SERIES = "DFF";
 /** F9-13: KI-Gewichte 6 h cachen (Spec: 6–12 h). */
 export const MACRO_AI_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 export const MACRO_HABITAT_CACHE_TTL_MS = 60 * 60 * 1000;
+/**
+ * F9-12: eigenes Zeitlimit für den KI-Gewichts-Call (nur hier, callLLMJson bleibt unverändert).
+ * Danach Fallback auf die quantitativen Gewichte wie bei KI-Fehler; eine späte Antwort wird verworfen
+ * (nicht gecacht). Liegt deutlich unter dem Client-Timeout von apiRequest (90 s).
+ */
+export const MACRO_AI_TIMEOUT_MS = 25_000;
 
 type LlmFn = (opts: { prompt: string; maxTokens?: number; temperature?: number; systemPrompt?: string }) =>
   Promise<{ data: any; modelUsed: string } | null>;
@@ -43,6 +49,21 @@ export interface MacroLayerDeps {
   fetchBars?: (symbol: string, from: string, to: string) => Promise<PriceBar[]>;
   /** F9-10: öffentliche Seite (multpl EPS). Fehlt → EPS-Komponente n/a. */
   fetchText?: (url: string) => Promise<string | null>;
+  /** Nur für Tests: Zeitlimit des KI-Calls überschreiben (Standard MACRO_AI_TIMEOUT_MS). */
+  llmTimeoutMs?: number;
+}
+
+const LLM_TIMEOUT = Symbol("llm-timeout");
+
+/** Promise.race gegen einen lokalen Timer; der Timer wird immer aufgeräumt. */
+export async function withMacroAiTimeout<T>(p: Promise<T>, ms: number): Promise<T | typeof LLM_TIMEOUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof LLM_TIMEOUT>(resolve => { timer = setTimeout(() => resolve(LLM_TIMEOUT), ms); });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 const aiCache = new Map<string, { ts: number; data: unknown; model: string }>();
@@ -119,13 +140,22 @@ export async function computeMacroLayer(indicators: MacroIndicatorInput[], deps:
         aiStatus = "ok";
       } else {
         let res: { data: any; modelUsed: string } | null = null;
+        const timeoutMs = deps.llmTimeoutMs ?? MACRO_AI_TIMEOUT_MS;
         try {
-          res = await deps.llm({
+          const call = deps.llm({
             prompt: buildMacroWeightPrompt(habitat, quant.dimensions),
             maxTokens: 500,
             temperature: 0.2,
             systemPrompt: "Antworte nur mit gültigem JSON.",
           });
+          call.catch(() => undefined); // späte Ablehnung nach Timeout nicht unbehandelt lassen
+          const raced = await withMacroAiTimeout(call, timeoutMs);
+          if (raced === LLM_TIMEOUT) {
+            console.warn(`[MACRO-LAYER] KI-Gewichte: Timeout nach ${timeoutMs} ms → quantitative Gewichte`);
+            res = null;
+          } else {
+            res = raced;
+          }
         } catch {
           res = null;
         }

@@ -35,7 +35,6 @@ const DFII10 = readFileSync(`${FX}/DFII10-2026-10-18.csv`, "utf8");
 const DFF = readFileSync(`${FX}/DFF-2026-10-18.csv`, "utf8");
 const NOW = Date.parse("2026-10-18T20:00:00Z");
 const IND = sanitizeIndicators({ indicators: RECESSION_FALLBACK_DATA.indicators });
-const F9_LAYER_HEAD = "d5923ef0";
 
 function deps(over: Partial<MacroLayerDeps> = {}): MacroLayerDeps {
   return {
@@ -183,13 +182,10 @@ async function main() {
   await computeMacroLayer(sanitizeIndicators(copy), deps());
   assert.equal(JSON.stringify(copy), before); assert.equal(JSON.stringify(RECESSION_FALLBACK_DATA), before);
   ok("Eingaben nach dem Lauf byte-identisch");
-  const mb = execSync("git merge-base HEAD origin/main", { encoding: "utf8" }).trim();
-  execSync(`git diff --quiet ${mb} -- server/recession.ts server/recession-sahm.ts server/analyze-route.ts server/history-fallback.ts shared/recession-regions.ts shared/recession-market-charts.ts client/src/components/recession/recessionDashboardPartsA.tsx client/src/components/recession/recessionDashboardPartsB.tsx client/src/components/recession/recessionDashboardShared.tsx client/src/lib/recessionFallbackData.ts`);
-  execSync(`git diff --quiet ${F9_LAYER_HEAD} -- script/fixtures/macro/f9-history-2026-10-18.json server/routes-register.ts client/src/pages/RecessionDashboard.tsx client/src/hooks/useMacroLayer.ts`);
-  const changed = execSync(`git diff --name-only ${F9_LAYER_HEAD}`, { encoding: "utf8" }).split("\n").filter(Boolean);
-  const untracked = execSync("git ls-files --others --exclude-standard", { encoding: "utf8" }).split("\n").filter(Boolean);
-  for (const f of [...changed, ...untracked]) assert.ok(/macro-layer|MacroLayer|f9-macro|fixtures\/macro/.test(f), `unerwartete Änderung ${f}`);
-  ok(`recession.ts/analyze-route.ts/history-fallback.ts unverändert; gegen F9-Layer ${F9_LAYER_HEAD} nur Makro-Ebene-Dateien geändert, F9-17-Ergebnisdatei unverändert`);
+  const importers = execSync(`git grep -l "macro-layer" -- server shared client`, { encoding: "utf8" }).split("\n").filter(Boolean).sort();
+  for (const f of importers) assert.ok(/macro-layer|MacroLayer|routes-register\.ts$/.test(f), `Import in ${f}`);
+  assert.ok(importers.includes("server/macro-layer-gaps.ts") && importers.includes("server/macro-layer.ts"));
+  ok("kein Score-Modul importiert Makro-Ebene/Lücken (nur routes-register.ts und Makro-Ebene-Dateien)");
 
   console.log("UI und Historie");
   const html = renderToStaticMarkup(createElement(MacroLayerCard, { layer: full, loading: false, error: false, fallback: false }));

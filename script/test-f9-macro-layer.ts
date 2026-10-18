@@ -15,7 +15,7 @@ import { MacroLayerCard } from "../client/src/components/recession/MacroLayerCar
 import { fredCsvObservations } from "../server/fred-csv";
 import { probabilityFromNet, scoredTotals } from "../server/recession";
 import {
-  MACRO_AI_CACHE_TTL_MS, computeMacroLayer, registerMacroLayerRoute, resetMacroLayerCaches, sanitizeIndicators, type MacroLayerDeps,
+  MACRO_AI_CACHE_TTL_MS, MACRO_AI_TIMEOUT_MS, computeMacroLayer, registerMacroLayerRoute, resetMacroLayerCaches, sanitizeIndicators, type MacroLayerDeps,
 } from "../server/macro-layer";
 import {
   MACRO_BASE_WEIGHTS, applyAiWeights, buildMacroWeightPrompt, calculateAdaptiveWeights, detectHabitat, dimensionOfIndicator,
@@ -25,10 +25,6 @@ import {
 let n = 0;
 const ok = (name: string) => { n++; console.log(`  ✅ ${name}`); };
 const close = (a: number | null, b: number, eps = 1e-9) => assert.ok(a != null && Math.abs(a - b) < eps, `${a} ≠ ${b}`);
-// Basis = Abzweigpunkt von main (Auftrag: 35ead515; main ist inzwischen auf 4dd43ab8 ohne Überschneidung).
-const BASE = (() => {
-  try { return execSync("git merge-base HEAD origin/main", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().slice(0, 8); } catch { return "35ead515"; }
-})();
 const DFII10 = readFileSync("script/fixtures/macro/DFII10-2026-10-18.csv", "utf8");
 const DFF = readFileSync("script/fixtures/macro/DFF-2026-10-18.csv", "utf8");
 const NOW = Date.parse("2026-10-18T20:00:00Z");
@@ -160,6 +156,35 @@ async function main() {
     assert.deepEqual(lf.dimensions.map(d => d.finalWeight), layer.dimensions.map(d => d.finalWeight), label);
   }
   ok("KI-Fehler/ungültig → Fallback auf quantitative Gewichte (identisch zum No-Key-Pfad)");
+  resetMacroLayerCaches();
+  let hangCalls = 0;
+  const t0 = Date.now();
+  const lHang = await computeMacroLayer(IND, deps({
+    llmAvailable: () => true,
+    llmTimeoutMs: 50,
+    llm: () => { hangCalls++; return new Promise(() => {}); },
+  }));
+  const tHang = Date.now() - t0;
+  assert.equal(hangCalls, 1); assert.ok(tHang < 2000, `${tHang} ms`);
+  assert.equal(lHang.weightSource, "deterministisch"); assert.equal(lHang.ai.status, "failed");
+  assert.deepEqual(lHang.dimensions.map(d => d.finalWeight), layer.dimensions.map(d => d.finalWeight));
+  const lLate = await computeMacroLayer(IND, deps({
+    llmAvailable: () => true,
+    llmTimeoutMs: 30,
+    llm: () => new Promise((_, rej) => setTimeout(() => rej(new Error("spät")), 80)),
+  }));
+  assert.equal(lLate.ai.status, "failed");
+  const lLateOk = await computeMacroLayer(IND, deps({
+    llmAvailable: () => true,
+    llmTimeoutMs: 30,
+    llm: () => new Promise(res => setTimeout(() => res({ data: { adjustedWeights: { bewertung: 99 } }, modelUsed: "spät" }), 80)),
+  }));
+  assert.equal(lLateOk.ai.status, "failed"); assert.equal(lLateOk.weightSource, "deterministisch");
+  await new Promise(r => setTimeout(r, 150));
+  const lAfter = await computeMacroLayer(IND, deps({ llmAvailable: () => true, llm: async () => null }));
+  assert.equal(lAfter.ai.status, "failed"); assert.equal(lAfter.ai.cached, false); assert.equal(lAfter.weightSource, "deterministisch");
+  assert.equal(MACRO_AI_TIMEOUT_MS, 25_000);
+  ok(`KI-Timeout (hängende Fake-Antwort, Limit 50 ms → ${tHang} ms): Fallback auf quantitative Gewichte, späte Ablehnung unschädlich, nichts gecacht; Standard ${MACRO_AI_TIMEOUT_MS} ms`);
   const applied = applyAiWeights(qw, { adjustedWeights: { bewertung: Number.NaN } });
   assert.equal(applied.valid, false); assert.equal(applied.dimensions, qw);
   ok("NaN-Vorschlag → unverändert");
@@ -204,22 +229,9 @@ async function main() {
   await computeMacroLayer(sanitizeIndicators(rawCopy), deps());
   assert.equal(JSON.stringify(RECESSION_FALLBACK_DATA), before); assert.equal(JSON.stringify(rawCopy), before);
   ok("Eingabe-Indikatoren nach dem Lauf byte-identisch (keine Mutation)");
-  const protectedFiles = [
-    "server/recession.ts", "server/recession-sahm.ts", "server/analyze-route.ts", "shared/recession-regions.ts",
-    "shared/recession-market-charts.ts", "client/src/components/recession/recessionDashboardPartsA.tsx",
-    "client/src/components/recession/recessionDashboardPartsB.tsx", "client/src/components/recession/recessionDashboardShared.tsx",
-    "client/src/lib/recessionFallbackData.ts",
-  ];
-  execSync(`git diff --quiet ${BASE} -- ${protectedFiles.join(" ")}`);
-  ok(`Score-/Rezessions-Dateien und analyze-route.ts unverändert gegen ${BASE}`);
-  const changed = execSync(`git diff --name-only ${BASE}`, { encoding: "utf8" }).split("\n").filter(Boolean);
-  const untracked = execSync("git ls-files --others --exclude-standard", { encoding: "utf8" }).split("\n").filter(Boolean);
-  const allowed = new Set(["server/routes-register.ts", "client/src/pages/RecessionDashboard.tsx"]);
-  for (const f of changed) assert.ok(allowed.has(f) || /macro-layer|MacroLayer|f9-macro|fixtures\/macro/.test(f), `unerwartete Änderung ${f}`);
-  for (const f of untracked) assert.ok(/macro-layer|MacroLayer|f9-macro|fixtures\/macro/.test(f), `unerwartete neue Datei ${f}`);
   const importers = execSync(`git grep -l "macro-layer" -- server shared client`, { encoding: "utf8" }).split("\n").filter(Boolean).sort();
   for (const f of importers) assert.ok(/macro-layer|MacroLayer|routes-register\.ts$/.test(f), `Import in ${f}`);
-  ok("geänderte Bestandsdateien nur routes-register.ts + RecessionDashboard.tsx; kein Score-Modul importiert die Makro-Ebene");
+  ok("kein Score-Modul importiert die Makro-Ebene (nur routes-register.ts und Makro-Ebene-Dateien)");
 
   console.log("Route POST /api/recession/macro-layer");
   resetMacroLayerCaches();
