@@ -1,6 +1,6 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { formatNumber, formatCurrency } from "../../lib/formatters";
+import { formatNumber, formatCurrency, statementCurrency } from "../../lib/formatters";
 import { calculateFCFFDCF, buildDefaultDCFParams, selectCatalystBase } from "../../lib/calculations";
 import { buildBiasDecision, isNegativeCatalyst, sumUpsideGb } from "../../../../shared/bias-fixes";
 import React from "react";
@@ -123,6 +123,10 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
   const catalystDCFBase = _baseInfoS11.base;
   const catalystBaseFallback = _baseInfoS11.source !== "dcf";
   const catalystAdjTarget = catalystDCFBase * (1 + totalGB / 100);
+  // JOB 23 (wie SummarySection): DCF-Werte in Statement-Währung; Kurs und Analyst-PT in Listing-Währung (data.currency).
+  // Das Kat.-Ziel erbt die Währung seiner Basis (DCF → statementCurrency, Fallback Analyst PT → data.currency).
+  const dcfCcy = statementCurrency(data);
+  const catalystCcy = catalystBaseFallback ? data.currency : dcfCcy;
 
   return (
     <SectionCard number={17} title="KURSANSTIEG-KATALYSATOREN (Anti-Bias)">
@@ -175,7 +179,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
       <div className="text-[11px] text-foreground/70 bg-muted/30 border border-border/50 rounded px-3 py-2" data-testid="catalyst-mode-label">
         {bias.modeLabel}
         {bias.switched
-          ? ` · Basis: ${bias.valuationBaseLabel} ${formatCurrency(bias.decisionPerShare)} · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare)}`
+          ? ` · Basis: ${bias.valuationBaseLabel} ${formatCurrency(bias.decisionPerShare, 2, dcfCcy)} · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare, 2, dcfCcy)}`
           : ` · Basis: ${bias.valuationBaseLabel}`}
         {downsideCatalysts.length > 0 ? ` · ${downsideCatalysts.length} ▼ aus der positiven GB-Summe ausgeschlossen` : ""}
       </div>
@@ -491,21 +495,21 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
                   const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
                   return (
                     <div className="text-[10px] text-muted-foreground">
-                      = Analyst PT {formatCurrency(data.analystPT.median)}
+                      = Analyst PT {formatCurrency(data.analystPT.median, 2, data.currency)}
                       <span className={`ml-1 font-medium ${ptUpside >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         ({ptUpside >= 0 ? '+' : ''}{formatNumber(ptUpside, 1)}% vs. Kurs)
                       </span>
-                      {' '}× (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget)}
+                      {' '}× (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget, 2, catalystCcy)}
                     </div>
                   );
                 })()}
                 {!catalystBaseFallback && (
                   <div className="text-[10px] text-muted-foreground">
-                    = {formatCurrency(catalystDCFBase)} × (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget)}
+                    = {formatCurrency(catalystDCFBase, 2, catalystCcy)} × (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget, 2, catalystCcy)}
                   </div>
                 )}
                 <div className={`text-[10px] font-medium mt-0.5 ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>
-                  vs. Kurs ({formatCurrency(data.currentPrice)}): {catVsKurs >= 0 ? '+' : ''}{formatNumber(catVsKurs, 1)}%
+                  vs. Kurs ({formatCurrency(data.currentPrice, 2, data.currency)}): {catVsKurs >= 0 ? '+' : ''}{formatNumber(catVsKurs, 1)}%
                   {isBelowKurs && ' — Target UNTER aktuellem Kurs'}
                 </div>
                 {/* Catalyst Upside auf aktuellen Kurs aufgerechnet — immer sichtbar */}
@@ -514,8 +518,8 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
                   return (
                     <div className="text-[10px] text-muted-foreground mt-1 pt-1 border-t border-border/40">
                       <span className="text-muted-foreground/70">Katalysatoren auf akt. Kurs:</span>
-                      {' '}{formatCurrency(data.currentPrice)} × (1 + {formatNumber(totalGB, 2)}%)
-                      {' '}= <span className="font-medium text-emerald-400">{formatCurrency(kursPlus)}</span>
+                      {' '}{formatCurrency(data.currentPrice, 2, data.currency)} × (1 + {formatNumber(totalGB, 2)}%)
+                      {' '}= <span className="font-medium text-emerald-400">{formatCurrency(kursPlus, 2, data.currency)}</span>
                       <span className="ml-1 font-medium text-emerald-400">(+{formatNumber(totalGB, 2)}% nicht eingepreist)</span>
                     </div>
                   );
@@ -523,7 +527,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
               </div>
               <div className="text-right">
                 <div className={`text-lg font-bold font-mono tabular-nums ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>
-                  {formatCurrency(catalystAdjTarget)}
+                  {formatCurrency(catalystAdjTarget, 2, catalystCcy)}
                 </div>
                 <div className={`text-xs font-mono font-medium ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>
                   {catVsKurs >= 0 ? '+' : ''}{formatNumber(catVsKurs, 1)}%
@@ -532,8 +536,8 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
             </div>
             {catalystBaseFallback && (
               <div className="text-[10px] text-amber-500 bg-amber-500/5 rounded-md p-2 border border-amber-500/20">
-                ⚠ DCF-Basis zu niedrig ({formatCurrency(decisionBase)}), verwende Analyst PT Median als Basis
-                {bias.switched ? ` · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare)}` : ""}
+                ⚠ DCF-Basis zu niedrig ({formatCurrency(decisionBase, 2, dcfCcy)}), verwende Analyst PT Median als Basis
+                {bias.switched ? ` · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare, 2, dcfCcy)}` : ""}
               </div>
             )}
           </>

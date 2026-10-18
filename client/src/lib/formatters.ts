@@ -45,6 +45,16 @@ export function formatTarget(value: number | null | undefined, currency?: string
   return formatCurrency(value, 2, currency);
 }
 
+/**
+ * JOB 23 (Tester-FAIL SHEL.L): Upside zum Kursziel in %. Ohne Ziel (dieselbe Regel wie formatTarget: 0/null/nicht
+ * endlich) oder ohne gültigen Kurs → null, damit die UI „n/a“ zeigt statt „-100.0% upside“.
+ */
+export function targetUpsidePct(target: number | null | undefined, price: number | null | undefined): number | null {
+  if (target == null || typeof target !== "number" || !Number.isFinite(target) || target <= 0) return null;
+  if (price == null || typeof price !== "number" || !Number.isFinite(price) || price <= 0) return null;
+  return ((target - price) / price) * 100;
+}
+
 export function formatCurrency(value: number, decimals: number = 2, currency?: string | null): string {
   const v = safeNum(value);
   return `${currencySymbol(currency)}${v.toLocaleString("en-US", {

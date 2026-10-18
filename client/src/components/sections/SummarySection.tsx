@@ -6,7 +6,7 @@ import {
   worstCaseM1, worstCaseM2, worstCaseM3, calculateCatalystUpside, selectCatalystBase,
   gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult,
 } from "../../lib/calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, formatRatio, getCRVColor, formatTarget, statementCurrency } from "../../lib/formatters";
+import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, formatRatio, getCRVColor, formatTarget, statementCurrency, targetUpsidePct } from "../../lib/formatters";
 import { buildFazitSignal } from "../../lib/fazit-signal";
 import { buildBiasDecision, isNegativeCatalyst } from "../../../../shared/bias-fixes";
 import { useMemo } from "react";
@@ -106,7 +106,8 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   const optimisticUpside = ((optimisticDCF.perShare / data.currentPrice - 1) * 100);
   const stressDownside = ((stressDCF.perShare / data.currentPrice - 1) * 100);
 
-  const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
+  // JOB 23: ohne Kursziel (Median n/a) kein „-100.0% upside“, sondern „upside n/a“.
+  const ptUpside = targetUpsidePct(data.analystPT.median, data.currentPrice);
 
   // RSL growth adjustment flag (rsl = null → keine ausreichende Kurshistorie, kein Malus)
   const rslGrowthAdj = rsl != null && rsl < 105 ? "-5% to -10%" : "none";
@@ -235,7 +236,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             <SummaryRow label="FCF Margin" value={formatPercentNoSign(data.fcfMargin)} />
             <SummaryRow label="FCF Haircut" value={`${haircut}%`} note={haircut > 0 ? `Gov. exposure: ${formatPercentNoSign(data.governmentExposure)}` : "N/A"} />
             <SummaryRow label="Moat" value={data.moatRating} note={data.moatRating === "Wide" ? "Strong" : data.moatRating === "Narrow" ? "Moderate" : "Weak"} />
-            <SummaryRow label="Analyst PT Median" value={formatTarget(data.analystPT.median, data.currency)} note={`${ptUpside >= 0 ? "+" : ""}${formatNumber(ptUpside, 1)}% upside`} />
+            <SummaryRow label="Analyst PT Median" value={formatTarget(data.analystPT.median, data.currency)} note={ptUpside == null ? "upside n/a" : `${ptUpside >= 0 ? "+" : ""}${formatNumber(ptUpside, 1)}% upside`} />
             <SummaryRow label="WACC (CAPM)" value={formatPercentNoSign(conservativeDCF.wacc)} note={`Re=${formatPercentNoSign(conservativeDCF.costOfEquity)}, β=${formatNumber(data.beta5Y, 2)}`} />
             <tr className="bg-primary/5">
               <td className="py-2 px-2 font-semibold">Conservative DCF (FCFF)</td>
