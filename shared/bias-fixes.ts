@@ -561,7 +561,10 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
   const unadjusted = calculateFCFFDCF(baseParams);
   const price = finite(data.currentPrice) && data.currentPrice > 0 ? data.currentPrice : 0;
   const dcfUpside = price > 0 ? (unadjusted.perShare / price - 1) * 100 : 0;
-  const analyst = finite(data.analystPT?.median) ? data.analystPT.median : price;
+  // JOB D2: Kursziel 0 (FMP ohne Targets, analyze-route `?? 0`) ist kein echtes Ziel — gleiche Regel wie
+  // targetUpsidePct/computeDcfVsMarketDivergence (PT > 0 und endlich). Ohne Ziel greift der bestehende
+  // Fallback auf den Kurs (Analyst-Upside 0 %) statt -100 % und damit eines fast immer aktiven dcf_divergence-Triggers.
+  const analyst = finite(data.analystPT?.median) && data.analystPT.median > 0 ? data.analystPT.median : price;
   const analystUpside = price > 0 ? (analyst / price - 1) * 100 : 0;
   const totalEd = (data.risks ?? []).reduce((s, r) => s + (finite(r.expectedDamage) ? r.expectedDamage : 0), 0);
   const moat = ruleMoatFromAnalysis(data);

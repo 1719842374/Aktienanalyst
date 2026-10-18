@@ -4,6 +4,7 @@
  * (2) computeDcfVsMarketDivergence: ohne PT kein Divergenz-Flag (kein künstlicher Analysten-Upside -100 %).
  * (3) Deep-Dive-Prompt: kein „Analyst PT: $0.00“, Kurs/PT in Listing-Währung, sobald sie übergeben wird.
  * (4) Exec-Summary-Fazit: kein „0 Dollar“-Satz, Währungswort aus data.currency.
+ * (D2) bias-fixes buildBiasDecision: PT 0 zählt nicht als Ziel → Fallback Kurs, kein künstlicher dcf_divergence-Trigger.
  * Server-Score: buildScoringForAnalysis/runScoringPipeline lesen kein Kursziel (statischer Nachweis unten) und
  * die gehärtete Server-CRV (crvBase/maxEntryCrv3) ist mit PT 0 identisch zu vorher.
  * Fixture: script/fixtures/analysis-MSFT.json (live /api/analyze 11.10.2026).
@@ -17,6 +18,7 @@ import { computeDcfVsMarketDivergence, computeHardenedCRV } from "../shared/valu
 import { deepDiveAnalystPtText, deepDivePricePrefix } from "../server/llm-openrouter";
 import { buildFazit, currencyWord, hasAnalystTarget } from "../server/exec-summary";
 import { buildExecSummaryInputFromAnalysis, statementCurrencyForExec } from "../server/exec-summary-attach";
+import { buildBiasDecision } from "../shared/bias-fixes";
 
 let fail = 0;
 const check = (n: string, ok: boolean, info = "") => { console.log(`${ok ? "✅" : "❌"} ${n}${info ? `  (${info})` : ""}`); if (!ok) fail++; };
@@ -105,6 +107,33 @@ for (const [t, c] of [["SHEL.L", "GBP"], ["SHEL.L", "GBp"], ["RY.TO", "CAD"], ["
 const inp = buildExecSummaryInputFromAnalysis({ ticker: "SHEL.L", currency: "GBP", currentPrice: 39.38, analystPT: { median: 0 } });
 check("Attach: currency/statementCurrency aus der Analyse", inp.currency === "GBP" && inp.statementCurrency === "GBP" && inp.analystPtMedian === 0);
 
+// ── (D2) bias-fixes: dcf_divergence-Trigger ──
+const divTrig = (d: any) => buildBiasDecision(d).triggers.find(t => t.id === "dcf_divergence")!;
+{
+  const t0 = divTrig({ ...msft, analystPT: { ...msft.analystPT, median: 0 } });
+  const tPx = divTrig({ ...msft, analystPT: { ...msft.analystPT, median: msft.currentPrice } });
+  const tNaN = divTrig({ ...msft, analystPT: { ...msft.analystPT, median: NaN } });
+  check("Bias: PT 0 verhält sich wie PT = Kurs (Fallback, kein -100 %)", t0.active === tPx.active && t0.detail === tPx.detail, `${t0.detail} / ${tPx.detail}`);
+  check("Bias: PT 0 = PT NaN (bestehender Fallback)", t0.active === tNaN.active && t0.detail === tNaN.detail);
+  const b0 = buildBiasDecision({ ...msft, analystPT: { ...msft.analystPT, median: 0 } });
+  const dcfUp = (b0.unadjustedPerShare / msft.currentPrice - 1) * 100;
+  check("Bias: PT 0 → Δ = |DCF-Upside − 0| (nicht |DCF-Upside + 100|)", t0.detail === `Δ ${Math.abs(dcfUp).toFixed(1)} Pp (Schwelle 80)`, t0.detail);
+  const tReal = divTrig(msft);
+  const exp = Math.abs(dcfUp - (msft.analystPT.median / msft.currentPrice - 1) * 100);
+  check("Bias: echter PT 560 unverändert genutzt", tReal.detail === `Δ ${exp.toFixed(1)} Pp (Schwelle 80)`, tReal.detail);
+  check("Bias: PT 0 → kein Red Flag „DCF-Upside weicht stark vom Analysten-Upside ab“ (MSFT-Fixture, |DCF-Up| < 80)", Math.abs(dcfUp) < 80 && !b0.redFlags.some(r => /Analysten-Upside/.test(r)));
+}
+{
+  // Statischer Nachweis: Server-finalScore entsteht vor applyBiasFix und liest biasFix nicht.
+  const route = readFileSync("server/analyze-route.ts", "utf8");
+  const iScore = route.indexOf("scoring = buildScoringForAnalysis(");
+  const iBias = route.indexOf("applyBiasFix(analysis);");
+  check("analyze-route: buildScoringForAnalysis läuft vor applyBiasFix", iScore > 0 && iBias > iScore);
+  for (const p of ["server/scoring-integration.ts", "server/scoring-gates.ts"]) {
+    check(`${p}: liest bias-fixes/biasFix nicht`, !/bias-fixes|biasFix|buildBiasDecision/.test(readFileSync(p, "utf8")));
+  }
+}
+
 // Optional: echte Prod-Antworten (nicht im Repo, nur Anzeige + gleiche Assertions)
 const live = process.env.JOBD_LIVE_DIR;
 if (live) {
@@ -117,6 +146,7 @@ if (live) {
     const pt = a.analystPT?.median;
     check(`LIVE ${t} (PT ${pt}, ${a.currency}): kein „0 Dollar“${a.currency !== "USD" ? ", Kurs nicht in Dollar" : ""}`,
       !/\b0 Dollar/.test(txt) && (a.currency === "USD" || !/Kurs\./.test(fz.lage) || !/Dollar Kurs/.test(fz.lage)), fz.lage);
+    if (!(pt > 0)) check(`LIVE ${t}: Bias-Trigger dcf_divergence ohne PT nur bei |DCF-Upside| ≥ 80`, divTrig(a).active === Math.abs((buildBiasDecision(a).unadjustedPerShare / a.currentPrice - 1) * 100) >= 80, divTrig(a).detail);
     const before = a.execSummary?.fazit?.lage;
     if (before) console.log(`   vorher (Prod): ${before}`);
   }
