@@ -16,6 +16,8 @@
  * Läuft nur serverseitig. Kein API-Key; Yahoo verlangt für quoteSummary
  * Cookie + Crumb, die hier einmalig geholt und wiederverwendet werden.
  */
+// Alias: #261 importiert minorUnitInfo aus demselben Modul (eigener Name vermeidet doppelten Bezeichner beim Merge).
+import { minorUnitInfo as chartMetaMinorUnit } from "../shared/listing-units";
 import { yahooFetch, indicatorWarmupFromDate, type DailyBar } from "./history-fallback";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -32,6 +34,8 @@ export interface YahooSnapshot {
   eps: number | null;
   name: string | null;
   exchange: string | null;
+  /** Gesetzt, wenn Name/Währung/Börse (ganz oder teilweise) aus der v8-Chart-Meta stammen: "Yahoo chart meta". */
+  metaSource?: typeof YAHOO_CHART_META_SOURCE;
   bars: DailyBar[];
   fundamentalsAvailable: boolean;
 }
@@ -247,9 +251,10 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
     console.warn(`[YAHOO-402] ${key}: ${String(err?.message ?? err).slice(0, 120)}`);
     return null;
   });
-  inflight.set(key, p);
+  const withMeta = p.then(applyChartMetaFallback);
+  inflight.set(key, withMeta);
   try {
-    const value = await p;
+    const value = await withMeta;
     cache.set(key, { value, at: Date.now() });
     return value;
   } finally {
@@ -259,3 +264,57 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
 
 /** Klarer Hinweistext (Spec §7), wenn FMP 402 liefert und Yahoo übernimmt. */
 export const YAHOO_402_NOTICE = "Plan deckt dieses Symbol nicht ab – Yahoo-Kurs/History aktiv";
+
+// ─── Chart-Meta-Ersatz (Render: getcrumb 429 → quoteSummary fehlt) ───
+// Die v8-Chart-API braucht keinen Crumb und nennt in `meta` Währung, Börse und Namen. Fehlt quoteSummary
+// (oder fehlen dort diese Felder), werden NUR diese drei Felder aus der Meta ergänzt. Market Cap, KGV und EPS
+// bleiben null (die Meta hat sie nicht; nichts wird geschätzt). Vorhandene quoteSummary-Werte haben Vorrang.
+export const YAHOO_CHART_META_SOURCE = "Yahoo chart meta" as const;
+
+export interface YahooChartMeta { currency: string | null; exchange: string | null; name: string | null }
+
+/** Liest currency, fullExchangeName/exchangeName und longName/shortName aus einer v8-Chart-Antwort. null ohne Meta. */
+export function parseYahooChartMeta(json: any): YahooChartMeta | null {
+  const meta = json?.chart?.result?.[0]?.meta;
+  if (!meta || typeof meta !== "object") return null;
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().replace(/\s{2,}.*$/, "") : null);
+  const out = { currency: str(meta.currency), exchange: str(meta.fullExchangeName) ?? str(meta.exchangeName), name: str(meta.longName) ?? str(meta.shortName) };
+  return out.currency || out.exchange || out.name ? out : null;
+}
+
+/** Kleiner v8-Chart-Call (range=5d, ohne Crumb) nur für die Meta. null bei jedem Fehler (kein Throw, kein Log). */
+async function fetchYahooChartMeta(symbol: string): Promise<YahooChartMeta | null> {
+  try {
+    await spaceYahooCall();
+    const resp = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`, {
+      signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA, Accept: "application/json" },
+    });
+    if (!resp.ok) return null;
+    return parseYahooChartMeta(await resp.json());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ergänzt fehlende Name/Währung/Börse eines Snapshots aus der Chart-Meta. Kein Call, wenn alle drei schon
+ * gesetzt sind (quoteSummary ok → Snapshot unverändert). Kurs kommt ohne quoteSummary aus den Bars, die
+ * history-fallback schon in die Major-Einheit bringt (yahooBarsToMajor) → Minor-Code (GBp) wird dann als
+ * Major (GBP) gemeldet, damit Kurs und Währung zusammenpassen. Keine Umrechnung von Werten.
+ */
+export async function applyChartMetaFallback(snap: YahooSnapshot | null): Promise<YahooSnapshot | null> {
+  if (!snap || (snap.currency && snap.name && snap.exchange)) return snap;
+  const meta = await fetchYahooChartMeta(snap.symbol);
+  if (!meta) return snap;
+  let currency = meta.currency;
+  if (currency && !snap.fundamentalsAvailable) currency = chartMetaMinorUnit(currency)?.major ?? currency;
+  const filled: string[] = [];
+  const next: YahooSnapshot = { ...snap };
+  if (!next.currency && currency) { next.currency = currency; filled.push(`Währung ${currency}`); }
+  if (!next.name && meta.name) { next.name = meta.name; filled.push(`Name ${meta.name}`); }
+  if (!next.exchange && meta.exchange) { next.exchange = meta.exchange; filled.push(`Börse ${meta.exchange}`); }
+  if (!filled.length) return snap;
+  next.metaSource = YAHOO_CHART_META_SOURCE;
+  console.log(`[YAHOO-402] ${snap.symbol}: ${filled.join(", ")} aus ${YAHOO_CHART_META_SOURCE} (quoteSummary ${snap.fundamentalsAvailable ? "unvollständig" : "fehlt"}; Market Cap/KGV/EPS bleiben null)`);
+  return next;
+}
