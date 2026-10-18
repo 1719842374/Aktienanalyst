@@ -888,59 +888,41 @@ export interface LiquidityBriefing {
 
 export type { RegionalCatalogs, RegionCatalog, RegionSlot } from "./recession-regions";
 
-// ─── Gold-AISC-Linie (Future_10 §5, Ticket B1, additiv) ─────────────────────────
-// Quartals-AISC der großen Goldproduzenten aus server/data/gold-aisc.json, über
-// GET /api/analyze-gold als `aiscLine` an den Gold-Chart (GoldPriceChart.tsx).
-// Nur Anzeige: GIS, getTechnicalScore und `aisc: null` in gold-routes.ts bleiben (B2).
+// ─── Credit-Overlay Stufe 1 (JOB A1): Markt-Spread Baa, FRED BAA10Y ─────────────
+// GET /api/credit-spread/market. Markt-Aggregat (alle US-Unternehmen), keine Anleihe
+// des analysierten Titels. Nur Anzeige in der Technischen Analyse — kein Score, kein Fazit-Faktor.
 
-/** NEM = Newmont, B = Barrick (vormals GOLD), AEM = Agnico Eagle. */
-export type GoldAiscCompanyCode = "NEM" | "B" | "AEM";
+/** Eine FRED-Beobachtung in Prozentpunkten (BAA10Y ist bereits Baa − 10Y Treasury). */
+export interface CreditPoint {
+  date: string;
+  value: number;
+}
 
-/** Ein belegter Quartalswert. Ohne Quelle und Datum kein Eintrag (nichts geschätzt). */
-export interface GoldAiscValue {
-  company: GoldAiscCompanyCode;
-  /** z. B. "2026-Q2" */
-  quarter: string;
-  /** AISC in USD je Unze Gold, by-product */
-  aisc: number;
-  /** Quartalsbericht bzw. Pressemitteilung (SEC-Exhibit) */
+/** „Spread steigt“: aktuelle 3M-Änderung > 0 und über dem P80 der rollierenden 3M-Änderungen (20J). */
+export interface CreditStressSignal {
+  rising: boolean;
+  asOf: string;
+  last: number;
+  change3MPp: number;
+  percentileThresholdPp: number;
+  percentileRank: number;
+  sampleSize: number;
+}
+
+export interface CreditSpreadResponse {
+  seriesId: string;
+  source: string;
   sourceUrl: string;
-  sourceTitle: string;
-  /** Datum der Quelle (SEC-Einreichung), YYYY-MM-DD */
-  sourceDate: string;
-  note?: string;
+  /** Aufsteigend nach Datum. Leer = n/a (FRED nicht erreichbar). */
+  points: CreditPoint[];
+  /** null = zu wenig Historie oder keine Daten → kein Hinweis. */
+  stress: CreditStressSignal | null;
+  note: string | null;
 }
 
-/** Eine Stufe der Linie: Mittelwert der belegten Firmenwerte eines Quartals. */
-export interface GoldAiscQuarterStep {
-  quarter: string;
-  /** Quartalsende YYYY-MM-DD */
-  periodEnd: string;
-  /** Ab hier zeichnet der Chart die Stufe (Quartalsende + lagDays, Berichtsverzug). */
-  availableFrom: string;
-  /** Ø USD/oz oder null (n/a: weniger als minCompanies belegte Werte) */
-  aisc: number | null;
-  count: number;
-  values: GoldAiscValue[];
-}
-
-export interface GoldAiscSeries {
-  unit: "USD/oz";
-  basis: "by-product";
-  /** Mittelwert der belegten Firmenwerte je Quartal */
-  method: "mean";
-  minCompanies: number;
-  lagDays: number;
-  /** Stresszone: Preis < AISC × stressLow (Stress) bzw. < AISC × stressHigh (Vorwarnung) */
-  stressLow: number;
-  stressHigh: number;
-  companies: Record<GoldAiscCompanyCode, { name: string; ticker: string; metric: string }>;
-  /** älteste zuerst */
-  quarters: GoldAiscQuarterStep[];
-  /** Firma × Quartal ohne belegten Wert im abgedeckten Zeitraum, z. B. "NEM 2024-Q1" */
-  gaps: string[];
-  retrievedAt: string;
-  source: "server/data/gold-aisc.json";
-  /** Kein Score-Effekt in B1. */
-  inScore: false;
+/** Spread je Kurstag (as-of-Join). null = kein FRED-Wert innerhalb der Lückentoleranz. */
+export interface CreditOverlayPoint {
+  date: string;
+  spreadPct: number | null;
+  spreadDate: string | null;
 }
