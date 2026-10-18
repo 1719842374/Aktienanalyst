@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "fs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Router } from "wouter";
-import { currencySymbol, formatCurrency, formatTarget, statementCurrency } from "../client/src/lib/formatters";
+import { currencySymbol, formatCurrency, formatTarget, statementCurrency, targetUpsidePct } from "../client/src/lib/formatters";
 
 let fail = 0;
 const check = (n: string, ok: boolean) => { console.log(`${ok ? "✅" : "❌"} ${n}`); if (!ok) fail++; };
@@ -78,6 +78,50 @@ check(`SAP.DE: kein Betrag mit $ und € zugleich (${both.join(", ") || "keiner"
 check(`SAP.DE: Kurs in € (${formatCurrency(sap.currentPrice, 2, "EUR")})`, sapHtml.includes(formatCurrency(sap.currentPrice, 2, "EUR")));
 const dcfSrc = ["Section2", "Section6", "Section8", "SummarySection"].map(f => readFileSync(`client/src/components/sections/${f}.tsx`, "utf8")).join("\n") + readFileSync("client/src/lib/fazit-signal.ts", "utf8");
 check("DCF-Werte (perShare, dcfBeiCRV3, raConservativeFV, decision/unadjusted, invertedDCF) nie mit data.currency", !/formatCurrency\((?:[\w.]*perShare|r?a?[dD]cfBeiCRV3|raConservativeFV|decisionPerShare|bias\.\w+PerShare)[^)]*, 2, data\.currency\)/.test(dcfSrc));
+
+// Tester-FAIL SHEL.L (9e675737): (a) Median PT n/a → upside n/a; (b) Katalysatoren/RSL/Reverse-DCF ohne festes $
+check("targetUpsidePct: kein Ziel (0/null/NaN) → null, 45 vs 40 → +12.5", targetUpsidePct(0, 37.94) === null && targetUpsidePct(null, 37.94) === null && targetUpsidePct(NaN, 37.94) === null && Math.abs((targetUpsidePct(45, 40) ?? 0) - 12.5) < 1e-9 && targetUpsidePct(45, 0) === null);
+{
+  const M: any = await import("../client/src/components/sections/SummarySection");
+  const html = wrap(React.createElement(M.SummarySection, { data: shel }));
+  check("Summary SHEL.L: Median PT n/a → „upside n/a“, kein „-100.0% upside“", html.includes("upside n/a") && !html.includes("-100.0% upside"));
+  check("Section 1 SHEL.L: PT Upside n/a statt -100.0%", !s1.includes("-100.0%"));
+}
+for (const [name, mod] of [["CatalystsSection", "CatalystsSection"], ["Section9 (RSL)", "Section9"], ["ReverseDCFSection", "ReverseDCFSection"], ["PestelSection", "PestelSection"]] as const) {
+  try {
+    const M: any = await import(`../client/src/components/sections/${mod}`);
+    const comp = M[mod];
+    const html = wrap(React.createElement(comp, { data: shel }));
+    // Reverse-DCF-Rechenweg ist zugeklappt (RechenWeg isOpen=false), Pestel-EPS-Impact nur nach KI-Lauf → dort nur „kein $Betrag“ + Quelltext-Check unten
+    const needsPound = mod !== "PestelSection" && mod !== "ReverseDCFSection";
+    check(`${name} SHEL.L: ${needsPound ? "£ und " : ""}kein $Betrag`, (!needsPound || html.includes("£")) && !/\$[0-9]/.test(html) && !/[0-9] \$</.test(html));
+  } catch (e: any) { check(`${name} rendert (${e?.message})`, false); }
+}
+{
+  const M: any = await import("../client/src/components/sections/Section9");
+  const html = wrap(React.createElement(M.Section9, { data: shel }));
+  check(`Section9 SHEL.L: Current Price ${formatCurrency(shel.currentPrice, 2, "GBP")}`, html.includes(formatCurrency(shel.currentPrice, 2, "GBP")));
+  const C: any = await import("../client/src/components/sections/CatalystsSection");
+  const cs = wrap(React.createElement(C.CatalystsSection, { data: sap }));
+  check(`CatalystsSection SAP.DE-artig: „vs. Kurs (${formatCurrency(sap.currentPrice, 2, "EUR")})“ in €`, cs.includes(`vs. Kurs (${formatCurrency(sap.currentPrice, 2, "EUR")})`));
+  check("CatalystsSection SAP.DE-artig: DCF-Basis in $ (statementCurrency), kein Betrag mit $ und € zugleich", (() => {
+    const m = new Map<string, Set<string>>();
+    for (const x of cs.matchAll(/([$€])([0-9][0-9,]*\.[0-9]{2})/g)) { if (!m.has(x[2])) m.set(x[2], new Set()); m.get(x[2])!.add(x[1]); }
+    return cs.includes("$") && [...m.values()].every(v => v.size === 1);
+  })());
+}
+{
+  const rd = readFileSync("client/src/components/sections/ReverseDCFSection.tsx", "utf8");
+  check("ReverseDCF-Rechenweg: Kurs/EV mit Listing-Symbol, FCF/Net Debt/FV mit Statement-Symbol", rd.includes("const pxSym = currencySymbol(data.currency);") && rd.includes("const stSym = currencySymbol(statementCurrency(data));") && rd.includes("`EV = ${pxSym}${formatNumber(data.currentPrice)} × ${formatNumber(data.sharesOutstanding / 1e9, 2)}B + ${stSym}${formatNumber(netDebt / 1e9, 2)}B`") && rd.includes("{stSym}{formatNumber(fiscalOverlayView.base.fairValuePerShare)}"));
+  const pe = readFileSync("client/src/components/sections/PestelSection.tsx", "utf8");
+  check("Pestel EPS-Impact: Symbol aus statementCurrency statt festem „ $“", pe.includes("{e.epsImpact.toFixed(2)} {currencySymbol(statementCurrency(data)).trim()}"));
+}
+for (const f of ["CatalystsSection", "Section9", "ReverseDCFSection", "PestelSection"]) {
+  const src = readFileSync(`client/src/components/sections/${f}.tsx`, "utf8");
+  const bare = [...src.matchAll(/formatCurrency\(([^(),]|\([^()]*\))+\)/g)].length;
+  const fixed = /`\$\$\{/.test(src) || /\$\$\{formatNumber/.test(src) || />\$\{formatNumber/.test(src) || /\.toFixed\(2\)\} \$</.test(src);
+  check(`${f}: kein festes $ (Ein-Argument-formatCurrency: ${bare}, festes $: ${fixed})`, bare === 0 && !fixed);
+}
 
 // (c) Buffett Max 375 px
 const bp = readFileSync("client/src/components/recession/BuffettRatioPanel.tsx", "utf8");
