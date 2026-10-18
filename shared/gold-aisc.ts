@@ -140,6 +140,15 @@ export function goldAiscStepAt(series: GoldAiscSeries | null | undefined, date: 
   return hit && hit.aisc != null ? hit : null;
 }
 
+/** Hinweis, wenn die Antwort kein `aiscLine` trägt (z. B. Client-Offline-Fallback): sichtbar statt stillem Verschwinden. */
+export const GOLD_AISC_OFFLINE_LABEL = "AISC n/a (Offline-Daten)";
+
+/** offline: Antwort ohne aiscLine · window-na: Reihe da, aber kein belegtes Quartal im Fenster · ok */
+export function goldAiscAvailability(series: GoldAiscSeries | null | undefined, hasStepInWindow: boolean): "offline" | "window-na" | "ok" {
+  if (!series) return "offline";
+  return hasStepInWindow ? "ok" : "window-na";
+}
+
 export type GoldAiscStress = "na" | "below" | "stress" | "watch" | "ok";
 
 /** below: Preis < AISC · stress: < AISC × 1,10 · watch: < AISC × 1,15 · ok: darüber · na: keine AISC */

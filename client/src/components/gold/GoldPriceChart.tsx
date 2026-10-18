@@ -19,7 +19,7 @@ import {
   type GoldTechPoint, type GoldTimeRange,
 } from "./goldTechnical";
 import type { GoldPricePoint } from "../../../../shared/gold-schema";
-import { aiscBands, aiscStressRuns, attachAiscToChart, goldAiscStepAt, goldAiscStress } from "../../../../shared/gold-aisc";
+import { aiscBands, aiscStressRuns, attachAiscToChart, GOLD_AISC_OFFLINE_LABEL, goldAiscAvailability, goldAiscStepAt, goldAiscStress } from "../../../../shared/gold-aisc";
 
 /**
  * Gold Section 2 im Design von BTC Section 11 „Technische Analyse“
@@ -163,6 +163,7 @@ export function GoldPriceChart({ data }: Props) {
   const hasVolume = chartDataWithVol.some(d => d._volNorm > 0);
   // AISC: Stufen und Stresszone nur auf echten Quartalswerten im Fenster, sonst Chip „AISC n/a“.
   const hasAisc = chartDataWithVol.some(d => d.aisc != null);
+  const aiscAvail = goldAiscAvailability(data.aiscLine, hasAisc);
   const aiscOn = showAisc && hasAisc;
   const aiscBandList = useMemo(() => (aiscOn ? aiscBands(chartDataWithVol) : []), [aiscOn, chartDataWithVol]);
   const aiscStressList = useMemo(() => (aiscOn ? aiscStressRuns(chartDataWithVol) : []), [aiscOn, chartDataWithVol]);
@@ -458,32 +459,38 @@ export function GoldPriceChart({ data }: Props) {
             ))}
           </div>
         )}
-        {data.aiscLine && (
-          <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
-            <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
-            <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Minen:</span>
-            {hasAisc ? (
-              <button
-                onClick={() => setShowAisc(!showAisc)}
-                className={`${chipCls} font-mono ${showAisc ? "border-current" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"}`}
-                style={showAisc ? { color: AISC_COLOR } : undefined}
-                title="Quartals-AISC Newmont/Barrick/Agnico Eagle (Ø, by-product) als gestufte Linie auf der Preisachse, mit Stresszone AISC × 1,10–1,15 ein-/ausblenden. Kein Einfluss auf GIS/Score."
-                data-testid="toggle-gold-aisc"
-              >
-                {showAisc ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
-                AISC (Minen)
-              </button>
-            ) : (
-              <span
-                className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`}
-                title="Für den gewählten Zeitraum liegt kein belegtes AISC-Quartal vor (nichts geschätzt)"
-                data-testid="gold-aisc-na"
-              >
-                AISC n/a
-              </span>
-            )}
-          </div>
-        )}
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+          <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
+          <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Minen:</span>
+          {aiscAvail === "offline" ? (
+            <span
+              className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-70`}
+              title="Die Antwort enthält keine AISC-Daten (z. B. Offline-Fallback). Nichts geschätzt."
+              data-testid="gold-aisc-offline"
+            >
+              {GOLD_AISC_OFFLINE_LABEL}
+            </span>
+          ) : hasAisc ? (
+            <button
+              onClick={() => setShowAisc(!showAisc)}
+              className={`${chipCls} font-mono ${showAisc ? "border-current" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"}`}
+              style={showAisc ? { color: AISC_COLOR } : undefined}
+              title="Quartals-AISC Newmont/Barrick/Agnico Eagle (Ø, by-product) als gestufte Linie auf der Preisachse, mit Stresszone AISC × 1,10–1,15 ein-/ausblenden. Kein Einfluss auf GIS/Score."
+              data-testid="toggle-gold-aisc"
+            >
+              {showAisc ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              AISC (Minen)
+            </button>
+          ) : (
+            <span
+              className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`}
+              title="Für den gewählten Zeitraum liegt kein belegtes AISC-Quartal vor (nichts geschätzt)"
+              data-testid="gold-aisc-na"
+            >
+              AISC n/a
+            </span>
+          )}
+        </div>
         <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
           <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
           <button
@@ -859,25 +866,25 @@ export function GoldPriceChart({ data }: Props) {
         <span className="flex items-center gap-1">
           <span className="w-3 h-0.5 rounded-full" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value (adj.)
         </span>
-        {data.aiscLine && (
-          <span className="flex flex-wrap items-center gap-1" data-testid="gold-aisc-status">
-            <span className="w-3 h-0.5 rounded-full" style={{ backgroundColor: AISC_COLOR }} />
-            {aiscLatest ? (
-              <>
-                AISC Ø {aiscLatest.step.quarter} ({aiscLatest.step.count} Minen): ${aiscLatest.step.aisc!.toLocaleString("en-US")} · Kurs = {aiscLatest.ratio.toFixed(2)}× AISC ·{" "}
-                <span className={aiscLatest.stress === "ok" ? "text-emerald-400" : "text-red-400"}>{AISC_STRESS_TEXT[aiscLatest.stress]}</span>
-                {aiscOn && (
-                  <span className="inline-flex items-center gap-1">
-                    · <span className="inline-block h-2 w-3" style={{ background: "rgba(239,68,68,0.35)" }} /> ×1,00–{aiscStressLow.toFixed(2).replace(".", ",")}
-                    <span className="inline-block h-2 w-3" style={{ background: "rgba(245,158,11,0.3)" }} /> –×{aiscStressHigh.toFixed(2).replace(".", ",")}
-                  </span>
-                )}
-              </>
-            ) : (
-              "AISC n/a (kein belegtes Quartal zum letzten Kurs)"
-            )}
-          </span>
-        )}
+        <span className="flex flex-wrap items-center gap-1" data-testid="gold-aisc-status">
+          <span className="w-3 h-0.5 rounded-full" style={{ backgroundColor: AISC_COLOR }} />
+          {aiscAvail === "offline" ? (
+            `${GOLD_AISC_OFFLINE_LABEL}: Antwort ohne AISC-Daten, keine Linie`
+          ) : aiscLatest ? (
+            <>
+              AISC Ø {aiscLatest.step.quarter} ({aiscLatest.step.count} Minen): ${aiscLatest.step.aisc!.toLocaleString("en-US")} · Kurs = {aiscLatest.ratio.toFixed(2)}× AISC ·{" "}
+              <span className={aiscLatest.stress === "ok" ? "text-emerald-400" : "text-red-400"}>{AISC_STRESS_TEXT[aiscLatest.stress]}</span>
+              {aiscOn && (
+                <span className="inline-flex items-center gap-1">
+                  · <span className="inline-block h-2 w-3" style={{ background: "rgba(239,68,68,0.35)" }} /> ×1,00–{aiscStressLow.toFixed(2).replace(".", ",")}
+                  <span className="inline-block h-2 w-3" style={{ background: "rgba(245,158,11,0.3)" }} /> –×{aiscStressHigh.toFixed(2).replace(".", ",")}
+                </span>
+              )}
+            </>
+          ) : (
+            "AISC n/a (kein belegtes Quartal zum letzten Kurs)"
+          )}
+        </span>
       </div>
 
       {visibleSignals.length > 0 && (

@@ -3,8 +3,13 @@
  * Ausführen: npx tsx script/test-gold-aisc-line.ts
  */
 import { readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
+import * as esbuild from "esbuild";
 import {
+  GOLD_AISC_OFFLINE_LABEL,
+  goldAiscAvailability,
   aiscBands,
   aiscStressRuns,
   attachAiscToChart,
@@ -42,6 +47,22 @@ console.log("\nDatei server/data/gold-aisc.json ist belegt");
   check("Stichprobe AEM 2024-Q1 = 1190", file.values.find(v => v.company === "AEM" && v.quarter === "2024-Q1")?.aisc === 1190);
   const bad = validateGoldAiscFile({ ...file, values: [...file.values, { ...file.values[0], sourceUrl: "http://x" }] });
   check("Validierung erkennt Duplikat + Nicht-https", bad.some(e => /doppelt/i.test(e)) && bad.some(e => /https/i.test(e)), bad.join("; "));
+}
+
+console.log("\nLookahead-Kennzeichnung (Quelle nach der Chart-Stufe eingereicht)");
+{
+  const LAG = 60;
+  const addDays = (d: string, n: number) => new Date(Date.parse(d + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+  const late = file.values.filter(v => v.sourceDate > addDays(quarterPeriodEnd(v.quarter), LAG));
+  const ids = late.map(v => `${v.company} ${v.quarter}`).sort();
+  const expected = ["AEM", "B", "NEM"].flatMap(c => ["2024-Q1", "2024-Q2", "2024-Q3", "2024-Q4"].map(q => `${c} ${q}`))
+    .concat(["NEM 2025-Q1", "NEM 2025-Q2", "NEM 2025-Q3"]).sort();
+  check(`15 von 30 Werten nicht point-in-time (alle 2024er + NEM 2025-Q1–Q3), gezählt: ${late.length}`, JSON.stringify(ids) === JSON.stringify(expected), ids.join(","));
+  check("jeder davon trägt die Lookahead-Note (inkl. „nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung“)",
+    late.every(v => (v.note ?? "").startsWith("Lookahead:") && (v.note ?? "").includes("nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung")));
+  check("kein point-in-time-Wert trägt eine Lookahead-Note", file.values.filter(v => !late.includes(v)).every(v => !(v.note ?? "").includes("Lookahead")));
+  check("NEM-Notes nennen den Release vom 19.02.2026", late.filter(v => v.company === "NEM").every(v => (v.note ?? "").includes("19.02.2026")));
+  check("_comment nennt 15 von 30", /15 von 30 Werten/.test((file as any)._comment ?? ""));
 }
 
 console.log("\nØ-Stufen und Verfügbarkeit (Quartalsende + 60 Tage)");
@@ -106,6 +127,13 @@ console.log("\nServer-Loader + Verdrahtung");
   const loaded = loadGoldAiscSeries();
   check("loadGoldAiscSeries() liefert Serie", !!loaded && loaded.quarters.length === 10 && loaded.quarters.at(-1)!.aisc === 1649);
   check("ungültige Datei → null", loadGoldAiscSeries(path.join(root, "server/data/does-not-exist.json")) === null);
+  const loaderSrc = readFileSync(path.join(root, "server/gold-aisc.ts"), "utf8");
+  check("Prod: JSON wird importiert (esbuild bündelt, cwd-unabhängig)", /import bundledGoldAisc from "\.\/data\/gold-aisc\.json"/.test(loaderSrc));
+  const cwd = process.cwd();
+  process.chdir(os.tmpdir());
+  const fromTmp = loadGoldAiscSeries();
+  process.chdir(cwd);
+  check("loadGoldAiscSeries() aus fremdem cwd liefert 10 Quartale", !!fromTmp && fromTmp.quarters.length === 10 && fromTmp.quarters.at(-1)!.aisc === 1649);
   const routes = readFileSync(path.join(root, "server/gold-routes.ts"), "utf8");
   check("gold-routes liefert aiscLine aus dem Loader", /aiscLine:\s*loadGoldAiscSeries\(\)/.test(routes));
   check("supplySignal-Platzhalter `aisc: null` unverändert (B2)", /aisc:\s*null/.test(routes));
@@ -120,6 +148,52 @@ console.log("\nServer-Loader + Verdrahtung");
   check("Chip heißt „Inflations-BE (T10YIE)“", chart.includes('label: "Inflations-BE (T10YIE)"') && !/label: "Breakeven"/.test(chart));
   check("Chart zeichnet stepAfter-AISC", /type="stepAfter" dataKey="aisc"/.test(chart));
   check("Status-Zeile vorhanden", chart.includes('data-testid="gold-aisc-status"'));
+}
+
+console.log("\nOhne aiscLine (Offline-Fallback): sichtbarer Hinweis statt stillem Verschwinden");
+{
+  check("goldAiscAvailability(null) = offline", goldAiscAvailability(null, false) === "offline" && goldAiscAvailability(undefined, true) === "offline");
+  check("Reihe ohne Quartal im Fenster = window-na, sonst ok", goldAiscAvailability(series, false) === "window-na" && goldAiscAvailability(series, true) === "ok");
+  check("Label lautet „AISC n/a (Offline-Daten)“", GOLD_AISC_OFFLINE_LABEL === "AISC n/a (Offline-Daten)");
+  // Echter Render des Charts (SSR) mit dem Client-Fallback GOLD_FALLBACK_DATA, der kein aiscLine trägt.
+  // Alles in ein Bundle (eine React-Instanz für Chart und Renderer).
+  const outfile = path.join(os.tmpdir(), `gold-aisc-chart-render-${process.pid}.cjs`);
+  await esbuild.build({
+    absWorkingDir: root,
+    stdin: {
+      contents: `export { GoldPriceChart } from "./client/src/components/gold/GoldPriceChart";
+export { GOLD_FALLBACK_DATA } from "./client/src/lib/goldFallbackData";
+export { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+export { createElement } from "react";
+export { renderToStaticMarkup } from "react-dom/server";`,
+      resolveDir: root,
+      loader: "ts",
+    },
+    bundle: true, format: "cjs", platform: "node", jsx: "automatic", loader: { ".css": "empty" },
+    alias: { "@": path.join(root, "client/src"), "@shared": path.join(root, "shared") },
+    outfile, logLevel: "silent",
+  });
+  const mod = createRequire(import.meta.url)(outfile);
+  const render = (data: any) => mod.renderToStaticMarkup(mod.createElement(mod.QueryClientProvider, { client: new mod.QueryClient() }, mod.createElement(mod.GoldPriceChart, { data })));
+  check("Fallback-Daten haben kein aiscLine", mod.GOLD_FALLBACK_DATA.aiscLine == null);
+  // Der statische Fallback hat keine Preise (Chart zeigt dann „Keine Preisdaten“). Für den Fall „Preise da,
+  // aiscLine fehlt“ (älterer Server, Loader-Fehler) synthetische Werktags-Kurse anhängen, aiscLine weiter fehlend.
+  const prices: Array<{ date: string; close: number }> = [];
+  for (let t = Date.parse("2024-01-02T00:00:00Z"); t <= Date.parse("2026-10-16T00:00:00Z"); t += 864e5) {
+    const d = new Date(t); if (d.getUTCDay() === 0 || d.getUTCDay() === 6) continue;
+    prices.push({ date: d.toISOString().slice(0, 10), close: Math.round((2000 + prices.length * 2.5 + 40 * Math.sin(prices.length / 9)) * 100) / 100 });
+  }
+  const base = { ...mod.GOLD_FALLBACK_DATA, historicalPrices: prices };
+  check("Fallback ohne Preise: Chart rendert „Keine Preisdaten“ (unverändert)", render(mod.GOLD_FALLBACK_DATA).includes("Keine Preisdaten"));
+  const offline = render(base);
+  const chip = /data-testid="gold-aisc-offline"[^>]*>([^<]*)</.exec(offline)?.[1];
+  const status = /data-testid="gold-aisc-status"[^>]*>(?:<span[^>]*><\/span>)?([^<]*)</.exec(offline)?.[1];
+  check("Chip zeigt „AISC n/a (Offline-Daten)“", chip === "AISC n/a (Offline-Daten)", chip);
+  check("Statuszeile zeigt „AISC n/a (Offline-Daten)…“", !!status && status.startsWith("AISC n/a (Offline-Daten)"), status);
+  check("kein AISC-Toggle offline", !offline.includes('data-testid="toggle-gold-aisc"'));
+  const online = render({ ...base, aiscLine: series });
+  check("mit aiscLine: kein Offline-Hinweis", !online.includes("Offline-Daten"));
+  check("mit aiscLine: Toggle + Statuszeile „AISC Ø 2026-Q2 (3 Minen): $1,649“", online.includes('data-testid="toggle-gold-aisc"') && online.includes("AISC Ø 2026-Q2 (3 Minen): $1,649"));
 }
 
 console.log(failed === 0 ? "\nAlle AISC-Tests grün." : `\n${failed} Test(s) fehlgeschlagen.`);
