@@ -1,3 +1,5 @@
+> Aktueller Soll-Ist im Detail (alle 11 Future-Dateien, Stand 18.10.2026 auf `35ead515`): siehe [`Offen_FUTURE_SOLL_IST_DETAIL.md`](Offen_FUTURE_SOLL_IST_DETAIL.md). Der Inhalt unten ist der Stand vom 11.10.2026.
+
 # Offen — Future Soll/Ist (main)
 
 **Geprüft gegen:** `origin/main` `5849ed15a956388fea2259f166a303c16fa6ed69`  
