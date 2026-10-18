@@ -926,3 +926,60 @@ export interface CreditOverlayPoint {
   spreadPct: number | null;
   spreadDate: string | null;
 }
+
+// ─── Gold-AISC-Linie (Future_10 §5, Ticket B1, additiv) ─────────────────────────
+// Quartals-AISC der großen Goldproduzenten aus server/data/gold-aisc.json, über
+// GET /api/analyze-gold als `aiscLine` an den Gold-Chart (GoldPriceChart.tsx).
+// Nur Anzeige: GIS, getTechnicalScore und `aisc: null` in gold-routes.ts bleiben (B2).
+
+/** NEM = Newmont, B = Barrick (vormals GOLD), AEM = Agnico Eagle. */
+export type GoldAiscCompanyCode = "NEM" | "B" | "AEM";
+
+/** Ein belegter Quartalswert. Ohne Quelle und Datum kein Eintrag (nichts geschätzt). */
+export interface GoldAiscValue {
+  company: GoldAiscCompanyCode;
+  /** z. B. "2026-Q2" */
+  quarter: string;
+  /** AISC in USD je Unze Gold, by-product */
+  aisc: number;
+  /** Quartalsbericht bzw. Pressemitteilung (SEC-Exhibit) */
+  sourceUrl: string;
+  sourceTitle: string;
+  /** Datum der Quelle (SEC-Einreichung), YYYY-MM-DD */
+  sourceDate: string;
+  note?: string;
+}
+
+/** Eine Stufe der Linie: Mittelwert der belegten Firmenwerte eines Quartals. */
+export interface GoldAiscQuarterStep {
+  quarter: string;
+  /** Quartalsende YYYY-MM-DD */
+  periodEnd: string;
+  /** Ab hier zeichnet der Chart die Stufe (Quartalsende + lagDays, Berichtsverzug). */
+  availableFrom: string;
+  /** Ø USD/oz oder null (n/a: weniger als minCompanies belegte Werte) */
+  aisc: number | null;
+  count: number;
+  values: GoldAiscValue[];
+}
+
+export interface GoldAiscSeries {
+  unit: "USD/oz";
+  basis: "by-product";
+  /** Mittelwert der belegten Firmenwerte je Quartal */
+  method: "mean";
+  minCompanies: number;
+  lagDays: number;
+  /** Stresszone: Preis < AISC × stressLow (Stress) bzw. < AISC × stressHigh (Vorwarnung) */
+  stressLow: number;
+  stressHigh: number;
+  companies: Record<GoldAiscCompanyCode, { name: string; ticker: string; metric: string }>;
+  /** älteste zuerst */
+  quarters: GoldAiscQuarterStep[];
+  /** Firma × Quartal ohne belegten Wert im abgedeckten Zeitraum, z. B. "NEM 2024-Q1" */
+  gaps: string[];
+  retrievedAt: string;
+  source: "server/data/gold-aisc.json";
+  /** Kein Score-Effekt in B1. */
+  inScore: false;
+}
