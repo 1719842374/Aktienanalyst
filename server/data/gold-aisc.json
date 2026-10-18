@@ -1,0 +1,267 @@
+{
+  "_comment": "Future_10 §5 (Ticket B1): Quartals-AISC (USD/oz, by-product) von Newmont, Barrick, Agnico Eagle. Jeder Wert aus dem offiziellen Quartalsbericht (SEC-Exhibit), sourceDate = SEC-Einreichungsdatum. Nichts geschätzt oder interpoliert: fehlt ein Quartal, fehlt der Eintrag. Neue Quartale per Daten-PR anhängen. Nur Chart-Anzeige, kein Score (B2).",
+  "unit": "USD/oz",
+  "basis": "by-product",
+  "retrievedAt": "2026-10-18",
+  "companies": {
+    "NEM": {
+      "name": "Newmont",
+      "ticker": "NEM",
+      "metric": "Gold By-Product AISC ($/oz), je verkaufter Unze"
+    },
+    "B": {
+      "name": "Barrick",
+      "ticker": "B",
+      "metric": "Gold AISC ($/oz), by-product, je verkaufter Unze (Barrick-Anteil)"
+    },
+    "AEM": {
+      "name": "Agnico Eagle",
+      "ticker": "AEM",
+      "metric": "AISC per ounce, by-product, je produzierter Unze"
+    }
+  },
+  "values": [
+    {
+      "company": "NEM",
+      "quarter": "2024-Q1",
+      "aisc": 1373,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
+      "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
+      "sourceDate": "2026-02-19"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2024-Q2",
+      "aisc": 1412,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
+      "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
+      "sourceDate": "2026-02-19"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2024-Q3",
+      "aisc": 1542,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
+      "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
+      "sourceDate": "2026-02-19"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2024-Q4",
+      "aisc": 1319,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
+      "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
+      "sourceDate": "2026-02-19"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2025-Q1",
+      "aisc": 1447,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
+      "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
+      "sourceDate": "2026-02-19"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2025-Q2",
+      "aisc": 1375,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
+      "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
+      "sourceDate": "2026-02-19"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2025-Q3",
+      "aisc": 1303,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
+      "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
+      "sourceDate": "2026-02-19"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2025-Q4",
+      "aisc": 1302,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000009/newmontq42025earningsand20.htm",
+      "sourceTitle": "Newmont Q4/FY2025 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz) 2024 Q1–Q4 und 2025 Q1–Q4",
+      "sourceDate": "2026-02-19"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2026-Q1",
+      "aisc": 1029,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000017/newmontq12026earningsrelea.htm",
+      "sourceTitle": "Newmont Q1 2026 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz)",
+      "sourceDate": "2026-04-23"
+    },
+    {
+      "company": "NEM",
+      "quarter": "2026-Q2",
+      "aisc": 1621,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1164727/000116472726000034/newmontq22026earningsrelea.htm",
+      "sourceTitle": "Newmont Q2 2026 Results (8-K Ex. 99.1), Summary of Results, Gold By-Product AISC ($/oz)",
+      "sourceDate": "2026-07-23"
+    },
+    {
+      "company": "B",
+      "quarter": "2024-Q1",
+      "aisc": 1474,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312525114445/d936939dex992.htm",
+      "sourceTitle": "Barrick Q1 2025 Report (6-K Ex. 99.2), Gold AISC ($/oz), Spalten 3/31/25 und 3/31/24",
+      "sourceDate": "2025-05-07"
+    },
+    {
+      "company": "B",
+      "quarter": "2024-Q2",
+      "aisc": 1498,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312525178085/d30477dex991.htm",
+      "sourceTitle": "Barrick Q2 2025 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalten 6/30/25 und 6/30/24",
+      "sourceDate": "2025-08-11"
+    },
+    {
+      "company": "B",
+      "quarter": "2024-Q3",
+      "aisc": 1507,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312525274144/d922379dex991.htm",
+      "sourceTitle": "Barrick Q3 2025 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalten 9/30/25 und 9/30/24",
+      "sourceDate": "2025-11-10"
+    },
+    {
+      "company": "B",
+      "quarter": "2024-Q4",
+      "aisc": 1451,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312526039501/d10712dex991.htm",
+      "sourceTitle": "Barrick Q4/FY2025 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalten 12/31/25 und 12/31/24",
+      "sourceDate": "2026-02-05"
+    },
+    {
+      "company": "B",
+      "quarter": "2025-Q1",
+      "aisc": 1775,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312525114445/d936939dex992.htm",
+      "sourceTitle": "Barrick Q1 2025 Report (6-K Ex. 99.2), Gold AISC ($/oz), Spalten 3/31/25 und 3/31/24",
+      "sourceDate": "2025-05-07"
+    },
+    {
+      "company": "B",
+      "quarter": "2025-Q2",
+      "aisc": 1684,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312525178085/d30477dex991.htm",
+      "sourceTitle": "Barrick Q2 2025 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalten 6/30/25 und 6/30/24",
+      "sourceDate": "2025-08-11"
+    },
+    {
+      "company": "B",
+      "quarter": "2025-Q3",
+      "aisc": 1538,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312525274144/d922379dex991.htm",
+      "sourceTitle": "Barrick Q3 2025 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalten 9/30/25 und 9/30/24",
+      "sourceDate": "2025-11-10"
+    },
+    {
+      "company": "B",
+      "quarter": "2025-Q4",
+      "aisc": 1581,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312526039501/d10712dex991.htm",
+      "sourceTitle": "Barrick Q4/FY2025 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalten 12/31/25 und 12/31/24",
+      "sourceDate": "2026-02-05"
+    },
+    {
+      "company": "B",
+      "quarter": "2026-Q1",
+      "aisc": 1708,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312526216613/d145525dex991.htm",
+      "sourceTitle": "Barrick Q1 2026 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalte 3/31/26",
+      "sourceDate": "2026-05-11"
+    },
+    {
+      "company": "B",
+      "quarter": "2026-Q2",
+      "aisc": 1866,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/756894/000119312526343857/d67611dex991.htm",
+      "sourceTitle": "Barrick Q2 2026 Results (6-K Ex. 99.1), Gold AISC ($/oz), Spalte 6/30/26",
+      "sourceDate": "2026-08-11"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2024-Q1",
+      "aisc": 1190,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465925039916/tm2512606d3_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle Q1 2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce 2025 und 2024",
+      "sourceDate": "2025-04-28"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2024-Q2",
+      "aisc": 1169,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465925072613/tm2519744d3_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle Q2 2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce 2025 und 2024",
+      "sourceDate": "2025-07-31"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2024-Q3",
+      "aisc": 1286,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465925104746/tm2525021d3_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle Q3 2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce 2025 und 2024",
+      "sourceDate": "2025-10-31"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2024-Q4",
+      "aisc": 1316,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465926014451/aem-20251231xex99d1.htm",
+      "sourceTitle": "Agnico Eagle Q4/FY2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce Q4 2025 und Q4 2024",
+      "sourceDate": "2026-02-13"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2025-Q1",
+      "aisc": 1183,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465925039916/tm2512606d3_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle Q1 2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce 2025 und 2024",
+      "sourceDate": "2025-04-28"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2025-Q2",
+      "aisc": 1289,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465925072613/tm2519744d3_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle Q2 2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce 2025 und 2024",
+      "sourceDate": "2025-07-31"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2025-Q3",
+      "aisc": 1373,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465925104746/tm2525021d3_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle Q3 2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce 2025 und 2024",
+      "sourceDate": "2025-10-31"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2025-Q4",
+      "aisc": 1517,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465926014451/aem-20251231xex99d1.htm",
+      "sourceTitle": "Agnico Eagle Q4/FY2025 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce Q4 2025 und Q4 2024",
+      "sourceDate": "2026-02-13"
+    },
+    {
+      "company": "AEM",
+      "quarter": "2026-Q1",
+      "aisc": 1483,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465926054134/tm2612722d3_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle Q1 2026 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce Q1 2026",
+      "sourceDate": "2026-05-01",
+      "note": "Ab 2026 revidierte Zusammensetzung (NTI-Zahlungen Meadowbank); laut Q4/FY2025-Bericht FY2025 neu 1.313 statt 1.339 $/oz. Nicht zurückgerechnet."
+    },
+    {
+      "company": "AEM",
+      "quarter": "2026-Q2",
+      "aisc": 1459,
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/2809/000110465926088794/tm2619289d4_ex99-1.htm",
+      "sourceTitle": "Agnico Eagle Q2 2026 Results (6-K Ex. 99.1), Production and Cost Results Summary, AISC per ounce Q2 2026",
+      "sourceDate": "2026-07-30",
+      "note": "Ab 2026 revidierte Zusammensetzung (NTI-Zahlungen Meadowbank); laut Q4/FY2025-Bericht FY2025 neu 1.313 statt 1.339 $/oz. Nicht zurückgerechnet."
+    }
+  ]
+}
