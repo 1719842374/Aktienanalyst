@@ -83,6 +83,15 @@ export interface MacroIndicatorInput {
   weightedScore: number;
   maxWeighted: number;
   available?: boolean;
+  /** Nur serverseitig gesetzt (F9-10/F9-11-Komponenten): feste Dimension statt Namens-Zuordnung. */
+  dimension?: MacroDimensionId;
+  /** Nur Makro-Ebene: zählt nicht in die Referenz der bestehenden Formel. */
+  layerOnly?: boolean;
+}
+
+/** Dimension eines Eingangs: Server-Komponente fest, Rezessions-Slot über den Namen. */
+export function dimensionOfInput(ind: Pick<MacroIndicatorInput, "name" | "dimension">): MacroDimensionId | null {
+  return ind.dimension ?? dimensionOfIndicator(ind.name);
 }
 
 export interface MacroHabitatInput {
@@ -155,6 +164,8 @@ export interface MacroLayer {
   /** Immer „keiner“: Zusatzobjekt, bestehende P/Scores unverändert. */
   scoreImpact: "keiner";
   notes: string[];
+  /** F9-07/10/11 Detail (Konzentration, Managing-Komponenten, Widerspruchs-Paare); fehlt = nicht berechnet. */
+  gaps?: import("./macro-layer-gaps").MacroGaps;
 }
 
 const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
@@ -243,7 +254,7 @@ export function calculateAdaptiveWeights(indicators: MacroIndicatorInput[], habi
   const unmapped: string[] = [];
   const byDim = new Map<MacroDimensionId, MacroIndicatorInput[]>();
   for (const ind of indicators) {
-    const dim = dimensionOfIndicator(ind.name);
+    const dim = dimensionOfInput(ind);
     if (!dim) { unmapped.push(ind.name); continue; }
     if (!byDim.has(dim)) byDim.set(dim, []);
     byDim.get(dim)!.push(ind);
@@ -255,8 +266,8 @@ export function calculateAdaptiveWeights(indicators: MacroIndicatorInput[], habi
     const hab = habitatMultiplier(id, habitat);
     const label = MACRO_DIMENSION_LABELS[id];
     if (scored.length === 0) {
-      const why = id === "managing" ? "F9-10 (CAPEX/EPS/Realzins/Konzentration vs. Trend) noch nicht gebaut"
-        : id === "widersprueche" ? "F9-11: Definition laut Spec unscharf, nicht gebaut"
+      const why = id === "managing" ? "F9-10: weniger als 2 Komponenten (CAPEX/EPS/Realzins/Konzentration vs. Trend) verfügbar"
+        : id === "widersprueche" ? "F9-11: kein auswertbares Signalpaar"
         : all.length ? "kein gewerteter Slot (alle n/a)" : "kein Slot zugeordnet";
       return { id, label, available: false, indicators: all.map(i => i.name), score: null, strength: null, baseWeight: base, habitatMultiplier: hab,
         strengthMultiplier: null, quantWeight: null, aiWeight: null, finalWeight: null, adjusted: false, note: `n/a – ${why}` };
@@ -301,14 +312,15 @@ export function applyAiWeights(
 /** Gruppen-P der Makro-Ebene plus Referenz der bestehenden Formel aus denselben Slots. */
 export function groupProbability(indicators: MacroIndicatorInput[], dimensions: MacroDimension[], group: "recession" | "correction"): MacroGroupProbability {
   const inGroup = indicators.filter(i => i.group === group && i.available !== false && Number.isFinite(i.maxWeighted) && i.maxWeighted > 0);
-  const net = inGroup.reduce((s, i) => s + i.weightedScore, 0);
-  const max = inGroup.reduce((s, i) => s + i.maxWeighted, 0);
+  const refSlots = inGroup.filter(i => !i.layerOnly);
+  const net = refSlots.reduce((s, i) => s + i.weightedScore, 0);
+  const max = refSlots.reduce((s, i) => s + i.maxWeighted, 0);
   const reference = max > 0 ? clampRound5(50 + (net / max) * 50) : null;
   let wSum = 0, acc = 0;
   const parts: string[] = [];
   for (const d of dimensions) {
     if (!d.available || d.finalWeight == null) continue;
-    const slots = inGroup.filter(i => dimensionOfIndicator(i.name) === d.id);
+    const slots = inGroup.filter(i => dimensionOfInput(i) === d.id);
     if (!slots.length) continue;
     const dn = slots.reduce((s, i) => s + i.weightedScore, 0);
     const dm = slots.reduce((s, i) => s + i.maxWeighted, 0);
