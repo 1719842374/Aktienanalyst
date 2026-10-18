@@ -8,7 +8,7 @@ import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 import { useDividendKpi } from "@/lib/useDividendHistory";
 import { listingFxWarning } from "@shared/listing-units";
-import { isYahooOnly } from "@shared/data-source";
+import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from "@shared/data-source";
 import { YahooNoValuationNotice } from "../YahooNoValuationCard";
 
 interface Props { data: StockAnalysis; onRefresh?: () => void; onThesisScore?: (score: number) => void }
@@ -292,7 +292,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         </div>
       </div>
 
-      <ThesisStrengthPanel data={data} onScore={onThesisScore} />
+      {isYahooOnly(data)
+        ? <p className="text-xs text-muted-foreground" data-testid="thesis-strength-yahoo-na">Thesis Strength Score: n/a ({YAHOO_NO_VALUATION_NOTICE})</p>
+        : <ThesisStrengthPanel data={data} onScore={onThesisScore} />}
     </SectionCard>
   );
 }

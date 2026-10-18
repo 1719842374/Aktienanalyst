@@ -674,7 +674,7 @@ export interface StockAnalysis {
   /** 0–10, gesetzt nach dem Thesis-Strength-Lauf (Variante B). */
   thesisStrengthScore?: number | null;
   /** Reverse-DCF g* in Prozent, serverseitig an der Analyse. */
-  impliedGStar?: number;
+  impliedGStar?: number | null; // null bei Yahoo-Daten (C1, #252): keine Bewertung
   consistencyWarnings?: ConsistencyWarning[];
   dataTimestamp?: string; // ISO date when data was fetched
   /** Datenquelle der Analyse. 'yahoo' = C1 (#252): FMP 402, Yahoo-Fallback ohne Statements →
