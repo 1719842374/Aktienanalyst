@@ -6,6 +6,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fredCsvObservations } from "../server/fred-csv";
 import {
   BTC_LIQUIDITY_CONFIG,
   addDays,
@@ -81,8 +82,20 @@ console.log("\n=== Point-in-time ===");
   const obs = [{ date: "2022-10-26", value: 1 }, { date: "2022-10-31", value: 2 }];
   check("Wert vom Stichtag ist bei lag 1 noch nicht sichtbar", pointInTime(obs, "2022-10-31", 1).length === 1);
   check("am Folgetag sichtbar", pointInTime(obs, "2022-11-01", 1).length === 2);
-  check("Z.1-Quartal 2022-04-01 erst ab +165 T. (2022-09-13)", pointInTime([{ date: "2022-04-01", value: 1 }], "2022-09-12", 165).length === 0
-    && pointInTime([{ date: "2022-04-01", value: 1 }], "2022-09-13", 165).length === 1);
+  const z1Lag = BTC_LIQUIDITY_CONFIG.bills.z1VisibilityLagDays;
+  check("Z.1-Sichtbarkeit = FRED-Datum (Quartalsanfang) + 180 T.", z1Lag === 180);
+  const q2 = [{ date: "2020-04-01", value: 1 }];
+  check("Z.1 Q2/2020 am 2020-09-13 NICHT sichtbar (alte Regel +165, vor Release 2020-09-21)", pointInTime(q2, "2020-09-13", z1Lag).length === 0);
+  check("Z.1 Q2/2020 am 2020-09-21 (Release-Tag) noch nicht sichtbar", pointInTime(q2, "2020-09-21", z1Lag).length === 0);
+  check("Z.1 Q2/2020 ab 2020-09-28 sichtbar", pointInTime(q2, "2020-09-27", z1Lag).length === 0 && pointInTime(q2, "2020-09-28", z1Lag).length === 1);
+  check("Z.1 Q2/2020 am 2020-09-30 sichtbar", pointInTime(q2, "2020-09-30", z1Lag).length === 1);
+  // Echte FRED-Fixtures (script/fixtures/btc-liquidity): Komponentenstand vor/nach Sichtbarkeit
+  const fx = (id: string) => fredCsvObservations(readFileSync(`script/fixtures/btc-liquidity/${id}.csv`, "utf8"));
+  const fb = fx("BOGZ1FL313161110Q"), fo = fx("BOGZ1FL313161275Q");
+  const at0913 = billsComponent(fb, fo, "2020-09-13");
+  const at0930 = billsComponent(fb, fo, "2020-09-30");
+  check("Fixtures: Bills am 2020-09-13 noch Stand Q1/2020", at0913.available && at0913.asOf === "2020-01-01", `${at0913.asOf} ${at0913.value}`);
+  check("Fixtures: Bills am 2020-09-30 Stand Q2/2020", at0930.available && at0930.asOf === "2020-04-01", `${at0930.asOf} ${at0930.value}`);
 }
 
 console.log("\n=== DGS10: 63-Beobachtungs-Trend, fallend = positiv ===");
@@ -107,9 +120,9 @@ console.log("\n=== T-Bill-Anteil (Z.1): 4Q-Änderung, Perzentil 20J ===");
   const total = 20_000_000;
   const bills = quarterly(2000, n, i => total * shareAt(i) / 100);
   const other = quarterly(2000, n, i => total * (1 - shareAt(i) / 100));
-  const asOf = addDays(lastDate(bills), 170);
+  const asOf = addDays(lastDate(bills), BTC_LIQUIDITY_CONFIG.bills.z1VisibilityLagDays + 5); // letztes Quartal gerade sichtbar
   const comp = billsComponent(bills, other, asOf);
-  check("starker Anstieg des Bill-Anteils → +1", comp.score === 1, `${comp.value}`);
+  check("starker Anstieg des Bill-Anteils → +1 (letztes Quartal verwendet)", comp.score === 1 && comp.asOf === lastDate(bills), `${comp.asOf} ${comp.value}`);
   check("Wert nennt Bills in Bio. $ und Anteil", /Bio\. \$/.test(comp.value) && /Anteil/.test(comp.value), comp.value);
   const before = billsComponent(bills, other, addDays(lastDate(bills), 100));
   check("letztes Quartal vor Veröffentlichung nicht verwendet", before.asOf !== lastDate(bills), String(before.asOf));
@@ -203,6 +216,58 @@ console.log("\n=== WALCL-Overlay ===");
   check("vor erstem Wert kein Wert", byDate["2026-01-06"] === undefined);
   check("Forward-Fill innerhalb der Woche", near(byDate["2026-01-10"], 6.5));
   check("≤ 14 T. fortgeschrieben, danach leer", near(byDate["2026-01-27"], 6.51) && byDate["2026-01-29"] === undefined);
+}
+
+console.log("\n=== Gewichte (Philip-Freigabe 18.10.2026 22:37) ===");
+{
+  const cfg = BTC_LIQUIDITY_CONFIG;
+  check("Block zählt genau 15 % im GIS", cfg.blockWeight === 0.15);
+  check("innen WALCL 45 % / DGS10 35 % / Bill-Anteil 20 %", cfg.subWeights.walcl === 0.45 && cfg.subWeights.dgs10 === 0.35 && cfg.subWeights.bills === 0.20);
+  const base = [0.20, 0.15, 0.10, 0.10, 0.15, 0.15, 0.15].map((w, i) => ({ name: `I${i}`, value: "", score: 1, weight: w, weighted: w, source: "" }));
+  const block = { ...computeBtcLiquidityBlock({ walcl: [], bills: [], otherMarketable: [], dgs10: [] }, "2026-10-18"), available: true, score: 1, coverage: 1 };
+  const on = applyBtcLiquidityBlock(base, block);
+  const liq = on.indicators[on.indicators.length - 1];
+  const others = on.indicators.slice(0, -1).reduce((s, i) => s + i.weight, 0);
+  check("angewendet: Blockzeile Gewicht 0,15, übrige 7 zusammen 0,85", liq.weight === 0.15 && near(others, 0.85), `${liq.weight} / ${others}`);
+  check("alle Scores +1 → GIS 1 (Anteile summieren exakt)", near(on.gis, 1));
+  // Innen: Block-Score = 0,45·W + 0,35·D + 0,20·B bei voller Abdeckung
+  const fx = (id: string) => fredCsvObservations(readFileSync(`script/fixtures/btc-liquidity/${id}.csv`, "utf8"));
+  const meta = JSON.parse(readFileSync("script/fixtures/btc-liquidity/meta.json", "utf8"));
+  const today = computeBtcLiquidityBlock({
+    walcl: fx("WALCL"), bills: fx("BOGZ1FL313161110Q"), otherMarketable: fx("BOGZ1FL313161275Q"), dgs10: fx("DGS10"),
+  }, meta.today);
+  const comp = (k: string) => today.components.find(c => c.key === k)!;
+  check("Fixture heute: volle Abdeckung, effektive Anteile 0,45/0,35/0,20",
+    today.available && near(today.coverage, 1) && near(comp("walcl").effectiveSubWeight, 0.45) && near(comp("dgs10").effectiveSubWeight, 0.35) && near(comp("bills").effectiveSubWeight, 0.20));
+  check("Fixture heute: L = 0,45·W + 0,35·D + 0,20·B", near(today.score, 0.45 * comp("walcl").score! + 0.35 * comp("dgs10").score! + 0.20 * comp("bills").score!));
+  const bp = comp("dgs10").metric!;
+  check(`Fixture heute (${meta.today}): DGS10 3M ${bp.toFixed(1)} bp → +53 bp gerundet, Score −1`, Math.round(bp) === 53 && comp("dgs10").score === -1, String(bp));
+  check("Fixture heute: WALCL 0, Bills +0,5 → L = −0,25 (leicht negativ, getrieben von DGS10)",
+    comp("walcl").score === 0 && comp("bills").score === 0.5 && near(today.score, -0.25));
+}
+
+console.log("\n=== FRED-Ausfall / Mindestabdeckung → GIS byte-gleich ===");
+{
+  const base = [
+    { s: 1, w: 0.20 }, { s: -0.5, w: 0.15 }, { s: 0.5, w: 0.10 }, { s: 0, w: 0.10 }, { s: 0.5, w: 0.15 }, { s: 0.8, w: 0.15 }, { s: -1, w: 0.15 },
+  ].map((x, i) => ({ name: `I${i}`, value: "", score: x.s, weight: x.w, weighted: x.s * x.w, source: "" }));
+  const oldGis = base.reduce((sum, i) => sum + i.weighted, 0);
+  const fx = (id: string) => fredCsvObservations(readFileSync(`script/fixtures/btc-liquidity/${id}.csv`, "utf8"));
+  const down = computeBtcLiquidityBlock({ walcl: [], bills: [], otherMarketable: [], dgs10: [] }, "2026-10-18");
+  const low = computeBtcLiquidityBlock({ walcl: [], bills: fx("BOGZ1FL313161110Q"), otherMarketable: fx("BOGZ1FL313161275Q"), dgs10: [] }, "2026-10-18");
+  check("nur Bills verfügbar (0,20) → unter Mindestabdeckung → Block n/a", !low.available && low.score === null
+    && low.components.find(c => c.key === "bills")!.available, low.note ?? "");
+  for (const [name, b] of [["FRED-Ausfall", down], ["unter Mindestabdeckung", low]] as const) {
+    const r = applyBtcLiquidityBlock(base, b);
+    check(`${name}: GIS byte-gleich (===)`, r.gis === oldGis, `${r.gis} vs ${oldGis}`);
+    check(`${name}: alte Gewichte unverändert`, r.indicators.slice(0, 7).every((x, i) => x.weight === base[i].weight && x.weighted === base[i].weighted));
+    // GWS-Formel aus analyzeBTC: gis·0.30 + power·0.50 + cycle·0.20 → bei gleichem GIS bitgleich
+    const gws = (g: number) => g * 0.30 + 0.5 * 0.50 + -0.5 * 0.20;
+    check(`${name}: GWS byte-gleich`, gws(r.gis) === gws(oldGis));
+  }
+  const srvDown = await loadBtcLiquidity({ fetchCsv: async () => null, now: new Date("2026-10-18T12:00:00Z") });
+  check("Server bei FRED-Ausfall → GIS byte-gleich", applyBtcLiquidityBlock(base, srvDown.block).gis === oldGis);
+  console.log("  (End-to-End mit echtem analyzeBTC vs. main: script/btc-liquidity-history.ts, Zeile „FRED-Ausfall / unter Mindestabdeckung“)");
 }
 
 console.log("\n=== Verdrahtung / Sperren ===");

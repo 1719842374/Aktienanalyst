@@ -48,10 +48,16 @@ export const BTC_LIQUIDITY_CONFIG = {
     lookbackObs: 4, percentileYears: 20, minSample: 40,
     /** Perzentil-Stufen der 4Q-Änderung des Bill-Anteils */
     p: { hi: 80, midHi: 60, midLo: 40, lo: 20 },
-    /** FRED datiert Z.1 auf den Quartalsanfang; Veröffentlichung ≈ 70 Tage nach Quartalsende ⇒ ≈ 165 Tage nach Datum. */
-    lagDays: 165,
-    /** > lagDays + ein Quartal + Puffer ⇒ eine Z.1-Veröffentlichung fehlt → n/a */
-    maxAgeDays: 165 + 120,
+    /**
+     * Z.1-Sichtbarkeit (Look-ahead-Fix, Stabschef 18.10.2026): Beobachtung zählt erst ab
+     * FRED-Beobachtungsdatum + 180 Tage. Bezug ist das FRED-Datum = QUARTALSANFANG
+     * (z. B. Q2/2020 = 2020-04-01 → sichtbar ab 2020-09-28), also ≈ Quartalsende + 89 Tage.
+     * Grund: Z.1 erscheint ~10 Wochen nach Quartalsende, Q2/2020 z. B. am 2020-09-21; die frühere
+     * Regel (+165 → 2020-09-13) lag davor. +180 liegt nach den Release-Terminen (Puffer für späte Termine).
+     */
+    z1VisibilityLagDays: 180,
+    /** > z1VisibilityLagDays + ein Quartal + Puffer ⇒ eine Z.1-Veröffentlichung fehlt → n/a */
+    maxAgeDays: 180 + 120,
   },
 } as const;
 
@@ -160,8 +166,8 @@ export function billShareSeries(bills: LiquidityObs[], other: LiquidityObs[]): L
 export function billsComponent(billsRaw: LiquidityObs[], otherRaw: LiquidityObs[], asOf: string): BtcLiquidityComponent {
   const c = BTC_LIQUIDITY_CONFIG.bills;
   const ids = [BTC_LIQUIDITY_SERIES.bills, BTC_LIQUIDITY_SERIES.otherMarketable];
-  const bills = pointInTime(cleanObs(billsRaw), asOf, c.lagDays);
-  const other = pointInTime(cleanObs(otherRaw), asOf, c.lagDays);
+  const bills = pointInTime(cleanObs(billsRaw), asOf, c.z1VisibilityLagDays);
+  const other = pointInTime(cleanObs(otherRaw), asOf, c.z1VisibilityLagDays);
   const share = billShareSeries(bills, other);
   if (share.length <= c.lookbackObs) return naComponent("bills", ids, "pp", "keine Z.1-Bill-Daten");
   const last = share[share.length - 1];
@@ -187,7 +193,7 @@ export function billsComponent(billsRaw: LiquidityObs[], otherRaw: LiquidityObs[
     value: `${billsLast != null ? `${(billsLast / 1e6).toFixed(2)} Bio. $, ` : ""}Anteil ${last.value.toFixed(1)} % (4Q ${sign(current.d, 2)} pp, P${Math.round(rank)})`,
     subWeight: BTC_LIQUIDITY_CONFIG.subWeights.bills, effectiveSubWeight: 0, asOf: last.date,
     seriesIds: ids, source: "FRED Z.1 (BOGZ1FL313161110Q, …275Q)",
-    note: `4Q-Änderung des Bill-Anteils gegen ${c.percentileYears}J-Verteilung: ≥ P${c.p.hi} → +1, ≥ P${c.p.midHi} → +0,5, ≤ P${c.p.midLo} → −0,5, ≤ P${c.p.lo} → −1 (Stand Quartal ${last.date}, ~${c.lagDays} T. Verzug)`,
+    note: `4Q-Änderung des Bill-Anteils gegen ${c.percentileYears}J-Verteilung: ≥ P${c.p.hi} → +1, ≥ P${c.p.midHi} → +0,5, ≤ P${c.p.midLo} → −0,5, ≤ P${c.p.lo} → −1 (Stand Quartal ${last.date}, sichtbar ab FRED-Datum + ${c.z1VisibilityLagDays} T.)`,
   };
 }
 

@@ -27,7 +27,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { fetchFredCsv, fredCsvObservations } from "../server/fred-csv";
-import { addDays, BTC_LIQUIDITY_SERIES, type LiquidityObs } from "../shared/btc-liquidity";
+import { addDays, BTC_LIQUIDITY_CONFIG, BTC_LIQUIDITY_SERIES, type LiquidityObs } from "../shared/btc-liquidity";
 import { buildBtcLiquidityResponse } from "../server/btc-liquidity";
 
 const ROOT = process.cwd();
@@ -84,7 +84,15 @@ const readJson = (f: string) => JSON.parse(readFileSync(path.join(FIX, f), "utf8
 const fred = (id: string): LiquidityObs[] => fredCsvObservations(readFileSync(path.join(FIX, `${id}.csv`), "utf8"));
 const visible = (obs: LiquidityObs[], asOf: string, lag: number) => obs.filter(o => addDays(o.date, lag) <= asOf);
 
-interface Scenario { label: string; asOf: string; withLiquidity: boolean; fiscal: "none" | "recorded" }
+/**
+ * Liquiditäts-Endpoint im Mock:
+ *  off          = 404 (Endpoint fehlt, = Code ohne Block)
+ *  on           = Block aus allen Fixtures
+ *  fred-down    = 200, aber alle FRED-Reihen leer (FRED-Ausfall) → Block n/a
+ *  low-coverage = 200, nur Z.1-Bills vorhanden (0,20 < minCoverage 0,35) → Block n/a
+ */
+type LiquidityMode = "off" | "on" | "fred-down" | "low-coverage";
+interface Scenario { label: string; asOf: string; liquidity: LiquidityMode; fiscal: "none" | "recorded" }
 
 function makeFetch(sc: Scenario, unexpected: Set<string>) {
   const cutoffMs = Date.parse(`${sc.asOf}T23:59:59Z`);
@@ -118,12 +126,14 @@ function makeFetch(sc: Scenario, unexpected: Set<string>) {
       return json({ hashrates: hs, currentHashrate: hs.length ? hs[hs.length - 1].avgHashrate : 0 });
     }
     if (url.includes("/api/analyze-btc/liquidity")) {
-      if (!sc.withLiquidity) return text("not found", 404);
+      if (sc.liquidity === "off") return text("not found", 404);
+      const z1 = sc.liquidity !== "fred-down";
+      const rest = sc.liquidity === "on";
       const series = {
-        walcl: fred(BTC_LIQUIDITY_SERIES.walcl),
-        bills: fred(BTC_LIQUIDITY_SERIES.bills),
-        otherMarketable: fred(BTC_LIQUIDITY_SERIES.otherMarketable),
-        dgs10: fred(BTC_LIQUIDITY_SERIES.dgs10),
+        walcl: rest ? fred(BTC_LIQUIDITY_SERIES.walcl) : [],
+        bills: z1 ? fred(BTC_LIQUIDITY_SERIES.bills) : [],
+        otherMarketable: z1 ? fred(BTC_LIQUIDITY_SERIES.otherMarketable) : [],
+        dgs10: rest ? fred(BTC_LIQUIDITY_SERIES.dgs10) : [],
       };
       return json(buildBtcLiquidityResponse(series, sc.asOf));
     }
@@ -180,7 +190,7 @@ const f = (v: number | null | undefined, d = 3) => (v == null || !Number.isFinit
 async function main() {
   const { meta } = await ensureFixtures();
   const today = meta.today;
-  const scenarios: Omit<Scenario, "withLiquidity">[] = [
+  const scenarios: Omit<Scenario, "liquidity">[] = [
     { label: "QE 2020", asOf: "2020-06-30", fiscal: "none" },
     { label: "QT 2022", asOf: "2022-10-31", fiscal: "none" },
     { label: `jetzt (rekonstr.)`, asOf: today, fiscal: "none" },
@@ -193,12 +203,18 @@ async function main() {
   let parityFail = 0;
   try {
     for (const s of scenarios) {
-      const before = await runAt(analyzeBTC, { ...s, withLiquidity: false }, unexpected);
-      const beforeMain = await runAt(mainMod.analyze, { ...s, withLiquidity: false }, unexpected);
-      const after = await runAt(analyzeBTC, { ...s, withLiquidity: true }, unexpected);
-      const parity = before.gis === beforeMain.gis && before.gws.value === beforeMain.gws.value;
-      if (!parity) parityFail++;
-      rows.push({ s, before, beforeMain, after, parity });
+      const before = await runAt(analyzeBTC, { ...s, liquidity: "off" }, unexpected);
+      const beforeMain = await runAt(mainMod.analyze, { ...s, liquidity: "off" }, unexpected);
+      const after = await runAt(analyzeBTC, { ...s, liquidity: "on" }, unexpected);
+      const fredDown = await runAt(analyzeBTC, { ...s, liquidity: "fred-down" }, unexpected);
+      const lowCov = await runAt(analyzeBTC, { ...s, liquidity: "low-coverage" }, unexpected);
+      // byte-genau: === auf den Zahlen (gleiche Bits), nicht gerundet
+      const same = (a: any) => a.gis === beforeMain.gis && a.gws.value === beforeMain.gws.value;
+      const parity = same(before);
+      const naParity = same(fredDown) && same(lowCov)
+        && fredDown.liquidity?.available === false && lowCov.liquidity?.available === false;
+      if (!parity || !naParity) parityFail++;
+      rows.push({ s, before, beforeMain, after, fredDown, lowCov, parity, naParity });
     }
   } finally {
     mainMod.cleanup();
@@ -235,6 +251,7 @@ async function main() {
   add("**GWS nachher**", r => `**${f(r.after.gws.value, 4)}**`);
   add("Δ GWS", r => f(r.after.gws.value - r.before.gws.value, 4));
   add("Vorher = main 35ead515 (GIS & GWS identisch)", r => (r.parity ? "✅" : `❌ main GIS ${f(r.beforeMain.gis, 4)}`));
+  add("FRED-Ausfall / unter Mindestabdeckung → Block n/a, GIS & GWS byte-gleich main", r => (r.naParity ? "✅" : `❌ GIS ${f(r.fredDown.gis, 6)} / ${f(r.lowCov.gis, 6)}`));
 
   const notes = [
     "",
@@ -243,7 +260,7 @@ async function main() {
     "³ ETF: Farside-Historie nicht rekonstruierbar → analyzeBTC-eigener 7d-Momentum-Proxy (in allen Spalten, auch heute).",
     "⁴ Macro: historisch und „jetzt (rekonstr.)“ FFR-Regel (fiscal-frontend nicht point-in-time); „heute (App-Pfad)“ mit aufgezeichneter fiscal-frontend-Antwort.",
     "⁵ DXY: FRED DEXUSEU als EUR/USD-Proxy für Binance EURUSDT in derselben Formel.",
-    "Alle Reihen point-in-time mit Veröffentlichungsverzug (WALCL/DGS10/DEXUSEU +1 T., FEDFUNDS +32 T., Z.1 +165 T.); FRED-Revisionen (ALFRED) nicht nachgebildet.",
+    `Alle Reihen point-in-time mit Veröffentlichungsverzug (WALCL/DGS10/DEXUSEU +1 T., FEDFUNDS +32 T., Z.1 FRED-Datum (Quartalsanfang) +${BTC_LIQUIDITY_CONFIG.bills.z1VisibilityLagDays} T.); FRED-Revisionen (ALFRED) nicht nachgebildet.`,
     "BTC-Kurs: blockchain.info market-price (timespan=all, 4-Tage-Raster) bis Stichtag; CoinGecko-Spot nicht historisch → letzter Punkt.",
     `Fixtures: ${Object.entries(meta).filter(([k]) => k !== "today").map(([k, v]) => `${k} = ${v}`).join("; ")}`,
   ];
@@ -252,7 +269,7 @@ async function main() {
   writeFileSync(path.join(FIX, "history-table.md"), out + "\n");
   if (unexpected.size) console.error(`Unerwartete URLs (404 geliefert): ${[...unexpected].join(", ")}`);
   if (parityFail) {
-    console.error(`❌ ${parityFail} Stichtag(e): Vorher ≠ main`);
+    console.error(`❌ ${parityFail} Stichtag(e): Vorher bzw. n/a-Fall ≠ main`);
     process.exit(1);
   }
 }

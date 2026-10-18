@@ -24,12 +24,13 @@
 | **GWS nachher** | **+0.3958** | **+0.4006** | **+0.1706** | **+0.1998** |
 | Δ GWS | +0.0158 | -0.0619 | -0.0169 | -0.0220 |
 | Vorher = main 35ead515 (GIS & GWS identisch) | ✅ | ✅ | ✅ | ✅ |
+| FRED-Ausfall / unter Mindestabdeckung → Block n/a, GIS & GWS byte-gleich main | ✅ | ✅ | ✅ | ✅ |
 
 ¹ Zyklus: analyzeBTC rechnet fest mit Halving 2024-04-20; für 2020/2022 ergibt das negative Monate → Zyklus-Signal historisch NICHT aussagekräftig (bestehendes Verhalten, unverändert).
 ² Hashrate: mempool /all auf 90 T. vor Stichtag geschnitten (Proxy für /3m).
 ³ ETF: Farside-Historie nicht rekonstruierbar → analyzeBTC-eigener 7d-Momentum-Proxy (in allen Spalten, auch heute).
 ⁴ Macro: historisch und „jetzt (rekonstr.)“ FFR-Regel (fiscal-frontend nicht point-in-time); „heute (App-Pfad)“ mit aufgezeichneter fiscal-frontend-Antwort.
 ⁵ DXY: FRED DEXUSEU als EUR/USD-Proxy für Binance EURUSDT in derselben Formel.
-Alle Reihen point-in-time mit Veröffentlichungsverzug (WALCL/DGS10/DEXUSEU +1 T., FEDFUNDS +32 T., Z.1 +165 T.); FRED-Revisionen (ALFRED) nicht nachgebildet.
+Alle Reihen point-in-time mit Veröffentlichungsverzug (WALCL/DGS10/DEXUSEU +1 T., FEDFUNDS +32 T., Z.1 FRED-Datum (Quartalsanfang) +180 T.); FRED-Revisionen (ALFRED) nicht nachgebildet.
 BTC-Kurs: blockchain.info market-price (timespan=all, 4-Tage-Raster) bis Stichtag; CoinGecko-Spot nicht historisch → letzter Punkt.
 Fixtures: blockchain = https://api.blockchain.info/charts/market-price?timespan=all&format=json&cors=true @ 2026-10-18T20:28:28.582Z; fng = https://api.alternative.me/fng/?limit=0&format=json @ 2026-10-18T20:28:29.502Z; hashrate = https://mempool.space/api/v1/mining/hashrate/all @ 2026-10-18T20:28:29.978Z; FEDFUNDS = https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2015-01-01 @ 2026-10-18T20:28:31.179Z; DEXUSEU = https://fred.stlouisfed.org/graph/fredgraph.csv?id=DEXUSEU&cosd=2015-01-01 @ 2026-10-18T20:28:32.744Z; WALCL = https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL&cosd=2002-12-01 @ 2026-10-18T20:28:33.363Z; DGS10 = https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=2015-01-01 @ 2026-10-18T20:28:33.910Z; BOGZ1FL313161110Q = https://fred.stlouisfed.org/graph/fredgraph.csv?id=BOGZ1FL313161110Q&cosd=1990-01-01 @ 2026-10-18T20:28:34.518Z; BOGZ1FL313161275Q = https://fred.stlouisfed.org/graph/fredgraph.csv?id=BOGZ1FL313161275Q&cosd=1990-01-01 @ 2026-10-18T20:28:35.115Z; fiscalFrontend = buildFiscalFrontendResponse() @ 2026-10-18T20:28:35.155Z
