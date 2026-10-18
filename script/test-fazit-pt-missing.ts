@@ -5,6 +5,7 @@
  * (3) Deep-Dive-Prompt: kein „Analyst PT: $0.00“, Kurs/PT in Listing-Währung, sobald sie übergeben wird.
  * (4) Exec-Summary-Fazit: kein „0 Dollar“-Satz, Währungswort aus data.currency.
  * (D2) bias-fixes buildBiasDecision: PT 0 zählt nicht als Ziel → Fallback Kurs, kein künstlicher dcf_divergence-Trigger.
+ * (D3) Exec-Summary-DCF: biasFix.decisionPerShare (> 0, endlich) auch ohne switched, sonst bestehender dcfFairValue-Fallback.
  * Server-Score: buildScoringForAnalysis/runScoringPipeline lesen kein Kursziel (statischer Nachweis unten) und
  * die gehärtete Server-CRV (crvBase/maxEntryCrv3) ist mit PT 0 identisch zu vorher.
  * Fixture: script/fixtures/analysis-MSFT.json (live /api/analyze 11.10.2026).
@@ -18,7 +19,7 @@ import { computeDcfVsMarketDivergence, computeHardenedCRV } from "../shared/valu
 import { deepDiveAnalystPtText, deepDivePricePrefix } from "../server/llm-openrouter";
 import { buildFazit, currencyWord, hasAnalystTarget } from "../server/exec-summary";
 import { buildExecSummaryInputFromAnalysis, statementCurrencyForExec } from "../server/exec-summary-attach";
-import { buildBiasDecision } from "../shared/bias-fixes";
+import { buildBiasDecision, applyBiasFix } from "../shared/bias-fixes";
 
 let fail = 0;
 const check = (n: string, ok: boolean, info = "") => { console.log(`${ok ? "✅" : "❌"} ${n}${info ? `  (${info})` : ""}`); if (!ok) fail++; };
@@ -134,6 +135,19 @@ const divTrig = (d: any) => buildBiasDecision(d).triggers.find(t => t.id === "dc
   }
 }
 
+// ── (D3) Exec-Summary-DCF aus biasFix.decisionPerShare ──
+{
+  const dcfOf = (a: any) => buildExecSummaryInputFromAnalysis(a).dcfConservative;
+  const baseA = { ticker: "SHEL.L", currency: "GBP", currentPrice: 39.38, dcfFairValue: 20.18 };
+  check("D3: nicht switched + decisionPerShare 58.55 → Exec-DCF 58.55 (nicht dcfFairValue 20.18)", dcfOf({ ...baseA, biasFix: { switched: false, decisionPerShare: 58.55 } }) === 58.55);
+  check("D3: switched → decisionPerShare (Regression)", dcfOf({ ...baseA, biasFix: { switched: true, decisionPerShare: 49.45 } }) === 49.45);
+  check("D3: decisionPerShare 0 (emptyPayload) → Fallback dcfFairValue", dcfOf({ ...baseA, biasFix: { switched: false, decisionPerShare: 0 } }) === 20.18);
+  check("D3: decisionPerShare NaN/null → Fallback dcfFairValue", dcfOf({ ...baseA, biasFix: { switched: false, decisionPerShare: NaN } }) === 20.18 && dcfOf({ ...baseA, biasFix: { decisionPerShare: null } }) === 20.18);
+  check("D3: ohne biasFix → Fallback dcfFairValue (Regression)", dcfOf(baseA) === 20.18);
+  const m = applyBiasFix(JSON.parse(JSON.stringify(msft)));
+  check("D3: MSFT-Fixture nach applyBiasFix → Exec-DCF = biasFix.decisionPerShare", dcfOf(m) === m.biasFix.decisionPerShare, `${dcfOf(m)} / ${m.biasFix.decisionPerShare} (switched ${m.biasFix.switched})`);
+}
+
 // Optional: echte Prod-Antworten (nicht im Repo, nur Anzeige + gleiche Assertions)
 const live = process.env.JOBD_LIVE_DIR;
 if (live) {
@@ -147,6 +161,8 @@ if (live) {
     check(`LIVE ${t} (PT ${pt}, ${a.currency}): kein „0 Dollar“${a.currency !== "USD" ? ", Kurs nicht in Dollar" : ""}`,
       !/\b0 Dollar/.test(txt) && (a.currency === "USD" || !/Kurs\./.test(fz.lage) || !/Dollar Kurs/.test(fz.lage)), fz.lage);
     if (!(pt > 0)) check(`LIVE ${t}: Bias-Trigger dcf_divergence ohne PT nur bei |DCF-Upside| ≥ 80`, divTrig(a).active === Math.abs((buildBiasDecision(a).unadjustedPerShare / a.currentPrice - 1) * 100) >= 80, divTrig(a).detail);
+    { const b = applyBiasFix(JSON.parse(JSON.stringify(a))); const dcf = buildExecSummaryInputFromAnalysis(b).dcfConservative;
+      check(`LIVE ${t}: Exec-DCF = biasFix.decisionPerShare (switched ${b.biasFix.switched})`, dcf === b.biasFix.decisionPerShare, String(dcf)); }
     const before = a.execSummary?.fazit?.lage;
     if (before) console.log(`   vorher (Prod): ${before}`);
   }

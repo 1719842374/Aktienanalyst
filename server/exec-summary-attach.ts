@@ -49,7 +49,10 @@ export function buildExecSummaryInputFromAnalysis(a: any): ExecSummaryInput {
   // der alten Feldnamen). dcfFairValue zuerst pruefen, alte Namen als
   // Fallback fuer etwaige andere Aufrufer/Altdaten belassen.
   const bias = a?.biasFix;
-  const decisionFv = bias?.switched && finite(bias?.decisionPerShare) ? bias.decisionPerShare : null;
+  // JOB D3: Bias-Entscheidungswert immer nutzen, wenn vorhanden (auch nicht-switched = konservativer DCF des
+  // Bias-Fix, derselbe Wert wie im Client-Fazit), statt auf den Server-Einfach-DCF dcfFairValue zu fallen.
+  // > 0: emptyPayload (bias-fixes.ts) liefert decisionPerShare 0 → dann bestehender Fallback.
+  const decisionFv = finite(bias?.decisionPerShare) && bias.decisionPerShare > 0 ? bias.decisionPerShare : null;
   const fv =
     decisionFv != null ? decisionFv
     : finite(a?.dcfFairValue) ? a.dcfFairValue
