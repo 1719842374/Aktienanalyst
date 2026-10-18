@@ -142,3 +142,18 @@ Quality 55 × Trend 0.9 = 49.5
 ~4–8 Stunden (Gate-Logik + Ampel-Anpassung + Test mit NVO und Gegenbeispiel).
 
 **Priorität:** Hoch (falsch positive ATTRAKTIV-Einstufung bei klarem technischen Negativsignal).
+
+---
+
+## 9. Soll-Ist-Korrektur (18.10.2026, Branch `feat/tech-moat-override`, Audit A2/A3 Schritt 1)
+
+Status: **offen**, nicht fertig. Kein `fertig_`-Präfix, bis Philip die Vorher/Nachher-Tabelle freigibt und gemergt ist.
+Korrektur der falschen Behauptungen (Text oben bleibt stehen):
+
+| Audit-Zeile | Spec sagt | Ist im Code (main `ba760a84`) |
+|---|---|---|
+| 23 | §4.2: „Dämpfungsfaktor aus Daten, nicht hardcoded“ | Spec nutzt selbst feste Schwellen (RSL < 105, Moat ≤ 2.5, Cap 55). Umgesetzt: feste, benannte Trigger-Schwellen; adaptiv ist die Deckelhöhe über das RSL-Perzentil der eigenen Kurshistorie. |
+| (1/21) | §1/§4.3: Scoring-Pipeline 49.5 = „LEICHT ATTRAKTIV“, Cap 55 löst das Problem | finalScore 49.5 hat kein Label (nur Farbe, rot). ATTRAKTIV kommt vom Gesamtscore 0–10 (`shared/bias-fixes.ts`), LEICHT ATTRAKTIV vom Fazit (`fazit-signal.ts`). Cap 55 wäre bei 49.5 wirkungslos. |
+| (17/18/20/22) | siehe `WORK_SECTION_WEIGHTING_ADAPTIVE.md` §9 | – |
+
+**Umgesetzt:** Death Cross + RSL < 105 + schwacher Moat (min aus Regel- und KI-Moat: None oder Narrow) gleichzeitig → Ampel (Gesamtscore) und Fazit höchstens NEUTRAL. MACD ist nach Philips Korrektur (18.10.) **kein** Trigger. NVO (Prod 18.10.2026): Gesamtscore 8.17 ATTRAKTIV → 4.81 NEUTRAL, Fazit NEUTRAL. Begründung im Summary/Fazit: „Tech-Moat-Override: Death Cross + RSL … < 105 + Moat wirksam None (Regel Narrow 2.0, KI None)“.

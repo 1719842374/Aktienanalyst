@@ -138,3 +138,20 @@ Thesis Score und Management Score bleiben separat sichtbar, fließen aber als zu
 ~6–10 Stunden (Signal-Stärke, Cap, Dämpfung, Ampel-Anpassung, Test mit NVO und Gegenbeispiel).
 
 **Priorität:** Hoch.
+
+---
+
+## 9. Soll-Ist-Korrektur (18.10.2026, Branch `feat/tech-moat-override`, Audit A2/A3 Schritt 1)
+
+Status: **offen**, nicht fertig. Die Datei bleibt ohne `fertig_`-Präfix, bis Philip die Vorher/Nachher-Tabelle freigibt und gemergt ist.
+Die folgenden Aussagen oben sind gegen den Code (main `ba760a84`) **falsch** und werden hiermit korrigiert. Der Text oben bleibt zur Nachvollziehbarkeit stehen.
+
+| Audit-Zeile | Spec sagt | Ist im Code |
+|---|---|---|
+| 17 | §2 Zeile 19 / §5: Management-Score „separat“, soll in den Gesamt-Score | Steckt **schon** im Gesamtscore 0–10: `(m − 5) · 0.6 · MoatMult` (`shared/bias-fixes.ts` `computeOverallScore`), Client-seitig gesetzt (`Dashboard.tsx`). Nicht im finalScore, nicht im Fazit. |
+| 18 | §4/§5: Thesis-Score „separat“, soll adaptiv einfließen | Steckt **schon** im Gesamtscore: `(t − 5) · 0.4 · MoatMult`. Quelle S2 (ThesisStrengthPanel). |
+| 20 | §2: „Nicht direkt score-relevant: 2, 3, 4, 6, 9, 10, 15“ | Falsch. S4 → finalScore (Health, Marge, Inventory, 8Q) und Regel-Moat; S9 Peers → RELATIVE_GROWTH und Regel-Moat-ROIC; S6 (P/E, PEG, Beta) → Fazit; S10 (ED) → Fazit und Bias-Trigger; S15 → Fazit; S2 (Thesis, Analysten-PT) → Gesamtscore, Fazit, Divergenz; S3/S17 Katalysatoren → alle drei Modelle. |
+| 22 | §3.2: `valuationWeight *= 1 − tech · moat · 0.6` | `valuationWeight` existiert nirgends. Mit dem Fallback der Spec ergäbe sich für NVO ≈ 2 % Dämpfung, also praktisch keine Wirkung. **Nicht umgesetzt.** Stattdessen: Deckel des Gesamtscores im NEUTRAL-Band (siehe unten). |
+| 23 | §1: „keine festen Schwellen, adaptiv“ | Die Spec nutzt selbst feste Schwellen (RSL < 105, Moat ≤ 2.5, Cap 55, 0.6, `history > 20`), der Code ebenso (GATE_THRESHOLDS, Fazit-Grenzen, `overallRatingFromScore`). Umgesetzt ist: feste Trigger-Schwellen (benannt), adaptiv ist nur die Deckelhöhe über das RSL-Perzentil der eigenen Kurshistorie. |
+
+**Umgesetzt (Entscheidungen Stabschef + Philip 18.10.2026):** Death Cross (MA50 < MA200) **und** RSL < 105 **und** schwacher Moat (schwächerer aus Regel-Moat und KI-Moat ist None oder Narrow) gleichzeitig → Gesamtscore 0–10 höchstens NEUTRAL (Deckel 4.5 + Perzentil × 1.99, ohne Historie 6.49) und Fazit höchstens NEUTRAL. Kein Cap 55 auf den finalScore (der treibt kein Label), keine Änderung an `analyze-route.ts` oder `scoring-gates.ts`. Der inverse Moat-Multiplikator bleibt unverändert (offene Frage an Philip).
