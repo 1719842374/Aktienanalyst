@@ -19,6 +19,7 @@ import { analyzePostBody, readOverrides, writeOverrides, type KeyValueStore } fr
 import {
   MAX_PEER_OVERRIDE_ENTRIES, addListFull, clampPeerOverrides, discardRejectedOverrides,
   isPeerOverrideRejection, removeListFull, sameOverrides,
+  PEER_RESET_NOTICE_TEXT, peerResetNoticeAfterSuccess, peerResetNoticeFor, type PeerResetNotice,
 } from "../client/src/lib/peerOverrideLimits";
 import { Section7 } from "../client/src/components/sections/Section7";
 
@@ -172,7 +173,37 @@ async function main() {
   check("Dashboard: startAnalyze kürzt per clampPeerOverrides", dash.includes("const resolved: PeerOverrideLists = clampPeerOverrides(loaded);"));
   check("Dashboard: gesäuberte Overrides werden zurückgeschrieben", dash.includes("if (explicit || !sameOverrides(loaded, resolved)) writeOverrides(storage, args.ticker, resolved);"));
   check("Dashboard: 400 auf Overrides ohne Retries", dash.includes("if (isPeerOverrideRejection(res.status, peerOverrides))") && dash.includes("if (err?.errorCode === PEER_OVERRIDES_REJECTED) throw err;"));
-  check("Dashboard: onError verwirft + lädt neu", dash.includes("discardRejectedOverrides(safeLocalStorage(), variables.ticker)") && dash.includes("startAnalyze({ ticker: variables.ticker, llm: !!variables.llm, force: false, peerOverrides: cleared })"));
+  check("Dashboard: onError verwirft + lädt neu", dash.includes("discardRejectedOverrides(safeLocalStorage(), variables.ticker)") && dash.includes("startAnalyze({ ticker: variables.ticker, llm: !!variables.llm, force: false, peerOverrides: cleared, peerResetRecovery: true })"));
+
+  console.log("\nStabschef-Follow-up — UI-Hinweis nach automatischem Verwerfen");
+  // Zustandsfolge wie im Dashboard: 400 → Hinweis setzen → Recovery-Lauf ok → nächste Analyse ok
+  let notice: PeerResetNotice = null;
+  notice = { ticker: "NVO" }; // onError: setPeerResetNotice({ ticker })
+  notice = peerResetNoticeAfterSuccess(notice, { peerResetRecovery: true });
+  check("Recovery-Lauf erfolgreich → Hinweis bleibt stehen", notice?.ticker === "NVO");
+  check("Hinweis nur beim betroffenen Ticker (Groß/Klein egal)", peerResetNoticeFor(notice, "nvo")?.ticker === "NVO" && peerResetNoticeFor(notice, "MSFT") === null && peerResetNoticeFor(null, "NVO") === null);
+  notice = peerResetNoticeAfterSuccess(notice, { peerResetRecovery: false });
+  check("nächste erfolgreiche Analyse → Hinweis verschwindet", notice === null);
+  check("ohne Variablen → kein Hinweis", peerResetNoticeAfterSuccess({ ticker: "NVO" }, undefined) === null);
+
+  const dismissed: number[] = [];
+  const recovered = { ...fixture, ticker: "NVO", activePeerOverrides: { add: [], remove: [] } };
+  const nHtml = renderToStaticMarkup(React.createElement(Section7 as any, { data: recovered, onPeerOverridesChange, peerResetNotice: "NVO", onDismissPeerResetNotice: () => dismissed.push(1) }));
+  check("Section7: Hinweis sichtbar mit Text", nHtml.includes('data-testid="peer-reset-notice"') && nHtml.includes(PEER_RESET_NOTICE_TEXT) && nHtml.includes("NVO"));
+  check("Section7: Hinweis hat Schließen-Button", nHtml.includes('data-testid="button-peer-reset-notice-dismiss"'));
+  check("Section7: Hinweis steht vor dem Peer-Block (Peer-Bereich)", nHtml.indexOf('data-testid="peer-reset-notice"') < nHtml.indexOf('data-testid="input-peer-add"'));
+  const hiddenBlock = { ...fixture, ticker: "NVO", peerComparison: null, peerSet: undefined, activePeerOverrides: { add: [], remove: [] } };
+  const nHtml2 = renderToStaticMarkup(React.createElement(Section7 as any, { data: hiddenBlock, peerResetNotice: "NVO" }));
+  check("Section7: Hinweis auch ohne sichtbaren Peer-Block", nHtml2.includes('data-testid="peer-reset-notice"') && !nHtml2.includes('data-testid="input-peer-add"'));
+  const nHtml3 = renderToStaticMarkup(React.createElement(Section7 as any, { data: recovered, onPeerOverridesChange }));
+  check("Section7: ohne Hinweis-Prop kein Hinweis", !nHtml3.includes('data-testid="peer-reset-notice"'));
+  const nTree = expand(React.createElement(Section7 as any, { data: recovered, onPeerOverridesChange, peerResetNotice: "NVO", onDismissPeerResetNotice: () => dismissed.push(1) }));
+  findByTestId(nTree, "button-peer-reset-notice-dismiss")?.props.onClick();
+  check("Klickpfad: Schließen ruft onDismiss", dismissed.length === 1);
+  check("Dashboard: Verwerfen setzt Hinweis", /setPeerResetNotice\(\{ ticker: variables\.ticker \}\);\s*startAnalyze\(/.test(dash));
+  check("Dashboard: onSuccess räumt Hinweis per peerResetNoticeAfterSuccess", dash.includes("setPeerResetNotice((cur) => peerResetNoticeAfterSuccess(cur, variables));"));
+  check("Dashboard: Recovery-Flag geht bis in die Mutation-Variablen", dash.includes("reqId, peerResetRecovery: args.peerResetRecovery })"));
+  check("Dashboard: Section7 bekommt Hinweis + Dismiss", dash.includes("peerResetNotice={peerResetNoticeFor(peerResetNotice, data.ticker)?.ticker ?? null} onDismissPeerResetNotice={() => setPeerResetNotice(null)}"));
 
   console.log(failed === 0 ? "\n✅ Alle Peer-Override-Limit-Tests bestanden" : `\n❌ ${failed} Test(s) fehlgeschlagen`);
   process.exit(failed === 0 ? 0 : 1);
