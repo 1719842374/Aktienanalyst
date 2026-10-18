@@ -242,10 +242,19 @@ export async function fetchRoicForTickers(tickers: string[]): Promise<Record<str
   return out;
 }
 
+/** PR B Peer-Selection: Branche/Sektor je Peer aus bereits geladenen FMP-Profilen (peer-adaptive). */
+export interface PeerIndustryProfile {
+  sector: string | null;
+  industry: string | null;
+}
+
 export async function fetchPeerComparisonFromTickers(
   ticker: string, peerTickers: string[], pe: number, peg: number, revenue: number,
   marketCap: number, revenueGrowth: number, epsGrowth5Y: number,
-  subjectExtras?: { pb?: number | null; epsGrowth1Y?: number | null }
+  subjectExtras?: { pb?: number | null; epsGrowth1Y?: number | null },
+  // PR B: optional, nur Anzeige/Filter. Ohne Map bleiben die Peer-Objekte bitgleich (keine neuen Keys).
+  // Mit Map: Peer ohne Profil (z.B. manuell hinzugefuegt) → industry/sector null → UI „n/a“. Kein FMP-Call.
+  peerProfiles?: ReadonlyMap<string, PeerIndustryProfile>
 ): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
   try {
     const [quotes, ratiosPerPeer, roicByTicker, subjectRoic] = await Promise.all([
@@ -305,6 +314,10 @@ export async function fetchPeerComparisonFromTickers(
         roicFiscalYear: peerRoic?.fiscalYear ?? null,
         roic5Y: peerRoic?.roic5YPercent ?? null,
         roic5YYearsUsed: peerRoic?.roic5YYearsUsed ?? 0,
+        ...(peerProfiles ? {
+          industry: peerProfiles.get(t)?.industry || null,
+          sector: peerProfiles.get(t)?.sector || null,
+        } : {}),
       });
     });
     // F is already capped (5, or 8 after +/- overrides). peerAvg uses that set.
