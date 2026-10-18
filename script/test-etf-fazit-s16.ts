@@ -24,7 +24,8 @@ for (const t of ["SPY", "MSFT"]) {
   rows.push(`| ${t} | ${before.rd.join("; ")} | ${before.f.score} ${before.f.rating} | ${after.rd.join("; ")} | ${after.f.score} ${after.f.rating} | server finalScore ${after.d.scoring?.finalScore} |`);
   assert.equal(before.f.score, after.f.score, `${t}: Fazit-Score unverändert`);
   assert.equal(before.f.rating, after.f.rating, `${t}: Rating unverändert`);
-  assert.equal(after.f.score, t === "SPY" ? -6 : 1, `${t}: fixture score pinned`);
+  // JOB D: SPY-Fixture hat analystPT.median 0 (kein Kursziel) → der frühere Strafpunkt „-100 % unter Kurs“ entfällt: -6 → -5 (Rating bleibt STARK UNATTRAKTIV).
+  assert.equal(after.f.score, t === "SPY" ? -5 : 1, `${t}: fixture score pinned`);
   if (t === "SPY") {
     assert.ok(isEtfOrFund(after.d));
     assert.deepEqual(after.rd, [`Reverse-DCF ${ETF_RDCF_NOTE}`]);

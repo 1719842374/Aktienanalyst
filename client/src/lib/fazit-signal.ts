@@ -24,7 +24,7 @@ import {
   type GBMMonteCarloResult,
   computeDcfVsMarketDivergence,
 } from "./calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign, statementCurrency } from "./formatters";
+import { formatCurrency, formatNumber, formatPercentNoSign, statementCurrency, targetUpsidePct } from "./formatters";
 import { buildBiasDecision, type BiasFixPayload } from "../../../shared/bias-fixes";
 
 export type FazitSignalMetrics = {
@@ -312,8 +312,11 @@ export function buildFazitSignal(input: FazitSignalInput): FazitSignal {
   if (stressDownside < -30) negative.push(`Macro-Stress: ${formatNumber(stressDownside, 0)}% Downside`);
 
   // Analyst PT
-  const ptUps = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
-  if (ptUps > 20) positive.push(`Analysten sehen ${formatNumber(ptUps, 0)}% Upside zum Median-Kursziel`);
+  // JOB D: Kursziel 0/null/NaN = kein Ziel (FMP liefert für .L/.TO oft keine Targets, Server setzt dann 0).
+  // Gleiche Regel wie targetUpsidePct/formatTarget: ohne Ziel kein Faktor, statt „-100 % unter Kurs“ als Negativpunkt.
+  const ptUps = targetUpsidePct(data.analystPT?.median, data.currentPrice);
+  if (ptUps == null) neutral.push(`Kein Analysten-Kursziel verf\u00fcgbar \u2014 Faktor entf\u00e4llt`);
+  else if (ptUps > 20) positive.push(`Analysten sehen ${formatNumber(ptUps, 0)}% Upside zum Median-Kursziel`);
   else if (ptUps > 0) neutral.push(`Analysten-Kursziel +${formatNumber(ptUps, 0)}% \u00fcber Kurs`);
   else if (ptUps < -5) negative.push(`Analysten-Kursziel ${formatNumber(ptUps, 0)}% unter Kurs`);
 

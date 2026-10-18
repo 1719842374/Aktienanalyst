@@ -941,13 +941,19 @@ export function worstCaseStructural(price: number, betaAdjDrawdownPct: number, s
 export interface DivergenceFlagResult {
   divergenceFlag: boolean;
   dcfUpsidePct: number;
+  /** NaN, wenn kein Analysten-Kursziel vorliegt (analystPTAvailable=false). */
   analystUpsidePct: number;
+  /** JOB D: false bei Kursziel 0/null/NaN (FMP ohne Targets → Server setzt 0). */
+  analystPTAvailable: boolean;
 }
 export function computeDcfVsMarketDivergence(conservativeDCFPerShare: number, analystPTMedian: number, currentPrice: number): DivergenceFlagResult {
   const dcfUpsidePct = currentPrice > 0 ? ((conservativeDCFPerShare - currentPrice) / currentPrice) * 100 : 0;
-  const analystUpsidePct = currentPrice > 0 ? ((analystPTMedian - currentPrice) / currentPrice) * 100 : 0;
-  const divergenceFlag = dcfUpsidePct > 80 && analystUpsidePct < 15;
-  return { divergenceFlag, dcfUpsidePct, analystUpsidePct };
+  // JOB D: ohne Kursziel (PT ≤ 0, null, NaN — gleiche Regel wie targetUpsidePct) gibt es keinen Analysten-Upside.
+  // Vorher ergab PT 0 einen künstlichen Analysten-Upside von -100 % und damit bei DCF-Upside > 80 % immer das Flag.
+  const analystPTAvailable = typeof analystPTMedian === "number" && Number.isFinite(analystPTMedian) && analystPTMedian > 0;
+  const analystUpsidePct = !analystPTAvailable ? NaN : currentPrice > 0 ? ((analystPTMedian - currentPrice) / currentPrice) * 100 : 0;
+  const divergenceFlag = analystPTAvailable && dcfUpsidePct > 80 && analystUpsidePct < 15;
+  return { divergenceFlag, dcfUpsidePct, analystUpsidePct, analystPTAvailable };
 }
 
 // --- Teil F: gehärtete CRV-Kette (ein Aufruf, alle Bausteine kombiniert) ---
