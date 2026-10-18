@@ -17,6 +17,7 @@
  * Cookie + Crumb, die hier einmalig geholt und wiederverwendet werden.
  */
 import { yahooFetch, indicatorWarmupFromDate, type DailyBar } from "./history-fallback";
+import { currencyFromTickerSuffix, minorUnitInfo } from "../shared/listing-units";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 export const YAHOO_CACHE_TTL_MS = Number(process.env.YAHOO_CACHE_TTL_MS ?? 15 * 60 * 1000);
@@ -34,6 +35,8 @@ export interface YahooSnapshot {
   exchange: string | null;
   bars: DailyBar[];
   fundamentalsAvailable: boolean;
+  /** DCF-FX: woher `currency` stammt (quoteSummary, v8-Chart-Meta, Börsen-Suffix) oder null. */
+  currencySource?: "quoteSummary" | "chartMeta" | "suffix" | null;
 }
 
 let _lastYahooCallAt = 0;
@@ -202,6 +205,56 @@ async function fetchQuoteSummary(symbol: string): Promise<Partial<YahooSnapshot>
   };
 }
 
+/**
+ * DCF-FX / Tester #252-Prod: Auf Prod liefert quoteSummary (Cookie + Crumb) nichts, die v8-Chart-API (ohne Crumb)
+ * schon. Ihre Meta nennt Währung, Name und Börse. Nur gelesen, wenn quoteSummary fehlt; null bei Fehler.
+ */
+export async function fetchChartMeta(symbol: string): Promise<{ currency: string | null; name: string | null; exchange: string | null; price: number | null } | null> {
+  try {
+    await spaceYahooCall();
+    const resp = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`, {
+      signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA, Accept: "application/json" },
+    });
+    if (!resp.ok) return null;
+    const meta: any = (await resp.json())?.chart?.result?.[0]?.meta;
+    if (!meta) return null;
+    const str = (v: any) => (typeof v === "string" && v.trim() ? v.trim() : null);
+    const px = Number(meta.regularMarketPrice);
+    return { currency: str(meta.currency), name: str(meta.longName) ?? str(meta.shortName), exchange: str(meta.fullExchangeName) ?? str(meta.exchangeName), price: Number.isFinite(px) && px > 0 ? px : null };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * DCF-FX: Wechselkurs Major → USD über Yahoo (EURUSD=X), nur als Ersatz, wenn FMP keinen FX-Kurs liefert
+ * (z. B. Plan ohne Forex). Plausibilitätsband wie fmp.ts getFxRateToUsd; sonst null (nie 1 raten).
+ */
+export async function fetchYahooFxToUsd(major: string): Promise<number | null> {
+  const cur = String(major || "").toUpperCase();
+  if (!/^[A-Z]{3}$/.test(cur) || cur === "USD") return null;
+  const meta = await fetchChartMeta(`${cur}USD=X`);
+  const rate = meta?.price ?? null;
+  return rate != null && rate > 0 && rate < 1000 ? rate : null;
+}
+
+/**
+ * Währung zum Snapshot-Kurs. Kommt der Kurs aus den Bars (quoteSummary fehlt), ist er schon Major-Einheit
+ * (history-fallback yahooBarsToMajor) → Minor-Codes (GBp) werden dann auf die Major-Währung gemappt.
+ * Reihenfolge: quoteSummary → Chart-Meta → Börsen-Suffix. Nie stillschweigend USD.
+ */
+export function resolveSnapshotCurrency(input: { symbol: string; qsCurrency: string | null | undefined; metaCurrency: string | null | undefined; priceFromBars: boolean }): { currency: string | null; source: YahooSnapshot["currencySource"] } {
+  const pick = (c: string | null | undefined, source: YahooSnapshot["currencySource"]) => {
+    if (typeof c !== "string" || !c.trim()) return null;
+    const mu = input.priceFromBars ? minorUnitInfo(c.trim()) : null;
+    return { currency: mu ? mu.major : c.trim(), source };
+  };
+  return pick(input.qsCurrency, "quoteSummary")
+    ?? pick(input.metaCurrency, "chartMeta")
+    ?? pick(currencyFromTickerSuffix(input.symbol), "suffix")
+    ?? { currency: null, source: null };
+}
+
 const cache = new Map<string, { value: YahooSnapshot | null; at: number }>();
 const inflight = new Map<string, Promise<YahooSnapshot | null>>();
 
@@ -231,17 +284,22 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
     const lastClose = bars.length ? bars[bars.length - 1].close : null;
     const price = qs?.price ?? lastClose;
     if (!(typeof price === "number" && price > 0)) return null;
+    const priceFromBars = qs?.price == null;
+    const meta = !qs || !qs.currency || !qs.name ? await fetchChartMeta(key) : null;
+    const ccy = resolveSnapshotCurrency({ symbol: key, qsCurrency: qs?.currency, metaCurrency: meta?.currency, priceFromBars });
+    // Kein eigenes Log: das Scheitern von quoteSummary steht schon in [YAHOO-DIAG] (#259); currencySource im Snapshot.
     return {
       symbol: key,
       price,
-      currency: qs?.currency ?? null,
+      currency: ccy.currency,
       marketCap: qs?.marketCap ?? null,
       pe: qs?.pe ?? null,
       eps: qs?.eps ?? null,
-      name: qs?.name ?? null,
-      exchange: qs?.exchange ?? null,
+      name: qs?.name ?? meta?.name ?? null,
+      exchange: qs?.exchange ?? meta?.exchange ?? null,
       bars,
       fundamentalsAvailable: !!qs,
+      currencySource: ccy.source,
     };
   })().catch((err) => {
     console.warn(`[YAHOO-402] ${key}: ${String(err?.message ?? err).slice(0, 120)}`);
