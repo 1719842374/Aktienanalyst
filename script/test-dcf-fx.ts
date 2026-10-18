@@ -143,7 +143,8 @@ globalThis.fetch = (async (input: any) => {
   check("Yahoo-FX-Ersatz EURUSD=X (für FMP ohne FX)", (await Y.fetchYahooFxToUsd("EUR")) === 1.1 && (await Y.fetchYahooFxToUsd("USD")) === null);
   Y.clearYahooCache?.();
   const yx: any = await yahooFallbackData("XYZ.DE");
-  check("ohne Meta-Währung → Börsen-Suffix .DE = EUR (nie USD)", yx.profile._listingFx?.from === "EUR", String(yx.profile._listingFx?.from));
+  // Stabschef 18.10.2026 (4): .DE ohne Chart-Meta → Währung null wie #264 (kein Suffix für .DE); Suffix nur für andere Börsen.
+  check("XYZ.DE ohne Meta-Währung → null (nie USD, kein .DE-Suffix); Suffix nur außerhalb .DE (MC.PA → EUR)", yx.quote.currency === null && yx.profile._listingFx === undefined && Y.resolveSnapshotCurrency({ symbol: "XYZ.DE", qsCurrency: null, metaCurrency: null, priceFromBars: true, allowSuffix: false }).currency === null && Y.resolveSnapshotCurrency({ symbol: "MC.PA", qsCurrency: null, metaCurrency: null, priceFromBars: true }).currency === "EUR", `${yx.quote.currency} ${yx.profile._listingFx?.from}`);
   check("resolveSnapshotCurrency: Kurs aus Bars + GBp → GBP", Y.resolveSnapshotCurrency({ symbol: "BP.L", qsCurrency: null, metaCurrency: "GBp", priceFromBars: true }).currency === "GBP");
   check("resolveSnapshotCurrency: nichts bekannt → null (nicht USD)", Y.resolveSnapshotCurrency({ symbol: "FOO", qsCurrency: null, metaCurrency: null, priceFromBars: true }).currency === null);
 

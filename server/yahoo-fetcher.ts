@@ -42,9 +42,10 @@ export interface YahooSnapshot {
   timeseriesAsOf?: { shares: string | null; eps: string | null };
   bars: DailyBar[];
   fundamentalsAvailable: boolean;
-  /** DCF-FX: woher `currency` stammt (quoteSummary, v8-Chart-Meta, Börsen-Suffix) oder null. */
-  currencySource?: "quoteSummary" | "chartMeta" | "suffix" | null;
 }
+
+/** DCF-FX: woher die Snapshot-Währung stammt (nur Rückgabe von resolveSnapshotCurrency, nicht im Snapshot). */
+export type SnapshotCurrencySource = "quoteSummary" | "chartMeta" | "suffix" | null;
 
 let _lastYahooCallAt = 0;
 let _spacing: Promise<void> = Promise.resolve();
@@ -213,34 +214,14 @@ async function fetchQuoteSummary(symbol: string): Promise<Partial<YahooSnapshot>
 }
 
 /**
- * DCF-FX / Tester #252-Prod: Auf Prod liefert quoteSummary (Cookie + Crumb) nichts, die v8-Chart-API (ohne Crumb)
- * schon. Ihre Meta nennt Währung, Name und Börse. Nur gelesen, wenn quoteSummary fehlt; null bei Fehler.
- */
-export async function fetchChartMeta(symbol: string): Promise<{ currency: string | null; name: string | null; exchange: string | null; price: number | null } | null> {
-  try {
-    await spaceYahooCall();
-    const resp = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`, {
-      signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA, Accept: "application/json" },
-    });
-    if (!resp.ok) return null;
-    const meta: any = (await resp.json())?.chart?.result?.[0]?.meta;
-    if (!meta) return null;
-    const str = (v: any) => (typeof v === "string" && v.trim() ? v.trim() : null);
-    const px = Number(meta.regularMarketPrice);
-    return { currency: str(meta.currency), name: str(meta.longName) ?? str(meta.shortName), exchange: str(meta.fullExchangeName) ?? str(meta.exchangeName), price: Number.isFinite(px) && px > 0 ? px : null };
-  } catch {
-    return null;
-  }
-}
-
-/**
  * DCF-FX: Wechselkurs Major → USD über Yahoo (EURUSD=X), nur als Ersatz, wenn FMP keinen FX-Kurs liefert
- * (z. B. Plan ohne Forex). Plausibilitätsband wie fmp.ts getFxRateToUsd; sonst null (nie 1 raten).
+ * (z. B. Plan ohne Forex). Kurs aus der v8-Chart-Meta über fetchYahooChartMetaWithPrice (#264).
+ * Plausibilitätsband wie fmp.ts getFxRateToUsd; sonst null (nie 1 raten).
  */
 export async function fetchYahooFxToUsd(major: string): Promise<number | null> {
   const cur = String(major || "").toUpperCase();
   if (!/^[A-Z]{3}$/.test(cur) || cur === "USD") return null;
-  const meta = await fetchChartMeta(`${cur}USD=X`);
+  const meta = await fetchYahooChartMetaWithPrice(`${cur}USD=X`);
   const rate = meta?.price ?? null;
   return rate != null && rate > 0 && rate < 1000 ? rate : null;
 }
@@ -248,18 +229,32 @@ export async function fetchYahooFxToUsd(major: string): Promise<number | null> {
 /**
  * Währung zum Snapshot-Kurs. Kommt der Kurs aus den Bars (quoteSummary fehlt), ist er schon Major-Einheit
  * (history-fallback yahooBarsToMajor) → Minor-Codes (GBp) werden dann auf die Major-Währung gemappt.
- * Reihenfolge: quoteSummary → Chart-Meta → Börsen-Suffix. Nie stillschweigend USD.
+ * Reihenfolge: quoteSummary → Chart-Meta → Börsen-Suffix. Nie stillschweigend USD. Rein (kein Netz-Call).
+ * `allowSuffix: false` (für .DE): ohne quoteSummary-/Meta-Währung bleibt sie null (#264: Chart ohne Meta → null).
  */
-export function resolveSnapshotCurrency(input: { symbol: string; qsCurrency: string | null | undefined; metaCurrency: string | null | undefined; priceFromBars: boolean }): { currency: string | null; source: YahooSnapshot["currencySource"] } {
-  const pick = (c: string | null | undefined, source: YahooSnapshot["currencySource"]) => {
+export function resolveSnapshotCurrency(input: { symbol: string; qsCurrency: string | null | undefined; metaCurrency: string | null | undefined; priceFromBars: boolean; allowSuffix?: boolean }): { currency: string | null; source: SnapshotCurrencySource } {
+  const pick = (c: string | null | undefined, source: SnapshotCurrencySource) => {
     if (typeof c !== "string" || !c.trim()) return null;
     const mu = input.priceFromBars ? minorUnitInfo(c.trim()) : null;
     return { currency: mu ? mu.major : c.trim(), source };
   };
   return pick(input.qsCurrency, "quoteSummary")
     ?? pick(input.metaCurrency, "chartMeta")
-    ?? pick(currencyFromTickerSuffix(input.symbol), "suffix")
+    ?? (input.allowSuffix === false ? null : pick(currencyFromTickerSuffix(input.symbol), "suffix"))
     ?? { currency: null, source: null };
+}
+
+/**
+ * DCF-FX, nach den #264-Stufen: Währung des fertigen Snapshots über resolveSnapshotCurrency (quoteSummary → Chart-Meta
+ * aus applyChartMetaFallback → Börsen-Suffix, Suffix nicht für .DE). Kein Netz-Call; unverändert → dasselbe Objekt.
+ */
+function finalizeSnapshotCurrency(snap: YahooSnapshot | null, qsCurrency: string | null, priceFromBars: boolean): YahooSnapshot | null {
+  if (!snap) return snap;
+  const ccy = resolveSnapshotCurrency({
+    symbol: snap.symbol, qsCurrency, metaCurrency: qsCurrency ? null : snap.currency, priceFromBars,
+    allowSuffix: !isGermanXetraTicker(snap.symbol),
+  });
+  return ccy.currency === snap.currency ? snap : { ...snap, currency: ccy.currency };
 }
 
 const cache = new Map<string, { value: YahooSnapshot | null; at: number }>();
@@ -277,6 +272,8 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
   if (hit && Date.now() - hit.at < (hit.value ? YAHOO_CACHE_TTL_MS : YAHOO_FAIL_TTL_MS)) return hit.value;
   const running = inflight.get(key);
   if (running) return running;
+  let qsCurrency: string | null = null;
+  let priceFromBars = true;
   const p = (async (): Promise<YahooSnapshot | null> => {
     const to = new Date().toISOString().slice(0, 10);
     const [qsRes, barsRes] = await Promise.allSettled([
@@ -291,29 +288,29 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
     const lastClose = bars.length ? bars[bars.length - 1].close : null;
     const price = qs?.price ?? lastClose;
     if (!(typeof price === "number" && price > 0)) return null;
-    const priceFromBars = qs?.price == null;
-    const meta = !qs || !qs.currency || !qs.name ? await fetchChartMeta(key) : null;
-    const ccy = resolveSnapshotCurrency({ symbol: key, qsCurrency: qs?.currency, metaCurrency: meta?.currency, priceFromBars });
-    // Kein eigenes Log: das Scheitern von quoteSummary steht schon in [YAHOO-DIAG] (#259); currencySource im Snapshot.
+    // DCF-FX: Währung wird erst nach den #264-Stufen festgelegt (finalizeSnapshotCurrency); hier wie main.
+    qsCurrency = typeof qs?.currency === "string" && qs.currency.trim() ? qs.currency : null;
+    priceFromBars = qs?.price == null;
     return {
       symbol: key,
       price,
-      currency: ccy.currency,
+      currency: qs?.currency ?? null,
       marketCap: qs?.marketCap ?? null,
       pe: qs?.pe ?? null,
       eps: qs?.eps ?? null,
-      name: qs?.name ?? meta?.name ?? null,
-      exchange: qs?.exchange ?? meta?.exchange ?? null,
+      name: qs?.name ?? null,
+      exchange: qs?.exchange ?? null,
       bars,
       fundamentalsAvailable: !!qs,
-      currencySource: ccy.source,
     };
   })().catch((err) => {
     console.warn(`[YAHOO-402] ${key}: ${String(err?.message ?? err).slice(0, 120)}`);
     return null;
   });
   // Ersatzstufen A (Chart-Meta) und B (timeseries) NUR für .DE (Philip 18.10.2026 22:27); alle anderen Ticker wie main.
-  const withMeta = isGermanXetraTicker(key) ? p.then(applyChartMetaFallback).then(applyTimeseriesFundamentals) : p;
+  const staged = isGermanXetraTicker(key) ? p.then(applyChartMetaFallback).then(applyTimeseriesFundamentals) : p;
+  // DCF-FX: Reihenfolge quoteSummary → Chart-Meta (Stufe A, nur .DE) → Börsen-Suffix (nicht .DE); kein Zusatz-Call.
+  const withMeta = staged.then((s) => finalizeSnapshotCurrency(s, qsCurrency, priceFromBars));
   inflight.set(key, withMeta);
   try {
     const value = await withMeta;
