@@ -13,6 +13,13 @@ import {
   writeOverrides,
   type PeerOverrideLists,
 } from "@shared/peer-override-persist";
+import {
+  PEER_OVERRIDES_REJECTED,
+  clampPeerOverrides,
+  discardRejectedOverrides,
+  isPeerOverrideRejection,
+  sameOverrides,
+} from "@/lib/peerOverrideLimits";
 import type { StockAnalysis } from "../../../shared/schema";
 import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "@/lib/calculations";
 import { TickerSearch } from "@/components/TickerSearch";
@@ -153,11 +160,13 @@ export default function Dashboard() {
   const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean; peerOverrides?: { add: string[]; remove: string[] } }) => {
     const storage = safeLocalStorage();
     const explicit = args.peerOverrides;
-    const resolved: PeerOverrideLists = explicit
+    const loaded: PeerOverrideLists = explicit
       ? normalizeStoredOverrides(explicit)
       : (storage ? readOverrides(storage, args.ticker) : { add: [], remove: [] });
+    // #258 FAIL 5: harter Deckel 8 je Liste (Server-zod .max(8)), auch für Altbestände aus localStorage.
+    const resolved: PeerOverrideLists = clampPeerOverrides(loaded);
     if (storage) {
-      if (explicit) writeOverrides(storage, args.ticker, resolved);
+      if (explicit || !sameOverrides(loaded, resolved)) writeOverrides(storage, args.ticker, resolved);
       writeLastTicker(storage, args.ticker);
     }
     requestIdRef.current += 1;
@@ -182,6 +191,12 @@ export default function Dashboard() {
           if (!res.ok) {
             const errJson = await res.json().catch(() => ({}));
             const errMsg = errJson?.error || errJson?.message || `HTTP ${res.status}`;
+            // #258 FAIL 5: 400 auf Overrides (z.B. zod "Array must contain at most 8 element(s)")
+            // ist nicht transient -- keine Retries; onError verwirft die Overrides und lädt neu.
+            if (isPeerOverrideRejection(res.status, peerOverrides)) {
+              setRetryInfo(null);
+              throw Object.assign(new Error(errMsg), { errorCode: PEER_OVERRIDES_REJECTED, details: errJson?.details });
+            }
             // 429 / RATE_LIMITED: surface immediately, no retries
             if (res.status === 429 || errJson?.errorCode === 'RATE_LIMITED') {
               console.warn(`[Analyze] Rate-limit erkannt — keine Retries`);
@@ -261,6 +276,7 @@ export default function Dashboard() {
           if (err?.errorCode === 'RATE_LIMITED' || msg.includes("RATE_LIMITED") || msg.includes("Tagesquota")) {
             throw err;
           }
+          if (err?.errorCode === PEER_OVERRIDES_REJECTED) throw err;
           console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${msg.substring(0, 100)}`);
           if (attempt < maxRetries) {
             // Network retry backoff (short) — no cold-start warmup needed anymore.
@@ -298,6 +314,14 @@ export default function Dashboard() {
       // Only clear data for RATE_LIMITED (needs explicit empty state for quota warning UI).
       // For all other errors: old data > blank screen.
       const ec = (err as any)?.errorCode;
+      // #258 FAIL 5: Overrides vom Server abgelehnt → gespeicherte Overrides verwerfen und
+      // die Analyse ohne Overrides neu laden. Kein Loop: ohne Overrides greift isPeerOverrideRejection nicht.
+      if (ec === PEER_OVERRIDES_REJECTED && variables?.ticker) {
+        console.warn(`[Analyze] Peer-Overrides für ${variables.ticker} vom Server abgelehnt (400) — verworfen, lade ohne Overrides neu`);
+        const cleared = discardRejectedOverrides(safeLocalStorage(), variables.ticker);
+        startAnalyze({ ticker: variables.ticker, llm: !!variables.llm, force: false, peerOverrides: cleared });
+        return;
+      }
       if (ec !== 'RATE_LIMITED' && dataRef.current) {
         console.log('[Analyze] Error but keeping previous data visible');
         setRetryInfo(null);

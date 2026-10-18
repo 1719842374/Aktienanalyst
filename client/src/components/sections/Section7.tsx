@@ -52,6 +52,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
   const [peerKiError, setPeerKiError] = useState<string | null>(null);
   const peerKiRequest = useRef(0);
   const factPeerCount = data.peerSet?.peerCount ?? data.peerComparison?.peers?.length ?? 0;
+  // #258 FAIL 3: aktive Overrides (z.B. alle Peers entfernt → peerComparison null) brauchen den Weg zurück.
+  const hasActivePeerOverrides = (data.activePeerOverrides?.add?.length ?? 0) > 0 || (data.activePeerOverrides?.remove?.length ?? 0) > 0;
   const peerGap = peersNeeded(factPeerCount);
 
   const tamSegmentSig = useMemo(() => {
@@ -604,7 +606,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
       )}
 
       {/* Peer Comparison. Banner und KI-Ticker kommen vom Server. Kennzahlen der KI-Zeilen sind FMP. */}
-      {(data.peerSet?.banner || peerGap > 0 || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
+      {(data.peerSet?.banner || peerGap > 0 || hasActivePeerOverrides || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
         <div className="mt-4 pt-4 border-t border-border">
           <div className="flex flex-wrap items-center gap-1.5 mb-2">
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Peer-Vergleich (Wettbewerber)</h3>
@@ -668,7 +670,9 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
               {data.peerSet.banner}
             </div>
           )}
-          {((data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
+          {/* #258 FAIL 3: mit Override-Callback immer rendern, auch bei peerComparison null / 0 Peers,
+              damit Eingabefeld und „Standard wiederherstellen“ (Empty-State in PeerComparison) erreichbar sind. */}
+          {(!!onPeerOverridesChange || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
             <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} peerBusy={peerBusy} />
           )}
         </div>

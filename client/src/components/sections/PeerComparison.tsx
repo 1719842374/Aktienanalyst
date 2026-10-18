@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import type { StockAnalysis, PeerCompany } from "@shared/schema";
 import type { PeerNaFill } from "@shared/peer-na-fill";
 import { ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from "lucide-react";
+import { addListFull, removeListFull } from "@/lib/peerOverrideLimits";
 
 function fmt(v: number | null | undefined, decimals = 1): string {
   if (v == null || isNaN(v) || !isFinite(v)) return "—";
@@ -82,7 +83,10 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
   const activeRemove = data.activePeerOverrides?.remove ?? [];
 
   const visiblePeers: PeerCompany[] = pc?.peers ?? [];
-  const capReached = peerCapReached(visiblePeers);
+  const visibleCapReached = peerCapReached(visiblePeers);
+  // #258 FAIL 5: harter Deckel auf die Add-Liste (Server-zod max. 8), zählt auch nicht übernommene Ticker.
+  const addCapReached = addListFull(activeAdd);
+  const capReached = visibleCapReached || addCapReached;
   const notAdopted = missingAddedPeers(activeAdd, visiblePeers, data.ticker);
 
   const handleAddTicker = () => {
@@ -90,9 +94,16 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
     const t = addInput.trim().toUpperCase();
     if (!t || t === data.ticker) return;
     if (activeAdd.includes(t)) return;
-    if (capReached) return; // Ticket: max. 8 sichtbare Peers
+    if (capReached) return; // Ticket: max. 8 sichtbare Peers, max. 8 Einträge in der Add-Liste
     onOverridesChange({ add: [...activeAdd, t], remove: activeRemove.filter(r => r !== t) });
     setAddInput("");
+  };
+
+  // #258 FAIL 5: nicht übernommene Ticker belegen Plätze in der Add-Liste und sind nicht
+  // per „×“ in der Tabelle erreichbar -- einzeln aus der Add-Liste nehmen.
+  const handleDropAdd = (ticker: string) => {
+    if (!onOverridesChange) return;
+    onOverridesChange({ add: activeAdd.filter(t => t.toUpperCase() !== ticker.toUpperCase()), remove: activeRemove });
   };
 
   const handleResetDefaults = () => {
@@ -110,8 +121,11 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
       onReset={handleResetDefaults}
       hasOverrides={activeAdd.length > 0 || activeRemove.length > 0}
       capReached={capReached}
+      visibleCapReached={visibleCapReached}
+      addCapReached={addCapReached}
       peerBusy={peerBusy}
       notAdopted={peerBusy ? [] : notAdopted}
+      onDropAdd={handleDropAdd}
     />
   ) : null;
 
@@ -135,6 +149,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
 
   const handleRemove = (ticker: string) => {
     if (!onOverridesChange) return;
+    if (removeListFull(activeRemove, ticker)) return; // #258 FAIL 5: Server-zod max. 8 auch für remove
     const newRemove = activeRemove.includes(ticker) ? activeRemove : [...activeRemove, ticker];
     const newAdd = activeAdd.filter(t => t !== ticker);
     onOverridesChange({ add: newAdd, remove: newRemove });
@@ -311,8 +326,9 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
                 {onOverridesChange && (
                   <td className="py-1.5 px-1 text-right">
                     <button
-                      className="text-[10px] text-foreground/30 hover:text-red-400 transition-colors"
-                      title={`${p.ticker} aus Peer-Liste entfernen`}
+                      className="text-[10px] text-foreground/30 hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      title={removeListFull(activeRemove, p.ticker) ? "Max. 8 entfernte Peers — Standard wiederherstellen" : `${p.ticker} aus Peer-Liste entfernen`}
+                      disabled={removeListFull(activeRemove, p.ticker)}
                       onClick={() => handleRemove(p.ticker)}
                     >
                       ×
@@ -387,15 +403,18 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
   );
 }
 
-function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, hasOverrides, capReached, peerBusy, notAdopted }: {
+export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, hasOverrides, capReached, visibleCapReached = capReached, addCapReached = false, peerBusy, notAdopted, onDropAdd }: {
   addInput: string;
   setAddInput: (v: string) => void;
   onAdd: () => void;
   onReset: () => void;
   hasOverrides: boolean;
   capReached: boolean;
+  visibleCapReached?: boolean;
+  addCapReached?: boolean;
   peerBusy: boolean;
   notAdopted: string[];
+  onDropAdd?: (ticker: string) => void;
 }) {
   return (
     <div className="space-y-1 pt-1">
@@ -434,8 +453,11 @@ function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, hasOverri
         >
           Standard wiederherstellen
         </button>
-        {capReached && (
+        {visibleCapReached && (
           <span className="text-[10px] text-amber-400/70" data-testid="peer-cap-reached">Max. 8 Peers erreicht</span>
+        )}
+        {!visibleCapReached && addCapReached && (
+          <span className="text-[10px] text-amber-400/70" data-testid="peer-add-cap-reached">Max. 8 Hinzufügungen erreicht — nicht übernommene entfernen oder Standard wiederherstellen</span>
         )}
       </div>
       {notAdopted.length > 0 && (
@@ -445,6 +467,23 @@ function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, hasOverri
           data-testid="peer-not-adopted"
         >
           {notAdopted.join(", ")} nicht übernommen (ungültig, außerhalb des Market-Cap-Bands oder ohne Kennzahlen)
+          {onDropAdd && (
+            <span className="ml-1 inline-flex flex-wrap gap-1">
+              {notAdopted.map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => onDropAdd(t)}
+                  disabled={peerBusy}
+                  className="rounded border border-amber-400/30 px-1 text-[10px] hover:bg-amber-400/10 disabled:opacity-40"
+                  title={`${t} aus der Hinzufügen-Liste nehmen`}
+                  data-testid={`peer-not-adopted-drop-${t}`}
+                >
+                  {t} ×
+                </button>
+              ))}
+            </span>
+          )}
         </div>
       )}
     </div>
