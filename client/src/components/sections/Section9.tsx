@@ -3,6 +3,7 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { calculateRSL, RSL_MOMENTUM_MALUS_PCT, LYNCH_DCF_DEFAULTS } from "../../lib/calculations";
 import { formatNumber, formatCurrency, getRSLColor, getRSLBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
+import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from "../../../../shared/data-source";
 
 interface Props { data: StockAnalysis }
 
@@ -27,10 +28,12 @@ export function Section9({ data }: Props) {
     : true; // keine bekannte Klasse → bisheriges (klassen-agnostisches) Verhalten
   const rslWeak = !(rsl > 105);
   const malusActive = rslWeak && malusAllowedForClass;
+  // C1 (#252): Yahoo-Daten → kein DCF (Sektion 5 = n/a), also auch keine DCF-Wachstumsanpassung anzeigen.
+  const yahooOnly = isYahooOnly(data);
 
   // RSL < 105 → DCF growth adjustment is now actually applied in calculateFCFFDCF (see RSL_MOMENTUM_MALUS_PCT),
   // aber NUR wenn die Lynch-Klasse den Malus erlaubt (applyRslMalus).
-  const growthAdj = rsl > 110 ? "+0% (strong momentum)" :
+  const growthAdj = yahooOnly ? `n/a (${YAHOO_NO_VALUATION_NOTICE})` : rsl > 110 ? "+0% (strong momentum)" :
     rsl > 105 ? "+0% (neutral)" :
     malusActive
       ? `-${RSL_MOMENTUM_MALUS_PCT}% (aktiv im DCF-Modell — siehe Sektion 5 Rechenweg)`
@@ -45,7 +48,7 @@ export function Section9({ data }: Props) {
   return (
     <SectionCard number={11} title="RSL-MOMENTUM (Levy RSL)">
       {/* RSL < 105 Warning */}
-      {rslWeak && malusActive && (
+      {!yahooOnly && rslWeak && malusActive && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
           <span className="text-amber-500 text-lg">⚠</span>
           <div>
@@ -57,7 +60,7 @@ export function Section9({ data }: Props) {
           </div>
         </div>
       )}
-      {rslWeak && !malusActive && (
+      {!yahooOnly && rslWeak && !malusActive && (
         <div className="bg-muted/30 border border-border/50 rounded-lg p-3 flex items-start gap-2">
           <span className="text-muted-foreground text-lg">ℹ</span>
           <div>

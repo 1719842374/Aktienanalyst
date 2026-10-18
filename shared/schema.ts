@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { BiasFixPayload, CatalystSource } from "./bias-fixes";
+import type { AnalysisDataSource } from "./data-source";
 
 // === Request Schema ===
 export const analyzeRequestSchema = z.object({
@@ -621,8 +622,9 @@ export interface StockAnalysis {
    *  'fmp+yahoo' / 'fmp+stooq' = FMP-Basis + Alt-Provider hat Luecken
    *  gefuellt/nach links verlaengert (z.B. weil der FMP-Plan nur 5 Jahre
    *  liefert, der UI-Timeframe aber 10Y anfordert). Optional: fehlt bei
-   *  alten Cache-Eintraegen vor diesem Ticket. */
-  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt';
+   *  alten Cache-Eintraegen vor diesem Ticket.
+   *  'yahoo' = C1 (#252): FMP 402, Historie komplett aus dem Yahoo-Fallback. */
+  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt' | 'yahoo';
 
   /** true, wenn selbst nach Alt-Provider-Fallback nicht genug Historie fuer
    *  den urspruenglich gewuenschten Zeitraum vorhanden war (ehrliche
@@ -672,9 +674,14 @@ export interface StockAnalysis {
   /** 0–10, gesetzt nach dem Thesis-Strength-Lauf (Variante B). */
   thesisStrengthScore?: number | null;
   /** Reverse-DCF g* in Prozent, serverseitig an der Analyse. */
-  impliedGStar?: number;
+  impliedGStar?: number | null; // null bei Yahoo-Daten (C1, #252): keine Bewertung
   consistencyWarnings?: ConsistencyWarning[];
   dataTimestamp?: string; // ISO date when data was fetched
+  /** Datenquelle der Analyse. 'yahoo' = C1 (#252): FMP 402, Yahoo-Fallback ohne Statements →
+   *  DCF, Inverse-DCF, CRV, Score und Rating n/a (siehe shared/data-source.ts). Fehlt bei Altdaten. */
+  dataSource?: AnalysisDataSource;
+  /** Nur bei dataSource 'yahoo': sichtbarer Hinweis „Yahoo-Daten – keine Bewertung“. */
+  valuationNotice?: string;
   _cached?: boolean; // True if served from server cache
   _cacheAge?: number; // Cache age in minutes
   _cacheDate?: string; // ISO date when data was cached

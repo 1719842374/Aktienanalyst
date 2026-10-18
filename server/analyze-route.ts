@@ -133,6 +133,7 @@ import { buildScoringForAnalysis } from "./scoring-integration";
 import { applyFactPackFromFmpContext } from "./factpack-apply";
 import { attachExecSummary } from "./exec-summary-attach";
 import { applyBiasFix } from "../shared/bias-fixes";
+import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from "../shared/data-source";
 import { getCachedRegulatoryAssessment } from "./regulatory";
 import { assessEcosystem, collectPorterNarrative, resolveEcosystem } from "./ecosystem-moat";
 import {
@@ -627,6 +628,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // geoSegments was added in commit cd79678 (fmp.ts:fmpGeoSegments +
       // analyze-helpers.ts wiring). fmpData carries it through to us.
       const { quote, profile, financials, analyst, ohlcv, segments, geoSegments, peers, ratios } = fmpData as any;
+      // C1 (#252): FMP 402 → Yahoo-Fallback ohne Statements. Dann keine Bewertung (DCF/Score/Rating null).
+      const yahooOnly = (fmpData as any).source === "yahoo";
 
       // ── 2. Parse core financials ──
       const price = parseNumber(String(quote?.price ?? 0));
@@ -1805,7 +1808,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
       let scoring: StockAnalysis["scoring"] = undefined;
       try {
-        scoring = buildScoringForAnalysis({
+        scoring = yahooOnly ? undefined : buildScoringForAnalysis({
           ctx: {
             impliedGStar,
             quarterlyRevenueChronological,
@@ -2019,7 +2022,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
         // Section 10
         ohlcvData: ohlcvPoints,
-        historyDataSource,
+        historyDataSource: yahooOnly ? "yahoo" : historyDataSource,
         historyTruncated,
         technicalIndicators,
 
@@ -2086,7 +2089,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         // KI mode signalling for Dashboard state
         llmMode: useLLM,
         llmModelUsed,
-        dataSource: "fmp" as const,
+        dataSource: yahooOnly ? "yahoo" as const : "fmp" as const,
+        ...(yahooOnly ? { valuationNotice: YAHOO_NO_VALUATION_NOTICE } : {}),
         dataTimestamp: new Date().toISOString(),
         _useLLM: useLLM,
 
@@ -2100,9 +2104,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         dividendYield,
         returnOnEquity,
         wacc,
-        dcfFairValue,
-        upsidePotential,
-        impliedGStar: impliedGStar ?? 0,
+        dcfFairValue: yahooOnly ? null : dcfFairValue,
+        upsidePotential: yahooOnly ? null : upsidePotential,
+        impliedGStar: yahooOnly ? null : (impliedGStar ?? 0),
         pbRatio,
         yearHigh,
         yearLow,
@@ -2205,7 +2209,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // legt die Grundlage fuer Phase 2 (PIT-Universum). Laeuft NIEMALS auf
       // dem kritischen Antwortpfad: try/catch, kein Effekt auf `analysis`
       // oder die Response, falls SQLite/Scoring hier fehlschlaegt.
-      try {
+      // C1 (#252): bei Yahoo-Daten weder Server-CRV noch Backtest-Snapshot (keine 0-Werte ins Scoring).
+      if (!yahooOnly) try {
         // Sprint B3 Phase 1b (Ticket: tickets/SPRINT_B3_PHASE1B_SHARED_CRV.md;
         // Nutzer-Praezisierung 30.08.2026): invDcf/CRV jetzt ECHT serverseitig
         // berechnen — ueber dieselben reinen Funktionen wie die Live-UI
@@ -2354,8 +2359,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         console.warn(`[ANALYZE] Scoring-Snapshot (Backtest) fehlgeschlagen fuer ${upperTicker}: ${snapErr?.message?.substring(0, 150)}`);
       }
 
-      applyBiasFix(analysis);
-      attachExecSummary(analysis);
+      if (!yahooOnly) {
+        applyBiasFix(analysis);
+        attachExecSummary(analysis);
+      }
       // Nach Assemble (CRV-Felder + ExecSummary): L2 hält dieselbe Payload wie die Response. L1 zeigt schon auf dasselbe Objekt.
       diskCacheSet(cacheKey, analysis);
       return res.json(analysis);
@@ -2568,8 +2575,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // invertedDcf, die sich durch Enrichment NICHT aendern) -- ein
       // erneuter Aufruf auf "updated" zieht automatisch die neuen
       // Katalysatoren mit ein, ohne Logik zu duplizieren.
-      updated = applyBiasFix(updated);
-      updated = attachExecSummary(updated);
+      if (!isYahooOnly(updated)) {
+        updated = applyBiasFix(updated);
+        updated = attachExecSummary(updated);
+      }
 
       analysisCache.set(cacheKeyUsed, { ...cached, result: updated });
       // Enrich überlebt die 20-min-RAM-TTL und einen Restart (gleicher Analyze-Key).
