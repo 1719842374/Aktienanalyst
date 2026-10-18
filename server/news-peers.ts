@@ -8,6 +8,7 @@ import type { Catalyst } from "../shared/schema";
 import { btcMediaSiteQuery, filterBtcNewsItems } from "../shared/btc-source-policy";
 import { fmpBatchQuote, fmpRatios, fmpKeyMetrics, fmpProfile } from "./fmp";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
+import { diskResearcherGetWithTtl, diskResearcherSet } from "./disk-cache";
 
 // Re-export so analyze-route can import sentiment helpers from news-peers
 export {
@@ -248,12 +249,111 @@ export interface PeerIndustryProfile {
   industry: string | null;
 }
 
+/**
+ * H1 (Tester-Hinweis #260): Manuell hinzugefügte Peers stehen nicht in der 2-Hop-Profil-Map und
+ * bekamen deshalb immer industry/sector = null. Für solche Peers wird das FMP-Profil (/stable/profile)
+ * nachgeladen, aber nur im Map-Pfad (analyze-route reicht peerProfiles durch), nur für Peers, die
+ * Band- und Datenfilter bereits passiert haben, und mit Cache:
+ *   - Erfolg: Speicher + Disk (researcher_cache, Key peerindustry:{TICKER}), 7 Tage
+ *   - kein Profil / Fehler: nur Speicher, 6 h (kein Dauer-Retry, kein Disk-Eintrag)
+ * Reine Anzeige: industry/sector fließen in keinen Ø, keine Peer-Auswahl, keinen Score.
+ * Fehler beim Nachladen ändern das Ergebnis nicht (Peer bleibt n/a).
+ */
+export const PEER_INDUSTRY_PROFILE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const PEER_INDUSTRY_MISS_TTL_MS = 6 * 60 * 60 * 1000;
+
+export function peerIndustryProfileCacheKey(ticker: string): string {
+  return `peerindustry:${ticker.trim().toUpperCase()}`;
+}
+
+type PeerIndustryLoader = (symbol: string) => Promise<PeerIndustryProfile | null>;
+interface PeerIndustryDeps {
+  loader: PeerIndustryLoader;
+  cacheGet: (key: string, now: number) => { data: any; storedAt: number } | null;
+  cacheSet: (key: string, data: PeerIndustryProfile) => void;
+}
+
+export function peerIndustryFromFmpProfile(row: unknown): PeerIndustryProfile | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as { industry?: unknown; sector?: unknown };
+  const industry = typeof r.industry === "string" && r.industry.trim() ? r.industry.trim() : null;
+  const sector = typeof r.sector === "string" && r.sector.trim() ? r.sector.trim() : null;
+  return industry || sector ? { industry, sector } : null;
+}
+
+const defaultPeerIndustryDeps: PeerIndustryDeps = {
+  loader: async (symbol) => peerIndustryFromFmpProfile(await fmpProfile(symbol)),
+  cacheGet: (key, now) => diskResearcherGetWithTtl(key, PEER_INDUSTRY_PROFILE_TTL_MS, now),
+  cacheSet: (key, data) => diskResearcherSet(key, data),
+};
+let peerIndustryDeps: PeerIndustryDeps = defaultPeerIndustryDeps;
+const peerIndustryMemory = new Map<string, { profile: PeerIndustryProfile | null; storedAt: number }>();
+
+/** Tests: Loader/Cache ersetzen (null = Standard) und Speicher-Cache leeren. */
+export function setPeerIndustryDepsForTests(deps: Partial<PeerIndustryDeps> | null): void {
+  peerIndustryDeps = deps ? { ...defaultPeerIndustryDeps, ...deps } : defaultPeerIndustryDeps;
+  peerIndustryMemory.clear();
+}
+
+export async function loadPeerIndustryProfile(
+  ticker: string, now = Date.now(),
+): Promise<{ profile: PeerIndustryProfile | null; source: "memory" | "disk" | "fmp" | "miss" }> {
+  const key = peerIndustryProfileCacheKey(ticker);
+  const mem = peerIndustryMemory.get(key);
+  if (mem) {
+    const ttl = mem.profile ? PEER_INDUSTRY_PROFILE_TTL_MS : PEER_INDUSTRY_MISS_TTL_MS;
+    const age = now - mem.storedAt;
+    if (age >= 0 && age <= ttl) return { profile: mem.profile, source: "memory" };
+    peerIndustryMemory.delete(key);
+  }
+  try {
+    const disk = peerIndustryDeps.cacheGet(key, now);
+    const fromDisk = disk ? peerIndustryFromFmpProfile(disk.data) : null;
+    if (fromDisk) {
+      peerIndustryMemory.set(key, { profile: fromDisk, storedAt: disk!.storedAt });
+      return { profile: fromDisk, source: "disk" };
+    }
+  } catch { /* Disk-Cache optional */ }
+  let profile: PeerIndustryProfile | null = null;
+  try {
+    profile = await peerIndustryDeps.loader(ticker.trim().toUpperCase());
+  } catch {
+    profile = null;
+  }
+  peerIndustryMemory.set(key, { profile, storedAt: now });
+  if (profile) {
+    try { peerIndustryDeps.cacheSet(key, profile); } catch { /* Disk-Cache optional */ }
+    return { profile, source: "fmp" };
+  }
+  return { profile: null, source: "miss" };
+}
+
+/** Peers ohne Eintrag in der Profil-Map (z. B. manuell hinzugefügt) bekommen Branche/Sektor aus dem Profil-Cache bzw. FMP. */
+export async function fillMissingPeerIndustry(
+  peers: Array<{ ticker: string; industry?: string | null; sector?: string | null }>,
+  peerProfiles: ReadonlyMap<string, PeerIndustryProfile>,
+): Promise<void> {
+  const missing = peers.filter(p => !peerProfiles.has(p.ticker));
+  if (missing.length === 0) return;
+  await Promise.all(missing.map(async (p) => {
+    try {
+      const { profile, source } = await loadPeerIndustryProfile(p.ticker);
+      if (profile) {
+        p.industry = profile.industry;
+        p.sector = profile.sector;
+      }
+      console.log(`[PEERS-INDUSTRY] ${p.ticker} source=${source} industry=${profile?.industry ?? "n/a"}`);
+    } catch { /* Anzeige bleibt n/a */ }
+  }));
+}
+
 export async function fetchPeerComparisonFromTickers(
   ticker: string, peerTickers: string[], pe: number, peg: number, revenue: number,
   marketCap: number, revenueGrowth: number, epsGrowth5Y: number,
   subjectExtras?: { pb?: number | null; epsGrowth1Y?: number | null },
   // PR B: optional, nur Anzeige/Filter. Ohne Map bleiben die Peer-Objekte bitgleich (keine neuen Keys).
-  // Mit Map: Peer ohne Profil (z.B. manuell hinzugefuegt) → industry/sector null → UI „n/a“. Kein FMP-Call.
+  // Mit Map: Peer ohne Map-Eintrag (z.B. manuell hinzugefuegt) → Profil per fillMissingPeerIndustry
+  // (gecacht, H1); ohne Profil bleibt industry/sector null → UI „n/a“.
   peerProfiles?: ReadonlyMap<string, PeerIndustryProfile>
 ): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
   try {
@@ -320,6 +420,8 @@ export async function fetchPeerComparisonFromTickers(
         } : {}),
       });
     });
+    // H1: nur Anzeige-Felder; Peer-Liste, Reihenfolge und Kennzahlen bleiben unverändert.
+    if (peerProfiles) await fillMissingPeerIndustry(peers, peerProfiles);
     // F is already capped (5, or 8 after +/- overrides). peerAvg uses that set.
     const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null);
     if (validPeers.length === 0) return null;

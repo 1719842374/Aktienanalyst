@@ -174,6 +174,12 @@ export default function Dashboard() {
       if (explicit || !sameOverrides(loaded, resolved)) writeOverrides(storage, args.ticker, resolved);
       writeLastTicker(storage, args.ticker);
     }
+    // Befund B (dod-258): der analysierte Ticker ist der aktuelle -- auch beim Deep-Link
+    // (?ticker=) und beim Wiederherstellen nach Reload, die nicht über onSearch laufen.
+    // Ohne das blieb currentTickerRef leer, und Peer-Add/-Remove/Reset (Section7) sowie
+    // Refresh/KI-Toggle lösten keinen Request aus. Ref sofort, State für Renderpfade.
+    currentTickerRef.current = args.ticker;
+    setCurrentTicker(args.ticker);
     requestIdRef.current += 1;
     const reqId = requestIdRef.current;
     analyzeMutationRef.current.mutate({ ticker: args.ticker, llm: args.llm, force: args.force, peerOverrides: resolved, reqId, peerResetRecovery: args.peerResetRecovery });
