@@ -14,6 +14,7 @@ import {
 import { indicatorWarmupFromDate } from "./history-fallback";
 import { FX_CONVERTIBLE_FIELDS, getFxRateToUsd } from "./fmp";
 import { minorUnitInfo, normalizeMinorUnitListing } from "../shared/listing-units";
+import { getYahooSnapshot, YAHOO_402_NOTICE } from "./yahoo-fetcher";
 
 // ============================================================
 // FMP Budget Tracker (single source of truth)
@@ -492,6 +493,10 @@ export function fmpFallbackFailureResponse(ticker: string, failure: FmpFailure):
     case "FMP_NOT_CONFIGURED":
       return { status: 503, body: { error: "FMP nicht konfiguriert (FMP_API_KEY fehlt).", errorCode, fmpStatus } };
     case "FMP_UPSTREAM_ERROR":
+      // C1 (§7): 402 = Plan deckt das Symbol nicht ab. Hier kommt man nur an, wenn auch Yahoo nichts lieferte.
+      if (fmpStatus === 402) {
+        return { status: 502, body: { error: `Dein FMP-Plan deckt ${ticker} nicht ab (HTTP 402), und der Yahoo-Ersatz liefert für dieses Symbol keinen Kurs.`, errorCode, fmpStatus } };
+      }
       return { status: 502, body: { error: `FMP-Fehler HTTP ${fmpStatus} für ${ticker}.`, errorCode, fmpStatus } };
     case "FMP_UNREACHABLE":
       return { status: 503, body: { error: `Keine Daten für ${ticker} verfügbar. FMP API nicht erreichbar.`, errorCode, fmpStatus } };
@@ -505,7 +510,7 @@ export async function getFmpFallbackData(ticker: string): Promise<{
   financials: { income: any[]; cashflow: any[]; balanceSheet: any[] };
   analyst: { priceTarget: any; grades: any[]; estimates: any[] };
   ohlcv: any[]; segments: any[]; geoSegments: any[]; peers: any[]; ratios: any[];
-  source: 'fmp';
+  source: 'fmp' | 'yahoo';
 } | { failure: FmpFailure }> {
   if (!isFmpAvailable()) {
     console.warn(`[FMP-FALLBACK] FMP_API_KEY not set for ${ticker}`);
@@ -544,6 +549,11 @@ export async function getFmpFallbackData(ticker: string): Promise<{
     if (!quote?.price) {
       const failure = describeFmpFallbackFailure(ticker, quoteRes, settledAll.slice(1));
       console.warn(`[FMP-FALLBACK] No quote data for ${ticker}: ${failure.errorCode} fmpStatus=${failure.fmpStatus ?? "-"} ${failure.message}`);
+      // C1: nur bei 402 (Plan deckt Symbol nicht ab) auf Yahoo ausweichen. Andere Fehler bleiben wie bisher.
+      if (failure.fmpStatus === 402) {
+        const yahoo = await yahooFallbackData(ticker);
+        if (yahoo) return yahoo;
+      }
       return { failure };
     }
     console.log(`[FMP-FALLBACK] OK for ${ticker} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
@@ -593,6 +603,44 @@ export async function getFmpFallbackData(ticker: string): Promise<{
     console.error(`[FMP-FALLBACK] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
     return { failure: classifyFmpError(err) };
   }
+}
+
+/**
+ * C1 (Future_2_NA_Fixes_Research.md §6/§7/§10): FMP 402 → Yahoo liefert Kurs,
+ * Market Cap, PE, EPS und Historie im selben Shape wie der FMP-Pfad. Statements,
+ * Analystendaten, Segmente und Peers bleiben leer (keine erfundenen Werte).
+ * Quelle steht in source='yahoo' und quote/profile._dataSource.
+ */
+export async function yahooFallbackData(ticker: string): Promise<{
+  quote: any; profile: any;
+  financials: { income: any[]; cashflow: any[]; balanceSheet: any[] };
+  analyst: { priceTarget: any; grades: any[]; estimates: any[] };
+  ohlcv: any[]; segments: any[]; geoSegments: any[]; peers: any[]; ratios: any[];
+  source: 'yahoo';
+} | null> {
+  const snap = await getYahooSnapshot(ticker);
+  if (!snap) {
+    console.warn(`[YAHOO-402] ${ticker}: Yahoo liefert keinen Kurs`);
+    return null;
+  }
+  console.log(`[YAHOO-402] ${ticker}: FMP 402 → Yahoo (Kurs ${snap.price} ${snap.currency ?? "?"}, ${snap.bars.length} Bars)`);
+  const marker = { _dataSource: "yahoo" as const, _dataSourceNote: YAHOO_402_NOTICE, _partialCoverage: true };
+  const quote = {
+    symbol: ticker, price: snap.price, marketCap: snap.marketCap, pe: snap.pe, eps: snap.eps,
+    name: snap.name, currency: snap.currency, exchange: snap.exchange, ...marker,
+  };
+  const profile = {
+    symbol: ticker, companyName: snap.name ?? ticker, currency: snap.currency ?? undefined,
+    exchange: snap.exchange ?? "", marketCap: snap.marketCap, price: snap.price, ...marker,
+  };
+  const ohlcv = [...snap.bars].reverse().map(({ source: _s, ...bar }) => bar); // FMP-Reihenfolge: neueste zuerst
+  return {
+    quote, profile,
+    financials: { income: [], cashflow: [], balanceSheet: [] },
+    analyst: { priceTarget: null, grades: [], estimates: [] },
+    ohlcv, segments: [], geoSegments: [], peers: [], ratios: [],
+    source: 'yahoo',
+  };
 }
 
 // ============================================================
