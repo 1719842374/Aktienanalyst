@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { GoldAiscSeries } from "./schema";
 
 // === Gold Analysis Types ===
 
@@ -305,4 +306,7 @@ export interface GoldAnalysis {
   gates?: GoldModelGate[];
   /** RSI, MA200, MA-Spread, MACD, Volumen. Gleich `adaptiveScore.technicalSignals`. */
   technicalSignals?: GoldAdaptiveSignal[];
+  /** Future_10 §5 (B1): Quartals-AISC NEM/B/AEM für die gestufte Chart-Linie. Nur Anzeige, kein Score.
+   * null, wenn server/data/gold-aisc.json fehlt oder ungültig ist; fehlt bei älteren Antworten. */
+  aiscLine?: GoldAiscSeries | null;
 }
