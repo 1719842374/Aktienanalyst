@@ -127,7 +127,8 @@ const divTrig = (d: any) => buildBiasDecision(d).triggers.find(t => t.id === "dc
 {
   // Statischer Nachweis: Server-finalScore entsteht vor applyBiasFix und liest biasFix nicht.
   const route = readFileSync("server/analyze-route.ts", "utf8");
-  const iScore = route.indexOf("scoring = buildScoringForAnalysis(");
+  // Seit #252: „scoring = yahooOnly ? undefined : buildScoringForAnalysis(“ → Zuweisung mit optionalem Ternary-Guard matchen.
+  const iScore = route.search(/\bscoring\s*=\s*(?:[\w.!]+\s*\?\s*undefined\s*:\s*)?buildScoringForAnalysis\(/);
   const iBias = route.indexOf("applyBiasFix(analysis);");
   check("analyze-route: buildScoringForAnalysis läuft vor applyBiasFix", iScore > 0 && iBias > iScore);
   for (const p of ["server/scoring-integration.ts", "server/scoring-gates.ts"]) {
