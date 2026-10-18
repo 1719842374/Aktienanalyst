@@ -58,3 +58,26 @@ export function discardRejectedOverrides(storage: KeyValueStore | null, ticker: 
   if (storage) writeOverrides(storage, ticker, empty);
   return empty;
 }
+
+/** Stabschef-Follow-up #258: sichtbarer Hinweis nach dem automatischen Verwerfen (statt nur console.warn). */
+export const PEER_RESET_NOTICE_TEXT = "Peer-Anpassungen zurückgesetzt (ungültig)";
+
+/** Ticker, dessen Overrides nach einem 400 verworfen wurden; null = kein Hinweis. */
+export type PeerResetNotice = { ticker: string } | null;
+
+/**
+ * Hinweis-Zustand nach einer erfolgreichen Analyse. Der Neu-Lauf direkt nach dem Verwerfen
+ * (`peerResetRecovery: true`) lässt den Hinweis stehen; jede weitere erfolgreiche Analyse räumt ihn ab.
+ */
+export function peerResetNoticeAfterSuccess(
+  current: PeerResetNotice,
+  variables: { peerResetRecovery?: boolean } | null | undefined,
+): PeerResetNotice {
+  return variables?.peerResetRecovery ? current : null;
+}
+
+/** Hinweis nur beim betroffenen Ticker zeigen. */
+export function peerResetNoticeFor(notice: PeerResetNotice, ticker: string | null | undefined): PeerResetNotice {
+  if (!notice || !ticker) return null;
+  return notice.ticker.toUpperCase() === ticker.toUpperCase() ? notice : null;
+}

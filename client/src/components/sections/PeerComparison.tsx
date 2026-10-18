@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import type { StockAnalysis, PeerCompany } from "@shared/schema";
 import type { PeerNaFill } from "@shared/peer-na-fill";
 import { ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from "lucide-react";
-import { addListFull, removeListFull } from "@/lib/peerOverrideLimits";
+import { PEER_RESET_NOTICE_TEXT, addListFull, removeListFull } from "@/lib/peerOverrideLimits";
 
 function fmt(v: number | null | undefined, decimals = 1): string {
   if (v == null || isNaN(v) || !isFinite(v)) return "—";
@@ -88,6 +88,21 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
   const addCapReached = addListFull(activeAdd);
   const capReached = visibleCapReached || addCapReached;
   const notAdopted = missingAddedPeers(activeAdd, visiblePeers, data.ticker);
+
+  // Sort peers. #258: vor dem Early-Return (leere Peer-Liste), damit die Hook-Reihenfolge
+  // beim Wechsel 0 Peers <-> Peers gleich bleibt (sonst "Rendered more/fewer hooks").
+  const sortedPeers = useMemo(() => {
+    if (!sortKey) return visiblePeers;
+    return [...visiblePeers].sort((a, b) => {
+      const av = sanitizedMetricValue(sortKey, (a as any)[sortKey]);
+      const bv = sanitizedMetricValue(sortKey, (b as any)[sortKey]);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (sortKey === "ticker") return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+  }, [visiblePeers, sortKey, sortDir]);
 
   const handleAddTicker = () => {
     if (!onOverridesChange) return;
@@ -176,20 +191,6 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
     // news-peers.ts extractRoicFromKeyMetricsRows).
     { key: "roic5Y", label: "ROIC 5Y Ø", lowerIsBetter: false, decimals: 1, suffix: "%" },
   ];
-
-  // Sort peers
-  const sortedPeers = useMemo(() => {
-    if (!sortKey) return peers;
-    return [...peers].sort((a, b) => {
-      const av = sanitizedMetricValue(sortKey, (a as any)[sortKey]);
-      const bv = sanitizedMetricValue(sortKey, (b as any)[sortKey]);
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      if (sortKey === "ticker") return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
-      return sortDir === "asc" ? av - bv : bv - av;
-    });
-  }, [peers, sortKey, sortDir]);
 
   // Toggle sort
   function handleSort(key: SortKey) {
@@ -491,6 +492,33 @@ export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, ha
 }
 
 type PeerCol = { key: SortKey; label: string; lowerIsBetter: boolean; decimals: number; suffix: string };
+
+/** Stabschef-Follow-up #258: Hinweis nach automatischem Verwerfen abgelehnter Overrides (400). */
+export function PeerOverrideResetNotice({ ticker, onDismiss }: { ticker: string; onDismiss?: () => void }) {
+  return (
+    <div
+      role="status"
+      className="mt-4 flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-300"
+      data-testid="peer-reset-notice"
+    >
+      <span className="flex-1">
+        {PEER_RESET_NOTICE_TEXT} — die gespeicherten Peer-Anpassungen für {ticker} wurden vom Server abgelehnt; Standard-Peers geladen.
+      </span>
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 text-amber-300/70 hover:text-amber-200"
+          aria-label="Hinweis schließen"
+          title="Hinweis schließen"
+          data-testid="button-peer-reset-notice-dismiss"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
 
 function KiBadge({ testId }: { testId?: string }) {
   return (

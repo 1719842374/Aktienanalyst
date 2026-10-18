@@ -6,7 +6,7 @@ import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded,
 import { formatNumber } from "../../lib/formatters";
 import { apiRequest } from "../../lib/queryClient";
 import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "lucide-react";
-import PeerComparison from "./PeerComparison";
+import PeerComparison, { PeerOverrideResetNotice } from "./PeerComparison";
 import EpsGrowthChart from "./EpsGrowthChart";
 
 interface Props {
@@ -14,9 +14,12 @@ interface Props {
   onPeerOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void;
   /** True while the in-flight analyze carries peer overrides. */
   peerBusy?: boolean;
+  /** #258: Ticker, dessen Peer-Overrides nach einem 400 verworfen wurden (Hinweis), sonst null. */
+  peerResetNotice?: string | null;
+  onDismissPeerResetNotice?: () => void;
 }
 
-export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Props) {
+export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerResetNotice = null, onDismissPeerResetNotice }: Props) {
   // Use TTM sector avg for TTM stock P/E, and forward sector avg for forward stock P/E
   // Fallback: if backend didn't ship sectorAvgForwardPE (older cached payloads), fall back to TTM to avoid NaN
   const sectorFwdPE = data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE;
@@ -604,6 +607,9 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
           <EpsGrowthChart data={data} />
         </div>
       )}
+
+      {/* #258: Hinweis nach automatischem Verwerfen (400), unabhängig davon, ob der Peer-Block sichtbar ist. */}
+      {peerResetNotice && <PeerOverrideResetNotice ticker={peerResetNotice} onDismiss={onDismissPeerResetNotice} />}
 
       {/* Peer Comparison. Banner und KI-Ticker kommen vom Server. Kennzahlen der KI-Zeilen sind FMP. */}
       {(data.peerSet?.banner || peerGap > 0 || hasActivePeerOverrides || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
