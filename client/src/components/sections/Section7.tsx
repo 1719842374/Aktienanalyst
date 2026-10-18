@@ -6,7 +6,7 @@ import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded,
 import { formatNumber } from "../../lib/formatters";
 import { apiRequest } from "../../lib/queryClient";
 import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "lucide-react";
-import PeerComparison from "./PeerComparison";
+import PeerComparison, { PeerOverrideResetNotice } from "./PeerComparison";
 import EpsGrowthChart from "./EpsGrowthChart";
 
 interface Props {
@@ -14,9 +14,12 @@ interface Props {
   onPeerOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void;
   /** True while the in-flight analyze carries peer overrides. */
   peerBusy?: boolean;
+  /** #258: Ticker, dessen Peer-Overrides nach einem 400 verworfen wurden (Hinweis), sonst null. */
+  peerResetNotice?: string | null;
+  onDismissPeerResetNotice?: () => void;
 }
 
-export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Props) {
+export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerResetNotice = null, onDismissPeerResetNotice }: Props) {
   // Use TTM sector avg for TTM stock P/E, and forward sector avg for forward stock P/E
   // Fallback: if backend didn't ship sectorAvgForwardPE (older cached payloads), fall back to TTM to avoid NaN
   const sectorFwdPE = data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE;
@@ -52,6 +55,8 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
   const [peerKiError, setPeerKiError] = useState<string | null>(null);
   const peerKiRequest = useRef(0);
   const factPeerCount = data.peerSet?.peerCount ?? data.peerComparison?.peers?.length ?? 0;
+  // #258 FAIL 3: aktive Overrides (z.B. alle Peers entfernt → peerComparison null) brauchen den Weg zurück.
+  const hasActivePeerOverrides = (data.activePeerOverrides?.add?.length ?? 0) > 0 || (data.activePeerOverrides?.remove?.length ?? 0) > 0;
   const peerGap = peersNeeded(factPeerCount);
 
   const tamSegmentSig = useMemo(() => {
@@ -603,8 +608,11 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
         </div>
       )}
 
+      {/* #258: Hinweis nach automatischem Verwerfen (400), unabhängig davon, ob der Peer-Block sichtbar ist. */}
+      {peerResetNotice && <PeerOverrideResetNotice ticker={peerResetNotice} onDismiss={onDismissPeerResetNotice} />}
+
       {/* Peer Comparison. Banner und KI-Ticker kommen vom Server. Kennzahlen der KI-Zeilen sind FMP. */}
-      {(data.peerSet?.banner || peerGap > 0 || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
+      {(data.peerSet?.banner || peerGap > 0 || hasActivePeerOverrides || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
         <div className="mt-4 pt-4 border-t border-border">
           <div className="flex flex-wrap items-center gap-1.5 mb-2">
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Peer-Vergleich (Wettbewerber)</h3>
@@ -668,7 +676,9 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
               {data.peerSet.banner}
             </div>
           )}
-          {((data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
+          {/* #258 FAIL 3: mit Override-Callback immer rendern, auch bei peerComparison null / 0 Peers,
+              damit Eingabefeld und „Standard wiederherstellen“ (Empty-State in PeerComparison) erreichbar sind. */}
+          {(!!onPeerOverridesChange || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
             <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} peerBusy={peerBusy} />
           )}
         </div>
