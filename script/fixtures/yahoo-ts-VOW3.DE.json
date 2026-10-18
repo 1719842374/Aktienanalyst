@@ -1,0 +1,346 @@
+{
+ "_fixture": {
+  "chart": {
+   "source": "/workspace/mcap-research/chart_VOW3.DE.json (MCap-Recherche, live vom Box 18.10.2026 21:55 MESZ, v8 chart range=5d ohne Crumb), unverändert",
+   "sha256": "9abddb64ec5616b307027bc1ef7e1e45f395f989c96d4fe6c0abb86ba1af2d56"
+  },
+  "timeseries": {
+   "url": "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/VOW3.DE?type=quarterlyOrdinarySharesNumber,annualOrdinarySharesNumber,trailingDilutedEPS&period1=<jetzt-2J>&period2=<jetzt>",
+   "fetchedAt": "2026-10-18T22:05+02:00",
+   "http": 200,
+   "auth": "kein Cookie, kein Crumb, Browser-UA wie server/yahoo-fetcher.ts",
+   "sha256": "1177f63894ab84f3023758435bae4858b4b690360593cbe4e4d771d13ed05d5b"
+  },
+  "quoteSummaryRef": {
+   "source": "/workspace/mcap-research/app-yahoo-client-box.log (App-Client server/yahoo-fetcher.ts auf main 122762b mit Crumb, Box, 18.10.2026 21:56 MESZ), RESULT-Zeile unverändert"
+  }
+ },
+ "chart": {
+  "result": [
+   {
+    "meta": {
+     "currency": "EUR",
+     "symbol": "VOW3.DE",
+     "exchangeName": "GER",
+     "fullExchangeName": "XETRA",
+     "instrumentType": "EQUITY",
+     "firstTradeDate": 901090800,
+     "regularMarketTime": 1792164982,
+     "hasPrePostMarketData": false,
+     "gmtoffset": 7200,
+     "timezone": "CEST",
+     "exchangeTimezoneName": "Europe/Berlin",
+     "regularMarketPrice": 68.68,
+     "regularMarketChangePercent": 2.784,
+     "fulldayPrice": 68.68,
+     "fulldayChange": 1.86,
+     "fulldayChangePercent": 2.784,
+     "fiftyTwoWeekHigh": 109.15,
+     "fiftyTwoWeekLow": 65.92,
+     "regularMarketDayHigh": 69.56,
+     "regularMarketDayLow": 67.04,
+     "regularMarketVolume": 1475524,
+     "longName": "Volkswagen AG",
+     "shortName": "VOLKSWAGEN AG                 V",
+     "chartPreviousClose": 68.0,
+     "priceHint": 2,
+     "currentTradingPeriod": {
+      "pre": {
+       "timezone": "CEST",
+       "end": 1792134000,
+       "start": 1792126800,
+       "gmtoffset": 7200
+      },
+      "regular": {
+       "timezone": "CEST",
+       "end": 1792164600,
+       "start": 1792134000,
+       "gmtoffset": 7200
+      },
+      "post": {
+       "timezone": "CEST",
+       "end": 1792175400,
+       "start": 1792164600,
+       "gmtoffset": 7200
+      }
+     },
+     "dataGranularity": "1d",
+     "range": "5d",
+     "validRanges": [
+      "1d",
+      "5d",
+      "1mo",
+      "3mo",
+      "6mo",
+      "1y",
+      "2y",
+      "5y",
+      "10y",
+      "ytd",
+      "max"
+     ]
+    },
+    "timestamp": [
+     1791788400,
+     1791874800,
+     1791961200,
+     1792047600,
+     1792134000
+    ],
+    "indicators": {
+     "quote": [
+      {
+       "volume": [
+        771143,
+        471927,
+        1247070,
+        1023972,
+        1475524
+       ],
+       "open": [
+        68.80000305175781,
+        69.22000122070312,
+        68.72000122070312,
+        67.36000061035156,
+        67.04000091552734
+       ],
+       "low": [
+        68.0,
+        68.36000061035156,
+        67.04000091552734,
+        65.91999816894531,
+        67.04000091552734
+       ],
+       "high": [
+        69.4000015258789,
+        69.54000091552734,
+        68.83999633789062,
+        67.87999725341797,
+        69.55999755859375
+       ],
+       "close": [
+        68.4000015258789,
+        68.86000061035156,
+        67.04000091552734,
+        66.81999969482422,
+        68.68000030517578
+       ]
+      }
+     ],
+     "adjclose": [
+      {
+       "adjclose": [
+        68.4000015258789,
+        68.86000061035156,
+        67.04000091552734,
+        66.81999969482422,
+        68.68000030517578
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "error": null
+ },
+ "timeseries": {
+  "result": [
+   {
+    "meta": {
+     "symbol": [
+      "VOW3.DE"
+     ],
+     "type": [
+      "annualOrdinarySharesNumber"
+     ]
+    },
+    "timestamp": [
+     1735603200,
+     1767139200
+    ],
+    "annualOrdinarySharesNumber": [
+     {
+      "dataId": 23393,
+      "asOfDate": "2024-12-31",
+      "periodType": "12M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 501295263.0,
+       "fmt": "501.30M"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-12-31",
+      "periodType": "12M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 501295263.0,
+       "fmt": "501.30M"
+      }
+     }
+    ]
+   },
+   {
+    "meta": {
+     "symbol": [
+      "VOW3.DE"
+     ],
+     "type": [
+      "quarterlyOrdinarySharesNumber"
+     ]
+    },
+    "timestamp": [
+     1743379200,
+     1751241600,
+     1767139200,
+     1774915200,
+     1782777600
+    ],
+    "quarterlyOrdinarySharesNumber": [
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-03-31",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 501295263.0,
+       "fmt": "501.30M"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-06-30",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 501295263.0,
+       "fmt": "501.30M"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-12-31",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 501295263.0,
+       "fmt": "501.30M"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2026-03-31",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 501295263.0,
+       "fmt": "501.30M"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2026-06-30",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 501295263.0,
+       "fmt": "501.30M"
+      }
+     }
+    ]
+   },
+   {
+    "meta": {
+     "symbol": [
+      "VOW3.DE"
+     ],
+     "type": [
+      "trailingDilutedEPS"
+     ]
+    },
+    "timestamp": [
+     1735603200,
+     1743379200,
+     1751241600,
+     1767139200,
+     1774915200,
+     1782777600
+    ],
+    "trailingDilutedEPS": [
+     {
+      "dataId": 29009,
+      "asOfDate": "2024-12-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 21.36,
+       "fmt": "21.36"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-03-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 18.56,
+       "fmt": "18.56"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-06-30",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 16.76,
+       "fmt": "16.76"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-12-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 13.29,
+       "fmt": "13.29"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2026-03-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 12.21,
+       "fmt": "12.21"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2026-06-30",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 10.43,
+       "fmt": "10.43"
+      }
+     }
+    ]
+   }
+  ],
+  "error": null
+ },
+ "quoteSummaryRef": {
+  "price": 68.68,
+  "currency": "EUR",
+  "marketCap": 34428960768,
+  "pe": 6.578544,
+  "eps": 10.44,
+  "name": "Volkswagen AG",
+  "bars": 2794,
+  "fa": true
+ }
+}
