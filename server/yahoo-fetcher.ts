@@ -254,7 +254,8 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
     console.warn(`[YAHOO-402] ${key}: ${String(err?.message ?? err).slice(0, 120)}`);
     return null;
   });
-  const withMeta = p.then(applyChartMetaFallback).then(applyTimeseriesFundamentals);
+  // Ersatzstufen A (Chart-Meta) und B (timeseries) NUR für .DE (Philip 18.10.2026 22:27); alle anderen Ticker wie main.
+  const withMeta = isGermanXetraTicker(key) ? p.then(applyChartMetaFallback).then(applyTimeseriesFundamentals) : p;
   inflight.set(key, withMeta);
   try {
     const value = await withMeta;
@@ -267,6 +268,15 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
 
 /** Klarer Hinweistext (Spec §7), wenn FMP 402 liefert und Yahoo übernimmt. */
 export const YAHOO_402_NOTICE = "Plan deckt dieses Symbol nicht ab – Yahoo-Kurs/History aktiv";
+
+/**
+ * Gate für die automatischen Ersatzstufen A (Chart-Meta) und B (fundamentals-timeseries) im Snapshot-Pfad:
+ * nur Ticker mit Suffix `.DE` (Philip 18.10.2026 22:27). US, .L, .AS, .SW, .T, .PA usw. bleiben exakt wie auf main
+ * (kein Zusatz-Call, keine zusätzliche [YAHOO-DIAG]-Zeile).
+ */
+export function isGermanXetraTicker(symbol: string): boolean {
+  return /\.DE$/i.test(String(symbol ?? "").trim());
+}
 
 // ─── Chart-Meta-Ersatz (Render: getcrumb 429 → quoteSummary fehlt) ───
 // Die v8-Chart-API braucht keinen Crumb und nennt in `meta` Währung, Börse und Namen. Fehlt quoteSummary
@@ -300,13 +310,14 @@ async function fetchYahooChartMeta(symbol: string): Promise<YahooChartMeta | nul
 }
 
 /**
- * Ergänzt fehlende Name/Währung/Börse eines Snapshots aus der Chart-Meta. Kein Call, wenn alle drei schon
+ * (Nur .DE, sonst Snapshot unverändert.) Ergänzt fehlende Name/Währung/Börse eines Snapshots aus der Chart-Meta. Kein Call, wenn alle drei schon
  * gesetzt sind (quoteSummary ok → Snapshot unverändert). Kurs kommt ohne quoteSummary aus den Bars, die
  * history-fallback schon in die Major-Einheit bringt (yahooBarsToMajor) → Minor-Code (GBp) wird dann als
  * Major (GBP) gemeldet, damit Kurs und Währung zusammenpassen. Keine Umrechnung von Werten.
  */
 export async function applyChartMetaFallback(snap: YahooSnapshot | null): Promise<YahooSnapshot | null> {
-  if (!snap || (snap.currency && snap.name && snap.exchange)) return snap;
+  if (!snap || !isGermanXetraTicker(snap.symbol)) return snap; // nur .DE
+  if (snap.currency && snap.name && snap.exchange) return snap;
   const meta = await fetchYahooChartMeta(snap.symbol);
   if (!meta) return snap;
   let currency = meta.currency;
@@ -417,6 +428,10 @@ const tsCache = new Map<string, { value: YahooTimeseriesFundamentals; at: number
  * Stufe 2 (Yahoo ohne Crumb): Name/Währung/Börse/Kurs aus der v8-Chart-Meta (oder aus opts), Aktienzahl und
  * trailingDilutedEPS aus fundamentals-timeseries. Wirft nie; Fehler stehen in `status`/`httpStatus`, Werte sind dann null.
  * Gecacht pro Symbol+Kurs+Währung (15 min, Fehlschläge 2 min). Je timeseries-Call eine Zeile [YAHOO-DIAG] stage=timeseries.
+ *
+ * Hinweis: Der direkte Aufruf dieser Funktion ist NICHT auf `.DE` begrenzt (z. B. für feat/fmp-adr-mapping).
+ * Nur die automatische Ersatzstufe im Snapshot-Pfad (getYahooSnapshot → applyTimeseriesFundamentals) läuft
+ * ausschließlich für `.DE` (isGermanXetraTicker). Wer sie direkt aufruft, entscheidet selbst über das Gate.
  */
 export async function fetchYahooTimeseriesFundamentals(symbol: string, opts: YahooTimeseriesOpts = {}): Promise<YahooTimeseriesFundamentals> {
   const sym = String(symbol || "").trim().toUpperCase();
@@ -497,9 +512,10 @@ async function fetchYahooChartMetaWithPrice(symbol: string): Promise<(YahooChart
   }
 }
 
-/** Snapshot-Stufe: ergänzt fehlende marketCap/eps/pe über fetchYahooTimeseriesFundamentals, wenn quoteSummary fehlt. Wirft nie. */
+/** Snapshot-Stufe (nur .DE): ergänzt fehlende marketCap/eps/pe über fetchYahooTimeseriesFundamentals, wenn quoteSummary fehlt. Wirft nie. */
 export async function applyTimeseriesFundamentals(snap: YahooSnapshot | null): Promise<YahooSnapshot | null> {
-  if (!snap || snap.fundamentalsAvailable) return snap; // quoteSummary ok → unverändert, kein Call
+  if (!snap || !isGermanXetraTicker(snap.symbol)) return snap; // nur .DE
+  if (snap.fundamentalsAvailable) return snap; // quoteSummary ok → unverändert, kein Call
   if (snap.marketCap != null && snap.eps != null && snap.pe != null) return snap;
   // Nur mit bestätigtem Listing (Währung + Name oder Börse aus der Chart-Meta): sonst kein „selbe Währung“-Check → n/a, kein Call.
   // (Eine nur aus dem Börsen-Suffix geratene Währung reicht nicht.)

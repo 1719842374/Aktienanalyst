@@ -4,6 +4,11 @@
  * timeseries = live vom Box 22:05 (exakte URL des Codes, ohne Cookie/Crumb, Browser-UA), quoteSummaryRef = RESULT-Zeile
  * des App-Clients mit Crumb (app-yahoo-client-box.log). Ticker: VOW3.DE, SAP.DE, BMW.DE, NESN.SW, 7203.T, MC.PA, ASML.AS.
  *
+ * Gate nur .DE (Philip 18.10.2026 22:27): Die automatische Stufe im Snapshot-Pfad läuft nur für VOW3.DE, SAP.DE, BMW.DE.
+ * NESN.SW, 7203.T, MC.PA, ASML.AS, VOD.L, AAPL → getYahooSnapshot deepEqual main, kein Meta-/timeseries-Call, keine
+ * zusätzliche DIAG-Zeile. Die Fixtures der Nicht-.DE-Ticker bleiben und belegen den (ungegateten) Direktaufruf
+ * fetchYahooTimeseriesFundamentals.
+ *
  * Prüft: MCap = Kurs × quarterlyOrdinarySharesNumber (Abw. zu quoteSummary ≤ 0,55 %), EPS = trailingDilutedEPS,
  * KGV = Kurs/EPS, Währung/Name aus Chart-Meta, [YAHOO-DIAG] stage=timeseries mit Status; Fehlerpfade (429, Throw,
  * leer, andere Währung, EPS ≤ 0, zu alt, keine Meta) → null/n/a ohne Crash; quoteSummary ok → kein Call, deepEqual main;
@@ -30,11 +35,14 @@ const ROOT = path.resolve(HERE, "..");
 const LEGACY_REF = "122762b3";
 const LEGACY_PATH = `${ROOT}/server/__yahoo-fetcher-legacy-ts.test-tmp.ts`;
 const TICKERS = ["VOW3.DE", "SAP.DE", "BMW.DE", "NESN.SW", "7203.T", "MC.PA", "ASML.AS"] as const;
+const DE_TICKERS = TICKERS.filter((t) => t.endsWith(".DE"));
+const NON_DE_TICKERS = TICKERS.filter((t) => !t.endsWith(".DE"));
 
 let fail = 0, n = 0;
 const check = (name: string, ok: boolean, detail = "") => { n++; console.log(`${ok ? "✅" : "❌"} ${name}${detail ? ` (${detail})` : ""}`); if (!ok) fail++; };
 const FIX: Record<string, any> = Object.fromEntries(TICKERS.map((t) => [t, JSON.parse(readFileSync(`${HERE}/fixtures/yahoo-ts-${t}.json`, "utf8"))]));
 const VOD = JSON.parse(readFileSync(`${HERE}/fixtures/yahoo-chart-VOD.L.json`, "utf8"));
+const AAPL = JSON.parse(readFileSync(`${HERE}/fixtures/yahoo-chart-AAPL.json`, "utf8"));
 const jsonResp = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const latest = (ts: any, type: string) => { let b: any = null; for (const r of ts.result) for (const row of r[type] ?? []) if (row && (!b || row.asOfDate > b.asOfDate)) b = row; return b; };
 
@@ -55,7 +63,7 @@ function install(mode: Mode) {
     const sym = decodeURIComponent((url.match(/\/(?:chart|timeseries)\/([^?]+)/) ?? [])[1] ?? "");
     const fx = FIX[sym];
     if (url.includes("/v8/finance/chart/")) {
-      const chart = fx?.chart ?? (sym === "VOD.L" ? VOD.chart : null);
+      const chart = fx?.chart ?? (sym === "VOD.L" ? VOD.chart : sym === "AAPL" ? AAPL.chart : null);
       if (!chart) return new Response("nf", { status: 404 });
       if (mode.chartNoMeta) return jsonResp({ chart: { result: [{ ...chart.result[0], meta: undefined }] } });
       return jsonResp({ chart });
@@ -88,8 +96,9 @@ try {
   const alt = await import("../server/__yahoo-fetcher-legacy-ts.test-tmp");
   const snap = async (t: string, mode: Mode) => { install(mode); neu.clearYahooCache(); return capture(() => neu.getYahooSnapshot(t)); };
 
-  console.log("=== 7 Ticker: getcrumb 429 → timeseries + Chart (echte Antworten) ===");
-  for (const t of TICKERS) {
+  console.log("=== .DE-Ticker: getcrumb 429 → timeseries + Chart (echte Antworten) ===");
+  check("Gate: DE_TICKERS = VOW3.DE, SAP.DE, BMW.DE", JSON.stringify(DE_TICKERS) === JSON.stringify(["VOW3.DE", "SAP.DE", "BMW.DE"]) && DE_TICKERS.every((t) => neu.isGermanXetraTicker(t)) && !NON_DE_TICKERS.some((t) => neu.isGermanXetraTicker(t)));
+  for (const t of DE_TICKERS) {
     const f = FIX[t], ref = f.quoteSummaryRef, meta = f.chart.result[0].meta;
     const sh = latest(f.timeseries, "quarterlyOrdinarySharesNumber"), ep = latest(f.timeseries, "trailingDilutedEPS");
     const { v: s, lines } = await snap(t, {});
@@ -98,11 +107,40 @@ try {
     check(`${t}: Name aus Chart-Meta „${s?.name}“`, s?.name === meta.longName && typeof s?.name === "string");
     check(`${t}: MCap = Kurs × quarterlyOrdinarySharesNumber (${sh.asOfDate}), Abw. zu quoteSummary ${dev.toFixed(3)} % ≤ 0,55 %`, s?.marketCap === s!.price * sh.reportedValue.raw && Math.abs(dev) <= 0.55);
     check(`${t}: EPS = trailingDilutedEPS ${ep.reportedValue.raw} ${ep.currencyCode} (${ep.asOfDate}), KGV = Kurs/EPS ${s?.pe?.toFixed(2)} (quoteSummary ${ref.pe.toFixed(2)})`, s?.eps === ep.reportedValue.raw && s?.pe === s!.price / ep.reportedValue.raw);
-    if (t !== "ASML.AS") check(`${t}: KGV ≈ quoteSummary (|Abw.| < 0,5 %)`, Math.abs(pct(s!.pe!, ref.pe)) < 0.5, `${pct(s!.pe!, ref.pe).toFixed(3)} %`);
-    else check(`ASML.AS: KGV weicht ab (timeseries-EPS Stand 30.06. vs. quoteSummary nach Q3) — dokumentiert, kein Ersatz`, s?.eps === 25.41 && ref.eps === 34.98, `PE ${s?.pe?.toFixed(2)} vs ${ref.pe.toFixed(2)}`);
+    check(`${t}: KGV ≈ quoteSummary (|Abw.| < 0,5 %)`, Math.abs(pct(s!.pe!, ref.pe)) < 0.5, `${pct(s!.pe!, ref.pe).toFixed(3)} %`);
     check(`${t}: fundamentalsSource "Yahoo timeseries", Stichtage, fundamentalsAvailable false`, s?.fundamentalsSource === "Yahoo timeseries" && s?.timeseriesAsOf?.shares === sh.asOfDate && s?.timeseriesAsOf?.eps === ep.asOfDate && s?.fundamentalsAvailable === false);
     const d = lines.filter((l) => l.includes("stage=timeseries"));
     check(`${t}: genau eine [YAHOO-DIAG] stage=timeseries status=200`, d.length === 1 && /^\[YAHOO-DIAG\] \S+ stage=timeseries status=200 ok: MCap Kurs × Aktien/.test(d[0]), d[0]);
+  }
+
+  console.log("\n=== Nicht-.DE (Gate): getYahooSnapshot exakt wie main, kein Zusatz-Call, keine Zusatz-DIAG ===");
+  for (const t of [...NON_DE_TICKERS, "VOD.L", "AAPL"]) {
+    install({}); alt.clearYahooCache();
+    const a = await capture(() => alt.getYahooSnapshot(t));
+    const callsAlt = [...calls];
+    const { v: s, lines } = await snap(t, {});
+    let same = true; try { assert.deepEqual(s, a.v); } catch { same = false; }
+    check(`${t}: Snapshot deepEqual main (MCap/KGV/EPS/currency/name null wie main, keine Quellenfelder)`, same && s != null && s.marketCap === null && s.currency === null && s.fundamentalsSource === undefined && s.metaSource === undefined);
+    check(`${t}: kein timeseries-/Meta-Call, Calls = main, DIAG-Zeilen = main (keine stage=timeseries)`, tsCalls() === 0 && calls.filter((u) => u.includes("range=5d")).length === 0 && JSON.stringify(calls) === JSON.stringify(callsAlt) && JSON.stringify(lines) === JSON.stringify(a.lines) && !lines.some((l) => l.includes("stage=timeseries")), `calls ${calls.length}/${callsAlt.length}`);
+  }
+  {
+    install({}); alt.clearYahooCache();
+    const base = await capture(() => alt.getYahooSnapshot("ASML.AS")).then((r) => r.v);
+    install({});
+    const r = await capture(() => neu.applyTimeseriesFundamentals(base ? { ...base, currency: "EUR", name: "ASML Holding N.V." } : base));
+    check("applyTimeseriesFundamentals(ASML.AS-Snapshot mit Währung/Name) direkt: unverändert, kein Call (Gate in der Stufe)", r.v?.marketCap === null && r.v?.fundamentalsSource === undefined && calls.length === 0);
+  }
+
+  console.log("\n=== Direktaufruf fetchYahooTimeseriesFundamentals (NICHT gegatet) mit den Nicht-.DE-Fixtures ===");
+  for (const t of NON_DE_TICKERS) {
+    const f = FIX[t], ref = f.quoteSummaryRef;
+    const sh = latest(f.timeseries, "quarterlyOrdinarySharesNumber"), ep = latest(f.timeseries, "trailingDilutedEPS");
+    install({}); neu.clearYahooCache();
+    const { v: r, lines } = await capture(() => neu.fetchYahooTimeseriesFundamentals(t));
+    const dev = r.marketCap != null ? pct(r.marketCap, ref.marketCap) : NaN;
+    check(`${t} direkt: status ok, Währung ${r.currency} = ${ref.currency}, MCap Abw. ${dev.toFixed(3)} % ≤ 0,55 %, EPS ${ep.reportedValue.raw} (${ep.asOfDate}), eine DIAG-Zeile`,
+      r.status === "ok" && r.currency === ref.currency && r.marketCap === r.price! * sh.reportedValue.raw && Math.abs(dev) <= 0.55 && r.epsDiluted === ep.reportedValue.raw && lines.filter((l) => l.includes("stage=timeseries")).length === 1);
+    if (t === "ASML.AS") check("ASML.AS direkt: KGV weicht ab (timeseries-EPS Stand 30.06. vs. quoteSummary nach Q3) — dokumentiert; im App-Pfad ASML nicht betroffen (Gate)", r.epsDiluted === 25.41 && ref.eps === 34.98, `PE ${r.pe?.toFixed(2)} vs ${ref.pe.toFixed(2)}`);
   }
 
   console.log("\n=== Fehlerpfade → n/a (null), kein Crash ===");
@@ -175,13 +213,19 @@ try {
   registerAnalyzeRoute(server, app);
   await new Promise((r) => server.once("listening", r));
   const port = (server.address() as any).port;
-  for (const t of ["VOW3.DE", "7203.T"]) {
+  for (const t of ["VOW3.DE", "BMW.DE"]) {
     install({}); neu.clearYahooCache();
     const r = await capture(() => realFetch(`http://127.0.0.1:${port}/api/analyze`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ticker: t, useLLM: false, force: true }) }).then(async (x) => ({ status: x.status, body: await x.json() }))).then((q) => q.v);
     const b = r.body, ref = FIX[t].quoteSummaryRef;
     check(`${t}: HTTP 200, dataSource yahoo, currency ${ref.currency}`, r.status === 200 && b.dataSource === "yahoo" && b.currency === ref.currency, `${b.dataSource} ${b.currency}`);
     check(`${t}: marketCap ${b.marketCap} (Abw. zu quoteSummary ${pct(b.marketCap, ref.marketCap).toFixed(3)} %), peRatio ${b.peRatio?.toFixed?.(2)}, epsTTM ${b.epsTTM}`, Math.abs(pct(b.marketCap, ref.marketCap)) <= 0.55 && b.peRatio > 0 && b.epsTTM > 0);
     check(`${t}: Score/Rating/DCF bleiben n/a (C1-Gate unverändert)`, b.scoring === undefined && b.biasFix === undefined && b.dcfFairValue === null && b.upsidePotential === null);
+  }
+  for (const t of ["7203.T", "ASML.AS"]) {
+    install({}); neu.clearYahooCache();
+    const r = await capture(() => realFetch(`http://127.0.0.1:${port}/api/analyze`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ticker: t, useLLM: false, force: true }) }).then(async (x) => ({ status: x.status, body: await x.json() })));
+    const b = r.v.body;
+    check(`${t} (Gate): HTTP ${r.v.status}, kein timeseries-/Meta-Call, keine stage=timeseries-Zeile (wie main)`, tsCalls() === 0 && calls.filter((u) => u.includes("range=5d")).length === 0 && !r.lines.some((l) => l.includes("stage=timeseries")) && !r.lines.some((l) => l.includes("chart meta")), `dataSource ${b?.dataSource} currency ${b?.currency} marketCap ${b?.marketCap}`);
   }
   server.close();
 } finally {
