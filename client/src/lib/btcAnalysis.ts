@@ -2,6 +2,14 @@
 // Uses Blockchain.com API for full historical BTC prices (10+ years),
 // CoinGecko simple/price for current price data, and alternative.me for F&G.
 
+import { apiRequest } from "./queryClient";
+import {
+  applyBtcLiquidityBlock,
+  walclByDate,
+  type BtcLiquidityBlock,
+  type BtcLiquidityResponse,
+} from "@shared/btc-liquidity";
+
 // === Types ===
 
 interface BTCIndicator {
@@ -11,6 +19,8 @@ interface BTCIndicator {
   weight: number;
   weighted: number;
   source: string;
+  /** false = n/a (nur Liquiditätsblock; Gewicht 0, nicht im GIS). Fehlt = verfügbar wie bisher. */
+  available?: boolean;
 }
 
 interface MonteCarloResult {
@@ -58,6 +68,8 @@ export interface TechChartPoint {
   m2Yoy?: number | null;
   m2Absolute?: number | null;
   m2AbsoluteLagged?: number | null;
+  /** Fed-Bilanz WALCL in Bio. USD (Wochenwert, auf Kurstage fortgeschrieben), aus /api/analyze-btc/liquidity. */
+  walcl?: number | null;
 }
 
 interface TechSignal {
@@ -88,6 +100,8 @@ export interface BTCAnalysis {
   indicators: BTCIndicator[];
   gis: number;
   gisCalculation: string;
+  /** Liquiditätsblock (WALCL/Bills/DGS10). null = Endpoint nicht erreichbar → GIS ohne Block. */
+  liquidity?: BtcLiquidityBlock | null;
   powerLaw: {
     daysSinceGenesis: number;
     fairValue: number;
@@ -234,6 +248,19 @@ async function fetchText(url: string, timeoutMs = 30000): Promise<string> {
 }
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * GET /api/analyze-btc/liquidity über apiRequest (API_BASE aus queryClient).
+ * null = nicht erreichbar / keine JSON-Antwort → Block n/a, GIS wie ohne Block.
+ */
+async function fetchBtcLiquidity(timeoutMs = 45000): Promise<BtcLiquidityResponse | null> {
+  const res = await apiRequest("GET", "/api/analyze-btc/liquidity", undefined, timeoutMs);
+  if (!res.ok) return null;
+  const text = await res.text();
+  if (text.trim().startsWith("<")) return null;
+  const body = JSON.parse(text) as BtcLiquidityResponse;
+  return body && body.block && Array.isArray(body.block.components) ? body : null;
+}
 
 export interface FiscalMacroSlotInput {
   frontEndImpulse?: { available?: boolean };
@@ -394,7 +421,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
   let hashrateChange = 0; // percent change over 90 days
   let hashrateValue = "";
 
-  const [fngResult, fngHistResult, fredResult, blockchainResult, eurusdResult, hashrateResult, etfFlowResult, fiscalResult] = await Promise.allSettled([
+  const [fngResult, fngHistResult, fredResult, blockchainResult, eurusdResult, hashrateResult, etfFlowResult, fiscalResult, liquidityResult] = await Promise.allSettled([
     fetchJSON("https://api.alternative.me/fng/?limit=1"),
     fetchJSON("https://api.alternative.me/fng/?limit=2000&format=json"),
     fetchText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2024-01-01"),
@@ -403,6 +430,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     fetchJSON("https://mempool.space/api/v1/mining/hashrate/3m"),
     fetchETFFlows(),
     fetchJSON("/api/analyze-btc/fiscal-frontend", 45000),
+    fetchBtcLiquidity(),
   ]);
 
   if (fngResult.status === "fulfilled" && fngResult.value?.data?.[0]) {
@@ -751,7 +779,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
 
   const dxySource = eurusdResult.status === "fulfilled" ? "Binance EUR/USDT" : "Default";
 
-  const indicators: BTCIndicator[] = [
+  const baseIndicators: BTCIndicator[] = [
     { name: "MVRV Z-Score", value: mvrvZScore !== null ? mvrvZScore.toFixed(2) : "N/A", score: mvrvScore, weight: 0.20, source: mvrvZScore !== null ? mvrvSource : "N/A", weighted: 0 },
     { name: "RSI (Weekly)", value: weeklyRSI !== null ? weeklyRSI.toFixed(1) : "N/A", score: rsiScore, weight: 0.15, source: weeklyRSI !== null ? rsiSource : "N/A", weighted: 0 },
     { name: "Fear & Greed", value: `${fearGreedIndex} (${fearGreedLabel})`, score: fgScore, weight: 0.10, source: "alternative.me", weighted: 0 },
@@ -761,10 +789,13 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     { name: "DXY", value: `${dxy.toFixed(2)}`, score: dxyScore, weight: 0.15, source: dxySource, weighted: 0 },
   ].map(ind => ({ ...ind, weighted: ind.score * ind.weight }));
 
-  const gis = indicators.reduce((sum, ind) => sum + ind.weighted, 0);
-  const gisCalculation = indicators
-    .map(ind => `${ind.name}: ${ind.score} × ${ind.weight} = ${ind.weighted.toFixed(4)}`)
-    .join(" + ") + ` = ${gis.toFixed(4)}`;
+  // Liquiditätsblock (shared/btc-liquidity.ts): verfügbar → bisherige Gewichte × (1 − 0.15) + Block × 0.15;
+  // n/a → bisherige 7 Indikatoren unverändert (GIS identisch zu vorher), Zeile „n/a“ mit Gewicht 0.
+  const liquidity = liquidityResult.status === "fulfilled" ? liquidityResult.value : null;
+  const liquidityBlock = liquidity?.block ?? null;
+  const { indicators, gis, gisCalculation } = applyBtcLiquidityBlock(baseIndicators, liquidityBlock) as {
+    indicators: BTCIndicator[]; gis: number; gisCalculation: string;
+  };
 
   // === 7. Cycle Signal ===
   let cycleSignal: number;
@@ -895,6 +926,9 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     // FRED-Overlay optional: BTC-Preis, MAs und Signale bleiben voll nutzbar.
   }
 
+  // WALCL-Overlay: Wochenwerte aus dem Liquiditäts-Endpoint, auf Kurstage fortgeschrieben (max. 14 T.).
+  const walclByDay = liquidity?.walcl?.length ? walclByDate(liquidity.walcl, allPriceData.map(d => d.date)) : {};
+
   // Standard MAs
   const ma20 = calcSMA(closePrices, 20);
   const ma50 = calcSMA(closePrices, 50);
@@ -977,6 +1011,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
       m2Yoy: m2YoyByDate[d.date] ?? null,
       m2Absolute: m2AbsoluteByDate[d.date] ?? null,
       m2AbsoluteLagged: m2AbsoluteLaggedByDate[d.date] ?? null,
+      walcl: walclByDay[d.date] ?? null,
     };
   });
 
@@ -1114,6 +1149,7 @@ export async function analyzeBTC(_force?: boolean): Promise<BTCAnalysis> {
     indicators,
     gis,
     gisCalculation,
+    liquidity: liquidityBlock,
 
     powerLaw: {
       daysSinceGenesis,
