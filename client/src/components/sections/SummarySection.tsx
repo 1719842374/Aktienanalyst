@@ -1,5 +1,6 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
+import { yahooValueMissing } from "@shared/data-source";
 import {
   calculateFCFFDCF, buildDefaultDCFParams, type FCFFDCFParams,
   calculateCRV, calculateRiskAdjustedCRV, calculateRSL, calculateReverseDCF,
@@ -225,11 +226,11 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
           </thead>
           <tbody className="divide-y divide-border/50">
             <SummaryRow label="Current Price" value={formatCurrency(data.currentPrice, 2, data.currency)} />
-            <SummaryRow label="Market Cap" value={formatLargeNumber(data.marketCap, data.currency)} />
+            <SummaryRow label="Market Cap" value={yahooValueMissing(data, data.marketCap) ? "n/a" : formatLargeNumber(data.marketCap as number, data.currency)} />
             <SummaryRow label="Sector / Industry" value={`${data.sector} — ${data.industry}`} />
             <SummaryRow label="Cycle Class" value={sp.cycleClass} note={`Political: ${sp.politicalCycle}`} />
-            <SummaryRow label="P/E (TTM)" value={formatNumber(data.peRatio, 1)} note={`Sector: ${formatNumber(data.sectorAvgPE, 1)}`} />
-            <SummaryRow label="Forward P/E" value={formatNumber(data.forwardPE, 1)} note={`Sector: ${formatNumber(data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE, 1)}`} />
+            <SummaryRow label="P/E (TTM)" value={yahooValueMissing(data, data.peRatio) ? "n/a" : formatNumber(data.peRatio as number, 1)} note={`Sector: ${formatNumber(data.sectorAvgPE, 1)}`} />
+            <SummaryRow label="Forward P/E" value={yahooValueMissing(data, data.forwardPE) ? "n/a" : formatNumber(data.forwardPE as number, 1)} note={`Sector: ${formatNumber(data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE, 1)}`} />
             <SummaryRow label="PEG Ratio" value={formatNumber(data.pegRatio, 2)} note={data.pegRatio < 1 ? "Undervalued" : data.pegRatio < 2 ? "Fair" : "Premium"} />
             <SummaryRow label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} note={`Sector: ${formatNumber(data.sectorAvgEVEBITDA, 1)}`} />
             <SummaryRow label="Beta (5Y)" value={formatNumber(data.beta5Y)} />

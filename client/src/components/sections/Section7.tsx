@@ -4,6 +4,7 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, hasPositiveSegmentRevenue, kiFillMetaLine, type TamNaFill, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
 import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
 import { formatNumber } from "../../lib/formatters";
+import { isYahooOnly } from "../../../../shared/data-source";
 import { apiRequest } from "../../lib/queryClient";
 import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "lucide-react";
 import PeerComparison from "./PeerComparison";
@@ -20,8 +21,12 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
   // Use TTM sector avg for TTM stock P/E, and forward sector avg for forward stock P/E
   // Fallback: if backend didn't ship sectorAvgForwardPE (older cached payloads), fall back to TTM to avoid NaN
   const sectorFwdPE = data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE;
-  const trailingPEPremium = data.sectorAvgPE > 0 ? ((data.peRatio / data.sectorAvgPE) - 1) * 100 : 0;
-  const fwdPEPremium = sectorFwdPE > 0 ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
+  // Tester #252-Prod (VOW3.DE „Discount −100 % · Fwd P/E 0.0“): KGV ≤ 0 oder fehlend (Yahoo null, Verlust) ergibt
+  // keinen Discount/keine Prämie. Bisher wurde 0/18 − 1 = −100 % als „Deep Value“ gezeigt → jetzt n/a.
+  const peValid = typeof data.peRatio === "number" && Number.isFinite(data.peRatio) && data.peRatio > 0;
+  const fwdPEValid = typeof data.forwardPE === "number" && Number.isFinite(data.forwardPE) && data.forwardPE > 0 && sectorFwdPE > 0;
+  const trailingPEPremium = peValid && data.sectorAvgPE > 0 ? ((data.peRatio / data.sectorAvgPE) - 1) * 100 : 0;
+  const fwdPEPremium = fwdPEValid ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
   const evEbitdaPremium = data.sectorAvgEVEBITDA > 0 ? ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100 : 0;
 
   // Revenue growth vs sector (use TAM CAGR as sector growth proxy)
@@ -29,7 +34,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
   const sectorGrowth = data.tamAnalysis?.tamCAGR ?? 5;
 
   // Discount panel shows Forward P/E values → base decision on fwdPEPremium
-  const isDiscount = fwdPEPremium < 0;
+  const isDiscount = fwdPEValid && fwdPEPremium < 0;
   const moatMaxPremium = data.moatRating === "Wide" ? 30 : data.moatRating === "Narrow-Wide" ? 20 : data.moatRating === "Narrow" ? 15 : 0;
   const moatJustified = isDiscount ? 0 : Math.min(trailingPEPremium, moatMaxPremium);
   const speculative = trailingPEPremium - moatJustified;
@@ -229,7 +234,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">P/E (TTM) vs. Sektor</h3>
           <div className="space-y-2">
-            <BarRow label={data.ticker} value={data.peRatio} max={Math.max(data.peRatio, data.sectorAvgPE, 1) * 1.3} color="bg-primary" />
+            <BarRow label={data.ticker} value={peValid ? data.peRatio : null} max={Math.max(peValid ? data.peRatio : 0, data.sectorAvgPE, 1) * 1.3} color="bg-primary" />
             <BarRow label="Sektor" value={data.sectorAvgPE} max={Math.max(data.peRatio, data.sectorAvgPE, 1) * 1.3} color="bg-muted-foreground/50" />
           </div>
         </div>
@@ -534,9 +539,14 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false }: Prop
       {/* Premium / Discount Breakdown */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
-          {isDiscount ? 'Discount-Analyse' : 'Premium Breakdown'}
+          {!fwdPEValid ? 'Discount / Premium' : isDiscount ? 'Discount-Analyse' : 'Premium Breakdown'}
         </h3>
-        {isDiscount ? (
+        {!fwdPEValid ? (
+          <div className="bg-muted/20 rounded-md p-3 border border-border text-xs text-muted-foreground" data-testid="discount-na">
+            Discount zum Sektor: <span className="font-mono font-semibold">n/a</span> · Fwd P/E {typeof data.forwardPE === "number" && data.forwardPE < 0 ? "negativ" : "nicht verfügbar"}
+            {isYahooOnly(data) ? " (Yahoo-Daten)" : ""}
+          </div>
+        ) : isDiscount ? (
           /* DISCOUNT: Show discount assessment instead of moat/speculative split */
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-emerald-500/5 rounded-md p-3 border border-emerald-500/20">
@@ -755,15 +765,16 @@ function KiBadge({ testId }: { testId?: string }) {
   );
 }
 
-function BarRow({ label, value, max, color, suffix = '' }: { label: string; value: number; max: number; color: string; suffix?: string }) {
-  const pct = Math.max(0, Math.min(100, (Math.abs(value) / max) * 100));
+function BarRow({ label, value, max, color, suffix = '' }: { label: string; value: number | null; max: number; color: string; suffix?: string }) {
+  // null = Wert fehlt (z. B. KGV bei Yahoo ohne quoteSummary) → leerer Balken + n/a statt 0.0
+  const pct = value == null ? 0 : Math.max(0, Math.min(100, (Math.abs(value) / max) * 100));
   return (
     <div className="flex items-center gap-3">
       <span className="text-xs text-muted-foreground w-20 flex-shrink-0">{label}</span>
       <div className="flex-1 h-5 bg-muted/30 rounded overflow-hidden">
         <div className={`h-full ${color} rounded transition-all`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs font-mono tabular-nums font-semibold w-14 text-right">{value >= 0 && suffix ? '+' : ''}{formatNumber(value, 1)}{suffix}</span>
+      <span className="text-xs font-mono tabular-nums font-semibold w-14 text-right">{value == null ? 'n/a' : <>{value >= 0 && suffix ? '+' : ''}{formatNumber(value, 1)}{suffix}</>}</span>
     </div>
   );
 }
