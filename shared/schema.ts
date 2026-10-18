@@ -103,6 +103,12 @@ export interface PeerCompany {
   roic5Y?: number | null;
   /** Anzahl der Jahre, die tatsaechlich in roic5Y eingeflossen sind (0, 3, 4 oder 5) — fuer den UI-Tooltip. */
   roic5YYearsUsed?: number;
+  /** PR B Peer-Selection (Filter-Tabs): FMP-Profil-Branche aus den in peer-adaptive bereits geladenen
+   *  2-Hop-Profilen, kein Extra-Call. null = kein Profil (z.B. manuell hinzugefuegter Peer) → UI „n/a“.
+   *  Feld fehlt = Server ohne Profil-Map (Altdaten). Nur Ansicht/Filter, nicht score-wirksam. */
+  industry?: string | null;
+  /** wie industry, FMP-Profil-Sektor. */
+  sector?: string | null;
 }
 
 export type WarningSeverity = 'critical' | 'warning' | 'info';

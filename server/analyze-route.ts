@@ -1256,6 +1256,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // +/- Overrides bleiben danach, Deckel 8.
       const rawPeerTickers: string[] = Array.isArray(peers) ? peers.map((p: any) => String(p.symbol ?? p ?? "")).filter(Boolean) : [];
       let peerTickers: string[] = rawPeerTickers.slice(0, 5);
+      let peerProfiles: Awaited<ReturnType<typeof resolveAdaptivePeerTickers>>["profiles"]; // PR B: nur Anzeige/Filter
       try {
         const resolved = await resolveAdaptivePeerTickers({
           subject: upperTicker,
@@ -1269,6 +1270,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           loadProfile: loadFmpPeerProfile,
         });
         peerTickers = resolved.tickers;
+        peerProfiles = resolved.profiles;
         console.log(`[PEERS-2HOP] ticker=${upperTicker} hopCalls=${resolved.hopCalls} F=[${peerTickers.join(",")}]`);
       } catch (peerFilterErr: any) {
         console.warn(`[ANALYZE] Peer-Filter fehlgeschlagen fuer ${upperTicker}, verwende ungefilterte FMP-Peers: ${peerFilterErr?.message?.substring(0, 100)}`);
@@ -1631,7 +1633,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         try {
           peerComparison = await fetchPeerComparisonFromTickers(
             upperTicker, peerTickers, pe, peg ?? 0, revenue, marketCap, revenueGrowth, epsGrowth5Y,
-            { pb: subjectPB, epsGrowth1Y: subjectEpsGrowth1Y }
+            { pb: subjectPB, epsGrowth1Y: subjectEpsGrowth1Y },
+            peerProfiles,
           );
         } catch (peerErr: any) {
           console.warn(`[ANALYZE] Peer comparison failed: ${peerErr?.message?.substring(0, 80)}`);
