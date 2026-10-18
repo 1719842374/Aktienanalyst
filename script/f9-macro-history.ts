@@ -8,6 +8,9 @@
  * Grenzen: aktuelle FRED-Vintage (Revisionen nicht zurückgedreht, kein ALFRED); Buffett, Google Trends,
  * CNN F&G, WEI historisch n/a (nicht nachbaubar) → wie im Live-Pfad: n/a zählt weder net noch max.
  * Ausführen: npx tsx script/f9-macro-history.ts [--write]   (Ergebnis: script/fixtures/macro/f9-history-2026-10-18.json)
+ * F9-07/10/11: --gaps rechnet zusätzlich Konzentration (SPY/RSP ab 2003), Managing (EPS multpl, Realzins, Konzentration)
+ * und Widersprüche point-in-time; Ergebnis getrennt in script/fixtures/macro/f9-history-gaps-2026-10-18.json.
+ * Ohne --gaps bleibt die Ausgabe unverändert.
  */
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fetchFredCsv, fredCsvObservations, type FredObservation } from "../server/fred-csv";
@@ -18,6 +21,22 @@ import {
 } from "../server/recession";
 import { sahmIndicatorFromScore, scoreSahmFromUnemployment, SAHM_HISTORY_YEARS } from "../server/recession-sahm";
 import { buildMacroLayer, detectHabitat, type MacroIndicatorInput } from "../shared/macro-layer";
+import { computeConcentration, computeContradictions, computeManaging, epsGrowthVsTrend, gapInputs, type PriceBar } from "../shared/macro-layer-gaps";
+import { altFetchYahooThenStooq } from "../server/history-fallback";
+import { MULTPL_EPS_URL, parseMultplMonthlyTable } from "../server/macro-layer-gaps";
+
+const GAPS = process.argv.includes("--gaps");
+/** multpl TTM-EPS (Monatsende) gilt erst nach Quartalsberichtssaison als bekannt. */
+export const EPS_VIS_LAG_DAYS = 90;
+
+async function bars(symbol: string): Promise<PriceBar[]> {
+  mkdirSync(CACHE, { recursive: true });
+  const f = `${CACHE}/${symbol}-bars.json`;
+  if (existsSync(f)) return JSON.parse(readFileSync(f, "utf8"));
+  const b = (await altFetchYahooThenStooq(symbol, "2002-01-01", "2026-10-18")).map(x => ({ date: x.date, close: x.close }));
+  if (b.length) writeFileSync(f, JSON.stringify(b));
+  return b;
+}
 
 export const F9_HISTORY_DATES = ["2000-03-31", "2000-09-29", "2007-10-31", "2007-12-31", "2008-09-30", "2022-01-31", "2022-06-30", "2026-10-15"];
 
@@ -70,6 +89,10 @@ export async function main() {
   const coverage = Object.fromEntries([...ids.map(id => [id, s[id].length ? `${s[id][0].date}…${s[id].at(-1)!.date} (${s[id].length})` : "n/a"]),
     ["CAPE", capeRows.length ? `${capeRows[0].date}…${capeRows.at(-1)!.date}` : "n/a"], ["MARGIN", margin.length ? `${margin[0].date}…${margin.at(-1)!.date}` : "n/a"]]);
 
+  const spy = GAPS ? await bars("SPY") : [];
+  const rsp = GAPS ? await bars("RSP") : [];
+  const epsAll = GAPS ? parseMultplMonthlyTable((await text(MULTPL_EPS_URL, "eps.html"))?.toString("utf8")) : [];
+  const gapRows = [];
   const rows = [];
   for (const asOf of F9_HISTORY_DATES) {
     const v = (id: string, years?: number) => { const o = visible(s[id], id, asOf); return years ? o.filter(p => p.date >= yearsBack(asOf, years)) : o; };
@@ -109,6 +132,31 @@ export async function main() {
     });
     const input: MacroIndicatorInput[] = inds.map(i => ({ name: i.name, group: i.group, weightedScore: i.weightedScore, maxWeighted: i.maxWeighted, available: i.available }));
     const layer = buildMacroLayer({ asOf, indicators: input, habitat, ai: null, aiStatus: "disabled" });
+    if (GAPS) {
+      const conc = computeConcentration(spy.filter(b => b.date <= asOf), rsp.filter(b => b.date <= asOf));
+      const habG = detectHabitat({
+        realYieldMonthly: v("DFII10").filter(p => p.date >= yearsBack(asOf, 21)),
+        fedFunds: v("DFF").filter(p => p.date >= yearsBack(asOf, 2)),
+        concentration: conc.value,
+      });
+      const epsVis = epsAll.filter(p => addDays(p.date, EPS_VIS_LAG_DAYS) <= asOf);
+      const gaps = {
+        concentration: conc,
+        managing: computeManaging({ eps: epsVis.length ? epsGrowthVsTrend(epsVis) : null, realYield: habG.realYield, realYieldZ: habG.realYieldZ, concentration: conc }),
+        widersprueche: computeContradictions(input),
+      };
+      const lg = buildMacroLayer({ asOf, indicators: [...input, ...gapInputs(gaps)], habitat: habG, ai: null, aiStatus: "disabled" });
+      gapRows.push({
+        asOf,
+        habitat: { regime: habG.regime, concentration: conc.value },
+        recession: { anchored: anchored.probability, layerF9: layer.recession.layer, layerGaps: lg.recession.layer },
+        correction: { formula: probabilityFromNet(ct.net, ct.max), layerF9: layer.correction.layer, layerGaps: lg.correction.layer },
+        concentration: { value: conc.value, z: conc.z, rslCap: conc.rslCap, rslEqual: conc.rslEqual, note: conc.note },
+        managing: { score: gaps.managing.score, components: gaps.managing.components.map(c => ({ id: c.id, value: c.value, z: c.z, component: c.component })) },
+        widersprueche: { score: gaps.widersprueche.score, pairs: gaps.widersprueche.pairs.map(p => ({ id: p.id, scoreA: p.scoreA, scoreB: p.scoreB, contradiction: p.contradiction })) },
+        weights: Object.fromEntries(lg.dimensions.map(d => [d.id, d.finalWeight == null ? null : Math.round(d.finalWeight * 1000) / 1000])),
+      });
+    }
     rows.push({
       asOf,
       habitat: { regime: habitat.regime, realYieldZ: habitat.realYieldZ, fedFundsChange12mPp: habitat.fedFundsChange12mPp },
@@ -127,7 +175,18 @@ export async function main() {
     const p = (x: number | null) => (x == null ? "n/a" : `${x}%`);
     console.log(`| ${r.asOf} | ${r.habitat.regime ?? "n/a"} | ${p(r.recession.formula)} | ${p(r.recession.anchored)} | ${p(r.recession.layer)} | ${p(r.correction.formula)} | ${p(r.correction.layer)} | ${n}/${r.slots.length} |`);
   }
-  if (process.argv.includes("--write")) writeFileSync("script/fixtures/macro/f9-history-2026-10-18.json", JSON.stringify(out, null, 2) + "\n");
+  if (process.argv.includes("--write") && !GAPS) writeFileSync("script/fixtures/macro/f9-history-2026-10-18.json", JSON.stringify(out, null, 2) + "\n");
+  if (GAPS) {
+    const p = (x: number | null) => (x == null ? "n/a" : `${x}%`);
+    const f = (x: number | null, d = 2) => (x == null ? "n/a" : x.toFixed(d));
+    console.log("\n| Stichtag | Konzentration | Managing | Widersprüche | P_rez bestehend | P_rez F9 | P_rez F9+Lücken | P_korr bestehend | P_korr F9 | P_korr F9+Lücken |");
+    console.log("|---|---|---|---|---|---|---|---|---|---|");
+    for (const g of gapRows) {
+      console.log(`| ${g.asOf} | ${f(g.concentration.value, 3)} | ${f(g.managing.score)} | ${f(g.widersprueche.score)} | ${p(g.recession.anchored)} | ${p(g.recession.layerF9)} | ${p(g.recession.layerGaps)} | ${p(g.correction.formula)} | ${p(g.correction.layerF9)} | ${p(g.correction.layerGaps)} |`);
+    }
+    const outG = { generated: "2026-10-18", note: "wie f9-history; zusätzlich F9-07/10/11; SPY/RSP Yahoo-Chart (frei), EPS multpl (Sichtbarkeit +90 T); CAPEX n/a", rows: gapRows };
+    if (process.argv.includes("--write")) writeFileSync("script/fixtures/macro/f9-history-gaps-2026-10-18.json", JSON.stringify(outG, null, 2) + "\n");
+  }
   return out;
 }
 

@@ -8,6 +8,10 @@
  */
 import type { Express } from "express";
 import { fetchFredCsv, fredCsvObservations, type FredObservation } from "./fred-csv";
+import { fetchPublicText, loadConcentration, loadEpsHistory, resetMacroGapCaches } from "./macro-layer-gaps";
+import {
+  computeContradictions, computeManaging, epsGrowthVsTrend, gapInputs, type MacroConcentration, type MacroGaps, type PriceBar,
+} from "@shared/macro-layer-gaps";
 import {
   buildMacroLayer,
   buildMacroWeightPrompt,
@@ -35,14 +39,19 @@ export interface MacroLayerDeps {
   llmAvailable: () => boolean;
   llm: LlmFn;
   now: () => number;
+  /** F9-07: Tageskurse SPY/RSP (frei). Fehlt → Konzentration n/a. */
+  fetchBars?: (symbol: string, from: string, to: string) => Promise<PriceBar[]>;
+  /** F9-10: öffentliche Seite (multpl EPS). Fehlt → EPS-Komponente n/a. */
+  fetchText?: (url: string) => Promise<string | null>;
 }
 
 const aiCache = new Map<string, { ts: number; data: unknown; model: string }>();
-let habitatCache: { ts: number; habitat: MacroHabitat } | null = null;
+let habitatCache: { ts: number; ry: FredObservation[]; ff: FredObservation[] } | null = null;
 
 export function resetMacroLayerCaches(): void {
   aiCache.clear();
   habitatCache = null;
+  resetMacroGapCaches();
 }
 
 function isoYearsBack(nowMs: number, years: number): string {
@@ -51,9 +60,11 @@ function isoYearsBack(nowMs: number, years: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export async function loadMacroHabitat(deps: MacroLayerDeps): Promise<MacroHabitat> {
+export async function loadMacroHabitat(deps: MacroLayerDeps, concentration: number | null = null): Promise<MacroHabitat> {
   const now = deps.now();
-  if (habitatCache && now - habitatCache.ts < MACRO_HABITAT_CACHE_TTL_MS) return habitatCache.habitat;
+  if (habitatCache && now - habitatCache.ts < MACRO_HABITAT_CACHE_TTL_MS) {
+    return detectHabitat({ realYieldMonthly: habitatCache.ry, fedFunds: habitatCache.ff, concentration });
+  }
   const safe = async (id: string, cosd: string): Promise<FredObservation[]> => {
     try { return fredCsvObservations(await deps.fetchCsv(id, cosd)); } catch { return []; }
   };
@@ -61,9 +72,9 @@ export async function loadMacroHabitat(deps: MacroLayerDeps): Promise<MacroHabit
     safe(MACRO_REAL_YIELD_SERIES, isoYearsBack(now, 21)),
     safe(MACRO_FED_FUNDS_SERIES, isoYearsBack(now, 2)),
   ]);
-  const habitat = detectHabitat({ realYieldMonthly: ry, fedFunds: ff, concentration: null });
+  const habitat = detectHabitat({ realYieldMonthly: ry, fedFunds: ff, concentration });
   // Nur cachen, wenn mindestens eine Reihe kam; ein FRED-Ausfall soll beim nächsten Klick neu versuchen.
-  if (ry.length || ff.length) habitatCache = { ts: now, habitat };
+  if (ry.length || ff.length) habitatCache = { ts: now, ry, ff };
   return habitat;
 }
 
@@ -83,8 +94,21 @@ export async function computeMacroLayer(indicators: MacroIndicatorInput[], deps:
   const asOf = new Date(deps.now()).toISOString().slice(0, 10);
   try {
     if (!indicators.length) return emptyMacroLayer(asOf, "Keine Rezessions-Indikatoren übergeben – Makro-Ebene n/a");
-    const habitat = await loadMacroHabitat(deps);
-    const quant = calculateAdaptiveWeights(indicators, habitat);
+    const conc = await loadConcentration(deps);
+    const habitat = await loadMacroHabitat(deps, conc?.value ?? null);
+    const epsPoints = await loadEpsHistory(deps);
+    const gaps: MacroGaps = {
+      concentration: conc ?? naConcentration(),
+      managing: computeManaging({
+        eps: epsPoints ? epsGrowthVsTrend(epsPoints) : null,
+        realYield: habitat.realYield,
+        realYieldZ: habitat.realYieldZ,
+        concentration: conc,
+      }),
+      widersprueche: computeContradictions(indicators),
+    };
+    const inputs = [...indicators, ...gapInputs(gaps)];
+    const quant = calculateAdaptiveWeights(inputs, habitat);
     let ai: { suggestion: unknown; model: string | null; cached: boolean } | null = null;
     let aiStatus: MacroAiInfo["status"] = "no-key";
     if (deps.llmAvailable() && quant.dimensions.some(d => d.available)) {
@@ -114,16 +138,23 @@ export async function computeMacroLayer(indicators: MacroIndicatorInput[], deps:
         }
       }
     }
-    return buildMacroLayer({ asOf, indicators, habitat, ai, aiStatus });
+    return { ...buildMacroLayer({ asOf, indicators: inputs, habitat, ai, aiStatus }), gaps };
   } catch (err: any) {
     console.warn(`[MACRO-LAYER] failed: ${String(err?.message ?? err).slice(0, 200)}`);
     return emptyMacroLayer(asOf, "Makro-Ebene konnte nicht berechnet werden – n/a");
   }
 }
 
+function naConcentration(): MacroConcentration {
+  return { value: null, asOf: null, rslCap: null, rslEqual: null, z: null, weeks: 0, source: "SPY vs. RSP", note: "n/a – Kursquelle nicht konfiguriert" };
+}
+
 export async function defaultMacroLayerDeps(): Promise<MacroLayerDeps> {
   const llm = await import("./llm-openrouter");
+  const hist = await import("./history-fallback");
   return {
+    fetchBars: async (symbol, from, to) => (await hist.altFetchYahooThenStooq(symbol, from, to)).map(b => ({ date: b.date, close: b.close })),
+    fetchText: url => fetchPublicText(url),
     fetchCsv: (id, cosd) => fetchFredCsv(id, cosd),
     llmAvailable: () => llm.isLLMAvailable(),
     llm: opts => llm.callLLMJson(opts),
