@@ -26,6 +26,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerThesisLabRoutes(app);
   const { registerDividendRoute } = await import("./dividend-route");
   registerDividendRoute(app);
+  // GET /api/credit-spread/market (JOB A1, Markt-Spread Baa FRED BAA10Y, nur Anzeige in der TA, kein Score)
+  const { registerCreditRoute } = await import("./credit-route");
+  registerCreditRoute(app);
   // POST /api/export-pdf (lost from routes.ts in 57189dd, see pdf-export-route.ts)
   const { registerPdfExportRoute } = await import("./pdf-export-route");
   registerPdfExportRoute(app);

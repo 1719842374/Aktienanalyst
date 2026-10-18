@@ -887,3 +887,42 @@ export interface LiquidityBriefing {
 }
 
 export type { RegionalCatalogs, RegionCatalog, RegionSlot } from "./recession-regions";
+
+// ─── Credit-Overlay Stufe 1 (JOB A1): Markt-Spread Baa, FRED BAA10Y ─────────────
+// GET /api/credit-spread/market. Markt-Aggregat (alle US-Unternehmen), keine Anleihe
+// des analysierten Titels. Nur Anzeige in der Technischen Analyse — kein Score, kein Fazit-Faktor.
+
+/** Eine FRED-Beobachtung in Prozentpunkten (BAA10Y ist bereits Baa − 10Y Treasury). */
+export interface CreditPoint {
+  date: string;
+  value: number;
+}
+
+/** „Spread steigt“: aktuelle 3M-Änderung > 0 und über dem P80 der rollierenden 3M-Änderungen (20J). */
+export interface CreditStressSignal {
+  rising: boolean;
+  asOf: string;
+  last: number;
+  change3MPp: number;
+  percentileThresholdPp: number;
+  percentileRank: number;
+  sampleSize: number;
+}
+
+export interface CreditSpreadResponse {
+  seriesId: string;
+  source: string;
+  sourceUrl: string;
+  /** Aufsteigend nach Datum. Leer = n/a (FRED nicht erreichbar). */
+  points: CreditPoint[];
+  /** null = zu wenig Historie oder keine Daten → kein Hinweis. */
+  stress: CreditStressSignal | null;
+  note: string | null;
+}
+
+/** Spread je Kurstag (as-of-Join). null = kein FRED-Wert innerhalb der Lückentoleranz. */
+export interface CreditOverlayPoint {
+  date: string;
+  spreadPct: number | null;
+  spreadDate: string | null;
+}
