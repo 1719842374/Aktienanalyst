@@ -29,6 +29,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // GET /api/credit-spread/market (JOB A1, Markt-Spread Baa FRED BAA10Y, nur Anzeige in der TA, kein Score)
   const { registerCreditRoute } = await import("./credit-route");
   registerCreditRoute(app);
+  // GET /api/credit-risk/company/:ticker (Kreditrisiko-Karte Sektion 10: Zinsdeckung aus FMP-GuV, nur Anzeige, kein Score)
+  const { registerCreditRiskRoute } = await import("./credit-risk-route");
+  registerCreditRiskRoute(app);
   // GET /api/treasury-10y/market (A3, 10J-Treasury FRED DGS10, nur Anzeige in der TA, kein Score)
   const { registerTreasury10YRoute } = await import("./treasury10y-route");
   registerTreasury10YRoute(app);
