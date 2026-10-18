@@ -1,0 +1,346 @@
+{
+ "_fixture": {
+  "chart": {
+   "source": "/workspace/mcap-research/chart_BMW.DE.json (MCap-Recherche, live vom Box 18.10.2026 21:55 MESZ, v8 chart range=5d ohne Crumb), unverändert",
+   "sha256": "3a8e00c609b92264f553ab6cdcc7b125fcb69ba44d3c52988bb508d4000564c3"
+  },
+  "timeseries": {
+   "url": "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/BMW.DE?type=quarterlyOrdinarySharesNumber,annualOrdinarySharesNumber,trailingDilutedEPS&period1=<jetzt-2J>&period2=<jetzt>",
+   "fetchedAt": "2026-10-18T22:05+02:00",
+   "http": 200,
+   "auth": "kein Cookie, kein Crumb, Browser-UA wie server/yahoo-fetcher.ts",
+   "sha256": "c2d24de09beb9ab48d4d303fa83976a5c05f0aed52c5a413b4e74de43284e0a4"
+  },
+  "quoteSummaryRef": {
+   "source": "/workspace/mcap-research/app-yahoo-client-box.log (App-Client server/yahoo-fetcher.ts auf main 122762b mit Crumb, Box, 18.10.2026 21:56 MESZ), RESULT-Zeile unverändert"
+  }
+ },
+ "chart": {
+  "result": [
+   {
+    "meta": {
+     "currency": "EUR",
+     "symbol": "BMW.DE",
+     "exchangeName": "GER",
+     "fullExchangeName": "XETRA",
+     "instrumentType": "EQUITY",
+     "firstTradeDate": 847440000,
+     "regularMarketTime": 1792165170,
+     "hasPrePostMarketData": false,
+     "gmtoffset": 7200,
+     "timezone": "CEST",
+     "exchangeTimezoneName": "Europe/Berlin",
+     "regularMarketPrice": 57.06,
+     "regularMarketChangePercent": 3.52,
+     "fulldayPrice": 57.06,
+     "fulldayChange": 1.94,
+     "fulldayChangePercent": 3.52,
+     "fiftyTwoWeekHigh": 97.92,
+     "fiftyTwoWeekLow": 51.98,
+     "regularMarketDayHigh": 57.3,
+     "regularMarketDayLow": 55.4,
+     "regularMarketVolume": 1891634,
+     "longName": "Bayerische Motoren Werke Aktiengesellschaft",
+     "shortName": "BAYERISCHE MOTOREN WERKE AG   S",
+     "chartPreviousClose": 53.26,
+     "priceHint": 2,
+     "currentTradingPeriod": {
+      "pre": {
+       "timezone": "CEST",
+       "start": 1792126800,
+       "end": 1792134000,
+       "gmtoffset": 7200
+      },
+      "regular": {
+       "timezone": "CEST",
+       "start": 1792134000,
+       "end": 1792164600,
+       "gmtoffset": 7200
+      },
+      "post": {
+       "timezone": "CEST",
+       "start": 1792164600,
+       "end": 1792175400,
+       "gmtoffset": 7200
+      }
+     },
+     "dataGranularity": "1d",
+     "range": "5d",
+     "validRanges": [
+      "1d",
+      "5d",
+      "1mo",
+      "3mo",
+      "6mo",
+      "1y",
+      "2y",
+      "5y",
+      "10y",
+      "ytd",
+      "max"
+     ]
+    },
+    "timestamp": [
+     1791788400,
+     1791874800,
+     1791961200,
+     1792047600,
+     1792134000
+    ],
+    "indicators": {
+     "quote": [
+      {
+       "close": [
+        53.060001373291016,
+        54.41999816894531,
+        54.79999923706055,
+        55.119998931884766,
+        57.060001373291016
+       ],
+       "open": [
+        53.79999923706055,
+        53.41999816894531,
+        54.65999984741211,
+        55.0,
+        55.400001525878906
+       ],
+       "volume": [
+        1076276,
+        1529605,
+        1617504,
+        1574975,
+        1891634
+       ],
+       "low": [
+        52.91999816894531,
+        53.08000183105469,
+        53.97999954223633,
+        54.70000076293945,
+        55.400001525878906
+       ],
+       "high": [
+        53.91999816894531,
+        54.439998626708984,
+        54.84000015258789,
+        55.97999954223633,
+        57.29999923706055
+       ]
+      }
+     ],
+     "adjclose": [
+      {
+       "adjclose": [
+        53.060001373291016,
+        54.41999816894531,
+        54.79999923706055,
+        55.119998931884766,
+        57.060001373291016
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "error": null
+ },
+ "timeseries": {
+  "result": [
+   {
+    "meta": {
+     "symbol": [
+      "BMW.DE"
+     ],
+     "type": [
+      "annualOrdinarySharesNumber"
+     ]
+    },
+    "timestamp": [
+     1735603200,
+     1767139200
+    ],
+    "annualOrdinarySharesNumber": [
+     {
+      "dataId": 23393,
+      "asOfDate": "2024-12-31",
+      "periodType": "12M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 622259319.0,
+       "fmt": "622.26M"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-12-31",
+      "periodType": "12M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 607128285.0,
+       "fmt": "607.13M"
+      }
+     }
+    ]
+   },
+   {
+    "meta": {
+     "symbol": [
+      "BMW.DE"
+     ],
+     "type": [
+      "quarterlyOrdinarySharesNumber"
+     ]
+    },
+    "timestamp": [
+     1743379200,
+     1751241600,
+     1767139200,
+     1774915200,
+     1782777600
+    ],
+    "quarterlyOrdinarySharesNumber": [
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-03-31",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 622259319.0,
+       "fmt": "622.26M"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-06-30",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 613627123.0,
+       "fmt": "613.63M"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-12-31",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 607128285.0,
+       "fmt": "607.13M"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2026-03-31",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 607128285.0,
+       "fmt": "607.13M"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2026-06-30",
+      "periodType": "3M",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 598875510.0,
+       "fmt": "598.88M"
+      }
+     }
+    ]
+   },
+   {
+    "meta": {
+     "symbol": [
+      "BMW.DE"
+     ],
+     "type": [
+      "trailingDilutedEPS"
+     ]
+    },
+    "timestamp": [
+     1735603200,
+     1743379200,
+     1751241600,
+     1767139200,
+     1774915200,
+     1782777600
+    ],
+    "trailingDilutedEPS": [
+     {
+      "dataId": 29009,
+      "asOfDate": "2024-12-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 11.62,
+       "fmt": "11.62"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-03-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 10.58,
+       "fmt": "10.58"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-06-30",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 9.28,
+       "fmt": "9.28"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-12-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 11.89,
+       "fmt": "11.89"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2026-03-31",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 11.19,
+       "fmt": "11.19"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2026-06-30",
+      "periodType": "TTM",
+      "currencyCode": "EUR",
+      "reportedValue": {
+       "raw": 10.39,
+       "fmt": "10.39"
+      }
+     }
+    ]
+   }
+  ],
+  "error": null
+ },
+ "quoteSummaryRef": {
+  "price": 57.06,
+  "currency": "EUR",
+  "marketCap": 34154717184,
+  "pe": 5.491819,
+  "eps": 10.39,
+  "name": "Bayerische Motoren Werke Aktiengesellschaft",
+  "bars": 2794,
+  "fa": true
+ }
+}

@@ -17,7 +17,7 @@ import {
   filterPeersForView, peerIndustryLabel, viewAverage, withinRelativeBand, normaliseIndustryLabel,
 } from "../client/src/lib/peerViewFilter";
 import { resolveAdaptivePeerTickers, type AdaptivePeerProfile } from "../server/peer-adaptive";
-import { fetchPeerComparisonFromTickers, normaliseIndustry, type PeerIndustryProfile } from "../server/news-peers";
+import { fetchPeerComparisonFromTickers, normaliseIndustry, setPeerIndustryDepsForTests, type PeerIndustryProfile } from "../server/news-peers";
 import PeerComparison from "../client/src/components/sections/PeerComparison";
 
 (globalThis as any).React = React;
@@ -82,6 +82,8 @@ async function main() {
 
   console.log("\nfetchPeerComparisonFromTickers mit/ohne Map (FMP gestubbt)");
   process.env.FMP_API_KEY = "test-dummy-not-a-key";
+  // H1: Profil-Nachladen für Peers ohne Map-Eintrag ohne Disk-Cache (kein data.db im Test); FMP-/profile ist gestubbt (leer).
+  setPeerIndustryDepsForTests({ cacheGet: () => null, cacheSet: () => {} });
   const fixtures: Record<string, { quote: any; ratios: any[] }> = {
     LLY: { quote: { symbol: "LLY", name: "Eli Lilly", marketCap: 700e9, price: 800, eps: 30 }, ratios: [{ priceToEarningsRatio: 26, priceToSalesRatio: 15, priceToBookRatio: 50, netIncomePerShare: 12, revenuePerShare: 50 }, { netIncomePerShare: 10, revenuePerShare: 40 }] },
     AZN: { quote: { symbol: "AZN", name: "AstraZeneca", marketCap: 250e9, price: 150, eps: 5 }, ratios: [{ priceToEarningsRatio: 14, priceToSalesRatio: 5, priceToBookRatio: 6, netIncomePerShare: 4, revenuePerShare: 30 }, { netIncomePerShare: 3.5, revenuePerShare: 28 }] },
@@ -111,7 +113,8 @@ async function main() {
   globalThis.fetch = realFetch;
   check("ohne Map: keine industry/sector-Keys (Altpfad bitgleich)", !!without && without.peers.every(p => !("industry" in p) && !("sector" in p)));
   check("mit Map: Branche gesetzt, Peer ohne Profil → null", withMap?.peers.find(p => p.ticker === "LLY")?.industry === "Drug Manufacturers - General" && withMap?.peers.find(p => p.ticker === "ADD")?.industry === null && withMap?.peers.find(p => p.ticker === "ADD")?.sector === null);
-  check("mit Map: keine zusätzlichen FMP-Calls", callsWith === callsWithout, `${callsWith} vs ${callsWithout}`);
+  // H1: genau 1 /profile-Call für ADD (kein Map-Eintrag); Stub liefert kein Profil → n/a, Fehlschlag 6 h im Speicher gecacht.
+  check("mit Map: nur 1 Profil-Call für den Peer ohne Map-Eintrag (H1), sonst keine", callsWith === callsWithout + 1, `${callsWith} vs ${callsWithout}`);
   check("peerAvg bitgleich mit/ohne Map", JSON.stringify(withMap?.peerAvg) === JSON.stringify(without?.peerAvg), `${JSON.stringify(withMap?.peerAvg)} vs ${JSON.stringify(without?.peerAvg)}`);
   check("subject bitgleich mit/ohne Map", JSON.stringify(withMap?.subject) === JSON.stringify(without?.subject));
   const strip = (ps: any[]) => JSON.stringify(ps.map(({ industry: _i, sector: _s, ...rest }) => rest));
