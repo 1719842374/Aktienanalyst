@@ -3,6 +3,8 @@ import { SectionCard } from "../SectionCard";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, Shield, DollarSign } from "lucide-react";
 import { useDividendKpi } from "@/lib/useDividendHistory";
 import { currencySymbol, statementCurrency } from "@/lib/formatters";
+import { isYahooOnly } from "@shared/data-source";
+import { YahooNoValuationNotice } from "../YahooNoValuationCard";
 
 interface Props { data: StockAnalysis }
 
@@ -26,6 +28,8 @@ export function FinancialStatements({ data }: Props) {
   // JOB 20: dieselbe Div.-Yield wie die Kachel in Section 1 (Hook vor dem frühen return)
   const divKpi = useDividendKpi(data);
   if (!fs) return null;
+  // #252-Rest: Yahoo-Fallback hat keine Finanzberichte (Server füllt 0) → n/a statt $0 / „Weak“. EPS kommt echt von Yahoo (Listing-Währung).
+  if (isYahooOnly(data)) return <YahooFinancialStatements data={data} eps={fs.incomeStatement?.eps} divKpi={divKpi} />;
 
   const { incomeStatement: is, balanceSheet: bs, cashFlow: cf, health, healthReasons } = fs;
   const healthColor = health === 'Excellent' ? 'text-emerald-500' : health === 'Good' ? 'text-emerald-400' :
@@ -143,6 +147,43 @@ export function FinancialStatements({ data }: Props) {
           <WaterfallBar label="FCF" value={cf.fcfMargin} maxVal={80} color="bg-cyan-500/60" />
         </div>
       </div>
+    </SectionCard>
+  );
+}
+
+const YAHOO_FS_ROWS: { title: string; rows: string[] }[] = [
+  { title: "Income Statement (TTM)", rows: ["Revenue", "Gross Profit", "Operating Income", "Net Income", "EBITDA"] },
+  { title: "Balance Sheet", rows: ["Total Assets", "Total Equity", "Total Debt", "Cash & Equiv.", "Net Debt", "Debt/Equity"] },
+  { title: "Cash Flow (TTM)", rows: ["Operating CF", "CapEx", "Free Cash Flow", "FCF / Share"] },
+];
+
+function YahooFinancialStatements({ data, eps, divKpi }: { data: StockAnalysis; eps: number | undefined; divKpi: ReturnType<typeof useDividendKpi> }) {
+  const epsOk = typeof eps === "number" && Number.isFinite(eps) && eps !== 0;
+  return (
+    <SectionCard number={4} title="FINANCIAL STATEMENTS" subtitle="Income • Balance Sheet • Cash Flow">
+      <YahooNoValuationNotice data={data} />
+      <div className="text-xs text-muted-foreground" data-testid="fs-yahoo-na">Finanzgesundheit: n/a (keine Finanzberichte aus Yahoo)</div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {YAHOO_FS_ROWS.map((col, ci) => (
+          <div key={col.title} className="bg-muted/10 rounded-lg p-3 border border-border/30">
+            <h4 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">{col.title}</h4>
+            <div className="space-y-1.5 text-[10px]">
+              {col.rows.map(r => <Row key={r} label={r} value="n/a" />)}
+              {ci === 0 && <Row label="EPS" value={epsOk ? `${currencySymbol(data.currency)}${eps!.toFixed(2)}` : "n/a"} sub="EPS-CAGR 5Y n/a" />}
+              {ci === 2 && (
+                <div className="pt-1 border-t border-border/20 mt-1">
+                  <div className="text-[9px] text-muted-foreground">FCF Yield: n/a</div>
+                  <div className="text-[9px] text-muted-foreground" data-testid="fs-div-yield">
+                    Div. Yield: <span className="font-mono">{divKpi ? divKpi.value : "n/a"}</span>
+                    {divKpi && <span className="ml-1">({divKpi.sub})</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="text-[10px] text-muted-foreground">Margen-Wasserfall: n/a</div>
     </SectionCard>
   );
 }

@@ -8,6 +8,7 @@ import { sumUpsideGb } from '../shared/bias-fixes';
 import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
 import { reverseDcfFromAnalysis, isEtfOrFund } from '../shared/conflict-matrix';
 import { companyDcfWaccPct, safeCompanyDcfWaccPct, waccSuffix } from '../shared/valuation-signal';
+import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from '../shared/data-source';
 
 /** " (WACC x.xx%)" next to g* — omitted when beta5Y/marketCap/totalDebt are missing so the PDF never prints "WACC NaN%". */
 export function pdfWaccSuffix(d: any): string {
@@ -257,8 +258,48 @@ Nur JSON, keine Erklärung. Professioneller Ton, keine Floskeln.`;
   }
 }
 
+// ===== #252-Rest: Yahoo-Fallback (FMP 402) — kein Fazit/DCF/CRV/Score aus 0-Statements =====
+/** PDF für Analysen mit dataSource "yahoo": nur Kurs, Market Cap, KGV, EPS (Listing-Währung) und Hinweis; Bewertung n/a. Kein LLM-Narrativ. */
+export function generateYahooOnlyHTML(data: any): string {
+  const ccy = String(data.currency || 'USD');
+  const num = (v: any, d = 2) => typeof v === 'number' && isFinite(v) && v !== 0 ? v.toFixed(d) : 'n/a';
+  const big = (v: any) => typeof v === 'number' && isFinite(v) && v > 0 ? (v >= 1e12 ? `${(v/1e12).toFixed(2)}T` : v >= 1e9 ? `${(v/1e9).toFixed(2)}B` : `${(v/1e6).toFixed(0)}M`) + ` ${esc(ccy)}` : 'n/a';
+  const notice = esc(String(data.valuationNotice || YAHOO_NO_VALUATION_NOTICE));
+  const na = ['Forward P/E', 'PEG', 'EV/EBITDA', 'Beta (5Y)', 'FCF TTM', 'FCF Margin', 'Financial Statements', 'DCF / Fair Value', 'Reverse DCF (g*)', 'CRV', 'Score / Rating', 'Management-Score', 'Fazit'];
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 12mm 10mm; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 9px; line-height: 1.4; color: #c8cdd5; background: #0c1223; margin: 0; }
+  h1 { font-size: 18px; color: #50a0f0; margin: 0 0 2px; }
+  .subtitle { font-size: 9px; color: #646e82; margin-bottom: 10px; }
+  .warn { background: #2a1a10; border: 1px solid #c89630; border-radius: 4px; padding: 6px 8px; margin: 6px 0; font-size: 9px; color: #c89630; }
+  table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 8.5px; }
+  td { padding: 2.5px 5px; border-bottom: 1px solid #1a2540; color: #b0b5c5; }
+  .row-label { color: #7880a0; } .row-val { color: #d0d5e0; font-weight: 600; text-align: right; }
+  .footer { border-top: 1px solid #2a3550; margin-top: 10px; padding-top: 4px; font-size: 7px; color: #505868; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>Stock Analyst Pro</h1>
+<div class="subtitle">${esc(String(data.ticker || ''))} — ${esc(String(data.companyName || ''))} &nbsp;&nbsp; ${new Date().toLocaleDateString('de-DE')} | Alle Werte in ${esc(ccy)} | Quelle: Yahoo</div>
+<div class="warn" data-testid="pdf-yahoo-na"><strong>${notice}</strong> — FMP-Plan deckt dieses Symbol nicht ab (HTTP 402). Kurs, Market Cap, KGV, EPS und Historie kommen von Yahoo; ohne Finanzberichte bleiben DCF, Inverse-DCF, CRV/Upside, Score und Rating n/a.</div>
+<table>
+<tr><td class="row-label">Kurs</td><td class="row-val">${num(data.currentPrice)} ${esc(ccy)}</td></tr>
+<tr><td class="row-label">Market Cap</td><td class="row-val">${big(data.marketCap)}</td></tr>
+<tr><td class="row-label">P/E (TTM)</td><td class="row-val">${num(data.peRatio, 1)}</td></tr>
+<tr><td class="row-label">EPS TTM</td><td class="row-val">${num(data.epsTTM)}${num(data.epsTTM) === 'n/a' ? '' : ' ' + esc(ccy)}</td></tr>
+${na.map(l => `<tr><td class="row-label">${esc(l)}</td><td class="row-val">n/a</td></tr>`).join('\n')}
+</table>
+<div class="footer"><div>Stock Analyst Pro — ${notice}</div><div style="float:right">Generiert: ${new Date().toLocaleString('de-DE')}</div></div>
+</body></html>`;
+}
+
 // ===== Generate HTML =====
 export async function generateAnalysisHTML(rawData: any): Promise<string> {
+  if (isYahooOnly(rawData)) return generateYahooOnlyHTML(rawData);
   const data = normalizeData(rawData);
   const sp = data.sectorProfile;
   const wS = sp?.waccScenarios;

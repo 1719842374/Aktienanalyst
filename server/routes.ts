@@ -362,7 +362,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const revenueGrowthSeries = revenueChrono.slice(1).map((x, i) => revenueChrono[i] !== 0 ? ((x - revenueChrono[i]) / Math.abs(revenueChrono[i])) * 100 : null).filter((x): x is number => x != null);
       const opMarginsChrono = incomeRows.slice().reverse().map((r: any) => { const rv=revenue(r), op=number(r?.operatingIncome); return rv && op != null ? op/rv*100 : null; }).filter((x: any) => x != null) as number[];
       const realizedGrowth = b.revenueGrowth != null ? Number(b.revenueGrowth) : (revNow && revenue(incomeRows[1]) ? (revNow/revenue(incomeRows[1])!-1)*100 : null);
-      const gStar = number(b.impliedGStar);
+      // #252-Rest: Number(null) = 0 → ein fehlendes g* (Yahoo/FMP ohne Reverse-DCF) darf nicht als g* = 0 % in growthGap/computeThesisStrength laufen.
+      const gStar = b.impliedGStar == null || b.impliedGStar === "" ? null : number(b.impliedGStar);
       const missingFeatures: string[] = [];
       const vectorFields: Array<[string, number | null]> = [["revenueCagr3to5y",revenueCagr3to5y],["earningsVolatility",earningsVolatility],["fcfMarginTrend",fcfMarginTrend],["leverageTrend",leverageTrend],["marginInflectionStrength",marginInflectionStrength],["growthGap",gStar != null && realizedGrowth != null ? gStar-realizedGrowth : null]];
       vectorFields.forEach(([name,value])=>{if(value==null)missingFeatures.push(name);});
