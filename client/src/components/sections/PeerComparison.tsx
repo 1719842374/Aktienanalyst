@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import type { StockAnalysis, PeerCompany } from "@shared/schema";
 import type { PeerNaFill } from "@shared/peer-na-fill";
 import { ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from "lucide-react";
+import { PEER_VIEW_TABS, filterPeersForView, peerIndustryLabel, viewAverage, type PeerViewTab } from "@/lib/peerViewFilter";
 
 function fmt(v: number | null | undefined, decimals = 1): string {
   if (v == null || isNaN(v) || !isFinite(v)) return "—";
@@ -57,6 +58,8 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [addInput, setAddInput] = useState("");
+  // PR B Peer-Selection: Filter-Tabs sind reine Ansicht (Server-Ø, Score, PDF = volles Set).
+  const [viewTab, setViewTab] = useState<PeerViewTab>("all");
 
   // Lokaler Override-State, vorbelegt aus dem letzten Server-Response (falls
   // die Seite mit bereits aktiven Overrides geladen wurde).
@@ -115,10 +118,15 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
     { key: "roic5Y", label: "ROIC 5Y Ø", lowerIsBetter: false, decimals: 1, suffix: "%" },
   ];
 
+  // PR B: sichtbare Zeilen je Tab; Ø-Peers-Zeile, Score und PDF bleiben auf `peers` (volles Set).
+  const viewPeers = filterPeersForView(peers, subject, data.industry, viewTab);
+  const viewAvg = viewTab === "all" ? null : viewAverage(viewPeers);
+  const tabCounts = new Map(PEER_VIEW_TABS.map(t => [t.key, filterPeersForView(peers, subject, data.industry, t.key).length]));
+
   // Sort peers
   const sortedPeers = useMemo(() => {
-    if (!sortKey) return peers;
-    return [...peers].sort((a, b) => {
+    if (!sortKey) return viewPeers;
+    return [...viewPeers].sort((a, b) => {
       const av = sanitizedMetricValue(sortKey, (a as any)[sortKey]);
       const bv = sanitizedMetricValue(sortKey, (b as any)[sortKey]);
       if (av == null && bv == null) return 0;
@@ -127,7 +135,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
       if (sortKey === "ticker") return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
       return sortDir === "asc" ? av - bv : bv - av;
     });
-  }, [peers, sortKey, sortDir]);
+  }, [viewPeers, sortKey, sortDir]);
 
   // Toggle sort
   function handleSort(key: SortKey) {
@@ -215,6 +223,26 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
         )}
       </div>
 
+      {/* PR B Peer-Selection: Filter-Tabs, nur Ansicht */}
+      <div className="flex flex-wrap items-center gap-1" role="tablist" data-testid="peer-view-tabs">
+        {PEER_VIEW_TABS.map(t => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={viewTab === t.key}
+            title={t.title}
+            onClick={() => setViewTab(t.key)}
+            className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${viewTab === t.key ? "border-primary/50 bg-primary/10 text-primary" : "border-border/50 text-foreground/50 hover:text-foreground/80"}`}
+            data-testid={`peer-view-tab-${t.key}`}
+          >
+            {t.label} ({tabCounts.get(t.key) ?? 0})
+          </button>
+        ))}
+        {viewTab !== "all" && (
+          <span className="text-[10px] text-foreground/40" data-testid="peer-view-note">Ansicht, nicht score-wirksam</span>
+        )}
+      </div>
+
       <div className="overflow-x-auto -mx-1">
         <table className="w-full text-[11px]" data-testid="peer-scored-table">
           <thead>
@@ -241,6 +269,9 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
                   <span className="text-primary">{subject.ticker}</span>
                   <span className="text-[8px] px-1 py-px rounded bg-primary/15 text-primary/70">Analyse</span>
                 </div>
+                {viewTab === "industry" && (
+                  <div className="text-[9px] font-normal text-foreground/40">{data.industry || "n/a"}</div>
+                )}
               </td>
               <td className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px]">{fmtCap(subject.marketCap)}</td>
               {cols.map(c => {
@@ -254,7 +285,12 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
             {/* Peer rows */}
             {sortedPeers.map((p, i) => (
               <tr key={i} className="hover:bg-muted/20 transition-colors">
-                <td className="py-1.5 px-1.5 text-foreground/80">{p.ticker}</td>
+                <td className="py-1.5 px-1.5 text-foreground/80">
+                  {p.ticker}
+                  {peerIndustryLabel(p) != null && (
+                    <div className="text-[9px] text-foreground/40" data-testid="peer-industry">{peerIndustryLabel(p)}</div>
+                  )}
+                </td>
                 <td className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px] text-foreground/50">{fmtCap(p.marketCap)}</td>
                 {cols.map(c => {
                   const val = (p as any)[c.key] as number | null;
@@ -275,6 +311,14 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
               </tr>
             ))}
 
+            {sortedPeers.length === 0 && (
+              <tr data-testid="peer-view-empty">
+                <td colSpan={cols.length + 2 + (onOverridesChange ? 1 : 0)} className="py-2 px-1.5 text-[10px] text-foreground/40">
+                  Keine Peers in dieser Ansicht (fehlende Daten zählen als n/a)
+                </td>
+              </tr>
+            )}
+
             {/* Peer Average row */}
             <tr className="border-t-2 border-border bg-muted/10 font-medium">
               <td className="py-1.5 px-1.5 text-muted-foreground">Ø Peers</td>
@@ -285,6 +329,20 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
               })}
               {onOverridesChange && <td></td>}
             </tr>
+
+            {/* PR B: Ansichts-Ø, separat vom Server-Ø, nicht score-wirksam */}
+            {viewAvg && (
+              <tr className="bg-muted/5 italic" data-testid="peer-view-avg">
+                <td className="py-1.5 px-1.5 text-muted-foreground text-[10px]" title="Durchschnitt nur der sichtbaren Peers. Ø Peers, Score und PDF nutzen das volle Set.">
+                  Ø Ansicht ({viewPeers.length}) · Ansicht, nicht score-wirksam
+                </td>
+                <td className="py-1.5 px-1 text-right text-muted-foreground text-[11px]">—</td>
+                {cols.map(c => (
+                  <td key={c.key} className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px] text-muted-foreground/70">{fmtMetric(c.key, viewAvg[c.key] ?? null, c.decimals, c.suffix)}</td>
+                ))}
+                {onOverridesChange && <td></td>}
+              </tr>
+            )}
 
             {/* Sector Median row (Damodaran) */}
             {sectorMedian && (
