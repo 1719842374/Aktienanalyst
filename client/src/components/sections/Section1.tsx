@@ -44,7 +44,12 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
   // JOB 22: Symbol aus der Listing-Währung (SHEL.L → £). JOB 23: Statement-Werte (EPS, FCF) über statementCurrency —
   // USD (Server rechnet nach USD um), nur Minor-Unit-Listings (.L) in Listing-Währung.
   const priceCcy = data.currency;
-  const stmtCcy = statementCurrency(data);
+  // #252-Rest: Yahoo-Fallback liefert EPS/KGV unkonvertiert in der Listing-Währung (VOW3.DE EPS 10.44 €, keine USD-Umrechnung).
+  const yahoo = isYahooOnly(data);
+  const stmtCcy = yahoo ? (priceCcy || statementCurrency(data)) : statementCurrency(data);
+  // #252-Rest: Yahoo liefert Fwd P/E, EV/EBITDA, PEG, EPS adj./Konsens nicht; der Server füllt 0 → bei Yahoo n/a statt 0.0.
+  const yNum = (v: number | null | undefined, d = 2): string =>
+    yahoo && !(typeof v === "number" && Number.isFinite(v) && v !== 0) ? "n/a" : formatNumber(v as number, d);
   // JOB 23: ohne Kursziel (Median n/a) PT Upside n/a statt „-100.0%“ (gleiche Regel wie Summary).
   const ptUpside = targetUpsidePct(data.analystPT.median, data.currentPrice);
 
@@ -170,9 +175,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
       <div className={`grid grid-cols-2 sm:grid-cols-3 ${divKpi ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-3`}>
         <KPI label="Price" value={formatCurrency(data.currentPrice, 2, priceCcy)} sub={new Date(data.priceTimestamp).toLocaleString()} />
         <KPI label="Market Cap" value={formatLargeNumber(data.marketCap, priceCcy)} />
-        <KPI label="Beta (5Y)" value={formatNumber(data.beta5Y)} />
-        <KPI label="P/E" value={formatNumber(data.peRatio, 1)} sub={`Fwd: ${formatNumber(data.forwardPE, 1)}`} />
-        <KPI label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
+        <KPI label="Beta (5Y)" value={yahoo ? "n/a" : formatNumber(data.beta5Y)} sub={yahoo ? `Default ${formatNumber(data.beta5Y)} (Yahoo, kein Beta)` : undefined} />
+        <KPI label="P/E" value={formatNumber(data.peRatio, 1)} sub={`Fwd: ${yNum(data.forwardPE, 1)}`} />
+        <KPI label="EV/EBITDA" value={yNum(data.evEbitda, 1)} />
         {divKpi && <KPI label="Div. Yield" value={divKpi.value} sub={divKpi.sub} />}
       </div>
 
@@ -207,8 +212,8 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
           </thead>
           <tbody className="divide-y divide-border/50">
             <Row label="EPS TTM" value={`${currencySymbol(stmtCcy)}${formatNumber(data.epsTTM)}`} />
-            <Row label="EPS adj. FY" value={`${currencySymbol(stmtCcy)}${formatNumber(data.epsAdjFY)}`} />
-            <Row label="EPS Consensus Next FY" value={`${currencySymbol(stmtCcy)}${formatNumber(data.epsConsensusNextFY)}`} />
+            <Row label="EPS adj. FY" value={yNum(data.epsAdjFY) === "n/a" ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsAdjFY)}`} />
+            <Row label="EPS Consensus Next FY" value={yNum(data.epsConsensusNextFY) === "n/a" ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsConsensusNextFY)}`} />
             <Row label="EPS-CAGR 5Y" value={data.epsCagrFromIncome === false ? "n/a" : formatPercentNoSign(data.epsGrowth5Y)} />
           </tbody>
         </table>
@@ -252,12 +257,12 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
           <table className="w-full text-xs">
             <tbody className="divide-y divide-border/50">
               <Row label="P/E" value={formatNumber(data.peRatio, 1)} />
-              <Row label="Forward P/E" value={formatNumber(data.forwardPE, 1)} />
+              <Row label="Forward P/E" value={yNum(data.forwardPE, 1)} />
               <tr className="border-b border-border/50">
                 <td className="py-1.5 px-2 text-muted-foreground">PEG</td>
                 <td className="py-1.5 px-2 text-right font-mono">
-                  <span>{formatNumber(data.pegRatio)}</span>
-                  {data.lynchClass && (
+                  <span>{yNum(data.pegRatio)}</span>
+                  {data.lynchClass && !yahoo && (
                     <span title={data.lynchPEGBasis || data.lynchClass}
                       className={`ml-2 text-[9px] px-1.5 py-0.5 rounded font-medium cursor-help ${
                         data.lynchClass === "cyclical" ? "bg-orange-500/15 text-orange-400" :
@@ -268,7 +273,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
                   )}
                 </td>
               </tr>
-              <Row label="EV/EBITDA" value={formatNumber(data.evEbitda, 1)} />
+              <Row label="EV/EBITDA" value={yNum(data.evEbitda, 1)} />
               <Row label="FCF TTM" value={data.fcfAvailable === false ? "n/a" : formatLargeNumber(data.fcfTTM, stmtCcy)} />
               <tr>
                 <td className="py-1.5 px-2 text-muted-foreground">FCF Margin</td>

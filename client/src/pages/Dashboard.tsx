@@ -631,9 +631,9 @@ export default function Dashboard() {
                 }}
               />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(18)}><SectionErrorBoundary sectionId={18} sectionLabel="Monte Carlo"><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(19)}><SectionErrorBoundary sectionId={19} sectionLabel="Management-Score"><ManagementScoreSection data={data} onScore={(score) => {
+              <div ref={setSectionRef(19)}><SectionErrorBoundary sectionId={19} sectionLabel="Management-Score">{isYahooOnly(data) ? <YahooNoValuationCard number={19} title="MANAGEMENT-EXECUTION-SCORE" data={data} /> : <ManagementScoreSection data={data} onScore={(score) => {
                 setData(prev => prev && prev.managementScore !== score ? { ...prev, managementScore: score } : prev);
-              }} /></SectionErrorBoundary></div>
+              }} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Zusammenfassung">{isYahooOnly(data) ? <YahooNoValuationCard number={20} title="ZUSAMMENFASSUNGSTABELLE" data={data} /> : <SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} />}</SectionErrorBoundary></div>
               <div className="pb-8" />
             </div>
