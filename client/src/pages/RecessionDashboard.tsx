@@ -15,6 +15,8 @@ import { showRecessionStand, type RecessionAnalysis } from "@/components/recessi
 import { RegionalCatalogSection } from "@/components/recession/RegionalCatalogSection";
 import { useRecessionCatalog } from "@/hooks/useRecessionCatalog";
 import { RegionGaugeSwitch } from "@/components/recession/RegionGaugeSwitch";
+import { MacroLayerCard } from "@/components/recession/MacroLayerCard";
+import { useMacroLayer } from "@/hooks/useMacroLayer";
 import {
   WelcomeScreen, LoadingScreen, ErrorScreen,
   NYFedReference, ScoringRules, ScoringZones,
@@ -55,6 +57,8 @@ export default function RecessionDashboard() {
   });
 
   const regions = useRecessionCatalog(data);
+  const isFallback = data === RECESSION_FALLBACK_DATA;
+  const macroLayer = useMacroLayer(data?.indicators ?? null, !!data && !isFallback);
 
   const startAnalysis = useCallback(() => {
     analyzeMutation.mutate();
@@ -126,6 +130,12 @@ export default function RecessionDashboard() {
             </SectionCard>
             <SectionCard number={7} title="Prozentschätzungen">
               <ProbabilityEstimates subgroups={data.subgroups} />
+              <MacroLayerCard
+                layer={macroLayer.data}
+                loading={macroLayer.isLoading}
+                error={macroLayer.isError}
+                fallback={isFallback}
+              />
             </SectionCard>
             {regions && (
               <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Japan)">
