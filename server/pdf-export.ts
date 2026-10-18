@@ -207,7 +207,7 @@ async function generateNarrativeSummary(data: any, fazit: any): Promise<{ execSu
 
 KERNDATEN:
 - Kurs: $${data.currentPrice?.toFixed(2)} | Market Cap: ${data.marketCap ? '$' + (data.marketCap/1e12).toFixed(2) + 'T' : '?'}
-- P/E: ${data.peRatio?.toFixed(1)} | PEG: ${data.pegRatio?.toFixed(2)} | EV/EBITDA: ${data.evEbitda?.toFixed(1)}
+- P/E: ${data.peRatio?.toFixed(1) ?? 'n/a'} | PEG: ${data.pegRatio?.toFixed(2)} | EV/EBITDA: ${data.evEbitda?.toFixed(1)}
 - FCF-Marge: ${data.fcfMargin?.toFixed(1)}% | FCF: $${data.fcfTTM ? (data.fcfTTM/1e9).toFixed(1) + 'B' : '?'}
 - Revenue: $${data.revenue ? (data.revenue/1e9).toFixed(1) + 'B' : '?'} | Gross Margin: ${data.financialStatements?.incomeStatement?.grossMargin?.toFixed(1)}%
 - Moat: ${data.moatRating} | Beta: ${data.beta5Y?.toFixed(2)} | Gov. Exposure: ${data.governmentExposure}%

@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
-import { fmpDividends, fmpProfile } from "./fmp";
-import { dividendsToMajor } from "../shared/listing-units";
+import { fmpDividends, fmpProfile, getFxRateToUsd } from "./fmp";
+import { currencyFromTickerSuffix, dividendsToMajor, dividendsToUsd, minorUnitInfo } from "../shared/listing-units";
+import { fetchYahooFxToUsd } from "./yahoo-fetcher";
 import {
   parseFmpDividends,
   parseYahooDividends,
@@ -17,7 +18,7 @@ import {
 
 const CACHE_MS = 12 * 60 * 60 * 1000;
 // v2 (#244): .L amounts are now converted pence → GBP; old v1 entries (pence) must not be served.
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v3"; // v3: DCF-FX – Nicht-USD-Dividenden in USD (wie der Kurs)
 const cacheKey = (t: string) => `${CACHE_VERSION}:${t}`;
 const cache = new Map<string, { at: number; body: DividendHistoryResponse }>();
 const TICKER_RE = /^[A-Z0-9.\-^=]{1,15}$/;
@@ -49,14 +50,47 @@ async function listingCurrencyOf(ticker: string): Promise<string | null> {
   return typeof p?.currency === "string" ? p.currency : null;
 }
 
+/** DCF-FX: Major → USD, FMP zuerst, Yahoo als Ersatz; null wenn keiner einen Kurs liefert (nie 1 raten). */
+async function fxToUsd(major: string): Promise<number | null> {
+  const r = await getFxRateToUsd(major).catch(() => 1);
+  if (r > 0 && r !== 1) return r;
+  return fetchYahooFxToUsd(major).catch(() => null);
+}
+
+type DividendDeps = {
+  fmp: (t: string) => Promise<unknown>;
+  yahoo: (t: string) => Promise<YahooDivs>;
+  listingCurrency?: (t: string) => Promise<string | null>;
+  /** DCF-FX: gesetzt → Nicht-USD-Beträge nach USD (Analyse-Kurs ist seit DCF-FX USD). Ohne → wie bisher. */
+  fxToUsd?: (major: string) => Promise<number | null>;
+};
+
 export async function loadDividendHistory(
   ticker: string,
-  deps: { fmp: (t: string) => Promise<unknown>; yahoo: (t: string) => Promise<YahooDivs>; listingCurrency?: (t: string) => Promise<string | null> } = {
+  deps: DividendDeps = {
     fmp: fmpDividends,
     yahoo: yahooDividends,
     listingCurrency: listingCurrencyOf,
+    fxToUsd,
   },
 ): Promise<DividendHistoryResponse> {
+  const res = await loadDividendHistoryListing(ticker, deps);
+  if (!deps.fxToUsd || res.events.length === 0) return res;
+  // Währung der Beträge: Quelle → Listing-Währung (FMP-Profil) → Börsen-Suffix. Minor Units sind hier schon Major.
+  let cur: string | null = res.currency ?? null;
+  if (!cur && ticker.includes(".")) {
+    const lc = deps.listingCurrency ? await deps.listingCurrency(ticker).catch(() => null) : null;
+    const raw = lc ?? currencyFromTickerSuffix(ticker);
+    cur = minorUnitInfo(raw)?.major ?? raw;
+  }
+  if (!cur || cur.toUpperCase() === "USD") return res;
+  const rate = await deps.fxToUsd(cur.toUpperCase()).catch(() => null);
+  const usd = dividendsToUsd(res.events, cur, rate);
+  if (!usd) return { ...res, currency: cur, note: [res.note, `FX ${cur.toUpperCase()}USD fehlt – Beträge in ${cur}`].filter(Boolean).join(", ") };
+  return { ...res, events: usd.events, currency: "USD", note: [res.note, `Beträge ${cur} → USD @ ${usd.rate.toFixed(4)}`].filter(Boolean).join(", ") };
+}
+
+async function loadDividendHistoryListing(ticker: string, deps: DividendDeps): Promise<DividendHistoryResponse> {
   let fmpNote: string | null = null;
   try {
     const raw = await deps.fmp(ticker);

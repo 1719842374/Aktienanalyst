@@ -134,6 +134,7 @@ import { applyFactPackFromFmpContext } from "./factpack-apply";
 import { attachExecSummary } from "./exec-summary-attach";
 import { applyBiasFix } from "../shared/bias-fixes";
 import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from "../shared/data-source";
+import { currencyFromTickerSuffix, currencyInfoFromListingFx, scaleBarsToUsd } from "../shared/listing-units";
 import { getCachedRegulatoryAssessment } from "./regulatory";
 import { assessEcosystem, collectPorterNarrative, resolveEcosystem } from "./ecosystem-moat";
 import {
@@ -641,7 +642,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const exchange = String(profile?.exchange ?? "");
       const website = String(profile?.website ?? "");
       const image = String(profile?.image ?? "");
-      const reportedCurrency = String(profile?.currency ?? "USD");
+      // DCF-FX / Tester #252-Prod: Im Yahoo-Pfad fehlt die Währung, wenn quoteSummary leer ist. Nicht still „USD“
+      // setzen, sondern aus dem Börsen-Suffix ableiten (.DE → EUR, .TO → CAD …). FMP-Pfad unverändert.
+      // DCF-FX: Umrechnungsmetadaten aus analyze-helpers listingToUsd (profile._listingFx); null bei USD-Listings.
+      const listingCurrencyInfo = currencyInfoFromListingFx((profile as any)?._listingFx);
+      const reportedCurrency = String(profile?.currency ?? (yahooOnly ? currencyFromTickerSuffix(upperTicker) : null) ?? "USD");
 
       // Income statement (most recent year)
       const incomeLatest = financials.income[0] ?? {};
@@ -782,7 +787,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             timeframe: "10Y",
             fetchFrom: indicatorWarmupFromDate(),
             fmpFetch: async () => ohlcvPoints.map((p) => ({ ...p, source: "fmp" as const })),
-            altFetch: (from, to) => altFetchYahooThenStooq(upperTicker, from, to),
+            // DCF-FX: FMP-Bars sind nach USD umgerechnet (listingToUsd) → Alt-Bars (Major-Listing-Währung) mit
+            // demselben Kurs, sonst entstünde links eine Serie in EUR/CAD/GBP neben USD. USD-Titel: Faktor 1.
+            altFetch: async (from, to) => scaleBarsToUsd(await altFetchYahooThenStooq(upperTicker, from, to), (profile as any)?._listingFx),
           });
           if (bars.length > ohlcvPoints.length) {
             ohlcvPoints = bars.slice(-OHLCV_MAX_POINTS).map(({ source: _s, ...bar }) => bar);
@@ -1929,8 +1936,11 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         currentPrice: price,
         priceTimestamp: new Date().toISOString(),
         currency: reportedCurrency || "USD",
-        marketCap,
+        // Tester #252-Prod (VOW3.DE): Yahoo ohne quoteSummary liefert keine Market Cap → null (UI n/a), nicht 0.
+        marketCap: yahooOnly && !(marketCap > 0) ? null : marketCap,
         sharesOutstanding,
+        // DCF-FX: Umrechnungs-Transparenz (Section1-Hinweis). Nur bei Nicht-USD-Listings gesetzt, USD-Titel unverändert.
+        ...(listingCurrencyInfo ? { currencyInfo: listingCurrencyInfo } : {}),
 
         // Analyst data (schema: analystPT + ratings objects, NOT flat fields)
         analystPT: {
@@ -1947,14 +1957,15 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         },
 
         // Earnings (schema: peRatio, forwardPE, pegRatio — NOT pe)
-        epsTTM,
+        // Tester #252-Prod (VOW3.DE): Yahoo ohne EPS/KGV → null (UI n/a) statt 0 bzw. „Discount −100 %“. FMP unverändert.
+        epsTTM: yahooOnly && quote?.eps == null && profile?.eps == null ? null : epsTTM,
         epsAdjFY,
         epsConsensusNextFY,
         epsGrowth5Y,
         epsCagrFromIncome,
 
-        peRatio: pe,
-        forwardPE,
+        peRatio: yahooOnly && !(pe > 0) ? null : pe,
+        forwardPE: yahooOnly && !(forwardPE > 0) ? null : forwardPE,
         pegRatio: peg ?? 0,
         peg: peg ?? null,
         lynchClass,
