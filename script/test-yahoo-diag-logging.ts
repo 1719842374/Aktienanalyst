@@ -131,12 +131,13 @@ try {
     const neuVal = await neu.getYahooSnapshot(ticker);
     console.warn = realWarn; console.log = realLog; console.error = realError;
 
-    // (a) Rückgabe unverändert — außer den DCF-FX-Feldern (currency/name/exchange: Ersatz aus Chart-Meta bzw.
-    // Börsen-Suffix, wenn quoteSummary fehlt; currencySource neu). Die prüft script/test-dcf-fx.ts.
+    // (a) Rückgabe unverändert — außer currency/name/exchange (Ersatz aus Chart-Meta #264 bzw. Börsen-Suffix außerhalb .DE).
+    // Die prüfen script/test-dcf-fx.ts und die #264-Tests.
     const dcfFx = (v: any) => { if (!v) return v; const { currency: _c, name: _n, exchange: _e, currencySource: _s, ...rest } = v; return rest; };
     assert.deepEqual(dcfFx(neuVal), dcfFx(altVal), `${s.name}: Rückgabe weicht ab`);
     if (neuVal && altVal?.currency) assert.equal(neuVal.currency, altVal.currency, `${s.name}: Währung aus quoteSummary weicht ab`);
-    if (neuVal && !altVal?.currency) assert.equal(neuVal.currency, "EUR", `${s.name}: Ersatzwährung (.DE → EUR) erwartet`);
+    // Stabschef 18.10.2026 (4): .DE ohne Chart-Meta (Mock-Chart hat keine meta) → Währung null wie #264, kein Suffix.
+    if (neuVal && !altVal?.currency) assert.equal(neuVal.currency, null, `${s.name}: .DE ohne Meta → Währung null erwartet`);
     assert.equal(neuVal === null, s.expectNull, `${s.name}: null erwartet=${s.expectNull}`);
     if (!s.expectNull) assert.equal(neuVal!.fundamentalsAvailable, s.name === "Erfolg");
 
