@@ -21,6 +21,7 @@ import {
   isIndustryCompatible,
   isPeerMarketCapWithinBand,
   normaliseIndustry,
+  type PeerIndustryProfile,
 } from "./news-peers";
 
 export const PEERS_2HOP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -46,6 +47,9 @@ export interface HopCacheRow {
 export interface AdaptivePeerResolution {
   tickers: string[];
   hopCalls: number;
+  /** PR B Peer-Selection: Branche/Sektor aller geladenen Kandidaten-Profile (Schritt C/D), fuer
+   *  fetchPeerComparisonFromTickers. Kein zusaetzlicher FMP-Call, keine Auswirkung auf tickers. */
+  profiles?: ReadonlyMap<string, PeerIndustryProfile>;
 }
 
 const hopMemory = new Map<string, HopCacheRow>();
@@ -274,11 +278,13 @@ export async function resolveAdaptivePeerTickers(opts: {
     }
   }));
   const candidates: AdaptivePeerProfile[] = [];
+  const profiles = new Map<string, PeerIndustryProfile>();
   for (const profile of loaded) {
     if (!profile) continue;
     const symbol = asSymbol(profile.symbol);
     if (!symbol) continue;
     candidates.push({ ...profile, symbol, marketCap: positiveCap(profile.marketCap) });
+    if (!profiles.has(symbol)) profiles.set(symbol, { sector: profile.sector || null, industry: profile.industry || null });
   }
   const curatedFallback = opts.curatedFallback !== undefined
     ? opts.curatedFallback
@@ -298,5 +304,6 @@ export async function resolveAdaptivePeerTickers(opts: {
       limit: opts.limit,
     }),
     hopCalls: hop.calls,
+    profiles,
   };
 }
