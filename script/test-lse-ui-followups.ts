@@ -20,8 +20,8 @@ const check = (n: string, ok: boolean) => { console.log(`${ok ? "✅" : "❌"} $
 // ── 1) Währungssymbol ──
 check("GBP → £, USD → $, EUR → €", currencySymbol("GBP") === "£" && currencySymbol("USD") === "$" && currencySymbol("EUR") === "€");
 check("ohne Währung bleibt $ (bisheriges Verhalten)", currencySymbol(undefined) === "$" && formatCurrency(12.3) === "$12.30" && formatLargeNumber(2.5e9) === "$2.50B");
-check("GBp (FX fehlt) bleibt als Code, nicht £", currencySymbol("GBp") === "GBp ");
-check("unbekannte Währung als Code statt $", currencySymbol("CHF") === "CHF ");
+check("GBp (FX fehlt) bleibt als Code, nicht £", currencySymbol("GBp") === "GBp\u00A0");
+check("unbekannte Währung als Code statt $", currencySymbol("CHF") === "CHF\u00A0");
 check("SHEL.L: £37.94 / £209.92B", formatCurrency(37.935, 2, "GBP") === "£37.94" && formatLargeNumber(209.92e9, "GBP") === "£209.92B");
 const dash = readFileSync("client/src/pages/Dashboard.tsx", "utf8");
 check("Header nutzt Listing-Währung", dash.includes("{formatCurrency(data.currentPrice, 2, data.currency)}") && !dash.includes("${data.currentPrice.toFixed(2)}"));

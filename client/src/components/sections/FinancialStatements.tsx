@@ -2,14 +2,17 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, Shield, DollarSign } from "lucide-react";
 import { useDividendKpi } from "@/lib/useDividendHistory";
+import { currencySymbol, statementCurrency } from "@/lib/formatters";
 
 interface Props { data: StockAnalysis }
 
-const fmt = (v: number, decimals = 1) => {
-  if (Math.abs(v) >= 1e12) return `$${(v / 1e12).toFixed(decimals)}T`;
-  if (Math.abs(v) >= 1e9) return `$${(v / 1e9).toFixed(decimals)}B`;
-  if (Math.abs(v) >= 1e6) return `$${(v / 1e6).toFixed(decimals)}M`;
-  return `$${v.toFixed(0)}`;
+/** JOB 23: Statement-Beträge in Statement-Währung (statementCurrency: USD nur nach Server-Umrechnung), nicht fest "$". */
+const fmt = (v: number, decimals = 1, ccy?: string | null) => {
+  const s = currencySymbol(ccy);
+  if (Math.abs(v) >= 1e12) return `${s}${(v / 1e12).toFixed(decimals)}T`;
+  if (Math.abs(v) >= 1e9) return `${s}${(v / 1e9).toFixed(decimals)}B`;
+  if (Math.abs(v) >= 1e6) return `${s}${(v / 1e6).toFixed(decimals)}M`;
+  return `${s}${v.toFixed(0)}`;
 };
 
 const pct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
@@ -65,14 +68,14 @@ export function FinancialStatements({ data }: Props) {
             <DollarSign className="w-3 h-3" /> Income Statement (TTM)
           </h4>
           <div className="space-y-1.5 text-[10px]">
-            <Row label="Revenue" value={fmt(is.revenue)} sub={pct(is.revenueGrowth)} subColor={pctColor(is.revenueGrowth)} />
-            <Row label="Gross Profit" value={fmt(is.grossProfit)} sub={`${is.grossMargin.toFixed(1)}% Marge`} subColor={is.grossMargin > 40 ? 'text-emerald-500' : is.grossMargin > 20 ? 'text-amber-500' : 'text-red-500'} />
-            <Row label="Operating Income" value={fmt(is.operatingIncome)} sub={`${is.operatingMargin.toFixed(1)}% Marge`} subColor={is.operatingMargin > 20 ? 'text-emerald-500' : is.operatingMargin > 10 ? 'text-amber-500' : 'text-red-500'} />
-            <Row label="Net Income" value={fmt(is.netIncome)} sub={`${is.netMargin.toFixed(1)}% Marge`} subColor={is.netMargin > 15 ? 'text-emerald-500' : is.netMargin > 5 ? 'text-amber-500' : 'text-red-500'} />
-            <Row label="EBITDA" value={fmt(is.ebitda)} sub={`${is.ebitdaMargin.toFixed(1)}% Marge`} subColor={is.ebitdaMargin > 25 ? 'text-emerald-500' : 'text-muted-foreground'} />
+            <Row label="Revenue" value={fmt(is.revenue, 1, statementCurrency(data))} sub={pct(is.revenueGrowth)} subColor={pctColor(is.revenueGrowth)} />
+            <Row label="Gross Profit" value={fmt(is.grossProfit, 1, statementCurrency(data))} sub={`${is.grossMargin.toFixed(1)}% Marge`} subColor={is.grossMargin > 40 ? 'text-emerald-500' : is.grossMargin > 20 ? 'text-amber-500' : 'text-red-500'} />
+            <Row label="Operating Income" value={fmt(is.operatingIncome, 1, statementCurrency(data))} sub={`${is.operatingMargin.toFixed(1)}% Marge`} subColor={is.operatingMargin > 20 ? 'text-emerald-500' : is.operatingMargin > 10 ? 'text-amber-500' : 'text-red-500'} />
+            <Row label="Net Income" value={fmt(is.netIncome, 1, statementCurrency(data))} sub={`${is.netMargin.toFixed(1)}% Marge`} subColor={is.netMargin > 15 ? 'text-emerald-500' : is.netMargin > 5 ? 'text-amber-500' : 'text-red-500'} />
+            <Row label="EBITDA" value={fmt(is.ebitda, 1, statementCurrency(data))} sub={`${is.ebitdaMargin.toFixed(1)}% Marge`} subColor={is.ebitdaMargin > 25 ? 'text-emerald-500' : 'text-muted-foreground'} />
             <Row
               label="EPS"
-              value={`$${is.eps.toFixed(2)}`}
+              value={`${currencySymbol(statementCurrency(data))}${is.eps.toFixed(2)}`}
               sub={data.epsCagrFromIncome === false ? "EPS-CAGR 5Y n/a" : `EPS-CAGR 5Y ${is.epsGrowth.toFixed(1)}%`}
               subColor={data.epsCagrFromIncome === false ? "text-muted-foreground" : pctColor(is.epsGrowth)}
             />
@@ -85,11 +88,11 @@ export function FinancialStatements({ data }: Props) {
             <Shield className="w-3 h-3" /> Balance Sheet
           </h4>
           <div className="space-y-1.5 text-[10px]">
-            <Row label="Total Assets" value={fmt(bs.totalAssets)} />
-            <Row label="Total Equity" value={fmt(bs.totalEquity)} sub={`${bs.totalAssets > 0 ? ((bs.totalEquity / bs.totalAssets) * 100).toFixed(0) : 0}% der Assets`} />
-            <Row label="Total Debt" value={fmt(bs.totalDebt)} subColor="text-red-500" />
-            <Row label="Cash & Equiv." value={fmt(bs.cashEquivalents)} subColor="text-emerald-500" />
-            <Row label="Net Debt" value={fmt(bs.netDebt)} sub={bs.netDebt < 0 ? 'Netto-Cash' : 'Netto-Verschuldet'} subColor={bs.netDebt < 0 ? 'text-emerald-500' : 'text-amber-500'} />
+            <Row label="Total Assets" value={fmt(bs.totalAssets, 1, statementCurrency(data))} />
+            <Row label="Total Equity" value={fmt(bs.totalEquity, 1, statementCurrency(data))} sub={`${bs.totalAssets > 0 ? ((bs.totalEquity / bs.totalAssets) * 100).toFixed(0) : 0}% der Assets`} />
+            <Row label="Total Debt" value={fmt(bs.totalDebt, 1, statementCurrency(data))} subColor="text-red-500" />
+            <Row label="Cash & Equiv." value={fmt(bs.cashEquivalents, 1, statementCurrency(data))} subColor="text-emerald-500" />
+            <Row label="Net Debt" value={fmt(bs.netDebt, 1, statementCurrency(data))} sub={bs.netDebt < 0 ? 'Netto-Cash' : 'Netto-Verschuldet'} subColor={bs.netDebt < 0 ? 'text-emerald-500' : 'text-amber-500'} />
             <Row label="Debt/Equity" value={bs.debtToEquity.toFixed(2)} sub={bs.debtToEquity < 0.5 ? 'Konservativ' : bs.debtToEquity < 1.5 ? 'Moderat' : 'Hoch'} subColor={bs.debtToEquity < 0.5 ? 'text-emerald-500' : bs.debtToEquity < 1.5 ? 'text-amber-500' : 'text-red-500'} />
           </div>
         </div>
@@ -100,11 +103,11 @@ export function FinancialStatements({ data }: Props) {
             <TrendingUp className="w-3 h-3" /> Cash Flow (TTM)
           </h4>
           <div className="space-y-1.5 text-[10px]">
-            <Row label="Operating CF" value={fmt(cf.operatingCashFlow)} />
-            <Row label="CapEx" value={`-${fmt(Math.abs(cf.capex))}`} subColor="text-red-500" />
+            <Row label="Operating CF" value={fmt(cf.operatingCashFlow, 1, statementCurrency(data))} />
+            <Row label="CapEx" value={`-${fmt(Math.abs(cf.capex), 1, statementCurrency(data))}`} subColor="text-red-500" />
             <Row
               label="Free Cash Flow"
-              value={data.fcfAvailable === false ? "n/a" : fmt(cf.fcf)}
+              value={data.fcfAvailable === false ? "n/a" : fmt(cf.fcf, 1, statementCurrency(data))}
               sub={data.fcfAvailable === false ? "n/a" : `${cf.fcfMargin.toFixed(1)}% Marge`}
               subColor={data.fcfAvailable === false ? "text-muted-foreground" : cf.fcf > 0 ? "text-emerald-500" : "text-red-500"}
               bold
@@ -114,7 +117,7 @@ export function FinancialStatements({ data }: Props) {
                 {data.fcfCapexHint}
               </p>
             )}
-            <Row label="FCF / Share" value={data.fcfAvailable === false ? "n/a" : `$${cf.fcfPerShare.toFixed(2)}`} />
+            <Row label="FCF / Share" value={data.fcfAvailable === false ? "n/a" : `${currencySymbol(statementCurrency(data))}${cf.fcfPerShare.toFixed(2)}`} />
             <div className="pt-1 border-t border-border/20 mt-1">
               <div className="text-[9px] text-muted-foreground">
                 FCF Yield: {data.fcfAvailable === false || !(data.marketCap > 0) ? "n/a" : `${((cf.fcf / data.marketCap) * 100).toFixed(1)}%`}
