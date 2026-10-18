@@ -1022,3 +1022,65 @@ export interface GoldAiscSeries {
   /** Kein Score-Effekt in B1. */
   inScore: false;
 }
+
+// ─── BTC-Liquiditätsblock (C1/C2, Philip-Freigabe 18.10.2026) ─────────────────
+// GET /api/analyze-btc/liquidity. Drei freie FRED-Reihen: Fed-Bilanz (WALCL),
+// T-Bill-Anteil an den marktfähigen Treasuries (Z.1, BOGZ1FL313161110Q /
+// BOGZ1FL313161275Q) und 10Y-Treasury-Trend (DGS10). Regeln + Gewichte:
+// shared/btc-liquidity.ts (BTC_LIQUIDITY_CONFIG). Fehlt eine Reihe → Komponente
+// n/a, Gewichte im Block renormalisiert; fehlt der Block → GIS exakt wie vorher.
+
+export type BtcLiquidityComponentKey = "walcl" | "bills" | "dgs10";
+
+export interface BtcLiquidityComponent {
+  key: BtcLiquidityComponentKey;
+  label: string;
+  /** false = n/a (keine/zu alte Daten). score und metric sind dann null. */
+  available: boolean;
+  /** −1 … +1 (wie die übrigen GIS-Indikatoren), null = n/a */
+  score: number | null;
+  /** Kennzahl, nach der bewertet wird (Einheit in metricUnit), null = n/a */
+  metric: number | null;
+  metricUnit: "%" | "pp" | "bp";
+  /** Anzeigetext, z. B. "6,76 Bio. $ (13W +0,4 %)" oder "n/a" */
+  value: string;
+  /** Gewicht im Block laut Config */
+  subWeight: number;
+  /** nach Renormalisierung über die verfügbaren Komponenten (0 bei n/a) */
+  effectiveSubWeight: number;
+  /** Datum der letzten verwendeten Beobachtung */
+  asOf: string | null;
+  seriesIds: string[];
+  source: string;
+  /** Regel in Kurzform bzw. Grund für n/a */
+  note: string;
+}
+
+export interface BtcLiquidityBlock {
+  /** false = Block n/a → GIS ohne Liquiditätsblock (Gewichte unverändert) */
+  available: boolean;
+  /** gewichteter Mittelwert der verfügbaren Komponenten, −1 … +1; null = n/a */
+  score: number | null;
+  /** Gewicht des Blocks im GIS laut Config (wirkt nur, wenn available) */
+  weight: number;
+  /** Summe der Config-Gewichte der verfügbaren Komponenten (0 … 1) */
+  coverage: number;
+  components: BtcLiquidityComponent[];
+  /** Stichtag der Berechnung (YYYY-MM-DD) */
+  asOf: string;
+  note: string | null;
+}
+
+/** Wochenwert der Fed-Bilanz für das Chart-Overlay (Bio. USD). */
+export interface WalclPoint {
+  date: string;
+  valueTn: number;
+}
+
+export interface BtcLiquidityResponse {
+  block: BtcLiquidityBlock;
+  /** WALCL wöchentlich, aufsteigend. Leer = n/a. */
+  walcl: WalclPoint[];
+  fetchedAt: string;
+  sources: { walcl: string; bills: string; otherMarketable: string; dgs10: string };
+}

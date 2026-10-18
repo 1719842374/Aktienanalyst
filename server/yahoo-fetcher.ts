@@ -16,6 +16,8 @@
  * Läuft nur serverseitig. Kein API-Key; Yahoo verlangt für quoteSummary
  * Cookie + Crumb, die hier einmalig geholt und wiederverwendet werden.
  */
+// Alias: #261 importiert minorUnitInfo aus demselben Modul (eigener Name vermeidet doppelten Bezeichner beim Merge).
+import { minorUnitInfo as chartMetaMinorUnit } from "../shared/listing-units";
 import { yahooFetch, indicatorWarmupFromDate, type DailyBar } from "./history-fallback";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -32,6 +34,11 @@ export interface YahooSnapshot {
   eps: number | null;
   name: string | null;
   exchange: string | null;
+  /** Gesetzt, wenn Name/Währung/Börse (ganz oder teilweise) aus der v8-Chart-Meta stammen: "Yahoo chart meta". */
+  metaSource?: typeof YAHOO_CHART_META_SOURCE;
+  /** Gesetzt, wenn MCap/EPS/KGV aus Yahoo fundamentals-timeseries stammen (ohne Crumb), mit Stichtagen. */
+  fundamentalsSource?: typeof YAHOO_TIMESERIES_SOURCE;
+  timeseriesAsOf?: { shares: string | null; eps: string | null };
   bars: DailyBar[];
   fundamentalsAvailable: boolean;
 }
@@ -55,7 +62,7 @@ export function spaceYahooCall(): Promise<void> {
 // nie geloggt: bekannte Werte und typische Muster (crumb=…, Cookie-Paare) werden zu *** maskiert.
 // Nur Logging — Rückgabewerte und Ablauf bleiben unverändert (kein Retry, kein neuer Header).
 export const YAHOO_DIAG_PREFIX = "[YAHOO-DIAG]";
-export type YahooDiagStage = "cookie" | "crumb" | "quoteSummary" | "chart";
+export type YahooDiagStage = "cookie" | "crumb" | "quoteSummary" | "chart" | "timeseries";
 
 /** Ersetzt Geheimnisse (Cookie-/Crumb-Werte) und typische Muster durch ***. */
 export function maskYahooSecrets(text: string, secrets: Array<string | null | undefined> = []): string {
@@ -205,7 +212,7 @@ async function fetchQuoteSummary(symbol: string): Promise<Partial<YahooSnapshot>
 const cache = new Map<string, { value: YahooSnapshot | null; at: number }>();
 const inflight = new Map<string, Promise<YahooSnapshot | null>>();
 
-export function clearYahooCache(): void { cache.clear(); inflight.clear(); _crumb = null; }
+export function clearYahooCache(): void { cache.clear(); inflight.clear(); _crumb = null; tsCache.clear(); }
 
 /**
  * Yahoo-Snapshot für ein Symbol (gecacht). Braucht mindestens einen Kurs
@@ -247,9 +254,11 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
     console.warn(`[YAHOO-402] ${key}: ${String(err?.message ?? err).slice(0, 120)}`);
     return null;
   });
-  inflight.set(key, p);
+  // Ersatzstufen A (Chart-Meta) und B (timeseries) NUR für .DE (Philip 18.10.2026 22:27); alle anderen Ticker wie main.
+  const withMeta = isGermanXetraTicker(key) ? p.then(applyChartMetaFallback).then(applyTimeseriesFundamentals) : p;
+  inflight.set(key, withMeta);
   try {
-    const value = await p;
+    const value = await withMeta;
     cache.set(key, { value, at: Date.now() });
     return value;
   } finally {
@@ -259,3 +268,266 @@ export async function getYahooSnapshot(symbol: string): Promise<YahooSnapshot | 
 
 /** Klarer Hinweistext (Spec §7), wenn FMP 402 liefert und Yahoo übernimmt. */
 export const YAHOO_402_NOTICE = "Plan deckt dieses Symbol nicht ab – Yahoo-Kurs/History aktiv";
+
+/**
+ * Gate für die automatischen Ersatzstufen A (Chart-Meta) und B (fundamentals-timeseries) im Snapshot-Pfad:
+ * nur Ticker mit Suffix `.DE` (Philip 18.10.2026 22:27). US, .L, .AS, .SW, .T, .PA usw. bleiben exakt wie auf main
+ * (kein Zusatz-Call, keine zusätzliche [YAHOO-DIAG]-Zeile).
+ */
+export function isGermanXetraTicker(symbol: string): boolean {
+  return /\.DE$/i.test(String(symbol ?? "").trim());
+}
+
+// ─── Chart-Meta-Ersatz (Render: getcrumb 429 → quoteSummary fehlt) ───
+// Die v8-Chart-API braucht keinen Crumb und nennt in `meta` Währung, Börse und Namen. Fehlt quoteSummary
+// (oder fehlen dort diese Felder), werden NUR diese drei Felder aus der Meta ergänzt. Market Cap, KGV und EPS
+// bleiben null (die Meta hat sie nicht; nichts wird geschätzt). Vorhandene quoteSummary-Werte haben Vorrang.
+export const YAHOO_CHART_META_SOURCE = "Yahoo chart meta" as const;
+
+export interface YahooChartMeta { currency: string | null; exchange: string | null; name: string | null }
+
+/** Liest currency, fullExchangeName/exchangeName und longName/shortName aus einer v8-Chart-Antwort. null ohne Meta. */
+export function parseYahooChartMeta(json: any): YahooChartMeta | null {
+  const meta = json?.chart?.result?.[0]?.meta;
+  if (!meta || typeof meta !== "object") return null;
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().replace(/\s{2,}.*$/, "") : null);
+  const out = { currency: str(meta.currency), exchange: str(meta.fullExchangeName) ?? str(meta.exchangeName), name: str(meta.longName) ?? str(meta.shortName) };
+  return out.currency || out.exchange || out.name ? out : null;
+}
+
+/** Kleiner v8-Chart-Call (range=5d, ohne Crumb) nur für die Meta. null bei jedem Fehler (kein Throw, kein Log). */
+async function fetchYahooChartMeta(symbol: string): Promise<YahooChartMeta | null> {
+  try {
+    await spaceYahooCall();
+    const resp = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`, {
+      signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA, Accept: "application/json" },
+    });
+    if (!resp.ok) return null;
+    return parseYahooChartMeta(await resp.json());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * (Nur .DE, sonst Snapshot unverändert.) Ergänzt fehlende Name/Währung/Börse eines Snapshots aus der Chart-Meta. Kein Call, wenn alle drei schon
+ * gesetzt sind (quoteSummary ok → Snapshot unverändert). Kurs kommt ohne quoteSummary aus den Bars, die
+ * history-fallback schon in die Major-Einheit bringt (yahooBarsToMajor) → Minor-Code (GBp) wird dann als
+ * Major (GBP) gemeldet, damit Kurs und Währung zusammenpassen. Keine Umrechnung von Werten.
+ */
+export async function applyChartMetaFallback(snap: YahooSnapshot | null): Promise<YahooSnapshot | null> {
+  if (!snap || !isGermanXetraTicker(snap.symbol)) return snap; // nur .DE
+  if (snap.currency && snap.name && snap.exchange) return snap;
+  const meta = await fetchYahooChartMeta(snap.symbol);
+  if (!meta) return snap;
+  let currency = meta.currency;
+  if (currency && !snap.fundamentalsAvailable) currency = chartMetaMinorUnit(currency)?.major ?? currency;
+  const filled: string[] = [];
+  const next: YahooSnapshot = { ...snap };
+  if (!next.currency && currency) { next.currency = currency; filled.push(`Währung ${currency}`); }
+  if (!next.name && meta.name) { next.name = meta.name; filled.push(`Name ${meta.name}`); }
+  if (!next.exchange && meta.exchange) { next.exchange = meta.exchange; filled.push(`Börse ${meta.exchange}`); }
+  if (!filled.length) return snap;
+  next.metaSource = YAHOO_CHART_META_SOURCE;
+  console.log(`[YAHOO-402] ${snap.symbol}: ${filled.join(", ")} aus ${YAHOO_CHART_META_SOURCE} (quoteSummary ${snap.fundamentalsAvailable ? "unvollständig" : "fehlt"}; Market Cap/KGV/EPS bleiben null)`);
+  return next;
+}
+
+// ─── Fundamentals ohne Crumb: Yahoo fundamentals-timeseries (Render: getcrumb 429) ───
+// Nur wenn quoteSummary fehlt (fundamentalsAvailable false). Ein Call ohne Cookie/Crumb, mit Browser-UA (ohne UA → 429).
+// MCap = Kurs (Chart) × quarterlyOrdinarySharesNumber (Ersatz annualOrdinarySharesNumber), EPS = trailingDilutedEPS,
+// KGV = Kurs / EPS (nur EPS > 0). Alles vom selben Listing; EPS nur, wenn dessen currencyCode = Snapshot-Währung
+// (Chart-Meta) — keine FX-Umrechnung, kein ADR. Fehler/fehlende Werte → Feld bleibt null (UI n/a), nie geschätzt.
+// Je Abruf eine Zeile [YAHOO-DIAG] stage=timeseries mit HTTP-Status (Render-Gegenprobe).
+export const YAHOO_TIMESERIES_SOURCE = "Yahoo timeseries" as const;
+const TIMESERIES_TYPES = ["quarterlyOrdinarySharesNumber", "annualOrdinarySharesNumber", "trailingDilutedEPS"] as const;
+/** Ältere Werte als das werden ignoriert (Halbjahres-Berichter liegen bei ≤ ~9 Monaten). */
+export const TIMESERIES_MAX_AGE_DAYS = 550;
+
+type TsPoint = { asOfDate: string; currencyCode: string | null; value: number };
+
+/** Jüngster gültiger Punkt (asOfDate max, Wert endlich) eines Typs aus der timeseries-Antwort. */
+function latestTsPoint(json: any, type: string, now: number): TsPoint | null {
+  const results: any[] = Array.isArray(json?.timeseries?.result) ? json.timeseries.result : [];
+  let best: TsPoint | null = null;
+  for (const r of results) {
+    const rows = r?.[type];
+    if (!Array.isArray(rows)) continue;
+    for (const row of rows) {
+      const v = row?.reportedValue?.raw;
+      const d = typeof row?.asOfDate === "string" ? row.asOfDate : null;
+      if (typeof v !== "number" || !Number.isFinite(v) || !d) continue;
+      const t = Date.parse(`${d}T00:00:00Z`);
+      if (!Number.isFinite(t) || now - t > TIMESERIES_MAX_AGE_DAYS * 86400000 || t - now > 86400000) continue;
+      if (!best || d > best.asOfDate) best = { asOfDate: d, currencyCode: typeof row.currencyCode === "string" ? row.currencyCode : null, value: v };
+    }
+  }
+  return best;
+}
+
+/**
+ * Leitet MCap/EPS/KGV aus einer timeseries-Antwort ab (rein, testbar). Nur Werte vom selben Listing und in der
+ * Snapshot-Währung; sonst null.
+ */
+export function deriveTimeseriesFundamentals(json: any, price: number, currency: string, now: number = Date.now()): {
+  marketCap: number | null; eps: number | null; pe: number | null; sharesAsOf: string | null; epsAsOf: string | null;
+} {
+  const shares = latestTsPoint(json, "quarterlyOrdinarySharesNumber", now) ?? latestTsPoint(json, "annualOrdinarySharesNumber", now);
+  const epsPt = latestTsPoint(json, "trailingDilutedEPS", now);
+  const okPrice = Number.isFinite(price) && price > 0;
+  const marketCap = okPrice && shares && shares.value > 0 ? price * shares.value : null;
+  const epsSameCcy = epsPt && epsPt.currencyCode != null && epsPt.currencyCode.toUpperCase() === currency.toUpperCase() ? epsPt : null;
+  const eps = epsSameCcy ? epsSameCcy.value : null;
+  const pe = okPrice && eps != null && eps > 0 ? price / eps : null;
+  return { marketCap, eps, pe, sharesAsOf: marketCap != null ? shares!.asOfDate : null, epsAsOf: eps != null ? epsSameCcy!.asOfDate : null };
+}
+
+/** Ergebnis von fetchYahooTimeseriesFundamentals. Fehlende Werte sind null (= n/a), nie 0 oder geschätzt. */
+export interface YahooTimeseriesFundamentals {
+  symbol: string;
+  /**
+   * ok       = MCap und EPS/KGV abgeleitet
+   * partial  = nur ein Teil (z. B. MCap ja, EPS fehlt/andere Währung)
+   * no_data  = timeseries 200, aber nichts Verwertbares
+   * no_meta  = keine Listing-Währung/kein Kurs (Chart-Meta fehlt) → kein timeseries-Call
+   * http_error = timeseries HTTP ≠ 2xx (z. B. 429), error = Netzwerk/Timeout/JSON
+   */
+  status: "ok" | "partial" | "no_data" | "no_meta" | "http_error" | "error";
+  /** HTTP-Status des timeseries-Calls (null: kein Call oder Netzwerkfehler). */
+  httpStatus: number | null;
+  /** Listing-Währung (Major-Einheit, z. B. GBp → GBP); Kurs, MCap und EPS sind in dieser Währung. */
+  currency: string | null;
+  exchangeName: string | null;
+  name: string | null;
+  /** Kurs (Major-Einheit), aus opts.price oder Chart-Meta regularMarketPrice. */
+  price: number | null;
+  sharesOutstanding: number | null;
+  /** price × sharesOutstanding. */
+  marketCap: number | null;
+  /** trailingDilutedEPS (TTM), nur wenn currencyCode = currency. */
+  epsDiluted: number | null;
+  /** price / epsDiluted, nur wenn epsDiluted > 0. */
+  pe: number | null;
+  /** Stichtage (asOfDate, YYYY-MM-DD) der Aktienzahl und des EPS. */
+  asOf: { shares: string | null; eps: string | null };
+  /** "Yahoo timeseries", sobald MCap oder EPS daraus stammt; sonst "Yahoo chart meta" (nur Name/Währung/Börse/Kurs). */
+  source: typeof YAHOO_TIMESERIES_SOURCE | typeof YAHOO_CHART_META_SOURCE;
+}
+
+export interface YahooTimeseriesOpts {
+  /** Kurs in Listing-Währung (Major). Mit `currency` zusammen gesetzt → kein Chart-Meta-Call. */
+  price?: number | null;
+  currency?: string | null;
+  name?: string | null;
+  exchangeName?: string | null;
+}
+
+const tsCache = new Map<string, { value: YahooTimeseriesFundamentals; at: number }>();
+
+/**
+ * Stufe 2 (Yahoo ohne Crumb): Name/Währung/Börse/Kurs aus der v8-Chart-Meta (oder aus opts), Aktienzahl und
+ * trailingDilutedEPS aus fundamentals-timeseries. Wirft nie; Fehler stehen in `status`/`httpStatus`, Werte sind dann null.
+ * Gecacht pro Symbol+Kurs+Währung (15 min, Fehlschläge 2 min). Je timeseries-Call eine Zeile [YAHOO-DIAG] stage=timeseries.
+ *
+ * Hinweis: Der direkte Aufruf dieser Funktion ist NICHT auf `.DE` begrenzt (z. B. für feat/fmp-adr-mapping).
+ * Nur die automatische Ersatzstufe im Snapshot-Pfad (getYahooSnapshot → applyTimeseriesFundamentals) läuft
+ * ausschließlich für `.DE` (isGermanXetraTicker). Wer sie direkt aufruft, entscheidet selbst über das Gate.
+ */
+export async function fetchYahooTimeseriesFundamentals(symbol: string, opts: YahooTimeseriesOpts = {}): Promise<YahooTimeseriesFundamentals> {
+  const sym = String(symbol || "").trim().toUpperCase();
+  const cacheKey = `${sym}|${opts.price ?? ""}|${opts.currency ?? ""}`;
+  const hit = tsCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < (hit.value.status === "ok" || hit.value.status === "partial" ? YAHOO_CACHE_TTL_MS : YAHOO_FAIL_TTL_MS)) return hit.value;
+  const value = await fetchYahooTimeseriesFundamentalsUncached(sym, opts);
+  tsCache.set(cacheKey, { value, at: Date.now() });
+  return value;
+}
+
+async function fetchYahooTimeseriesFundamentalsUncached(sym: string, opts: YahooTimeseriesOpts): Promise<YahooTimeseriesFundamentals> {
+  let price = typeof opts.price === "number" && Number.isFinite(opts.price) && opts.price > 0 ? opts.price : null;
+  let currency = typeof opts.currency === "string" && opts.currency.trim() ? opts.currency.trim() : null;
+  let name = opts.name ?? null;
+  let exchangeName = opts.exchangeName ?? null;
+  if (price == null || currency == null) {
+    const m = await fetchYahooChartMetaWithPrice(sym);
+    if (m) {
+      // Meta-Kurs ist in der Meta-Währung; Minor (GBp) → Major (GBP), damit Kurs, MCap und Währung zusammenpassen.
+      const mu = m.currency ? chartMetaMinorUnit(m.currency) : null;
+      if (price == null && m.price != null) price = mu ? m.price / mu.factor : m.price;
+      if (currency == null && m.currency) currency = mu ? mu.major : m.currency;
+      name = name ?? m.name;
+      exchangeName = exchangeName ?? m.exchange;
+    }
+  }
+  const base: YahooTimeseriesFundamentals = {
+    symbol: sym, status: "no_meta", httpStatus: null, currency, exchangeName, name, price,
+    sharesOutstanding: null, marketCap: null, epsDiluted: null, pe: null, asOf: { shares: null, eps: null }, source: YAHOO_CHART_META_SOURCE,
+  };
+  if (!sym || price == null || currency == null) return base;
+  try {
+    await spaceYahooCall();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const url = `https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(sym)}?type=${TIMESERIES_TYPES.join(",")}&period1=${nowSec - 2 * 366 * 86400}&period2=${nowSec}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA, Accept: "application/json" } });
+    if (!resp.ok) {
+      yahooDiag(sym, "timeseries", resp.status, `nicht ok${statusHint(resp.status)}${redirectNote(resp)}: ${await bodySnippet(resp)} → MCap/KGV/EPS n/a`);
+      return { ...base, status: "http_error", httpStatus: resp.status };
+    }
+    const d = deriveTimeseriesFundamentals(await resp.json(), price, currency);
+    if (d.marketCap == null && d.eps == null) {
+      yahooDiag(sym, "timeseries", resp.status, `ok, aber keine verwertbaren Werte (Aktienzahl/EPS fehlen, zu alt oder andere Währung als ${currency}) → MCap/KGV/EPS n/a`);
+      return { ...base, status: "no_data", httpStatus: resp.status };
+    }
+    yahooDiag(sym, "timeseries", resp.status, `ok: MCap ${d.marketCap != null ? `Kurs × Aktien (Stand ${d.sharesAsOf})` : "n/a"}, EPS ${d.eps != null ? `trailingDilutedEPS (Stand ${d.epsAsOf})` : "n/a"}, KGV ${d.pe != null ? "Kurs/EPS" : "n/a"} [${currency}]`);
+    return {
+      ...base,
+      status: d.marketCap != null && d.eps != null && d.pe != null ? "ok" : "partial",
+      httpStatus: resp.status,
+      sharesOutstanding: d.marketCap != null ? d.marketCap / price : null,
+      marketCap: d.marketCap, epsDiluted: d.eps, pe: d.pe,
+      asOf: { shares: d.sharesAsOf, eps: d.epsAsOf },
+      source: YAHOO_TIMESERIES_SOURCE,
+    };
+  } catch (err) {
+    yahooDiag(sym, "timeseries", null, `Fehler: ${errText(err)} → MCap/KGV/EPS n/a`);
+    return { ...base, status: "error" };
+  }
+}
+
+/** Chart-Meta inkl. regularMarketPrice (für den Standalone-Aufruf ohne Snapshot). */
+async function fetchYahooChartMetaWithPrice(symbol: string): Promise<(YahooChartMeta & { price: number | null }) | null> {
+  try {
+    await spaceYahooCall();
+    const resp = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`, {
+      signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA, Accept: "application/json" },
+    });
+    if (!resp.ok) return null;
+    const json: any = await resp.json();
+    const meta = parseYahooChartMeta(json);
+    if (!meta) return null;
+    const px = Number(json?.chart?.result?.[0]?.meta?.regularMarketPrice);
+    return { ...meta, price: Number.isFinite(px) && px > 0 ? px : null };
+  } catch {
+    return null;
+  }
+}
+
+/** Snapshot-Stufe (nur .DE): ergänzt fehlende marketCap/eps/pe über fetchYahooTimeseriesFundamentals, wenn quoteSummary fehlt. Wirft nie. */
+export async function applyTimeseriesFundamentals(snap: YahooSnapshot | null): Promise<YahooSnapshot | null> {
+  if (!snap || !isGermanXetraTicker(snap.symbol)) return snap; // nur .DE
+  if (snap.fundamentalsAvailable) return snap; // quoteSummary ok → unverändert, kein Call
+  if (snap.marketCap != null && snap.eps != null && snap.pe != null) return snap;
+  // Nur mit bestätigtem Listing (Währung + Name oder Börse aus der Chart-Meta): sonst kein „selbe Währung“-Check → n/a, kein Call.
+  // (Eine nur aus dem Börsen-Suffix geratene Währung reicht nicht.)
+  if (!snap.currency || !(snap.name || snap.exchange)) return snap;
+  const f = await fetchYahooTimeseriesFundamentals(snap.symbol, { price: snap.price, currency: snap.currency, name: snap.name, exchangeName: snap.exchange });
+  if (f.source !== YAHOO_TIMESERIES_SOURCE) return snap;
+  return {
+    ...snap,
+    marketCap: snap.marketCap ?? f.marketCap,
+    eps: snap.eps ?? f.epsDiluted,
+    pe: snap.pe ?? f.pe,
+    fundamentalsSource: YAHOO_TIMESERIES_SOURCE,
+    timeseriesAsOf: { shares: f.asOf.shares, eps: f.asOf.eps },
+  };
+}
