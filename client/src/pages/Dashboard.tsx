@@ -13,6 +13,16 @@ import {
   writeOverrides,
   type PeerOverrideLists,
 } from "@shared/peer-override-persist";
+import {
+  PEER_OVERRIDES_REJECTED,
+  clampPeerOverrides,
+  discardRejectedOverrides,
+  isPeerOverrideRejection,
+  peerResetNoticeAfterSuccess,
+  peerResetNoticeFor,
+  type PeerResetNotice,
+  sameOverrides,
+} from "@/lib/peerOverrideLimits";
 import type { StockAnalysis } from "../../../shared/schema";
 import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "@/lib/calculations";
 import { TickerSearch } from "@/components/TickerSearch";
@@ -100,6 +110,8 @@ export default function Dashboard() {
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number; isPending?: boolean } | null>(null);
+  // #258: Hinweis nach automatischem Verwerfen abgelehnter Peer-Overrides (400).
+  const [peerResetNotice, setPeerResetNotice] = useState<PeerResetNotice>(null);
   const [serverReady, setServerReady] = useState<boolean | null>(null); // null=checking, true=ready, false=down
 
   const [financeQuotaOk, setFinanceQuotaOk] = useState<boolean | null>(null);
@@ -150,25 +162,27 @@ export default function Dashboard() {
 
   // Tagged mutate: assigns a fresh reqId on every kick-off so onSuccess can
   // reject stale responses. Use this everywhere instead of mutation.mutate().
-  const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean; peerOverrides?: { add: string[]; remove: string[] } }) => {
+  const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean; peerOverrides?: { add: string[]; remove: string[] }; peerResetRecovery?: boolean }) => {
     const storage = safeLocalStorage();
     const explicit = args.peerOverrides;
-    const resolved: PeerOverrideLists = explicit
+    const loaded: PeerOverrideLists = explicit
       ? normalizeStoredOverrides(explicit)
       : (storage ? readOverrides(storage, args.ticker) : { add: [], remove: [] });
+    // #258 FAIL 5: harter Deckel 8 je Liste (Server-zod .max(8)), auch für Altbestände aus localStorage.
+    const resolved: PeerOverrideLists = clampPeerOverrides(loaded);
     if (storage) {
-      if (explicit) writeOverrides(storage, args.ticker, resolved);
+      if (explicit || !sameOverrides(loaded, resolved)) writeOverrides(storage, args.ticker, resolved);
       writeLastTicker(storage, args.ticker);
     }
     requestIdRef.current += 1;
     const reqId = requestIdRef.current;
-    analyzeMutationRef.current.mutate({ ticker: args.ticker, llm: args.llm, force: args.force, peerOverrides: resolved, reqId });
+    analyzeMutationRef.current.mutate({ ticker: args.ticker, llm: args.llm, force: args.force, peerOverrides: resolved, reqId, peerResetRecovery: args.peerResetRecovery });
   }, []);
   // Forward-decl ref so startAnalyze can reference the mutation before it's declared
   const analyzeMutationRef = useRef<any>(null);
 
   const analyzeMutation = useMutation({
-    mutationFn: async ({ ticker, llm, force, peerOverrides }: { ticker: string; llm: boolean; force?: boolean; reqId?: number; peerOverrides?: { add: string[]; remove: string[] } }) => {
+    mutationFn: async ({ ticker, llm, force, peerOverrides }: { ticker: string; llm: boolean; force?: boolean; reqId?: number; peerOverrides?: { add: string[]; remove: string[] }; peerResetRecovery?: boolean }) => {
       const maxRetries = 5;
       let lastError: Error | null = null;
 
@@ -182,6 +196,12 @@ export default function Dashboard() {
           if (!res.ok) {
             const errJson = await res.json().catch(() => ({}));
             const errMsg = errJson?.error || errJson?.message || `HTTP ${res.status}`;
+            // #258 FAIL 5: 400 auf Overrides (z.B. zod "Array must contain at most 8 element(s)")
+            // ist nicht transient -- keine Retries; onError verwirft die Overrides und lädt neu.
+            if (isPeerOverrideRejection(res.status, peerOverrides)) {
+              setRetryInfo(null);
+              throw Object.assign(new Error(errMsg), { errorCode: PEER_OVERRIDES_REJECTED, details: errJson?.details });
+            }
             // 429 / RATE_LIMITED: surface immediately, no retries
             if (res.status === 429 || errJson?.errorCode === 'RATE_LIMITED') {
               console.warn(`[Analyze] Rate-limit erkannt — keine Retries`);
@@ -261,6 +281,7 @@ export default function Dashboard() {
           if (err?.errorCode === 'RATE_LIMITED' || msg.includes("RATE_LIMITED") || msg.includes("Tagesquota")) {
             throw err;
           }
+          if (err?.errorCode === PEER_OVERRIDES_REJECTED) throw err;
           console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${msg.substring(0, 100)}`);
           if (attempt < maxRetries) {
             // Network retry backoff (short) — no cold-start warmup needed anymore.
@@ -282,6 +303,8 @@ export default function Dashboard() {
         return;
       }
       setData(result);
+      // #258: Reset-Hinweis überlebt nur den Neu-Lauf nach dem Verwerfen, die nächste Analyse räumt ihn ab.
+      setPeerResetNotice((cur) => peerResetNoticeAfterSuccess(cur, variables));
       setFinanceQuotaOk(true); // Clear any quota warning on success
       const prev = dataRef.current;
       if (!result.llmMode || !prev || prev.companyName !== result.companyName) {
@@ -298,6 +321,15 @@ export default function Dashboard() {
       // Only clear data for RATE_LIMITED (needs explicit empty state for quota warning UI).
       // For all other errors: old data > blank screen.
       const ec = (err as any)?.errorCode;
+      // #258 FAIL 5: Overrides vom Server abgelehnt → gespeicherte Overrides verwerfen und
+      // die Analyse ohne Overrides neu laden. Kein Loop: ohne Overrides greift isPeerOverrideRejection nicht.
+      if (ec === PEER_OVERRIDES_REJECTED && variables?.ticker) {
+        console.warn(`[Analyze] Peer-Overrides für ${variables.ticker} vom Server abgelehnt (400) — verworfen, lade ohne Overrides neu`);
+        const cleared = discardRejectedOverrides(safeLocalStorage(), variables.ticker);
+        setPeerResetNotice({ ticker: variables.ticker });
+        startAnalyze({ ticker: variables.ticker, llm: !!variables.llm, force: false, peerOverrides: cleared, peerResetRecovery: true });
+        return;
+      }
       if (ec !== 'RATE_LIMITED' && dataRef.current) {
         console.log('[Analyze] Error but keeping previous data visible');
         setRetryInfo(null);
@@ -600,7 +632,7 @@ export default function Dashboard() {
               <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung">{isYahooOnly(data) ? <YahooNoValuationCard number={6} title="BEWERTUNGSKENNZAHLEN" data={data} /> : <Section4 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="DCF-Modell">{isYahooOnly(data) ? <YahooNoValuationCard number={7} title="DCF-MODELL (FCFF)" data={data} /> : <Section5 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="CRV">{isYahooOnly(data) ? <YahooNoValuationCard number={8} title="RISIKOADJUSTIERTES CRV" data={data} /> : <Section6 data={data} />}</SectionErrorBoundary></div>
-              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerBusy={analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides)} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerResetNotice={peerResetNoticeFor(peerResetNotice, data.ticker)?.ticker ?? null} onDismissPeerResetNotice={() => setPeerResetNotice(null)} peerBusy={analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides)} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion">{isYahooOnly(data) ? <YahooNoValuationCard number={10} title="INVERSION – RISIKOEINPREISUNG" data={data} /> : <Section8 data={data} useLLM={useLLM} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>

@@ -3,9 +3,15 @@
  * peerOverrides, localStorage übersteht einen Reload, der nächste Body nimmt
  * sie mit. Cache-Key bleibt der serverseitige aus peer-cache-key.ts.
  *
+ * PR A (Peer-Selection): Deckel 8 auf sichtbare Peers, Eingabe + „Standard
+ * wiederherstellen“ auch bei 0 Peers (SSR), Hinweis „X nicht übernommen“.
+ *
  * Ausfuehren: npx tsx script/test-peer-add-rest.ts
  */
 import { readFileSync } from "node:fs";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import PeerComparison, { missingAddedPeers, peerCapReached, MAX_VISIBLE_PEERS } from "../client/src/components/sections/PeerComparison";
 import { buildAnalyzeCacheKey, normalizePeerOverrides } from "../server/peer-cache-key";
 import {
   analyzePostBody,
@@ -20,6 +26,8 @@ import {
   type KeyValueStore,
   type PeerOverrideLists,
 } from "../shared/peer-override-persist";
+
+(globalThis as any).React = React; // Komponenten nutzen im Vite-Build das automatische JSX-Runtime
 
 let failed = 0;
 function check(name: string, cond: boolean, detail?: string) {
@@ -93,6 +101,60 @@ check("Peer-Zeile zeigt Loading", readFileSync(new URL("../client/src/components
 
 const unused: PeerOverrideLists = { add: [], remove: [] };
 check("hasPeerOverrideLists erkennt leer", hasPeerOverrideLists(unused) === false);
+
+// ── PR A: Deckel, leere Liste, „nicht übernommen“ ──
+console.log("\nPR A — PeerComparison");
+const mkPeer = (ticker: string) => ({
+  ticker, name: ticker, pe: 20, peg: 1.5, ps: 4, pb: 3, epsGrowth1Y: 10, epsGrowth5Y: 8,
+  marketCap: 100e9, revenueGrowth: 5, roic: 15, roicFiscalYear: "2025", roic5Y: 14, roic5YYearsUsed: 5,
+});
+const autoFive = ["GSK", "AZN", "SNY", "MRK", "PFE"].map(mkPeer);
+const sevenWithAdds = [...autoFive, mkPeer("LLY"), mkPeer("ABT")];
+check("Deckel konstant 8", MAX_VISIBLE_PEERS === 8);
+check("5 Auto + 2 übernommene Adds = 7 sichtbar → nicht gesperrt (alt: 2+7=9 ≥ 8 gesperrt)", peerCapReached(sevenWithAdds) === false && (2 + sevenWithAdds.length >= 8));
+check("8 sichtbare Peers → gesperrt", peerCapReached([...sevenWithAdds, mkPeer("JNJ")]) === true);
+check("0 Peers → nicht gesperrt", peerCapReached([]) === false);
+check("nicht übernommen: XYZ fehlt, LLY angekommen", JSON.stringify(missingAddedPeers(["LLY", "XYZ"], sevenWithAdds, "NVO")) === JSON.stringify(["XYZ"]));
+check("nicht übernommen: Groß/Klein egal, Subject zählt nicht", JSON.stringify(missingAddedPeers(["lly", "nvo"], [mkPeer("LLY")], "NVO")) === "[]");
+
+const subject = { ...mkPeer("NVO"), name: "Novo Nordisk" };
+const peerAvg = { pe: 20, peg: 1.5, ps: 4, pb: 3, epsGrowth1Y: 10, epsGrowth5Y: 8, roic: 15, roic5Y: 14 };
+const mkData = (peers: any[] | null, add: string[], remove: string[] = []) => ({
+  ticker: "NVO",
+  peerComparison: peers === null ? undefined : { subject, peers, peerAvg },
+  activePeerOverrides: { add, remove },
+}) as any;
+const render = (props: Record<string, unknown>) => renderToStaticMarkup(React.createElement(PeerComparison as any, props));
+const noop = () => {};
+
+const empty = render({ data: mkData([], ["XYZ"]), onOverridesChange: noop });
+check("SSR 0 Peers: Eingabefeld da", empty.includes('data-testid="input-peer-add"'), empty.slice(0, 300));
+check("SSR 0 Peers: „Standard wiederherstellen“ da", empty.includes("Standard wiederherstellen") && empty.includes('data-testid="button-peer-reset"'));
+check("SSR 0 Peers: „XYZ nicht übernommen“", empty.includes('data-testid="peer-not-adopted"') && empty.includes("XYZ nicht übernommen"));
+check("SSR 0 Peers: Reset aktiv bei Overrides", !/data-testid="button-peer-reset"[^>]*disabled|disabled=""[^>]*data-testid="button-peer-reset"/.test(empty));
+
+const emptyNoOverrides = render({ data: mkData([], []), onOverridesChange: noop });
+check("SSR 0 Peers ohne Overrides: Eingabe + Reset gerendert", emptyNoOverrides.includes('data-testid="input-peer-add"') && emptyNoOverrides.includes("Standard wiederherstellen"));
+check("SSR 0 Peers ohne Overrides: kein Hinweis", !emptyNoOverrides.includes("nicht übernommen"));
+
+const noPc = render({ data: mkData(null, ["XYZ"]), onOverridesChange: noop });
+check("SSR peerComparison fehlt: Eingabe + Reset + Hinweis", noPc.includes('data-testid="input-peer-add"') && noPc.includes("Standard wiederherstellen") && noPc.includes("XYZ nicht übernommen"));
+
+const emptyReadonly = render({ data: mkData([], ["XYZ"]) });
+check("SSR 0 Peers ohne Callback: weiterhin keine Steuerung", !emptyReadonly.includes("input-peer-add") && !emptyReadonly.includes("Standard wiederherstellen"));
+
+const seven = render({ data: mkData(sevenWithAdds, ["ABT", "LLY"]), onOverridesChange: noop });
+check("SSR 7 Peers (5 Auto + 2 Adds): kein „Max. 8 Peers erreicht“", seven.includes('data-testid="peer-scored-table"') && !seven.includes("Max. 8 Peers erreicht"));
+check("SSR 7 Peers: kein „nicht übernommen“", !seven.includes("nicht übernommen"));
+
+const eight = render({ data: mkData([...sevenWithAdds, mkPeer("JNJ")], ["ABT", "JNJ", "LLY"]), onOverridesChange: noop });
+check("SSR 8 Peers: „Max. 8 Peers erreicht“", eight.includes("Max. 8 Peers erreicht"));
+
+const busy = render({ data: mkData(autoFive, ["XYZ"]), onOverridesChange: noop, peerBusy: true });
+check("SSR peerBusy: kein Hinweis auf alten Daten, Loading sichtbar", !busy.includes("nicht übernommen") && busy.includes('data-testid="peer-add-loading"'));
+
+const pcSrc = readFileSync(new URL("../client/src/components/sections/PeerComparison.tsx", import.meta.url), "utf8");
+check("alte Doppelzählung activeAdd.length + peers.length ist weg", !pcSrc.includes("activeAdd.length + peers.length"));
 
 console.log(failed === 0 ? "\n✅ Alle Peer-Add-Rest-Tests bestanden" : `\n❌ ${failed} Test(s) fehlgeschlagen`);
 process.exit(failed === 0 ? 0 : 1);
