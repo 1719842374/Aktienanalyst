@@ -128,10 +128,57 @@ export interface BiasFixPayload {
   catalystAdjustment: number;
   overallScore: number;
   overallRating: string;
+  /** Gesamtscore vor dem TECH_MOAT_OVERRIDE-Deckel (= overallScore, wenn der Override nicht greift). */
+  overallScoreUncapped: number;
+  /** A2/A3: Death Cross + RSL < 105 + schwacher Moat gleichzeitig → Gesamtscore höchstens NEUTRAL. */
+  techMoatOverride: TechMoatOverride;
   redFlags: string[];
   narrative: string[];
   politicalGovMention: boolean;
 }
+
+/**
+ * TECH_MOAT_OVERRIDE (A2/A3, WORK_NVO_TECHNICAL_OVERRIDE.md / WORK_SECTION_WEIGHTING_ADAPTIVE.md,
+ * Entscheidungen Stabschef + Philip 18.10.2026). Generisch, kein Ticker-Hardcode.
+ * Greift nur, wenn ALLE drei Bedingungen gleichzeitig gelten:
+ *   1. Death Cross: currentStatus.ma50AboveMA200 === false
+ *   2. RSL < 105 (dieselbe Schwelle und derselbe 130-Tage-Slice wie RSL-Malus und Fazit)
+ *   3. schwacher Moat: der schwächere aus Regel-Moat und KI-/LLM-Moat ist None oder Narrow
+ * Dann wird der Gesamtscore auf das NEUTRAL-Band [4.5, 6.49] gedeckelt. Die Höhe des
+ * Deckels ist adaptiv: Perzentil der aktuellen RSL in der eigenen RSL-Historie
+ * (historicalPrices). Fehlt die Historie, gilt der obere Rand 6.49.
+ */
+export interface TechMoatOverride {
+  active: boolean;
+  /** true = MA50 < MA200; null = keine technische Lage im Payload. */
+  deathCross: boolean | null;
+  rsl: number | null;
+  rslThreshold: number;
+  /** 0–1: Anteil der eigenen historischen RSL-Werte ≤ aktueller RSL. */
+  rslPercentile: number | null;
+  rslZScore: number | null;
+  rslHistoryPoints: number;
+  ruleMoatRating: string;
+  ruleMoatScore: number;
+  llmMoatRating: string | null;
+  /** min(Regel-Moat, KI-Moat), nur für den Override; die Quellen bleiben getrennt. */
+  effectiveMoatRating: string;
+  moatWeak: boolean;
+  /** Deckel für den Gesamtscore, nur gesetzt wenn active. */
+  capScore: number | null;
+  detail: string;
+}
+
+/** Schwelle identisch mit RSL_MOMENTUM_MALUS (valuation-signal.ts) und dem Fazit-RSL-Faktor. */
+export const TECH_MOAT_RSL_THRESHOLD = 105;
+/** RSL-Fenster: 130 Handelstage (26 Wochen), wie buildDefaultDCFParams / Section 9. */
+export const TECH_MOAT_RSL_WINDOW = 130;
+/** Mindestens 252 historische RSL-Werte (≈ 1 Jahr), sonst kein Perzentil. */
+export const TECH_MOAT_RSL_HISTORY_MIN = 252;
+/** Untergrenze NEUTRAL in overallRatingFromScore. */
+export const TECH_MOAT_CAP_FLOOR = 4.5;
+/** Knapp unter der LEICHT-ATTRAKTIV-Grenze 6.5 in overallRatingFromScore. */
+export const TECH_MOAT_CAP_CEIL = 6.49;
 
 function finite(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n);
@@ -461,6 +508,94 @@ export function computeRuleBasedMoat(input: {
   return { baseScore: base, kiDelta, score, rating, notes };
 }
 
+const MOAT_RANK: Record<Exclude<MoatBucket, "unknown">, number> = { none: 0, narrow: 1, moderate: 2, wide: 3 };
+
+/** Schwächere der beiden Moat-Angaben (unbekannte Werte zählen nicht). "n/v", wenn keine bekannt ist. */
+export function weakerMoatRating(a: string | null | undefined, b: string | null | undefined): string {
+  const known = [a, b]
+    .map(r => ({ r: String(r ?? ""), bucket: moatBucket(r) }))
+    .filter((x): x is { r: string; bucket: Exclude<MoatBucket, "unknown"> } => x.bucket !== "unknown");
+  if (known.length === 0) return "n/v";
+  return known.reduce((lo, x) => (MOAT_RANK[x.bucket] < MOAT_RANK[lo.bucket] ? x : lo)).r;
+}
+
+/**
+ * RSL-Historie aus der eigenen Kurshistorie: RSL_t = Close_t / Ø(Close der letzten 130 Tage) × 100.
+ * Liefert Perzentil (Anteil ≤ aktueller RSL) und z-Score der aktuellen RSL.
+ */
+export function rslHistoryStats(
+  prices: Array<{ date: string; close: number }> | null | undefined,
+  currentRsl: number | null,
+): { points: number; percentile: number | null; zScore: number | null } {
+  const asc = (Array.isArray(prices) ? prices : [])
+    .filter(p => p && typeof p.date === "string" && finite(p.close) && p.close > 0)
+    .sort((x, y) => x.date.localeCompare(y.date))
+    .map(p => p.close);
+  const w = TECH_MOAT_RSL_WINDOW;
+  const series: number[] = [];
+  let sum = 0;
+  for (let i = 0; i < asc.length; i++) {
+    sum += asc[i];
+    if (i >= w) sum -= asc[i - w];
+    if (i >= w - 1) series.push((asc[i] / (sum / w)) * 100);
+  }
+  if (!finite(currentRsl) || series.length < TECH_MOAT_RSL_HISTORY_MIN) {
+    return { points: series.length, percentile: null, zScore: null };
+  }
+  const below = series.filter(v => v <= currentRsl).length;
+  const mean = series.reduce((s, v) => s + v, 0) / series.length;
+  const sd = Math.sqrt(series.reduce((s, v) => s + (v - mean) ** 2, 0) / series.length);
+  return {
+    points: series.length,
+    percentile: below / series.length,
+    zScore: sd > 0 ? (currentRsl - mean) / sd : null,
+  };
+}
+
+export function evaluateTechMoatOverride(input: {
+  ma50AboveMA200: boolean | null | undefined;
+  rsl: number | null;
+  historicalPrices: Array<{ date: string; close: number }> | null | undefined;
+  ruleMoat: Pick<RuleMoat, "rating" | "score">;
+  llmMoatRating: string | null | undefined;
+}): TechMoatOverride {
+  const deathCross = typeof input.ma50AboveMA200 === "boolean" ? !input.ma50AboveMA200 : null;
+  const rsl = finite(input.rsl) && input.rsl > 0 ? input.rsl : null;
+  const rslWeak = rsl != null && rsl < TECH_MOAT_RSL_THRESHOLD;
+  const llm = input.llmMoatRating ? String(input.llmMoatRating) : null;
+  const effective = weakerMoatRating(input.ruleMoat.rating, llm);
+  const effBucket = moatBucket(effective);
+  const moatWeak = effBucket === "none" || effBucket === "narrow";
+  const active = deathCross === true && rslWeak && moatWeak;
+  const hist = rslHistoryStats(input.historicalPrices, rsl);
+  const capScore = active
+    ? (hist.percentile == null
+        ? TECH_MOAT_CAP_CEIL
+        : TECH_MOAT_CAP_FLOOR + hist.percentile * (TECH_MOAT_CAP_CEIL - TECH_MOAT_CAP_FLOOR))
+    : null;
+  const moatText = `Moat wirksam ${effective} (Regel ${input.ruleMoat.rating} ${input.ruleMoat.score.toFixed(1)}, KI ${llm ?? "n/v"})`;
+  const rslText = rsl == null ? "RSL n/a" : `RSL ${rsl.toFixed(1)}${hist.percentile != null ? ` (Perzentil ${(hist.percentile * 100).toFixed(0)} %)` : ""}`;
+  const dcText = deathCross == null ? "Technik n/a" : deathCross ? "Death Cross" : "kein Death Cross";
+  return {
+    active,
+    deathCross,
+    rsl,
+    rslThreshold: TECH_MOAT_RSL_THRESHOLD,
+    rslPercentile: hist.percentile,
+    rslZScore: hist.zScore,
+    rslHistoryPoints: hist.points,
+    ruleMoatRating: input.ruleMoat.rating,
+    ruleMoatScore: input.ruleMoat.score,
+    llmMoatRating: llm,
+    effectiveMoatRating: effective,
+    moatWeak,
+    capScore,
+    detail: active
+      ? `${dcText} + ${rslText} < ${TECH_MOAT_RSL_THRESHOLD} + ${moatText} → Gesamtscore höchstens ${capScore!.toFixed(2)} (NEUTRAL)`
+      : `nicht aktiv: ${dcText}, ${rslText}, ${moatText}`,
+  };
+}
+
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const s = [...values].sort((a, b) => a - b);
@@ -542,6 +677,23 @@ function emptyPayload(data: Partial<StockAnalysis>, reason: string): BiasFixPayl
     catalystAdjustment: 0,
     overallScore: 5,
     overallRating: "NEUTRAL",
+    overallScoreUncapped: 5,
+    techMoatOverride: {
+      active: false,
+      deathCross: null,
+      rsl: null,
+      rslThreshold: TECH_MOAT_RSL_THRESHOLD,
+      rslPercentile: null,
+      rslZScore: null,
+      rslHistoryPoints: 0,
+      ruleMoatRating: "n/v",
+      ruleMoatScore: 0,
+      llmMoatRating: data.moatAssessment?.overallRating ?? data.moatRating ?? null,
+      effectiveMoatRating: "n/v",
+      moatWeak: false,
+      capScore: null,
+      detail: `nicht aktiv: ${reason}`,
+    },
     redFlags: [reason],
     narrative: [
       `${data.companyName || data.ticker || "Titel"}: Bias-Basis nicht berechenbar (${reason}).`,
@@ -644,6 +796,15 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
     technicalComponent: facts.technicalComponent,
     positiveGbPct: positiveGbSum,
   });
+  const techMoat = evaluateTechMoatOverride({
+    ma50AboveMA200: data.technicalIndicators?.currentStatus?.ma50AboveMA200,
+    rsl: baseParams.rsl ?? null,
+    historicalPrices: data.historicalPrices,
+    ruleMoat: moat,
+    llmMoatRating: data.moatAssessment?.overallRating ?? data.moatRating ?? null,
+  });
+  const overallScore = techMoat.capScore != null ? Math.min(score.overallScore, techMoat.capScore) : score.overallScore;
+  const overallRating = overallScore === score.overallScore ? score.overallRating : overallRatingFromScore(overallScore);
   const politicalGovMention = facts.politicalExposureHigh && facts.governmentExposurePct >= 25;
   const redFlags: string[] = [];
   if (moat.rating === "None") redFlags.push("Kein Moat");
@@ -652,6 +813,7 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
   if (finite(facts.managementScore) && facts.managementScore < 4) redFlags.push(`Management-Score ${facts.managementScore.toFixed(1)}`);
   if (facts.governmentExposurePct >= 25) redFlags.push(`Government Exposure ${facts.governmentExposurePct.toFixed(0)}%`);
   if (adj.triggers.find(t => t.id === "dcf_divergence")?.active) redFlags.push("DCF-Upside weicht stark vom Analysten-Upside ab");
+  if (techMoat.active) redFlags.push(`Tech-Moat-Override: ${techMoat.detail}`);
 
   const tech = data.technicalIndicators?.currentStatus;
   const techSentence = !tech
@@ -700,8 +862,10 @@ export function buildBiasDecision(data: StockAnalysis): BiasFixPayload {
     thesisAdjustment: score.thesisAdjustment,
     technicalComponent: score.technicalComponent,
     catalystAdjustment: score.catalystAdjustment,
-    overallScore: score.overallScore,
-    overallRating: score.overallRating,
+    overallScore,
+    overallRating,
+    overallScoreUncapped: score.overallScore,
+    techMoatOverride: techMoat,
     redFlags,
     narrative: narrative.slice(0, 5),
     politicalGovMention,
