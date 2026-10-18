@@ -20,6 +20,8 @@ import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, type
 import { currencySymbol } from "@/lib/formatters";
 import { useMarketCreditSpread } from "@/lib/useMarketCreditSpread";
 import { creditOverlaySeries, creditStressHint, marketSpreadLabel, ISSUER_BOND_NA_NOTE, CREDIT_STRESS_HINT, type CreditOverlayPoint, type CreditSpreadResponse } from "@shared/credit";
+import { useMarketTreasury10Y } from "@/lib/useMarketTreasury10Y";
+import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, type Treasury10YOverlayPoint, type Treasury10YResponse } from "@shared/treasury10y";
 
 interface Props { data: StockAnalysis; }
 
@@ -159,6 +161,11 @@ export function TechnicalChart({ data }: Props) {
   const [showCredit, setShowCredit] = useState(false);
   useEffect(() => { setShowCredit(false); }, [data.ticker]);
   const creditQuery = useMarketCreditSpread(showCredit);
+  // 10Y-Treasury-Overlay (A3): FRED DGS10, nur geladen solange der Chip an ist. Gleiches Muster wie Credit:
+  // reine Anzeige, kein Score, kein Fazit-Zählfaktor. Default aus, Reset je Ticker.
+  const [showT10y, setShowT10y] = useState(false);
+  useEffect(() => { setShowT10y(false); }, [data.ticker]);
+  const t10yQuery = useMarketTreasury10Y(showT10y);
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -366,6 +373,11 @@ export function TechnicalChart({ data }: Props) {
   );
   const creditOverlay = creditSeries && creditSeries.some(p => p.spreadPct != null) ? creditSeries : null;
   const creditLabel = marketSpreadLabel(data.ticker);
+  const t10ySeries = useMemo<Treasury10YOverlayPoint[] | null>(
+    () => (showT10y && t10yQuery.data && t10yQuery.data.points.length > 0 ? treasury10YOverlaySeries(aBuilt.points, t10yQuery.data.points) : null),
+    [showT10y, t10yQuery.data, aBuilt.points],
+  );
+  const t10yOverlay = t10ySeries && t10ySeries.some(p => p.yieldPct != null) ? t10ySeries : null;
 
   const formatDate = (date: string) => {
     const p = date.split("-");
@@ -586,6 +598,15 @@ export function TechnicalChart({ data }: Props) {
               {showCredit ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               Markt-Spread Baa
             </button>
+            <button type="button" onClick={() => setShowT10y(v => !v)} data-testid="button-t10y" aria-pressed={showT10y}
+              aria-label={TREASURY10Y_LABEL}
+              title={`${TREASURY10Y_LABEL}. FRED DGS10, eigene rechte %-Achse, kein Score-Einfluss.`}
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showT10y ? "border-indigo-500 text-indigo-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showT10y ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              10J-Treasury
+            </button>
             <button type="button" onClick={() => { setMeasureMode(v => !v); setMeasurePoints([]); }}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 measureMode ? "border-amber-500 bg-amber-500/10 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
@@ -746,6 +767,7 @@ export function TechnicalChart({ data }: Props) {
                 dividend={dividendOverlay}
                 credit={creditOverlay}
                 creditLabel={creditLabel}
+                t10y={t10yOverlay}
                 ccy={ccy}
               />
             </div>
@@ -789,6 +811,7 @@ export function TechnicalChart({ data }: Props) {
               dividend={dividendOverlay}
               credit={creditOverlay}
               creditLabel={creditLabel}
+              t10y={t10yOverlay}
               measureMode={measureMode}
               onPlotClick={handleChartClick}
               measurePoints={measurePoints}
@@ -863,6 +886,16 @@ export function TechnicalChart({ data }: Props) {
           loading={creditQuery.isLoading}
           failed={creditQuery.isError}
           label={creditLabel}
+          formatDateFull={formatDateFull}
+        />
+      )}
+
+      {showT10y && showKursA && !chartEmpty && (
+        <Treasury10YOverlayStatus
+          series={t10yOverlay}
+          response={t10yQuery.data ?? undefined}
+          loading={t10yQuery.isLoading}
+          failed={t10yQuery.isError}
           formatDateFull={formatDateFull}
         />
       )}
@@ -997,7 +1030,7 @@ function WindowDates({
 function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
-  onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, ccy = "$",
+  onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, ccy = "$",
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1017,14 +1050,17 @@ function PricePane({
   /** JOB A1: Markt-Spread Baa je Kurstag (eigene rechte %-Achse). */
   credit?: CreditOverlayPoint[] | null;
   creditLabel?: string;
+  /** A3: 10J-Treasury-Rendite (FRED DGS10) je Kurstag (eigene rechte %-Achse). */
+  t10y?: Treasury10YOverlayPoint[] | null;
   /** JOB 22: Kurs-Symbol (Listing-Währung). */
   ccy?: string;
 }) {
   const narrow = useIsNarrow();
   const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger);
-  const chartData = useMemo(() => withCreditOverlay(withDividendOverlay(points, dividend), credit), [points, dividend, credit]);
+  const chartData = useMemo(() => withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend), credit), t10y), [points, dividend, credit, t10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
-  const rightAxis = !!dividend || !!credit;
+  const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
+  const rightAxis = !!dividend || !!credit || !!t10y;
   const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0)) : 0;
   const tick = axisTick(narrow, dense ? 8 : 9, "var(--muted-foreground)");
   const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(points.length / (dense ? 5 : 8))));
@@ -1066,6 +1102,19 @@ function PricePane({
             tickCount={narrow ? 4 : 5}
           />
         )}
+        {t10y && (
+          <YAxis
+            yAxisId="t10y"
+            orientation="right"
+            domain={[0, Math.max(1, Math.ceil(t10yMax * 1.15))]}
+            width={T10Y_AXIS_W}
+            tick={{ fontSize: narrow ? 10 : 9, fill: T10Y_COLOR }}
+            tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+            axisLine={{ stroke: T10Y_COLOR }}
+            tickLine={false}
+            tickCount={narrow ? 4 : 5}
+          />
+        )}
         <Tooltip content={({ active, payload }) => {
           if (!active || !payload?.length) return null;
           const dp = payload[0]?.payload as WindowPoint | undefined;
@@ -1097,6 +1146,7 @@ function PricePane({
               )}
               {dividend && <DividendTooltipRows p={dv} formatDateFull={formatDateFull} />}
               {credit && <CreditTooltipRows p={dp as WindowPoint & CreditFields} label={creditLabel} formatDateFull={formatDateFull} />}
+              {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
               {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
@@ -1151,6 +1201,9 @@ function PricePane({
         )}
         {credit && (
           <Line yAxisId="credit" type="stepAfter" dataKey="_credit" name={creditLabel ?? "Markt-Spread Baa"} stroke={CREDIT_COLOR} strokeWidth={1.5} strokeDasharray="5 2" dot={false} connectNulls={false} isAnimationActive={false} />
+        )}
+        {t10y && (
+          <Line yAxisId="t10y" type="stepAfter" dataKey="_t10y" name={TREASURY10Y_LABEL} stroke={T10Y_COLOR} strokeWidth={1.5} strokeDasharray="2 2" dot={false} connectNulls={false} isAnimationActive={false} />
         )}
         {showSignals && signals.map((s, i) => (
           <ReferenceLine key={`sig-${s.date}-${i}`} yAxisId="price" x={s.date} stroke={s.type === "buy" ? "#22c55e" : "#ef4444"} strokeDasharray="2 2" strokeWidth={narrow ? 1 : 0.8} opacity={0.5} />
@@ -1274,7 +1327,7 @@ function RsiPane({
 function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
-  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, ccy,
+  testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, ccy,
 }: {
   label: string;
   labelClassName: string;
@@ -1301,6 +1354,7 @@ function BandStack({
   dividend?: DividendOverlaySeries | null;
   credit?: CreditOverlayPoint[] | null;
   creditLabel?: string;
+  t10y?: Treasury10YOverlayPoint[] | null;
   ccy?: string;
 }) {
   const narrow = useIsNarrow();
@@ -1335,6 +1389,7 @@ function BandStack({
               dividend={dividend}
               credit={credit}
               creditLabel={creditLabel}
+              t10y={t10y}
               ccy={ccy}
             />
           )}
@@ -1496,6 +1551,61 @@ function CreditOverlayStatus({ series, response, loading, failed, label, formatD
           <span className="ml-1 font-normal text-muted-foreground">{hint.slice(CREDIT_STRESS_HINT.length + 2)}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── 10Y-Treasury overlay helpers (A3) ───
+
+const T10Y_COLOR = "#6366f1";
+const T10Y_AXIS_W = 40;
+
+type Treasury10YFields = { _t10y?: number | null; _t10yDate?: string | null };
+
+/** Adds the 10Y Treasury yield (FRED DGS10) to each price point by date. No series → points unchanged. */
+export function withTreasury10YOverlay<T extends WindowPoint>(points: T[], series: Treasury10YOverlayPoint[] | null | undefined): Array<T & Treasury10YFields> {
+  if (!series) return points;
+  const byDate = new Map(series.map(p => [p.date, p]));
+  return points.map(pt => {
+    const y = byDate.get(pt.date);
+    return { ...pt, _t10y: y?.yieldPct ?? null, _t10yDate: y?.yieldDate ?? null };
+  });
+}
+
+function Treasury10YTooltipRows({ p, formatDateFull }: { p: Treasury10YFields; formatDateFull: (d: string) => string }) {
+  return (
+    <div className="mt-1 pt-1 border-t border-border max-w-[240px] whitespace-normal">
+      <div className="flex justify-between gap-3">
+        <span style={{ color: T10Y_COLOR }}>10J-Treasury</span>
+        <span className="font-mono">{p._t10y != null ? `${p._t10y.toFixed(2)}%` : "n/a"}</span>
+      </div>
+      {p._t10yDate && <div className="text-muted-foreground">FRED-Datum {formatDateFull(p._t10yDate)} · FRED DGS10</div>}
+    </div>
+  );
+}
+
+function Treasury10YOverlayStatus({ series, response, loading, failed, formatDateFull }: {
+  series: Treasury10YOverlayPoint[] | null;
+  response: Treasury10YResponse | undefined;
+  loading: boolean;
+  failed: boolean;
+  formatDateFull: (d: string) => string;
+}) {
+  const base = "mt-1 text-[10px] text-muted-foreground break-words";
+  if (loading) return <div className={base} data-testid="t10y-overlay-loading">10J-Treasury: FRED wird geladen …</div>;
+  if (failed || !response || response.points.length === 0) return <div className={base} data-testid="t10y-overlay-empty">10J-Treasury: n/a — FRED DGS10 nicht erreichbar.</div>;
+  if (!series) return <div className={base} data-testid="t10y-overlay-empty">10J-Treasury: n/a — FRED-Historie deckt dieses Fenster nicht ab.</div>;
+  const last = [...series].reverse().find(p => p.yieldPct != null);
+  // Zinsrichtung im Fenster A: erster vs. letzter vorhandener DGS10-Wert (nur Vorzeichen, keine Schwelle).
+  const chg = treasury10YWindowChange(series);
+  return (
+    <div className={base} data-testid="t10y-overlay-status">
+      <span style={{ color: T10Y_COLOR }} className="font-medium">{TREASURY10Y_LABEL}</span> (rechte Achse, %)
+      {last && last.yieldDate && <> · aktuell <span className="font-mono">{last.yieldPct!.toFixed(2)}%</span> per {formatDateFull(last.yieldDate)}</>}
+      {chg && (
+        <> · im Fenster <span className="font-mono" data-testid="t10y-window-change">{chg.changeBp >= 0 ? "+" : ""}{chg.changeBp} bp</span> ({chg.direction}, {chg.first.toFixed(2)}% → {chg.last.toFixed(2)}%)</>
+      )}
+      {" "}· Quelle <a className="underline" href={response.sourceUrl} target="_blank" rel="noreferrer">{response.source}</a> · kein Score-Einfluss
     </div>
   );
 }
