@@ -364,8 +364,23 @@ export interface CatalystDeepDiveInput {
   fcfMargin: number;
   price: number;
   analystPT: number;
+  /** JOB D: Listing-Währung (data.currency) für Kurs und Kursziel im Prompt. Fehlt sie, bleibt es "$" (bisheriges Verhalten). */
+  currency?: string | null;
   catalysts: Array<{ name: string; pos: number; bruttoUpside: number; einpreisungsgrad: number; context?: string; }>;
   newsHeadlines?: string[];
+}
+
+/** JOB D: Kurs-/Kursziel-Präfix im Deep-Dive-Prompt. USD/leer → "$", sonst der Code ("GBP 45.00", "CAD 120.00"). */
+export function deepDivePricePrefix(currency?: string | null): string {
+  const c = typeof currency === "string" ? currency.trim() : "";
+  return !c || c === "USD" ? "$" : `${c} `;
+}
+
+/** JOB D: Kursziel wie L165/L895 nur bei PT > 0 (endlich) ausgeben, sonst "N/A" statt "$0.00". */
+export function deepDiveAnalystPtText(analystPT: number | null | undefined, currency?: string | null): string {
+  return typeof analystPT === "number" && Number.isFinite(analystPT) && analystPT > 0
+    ? `${deepDivePricePrefix(currency)}${analystPT.toFixed(2)}`
+    : "N/A";
 }
 
 export async function generateCatalystDeepDives(
@@ -375,6 +390,7 @@ export async function generateCatalystDeepDives(
   if (!client) return null;
   const model = pickModel();
   const { ticker, companyName, sector, description, revenue, revenueGrowth, fcfMargin, price, analystPT, catalysts, newsHeadlines = [] } = input;
+  const pxPrefix = deepDivePricePrefix(input.currency);
 
   const newsCtx = newsHeadlines.length > 0 ? `\nAktuelle News: ${newsHeadlines.slice(0, 4).map((h, i) => `N${i + 1}: ${h}`).join(' | ')}` : '';
   const catList = catalysts.map((c, i) =>
@@ -382,7 +398,7 @@ export async function generateCatalystDeepDives(
   ).join('\n');
 
   const prompt = `Aktien-Analyst. Unternehmen: ${companyName} (${ticker}), Sektor: ${sector}.
-Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}% | Kurs: $${price.toFixed(2)} | Analyst PT: $${analystPT.toFixed(2)}
+Umsatz: $${(revenue / 1e9).toFixed(1)}B | Wachstum: ${revenueGrowth.toFixed(1)}% | FCF-Marge: ${fcfMargin.toFixed(1)}% | Kurs: ${pxPrefix}${price.toFixed(2)} | Analyst PT: ${deepDiveAnalystPtText(analystPT, input.currency)}
 Beschreibung: ${description.substring(0, 300)}${newsCtx}
 
 Katalysatoren:

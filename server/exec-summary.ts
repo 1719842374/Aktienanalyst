@@ -25,6 +25,10 @@ export interface ExecSummaryInput {
   peg?: number | null;
   dcfConservative?: number | null;
   analystPtMedian?: number | null;
+  /** JOB D: Listing-Währung (data.currency) — Kurs, Kursziel, Risk-Ziel. Fehlt sie, bleibt es "Dollar". */
+  currency?: string | null;
+  /** JOB D: Statement-Währung (wie client statementCurrency) — DCF und Max-Entry. Fehlt sie, gilt currency. */
+  statementCurrency?: string | null;
   riskAdjTarget?: number | null;
   invertedDcf?: number | null;
   crvBase?: number | null;
@@ -108,6 +112,22 @@ function fmtMoney(n: number): string {
 
 function fmtPx(n: number): string {
   return n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+}
+
+/**
+ * JOB D: Währungswort für den Fazit-Text statt fest "Dollar" (.L → Pfund, .TO → CAD, .DE → Euro).
+ * Ohne Währung bleibt "Dollar" (bisheriges Verhalten); unbekannte Codes erscheinen als Code.
+ */
+const CURRENCY_WORDS: Record<string, string> = { USD: "Dollar", EUR: "Euro", GBP: "Pfund", GBp: "Pence", GBX: "Pence", JPY: "Yen", CHF: "Franken" };
+export function currencyWord(currency?: string | null): string {
+  const c = typeof currency === "string" ? currency.trim() : "";
+  if (!c) return "Dollar";
+  return CURRENCY_WORDS[c] ?? c;
+}
+
+/** JOB D: Kursziel 0/null/NaN = kein Ziel (gleiche Regel wie client targetUpsidePct/formatTarget). */
+export function hasAnalystTarget(pt: number | null | undefined): pt is number {
+  return finite(pt) && pt > 0;
 }
 
 export function formatEarningsCall(
@@ -211,16 +231,19 @@ export function buildFazit(input: ExecSummaryInput): ExecSummary["fazit"] {
   const g1 = finite(input.g1Pct) ? input.g1Pct.toFixed(0) : null;
   const dcf = finite(input.dcfConservative) ? fmtPx(input.dcfConservative) : null;
   const px = fmtPx(input.price);
-  const pt = finite(input.analystPtMedian) ? fmtPx(input.analystPtMedian) : null;
+  const pt = hasAnalystTarget(input.analystPtMedian) ? fmtPx(input.analystPtMedian) : null;
   const risk = finite(input.riskAdjTarget) ? fmtPx(input.riskAdjTarget) : null;
   const entry = finite(input.maxEntryCrv3) ? fmtPx(input.maxEntryCrv3) : null;
   const call = formatEarningsCall(input.nextEarningsDate, input.lastReportedQuarter);
+  // JOB D: Kurs/Kursziel/Risk-Ziel in Listing-Währung, DCF/Max-Entry in Statement-Währung (Regel aus JOB 23).
+  const pxCcy = currencyWord(input.currency);
+  const dcfCcy = currencyWord(input.statementCurrency ?? input.currency);
 
   const lage = [
     `${name} ist ${verdict}.`,
-    dcf ? `Das konservative DCF sitzt bei ${dcf} Dollar gegenüber ${px} Dollar Kurs.` : null,
+    dcf ? `Das konservative DCF sitzt bei ${dcf} ${dcfCcy} gegenüber ${px} ${pxCcy} Kurs.` : null,
     gStar && g1 ? `Der Markt preist rund ${gStar} % Dauerwachstum, das Modell eher ${g1} %.` : null,
-    pt ? `Das Analystenziel liegt bei ${pt} Dollar.` : null,
+    pt ? `Das Analystenziel liegt bei ${pt} ${pxCcy}.` : "Ein Analystenziel liegt nicht vor.",
   ].filter(Boolean).join(" ");
 
   const topRisk = [...(input.risks || [])].sort(
@@ -229,12 +252,12 @@ export function buildFazit(input: ExecSummaryInput): ExecSummary["fazit"] {
   const bruch = [
     "Was nicht im Preis steckt, ist der Risikoabschlag.",
     topRisk ? `${topRisk.name} wird zu klein gerechnet.` : null,
-    risk ? `Mit Abschlag eher ${risk} Dollar als ${px}.` : null,
+    risk ? `Mit Abschlag eher ${risk} ${pxCcy} als ${px}.` : null,
   ].filter(Boolean).join(" ");
 
   const waitBecause =
     finite(input.maxEntryCrv3) && input.price > input.maxEntryCrv3
-      ? `Nachkaufen erst unter ${entry} Dollar.`
+      ? `Nachkaufen erst unter ${entry} ${dcfCcy}.`
       : "Position nicht überstürzen.";
   // Bugfix (06.09.2026, Nutzer-Feedback per Screenshot): call.callLine wurde
   // hier in "handlung" eingebettet UND zusaetzlich als eigenstaendiges Feld
