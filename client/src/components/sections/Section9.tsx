@@ -1,7 +1,7 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { calculateRSL, RSL_MOMENTUM_MALUS_PCT, LYNCH_DCF_DEFAULTS } from "../../lib/calculations";
-import { formatNumber, getRSLColor, getRSLBgColor } from "../../lib/formatters";
+import { formatNumber, formatCurrency, getRSLColor, getRSLBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
 
 interface Props { data: StockAnalysis }
@@ -110,11 +110,11 @@ export function Section9({ data }: Props) {
               <tbody className="divide-y divide-border/50">
                 <tr>
                   <td className="py-1.5 px-2 text-muted-foreground">Current Price</td>
-                  <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium">${formatNumber(data.currentPrice)}</td>
+                  <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium">{formatCurrency(data.currentPrice, 2, data.currency)}</td>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-2 text-muted-foreground">26-Week Average</td>
-                  <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium">${formatNumber(avg26w)}</td>
+                  <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium">{formatCurrency(avg26w, 2, data.currency)}</td>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-2 text-muted-foreground">RSL = (Price / Avg) × 100</td>

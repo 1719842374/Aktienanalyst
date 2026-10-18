@@ -5,6 +5,7 @@ import { useState } from "react";
 import { PolicyContextPanel } from "./PolicyContextPanel";
 import { apiRequest } from "@/lib/queryClient";
 import { pestelDampeningFactor } from "../../../../shared/bias-fixes";
+import { currencySymbol, statementCurrency } from "../../lib/formatters";
 
 interface Props { data: StockAnalysis }
 
@@ -438,7 +439,7 @@ function RegulatoryExposurePanel({ data }: { data: StockAnalysis }) {
                     <span className="text-muted-foreground">p: <span className="text-foreground">{(e.probability * 100).toFixed(0)} %</span></span>
                     <span className="text-muted-foreground">Horizont: <span className="text-foreground">{e.timeHorizon}</span></span>
                     {e.epsImpact != null && (
-                      <span className="text-muted-foreground">EPS-Impact: <span className={e.epsImpact < 0 ? "text-red-400 font-bold" : "text-emerald-400 font-bold"}>{e.epsImpact >= 0 ? "+" : ""}{e.epsImpact.toFixed(2)} $</span></span>
+                      <span className="text-muted-foreground">EPS-Impact: <span className={e.epsImpact < 0 ? "text-red-400 font-bold" : "text-emerald-400 font-bold"}>{e.epsImpact >= 0 ? "+" : ""}{e.epsImpact.toFixed(2)} {currencySymbol(statementCurrency(data)).trim()}</span></span>
                     )}
                   </div>
                   {e.source?.url && (

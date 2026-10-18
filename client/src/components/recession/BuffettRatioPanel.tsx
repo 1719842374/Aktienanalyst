@@ -165,6 +165,12 @@ function ChartOverlay(props: {
   const x1 = boxX + boxW - 2;
   const y1 = boxY + 18;
   const showCallout = props.range === "Max";
+  // JOB 23: bei 375 px reicht die Callout-Box (boxX..boxX+boxW) bis an den Punkt, das Label unter dem Punkt lag
+  // dahinter. Überlappt die Box horizontal mit dem Label, steht es unter Box + z-Zeile (boxY + boxH + 32).
+  const calloutCoversLabel = showCallout && boxX + boxW > x - 80;
+  const lastLabelY = calloutCoversLabel
+    ? Math.max(y + 18, boxY + boxH + 32)
+    : showCallout || y < 24 ? y + 18 : y - 9;
 
   const showLabels = props.range !== "6M" && props.range !== "1Y";
   const startStamp = Date.parse(`${rows[0].date}T00:00:00Z`);
@@ -233,7 +239,7 @@ function ChartOverlay(props: {
           <text
             data-testid="buffett-last-point-label"
             x={x - 8}
-            y={showCallout || y < 24 ? y + 18 : y - 9}
+            y={lastLabelY}
             textAnchor="end"
             fill={RATIO}
             fontSize={props.wide ? 12 : 11}
