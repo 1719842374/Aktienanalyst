@@ -42,6 +42,24 @@ function findBest(values: (number | null)[], lowerIsBetter: boolean): number | n
   return lowerIsBetter ? Math.min(...valid) : Math.max(...valid);
 }
 
+/** Max. sichtbare Peers (Server-Deckel applyPeerOverrides(…, 8) in peer-cache-key.ts). */
+export const MAX_VISIBLE_PEERS = 8;
+
+/**
+ * PR A (WORK_PEER_SELECTION_DETAILED §2 „Max. Peers 8“): Deckel nur auf die sichtbare Liste.
+ * `peers` enthält hinzugefügte Ticker bereits; activeAdd zusätzlich zu zählen sperrte bei 5 Auto-Peers schon bei 7.
+ */
+export function peerCapReached(peers: ReadonlyArray<{ ticker: string }>): boolean {
+  return peers.length >= MAX_VISIBLE_PEERS;
+}
+
+/** Hinzugefügte Ticker, die nicht in der Peer-Tabelle angekommen sind (ungültig, außerhalb des Market-Cap-Bands, ohne Kennzahlen, Deckel 8). */
+export function missingAddedPeers(activeAdd: readonly string[], peers: ReadonlyArray<{ ticker: string }>, subjectTicker: string): string[] {
+  const shown = new Set(peers.map(p => p.ticker.toUpperCase()));
+  const subject = subjectTicker.toUpperCase();
+  return activeAdd.map(t => t.toUpperCase()).filter(t => t !== subject && !shown.has(t));
+}
+
 // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): onOverridesChange ist optional
 // -- Aufrufer ohne den Callback (falls je vorhanden) sehen weiterhin nur die
 // reine Tabelle, keine Verhaltensaenderung. Additiv, kein Ersatz bestehender Props.
@@ -63,8 +81,52 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
   const activeAdd = data.activePeerOverrides?.add ?? [];
   const activeRemove = data.activePeerOverrides?.remove ?? [];
 
+  const visiblePeers: PeerCompany[] = pc?.peers ?? [];
+  const capReached = peerCapReached(visiblePeers);
+  const notAdopted = missingAddedPeers(activeAdd, visiblePeers, data.ticker);
+
+  const handleAddTicker = () => {
+    if (!onOverridesChange) return;
+    const t = addInput.trim().toUpperCase();
+    if (!t || t === data.ticker) return;
+    if (activeAdd.includes(t)) return;
+    if (capReached) return; // Ticket: max. 8 sichtbare Peers
+    onOverridesChange({ add: [...activeAdd, t], remove: activeRemove.filter(r => r !== t) });
+    setAddInput("");
+  };
+
+  const handleResetDefaults = () => {
+    if (!onOverridesChange) return;
+    onOverridesChange({ add: [], remove: [] });
+  };
+
+  // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): manuelles Nachziehen fehlender
+  // Wettbewerber, serverseitig angewendet. PR A: auch bei leerer Peer-Liste sichtbar.
+  const overrideControls = onOverridesChange ? (
+    <PeerOverrideControls
+      addInput={addInput}
+      setAddInput={setAddInput}
+      onAdd={handleAddTicker}
+      onReset={handleResetDefaults}
+      hasOverrides={activeAdd.length > 0 || activeRemove.length > 0}
+      capReached={capReached}
+      peerBusy={peerBusy}
+      notAdopted={peerBusy ? [] : notAdopted}
+    />
+  ) : null;
+
   if (!pc || !pc.peers || pc.peers.length === 0) {
-    return <KiSideList peers={kiPeers} />;
+    return (
+      <div className="space-y-3" data-testid="peer-empty">
+        {overrideControls && (
+          <div className="text-xs text-muted-foreground" data-testid="peer-empty-note">
+            Keine Wettbewerber mit Kennzahlen. Ticker hinzufügen, um Peers zu ergänzen.
+          </div>
+        )}
+        {overrideControls}
+        <KiSideList peers={kiPeers} />
+      </div>
+    );
   }
 
   const { subject, peers, peerAvg, sectorMedian } = pc;
@@ -76,21 +138,6 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
     const newRemove = activeRemove.includes(ticker) ? activeRemove : [...activeRemove, ticker];
     const newAdd = activeAdd.filter(t => t !== ticker);
     onOverridesChange({ add: newAdd, remove: newRemove });
-  };
-
-  const handleAdd = () => {
-    if (!onOverridesChange) return;
-    const t = addInput.trim().toUpperCase();
-    if (!t || t === data.ticker) return;
-    if (activeAdd.includes(t)) return;
-    if (activeAdd.length + peers.length >= 8) return; // Ticket: max. 8 Peers
-    onOverridesChange({ add: [...activeAdd, t], remove: activeRemove.filter(r => r !== t) });
-    setAddInput("");
-  };
-
-  const handleResetDefaults = () => {
-    if (!onOverridesChange) return;
-    onOverridesChange({ add: [], remove: [] });
   };
 
   // Columns config
@@ -311,46 +358,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
           fehlender Wettbewerber -- kein Hardcode im Core, der User kann jeden
           Ticker ergaenzen (z.B. LLY bei NVO), Overrides werden serverseitig
           angewendet und fliessen in Peer-Tabelle, Sektor-Median, g_required. */}
-      {onOverridesChange && (
-        <div className="flex items-center gap-2 pt-1">
-          <input
-            type="text"
-            value={addInput}
-            onChange={e => setAddInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") handleAdd(); }}
-            placeholder="Ticker hinzufügen (z.B. LLY)"
-            className="text-[11px] bg-muted/30 border border-border/50 rounded-md px-2 py-1 w-40 focus:outline-none focus:ring-1 focus:ring-primary/40"
-            maxLength={12}
-            disabled={peerBusy}
-            data-testid="input-peer-add"
-          />
-          <button
-            onClick={handleAdd}
-            disabled={peerBusy || !addInput.trim() || activeAdd.length + peers.length >= 8}
-            className="text-[11px] px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            data-testid="button-peer-add"
-          >
-            + Peer hinzufügen
-          </button>
-          {peerBusy && (
-            <span className="text-[10px] text-primary flex items-center gap-1" data-testid="peer-add-loading" role="status">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              Peer wird geladen…
-            </span>
-          )}
-          {(activeAdd.length > 0 || activeRemove.length > 0) && (
-            <button
-              onClick={handleResetDefaults}
-              className="text-[10px] text-foreground/40 hover:text-foreground/60 transition-colors ml-1"
-            >
-              Standard wiederherstellen
-            </button>
-          )}
-          {activeAdd.length + peers.length >= 8 && (
-            <span className="text-[10px] text-amber-400/70">Max. 8 Peers erreicht</span>
-          )}
-        </div>
-      )}
+      {overrideControls}
 
       {/* Premium/Discount Summary Cards */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
@@ -375,6 +383,70 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
       </div>
 
       <KiSideList peers={sideKi} />
+    </div>
+  );
+}
+
+function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, hasOverrides, capReached, peerBusy, notAdopted }: {
+  addInput: string;
+  setAddInput: (v: string) => void;
+  onAdd: () => void;
+  onReset: () => void;
+  hasOverrides: boolean;
+  capReached: boolean;
+  peerBusy: boolean;
+  notAdopted: string[];
+}) {
+  return (
+    <div className="space-y-1 pt-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          value={addInput}
+          onChange={e => setAddInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") onAdd(); }}
+          placeholder="Ticker hinzufügen (z.B. LLY)"
+          className="text-[11px] bg-muted/30 border border-border/50 rounded-md px-2 py-1 w-40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+          maxLength={12}
+          disabled={peerBusy}
+          data-testid="input-peer-add"
+        />
+        <button
+          onClick={onAdd}
+          disabled={peerBusy || !addInput.trim() || capReached}
+          className="text-[11px] px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          data-testid="button-peer-add"
+        >
+          + Peer hinzufügen
+        </button>
+        {peerBusy && (
+          <span className="text-[10px] text-primary flex items-center gap-1" data-testid="peer-add-loading" role="status">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Peer wird geladen…
+          </span>
+        )}
+        <button
+          onClick={onReset}
+          disabled={peerBusy || !hasOverrides}
+          title={hasOverrides ? "Hinzugefügte/entfernte Peers zurücksetzen" : "Keine manuellen Änderungen aktiv"}
+          className="text-[10px] text-foreground/40 hover:text-foreground/60 transition-colors ml-1 disabled:opacity-40 disabled:cursor-not-allowed"
+          data-testid="button-peer-reset"
+        >
+          Standard wiederherstellen
+        </button>
+        {capReached && (
+          <span className="text-[10px] text-amber-400/70" data-testid="peer-cap-reached">Max. 8 Peers erreicht</span>
+        )}
+      </div>
+      {notAdopted.length > 0 && (
+        <div
+          className="text-[10px] text-amber-400/80"
+          title="Möglich: Ticker ungültig, Market Cap außerhalb 5 %–20× des Analysewerts, keine Kennzahlen bei FMP oder Deckel 8 erreicht"
+          data-testid="peer-not-adopted"
+        >
+          {notAdopted.join(", ")} nicht übernommen (ungültig, außerhalb des Market-Cap-Bands oder ohne Kennzahlen)
+        </div>
+      )}
     </div>
   );
 }
