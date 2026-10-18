@@ -19,6 +19,7 @@ import {
   type GoldTechPoint, type GoldTimeRange,
 } from "./goldTechnical";
 import type { GoldPricePoint } from "../../../../shared/gold-schema";
+import { aiscBands, aiscStressRuns, attachAiscToChart, GOLD_AISC_OFFLINE_LABEL, goldAiscAvailability, goldAiscStepAt, goldAiscStress } from "../../../../shared/gold-aisc";
 
 /**
  * Gold Section 2 im Design von BTC Section 11 „Technische Analyse“
@@ -46,7 +47,7 @@ const MACRO = [
   { key: "real10y", label: "Real10Y", name: "Real10Y (DFII10)", color: "#38bdf8", defaultOn: true, unit: "%", width: 44, step: false, title: "Realzins (DFII10, FRED)" },
   { key: "m2Yoy", label: "M2 YoY", name: "M2 YoY (M2SL)", color: "#a78bfa", defaultOn: false, unit: "%", width: 44, step: true, title: "US-M2-Wachstum YoY (FRED M2SL)" },
   { key: "dxy", label: "DXY", name: "DXY (DTWEXBGS)", color: "#34d399", defaultOn: false, unit: "", width: 44, step: false, title: "Broad Dollar Index (FRED DTWEXBGS)" },
-  { key: "t10yie", label: "Breakeven", name: "Breakeven (T10YIE)", color: "#f472b6", defaultOn: false, unit: "%", width: 44, step: false, title: "10J-Breakeven-Inflation (FRED T10YIE)" },
+  { key: "t10yie", label: "Inflations-BE (T10YIE)", name: "Inflations-BE (T10YIE)", color: "#f472b6", defaultOn: false, unit: "%", width: 44, step: false, title: "10J-Breakeven-Inflation (FRED T10YIE) — Inflationserwartung, nicht die Minenkosten (AISC)" },
   { key: "walcl", label: "WALCL", name: "Fed-Bilanz (WALCL)", color: "#e2e8f0", defaultOn: false, unit: "T", width: 54, step: true, title: "Fed-Bilanzsumme in Bio. USD (FRED WALCL)" },
 ] as const;
 
@@ -59,6 +60,16 @@ interface GoldChartHistory { source: string; points: GoldPricePoint[]; incomplet
 const fmtMacro = (key: MacroKey, v: number) =>
   key === "walcl" ? `$${v.toFixed(2)}T` : key === "dxy" ? v.toFixed(1) : `${v.toFixed(2)}%`;
 
+// Future_10 §5 (B1): AISC-Linie der Minen (Quartals-AISC NEM/B/AEM aus /api/analyze-gold `aiscLine`), Preisachse.
+const AISC_COLOR = "#2dd4bf";
+const AISC_NAME = "AISC Ø Minen (NEM/B/AEM)";
+const AISC_STRESS_TEXT: Record<string, string> = {
+  below: "Preis unter AISC — Kapitulationszone",
+  stress: "Stresszone (< AISC × 1,10)",
+  watch: "Vorwarnung (< AISC × 1,15)",
+  ok: "keine Stresszone",
+};
+
 export function GoldPriceChart({ data }: Props) {
   const narrow = useIsNarrow();
   const tech = useMemo(() => buildGoldTechnical(data.historicalPrices ?? []), [data.historicalPrices]);
@@ -68,6 +79,8 @@ export function GoldPriceChart({ data }: Props) {
   const [visibleMacro, setVisibleMacro] = useState<Set<MacroKey>>(() => new Set(MACRO.filter(m => m.defaultOn).map(m => m.key)));
   const [showSignals, setShowSignals] = useState(true);
   const [showVolume, setShowVolume] = useState(true);
+  // AISC staucht die Preisachse (Kurs ≈ 2,5× AISC), deshalb wie die übrigen Overlays standardmäßig aus.
+  const [showAisc, setShowAisc] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [measureStart, setMeasureStart] = useState<{ date: string; price: number } | null>(null);
@@ -141,13 +154,29 @@ export function GoldPriceChart({ data }: Props) {
   const chartDataWithVol = useMemo(() => {
     const rawVols = chartData.map(d => d.volume ?? 0);
     const maxVol = Math.max(...rawVols, 0);
-    return chartData.map((d, i) => ({
+    return attachAiscToChart(chartData.map((d, i) => ({
       ...d,
       _volNorm: maxVol > 0 ? (d.volume ?? 0) / maxVol : 0,
       _volUp: i === 0 ? true : d.price >= chartData[i - 1].price,
-    }));
-  }, [chartData]);
+    })), data.aiscLine);
+  }, [chartData, data.aiscLine]);
   const hasVolume = chartDataWithVol.some(d => d._volNorm > 0);
+  // AISC: Stufen und Stresszone nur auf echten Quartalswerten im Fenster, sonst Chip „AISC n/a“.
+  const hasAisc = chartDataWithVol.some(d => d.aisc != null);
+  const aiscAvail = goldAiscAvailability(data.aiscLine, hasAisc);
+  const aiscOn = showAisc && hasAisc;
+  const aiscBandList = useMemo(() => (aiscOn ? aiscBands(chartDataWithVol) : []), [aiscOn, chartDataWithVol]);
+  const aiscStressList = useMemo(() => (aiscOn ? aiscStressRuns(chartDataWithVol) : []), [aiscOn, chartDataWithVol]);
+  const aiscStressLow = data.aiscLine?.stressLow ?? 1.10;
+  const aiscStressHigh = data.aiscLine?.stressHigh ?? 1.15;
+  // Status zum letzten Kurs (volle Reihe, unabhängig vom Fenster): jüngste gültige Stufe.
+  const aiscLatest = useMemo(() => {
+    const last = fullChart[fullChart.length - 1];
+    if (!last || !data.aiscLine) return null;
+    const step = goldAiscStepAt(data.aiscLine, last.date);
+    if (!step || step.aisc == null) return null;
+    return { step, price: last.price, ratio: last.price / step.aisc, stress: goldAiscStress(last.price, step.aisc, aiscStressLow, aiscStressHigh) };
+  }, [fullChart, data.aiscLine, aiscStressLow, aiscStressHigh]);
 
   // #208 Server-Signale (technicalSignals). Marker nur, wenn das Server-Signal
   // verfuegbar ist UND echtes Volumen im Chart liegt — sonst N/A-Hinweis.
@@ -176,18 +205,20 @@ export function GoldPriceChart({ data }: Props) {
 
   const yDomain = useMemo(() => {
     let minVal = Infinity, maxVal = -Infinity;
-    for (const d of chartData) {
+    for (const d of chartDataWithVol) {
       if (d.price > 0) { minVal = Math.min(minVal, d.price); maxVal = Math.max(maxVal, d.price); }
       for (const ma of MA_LINES) {
         if (!visibleMAs.has(ma.key)) continue;
         const v = d[ma.key];
         if (v && v > 0) { minVal = Math.min(minVal, v); maxVal = Math.max(maxVal, v); }
       }
+      // AISC-Linie + Stresszone (bis AISC × 1,15) müssen auf der Preisachse sichtbar sein.
+      if (aiscOn && d.aisc != null) { minVal = Math.min(minVal, d.aisc); maxVal = Math.max(maxVal, d.aisc * aiscStressHigh); }
     }
     if (!isFinite(minVal) || !isFinite(maxVal) || maxVal <= 0) return [0, 5000] as [number, number];
     const padding = (maxVal - minVal) * 0.05;
     return [Math.max(0, minVal - padding), maxVal + padding] as [number, number];
-  }, [chartData, visibleMAs]);
+  }, [chartDataWithVol, visibleMAs, aiscOn, aiscStressHigh]);
 
   const formatDate = (date: string) => {
     const parts = date.split("-");
@@ -430,6 +461,38 @@ export function GoldPriceChart({ data }: Props) {
         )}
         <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
           <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
+          <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Minen:</span>
+          {aiscAvail === "offline" ? (
+            <span
+              className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-70`}
+              title="Die Antwort enthält keine AISC-Daten (z. B. Offline-Fallback). Nichts geschätzt."
+              data-testid="gold-aisc-offline"
+            >
+              {GOLD_AISC_OFFLINE_LABEL}
+            </span>
+          ) : hasAisc ? (
+            <button
+              onClick={() => setShowAisc(!showAisc)}
+              className={`${chipCls} font-mono ${showAisc ? "border-current" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"}`}
+              style={showAisc ? { color: AISC_COLOR } : undefined}
+              title="Quartals-AISC Newmont/Barrick/Agnico Eagle (Ø, by-product) als gestufte Linie auf der Preisachse, mit Stresszone AISC × 1,10–1,15 ein-/ausblenden. Kein Einfluss auf GIS/Score."
+              data-testid="toggle-gold-aisc"
+            >
+              {showAisc ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              AISC (Minen)
+            </button>
+          ) : (
+            <span
+              className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`}
+              title="Für den gewählten Zeitraum liegt kein belegtes AISC-Quartal vor (nichts geschätzt)"
+              data-testid="gold-aisc-na"
+            >
+              AISC n/a
+            </span>
+          )}
+        </div>
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
+          <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
           <button
             onClick={() => { setIsMeasuring(!isMeasuring); setMeasureStart(null); setMeasureEnd(null); }}
             className={`${chipCls} ${isMeasuring ? "border-amber-500 text-amber-500 bg-amber-500/10" : "border-border text-muted-foreground opacity-60 hover:opacity-80"}`}
@@ -515,7 +578,7 @@ export function GoldPriceChart({ data }: Props) {
                   return (
                     <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
                       <div className="font-semibold mb-1">{formatDateFull(String(label))}</div>
-                      {payload.filter((p: any) => p.dataKey !== "_volNorm").map((p: any) => {
+                      {payload.filter((p: any) => p.dataKey !== "_volNorm" && !(p.dataKey === "aisc" && p.value == null)).map((p: any) => {
                         const macro = MACRO.find(m => m.key === p.dataKey);
                         return (
                           <div key={p.dataKey} className="flex justify-between gap-3">
@@ -529,6 +592,25 @@ export function GoldPriceChart({ data }: Props) {
                       {(pt?.volume ?? 0) > 0 && (
                         <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(pt!.volume ?? 0).toLocaleString("en-US")}</span></div>
                       )}
+                      {aiscOn && pt?.aisc != null && (() => {
+                        const step = data.aiscLine?.quarters.find(q => q.quarter === pt.aiscQuarter);
+                        const st = goldAiscStress(pt.price, pt.aisc, aiscStressLow, aiscStressHigh);
+                        return (
+                          <div className="mt-1 pt-1 border-t border-border" data-testid="gold-aisc-tooltip">
+                            <div style={{ color: AISC_COLOR }}>AISC {pt.aiscQuarter} · Ø aus {step?.count ?? "?"} Firmen</div>
+                            {step?.values.map(v => (
+                              <div key={v.company} className="flex justify-between gap-3 text-muted-foreground">
+                                <span>{data.aiscLine!.companies[v.company]?.name ?? v.company}</span>
+                                <span className="font-mono tabular-nums">${v.aisc.toLocaleString("en-US")}</span>
+                              </div>
+                            ))}
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted-foreground">Kurs / AISC</span>
+                              <span className={`font-mono tabular-nums ${st === "ok" ? "" : "text-red-400"}`}>{(pt.price / pt.aisc).toFixed(2)}× · {AISC_STRESS_TEXT[st] ?? "n/a"}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                       {pt?.cross && (
                         <div className={`mt-1 pt-1 border-t border-border ${pt.cross === "golden" ? "text-emerald-400" : "text-red-400"}`}>
                           {pt.cross === "golden" ? "✦ Golden Cross" : "✕ Death Cross"}
@@ -546,6 +628,17 @@ export function GoldPriceChart({ data }: Props) {
 
               {/* Fair Value (bestehend) */}
               <ReferenceLine y={data.fairValue.fvAdj} stroke="#a855f7" strokeDasharray="5 5" strokeOpacity={0.5} ifOverflow="hidden" />
+
+              {/* Future_10 §5 (B1): Stresszone je AISC-Stufe — rot AISC…×1,10, gelb ×1,10…×1,15 — und senkrecht dort, wo der Kurs darin lag. */}
+              {aiscBandList.map(b => (
+                <Fragment key={`aisc-band-${b.quarter}`}>
+                  <ReferenceArea x1={b.x1} x2={b.x2} y1={b.aisc} y2={b.aisc * aiscStressLow} fill="#ef4444" fillOpacity={0.14} stroke="none" ifOverflow="hidden" />
+                  <ReferenceArea x1={b.x1} x2={b.x2} y1={b.aisc * aiscStressLow} y2={b.aisc * aiscStressHigh} fill="#f59e0b" fillOpacity={0.10} stroke="none" ifOverflow="hidden" />
+                </Fragment>
+              ))}
+              {aiscStressList.map(r => (
+                <ReferenceArea key={`aisc-stress-${r.x1}`} x1={r.x1} x2={r.x2} fill="#ef4444" fillOpacity={0.08} stroke="#ef4444" strokeOpacity={0.25} ifOverflow="hidden" />
+              ))}
 
               {showVolume && hasVolume && !narrow && (
                 <Bar yAxisId="vol" dataKey="_volNorm" name="Volumen" isAnimationActive={false} maxBarSize={6}
@@ -573,6 +666,10 @@ export function GoldPriceChart({ data }: Props) {
               ))}
 
               <Line type="monotone" dataKey="price" name="Gold Kurs" stroke="#f59e0b" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+
+              {aiscOn && (
+                <Line type="stepAfter" dataKey="aisc" name={AISC_NAME} stroke={AISC_COLOR} strokeWidth={1.75} dot={false} connectNulls={false} isAnimationActive={false} />
+              )}
 
               {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
                 <Line
@@ -769,6 +866,25 @@ export function GoldPriceChart({ data }: Props) {
         <span className="flex items-center gap-1">
           <span className="w-3 h-0.5 rounded-full" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value (adj.)
         </span>
+        <span className="flex flex-wrap items-center gap-1" data-testid="gold-aisc-status">
+          <span className="w-3 h-0.5 rounded-full" style={{ backgroundColor: AISC_COLOR }} />
+          {aiscAvail === "offline" ? (
+            `${GOLD_AISC_OFFLINE_LABEL}: Antwort ohne AISC-Daten, keine Linie`
+          ) : aiscLatest ? (
+            <>
+              AISC Ø {aiscLatest.step.quarter} ({aiscLatest.step.count} Minen): ${aiscLatest.step.aisc!.toLocaleString("en-US")} · Kurs = {aiscLatest.ratio.toFixed(2)}× AISC ·{" "}
+              <span className={aiscLatest.stress === "ok" ? "text-emerald-400" : "text-red-400"}>{AISC_STRESS_TEXT[aiscLatest.stress]}</span>
+              {aiscOn && (
+                <span className="inline-flex items-center gap-1">
+                  · <span className="inline-block h-2 w-3" style={{ background: "rgba(239,68,68,0.35)" }} /> ×1,00–{aiscStressLow.toFixed(2).replace(".", ",")}
+                  <span className="inline-block h-2 w-3" style={{ background: "rgba(245,158,11,0.3)" }} /> –×{aiscStressHigh.toFixed(2).replace(".", ",")}
+                </span>
+              )}
+            </>
+          ) : (
+            "AISC n/a (kein belegtes Quartal zum letzten Kurs)"
+          )}
+        </span>
       </div>
 
       {visibleSignals.length > 0 && (
@@ -812,6 +928,8 @@ export function GoldPriceChart({ data }: Props) {
         MACD = EMA₁₂ − EMA₂₆, Signal = EMA₉(MACD), Histogram = MACD − Signal; α = 2/(Period+1).
         Makro-Overlays nur aus FRED (DFII10, M2SL, DTWEXBGS, T10YIE, WALCL); fehlt eine Reihe, fehlt ihr Chip; hat sie im Zeitraum keine Werte, steht „n/a“.
         10Y/Max laden die lange Historie separat (Indikatoren auf voller Reihe, Anzeige ausgedünnt auf ~500 Punkte). Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
+        AISC (Minen): Ø der berichteten Quartals-AISC (by-product) von Newmont, Barrick, Agnico Eagle aus den Quartalsberichten (Quelle je Wert in server/data/gold-aisc.json), Stufe ab Quartalsende + {data.aiscLine?.lagDays ?? 60} Tage, Ø erst ab {data.aiscLine?.minCompanies ?? 2} Werten, fehlende Quartale n/a.
+        Stresszone: Kurs &lt; AISC × {aiscStressLow.toFixed(2).replace(".", ",")}–{aiscStressHigh.toFixed(2).replace(".", ",")}. Kein Einfluss auf GIS/Score. „Inflations-BE (T10YIE)“ ist die Inflationserwartung, nicht die Minenkosten.
       </div>
       </div>
     </SectionCard>

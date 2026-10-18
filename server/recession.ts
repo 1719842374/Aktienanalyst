@@ -28,6 +28,7 @@ import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
 import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
+import { BAA10Y_SERIES_ID, fredCsvUrl, latestFredCsvValue } from "./fred-csv";
 
 // ============================================================
 // Generic Data Helpers
@@ -50,18 +51,9 @@ function fetchUrl(url: string, timeoutMs = 20000, headers: Record<string, string
   }
 }
 
-/** Generic FRED CSV fetcher — returns latest value or NaN */
+/** Generic FRED CSV fetcher — returns latest value or NaN. Parse-Kern geteilt mit dem Credit-Overlay (server/fred-csv.ts). */
 function getLatestFredValue(seriesId: string): number {
-  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}&cosd=${getDateNMonthsAgo(24)}`;
-  const csv = fetchUrl(url);
-  if (!csv || csv.includes("<html") || csv.includes("<!DOCTYPE")) return NaN;
-  const lines = csv.trim().split("\n").slice(1);
-  const validLines = lines.filter(l => {
-    const val = l.split(",")[1]?.trim();
-    return val && val !== "." && !isNaN(parseFloat(val));
-  });
-  if (validLines.length === 0) return NaN;
-  return parseFloat(validLines[validLines.length - 1].split(",")[1].trim());
+  return latestFredCsvValue(fetchUrl(fredCsvUrl(seriesId, getDateNMonthsAgo(24))));
 }
 
 /** Generic FRED CSV fetcher — returns all observations */
@@ -349,7 +341,7 @@ function scoreM2(): IndicatorResult {
 
 // 6. Credit Spreads (BAA - 10Y Treasury)
 function scoreCreditSpreads(): IndicatorResult {
-  let val = getLatestFredValue("BAA10Y");
+  let val = getLatestFredValue(BAA10Y_SERIES_ID);
   // Fallback
   if (isNaN(val)) {
     const baa = getLatestFredValue("BAA");

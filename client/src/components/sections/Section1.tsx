@@ -8,6 +8,8 @@ import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 import { useDividendKpi } from "@/lib/useDividendHistory";
 import { listingFxWarning } from "@shared/listing-units";
+import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from "@shared/data-source";
+import { YahooNoValuationNotice } from "../YahooNoValuationCard";
 
 interface Props { data: StockAnalysis; onRefresh?: () => void; onThesisScore?: (score: number) => void }
 
@@ -59,6 +61,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
 
   return (
     <SectionCard number={2} title="DATENAKTUALITÄT & PLAUSIBILITÄT">
+      {isYahooOnly(data) && <div className="mb-3"><YahooNoValuationNotice data={data} /></div>}
       {listingFxWarning(data.currency) && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 flex items-start gap-2 mb-3 text-xs text-amber-400 break-words" data-testid="fx-partial-warning">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -289,7 +292,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         </div>
       </div>
 
-      <ThesisStrengthPanel data={data} onScore={onThesisScore} />
+      {isYahooOnly(data)
+        ? <p className="text-xs text-muted-foreground" data-testid="thesis-strength-yahoo-na">Thesis Strength Score: n/a ({YAHOO_NO_VALUATION_NOTICE})</p>
+        : <ThesisStrengthPanel data={data} onScore={onThesisScore} />}
     </SectionCard>
   );
 }

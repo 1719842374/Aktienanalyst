@@ -20,6 +20,7 @@ import { createFredHistoryMemo } from "./gold-fred-memo";
 import { analyzeGoldHistoryPlan, parseFredLatest, prefetchHistories, prefetchedFetcher, tail5 } from "./gold-fred-prefetch";
 import { createGoldResponseCache, GOLD_ANALYSIS_CACHE_TTL_MS, GOLD_ANALYSIS_PARTIAL_TTL_MS } from "./gold-response-cache";
 import { buildGoldChartHistoryPoints, createChartHistoryCache, fetchFmpChunks, historyWindows, mergeGoldRows, parseChartHistoryRange, pickLongerSource, seriesCoverage, trimChartHistory } from "./gold-chart-history";
+import { loadGoldAiscSeries } from "./gold-aisc";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -949,6 +950,8 @@ export function registerGoldRoutes(server: Server, app: Express) {
         scoreDelta,
         gates,
         technicalSignals,
+        // Future_10 §5 (B1): Quartals-AISC nur für die Chart-Linie. Fließt nicht in GIS/Score (aisc: null oben bleibt, B2).
+        aiscLine: loadGoldAiscSeries(),
         // JOB 16: nur bei Teilausfall gesetzt; vollständige Antworten behalten exakt ihre Bytes.
         ...(partialReasons.length > 0 ? { partial: true as const, partialReasons } : {}),
       };

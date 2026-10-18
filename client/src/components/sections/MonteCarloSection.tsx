@@ -6,6 +6,7 @@ import { currencySymbol, formatCurrency, formatNumber, formatPercentNoSign, form
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
 import { Settings2, RotateCcw, Play, AlertTriangle } from "lucide-react";
+import { isYahooOnly } from "../../../../shared/data-source";
 
 interface Props { data: StockAnalysis; sharedResult?: GBMMonteCarloResult | null }
 
@@ -384,7 +385,7 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
             <div className="bg-muted/30 rounded-md p-3 border border-border/50">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">P(reach Analyst PT)</div>
               <div className="text-[10px] text-muted-foreground">≥ {formatTarget(data.analystPT.median, data.currency)}</div>
-              <div className="text-sm font-bold font-mono tabular-nums mt-1">{formatPercentNoSign(result.analystPTProb * 100, 1)}</div>
+              <div className="text-sm font-bold font-mono tabular-nums mt-1">{isYahooOnly(data) ? "n/a" : formatPercentNoSign(result.analystPTProb * 100, 1)}</div>
             </div>
             <div className="bg-muted/30 rounded-md p-3 border border-border/50">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg. Max Drawdown</div>
