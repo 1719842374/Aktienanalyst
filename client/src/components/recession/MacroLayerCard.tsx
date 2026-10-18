@@ -88,7 +88,7 @@ export function MacroLayerCard({ layer, loading, error, fallback }: {
                     <tr key={d.id} className={`border-b border-border/50 ${d.available ? "" : "text-muted-foreground"}`} data-testid={`macro-layer-dim-${d.id}`}>
                       <td className="py-1 pr-2 font-sans" title={d.note}>
                         {d.label}{d.adjusted ? <span className="ml-1 text-amber-500" title="Gewicht angepasst">●</span> : null}
-                        <div className="text-[10px] text-muted-foreground">{d.available ? d.indicators.join(", ") : d.note}</div>
+                        <div className="text-[10px] text-muted-foreground">{d.available ? Array.from(new Set(d.indicators)).join(", ") : d.note}</div>
                       </td>
                       <td className="text-right px-1">{signed(d.score)}</td>
                       <td className="text-right px-1">{fmt(d.baseWeight)}</td>
@@ -102,6 +102,45 @@ export function MacroLayerCard({ layer, loading, error, fallback }: {
                 </tbody>
               </table>
             </div>
+            {layer.gaps && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2" data-testid="macro-layer-gaps">
+                <div className="rounded-md border border-border p-2" data-testid="macro-layer-concentration">
+                  <div className="font-semibold">Konzentration (F9-07)</div>
+                  <div className="font-mono tabular-nums">
+                    Cap−Equal RSL {fmt(layer.gaps.concentration.value, 3)} · z {signed(layer.gaps.concentration.z)}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    RSL SPY {fmt(layer.gaps.concentration.rslCap, 3)} / RSP {fmt(layer.gaps.concentration.rslEqual, 3)}
+                    {layer.gaps.concentration.asOf ? ` · ${layer.gaps.concentration.asOf}` : ""} · Regel &gt; 0,4 → Bewertung ×1,15
+                    {layer.gaps.concentration.value != null && layer.gaps.concentration.value > 0.4 ? " (aktiv)" : " (nicht aktiv)"} · {layer.gaps.concentration.note}
+                  </div>
+                </div>
+                <div className="rounded-md border border-border p-2" data-testid="macro-layer-managing">
+                  <div className="font-semibold">Managing-Score (F9-10): <span className="font-mono">{signed(layer.gaps.managing.score)}</span></div>
+                  <ul className="text-[10px] text-muted-foreground space-y-0.5">
+                    {layer.gaps.managing.components.map(c => (
+                      <li key={c.id} title={c.note}>
+                        {c.label}: {c.available ? <span className="font-mono text-foreground">{signed(c.component)}</span> : "n/a"}
+                        {c.available ? ` (z ${signed(c.z)})` : ` – ${c.note.replace(/^n\/a – /, "")}`}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="text-[10px] text-muted-foreground">{layer.gaps.managing.note}</div>
+                </div>
+                <div className="rounded-md border border-border p-2" data-testid="macro-layer-widersprueche">
+                  <div className="font-semibold">Makro-Widersprüche (F9-11): <span className="font-mono">{fmt(layer.gaps.widersprueche.score)}</span></div>
+                  <ul className="text-[10px] text-muted-foreground space-y-0.5">
+                    {layer.gaps.widersprueche.pairs.map(p => (
+                      <li key={p.id} title={p.note}>
+                        {p.label}: {p.contradiction == null ? "n/a" : <span className="font-mono text-foreground">{fmt(p.contradiction)}</span>}
+                        {` (${p.a} ${signed(p.scoreA)} / ${p.b} ${signed(p.scoreB)})`}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="text-[10px] text-amber-500" data-testid="macro-layer-f911-assumption">{layer.gaps.widersprueche.assumption}</div>
+                </div>
+              </div>
+            )}
             {layer.ai.status === "ok" && layer.ai.reason && (
               <p className="text-muted-foreground" data-testid="macro-layer-ai-reason">
                 KI-Begründung{layer.ai.riskFlag === 1 ? " (Risiko-Flag)" : ""}: {layer.ai.reason}

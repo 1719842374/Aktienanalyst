@@ -1,0 +1,686 @@
+{
+  "generated": "2026-10-18",
+  "note": "wie f9-history; zusätzlich F9-07/10/11; SPY/RSP Yahoo-Chart (frei), EPS multpl (Sichtbarkeit +90 T); CAPEX n/a",
+  "rows": [
+    {
+      "asOf": "2000-03-31",
+      "habitat": {
+        "regime": "restrictive",
+        "concentration": null
+      },
+      "recession": {
+        "anchored": 30,
+        "layerF9": 65,
+        "layerGaps": 60
+      },
+      "correction": {
+        "formula": 85,
+        "layerF9": 95,
+        "layerGaps": 90
+      },
+      "concentration": {
+        "value": null,
+        "z": null,
+        "rslCap": null,
+        "rslEqual": null,
+        "note": "n/a – keine Kurse SPY/RSP"
+      },
+      "managing": {
+        "score": null,
+        "components": [
+          {
+            "id": "capex",
+            "value": null,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "eps",
+            "value": 24.41,
+            "z": 1.53,
+            "component": 0.765
+          },
+          {
+            "id": "realzins",
+            "value": null,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "konzentration",
+            "value": null,
+            "z": null,
+            "component": null
+          }
+        ]
+      },
+      "widersprueche": {
+        "score": 0.194,
+        "pairs": [
+          {
+            "id": "kredit-real",
+            "scoreA": 0.667,
+            "scoreB": -0.5,
+            "contradiction": 0.583
+          },
+          {
+            "id": "bewertung-kredit",
+            "scoreA": 1,
+            "scoreB": 0.667,
+            "contradiction": 0
+          },
+          {
+            "id": "vix-kredit",
+            "scoreA": 0.25,
+            "scoreB": 0.667,
+            "contradiction": 0
+          }
+        ]
+      },
+      "weights": {
+        "bewertung": 3.042,
+        "kredit": 1.457,
+        "realwirtschaft": 1.023,
+        "geldpolitik": 1.149,
+        "sentiment": 0.56,
+        "managing": null,
+        "widersprueche": 1.061
+      }
+    },
+    {
+      "asOf": "2000-09-29",
+      "habitat": {
+        "regime": "restrictive",
+        "concentration": null
+      },
+      "recession": {
+        "anchored": 30,
+        "layerF9": 60,
+        "layerGaps": 60
+      },
+      "correction": {
+        "formula": 80,
+        "layerF9": 85,
+        "layerGaps": 80
+      },
+      "concentration": {
+        "value": null,
+        "z": null,
+        "rslCap": null,
+        "rslEqual": null,
+        "note": "n/a – keine Kurse SPY/RSP"
+      },
+      "managing": {
+        "score": null,
+        "components": [
+          {
+            "id": "capex",
+            "value": null,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "eps",
+            "value": 22.02,
+            "z": 1.38,
+            "component": 0.69
+          },
+          {
+            "id": "realzins",
+            "value": null,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "konzentration",
+            "value": null,
+            "z": null,
+            "component": null
+          }
+        ]
+      },
+      "widersprueche": {
+        "score": 0.194,
+        "pairs": [
+          {
+            "id": "kredit-real",
+            "scoreA": 0.667,
+            "scoreB": -0.5,
+            "contradiction": 0.583
+          },
+          {
+            "id": "bewertung-kredit",
+            "scoreA": 1,
+            "scoreB": 0.667,
+            "contradiction": 0
+          },
+          {
+            "id": "vix-kredit",
+            "scoreA": 0,
+            "scoreB": 0.667,
+            "contradiction": 0
+          }
+        ]
+      },
+      "weights": {
+        "bewertung": 3.042,
+        "kredit": 1.149,
+        "realwirtschaft": 1.023,
+        "geldpolitik": 1.046,
+        "sentiment": 0.56,
+        "managing": null,
+        "widersprueche": 1.061
+      }
+    },
+    {
+      "asOf": "2007-10-31",
+      "habitat": {
+        "regime": "neutral",
+        "concentration": 0.0243
+      },
+      "recession": {
+        "anchored": 30,
+        "layerF9": 45,
+        "layerGaps": 45
+      },
+      "correction": {
+        "formula": 55,
+        "layerF9": 60,
+        "layerGaps": 65
+      },
+      "concentration": {
+        "value": 0.0243,
+        "z": 2.26,
+        "rslCap": 1.0258,
+        "rslEqual": 1.0015,
+        "note": "z über 209 Wochen"
+      },
+      "managing": {
+        "score": -0.587,
+        "components": [
+          {
+            "id": "capex",
+            "value": null,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "eps",
+            "value": 6.66,
+            "z": -0.35,
+            "component": -0.175
+          },
+          {
+            "id": "realzins",
+            "value": 2.06,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "konzentration",
+            "value": 0.0243,
+            "z": 2.26,
+            "component": -1
+          }
+        ]
+      },
+      "widersprueche": {
+        "score": 0,
+        "pairs": [
+          {
+            "id": "kredit-real",
+            "scoreA": 0,
+            "scoreB": -0.4,
+            "contradiction": 0
+          },
+          {
+            "id": "bewertung-kredit",
+            "scoreA": 0,
+            "scoreB": 0,
+            "contradiction": 0
+          },
+          {
+            "id": "vix-kredit",
+            "scoreA": 0.25,
+            "scoreB": 0,
+            "contradiction": 0
+          }
+        ]
+      },
+      "weights": {
+        "bewertung": 1.26,
+        "kredit": 1.046,
+        "realwirtschaft": 0.977,
+        "geldpolitik": 0.786,
+        "sentiment": 0.62,
+        "managing": 1.578,
+        "widersprueche": 0.91
+      }
+    },
+    {
+      "asOf": "2007-12-31",
+      "habitat": {
+        "regime": "easing",
+        "concentration": 0.02
+      },
+      "recession": {
+        "anchored": 30,
+        "layerF9": 65,
+        "layerGaps": 65
+      },
+      "correction": {
+        "formula": 55,
+        "layerF9": 55,
+        "layerGaps": 60
+      },
+      "concentration": {
+        "value": 0.02,
+        "z": 1.75,
+        "rslCap": 0.9807,
+        "rslEqual": 0.9607,
+        "note": "z über 218 Wochen"
+      },
+      "managing": {
+        "score": -0.288,
+        "components": [
+          {
+            "id": "capex",
+            "value": null,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "eps",
+            "value": -2.64,
+            "z": -0.87,
+            "component": -0.435
+          },
+          {
+            "id": "realzins",
+            "value": 1.78,
+            "z": -0.89,
+            "component": 0.445
+          },
+          {
+            "id": "konzentration",
+            "value": 0.02,
+            "z": 1.75,
+            "component": -0.875
+          }
+        ]
+      },
+      "widersprueche": {
+        "score": 0.233,
+        "pairs": [
+          {
+            "id": "kredit-real",
+            "scoreA": 1,
+            "scoreB": -0.4,
+            "contradiction": 0.7
+          },
+          {
+            "id": "bewertung-kredit",
+            "scoreA": 0,
+            "scoreB": 1,
+            "contradiction": 0
+          },
+          {
+            "id": "vix-kredit",
+            "scoreA": 0.25,
+            "scoreB": 1,
+            "contradiction": 0
+          }
+        ]
+      },
+      "weights": {
+        "bewertung": 1.26,
+        "kredit": 1.251,
+        "realwirtschaft": 0.977,
+        "geldpolitik": 0.7,
+        "sentiment": 0.62,
+        "managing": 1.309,
+        "widersprueche": 1.092
+      }
+    },
+    {
+      "asOf": "2008-09-30",
+      "habitat": {
+        "regime": "easing",
+        "concentration": 0.0062
+      },
+      "recession": {
+        "anchored": 70,
+        "layerF9": 65,
+        "layerGaps": 60
+      },
+      "correction": {
+        "formula": 45,
+        "layerF9": 35,
+        "layerGaps": 50
+      },
+      "concentration": {
+        "value": 0.0062,
+        "z": 0.83,
+        "rslCap": 0.8851,
+        "rslEqual": 0.8789,
+        "note": "z über 257 Wochen"
+      },
+      "managing": {
+        "score": -0.482,
+        "components": [
+          {
+            "id": "capex",
+            "value": null,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "eps",
+            "value": -42.4,
+            "z": -1.87,
+            "component": -0.935
+          },
+          {
+            "id": "realzins",
+            "value": 2.03,
+            "z": 0.19,
+            "component": -0.095
+          },
+          {
+            "id": "konzentration",
+            "value": 0.0062,
+            "z": 0.83,
+            "component": -0.415
+          }
+        ]
+      },
+      "widersprueche": {
+        "score": 0,
+        "pairs": [
+          {
+            "id": "kredit-real",
+            "scoreA": 1,
+            "scoreB": 0.5,
+            "contradiction": 0
+          },
+          {
+            "id": "bewertung-kredit",
+            "scoreA": 0,
+            "scoreB": 1,
+            "contradiction": 0
+          },
+          {
+            "id": "vix-kredit",
+            "scoreA": 1,
+            "scoreB": 1,
+            "contradiction": 0
+          }
+        ]
+      },
+      "weights": {
+        "bewertung": 1.26,
+        "kredit": 0.943,
+        "realwirtschaft": 0.838,
+        "geldpolitik": 0.871,
+        "sentiment": 0.62,
+        "managing": 1.484,
+        "widersprueche": 0.91
+      }
+    },
+    {
+      "asOf": "2022-01-31",
+      "habitat": {
+        "regime": "neutral",
+        "concentration": -0.0012
+      },
+      "recession": {
+        "anchored": 25,
+        "layerF9": 40,
+        "layerGaps": 40
+      },
+      "correction": {
+        "formula": 75,
+        "layerF9": 80,
+        "layerGaps": 60
+      },
+      "concentration": {
+        "value": -0.0012,
+        "z": -0.31,
+        "rslCap": 0.9916,
+        "rslEqual": 0.9929,
+        "note": "z über 260 Wochen"
+      },
+      "managing": {
+        "score": 0.597,
+        "components": [
+          {
+            "id": "capex",
+            "value": null,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "eps",
+            "value": 77.75,
+            "z": 1.8,
+            "component": 0.9
+          },
+          {
+            "id": "realzins",
+            "value": -0.66,
+            "z": -1.47,
+            "component": 0.735
+          },
+          {
+            "id": "konzentration",
+            "value": -0.0012,
+            "z": -0.31,
+            "component": 0.155
+          }
+        ]
+      },
+      "widersprueche": {
+        "score": 0,
+        "pairs": [
+          {
+            "id": "kredit-real",
+            "scoreA": 0,
+            "scoreB": -0.5,
+            "contradiction": 0
+          },
+          {
+            "id": "bewertung-kredit",
+            "scoreA": 1,
+            "scoreB": 0,
+            "contradiction": 0
+          },
+          {
+            "id": "vix-kredit",
+            "scoreA": 0.25,
+            "scoreB": 0,
+            "contradiction": 0
+          }
+        ]
+      },
+      "weights": {
+        "bewertung": 2.34,
+        "kredit": 0.84,
+        "realwirtschaft": 1.023,
+        "geldpolitik": 0.7,
+        "sentiment": 0.56,
+        "managing": 1.587,
+        "widersprueche": 0.91
+      }
+    },
+    {
+      "asOf": "2022-06-30",
+      "habitat": {
+        "regime": "restrictive",
+        "concentration": -0.0052
+      },
+      "recession": {
+        "anchored": 40,
+        "layerF9": 65,
+        "layerGaps": 65
+      },
+      "correction": {
+        "formula": 55,
+        "layerF9": 55,
+        "layerGaps": 50
+      },
+      "concentration": {
+        "value": -0.0052,
+        "z": -0.38,
+        "rslCap": 0.8839,
+        "rslEqual": 0.889,
+        "note": "z über 260 Wochen"
+      },
+      "managing": {
+        "score": 0.312,
+        "components": [
+          {
+            "id": "capex",
+            "value": null,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "eps",
+            "value": 42.22,
+            "z": 1.42,
+            "component": 0.71
+          },
+          {
+            "id": "realzins",
+            "value": 0.74,
+            "z": -0.07,
+            "component": 0.035
+          },
+          {
+            "id": "konzentration",
+            "value": -0.0052,
+            "z": -0.38,
+            "component": 0.19
+          }
+        ]
+      },
+      "widersprueche": {
+        "score": 0.194,
+        "pairs": [
+          {
+            "id": "kredit-real",
+            "scoreA": 0.667,
+            "scoreB": -0.5,
+            "contradiction": 0.583
+          },
+          {
+            "id": "bewertung-kredit",
+            "scoreA": 0.429,
+            "scoreB": 0.667,
+            "contradiction": 0
+          },
+          {
+            "id": "vix-kredit",
+            "scoreA": 0.25,
+            "scoreB": 0.667,
+            "contradiction": 0
+          }
+        ]
+      },
+      "weights": {
+        "bewertung": 2.24,
+        "kredit": 0.84,
+        "realwirtschaft": 0.792,
+        "geldpolitik": 1.149,
+        "sentiment": 0.56,
+        "managing": 1.597,
+        "widersprueche": 1.061
+      }
+    },
+    {
+      "asOf": "2026-10-15",
+      "habitat": {
+        "regime": "restrictive",
+        "concentration": 0.0127
+      },
+      "recession": {
+        "anchored": 30,
+        "layerF9": 45,
+        "layerGaps": 50
+      },
+      "correction": {
+        "formula": 80,
+        "layerF9": 90,
+        "layerGaps": 80
+      },
+      "concentration": {
+        "value": 0.0127,
+        "z": 0.07,
+        "rslCap": 1.0275,
+        "rslEqual": 1.0148,
+        "note": "z über 260 Wochen"
+      },
+      "managing": {
+        "score": -0.092,
+        "components": [
+          {
+            "id": "capex",
+            "value": null,
+            "z": null,
+            "component": null
+          },
+          {
+            "id": "eps",
+            "value": 28.21,
+            "z": 1.52,
+            "component": 0.76
+          },
+          {
+            "id": "realzins",
+            "value": 2.84,
+            "z": 2.02,
+            "component": -1
+          },
+          {
+            "id": "konzentration",
+            "value": 0.0127,
+            "z": 0.07,
+            "component": -0.035
+          }
+        ]
+      },
+      "widersprueche": {
+        "score": 0.222,
+        "pairs": [
+          {
+            "id": "kredit-real",
+            "scoreA": -0.333,
+            "scoreB": -0.5,
+            "contradiction": 0
+          },
+          {
+            "id": "bewertung-kredit",
+            "scoreA": 1,
+            "scoreB": -0.333,
+            "contradiction": 0.667
+          },
+          {
+            "id": "vix-kredit",
+            "scoreA": 0,
+            "scoreB": -0.333,
+            "contradiction": 0
+          }
+        ]
+      },
+      "weights": {
+        "bewertung": 3.042,
+        "kredit": 0.943,
+        "realwirtschaft": 0.792,
+        "geldpolitik": 0.943,
+        "sentiment": 0.56,
+        "managing": 1.359,
+        "widersprueche": 1.083
+      }
+    }
+  ]
+}
