@@ -1,10 +1,13 @@
 /**
- * Real10Y-Overlay (FRED DFII10, 10J-Realzins), gemeinsam für den BTC-Chart (BTCDashboard, Sektion 11) und die
- * Technische Analyse der Aktie (TechnicalChart, Sektion 12). Aus BTCDashboard.tsx herausgezogen, ohne
- * Verhaltensänderung: gleiche Farbe, Linie, Achse, Domain-Formel, Chip-Text, Datenquelle.
+ * Real10Y-Overlay (FRED DFII10, 10J-Realzins), gemeinsam für den BTC-Chart (BTC-Dashboard, dort Sektion 11
+ * „Technische Analyse“, BTCDashboard.tsx:142) und die Technische Analyse der Aktie (Aktien-Dashboard Sektion 12,
+ * TechnicalChart). Aus BTCDashboard.tsx herausgezogen, ohne Verhaltensänderung: gleiche Farbe, Linie, Achse,
+ * Domain-Formel, Chip-Text, FRED-Reihe.
  *
- * Datenquelle: GET /api/analyze-btc/macro-history?startDate=… (server/btc-routes.ts → server/btc-macro.ts
- * fetchBTCMacroHistory → FRED fredgraph.csv DFII10), Feld `real10yByDate`. Kein neuer Server-Pfad.
+ * Datenquelle BTC: GET /api/analyze-btc/macro-history?startDate=… (server/btc-routes.ts → server/btc-macro.ts
+ * fetchBTCMacroHistory → FRED DFII10 + M2SL), Feld `real10yByDate`.
+ * Datenquelle Aktien-TA: GET /api/analyze-btc/real10y-history?startDate=… (fetchReal10YHistory, nur DFII10,
+ * derselbe Fetcher), damit ein M2SL-Ausfall Real10Y nicht n/a macht.
  * Reine Anzeige: kein Score, kein Fazit. Fehlt die Reihe → n/a, kein Ersatzwert.
  */
 
@@ -49,7 +52,12 @@ export function macroHistoryPath(startDate: string): string {
   return `/api/analyze-btc/macro-history?startDate=${encodeURIComponent(startDate)}`;
 }
 
-/** Teil der Antwort von /api/analyze-btc/macro-history, den das Overlay liest (server/btc-macro.ts BTCMacroHistory). */
+/** Pfad der DFII10-Route für die Aktien-TA (nur Real10Y, ohne M2SL). */
+export function real10yHistoryPath(startDate: string): string {
+  return `/api/analyze-btc/real10y-history?startDate=${encodeURIComponent(startDate)}`;
+}
+
+/** Teil der Antwort von /api/analyze-btc/macro-history bzw. /real10y-history, den das Overlay liest (server/btc-macro.ts BTCMacroHistory). */
 export interface Real10YMacroHistory {
   real10yByDate?: Record<string, number>;
   latestReal10y?: { date: string; value: number } | null;
