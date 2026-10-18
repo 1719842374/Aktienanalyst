@@ -949,6 +949,32 @@ export interface CreditOverlayPoint {
   spreadDate: string | null;
 }
 
+// ─── 10Y-Treasury-Overlay (A3, Offen_WORK_BUFFETT_ASIA_10Y §3): FRED DGS10 ─────────
+// GET /api/treasury-10y/market. Marktzins (10-Year Treasury Constant Maturity), nicht tickerabhängig.
+// Nur Anzeige in der Technischen Analyse (Sektion 12) — kein Score, kein Fazit-Faktor.
+
+/** Eine FRED-Beobachtung DGS10 in Prozent. */
+export interface Treasury10YPoint {
+  date: string;
+  value: number;
+}
+
+export interface Treasury10YResponse {
+  seriesId: string;
+  source: string;
+  sourceUrl: string;
+  /** Aufsteigend nach Datum. Leer = n/a (FRED nicht erreichbar). */
+  points: Treasury10YPoint[];
+  note: string | null;
+}
+
+/** Rendite je Kurstag (as-of-Join). null = kein FRED-Wert innerhalb der Lückentoleranz. */
+export interface Treasury10YOverlayPoint {
+  date: string;
+  yieldPct: number | null;
+  yieldDate: string | null;
+}
+
 // ─── Gold-AISC-Linie (Future_10 §5, Ticket B1, additiv) ─────────────────────────
 // Quartals-AISC der großen Goldproduzenten aus server/data/gold-aisc.json, über
 // GET /api/analyze-gold als `aiscLine` an den Gold-Chart (GoldPriceChart.tsx).
