@@ -7,6 +7,7 @@ import {
 } from "./fmp";
 import { computeFcfTTM, highCapexFcfHint, tallyAnalystGrades } from "./analyze-helpers";
 import { indicatorWarmupFromDate } from "./history-fallback";
+import { detectPerShareUnit, directAdrSharesPerAdr } from "./fmp-adr-map";
 
 /** Annual cash-flow rows. More than one period so a zero latest row can fall through to a signed older GAAP FCF. */
 export const FMP_ANALYSIS_CASHFLOW_LIMIT = 4;
@@ -92,14 +93,24 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       estimatedRevenue: e.estimatedRevenueAvg,
     }));
 
+    // FMP-ADR (18.10.2026): Bei direkt eingegebenen ADRs (TM, LVMUY, VWAPY …) ist profile.price je ADR. Liefert FMP
+    // die Statement-EPS je Stammaktie, wird sie × Ratio auf ADR-Einheit gebracht (dieselbe Prüfung wie
+    // fmp-adr-map.ts normalizeDirectAdrPerShare). Sonst Faktor 1 (alle anderen Ticker bit-gleich).
+    const adrRatio = directAdrSharesPerAdr(ticker);
+    const adrUnit = adrRatio != null && adrRatio !== 1
+      ? detectPerShareUnit({ netIncome: li.netIncome, eps: li.epsDiluted ?? li.eps, marketCap: profile.marketCap, price: profile.price, sharesPerAdr: adrRatio })
+      : null;
+    const kAdr = adrUnit === "ordinary" ? (adrRatio as number) : 1;
+    if (adrUnit === "ordinary") console.log(`[FMP] ${ticker}: EPS je Stammaktie → je ADR (× ${adrRatio})`);
+
     // TTM EPS: prefer profile.eps (trailing 12M, GAAP) over income[0].epsDiluted (last FY)
-    const ttmEps = profile.eps || li.epsDiluted || 0;
+    const ttmEps = profile.eps || (li.epsDiluted || 0) * kAdr || 0;
 
     // FY EPS: last completed fiscal year (income[0] = most recent annual statement)
     // DISTINCT from TTM: mid-year reporters (Q2/Q3 FY-end) can differ >10%.
-    const fyEps = li.epsDiluted || li.eps || ttmEps;
+    const fyEps = (li.epsDiluted || li.eps || 0) * kAdr || ttmEps;
 
-    const fwdEpsConsensus = parsedEstimatesRaw[0]?.estimatedEps || 0;
+    const fwdEpsConsensus = (parsedEstimatesRaw[0]?.estimatedEps || 0) * kAdr;
 
     let epsGrowthFwd = 0;
     if (ttmEps > 0 && fwdEpsConsensus > 0) {
@@ -197,7 +208,7 @@ export async function fetchFmpAnalysisData(ticker: string): Promise<FmpAnalysisD
       capex: Math.abs(lc.capitalExpenditure || 0), operatingCashFlow: lc.operatingCashFlow || 0,
       epsTTM: ttmEps,
       epsAdjFY: fyEps,
-      epsConsensusNextFY: parsedEstimatesRaw[0]?.estimatedEps || 0, epsGrowth5Y,
+      epsConsensusNextFY: fwdEpsConsensus, epsGrowth5Y,
       epsGrowthFwd, pegRatio, forwardPE, dividendYield,
       analystBuy, analystHold, analystSell,
       ptMedian: pt?.targetConsensus || 0, ptHigh: pt?.targetHigh || 0, ptLow: pt?.targetLow || 0,
