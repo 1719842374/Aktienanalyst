@@ -73,7 +73,7 @@ NVO-Hauptchart + LLY und PFE als Overlay-Linien.
 
 ---
 
-## 4. AI-Chatbot im Interface
+## 4. AI-Chatbot im Interface (Aktien)
 
 ### Ziel
 Schwebendes Chat-Fenster, das auf den aktuellen Analysedaten antwortet und direkt an die Scoring-Gate-Logik und die 20 Sektionen angebunden ist.
@@ -85,19 +85,11 @@ Schwebendes Chat-Fenster, das auf den aktuellen Analysedaten antwortet und direk
 
 **Funktionen:**
 - Automatische Anbindung an die aktuelle Analyse (alle 20 Sektionen + Scoring-Gates).
-- User kann sich jede Sektion detailliert und beispielhaft erklären lassen (z. B. „Erkläre mir den gehärteten Inverse-DCF bei SAP“ oder „Warum greift hier kein Gate?“).
-- Die KI kann Szenarien automatisch overriden (z. B. „Was passiert, wenn das Wachstum auf 3 % fällt?“ → DCF und Ampel werden neu berechnet und erklärt).
-- Kontext: Letzter Earnings-Call, historische Beat/Miss-Raten, Peer-Vergleiche, aktuelle Scoring-Pipeline.
+- User kann sich jede Sektion detailliert und beispielhaft erklären lassen.
+- Die KI kann Szenarien automatisch overriden (DCF, Gates, Ampel neu berechnen).
+- Kontext: Earnings-Call, Beat/Miss-Raten, Peers, Scoring-Pipeline.
 
-**Beispiel-Fragen:**
-- „Warum ist der Inverse-DCF so viel höher als der Kurs?“
-- „Erkläre mir die Scoring-Gates bei dieser Analyse.“
-- „Was hat das Management im letzten Call zu Pricing gesagt?“
-- „Wie hat sich die Bruttomarge in den letzten 8 Quartalen entwickelt?“
-- „Override: Was passiert, wenn das Revenue-Wachstum nur noch 3 % ist?“
-
-**Technik:**  
-Claude Haiku / GPT-4o-mini (oder OpenRouter), Streaming, kein freier Chat (nur zum aktuellen Ticker und dessen Analyse).
+**Technik:** Claude Haiku / GPT-4o-mini (oder OpenRouter), Streaming.
 
 **Aufwand:** ~12–16 Stunden.
 
@@ -106,37 +98,40 @@ Claude Haiku / GPT-4o-mini (oder OpenRouter), Streaming, kein freier Chat (nur z
 ## 4b. Event hinzufügen Button in Sektion 17 (Katalysatoren / DCF)
 
 ### Ziel
-In Sektion 17 (Katalysatoren) einen „Event hinzufügen“-Button analog zum Peer-Ticker-Hinzufügen in Sektion 9 (Relative Bewertung). User kann Events mit KI-Logik hinzufügen; diese fließen automatisch in den DCF ein.
+In Sektion 17 einen „Event hinzufügen“-Button analog zum Peer-Ticker-Hinzufügen in Sektion 9. Events werden per KI-Schema berechnet und fließen in den DCF ein.
 
-### Mechanismus
-- Button „Event hinzufügen“ neben den bestehenden Katalysatoren.
-- Eingabe: Freitext oder strukturierte Felder (z. B. „Cloud-Adoption beschleunigt sich 2027“).
-- KI berechnet nach festem Schema den Impact:
-  - Betroffene Variable (Revenue Growth, Margin, Capex, etc.)
-  - Richtung und Stärke (+ / −)
-  - Zeitlicher Horizont (1–3 Jahre)
-  - Wahrscheinlichkeit
-- Der berechnete Impact wird als zusätzlicher Katalysator gespeichert und in den gehärteten Inverse-DCF und die Scoring-Gates eingerechnet.
-- User kann das Event später entfernen oder anpassen (wie Peer-Overrides).
+**Mechanismus:** Freitext oder strukturierte Eingabe → KI berechnet Impact nach Schema (Variable, Delta, Horizont, Wahrscheinlichkeit) → DCF und Gates werden aktualisiert.
 
-### Schema (KI-Vorgabe)
-```json
-{
-  "event": "Cloud-Adoption beschleunigt sich",
-  "impactOn": "revenueGrowth",
-  "delta": "+1.5pp",
-  "horizon": "2027–2028",
-  "probability": 0.6,
-  "dcfEffect": "g1 +1.2pp"
-}
-```
+**Aufwand:** ~8–10 Stunden.
 
-### Beispiel
-User fügt hinzu: „SAP gewinnt großen Public-Cloud-Deal 2027“.  
-KI schlägt vor: Revenue Growth +1.5 pp in 2027, Wahrscheinlichkeit 55 %.  
-Der DCF wird neu gerechnet und der Effekt in Sektion 17 und im Executive Summary angezeigt.
+---
 
-**Aufwand:** ~8–10 Stunden (UI-Button, KI-Schema, DCF-Integration, Persistenz).
+## 4c. Vollständige interaktive KI-Chatbot-Anbindung für alle Assets
+
+### Ziel
+Die interaktive Chatbot-Logik (Sektions-Erklärung + Szenario-Override + Event-Hinzufügen) soll nicht nur für die Aktien-Analyse, sondern auch für die anderen Assets im Projekt übertragen werden.
+
+### Assets
+
+| Asset | Sektionen / Module | Beispiel-Override | Aufwand (zusätzlich) |
+|-------|---------------------|-------------------|--------------------------|
+| **Aktien** | 1–20 + Gates | g1, WACC, Margen, Events | Basis (siehe 4 + 4b) |
+| **BTC** | Liquidität, Miner, Technische Analyse, Gates | Hashrate, Fee-Market, Liquiditäts-Index | ~6–8 h |
+| **Gold** | Adaptive Gates, AISC, Makro-Overlays, Technische Analyse | Realzinsen, AISC-Stress, Geopolitik-Event | ~5–7 h |
+| **Rezession** | Scoring (5 Untergruppen), Buffett, VIX, Yield Curve | Habitat, Konzentration, LLM-Flag | ~6–8 h |
+
+### Gemeinsame Architektur
+- Ein gemeinsames Chat-Widget, das den aktuellen Kontext (Asset + geladene Daten) erkennt.
+- Pro Asset ein Schema für Szenario-Overrides und Events.
+- Die KI nutzt die jeweilige Scoring-/Gate-Logik des Assets (nicht hardcodiert).
+- Persistenz der User-Events / Overrides pro Asset und Ticker/Zeitpunkt.
+
+### Beispiel-Fragen pro Asset
+- **BTC:** „Was passiert, wenn die Hashrate um 20 % fällt?“
+- **Gold:** „Override: Realzinsen steigen um 50 bp – wie ändert sich das Stress-Signal?“
+- **Rezession:** „Was, wenn der Buffett-Indikator auf 180 % fällt?“
+
+**Gesamtaufwand für Übertragung:** ~17–23 Stunden (nachdem die Aktien-Basis steht).
 
 ---
 
@@ -147,16 +142,7 @@ Der DCF wird neu gerechnet und der Effekt in Sektion 17 und im Executive Summary
 - Keine individuellen Filter
 
 ### Soll
-- Custom Screen mit Filtern:
-  - Market Cap (z. B. > 10 Mrd.)
-  - Industry (Multi-Select)
-  - Country (USA, CAN, AUS …)
-  - ROIC > x %
-  - Forward P/E < x
-  - Revenue Growth
-  - EBIT Margin
-
-**FMP-Quelle:** `/stable/stock-screener` + Company Profile + Key Metrics.
+- Custom Screen mit Filtern (Market Cap, Industry, Country, ROIC, Forward P/E, etc.).
 
 **Aufwand:** ~8–12 Stunden.
 
@@ -171,26 +157,18 @@ Der DCF wird neu gerechnet und der Effekt in Sektion 17 und im Executive Summary
 | Earnings Beat/Miss Overlay | Hoch | Mittel | 3 |
 | Screener Custom Criteria | Hoch | Mittel | 4 |
 | Sankey Income / Balance | Mittel | Hoch | 5 |
-| AI-Chatbot (mit Sektions-Erklärung + Szenario-Override) | Mittel–Hoch | Hoch | 6 |
+| AI-Chatbot Aktien (Sektions-Erklärung + Override) | Mittel–Hoch | Hoch | 6 |
 | Event hinzufügen (Sektion 17) | Mittel | Mittel | 7 |
+| KI-Chatbot Übertragung auf BTC / Gold / Rezession | Mittel | Hoch | 8 |
 
 ---
 
 ## 7. Design-Referenzen (Bilder aus Chat)
 
-- TIKR Detailed Financials (Multi-Jahr-Tabelle mit YoY)
-- TIKR Earnings Call Transcript
-- Sankey „How Microsoft Makes Its Money“ (Income Statement Flow)
-- Sankey Balance Sheet (Assets → Liabilities + Equity)
-- Fiscal.ai Earnings Chart (Beat/Miss Marker)
-- TIKR Global Screener (Custom Criteria)
-- TIKR Custom Dashboard (Watchlist-Tabelle)
-- GuruAI Chat-Interface
-- **Screenshot 24.10.2026:** Schwebendes Chat-Widget („Was sollen wir erkunden?“) über der SAP-Executive-Summary
-
-Diese Referenzen dienen als visuelles Ziel für die Umsetzung.
+- TIKR Detailed Financials, Earnings Call, Sankey, Fiscal.ai, Screener, GuruAI
+- **Screenshot 24.10.2026:** Schwebendes Chat-Widget über der SAP-Executive-Summary
 
 ---
 
 **Nächster Schritt:**  
-Agents können die Prioritäten abarbeiten. Detailed Financials und Peer-Overlay haben den höchsten unmittelbaren Nutzen.
+Agents können die Prioritäten abarbeiten. Die Aktien-Chatbot-Basis sollte vor der Übertragung auf die anderen Assets stehen.
