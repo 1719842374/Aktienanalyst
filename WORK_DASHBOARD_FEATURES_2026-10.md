@@ -103,6 +103,43 @@ Claude Haiku / GPT-4o-mini (oder OpenRouter), Streaming, kein freier Chat (nur z
 
 ---
 
+## 4b. Event hinzufügen Button in Sektion 17 (Katalysatoren / DCF)
+
+### Ziel
+In Sektion 17 (Katalysatoren) einen „Event hinzufügen“-Button analog zum Peer-Ticker-Hinzufügen in Sektion 9 (Relative Bewertung). User kann Events mit KI-Logik hinzufügen; diese fließen automatisch in den DCF ein.
+
+### Mechanismus
+- Button „Event hinzufügen“ neben den bestehenden Katalysatoren.
+- Eingabe: Freitext oder strukturierte Felder (z. B. „Cloud-Adoption beschleunigt sich 2027“).
+- KI berechnet nach festem Schema den Impact:
+  - Betroffene Variable (Revenue Growth, Margin, Capex, etc.)
+  - Richtung und Stärke (+ / −)
+  - Zeitlicher Horizont (1–3 Jahre)
+  - Wahrscheinlichkeit
+- Der berechnete Impact wird als zusätzlicher Katalysator gespeichert und in den gehärteten Inverse-DCF und die Scoring-Gates eingerechnet.
+- User kann das Event später entfernen oder anpassen (wie Peer-Overrides).
+
+### Schema (KI-Vorgabe)
+```json
+{
+  "event": "Cloud-Adoption beschleunigt sich",
+  "impactOn": "revenueGrowth",
+  "delta": "+1.5pp",
+  "horizon": "2027–2028",
+  "probability": 0.6,
+  "dcfEffect": "g1 +1.2pp"
+}
+```
+
+### Beispiel
+User fügt hinzu: „SAP gewinnt großen Public-Cloud-Deal 2027“.  
+KI schlägt vor: Revenue Growth +1.5 pp in 2027, Wahrscheinlichkeit 55 %.  
+Der DCF wird neu gerechnet und der Effekt in Sektion 17 und im Executive Summary angezeigt.
+
+**Aufwand:** ~8–10 Stunden (UI-Button, KI-Schema, DCF-Integration, Persistenz).
+
+---
+
 ## 5. Screener – Custom Criteria
 
 ### Ist
@@ -135,6 +172,7 @@ Claude Haiku / GPT-4o-mini (oder OpenRouter), Streaming, kein freier Chat (nur z
 | Screener Custom Criteria | Hoch | Mittel | 4 |
 | Sankey Income / Balance | Mittel | Hoch | 5 |
 | AI-Chatbot (mit Sektions-Erklärung + Szenario-Override) | Mittel–Hoch | Hoch | 6 |
+| Event hinzufügen (Sektion 17) | Mittel | Mittel | 7 |
 
 ---
 
