@@ -1,6 +1,6 @@
 # WORK – Dashboard Features (Oktober 2026)
 
-**Stand:** 18.10.2026  
+**Stand:** 18.10.2026 (aktualisiert 24.10.2026)  
 **Ziel:** Design- und Funktionsziele für das Aktienanalyst-Dashboard dokumentieren, damit Agents die visuellen Referenzen und Anforderungen sehen.
 
 ---
@@ -76,21 +76,28 @@ NVO-Hauptchart + LLY und PFE als Overlay-Linien.
 ## 4. AI-Chatbot im Interface
 
 ### Ziel
-Schwebendes Chat-Fenster, das auf den aktuellen Analysedaten antwortet.
+Schwebendes Chat-Fenster, das auf den aktuellen Analysedaten antwortet und direkt an die Scoring-Gate-Logik und die 20 Sektionen angebunden ist.
 
-**Kontext, den der Bot kennt:**
-- Alle 20 Sektionen der aktuellen Analyse
-- Letzter Earnings-Call (Datum + Inhalt)
-- Historische Beat/Miss-Raten
-- Peer-Vergleiche
+**Visuelles Beispiel (Screenshot 24.10.2026 – SAP-Analyse):**
+- Schwebendes Chat-Widget unten rechts mit der Frage „Was sollen wir erkunden?“
+- Eingabefeld: „Geben Sie @ ein, um Ihre Apps zu suchen (KI-Agent)“
+- Das Widget liegt über der Executive Summary und den positiven/negativen Faktoren.
+
+**Funktionen:**
+- Automatische Anbindung an die aktuelle Analyse (alle 20 Sektionen + Scoring-Gates).
+- User kann sich jede Sektion detailliert und beispielhaft erklären lassen (z. B. „Erkläre mir den gehärteten Inverse-DCF bei SAP“ oder „Warum greift hier kein Gate?“).
+- Die KI kann Szenarien automatisch overriden (z. B. „Was passiert, wenn das Wachstum auf 3 % fällt?“ → DCF und Ampel werden neu berechnet und erklärt).
+- Kontext: Letzter Earnings-Call, historische Beat/Miss-Raten, Peer-Vergleiche, aktuelle Scoring-Pipeline.
 
 **Beispiel-Fragen:**
 - „Warum ist der Inverse-DCF so viel höher als der Kurs?“
+- „Erkläre mir die Scoring-Gates bei dieser Analyse.“
 - „Was hat das Management im letzten Call zu Pricing gesagt?“
 - „Wie hat sich die Bruttomarge in den letzten 8 Quartalen entwickelt?“
+- „Override: Was passiert, wenn das Revenue-Wachstum nur noch 3 % ist?“
 
 **Technik:**  
-Claude Haiku / GPT-4o-mini, Streaming, kein freier Chat (nur zum aktuellen Ticker).
+Claude Haiku / GPT-4o-mini (oder OpenRouter), Streaming, kein freier Chat (nur zum aktuellen Ticker und dessen Analyse).
 
 **Aufwand:** ~12–16 Stunden.
 
@@ -127,7 +134,7 @@ Claude Haiku / GPT-4o-mini, Streaming, kein freier Chat (nur zum aktuellen Ticke
 | Earnings Beat/Miss Overlay | Hoch | Mittel | 3 |
 | Screener Custom Criteria | Hoch | Mittel | 4 |
 | Sankey Income / Balance | Mittel | Hoch | 5 |
-| AI-Chatbot | Mittel–Hoch | Hoch | 6 |
+| AI-Chatbot (mit Sektions-Erklärung + Szenario-Override) | Mittel–Hoch | Hoch | 6 |
 
 ---
 
@@ -141,6 +148,7 @@ Claude Haiku / GPT-4o-mini, Streaming, kein freier Chat (nur zum aktuellen Ticke
 - TIKR Global Screener (Custom Criteria)
 - TIKR Custom Dashboard (Watchlist-Tabelle)
 - GuruAI Chat-Interface
+- **Screenshot 24.10.2026:** Schwebendes Chat-Widget („Was sollen wir erkunden?“) über der SAP-Executive-Summary
 
 Diese Referenzen dienen als visuelles Ziel für die Umsetzung.
 
