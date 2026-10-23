@@ -83,6 +83,12 @@ Schwebendes Chat-Fenster, das auf den aktuellen Analysedaten antwortet und direk
 - Eingabefeld: „Geben Sie @ ein, um Ihre Apps zu suchen (KI-Agent)“
 - Das Widget liegt über der Executive Summary und den positiven/negativen Faktoren.
 
+**UI-Anforderungen:**
+- **Verschiebbar:** Das Widget kann per Drag & Drop frei auf dem Bildschirm positioniert werden.
+- **Vergrößer- / Verkleinerbar:** Der User kann die Größe des Chat-Fensters ändern (Resize-Handles an den Ecken oder Rändern).
+- Die Position und Größe werden im LocalStorage gespeichert, damit sie nach Reload erhalten bleiben.
+- Minimieren auf ein kleines Icon (optional).
+
 **Funktionen:**
 - Automatische Anbindung an die aktuelle Analyse (alle 20 Sektionen + Scoring-Gates).
 - User kann sich jede Sektion detailliert und beispielhaft erklären lassen.
@@ -91,7 +97,7 @@ Schwebendes Chat-Fenster, das auf den aktuellen Analysedaten antwortet und direk
 
 **Technik:** Claude Haiku / GPT-4o-mini (oder OpenRouter), Streaming.
 
-**Aufwand:** ~12–16 Stunden.
+**Aufwand:** ~12–16 Stunden (inkl. Drag & Resize).
 
 ---
 
@@ -125,6 +131,7 @@ Die interaktive Chatbot-Logik (Sektions-Erklärung + Szenario-Override + Event-H
 - Pro Asset ein Schema für Szenario-Overrides und Events.
 - Die KI nutzt die jeweilige Scoring-/Gate-Logik des Assets (nicht hardcodiert).
 - Persistenz der User-Events / Overrides pro Asset und Ticker/Zeitpunkt.
+- **Das Widget ist überall verschiebbar und in der Größe anpassbar** (gleiche UI-Anforderungen wie bei Aktien).
 
 ### Beispiel-Fragen pro Asset
 - **BTC:** „Was passiert, wenn die Hashrate um 20 % fällt?“
@@ -157,7 +164,7 @@ Die interaktive Chatbot-Logik (Sektions-Erklärung + Szenario-Override + Event-H
 | Earnings Beat/Miss Overlay | Hoch | Mittel | 3 |
 | Screener Custom Criteria | Hoch | Mittel | 4 |
 | Sankey Income / Balance | Mittel | Hoch | 5 |
-| AI-Chatbot Aktien (Sektions-Erklärung + Override) | Mittel–Hoch | Hoch | 6 |
+| AI-Chatbot Aktien (Sektions-Erklärung + Override + Drag/Resize) | Mittel–Hoch | Hoch | 6 |
 | Event hinzufügen (Sektion 17) | Mittel | Mittel | 7 |
 | KI-Chatbot Übertragung auf BTC / Gold / Rezession | Mittel | Hoch | 8 |
 
