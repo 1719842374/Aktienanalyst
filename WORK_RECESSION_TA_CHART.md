@@ -22,7 +22,7 @@
 
 ## 1b. Design-Vorschlag (Mockup 24.10.2026)
 
-**Screenshot (Chat-Upload):** „Technische Analyse – Rezessions-Signale“
+![Technische Analyse – Rezessions-Signale Mockup](docs/recession-ta-mockup.png)
 
 Das Mockup zeigt das gewünschte Layout und dient **nur als visuelle Design-Referenz**. Das finale Design soll **identisch** mit der bestehenden Technischen Analyse (Sektion 12) bei Aktien sein:
 
@@ -60,17 +60,17 @@ Das Mockup zeigt das gewünschte Layout und dient **nur als visuelle Design-Refe
 │ Hauptpane: SPY / VGK / ASHR Preis                       │
 │ + optional Buffett normalisiert (Dual-Axis)             │
 │ + Golden/Death Cross Marker                             │
-├────────────────────────────────────────────────────────────┤
+├───────────────────────────────────────────────────────────────┤
 │ Unterpane 1: VIX / VSTOXX                               │
-├──────────────────────────────────────────────────────────────┤
+├───────────────────────────────────────────────────────────────┤
 │ Unterpane 2: Yield Curve (T10Y2Y)                       │
-├──────────────────────────────────────────────────────────────┤
+├───────────────────────────────────────────────────────────────┤
 │ Unterpane 3: Credit Spread (BAA-Trs)                    │
-├──────────────────────────────────────────────────────────────┤
+├───────────────────────────────────────────────────────────────┤
 │ Unterpane 4: RSI(14)                                    │
-├──────────────────────────────────────────────────────────────┤
+├───────────────────────────────────────────────────────────────┤
 │ Unterpane 5: MACD                                       │
-└───────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 **Region-Switcher:** US / Europa / Asien (Japan) – analog zu den bestehenden Tabs im Rezessions-Dashboard.  
