@@ -1,3 +1,5 @@
+![Uploading image.png…]()
+
 # WORK – Rezessions-Dashboard: Technische Analyse Chart (analog Aktien Sektion 12)
 
 **Stand:** 24.10.2026  
