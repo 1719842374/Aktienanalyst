@@ -1,14 +1,5 @@
 # WORK – Rezessions-Dashboard: Technische Analyse Chart (analog Aktien Sektion 12)
 
-
-![Uploading image.png…]()
-
-
-
-
-
-
-
 **Stand:** 24.10.2026  
 **Ziel:** Im Rezessions-Dashboard einen interaktiven Chart mit Overlays bauen, der die relevanten Rezessions- und Korrektur-Signale in einer einzigen Ansicht zeigt – analog zur Technischen Analyse (Sektion 12) bei Aktien.
 
@@ -29,20 +20,21 @@
 
 ---
 
-## 1b. Design-Referenz (Mockup 24.10.2026)
+## 1b. Design-Vorschlag (Mockup 24.10.2026)
 
-**Screenshot:** „Technische Analyse – Rezessions-Signale“
+**Screenshot (Chat-Upload):** „Technische Analyse – Rezessions-Signale“
 
-Das Mockup zeigt das gewünschte Layout und dient **nur als visuelle Referenz**. Das Design soll identisch mit der bestehenden Technischen Analyse (Sektion 12) bei Aktien sein:
+Das Mockup zeigt das gewünschte Layout und dient **nur als visuelle Design-Referenz**. Das finale Design soll **identisch** mit der bestehenden Technischen Analyse (Sektion 12) bei Aktien sein:
 
-- Gleiche Toggle-Bar (SPY, VIX, Yield Curve, Credit Spread, Buffett, Volume, Signale, MACD, RSI)
-- Gleiche Zeitfenster-Buttons und Datumsauswahl
-- Golden Cross Banner
-- Mehrere synchronisierte Untercharts
-- Status-Banner oben mit REZESSION 12M / KORREKTUR 12M und Top-Treibern
+- Gleiche Toggle-Bar (SPY, VIX, Yield Curve T10Y2Y, Credit Spread BAA, Buffett Ind., Volume, Signale, MACD, RSI)
+- Gleiche Zeitfenster-Buttons (3M / 1Y / 3Y / 5Y / 10Y / MAX) und Datumsauswahl
+- Golden Cross Banner mit Datum
+- Mehrere synchronisierte Untercharts (VIX, Yield Curve, Credit Spread, RSI, MACD)
+- Status-Banner oben mit REZESSION 12M: 30% | KORREKTUR 12M: 80% und Top-Treibern (Buffett +16, CAPE +12.6, CSI +3)
 - Rechte Seite mit kleinen Indikator-Badges (Sahm, Buffett, CAPE, RSI, CSI)
+- Region-Switcher (US · Europa · Asien) oben rechts
 
-**Wichtig:** Kein neues Design erfinden – 1:1 die Komponenten und das Look & Feel aus der Aktien-Technischen-Analyse übernehmen.
+**Wichtig:** Kein neues Design erfinden – 1:1 die Komponenten und das Look & Feel aus der Aktien-Technischen-Analyse übernehmen. Das Mockup ist nur die Referenz dafür, welche Overlays und Badges erwartet werden.
 
 ---
 
@@ -64,21 +56,21 @@ Das Mockup zeigt das gewünschte Layout und dient **nur als visuelle Referenz**.
 ## 3. Vorgeschlagene Pane-Struktur
 
 ```
-┌────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────┐
 │ Hauptpane: SPY / VGK / ASHR Preis                       │
 │ + optional Buffett normalisiert (Dual-Axis)             │
 │ + Golden/Death Cross Marker                             │
 ├────────────────────────────────────────────────────────────┤
 │ Unterpane 1: VIX / VSTOXX                               │
-├────────────────────────────────────────────────────────────┤
+├──────────────────────────────────────────────────────────────┤
 │ Unterpane 2: Yield Curve (T10Y2Y)                       │
-├─────────────────────────────────────────────────────────────┤
+├──────────────────────────────────────────────────────────────┤
 │ Unterpane 3: Credit Spread (BAA-Trs)                    │
-├─────────────────────────────────────────────────────────────┤
+├──────────────────────────────────────────────────────────────┤
 │ Unterpane 4: RSI(14)                                    │
-├─────────────────────────────────────────────────────────────┤
+├──────────────────────────────────────────────────────────────┤
 │ Unterpane 5: MACD                                       │
-└─────────────────────────────────────────────────────────────┘
+└───────────────────────────────────────────────────────────────┘
 ```
 
 **Region-Switcher:** US / Europa / Asien (Japan) – analog zu den bestehenden Tabs im Rezessions-Dashboard.  
@@ -145,4 +137,4 @@ Optional: Kleine Badges über dem Chart mit den aktuellen Untergruppen-Wahrschei
 
 ## 8. Kurzfassung
 
-Der Rezessions-Chart soll die Logik und das Design der Aktien-Technischen-Analyse übernehmen: ein Hauptchart mit mehreren synchronisierten Untercharts und Toggles. Die wichtigsten Overlays sind Preis, VIX, Buffett, Yield Curve und Credit Spread. Fehlende Daten werden ausgeblendet, nicht als Fehler angezeigt. Das Mockup vom 24.10.2026 dient nur als visuelle Referenz.
+Der Rezessions-Chart soll die Logik und das Design der Aktien-Technischen-Analyse übernehmen: ein Hauptchart mit mehreren synchronisierten Untercharts und Toggles. Die wichtigsten Overlays sind Preis, VIX, Buffett, Yield Curve und Credit Spread. Fehlende Daten werden ausgeblendet, nicht als Fehler angezeigt. Das Mockup vom 24.10.2026 dient nur als visuelle Design-Referenz.
