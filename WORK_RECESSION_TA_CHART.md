@@ -1,5 +1,13 @@
 # WORK – Rezessions-Dashboard: Technische Analyse Chart (analog Aktien Sektion 12)
+
+
 ![Uploading image.png…]()
+
+
+
+
+
+
 
 **Stand:** 24.10.2026  
 **Ziel:** Im Rezessions-Dashboard einen interaktiven Chart mit Overlays bauen, der die relevanten Rezessions- und Korrektur-Signale in einer einzigen Ansicht zeigt – analog zur Technischen Analyse (Sektion 12) bei Aktien.
