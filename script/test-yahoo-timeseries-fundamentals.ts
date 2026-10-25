@@ -113,14 +113,16 @@ try {
     check(`${t}: genau eine [YAHOO-DIAG] stage=timeseries status=200`, d.length === 1 && /^\[YAHOO-DIAG\] \S+ stage=timeseries status=200 ok: MCap Kurs × Aktien/.test(d[0]), d[0]);
   }
 
-  console.log("\n=== Nicht-.DE (Gate): getYahooSnapshot exakt wie main, kein Zusatz-Call, keine Zusatz-DIAG ===");
+  console.log("\n=== Nicht-.DE (Gate): getYahooSnapshot wie main (bis auf Suffix-Währung #261), kein Zusatz-Call, keine Zusatz-DIAG ===");
+  // #261 DCF-FX (Stabschef 18.10.2026): ohne quoteSummary kommt die Währung aus dem Börsen-Suffix (nicht .DE, kein Netz-Call).
+  const SUFFIX_CUR: Record<string, string | null> = { "NESN.SW": "CHF", "7203.T": "JPY", "MC.PA": "EUR", "ASML.AS": "EUR", "VOD.L": "GBP", AAPL: null };
   for (const t of [...NON_DE_TICKERS, "VOD.L", "AAPL"]) {
     install({}); alt.clearYahooCache();
     const a = await capture(() => alt.getYahooSnapshot(t));
     const callsAlt = [...calls];
     const { v: s, lines } = await snap(t, {});
-    let same = true; try { assert.deepEqual(s, a.v); } catch { same = false; }
-    check(`${t}: Snapshot deepEqual main (MCap/KGV/EPS/currency/name null wie main, keine Quellenfelder)`, same && s != null && s.marketCap === null && s.currency === null && s.fundamentalsSource === undefined && s.metaSource === undefined);
+    let same = true; try { assert.deepEqual(s, a.v ? { ...a.v, currency: SUFFIX_CUR[t] } : a.v); } catch { same = false; }
+    check(`${t}: Snapshot deepEqual main bis auf currency = Suffix ${SUFFIX_CUR[t]} (MCap/KGV/EPS/name null wie main, keine Quellenfelder)`, same && s != null && s.marketCap === null && s.currency === SUFFIX_CUR[t] && s.fundamentalsSource === undefined && s.metaSource === undefined);
     check(`${t}: kein timeseries-/Meta-Call, Calls = main, DIAG-Zeilen = main (keine stage=timeseries)`, tsCalls() === 0 && calls.filter((u) => u.includes("range=5d")).length === 0 && JSON.stringify(calls) === JSON.stringify(callsAlt) && JSON.stringify(lines) === JSON.stringify(a.lines) && !lines.some((l) => l.includes("stage=timeseries")), `calls ${calls.length}/${callsAlt.length}`);
   }
   {
@@ -225,7 +227,8 @@ try {
     install({}); neu.clearYahooCache();
     const r = await capture(() => realFetch(`http://127.0.0.1:${port}/api/analyze`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ticker: t, useLLM: false, force: true }) }).then(async (x) => ({ status: x.status, body: await x.json() })));
     const b = r.v.body;
-    check(`${t} (Gate): HTTP ${r.v.status}, kein timeseries-/Meta-Call, keine stage=timeseries-Zeile (wie main)`, tsCalls() === 0 && calls.filter((u) => u.includes("range=5d")).length === 0 && !r.lines.some((l) => l.includes("stage=timeseries")) && !r.lines.some((l) => l.includes("chart meta")), `dataSource ${b?.dataSource} currency ${b?.currency} marketCap ${b?.marketCap}`);
+    // #261: Suffix-Währung → USD-Umrechnung; FMP-FX fehlt im Mock (402) → Yahoo-FX JPYUSD=X/EURUSD=X (range=5d). Gezählt werden nur Meta-Calls des Tickers.
+    check(`${t} (Gate): HTTP ${r.v.status}, kein timeseries-/Meta-Call für ${t}, keine stage=timeseries-Zeile (wie main)`, tsCalls() === 0 && calls.filter((u) => u.includes("range=5d") && u.includes(`/chart/${encodeURIComponent(t)}?`)).length === 0 && !r.lines.some((l) => l.includes("stage=timeseries")) && !r.lines.some((l) => l.includes("chart meta")), `dataSource ${b?.dataSource} currency ${b?.currency} marketCap ${b?.marketCap}`);
   }
   server.close();
 } finally {

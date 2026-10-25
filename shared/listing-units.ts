@@ -164,3 +164,144 @@ export function listingFxWarning(currency: unknown): string | null {
   const mu = minorUnitInfo(currency);
   return mu ? `FX ${mu.major}USD fehlt – Werte unkonvertiert (Kurs in ${mu.minor}, Bilanz in USD)` : null;
 }
+
+// ─── DCF-FX (Philip 18.10.2026 17:20 „ja fixen alles in dollar … also umrechnen“) ────────────────────────────
+/**
+ * Nicht-USD-Listings (EUR, CAD, GBp/GBP …): FMP rechnet die Statements/Estimates schon nach USD um
+ * (fmp.ts convertFmpRowsToUsd), Kurs, Market Cap, Historie und Kursziel kamen aber in Listing-Währung.
+ * Gemischt ergab das z. B. RY.TO „DCF 89,93 Dollar vs. Kurs 280,01 CAD“. Hier wird die MARKTSEITE in einem
+ * Schritt nach USD gebracht (Minor Units zuerst ÷ factor), die Statements bleiben USD. Danach ist jede Zahl USD.
+ *
+ * - Preisfelder (Quote/Profile/OHLCV, Quote-EPS): × rate / factor. Cap-Felder (FMP liefert sie schon in der
+ *   Major-Einheit): × rate. Kursziel: Minor-Unit-Plausibilisierung (priceTargetToListingUnit), dann × rate.
+ * - Historie mit EINEM aktuellen Kurs umgerechnet (konstanter Faktor): RSL, MA-Kreuze, RSI bleiben identisch.
+ * - USD-Listing → Eingabe unverändert zurück (bit-gleich). Ohne gültigen FX-Kurs → keine Umrechnung:
+ *   Minor Units wie bisher (#244, normalizeMinorUnitListing), Major-Währung bleibt stehen, nur markiert.
+ */
+export interface ListingFx {
+  /** Listing-Währung der Quelle, z. B. "CAD", "EUR", "GBp". */
+  from: string;
+  /** Major-Währung (GBp → GBP). */
+  major: string;
+  factor: number;
+  /** major → USD; null = FX fehlt. */
+  rate: number | null;
+  converted: boolean;
+  warning?: string;
+}
+
+export const LISTING_FX_MISSING_WARNING = (major: string) => `FX ${major}USD fehlt – Werte in ${major}, nicht in USD umgerechnet`;
+
+/** Listing-Währung aus profile/quote (FMP- und Yahoo-Shape), null wenn keine angegeben ist. */
+export function listingCurrencyOf(data: { profile?: any; quote?: any } | null | undefined): string | null {
+  const c = data?.profile?.currency ?? data?.quote?.currency;
+  return typeof c === "string" && c.trim() ? c.trim() : null;
+}
+
+/**
+ * Börsen-Suffix → Listing-Währung (nur Ersatz, wenn die Quelle keine Währung nennt, z. B. Yahoo-Fallback ohne
+ * quoteSummary). LSE quotet in Pence (GBp). Unbekanntes Suffix / US-Ticker → null (nie geraten).
+ */
+const SUFFIX_CURRENCY: Record<string, string> = {
+  DE: "EUR", F: "EUR", BE: "EUR", DU: "EUR", HM: "EUR", MU: "EUR", SG: "EUR", PA: "EUR", AS: "EUR", MI: "EUR",
+  MC: "EUR", BR: "EUR", LS: "EUR", VI: "EUR", HE: "EUR", IR: "EUR",
+  L: "GBp", IL: "USD", TO: "CAD", V: "CAD", NE: "CAD", SW: "CHF", ST: "SEK", CO: "DKK", OL: "NOK",
+  T: "JPY", HK: "HKD", AX: "AUD", NZ: "NZD", SI: "SGD", JO: "ZAc", TA: "ILA",
+};
+export function currencyFromTickerSuffix(ticker: unknown): string | null {
+  if (typeof ticker !== "string") return null;
+  const m = /\.([A-Za-z]+)$/.exec(ticker.trim());
+  return m ? SUFFIX_CURRENCY[m[1].toUpperCase()] ?? null : null;
+}
+
+export function normalizeListingToUsd<T extends MinorUnitInput>(
+  data: T,
+  majorToUsd: number | null | undefined,
+  statementFields: Iterable<string>,
+  opts: { barsInMajor?: boolean } = {},
+): T {
+  const code = listingCurrencyOf(data);
+  if (!code || code === "USD") return data;
+  const mu = minorUnitInfo(code);
+  const major = mu?.major ?? code.toUpperCase();
+  if (major === "USD") return data;
+  const factor = mu?.factor ?? 1;
+  const fx = Number(majorToUsd);
+  const fxOk = Number.isFinite(fx) && fx > 0 && fx !== 1;
+  if (!fxOk) {
+    // FMP-Shape mit Minor Unit: wie bisher #244 (Pence → Pfund inkl. Statements bzw. partial-Markierung).
+    if (mu && !opts.barsInMajor) return normalizeMinorUnitListing(data, majorToUsd, statementFields);
+    const listingFx: ListingFx = { from: code, major, factor, rate: null, converted: false, warning: LISTING_FX_MISSING_WARNING(major) };
+    if (!mu) return { ...data, profile: data.profile ? { ...data.profile, _listingFx: listingFx } : data.profile };
+    // Yahoo-Shape mit Minor Unit ohne FX: nur Kurs/EPS in die Major-Einheit (Bars sind es schon), Währung = Major.
+    return convertListing(data, { rate: 1, factor, kBars: 1, currency: major, listingFx, mu: true });
+  }
+  return convertListing(data, { rate: fx, factor, kBars: opts.barsInMajor ? fx : fx / factor, currency: "USD", listingFx: { from: code, major, factor, rate: fx, converted: true }, mu: !!mu });
+}
+
+function convertListing<T extends MinorUnitInput>(data: T, c: { rate: number; factor: number; kBars: number; currency: string; listingFx: ListingFx; mu: boolean }): T {
+  const { rate: fx, factor, kBars, listingFx, mu } = c;
+  const kPrice = fx / factor;
+  let quote = scaleFields(data.quote, QUOTE_PRICE_FIELDS, kPrice);
+  // Quote-EPS: Yahoo nennt sie bei LSE in Pfund (SHEL.L 3938 GBp, EPS 3,38, KGV 11,65), nicht in Pence.
+  // Einheit über KGV prüfen: Kurs/EPS ≈ KGV → EPS in Listing-Einheit (÷ factor), sonst Major-Einheit.
+  quote = scaleFields(quote, ["eps"], fx / epsUnitFactor(data.quote, factor));
+  quote = scaleFields(quote, ["marketCap", "mktCap"], fx);
+  if (quote && typeof quote === "object" && "currency" in quote) quote = { ...quote, currency: c.currency };
+  let profile = scaleFields(data.profile, PROFILE_PRICE_FIELDS, kPrice);
+  profile = scaleFields(profile, ["marketCap", "mktCap"], fx);
+  if (profile) profile = { ...profile, range: scaleRange(profile.range, kPrice), currency: c.currency, _listingFx: listingFx };
+  const rows = Array.isArray(data.ohlcv) ? data.ohlcv : data.ohlcv?.historical;
+  const scaledBars = Array.isArray(rows) ? rows.map((r: any) => scaleFields(r, BAR_FIELDS, kBars)) : rows;
+  const ohlcv = Array.isArray(data.ohlcv) ? scaledBars : data.ohlcv?.historical ? { ...data.ohlcv, historical: scaledBars } : data.ohlcv;
+  let pt = data.analyst?.priceTarget;
+  if (mu) pt = priceTargetToListingUnit(pt, (data.quote?.price ?? data.profile?.price) != null ? Number(data.quote?.price ?? data.profile?.price) / factor : null, factor);
+  if (pt && typeof pt === "object") pt = scaleFields(pt, PRICE_TARGET_FIELDS, fx);
+  const analyst = data.analyst ? { ...data.analyst, priceTarget: pt } : data.analyst;
+  return { ...data, quote, profile, ohlcv, analyst };
+}
+
+/** Faktor der Quote-EPS gegenüber der Major-Einheit: factor, wenn Kurs/EPS das KGV trifft (EPS in Minor Unit), sonst 1. */
+export function epsUnitFactor(quote: any, factor: number): number {
+  if (factor === 1 || !quote || typeof quote !== "object") return 1;
+  const price = Number(quote.price), eps = Number(quote.eps), pe = Number(quote.pe);
+  if (!(price > 0 && eps > 0 && pe > 0)) return 1;
+  return Math.abs(price / eps / pe - 1) < 0.2 ? factor : 1;
+}
+
+/** CurrencyInfo (shared/schema.ts) für die Response; Section1 zeigt bei converted den Umrechnungshinweis. */
+export function currencyInfoFromListingFx(fx: ListingFx | null | undefined): {
+  reportedCurrency: string; tradingCurrency: string; fxRate: number; fxPair: string; converted: boolean; note: string;
+} | null {
+  if (!fx || typeof fx !== "object" || typeof fx.major !== "string") return null;
+  const pair = `${fx.major}USD`;
+  if (fx.converted && typeof fx.rate === "number") {
+    const unit = fx.factor !== 1 ? ` (Kurs in ${fx.from} ÷ ${fx.factor})` : "";
+    return { reportedCurrency: fx.major, tradingCurrency: "USD", fxRate: fx.rate, fxPair: pair, converted: true,
+      note: `Listing in ${fx.from}${unit}; Kurs, Market Cap, Historie und Kursziel zu ${pair} = ${fx.rate.toFixed(4)} in USD umgerechnet, Statements in USD.` };
+  }
+  return { reportedCurrency: fx.major, tradingCurrency: fx.major, fxRate: 1, fxPair: pair, converted: false, note: fx.warning ?? LISTING_FX_MISSING_WARNING(fx.major) };
+}
+
+/**
+ * DCF-FX: Dividenden-Beträge (Major-Einheit, nach dividendsToMajor) mit demselben aktuellen FX-Kurs nach USD wie die
+ * Kurshistorie (normalizeListingToUsd). So bleibt die TTM-Rendite Dividende/Kurs unverändert und es entsteht kein
+ * „Dividende CAD ≠ Kurs USD“. USD oder ohne gültigen Kurs → null (Aufrufer lässt die Beträge unverändert).
+ */
+export function dividendsToUsd<E extends { amount: number }>(events: E[], majorCurrency: unknown, majorToUsd: number | null | undefined): { events: E[]; currency: "USD"; rate: number } | null {
+  if (typeof majorCurrency !== "string" || !majorCurrency.trim()) return null;
+  const cur = majorCurrency.trim().toUpperCase();
+  if (cur === "USD" || minorUnitInfo(majorCurrency)) return null;
+  const fx = Number(majorToUsd);
+  if (!(Number.isFinite(fx) && fx > 0 && fx !== 1)) return null;
+  return { events: events.map(e => ({ ...e, amount: e.amount * fx })), currency: "USD", rate: fx };
+}
+
+/**
+ * DCF-FX: Nachgeladene Alt-Historie (Yahoo/Stooq, Major-Listing-Währung) auf die USD-Serie bringen, wenn die
+ * Analyse umgerechnet ist (_listingFx.converted). Sonst unverändert zurück (USD-Titel, FX fehlt).
+ */
+export function scaleBarsToUsd<B extends Record<string, any>>(bars: B[], fx: ListingFx | null | undefined): B[] {
+  if (!fx || !fx.converted || typeof fx.rate !== "number" || !(fx.rate > 0) || !Array.isArray(bars)) return bars;
+  return bars.map(b => scaleFields(b, BAR_FIELDS, fx.rate as number));
+}

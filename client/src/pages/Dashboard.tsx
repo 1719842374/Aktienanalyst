@@ -53,6 +53,8 @@ import { TechnicalChart } from "@/components/sections/TechnicalChart";
 import { MoatPorterSection } from "@/components/sections/MoatPorterSection";
 import { PestelSection } from "@/components/sections/PestelSection";
 import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelationsSection";
+import { ChatWidget } from "@/components/chat/ChatWidget";
+import { buildStockChatContext } from "@shared/chat-context";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
@@ -388,6 +390,22 @@ export default function Dashboard() {
     sectionRefs.current[id] = el;
   }, []);
 
+  // KI-Chatbot (WORK_DASHBOARD_FEATURES §4): Kontext-Provider der Aktien-Analyse. Nur Lesen, kein Score-Einfluss.
+  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? buildStockChatContext(data) : null), [data]);
+  const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
+  // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
+  const getActiveSectionId = useCallback((): number | null => {
+    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    let best: number | null = null;
+    for (const { id } of SECTIONS) {
+      const el = sectionRefs.current[id];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.bottom > top + 40) { best = id; break; }
+    }
+    return best;
+  }, []);
+
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       {/* Header */}
@@ -685,6 +703,14 @@ export default function Dashboard() {
           )}
         </main>
       </div>
+      <ChatWidget
+        dashboard="stock"
+        context={chatContext}
+        sections={chatSections}
+        getActiveSectionId={getActiveSectionId}
+        onJumpToSection={scrollToSection}
+        suggestions={["Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?"]}
+      />
     </div>
   );
 }
