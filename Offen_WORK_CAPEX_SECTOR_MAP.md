@@ -1,4 +1,5 @@
 # Offen_WORK_CAPEX_SECTOR_MAP.md — Capex- und Sektor-Map im Researcher-Tab
+<img width="1792" height="1008" alt="image" src="https://github.com/user-attachments/assets/976dceca-6737-4b61-a0cf-c46e4f307186" />
 
 > **Stand: 18.10.2026**  
 > Fokussierte Spec für Capex-Hotspots und Sektor-Exposure auf einer 2D-Weltkarte.  

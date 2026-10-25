@@ -1,7 +1,7 @@
-# Soll-Ist im Detail: alle 11 Future-Dateien gegen main `35ead515`
+# Soll-Ist im Detail: alle 11 Future-Dateien gegen main `29fdf1d5`
 
-**Stand:** 18.10.2026, ca. 22:45 Uhr Berlin (MESZ, UTC+2)
-**Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs.
+**Stand:** 18.10.2026, ca. 23:20 Uhr Berlin (MESZ, UTC+2); Basis 22:45 Uhr
+**Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs. **Nachzug auf `main` = `29fdf1d5e19cc458005469098701d8190d1d374d` (#266, über #264 `4dd43ab8`):** nur die Zeilen zu #264, #265, #266, #267 und die Zählung, geprüft über die öffentliche GitHub-API und Raw-Dateien, ohne Klon. Alle übrigen Zeilen sind unverändert Stand `35ead515`.
 **Erstellt von:** Grok Bot (Executor im Auftrag von Stabschef)
 
 ## Wie diese Liste entstanden ist
@@ -10,7 +10,7 @@
 2. Jede Zeile gegen den Code auf `35ead515` geprüft, mit `rg` (Volltextsuche) und Lesen der Fundstelle. Bei Anzeige-Punkten habe ich die Kette verfolgt: Oberfläche (`client/src`) → Hook → API-Route → Server → Quelle bzw. `shared/`-Schema.
 3. Die Commit-Kennung (SHA) stammt aus `git log` auf dem Klon (der Commit, der die Datei oder Stelle eingeführt hat).
 4. FRED-Reihen für den Rezessions-Katalog habe ich am 18.10. gegen 22:35 Uhr Berlin einmal direkt abgerufen. Das zeigt nur, ob die Quelle liefert, nicht, was das Dashboard live anzeigt. Live in der Oberfläche getestet (Tester) habe ich nichts.
-5. Offene PRs habe ich über GitHub abgefragt (Stand 22:40 Uhr Berlin). Einen PR für BTC-WALCL (Werki), ADR-Mapping (dr eggbot) oder Real10Y in Sektion 12 (Grok Bot) gibt es noch nicht. Die Punkte stehen deshalb als „in Arbeit, noch kein PR“.
+5. Offene PRs habe ich über GitHub abgefragt (Stand 22:40 Uhr Berlin). Einen PR für BTC-WALCL (Werki), ADR-Mapping (dr eggbot) oder Real10Y in Sektion 12 (Grok Bot) gibt es noch nicht. Die Punkte stehen deshalb als „in Arbeit, noch kein PR“. Nachtrag 18.10., ca. 23:20 Uhr Berlin: BTC-WALCL ist gemergt (#266, `29fdf1d5`), ADR-Mapping ist Draft #265 (Head `dbdd7475`), Real10Y in Sektion 12 ist Draft #267 (Head `c224e2c9`).
 
 ## Status-Zeichen
 
@@ -54,7 +54,7 @@ Future_1 nummeriert die Sektionen nach dem Stand vom 09.10. Heute (`client/src/p
 | Sektion 12 „PESTEL“ | Sektion 14 | `PestelSection.tsx` |
 | Sektion 17 „Zusammenfassung“ | Sektion 20 | `SummarySection.tsx` |
 
-Philips Entscheidungen vom 18.10., die hier gewertet sind: BTC-Score mit WALCL, T-Bill und Zinsen (JA, Werki baut, noch kein PR) · Makro-Gewichte darf die KI wählen (JA) · Weltkarte 2D (JA) · keine zweite Quelle für .L-Analystenziele · ETFs bleiben blockiert · Credit nur über BAA10Y · DCF-Währung alles in USD (#261 offen) · Nicht-US-Titel über ADR bei FMP, Fallback Yahoo (dr eggbot baut, noch kein PR) · Yahoo-Fallback #264 offen · Real10Y aus BTC kommt in Sektion 12 (Grok Bot baut, noch kein PR) · Firmenanleihen-Quellen (Leeway, Terrapin) nicht freigegeben.
+Philips Entscheidungen vom 18.10., die hier gewertet sind: BTC-Score mit WALCL, T-Bill und Zinsen (JA, gemergt #266 `29fdf1d5`) · Makro-Gewichte darf die KI wählen (JA) · Weltkarte 2D (JA) · keine zweite Quelle für .L-Analystenziele · ETFs bleiben blockiert · Credit nur über BAA10Y · DCF-Währung alles in USD (#261 offen) · Nicht-US-Titel über ADR bei FMP, Fallback Yahoo (dr eggbot baut, Draft #265 „HOLD Philip“, Head `dbdd7475`) · Yahoo-Fallback #264 gemergt (`4dd43ab8`) · Real10Y aus BTC kommt in Sektion 12 (Grok Bot baut, Draft #267, Head `c224e2c9`) · Firmenanleihen-Quellen (Leeway, Terrapin) nicht freigegeben.
 
 ---
 ## Future_1_Work.md (782 Zeilen)
@@ -63,7 +63,7 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 
 | # | Zeile | Soll (wörtlich-knapp) | Ist (Datei:Zeile/SHA) | Status | Nächster Schritt |
 |---|---|---|---|---|---|
-| F1-01 | Z.108–114, 253–258 | Kette „FMP → Yahoo (nur bei FMP-Fehler, besonders 402) → Fehler an Frontend“ | `server/analyze-helpers.ts:552–555` (nur bei `fmpStatus === 402`), `:614–642` `yahooFallbackData`; `server/analyze-route.ts:631–632` `yahooOnly`. SHA `093cdd0` (#252). Tester auf Prod 18.10.: VOW3.DE/SAP.DE liefern Marktkapitalisierung, KGV und EPS = 0 (Yahoo verlangt dort einen „Crumb“ und antwortet 429) | 🟡 | **In Arbeit #264** (Draft, Head `5b244253`: Name/Währung aus Chart-Daten, MCap/EPS/KGV aus fundamentals-timeseries). Danach Tester auf Prod. Parallel: ADR-Weg über FMP (dr eggbot, noch kein PR) |
+| F1-01 | Z.108–114, 253–258 | Kette „FMP → Yahoo (nur bei FMP-Fehler, besonders 402) → Fehler an Frontend“ | `server/analyze-helpers.ts:552–555` (nur bei `fmpStatus === 402`), `:614–642` `yahooFallbackData`; `server/analyze-route.ts:631–632` `yahooOnly`. SHA `093cdd0` (#252). Tester auf Prod 18.10. vor #264: VOW3.DE/SAP.DE lieferten Marktkapitalisierung, KGV und EPS = 0 (Yahoo verlangt dort einen „Crumb“ und antwortet 429). **#264 gemergt:** Squash `4dd43ab8` (Head `5b244253`), nur `server/yahoo-fetcher.ts` +276/−4 plus Tests: Name/Währung aus Chart-Meta, MCap/EPS/KGV aus fundamentals-timeseries, ohne Crumb. Doublecheck Post-Merge GO; Tester Prod PASS Soft: VOW3.DE/SAP.DE MCap/KGV/EPS in EUR, AAPL unverändert | ✅ (Soft) | Soft-Rest: Börse wird nicht angezeigt, Analysten Buy 0/Hold 0/Sell 0, S9 forwardPE 0 → „Fwd P/E 0.0“. Parallel: ADR-Weg über FMP (dr eggbot, Draft #265 „HOLD Philip“, Head `dbdd7475`, offen) |
 | F1-02 | Z.116–179, 255–256 | Neue Datei `server/yahoo-fetcher.ts` mit Kurs, Währung, MCap, KGV, EPS, Historie | `server/yahoo-fetcher.ts:167–247` (`getYahooSnapshot`). Abweichung: Bibliothek `yahoo-finance2` ist nicht installiert (`package.json`), eigener `fetch` auf Yahoo. SHA `093cdd0` | ✅ | Keiner (Prod-Lücke siehe F1-01) |
 | F1-03 | Z.203–205, 258 | Nur Minimal-Felder mappen (Kurs, MCap, KGV, Historie), keine Fundamentals erfinden | `server/analyze-helpers.ts:614–642`; `server/analyze-route.ts:2095–2112` (DCF, Upside, Score = null bei Yahoo); `client/src/components/YahooNoValuationCard.tsx:13–33`. SHA `093cdd0`, Rest n/a statt 0 `2b3bf0e` (#257) | ✅ | Keiner |
 | F1-04 | Z.214, 259 | Klarere Fehlermeldung bei 402 („Plan deckt Symbol nicht ab – Fallback aktiv“) | `server/yahoo-fetcher.ts:261` `YAHOO_402_NOTICE`; `server/analyze-helpers.ts:496–498` (402 ohne Yahoo-Kurs); `YahooNoValuationCard.tsx:19`. SHA `093cdd0` | ✅ | Keiner |
@@ -73,7 +73,7 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 | F1-08 | Z.220 | 402-Status explizit loggen und weiterreichen | `server/analyze-helpers.ts:496–498` (`fmpStatus` im Body), Log `[YAHOO-402]` `:623,626` | ✅ | Keiner |
 | F1-09 | Z.222 | Yahoo-Ergebnisse cachen „24 h – 7 Tage“ | `server/yahoo-fetcher.ts:22` 15 Minuten, Fehlschläge 2 Minuten (`:23`) | 🟡 | Nur auf Wunsch verlängern; 15 min ist bewusst kurz für Kurse. Abweichung dokumentieren |
 | F1-10 | Z.223 | Rate-Limit-Schutz bei Yahoo (Abstand / sequenziell) | `server/yahoo-fetcher.ts:42` `spaceYahooCall` | ✅ | Keiner |
-| F1-11 | Z.229–234, 260 | Tests: VOW3.DE/BMW.DE/SAP.DE über Yahoo, AAPL bleibt FMP, ungültiger Ticker ohne Absturz | Code-Tests aus #252 vorhanden; Prod-Test 18.10. FAIL (siehe F1-01) | 🟡 | Nach #264 erneut durch Tester auf Prod |
+| F1-11 | Z.229–234, 260 | Tests: VOW3.DE/BMW.DE/SAP.DE über Yahoo, AAPL bleibt FMP, ungültiger Ticker ohne Absturz | Code-Tests aus #252 vorhanden; Prod-Test 18.10. vor #264 FAIL. Nach #264 (`4dd43ab8`, Tests `script/test-yahoo-chart-meta.ts`, `script/test-yahoo-timeseries-fundamentals.ts`): Tester Prod PASS Soft, VOW3.DE/SAP.DE MCap/KGV/EPS in EUR, AAPL unverändert | 🟡 | Rest: BMW.DE und ungültiger Ticker noch nicht live geprüft (Tester auf Prod). Soft-Rest wie F1-01 |
 | F1-12 | Z.272–275, 296–297, 391 | Dividendenrendite als Overlay im technischen Chart (heute Sektion 12), eigene Achse | `client/src/components/sections/TechnicalChart.tsx:153–158, 362–369, 585–590` → `client/src/lib/useDividendHistory.ts` → `GET /api/dividends/:ticker` (`server/dividend-route.ts:85`) → FMP/Yahoo → `shared/dividends.ts`. SHA `50980b3` (#213), `a91261b` (#227) | ✅ | Keiner |
 | F1-13 | Z.298 | Nur anzeigen, wenn Dividende > 0 | `TechnicalChart.tsx:364, 369` (Overlay nur bei Ereignissen und Yield-Werten), Währungs-Schutz `:368` | ✅ | Keiner |
 | F1-14 | Z.299 | Farbe für attraktive Yield-Bereiche (> 4 %) | 0 Treffer für eine 4-%-Schwelle in `shared/dividends.ts` / `TechnicalChart.tsx` | ❌ | Klein, autonom: farbiges Band ab 4 % auf der Dividendenachse |
@@ -326,12 +326,12 @@ Z.10–31 („Bereits umgesetzte Kernbereiche“) ist eine Referenzliste; geprü
 | FW-07 | Z.74–89, 238 | Portfolio-Performance-Attribution / Backtest gegen Benchmark | `client/src/components/portfolio/PortfolioBacktestPanel.tsx` (`d3a6534`), Spec `fertig_WORK_PORTFOLIO_BACKTEST.md` | ✅ | Keiner |
 | FW-08 | Z.93 | BTC: M2 auf den technischen Chart | `client/src/pages/BTCDashboard.tsx:951–956, 1041–1043` (M2 YoY, absolut, mit Verzögerung) | ✅ | Keiner |
 | FW-09 | Z.93–94 | BTC: Fiscal Spending (US + global) im Chart, Wachstumszonen | Fiscal nur als Panel/Score (`client/src/components/btc/StablecoinLiquidityPanel.tsx`, `client/src/lib/btcAnalysis.ts:248–252`), nicht im Chart | 🟡 | Autonom (Overlay, ohne Score) |
-| FW-10 | Z.94 | Balance-Sheet-Scoring Fed / EZB / China | Fed: **in Arbeit (Werki, Philip JA 18.10., noch kein PR)**. EZB/China fehlen | ❌ | Nach WALCL-PR: EZB/China als Anzeige; Score nur mit Philip |
+| FW-10 | Z.94 | Balance-Sheet-Scoring Fed / EZB / China | Fed: Liquiditätsblock (WALCL 13W, T-Bill-Anteil Z.1, DGS10) im BTC-Score, `shared/btc-liquidity.ts:109–126` → `client/src/lib/btcAnalysis.ts:792–796`. SHA `29fdf1d5` (#266). QE/QT-Bänder und Gate `BTC_QE_QT_REGIME` fehlen. EZB/China fehlen | 🟡 | Fed-Rest siehe FW-14/FW-15. EZB/China als Anzeige; Score nur mit Philip |
 | FW-11 | Z.96–99, 234 | Miner-Indikatoren vollständig live: Hash Ribbons, Puell, Hashprice, Breakeven, Difficulty Ribbon, Miner Position Index, MVRV | `server/btc-miner.ts` (Hash Ribbons, Puell, Breakeven, Difficulty); MPI fest „neutral“ ohne Datenquelle (`:80, 95`); MVRV nur als Annäherung im Score (`client/src/lib/btcAnalysis.ts:635`) | 🟡 | MPI/MVRV brauchen CryptoQuant/Glassnode (bezahlt) → Kostenfrage an Philip |
 | FW-12 | Z.99, 183, 255, 266 | Widerspruch `inCapitulation` vs. `minerZone.zone` klären | getrennte Logik: `server/btc-miner.ts:132` (MA30 < MA60) vs. `:89` `classifyMinerZone`; Anzeige `client/src/components/sections/Section13Miner.tsx:236, 280` | ❌ | Laut Work.MD sind Miner-Kernformeln „nicht anfassen“ → nur Benennung/Anzeige, Formel nur mit Philip |
-| FW-13 | Z.101–110, 235, 256 | BTC: Fed-Bilanz WALCL als Datenquelle (Forward-Fill wie M2) | 0 Treffer `walcl` in `server/btc-macro.ts`, `client/src/lib/btcAnalysis.ts`, `BTCDashboard.tsx` | ❌ | **In Arbeit (Werki), noch kein PR** |
-| FW-14 | Z.112–116 | BTC-Chart: log(WALCL)/Wachstumsrate als Linie, QE/QT-Bänder grün/rot/grau, optional BTC/WALCL-Verhältnis | fehlt | ❌ | **In Arbeit (Werki)**, laut Stabschef mit WALCL-Linie im BTC-Chart |
-| FW-15 | Z.118–125 | Score-Indikator „Fed Balance Sheet Regime“ (13W-Änderung > +1,5 % → +1, < −1 % → −1, Gewicht 0,10–0,15) + Gate `BTC_QE_QT_REGIME` | fehlt | ❌ | **In Arbeit (Werki)**; Philip JA inkl. T-Bill und Zinsen. Merge erst nach Vorher/Nachher-Tabelle (heute, QE 2020, QT 2022) |
+| FW-13 | Z.101–110, 235, 256 | BTC: Fed-Bilanz WALCL als Datenquelle (Forward-Fill wie M2) | `client/src/pages/BTCDashboard.tsx:314, 1648–1658` → `client/src/lib/btcAnalysis.ts:256` (`GET /api/analyze-btc/liquidity`), Forward-Fill auf Kurstage `:929` → `server/btc-routes.ts:95` → `server/btc-liquidity.ts:97–103` → FRED WALCL, BOGZ1FL313161110Q/…275Q (T-Bills), DGS10; Schema `shared/btc-liquidity.ts` (Forward-Fill `:288–289`), `shared/schema.ts`. SHA `29fdf1d5` (#266, Head `f87ac8b2`). Doublecheck Post-Merge GO, Tester PASS Soft | ✅ (Soft) | Soft-Rest: n/a-Zeile heißt „Abdeckung 0 %“ statt „FRED nicht erreichbar“; Toggle verschwindet ohne Hinweis; Tabelle bricht bei 375 px stark um |
+| FW-14 | Z.112–116 | BTC-Chart: log(WALCL)/Wachstumsrate als Linie, QE/QT-Bänder grün/rot/grau, optional BTC/WALCL-Verhältnis | WALCL-Linie (Bio. USD, eigene Achse, Schalter „Fed-Bilanz (WALCL)“) im BTC-Chart: `BTCDashboard.tsx:1648–1658, 1979–1984`. SHA `29fdf1d5` (#266). QE/QT-Bänder und BTC/WALCL-Verhältnis fehlen | 🟡 | QE/QT-Bänder grün/rot/grau, optional BTC/WALCL-Verhältnis |
+| FW-15 | Z.118–125 | Score-Indikator „Fed Balance Sheet Regime“ (13W-Änderung > +1,5 % → +1, < −1 % → −1, Gewicht 0,10–0,15) + Gate `BTC_QE_QT_REGIME` | Regel 13W > +1,5 % → +1, < −1 % → −1 `shared/btc-liquidity.ts:45, 109–126`; Block mit Gewicht 0,15 im GIS `client/src/lib/btcAnalysis.ts:792–796`; Vorher/Nachher-Tabelle (QE 2020, QT 2022, heute) `script/fixtures/btc-liquidity/history-table.md`. SHA `29fdf1d5` (#266). Gate `BTC_QE_QT_REGIME` fehlt | 🟡 | Gate `BTC_QE_QT_REGIME` bauen |
 | FW-16 | Z.133–134 | Gold-Minenkosten: AISC, C1 vs. C3, Kostenkurve, GDX/GLD-Verhältnis, P/NAV | AISC ✅ (#254); C1/C3, Kostenkurve, GDX/GLD, P/NAV: 0 Treffer | 🟡 | GDX/GLD autonom (Kurse frei); C1/C3/P/NAV brauchen Berichtsdaten |
 | FW-17 | Z.136–137 | Gold-Makro: Realzins, DXY, realer Leitzins, Gold/Silber, Zentralbank-Nettokäufe, Gold/Bond-Verhältnis | Realzins/DXY im Chart (`GoldPriceChart.tsx:47, 49`), realer Leitzins `gold-adaptive-score.ts:365`, Gold/Silber `server/gold-silver-ratio.ts` (`565ac7d` #243). Zentralbankkäufe, Gold/Bond fehlen | 🟡 | Gold/Bond autonom; Zentralbankkäufe = F10-34 |
 | FW-18 | Z.139–140, 236 | Kombinierte Ansicht Realzins + AISC-Kostenkurve | Realzins und AISC-Linie gemeinsam im Gold-Chart schaltbar (`GoldPriceChart.tsx:47, 83`); keine Kostenkurve über Minen | 🟡 | Kostenkurve braucht Daten je Mine |
@@ -373,19 +373,19 @@ Nicht gezählt (ℹ️, Konzept- und Content-Ideen ohne Bau-Auftrag): Z.215 Einl
 
 | Status | Zeilen | davon Wiederholung (mit „=“ markiert) | eigene Punkte |
 |---|---:|---:|---:|
-| ✅ erledigt | 101 | 0 | 101 |
-| 🟡 teilweise | 37 | 4 | 33 |
-| ❌ fehlt | 79 | 6 | 73 |
+| ✅ erledigt | 103 | 0 | 103 |
+| 🟡 teilweise | 39 | 4 | 35 |
+| ❌ fehlt | 75 | 6 | 69 |
 | ⛔ blockiert | 16 | 2 | 14 |
 | **Summe** | **233** | **12** | **221** |
 
-Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 88 erledigte Bau-Punkte.
+Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 90 erledigte Bau-Punkte.
 
 ### Je Datei
 
 | Datei | ✅ | 🟡 | ❌ | ⛔ | Summe |
 |---|---:|---:|---:|---:|---:|
-| Future_1_Work.md | 29 | 16 | 23 | 6 | 74 |
+| Future_1_Work.md | 30 | 15 | 23 | 6 | 74 |
 | Future_2_NA_Fixes_Research.md | 3 | 4 | 3 | 0 | 10 |
 | Future_3_SerpApi_Rate_Limits.md | 4 | 0 | 3 | 2 | 9 |
 | Future_4_Google_Trends_Conflict_and_Fixes.md | 4 | 0 | 4 | 2 | 10 |
@@ -395,18 +395,18 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | Future_8_Adaptive_Scoring_Logics_Detailed.md | 2 | 0 | 5 | 0 | 7 |
 | Future_9_Adaptive_Macro_Framework_Complete.md | 1 | 0 | 17 | 0 | 18 |
 | Future_10_Gold_Adaptive_Scoring_Framework.md | 23 | 5 | 7 | 0 | 35 |
-| Future_Work.md | 14 | 11 | 14 | 6 | 45 |
-| **Summe** | **101** | **37** | **79** | **16** | **233** |
+| Future_Work.md | 15 | 14 | 10 | 6 | 45 |
+| **Summe** | **103** | **39** | **75** | **16** | **233** |
 
 ### In Arbeit (laufend, mit PR-Nummer)
 
 | Punkt | Wer | PR | Stand |
 |---|---|---|---|
-| F1-01, F1-11 Yahoo-Ersatz auf Prod (MCap/KGV/EPS = 0) | GitHub-Lane / Builder | **#264** (Draft, Head `5b244253`) | offen |
-| F1-01, F1-05 Nicht-US-Titel über ADR bei FMP | dr eggbot | noch kein PR | Philip-Entscheidung 18.10. |
-| FW-13, FW-14, FW-15 BTC-Score mit WALCL, T-Bill, Zinsen + WALCL-Linie | Werki | noch kein PR | Philip JA 18.10.; Merge erst nach Vorher/Nachher-Tabelle |
+| F1-01, F1-11 Yahoo-Ersatz auf Prod (MCap/KGV/EPS = 0) | GitHub-Lane / Builder | **#264** gemergt (Squash `4dd43ab8`, Head `5b244253`) | F1-01 ✅ Soft (Doublecheck Post-Merge GO, Tester Prod PASS Soft); F1-11 🟡: BMW.DE und ungültiger Ticker noch nicht live geprüft |
+| F1-01, F1-05 Nicht-US-Titel über ADR bei FMP | dr eggbot | **#265** (Draft „HOLD Philip“, Head `dbdd7475`) | Philip-Entscheidung 18.10.; offen |
+| FW-13, FW-14, FW-15 BTC-Score mit WALCL, T-Bill, Zinsen + WALCL-Linie | Werki | **#266** gemergt (Squash `29fdf1d5`, Head `f87ac8b2`) | FW-13 ✅ Soft; FW-14/FW-15 🟡: QE/QT-Bänder, BTC/WALCL-Verhältnis, Gate `BTC_QE_QT_REGIME` offen |
 | F7-01, F8-04, F8-05 Buffett/CAPE-Perzentil als Zusatzzeile | – | **#220**, **#219** (Drafts seit 11.10.) | Ersetzen der Zonen braucht Philip |
-| (nicht aus Future-Dateien) Real10Y aus BTC in Sektion 12 | Grok Bot | noch kein PR | Philip 18.10. |
+| (nicht aus Future-Dateien) Real10Y aus BTC in Sektion 12 | Grok Bot | **#267** (Draft, Head `c224e2c9`) | Philip 18.10.; offen |
 | (nicht aus Future-Dateien) DCF-Währung alles in USD | – | **#261** (Draft) | wartet auf Philip |
 
 ---
@@ -477,7 +477,7 @@ Abgeglichen mit: `/home/box/agent-data/shared/Future_SOLL_IST_122762b3.md` und d
 | A-14 | Future_2 bis Future_9 | Basis-Inventur: nur über Überschriften geprüft, „unklar“ | Diesmal Zeile für Zeile; Future_6 komplett gegen den Code geprüft (13 Regeln stimmen; Doku veraltet bei Margin Debt und Trends-N/A) |
 | A-15 | Segment-Dedup (FW-28) | „SHA vor diesem Fenster“ | SHA `5e7b60a` (20.08.) |
 | A-16 | GDX/GLD (FW-16, alt D9) | „nicht gesucht“ | 0 Treffer → fehlt |
-| A-17 | Yahoo bei 402 (F1-01) | Work.MD: 🔴 Prod / 🟡 Code | Hier 🟡: Code und Fehlermeldungen sind da (F1-02 bis F1-04 ✅), auf Prod fehlen MCap/KGV/EPS → in Arbeit #264. Gleicher Befund, andere Einstufung |
+| A-17 | Yahoo bei 402 (F1-01) | Work.MD: 🔴 Prod / 🟡 Code | Hier 🟡: Code und Fehlermeldungen sind da (F1-02 bis F1-04 ✅), auf Prod fehlen MCap/KGV/EPS → in Arbeit #264. Gleicher Befund, andere Einstufung. Nachtrag: #264 gemergt (`4dd43ab8`), F1-01 jetzt ✅ (Soft) |
 | A-18 | Zählung | 66 Zeilen (6 🟢 / 17 🟡 / 1 🔴 / 42 offen) | Der alte Vergleich mischt Future-Dateien mit `Offen_WORK_*`, `WORK_*` und Ampel-Merges. Diese Liste zählt **nur die 11 Future-Dateien**: 233 Zeilen, 221 eigene Punkte |
 
 ### Wo `Offen_FUTURE_SOLL_IST.md` (11.10.) überholt ist
