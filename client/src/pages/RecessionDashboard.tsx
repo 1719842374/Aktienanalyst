@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { ChatWidget } from "@/components/chat/ChatWidget";
-import { buildRecessionChatContext } from "@shared/chat-context";
+import { visibleTopOf } from "@/lib/activeSection";
+import { buildRecessionChatContext, enrichChatContext, recessionSectionLayout, recessionSectionNumbers } from "@shared/chat-context";
+import { useChatSectionData } from "@/lib/chatSectionData";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { RECESSION_FALLBACK_DATA } from "@/lib/recessionFallbackData";
@@ -11,7 +13,6 @@ import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection"
 import { BuffettRatioPanel } from "@/components/recession/BuffettRatioPanel";
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
-import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
 import { showRecessionStand, type RecessionAnalysis } from "@/components/recession/recessionDashboardShared";
@@ -62,14 +63,22 @@ export default function RecessionDashboard() {
   // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen Rezessionsdaten.
   // Sektionen tragen keine Refs; Bindung und Sprung laufen über data-testid="section-N" der SectionCard.
   const mainRef = useRef<HTMLElement>(null);
-  const chatContext = useMemo(() => (data ? buildRecessionChatContext(data, { hasRegions: !!regions }) : null), [data, regions]);
-  const chatSections = useMemo(() => (chatContext?.sections ?? []).map(({ id, label }) => ({ id, label })), [chatContext]);
+  // PR 3: RSI, Marktcharts und Buffett aus den bestehenden Queries der Sektionen + Auffälligkeiten.
+  const chatLive = useChatSectionData("recession");
+  const chatContext = useMemo(() => {
+    if (!data) return null;
+    const keyToId = Object.fromEntries(recessionSectionLayout(!!regions, !!(data as any).fazit).map(s => [s.key, s.id]));
+    return enrichChatContext(buildRecessionChatContext(data, { hasRegions: !!regions, regions }), chatLive, { keyToId });
+  }, [data, regions, chatLive]);
+  const chatSections = useMemo(() => (chatContext?.sections ?? []).map(({ id, label, key }) => ({ id, label, key })), [chatContext]);
+  // Angezeigte Nummern aus derselben Schlüssel-Liste wie der Chat (RECESSION_SECTION_DEFS).
+  const nr = recessionSectionNumbers(!!regions, !!data?.fazit);
   const sectionEl = useCallback((id: number) => mainRef.current?.querySelector<HTMLElement>(`[data-testid="section-${id}"]`) ?? null, []);
   const jumpToSection = useCallback((id: number) => {
     sectionEl(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [sectionEl]);
   const getActiveSectionId = useCallback((): number | null => {
-    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
     for (const { id } of chatSections) {
       const el = sectionEl(id);
       if (!el) continue;
@@ -154,21 +163,20 @@ export default function RecessionDashboard() {
                 <RegionalCatalogSection catalogs={regions} />
               </SectionCard>
             )}
-            <RecessionRsiSection number={regions ? 9 : 8} />
-            <RecessionMarketChartsSection number={regions ? 10 : 9} />
-            <RecessionTaSection number={regions ? 11 : 10} subgroups={data.subgroups} topDrivers={data.topDrivers} indicators={data.indicators} />
-            <SectionCard number={regions ? 12 : 11} title="Buffett-Indikator: Marktwert zum BIP">
+            <RecessionRsiSection number={nr.rsi} />
+            <RecessionMarketChartsSection number={nr.markt} />
+            <SectionCard number={nr.buffett} title="Buffett-Indikator: Marktwert zum BIP">
               <BuffettRatioPanel />
             </SectionCard>
-            <SectionCard number={regions ? 13 : 12} title="Zusammenfassung & Top-3 Treiber">
+            <SectionCard number={nr.summary} title="Zusammenfassung & Top-3 Treiber">
               <Summary data={data} />
             </SectionCard>
             {data.fazit && (
-              <SectionCard number={regions ? 14 : 13} title="Fazit & Makro-Risikobewertung">
+              <SectionCard number={nr.fazit} title="Fazit & Makro-Risikobewertung">
                 <FazitSection fazit={data.fazit} />
               </SectionCard>
             )}
-            <SectionCard number={regions ? (data.fazit ? 15 : 14) : (data.fazit ? 14 : 13)} title="Quellenliste">
+            <SectionCard number={nr.quellen} title="Quellenliste">
               <SourcesList sources={data.sources} />
             </SectionCard>
             <div className="pb-4">
