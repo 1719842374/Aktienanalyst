@@ -54,9 +54,30 @@ check("Fallback-Objekt nicht verändert (Scores/Werte identisch)", JSON.stringif
 console.log("Live-Pfad (andere timestamp, sonst gleiche Werte)");
 const live = render({ ...F, timestamp: "2026-10-25T12:00:00.000Z", analysisDate: "25.10.2026, 13:00" });
 check("kein Offline-Hinweis", !live.includes("gold-offline-note") && !live.includes("Offline-Daten vom"));
-check("übriger Seiteninhalt identisch (nur Hinweis + Datum/Zeitstempel unterscheiden sich)",
-  strip(off.replace(/<div[^>]*data-testid="gold-offline-note"[^>]*>[^<]*<\/div>/, "")).replaceAll("27.03.2026, 20:18", "D") ===
-  strip(live).replaceAll("25.10.2026, 13:00", "D"));
+// #328: Konfliktmatrix zeigt im Offline-Fallback gewollt n/a (zählt nicht), live echte Signale. Genau dieser
+// Block wird für den Seitenvergleich ausgeschnitten und separat streng geprüft; der Rest bleibt bytegleich.
+const cutBlock = (html: string, testid: string) => {
+  const at = html.indexOf(`data-testid="${testid}"`);
+  if (at < 0) return { rest: html, block: null as string | null };
+  const start = html.lastIndexOf("<div", at);
+  const re = /<div\b|<\/div>/g; re.lastIndex = start; let depth = 0, m: RegExpExecArray | null;
+  while ((m = re.exec(html))) { depth += m[0] === "</div>" ? -1 : 1; if (depth === 0) break; }
+  const end = m ? m.index + 6 : html.length;
+  return { rest: html.slice(0, start) + html.slice(end), block: html.slice(start, end) };
+};
+const offCut = cutBlock(off, "asset-conflict-summary");
+const liveCut = cutBlock(live, "asset-conflict-summary");
+
+check("Konfliktmatrix in beiden Pfaden genau einmal vorhanden", !!offCut.block && !!liveCut.block &&
+  !offCut.rest.includes("asset-conflict-summary") && !liveCut.rest.includes("asset-conflict-summary"));
+const FB = "Offline-Fallback (gebündelte Daten, Live-API nicht erreichbar)";
+check("Offline-Matrix: jede Zeile n/a mit Fallback-Grund (#328)", !!offCut.block &&
+  (offCut.block.match(/<tr/g)?.length ?? 0) - 1 === 5 &&
+  strip(offCut.block).split("|").filter(t => t === `n/a · ${FB} → n/a, zählt nicht`).length === 5);
+check("Live-Matrix: kein Fallback-Grund", !!liveCut.block && !liveCut.block.includes(FB));
+check("übriger Seiteninhalt identisch (nur Hinweis, Datum/Zeitstempel und #328-Konfliktmatrix unterscheiden sich)",
+  strip(offCut.rest.replace(/<div[^>]*data-testid="gold-offline-note"[^>]*>[^<]*<\/div>/, "")).replaceAll("27.03.2026, 20:18", "D") ===
+  strip(liveCut.rest).replaceAll("25.10.2026, 13:00", "D"));
 
 console.log(failed === 0 ? "\nAlle Offline-Hinweis-Tests grün." : `\n${failed} Test(s) fehlgeschlagen.`);
 process.exit(failed === 0 ? 0 : 1);
