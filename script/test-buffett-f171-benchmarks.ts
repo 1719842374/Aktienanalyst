@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { withoutApproved326 } from "./guard-approved-326";
 import type { AddressInfo } from "node:net";
 
 (globalThis as any).React = React;
@@ -193,7 +194,7 @@ async function main() {
   // ── 5. Kein Effekt auf Rezessions-Score ──
   const git = (...x: string[]) => execFileSync("git", x, { encoding: "utf8" });
   const changed = [...git("diff", "--name-only", "99a06d1b").trim().split("\n"), ...git("ls-files", "--others", "--exclude-standard").trim().split("\n")].filter(Boolean);
-  for (const f of ["server/analyze-route.ts", "server/recession.ts", "server/recession-regions.ts", "server/buffett-ratio.ts", "shared/schema.ts", "shared/bias-fixes.ts", "server/scoring-integration.ts", "server/routes-register.ts"]) assert.ok(!changed.includes(f), f);
+  for (const f of ["server/analyze-route.ts", "server/recession.ts", "server/recession-regions.ts", "server/buffett-ratio.ts", "shared/schema.ts", "shared/bias-fixes.ts", "server/scoring-integration.ts", "server/routes-register.ts"]) assert.ok(!withoutApproved326("99a06d1b", changed).includes(f), f); // #326: nur zeilengenau freigegebene Zeilen ausgenommen
   assert.equal(route.WILSHIRE_DOLLARS_PER_POINT_BN, 1.05);
   const rec = readFileSync("server/recession.ts", "utf8");
   assert.ok(!/BENCHMARK_REGIONS|buildBenchmarkRegion|anchorEstimate|analyze-recession\/buffett/.test(rec), "recession.ts nutzt die neue Schätzung nicht");
