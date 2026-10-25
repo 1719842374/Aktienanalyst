@@ -192,19 +192,23 @@ async function main() {
   ok("UI: OK ohne Hinweis; Fallback → gelber Hinweis mit Quelle, Grund, letztem Quartal; n/a → Banner + sichtbarer Grund, kein Chart");
 
   // ── 6. Score/Rating unverändert ──
-  // Wächter prüft nur den #274-eigenen Anteil. Ist der Squash-Commit „(#274)“ in HEADs Historie (main und jeder spätere
-  // Branch, z.B. #321), zählt nur dieser Commit; Änderungen anderer PRs (etwa server/pdf-export.ts) lösen keinen Alarm aus.
-  // Vor dem Merge (#274-Branch): Diff gegen merge-base(HEAD, origin/main), sonst lokales main, sonst fester BASE,
-  // plus uncommittete Änderungen (git diff HEAD) und neue Dateien.
+  // Wächter-Basis wie #285: eigener Anteil = Diff gegen merge-base(HEAD, origin/main); fehlt origin/main → lokales main, sonst fester BASE.
+  // Uncommittete Änderungen (git diff HEAD) und neue Dateien zählen immer mit.
+  // Nach dem Squash-Merge (HEAD auf main, merge-base == HEAD) zählt nur der Squash-Commit „(#274)“ selbst.
   const tryGit = (...a: string[]) => { try { return git(...a).trim(); } catch { return ""; } };
   const mergeBase = tryGit("merge-base", "HEAD", "origin/main") || tryGit("merge-base", "HEAD", "main") || BASE;
-  const squash274 = tryGit("log", "--first-parent", "--format=%H %s", `${BASE}..HEAD`).split("\n")
-    .map(l => l.trim()).filter(l => /\(#274\)$/.test(l)).map(l => l.split(" ")[0]).pop() ?? null;
-  const changed = (squash274
-    ? git("diff", "--name-only", `${squash274}^`, squash274).trim().split("\n")
-    : [...git("diff", "--name-only", mergeBase).trim().split("\n"), ...git("diff", "--name-only", "HEAD").trim().split("\n"), ...git("ls-files", "--others", "--exclude-standard").trim().split("\n")]).filter(Boolean);
+  const squash274 = mergeBase === tryGit("rev-parse", "HEAD") ? (tryGit("log", "--first-parent", "--format=%H %s", `${BASE}..HEAD`).split("\n")
+    .map(l => l.trim()).filter(l => /\(#274\)$/.test(l)).map(l => l.split(" ")[0]).pop() ?? null) : null;
+  const changed = [...git("diff", "--name-only", ...(squash274 ? [`${squash274}^`, squash274] : [mergeBase])).trim().split("\n"), ...git("diff", "--name-only", "HEAD").trim().split("\n"), ...git("ls-files", "--others", "--exclude-standard").trim().split("\n")].filter(Boolean);
   console.log(`     Wächter-Basis: ${squash274 ? `Squash-Commit ${squash274.slice(0, 8)}` : `merge-base ${mergeBase.slice(0, 8)}${mergeBase === BASE ? " (Fallback BASE)" : ""}`}`);
-  for (const f of ["server/analyze-route.ts", "server/researcher.ts", "server/recession.ts", "shared/schema.ts", "shared/bias-fixes.ts", "server/scoring-integration.ts", "server/pdf-export.ts", "server/buffett-ratio.ts"]) assert.ok(!changed.includes(f), f);
+  // Ausnahme nur server/pdf-export.ts: #321 baut PDF-Abschnitt 6 aus dem Fazit (shared/fazit-entry) und ändert dafür pdf-export.ts.
+  // Score/Rating bleiben weiter durch die Prüfungen unten belegt (buildBiasDecision deepEqual, PDF-Fazit gleich, MSFT 5.6381 NEUTRAL).
+  const LOCKED = ["server/analyze-route.ts", "server/researcher.ts", "server/recession.ts", "shared/schema.ts", "shared/bias-fixes.ts", "server/scoring-integration.ts", "server/pdf-export.ts", "server/buffett-ratio.ts"];
+  const EXEMPT = new Set(["server/pdf-export.ts"]); // #321
+  const alarms = (files: string[]) => LOCKED.filter(f => !EXEMPT.has(f) && files.includes(f));
+  assert.deepEqual(alarms(["server/analyze-route.ts", "server/researcher.ts", "shared/schema.ts", "server/pdf-export.ts"]), ["server/analyze-route.ts", "server/researcher.ts", "shared/schema.ts"], "Wächter-Selbsttest: gesperrte Dateien schlagen weiter an");
+  assert.deepEqual(alarms(["server/pdf-export.ts", "shared/fazit-entry.ts"]), [], "Wächter-Selbsttest: nur pdf-export.ts ausgenommen");
+  for (const f of alarms(changed)) assert.fail(f);
   assert.equal(route.WILSHIRE_DOLLARS_PER_POINT_BN, 1.05, "Konstante, die recession.ts importiert, unverändert");
   const rec = readFileSync("server/recession.ts", "utf8");
   assert.ok(/import \{ WILSHIRE_DOLLARS_PER_POINT_BN \} from "\.\/buffett-route";/.test(rec) && !/analyze-recession\/buffett|buildUnitedStates|fallback/.test(rec.match(/function scoreBuffett[\s\S]*?\n\}/)![0]), "Rezessions-Score nutzt die Route nicht");

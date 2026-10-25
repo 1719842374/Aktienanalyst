@@ -13,7 +13,10 @@ import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 import { generateAnalysisHTML, sanitizeSectionImages, sectionImagesHtml, renderHTMLtoPDF } from "../server/pdf-export";
-import { checkPdfResponse, pdfFilename, MAX_SECTION_IMAGES } from "../client/src/lib/exportPdf";
+import { checkPdfResponse, pdfFilename, MAX_SECTION_IMAGES, encodeWithinBudget, MAX_IMAGE_CHARS, MAX_TOTAL_IMAGE_CHARS, MAX_PAYLOAD_BYTES } from "../client/src/lib/exportPdf";
+import { PDF_MAX_TOTAL_IMAGE_CHARS } from "../server/pdf-export";
+import express from "express";
+import { registerPdfExportRoute } from "../server/pdf-export-route";
 
 let pass = 0, fail = 0;
 const check = async (name: string, fn: () => void | Promise<void>) => { try { await fn(); pass++; console.log("  ✓", name); } catch (e: any) { fail++; console.log("  ✗", name, "—", String(e.message).split("\n")[0]); } };
@@ -79,6 +82,25 @@ const imgs = [3, 1, 2].map((id, i) => ({ id, label: `${id} · Sektion ${id}`, da
   });
   await check("data.scoring unverändert (bytegleich)", () => assert.equal(JSON.stringify(data.scoring), scoringBefore));
 
+  await check("Payload-Budget: Bildsumme + Daten < 10 MB; Server-Summe ≥ Client-Summe", () => {
+    assert.ok(MAX_TOTAL_IMAGE_CHARS + JSON.stringify(data).length < MAX_PAYLOAD_BYTES && MAX_PAYLOAD_BYTES < 10 * 1024 * 1024);
+    assert.ok(MAX_TOTAL_IMAGE_CHARS <= PDF_MAX_TOTAL_IMAGE_CHARS && PDF_MAX_TOTAL_IMAGE_CHARS + JSON.stringify(data).length < 10 * 1024 * 1024);
+    const qs: number[] = [];
+    assert.equal(encodeWithinBudget(q => { qs.push(q); return "x".repeat(q > 0.6 ? MAX_IMAGE_CHARS + 1 : 100); }, MAX_IMAGE_CHARS, 1e9), "x".repeat(100));
+    assert.deepEqual(qs, [0.72, 0.55]);
+    assert.equal(encodeWithinBudget(() => "x".repeat(500), MAX_IMAGE_CHARS, 400), null, "Restbudget überschritten → ausgelassen");
+  });
+  await check("Server: Bildsumme > Grenze → 413 JSON mit Grund; Body > 10 MB → 413 JSON statt generisch", async () => {
+    const app = express(); app.use(express.json({ limit: "10mb" })); registerPdfExportRoute(app);
+    const srv = app.listen(0); const port = (srv.address() as any).port;
+    try {
+      const big = Array.from({ length: 3 }, (_, i) => ({ id: i, dataUrl: "data:image/jpeg;base64," + "A".repeat(2_600_000) }));
+      let r = await fetch(`http://127.0.0.1:${port}/api/export-pdf`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ticker: "MSFT", _sectionImages: big }) });
+      assert.equal(r.status, 413); let j = await r.json(); assert.equal(j.errorCode, "PDF_IMAGES_TOO_LARGE"); assert.match(j.error, /Sektionsbilder zu groß: 7\.8 MB > 7\.5 MB/);
+      r = await fetch(`http://127.0.0.1:${port}/api/export-pdf`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ticker: "MSFT", pad: "A".repeat(11_000_000) }) });
+      assert.equal(r.status, 413); j = await r.json(); assert.equal(j.errorCode, "PDF_PAYLOAD_TOO_LARGE"); assert.match(j.error, /PDF-Anfrage zu groß/);
+    } finally { srv.close(); }
+  });
   await check("gerendertes PDF: gültig, enthält 3 Bilder und Sektion 3", async () => {
     const pdf = await renderHTMLtoPDF(htmlImg);
     assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
