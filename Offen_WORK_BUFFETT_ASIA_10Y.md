@@ -34,6 +34,10 @@
 - Keine Abhängigkeit von bezahlten GuruFocus-Daten.
 - Ladezeit und Fehlerbehandlung (N/A-Fallback) sauber.
 
+### Soll-Ist 25.10.2026 (HEAD `09750838`)
+- Soll: Karte bei S12 mit Std-Dev/Zone, ohne GuruFocus, N/A-Fallback.
+- Ist: ✅ #319 `4eaf1115` (Karte S12) auf Basis #274 `99a06d1b` (robust, Grund statt 502); EU/CN-Erweiterung ✅ #320 `09750838`; Asia-Benchmark (^TPX) **offen**.
+
 **Priorität:** Hoch  
 **Aufwand:** 0,5–1 Tag
 
@@ -67,6 +71,10 @@
 - Keine Regression bei US- und Europa-Katalogen.
 - N/A-Slots sauber behandelt.
 
+### Soll-Ist 25.10.2026 (HEAD `09750838`)
+- Soll: Label „Asien“, Aggregation mind. Japan + China, Score/Treiber aggregiert.
+- Ist: kein Commit dazu gemeldet oder geprüft → **OFFEN**.
+
 **Priorität:** Hoch (konkreter Fix, den Philip angesprochen hat)  
 **Aufwand:** 1–1,5 Tage
 
@@ -93,6 +101,10 @@
 - Toggle oder klare Sichtbarkeit.
 - Keine Performance-Probleme durch den Overlay.
 - Sauberer Fallback bei fehlenden Daten.
+
+### Soll-Ist 25.10.2026 (HEAD `09750838`)
+- Soll: 10Y-Treasury-Linie als Overlay/Toggle in `TechnicalChart`.
+- Ist: #267 (Squash vor `4820aaa3`) bringt ein Real10Y-Overlay (FRED DFII10, real) in `TechnicalChart.tsx`; nominaler 10Y laut Spec nicht belegt → **🟡 Teil**, Entscheidung „DFII10 reicht?“ offen.
 
 **Priorität:** Mittel (optional, aber sauber und relativ wenig Aufwand)  
 **Aufwand:** 2–4 Stunden
