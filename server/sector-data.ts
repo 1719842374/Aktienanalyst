@@ -456,6 +456,10 @@ export function dcfGrowthCapFromTam(tam: {
   return { useSegmentCagr: true, note: 'g1 ≤ max(companyGrowth, tamCAGR + share-shift Begründung)' };
 }
 
+/** Follow-up #292: Label/Quelle, wenn weder Sektor noch Branche bekannt sind (kein Sektor-Default mehr). */
+export const TAM_NO_SECTOR_LABEL = 'n/a – Sektor/Branche unbekannt';
+export const TAM_NO_SECTOR_SOURCE = 'keine Sektor-/Branchenangabe im Profil (z. B. Yahoo-Fallback ohne FMP-Profil)';
+
 export function generateTAMAnalysis(
   sector: string, industry: string, description: string,
   revenue: number, revenueGrowth: number,
@@ -480,6 +484,27 @@ export function generateTAMAnalysis(
   const hasRevenue = Number.isFinite(revenue) && revenue > 0;
 
   let tamTotal = 0, tamLabel = '', tamCAGR = 0, tamSource = '';
+
+  // Follow-up #292 (SAP.DE / VOW3.DE): Ohne Sektor UND Branche (z.B. Yahoo-Fallback bei FMP 402, Profil leer)
+  // gibt es keine Branchenzuordnung. Bisher fiel das in den else-Zweig ganz unten („Global Market“, 5 % CAGR,
+  // IMF-Quelle) und wurde als Branchen-CAGR angezeigt. Jetzt: TAM, CAGR, Marktanteil n/a mit Grund.
+  // quality/distinctLabels/coveragePct wie im bisherigen no-revenue-Zweig. quality bleibt 'weak' →
+  // dcfGrowthCapFromTam liefert dasselbe Ergebnis wie vorher (useSegmentCagr false), DCF unverändert.
+  // Nur der Pfad ohne Konzernumsatz (wie #292); mit Umsatz bleibt das Ergebnis byte-gleich.
+  const unclassified = !s.trim() && !ind.trim();
+  if (unclassified && !hasRevenue) {
+    return {
+      tamTotal: null, tamLabel: TAM_NO_SECTOR_LABEL, tamCAGR: null, companyGrowth: null,
+      companyRevenue: null,
+      marketShare: null,
+      tamSource: TAM_NO_SECTOR_SOURCE, outperforming: null,
+      quality: 'weak' as TamQuality,
+      distinctLabels: 1,
+      coveragePct: 100,
+      shareWarning: false,
+      companyDataMissing: 'no-revenue',
+    } as any;
+  }
 
   if (s.includes('tech')) {
     if (desc.includes('cloud') || desc.includes('azure') || desc.includes('aws')) { tamTotal = 1500; tamLabel = 'Global Cloud Computing'; tamCAGR = 16; tamSource = 'Gartner/IDC Cloud Forecast 2025-2030'; }
