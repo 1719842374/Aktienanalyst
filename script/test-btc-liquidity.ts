@@ -4,7 +4,8 @@
  *
  * Ausführen: npx tsx script/test-btc-liquidity.ts
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, normalize } from "node:path";
 import { fredCsvObservations } from "../server/fred-csv";
 import {
   BTC_LIQUIDITY_CONFIG,
@@ -283,9 +284,46 @@ console.log("\n=== Verdrahtung / Sperren ===");
   // Merge-fest statt Datei-Diff seit 35ead515: Der Aktien-Pfad (analyze-route.ts) darf den BTC-Liquiditätsblock
   // nicht einbinden — kein Import/Aufruf von btc-liquidity, fred-csv, Liquiditäts-Gewichten oder der BTC-Route.
   const analyzeRoute = readFileSync("server/analyze-route.ts", "utf8");
-  const btcRefs = ["btc-liquidity", "fred-csv", "computeBtcLiquidityBlock", "applyBtcLiquidityBlock", "BTC_LIQUIDITY_", "buildBtcLiquidityResponse", "/api/analyze-btc"]
-    .filter(k => analyzeRoute.includes(k));
+  const BTC_TOKENS = ["btc-liquidity", "fred-csv", "computeBtcLiquidityBlock", "applyBtcLiquidityBlock", "BTC_LIQUIDITY_", "buildBtcLiquidityResponse", "/api/analyze-btc",
+    "btc-macro", "btc-routes", "WALCL", "walcl", "liquidity-index"];
+  const btcRefs = BTC_TOKENS.filter(k => analyzeRoute.includes(k));
   check("server/analyze-route.ts ohne BTC-Liquiditäts-Kopplung (Philip-Sperre)", btcRefs.length === 0, btcRefs.join(", "));
+  // Transitiv: lokale Importkette von analyze-route.ts rekursiv auflösen (relativ, @/ und @shared/, inkl. Re-Exports und
+  // dynamischer Imports). Kein erreichtes Modul darf ein BTC-Liquiditätsmodul sein, und kein Import/Re-Export darin darf
+  // ein gesperrtes Token nennen (Spezifizierer oder importierte Namen). Reine Typdefinitionen im Modulrumpf (z. B.
+  // shared/schema.ts: BtcLiquidity-Response-Typen) sind keine Kopplung und werden nicht als Rumpftext geprüft.
+  const BTC_MODULE = /(^|\/)(btc-liquidity|btc-macro|btc-routes|fred-csv|liquidity-index|liquidity-index-math|liquidity-index-catalog)\.tsx?$/;
+  const IMPORT_RE = /(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?([^;]*?)\s+from\s+["']([^"']+)["']|(?:^|\n)\s*import\s+["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
+  const resolveLocal = (from: string, spec: string): string | null => {
+    const base = spec.startsWith("@/") ? join("client/src", spec.slice(2)) : spec.startsWith("@shared/") ? join("shared", spec.slice(8))
+      : spec.startsWith(".") ? join(dirname(from), spec) : null;
+    if (!base) return null;
+    for (const c of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx"), base.replace(/\.js$/, ".ts")]) {
+      if (existsSync(c) && statSync(c).isFile()) return normalize(c);
+    }
+    return `UNRESOLVED:${base}`;
+  };
+  const importChainViolations = (entry: string): string[] => {
+    const seen = new Set<string>(), queue = [entry], bad: string[] = [];
+    while (queue.length) {
+      const f = queue.shift()!;
+      if (seen.has(f)) continue;
+      seen.add(f);
+      if (f.startsWith("UNRESOLVED:")) { bad.push(f); continue; }
+      if (BTC_MODULE.test(f)) bad.push(`${f} (BTC-Liquiditätsmodul)`);
+      const src = readFileSync(f, "utf8");
+      for (const m of src.matchAll(IMPORT_RE)) {
+        const spec = m[2] ?? m[3] ?? m[4];
+        const hit = BTC_TOKENS.filter(t => spec.includes(t) || (m[1] ?? "").includes(t));
+        if (hit.length) bad.push(`${f}: import "${spec}" nennt ${hit.join(", ")}`);
+        const r = resolveLocal(f, spec);
+        if (r && !seen.has(r)) queue.push(r);
+      }
+    }
+    return bad.length ? bad : seen.size > 1 ? [] : ["Importkette leer (Parser defekt?)"];
+  };
+  const chainBad = importChainViolations("server/analyze-route.ts");
+  check("analyze-route.ts transitiv (Importkette rekursiv) ohne BTC-Liquiditätsmodul/-Token", chainBad.length === 0, chainBad.join(" | "));
 }
 
 if (failed > 0) {
