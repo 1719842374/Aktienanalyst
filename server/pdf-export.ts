@@ -332,6 +332,11 @@ ${na.map(l => `<tr><td class="row-label">${esc(l)}</td><td class="row-val">n/a</
 export type PdfSectionImage = { id: number; label: string; dataUrl: string };
 export const PDF_MAX_SECTION_IMAGES = 25;
 const PDF_MAX_IMAGE_CHARS = 3_000_000;
+/** Summe aller dataUrls; passt mit den Analysedaten unter express.json 10 MB (Client begrenzt auf 7 Mio.). */
+export const PDF_MAX_TOTAL_IMAGE_CHARS = 7_500_000;
+export function sectionImagesChars(raw: unknown): number {
+  return Array.isArray(raw) ? raw.reduce((n: number, x: any) => n + (typeof x?.dataUrl === 'string' ? x.dataUrl.length : 0), 0) : 0;
+}
 /** Nur data:image/jpeg|png;base64, höchstens 25 Bilder à ≤3 MB, sortiert nach Sektions-id. Alles andere wird verworfen. */
 export function sanitizeSectionImages(raw: unknown): PdfSectionImage[] {
   if (!Array.isArray(raw)) return [];

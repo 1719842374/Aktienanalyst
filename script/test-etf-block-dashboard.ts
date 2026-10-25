@@ -12,7 +12,12 @@ const dash = readFileSync("client/src/pages/Dashboard.tsx", "utf8");
 assert.match(dash, /data && isEtfOrFund\(data\) \? \(/, "ETF branch before the sections branch");
 assert.ok(dash.indexOf("data && isEtfOrFund(data) ? (") < dash.indexOf("<ExecSummaryCard data={data} />"), "note replaces the sections");
 assert.match(dash, /ETF\/Index – nicht im Aktien-Dashboard/);
-assert.match(dash, /\{data && !isEtfOrFund\(data\) && \(\s*<button[\s\S]{0,900}button-pdf-export/, "PDF button hidden for ETFs");
+// PDF-Button liegt direkt im ETF-Gate: Gate → <button … data-testid="button-pdf-export"> ohne dazwischen geschlossenes Element/Gate
+// (unabhängig von der Länge des onClick-Blocks).
+const gate = dash.search(/\{data && !isEtfOrFund\(data\) && \(\s*<button/), pdfBtn = dash.indexOf('data-testid="button-pdf-export"');
+assert.ok(gate >= 0 && pdfBtn > gate, "PDF button hidden for ETFs");
+assert.equal(dash.split('data-testid="button-pdf-export"').length, 2, "genau ein PDF-Button");
+assert.ok(!/<\/button>|\n\s*\)\}/.test(dash.slice(gate, pdfBtn)), "PDF-Button ist der Button direkt im ETF-Gate");
 assert.match(dash, /disabled=\{!data \|\| isEtfOrFund\(data\)\}/, "section nav disabled for ETFs");
 
 // Live flags (FMP profile via analyze): SPY/QQQ isEtf true, MSFT false

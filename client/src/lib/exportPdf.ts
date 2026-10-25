@@ -13,7 +13,12 @@ export interface SectionShot { id: number; label: string; dataUrl: string; width
 export type PdfExportResult = { ok: true; via: "server" | "client"; filename: string; bytes: number; sections: number; serverError?: string } | { ok: false; error: string };
 
 export const MAX_SECTION_IMAGES = 25;
-const JPEG_QUALITY = 0.72;
+const JPEG_QUALITIES = [0.72, 0.55, 0.4];
+/** Payload-Grenzen passend zu express.json({ limit: '10mb' }) und Server-Summenprüfung (PDF_MAX_TOTAL_IMAGE_CHARS 7,5 Mio.). */
+export const MAX_IMAGE_WIDTH = 1100;
+export const MAX_IMAGE_CHARS = 1_200_000;
+export const MAX_TOTAL_IMAGE_CHARS = 7_000_000;
+export const MAX_PAYLOAD_BYTES = 9_500_000;
 
 export function pdfFilename(ticker: string, now = new Date()): string {
   return `${String(ticker).replace(/[^A-Za-z0-9._-]/g, "_")}_Analyse_${now.toISOString().slice(0, 10)}.pdf`;
@@ -47,17 +52,28 @@ function sectionLabel(el: HTMLElement, id: number): string {
 }
 
 /** Nimmt die gerenderten Sektionen (Dashboard-Refs, Reihenfolge nach id) als JPEG auf. Fehler je Sektion → übersprungen + gemeldet. */
+/** JPEG mit sinkender Qualität, bis das Bild unter perImage und unter dem Restbudget liegt; sonst null. */
+export function encodeWithinBudget(encode: (q: number) => string, perImage: number, remaining: number): string | null {
+  for (const q of JPEG_QUALITIES) { const d = encode(q); if (d.length <= perImage && d.length <= remaining) return d; }
+  return null;
+}
+
 export async function captureSections(els: Array<{ id: number; el: HTMLElement | null }>): Promise<{ shots: SectionShot[]; failed: number[] }> {
   const html2canvas = (await import("html2canvas")).default;
   const bg = getComputedStyle(document.body).backgroundColor || "#0c1223";
   const shots: SectionShot[] = [];
   const failed: number[] = [];
+  let total = 0;
   for (const { id, el } of [...els].sort((a, b) => a.id - b.id)) {
     if (!el || el.offsetHeight === 0 || shots.length >= MAX_SECTION_IMAGES) continue;
     try {
-      const canvas = await html2canvas(el, { backgroundColor: bg, scale: 1, logging: false, useCORS: true, windowWidth: Math.max(document.documentElement.clientWidth, 1024) });
+      const scale = Math.min(1, MAX_IMAGE_WIDTH / Math.max(1, el.offsetWidth));
+      const canvas = await html2canvas(el, { backgroundColor: bg, scale, logging: false, useCORS: true, windowWidth: Math.max(document.documentElement.clientWidth, 1024) });
       if (!canvas.width || !canvas.height) { failed.push(id); continue; }
-      shots.push({ id, label: sectionLabel(el, id), dataUrl: canvas.toDataURL("image/jpeg", JPEG_QUALITY), width: canvas.width, height: canvas.height });
+      const dataUrl = encodeWithinBudget(q => canvas.toDataURL("image/jpeg", q), MAX_IMAGE_CHARS, MAX_TOTAL_IMAGE_CHARS - total);
+      if (!dataUrl) { console.warn(`[PDF] Sektion ${id} über Bildbudget, ausgelassen`); failed.push(id); continue; }
+      total += dataUrl.length;
+      shots.push({ id, label: sectionLabel(el, id), dataUrl, width: canvas.width, height: canvas.height });
     } catch (err) {
       console.warn(`[PDF] Sektion ${id} nicht aufnehmbar:`, err);
       failed.push(id);
@@ -114,7 +130,11 @@ export async function exportAnalysisPdf(data: StockAnalysis, sectionEls: Array<{
   }
   let serverError: string | undefined;
   try {
-    const res = await apiRequest("POST", "/api/export-pdf", { ...data, _sectionImages: shots }, 150_000);
+    let body = JSON.stringify({ ...data, _sectionImages: shots });
+    // Harte Obergrenze unter express.json 10 MB: lieber Bilder weglassen (und melden) als stilles 413.
+    while (body.length > MAX_PAYLOAD_BYTES && shots.length) { failed.push(shots.pop()!.id); body = JSON.stringify({ ...data, _sectionImages: shots }); }
+    console.log(`[PDF] Payload ${(body.length / 1e6).toFixed(2)} MB, ${shots.length} Sektionsbilder`);
+    const res = await apiRequest("POST", "/api/export-pdf", JSON.parse(body), 150_000);
     const buf = new Uint8Array(await res.arrayBuffer());
     const bad = checkPdfResponse(res.status, res.headers.get("content-type"), buf);
     if (bad) {
