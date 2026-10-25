@@ -63,6 +63,40 @@ export type FazitSignal = {
   raCrvCons: number;
 };
 
+export type FazitEntry = {
+  baseParams: ReturnType<typeof buildDefaultDCFParams>;
+  conservativeDCF: FCFFDCFResult;
+  bias: BiasFixPayload;
+  decisionPerShare: number;
+  worstCase: number;
+  crvConservative: number;
+  /** Max-Entry bei CRV 3:1 — der Wert, den S17-Fazit und Exec Summary anzeigen. */
+  dcfBeiCRV3: number;
+  totalExpDmg: number;
+  raCrvCons: number;
+};
+
+/**
+ * Einzige Quelle für Max-Entry (CRV 3:1) und CRV Base/risikoadjustiert im Client.
+ * prepareFazitMetrics (S17-Fazit) und die Exec Summary lesen beide hier (ohne Monte Carlo).
+ */
+export function prepareFazitEntry(data: StockAnalysis): FazitEntry {
+  const baseParams = buildDefaultDCFParams(data);
+  const conservativeDCF = calculateFCFFDCF(baseParams);
+  const bias = buildBiasDecision(data);
+  const decisionPerShare = Number.isFinite(bias.decisionPerShare) ? bias.decisionPerShare : conservativeDCF.perShare;
+  const m1 = worstCaseM1(data.currentPrice, data.beta5Y, data.sectorMaxDrawdown || 35);
+  const m2Impact = data.risks?.length ? Math.max(...data.risks.map(r => Math.abs(r.impact))) : 35;
+  const m2 = worstCaseM2(data.currentPrice, m2Impact);
+  const m3 = worstCaseM3(data.currentPrice, data.sectorMaxDrawdown || 35, data.lynchClass);
+  const worstCase = Math.min(m1, m2, m3);
+  const crvConservative = calculateCRV(decisionPerShare, worstCase, data.currentPrice);
+  const dcfBeiCRV3 = (decisionPerShare + 2 * worstCase) / 3;
+  const totalExpDmg = (data.risks || []).reduce((s, r) => s + r.expectedDamage, 0);
+  const raCrvCons = calculateRiskAdjustedCRV(decisionPerShare, worstCase, data.currentPrice, totalExpDmg);
+  return { baseParams, conservativeDCF, bias, decisionPerShare, worstCase, crvConservative, dcfBeiCRV3, totalExpDmg, raCrvCons };
+}
+
 /** Prepare the same metrics SummarySection feeds into the Fazit Ampel. */
 export function prepareFazitMetrics(
   data: StockAnalysis,
@@ -70,8 +104,8 @@ export function prepareFazitMetrics(
 ): FazitSignalMetrics {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
-  const baseParams = buildDefaultDCFParams(data);
-  const conservativeDCF = calculateFCFFDCF(baseParams);
+  const entry = prepareFazitEntry(data);
+  const { baseParams, conservativeDCF, bias, decisionPerShare, worstCase, crvConservative, dcfBeiCRV3, totalExpDmg, raCrvCons } = entry;
 
   const stressDCF = calculateFCFFDCF({
     ...baseParams,
@@ -83,8 +117,6 @@ export function prepareFazitMetrics(
     terminalG: Math.max(1, baseParams.terminalG - 0.5),
   });
 
-  const bias = buildBiasDecision(data);
-  const decisionPerShare = Number.isFinite(bias.decisionPerShare) ? bias.decisionPerShare : conservativeDCF.perShare;
   const catalysts = data.catalysts;
   const rawTotalUpside = bias.positiveGbSum;
   const catalystBaseInfo = selectCatalystBase(
@@ -94,12 +126,6 @@ export function prepareFazitMetrics(
     data.analystPT.median,
   );
   const { totalUpside } = calculateCatalystUpside(catalysts, catalystBaseInfo.base);
-
-  const m1 = worstCaseM1(data.currentPrice, data.beta5Y, data.sectorMaxDrawdown || 35);
-  const m2Impact = data.risks?.length ? Math.max(...data.risks.map(r => Math.abs(r.impact))) : 35;
-  const m2 = worstCaseM2(data.currentPrice, m2Impact);
-  const m3 = worstCaseM3(data.currentPrice, data.sectorMaxDrawdown || 35, data.lynchClass);
-  const worstCase = Math.min(m1, m2, m3);
 
   const sorted = [...data.historicalPrices].sort((a, b) => b.date.localeCompare(a.date));
   const prices26w = sorted.slice(0, 130).map((p) => p.close);
@@ -116,18 +142,8 @@ export function prepareFazitMetrics(
     epsGrowthNext5Y: data.epsGrowth5Y ?? 0,
   });
 
-  const crvConservative = calculateCRV(decisionPerShare, worstCase, data.currentPrice);
-  const dcfBeiCRV3 = (decisionPerShare + 2 * worstCase) / 3;
   const conservativeUpside = ((decisionPerShare / data.currentPrice - 1) * 100);
   const stressDownside = ((stressDCF.perShare / data.currentPrice - 1) * 100);
-
-  const totalExpDmg = (data.risks || []).reduce((s, r) => s + r.expectedDamage, 0);
-  const raCrvCons = calculateRiskAdjustedCRV(
-    decisionPerShare,
-    worstCase,
-    data.currentPrice,
-    totalExpDmg,
-  );
 
   let mcResult: GBMMonteCarloResult;
   if (sharedMonteCarlo) {
