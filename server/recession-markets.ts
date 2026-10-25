@@ -64,6 +64,67 @@ export async function fetchFredVolSeries(seriesId: string, cosd: string): Promis
   }
 }
 
+/** Yahoo chart symbol per FRED vol series. Only VIX has a Yahoo fallback (Future_1 F1-66 / Future_2 §2). */
+export const YAHOO_VOL_FALLBACK: Record<string, string> = { VIXCLS: "^VIX" };
+
+/** Daily closes from a Yahoo v8 chart payload. Null bars (session still printing) are skipped. */
+export function parseYahooChartSeries(payload: unknown): VolPoint[] {
+  if (!payload || typeof payload !== "object") return [];
+  const result = (payload as { chart?: { result?: Array<{ timestamp?: unknown; indicators?: { quote?: Array<{ close?: unknown }> } }> } }).chart?.result?.[0];
+  const stamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const closes = Array.isArray(result?.indicators?.quote?.[0]?.close) ? result.indicators.quote[0].close : [];
+  const byDate = new Map<string, number>();
+  const n = Math.min(stamps.length, closes.length);
+  for (let i = 0; i < n; i++) {
+    const raw = closes[i];
+    if (raw == null || raw === "") continue;
+    const value = typeof raw === "number" ? raw : Number(raw);
+    const stamp = typeof stamps[i] === "number" ? stamps[i] : Number(stamps[i]);
+    if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(stamp)) continue;
+    byDate.set(new Date(stamp * 1000).toISOString().slice(0, 10), value);
+  }
+  return Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([date, value]) => ({ date, value }));
+}
+
+/** Yahoo v8 chart (no key, no crumb), daily, from cosd to now + 1 day. */
+export async function fetchYahooDailySeries(symbol: string, cosd: string): Promise<VolPoint[]> {
+  const p1 = Math.floor(Date.parse(cosd + "T00:00:00Z") / 1000);
+  const p2 = Math.floor(Date.now() / 1000) + 86400;
+  if (!Number.isFinite(p1)) return [];
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${p1}&period2=${p2}&interval=1d`;
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(20000), headers: { "User-Agent": "Mozilla/5.0" } });
+    if (!resp.ok) return [];
+    return parseYahooChartSeries(await resp.json());
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Chart vol series: FRED first. Only when FRED is empty and the series has a Yahoo twin
+ * (VIXCLS → ^VIX) the Yahoo closes fill the chart, with a note. Chart path only; the
+ * VIX score keeps its own resolver in recession.ts.
+ */
+export async function fetchFredVolWithYahooFallback(
+  seriesId: string,
+  cosd: string,
+  deps: {
+    fred?: (id: string, cosd: string) => Promise<VolPoint[]>;
+    yahoo?: (symbol: string, cosd: string) => Promise<VolPoint[]>;
+  } = {},
+): Promise<{ vol: VolPoint[]; volNote: string | null }> {
+  const fred = deps.fred ?? fetchFredVolSeries;
+  const yahoo = deps.yahoo ?? fetchYahooDailySeries;
+  const vol = await fred(seriesId, cosd);
+  if (vol.length) return { vol, volNote: null };
+  const symbol = YAHOO_VOL_FALLBACK[seriesId];
+  if (!symbol) return { vol, volNote: `FRED ${seriesId} leer` };
+  const yv = (await yahoo(symbol, cosd)).filter(p => p.date >= cosd);
+  if (!yv.length) return { vol: [], volNote: `FRED ${seriesId} leer, Yahoo ${symbol} leer` };
+  return { vol: yv, volNote: `${seriesId === "VIXCLS" ? "VIX" : seriesId} via Yahoo ${symbol} (FRED ${seriesId} leer)` };
+}
+
 /** Official STOXX V2TX daily file (DD.MM.YYYY;V2TX;value). Spec: Yahoo/Stoox path. */
 const STOXX_V2TX_URL =
   "https://www.stoxx.com/document/Indices/Current/HistoricalData/h_v2tx.txt";
@@ -273,8 +334,7 @@ async function fetchRegionVol(
   if (region === "US") {
     // MAX ≈ series start 1990; keep headroom for window
     const cosd = yearsAgoISO(40);
-    const vol = await fetchFredVolSeries("VIXCLS", cosd);
-    return { vol, volNote: vol.length ? null : "FRED VIXCLS leer" };
+    return fetchFredVolWithYahooFallback("VIXCLS", cosd);
   }
   // EU implied: VSTOXX — FMP first, STOXX official fallback
   const { vol, source, stoxxErr } = await fetchVstoxxVol(from, to);
