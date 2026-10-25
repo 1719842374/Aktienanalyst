@@ -31,6 +31,14 @@ interface BuffettPayload {
   note: string;
   latest: TrendPoint | null;
   points: TrendPoint[];
+  /** F1-31: gesetzt, wenn der Zähler aus FRED (Quartalswerte) statt aus dem Wilshire 5000 kommt. */
+  fallback?: { source: string; reason: string; frequency: "quarterly"; asOf: string | null } | null;
+}
+
+/** F1-34: Grund aus dem 502-Body sichtbar machen, nicht nur im eingeklappten Detail. */
+function errorReason(error: unknown): string {
+  const message = String((error as { message?: unknown } | null)?.message ?? "").trim();
+  return message || "Datenquelle nicht erreichbar";
 }
 
 const REGIONS: { id: RegionId; name: string }[] = [
@@ -73,11 +81,12 @@ function sliceWindow(points: TrendPoint[], range: RangeId): TrendPoint[] {
   return points.filter(point => Date.parse(`${point.date}T00:00:00Z`) >= start);
 }
 
-function yDomain(rows: TrendPoint[], range: RangeId): [number, number] {
+function yDomain(rows: TrendPoint[], range: RangeId, fallback = false): [number, number] {
   const ratios = rows.map(row => row.ratio);
   const maxRatio = Math.max(...ratios);
   const minRatio = Math.min(...ratios);
-  if (range === "Max" && maxRatio >= 180) return [0, 250];
+  // F1-31: nur beim FRED-Ersatz (Financial Accounts, über 250 %) die Obergrenze in 50er-Schritten erweitern; Wilshire-Achse unverändert.
+  if (range === "Max" && maxRatio >= 180) return [0, fallback ? Math.max(250, Math.ceil(maxRatio / 50) * 50) : 250];
   const near = rows
     .flatMap(row => [row.ratio, row.plus1, row.plus2, row.trend, row.minus1, row.minus2])
     .filter(value => value >= minRatio - 25 && value <= maxRatio + 25);
@@ -90,7 +99,9 @@ function yDomain(rows: TrendPoint[], range: RangeId): [number, number] {
 }
 
 function yTicksFor(domain: [number, number], range: RangeId): number[] {
-  if (range === "Max" && domain[0] === 0 && domain[1] === 250) return [0, 50, 100, 150, 200, 250];
+  if (range === "Max" && domain[0] === 0 && domain[1] >= 250 && domain[1] % 50 === 0) {
+    return Array.from({ length: domain[1] / 50 + 1 }, (_, i) => i * 50);
+  }
   const span = domain[1] - domain[0];
   const step = span <= 40 ? 5 : span <= 90 ? 10 : span <= 180 ? 20 : 50;
   const ticks: number[] = [];
@@ -324,7 +335,7 @@ export function BuffettRatioPanel() {
     ...point,
     t: Date.parse(`${point.date}T00:00:00Z`),
   }));
-  const domain = chart.length > 0 ? yDomain(chart, range) : [0, 250] as [number, number];
+  const domain = chart.length > 0 ? yDomain(chart, range, !!query.data?.fallback) : [0, 250] as [number, number];
   const ticks = axisTicks(chart, range, wide);
   const yTicks = yTicksFor(domain, range);
 
@@ -373,6 +384,21 @@ export function BuffettRatioPanel() {
           retrying={query.isFetching}
           testId="text-buffett-error"
         />
+      )}
+      {query.error && !query.data && (
+        <p className="text-xs text-muted-foreground" data-testid="text-buffett-error-reason">
+          n/a — {errorReason(query.error)}
+        </p>
+      )}
+      {query.data?.fallback && (
+        <p
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-snug text-amber-700 dark:text-amber-300"
+          data-testid="text-buffett-fallback"
+        >
+          Ersatzquelle: {query.data.fallback.source}
+          {query.data.fallback.asOf ? `, letztes Quartal ${longDate(query.data.fallback.asOf)}` : ""}.
+          {" "}Wilshire 5000 nicht verfügbar ({query.data.fallback.reason}). Niveau nicht mit der Wilshire-Linie vergleichbar.
+        </p>
       )}
 
       {query.data && (

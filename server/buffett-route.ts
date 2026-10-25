@@ -27,7 +27,66 @@ type RegionId = (typeof REGIONS)[number];
 export const WILSHIRE_DOLLARS_PER_POINT_BN = 1.05;
 
 const CACHE_MS = 15 * 60 * 1000;
-const cache = new Map<string, { at: number; body: unknown }>();
+/** F1-31: Ersatz-Antworten (FRED statt Wilshire) nur kurz halten, damit Wilshire bald neu versucht wird. */
+const FALLBACK_CACHE_MS = 5 * 60 * 1000;
+const cache = new Map<string, { at: number; ttl: number; body: unknown }>();
+
+/** F1-30: zwei Versuche mit Pause; Yahoo mit längerem Timeout als FRED. */
+export const BUFFETT_FETCH_ATTEMPTS = 2;
+let retryPauseMs = 1500;
+const YAHOO_TIMEOUT_MS = 35000;
+const FRED_TIMEOUT_MS = 25000;
+const PROXY_TIMEOUT_MS = 25000;
+
+/** Nur für Tests: Pause zwischen den Versuchen und Cache. */
+export function setBuffettRetryPauseForTests(ms: number): void {
+  retryPauseMs = ms;
+}
+export function resetBuffettCache(): void {
+  cache.clear();
+}
+
+/** Fehler mit einem Grund, der so im 502-Body steht (F1-34). */
+export class BuffettSourceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BuffettSourceError";
+  }
+}
+
+function fetchFailure(err: unknown, timeoutMs: number): string {
+  const e = err as { name?: string; message?: string } | null;
+  if (e?.name === "TimeoutError" || e?.name === "AbortError") return `Timeout nach ${Math.round(timeoutMs / 1000)} s`;
+  return String(e?.message ?? err ?? "unbekannter Fehler").substring(0, 160);
+}
+
+/** Holt Text mit Wiederholung. Wirft mit „<Quelle>: <Grund> (n Versuche)“. */
+async function fetchTextWithRetry(
+  label: string,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  attempts: number,
+  accept: (text: string) => boolean = () => true,
+): Promise<string> {
+  let reason = "keine Antwort";
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      if (response.ok) {
+        const text = await response.text();
+        if (accept(text)) return text;
+        reason = "leere oder ungültige Antwort";
+      } else {
+        reason = `HTTP ${response.status}`;
+      }
+    } catch (err) {
+      reason = fetchFailure(err, timeoutMs);
+    }
+    if (attempt < attempts && retryPauseMs > 0) await new Promise(resolve => setTimeout(resolve, retryPauseMs));
+  }
+  throw new BuffettSourceError(`${label}: ${reason} (${attempts} ${attempts === 1 ? "Versuch" : "Versuche"})`);
+}
 
 const US_SOURCES = [
   { id: "^W5000", role: "Wilshire 5000, täglicher Schlusskurs" },
@@ -45,12 +104,27 @@ function isRegion(value: string): value is RegionId {
   return (REGIONS as readonly string[]).includes(value);
 }
 
-async function fetchFred(seriesId: string, from: string): Promise<FredPoint[]> {
+interface FredResult {
+  points: FredPoint[];
+  /** Grund, wenn die Reihe nicht geladen wurde; sonst null. */
+  error: string | null;
+}
+
+async function fetchFred(seriesId: string, from: string): Promise<FredResult> {
   const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(seriesId)}&cosd=${from}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(25000) });
-  if (!response.ok) return [];
-  const text = await response.text();
-  if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) return [];
+  let text: string;
+  try {
+    text = await fetchTextWithRetry(
+      `FRED ${seriesId}`,
+      url,
+      {},
+      FRED_TIMEOUT_MS,
+      BUFFETT_FETCH_ATTEMPTS,
+      body => !!body && !body.includes("<html") && !body.includes("<!DOCTYPE"),
+    );
+  } catch (err: any) {
+    return { points: [], error: String(err?.message ?? err) };
+  }
   const out: FredPoint[] = [];
   for (const line of text.trim().split(/\r?\n/).slice(1)) {
     const [date, raw] = line.split(",");
@@ -59,7 +133,7 @@ async function fetchFred(seriesId: string, from: string): Promise<FredPoint[]> {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim()) || !Number.isFinite(value)) continue;
     out.push({ date: date.trim(), value });
   }
-  return out;
+  return { points: out, error: out.length === 0 ? `FRED ${seriesId}: keine Werte in der CSV` : null };
 }
 
 function asMap(points: FredPoint[]): Map<string, number> {
@@ -90,15 +164,27 @@ interface YahooBar {
   close: number;
 }
 
-async function fetchYahooDaily(symbol: string, period1: number): Promise<YahooBar[]> {
+async function fetchYahooDaily(
+  symbol: string,
+  period1: number,
+  options: { attempts: number; timeoutMs: number } = { attempts: 1, timeoutMs: PROXY_TIMEOUT_MS },
+): Promise<YahooBar[]> {
   const period2 = Math.floor(Date.now() / 1000) + 86_400;
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d`;
-  const response = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0" },
-    signal: AbortSignal.timeout(25000),
-  });
-  if (!response.ok) throw new Error(`${symbol} ${response.status}`);
-  const body = await response.json() as {
+  const text = await fetchTextWithRetry(
+    `Yahoo ${symbol}`,
+    url,
+    { headers: { "User-Agent": "Mozilla/5.0" } },
+    options.timeoutMs,
+    options.attempts,
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new BuffettSourceError(`Yahoo ${symbol}: Antwort ist kein JSON`);
+  }
+  const body = parsed as {
     chart?: {
       result?: Array<{
         timestamp?: number[];
@@ -119,10 +205,20 @@ async function fetchYahooDaily(symbol: string, period1: number): Promise<YahooBa
 }
 
 async function fetchWilshire(): Promise<YahooBar[]> {
-  const out = await fetchYahooDaily("^W5000", 599817600);
-  if (out.length < 500) throw new Error("Wilshire-Reihe zu kurz");
+  const out = await fetchYahooDaily("^W5000", 599817600, { attempts: BUFFETT_FETCH_ATTEMPTS, timeoutMs: YAHOO_TIMEOUT_MS });
+  if (out.length < 500) throw new BuffettSourceError(`Yahoo ^W5000: zu wenige Tagesschlüsse (${out.length} < 500)`);
   return out;
 }
+
+/** F1-31: Kennzeichnung, wenn der Zähler aus FRED statt aus dem Wilshire 5000 kommt. */
+export interface BuffettFallbackInfo {
+  source: string;
+  reason: string;
+  frequency: "quarterly";
+  asOf: string | null;
+}
+
+export const FRED_MARKET_VALUE_FALLBACK_SOURCE = "FRED NCBEILQ027S + FBCELLQ027S (Financial Accounts, Quartalswerte)";
 
 /**
  * Yahoo lässt den Wilshire-Tag oft leer, während der US-Gesamtmarkt schon
@@ -149,7 +245,7 @@ async function fetchSessionProxy(): Promise<{ id: string; name: string; bars: Ya
 
 function withTrend(points: RatioObs[]): TrendPoint[] {
   const model = fitLogTrend(quarterlyFitSample(points));
-  if (!model) throw new Error("Trend nicht schätzbar");
+  if (!model) throw new BuffettSourceError("Trend nicht schätzbar (zu wenige Quartale)");
   return applyTrend(model, points);
 }
 
@@ -157,17 +253,22 @@ async function buildUnitedStates(): Promise<{
   points: TrendPoint[];
   note: string;
   sources: { id: string; role: string }[];
+  fallback?: BuffettFallbackInfo | null;
 }> {
-  const [gdp, nfc, financial, wilshire, proxy] = await Promise.all([
+  const [gdpResult, nfcResult, financialResult, wilshireResult, proxy] = await Promise.all([
     fetchFred("GDP", "1947-01-01"),
     fetchFred("NCBEILQ027S", "1947-01-01"),
     fetchFred("FBCELLQ027S", "1947-01-01"),
-    fetchWilshire(),
+    fetchWilshire().then(
+      bars => ({ bars, error: null as string | null }),
+      (err: any) => ({ bars: null as YahooBar[] | null, error: String(err?.message ?? err) }),
+    ),
     fetchSessionProxy(),
   ]);
-  const bars = proxy ? rollClosesForward(wilshire, proxy.bars) : wilshire;
-  const extended = bars.length > wilshire.length;
-  if (gdp.length < 8) throw new Error("BIP-Reihe leer");
+  const gdp = gdpResult.points;
+  const nfc = nfcResult.points;
+  const financial = financialResult.points;
+  if (gdp.length < 8) throw new BuffettSourceError(`BIP-Reihe leer – ${gdpResult.error ?? `nur ${gdp.length} Werte`}`);
   const nfcMap = asMap(nfc);
   const financialMap = asMap(financial);
   const earlyDates = [...nfcMap.keys()]
@@ -180,6 +281,25 @@ async function buildUnitedStates(): Promise<{
     const marketCapBn = ((nfcMap.get(date) ?? 0) + (financialMap.get(date) ?? 0)) / 1000;
     early.push({ date, ratio: (marketCapBn / gdpBn) * 100 });
   }
+  if (!wilshireResult.bars) {
+    // F1-31: Wilshire fehlt → FRED-Marktwert auch für aktuelle Werte, als Quartalsreihe mit eigenem Trend.
+    const wilshireError = wilshireResult.error ?? "Yahoo ^W5000: keine Daten";
+    if (early.length < 8) {
+      const fredError = nfcResult.error ?? financialResult.error ?? `nur ${early.length} Quartale`;
+      throw new BuffettSourceError(`${wilshireError}; FRED-Ersatz leer – ${fredError}`);
+    }
+    const points = withTrend(early);
+    const asOf = points.length > 0 ? points[points.length - 1].date : null;
+    return {
+      points,
+      fallback: { source: FRED_MARKET_VALUE_FALLBACK_SOURCE, reason: wilshireError, frequency: "quarterly", asOf },
+      note: `Ersatzquelle: Der Wilshire 5000 ist nicht verfügbar (${wilshireError}). Der Zähler ist deshalb der Marktwert der Aktien nichtfinanzieller und finanzieller Firmen aus den Financial Accounts (FRED NCBEILQ027S + FBCELLQ027S), geteilt durch das nominale BIP. Das sind Quartalswerte mit Veröffentlichungsverzug; der letzte Punkt ist das letzte veröffentlichte Quartal, nicht der heutige Handelstag. Das Niveau ist nicht mit der Wilshire-Linie vergleichbar, weil die Financial Accounts auch nicht börsennotierte Firmen enthalten. Trend und Bänder werden auf dieser Reihe geschätzt.`,
+      sources: US_SOURCES.filter(source => source.id !== "^W5000"),
+    };
+  }
+  const wilshire = wilshireResult.bars;
+  const bars = proxy ? rollClosesForward(wilshire, proxy.bars) : wilshire;
+  const extended = bars.length > wilshire.length;
   const listed: RatioObs[] = [];
   for (const bar of bars) {
     const gdpBn = valueAt(gdp, bar.date);
@@ -189,7 +309,7 @@ async function buildUnitedStates(): Promise<{
       ratio: (bar.close * WILSHIRE_DOLLARS_PER_POINT_BN / gdpBn) * 100,
     });
   }
-  if (listed.length < 500) throw new Error("Wilshire-Quote leer");
+  if (listed.length < 500) throw new BuffettSourceError(`Wilshire-Quote leer (${listed.length} Tage mit BIP-Wert)`);
   const spliced = spliceAtListedStart(early, listed);
   const carried = extended && proxy
     ? ` Fehlt der Wilshire-Schluss, läuft der Kurs mit der Tagesrendite des ${proxy.name} bis zur letzten US-Sitzung weiter (höchstens 30 Tage, Punkte als „fortgeschrieben“ markiert).`
@@ -208,9 +328,10 @@ async function buildUnitedStates(): Promise<{
 }
 
 async function buildAnnualRatio(seriesId: string): Promise<TrendPoint[]> {
-  const points = await fetchFred(seriesId, "1975-01-01");
-  const ratios = points.map(point => ({ date: point.date, ratio: point.value }));
-  if (ratios.length < 8) return [];
+  const result = await fetchFred(seriesId, "1975-01-01");
+  const ratios = result.points.map(point => ({ date: point.date, ratio: point.value }));
+  // F1-34: statt einer leeren 200-Antwort den Grund melden.
+  if (ratios.length < 8) throw new BuffettSourceError(result.error ?? `FRED ${seriesId}: nur ${ratios.length} Jahreswerte`);
   return withTrend(ratios);
 }
 
@@ -232,10 +353,15 @@ export function registerBuffettRatioRoute(app: Express): void {
       return res.status(400).json({ error: "Region muss US, EU oder CN sein" });
     }
     const hit = cache.get(region);
-    if (hit && Date.now() - hit.at < CACHE_MS) return res.json(hit.body);
+    if (hit && Date.now() - hit.at < hit.ttl) return res.json(hit.body);
     try {
       const annual = region === "US" ? null : ANNUAL_REGIONS[region];
-      const built = region === "US"
+      const built: {
+        points: TrendPoint[];
+        note: string;
+        sources: { id: string; role: string }[];
+        fallback?: BuffettFallbackInfo | null;
+      } = region === "US"
         ? await buildUnitedStates()
         : {
             points: await buildAnnualRatio(annual!.id),
@@ -249,13 +375,22 @@ export function registerBuffettRatioRoute(app: Express): void {
         latest,
         note: built.note,
         sources: built.sources,
+        fallback: built.fallback ?? null,
         points: built.points,
       };
-      if (built.points.length > 0) cache.set(region, { at: Date.now(), body });
+      if (built.points.length > 0) {
+        cache.set(region, { at: Date.now(), ttl: built.fallback ? FALLBACK_CACHE_MS : CACHE_MS, body });
+      }
       res.json(body);
     } catch (err: any) {
       console.error("[GET /api/analyze-recession/buffett]", err?.message?.substring(0, 200));
-      res.status(502).json({ error: "Buffett-Quote nicht verfügbar" });
+      // F1-34: konkreter Grund (Timeout, zu wenige Bars, BIP leer …) statt generischem Text.
+      const reason = String(err?.message ?? "unbekannter Fehler").substring(0, 300);
+      res.status(502).json({
+        error: `Buffett-Quote nicht verfügbar: ${reason}`,
+        errorCode: "BUFFETT_SOURCE_UNAVAILABLE",
+        reason,
+      });
     }
   });
 }
