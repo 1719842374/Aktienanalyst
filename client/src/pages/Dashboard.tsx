@@ -626,7 +626,7 @@ export default function Dashboard() {
         {/* Main Content */}
         <main
           ref={mainRef}
-          className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar"
+          className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0"
           data-testid="main-content"
         >
           {analyzeMutation.isError && !data && !analyzeMutation.isPending &&

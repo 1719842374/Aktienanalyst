@@ -127,7 +127,7 @@ export default function RecessionDashboard() {
         </div>
       </header>
 
-      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar">
+      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0">
         {!data && !analyzeMutation.isPending ? (
           <WelcomeScreen onStart={startAnalysis} />
         ) : analyzeMutation.isPending ? (

@@ -199,7 +199,7 @@ export default function GoldDashboard() {
         {/* Main Content */}
         <main
           ref={mainRef}
-          className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar"
+          className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0"
         >
           {isLoading ? (
             <GoldLoadingScreen />
