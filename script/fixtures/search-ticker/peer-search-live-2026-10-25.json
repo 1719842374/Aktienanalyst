@@ -1,0 +1,285 @@
+{
+ "source": "GET https://aktienanalyst.onrender.com/api/search-ticker?q=… (Production, FMP search-symbol + search-name via server/routes.ts), abgerufen 2026-10-25. Echte Antworten, unverändert.",
+ "responses": {
+  "LLY": {
+   "results": [
+    {
+     "ticker": "LLY",
+     "name": "Eli Lilly and Company",
+     "exchange": "NYSE",
+     "unavailable": false
+    },
+    {
+     "ticker": "LLYX",
+     "name": "Daily Target 2X Long LLY ETF",
+     "exchange": "AMEX",
+     "unavailable": false
+    },
+    {
+     "ticker": "LLYZ",
+     "name": "Daily Target 2X Short LLY ETF",
+     "exchange": "NASDAQ",
+     "unavailable": false
+    },
+    {
+     "ticker": "LLYVK",
+     "name": "Liberty Live Group",
+     "exchange": "NASDAQ",
+     "unavailable": false
+    },
+    {
+     "ticker": "LLYVA",
+     "name": "Liberty Live Group",
+     "exchange": "NASDAQ",
+     "unavailable": false
+    },
+    {
+     "ticker": "LLY.TO",
+     "name": "Eli Lilly and Company",
+     "exchange": "TSX",
+     "unavailable": false
+    },
+    {
+     "ticker": "LLY.SW",
+     "name": "Eli Lilly and Company",
+     "exchange": "SIX",
+     "unavailable": false
+    },
+    {
+     "ticker": "LLY.DE",
+     "name": "Eli Lilly and Company",
+     "exchange": "XETRA",
+     "unavailable": false
+    },
+    {
+     "ticker": "LLYC.MC",
+     "name": "Llorente & Cuenca S.A.",
+     "exchange": "BME",
+     "unavailable": false
+    },
+    {
+     "ticker": "HLLY",
+     "name": "Holley Inc.",
+     "exchange": "NYSE",
+     "unavailable": false
+    },
+    {
+     "ticker": "ALLY",
+     "name": "Ally Financial Inc.",
+     "exchange": "NYSE",
+     "unavailable": false
+    },
+    {
+     "ticker": "TLLYF",
+     "name": "Trilogy International Partners Inc.",
+     "exchange": "OTC",
+     "unavailable": false
+    }
+   ]
+  },
+  "Pfizer": {
+   "results": [
+    {
+     "ticker": "PFIZER.BO",
+     "name": "Pfizer Limited",
+     "exchange": "BSE",
+     "unavailable": false
+    },
+    {
+     "ticker": "PFIZER.NS",
+     "name": "Pfizer Limited",
+     "exchange": "NSE",
+     "unavailable": false
+    },
+    {
+     "ticker": "PFE.NE",
+     "name": "Pfizer Inc.",
+     "exchange": "NEO",
+     "unavailable": false
+    },
+    {
+     "ticker": "PFE.BA",
+     "name": "Pfizer Inc.",
+     "exchange": "BUE",
+     "unavailable": false
+    },
+    {
+     "ticker": "PFE",
+     "name": "Pfizer Inc.",
+     "exchange": "NYSE",
+     "unavailable": false
+    },
+    {
+     "ticker": "PFE.TO",
+     "name": "Pfizer Inc.",
+     "exchange": "TSX",
+     "unavailable": false
+    },
+    {
+     "ticker": "PFE.DE",
+     "name": "Pfizer Inc.",
+     "exchange": "XETRA",
+     "unavailable": false
+    },
+    {
+     "ticker": "PFE.F",
+     "name": "Pfizer Inc.",
+     "exchange": "FSX",
+     "unavailable": true
+    }
+   ]
+  },
+  "nov": {
+   "results": [
+    {
+     "ticker": "NOV",
+     "name": "NOV Inc.",
+     "exchange": "NYSE",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVM",
+     "name": "First Trust Exchange-Traded Fund VIII - FT Vest U.S. Equity Max Buffer ETF - November",
+     "exchange": "CBOE",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVV",
+     "name": "Nova Vision Acquisition Corporation",
+     "exchange": "NASDAQ",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVT",
+     "name": "Novanta Inc.",
+     "exchange": "NASDAQ",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVZ",
+     "name": "TrueShares Structured Outcome (November) ETF",
+     "exchange": "CBOE",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVP",
+     "name": "PGIM S&P 500 Buffer 12 ETF - Nov",
+     "exchange": "CBOE",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVN",
+     "name": "Novan, Inc.",
+     "exchange": "NASDAQ",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVA",
+     "name": "Sunnova Energy International Inc.",
+     "exchange": "NYSE",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVC",
+     "name": "Novation Companies, Inc.",
+     "exchange": "OTC",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVRF",
+     "name": "Nova Royalty Corp.",
+     "exchange": "OTC",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVVU",
+     "name": "Nova Vision Acquisition Corporation",
+     "exchange": "NASDAQ",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVTU",
+     "name": "Novanta Inc. Tangible Equity Units",
+     "exchange": "NASDAQ",
+     "unavailable": false
+    }
+   ]
+  },
+  "Novo": {
+   "results": [
+    {
+     "ticker": "NOVOUSD",
+     "name": "Novo USD",
+     "exchange": "CRYPTO",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVO.TO",
+     "name": "Novo Nordisk A/S",
+     "exchange": "TSX",
+     "unavailable": false
+    },
+    {
+     "ticker": "NOVO-B.CO",
+     "name": "Novo Nordisk A/S",
+     "exchange": "CPH",
+     "unavailable": false
+    },
+    {
+     "ticker": "NTEK-B.ST",
+     "name": "Novotek AB",
+     "exchange": "STO",
+     "unavailable": false
+    },
+    {
+     "ticker": "NVCR",
+     "name": "Novocure Ltd",
+     "exchange": "NASDAQ",
+     "unavailable": false
+    },
+    {
+     "ticker": "NSIS-B.CO",
+     "name": "Novozymes A/S",
+     "exchange": "CPH",
+     "unavailable": false
+    },
+    {
+     "ticker": "NZYM-B.CO",
+     "name": "Novozymes A/S",
+     "exchange": "CPH",
+     "unavailable": false
+    },
+    {
+     "ticker": "NSISBC.XD",
+     "name": "Novozymes A/S",
+     "exchange": "DXE",
+     "unavailable": false
+    },
+    {
+     "ticker": "NVZMY",
+     "name": "Novozymes A/S",
+     "exchange": "OTC",
+     "unavailable": false
+    },
+    {
+     "ticker": "NVZMF",
+     "name": "Novozymes A/S",
+     "exchange": "OTC",
+     "unavailable": false
+    },
+    {
+     "ticker": "NVX",
+     "name": "Novonix Limited",
+     "exchange": "NASDAQ",
+     "unavailable": false
+    },
+    {
+     "ticker": "NVNXF",
+     "name": "Novonix Limited",
+     "exchange": "OTC",
+     "unavailable": false
+    }
+   ]
+  }
+ }
+}

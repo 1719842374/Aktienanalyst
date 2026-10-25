@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import type { StockAnalysis, PeerCompany } from "@shared/schema";
 import type { PeerNaFill } from "@shared/peer-na-fill";
 import { ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from "lucide-react";
 import { PEER_VIEW_TABS, filterPeersForView, peerIndustryLabel, viewAverage, peForView, PEER_GICS_NA_TEXT, type PeerViewTab, type PeerPeBasis, type PeerIndustryBasis } from "@/lib/peerViewFilter";
 import { PEER_RESET_NOTICE_TEXT, addListFull, removeListFull } from "@/lib/peerOverrideLimits";
+import { parsePeerSearchResponse, rankPeerSuggestions, type PeerSuggestion } from "@shared/peer-suggestions";
 
 function fmt(v: number | null | undefined, decimals = 1): string {
   if (v == null || isNaN(v) || !isFinite(v)) return "—";
@@ -155,6 +156,8 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
       peerBusy={peerBusy}
       notAdopted={peerBusy ? [] : notAdopted}
       onDropAdd={handleDropAdd}
+      subject={data.ticker}
+      existingTickers={[...activeAdd, ...(pc?.peers ?? []).map(p => p.ticker)]}
     />
   ) : null;
 
@@ -499,7 +502,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
   );
 }
 
-export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, hasOverrides, capReached, visibleCapReached = capReached, addCapReached = false, peerBusy, notAdopted, onDropAdd }: {
+export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, hasOverrides, capReached, visibleCapReached = capReached, addCapReached = false, peerBusy, notAdopted, onDropAdd, subject = "", existingTickers = [] }: {
   addInput: string;
   setAddInput: (v: string) => void;
   onAdd: () => void;
@@ -511,21 +514,118 @@ export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, ha
   peerBusy: boolean;
   notAdopted: string[];
   onDropAdd?: (ticker: string) => void;
+  /** FW-38: Autocomplete-Filter (Subject + bereits vorhandene Peers ausblenden). */
+  subject?: string;
+  existingTickers?: string[];
 }) {
+  // FW-38: Autocomplete wie TickerSearch.tsx (gleicher Endpoint /api/search-ticker,
+  // 250 ms Debounce). Fehler/leere Antwort → keine Vorschlaege; das Feld bleibt
+  // reine Handeingabe. Auswahl fuellt nur das Feld, Hinzufuegen bleibt onAdd.
+  const [rawSuggestions, setRawSuggestions] = useState<PeerSuggestion[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [highlight, setHighlight] = useState(-1);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const reqSeq = useRef(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const suggestions = useMemo(
+    () => rankPeerSuggestions(rawSuggestions, { subject, existing: existingTickers }),
+    [rawSuggestions, subject, existingTickers.join(",")],
+  );
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setSuggestOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => { document.removeEventListener("mousedown", onDown); clearTimeout(debounceRef.current); };
+  }, []);
+
+  const runSearch = (q: string) => {
+    clearTimeout(debounceRef.current);
+    const query = q.trim();
+    if (!query) { setRawSuggestions([]); setSuggestOpen(false); return; }
+    debounceRef.current = setTimeout(async () => {
+      const seq = ++reqSeq.current;
+      let list: PeerSuggestion[] = [];
+      try {
+        // Lazy-Import: queryClient liest import.meta.env beim Laden; statisch
+        // importiert wuerde das die Node-Render-Tests der Peer-Sektion brechen.
+        const { apiRequest } = await import("@/lib/queryClient");
+        const res = await apiRequest("GET", `/api/search-ticker?q=${encodeURIComponent(query)}`);
+        list = parsePeerSearchResponse(await res.json());
+      } catch {
+        list = [];
+      }
+      if (seq !== reqSeq.current) return;
+      setRawSuggestions(list);
+      setHighlight(-1);
+      setSuggestOpen(list.length > 0);
+    }, 250);
+  };
+
+  const pickSuggestion = (s: PeerSuggestion) => {
+    setAddInput(s.ticker);
+    setSuggestOpen(false);
+    setHighlight(-1);
+  };
+
+  const showList = suggestOpen && suggestions.length > 0 && !peerBusy;
+
   return (
     <div className="space-y-1 pt-1">
       <div className="flex flex-wrap items-center gap-2">
+        <div className="relative" ref={wrapRef}>
         <input
           type="text"
           value={addInput}
-          onChange={e => setAddInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") onAdd(); }}
+          onChange={e => { setAddInput(e.target.value); runSearch(e.target.value); }}
+          onFocus={() => { if (suggestions.length > 0 && addInput.trim()) setSuggestOpen(true); }}
+          onKeyDown={e => {
+            if (showList && e.key === "ArrowDown") { e.preventDefault(); setHighlight(h => Math.min(h + 1, suggestions.length - 1)); return; }
+            if (showList && e.key === "ArrowUp") { e.preventDefault(); setHighlight(h => Math.max(h - 1, -1)); return; }
+            if (e.key === "Escape") { setSuggestOpen(false); return; }
+            if (e.key === "Enter") {
+              if (showList && highlight >= 0) { pickSuggestion(suggestions[highlight]); return; }
+              setSuggestOpen(false);
+              onAdd();
+            }
+          }}
+          role="combobox"
+          aria-expanded={showList}
+          aria-autocomplete="list"
+          autoComplete="off"
           placeholder="Ticker hinzufügen (z.B. LLY)"
           className="text-[11px] bg-muted/30 border border-border/50 rounded-md px-2 py-1 w-40 focus:outline-none focus:ring-1 focus:ring-primary/40"
           maxLength={12}
           disabled={peerBusy}
           data-testid="input-peer-add"
         />
+        {showList && (
+          <ul
+            role="listbox"
+            className="absolute left-0 top-full mt-1 z-50 w-72 max-w-[calc(100vw-2rem)] max-h-64 overflow-auto rounded-md border border-border bg-popover shadow-lg py-1"
+            data-testid="peer-suggest-list"
+          >
+            {suggestions.map((s, i) => (
+              <li
+                key={s.ticker}
+                role="option"
+                aria-selected={i === highlight}
+                onMouseDown={e => { e.preventDefault(); pickSuggestion(s); }}
+                onMouseEnter={() => setHighlight(i)}
+                className={`flex items-center gap-2 px-2 py-1 cursor-pointer text-[11px] ${i === highlight ? "bg-muted/60" : ""} ${s.unavailable ? "opacity-60" : ""}`}
+                data-testid={`peer-suggest-${s.ticker}`}
+              >
+                <span className="font-mono font-semibold shrink-0">{s.ticker}</span>
+                <span className="truncate text-foreground/60 flex-1">{s.name}</span>
+                {s.etfByName && <span className="text-[9px] px-1 rounded bg-amber-500/10 text-amber-400/80 shrink-0" title="Laut Name ein ETF/Fonds — als Peer meist ungeeignet">ETF/Fonds?</span>}
+                {s.unavailable && <span className="text-[9px] px-1 rounded bg-muted text-foreground/50 shrink-0" title="Lokale Börse ohne FMP-Daten">keine Daten</span>}
+                {!s.unavailable && !s.etfByName && s.exchange && <span className="text-[9px] text-foreground/40 shrink-0">{s.exchange}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+        </div>
         <button
           onClick={onAdd}
           disabled={peerBusy || !addInput.trim() || capReached}
