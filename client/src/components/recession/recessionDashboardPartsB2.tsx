@@ -10,6 +10,8 @@ import {
   getProbColor, getProbBg, getScoreColor, getScoreBg, getGaugeColor,
 } from "./recessionDashboardShared";
 import { riskLevelPhrase } from "@shared/risk-level-label";
+import { recessionConflictMatrix } from "@shared/asset-conflict-matrix";
+import { AssetConflictSummary } from "../sections/AssetConflictSummary";
 
 // Section 5: Indicator Table (full 17 indicators)
 
@@ -26,6 +28,9 @@ export function Summary({ data }: { data: RecessionAnalysis }) {
           <div className="text-sm leading-relaxed">{data.interpretation}</div>
         </div>
       </div>
+
+      {/* Konfliktmatrix (Future_Work §8) — Anzeige, ändert Wahrscheinlichkeiten und Fazit nicht */}
+      <AssetConflictSummary matrix={recessionConflictMatrix(data.subgroups)} />
 
       {/* Top 3 Drivers */}
       <div>

@@ -1,5 +1,7 @@
 import type { GoldAnalysis } from "../../../../shared/gold-schema";
 import { ExternalLink } from "lucide-react";
+import { AssetConflictSummary } from "../sections/AssetConflictSummary";
+import { goldConflictMatrix } from "../../../../shared/asset-conflict-matrix";
 
 interface Props { data: GoldAnalysis }
 
@@ -26,6 +28,9 @@ export function GoldSummarySection({ data }: Props) {
             </tbody>
           </table>
         </div>
+
+        {/* Konfliktmatrix (Future_Work §8) — Anzeige, ändert Sentiment und GIS nicht */}
+        <AssetConflictSummary matrix={goldConflictMatrix(data)} />
 
         {/* Final Assessment */}
         <div className="space-y-2">

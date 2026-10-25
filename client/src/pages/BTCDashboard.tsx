@@ -11,6 +11,8 @@ import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { Section13Miner, useMinerData } from "@/components/sections/Section13Miner";
 import { StablecoinLiquidityPanel } from "@/components/btc/StablecoinLiquidityPanel";
+import { AssetConflictSummary } from "@/components/sections/AssetConflictSummary";
+import { btcConflictMatrix } from "@shared/asset-conflict-matrix";
 import {
   calcCapitulationZones, buildCapitulationSegments, isCapitulationResolved,
   calcBreakevenPrice, DEFAULT_FLEET, blockRewardForDate,
@@ -2664,6 +2666,9 @@ export function Section12Fazit({ data }: { data: BTCAnalysis }) {
   return (
     <SectionCard number={14} title="Umfassendes Gesamt-Fazit">
       <div className="space-y-4">
+        {/* Konfliktmatrix (Future_Work §8) — Anzeige, ändert die Gesamtbewertung nicht */}
+        <AssetConflictSummary matrix={btcConflictMatrix(data)} />
+
         {/* Overall verdict banner */}
         <div className={`rounded-lg p-4 border ${
           bullCount <= 1 ? "bg-red-500/10 border-red-500/30" :
