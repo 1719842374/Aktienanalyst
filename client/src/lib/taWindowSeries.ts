@@ -59,7 +59,7 @@ function calcRSI(closes: number[], period = 14): (number | undefined)[] {
   return rsi;
 }
 
-function calcBollinger(closes: number[], period = 20, k = 2) {
+export function calcBollinger(closes: number[], period = 20, k = 2) {
   return closes.map((_, i) => {
     if (i < period - 1) return { bbMid: undefined, bbUpper: undefined, bbLower: undefined };
     const slice = closes.slice(i - period + 1, i + 1);
