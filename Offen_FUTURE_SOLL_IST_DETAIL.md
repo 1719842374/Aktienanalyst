@@ -10,7 +10,7 @@
 2. Jede Zeile gegen den Code auf `35ead515` geprüft, mit `rg` (Volltextsuche) und Lesen der Fundstelle. Bei Anzeige-Punkten habe ich die Kette verfolgt: Oberfläche (`client/src`) → Hook → API-Route → Server → Quelle bzw. `shared/`-Schema.
 3. Die Commit-Kennung (SHA) stammt aus `git log` auf dem Klon (der Commit, der die Datei oder Stelle eingeführt hat).
 4. FRED-Reihen für den Rezessions-Katalog habe ich am 18.10. gegen 22:35 Uhr Berlin einmal direkt abgerufen. Das zeigt nur, ob die Quelle liefert, nicht, was das Dashboard live anzeigt. Live in der Oberfläche getestet (Tester) habe ich nichts.
-5. Offene PRs habe ich über GitHub abgefragt (Stand 22:40 Uhr Berlin). Einen PR für BTC-WALCL (Werki), ADR-Mapping (dr eggbot) oder Real10Y in Sektion 12 (Grok Bot) gibt es noch nicht. Die Punkte stehen deshalb als „in Arbeit, noch kein PR“. Nachtrag 18.10., ca. 23:20 Uhr Berlin: BTC-WALCL ist gemergt (#266, `29fdf1d5`), ADR-Mapping ist Draft #265 (Head `dbdd7475`), Real10Y in Sektion 12 ist Draft #267 (Head `c224e2c9`).
+5. Offene PRs habe ich über GitHub abgefragt (Stand 22:40 Uhr Berlin). Einen PR für BTC-WALCL (Werki), ADR-Mapping (dr eggbot) oder Real10Y in Sektion 12 (Grok Bot) gibt es noch nicht. Die Punkte stehen deshalb als „in Arbeit, noch kein PR“. Nachtrag 18.10., ca. 23:20 Uhr Berlin: BTC-WALCL ist gemergt (#266, `29fdf1d5`), ADR-Mapping ist Draft #265 (Head `dbdd7475`), Real10Y in Sektion 12 ist Draft #267 (Head `c224e2c9`). Nachtrag 25.10.: ADR-Mapping via #326 f7d3fe0e gemergt (#265 abgelöst), 🟡 bis Tester PASS.
 
 ## Status-Zeichen
 
