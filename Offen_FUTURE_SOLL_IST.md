@@ -1,3 +1,4 @@
+> Nachzug 25.10.2026 auf `main` `73eff97e`: Status je Punkt mit offenen PRs im Abschnitt „Nachzug 25.10.2026“ in [`Offen_FUTURE_SOLL_IST_DETAIL.md`](Offen_FUTURE_SOLL_IST_DETAIL.md).
 > Aktueller Soll-Ist im Detail (alle 11 Future-Dateien, Stand 18.10.2026 auf `35ead515`): siehe [`Offen_FUTURE_SOLL_IST_DETAIL.md`](Offen_FUTURE_SOLL_IST_DETAIL.md). Der Inhalt unten ist der Stand vom 11.10.2026.
 
 # Offen — Future Soll/Ist (main)
