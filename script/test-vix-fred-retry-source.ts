@@ -13,6 +13,7 @@
 import React from "react";
 import { readFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
+import { withoutApproved326 } from "./guard-approved-326";
 import type { AddressInfo } from "node:net";
 
 const FRED_CSV = readFileSync("script/fixtures/fred-VIXCLS-2026-10-25.csv", "utf8");
@@ -144,7 +145,7 @@ async function parent() {
   ok("QQQ (VXNCLS, kein Yahoo-Zwilling): kein volSource, Notiz wie main", c.qqqHasSource === false && c.qqqNote === "FRED VXNCLS leer", JSON.stringify([c.qqqHasSource, c.qqqNote]));
   const base = execFileSync("git", ["merge-base", "HEAD", "origin/main"], { encoding: "utf8" }).trim();
   const touched = execFileSync("git", ["diff", "--name-only", base], { encoding: "utf8" }).split("\n");
-  ok("Score-Pfad unberührt (recession.ts, analyze-route.ts, researcher.ts)", !touched.some(f => /server\/(recession|analyze-route|researcher)\.ts$/.test(f)), touched.join(","));
+  ok("Score-Pfad unberührt (recession.ts, analyze-route.ts, researcher.ts)", !withoutApproved326(base, touched).some(f => /server\/(recession|analyze-route|researcher)\.ts$/.test(f)), touched.join(",")); // #326: zeilengenaue Freigabe
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
