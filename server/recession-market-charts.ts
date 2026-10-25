@@ -15,7 +15,7 @@ import {
   fmpRatiosTtm,
   isFmpAvailable,
 } from "./fmp";
-import { fetchFredVolSeries, fetchVstoxxVol } from "./recession-markets";
+import { fetchFredVolWithYahooFallback, fetchVstoxxVol } from "./recession-markets";
 import { macd1269, rsiWilder } from "../shared/tech-rsi";
 import {
   CHART_BOOKS,
@@ -150,8 +150,7 @@ async function loadVol(
     };
   }
   if (book.fredStart) {
-    const vol = await fetchFredVolSeries(book.volId, book.fredStart);
-    return { vol, volNote: vol.length ? null : `FRED ${book.volId} leer` };
+    return fetchFredVolWithYahooFallback(book.volId, book.fredStart);
   }
   const { vol, source, stoxxErr } = await fetchVstoxxVol(from, to);
   if (!vol.length) {
