@@ -1,12 +1,12 @@
 /**
  * F1-43 / F1-45 (ohne F1-41): Rezessions-Sektion „Vier Märkte“ bekommt zwei Overlay-Schalter im
- * Preis-Pane — Markt-Spread Baa (FRED BAA10Y) und 10J-Treasury (FRED DGS10). Bestehende Endpoints
- * /api/credit-spread/market und /api/treasury-10y/market, nur Anzeige, kein Score. Default aus.
+ * Preis-Pane — Markt-Spread Baa (FRED BAA10Y) und Real 10J (FRED DFII10, wie #267 Real10Y). Bestehende Endpoints
+ * /api/credit-spread/market und /api/analyze-btc/real10y-history, nur Anzeige, kein Score. Default aus.
  *
  * Echte Sektion (createRoot + React.act auf script/lib/fake-dom), fetch gestubbt mit Live-Payloads
  * (script/fixtures/recession-s10-credit-t10y-live.json). Recharts zeichnet in fake-dom nicht —
  * geprüft werden Schalter, Abrufe, Statuszeilen und der geteilte Join-Helper.
- * Gegenprobe: auf main (2e360ca9) fehlen Schalter und Helper → exit 1.
+ * Gegenprobe: auf main (2e360ca9) fehlen Schalter und Helper → exit 1; auf 438f26ac (nominal DGS10) → exit 1.
  *
  * Ausfuehren: npx tsx --tsconfig script/tsconfig.jsx.json script/test-recession-s10-credit-t10y-f1-43.ts
  */
@@ -25,7 +25,7 @@ function check(name: string, cond: boolean, detail?: string) {
 
 const { doc } = installFakeDom({ hash: "#/recession" });
 const fx = JSON.parse(readFileSync(new URL("./fixtures/recession-s10-credit-t10y-live.json", import.meta.url), "utf8"));
-const lastC = fx.credit.points.at(-1), lastT = fx.t10y.points.at(-1);
+const lastC = fx.credit.points.at(-1), lastT = fx.real10y.latestReal10y;
 
 let mode: "ok" | "fail" | "empty" = "ok";
 const calls: string[] = [];
@@ -39,10 +39,10 @@ const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { sta
     if (mode === "empty") return json({ ...fx.credit, points: [], stress: null, note: "FRED nicht erreichbar oder leer" });
     return json(fx.credit);
   }
-  if (url.includes("/api/treasury-10y/market")) {
-    if (mode === "fail") return new Response("upstream", { status: 503 });
-    if (mode === "empty") return json({ ...fx.t10y, points: [], note: "FRED nicht erreichbar oder leer" });
-    return json(fx.t10y);
+  if (url.includes("/api/analyze-btc/real10y-history")) {
+    if (mode === "fail") return json({ error: "FRED DFII10 nicht verfügbar" }, 502);
+    if (mode === "empty") return json({ real10yByDate: {}, latestReal10y: null });
+    return json(fx.real10y);
   }
   return json({});
 };
@@ -63,10 +63,14 @@ async function main() {
   if (typeof join === "function") {
     const off = join(spy.ohlcv, null, null);
     check("beide aus → Bars unverändert (gleiche Referenz)", off === spy.ohlcv);
-    const on = join(spy.ohlcv, fx.credit, fx.t10y);
+    const on = join(spy.ohlcv, fx.credit, fx.real10y);
     const last = on.at(-1);
     check(`letzter Bar ${last.date}: Baa = ${lastC.value} (FRED ${lastC.date})`, last._credit === lastC.value, String(last._credit));
-    check(`letzter Bar: 10J = ${lastT.value} (FRED ${lastT.date})`, last._t10y === lastT.value, String(last._t10y));
+    const atT = on.find((b: any) => b.date === lastT.date);
+    check(`Bar ${lastT.date}: Real 10J = ${lastT.value} (DFII10, exakter Treffer wie #267)`, atT?._t10y === lastT.value, String(atT?._t10y));
+    check(`letzter Bar ${last.date} ohne DFII10-Wert → null (n/a), kein Fortschreiben`, last._t10y === null, String(last._t10y));
+    const nullT = on.filter((b: any) => b._t10y == null).length;
+    check("Real 10J ist nicht der nominale DGS10 (Werte < 3,5 %)", on.every((b: any) => b._t10y == null || b._t10y < 3.5) && nullT < on.length * 0.05, String(nullT));
     check("Close bleibt unverändert", last.close === spy.ohlcv.at(-1).close);
     const nullC = on.filter((b: any) => b._credit == null).length;
     check("fast alle Bars haben einen Spread (Lücke ≤ 7 Tage)", nullC < on.length * 0.02, String(nullC));
@@ -91,22 +95,24 @@ async function main() {
   const tC = findByTestId(c, "toggle-recession-credit"), tT = findByTestId(c, "toggle-recession-t10y");
   check("Preis-Chart gerendert", !!findByTestId(c, "price-chart"));
   check("Schalter Baa-Spread vorhanden", !!tC && tC.textContent === "Baa-Spread");
-  check("Schalter 10J-Treasury vorhanden", !!tT && tT.textContent === "10J-Treasury");
+  check("Schalter Real 10J vorhanden", !!tT && tT.textContent === "Real 10J");
   check("Default aus: aria-pressed false", reactPropsOf(tC)?.["aria-pressed"] === false && reactPropsOf(tT)?.["aria-pressed"] === false);
   check("Default aus: keine Statuszeile", !findByTestId(c, "recession-credit-status") && !findByTestId(c, "recession-t10y-status"));
-  check("Default aus: kein FRED-Abruf", !calls.some(u => u.includes("credit-spread") || u.includes("treasury-10y")), calls.join(","));
+  check("Default aus: kein FRED-Abruf", !calls.some(u => u.includes("credit-spread") || u.includes("real10y") || u.includes("treasury-10y")), calls.join(","));
 
   await click(tC);
   const sC = findByTestId(c, "recession-credit-status")?.textContent ?? "";
   check("Baa an: genau ein Abruf /api/credit-spread/market", calls.filter(u => u.includes("/api/credit-spread/market")).length === 1);
   check(`Baa-Status nennt ${lastC.value.toFixed(2)} % per ${lastC.date}`, sC.includes(`aktuell ${lastC.value.toFixed(2)} % per ${lastC.date}`), sC);
   check("Baa-Status: FRED BAA10Y + kein Score-Einfluss", sC.includes("BAA10Y") && sC.includes("kein Score-Einfluss"), sC);
-  check("10J weiter aus", !findByTestId(c, "recession-t10y-status") && !calls.some(u => u.includes("treasury-10y")));
+  check("Real 10J weiter aus", !findByTestId(c, "recession-t10y-status") && !calls.some(u => u.includes("real10y")));
 
   await click(tT);
   const sT = findByTestId(c, "recession-t10y-status")?.textContent ?? "";
-  check(`10J-Status nennt ${lastT.value.toFixed(2)} % per ${lastT.date}`, sT.includes(`aktuell ${lastT.value.toFixed(2)} % per ${lastT.date}`), sT);
-  check("10J-Status: DGS10", sT.includes("DGS10"), sT);
+  check("Real-10J-Abruf über bestehende DFII10-Route mit startDate = ältester SPY-Kurstag", calls.some(u => u.includes(`/api/analyze-btc/real10y-history?startDate=${spy.ohlcv[0].date}`)), calls.filter(u => u.includes("real10y")).join(","));
+  check("kein Abruf des nominalen DGS10", !calls.some(u => u.includes("treasury-10y")));
+  check(`Real-10J-Status nennt ${lastT.value.toFixed(2)} % per ${lastT.date}`, sT.includes(`aktuell ${lastT.value.toFixed(2)} % per ${lastT.date}`), sT);
+  check("Label 'Real 10J (DFII10)', kein DGS10", sT.startsWith("■ Real 10J (DFII10)") && !sT.includes("DGS10"), sT);
 
   await click(findByTestId(c, "toggle-recession-credit"));
   check("Baa wieder aus → Statuszeile weg", !findByTestId(c, "recession-credit-status"));
@@ -120,7 +126,7 @@ async function main() {
     const a = findByTestId(r.c, "recession-credit-status")?.textContent ?? "";
     const b = findByTestId(r.c, "recession-t10y-status")?.textContent ?? "";
     check(`${m}: Baa-Status n/a, keine Zahl`, a.includes(": n/a") && !/aktuell \d/.test(a), a);
-    check(`${m}: 10J-Status n/a, keine Zahl`, b.includes(": n/a") && !/aktuell \d/.test(b), b);
+    check(`${m}: Real-10J-Status n/a, keine Zahl`, b.includes(": n/a") && !/aktuell \d/.test(b), b);
     check(`${m}: Preis-Chart bleibt`, !!findByTestId(r.c, "price-chart"));
     await act(async () => { r.root.unmount(); });
   }
