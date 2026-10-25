@@ -4,7 +4,6 @@
  *
  * Ausführen: npx tsx script/test-btc-liquidity.ts
  */
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fredCsvObservations } from "../server/fred-csv";
 import {
@@ -281,14 +280,12 @@ console.log("\n=== Verdrahtung / Sperren ===");
   check("Client lädt über apiRequest + applyBtcLiquidityBlock", /apiRequest\("GET", "\/api\/analyze-btc\/liquidity"/.test(client) && /applyBtcLiquidityBlock\(baseIndicators/.test(client));
   const dash = readFileSync("client/src/pages/BTCDashboard.tsx", "utf8");
   check("Dashboard: WALCL-Toggle, default aus", /toggle-btc-walcl/.test(dash) && /\[showWalcl, setShowWalcl\] = useState\(false\)/.test(dash) && /yAxisId="walcl"/.test(dash));
-  let analyzeRouteDiff = "";
-  try {
-    analyzeRouteDiff = execFileSync("git", ["diff", "--name-only", "35ead515", "--", "server/analyze-route.ts"], { encoding: "utf8" }).trim()
-      + execFileSync("git", ["status", "--porcelain", "--", "server/analyze-route.ts"], { encoding: "utf8" }).trim();
-  } catch (e: any) {
-    analyzeRouteDiff = `git-Fehler: ${e?.message}`;
-  }
-  check("server/analyze-route.ts unverändert (Philip-Sperre)", analyzeRouteDiff === "", analyzeRouteDiff);
+  // Merge-fest statt Datei-Diff seit 35ead515: Der Aktien-Pfad (analyze-route.ts) darf den BTC-Liquiditätsblock
+  // nicht einbinden — kein Import/Aufruf von btc-liquidity, fred-csv, Liquiditäts-Gewichten oder der BTC-Route.
+  const analyzeRoute = readFileSync("server/analyze-route.ts", "utf8");
+  const btcRefs = ["btc-liquidity", "fred-csv", "computeBtcLiquidityBlock", "applyBtcLiquidityBlock", "BTC_LIQUIDITY_", "buildBtcLiquidityResponse", "/api/analyze-btc"]
+    .filter(k => analyzeRoute.includes(k));
+  check("server/analyze-route.ts ohne BTC-Liquiditäts-Kopplung (Philip-Sperre)", btcRefs.length === 0, btcRefs.join(", "));
 }
 
 if (failed > 0) {
