@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
-import { buildRecessionChatContext, enrichChatContext, recessionSectionLayout } from "@shared/chat-context";
+import { buildRecessionChatContext, enrichChatContext, recessionSectionLayout, recessionSectionNumbers } from "@shared/chat-context";
 import { useChatSectionData } from "@/lib/chatSectionData";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -68,9 +68,11 @@ export default function RecessionDashboard() {
   const chatContext = useMemo(() => {
     if (!data) return null;
     const keyToId = Object.fromEntries(recessionSectionLayout(!!regions, !!(data as any).fazit).map(s => [s.key, s.id]));
-    return enrichChatContext(buildRecessionChatContext(data, { hasRegions: !!regions }), chatLive, { keyToId });
+    return enrichChatContext(buildRecessionChatContext(data, { hasRegions: !!regions, regions }), chatLive, { keyToId });
   }, [data, regions, chatLive]);
-  const chatSections = useMemo(() => (chatContext?.sections ?? []).map(({ id, label }) => ({ id, label })), [chatContext]);
+  const chatSections = useMemo(() => (chatContext?.sections ?? []).map(({ id, label, key }) => ({ id, label, key })), [chatContext]);
+  // Angezeigte Nummern aus derselben Schlüssel-Liste wie der Chat (RECESSION_SECTION_DEFS).
+  const nr = recessionSectionNumbers(!!regions, !!data?.fazit);
   const sectionEl = useCallback((id: number) => mainRef.current?.querySelector<HTMLElement>(`[data-testid="section-${id}"]`) ?? null, []);
   const jumpToSection = useCallback((id: number) => {
     sectionEl(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -161,20 +163,20 @@ export default function RecessionDashboard() {
                 <RegionalCatalogSection catalogs={regions} />
               </SectionCard>
             )}
-            <RecessionRsiSection number={regions ? 9 : 8} />
-            <RecessionMarketChartsSection number={regions ? 10 : 9} />
-            <SectionCard number={regions ? 11 : 10} title="Buffett-Indikator: Marktwert zum BIP">
+            <RecessionRsiSection number={nr.rsi} />
+            <RecessionMarketChartsSection number={nr.markt} />
+            <SectionCard number={nr.buffett} title="Buffett-Indikator: Marktwert zum BIP">
               <BuffettRatioPanel />
             </SectionCard>
-            <SectionCard number={regions ? 12 : 11} title="Zusammenfassung & Top-3 Treiber">
+            <SectionCard number={nr.summary} title="Zusammenfassung & Top-3 Treiber">
               <Summary data={data} />
             </SectionCard>
             {data.fazit && (
-              <SectionCard number={regions ? 13 : 12} title="Fazit & Makro-Risikobewertung">
+              <SectionCard number={nr.fazit} title="Fazit & Makro-Risikobewertung">
                 <FazitSection fazit={data.fazit} />
               </SectionCard>
             )}
-            <SectionCard number={regions ? (data.fazit ? 14 : 13) : (data.fazit ? 13 : 12)} title="Quellenliste">
+            <SectionCard number={nr.quellen} title="Quellenliste">
               <SourcesList sources={data.sources} />
             </SectionCard>
             <div className="pb-4">
