@@ -16,6 +16,7 @@ import { GoldCycleSection } from "@/components/gold/GoldCycleSection";
 import { GoldSummarySection } from "@/components/gold/GoldSummarySection";
 import { GoldAdaptiveLayersCard } from "@/components/gold/GoldAdaptiveLayersCard";
 import { GoldAdaptiveGatesCard } from "@/components/gold/GoldAdaptiveGatesCard";
+import { GoldExtraSignalsCard } from "@/components/gold/GoldExtraSignalsCard";
 import { GoldNewsCard } from "@/components/gold/GoldNewsCard";
 import { GoldPriceChart } from "@/components/gold/GoldPriceChart";
 import { GoldSilverRatioRow } from "@/components/gold/GoldSilverRatioRow";
@@ -231,6 +232,7 @@ export default function GoldDashboard() {
               <div ref={setSectionRef(8)}><GoldSummarySection data={data} /></div>
               <GoldAdaptiveLayersCard data={data} />
               <GoldAdaptiveGatesCard data={data} />
+              <GoldExtraSignalsCard data={data} />
               <div className="pb-8" />
             </div>
           ) : null}
