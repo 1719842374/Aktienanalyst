@@ -54,6 +54,7 @@ import { MoatPorterSection } from "@/components/sections/MoatPorterSection";
 import { PestelSection } from "@/components/sections/PestelSection";
 import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelationsSection";
 import { ChatWidget } from "@/components/chat/ChatWidget";
+import { visibleTopOf } from "@/lib/activeSection";
 import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
 import { useChatSectionData } from "@/lib/chatSectionData";
 import {
@@ -398,7 +399,7 @@ export default function Dashboard() {
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
   const getActiveSectionId = useCallback((): number | null => {
-    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
     let best: number | null = null;
     for (const { id } of SECTIONS) {
       const el = sectionRefs.current[id];
