@@ -50,6 +50,7 @@ import { MonteCarloSection } from "@/components/sections/MonteCarloSection";
 import { SummarySection } from "@/components/sections/SummarySection";
 import { ManagementScoreSection } from "@/components/sections/ManagementScoreSection";
 import { TechnicalChart } from "@/components/sections/TechnicalChart";
+import { BuffettMacroCard } from "@/components/sections/BuffettMacroCard";
 import { MoatPorterSection } from "@/components/sections/MoatPorterSection";
 import { PestelSection } from "@/components/sections/PestelSection";
 import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelationsSection";
@@ -663,7 +664,7 @@ export default function Dashboard() {
               <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerResetNotice={peerResetNoticeFor(peerResetNotice, data.ticker)?.ticker ?? null} onDismissPeerResetNotice={() => setPeerResetNotice(null)} peerBusy={analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides)} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion">{isYahooOnly(data) ? <YahooNoValuationCard number={10} title="INVERSION – RISIKOEINPREISUNG" data={data} /> : <Section8 data={data} useLLM={useLLM} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /><BuffettMacroCard /></SectionErrorBoundary></div>
               <div ref={setSectionRef(13)}><SectionErrorBoundary sectionId={13} sectionLabel="Moat / Porter"><MoatPorterSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="PESTEL"><PestelSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(15)}><SectionErrorBoundary sectionId={15} sectionLabel="Makro-Korr."><MacroCorrelationsSection data={data} /></SectionErrorBoundary></div>
