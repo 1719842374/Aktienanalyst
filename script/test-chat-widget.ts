@@ -45,6 +45,6 @@ assert.ok(w.includes("Was sollen wir erkunden?"));
 assert.ok(!/Geben Sie @|Perplexity/.test(w)); ok("Fenster-Controls, Resize-Griff, Sektionsbindung vorhanden; keine Mockup-Fremdtexte");
 const dash = readFileSync("client/src/pages/Dashboard.tsx", "utf8");
 assert.ok(dash.includes("<ChatWidget") && dash.includes('dashboard="stock"') && dash.includes("buildStockChatContext(data)"));
-for (const f of ["client/src/pages/BTCDashboard.tsx", "client/src/pages/GoldDashboard.tsx", "client/src/pages/RecessionDashboard.tsx"]) assert.ok(!readFileSync(f, "utf8").includes("ChatWidget"), f);
-ok("nur im Aktien-Dashboard eingehängt (BTC/Gold/Rezession folgen in PR 2)");
+for (const f of ["client/src/pages/Dashboard.tsx", "client/src/pages/BTCDashboard.tsx", "client/src/pages/GoldDashboard.tsx", "client/src/pages/RecessionDashboard.tsx"]) assert.ok(readFileSync(f, "utf8").includes("<ChatWidget"), f);
+ok("in allen vier Dashboards eingehängt (PR 2: BTC/Gold/Rezession)");
 console.log(`\n${n} Checks grün.`);
