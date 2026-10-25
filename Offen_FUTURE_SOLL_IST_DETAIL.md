@@ -1,7 +1,7 @@
 # Soll-Ist im Detail: alle 11 Future-Dateien gegen main `29fdf1d5`
 
 **Stand:** 18.10.2026, ca. 23:20 Uhr Berlin (MESZ, UTC+2); Basis 22:45 Uhr
-**Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs. **Nachzug auf `main` = `29fdf1d5e19cc458005469098701d8190d1d374d` (#266, über #264 `4dd43ab8`):** nur die Zeilen zu #264, #265, #266, #267 und die Zählung, geprüft über die öffentliche GitHub-API und Raw-Dateien, ohne Klon. Alle übrigen Zeilen sind unverändert Stand `35ead515`.
+**Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs. **Nachzug auf `main` = `29fdf1d5e19cc458005469098701d8190d1d374d` (#266, über #264 `4dd43ab8`):** nur die Zeilen zu #264, #265, #266, #267 und die Zählung, geprüft über die öffentliche GitHub-API und Raw-Dateien, ohne Klon. Alle übrigen Zeilen sind unverändert Stand `35ead515`. **Nachzug `09750838` (#320, 25.10.2026):** F1-71/F1-74, dazu F1-30/F1-31/F1-34 (#274 `99a06d1b`, gegen den Code auf `09750838` belegt) und die Zählung.
 **Erstellt von:** Grok Bot (Executor im Auftrag von Stabschef)
 
 ## Wie diese Liste entstanden ist
@@ -92,11 +92,11 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 | F1-27 | Z.399 | Offener Punkt: Datenquelle CDS / Einzelanleihen (kostenpflichtig?) | Philip 18.10.: Leeway/Terrapin nicht freigegeben | ⛔ | Kostenfrage bei Philip |
 | F1-28 | Z.400 | Offener Punkt: Qualität historischer Dividenden bei EU-Tickern | Währungsprüfung `TechnicalChart.tsx:368` (`dividendCurrencyCheck`), LSE-Pence/Rendite `6fb9f6d` (#249), `b0e990e` (#244) | ✅ | Keiner |
 | F1-29 | Z.401–402 | Offene Punkte: Performance des Overlays, Design der zweiten Y-Achse | Overlays laden nur bei eingeschaltetem Chip (`TechnicalChart.tsx:158, 163, 168`); eigene rechte Achsen. Tester #263: drei rechte Achsen gleichzeitig lesbar, ohne Überlappung (bei 375 px erst nach Scrollen) | ✅ | Soft-Punkt aus #263: 10J-Antwort 566 KB ohne gzip |
-| F1-30 | Z.477–478, 493 | Buffett: Yahoo `^W5000` mit Retry und längerem Timeout | `server/buffett-route.ts:94–98` ein Versuch, 25 s Timeout; FRED `:50` ebenfalls ein Versuch | ❌ | Autonom, klein: 2. Versuch mit Pause, keine Formeländerung |
-| F1-31 | Z.479 | Wenn Wilshire fehlt: FRED `NCBEILQ027S` + `FBCELLQ027S` auch für aktuelle Werte | `server/buffett-route.ts:163–164, 172–181` nur als Historie vor Indexstart; `:187` wirft „Wilshire-Quote leer“. Ersatz: Fortschreibung über Tagesrendite eines Proxys bis 30 Tage (`:189–191`, `37127f1` #245) | 🟡 | Autonom: FRED-Marktwert als Ersatz, wenn `^W5000` leer ist (Quartalswerte, klar markiert) |
+| F1-30 | Z.477–478, 493 | Buffett: Yahoo `^W5000` mit Retry und längerem Timeout | ✅ `99a06d1b` (#274), belegt auf `09750838`: `server/buffett-route.ts:37–39` `BUFFETT_FETCH_ATTEMPTS = 2`, Pause 1500 ms, `YAHOO_TIMEOUT_MS = 35000` (FRED 25000); `:66–90` `fetchTextWithRetry`; `:210` `^W5000` mit 2 Versuchen und Yahoo-Timeout; FRED ebenfalls 2 Versuche (`:119–124`). Vorher: `:94–98` ein Versuch, 25 s Timeout; FRED `:50` ebenfalls ein Versuch | ✅ | Keiner |
+| F1-31 | Z.479 | Wenn Wilshire fehlt: FRED `NCBEILQ027S` + `FBCELLQ027S` auch für aktuelle Werte | ✅ `99a06d1b` (#274), belegt auf `09750838`: `server/buffett-route.ts:286–300` wenn `wilshireResult.bars` fehlt → Reihe aus NCBEILQ027S + FBCELLQ027S als Quartalsreihe mit eigenem Trend, `fallback` mit Quelle/Grund/`asOf` (`:223, 297`), Cache 5 min (`:33`); Kennzeichnung im Panel `BuffettRatioPanel.tsx:402–409` „Ersatzquelle … Wilshire 5000 nicht verfügbar“. Vorher: `:163–164, 172–181` nur Historie vor Indexstart; `:187` „Wilshire-Quote leer“; Proxy-Fortschreibung bis 30 Tage (`37127f1` #245) | ✅ | Keiner |
 | F1-32 | Z.482 | `period2` immer auf jetzt + 1 Tag | `server/buffett-route.ts:94` | ✅ | Keiner |
 | F1-33 | Z.483, 495 | Letzten Punkt als „aktuell“ markieren, blaue Box darauf ausrichten | `client/src/components/recession/BuffettRatioPanel.tsx:238–251` (`lastPointLabel`). SHA `37127f1` (#245) | ✅ | Keiner |
-| F1-34 | Z.486, 506 | Konkreten Backend-Fehler anzeigen statt generischer roter Box | `server/buffett-route.ts:258` immer „Buffett-Quote nicht verfügbar“ → `BuffettRatioPanel.tsx:353–359` `ApiErrorBanner` | ❌ | Autonom: Fehlergrund (Timeout, zu wenige Bars, BIP leer) im 502-Body mitgeben |
+| F1-34 | Z.486, 506 | Konkreten Backend-Fehler anzeigen statt generischer roter Box | ✅ `99a06d1b` (#274), belegt auf `09750838`: `server/buffett-route.ts:609–615` 502 mit `error: "Buffett-Quote nicht verfügbar: <Grund>"`, `errorCode`, `reason`; Gründe aus `BuffettSourceError` (`:51–56`, z. B. Timeout `:61`, „zu wenige Tagesschlüsse“ `:211`, „BIP-Reihe leer“ `:273`); Panel `BuffettRatioPanel.tsx:388–400` `ApiErrorBanner` + „n/a — <Grund>“ (`errorReason` `:47`). Vorher: `:258` immer „Buffett-Quote nicht verfügbar“ | ✅ | Keiner |
 | F1-35 | Z.488–489 | Bei Fehler nicht cachen, später neu versuchen | `server/buffett-route.ts:254` cacht nur bei Punkten > 0. Cache heute 15 min (`:29`) statt 6 h | ✅ | Keiner |
 | F1-36 | Z.438–453, 494 | Globalisierungsbereinigter Buffett (Auslandsumsatz-Anteil φ, nicht fest codiert) | `server/buffett-ratio.ts:83–105` `buildBuffettSeries` rechnet `foreignShare`, wird aber nur in `script/test-buffett-ratio.ts` aufgerufen, nicht in der Route | ❌ | Erst als **Zusatzkennzahl** autonom. In den Score-Slot nur mit Philip |
 | F1-37 | Z.459, 464–473 | φ über LLM-Call schätzen, Fallback klar markiert | 0 Treffer in `buffett-*.ts` | ❌ | Mit F1-36, LLM-Kosten gering; Fallback 0,40 markieren |
@@ -133,10 +133,10 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 | F1-68 | Z.662, 720 | Analystenschätzungen SPY: Ersatz über Yahoo oder Perplexity | `server/recession-market-charts.ts:389` nur FMP `/stable/analyst-estimates` | ❌ | Mit F1-67 |
 | F1-69 | Z.663, 721 | Optional: Margin-Debt-Chart auch für EU/Asien | FINRA nur USA (Soll sagt selbst „FINRA bleibt US-only“) | ❌ | Niedrig; keine freie EU/JP-Quelle bekannt |
 | F1-70 | Z.673, 742 | Nach den Daten-Fixes regionale Berechnung neu validieren | kein Nachweis | ❌ | Tester-Auftrag: US/EZ/JP-Katalog live mit Vorher/Nachher |
-| F1-71 | Z.749–757, 765–766, 771–774, 782 | Buffett Europa (STOXX 600 / VGK) und Asien (TOPIX / ASHR) mit echten Benchmarks | `server/buffett-route.ts:219–223` weiter Weltbank-Jahresquoten `DDDM01EZA156NWDB` / `DDDM01CNA156NWDB` | ❌ | Autonom (nur Chart, kein Score) |
+| F1-71 | Z.749–757, 765–766, 771–774, 782 | Buffett Europa (STOXX 600 / VGK) und Asien (TOPIX / ASHR) mit echten Benchmarks | ✅ `09750838` (#320, 25.10.2026): `BuffettRatioPanel.tsx` + `buffettChartScale.ts` → `server/buffett-route.ts` → FRED EUNNGDP/DEXUSEU/DDDM01CNA156NWDB/MKTGDPCNA646NWDB + STOXX/VGK/ASHR-Proxy (Fixtures 2026-10-25); Test `test-buffett-f171-benchmarks.ts`. Vorher: `server/buffett-route.ts:219–223` Weltbank-Jahresquoten `DDDM01EZA156NWDB` / `DDDM01CNA156NWDB` | ✅ | Asia (^TPX) bleibt offen |
 | F1-72 | Z.767 | Trendlinie + 1σ/2σ-Bänder je Region | `server/buffett-route.ts:150–154` `withTrend` für alle Regionen | ✅ | Keiner |
 | F1-73 | Z.775 | Tabs US / Europa / China laden die Reihen | `BuffettRatioPanel.tsx:35–38, 296–302` | ✅ | Bei F1-71 Tab „China“ → „Asien“ nur nach Philips Asien-Entscheidung |
-| F1-74 | Z.776 | ETF-Proxy (VGK, ASHR) klar kennzeichnen | 0 Treffer | ❌ | Mit F1-71. Hinweis: „ETFs blockiert“ betrifft die ETF-Analyse, nicht ETFs als Datenquelle; im Zweifel bei Philip nachfragen |
+| F1-74 | Z.776 | ETF-Proxy (VGK, ASHR) klar kennzeichnen | ✅ `09750838` (#320, 25.10.2026): ETF-Proxy-Kennzeichnung (Ist-Kette siehe F1-71). Vorher: 0 Treffer | ✅ | Mit F1-71. Hinweis: „ETFs blockiert“ betrifft die ETF-Analyse, nicht ETFs als Datenquelle; im Zweifel bei Philip nachfragen |
 
 ## Future_2_NA_Fixes_Research.md (82 Zeilen)
 
@@ -373,19 +373,19 @@ Nicht gezählt (ℹ️, Konzept- und Content-Ideen ohne Bau-Auftrag): Z.215 Einl
 
 | Status | Zeilen | davon Wiederholung (mit „=“ markiert) | eigene Punkte |
 |---|---:|---:|---:|
-| ✅ erledigt | 103 | 0 | 103 |
-| 🟡 teilweise | 39 | 4 | 35 |
-| ❌ fehlt | 75 | 6 | 69 |
+| ✅ erledigt | 108 | 0 | 108 |
+| 🟡 teilweise | 38 | 4 | 34 |
+| ❌ fehlt | 71 | 6 | 65 |
 | ⛔ blockiert | 16 | 2 | 14 |
 | **Summe** | **233** | **12** | **221** |
 
-Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 90 erledigte Bau-Punkte.
+Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 95 erledigte Bau-Punkte.
 
 ### Je Datei
 
 | Datei | ✅ | 🟡 | ❌ | ⛔ | Summe |
 |---|---:|---:|---:|---:|---:|
-| Future_1_Work.md | 30 | 15 | 23 | 6 | 74 |
+| Future_1_Work.md | 35 | 14 | 19 | 6 | 74 |
 | Future_2_NA_Fixes_Research.md | 3 | 4 | 3 | 0 | 10 |
 | Future_3_SerpApi_Rate_Limits.md | 4 | 0 | 3 | 2 | 9 |
 | Future_4_Google_Trends_Conflict_and_Fixes.md | 4 | 0 | 4 | 2 | 10 |
@@ -396,7 +396,7 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | Future_9_Adaptive_Macro_Framework_Complete.md | 1 | 0 | 17 | 0 | 18 |
 | Future_10_Gold_Adaptive_Scoring_Framework.md | 23 | 5 | 7 | 0 | 35 |
 | Future_Work.md | 15 | 14 | 10 | 6 | 45 |
-| **Summe** | **103** | **39** | **75** | **16** | **233** |
+| **Summe** | **108** | **38** | **71** | **16** | **233** |
 
 ### In Arbeit (laufend, mit PR-Nummer)
 
@@ -424,7 +424,7 @@ Reihenfolge nach Nutzen und Aufwand (S = klein, M = mittel, L = groß).
 5. **Regionen-Umschalter vollständig** – F1-52 Backend rechnet die 5 Untergruppen je Region, F1-47 fünf Gauges, F1-48 Tabellen folgen der Region (M). Nur Anzeige, US-Handlung bleibt.
 6. **Dividende fertig machen** – F1-17 Spanne/Sektor in Sektion 6, F1-18 Hinweis in Sektion 20, F1-14 Band ab 4 % (S).
 7. **Rezessions-TA in einer Sektion** – F1-41, F1-42, F1-43, F1-45 (L), nach Punkt 3.
-8. **Buffett Europa/Asien mit echten Benchmarks** – F1-71, F1-74 (M, nur Chart). Das Label „Asien“ erst nach Philips Asien-Entscheidung.
+8. **Buffett Europa/Asien mit echten Benchmarks** – F1-71, F1-74 (M, nur Chart). Das Label „Asien“ erst nach Philips Asien-Entscheidung. ✅ `09750838` (#320); Asia ^TPX und Label „Asien“ offen.
 9. **SPY-Fundamentals und Analystenschätzungen mit Yahoo-Ersatz** – F1-67, F1-68 (S). Erst nach #264, weil dasselbe Crumb-Problem gilt.
 10. **Google Trends: Retry mit Backoff** – F3-04 (S).
 11. **Gold-Zusatzschicht ergänzen** – F10-20 AISC-Marge (Quartalswerte an die Schicht, nicht an den GIS), F10-24 Fiskaldefizit, F10-08 Volumen-Trend, F10-33 Backtest der Kreuze, F10-34 Zentralbankkäufe, F10-12/13 Bollinger/ATR (S–M).
