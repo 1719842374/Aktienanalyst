@@ -368,3 +368,98 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
     notes: ["Rezessions-Dashboard hat keine Gates; Scores sind die 5 Untergruppen", "RSI, Marktcharts und Buffett-Indikator laden eigene Daten und fehlen im Kontext"],
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR 3: Kontext vollständig. `enrichChatContext` ergänzt einen Provider-Kontext um die Werte, die
+// Sektionen im Client anzeigen (veröffentlicht über client/src/lib/chatSectionData.ts), und um
+// eine kompakte Zeile "auffaelligkeiten" je Sektion. Die Provider selbst bleiben unverändert.
+//
+// Auffälligkeiten entstehen NUR aus vorhandenen Daten/Flags/Gates:
+//   - Flags, die die Sektion selbst anzeigt (vom Publisher als `_auffaelligkeiten` geliefert),
+//   - aktive Gates (in der Gate-Sektion des Dashboards),
+//   - fehlende Werte (n/a-Felder) und nicht geladene Selbstlade-Sektionen.
+//
+// Kontext-Budget (dokumentiert, geprüft in script/test-chat-context-full.ts):
+//   Server-Limit CHAT_LIMITS.maxContextChars = 40 000 Zeichen (JSON). Client-Ziel CHAT_CONTEXT_BUDGET
+//   = 36 000 Zeichen (10 % Reserve). Je Fakt ≤ 400 Zeichen, ≤ 40 Fakten je Sektion, Auffälligkeiten
+//   ≤ 400 Zeichen. Wird das Ziel überschritten, kürzt fitChatContextBudget zuerst die längsten
+//   Textwerte (auf min. 80 Zeichen), danach die letzten Fakten der größten Sektion — Zahlen,
+//   Gates und "auffaelligkeiten" bleiben bis zuletzt erhalten.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const CHAT_CONTEXT_BUDGET = 36_000;
+export const CHAT_WEAKNESS_KEY = "auffaelligkeiten";
+/** Schlüssel, unter dem Publisher angezeigte Warn-Flags liefern (wird in `auffaelligkeiten` überführt). */
+export const CHAT_LIVE_FLAGS_KEY = "_auffaelligkeiten";
+
+export interface EnrichChatOptions {
+  /** Live-Schlüssel → Sektions-ID (z.B. Rezession "rsi" → 9). Ohne Eintrag: Schlüssel als Zahl. */
+  keyToId?: Record<string, number>;
+  /** Sektion, in der aktive Gates als Auffälligkeit erscheinen (Aktie 20, Gold 8). */
+  gatesSectionId?: number;
+}
+
+const CLIENT_HINT_RE = /im Client (berechnet|aus der Kurshistorie)|lädt eigene Daten nach/;
+
+export function enrichChatContext(
+  ctx: ChatContext,
+  live: Readonly<Record<string, Record<string, ChatFactValue>>> | null | undefined,
+  opts: EnrichChatOptions = {},
+): ChatContext {
+  const byId = new Map<number, Record<string, ChatFactValue>>();
+  for (const [key, facts] of Object.entries(live ?? {})) {
+    const id = opts.keyToId?.[key] ?? Number(key);
+    if (Number.isFinite(id) && facts) byId.set(id, facts);
+  }
+  const activeGates = ctx.gates.filter(g => g.active);
+  const missingSelfLoaded: string[] = [];
+
+  const sections = ctx.sections.map(s0 => {
+    const liveFacts = byId.get(s0.id);
+    const facts: Record<string, ChatFactValue> = { ...s0.facts };
+    const flags: string[] = [];
+    if (liveFacts) {
+      if (typeof facts.hinweis === "string" && CLIENT_HINT_RE.test(facts.hinweis)) delete facts.hinweis;
+      for (const [k, v] of Object.entries(liveFacts)) {
+        if (k === CHAT_LIVE_FLAGS_KEY) { if (typeof v === "string" && v) flags.push(v); continue; }
+        facts[k.slice(0, CHAT_LIMITS.maxFactKeyChars)] = typeof v === "string" ? str(v) : v;
+      }
+    } else if (facts.hinweis === SELF_LOADED) {
+      flags.push("Daten dieser Sektion sind (noch) nicht geladen: n/a");
+      missingSelfLoaded.push(s0.label);
+    }
+    if (opts.gatesSectionId === s0.id && activeGates.length) {
+      flags.push(`aktive Gates: ${activeGates.map(g => `${g.id}${g.cap != null ? ` (Cap ${g.cap})` : ""}`).join(", ")}`);
+    }
+    const nas = Object.entries(facts).filter(([k, v]) => v === null && k !== CHAT_WEAKNESS_KEY).map(([k]) => k);
+    if (nas.length) flags.push(`fehlende Werte (n/a): ${nas.slice(0, 8).join(", ")}${nas.length > 8 ? ` +${nas.length - 8}` : ""}`);
+    const entries = Object.entries(facts).slice(0, CHAT_LIMITS.maxFactsPerSection - 1);
+    entries.push([CHAT_WEAKNESS_KEY, flags.length ? str(flags.join(" | ")) : "keine aus den vorhandenen Daten ableitbar"]);
+    return { ...s0, facts: Object.fromEntries(entries) };
+  });
+
+  const notes = (live && byId.size ? ctx.notes.filter(n => !/fehlen im Kontext|nur teilweise im Kontext/.test(n)) : [...ctx.notes]);
+  if (byId.size) notes.push(`Angezeigte Client-Werte übernommen für Sektionen: ${Array.from(byId.keys()).sort((a, b) => a - b).join(", ")}`);
+  if (missingSelfLoaded.length) notes.push(`Noch nicht geladen (n/a): ${missingSelfLoaded.join(", ")}`);
+  return fitChatContextBudget({ ...ctx, sections, notes: notes.slice(0, CHAT_LIMITS.maxNotes) });
+}
+
+/** Hält den Kontext unter `budget` Zeichen (JSON). Reine Funktion. */
+export function fitChatContextBudget(ctx: ChatContext, budget: number = CHAT_CONTEXT_BUDGET): ChatContext {
+  const size = (c: ChatContext) => JSON.stringify(c).length;
+  if (size(ctx) <= budget) return ctx;
+  const out: ChatContext = { ...ctx, sections: ctx.sections.map(s => ({ ...s, facts: { ...s.facts } })) };
+  for (let guard = 0; guard < 6000 && size(out) > budget; guard++) {
+    let best: { s: ChatSection; k: string; len: number } | null = null;
+    for (const s of out.sections) for (const [k, v] of Object.entries(s.facts)) {
+      if (k === CHAT_WEAKNESS_KEY || typeof v !== "string" || v.length <= 80) continue;
+      if (!best || v.length > best.len) best = { s, k, len: v.length };
+    }
+    if (best) { const v = best.s.facts[best.k] as string; best.s.facts[best.k] = `${v.slice(0, Math.max(80, Math.floor(v.length / 2)) - 1)}…`; continue; }
+    const big = out.sections.reduce((a, b) => (Object.keys(b.facts).length > Object.keys(a.facts).length ? b : a));
+    const keys = Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY);
+    if (!keys.length) break;
+    delete big.facts[keys[keys.length - 1]];
+  }
+  return out;
+}
