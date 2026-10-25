@@ -59,6 +59,10 @@ export type FazitEntryExport = {
   maxEntry: number;
   crvBase: number;
   crvRiskAdj: number;
+  /** Worst Case = min(M1,M2,M3) wie im Fazit (Listing-Währung, Kursbasis). */
+  worstCase: number;
+  /** Entscheidungsbasis des Fazits (Bias-Decision bzw. konservatives FCFF-DCF), Statement-Währung. */
+  fairValue: number;
   /** Währung wie im Fazit (statementCurrency). */
   currency: string;
   /** Formatiert wie im Fazit, z.B. „£31.33“. */
@@ -79,6 +83,8 @@ export function fazitEntryForExport(data: StockAnalysis): FazitEntryExport | nul
       maxEntry: m.dcfBeiCRV3,
       crvBase: m.crvConservative,
       crvRiskAdj: m.raCrvCons,
+      worstCase: m.worstCase,
+      fairValue: m.decisionPerShare,
       currency,
       label: formatCurrency(m.dcfBeiCRV3, 2, currency),
       source: FAZIT_ENTRY_SOURCE,

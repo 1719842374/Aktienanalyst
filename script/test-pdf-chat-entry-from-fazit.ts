@@ -53,6 +53,7 @@ const stripDates = (h: string) => h.replace(/\d{1,2}\.\d{1,2}\.\d{4}(, \d{1,2}:\
 const shel = JSON.parse(readFileSync("script/fixtures/analysis-SHEL.L.json", "utf8"));
 const msft = attachExecSummary(JSON.parse(readFileSync("script/fixtures/analysis-MSFT.json", "utf8")));
 
+const TABLE: any[] = [];
 for (const [label, data, expLabel] of [["SHEL.L", shel, "£31.33"], ["MSFT", msft, null]] as const) {
   const d: any = data;
   const before = JSON.stringify(d);
@@ -73,11 +74,30 @@ for (const [label, data, expLabel] of [["SHEL.L", shel, "£31.33"], ["MSFT", msf
   await check(`${label}: PDF S6 Max-Entry ${oldEntry} → ${newEntry} (= Fazit ${fe!.label})`, () => assert.equal(newEntry, fe!.label));
   await check(`${label}: alter PDF-Wert ${oldEntry} taucht nicht mehr auf`, () => assert.ok(!htmlNew.includes(oldEntry!), oldEntry));
   await check(`${label}: PDF-Faktor nennt Fazit-Entry`, () => assert.ok(htmlNew.includes(`Max-Entry (${fe!.label})`)));
-  await check(`${label}: PDF Verdict/Faktorzahlen/Signal-Score bytegleich zu main`, () => assert.equal(verdictBits(htmlNew), verdictBits(htmlOld)));
-  await check(`${label}: PDF-Diff zu main nur Max-Entry-Stellen`, () => {
+  const s6 = (h: string) => {
+    const g = (re: RegExp) => (h.match(re) ?? [])[1] ?? "—";
+    return {
+      wc: g(/Worst Case = min\(M1,M2,M3\)<\/span><span class="row-val">([^<]+)</),
+      fv: g(/Fair Value \([^)]*\)<\/span><span class="row-val">([^<]+)</),
+      crv: g(/CRV Base<\/span><span class="row-val">([^<]+)</),
+      racrv: g(/CRV Risikoadjustiert<\/span><span class="row-val">([^<]+)</),
+      entry: g(/Max-Entry \(CRV 3:1\)<\/span><span class="row-val">([^<]+)</),
+      urteil: g(/<div class="verdict-text">FAZIT: ([^<]+)</),
+    };
+  };
+  const vor = s6(htmlOld), nach = s6(htmlNew);
+  TABLE.push({ ticker: label, vor, nach });
+  await check(`${label}: S6 komplett aus Fazit (WC/FV/CRV/RA-CRV)`, () => {
+    const cS = fe!.currency, cL = d.currency;
+    assert.equal(nach.wc, fmtClient(m.worstCase, 2, cL));
+    assert.equal(nach.fv, fmtClient(m.bias && Number.isFinite(m.bias.decisionPerShare) ? m.bias.decisionPerShare : m.conservativeDCF.perShare, 2, cS));
+    assert.equal(nach.crv, `${m.crvConservative.toFixed(1)}:1`);
+    assert.equal(nach.racrv, `${m.raCrvCons.toFixed(1)}:1`);
+  });
+  await check(`${label}: PDF-Diff zu main nur S6/Faktoren/Urteil`, () => {
     const a = stripDates(htmlOld).split("\n"), b = stripDates(htmlNew).split("\n");
     const changed = b.filter(x => !a.includes(x));
-    for (const line of changed) assert.ok(/Max-Entry|Gleicher Wert wie das Fazit/.test(line), line.slice(0, 160));
+    for (const line of changed) assert.ok(/pdf-s6-|Max-Entry|Gleicher Wert wie das Fazit|CRV|verdict|Signal-Score|Faktoren|factor|<li|border: 2px solid|color: #|^- /.test(line), line.slice(0, 160));
   });
   await check(`${label}: data.scoring/Analyse unverändert (keine Mutation)`, () => assert.equal(JSON.stringify(d), before));
   await check(`${label}: Client-Fazit Score/Rating (${sig.score} / ${sig.rating}) unverändert durch Export`, () => {
@@ -154,5 +174,6 @@ if (process.env.TABLE_C === "1") {
   }
 }
 
+if (process.env.TABLE_S6 === "1") for (const r of TABLE) console.log("TABLE_S6", JSON.stringify(r));
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

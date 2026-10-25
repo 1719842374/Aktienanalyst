@@ -10,7 +10,7 @@ import { reverseDcfFromAnalysis, isEtfOrFund } from '../shared/conflict-matrix';
 import { companyDcfWaccPct, safeCompanyDcfWaccPct, waccSuffix } from '../shared/valuation-signal';
 import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from '../shared/data-source';
 import { fazitEntryForExport, type FazitEntryExport } from '../shared/fazit-entry';
-import { currencySymbol, statementCurrency } from '../shared/currency-format';
+import { currencySymbol, statementCurrency, formatCurrency } from '../shared/currency-format';
 
 /** " (WACC x.xx%)" next to g* — omitted when beta5Y/marketCap/totalDebt are missing so the PDF never prints "WACC NaN%". */
 export function pdfWaccSuffix(d: any): string {
@@ -46,7 +46,7 @@ function dcfCalc(data: any, wacc: number, gr: number): number {
 }
 
 // ===== Build Fazit signals (same logic as Section13.tsx) =====
-function buildFazit(data: any) {
+function buildFazit(data: any, s6: FazitEntryExport | null) {
   const sp = data.sectorProfile;
   const wS = sp?.waccScenarios;
   const g = data.epsGrowth5Y || 5;
@@ -56,18 +56,14 @@ function buildFazit(data: any) {
   const stressDown = data.currentPrice ? (stressDCF / data.currentPrice - 1) * 100 : 0;
   const totalGB = sumUpsideGb(data.catalysts) || 0;
   const totalExpDmg = data.risks?.reduce((s: number, r: any) => s + (r.expectedDamage || 0), 0) || 0;
-  const riskFactor = 1 - totalExpDmg / 100;
-  const ddPct = parseFloat(String(data.maxDrawdownHistory)) || 30;
-  const sectorDD = data.sectorMaxDrawdown || 35;
   const price = data.currentPrice || 0;
-  const worstCase = price ? Math.min(
-    price * (1 - Math.min(0.9, (data.beta5Y || 1) * 0.5)),
-    price * (1 - sectorDD / 100),
-    price * (1 - ddPct / 100)
-  ) : 0;
-  const crvCons = price && (price - worstCase) > 0 ? (konsDCF - worstCase) / (price - worstCase) : 0;
-  const raCrvCons = price && (price - worstCase) > 0 ? (konsDCF * riskFactor - worstCase) / (price - worstCase) : 0;
-  const dcfBeiCRV3 = (konsDCF + 3 * worstCase) / 4;
+  // S6 (Worst Case, Fair Value, CRV, Max-Entry) kommt aus dem S17-Fazit (shared/fazit-entry.ts), keine PDF-eigene Formel.
+  // Nicht berechenbar → null (n/a), die CRV-/Max-Entry-Faktoren entfallen dann statt Ersatzwerten.
+  const worstCase = s6 ? s6.worstCase : null;
+  const fairValue = s6 ? s6.fairValue : null;
+  const crvCons = s6 ? s6.crvBase : null;
+  const raCrvCons = s6 ? s6.crvRiskAdj : null;
+  const dcfBeiCRV3 = s6 ? s6.maxEntry : null;
   const rsl = data.rsl?.value || 0;
   const t = data.technicals || {};
   const allBuy = t.priceAboveMA200 && t.ma50AboveMA200 && t.macdAboveZero && t.macdRising;
@@ -87,11 +83,14 @@ function buildFazit(data: any) {
   else if (data.pegRatio && data.pegRatio > 2) neg.push(`PEG ${f(data.pegRatio,2)} > 2 — teuer`);
   if (konsUpside > 30) pos.push(`Kons. DCF +${f(konsUpside,0)}% Upside`);
   else if (konsUpside < -10) neg.push(`Kons. DCF zeigt ${f(konsUpside,0)}% Downside — Überbewertung`);
-  if (crvCons >= 2.5) pos.push(`CRV Base ${f(crvCons,1)}:1 — attraktiv`);
-  else if (crvCons < 2.0) neg.push(`CRV Base nur ${f(crvCons,1)}:1 — unzureichend`);
-  if (raCrvCons < 1.5) neg.push(`CRV Risikoadj. nur ${f(raCrvCons,1)}:1 — Risiken nicht eingepreist`);
-  if (price && price <= dcfBeiCRV3) pos.push(`Kurs UNTER Max-Entry ($${f(dcfBeiCRV3,2)})`);
-  else if (price) neg.push(`Kurs ($${price.toFixed(2)}) ÜBER Max-Entry ($${f(dcfBeiCRV3,2)}) bei CRV 3:1`);
+  if (crvCons != null && crvCons >= 2.5) pos.push(`CRV Base ${f(crvCons,1)}:1 — attraktiv`);
+  else if (crvCons != null && crvCons < 2.0) neg.push(`CRV Base nur ${f(crvCons,1)}:1 — unzureichend`);
+  if (raCrvCons != null && raCrvCons < 1.5) neg.push(`CRV Risikoadj. nur ${f(raCrvCons,1)}:1 — Risiken nicht eingepreist`);
+  if (s6 && dcfBeiCRV3 != null && price) {
+    const cL = currencySymbol(data.currency);
+    if (price <= dcfBeiCRV3) pos.push(`Kurs UNTER Max-Entry (${s6.label})`);
+    else neg.push(`Kurs (${cL}${price.toFixed(2)}) ÜBER Max-Entry (${s6.label}) bei CRV 3:1`);
+  }
   if (totalExpDmg > 15) neg.push(`Expected Damage ${f(totalExpDmg,1)}% — erhebliche Risiko-Exposition`);
   else if (totalExpDmg < 8) pos.push(`Expected Damage nur ${f(totalExpDmg,1)}%`);
   if (rsl > 110) pos.push(`RSL ${f(rsl,0)} — starkes Momentum`);
@@ -113,21 +112,20 @@ function buildFazit(data: any) {
   const score = pos.length - neg.length;
   let verdict = score >= 4 ? "ATTRAKTIV" : score >= 2 ? "LEICHT ATTRAKTIV" : score >= -1 ? "NEUTRAL" : score >= -3 ? "UNATTRAKTIV" : "STARK UNATTRAKTIV";
 
-  return { pos, neg, neut, score, verdict, konsDCF, worstCase, crvCons, raCrvCons, dcfBeiCRV3, totalGB, totalExpDmg, allBuy, ptUp };
+  return { pos, neg, neut, score, verdict, konsDCF, worstCase, fairValue, crvCons, raCrvCons, dcfBeiCRV3, totalGB, totalExpDmg, allBuy, ptUp };
 }
 
-/**
- * Max-Entry (CRV 3:1) im PDF = Wert des S17-Fazits (fazitEntryForExport). Nur Anzeige:
- * Zählung/Verdict von buildFazit bleibt unverändert. Der Faktor-Text bekommt die Fazit-Zahl nur,
- * wenn Kurs-Seite (unter/über) bei beiden Werten gleich ist — sonst bleibt der Text wie bisher.
- */
-export function applyFazitEntryToPdfFactors(fazit: { pos: string[]; neg: string[]; dcfBeiCRV3: number }, price: number, fe: FazitEntryExport | null): void {
-  if (!fe || !price) return;
-  if ((price <= fazit.dcfBeiCRV3) !== (price <= fe.maxEntry)) return;
-  const old = `($${f(fazit.dcfBeiCRV3,2)})`;
-  const swap = (xs: string[]) => xs.map(x => (x.includes('Max-Entry') && x.includes(old)) ? x.replace(old, `(${fe.label})`) : x);
-  fazit.pos = swap(fazit.pos);
-  fazit.neg = swap(fazit.neg);
+/** S6-Zeilen Worst Case / Fair Value / CRV aus dem S17-Fazit; ohne Wert sichtbares n/a. */
+export function pdfS6Rows(fe: FazitEntryExport | null, listingCurrency: string | null | undefined): string {
+  const na = 'n/a — Fazit-Wert nicht berechenbar';
+  const row = (id: string, label: string, val: string) => `<div class="row" data-testid="pdf-s6-${id}"><span class="row-label">${label}</span><span class="row-val">${val}</span></div>`;
+  const ok = (n: number | undefined) => typeof n === 'number' && Number.isFinite(n);
+  return [
+    row('wc', 'Worst Case = min(M1,M2,M3)', fe && ok(fe.worstCase) ? esc(formatCurrency(fe.worstCase, 2, listingCurrency)) : na),
+    row('fv', 'Fair Value (Entscheidungsbasis Fazit)', fe && ok(fe.fairValue) ? esc(formatCurrency(fe.fairValue, 2, fe.currency)) : na),
+    row('crv', 'CRV Base', fe && ok(fe.crvBase) ? `${f(fe.crvBase,1)}:1` : na),
+    row('racrv', 'CRV Risikoadjustiert', fe && ok(fe.crvRiskAdj) ? `${f(fe.crvRiskAdj,1)}:1` : na),
+  ].join('\n');
 }
 
 /** S6-Zeile „Max-Entry (CRV 3:1)“: Fazit-Wert, sonst sichtbares n/a (kein Ersatzwert). */
@@ -235,10 +233,10 @@ KERNDATEN:
 
 DCF-BEWERTUNG:
 - Konservativ DCF: ${cS}${fazit.konsDCF?.toFixed(2)} (${((fazit.konsDCF/data.currentPrice-1)*100).toFixed(0)}% vs. Kurs)
-- CRV Base: ${fazit.crvCons?.toFixed(1)}:1 | CRV Risikoadj.: ${fazit.raCrvCons?.toFixed(1)}:1
+- CRV Base: ${fazit.crvCons != null ? fazit.crvCons.toFixed(1) + ':1' : 'n/a'} | CRV Risikoadj.: ${fazit.raCrvCons != null ? fazit.raCrvCons.toFixed(1) + ':1' : 'n/a'}
 - Max-Entry (CRV 3:1): ${fazit.dcfBeiCRV3 != null ? cS + fazit.dcfBeiCRV3.toFixed(2) : 'n/a'}
 - Total Expected Damage: ${fazit.totalExpDmg?.toFixed(1)}%
-- Worst Case: ${cL}${fazit.worstCase?.toFixed(2)}
+- Worst Case: ${fazit.worstCase != null ? cL + fazit.worstCase.toFixed(2) : 'n/a'}
 
 KATALYSATOREN (Total GB: +${fazit.totalGB?.toFixed(1)}%):
 ${catalystSummary}
@@ -341,17 +339,16 @@ export async function generateAnalysisHTML(rawData: any): Promise<string> {
   const inc = fs.incomeStatement || {};
   const bal = fs.balanceSheet || {};
   const cf = fs.cashFlow || {};
-  const fazit = buildFazit(data);
-  // Max-Entry wie im S17-Fazit (Quelle wie Exec Summary Option A); Score/Verdict oben unverändert.
+  // S6 komplett aus dem S17-Fazit (shared/fazit-entry.ts); wirkt nur auf das PDF-Urteil, nicht auf data.scoring.
   const fazitEntry = fazitEntryForExport(rawData);
-  applyFazitEntryToPdfFactors(fazit, data.currentPrice || 0, fazitEntry);
+  const fazit = buildFazit(data, fazitEntry);
   // Reverse DCF: same formula as the UI and the Konfliktmatrix (one g* in the whole PDF)
   const rdcf = reverseDcfFromAnalysis(rawData);
   const nd = (data.totalDebt || 0) - (data.cashEquivalents || 0);
   const ptUp = data.analystPT?.median && data.currentPrice ? ((data.analystPT.median - data.currentPrice) / data.currentPrice * 100) : null;
 
   // Generate LLM narrative summary (parallel-safe, graceful fallback)
-  const narrative = await generateNarrativeSummary(data, fazitEntry ? { ...fazit, dcfBeiCRV3: fazitEntry.maxEntry } : { ...fazit, dcfBeiCRV3: null });
+  const narrative = await generateNarrativeSummary(data, fazit);
 
   // DCF scenarios
   const konsFV = wS ? dcfCalc(data, wS.kons, g * 0.7) : 0;
@@ -492,10 +489,7 @@ ${wS ? `<div class="sub">DCF-Szenarien (5Y → Gordon Growth Terminal Value)</di
 <!-- S6: CRV -->
 <div class="sec-header"><span>6 &nbsp; RISIKOADJUSTIERTES CRV</span></div>
 <div class="row"><span class="row-label">Max Drawdown (hist.)</span><span class="row-val">${String(data.maxDrawdownHistory||'—').replace('%','')}% (${data.maxDrawdownYear||'?'})</span></div>
-<div class="row"><span class="row-label">Worst Case = min(M1,M2,M3)</span><span class="row-val">$${f(fazit.worstCase,2)}</span></div>
-<div class="row"><span class="row-label">Fair Value (Kons. DCF)</span><span class="row-val">$${f(fazit.konsDCF,2)}</span></div>
-<div class="row"><span class="row-label">CRV Base</span><span class="row-val">${f(fazit.crvCons,1)}:1</span></div>
-<div class="row"><span class="row-label">CRV Risikoadjustiert</span><span class="row-val">${f(fazit.raCrvCons,1)}:1</span></div>
+${pdfS6Rows(fazitEntry, data.currency)}
 ${pdfMaxEntryRow(fazitEntry)}
 
 <!-- S7: RELATIVE BEWERTUNG -->
