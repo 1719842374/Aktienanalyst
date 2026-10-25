@@ -136,7 +136,7 @@ async function parent() {
   ok("S9 API: leer, volSource null, Notiz nennt beide", c.s9Vol === 0 && c.s9Source === null && c.s9Note === "FRED VIXCLS leer, Yahoo ^VIX leer", JSON.stringify([c.s9Vol, c.s9Source, c.s9Note]));
   ok("S9 UI-Label n/a + Grund sichtbar", /VIX n\/a/.test(c.s9Title) && c.s9Text.includes("FRED VIXCLS leer, Yahoo ^VIX leer"), c.s9Title);
   ok("S10 API: leer, volSource null", c.s10Vol === 0 && c.s10Source === null, JSON.stringify([c.s10Vol, c.s10Source]));
-  ok("S10 UI-Kopf 'VIXCLS n/a'", /VIXCLS n\/a/.test(c.s10Header), c.s10Header);
+  ok("S10 UI-Kopf 'VIX n/a' (gleicher Text wie S9, Follow-up #325)", /VIX n\/a \(keine Quelle lieferte Daten\) · implizit/.test(c.s10Header), c.s10Header);
 
   console.log("4) Unverändert");
   const d = run("fred-first");
