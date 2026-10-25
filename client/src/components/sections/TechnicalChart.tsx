@@ -16,6 +16,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, Ey
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useDividendHistory } from "@/lib/useDividendHistory";
+import { DIVIDEND_ATTRACTIVE_PCT } from "@shared/dividend-valuation";
 import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
 import { currencySymbol } from "@/lib/formatters";
 import { useMarketCreditSpread } from "@/lib/useMarketCreditSpread";
@@ -1232,6 +1233,10 @@ function PricePane({
             <Line yAxisId="price" type="monotone" dataKey="bbMid" name="BB Mid" stroke="#a78bfa" strokeWidth={1} strokeDasharray="5 3" dot={false} connectNulls isAnimationActive={false} />
             <Area yAxisId="price" type="monotone" dataKey="bbLower" name="BB Lower" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none" />
           </>
+        )}
+        {/* F1-14: Band für attraktive Rendite ≥ 4 % auf der Dividendenachse — nur Anzeige */}
+        {dividend && divMax >= DIVIDEND_ATTRACTIVE_PCT && (
+          <ReferenceArea yAxisId="div" y1={DIVIDEND_ATTRACTIVE_PCT} fill={DIV_COLOR} fillOpacity={0.08} stroke="none" ifOverflow="hidden" />
         )}
         {dividend && (
           <Line
