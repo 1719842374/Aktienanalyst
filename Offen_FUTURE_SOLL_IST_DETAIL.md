@@ -133,10 +133,10 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 | F1-68 | Z.662, 720 | Analystenschätzungen SPY: Ersatz über Yahoo oder Perplexity | `server/recession-market-charts.ts:389` nur FMP `/stable/analyst-estimates` | ❌ | Mit F1-67 |
 | F1-69 | Z.663, 721 | Optional: Margin-Debt-Chart auch für EU/Asien | FINRA nur USA (Soll sagt selbst „FINRA bleibt US-only“) | ❌ | Niedrig; keine freie EU/JP-Quelle bekannt |
 | F1-70 | Z.673, 742 | Nach den Daten-Fixes regionale Berechnung neu validieren | kein Nachweis | ❌ | Tester-Auftrag: US/EZ/JP-Katalog live mit Vorher/Nachher |
-| F1-71 | Z.749–757, 765–766, 771–774, 782 | Buffett Europa (STOXX 600 / VGK) und Asien (TOPIX / ASHR) mit echten Benchmarks | `server/buffett-route.ts:219–223` weiter Weltbank-Jahresquoten `DDDM01EZA156NWDB` / `DDDM01CNA156NWDB` | ❌ | Autonom (nur Chart, kein Score) |
+| F1-71 | Z.749–757, 765–766, 771–774, 782 | Buffett Europa (STOXX 600 / VGK) und Asien (TOPIX / ASHR) mit echten Benchmarks | ✅ `09750838` (#320, 25.10.2026): `BuffettRatioPanel.tsx` + `buffettChartScale.ts` → `server/buffett-route.ts` → FRED EUNNGDP/DEXUSEU/DDDM01CNA156NWDB/MKTGDPCNA646NWDB + STOXX/VGK/ASHR-Proxy (Fixtures 2026-10-25); Test `test-buffett-f171-benchmarks.ts`. Vorher: `server/buffett-route.ts:219–223` Weltbank-Jahresquoten `DDDM01EZA156NWDB` / `DDDM01CNA156NWDB` | ✅ | Asia (^TPX) bleibt offen |
 | F1-72 | Z.767 | Trendlinie + 1σ/2σ-Bänder je Region | `server/buffett-route.ts:150–154` `withTrend` für alle Regionen | ✅ | Keiner |
 | F1-73 | Z.775 | Tabs US / Europa / China laden die Reihen | `BuffettRatioPanel.tsx:35–38, 296–302` | ✅ | Bei F1-71 Tab „China“ → „Asien“ nur nach Philips Asien-Entscheidung |
-| F1-74 | Z.776 | ETF-Proxy (VGK, ASHR) klar kennzeichnen | 0 Treffer | ❌ | Mit F1-71. Hinweis: „ETFs blockiert“ betrifft die ETF-Analyse, nicht ETFs als Datenquelle; im Zweifel bei Philip nachfragen |
+| F1-74 | Z.776 | ETF-Proxy (VGK, ASHR) klar kennzeichnen | ✅ `09750838` (#320, 25.10.2026): ETF-Proxy-Kennzeichnung (Ist-Kette siehe F1-71). Vorher: 0 Treffer | ✅ | Mit F1-71. Hinweis: „ETFs blockiert“ betrifft die ETF-Analyse, nicht ETFs als Datenquelle; im Zweifel bei Philip nachfragen |
 
 ## Future_2_NA_Fixes_Research.md (82 Zeilen)
 
