@@ -14,6 +14,7 @@ const TTL_MIN = 60 * 24;
 const PARAMS = "global";
 const fileFor = () => path.join(CACHE_DIR, `${GEO_MAP_CACHE_TAB}__${PARAMS}.json`);
 const diskKey = `${GEO_MAP_CACHE_TAB}__${PARAMS}`;
+export const GEO_MAP_REFRESH_MIN_INTERVAL_MS = 10 * 60 * 1000;
 
 function readCache(): any | null {
   try {
@@ -41,16 +42,29 @@ function deleteCache(): void {
   try { diskResearcherDelete(diskKey); } catch {}
 }
 
-export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoMapDeps, opts: { useCache?: boolean } = {}): void {
+export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoMapDeps, opts: { useCache?: boolean; refreshMinIntervalMs?: number; now?: () => number } = {}): void {
   const useCache = opts.useCache !== false;
+  const refreshMinIntervalMs = opts.refreshMinIntervalMs ?? GEO_MAP_REFRESH_MIN_INTERVAL_MS;
+  const now = opts.now ?? Date.now;
   let inflight: Promise<any> | null = null;
+  let lastRefreshAt: number | null = null;
   app.get("/api/researcher/geo-map", async (req, res) => {
     const layer = String(req.query?.layer ?? "capex");
     if (layer !== "capex") {
       return res.status(400).json({ error: `layer=${layer} noch nicht verfügbar (Slice 1: nur capex)` });
     }
-    const force = req.query?.refresh === "1" || req.query?.refresh === "true";
-    if (useCache && force) deleteCache();
+    let force = req.query?.refresh === "1" || req.query?.refresh === "true";
+    if (useCache && force) {
+      const t = now();
+      if (lastRefreshAt != null && t - lastRefreshAt < refreshMinIntervalMs) {
+        const cached = readCache();
+        if (cached) return res.json({ ...cached, _refreshThrottled: true });
+        force = false; // kein Cache vorhanden → normaler Aufbau wie ohne refresh
+      } else {
+        lastRefreshAt = t;
+        deleteCache();
+      }
+    }
     if (useCache && !force) {
       const cached = readCache();
       if (cached) return res.json(cached);
