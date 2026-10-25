@@ -20,6 +20,7 @@ import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import { TaStatusPill } from "@/components/sections/TaStatusPill";
+import { REAL10Y_OVERLAY, formatReal10yTick, real10yDomain as real10yDomainOf } from "@/lib/real10yOverlay";
 import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
@@ -1104,14 +1105,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
 
   // Exakt analog zur Gold-Domain: eigene Skala verhindert, dass die kleine
   // Prozentreihe die unveraenderte BTC-Preisachse oder MAs verzieht.
-  const real10yDomain = useMemo(() => {
-    const vals = chartData.map(d => d.real10y).filter((v): v is number => v != null);
-    if (vals.length === 0) return [0, 5] as [number, number];
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    const padding = Math.max((max - min) * 0.15, 0.2);
-    return [+(min - padding).toFixed(1), +(max + padding).toFixed(1)] as [number, number];
-  }, [chartData]);
+  const real10yDomain = useMemo(() => real10yDomainOf(chartData.map(d => d.real10y)), [chartData]);
 
   const m2YoyDomain = useMemo(() => {
     const vals = chartData.map(d => d.m2Yoy).filter((v): v is number => v != null);
@@ -1365,7 +1359,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     : taChartMinWidth(55, desktopRightAxes, 106);
   const hiddenMacroSeries: { key: string; label: string; color: string }[] = [];
   if (narrow) {
-    if (showReal10y && hasReal10y && primaryMacroAxis !== "real10y") hiddenMacroSeries.push({ key: "real10y", label: "Real10Y", color: "#38bdf8" });
+    if (showReal10y && hasReal10y && primaryMacroAxis !== "real10y") hiddenMacroSeries.push({ key: "real10y", label: REAL10Y_OVERLAY.label, color: REAL10Y_OVERLAY.color });
     if (showM2Yoy && hasM2Yoy && primaryMacroAxis !== "m2yoy") hiddenMacroSeries.push({ key: "m2yoy", label: "M2 YoY", color: "#a78bfa" });
     if (showM2Absolute && hasM2Absolute && primaryMacroAxis !== "m2absolute") hiddenMacroSeries.push({ key: "m2abs", label: "M2 Absolut", color: "#e2e8f0" });
     if (showM2AbsoluteLagged && hasM2AbsoluteLagged && primaryMacroAxis !== "m2absolute") hiddenMacroSeries.push({ key: "m2lag", label: "M2 Lag (10W)", color: "#fbbf24" });
@@ -1597,13 +1591,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               <button
                 onClick={() => setShowReal10y(v => !v)}
                 className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
-                  showReal10y ? "border-sky-400 text-sky-400" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
+                  showReal10y ? REAL10Y_OVERLAY.chipOnClass : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
                 }`}
-                title="Realzins (DFII10) als rechte Achse ein-/ausblenden"
+                title={REAL10Y_OVERLAY.chipTitle}
                 data-testid="toggle-btc-real10y"
               >
                 {showReal10y ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
-                Real10Y
+                {REAL10Y_OVERLAY.label}
               </button>
             )}
             {hasM2Yoy && (
@@ -1756,10 +1750,10 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 orientation="right"
                 domain={real10yDomain}
                 hide={macroAxisHidden("real10y")}
-                tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-                tick={macroAxisHidden("real10y") ? false : { fontSize: narrow ? 10 : 9, fill: "#38bdf8" }}
+                tickFormatter={formatReal10yTick}
+                tick={macroAxisHidden("real10y") ? false : { fontSize: narrow ? 10 : 9, fill: REAL10Y_OVERLAY.color }}
                 width={macroAxisHidden("real10y") ? 0 : macroAxisFullWidth("real10y")}
-                axisLine={macroAxisHidden("real10y") ? false : { stroke: "#38bdf8" }}
+                axisLine={macroAxisHidden("real10y") ? false : { stroke: REAL10Y_OVERLAY.color }}
                 {...(narrow ? { tickCount: 4 } : {})}
               />
             )}
@@ -1927,9 +1921,9 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 yAxisId="real10y"
                 type="monotone"
                 dataKey="real10y"
-                name="Real10Y (DFII10)"
-                stroke="#38bdf8"
-                strokeWidth={1.25}
+                name={REAL10Y_OVERLAY.lineName}
+                stroke={REAL10Y_OVERLAY.color}
+                strokeWidth={REAL10Y_OVERLAY.strokeWidth}
                 dot={false}
                 connectNulls
                 isAnimationActive={false}

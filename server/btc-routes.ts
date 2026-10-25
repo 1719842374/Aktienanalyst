@@ -7,6 +7,7 @@ import { isLLMAvailable } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
 import { fetchTopicNewsFromGoogleRSS } from "./news-peers";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
+import { fetchReal10YHistory } from "./btc-macro";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const cache = new Map<string, { expiresAt: number; data: Awaited<ReturnType<typeof fetchBTCMacroHistory>> }>();
@@ -40,6 +41,24 @@ export function registerBTCRoutes(app: Express): void {
     } catch (err: any) {
       console.error("[GET /api/analyze-btc/macro-history]", err?.message?.substring(0, 200));
       res.status(502).json({ error: "FRED-Makrodaten nicht verfügbar" });
+    }
+  });
+
+  // Real10Y-Overlay der Aktien-TA (#267): nur DFII10, damit ein M2SL-Ausfall Real10Y nicht n/a macht.
+  // Gleicher Fetcher und gleicher 5-min-Cache wie macro-history; die BTC-Route oben bleibt unverändert.
+  const real10yCache = new Map<string, { expiresAt: number; data: Awaited<ReturnType<typeof fetchReal10YHistory>> }>();
+  app.get("/api/analyze-btc/real10y-history", async (req, res) => {
+    const requestedStart = typeof req.query.startDate === "string" ? req.query.startDate : "2011-01-01";
+    const startDate = DATE_PATTERN.test(requestedStart) ? requestedStart : "2011-01-01";
+    const cached = real10yCache.get(startDate);
+    if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+    try {
+      const data = await fetchReal10YHistory(startDate);
+      real10yCache.set(startDate, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+      res.json(data);
+    } catch (err: any) {
+      console.error("[GET /api/analyze-btc/real10y-history]", err?.message?.substring(0, 200));
+      res.status(502).json({ error: "FRED DFII10 nicht verfügbar" });
     }
   });
 
