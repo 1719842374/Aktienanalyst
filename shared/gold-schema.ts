@@ -220,6 +220,31 @@ export interface GoldNewsImpact {
   /** JOB 16b: gesetzt, wenn der aktuelle Lauf leer/gescheitert war und der letzte gute Wert gezeigt wird. */
   lastGood?: true;
   lastGoodReason?: string;
+  /** F10-34: Zentralbank-Goldkäufe (LLM-Extraktion aus Meldungen). Nur Anzeige: kein Flag, kein GIS, kein Score. */
+  centralBankBuying?: GoldCentralBankBuying | null;
+}
+
+/** F10-34: ein Eintrag, nur gültig mit Quelle und Datum der zitierten Meldung. */
+export interface GoldCentralBankPurchase {
+  institution: string;
+  direction: "buy" | "sell";
+  /** Tonnen nur, wenn die Zahl wörtlich in der zitierten Schlagzeile steht, sonst null (n/a). */
+  tonnes: number | null;
+  period: string | null;
+  sourceTitle: string;
+  source: string;
+  url: string;
+  /** ISO-Datum der Meldung (pubDate des Feeds). */
+  date: string;
+}
+
+export interface GoldCentralBankBuying {
+  entries: GoldCentralBankPurchase[];
+  updatedAt: string | null;
+  unavailableReason: string | null;
+  /** Vom LLM geliefert, aber verworfen (ohne Quelle/Datum oder Zahl nicht in der Meldung). */
+  discarded: number;
+  cacheTtlHours: number;
 }
 
 export interface GoldAnalysis {

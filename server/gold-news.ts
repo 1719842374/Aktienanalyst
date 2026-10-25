@@ -10,7 +10,7 @@
  */
 import { callLLMJson, isLLMAvailable } from "./llm-openrouter";
 import { diskResearcherGetWithTtl, diskResearcherSet } from "./disk-cache";
-import type { GoldNewsImpact, GoldNewsItem } from "../shared/gold-schema";
+import type { GoldNewsImpact, GoldNewsItem, GoldCentralBankBuying, GoldCentralBankPurchase } from "../shared/gold-schema";
 import { scoreHeadlineSentiment } from "./news-sentiment";
 
 export const GOLD_NEWS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -341,5 +341,195 @@ export async function getGoldNewsImpact(): Promise<GoldNewsImpact> {
       try { diskResearcherSet(LAST_GOOD_KEY, entry); } catch { /* Disk ist der Backstop */ }
     },
   });
-  return { ...impact, items: enrichGoldNewsItems(impact.items) };
+  let centralBankBuying: GoldCentralBankBuying | null;
+  try {
+    centralBankBuying = await getCentralBankGoldBuying();
+  } catch (err: any) {
+    centralBankBuying = emptyCb(`Abruf fehlgeschlagen: ${err?.message?.substring(0, 120) ?? "unbekannt"}`);
+  }
+  // F10-34: nur Anzeige. flag/summary/items oben bleiben unverändert, goldNewsScoreFlag liest nur flag.
+  return { ...impact, items: enrichGoldNewsItems(impact.items), centralBankBuying };
+}
+
+// ─── F10-34 (Future_10 §11): Zentralbank-Goldkäufe Europa/global per LLM ───────────────────────
+// Nur Anzeige in der Gold-News-Sektion. Kein News-Flag, kein GIS, kein Score.
+// Das LLM darf nur aus den gelieferten Meldungen zitieren. Quelle, URL und Datum kommen aus dem Feed,
+// nicht vom LLM. Tonnen gelten nur, wenn die Zahl wörtlich in der zitierten Schlagzeile steht.
+
+export const GOLD_CB_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const CB_CACHE_KEY = "gold_cb_buying_v1";
+const CB_FEEDS: { id: string; url: string; source: string }[] = [
+  {
+    id: "cb-global",
+    url: "https://news.google.com/rss/search?q=%22central+bank%22+gold+purchases+OR+buying+OR+reserves+tonnes&hl=en-US&gl=US&ceid=US:en",
+    source: "Google News",
+  },
+  {
+    id: "cb-europe",
+    url: "https://news.google.com/rss/search?q=gold+reserves+(ECB+OR+Bundesbank+OR+%22National+Bank+of+Poland%22+OR+%22Czech+National+Bank%22+OR+%22Banca+d%27Italia%22)&hl=en-US&gl=US&ceid=US:en",
+    source: "Google News",
+  },
+];
+
+export function centralBankPrompt(headlines: string[]): string {
+  return `Gold-Meldungen (nummeriert, mit Datum und Quelle):
+${headlines.map((headline, index) => `${index + 1}. ${headline}`).join("\n")}
+
+Aufgabe: Liste nur Käufe oder Verkäufe von Gold durch Zentralbanken (Europa und global), die in diesen Meldungen ausdrücklich genannt werden.
+Regeln:
+- item: Nummer der Meldung, aus der der Eintrag stammt (Pflicht).
+- institution: Zentralbank oder Land, wie in der Meldung genannt.
+- direction: "buy" oder "sell".
+- tonnes: nur, wenn die Tonnenzahl in der Meldung steht, sonst null. Nichts schätzen, nichts umrechnen.
+- period: Zeitraum laut Meldung (z. B. "September 2026"), sonst null.
+- Keine Meldung passt: leere Liste.
+
+Antworte nur als JSON:
+{ "entries": [ { "item": 1, "institution": "...", "direction": "buy", "tonnes": null, "period": null } ] }`;
+}
+
+export interface CbDeps {
+  now: number;
+  llmAvailable: boolean;
+  fetchItems: () => Promise<GoldNewsItem[]>;
+  complete: (headlines: string[]) => Promise<unknown>;
+  cacheGet: () => GoldCentralBankBuying | null;
+  cacheSet: (value: GoldCentralBankBuying) => void;
+}
+
+function emptyCb(reason: string): GoldCentralBankBuying {
+  return { entries: [], updatedAt: null, unavailableReason: reason, discarded: 0, cacheTtlHours: GOLD_NEWS_CACHE_HOURS };
+}
+
+/** Zahl steht wörtlich in der Schlagzeile (z. B. "12", "12.5", "1,000", "1.000")? */
+export function numberInText(value: number, text: string): boolean {
+  const matches = text.match(/\d[\d.,]*/g) ?? [];
+  return matches.some(raw => {
+    const t = raw.replace(/[.,]$/, "");
+    const candidates = [Number(t.replace(/,/g, "")), Number(t.replace(/\./g, "").replace(/,/g, ".")), Number(t.replace(/,/g, "."))];
+    return candidates.some(c => Number.isFinite(c) && Math.abs(c - value) < 1e-9);
+  });
+}
+
+/** Schema-Prüfung der LLM-Antwort gegen die gelieferten Meldungen. Ungültige Einträge werden verworfen. */
+export function validateCentralBankLlm(
+  data: unknown,
+  items: GoldNewsItem[],
+): { entries: GoldCentralBankPurchase[]; discarded: number; reason: string | null } {
+  const record = data && typeof data === "object" ? data as { entries?: unknown } : null;
+  if (!record || !Array.isArray(record.entries)) {
+    return { entries: [], discarded: 0, reason: "OpenRouter ohne gültige Antwort (entries fehlt)" };
+  }
+  const entries: GoldCentralBankPurchase[] = [];
+  let discarded = 0;
+  const seen = new Set<string>();
+  for (const raw of record.entries) {
+    const e = raw && typeof raw === "object" ? raw as Record<string, unknown> : null;
+    const idx = e && typeof e.item === "number" && Number.isInteger(e.item) ? e.item - 1 : -1;
+    const item = idx >= 0 && idx < items.length ? items[idx] : null;
+    const institution = typeof e?.institution === "string" ? e.institution.trim() : "";
+    const direction = e?.direction === "buy" || e?.direction === "sell" ? e.direction : null;
+    const tonnesRaw = e?.tonnes;
+    const tonnesOk = tonnesRaw == null
+      || (typeof tonnesRaw === "number" && Number.isFinite(tonnesRaw) && tonnesRaw > 0 && !!item && numberInText(tonnesRaw, item.title));
+    const period = typeof e?.period === "string" && e.period.trim() ? e.period.trim().slice(0, 40) : null;
+    if (!item || !item.pubDate || !item.source || !item.url || !institution || institution.length > 80 || !direction || !tonnesOk) {
+      discarded++;
+      continue;
+    }
+    const key = `${idx}|${institution.toLowerCase()}|${direction}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push({
+      institution,
+      direction,
+      tonnes: typeof tonnesRaw === "number" ? tonnesRaw : null,
+      period,
+      sourceTitle: item.title,
+      source: item.source,
+      url: item.url,
+      date: item.pubDate,
+    });
+  }
+  return { entries, discarded, reason: entries.length === 0 ? "keine belegten Zentralbank-Käufe in den Meldungen" : null };
+}
+
+export async function loadCentralBankGoldBuying(deps: CbDeps): Promise<GoldCentralBankBuying> {
+  const cached = deps.cacheGet();
+  if (cached && cached.updatedAt && deps.now - Date.parse(cached.updatedAt) < GOLD_CB_CACHE_TTL_MS) return cached;
+  if (!deps.llmAvailable) return emptyCb("OPENROUTER_API_KEY fehlt");
+  let items: GoldNewsItem[] = [];
+  try { items = (await deps.fetchItems()).filter(item => item.pubDate && item.source && item.url).slice(0, 10); } catch { items = []; }
+  if (items.length === 0) return emptyCb("keine Zentralbank-Meldungen abrufbar");
+  let raw: unknown = null;
+  try {
+    raw = await deps.complete(items.map(item => `${item.pubDate.slice(0, 10)} | ${item.source} | ${item.title}`));
+  } catch (err: any) {
+    return emptyCb(`OpenRouter fehlgeschlagen: ${err?.message?.substring(0, 120) ?? "unbekannt"}`);
+  }
+  if (raw == null) return emptyCb("OpenRouter ohne Antwort");
+  const v = validateCentralBankLlm(raw, items);
+  const out: GoldCentralBankBuying = {
+    entries: v.entries,
+    updatedAt: new Date(deps.now).toISOString(),
+    unavailableReason: v.reason,
+    discarded: v.discarded,
+    cacheTtlHours: GOLD_NEWS_CACHE_HOURS,
+  };
+  // Nur gültige Antworten cachen (auch „keine belegten Käufe“ ist eine gültige Antwort).
+  deps.cacheSet(out);
+  return out;
+}
+
+async function fetchCentralBankItems(): Promise<GoldNewsItem[]> {
+  const batches = await Promise.all(CB_FEEDS.map(async feed => {
+    try {
+      return parseGoldRssItems(await fetchFeed(feed.url), feed.source, 8);
+    } catch (err: any) {
+      console.warn(`[GOLD-CB] ${feed.id} fehlgeschlagen: ${err?.message?.substring(0, 120)}`);
+      return [];
+    }
+  }));
+  const seen = new Set<string>();
+  const merged: GoldNewsItem[] = [];
+  for (const item of batches.flat()) {
+    const key = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 48);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+  merged.sort((a, b) => (b.pubDate || "").localeCompare(a.pubDate || ""));
+  return merged;
+}
+
+async function completeCentralBank(headlines: string[]): Promise<unknown> {
+  const result = await callLLMJson({
+    prompt: centralBankPrompt(headlines),
+    temperature: 0,
+    maxTokens: 600,
+    systemPrompt: "Du extrahierst nur ausdrücklich genannte Zentralbank-Goldkäufe aus den gelieferten Meldungen. Nichts erfinden. Antworte als JSON mit entries.",
+  });
+  return result?.data ?? null;
+}
+
+let memoryCb: GoldCentralBankBuying | null = null;
+
+export async function getCentralBankGoldBuying(): Promise<GoldCentralBankBuying> {
+  return loadCentralBankGoldBuying({
+    now: Date.now(),
+    llmAvailable: isLLMAvailable(),
+    fetchItems: fetchCentralBankItems,
+    complete: completeCentralBank,
+    cacheGet: () => {
+      if (memoryCb) return memoryCb;
+      const disk = diskResearcherGetWithTtl(CB_CACHE_KEY, GOLD_CB_CACHE_TTL_MS);
+      if (!disk || !disk.data || !Array.isArray(disk.data.entries)) return null;
+      memoryCb = disk.data as GoldCentralBankBuying;
+      return memoryCb;
+    },
+    cacheSet: value => {
+      memoryCb = value;
+      try { diskResearcherSet(CB_CACHE_KEY, value); } catch { /* Disk ist der Backstop */ }
+    },
+  });
 }
