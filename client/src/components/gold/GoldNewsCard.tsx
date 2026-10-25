@@ -1,5 +1,5 @@
 import React from "react";
-import type { GoldAnalysis } from "../../../../shared/gold-schema";
+import type { GoldAnalysis, GoldCentralBankBuying } from "../../../../shared/gold-schema";
 import {
   NewsHeader,
   SentimentNewsList,
@@ -34,6 +34,40 @@ function flagClass(flag: number | null | undefined): string {
   if (flag > 0) return "bg-emerald-500/15 text-emerald-400";
   if (flag < 0) return "bg-red-500/15 text-red-400";
   return "bg-foreground/5 text-foreground/50";
+}
+
+function day(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "n/a" : date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+/** F10-34: Zentralbank-Goldkäufe, nur Anzeige (kein Flag, kein Score). Jeder Eintrag mit Quelle und Datum. */
+function CentralBankLine({ cb }: { cb: GoldCentralBankBuying | null | undefined }) {
+  const entries = cb?.entries ?? [];
+  return (
+    <div className="text-[10px] text-muted-foreground mt-2 pt-2 border-t border-border/40" data-testid="gold-cb-buying">
+      <span className="font-medium text-foreground/70">Zentralbank-Goldkäufe (Europa/global, LLM, nur Anzeige):</span>{" "}
+      {entries.length === 0 ? (
+        <span data-testid="gold-cb-buying-na">n/a · {cb?.unavailableReason || "keine Daten"}</span>
+      ) : (
+        <ul className="mt-1 space-y-0.5">
+          {entries.map((e, i) => (
+            <li key={i} data-testid="gold-cb-buying-entry">
+              {e.institution} · {e.direction === "buy" ? "Kauf" : "Verkauf"} · {e.tonnes == null ? "Tonnen n/a" : `${e.tonnes.toLocaleString("de-DE")} t`}
+              {e.period ? ` · ${e.period}` : ""} ·{" "}
+              <a href={e.url} target="_blank" rel="noreferrer" className="underline hover:text-foreground">{e.source}</a>, {day(e.date)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {cb && (cb.updatedAt || cb.discarded > 0) ? (
+        <div className="mt-0.5">
+          {cb.updatedAt ? `Stand ${stamp(cb.updatedAt)}` : ""}
+          {cb.discarded > 0 ? ` · ${cb.discarded} LLM-Eintrag/Einträge ohne Beleg verworfen` : ""}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -83,6 +117,7 @@ export function GoldNewsCard({ data, now }: { data: Pick<GoldAnalysis, "goldNews
           {news ? ` · Cache ${news.cacheTtlHours} h` : ""}
           {items.length > 0 ? " · Sentiment je Meldung: Keyword (Anzeige)" : ""}
         </div>
+        <CentralBankLine cb={news?.centralBankBuying} />
         {news?.lastGood && (
           <div className="text-[10px] text-amber-400 mt-1" data-testid="gold-news-last-good">
             Letzter guter Stand vom {stamp(news.updatedAt)} · aktueller Abruf: {news.lastGoodReason || "n/a"}
