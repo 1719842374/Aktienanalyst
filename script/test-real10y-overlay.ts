@@ -40,7 +40,7 @@ const git = (...a: string[]) => execFileSync("git", a, { encoding: "utf8" });
 const mergedMains = git("log", "--first-parent", "--merges", "--format=%P", `${BASE}..HEAD`).trim().split("\n").filter(Boolean)
   .map(l => l.split(" ")[1]).filter(Boolean);
 const DIFF_BASE = mergedMains[0] ?? BASE;
-const onSquashedMain = mergedMains.length === 0 && /\(#\d+\)$/.test(git("log", "-1", "--format=%s", "HEAD").trim()) && !git("log", "--format=%s", `${BASE}..HEAD`).includes("Real10Y");
+const onSquashedMain = mergedMains.length === 0 && /\(#\d+\)$/.test(git("log", "-1", "--format=%s", "HEAD").trim()) && git("log", "--format=%s", `${BASE}..HEAD`).split("\n").some(s => /\(#267\)$/.test(s.trim()));
 const filesVs = (b: string) => new Set([
   ...git("diff", "--name-only", b).trim().split("\n"),
   ...git("ls-files", "--others", "--exclude-standard").trim().split("\n"),
