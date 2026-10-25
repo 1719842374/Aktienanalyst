@@ -1676,7 +1676,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const dcfGrowthRate = Math.min(Math.max(revenueGrowth / 100, -0.05), 0.25);
       const dcfTerminalGrowth = 0.025;
       const dcfYears = 5;
-      let dcfFairValue = 0;
+      // #326: Ohne berechenbaren FCF-DCF bleibt der Wert null (n/a) statt einer erfundenen 0.
+      // Negativer FCF bekommt den Grund 'negativer FCF' (gleiche Regel wie dcfApplicable §3.3).
+      let dcfFairValue: number | null = null;
+      const dcfNaReason: "negativer FCF" | null = fcfTTM < 0 ? "negativer FCF" : null;
       if (fcfTTM > 0 && sharesOutstanding > 0 && dcfWacc > dcfTerminalGrowth) {
         let pvFCF = 0;
         for (let y = 1; y <= dcfYears; y++) {
@@ -1686,7 +1689,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         dcfFairValue = Math.round((pvFCF + terminalValue - netDebt) / sharesOutstanding * 100) / 100;
       }
 
-      const upsidePotential = dcfFairValue > 0 && price > 0
+      const upsidePotential = dcfFairValue != null && dcfFairValue > 0 && price > 0
         ? Math.round((dcfFairValue / price - 1) * 1000) / 10
         : analystPTMedian > 0 && price > 0
           ? Math.round((analystPTMedian / price - 1) * 1000) / 10
@@ -2127,6 +2130,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         returnOnEquity,
         wacc,
         dcfFairValue: yahooOnly ? null : dcfFairValue,
+        ...(!yahooOnly && dcfNaReason ? { dcfNaReason } : {}),
         upsidePotential: yahooOnly ? null : upsidePotential,
         impliedGStar: yahooOnly ? null : (impliedGStar ?? 0),
         pbRatio,

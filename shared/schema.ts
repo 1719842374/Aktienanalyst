@@ -695,6 +695,10 @@ export interface StockAnalysis {
   thesisStrengthScore?: number | null;
   /** Reverse-DCF g* in Prozent, serverseitig an der Analyse. */
   impliedGStar?: number | null; // null bei Yahoo-Daten (C1, #252): keine Bewertung
+  /** Server-FCF-DCF je Aktie; null = n/a (Yahoo-Daten oder nicht berechenbar, nie 0 als Ersatz). */
+  dcfFairValue?: number | null;
+  /** #326: Grund für dcfFairValue = null; nur gesetzt bei negativem FCF-TTM. */
+  dcfNaReason?: "negativer FCF";
   consistencyWarnings?: ConsistencyWarning[];
   dataTimestamp?: string; // ISO date when data was fetched
   /** Datenquelle der Analyse. 'yahoo' = C1 (#252): FMP 402, Yahoo-Fallback ohne Statements →

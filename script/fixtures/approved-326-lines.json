@@ -1,0 +1,50 @@
+{
+ "_note": "#326: exakt freigegebene Diff-Zeilen (ADR-Follow-up c926c91, freigegeben 25.10.2026 19:53 Europe/Berlin; DCF n/a bei negativem FCF). Jede andere Zeile in diesen Dateien schlaegt in den Waechtern an.",
+ "files": {
+  "server/analyze-route.ts": [
+   "+      // FMP-ADR: 402-Listing mit Fundamentaldaten über das US-/ADR-Symbol (analyze-helpers fmpViaAdrData). Volle",
+   "+      // Bewertung (source 'fmp'); weitere FMP-Calls dieses Laufs gehen an das ADR-Symbol, Kurs/Chart bleiben lokal.",
+   "+      const adrInfo = (fmpData as any).adr ?? null;",
+   "+      const fmpSymbol: string = (fmpData as any).fmpSymbol ?? upperTicker;",
+   "-      const earningsRows = await fmpEarningsCalendar(upperTicker).catch(() => []);",
+   "+      const earningsRows = await fmpEarningsCalendar(fmpSymbol).catch(() => []);",
+   "-        .filter((r: any) => (!r?.symbol || String(r.symbol).toUpperCase() === upperTicker) && typeof r?.date === \"string\" && r.date.slice(0, 10) > todayIso)",
+   "+        .filter((r: any) => (!r?.symbol || String(r.symbol).toUpperCase() === fmpSymbol) && typeof r?.date === \"string\" && r.date.slice(0, 10) > todayIso)",
+   "-        const fb = productFallback[upperTicker];",
+   "+        const fb = productFallback[upperTicker] ?? (adrInfo ? productFallback[fmpSymbol] : undefined);",
+   "-              const fetched = await fetchSecBusinessSegments(upperTicker, companyName);",
+   "+              const fetched = await fetchSecBusinessSegments(fmpSymbol, companyName);",
+   "-          const fetched = await fetchSecBusinessSegments(upperTicker, companyName);",
+   "+          const fetched = await fetchSecBusinessSegments(fmpSymbol, companyName);",
+   "-        const qRows: any[] = await fmpIncomeStatementQuarterly(upperTicker, 16);",
+   "+        const qRows: any[] = await fmpIncomeStatementQuarterly(fmpSymbol, 16);",
+   "-      let dcfFairValue = 0;",
+   "+      // #326: Ohne berechenbaren FCF-DCF bleibt der Wert null (n/a) statt einer erfundenen 0.",
+   "+      // Negativer FCF bekommt den Grund 'negativer FCF' (gleiche Regel wie dcfApplicable §3.3).",
+   "+      let dcfFairValue: number | null = null;",
+   "+      const dcfNaReason: \"negativer FCF\" | null = fcfTTM < 0 ? \"negativer FCF\" : null;",
+   "-      const upsidePotential = dcfFairValue > 0 && price > 0",
+   "+      const upsidePotential = dcfFairValue != null && dcfFairValue > 0 && price > 0",
+   "-        historyDataSource: yahooOnly ? \"yahoo\" : historyDataSource,",
+   "+        // FMP-ADR: Chart kommt vom lokalen Listing (Yahoo), nicht vom ADR.",
+   "+        historyDataSource: yahooOnly || adrInfo ? \"yahoo\" : historyDataSource,",
+   "+        ...(adrInfo ? { adrSource: adrInfo } : {}),",
+   "+        ...(!yahooOnly && dcfNaReason ? { dcfNaReason } : {}),"
+  ],
+  "shared/schema.ts": [
+   "+  /** FMP-ADR (#265 v2): gesetzt, wenn ein Nicht-US-Listing (FMP 402) seine Fundamentaldaten von FMP über das",
+   "+   *  US-/ADR-Symbol bekommt (SAP.DE→SAP, VOW3.DE→VWAPY, Rückfall VWAGY = Proxy Stammaktie). Kurs und Chart vom",
+   "+   *  lokalen Listing. Fehlt bei allen anderen Analysen. Shape: server/fmp-adr-map.ts AdrSourceInfo. */",
+   "+  adrSource?: {",
+   "+    fmpSymbol: string; sharesPerAdr: number; proxy: boolean; impliedSharesPerAdr: number;",
+   "+    ratioDeviationPct: number; mcapDeviationPct: number; perShareUnit: \"adr\" | \"ordinary\"; note: string;",
+   "+  };",
+   "+",
+   "+  /** Server-FCF-DCF je Aktie; null = n/a (Yahoo-Daten oder nicht berechenbar, nie 0 als Ersatz). */",
+   "+  dcfFairValue?: number | null;",
+   "+  /** #326: Grund für dcfFairValue = null; nur gesetzt bei negativem FCF-TTM. */",
+   "+  dcfNaReason?: \"negativer FCF\";",
+   ""
+  ]
+ }
+}
