@@ -8,7 +8,7 @@ import { AlertTriangle, AlertCircle, Info, RefreshCw, Clock, Briefcase, ListPlus
 import { ThesisStrengthPanel } from "./ThesisStrengthPanel";
 import { useDividendKpi } from "@/lib/useDividendHistory";
 import { listingFxWarning } from "@shared/listing-units";
-import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from "@shared/data-source";
+import { isYahooOnly, yahooValueMissing, YAHOO_NO_VALUATION_NOTICE } from "@shared/data-source";
 import { YahooNoValuationNotice } from "../YahooNoValuationCard";
 
 interface Props { data: StockAnalysis; onRefresh?: () => void; onThesisScore?: (score: number) => void }
@@ -139,15 +139,17 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         </div>
       )}
 
-      {data.currencyInfo?.converted && (
-        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 flex items-start gap-2">
+      {data.currencyInfo && (
+        <div className={`${data.currencyInfo.converted ? "bg-blue-500/10 border-blue-500/20" : "bg-amber-500/10 border-amber-500/20"} border rounded-lg p-3 flex items-start gap-2`} data-testid="currency-info">
           <span className="text-base flex-shrink-0">💱</span>
           <div className="text-xs">
-            <span className="font-semibold text-blue-400">Währungsumrechnung aktiv</span>
+            <span className={`font-semibold ${data.currencyInfo.converted ? "text-blue-400" : "text-amber-400"}`}>
+              {data.currencyInfo.converted ? "Währungsumrechnung aktiv" : "Keine Währungsumrechnung"}
+            </span>
             <span className="text-foreground/70 ml-1">
-              — Finanzdaten in {data.currencyInfo.reportedCurrency} gemeldet, umgerechnet zu USD
-              ({data.currencyInfo.fxPair} = {data.currencyInfo.fxRate.toFixed(4)}).
-              Alle Bewertungen und DCF-Berechnungen in USD.
+              {/* DCF-FX: Server-Hinweis (shared/listing-units.ts currencyInfoFromListingFx) */}
+              — {data.currencyInfo.note ?? `${data.currencyInfo.fxPair} = ${data.currencyInfo.fxRate.toFixed(4)}`}
+              {data.currencyInfo.converted ? " Alle Bewertungen und DCF-Berechnungen in USD." : ""}
             </span>
           </div>
         </div>
@@ -174,9 +176,9 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
 
       <div className={`grid grid-cols-2 sm:grid-cols-3 ${divKpi ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-3`}>
         <KPI label="Price" value={formatCurrency(data.currentPrice, 2, priceCcy)} sub={new Date(data.priceTimestamp).toLocaleString()} />
-        <KPI label="Market Cap" value={formatLargeNumber(data.marketCap, priceCcy)} />
+        <KPI label="Market Cap" value={yahooValueMissing(data, data.marketCap) ? "n/a" : formatLargeNumber(data.marketCap, priceCcy)} />
         <KPI label="Beta (5Y)" value={yahoo ? "n/a" : formatNumber(data.beta5Y)} sub={yahoo ? `Default ${formatNumber(data.beta5Y)} (Yahoo, kein Beta)` : undefined} />
-        <KPI label="P/E" value={formatNumber(data.peRatio, 1)} sub={`Fwd: ${yNum(data.forwardPE, 1)}`} />
+        <KPI label="P/E" value={yNum(data.peRatio, 1)} sub={`Fwd: ${yNum(data.forwardPE, 1)}`} />
         <KPI label="EV/EBITDA" value={yNum(data.evEbitda, 1)} />
         {divKpi && <KPI label="Div. Yield" value={divKpi.value} sub={divKpi.sub} />}
       </div>
@@ -211,7 +213,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
-            <Row label="EPS TTM" value={`${currencySymbol(stmtCcy)}${formatNumber(data.epsTTM)}`} />
+            <Row label="EPS TTM" value={yahooValueMissing(data, data.epsTTM) ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsTTM as number)}`} />
             <Row label="EPS adj. FY" value={yNum(data.epsAdjFY) === "n/a" ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsAdjFY)}`} />
             <Row label="EPS Consensus Next FY" value={yNum(data.epsConsensusNextFY) === "n/a" ? "n/a" : `${currencySymbol(stmtCcy)}${formatNumber(data.epsConsensusNextFY)}`} />
             <Row label="EPS-CAGR 5Y" value={data.epsCagrFromIncome === false ? "n/a" : formatPercentNoSign(data.epsGrowth5Y)} />
@@ -256,7 +258,7 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <tbody className="divide-y divide-border/50">
-              <Row label="P/E" value={formatNumber(data.peRatio, 1)} />
+              <Row label="P/E" value={yNum(data.peRatio, 1)} />
               <Row label="Forward P/E" value={yNum(data.forwardPE, 1)} />
               <tr className="border-b border-border/50">
                 <td className="py-1.5 px-2 text-muted-foreground">PEG</td>

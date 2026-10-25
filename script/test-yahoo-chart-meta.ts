@@ -109,13 +109,15 @@ try {
   check("isGermanXetraTicker: VOW3.DE/sap.de/BMW.DE ja; AAPL, VOD.L, ASML.AS, NESN.SW, 7203.T, MC.PA, DE, X.DEX nein",
     ["VOW3.DE", "sap.de", "BMW.DE"].every((t) => neu.isGermanXetraTicker(t)) &&
     !["AAPL", "VOD.L", "ASML.AS", "NESN.SW", "7203.T", "MC.PA", "DE", "X.DEX"].some((t) => neu.isGermanXetraTicker(t)));
-  for (const t of ["AAPL", "VOD.L"] as const) {
+  // #261 DCF-FX (Stabschef 18.10.2026): ohne quoteSummary Währung aus dem Börsen-Suffix (nicht .DE, ohne Netz-Call);
+  // VOD.L .L → GBp → GBP (Kurs aus den Bars schon in Pfund), AAPL ohne Suffix → null wie main. Alles andere deepEqual main.
+  for (const [t, sufCur] of [["AAPL", null], ["VOD.L", "GBP"]] as const) {
     install({ qs: "crumb429" }); alt.clearYahooCache();
     const a = await silence(() => alt.getYahooSnapshot(t))();
     const callsAlt = [...calls];
     const { neu: s, lines, metaCalls: mc } = await both(t, { qs: "crumb429" });
-    let same = true; try { assert.deepEqual(s, a.v); } catch { same = false; }
-    check(`${t} ohne quoteSummary: Rückgabe deepEqual main (currency/name/exchange null wie main)`, same && s?.currency === null && s?.name === null && s?.metaSource === undefined, `currency ${s?.currency}`);
+    let same = true; try { assert.deepEqual(s, a.v ? { ...a.v, currency: sufCur } : a.v); } catch { same = false; }
+    check(`${t} ohne quoteSummary: Rückgabe deepEqual main bis auf currency (Suffix ${sufCur}; name/exchange null wie main)`, same && s?.currency === sufCur && s?.name === null && s?.metaSource === undefined, `currency ${s?.currency}`);
     check(`${t}: kein Meta-Call, gleiche Calls wie main, gleiche Log-/DIAG-Zeilen wie main`, mc === 0 && JSON.stringify(calls) === JSON.stringify(callsAlt) && JSON.stringify(lines) === JSON.stringify(a.lines), `metaCalls ${mc}, calls ${calls.length}/${callsAlt.length}`);
   }
   {
