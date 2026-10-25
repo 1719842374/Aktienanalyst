@@ -855,7 +855,7 @@ Soll aus `Future_10_Gold_Adaptive_Scoring_Framework.md` (Stand 2026-10-09, §4 u
 **Softs, blockieren die Ampel nicht:**
 
 1. Gold-Zeile im Cross-Tooltip doppelt. `GoldPriceChart.tsx` zeichnet `Area` und `Line` mit demselben `dataKey="close"`. Der Formatter setzt bei `name === "close"` das Label „Gold“ und, wenn `payload.cross` gesetzt ist, die Cross-Notiz. Beide Serien laufen durch diesen Zweig.
-2. Echter Touch-Input ist nicht verifiziert. `script/test-gold-fv-label-layout.ts` prüft den Reducer (`tap` öffnet und pinnt, zweiter `tap` schließt, Hover-out lässt den Pin). Der Button im DOM hängt an `onClick`.
+2. Echter Touch-Input ist nicht verifiziert. `script/test-gold-fv-label-layout.ts` prüft den Reducer (`tap` öffnet und pinnt, zweiter `tap` schließt, Hover-out lässt den Pin). Der Button im DOM hängt an `onClick`. **Verifiziert 25.10.2026 (B2 Gold-Nachzug, Docs-Nachtrag, kein neuer Code):** Playwright auf Prod-Build bei 375 px (echter Touch) und 1440 px; Screenshots `/workspace/goldb2/shots/`, Messungen `/workspace/goldb2/before.json`. Punkte auf main: #194 `e4e0e1e0`, #201 `98ccc928`, #216 `b1fcf05e`. Spec bleibt `fertig_`, nicht auf `Offen_`.
 
 **Lane:** 🟡 Teil. Nicht vollständig 🟢. Live-Slice #201 auf Tip `98ccc928`: 50-DMA, Golden/Death-Marker, B2 FV-Labels. Dazu #209 Gold-Chart im BTC-Design gemergt auf Tip `a0979593` (parent `f0943dd5` #206). Doublecheck Integrity GO Soft: 7 Dateien byte-gleich mit dem gebauten Stand `9d14901a`, in BTC nur die JA/NEIN-Karte ausgelagert, #201-Marker erhalten, Overlays aus echten FRED-/FMP-Daten ohne Ersatzwerte. Status: live-Check ausstehend (Tester). Softs: 4 zusätzliche FRED-Abrufe pro Gold-Request, noch kein Build gelaufen.
 
