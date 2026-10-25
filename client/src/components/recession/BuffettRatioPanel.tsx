@@ -23,6 +23,8 @@ interface TrendPoint {
   zScore: number;
   /** #245: Proxy-Symbol bei fortgeschriebenen Punkten */
   proxy?: string;
+  /** F1-74: „etf“, wenn der Punkt aus einem ETF-Kurs geschätzt ist (EU/CN) */
+  proxyKind?: "etf";
 }
 
 interface BuffettPayload {
@@ -33,6 +35,12 @@ interface BuffettPayload {
   points: TrendPoint[];
   /** F1-31: gesetzt, wenn der Zähler aus FRED (Quartalswerte) statt aus dem Wilshire 5000 kommt. */
   fallback?: { source: string; reason: string; frequency: "quarterly"; asOf: string | null } | null;
+  /** F1-71/F1-74: nur EU/CN – Schätzung ab der letzten Weltbank-Quote (Anker) mit Index- oder ETF-Kurs. */
+  benchmark?: {
+    symbol: string; name: string; kind: "index" | "etf"; currency: "EUR" | "USD"; estimate: true;
+    anchorYear: number; anchorDate: string; anchorQuote: number; gdpSeries: string; gdpAsOf: string; skipped: string[];
+  } | null;
+  benchmarkUnavailable?: string | null;
 }
 
 /** F1-34: Grund aus dem 502-Body sichtbar machen, nicht nur im eingeklappten Detail. */
@@ -270,7 +278,7 @@ function ChartOverlay(props: {
           <polygon points={`${x},${y} ${x - 9},${y - 4} ${x - 9},${y + 4}`} fill={RATIO} />
           <g data-testid="text-buffett-callout">
             <rect x={boxX} y={boxY} width={boxW} height={boxH} rx={2} fill="#ffffff" stroke={RATIO} strokeWidth={1.6} />
-            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}{last.proxy ? ` (via ${last.proxy})` : ""}{" "}</text>
+            <text x={boxX + 10} y={boxY + 16} fill={RATIO} fontSize={props.wide ? 12 : 11} fontWeight={700}>{longDate(last.date)}{last.proxy ? (last.proxyKind === "etf" ? ` (ETF-Proxy ${last.proxy})` : ` (via ${last.proxy})`) : ""}{" "}</text>
             <text x={boxX + 10} y={boxY + 33} fill={RATIO} fontSize={props.wide ? 12 : 11}>{ratioText}</text>
             <text x={boxX + 10} y={boxY + 50} fill={RATIO} fontSize={props.wide ? 12 : 11}>{premiumText}{" "}</text>
           </g>
@@ -328,7 +336,8 @@ export function BuffettRatioPanel() {
     _auffaelligkeiten: [
       bl && bl.zScore >= 2 ? "Bewertung ≥ +2σ über dem Trend" : bl && bl.zScore >= 1 ? "Bewertung ≥ +1σ über dem Trend" : "",
       bl && bl.zScore <= -1 ? "Bewertung ≤ −1σ unter dem Trend" : "",
-      bl?.proxy ? `letzter Punkt fortgeschrieben via ${bl.proxy}` : "",
+      bl?.proxy ? (bl.proxyKind === "etf" ? `Schätzung über ETF-Proxy ${bl.proxy}` : `letzter Punkt fortgeschrieben via ${bl.proxy}`) : "",
+      query.data.benchmark ? `Schätzung ab Anker ${query.data.benchmark.anchorDate}` : "",
     ].filter(Boolean).join("; ") || null,
   } : null);
   const chart = sliceWindow(all, range).map(point => ({
@@ -398,6 +407,28 @@ export function BuffettRatioPanel() {
           Ersatzquelle: {query.data.fallback.source}
           {query.data.fallback.asOf ? `, letztes Quartal ${longDate(query.data.fallback.asOf)}` : ""}.
           {" "}Wilshire 5000 nicht verfügbar ({query.data.fallback.reason}). Niveau nicht mit der Wilshire-Linie vergleichbar.
+        </p>
+      )}
+
+      {query.data?.benchmark && (
+        <p className="flex flex-wrap items-center gap-1.5 text-[11px] leading-snug text-muted-foreground" data-testid="text-buffett-benchmark">
+          {query.data.benchmark.kind === "etf" && (
+            <span
+              className="rounded border border-violet-500/50 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-300"
+              data-testid="badge-buffett-etf-proxy"
+            >
+              ETF-Proxy
+            </span>
+          )}
+          <span>
+            Schätzung ab {longDate(query.data.benchmark.anchorDate)} über {query.data.benchmark.name} ({query.data.benchmark.symbol}),
+            geeicht auf die Weltbank-Quote {query.data.benchmark.anchorYear} ({query.data.benchmark.anchorQuote.toFixed(1).replace(".", ",")} %).
+          </span>
+        </p>
+      )}
+      {query.data?.benchmarkUnavailable && (
+        <p className="text-[11px] leading-snug text-muted-foreground" data-testid="text-buffett-benchmark-unavailable">
+          Benchmark-Schätzung n/a — {query.data.benchmarkUnavailable}
         </p>
       )}
 

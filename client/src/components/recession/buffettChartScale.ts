@@ -75,13 +75,17 @@ export function tickLabel(value: number, range: BuffettRangeId): string {
  * JOB 18: kurze Beschriftung am letzten Datenpunkt („211 % · 05.10.26“), in allen Zeitfenstern.
  * Datum = Datum des letzten Punkts (ggf. per Sitzungs-Proxy fortgeschrieben, siehe buffett-route).
  */
-export function lastPointLabel(last: { date: string; ratio: number; proxy?: string } | null | undefined): string | null {
+export function lastPointLabel(last: { date: string; ratio: number; proxy?: string; proxyKind?: "etf" } | null | undefined): string | null {
   if (!last || !Number.isFinite(last.ratio) || !/^\d{4}-\d{2}-\d{2}$/.test(last.date)) return null;
   const [y, m, d] = last.date.split("-");
   return `${Math.round(last.ratio)} % · ${d}.${m}.${y.slice(2)}${proxySuffix(last)}`;
 }
 
-/** #245: Zusatz für per Proxy fortgeschriebene Punkte, z. B. „ (fortgeschrieben via VTI)“. */
-export function proxySuffix(point: { proxy?: string } | null | undefined): string {
-  return point?.proxy ? ` (fortgeschrieben via ${point.proxy})` : "";
+/**
+ * #245: Zusatz für per Proxy fortgeschriebene Punkte, z. B. „ (fortgeschrieben via VTI)“.
+ * F1-74: Punkte aus einem ETF-Kurs (EU/CN) heißen „ (ETF-Proxy VGK)“, damit sie nicht wie die US-Fortschreibung aussehen.
+ */
+export function proxySuffix(point: { proxy?: string; proxyKind?: "etf" } | null | undefined): string {
+  if (!point?.proxy) return "";
+  return point.proxyKind === "etf" ? ` (ETF-Proxy ${point.proxy})` : ` (fortgeschrieben via ${point.proxy})`;
 }
