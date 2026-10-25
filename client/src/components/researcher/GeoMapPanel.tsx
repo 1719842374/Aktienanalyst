@@ -85,6 +85,7 @@ export function GeoMapPanel() {
         <div>
           <div className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
             <Globe2 className="w-3.5 h-3.5 text-violet-400" /> Capex-Weltkarte
+            <span className="font-normal text-[10px] text-foreground/45" data-testid="geo-attribution">· nach Firmensitz</span>
           </div>
           {data && (
             <div className="text-[11px] text-foreground/50 mt-0.5">
