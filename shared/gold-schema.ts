@@ -309,4 +309,6 @@ export interface GoldAnalysis {
   /** Future_10 §5 (B1): Quartals-AISC NEM/B/AEM für die gestufte Chart-Linie. Nur Anzeige, kein Score.
    * null, wenn server/data/gold-aisc.json fehlt oder ungültig ist; fehlt bei älteren Antworten. */
   aiscLine?: GoldAiscSeries | null;
+  /** F10-20/F10-24: AISC-Marge und Fiskaldefizit als Zusatzschicht. Nur Anzeige, kein Score. */
+  extraSignals?: import("./gold-extra-signals").GoldExtraSignals;
 }

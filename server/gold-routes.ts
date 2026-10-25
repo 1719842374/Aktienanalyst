@@ -21,6 +21,7 @@ import { analyzeGoldHistoryPlan, parseFredLatest, prefetchHistories, prefetchedF
 import { createGoldResponseCache, GOLD_ANALYSIS_CACHE_TTL_MS, GOLD_ANALYSIS_PARTIAL_TTL_MS } from "./gold-response-cache";
 import { buildGoldChartHistoryPoints, createChartHistoryCache, fetchFmpChunks, historyWindows, mergeGoldRows, parseChartHistoryRange, pickLongerSource, seriesCoverage, trimChartHistory } from "./gold-chart-history";
 import { loadGoldAiscSeries } from "./gold-aisc";
+import { buildGoldExtraSignals } from "../shared/gold-extra-signals";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -342,6 +343,8 @@ export function registerGoldRoutes(server: Server, app: Express) {
       const m2Start = new Date(new Date(startDate).getTime() - 400 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
       const fredLatestPromise = Promise.all(["T10YIE", "DFII10", "M2SL", "CPIAUCSL"].map(id => fetchFREDSeriesAsync(id)));
       const fredHistoryPromise = prefetchHistories(analyzeGoldHistoryPlan(startDate, m2Start), fetchFREDSeriesHistoryAsync);
+      // F10-24 (nur Anzeige): Monatsdefizit, eigener Abruf ausserhalb von Memo/Plan; Fehler -> [] -> n/a.
+      const deficitPromise = fetchFREDSeriesHistoryAsync("MTSDS133FMS", new Date(Date.now() - 3 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
       const m2YoyUrl = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=M2SL&vintage_date=${new Date().toISOString().split('T')[0]}&limit=14&sort_order=desc`;
       const m2YoyCsvPromise = fetchM2YoyCsvAsync(m2YoyUrl);
       m2YoyCsvPromise.catch(() => {}); // Fehler wird unten im try/catch wie vorher behandelt
@@ -903,6 +906,9 @@ export function registerGoldRoutes(server: Server, app: Express) {
         `CPI ${cpiToday} für Fair Value (${cpiToday > 200 && cpiToday < 500 ? "✅" : "⚠️ geschätzt"})`,
       ];
 
+      // F10-20/F10-24: Zusatzschicht nur Anzeige. Fliesst nicht in GIS, adaptiven Score oder Gates.
+      const extraSignals = buildGoldExtraSignals({ price: spotPrice, date: now.toISOString().slice(0, 10), aiscLine: loadGoldAiscSeries(), deficitPoints: await deficitPromise });
+
       // === Build response ===
       const analysis: GoldAnalysis = {
         timestamp: now.toISOString(),
@@ -952,6 +958,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         technicalSignals,
         // Future_10 §5 (B1): Quartals-AISC nur für die Chart-Linie. Fließt nicht in GIS/Score (aisc: null oben bleibt, B2).
         aiscLine: loadGoldAiscSeries(),
+        extraSignals,
         // JOB 16: nur bei Teilausfall gesetzt; vollständige Antworten behalten exakt ihre Bytes.
         ...(partialReasons.length > 0 ? { partial: true as const, partialReasons } : {}),
       };
