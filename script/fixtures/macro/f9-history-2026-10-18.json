@@ -1,0 +1,920 @@
+{
+  "generated": "2026-10-18",
+  "note": "aktuelle FRED-Vintage; Buffett/Google/CNN/WEI n/a; Habitat-Konzentration n/a (F9-07); Gewichte deterministisch",
+  "coverage": {
+    "UNRATE": "1975-01-01…2026-09-01 (620)",
+    "SAHMREALTIME": "1975-01-01…2026-09-01 (620)",
+    "T10Y2Y": "1976-06-01…2026-10-16 (12591)",
+    "T10Y3M": "1982-01-04…2026-10-16 (11200)",
+    "INDPRO": "1975-01-01…2026-09-01 (621)",
+    "TCU": "1975-01-01…2026-09-01 (621)",
+    "DGORDER": "1992-02-01…2026-08-01 (415)",
+    "M2SL": "1975-01-01…2026-08-01 (620)",
+    "BAA10Y": "1986-01-02…2026-10-15 (10197)",
+    "UMCSENT": "1975-02-01…2026-08-01 (596)",
+    "VIXCLS": "1990-01-02…2026-10-15 (9296)",
+    "RECPROUSM156N": "1975-01-01…2026-08-01 (620)",
+    "DFII10": "2003-01-02…2026-10-15 (5951)",
+    "DFF": "1975-01-01…2026-10-15 (18916)",
+    "CAPE": "1871-02-01…2026-10-16",
+    "MARGIN": "1997-01-01…2026-09-01"
+  },
+  "rows": [
+    {
+      "asOf": "2000-03-31",
+      "habitat": {
+        "regime": "restrictive",
+        "realYieldZ": null,
+        "fedFundsChange12mPp": 1.34
+      },
+      "recession": {
+        "formula": 45,
+        "anchored": 30,
+        "nyFed": 0.04,
+        "layer": 65
+      },
+      "correction": {
+        "formula": 85,
+        "layer": 95
+      },
+      "weights": {
+        "bewertung": 3.042,
+        "kredit": 1.457,
+        "realwirtschaft": 1.023,
+        "geldpolitik": 1.149,
+        "sentiment": 0.56,
+        "managing": null,
+        "widersprueche": null
+      },
+      "slots": [
+        {
+          "name": "Sahm-Regel",
+          "value": "0.00 pp",
+          "weightedScore": -1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Inv. Zinskurve (10Y-2Y)",
+          "value": "T10Y2Y -0.46% · 12M Δ -0.72 pp · T10Y3M 0.18%",
+          "weightedScore": 3,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Aktivität (IP / Auslastung)",
+          "value": "INDPRO YoY +4.3%, TCU 82.2%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Durable Goods (YoY)",
+          "value": "8.0%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "M2 Geldmenge (YoY)",
+          "value": "5.8%",
+          "weightedScore": 0,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Kreditspreads (BAA-Trs)",
+          "value": "2.30%",
+          "weightedScore": 2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Konsumklima (CSI)",
+          "value": "111.3",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Shiller CAPE",
+          "value": "42.2",
+          "weightedScore": 12.6,
+          "maxWeighted": 12.6,
+          "available": true
+        },
+        {
+          "name": "Margin Debt",
+          "value": "284.2 Mrd. $ · YoY +74.5% · z5y +2.57",
+          "weightedScore": 4,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX",
+          "value": "25.5",
+          "weightedScore": 1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX-Proxy",
+          "value": "VIX-Proxy 25.5",
+          "weightedScore": -1,
+          "maxWeighted": 4,
+          "available": true
+        }
+      ],
+      "naSlots": [
+        "Buffett Indikator (TMC/GDP)",
+        "Google Trends \"Recession\"",
+        "CNN Fear & Greed (live)",
+        "Weekly Nowcast (WEI)"
+      ]
+    },
+    {
+      "asOf": "2000-09-29",
+      "habitat": {
+        "regime": "restrictive",
+        "realYieldZ": null,
+        "fedFundsChange12mPp": 1.27
+      },
+      "recession": {
+        "formula": 45,
+        "anchored": 30,
+        "nyFed": 0.7,
+        "layer": 60
+      },
+      "correction": {
+        "formula": 80,
+        "layer": 85
+      },
+      "weights": {
+        "bewertung": 3.042,
+        "kredit": 1.149,
+        "realwirtschaft": 1.023,
+        "geldpolitik": 1.046,
+        "sentiment": 0.56,
+        "managing": null,
+        "widersprueche": null
+      },
+      "slots": [
+        {
+          "name": "Sahm-Regel",
+          "value": "0.03 pp",
+          "weightedScore": -1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Inv. Zinskurve (10Y-2Y)",
+          "value": "T10Y2Y -0.20% · 12M Δ -0.47 pp · T10Y3M -0.43%",
+          "weightedScore": 2,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Aktivität (IP / Auslastung)",
+          "value": "INDPRO YoY +3.1%, TCU 81.3%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Durable Goods (YoY)",
+          "value": "0.1%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "M2 Geldmenge (YoY)",
+          "value": "5.9%",
+          "weightedScore": 0,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Kreditspreads (BAA-Trs)",
+          "value": "2.50%",
+          "weightedScore": 2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Konsumklima (CSI)",
+          "value": "107.3",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Shiller CAPE",
+          "value": "42.9",
+          "weightedScore": 12.6,
+          "maxWeighted": 12.6,
+          "available": true
+        },
+        {
+          "name": "Margin Debt",
+          "value": "265.2 Mrd. $ · YoY +41.3% · z5y +0.44",
+          "weightedScore": 1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX",
+          "value": "19.5",
+          "weightedScore": 0,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX-Proxy",
+          "value": "VIX-Proxy 19.5",
+          "weightedScore": 0,
+          "maxWeighted": 4,
+          "available": true
+        }
+      ],
+      "naSlots": [
+        "Buffett Indikator (TMC/GDP)",
+        "Google Trends \"Recession\"",
+        "CNN Fear & Greed (live)",
+        "Weekly Nowcast (WEI)"
+      ]
+    },
+    {
+      "asOf": "2007-10-31",
+      "habitat": {
+        "regime": "neutral",
+        "realYieldZ": null,
+        "fedFundsChange12mPp": -0.49
+      },
+      "recession": {
+        "formula": 40,
+        "anchored": 30,
+        "nyFed": 0.74,
+        "layer": 45
+      },
+      "correction": {
+        "formula": 55,
+        "layer": 60
+      },
+      "weights": {
+        "bewertung": 1.26,
+        "kredit": 1.046,
+        "realwirtschaft": 0.977,
+        "geldpolitik": 0.786,
+        "sentiment": 0.62,
+        "managing": null,
+        "widersprueche": null
+      },
+      "slots": [
+        {
+          "name": "Sahm-Regel",
+          "value": "0.17 pp",
+          "weightedScore": 0,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Inv. Zinskurve (10Y-2Y)",
+          "value": "T10Y2Y 0.58% · 12M Δ +0.68 pp · T10Y3M 0.44%",
+          "weightedScore": 1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Aktivität (IP / Auslastung)",
+          "value": "INDPRO YoY +2.8%, TCU 80.9%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Durable Goods (YoY)",
+          "value": "-3.5%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "M2 Geldmenge (YoY)",
+          "value": "6.6%",
+          "weightedScore": 0,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Kreditspreads (BAA-Trs)",
+          "value": "1.99%",
+          "weightedScore": 0,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Konsumklima (CSI)",
+          "value": "83.4",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Shiller CAPE",
+          "value": "26.7",
+          "weightedScore": 0,
+          "maxWeighted": 12.6,
+          "available": true
+        },
+        {
+          "name": "Margin Debt",
+          "value": "359.1 Mrd. $ · YoY +37.2% · z5y +1.17",
+          "weightedScore": 2,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX",
+          "value": "21.1",
+          "weightedScore": 1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX-Proxy",
+          "value": "VIX-Proxy 21.1",
+          "weightedScore": 0,
+          "maxWeighted": 4,
+          "available": true
+        }
+      ],
+      "naSlots": [
+        "Buffett Indikator (TMC/GDP)",
+        "Google Trends \"Recession\"",
+        "CNN Fear & Greed (live)",
+        "Weekly Nowcast (WEI)"
+      ]
+    },
+    {
+      "asOf": "2007-12-31",
+      "habitat": {
+        "regime": "easing",
+        "realYieldZ": -0.89,
+        "fedFundsChange12mPp": -1.16
+      },
+      "recession": {
+        "formula": 45,
+        "anchored": 30,
+        "nyFed": 1.86,
+        "layer": 65
+      },
+      "correction": {
+        "formula": 55,
+        "layer": 55
+      },
+      "weights": {
+        "bewertung": 1.26,
+        "kredit": 1.251,
+        "realwirtschaft": 0.977,
+        "geldpolitik": 0.7,
+        "sentiment": 0.62,
+        "managing": null,
+        "widersprueche": null
+      },
+      "slots": [
+        {
+          "name": "Sahm-Regel",
+          "value": "0.23 pp",
+          "weightedScore": 0,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Inv. Zinskurve (10Y-2Y)",
+          "value": "T10Y2Y 0.99% · 12M Δ +1.10 pp · T10Y3M 0.93%",
+          "weightedScore": 0,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Aktivität (IP / Auslastung)",
+          "value": "INDPRO YoY +3.2%, TCU 81.1%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Durable Goods (YoY)",
+          "value": "1.0%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "M2 Geldmenge (YoY)",
+          "value": "5.9%",
+          "weightedScore": 0,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Kreditspreads (BAA-Trs)",
+          "value": "2.51%",
+          "weightedScore": 3,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Konsumklima (CSI)",
+          "value": "76.1",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Shiller CAPE",
+          "value": "25.7",
+          "weightedScore": 0,
+          "maxWeighted": 12.6,
+          "available": true
+        },
+        {
+          "name": "Margin Debt",
+          "value": "379.6 Mrd. $ · YoY +28.7% · z5y +0.58",
+          "weightedScore": 1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX",
+          "value": "20.7",
+          "weightedScore": 1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX-Proxy",
+          "value": "VIX-Proxy 20.7",
+          "weightedScore": 0,
+          "maxWeighted": 4,
+          "available": true
+        }
+      ],
+      "naSlots": [
+        "Buffett Indikator (TMC/GDP)",
+        "Google Trends \"Recession\"",
+        "CNN Fear & Greed (live)",
+        "Weekly Nowcast (WEI)"
+      ]
+    },
+    {
+      "asOf": "2008-09-30",
+      "habitat": {
+        "regime": "easing",
+        "realYieldZ": 0.19,
+        "fedFundsChange12mPp": -3.02
+      },
+      "recession": {
+        "formula": 60,
+        "anchored": 70,
+        "nyFed": 95.22,
+        "layer": 65
+      },
+      "correction": {
+        "formula": 45,
+        "layer": 35
+      },
+      "weights": {
+        "bewertung": 1.26,
+        "kredit": 0.943,
+        "realwirtschaft": 0.838,
+        "geldpolitik": 0.871,
+        "sentiment": 0.62,
+        "managing": null,
+        "widersprueche": null
+      },
+      "slots": [
+        {
+          "name": "Sahm-Regel",
+          "value": "1.10 pp",
+          "weightedScore": 4,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Inv. Zinskurve (10Y-2Y)",
+          "value": "T10Y2Y 1.91% · 12M Δ +1.29 pp · T10Y3M 2.67%",
+          "weightedScore": -2,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Aktivität (IP / Auslastung)",
+          "value": "INDPRO YoY -3.7%, TCU 77.7%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Durable Goods (YoY)",
+          "value": "-9.2%",
+          "weightedScore": 3,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "M2 Geldmenge (YoY)",
+          "value": "5.6%",
+          "weightedScore": 0,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Kreditspreads (BAA-Trs)",
+          "value": "4.01%",
+          "weightedScore": 3,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Konsumklima (CSI)",
+          "value": "63.0",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Shiller CAPE",
+          "value": "21.4",
+          "weightedScore": 0,
+          "maxWeighted": 12.6,
+          "available": true
+        },
+        {
+          "name": "Margin Debt",
+          "value": "324.8 Mrd. $ · YoY -10.4% · z5y -1.97",
+          "weightedScore": -4,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX",
+          "value": "46.7",
+          "weightedScore": 4,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX-Proxy",
+          "value": "VIX-Proxy 46.7",
+          "weightedScore": -3,
+          "maxWeighted": 4,
+          "available": true
+        }
+      ],
+      "naSlots": [
+        "Buffett Indikator (TMC/GDP)",
+        "Google Trends \"Recession\"",
+        "CNN Fear & Greed (live)",
+        "Weekly Nowcast (WEI)"
+      ]
+    },
+    {
+      "asOf": "2022-01-31",
+      "habitat": {
+        "regime": "neutral",
+        "realYieldZ": -1.47,
+        "fedFundsChange12mPp": 0.01
+      },
+      "recession": {
+        "formula": 35,
+        "anchored": 25,
+        "nyFed": 0.24,
+        "layer": 40
+      },
+      "correction": {
+        "formula": 75,
+        "layer": 80
+      },
+      "weights": {
+        "bewertung": 2.34,
+        "kredit": 0.84,
+        "realwirtschaft": 1.023,
+        "geldpolitik": 0.7,
+        "sentiment": 0.56,
+        "managing": null,
+        "widersprueche": null
+      },
+      "slots": [
+        {
+          "name": "Sahm-Regel",
+          "value": "-0.27 pp",
+          "weightedScore": -1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Inv. Zinskurve (10Y-2Y)",
+          "value": "T10Y2Y 0.63% · 12M Δ -0.37 pp · T10Y3M 1.59%",
+          "weightedScore": 2,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Aktivität (IP / Auslastung)",
+          "value": "INDPRO YoY +2.2%, TCU 78.4%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Durable Goods (YoY)",
+          "value": "14.8%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "M2 Geldmenge (YoY)",
+          "value": "12.5%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Kreditspreads (BAA-Trs)",
+          "value": "1.91%",
+          "weightedScore": 0,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Konsumklima (CSI)",
+          "value": "70.6",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Shiller CAPE",
+          "value": "38.3",
+          "weightedScore": 12.6,
+          "maxWeighted": 12.6,
+          "available": true
+        },
+        {
+          "name": "Margin Debt",
+          "value": "910.0 Mrd. $ · YoY +17.0% · z5y +0.18",
+          "weightedScore": 0,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX",
+          "value": "27.7",
+          "weightedScore": 1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX-Proxy",
+          "value": "VIX-Proxy 27.7",
+          "weightedScore": -1,
+          "maxWeighted": 4,
+          "available": true
+        }
+      ],
+      "naSlots": [
+        "Buffett Indikator (TMC/GDP)",
+        "Google Trends \"Recession\"",
+        "CNN Fear & Greed (live)",
+        "Weekly Nowcast (WEI)"
+      ]
+    },
+    {
+      "asOf": "2022-06-30",
+      "habitat": {
+        "regime": "restrictive",
+        "realYieldZ": -0.07,
+        "fedFundsChange12mPp": 1.48
+      },
+      "recession": {
+        "formula": 55,
+        "anchored": 40,
+        "nyFed": 0.38,
+        "layer": 65
+      },
+      "correction": {
+        "formula": 55,
+        "layer": 55
+      },
+      "weights": {
+        "bewertung": 2.24,
+        "kredit": 0.84,
+        "realwirtschaft": 0.792,
+        "geldpolitik": 1.149,
+        "sentiment": 0.56,
+        "managing": null,
+        "widersprueche": null
+      },
+      "slots": [
+        {
+          "name": "Sahm-Regel",
+          "value": "-0.07 pp",
+          "weightedScore": -1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Inv. Zinskurve (10Y-2Y)",
+          "value": "T10Y2Y 0.04% · 12M Δ -1.16 pp · T10Y3M 1.32%",
+          "weightedScore": 3,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Aktivität (IP / Auslastung)",
+          "value": "INDPRO YoY +1.9%, TCU 78.9%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Durable Goods (YoY)",
+          "value": "10.2%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "M2 Geldmenge (YoY)",
+          "value": "6.2%",
+          "weightedScore": 0,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Kreditspreads (BAA-Trs)",
+          "value": "2.24%",
+          "weightedScore": 2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Konsumklima (CSI)",
+          "value": "58.4",
+          "weightedScore": 3,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Shiller CAPE",
+          "value": "30.7",
+          "weightedScore": 5.4,
+          "maxWeighted": 12.6,
+          "available": true
+        },
+        {
+          "name": "Margin Debt",
+          "value": "752.9 Mrd. $ · YoY -12.6% · z5y -1.13",
+          "weightedScore": -2,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX",
+          "value": "28.2",
+          "weightedScore": 1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX-Proxy",
+          "value": "VIX-Proxy 28.2",
+          "weightedScore": -1,
+          "maxWeighted": 4,
+          "available": true
+        }
+      ],
+      "naSlots": [
+        "Buffett Indikator (TMC/GDP)",
+        "Google Trends \"Recession\"",
+        "CNN Fear & Greed (live)",
+        "Weekly Nowcast (WEI)"
+      ]
+    },
+    {
+      "asOf": "2026-10-15",
+      "habitat": {
+        "regime": "restrictive",
+        "realYieldZ": 2.02,
+        "fedFundsChange12mPp": -0.22
+      },
+      "recession": {
+        "formula": 45,
+        "anchored": 30,
+        "nyFed": 0.62,
+        "layer": 45
+      },
+      "correction": {
+        "formula": 80,
+        "layer": 90
+      },
+      "weights": {
+        "bewertung": 3.042,
+        "kredit": 0.943,
+        "realwirtschaft": 0.792,
+        "geldpolitik": 0.943,
+        "sentiment": 0.56,
+        "managing": null,
+        "widersprueche": null
+      },
+      "slots": [
+        {
+          "name": "Sahm-Regel",
+          "value": "0.00 pp",
+          "weightedScore": -1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Inv. Zinskurve (10Y-2Y)",
+          "value": "T10Y2Y 0.37% · 12M Δ -0.14 pp · T10Y3M 0.91%",
+          "weightedScore": 1,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "Aktivität (IP / Auslastung)",
+          "value": "INDPRO YoY +1.6%, TCU 76.4%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Durable Goods (YoY)",
+          "value": "8.4%",
+          "weightedScore": -2,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "M2 Geldmenge (YoY)",
+          "value": "5.7%",
+          "weightedScore": 0,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Kreditspreads (BAA-Trs)",
+          "value": "1.44%",
+          "weightedScore": -1,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Konsumklima (CSI)",
+          "value": "51.7",
+          "weightedScore": 3,
+          "maxWeighted": 3,
+          "available": true
+        },
+        {
+          "name": "Shiller CAPE",
+          "value": "40.4",
+          "weightedScore": 12.6,
+          "maxWeighted": 12.6,
+          "available": true
+        },
+        {
+          "name": "Margin Debt",
+          "value": "1453.8 Mrd. $ · YoY +37.2% · z5y +1.01",
+          "weightedScore": 2,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX",
+          "value": "16.9",
+          "weightedScore": 0,
+          "maxWeighted": 4,
+          "available": true
+        },
+        {
+          "name": "VIX-Proxy",
+          "value": "VIX-Proxy 16.9",
+          "weightedScore": 0,
+          "maxWeighted": 4,
+          "available": true
+        }
+      ],
+      "naSlots": [
+        "Buffett Indikator (TMC/GDP)",
+        "Google Trends \"Recession\"",
+        "CNN Fear & Greed (live)",
+        "Weekly Nowcast (WEI)"
+      ]
+    }
+  ]
+}
