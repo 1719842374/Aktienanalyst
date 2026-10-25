@@ -8,6 +8,7 @@ import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
 import { fetchTopicNewsFromGoogleRSS } from "./news-peers";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
 import { fetchReal10YHistory } from "./btc-macro";
+import { fetchFiscalHistory } from "./btc-fiscal-history";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const cache = new Map<string, { expiresAt: number; data: Awaited<ReturnType<typeof fetchBTCMacroHistory>> }>();
@@ -160,6 +161,20 @@ export function registerBTCRoutes(app: Express): void {
       }
       console.error("[GET /api/analyze-btc/news]", err?.message?.substring(0, 200));
       res.status(502).json({ error: "Krypto-Nachrichten nicht verfügbar" });
+    }
+  });
+
+  // FW-09: US-Fiscal-Overlay (FRED MTSO133FMS) — reine Anzeige, kein Score.
+  let fiscalCache: { expiresAt: number; data: Awaited<ReturnType<typeof fetchFiscalHistory>> } | null = null;
+  app.get("/api/analyze-btc/fiscal-history", async (_req, res) => {
+    if (fiscalCache && fiscalCache.expiresAt > Date.now()) return res.json(fiscalCache.data);
+    try {
+      const data = await fetchFiscalHistory();
+      fiscalCache = { data, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
+      res.json(data);
+    } catch (err: any) {
+      console.error("[GET /api/analyze-btc/fiscal-history]", err?.message?.substring(0, 200));
+      res.status(502).json({ error: "FRED-Fiskaldaten nicht verfügbar" });
     }
   });
 }
