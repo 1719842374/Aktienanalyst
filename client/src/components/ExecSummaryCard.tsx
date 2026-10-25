@@ -6,6 +6,7 @@
 import { useMemo } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import type { StockAnalysis } from "../../../shared/schema";
+import { execEntryLinesFromFazit } from "@/lib/execEntryFromFazit";
 import { buildFazitSignal, prepareFazitMetrics } from "@/lib/fazit-signal";
 import { buildBiasDecision } from "../../../shared/bias-fixes";
 import { usePublishChatSection } from "@/lib/chatSectionData";
@@ -68,6 +69,9 @@ export function ExecSummaryCard({ data, sharedMonteCarlo }: {
       .sort((a, b) => b.ed - a.ed)
       .slice(0, 3);
   }, [data?.risks]);
+
+  // Entry-Sätze (Nachkaufen unter …, CRV 3:1) aus derselben Quelle wie S17-Fazit/PDF/Chat (shared/fazit-entry).
+  const entryLines = useMemo(() => (data ? execEntryLinesFromFazit(data) : null), [data]);
 
   // Chat-Kontext (S1): genau die hier angezeigten Werte — Ampel, Signal-Score, Bewertungsbasis/Upside.
   const r2 = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
@@ -243,9 +247,9 @@ export function ExecSummaryCard({ data, sharedMonteCarlo }: {
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Lage / Bruch / Handlung</div>
           {(lage ?? s.fazit?.lage) && <p className="leading-relaxed text-foreground/90" data-testid="exec-summary-lage">{lage ?? s.fazit?.lage}</p>}
           {s.fazit?.bruch && <p className="leading-relaxed text-foreground/90">{s.fazit.bruch}</p>}
-          {s.fazit?.handlung && <p className="leading-relaxed text-foreground/90">{s.fazit.handlung}</p>}
+          {(entryLines?.handlung ?? s.fazit?.handlung) && <p className="leading-relaxed text-foreground/90" data-testid="exec-summary-handlung">{entryLines?.handlung ?? s.fazit?.handlung}</p>}
           {s.posLine && <p className="leading-relaxed text-foreground/90">{s.posLine}</p>}
-          {s.crvLine && <p className="leading-relaxed text-foreground/90">{s.crvLine}</p>}
+          {(entryLines?.crvLine ?? s.crvLine) && <p className="leading-relaxed text-foreground/90" data-testid="exec-summary-crv">{entryLines?.crvLine ?? s.crvLine}</p>}
           {s.crossLine ? <p className="leading-relaxed text-foreground/90">{s.crossLine}</p> : null}
           {s.callLine && <p className="leading-relaxed text-muted-foreground">{s.callLine}</p>}
         </div>
