@@ -8,6 +8,7 @@ import {
 } from "../../lib/calculations";
 import { currencySymbol, formatCurrency, formatNumber, formatPercentNoSign, statementCurrency } from "../../lib/formatters";
 import { useMemo, useState, useCallback, useEffect } from "react";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import { Settings2, RotateCcw, ChevronDown, ChevronUp, AlertTriangle, Lock, Unlock } from "lucide-react";
 
 interface Props { data: StockAnalysis }
@@ -167,6 +168,25 @@ export function Section5({ data }: Props) {
     { name: "Optimistic", result: optResult, color: "border-emerald-500/20 bg-emerald-500/5" },
     { name: "Macro-Stress", result: stressResult, color: "border-red-500/20 bg-red-500/5" },
   ];
+
+  // PR 3 (Chat-Kontext): genau die angezeigten Werte veröffentlichen — keine eigene Rechnung.
+  const fin = (v: number) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  usePublishChatSection("stock", "7", {
+    fairValue_konservativ: fin(mainResult.perShare), fairValue_optimistisch: fin(optResult.perShare),
+    fairValue_makroStress: fin(stressResult.perShare), fairValue_riskAdjInverted: fin(riskAdjDCF),
+    fairValue_safetyMargin30: fin(safetyMarginDCF), dcfWaehrung: statementCurrency(data) ?? null,
+    waccPct: fin(mainResult.wacc), eigenkapitalkostenPct: fin(mainResult.costOfEquity), betaDCF: fin(params.beta),
+    tvAnteilEVPct: mainResult.enterpriseValue > 0 ? fin((mainResult.pvTerminal / mainResult.enterpriseValue) * 100) : null,
+    ebitMargePct: fin(params.ebitMargin), terminalGPct: fin(params.terminalG),
+    wachstumP1Pct: fin(params.revenueGrowthP1), wachstumP2Pct: fin(params.revenueGrowthP2),
+    parameterAngepasst: isModified, betaModus: betaMode,
+    _auffaelligkeiten: [
+      invertedBelowPrice ? "Risk-adj. DCF liegt unter dem aktuellen Kurs (Inverted-DCF-Warnung)" : "",
+      waccWasCapped ? `WACC-Sanity-Cap aktiv (CAPM ${rawWaccCalc.toFixed(2)}% → ${mainResult.wacc.toFixed(2)}%)` : "",
+      betaDivergedFromMarket ? "DCF-Beta weicht vom Markt-Beta ab" : "",
+      isModified ? "Parameter vom Nutzer angepasst (custom)" : "",
+    ].filter(Boolean).join("; ") || null,
+  });
 
   return (
     <SectionCard number={7} title="DCF-MODELL (FCFF)">
