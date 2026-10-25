@@ -50,14 +50,19 @@ async function main() {
   }
   const { fetchGoogleTrendsWithRetry, resetGoogleTrendsRetryState, GOOGLE_TRENDS_MAX_ATTEMPTS, GOOGLE_TRENDS_BACKOFF_CAP_MS, GOOGLE_TRENDS_COOLDOWN_MS } = mod;
 
-  function run(statuses: Array<[number, string]>, clock = { t: 0 }) {
+  // [status, body, retryAfter?, attemptDurationMs?] — duration advances the fake clock (min(duration, timeout)).
+  const timeouts: number[] = [];
+  function run(statuses: Array<[number, string, string?, number?]>, clock = { t: 0 }) {
     let i = 0;
     const sleeps: number[] = [];
+    timeouts.length = 0;
     const out = fetchGoogleTrendsWithRetry(
-      () => {
-        const [status, b] = statuses[Math.min(i, statuses.length - 1)];
+      (timeoutMs: number) => {
+        const [status, b, retryAfter, dur] = statuses[Math.min(i, statuses.length - 1)];
         i++;
-        return { status, body: b };
+        timeouts.push(timeoutMs);
+        if (dur) clock.t += Math.min(dur, timeoutMs ?? dur);
+        return { status, body: b, ...(retryAfter ? { retryAfter } : {}) };
       },
       ms => { sleeps.push(ms); clock.t += ms; },
       () => clock.t,
@@ -99,6 +104,40 @@ async function main() {
   resetGoogleTrendsRetryState();
   res = run([[401, '{"error":"Invalid API key"}']]);
   check("401 → no retry, null", res.calls === 1 && res.out.parsed === null && res.out.reason === "http-401");
+
+  // F3-04b — total budget 15 s incl. backoff, Retry-After inside the budget only.
+  const budget = (mod as any).GOOGLE_TRENDS_TOTAL_BUDGET_MS;
+  check("total budget constant is 15 s", budget === 15_000, String(budget));
+
+  resetGoogleTrendsRetryState();
+  let bc = { t: 0 };
+  res = run([[0, "", undefined, 60_000]], bc);
+  check("timeouts: elapsed never exceeds 15 s budget", bc.t <= 15_000, `elapsed=${bc.t}`);
+  check("first attempt timeout ≤ 12 s, later ones shrink to remaining budget", timeouts[0] === 12_000 && timeouts.every(t => t <= 15_000) && (timeouts.length < 2 || timeouts[1] <= 15_000 - 12_000 - res.sleeps[0]), JSON.stringify({ timeouts, sleeps: res.sleeps }));
+  check("budget exhausted → null + cooldown", res.out.parsed === null && run([[200, OK_BODY]], bc).out.reason === "cooldown");
+
+  for (const dur of [4_000, 5_500, 9_000, 11_000, 14_000]) {
+    resetGoogleTrendsRetryState();
+    bc = { t: 0 };
+    run([[503, "", undefined, dur]], bc);
+    const sum = timeouts.reduce((a, b) => a + b, 0);
+    check(`budget holds for ${dur} ms attempts (elapsed ${bc.t} ms, timeouts sum ${sum})`, bc.t <= 15_000 && timeouts.every(t => t >= 1000));
+  }
+
+  resetGoogleTrendsRetryState();
+  res = run([[429, "", "3"], [200, OK_BODY]]);
+  check("Retry-After: 3 (seconds) on 429 honoured inside budget", res.calls === 2 && JSON.stringify(res.sleeps) === "[3000]" && res.out.parsed?.value === 55, JSON.stringify(res.sleeps));
+
+  resetGoogleTrendsRetryState();
+  bc = { t: Date.parse("2026-10-25T12:00:00Z") };
+  res = run([[503, "", "Sun, 25 Oct 2026 12:00:05 GMT"], [200, OK_BODY]], bc);
+  check("Retry-After HTTP-date on 503 honoured (5 s)", res.calls === 2 && JSON.stringify(res.sleeps) === "[5000]" && res.out.parsed != null, JSON.stringify(res.sleeps));
+
+  resetGoogleTrendsRetryState();
+  bc = { t: 0 };
+  res = run([[429, "", "60"], [200, OK_BODY]], bc);
+  check("Retry-After 60 s > budget → no retry, no sleep", res.calls === 1 && res.sleeps.length === 0 && res.out.parsed === null, JSON.stringify(res));
+  check("Retry-After over budget → cooldown applies", run([[200, OK_BODY]], bc).out.reason === "cooldown");
 
   // Re-entrancy guard: a nested call while one is in flight makes no SerpApi call.
   resetGoogleTrendsRetryState();

@@ -504,15 +504,20 @@ export function finraMarginPoints(buf: Buffer): { date: string; debitMillions: n
 function fetchSerpApiWithStatus(url: string, timeoutMs: number): SerpApiHttpResult {
   const marker = "\n__HTTP_STATUS__";
   try {
-    const out = execSync(`curl -sL --max-time ${Math.floor(timeoutMs / 1000)} -w "${marker.replace("\n", "\\n")}%{http_code}" "${url}"`, {
+    const raMarker = "\n__RETRY_AFTER__";
+    const maxTime = Math.max(1, Math.floor(timeoutMs / 1000));
+    const out = execSync(`curl -sL --max-time ${maxTime} -w "${marker.replace("\n", "\\n")}%{http_code}${raMarker.replace("\n", "\\n")}%header{retry-after}" "${url}"`, {
       encoding: "utf-8",
       timeout: timeoutMs + 5000,
       maxBuffer: 50 * 1024 * 1024,
     });
     const idx = out.lastIndexOf(marker);
     if (idx < 0) return { status: 0, body: out };
-    const status = parseInt(out.slice(idx + marker.length).trim(), 10);
-    return { status: Number.isFinite(status) ? status : 0, body: out.slice(0, idx) };
+    const tail = out.slice(idx + marker.length);
+    const raIdx = tail.indexOf(raMarker);
+    const status = parseInt((raIdx < 0 ? tail : tail.slice(0, raIdx)).trim(), 10);
+    const retryAfter = raIdx < 0 ? "" : tail.slice(raIdx + raMarker.length).trim();
+    return { status: Number.isFinite(status) ? status : 0, body: out.slice(0, idx), ...(retryAfter ? { retryAfter } : {}) };
   } catch {
     return { status: 0, body: "" };
   }
@@ -543,8 +548,8 @@ function scoreGoogleTrends(): IndicatorResult {
   let fetched: { value: number; source: string } | null = null;
   try {
     const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
-    // F3-04: bounded retry (max 3 attempts, 1 s / 2 s backoff, 15 min cooldown after a final 429).
-    const outcome = fetchGoogleTrendsWithRetry(() => fetchSerpApiWithStatus(url, 12000), sleepSync);
+    // F3-04: bounded retry (max 3 attempts, 1 s / 2 s backoff or Retry-After, 15 s total budget, 15 min cooldown after a final 429).
+    const outcome = fetchGoogleTrendsWithRetry(timeoutMs => fetchSerpApiWithStatus(url, timeoutMs), sleepSync);
     if (!outcome.parsed) console.log(`  Google Trends SerpApi miss (${outcome.reason}, attempts=${outcome.attempts})`);
     const parsed = outcome.parsed;
     if (parsed) {
