@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceLine, ReferenceArea, ReferenceDot, ComposedChart, Bar,
+  ReferenceLine, ReferenceArea, ReferenceDot, ComposedChart, Bar, Area,
 } from "recharts";
 import {
   CheckCircle2, AlertTriangle, Eye, EyeOff, TrendingUp, TrendingDown,
@@ -79,6 +79,9 @@ export function GoldPriceChart({ data }: Props) {
   const [visibleMacro, setVisibleMacro] = useState<Set<MacroKey>>(() => new Set(MACRO.filter(m => m.defaultOn).map(m => m.key)));
   const [showSignals, setShowSignals] = useState(true);
   const [showVolume, setShowVolume] = useState(true);
+  // F10-12/13: optional wie Aktien-S12 (BB standardmäßig aus); ATR-Pane optional.
+  const [showBollinger, setShowBollinger] = useState(false);
+  const [showAtr, setShowAtr] = useState(false);
   // AISC staucht die Preisachse (Kurs ≈ 2,5× AISC), deshalb wie die übrigen Overlays standardmäßig aus.
   const [showAisc, setShowAisc] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
@@ -122,7 +125,7 @@ export function GoldPriceChart({ data }: Props) {
     const step = Math.ceil(filteredData.length / 500);
     // 10Y/Max: nur Cross-Tage zusaetzlich behalten — Volumen-Marker-Tage wuerden sonst bei
     // Jahrzehnten Historie hunderte Extra-Punkte erzwingen und die Ausduennung aushebeln.
-    const result = filteredData.filter((d, i) => i % step === 0 || d.cross || (!longRange && (d.volSpike || d.volDivergence)));
+    const result = filteredData.filter((d, i) => i % step === 0 || d.cross || (!longRange && (d.volSpike || d.volDivergence || d.volConfirm)));
     if (result[result.length - 1] !== filteredData[filteredData.length - 1]) result.push(filteredData[filteredData.length - 1]);
     return result;
   }, [filteredData, longRange]);
@@ -186,7 +189,28 @@ export function GoldPriceChart({ data }: Props) {
   const sigRsi = serverSig("technical.rsi");
   const spikeOn = hasVolume && !!sigSpike?.available;
   const divOn = hasVolume && !!sigDiv?.available;
-  const volMarkers = chartDataWithVol.filter(d => (spikeOn && d.volSpike) || (divOn && d.volDivergence));
+  const volMarkers = chartDataWithVol.filter(d => (spikeOn && d.volSpike) || (divOn && d.volDivergence) || (hasVolume && d.volConfirm));
+  // F10-08: Spike (amber) > Divergenz (lila) > Bestätigung (grün).
+  const volMarkerFill = (d: { volSpike?: boolean; volDivergence?: boolean }) => (d.volSpike && spikeOn ? "#f59e0b" : d.volDivergence && divOn ? "#c084fc" : "#22c55e");
+  // F10-08 Volumen-Trend (Zusatzschicht, kein GIS): Fenster 20T vs. 20T davor, nur echte Prints.
+  const volTrend = hasVolume ? tech.volumeTrend ?? null : null;
+  const VOL_TREND_TEXT: Record<string, string> = {
+    bestaetigt: "steigendes Volumen bei Aufwärtsbewegung = bullisch bestätigt",
+    divergenz: "Aufwärtsbewegung ohne Volumen = schwache Bestätigung",
+    abwaertsdruck: "steigendes Volumen bei Abwärtsbewegung = bärisch",
+    neutral: "fallendes Volumen bei Abwärtsbewegung = neutral",
+  };
+  const fmtPct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1).replace(".", ",")}%`;
+  // F10-12/13: Bollinger aus Closes (immer rechenbar ab 20 Punkten), ATR nur mit echtem High/Low.
+  const hasBollinger = chartDataWithVol.some(d => d.bbUpper != null);
+  const bbOn = showBollinger && hasBollinger;
+  const hasAtr = chartDataWithVol.some(d => d.atr14 != null);
+  const atrOn = showAtr && hasAtr;
+  const bbLast = useMemo(() => {
+    const last = fullChart[fullChart.length - 1];
+    if (!last || last.bbUpper == null || last.bbLower == null) return null;
+    return { state: last.price > last.bbUpper ? "über" : last.price < last.bbLower ? "unter" : "innerhalb", upper: last.bbUpper, lower: last.bbLower };
+  }, [fullChart]);
   const sigNote = (label: string, sig: typeof sigSpike, on: boolean) =>
     on ? volumeLegendText(label, sig!.detail) : `${label}: N/A — ${!hasVolume ? "kein echtes Volumen" : sig ? volumeLegendText("", sig.detail).replace(/^: /, "") : "Server-Signal fehlt"}`;
   const relRsi = describeRelativeRsi(tech.rsiPercentile, tech.rsiHistoryDays, sigRsi?.available ? sigRsi.z : null);
@@ -214,11 +238,13 @@ export function GoldPriceChart({ data }: Props) {
       }
       // AISC-Linie + Stresszone (bis AISC × 1,15) müssen auf der Preisachse sichtbar sein.
       if (aiscOn && d.aisc != null) { minVal = Math.min(minVal, d.aisc); maxVal = Math.max(maxVal, d.aisc * aiscStressHigh); }
+      if (bbOn && d.bbLower != null && d.bbLower > 0) minVal = Math.min(minVal, d.bbLower);
+      if (bbOn && d.bbUpper != null) maxVal = Math.max(maxVal, d.bbUpper);
     }
     if (!isFinite(minVal) || !isFinite(maxVal) || maxVal <= 0) return [0, 5000] as [number, number];
     const padding = (maxVal - minVal) * 0.05;
     return [Math.max(0, minVal - padding), maxVal + padding] as [number, number];
-  }, [chartDataWithVol, visibleMAs, aiscOn, aiscStressHigh]);
+  }, [chartDataWithVol, visibleMAs, aiscOn, aiscStressHigh, bbOn]);
 
   const formatDate = (date: string) => {
     const parts = date.split("-");
@@ -423,6 +449,35 @@ export function GoldPriceChart({ data }: Props) {
             {showVolume && hasVolume ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
             Volumen{hasVolume ? "" : " (N/A)"}
           </button>
+          <button
+            onClick={() => setShowBollinger(!showBollinger)}
+            disabled={!hasBollinger}
+            title={hasBollinger ? "Bollinger-Band (20, 2σ) wie Aktien-S12 ein-/ausblenden — Preis außerhalb Band = Extrem. Kein Einfluss auf GIS." : "Bollinger n/a — weniger als 20 Kurse"}
+            className={`${chipCls} ${bbOn ? "border-violet-400 text-violet-400" : "border-border text-muted-foreground opacity-50"}`}
+            data-testid="toggle-gold-bollinger"
+          >
+            {bbOn ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+            BB(20,2){hasBollinger ? "" : " n/a"}
+          </button>
+          {hasAtr ? (
+            <button
+              onClick={() => setShowAtr(!showAtr)}
+              title="ATR(14) Wilder aus Tageshoch/-tief der Preisquelle — Volatilität für Stops. Kein Einfluss auf GIS."
+              className={`${chipCls} ${atrOn ? "border-teal-400 text-teal-400" : "border-border text-muted-foreground opacity-50"}`}
+              data-testid="toggle-gold-atr"
+            >
+              {atrOn ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+              ATR(14)
+            </button>
+          ) : (
+            <span
+              className={`${chipCls} cursor-not-allowed border-dashed border-border font-mono text-muted-foreground opacity-50`}
+              title="Die Preisquelle liefert kein Tageshoch/-tief — ATR wird nicht geschätzt"
+              data-testid="gold-atr-na"
+            >
+              ATR n/a
+            </span>
+          )}
         </div>
       </div>
 
@@ -658,12 +713,20 @@ export function GoldPriceChart({ data }: Props) {
                   x={d.date}
                   y={0.02}
                   r={3}
-                  fill={d.volSpike && spikeOn ? "#f59e0b" : "#c084fc"}
+                  fill={volMarkerFill(d)}
                   stroke="#0a0a0a"
                   strokeWidth={0.5}
                   ifOverflow="discard"
                 />
               ))}
+
+              {bbOn && (
+                <>
+                  <Area type="monotone" dataKey="bbUpper" name="BB Upper" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none" />
+                  <Line type="monotone" dataKey="bbMid" name="BB Mid" stroke="#a78bfa" strokeWidth={1} strokeDasharray="5 3" dot={false} connectNulls isAnimationActive={false} />
+                  <Area type="monotone" dataKey="bbLower" name="BB Lower" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none" />
+                </>
+              )}
 
               <Line type="monotone" dataKey="price" name="Gold Kurs" stroke="#f59e0b" strokeWidth={1.5} dot={false} isAnimationActive={false} />
 
@@ -746,7 +809,7 @@ export function GoldPriceChart({ data }: Props) {
                 <YAxis width={55} tick={false} axisLine={false} tickLine={false} domain={[0, 1]} />
                 {visibleRightWidth > 0 && <YAxis yAxisId="align" orientation="right" width={visibleRightWidth} tick={false} axisLine={false} tickLine={false} />}
                 {volMarkers.map(d => (
-                  <ReferenceDot key={`vmm-${d.date}`} x={d.date} y={0.5} r={2.5} fill={d.volSpike && spikeOn ? "#f59e0b" : "#c084fc"} stroke="none" ifOverflow="discard" />
+                  <ReferenceDot key={`vmm-${d.date}`} x={d.date} y={0.5} r={2.5} fill={volMarkerFill(d)} stroke="none" ifOverflow="discard" />
                 ))}
               </ComposedChart>
             </ResponsiveContainer>
@@ -756,6 +819,11 @@ export function GoldPriceChart({ data }: Props) {
           <div className="sticky left-0 mt-1 flex max-w-full flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground" style={narrow ? { maxWidth: "calc(100vw - 3rem)" } : undefined} data-testid="gold-vol-signals">
             <span className="inline-flex min-w-0 max-w-full items-start gap-1 break-words"><span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: spikeOn ? "#f59e0b" : "transparent", border: "1px solid #f59e0b" }} />{sigNote("Volumen-Spike (>1,5× Ø20T)", sigSpike, spikeOn)}</span>
             <span className="inline-flex min-w-0 max-w-full items-start gap-1 break-words"><span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: divOn ? "#c084fc" : "transparent", border: "1px solid #c084fc" }} />{sigNote("Volumen-Divergenz", sigDiv, divOn)}</span>
+            <span className="inline-flex min-w-0 max-w-full items-start gap-1 break-words" data-testid="gold-vol-trend"><span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: volTrend ? "#22c55e" : "transparent", border: "1px solid #22c55e" }} />
+              {volTrend
+                ? `Volumen-Trend 20T: Ø-Volumen ${fmtPct(volTrend.volChangePct)}, Kurs ${fmtPct(volTrend.priceChangePct)} — ${VOL_TREND_TEXT[volTrend.state]}`
+                : `Volumen-Trend: n/a — ${hasVolume ? "zu wenige echte Prints (40T)" : "kein echtes Volumen"}`}
+            </span>
           </div>
         )}
         {hiddenMacroSeries.length > 0 && (
@@ -855,6 +923,37 @@ export function GoldPriceChart({ data }: Props) {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
+
+        {/* F10-13: ATR(14) — optional, nur mit echtem High/Low. */}
+        {atrOn && (
+          <div className="mt-3 min-h-10 shrink-0" style={{ minHeight: TA_OSC_MIN_PX }} data-testid="gold-atr-pane">
+            <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2 text-[10px] text-muted-foreground sm:flex-nowrap">
+              <span className="font-medium">ATR(14)</span>
+              <span className="opacity-60">= Average True Range (Wilder) | Volatilität für Stops</span>
+              {tech.currentAtr != null && fullChart.length > 0 && (
+                <span className="ml-auto font-mono font-semibold text-teal-400">
+                  ${tech.currentAtr.toFixed(2)} ({((tech.currentAtr / fullChart[fullChart.length - 1].price) * 100).toFixed(2).replace(".", ",")}% vom Kurs) · 2×ATR = ${(2 * tech.currentAtr).toFixed(0)}
+                </span>
+              )}
+            </div>
+            <ResponsiveContainer width="100%" height={110}>
+              <ComposedChart data={chartDataWithVol} margin={narrow ? { top: 2, right: 8, left: 0, bottom: 2 } : { top: 2, right: 10, left: 0, bottom: 2 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                <XAxis dataKey="date" tick={false} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: narrow ? 10 : 9, fill: "rgba(255,255,255,0.4)" }} tickLine={false} axisLine={false} width={narrow ? 55 : 28} tickFormatter={(v: number) => v.toFixed(0)} />
+                {narrow && visibleRightWidth > 0 && (
+                  <YAxis yAxisId="align" orientation="right" width={visibleRightWidth} tick={false} axisLine={false} tickLine={false} />
+                )}
+                <Tooltip
+                  contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "11px" }}
+                  formatter={(value: number) => [`$${value?.toFixed(2)}`, "ATR(14)"]}
+                  labelFormatter={(label) => label}
+                />
+                <Line type="monotone" dataKey="atr14" stroke="#2dd4bf" strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </TaPlotScroll>
 
       {/* Legende: Fair Value + #201-Cross-Marker */}
@@ -866,6 +965,12 @@ export function GoldPriceChart({ data }: Props) {
         <span className="flex items-center gap-1">
           <span className="w-3 h-0.5 rounded-full" style={{ borderTop: "1px dashed #a855f7" }} /> Fair Value (adj.)
         </span>
+        {bbOn && (
+          <span className="flex items-center gap-1" data-testid="gold-bb-status">
+            <span className="w-3 h-0.5 rounded-full" style={{ borderTop: "1px dashed #7c3aed" }} />
+            {bbLast ? `BB(20,2): Kurs ${bbLast.state} Band ($${bbLast.lower.toFixed(0)}–$${bbLast.upper.toFixed(0)})${bbLast.state === "innerhalb" ? "" : " — außerhalb = Extrem"}` : "BB(20,2): n/a"}
+          </span>
+        )}
         <span className="flex flex-wrap items-center gap-1" data-testid="gold-aisc-status">
           <span className="w-3 h-0.5 rounded-full" style={{ backgroundColor: AISC_COLOR }} />
           {aiscAvail === "offline" ? (
@@ -928,6 +1033,7 @@ export function GoldPriceChart({ data }: Props) {
         MACD = EMA₁₂ − EMA₂₆, Signal = EMA₉(MACD), Histogram = MACD − Signal; α = 2/(Period+1).
         Makro-Overlays nur aus FRED (DFII10, M2SL, DTWEXBGS, T10YIE, WALCL); fehlt eine Reihe, fehlt ihr Chip; hat sie im Zeitraum keine Werte, steht „n/a“.
         10Y/Max laden die lange Historie separat (Indikatoren auf voller Reihe, Anzeige ausgedünnt auf ~500 Punkte). Reine Chart-Anzeige, kein Einfluss auf GIS/Technik-Score.
+        F10-08/12/13 (Zusatzschicht, GIS unverändert): Volumen-Trend = Ø-Volumen 20T vs. 20T davor bei Kursänderung 20T (nur echte Prints, sonst n/a); BB(20,2) = SMA20 ± 2σ wie Aktien-S12; ATR(14) Wilder nur mit echtem Tageshoch/-tief der Preisquelle, sonst „ATR n/a“.
         AISC (Minen): Ø der berichteten Quartals-AISC (by-product) von Newmont, Barrick, Agnico Eagle aus den Quartalsberichten (Quelle je Wert in server/data/gold-aisc.json), Stufe ab Quartalsende + {data.aiscLine?.lagDays ?? 60} Tage, Ø erst ab {data.aiscLine?.minCompanies ?? 2} Werten, fehlende Quartale n/a.
         Stresszone: Kurs &lt; AISC × {aiscStressLow.toFixed(2).replace(".", ",")}–{aiscStressHigh.toFixed(2).replace(".", ",")}. Kein Einfluss auf GIS/Score. „Inflations-BE (T10YIE)“ ist die Inflationserwartung, nicht die Minenkosten.
       </div>

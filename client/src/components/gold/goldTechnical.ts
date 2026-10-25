@@ -8,6 +8,7 @@
  */
 import type { GoldPricePoint } from "../../../../shared/gold-schema";
 import { detectMaCrosses, trailingSma, withClientMa50 } from "./goldChartMa";
+import { calcBollinger } from "../../lib/taWindowSeries";
 
 export interface GoldTechPoint {
   date: string;
@@ -23,7 +24,16 @@ export interface GoldTechPoint {
   volSpike?: boolean;
   /** Future_10 §4: Beginn einer Divergenz — Preis 20T hoeher, Ø-Volumen 20T unter den 20T davor. */
   volDivergence?: boolean;
+  /** F10-12: Bollinger(20,2) — dieselbe Rechnung wie Aktien-S12 (taWindowSeries.calcBollinger). */
+  bbUpper?: number; bbMid?: number; bbLower?: number;
+  /** F10-13: ATR(14) Wilder aus High/Low/Close derselben Quelle; null ohne echte High/Low. */
+  atr14?: number | null;
+  /** F10-08: Beginn einer Volumen-Bestätigung — Preis 20T höher UND Ø-Volumen 20T über den 20T davor. */
+  volConfirm?: boolean;
 }
+
+/** F10-08: Volumen-Trend am letzten Punkt (nur echte Prints, sonst null = n/a). */
+export interface GoldVolumeTrend { state: "bestaetigt" | "divergenz" | "abwaertsdruck" | "neutral"; volChangePct: number; priceChangePct: number }
 
 export interface GoldTechSignal { date: string; type: "BUY" | "SELL"; reason: string; price: number }
 
@@ -38,6 +48,33 @@ export interface GoldTechnical {
   /** RSI-Perzentil (0–100) gegen die eigene RSI-Historie (252–504 Tage). null bei < 252 Werten. */
   rsiPercentile: number | null;
   rsiHistoryDays: number;
+  /** F10-08: null = kein echtes Volumen (n/a). */
+  volumeTrend?: GoldVolumeTrend | null;
+  /** F10-13: letzter ATR(14) bzw. null (n/a). */
+  currentAtr?: number | null;
+}
+
+export const ATR_PERIOD = 14;
+
+/** ATR Wilder (True Range = max(H−L, |H−C₋₁|, |L−C₋₁|)). Fehlt High/Low, startet die Reihe neu (keine Schaetzung). */
+export function calcAtr(points: Array<{ close: number; high?: number; low?: number }>, period = ATR_PERIOD): (number | null)[] {
+  const out: (number | null)[] = [];
+  let trs: number[] = [];
+  let atr: number | null = null;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const prev = i > 0 ? points[i - 1] : null;
+    if (p.high == null || p.low == null || prev == null) { trs = []; atr = null; out.push(null); continue; }
+    const tr = Math.max(p.high - p.low, Math.abs(p.high - prev.close), Math.abs(p.low - prev.close));
+    if (atr == null) {
+      trs.push(tr);
+      if (trs.length === period) atr = trs.reduce((a, b) => a + b, 0) / period;
+    } else {
+      atr = (atr * (period - 1) + tr) / period;
+    }
+    out.push(atr);
+  }
+  return out;
 }
 
 export const VOLUME_SPIKE_MULTIPLE = 1.5; // wie server/gold-adaptive-score.ts
@@ -112,6 +149,8 @@ export function buildGoldTechnical(history: GoldPricePoint[]): GoldTechnical {
   const signalLine = macdLine.map(v => (v === null ? null : signalRaw[sIdx++]));
   const rsi = calcRSI(closes);
   const crossByDate = new Map(detectMaCrosses(series).map(c => [c.date, c.type] as const));
+  const bb = calcBollinger(closes);
+  const atr = calcAtr(history);
 
   const points: GoldTechPoint[] = series.map((p, i) => {
     const m = macdLine[i];
@@ -127,6 +166,8 @@ export function buildGoldTechnical(history: GoldPricePoint[]): GoldTechnical {
       real10y: p.real10y ?? null, m2Yoy: p.m2Yoy ?? null, dxy: p.dxy ?? null,
       t10yie: p.t10yie ?? null, walcl: p.walcl ?? null,
       cross: crossByDate.get(p.date),
+      bbUpper: bb[i]?.bbUpper, bbMid: bb[i]?.bbMid, bbLower: bb[i]?.bbLower,
+      atr14: atr[i] ?? null,
     };
   });
 
@@ -152,6 +193,8 @@ export function buildGoldTechnical(history: GoldPricePoint[]): GoldTechnical {
   // Volumen-Marker (nur echte Volumina; fehlt ein Print im Fenster, kein Marker).
   const vols = points.map(p => p.volume);
   let prevDiv = false;
+  let prevConf = false;
+  let volumeTrend: GoldVolumeTrend | null = null;
   for (let i = 0; i < points.length; i++) {
     const v = vols[i];
     const avg = realMean(vols, i - 1, VOLUME_AVERAGE_DAYS);
@@ -162,6 +205,18 @@ export function buildGoldTechnical(history: GoldPricePoint[]): GoldTechnical {
     const div = recent != null && prior != null && priorClose != null && points[i].price > priorClose && recent < prior;
     if (div && !prevDiv) points[i].volDivergence = true;
     prevDiv = div;
+    const conf = recent != null && prior != null && priorClose != null && points[i].price > priorClose && recent > prior;
+    if (conf && !prevConf) points[i].volConfirm = true;
+    prevConf = conf;
+    if (i === points.length - 1 && recent != null && prior != null && priorClose != null && prior > 0 && priorClose > 0) {
+      const up = points[i].price > priorClose;
+      const volUp = recent > prior;
+      volumeTrend = {
+        state: up && volUp ? "bestaetigt" : up ? "divergenz" : volUp ? "abwaertsdruck" : "neutral",
+        volChangePct: (recent / prior - 1) * 100,
+        priceChangePct: (points[i].price / priorClose - 1) * 100,
+      };
+    }
   }
 
   // RSI relativ zur eigenen Historie: Perzentil des letzten RSI in den letzten 252–504 Werten.
@@ -192,6 +247,8 @@ export function buildGoldTechnical(history: GoldPricePoint[]): GoldTechnical {
     currentSignal: last?.signal ?? null,
     rsiPercentile,
     rsiHistoryDays: rsiHist.length,
+    volumeTrend,
+    currentAtr: last?.atr14 ?? null,
   };
 }
 
