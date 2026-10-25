@@ -1056,3 +1056,37 @@ Soll aus den drei Dateien (Stand 2026-10-09). Ist aus dem Code auf Tip `8add9ed1
 **Soll:** `N^b`, `FE`, `S_M` / `S_F*` / `S_D`, QRA-Anker ohne Score-Eingang, GIS-Slot erst bei `FE.available`, Cron/QRA-LLM optional in Step 7.
 
 **Ist:** Unverändert gegenüber Abschnitt 17. Adaptives `s(z)` für Bills, TGA und SOMA liegt auf main. GIS-Slot ist `macroFiscal` (Tester PASS: GIS `S 55.6` = API `macroFiscal`). Softs blockieren nicht. Dateiname bleibt `fertig_`.
+
+## 20. 25.10.2026 Tip 2c955018
+
+Gelesen am Tip `2c955018` (#291 Peer-Varianten A/B, parent `73eff97e`). Ampel-Einträge von Work.MD, 25.10.2026 16:24 Europe/Madrid. Dieser Nachzug ändert keine App-Dateien und benennt keine Spec um. Kein Rückbau von `Fertig_`/`fertig_` nach `Offen_`. #180 HOLD — nicht anfassen.
+
+### Soll vs. Ist — #291 Peer A/B und B2 Gold-Nachzug
+
+| Punkt | Soll | Ist | Ampel |
+|-------|------|-----|-------|
+| #291 Peer A/B | `WORK_PEER_SELECTION_DETAILED.md` Z. 107–108: beide Varianten bauen, Gruppe entscheidet; keine Score-Änderung ohne Vorher/Nachher-Tabelle an Philip | Squash `2c955018` über `73eff97e`, Tree `2299b618`. 8 Dateien: `PeerComparison.tsx` (+36/−4) → `lib/peerViewFilter.ts` → `server/news-peers.ts` (+7/−2) → `shared/peer-forward-pe.ts` (neu) + `shared/schema.ts` (+3). Neuer Test `script/test-peer-variants-ab.ts`. Nur Ansicht, kein Score-Effekt | 🟢 Soft |
+| B2 Gold-Nachzug | Alle 4 Punkte des Designs B2 auf main | #194 `e4e0e1e0`, #201 `98ccc928`, #216 `b1fcf05e` (`GoldFairValueSection.tsx` / `GoldPriceChart.tsx`, Tests `script/test-gold-fv-label-layout.ts`, `test-gold-ma-cross.ts`). Docs-Nachtrag, kein neuer Code | 🟢 |
+| Spec-Dateien | `fertig_`/`Fertig_` bleiben | Kein Rename, kein Rückbau nach `Offen_` | 🟢 |
+
+**Softs, blockieren die Ampel nicht:**
+
+1. #291: Default-Tab Forward-KGV ist nicht von Philip bestätigt (nur Anzeige).
+2. #291: Prod-Stichprobe der Fwd-Abdeckung nach dem Deploy.
+
+### 1. #291 Peer-Varianten A/B (Forward- vs. Trailing-KGV ±30 %, GICS (n/a) vs. FMP-Industrie; nur Ansicht, kein Score) — 🟢 Soft
+
+**Soll:** `WORK_PEER_SELECTION_DETAILED.md` Z. 107–108: beide Varianten bauen, Gruppe entscheidet; keine Score-Änderung ohne Vorher/Nachher-Tabelle an Philip.
+
+**Ist:** Squash `2c955018` über `73eff97e`, Tree `2299b618` — feat(peers): Varianten A/B umschaltbar – Forward- vs. Trailing-KGV ±30 %, GICS (n/a) vs. FMP-Industrie (Ansicht, kein Score) (#291). Doublecheck: Diff-GO Soft und Post-Merge GO. Tester PASS Soft (`/workspace/dod-291/REPORT.md`). Nur Ansicht, kein Score-Effekt, daher keine Vorher/Nachher-Tabelle nötig. OFFEN (Soft): Default-Tab Forward-KGV ist nicht von Philip bestätigt (nur Anzeige); Prod-Stichprobe der Fwd-Abdeckung nach dem Deploy.
+
+### 2. Design B2 Gold-Nachzug (Docs-Nachtrag, kein neuer Code) — 🟢
+
+**Soll:** Alle 4 Punkte des Designs B2 liegen auf main.
+
+**Ist:** Alle 4 Punkte liegen schon auf main:
+- `e4e0e1e0` fix(gold): B2 Fair-Value label collision avoidance (#194)
+- `98ccc928` Gold-Chart: MA50 und Cross-Marker, Fair-Value-Label-Nachzug (#201)
+- `b1fcf05e` Gold FV-Korridor: Stapel nur bei nahen Preisen, Spot-Abstand 375px, Tap-Tooltip fuer Kuerzel/Stapel (#216)
+
+Beleg: Playwright auf Prod-Build bei 375 px (echter Touch) und 1440 px; Screenshots `/workspace/goldb2/shots/`, Messungen `/workspace/goldb2/before.json`. Der Soft-Punkt 2 in Abschnitt 19 „Echter Touch-Input ist nicht verifiziert“ ist damit verifiziert. Abschnitt 19 selbst bleibt unverändert stehen. Spec bleibt `fertig_`, nicht auf `Offen_`.
