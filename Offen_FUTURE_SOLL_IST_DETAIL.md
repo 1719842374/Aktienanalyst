@@ -255,7 +255,7 @@ Philip hat am 18.10. entschieden: **Makro-Gewichte darf die KI wählen (JA).** D
 | F9-01 | Z.12 | Adaptive Signale (z-Score / Perzentil über 15–20 Jahre) | im Rezessionspfad nur Margin Debt z 5 Jahre (`server/recession.ts:1226`) | ❌ | Autonom (freigegeben), als Zusatzobjekt |
 | F9-02 | Z.26 | Gewinnwachstum vs. Trend (S&P-EPS YoY) | 0 Treffer | ❌ | Autonom; Quelle Multpl/FMP |
 | F9-03 | Z.27 | Realized Growth Gap (Überraschungsquote, Prognose-Revisionen) | 0 Treffer im Makropfad (nur Aktien-Factpack `server/factpack-validate.ts:244`) | ❌ | Autonom; Datenquelle klären |
-| F9-04 | Z.28 | Lager/Nachfrage-Lücke (Inventory-to-Sales, DGORDER vs. Shipments) | DGORDER nur als YoY-Slot (`server/recession.ts:332–334`), keine Lücke | ❌ | Autonom (FRED, kostenlos) |
+| F9-04 | Z.28 | Lager/Nachfrage-Lücke (Inventory-to-Sales, DGORDER vs. Shipments) | DGORDER nur als YoY-Slot (`server/recession.ts:332–334`), keine Lücke; Rechenmodul shared/ und server/inventory-demand-gap.ts c474c621 (#343) | ❌ | Route und UI offen |
 | F9-05 | Z.29–35 | Sahm, Zinskurve, BAA10Y, Margin Debt, VIX, Buffett, CAPE als Signale | alle als Slots vorhanden (`server/recession.ts`) | ✅ | Keiner (nur in den Layer übernehmen) |
 | F9-06 | Z.36 | Realzins DFII10 im Makro-Layer | DFII10 nur in Gold/BTC/Liquidität (`server/liquidity-briefing-catalog.ts:179`), nicht im Rezessionspfad | ❌ | Autonom |
 | F9-07 | Z.37 | Konzentration: Cap-Weight-RSL minus Equal-Weight-RSL | 0 Treffer | ❌ | Autonom (SPY gegen RSP aus vorhandenen Kursen) |
