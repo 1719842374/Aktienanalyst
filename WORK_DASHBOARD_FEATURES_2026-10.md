@@ -1,6 +1,6 @@
 # WORK – Dashboard Features (Oktober 2026)
 
-**Stand:** 18.10.2026  
+**Stand:** 18.10.2026 (aktualisiert 24.10.2026)  
 **Ziel:** Design- und Funktionsziele für das Aktienanalyst-Dashboard dokumentieren, damit Agents die visuellen Referenzen und Anforderungen sehen.
 
 ---
@@ -73,26 +73,71 @@ NVO-Hauptchart + LLY und PFE als Overlay-Linien.
 
 ---
 
-## 4. AI-Chatbot im Interface
+## 4. AI-Chatbot im Interface (Aktien)
 
 ### Ziel
-Schwebendes Chat-Fenster, das auf den aktuellen Analysedaten antwortet.
+Schwebendes Chat-Fenster, das auf den aktuellen Analysedaten antwortet und direkt an die Scoring-Gate-Logik und die 20 Sektionen angebunden ist.
 
-**Kontext, den der Bot kennt:**
-- Alle 20 Sektionen der aktuellen Analyse
-- Letzter Earnings-Call (Datum + Inhalt)
-- Historische Beat/Miss-Raten
-- Peer-Vergleiche
+**Visuelle Beispiele (Screenshots 24.10.2026 – SAP-Analyse):**
+1. Erstes Widget: Schwebendes Chat-Fenster unten rechts mit „Was sollen wir erkunden?“ über der Executive Summary.
+2. Zweites Widget: Fenster mit Titelleiste (Zurück, Minimieren, Maximieren, Schließen) und Resize-Handle unten rechts.
 
-**Beispiel-Fragen:**
-- „Warum ist der Inverse-DCF so viel höher als der Kurs?“
-- „Was hat das Management im letzten Call zu Pricing gesagt?“
-- „Wie hat sich die Bruttomarge in den letzten 8 Quartalen entwickelt?“
+**UI-Anforderungen:**
+- **Verschiebbar:** Das Widget kann per Drag & Drop frei auf dem Bildschirm positioniert werden.
+- **Vergrößer- / Verkleinerbar:** Der User kann die Größe des Chat-Fensters ändern (Resize-Handles an den Ecken oder Rändern).
+- **Fenster-Controls:** Minimieren, Maximieren, Schließen in der Titelleiste.
+- Die Position und Größe werden im LocalStorage gespeichert, damit sie nach Reload erhalten bleiben.
 
-**Technik:**  
-Claude Haiku / GPT-4o-mini, Streaming, kein freier Chat (nur zum aktuellen Ticker).
+**Funktionen:**
+- Automatische Anbindung an die aktuelle Analyse (alle 20 Sektionen + Scoring-Gates).
+- User kann sich jede Sektion detailliert und beispielhaft erklären lassen.
+- Die KI kann Szenarien automatisch overriden (DCF, Gates, Ampel neu berechnen).
+- Kontext: Earnings-Call, Beat/Miss-Raten, Peers, Scoring-Pipeline.
 
-**Aufwand:** ~12–16 Stunden.
+**Technik:** Claude Haiku / GPT-4o-mini (oder OpenRouter), Streaming.
+
+**Aufwand:** ~12–16 Stunden (inkl. Drag, Resize und Fenster-Controls).
+
+---
+
+## 4b. Event hinzufügen Button in Sektion 17 (Katalysatoren / DCF)
+
+### Ziel
+In Sektion 17 einen „Event hinzufügen“-Button analog zum Peer-Ticker-Hinzufügen in Sektion 9. Events werden per KI-Schema berechnet und fließen in den DCF ein.
+
+**Mechanismus:** Freitext oder strukturierte Eingabe → KI berechnet Impact nach Schema (Variable, Delta, Horizont, Wahrscheinlichkeit) → DCF und Gates werden aktualisiert.
+
+**Aufwand:** ~8–10 Stunden.
+
+---
+
+## 4c. Vollständige interaktive KI-Chatbot-Anbindung für alle Assets
+
+### Ziel
+Die interaktive Chatbot-Logik (Sektions-Erklärung + Szenario-Override + Event-Hinzufügen) soll nicht nur für die Aktien-Analyse, sondern auch für die anderen Assets im Projekt übertragen werden.
+
+### Assets
+
+| Asset | Sektionen / Module | Beispiel-Override | Aufwand (zusätzlich) |
+|-------|---------------------|-------------------|--------------------------|
+| **Aktien** | 1–20 + Gates | g1, WACC, Margen, Events | Basis (siehe 4 + 4b) |
+| **BTC** | Liquidität, Miner, Technische Analyse, Gates | Hashrate, Fee-Market, Liquiditäts-Index | ~6–8 h |
+| **Gold** | Adaptive Gates, AISC, Makro-Overlays, Technische Analyse | Realzinsen, AISC-Stress, Geopolitik-Event | ~5–7 h |
+| **Rezession** | Scoring (5 Untergruppen), Buffett, VIX, Yield Curve | Habitat, Konzentration, LLM-Flag | ~6–8 h |
+
+### Gemeinsame Architektur
+- Ein gemeinsames Chat-Widget, das den aktuellen Kontext (Asset + geladene Daten) erkennt.
+- Pro Asset ein Schema für Szenario-Overrides und Events.
+- Die KI nutzt die jeweilige Scoring-/Gate-Logik des Assets (nicht hardcodiert).
+- Persistenz der User-Events / Overrides pro Asset und Ticker/Zeitpunkt.
+- **Das Widget ist überall verschiebbar, in der Größe anpassbar und hat Fenster-Controls** (gleiche UI-Anforderungen wie bei Aktien).
+
+### Beispiel-Fragen pro Asset
+- **BTC:** „Was passiert, wenn die Hashrate um 20 % fällt?“
+- **Gold:** „Override: Realzinsen steigen um 50 bp – wie ändert sich das Stress-Signal?“
+- **Rezession:** „Was, wenn der Buffett-Indikator auf 180 % fällt?“
+
+**Gesamtaufwand für Übertragung:** ~17–23 Stunden (nachdem die Aktien-Basis steht).
 
 ---
 
@@ -103,16 +148,7 @@ Claude Haiku / GPT-4o-mini, Streaming, kein freier Chat (nur zum aktuellen Ticke
 - Keine individuellen Filter
 
 ### Soll
-- Custom Screen mit Filtern:
-  - Market Cap (z. B. > 10 Mrd.)
-  - Industry (Multi-Select)
-  - Country (USA, CAN, AUS …)
-  - ROIC > x %
-  - Forward P/E < x
-  - Revenue Growth
-  - EBIT Margin
-
-**FMP-Quelle:** `/stable/stock-screener` + Company Profile + Key Metrics.
+- Custom Screen mit Filtern (Market Cap, Industry, Country, ROIC, Forward P/E, etc.).
 
 **Aufwand:** ~8–12 Stunden.
 
@@ -127,24 +163,19 @@ Claude Haiku / GPT-4o-mini, Streaming, kein freier Chat (nur zum aktuellen Ticke
 | Earnings Beat/Miss Overlay | Hoch | Mittel | 3 |
 | Screener Custom Criteria | Hoch | Mittel | 4 |
 | Sankey Income / Balance | Mittel | Hoch | 5 |
-| AI-Chatbot | Mittel–Hoch | Hoch | 6 |
+| AI-Chatbot Aktien (Sektions-Erklärung + Override + Drag/Resize + Controls) | Mittel–Hoch | Hoch | 6 |
+| Event hinzufügen (Sektion 17) | Mittel | Mittel | 7 |
+| KI-Chatbot Übertragung auf BTC / Gold / Rezession | Mittel | Hoch | 8 |
 
 ---
 
 ## 7. Design-Referenzen (Bilder aus Chat)
 
-- TIKR Detailed Financials (Multi-Jahr-Tabelle mit YoY)
-- TIKR Earnings Call Transcript
-- Sankey „How Microsoft Makes Its Money“ (Income Statement Flow)
-- Sankey Balance Sheet (Assets → Liabilities + Equity)
-- Fiscal.ai Earnings Chart (Beat/Miss Marker)
-- TIKR Global Screener (Custom Criteria)
-- TIKR Custom Dashboard (Watchlist-Tabelle)
-- GuruAI Chat-Interface
-
-Diese Referenzen dienen als visuelles Ziel für die Umsetzung.
+- TIKR Detailed Financials, Earnings Call, Sankey, Fiscal.ai, Screener, GuruAI
+- **Screenshot 24.10.2026 (1):** Schwebendes Chat-Widget über der SAP-Executive-Summary
+- **Screenshot 24.10.2026 (2):** Chat-Widget mit Titelleiste (Minimieren, Maximieren, Schließen) und Resize-Handle
 
 ---
 
 **Nächster Schritt:**  
-Agents können die Prioritäten abarbeiten. Detailed Financials und Peer-Overlay haben den höchsten unmittelbaren Nutzen.
+Agents können die Prioritäten abarbeiten. Die Aktien-Chatbot-Basis sollte vor der Übertragung auf die anderen Assets stehen.
