@@ -26,6 +26,7 @@ import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import { TaStatusPill } from "@/components/sections/TaStatusPill";
 import { REAL10Y_OVERLAY, formatReal10yTick, real10yDomain as real10yDomainOf } from "@/lib/real10yOverlay";
 import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
+import { qeQtSegments, QE_QT_COLORS, QE_QT_LABELS } from "@shared/btc-qe-qt";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
   LineChart as LineChartIcon, Target, Scale, BarChart3, Dice6,
@@ -1173,6 +1174,20 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
       .filter((seg): seg is NonNullable<typeof seg> => seg !== null);
   }, [chartData, capitulationSegmentsFull]);
 
+  // FW-14: QE/QT-Bänder aus der WALCL-13W-Änderung (Regel aus dem Liquiditätsblock), nur Anzeige.
+  // Aus der vollen Reihe berechnet, auf das Zeitfenster geklemmt und wie die Kapitulationszonen
+  // auf vorhandene Datums-Kategorien gesnappt.
+  const qeQtBands = useMemo(() => {
+    if (!showWalcl || chartData.length === 0) return [];
+    const dates = chartData.map(d => d.date);
+    const first = dates[0], last = dates[dates.length - 1];
+    const snap = (t: string) => dates.find(d => d >= t) ?? last;
+    return qeQtSegments(fullChart)
+      .filter(seg => seg.x2 >= first && seg.x1 <= last)
+      .map(seg => ({ ...seg, x1: snap(seg.x1 < first ? first : seg.x1), x2: snap(seg.x2 > last ? last : seg.x2) }))
+      .filter(seg => seg.x1 !== seg.x2 || dates.length === 1);
+  }, [showWalcl, chartData, fullChart]);
+
   // Merge RSI(14) + Volume into chartData
   const chartDataWithRSI = useMemo(() => {
     if (chartData.length === 0) return chartData;
@@ -1656,6 +1671,14 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 Fed-Bilanz (WALCL)
               </button>
             )}
+            {showWalcl && hasWalcl && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground" data-testid="btc-qeqt-legend">
+                {(["qe", "qt", "neutral"] as const).map(r => (
+                  <span key={r} className="inline-flex items-center gap-0.5"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: QE_QT_COLORS[r], opacity: 0.6 }} />{QE_QT_LABELS[r]}</span>
+                ))}
+                <span>· 13W WALCL, nur Anzeige</span>
+              </span>
+            )}
           </div>
         )}
 
@@ -1842,6 +1865,18 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 < MA60(Hashrate) gleichzeitig gelten (siehe minerMetrics.ts).
                 Nur Segmente sichtbar, die im aktuell gewählten Zeitfenster liegen
                 — Recharts clippt ReferenceArea automatisch am sichtbaren Bereich. */}
+            {/* FW-14: QE/QT-Regime-Bänder (grün/rot/grau) hinter den Linien — nur Anzeige, kein Gate/Score */}
+            {qeQtBands.map((seg, idx) => (
+              <ReferenceArea
+                key={`qeqt-${idx}`}
+                x1={seg.x1}
+                x2={seg.x2}
+                fill={QE_QT_COLORS[seg.regime]}
+                fillOpacity={seg.regime === "neutral" ? 0.06 : 0.1}
+                strokeOpacity={0}
+                ifOverflow="hidden"
+              />
+            ))}
             {capitulationSegmentsSnapped.map((seg, idx) => (
               <ReferenceArea
                 key={`cap-zone-${idx}`}
