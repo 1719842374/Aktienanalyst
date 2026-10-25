@@ -171,6 +171,12 @@ export function Section5({ data }: Props) {
 
   // PR 3 (Chat-Kontext): genau die angezeigten Werte veröffentlichen — keine eigene Rechnung.
   const fin = (v: number) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  const pctVsPrice = (fv: number) => (Number.isFinite(fv) && data.currentPrice > 0 ? +((fv / data.currentPrice - 1) * 100).toFixed(1) : null);
+  // Bewertungsurteil nur aus den angezeigten Vergleichen (grün/rot je Szenario, Warnbox) — keine neue Rechnung.
+  const dcfVerdict = !(data.currentPrice > 0) || !Number.isFinite(mainResult.perShare) ? null
+    : mainResult.perShare < data.currentPrice
+      ? `Überbewertung laut S7: Conservative-FV ${fin(mainResult.perShare)} < Kurs ${fin(data.currentPrice)} (${pctVsPrice(mainResult.perShare)}%)${invertedBelowPrice ? `, Risk-adj. DCF ${fin(riskAdjDCF)} < Kurs (Warnbox)` : ""}`
+      : `Unterbewertung laut S7: Conservative-FV ${fin(mainResult.perShare)} > Kurs ${fin(data.currentPrice)} (+${pctVsPrice(mainResult.perShare)}%)${invertedBelowPrice ? `, aber Risk-adj. DCF ${fin(riskAdjDCF)} < Kurs (Warnbox)` : ""}`;
   usePublishChatSection("stock", "7", {
     fairValue_konservativ: fin(mainResult.perShare), fairValue_optimistisch: fin(optResult.perShare),
     fairValue_makroStress: fin(stressResult.perShare), fairValue_riskAdjInverted: fin(riskAdjDCF),
@@ -180,6 +186,15 @@ export function Section5({ data }: Props) {
     ebitMargePct: fin(params.ebitMargin), terminalGPct: fin(params.terminalG),
     wachstumP1Pct: fin(params.revenueGrowthP1), wachstumP2Pct: fin(params.revenueGrowthP2),
     parameterAngepasst: isModified, betaModus: betaMode,
+    // Wie angezeigt: Szenario-WACC und Abweichung zum Kurs ((FV/Kurs − 1) · 100, eine Nachkommastelle).
+    kurs: fin(data.currentPrice), kursWaehrung: data.currency ?? null,
+    waccOptimistischPct: fin(optResult.wacc), waccMakroStressPct: fin(stressResult.wacc),
+    vsKurs_konservativPct: pctVsPrice(mainResult.perShare), vsKurs_optimistischPct: pctVsPrice(optResult.perShare),
+    vsKurs_makroStressPct: pctVsPrice(stressResult.perShare),
+    bewertungsurteil: dcfVerdict,
+    warnbox: invertedBelowPrice
+      ? `AUTOMATISCHE WARNUNG: Inverted DCF < aktueller Kurs — Risk-adj. DCF (${formatCurrency(riskAdjDCF, 2, statementCurrency(data))}) liegt unter dem aktuellen Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}). Anti-Bias-Protokoll: Symmetrische Downside-Betrachtung notwendig.`
+      : null,
     _auffaelligkeiten: [
       invertedBelowPrice ? "Risk-adj. DCF liegt unter dem aktuellen Kurs (Inverted-DCF-Warnung)" : "",
       waccWasCapped ? `WACC-Sanity-Cap aktiv (CAPM ${rawWaccCalc.toFixed(2)}% → ${mainResult.wacc.toFixed(2)}%)` : "",

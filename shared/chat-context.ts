@@ -9,6 +9,7 @@
  * Analyse, keinen Score und kein Gate. Fehlende Werte sind `null` ("n/a"), nie geschätzt.
  */
 import type { StockAnalysis } from "./schema";
+import { sumUpsideGb } from "./bias-fixes";
 
 export type ChatDashboard = "stock" | "btc" | "gold" | "recession";
 export const CHAT_DASHBOARDS: readonly ChatDashboard[] = ["stock", "btc", "gold", "recession"];
@@ -125,7 +126,9 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
       analystenKursziel_median: num(d.analystPT?.median), analystenKursziel_hoch: num(d.analystPT?.high),
       analystenKursziel_tief: num(d.analystPT?.low), analystenAnzahl: num(d.analystPT?.count, 0),
       ratings_buy_hold_sell: d.ratings ? `${d.ratings.buy}/${d.ratings.hold}/${d.ratings.sell}` : null,
-      finalScore: num(sc?.finalScore, 1),
+      // S1 zeigt keinen 0–100-Score (der steht in S20 „/ 100“); Ampel/Signal-Score liefert die
+      // Executive-Summary-Karte selbst (usePublishChatSection "1"). Hier nur als S20-Verweis.
+      scoringFinalScore_S20: num(sc?.finalScore, 1),
     }),
     s(2, {
       kursZeitpunkt: str(d.priceTimestamp), datenStand: str(d.dataTimestamp), cacheStand: str(d._cachedAt),
@@ -162,7 +165,8 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
     }),
     s(8, {
       erwarteterSchadenSummePct: num(risks.reduce((a: number, r: any) => a + (Number.isFinite(r?.expectedDamage) ? r.expectedDamage : 0), 0)),
-      katalysatorGBSumme: num(catalysts.reduce((a: number, c: any) => a + (Number.isFinite(c?.gb) ? c.gb : 0), 0)),
+      // Gleiche Summe wie die Seite (S17 „Σ GB“, Fazit „positive GB“): ▼-Katalysatoren zählen 0.
+      katalysatorGBSumme: num(sumUpsideGb(catalysts)),
     }),
     s(9, {
       peers: list((d.peerComparison?.peers ?? []).map((p: any) => str(p?.ticker ?? p?.name, 20)), 8),
