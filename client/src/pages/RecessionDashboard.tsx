@@ -9,6 +9,7 @@ import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection"
 import { BuffettRatioPanel } from "@/components/recession/BuffettRatioPanel";
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
+import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
 import { showRecessionStand, type RecessionAnalysis } from "@/components/recession/recessionDashboardShared";
@@ -134,18 +135,19 @@ export default function RecessionDashboard() {
             )}
             <RecessionRsiSection number={regions ? 9 : 8} />
             <RecessionMarketChartsSection number={regions ? 10 : 9} />
-            <SectionCard number={regions ? 11 : 10} title="Buffett-Indikator: Marktwert zum BIP">
+            <RecessionTaSection number={regions ? 11 : 10} subgroups={data.subgroups} topDrivers={data.topDrivers} indicators={data.indicators} />
+            <SectionCard number={regions ? 12 : 11} title="Buffett-Indikator: Marktwert zum BIP">
               <BuffettRatioPanel />
             </SectionCard>
-            <SectionCard number={regions ? 12 : 11} title="Zusammenfassung & Top-3 Treiber">
+            <SectionCard number={regions ? 13 : 12} title="Zusammenfassung & Top-3 Treiber">
               <Summary data={data} />
             </SectionCard>
             {data.fazit && (
-              <SectionCard number={regions ? 13 : 12} title="Fazit & Makro-Risikobewertung">
+              <SectionCard number={regions ? 14 : 13} title="Fazit & Makro-Risikobewertung">
                 <FazitSection fazit={data.fazit} />
               </SectionCard>
             )}
-            <SectionCard number={regions ? (data.fazit ? 14 : 13) : (data.fazit ? 13 : 12)} title="Quellenliste">
+            <SectionCard number={regions ? (data.fazit ? 15 : 14) : (data.fazit ? 14 : 13)} title="Quellenliste">
               <SourcesList sources={data.sources} />
             </SectionCard>
             <div className="pb-4">

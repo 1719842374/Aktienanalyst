@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, type ReactNode } from "react";
 import type { StockAnalysis, TradingSignal } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import {
@@ -25,7 +25,30 @@ import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, t
 import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 
-interface Props { data: StockAnalysis; }
+/** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
+export interface TaPaneContext {
+  points: WindowPoint[];
+  tickFormatter: (date: string) => string;
+  formatDateFull: (date: string) => string;
+}
+
+interface Props {
+  data: StockAnalysis;
+  /** Defaults keep the stock Section 12 exactly as before. */
+  sectionNumber?: number;
+  title?: string;
+  subtitle?: string;
+  /** Rendered above the score box (e.g. recession status banner + region switch). */
+  headerSlot?: ReactNode;
+  /** Extra toggle chips appended to the indicator row. */
+  extraChips?: ReactNode;
+  /** Synced sub-panes rendered between price pane and MACD (single-window layout). */
+  extraPanes?: (ctx: TaPaneContext) => ReactNode;
+  rangePresets?: readonly TimeRange[];
+  defaultRange?: TimeRange;
+}
+
+const STOCK_RANGE_PRESETS = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y"] as const;
 
 const MA_LINES = [
   { key: "ma200", label: "MA200 (SMA)", color: "#ef4444", defaultOn: true },
@@ -43,8 +66,10 @@ const SIGNALS_PAGE_SIZE = 10;
 // Preset-Schnitte in Handelstagen — identisch zum bisherigen IST (slice vom letzten Bar).
 const TIME_RANGE_CUTOFF = {
   "3M": 63, "6M": 126, "1Y": 252, "2Y": 504, "3Y": 756, "5Y": 1260, "10Y": 2520,
+  /** Only offered via `rangePresets` (recession TA). Slices the whole series. */
+  "Max": Number.MAX_SAFE_INTEGER,
 } as const;
-type TimeRange = keyof typeof TIME_RANGE_CUTOFF;
+export type TimeRange = keyof typeof TIME_RANGE_CUTOFF;
 
 const EMPTY_WINDOW_HINT = "Keine Bars in diesem Fenster";
 
@@ -119,7 +144,17 @@ function priceDomain(points: WindowPoint[], visible: Set<MAKey>, showBB: boolean
   return [min - pad, max + pad];
 }
 
-export function TechnicalChart({ data }: Props) {
+export function TechnicalChart({
+  data,
+  sectionNumber = 12,
+  title = "Technische Analyse",
+  subtitle = "Interactive Chart – MA / MACD / RSI / BB / Volume",
+  headerSlot,
+  extraChips,
+  extraPanes,
+  rangePresets = STOCK_RANGE_PRESETS,
+  defaultRange = "1Y",
+}: Props) {
   const narrow = useIsNarrow();
   const stockPlotMinWidth = taChartMinWidth(52, 0, 10);
   const ti = data.technicalIndicators;
@@ -136,7 +171,7 @@ export function TechnicalChart({ data }: Props) {
   // Immer an, solange der Nutzer sie nicht ausblendet — Ein-Band bleibt MACD/RSI wie nach #97.
   const [showMacd, setShowMacd] = useState(true);
   const [showRsi, setShowRsi] = useState(true);
-  const [timeRange, setTimeRange] = useState<TimeRange>("1Y");
+  const [timeRange, setTimeRange] = useState<TimeRange>(defaultRange);
   // null = Preset-Slice (IST). Gesetzt, sobald Von/Bis A vom Kalender kommt.
   const [customA, setCustomA] = useState<{ from: string; to: string } | null>(null);
   // Default: nur Kurs A an. B/C aus = heutiges Ein-Kurs-Chart. Aus blendet nur den Plot.
@@ -193,7 +228,8 @@ export function TechnicalChart({ data }: Props) {
 
   if (!ti || !ohlcv || ohlcv.length === 0) {
     return (
-      <SectionCard number={12} title="Technische Analyse" subtitle="Chart & Signale">
+      <SectionCard number={sectionNumber} title={title} subtitle="Chart & Signale">
+        {headerSlot}
         <div className="text-center text-muted-foreground text-xs py-8">Keine OHLCV-Daten verfügbar</div>
       </SectionCard>
     );
@@ -230,7 +266,7 @@ export function TechnicalChart({ data }: Props) {
   // Toleranz 95%: Handelstage pro Kalenderjahr schwanken leicht (Feiertage,
   // Boersenferien), ein exaktes "< cutoff" wuerde bei z.B. 2513 von 2520
   // Punkten (99.7%, faktisch volle 10 Jahre) einen falschen Alarm ausloesen.
-  const isHistoryTruncated = !customA && ti.maData.length > 0 && ti.maData.length < rangeCutoff * 0.95;
+  const isHistoryTruncated = !customA && timeRange !== "Max" && ti.maData.length > 0 && ti.maData.length < rangeCutoff * 0.95;
   const actualYearsAvailable = ti.maData.length > 0 ? +(ti.maData.length / 252).toFixed(1) : 0;
   const hasEnoughForMA200 = ti.maData.length >= 200;
 
@@ -396,7 +432,7 @@ export function TechnicalChart({ data }: Props) {
 
   const formatDate = (date: string) => {
     const p = date.split("-");
-    const presetLong = timeRange==="2Y"||timeRange==="3Y"||timeRange==="5Y"||timeRange==="10Y";
+    const presetLong = timeRange==="2Y"||timeRange==="3Y"||timeRange==="5Y"||timeRange==="10Y"||timeRange==="Max";
     const customLong = !!customA && (new Date(customA.to + "T00:00:00").getTime() - new Date(customA.from + "T00:00:00").getTime()) > 400 * 86400000;
     const long = customA ? customLong : presetLong;
     return long
@@ -408,7 +444,8 @@ export function TechnicalChart({ data }: Props) {
 
 
   return (
-    <SectionCard number={12} title="Technische Analyse" subtitle="Interactive Chart – MA / MACD / RSI / BB / Volume">
+    <SectionCard number={sectionNumber} title={title} subtitle={subtitle}>
+      {headerSlot}
 
       {/* ── Ampel-Score (0-4) ── */}
       <div className={`rounded-lg p-3 mb-3 border ${scoreBg}`}>
@@ -458,7 +495,7 @@ export function TechnicalChart({ data }: Props) {
         <div className="flex min-w-0 max-w-full flex-col gap-2 sm:flex-row sm:items-center sm:gap-3" data-testid="controls-row-presets">
           {/* Time range — setzt nur Fenster A (Ende = letzter Bar, Start = cutoff) */}
           <div className="flex min-h-9 max-w-full flex-wrap gap-1.5 sm:gap-1" data-testid="row-presets">
-            {(["3M","6M","1Y","2Y","3Y","5Y","10Y"] as const).map(r => (
+            {rangePresets.map(r => (
               <button key={r} type="button" onClick={() => { setTimeRange(r); setCustomA(null); setRangeHint(null); setSignalPage(0); }}
                 className={`min-h-9 shrink-0 rounded-md border px-2.5 text-[11px] font-medium transition-colors sm:text-[10px] ${
                   timeRange===r && !customA ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted/50"
@@ -638,6 +675,7 @@ export function TechnicalChart({ data }: Props) {
               <Ruler className="w-2.5 h-2.5"/>
               Messen
             </button>
+            {extraChips}
           </div>
         </div>
 
@@ -799,6 +837,7 @@ export function TechnicalChart({ data }: Props) {
             {narrow && showVolume && (
               <TaVolumeBand data={aBuilt.points} leftAxisWidth={52} marginRight={10} />
             )}
+            {extraPanes?.({ points: aBuilt.points, tickFormatter: formatDate, formatDateFull })}
             {showMacd && (
               <MacdPane points={aBuilt.points} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-macd" title="MACD(12,26,9)" hint="= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal" />
             )}
@@ -1293,6 +1332,66 @@ function OscCaption({ title, hint, compact }: { title: string; hint?: string; co
       <span className="truncate">{title}</span>
       {hint && !compact && <span className="truncate text-[9px] opacity-60">{hint}</span>}
     </div>
+  );
+}
+
+export interface MacroPaneLine {
+  key: string;
+  name: string;
+  color: string;
+  /** stepAfter for monthly/annual prints, monotone for daily. */
+  step?: boolean;
+}
+
+/**
+ * Generic synced sub-pane — same frame as MacdPane/RsiPane (caption, height,
+ * axes, tooltip) so recession overlays look like the stock Section 12.
+ */
+export function MacroPane({
+  data, lines, tickFormatter, formatDateFull, testId, title, hint, refLines = [], digits = 2, unit = "",
+}: {
+  data: Array<{ date: string } & Record<string, number | string | null | undefined>>;
+  lines: MacroPaneLine[];
+  tickFormatter: (date: string) => string;
+  formatDateFull: (date: string) => string;
+  testId: string;
+  title: string;
+  hint?: string;
+  refLines?: { y: number; color: string; label?: string; dashed?: boolean }[];
+  digits?: number;
+  unit?: string;
+}) {
+  const narrow = useIsNarrow();
+  const tick = axisTick(narrow, 9, "var(--muted-foreground)");
+  return (
+    <>
+      <OscCaption title={title} hint={hint} compact={false} />
+      <div className="h-[110px] sm:h-[130px] min-h-10 w-full shrink-0" style={{ minHeight: TA_OSC_MIN_PX }} data-testid={testId}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={data} margin={{ top: 4, right: 10, left: 0, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+            <XAxis dataKey="date" tickFormatter={tickFormatter} tick={tick} {...xAxisIntervalProps(narrow, Math.max(0, Math.floor(data.length / 8)))} axisLine={{ stroke: "var(--border)" }} />
+            <YAxis tick={tick} width={52} axisLine={{ stroke: "var(--border)" }} domain={["auto", "auto"]} tickFormatter={(v: number) => `${v.toFixed(digits > 1 ? 1 : digits)}${unit}`} {...(narrow ? { tickCount: 5 } : {})} />
+            <Tooltip content={({ active, payload, label }) => {
+              if (!active || !payload?.length) return null;
+              return (
+                <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px]">
+                  <div className="font-semibold mb-1">{formatDateFull(String(label ?? ""))}</div>
+                  {payload.map((p: any) => <div key={p.dataKey} className="flex justify-between gap-3"><span style={{ color: p.color }}>{p.name}</span><span className="font-mono">{p.value == null ? "n/a" : `${Number(p.value).toFixed(digits)}${unit}`}</span></div>)}
+                </div>
+              );
+            }} />
+            {refLines.map(r => (
+              <ReferenceLine key={`${r.y}-${r.label ?? ""}`} y={r.y} stroke={r.color} strokeWidth={0.75} strokeDasharray={r.dashed === false ? undefined : "4 3"}
+                label={r.label ? { value: r.label, position: "insideTopLeft", fontSize: 8, fill: r.color } : undefined} />
+            ))}
+            {lines.map(l => (
+              <Line key={l.key} type={l.step ? "stepAfter" : "monotone"} dataKey={l.key} name={l.name} stroke={l.color} strokeWidth={1.5} dot={false} connectNulls={false} isAnimationActive={false} />
+            ))}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </>
   );
 }
 
