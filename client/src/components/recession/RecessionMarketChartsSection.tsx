@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import { ApiErrorBanner } from "@/components/ApiErrorBanner";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import {
   Drawer,
   DrawerContent,
@@ -418,6 +419,21 @@ function ChartsBody() {
   const q = useRecessionMarketCharts(window);
   const market = q.data?.markets.find((m) => m.id === tab) ?? null;
   const factpack = useRecessionMarketFactpack(clickDate ? tab : null, clickDate, window);
+
+  // PR 3 (Chat-Kontext): Snapshot-Zeilen aller vier bereits geladenen Märkte veröffentlichen.
+  const snapFacts: Record<string, string> = {};
+  for (const m of q.data?.markets ?? []) {
+    const s = m.snapshot;
+    snapFacts[m.id] = `${m.valuationLabel} · PE ${fmt(s.pe, 1)} · fwd ${fmt(s.peFwd, 1)} · EPS YoY ${fmt(s.epsYoy, 1)}% · PEG ${fmt(s.peg, 2)}${pegDisplaySuffix(s.pegKind)} · PEG fwd ${fmt(s.pegFwd, 2)}${pegDisplaySuffix(s.pegFwdKind)} · RSI ${fmt(s.rsi, 1)} · MACD H ${fmt(s.macdHist, 2)}`;
+  }
+  usePublishChatSection("recession", "markt", q.data ? {
+    stand: q.data.asOf, fenster: q.data.window, aktiverTab: tab, ...snapFacts,
+    _auffaelligkeiten: (q.data.markets ?? []).flatMap(m => [
+      m.snapshot.pegKind === "formula" && m.snapshot.peg != null && m.snapshot.peg > 3 ? `${m.id}: PEG > 3 (teuer je Wachstumseinheit)` : "",
+      m.snapshot.missing ? `${m.id}: fehlend ${m.snapshot.missing}` : "",
+      m.volNote ? `${m.id}: ${m.volNote}` : "",
+    ]).filter(Boolean).join("; ") || null,
+  } : null);
 
   return (
     <div className="space-y-3">
