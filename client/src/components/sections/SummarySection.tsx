@@ -11,6 +11,7 @@ import { formatCurrency, formatNumber, formatPercentNoSign, formatLargeNumber, f
 import { buildFazitSignal } from "../../lib/fazit-signal";
 import { buildBiasDecision, isNegativeCatalyst } from "../../../../shared/bias-fixes";
 import { useMemo } from "react";
+import { catalystDisplayName } from "../../../../shared/catalyst-event";
 import { buildConflictMatrix, conflictInputsFromAnalysis, isEtfOrFund } from "../../lib/conflictMatrix";
 import { ConflictMatrixPanel } from "./ConflictMatrixPanel";
 import { safeCompanyDcfWaccPct, waccSuffix } from "../../../../shared/valuation-signal";
@@ -317,7 +318,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             <tbody className="divide-y divide-border/50">
               {upsideCatalysts.map((c, i) => (
                 <tr key={i}>
-                  <td className="py-1.5 px-2">{c.name}</td>
+                  <td className="py-1.5 px-2">{catalystDisplayName(c)}</td>
                   <td className={`py-1.5 px-2 text-right font-mono tabular-nums ${c.gb >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
                     {c.gb >= 0 ? '+' : ''}{formatNumber(c.gb, 2)}%
                   </td>
