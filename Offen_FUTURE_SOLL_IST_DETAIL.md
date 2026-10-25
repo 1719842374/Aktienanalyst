@@ -403,7 +403,7 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | Punkt | Wer | PR | Stand |
 |---|---|---|---|
 | F1-01, F1-11 Yahoo-Ersatz auf Prod (MCap/KGV/EPS = 0) | GitHub-Lane / Builder | **#264** gemergt (Squash `4dd43ab8`, Head `5b244253`) | F1-01 ✅ Soft (Doublecheck Post-Merge GO, Tester Prod PASS Soft); F1-11 🟡: BMW.DE und ungültiger Ticker noch nicht live geprüft |
-| F1-01, F1-05 Nicht-US-Titel über ADR bei FMP | dr eggbot | **#265** (Draft „HOLD Philip“, Head `dbdd7475`) | Philip-Entscheidung 18.10.; offen |
+| F1-01, F1-05 Nicht-US-Titel über ADR bei FMP | dr eggbot | ADR-Mapping via #326 f7d3fe0e gemergt (#265 abgelöst), Tester live ausstehend | Philip-Entscheidung 18.10.; offen |
 | FW-13, FW-14, FW-15 BTC-Score mit WALCL, T-Bill, Zinsen + WALCL-Linie | Werki | **#266** gemergt (Squash `29fdf1d5`, Head `f87ac8b2`) | FW-13 ✅ Soft; FW-14/FW-15 🟡: QE/QT-Bänder, BTC/WALCL-Verhältnis, Gate `BTC_QE_QT_REGIME` offen |
 | F7-01, F8-04, F8-05 Buffett/CAPE-Perzentil als Zusatzzeile | – | **#220**, **#219** (Drafts seit 11.10.) | Ersetzen der Zonen braucht Philip |
 | (nicht aus Future-Dateien) Real10Y aus BTC in Sektion 12 | Grok Bot | **#267** (Draft, Head `c224e2c9`) | Philip 18.10.; offen |
