@@ -85,7 +85,8 @@ export default function GoldDashboard() {
   // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen Gold-Daten.
   // PR 3: Auffälligkeiten je Sektion (aus vorhandenen Daten/Gates); Gold hat keine Selbstlade-Sektionen.
   const chatContext = useMemo(() => (data ? enrichChatContext(buildGoldChatContext(data), null, { gatesSectionId: 8 }) : null), [data]);
-  const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
+  // Gold-News trägt intern die ID 100 und auf der Seite keine Nummer → in der Auswahl das Badge statt "100.".
+  const chatSections = useMemo(() => SECTIONS.map(({ id, label, badge }) => (id === NEWS_SECTION_ID ? { id, label, display: badge ?? "📰" } : { id, label })), []);
   const getActiveSectionId = useCallback((): number | null => {
     const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
     for (const { id } of chatSections) {
