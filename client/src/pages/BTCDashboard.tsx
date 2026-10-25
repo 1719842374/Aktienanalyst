@@ -25,6 +25,8 @@ import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisInterv
 import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
 import { TaStatusPill } from "@/components/sections/TaStatusPill";
 import { REAL10Y_OVERLAY, formatReal10yTick, real10yDomain as real10yDomainOf } from "@/lib/real10yOverlay";
+import { FISCAL_OVERLAY, fiscalDomain, useBtcFiscalHistory } from "@/lib/btcFiscalOverlay";
+import { FISCAL_ZONE_STYLE, fiscalForwardFill, fiscalZoneRuns, type FiscalZone } from "@shared/btc-fiscal";
 import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
@@ -75,6 +77,8 @@ interface TechChartPoint {
   m2Absolute?: number | null; m2AbsoluteLagged?: number | null;
   /** Fed-Bilanz WALCL in Bio. USD (Liquiditäts-Endpoint) */
   walcl?: number | null;
+  /** FW-09: US-Fiscal 12M-Ausgaben YoY % (FRED MTSO133FMS, point-in-time) — nur Anzeige */
+  fiscalYoy?: number | null; fiscalZone?: FiscalZone | null;
   rsi14?: number | null;
 }
 
@@ -1018,6 +1022,9 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   const [showM2AbsoluteLagged, setShowM2AbsoluteLagged] = useState(false);
   // Fed-Bilanz (WALCL) aus dem Liquiditätsblock — wie die absoluten M2-Linien nur manuell an.
   const [showWalcl, setShowWalcl] = useState(false);
+  // FW-09: US-Fiscal-Overlay (Anzeige, kein Score) — manuell an.
+  const [showFiscal, setShowFiscal] = useState(false);
+  const fiscalHistory = useBtcFiscalHistory();
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>("1Y");
   const timeRange = timeRangeProp ?? internalTimeRange;
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange;
@@ -1091,7 +1098,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   }, [fullChart, timeRange]);
 
   // Downsample for performance: max ~500 points
-  const chartData = useMemo(() => {
+  const chartDataSampled = useMemo(() => {
     if (filteredData.length <= 500) return filteredData;
     const step = Math.ceil(filteredData.length / 500);
     const result = filteredData.filter((_, i) => i % step === 0);
@@ -1100,12 +1107,25 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     }
     return result;
   }, [filteredData]);
+  // FW-09: Fiscal-YoY additiv je Datum anhängen (point-in-time Forward-Fill); ohne Daten unverändert.
+  const chartData = useMemo(() => {
+    const pts = fiscalHistory.data?.points;
+    if (!pts || pts.length === 0) return chartDataSampled;
+    const byDate = fiscalForwardFill(pts, chartDataSampled.map(d => d.date));
+    return chartDataSampled.map(d => {
+      const f = byDate[d.date];
+      return { ...d, fiscalYoy: f ? f.yoyPct : null, fiscalZone: f ? f.zone : null };
+    });
+  }, [chartDataSampled, fiscalHistory.data]);
 
   const hasReal10y = useMemo(() => chartData.some(d => d.real10y != null), [chartData]);
   const hasM2Yoy = useMemo(() => chartData.some(d => d.m2Yoy != null), [chartData]);
   const hasM2Absolute = useMemo(() => chartData.some(d => d.m2Absolute != null), [chartData]);
   const hasM2AbsoluteLagged = useMemo(() => chartData.some(d => d.m2AbsoluteLagged != null), [chartData]);
   const hasWalcl = useMemo(() => chartData.some(d => d.walcl != null), [chartData]);
+  const hasFiscal = useMemo(() => chartData.some(d => d.fiscalYoy != null), [chartData]);
+  const fiscalYDomain = useMemo(() => fiscalDomain(chartData.map(d => d.fiscalYoy).filter((v): v is number => v != null)), [chartData]);
+  const fiscalRuns = useMemo(() => (showFiscal ? fiscalZoneRuns(chartData) : []), [chartData, showFiscal]);
 
   // Exakt analog zur Gold-Domain: eigene Skala verhindert, dass die kleine
   // Prozentreihe die unveraenderte BTC-Preisachse oder MAs verzieht.
@@ -1343,12 +1363,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
 
   // Mobile: höchstens eine volle rechte Achse. Weitere Makro-Serien behalten
   // ihre Skala (Achse versteckt) und sind über Farbe + Tooltip lesbar.
-  type MacroAxisId = "real10y" | "m2yoy" | "m2absolute" | "walcl";
+  type MacroAxisId = "real10y" | "m2yoy" | "m2absolute" | "walcl" | "fiscal";
   const primaryMacroAxis: MacroAxisId | null = !narrow ? null
     : showReal10y && hasReal10y ? "real10y"
     : showM2Yoy && hasM2Yoy ? "m2yoy"
     : ((showM2Absolute && hasM2Absolute) || (showM2AbsoluteLagged && hasM2AbsoluteLagged)) ? "m2absolute"
     : showWalcl && hasWalcl ? "walcl"
+    : showFiscal && hasFiscal ? "fiscal"
     : null;
   const macroAxisFullWidth = (id: MacroAxisId) => (id === "m2absolute" || id === "walcl" ? 54 : 44);
   const macroAxisHidden = (id: MacroAxisId) => narrow && primaryMacroAxis !== id;
@@ -1357,7 +1378,8 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     (!narrow && showReal10y && hasReal10y ? 44 : 0) +
     (!narrow && showM2Yoy && hasM2Yoy ? 44 : 0) +
     (!narrow && ((showM2Absolute && hasM2Absolute) || (showM2AbsoluteLagged && hasM2AbsoluteLagged)) ? 54 : 0) +
-    (!narrow && showWalcl && hasWalcl ? 54 : 0);
+    (!narrow && showWalcl && hasWalcl ? 54 : 0) +
+    (!narrow && showFiscal && hasFiscal ? 44 : 0);
   const plotMinWidth = narrow
     ? taChartMinWidth(55, visibleRightWidth, 8)
     : taChartMinWidth(55, desktopRightAxes, 106);
@@ -1368,6 +1390,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     if (showM2Absolute && hasM2Absolute && primaryMacroAxis !== "m2absolute") hiddenMacroSeries.push({ key: "m2abs", label: "M2 Absolut", color: "#e2e8f0" });
     if (showM2AbsoluteLagged && hasM2AbsoluteLagged && primaryMacroAxis !== "m2absolute") hiddenMacroSeries.push({ key: "m2lag", label: "M2 Lag (10W)", color: "#fbbf24" });
     if (showWalcl && hasWalcl && primaryMacroAxis !== "walcl") hiddenMacroSeries.push({ key: "walcl", label: "Fed-Bilanz", color: "#34d399" });
+    if (showFiscal && hasFiscal && primaryMacroAxis !== "fiscal") hiddenMacroSeries.push({ key: "fiscal", label: FISCAL_OVERLAY.label, color: FISCAL_OVERLAY.color });
   }
   const priceMargin = narrow
     ? { top: 5, right: 8, left: 0, bottom: 5 }
@@ -1587,7 +1610,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         ))}
         </div>
 
-        {(hasReal10y || hasM2Yoy || hasM2Absolute || hasM2AbsoluteLagged || hasWalcl) && (
+        {(hasReal10y || hasM2Yoy || hasM2Absolute || hasM2AbsoluteLagged || hasWalcl || hasFiscal) && (
           <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
             <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
             <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Makro:</span>
@@ -1655,6 +1678,28 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 {showWalcl ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
                 Fed-Bilanz (WALCL)
               </button>
+            )}
+            {hasFiscal && (
+              <button
+                onClick={() => setShowFiscal(v => !v)}
+                className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
+                  showFiscal ? "border-pink-400 text-pink-400" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
+                }`}
+                title={FISCAL_OVERLAY.chipTitle}
+                data-testid="toggle-btc-fiscal"
+              >
+                {showFiscal ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+                {FISCAL_OVERLAY.label}
+              </button>
+            )}
+            {hasFiscal && (
+              <span
+                className="inline-flex min-h-9 shrink-0 items-center whitespace-nowrap rounded border border-dashed border-border px-2 text-[11px] font-mono text-muted-foreground opacity-60 sm:min-h-0 sm:py-0.5 sm:text-[10px]"
+                title={FISCAL_OVERLAY.globalTitle}
+                data-testid="chip-btc-fiscal-global-na"
+              >
+                {FISCAL_OVERLAY.globalLabel}
+              </span>
             )}
           </div>
         )}
@@ -1803,6 +1848,20 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 {...(narrow ? { tickCount: 4 } : {})}
               />
             )}
+            {showFiscal && hasFiscal && (
+              <YAxis
+                yAxisId="fiscal"
+                orientation="right"
+                domain={fiscalYDomain}
+                hide={macroAxisHidden("fiscal")}
+                tickFormatter={(v: number) => `${v.toFixed(0)}%`}
+                tick={macroAxisHidden("fiscal") ? false : { fontSize: narrow ? 10 : 9, fill: FISCAL_OVERLAY.color }}
+                width={macroAxisHidden("fiscal") ? 0 : macroAxisFullWidth("fiscal")}
+                axisLine={false}
+                tickLine={false}
+                {...(narrow ? { tickCount: 4 } : {})}
+              />
+            )}
             <Tooltip
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
@@ -1814,7 +1873,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                       <div key={p.dataKey} className="flex justify-between gap-3">
                         <span style={{ color: p.color }}>{p.name}</span>
                         <span className="font-mono tabular-nums">
-                          {p.dataKey === "real10y" || p.dataKey === "m2Yoy"
+                          {p.dataKey === "real10y" || p.dataKey === "m2Yoy" || p.dataKey === "fiscalYoy"
                             ? `${Number(p.value).toFixed(2)}%`
                             : p.dataKey === "m2Absolute" || p.dataKey === "m2AbsoluteLagged"
                               ? `$${Number(p.value).toFixed(1)} T`
@@ -1849,6 +1908,19 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 x2={seg.x2}
                 fill="#EF4444"
                 fillOpacity={0.3}
+                strokeOpacity={0}
+                ifOverflow="hidden"
+              />
+            ))}
+            {/* FW-09: Fiscal-Zonen (nur bei aktivem Overlay; reine Anzeige) */}
+            {fiscalRuns.map((r, idx) => (
+              <ReferenceArea
+                key={`fiscal-zone-${idx}`}
+                yAxisId="fiscal"
+                x1={r.x1}
+                x2={r.x2}
+                fill={FISCAL_ZONE_STYLE[r.zone].fill}
+                fillOpacity={0.08}
                 strokeOpacity={0}
                 ifOverflow="hidden"
               />
@@ -1970,6 +2042,19 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 strokeDasharray="6 3"
                 dot={false}
                 connectNulls
+                isAnimationActive={false}
+              />
+            )}
+            {showFiscal && hasFiscal && (
+              <Line
+                yAxisId="fiscal"
+                type="stepAfter"
+                dataKey="fiscalYoy"
+                name={FISCAL_OVERLAY.lineName}
+                stroke={FISCAL_OVERLAY.color}
+                strokeWidth={1.25}
+                dot={false}
+                connectNulls={false}
                 isAnimationActive={false}
               />
             )}
