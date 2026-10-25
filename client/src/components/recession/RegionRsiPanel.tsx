@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiErrorFromResponse } from "@/lib/apiError";
 import { ApiErrorBanner } from "@/components/ApiErrorBanner";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip,
   CartesianGrid, ReferenceLine, ComposedChart, Bar, Cell,
@@ -142,6 +143,20 @@ export function RegionRsiPanel() {
   const volSeries = q.data?.vol || [];
   const div = q.data?.divergence;
   const yMax = q.data?.volYMax ?? 90;
+
+  // PR 3 (Chat-Kontext): angezeigte Werte aus der bestehenden Query veröffentlichen — keine neue Abfrage.
+  const qd = q.data;
+  usePublishChatSection("recession", "rsi", qd ? {
+    region: qd.label, fenster: qd.window, stand: qd.asOf, rsi14: qd.rsi, rsiZone: zoneDe(qd.rsiZone),
+    macd: qd.macd, signal: qd.signal, histogramm: qd.hist, kombination: comboDe(qd.combo),
+    divergenz: qd.divergence ? divDe(qd.divergence) : null, vol: qd.volLatest ?? null, volBand: qd.volBand ?? null,
+    _auffaelligkeiten: [
+      qd.rsiZone === "overbought" || qd.rsiZone === "oversold" ? zoneDe(qd.rsiZone) : "",
+      qd.combo === "overbought_fade" ? comboDe(qd.combo) : "",
+      qd.divergence && qd.divergence.kind !== "none" ? divDe(qd.divergence) : "",
+      qd.volNote ?? "",
+    ].filter(Boolean).join("; ") || null,
+  } : null);
 
   return (
     <div className="space-y-3">

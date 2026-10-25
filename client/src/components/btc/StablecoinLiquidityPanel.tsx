@@ -7,6 +7,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import { apiRequest } from "@/lib/queryClient";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import { btcSourceRole } from "@shared/btc-source-policy";
 import { allowedKeyEventEvidence, canonicalDocumentTitle, keyEventBody } from "@shared/policy-event-copy";
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Flame, Loader2, Minus, Sparkles } from "lucide-react";
@@ -677,6 +678,31 @@ export function StablecoinLiquidityPanel() {
   const cited = (scan?.regulations ?? []).filter(reg => reg.confidence === "cited" && hasHttps(reg.evidence));
   const events = collectPolicyEvents(scan?.regulations ?? [], scan?.instruments ?? []);
   const note = scan?.note;
+
+  // PR 3 (Chat-Kontext): angezeigte, bereits geladene Werte veröffentlichen — keine neue Abfrage.
+  const chatLoaded = !news.loading || fiscal != null || scan != null;
+  const r1 = (v: number | null | undefined) => (v != null && Number.isFinite(v) ? Math.round(v * 1000) / 1000 : null);
+  usePublishChatSection("btc", "3", chatLoaded ? {
+    newsAnzahl: news.loading ? null : news.items.length,
+    news: news.items.slice(0, 5).map(i => `${i.title} (${i.source}${i.sentiment ? `, ${i.sentiment}` : ""})`).join("; ").slice(0, 400) || null,
+    nettoBillAngebot30T_Mrd: r1(fiscal?.netBillSupply.nb30Bn), fedBillsDelta_Mrd: fiscal?.fedBills.available ? r1(fiscal.fedBills.deltaBn) : null,
+    adaptiveNoteS: fiscal?.adaptiveScore.available ? r1(fiscal.adaptiveScore.displayS) : null,
+    frontEndImpuls_Mrd: fiscal?.frontEndImpulse.available ? r1(fiscal.frontEndImpulse.fe30Bn) : null,
+    qraAnkerStand: fiscal?.qra.asOf ?? null,
+    kiZusammenfassung: showAnalysis ? (note?.summary || scan?.summary || null) : null,
+    kiZinsen: showAnalysis ? note?.ratesView ?? null : null, kiLiquiditaet: showAnalysis ? note?.liquidityView ?? null : null,
+    kiFiskal: showAnalysis ? note?.fiscalView ?? null : null, kiBtcImplikation: showAnalysis ? note?.btcImplication ?? null : null,
+    leitzinsPct: r1(scan?.measured?.policyRate), realzins10JPct: r1(scan?.measured?.realYield10y),
+    regulierungenBelegt: showAnalysis ? cited.length : null, politikEreignisse: showAnalysis ? events.length : null,
+    _auffaelligkeiten: [
+      news.error ? `News-Fehler: ${news.error}` : "",
+      fiscal && !fiscal.adaptiveScore.available ? "Adaptive Note nicht verfügbar (Anzeige 50)" : "",
+      fiscal && !fiscal.frontEndImpulse.available ? "Front-End-Impuls n/v" : "",
+      fiscal?.qra.stale ? "QRA-Anker veraltet (stale)" : "",
+      fiscal?.netBillSupply.kennzeichnung === "scaled-from-monthly" ? "Bill-Angebot aus Monatswert skaliert" : "",
+      scanError ? `KI-Analyse fehlgeschlagen: ${scanError}` : (!scan ? "KI-Makro-Notiz nicht abgerufen (n/a)" : ""),
+    ].filter(Boolean).join("; ") || null,
+  } : null);
 
   const kiButton = (
     <button
