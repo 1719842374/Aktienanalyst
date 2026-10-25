@@ -40,13 +40,20 @@ const git = (...a: string[]) => execFileSync("git", a, { encoding: "utf8" });
 const mergedMains = git("log", "--first-parent", "--merges", "--format=%P", `${BASE}..HEAD`).trim().split("\n").filter(Boolean)
   .map(l => l.split(" ")[1]).filter(Boolean);
 const DIFF_BASE = mergedMains[0] ?? BASE;
-const onSquashedMain = mergedMains.length === 0 && /\(#\d+\)$/.test(git("log", "-1", "--format=%s", "HEAD").trim()) && git("log", "--format=%s", `${BASE}..HEAD`).split("\n").some(s => /\(#267\)$/.test(s.trim()));
+// Nach dem Squash-Merge (#277-Erkennung: Subject endet auf „(#267)“) ist der eigene Anteil von #267 genau der
+// Squash-Commit selbst: Datei-/Diff-Prüfungen laufen gegen SQUASH^..SQUASH, nie gegen den Branch-Diff. So bleibt der Test
+// auf main UND auf jedem späteren Feature-Branch grün, prüft aber weiterhin, was #267 tatsächlich geändert hat.
+const SQUASH_267 = git("log", "--first-parent", "--format=%H %s", `${BASE}..HEAD`).split("\n")
+  .map(l => l.trim()).filter(l => /\(#267\)$/.test(l)).map(l => l.split(" ")[0]).pop() ?? null;
+const onSquashedMain = SQUASH_267 != null;
 const filesVs = (b: string) => new Set([
   ...git("diff", "--name-only", b).trim().split("\n"),
   ...git("ls-files", "--others", "--exclude-standard").trim().split("\n"),
 ].filter(Boolean));
-const ownFiles = onSquashedMain ? [] : [...[DIFF_BASE, BASE, ...mergedMains].map(filesVs).reduce((acc, set) => new Set([...acc].filter(f => set.has(f))))].sort();
-const ownDiffLines = (path: string) => onSquashedMain ? [] : git("diff", "--unified=0", DIFF_BASE, "--", path).split("\n").filter(l => /^[+-][^+-]/.test(l));
+const ownFiles = SQUASH_267 ? git("diff", "--name-only", `${SQUASH_267}^`, SQUASH_267).trim().split("\n").filter(Boolean).sort()
+  : [...[DIFF_BASE, BASE, ...mergedMains].map(filesVs).reduce((acc, set) => new Set([...acc].filter(f => set.has(f))))].sort();
+const ownDiffLines = (path: string) => git("diff", "--unified=0", ...(SQUASH_267 ? [`${SQUASH_267}^`, SQUASH_267] : [DIFF_BASE]), "--", path)
+  .split("\n").filter(l => /^[+-][^+-]/.test(l));
 
 const { doc } = installFakeDom();
 // Recharts (CartesianAxis.componentDidMount) fragt getElementsByClassName ab; fake-dom kennt es nicht → leer (nur hier im Test).
@@ -341,7 +348,7 @@ esac
   const h0 = await generateAnalysisHTML(fixture); const h1 = await generateAnalysisHTML({ ...fixture, real10y: macro });
   assert.equal(verdict(h1), verdict(h0)); assert.ok(!h1.includes("DFII10"));
   console.log(`     MSFT (Fixture): Score ${before.overallScore.toFixed(4)} ${before.overallRating}; mit Real10Y-Daten ${after.overallScore.toFixed(4)} ${after.overallRating} (== ohne: ${beforeOhlcv.overallScore.toFixed(4)}); PDF-Fazit ${verdict(h0)} = ${verdict(h1)}`);
-  console.log(`     eigener Anteil ggü. ${DIFF_BASE.slice(0, 8)}${onSquashedMain ? " (squash-main: übersprungen)" : ""}: ${changed.join(", ")}`);
+  console.log(`     eigener Anteil ggü. ${DIFF_BASE.slice(0, 8)}${SQUASH_267 ? ` (Squash-Commit ${SQUASH_267.slice(0, 8)})` : ""}: ${changed.join(", ")}`);
   ok("Keine shared/- oder Score-Datei geändert, server/ nur btc-macro/btc-routes-Ergänzung; Score/Rating deepEqual, PDF-Fazit identisch");
 
   server.close();
