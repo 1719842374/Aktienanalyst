@@ -461,16 +461,23 @@ export function generateTAMAnalysis(
   revenue: number, revenueGrowth: number,
   revenueSegments?: any[]
 ): {
-  tamTotal: number | null; tamLabel: string; tamCAGR: number | null; companyGrowth: number;
-  companyRevenue: number; marketShare: number | null; tamSource: string; outperforming: boolean | null;
+  tamTotal: number | null; tamLabel: string; tamCAGR: number | null; companyGrowth: number | null;
+  companyRevenue: number | null; marketShare: number | null; tamSource: string; outperforming: boolean | null;
+  /** Follow-up #271: kein Konzernumsatz (z.B. FMP 402 → Yahoo-only). Unternehmensseite und TAM sind dann n/a (null), nie 0/Default. */
+  companyDataMissing?: 'no-revenue';
   segments?: any[]; segmentWeightedGrowth?: number | null; segmentGrowthCoveragePct?: number;
   // A1 Qualitaetstor (additiv, siehe assessTamQuality()):
   quality?: TamQuality; distinctLabels?: number; coveragePct?: number; shareWarning?: boolean;
 } {
-  const s = sector.toLowerCase();
-  const ind = industry.toLowerCase();
-  const desc = description.toLowerCase();
+  const s = (sector || '').toLowerCase();
+  const ind = (industry || '').toLowerCase();
+  const desc = (description || '').toLowerCase();
   const revB = revenue / 1e9;
+  // Follow-up #271 (Tester DoD-271 Soft 1): ohne Konzernumsatz gibt es weder Unternehmens-Wachstum noch Marktanteil.
+  // Bisher kamen companyGrowth 0, companyRevenue 0, marketShare 0, outperforming false und der Sektor-Default-TAM
+  // (z.B. 5000 „Global Market“) als echte Zahlen in /api/analyze. Jetzt null = n/a. Branchen-CAGR/Label/Quelle
+  // (Branchenseite) und quality 'weak' bleiben wie bisher, damit dcfGrowthCapFromTam unverändert bleibt.
+  const hasRevenue = Number.isFinite(revenue) && revenue > 0;
 
   let tamTotal = 0, tamLabel = '', tamCAGR = 0, tamSource = '';
 
@@ -519,7 +526,7 @@ export function generateTAMAnalysis(
     tamTotal = 5000; tamLabel = 'Global Market'; tamCAGR = 5; tamSource = 'IMF / World Bank GDP Growth Estimate';
   }
 
-  if (revenueSegments && revenueSegments.length >= 2) {
+  if (hasRevenue && revenueSegments && revenueSegments.length >= 2) {
     // A2 (WORK_TAM_RESIDUAL_XBOX.md, Abschnitt 2): Residuum-Regel VOR dem
     // Mapping anwenden -- genau EIN Rev-Loch darf als "Other / nicht
     // segmentiert"-Zeile ergaenzt werden, wenn die gemeldeten Segmente nicht
@@ -661,6 +668,19 @@ export function generateTAMAnalysis(
     } as any;
   }
 
+  if (!hasRevenue) {
+    return {
+      tamTotal: null, tamLabel, tamCAGR, companyGrowth: null,
+      companyRevenue: null,
+      marketShare: null,
+      tamSource, outperforming: null,
+      quality: 'weak' as TamQuality,
+      distinctLabels: 1,
+      coveragePct: 100,
+      shareWarning: false,
+      companyDataMissing: 'no-revenue',
+    } as any;
+  }
   const marketShare = tamTotal > 0 ? (revB / tamTotal) * 100 : 0;
   // Pfad A (< 2 Segmente): Konzern-Dummy bleibt, aber als quality:'weak' und
   // distinctLabels:1 markiert (Spec 3.5, letzter Satz) -- kein Segment-Mix,
