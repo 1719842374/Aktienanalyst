@@ -15,6 +15,8 @@ import { indicatorWarmupFromDate } from "./history-fallback";
 import { FX_CONVERTIBLE_FIELDS, getFxRateToUsd } from "./fmp";
 import { minorUnitInfo, listingCurrencyOf, normalizeListingToUsd } from "../shared/listing-units";
 import { fetchYahooFxToUsd, getYahooSnapshot, YAHOO_402_NOTICE } from "./yahoo-fetcher";
+// #265 v2: SAP.DE/VOW3.DE (FMP 402) über das US-/ADR-Symbol; Bausteine in fmp-adr-map.ts.
+import { adrCandidatesFor, checkAdrPlausibility, detectPerShareUnit, adrBundleHasData, adrBundleToLocalListing, type AdrSourceInfo } from "./fmp-adr-map";
 
 // ============================================================
 // FMP Budget Tracker (single source of truth)
@@ -505,7 +507,7 @@ export function fmpFallbackFailureResponse(ticker: string, failure: FmpFailure):
   }
 }
 
-export async function getFmpFallbackData(ticker: string): Promise<{
+export async function getFmpFallbackData(ticker: string, opts: { yahooOn402?: boolean } = {}): Promise<{
   quote: any; profile: any;
   financials: { income: any[]; cashflow: any[]; balanceSheet: any[] };
   analyst: { priceTarget: any; grades: any[]; estimates: any[] };
@@ -550,7 +552,11 @@ export async function getFmpFallbackData(ticker: string): Promise<{
       const failure = describeFmpFallbackFailure(ticker, quoteRes, settledAll.slice(1));
       console.warn(`[FMP-FALLBACK] No quote data for ${ticker}: ${failure.errorCode} fmpStatus=${failure.fmpStatus ?? "-"} ${failure.message}`);
       // C1: nur bei 402 (Plan deckt Symbol nicht ab) auf Yahoo ausweichen. Andere Fehler bleiben wie bisher.
-      if (failure.fmpStatus === 402) {
+      // opts.yahooOn402=false: innerer ADR-Abruf (fmpViaAdrData), kein Ersatz für das ADR-Symbol selbst.
+      if (failure.fmpStatus === 402 && opts.yahooOn402 !== false) {
+        // #265 v2: erst FMP über das ADR (SAP.DE → SAP, VOW3.DE → VWAPY, sonst VWAGY als Proxy), sonst Yahoo wie bisher.
+        const viaAdr = await fmpViaAdrData(ticker);
+        if (viaAdr) return viaAdr;
         const yahoo = await yahooFallbackData(ticker);
         if (yahoo) return yahoo;
       }
@@ -597,6 +603,68 @@ export async function getFmpFallbackData(ticker: string): Promise<{
     console.error(`[FMP-FALLBACK] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
     return { failure: classifyFmpError(err) };
   }
+}
+
+/** Abhängigkeiten von fmpViaAdrData (für Tests mit Mocks austauschbar). */
+export type FmpViaAdrDeps = {
+  snapshot: typeof getYahooSnapshot;
+  fetchAdr: (symbol: string) => ReturnType<typeof getFmpFallbackData>;
+  fxToUsd: (currency: string) => Promise<number>;
+  toUsd: (ticker: string, data: any) => Promise<any>;
+};
+const defaultAdrDeps: FmpViaAdrDeps = {
+  snapshot: getYahooSnapshot,
+  fetchAdr: (symbol) => getFmpFallbackData(symbol, { yahooOn402: false }),
+  fxToUsd: async (cur) => {
+    let fx = await getFxRateToUsd(cur).catch(() => 1);
+    if (!(fx > 0) || fx === 1) fx = (await fetchYahooFxToUsd(cur).catch(() => null)) ?? fx;
+    return fx;
+  },
+  toUsd: (ticker, data) => listingToUsd(ticker, data, { barsInMajor: true }),
+};
+
+/**
+ * #265 v2 (Philip 25.10.2026): SAP.DE → SAP, VOW3.DE → VWAPY (Vorzug) zuerst; liefert FMP für VWAPY nichts
+ * (leer/402) oder ist der Datensatz unplausibel → VWAGY (Stammaktie) mit Hinweis „Proxy: Stammaktie“.
+ * Kurs und Chart vom lokalen Listing (Yahoo), danach dieselbe USD-Normalisierung wie main (listingToUsd).
+ * Plausibilität je Abruf: Kursverhältnis zum ADR-Ratio, MCap ±3 % zu Yahoo. Jeder Fehlschlag → null
+ * (Aufrufer nimmt den Yahoo-Fallback; nie gemischte Werte). Andere Ticker: sofort null (unverändert).
+ */
+export async function fmpViaAdrData(ticker: string, deps: FmpViaAdrDeps = defaultAdrDeps): Promise<(any & { fmpSymbol: string; adr: AdrSourceInfo }) | null> {
+  const candidates = adrCandidatesFor(ticker);
+  if (!candidates.length) return null;
+  const snap = await deps.snapshot(ticker);
+  if (!snap || !(snap.price > 0)) { console.warn(`[FMP-ADR] ${ticker}: kein lokaler Yahoo-Kurs → Yahoo-Fallback`); return null; }
+  const cur = snap.currency ? snap.currency.trim().toUpperCase() : "";
+  if (!cur || minorUnitInfo(snap.currency as string)) { console.warn(`[FMP-ADR] ${ticker}: Listing-Währung ${cur || "fehlt"} nicht nutzbar → Yahoo-Fallback`); return null; }
+  const fx = cur === "USD" ? 1 : await deps.fxToUsd(cur).catch(() => 1);
+  if (cur !== "USD" && !(fx > 0 && fx !== 1)) { console.warn(`[FMP-ADR] ${ticker}: FX ${cur}USD fehlt → Yahoo-Fallback`); return null; }
+  for (const c of candidates) {
+    const res: any = await deps.fetchAdr(c.symbol).catch((e: any) => ({ failure: { errorCode: "FMP_UNREACHABLE", fmpStatus: null, message: String(e?.message ?? e) } }));
+    if ("failure" in res || !adrBundleHasData(res)) {
+      console.warn(`[FMP-ADR] ${ticker} → ${c.symbol}: FMP liefert keine Daten (${"failure" in res ? `${res.failure.errorCode} ${res.failure.fmpStatus ?? "-"}` : "leer"})`);
+      continue;
+    }
+    const adrPrice = Number(res.quote?.price ?? res.profile?.price);
+    const adrMcap = Number(res.profile?.marketCap ?? res.profile?.mktCap ?? res.quote?.marketCap);
+    const plaus = checkAdrPlausibility({ localPrice: snap.price, fxToUsd: fx, adrPrice, sharesPerAdr: c.sharesPerAdr, proxy: c.proxy, adrMarketCapUsd: adrMcap, yahooMarketCapLocal: snap.marketCap });
+    if (!plaus.ok) { console.warn(`[FMP-ADR] ${ticker} → ${c.symbol}: unplausibel – ${plaus.reason}`); continue; }
+    const inc0 = res.financials.income[0] ?? {};
+    const unit = detectPerShareUnit({ netIncome: inc0.netIncome, eps: inc0.epsDiluted ?? inc0.eps, marketCap: adrMcap, price: adrPrice, sharesPerAdr: c.sharesPerAdr });
+    if (!unit) { console.warn(`[FMP-ADR] ${ticker} → ${c.symbol}: Per-Share-Einheit unklar → nicht verwendet`); continue; }
+    const bars = [...(snap.bars ?? [])].reverse().map(({ source: _s, ...bar }: any) => bar); // neueste zuerst
+    const local = adrBundleToLocalListing(res, {
+      localSymbol: ticker.toUpperCase(), localPrice: snap.price, localCurrency: cur, fxToUsd: fx,
+      localBarsNewestFirst: bars, localExchange: snap.exchange ?? null, localName: snap.name ?? null,
+      candidate: c, plaus, perShareUnit: unit,
+    });
+    const usd = await deps.toUsd(ticker, local);
+    const lfx = usd?.profile?._listingFx;
+    if (usd?.profile) usd.profile = { ...usd.profile, _listingFx: lfx ? { ...lfx, sourceNote: local.adr.note } : lfx };
+    console.log(`[FMP-ADR] ${ticker} → ${c.symbol}${c.proxy ? " (Proxy Stammaktie)" : ""}: Ratio impl. ${plaus.impliedSharesPerAdr?.toFixed(4)} (${plaus.ratioDeviationPct?.toFixed(1)} %), MCap ${plaus.mcapDeviationPct?.toFixed(1)} % zu Yahoo, EPS-Einheit ${unit}, ${cur}USD ${fx}`);
+    return { ...usd, fmpSymbol: local.fmpSymbol, adr: local.adr };
+  }
+  return null;
 }
 
 /**

@@ -188,6 +188,8 @@ export interface ListingFx {
   rate: number | null;
   converted: boolean;
   warning?: string;
+  /** #265 v2: Datenquellen-Hinweis (z. B. FMP über ADR, „Proxy: Stammaktie“); wird an currencyInfo.note angehängt. */
+  sourceNote?: string;
 }
 
 export const LISTING_FX_MISSING_WARNING = (major: string) => `FX ${major}USD fehlt – Werte in ${major}, nicht in USD umgerechnet`;
@@ -277,8 +279,9 @@ export function currencyInfoFromListingFx(fx: ListingFx | null | undefined): {
   const pair = `${fx.major}USD`;
   if (fx.converted && typeof fx.rate === "number") {
     const unit = fx.factor !== 1 ? ` (Kurs in ${fx.from} ÷ ${fx.factor})` : "";
+    const src = typeof fx.sourceNote === "string" && fx.sourceNote ? ` ${fx.sourceNote}` : "";
     return { reportedCurrency: fx.major, tradingCurrency: "USD", fxRate: fx.rate, fxPair: pair, converted: true,
-      note: `Listing in ${fx.from}${unit}; Kurs, Market Cap, Historie und Kursziel zu ${pair} = ${fx.rate.toFixed(4)} in USD umgerechnet, Statements in USD.` };
+      note: `Listing in ${fx.from}${unit}; Kurs, Market Cap, Historie und Kursziel zu ${pair} = ${fx.rate.toFixed(4)} in USD umgerechnet, Statements in USD.${src}` };
   }
   return { reportedCurrency: fx.major, tradingCurrency: fx.major, fxRate: 1, fxPair: pair, converted: false, note: fx.warning ?? LISTING_FX_MISSING_WARNING(fx.major) };
 }
