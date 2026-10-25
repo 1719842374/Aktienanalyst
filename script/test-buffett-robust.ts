@@ -192,7 +192,15 @@ async function main() {
   ok("UI: OK ohne Hinweis; Fallback → gelber Hinweis mit Quelle, Grund, letztem Quartal; n/a → Banner + sichtbarer Grund, kein Chart");
 
   // ── 6. Score/Rating unverändert ──
-  const changed = [...git("diff", "--name-only", BASE).trim().split("\n"), ...git("ls-files", "--others", "--exclude-standard").trim().split("\n")].filter(Boolean);
+  // Wächter-Basis wie #285: eigener Anteil = Diff gegen merge-base(HEAD, origin/main); fehlt origin/main → lokales main, sonst fester BASE.
+  // Uncommittete Änderungen (git diff HEAD) und neue Dateien zählen immer mit.
+  // Nach dem Squash-Merge (HEAD auf main, merge-base == HEAD) zählt nur der Squash-Commit „(#274)“ selbst.
+  const tryGit = (...a: string[]) => { try { return git(...a).trim(); } catch { return ""; } };
+  const mergeBase = tryGit("merge-base", "HEAD", "origin/main") || tryGit("merge-base", "HEAD", "main") || BASE;
+  const squash274 = mergeBase === tryGit("rev-parse", "HEAD") ? (tryGit("log", "--first-parent", "--format=%H %s", `${BASE}..HEAD`).split("\n")
+    .map(l => l.trim()).filter(l => /\(#274\)$/.test(l)).map(l => l.split(" ")[0]).pop() ?? null) : null;
+  const changed = [...git("diff", "--name-only", ...(squash274 ? [`${squash274}^`, squash274] : [mergeBase])).trim().split("\n"), ...git("diff", "--name-only", "HEAD").trim().split("\n"), ...git("ls-files", "--others", "--exclude-standard").trim().split("\n")].filter(Boolean);
+  console.log(`     Wächter-Basis: ${squash274 ? `Squash-Commit ${squash274.slice(0, 8)}` : `merge-base ${mergeBase.slice(0, 8)}${mergeBase === BASE ? " (Fallback BASE)" : ""}`}`);
   for (const f of ["server/analyze-route.ts", "server/researcher.ts", "server/recession.ts", "shared/schema.ts", "shared/bias-fixes.ts", "server/scoring-integration.ts", "server/pdf-export.ts", "server/buffett-ratio.ts"]) assert.ok(!changed.includes(f), f);
   assert.equal(route.WILSHIRE_DOLLARS_PER_POINT_BN, 1.05, "Konstante, die recession.ts importiert, unverändert");
   const rec = readFileSync("server/recession.ts", "utf8");
