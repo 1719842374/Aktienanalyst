@@ -40,16 +40,41 @@ export function withinRelativeBand(value: number | null | undefined, reference: 
   return Math.abs(v / r - 1) <= band + 1e-12;
 }
 
-/** Peers, die in der Ansicht sichtbar sind. Fehlende Daten (null/n/a) → nicht im gefilterten Tab. */
+// ── Peer-Varianten A/B (umschaltbar, reine Ansicht) ──
+/** A: Basis des KGV-Tabs. forward = Forward-KGV ±30 % (Spec), Fallback je Wert auf trailing, wenn kein Forward vorliegt. */
+export type PeerPeBasis = "forward" | "trailing";
+/** B: Basis des Industrie-Tabs. gics = GICS Sub-Industry (Spec). Im Code/Datenbestand gibt es keine GICS-Sub-Industry-Quelle → n/a. */
+export type PeerIndustryBasis = "fmp" | "gics";
+export interface PeerViewVariants { peBasis?: PeerPeBasis; industryBasis?: PeerIndustryBasis; subjectForwardPe?: number | null }
+export const PEER_GICS_AVAILABLE = false;
+export const PEER_GICS_NA_TEXT = "n/a – keine GICS-Sub-Industry-Quelle im Datenbestand (FMP liefert nur eigene Branchen); kein Ersatz";
+
+export type PeBasisUsed = "forward" | "trailing" | null;
+/** KGV-Wert für die Ansicht samt verwendeter Basis. */
+export function peForView(pe: number | null | undefined, forwardPe: number | null | undefined, basis: PeerPeBasis): { value: number | null; basis: PeBasisUsed } {
+  if (basis === "forward" && positive(forwardPe) != null) return { value: positive(forwardPe), basis: "forward" };
+  const t = positive(pe);
+  return { value: t, basis: t == null ? null : "trailing" };
+}
+
+/** Peers, die in der Ansicht sichtbar sind. Fehlende Daten (null/n/a) → nicht im gefilterten Tab.
+ *  Ohne variants: Verhalten wie PR B (trailing-KGV, FMP-Branche). */
 export function filterPeersForView(
   peers: readonly PeerCompany[],
   subject: Pick<PeerCompany, "marketCap" | "pe">,
   subjectIndustry: string | null | undefined,
   tab: PeerViewTab,
+  variants: PeerViewVariants = {},
 ): PeerCompany[] {
+  const peBasis = variants.peBasis ?? "trailing";
+  const industryBasis = variants.industryBasis ?? "fmp";
   if (tab === "all") return [...peers];
   if (tab === "marketCap") return peers.filter(p => withinRelativeBand(p.marketCap, subject.marketCap, PEER_VIEW_MCAP_BAND));
-  if (tab === "pe") return peers.filter(p => withinRelativeBand(p.pe, subject.pe, PEER_VIEW_PE_BAND));
+  if (tab === "pe") {
+    const ref = peForView(subject.pe, variants.subjectForwardPe, peBasis).value;
+    return peers.filter(p => withinRelativeBand(peForView(p.pe, p.forwardPe, peBasis).value, ref, PEER_VIEW_PE_BAND));
+  }
+  if (industryBasis === "gics") return []; // keine GICS-Quelle → n/a, kein Ersatz über FMP
   const key = normaliseIndustryLabel(subjectIndustry);
   if (!key) return [];
   return peers.filter(p => normaliseIndustryLabel(p.industry) === key);

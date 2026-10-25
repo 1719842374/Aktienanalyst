@@ -99,6 +99,8 @@ export const CHAT_SYSTEM_PROMPT = [
   "Nutze ausschließlich Werte aus dem KONTEXT. Fehlt ein Wert (n/a), sage das ausdrücklich und erfinde nichts.",
   "Erkläre Sektionen detailliert und mit einem Beispiel, wenn danach gefragt wird.",
   "Was-wäre-wenn-Fragen beantwortest du nur qualitativ als Gedankenexperiment; du änderst keine Scores, Gates oder Bewertungen und gibst keine neuen Score-Werte aus.",
+  "Jede Sektion kann ein Feld \"auffaelligkeiten\" haben: mögliche Schwächen oder Auffälligkeiten, abgeleitet nur aus vorhandenen Daten, Flags und Gates. Nenne sie, wenn nach Schwächen, Risiken oder Auffälligkeiten einer Sektion gefragt wird, und erkläre sie mit den Zahlen der Sektion; erfinde keine weiteren.",
+  "Du machst keine Änderungsvorschläge an Parametern und keine Overrides.",
   "Keine Anlageberatung. Antworte nur mit gültigem JSON: {\"answer\": string, \"sectionRefs\": number[]}.",
 ].join(" ");
 

@@ -7,6 +7,7 @@ import { useMemo, useState, useEffect, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
 import { Settings2, RotateCcw, Play, AlertTriangle } from "lucide-react";
 import { isYahooOnly } from "../../../../shared/data-source";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 
 interface Props { data: StockAnalysis; sharedResult?: GBMMonteCarloResult | null }
 
@@ -136,6 +137,26 @@ export function MonteCarloSection({ data, sharedResult }: Props) {
 
     return () => clearTimeout(timer);
   }, [data, inputs.mu, inputs.sigma, inputs.iterations, inputs.tradingDays, runCount, isModified, sharedResult]);
+
+  // PR 3 (Chat-Kontext): das angezeigte Ergebnis veröffentlichen (Default-Ansicht = sharedResult,
+  // derselbe Lauf wie Sektion 20) — keine eigene Simulation.
+  const shownMc = result ?? (!isModified && runCount === 0 && sharedResult ? sharedResult : null);
+  const mcFin = (v: number) => (Number.isFinite(v) ? Math.round(v * 10000) / 10000 : null);
+  usePublishChatSection("stock", "18", shownMc ? {
+    iterationen: inputs.iterations, handelstage: inputs.tradingDays, muJahr: mcFin(inputs.mu), sigmaJahr: mcFin(inputs.sigma),
+    parameterAngepasst: isModified,
+    mittelwert: mcFin(shownMc.mean), p5: mcFin(shownMc.p5), p10: mcFin(shownMc.p10), p25: mcFin(shownMc.p25), p50: mcFin(shownMc.p50),
+    p75: mcFin(shownMc.p75), p90: mcFin(shownMc.p90), p95: mcFin(shownMc.p95),
+    wVerlust: mcFin(shownMc.downsideProb), wVerlustUeber10Pct: mcFin(shownMc.downsideProb10), wVerlustUeber20Pct: mcFin(shownMc.downsideProb20),
+    erwarteteRendite: mcFin(shownMc.expectedReturn), mittlererMaxDrawdown: mcFin(shownMc.maxDrawdownMean),
+    wAnalystenZiel: isYahooOnly(data) ? null : mcFin(shownMc.analystPTProb),
+    _auffaelligkeiten: [
+      shownMc.downsideProb > 0.5 ? "Verlustwahrscheinlichkeit > 50%" : "",
+      shownMc.downsideProb20 > 0.2 ? "W(Verlust > 20%) > 20%" : "",
+      shownMc.expectedReturn < 0 ? "negative erwartete Rendite" : "",
+      isModified ? "Parameter vom Nutzer angepasst" : "",
+    ].filter(Boolean).join("; ") || null,
+  } : null);
 
   const horizonLabel = inputs.tradingDays === 252 ? "1 Jahr" : inputs.tradingDays === 126 ? "6 Monate" : `${inputs.tradingDays} Tage`;
 

@@ -54,7 +54,9 @@ import { MoatPorterSection } from "@/components/sections/MoatPorterSection";
 import { PestelSection } from "@/components/sections/PestelSection";
 import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelationsSection";
 import { ChatWidget } from "@/components/chat/ChatWidget";
-import { buildStockChatContext } from "@shared/chat-context";
+import { visibleTopOf } from "@/lib/activeSection";
+import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
+import { useChatSectionData } from "@/lib/chatSectionData";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
@@ -391,11 +393,13 @@ export default function Dashboard() {
   }, []);
 
   // KI-Chatbot (WORK_DASHBOARD_FEATURES §4): Kontext-Provider der Aktien-Analyse. Nur Lesen, kein Score-Einfluss.
-  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? buildStockChatContext(data) : null), [data]);
+  // PR 3: angezeigte Client-Werte (DCF/CRV/RSL/Monte Carlo) + Auffälligkeiten je Sektion.
+  const chatLive = useChatSectionData("stock");
+  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(buildStockChatContext(data), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive]);
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
   const getActiveSectionId = useCallback((): number | null => {
-    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
     let best: number | null = null;
     for (const { id } of SECTIONS) {
       const el = sectionRefs.current[id];

@@ -7,7 +7,7 @@ import React from "react";
 import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, TrendingUp, Globe, AlertTriangle, Sparkles, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { apiRequest } from "../../lib/queryClient";
-import { CATALYST_EVENT_VARIABLES, DOWNSIDE_EVENT_MIN_POS_EXCLUSIVE, isDownsideEventBelowThreshold, isUserEvent } from "../../../../shared/catalyst-event";
+import { CATALYST_EVENT_VARIABLES, DOWNSIDE_EVENT_MIN_POS_EXCLUSIVE, USER_EVENT_SUFFIX, catalystDisplayName, formatSignedPct, isDownsideEventBelowThreshold, isUserEvent } from "../../../../shared/catalyst-event";
 
 interface Props {
   data: StockAnalysis;
@@ -231,18 +231,34 @@ export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent }: Pro
             ))}
           </div>
           {eventMode === "text" ? (
-            <textarea value={eventText} onChange={e => setEventText(e.target.value)} rows={3} className="w-full bg-background border border-border/50 rounded p-1.5"
-              placeholder="z. B. Q3-Call: Guidance für FY27-Bruttomarge +150 bp angehoben" data-testid="catalyst-event-text" />
+            <div className="space-y-1">
+              <label htmlFor="catalyst-event-text" className="block text-[10px] font-medium text-foreground/70">Event-Beschreibung (Freitext, Impact per KI)</label>
+              <textarea id="catalyst-event-text" value={eventText} onChange={e => setEventText(e.target.value)} rows={3} className="w-full bg-background border border-border/50 rounded p-1.5"
+                placeholder="z. B. Q3-Call: Guidance für FY27-Bruttomarge +150 bp angehoben" data-testid="catalyst-event-text" />
+            </div>
           ) : (
-            <div className="grid grid-cols-3 gap-1.5">
-              <input value={eventForm.name} onChange={e => setEventForm({ ...eventForm, name: e.target.value })} placeholder="Name" className="col-span-3 bg-background border border-border/50 rounded p-1" />
-              <select value={eventForm.variable} onChange={e => setEventForm({ ...eventForm, variable: e.target.value })} className="bg-background border border-border/50 rounded p-1">
-                {CATALYST_EVENT_VARIABLES.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-              <input value={eventForm.deltaPct} onChange={e => setEventForm({ ...eventForm, deltaPct: e.target.value })} placeholder="Delta % (− = Downside)" className="bg-background border border-border/50 rounded p-1" />
-              <input value={eventForm.horizonMonths} onChange={e => setEventForm({ ...eventForm, horizonMonths: e.target.value })} placeholder="Horizont M" className="bg-background border border-border/50 rounded p-1" />
-              <input value={eventForm.pos} onChange={e => setEventForm({ ...eventForm, pos: e.target.value })} placeholder="Wahrscheinlichkeit %" className="bg-background border border-border/50 rounded p-1" />
-              <input value={eventForm.einpreisungsgrad} onChange={e => setEventForm({ ...eventForm, einpreisungsgrad: e.target.value })} placeholder="Einpreisung %" className="bg-background border border-border/50 rounded p-1" />
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5" data-testid="catalyst-event-structured">
+              {([
+                { id: "catalyst-event-name", key: "name", label: "Name", placeholder: "z. B. Q3-Guidance", span: "col-span-2 sm:col-span-3" },
+                { id: "catalyst-event-variable", key: "variable", label: "Variable", span: "" },
+                { id: "catalyst-event-delta", key: "deltaPct", label: "Delta % (− = Downside)", placeholder: "z. B. 10 oder -15", span: "" },
+                { id: "catalyst-event-horizon", key: "horizonMonths", label: "Horizont (Monate)", placeholder: "12", span: "" },
+                { id: "catalyst-event-pos", key: "pos", label: "Wahrscheinlichkeit %", placeholder: "0–100", span: "" },
+                { id: "catalyst-event-einpreisung", key: "einpreisungsgrad", label: "Einpreisung %", placeholder: "0–100", span: "" },
+              ] as const).map(f => (
+                <div key={f.id} className={`flex flex-col gap-0.5 min-w-0 ${f.span}`}>
+                  <label htmlFor={f.id} className="text-[10px] font-medium text-foreground/70">{f.label}</label>
+                  {f.key === "variable" ? (
+                    <select id={f.id} value={eventForm.variable} onChange={e => setEventForm({ ...eventForm, variable: e.target.value })} className="w-full bg-background border border-border/50 rounded p-1">
+                      {CATALYST_EVENT_VARIABLES.map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  ) : (
+                    <input id={f.id} value={eventForm[f.key]} onChange={e => setEventForm({ ...eventForm, [f.key]: e.target.value })}
+                      placeholder={"placeholder" in f ? f.placeholder : undefined} inputMode={f.key === "name" ? undefined : "decimal"}
+                      className="w-full bg-background border border-border/50 rounded p-1" />
+                  )}
+                </div>
+              ))}
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -358,7 +374,7 @@ export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent }: Pro
                     <div className="flex items-center gap-1">
                       <span className="font-medium">{c.name}</span>
                       {isUserEvent(c) && (
-                        <span className="text-[9px] px-1 py-px rounded bg-sky-500/15 text-sky-400" data-testid="catalyst-user-event-badge">Event</span>
+                        <span className="text-sky-400" data-testid="catalyst-user-event-badge">{USER_EVENT_SUFFIX.trim()}</span>
                       )}
                       {c.newsCount && c.newsCount > 0 && (
                         <span className={`text-[9px] px-1 py-px rounded ${c.newsSentiment === 'bullish' ? 'bg-emerald-500/15 text-emerald-400' : c.newsSentiment === 'bearish' ? 'bg-red-500/15 text-red-400' : c.newsSentiment === 'mixed' ? 'bg-amber-500/15 text-amber-400' : 'bg-foreground/5 text-foreground/40'}`}>
@@ -669,10 +685,10 @@ export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent }: Pro
                 {downsideCatalysts.map((c, i) => (
                   <tr key={`down-${i}`} className="border-b border-border/30">
                     <td className="py-1.5 pr-2 font-mono text-muted-foreground">▼</td>
-                    <td className="py-1.5 pr-2 font-medium">{c.name}{isUserEvent(c) ? " (Event)" : ""}</td>
+                    <td className="py-1.5 pr-2 font-medium">{catalystDisplayName(c)}</td>
                     <td className="py-1.5 pr-2 text-center font-mono text-muted-foreground">{c.timeline}</td>
                     <td className="py-1.5 pr-2 text-center font-mono text-amber-500">{c.pos}%</td>
-                    <td className="py-1.5 pr-2 text-right font-mono text-red-500">{formatNumber(c.bruttoUpside, 1)}%</td>
+                    <td className="py-1.5 pr-2 text-right font-mono text-red-500">{formatSignedPct(c.bruttoUpside, 1)}</td>
                     <td className="py-1.5 text-right font-mono text-muted-foreground">GB Upside 0</td>
                   </tr>
                 ))}
@@ -687,11 +703,16 @@ export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent }: Pro
                 {ignoredEvents.map((c, i) => (
                   <tr key={`ign-${i}`} className="border-b border-border/30">
                     <td className="py-1.5 pr-2 font-mono text-muted-foreground">▼</td>
-                    <td className="py-1.5 pr-2 font-medium">{c.name} (Event)</td>
+                    <td className="py-1.5 pr-2 font-medium">{catalystDisplayName(c)}</td>
                     <td className="py-1.5 pr-2 text-center font-mono text-muted-foreground">{c.timeline}</td>
                     <td className="py-1.5 pr-2 text-center font-mono text-amber-500">{c.pos}%</td>
-                    <td className="py-1.5 pr-2 text-right font-mono text-red-500">{formatNumber(c.bruttoUpside, 1)}%</td>
-                    <td className="py-1.5 text-right font-mono text-muted-foreground">nicht berücksichtigt (≤ {DOWNSIDE_EVENT_MIN_POS_EXCLUSIVE} %)</td>
+                    <td className="py-1.5 pr-2 text-right font-mono text-red-500">{formatSignedPct(c.bruttoUpside, 1)}</td>
+                    <td className="py-1.5 pr-2 text-right font-mono text-muted-foreground">nicht berücksichtigt (≤ {DOWNSIDE_EVENT_MIN_POS_EXCLUSIVE} %)</td>
+                    <td className="py-1.5 text-right">
+                      <button type="button" onClick={() => setIgnoredEvents(prev => prev.filter((_, j) => j !== i))}
+                        className="px-1.5 py-0.5 rounded border border-border/50 text-foreground/60 hover:text-foreground"
+                        aria-label={`Event „${c.name}“ entfernen`} data-testid={`button-catalyst-event-remove-${i}`}>✕ Entfernen</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

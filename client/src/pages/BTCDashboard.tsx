@@ -1,6 +1,8 @@
 import { Fragment, useState, useRef, useCallback, useMemo } from "react";
 import { ChatWidget } from "@/components/chat/ChatWidget";
-import { buildBtcChatContext } from "@shared/chat-context";
+import { visibleTopOf } from "@/lib/activeSection";
+import { buildBtcChatContext, enrichChatContext } from "@shared/chat-context";
+import { useChatSectionData, usePublishChatSection } from "@/lib/chatSectionData";
 import { useMutation } from "@tanstack/react-query";
 import { analyzeBTC } from "@/lib/btcAnalysis";
 import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
@@ -2502,7 +2504,7 @@ function Section11FearGreed({ data }: { data: BTCAnalysis }) {
 }
 
 // === Section 12: Umfassendes Gesamt-Fazit ===
-function Section12Fazit({ data }: { data: BTCAnalysis }) {
+export function Section12Fazit({ data }: { data: BTCAnalysis }) {
   const bc = data.bullConditions;
   const bullCount = [bc.priceAboveMA200, bc.ma50AboveMA200, bc.macdAboveZero, bc.macdRising].filter(Boolean).length;
   const msh = data.monthsSinceHalving;
@@ -2649,6 +2651,16 @@ function Section12Fazit({ data }: { data: BTCAnalysis }) {
   const overallScore = bullCount <= 1 ? "Bearish" : bullCount === 2 ? "Neutral-Bearish" : bullCount === 3 ? "Neutral-Bullish" : "Bullish";
   const overallColor = bullCount <= 1 ? "text-red-500" : bullCount === 2 ? "text-amber-500" : bullCount === 3 ? "text-emerald-400" : "text-emerald-500";
 
+  // Chat-Kontext: genau die angezeigten Fazit-Werte (keine neue Berechnung).
+  usePublishChatSection("btc", "14", {
+    gesamtbewertung: overallScore,
+    technischeBedingungen: `${bullCount}/4`,
+    kopfzeile: `${bullCount}/4 technische Bedingungen | F&G: ${fgi} (${data.fearGreedLabel}) | Zyklus: Monat ${msh} | Power-Law: ${plDev > 0 ? "+" : ""}${plDev.toFixed(0)}%`,
+    ...Object.fromEntries(blocks.map(b => [b.title, b.lines.join(" ")])),
+    regime: isBearMarket ? "Bärenmarkt" : isCorrection ? "Korrektur" : isStrongBull ? "starker Bullenmarkt" : "gemischte Signale",
+    _auffaelligkeiten: deathCrossImminent ? `Drohendes Death Cross (MA50-MA200-Abstand ${maGapPct.toFixed(1)}%)` : null,
+  });
+
   return (
     <SectionCard number={14} title="Umfassendes Gesamt-Fazit">
       <div className="space-y-4">
@@ -2762,10 +2774,12 @@ export default function BTCDashboard() {
   }, []);
 
   // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen BTC-Daten.
-  const chatContext = useMemo(() => (data ? buildBtcChatContext(data) : null), [data]);
+  // PR 3: Krypto-Liquidität (3) und Miner-Zone (13) aus der Anzeige + Auffälligkeiten je Sektion.
+  const chatLive = useChatSectionData("btc");
+  const chatContext = useMemo(() => (data ? enrichChatContext(buildBtcChatContext(data), chatLive) : null), [data, chatLive]);
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   const getActiveSectionId = useCallback((): number | null => {
-    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
     for (const { id } of chatSections) {
       const el = sectionRefs.current[id];
       if (!el) continue;

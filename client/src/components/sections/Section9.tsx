@@ -3,6 +3,7 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { calculateRSL, RSL_MOMENTUM_MALUS_PCT, LYNCH_DCF_DEFAULTS } from "../../lib/calculations";
 import { formatNumber, formatCurrency, getRSLColor, getRSLBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from "../../../../shared/data-source";
 
 interface Props { data: StockAnalysis }
@@ -44,6 +45,14 @@ export function Section9({ data }: Props) {
   const gaugeMin = 90;
   const gaugeMax = 130;
   const gaugePos = Math.max(0, Math.min(100, ((rsl - gaugeMin) / (gaugeMax - gaugeMin)) * 100));
+
+  // PR 3 (Chat-Kontext): genau die angezeigten RSL-Werte veröffentlichen — keine eigene Rechnung.
+  usePublishChatSection("stock", "11", {
+    rsl: rsl != null && Number.isFinite(rsl) ? Math.round(rsl * 100) / 100 : null, rslZone,
+    schnitt26W: Number.isFinite(avg26w) ? Math.round(avg26w * 100) / 100 : null, zyklusKlasse: sp?.cycleClass ?? null,
+    dcfWachstumsAnpassung: growthAdj, malusAktiv: !yahooOnly && malusActive,
+    _auffaelligkeiten: !yahooOnly && rslWeak ? (malusActive ? `RSL < 105: DCF-Wachstum −${RSL_MOMENTUM_MALUS_PCT}%` : `RSL < 105, Malus durch Lynch-Klasse ausgesetzt`) : null,
+  });
 
   return (
     <SectionCard number={11} title="RSL-MOMENTUM (Levy RSL)">

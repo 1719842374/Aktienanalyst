@@ -9,6 +9,7 @@
  * Analyse, keinen Score und kein Gate. Fehlende Werte sind `null` ("n/a"), nie geschätzt.
  */
 import type { StockAnalysis } from "./schema";
+import { sumUpsideGb } from "./bias-fixes";
 
 export type ChatDashboard = "stock" | "btc" | "gold" | "recession";
 export const CHAT_DASHBOARDS: readonly ChatDashboard[] = ["stock", "btc", "gold", "recession"];
@@ -16,9 +17,34 @@ export const CHAT_DASHBOARDS: readonly ChatDashboard[] = ["stock", "btc", "gold"
 export type ChatFactValue = string | number | boolean | null;
 
 export interface ChatSection {
+  /** Angezeigte Sektionsnummer (wie auf der Seite; Ziel für Sprünge/Verweise). */
   id: number;
   label: string;
   facts: Record<string, ChatFactValue>;
+  /** Stabile, semantische ID (z.B. Rezession "buffett"); ändert sich nicht, wenn sich Nummern verschieben. */
+  key?: string;
+}
+
+/** Eintrag der Sektionsauswahl im Chat-Widget. */
+export interface ChatSectionItem {
+  id: number;
+  label: string;
+  /** Stabile Bindung; ohne Angabe gilt die Nummer als Schlüssel. */
+  key?: string;
+  /** Ersetzt die Nummer in Auswahl/Verweisen (z.B. Gold-News, interne ID 100, ohne Nummer auf der Seite). */
+  display?: string;
+}
+
+export function chatSectionKey(s: ChatSectionItem): string {
+  return s.key ?? String(s.id);
+}
+/** Präfix in der Auswahl: "7." bzw. das Anzeige-Symbol (Gold-News "📰"). */
+export function chatSectionTag(s: ChatSectionItem): string {
+  return s.display ?? `${s.id}.`;
+}
+/** Name im Erklär-Prompt: "7 (Label)" bzw. nur das Label, wenn die Sektion keine Nummer zeigt. */
+export function chatSectionName(s: ChatSectionItem): string {
+  return s.display != null ? s.label : `${s.id} (${s.label})`;
 }
 
 export interface ChatGate {
@@ -125,7 +151,9 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
       analystenKursziel_median: num(d.analystPT?.median), analystenKursziel_hoch: num(d.analystPT?.high),
       analystenKursziel_tief: num(d.analystPT?.low), analystenAnzahl: num(d.analystPT?.count, 0),
       ratings_buy_hold_sell: d.ratings ? `${d.ratings.buy}/${d.ratings.hold}/${d.ratings.sell}` : null,
-      finalScore: num(sc?.finalScore, 1),
+      // S1 zeigt keinen 0–100-Score (der steht in S20 „/ 100“); Ampel/Signal-Score liefert die
+      // Executive-Summary-Karte selbst (usePublishChatSection "1"). Hier nur als S20-Verweis.
+      scoringFinalScore_S20: num(sc?.finalScore, 1),
     }),
     s(2, {
       kursZeitpunkt: str(d.priceTimestamp), datenStand: str(d.dataTimestamp), cacheStand: str(d._cachedAt),
@@ -162,7 +190,8 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
     }),
     s(8, {
       erwarteterSchadenSummePct: num(risks.reduce((a: number, r: any) => a + (Number.isFinite(r?.expectedDamage) ? r.expectedDamage : 0), 0)),
-      katalysatorGBSumme: num(catalysts.reduce((a: number, c: any) => a + (Number.isFinite(c?.gb) ? c.gb : 0), 0)),
+      // Gleiche Summe wie die Seite (S17 „Σ GB“, Fazit „positive GB“): ▼-Katalysatoren zählen 0.
+      katalysatorGBSumme: num(sumUpsideGb(catalysts)),
     }),
     s(9, {
       peers: list((d.peerComparison?.peers ?? []).map((p: any) => str(p?.ticker ?? p?.name, 20)), 8),
@@ -295,7 +324,7 @@ export function buildBtcChatContext(data: any): ChatContext {
   ];
   return {
     dashboard: "btc", entity: "BTC", title: "Bitcoin (BTC)", asOf: str(d.timestamp, 40), sections, gates: [],
-    notes: ["BTC-Dashboard hat keine Scoring-Gates; GIS/GWS sind die Scores", "Krypto-Liquidität (3) und Miner-Zone (13) laden eigene Daten und fehlen im Kontext"],
+    notes: ["BTC-Dashboard hat keine Scoring-Gates; GIS/GWS sind die Scores", "Krypto-Liquidität (3) und Miner-Zone (13) laden eigene Daten und fehlen im Kontext", "Gesamt-Fazit (14) ist nur teilweise im Kontext (im Client abgeleitet)"],
   };
 }
 
@@ -328,23 +357,56 @@ export function buildGoldChatContext(data: any): ChatContext {
   return { dashboard: "gold", entity: "GOLD", title: "Gold (XAU)", asOf: str(d.timestamp ?? d.analysisDate, 40), sections, gates, notes };
 }
 
+/**
+ * Rezession: EINE geordnete Liste mit stabilen, semantischen Schlüsseln. Die angezeigte Nummer wird
+ * daraus abgeleitet (Seite UND Chat), nie fest verdrahtet. Neue Sektion = ein Eintrag an der
+ * richtigen Stelle (z.B. #284: `{ key: "ta", label: "Technische Analyse" }` nach "markt");
+ * alle folgenden Nummern verschieben sich automatisch, Schlüssel/Bindungen/Publisher bleiben gleich.
+ * `when`: Sektion erscheint nur, wenn das Flag gesetzt ist.
+ */
+export type RecessionSectionFlag = "regions" | "fazit";
+export const RECESSION_SECTION_DEFS: ReadonlyArray<{ key: string; label: string; when?: RecessionSectionFlag }> = [
+  { key: "bewertung", label: "Aktuelle Bewertung" }, { key: "nyfed", label: "NY Fed / FRED Referenz" },
+  { key: "regeln", label: "Scoring-Regeln" }, { key: "zonen", label: "Scoring-Zonen" },
+  { key: "indikatoren", label: "Indikatoren-Tabelle" }, { key: "untergruppen", label: "Score-Übersicht (5 Untergruppen)" },
+  { key: "prozent", label: "Prozentschätzungen" },
+  { key: "regionen", label: "Regionale Kataloge", when: "regions" },
+  { key: "rsi", label: "RSI" }, { key: "markt", label: "Marktcharts" }, { key: "buffett", label: "Buffett-Indikator" },
+  { key: "summary", label: "Zusammenfassung & Top-3 Treiber" },
+  { key: "fazit", label: "Fazit & Makro-Risiko", when: "fazit" },
+  { key: "quellen", label: "Quellenliste" },
+];
+
 /** Nummerierung wie in client/src/pages/RecessionDashboard.tsx (abhängig von Regionen/Fazit). */
 export function recessionSectionLayout(hasRegions: boolean, hasFazit: boolean): Array<{ id: number; label: string; key: string }> {
-  const out = [
-    { id: 1, label: "Aktuelle Bewertung", key: "bewertung" }, { id: 2, label: "NY Fed / FRED Referenz", key: "nyfed" },
-    { id: 3, label: "Scoring-Regeln", key: "regeln" }, { id: 4, label: "Scoring-Zonen", key: "zonen" },
-    { id: 5, label: "Indikatoren-Tabelle", key: "indikatoren" }, { id: 6, label: "Score-Übersicht (5 Untergruppen)", key: "untergruppen" },
-    { id: 7, label: "Prozentschätzungen", key: "prozent" },
-  ];
-  let n = 8;
-  if (hasRegions) out.push({ id: n++, label: "Regionale Kataloge", key: "regionen" });
-  out.push({ id: n++, label: "RSI", key: "rsi" }, { id: n++, label: "Marktcharts", key: "markt" }, { id: n++, label: "Buffett-Indikator", key: "buffett" }, { id: n++, label: "Zusammenfassung & Top-3 Treiber", key: "summary" });
-  if (hasFazit) out.push({ id: n++, label: "Fazit & Makro-Risiko", key: "fazit" });
-  out.push({ id: n++, label: "Quellenliste", key: "quellen" });
+  const flags: Record<RecessionSectionFlag, boolean> = { regions: hasRegions, fazit: hasFazit };
+  return RECESSION_SECTION_DEFS.filter(d => !d.when || flags[d.when]).map((d, i) => ({ id: i + 1, label: d.label, key: d.key }));
+}
+
+/** Schlüssel → angezeigte Nummer; fehlende (ausgeblendete) Sektionen fehlen in der Map. */
+export function recessionSectionNumbers(hasRegions: boolean, hasFazit: boolean): Record<string, number> {
+  return Object.fromEntries(recessionSectionLayout(hasRegions, hasFazit).map(s => [s.key, s.id]));
+}
+
+/** Regionale Kataloge (S8) genau wie in RegionalCatalogSection angezeigt; fehlende Werte = null. */
+function regionFacts(cat: any): Record<string, ChatFactValue> {
+  if (!cat || !Array.isArray(cat.regions)) return { hinweis: "Regionale Kataloge nicht geladen (n/a)" };
+  const pct = (v: any) => (typeof v === "number" && Number.isFinite(v) ? `${v}%` : "n/a");
+  const out: Record<string, ChatFactValue> = {};
+  for (const r of cat.regions.slice(0, 6)) {
+    const id = String(r?.id ?? "n/a").slice(0, 8);
+    out[`region_${id}`] = str(`${r?.label ?? id}: Katalog Rez. ${pct(r?.recessionProbability)}, Katalog Korr. ${pct(r?.correctionProbability)}, Gewicht ×${num(r?.weight, 2)?.toFixed(2) ?? "n/a"}`);
+    out[`slots_${id}`] = list((r?.slots ?? []).map((sl: any) => `${sl.name}: ${sl.value} | ${sl.zone} | Score ${sl.available ? `${sl.weightedScore > 0 ? "+" : ""}${sl.weightedScore}` : "—"}/${sl.available ? sl.maxWeighted : 0}`), 12);
+  }
+  out.gewichteteRezession12MPct = num(cat.blendedRecession12m, 1);
+  out.gewichteteKorrektur12MPct = num(cat.blendedCorrection12m, 1);
+  const w = cat.weights;
+  out.gewichte = w ? str(`US ${num(w.US, 2)?.toFixed(2) ?? "n/a"} / EZ ${num(w.EZ, 2)?.toFixed(2) ?? "n/a"} / JP ${num(w.JP, 2)?.toFixed(2) ?? "n/a"}`) : null;
+  out.handlungAufUSBuechern = cat.actionUsesUsBooks === true ? "Handlung bleibt auf den US-Büchern P_korr12 und P_rez12." : null;
   return out;
 }
 
-export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean }): ChatContext {
+export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean; regions?: any }): ChatContext {
   const d = data ?? {};
   const subs: any[] = Array.isArray(d.subgroups) ? d.subgroups : [];
   const inds: any[] = Array.isArray(d.indicators) ? d.indicators : [];
@@ -355,16 +417,113 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
     zonen: { hinweis: "Statische Zonen des Dashboards" },
     indikatoren: Object.fromEntries(inds.slice(0, CHAT_LIMITS.maxFactsPerSection).map(i => [String(i.name).slice(0, CHAT_LIMITS.maxFactKeyChars), str(i.available === false ? `n/a (${i.subgroup})` : `${i.value} | Score ${i.rawScore} | ${i.zone} | ${i.group}/${i.subgroup}${i.proxy ? " | Proxy" : ""}`)])),
     untergruppen: Object.fromEntries(subs.slice(0, 8).map(s => [String(s.name).slice(0, 40), str(`${s.label} (${s.horizon}): net ${num(s.netScore, 2) ?? "n/a"}/${num(s.maxScore, 2) ?? "n/a"}, P ${num(s.probability, 1) ?? "n/a"}%`)])),
-    prozent: Object.fromEntries(subs.slice(0, 8).map(s => [String(s.name).slice(0, 40), str(`P ${num(s.probability, 1) ?? "n/a"}%, final ${num(s.finalProbability, 1) ?? "n/a"}%, NY-Fed-Anker ${num(s.nyFedAnchor, 1) ?? "n/a"}`)])),
-    regionen: { hinweis: "Regionale Kataloge werden im Client zusammengestellt; nur Anzeige" },
+    // S7 wie angezeigt: P, Netto/Max, Formel. NY-Fed-Anker/final existieren nur in der Mischformel von
+    // "recession_full" (server/recession.ts); für die übrigen Gruppen gibt es sie nicht → nicht als n/a melden.
+    prozent: Object.fromEntries(subs.slice(0, 8).map(s => [String(s.name).slice(0, 40), str(`P ${num(s.probability, 1) ?? "n/a"}% (${s.horizon ?? "n/a"}), Netto ${num(s.netScore, 1) ?? "n/a"}/${num(s.maxScore, 1) ?? "n/a"}${typeof s.nyFedAnchor === "number" ? `, NY-Fed-Anker ${num(s.nyFedAnchor, 1)}%, final ${num(s.finalProbability, 1) ?? "n/a"}%` : ""}${s.formula ? ` | ${s.formula}` : ""}`)])),
+    regionen: regionFacts(opts.regions),
     rsi: { hinweis: SELF_LOADED }, markt: { hinweis: SELF_LOADED }, buffett: { hinweis: SELF_LOADED },
     summary: { topTreiber: list(d.topDrivers), interpretation: str(d.interpretation, 800) },
     fazit: { risiko: str(d.fazit?.riskLevel), zusammenfassung: str(d.fazit?.summary, 800), abschnitte: list((d.fazit?.sections ?? []).map((s: any) => s.title)) },
     quellen: { anzahl: Array.isArray(d.sources) ? d.sources.length : null, quellen: list((d.sources ?? []).map((s: any) => s.name), 8) },
   };
-  const sections = recessionSectionLayout(opts.hasRegions, !!d.fazit).map(s => sec(s.id, s.label, facts[s.key] ?? {}));
+  const sections = recessionSectionLayout(opts.hasRegions, !!d.fazit).map(s => ({ ...sec(s.id, s.label, facts[s.key] ?? {}), key: s.key }));
   return {
     dashboard: "recession", entity: "US-Rezession", title: "Rezessions-Dashboard", asOf: str(d.asOf ?? d.date, 40), sections, gates: [],
     notes: ["Rezessions-Dashboard hat keine Gates; Scores sind die 5 Untergruppen", "RSI, Marktcharts und Buffett-Indikator laden eigene Daten und fehlen im Kontext"],
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR 3: Kontext vollständig. `enrichChatContext` ergänzt einen Provider-Kontext um die Werte, die
+// Sektionen im Client anzeigen (veröffentlicht über client/src/lib/chatSectionData.ts), und um
+// eine kompakte Zeile "auffaelligkeiten" je Sektion. Die Provider selbst bleiben unverändert.
+//
+// Auffälligkeiten entstehen NUR aus vorhandenen Daten/Flags/Gates:
+//   - Flags, die die Sektion selbst anzeigt (vom Publisher als `_auffaelligkeiten` geliefert),
+//   - aktive Gates (in der Gate-Sektion des Dashboards),
+//   - fehlende Werte (n/a-Felder) und nicht geladene Selbstlade-Sektionen.
+//
+// Kontext-Budget (dokumentiert, geprüft in script/test-chat-context-full.ts):
+//   Server-Limit CHAT_LIMITS.maxContextChars = 40 000 Zeichen (JSON). Client-Ziel CHAT_CONTEXT_BUDGET
+//   = 36 000 Zeichen (10 % Reserve). Je Fakt ≤ 400 Zeichen, ≤ 40 Fakten je Sektion, Auffälligkeiten
+//   ≤ 400 Zeichen. Wird das Ziel überschritten, kürzt fitChatContextBudget zuerst die längsten
+//   Textwerte (auf min. 80 Zeichen), danach die letzten Fakten der größten Sektion — Zahlen,
+//   Gates und "auffaelligkeiten" bleiben bis zuletzt erhalten.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const CHAT_CONTEXT_BUDGET = 36_000;
+export const CHAT_WEAKNESS_KEY = "auffaelligkeiten";
+/** Schlüssel, unter dem Publisher angezeigte Warn-Flags liefern (wird in `auffaelligkeiten` überführt). */
+export const CHAT_LIVE_FLAGS_KEY = "_auffaelligkeiten";
+
+export interface EnrichChatOptions {
+  /** Live-Schlüssel → Sektions-ID (z.B. Rezession "rsi" → 9). Ohne Eintrag: Schlüssel als Zahl. */
+  keyToId?: Record<string, number>;
+  /** Sektion, in der aktive Gates als Auffälligkeit erscheinen (Aktie 20, Gold 8). */
+  gatesSectionId?: number;
+}
+
+const CLIENT_HINT_RE = /im Client (berechnet|aus der Kurshistorie|aus den Sektionen)|lädt eigene Daten nach/;
+
+export function enrichChatContext(
+  ctx: ChatContext,
+  live: Readonly<Record<string, Record<string, ChatFactValue>>> | null | undefined,
+  opts: EnrichChatOptions = {},
+): ChatContext {
+  const byId = new Map<number, Record<string, ChatFactValue>>();
+  for (const [key, facts] of Object.entries(live ?? {})) {
+    const id = opts.keyToId?.[key] ?? Number(key);
+    if (Number.isFinite(id) && facts) byId.set(id, facts);
+  }
+  const activeGates = ctx.gates.filter(g => g.active);
+  const missingSelfLoaded: string[] = [];
+
+  const sections = ctx.sections.map(s0 => {
+    const liveFacts = byId.get(s0.id);
+    const facts: Record<string, ChatFactValue> = { ...s0.facts };
+    const flags: string[] = [];
+    if (liveFacts) {
+      if (typeof facts.hinweis === "string" && CLIENT_HINT_RE.test(facts.hinweis)) delete facts.hinweis;
+      for (const [k, v] of Object.entries(liveFacts)) {
+        if (k === CHAT_LIVE_FLAGS_KEY) { if (typeof v === "string" && v) flags.push(v); continue; }
+        facts[k.slice(0, CHAT_LIMITS.maxFactKeyChars)] = typeof v === "string" ? str(v) : v;
+      }
+    } else if (facts.hinweis === SELF_LOADED) {
+      flags.push("Daten dieser Sektion sind (noch) nicht geladen: n/a");
+      missingSelfLoaded.push(s0.label);
+    }
+    if (opts.gatesSectionId === s0.id && activeGates.length) {
+      flags.push(`aktive Gates: ${activeGates.map(g => `${g.id}${g.cap != null ? ` (Cap ${g.cap})` : ""}`).join(", ")}`);
+    }
+    const nas = Object.entries(facts).filter(([k, v]) => v === null && k !== CHAT_WEAKNESS_KEY).map(([k]) => k);
+    if (nas.length) flags.push(`fehlende Werte (n/a): ${nas.slice(0, 8).join(", ")}${nas.length > 8 ? ` +${nas.length - 8}` : ""}`);
+    const entries = Object.entries(facts).slice(0, CHAT_LIMITS.maxFactsPerSection - 1);
+    entries.push([CHAT_WEAKNESS_KEY, flags.length ? str(flags.join(" | ")) : "keine aus den vorhandenen Daten ableitbar"]);
+    return { ...s0, facts: Object.fromEntries(entries) };
+  });
+
+  const notes = (live && byId.size ? ctx.notes.filter(n => !/fehlen im Kontext|nur teilweise im Kontext/.test(n)) : [...ctx.notes]);
+  if (byId.size) notes.push(`Angezeigte Client-Werte übernommen für Sektionen: ${Array.from(byId.keys()).sort((a, b) => a - b).join(", ")}`);
+  if (missingSelfLoaded.length) notes.push(`Noch nicht geladen (n/a): ${missingSelfLoaded.join(", ")}`);
+  return fitChatContextBudget({ ...ctx, sections, notes: notes.slice(0, CHAT_LIMITS.maxNotes) });
+}
+
+/** Hält den Kontext unter `budget` Zeichen (JSON). Reine Funktion. */
+export function fitChatContextBudget(ctx: ChatContext, budget: number = CHAT_CONTEXT_BUDGET): ChatContext {
+  const size = (c: ChatContext) => JSON.stringify(c).length;
+  if (size(ctx) <= budget) return ctx;
+  const out: ChatContext = { ...ctx, sections: ctx.sections.map(s => ({ ...s, facts: { ...s.facts } })) };
+  for (let guard = 0; guard < 6000 && size(out) > budget; guard++) {
+    let best: { s: ChatSection; k: string; len: number } | null = null;
+    for (const s of out.sections) for (const [k, v] of Object.entries(s.facts)) {
+      if (k === CHAT_WEAKNESS_KEY || typeof v !== "string" || v.length <= 80) continue;
+      if (!best || v.length > best.len) best = { s, k, len: v.length };
+    }
+    if (best) { const v = best.s.facts[best.k] as string; best.s.facts[best.k] = `${v.slice(0, Math.max(80, Math.floor(v.length / 2)) - 1)}…`; continue; }
+    const big = out.sections.reduce((a, b) => (Object.keys(b.facts).length > Object.keys(a.facts).length ? b : a));
+    const keys = Object.keys(big.facts).filter(k => k !== CHAT_WEAKNESS_KEY);
+    if (!keys.length) break;
+    delete big.facts[keys[keys.length - 1]];
+  }
+  return out;
 }

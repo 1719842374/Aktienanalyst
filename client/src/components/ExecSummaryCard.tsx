@@ -8,6 +8,7 @@ import { SectionCard } from "@/components/SectionCard";
 import type { StockAnalysis } from "../../../shared/schema";
 import { buildFazitSignal, prepareFazitMetrics } from "@/lib/fazit-signal";
 import { buildBiasDecision } from "../../../shared/bias-fixes";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 
 export type ExecSummaryView = {
   headline?: string;
@@ -61,6 +62,22 @@ export function ExecSummaryCard({ data }: {
       .sort((a, b) => b.ed - a.ed)
       .slice(0, 3);
   }, [data?.risks]);
+
+  // Chat-Kontext (S1): genau die hier angezeigten Werte — Ampel, Signal-Score, Bewertungsbasis/Upside.
+  const r2 = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  usePublishChatSection("stock", "1", s && fazit ? {
+    ampel: bias?.overallRating ?? fazit.rating,
+    fazitAmpel: fazit.rating,
+    signalScore: `${fazit.positive.length} positiv / ${fazit.negative.length} negativ / ${fazit.neutral.length} neutral = ${fazit.rating}`,
+    bewertungsBasis: bias ? bias.valuationBaseLabel : null,
+    bewertungsBasisProAktie: bias ? r2(bias.decisionPerShare) : null,
+    upsidePct: bias ? r2(bias.decisionUpsidePct) : null,
+    positiveGbSummePct: bias ? r2(bias.positiveGbSum) : null,
+    gesamtscore_0bis10: bias ? r2(bias.overallScore) : null,
+    redFlags: (bias?.redFlags ?? s.redFlags ?? []).join(" · ") || null,
+    negativeFaktoren: fazit.negative.join(" | ") || null,
+    positiveFaktoren: fazit.positive.join(" | ") || null,
+  } : null);
 
   if (!s || !fazit) return null;
 
