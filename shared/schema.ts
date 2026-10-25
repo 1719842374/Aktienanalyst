@@ -61,8 +61,8 @@ export interface TAMAnalysis {
   tamTotal: number | null; // Weighted total TAM in $B — null wenn quality==='unreliable' oder coveragePct<=0
   tamLabel: string; // Primary TAM label
   tamCAGR: number | null; // Weighted average industry CAGR % — null wenn tamTotal null ist
-  companyGrowth: number; // Company revenue growth %
-  companyRevenue: number; // Company revenue in $B
+  companyGrowth: number | null; // Company revenue growth % — null wenn kein Konzernumsatz (companyDataMissing)
+  companyRevenue: number | null; // Company revenue in $B — null wenn kein Konzernumsatz
   marketShare: number | null; // Company share of weighted TAM in % — null wenn tamTotal null ist
   tamSource: string; // Source description
   outperforming: boolean | null; // Company growing faster than weighted TAM CAGR? null wenn tamCAGR null ist
@@ -79,6 +79,9 @@ export interface TAMAnalysis {
   coveragePct?: number;
   /** A1: mindestens ein Segment hat marketShare > TAM_SHARE_WARN (25%). */
   shareWarning?: boolean;
+  /** Follow-up #271: 'no-revenue' = kein Konzernumsatz (z.B. Yahoo-only). tamTotal, companyGrowth, companyRevenue,
+   *  marketShare, outperforming sind dann null (n/a), nie 0/Sektor-Default. */
+  companyDataMissing?: 'no-revenue';
 }
 
 export interface PeerCompany {
