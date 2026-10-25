@@ -6,7 +6,8 @@
 
 import type { Catalyst } from "../shared/schema";
 import { btcMediaSiteQuery, filterBtcNewsItems } from "../shared/btc-source-policy";
-import { fmpBatchQuote, fmpRatios, fmpKeyMetrics, fmpProfile } from "./fmp";
+import { fmpBatchQuote, fmpRatios, fmpKeyMetrics, fmpProfile, fmpAnalystEstimates } from "./fmp";
+import { peerForwardPe } from "../shared/peer-forward-pe";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
 import { diskResearcherGetWithTtl, diskResearcherSet } from "./disk-cache";
 
@@ -357,12 +358,15 @@ export async function fetchPeerComparisonFromTickers(
   peerProfiles?: ReadonlyMap<string, PeerIndustryProfile>
 ): Promise<{ subject: any; peers: any[]; peerAvg: any } | null> {
   try {
-    const [quotes, ratiosPerPeer, roicByTicker, subjectRoic] = await Promise.all([
+    const [quotes, ratiosPerPeer, roicByTicker, subjectRoic, estimatesPerPeer] = await Promise.all([
       fmpBatchQuote(peerTickers),
       Promise.all(peerTickers.map(t => fmpRatios(t, 6).catch(() => []))),
       fetchRoicForTickers(peerTickers),
       fetchRoicForTickers([ticker]).then(r => r[ticker]),
+      // Peer-Variante A: Forward-KGV nur im Ansichtspfad (mit Profil-Map), sonst kein Extra-Call.
+      peerProfiles ? Promise.all(peerTickers.map(t => fmpAnalystEstimates(t, 6).catch(() => []))) : Promise.resolve(null),
     ]);
+    const todayIso = new Date().toISOString().slice(0, 10);
     const quoteByTicker = new Map<string, any>((quotes || []).map((q: any) => [q.symbol, q]));
     const cagr = (endValue: number | undefined, startValue: number | undefined, years: number): number | null => {
       if (!endValue || !startValue || years <= 0) return null;
@@ -417,6 +421,7 @@ export async function fetchPeerComparisonFromTickers(
         ...(peerProfiles ? {
           industry: peerProfiles.get(t)?.industry || null,
           sector: peerProfiles.get(t)?.sector || null,
+          forwardPe: peerForwardPe({ ticker: t, price: q?.price, reportedCurrency: r0?.reportedCurrency, estimates: estimatesPerPeer?.[idx] as any[], todayIso }),
         } : {}),
       });
     });

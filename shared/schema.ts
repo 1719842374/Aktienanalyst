@@ -109,6 +109,9 @@ export interface PeerCompany {
   industry?: string | null;
   /** wie industry, FMP-Profil-Sektor. */
   sector?: string | null;
+  /** Peer-Variante A: Forward-KGV (Kurs / EPS-Konsens nächstes GJ, shared/peer-forward-pe.ts). null = nicht verfügbar
+   *  oder Währung nicht sicher → Ansicht fällt auf pe (trailing) zurück. Nur Ansicht/Filter, nicht score-wirksam. */
+  forwardPe?: number | null;
 }
 
 export type WarningSeverity = 'critical' | 'warning' | 'info';
