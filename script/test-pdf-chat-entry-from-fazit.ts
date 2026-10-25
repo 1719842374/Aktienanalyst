@@ -4,7 +4,7 @@
  * ($18.76), Exec-Summary-Server-Satz 29,87, Chat ohne Fazit-Entry.
  * Prüft offline (Fixtures SHEL.L + MSFT):
  *  - PDF S6-Zeile und Faktor-Text = Fazit-Wert, alter PDF-Wert taucht nicht mehr auf
- *  - PDF-Verdict, Faktorzahlen und Signal-Score-Zeile bytegleich zu main
+ *  - PDF-Verdict, Faktorzahlen und Signal-Score-Zeile bytegleich zum eingefrorenen Vorher-Stand (main vor #321)
  *  - Client-Fazit Score/Rating und data.scoring bytegleich (keine Mutation)
  *  - Chat-Kontext: S1/S20 tragen den Fazit-Entry, alle anderen Sektionen bytegleich
  *  - n/a statt Ersatzwert, wenn das Fazit nicht berechenbar ist
@@ -31,12 +31,14 @@ const SHOTS = process.env.SHOTS === "1";
 const OUT = "/workspace/fazitpdf-shots";
 if (SHOTS) mkdirSync(OUT, { recursive: true });
 
-// main-Stand von pdf-export.ts neben die Datei legen (gleiche relative Imports) für den Vorher-Vergleich.
+// Vorher-Stand eingefroren: pdf-export.ts von main VOR #321 (0093b4d = df693e3^), nicht origin/main/HEAD —
+// sonst prüft der Test nach dem Merge gegen sich selbst. Fehlt der Commit (shallow clone) → Test bricht ab, kein Fallback.
+const BEFORE_REF = "0093b4ded9995444fc0dbdc285ddc60664826a54";
+// Alter PDF-Wert (eigene PDF-Formel vor #321) als feste Konstanten; der eingefrorene Stand muss sie liefern.
+const OLD_PDF_ENTRY: Record<string, string> = { "SHEL.L": "$18.76", MSFT: "$227.72" };
 const tmp = "server/.main-pdf-export.tmp.ts";
 let mainPdf: any;
-let mainRef = "origin/main";
-try { execSync(`git rev-parse --verify -q ${mainRef}`, { stdio: "ignore" }); } catch { mainRef = "HEAD~0"; }
-writeFileSync(tmp, execSync(`git show ${mainRef}:server/pdf-export.ts`));
+writeFileSync(tmp, execSync(`git show ${BEFORE_REF}:server/pdf-export.ts`));
 try { mainPdf = await import(pathToFileURL(resolve(tmp)).href); } finally { unlinkSync(tmp); }
 
 delete process.env.ANTHROPIC_API_KEY; // kein LLM im Test
@@ -72,7 +74,7 @@ for (const [label, data, expLabel] of [["SHEL.L", shel, "£31.33"], ["MSFT", msf
   const newEntry = (htmlNew.match(/data-testid="pdf-max-entry"><span class="row-label">Max-Entry \(CRV 3:1\)<\/span><span class="row-val">([^<]+)</) ?? [])[1];
 
   await check(`${label}: PDF S6 Max-Entry ${oldEntry} → ${newEntry} (= Fazit ${fe!.label})`, () => assert.equal(newEntry, fe!.label));
-  await check(`${label}: alter PDF-Wert ${oldEntry} taucht nicht mehr auf`, () => assert.ok(!htmlNew.includes(oldEntry!), oldEntry));
+  await check(`${label}: alter PDF-Wert ${OLD_PDF_ENTRY[label]} (fest, = Vorher-Stand) taucht nicht mehr auf`, () => { assert.equal(oldEntry, OLD_PDF_ENTRY[label], "Vorher-Stand"); assert.notEqual(OLD_PDF_ENTRY[label], fe!.label); assert.ok(!htmlNew.includes(OLD_PDF_ENTRY[label]), OLD_PDF_ENTRY[label]); });
   await check(`${label}: PDF-Faktor nennt Fazit-Entry`, () => assert.ok(htmlNew.includes(`Max-Entry (${fe!.label})`)));
   const s6 = (h: string) => {
     const g = (re: RegExp) => (h.match(re) ?? [])[1] ?? "—";
