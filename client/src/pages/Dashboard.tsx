@@ -56,6 +56,7 @@ import { PestelSection } from "@/components/sections/PestelSection";
 import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelationsSection";
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
+import { deliverPdfOnGesture, needsGestureHandoff } from "@/lib/pdfDelivery";
 import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
 import { withFazitEntryChatFacts } from "@shared/fazit-entry";
 import { useChatSectionData } from "@/lib/chatSectionData";
@@ -116,6 +117,8 @@ export default function Dashboard() {
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
   // PDF-Export läuft ~30–60 s (Sektionsaufnahme + Server-Render): sichtbarer Zustand statt scheinbar nichts.
   const [pdfBusy, setPdfBusy] = useState(false);
+  // iOS: fertiges PDF wartet auf eine frische Geste („PDF öffnen/teilen“), weil die Klick-Activation nach ~1 min abgelaufen ist.
+  const [pdfReady, setPdfReady] = useState<{ blob: Blob; filename: string; download: (b: Blob, f: string) => void } | null>(null);
 
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number; isPending?: boolean } | null>(null);
   // #258: Hinweis nach automatischem Verwerfen abgelehnter Peer-Overrides (400).
@@ -464,10 +467,14 @@ export default function Dashboard() {
               onClick={async () => {
                 if (pdfBusy) return;
                 setPdfBusy(true);
+                setPdfReady(null);
                 try {
-                  const { exportAnalysisPdf } = await import('../lib/exportPdf');
+                  const { exportAnalysisPdf, triggerDownload } = await import('../lib/exportPdf');
+                  // iOS: Die Klick-Activation ist nach dem 54–75-s-Export abgelaufen, deshalb kein Auto-Download, sondern Übergabe an den
+                  // Knopf „PDF öffnen/teilen“ (frische Geste). Desktop/Android: triggerDownload wie bisher.
+                  const deliver = (blob: Blob, filename: string) => needsGestureHandoff(navigator as any) ? setPdfReady({ blob, filename, download: triggerDownload }) : triggerDownload(blob, filename);
                   // Alle gerenderten Sektionen (inkl. S3) als Bild ins PDF; Fehler meldet exportAnalysisPdf sichtbar.
-                  await exportAnalysisPdf(data, Object.entries(sectionRefs.current).map(([id, el]) => ({ id: Number(id), el })));
+                  await exportAnalysisPdf(data, Object.entries(sectionRefs.current).map(([id, el]) => ({ id: Number(id), el })), deliver);
                 } catch (err: any) {
                   alert(`PDF-Export fehlgeschlagen: ${err?.message || err}`);
                 } finally {
@@ -726,6 +733,25 @@ export default function Dashboard() {
           )}
         </main>
       </div>
+      {/* < 640 px ist das Button-Label versteckt: eigener Status-Hinweis während des Exports (Desktop: Button-Text wie bisher). */}
+      {pdfBusy && <PdfBusyBanner />}
+      {pdfReady && (
+        <div className="fixed bottom-20 left-3 right-3 sm:left-auto sm:right-4 sm:w-80 z-50 rounded-lg border border-primary/40 bg-card shadow-lg p-3 text-xs flex items-center gap-2" role="status" data-testid="pdf-ready-banner">
+          <span className="flex-1 min-w-0 truncate">PDF fertig: {pdfReady.filename}</span>
+          <button
+            onClick={() => {
+              // Synchron im Tap (keine awaits davor): frische User-Activation für navigator.share / Download.
+              deliverPdfOnGesture(pdfReady.blob, pdfReady.filename, navigator as any, pdfReady.download);
+              setPdfReady(null);
+            }}
+            className="h-8 px-3 rounded-md bg-primary text-primary-foreground font-medium shrink-0"
+            data-testid="button-pdf-open-share"
+          >
+            PDF öffnen/teilen
+          </button>
+          <button onClick={() => setPdfReady(null)} className="p-1 text-muted-foreground shrink-0" aria-label="Schließen" data-testid="button-pdf-ready-close"><X className="w-4 h-4" /></button>
+        </div>
+      )}
       <ChatWidget
         dashboard="stock"
         context={chatContext}
@@ -734,6 +760,22 @@ export default function Dashboard() {
         onJumpToSection={scrollToSection}
         suggestions={["Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?"]}
       />
+    </div>
+  );
+}
+
+/** Status während des PDF-Exports, nur < 640 px (dort zeigt der Header-Button nur ein Icon). Sekundenzähler als Fortschritt. */
+function PdfBusyBanner() {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    const t0 = Date.now();
+    const id = setInterval(() => setSec(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="sm:hidden fixed top-[5.75rem] left-3 right-3 z-50 rounded-lg border border-primary/40 bg-card/95 backdrop-blur shadow-lg px-3 py-2 text-xs flex items-center gap-2" role="status" aria-live="polite" data-testid="pdf-export-status-mobile">
+      <div className="w-3 h-3 rounded-full border-2 border-primary border-t-transparent animate-spin shrink-0" />
+      <span className="flex-1">PDF wird erstellt… {sec} s <span className="text-muted-foreground">(dauert ca. 1 Min.)</span></span>
     </div>
   );
 }
