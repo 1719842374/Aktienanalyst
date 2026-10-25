@@ -16,7 +16,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, Ey
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useDividendHistory } from "@/lib/useDividendHistory";
-import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
+import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
 import { currencySymbol } from "@/lib/formatters";
 import { useMarketCreditSpread } from "@/lib/useMarketCreditSpread";
 import { creditOverlaySeries, creditStressHint, marketSpreadLabel, ISSUER_BOND_NA_NOTE, CREDIT_STRESS_HINT, type CreditOverlayPoint, type CreditSpreadResponse } from "@shared/credit";
@@ -1140,6 +1140,9 @@ function PricePane({
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
   const rightAxis = !!dividend || !!credit || !!t10y || !!real10y;
   const divMax = dividend ? Math.max(0, ...dividend.points.map(p => p.yieldPct ?? 0)) : 0;
+  const divAxisMax = Math.max(1, Math.ceil(divMax * 1.15));
+  // F1-14: Band ab 4 % auf der Dividendenachse (nur Anzeige). Achse wird dafür nicht gestreckt.
+  const divBand = dividend ? attractiveYieldBand(divAxisMax) : null;
   const tick = axisTick(narrow, dense ? 8 : 9, "var(--muted-foreground)");
   const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(points.length / (dense ? 5 : 8))));
   return (
@@ -1158,7 +1161,7 @@ function PricePane({
           <YAxis
             yAxisId="div"
             orientation="right"
-            domain={[0, Math.max(1, Math.ceil(divMax * 1.15))]}
+            domain={[0, divAxisMax]}
             width={DIV_AXIS_W}
             tick={{ fontSize: narrow ? 10 : 9, fill: DIV_COLOR }}
             tickFormatter={(v: number) => `${v.toFixed(v < 10 ? 1 : 0)}%`}
@@ -1270,6 +1273,13 @@ function PricePane({
             <Area yAxisId="price" type="monotone" dataKey="bbUpper" name="BB Upper" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none" />
             <Line yAxisId="price" type="monotone" dataKey="bbMid" name="BB Mid" stroke="#a78bfa" strokeWidth={1} strokeDasharray="5 3" dot={false} connectNulls isAnimationActive={false} />
             <Area yAxisId="price" type="monotone" dataKey="bbLower" name="BB Lower" stroke="#7c3aed" strokeWidth={1} strokeDasharray="3 2" fill="rgba(124,58,237,0.05)" dot={false} connectNulls isAnimationActive={false} legendType="none" />
+          </>
+        )}
+        {dividend && divBand && (
+          <>
+            <ReferenceArea yAxisId="div" y1={divBand.y1} y2={divBand.y2} fill={DIV_ATTRACTIVE_FILL} ifOverflow="hidden" />
+            <ReferenceLine yAxisId="div" y={DIV_ATTRACTIVE_YIELD_PCT} stroke={DIV_ATTRACTIVE_STROKE} strokeDasharray="4 3" strokeWidth={0.8} opacity={0.8}
+              label={narrow || dense ? undefined : { value: `${DIV_ATTRACTIVE_YIELD_PCT} % attraktiv`, position: "insideTopRight", fontSize: 8, fill: DIV_ATTRACTIVE_STROKE }} />
           </>
         )}
         {dividend && (
@@ -1594,6 +1604,9 @@ function StatusPill({ label, value, detail }: { label: string; value: boolean; d
 
 const DIV_COLOR = "#14b8a6";
 const DIV_AXIS_W = 36;
+/** F1-14: Band „Yield ≥ 4 % attraktiv“ — grün, sehr transparent, damit Kurs und andere Overlays lesbar bleiben. */
+const DIV_ATTRACTIVE_FILL = "rgba(34,197,94,0.07)";
+const DIV_ATTRACTIVE_STROKE = "#22c55e";
 
 type DividendFields = {
   _divYield?: number | null;
@@ -1622,6 +1635,7 @@ function DividendTooltipRows({ p, formatDateFull }: { p: DividendFields; formatD
   return (
     <>
       <div className="flex justify-between gap-3"><span style={{ color: DIV_COLOR }}>Div. Yield TTM</span><span className="font-mono">{p._divYield.toFixed(2)}%</span></div>
+      {isAttractiveDividendYield(p._divYield) && <div className="text-green-500" data-testid="dividend-tooltip-attractive">≥ {DIV_ATTRACTIVE_YIELD_PCT} % attraktiv</div>}
       {p._divTtm != null && <div className="flex justify-between gap-3"><span className="text-muted-foreground">Dividende 12M je Aktie</span><span className="font-mono">{p._divTtm.toFixed(2)}</span></div>}
       {dividendMarkerLines({ yieldPct: p._divYield, rawYieldPct: p._divRaw, droppedExDates: p._divDropped, addedExDates: p._divAdded, specialExDates: p._divSpecial }, formatDateFull).map(l => (
         <div key={l.text} className={`${l.cls} max-w-[240px] whitespace-normal`} data-testid="dividend-tooltip-marker">{l.text}</div>
@@ -1652,6 +1666,7 @@ function DividendOverlayStatus({ series, history, loading, failed, formatDateFul
       <span style={{ color: DIV_COLOR }} className="font-medium">Div. Yield TTM</span> (rechte Achse) = Σ Dividenden 12M / Kurs
       {last && <> · aktuell <span className="font-mono">{last.yieldPct!.toFixed(2)}%</span> ({last.ttmDividend?.toFixed(2)} je Aktie)</>}
       {" "}· {series.paymentsPerYear}× jährlich · Quelle {src}
+      {series.points.some(p => isAttractiveDividendYield(p.yieldPct)) && <> · <span className="text-green-500" data-testid="dividend-overlay-attractive">grünes Band = Yield ≥ {DIV_ATTRACTIVE_YIELD_PCT} % (attraktiv, nur Anzeige)</span></>}
       {currencyCheck === "ok" ? <> · Währung {history.currency} = Kurs</> : <> · Dividendenwährung von der Quelle nicht angegeben (Annahme: Kurswährung)</>}
       {series.correctedBars > 0 && <> · <span className="text-amber-500">{series.correctedBars} Punkt(e) geglättet</span> (Ex-Tag-Verschiebung, Rohwert im Tooltip)</>}
       {series.specialExDates.length > 0 && <> · <span className="text-violet-400">Sonderdividende {series.specialExDates.map(formatDateFull).join(", ")}</span></>}
