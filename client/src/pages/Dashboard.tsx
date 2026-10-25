@@ -57,6 +57,7 @@ import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelation
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
 import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
+import { withFazitEntryChatFacts } from "@shared/fazit-entry";
 import { useChatSectionData } from "@/lib/chatSectionData";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
@@ -396,7 +397,7 @@ export default function Dashboard() {
   // KI-Chatbot (WORK_DASHBOARD_FEATURES §4): Kontext-Provider der Aktien-Analyse. Nur Lesen, kein Score-Einfluss.
   // PR 3: angezeigte Client-Werte (DCF/CRV/RSL/Monte Carlo) + Auffälligkeiten je Sektion.
   const chatLive = useChatSectionData("stock");
-  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(buildStockChatContext(data), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive]);
+  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withFazitEntryChatFacts(buildStockChatContext(data), data), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive]);
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
   const getActiveSectionId = useCallback((): number | null => {
