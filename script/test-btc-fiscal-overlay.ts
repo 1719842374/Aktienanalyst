@@ -3,7 +3,8 @@
  * Prüft: (1) 12M-Summe/YoY gegen Handrechnung auf echtem FRED-Snapshot,
  * (2) point-in-time (kein Wert vor Monatsanfang+1M+14T), Staleness → null (n/a),
  * (3) Zonenlogik + Zonen-Läufe, (4) Score-Dateien byte-gleich zu origin/main
- * (btcAnalysis.ts, analyze-route.ts, btc-macro.ts), (5) macro-history-Route unverändert.
+ * (btcAnalysis.ts, analyze-route.ts, btc-macro.ts), (5) Scoring-Ausgabe inhaltlich: echter analyzeBTC()
+ * auf Fixtures (script/fixtures/btc-liquidity) mit vs. ohne fiscal-history-Route identisch (merge-robust).
  * Fixture (echt, 25.10.2026): script/fixtures/fiscal/MTSO133FMS-2026-10-25.csv
  * Ausführen: npx tsx script/test-btc-fiscal-overlay.ts
  */
@@ -78,9 +79,67 @@ ok("Score-/Pflichtdateien byte-gleich zu main 73eff97e", () => {
   }
 });
 
-ok("macro-history-Route unverändert (Diff nur additiv)", () => {
-  const diff = execSync("git diff 73eff97e -- server/btc-routes.ts").toString();
-  assert.ok(!/^-(?!--)/m.test(diff), "keine entfernten Zeilen");
-});
+// Inhaltlich statt Diff gegen einen festen SHA (robust gegen andere BTC-Merges):
+// echter analyzeBTC() auf festen Fixtures (script/fixtures/btc-liquidity, Stichtag 2026-10-18).
+// „main“ = /api/analyze-btc/fiscal-history existiert nicht (404, Zustand vor FW-09);
+// „FW-09“ = Route liefert die echte Fiscal-Antwort. Gesamte Analyse-/Score-Ausgabe muss identisch sein.
+async function scoringParity() {
+  const FIX = "script/fixtures/btc-liquidity";
+  const rj = (f: string) => JSON.parse(readFileSync(`${FIX}/${f}`, "utf8"));
+  const asOf = "2026-10-18";
+  const cutoffSec = Math.floor(Date.parse(`${asOf}T23:59:59Z`) / 1000);
+  const blockchain = rj("blockchain-market-price-all.json");
+  const fng = (rj("fng-all.json").data as any[]).filter((d) => Number(d.timestamp) <= cutoffSec);
+  const hashrate = rj("mempool-hashrate-all.json");
+  const fedfunds = readFileSync(`${FIX}/FEDFUNDS.csv`, "utf8");
+  const fiscalBody = {
+    source: "FRED MTSO133FMS", series: "MTSO133FMS", points: pts, global: null, globalNote: "n/a",
+  };
+  const json = (b: unknown, st = 200) => new Response(JSON.stringify(b), { status: st, headers: { "content-type": "application/json" } });
+  const text = (b: string, st = 200) => new Response(b, { status: st });
+  const fiscalCalls = { n: 0 };
+  const mkFetch = (withFiscal: boolean) => async (input: any): Promise<Response> => {
+    const url = String(typeof input === "string" ? input : input?.url ?? input);
+    if (url.includes("/api/analyze-btc/fiscal-history")) { fiscalCalls.n++; return withFiscal ? json(fiscalBody) : text("not found", 404); }
+    if (url.startsWith("https://api.alternative.me/fng/?limit=1")) return json({ data: fng.slice(0, 1) });
+    if (url.startsWith("https://api.alternative.me/fng/")) return json({ data: fng.slice(0, 2000) });
+    if (url.includes("fredgraph.csv?id=FEDFUNDS")) return text(fedfunds);
+    if (url.startsWith("https://api.blockchain.info/charts/market-price")) return json({ ...blockchain, values: (blockchain.values as any[]).filter((v) => v.x <= cutoffSec) });
+    if (url.startsWith("https://mempool.space/api/v1/mining/hashrate/3m")) {
+      const hs = (hashrate.hashrates as any[]).filter((h) => h.timestamp > cutoffSec - 90 * 86400 && h.timestamp <= cutoffSec);
+      return json({ hashrates: hs, currentHashrate: hs.length ? hs[hs.length - 1].avgHashrate : 0 });
+    }
+    if (url.includes("/api/analyze-btc/fiscal-frontend")) return json(rj("fiscal-frontend-heute.json"));
+    return text("offline (Test)", 404); // übrige Quellen: definierter Ausfall, in beiden Läufen gleich
+  };
+  const { analyzeBTC } = await import("../client/src/lib/btcAnalysis");
+  const RealDate = Date;
+  const fixed = RealDate.parse(`${asOf}T23:59:59Z`);
+  class FakeDate extends RealDate {
+    constructor(...a: any[]) { if (a.length === 0) super(fixed); else super(...(a as [any])); }
+    static now() { return fixed; }
+  }
+  const run = async (withFiscal: boolean) => {
+    const rf = globalThis.fetch, rl = console.log, rw = console.warn, re = console.error, rr = Math.random;
+    let seed = 42; // Monte Carlo deterministisch (mulberry32), in beiden Läufen gleich
+    Math.random = () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    (globalThis as any).Date = FakeDate; globalThis.fetch = mkFetch(withFiscal) as any;
+    console.log = console.warn = console.error = () => {};
+    try { return await analyzeBTC(true); }
+    finally { (globalThis as any).Date = RealDate; globalThis.fetch = rf; console.log = rl; console.warn = rw; console.error = re; Math.random = rr; }
+  };
+  const mainState = await run(false);
+  const fw09 = await run(true);
+  assert.equal(fiscalCalls.n, 0, "analyzeBTC darf fiscal-history nicht abfragen");
+  assert.ok(Number.isFinite(mainState.gis) && Number.isFinite(mainState.gws?.value), "Score auf Fixture berechnet");
+  assert.equal(fw09.gis, mainState.gis);
+  assert.equal(fw09.gws.value, mainState.gws.value);
+  const strip = (a: any) => JSON.stringify({ ...a, timestamp: undefined });
+  assert.equal(strip(fw09), strip(mainState), "gesamte Analyse-Ausgabe identisch");
+  return { gis: mainState.gis, gws: mainState.gws.value };
+}
+
+const parity = await scoringParity();
+n++; console.log(`✓ Scoring-Ausgabe (analyzeBTC auf Fixture) gleich main-Zustand ohne Fiscal-Route (GIS ${parity.gis}, GWS ${parity.gws})`);
 
 console.log(`\n${n} Tests grün`);
