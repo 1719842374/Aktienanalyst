@@ -20,6 +20,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerValueChainRoutes(app);
   const { registerRecessionMarketRoutes } = await import("./recession-markets");
   registerRecessionMarketRoutes(app);
+  const { registerRecessionTaRoute } = await import("./recession-ta-route");
+  registerRecessionTaRoute(app);
   const { registerBuffettRatioRoute } = await import("./buffett-route");
   registerBuffettRatioRoute(app);
   const { registerThesisLabRoutes } = await import("./thesis-lab-routes");
