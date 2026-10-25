@@ -3,6 +3,7 @@ import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
 import { buildRecessionChatContext, enrichChatContext, recessionSectionLayout, recessionSectionNumbers } from "@shared/chat-context";
 import { useChatSectionData } from "@/lib/chatSectionData";
+import type { RegionalCatalogs } from "@shared/recession-regions";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { RECESSION_FALLBACK_DATA } from "@/lib/recessionFallbackData";
@@ -13,6 +14,7 @@ import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection"
 import { BuffettRatioPanel } from "@/components/recession/BuffettRatioPanel";
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
+import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
 import { showRecessionStand, type RecessionAnalysis } from "@/components/recession/recessionDashboardShared";
@@ -71,8 +73,6 @@ export default function RecessionDashboard() {
     return enrichChatContext(buildRecessionChatContext(data, { hasRegions: !!regions, regions }), chatLive, { keyToId });
   }, [data, regions, chatLive]);
   const chatSections = useMemo(() => (chatContext?.sections ?? []).map(({ id, label, key }) => ({ id, label, key })), [chatContext]);
-  // Angezeigte Nummern aus derselben Schlüssel-Liste wie der Chat (RECESSION_SECTION_DEFS).
-  const nr = recessionSectionNumbers(!!regions, !!data?.fazit);
   const sectionEl = useCallback((id: number) => mainRef.current?.querySelector<HTMLElement>(`[data-testid="section-${id}"]`) ?? null, []);
   const jumpToSection = useCallback((id: number) => {
     sectionEl(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -135,54 +135,7 @@ export default function RecessionDashboard() {
         ) : analyzeMutation.isError ? (
           <ErrorScreen error={analyzeMutation.error} onRetry={startAnalysis} />
         ) : data ? (
-          <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
-            <SectionCard number={1} title={`Aktuelle Bewertung zum ${data.date}`}>
-              <RegionGaugeSwitch data={data} regions={regions} />
-            </SectionCard>
-            <SectionCard number={2} title="NY Fed / FRED Referenz">
-              <NYFedReference data={data} />
-            </SectionCard>
-            <SectionCard number={3} title="Scoring-Regeln">
-              <ScoringRules />
-            </SectionCard>
-            <SectionCard number={4} title="Scoring-Zonen">
-              <ScoringZones />
-            </SectionCard>
-            <SectionCard number={5} title="Indikatoren-Tabelle">
-              <IndicatorTable indicators={data.indicators} />
-              <SahmRegions regions={data.sahmRegions} />
-            </SectionCard>
-            <SectionCard number={6} title="Score-Übersicht (5 Untergruppen)">
-              <SubgroupOverview subgroups={data.subgroups} />
-            </SectionCard>
-            <SectionCard number={7} title="Prozentschätzungen">
-              <ProbabilityEstimates subgroups={data.subgroups} />
-            </SectionCard>
-            {regions && (
-              <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Japan)">
-                <RegionalCatalogSection catalogs={regions} />
-              </SectionCard>
-            )}
-            <RecessionRsiSection number={nr.rsi} />
-            <RecessionMarketChartsSection number={nr.markt} />
-            <SectionCard number={nr.buffett} title="Buffett-Indikator: Marktwert zum BIP">
-              <BuffettRatioPanel />
-            </SectionCard>
-            <SectionCard number={nr.summary} title="Zusammenfassung & Top-3 Treiber">
-              <Summary data={data} />
-            </SectionCard>
-            {data.fazit && (
-              <SectionCard number={nr.fazit} title="Fazit & Makro-Risikobewertung">
-                <FazitSection fazit={data.fazit} />
-              </SectionCard>
-            )}
-            <SectionCard number={nr.quellen} title="Quellenliste">
-              <SourcesList sources={data.sources} />
-            </SectionCard>
-            <div className="pb-4">
-              <PerplexityAttribution />
-            </div>
-          </div>
+          <RecessionSectionsBody data={data} regions={regions} />
         ) : null}
       </main>
       <ChatWidget
@@ -193,6 +146,66 @@ export default function RecessionDashboard() {
         onJumpToSection={jumpToSection}
         suggestions={["Fasse die Rezessionslage in 5 Punkten zusammen", "Welche Indikatoren treiben das Risiko?", "Wie unterscheiden sich die 5 Untergruppen?"]}
       />
+    </div>
+  );
+}
+
+/**
+ * Sektionsliste des Rezessions-Dashboards (#284). Angezeigte Nummern aus derselben Schlüssel-Liste wie der Chat
+ * (RECESSION_SECTION_DEFS → recessionSectionNumbers), damit data-testid="section-N" und Chat-Bindung übereinstimmen.
+ * Exportiert für den SSR-Render in script/test-recession-section-numbers.ts.
+ */
+export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalysis; regions: RegionalCatalogs | null }) {
+  const nr = recessionSectionNumbers(!!regions, !!data.fazit);
+  return (
+    <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
+      <SectionCard number={1} title={`Aktuelle Bewertung zum ${data.date}`}>
+        <RegionGaugeSwitch data={data} regions={regions} />
+      </SectionCard>
+      <SectionCard number={2} title="NY Fed / FRED Referenz">
+        <NYFedReference data={data} />
+      </SectionCard>
+      <SectionCard number={3} title="Scoring-Regeln">
+        <ScoringRules />
+      </SectionCard>
+      <SectionCard number={4} title="Scoring-Zonen">
+        <ScoringZones />
+      </SectionCard>
+      <SectionCard number={5} title="Indikatoren-Tabelle">
+        <IndicatorTable indicators={data.indicators} />
+        <SahmRegions regions={data.sahmRegions} />
+      </SectionCard>
+      <SectionCard number={6} title="Score-Übersicht (5 Untergruppen)">
+        <SubgroupOverview subgroups={data.subgroups} />
+      </SectionCard>
+      <SectionCard number={7} title="Prozentschätzungen">
+        <ProbabilityEstimates subgroups={data.subgroups} />
+      </SectionCard>
+      {regions && (
+        <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Japan)">
+          <RegionalCatalogSection catalogs={regions} />
+        </SectionCard>
+      )}
+      <RecessionRsiSection number={nr.rsi} />
+      <RecessionMarketChartsSection number={nr.markt} />
+      <RecessionTaSection number={nr.ta} subgroups={data.subgroups} topDrivers={data.topDrivers} indicators={data.indicators} />
+      <SectionCard number={nr.buffett} title="Buffett-Indikator: Marktwert zum BIP">
+        <BuffettRatioPanel />
+      </SectionCard>
+      <SectionCard number={nr.summary} title="Zusammenfassung & Top-3 Treiber">
+        <Summary data={data} />
+      </SectionCard>
+      {data.fazit && (
+        <SectionCard number={nr.fazit} title="Fazit & Makro-Risikobewertung">
+          <FazitSection fazit={data.fazit} />
+        </SectionCard>
+      )}
+      <SectionCard number={nr.quellen} title="Quellenliste">
+        <SourcesList sources={data.sources} />
+      </SectionCard>
+      <div className="pb-4">
+        <PerplexityAttribution />
+      </div>
     </div>
   );
 }
