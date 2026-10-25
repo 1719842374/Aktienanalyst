@@ -100,14 +100,14 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 | F1-35 | Z.488–489 | Bei Fehler nicht cachen, später neu versuchen | `server/buffett-route.ts:254` cacht nur bei Punkten > 0. Cache heute 15 min (`:29`) statt 6 h | ✅ | Keiner |
 | F1-36 | Z.438–453, 494 | Globalisierungsbereinigter Buffett (Auslandsumsatz-Anteil φ, nicht fest codiert) | `server/buffett-ratio.ts:83–105` `buildBuffettSeries` rechnet `foreignShare`, wird aber nur in `script/test-buffett-ratio.ts` aufgerufen, nicht in der Route | ❌ | Erst als **Zusatzkennzahl** autonom. In den Score-Slot nur mit Philip |
 | F1-37 | Z.459, 464–473 | φ über LLM-Call schätzen, Fallback klar markiert | 0 Treffer in `buffett-*.ts` | ❌ | Mit F1-36, LLM-Kosten gering; Fallback 0,40 markieren |
-| F1-38 | Z.460 | Handelsbilanz/BIP (FRED `BOPGSTB`) | 0 Treffer | ❌ | Mit F1-36 |
+| F1-38 | Z.460 | Handelsbilanz/BIP (FRED `BOPGSTB`) | BOPGSTB/GDP, BuffettRatioPanel → trade-balance-route → shared/trade-balance | ✅ `730c12ab` | Keiner |
 | F1-39 | Z.461 | Dollar-Anteil an Weltreserven (IMF COFER) | 0 Treffer | ❌ | Mit F1-36 |
 | F1-40 | Z.496 | Optional: bereinigter Buffett als zweiter Chart / Kennzahl | 0 Treffer | ❌ | Mit F1-36 |
 | F1-41 | Z.512, 550 | Eine Sektion „Technische Analyse – Rezession & Korrektur“ | Weiter getrennt: Sektion 9 `RecessionRsiSection`, Sektion 10 `RecessionMarketChartsSection`, Sektion 11 Buffett (`client/src/pages/RecessionDashboard.tsx:135–139`) | 🟡 | Autonom (groß). Erst Datenpunkte F1-58/F1-66 stabil |
 | F1-42 | Z.551 | Ein Backend-Endpunkt für SPY/VGK + VIX + Buffett + Kurve + Credit | `server/recession-markets.ts` liefert Preis/Vol je Region; Buffett eigener Endpunkt `/api/analyze-recession/buffett` | ❌ | Mit F1-41 |
-| F1-43 | Z.552–556 | Synchronisierte Panes, Overlay-Schalter, Zeitfenster 1/3/5/10/Max, aktuelle Werte als Label | `client/src/components/recession/RecessionMarketChartsSection.tsx:415–459` Fenster 1/3/5/10/MAX ✅; Overlay-Schalter für Buffett/Credit/Kurve fehlen | 🟡 | Mit F1-41 |
+| F1-43 | Z.552–556 | Synchronisierte Panes, Overlay-Schalter, Zeitfenster 1/3/5/10/Max, aktuelle Werte als Label | Overlays BAA10Y + Real 10J DFII10 (Route #267) statt DGS10, Default aus | ✅ `470c28c5` | Keiner |
 | F1-44 | Z.557 | Leerer Overlay → kleiner Hinweis statt Blockade | `server/recession-markets.ts:277` „FRED VIXCLS leer“, `:281` „VSTOXX nicht lieferbar …“ | ✅ | Keiner |
-| F1-45 | Z.518–528 | Overlays: Buffett, CAPE, Margin Debt, Zinskurve, Credit Spread, M2, Google Trends | Margin-Debt-Streifen (FINRA) `server/recession-market-charts.ts:216–235`. Buffett, CAPE, Kurve, BAA10Y, M2, Trends nicht im Chart | 🟡 | Mit F1-41 |
+| F1-45 | Z.518–528 | Overlays: Buffett, CAPE, Margin Debt, Zinskurve, Credit Spread, M2, Google Trends | Baa-Spread (BAA10Y) + Real 10J (DFII10) + bestehendes Margin Debt | 🟡 Teil `470c28c5` | Rest-Overlays offen: Buffett, CAPE, Kurve, M2, Trends |
 | F1-46 | Z.575–586, 611–615 | Auswahl-Buttons US / Europa / Asien | `client/src/components/recession/RegionGaugeSwitch.tsx:7–11, 42–55`. SHA `101c3c0` (#211). Label heißt „Asien (Japan)“ | ✅ | Keiner (Asien-Inhalt siehe F1-54) |
 | F1-47 | Z.588, 617 | Die **fünf** Gauges (Rez. 3M/6M/12M, Korr. 3–6M/12M) regionsspezifisch | `RegionGaugeSwitch.tsx:62–63`: für EZ/JP nur **zwei** Katalog-Gauges (Rezession, Korrektur 12M) | 🟡 | Backend muss die 5 Untergruppen je Region rechnen (F1-52). Nur Anzeige, US-Handlung bleibt |
 | F1-48 | Z.589, 617, 624 | Scoring-Tabelle (und Heatmap) passt sich der Region an | Sektionen 5/6 (`RecessionDashboard.tsx:120–126`) zeigen immer US | ❌ | Mit F1-52 |
@@ -348,7 +348,7 @@ Z.10–31 („Bereits umgesetzte Kernbereiche“) ist eine Referenzliste; geprü
 | FW-29 | Z.200, 241 | Google-Trend-Score fixen (oft N/A) | siehe Future_3–5, `8add9ed` (#200) | ✅ | Keiner (Rest F3-04, F4-07) |
 | FW-30 | Z.202, 241 | Fazit Makro-Risikobewertung im KI-Modus + LLM-Suche | KI-Fazit `server/recession-drivers.ts:422–477` (`bc72953` #152), Anzeige `RecessionDashboard.tsx:144–146`; LLM-Websuche fehlt | 🟡 | „LLM-Search“ ist nicht spezifiziert → Spec schärfen |
 | FW-31 | Z.204 | Rezession: Sektorrotation unter-/überbewertet | im Rezessions-Dashboard 0 Treffer; Sektorrotation nur im Researcher | ❌ | Autonom: Researcher-Sektorrotation im Rezessions-Dashboard verlinken/einbetten |
-| FW-32 | Z.208–211, 242 | Fazit als Konfliktmatrix (Qualität, Trend, Reverse DCF, Technik, Katalysatoren) | `client/src/components/sections/ConflictMatrixPanel.tsx` (`0c7809a` #218), `shared/conflict-matrix.ts`, PDF `server/pdf-conflict-matrix.ts` (`157f478` #221) | ✅ | PDF-Route auf Prod laut Ampel noch nicht live geprüft |
+| FW-32 | Z.208–211, 242 | Fazit als Konfliktmatrix (Qualität, Trend, Reverse DCF, Technik, Katalysatoren) | `client/src/components/sections/ConflictMatrixPanel.tsx` (`0c7809a` #218), `shared/conflict-matrix.ts`, PDF `server/pdf-conflict-matrix.ts` (`157f478` #221) | ✅ | PDF-Route auf Prod live geprüft: Tester Prod PASS Soft `9aff468d` (#327); Soft: <640px kein Export-Hinweis, iOS Safari ungetestet |
 | FW-33 | Z.216 | ETF + Core-Satellite-Strategie | — | ⛔ | Philip 18.10.: ETFs bleiben blockiert |
 | FW-34 | Z.254 | Fiscal-Bridge an echten Discovery-Workflow anschließen | genutzt im Backtest-Replay (`server/backtest/fiscal-replay.ts:64`) und als Client-Gegenstück (`client/src/lib/calculations.ts:448–451`); kein Anschluss an Discovery | 🟡 | Autonom |
 | FW-35 | Z.257 | Screener-Gates + Backtesting Vollversion | Kern `server/backtest-routes.ts`, `server/backtest/`; „Vollversion“ ist nicht definiert | 🟡 | Spec schärfen |
@@ -373,19 +373,19 @@ Nicht gezählt (ℹ️, Konzept- und Content-Ideen ohne Bau-Auftrag): Z.215 Einl
 
 | Status | Zeilen | davon Wiederholung (mit „=“ markiert) | eigene Punkte |
 |---|---:|---:|---:|
-| ✅ erledigt | 111 | 1 | 110 |
-| 🟡 teilweise | 35 | 3 | 32 |
-| ❌ fehlt | 71 | 6 | 65 |
+| ✅ erledigt | 113 | 1 | 112 |
+| 🟡 teilweise | 34 | 3 | 31 |
+| ❌ fehlt | 70 | 6 | 64 |
 | ⛔ blockiert | 16 | 2 | 14 |
 | **Summe** | **233** | **12** | **221** |
 
-Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 98 erledigte Bau-Punkte.
+Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 100 erledigte Bau-Punkte.
 
 ### Je Datei
 
 | Datei | ✅ | 🟡 | ❌ | ⛔ | Summe |
 |---|---:|---:|---:|---:|---:|
-| Future_1_Work.md | 36 | 13 | 19 | 6 | 74 |
+| Future_1_Work.md | 38 | 12 | 18 | 6 | 74 |
 | Future_2_NA_Fixes_Research.md | 4 | 3 | 3 | 0 | 10 |
 | Future_3_SerpApi_Rate_Limits.md | 4 | 0 | 3 | 2 | 9 |
 | Future_4_Google_Trends_Conflict_and_Fixes.md | 4 | 0 | 4 | 2 | 10 |
@@ -396,7 +396,7 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | Future_9_Adaptive_Macro_Framework_Complete.md | 1 | 0 | 17 | 0 | 18 |
 | Future_10_Gold_Adaptive_Scoring_Framework.md | 24 | 4 | 7 | 0 | 35 |
 | Future_Work.md | 15 | 14 | 10 | 6 | 45 |
-| **Summe** | **111** | **35** | **71** | **16** | **233** |
+| **Summe** | **113** | **34** | **70** | **16** | **233** |
 
 ### In Arbeit (laufend, mit PR-Nummer)
 
@@ -423,7 +423,7 @@ Reihenfolge nach Nutzen und Aufwand (S = klein, M = mittel, L = groß).
 4. **Credit-Risiko-Karte in Sektion 10 (Risikoinversion)** – F1-21 mit F1-20 (Verschuldung, Zinsdeckung aus FMP) und F1-24 (PESTEL-Zeile) (M). Basis ist der Markt-Spread BAA10Y; kein CDS, kein Score.
 5. **Regionen-Umschalter vollständig** – F1-52 Backend rechnet die 5 Untergruppen je Region, F1-47 fünf Gauges, F1-48 Tabellen folgen der Region (M). Nur Anzeige, US-Handlung bleibt.
 6. **Dividende fertig machen** – F1-17 Spanne/Sektor in Sektion 6, F1-18 Hinweis in Sektion 20, F1-14 Band ab 4 % (S).
-7. **Rezessions-TA in einer Sektion** – F1-41, F1-42, F1-43, F1-45 (L), nach Punkt 3.
+7. **Rezessions-TA in einer Sektion** – F1-41, F1-42, F1-43 ✅ `470c28c5`, F1-45 🟡 Teil `470c28c5`, Rest-Overlays offen (L), nach Punkt 3.
 8. **Buffett Europa/Asien mit echten Benchmarks** – F1-71, F1-74 (M, nur Chart). Das Label „Asien“ erst nach Philips Asien-Entscheidung. ✅ `09750838` (#320); Asia ^TPX und Label „Asien“ offen.
 9. **SPY-Fundamentals und Analystenschätzungen mit Yahoo-Ersatz** – F1-67, F1-68 (S). Erst nach #264, weil dasselbe Crumb-Problem gilt.
 10. **Google Trends: Retry mit Backoff** – F3-04 (S).
