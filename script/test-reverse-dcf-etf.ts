@@ -56,7 +56,7 @@ const schema = readFileSync("shared/schema.ts", "utf8");
 assert.match(schema, /revenueSegmentsMessage\?: string;\n  isEtf\?: boolean;\n  isFund\?: boolean;\n\}/);
 const pdf = readFileSync("server/pdf-export.ts", "utf8");
 assert.match(pdf, /ETF\/Fonds — Reverse DCF nicht anwendbar/);
-assert.match(pdf, /const fazit = buildFazit\(data\);/);
+assert.match(pdf, /const fazit = buildFazit\(data(, fazitEntry)?\);/);
 // Summary table row "Reverse DCF g*": n/a for ETF/Fonds, like the matrix and PDF section 14
 const ui = readFileSync("client/src/components/sections/SummarySection.tsx", "utf8");
 assert.match(ui, /value=\{isEtfOrFund\(data\) \? "n\/a" : formatPercentNoSign\(reverseDCF\.impliedGrowth\)\}/);
