@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowLeft, Crosshair, Loader2, Maximize2, MessageCircle, Minimize2, Minus, Send, Sparkles, X } from "lucide-react";
-import type { ChatContext } from "@shared/chat-context";
+import { chatSectionKey, chatSectionName, chatSectionTag, type ChatContext, type ChatSectionItem } from "@shared/chat-context";
 import { useDashboardChat } from "@/hooks/useDashboardChat";
 import {
   chatWindowStorageKey, clampChatWindow, moveChatWindow, parseChatWindow, resizeChatWindow, serializeChatWindow,
@@ -17,7 +17,8 @@ import {
 export interface ChatWidgetProps {
   dashboard: string;
   context: ChatContext | null;
-  sections: Array<{ id: number; label: string }>;
+  /** `key` = stabile Bindung (semantisch, z.B. Rezession "buffett"); `id` = angezeigte Nummer; `display` ersetzt die Nummer in der Auswahl (Gold-News). */
+  sections: ChatSectionItem[];
   /** Liefert die aktuell sichtbare Sektion (für „Aktuelle Sektion binden“). */
   getActiveSectionId?: () => number | null;
   /** Springt im Dashboard zu einer Sektion (Antwort-Verweise). */
@@ -37,7 +38,15 @@ function readStored(key: string): string | null {
 export function ChatWidget({ dashboard, context, sections, getActiveSectionId, onJumpToSection, suggestions = [] }: ChatWidgetProps) {
   const storageKey = chatWindowStorageKey(dashboard);
   const [win, setWin] = useState<ChatWindowState>(() => { const { vw, vh } = viewport(); return parseChatWindow(readStored(storageKey), vw, vh); });
-  const [sectionId, setSectionId] = useState<number | null>(null);
+  // Bindung über den stabilen Schlüssel: verschiebt sich die Nummerierung (Rezession: Regionen
+  // laden nach, #284 fügt TA ein), bleibt die gebundene Sektion dieselbe.
+  const [boundKey, setBoundKey] = useState<string | null>(null);
+  const bound = useMemo(() => (boundKey == null ? null : sections.find(s => chatSectionKey(s) === boundKey) ?? null), [sections, boundKey]);
+  const sectionId = bound?.id ?? null;
+  const bindId = useCallback((id: number | null) => {
+    const s = id == null ? null : sections.find(x => x.id === id);
+    setBoundKey(s ? chatSectionKey(s) : null);
+  }, [sections]);
   const [input, setInput] = useState("");
   const { entries, pending, send, reset } = useDashboardChat(context, sectionId);
   const listRef = useRef<HTMLDivElement>(null);
@@ -52,7 +61,7 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }); }, [entries, pending]);
   // Neues Objekt (anderer Ticker) → Bindung lösen, Verlauf leeren (Antworten bezogen sich auf alte Daten).
   const entity = context?.entity ?? null;
-  useEffect(() => { reset(); setSectionId(null); }, [entity, reset]);
+  useEffect(() => { reset(); setBoundKey(null); }, [entity, reset]);
 
   const startPointer = useCallback((mode: "move" | ResizeEdge) => (e: ReactPointerEvent<HTMLElement>) => {
     if (win.maximized || e.button !== 0) return;
@@ -70,7 +79,7 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
   }, []);
   const endPointer = useCallback(() => { dragRef.current = null; }, []);
 
-  const sectionLabel = useMemo(() => sections.find(s => s.id === sectionId)?.label ?? null, [sections, sectionId]);
+  const sectionLabel = bound?.label ?? null;
   const submit = (text: string) => { if (!text.trim()) return; send(text); setInput(""); };
 
   if (!win.open) {
@@ -113,7 +122,7 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
         className={`h-10 shrink-0 flex items-center gap-1 px-1.5 border-b border-border bg-muted/40 select-none ${win.maximized ? "" : "cursor-move"} touch-none`}
         data-testid="chat-titlebar"
       >
-        <button type="button" onClick={() => { reset(); setSectionId(null); }} className="p-1.5 rounded hover:bg-muted" title="Zurück (neuer Chat)" data-testid="chat-back"><ArrowLeft className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => { reset(); setBoundKey(null); }} className="p-1.5 rounded hover:bg-muted" title="Zurück (neuer Chat)" data-testid="chat-back"><ArrowLeft className="w-3.5 h-3.5" /></button>
         <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
         <span className="text-xs font-medium truncate flex-1">KI-Chat{context ? ` · ${context.entity}` : ""}{sectionLabel ? ` · ${sectionLabel}` : ""}</span>
         <button type="button" onClick={() => setWin(w => ({ ...w, minimized: !w.minimized, maximized: false }))} className="p-1.5 rounded hover:bg-muted" title={win.minimized ? "Wiederherstellen" : "Minimieren"} data-testid="chat-minimize"><Minus className="w-3.5 h-3.5" /></button>
@@ -128,17 +137,17 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
             <label htmlFor="chat-section" className="text-muted-foreground shrink-0">Sektion</label>
             <select
               id="chat-section"
-              value={sectionId ?? ""}
-              onChange={e => setSectionId(e.target.value === "" ? null : Number(e.target.value))}
+              value={bound ? chatSectionKey(bound) : ""}
+              onChange={e => setBoundKey(e.target.value === "" ? null : e.target.value)}
               className="flex-1 min-w-0 h-7 rounded border border-border bg-background px-1.5"
               data-testid="chat-section-select"
               disabled={!context}
             >
               <option value="">Ganze Analyse</option>
-              {sections.map(s => <option key={s.id} value={s.id}>{s.id}. {s.label}</option>)}
+              {sections.map(s => <option key={chatSectionKey(s)} value={chatSectionKey(s)}>{chatSectionTag(s)} {s.label}</option>)}
             </select>
             {getActiveSectionId && (
-              <button type="button" disabled={!context} onClick={() => setSectionId(getActiveSectionId())} className="h-7 px-2 rounded border border-border hover:bg-muted flex items-center gap-1 shrink-0 disabled:opacity-40" title="Aktuell sichtbare Sektion binden" data-testid="chat-bind-visible">
+              <button type="button" disabled={!context} onClick={() => bindId(getActiveSectionId())} className="h-7 px-2 rounded border border-border hover:bg-muted flex items-center gap-1 shrink-0 disabled:opacity-40" title="Aktuell sichtbare Sektion binden" data-testid="chat-bind-visible">
                 <Crosshair className="w-3 h-3" /> Aktuelle
               </button>
             )}
@@ -152,9 +161,9 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
                   <div className="text-muted-foreground">Erst eine Analyse laden – der Chat antwortet auf die geladenen Daten.</div>
                 ) : (
                   <div className="flex flex-col gap-1.5 items-stretch">
-                    {sectionId != null && (
-                      <button type="button" onClick={() => submit(`Erkläre mir Sektion ${sectionId} (${sectionLabel}) detailliert und mit einem konkreten Beispiel aus diesen Daten.`)} className="text-left px-2.5 py-1.5 rounded-md border border-violet-500/30 bg-violet-500/10 hover:bg-violet-500/20" data-testid="chat-explain-section">
-                        Sektion {sectionId} ({sectionLabel}) erklären
+                    {bound != null && (
+                      <button type="button" onClick={() => submit(`Erkläre mir Sektion ${chatSectionName(bound)} detailliert und mit einem konkreten Beispiel aus diesen Daten.`)} className="text-left px-2.5 py-1.5 rounded-md border border-violet-500/30 bg-violet-500/10 hover:bg-violet-500/20" data-testid="chat-explain-section">
+                        Sektion {chatSectionName(bound)} erklären
                       </button>
                     )}
                     {suggestions.map(q => (
@@ -171,7 +180,7 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
                   {m.sectionRefs && m.sectionRefs.length > 0 && onJumpToSection && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {m.sectionRefs.map(id => (
-                        <button key={id} type="button" onClick={() => onJumpToSection(id)} className="px-1.5 py-0.5 rounded bg-background/60 border border-border text-[10px] hover:bg-background">→ S{id}</button>
+                        <button key={id} type="button" onClick={() => onJumpToSection(id)} className="px-1.5 py-0.5 rounded bg-background/60 border border-border text-[10px] hover:bg-background">→ {sections.find(s => s.id === id)?.display ?? `S${id}`}</button>
                       ))}
                     </div>
                   )}
