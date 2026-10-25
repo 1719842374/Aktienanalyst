@@ -1,0 +1,67 @@
+{
+ "timestamp": "2026-10-25T18:56:37.929Z",
+ "gis": 0.5,
+ "adaptiveScore": {
+  "score": -0.09935616606851558
+ },
+ "realYieldModel": {
+  "fairValue": {
+   "windowUsed": 252,
+   "alpha": 5400.766897359067,
+   "beta": -439.71909693055005,
+   "correlation": -0.4133544399841255,
+   "fairValue": 4239.908481462415,
+   "actualPrice": 4060.4,
+   "premiumPct": -0.04233781984853108,
+   "withinFairBand": true,
+   "decoupled": false
+  },
+  "regime": {
+   "regime": "stress",
+   "real10YTrendPp": 0.22999999999999998,
+   "rationale": "Real10Y steigt um 0.23pp im Fenster → Gegenwind für Gold"
+  }
+ },
+ "indicators": [
+  {
+   "name": "Zentralbankkäufe",
+   "score": 1,
+   "value": "863t (WGC Gold Demand Trends 2025)"
+  },
+  {
+   "name": "ETF-Flows",
+   "score": 1,
+   "value": "YTD >10 Mrd. $; 7T-Trend positiv"
+  },
+  {
+   "name": "Breakeven (T10YIE)",
+   "score": 0,
+   "value": "2.34%"
+  },
+  {
+   "name": "Realzinsen (DFII10)",
+   "score": -1,
+   "value": "2.64%"
+  },
+  {
+   "name": "M2 YoY",
+   "score": 1,
+   "value": "5.7%"
+  },
+  {
+   "name": "DXY",
+   "score": 0,
+   "value": "100.0"
+  },
+  {
+   "name": "Geopolitik (GPR)",
+   "score": 1,
+   "value": ">155 (Nahost, Asien-Eskalation)"
+  },
+  {
+   "name": "Technisch (RSI+200DMA)",
+   "score": 1,
+   "value": "RSI 30.6 | Abw. -10.8%"
+  }
+ ]
+}
