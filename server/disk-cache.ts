@@ -4,7 +4,7 @@
 // Falls back to a no-op if SQLite cannot open (e.g. read-only FS).
 import Database from "better-sqlite3";
 import path from "path";
-import { minorUnitInfo } from "../shared/listing-units";
+import { currencyFromTickerSuffix, minorUnitInfo } from "../shared/listing-units";
 
 const DB_PATH = path.resolve(process.cwd(), "data.db");
 const CACHE_TTL_DAYS = 7;
@@ -115,6 +115,22 @@ function lookupAnalysisRow(d: Database.Database, key: string): { data: string; u
   return null;
 }
 
+/**
+ * DCF-FX (Philip 18.10.2026): Analysen vor der USD-Umrechnung tragen Kurs/Market Cap in Listing-Währung neben
+ * USD-Statements (RY.TO „DCF 89,93 $ vs. Kurs 280,01 CAD“) bzw. im Yahoo-Pfad ein still gesetztes „USD“ (VOW3.DE).
+ * Gezielt verwerfen: Nicht-USD-Währung ohne currencyInfo, oder Yahoo-Eintrag mit Nicht-USD-Börsensuffix ohne
+ * currencyInfo, oder converted:false (FX fehlte). USD-Titel (AAPL, MSFT, NVO-ADR) bleiben im Cache.
+ */
+export function isPreDcfFxEntry(ticker: string, data: any): boolean {
+  if (!data || typeof data !== "object") return false;
+  // FX fehlte beim Rechnen (converted:false) → beim nächsten Abruf neu versuchen, wie #244 bei Minor Units.
+  if (data.currencyInfo) return data.currencyInfo.converted === false;
+  const ccy = typeof data.currency === "string" ? data.currency : "";
+  if (ccy && ccy !== "USD") return true;
+  const sfx = currencyFromTickerSuffix(ticker);
+  return data.dataSource === "yahoo" && !!sfx && sfx !== "USD";
+}
+
 export function diskCacheGet(ticker: string): any | null {
   const d = getDb();
   if (!d) return null;
@@ -137,6 +153,11 @@ export function diskCacheGet(ticker: string): any | null {
     if (minorUnitInfo(data.currency)) {
       d.prepare("DELETE FROM analysis_cache WHERE ticker = ?").run(ticker);
       console.log(`[DiskCache] Invalidated ${ticker}: minor-unit currency ${data.currency} (pre-#244 or FX missing)`);
+      return null;
+    }
+    if (isPreDcfFxEntry(ticker, data)) {
+      d.prepare("DELETE FROM analysis_cache WHERE ticker = ?").run(ticker);
+      console.log(`[DiskCache] Invalidated ${ticker}: ${data.currency} ohne currencyInfo (vor DCF-FX)`);
       return null;
     }
     const hp = data.historicalPrices;
