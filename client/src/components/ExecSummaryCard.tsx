@@ -10,6 +10,7 @@ import { buildFazitSignal, prepareFazitMetrics } from "@/lib/fazit-signal";
 import { buildBiasDecision } from "../../../shared/bias-fixes";
 import { usePublishChatSection } from "@/lib/chatSectionData";
 import type { GBMMonteCarloResult } from "@/lib/calculations";
+import { execLageFromFazit } from "@/lib/execLageFromFazit";
 
 export type ExecSummaryView = {
   headline?: string;
@@ -39,6 +40,8 @@ export function ExecSummaryCard({ data, sharedMonteCarlo }: {
   };
 }) {
   const s = data?.execSummary;
+  // Lage-Satz: DCF wie S6 (Fazit-Quelle), Währung DCF=statementCurrency, Kurs=Listing.
+  const lage = useMemo(() => (data ? execLageFromFazit(data) : null), [data]);
 
   const bias = useMemo(() => {
     try { return buildBiasDecision(data); } catch { return null; }
@@ -238,7 +241,7 @@ export function ExecSummaryCard({ data, sharedMonteCarlo }: {
 
         <div className="space-y-2 border-t border-border/60 pt-3">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Lage / Bruch / Handlung</div>
-          {s.fazit?.lage && <p className="leading-relaxed text-foreground/90">{s.fazit.lage}</p>}
+          {(lage ?? s.fazit?.lage) && <p className="leading-relaxed text-foreground/90" data-testid="exec-summary-lage">{lage ?? s.fazit?.lage}</p>}
           {s.fazit?.bruch && <p className="leading-relaxed text-foreground/90">{s.fazit.bruch}</p>}
           {s.fazit?.handlung && <p className="leading-relaxed text-foreground/90">{s.fazit.handlung}</p>}
           {s.posLine && <p className="leading-relaxed text-foreground/90">{s.posLine}</p>}
