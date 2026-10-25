@@ -207,6 +207,12 @@ export default function GoldDashboard() {
             <GoldErrorScreen error={error as Error} onRetry={() => refetch()} />
           ) : data ? (
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
+              {/* Offline-Fallback sichtbar machen: gebündelte Build-Daten statt Live-API, Werte unverändert */}
+              {data.timestamp === GOLD_FALLBACK_DATA.timestamp && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300" data-testid="gold-offline-note">
+                  Offline-Daten vom {data.analysisDate.split(",")[0]} – Live-API nicht erreichbar, Werte nicht aktuell
+                </div>
+              )}
               {/* JOB 16: Teilausfall sichtbar machen (Antwort enthält interne Ersatzwerte) */}
               {data.partial && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300" data-testid="gold-partial-note">
