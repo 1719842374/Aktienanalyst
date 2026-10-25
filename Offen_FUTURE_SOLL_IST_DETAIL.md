@@ -2,6 +2,7 @@
 
 **Stand:** 18.10.2026, ca. 23:20 Uhr Berlin (MESZ, UTC+2); Basis 22:45 Uhr
 **Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs. **Nachzug auf `main` = `29fdf1d5e19cc458005469098701d8190d1d374d` (#266, über #264 `4dd43ab8`):** nur die Zeilen zu #264, #265, #266, #267 und die Zählung, geprüft über die öffentliche GitHub-API und Raw-Dateien, ohne Klon. Alle übrigen Zeilen sind unverändert Stand `35ead515`.
+**Nachzug 25.10.2026 auf `main` = `73eff97e` (#289):** siehe Abschnitt „Nachzug 25.10.2026“ vor der Gesamtzählung (Status je Punkt mit offenen PRs, Zählung unverändert).
 **Erstellt von:** Grok Bot (Executor im Auftrag von Stabschef)
 
 ## Wie diese Liste entstanden ist
@@ -367,6 +368,104 @@ Nicht gezählt (ℹ️, Konzept- und Content-Ideen ohne Bau-Auftrag): Z.215 Einl
 
 ---
 
+## Nachzug 25.10.2026 auf `main` = `73eff97e` (Status je Punkt mit offenen PRs)
+
+**Stand:** 25.10.2026, Berlin (MEZ, UTC+1). **Geprüft:** eigener Klon auf `73eff97e` (#289), nur gelesen. Future_1 bis Future_10 und Future_Work.md erneut vollständig gelesen. Gegengeprüft: alle Commits `29fdf1d5..73eff97e` (`git log` und `git diff --stat`) und die offenen PRs (#164, #219, #220, #265, #269, #270, #273, #274, #283, #284, #286, #287, #288, #291–#296) über die GitHub-API (Titel, Dateien, Spec-IDs im PR-Text). In den Tabellen oben ist nichts gelöscht. Die Zeilen oben bleiben Stand `35ead515`/`29fdf1d5`; was sich geändert hat, steht hier.
+
+### Was seit `29fdf1d5` auf `main` kam und welche Punkte es berührt
+
+| Commit | PR | Inhalt | Wirkung auf Future-Punkte |
+|---|---|---|---|
+| `4820aaa` | #267 | Real10Y-Overlay (DFII10) in Aktien-Sektion 12 | kein Future-Punkt (stand oben als „nicht aus Future-Dateien“) → **erledigt** |
+| `df77ae4` | #261 | DCF-FX: Nicht-USD-Titel in USD | kein Future-Punkt → **erledigt** |
+| `08daf0c` | #279 | `dividendYield` über `normalizeDividendYieldPct` | stützt F1-16 (Dividenden-KPI, war schon ✅); F1-14/17/18 bleiben ❌ |
+| `60b4bcf` | #271 | S9 Yahoo-only: n/a statt 0/Sektor-Default | Rest zu F1-01 (✅ Soft) / F1-11; Status unverändert |
+| `b0d07c8` | #278 | S17 „Event hinzufügen“ | kein Future-Punkt |
+| `f4d1987`, `12ce843`, `73eff97` | #275, #281, #289 | Chat-Widget | kein Future-Punkt |
+| `1161232`, `995036f` | #277, #285 | Tests zu #267 | kein Future-Punkt |
+
+**Ergebnis:** Kein Future-Punkt hat auf `main` den Status gewechselt. Die Zählung bleibt **103 ✅ / 39 🟡 / 75 ❌ / 16 ⛔ (233)**.
+
+### Status je offenem Punkt (`main` + offene PRs)
+
+Legende: **erledigt** = auf `main` (SHA/PR). **offen, PR** = auf `main` nicht da, Draft-PR liegt vor (wartet auf Review/Merge). **offen** = kein PR. **blockiert** = mit Grund.
+
+| Punkt | Status `main` | Neu-Einstufung 25.10. | PR / Grund |
+|---|---|---|---|
+| F1-05 | 🟡 | blockiert | #265 Draft „HOLD Philip“ (ADR) → Philip-Freigabe |
+| F1-11 | 🟡 | offen | BMW.DE / ungültiger Ticker live prüfen (Tester) |
+| F1-14 | ❌ | offen | kein PR; autonom |
+| F1-17 | ❌ | offen | kein PR; autonom (nur Anzeige) |
+| F1-18 | ❌ | offen | kein PR; autonom (nur Text) |
+| F1-19, F1-25 | ⛔ | blockiert | Kosten (CDS/Anleihe) nicht freigegeben; #270 zeigt nur „n/a“-Hinweis |
+| F1-20, F1-21, F1-24 | ❌ | offen, PR | **#270** Draft (Kreditrisiko-Karte, BAA10Y + FMP D/E, Zinsdeckung; PESTEL-Zeile) |
+| F1-23 | ❌ | blockiert | Philip-Freigabe (CRV-Änderung) |
+| F1-26 | ❌ | offen | kein PR; autonom, niedrig |
+| F1-30, F1-31, F1-34 | ❌ | offen, PR | **#274** Draft (Retry, FRED-Ersatz, konkreter Fehlergrund) |
+| F1-65, F2-08 | 🟡 | offen, PR | **#274** |
+| (kein Future-Punkt) Buffett-Karte in Sektion 12 | – | offen, PR | **#287** Draft (baut auf #274, kein Score) |
+| F1-36 | 🟡 | offen | Zusatzkennzahl autonom; im Score-Slot → Philip |
+| F1-37–F1-40 | ❌ | offen | kein PR; mit F1-36 als Zusatzkennzahl |
+| F1-41, F1-42, F1-43, F1-45 | ❌/🟡 | offen, PR | **#284** Draft (Rezessions-TA analog Aktien-Sektion 12, kein Score) |
+| F1-44 | ✅ | erledigt | unverändert; #296 ergänzt den Chart-Ersatz |
+| F1-47, F1-48, F1-52 | 🟡/❌ | offen | kein PR; autonom nur als Anzeige (US-Handlung bleibt) |
+| F1-54 | ⛔ | blockiert | Philip: Asien-Zuschnitt |
+| F1-56, F2-07 | 🟡 | blockiert | ECB-Ersatz ändert die EZ-Katalog-P → Score-Änderung, Philip |
+| F1-58, F2-06 | 🟡 | offen | kein PR; Yahoo `^V2TX` nur im Chart (Score-Pfad nicht anfassen) |
+| F1-63 | 🟡 | blockiert | Yahoo-TOPIX ändert die JP-Katalog-P → Score-Änderung, Philip |
+| F1-66, F2-05 | 🟡 | offen, PR | **#296** Draft (Head `31065b9e`, Yahoo `^VIX` in S9/S10, kein Score) |
+| F1-67, F1-68, F2-09 | ❌ | offen | kein PR; Achtung Überschneidung mit altem Draft #164 (`server/recession-market-charts.ts`) |
+| F1-69 | ❌ | blockiert | fehlende Quelle (kein freies EU/JP-Margin-Debt) |
+| F1-70, F2-10 | ❌ | offen | Tester-Auftrag, kein Bau |
+| F1-71, F1-74 | ❌ | offen | autonom nur mit Index-Quellen; ETF-Proxy (VGK/ASHR) vorher mit Philip klären (ETF-Sperre) |
+| F2-03 | ❌ | offen | niedrig; Python auf Render fraglich |
+| F3-04 | ❌ | offen | kein PR; autonom (kostet SerpApi-Kontingent) |
+| F3-07, F3-09 | ⛔ | blockiert | Kosten |
+| F3-08, F4-09 | – | blockiert | Philip (Antrag offizielle Trends-API) |
+| F4-07 | ❌ | blockiert | Score-Änderung, Philip |
+| F5-06, F6-01, F6-07, F10-35 | – | offen | nur Doku |
+| F7-01, F7-02, F8-01–F8-05 | ❌ | blockiert | Zonen ersetzen = Score-Änderung, Philip; Zusatzzeilen als **#219/#220** Draft |
+| F9-01, F9-02, F9-07–F9-13, F9-16, F9-17 | ❌ | offen, PR | **#269** Draft (Makro-Layer, KI-Gewichte, Anzeige, Validierung; „nicht mergen ohne Philip“) und **#273** Draft (F9-02/07/08/10/11, stacked auf #269) |
+| F9-03, F9-04, F9-06 | ❌ | offen | nicht in #269/#273 genannt; nach Merge von #269 |
+| F9-14, F9-15, F9-18 | ❌ | offen | hängen an #269 |
+| F10-04, F10-31 | 🟡/❌ | blockiert | Score-Änderung (Gold-GIS), Philip |
+| F10-08, F10-12, F10-13, F10-20, F10-24, F10-33, F10-34 | ❌/🟡 | offen | kein PR; nur Zusatzschicht (GIS unverändert) |
+| (kein Future-Punkt) Gold Offline-Hinweis | – | offen, PR | **#286** Draft |
+| FW-01, FW-04, FW-05, FW-27 | ❌ | offen | große Blöcke ohne Code |
+| FW-09, FW-16, FW-17, FW-31, FW-36 | ❌ | offen | kein PR; FW-16 (GDX/GLD) vorher wegen ETF-Sperre klären |
+| FW-11 | 🟡 | blockiert | Kosten (CryptoQuant/Glassnode) |
+| FW-12 | 🟡 | blockiert | Philip (Miner-Formel) |
+| FW-14, FW-15 | 🟡 | offen | QE/QT-Bänder + BTC/WALCL autonom (Anzeige); Gate `BTC_QE_QT_REGIME` = Score → Philip |
+| FW-21, FW-22, FW-24 | ❌ | blockiert | Philip (Gold QE/QT) |
+| FW-26 | 🟡 | blockiert | Philip (Fazit folgt Regler?) |
+| FW-33, FW-42 | ⛔ | blockiert | Verbot: ETFs blockiert / Credit nur BAA10Y |
+| FW-38 | ❌ | offen | Überschneidung mit #291 (Peers) prüfen |
+| FW-40, FW-41, FW-43–FW-45 | ⛔/❌ | blockiert | Kosten bzw. Score (FW-41 Gate) |
+
+Nicht aus Future-Dateien, nur zur Abgrenzung: #283 (Capex-Weltkarte, `Offen_WORK_CAPEX_SECTOR_MAP.md`), #288 (S17-Polish), #291 (Peers), #292 (TAM n/a), #293 (Chat), #294/#295 (Exec/S17).
+
+### Nächste autonom baubare Punkte (sortiert)
+
+Filter: kein Score/Rating, kein `analyze-route.ts`/`researcher.ts`, keine zweite .L-Quelle, kein ETF, kein Security, nicht schon in einem PR.
+
+1. **F1-17 / F1-18 / F1-14 Dividende fertig** (S) – nur Anzeige/Text in Sektion 6 und 20 plus 4-%-Band; Daten (`shared/dividends.ts`, #279) sind da.
+2. **F1-58 / F2-06 VSTOXX im Chart über Yahoo** (S) – gleiches Muster wie #296, nur Chartpfad `recession-markets.ts`.
+3. **F3-04 Trends-Retry mit Backoff** (S) – Verfügbarkeit, keine Zonenänderung; Retries knapp halten (Kontingent).
+4. **F1-67 / F1-68 / F2-09 SPY-Factpack über Yahoo** (S) – Anzeige; vorher #164 auf Überschneidung prüfen.
+5. **F10-08 / F10-12 / F10-13 Gold-Zusatzschicht: Volumen-Trend, Bollinger, ATR** (S–M) – Zusatzschicht, GIS unverändert.
+6. **F10-20 / F10-24 / F10-34 AISC-Marge, Fiskaldefizit, Zentralbankkäufe in die Schicht** (M) – Daten vorhanden bzw. FRED.
+7. **F1-47 / F1-48 / F1-52 Regionen: 5 Gauges und Tabellen je Region** (M) – nur Anzeige, US-Handlung bleibt.
+8. **FW-14 QE/QT-Bänder + BTC/WALCL-Verhältnis** (M) – Overlay auf vorhandener WALCL-Reihe (#266), ohne Gate.
+9. **F1-36–F1-40 bereinigter Buffett als Zusatzkennzahl** (M) – ohne Score-Slot; nach #274/#287.
+10. **FW-09 BTC-Fiscal-Overlay** (M) – Anzeige, FRED.
+11. **F1-26 Refinanzierungszyklus Sektion 5** (S–M) – FMP-Schuldenfälligkeiten, nur Anzeige.
+12. **FW-31 Sektorrotation im Rezessions-Dashboard, FW-36 Regulatory in Sektion 10** (M) – vorhandene Bausteine verdrahten (nicht `researcher.ts`).
+13. **F10-33 Backtest der Gold-Kreuze** (M) – Skript/Anzeige.
+14. **Doku: F10-35, F6-01, F6-07, F5-06** (S) – Texte an Code angleichen.
+15. **Große Blöcke FW-01, FW-04, FW-05, FW-27** (L) – zuerst Spec schärfen.
+
+---
+
 ## Gesamtzählung
 
 ### Je Status (alle Zeilen)
@@ -408,6 +507,12 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | F7-01, F8-04, F8-05 Buffett/CAPE-Perzentil als Zusatzzeile | – | **#220**, **#219** (Drafts seit 11.10.) | Ersetzen der Zonen braucht Philip |
 | (nicht aus Future-Dateien) Real10Y aus BTC in Sektion 12 | Grok Bot | **#267** (Draft, Head `c224e2c9`) | Philip 18.10.; offen |
 | (nicht aus Future-Dateien) DCF-Währung alles in USD | – | **#261** (Draft) | wartet auf Philip |
+| Nachtrag 25.10.: Real10Y in Sektion 12 / DCF-Währung | – | #267 gemergt `4820aaa`, #261 gemergt `df77ae4` | erledigt |
+| F1-30, F1-31, F1-34, F1-65, F2-08 Buffett robust | Grok Bot | **#274** (Draft, Head `bddc3d4d`); Buffett-Karte Sektion 12 **#287** (Draft, auf #274) | offen, Review |
+| F1-41, F1-42, F1-43, F1-45 Rezessions-TA | – | **#284** (Draft, Head `f8340a33`) | offen, Review |
+| F1-66, F2-05 VIX im Chart über Yahoo | Grok Bot | **#296** (Draft, Head `31065b9e`) | offen, Review |
+| F1-20, F1-21, F1-24 Kreditrisiko-Karte | – | **#270** (Draft, Head `2a1aa024`) | offen, Review |
+| F9-01/02/07–13/16/17 Makro-Layer | – | **#269** (Draft, Head `a7bb7cd8`), **#273** (Draft, Head `6d543b61`) | offen; nicht mergen ohne Philip |
 
 ---
 
