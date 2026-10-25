@@ -9,6 +9,7 @@ import {
 } from "../../lib/calculations";
 import { formatCurrency, formatNumber, statementCurrency, getCRVColor, getCRVBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import { buildBiasDecision } from "../../../../shared/bias-fixes";
 
 interface Props { data: StockAnalysis }
@@ -114,6 +115,25 @@ export function Section6({ data }: Props) {
     sectorDrawdownPct: sectorDD,
     analystPTMedian: data.analystPT?.median ?? data.currentPrice,
   }), [conservativeDCF, data, baseParams, m1, sectorDD]);
+
+  // PR 3 (Chat-Kontext): genau die angezeigten CRV-Werte veröffentlichen — keine eigene Rechnung.
+  const fin = (v: number) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  usePublishChatSection("stock", "8", {
+    worstCase: fin(worstCase), worstCase_M1: fin(m1), worstCase_M2: fin(m2), worstCase_M3: fin(m3),
+    crv_konservativ: fin(crvConservative), crv_optimistisch: fin(crvOptimistic), crv_katalysator: fin(crvCatalyst),
+    crvRA_konservativ: fin(raCrvConservative), crvRA_optimistisch: fin(raCrvOptimistic), crvRA_katalysator: fin(raCrvCatalyst),
+    erwarteterSchadenPct: fin(totalExpectedDamage), katalysatorZiel: fin(adjustedTarget),
+    crv_gehaertet: fin(hardenedCRV.crvHardened), crv_stress: fin(hardenedCRV.crvStress), crv_raw: fin(hardenedCRV.crvRaw),
+    fv_gehaertet: fin(hardenedCRV.fvHardened), waccVerwendetPct: fin(hardenedCRV.waccUsed),
+    dcfBeiCRV3_base: fin(dcfBeiCRV3), dcfBeiCRV3_riskAdj: fin(raDcfBeiCRV3),
+    kursUeberMaxEntry: data.currentPrice > dcfBeiCRV3,
+    _auffaelligkeiten: [
+      ...hardenedCRV.flags,
+      hardenedCRV.divergenceFlag ? `DCF vs. Markt Divergenz (DCF-Upside ${formatNumber(hardenedCRV.dcfUpsidePct, 0)}% vs. Analyst ${formatNumber(hardenedCRV.analystUpsidePct, 0)}%)` : "",
+      bias.switched ? `Entscheidungsbasis gewechselt: ${bias.valuationBaseLabel} (${bias.triggerCount} Trigger)` : "",
+      data.currentPrice > dcfBeiCRV3 ? "Kurs über Max-Entry (DCF bei CRV 3:1)" : "",
+    ].filter(Boolean).join("; ") || null,
+  });
 
   return (
     <SectionCard number={8} title="RISIKOADJUSTIERTES CRV">
