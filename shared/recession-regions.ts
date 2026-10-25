@@ -220,6 +220,52 @@ export function alignSpread(longRates: DatedPoint[], shortRates: DatedPoint[]): 
 /** Share of unscored slots above which the region view shows a thin-data hint instead of pretending full coverage. */
 export const REGION_SPARSE_SHARE = 0.5;
 
+export type RegionSubgroupKey = "rez3m" | "rez6m" | "rez12m" | "korr3_6m" | "korr12m";
+
+export interface RegionSubgroup {
+  key: RegionSubgroupKey;
+  label: string;
+  horizon: string;
+  /** null = n/a. Never filled from another region or a default. */
+  probability: number | null;
+  net: number;
+  max: number;
+  scoredNames: string[];
+  /** Why the gauge is n/a, or what differs from the US subgroup. */
+  note: string | null;
+}
+
+/**
+ * F1-52: the five US subgroup cuts applied to a region catalog's slots.
+ * Display only. Same 50 + net/max × 50 rule as catalogProbability. N/A slots add neither net nor max.
+ * Rez 12M and Korr 12M equal the catalog P the server already computes; the aggregate is untouched.
+ */
+const SUBGROUP_SPEC: Array<{ key: RegionSubgroupKey; label: string; horizon: string; ids: RegionSlotId[]; book: RegionBook; diff: string | null }> = [
+  { key: "rez3m", label: "Rezession Coincident", horizon: "3M", ids: ["labor", "curve", "activity"], book: "recession", diff: null },
+  { key: "rez6m", label: "Rezession Leading", horizon: "6M", ids: ["labor", "curve", "activity", "money", "spreads"], book: "recession", diff: null },
+  { key: "rez12m", label: "Rezession Vollständig", horizon: "12M", ids: ["labor", "curve", "activity", "money", "spreads"], book: "recession", diff: "ohne Konsumklima und NY-Fed-Anker (kein Regional-Slot) = Katalog-P" },
+  { key: "korr3_6m", label: "Korrektur Sentiment", horizon: "3-6M", ids: ["vol"], book: "correction", diff: null },
+  { key: "korr12m", label: "Korrektur Vollständig", horizon: "12M", ids: ["vol", "valuation"], book: "correction", diff: "= Katalog-P" },
+];
+
+export function regionSubgroups(slots: RegionSlot[]): RegionSubgroup[] {
+  return SUBGROUP_SPEC.map(spec => {
+    const members = slots.filter(slot => slot.book === spec.book && spec.ids.includes(slot.id));
+    const scored = members.filter(slot => slot.available);
+    const net = scored.reduce((sum, slot) => sum + slot.weightedScore, 0);
+    const max = scored.reduce((sum, slot) => sum + slot.maxWeighted, 0);
+    const probability = scored.length === 0 ? null : bookProbability(net, max);
+    let note = spec.diff;
+    if (probability == null) {
+      const missing = members.map(slot => slot.source.startsWith(slot.name) ? slot.source : `${slot.name} (${slot.source})`);
+      note = missing.length
+        ? `n/a: keine Daten für ${missing.join(", ")}`
+        : "n/a: kein Slot dieser Gruppe im Regional-Katalog";
+    }
+    return { key: spec.key, label: spec.label, horizon: spec.horizon, probability, net, max, scoredNames: scored.map(slot => slot.name), note };
+  });
+}
+
 export interface RegionGaugeView {
   id: RegionId;
   label: string;
@@ -229,6 +275,7 @@ export interface RegionGaugeView {
   totalSlots: number;
   sparse: boolean;
   topDrivers: RegionSlot[];
+  subgroups: RegionSubgroup[];
 }
 
 /**
@@ -253,5 +300,6 @@ export function regionGaugeView(catalogs: RegionalCatalogs | null | undefined, i
     totalSlots,
     sparse: totalSlots === 0 || (totalSlots - scored.length) / totalSlots > REGION_SPARSE_SHARE,
     topDrivers,
+    subgroups: regionSubgroups(region.slots),
   };
 }
