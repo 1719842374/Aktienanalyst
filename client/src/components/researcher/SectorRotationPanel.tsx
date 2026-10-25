@@ -17,6 +17,8 @@ import {
   Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { apiRequest } from "@/lib/queryClient";
+import { KostolanyWheel } from "./KostolanyWheel";
+import type { KostolanyResult } from "../../../../shared/kostolany";
 
 type Valuation = "Teuer" | "Angemessen" | "Attraktiv" | "n.v.";
 type CyclePhase = "Frühzyklus" | "Hochkonjunktur" | "Spätkonjunktur" | "Abschwung";
@@ -41,6 +43,8 @@ interface SectorRotationPayload {
   sectors: SectorRow[];
   recommendations?: Record<CyclePhase, string[]>;
   dataQuality?: { etfCoverage: number; pe10yCoverage: number; source: string };
+  /** FW-04 Zusatzfeld (reine Anzeige), fehlt bei alten Antworten → n/a. */
+  kostolany?: KostolanyResult | null;
   _cached?: boolean;
   _cacheAge?: number;
 }
@@ -694,6 +698,9 @@ export function SectorRotationPanel() {
           </div>
         </div>
       )}
+
+      {/* FW-04 Kostolany-Rad: reine Anzeige des Zusatzfelds, beeinflusst keine Empfehlung */}
+      {data && <KostolanyWheel data={data.kostolany} />}
 
       {data && recommendations && (
         <div>
