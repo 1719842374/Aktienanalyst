@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { fetchBTCMacroHistory } from "./btc-macro";
 import { buildStablecoinLiquidityResponse } from "./stablecoin-liquidity";
 import { buildFiscalFrontendResponse } from "./fiscal-frontend";
+import { emptyBtcLiquidity, getBtcLiquidity } from "./btc-liquidity";
 import { isLLMAvailable } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet } from "./disk-cache";
 import { fetchTopicNewsFromGoogleRSS } from "./news-peers";
@@ -86,6 +87,18 @@ export function registerBTCRoutes(app: Express): void {
     } catch (err: any) {
       console.error("[GET /api/analyze-btc/fiscal-frontend]", err?.message?.substring(0, 200));
       res.status(502).json({ error: "Fiscal-Frontend nicht verfügbar" });
+    }
+  });
+
+  // Liquiditaetsblock im BTC-Score (WALCL, T-Bill-Anteil Z.1, DGS10) + WALCL-Overlay.
+  // FRED ueber server/fred-csv.ts. Fehler → 200 mit Block n/a (GIS dann wie ohne Block).
+  app.get("/api/analyze-btc/liquidity", async (_req, res) => {
+    try {
+      res.json(await getBtcLiquidity());
+    } catch (err: any) {
+      // getBtcLiquidity wirft nicht; letzte Sicherung gegen Unhandled Rejection.
+      console.error("[GET /api/analyze-btc/liquidity]", err?.message?.substring(0, 200));
+      if (!res.headersSent) res.json(emptyBtcLiquidity("Liquiditätsblock n/a (Serverfehler)"));
     }
   });
 

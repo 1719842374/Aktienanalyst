@@ -1692,8 +1692,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Full matrix (indices, VIX, ISM, rates, energy, metals, crypto, FX).
       // Inputs match the historical call site: sector/industry already corrected
       // by getEffectiveSector, beta stored on the payload as beta5Y.
+      // DCF-FX (Befund A): Kurse sind nach listingToUsd in USD, das Währungsrisiko bleibt aber das der Listing-Währung
+      // → FX-Korrelation (GBP/USD, CAD/USD …) aus der Original-Major-Währung (currencyInfo.reportedCurrency), wie auf main.
       const macroCorrelations = generateMacroCorrelations(
-        effectiveSector, effectiveIndustry, description, beta, reportedCurrency
+        effectiveSector, effectiveIndustry, description, beta, listingCurrencyInfo?.reportedCurrency ?? reportedCurrency
       );
 
       // ── 20. Assemble final result ──
