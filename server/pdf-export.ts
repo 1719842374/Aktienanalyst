@@ -9,7 +9,8 @@ import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
 import { reverseDcfFromAnalysis, isEtfOrFund } from '../shared/conflict-matrix';
 import { companyDcfWaccPct, safeCompanyDcfWaccPct, waccSuffix } from '../shared/valuation-signal';
 import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from '../shared/data-source';
-import { fazitEntryForExport, type FazitEntryExport } from '../client/src/lib/fazitEntryExport';
+import { fazitEntryForExport, type FazitEntryExport } from '../shared/fazit-entry';
+import { currencySymbol, statementCurrency } from '../shared/currency-format';
 
 /** " (WACC x.xx%)" next to g* — omitted when beta5Y/marketCap/totalDebt are missing so the PDF never prints "WACC NaN%". */
 export function pdfWaccSuffix(d: any): string {
@@ -212,6 +213,54 @@ function normalizeData(data: any): any {
 
 // ===== Generate Executive Summary via Claude LLM =====
 export const NARRATIVE_NA_NOTE = 'KI-Zusammenfassung n/a — kein ANTHROPIC_API_KEY konfiguriert; alle Zahlen unten sind regelbasiert.';
+/** Prompt der KI-Zusammenfassung (rein, ohne LLM-Aufruf; testbar). */
+export function buildNarrativePrompt(data: any, fazit: any): string {
+  const catalystSummary = (data.catalysts || []).map((c: any, i: number) => 
+    `K${i+1}: ${c.name} (PoS ${c.pos}%, GB ${c.gb?.toFixed(2)}%)${c.context ? ' — ' + c.context.substring(0, 150) : ''}`
+  ).join('\n');
+
+  // Währung wie #295 (Max-Entry/DCF = Statement-Währung, Kurs/Kursziel/Worst Case = Listing-Währung), SHEL.L → £.
+  const cL = currencySymbol(data.currency);
+  const cS = currencySymbol(statementCurrency(data));
+  const prompt = `Du bist ein professioneller Aktienanalyst. Erstelle eine kurze, aber substanzielle Analyse-Zusammenfassung auf Deutsch für die Aktie ${data.ticker} (${data.companyName}).
+
+KERNDATEN:
+- Kurs: ${cL}${data.currentPrice?.toFixed(2)} | Market Cap: ${data.marketCap ? cL + (data.marketCap/1e12).toFixed(2) + 'T' : '?'}
+- P/E: ${data.peRatio?.toFixed(1) ?? 'n/a'} | PEG: ${data.pegRatio?.toFixed(2)} | EV/EBITDA: ${data.evEbitda?.toFixed(1)}
+- FCF-Marge: ${data.fcfMargin?.toFixed(1)}% | FCF: ${cS}${data.fcfTTM ? (data.fcfTTM/1e9).toFixed(1) + 'B' : '?'}
+- Revenue: ${cS}${data.revenue ? (data.revenue/1e9).toFixed(1) + 'B' : '?'} | Gross Margin: ${data.financialStatements?.incomeStatement?.grossMargin?.toFixed(1)}%
+- Moat: ${data.moatRating} | Beta: ${data.beta5Y?.toFixed(2)} | Gov. Exposure: ${data.governmentExposure}%
+- Sektor: ${data.sector} / ${data.industry}
+- Analysten PT: Median ${cL}${data.analystPT?.median} (${fazit.ptUp > 0 ? '+' : ''}${fazit.ptUp?.toFixed(0)}% Upside)
+
+DCF-BEWERTUNG:
+- Konservativ DCF: ${cS}${fazit.konsDCF?.toFixed(2)} (${((fazit.konsDCF/data.currentPrice-1)*100).toFixed(0)}% vs. Kurs)
+- CRV Base: ${fazit.crvCons?.toFixed(1)}:1 | CRV Risikoadj.: ${fazit.raCrvCons?.toFixed(1)}:1
+- Max-Entry (CRV 3:1): ${fazit.dcfBeiCRV3 != null ? cS + fazit.dcfBeiCRV3.toFixed(2) : 'n/a'}
+- Total Expected Damage: ${fazit.totalExpDmg?.toFixed(1)}%
+- Worst Case: ${cL}${fazit.worstCase?.toFixed(2)}
+
+KATALYSATOREN (Total GB: +${fazit.totalGB?.toFixed(1)}%):
+${catalystSummary}
+
+TECHNISCH:
+- Kaufsignal: ${fazit.allBuy ? 'JA' : 'NEIN'} | RSL: ${data.rsl?.value || '?'}
+- MACD: ${data.technicals?.macdAboveZero ? '> 0' : '< 0'} | MA200: ${cL}${data.technicals?.ma200?.toFixed(2) || '?'}
+
+MONTE CARLO: ${data.monteCarloResults ? 'Mean ' + cL + data.monteCarloResults.mean + ', P(Verlust) ' + data.monteCarloResults.probLoss + '%' : 'N/A'}
+
+FAZIT: ${fazit.verdict} (${fazit.pos.length} positiv, ${fazit.neg.length} negativ)
+
+Schreibe ZWEI Abschnitte im JSON-Format:
+{
+"execSummary": "2-3 Sätze Executive Summary: Was ist das Unternehmen, was zeigt die Analyse, was ist das Kernfazit. Nenne konkrete Zahlen.",
+"recommendation": "2-3 Sätze Handlungsempfehlung: Kaufen/Verkaufen/Abwarten + konkreter Entry-Level (${cS}xxx) + Begründung. Anti-Bias: Nenne sowohl das Upside-Szenario als auch das Downside-Risiko."
+}
+
+Nur JSON, keine Erklärung. Professioneller Ton, keine Floskeln.`;
+  return prompt;
+}
+
 async function generateNarrativeSummary(data: any, fazit: any): Promise<{ execSummary: string; recommendation: string; unavailable?: string }> {
   // Without a key the SDK would only throw; skip the call and say so in the PDF instead.
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -222,46 +271,7 @@ async function generateNarrativeSummary(data: any, fazit: any): Promise<{ execSu
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const client = new Anthropic();
 
-    const catalystSummary = (data.catalysts || []).map((c: any, i: number) => 
-      `K${i+1}: ${c.name} (PoS ${c.pos}%, GB ${c.gb?.toFixed(2)}%)${c.context ? ' — ' + c.context.substring(0, 150) : ''}`
-    ).join('\n');
-
-    const prompt = `Du bist ein professioneller Aktienanalyst. Erstelle eine kurze, aber substanzielle Analyse-Zusammenfassung auf Deutsch für die Aktie ${data.ticker} (${data.companyName}).
-
-KERNDATEN:
-- Kurs: $${data.currentPrice?.toFixed(2)} | Market Cap: ${data.marketCap ? '$' + (data.marketCap/1e12).toFixed(2) + 'T' : '?'}
-- P/E: ${data.peRatio?.toFixed(1) ?? 'n/a'} | PEG: ${data.pegRatio?.toFixed(2)} | EV/EBITDA: ${data.evEbitda?.toFixed(1)}
-- FCF-Marge: ${data.fcfMargin?.toFixed(1)}% | FCF: $${data.fcfTTM ? (data.fcfTTM/1e9).toFixed(1) + 'B' : '?'}
-- Revenue: $${data.revenue ? (data.revenue/1e9).toFixed(1) + 'B' : '?'} | Gross Margin: ${data.financialStatements?.incomeStatement?.grossMargin?.toFixed(1)}%
-- Moat: ${data.moatRating} | Beta: ${data.beta5Y?.toFixed(2)} | Gov. Exposure: ${data.governmentExposure}%
-- Sektor: ${data.sector} / ${data.industry}
-- Analysten PT: Median $${data.analystPT?.median} (${fazit.ptUp > 0 ? '+' : ''}${fazit.ptUp?.toFixed(0)}% Upside)
-
-DCF-BEWERTUNG:
-- Konservativ DCF: $${fazit.konsDCF?.toFixed(2)} (${((fazit.konsDCF/data.currentPrice-1)*100).toFixed(0)}% vs. Kurs)
-- CRV Base: ${fazit.crvCons?.toFixed(1)}:1 | CRV Risikoadj.: ${fazit.raCrvCons?.toFixed(1)}:1
-- Max-Entry (CRV 3:1): ${fazit.dcfBeiCRV3 != null ? '$' + fazit.dcfBeiCRV3.toFixed(2) : 'n/a'}
-- Total Expected Damage: ${fazit.totalExpDmg?.toFixed(1)}%
-- Worst Case: $${fazit.worstCase?.toFixed(2)}
-
-KATALYSATOREN (Total GB: +${fazit.totalGB?.toFixed(1)}%):
-${catalystSummary}
-
-TECHNISCH:
-- Kaufsignal: ${fazit.allBuy ? 'JA' : 'NEIN'} | RSL: ${data.rsl?.value || '?'}
-- MACD: ${data.technicals?.macdAboveZero ? '> 0' : '< 0'} | MA200: $${data.technicals?.ma200?.toFixed(2) || '?'}
-
-MONTE CARLO: ${data.monteCarloResults ? 'Mean $' + data.monteCarloResults.mean + ', P(Verlust) ' + data.monteCarloResults.probLoss + '%' : 'N/A'}
-
-FAZIT: ${fazit.verdict} (${fazit.pos.length} positiv, ${fazit.neg.length} negativ)
-
-Schreibe ZWEI Abschnitte im JSON-Format:
-{
-  "execSummary": "2-3 Sätze Executive Summary: Was ist das Unternehmen, was zeigt die Analyse, was ist das Kernfazit. Nenne konkrete Zahlen.",
-  "recommendation": "2-3 Sätze Handlungsempfehlung: Kaufen/Verkaufen/Abwarten + konkreter Entry-Level ($xxx) + Begründung. Anti-Bias: Nenne sowohl das Upside-Szenario als auch das Downside-Risiko."
-}
-
-Nur JSON, keine Erklärung. Professioneller Ton, keine Floskeln.`;
+    const prompt = buildNarrativePrompt(data, fazit);
 
     const message = await client.messages.create({
       model: 'claude-3-5-sonnet-20241022',

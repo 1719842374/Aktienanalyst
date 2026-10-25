@@ -56,7 +56,7 @@ import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelation
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
 import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
-import { withFazitEntryChatFacts } from "@/lib/fazitEntryExport";
+import { withFazitEntryChatFacts } from "@shared/fazit-entry";
 import { useChatSectionData } from "@/lib/chatSectionData";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,

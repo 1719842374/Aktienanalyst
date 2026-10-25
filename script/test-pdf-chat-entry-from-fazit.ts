@@ -15,10 +15,13 @@ import { execSync } from "node:child_process";
 import { writeFileSync, unlinkSync, readFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { generateAnalysisHTML, pdfMaxEntryRow } from "../server/pdf-export";
+import { generateAnalysisHTML, pdfMaxEntryRow, buildNarrativePrompt } from "../server/pdf-export";
 import { attachExecSummary } from "../server/exec-summary-attach";
 import { buildStockChatContext } from "../shared/chat-context";
-import { fazitEntryForExport, withFazitEntryChatFacts } from "../client/src/lib/fazitEntryExport";
+import { fazitEntryForExport, withFazitEntryChatFacts } from "../shared/fazit-entry";
+import { computeFazitEntry } from "../shared/fazit-entry";
+import * as clientReexport from "../client/src/lib/fazitEntryExport";
+import { formatCurrency as fmtClient, currencySymbol as symClient, statementCurrency as scClient } from "../client/src/lib/formatters";
 import { prepareFazitMetrics, buildFazitSignal } from "../client/src/lib/fazit-signal";
 import { calculateGBMParams, gbmMonteCarlo } from "../client/src/lib/calculations";
 
@@ -114,6 +117,42 @@ await check("n/a: Analyse ohne Kurs → kein Ersatzwert", () => {
   const c = withFazitEntryChatFacts(buildStockChatContext(shel), { ...shel, currentPrice: undefined });
   assert.equal(c.sections.find(x => x.id === 1)!.facts.maxEntryCRV3_fazit, null);
 });
+
+await check("server/pdf-export.ts + shared/fazit-entry.ts importieren nichts aus client/", () => {
+  for (const f of ["server/pdf-export.ts", "shared/fazit-entry.ts", "shared/currency-format.ts"]) {
+    assert.ok(!/from ['"][^'"]*client\//.test(readFileSync(f, "utf8")), f);
+  }
+});
+await check("Drift-Guard: computeFazitEntry === prepareFazitMetrics (SHEL.L, MSFT)", () => {
+  for (const d of [shel, msft]) {
+    const a = computeFazitEntry(d); const b: any = prepareFazitMetrics(d, {} as any);
+    assert.equal(a.decisionPerShare, b.bias.decisionPerShare ?? a.decisionPerShare);
+    for (const k of ["worstCase", "crvConservative", "dcfBeiCRV3", "totalExpDmg", "raCrvCons"] as const) assert.equal(a[k], b[k], `${d.ticker} ${k}`);
+  }
+});
+await check("Client-Re-Exporte zeigen auf dieselben shared-Funktionen", () => {
+  assert.equal(clientReexport.fazitEntryForExport, fazitEntryForExport);
+  assert.equal(clientReexport.withFazitEntryChatFacts, withFazitEntryChatFacts);
+  assert.equal(fmtClient(1234.5, 2, "GBP"), "£1,234.50");
+  assert.equal(symClient("GBp"), "GBp\u00A0");
+  assert.equal(scClient({ ticker: "SAP.DE", currency: "EUR" }), "USD");
+  assert.equal(scClient({ ticker: "SHEL.L", currency: "GBP" }), "GBP");
+});
+await check("LLM-Prompt: SHEL.L mit £ (kein $), MSFT mit $", () => {
+  const fz = (d: any) => ({ konsDCF: 30, crvCons: 1, raCrvCons: 1, dcfBeiCRV3: fazitEntryForExport(d)!.maxEntry, totalExpDmg: 1, worstCase: 20, totalGB: 1, ptUp: 5, allBuy: false, verdict: "X", pos: [], neg: [] });
+  const ps = buildNarrativePrompt(shel, fz(shel));
+  assert.ok(ps.includes("- Max-Entry (CRV 3:1): £31.33"), "Max-Entry £");
+  assert.ok(ps.includes(`- Kurs: £${shel.currentPrice.toFixed(2)}`), "Kurs £");
+  assert.ok(!/\$\d/.test(ps), "kein $-Betrag");
+  const pm = buildNarrativePrompt(msft, fz(msft));
+  assert.ok(pm.includes("- Max-Entry (CRV 3:1): $340.78") && pm.includes(`- Kurs: $${msft.currentPrice.toFixed(2)}`));
+});
+if (process.env.TABLE_C === "1") {
+  for (const d of [shel, msft]) {
+    const fe = fazitEntryForExport(d)!; const es: any = attachExecSummary(JSON.parse(JSON.stringify(d))).execSummary;
+    console.log("TABLE_C", d.ticker, JSON.stringify({ fazit: [fe.label, fe.crvBase, fe.crvRiskAdj], server: { crvLine: es?.crvLine, handlung: es?.fazit?.handlung } }));
+  }
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
