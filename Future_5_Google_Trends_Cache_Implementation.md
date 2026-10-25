@@ -92,6 +92,8 @@ if (trendResult.value != null) {
 }
 ```
 
+> **Ist-Stand main `73eff97e` (Nachtrag 25.10.2026, nur Doku):** `isStale` wird erst ab **> 24 h** gesetzt, nicht ab 6 h – `server/cache/google-trends-cache.ts:13` (`GOOGLE_TRENDS_STALE_AFTER_HOURS = 24`) und `:59` (`isStale: ageHours > GOOGLE_TRENDS_STALE_AFTER_HOURS`). Frischer Cache-Treffer < 12 h (`:9`), letzter guter Wert bis 48 h (`:11`), danach N/A. Felder `ageHours`/`isStale` im Indikator: `server/recession.ts:190–193`, gesetzt in `:541–544`. Die 24 h folgen Future_2/3/4; ob 6 h gewünscht ist, bleibt eine offene Entscheidung (F5-06). Das Beispiel oben bleibt als ursprüngliche Spezifikation stehen.
+
 ---
 
 ## 4. Frontend-Anzeige
