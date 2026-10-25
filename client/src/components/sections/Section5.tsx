@@ -37,6 +37,43 @@ function InputField({ label, value, onChange, suffix = "%", min, max, step = 0.5
   );
 }
 
+/** Geschäftsmodell-Warnungen (unverändert aus der bisherigen IIFE extrahiert; Anzeige byte-gleich). */
+export function businessModelWarnings(data: StockAnalysis): string[] {
+  const warnings: string[] = [];
+  const ind = data.industry.toLowerCase();
+  const sect = data.sector.toLowerCase();
+  const desc = data.description.toLowerCase();
+  if (ind.includes('drug') || ind.includes('pharma') || ind.includes('biotechnology')) {
+    warnings.push('Preisregulierungsrisiko: IRA/Medicaid-Rabatte, Medicare-Preisverhandlungen können Margen um 10-30% drücken.');
+    if (desc.includes('patent') || desc.includes('biosimilar') || desc.includes('generic')) {
+      warnings.push('Patent-Cliff-Risiko: Generika/Biosimilar-Konkurrenz bei Patentablauf.');
+    }
+  }
+  const hasSoftwareCore = ind.includes('software') || ind.includes('saas') ||
+    desc.includes('cloud computing') || desc.includes('cloud platform') || desc.includes('cloud services') ||
+    desc.includes('software-as-a-service') || (desc.includes('subscription') && sect.includes('tech'));
+  if (hasSoftwareCore) {
+    warnings.push('KI-Disruption: AI-Agenten können Software-Margen durch Automatisierung und Commoditisierung erodieren.');
+  }
+  if ((sect.includes('consumer') && (sect.includes('cycl') || sect.includes('discr'))) &&
+      (ind.includes('luxury') || ind.includes('fashion') || ind.includes('apparel'))) {
+    warnings.push('Zyklisches Konsumrisiko: Luxusgüter-Nachfrage stark abhängig von China-Konjunktur, Vermögenseffekten und Konsumsentiment.');
+  }
+  if (data.fcfTTM < 0) {
+    warnings.push('Negativer FCF: Geschäftsmodell generiert aktuell keinen freien Cashflow — DCF-Projektion basiert auf Margenverbesserungs-Annahme.');
+  }
+  if (data.ebitda > 0 && data.revenue > 0) {
+    const ebitMargin = (data.ebitda / data.revenue) * 100;
+    if (ebitMargin > 30 && data.sectorProfile.growthAssumptions.g1 < 8) {
+      warnings.push(`Hohe EBIT-Marge (${ebitMargin.toFixed(0)}%) bei niedrigem Wachstum — Margenerhalt nicht gesichert bei Wettbewerbsdruck.`);
+    }
+  }
+  if (data.governmentExposure > 20) {
+    warnings.push(`Staatsabhängigkeit ${data.governmentExposure}%: Regulatorische Preisänderungen können DCF-Annahmen entwerten.`);
+  }
+  return warnings;
+}
+
 export function Section5({ data }: Props) {
   const [showEditor, setShowEditor] = useState(false);
   const [showProjections, setShowProjections] = useState(false);
@@ -169,6 +206,7 @@ export function Section5({ data }: Props) {
     { name: "Macro-Stress", result: stressResult, color: "border-red-500/20 bg-red-500/5" },
   ];
 
+  const bmWarnings = businessModelWarnings(data);
   // PR 3 (Chat-Kontext): genau die angezeigten Werte veröffentlichen — keine eigene Rechnung.
   const fin = (v: number) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
   const pctVsPrice = (fv: number) => (Number.isFinite(fv) && data.currentPrice > 0 ? +((fv / data.currentPrice - 1) * 100).toFixed(1) : null);
@@ -192,6 +230,7 @@ export function Section5({ data }: Props) {
     vsKurs_konservativPct: pctVsPrice(mainResult.perShare), vsKurs_optimistischPct: pctVsPrice(optResult.perShare),
     vsKurs_makroStressPct: pctVsPrice(stressResult.perShare),
     bewertungsurteil: dcfVerdict,
+    geschaeftsmodellWarnungen: bmWarnings.length ? bmWarnings.join(" | ") : null,
     warnbox: invertedBelowPrice
       ? `AUTOMATISCHE WARNUNG: Inverted DCF < aktueller Kurs — Risk-adj. DCF (${formatCurrency(riskAdjDCF, 2, statementCurrency(data))}) liegt unter dem aktuellen Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}). Anti-Bias-Protokoll: Symmetrische Downside-Betrachtung notwendig.`
       : null,
@@ -472,38 +511,7 @@ export function Section5({ data }: Props) {
 
       {/* Business Model Integrity Warning */}
       {(() => {
-        const warnings: string[] = [];
-        const ind = data.industry.toLowerCase();
-        const sect = data.sector.toLowerCase();
-        const desc = data.description.toLowerCase();
-        if (ind.includes('drug') || ind.includes('pharma') || ind.includes('biotechnology')) {
-          warnings.push('Preisregulierungsrisiko: IRA/Medicaid-Rabatte, Medicare-Preisverhandlungen können Margen um 10-30% drücken.');
-          if (desc.includes('patent') || desc.includes('biosimilar') || desc.includes('generic')) {
-            warnings.push('Patent-Cliff-Risiko: Generika/Biosimilar-Konkurrenz bei Patentablauf.');
-          }
-        }
-        const hasSoftwareCore = ind.includes('software') || ind.includes('saas') ||
-          desc.includes('cloud computing') || desc.includes('cloud platform') || desc.includes('cloud services') ||
-          desc.includes('software-as-a-service') || (desc.includes('subscription') && sect.includes('tech'));
-        if (hasSoftwareCore) {
-          warnings.push('KI-Disruption: AI-Agenten können Software-Margen durch Automatisierung und Commoditisierung erodieren.');
-        }
-        if ((sect.includes('consumer') && (sect.includes('cycl') || sect.includes('discr'))) &&
-            (ind.includes('luxury') || ind.includes('fashion') || ind.includes('apparel'))) {
-          warnings.push('Zyklisches Konsumrisiko: Luxusgüter-Nachfrage stark abhängig von China-Konjunktur, Vermögenseffekten und Konsumsentiment.');
-        }
-        if (data.fcfTTM < 0) {
-          warnings.push('Negativer FCF: Geschäftsmodell generiert aktuell keinen freien Cashflow — DCF-Projektion basiert auf Margenverbesserungs-Annahme.');
-        }
-        if (data.ebitda > 0 && data.revenue > 0) {
-          const ebitMargin = (data.ebitda / data.revenue) * 100;
-          if (ebitMargin > 30 && data.sectorProfile.growthAssumptions.g1 < 8) {
-            warnings.push(`Hohe EBIT-Marge (${ebitMargin.toFixed(0)}%) bei niedrigem Wachstum — Margenerhalt nicht gesichert bei Wettbewerbsdruck.`);
-          }
-        }
-        if (data.governmentExposure > 20) {
-          warnings.push(`Staatsabhängigkeit ${data.governmentExposure}%: Regulatorische Preisänderungen können DCF-Annahmen entwerten.`);
-        }
+        const warnings = bmWarnings;
         if (warnings.length === 0) return null;
         return (
           <div className="rounded-lg border-2 border-amber-500/30 bg-amber-500/5 p-3">

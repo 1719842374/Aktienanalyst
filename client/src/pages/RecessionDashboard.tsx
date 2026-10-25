@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { ChatWidget } from "@/components/chat/ChatWidget";
+import { visibleTopOf } from "@/lib/activeSection";
 import { buildRecessionChatContext, enrichChatContext, recessionSectionLayout } from "@shared/chat-context";
 import { useChatSectionData } from "@/lib/chatSectionData";
 import { useMutation } from "@tanstack/react-query";
@@ -75,7 +76,7 @@ export default function RecessionDashboard() {
     sectionEl(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [sectionEl]);
   const getActiveSectionId = useCallback((): number | null => {
-    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
     for (const { id } of chatSections) {
       const el = sectionEl(id);
       if (!el) continue;
