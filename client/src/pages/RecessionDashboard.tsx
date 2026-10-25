@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { ChatWidget } from "@/components/chat/ChatWidget";
-import { buildRecessionChatContext } from "@shared/chat-context";
+import { visibleTopOf } from "@/lib/activeSection";
+import { buildRecessionChatContext, enrichChatContext, recessionSectionLayout } from "@shared/chat-context";
+import { useChatSectionData } from "@/lib/chatSectionData";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { RECESSION_FALLBACK_DATA } from "@/lib/recessionFallbackData";
@@ -61,14 +63,20 @@ export default function RecessionDashboard() {
   // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen Rezessionsdaten.
   // Sektionen tragen keine Refs; Bindung und Sprung laufen über data-testid="section-N" der SectionCard.
   const mainRef = useRef<HTMLElement>(null);
-  const chatContext = useMemo(() => (data ? buildRecessionChatContext(data, { hasRegions: !!regions }) : null), [data, regions]);
+  // PR 3: RSI, Marktcharts und Buffett aus den bestehenden Queries der Sektionen + Auffälligkeiten.
+  const chatLive = useChatSectionData("recession");
+  const chatContext = useMemo(() => {
+    if (!data) return null;
+    const keyToId = Object.fromEntries(recessionSectionLayout(!!regions, !!(data as any).fazit).map(s => [s.key, s.id]));
+    return enrichChatContext(buildRecessionChatContext(data, { hasRegions: !!regions }), chatLive, { keyToId });
+  }, [data, regions, chatLive]);
   const chatSections = useMemo(() => (chatContext?.sections ?? []).map(({ id, label }) => ({ id, label })), [chatContext]);
   const sectionEl = useCallback((id: number) => mainRef.current?.querySelector<HTMLElement>(`[data-testid="section-${id}"]`) ?? null, []);
   const jumpToSection = useCallback((id: number) => {
     sectionEl(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [sectionEl]);
   const getActiveSectionId = useCallback((): number | null => {
-    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
     for (const { id } of chatSections) {
       const el = sectionEl(id);
       if (!el) continue;
