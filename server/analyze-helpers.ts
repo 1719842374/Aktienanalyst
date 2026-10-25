@@ -13,8 +13,8 @@ import {
 } from "./fmp";
 import { indicatorWarmupFromDate } from "./history-fallback";
 import { FX_CONVERTIBLE_FIELDS, getFxRateToUsd } from "./fmp";
-import { minorUnitInfo, normalizeMinorUnitListing } from "../shared/listing-units";
-import { getYahooSnapshot, YAHOO_402_NOTICE } from "./yahoo-fetcher";
+import { minorUnitInfo, listingCurrencyOf, normalizeListingToUsd } from "../shared/listing-units";
+import { fetchYahooFxToUsd, getYahooSnapshot, YAHOO_402_NOTICE } from "./yahoo-fetcher";
 
 // ============================================================
 // FMP Budget Tracker (single source of truth)
@@ -588,17 +588,11 @@ export async function getFmpFallbackData(ticker: string): Promise<{
       ohlcv: get(ohlcvRes) || [], segments: get(segmentsRes) || [], geoSegments: get(geoSegmentsRes) || [], peers: get(peersRes) || [], ratios: get(ratiosRes) || [],
       source: 'fmp' as const,
     };
-    // Minor-unit listings (LSE GBp etc.): price/OHLCV pence → pounds, statements USD → GBP,
-    // so price, market cap and balance sheet share one unit (shared/listing-units.ts).
-    const minor = minorUnitInfo(out.profile?.currency ?? quote?.currency);
-    if (minor) {
-      const majorToUsd = await getFxRateToUsd(minor.major).catch(() => 1);
-      const norm = normalizeMinorUnitListing(out, majorToUsd, FX_CONVERTIBLE_FIELDS);
-      if ((norm.profile as any)?._minorUnit?.partial) console.warn(`[FMP-FALLBACK] ${ticker}: ${(norm.profile as any)._minorUnit.warning} — keine Einheiten-Normalisierung (Kurs ${minor.minor}, Statements USD wie bisher)`);
-      else console.log(`[FMP-FALLBACK] ${ticker}: ${minor.minor} → ${minor.major} (÷${minor.factor}), statements USD → ${minor.major} @ ${majorToUsd}`);
-      return norm;
-    }
-    return out;
+    // DCF-FX (Philip 18.10.2026 „alles in dollar … umrechnen“): Nicht-USD-Listings (EUR, CAD, GBp …) →
+    // Marktseite (Kurs, Market Cap, OHLCV, Kursziel) in USD, Statements sind schon USD (convertFmpRowsToUsd).
+    // Damit teilen Kurs, Market Cap, DCF und Bilanz eine Währung. USD-Listings (inkl. ADRs wie NVO) unverändert.
+    // Ohne FX: Minor Units wie bisher nach #244 (Pence → Pfund), Major-Währungen bleiben stehen und werden markiert.
+    return await listingToUsd(ticker, out);
   } catch (err: any) {
     console.error(`[FMP-FALLBACK] Failed for ${ticker}: ${err?.message?.substring(0, 200)}`);
     return { failure: classifyFmpError(err) };
@@ -634,13 +628,35 @@ export async function yahooFallbackData(ticker: string): Promise<{
     exchange: snap.exchange ?? "", marketCap: snap.marketCap, price: snap.price, ...marker,
   };
   const ohlcv = [...snap.bars].reverse().map(({ source: _s, ...bar }) => bar); // FMP-Reihenfolge: neueste zuerst
-  return {
+  const data = {
     quote, profile,
     financials: { income: [], cashflow: [], balanceSheet: [] },
     analyst: { priceTarget: null, grades: [], estimates: [] },
     ohlcv, segments: [], geoSegments: [], peers: [], ratios: [],
-    source: 'yahoo',
+    source: 'yahoo' as const,
   };
+  // DCF-FX: Yahoo-Bars kommen über history-fallback schon in der Major-Einheit (yahooBarsToMajor).
+  return await listingToUsd(ticker, data, { barsInMajor: true });
+}
+
+/** DCF-FX: gemeinsame USD-Normalisierung für FMP- und Yahoo-Shape (shared/listing-units.ts normalizeListingToUsd). */
+async function listingToUsd<T extends Parameters<typeof normalizeListingToUsd>[0]>(ticker: string, data: T, opts: { barsInMajor?: boolean } = {}): Promise<T> {
+  const code = listingCurrencyOf(data);
+  if (!code || code === "USD") return data;
+  const minor = minorUnitInfo(code);
+  const major = minor?.major ?? code.toUpperCase();
+  let majorToUsd = await getFxRateToUsd(major).catch(() => 1);
+  if (!(majorToUsd > 0) || majorToUsd === 1) {
+    // FMP ohne FX-Kurs (getFxRateToUsd → 1) → Yahoo-FX als Ersatz; fehlt auch der, bleibt die Listing-Währung markiert.
+    const y = await fetchYahooFxToUsd(major).catch(() => null);
+    if (y != null) { console.log(`[FX-LISTING] ${ticker}: ${major}USD von Yahoo = ${y}`); majorToUsd = y; }
+  }
+  const norm = normalizeListingToUsd(data, majorToUsd, FX_CONVERTIBLE_FIELDS, opts);
+  const fx = (norm.profile as any)?._listingFx;
+  if (fx?.converted) console.log(`[FX-LISTING] ${ticker}: ${code} → USD @ ${major}USD ${majorToUsd}${minor ? ` (÷${minor.factor})` : ""}`);
+  else if ((norm.profile as any)?._minorUnit?.partial) console.warn(`[FX-LISTING] ${ticker}: ${(norm.profile as any)._minorUnit.warning} — keine Einheiten-Normalisierung (Kurs ${code}, Statements USD wie bisher)`);
+  else console.warn(`[FX-LISTING] ${ticker}: ${fx?.warning ?? `FX ${major}USD fehlt`}`);
+  return norm;
 }
 
 // ============================================================
