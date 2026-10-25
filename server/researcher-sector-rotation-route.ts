@@ -7,6 +7,15 @@ import * as fs from "fs";
 import * as path from "path";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
 import { fetchSectorRotationLive, SECTOR_ROTATION_CACHE_TAB } from "./sector-rotation";
+import { fetchKostolanyLive, withKostolany } from "./kostolany-live";
+
+/** FW-04: Kostolany-Zusatzfeld, Fehler → null (UI n/a), Sektor-Ergebnis bleibt unberührt. */
+async function kostolanySafe() {
+  try { return await fetchKostolanyLive(); } catch (err: any) {
+    console.warn("[RESEARCHER/sector-rotation] kostolany failed:", err?.message ?? err);
+    return null;
+  }
+}
 
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -71,12 +80,15 @@ export function registerSectorRotationRoute(app: Express): void {
       const cached = readCache(SECTOR_ROTATION_CACHE_TAB, cacheParams);
       if (cached) {
         console.log(`[RESEARCHER/sector-rotation] cache HIT age=${cached._cacheAge}min`);
+        // FW-04: alter Cache ohne Zusatzfeld → nur das Feld nachladen (Cache-Datei bleibt).
+        if (!("kostolany" in cached)) return res.json(withKostolany(cached, await kostolanySafe()));
         return res.json(cached);
       }
     }
     console.log("[RESEARCHER/sector-rotation] building");
     try {
-      const result = await fetchSectorRotationLive();
+      const [sectorResult, kostolany] = await Promise.all([fetchSectorRotationLive(), kostolanySafe()]);
+      const result = withKostolany(sectorResult, kostolany);
       writeCache(SECTOR_ROTATION_CACHE_TAB, cacheParams, result);
       res.json(result);
     } catch (err: any) {
