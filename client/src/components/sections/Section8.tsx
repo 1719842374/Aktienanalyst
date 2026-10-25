@@ -2,6 +2,7 @@ import React from "react";
 import { SectionCard } from "../SectionCard";
 import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, Risk } from "../../../../shared/schema";
+import { RegulatoryPestelRisks } from "./RegulatoryPestelRisks";
 import { calculateDCF, invertedDcf } from "../../lib/calculations";
 import { formatCurrency, formatNumber, formatPercentNoSign, formatTarget, statementCurrency } from "../../lib/formatters";
 import { useMemo, useState, useEffect, useRef } from "react";
@@ -518,6 +519,10 @@ export function Section8({ data, useLLM = false }: Props) {
           </div>
         )}
       </div>
+
+      {/* FW-36: Regulatory-Risiken aus der PESTEL-Regulatorik (Disk-Cache, kein LLM-Call). Nur Anzeige —
+          fließt nicht in Total Expected Damage, Risk-Adjusted Target oder Inverted DCF. */}
+      <RegulatoryPestelRisks data={data} variant="risk-inversion" />
 
       <RechenWeg title="Risk Adjustment Rechenweg" steps={[
         `Total Expected Damage = Σ(EW% × Impact%) = ${formatNumber(totalExpectedDamage, 2)}%`,
