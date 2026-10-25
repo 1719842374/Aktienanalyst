@@ -14,16 +14,18 @@ import { isEtfOrFund } from "../shared/conflict-matrix";
 export function registerPdfExportRoute(app: Express): void {
   app.post("/api/export-pdf", async (req, res) => {
     try {
-      const analysisData = req.body;
+      // _sectionImages (Client-Aufnahme der Sektionen) vom Analyse-Objekt trennen: Fazit/Score sehen dieselben Daten wie vorher.
+      const { _sectionImages, ...analysisData } = (req.body ?? {}) as any;
       if (!analysisData?.ticker) return res.status(400).json({ error: "No analysis data provided" });
       if (isEtfOrFund(analysisData)) {
         return res.status(422).json({ error: "ETF/Index – nicht im Aktien-Dashboard, kein PDF-Export", errorCode: "ETF_NOT_SUPPORTED", ticker: String(analysisData.ticker) });
       }
       console.log(`[PDF] Generating PDF for ${analysisData.ticker}...`);
-      const { generateAnalysisHTML, renderHTMLtoPDF } = await import("./pdf-export");
-      const html = await generateAnalysisHTML(analysisData);
+      const { generateAnalysisHTML, renderHTMLtoPDF, sanitizeSectionImages } = await import("./pdf-export");
+      const images = sanitizeSectionImages(_sectionImages);
+      const html = await generateAnalysisHTML(analysisData, images);
       const pdfBuffer = await renderHTMLtoPDF(html);
-      console.log(`[PDF] Generated ${(pdfBuffer.length / 1024).toFixed(0)}KB PDF for ${analysisData.ticker}`);
+      console.log(`[PDF] Generated ${(pdfBuffer.length / 1024).toFixed(0)}KB PDF for ${analysisData.ticker} (${images.length} Sektionsbilder)`);
       const safeTicker = String(analysisData.ticker).replace(/[^A-Za-z0-9._-]/g, "_");
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `attachment; filename="${safeTicker}_Analyse_${new Date().toISOString().slice(0, 10)}.pdf"`);

@@ -328,9 +328,32 @@ ${na.map(l => `<tr><td class="row-label">${esc(l)}</td><td class="row-val">n/a</
 </body></html>`;
 }
 
+// ===== Sektionen als Bild (Client-Aufnahme der Dashboard-Sektionen, html2canvas) =====
+export type PdfSectionImage = { id: number; label: string; dataUrl: string };
+export const PDF_MAX_SECTION_IMAGES = 25;
+const PDF_MAX_IMAGE_CHARS = 3_000_000;
+/** Nur data:image/jpeg|png;base64, höchstens 25 Bilder à ≤3 MB, sortiert nach Sektions-id. Alles andere wird verworfen. */
+export function sanitizeSectionImages(raw: unknown): PdfSectionImage[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((x: any) => x && typeof x.dataUrl === 'string' && x.dataUrl.length <= PDF_MAX_IMAGE_CHARS
+      && /^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(x.dataUrl) && Number.isFinite(Number(x.id)))
+    .map((x: any) => ({ id: Number(x.id), label: String(x.label ?? `Sektion ${x.id}`).slice(0, 120), dataUrl: x.dataUrl as string }))
+    .sort((a, b) => a.id - b.id)
+    .slice(0, PDF_MAX_SECTION_IMAGES);
+}
+/** Anhang „Dashboard-Sektionen als Bild“; leer ohne Bilder (PDF dann bytegleich zum Text-Template). */
+export function sectionImagesHtml(imgs: PdfSectionImage[]): string {
+  if (!imgs.length) return '';
+  return `<div style="page-break-before:always"></div>
+<div class="sec-header" data-testid="pdf-section-images"><span>ANHANG &nbsp; DASHBOARD-SEKTIONEN ALS BILD (${imgs.length})</span></div>
+${imgs.map(im => `<div class="sub" style="break-after:avoid">${esc(im.label)}</div>
+<img data-testid="pdf-section-img-${im.id}" src="${im.dataUrl}" style="width:100%;height:auto;display:block;margin:2px 0 8px;border:1px solid #1e2a42;border-radius:4px">`).join('\n')}`;
+}
+
 // ===== Generate HTML =====
-export async function generateAnalysisHTML(rawData: any): Promise<string> {
-  if (isYahooOnly(rawData)) return generateYahooOnlyHTML(rawData);
+export async function generateAnalysisHTML(rawData: any, sectionImages: PdfSectionImage[] = []): Promise<string> {
+  if (isYahooOnly(rawData)) return generateYahooOnlyHTML(rawData).replace('</body></html>', `${sectionImagesHtml(sectionImages)}</body></html>`);
   const data = normalizeData(rawData);
   const sp = data.sectorProfile;
   const wS = sp?.waccScenarios;
@@ -686,6 +709,7 @@ ${fazit.pos.length ? `<div class="sub">Positive Faktoren (${fazit.pos.length})</
 ${fazit.neg.length ? `<div class="sub">Negative Faktoren (${fazit.neg.length})</div><ul class="factor-list">${fazit.neg.map(n => `<li class="neg">− ${esc(n)}</li>`).join('')}</ul>` : ''}
 ${fazit.neut.length ? `<div class="sub">Neutral (${fazit.neut.length})</div><ul class="factor-list">${fazit.neut.map(n => `<li class="neut">● ${esc(n)}</li>`).join('')}</ul>` : ''}
 
+${sectionImagesHtml(sectionImages)}
 <!-- FOOTER -->
 <div class="footer">
   <div>Stock Analyst Pro — Erstellt mit Perplexity Computer</div>

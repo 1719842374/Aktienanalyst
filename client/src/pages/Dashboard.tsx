@@ -113,6 +113,8 @@ export default function Dashboard() {
   const [, navigate] = useLocation();
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  // PDF-Export läuft ~30–60 s (Sektionsaufnahme + Server-Render): sichtbarer Zustand statt scheinbar nichts.
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number; isPending?: boolean } | null>(null);
   // #258: Hinweis nach automatischem Verwerfen abgelehnter Peer-Overrides (400).
@@ -459,15 +461,26 @@ export default function Dashboard() {
           {data && !isEtfOrFund(data) && (
             <button
               onClick={async () => {
-                const { exportAnalysisPdf } = await import('../lib/exportPdf');
-                exportAnalysisPdf(data);
+                if (pdfBusy) return;
+                setPdfBusy(true);
+                try {
+                  const { exportAnalysisPdf } = await import('../lib/exportPdf');
+                  // Alle gerenderten Sektionen (inkl. S3) als Bild ins PDF; Fehler meldet exportAnalysisPdf sichtbar.
+                  await exportAnalysisPdf(data, Object.entries(sectionRefs.current).map(([id, el]) => ({ id: Number(id), el })));
+                } catch (err: any) {
+                  alert(`PDF-Export fehlgeschlagen: ${err?.message || err}`);
+                } finally {
+                  setPdfBusy(false);
+                }
               }}
+              disabled={pdfBusy}
+              aria-busy={pdfBusy}
               className="h-8 px-2 text-[11px] font-medium rounded-md text-foreground/40 border border-border/50 hover:bg-muted/50 hover:text-foreground/60 transition-all flex items-center gap-1"
               title="Analyse als PDF exportieren"
               data-testid="button-pdf-export"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              <span className="hidden sm:inline">PDF</span>
+              <span className="hidden sm:inline">{pdfBusy ? 'PDF wird erstellt…' : 'PDF'}</span>
             </button>
           )}
           {/* KI-Katalysatoren Toggle */}
