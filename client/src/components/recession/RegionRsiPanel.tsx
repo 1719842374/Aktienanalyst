@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiErrorFromResponse } from "@/lib/apiError";
 import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import { usePublishChatSection } from "@/lib/chatSectionData";
+import { VIX_SOURCE_NA } from "@/lib/vixSourceLabel";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip,
   CartesianGrid, ReferenceLine, ComposedChart, Bar, Cell,
@@ -111,7 +112,7 @@ function volTitle(data: MarketPayload) {
   if (data.volKind === "realized") return "Realisierte Vol 20T (ASHR), %";
   if (data.region === "EU") return "VSTOXX (analog), Index";
   // F1-66: name the source that really delivered; null = FRED and Yahoo empty (reason in volNote).
-  if (data.volSource === null) return "VIX n/a (keine Quelle lieferte Daten), Index";
+  if (data.volSource === null) return `${VIX_SOURCE_NA}, Index`;
   return `VIX (${data.volSource ?? "FRED VIXCLS"}), Index`;
 }
 
@@ -241,7 +242,8 @@ export function RegionRsiPanel() {
           <div>
             <p className="text-[11px] text-muted-foreground mb-1">
               {volTitle(q.data)} · Y linear 0–{yMax} · Fenster {q.data.window}
-              {q.data.volSource ? ` · ${q.data.volSource}` : q.data.volId ? ` · ${q.data.volId}` : ""}
+              {/* F1-66: source already named in volTitle for US (VIX); suffix only for EU/AS volId. */}
+              {q.data.volSource !== undefined ? "" : q.data.volId ? ` · ${q.data.volId}` : ""}
             </p>
             {q.data.volNote && (
               <p className="text-[11px] text-amber-600 dark:text-amber-400 mb-1">{q.data.volNote}</p>
