@@ -1,4 +1,6 @@
 import { Fragment, useState, useRef, useCallback, useMemo } from "react";
+import { ChatWidget } from "@/components/chat/ChatWidget";
+import { buildBtcChatContext } from "@shared/chat-context";
 import { useMutation } from "@tanstack/react-query";
 import { analyzeBTC } from "@/lib/btcAnalysis";
 import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
@@ -2765,6 +2767,19 @@ export default function BTCDashboard() {
     sectionRefs.current[id] = el;
   }, []);
 
+  // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen BTC-Daten.
+  const chatContext = useMemo(() => (data ? buildBtcChatContext(data) : null), [data]);
+  const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
+  const getActiveSectionId = useCallback((): number | null => {
+    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    for (const { id } of chatSections) {
+      const el = sectionRefs.current[id];
+      if (!el) continue;
+      if (el.getBoundingClientRect().bottom > top + 40) return id;
+    }
+    return null;
+  }, [chatSections]);
+
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       {/* Header */}
@@ -2881,6 +2896,14 @@ export default function BTCDashboard() {
           ) : null}
         </main>
       </div>
+      <ChatWidget
+        dashboard="btc"
+        context={chatContext}
+        sections={chatSections}
+        getActiveSectionId={getActiveSectionId}
+        onJumpToSection={scrollToSection}
+        suggestions={["Fasse die BTC-Analyse in 5 Punkten zusammen", "Wie ist der Kurs zum Power-Law einzuordnen?", "Was sagt die Monte-Carlo-Spanne?"]}
+      />
     </div>
   );
 }
