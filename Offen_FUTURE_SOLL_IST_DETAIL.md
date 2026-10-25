@@ -414,7 +414,7 @@ Legende: **erledigt** = auf `main` (SHA/PR). **offen, PR** = auf `main` nicht da
 | F1-58, F2-06 | 🟡 | offen | kein PR; Yahoo `^V2TX` nur im Chart (Score-Pfad nicht anfassen) |
 | F1-63 | 🟡 | blockiert | Yahoo-TOPIX ändert die JP-Katalog-P → Score-Änderung, Philip |
 | F1-66, F2-05 | 🟡 | offen, PR | **#296** Draft (Head `31065b9e`, Yahoo `^VIX` in S9/S10, kein Score) |
-| F1-67, F1-68, F2-09 | ❌ | offen | kein PR; Achtung Überschneidung mit altem Draft #164 (`server/recession-market-charts.ts`) |
+| F1-67, F1-68, F2-09 | ❌ | blockiert | ❌ Yahoo-Crumb 429 (#264), nicht baubar ohne Quelle; Konflikt mit Draft #164 (loadValuation/Factpack). Kein PR; Achtung Überschneidung mit altem Draft #164 (`server/recession-market-charts.ts`) |
 | F1-69 | ❌ | blockiert | fehlende Quelle (kein freies EU/JP-Margin-Debt) |
 | F1-70, F2-10 | ❌ | offen | Tester-Auftrag, kein Bau |
 | F1-71, F1-74 | ❌ | offen | autonom nur mit Index-Quellen; ETF-Proxy (VGK/ASHR) vorher mit Philip klären (ETF-Sperre) |
@@ -451,7 +451,7 @@ Filter: kein Score/Rating, kein `analyze-route.ts`/`researcher.ts`, keine zweite
 1. **F1-17 / F1-18 / F1-14 Dividende fertig** (S) – nur Anzeige/Text in Sektion 6 und 20 plus 4-%-Band; Daten (`shared/dividends.ts`, #279) sind da.
 2. **F1-58 / F2-06 VSTOXX im Chart über Yahoo** (S) – gleiches Muster wie #296, nur Chartpfad `recession-markets.ts`.
 3. **F3-04 Trends-Retry mit Backoff** (S) – Verfügbarkeit, keine Zonenänderung; Retries knapp halten (Kontingent).
-4. **F1-67 / F1-68 / F2-09 SPY-Factpack über Yahoo** (S) – Anzeige; vorher #164 auf Überschneidung prüfen.
+4. ~~**F1-67 / F1-68 / F2-09 SPY-Factpack über Yahoo** (S) – Anzeige; vorher #164 auf Überschneidung prüfen.~~ **Nicht autonom baubar:** ❌ Yahoo-Crumb 429 (#264), nicht baubar ohne Quelle; Konflikt mit Draft #164 (loadValuation/Factpack).
 5. **F10-08 / F10-12 / F10-13 Gold-Zusatzschicht: Volumen-Trend, Bollinger, ATR** (S–M) – Zusatzschicht, GIS unverändert.
 6. **F10-20 / F10-24 / F10-34 AISC-Marge, Fiskaldefizit, Zentralbankkäufe in die Schicht** (M) – Daten vorhanden bzw. FRED.
 7. **F1-47 / F1-48 / F1-52 Regionen: 5 Gauges und Tabellen je Region** (M) – nur Anzeige, US-Handlung bleibt.
