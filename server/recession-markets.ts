@@ -101,10 +101,20 @@ export async function fetchYahooDailySeries(symbol: string, cosd: string): Promi
   }
 }
 
+/** F1-66: pause between the two FRED attempts (like #274 buffett-route). Tests set 0. */
+let fredVolRetryPauseMs = 1500;
+export function setFredVolRetryPauseForTests(ms: number): void {
+  fredVolRetryPauseMs = ms;
+}
+
 /**
  * Chart vol series: FRED first. Only when FRED is empty and the series has a Yahoo twin
  * (VIXCLS → ^VIX) the Yahoo closes fill the chart, with a note. Chart path only; the
  * VIX score keeps its own resolver in recession.ts.
+ * F1-66: for a series with a Yahoo twin, FRED gets a second attempt (pause 1.5 s) before Yahoo.
+ * Bound: 2 × 20 s FRED + 1.5 s + 20 s Yahoo. volSource names the source that really
+ * delivered ("FRED VIXCLS" / "Yahoo ^VIX"), null when both are empty; series without a
+ * Yahoo twin carry no volSource (unchanged).
  */
 export async function fetchFredVolWithYahooFallback(
   seriesId: string,
@@ -113,16 +123,20 @@ export async function fetchFredVolWithYahooFallback(
     fred?: (id: string, cosd: string) => Promise<VolPoint[]>;
     yahoo?: (symbol: string, cosd: string) => Promise<VolPoint[]>;
   } = {},
-): Promise<{ vol: VolPoint[]; volNote: string | null }> {
+): Promise<{ vol: VolPoint[]; volNote: string | null; volSource?: string | null }> {
   const fred = deps.fred ?? fetchFredVolSeries;
   const yahoo = deps.yahoo ?? fetchYahooDailySeries;
-  const vol = await fred(seriesId, cosd);
-  if (vol.length) return { vol, volNote: null };
   const symbol = YAHOO_VOL_FALLBACK[seriesId];
+  let vol = await fred(seriesId, cosd);
+  if (!vol.length && symbol) {
+    if (fredVolRetryPauseMs > 0) await new Promise(resolve => setTimeout(resolve, fredVolRetryPauseMs));
+    vol = await fred(seriesId, cosd);
+  }
+  if (vol.length) return symbol ? { vol, volNote: null, volSource: `FRED ${seriesId}` } : { vol, volNote: null };
   if (!symbol) return { vol, volNote: `FRED ${seriesId} leer` };
   const yv = (await yahoo(symbol, cosd)).filter(p => p.date >= cosd);
-  if (!yv.length) return { vol: [], volNote: `FRED ${seriesId} leer, Yahoo ${symbol} leer` };
-  return { vol: yv, volNote: `${seriesId === "VIXCLS" ? "VIX" : seriesId} via Yahoo ${symbol} (FRED ${seriesId} leer)` };
+  if (!yv.length) return { vol: [], volNote: `FRED ${seriesId} leer, Yahoo ${symbol} leer`, volSource: null };
+  return { vol: yv, volNote: `${seriesId === "VIXCLS" ? "VIX" : seriesId} via Yahoo ${symbol} (FRED ${seriesId} leer)`, volSource: `Yahoo ${symbol}` };
 }
 
 /** Official STOXX V2TX daily file (DD.MM.YYYY;V2TX;value). Spec: Yahoo/Stoox path. */
@@ -327,7 +341,7 @@ async function fetchRegionVol(
   etfRows: { date: string; close: number }[],
   from: string,
   to: string,
-): Promise<{ vol: VolPoint[]; volNote: string | null }> {
+): Promise<{ vol: VolPoint[]; volNote: string | null; volSource?: string | null }> {
   if (book.volKind === "realized" || book.volId === "realized20") {
     return { vol: realizedVol20(etfRows), volNote: null };
   }
@@ -379,7 +393,7 @@ export async function buildRegionMarket(region: RegionId, window: string) {
   });
 
   const windowStart = series[0]?.date ?? null;
-  const { vol: volFull, volNote } = await fetchRegionVol(region, book, rows, from, to);
+  const { vol: volFull, volNote, volSource } = await fetchRegionVol(region, book, rows, from, to);
   const vol = sliceVolToWindow(volFull, windowStart, days);
   const volLatest = vol.length ? vol[vol.length - 1].value : null;
 
@@ -409,6 +423,8 @@ export async function buildRegionMarket(region: RegionId, window: string) {
     volLatest,
     volBand: volBandLabel(volLatest),
     volNote,
+    // F1-66: real source of the VIX series (FRED VIXCLS / Yahoo ^VIX, null = both empty); absent for EU/AS.
+    ...(volSource !== undefined ? { volSource } : {}),
     vol,
     window,
     asOf: last?.date ?? null,

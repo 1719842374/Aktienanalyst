@@ -179,7 +179,7 @@ function MarketPanes({
     <div className="space-y-3">
       <div>
         <p className="text-[11px] text-muted-foreground mb-1">
-          {market.volId} · {market.volKind === "realized" ? "realisiert" : "implizit"} · Y linear 0–{yMax}
+          {market.volSource === null ? `${market.volId} n/a (keine Quelle lieferte Daten)` : market.volSource ?? market.volId} · {market.volKind === "realized" ? "realisiert" : "implizit"} · Y linear 0–{yMax}
           {market.bandsAnalog ? " · Bänder analog, nicht identisch" : " · US-kalibriert"}
         </p>
         {market.volNote && (
