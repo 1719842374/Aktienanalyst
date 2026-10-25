@@ -72,7 +72,8 @@ check("übrige Sektionen: Auswahltext byte-gleich '7. Label'", `${cc.chatSection
 check("Bindung ohne key = Nummer (Aktie/BTC/Gold unverändert)", cc.chatSectionKey({ id: 13, label: "x" }) === "13");
 
 // ── Stabile IDs (Rezession, #284) ──
-const old = (r: boolean, f: boolean) => ({ rsi: r ? 9 : 8, markt: r ? 10 : 9, buffett: r ? 11 : 10, summary: r ? 12 : 11, ...(f ? { fazit: r ? 13 : 12 } : {}), quellen: r ? (f ? 14 : 13) : (f ? 13 : 12) });
+// #284: TA nach Marktcharts → ab TA +1 gegenüber den Formeln vor #284.
+const old = (r: boolean, f: boolean) => ({ rsi: r ? 9 : 8, markt: r ? 10 : 9, ta: r ? 11 : 10, buffett: r ? 12 : 11, summary: r ? 13 : 12, ...(f ? { fazit: r ? 14 : 13 } : {}), quellen: r ? (f ? 15 : 14) : (f ? 14 : 13) });
 let same = true;
 for (const r of [false, true]) for (const f of [false, true]) {
   const nr = cc.recessionSectionNumbers(r, f);
@@ -80,12 +81,12 @@ for (const r of [false, true]) for (const f of [false, true]) {
   if (r && nr.regionen !== 8) same = false;
   if (!f && "fazit" in nr) same = false;
 }
-check("Anzeige-Nummern == bisherige Formeln (4 Kombinationen)", same);
+check("Anzeige-Nummern == Formeln inkl. TA (#284, 4 Kombinationen)", same);
 const withTa = [...cc.RECESSION_SECTION_DEFS];
-withTa.splice(withTa.findIndex(d => d.key === "markt") + 1, 0, { key: "ta", label: "Technische Analyse" });
+if (!withTa.some(d => d.key === "ta")) withTa.splice(withTa.findIndex(d => d.key === "markt") + 1, 0, { key: "ta", label: "Technische Analyse" }); // #284: bereits in den DEFS
 const nrTa = Object.fromEntries(withTa.filter(d => d.when !== "fazit").map((d, i) => [d.key, i + 1]));
 check("#284-Simulation: TA = 11, Buffett 12, Quellen 15 (mit Regionen+Fazit)", Object.fromEntries(withTa.map((d, i) => [d.key, i + 1])).ta === 11 && Object.fromEntries(withTa.map((d, i) => [d.key, i + 1])).buffett === 12 && withTa.length === 15);
-check("Schlüssel stabil, nur Nummer verschiebt sich", nrTa.buffett !== cc.recessionSectionNumbers(true, false).buffett && withTa.some(d => d.key === "buffett"));
+check("Schlüssel stabil, nur Nummer verschiebt sich", nrTa.buffett === cc.recessionSectionNumbers(false, false).buffett + 1 && nrTa.buffett === 12 && withTa.some(d => d.key === "buffett"));
 check("Rezession-Kontext trägt key je Sektion", rec.sections.every((s: any) => typeof s.key === "string"));
 // Widget-Bindung über key: nach Umnummerierung zeigt dieselbe Bindung auf dieselbe Sektion.
 const before = rec.sections.map((s: any) => ({ id: s.id, label: s.label, key: s.key }));
