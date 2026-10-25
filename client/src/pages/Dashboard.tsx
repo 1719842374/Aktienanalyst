@@ -667,6 +667,10 @@ export default function Dashboard() {
                     ...(execSummary ? { execSummary } : {}),
                   } : prev);
                 }}
+                onUserEvent={(cat) => {
+                  // S17 „Event hinzufügen“ (§4b Stufe 1): additiv an die bestehende Liste, nur Session-State.
+                  setData(prev => prev ? { ...prev, catalysts: [...(prev.catalysts ?? []), cat] } : prev);
+                }}
               />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(18)}><SectionErrorBoundary sectionId={18} sectionLabel="Monte Carlo"><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(19)}><SectionErrorBoundary sectionId={19} sectionLabel="Management-Score">{isYahooOnly(data) ? <YahooNoValuationCard number={19} title="MANAGEMENT-EXECUTION-SCORE" data={data} /> : <ManagementScoreSection data={data} onScore={(score) => {
