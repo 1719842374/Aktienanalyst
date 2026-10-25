@@ -1,4 +1,6 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
+import { ChatWidget } from "@/components/chat/ChatWidget";
+import { buildGoldChatContext } from "@shared/chat-context";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { GoldAnalysis } from "../../../shared/gold-schema";
@@ -78,6 +80,19 @@ export default function GoldDashboard() {
   const setSectionRef = useCallback((id: number) => (el: HTMLDivElement | null) => {
     sectionRefs.current[id] = el;
   }, []);
+
+  // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen Gold-Daten.
+  const chatContext = useMemo(() => (data ? buildGoldChatContext(data) : null), [data]);
+  const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
+  const getActiveSectionId = useCallback((): number | null => {
+    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    for (const { id } of chatSections) {
+      const el = sectionRefs.current[id];
+      if (!el) continue;
+      if (el.getBoundingClientRect().bottom > top + 40) return id;
+    }
+    return null;
+  }, [chatSections]);
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
@@ -212,6 +227,14 @@ export default function GoldDashboard() {
           ) : null}
         </main>
       </div>
+      <ChatWidget
+        dashboard="gold"
+        context={chatContext}
+        sections={chatSections}
+        getActiveSectionId={getActiveSectionId}
+        onJumpToSection={scrollToSection}
+        suggestions={["Fasse die Gold-Analyse in 5 Punkten zusammen", "Welche Gates sind aktiv und warum?", "Wie passt der Kurs zum Fair Value?"]}
+      />
     </div>
   );
 }

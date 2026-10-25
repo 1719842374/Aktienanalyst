@@ -233,3 +233,138 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
     notes,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR 2 (§4c): Provider für BTC, Gold und Rezession. Eingabe = bereits geladene Daten der
+// jeweiligen Seite (BTC: analyzeBTC/Fallback, Gold: GET /api/analyze-gold/Fallback,
+// Rezession: POST /api/analyze-recession/Fallback). Keine neuen Abfragen. Daten, die eine
+// Sektion selbst nachlädt (z.B. BTC-Miner, Rezession-Buffett), sind nicht im Kontext → Hinweis.
+// Bewusst lose typisiert (`any`), weil die BTC-/Rezessions-Typen im Client liegen.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SELF_LOADED = "Sektion lädt eigene Daten nach; nicht im Chat-Kontext (n/a)";
+
+function sec(id: number, label: string, facts: Record<string, ChatFactValue>): ChatSection {
+  return { id, label, facts };
+}
+
+function gatesFrom(list: any): ChatGate[] {
+  return (Array.isArray(list) ? list : []).slice(0, CHAT_LIMITS.maxGates).map((g: any) => ({
+    id: String(g?.id ?? "n/a").slice(0, 60), active: !!g?.active, cap: num(g?.cap, 1),
+    severity: String(g?.severity ?? "").slice(0, 30), rationale: str(g?.rationale) ?? "",
+  }));
+}
+
+/** Labels identisch mit SECTIONS in client/src/pages/BTCDashboard.tsx. */
+export const BTC_SECTION_LABELS: Record<number, string> = {
+  1: "Status & Preis", 2: "Halving-Zyklus", 3: "Krypto-Liquidität", 4: "Indikatoren", 5: "Power-Law", 6: "GWS",
+  7: "Monte Carlo", 8: "Kategorien A-E", 9: "Zyklus-Einsch.", 10: "Finale Schätzung", 11: "Technische Analyse",
+  12: "Fear & Greed", 13: "Miner-Zone", 14: "Gesamt-Fazit",
+};
+
+export function buildBtcChatContext(data: any): ChatContext {
+  const d = data ?? {};
+  const L = BTC_SECTION_LABELS;
+  const bc = d.bullConditions;
+  const mc3 = d.monteCarlo?.threeMonth, mc6 = d.monteCarlo?.sixMonth;
+  const liq = d.liquidity;
+  const sections: ChatSection[] = [
+    sec(1, L[1], { zeitpunkt: str(d.timestamp), kursUSD: num(d.btcPrice, 0), aenderung24hPct: num(d.btcChange24h), marktkapUSD: num(d.btcMarketCap, 0), fearGreed: num(d.fearGreedIndex, 0), dxy: num(d.dxy), fedFundsPct: num(d.fedFundsRate) }),
+    sec(2, L[2], { letztesHalving: str(d.lastHalvingDate), monateSeitHalving: num(d.monthsSinceHalving, 0), naechstesHalving: str(d.nextHalvingEstimate), zyklusphase: str(d.cyclePhase) }),
+    sec(3, L[3], { hinweis: SELF_LOADED }),
+    sec(4, L[4], {
+      indikatoren: list((d.indicators ?? []).map((i: any) => `${i.name}: ${i.value} (Score ${i.available === false ? "n/a" : i.score}, Gewicht ${num(i.weight * 100, 1) ?? "n/a"}%)`), 10),
+      gis: num(d.gis, 4),
+      liquiditaetsblockScore: liq ? (liq.available && liq.score != null ? num(liq.score) : null) : null,
+    }),
+    sec(5, L[5], { fairValue: num(d.powerLaw?.fairValue, 0), support: num(d.powerLaw?.support, 0), resistance: num(d.powerLaw?.resistance, 0), abweichungPct: num(d.powerLaw?.deviationPercent, 1), fairValue6M: num(d.powerLaw?.fairValue6M, 0), powerSignal: num(d.powerLaw?.powerSignal, 1) }),
+    sec(6, L[6], { gws: num(d.gws?.value, 4), gis: num(d.gws?.gis, 4), powerSignal: num(d.gws?.powerSignal, 1), zyklusSignal: num(d.gws?.cycleSignal, 1), muTaeglich: num(d.gws?.mu, 4), interpretation: str(d.gws?.interpretation) }),
+    sec(7, L[7], { sigmaTaeglich: num(d.monteCarlo?.sigma, 4), mu: num(d.monteCarlo?.mu, 4), p10_3M: num(mc3?.p10, 0), p50_3M: num(mc3?.p50, 0), p90_3M: num(mc3?.p90, 0), p10_6M: num(mc6?.p10, 0), p50_6M: num(mc6?.p50, 0), p90_6M: num(mc6?.p90, 0), pVerlust_3MPct: num(mc3?.probBelow, 1) }),
+    sec(8, L[8], { kategorien: list((d.categories ?? []).map((c: any) => `${c.label} ${c.range}: ${num(c.probability, 1) ?? "n/a"}%`), 5) }),
+    sec(9, L[9], { position: str(d.cycleAssessment?.position), einstieg: str(d.cycleAssessment?.entryPoint), halvingKatalysator: str(d.cycleAssessment?.halvingCatalyst) }),
+    sec(10, L[10], { ausblick: str(d.finalEstimate?.outlook), range3M: str(d.finalEstimate?.threeMonthRange), range6M: str(d.finalEstimate?.sixMonthRange), zusammenfassung: str(d.finalEstimate?.summary, 800) }),
+    sec(11, L[11], {
+      kursUeberMA200: bc ? !!bc.priceAboveMA200 : null, ma50UeberMA200: bc ? !!bc.ma50AboveMA200 : null,
+      macdUeberNull: bc ? !!bc.macdAboveZero : null, macdSteigend: bc ? !!bc.macdRising : null, bull: typeof d.isBull === "boolean" ? d.isBull : null,
+      ma50: num(d.currentMA50, 0), ma200: num(d.currentMA200, 0), macd: num(d.currentMACD, 2),
+      letzteSignale: list((d.technicalSignals ?? []).slice(-3).map((s: any) => `${s.date} ${s.type}: ${s.reason}`), 3),
+    }),
+    sec(12, L[12], { wert: num(d.fearGreedIndex, 0), label: str(d.fearGreedLabel), schnitt30: num(d.fearGreedStats?.avg30, 0), schnitt90: num(d.fearGreedStats?.avg90, 0), jahresHoch: num(d.fearGreedStats?.yearHigh, 0), jahresTief: num(d.fearGreedStats?.yearLow, 0) }),
+    sec(13, L[13], { hinweis: SELF_LOADED }),
+    sec(14, L[14], { hinweis: "Fazit wird im Client aus den Sektionen 1–12 abgeleitet", ausblick: str(d.finalEstimate?.outlook) }),
+  ];
+  return {
+    dashboard: "btc", entity: "BTC", title: "Bitcoin (BTC)", asOf: str(d.timestamp, 40), sections, gates: [],
+    notes: ["BTC-Dashboard hat keine Scoring-Gates; GIS/GWS sind die Scores", "Krypto-Liquidität (3) und Miner-Zone (13) laden eigene Daten und fehlen im Kontext"],
+  };
+}
+
+/** Labels/IDs identisch mit SECTIONS in client/src/pages/GoldDashboard.tsx (News = 100). */
+export const GOLD_SECTION_LABELS: Record<number, string> = {
+  1: "Preis & Status", 100: "Gold-News", 2: "Preis-Chart", 3: "Indikatoren", 4: "Fair Value", 5: "Monte Carlo",
+  6: "Preisschätzung", 7: "Zyklus", 8: "Zusammenfassung",
+};
+
+export function buildGoldChatContext(data: any): ChatContext {
+  const d = data ?? {};
+  const L = GOLD_SECTION_LABELS;
+  const fv = d.fairValue, ry = d.realYieldModel, pe = d.priceEstimate, ad = d.adaptiveScore;
+  const mc = (m: any) => (m ? `Median ${num(m.median, 0) ?? "n/a"}, P10 ${num(m.p10, 0) ?? "n/a"}, P90 ${num(m.p90, 0) ?? "n/a"}` : null);
+  const sections: ChatSection[] = [
+    sec(1, L[1], { kursUSD: num(d.spotPrice), aenderungPct: num(d.changePercent), jahresHoch: num(d.yearHigh), jahresTief: num(d.yearLow), ma200: num(d.ma200), abweichungMA200Pct: num(d.deviationFromMA200, 1), stand: str(d.priceTimestamp), teilausfall: d.partial === true ? (list(d.partialReasons) ?? "ja") : null }),
+    sec(100, L[100], { newsFlag: d.goldNews ? num(d.goldNews.flag, 2) : null, newsZusammenfassung: str(d.goldNews?.summary, 600), hinweis: d.goldNews ? null : "News-Abruf lief nicht (n/a)" }),
+    sec(2, L[2], { rsi14: num(d.rsi14, 1), historiePunkte: Array.isArray(d.historicalPrices) ? d.historicalPrices.length : null, technikSignale: list((d.technicalSignals ?? []).map((s: any) => `${s.id}: ${s.available === false ? "n/a" : `Richtung ${s.direction ?? "n/a"}`}${s.detail ? ` (${s.detail})` : ""}`), 6) }),
+    sec(3, L[3], { indikatoren: list((d.indicators ?? []).map((i: any) => `${i.name}: ${i.value} (Score ${i.score}, Gewicht ${num(i.weight * 100, 1) ?? "n/a"}%)`), 10), gis: num(d.gis, 4), adaptiverScore: num(ad?.score, 3), scoreDelta: num(d.scoreDelta ?? ad?.scoreDelta, 3) }),
+    sec(4, L[4], { fvBasis: num(fv?.fvBasis, 0), fvAdj: num(fv?.fvAdj, 0), praemie: num(fv?.premium, 2), support1: num(fv?.support1, 0), resistance1: num(fv?.resistance1, 0), realzinsModellFV: num(ry?.fairValue?.fairValue, 0), realzinsRegime: str(ry?.regime?.regime) }),
+    sec(5, L[5], { mc3M: mc(d.monteCarlo3M), mc6M: mc(d.monteCarlo6M), mc12M: mc(d.monteCarlo12M) }),
+    sec(6, L[6], { mid3M: num(pe?.threeMonth?.mid, 0), mid6M: num(pe?.sixMonth?.mid, 0), mid12M: num(pe?.twelveMonth?.mid, 0), low12M: num(pe?.twelveMonth?.low, 0), high12M: num(pe?.twelveMonth?.high, 0) }),
+    sec(7, L[7], { phase: str(d.cycleAssessment?.currentPhase), treiber: list(d.cycleAssessment?.drivers), ausblick: str(d.cycleAssessment?.outlook) }),
+    sec(8, L[8], { sentiment: str(d.sentiment), fazit: str(d.finalAssessment, 800), tabelle: list((d.summaryTable ?? []).map((r: any) => `${r.metric}: ${r.value}`), 10) }),
+  ];
+  const gates = gatesFrom(d.gates ?? ad?.gates ?? ry?.gates);
+  const notes: string[] = [];
+  if (!gates.length) notes.push("Gold-Gates fehlen in diesen Daten: n/a");
+  if (d.partial === true) notes.push("Antwort enthält interne Ersatzwerte (Teilausfall)");
+  return { dashboard: "gold", entity: "GOLD", title: "Gold (XAU)", asOf: str(d.timestamp ?? d.analysisDate, 40), sections, gates, notes };
+}
+
+/** Nummerierung wie in client/src/pages/RecessionDashboard.tsx (abhängig von Regionen/Fazit). */
+export function recessionSectionLayout(hasRegions: boolean, hasFazit: boolean): Array<{ id: number; label: string; key: string }> {
+  const out = [
+    { id: 1, label: "Aktuelle Bewertung", key: "bewertung" }, { id: 2, label: "NY Fed / FRED Referenz", key: "nyfed" },
+    { id: 3, label: "Scoring-Regeln", key: "regeln" }, { id: 4, label: "Scoring-Zonen", key: "zonen" },
+    { id: 5, label: "Indikatoren-Tabelle", key: "indikatoren" }, { id: 6, label: "Score-Übersicht (5 Untergruppen)", key: "untergruppen" },
+    { id: 7, label: "Prozentschätzungen", key: "prozent" },
+  ];
+  let n = 8;
+  if (hasRegions) out.push({ id: n++, label: "Regionale Kataloge", key: "regionen" });
+  out.push({ id: n++, label: "RSI", key: "rsi" }, { id: n++, label: "Marktcharts", key: "markt" }, { id: n++, label: "Buffett-Indikator", key: "buffett" }, { id: n++, label: "Zusammenfassung & Top-3 Treiber", key: "summary" });
+  if (hasFazit) out.push({ id: n++, label: "Fazit & Makro-Risiko", key: "fazit" });
+  out.push({ id: n++, label: "Quellenliste", key: "quellen" });
+  return out;
+}
+
+export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean }): ChatContext {
+  const d = data ?? {};
+  const subs: any[] = Array.isArray(d.subgroups) ? d.subgroups : [];
+  const inds: any[] = Array.isArray(d.indicators) ? d.indicators : [];
+  const facts: Record<string, Record<string, ChatFactValue>> = {
+    bewertung: Object.fromEntries(subs.slice(0, 8).map(s => [`P_${String(s.name).slice(0, 40)}`, num(s.finalProbability ?? s.probability, 1)])),
+    nyfed: { nyFedWertPct: num(d.nyFedValue, 1), googleTrends: typeof d.googleTrendsAvailable === "boolean" ? d.googleTrendsAvailable : null },
+    regeln: { hinweis: "Statische Regeltexte des Dashboards" },
+    zonen: { hinweis: "Statische Zonen des Dashboards" },
+    indikatoren: Object.fromEntries(inds.slice(0, CHAT_LIMITS.maxFactsPerSection).map(i => [String(i.name).slice(0, CHAT_LIMITS.maxFactKeyChars), str(i.available === false ? `n/a (${i.subgroup})` : `${i.value} | Score ${i.rawScore} | ${i.zone} | ${i.group}/${i.subgroup}${i.proxy ? " | Proxy" : ""}`)])),
+    untergruppen: Object.fromEntries(subs.slice(0, 8).map(s => [String(s.name).slice(0, 40), str(`${s.label} (${s.horizon}): net ${num(s.netScore, 2) ?? "n/a"}/${num(s.maxScore, 2) ?? "n/a"}, P ${num(s.probability, 1) ?? "n/a"}%`)])),
+    prozent: Object.fromEntries(subs.slice(0, 8).map(s => [String(s.name).slice(0, 40), str(`P ${num(s.probability, 1) ?? "n/a"}%, final ${num(s.finalProbability, 1) ?? "n/a"}%, NY-Fed-Anker ${num(s.nyFedAnchor, 1) ?? "n/a"}`)])),
+    regionen: { hinweis: "Regionale Kataloge werden im Client zusammengestellt; nur Anzeige" },
+    rsi: { hinweis: SELF_LOADED }, markt: { hinweis: SELF_LOADED }, buffett: { hinweis: SELF_LOADED },
+    summary: { topTreiber: list(d.topDrivers), interpretation: str(d.interpretation, 800) },
+    fazit: { risiko: str(d.fazit?.riskLevel), zusammenfassung: str(d.fazit?.summary, 800), abschnitte: list((d.fazit?.sections ?? []).map((s: any) => s.title)) },
+    quellen: { anzahl: Array.isArray(d.sources) ? d.sources.length : null, quellen: list((d.sources ?? []).map((s: any) => s.name), 8) },
+  };
+  const sections = recessionSectionLayout(opts.hasRegions, !!d.fazit).map(s => sec(s.id, s.label, facts[s.key] ?? {}));
+  return {
+    dashboard: "recession", entity: "US-Rezession", title: "Rezessions-Dashboard", asOf: str(d.asOf ?? d.date, 40), sections, gates: [],
+    notes: ["Rezessions-Dashboard hat keine Gates; Scores sind die 5 Untergruppen", "RSI, Marktcharts und Buffett-Indikator laden eigene Daten und fehlen im Kontext"],
+  };
+}

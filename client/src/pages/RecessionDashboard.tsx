@@ -1,4 +1,6 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { ChatWidget } from "@/components/chat/ChatWidget";
+import { buildRecessionChatContext } from "@shared/chat-context";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { RECESSION_FALLBACK_DATA } from "@/lib/recessionFallbackData";
@@ -57,6 +59,25 @@ export default function RecessionDashboard() {
 
   const regions = useRecessionCatalog(data);
 
+  // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen Rezessionsdaten.
+  // Sektionen tragen keine Refs; Bindung und Sprung laufen über data-testid="section-N" der SectionCard.
+  const mainRef = useRef<HTMLElement>(null);
+  const chatContext = useMemo(() => (data ? buildRecessionChatContext(data, { hasRegions: !!regions }) : null), [data, regions]);
+  const chatSections = useMemo(() => (chatContext?.sections ?? []).map(({ id, label }) => ({ id, label })), [chatContext]);
+  const sectionEl = useCallback((id: number) => mainRef.current?.querySelector<HTMLElement>(`[data-testid="section-${id}"]`) ?? null, []);
+  const jumpToSection = useCallback((id: number) => {
+    sectionEl(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [sectionEl]);
+  const getActiveSectionId = useCallback((): number | null => {
+    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    for (const { id } of chatSections) {
+      const el = sectionEl(id);
+      if (!el) continue;
+      if (el.getBoundingClientRect().bottom > top + 40) return id;
+    }
+    return null;
+  }, [chatSections, sectionEl]);
+
   const startAnalysis = useCallback(() => {
     analyzeMutation.mutate();
   }, [analyzeMutation]);
@@ -97,7 +118,7 @@ export default function RecessionDashboard() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar">
+      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar">
         {!data && !analyzeMutation.isPending ? (
           <WelcomeScreen onStart={startAnalysis} />
         ) : analyzeMutation.isPending ? (
@@ -156,6 +177,14 @@ export default function RecessionDashboard() {
           </div>
         ) : null}
       </main>
+      <ChatWidget
+        dashboard="recession"
+        context={chatContext}
+        sections={chatSections}
+        getActiveSectionId={getActiveSectionId}
+        onJumpToSection={jumpToSection}
+        suggestions={["Fasse die Rezessionslage in 5 Punkten zusammen", "Welche Indikatoren treiben das Risiko?", "Wie unterscheiden sich die 5 Untergruppen?"]}
+      />
     </div>
   );
 }
