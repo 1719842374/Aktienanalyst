@@ -418,8 +418,8 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 Reihenfolge nach Nutzen und Aufwand (S = klein, M = mittel, L = groß).
 
 1. **Makro-Layer mit KI-Gewichten (Future_9)** – F9-09, F9-12, F9-13, F9-16, F9-17 (L). Philip hat am 18.10. JA gesagt. Heute 0 Code im Rezessionspfad. Erst als Zusatzobjekt mit Anzeige der angepassten Gewichte und Prüfung an 2000/2008/2022, erst danach die Live-P umschalten. Datenreihen F9-02/04/06/07/08 (FRED/FMP, kostenlos) gehören dazu.
-2. **Buffett robust machen** – F1-34 Fehlergrund statt generischem 502, F1-30 zweiter Versuch, F1-31 FRED-Marktwert als Ersatz (S).
-3. **VIX im Rezessions-Chart mit Yahoo-Ersatz** – F1-66 (S). Der Score hat ihn schon (#210).
+2. **Buffett robust machen** – F1-34 Fehlergrund statt generischem 502, F1-30 zweiter Versuch, F1-31 FRED-Marktwert als Ersatz (S). ✅ `99a06d1b` (#274), Nachzug #323 `cee85b81`.
+3. **VIX im Rezessions-Chart mit Yahoo-Ersatz** – F1-66 (S). Der Score hat ihn schon (#210). Chart-Teil ✅ `35037f92` (#296); Retry offen, Folgejob dr eggbot.
 4. **Credit-Risiko-Karte in Sektion 10 (Risikoinversion)** – F1-21 mit F1-20 (Verschuldung, Zinsdeckung aus FMP) und F1-24 (PESTEL-Zeile) (M). Basis ist der Markt-Spread BAA10Y; kein CDS, kein Score.
 5. **Regionen-Umschalter vollständig** – F1-52 Backend rechnet die 5 Untergruppen je Region, F1-47 fünf Gauges, F1-48 Tabellen folgen der Region (M). Nur Anzeige, US-Handlung bleibt.
 6. **Dividende fertig machen** – F1-17 Spanne/Sektor in Sektion 6, F1-18 Hinweis in Sektion 20, F1-14 Band ab 4 % (S).
