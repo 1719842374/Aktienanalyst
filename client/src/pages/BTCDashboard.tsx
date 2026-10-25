@@ -2876,7 +2876,7 @@ export default function BTCDashboard() {
         )}
 
         {/* Main content */}
-        <main ref={mainRef} className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar">
+        <main ref={mainRef} className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0">
           {!data && !analyzeMutation.isPending ? (
             <BTCWelcomeScreen onAnalyze={() => analyzeMutation.mutate(undefined)} />
           ) : analyzeMutation.isPending ? (
