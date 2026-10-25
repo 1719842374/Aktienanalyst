@@ -505,4 +505,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // wie der 13F-Screener oben — dieser Route-Orchestrator bleibt append-only.
   const { registerBacktestRoutes } = await import("./backtest-routes");
   registerBacktestRoutes(app);
+
+  // 16. POST /api/catalyst-event — S17 „Event hinzufügen“ (§4b Stufe 1), isoliertes Modul.
+  const { registerCatalystEventRoute } = await import("./catalyst-event-route");
+  registerCatalystEventRoute(app);
 }
