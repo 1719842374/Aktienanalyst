@@ -631,6 +631,10 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       const { quote, profile, financials, analyst, ohlcv, segments, geoSegments, peers, ratios } = fmpData as any;
       // C1 (#252): FMP 402 → Yahoo-Fallback ohne Statements. Dann keine Bewertung (DCF/Score/Rating null).
       const yahooOnly = (fmpData as any).source === "yahoo";
+      // FMP-ADR: 402-Listing mit Fundamentaldaten über das US-/ADR-Symbol (analyze-helpers fmpViaAdrData). Volle
+      // Bewertung (source 'fmp'); weitere FMP-Calls dieses Laufs gehen an das ADR-Symbol, Kurs/Chart bleiben lokal.
+      const adrInfo = (fmpData as any).adr ?? null;
+      const fmpSymbol: string = (fmpData as any).fmpSymbol ?? upperTicker;
 
       // ── 2. Parse core financials ──
       const price = parseNumber(String(quote?.price ?? 0));
@@ -810,9 +814,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // Nur echte zukünftige Kalendertermine werden gezeigt. Fehlt FMPs Termin,
       // bleibt das Feld null; die UI zeigt transparent "n/a" statt einer Schätzung.
       const todayIso = new Date().toISOString().slice(0, 10);
-      const earningsRows = await fmpEarningsCalendar(upperTicker).catch(() => []);
+      const earningsRows = await fmpEarningsCalendar(fmpSymbol).catch(() => []);
       const nextEarnings = earningsRows
-        .filter((r: any) => (!r?.symbol || String(r.symbol).toUpperCase() === upperTicker) && typeof r?.date === "string" && r.date.slice(0, 10) > todayIso)
+        .filter((r: any) => (!r?.symbol || String(r.symbol).toUpperCase() === fmpSymbol) && typeof r?.date === "string" && r.date.slice(0, 10) > todayIso)
         .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))[0] ?? null;
       const nextEarningsDate = nextEarnings?.date ? String(nextEarnings.date).slice(0, 10) : null;
       const nextEarningsTimeRaw = String(nextEarnings?.time ?? "").toLowerCase();
@@ -1070,7 +1074,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             { name: "Other", pct: 3 },
           ],
         };
-        const fb = productFallback[upperTicker];
+        const fb = productFallback[upperTicker] ?? (adrInfo ? productFallback[fmpSymbol] : undefined);
         if (fb) {
           revenueSegments = fb.map(row => ({
             name: row.name,
@@ -1130,7 +1134,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             const enrichCacheKey = `segments_growth__${upperTicker}`;
             let enrichResult = diskResearcherGet(enrichCacheKey) as { segments: RevenueSegment[]; _empty?: boolean } | null;
             if (!enrichResult) {
-              const fetched = await fetchSecBusinessSegments(upperTicker, companyName);
+              const fetched = await fetchSecBusinessSegments(fmpSymbol, companyName);
               enrichResult = fetched && fetched.segments.length > 0
                 ? { segments: fetched.segments.map(s => ({ name: s.name, revenue: s.revenue, percentage: s.percentage, ...(typeof s.prevRevenue === "number" && s.prevRevenue > 0 && !s.noPriorYearMatch ? { prevRevenue: s.prevRevenue } : {}) })) }
                 : { segments: [], _empty: true };
@@ -1175,7 +1179,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
           | null;
 
         if (!secResult) {
-          const fetched = await fetchSecBusinessSegments(upperTicker, companyName);
+          const fetched = await fetchSecBusinessSegments(fmpSymbol, companyName);
           if (fetched && fetched.segments.length > 0) {
             const total = fetched.segments.reduce((sum, s) => sum + s.revenue, 0);
             secResult = {
@@ -1615,7 +1619,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       let quarterlyRevenueChronological: number[] | null = null;
       let quarterlyIncomeRows: any[] = [];
       try {
-        const qRows: any[] = await fmpIncomeStatementQuarterly(upperTicker, 16);
+        const qRows: any[] = await fmpIncomeStatementQuarterly(fmpSymbol, 16);
         if (Array.isArray(qRows) && qRows.length > 0) {
           quarterlyIncomeRows = qRows;
           quarterlyRevenueChronological = qRows
@@ -2038,7 +2042,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
         // Section 10
         ohlcvData: ohlcvPoints,
-        historyDataSource: yahooOnly ? "yahoo" : historyDataSource,
+        // FMP-ADR: Chart kommt vom lokalen Listing (Yahoo), nicht vom ADR.
+        historyDataSource: yahooOnly || adrInfo ? "yahoo" : historyDataSource,
         historyTruncated,
         technicalIndicators,
 
@@ -2107,6 +2112,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         llmModelUsed,
         dataSource: yahooOnly ? "yahoo" as const : "fmp" as const,
         ...(yahooOnly ? { valuationNotice: YAHOO_NO_VALUATION_NOTICE } : {}),
+        ...(adrInfo ? { adrSource: adrInfo } : {}),
         dataTimestamp: new Date().toISOString(),
         _useLLM: useLLM,
 

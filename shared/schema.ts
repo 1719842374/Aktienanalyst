@@ -656,6 +656,14 @@ export interface StockAnalysis {
   // NEW: Currency conversion info (for non-USD reporting companies)
   currencyInfo?: CurrencyInfo;
 
+  /** FMP-ADR (#265 v2): gesetzt, wenn ein Nicht-US-Listing (FMP 402) seine Fundamentaldaten von FMP über das
+   *  US-/ADR-Symbol bekommt (SAP.DE→SAP, VOW3.DE→VWAPY, Rückfall VWAGY = Proxy Stammaktie). Kurs und Chart vom
+   *  lokalen Listing. Fehlt bei allen anderen Analysen. Shape: server/fmp-adr-map.ts AdrSourceInfo. */
+  adrSource?: {
+    fmpSymbol: string; sharesPerAdr: number; proxy: boolean; impliedSharesPerAdr: number;
+    ratioDeviationPct: number; mcapDeviationPct: number; perShareUnit: "adr" | "ordinary"; note: string;
+  };
+
   // NEW: PESTEL analysis
   pestelAnalysis?: PESTELAnalysis;
 

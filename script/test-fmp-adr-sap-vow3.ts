@@ -130,5 +130,16 @@ await check("currencyInfo-Hinweis ohne sourceNote bytegleich zu main", () => {
   assert.equal(currencyInfoFromListingFx(lfx)!.note, "Listing in EUR; Kurs, Market Cap, Historie und Kursziel zu EURUSD = 1.1000 in USD umgerechnet, Statements in USD.");
 });
 
+await check("analyze-route: Folge-Calls über ADR, historyDataSource yahoo, adrSource in Antwort und Schema", () => {
+  const r = readFileSync("server/analyze-route.ts", "utf8");
+  assert.match(r, /const fmpSymbol: string = \(fmpData as any\)\.fmpSymbol \?\? upperTicker;/);
+  assert.match(r, /fmpEarningsCalendar\(fmpSymbol\)/);
+  assert.match(r, /fmpIncomeStatementQuarterly\(fmpSymbol, 16\)/);
+  assert.equal((r.match(/fetchSecBusinessSegments\(fmpSymbol, companyName\)/g) || []).length, 2);
+  assert.match(r, /historyDataSource: yahooOnly \|\| adrInfo \? "yahoo" : historyDataSource/);
+  assert.match(r, /\.\.\.\(adrInfo \? \{ adrSource: adrInfo \} : \{\}\)/);
+  assert.match(readFileSync("shared/schema.ts", "utf8"), /adrSource\?: \{\s*fmpSymbol: string; sharesPerAdr: number; proxy: boolean;/);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
