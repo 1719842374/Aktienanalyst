@@ -74,6 +74,7 @@
 ### Soll-Ist 25.10.2026 (HEAD `09750838`)
 - Soll: Label „Asien“, Aggregation mind. Japan + China, Score/Treiber aggregiert.
 - Ist: kein Commit dazu gemeldet oder geprüft → **OFFEN**.
+- Nachtrag 25.10.2026 19:34 (HEAD `35037f92`): §2 Asien-Aggregation: OFFEN. Vorgabe Philip 17:11 (von Stabschef übermittelt): dritter Markt China über ASHR. Ob §2 damit erfüllt ist, klärt Stabschef. Datei bleibt **Offen_**, bis §2 geklärt ist.
 
 **Priorität:** Hoch (konkreter Fix, den Philip angesprochen hat)  
 **Aufwand:** 1–1,5 Tage
@@ -105,6 +106,7 @@
 ### Soll-Ist 25.10.2026 (HEAD `09750838`)
 - Soll: 10Y-Treasury-Linie als Overlay/Toggle in `TechnicalChart`.
 - Ist: #267 (Squash vor `4820aaa3`) bringt ein Real10Y-Overlay (FRED DFII10, real) in `TechnicalChart.tsx`; nominaler 10Y laut Spec nicht belegt → **🟡 Teil**, Entscheidung „DFII10 reicht?“ offen.
+- Nachtrag 25.10.2026 19:34 (HEAD `35037f92`): §3 10Y-Overlay S12: ✅ über #267 Real10Y (DFII10) in `TechnicalChart.tsx`. Grund: Entscheidung Philip 19:33, dass Real 10Y reicht (von Stabschef übermittelt). Status jetzt ✅ (nicht mehr 🟡).
 
 **Priorität:** Mittel (optional, aber sauber und relativ wenig Aufwand)  
 **Aufwand:** 2–4 Stunden
