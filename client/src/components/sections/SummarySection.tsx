@@ -576,7 +576,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
 
 // === Sub-components ===
 
-function SummaryRow({ label, value, note }: { label: string; value: string; note?: string }) {
+export function SummaryRow({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
     <tr>
       <td className="py-1.5 px-2 text-muted-foreground">{label}</td>

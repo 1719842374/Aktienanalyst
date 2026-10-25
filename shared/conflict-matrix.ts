@@ -9,22 +9,27 @@ import { sumUpsideGb } from "./bias-fixes";
 
 export type ConflictSignal = "positiv" | "neutral" | "negativ" | "n/a";
 
-export interface ConflictCell {
-  id: "quality" | "trend" | "reverseDcf" | "technical" | "catalysts";
+/** One dimension. Generic id so BTC, Gold and Recession reuse the same matrix (shared/asset-conflict-matrix.ts). */
+export interface ConflictCellOf<Id extends string = string> {
+  id: Id;
   label: string;
   signal: ConflictSignal;
   value: string;
   basis: string;
 }
 
-export interface ConflictMatrix {
-  cells: ConflictCell[];
+export type ConflictCell = ConflictCellOf<"quality" | "trend" | "reverseDcf" | "technical" | "catalysts">;
+
+export interface ConflictMatrixOf<C extends ConflictCellOf = ConflictCellOf> {
+  cells: C[];
   positives: number;
   negatives: number;
   /** At least one positive AND one negative dimension. */
   divergent: boolean;
   summary: string;
 }
+
+export type ConflictMatrix = ConflictMatrixOf<ConflictCell>;
 
 export interface ConflictInputs {
   qualityScore: number | null | undefined;
@@ -101,14 +106,19 @@ export function buildConflictMatrix(i: ConflictInputs): ConflictMatrix {
     { id: "catalysts", label: "Katalysatoren-EW", signal: catalystSignal(i.catalystUpsidePct),
       value: fin(i.catalystUpsidePct) ? `+${i.catalystUpsidePct.toFixed(1)}%` : "n/a", basis: "Σ gewichtete positive GB, ≥10% / <3%" },
   ];
+  return summarizeConflictCells(cells);
+}
+
+/** Counts, divergence flag and summary line. n/a counts neither way. Shared by the stock and the asset matrices. */
+export function summarizeConflictCells<C extends ConflictCellOf>(cells: C[]): ConflictMatrixOf<C> {
   const positives = cells.filter(c => c.signal === "positiv").length;
   const negatives = cells.filter(c => c.signal === "negativ").length;
   const divergent = positives > 0 && negatives > 0;
   const name = (s: ConflictSignal) => cells.filter(c => c.signal === s).map(c => c.label).join(", ");
   const summary = divergent
     ? `Divergenz: ${name("positiv")} positiv, aber ${name("negativ")} negativ.`
-    : positives > 0 ? `Gleichgerichtet positiv (${positives}/5).`
-    : negatives > 0 ? `Gleichgerichtet negativ (${negatives}/5).`
+    : positives > 0 ? `Gleichgerichtet positiv (${positives}/${cells.length}).`
+    : negatives > 0 ? `Gleichgerichtet negativ (${negatives}/${cells.length}).`
     : "Kein klares Signal.";
   return { cells, positives, negatives, divergent, summary };
 }
