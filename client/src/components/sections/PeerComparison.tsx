@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import type { StockAnalysis, PeerCompany } from "@shared/schema";
 import type { PeerNaFill } from "@shared/peer-na-fill";
 import { ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from "lucide-react";
-import { PEER_VIEW_TABS, filterPeersForView, peerIndustryLabel, viewAverage, type PeerViewTab } from "@/lib/peerViewFilter";
+import { PEER_VIEW_TABS, filterPeersForView, peerIndustryLabel, viewAverage, peForView, PEER_GICS_NA_TEXT, type PeerViewTab, type PeerPeBasis, type PeerIndustryBasis } from "@/lib/peerViewFilter";
 import { PEER_RESET_NOTICE_TEXT, addListFull, removeListFull } from "@/lib/peerOverrideLimits";
 
 function fmt(v: number | null | undefined, decimals = 1): string {
@@ -79,6 +79,11 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
   const [addInput, setAddInput] = useState("");
   // PR B Peer-Selection: Filter-Tabs sind reine Ansicht (Server-Ø, Score, PDF = volles Set).
   const [viewTab, setViewTab] = useState<PeerViewTab>("all");
+  // Peer-Varianten A/B (umschaltbar, reine Ansicht): A = KGV-Basis, B = Industrie-Basis.
+  const [peBasis, setPeBasis] = useState<PeerPeBasis>("forward");
+  const [industryBasis, setIndustryBasis] = useState<PeerIndustryBasis>("fmp");
+  const subjectForwardPe = Number(data.forwardPE) > 0 ? Number(data.forwardPE) : null;
+  const variants = { peBasis, industryBasis, subjectForwardPe };
 
   // Lokaler Override-State, vorbelegt aus dem letzten Server-Response (falls
   // die Seite mit bereits aktiven Overrides geladen wurde).
@@ -94,8 +99,8 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
 
   // PR B: sichtbare Zeilen je Tab (reine Ansicht). Wie sortedPeers vor dem Early-Return (#258 Hook-Reihenfolge).
   const viewPeers = useMemo(
-    () => (pc && visiblePeers.length > 0 ? filterPeersForView(visiblePeers, pc.subject, data.industry, viewTab) : []),
-    [pc, visiblePeers, data.industry, viewTab],
+    () => (pc && visiblePeers.length > 0 ? filterPeersForView(visiblePeers, pc.subject, data.industry, viewTab, variants) : []),
+    [pc, visiblePeers, data.industry, viewTab, peBasis, industryBasis, subjectForwardPe],
   );
 
   // Sort peers. #258: vor dem Early-Return (leere Peer-Liste), damit die Hook-Reihenfolge
@@ -203,7 +208,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
 
   // PR B: Tab-Zähler und Ansichts-Ø (keine Hooks); Ø-Peers-Zeile, Score und PDF bleiben auf `peers` (volles Set).
   const viewAvg = viewTab === "all" ? null : viewAverage(viewPeers);
-  const tabCounts = new Map(PEER_VIEW_TABS.map(t => [t.key, filterPeersForView(peers, subject, data.industry, t.key).length]));
+  const tabCounts = new Map(PEER_VIEW_TABS.map(t => [t.key, filterPeersForView(peers, subject, data.industry, t.key, variants).length]));
 
   // Toggle sort
   function handleSort(key: SortKey) {
@@ -310,6 +315,30 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
           <span className="text-[10px] text-foreground/40" data-testid="peer-view-note">Ansicht, nicht score-wirksam</span>
         )}
       </div>
+      {viewTab === "pe" && (
+        <div className="flex flex-wrap items-center gap-1 text-[10px]" data-testid="peer-variant-pe">
+          <span className="text-foreground/40">KGV-Basis:</span>
+          {(["forward", "trailing"] as const).map(b => (
+            <button key={b} type="button" aria-pressed={peBasis === b} onClick={() => setPeBasis(b)} data-testid={`peer-pe-basis-${b}`}
+              className={`px-1.5 py-px rounded border ${peBasis === b ? "border-primary/50 bg-primary/10 text-primary" : "border-border/50 text-foreground/50"}`}>
+              {b === "forward" ? "Forward ±30 % (Fallback trailing)" : "Trailing ±30 %"}
+            </button>
+          ))}
+          <span className="text-foreground/40" data-testid="peer-pe-subject">Referenz {subject.ticker}: {(() => { const r = peForView(subject.pe, subjectForwardPe, peBasis); return r.value == null ? "n/a" : `${r.value.toFixed(1)} (${r.basis === "forward" ? "Fwd" : "TTM"})`; })()}</span>
+        </div>
+      )}
+      {viewTab === "industry" && (
+        <div className="flex flex-wrap items-center gap-1 text-[10px]" data-testid="peer-variant-industry">
+          <span className="text-foreground/40">Industrie-Basis:</span>
+          {(["fmp", "gics"] as const).map(b => (
+            <button key={b} type="button" aria-pressed={industryBasis === b} onClick={() => setIndustryBasis(b)} data-testid={`peer-industry-basis-${b}`}
+              className={`px-1.5 py-px rounded border ${industryBasis === b ? "border-primary/50 bg-primary/10 text-primary" : "border-border/50 text-foreground/50"}`}>
+              {b === "fmp" ? "FMP-Industrie" : "GICS Sub-Industry"}
+            </button>
+          ))}
+          {industryBasis === "gics" && <span className="text-amber-500/80" data-testid="peer-gics-na">{PEER_GICS_NA_TEXT}</span>}
+        </div>
+      )}
 
       <div className="overflow-x-auto -mx-1">
         <table className="w-full text-[11px]" data-testid="peer-scored-table">
@@ -358,6 +387,9 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
                   {peerIndustryLabel(p) != null && (
                     <div className="text-[9px] text-foreground/40" data-testid="peer-industry">{peerIndustryLabel(p)}</div>
                   )}
+                  {viewTab === "pe" && (() => { const r = peForView(p.pe, p.forwardPe, peBasis); return (
+                    <div className="text-[9px] text-foreground/40" data-testid="peer-pe-basis">{r.value == null ? "KGV n/a" : `${r.basis === "forward" ? "Fwd" : "TTM"} ${r.value.toFixed(1)}`}</div>
+                  ); })()}
                 </td>
                 <td className="py-1.5 px-1 text-right font-mono tabular-nums text-[11px] text-foreground/50">{fmtCap(p.marketCap)}</td>
                 {cols.map(c => {
