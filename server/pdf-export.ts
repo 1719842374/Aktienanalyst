@@ -9,6 +9,7 @@ import { conflictMatrixHtmlForAnalysis } from './pdf-conflict-matrix';
 import { reverseDcfFromAnalysis, isEtfOrFund } from '../shared/conflict-matrix';
 import { companyDcfWaccPct, safeCompanyDcfWaccPct, waccSuffix } from '../shared/valuation-signal';
 import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from '../shared/data-source';
+import { fazitEntryForExport, type FazitEntryExport } from '../client/src/lib/fazitEntryExport';
 
 /** " (WACC x.xx%)" next to g* — omitted when beta5Y/marketCap/totalDebt are missing so the PDF never prints "WACC NaN%". */
 export function pdfWaccSuffix(d: any): string {
@@ -114,6 +115,28 @@ function buildFazit(data: any) {
   return { pos, neg, neut, score, verdict, konsDCF, worstCase, crvCons, raCrvCons, dcfBeiCRV3, totalGB, totalExpDmg, allBuy, ptUp };
 }
 
+/**
+ * Max-Entry (CRV 3:1) im PDF = Wert des S17-Fazits (fazitEntryForExport). Nur Anzeige:
+ * Zählung/Verdict von buildFazit bleibt unverändert. Der Faktor-Text bekommt die Fazit-Zahl nur,
+ * wenn Kurs-Seite (unter/über) bei beiden Werten gleich ist — sonst bleibt der Text wie bisher.
+ */
+export function applyFazitEntryToPdfFactors(fazit: { pos: string[]; neg: string[]; dcfBeiCRV3: number }, price: number, fe: FazitEntryExport | null): void {
+  if (!fe || !price) return;
+  if ((price <= fazit.dcfBeiCRV3) !== (price <= fe.maxEntry)) return;
+  const old = `($${f(fazit.dcfBeiCRV3,2)})`;
+  const swap = (xs: string[]) => xs.map(x => (x.includes('Max-Entry') && x.includes(old)) ? x.replace(old, `(${fe.label})`) : x);
+  fazit.pos = swap(fazit.pos);
+  fazit.neg = swap(fazit.neg);
+}
+
+/** S6-Zeile „Max-Entry (CRV 3:1)“: Fazit-Wert, sonst sichtbares n/a (kein Ersatzwert). */
+export function pdfMaxEntryRow(fe: FazitEntryExport | null): string {
+  return fe
+    ? `<div class="row" data-testid="pdf-max-entry"><span class="row-label">Max-Entry (CRV 3:1)</span><span class="row-val">${esc(fe.label)}</span></div>
+<div class="para" style="font-size:7px;color:#7a8296">Gleicher Wert wie das Fazit (S17): (Entscheidungsbasis + 2 × Worst Case) / 3.</div>`
+    : `<div class="row" data-testid="pdf-max-entry"><span class="row-label">Max-Entry (CRV 3:1)</span><span class="row-val">n/a — Fazit-Wert nicht berechenbar</span></div>`;
+}
+
 // ===== Normalize data (fill computed fields the frontend calculates) =====
 function normalizeData(data: any): any {
   const d = { ...data };
@@ -217,7 +240,7 @@ KERNDATEN:
 DCF-BEWERTUNG:
 - Konservativ DCF: $${fazit.konsDCF?.toFixed(2)} (${((fazit.konsDCF/data.currentPrice-1)*100).toFixed(0)}% vs. Kurs)
 - CRV Base: ${fazit.crvCons?.toFixed(1)}:1 | CRV Risikoadj.: ${fazit.raCrvCons?.toFixed(1)}:1
-- Max-Entry (CRV 3:1): $${fazit.dcfBeiCRV3?.toFixed(2)}
+- Max-Entry (CRV 3:1): ${fazit.dcfBeiCRV3 != null ? '$' + fazit.dcfBeiCRV3.toFixed(2) : 'n/a'}
 - Total Expected Damage: ${fazit.totalExpDmg?.toFixed(1)}%
 - Worst Case: $${fazit.worstCase?.toFixed(2)}
 
@@ -309,13 +332,16 @@ export async function generateAnalysisHTML(rawData: any): Promise<string> {
   const bal = fs.balanceSheet || {};
   const cf = fs.cashFlow || {};
   const fazit = buildFazit(data);
+  // Max-Entry wie im S17-Fazit (Quelle wie Exec Summary Option A); Score/Verdict oben unverändert.
+  const fazitEntry = fazitEntryForExport(rawData);
+  applyFazitEntryToPdfFactors(fazit, data.currentPrice || 0, fazitEntry);
   // Reverse DCF: same formula as the UI and the Konfliktmatrix (one g* in the whole PDF)
   const rdcf = reverseDcfFromAnalysis(rawData);
   const nd = (data.totalDebt || 0) - (data.cashEquivalents || 0);
   const ptUp = data.analystPT?.median && data.currentPrice ? ((data.analystPT.median - data.currentPrice) / data.currentPrice * 100) : null;
 
   // Generate LLM narrative summary (parallel-safe, graceful fallback)
-  const narrative = await generateNarrativeSummary(data, fazit);
+  const narrative = await generateNarrativeSummary(data, fazitEntry ? { ...fazit, dcfBeiCRV3: fazitEntry.maxEntry } : { ...fazit, dcfBeiCRV3: null });
 
   // DCF scenarios
   const konsFV = wS ? dcfCalc(data, wS.kons, g * 0.7) : 0;
@@ -460,7 +486,7 @@ ${wS ? `<div class="sub">DCF-Szenarien (5Y → Gordon Growth Terminal Value)</di
 <div class="row"><span class="row-label">Fair Value (Kons. DCF)</span><span class="row-val">$${f(fazit.konsDCF,2)}</span></div>
 <div class="row"><span class="row-label">CRV Base</span><span class="row-val">${f(fazit.crvCons,1)}:1</span></div>
 <div class="row"><span class="row-label">CRV Risikoadjustiert</span><span class="row-val">${f(fazit.raCrvCons,1)}:1</span></div>
-<div class="row"><span class="row-label">Max-Entry (CRV 3:1)</span><span class="row-val">$${f(fazit.dcfBeiCRV3,2)}</span></div>
+${pdfMaxEntryRow(fazitEntry)}
 
 <!-- S7: RELATIVE BEWERTUNG -->
 <div class="sec-header"><span>7 &nbsp; RELATIVE BEWERTUNG (Peer Comparison)</span></div>
