@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import { apiErrorFromResponse } from "@/lib/apiError";
 import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import {
@@ -305,6 +306,20 @@ export function BuffettRatioPanel() {
   });
 
   const all = query.data?.points ?? [];
+
+  // PR 3 (Chat-Kontext): letzter angezeigter Punkt aus der bestehenden Query — keine neue Abfrage.
+  const bl = query.data?.latest ?? (all.length ? all[all.length - 1] : null);
+  const b1 = (v: number | null | undefined) => (v != null && Number.isFinite(v) ? Math.round(v * 10) / 10 : null);
+  usePublishChatSection("recession", "buffett", query.data ? {
+    region, stand: query.data.asOf, datum: bl?.date ?? null, marktwertZuBipPct: b1(bl?.ratio), trendPct: b1(bl?.trend),
+    abweichungVomTrendPct: b1(bl?.premiumPct), zScore: b1(bl?.zScore), plus1Sigma: b1(bl?.plus1), plus2Sigma: b1(bl?.plus2),
+    proxy: bl?.proxy ?? null, hinweisQuelle: query.data.note ? query.data.note.slice(0, 400) : null,
+    _auffaelligkeiten: [
+      bl && bl.zScore >= 2 ? "Bewertung ≥ +2σ über dem Trend" : bl && bl.zScore >= 1 ? "Bewertung ≥ +1σ über dem Trend" : "",
+      bl && bl.zScore <= -1 ? "Bewertung ≤ −1σ unter dem Trend" : "",
+      bl?.proxy ? `letzter Punkt fortgeschrieben via ${bl.proxy}` : "",
+    ].filter(Boolean).join("; ") || null,
+  } : null);
   const chart = sliceWindow(all, range).map(point => ({
     ...point,
     t: Date.parse(`${point.date}T00:00:00Z`),

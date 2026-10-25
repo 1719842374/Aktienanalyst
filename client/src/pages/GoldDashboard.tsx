@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import { ChatWidget } from "@/components/chat/ChatWidget";
-import { buildGoldChatContext } from "@shared/chat-context";
+import { visibleTopOf } from "@/lib/activeSection";
+import { buildGoldChatContext, enrichChatContext } from "@shared/chat-context";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { GoldAnalysis } from "../../../shared/gold-schema";
@@ -82,10 +83,11 @@ export default function GoldDashboard() {
   }, []);
 
   // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen Gold-Daten.
-  const chatContext = useMemo(() => (data ? buildGoldChatContext(data) : null), [data]);
+  // PR 3: Auffälligkeiten je Sektion (aus vorhandenen Daten/Gates); Gold hat keine Selbstlade-Sektionen.
+  const chatContext = useMemo(() => (data ? enrichChatContext(buildGoldChatContext(data), null, { gatesSectionId: 8 }) : null), [data]);
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   const getActiveSectionId = useCallback((): number | null => {
-    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
     for (const { id } of chatSections) {
       const el = sectionRefs.current[id];
       if (!el) continue;

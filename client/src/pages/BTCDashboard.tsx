@@ -1,6 +1,8 @@
 import { Fragment, useState, useRef, useCallback, useMemo } from "react";
 import { ChatWidget } from "@/components/chat/ChatWidget";
-import { buildBtcChatContext } from "@shared/chat-context";
+import { visibleTopOf } from "@/lib/activeSection";
+import { buildBtcChatContext, enrichChatContext } from "@shared/chat-context";
+import { useChatSectionData } from "@/lib/chatSectionData";
 import { useMutation } from "@tanstack/react-query";
 import { analyzeBTC } from "@/lib/btcAnalysis";
 import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
@@ -2762,10 +2764,12 @@ export default function BTCDashboard() {
   }, []);
 
   // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen BTC-Daten.
-  const chatContext = useMemo(() => (data ? buildBtcChatContext(data) : null), [data]);
+  // PR 3: Krypto-Liquidität (3) und Miner-Zone (13) aus der Anzeige + Auffälligkeiten je Sektion.
+  const chatLive = useChatSectionData("btc");
+  const chatContext = useMemo(() => (data ? enrichChatContext(buildBtcChatContext(data), chatLive) : null), [data, chatLive]);
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   const getActiveSectionId = useCallback((): number | null => {
-    const top = mainRef.current?.getBoundingClientRect().top ?? 0;
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
     for (const { id } of chatSections) {
       const el = sectionRefs.current[id];
       if (!el) continue;
