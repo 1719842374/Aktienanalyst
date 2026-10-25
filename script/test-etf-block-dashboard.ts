@@ -10,7 +10,7 @@ import { isEtfOrFund } from "../shared/conflict-matrix";
 
 const dash = readFileSync("client/src/pages/Dashboard.tsx", "utf8");
 assert.match(dash, /data && isEtfOrFund\(data\) \? \(/, "ETF branch before the sections branch");
-assert.ok(dash.indexOf("data && isEtfOrFund(data) ? (") < dash.indexOf("<ExecSummaryCard data={data} />"), "note replaces the sections");
+assert.ok(dash.indexOf("data && isEtfOrFund(data) ? (") < dash.indexOf("<ExecSummaryCard data={data}"), "note replaces the sections");
 assert.match(dash, /ETF\/Index – nicht im Aktien-Dashboard/);
 assert.match(dash, /\{data && !isEtfOrFund\(data\) && \(\s*<button[\s\S]{0,900}button-pdf-export/, "PDF button hidden for ETFs");
 assert.match(dash, /disabled=\{!data \|\| isEtfOrFund\(data\)\}/, "section nav disabled for ETFs");

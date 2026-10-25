@@ -9,6 +9,7 @@ import type { StockAnalysis } from "../../../shared/schema";
 import { buildFazitSignal, prepareFazitMetrics } from "@/lib/fazit-signal";
 import { buildBiasDecision } from "../../../shared/bias-fixes";
 import { usePublishChatSection } from "@/lib/chatSectionData";
+import type { GBMMonteCarloResult } from "@/lib/calculations";
 
 export type ExecSummaryView = {
   headline?: string;
@@ -28,7 +29,9 @@ export type ExecSummaryView = {
   redFlags?: string[];
 };
 
-export function ExecSummaryCard({ data }: {
+export function ExecSummaryCard({ data, sharedMonteCarlo }: {
+  /** Derselbe Monte-Carlo-Lauf wie S18/S20 – sonst eigener Zufallslauf, der an Schwellen kippen kann. */
+  sharedMonteCarlo?: GBMMonteCarloResult | null;
   data: StockAnalysis & {
     execSummary?: ExecSummaryView | null;
     growthThesis?: string | null;
@@ -44,12 +47,12 @@ export function ExecSummaryCard({ data }: {
   const fazit = useMemo(() => {
     if (!data) return null;
     try {
-      const metrics = prepareFazitMetrics(data);
+      const metrics = prepareFazitMetrics(data, sharedMonteCarlo);
       return buildFazitSignal({ data, ...metrics });
     } catch {
       return null;
     }
-  }, [data]);
+  }, [data, sharedMonteCarlo]);
 
   const downsideRisks = useMemo(() => {
     const risks = Array.isArray(data?.risks) ? [...data.risks] : [];
@@ -66,7 +69,7 @@ export function ExecSummaryCard({ data }: {
   // Chat-Kontext (S1): genau die hier angezeigten Werte — Ampel, Signal-Score, Bewertungsbasis/Upside.
   const r2 = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
   usePublishChatSection("stock", "1", s && fazit ? {
-    ampel: bias?.overallRating ?? fazit.rating,
+    ampel: fazit.rating, // = Kopf-Ampel (Fazit-Signal); Gesamtscore separat als gesamtscore_0bis10
     fazitAmpel: fazit.rating,
     signalScore: `${fazit.positive.length} positiv / ${fazit.negative.length} negativ / ${fazit.neutral.length} neutral = ${fazit.rating}`,
     bewertungsBasis: bias ? bias.valuationBaseLabel : null,
@@ -89,8 +92,11 @@ export function ExecSummaryCard({ data }: {
     <SectionCard number={1} title="Executive Summary" defaultOpen>
       <div className="space-y-3 text-sm" data-testid="exec-summary-card">
         <div className={`rounded-md border px-3 py-2 flex items-center justify-between gap-2 ${fazit.ratingBg}`}>
+          {/* Ampel = Fazit-Signal-Score (buildFazitSignal, identisch S20-Fazit / Kasten unten).
+              Nicht bias.overallRating: der Gesamtscore haengt an spaet nachgeladenen
+              Management-/Thesis-Scores und kippte je nach Ladezeitpunkt (375 vs. 1440 px). */}
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Ampel (S17)</span>
-          <span className={`text-sm font-bold ${fazit.ratingColor}`} data-testid="exec-summary-ampel">{bias?.overallRating ?? fazit.rating}</span>
+          <span className={`text-sm font-bold ${fazit.ratingColor}`} data-testid="exec-summary-ampel">{fazit.rating}</span>
         </div>
 
         {s.headline && (
