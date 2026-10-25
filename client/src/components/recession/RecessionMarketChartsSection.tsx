@@ -2,6 +2,7 @@ import { useState } from "react";
 import { SectionCard } from "@/components/SectionCard";
 import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import { usePublishChatSection } from "@/lib/chatSectionData";
+import { VIX_SOURCE_NA } from "@/lib/vixSourceLabel";
 import {
   Drawer,
   DrawerContent,
@@ -38,6 +39,75 @@ import {
   Bar,
   Cell,
 } from "recharts";
+import { useMarketCreditSpread } from "@/lib/useMarketCreditSpread";
+import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
+import { REAL10Y_OVERLAY, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
+import { oldestOhlcvDate, real10yOverlaySeries, type Real10YOverlayPoint } from "@/components/sections/TechnicalChart";
+import { creditOverlaySeries, type CreditOverlayPoint, type CreditSpreadResponse } from "@shared/credit";
+
+// F1-43/F1-45 (ohne F1-41): Overlays Markt-Spread Baa (FRED BAA10Y) und Real 10J (FRED DFII10, wie #267 Real10Y) im Preis-Pane.
+// Bestehende Endpoints /api/credit-spread/market und /api/analyze-btc/real10y-history, nur Anzeige, kein Score. Default aus.
+const CREDIT_COLOR = "#f43f5e";
+// Eigene Farbe statt REAL10Y_OVERLAY.color (#38bdf8): die ist hier schon die SPY-Close-Linie.
+const T10Y_COLOR = "#6366f1";
+export const RECESSION_CREDIT_LABEL = "Markt-Spread Baa (FRED BAA10Y, US)";
+export const RECESSION_T10Y_LABEL = "Real 10J (DFII10)";
+
+export interface MacroOverlayState<T> {
+  on: boolean;
+  data: T | null | undefined;
+  loading: boolean;
+  failed: boolean;
+}
+
+/**
+ * Hängt je Kurstag `_credit` (as-of-Join aus shared/credit, max. 7 Tage) und `_t10y` = Real 10J DFII10
+ * (exakter Datums-Treffer wie #267/BTC-Chart, real10yOverlaySeries) an. Overlay aus → Feld fehlt.
+ */
+export function withRecessionMacroOverlays<T extends { date: string }>(
+  bars: T[],
+  credit: CreditSpreadResponse | null | undefined,
+  t10y: Real10YMacroHistory | null | undefined,
+): Array<T & { _credit?: number | null; _t10y?: number | null }> {
+  const c = credit && credit.points.length > 0 ? creditOverlaySeries(bars, credit.points) : null;
+  const t = real10yOverlaySeries(bars, t10y);
+  if (!c && !t) return bars;
+  return bars.map((b, i) => ({
+    ...b,
+    ...(c ? { _credit: c[i].spreadPct } : {}),
+    ...(t ? { _t10y: t[i].real10y } : {}),
+  }));
+}
+
+/** Statuszeile je Overlay: lädt / n/a mit Grund / aktueller Wert im Fenster. */
+export function macroOverlayStatusText(
+  label: string,
+  state: MacroOverlayState<{ points: unknown[]; note: string | null; source: string }>,
+  series: CreditOverlayPoint[] | null,
+): string {
+  if (state.loading) return `${label}: FRED wird geladen …`;
+  if (state.failed || !state.data || state.data.points.length === 0) {
+    return `${label}: n/a — ${state.data?.note ?? "FRED nicht erreichbar"}`;
+  }
+  const last = [...(series ?? [])].reverse().find(p => p.spreadPct != null);
+  if (!last) return `${label}: n/a — FRED-Historie deckt dieses Fenster nicht ab`;
+  return `${label} (rechte Achse, %): aktuell ${last.spreadPct!.toFixed(2)} % per ${last.spreadDate} · Quelle ${state.data.source} · kein Score-Einfluss`;
+}
+
+/** Statuszeile Real 10J (DFII10, Route #267): lädt / n/a (Route 502, leer, Fenster ohne Treffer) / letzter Wert im Fenster. */
+export function real10yStatusText(
+  state: MacroOverlayState<Real10YMacroHistory>,
+  series: Real10YOverlayPoint[] | null,
+): string {
+  const label = RECESSION_T10Y_LABEL;
+  if (state.loading) return `${label}: FRED wird geladen …`;
+  if (state.failed || !state.data?.real10yByDate || Object.keys(state.data.real10yByDate).length === 0) {
+    return `${label}: n/a — ${REAL10Y_OVERLAY.sourceLabel} nicht erreichbar`;
+  }
+  const last = [...(series ?? [])].reverse().find(p => p.real10y != null);
+  if (!last) return `${label}: n/a — FRED-Historie deckt dieses Fenster nicht ab`;
+  return `${label} (rechte Achse, %): aktuell ${last.real10y!.toFixed(2)} % per ${last.date} · Quelle ${REAL10Y_OVERLAY.sourceLabel} (Realzins) · kein Score-Einfluss`;
+}
 
 function fmt(n: number | null | undefined, digits: number): string {
   if (n == null || !Number.isFinite(n)) return "n/a";
@@ -165,12 +235,23 @@ function MarketPanes({
   market,
   logScale,
   onPickDate,
+  credit,
+  t10y,
 }: {
   market: MarketChart;
   logScale: boolean;
   onPickDate: (date: string) => void;
+  credit?: MacroOverlayState<CreditSpreadResponse>;
+  t10y?: MacroOverlayState<Real10YMacroHistory>;
 }) {
   const price = market.ohlcv;
+  const creditOn = !!credit?.on;
+  const t10yOn = !!t10y?.on;
+  const priceData = withRecessionMacroOverlays(price, creditOn ? credit?.data : null, t10yOn ? t10y?.data : null);
+  const creditSeries = creditOn && credit?.data && credit.data.points.length > 0 ? creditOverlaySeries(price, credit.data.points) : null;
+  const t10ySeries = t10yOn ? real10yOverlaySeries(price, t10y?.data) : null;
+  const showCreditLine = !!creditSeries?.some(p => p.spreadPct != null);
+  const showT10yLine = !!t10ySeries?.some(p => p.real10y != null);
   const rsi = price.filter((p) => p.rsi != null);
   const macd = price.filter((p) => p.macd != null && p.signal != null);
   const yMax = market.volYMax ?? VOL_Y_MAX;
@@ -179,7 +260,7 @@ function MarketPanes({
     <div className="space-y-3">
       <div>
         <p className="text-[11px] text-muted-foreground mb-1">
-          {market.volId} · {market.volKind === "realized" ? "realisiert" : "implizit"} · Y linear 0–{yMax}
+          {market.volSource === null ? VIX_SOURCE_NA : market.volSource ?? market.volId} · {market.volKind === "realized" ? "realisiert" : "implizit"} · Y linear 0–{yMax}
           {market.bandsAnalog ? " · Bänder analog, nicht identisch" : " · US-kalibriert"}
         </p>
         {market.volNote && (
@@ -230,8 +311,8 @@ function MarketPanes({
           <div className="h-[220px] w-full" data-testid="price-chart">
             <ResponsiveContainer>
               <LineChart
-                data={price}
-                margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+                data={priceData}
+                margin={{ top: 8, right: showCreditLine || showT10yLine ? 0 : 12, left: 0, bottom: 0 }}
                 onClick={(state) => {
                   const date = chartClickDate(state);
                   if (date) onPickDate(date);
@@ -240,26 +321,55 @@ function MarketPanes({
                 <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={48} />
                 <YAxis
+                  yAxisId="price"
                   scale={logScale ? "log" : "linear"}
                   domain={["auto", "auto"]}
                   tick={{ fontSize: 10 }}
                   width={48}
                 />
+                {showCreditLine && (
+                  <YAxis yAxisId="credit" orientation="right" domain={[0, "auto"]} width={36} tick={{ fontSize: 9, fill: CREDIT_COLOR }} axisLine={{ stroke: CREDIT_COLOR }} tickLine={false} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+                )}
+                {showT10yLine && (
+                  <YAxis yAxisId="t10y" orientation="right" domain={real10yDomain(t10ySeries ? t10ySeries.map(p => p.real10y) : [])} width={36} tick={{ fontSize: 9, fill: T10Y_COLOR }} axisLine={{ stroke: T10Y_COLOR }} tickLine={false} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+                )}
                 <Tooltip
-                  content={({ active, label, payload }) => (
-                    <DayTooltip
-                      active={active}
-                      label={typeof label === "string" ? label : undefined}
-                      rows={[{ name: "Close", value: fmt(payload?.[0]?.value as number | undefined, 2) }]}
-                    />
-                  )}
+                  content={({ active, label, payload }) => {
+                    const row = payload?.[0]?.payload as { close?: number; _credit?: number | null; _t10y?: number | null } | undefined;
+                    const rows = [{ name: "Close", value: fmt(row?.close, 2) }];
+                    if (creditOn) rows.push({ name: "Baa-Spread", value: row?._credit == null ? "n/a" : `${fmt(row._credit, 2)} %` });
+                    if (t10yOn) rows.push({ name: RECESSION_T10Y_LABEL, value: row?._t10y == null ? "n/a" : `${fmt(row._t10y, 2)} %` });
+                    return (
+                      <DayTooltip
+                        active={active}
+                        label={typeof label === "string" ? label : undefined}
+                        rows={rows}
+                      />
+                    );
+                  }}
                 />
-                <Line type="monotone" dataKey="close" stroke="#38bdf8" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+                <Line yAxisId="price" type="monotone" dataKey="close" stroke="#38bdf8" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+                {showCreditLine && (
+                  <Line yAxisId="credit" type="stepAfter" dataKey="_credit" name={RECESSION_CREDIT_LABEL} stroke={CREDIT_COLOR} strokeDasharray="5 2" dot={false} strokeWidth={1.3} connectNulls={false} isAnimationActive={false} />
+                )}
+                {showT10yLine && (
+                  <Line yAxisId="t10y" type="monotone" dataKey="_t10y" name={RECESSION_T10Y_LABEL} stroke={T10Y_COLOR} strokeDasharray="2 2" dot={false} strokeWidth={1.3} connectNulls={false} isAnimationActive={false} />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">Keine Kurse für dieses Fenster.</p>
+        )}
+        {creditOn && credit && (
+          <p className="text-[10px] text-muted-foreground break-words mt-1" data-testid="recession-credit-status">
+            <span style={{ color: CREDIT_COLOR }}>■</span> {macroOverlayStatusText(RECESSION_CREDIT_LABEL, credit, creditSeries)}
+          </p>
+        )}
+        {t10yOn && t10y && (
+          <p className="text-[10px] text-muted-foreground break-words mt-1" data-testid="recession-t10y-status">
+            <span style={{ color: T10Y_COLOR }}>■</span> {real10yStatusText(t10y, t10ySeries)}
+          </p>
         )}
       </div>
 
@@ -416,7 +526,14 @@ function ChartsBody() {
   const [window, setWindow] = useState<MarketWindow>("5Y");
   const [logScale, setLogScale] = useState(false);
   const [clickDate, setClickDate] = useState<string | null>(null);
+  // F1-43/F1-45: Overlay-Schalter, Default aus (Anzeige wie bisher). Abruf nur, solange der Schalter an ist.
+  const [showCredit, setShowCredit] = useState(false);
+  const [showT10y, setShowT10y] = useState(false);
+  const creditQ = useMarketCreditSpread(showCredit);
   const q = useRecessionMarketCharts(window);
+  // Real 10J: bestehende DFII10-Route aus #267 (useMarketReal10Y), Start = ältester Kurstag des aktiven Markts.
+  const real10yStart = oldestOhlcvDate(q.data?.markets.find((m) => m.id === tab)?.ohlcv);
+  const t10yQ = useMarketReal10Y(real10yStart, showT10y);
   const market = q.data?.markets.find((m) => m.id === tab) ?? null;
   const factpack = useRecessionMarketFactpack(clickDate ? tab : null, clickDate, window);
 
@@ -485,6 +602,30 @@ function ChartsBody() {
         >
           log
         </button>
+        <button
+          type="button"
+          data-testid="toggle-recession-credit"
+          aria-pressed={showCredit}
+          title={`${RECESSION_CREDIT_LABEL}. Nur Anzeige, kein Score-Einfluss.`}
+          onClick={() => setShowCredit((v) => !v)}
+          className={`px-2 py-1 text-[11px] rounded-md border ${
+            showCredit ? "border-rose-500 text-rose-500" : "border-border text-muted-foreground hover:bg-muted/40"
+          }`}
+        >
+          Baa-Spread
+        </button>
+        <button
+          type="button"
+          data-testid="toggle-recession-t10y"
+          aria-pressed={showT10y}
+          title={`${RECESSION_T10Y_LABEL}. Nur Anzeige, kein Score-Einfluss.`}
+          onClick={() => setShowT10y((v) => !v)}
+          className={`px-2 py-1 text-[11px] rounded-md border ${
+            showT10y ? "border-indigo-500 text-indigo-500" : "border-border text-muted-foreground hover:bg-muted/40"
+          }`}
+        >
+          Real 10J
+        </button>
       </div>
 
       {q.isLoading && <p className="text-xs text-muted-foreground">Vier Märkte, Vol und OHLCV …</p>}
@@ -507,7 +648,13 @@ function ChartsBody() {
             <span className="text-xs text-muted-foreground">Fenster {q.data?.window}</span>
           </div>
           <SnapshotRow market={market} />
-          <MarketPanes market={market} logScale={logScale} onPickDate={setClickDate} />
+          <MarketPanes
+            market={market}
+            logScale={logScale}
+            onPickDate={setClickDate}
+            credit={{ on: showCredit, data: creditQ.data, loading: creditQ.isLoading, failed: creditQ.isError }}
+            t10y={{ on: showT10y, data: t10yQ.data, loading: t10yQ.isLoading, failed: t10yQ.isError }}
+          />
         </>
       )}
 

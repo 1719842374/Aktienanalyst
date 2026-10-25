@@ -46,21 +46,39 @@ function parseClose(row: any): { date: string; close: number; volume?: number } 
 
 /** FRED CSV — same public fredgraph path as recession.ts (no API key). */
 export async function fetchFredVolSeries(seriesId: string, cosd: string): Promise<VolPoint[]> {
+  return (await fetchFredVolSeriesDetailed(seriesId, cosd)).vol;
+}
+
+/** Below this duration an empty FRED answer counts as a fast failure (error/empty body, not a hang). */
+export const FRED_FAST_FAIL_MS = 5000;
+
+/**
+ * Same request as fetchFredVolSeries, plus whether an empty result was a fast failure
+ * (HTTP error, HTML wall, empty CSV, immediate network error) or a timeout/hang.
+ * Only fast failures get the F1-66 retry; a timeout goes straight to Yahoo.
+ */
+export async function fetchFredVolSeriesDetailed(
+  seriesId: string,
+  cosd: string,
+): Promise<{ vol: VolPoint[]; fastFail: boolean }> {
   const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(seriesId)}&cosd=${cosd}`;
+  const t0 = Date.now();
+  const fast = () => Date.now() - t0 < FRED_FAST_FAIL_MS;
   try {
     const resp = await fetch(url, { signal: AbortSignal.timeout(20000) });
-    if (!resp.ok) return [];
+    if (!resp.ok) return { vol: [], fastFail: fast() };
     const csv = await resp.text();
-    if (!csv || csv.includes("<html") || csv.includes("<!DOCTYPE")) return [];
+    if (!csv || csv.includes("<html") || csv.includes("<!DOCTYPE")) return { vol: [], fastFail: fast() };
     const out: VolPoint[] = [];
     for (const line of csv.trim().split("\n").slice(1)) {
       const [date, valStr] = line.split(",");
       const value = parseFloat(valStr?.trim());
       if (date && Number.isFinite(value)) out.push({ date: date.trim(), value });
     }
-    return out;
-  } catch {
-    return [];
+    return { vol: out, fastFail: !out.length && fast() };
+  } catch (e: any) {
+    const timedOut = e?.name === "TimeoutError" || e?.name === "AbortError";
+    return { vol: [], fastFail: !timedOut && fast() };
   }
 }
 
@@ -101,28 +119,50 @@ export async function fetchYahooDailySeries(symbol: string, cosd: string): Promi
   }
 }
 
+/** F1-66: pause between the two FRED attempts (like #274 buffett-route). Tests set 0. */
+let fredVolRetryPauseMs = 1500;
+export function setFredVolRetryPauseForTests(ms: number): void {
+  fredVolRetryPauseMs = ms;
+}
+
 /**
  * Chart vol series: FRED first. Only when FRED is empty and the series has a Yahoo twin
  * (VIXCLS → ^VIX) the Yahoo closes fill the chart, with a note. Chart path only; the
  * VIX score keeps its own resolver in recession.ts.
+ * F1-66: for a series with a Yahoo twin, FRED gets a second attempt (pause 1.5 s) before Yahoo,
+ * but only after a fast failure (error/empty answer in < FRED_FAST_FAIL_MS). After a timeout
+ * Yahoo follows directly. Bound: 20 s FRED + 20 s Yahoo (fast path: < 5 s + 1.5 s + 20 s + 20 s). volSource names the source that really
+ * delivered ("FRED VIXCLS" / "Yahoo ^VIX"), null when both are empty; series without a
+ * Yahoo twin carry no volSource (unchanged).
  */
 export async function fetchFredVolWithYahooFallback(
   seriesId: string,
   cosd: string,
   deps: {
-    fred?: (id: string, cosd: string) => Promise<VolPoint[]>;
+    /** Plain array = legacy stub; fastFail is then derived from the elapsed time. */
+    fred?: (id: string, cosd: string) => Promise<VolPoint[] | { vol: VolPoint[]; fastFail: boolean }>;
     yahoo?: (symbol: string, cosd: string) => Promise<VolPoint[]>;
   } = {},
-): Promise<{ vol: VolPoint[]; volNote: string | null }> {
-  const fred = deps.fred ?? fetchFredVolSeries;
+): Promise<{ vol: VolPoint[]; volNote: string | null; volSource?: string | null }> {
+  const fredRaw = deps.fred ?? fetchFredVolSeriesDetailed;
+  const fred = async (id: string, c: string) => {
+    const t0 = Date.now();
+    const r = await fredRaw(id, c);
+    return Array.isArray(r) ? { vol: r, fastFail: !r.length && Date.now() - t0 < FRED_FAST_FAIL_MS } : r;
+  };
   const yahoo = deps.yahoo ?? fetchYahooDailySeries;
-  const vol = await fred(seriesId, cosd);
-  if (vol.length) return { vol, volNote: null };
   const symbol = YAHOO_VOL_FALLBACK[seriesId];
+  const first = await fred(seriesId, cosd);
+  let vol = first.vol;
+  if (!vol.length && symbol && first.fastFail) {
+    if (fredVolRetryPauseMs > 0) await new Promise(resolve => setTimeout(resolve, fredVolRetryPauseMs));
+    vol = (await fred(seriesId, cosd)).vol;
+  }
+  if (vol.length) return symbol ? { vol, volNote: null, volSource: `FRED ${seriesId}` } : { vol, volNote: null };
   if (!symbol) return { vol, volNote: `FRED ${seriesId} leer` };
   const yv = (await yahoo(symbol, cosd)).filter(p => p.date >= cosd);
-  if (!yv.length) return { vol: [], volNote: `FRED ${seriesId} leer, Yahoo ${symbol} leer` };
-  return { vol: yv, volNote: `${seriesId === "VIXCLS" ? "VIX" : seriesId} via Yahoo ${symbol} (FRED ${seriesId} leer)` };
+  if (!yv.length) return { vol: [], volNote: `FRED ${seriesId} leer, Yahoo ${symbol} leer`, volSource: null };
+  return { vol: yv, volNote: `${seriesId === "VIXCLS" ? "VIX" : seriesId} via Yahoo ${symbol} (FRED ${seriesId} leer)`, volSource: `Yahoo ${symbol}` };
 }
 
 /** Official STOXX V2TX daily file (DD.MM.YYYY;V2TX;value). Spec: Yahoo/Stoox path. */
@@ -327,7 +367,7 @@ async function fetchRegionVol(
   etfRows: { date: string; close: number }[],
   from: string,
   to: string,
-): Promise<{ vol: VolPoint[]; volNote: string | null }> {
+): Promise<{ vol: VolPoint[]; volNote: string | null; volSource?: string | null }> {
   if (book.volKind === "realized" || book.volId === "realized20") {
     return { vol: realizedVol20(etfRows), volNote: null };
   }
@@ -379,7 +419,7 @@ export async function buildRegionMarket(region: RegionId, window: string) {
   });
 
   const windowStart = series[0]?.date ?? null;
-  const { vol: volFull, volNote } = await fetchRegionVol(region, book, rows, from, to);
+  const { vol: volFull, volNote, volSource } = await fetchRegionVol(region, book, rows, from, to);
   const vol = sliceVolToWindow(volFull, windowStart, days);
   const volLatest = vol.length ? vol[vol.length - 1].value : null;
 
@@ -409,6 +449,8 @@ export async function buildRegionMarket(region: RegionId, window: string) {
     volLatest,
     volBand: volBandLabel(volLatest),
     volNote,
+    // F1-66: real source of the VIX series (FRED VIXCLS / Yahoo ^VIX, null = both empty); absent for EU/AS.
+    ...(volSource !== undefined ? { volSource } : {}),
     vol,
     window,
     asOf: last?.date ?? null,
@@ -462,7 +504,10 @@ export function registerRecessionMarketRoutes(app: Express) {
       // Empty EU vol often transient (STOXX egress) — do not pin for 6h
       const euEmpty =
         region === "EU" && Array.isArray(data?.vol) && data.vol.length === 0;
-      if (!euEmpty) {
+      // F1-66: empty US VIX (FRED and Yahoo both empty/hung) is transient too — do not pin for 6h
+      const usVixEmpty =
+        region === "US" && Array.isArray(data?.vol) && data.vol.length === 0;
+      if (!euEmpty && !usVixEmpty) {
         marketCache = { key, ts: Date.now(), data };
       }
       res.json(data);

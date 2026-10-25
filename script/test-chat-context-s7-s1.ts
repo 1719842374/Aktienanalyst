@@ -60,7 +60,7 @@ const p1: any = bus.readChatSectionData("stock")["1"];
 const fz = buildFazitSignal({ data: view, ...prepareFazitMetrics(view) });
 const bd = bias.buildBiasDecision(view);
 check("S1 veröffentlicht", !!p1);
-check(`S1 ampel == angezeigte Ampel (${p1?.ampel})`, p1?.ampel === (bd?.overallRating ?? fz.rating) && h1.includes(`Ampel (S17)${p1.ampel}`));
+check(`S1 ampel == angezeigte Ampel (${p1?.ampel})`, p1?.ampel === fz.rating && h1.includes(`Ampel (S17)${p1.ampel}`));
 check("S1 signalScore so im HTML", h1.includes(`Signal-Score: ${p1.signalScore}`), p1?.signalScore);
 check("S1 Basis/Upside so im HTML", h1.includes(`Basis: ${p1.bewertungsBasis} ${bd.decisionPerShare.toFixed(2)}`) && h1.includes(`Upside ${bd.decisionUpsidePct >= 0 ? "+" : ""}${bd.decisionUpsidePct.toFixed(1)}%`));
 const ctx1 = cc.enrichChatContext(cc.buildStockChatContext(data), bus.readChatSectionData("stock")).sections.find(s => s.id === 1)!.facts;

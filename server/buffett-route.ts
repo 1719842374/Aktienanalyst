@@ -8,6 +8,7 @@
  * Benchmark-Kurs und BIP fortgeschrieben (EU ^STOXX, ersatzweise VGK; CN ASHR).
  */
 import type { Express, Request, Response } from "express";
+import { registerTradeBalanceRoute } from "./trade-balance-route";
 import {
   applyTrend,
   fitLogTrend,
@@ -569,6 +570,8 @@ async function buildBenchmarkRegion(region: Exclude<RegionId, "US">): Promise<{
 }
 
 export function registerBuffettRatioRoute(app: Express): void {
+  // F1-38: Handelsbilanz/BIP (FRED BOPGSTB ÷ GDP) als eigene Route neben der Buffett-Route — die Buffett-Antwort bleibt unverändert.
+  registerTradeBalanceRoute(app);
   app.get("/api/analyze-recession/buffett", async (req: Request, res: Response) => {
     const region = String(req.query.region || "US").toUpperCase();
     if (!isRegion(region)) {

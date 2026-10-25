@@ -6,6 +6,7 @@ import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import {
   CartesianGrid, Customized, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import type { TradeBalanceResponse } from "@shared/trade-balance";
 import { axisTicks, lastPointLabel, proxySuffix, tickLabel, type BuffettRangeId } from "./buffettChartScale";
 
 type RegionId = "US" | "EU" | "CN";
@@ -41,6 +42,31 @@ interface BuffettPayload {
     anchorYear: number; anchorDate: string; anchorQuote: number; gdpSeries: string; gdpAsOf: string; skipped: string[];
   } | null;
   benchmarkUnavailable?: string | null;
+}
+
+function pctDe(v: number): string {
+  return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1).replace(".", ",")} %`;
+}
+
+function monthDe(iso: string): string {
+  return `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
+}
+
+/**
+ * F1-38: Zeile Handelsbilanz/BIP (eigene Route /api/analyze-recession/trade-balance). US mit Wert / lädt /
+ * US n/a mit Grund / EU, CN n/a (Reihe nur für die USA). Nur Anzeige, kein Score.
+ */
+export function tradeBalanceLine(
+  region: RegionId,
+  state: { data: TradeBalanceResponse | null | undefined; loading: boolean; error: unknown },
+): string {
+  const label = "Handelsbilanz/BIP (FRED BOPGSTB)";
+  if (region !== "US") return `${label}: n/a — Reihe gilt nur für die USA`;
+  if (state.loading) return `${label}: wird geladen …`;
+  const t = state.data?.value;
+  if (!t) return `${label}: n/a — ${state.data?.reason ?? (state.error ? errorReason(state.error) : "keine Daten")}`;
+  const ago = t.pctYearAgo != null && t.asOfYearAgo ? ` · Vorjahr ${pctDe(t.pctYearAgo)} (bis ${monthDe(t.asOfYearAgo)})` : " · Vorjahr n/a";
+  return `${label}: ${pctDe(t.pct)} — 12 Monate ${monthDe(t.from)} bis ${monthDe(t.asOf)}, ${t.ttmBn.toFixed(0).replace("-", "−")} Mrd. $ ÷ BIP ${t.gdpBn.toFixed(0)} Mrd. $ (Quartal ab ${t.gdpDate})${ago} · nur Anzeige, kein Score`;
 }
 
 /** F1-34: Grund aus dem 502-Body sichtbar machen, nicht nur im eingeklappten Detail. */
@@ -324,6 +350,18 @@ export function BuffettRatioPanel() {
     },
   });
 
+  // F1-38: Handelsbilanz/BIP nur für US laden (eigene Route, Buffett-Antwort unverändert).
+  const tradeQuery = useQuery({
+    queryKey: ["recession-trade-balance"],
+    enabled: region === "US",
+    staleTime: 60 * 60 * 1000,
+    queryFn: async () => {
+      const res = await fetch("/api/analyze-recession/trade-balance");
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      return await res.json() as TradeBalanceResponse;
+    },
+  });
+
   const all = query.data?.points ?? [];
 
   // PR 3 (Chat-Kontext): letzter angezeigter Punkt aus der bestehenden Query — keine neue Abfrage.
@@ -499,6 +537,9 @@ export function BuffettRatioPanel() {
               In diesem Fenster liegt kein Verlauf.
             </p>
           )}
+          <p className="text-[11px] leading-snug text-muted-foreground" data-testid="text-buffett-trade-balance">
+            {tradeBalanceLine(region, { data: tradeQuery.data, loading: tradeQuery.isLoading, error: tradeQuery.error })}
+          </p>
           <p className="text-[10px] text-muted-foreground leading-relaxed">{query.data.note}</p>
         </>
       )}

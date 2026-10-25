@@ -57,6 +57,7 @@ import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelation
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { visibleTopOf } from "@/lib/activeSection";
 import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
+import { withFazitEntryChatFacts } from "@shared/fazit-entry";
 import { useChatSectionData } from "@/lib/chatSectionData";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
@@ -113,6 +114,8 @@ export default function Dashboard() {
   const [, navigate] = useLocation();
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  // PDF-Export läuft ~30–60 s (Sektionsaufnahme + Server-Render): sichtbarer Zustand statt scheinbar nichts.
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number; isPending?: boolean } | null>(null);
   // #258: Hinweis nach automatischem Verwerfen abgelehnter Peer-Overrides (400).
@@ -396,7 +399,7 @@ export default function Dashboard() {
   // KI-Chatbot (WORK_DASHBOARD_FEATURES §4): Kontext-Provider der Aktien-Analyse. Nur Lesen, kein Score-Einfluss.
   // PR 3: angezeigte Client-Werte (DCF/CRV/RSL/Monte Carlo) + Auffälligkeiten je Sektion.
   const chatLive = useChatSectionData("stock");
-  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(buildStockChatContext(data), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive]);
+  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withFazitEntryChatFacts(buildStockChatContext(data), data), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive]);
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
   const getActiveSectionId = useCallback((): number | null => {
@@ -459,15 +462,26 @@ export default function Dashboard() {
           {data && !isEtfOrFund(data) && (
             <button
               onClick={async () => {
-                const { exportAnalysisPdf } = await import('../lib/exportPdf');
-                exportAnalysisPdf(data);
+                if (pdfBusy) return;
+                setPdfBusy(true);
+                try {
+                  const { exportAnalysisPdf } = await import('../lib/exportPdf');
+                  // Alle gerenderten Sektionen (inkl. S3) als Bild ins PDF; Fehler meldet exportAnalysisPdf sichtbar.
+                  await exportAnalysisPdf(data, Object.entries(sectionRefs.current).map(([id, el]) => ({ id: Number(id), el })));
+                } catch (err: any) {
+                  alert(`PDF-Export fehlgeschlagen: ${err?.message || err}`);
+                } finally {
+                  setPdfBusy(false);
+                }
               }}
+              disabled={pdfBusy}
+              aria-busy={pdfBusy}
               className="h-8 px-2 text-[11px] font-medium rounded-md text-foreground/40 border border-border/50 hover:bg-muted/50 hover:text-foreground/60 transition-all flex items-center gap-1"
               title="Analyse als PDF exportieren"
               data-testid="button-pdf-export"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              <span className="hidden sm:inline">PDF</span>
+              <span className="hidden sm:inline">{pdfBusy ? 'PDF wird erstellt…' : 'PDF'}</span>
             </button>
           )}
           {/* KI-Katalysatoren Toggle */}
@@ -651,7 +665,7 @@ export default function Dashboard() {
                   single component crash (e.g. .slice on undefined) can no longer
                   unmount the entire dashboard and leave the user with a black
                   screen. Without this, one bad field → whole app unmounts. */}
-              <div ref={setSectionRef(1)}>{isYahooOnly(data) ? <YahooNoValuationCard number={1} title="Executive Summary" data={data} /> : <ExecSummaryCard data={data} />}</div>
+              <div ref={setSectionRef(1)}>{isYahooOnly(data) ? <YahooNoValuationCard number={1} title="Executive Summary" data={data} /> : <ExecSummaryCard data={data} sharedMonteCarlo={sharedMonteCarlo} />}</div>
               <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} onThesisScore={(score) => {
                 setData(prev => prev && prev.thesisStrengthScore !== score ? { ...prev, thesisStrengthScore: score } : prev);
               }} /></SectionErrorBoundary></div>

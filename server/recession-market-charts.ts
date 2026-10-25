@@ -142,7 +142,7 @@ async function loadVol(
   bars: RawBar[],
   from: string,
   to: string,
-): Promise<{ vol: VolPoint[]; volNote: string | null }> {
+): Promise<{ vol: VolPoint[]; volNote: string | null; volSource?: string | null }> {
   if (book.volKind === "realized") {
     return {
       vol: realizedVol20(bars),
@@ -445,7 +445,7 @@ export async function buildChartMarket(
   const rawBars = await loadBars(book.etf, from, to);
   const indicated = attachIndicators(rawBars);
   const ohlcv = sliceByWindow(indicated, window);
-  const { vol: volFull, volNote } = await loadVol(book, rawBars, from, to);
+  const { vol: volFull, volNote, volSource } = await loadVol(book, rawBars, from, to);
   const vol = sliceVol(volFull, ohlcv, window);
   const marks = localVolMaxima(vol);
   const last = ohlcv[ohlcv.length - 1] ?? null;
@@ -482,6 +482,7 @@ export async function buildChartMarket(
     bandsAnalog: book.bandsAnalog,
     volYMax: VOL_Y_MAX,
     volNote,
+    ...(volSource !== undefined ? { volSource } : {}),
     ohlcv,
     vol,
     marks,
