@@ -10,6 +10,7 @@
  * Reine Anzeige: buildFazitSignal / buildBiasDecision bleiben unveraendert.
  */
 import React from "react";
+(globalThis as any).React = React;
 import { renderToStaticMarkup } from "react-dom/server";
 import assert from "node:assert/strict";
 import { ExecSummaryCard } from "../client/src/components/ExecSummaryCard";
@@ -22,7 +23,7 @@ const base = (await import("./fixtures/analysis-SHEL.L.json", { with: { type: "j
 let pass = 0, fail = 0;
 const check = (name: string, fn: () => void) => { try { fn(); pass++; console.log("  ✓", name); } catch (e: any) { fail++; console.log("  ✗", name, "—", e.message.split("\n")[0]); } };
 
-const strip = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&");
+const strip = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&/g, "&");
 const headerAmpel = (h: string) => strip((h.match(/data-testid="exec-summary-ampel"[^>]*>([\s\S]*?)<\/span>/) ?? [])[1] ?? "");
 const execFazit = (h: string) => strip((h.match(/data-testid="exec-summary-fazit-ampel"[\s\S]*?<span class="text-sm font-bold[^"]*">([\s\S]*?)<\/span>/) ?? [])[1] ?? "");
 const s20Signal = (h: string) => strip((h.match(/Signal-Score:[\s\S]*?<span class="font-semibold[^"]*">([\s\S]*?)<\/span>/) ?? [])[1] ?? "");
