@@ -128,7 +128,7 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 | F1-63 | Z.651, 709 | TOPIX / CAPE JP über Yahoo `^TPX` + Gewinne oder manueller Import | `server/recession-regions.ts:274–276`: nur FMP `^TPX`/`1306.T`, sonst N/A | 🟡 | Yahoo-Versuch ergänzen (verändert JP-Katalog-P, nicht US) |
 | F1-64 | Z.652, 710 | JNVI: N/A lassen oder VIX-Ersatz | N/A | ✅ | Keiner (Soll erlaubt N/A) |
 | F1-65 | Z.658, 667, 716, 736 | Buffett „Max“ lädt nicht (Sektion 11 blockiert) | US-Chart läuft; Robustheit siehe F1-30, F1-31, F1-34 | 🟡 | F1-30 + F1-34 bauen |
-| F1-66 | Z.659, 668, 717, 737 | FRED VIXCLS leer in Charts → Retry, Yahoo `^VIX` als Ersatz | Score: Yahoo-Ersatz `server/recession.ts:1277–1287` (`27332f3`, #210). Chart: ✅ `35037f92` (#296, 25.10.2026), belegt auf `35037f92`: `server/recession-markets.ts:68` `YAHOO_VOL_FALLBACK = { VIXCLS: "^VIX" }`, `:90–102` `fetchYahooDailySeries`, `:104–126` `fetchFredVolWithYahooFallback` (FRED zuerst, bei leerer Reihe Yahoo `^VIX` mit Hinweis „VIX via Yahoo ^VIX (FRED VIXCLS leer)“), genutzt in `:337` (US-Regionen-Vol) und `server/recession-market-charts.ts:18, 153` (`loadVol`); ohne Score; Test `test-recession-vix-chart-yahoo.ts`. Retry-Teil offen: `fetchFredVolSeries` `server/recession-markets.ts:48–65` ein Versuch, 20 s Timeout. Vorher: `server/recession-markets.ts:276–277` nur FRED, kein Yahoo. FRED lieferte am 18.10. (15.10. = 16,46) | ✅ | Chart-Teil ✅ `35037f92`. Retry ✅ `2e360ca9` (#325) |
+| F1-66 | Z.659, 668, 717, 737 | FRED VIXCLS leer in Charts → Retry, Yahoo `^VIX` als Ersatz | Score: Yahoo-Ersatz `server/recession.ts:1277–1287` (`27332f3`, #210). Chart: ✅ `35037f92` (#296, 25.10.2026), belegt auf `35037f92`: `server/recession-markets.ts:68` `YAHOO_VOL_FALLBACK = { VIXCLS: "^VIX" }`, `:90–102` `fetchYahooDailySeries`, `:104–126` `fetchFredVolWithYahooFallback` (FRED zuerst, bei leerer Reihe Yahoo `^VIX` mit Hinweis „VIX via Yahoo ^VIX (FRED VIXCLS leer)“), genutzt in `:337` (US-Regionen-Vol) und `server/recession-market-charts.ts:18, 153` (`loadVol`); ohne Score; Test `test-recession-vix-chart-yahoo.ts`. Chart ✅ `35037f92` (#296); FRED-VIXCLS-Retry vor Yahoo ^VIX + echtes Quellen-Label S9/S10 ✅ `2e360ca9` (#325). Vorher: `server/recession-markets.ts:276–277` nur FRED, kein Yahoo. FRED lieferte am 18.10. (15.10. = 16,46) | ✅ | Keiner |
 | F1-67 | Z.661, 671, 719, 740 | SPY KGV / EPS / Kennzahlen: Yahoo `quoteSummary` als Ersatz | 0 Treffer `quoteSummary` außerhalb `server/yahoo-fetcher.ts`; Vier-Märkte-Factpack nur FMP | ❌ | Autonom, klein. Achtung: Yahoo-Crumb-Problem aus #264 gilt auch hier |
 | F1-68 | Z.662, 720 | Analystenschätzungen SPY: Ersatz über Yahoo oder Perplexity | `server/recession-market-charts.ts:389` nur FMP `/stable/analyst-estimates` | ❌ | Mit F1-67 |
 | F1-69 | Z.663, 721 | Optional: Margin-Debt-Chart auch für EU/Asien | FINRA nur USA (Soll sagt selbst „FINRA bleibt US-only“) | ❌ | Niedrig; keine freie EU/JP-Quelle bekannt |
@@ -148,7 +148,7 @@ Z.1–26 und Z.37–60 enthalten Recherche (Quellen, Fakten) als Begründung (�
 | F2-02 | Z.29, 79 | Bei Fehler letzten gültigen Wert weiterverwenden, nicht 0 | `google-trends-cache.ts:81–108`; `server/recession.ts:532–540` | ✅ | Keiner |
 | F2-03 | Z.30 | Optional: Ersatz über pytrends oder manuellen Export | 0 Treffer `pytrends` | ❌ | Niedrig; Python-Abhängigkeit auf Render fraglich |
 | F2-04 | Z.31 | Im UI kennzeichnen, wenn Wert älter als 24 h | `google-trends-cache.ts:13, 57–60`; `client/src/components/recession/recessionDashboardPartsB2.tsx:65–72` | ✅ | Keiner |
-| F2-05 | Z.41, 80 | VIX: FRED-Abruf mit Retry/Timeout, Ersatz Yahoo `^VIX` | Score ✅ (`server/recession.ts:1277–1287`, `27332f3` #210); Chart: ✅ `35037f92` (#296), Yahoo `^VIX` als Ersatz (Belege siehe F1-66). Retry-Teil offen. Vorher: Chart nur FRED (`server/recession-markets.ts:276–277`) | ✅ | = F1-66. Chart-Teil ✅ `35037f92`. Retry ✅ `2e360ca9` (#325) |
+| F2-05 | Z.41, 80 | VIX: FRED-Abruf mit Retry/Timeout, Ersatz Yahoo `^VIX` | Score ✅ (`server/recession.ts:1277–1287`, `27332f3` #210); Chart: ✅ `35037f92` (#296), Yahoo `^VIX` als Ersatz (Belege siehe F1-66). Chart ✅ `35037f92` (#296); FRED-VIXCLS-Retry vor Yahoo ^VIX + echtes Quellen-Label S9/S10 ✅ `2e360ca9` (#325). Vorher: Chart nur FRED (`server/recession-markets.ts:276–277`) | ✅ | = F1-66. Keiner |
 | F2-06 | Z.46, 80 | VSTOXX direkt über Yahoo `^V2TX`/`V2TX.DE` statt FMP | FMP → STOXX-Datei (`server/recession-markets.ts:199–224`), kein Yahoo | 🟡 | = F1-58 |
 | F2-07 | Z.51 | EZ-Kurve: FRED-Reihe validieren, sonst ECB oder Yahoo | FRED-Slot da, kein ECB-Ersatz (`server/recession-regions.ts:324–325, 462`) | 🟡 | = F1-56 |
 | F2-08 | Z.56, 81 | Buffett: Retry + längerer Timeout, `period2` aktuell | `period2` ✅ (`server/buffett-route.ts:94`); Retry ❌ | 🟡 | = F1-30 |
@@ -373,8 +373,8 @@ Nicht gezählt (ℹ️, Konzept- und Content-Ideen ohne Bau-Auftrag): Z.215 Einl
 
 | Status | Zeilen | davon Wiederholung (mit „=“ markiert) | eigene Punkte |
 |---|---:|---:|---:|
-| ✅ erledigt | 108 | 0 | 108 |
-| 🟡 teilweise | 38 | 4 | 34 |
+| ✅ erledigt | 111 | 1 | 110 |
+| 🟡 teilweise | 35 | 3 | 32 |
 | ❌ fehlt | 71 | 6 | 65 |
 | ⛔ blockiert | 16 | 2 | 14 |
 | **Summe** | **233** | **12** | **221** |
@@ -385,8 +385,8 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 
 | Datei | ✅ | 🟡 | ❌ | ⛔ | Summe |
 |---|---:|---:|---:|---:|---:|
-| Future_1_Work.md | 35 | 14 | 19 | 6 | 74 |
-| Future_2_NA_Fixes_Research.md | 3 | 4 | 3 | 0 | 10 |
+| Future_1_Work.md | 36 | 13 | 19 | 6 | 74 |
+| Future_2_NA_Fixes_Research.md | 4 | 3 | 3 | 0 | 10 |
 | Future_3_SerpApi_Rate_Limits.md | 4 | 0 | 3 | 2 | 9 |
 | Future_4_Google_Trends_Conflict_and_Fixes.md | 4 | 0 | 4 | 2 | 10 |
 | Future_5_Google_Trends_Cache_Implementation.md | 6 | 1 | 1 | 0 | 8 |
@@ -394,9 +394,9 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | Future_7_Scoring_Adaptivity_Historical_Crashes.md | 2 | 0 | 2 | 0 | 4 |
 | Future_8_Adaptive_Scoring_Logics_Detailed.md | 2 | 0 | 5 | 0 | 7 |
 | Future_9_Adaptive_Macro_Framework_Complete.md | 1 | 0 | 17 | 0 | 18 |
-| Future_10_Gold_Adaptive_Scoring_Framework.md | 23 | 5 | 7 | 0 | 35 |
+| Future_10_Gold_Adaptive_Scoring_Framework.md | 24 | 4 | 7 | 0 | 35 |
 | Future_Work.md | 15 | 14 | 10 | 6 | 45 |
-| **Summe** | **108** | **38** | **71** | **16** | **233** |
+| **Summe** | **111** | **35** | **71** | **16** | **233** |
 
 ### In Arbeit (laufend, mit PR-Nummer)
 
@@ -419,7 +419,7 @@ Reihenfolge nach Nutzen und Aufwand (S = klein, M = mittel, L = groß).
 
 1. **Makro-Layer mit KI-Gewichten (Future_9)** – F9-09, F9-12, F9-13, F9-16, F9-17 (L). Philip hat am 18.10. JA gesagt. Heute 0 Code im Rezessionspfad. Erst als Zusatzobjekt mit Anzeige der angepassten Gewichte und Prüfung an 2000/2008/2022, erst danach die Live-P umschalten. Datenreihen F9-02/04/06/07/08 (FRED/FMP, kostenlos) gehören dazu.
 2. **Buffett robust machen** – F1-34 Fehlergrund statt generischem 502, F1-30 zweiter Versuch, F1-31 FRED-Marktwert als Ersatz (S). ✅ `99a06d1b` (#274), Nachzug #323 `cee85b81`.
-3. **VIX im Rezessions-Chart mit Yahoo-Ersatz** – F1-66 (S). Der Score hat ihn schon (#210). Chart-Teil ✅ `35037f92` (#296); Retry offen, Folgejob dr eggbot.
+3. **VIX im Rezessions-Chart mit Yahoo-Ersatz** – F1-66 (S). Der Score hat ihn schon (#210). Chart-Teil ✅ `35037f92` (#296); Retry ✅ `2e360ca9` (#325). Erledigt.
 4. **Credit-Risiko-Karte in Sektion 10 (Risikoinversion)** – F1-21 mit F1-20 (Verschuldung, Zinsdeckung aus FMP) und F1-24 (PESTEL-Zeile) (M). Basis ist der Markt-Spread BAA10Y; kein CDS, kein Score.
 5. **Regionen-Umschalter vollständig** – F1-52 Backend rechnet die 5 Untergruppen je Region, F1-47 fünf Gauges, F1-48 Tabellen folgen der Region (M). Nur Anzeige, US-Handlung bleibt.
 6. **Dividende fertig machen** – F1-17 Spanne/Sektor in Sektion 6, F1-18 Hinweis in Sektion 20, F1-14 Band ab 4 % (S).
