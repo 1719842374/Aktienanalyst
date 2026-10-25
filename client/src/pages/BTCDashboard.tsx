@@ -2667,7 +2667,7 @@ export function Section12Fazit({ data }: { data: BTCAnalysis }) {
     <SectionCard number={14} title="Umfassendes Gesamt-Fazit">
       <div className="space-y-4">
         {/* Konfliktmatrix (Future_Work §8) — Anzeige, ändert die Gesamtbewertung nicht */}
-        <AssetConflictSummary matrix={btcConflictMatrix(data)} />
+        <AssetConflictSummary matrix={btcConflictMatrix(data, { fallback: data.timestamp === BTC_FALLBACK_DATA.timestamp })} />
 
         {/* Overall verdict banner */}
         <div className={`rounded-lg p-4 border ${

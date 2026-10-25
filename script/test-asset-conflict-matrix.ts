@@ -61,4 +61,39 @@ assert.ok(goldHtml.includes(ASSET_CONFLICT_NOTE));
 assert.ok(goldHtml.includes('data-testid="asset-conflict-table"'));
 assert.equal((goldHtml.match(/<tr>/g) ?? []).length, 5);
 
+// ── #328-Nachzug: Offline-Fallback zählt nicht (Marker wie gold-offline-note: timestamp === *_FALLBACK_DATA.timestamp) ──
+const { GOLD_FALLBACK_DATA } = await import("../client/src/lib/goldFallbackData");
+const { GoldSummarySection } = await import("../client/src/components/gold/GoldSummarySection");
+const { Section12Fazit } = await import("../client/src/pages/BTCDashboard");
+const rowsOf = (html: string) => [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map(m => m[1].replace(/<[^>]+>/g, "|").replace(/\|+/g, "|"));
+const goldFbHtml = renderToStaticMarkup(React.createElement(GoldSummarySection, { data: GOLD_FALLBACK_DATA }));
+assert.ok(GOLD_FALLBACK_DATA.indicators.some(i => i.value === "RSI 50.0 | Abw. 0.0%"), "Platzhalter im Fallback vorhanden");
+assert.ok(!goldFbHtml.includes("RSI 50.0 | Abw. 0.0%"), "Gold-Fallback-Platzhalter nicht in der Matrix");
+const goldFbRows = rowsOf(goldFbHtml.slice(goldFbHtml.indexOf('data-testid="asset-conflict-table"')));
+assert.equal(goldFbRows.length, 5);
+assert.ok(goldFbRows.every(r => r.includes("|n/a|") && r.includes("Offline-Fallback")), JSON.stringify(goldFbRows));
+assert.ok(goldFbHtml.includes("Kein klares Signal."), "Gold-Fallback: nichts gezählt");
+// Live-Gold (echte Felder aus gold-live.json, Rest aus der Fallback-Hülle, aber eigener timestamp) → Werte bleiben
+const goldLiveHtml = renderToStaticMarkup(React.createElement(GoldSummarySection, { data: { ...GOLD_FALLBACK_DATA, ...fixture("gold-live.json"), timestamp: "2026-10-25T10:00:00.000Z" } }));
+assert.ok(goldLiveHtml.includes("-4.2% · im Band") && !goldLiveHtml.includes("Offline-Fallback"));
+const btcFbHtml = renderToStaticMarkup(React.createElement(Section12Fazit, { data: BTC_FALLBACK_DATA }));
+const btcFbRows = rowsOf(btcFbHtml.slice(btcFbHtml.indexOf('data-testid="asset-conflict-table"')));
+assert.ok(btcFbRows.length >= 5 && btcFbRows.slice(0, 5).every(r => r.includes("|n/a|") && r.includes("Offline-Fallback")), JSON.stringify(btcFbRows.slice(0, 5)));
+assert.ok(!btcFbRows.slice(0, 5).some(r => r.includes("13 (Extreme Fear)")), "BTC-Fallback F&G 13 nicht in der Matrix");
+const btcLiveHtml = renderToStaticMarkup(React.createElement(Section12Fazit, { data: { ...BTC_FALLBACK_DATA, timestamp: "2026-10-25T10:00:00.000Z" } }));
+const btcLiveRows = rowsOf(btcLiveHtml.slice(btcLiveHtml.indexOf('data-testid="asset-conflict-table"')));
+assert.ok(btcLiveRows.slice(0, 5).some(r => r.includes("13 (Extreme Fear)")) && !btcLiveHtml.includes("Offline-Fallback"), "Live-BTC unverändert");
+assert.deepEqual(sig(goldConflictMatrix(GOLD_FALLBACK_DATA as any, { fallback: true })), { gis: "n/a", adaptive: "n/a", realYieldFv: "n/a", regime: "n/a", technical: "n/a" });
+
+// ── #328-Nachzug: Rezession — Quelle je Zeile aus den echten Subgruppen-Feldern ──
+const recBasis = Object.fromEntries(rec.cells.map(c => [c.id, c.basis]));
+assert.equal(recBasis.recession_coincident, "subgroups[recession_coincident].probability, Horizont 3M, <30% positiv / ≥50% negativ");
+assert.equal(recBasis.recession_leading, "subgroups[recession_leading].probability, Horizont 6M, <30% positiv / ≥50% negativ");
+assert.equal(recBasis.recession_full, "subgroups[recession_full].finalProbability (mit NY-Fed-Anker), Horizont 12M, <30% positiv / ≥50% negativ");
+assert.equal(recBasis.correction_sentiment, "subgroups[correction_sentiment].probability, Horizont 3-6M, <30% positiv / ≥50% negativ");
+assert.equal(recBasis.correction_full, "subgroups[correction_full].probability, Horizont 12M, <30% positiv / ≥50% negativ");
+const recHtml = renderToStaticMarkup(React.createElement(AssetConflictSummary, { matrix: rec }));
+assert.equal((recHtml.match(/12M Rezession: finalProbability/g) ?? []).length, 0, "kein Einheits-Basistext mehr");
+assert.equal(recessionConflictMatrix([]).cells[0].basis, "subgroups[recession_coincident] fehlt → n/a");
+
 console.log("asset conflict matrix: OK");

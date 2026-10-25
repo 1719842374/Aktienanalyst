@@ -21,7 +21,23 @@ function signSignal(v: number): ConflictSignal {
   return v > 0 ? "positiv" : v < 0 ? "negativ" : "neutral";
 }
 
+/**
+ * Offline-Fallback (GOLD_FALLBACK_DATA / BTC_FALLBACK_DATA, gebündelte Build-Daten statt Live-API): die Werte sind
+ * veraltet bzw. Platzhalter (Gold-Technik „RSI 50.0 | Abw. 0.0%“). Die Aufrufer erkennen den Fallback am Marker des
+ * Dashboards (timestamp === *_FALLBACK_DATA.timestamp, wie gold-offline-note). Dann n/a in jeder Zelle — zählt nicht.
+ */
+export interface AssetConflictOptions { fallback?: boolean }
+const FALLBACK_BASIS = "Offline-Fallback (gebündelte Daten, Live-API nicht erreichbar) → n/a, zählt nicht";
+function fallbackMatrix(cells: { id: string; label: string }[]): AssetConflictMatrix {
+  return summarizeConflictCells<ConflictCellOf<string>>(cells.map(({ id, label }) => ({ id, label, ...NA, basis: FALLBACK_BASIS })));
+}
+
 // ─── BTC ────────────────────────────────────────────────────────────────────────
+
+const BTC_DIMENSIONS = [
+  { id: "gis", label: "GIS (Indikatoren)" }, { id: "powerLaw", label: "Power-Law" }, { id: "cycle", label: "Halving-Zyklus" },
+  { id: "technical", label: "Technik-Regime" }, { id: "sentiment", label: "Fear & Greed (konträr)" },
+];
 
 /** Loose view of BTCAnalysis (client/src/lib/btcAnalysis.ts). Fallback or old data can lack fields. */
 export interface BtcConflictSource {
@@ -34,7 +50,8 @@ export interface BtcConflictSource {
   fearGreedLabel?: string | null;
 }
 
-export function btcConflictMatrix(d: BtcConflictSource | null | undefined): AssetConflictMatrix {
+export function btcConflictMatrix(d: BtcConflictSource | null | undefined, opts: AssetConflictOptions = {}): AssetConflictMatrix {
+  if (opts.fallback) return fallbackMatrix(BTC_DIMENSIONS);
   const gis = d?.gis;
   const ps = d?.powerLaw?.powerSignal;
   const dev = d?.powerLaw?.deviationPercent;
@@ -70,7 +87,13 @@ export interface GoldConflictSource {
   indicators?: { name: string; score: number; value: string }[] | null;
 }
 
-export function goldConflictMatrix(d: GoldConflictSource | null | undefined): AssetConflictMatrix {
+const GOLD_DIMENSIONS = [
+  { id: "gis", label: "GIS (Indikatoren)" }, { id: "adaptive", label: "Adaptive Schicht" }, { id: "realYieldFv", label: "Real-Yield Fair Value" },
+  { id: "regime", label: "Realzins-Regime" }, { id: "technical", label: "Technik (RSI + 200-DMA)" },
+];
+
+export function goldConflictMatrix(d: GoldConflictSource | null | undefined, opts: AssetConflictOptions = {}): AssetConflictMatrix {
+  if (opts.fallback) return fallbackMatrix(GOLD_DIMENSIONS);
   const gis = d?.gis;
   const ad = d?.adaptiveScore?.score;
   const fv = d?.realYieldModel?.fairValue;
@@ -120,10 +143,14 @@ export function recessionProbSignal(p: number | null | undefined): ConflictSigna
 export function recessionConflictMatrix(subgroups: RecessionSubgroupSource[] | null | undefined): AssetConflictMatrix {
   return summarizeConflictCells<ConflictCellOf<string>>(RECESSION_DIMENSIONS.map(({ id, label }) => {
     const sg = subgroups?.find(s => s.name === id);
-    const p = fin(sg?.finalProbability) ? sg!.finalProbability : sg?.probability;
+    const useFinal = fin(sg?.finalProbability);
+    const p = useFinal ? sg!.finalProbability : sg?.probability;
+    // Quelle je Zeile aus den echten Subgruppen-Feldern (name, horizon, finalProbability vs. probability)
+    const field = useFinal ? "finalProbability (mit NY-Fed-Anker)" : "probability";
+    const horizon = sg?.horizon ? `, Horizont ${sg.horizon}` : "";
     return {
       id, label, signal: recessionProbSignal(p), value: fin(p) ? `${p}%` : "n/a",
-      basis: "subgroups[].probability (12M Rezession: finalProbability mit NY-Fed-Anker), <30% positiv / ≥50% negativ",
+      basis: sg ? `subgroups[${id}].${field}${horizon}, <30% positiv / ≥50% negativ` : `subgroups[${id}] fehlt → n/a`,
     };
   }));
 }
