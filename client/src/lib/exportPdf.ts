@@ -119,7 +119,8 @@ export async function buildClientPdf(data: StockAnalysis, shots: SectionShot[], 
   return doc.output("blob");
 }
 
-export async function exportAnalysisPdf(data: StockAnalysis, sectionEls: Array<{ id: number; el: HTMLElement | null }> = []): Promise<PdfExportResult> {
+/** deliver: Standard = sofortiger Download (Desktop unverändert). iOS übergibt eine Übergabe an den „PDF öffnen/teilen“-Knopf (lib/pdfDelivery). */
+export async function exportAnalysisPdf(data: StockAnalysis, sectionEls: Array<{ id: number; el: HTMLElement | null }> = [], deliver: (blob: Blob, filename: string) => void = triggerDownload): Promise<PdfExportResult> {
   const filename = pdfFilename(data.ticker);
   let shots: SectionShot[] = [];
   let failed: number[] = [];
@@ -142,7 +143,7 @@ export async function exportAnalysisPdf(data: StockAnalysis, sectionEls: Array<{
       try { detail = JSON.parse(new TextDecoder().decode(buf))?.error ?? ""; } catch { /* kein JSON */ }
       throw new Error(detail ? `${bad}: ${detail}` : bad);
     }
-    triggerDownload(new Blob([buf], { type: "application/pdf" }), filename);
+    deliver(new Blob([buf], { type: "application/pdf" }), filename);
     if (failed.length) alert(`PDF erstellt. Nicht als Bild aufnehmbar: Sektion ${failed.join(", ")}.`);
     return { ok: true, via: "server", filename, bytes: buf.length, sections: shots.length };
   } catch (err: any) {
@@ -151,7 +152,7 @@ export async function exportAnalysisPdf(data: StockAnalysis, sectionEls: Array<{
   }
   try {
     const blob = await buildClientPdf(data, shots, serverError);
-    triggerDownload(blob, filename);
+    deliver(blob, filename);
     alert(`Server-PDF fehlgeschlagen (${serverError}). Es wurde ein Client-PDF mit Fazit-Werten und ${shots.length} Sektionsbildern erstellt.`);
     return { ok: true, via: "client", filename, bytes: blob.size, sections: shots.length, serverError };
   } catch (err: any) {
