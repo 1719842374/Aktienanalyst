@@ -2,14 +2,17 @@
  * FW-09 — BTC-Fiscal-Overlay (FRED MTSO133FMS): reine Anzeige, kein Score.
  * Prüft: (1) 12M-Summe/YoY gegen Handrechnung auf echtem FRED-Snapshot,
  * (2) point-in-time (kein Wert vor Monatsanfang+1M+14T), Staleness → null (n/a),
- * (3) Zonenlogik + Zonen-Läufe, (4) Score-Dateien byte-gleich zu origin/main
- * (btcAnalysis.ts, analyze-route.ts, btc-macro.ts), (5) Scoring-Ausgabe inhaltlich: echter analyzeBTC()
+ * (3) Zonenlogik + Zonen-Läufe, (4) inhaltlich ohne festen SHA: analyzeBTC Branch == origin/main,
+ * btc-macro Branch == origin/main (FRED-Snapshots), analyze-route.ts vom Branch unberührt, (5) Scoring-Ausgabe inhaltlich: echter analyzeBTC()
  * auf Fixtures (script/fixtures/btc-liquidity) mit vs. ohne fiscal-history-Route identisch (merge-robust).
  * Fixture (echt, 25.10.2026): script/fixtures/fiscal/MTSO133FMS-2026-10-25.csv
  * Ausführen: npx tsx script/test-btc-fiscal-overlay.ts
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, mkdtempSync, chmodSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { execSync } from "node:child_process";
 import { parseFredCsv } from "../server/btc-macro";
 import {
@@ -72,13 +75,6 @@ ok("Zonen-Läufe", () => {
   ]);
 });
 
-ok("Score-/Pflichtdateien byte-gleich zu main 73eff97e", () => {
-  for (const f of ["client/src/lib/btcAnalysis.ts", "server/analyze-route.ts", "server/btc-macro.ts"]) {
-    const base = execSync(`git show 73eff97e:${f}`, { maxBuffer: 64 << 20 });
-    assert.ok(base.equals(readFileSync(f)), f);
-  }
-});
-
 // Inhaltlich statt Diff gegen einen festen SHA (robust gegen andere BTC-Merges):
 // echter analyzeBTC() auf festen Fixtures (script/fixtures/btc-liquidity, Stichtag 2026-10-18).
 // „main“ = /api/analyze-btc/fiscal-history existiert nicht (404, Zustand vor FW-09);
@@ -113,6 +109,7 @@ async function scoringParity() {
     return text("offline (Test)", 404); // übrige Quellen: definierter Ausfall, in beiden Läufen gleich
   };
   const { analyzeBTC } = await import("../client/src/lib/btcAnalysis");
+  let analyzeBTCRef: any = analyzeBTC;
   const RealDate = Date;
   const fixed = RealDate.parse(`${asOf}T23:59:59Z`);
   class FakeDate extends RealDate {
@@ -125,9 +122,18 @@ async function scoringParity() {
     Math.random = () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     (globalThis as any).Date = FakeDate; globalThis.fetch = mkFetch(withFiscal) as any;
     console.log = console.warn = console.error = () => {};
-    try { return await analyzeBTC(true); }
+    try { return await analyzeBTCRef(true); }
     finally { (globalThis as any).Date = RealDate; globalThis.fetch = rf; console.log = rl; console.warn = rw; console.error = re; Math.random = rr; }
   };
+  // main-Stand von btcAnalysis.ts (origin/main zur Laufzeit, kein fester SHA) neben die Datei legen,
+  // damit relative Imports gleich auflösen; mit denselben Mocks rechnen.
+  const mainSrc = execSync("git show origin/main:client/src/lib/btcAnalysis.ts", { maxBuffer: 64 << 20 }).toString();
+  const tmp = "client/src/lib/.main-btcAnalysis.tmp.ts";
+  writeFileSync(tmp, mainSrc);
+  let mainAnalyze: any;
+  try { mainAnalyze = (await import(pathToFileURL(resolve(tmp)).href)).analyzeBTC; } finally { unlinkSync(tmp); }
+  const runWith = async (fn: any) => { const keep = analyzeBTCRef; analyzeBTCRef = fn; try { return await run(false); } finally { analyzeBTCRef = keep; } };
+  const mainCode = await runWith(mainAnalyze);
   const mainState = await run(false);
   const fw09 = await run(true);
   assert.equal(fiscalCalls.n, 0, "analyzeBTC darf fiscal-history nicht abfragen");
@@ -136,10 +142,42 @@ async function scoringParity() {
   assert.equal(fw09.gws.value, mainState.gws.value);
   const strip = (a: any) => JSON.stringify({ ...a, timestamp: undefined });
   assert.equal(strip(fw09), strip(mainState), "gesamte Analyse-Ausgabe identisch");
+  assert.equal(strip(mainState), strip(mainCode), "analyzeBTC Branch == analyzeBTC origin/main (gleiche Fixtures)");
   return { gis: mainState.gis, gws: mainState.gws.value };
 }
 
 const parity = await scoringParity();
+n++; console.log("✓ analyzeBTC-Ausgabe (Branch) == analyzeBTC von origin/main auf denselben Fixtures");
+
+// btc-macro inhaltlich: main-Version vs. Branch, gleiche FRED-Snapshots (curl = Fixture-Skript)
+{
+  const bin = mkdtempSync(join(tmpdir(), "fw09-curl-"));
+  writeFileSync(join(bin, "curl"), `#!/bin/sh
+for a; do url="$a"; done
+case "$url" in *id=DFII10*) cat "${resolve("script/fixtures/real10y/DFII10-2026-10-18.csv")}";; *id=M2SL*) cat "${resolve("script/fixtures/real10y/M2SL-2026-10-18.csv")}";; *) exit 22;; esac
+`);
+  chmodSync(join(bin, "curl"), 0o755);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath}`;
+  const tmp = "server/.main-btc-macro.tmp.ts";
+  writeFileSync(tmp, execSync("git show origin/main:server/btc-macro.ts", { maxBuffer: 64 << 20 }));
+  try {
+    const mainMacro = await import(pathToFileURL(resolve(tmp)).href);
+    const branchMacro = await import("../server/btc-macro");
+    const a = await branchMacro.fetchBTCMacroHistory("2020-01-01", "2026-10-18");
+    const b = await mainMacro.fetchBTCMacroHistory("2020-01-01", "2026-10-18");
+    assert.ok(Object.keys(a.real10yByDate).length > 100);
+    assert.deepEqual(a, b);
+  } finally { unlinkSync(tmp); process.env.PATH = oldPath; }
+  n++; console.log("✓ btc-macro: fetchBTCMacroHistory Branch == origin/main (echte FRED-Snapshots)");
+}
+
+// analyze-route: liegt nicht im BTC-Pfad; Branch ändert sie nicht (gegen merge-base, kein fester SHA)
+{
+  const mb = execSync("git merge-base HEAD origin/main").toString().trim();
+  execSync(`git diff --quiet ${mb} HEAD -- server/analyze-route.ts`);
+  n++; console.log("✓ analyze-route.ts vom Branch unberührt (merge-base mit origin/main)");
+}
 n++; console.log(`✓ Scoring-Ausgabe (analyzeBTC auf Fixture) gleich main-Zustand ohne Fiscal-Route (GIS ${parity.gis}, GWS ${parity.gws})`);
 
 console.log(`\n${n} Tests grün`);
