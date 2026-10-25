@@ -6,6 +6,8 @@ import { PolicyContextPanel } from "./PolicyContextPanel";
 import { apiRequest } from "@/lib/queryClient";
 import { pestelDampeningFactor } from "../../../../shared/bias-fixes";
 import { currencySymbol, statementCurrency } from "../../lib/formatters";
+import { useMarketCreditSpread } from "../../lib/useMarketCreditSpread";
+import { pestelCreditLine, isEconomicCategory, PESTEL_CREDIT_DISPLAY_NOTE, ISSUER_BOND_NA_NOTE } from "../../../../shared/pestel-credit-line";
 
 interface Props { data: StockAnalysis }
 
@@ -48,6 +50,9 @@ function StockCorrIcon({ corr }: { corr: string }) {
 export function PestelSection({ data }: Props) {
   const pestel = data.pestelAnalysis;
   const [expandedCategory, setExpandedCategory] = useState<number | null>(null);
+  // F1-24: Markt-Spread Baa nur laden, solange „Economic“ aufgeklappt ist. Nur Anzeige.
+  const economicOpen = expandedCategory != null && isEconomicCategory(pestel?.factors?.[expandedCategory]?.category);
+  const creditQuery = useMarketCreditSpread(economicOpen);
 
   if (!pestel) {
     return (
@@ -170,6 +175,20 @@ export function PestelSection({ data }: Props) {
                       <span className="text-muted-foreground font-medium">Regional Outlook: </span>
                       {category.regionalOutlook}
                     </div>
+
+                    {/* F1-24: Kreditrisiko unter Economic (FRED BAA10Y, nur Anzeige) */}
+                    {isEconomicCategory(category.category) && (() => {
+                      const line = pestelCreditLine(creditQuery.data, { loading: creditQuery.isLoading, error: creditQuery.isError });
+                      return (
+                        <div className="rounded-md border border-border/30 p-2.5 mb-3 text-[11px] leading-relaxed" data-testid="pestel-credit-line" data-status={line.status}>
+                          <div className={line.status === "ok" ? "text-foreground/80" : "text-muted-foreground"}>{line.text}</div>
+                          {line.status === "ok" && line.stressHint && (
+                            <div className="text-amber-500 mt-1" data-testid="pestel-credit-stress">{line.stressHint}</div>
+                          )}
+                          <div className="text-[10px] text-muted-foreground mt-1">{ISSUER_BOND_NA_NOTE}. {PESTEL_CREDIT_DISPLAY_NOTE}</div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Factor Details */}
                     <div className="space-y-2">
