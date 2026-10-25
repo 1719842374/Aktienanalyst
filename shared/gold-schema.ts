@@ -69,6 +69,9 @@ export interface GoldPricePoint {
   t10yie?: number;  // FRED T10YIE, %
   walcl?: number;   // FRED WALCL, Billionen USD
   volume?: number;  // FMP GCUSD, nur echte positive Prints
+  /** F10-13: Tageshoch/-tief derselben Quelle wie `close` (FMP GCUSD). Fehlt es, ist ATR n/a. */
+  high?: number;
+  low?: number;
 }
 
 // Punkt 2 (HOCH-Ticket 05.08.2026): gold-realyield-model.ts an gold-routes.ts

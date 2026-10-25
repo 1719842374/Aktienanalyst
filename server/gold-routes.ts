@@ -406,6 +406,10 @@ export function registerGoldRoutes(server: Server, app: Express) {
           if (/\d{4}-\d{2}-\d{2}/.test(dateStr) && isFinite(close) && close > 0) {
             closePrices.push(close);
             historicalPrices.push({ date: dateStr, close });
+            // F10-13 (nur Anzeige): High/Low derselben FMP-Zeile fuer ATR; ohne echte Werte bleibt ATR n/a.
+            const high = parseFloat(String(row.high ?? ""));
+            const low = parseFloat(String(row.low ?? ""));
+            if (Number.isFinite(high) && Number.isFinite(low) && low > 0 && high >= low) Object.assign(historicalPrices[historicalPrices.length - 1], { high, low });
             const volumeRaw = parseFloat(String(row.volume ?? row.Volume ?? ""));
             if (Number.isFinite(volumeRaw)) fmpVolumes.push({ date: dateStr, volume: volumeRaw });
           }
@@ -826,6 +830,10 @@ export function registerGoldRoutes(server: Server, app: Express) {
             if (volumeReadingsAreReal(yahooVolumes.map(point => point.volume))) {
               volumePoints = yahooVolumes;
               volumeSource = "Yahoo GC=F";
+              // F10-08 (nur Anzeige): dieselben echten Yahoo-Prints auch im Chart zeigen, wenn FMP keine liefert.
+              // Closes bleiben unveraendert, der Score bekommt weiter genau `volumePoints`.
+              const chartVolByDate = new Map(yahooVolumes.filter(v => Number.isFinite(v.volume) && v.volume > 0).map(v => [v.date, v.volume]));
+              historicalPrices = historicalPrices.map(p => (p.volume == null && chartVolByDate.has(p.date) ? { ...p, volume: chartVolByDate.get(p.date)! } : p));
             } else {
               console.log("[GOLD] Volumen N/A: FMP GCUSD und Yahoo GC=F ohne echte positive Prints");
             }
