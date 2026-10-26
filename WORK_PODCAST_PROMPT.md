@@ -81,6 +81,52 @@ Das Schema ist generisch und deckt beide Pole ab.
 
 ---
 
+## RSI – Recursive Self-Improvement (Lernen aus eigenen Outputs)
+
+**Ziel:** Der Podcast verbessert sich kontinuierlich anhand seiner eigenen bisherigen Ausgaben.
+
+### Ablauf
+
+1. **Generierung** – Skript wird wie oben erzeugt.
+2. **Bewertung** – Ein zweiter Call bewertet das Skript gegen feste Kriterien:
+   - Flüssigkeit (keine abgehackten Sätze)
+   - Redundanz (Wiederholungen)
+   - Struktur-Einhaltung
+   - Quellenangaben
+   - Interaktion zwischen Rollen
+3. **Feedback speichern** – Bewertung + konkrete Verbesserungsvorschläge werden gespeichert.
+4. **Nächster Lauf** – Das Feedback wird dem System-Prompt als zusätzlicher Kontext mitgegeben („Vermeide die Fehler aus dem letzten Lauf: …“).
+
+### Bewertungsprompt (Beispiel)
+
+```
+Bewerte das folgende Podcast-Skript auf einer Skala von 1–10 für:
+- Flüssigkeit
+- Redundanzfreiheit
+- Struktur-Einhaltung
+- Quellenklarheit
+- Rollen-Interaktion
+
+Gib konkrete Verbesserungsvorschläge (max. 5 Punkte).
+```
+
+### Speicher
+
+- Einfache JSON-Datei oder DB-Tabelle mit `timestamp`, `topic`, `score`, `feedback`.
+- Beim nächsten Lauf werden die letzten 3–5 Feedbacks in den Prompt injiziert.
+
+### Aufwand
+
+| Schritt | Aufwand |
+|---------|---------|
+| Bewertungs-Call + Speicher | 4–6 h |
+| Feedback-Injection in Prompt | 2–3 h |
+| **Gesamt RSI** | **~6–9 h** |
+
+**Ergebnis:** Jeder neue Podcast wird messbar besser als der vorherige, ohne manuelles Nachjustieren.
+
+---
+
 ## Beispiel-Aufruf (User)
 
 ```
@@ -104,6 +150,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 - Für Multi-Voice: Abschnitte mit Sprecher-Tags versehen, dann an TTS weitergeben.
 - Filter (öffentliche Daten only) vorher anwenden.
 - Kennzeichnung „KI-generiert“ ist im Abschluss enthalten.
+- RSI-Loop läuft automatisch nach jedem Podcast.
 
 ---
 
@@ -114,6 +161,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 | Prompt in Pipeline einbauen | 2–3 h |
 | Multi-Rollen-Logik | 4–6 h |
 | TTS-Anbindung | 6–8 h |
-| **Gesamt** | **~12–17 h** |
+| RSI-Loop | 6–9 h |
+| **Gesamt** | **~18–26 h** |
 
 Der Prompt ist generisch und für alle Research-Themen einsetzbar.
