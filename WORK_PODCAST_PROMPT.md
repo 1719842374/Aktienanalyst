@@ -163,7 +163,7 @@ Gib konkrete Verbesserungsvorschläge (max. 5 Punkte).
 ### Ziel
 Beides umsetzen:
 1. **Eigene Podcast-Sektion** (Economist-/Spotify-ähnlich, mit Regionen).
-2. **Integration in Asset-News** (Aktien, Gold, BTC, Rezession etc.).
+2. **Integration in Asset-News** (Aktien, Gold, BTC, Rezession etc.) mit Scoring-Logik und Fazit.
 
 ### 1. Eigene Podcast-Sektion
 
@@ -180,7 +180,7 @@ Beides umsetzen:
 
 **Aufwand:** 8–12 h (Frontend Player + Backend Generierung + Regionen).
 
-### 2. Integration in Asset-News
+### 2. Integration in Asset-News (mit Scoring & Fazit)
 
 **UI:**
 - In der News-Sektion jedes Assets (Aktie, Gold, BTC, Rezession):
@@ -188,21 +188,33 @@ Beides umsetzen:
   - Generiert oder lädt eine asset-spezifische Episode.
   - Player + Transkript wie in der eigenen Sektion.
 
-**Daten:**
-- Asset-spezifische Daten (Kurs, Fundamentals, Scoring) + FMP Stock News.
-- Regionale Quellen je nach Asset (z. B. Handelsblatt für deutsche Aktien).
+**Daten, die an den Podcast geschickt werden:**
+- Asset-spezifische Daten (Kurs, Fundamentals).
+- **Scoring-Logik / Bewertung:**
+  - Ampel (ATTRAKTIV / NEUTRAL / UNATTRAKTIV).
+  - Signal-Score (positiv / negativ / neutral).
+  - Gates & Anti-Bias (DCF_REALITY_CHECK, PRICING_POWER, INVENTORY etc.).
+  - Technische Analyse (RSI, MACD, Death Cross / Golden Cross, RSL).
+  - Fundamentale Bewertung (gehärteter Inverse-DCF, g*, WACC).
+  - Moat / Porter, PESTEL, Management-Score.
+- FMP Stock News + regionale Quellen.
 
-**Aufwand:** 10–14 h (Asset-Kontext, Generierung pro Asset, Caching).
+**Podcast-Inhalt (zusätzlich zur Standardstruktur):**
+- Kurze Erklärung der Scoring-Logik im Kontext des Assets.
+- Fazit: Technische Analyse + Fundamentale Bewertung + Gesamtampel.
+- Warum die Ampel so steht (Top-Treiber und Red Flags).
+
+**Aufwand:** 12–16 h (Asset-Kontext, Scoring-Payload, Generierung pro Asset, Caching).
 
 ### Gesamtaufwand Dual Placement
 
 | Schritt | Aufwand |
 |---------|---------|
 | Eigene Podcast-Sektion | 8–12 h |
-| Asset-Integration | 10–14 h |
-| **Gesamt Placement** | **~18–26 h** |
+| Asset-Integration (inkl. Scoring & Fazit) | 12–16 h |
+| **Gesamt Placement** | **~20–28 h** |
 
-**Empfehlung:** Beide parallel umsetzen. Die eigene Sektion als Hauptansicht, die Asset-Integration als kontextueller Einstieg.
+**Empfehlung:** Beide parallel umsetzen. Die eigene Sektion als Hauptansicht, die Asset-Integration als kontextueller Einstieg mit voller Scoring-Erklärung.
 
 ---
 
@@ -231,7 +243,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 - Kennzeichnung „KI-generiert“ ist im Abschluss enthalten.
 - RSI-Loop läuft automatisch nach jedem Podcast.
 - Quellen: FMP für strukturierte News, regionale Medien für Kontext.
-- Dual Placement: Eigene Sektion + Asset-Integration.
+- Dual Placement: Eigene Sektion + Asset-Integration (mit Scoring & Fazit).
 
 ---
 
@@ -244,7 +256,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 | TTS-Anbindung | 6–8 h |
 | RSI-Loop | 6–9 h |
 | Quellen-Anbindung (FMP + regional) | 4–6 h |
-| Dual Placement (eigene Sektion + Asset) | 18–26 h |
-| **Gesamt** | **~40–58 h** |
+| Dual Placement (eigene Sektion + Asset mit Scoring) | 20–28 h |
+| **Gesamt** | **~42–60 h** |
 
 Der Prompt ist generisch und für alle Research-Themen einsetzbar.
