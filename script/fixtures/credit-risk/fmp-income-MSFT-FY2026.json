@@ -1,0 +1,16 @@
+{
+  "_source": "Kein FMP-Key auf der Box. Zeile im Format von FMP /stable/income-statement (neueste zuerst, limit=1); Werte aus dem MSFT-10-K GJ 2026 (Stichtag 2026-06-30) laut SEC EDGAR XBRL companyfacts (CIK 0000789019, accn 0001193125-26-323660, abgerufen 18.10.2026): OperatingIncomeLoss, InterestExpenseNonoperating, RevenueFromContractWithCustomerExcludingAssessedTax, IncomeLossFromContinuingOperationsBeforeIncomeTaxes…",
+  "rows": [
+    {
+      "date": "2026-06-30",
+      "symbol": "MSFT",
+      "reportedCurrency": "USD",
+      "fiscalYear": "2026",
+      "period": "FY",
+      "revenue": 331839000000,
+      "operatingIncome": 155237000000,
+      "interestExpense": 3051000000,
+      "incomeBeforeTax": 165934000000
+    }
+  ]
+}
