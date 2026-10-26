@@ -24,6 +24,7 @@ import {
   readGoogleTrendsCache,
   writeGoogleTrendsCache,
 } from "./cache/google-trends-cache";
+import { fetchGoogleTrendsWithRetry, type SerpApiHttpResult } from "./cache/google-trends-retry";
 import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
@@ -499,6 +500,33 @@ export function finraMarginPoints(buf: Buffer): { date: string; debitMillions: n
   return finraMarginFromSheetXml(xml.toString("utf8"));
 }
 
+/** SerpApi call that keeps the HTTP status (fetchUrl drops it). Status 0 = timeout/transport failure. */
+function fetchSerpApiWithStatus(url: string, timeoutMs: number): SerpApiHttpResult {
+  const marker = "\n__HTTP_STATUS__";
+  try {
+    const raMarker = "\n__RETRY_AFTER__";
+    const maxTime = Math.max(1, Math.floor(timeoutMs / 1000));
+    const out = execSync(`curl -sL --max-time ${maxTime} -w "${marker.replace("\n", "\\n")}%{http_code}${raMarker.replace("\n", "\\n")}%header{retry-after}" "${url}"`, {
+      encoding: "utf-8",
+      timeout: timeoutMs + 5000,
+      maxBuffer: 50 * 1024 * 1024,
+    });
+    const idx = out.lastIndexOf(marker);
+    if (idx < 0) return { status: 0, body: out };
+    const tail = out.slice(idx + marker.length);
+    const raIdx = tail.indexOf(raMarker);
+    const status = parseInt((raIdx < 0 ? tail : tail.slice(0, raIdx)).trim(), 10);
+    const retryAfter = raIdx < 0 ? "" : tail.slice(raIdx + raMarker.length).trim();
+    return { status: Number.isFinite(status) ? status : 0, body: out.slice(0, idx), ...(retryAfter ? { retryAfter } : {}) };
+  } catch {
+    return { status: 0, body: "" };
+  }
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 // 11. Google Trends "Recession"
 // One cache: server/cache/google-trends-cache.ts. No second store, no extra route.
 // A miss inside 48h is scored with the last print. Older than that, the slot closes.
@@ -520,7 +548,10 @@ function scoreGoogleTrends(): IndicatorResult {
   let fetched: { value: number; source: string } | null = null;
   try {
     const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
-    const parsed = parseSerpApiGoogleTrends(fetchUrl(url, 12000));
+    // F3-04: bounded retry (max 3 attempts, 1 s / 2 s backoff or Retry-After, 15 s total budget, 15 min cooldown after a final 429).
+    const outcome = fetchGoogleTrendsWithRetry(timeoutMs => fetchSerpApiWithStatus(url, timeoutMs), sleepSync);
+    if (!outcome.parsed) console.log(`  Google Trends SerpApi miss (${outcome.reason}, attempts=${outcome.attempts})`);
+    const parsed = outcome.parsed;
     if (parsed) {
       fetched = { value: parsed.value, source: parsed.source };
       console.log(`  Google Trends (SerpApi): avg=${parsed.value}, latest=${parsed.latest}, peak=${parsed.peak}`);
