@@ -217,15 +217,41 @@ Beides umsetzen:
 
 **Aufwand:** 14–18 h (Asset-Kontext, Scoring-Payload, 20-Min-Generierung, konkrete Moat/PESTEL-Beispiele, Caching).
 
+### Verknüpfung der Sektionen (Backend)
+
+**Sinnvollste Stelle:** Backend, direkt nach der Asset-Analyse.
+
+**Ablauf:**
+1. Asset-Analyse läuft (Scoring, Technical, Fundamental, Moat, PESTEL).
+2. News werden parallel geholt (FMP Stock News + regionale Quellen).
+3. Beides wird in ein gemeinsames Payload gepackt.
+4. Payload geht an den Podcast-Generator (OpenRouter).
+5. Podcast + Transkript werden zurückgegeben.
+
+**Neuer Endpoint:** `/podcast/asset/:symbol`
+- Holt intern Analyse-Daten (gecacht oder frisch) + News.
+- Packt alles in ein strukturiertes Prompt-Payload.
+- Ruft OpenRouter auf.
+- Speichert Audio + Transkript.
+
+**Warum hier:**
+- Analyse ist bereits berechnet.
+- News sind frisch.
+- Alles in einem Call.
+- Keine doppelte Logik im Frontend.
+
+**Aufwand Verknüpfung:** ~6–8 h (Endpoint + Payload-Mapping).
+
 ### Gesamtaufwand Dual Placement
 
 | Schritt | Aufwand |
 |---------|---------|
 | Eigene Podcast-Sektion | 8–12 h |
 | Asset-Integration (20-Min-Überblick + Scoring & Fazit) | 14–18 h |
-| **Gesamt Placement** | **~22–30 h** |
+| Verknüpfung im Backend | 6–8 h |
+| **Gesamt Placement** | **~28–38 h** |
 
-**Empfehlung:** Beide parallel umsetzen. Die eigene Sektion als Hauptansicht, die Asset-Integration als kontextueller 20-Minuten-Überblick mit konkreter Moat-/PESTEL-Erklärung.
+**Empfehlung:** Beide parallel umsetzen. Die eigene Sektion als Hauptansicht, die Asset-Integration als kontextueller 20-Minuten-Überblick mit konkreter Moat-/PESTEL-Erklärung. Verknüpfung im Backend.
 
 ---
 
@@ -255,6 +281,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 - RSI-Loop läuft automatisch nach jedem Podcast und lernt cross-podcast (Memory).
 - Quellen: FMP für strukturierte News, regionale Medien für Kontext.
 - Dual Placement: Eigene Sektion + Asset-Integration (20-Min-Überblick mit Scoring & Fazit).
+- Verknüpfung der Sektionen erfolgt im Backend über `/podcast/asset/:symbol`.
 
 ---
 
@@ -268,6 +295,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 | RSI-Loop (inkl. Cross-Podcast Memory) | 8–12 h |
 | Quellen-Anbindung (FMP + regional) | 4–6 h |
 | Dual Placement (eigene Sektion + Asset mit 20-Min-Überblick) | 22–30 h |
-| **Gesamt** | **~46–65 h** |
+| Verknüpfung im Backend | 6–8 h |
+| **Gesamt** | **~52–73 h** |
 
 Der Prompt ist generisch und für alle Research-Themen einsetzbar.
