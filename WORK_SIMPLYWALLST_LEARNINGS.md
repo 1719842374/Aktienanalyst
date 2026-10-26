@@ -88,3 +88,45 @@ Grok gibt Markdown (`**Gate**`) aus. Im Interface werden die Sterne angezeigt.
 
 **Kurz:**  
 Von Simply Wall St lohnt sich vor allem die saubere Markdown-Darstellung und die Narrative-Struktur (Catalysts / Assumptions / Risks). Die Sterne im Interface müssen weg.
+
+---
+
+## 6. Chat History & Interface
+
+**Problem:** Chat History fehlt. Simply Wall St hat sie (New Chat, History).
+
+**Lösung:**
+- Chat-History im Backend speichern (pro User / pro Asset).
+- Sidebar oder Dropdown mit bisherigen Chats.
+- „New Chat“-Button.
+
+**Aufwand:** 6–8 h.
+
+---
+
+## 7. Podcast-Transkript – Economist-Niveau
+
+**Ziel:** Transkript so hochwertig wie beim Economist (Fließtext, Drop-Cap, saubere Typografie).
+
+**UI-Elemente:**
+- Drop-Cap am Anfang.
+- Serifen-Schrift für Fließtext.
+- Klare Absätze.
+- AI NARRATED Badge.
+- Player oben.
+
+**Aufwand:** 4–6 h (CSS + Komponenten).
+
+---
+
+## 8. MCP-Anbindung
+
+**Ja, möglich.**
+
+- FMP hat einen MCP-Server.
+- OpenRouter unterstützt Tool-Calls.
+- Eigener MCP-Server für den Podcast-Generator (Analyse-Daten + News als Tools).
+
+**Aufwand:** 8–12 h (MCP-Server + Tool-Definitionen).
+
+**Empfehlung:** Zuerst Chat History und Podcast-Styling, MCP später.
