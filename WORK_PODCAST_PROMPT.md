@@ -127,6 +127,37 @@ Gib konkrete Verbesserungsvorschläge (max. 5 Punkte).
 
 ---
 
+## Quellen – Global und Regional
+
+### FMP News-Endpoints (strukturiert)
+
+| Endpoint | Funktion |
+|----------|----------|
+| `/stable/news/stock-latest` | Aktuelle Aktien-News |
+| `/stable/news/stock` | Aktien-News nach Symbol |
+| `/stable/news/general-latest` | Allgemeine News |
+| `/stable/news/press-releases-latest` | Pressemitteilungen |
+| `/stable/news/press-releases` | Pressemitteilungen nach Symbol |
+| `/stable/news/crypto-latest` | Krypto-News |
+| `/stable/news/forex-latest` | Forex-News |
+| `/stable/fmp-articles` | Eigene FMP-Artikel |
+
+**Abdeckung:** Headlines, Snippets, URLs, Ticker. Gut als schnelle, strukturierte Quelle für US-/globale Aktien.
+
+### Regionale und globale Qualitätsquellen
+
+| Region | Quelle | Nutzen |
+|--------|--------|--------|
+| **Deutschland** | Handelsblatt, Manager Magazin, Börsen-Zeitung, FAZ | Unternehmens-, Politik- und Kapitalmarkt-Tiefe |
+| **Europa** | NZZ, Financial Times, ECB, Bundesbank | Unabhängige Analyse, Geldpolitik |
+| **USA** | Wall Street Journal, Bloomberg, Goldman/JPM Research | Märkte, institutionelle Sicht |
+| **China** | Caixin, South China Morning Post | Unabhängige chinesische Perspektive |
+| **Global** | The Economist, Google News | Makro, Geopolitik, Aggregation |
+
+**Kombination:** FMP (strukturiert, API) + regionale Qualitätsmedien (Kontext) deckt das globale + lokale Bild ab.
+
+---
+
 ## Beispiel-Aufruf (User)
 
 ```
@@ -151,6 +182,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 - Filter (öffentliche Daten only) vorher anwenden.
 - Kennzeichnung „KI-generiert“ ist im Abschluss enthalten.
 - RSI-Loop läuft automatisch nach jedem Podcast.
+- Quellen: FMP für strukturierte News, regionale Medien für Kontext.
 
 ---
 
@@ -162,6 +194,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 | Multi-Rollen-Logik | 4–6 h |
 | TTS-Anbindung | 6–8 h |
 | RSI-Loop | 6–9 h |
-| **Gesamt** | **~18–26 h** |
+| Quellen-Anbindung (FMP + regional) | 4–6 h |
+| **Gesamt** | **~22–32 h** |
 
 Der Prompt ist generisch und für alle Research-Themen einsetzbar.
