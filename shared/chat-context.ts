@@ -122,6 +122,19 @@ function list(items: Array<string | null | undefined> | undefined, maxItems = 6)
   return xs.length ? str(xs.join("; ")) : null;
 }
 
+/**
+ * S9 Peer-Overrides für den Chat-Kontext. Der Server schickt immer `{ add: [], remove: [] }`
+ * (analyze-route), vorher wurde daraus der Platzhalter „+- / −-“. Jetzt: echter Wert
+ * („+A,B / −C“, leere Seite entfällt), leere Listen = „keine“, Feld fehlt (alter Cache) = null (n/a).
+ */
+export function peerOverridesFact(o: { add?: unknown; remove?: unknown } | null | undefined): string | null {
+  if (!o || typeof o !== "object") return null;
+  const clean = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map(x => x.trim()) : []);
+  const add = clean(o.add), remove = clean(o.remove);
+  const parts = [add.length ? `+${add.join(",")}` : "", remove.length ? `−${remove.join(",")}` : ""].filter(Boolean);
+  return parts.length ? str(parts.join(" / ")) : "keine";
+}
+
 /** Reihenfolge und Labels identisch mit SECTIONS in client/src/pages/Dashboard.tsx. */
 export const STOCK_SECTION_LABELS: Record<number, string> = {
   1: "Executive Summary", 2: "Datenaktualität", 3: "Investmentthese", 4: "Financial Statements",
@@ -197,7 +210,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
       peers: list((d.peerComparison?.peers ?? []).map((p: any) => str(p?.ticker ?? p?.name, 20)), 8),
       peerKgvSchnitt: num(d.peerComparison?.peerAvg?.pe), peerPegSchnitt: num(d.peerComparison?.peerAvg?.peg),
       peerRoicSchnittPct: num(d.peerComparison?.peerAvg?.roic),
-      peerOverrides: d.activePeerOverrides ? `+${d.activePeerOverrides.add.join(",") || "-"} / −${d.activePeerOverrides.remove.join(",") || "-"}` : null,
+      peerOverrides: peerOverridesFact(d.activePeerOverrides),
     }),
     s(10, {
       risiken: list(risks.map((r: any) => `${r.name} (${r.category}, EW ${num(r.ew, 0) ?? "n/a"}%, Impact ${num(r.impact, 0) ?? "n/a"}%)`), 8),
