@@ -1,35 +1,38 @@
-# WORK – Chat Uploads & Dashboard als Connector
+# WORK – Chat Uploads, Voice & Dashboard als Connector
 
 **Stand:** 26.10.2026  
 **Ziel:**  
-1. Warum der KI-Chat keine Dokumente/Fotos/Screenshots akzeptiert und wie man das fixt.  
+1. Warum der KI-Chat keine Dokumente/Fotos/Screenshots und keine Voice-Eingabe akzeptiert und wie man das fixt.  
 2. Dashboard als Connector für externe Agents (Grok Bot, Claude Code etc.).
 
 ---
 
-## 1. Chat Uploads (Dokumente, Fotos, Screenshots)
+## 1. Chat Uploads (Dokumente, Fotos, Screenshots) + Voice
 
 ### Aktueller Stand
-Der KI-Chat akzeptiert nur Text. Der User kann keine Dateien, Bilder oder Screenshots einfügen.
+Der KI-Chat akzeptiert nur Text. Der User kann keine Dateien, Bilder, Screenshots oder Sprache einfügen.
 
 ### Warum es nicht geht
-- Frontend hat keinen File-Upload.
-- Backend hat keinen Endpoint für Multimodal-Input.
+- Frontend hat keinen File-Upload und keinen Voice-Input.
+- Backend hat keinen Endpoint für Multimodal-Input oder Speech-to-Text.
 - LLM-Call (Grok) wird nur mit Text aufgerufen.
 
 ### Implementierungsvorschlag
 
 | Schritt | Beschreibung | Aufwand |
 |---------|--------------|---------|
-| **Frontend** | Drag & Drop oder Button für Upload (PDF, PNG, JPG). | 4–6 h |
-| **Backend** | Endpoint `/chat/upload` speichert Datei und extrahiert Text (PDF) oder sendet Bild an Vision-Modell. | 6–8 h |
-| **LLM-Call** | Multimodal: Text + Bild-URL oder extrahierter Text wird dem Prompt mitgegeben. | 2–3 h |
-| **Caching** | Uploads werden pro Chat gespeichert. | 2–3 h |
-| **Gesamt** | | **~14–20 h** |
+| **Frontend Upload** | Drag & Drop oder Button für Upload (PDF, PNG, JPG). | 4–6 h |
+| **Frontend Voice** | Mikrofon-Button, Aufnahme, Send an Backend. | 3–4 h |
+| **Backend Upload** | Endpoint `/chat/upload` speichert Datei und extrahiert Text (PDF) oder sendet Bild an Vision-Modell. | 6–8 h |
+| **Backend Voice** | Endpoint `/chat/voice` sendet Audio an Whisper (OpenRouter) und gibt Transkript zurück. | 3–4 h |
+| **LLM-Call** | Multimodal: Text + Bild-URL oder extrahierter Text + Voice-Transkript wird dem Prompt mitgegeben. | 2–3 h |
+| **Caching** | Uploads und Voice-Transkripte werden pro Chat gespeichert. | 2–3 h |
+| **Gesamt** | | **~20–28 h** |
 
 **Unterstützte Formate (Vorschlag):**
 - PDF (Text-Extraktion)
 - PNG / JPG (Vision)
+- Voice (Whisper via OpenRouter)
 - Optional: Excel / CSV (Tabellen-Extraktion)
 
 ---
@@ -90,7 +93,7 @@ JSON-Response an Agent
 
 | Priorität | Feature | Aufwand | Nutzen |
 |-----------|---------|---------|--------|
-| **1** | Chat Uploads | 14–20 h | User kann Screenshots/PDFs einfügen |
+| **1** | Chat Uploads + Voice | 20–28 h | User kann Screenshots/PDFs und Sprache einfügen |
 | **2** | Connector | 17–22 h | Agents können Scoring nutzen |
 
-**Gesamt:** ~31–42 h.
+**Gesamt:** ~37–50 h.
