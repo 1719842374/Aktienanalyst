@@ -17,6 +17,12 @@ Der KI-Chat akzeptiert nur Text. Der User kann keine Dateien, Bilder, Screenshot
 - Backend hat keinen Endpoint für Multimodal-Input oder Speech-to-Text.
 - LLM-Call (Grok) wird nur mit Text aufgerufen.
 
+### Design-Beispiel (Grok Interface)
+
+![Grok Chat Interface](docs/images/grok-chat-interface.png)
+
+*Beispiel: Plus-Button für Uploads, Mikrofon und Voice-Wave für Spracheingabe.*
+
 ### Implementierungsvorschlag
 
 | Schritt | Beschreibung | Aufwand |
