@@ -158,6 +158,54 @@ Gib konkrete Verbesserungsvorschläge (max. 5 Punkte).
 
 ---
 
+## Implementierung – Dual Placement (Eigene Sektion + Asset-Integration)
+
+### Ziel
+Beides umsetzen:
+1. **Eigene Podcast-Sektion** (Economist-/Spotify-ähnlich, mit Regionen).
+2. **Integration in Asset-News** (Aktien, Gold, BTC, Rezession etc.).
+
+### 1. Eigene Podcast-Sektion
+
+**UI (Economist / Spotify-Niveau):**
+- Player oben: Play, Fortschrittsbalken, Geschwindigkeit (1x/1.25x/1.5x), 15s Skip.
+- Darunter: Fließtext des Transkripts (scrollbar, mit Zeitstempeln).
+- Badge: „KI-generiert im Research-Stil“.
+- Regionen-Filter: Deutschland / Europa / USA / China / Global.
+- Kapitel-Sprünge: Hook, These, Takeaways, Mechanismus, Implikation.
+
+**Daten:**
+- Themen aus Dashboard (Buffett, CAPE, KI-Capex, Rezession, Gold etc.).
+- Quellen: FMP + regionale Medien (siehe oben).
+
+**Aufwand:** 8–12 h (Frontend Player + Backend Generierung + Regionen).
+
+### 2. Integration in Asset-News
+
+**UI:**
+- In der News-Sektion jedes Assets (Aktie, Gold, BTC, Rezession):
+  - Button „Podcast zu diesem Asset“.
+  - Generiert oder lädt eine asset-spezifische Episode.
+  - Player + Transkript wie in der eigenen Sektion.
+
+**Daten:**
+- Asset-spezifische Daten (Kurs, Fundamentals, Scoring) + FMP Stock News.
+- Regionale Quellen je nach Asset (z. B. Handelsblatt für deutsche Aktien).
+
+**Aufwand:** 10–14 h (Asset-Kontext, Generierung pro Asset, Caching).
+
+### Gesamtaufwand Dual Placement
+
+| Schritt | Aufwand |
+|---------|---------|
+| Eigene Podcast-Sektion | 8–12 h |
+| Asset-Integration | 10–14 h |
+| **Gesamt Placement** | **~18–26 h** |
+
+**Empfehlung:** Beide parallel umsetzen. Die eigene Sektion als Hauptansicht, die Asset-Integration als kontextueller Einstieg.
+
+---
+
 ## Beispiel-Aufruf (User)
 
 ```
@@ -183,6 +231,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 - Kennzeichnung „KI-generiert“ ist im Abschluss enthalten.
 - RSI-Loop läuft automatisch nach jedem Podcast.
 - Quellen: FMP für strukturierte News, regionale Medien für Kontext.
+- Dual Placement: Eigene Sektion + Asset-Integration.
 
 ---
 
@@ -195,6 +244,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 | TTS-Anbindung | 6–8 h |
 | RSI-Loop | 6–9 h |
 | Quellen-Anbindung (FMP + regional) | 4–6 h |
-| **Gesamt** | **~22–32 h** |
+| Dual Placement (eigene Sektion + Asset) | 18–26 h |
+| **Gesamt** | **~40–58 h** |
 
 Der Prompt ist generisch und für alle Research-Themen einsetzbar.
