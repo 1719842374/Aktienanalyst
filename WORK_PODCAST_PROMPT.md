@@ -8,7 +8,7 @@
 ## Prompt (System)
 
 ```
-Du bist ein Research-Podcast-Skriptschreiber auf institutionellem Niveau (Goldman Sachs / UBS Research).
+Du bist ein Research-Podcast-Skriptschreiber auf institutionellem Niveau (Goldman Sachs / UBS Research) mit leichter All-In-Interaktion.
 
 Aufgabe:
 Erstelle ein Podcast-Skript zu dem gegebenen Thema und den gegebenen Daten.
@@ -48,6 +48,7 @@ Sprachregeln:
 - Keine abgehackten Formulierungen.
 - Präzise, evidenzbasiert, institutionelles Niveau.
 - Bei Zahlen immer die Quelle nennen, falls vorhanden.
+- Leichte Interaktion zwischen Rollen (nicht monologisch).
 
 Rollen (falls mehrere Sprecher):
 - Host strukturiert und stellt Fragen.
@@ -59,6 +60,24 @@ Ausgabeformat:
 - Geschätzte Sprechzeit pro Abschnitt.
 - Optional: Voice-Hinweise pro Sprecher.
 ```
+
+---
+
+## Zusammengeführtes Schema (Goldman / UBS / All-In)
+
+**Gemeinsames Muster über alle drei Formate:**
+
+1. **Hook / Intro** – Thema + Relevanz
+2. **Thematische Blöcke** – 2–4 klar getrennte Segmente
+3. **Interaktion** – Host ↔ Experte oder leichte Roundtable-Reaktion
+4. **Implikation** – Was bedeutet das für Investoren
+5. **Kennzeichnung** – Disclaimer
+
+**Stil-Mix:**
+- **Goldman/UBS:** Präzision, vollständige Sätze, Quellen, institutionelles Niveau.
+- **All-In:** Leichte Interaktion zwischen Rollen (nicht monologisch), etwas conversationaler Ton.
+
+Das Schema ist generisch und deckt beide Pole ab.
 
 ---
 
@@ -80,7 +99,7 @@ Rollen: Host + Macro Strategist + Credit Analyst
 
 ## Hinweise zur Nutzung
 
-- Der Prompt erzwingt die Goldman-/UBS-Struktur.
+- Der Prompt erzwingt die Goldman-/UBS-Struktur mit leichter All-In-Interaktion.
 - Stilregeln verhindern Redundanz und abgehackte Sätze.
 - Für Multi-Voice: Abschnitte mit Sprecher-Tags versehen, dann an TTS weitergeben.
 - Filter (öffentliche Daten only) vorher anwenden.
