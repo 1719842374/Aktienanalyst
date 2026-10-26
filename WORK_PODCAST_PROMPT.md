@@ -83,7 +83,7 @@ Das Schema ist generisch und deckt beide Pole ab.
 
 ## RSI – Recursive Self-Improvement (Lernen aus eigenen Outputs)
 
-**Ziel:** Der Podcast verbessert sich kontinuierlich anhand seiner eigenen bisherigen Ausgaben.
+**Ziel:** Der Podcast verbessert sich kontinuierlich anhand seiner eigenen bisherigen Ausgaben – und lernt über Podcasts hinweg (Memory).
 
 ### Ablauf
 
@@ -96,6 +96,12 @@ Das Schema ist generisch und deckt beide Pole ab.
    - Interaktion zwischen Rollen
 3. **Feedback speichern** – Bewertung + konkrete Verbesserungsvorschläge werden gespeichert.
 4. **Nächster Lauf** – Das Feedback wird dem System-Prompt als zusätzlicher Kontext mitgegeben („Vermeide die Fehler aus dem letzten Lauf: …“).
+
+### Cross-Podcast Memory
+
+- Feedback wird nicht nur pro Podcast, sondern über alle Podcasts hinweg gespeichert.
+- Die letzten 5–10 Feedbacks (unabhängig vom Thema) werden dem Prompt mitgegeben.
+- Dadurch lernt das System generische Verbesserungen (z. B. „immer Quellen nennen“, „keine abgehackten Sätze“) aus allen bisherigen Outputs.
 
 ### Bewertungsprompt (Beispiel)
 
@@ -113,7 +119,7 @@ Gib konkrete Verbesserungsvorschläge (max. 5 Punkte).
 ### Speicher
 
 - Einfache JSON-Datei oder DB-Tabelle mit `timestamp`, `topic`, `score`, `feedback`.
-- Beim nächsten Lauf werden die letzten 3–5 Feedbacks in den Prompt injiziert.
+- Beim nächsten Lauf werden die letzten 5–10 Feedbacks (cross-podcast) in den Prompt injiziert.
 
 ### Aufwand
 
@@ -121,9 +127,10 @@ Gib konkrete Verbesserungsvorschläge (max. 5 Punkte).
 |---------|---------|
 | Bewertungs-Call + Speicher | 4–6 h |
 | Feedback-Injection in Prompt | 2–3 h |
-| **Gesamt RSI** | **~6–9 h** |
+| Cross-Podcast Memory | 2–3 h |
+| **Gesamt RSI** | **~8–12 h** |
 
-**Ergebnis:** Jeder neue Podcast wird messbar besser als der vorherige, ohne manuelles Nachjustieren.
+**Ergebnis:** Jeder neue Podcast wird messbar besser als der vorherige, und das System lernt über alle Podcasts hinweg.
 
 ---
 
@@ -163,7 +170,7 @@ Gib konkrete Verbesserungsvorschläge (max. 5 Punkte).
 ### Ziel
 Beides umsetzen:
 1. **Eigene Podcast-Sektion** (Economist-/Spotify-ähnlich, mit Regionen).
-2. **Integration in Asset-News** (Aktien, Gold, BTC, Rezession etc.) mit Scoring-Logik und Fazit.
+2. **Integration in Asset-News** (Aktien, Gold, BTC, Rezession etc.) mit Scoring-Logik, Fazit und 20-Minuten-Unternehmensüberblick.
 
 ### 1. Eigene Podcast-Sektion
 
@@ -180,12 +187,12 @@ Beides umsetzen:
 
 **Aufwand:** 8–12 h (Frontend Player + Backend Generierung + Regionen).
 
-### 2. Integration in Asset-News (mit Scoring & Fazit)
+### 2. Integration in Asset-News (20-Minuten-Überblick + Scoring & Fazit)
 
 **UI:**
 - In der News-Sektion jedes Assets (Aktie, Gold, BTC, Rezession):
   - Button „Podcast zu diesem Asset“.
-  - Generiert oder lädt eine asset-spezifische Episode.
+  - Generiert oder lädt eine asset-spezifische Episode (~20 Minuten).
   - Player + Transkript wie in der eigenen Sektion.
 
 **Daten, die an den Podcast geschickt werden:**
@@ -199,22 +206,26 @@ Beides umsetzen:
   - Moat / Porter, PESTEL, Management-Score.
 - FMP Stock News + regionale Quellen.
 
-**Podcast-Inhalt (zusätzlich zur Standardstruktur):**
+**Podcast-Inhalt (~20 Minuten Unternehmensüberblick):**
 - Kurze Erklärung der Scoring-Logik im Kontext des Assets.
+- **Moat / PESTEL mit Gesicht:**
+  - Konkrete Beispiele statt abstrakter Scores.
+  - Zölle, Lieferkettenprobleme, starke Konkurrenz, regulatorische Risiken – soweit in den Daten oder News gefunden.
+  - Beispiel: „Der Moat ist durch hohe Wechselkosten gestützt, wird aber durch Zölle auf Importkomponenten und starke Konkurrenz aus Asien belastet.“
 - Fazit: Technische Analyse + Fundamentale Bewertung + Gesamtampel.
 - Warum die Ampel so steht (Top-Treiber und Red Flags).
 
-**Aufwand:** 12–16 h (Asset-Kontext, Scoring-Payload, Generierung pro Asset, Caching).
+**Aufwand:** 14–18 h (Asset-Kontext, Scoring-Payload, 20-Min-Generierung, konkrete Moat/PESTEL-Beispiele, Caching).
 
 ### Gesamtaufwand Dual Placement
 
 | Schritt | Aufwand |
 |---------|---------|
 | Eigene Podcast-Sektion | 8–12 h |
-| Asset-Integration (inkl. Scoring & Fazit) | 12–16 h |
-| **Gesamt Placement** | **~20–28 h** |
+| Asset-Integration (20-Min-Überblick + Scoring & Fazit) | 14–18 h |
+| **Gesamt Placement** | **~22–30 h** |
 
-**Empfehlung:** Beide parallel umsetzen. Die eigene Sektion als Hauptansicht, die Asset-Integration als kontextueller Einstieg mit voller Scoring-Erklärung.
+**Empfehlung:** Beide parallel umsetzen. Die eigene Sektion als Hauptansicht, die Asset-Integration als kontextueller 20-Minuten-Überblick mit konkreter Moat-/PESTEL-Erklärung.
 
 ---
 
@@ -241,9 +252,9 @@ Rollen: Host + Macro Strategist + Credit Analyst
 - Für Multi-Voice: Abschnitte mit Sprecher-Tags versehen, dann an TTS weitergeben.
 - Filter (öffentliche Daten only) vorher anwenden.
 - Kennzeichnung „KI-generiert“ ist im Abschluss enthalten.
-- RSI-Loop läuft automatisch nach jedem Podcast.
+- RSI-Loop läuft automatisch nach jedem Podcast und lernt cross-podcast (Memory).
 - Quellen: FMP für strukturierte News, regionale Medien für Kontext.
-- Dual Placement: Eigene Sektion + Asset-Integration (mit Scoring & Fazit).
+- Dual Placement: Eigene Sektion + Asset-Integration (20-Min-Überblick mit Scoring & Fazit).
 
 ---
 
@@ -254,9 +265,9 @@ Rollen: Host + Macro Strategist + Credit Analyst
 | Prompt in Pipeline einbauen | 2–3 h |
 | Multi-Rollen-Logik | 4–6 h |
 | TTS-Anbindung | 6–8 h |
-| RSI-Loop | 6–9 h |
+| RSI-Loop (inkl. Cross-Podcast Memory) | 8–12 h |
 | Quellen-Anbindung (FMP + regional) | 4–6 h |
-| Dual Placement (eigene Sektion + Asset mit Scoring) | 20–28 h |
-| **Gesamt** | **~42–60 h** |
+| Dual Placement (eigene Sektion + Asset mit 20-Min-Überblick) | 22–30 h |
+| **Gesamt** | **~46–65 h** |
 
 Der Prompt ist generisch und für alle Research-Themen einsetzbar.
