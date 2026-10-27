@@ -284,37 +284,8 @@ export function calculateCatalystUpside(
   return { totalUpside, adjustedTarget };
 }
 
-export function selectCatalystBase(
-  conservativeDCFPerShare: number,
-  totalCatalystUpsidePct: number,
-  currentPrice: number,
-  analystPTMedian: number
-): { base: number; source: "dcf" | "analyst-pt" | "current-price"; reason: string } {
-  const dcfWithCatalysts = conservativeDCFPerShare * (1 + totalCatalystUpsidePct / 100);
-  const realisticThreshold = currentPrice * 0.70;
-
-  if (conservativeDCFPerShare > 0 && dcfWithCatalysts >= realisticThreshold) {
-    return {
-      base: conservativeDCFPerShare,
-      source: "dcf",
-      reason: `DCF + Catalysts ($${dcfWithCatalysts.toFixed(2)}) liegt im plausiblen Bereich (≥70% des Kurses).`,
-    };
-  }
-
-  if (analystPTMedian > 0) {
-    return {
-      base: analystPTMedian,
-      source: "analyst-pt",
-      reason: `DCF $${conservativeDCFPerShare.toFixed(2)} + Catalysts hätte $${dcfWithCatalysts.toFixed(2)} (<70% Kurs) ergeben — Verzerrung wahrscheinlich. Fallback auf Analyst-PT-Median.`,
-    };
-  }
-
-  return {
-    base: currentPrice,
-    source: "current-price",
-    reason: `DCF & Analyst-PT nicht verwertbar — Kurs als Basis (Catalysts modifizieren ab Marktpreis).`,
-  };
-}
+// selectCatalystBase lebt jetzt in shared/catalyst-base.ts (eine Quelle für UI + PDF); Re-Export hält alle Client-Importe stabil.
+export { selectCatalystBase } from "../../../shared/catalyst-base";
 
 // === DCF Sensitivity Matrix ===
 export function buildSensitivityMatrix(
