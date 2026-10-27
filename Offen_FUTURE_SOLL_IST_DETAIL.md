@@ -10,7 +10,7 @@
 2. Jede Zeile gegen den Code auf `35ead515` geprüft, mit `rg` (Volltextsuche) und Lesen der Fundstelle. Bei Anzeige-Punkten habe ich die Kette verfolgt: Oberfläche (`client/src`) → Hook → API-Route → Server → Quelle bzw. `shared/`-Schema.
 3. Die Commit-Kennung (SHA) stammt aus `git log` auf dem Klon (der Commit, der die Datei oder Stelle eingeführt hat).
 4. FRED-Reihen für den Rezessions-Katalog habe ich am 18.10. gegen 22:35 Uhr Berlin einmal direkt abgerufen. Das zeigt nur, ob die Quelle liefert, nicht, was das Dashboard live anzeigt. Live in der Oberfläche getestet (Tester) habe ich nichts.
-5. Offene PRs habe ich über GitHub abgefragt (Stand 22:40 Uhr Berlin). Einen PR für BTC-WALCL (Werki), ADR-Mapping (dr eggbot) oder Real10Y in Sektion 12 (Grok Bot) gibt es noch nicht. Die Punkte stehen deshalb als „in Arbeit, noch kein PR“. Nachtrag 18.10., ca. 23:20 Uhr Berlin: BTC-WALCL ist gemergt (#266, `29fdf1d5`), ADR-Mapping ist Draft #265 (Head `dbdd7475`), Real10Y in Sektion 12 ist Draft #267 (Head `c224e2c9`).
+5. Offene PRs habe ich über GitHub abgefragt (Stand 22:40 Uhr Berlin). Einen PR für BTC-WALCL (Werki), ADR-Mapping (dr eggbot) oder Real10Y in Sektion 12 (Grok Bot) gibt es noch nicht. Die Punkte stehen deshalb als „in Arbeit, noch kein PR“. Nachtrag 18.10., ca. 23:20 Uhr Berlin: BTC-WALCL ist gemergt (#266, `29fdf1d5`), ADR-Mapping ist Draft #265 (Head `dbdd7475`), Real10Y in Sektion 12 ist Draft #267 (Head `c224e2c9`). Nachtrag 25.10.: ADR-Mapping via #326 f7d3fe0e gemergt (#265 abgelöst), 🟡 bis Tester PASS.
 
 ## Status-Zeichen
 
@@ -255,7 +255,7 @@ Philip hat am 18.10. entschieden: **Makro-Gewichte darf die KI wählen (JA).** D
 | F9-01 | Z.12 | Adaptive Signale (z-Score / Perzentil über 15–20 Jahre) | im Rezessionspfad nur Margin Debt z 5 Jahre (`server/recession.ts:1226`) | ❌ | Autonom (freigegeben), als Zusatzobjekt |
 | F9-02 | Z.26 | Gewinnwachstum vs. Trend (S&P-EPS YoY) | 0 Treffer | ❌ | Autonom; Quelle Multpl/FMP |
 | F9-03 | Z.27 | Realized Growth Gap (Überraschungsquote, Prognose-Revisionen) | 0 Treffer im Makropfad (nur Aktien-Factpack `server/factpack-validate.ts:244`) | ❌ | Autonom; Datenquelle klären |
-| F9-04 | Z.28 | Lager/Nachfrage-Lücke (Inventory-to-Sales, DGORDER vs. Shipments) | DGORDER nur als YoY-Slot (`server/recession.ts:332–334`), keine Lücke | ❌ | Autonom (FRED, kostenlos) |
+| F9-04 | Z.28 | Lager/Nachfrage-Lücke (Inventory-to-Sales, DGORDER vs. Shipments) | DGORDER nur als YoY-Slot (`server/recession.ts:332–334`), keine Lücke; Rechenmodul shared/ und server/inventory-demand-gap.ts c474c621 (#343) | ❌ | Route und UI offen |
 | F9-05 | Z.29–35 | Sahm, Zinskurve, BAA10Y, Margin Debt, VIX, Buffett, CAPE als Signale | alle als Slots vorhanden (`server/recession.ts`) | ✅ | Keiner (nur in den Layer übernehmen) |
 | F9-06 | Z.36 | Realzins DFII10 im Makro-Layer | DFII10 nur in Gold/BTC/Liquidität (`server/liquidity-briefing-catalog.ts:179`), nicht im Rezessionspfad | ❌ | Autonom |
 | F9-07 | Z.37 | Konzentration: Cap-Weight-RSL minus Equal-Weight-RSL | 0 Treffer | ❌ | Autonom (SPY gegen RSP aus vorhandenen Kursen) |
@@ -403,7 +403,7 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | Punkt | Wer | PR | Stand |
 |---|---|---|---|
 | F1-01, F1-11 Yahoo-Ersatz auf Prod (MCap/KGV/EPS = 0) | GitHub-Lane / Builder | **#264** gemergt (Squash `4dd43ab8`, Head `5b244253`) | F1-01 ✅ Soft (Doublecheck Post-Merge GO, Tester Prod PASS Soft); F1-11 🟡: BMW.DE und ungültiger Ticker noch nicht live geprüft |
-| F1-01, F1-05 Nicht-US-Titel über ADR bei FMP | dr eggbot | **#265** (Draft „HOLD Philip“, Head `dbdd7475`) | Philip-Entscheidung 18.10.; offen |
+| F1-01, F1-05 Nicht-US-Titel über ADR bei FMP | dr eggbot | ADR-Mapping via #326 f7d3fe0e gemergt (#265 abgelöst), Tester live ausstehend | Philip-Entscheidung 18.10.; offen |
 | FW-13, FW-14, FW-15 BTC-Score mit WALCL, T-Bill, Zinsen + WALCL-Linie | Werki | **#266** gemergt (Squash `29fdf1d5`, Head `f87ac8b2`) | FW-13 ✅ Soft; FW-14/FW-15 🟡: QE/QT-Bänder, BTC/WALCL-Verhältnis, Gate `BTC_QE_QT_REGIME` offen |
 | F7-01, F8-04, F8-05 Buffett/CAPE-Perzentil als Zusatzzeile | – | **#220**, **#219** (Drafts seit 11.10.) | Ersetzen der Zonen braucht Philip |
 | (nicht aus Future-Dateien) Real10Y aus BTC in Sektion 12 | Grok Bot | **#267** (Draft, Head `c224e2c9`) | Philip 18.10.; offen |
