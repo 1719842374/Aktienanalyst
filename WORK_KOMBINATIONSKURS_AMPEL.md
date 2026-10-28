@@ -3,43 +3,30 @@
 **Stand:** 2026-10-28  
 **Status:** Offen / Implementierungsvorschlag  
 **Sektion:** Technische Analyse (Sektion 12)  
-**Ziel:** Eine Kurslinie mit Ampel-Logik (grün / gelb / rot), die zeigt, ob die Aktie gerade fundamental (DCF), vom Momentum (RSL) oder technisch unterbewertet / attraktiv ist.
+**Ziel:** Ampel-Logik als farbige Overlay-Linie **direkt auf dem Kurs** (grün / gelb / rot Segmente).
 
 ---
 
-## 1. Idee
+## 1. Gewünschte Visualisierung (aus Bild 2)
 
-Statt nur den reinen Kurs zu zeigen, eine **Kombinations-Ampel** als Overlay oder eigene Linie:
+Die Ampel soll **nicht** als separate Linie oder Punkte neben dem Kurs liegen, sondern **als farbige Segmente auf der Kurslinie selbst**:
 
-| Farbe | Bedeutung | Beispiel-Logik |
-|-------|-----------|----------------|
-| **Grün** | Fundamental + Momentum + Technik passen zusammen | DCF-Upside > 15 % **und** RSL > 100 **und** Golden Cross aktiv |
-| **Gelb** | Gemischtes Signal | DCF positiv, aber RSL < 95 oder Death Cross |
-| **Rot** | Fundamental teuer oder Momentum schwach | DCF-Upside < 0 % **oder** RSL < 90 **oder** Kurs < MA200 |
+- Rote Abschnitte = schwaches / teures Signal
+- Gelbe Abschnitte = gemischt
+- Grüne Abschnitte = starkes Kaufsignal
 
-Die Ampel wird als farbige Linie oder farbige Punkte auf dem bestehenden Kurs-Chart gelegt.
+Zusätzlich ein Badge oben rechts: **„Ampel: Starkes Kaufsignal“** (grün).
 
----
-
-## 2. Datenquellen (bereits im Dashboard vorhanden)
-
-| Signal | Quelle im Projekt | Sektion |
-|--------|-------------------|---------|
-| DCF-Upside / g* | Gehärteter Inverse-DCF | 6 / 16 |
-| RSL-Momentum | RSL-Score | 11 |
-| Golden / Death Cross | MA50 vs MA200 | 12 |
-| Kurs vs MA200 | Technische Analyse | 12 |
-| MACD | Technische Analyse | 12 |
-| Moat / Quality | Moat-Score | 13 |
+Das ist die bevorzugte Darstellung.
 
 ---
 
-## 3. Ampel-Logik (Vorschlag)
+## 2. Ampel-Logik (unverändert)
 
 ```typescript
 function getAmpelStatus(data: {
-  dcfUpside: number;      // z. B. +17.5 %
-  rsl: number;            // z. B. 87
+  dcfUpside: number;
+  rsl: number;
   goldenCross: boolean;
   deathCross: boolean;
   priceAboveMA200: boolean;
@@ -56,61 +43,44 @@ function getAmpelStatus(data: {
 }
 ```
 
-### Schwellen (adaptiv anpassbar)
+---
 
-| Signal | Grün | Gelb | Rot |
-|--------|------|------|-----|
-| DCF-Upside | > 15 % | 0–15 % | < 0 % |
-| RSL | > 100 | 90–100 | < 90 |
-| Technik | Golden Cross + Kurs > MA200 | Kurs > MA200 | Death Cross oder Kurs < MA200 |
+## 3. Technische Umsetzung des Overlays
+
+### Frontend (Chart-Library, z. B. Lightweight Charts / Recharts)
+
+1. Kursdaten holen.
+2. Pro Datenpunkt den Ampel-Status berechnen.
+3. Die Kurslinie in Segmente aufteilen, sobald sich die Farbe ändert.
+4. Jedes Segment als eigene Linie mit der entsprechenden Farbe zeichnen (rot / gelb / grün).
+5. Die Segmente nahtlos aneinanderreihen, sodass es wie eine durchgehende, farbwechselnde Kurslinie aussieht.
+
+### Toggle
+
+- Ein-/Ausschalten wie MA200 / RSI.
+- Badge „Ampel: Starkes Kaufsignal“ nur anzeigen, wenn aktueller Status grün ist.
 
 ---
 
-## 4. Visualisierung
+## 4. Aufwand (angepasst)
 
-### Option A: Farbige Punkte auf dem Kurs
-- Jeder Handelstag bekommt einen Punkt in Grün / Gelb / Rot.
-- Der Punkt liegt auf dem Kurs oder leicht darüber.
-
-### Option B: Ampel-Linie als Overlay
-- Eine zweite Linie (gestrichelt), deren Farbe sich ändert.
-- Dual-Axis nicht nötig, da nur Farbe relevant ist.
-
-### Option C: Ampel-Badge im Chart-Header
-- Aktueller Status als großes Badge (z. B. „Grün – Fundamental + Momentum passen“).
-- Historischer Verlauf als farbige Balken unter dem Chart.
+| Schritt | Aufwand |
+|---------|---------|
+| Ampel-Logik + Backend-Daten | 4–5 h |
+| Segmentierte Overlay-Linie im Chart | 6–8 h |
+| Badge + Tooltip | 2 h |
+| **Gesamt** | **~12–15 h** |
 
 ---
 
-## 5. Implementierungsschritte
+## 5. Akzeptanzkriterien
 
-| Schritt | Aufwand | Beschreibung |
-|---------|---------|--------------|
-| Backend-Endpoint | 3–4 h | Liefert pro Tag den Ampel-Status (aus bestehenden Daten) |
-| Ampel-Logik | 2–3 h | Kombination aus DCF, RSL, MA, MACD |
-| Frontend-Overlay | 4–6 h | Farbige Punkte oder Linie im bestehenden Chart |
-| Tooltip | 1–2 h | „Grün: DCF +17 %, RSL 102, Golden Cross“ |
-| **Gesamt** | **~10–15 h** | – |
+1. Die Kurslinie wechselt Farbe (rot → gelb → grün) genau dort, wo sich der Ampel-Status ändert.
+2. Overlay ist ein-/ausschaltbar.
+3. Badge oben rechts zeigt den aktuellen Status.
+4. Tooltip beim Hover: „Grün: DCF +17 %, RSL 102, Golden Cross“.
+5. Keine neue Datenquelle – nur bestehende Signale aus Sektion 6/11/12/16.
 
 ---
 
-## 6. Beispiel (aus Screenshot)
-
-| Datum | Kurs | Ampel | Begründung |
-|-------|------|-------|--------------|
-| 30. Juli 2026 | $451 | Gelb | Golden Cross aktiv, aber RSL noch nicht stark |
-| 31. Aug. 2026 | – | Grün | Golden Cross + 59 Tage aktiv |
-
----
-
-## 7. Akzeptanzkriterien
-
-1. Ampel-Status wird für den aktuellen Tag und historisch berechnet.
-2. Overlay ist ein-/ausschaltbar (Toggle wie MA200 / RSI).
-3. Tooltip erklärt, welche Signale gerade grün / gelb / rot sind.
-4. Logik nutzt nur bereits vorhandene Daten (kein neuer API-Call).
-5. Bei fehlenden Daten (z. B. kein DCF) fällt die Ampel auf „Gelb“ oder „n.v.“ zurück.
-
----
-
-**Quellen:** Screenshot Technische Analyse (Golden Cross), bestehende Sektionen 6/11/12/16, DCF- und RSL-Logik im Dashboard.
+**Quellen:** Screenshots (Bild 2 = gewünschtes Overlay auf dem Kurs), bestehende Golden-Cross- und Ampel-Logik.
