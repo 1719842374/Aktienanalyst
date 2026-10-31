@@ -8,6 +8,18 @@
 
 ---
 
+## Wichtige Links
+
+- **Supabase Dashboard (Storage / Files):**  
+  https://supabase.com/dashboard/project/xtfkebsshlrzdqsrrejs/storage/files  
+  (Relevant für Podcast-Work.mds und Datei-Ablage)
+
+- **Cursor Voice Agent Dashboard:**  
+  https://cursor.com/dashboard/voice?from=2026-09-01&to=2026-10-31  
+  Pricing (Stand Okt 2026): Plus $8/mo (Grok only), Premium $30/mo, Super $100/mo, Ultra $200/mo. Voice-Nutzung zieht aus dem wöchentlichen Usage-Pool. Exakte Kosten pro Minute nicht öffentlich – hängt vom Plan und der Nutzung ab.
+
+---
+
 ## 1. Proxy-Hype-Cycle für Wertschöpfungskette
 
 ### Hintergrund
@@ -107,4 +119,4 @@ CREATE TABLE stock_scores (
 
 ---
 
-**Quellen:** Gartner Hype Cycle Methodology, Supabase Database Webhooks, bestehende Scoring-Logik im Aktienanalyst-Dashboard, GuruFocus-Screenshot als Referenz.
+**Quellen:** Gartner Hype Cycle Methodology, Supabase Database Webhooks, bestehende Scoring-Logik im Aktienanalyst-Dashboard, GuruFocus-Screenshot als Referenz, Cursor Pricing (Okt 2026).
