@@ -417,6 +417,7 @@ export const RECESSION_SECTION_DEFS: ReadonlyArray<{ key: string; label: string;
   { key: "summary", label: "Zusammenfassung & Top-3 Treiber" },
   { key: "fazit", label: "Fazit & Makro-Risiko", when: "fazit" },
   { key: "quellen", label: "Quellenliste" },
+  { key: "lager", label: "Lager/Nachfrage-Lücke" },
 ];
 
 /** Nummerierung wie in client/src/pages/RecessionDashboard.tsx (abhängig von Regionen/Fazit). */
@@ -464,6 +465,7 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
     prozent: Object.fromEntries(subs.slice(0, 8).map(s => [String(s.name).slice(0, 40), str(`P ${num(s.probability, 1) ?? "n/a"}% (${s.horizon ?? "n/a"}), Netto ${num(s.netScore, 1) ?? "n/a"}/${num(s.maxScore, 1) ?? "n/a"}${typeof s.nyFedAnchor === "number" ? `, NY-Fed-Anker ${num(s.nyFedAnchor, 1)}%, final ${num(s.finalProbability, 1) ?? "n/a"}%` : ""}${s.formula ? ` | ${s.formula}` : ""}`)])),
     regionen: regionFacts(opts.regions),
     rsi: { hinweis: SELF_LOADED }, markt: { hinweis: SELF_LOADED }, ta: { hinweis: SELF_LOADED }, buffett: { hinweis: SELF_LOADED },
+    lager: { hinweis: SELF_LOADED },
     summary: { topTreiber: list(d.topDrivers), interpretation: str(d.interpretation, 800) },
     fazit: { risiko: str(d.fazit?.riskLevel), zusammenfassung: str(d.fazit?.summary, 800), abschnitte: list((d.fazit?.sections ?? []).map((s: any) => s.title)) },
     quellen: { anzahl: Array.isArray(d.sources) ? d.sources.length : null, quellen: list((d.sources ?? []).map((s: any) => s.name), 8) },
@@ -471,7 +473,7 @@ export function buildRecessionChatContext(data: any, opts: { hasRegions: boolean
   const sections = recessionSectionLayout(opts.hasRegions, !!d.fazit).map(s => ({ ...sec(s.id, s.label, facts[s.key] ?? {}), key: s.key }));
   return {
     dashboard: "recession", entity: "US-Rezession", title: "Rezessions-Dashboard", asOf: str(d.asOf ?? d.date, 40), sections, gates: [],
-    notes: ["Rezessions-Dashboard hat keine Gates; Scores sind die 5 Untergruppen", "RSI, Marktcharts, Technische Analyse und Buffett-Indikator laden eigene Daten und fehlen im Kontext"],
+    notes: ["Rezessions-Dashboard hat keine Gates; Scores sind die 5 Untergruppen", "RSI, Marktcharts, Technische Analyse, Buffett-Indikator und Lager/Nachfrage-Lücke laden eigene Daten und fehlen im Kontext"],
   };
 }
 

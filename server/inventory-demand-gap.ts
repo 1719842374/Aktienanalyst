@@ -1,10 +1,12 @@
 /**
  * F9-04 — Server-Abruf der Lager/Nachfrage-Lücke. Kette: FRED fredgraph.csv → fetchFredCsv
  * (server/fred-csv.ts) → fredCsvObservations → computeInventoryDemandGap (shared/inventory-demand-gap.ts).
- * Noch nicht an eine Route/UI angebunden (wartet auf #269/#273/#143). Nicht erreichbar → n/a mit Grund.
+ * Route: server/inventory-demand-gap-route.ts. Nicht erreichbar → n/a mit Grund, nie 0.
  */
 import { fetchFredCsv, fredCsvObservations } from "./fred-csv";
-import { computeInventoryDemandGap, ISRATIO_WINDOW_YEARS, type InventoryDemandGap, type SeriesPoint } from "../shared/inventory-demand-gap";
+import { computeInventoryDemandGap, INVENTORY_DEMAND_GAP_PARAMS, type InventoryDemandGap, type SeriesPoint } from "../shared/inventory-demand-gap";
+
+export type FredCsvFetch = (seriesId: string, cosd: string) => Promise<string | null>;
 
 function yearsAgo(n: number, now: Date): string {
   const d = new Date(now);
@@ -18,12 +20,13 @@ export interface InventoryDemandGapFetch {
   raw: { isratio: SeriesPoint[] | null; dgorder: SeriesPoint[] | null; amdmvs: SeriesPoint[] | null };
 }
 
-export async function fetchInventoryDemandGap(now: Date = new Date()): Promise<InventoryDemandGapFetch> {
-  // +1 Jahr Puffer, damit das 10J-Fenster auch bei Veröffentlichungsverzug voll ist; YoY braucht 2 Jahre.
+export async function fetchInventoryDemandGap(now: Date = new Date(), fetchCsv: FredCsvFetch = fetchFredCsv): Promise<InventoryDemandGapFetch> {
+  // Fenster + fetchBufferYears: Veröffentlichungsverzug und das YoY-Vorjahr. Dieselbe Länge für ISRATIO und die Lücke.
+  const years = INVENTORY_DEMAND_GAP_PARAMS.windowYears + INVENTORY_DEMAND_GAP_PARAMS.fetchBufferYears;
   const [isr, dgo, amd] = await Promise.all([
-    fetchFredCsv("ISRATIO", yearsAgo(ISRATIO_WINDOW_YEARS + 1, now)),
-    fetchFredCsv("DGORDER", yearsAgo(3, now)),
-    fetchFredCsv("AMDMVS", yearsAgo(3, now)),
+    fetchCsv("ISRATIO", yearsAgo(years, now)),
+    fetchCsv("DGORDER", yearsAgo(years, now)),
+    fetchCsv("AMDMVS", yearsAgo(years, now)),
   ]);
   const raw = {
     isratio: isr == null ? null : fredCsvObservations(isr),
@@ -33,7 +36,9 @@ export async function fetchInventoryDemandGap(now: Date = new Date()): Promise<I
   const result = computeInventoryDemandGap(raw.isratio ?? [], raw.dgorder ?? [], raw.amdmvs ?? []);
   if (raw.isratio == null) result.isratio = { available: false, reason: "ISRATIO: FRED nicht erreichbar" };
   if (raw.dgorder == null || raw.amdmvs == null) {
-    result.orderShipmentGap = { available: false, reason: `${raw.dgorder == null ? "DGORDER" : "AMDMVS"}: FRED nicht erreichbar` };
+    const reason = `${raw.dgorder == null ? "DGORDER" : "AMDMVS"}: FRED nicht erreichbar`;
+    result.orderShipmentGap = { available: false, reason };
+    result.gapWindow = { available: false, reason };
   }
   return { result, raw };
 }
