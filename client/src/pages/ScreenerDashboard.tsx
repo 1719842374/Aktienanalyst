@@ -3,6 +3,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Search, TrendingUp, TrendingDown, Users, DollarSign, ArrowUpDown, Filter, RefreshCw, ChevronDown, ChevronUp, ExternalLink, ListPlus } from "lucide-react";
 import { TickerAddButtons, bulkAddToWatchlist } from "@/components/portfolio/TickerAddButtons";
 import { useLocation } from "wouter";
+import { decideCustomScreen, type CustomScreenCriteria } from "@shared/custom-screen";
 
 interface ScreenedStock {
   ticker: string;
@@ -41,6 +42,12 @@ export default function ScreenerDashboard() {
   const [filterCRV, setFilterCRV] = useState(false);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [searchFilter, setSearchFilter] = useState("");
+  const [mcapMin, setMcapMin] = useState("");
+  const [mcapMax, setMcapMax] = useState("");
+  const [industryQ, setIndustryQ] = useState("");
+  const [countryQ, setCountryQ] = useState("");
+  const [roicMin, setRoicMin] = useState("");
+  const [fwdPeMax, setFwdPeMax] = useState("");
   const [, navigate] = useLocation();
 
   const [data, setData] = useState<ScreenerData | null>(null);
@@ -88,7 +95,28 @@ export default function ScreenerDashboard() {
     else { setSortField(field); setSortAsc(false); }
   };
 
-  const stocks = (data?.screenedStocks || [])
+  const criteria: CustomScreenCriteria = {
+    marketCapMin: mcapMin.trim() ? Number(mcapMin) : null,
+    marketCapMax: mcapMax.trim() ? Number(mcapMax) : null,
+    industryIncludes: industryQ.trim() || null,
+    countryIncludes: countryQ.trim() || null,
+    roicMin: roicMin.trim() ? Number(roicMin) : null,
+    forwardPeMax: fwdPeMax.trim() ? Number(fwdPeMax) : null,
+  };
+  const screened = (data?.screenedStocks || []).map(s => {
+    const decision = decideCustomScreen({
+      marketCap: s.marketCap > 0 ? s.marketCap : null,
+      industry: s.sector || null,
+      country: null,
+      roic: null,
+      forwardPe: s.forwardPE > 0 ? s.forwardPE : null,
+    }, criteria);
+    return { stock: s, decision };
+  });
+  const skippedNotes = Array.from(new Set(screened.flatMap(s => s.decision.skipped.map(x => x.reason))));
+  const stocks = screened
+    .filter(s => s.decision.pass)
+    .map(s => s.stock)
     .filter(s => !filterCRV || s.crvPass)
     .filter(s => !searchFilter || s.ticker.toLowerCase().includes(searchFilter.toLowerCase()) || s.name.toLowerCase().includes(searchFilter.toLowerCase()))
     .sort((a, b) => {
@@ -201,6 +229,17 @@ export default function ScreenerDashboard() {
               </button>
               <span className="text-[10px] text-muted-foreground ml-auto">{stocks.length} Ergebnisse</span>
             </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 min-w-0" data-testid="screener-custom-criteria">
+              <label className="text-[10px] text-muted-foreground">MCap min<input value={mcapMin} onChange={e => setMcapMin(e.target.value)} className="mt-0.5 h-9 w-full min-w-0 rounded border border-border bg-background px-2 text-xs sm:h-7" data-testid="screener-mcap-min" /></label>
+              <label className="text-[10px] text-muted-foreground">MCap max<input value={mcapMax} onChange={e => setMcapMax(e.target.value)} className="mt-0.5 h-9 w-full min-w-0 rounded border border-border bg-background px-2 text-xs sm:h-7" data-testid="screener-mcap-max" /></label>
+              <label className="text-[10px] text-muted-foreground">Sektor enthält<input value={industryQ} onChange={e => setIndustryQ(e.target.value)} className="mt-0.5 h-9 w-full min-w-0 rounded border border-border bg-background px-2 text-xs sm:h-7" data-testid="screener-industry" /></label>
+              <label className="text-[10px] text-muted-foreground">Land<input value={countryQ} onChange={e => setCountryQ(e.target.value)} className="mt-0.5 h-9 w-full min-w-0 rounded border border-border bg-background px-2 text-xs sm:h-7" data-testid="screener-country" /></label>
+              <label className="text-[10px] text-muted-foreground">ROIC min %<input value={roicMin} onChange={e => setRoicMin(e.target.value)} className="mt-0.5 h-9 w-full min-w-0 rounded border border-border bg-background px-2 text-xs sm:h-7" data-testid="screener-roic" /></label>
+              <label className="text-[10px] text-muted-foreground">Forward P/E max<input value={fwdPeMax} onChange={e => setFwdPeMax(e.target.value)} className="mt-0.5 h-9 w-full min-w-0 rounded border border-border bg-background px-2 text-xs sm:h-7" data-testid="screener-fwd-pe" /></label>
+            </div>
+            {skippedNotes.length > 0 && (
+              <p className="text-[10px] text-muted-foreground" data-testid="screener-na-notes">{skippedNotes.join(" · ")}. Land und ROIC liefert der 13F-Screener nicht.</p>
+            )}
 
             <div className="flex justify-end mb-2">
               <button
