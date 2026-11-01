@@ -39,6 +39,7 @@ const TITLE: Record<string, RegExp> = {
   untergruppen: /Score-Übersicht/, prozent: /Prozentschätzungen/, regionen: /Regionale Kataloge/, rsi: /RSI/, markt: /Märkte|Markt/,
   ta: /Technische Analyse/, buffett: /Buffett/, summary: /Zusammenfassung/, fazit: /Fazit/, quellen: /Quellenliste/,
   lager: /Lager\/Nachfrage/,
+  sektor: /Sektorrotation/,
 };
 
 let n = 0, fail = 0;

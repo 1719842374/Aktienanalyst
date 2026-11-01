@@ -15,6 +15,7 @@ import { DollarReserveShareCard } from "@/components/recession/DollarReserveShar
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
 import { InventoryDemandGapCard } from "@/components/recession/InventoryDemandGapCard";
+import { SectorRotationRecessionCard } from "@/components/recession/SectorRotationRecessionCard";
 import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
@@ -206,6 +207,7 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
         <SourcesList sources={data.sources} />
       </SectionCard>
       <InventoryDemandGapCard number={nr.lager} />
+      <SectorRotationRecessionCard number={nr.sektor} />
       <div className="pb-4">
       </div>
     </div>
