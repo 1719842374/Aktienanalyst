@@ -107,54 +107,123 @@ function clipDiag(text: string): string {
 /**
  * Quote-Seite. globales fetch wirft UND_ERR_HEADERS_OVERFLOW: die CSP-Header sind
  * größer als undicis 16 KB. HTTP/2 liefert denselben Body, darin steht trailingPE.
- * Eine Session für alle ETFs. Wirft nie.
+ * Eine Session für alle ETFs. Im Leerlauf zu, per unref aus dem Event-Loop.
+ * close, error und goaway verwerfen sie; der nächste Abruf baut sie neu. Wirft nie.
  */
+const QUOTE_PAGE_IDLE_MS = 15_000;
 let quotePageClient: http2.ClientHttp2Session | null = null;
+let quotePageIdle: ReturnType<typeof setTimeout> | null = null;
+let quotePageInflight = 0;
+
+function discardQuotePageSession(client: http2.ClientHttp2Session): void {
+  if (quotePageClient === client) quotePageClient = null;
+}
+
+function clearQuotePageIdle(): void {
+  if (!quotePageIdle) return;
+  clearTimeout(quotePageIdle);
+  quotePageIdle = null;
+}
+
+function armQuotePageIdle(client: http2.ClientHttp2Session): void {
+  clearQuotePageIdle();
+  if (quotePageInflight > 0 || quotePageClient !== client) return;
+  if (client.closed || client.destroyed) return;
+  quotePageIdle = setTimeout(() => {
+    quotePageIdle = null;
+    if (quotePageInflight > 0 || quotePageClient !== client) return;
+    quotePageClient = null;
+    if (!client.closed && !client.destroyed) client.close();
+  }, QUOTE_PAGE_IDLE_MS);
+  quotePageIdle.unref();
+}
+
+function holdQuotePage(client: http2.ClientHttp2Session): void {
+  quotePageInflight += 1;
+  clearQuotePageIdle();
+  client.ref();
+}
+
+function releaseQuotePage(client: http2.ClientHttp2Session): void {
+  quotePageInflight = Math.max(0, quotePageInflight - 1);
+  if (quotePageInflight > 0) return;
+  client.unref();
+  if (quotePageClient && quotePageClient !== client) quotePageClient.unref();
+  if (quotePageClient && !quotePageClient.closed && !quotePageClient.destroyed) armQuotePageIdle(quotePageClient);
+}
+
+/** Schließt die gemerkte Session, damit der nächste Abruf eine neue aufbaut. */
+export function closeQuotePageSessionForTests(): void {
+  const client = quotePageClient;
+  clearQuotePageIdle();
+  quotePageClient = null;
+  if (client && !client.closed && !client.destroyed) client.close();
+}
 
 function quotePageSession(): http2.ClientHttp2Session {
-  if (quotePageClient && !quotePageClient.closed && !quotePageClient.destroyed) return quotePageClient;
-  quotePageClient = http2.connect("https://finance.yahoo.com");
-  quotePageClient.on("error", () => {
-    const dead = quotePageClient;
-    quotePageClient = null;
-    if (dead && !dead.destroyed) dead.destroy();
+  if (quotePageClient && !quotePageClient.closed && !quotePageClient.destroyed) {
+    clearQuotePageIdle();
+    return quotePageClient;
+  }
+  const client = http2.connect("https://finance.yahoo.com");
+  client.unref();
+  client.on("error", () => {
+    discardQuotePageSession(client);
+    if (!client.destroyed) client.destroy();
   });
-  return quotePageClient;
+  client.on("close", () => {
+    discardQuotePageSession(client);
+    if (quotePageClient === null) clearQuotePageIdle();
+  });
+  client.on("goaway", () => {
+    discardQuotePageSession(client);
+    if (quotePageInflight === 0 && !client.closed && !client.destroyed) client.close();
+  });
+  quotePageClient = client;
+  return client;
 }
 
 function fetchQuoteHtml(symbol: string): Promise<{ status: number | null; html: string | null; error: string | null }> {
   return new Promise((resolve) => {
     let settled = false;
+    let held = false;
+    let client: http2.ClientHttp2Session | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const finish = (out: { status: number | null; html: string | null; error: string | null }) => {
       if (settled) return;
       settled = true;
+      if (timer) clearTimeout(timer);
+      if (held && client) releaseQuotePage(client);
       resolve(out);
     };
-    let client: http2.ClientHttp2Session;
     try {
       client = quotePageSession();
     } catch (err) {
       finish({ status: null, html: null, error: err instanceof Error ? err.message : "HTTP/2-Verbindung fehlgeschlagen" });
       return;
     }
-    const timer = setTimeout(() => {
-      client.destroy();
-      quotePageClient = null;
+    const session = client;
+    timer = setTimeout(() => {
+      discardQuotePageSession(session);
+      if (!session.destroyed) session.destroy();
       finish({ status: null, html: null, error: "Timeout" });
     }, 15000);
     let req: http2.ClientHttp2Stream;
     try {
-      req = client.request({
+      req = session.request({
         ":path": `/quote/${encodeURIComponent(symbol)}/`,
         ":method": "GET",
         "user-agent": YAHOO_BROWSER_UA,
         accept: "text/html",
       });
     } catch (err) {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      armQuotePageIdle(session);
       finish({ status: null, html: null, error: err instanceof Error ? err.message : "Quote-Seite fehlgeschlagen" });
       return;
     }
+    holdQuotePage(session);
+    held = true;
     const chunks: Buffer[] = [];
     let bytes = 0;
     let status: number | null = null;
@@ -168,11 +237,9 @@ function fetchQuoteHtml(symbol: string): Promise<{ status: number | null; html: 
       if (bytes >= 2_000_000) req.close();
     });
     req.on("end", () => {
-      clearTimeout(timer);
       finish({ status, html: Buffer.concat(chunks).toString("utf8"), error: null });
     });
     req.on("error", (err) => {
-      clearTimeout(timer);
       const html = chunks.length > 0 ? Buffer.concat(chunks).toString("utf8") : null;
       finish({ status, html, error: err instanceof Error ? err.message : "Quote-Seite fehlgeschlagen" });
     });

@@ -8,7 +8,11 @@
  * sector-pe hat für mindestens 7 von 9 ETFs ein aktuelles KGV.
  * Keine erfundenen Werte: Platzhalter-Nullen und fehlende Felder bleiben n/a.
  */
-import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   annualsFromQuoteSummary,
   annualsFromTimeseries,
@@ -31,7 +35,7 @@ import {
   resetFundamentalCacheForTests,
 } from "../server/earnings-yield-roic-route";
 import { loadSectorPeDisplay, resetSectorPeCacheForTests } from "../server/sector-pe-route";
-import { loadYahooEtfTrailingPe, yahooTrailingPeMissNote } from "../server/yahoo-fundamental-fallback";
+import { closeQuotePageSessionForTests, loadYahooEtfTrailingPe, yahooTrailingPeMissNote } from "../server/yahoo-fundamental-fallback";
 import { clearYahooCache } from "../server/yahoo-fetcher";
 import { composeSectorPeDisplay } from "../shared/sector-pe-display";
 import { ETF_PROXY_MAP } from "../server/sector-rotation-math";
@@ -308,6 +312,72 @@ for (const [label, body] of [
 const liveWithPe = liveSector.sectors.filter(s => s.current != null);
 check("Live sector-pe ≥ 7/9", liveWithPe.length >= 7, `${liveWithPe.length}/9 ` + liveSector.sectors.map(s => `${s.etf}:${s.current ?? "n/a"}`).join(" "));
 check("Live sector-pe nennt die Quelle und scoreImpact false", liveSector.scoreImpact === false && liveWithPe.every(s => (s.sourceLabel ?? "").length > 0), liveWithPe.map(s => s.sourceLabel).join(" | "));
+
+console.log("\n=== Quote-Session gibt den Prozess frei ===");
+{
+  const childPath = join(tmpdir(), `quote-session-exit-${process.pid}.ts`);
+  const fallbackMod = fileURLToPath(new URL("../server/yahoo-fundamental-fallback.ts", import.meta.url));
+  const fetcherMod = fileURLToPath(new URL("../server/yahoo-fetcher.ts", import.meta.url));
+  writeFileSync(childPath, `
+import { closeQuotePageSessionForTests, loadYahooEtfTrailingPe } from ${JSON.stringify(fallbackMod)};
+import { clearYahooCache } from ${JSON.stringify(fetcherMod)};
+clearYahooCache();
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (input) => {
+  const url = String(input);
+  if (url.startsWith("https://fc.yahoo.com")) {
+    return new Response("", { status: 404, headers: { "set-cookie": "A3=d=AQABBSECRETCOOKIEVALUE1234567; Path=/" } });
+  }
+  if (url.includes("/v1/test/getcrumb")) return new Response("Too Many Requests", { status: 429 });
+  if (url.includes("fundamentals-timeseries")) {
+    return new Response(JSON.stringify({ timeseries: { result: [{ meta: { type: ["trailingPeRatio"] } }], error: null } }), { status: 200 });
+  }
+  return realFetch(input);
+});
+async function main() {
+  const first = await loadYahooEtfTrailingPe("XLK");
+  if (!(first.pe != null && first.pe > 5)) {
+    console.error("erster Abruf ohne KGV " + JSON.stringify(first));
+    process.exit(2);
+  }
+  closeQuotePageSessionForTests();
+  const second = await loadYahooEtfTrailingPe("XLK");
+  if (!(second.pe != null && second.pe > 5)) {
+    console.error("zweiter Abruf nach Session-Close ohne KGV " + JSON.stringify(second));
+    process.exit(3);
+  }
+  console.log("READY");
+}
+void main();
+`);
+  const child = spawn(process.execPath, ["--import", "tsx", childPath], {
+    cwd: fileURLToPath(new URL("..", import.meta.url)),
+    env: { ...process.env, YAHOO_MIN_INTERVAL_MS: "0" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "";
+  let err = "";
+  let readyAt = 0;
+  child.stdout.on("data", (buf) => {
+    out += String(buf);
+    if (!readyAt && out.includes("READY")) readyAt = Date.now();
+  });
+  child.stderr.on("data", (buf) => { err += String(buf); });
+  const code = await new Promise<number | null>((resolve) => {
+    const killer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve(null);
+    }, 30_000);
+    child.on("exit", (status) => {
+      clearTimeout(killer);
+      resolve(status);
+    });
+  });
+  unlinkSync(childPath);
+  const afterReadyMs = readyAt ? Date.now() - readyAt : -1;
+  check("Quote-Session: Prozess endet nach READY, ohne am Socket zu hängen", code === 0 && afterReadyMs >= 0 && afterReadyMs < 2_000, `code=${code ?? "timeout"} nach READY ${afterReadyMs}ms\n${err.slice(-500)}`);
+  check("Quote-Session: zweiter Abruf nach close baut neu", code === 0, out.trim());
+}
 
 if (failures > 0) {
   console.error(`\n${failures} Fehler`);
