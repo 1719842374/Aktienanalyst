@@ -186,6 +186,75 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
   t.close();
 }
 
+// 6b) Zählung und Blasenradius aus sites (decorateMinerSites). regions bleibt der leere Länderanteil.
+{
+  const { MINER_MAP_SITES, decorateMinerSites } = await import("../shared/miner-map");
+  const decorated = decorateMinerSites(MINER_MAP_SITES);
+  const t = await run(
+    { hasKey: () => false, screenCountry: async () => [], capexYears: async () => ({ latest: null, prevCapexUsd: null }) },
+    { minerNetwork: async () => ({ hashrateEH: 600, hashpriceBtcPerThDay: 0.00005, breakevenUsd: 40000, source: "fixture", note: null }) },
+  );
+  const r = await t.get("?layer=miner");
+  assert.equal(r.status, 200);
+  assert.equal(r.json.regions.length, 0);
+  assert.equal(r.json.sites.length, decorated.length);
+  assert.ok(r.json.sites.length > r.json.regions.length);
+  for (const site of decorated) {
+    const got = r.json.sites.find((row: { id: string }) => row.id === site.id);
+    assert.ok(got, site.id);
+    assert.equal(got.bubble.radiusPx, site.bubble.radiusPx, `${site.id} radius`);
+  }
+  assert.match(r.json.countryShareNote, /^n\/a — /);
+  const standortLine = panel.match(/\{[^}\n]+\} Standorte/);
+  assert.ok(standortLine, "Zählzeile Standorte fehlt");
+  assert.match(standortLine[0], /minerSites\.length/);
+  assert.doesNotMatch(standortLine[0], /regions/);
+  assert.match(panel, /minerSites\.map/);
+  assert.doesNotMatch(panel, /minerData\.regions\.map/);
+  assert.match(panel, /function minerBubbleRadius/);
+  assert.match(panel, /bubble\?\.radiusPx/);
+  assert.match(panel, /spreadMarkerOffsets/);
+  assert.match(panel, /MINER_MAP_RADIUS\.naPx/);
+  assert.doesNotMatch(panel, /radiusPx == null\) return null/);
+  assert.match(panel, /countryShareNote/);
+  const { geoEqualEarth } = await import("d3-geo");
+  const { MINER_MAP_RADIUS, spreadMarkerOffsets } = await import("../shared/miner-map");
+  const drawnRadius = (site: { bubble: { radiusPx: number | null } }) => {
+    const radiusPx = site.bubble.radiusPx;
+    return typeof radiusPx === "number" && Number.isFinite(radiusPx) ? radiusPx : MINER_MAP_RADIUS.naPx;
+  };
+  const proj = geoEqualEarth().translate([400, 200]).scale(160);
+  const points = decorated.map(site => {
+    const xy = proj([site.lon, site.lat]);
+    assert.ok(xy, site.id);
+    return { id: site.id, x: xy[0], y: xy[1], radiusPx: drawnRadius(site) };
+  });
+  assert.equal(points.length, decorated.length);
+  const pairOverlaps = (offsets: Map<string, { dx: number; dy: number }> | null) => {
+    const pairs: string[] = [];
+    for (let i = 0; i < points.length; i++) {
+      for (let j = i + 1; j < points.length; j++) {
+        const a = points[i];
+        const b = points[j];
+        const oa = offsets?.get(a.id) ?? { dx: 0, dy: 0 };
+        const ob = offsets?.get(b.id) ?? { dx: 0, dy: 0 };
+        const dist = Math.hypot(a.x + oa.dx - (b.x + ob.dx), a.y + oa.dy - (b.y + ob.dy));
+        if (dist + 1e-6 < a.radiusPx + b.radiusPx) pairs.push(`${a.id}|${b.id}`);
+      }
+    }
+    return pairs;
+  };
+  const raw = pairOverlaps(null);
+  assert.ok(raw.length >= 9, `ohne Versatz ${raw.length} Paare`);
+  for (const pair of ["us-tx-rockdale|us-tx-childress", "us-ky-riot|us-oh-hannibal"]) {
+    assert.ok(raw.includes(pair), pair);
+  }
+  assert.ok(raw.some(pair => pair.includes("ca-bc-")), "BC-Standorte überlappen roh");
+  const spread = new Map(spreadMarkerOffsets(points).map(item => [item.id, item]));
+  assert.deepEqual(pairOverlaps(spread), []);
+  t.close();
+}
+
 // 7) Kaltstart über dem Budget: JSON mit n/a, nicht hängen und nicht HTML
 {
   const { mkdtempSync } = await import("node:fs");

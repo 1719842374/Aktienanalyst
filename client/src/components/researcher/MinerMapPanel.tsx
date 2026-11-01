@@ -2,12 +2,12 @@
  * Miner-Layer der Weltkarte. Daten: useMinerMap → GET /api/btc/miner-map.
  * Bubble = Perzentil der genannten MW. Fehlende Zahlen bleiben „n/a — Grund“.
  */
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ComposableMap, Geographies, Geography, Marker, useMapContext } from "react-simple-maps";
 import worldUrl from "world-atlas/countries-110m.json?url";
 import { AlertTriangle, Loader2, Pickaxe } from "lucide-react";
 import { useMinerMap } from "@/hooks/useMinerMap";
-import { MINER_MAP_RADIUS, formatMinerCoverage, spreadMarkerOffsets, type MarkerPixel, type MinerMapResponse, type MinerMapSite, type MinerMapBubble } from "@shared/miner-map";
+import { MINER_MAP_RADIUS, formatMinerCoverage, spreadMarkerOffsets, type MarkerPixel, type MinerMapResponse, type MinerMapSite, type MinerMapBubble, type SourcedNumber } from "@shared/miner-map";
 
 type SiteView = MinerMapSite & { bubble: MinerMapBubble };
 
@@ -35,8 +35,16 @@ function drawnRadius(site: SiteView): number {
   return site.bubble.radiusPx ?? MINER_MAP_RADIUS.naPx;
 }
 
+function SourceLink({ sourced }: { sourced: SourcedNumber }) {
+  return (
+    <a href={sourced.sourceUrl} target="_blank" rel="noreferrer" className="underline text-amber-300/90 break-words" data-testid="miner-source-link">
+      {sourced.sourceLabel}
+    </a>
+  );
+}
+
 /** Versatz in der Pixelebene der gerade gezeichneten Projektion, also relativ zu deren Maßstab. */
-function MinerBubbles({ sites, selected, onSelect }: { sites: SiteView[]; selected: string | null; onSelect: (id: string) => void }) {
+function MinerBubbles({ sites, selected, onSelect, onOffset }: { sites: SiteView[]; selected: string | null; onSelect: (id: string) => void; onOffset: (active: boolean) => void }) {
   const { projection } = useMapContext();
   const placed = useMemo(() => {
     const points: MarkerPixel[] = [];
@@ -48,6 +56,8 @@ function MinerBubbles({ sites, selected, onSelect }: { sites: SiteView[]; select
     const offset = new Map(spreadMarkerOffsets(points).map(item => [item.id, item]));
     return sites.map(site => ({ site, dx: offset.get(site.id)?.dx ?? 0, dy: offset.get(site.id)?.dy ?? 0 }));
   }, [projection, sites]);
+  const shifted = placed.some(item => item.dx !== 0 || item.dy !== 0);
+  useEffect(() => { onOffset(shifted); }, [shifted, onOffset]);
 
   return (
     <>
@@ -76,6 +86,8 @@ export function MinerMapPanel({ showBtcLink = true }: { showBtcLink?: boolean })
   const query = useMinerMap(true);
   const data = query.data ?? null;
   const [selected, setSelected] = useState<string | null>(null);
+  const [offsetHint, setOffsetHint] = useState(false);
+  const onOffset = useCallback((active: boolean) => setOffsetHint(active), []);
 
   const sites = data?.sites ?? [];
   const sel = sites.find(s => s.id === selected) ?? null;
@@ -143,11 +155,16 @@ export function MinerMapPanel({ showBtcLink = true }: { showBtcLink?: boolean })
                   );
                 })}
               </Geographies>
-              <MinerBubbles sites={sites} selected={selected} onSelect={setSelected} />
+              <MinerBubbles sites={sites} selected={selected} onSelect={setSelected} onOffset={onOffset} />
             </ComposableMap>
             <div className="px-2 pb-1.5 text-[10px] text-foreground/40 leading-relaxed">
               Größe und Farbe = Perzentil der genannten MW (developed, nameplate, available). Grau = keine MW in der Stichprobe, kein Wert 0.
             </div>
+            {offsetHint && (
+              <div className="px-2 pb-1.5 text-[10px] text-amber-200/80" data-testid="miner-offset-hint">
+                Überlappende Pins sind zur Lesbarkeit versetzt. Die Standortkoordinate bleibt unverändert.
+              </div>
+            )}
           </div>
 
           <div className="rounded-md border border-border/30 bg-background/40 p-2.5 text-[11px] min-w-0" data-testid="miner-side-panel">
@@ -218,16 +235,20 @@ function SiteCard({ site, onClose }: { site: SiteView; onClose: () => void }) {
       <div>
         <div className="text-foreground/45 text-[10px]">Leistung</div>
         <div className="font-mono">{fmtMw(site)}</div>
-        {site.capacityMw && <div className="text-[10px] text-foreground/45">{site.capacityMw.scope} · {site.capacityMw.asOf}</div>}
+        {site.capacityMw && (
+          <div className="text-[10px] text-foreground/45">
+            {site.capacityMw.scope} · {site.capacityMw.asOf} · <SourceLink sourced={site.capacityMw} />
+          </div>
+        )}
       </div>
       {site.operatorNote && <div className="text-foreground/60">{site.operatorNote}</div>}
       {site.operators.map(op => (
         <div key={op.ticker} className="border-t border-border/20 pt-1.5 space-y-0.5">
           <div className="font-mono text-foreground/80">{op.ticker} <span className="font-sans text-foreground/50">{op.name}</span></div>
-          <div>Standort-Hashrate: {fmtEh(op.siteHashrateEHs?.value ?? null, op.siteHashrateNote)}</div>
-          <div>Konzern-Hashrate: {fmtEh(op.companyHashrateEHs?.value ?? null, op.companyHashrateNote)}</div>
+          <div>Standort-Hashrate: {fmtEh(op.siteHashrateEHs?.value ?? null, op.siteHashrateNote)}{op.siteHashrateEHs && <> · <SourceLink sourced={op.siteHashrateEHs} /></>}</div>
+          <div>Konzern-Hashrate: {fmtEh(op.companyHashrateEHs?.value ?? null, op.companyHashrateNote)}{op.companyHashrateEHs && <> · <SourceLink sourced={op.companyHashrateEHs} /></>}</div>
           {op.companyHashrateEHs && <div className="text-[10px] text-foreground/45">{op.companyHashrateEHs.scope}</div>}
-          <div>Strom: {fmtCt(op.companyPowerUsdPerKwh?.value ?? null, op.companyPowerNote)}</div>
+          <div>Strom: {fmtCt(op.companyPowerUsdPerKwh?.value ?? null, op.companyPowerNote)}{op.companyPowerUsdPerKwh && <> · <SourceLink sourced={op.companyPowerUsdPerKwh} /></>}</div>
           {op.companyPowerUsdPerKwh && <div className="text-[10px] text-foreground/45">{op.companyPowerUsdPerKwh.scope}</div>}
         </div>
       ))}

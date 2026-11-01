@@ -202,6 +202,32 @@ for (const site of [hannibal, minden]) {
 assert.equal(hannibal.operators[0]?.companyHashrateEHs?.value, 53.2);
 assert.equal(hannibal.operators[0]?.companyHashrateEHs?.asOf, "2025-12-31");
 
+function sourceText(site: typeof hannibal): string {
+  const op = site?.operators[0];
+  return [
+    site?.coordNote,
+    site?.energyNote,
+    site?.regulatoryNote,
+    op?.siteHashrateNote,
+    op?.companyPowerNote,
+  ].join(" ");
+}
+const hannibalText = sourceText(hannibal);
+const mindenText = sourceText(minden);
+assert.doesNotMatch(hannibalText, /Marketing-Seite|MARA-Seite|auf der Seite|\b[Dd]ie Seite\b/);
+assert.doesNotMatch(mindenText, /Marketing-Seite|MARA-Seite|auf der Seite|\b[Dd]ie Seite\b/);
+assert.match(hannibal.regulatoryNote, /Form 8-K Exhibit 99\.1/);
+assert.match(hannibal.regulatoryNote, /30\.04\.2026/);
+assert.match(minden.regulatoryNote, /Form 10-Q/);
+assert.match(minden.regulatoryNote, /06\.08\.2026/);
+assert.match(hannibal.operators[0]?.companyPowerNote ?? "", /8-K Exhibit 99\.1/);
+assert.match(minden.operators[0]?.companyPowerNote ?? "", /10-Q/);
+assert.match(panelSrc, /data-testid="miner-source-link"/);
+assert.match(panelSrc, /href=\{sourced\.sourceUrl\}/);
+assert.match(panelSrc, /data-testid="miner-offset-hint"/);
+assert.match(panelSrc, /zur Lesbarkeit versetzt/);
+assert.match(panelSrc, /offsetHint &&/);
+
 const work = readFileSync("Fertig_WORK_BITCOIN_MINER_MAP.md", "utf8");
 const workLines = work.endsWith("\n") ? work.slice(0, -1).split("\n") : work.split("\n");
 assert.equal(workLines.length, 75, "Spec nicht kürzen");
