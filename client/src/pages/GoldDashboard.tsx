@@ -18,6 +18,7 @@ import { GoldAdaptiveGatesCard } from "@/components/gold/GoldAdaptiveGatesCard";
 import { GoldNewsCard } from "@/components/gold/GoldNewsCard";
 import { GoldPriceChart } from "@/components/gold/GoldPriceChart";
 import { GoldSilverRatioRow } from "@/components/gold/GoldSilverRatioRow";
+import { GoldCrossBacktestCard } from "@/components/gold/GoldCrossBacktestCard";
 import {
   Sun, Moon, TrendingUp, BarChart3, Calculator,
   Dice6, Activity, Table2, Menu, X, LineChart, Target,
@@ -220,7 +221,7 @@ export default function GoldDashboard() {
               <div ref={setSectionRef(1)} className="space-y-3"><GoldPriceSection data={data} /><GoldSilverRatioRow /></div>
               {/* JOB 14: Gold-News an zweiter Stelle, im Stil der Aktien-News */}
               <div ref={setSectionRef(NEWS_SECTION_ID)}><GoldNewsCard data={data} /></div>
-              <div ref={setSectionRef(2)}><GoldPriceChart data={data} /></div>
+              <div ref={setSectionRef(2)} className="space-y-3"><GoldPriceChart data={data} /><GoldCrossBacktestCard /></div>
               <div ref={setSectionRef(3)}><GoldIndicatorsSection data={data} /></div>
               <div ref={setSectionRef(4)}><GoldFairValueSection data={data} /></div>
               <div ref={setSectionRef(5)}><GoldMonteCarloSection data={data} /></div>
