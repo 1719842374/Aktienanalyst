@@ -4,9 +4,12 @@
  */
 import { fmpRatiosTtm } from "./fmp";
 import { parseBojSeries, parseEcbCsv } from "./liquidity-briefing-math";
-import { fetchVstoxxVol } from "./recession-markets";
+import { fetchVstoxxVol, fetchYahooDailySeries } from "./recession-markets";
+import { fetchYahooTimeseriesFundamentals } from "./yahoo-fetcher";
 import {
+  ASIA_PEER_WEIGHT,
   REGION_WEIGHT,
+  SERIES_STRESS_MAX,
   alignSpread,
   catalogProbability,
   blendWeighted,
@@ -14,7 +17,9 @@ import {
   isStale,
   laborSlot,
   levelAndDelta,
+  monthEndSeries,
   parseEurostatSeries,
+  realizedVol20,
   sahmGapPp,
   yoyByMonth,
   type DatedPoint,
@@ -47,6 +52,11 @@ export interface RegionalPrints {
   jpPe: number | null;
   jpPeSource: string;
   jpVol: number | null;
+  /** Month-end 20-session realized vol of ASHR. Empty when Yahoo has no closes. */
+  cnVolPoints: DatedPoint[];
+  cnVolSource: string;
+  cnPe: number | null;
+  cnPeSource: string;
 }
 
 export interface RegionScorers {
@@ -270,10 +280,76 @@ async function stoxxPe(today: string): Promise<{ value: number | null; source: s
   return { value: null, source: "STOXX 600 PE (FMP leer, iShares ohne KGV)" };
 }
 
-async function topixPe(): Promise<{ value: number | null; source: string }> {
+export interface YahooPeProbe {
+  pe: number | null;
+  status: string;
+  httpStatus: number | null;
+  epsAsOf: string | null;
+}
+
+/**
+ * FMP trailing PE first. Yahoo ^TPX / ASHR (timeseries, no crumb) only when FMP has no PE in range.
+ * A missing or stale print stays null. The source string carries the reason. Never 0.
+ */
+export function pickIndexPe(input: {
+  fmp: { value: number; source: string } | null;
+  yahoo: YahooPeProbe | null;
+  symbol: string;
+  today: string;
+}): { value: number | null; source: string } {
+  if (input.fmp && peInRange(input.fmp.value)) return { value: input.fmp.value, source: input.fmp.source };
+  const yahoo = input.yahoo;
+  if (yahoo && yahoo.pe != null && peInRange(yahoo.pe)) {
+    if (yahoo.epsAsOf && isStale(yahoo.epsAsOf, input.today)) {
+      return { value: null, source: `n/a — Yahoo ${input.symbol} KGV ${yahoo.epsAsOf.slice(0, 7)} außerhalb des 18-Monats-Fensters` };
+    }
+    const asOf = yahoo.epsAsOf ?? "ohne Stichtag";
+    return { value: yahoo.pe, source: `Yahoo ${input.symbol} KGV (Kurs/trailingDilutedEPS, Stand ${asOf})` };
+  }
+  const fmpWhy = !input.fmp
+    ? "FMP leer"
+    : `FMP ${input.fmp.value} außerhalb 0–80`;
+  const yahooWhy = !yahoo
+    ? "Yahoo nicht abgefragt"
+    : yahoo.status === "http_error" && yahoo.httpStatus != null
+      ? `Yahoo ${input.symbol} HTTP ${yahoo.httpStatus}`
+      : `Yahoo ${input.symbol} ${yahoo.status}`;
+  return { value: null, source: `n/a — ${input.symbol} KGV (${fmpWhy}; ${yahooWhy})` };
+}
+
+async function yahooPeProbe(symbol: string): Promise<YahooPeProbe> {
+  try {
+    const yahoo = await fetchYahooTimeseriesFundamentals(symbol);
+    return { pe: yahoo.pe, status: yahoo.status, httpStatus: yahoo.httpStatus, epsAsOf: yahoo.asOf.eps };
+  } catch (err) {
+    return { pe: null, status: String((err as Error)?.message ?? err).slice(0, 160), httpStatus: null, epsAsOf: null };
+  }
+}
+
+async function topixPe(today: string): Promise<{ value: number | null; source: string }> {
   const fmp = await indexPe(["^TPX", "1306.T"]);
-  if (fmp) return { value: fmp.value, source: fmp.source };
-  return { value: null, source: "TOPIX/CAPE JP (FMP leer; JPX-PER nur xlsx)" };
+  if (fmp && peInRange(fmp.value)) return pickIndexPe({ fmp, yahoo: null, symbol: "^TPX", today });
+  return pickIndexPe({ fmp: null, yahoo: await yahooPeProbe("^TPX"), symbol: "^TPX", today });
+}
+
+async function ashrPe(today: string): Promise<{ value: number | null; source: string }> {
+  const fmp = await indexPe(["ASHR"]);
+  if (fmp && peInRange(fmp.value)) return pickIndexPe({ fmp, yahoo: null, symbol: "ASHR", today });
+  return pickIndexPe({ fmp: null, yahoo: await yahooPeProbe("ASHR"), symbol: "ASHR", today });
+}
+
+async function chinaVolPrint(cosd: string): Promise<{ points: DatedPoint[]; source: string }> {
+  let bars: { date: string; value: number }[] = [];
+  try {
+    bars = await fetchYahooDailySeries("ASHR", cosd);
+  } catch {
+    bars = [];
+  }
+  const points = monthEndSeries(realizedVol20(bars.map(bar => ({ date: bar.date, close: bar.value }))));
+  if (points.length === 0) {
+    return { points: [], source: "n/a — Yahoo ASHR ohne Tagesschlüsse für realisierte Vol 20T" };
+  }
+  return { points, source: "Yahoo ASHR, realisierte Vol 20T annualisiert" };
 }
 
 function yearsAgo(today: string, years: number): string {
@@ -312,13 +388,17 @@ export function emptyRegionalPrints(): RegionalPrints {
     jpPe: null,
     jpPeSource: "TOPIX/CAPE JP (FMP leer; JPX-PER nur xlsx)",
     jpVol: null,
+    cnVolPoints: [],
+    cnVolSource: "n/a — Yahoo ASHR ohne Tagesschlüsse für realisierte Vol 20T",
+    cnPe: null,
+    cnPeSource: "n/a — ASHR KGV (FMP leer)",
   };
 }
 
 export async function fetchRegionalPrints(today = new Date().toISOString().slice(0, 10)): Promise<RegionalPrints> {
   const cosd = yearsAgo(today, 20);
   const bojStart = yearsAgo(today, 20).slice(0, 4) + yearsAgo(today, 20).slice(5, 7);
-  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, vstoxx] = await Promise.all([
+  const [ezUnemployment, ezIp, ezLong, ezShort, ezHyPoints, jpUnemployment, jpLong, jpIpFred, oecdIpText, ezM3Yoy, bojText, ezPe, jpPe, cnPe, cnVol, vstoxx] = await Promise.all([
     eurostat("une_rt_m", "s_adj=SA&age=TOTAL&unit=PC_ACT&sex=T&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     eurostat("sts_inpr_m", "s_adj=SCA&nace_r2=B-D&unit=I21&sinceTimePeriod=2005-01", ["EA20", "EA21"]),
     fred("IRLTLT01EZM156N", cosd),
@@ -331,7 +411,9 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     ecbM3Yoy(),
     getText(`https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=csv&lang=en&db=MD02&code=${BOJ_M2_YOY}&startDate=${bojStart}`),
     stoxxPe(today),
-    topixPe(),
+    topixPe(today),
+    ashrPe(today),
+    chinaVolPrint(cosd),
     fetchVstoxxVol(cosd, today).catch(() => ({ vol: [] as { date: string; value: number }[] })),
   ]);
   let oecdIp: DatedPoint[] = [];
@@ -363,6 +445,10 @@ export async function fetchRegionalPrints(today = new Date().toISOString().slice
     jpPe: jpPe.value,
     jpPeSource: jpPe.source,
     jpVol: null,
+    cnVolPoints: cnVol.points,
+    cnVolSource: cnVol.source,
+    cnPe: cnPe.value,
+    cnPeSource: cnPe.source,
   };
 }
 
@@ -436,6 +522,50 @@ function curveSlot(
   };
 }
 
+function naValue(source: string): string {
+  return source.startsWith("n/a —") ? source : "N/A";
+}
+
+function chinaVolSlot(prints: RegionalPrints, scorers: RegionScorers): RegionSlot {
+  const source = prints.cnVolSource || "n/a — Yahoo ASHR ohne Tagesschlüsse für realisierte Vol 20T";
+  const points = [...prints.cnVolPoints]
+    .filter(point => Number.isFinite(point.value))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const latest = points.at(-1);
+  if (!latest) return closedSlot("vol", "Vol China (ASHR)", "correction", source, naValue(source));
+  const scored = scorers.curve(points.map(point => point.value), false);
+  if (!scored.available) {
+    return closedSlot(
+      "vol",
+      "Vol China (ASHR)",
+      "correction",
+      source,
+      `n/a — ASHR-Vol: ${points.length} Monate, Historie für s(z) reicht nicht`,
+    );
+  }
+  return {
+    id: "vol",
+    name: "Vol China (ASHR)",
+    book: "correction",
+    value: `${latest.value.toFixed(1)}% · 20T · ${latest.date.slice(0, 7)}`,
+    rawScore: scored.raw,
+    weight: 1,
+    weightedScore: scored.raw,
+    maxWeighted: SERIES_STRESS_MAX,
+    zone: "s(z) eigene Historie",
+    source,
+    available: true,
+  };
+}
+
+function chinaPeSlot(prints: RegionalPrints, scorers: RegionScorers): RegionSlot {
+  const source = prints.cnPeSource || "n/a — ASHR KGV (FMP leer)";
+  if (prints.cnPe == null || !peInRange(prints.cnPe)) {
+    return closedSlot("valuation", "KGV China (ASHR)", "correction", source, naValue(source));
+  }
+  return fromReading("valuation", "KGV China (ASHR)", "correction", source, scorers.valuation(prints.cnPe), prints.cnPe.toFixed(1));
+}
+
 function region(id: RegionCatalog["id"], label: string, slots: RegionSlot[]): RegionCatalog {
   return {
     id,
@@ -483,27 +613,40 @@ export function scoreRegionalCatalogs(input: ScoreInput): RegionalCatalogs {
       : fromReading("money", "Geld JP M2", "recession", "BoJ M2", scorers.money(prints.jpM2Yoy), `${prints.jpM2Yoy.toFixed(1)}%`),
     closedSlot("spreads", "Spreads JP", "recession", "JGB-Corp (keine freie OAS-Serie)"),
     prints.jpPe == null
-      ? closedSlot("valuation", "TOPIX/CAPE JP", "correction", prints.jpPeSource)
+      ? closedSlot("valuation", "TOPIX/CAPE JP", "correction", prints.jpPeSource, naValue(prints.jpPeSource))
       : fromReading("valuation", "TOPIX/CAPE JP", "correction", prints.jpPeSource, scorers.valuation(prints.jpPe), prints.jpPe.toFixed(1)),
     prints.jpVol == null
       ? closedSlot("vol", "JNVI", "correction", "JNVI (keine freie Serie)")
       : fromReading("vol", "JNVI", "correction", "JNVI", scorers.vol(prints.jpVol), prints.jpVol.toFixed(1)),
   ];
+  const cn: RegionSlot[] = [
+    chinaVolSlot(prints, scorers),
+    chinaPeSlot(prints, scorers),
+  ];
   const us = region("US", "USA", input.usSlots);
   const euro = region("EZ", "Eurozone", ez);
-  const japan = region("JP", "Japan", jp);
+  const asia = region("JP", "Asien", [...jp, ...cn]);
+  asia.recessionProbability = blendWeighted([
+    { weight: ASIA_PEER_WEIGHT.JP, probability: catalogProbability(jp, "recession") },
+    { weight: ASIA_PEER_WEIGHT.CN, probability: catalogProbability(cn, "recession") },
+  ]);
+  asia.correctionProbability = blendWeighted([
+    { weight: ASIA_PEER_WEIGHT.JP, probability: catalogProbability(jp, "correction") },
+    { weight: ASIA_PEER_WEIGHT.CN, probability: catalogProbability(cn, "correction") },
+  ]);
+  asia.note = "Japan + China (ASHR), Peer-Gewicht 1/1. ^TPX bewertet Japan, ASHR ist der China-Markt. Ein leerer Markt fällt aus der Mischung. Kein Buffett im Katalog-Score.";
   return {
     weights: { ...REGION_WEIGHT },
-    regions: [us, euro, japan],
+    regions: [us, euro, asia],
     blendedRecession12m: blendWeighted([
       { weight: REGION_WEIGHT.US, probability: input.usRecession12m },
       { weight: REGION_WEIGHT.EZ, probability: euro.recessionProbability },
-      { weight: REGION_WEIGHT.JP, probability: japan.recessionProbability },
+      { weight: REGION_WEIGHT.JP, probability: asia.recessionProbability },
     ]),
     blendedCorrection12m: blendWeighted([
       { weight: REGION_WEIGHT.US, probability: input.usCorrection12m },
       { weight: REGION_WEIGHT.EZ, probability: euro.correctionProbability },
-      { weight: REGION_WEIGHT.JP, probability: japan.correctionProbability },
+      { weight: REGION_WEIGHT.JP, probability: asia.correctionProbability },
     ]),
     actionUsesUsBooks: true,
   };

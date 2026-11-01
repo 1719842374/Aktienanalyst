@@ -5,6 +5,17 @@
  */
 
 export const REGION_WEIGHT = { US: 0.7, EZ: 0.2, JP: 0.1 } as const;
+/**
+ * Asia catalog peers. Philip 01.11.2026: the market beside Japan is China via ASHR.
+ * blendWeighted drops a peer whose book is entirely n/a.
+ */
+export const ASIA_PEER_WEIGHT = { JP: 1, CN: 1 } as const;
+/** s(z) raw is already on the −4…+4 scale. Same max the curve slot uses. */
+export const SERIES_STRESS_MAX = 4;
+/** 20-session realized vol, same window as the ASHR market chart. */
+export const ASHR_REALIZED_SESSIONS = 20;
+export const ASHR_REALIZED_MIN_RETURNS = 15;
+export const ASHR_ANN_SESSIONS = 252;
 /** A monthly print older than this is shown and not scored. */
 export const STALE_MONTHS = 18;
 export const SAHM_ANALOG_THRESHOLD_PP = 0.5;
@@ -34,6 +45,8 @@ export interface RegionCatalog {
   slots: RegionSlot[];
   recessionProbability: number | null;
   correctionProbability: number | null;
+  /** How this region's headline P was built. Absent on US and Europa. */
+  note?: string;
 }
 
 export interface RegionalCatalogs {
@@ -229,6 +242,7 @@ export interface RegionGaugeView {
   totalSlots: number;
   sparse: boolean;
   topDrivers: RegionSlot[];
+  note?: string;
 }
 
 /**
@@ -253,5 +267,39 @@ export function regionGaugeView(catalogs: RegionalCatalogs | null | undefined, i
     totalSlots,
     sparse: totalSlots === 0 || (totalSlots - scored.length) / totalSlots > REGION_SPARSE_SHARE,
     topDrivers,
+    note: region.note,
   };
+}
+
+/** Annualized 20-session realized vol in percent. A flat price is 0, which is a print, not a missing value. */
+export function realizedVol20(closes: { date: string; close: number }[]): DatedPoint[] {
+  const sorted = closes
+    .filter(bar => bar.date && Number.isFinite(bar.close) && bar.close > 0)
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const out: DatedPoint[] = [];
+  for (let i = ASHR_REALIZED_SESSIONS; i < sorted.length; i++) {
+    const rets: number[] = [];
+    for (let j = i - (ASHR_REALIZED_SESSIONS - 1); j <= i; j++) {
+      const left = sorted[j - 1]?.close;
+      const right = sorted[j]?.close;
+      if (!(left > 0) || !(right > 0)) continue;
+      rets.push(Math.log(right / left));
+    }
+    if (rets.length < ASHR_REALIZED_MIN_RETURNS) continue;
+    const mean = rets.reduce((sum, value) => sum + value, 0) / rets.length;
+    const variance = rets.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (rets.length - 1);
+    const annualized = Math.sqrt(Math.max(0, variance) * ASHR_ANN_SESSIONS) * 100;
+    if (Number.isFinite(annualized)) out.push({ date: sorted[i].date, value: annualized });
+  }
+  return out;
+}
+
+/** Last print of each calendar month, in date order. */
+export function monthEndSeries(points: DatedPoint[]): DatedPoint[] {
+  const byMonth = new Map<string, DatedPoint>();
+  const sorted = [...points]
+    .filter(point => point.date.length >= 7 && Number.isFinite(point.value))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  for (const point of sorted) byMonth.set(point.date.slice(0, 7), point);
+  return Array.from(byMonth.values());
 }
