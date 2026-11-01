@@ -116,6 +116,7 @@ export function buildGoldAiscSeries(
   const minCompanies = opts.minCompanies ?? GOLD_AISC_MIN_COMPANIES;
   const derivedLag = goldAiscReportLagDays(file.values);
   const lagDays = opts.lagDays ?? derivedLag;
+  // Verzug nicht ableitbar: aktuell nicht datengetrieben, kein fester Ersatz (weder 60 noch 0).
   if (lagDays == null) {
     return {
       unit: "USD/oz",

@@ -15,6 +15,7 @@ import { macd1269, rsiWilder } from "../shared/tech-rsi";
 import type { GoldAdaptiveLayer, GoldAdaptiveScore, GoldAdaptiveSignal, GoldModelGate } from "../shared/gold-schema";
 import type { GoldAiscSeries } from "../shared/schema";
 
+/** Policy 1,3 und die übrigen Basisgewichte sind aktuell nicht datengetrieben. Änderung nur mit Philip. */
 export const GOLD_ADAPTIVE_BASE_WEIGHTS = {
   realYield: 1.8,
   policy: 1.3,
@@ -36,7 +37,7 @@ export const GOLD_HABITAT = {
   LIQUIDITY_BOOST: 1.15,
 } as const;
 
-/** effectiveWeight = base × habitat × (0.7 + strength × 0.6) */
+/** effectiveWeight = base × habitat × (0.7 + strength × 0.6). Floor und Spanne sind aktuell nicht datengetrieben. */
 export const GOLD_EFFECTIVE_WEIGHT = { FLOOR: 0.7, STRENGTH_SPAN: 0.6 } as const;
 
 export const VOLUME_SPIKE_MULTIPLE = 1.5;
