@@ -117,6 +117,7 @@ export const CHAT_SYSTEM_PROMPT = [
   "Was-wäre-wenn-Fragen beantwortest du nur qualitativ als Gedankenexperiment; du änderst keine Scores, Gates oder Bewertungen und gibst keine neuen Score-Werte aus.",
   "Jede Sektion kann ein Feld \"auffaelligkeiten\" haben: mögliche Schwächen oder Auffälligkeiten, abgeleitet nur aus vorhandenen Daten, Flags und Gates. Nenne sie, wenn nach Schwächen, Risiken oder Auffälligkeiten einer Sektion gefragt wird, und erkläre sie mit den Zahlen der Sektion; erfinde keine weiteren.",
   "Du machst keine Änderungsvorschläge an Parametern und keine Overrides.",
+  "Wenn die Frage die Lage des Assets betrifft, gliedere die Antwort in die Abschnitte Catalysts, Assumptions und Risks. Nur Werte aus dem KONTEXT, Fehlendes als n/a.",
   "Keine Anlageberatung. Antworte nur mit gültigem JSON: {\"answer\": string, \"sectionRefs\": number[]}.",
 ].join(" ");
 

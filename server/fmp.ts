@@ -152,6 +152,19 @@ export async function fmpEarningsCalendar(symbol: string): Promise<any[]> {
   }
 }
 
+/** GET /stable/earnings-surprises. Wirft, damit der Aufrufer auf /earnings ausweichen kann. */
+export async function fmpEarningsSurprises(symbol: string): Promise<unknown> {
+  return fmpFetch(`/earnings-surprises`, { symbol: symbol.toUpperCase() });
+}
+
+/** Rohe Jahreszeilen der Produktsegmentierung, ohne die Zwei-Perioden-Normalisierung von fmpSegments. */
+export async function fmpProductSegmentationRaw(symbol: string): Promise<unknown[]> {
+  const raw = await fmpFetch(`/revenue-product-segmentation`, { symbol });
+  if (Array.isArray(raw)) return raw;
+  if (Array.isArray((raw as { data?: unknown[] } | null)?.data)) return (raw as { data: unknown[] }).data;
+  return [];
+}
+
 export async function fmpHistoricalPrices(symbol: string, from?: string, to?: string) {
   const params: Record<string, string> = { symbol };
   if (from) params.from = from;

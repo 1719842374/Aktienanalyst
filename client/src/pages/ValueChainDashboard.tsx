@@ -30,6 +30,7 @@ import { ApiErrorBanner } from "@/components/ApiErrorBanner";
 import { StageColumn } from "@/components/valuechain/StageColumn";
 import { ValueChainFlow } from "@/components/valuechain/ValueChainFlow";
 import { ValueChainKpiTiles } from "@/components/valuechain/ValueChainKpiTiles";
+import { HypeCyclePanel } from "@/components/valuechain/HypeCyclePanel";
 import type { ValueChainResponse, Region } from "@/lib/valueChainTypes";
 
 interface IndustryOption {
@@ -393,6 +394,10 @@ export default function ValueChainDashboard() {
           <div className="mb-6">
             <ValueChainKpiTiles stages={data.stages} />
           </div>
+        )}
+
+        {data && (
+          <HypeCyclePanel tickers={Array.from(new Set(data.stages.flatMap(s => s.companies.map(c => c.ticker)).filter(Boolean)))} />
         )}
 
         {/* Footer */}
