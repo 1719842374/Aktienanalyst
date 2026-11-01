@@ -16,7 +16,10 @@ import {
   preferReportedSeries,
   roicPointsFromAnnuals,
   trailingPeFromQuoteSummary,
+  trailingPeFromTimeseries,
+  trailingPeFromV7Quote,
   trailingPeFromYahooHtml,
+  YAHOO_HTML_TRAILING_PE_SOURCE,
   YAHOO_QS_TRAILING_PE_SOURCE,
   YAHOO_TS_EY_SOURCE,
   YAHOO_TS_ROIC_SOURCE,
@@ -28,6 +31,9 @@ import {
   resetFundamentalCacheForTests,
 } from "../server/earnings-yield-roic-route";
 import { loadSectorPeDisplay, resetSectorPeCacheForTests } from "../server/sector-pe-route";
+import { loadYahooEtfTrailingPe, yahooTrailingPeMissNote } from "../server/yahoo-fundamental-fallback";
+import { clearYahooCache } from "../server/yahoo-fetcher";
+import { composeSectorPeDisplay } from "../shared/sector-pe-display";
 import { ETF_PROXY_MAP } from "../server/sector-rotation-math";
 import { PEER_RATING_EXTENSIONS } from "../shared/peer-rating-extensions";
 
@@ -130,6 +136,34 @@ check("trailingPE 0 ist kein KGV", trailingPeFromQuoteSummary({ summaryDetail: {
 const html = String.raw`{\"trailingPE\":{\"raw\":29.394281,\"fmt\":\"29.39\"}}`;
 check("Quote-HTML nennt summaryDetail.trailingPE", trailingPeFromYahooHtml(html) === 29.394281);
 check("HTML ohne Feld bleibt n/a", trailingPeFromYahooHtml("<html></html>") === null);
+check("v7 quote trailingPE", trailingPeFromV7Quote({ quoteResponse: { result: [{ trailingPE: 29.394281 }] } }) === 29.394281);
+check("v7 ohne Feld bleibt n/a", trailingPeFromV7Quote({ finance: { error: { code: "Unauthorized" } } }) === null);
+const nowMs = Date.parse("2026-11-01T00:00:00Z");
+check("timeseries trailingPeRatio nimmt den jüngsten Punkt", trailingPeFromTimeseries({
+  timeseries: { result: [{ trailingPeRatio: [
+    { asOfDate: "2026-09-09", reportedValue: { raw: 31.2 } },
+    { asOfDate: "2026-10-30", reportedValue: { raw: 29.4 } },
+  ] }] },
+}, nowMs) === 29.4);
+check("timeseries nur mit meta bleibt n/a", trailingPeFromTimeseries({ timeseries: { result: [{ meta: { type: ["trailingPeRatio"] } }] } }, nowMs) === null);
+check("timeseries älter als 550 Tage bleibt n/a", trailingPeFromTimeseries({
+  timeseries: { result: [{ trailingPeRatio: [{ asOfDate: "2020-01-01", reportedValue: { raw: 20 } }] }] },
+}, nowMs) === null);
+const miss = yahooTrailingPeMissNote([
+  { stage: "crumb", status: 429, detail: "getcrumb nicht ok [429 Rate-Limit] (Länge 17): Too Many Requests" },
+  { stage: "quoteSummary", status: null, detail: "nicht gesendet: kein Cookie/Crumb" },
+  { stage: "v7quote", status: 401, detail: "{\"finance\":{\"error\":{\"code\":\"Unauthorized\",\"description\":\"Invalid Crumb\"}}}" },
+]);
+check("n/a-Grund nennt HTTP-Status und Body", miss.includes("HTTP 429") && miss.includes("Too Many Requests") && miss.includes("kein HTTP") && miss.includes("HTTP 401") && miss.includes("Invalid Crumb"), miss);
+const shown = composeSectorPeDisplay({
+  id: "technology",
+  etf: "XLK",
+  label: "Technologie",
+  holdings: null,
+  etfHistory: [],
+  holdingsNote: `n/a — Holdings nicht geladen (FMP 402: /etf/holdings) · ${miss}`,
+});
+check("Sektor-Zelle zeigt den HTTP-Grund und bleibt n/a", shown.current === null && shown.source === "n/a" && shown.text.includes("HTTP 429") && shown.text.includes("Invalid Crumb"), shown.text);
 
 resetFundamentalCacheForTests();
 let yahooCalls = 0;
@@ -211,6 +245,46 @@ check("Chart-Status nennt die Response-Quelle", chart.includes("data-testid=\"st
 check("Sektor-Zeile nennt sourceLabel", panel.includes("sector-pe-source-") && panel.includes("sourceLabel"));
 check("Hooks bleiben auf den API-Pfaden", hooks.includes("/api/chart/earnings-yield") && hooks.includes("/api/chart/roic") && hooks.includes("/api/researcher/sector-pe"));
 check("Peer-Flags bleiben aus", PEER_RATING_EXTENSIONS.industryFallback === false && PEER_RATING_EXTENSIONS.thesisPeerSet === false);
+
+console.log("\n=== Crumb 429 → Quote-HTML (Prod-Pfad) ===");
+clearYahooCache();
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = String(input);
+  if (url.startsWith("https://fc.yahoo.com")) {
+    return new Response("", { status: 404, headers: { "set-cookie": "A3=d=AQABBSECRETCOOKIEVALUE1234567; Path=/" } });
+  }
+  if (url.includes("/v1/test/getcrumb")) return new Response("Too Many Requests", { status: 429 });
+  if (url.includes("/v10/finance/quoteSummary/")) {
+    return new Response(JSON.stringify({ finance: { result: null, error: { code: "Unauthorized", description: "Invalid Crumb" } } }), { status: 401, headers: { "content-type": "application/json" } });
+  }
+  if (url.includes("/v7/finance/quote")) {
+    return new Response(JSON.stringify({ finance: { result: null, error: { code: "Unauthorized", description: "User is unable to access this feature" } } }), { status: 401, headers: { "content-type": "application/json" } });
+  }
+  if (url.includes("fundamentals-timeseries")) {
+    return new Response(JSON.stringify({ timeseries: { result: [{ meta: { type: ["trailingPeRatio"] } }], error: null } }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+  return realFetch(input, init);
+}) as typeof fetch;
+try {
+  const xlk = await loadYahooEtfTrailingPe("XLK");
+  check("XLK bei getcrumb 429 kommt von der Quote-Seite", xlk.pe != null && xlk.pe > 5 && xlk.source === YAHOO_HTML_TRAILING_PE_SOURCE, `${xlk.pe ?? "n/a"} ${xlk.source} ${xlk.note ?? ""}`);
+  resetSectorPeCacheForTests();
+  clearYahooCache();
+  const blocked = await loadSectorPeDisplay({
+    ratios: async () => { throw new Error("FMP 402: /ratios"); },
+    holdings: async () => { throw new Error("FMP 402: /etf/holdings"); },
+    now: () => Date.now(),
+  });
+  const got = blocked.sectors.filter(s => s.current != null && s.current > 0);
+  check("9/9 Sektor-ETFs trotz FMP 402 und getcrumb 429", got.length === 9, blocked.sectors.map(s => `${s.etf}:${s.current ?? "n/a"}:${s.source}`).join(" "));
+  check("Quelle ist die Quote-Seite und der Score bleibt aus", got.length === 9 && got.every(s => s.source === "yahoo-trailing-pe" && s.sourceLabel === YAHOO_HTML_TRAILING_PE_SOURCE) && blocked.scoreImpact === false, got.map(s => s.sourceLabel).join(" | "));
+  const sample = blocked.sectors.find(s => s.etf === "XLK");
+  check("Zelle nennt Holdings-402 und ein KGV", (sample?.text ?? "").includes("FMP 402") && (sample?.current ?? 0) > 0, sample?.text ?? "");
+} finally {
+  globalThis.fetch = realFetch;
+  clearYahooCache();
+}
 
 console.log("\n=== Live: SAP.DE / VOW3.DE / Sektor-ETFs ===");
 resetFundamentalCacheForTests();

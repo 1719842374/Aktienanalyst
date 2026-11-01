@@ -10,6 +10,8 @@ export const YAHOO_QS_ROIC_SOURCE = "Yahoo quoteSummary incomeStatementHistory +
 export const YAHOO_TS_EY_SOURCE = "Yahoo fundamentals-timeseries annualEBIT + annualEnterpriseValue";
 export const YAHOO_TS_ROIC_SOURCE = "Yahoo fundamentals-timeseries annualEBIT, annualTaxProvision, annualPretaxIncome, annualInvestedCapital";
 export const YAHOO_QS_TRAILING_PE_SOURCE = "Yahoo quoteSummary summaryDetail.trailingPE";
+export const YAHOO_V7_TRAILING_PE_SOURCE = "Yahoo v7 quote trailingPE";
+export const YAHOO_TS_TRAILING_PE_SOURCE = "Yahoo fundamentals-timeseries trailingPeRatio";
 export const YAHOO_HTML_TRAILING_PE_SOURCE = "Yahoo Finance Quote summaryDetail.trailingPE";
 
 /** Unix-Sekunden liegen unter diesem Schnitt, Millisekunden darüber. */
@@ -299,6 +301,38 @@ export function trailingPeFromQuoteSummary(result: unknown): number | null {
   const stats = yahooNumber(asRecord(root.defaultKeyStatistics)?.trailingPE);
   if (stats != null && stats > 0) return stats;
   return null;
+}
+
+/** Jüngstes positives trailingPeRatio. Leer bei ETFs (nur meta) und bei Punkten älter als 550 Tage. */
+const TRAILING_PE_MAX_AGE_MS = 550 * 24 * 60 * 60 * 1000;
+
+export function trailingPeFromTimeseries(json: unknown, nowMs: number = Date.now()): number | null {
+  const root = asRecord(json);
+  const series = asRecord(root?.timeseries);
+  const blocks = Array.isArray(series?.result) ? series.result : [];
+  let best: { date: string; value: number } | null = null;
+  for (const block of blocks) {
+    const rec = asRecord(block);
+    const rows = rec?.trailingPeRatio;
+    if (!Array.isArray(rows)) continue;
+    for (const cell of rows) {
+      const parsed = readTimeseriesCell(cell);
+      if (!parsed || !(parsed.value > 0)) continue;
+      const t = Date.parse(`${parsed.date}T00:00:00Z`);
+      if (!Number.isFinite(t) || nowMs - t > TRAILING_PE_MAX_AGE_MS || t - nowMs > 24 * 60 * 60 * 1000) continue;
+      if (!best || parsed.date > best.date) best = { date: parsed.date, value: parsed.value };
+    }
+  }
+  return best?.value ?? null;
+}
+
+/** v7 `quoteResponse.result[0].trailingPE` ist eine Zahl, kein {raw}-Block. */
+export function trailingPeFromV7Quote(json: unknown): number | null {
+  const root = asRecord(json);
+  const box = asRecord(root?.quoteResponse);
+  const rows = Array.isArray(box?.result) ? box.result : [];
+  const pe = yahooNumber(asRecord(rows[0])?.trailingPE);
+  return pe != null && pe > 0 ? pe : null;
 }
 
 export function trailingPeFromYahooHtml(html: string): number | null {
