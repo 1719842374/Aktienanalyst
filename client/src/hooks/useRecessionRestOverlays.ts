@@ -28,3 +28,21 @@ export function useRecessionBuffettOverlay(region: "US" | "EU" | "CN", enabled: 
 export function buffettSourceIds(body: BuffettOverlayBody | null | undefined): string {
   return (body?.sources ?? []).map(s => s.id).filter(Boolean).join(", ");
 }
+
+/** Shiller CAPE, GET /api/analyze-recession/cape (server/recession-cape-route.ts). Nur bei eingeschaltetem Chip. */
+export interface CapeOverlayBody {
+  source: string;
+  sourceUrl: string;
+  points: { date: string; value: number }[];
+  note: string | null;
+}
+
+export function useRecessionCapeOverlay(enabled: boolean) {
+  return useQuery<CapeOverlayBody | null>({
+    queryKey: ["/api/analyze-recession/cape"],
+    queryFn: getQueryFn<CapeOverlayBody | null>({ on401: "throw" }),
+    enabled,
+    // server/recession-cape-route.ts CAPE_CACHE_HOURS.
+    staleTime: 12 * 60 * 60 * 1000,
+  });
+}

@@ -151,7 +151,16 @@ export function restOverlayStatusText(input: {
   return `${label} (eigene Achse, z): aktuell ${last.z.toFixed(2)} (Roh ${last.value.toFixed(2)} ${input.rawUnit}) per ${last.date} · Perzentil ${last.peerPercentile.toFixed(0)} · Median-z ${input.window.medianZ.toFixed(2)} · Bänder P${p.bandLowPercentile}/P${p.bandHighPercentile} · Quelle ${input.source} · kein Score-Einfluss`;
 }
 
-export type RestOverlayId = "buffett";
+/**
+ * Spanne eines CAPE-Drucks. Herkunft: latestMultplCape in server/recession.ts
+ * (Wert &lt; 5 oder &gt; 80 ist kein CAPE-Druck). Keine neue Schwelle.
+ */
+export const CAPE_PARAMS = {
+  minValue: 5,
+  maxValue: 80,
+} as const;
+
+export type RestOverlayId = "buffett" | "cape";
 
 export interface RestOverlaySpec {
   id: RestOverlayId;
@@ -183,6 +192,20 @@ export const REST_OVERLAYS: Record<RestOverlayId, RestOverlaySpec> = {
     frequency: "daily",
     rawUnit: "%",
     dash: "4 3",
+  },
+  cape: {
+    id: "cape",
+    chip: "CAPE",
+    label: "CAPE",
+    color: "#a78bfa",
+    onClass: "border-violet-500 text-violet-500",
+    testId: "toggle-recession-cape",
+    statusTestId: "recession-cape-status",
+    field: "_zCape",
+    axisId: "zCape",
+    frequency: "monthly",
+    rawUnit: "PE",
+    dash: "6 3",
   },
 };
 

@@ -52,6 +52,16 @@ const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { sta
   if (url.includes("/api/analyze-recession/markets")) return json(fx.markets);
   if (url.includes("/api/credit-spread/market")) return json(fx.credit);
   if (url.includes("/api/analyze-btc/real10y-history")) return json(fx.real10y);
+  if (url.includes("/api/analyze-recession/cape")) {
+    if (mode === "fail") return new Response("upstream", { status: 503 });
+    if (mode === "empty") return json({ source: "Multpl Shiller PE (US)", sourceUrl: "https://www.multpl.com/shiller-pe/table/by-month", points: [], note: "Multpl nicht erreichbar oder leer" });
+    return json({
+      source: "Multpl Shiller PE (US)",
+      sourceUrl: "https://www.multpl.com/shiller-pe/table/by-month",
+      points: seriesOn(21, i => 20 + i * 0.4),
+      note: null,
+    });
+  }
   if (url.includes("/api/analyze-recession/buffett")) {
     if (mode === "fail") return json({ error: "Buffett-Quote nicht verfügbar: Timeout" }, 502);
     if (mode === "empty") return json({ region: "US", asOf: null, sources: [], points: [], note: "leer" });
@@ -158,6 +168,49 @@ async function main() {
     await act(async () => { r.root.unmount(); });
   }
   quietOff();
+
+  console.log("3) CAPE: dieselbe Multpl-Tabelle wie scoreCAPE, Linie mit Quelle+Datum");
+  mode = "ok";
+  let multplCapeSeries: (html: string) => { date: string; value: number }[] = () => [];
+  let CAPE_SOURCE_URL = "";
+  try {
+    const capeMod = await import("../server/recession-cape-route.ts");
+    multplCapeSeries = capeMod.multplCapeSeries;
+    CAPE_SOURCE_URL = capeMod.CAPE_SOURCE_URL;
+  } catch (e: any) {
+    check("server/recession-cape-route lädt", false, e?.message ?? String(e));
+  }
+  const { latestMultplCape } = await import("../server/recession.ts");
+  const capeHtml = `<table><tr><td>Oct 1, 2026</td><td>39.2</td></tr><tr><td>Sep 1, 2024</td><td>32.1</td></tr><tr><td>Jan 1, 2020</td><td>4.0</td></tr></table>`;
+  const capeSeries = multplCapeSeries(capeHtml);
+  const capeLatest = latestMultplCape(capeHtml);
+  check("URL ist die von scoreCAPE", CAPE_SOURCE_URL.length > 0 && readFileSync(new URL("../server/recession.ts", import.meta.url), "utf8").includes(CAPE_SOURCE_URL), CAPE_SOURCE_URL);
+  check("4.0 liegt außerhalb und fällt weg, zwei Drucke bleiben", capeSeries.length === 2 && capeSeries.every((p: { value: number }) => p.value >= 5), JSON.stringify(capeSeries));
+  check("erster Druck = latestMultplCape (Score-Parser unverändert)", capeLatest?.date === "2026-10-01" && capeLatest.value === 39.2 && capeSeries[0]?.date === capeLatest.date && capeSeries[0]?.value === capeLatest.value);
+
+  calls.length = 0;
+  const capeMount = await mount();
+  await click(findByTestId(capeMount.c, "toggle-recession-cape"));
+  const capePoints = seriesOn(21, i => 20 + i * 0.4);
+  const capeLast = capePoints[capePoints.length - 1];
+  const sCape = findByTestId(capeMount.c, "recession-cape-status")?.textContent ?? "";
+  check("Schalter CAPE", findByTestId(capeMount.c, "toggle-recession-cape")?.textContent === "CAPE");
+  check("CAPE an: ein Abruf /api/analyze-recession/cape", calls.filter(u => u.includes("/api/analyze-recession/cape")).length === 1, calls.filter(u => u.includes("cape")).join(","));
+  check("CAPE-Status: Multpl, US, Datum, kein Score", sCape.includes("Multpl") && sCape.includes("US") && sCape.includes(capeLast.date) && sCape.includes("kein Score-Einfluss"), sCape);
+  await click(findByTestId(capeMount.c, "tab-vgk"));
+  await click(findByTestId(capeMount.c, "tab-ashr"));
+  const sCapeAs = findByTestId(capeMount.c, "recession-cape-status")?.textContent ?? "";
+  check("CAPE auf EU- und Asien-Tab bleibt die US-Reihe mit Datum", sCapeAs.includes("US") && sCapeAs.includes(capeLast.date) && calls.filter(u => u.includes("/api/analyze-recession/cape")).length === 1, sCapeAs);
+  await act(async () => { capeMount.root.unmount(); });
+
+  for (const m of ["fail", "empty"] as const) {
+    mode = m;
+    const r = await mount();
+    await click(findByTestId(r.c, "toggle-recession-cape"));
+    const a = findByTestId(r.c, "recession-cape-status")?.textContent ?? "";
+    check(`CAPE ${m}: n/a ohne aktuelle z-Zahl`, a.includes(": n/a") && !/aktuell /.test(a), a);
+    await act(async () => { r.root.unmount(); });
+  }
 
   console.log(failed ? `\n${failed} Check(s) fehlgeschlagen` : "\nAlle Checks grün");
   process.exit(failed ? 1 : 0);

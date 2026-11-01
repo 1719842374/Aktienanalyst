@@ -55,7 +55,7 @@ import {
   type RestOverlayId,
   type RestOverlaySpec,
 } from "@shared/recession-rest-overlays";
-import { buffettSourceIds, useRecessionBuffettOverlay, type BuffettOverlayBody } from "@/hooks/useRecessionRestOverlays";
+import { buffettSourceIds, useRecessionBuffettOverlay, useRecessionCapeOverlay, type BuffettOverlayBody, type CapeOverlayBody } from "@/hooks/useRecessionRestOverlays";
 
 // F1-43/F1-45 (ohne F1-41): Overlays Markt-Spread Baa (FRED BAA10Y) und Real 10J (FRED DFII10, wie #267 Real10Y) im Preis-Pane.
 // Bestehende Endpoints /api/credit-spread/market und /api/analyze-btc/real10y-history, nur Anzeige, kein Score. Default aus.
@@ -66,7 +66,7 @@ export const RECESSION_CREDIT_LABEL = "Markt-Spread Baa (FRED BAA10Y, US)";
 export const RECESSION_T10Y_LABEL = "Real 10J (DFII10)";
 
 /** F1-45: welche Rest-Overlays der Schalterleiste schon verdrahtet sind. Ein Eintrag pro Overlay. */
-const REST_WIRED: RestOverlayId[] = ["buffett"];
+const REST_WIRED: RestOverlayId[] = ["buffett", "cape"];
 
 export interface RestOverlayToggle {
   spec: RestOverlaySpec;
@@ -589,20 +589,35 @@ function restOverlayToggles(input: {
   buffettOn: boolean;
   buffettRegion: "US" | "EU" | "CN";
   buffett: { data?: BuffettOverlayBody | null; isLoading: boolean; isError: boolean };
+  capeOn: boolean;
+  cape: { data?: CapeOverlayBody | null; isLoading: boolean; isError: boolean };
 }): RestOverlayToggle[] {
   const body = input.buffett.data;
   const ids = buffettSourceIds(body);
   const where = BUFFETT_REGION_LABEL[input.buffettRegion];
-  return [{
-    spec: REST_OVERLAYS.buffett,
-    on: input.buffettOn,
-    loading: input.buffettOn && input.buffett.isLoading,
-    failed: input.buffett.isError || !!body?.error,
-    raw: (body?.points ?? []).flatMap(p => Number.isFinite(p.ratio) ? [{ date: p.date, value: p.ratio }] : []),
-    source: ids ? `${ids} (${where})` : where,
-    note: body?.error ?? body?.note ?? null,
-    label: `Buffett (${where})`,
-  }];
+  const cape = input.cape.data;
+  return [
+    {
+      spec: REST_OVERLAYS.buffett,
+      on: input.buffettOn,
+      loading: input.buffettOn && input.buffett.isLoading,
+      failed: input.buffett.isError || !!body?.error,
+      raw: (body?.points ?? []).flatMap(p => Number.isFinite(p.ratio) ? [{ date: p.date, value: p.ratio }] : []),
+      source: ids ? `${ids} (${where})` : where,
+      note: body?.error ?? body?.note ?? null,
+      label: `Buffett (${where})`,
+    },
+    {
+      spec: REST_OVERLAYS.cape,
+      on: input.capeOn,
+      loading: input.capeOn && input.cape.isLoading,
+      failed: input.cape.isError,
+      raw: (cape?.points ?? []).flatMap(p => Number.isFinite(p.value) ? [{ date: p.date, value: p.value }] : []),
+      source: cape?.source ?? "Multpl Shiller PE (US)",
+      note: cape?.note ?? null,
+      label: "CAPE (US)",
+    },
+  ];
 }
 
 function ChartsBody() {
@@ -613,7 +628,7 @@ function ChartsBody() {
   // F1-43/F1-45: Overlay-Schalter, Default aus (Anzeige wie bisher). Abruf nur, solange der Schalter an ist.
   const [showCredit, setShowCredit] = useState(false);
   const [showT10y, setShowT10y] = useState(false);
-  const [restOn, setRestOn] = useState<Record<RestOverlayId, boolean>>({ buffett: false });
+  const [restOn, setRestOn] = useState<Record<RestOverlayId, boolean>>({ buffett: false, cape: false });
   const creditQ = useMarketCreditSpread(showCredit);
   const q = useRecessionMarketCharts(window);
   // Real 10J: bestehende DFII10-Route aus #267 (useMarketReal10Y), Start = ältester Kurstag des aktiven Markts.
@@ -621,8 +636,12 @@ function ChartsBody() {
   const t10yQ = useMarketReal10Y(real10yStart, showT10y);
   const buffettRegion = marketBuffettRegion(tab);
   const buffettQ = useRecessionBuffettOverlay(buffettRegion, restOn.buffett);
+  const capeQ = useRecessionCapeOverlay(restOn.cape);
   const market = q.data?.markets.find((m) => m.id === tab) ?? null;
-  const restToggles = restOverlayToggles({ buffettOn: restOn.buffett, buffettRegion, buffett: buffettQ });
+  const restToggles = restOverlayToggles({
+    buffettOn: restOn.buffett, buffettRegion, buffett: buffettQ,
+    capeOn: restOn.cape, cape: capeQ,
+  });
   const factpack = useRecessionMarketFactpack(clickDate ? tab : null, clickDate, window);
 
   // PR 3 (Chat-Kontext): Snapshot-Zeilen aller vier bereits geladenen Märkte veröffentlichen.

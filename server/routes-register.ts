@@ -27,6 +27,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerRecessionTaRoute(app);
   const { registerBuffettRatioRoute } = await import("./buffett-route");
   registerBuffettRatioRoute(app);
+  // GET /api/analyze-recession/cape (F1-45, Multpl Shiller PE, nur Anzeige, kein Score)
+  const { registerCapeRoute } = await import("./recession-cape-route");
+  registerCapeRoute(app);
   const { registerThesisLabRoutes } = await import("./thesis-lab-routes");
   registerThesisLabRoutes(app);
   const { registerDividendRoute } = await import("./dividend-route");
