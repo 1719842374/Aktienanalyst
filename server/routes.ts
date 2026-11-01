@@ -509,4 +509,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 16. POST /api/catalyst-event — S17 „Event hinzufügen“ (§4b Stufe 1), isoliertes Modul.
   const { registerCatalystEventRoute } = await import("./catalyst-event-route");
   registerCatalystEventRoute(app);
+
+  // 17. GET /api/macro/inventory-demand-gap — F9-04, nur Anzeige, kein Score.
+  (await import("./inventory-demand-gap-route")).registerInventoryDemandGapRoute(app);
 }
