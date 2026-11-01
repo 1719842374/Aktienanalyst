@@ -1,5 +1,5 @@
 # Gold Adaptive Scoring Framework
-## Vollständige Dokumentation (Stand 2026-10-09)
+## Vollständige Dokumentation (Stand 2026-10-11)
 
 ### Ziel
 Adaptives Scoring für Gold analog zur 1–20-Aktienanalyse und dem Makro-Framework. Bestehende Modelle (Real-Yield, Multi-Faktor, Gates) bleiben Basis, werden um Layer-Gewichtung, Policy-Signale und technische Bestätigung erweitert.
@@ -28,8 +28,8 @@ Adaptives Scoring für Gold analog zur 1–20-Aktienanalyse und dem Makro-Framew
 | **Real Yield** | Fair-Value-Premium (z-Score), Real10Y-Trend | FRED DFII10 | Fallend = bullish |
 | **Policy** | Fed Funds Änderung, Realzins-Rückgang | FRED FEDFUNDS, DFII10 | Senkung = bullish |
 | **Liquidity** | M2 YoY, WALCL, Netto-Liquidität | FRED M2SL, WALCL | Steigend = bullish |
-| **Inflation** | Breakeven (T10YIE) | FRED T10YIE | Steigend = bullish (bedingt) |
-| **Supply** | AISC-Margin, Kapitulationszone | Aggregate / Berichte | Preis << AISC = Stress |
+| **Inflation** | Inflations-BE (T10YIE) | FRED T10YIE | Steigend = bullish (bedingt) |
+| **Supply** | AISC-Margin, Kapitulationszone | Quartals-AISC großer Produzenten | Preis << AISC = Stress |
 | **Technical** | RSI, MA200-Abweichung, Golden/Death Cross, Volumen | Preisdaten | Cross = Bestätigung |
 | **Macro** | DXY-Trend | FRED DTWEXBGS / Yahoo | Fallend = bullish |
 | **News** | LLM-Flag aus Gold-News | RSS / API + OpenRouter | Leichtes Flag |
@@ -41,12 +41,12 @@ Adaptives Scoring für Gold analog zur 1–20-Aktienanalyse und dem Makro-Framew
 | Real10Y | DFII10 | Täglich |
 | M2 | M2SL | Monatlich |
 | Fed Bilanz | WALCL | Wöchentlich |
-| Breakeven | T10YIE | Täglich |
+| Inflations-BE | T10YIE | Täglich |
 | DXY | DTWEXBGS | Täglich |
 | Fed Funds | FEDFUNDS | Monatlich |
 | Gold Preis | GCUSD / Yahoo | Täglich |
 | Volumen | GCUSD / Yahoo | Täglich |
-| AISC | Unternehmensaggregate | Quartalsweise |
+| AISC | Quartalsberichte Newmont / Barrick / Agnico Eagle | Quartalsweise |
 | Gold-News | Kitco, Reuters, WGC, Fed | Laufend |
 
 ---
@@ -128,12 +128,28 @@ function detectMACross(prices: number[]): {
 
 ---
 
-## 5. Angebotsseite (Miner)
+## 5. Angebotsseite (Miner) – AISC-Linie
+
+### Unterschied zu T10YIE
+Der Chart-Chip „Breakeven“ zeigt aktuell die **Inflationserwartung** (FRED T10YIE), **nicht** die Produktionskosten der Minen. Der Chip wird umbenannt in „Inflations-BE (T10YIE)“.
+
+### AISC-Linie (neu)
+| Element | Beschreibung |
+|---------|--------------|
+| **Datenquelle** | Quartals-AISC aus den veröffentlichten Quartalsberichten von Newmont (NEM), Barrick (B) und Agnico Eagle (AEM) |
+| **Speicherung** | Kleine statische Datendatei im Repo (z. B. `server/data/gold-aisc.json`), jeder Wert mit Quelle + Datum |
+| **Plot** | Gestufte Linie auf der **Preisachse** (USD/oz), nicht auf der %-Achse |
+| **Stresszone** | Preis < AISC × 1.10–1.15 als markierter Bereich (Kapitulations-/Stresszone) |
+| **Fehlende Quartale** | n/a, nichts wird geschätzt oder interpoliert |
+| **Optional** | Mittelwert oder Median der drei Produzenten als eine Linie; Einzelwerte als Tooltip |
+
+**Hinweis:** World Gold Council (gold.org/goldhub/data/aisc-gold) bietet globale Aggregate (Metals Focus). Für eine stabile, quelloffene Lösung im Repo sind die Unternehmensberichte vorzuziehen.
 
 | Signal | Beschreibung | Status |
 |--------|--------------|--------|
 | AISC-Margin | (Preis - AISC) / AISC | Gate vorhanden, als Signal erweitern |
-| Kapitulationszone | Preis nahe AISC + Produktionsrückgang | Fehlt |
+| AISC-Linie | Gestufter Plot auf Preisachse | **Offen** |
+| Kapitulationszone | Preis nahe oder unter AISC | **Offen** |
 | Angebotsreaktion | Veränderung Minenproduktion | Fehlt |
 
 ---
@@ -156,11 +172,11 @@ function detectMACross(prices: number[]): {
 | Real10Y (DFII10) | FRED | **Sehr hoch** | Kern-Treiber |
 | M2 YoY | FRED M2SL | Hoch | Liquidität |
 | DXY | FRED / Yahoo | Hoch | Inverser Treiber |
-| Breakeven (T10YIE) | FRED | Mittel | Inflationserwartungen |
+| **Inflations-BE (T10YIE)** | FRED | Mittel | Inflationserwartungen (nicht Miner-Kosten) |
 | WALCL | FRED | Mittel | Fed-Bilanz |
 | **50-MA / 200-MA** | Berechnet | **Hoch** | Golden/Death Cross |
 | Volumen | Preisdaten | Mittel | Bestätigung |
-| AISC-Linie | Aggregate | Niedrig–Mittel | Angebotsseite |
+| **AISC-Linie** | Quartalsberichte | Hoch (neu) | Miner-Kosten auf Preisachse |
 
 ---
 
@@ -243,14 +259,15 @@ Antworte nur als JSON:
 7. Optional: Gold-News-Flag via LLM einholen
 8. Score aggregieren
 9. Gates als Warnungen anzeigen
-10. Chart mit Makro-Overlays + 50/200-MA + Volumen
+10. Chart mit Makro-Overlays + 50/200-MA + Volumen + AISC-Linie
 11. News-Sektion im Dashboard anzeigen
 
 ---
 
 ## 11. Offene Punkte
 
-- AISC-Zeitreihe beschaffen
+- **AISC-Linie implementieren** (Quartalsdaten Newmont/Barrick/Agnico Eagle als gestufter Preis-Overlay + Stresszone)
+- Chip „Breakeven“ umbenennen in „Inflations-BE (T10YIE)“
 - Kapitulationszone definieren
 - Volumen-Daten zuverlässig anbinden
 - Gold-News-Quellen anbinden (RSS/API)
@@ -259,4 +276,4 @@ Antworte nur als JSON:
 
 ---
 
-**Status:** Konzept dokumentiert inkl. detaillierter technischer Signale (Death/Golden Cross, Volumen) und Gold-News-Sektion (analog BTC-Liquidität).
+**Status:** Konzept dokumentiert inkl. detaillierter technischer Signale, Gold-News-Sektion und klarer Trennung zwischen Inflations-BE (T10YIE) und Miner-AISC.

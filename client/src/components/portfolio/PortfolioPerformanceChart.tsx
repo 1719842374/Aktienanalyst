@@ -5,9 +5,10 @@ import { useMemo, useState } from "react";
 import { ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as AreaTooltip, Legend, ReferenceLine, DefaultTooltipContent, type TooltipProps } from "recharts";
 import { Eye, EyeOff } from "lucide-react";
 import { timeframeCutoffIso, type PerformanceTimeframe } from "@/lib/portfolio/positions";
+import { AMPEL_COLORS, attachAmpel, type ComboPoint } from "@/lib/comboBands";
 
-type ChartSeriesKey = "pct" | "benchPct" | "combo" | "benchPrice";
-const DEFAULT_VISIBLE: ChartSeriesKey[] = ["pct", "benchPct", "combo", "benchPrice"];
+type ChartSeriesKey = "pct" | "benchPct" | "combo" | "benchPrice" | "ampel";
+const DEFAULT_VISIBLE: ChartSeriesKey[] = ["pct", "benchPct", "combo", "benchPrice", "ampel"];
 
 /** Same solid used by the Fenster-Rendite eye toggle and the green zone stop. */
 const FENSTER_RENDITE_TOOLTIP_COLOR = "#10b981";
@@ -21,18 +22,34 @@ const TOOLTIP_LABEL_COLOR = "#0f172a";
  * the white tooltip. Other series already pass solid hex strokes.
  */
 function portfolioPerfTooltipContent(props: TooltipProps<number, string>) {
-  const payload = props.payload?.map(entry =>
+  const row = props.payload?.[0]?.payload as { ampelLabel?: string | null } | undefined;
+  const seen = new Set<string>();
+  const payload = props.payload?.filter(entry => {
+    if (!row?.ampelLabel) return true;
+    const name = String(entry.name ?? "");
+    if (name !== "Kombinationskurs") return true;
+    if (seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  }).map(entry =>
     typeof entry.color === "string" && entry.color.startsWith("url(")
       ? { ...entry, color: FENSTER_RENDITE_TOOLTIP_COLOR }
       : entry,
   );
-  return (
+  const tooltip = (
     <DefaultTooltipContent
       {...props}
       payload={payload}
       contentStyle={{ ...props.contentStyle, color: TOOLTIP_LABEL_COLOR }}
       labelStyle={{ ...props.labelStyle, color: TOOLTIP_LABEL_COLOR }}
     />
+  );
+  if (!row?.ampelLabel) return tooltip;
+  return (
+    <div>
+      {tooltip}
+      <div style={{ color: TOOLTIP_LABEL_COLOR, fontSize: 11, padding: "0 10px 6px" }}>{row.ampelLabel}</div>
+    </div>
   );
 }
 
@@ -46,11 +63,14 @@ export default function PortfolioPerformanceChart({
   timeframe,
   benchmarkTicker,
   benchmarkHistoricalPrices,
+  ampelSourceSeries,
 }: {
   series: Array<{ date: string; performancePct: number; value: number }>;
   timeframe: PerformanceTimeframe;
   benchmarkTicker?: string;
   benchmarkHistoricalPrices?: Array<{ date: string; close: number }> | undefined;
+  /** Längere Kombinationskurs-Reihe (Warmup), nur für Ampel und Band. Die gezeichneten Kurse bleiben `series`. */
+  ampelSourceSeries?: ComboPoint[];
 }) {
   const [visibleSeries, setVisibleSeries] = useState<Set<ChartSeriesKey>>(() => new Set(DEFAULT_VISIBLE));
   const toggleSeries = (key: ChartSeriesKey) => {
@@ -61,14 +81,22 @@ export default function PortfolioPerformanceChart({
     });
   };
   const benchLabel = benchmarkTicker || "SPY";
+  const ampelOn = visibleSeries.has("ampel");
   const seriesMeta: Array<{ key: ChartSeriesKey; label: string; color: string }> = [
     { key: "pct", label: "Fenster-Rendite", color: "#10b981" },
     { key: "benchPct", label: `${benchLabel} %`, color: "#f59e0b" },
     { key: "combo", label: "Kombinationskurs", color: "#38bdf8" },
     { key: "benchPrice", label: `${benchLabel}-Kurs`, color: "#a855f7" },
+    { key: "ampel", label: "Ampel", color: AMPEL_COLORS.green },
   ];
   const showPctAxis = visibleSeries.has("pct") || visibleSeries.has("benchPct");
   const showPriceAxis = visibleSeries.has("combo") || visibleSeries.has("benchPrice");
+
+  const visibleCombo = useMemo<ComboPoint[]>(() => series.map(pt => ({ date: pt.date, value: pt.value })), [series]);
+  const overlay = useMemo(
+    () => attachAmpel(visibleCombo, ampelSourceSeries && ampelSourceSeries.length ? ampelSourceSeries : visibleCombo, ampelOn),
+    [visibleCombo, ampelSourceSeries, ampelOn],
+  );
 
   const chartData = useMemo(() => {
     const cutoff = timeframeCutoffIso(timeframe);
@@ -85,14 +113,24 @@ export default function PortfolioPerformanceChart({
         benchPctByDate.set(pt.date, (pt.close / closeFrom - 1) * 100);
       }
     }
-    return series.map(pt => ({
-      date: pt.date,
-      pct: pt.performancePct * 100,
-      combo: pt.value,
-      benchPct: benchPctByDate.get(pt.date),
-      benchPrice: benchCloseByDate.get(pt.date),
-    }));
-  }, [series, timeframe, benchmarkHistoricalPrices]);
+    return series.map((pt, index) => {
+      const row = overlay.rows[index];
+      return {
+        date: pt.date,
+        pct: pt.performancePct * 100,
+        combo: pt.value,
+        benchPct: benchPctByDate.get(pt.date),
+        benchPrice: benchCloseByDate.get(pt.date),
+        ...(ampelOn && row ? {
+          ...row.segments,
+          bandLo: row.bandLo ?? undefined,
+          bandHi: row.bandHi ?? undefined,
+          bandMedian: row.bandMedian ?? undefined,
+          ampelLabel: row.ampelLabel,
+        } : {}),
+      };
+    });
+  }, [series, timeframe, benchmarkHistoricalPrices, overlay, ampelOn]);
 
   // Y-gradient: top = dataMax, bottom = dataMin. Offset is the share of the range above 0%.
   const zeroOffset = useMemo(() => {
@@ -116,13 +154,26 @@ export default function PortfolioPerformanceChart({
   const windowTo = series.length ? series[series.length - 1].date : null;
 
   return (
-    <div className="bg-card rounded-xl border border-border p-4">
-      <h3 className="text-sm font-semibold">Performance</h3>
+    <div className="bg-card rounded-xl border border-border p-4" data-testid="portfolio-performance-chart">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h3 className="text-sm font-semibold">Performance</h3>
+        {ampelOn && overlay.badge ? (
+          <span
+            data-testid="portfolio-ampel-badge"
+            className="shrink-0 rounded-full border border-green-500/40 bg-green-500/10 px-2 py-0.5 text-[10px] font-semibold text-green-500"
+          >
+            Ampel: Starkes Kaufsignal
+          </span>
+        ) : null}
+      </div>
       <p className="text-[10px] text-muted-foreground mb-2">
         {windowFrom && windowTo
           ? `${windowFrom} → ${windowTo} · Fenster ${windowReturnPct == null ? "—" : fmtPct(windowReturnPct)}${comboStart != null && comboEnd != null ? ` · Kombi-Kurs ${comboStart.toFixed(2)} → ${comboEnd.toFixed(2)}` : ""}`
           : "Fenster-Rendite ab Startpunkt (0%) + Kombinationskurs + Benchmark"}
       </p>
+      {ampelOn ? (
+        <p className="text-[10px] text-muted-foreground mb-2">Ampel auf dem Kombinationskurs (Kurs&gt;MA200, MA50&gt;MA200, MACD&gt;0, MACD↑). Gestrichelt: Median und P20–P80.</p>
+      ) : null}
       <div className="flex flex-wrap gap-1 mb-2">
         {seriesMeta.map(s => (
           <button
@@ -134,6 +185,7 @@ export default function PortfolioPerformanceChart({
             }`}
             style={{ color: s.color }}
             title={`${s.label} ein-/ausblenden`}
+            aria-pressed={visibleSeries.has(s.key)}
             data-testid={`toggle-portfolio-${s.key}`}
           >
             {visibleSeries.has(s.key) ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
@@ -167,7 +219,7 @@ export default function PortfolioPerformanceChart({
             <AreaTooltip
               content={portfolioPerfTooltipContent}
               formatter={(v: number, name: string) =>
-                name === "Kombinationskurs" || name.endsWith("-Kurs")
+                name === "Kombinationskurs" || name.endsWith("-Kurs") || name === "Median" || name.startsWith("Band ")
                   ? [Number(v).toFixed(2), name]
                   : [`${Number(v).toFixed(2)}%`, name]
               }
@@ -183,8 +235,32 @@ export default function PortfolioPerformanceChart({
             {visibleSeries.has("benchPct") && (
               <Line yAxisId="pct" type="monotone" dataKey="benchPct" name={`${benchLabel} %`} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls />
             )}
-            {visibleSeries.has("combo") && (
+            {visibleSeries.has("combo") && !ampelOn && (
               <Line yAxisId="combo" type="monotone" dataKey="combo" name="Kombinationskurs" stroke="#38bdf8" strokeWidth={1.5} dot={false} />
+            )}
+            {visibleSeries.has("combo") && ampelOn && overlay.segmentMeta.map(segment => (
+              <Line
+                key={segment.key}
+                yAxisId="combo"
+                type="monotone"
+                dataKey={segment.key}
+                name="Kombinationskurs"
+                stroke={AMPEL_COLORS[segment.color]}
+                strokeWidth={2}
+                dot={false}
+                legendType={segment.legend ? "line" : "none"}
+                isAnimationActive={false}
+                connectNulls={false}
+              />
+            ))}
+            {visibleSeries.has("combo") && ampelOn && (
+              <Line yAxisId="combo" type="monotone" dataKey="bandMedian" name="Median" stroke="#64748b" strokeWidth={1} strokeDasharray="1 3" dot={false} legendType="none" connectNulls isAnimationActive={false} />
+            )}
+            {visibleSeries.has("combo") && ampelOn && (
+              <Line yAxisId="combo" type="monotone" dataKey="bandLo" name="Band unten" stroke="#94a3b8" strokeWidth={1} strokeDasharray="3 3" dot={false} legendType="none" connectNulls isAnimationActive={false} />
+            )}
+            {visibleSeries.has("combo") && ampelOn && (
+              <Line yAxisId="combo" type="monotone" dataKey="bandHi" name="Band oben" stroke="#94a3b8" strokeWidth={1} strokeDasharray="3 3" dot={false} legendType="none" connectNulls isAnimationActive={false} />
             )}
             {visibleSeries.has("benchPrice") && (
               <Line yAxisId="combo" type="monotone" dataKey="benchPrice" name={`${benchLabel}-Kurs`} stroke="#a855f7" strokeWidth={1.5} strokeDasharray="2 2" dot={false} connectNulls />

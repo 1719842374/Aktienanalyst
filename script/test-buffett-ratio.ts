@@ -3,6 +3,7 @@ import {
   buildBuffettSeries,
   fitLogTrend,
   quarterlyFitSample,
+  rollClosesForward,
   spliceAtListedStart,
   type BuffettObservation,
 } from "../server/buffett-ratio";
@@ -128,6 +129,31 @@ const quartersFit = quarterlyFitSample([
   { date: "2020-04-01", ratio: 14 },
 ]);
 ok("je Quartal bleibt der letzte Wert für den Trend", quartersFit.length === 2 && quartersFit[0].ratio === 12 && quartersFit[1].ratio === 14, JSON.stringify(quartersFit));
+
+const rolled = rollClosesForward(
+  [{ date: "2026-10-02", close: 100 }],
+  [{ date: "2026-10-02", close: 200 }, { date: "2026-10-05", close: 210 }],
+);
+ok(
+  "eine spätere Sitzung schreibt den letzten Schluss mit der Proxy-Rendite fort",
+  rolled.length === 2 && rolled[1].date === "2026-10-05" && Math.abs(rolled[1].close - 105) < 1e-9,
+  JSON.stringify(rolled),
+);
+const anchored = rollClosesForward(
+  [{ date: "2026-10-02", close: 100 }],
+  [{ date: "2026-10-01", close: 190 }, { date: "2026-10-05", close: 209 }],
+);
+ok(
+  "fehlt der Proxy am Primärtag, gilt der letzte frühere Proxy-Schluss",
+  anchored.length === 2 && Math.abs(anchored[1].close - 110) < 1e-9,
+  JSON.stringify(anchored),
+);
+const unchanged = rollClosesForward(
+  [{ date: "2026-10-05", close: 100 }],
+  [{ date: "2026-10-02", close: 200 }],
+);
+ok("ein älterer Proxy ersetzt keinen neueren Primärschluss", unchanged.length === 1 && unchanged[0].date === "2026-10-05", JSON.stringify(unchanged));
+ok("ohne Proxy bleibt die Primärreihe", rollClosesForward([{ date: "2026-10-02", close: 100 }], []).length === 1);
 
 if (failed) {
   console.log(`\n${failed} TESTS FEHLGESCHLAGEN`);

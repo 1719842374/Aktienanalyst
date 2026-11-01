@@ -1,0 +1,335 @@
+{
+ "_fixture": {
+  "chart": {
+   "source": "/workspace/mcap-research/chart_7203.T.json (MCap-Recherche, live vom Box 18.10.2026 21:55 MESZ, v8 chart range=5d ohne Crumb), unverändert",
+   "sha256": "a11864480ac56d8db3cc84b92e31a89d77032b66747af9a9b3153867b9c26887"
+  },
+  "timeseries": {
+   "url": "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/7203.T?type=quarterlyOrdinarySharesNumber,annualOrdinarySharesNumber,trailingDilutedEPS&period1=<jetzt-2J>&period2=<jetzt>",
+   "fetchedAt": "2026-10-18T22:05+02:00",
+   "http": 200,
+   "auth": "kein Cookie, kein Crumb, Browser-UA wie server/yahoo-fetcher.ts",
+   "sha256": "5fdf1a10e61110ff2ce0157b6b29fd87dc8a66b4658823339005503ad7f9b963"
+  },
+  "quoteSummaryRef": {
+   "source": "/workspace/mcap-research/app-yahoo-client-box.log (App-Client server/yahoo-fetcher.ts auf main 122762b mit Crumb, Box, 18.10.2026 21:56 MESZ), RESULT-Zeile unverändert"
+  }
+ },
+ "chart": {
+  "result": [
+   {
+    "meta": {
+     "currency": "JPY",
+     "symbol": "7203.T",
+     "exchangeName": "JPX",
+     "fullExchangeName": "Tokyo",
+     "instrumentType": "EQUITY",
+     "firstTradeDate": 925948800,
+     "regularMarketTime": 1792132200,
+     "hasPrePostMarketData": false,
+     "gmtoffset": 32400,
+     "timezone": "JST",
+     "exchangeTimezoneName": "Asia/Tokyo",
+     "regularMarketPrice": 3094.0,
+     "regularMarketChangePercent": 2.146,
+     "fulldayPrice": 3094.0,
+     "fulldayChange": 65.0,
+     "fulldayChangePercent": 2.146,
+     "fiftyTwoWeekHigh": 4000.0,
+     "fiftyTwoWeekLow": 2686.0,
+     "regularMarketDayHigh": 3096.0,
+     "regularMarketDayLow": 3047.0,
+     "regularMarketVolume": 25007500,
+     "longName": "Toyota Motor Corporation",
+     "shortName": "TOYOTA MOTOR CORP",
+     "chartPreviousClose": 2910.5,
+     "priceHint": 2,
+     "currentTradingPeriod": {
+      "pre": {
+       "timezone": "JST",
+       "start": 1792368000,
+       "end": 1792368000,
+       "gmtoffset": 32400
+      },
+      "regular": {
+       "timezone": "JST",
+       "start": 1792368000,
+       "end": 1792391400,
+       "gmtoffset": 32400
+      },
+      "post": {
+       "timezone": "JST",
+       "start": 1792391400,
+       "end": 1792391400,
+       "gmtoffset": 32400
+      }
+     },
+     "dataGranularity": "1d",
+     "range": "5d",
+     "validRanges": [
+      "1d",
+      "5d",
+      "1mo",
+      "3mo",
+      "6mo",
+      "1y",
+      "2y",
+      "5y",
+      "10y",
+      "ytd",
+      "max"
+     ]
+    },
+    "timestamp": [
+     1791504000,
+     1791849600,
+     1791936000,
+     1792022400,
+     1792108800
+    ],
+    "indicators": {
+     "quote": [
+      {
+       "high": [
+        2936.5,
+        2984.0,
+        3022.0,
+        3046.0,
+        3096.0
+       ],
+       "low": [
+        2891.0,
+        2916.5,
+        2972.5,
+        2975.0,
+        3047.0
+       ],
+       "volume": [
+        17845800,
+        25048800,
+        19149000,
+        32262800,
+        25007500
+       ],
+       "open": [
+        2936.0,
+        2930.0,
+        2988.0,
+        2987.0,
+        3051.0
+       ],
+       "close": [
+        2910.5,
+        2984.0,
+        3011.0,
+        3029.0,
+        3094.0
+       ]
+      }
+     ],
+     "adjclose": [
+      {
+       "adjclose": [
+        2910.5,
+        2984.0,
+        3011.0,
+        3029.0,
+        3094.0
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "error": null
+ },
+ "timeseries": {
+  "result": [
+   {
+    "meta": {
+     "symbol": [
+      "7203.T"
+     ],
+     "type": [
+      "annualOrdinarySharesNumber"
+     ]
+    },
+    "timestamp": [
+     1743379200,
+     1774915200
+    ],
+    "annualOrdinarySharesNumber": [
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-03-31",
+      "periodType": "12M",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 13048929774.0,
+       "fmt": "13.05B"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2026-03-31",
+      "periodType": "12M",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 13033384474.0,
+       "fmt": "13.03B"
+      }
+     }
+    ]
+   },
+   {
+    "meta": {
+     "symbol": [
+      "7203.T"
+     ],
+     "type": [
+      "quarterlyOrdinarySharesNumber"
+     ]
+    },
+    "timestamp": [
+     1751241600,
+     1759190400,
+     1767139200,
+     1774915200,
+     1782777600
+    ],
+    "quarterlyOrdinarySharesNumber": [
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-06-30",
+      "periodType": "3M",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 13033391244.0,
+       "fmt": "13.03B"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-09-30",
+      "periodType": "3M",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 13033389219.0,
+       "fmt": "13.03B"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2025-12-31",
+      "periodType": "3M",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 13033386727.0,
+       "fmt": "13.03B"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2026-03-31",
+      "periodType": "3M",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 13033384474.0,
+       "fmt": "13.03B"
+      }
+     },
+     {
+      "dataId": 23393,
+      "asOfDate": "2026-06-30",
+      "periodType": "3M",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 11841833660.0,
+       "fmt": "11.84B"
+      }
+     }
+    ]
+   },
+   {
+    "meta": {
+     "symbol": [
+      "7203.T"
+     ],
+     "type": [
+      "trailingDilutedEPS"
+     ]
+    },
+    "timestamp": [
+     1735603200,
+     1751241600,
+     1767139200,
+     1774915200,
+     1782777600
+    ],
+    "trailingDilutedEPS": [
+     {
+      "dataId": 29009,
+      "asOfDate": "2024-12-31",
+      "periodType": "TTM",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 382.02,
+       "fmt": "382.02"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-06-30",
+      "periodType": "TTM",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 325.13,
+       "fmt": "325.13"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2025-12-31",
+      "periodType": "TTM",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 284.16,
+       "fmt": "284.16"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2026-03-31",
+      "periodType": "TTM",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 295.25,
+       "fmt": "295.25"
+      }
+     },
+     {
+      "dataId": 29009,
+      "asOfDate": "2026-06-30",
+      "periodType": "TTM",
+      "currencyCode": "JPY",
+      "reportedValue": {
+       "raw": 351.38,
+       "fmt": "351.38"
+      }
+     }
+    ]
+   }
+  ],
+  "error": null
+ },
+ "quoteSummaryRef": {
+  "price": 3094,
+  "currency": "JPY",
+  "marketCap": 36441333694464,
+  "pe": 8.805282,
+  "eps": 351.38,
+  "name": "Toyota Motor Corporation",
+  "bars": 2704,
+  "fa": true
+ }
+}

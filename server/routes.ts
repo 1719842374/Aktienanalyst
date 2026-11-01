@@ -362,7 +362,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const revenueGrowthSeries = revenueChrono.slice(1).map((x, i) => revenueChrono[i] !== 0 ? ((x - revenueChrono[i]) / Math.abs(revenueChrono[i])) * 100 : null).filter((x): x is number => x != null);
       const opMarginsChrono = incomeRows.slice().reverse().map((r: any) => { const rv=revenue(r), op=number(r?.operatingIncome); return rv && op != null ? op/rv*100 : null; }).filter((x: any) => x != null) as number[];
       const realizedGrowth = b.revenueGrowth != null ? Number(b.revenueGrowth) : (revNow && revenue(incomeRows[1]) ? (revNow/revenue(incomeRows[1])!-1)*100 : null);
-      const gStar = number(b.impliedGStar);
+      // #252-Rest: Number(null) = 0 → ein fehlendes g* (Yahoo/FMP ohne Reverse-DCF) darf nicht als g* = 0 % in growthGap/computeThesisStrength laufen.
+      const gStar = b.impliedGStar == null || b.impliedGStar === "" ? null : number(b.impliedGStar);
       const missingFeatures: string[] = [];
       const vectorFields: Array<[string, number | null]> = [["revenueCagr3to5y",revenueCagr3to5y],["earningsVolatility",earningsVolatility],["fcfMarginTrend",fcfMarginTrend],["leverageTrend",leverageTrend],["marginInflectionStrength",marginInflectionStrength],["growthGap",gStar != null && realizedGrowth != null ? gStar-realizedGrowth : null]];
       vectorFields.forEach(([name,value])=>{if(value==null)missingFeatures.push(name);});
@@ -504,4 +505,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // wie der 13F-Screener oben — dieser Route-Orchestrator bleibt append-only.
   const { registerBacktestRoutes } = await import("./backtest-routes");
   registerBacktestRoutes(app);
+
+  // 16. POST /api/catalyst-event — S17 „Event hinzufügen“ (§4b Stufe 1), isoliertes Modul.
+  const { registerCatalystEventRoute } = await import("./catalyst-event-route");
+  registerCatalystEventRoute(app);
+
+  // 17. GET /api/macro/inventory-demand-gap — F9-04, nur Anzeige, kein Score.
+  (await import("./inventory-demand-gap-route")).registerInventoryDemandGapRoute(app);
+  const { registerDollarReserveShareRoute } = await import("./dollar-reserve-share-route"); registerDollarReserveShareRoute(app);
 }

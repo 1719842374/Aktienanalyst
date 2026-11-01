@@ -1,12 +1,17 @@
 import { Fragment, useState, useRef, useCallback, useMemo } from "react";
+import { ChatWidget } from "@/components/chat/ChatWidget";
+import { visibleTopOf } from "@/lib/activeSection";
+import { buildBtcChatContext, enrichChatContext } from "@shared/chat-context";
+import { useChatSectionData, usePublishChatSection } from "@/lib/chatSectionData";
 import { useMutation } from "@tanstack/react-query";
 import { analyzeBTC } from "@/lib/btcAnalysis";
 import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { Section13Miner, useMinerData } from "@/components/sections/Section13Miner";
 import { StablecoinLiquidityPanel } from "@/components/btc/StablecoinLiquidityPanel";
+import { AssetConflictSummary } from "@/components/sections/AssetConflictSummary";
+import { btcConflictMatrix } from "@shared/asset-conflict-matrix";
 import {
   calcCapitulationZones, buildCapitulationSegments, isCapitulationResolved,
   calcBreakevenPrice, DEFAULT_FLEET, blockRewardForDate,
@@ -19,6 +24,9 @@ import { useLocation } from "wouter";
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
 import { TaPlotScroll, TaVolumeBand } from "@/components/sections/TaPlotFrame";
+import { TaStatusPill } from "@/components/sections/TaStatusPill";
+import { REAL10Y_OVERLAY, formatReal10yTick, real10yDomain as real10yDomainOf } from "@/lib/real10yOverlay";
+import type { BtcLiquidityBlock } from "@shared/btc-liquidity";
 import {
   Sun, Moon, Bitcoin, TrendingUp, TrendingDown, Activity, Calculator,
   LineChart as LineChartIcon, Target, Scale, BarChart3, Dice6,
@@ -66,6 +74,8 @@ interface TechChartPoint {
   ma1400: number | null;
   real10y?: number | null; m2Yoy?: number | null;
   m2Absolute?: number | null; m2AbsoluteLagged?: number | null;
+  /** Fed-Bilanz WALCL in Bio. USD (Liquiditäts-Endpoint) */
+  walcl?: number | null;
   rsi14?: number | null;
 }
 
@@ -78,9 +88,11 @@ interface BTCAnalysis {
   monthsSinceHalving: number;
   nextHalvingEstimate: string;
   cyclePhase: string;
-  indicators: { name: string; value: string; score: number; weight: number; weighted: number; source: string; }[];
+  indicators: { name: string; value: string; score: number; weight: number; weighted: number; source: string; available?: boolean; }[];
   gis: number;
   gisCalculation: string;
+  /** Liquiditätsblock (WALCL/Bills/DGS10); fehlt bei Fallback-Daten. */
+  liquidity?: BtcLiquidityBlock | null;
   powerLaw: {
     daysSinceGenesis: number; fairValue: number; support: number; resistance: number;
     deviationPercent: number; fairValue6M: number; powerSignal: number;
@@ -273,8 +285,12 @@ function Section3Indicators({ data }: { data: BTCAnalysis }) {
               <tr key={i} className="border-b border-border/50">
                 <td className="py-2 px-2 font-medium">{ind.name}</td>
                 <td className="py-2 px-2 font-mono tabular-nums text-muted-foreground">{ind.value}</td>
-                <td className="py-2 px-2 text-center"><ScoreBadge score={ind.score} /></td>
-                <td className="py-2 px-2 text-center font-mono tabular-nums">{(ind.weight * 100).toFixed(0)}%</td>
+                <td className="py-2 px-2 text-center">
+                  {ind.available === false
+                    ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold font-mono border border-border text-muted-foreground">n/a</span>
+                    : <ScoreBadge score={ind.score} />}
+                </td>
+                <td className="py-2 px-2 text-center font-mono tabular-nums">{+(ind.weight * 100).toFixed(2)}%</td>
                 <td className="py-2 px-2 text-center font-mono tabular-nums font-bold">{ind.weighted.toFixed(3)}</td>
                 <td className="py-2 px-2 text-muted-foreground">{ind.source}</td>
               </tr>
@@ -295,7 +311,55 @@ function Section3Indicators({ data }: { data: BTCAnalysis }) {
         title="GIS Rechenweg"
         steps={data.gisCalculation.split(" + ").map(s => s.trim())}
       />
+      {data.liquidity && <LiquidityBlockTable block={data.liquidity} />}
     </SectionCard>
+  );
+}
+
+/** Einzelwerte des Liquiditätsblocks: Wert, Score, Anteil, Stand je Komponente; n/a sichtbar statt 0. */
+function LiquidityBlockTable({ block }: { block: BtcLiquidityBlock }) {
+  return (
+    <div className="mt-4 overflow-x-auto" data-testid="btc-liquidity-block">
+      <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-1.5">
+        Liquiditätsblock{" "}
+        {block.available && block.score != null
+          ? `– Score ${block.score >= 0 ? "+" : ""}${block.score.toFixed(2)} × ${(block.weight * 100).toFixed(0)}% im GIS`
+          : "– n/a, nicht im GIS"}
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Komponente</th>
+            <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Wert</th>
+            <th className="text-center py-1.5 px-2 font-medium text-muted-foreground">Score</th>
+            <th className="text-center py-1.5 px-2 font-medium text-muted-foreground">Anteil im Block</th>
+            <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Stand</th>
+          </tr>
+        </thead>
+        <tbody>
+          {block.components.map(c => (
+            <tr key={c.key} className="border-b border-border/50" title={c.note}>
+              <td className="py-1.5 px-2 font-medium">{c.label}</td>
+              <td className="py-1.5 px-2 font-mono tabular-nums text-muted-foreground">{c.available ? c.value : `n/a – ${c.note}`}</td>
+              <td className="py-1.5 px-2 text-center">
+                {c.available && c.score != null
+                  ? <ScoreBadge score={c.score} />
+                  : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold font-mono border border-border text-muted-foreground">n/a</span>}
+              </td>
+              <td className="py-1.5 px-2 text-center font-mono tabular-nums">
+                {c.available ? `${+(c.effectiveSubWeight * 100).toFixed(1)}%` : "–"}
+                <span className="text-muted-foreground"> ({(c.subWeight * 100).toFixed(0)}%)</span>
+              </td>
+              <td className="py-1.5 px-2 font-mono tabular-nums text-muted-foreground">{c.asOf ?? "–"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {block.note && <div className="mt-1 text-[10px] text-amber-500">{block.note}</div>}
+      <div className="mt-1 text-[10px] text-muted-foreground">
+        Quelle FRED (frei): WALCL, BOGZ1FL313161110Q/BOGZ1FL313161275Q (Z.1, quartalsweise, ~5 Monate Verzug), DGS10. Fehlende Komponenten werden nicht als 0 gezählt, sondern ausgeblendet; die Anteile im Block werden auf die verfügbaren umgelegt.
+      </div>
+    </div>
   );
 }
 
@@ -921,27 +985,8 @@ type MAKey = typeof MA_LINES[number]["key"];
 type BTCOverlayKey = typeof BTC_OVERLAYS[number]["key"];
 type TimeRange = "3M" | "6M" | "1Y" | "2Y" | "3Y" | "5Y";
 
-// StatusPill component matching TechnicalChart reference
-function StatusPill({ label, value, detail }: { label: string; value: boolean; detail: string }) {
-  return (
-    <div className={`rounded-lg p-2 border text-center ${
-      value ? "bg-green-500/10 border-green-500/30" : "bg-red-500/10 border-red-500/30"
-    }`}>
-      <div className="flex items-center justify-center gap-1 mb-0.5">
-        {value ? (
-          <CheckCircle2 className="w-3 h-3 text-green-500" />
-        ) : (
-          <XCircle className="w-3 h-3 text-red-500" />
-        )}
-        <span className={`text-[10px] font-semibold ${value ? "text-green-500" : "text-red-500"}`}>
-          {value ? "JA" : "NEIN"}
-        </span>
-      </div>
-      <div className="text-[9px] font-medium">{label}</div>
-      {detail && <div className="text-[8px] text-muted-foreground mt-0.5 font-mono tabular-nums">{detail}</div>}
-    </div>
-  );
-}
+// StatusPill: ausgelagert nach TaStatusPill (Markup unveraendert), Gold nutzt dieselbe Karte.
+const StatusPill = TaStatusPill;
 
 /**
  * timeRange/onTimeRangeChange sind OPTIONAL (additiv): werden sie vom Parent
@@ -972,6 +1017,8 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   // manuell aktiviert; beide Toggles bleiben bewusst voneinander unabhaengig.
   const [showM2Absolute, setShowM2Absolute] = useState(false);
   const [showM2AbsoluteLagged, setShowM2AbsoluteLagged] = useState(false);
+  // Fed-Bilanz (WALCL) aus dem Liquiditätsblock — wie die absoluten M2-Linien nur manuell an.
+  const [showWalcl, setShowWalcl] = useState(false);
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>("1Y");
   const timeRange = timeRangeProp ?? internalTimeRange;
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange;
@@ -1059,17 +1106,11 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
   const hasM2Yoy = useMemo(() => chartData.some(d => d.m2Yoy != null), [chartData]);
   const hasM2Absolute = useMemo(() => chartData.some(d => d.m2Absolute != null), [chartData]);
   const hasM2AbsoluteLagged = useMemo(() => chartData.some(d => d.m2AbsoluteLagged != null), [chartData]);
+  const hasWalcl = useMemo(() => chartData.some(d => d.walcl != null), [chartData]);
 
   // Exakt analog zur Gold-Domain: eigene Skala verhindert, dass die kleine
   // Prozentreihe die unveraenderte BTC-Preisachse oder MAs verzieht.
-  const real10yDomain = useMemo(() => {
-    const vals = chartData.map(d => d.real10y).filter((v): v is number => v != null);
-    if (vals.length === 0) return [0, 5] as [number, number];
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    const padding = Math.max((max - min) * 0.15, 0.2);
-    return [+(min - padding).toFixed(1), +(max + padding).toFixed(1)] as [number, number];
-  }, [chartData]);
+  const real10yDomain = useMemo(() => real10yDomainOf(chartData.map(d => d.real10y)), [chartData]);
 
   const m2YoyDomain = useMemo(() => {
     const vals = chartData.map(d => d.m2Yoy).filter((v): v is number => v != null);
@@ -1086,6 +1127,15 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
     const min = Math.min(...vals);
     const max = Math.max(...vals);
     const padding = Math.max((max - min) * 0.15, 0.2);
+    return [+(min - padding).toFixed(1), +(max + padding).toFixed(1)] as [number, number];
+  }, [chartData]);
+
+  const walclDomain = useMemo(() => {
+    const vals = chartData.map(d => d.walcl).filter((v): v is number => v != null);
+    if (vals.length === 0) return [0, 10] as [number, number];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const padding = Math.max((max - min) * 0.15, 0.1);
     return [+(min - padding).toFixed(1), +(max + padding).toFixed(1)] as [number, number];
   }, [chartData]);
 
@@ -1294,28 +1344,31 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
 
   // Mobile: höchstens eine volle rechte Achse. Weitere Makro-Serien behalten
   // ihre Skala (Achse versteckt) und sind über Farbe + Tooltip lesbar.
-  type MacroAxisId = "real10y" | "m2yoy" | "m2absolute";
+  type MacroAxisId = "real10y" | "m2yoy" | "m2absolute" | "walcl";
   const primaryMacroAxis: MacroAxisId | null = !narrow ? null
     : showReal10y && hasReal10y ? "real10y"
     : showM2Yoy && hasM2Yoy ? "m2yoy"
     : ((showM2Absolute && hasM2Absolute) || (showM2AbsoluteLagged && hasM2AbsoluteLagged)) ? "m2absolute"
+    : showWalcl && hasWalcl ? "walcl"
     : null;
-  const macroAxisFullWidth = (id: MacroAxisId) => (id === "m2absolute" ? 54 : 44);
+  const macroAxisFullWidth = (id: MacroAxisId) => (id === "m2absolute" || id === "walcl" ? 54 : 44);
   const macroAxisHidden = (id: MacroAxisId) => narrow && primaryMacroAxis !== id;
   const visibleRightWidth = primaryMacroAxis ? macroAxisFullWidth(primaryMacroAxis) : 0;
   const desktopRightAxes =
     (!narrow && showReal10y && hasReal10y ? 44 : 0) +
     (!narrow && showM2Yoy && hasM2Yoy ? 44 : 0) +
-    (!narrow && ((showM2Absolute && hasM2Absolute) || (showM2AbsoluteLagged && hasM2AbsoluteLagged)) ? 54 : 0);
+    (!narrow && ((showM2Absolute && hasM2Absolute) || (showM2AbsoluteLagged && hasM2AbsoluteLagged)) ? 54 : 0) +
+    (!narrow && showWalcl && hasWalcl ? 54 : 0);
   const plotMinWidth = narrow
     ? taChartMinWidth(55, visibleRightWidth, 8)
     : taChartMinWidth(55, desktopRightAxes, 106);
   const hiddenMacroSeries: { key: string; label: string; color: string }[] = [];
   if (narrow) {
-    if (showReal10y && hasReal10y && primaryMacroAxis !== "real10y") hiddenMacroSeries.push({ key: "real10y", label: "Real10Y", color: "#38bdf8" });
+    if (showReal10y && hasReal10y && primaryMacroAxis !== "real10y") hiddenMacroSeries.push({ key: "real10y", label: REAL10Y_OVERLAY.label, color: REAL10Y_OVERLAY.color });
     if (showM2Yoy && hasM2Yoy && primaryMacroAxis !== "m2yoy") hiddenMacroSeries.push({ key: "m2yoy", label: "M2 YoY", color: "#a78bfa" });
     if (showM2Absolute && hasM2Absolute && primaryMacroAxis !== "m2absolute") hiddenMacroSeries.push({ key: "m2abs", label: "M2 Absolut", color: "#e2e8f0" });
     if (showM2AbsoluteLagged && hasM2AbsoluteLagged && primaryMacroAxis !== "m2absolute") hiddenMacroSeries.push({ key: "m2lag", label: "M2 Lag (10W)", color: "#fbbf24" });
+    if (showWalcl && hasWalcl && primaryMacroAxis !== "walcl") hiddenMacroSeries.push({ key: "walcl", label: "Fed-Bilanz", color: "#34d399" });
   }
   const priceMargin = narrow
     ? { top: 5, right: 8, left: 0, bottom: 5 }
@@ -1535,7 +1588,7 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
         ))}
         </div>
 
-        {(hasReal10y || hasM2Yoy || hasM2Absolute || hasM2AbsoluteLagged) && (
+        {(hasReal10y || hasM2Yoy || hasM2Absolute || hasM2AbsoluteLagged || hasWalcl) && (
           <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:contents">
             <span className="mx-1 hidden self-center text-muted-foreground/30 sm:inline">|</span>
             <span className="self-center text-[11px] text-muted-foreground sm:mr-1 sm:text-[9px]">Makro:</span>
@@ -1543,13 +1596,13 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               <button
                 onClick={() => setShowReal10y(v => !v)}
                 className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
-                  showReal10y ? "border-sky-400 text-sky-400" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
+                  showReal10y ? REAL10Y_OVERLAY.chipOnClass : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
                 }`}
-                title="Realzins (DFII10) als rechte Achse ein-/ausblenden"
+                title={REAL10Y_OVERLAY.chipTitle}
                 data-testid="toggle-btc-real10y"
               >
                 {showReal10y ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
-                Real10Y
+                {REAL10Y_OVERLAY.label}
               </button>
             )}
             {hasM2Yoy && (
@@ -1589,6 +1642,19 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
               >
                 {showM2AbsoluteLagged ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
                 M2 Lag (10W)
+              </button>
+            )}
+            {hasWalcl && (
+              <button
+                onClick={() => setShowWalcl(v => !v)}
+                className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] font-mono transition-colors sm:min-h-0 sm:py-0.5 sm:text-[10px] ${
+                  showWalcl ? "border-emerald-400 text-emerald-400" : "border-border opacity-40 hover:opacity-60 text-muted-foreground"
+                }`}
+                title="Fed-Bilanzsumme (FRED WALCL, Bio. USD, wöchentlich) ein-/ausblenden"
+                data-testid="toggle-btc-walcl"
+              >
+                {showWalcl ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+                Fed-Bilanz (WALCL)
               </button>
             )}
           </div>
@@ -1689,10 +1755,10 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 orientation="right"
                 domain={real10yDomain}
                 hide={macroAxisHidden("real10y")}
-                tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-                tick={macroAxisHidden("real10y") ? false : { fontSize: narrow ? 10 : 9, fill: "#38bdf8" }}
+                tickFormatter={formatReal10yTick}
+                tick={macroAxisHidden("real10y") ? false : { fontSize: narrow ? 10 : 9, fill: REAL10Y_OVERLAY.color }}
                 width={macroAxisHidden("real10y") ? 0 : macroAxisFullWidth("real10y")}
-                axisLine={macroAxisHidden("real10y") ? false : { stroke: "#38bdf8" }}
+                axisLine={macroAxisHidden("real10y") ? false : { stroke: REAL10Y_OVERLAY.color }}
                 {...(narrow ? { tickCount: 4 } : {})}
               />
             )}
@@ -1724,6 +1790,20 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 {...(narrow ? { tickCount: 4 } : {})}
               />
             )}
+            {showWalcl && hasWalcl && (
+              <YAxis
+                yAxisId="walcl"
+                orientation="right"
+                domain={walclDomain}
+                hide={macroAxisHidden("walcl")}
+                tickFormatter={(v: number) => `$${v.toFixed(1)}T`}
+                tick={macroAxisHidden("walcl") ? false : { fontSize: narrow ? 10 : 9, fill: "#34d399" }}
+                width={macroAxisHidden("walcl") ? 0 : macroAxisFullWidth("walcl")}
+                axisLine={false}
+                tickLine={false}
+                {...(narrow ? { tickCount: 4 } : {})}
+              />
+            )}
             <Tooltip
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
@@ -1739,6 +1819,8 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                             ? `${Number(p.value).toFixed(2)}%`
                             : p.dataKey === "m2Absolute" || p.dataKey === "m2AbsoluteLagged"
                               ? `$${Number(p.value).toFixed(1)} T`
+                              : p.dataKey === "walcl"
+                              ? `$${Number(p.value).toFixed(2)} T`
                               : `$${Number(p.value).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
                         </span>
                       </div>
@@ -1844,9 +1926,9 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 yAxisId="real10y"
                 type="monotone"
                 dataKey="real10y"
-                name="Real10Y (DFII10)"
-                stroke="#38bdf8"
-                strokeWidth={1.25}
+                name={REAL10Y_OVERLAY.lineName}
+                stroke={REAL10Y_OVERLAY.color}
+                strokeWidth={REAL10Y_OVERLAY.strokeWidth}
                 dot={false}
                 connectNulls
                 isAnimationActive={false}
@@ -1887,6 +1969,20 @@ function Section10TechnicalChart({ data, timeRange: timeRangeProp, onTimeRangeCh
                 stroke="#fbbf24"
                 strokeWidth={1.25}
                 strokeDasharray="6 3"
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            )}
+
+            {showWalcl && hasWalcl && (
+              <Line
+                yAxisId="walcl"
+                type="stepAfter"
+                dataKey="walcl"
+                name="Fed-Bilanz (WALCL)"
+                stroke="#34d399"
+                strokeWidth={1.25}
                 dot={false}
                 connectNulls
                 isAnimationActive={false}
@@ -2409,7 +2505,7 @@ function Section11FearGreed({ data }: { data: BTCAnalysis }) {
 }
 
 // === Section 12: Umfassendes Gesamt-Fazit ===
-function Section12Fazit({ data }: { data: BTCAnalysis }) {
+export function Section12Fazit({ data }: { data: BTCAnalysis }) {
   const bc = data.bullConditions;
   const bullCount = [bc.priceAboveMA200, bc.ma50AboveMA200, bc.macdAboveZero, bc.macdRising].filter(Boolean).length;
   const msh = data.monthsSinceHalving;
@@ -2556,9 +2652,22 @@ function Section12Fazit({ data }: { data: BTCAnalysis }) {
   const overallScore = bullCount <= 1 ? "Bearish" : bullCount === 2 ? "Neutral-Bearish" : bullCount === 3 ? "Neutral-Bullish" : "Bullish";
   const overallColor = bullCount <= 1 ? "text-red-500" : bullCount === 2 ? "text-amber-500" : bullCount === 3 ? "text-emerald-400" : "text-emerald-500";
 
+  // Chat-Kontext: genau die angezeigten Fazit-Werte (keine neue Berechnung).
+  usePublishChatSection("btc", "14", {
+    gesamtbewertung: overallScore,
+    technischeBedingungen: `${bullCount}/4`,
+    kopfzeile: `${bullCount}/4 technische Bedingungen | F&G: ${fgi} (${data.fearGreedLabel}) | Zyklus: Monat ${msh} | Power-Law: ${plDev > 0 ? "+" : ""}${plDev.toFixed(0)}%`,
+    ...Object.fromEntries(blocks.map(b => [b.title, b.lines.join(" ")])),
+    regime: isBearMarket ? "Bärenmarkt" : isCorrection ? "Korrektur" : isStrongBull ? "starker Bullenmarkt" : "gemischte Signale",
+    _auffaelligkeiten: deathCrossImminent ? `Drohendes Death Cross (MA50-MA200-Abstand ${maGapPct.toFixed(1)}%)` : null,
+  });
+
   return (
     <SectionCard number={14} title="Umfassendes Gesamt-Fazit">
       <div className="space-y-4">
+        {/* Konfliktmatrix (Future_Work §8) — Anzeige, ändert die Gesamtbewertung nicht */}
+        <AssetConflictSummary matrix={btcConflictMatrix(data, { fallback: data.timestamp === BTC_FALLBACK_DATA.timestamp })} />
+
         {/* Overall verdict banner */}
         <div className={`rounded-lg p-4 border ${
           bullCount <= 1 ? "bg-red-500/10 border-red-500/30" :
@@ -2668,6 +2777,21 @@ export default function BTCDashboard() {
     sectionRefs.current[id] = el;
   }, []);
 
+  // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen BTC-Daten.
+  // PR 3: Krypto-Liquidität (3) und Miner-Zone (13) aus der Anzeige + Auffälligkeiten je Sektion.
+  const chatLive = useChatSectionData("btc");
+  const chatContext = useMemo(() => (data ? enrichChatContext(buildBtcChatContext(data), chatLive) : null), [data, chatLive]);
+  const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
+  const getActiveSectionId = useCallback((): number | null => {
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
+    for (const { id } of chatSections) {
+      const el = sectionRefs.current[id];
+      if (!el) continue;
+      if (el.getBoundingClientRect().bottom > top + 40) return id;
+    }
+    return null;
+  }, [chatSections]);
+
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       {/* Header */}
@@ -2743,7 +2867,6 @@ export default function BTCDashboard() {
             ))}
           </nav>
           <div className="px-3 py-3 border-t border-border mt-2">
-            <PerplexityAttribution />
           </div>
         </aside>
 
@@ -2756,7 +2879,7 @@ export default function BTCDashboard() {
         )}
 
         {/* Main content */}
-        <main ref={mainRef} className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar">
+        <main ref={mainRef} className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0">
           {!data && !analyzeMutation.isPending ? (
             <BTCWelcomeScreen onAnalyze={() => analyzeMutation.mutate(undefined)} />
           ) : analyzeMutation.isPending ? (
@@ -2784,6 +2907,14 @@ export default function BTCDashboard() {
           ) : null}
         </main>
       </div>
+      <ChatWidget
+        dashboard="btc"
+        context={chatContext}
+        sections={chatSections}
+        getActiveSectionId={getActiveSectionId}
+        onJumpToSection={scrollToSection}
+        suggestions={["Fasse die BTC-Analyse in 5 Punkten zusammen", "Wie ist der Kurs zum Power-Law einzuordnen?", "Was sagt die Monte-Carlo-Spanne?"]}
+      />
     </div>
   );
 }
@@ -2800,7 +2931,7 @@ function BTCWelcomeScreen({ onAnalyze }: { onAnalyze: () => void }) {
           <h1 className="text-xl font-semibold">BTC-Analyse</h1>
           <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
             Umfassende Bitcoin-Bewertung mit Power-Law-Modell, Monte Carlo Simulation,
-            Halving-Zyklus-Analyse und 7-Indikatoren-Scoring.
+            Halving-Zyklus-Analyse und 7-Indikatoren-Scoring plus Liquiditätsblock.
           </p>
         </div>
         <div className="flex flex-col items-center gap-3">

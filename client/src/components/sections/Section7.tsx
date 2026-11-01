@@ -4,27 +4,47 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, hasPositiveSegmentRevenue, kiFillMetaLine, type TamNaFill, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
 import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
 import { formatNumber } from "../../lib/formatters";
+import { isYahooOnly } from "../../../../shared/data-source";
 import { apiRequest } from "../../lib/queryClient";
 import { TrendingUp, TrendingDown, Globe, BarChart3, Sparkles, Loader2 } from "lucide-react";
-import PeerComparison from "./PeerComparison";
+import PeerComparison, { PeerOverrideResetNotice } from "./PeerComparison";
 import EpsGrowthChart from "./EpsGrowthChart";
 
-interface Props { data: StockAnalysis; onPeerOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void }
+interface Props {
+  data: StockAnalysis;
+  onPeerOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void;
+  /** True while the in-flight analyze carries peer overrides. */
+  peerBusy?: boolean;
+  /** #258: Ticker, dessen Peer-Overrides nach einem 400 verworfen wurden (Hinweis), sonst null. */
+  peerResetNotice?: string | null;
+  onDismissPeerResetNotice?: () => void;
+}
 
-export function Section7({ data, onPeerOverridesChange }: Props) {
+export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerResetNotice = null, onDismissPeerResetNotice }: Props) {
   // Use TTM sector avg for TTM stock P/E, and forward sector avg for forward stock P/E
   // Fallback: if backend didn't ship sectorAvgForwardPE (older cached payloads), fall back to TTM to avoid NaN
   const sectorFwdPE = data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE;
-  const trailingPEPremium = data.sectorAvgPE > 0 ? ((data.peRatio / data.sectorAvgPE) - 1) * 100 : 0;
-  const fwdPEPremium = sectorFwdPE > 0 ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
+  // Tester #252-Prod (VOW3.DE „Discount −100 % · Fwd P/E 0.0“): KGV ≤ 0 oder fehlend (Yahoo null, Verlust) ergibt
+  // keinen Discount/keine Prämie. Bisher wurde 0/18 − 1 = −100 % als „Deep Value“ gezeigt → jetzt n/a.
+  const peValid = typeof data.peRatio === "number" && Number.isFinite(data.peRatio) && data.peRatio > 0;
+  const fwdPEValid = typeof data.forwardPE === "number" && Number.isFinite(data.forwardPE) && data.forwardPE > 0 && sectorFwdPE > 0;
+  const trailingPEPremium = peValid && data.sectorAvgPE > 0 ? ((data.peRatio / data.sectorAvgPE) - 1) * 100 : 0;
+  const fwdPEPremium = fwdPEValid ? ((data.forwardPE / sectorFwdPE) - 1) * 100 : 0;
   const evEbitdaPremium = data.sectorAvgEVEBITDA > 0 ? ((data.evEbitda / data.sectorAvgEVEBITDA) - 1) * 100 : 0;
 
   // Revenue growth vs sector (use TAM CAGR as sector growth proxy)
   const companyGrowth = data.tamAnalysis?.companyGrowth ?? 0;
   const sectorGrowth = data.tamAnalysis?.tamCAGR ?? 5;
+  // S9 / Tester SAP.DE, VOW3.DE (Yahoo-only): Yahoo liefert keinen Umsatz. tamAnalysis ist dann der Sektor-Default
+  // (companyGrowth 0, companyRevenue 0, marketShare 0, TAM-Default) → Unternehmensseite und TAM n/a statt 0/Default.
+  // FMP-Analysen: false, Anzeige unverändert.
+  // Follow-up #271: Server liefert ohne Konzernumsatz companyDataMissing='no-revenue' und null statt 0/Default.
+  // companyNa deckt beides ab (Yahoo-Flag oder Server-Flag/null), damit Altdaten und neue Payloads gleich aussehen.
+  const yahooTamNa = isYahooOnly(data);
+  const companyNa = yahooTamNa || data.tamAnalysis?.companyDataMissing === 'no-revenue' || (data.tamAnalysis != null && data.tamAnalysis.companyGrowth == null);
 
   // Discount panel shows Forward P/E values → base decision on fwdPEPremium
-  const isDiscount = fwdPEPremium < 0;
+  const isDiscount = fwdPEValid && fwdPEPremium < 0;
   const moatMaxPremium = data.moatRating === "Wide" ? 30 : data.moatRating === "Narrow-Wide" ? 20 : data.moatRating === "Narrow" ? 15 : 0;
   const moatJustified = isDiscount ? 0 : Math.min(trailingPEPremium, moatMaxPremium);
   const speculative = trailingPEPremium - moatJustified;
@@ -47,6 +67,8 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
   const [peerKiError, setPeerKiError] = useState<string | null>(null);
   const peerKiRequest = useRef(0);
   const factPeerCount = data.peerSet?.peerCount ?? data.peerComparison?.peers?.length ?? 0;
+  // #258 FAIL 3: aktive Overrides (z.B. alle Peers entfernt → peerComparison null) brauchen den Weg zurück.
+  const hasActivePeerOverrides = (data.activePeerOverrides?.add?.length ?? 0) > 0 || (data.activePeerOverrides?.remove?.length ?? 0) > 0;
   const peerGap = peersNeeded(factPeerCount);
 
   const tamSegmentSig = useMemo(() => {
@@ -193,7 +215,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
             {metrics.map((m, i) => {
               const isGrowthRow = 'isGrowth' in m && m.isGrowth;
               // For valuation metrics with negative stock value (loss-making): premium meaningless
-              const stockInvalid = !isGrowthRow && m.stock <= 0;
+              const stockInvalid = isGrowthRow ? companyNa : m.stock <= 0;
               const premiumColor = isGrowthRow
                 ? (m.premium >= 0 ? 'text-emerald-500' : 'text-red-500')
                 : (m.premium > 0 ? 'text-amber-500' : 'text-emerald-500');
@@ -224,21 +246,21 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">P/E (TTM) vs. Sektor</h3>
           <div className="space-y-2">
-            <BarRow label={data.ticker} value={data.peRatio} max={Math.max(data.peRatio, data.sectorAvgPE, 1) * 1.3} color="bg-primary" />
+            <BarRow label={data.ticker} value={peValid ? data.peRatio : null} max={Math.max(peValid ? data.peRatio : 0, data.sectorAvgPE, 1) * 1.3} color="bg-primary" />
             <BarRow label="Sektor" value={data.sectorAvgPE} max={Math.max(data.peRatio, data.sectorAvgPE, 1) * 1.3} color="bg-muted-foreground/50" />
           </div>
         </div>
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Revenue Growth vs. Branche</h3>
           <div className="space-y-2">
-            <BarRow label={data.ticker} value={companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color={companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500'} suffix="%" />
+            <BarRow label={data.ticker} value={companyNa ? null : companyGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color={companyGrowth >= sectorGrowth ? 'bg-emerald-500' : 'bg-red-500'} suffix="%" />
             <BarRow label="Branche" value={sectorGrowth} max={Math.max(Math.abs(companyGrowth), sectorGrowth, 1) * 1.5} color="bg-muted-foreground/50" suffix="%" />
           </div>
         </div>
       </div>
 
       {/* TAM Analysis */}
-      {tam && (tam.tamTotal !== null && tam.tamTotal !== undefined ? tam.tamTotal > 0 : (tam.segments && tam.segments.length > 0)) && (
+      {tam && (tam.companyDataMissing === 'no-revenue' || (tam.tamTotal !== null && tam.tamTotal !== undefined ? tam.tamTotal > 0 : (tam.segments && tam.segments.length > 0))) && (
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1.5">
             <Globe className="w-3 h-3" />
@@ -247,7 +269,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
           {/* A1 Qualitaetstor: bei quality==='unreliable' (Coverage < 70% oder < 2
               unterschiedliche TAM-Labels) zeigen wir KEINE falsche Konzernzahl
               mehr (z.B. den $896B-Bug), sondern einen erklaerenden Banner. */}
-          {tam.quality === 'unreliable' || tam.tamTotal === null || tam.tamTotal === undefined ? (
+          {tam.companyDataMissing !== 'no-revenue' && (tam.quality === 'unreliable' || tam.tamTotal === null || tam.tamTotal === undefined) ? (
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5 mb-3 text-[10.5px] text-amber-600 dark:text-amber-400 leading-relaxed">
               Segment-TAM nicht belastbar genug fuer eine Gesamtkennzahl
               {typeof tam.coveragePct === 'number' ? ` (nur ${formatNumber(tam.coveragePct, 0)}% des Umsatzes zuordenbar` : ''}
@@ -258,7 +280,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wider">TAM</div>
-                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">${formatNumber(tam.tamTotal, 0)}B</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{companyNa || tam.tamTotal == null ? 'n/a' : <>${formatNumber(tam.tamTotal, 0)}B</>}</div>
                 <div className="text-[9px] text-muted-foreground mt-0.5 leading-tight">{tam.tamLabel}</div>
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
@@ -268,8 +290,8 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
               </div>
               <div className="bg-muted/20 rounded-md p-2.5 border border-border/30">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Unternehmens-Wachstum</div>
-                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                  {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${companyNa ? 'text-muted-foreground' : companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {companyNa ? 'n/a' : <>{companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%</>}
                 </div>
                 <div className="text-[9px] text-muted-foreground mt-0.5">Revenue YoY</div>
               </div>
@@ -280,8 +302,8 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                     <span title="Mindestens ein Segment-Marktanteil > 25% — Wert mit Vorsicht interpretieren" className="text-amber-500">⚠</span>
                   )}
                 </div>
-                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{tam.marketShare === null || tam.marketShare === undefined ? 'n/a' : (tam.marketShare < 0.01 ? '<0.01' : formatNumber(tam.marketShare, 2)) + '%'}</div>
-                <div className="text-[9px] text-muted-foreground mt-0.5">${formatNumber(tam.companyRevenue, 1)}B / ${formatNumber(tam.tamTotal, 0)}B</div>
+                <div className="text-sm font-bold font-mono tabular-nums mt-0.5">{companyNa || tam.marketShare === null || tam.marketShare === undefined ? 'n/a' : (tam.marketShare < 0.01 ? '<0.01' : formatNumber(tam.marketShare, 2)) + '%'}</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">{companyNa || tam.companyRevenue == null || tam.tamTotal == null ? 'n/a' : <>${formatNumber(tam.companyRevenue, 1)}B / ${formatNumber(tam.tamTotal, 0)}B</>}</div>
               </div>
             </div>
           )}
@@ -446,7 +468,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                   {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                   <span className="font-medium">
                     Gewichteter Branchen-CAGR: {formatNumber(tam.tamCAGR, 1)}% — Unternehmen {tam.outperforming ? 'outperformed' : 'underperformed'}
-                    {' '}({tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}% vs. {formatNumber(tam.tamCAGR, 1)}%)
+                    {' '}({companyNa ? 'n/a' : <>{companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%</>} vs. {formatNumber(tam.tamCAGR, 1)}%)
                   </span>
                 </div>
               ) : (
@@ -465,7 +487,7 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                     </span>
                   </span>
                   <span className="text-muted-foreground/60">
-                    (vs. Revenue Growth {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                    (vs. Revenue Growth {companyNa ? 'n/a' : <>{companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%</>}
                     {typeof tam.segmentGrowthCoveragePct === 'number' && tam.segmentGrowthCoveragePct < 99.5
                       ? `, Abdeckung ${formatNumber(tam.segmentGrowthCoveragePct, 0)}% des Umsatzes`
                       : ''})
@@ -476,8 +498,11 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
           ) : (
             /* Fallback: single growth comparison bar — nur wenn tamCAGR/outperforming
                belastbar sind (Pfad A liefert quality:'weak', aber tamCAGR ist dort
-               immer eine Zahl, nie null; Guard bleibt trotzdem defensiv). */
-            tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
+               immer eine Zahl, nie null; Guard bleibt trotzdem defensiv).
+               Yahoo-only: kein Umsatz → kein Wachstumsvergleich (n/a statt „Wächst X Pkt. langsamer“). */
+            companyNa ? (
+              <div className="text-[10px] text-muted-foreground/70 italic" data-testid="s9-growth-vs-sector-na">Wachstum Unternehmen vs. Branche: n/a ({yahooTamNa ? 'Yahoo-Daten' : 'kein Umsatz'})</div>
+            ) : tam.tamCAGR !== null && tam.tamCAGR !== undefined && tam.outperforming !== null && tam.outperforming !== undefined ? (
             <div className="space-y-1.5">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Wachstum: Unternehmen vs. Branche</div>
               <div className="flex items-center gap-2">
@@ -485,11 +510,11 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                 <div className="flex-1 h-4 bg-muted/30 rounded overflow-hidden relative">
                   <div
                     className={`h-full rounded transition-all ${tam.outperforming ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
-                    style={{ width: `${Math.min(100, Math.max(2, Math.abs(tam.companyGrowth) / Math.max(tam.tamCAGR * 2, 1) * 100))}%` }}
+                    style={{ width: `${Math.min(100, Math.max(2, Math.abs(companyGrowth) / Math.max(tam.tamCAGR * 2, 1) * 100))}%` }}
                   />
                 </div>
-                <span className={`text-[10px] font-mono tabular-nums font-semibold w-14 text-right ${tam.companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                  {tam.companyGrowth >= 0 ? '+' : ''}{formatNumber(tam.companyGrowth, 1)}%
+                <span className={`text-[10px] font-mono tabular-nums font-semibold w-14 text-right ${companyGrowth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {companyGrowth >= 0 ? '+' : ''}{formatNumber(companyGrowth, 1)}%
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -508,8 +533,8 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
                 {tam.outperforming ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                 <span className="font-medium">
                   {tam.outperforming
-                    ? `Wächst ${formatNumber(tam.companyGrowth - tam.tamCAGR, 1)} Pkt. schneller als die Branche`
-                    : `Wächst ${formatNumber(tam.tamCAGR - tam.companyGrowth, 1)} Pkt. langsamer als die Branche`
+                    ? `Wächst ${formatNumber(companyGrowth - tam.tamCAGR, 1)} Pkt. schneller als die Branche`
+                    : `Wächst ${formatNumber(tam.tamCAGR - companyGrowth, 1)} Pkt. langsamer als die Branche`
                   }
                 </span>
               </div>
@@ -529,9 +554,14 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
       {/* Premium / Discount Breakdown */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
-          {isDiscount ? 'Discount-Analyse' : 'Premium Breakdown'}
+          {!fwdPEValid ? 'Discount / Premium' : isDiscount ? 'Discount-Analyse' : 'Premium Breakdown'}
         </h3>
-        {isDiscount ? (
+        {!fwdPEValid ? (
+          <div className="bg-muted/20 rounded-md p-3 border border-border text-xs text-muted-foreground" data-testid="discount-na">
+            Discount zum Sektor: <span className="font-mono font-semibold">n/a</span> · Fwd P/E {typeof data.forwardPE === "number" && data.forwardPE < 0 ? "negativ" : "nicht verfügbar"}
+            {isYahooOnly(data) ? " (Yahoo-Daten)" : ""}
+          </div>
+        ) : isDiscount ? (
           /* DISCOUNT: Show discount assessment instead of moat/speculative split */
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-emerald-500/5 rounded-md p-3 border border-emerald-500/20">
@@ -598,8 +628,11 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
         </div>
       )}
 
+      {/* #258: Hinweis nach automatischem Verwerfen (400), unabhängig davon, ob der Peer-Block sichtbar ist. */}
+      {peerResetNotice && <PeerOverrideResetNotice ticker={peerResetNotice} onDismiss={onDismissPeerResetNotice} />}
+
       {/* Peer Comparison. Banner und KI-Ticker kommen vom Server. Kennzahlen der KI-Zeilen sind FMP. */}
-      {(data.peerSet?.banner || peerGap > 0 || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
+      {(data.peerSet?.banner || peerGap > 0 || hasActivePeerOverrides || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
         <div className="mt-4 pt-4 border-t border-border">
           <div className="flex flex-wrap items-center gap-1.5 mb-2">
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Peer-Vergleich (Wettbewerber)</h3>
@@ -663,8 +696,10 @@ export function Section7({ data, onPeerOverridesChange }: Props) {
               {data.peerSet.banner}
             </div>
           )}
-          {((data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
-            <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} />
+          {/* #258 FAIL 3: mit Override-Callback immer rendern, auch bei peerComparison null / 0 Peers,
+              damit Eingabefeld und „Standard wiederherstellen“ (Empty-State in PeerComparison) erreichbar sind. */}
+          {(!!onPeerOverridesChange || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
+            <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} peerBusy={peerBusy} />
           )}
         </div>
       )}
@@ -750,15 +785,16 @@ function KiBadge({ testId }: { testId?: string }) {
   );
 }
 
-function BarRow({ label, value, max, color, suffix = '' }: { label: string; value: number; max: number; color: string; suffix?: string }) {
-  const pct = Math.max(0, Math.min(100, (Math.abs(value) / max) * 100));
+function BarRow({ label, value, max, color, suffix = '' }: { label: string; value: number | null; max: number; color: string; suffix?: string }) {
+  // null = Wert fehlt (z. B. KGV bei Yahoo ohne quoteSummary) → leerer Balken + n/a statt 0.0
+  const pct = value == null ? 0 : Math.max(0, Math.min(100, (Math.abs(value) / max) * 100));
   return (
     <div className="flex items-center gap-3">
       <span className="text-xs text-muted-foreground w-20 flex-shrink-0">{label}</span>
       <div className="flex-1 h-5 bg-muted/30 rounded overflow-hidden">
         <div className={`h-full ${color} rounded transition-all`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs font-mono tabular-nums font-semibold w-14 text-right">{value >= 0 && suffix ? '+' : ''}{formatNumber(value, 1)}{suffix}</span>
+      <span className="text-xs font-mono tabular-nums font-semibold w-14 text-right">{value == null ? 'n/a' : <>{value >= 0 && suffix ? '+' : ''}{formatNumber(value, 1)}{suffix}</>}</span>
     </div>
   );
 }

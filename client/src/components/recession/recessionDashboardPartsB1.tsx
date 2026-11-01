@@ -40,7 +40,10 @@ export function IndicatorTable({ indicators }: { indicators: IndicatorResult[] }
               <tr key={ind.name} className="border-b border-border/50 hover:bg-muted/20">
                 <td className="py-1.5 px-2">
                   <div className="font-medium">{ind.name}</div>
-                  <div className="text-[10px] text-muted-foreground/70">{ind.source}{ind.proxy ? " · Proxy" : ""}</div>
+                  <div className="text-[10px] text-muted-foreground/70">
+                    {ind.source}{ind.proxy ? " · Proxy" : ""}
+                    {typeof ind.ageHours === "number" ? ` · vor ${ind.ageHours.toFixed(1)}h${ind.isStale ? " (veraltet)" : ""}` : ""}
+                  </div>
                 </td>
                 <td className="py-1.5 px-2 text-right font-mono tabular-nums font-semibold">{ind.value}</td>
                 <td className="py-1.5 px-2">
@@ -87,7 +90,7 @@ export function IndicatorTable({ indicators }: { indicators: IndicatorResult[] }
             <div
               key={ind.name}
               className={`px-2 py-1 rounded text-[10px] font-medium ${getScoreBg(ind.weightedScore)} ${getScoreColor(ind.weightedScore)} border border-current/10`}
-              title={`${ind.name}: ${ind.value} → ${ind.weightedScore > 0 ? "+" : ""}${ind.weightedScore}`}
+              title={`${ind.name}: ${ind.value} → ${ind.weightedScore > 0 ? "+" : ""}${ind.weightedScore}${typeof ind.ageHours === "number" ? ` · vor ${ind.ageHours.toFixed(1)}h${ind.isStale ? " (veraltet)" : ""}` : ""}`}
             >
               {ind.name.length > 16 ? ind.name.substring(0, 14) + "..." : ind.name}
               <span className="ml-1 font-bold">{ind.weightedScore > 0 ? "+" : ""}{ind.weightedScore}</span>

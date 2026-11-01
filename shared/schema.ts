@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { BiasFixPayload, CatalystSource } from "./bias-fixes";
+import type { AnalysisDataSource } from "./data-source";
 
 // === Request Schema ===
 export const analyzeRequestSchema = z.object({
@@ -60,8 +61,8 @@ export interface TAMAnalysis {
   tamTotal: number | null; // Weighted total TAM in $B — null wenn quality==='unreliable' oder coveragePct<=0
   tamLabel: string; // Primary TAM label
   tamCAGR: number | null; // Weighted average industry CAGR % — null wenn tamTotal null ist
-  companyGrowth: number; // Company revenue growth %
-  companyRevenue: number; // Company revenue in $B
+  companyGrowth: number | null; // Company revenue growth % — null wenn kein Konzernumsatz (companyDataMissing)
+  companyRevenue: number | null; // Company revenue in $B — null wenn kein Konzernumsatz
   marketShare: number | null; // Company share of weighted TAM in % — null wenn tamTotal null ist
   tamSource: string; // Source description
   outperforming: boolean | null; // Company growing faster than weighted TAM CAGR? null wenn tamCAGR null ist
@@ -78,6 +79,9 @@ export interface TAMAnalysis {
   coveragePct?: number;
   /** A1: mindestens ein Segment hat marketShare > TAM_SHARE_WARN (25%). */
   shareWarning?: boolean;
+  /** Follow-up #271: 'no-revenue' = kein Konzernumsatz (z.B. Yahoo-only). tamTotal, companyGrowth, companyRevenue,
+   *  marketShare, outperforming sind dann null (n/a), nie 0/Sektor-Default. */
+  companyDataMissing?: 'no-revenue';
 }
 
 export interface PeerCompany {
@@ -102,6 +106,15 @@ export interface PeerCompany {
   roic5Y?: number | null;
   /** Anzahl der Jahre, die tatsaechlich in roic5Y eingeflossen sind (0, 3, 4 oder 5) — fuer den UI-Tooltip. */
   roic5YYearsUsed?: number;
+  /** PR B Peer-Selection (Filter-Tabs): FMP-Profil-Branche aus den in peer-adaptive bereits geladenen
+   *  2-Hop-Profilen, kein Extra-Call. null = kein Profil (z.B. manuell hinzugefuegter Peer) → UI „n/a“.
+   *  Feld fehlt = Server ohne Profil-Map (Altdaten). Nur Ansicht/Filter, nicht score-wirksam. */
+  industry?: string | null;
+  /** wie industry, FMP-Profil-Sektor. */
+  sector?: string | null;
+  /** Peer-Variante A: Forward-KGV (Kurs / EPS-Konsens nächstes GJ, shared/peer-forward-pe.ts). null = nicht verfügbar
+   *  oder Währung nicht sicher → Ansicht fällt auf pe (trailing) zurück. Nur Ansicht/Filter, nicht score-wirksam. */
+  forwardPe?: number | null;
 }
 
 export type WarningSeverity = 'critical' | 'warning' | 'info';
@@ -450,7 +463,7 @@ export interface StockAnalysis {
   currentPrice: number;
   priceTimestamp: string;
   currency: string;
-  marketCap: number;
+  marketCap: number; // DCF-FX/Tester #252-Prod: bei dataSource "yahoo" zur Laufzeit auch null (= n/a); Typ bewusst number, Leser geprüft
   sharesOutstanding: number;
 
   // Analyst data
@@ -493,6 +506,8 @@ export interface StockAnalysis {
   fcfYield?: number | null;
   fcfYieldYoyPp?: number | null;
   fcfYieldYoyAvailable?: boolean;
+  /** Trailing Dividendenrendite in % (FMP quote/ratios, in analyze-route schon auf % normiert). 0 = keine Dividende. */
+  dividendYield?: number | null;
   fcfMarginYoyPp?: number | null;
   fcfMarginYoyAvailable?: boolean;
   revenue: number;
@@ -619,8 +634,9 @@ export interface StockAnalysis {
    *  'fmp+yahoo' / 'fmp+stooq' = FMP-Basis + Alt-Provider hat Luecken
    *  gefuellt/nach links verlaengert (z.B. weil der FMP-Plan nur 5 Jahre
    *  liefert, der UI-Timeframe aber 10Y anfordert). Optional: fehlt bei
-   *  alten Cache-Eintraegen vor diesem Ticket. */
-  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt';
+   *  alten Cache-Eintraegen vor diesem Ticket.
+   *  'yahoo' = C1 (#252): FMP 402, Historie komplett aus dem Yahoo-Fallback. */
+  historyDataSource?: 'fmp' | 'fmp+yahoo' | 'fmp+stooq' | 'fmp+alt' | 'yahoo';
 
   /** true, wenn selbst nach Alt-Provider-Fallback nicht genug Historie fuer
    *  den urspruenglich gewuenschten Zeitraum vorhanden war (ehrliche
@@ -639,6 +655,14 @@ export interface StockAnalysis {
 
   // NEW: Currency conversion info (for non-USD reporting companies)
   currencyInfo?: CurrencyInfo;
+
+  /** FMP-ADR (#265 v2): gesetzt, wenn ein Nicht-US-Listing (FMP 402) seine Fundamentaldaten von FMP über das
+   *  US-/ADR-Symbol bekommt (SAP.DE→SAP, VOW3.DE→VWAPY, Rückfall VWAGY = Proxy Stammaktie). Kurs und Chart vom
+   *  lokalen Listing. Fehlt bei allen anderen Analysen. Shape: server/fmp-adr-map.ts AdrSourceInfo. */
+  adrSource?: {
+    fmpSymbol: string; sharesPerAdr: number; proxy: boolean; impliedSharesPerAdr: number;
+    ratioDeviationPct: number; mcapDeviationPct: number; perShareUnit: "adr" | "ordinary"; note: string;
+  };
 
   // NEW: PESTEL analysis
   pestelAnalysis?: PESTELAnalysis;
@@ -670,9 +694,18 @@ export interface StockAnalysis {
   /** 0–10, gesetzt nach dem Thesis-Strength-Lauf (Variante B). */
   thesisStrengthScore?: number | null;
   /** Reverse-DCF g* in Prozent, serverseitig an der Analyse. */
-  impliedGStar?: number;
+  impliedGStar?: number | null; // null bei Yahoo-Daten (C1, #252): keine Bewertung
+  /** Server-FCF-DCF je Aktie; null = n/a (Yahoo-Daten oder nicht berechenbar, nie 0 als Ersatz). */
+  dcfFairValue?: number | null;
+  /** #326: Grund für dcfFairValue = null; nur gesetzt bei negativem FCF-TTM. */
+  dcfNaReason?: "negativer FCF";
   consistencyWarnings?: ConsistencyWarning[];
   dataTimestamp?: string; // ISO date when data was fetched
+  /** Datenquelle der Analyse. 'yahoo' = C1 (#252): FMP 402, Yahoo-Fallback ohne Statements →
+   *  DCF, Inverse-DCF, CRV, Score und Rating n/a (siehe shared/data-source.ts). Fehlt bei Altdaten. */
+  dataSource?: AnalysisDataSource;
+  /** Nur bei dataSource 'yahoo': sichtbarer Hinweis „Yahoo-Daten – keine Bewertung“. */
+  valuationNotice?: string;
   _cached?: boolean; // True if served from server cache
   _cacheAge?: number; // Cache age in minutes
   _cacheDate?: string; // ISO date when data was cached
@@ -691,6 +724,8 @@ export interface StockAnalysis {
   // (e.g. "Segmentreporting nicht in den letzten 10-K/20-F enthalten" or
   // "Unternehmen berichtet nur geografisch"). Never a generic "N/A".
   revenueSegmentsMessage?: string;
+  isEtf?: boolean;
+  isFund?: boolean;
 }
 
 // ─── NEW (WORK_PORTFOLIO.md — Virtuelles Portfolio, additive-only) ─────────────
@@ -883,3 +918,187 @@ export interface LiquidityBriefing {
 }
 
 export type { RegionalCatalogs, RegionCatalog, RegionSlot } from "./recession-regions";
+
+// ─── Credit-Overlay Stufe 1 (JOB A1): Markt-Spread Baa, FRED BAA10Y ─────────────
+// GET /api/credit-spread/market. Markt-Aggregat (alle US-Unternehmen), keine Anleihe
+// des analysierten Titels. Nur Anzeige in der Technischen Analyse — kein Score, kein Fazit-Faktor.
+
+/** Eine FRED-Beobachtung in Prozentpunkten (BAA10Y ist bereits Baa − 10Y Treasury). */
+export interface CreditPoint {
+  date: string;
+  value: number;
+}
+
+/** „Spread steigt“: aktuelle 3M-Änderung > 0 und über dem P80 der rollierenden 3M-Änderungen (20J). */
+export interface CreditStressSignal {
+  rising: boolean;
+  asOf: string;
+  last: number;
+  change3MPp: number;
+  percentileThresholdPp: number;
+  percentileRank: number;
+  sampleSize: number;
+}
+
+export interface CreditSpreadResponse {
+  seriesId: string;
+  source: string;
+  sourceUrl: string;
+  /** Aufsteigend nach Datum. Leer = n/a (FRED nicht erreichbar). */
+  points: CreditPoint[];
+  /** null = zu wenig Historie oder keine Daten → kein Hinweis. */
+  stress: CreditStressSignal | null;
+  note: string | null;
+}
+
+/** Spread je Kurstag (as-of-Join). null = kein FRED-Wert innerhalb der Lückentoleranz. */
+export interface CreditOverlayPoint {
+  date: string;
+  spreadPct: number | null;
+  spreadDate: string | null;
+}
+
+// ─── 10Y-Treasury-Overlay (A3, Offen_WORK_BUFFETT_ASIA_10Y §3): FRED DGS10 ─────────
+// GET /api/treasury-10y/market. Marktzins (10-Year Treasury Constant Maturity), nicht tickerabhängig.
+// Nur Anzeige in der Technischen Analyse (Sektion 12) — kein Score, kein Fazit-Faktor.
+
+/** Eine FRED-Beobachtung DGS10 in Prozent. */
+export interface Treasury10YPoint {
+  date: string;
+  value: number;
+}
+
+export interface Treasury10YResponse {
+  seriesId: string;
+  source: string;
+  sourceUrl: string;
+  /** Aufsteigend nach Datum. Leer = n/a (FRED nicht erreichbar). */
+  points: Treasury10YPoint[];
+  note: string | null;
+}
+
+/** Rendite je Kurstag (as-of-Join). null = kein FRED-Wert innerhalb der Lückentoleranz. */
+export interface Treasury10YOverlayPoint {
+  date: string;
+  yieldPct: number | null;
+  yieldDate: string | null;
+}
+
+// ─── Gold-AISC-Linie (Future_10 §5, Ticket B1, additiv) ─────────────────────────
+// Quartals-AISC der großen Goldproduzenten aus server/data/gold-aisc.json, über
+// GET /api/analyze-gold als `aiscLine` an den Gold-Chart (GoldPriceChart.tsx).
+// Nur Anzeige: GIS, getTechnicalScore und `aisc: null` in gold-routes.ts bleiben (B2).
+
+/** NEM = Newmont, B = Barrick (vormals GOLD), AEM = Agnico Eagle. */
+export type GoldAiscCompanyCode = "NEM" | "B" | "AEM";
+
+/** Ein belegter Quartalswert. Ohne Quelle und Datum kein Eintrag (nichts geschätzt). */
+export interface GoldAiscValue {
+  company: GoldAiscCompanyCode;
+  /** z. B. "2026-Q2" */
+  quarter: string;
+  /** AISC in USD je Unze Gold, by-product */
+  aisc: number;
+  /** Quartalsbericht bzw. Pressemitteilung (SEC-Exhibit) */
+  sourceUrl: string;
+  sourceTitle: string;
+  /** Datum der Quelle (SEC-Einreichung), YYYY-MM-DD */
+  sourceDate: string;
+  note?: string;
+}
+
+/** Eine Stufe der Linie: Mittelwert der belegten Firmenwerte eines Quartals. */
+export interface GoldAiscQuarterStep {
+  quarter: string;
+  /** Quartalsende YYYY-MM-DD */
+  periodEnd: string;
+  /** Ab hier zeichnet der Chart die Stufe (Quartalsende + lagDays, Berichtsverzug). */
+  availableFrom: string;
+  /** Ø USD/oz oder null (n/a: weniger als minCompanies belegte Werte) */
+  aisc: number | null;
+  count: number;
+  values: GoldAiscValue[];
+}
+
+export interface GoldAiscSeries {
+  unit: "USD/oz";
+  basis: "by-product";
+  /** Mittelwert der belegten Firmenwerte je Quartal */
+  method: "mean";
+  minCompanies: number;
+  lagDays: number;
+  /** Stresszone: Preis < AISC × stressLow (Stress) bzw. < AISC × stressHigh (Vorwarnung) */
+  stressLow: number;
+  stressHigh: number;
+  companies: Record<GoldAiscCompanyCode, { name: string; ticker: string; metric: string }>;
+  /** älteste zuerst */
+  quarters: GoldAiscQuarterStep[];
+  /** Firma × Quartal ohne belegten Wert im abgedeckten Zeitraum, z. B. "NEM 2024-Q1" */
+  gaps: string[];
+  retrievedAt: string;
+  source: "server/data/gold-aisc.json";
+  /** Kein Score-Effekt in B1. */
+  inScore: false;
+}
+
+// ─── BTC-Liquiditätsblock (C1/C2, Philip-Freigabe 18.10.2026) ─────────────────
+// GET /api/analyze-btc/liquidity. Drei freie FRED-Reihen: Fed-Bilanz (WALCL),
+// T-Bill-Anteil an den marktfähigen Treasuries (Z.1, BOGZ1FL313161110Q /
+// BOGZ1FL313161275Q) und 10Y-Treasury-Trend (DGS10). Regeln + Gewichte:
+// shared/btc-liquidity.ts (BTC_LIQUIDITY_CONFIG). Fehlt eine Reihe → Komponente
+// n/a, Gewichte im Block renormalisiert; fehlt der Block → GIS exakt wie vorher.
+
+export type BtcLiquidityComponentKey = "walcl" | "bills" | "dgs10";
+
+export interface BtcLiquidityComponent {
+  key: BtcLiquidityComponentKey;
+  label: string;
+  /** false = n/a (keine/zu alte Daten). score und metric sind dann null. */
+  available: boolean;
+  /** −1 … +1 (wie die übrigen GIS-Indikatoren), null = n/a */
+  score: number | null;
+  /** Kennzahl, nach der bewertet wird (Einheit in metricUnit), null = n/a */
+  metric: number | null;
+  metricUnit: "%" | "pp" | "bp";
+  /** Anzeigetext, z. B. "6,76 Bio. $ (13W +0,4 %)" oder "n/a" */
+  value: string;
+  /** Gewicht im Block laut Config */
+  subWeight: number;
+  /** nach Renormalisierung über die verfügbaren Komponenten (0 bei n/a) */
+  effectiveSubWeight: number;
+  /** Datum der letzten verwendeten Beobachtung */
+  asOf: string | null;
+  seriesIds: string[];
+  source: string;
+  /** Regel in Kurzform bzw. Grund für n/a */
+  note: string;
+}
+
+export interface BtcLiquidityBlock {
+  /** false = Block n/a → GIS ohne Liquiditätsblock (Gewichte unverändert) */
+  available: boolean;
+  /** gewichteter Mittelwert der verfügbaren Komponenten, −1 … +1; null = n/a */
+  score: number | null;
+  /** Gewicht des Blocks im GIS laut Config (wirkt nur, wenn available) */
+  weight: number;
+  /** Summe der Config-Gewichte der verfügbaren Komponenten (0 … 1) */
+  coverage: number;
+  components: BtcLiquidityComponent[];
+  /** Stichtag der Berechnung (YYYY-MM-DD) */
+  asOf: string;
+  note: string | null;
+}
+
+/** Wochenwert der Fed-Bilanz für das Chart-Overlay (Bio. USD). */
+export interface WalclPoint {
+  date: string;
+  valueTn: number;
+}
+
+export interface BtcLiquidityResponse {
+  block: BtcLiquidityBlock;
+  /** WALCL wöchentlich, aufsteigend. Leer = n/a. */
+  walcl: WalclPoint[];
+  fetchedAt: string;
+  sources: { walcl: string; bills: string; otherMarketable: string; dgs10: string };
+}

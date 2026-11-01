@@ -1,3 +1,4 @@
+
 // === Numeric Safety Guard ===
 // Fix 6: all formatters guard against NaN, Infinity, null, undefined
 // so price=0 or division-by-zero never shows "Infinity%" in the UI
@@ -7,23 +8,37 @@ function safeNum(v: number, fallback = 0): number {
 }
 
 // === Currency Formatters ===
-export function formatCurrency(value: number, decimals: number = 2): string {
-  const v = safeNum(value);
-  return `$${v.toLocaleString("en-US", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  })}`;
+// currencySymbol / statementCurrency / formatCurrency liegen unverändert in shared/currency-format.ts
+// (gemeinsam mit dem Server-PDF-Export); hier nur re-exportiert.
+import { currencySymbol, statementCurrency, formatCurrency } from "@shared/currency-format";
+export { currencySymbol, statementCurrency, formatCurrency };
+
+/** JOB 23: Kursziel — 0/null/nicht endlich heißt „kein Ziel“ (FMP ohne .L-Targets) → "n/a" statt "£0.00". */
+export function formatTarget(value: number | null | undefined, currency?: string | null): string {
+  if (value == null || typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "n/a";
+  return formatCurrency(value, 2, currency);
 }
 
-export function formatLargeNumber(value: number): string {
+/**
+ * JOB 23 (Tester-FAIL SHEL.L): Upside zum Kursziel in %. Ohne Ziel (dieselbe Regel wie formatTarget: 0/null/nicht
+ * endlich) oder ohne gültigen Kurs → null, damit die UI „n/a“ zeigt statt „-100.0% upside“.
+ */
+export function targetUpsidePct(target: number | null | undefined, price: number | null | undefined): number | null {
+  if (target == null || typeof target !== "number" || !Number.isFinite(target) || target <= 0) return null;
+  if (price == null || typeof price !== "number" || !Number.isFinite(price) || price <= 0) return null;
+  return ((target - price) / price) * 100;
+}
+
+export function formatLargeNumber(value: number, currency?: string | null): string {
   const v = safeNum(value);
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "";
-  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
-  return `${sign}$${abs.toFixed(2)}`;
+  const s = currencySymbol(currency);
+  if (abs >= 1e12) return `${sign}${s}${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}${s}${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}${s}${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}${s}${(abs / 1e3).toFixed(1)}K`;
+  return `${sign}${s}${abs.toFixed(2)}`;
 }
 
 export function formatPercent(value: number, decimals: number = 2): string {

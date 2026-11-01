@@ -1,12 +1,13 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
-import { formatNumber, formatCurrency } from "../../lib/formatters";
+import { formatNumber, formatCurrency, statementCurrency } from "../../lib/formatters";
 import { calculateFCFFDCF, buildDefaultDCFParams, selectCatalystBase } from "../../lib/calculations";
 import { buildBiasDecision, isNegativeCatalyst, sumUpsideGb } from "../../../../shared/bias-fixes";
 import React from "react";
 import { Lightbulb, Clock, Zap, Info, ChevronDown, ChevronUp, Building2, TrendingUp, Globe, AlertTriangle, Sparkles, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { apiRequest } from "../../lib/queryClient";
+import { CATALYST_EVENT_VARIABLES, DOWNSIDE_EVENT_MIN_POS_EXCLUSIVE, USER_EVENT_SUFFIX, catalystDisplayName, formatSignedPct, isDownsideEventBelowThreshold, isUserEvent } from "../../../../shared/catalyst-event";
 
 interface Props {
   data: StockAnalysis;
@@ -20,6 +21,8 @@ interface Props {
   // statt der alten generischen. Optional gehalten (aeltere Response-
   // Formen/Fehlerfaelle liefern es ggf. nicht).
   onCatalystsEnriched?: (catalysts: StockAnalysis['catalysts'], growthThesis?: string | null, growthThesisGeneratedAt?: string | null, execSummary?: any) => void;
+  // S17 „Event hinzufügen“ (§4b Stufe 1): ein zusätzlicher Katalysator, Dashboard hängt ihn an data.catalysts (nur Session).
+  onUserEvent?: (catalyst: StockAnalysis['catalysts'][number]) => void;
 }
 
 const GENERIC_CATALYST_NAMES = new Set<string>([
@@ -43,7 +46,7 @@ function hasGenericCatalysts(cats: { name: string }[]): boolean {
   return generic >= cats.length / 2;
 }
 
-export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
+export function CatalystsSection({ data, onCatalystsEnriched, onUserEvent }: Props) {
   const reasoning = data.catalystReasoning;
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
@@ -51,6 +54,14 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
   const [llmSkipped, setLlmSkipped] = useState(false);
   const [llmError, setLlmError] = useState<string | null>(null);
   const [llmEnrichedCatalysts, setLlmEnrichedCatalysts] = useState<any[] | null>(null);
+  // S17 „Event hinzufügen“
+  const [eventOpen, setEventOpen] = useState(false);
+  const [eventMode, setEventMode] = useState<"text" | "structured">("text");
+  const [eventText, setEventText] = useState("");
+  const [eventForm, setEventForm] = useState({ name: "", variable: "umsatz", deltaPct: "", horizonMonths: "12", pos: "", einpreisungsgrad: "0" });
+  const [eventLoading, setEventLoading] = useState(false);
+  const [eventError, setEventError] = useState<string | null>(null);
+  const [ignoredEvents, setIgnoredEvents] = useState<any[]>([]);
 
   const catalysts = (llmEnrichedCatalysts ?? data.catalysts) as typeof data.catalysts;
   const biasInput = useMemo(() => {
@@ -108,6 +119,36 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
     }
   }
 
+  async function submitEvent() {
+    setEventLoading(true);
+    setEventError(null);
+    try {
+      const body = eventMode === "text"
+        ? { ticker: data.ticker, companyName: data.companyName, currency: data.currency, currentPrice: data.currentPrice, text: eventText, existing: catalysts.map(c => c.name) }
+        : { ticker: data.ticker, structured: eventForm };
+      const res = await apiRequest("POST", "/api/catalyst-event", body, 90_000);
+      const json = await res.json().catch(() => ({}));
+      if (!json?.catalyst) {
+        setEventError(json?.error || (json?.reason === "llm_unavailable" ? "KI nicht verfügbar — bitte strukturiert eingeben." : `Event nicht übernommen (${json?.reason || res.status}).`));
+        return;
+      }
+      const cat = json.catalyst;
+      if (isDownsideEventBelowThreshold(cat)) {
+        // Philip 25.10.2026: Downside ≤ 50 % fließt nicht ein, wird nur angezeigt.
+        setIgnoredEvents(prev => [...prev, cat]);
+      } else {
+        setLlmEnrichedCatalysts(prev => (prev ? [...prev, cat] : prev));
+        onUserEvent?.(cat);
+      }
+      setEventText("");
+      setEventOpen(false);
+    } catch (err: any) {
+      setEventError(err?.message || "Event fehlgeschlagen.");
+    } finally {
+      setEventLoading(false);
+    }
+  }
+
   // Compute conservative FCFF DCF — shared defaults via buildDefaultDCFParams
   // (same single source of truth as Section2/Section5/Section6, inkl. `rsl`)
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -123,6 +164,10 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
   const catalystDCFBase = _baseInfoS11.base;
   const catalystBaseFallback = _baseInfoS11.source !== "dcf";
   const catalystAdjTarget = catalystDCFBase * (1 + totalGB / 100);
+  // JOB 23 (wie SummarySection): DCF-Werte in Statement-Währung; Kurs und Analyst-PT in Listing-Währung (data.currency).
+  // Das Kat.-Ziel erbt die Währung seiner Basis (DCF → statementCurrency, Fallback Analyst PT → data.currency).
+  const dcfCcy = statementCurrency(data);
+  const catalystCcy = catalystBaseFallback ? data.currency : dcfCcy;
 
   return (
     <SectionCard number={17} title="KURSANSTIEG-KATALYSATOREN (Anti-Bias)">
@@ -159,12 +204,72 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
           </span>
         )}
 
+        <button
+          onClick={() => setEventOpen(o => !o)}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border text-foreground/50 border-border/50 hover:bg-muted/50 hover:text-foreground/70 transition-all"
+          title="Event hinzufügen — zusätzlicher Katalysator (z. B. aus dem letzten Earnings Call), Impact per KI-Schema"
+          data-testid="button-catalyst-event-add"
+        >
+          <Zap className="w-3 h-3" />
+          Event hinzufügen
+        </button>
+
         {llmDone && !llmLoading && (
           <span className="ml-auto text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border bg-violet-500/10 text-violet-400 border-violet-500/20">
             ✦ KI
           </span>
         )}
       </div>
+
+      {eventOpen && (
+        <div className="text-[11px] border border-border/50 rounded px-3 py-2 space-y-2 bg-muted/20" data-testid="catalyst-event-form">
+          <div className="flex gap-2">
+            {(["text", "structured"] as const).map(m => (
+              <button key={m} onClick={() => setEventMode(m)} className={`px-2 py-0.5 rounded border ${eventMode === m ? "border-primary/40 text-primary" : "border-border/50 text-foreground/50"}`}>
+                {m === "text" ? "Freitext (KI)" : "Strukturiert"}
+              </button>
+            ))}
+          </div>
+          {eventMode === "text" ? (
+            <div className="space-y-1">
+              <label htmlFor="catalyst-event-text" className="block text-[10px] font-medium text-foreground/70">Event-Beschreibung (Freitext, Impact per KI)</label>
+              <textarea id="catalyst-event-text" value={eventText} onChange={e => setEventText(e.target.value)} rows={3} className="w-full bg-background border border-border/50 rounded p-1.5"
+                placeholder="z. B. Q3-Call: Guidance für FY27-Bruttomarge +150 bp angehoben" data-testid="catalyst-event-text" />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5" data-testid="catalyst-event-structured">
+              {([
+                { id: "catalyst-event-name", key: "name", label: "Name", placeholder: "z. B. Q3-Guidance", span: "col-span-2 sm:col-span-3" },
+                { id: "catalyst-event-variable", key: "variable", label: "Variable", span: "" },
+                { id: "catalyst-event-delta", key: "deltaPct", label: "Delta % (− = Downside)", placeholder: "z. B. 10 oder -15", span: "" },
+                { id: "catalyst-event-horizon", key: "horizonMonths", label: "Horizont (Monate)", placeholder: "12", span: "" },
+                { id: "catalyst-event-pos", key: "pos", label: "Wahrscheinlichkeit %", placeholder: "0–100", span: "" },
+                { id: "catalyst-event-einpreisung", key: "einpreisungsgrad", label: "Einpreisung %", placeholder: "0–100", span: "" },
+              ] as const).map(f => (
+                <div key={f.id} className={`flex flex-col gap-0.5 min-w-0 ${f.span}`}>
+                  <label htmlFor={f.id} className="text-[10px] font-medium text-foreground/70">{f.label}</label>
+                  {f.key === "variable" ? (
+                    <select id={f.id} value={eventForm.variable} onChange={e => setEventForm({ ...eventForm, variable: e.target.value })} className="w-full bg-background border border-border/50 rounded p-1">
+                      {CATALYST_EVENT_VARIABLES.map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  ) : (
+                    <input id={f.id} value={eventForm[f.key]} onChange={e => setEventForm({ ...eventForm, [f.key]: e.target.value })}
+                      placeholder={"placeholder" in f ? f.placeholder : undefined} inputMode={f.key === "name" ? undefined : "decimal"}
+                      className="w-full bg-background border border-border/50 rounded p-1" />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <button onClick={() => !eventLoading && submitEvent()} disabled={eventLoading} className="px-2.5 py-1 rounded border border-primary/40 text-primary" data-testid="button-catalyst-event-submit">
+              {eventLoading ? <Loader2 className="w-3 h-3 animate-spin inline" /> : null} Übernehmen
+            </button>
+            <span className="text-[10px] text-muted-foreground">Zusätzlicher Katalysator, bewertet nach der bestehenden Logik (nur diese Sitzung). Downside nur bei Wahrscheinlichkeit &gt; {DOWNSIDE_EVENT_MIN_POS_EXCLUSIVE} %.</span>
+          </div>
+          {eventError && <div className="text-red-400">⚠ {eventError}</div>}
+        </div>
+      )}
 
       {llmError && (
         <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
@@ -175,7 +280,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
       <div className="text-[11px] text-foreground/70 bg-muted/30 border border-border/50 rounded px-3 py-2" data-testid="catalyst-mode-label">
         {bias.modeLabel}
         {bias.switched
-          ? ` · Basis: ${bias.valuationBaseLabel} ${formatCurrency(bias.decisionPerShare)} · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare)}`
+          ? ` · Basis: ${bias.valuationBaseLabel} ${formatCurrency(bias.decisionPerShare, 2, dcfCcy)} · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare, 2, dcfCcy)}`
           : ` · Basis: ${bias.valuationBaseLabel}`}
         {downsideCatalysts.length > 0 ? ` · ${downsideCatalysts.length} ▼ aus der positiven GB-Summe ausgeschlossen` : ""}
       </div>
@@ -268,6 +373,9 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
                   <td className="py-2 pr-2">
                     <div className="flex items-center gap-1">
                       <span className="font-medium">{c.name}</span>
+                      {isUserEvent(c) && (
+                        <span className="text-sky-400" data-testid="catalyst-user-event-badge">{USER_EVENT_SUFFIX.trim()}</span>
+                      )}
                       {c.newsCount && c.newsCount > 0 && (
                         <span className={`text-[9px] px-1 py-px rounded ${c.newsSentiment === 'bullish' ? 'bg-emerald-500/15 text-emerald-400' : c.newsSentiment === 'bearish' ? 'bg-red-500/15 text-red-400' : c.newsSentiment === 'mixed' ? 'bg-amber-500/15 text-amber-400' : 'bg-foreground/5 text-foreground/40'}`}>
                           {c.newsCount}📰
@@ -491,21 +599,21 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
                   const ptUpside = ((data.analystPT.median - data.currentPrice) / data.currentPrice) * 100;
                   return (
                     <div className="text-[10px] text-muted-foreground">
-                      = Analyst PT {formatCurrency(data.analystPT.median)}
+                      = Analyst PT {formatCurrency(data.analystPT.median, 2, data.currency)}
                       <span className={`ml-1 font-medium ${ptUpside >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         ({ptUpside >= 0 ? '+' : ''}{formatNumber(ptUpside, 1)}% vs. Kurs)
                       </span>
-                      {' '}× (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget)}
+                      {' '}× (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget, 2, catalystCcy)}
                     </div>
                   );
                 })()}
                 {!catalystBaseFallback && (
                   <div className="text-[10px] text-muted-foreground">
-                    = {formatCurrency(catalystDCFBase)} × (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget)}
+                    = {formatCurrency(catalystDCFBase, 2, catalystCcy)} × (1 + {formatNumber(totalGB, 2)}%) = {formatCurrency(catalystAdjTarget, 2, catalystCcy)}
                   </div>
                 )}
                 <div className={`text-[10px] font-medium mt-0.5 ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>
-                  vs. Kurs ({formatCurrency(data.currentPrice)}): {catVsKurs >= 0 ? '+' : ''}{formatNumber(catVsKurs, 1)}%
+                  vs. Kurs ({formatCurrency(data.currentPrice, 2, data.currency)}): {catVsKurs >= 0 ? '+' : ''}{formatNumber(catVsKurs, 1)}%
                   {isBelowKurs && ' — Target UNTER aktuellem Kurs'}
                 </div>
                 {/* Catalyst Upside auf aktuellen Kurs aufgerechnet — immer sichtbar */}
@@ -514,8 +622,8 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
                   return (
                     <div className="text-[10px] text-muted-foreground mt-1 pt-1 border-t border-border/40">
                       <span className="text-muted-foreground/70">Katalysatoren auf akt. Kurs:</span>
-                      {' '}{formatCurrency(data.currentPrice)} × (1 + {formatNumber(totalGB, 2)}%)
-                      {' '}= <span className="font-medium text-emerald-400">{formatCurrency(kursPlus)}</span>
+                      {' '}{formatCurrency(data.currentPrice, 2, data.currency)} × (1 + {formatNumber(totalGB, 2)}%)
+                      {' '}= <span className="font-medium text-emerald-400">{formatCurrency(kursPlus, 2, data.currency)}</span>
                       <span className="ml-1 font-medium text-emerald-400">(+{formatNumber(totalGB, 2)}% nicht eingepreist)</span>
                     </div>
                   );
@@ -523,7 +631,7 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
               </div>
               <div className="text-right">
                 <div className={`text-lg font-bold font-mono tabular-nums ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>
-                  {formatCurrency(catalystAdjTarget)}
+                  {formatCurrency(catalystAdjTarget, 2, catalystCcy)}
                 </div>
                 <div className={`text-xs font-mono font-medium ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>
                   {catVsKurs >= 0 ? '+' : ''}{formatNumber(catVsKurs, 1)}%
@@ -532,8 +640,8 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
             </div>
             {catalystBaseFallback && (
               <div className="text-[10px] text-amber-500 bg-amber-500/5 rounded-md p-2 border border-amber-500/20">
-                ⚠ DCF-Basis zu niedrig ({formatCurrency(decisionBase)}), verwende Analyst PT Median als Basis
-                {bias.switched ? ` · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare)}` : ""}
+                ⚠ DCF-Basis zu niedrig ({formatCurrency(decisionBase, 2, dcfCcy)}), verwende Analyst PT Median als Basis
+                {bias.switched ? ` · Unadjusted / Extrapolative ${formatCurrency(bias.unadjustedPerShare, 2, dcfCcy)}` : ""}
               </div>
             )}
           </>
@@ -577,11 +685,34 @@ export function CatalystsSection({ data, onCatalystsEnriched }: Props) {
                 {downsideCatalysts.map((c, i) => (
                   <tr key={`down-${i}`} className="border-b border-border/30">
                     <td className="py-1.5 pr-2 font-mono text-muted-foreground">▼</td>
-                    <td className="py-1.5 pr-2 font-medium">{c.name}</td>
+                    <td className="py-1.5 pr-2 font-medium">{catalystDisplayName(c)}</td>
                     <td className="py-1.5 pr-2 text-center font-mono text-muted-foreground">{c.timeline}</td>
                     <td className="py-1.5 pr-2 text-center font-mono text-amber-500">{c.pos}%</td>
-                    <td className="py-1.5 pr-2 text-right font-mono text-red-500">{formatNumber(c.bruttoUpside, 1)}%</td>
+                    <td className="py-1.5 pr-2 text-right font-mono text-red-500">{formatSignedPct(c.bruttoUpside, 1)}</td>
                     <td className="py-1.5 text-right font-mono text-muted-foreground">GB Upside 0</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {ignoredEvents.length > 0 && (
+          <div className="overflow-x-auto" data-testid="catalyst-events-ignored">
+            <table className="w-full text-[10px] opacity-60">
+              <tbody>
+                {ignoredEvents.map((c, i) => (
+                  <tr key={`ign-${i}`} className="border-b border-border/30">
+                    <td className="py-1.5 pr-2 font-mono text-muted-foreground">▼</td>
+                    <td className="py-1.5 pr-2 font-medium">{catalystDisplayName(c)}</td>
+                    <td className="py-1.5 pr-2 text-center font-mono text-muted-foreground">{c.timeline}</td>
+                    <td className="py-1.5 pr-2 text-center font-mono text-amber-500">{c.pos}%</td>
+                    <td className="py-1.5 pr-2 text-right font-mono text-red-500">{formatSignedPct(c.bruttoUpside, 1)}</td>
+                    <td className="py-1.5 pr-2 text-right font-mono text-muted-foreground">nicht berücksichtigt (≤ {DOWNSIDE_EVENT_MIN_POS_EXCLUSIVE} %)</td>
+                    <td className="py-1.5 text-right">
+                      <button type="button" onClick={() => setIgnoredEvents(prev => prev.filter((_, j) => j !== i))}
+                        className="px-1.5 py-0.5 rounded border border-border/50 text-foreground/60 hover:text-foreground"
+                        aria-label={`Event „${c.name}“ entfernen`} data-testid={`button-catalyst-event-remove-${i}`}>✕ Entfernen</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

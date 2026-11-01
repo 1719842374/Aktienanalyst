@@ -1,26 +1,35 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
+import { ChatWidget } from "@/components/chat/ChatWidget";
+import { visibleTopOf } from "@/lib/activeSection";
+import { buildGoldChatContext, enrichChatContext } from "@shared/chat-context";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { GoldAnalysis } from "../../../shared/gold-schema";
 import { GOLD_FALLBACK_DATA } from "@/lib/goldFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { GoldPriceSection } from "@/components/gold/GoldPriceSection";
 import { GoldIndicatorsSection } from "@/components/gold/GoldIndicatorsSection";
 import { GoldFairValueSection } from "@/components/gold/GoldFairValueSection";
 import { GoldMonteCarloSection } from "@/components/gold/GoldMonteCarloSection";
 import { GoldCycleSection } from "@/components/gold/GoldCycleSection";
 import { GoldSummarySection } from "@/components/gold/GoldSummarySection";
+import { GoldAdaptiveLayersCard } from "@/components/gold/GoldAdaptiveLayersCard";
+import { GoldAdaptiveGatesCard } from "@/components/gold/GoldAdaptiveGatesCard";
+import { GoldNewsCard } from "@/components/gold/GoldNewsCard";
 import { GoldPriceChart } from "@/components/gold/GoldPriceChart";
+import { GoldSilverRatioRow } from "@/components/gold/GoldSilverRatioRow";
 import {
   Sun, Moon, TrendingUp, BarChart3, Calculator,
   Dice6, Activity, Table2, Menu, X, LineChart, Target,
-  RefreshCw, Loader2, ArrowLeft, Scale,
+  RefreshCw, Loader2, ArrowLeft, Scale, Newspaper,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
-const SECTIONS = [
+const NEWS_SECTION_ID = 100;
+
+const SECTIONS: { id: number; label: string; icon: typeof TrendingUp; badge?: string }[] = [
   { id: 1, label: "Preis & Status", icon: TrendingUp },
+  { id: 100, label: "Gold-News", icon: Newspaper, badge: "📰" },
   { id: 2, label: "Preis-Chart", icon: LineChart },
   { id: 3, label: "Indikatoren", icon: BarChart3 },
   { id: 4, label: "Fair Value", icon: Calculator },
@@ -36,13 +45,20 @@ export default function GoldDashboard() {
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const [, navigate] = useLocation();
+  // JOB 16: der Aktualisieren-Button umgeht den 10-min-Servercache (?fresh=1); Auto-Laden nicht.
+  const freshRef = useRef(false);
 
   const { data, isLoading, isError, error, refetch } = useQuery<GoldAnalysis>({
     queryKey: ["/api/analyze-gold"],
     queryFn: async () => {
       // Try live API first, fallback to bundled static data
       try {
-        const res = await apiRequest("GET", "/api/analyze-gold");
+        const fresh = freshRef.current;
+        freshRef.current = false;
+        const res = await apiRequest("GET", fresh ? "/api/analyze-gold?fresh=1" : "/api/analyze-gold");
+        // apiRequest does not throw on HTTP errors. A 500 body is not a GoldAnalysis
+        // (missing FMP key → { error }) and used to crash the page on spotPrice.toFixed.
+        if (!res.ok) throw new Error(`Gold-API ${res.status}`);
         return res.json();
       } catch {
         // Return pre-computed data bundled at build time
@@ -64,6 +80,21 @@ export default function GoldDashboard() {
   const setSectionRef = useCallback((id: number) => (el: HTMLDivElement | null) => {
     sectionRefs.current[id] = el;
   }, []);
+
+  // Chat-Widget (PR 2, additiv): Kontext nur aus den bereits geladenen Gold-Daten.
+  // PR 3: Auffälligkeiten je Sektion (aus vorhandenen Daten/Gates); Gold hat keine Selbstlade-Sektionen.
+  const chatContext = useMemo(() => (data ? enrichChatContext(buildGoldChatContext(data), null, { gatesSectionId: 8 }) : null), [data]);
+  // Gold-News trägt intern die ID 100 und auf der Seite keine Nummer → in der Auswahl das Badge statt "100.".
+  const chatSections = useMemo(() => SECTIONS.map(({ id, label, badge }) => (id === NEWS_SECTION_ID ? { id, label, display: badge ?? "📰" } : { id, label })), []);
+  const getActiveSectionId = useCallback((): number | null => {
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
+    for (const { id } of chatSections) {
+      const el = sectionRefs.current[id];
+      if (!el) continue;
+      if (el.getBoundingClientRect().bottom > top + 40) return id;
+    }
+    return null;
+  }, [chatSections]);
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
@@ -97,8 +128,9 @@ export default function GoldDashboard() {
             </div>
           )}
           <button
-            onClick={() => refetch()}
+            onClick={() => { freshRef.current = true; refetch(); }}
             disabled={isLoading}
+            data-testid="gold-refresh"
             className="h-8 px-3 text-xs font-medium bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
           >
             {isLoading ? (
@@ -145,13 +177,12 @@ export default function GoldDashboard() {
               >
                 <s.icon className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 group-hover:text-amber-500 transition-colors" />
                 <span className="flex-1 truncate">{s.label}</span>
-                <span className="text-[10px] font-mono tabular-nums text-muted-foreground/50">{s.id}</span>
+                <span className="text-[10px] font-mono tabular-nums text-muted-foreground/50">{s.badge ?? s.id}</span>
               </button>
             ))}
           </nav>
 
           <div className="px-3 py-3 border-t border-border mt-2">
-            <PerplexityAttribution />
           </div>
         </aside>
 
@@ -166,7 +197,7 @@ export default function GoldDashboard() {
         {/* Main Content */}
         <main
           ref={mainRef}
-          className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar"
+          className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0"
         >
           {isLoading ? (
             <GoldLoadingScreen />
@@ -174,7 +205,21 @@ export default function GoldDashboard() {
             <GoldErrorScreen error={error as Error} onRetry={() => refetch()} />
           ) : data ? (
             <div className="max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
-              <div ref={setSectionRef(1)}><GoldPriceSection data={data} /></div>
+              {/* Offline-Fallback sichtbar machen: gebündelte Build-Daten statt Live-API, Werte unverändert */}
+              {data.timestamp === GOLD_FALLBACK_DATA.timestamp && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300" data-testid="gold-offline-note">
+                  Offline-Daten vom {data.analysisDate.split(",")[0]} – Live-API nicht erreichbar, Werte nicht aktuell
+                </div>
+              )}
+              {/* JOB 16: Teilausfall sichtbar machen (Antwort enthält interne Ersatzwerte) */}
+              {data.partial && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300" data-testid="gold-partial-note">
+                  Teilweise Ersatzwerte: {(data.partialReasons ?? []).join(" · ") || "n/a"}
+                </div>
+              )}
+              <div ref={setSectionRef(1)} className="space-y-3"><GoldPriceSection data={data} /><GoldSilverRatioRow /></div>
+              {/* JOB 14: Gold-News an zweiter Stelle, im Stil der Aktien-News */}
+              <div ref={setSectionRef(NEWS_SECTION_ID)}><GoldNewsCard data={data} /></div>
               <div ref={setSectionRef(2)}><GoldPriceChart data={data} /></div>
               <div ref={setSectionRef(3)}><GoldIndicatorsSection data={data} /></div>
               <div ref={setSectionRef(4)}><GoldFairValueSection data={data} /></div>
@@ -182,11 +227,21 @@ export default function GoldDashboard() {
               <div ref={setSectionRef(6)}><GoldPriceEstimateSection data={data} /></div>
               <div ref={setSectionRef(7)}><GoldCycleSection data={data} /></div>
               <div ref={setSectionRef(8)}><GoldSummarySection data={data} /></div>
+              <GoldAdaptiveLayersCard data={data} />
+              <GoldAdaptiveGatesCard data={data} />
               <div className="pb-8" />
             </div>
           ) : null}
         </main>
       </div>
+      <ChatWidget
+        dashboard="gold"
+        context={chatContext}
+        sections={chatSections}
+        getActiveSectionId={getActiveSectionId}
+        onJumpToSection={scrollToSection}
+        suggestions={["Fasse die Gold-Analyse in 5 Punkten zusammen", "Welche Gates sind aktiv und warum?", "Wie passt der Kurs zum Fair Value?"]}
+      />
     </div>
   );
 }
