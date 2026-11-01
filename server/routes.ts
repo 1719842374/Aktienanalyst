@@ -77,6 +77,7 @@ export {
 import { registerAnalyzeRoute } from "./analyze-route";
 import { registerOhlcvRoute } from "./ohlcv-route";
 import { registerGoldRoutes } from "./gold-routes";
+import { registerGoldFrameworkRoutes } from "./gold-framework-routes";
 import { registerBTCRoutes } from "./btc-routes";
 import { fetchMinerData, minerUnavailableBody } from "./btc-miner";
 import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpPeers, fmpQuote, fmpRatios, fmpAnalystEstimates } from "./fmp";
@@ -125,6 +126,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // 2. /api/analyze-gold
   registerGoldRoutes(httpServer, app);
+  // Zusatzanzeigen (Angebot, MA-Backtest, Zentralbanken, Philip). Nicht der GIS.
+  registerGoldFrameworkRoutes(app);
 
   // 2a. /api/analyze-btc/macro-history (FRED: DFII10 + M2SL YoY)
   registerBTCRoutes(app);

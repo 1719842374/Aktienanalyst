@@ -148,9 +148,9 @@ Der Chart-Chip „Breakeven“ zeigt aktuell die **Inflationserwartung** (FRED T
 | Signal | Beschreibung | Status |
 |--------|--------------|--------|
 | AISC-Margin | (Preis - AISC) / AISC | Gate vorhanden, als Signal erweitern |
-| AISC-Linie | Gestufter Plot auf Preisachse | **Offen** |
-| Kapitulationszone | Preis nahe oder unter AISC | **Offen** |
-| Angebotsreaktion | Veränderung Minenproduktion | Fehlt |
+| AISC-Linie | Gestufter Plot auf Preisachse | erledigt (Chart, #254) |
+| Kapitulationszone | Preis nahe oder unter AISC | erledigt (Chart, #254) |
+| Angebotsreaktion | Veränderung Minenproduktion | Anzeige; ohne belegte Quartalsmengen n/a, kein Score |
 
 ---
 
@@ -266,13 +266,14 @@ Antworte nur als JSON:
 
 ## 11. Offene Punkte
 
-- **AISC-Linie implementieren** (Quartalsdaten Newmont/Barrick/Agnico Eagle als gestufter Preis-Overlay + Stresszone)
+- **AISC-Linie** erledigt (#254): Quartalsdaten Newmont/Barrick/Agnico Eagle als gestufter Preis-Overlay plus Stresszone
 - Chip „Breakeven“ umbenennen in „Inflations-BE (T10YIE)“
-- Kapitulationszone definieren
+- **Kapitulationszone** erledigt (#254)
 - Volumen-Daten zuverlässig anbinden
 - Gold-News-Quellen anbinden (RSS/API)
-- Backtest der MA-Cross-Signale auf Gold
-- Europa-/globale Zentralbank-Käufe (LLM)
+- **Backtest der MA-Cross-Signale auf Gold:** Anzeige bis zum gegenteiligen Kreuz, kein Score
+- **Europa-/globale Zentralbank-Käufe (LLM):** Hinweis aus den Gold-Schlagzeilen, ohne Menge und ohne Score
+- **Gold-GIS und QE/QT:** Anzeige „n/a — Philip-Entscheidung offen“, ohne Score-Wirkung
 
 ---
 
