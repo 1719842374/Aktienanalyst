@@ -1,0 +1,25 @@
+{
+  "_comment": "F10-22: attributable Goldproduktion in koz aus den Quartalsberichten von Newmont, Barrick und Agnico Eagle. Jeder Wert braucht sourceUrl, sourceTitle und sourceDate nach dem Quartalsende. Nichts schätzen. Die SEC-Exhibits waren beim Anlegen nicht abrufbar (HTTP 403), deshalb bleibt values leer und die Karte zeigt n/a.",
+  "unit": "koz",
+  "basis": "attributable gold production",
+  "retrievedAt": "2026-11-01",
+  "reasonEmpty": "keine belegten Quartalsmengen von Newmont, Barrick und Agnico Eagle (Quartalsberichte nicht im Repo, nichts geschätzt)",
+  "companies": {
+    "NEM": {
+      "name": "Newmont",
+      "ticker": "NEM",
+      "metric": "Attributable gold production, koz"
+    },
+    "B": {
+      "name": "Barrick",
+      "ticker": "B",
+      "metric": "Attributable gold production, koz"
+    },
+    "AEM": {
+      "name": "Agnico Eagle",
+      "ticker": "AEM",
+      "metric": "Payable gold production, koz"
+    }
+  },
+  "values": []
+}

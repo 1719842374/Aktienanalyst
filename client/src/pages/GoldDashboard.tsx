@@ -16,6 +16,12 @@ import { GoldSummarySection } from "@/components/gold/GoldSummarySection";
 import { GoldAdaptiveLayersCard } from "@/components/gold/GoldAdaptiveLayersCard";
 import { GoldAdaptiveGatesCard } from "@/components/gold/GoldAdaptiveGatesCard";
 import { GoldNewsCard } from "@/components/gold/GoldNewsCard";
+import {
+  GoldCentralBankCard,
+  GoldMaBacktestCard,
+  GoldMineSupplyCard,
+  GoldPhilipPendingCard,
+} from "@/components/gold/GoldFrameworkCards";
 import { GoldPriceChart } from "@/components/gold/GoldPriceChart";
 import { GoldSilverRatioRow } from "@/components/gold/GoldSilverRatioRow";
 import {
@@ -219,7 +225,10 @@ export default function GoldDashboard() {
               )}
               <div ref={setSectionRef(1)} className="space-y-3"><GoldPriceSection data={data} /><GoldSilverRatioRow /></div>
               {/* JOB 14: Gold-News an zweiter Stelle, im Stil der Aktien-News */}
-              <div ref={setSectionRef(NEWS_SECTION_ID)}><GoldNewsCard data={data} /></div>
+              <div ref={setSectionRef(NEWS_SECTION_ID)} className="space-y-3">
+                <GoldNewsCard data={data} />
+                <GoldCentralBankCard />
+              </div>
               <div ref={setSectionRef(2)}><GoldPriceChart data={data} /></div>
               <div ref={setSectionRef(3)}><GoldIndicatorsSection data={data} /></div>
               <div ref={setSectionRef(4)}><GoldFairValueSection data={data} /></div>
@@ -229,6 +238,9 @@ export default function GoldDashboard() {
               <div ref={setSectionRef(8)}><GoldSummarySection data={data} /></div>
               <GoldAdaptiveLayersCard data={data} />
               <GoldAdaptiveGatesCard data={data} />
+              <GoldMineSupplyCard />
+              <GoldMaBacktestCard />
+              <GoldPhilipPendingCard />
               <div className="pb-8" />
             </div>
           ) : null}
