@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { execSync } from "child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { fetchMacroSnapshot } from "./fmp-macro";
@@ -19,11 +20,18 @@ import { driverFazitSections, loadDriverAssessment, type DriverView } from "./re
 import { diskBriefingUpdatedAt } from "./disk-cache";
 import {
   acceptGoogleTrendsFetch,
+  clearGoogleTrendsMiss,
+  collectTrendsFetch,
   freshGoogleTrends,
+  googleTrendsClosedLabel,
+  googleTrendsFetchNote,
   parseSerpApiGoogleTrends,
   parseSerpApiTrendPoints,
   readGoogleTrendsCache,
   writeGoogleTrendsCache,
+  writeGoogleTrendsMiss,
+  type GoogleTrendsMissKind,
+  type SerpApiAttempt,
 } from "./cache/google-trends-cache";
 import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
@@ -192,6 +200,10 @@ export interface IndicatorResult {
   ageHours?: number;
   /** True when the Google Trends print is over 24h. The zone weight stays ×1.7. */
   isStale?: boolean;
+  /** Closed slot. Shown as „n/a — Grund“. Not a market print and not part of the net. */
+  unavailableReason?: string;
+  /** Failed refresh that kept the last print. The zone weight stays ×1.7. */
+  fetchNote?: string;
 }
 
 // ============================================================
@@ -503,11 +515,64 @@ export function finraMarginPoints(buf: Buffer): { date: string; debitMillions: n
 // 11. Google Trends "Recession"
 // One cache: server/cache/google-trends-cache.ts. No second store, no extra route.
 // A miss inside 48h is scored with the last print. Older than that, the slot closes.
+const GOOGLE_TRENDS_ATTEMPT_TIMEOUT_MS = 12_000;
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function parseRetryAfterMs(headers: string, now: number): number | null {
+  const match = headers.match(/^retry-after:\s*(.+)$/im);
+  if (!match) return null;
+  const raw = match[1].trim();
+  if (/^\d+$/.test(raw)) return Number(raw) * 1000;
+  const when = Date.parse(raw);
+  if (!Number.isFinite(when)) return null;
+  return Math.max(0, when - now);
+}
+
+/** One SerpApi call with status. curl failure (timeout) is status null, not a print. */
+function requestSerpApi(url: string, timeoutMs: number): SerpApiAttempt {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "trends-"));
+  const bodyPath = path.join(dir, "body");
+  const hdrPath = path.join(dir, "hdr");
+  try {
+    const seconds = Math.max(1, Math.floor(timeoutMs / 1000));
+    let code = "";
+    try {
+      code = execSync(
+        `curl -sS -L --max-time ${seconds} -o ${shellQuote(bodyPath)} -D ${shellQuote(hdrPath)} -w "%{http_code}" ${shellQuote(url)}`,
+        { encoding: "utf-8", timeout: timeoutMs + 5000 },
+      ).trim();
+    } catch {
+      return { status: null, body: "", retryAfterMs: null };
+    }
+    const status = Number(code);
+    const body = fs.existsSync(bodyPath) ? fs.readFileSync(bodyPath, "utf8") : "";
+    const hdr = fs.existsSync(hdrPath) ? fs.readFileSync(hdrPath, "utf8") : "";
+    return {
+      status: Number.isFinite(status) ? status : null,
+      body,
+      retryAfterMs: parseRetryAfterMs(hdr, Date.now()),
+    };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function sleepMs(ms: number): void {
+  if (!(ms > 0)) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function scoreGoogleTrends(): IndicatorResult {
   const serpKey = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || "";
   if (!serpKey) {
     console.log("  Google Trends: SERPAPI_KEY not set — reporting N/A");
-    return googleReading(null);
+    writeGoogleTrendsMiss("no_key", null);
+    return googleReading(null, "Google Trends (N/A)", undefined, {
+      closedLabel: googleTrendsClosedLabel("no_key", null, false),
+    });
   }
 
   const now = Date.now();
@@ -519,28 +584,54 @@ function scoreGoogleTrends(): IndicatorResult {
   }
 
   let fetched: { value: number; source: string; points?: { date: string; value: number }[] } | null = null;
+  let missKind: GoogleTrendsMissKind = "empty";
+  let missStatus: number | null = null;
   try {
     const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
-    const raw = fetchUrl(url, 12000);
-    const parsed = parseSerpApiGoogleTrends(raw);
-    if (parsed) {
-      const points = parseSerpApiTrendPoints(raw) ?? undefined;
-      fetched = { value: parsed.value, source: parsed.source, ...(points?.length ? { points } : {}) };
-      console.log(`  Google Trends (SerpApi): avg=${parsed.value}, latest=${parsed.latest}, peak=${parsed.peak}`);
+    const outcome = collectTrendsFetch({
+      sleep: sleepMs,
+      call: () => requestSerpApi(url, GOOGLE_TRENDS_ATTEMPT_TIMEOUT_MS),
+    });
+    missKind = outcome.kind ?? "empty";
+    missStatus = outcome.httpStatus;
+    if (outcome.ok && outcome.body) {
+      const parsed = parseSerpApiGoogleTrends(outcome.body);
+      if (parsed) {
+        const points = parseSerpApiTrendPoints(outcome.body) ?? undefined;
+        fetched = { value: parsed.value, source: parsed.source, ...(points?.length ? { points } : {}) };
+        console.log(`  Google Trends (SerpApi): avg=${parsed.value}, latest=${parsed.latest}, peak=${parsed.peak}, attempts=${outcome.attempts}`);
+      } else {
+        missKind = "empty";
+      }
     }
   } catch (err: any) {
+    missKind = "error";
     console.log(`  Google Trends SerpApi failed: ${err?.message?.substring(0, 200)}`);
   }
 
   const decided = acceptGoogleTrendsFetch(fetched, cached, now);
-  if (decided.store) writeGoogleTrendsCache(decided.store);
+  if (decided.store) {
+    writeGoogleTrendsCache(decided.store);
+    clearGoogleTrendsMiss();
+  }
   if (decided.value == null) {
-    console.log("  Google Trends: no value within 48h — reporting N/A");
-    return googleReading(null);
+    const cacheExpired = cached != null;
+    const kind = cacheExpired && missKind === "empty" ? "stale_cache" : missKind;
+    console.log(`  Google Trends: no value within 48h — reporting N/A (${kind})`);
+    writeGoogleTrendsMiss(kind, missStatus);
+    return googleReading(null, "Google Trends (N/A)", undefined, {
+      closedLabel: googleTrendsClosedLabel(kind, missStatus, cacheExpired),
+    });
   }
   if (!fetched) {
-    console.log(`  Google Trends last good (age=${decided.ageHours}h stale=${decided.isStale})`);
+    console.log(`  Google Trends last good (age=${decided.ageHours}h stale=${decided.isStale} miss=${missKind})`);
+    writeGoogleTrendsMiss(missKind, missStatus);
+    return googleReading(decided.value, decided.source, {
+      ageHours: decided.ageHours ?? 0,
+      isStale: decided.isStale,
+    }, { fetchNote: googleTrendsFetchNote(missKind, missStatus) });
   }
+  clearGoogleTrendsMiss();
   return googleReading(decided.value, decided.source, {
     ageHours: decided.ageHours ?? 0,
     isStale: decided.isStale,
@@ -1248,6 +1339,7 @@ export function googleReading(
   trend: number | null,
   source = "Google Trends",
   freshness?: { ageHours: number; isStale: boolean },
+  notice?: { closedLabel?: string; fetchNote?: string },
 ): IndicatorResult {
   const base = {
     name: "Google Trends \"Recession\"",
@@ -1256,7 +1348,10 @@ export function googleReading(
     source: trend == null ? "Google Trends (N/A)" : source,
     description: "Google-Suchinteresse für 'Recession' (0-100 Index)",
   };
-  if (trend == null || !Number.isFinite(trend)) return closedIndicator(base);
+  if (trend == null || !Number.isFinite(trend)) {
+    const closed = closedIndicator(base, notice?.closedLabel ?? "N/A");
+    return notice?.closedLabel ? { ...closed, unavailableReason: notice.closedLabel } : closed;
+  }
   let rawScore = -4;
   let zone = `Niedrig (${trend} <30) → Sorglosigkeit`;
   if (trend > 75) { rawScore = 7; zone = `Extrem hoch (${trend} >75) → Panik-Suchen`; }
@@ -1271,6 +1366,7 @@ export function googleReading(
     maxWeighted: 11.9,
     zone,
     ...(freshness ? { ageHours: freshness.ageHours, isStale: freshness.isStale } : {}),
+    ...(notice?.fetchNote ? { fetchNote: notice.fetchNote } : {}),
   };
 }
 
@@ -1448,7 +1544,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     console.log(`  ${ind.name}: ${ind.value} → Score ${ind.weightedScore} (max ${ind.maxWeighted})`);
   });
 
-  const googleAvailable = indicators.find(i => i.name.includes("Google"))?.value !== "N/A";
+  const googleRow = indicators.find(i => i.name.includes("Google"));
+  const googleAvailable = !!googleRow && googleRow.available !== false;
   const nyFedValue = getNYFedRecessionProb();
   console.log(`[RECESSION] NY Fed recession prob: ${nyFedValue}`);
 

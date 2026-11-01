@@ -12,6 +12,10 @@ import {
 
 // Section 5: Indicator Table (full 17 indicators)
 // ============================================================
+function showsClosedReason(ind: IndicatorResult): boolean {
+  return ind.available === false && typeof ind.unavailableReason === "string" && ind.unavailableReason.startsWith("n/a");
+}
+
 export function IndicatorTable({ indicators }: { indicators: IndicatorResult[] }) {
   const recession = indicators.filter(i => i.group === "recession");
   const correction = indicators.filter(i => i.group === "correction");
@@ -43,20 +47,21 @@ export function IndicatorTable({ indicators }: { indicators: IndicatorResult[] }
                   <div className="text-[10px] text-muted-foreground/70">
                     {ind.source}{ind.proxy ? " · Proxy" : ""}
                     {typeof ind.ageHours === "number" ? ` · vor ${ind.ageHours.toFixed(1)}h${ind.isStale ? " (veraltet)" : ""}` : ""}
+                    {ind.fetchNote ? ` · ${ind.fetchNote}` : ""}
                   </div>
                 </td>
-                <td className="py-1.5 px-2 text-right font-mono tabular-nums font-semibold">{ind.value}</td>
+                <td className="py-1.5 px-2 text-right font-mono tabular-nums font-semibold break-words max-w-[11rem] min-[1440px]:max-w-none">{ind.value}</td>
                 <td className="py-1.5 px-2">
                   <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${getScoreBg(ind.weightedScore)} ${getScoreColor(ind.weightedScore)}`}>
                     {ind.zone}
                   </span>
                 </td>
-                <td className="py-1.5 px-2 text-center font-mono tabular-nums">{ind.rawScore > 0 ? "+" : ""}{ind.rawScore}</td>
-                <td className="py-1.5 px-2 text-center font-mono tabular-nums text-muted-foreground">×{ind.weight}</td>
+                <td className="py-1.5 px-2 text-center font-mono tabular-nums">{showsClosedReason(ind) ? "n/a" : `${ind.rawScore > 0 ? "+" : ""}${ind.rawScore}`}</td>
+                <td className="py-1.5 px-2 text-center font-mono tabular-nums text-muted-foreground">{showsClosedReason(ind) ? "n/a" : `×${ind.weight}`}</td>
                 <td className={`py-1.5 px-2 text-center font-mono tabular-nums font-bold ${getScoreColor(ind.weightedScore)}`}>
-                  {ind.weightedScore > 0 ? "+" : ""}{ind.weightedScore}
+                  {showsClosedReason(ind) ? "n/a" : `${ind.weightedScore > 0 ? "+" : ""}${ind.weightedScore}`}
                 </td>
-                <td className="py-1.5 px-2 text-center font-mono tabular-nums text-muted-foreground">{ind.maxWeighted}</td>
+                <td className="py-1.5 px-2 text-center font-mono tabular-nums text-muted-foreground">{showsClosedReason(ind) ? "n/a" : ind.maxWeighted}</td>
               </tr>
             ))}
           </tbody>
@@ -90,10 +95,10 @@ export function IndicatorTable({ indicators }: { indicators: IndicatorResult[] }
             <div
               key={ind.name}
               className={`px-2 py-1 rounded text-[10px] font-medium ${getScoreBg(ind.weightedScore)} ${getScoreColor(ind.weightedScore)} border border-current/10`}
-              title={`${ind.name}: ${ind.value} → ${ind.weightedScore > 0 ? "+" : ""}${ind.weightedScore}${typeof ind.ageHours === "number" ? ` · vor ${ind.ageHours.toFixed(1)}h${ind.isStale ? " (veraltet)" : ""}` : ""}`}
+              title={`${ind.name}: ${ind.value} → ${showsClosedReason(ind) ? "n/a" : `${ind.weightedScore > 0 ? "+" : ""}${ind.weightedScore}`}${typeof ind.ageHours === "number" ? ` · vor ${ind.ageHours.toFixed(1)}h${ind.isStale ? " (veraltet)" : ""}` : ""}`}
             >
               {ind.name.length > 16 ? ind.name.substring(0, 14) + "..." : ind.name}
-              <span className="ml-1 font-bold">{ind.weightedScore > 0 ? "+" : ""}{ind.weightedScore}</span>
+              <span className="ml-1 font-bold">{showsClosedReason(ind) ? "n/a" : `${ind.weightedScore > 0 ? "+" : ""}${ind.weightedScore}`}</span>
             </div>
           ))}
         </div>

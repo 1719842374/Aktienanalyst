@@ -43,9 +43,11 @@ export interface AcceptedGoogleTrends {
 }
 
 let memory: GoogleTrendsCacheEntry | null = null;
+let lastMiss: { kind: GoogleTrendsMissKind; httpStatus: number | null } | null = null;
 
 export function resetGoogleTrendsCache(): void {
   memory = null;
+  lastMiss = null;
 }
 
 export function readGoogleTrendsCache(): GoogleTrendsCacheEntry | null {
@@ -202,4 +204,119 @@ export function parseSerpApiTrendPoints(raw: string): { date: string; value: num
     out.push({ date, value: num });
   }
   return out.length ? out : null;
+}
+
+/**
+ * F3-04 / F4-05. Nur HTTP 429 wird wiederholt. Leere Timeline und Timeout
+ * kosten keinen zweiten SerpApi-Call. Die Pausen sind Parameter, kein Streuwert.
+ * Retry-After der Antwort gewinnt, gedeckelt, damit die Analyse nicht stehen bleibt.
+ */
+export const GOOGLE_TRENDS_BACKOFF = {
+  maxAttempts: 3,
+  baseMs: 400,
+  factor: 2,
+  capMs: 2000,
+} as const;
+
+export type GoogleTrendsMissKind = "no_key" | "rate_limit" | "timeout" | "empty" | "error" | "stale_cache";
+
+export interface SerpApiAttempt {
+  status: number | null;
+  body: string;
+  retryAfterMs: number | null;
+}
+
+export interface TrendsFetchOutcome {
+  ok: boolean;
+  body: string | null;
+  kind: GoogleTrendsMissKind | null;
+  httpStatus: number | null;
+  attempts: number;
+  delaysMs: number[];
+}
+
+export function classifySerpApiAttempt(
+  attempt: SerpApiAttempt,
+): { ok: true } | { ok: false; kind: GoogleTrendsMissKind; httpStatus: number | null } {
+  if (attempt.status === 429) return { ok: false, kind: "rate_limit", httpStatus: 429 };
+  if (attempt.status == null || attempt.status === 0) return { ok: false, kind: "timeout", httpStatus: attempt.status };
+  if (attempt.status >= 400) return { ok: false, kind: "error", httpStatus: attempt.status };
+  if (!parseSerpApiGoogleTrends(attempt.body)) return { ok: false, kind: "empty", httpStatus: attempt.status };
+  return { ok: true };
+}
+
+/** Wartezeit vor dem nächsten Versuch. retryIndex 0 ist die erste Pause. */
+export function trendsBackoffDelayMs(retryIndex: number, retryAfterMs: number | null): number {
+  const exponential = Math.min(
+    GOOGLE_TRENDS_BACKOFF.capMs,
+    GOOGLE_TRENDS_BACKOFF.baseMs * GOOGLE_TRENDS_BACKOFF.factor ** retryIndex,
+  );
+  if (retryAfterMs != null && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return Math.min(GOOGLE_TRENDS_BACKOFF.capMs, retryAfterMs);
+  }
+  return exponential;
+}
+
+/** Ruft SerpApi so oft auf, wie der Backoff erlaubt. Der Score wertet das Ergebnis separat. */
+export function collectTrendsFetch(input: {
+  call: () => SerpApiAttempt;
+  sleep: (ms: number) => void;
+  maxAttempts?: number;
+}): TrendsFetchOutcome {
+  const max = input.maxAttempts ?? GOOGLE_TRENDS_BACKOFF.maxAttempts;
+  const delaysMs: number[] = [];
+  let kind: GoogleTrendsMissKind = "error";
+  let httpStatus: number | null = null;
+  let attempts = 0;
+  for (let i = 0; i < max; i++) {
+    attempts = i + 1;
+    const attempt = input.call();
+    const classified = classifySerpApiAttempt(attempt);
+    if (classified.ok) {
+      return { ok: true, body: attempt.body, kind: null, httpStatus: attempt.status, attempts, delaysMs };
+    }
+    kind = classified.kind;
+    httpStatus = classified.httpStatus;
+    if (kind !== "rate_limit" || i >= max - 1) break;
+    const delay = trendsBackoffDelayMs(i, attempt.retryAfterMs);
+    delaysMs.push(delay);
+    input.sleep(delay);
+  }
+  return { ok: false, body: null, kind, httpStatus, attempts, delaysMs };
+}
+
+export function googleTrendsMissPhrase(kind: GoogleTrendsMissKind, httpStatus: number | null): string {
+  switch (kind) {
+    case "no_key": return "SerpApi-Schlüssel fehlt";
+    case "rate_limit": return "SerpApi-Limit (429)";
+    case "timeout": return "SerpApi-Timeout";
+    case "empty": return "SerpApi lieferte keine Timeline";
+    case "error": return httpStatus != null ? `SerpApi-Fehler (HTTP ${httpStatus})` : "SerpApi-Fehler";
+    case "stale_cache": return "letzter Wert älter als 48 h";
+  }
+}
+
+/** Anzeigetext, wenn nichts innerhalb 48 h gewertet werden darf. Kein erfundener Index. */
+export function googleTrendsClosedLabel(kind: GoogleTrendsMissKind, httpStatus: number | null, cacheExpired: boolean): string {
+  const phrase = googleTrendsMissPhrase(kind, httpStatus);
+  if (kind === "no_key" || kind === "stale_cache") return `n/a — ${phrase}`;
+  if (cacheExpired) return `n/a — letzter Wert älter als 48 h (${phrase})`;
+  return `n/a — ${phrase}, kein Wert innerhalb 48 h`;
+}
+
+/** Neben dem letzten gültigen Wert. Das Gewicht der Zone bleibt der bestehende Parameter. */
+export function googleTrendsFetchNote(kind: GoogleTrendsMissKind, httpStatus: number | null): string {
+  return `Abruf: ${googleTrendsMissPhrase(kind, httpStatus)}. Letzter gültiger Wert, Gewicht unverändert.`;
+}
+
+export function writeGoogleTrendsMiss(kind: GoogleTrendsMissKind, httpStatus: number | null): void {
+  lastMiss = { kind, httpStatus };
+}
+
+export function readGoogleTrendsMiss(): { kind: GoogleTrendsMissKind; httpStatus: number | null } | null {
+  return lastMiss ? { kind: lastMiss.kind, httpStatus: lastMiss.httpStatus } : null;
+}
+
+export function clearGoogleTrendsMiss(): void {
+  lastMiss = null;
 }

@@ -6,8 +6,10 @@
 import type { Express, Request, Response } from "express";
 import {
   googleTrendsFreshness,
+  googleTrendsMissPhrase,
   parseSerpApiTrendPoints,
   readGoogleTrendsCache,
+  readGoogleTrendsMiss,
 } from "./cache/google-trends-cache";
 import { REST_OVERLAY_PARAMS } from "../shared/recession-rest-overlays";
 
@@ -18,6 +20,8 @@ export interface GoogleTrendsOverlayBody {
   note: string | null;
   ageHours: number | null;
   isStale: boolean;
+  /** „n/a — Grund“, wenn der Cache keinen Druck hat. Sonst null. Kein Score. */
+  unavailableReason: string | null;
 }
 
 export function pointsFromSerp(raw: string): { date: string; value: number }[] {
@@ -27,7 +31,17 @@ export function pointsFromSerp(raw: string): { date: string; value: number }[] {
 export function readGoogleTrendsOverlay(now: number): GoogleTrendsOverlayBody {
   const entry = readGoogleTrendsCache();
   if (!entry) {
-    return { source: "Google-Trends-Cache", points: [], asOf: null, note: "Google-Trends-Cache leer", ageHours: null, isStale: false };
+    const miss = readGoogleTrendsMiss();
+    const reason = miss ? googleTrendsMissPhrase(miss.kind, miss.httpStatus) : "Google-Trends-Cache leer";
+    return {
+      source: "Google-Trends-Cache",
+      points: [],
+      asOf: null,
+      note: reason,
+      unavailableReason: `n/a — ${reason}`,
+      ageHours: null,
+      isStale: false,
+    };
   }
   const age = now - entry.timestamp;
   const freshness = age >= 0 ? googleTrendsFreshness(age) : { ageHours: null, isStale: false };
@@ -45,6 +59,7 @@ export function readGoogleTrendsOverlay(now: number): GoogleTrendsOverlayBody {
     note,
     ageHours: freshness.ageHours,
     isStale: freshness.isStale,
+    unavailableReason: null,
   };
 }
 
