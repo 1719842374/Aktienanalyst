@@ -22,6 +22,7 @@ import { yahooFetch, indicatorWarmupFromDate, type DailyBar } from "./history-fa
 import { currencyFromTickerSuffix, minorUnitInfo } from "../shared/listing-units";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+export const YAHOO_BROWSER_UA = UA;
 export const YAHOO_CACHE_TTL_MS = Number(process.env.YAHOO_CACHE_TTL_MS ?? 15 * 60 * 1000);
 const YAHOO_FAIL_TTL_MS = 2 * 60 * 1000;
 const YAHOO_MIN_INTERVAL_MS = Number(process.env.YAHOO_MIN_INTERVAL_MS ?? 500);
@@ -585,4 +586,53 @@ export async function applyTimeseriesFundamentals(snap: YahooSnapshot | null): P
     fundamentalsSource: YAHOO_TIMESERIES_SOURCE,
     timeseriesAsOf: { shares: f.asOf.shares, eps: f.asOf.eps },
   };
+}
+
+/** quoteSummary-Modulblock (result[0]). null bei fehlendem Crumb oder HTTP-Fehler, wirft nie. */
+export async function fetchYahooQuoteSummaryResult(symbol: string, modules: readonly string[]): Promise<Record<string, unknown> | null> {
+  const sym = String(symbol || "").trim();
+  if (!sym || modules.length === 0) return null;
+  const auth = await getCrumb(sym);
+  if (!auth) return null;
+  try {
+    await spaceYahooCall();
+    const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(sym)}?modules=${encodeURIComponent(modules.join(","))}&crumb=${encodeURIComponent(auth.crumb)}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": UA, Cookie: auth.cookie, Accept: "application/json" } });
+    if (resp.status === 401) _crumb = null;
+    if (!resp.ok) {
+      yahooDiag(sym, "quoteSummary", resp.status, `module ${modules.join(",")} nicht ok${statusHint(resp.status)}: ${await bodySnippet(resp)}`, [auth.cookie, auth.crumb]);
+      return null;
+    }
+    const json: any = await resp.json();
+    const result = json?.quoteSummary?.result?.[0];
+    if (!result || typeof result !== "object") {
+      yahooDiag(sym, "quoteSummary", resp.status, "result leer", [auth.cookie, auth.crumb]);
+      return null;
+    }
+    yahooDiag(sym, "quoteSummary", resp.status, `ok module ${modules.join(",")}`, [auth.cookie, auth.crumb]);
+    return result as Record<string, unknown>;
+  } catch (err) {
+    yahooDiag(sym, "quoteSummary", null, `Fehler: ${errText(err)}`);
+    return null;
+  }
+}
+
+/** fundamentals-timeseries ohne Crumb. null bei HTTP- oder Netzfehler, wirft nie. */
+export async function fetchYahooTimeseriesDocument(symbol: string, types: readonly string[], period1Sec: number, period2Sec: number): Promise<unknown | null> {
+  const sym = String(symbol || "").trim();
+  if (!sym || types.length === 0) return null;
+  try {
+    await spaceYahooCall();
+    const url = `https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(sym)}?type=${encodeURIComponent(types.join(","))}&period1=${Math.floor(period1Sec)}&period2=${Math.floor(period2Sec)}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": UA, Accept: "application/json" } });
+    if (!resp.ok) {
+      yahooDiag(sym, "timeseries", resp.status, `Jahresreihe nicht ok${statusHint(resp.status)}: ${await bodySnippet(resp)}`);
+      return null;
+    }
+    yahooDiag(sym, "timeseries", resp.status, `ok types ${types.length}`);
+    return await resp.json();
+  } catch (err) {
+    yahooDiag(sym, "timeseries", null, `Fehler: ${errText(err)}`);
+    return null;
+  }
 }

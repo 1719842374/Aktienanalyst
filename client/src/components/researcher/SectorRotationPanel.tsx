@@ -23,6 +23,7 @@ import {
 } from "recharts";
 import { apiRequest } from "@/lib/queryClient";
 import { useSectorPeDisplay } from "@/lib/useSectorPeDisplay";
+import type { SectorPeDisplay } from "@shared/schema";
 
 type Valuation = "Teuer" | "Angemessen" | "Attraktiv" | "n.v.";
 type CyclePhase = "Frühzyklus" | "Hochkonjunktur" | "Spätkonjunktur" | "Abschwung";
@@ -583,8 +584,8 @@ export function SectorRotationPanel() {
   const [data, setData] = useState<SectorRotationPayload | null>(null);
   const sectorPe = useSectorPeDisplay();
   const peById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const row of sectorPe.data?.sectors ?? []) map.set(row.id, row.text);
+    const map = new Map<string, SectorPeDisplay>();
+    for (const row of sectorPe.data?.sectors ?? []) map.set(row.id, row);
     return map;
   }, [sectorPe.data]);
   const [error, setError] = useState<string | null>(null);
@@ -848,7 +849,10 @@ export function SectorRotationPanel() {
                         ? "Sektor-KGV wird geladen …"
                         : sectorPe.isError
                           ? "n/a — Sektor-KGV nicht geladen"
-                          : (peById.get(s.id) ?? "n/a — kein Sektor-KGV in der Antwort")}
+                          : (peById.get(s.id)?.text ?? "n/a — kein Sektor-KGV in der Antwort")}
+                      {peById.get(s.id)?.sourceLabel && (
+                        <div data-testid={`sector-pe-source-${s.id}`}>Quelle: {peById.get(s.id)?.sourceLabel}</div>
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-3"><AttrCell row={s} /></td>
