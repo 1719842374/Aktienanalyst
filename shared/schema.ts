@@ -1107,3 +1107,11 @@ export interface BtcLiquidityResponse {
   fetchedAt: string;
   sources: { walcl: string; bills: string; otherMarketable: string; dgs10: string };
 }
+
+/** Future_9 Makro-Gewichte. Nicht shared/recession-adaptive.ts (das sind die Schwellen aus #375). */
+export type {
+  RecessionAdaptiveView,
+  RecessionAdaptiveLayerView,
+  RecessionAdaptiveShadow,
+  WeightPrior,
+} from "./recession-adaptive-weights-view";

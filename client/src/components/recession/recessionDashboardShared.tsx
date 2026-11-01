@@ -1,5 +1,6 @@
 // Types matching the backend response
 import type { RegionalCatalogs } from "@shared/recession-regions";
+import type { RecessionAdaptiveView } from "@shared/recession-adaptive-weights-view";
 
 export interface IndicatorResult {
   name: string;
@@ -128,6 +129,8 @@ export interface RecessionAnalysis {
   bridge?: RecessionBridgeView;
   sahmRegions?: SahmRegionBoard[];
   regions?: RegionalCatalogs;
+  /** Future_9. Zusatzobjekt. Die Untergruppen-P bleibt die Live-P. */
+  adaptiveWeights?: RecessionAdaptiveView;
 }
 
 /** „Stand“ only when the response day is this UTC day. */

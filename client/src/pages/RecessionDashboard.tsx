@@ -17,6 +17,7 @@ import { RecessionMarketChartsSection } from "@/components/recession/RecessionMa
 import { InventoryDemandGapCard } from "@/components/recession/InventoryDemandGapCard";
 import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
 import { useLocation } from "wouter";
+import { RecessionAdaptiveWeightsCard } from "@/components/recession/RecessionAdaptiveWeightsCard";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
 import { showRecessionStand, type RecessionAnalysis } from "@/components/recession/recessionDashboardShared";
 import { RegionalCatalogSection } from "@/components/recession/RegionalCatalogSection";
@@ -182,6 +183,7 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
       <SectionCard number={7} title="Prozentschätzungen">
         <ProbabilityEstimates subgroups={data.subgroups} />
       </SectionCard>
+      <RecessionAdaptiveWeightsCard view={data.adaptiveWeights} />
       {regions && (
         <SectionCard number={8} title="Regionale Kataloge (US / Eurozone / Japan)">
           <RegionalCatalogSection catalogs={regions} />

@@ -30,6 +30,9 @@ import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlot
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
 import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
 import { BAA10Y_SERIES_ID, fredCsvUrl, latestFredCsvValue } from "./fred-csv";
+import { loadRecessionAdaptiveView, unavailableAdaptiveView } from "./recession-adaptive";
+import { RECESSION_AI_WEIGHT_TIMEOUT_MS } from "./recession-adaptive-ai";
+import type { RecessionAdaptiveView } from "../shared/recession-adaptive-weights-view";
 
 // ============================================================
 // Generic Data Helpers
@@ -617,6 +620,11 @@ export interface RecessionAnalysis {
   /** US card plus scored Eurozone and Japan unemployment S. Not in the 17-indicator net. */
   sahmRegions: SahmRegionBoard[];
   regions: RegionalCatalogs;
+  /**
+   * Future_9. Zusatzobjekt. Die Untergruppen-P oben bleibt die Live-P.
+   * Fehlt, wenn die Schicht nicht gebaut werden konnte.
+   */
+  adaptiveWeights?: RecessionAdaptiveView;
 }
 
 function clampAndRound(p: number): number {
@@ -1644,6 +1652,38 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   console.log("[RECESSION] Analysis complete.");
   console.log(`[RECESSION] Probabilities: Rez-3M=${pCoincident}%, Rez-6M=${pLeading}%, Rez-12M=${pRezFull}%, Korr-3-6M=${pSentiment}%, Korr-12M=${pCorrFull}%`);
 
+  // Live-P steht schon in den Untergruppen. Dieser Await ist der KI-Abruf
+  // und endet nach RECESSION_AI_WEIGHT_TIMEOUT_MS mit n/a und den quantitativen Gewichten.
+  const adaptiveWeights = await loadRecessionAdaptiveView({
+    indicators,
+    groups: [
+      { name: "recession_coincident", label: "Rezession Coincident", indicators: coincidentInds, nyFed: null, liveProbability: pCoincident },
+      { name: "recession_leading", label: "Rezession Leading", indicators: [...coincidentInds, ...leadingInds], nyFed: null, liveProbability: pLeading },
+      {
+        name: "recession_full",
+        label: "Rezession Vollständig",
+        indicators: [...coincidentInds, ...leadingInds, ...fullInds],
+        nyFed: Number.isFinite(nyFedValue) ? nyFedValue : null,
+        liveProbability: pRezFull,
+      },
+      { name: "correction_sentiment", label: "Korrektur Sentiment", indicators: sentimentInds, nyFed: null, liveProbability: pSentiment },
+      { name: "correction_full", label: "Korrektur Vollständig", indicators: [...sentimentInds, ...valuationInds], nyFed: null, liveProbability: pCorrFull },
+    ],
+    zReal: bridge.rates.zReal,
+    rateTight: bridge.flags.rateTight,
+    timeoutMs: RECESSION_AI_WEIGHT_TIMEOUT_MS,
+    probability: (name, net, max, nyFed) => {
+      if (!(max > 0) || !Number.isFinite(net)) return null;
+      if (name === "recession_full") return anchoredRecessionProbability(net, max, nyFed).probability;
+      return probabilityFromNet(net, max);
+    },
+  }).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[RECESSION] Adaptive Gewichte nicht gebaut: ${message.slice(0, 200)}`);
+    return unavailableAdaptiveView(`n/a — adaptive Schicht nicht gebaut (${message.slice(0, 120)}), Live-P unverändert`);
+  });
+  console.log(`[RECESSION] Adaptive Gewichte Quelle=${adaptiveWeights?.source ?? "n/a"}, Live-P unverändert`);
+
   return {
     date: today,
     asOf: recessionAsOf(),
@@ -1681,6 +1721,7 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
         },
       },
     }),
+    ...(adaptiveWeights ? { adaptiveWeights } : {}),
   };
 }
 
