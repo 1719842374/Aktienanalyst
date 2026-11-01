@@ -561,6 +561,7 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
             </div>
           ))}
           <a href="#/gold" className="inline-block text-violet-300 underline" data-testid="geo-gold-dashboard">Gold-Dashboard</a>
+          <div className="text-[10px] text-foreground/40 leading-relaxed">Quelle: {goldData.source}.</div>
           <div className="text-[10px] text-foreground/40">{goldData.attribution}</div>
         </div>
       )}
