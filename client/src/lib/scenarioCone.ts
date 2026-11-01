@@ -3,8 +3,7 @@
  * Reine Anzeige — keine Bewertungs- oder Score-Rechnung, kein Import aus der Score-Pipeline.
  *
  * Kegelbreite: σ_daily aus den letzten CONE_PARAMS.volWindowDays Schlusskursen,
- * Band = last · exp(z_p · σ_daily · √t) für P10 / P50 / P90.
- * z_p = Φ⁻¹(Perzentil), nicht als feste Schwelle im Pfad.
+ * Band = last · exp(z · σ_daily · √t). z steht in CONE_PARAMS.quantiles (P10/P50/P90).
  *
  * Endpunkte Bull / Base / Bear sind Marker. Wahrscheinlichkeiten nur, wenn die
  * Response sie als Szenario-PoS trägt. shared/schema.ts hat kein solches Feld
@@ -13,35 +12,40 @@
  * Die Platzhalter 50/30/20 werden nicht eingesetzt.
  *
  * Herkunft der Fenster: Philip 01.11.2026 12:36 — Schwellen aus den Daten
- * (Median der Katalysator-Horizonte, Perzentil → z), Gewichte/Fenster nur
- * als benannte Konstanten. volWindowDays = ein Quartal Handelstage.
- * 252 Tage = dieselbe Börsenjahr-Konvention wie die GBM in calculations.ts.
+ * (Median der Katalysator-Horizonte), Gewichte/Fenster nur als benannte
+ * Konstanten. volWindowDays = 63 = ein Quartal des Börsenjahrs.
+ * tradingDaysPerYear = dieselbe 252-Tage-Konvention wie die GBM in calculations.ts.
  */
 
 export const CONE_PARAMS = {
   /** Börsenjahr, identisch zu Δt = 1/252 in client/src/lib/calculations.ts. */
   tradingDaysPerYear: 252,
   monthsPerYear: 12,
-  /** volWindowDays = tradingDaysPerYear / quartersPerYear (ein Quartal). */
+  /** Nenner für das Quartalsfenster: volWindowDays = tradingDaysPerYear / quartersPerYear. */
   quartersPerYear: 4,
-  volWindowDays: 252 / 4,
+  /**
+   * σ-Fenster in Handelstagen. 63 = ein Quartal (tradingDaysPerYear / quartersPerYear).
+   * Der Band-Pfad liest nur diesen Namen.
+   */
+  volWindowDays: 63,
   /**
    * g* und Expected Damage stehen in der Analyse-Response in Prozent
    * (impliedGStar, risks[].expectedDamage), nicht als Dezimal.
    */
   percent: 100,
-  /** Perzentile der Lognormal-Bänder. z kommt aus Φ⁻¹, nicht aus einer Fixschwelle. */
-  bands: ["P10", "P50", "P90"] as const,
+  /**
+   * Quantile der Kegelbänder. z = Φ⁻¹(Perzentil/100), Standardnormalverteilung.
+   * P10 −1.2815515655446004, P50 0, P90 +1.2815515655446004.
+   * Der Band-Pfad liest nur diese z-Parameter.
+   */
+  quantiles: {
+    P10: { percentile: 10, z: -1.2815515655446004 },
+    P50: { percentile: 50, z: 0 },
+    P90: { percentile: 90, z: 1.2815515655446004 },
+  },
 } as const;
 
-export type ConeBand = (typeof CONE_PARAMS.bands)[number];
-
-/** Perzentil zu Band-Namen. Nur diese Tabelle, der Pfad rechnet mit Φ⁻¹. */
-export const CONE_BAND_PERCENT: Record<ConeBand, number> = {
-  P10: 10,
-  P50: 50,
-  P90: 90,
-};
+export type ConeBand = keyof typeof CONE_PARAMS.quantiles;
 
 export const CONE_STYLE = {
   band: "#64748b",
@@ -61,52 +65,9 @@ const MARKER_NAME: Record<ScenarioMarkerId, string> = {
   bear: "Bear",
 };
 
-/**
- * Koeffizienten der Acklam-Approximation für Φ⁻¹.
- * Das sind die Konstanten der Näherung, keine Szenario-Schwellen.
- * Quelle: Peter J. Acklam, „An algorithm for computing the inverse normal“.
- */
-const INV_NORM_A = [
-  -3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2,
-  1.38357751867269e2, -3.066479806614716e1, 2.506628277459239,
-] as const;
-const INV_NORM_B = [
-  -5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2,
-  6.680131188771972e1, -1.328068155288572e1,
-] as const;
-const INV_NORM_C = [
-  -7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838,
-  -2.549732539343734, 4.374664141464968, 2.938163982698783,
-] as const;
-const INV_NORM_D = [
-  7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416,
-] as const;
-const INV_NORM_PLOW = 0.02425;
-
-/** Φ⁻¹(p). p = 0.5 → exakt 0 (P50-Band = last · exp(0)). */
-export function inverseNorm(p: number): number {
-  if (!Number.isFinite(p) || p <= 0 || p >= 1) return NaN;
-  if (p === 0.5) return 0;
-  const plow = INV_NORM_PLOW;
-  if (p < plow) {
-    const q = Math.sqrt(-2 * Math.log(p));
-    return (((((INV_NORM_C[0] * q + INV_NORM_C[1]) * q + INV_NORM_C[2]) * q + INV_NORM_C[3]) * q + INV_NORM_C[4]) * q + INV_NORM_C[5])
-      / ((((INV_NORM_D[0] * q + INV_NORM_D[1]) * q + INV_NORM_D[2]) * q + INV_NORM_D[3]) * q + 1);
-  }
-  if (p > 1 - plow) {
-    const q = Math.sqrt(-2 * Math.log(1 - p));
-    return -(((((INV_NORM_C[0] * q + INV_NORM_C[1]) * q + INV_NORM_C[2]) * q + INV_NORM_C[3]) * q + INV_NORM_C[4]) * q + INV_NORM_C[5])
-      / ((((INV_NORM_D[0] * q + INV_NORM_D[1]) * q + INV_NORM_D[2]) * q + INV_NORM_D[3]) * q + 1);
-  }
-  const q = p - 0.5;
-  const r = q * q;
-  return (((((INV_NORM_A[0] * r + INV_NORM_A[1]) * r + INV_NORM_A[2]) * r + INV_NORM_A[3]) * r + INV_NORM_A[4]) * r + INV_NORM_A[5]) * q
-    / (((((INV_NORM_B[0] * r + INV_NORM_B[1]) * r + INV_NORM_B[2]) * r + INV_NORM_B[3]) * r + INV_NORM_B[4]) * r + 1);
-}
-
+/** z des Quantils aus CONE_PARAMS. Kein zweiter Rechenweg. */
 export function bandZ(band: ConeBand): number {
-  if (band === "P50") return 0;
-  return inverseNorm(CONE_BAND_PERCENT[band] / CONE_PARAMS.percent);
+  return CONE_PARAMS.quantiles[band].z;
 }
 
 /** last · exp(z · σ_daily · √t). t in Handelstagen, σ daily (nicht annualisiert). */

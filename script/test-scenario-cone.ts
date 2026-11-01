@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   CONE_PARAMS, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
-  coneBandPrice, coneDomainValues, conePlotScale, horizonTradingDays, inverseNorm,
+  coneBandPrice, coneDomainValues, conePlotScale, horizonTradingDays,
   realizedSigmaDaily, scenarioConeFromAnalysis, type ScenarioConeInput,
 } from "../client/src/lib/scenarioCone";
 
@@ -36,11 +36,18 @@ function input(over: Partial<ScenarioConeInput> & Pick<ScenarioConeInput, "close
   };
 }
 
-// Φ⁻¹: P50 exakt 0, P10/P90 symmetrisch. Keine feste 1.28-Schwelle im Band.
+// Fenster 63 und Quantil-z nur aus CONE_PARAMS. P50 = 0, P10 = −P90.
+assert.equal(CONE_PARAMS.volWindowDays, 63);
+assert.equal(CONE_PARAMS.volWindowDays, CONE_PARAMS.tradingDaysPerYear / CONE_PARAMS.quartersPerYear);
+assert.equal(CONE_PARAMS.quantiles.P10.percentile, 10);
+assert.equal(CONE_PARAMS.quantiles.P50.percentile, 50);
+assert.equal(CONE_PARAMS.quantiles.P90.percentile, 90);
+assert.equal(bandZ("P10"), CONE_PARAMS.quantiles.P10.z);
+assert.equal(bandZ("P50"), CONE_PARAMS.quantiles.P50.z);
+assert.equal(bandZ("P90"), CONE_PARAMS.quantiles.P90.z);
 assert.equal(bandZ("P50"), 0);
-assert.equal(inverseNorm(0.5), 0);
-assert.ok(Math.abs(bandZ("P90") - 1.2815515655446004) < 1e-6, String(bandZ("P90")));
-assert.ok(Math.abs(bandZ("P10") + bandZ("P90")) < 1e-9);
+assert.equal(bandZ("P10"), -bandZ("P90"));
+assert.equal(bandZ("P90"), 1.2815515655446004);
 
 // σ = 0 → Band klebt auf dem letzten Close, für jeden Horizont.
 {
@@ -281,17 +288,26 @@ for (const [ticker, file] of [["SAP.DE", "script/fixtures/yahoo-chart-SAP.DE.jso
   assert.doesNotMatch(lib, /probabilityBull:\s*0\.\d|probabilityBase:\s*0\.\d|probabilityBear:\s*0\.\d/);
   const ui = read("client/src/components/sections/TechnicalChart.tsx");
   assert.match(ui, /const \[showCone, setShowCone\] = useState\(false\)/);
+  assert.match(ui, /const \[showDividend, setShowDividend\] = useState\(false\)/);
   assert.match(ui, /setShowCone\(false\); \}, \[data\.ticker\]\)/);
   assert.match(ui, /if \(!showCone\) return null/);
   assert.match(ui, /data-testid="button-scenario-cone"/);
+  assert.match(ui, /data-testid="button-dividend"/);
   assert.match(ui, /widthScale=\{coneScale\}/);
   assert.match(ui, /\{cone && \(/);
   assert.match(ui, /return cone \? attachConeSeries\(base, cone\) : base/);
+  assert.match(ui, /const divBand = dividend \? attractiveYieldBand\(divAxisMax\) : null/);
+  assert.match(ui, /\{dividend && divBand && \(/);
+  assert.match(ui, /yAxisId="div" y1=\{divBand\.y1\} y2=\{divBand\.y2\}/);
   assert.doesNotMatch(ui, /overallScore|applyBiasFix/);
   const frame = read("client/src/components/sections/TaPlotFrame.tsx");
   assert.match(frame, /widthScale > 1 \? `calc\(\$\{base\} \* \$\{widthScale\}\)` : base/);
-  // Dividenden-Import von #341 bleibt die eine Zeile — kein Vermischen mit dem Kegel.
-  assert.match(ui, /import \{ dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, type DividendHistoryResponse, type DividendOverlaySeries \} from "@shared\/dividends";/);
+  // #341-Dividenden-Import bleibt, der Kegel hängt nicht an dieser Zeile.
+  assert.match(ui, /attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT/);
+  assert.match(lib, /volWindowDays: 63/);
+  assert.match(lib, /P10: \{ percentile: 10, z: -1\.2815515655446004 \}/);
+  assert.match(lib, /P90: \{ percentile: 90, z: 1\.2815515655446004 \}/);
+  assert.doesNotMatch(lib, /inverseNorm|INV_NORM|CONE_BAND_PERCENT/);
 }
 
 console.log("test-scenario-cone: OK");
