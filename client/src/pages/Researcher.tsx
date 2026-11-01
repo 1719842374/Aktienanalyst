@@ -372,7 +372,7 @@ export default function Researcher() {
           </div>
         )}
 
-        {activeTab === "capex" && <GeoMapPanel />}
+        {activeTab === "capex" && <GeoMapPanel onOpenSectorOpportunity={() => setActiveTab("sectors")} />}
 
         {!currentData && !loadingForCurrentView && !error && activeTab !== "sectors" && (
           <EmptyState />
