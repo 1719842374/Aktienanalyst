@@ -88,6 +88,7 @@ import { fetchSecRpo } from "./sec-segments";
 import { filterAndSelectPeers } from "./news-peers";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
+import { registerRecessionAdaptiveRoute } from "./recession-adaptive-route";
 import { registerRegressionScanRoutes } from "./regression-scan";
 import { thesisStrengthCache, catalystSignature } from "./thesis-strength-cache";
 import { callLLMJson } from "./llm-openrouter";
@@ -279,6 +280,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // 6. /api/analyze-recession — Rezessions-Dashboard (17 Indikatoren)
   registerRecessionRoutes(app);
+  // 6b. GET /api/analyze-recession/adaptive — Future_7/8, nur Zusatzobjekt, kein Score.
+  registerRecessionAdaptiveRoute(app);
 
   // 7. /api/regression-scan — Regressions-Scanner
   registerRegressionScanRoutes(app);
