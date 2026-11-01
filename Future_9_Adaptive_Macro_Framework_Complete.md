@@ -90,6 +90,8 @@ function calculateAdaptiveWeights(habitat, signals) {
 }
 ```
 
+Die festen Policy-Gewichte in diesem Schema (Basis 1,8 / 1,2 / 1,0 / 1,0 / 0,8 / 1,5 / 1,3, Habitat ×1,3 / ×1,2 / ×1,2, Konzentration ×1,15, Stärke 0,7 + Stärke × 0,6, KI-Band ±25 %) sind aktuell noch nicht datengetrieben. Ob ein Habitat gilt, kommt aus den Daten. Die Faktoren selbst sind noch keine Schätzung aus einer Trefferquote.
+
 ---
 
 ## 5. Managing-Score (Korrektur)

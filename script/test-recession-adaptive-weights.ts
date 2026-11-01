@@ -40,6 +40,7 @@ import {
   capeReading,
   vixReading,
 } from "../server/recession";
+import { RECESSION_FALLBACK_DATA } from "../client/src/lib/recessionFallbackData";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail?: string) {
@@ -266,6 +267,8 @@ console.log("\nHistorische Validierung 2000 / 2008 / 2022 — P alt gegen P neu"
   ];
   console.log("  Korrekturbuch, Dokumentationsmitten aus Future_7. Habitat und Konzentration: n/a, Aufschlag nicht angewendet.");
   console.log("  Jahr | P alt roh | P alt | P neu roh | P neu | belegt | fehlt");
+  const table: string[] = [];
+  const cell = (value: number | null) => value == null ? "n/a" : String(value);
   for (const year of years) {
     const weights = calculateAdaptiveWeights({
       regime: null,
@@ -276,6 +279,8 @@ console.log("\nHistorische Validierung 2000 / 2008 / 2022 — P alt gegen P neu"
     const pAlt = anchoredRecessionProbability(alt.net, alt.max, null);
     const pNeu = anchoredRecessionProbability(neu.net, neu.max, null);
     console.log(`  ${year.year} | ${pAlt.formulaPct.toFixed(1)} | ${pAlt.probability} | ${pNeu.formulaPct.toFixed(1)} | ${pNeu.probability} | ${alt.used.join(", ")} | ${year.missing}`);
+    table.push(`  ${year.year} | Korrektur 12M | ${pAlt.probability} | ${pAlt.probability} | nicht umgeschaltet | ${pNeu.probability} | roh ${pAlt.formulaPct.toFixed(1)} → ${pNeu.formulaPct.toFixed(1)} | ${year.missing}`);
+    table.push(`  ${year.year} | Rezession 12M | n/a | n/a | nicht umgeschaltet | n/a | n/a — Future_7 ohne vollständige Rezessionsreihe`);
     check(`${year.year} P alt und P neu sind gesetzt`, Number.isFinite(pAlt.probability) && Number.isFinite(pNeu.probability));
     check(`${year.year} gerundet auf 5 und nicht 0`, pAlt.probability % 5 === 0 && pNeu.probability % 5 === 0 && pAlt.probability !== 0 && pNeu.probability !== 0);
     check(`${year.year} fehlt-Text ist n/a`, year.missing.includes("n/a —"));
@@ -285,6 +290,51 @@ console.log("\nHistorische Validierung 2000 / 2008 / 2022 — P alt gegen P neu"
       check(`${year.year} zwei Dimensionen, Rohwerte verschieden`, Math.abs(pAlt.formulaPct - pNeu.formulaPct) > 0.1, `${pAlt.formulaPct} vs ${pNeu.formulaPct}`);
     }
   }
+
+  const fallback = RECESSION_FALLBACK_DATA as {
+    asOf?: string;
+    indicators: AdaptiveIndicator[];
+    subgroups: Array<{ name: string; label: string; probability: number; indicators: string[]; nyFedAnchor?: number }>;
+    nyFedValue: number | null;
+  };
+  const byName = new Map(fallback.indicators.map(item => [item.name, item]));
+  const view = await loadRecessionAdaptiveView({
+    indicators: fallback.indicators,
+    groups: fallback.subgroups.map(group => ({
+      name: group.name,
+      label: group.label,
+      indicators: group.indicators.map(name => byName.get(name)).filter((item): item is AdaptiveIndicator => item != null),
+      nyFed: group.name === "recession_full" ? fallback.nyFedValue : null,
+      liveProbability: group.probability,
+    })),
+    zReal: null,
+    rateTight: false,
+    timeoutMs: 20,
+    suggest: async (args) => ({
+      source: "quantitativ",
+      weights: args.currentWeights,
+      reason: "quantitativ, kein KI-Abruf",
+      riskFlag: null,
+      cached: false,
+    }),
+    probability: (name, net, max, nyFed) => {
+      if (!(max > 0) || !Number.isFinite(net)) return null;
+      if (name === "recession_full") return anchoredRecessionProbability(net, max, nyFed).probability;
+      return anchoredRecessionProbability(net, max, null).probability;
+    },
+  });
+  for (const group of fallback.subgroups) {
+    const shadow = view.shadow.find(item => item.name === group.name);
+    const liveOld = group.probability;
+    const shadowOld = shadow?.pAlt ?? null;
+    const shadowNew = shadow?.pNeu ?? null;
+    check(`${group.name} Schatten-P alt kopiert die Live-P`, shadowOld === liveOld, `${shadowOld} / ${liveOld}`);
+    table.push(`  Fallback ${fallback.asOf ?? "ohne Datum"} | ${group.label} | ${cell(liveOld)} | ${cell(shadowOld)} | nicht umgeschaltet | ${cell(shadowNew)} | ${shadow?.detail ?? "n/a — keine Schattenzeile"}`);
+  }
+  console.log("\nVorher/Nachher: Live-P und Schatten-P, alte und adaptive Gewichte");
+  console.log("  Zeitpunkt | Buch | Live-P alte Gewichte | Schatten-P alte Gewichte | Live-P adaptive Gewichte | Schatten-P adaptive Gewichte | Hinweis");
+  for (const line of table) console.log(line);
+  check("Tabelle enthält 2000, 2008, 2022 und den Fallback-Stand", ["2000", "2008", "2022", "Fallback"].every(token => table.some(line => line.includes(token))));
 }
 
 console.log("\nKarte");

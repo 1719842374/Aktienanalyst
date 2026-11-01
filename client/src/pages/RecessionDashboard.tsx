@@ -15,9 +15,9 @@ import { DollarReserveShareCard } from "@/components/recession/DollarReserveShar
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
 import { InventoryDemandGapCard } from "@/components/recession/InventoryDemandGapCard";
-import { RecessionAdaptiveWeightsCard } from "@/components/recession/RecessionAdaptiveWeightsCard";
 import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
 import { useLocation } from "wouter";
+import { RecessionAdaptiveWeightsCard } from "@/components/recession/RecessionAdaptiveWeightsCard";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
 import { showRecessionStand, type RecessionAnalysis } from "@/components/recession/recessionDashboardShared";
 import { RegionalCatalogSection } from "@/components/recession/RegionalCatalogSection";

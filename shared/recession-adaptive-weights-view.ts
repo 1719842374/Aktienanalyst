@@ -28,7 +28,7 @@ export interface WeightPrior {
   reason: string;
 }
 
-export const PRIOR_KIND_LABEL = "Prior (nicht datenbasiert)" as const;
+export const PRIOR_KIND_LABEL = "aktuell noch nicht datengetrieben" as const;
 
 export interface RecessionAdaptiveLayerView {
   id: RecessionMacroDimension;
