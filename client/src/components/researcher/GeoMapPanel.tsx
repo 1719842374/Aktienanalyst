@@ -159,6 +159,37 @@ function goldBubbleTitle(c: GoldMapCountry): string {
   return bits.length > 0 ? `${c.name}: ${bits.join(" · ")}` : c.name;
 }
 
+function GoldBubbles({ bubbles, percentiles }: { bubbles: GoldMapCountry[]; percentiles: Map<string, number | null> }) {
+  const { projection } = useMapContext();
+  const placed = useMemo(() => {
+    const points: MarkerPixel[] = [];
+    for (const country of bubbles) {
+      const xy = projection([country.lon, country.lat]);
+      if (!xy) continue;
+      points.push({ id: country.iso2, x: xy[0], y: xy[1], radiusPx: radiusForPercentile(percentiles.get(country.iso2) ?? null) });
+    }
+    const offset = new Map(spreadMarkerOffsets(points).map(item => [item.id, item]));
+    return bubbles.map(country => ({ country, dx: offset.get(country.iso2)?.dx ?? 0, dy: offset.get(country.iso2)?.dy ?? 0 }));
+  }, [bubbles, percentiles, projection]);
+  return (
+    <>
+      {placed.map(({ country, dx, dy }) => {
+        const pct = percentiles.get(country.iso2) ?? null;
+        return (
+          <Marker key={country.iso2} coordinates={[country.lon, country.lat]}>
+            <g transform={`translate(${dx}, ${dy})`}>
+              <circle r={radiusForPercentile(pct)} fill={colorForPercentile(pct, "capex")} fillOpacity={0.85}
+                data-testid={`geo-gold-bubble-${country.iso2}`}>
+                <title>{goldBubbleTitle(country)}</title>
+              </circle>
+            </g>
+          </Marker>
+        );
+      })}
+    </>
+  );
+}
+
 export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportunity?: () => void } = {}) {
   const [data, setData] = useState<MapPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -535,17 +566,7 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
                     <Geography key={geo.rsmKey} geography={geo} fill="rgba(148,163,184,0.12)" stroke="rgba(148,163,184,0.25)" strokeWidth={0.4} className="outline-none" />
                   ))}
                 </Geographies>
-                {goldBubbles.map(c => {
-                  const pct = goldPercentiles.get(c.iso2) ?? null;
-                  return (
-                    <Marker key={c.iso2} coordinates={[c.lon, c.lat]}>
-                      <circle r={radiusForPercentile(pct)} fill={colorForPercentile(pct, "capex")} fillOpacity={0.85}
-                        data-testid={`geo-gold-bubble-${c.iso2}`}>
-                        <title>{goldBubbleTitle(c)}</title>
-                      </circle>
-                    </Marker>
-                  );
-                })}
+                <GoldBubbles bubbles={goldBubbles} percentiles={goldPercentiles} />
               </ComposableMap>
               <div className="px-2 pb-1.5 text-[10px] text-foreground/40">Größe und Farbe = Perzentil des Anteils am Weltvolumen.</div>
             </div>
@@ -561,7 +582,7 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
             </div>
           ))}
           <a href="#/gold" className="inline-block text-violet-300 underline" data-testid="geo-gold-dashboard">Gold-Dashboard</a>
-          <div className="text-[10px] text-foreground/40 leading-relaxed">Quelle: {goldData.source}.</div>
+          <div className="text-[10px] text-foreground/40 leading-relaxed">Quelle: {goldData.source}</div>
           <div className="text-[10px] text-foreground/40">{goldData.attribution}</div>
         </div>
       )}

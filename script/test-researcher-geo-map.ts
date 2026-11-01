@@ -626,4 +626,28 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
   }
 }
 
+{
+  const { loadGoldMapProduction } = await import("../server/gold-mine-production");
+  const { feature } = await import("topojson-client");
+  const { geoContains } = await import("d3-geo");
+  const atlas = JSON.parse(readFileSync("node_modules/world-atlas/countries-110m.json", "utf8"));
+  const collection = feature(atlas, atlas.objects.countries);
+  const byId = new Map(collection.features.map((entry: { id?: string | number; geometry: unknown }) => [String(entry.id).padStart(3, "0"), entry]));
+  const loaded = loadGoldMapProduction();
+  assert.ok(loaded);
+  const countryRows = JSON.parse(readFileSync("server/data/gold-mine-production.json", "utf8")).rows.filter((row: { role?: string }) => row.role === "country");
+  assert.equal(loaded.placements.length, countryRows.length);
+  for (const place of loaded.placements) {
+    assert.ok(place.lon >= -180 && place.lon <= 180, `${place.iso2} lon ${place.lon}`);
+    assert.ok(place.lat >= -90 && place.lat <= 90, `${place.iso2} lat ${place.lat}`);
+    const entry = byId.get(place.isoNum.padStart(3, "0"));
+    assert.ok(entry, place.iso2);
+    assert.equal(geoContains(entry, [place.lon, place.lat]), true, `${place.iso2} ${place.lon},${place.lat} liegt nicht im Land`);
+  }
+  const panelSrc = readFileSync("client/src/components/researcher/GeoMapPanel.tsx", "utf8");
+  assert.match(panelSrc, /Quelle: \{goldData\.source\}<\/div>/);
+  assert.doesNotMatch(panelSrc, /goldData\.source\}\./);
+  assert.match(panelSrc, /spreadMarkerOffsets/);
+}
+
 console.log("test-researcher-geo-map: OK");

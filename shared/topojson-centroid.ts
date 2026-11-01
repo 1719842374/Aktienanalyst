@@ -1,8 +1,14 @@
 /**
  * Landesmitte aus einem TopoJSON-Atlas (world-atlas countries-110m).
- * Die Mitte ist der Flächenschwerpunkt des größten Außenrings.
- * Kein fester Koordinatenersatz, wenn die Geometrie fehlt.
+ * Der Punkt ist der sphärische Schwerpunkt (d3.geoCentroid). Liegt er
+ * außerhalb, etwa weil ein Archipel die Mitte ins Meer setzt, gilt der
+ * sphärische Schwerpunkt des größten Teilpolygons, das ihn enthält.
+ * Ein flacher Schwerpunkt über die Datumsgrenze wird nicht verwendet.
+ * Kein fester Koordinatenersatz für ein einzelnes Land.
  */
+import type { Geometry, Polygon, Position } from "geojson";
+import { geoArea, geoCentroid, geoContains } from "d3-geo";
+import { feature } from "topojson-client";
 
 export interface TopologyArcPoint {
   0: number;
@@ -32,136 +38,123 @@ export interface LonLat {
   lat: number;
 }
 
-function decodeArc(topology: CountryTopology, index: number): LonLat[] {
-  const negative = index < 0;
-  const arc = topology.arcs[negative ? ~index : index];
-  if (!arc) return [];
-  const transform = topology.transform;
+function assertNever(value: never): never {
+  throw new Error(`unbehandelte Geometrie: ${String(value)}`);
+}
+
+function wrapLon(lon: number): number {
+  const wrapped = ((lon + 180) % 360 + 360) % 360 - 180;
+  return wrapped === 0 ? 0 : wrapped;
+}
+
+function asLonLat(point: [number, number]): LonLat | null {
+  const lon = wrapLon(point[0]);
+  const lat = point[1];
+  if (!Number.isFinite(lon) || !Number.isFinite(lat) || lat < -90 || lat > 90) return null;
+  return { lon, lat };
+}
+
+function sphericalCentroid(geometry: Geometry): LonLat | null {
+  return asLonLat(geoCentroid(geometry));
+}
+
+function contains(geometry: Geometry, point: LonLat): boolean {
+  return geoContains(geometry, [point.lon, point.lat]);
+}
+
+function polygonsOf(geometry: Geometry): Polygon[] {
+  switch (geometry.type) {
+    case "Polygon":
+      return [geometry];
+    case "MultiPolygon":
+      return geometry.coordinates.map(coordinates => ({ type: "Polygon", coordinates }));
+    case "GeometryCollection":
+      return geometry.geometries.flatMap(polygonsOf);
+    case "Point":
+    case "MultiPoint":
+    case "LineString":
+    case "MultiLineString":
+      return [];
+    default:
+      return assertNever(geometry);
+  }
+}
+
+function meanPosition(points: readonly Position[]): LonLat | null {
   let x = 0;
   let y = 0;
-  const points: LonLat[] = [];
-  for (const pair of arc) {
-    x += pair[0];
-    y += pair[1];
-    if (transform) {
-      points.push({ lon: x * transform.scale[0] + transform.translate[0], lat: y * transform.scale[1] + transform.translate[1] });
-    } else {
-      points.push({ lon: x, lat: y });
-    }
+  let z = 0;
+  for (const point of points) {
+    const lon = point[0] * Math.PI / 180;
+    const lat = point[1] * Math.PI / 180;
+    const cos = Math.cos(lat);
+    x += cos * Math.cos(lon);
+    y += cos * Math.sin(lon);
+    z += Math.sin(lat);
   }
-  if (negative) points.reverse();
-  return points;
+  if (x === 0 && y === 0 && z === 0) return null;
+  return asLonLat([
+    Math.atan2(y, x) * 180 / Math.PI,
+    Math.atan2(z, Math.hypot(x, y)) * 180 / Math.PI,
+  ]);
 }
 
-function stitch(topology: CountryTopology, indexes: readonly number[]): LonLat[] {
-  const line: LonLat[] = [];
-  for (const index of indexes) {
-    const points = decodeArc(topology, index);
-    if (line.length > 0 && points.length > 0) points.shift();
-    line.push(...points);
-  }
-  return line;
-}
-
-function asIndexList(value: unknown): number[] | null {
-  if (!Array.isArray(value) || value.some(item => typeof item !== "number")) return null;
-  return value as number[];
-}
-
-function outerRings(topology: CountryTopology, geometry: TopologyGeometry): LonLat[][] {
-  if (geometry.type === "Polygon") {
-    if (!Array.isArray(geometry.arcs) || geometry.arcs.length === 0) return [];
-    const ring = asIndexList(geometry.arcs[0]);
-    return ring ? [stitch(topology, ring)] : [];
-  }
-  if (geometry.type === "MultiPolygon") {
-    if (!Array.isArray(geometry.arcs)) return [];
-    const rings: LonLat[][] = [];
-    for (const polygon of geometry.arcs) {
-      if (!Array.isArray(polygon) || polygon.length === 0) continue;
-      const ring = asIndexList(polygon[0]);
-      if (ring) rings.push(stitch(topology, ring));
-    }
-    return rings;
-  }
-  if (geometry.type === "GeometryCollection") {
-    return (geometry.geometries ?? []).flatMap(child => outerRings(topology, child));
-  }
-  return [];
-}
-
-function openCount(ring: readonly LonLat[]): number {
-  const n = ring.length;
-  if (n > 1 && ring[0].lon === ring[n - 1].lon && ring[0].lat === ring[n - 1].lat) return n - 1;
-  return n;
-}
-
-function ringArea(ring: readonly LonLat[]): number {
-  const n = openCount(ring);
-  if (n < 3) return 0;
-  let area = 0;
-  for (let i = 0; i < n; i++) {
-    const a = ring[i];
-    const b = ring[(i + 1) % n];
-    area += a.lon * b.lat - b.lon * a.lat;
-  }
-  return area / 2;
-}
-
-function ringCentroid(ring: readonly LonLat[]): LonLat | null {
-  const n = openCount(ring);
-  if (n === 0) return null;
-  let twice = 0;
-  let cx = 0;
-  let cy = 0;
-  for (let i = 0; i < n; i++) {
-    const a = ring[i];
-    const b = ring[(i + 1) % n];
-    const cross = a.lon * b.lat - b.lon * a.lat;
-    twice += cross;
-    cx += (a.lon + b.lon) * cross;
-    cy += (a.lat + b.lat) * cross;
-  }
-  const area = twice / 2;
-  if (area === 0) {
-    let lon = 0;
-    let lat = 0;
-    for (let i = 0; i < n; i++) {
-      lon += ring[i].lon;
-      lat += ring[i].lat;
-    }
-    return { lon: lon / n, lat: lat / n };
-  }
-  return { lon: cx / (3 * twice), lat: cy / (3 * twice) };
-}
-
-function largestRingCentroid(rings: readonly LonLat[][]): LonLat | null {
-  let best: LonLat[] | null = null;
+/** Schwerpunkt eines Dreiecks im Ring, das im Land liegt. Größte Kugelfläche gewinnt. */
+function interiorPoint(polygon: Polygon, country: Geometry): LonLat | null {
+  const ring = polygon.coordinates[0];
+  if (!ring || ring.length < 3) return null;
+  const closed = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1];
+  const n = closed ? ring.length - 1 : ring.length;
+  if (n < 3) return null;
+  let best: LonLat | null = null;
   let bestArea = 0;
   let seen = false;
-  for (const ring of rings) {
-    const area = Math.abs(ringArea(ring));
+  for (let i = 0; i < n; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % n];
+    const c = ring[(i + 2) % n];
+    const mean = meanPosition([a, b, c]);
+    if (!mean || !contains(country, mean)) continue;
+    const area = Math.abs(geoArea({ type: "Polygon", coordinates: [[a, b, c, a]] }));
     if (!seen || area > bestArea) {
-      best = ring.slice();
+      best = mean;
       bestArea = area;
       seen = true;
     }
   }
-  if (!best) return null;
-  return ringCentroid(best);
+  return best;
+}
+
+function pointInCountry(geometry: Geometry): LonLat | null {
+  const whole = sphericalCentroid(geometry);
+  if (whole && contains(geometry, whole)) return whole;
+  const polygons = polygonsOf(geometry)
+    .map(polygon => ({ polygon, area: geoArea(polygon) }))
+    .sort((a, b) => b.area - a.area);
+  for (const item of polygons) {
+    const centroid = sphericalCentroid(item.polygon);
+    if (centroid && contains(geometry, centroid)) return centroid;
+  }
+  for (const item of polygons) {
+    const inside = interiorPoint(item.polygon, geometry);
+    if (inside) return inside;
+  }
+  return null;
 }
 
 /** Schlüssel sind die Atlas-Id und dieselbe Id auf drei Stellen aufgefüllt. */
 export function countryCentroids(topology: CountryTopology, objectName = "countries"): Map<string, LonLat> {
-  const collection = topology.objects[objectName];
+  const object = topology.objects[objectName];
   const out = new Map<string, LonLat>();
-  for (const geometry of collection?.geometries ?? []) {
-    if (geometry.id == null) continue;
-    const centroid = largestRingCentroid(outerRings(topology, geometry));
-    if (!centroid || !Number.isFinite(centroid.lon) || !Number.isFinite(centroid.lat)) continue;
-    const id = String(geometry.id);
-    out.set(id, centroid);
-    out.set(id.padStart(3, "0"), centroid);
+  if (!object) return out;
+  const collection = feature(topology, object);
+  for (const entry of collection.features) {
+    if (entry.id == null || !entry.geometry) continue;
+    const point = pointInCountry(entry.geometry);
+    if (!point) continue;
+    const id = String(entry.id);
+    out.set(id, point);
+    out.set(id.padStart(3, "0"), point);
   }
   return out;
 }
