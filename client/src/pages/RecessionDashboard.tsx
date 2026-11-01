@@ -22,6 +22,7 @@ import { showRecessionStand, type RecessionAnalysis } from "@/components/recessi
 import { RegionalCatalogSection } from "@/components/recession/RegionalCatalogSection";
 import { useRecessionCatalog } from "@/hooks/useRecessionCatalog";
 import { RegionGaugeSwitch } from "@/components/recession/RegionGaugeSwitch";
+import { RecessionAdaptiveCard } from "@/components/recession/RecessionAdaptiveCard";
 import {
   WelcomeScreen, LoadingScreen, ErrorScreen,
   NYFedReference, ScoringRules, ScoringZones,
@@ -171,6 +172,7 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
       </SectionCard>
       <SectionCard number={4} title="Scoring-Zonen">
         <ScoringZones />
+        <RecessionAdaptiveCard />
       </SectionCard>
       <SectionCard number={5} title="Indikatoren-Tabelle">
         <IndicatorTable indicators={data.indicators} />
