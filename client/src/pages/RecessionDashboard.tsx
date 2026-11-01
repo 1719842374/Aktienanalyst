@@ -12,6 +12,7 @@ import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection";
 import { BuffettRatioPanel } from "@/components/recession/BuffettRatioPanel";
+import { DollarReserveShareCard } from "@/components/recession/DollarReserveShareCard";
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
 import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
@@ -191,6 +192,7 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
       <RecessionTaSection number={nr.ta} subgroups={data.subgroups} topDrivers={data.topDrivers} indicators={data.indicators} />
       <SectionCard number={nr.buffett} title="Buffett-Indikator: Marktwert zum BIP">
         <BuffettRatioPanel />
+        <DollarReserveShareCard />
       </SectionCard>
       <SectionCard number={nr.summary} title="Zusammenfassung & Top-3 Treiber">
         <Summary data={data} />

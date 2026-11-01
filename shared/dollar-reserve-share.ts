@@ -16,6 +16,58 @@ export const COFER_SERIES_KEY = "G001.AFXRA.CI_USD.SHRO_PT.Q";
 /** Mindestens 5 Quartale (aktuell + Vorjahresquartal), sonst n/a. */
 export const COFER_MIN_QUARTERS = 5;
 
+/**
+ * Anzeige- und Cache-Parameter für F1-39.
+ * Herkunft: Philip 01.11.2026 12:36 — Schwellen nur aus der Verteilung der
+ * Quartalsänderungen (Median, Perzentil, z-Score), kein fester Alarmwert.
+ * Peer-Position: COFER_SERIES_KEY ist eine einzelne USD-Reihe; die Position ist
+ * das Perzentil dieser Änderung in der eigenen Historie, nicht eine zweite Währung.
+ * Cache: Future_1_Work.md Z.461 „Quartalsweise“. Die TTL liegt unter einem Quartal,
+ * damit ein neues IMF-Quartal spätestens am nächsten Tag sichtbar ist. Fehler
+ * cacht die Route nicht.
+ */
+export const DOLLAR_RESERVE_SHARE_PARAMS = {
+  cacheTtlMs: 24 * 60 * 60 * 1000,
+  /** Nachkommastellen der Anzeige (Prozent und Perzentil). */
+  displayDecimals: 2,
+  /** Kürzung von Fehlertexten in der API-Antwort. */
+  maxReasonChars: 160,
+} as const;
+
+export const DOLLAR_RESERVE_TREND_ARROW = { up: "↑", down: "↓", flat: "→" } as const;
+export const DOLLAR_RESERVE_TREND_LABEL = {
+  up: "über dem Median der Quartalsänderungen",
+  down: "unter dem Median der Quartalsänderungen",
+  flat: "auf dem Median der Quartalsänderungen",
+} as const;
+
+export interface DollarReserveShareTrend {
+  /** Letzte Änderung in Prozentpunkten, nur bei direkt folgendem Quartal. */
+  latestChangePp: number;
+  previousPeriod: string;
+  /** Midrank-Perzentil der letzten Änderung in der Historie, 0–100. */
+  percentile: number;
+  /** Median der Quartalsänderungen — die einzige Richtungsschwelle, aus den Daten. */
+  medianChangePp: number;
+  /** z-Score gegen die volle Historie (Population). null, wenn alle Änderungen gleich sind. */
+  zScore: number | null;
+  /** latest > Median → up, < → down, gleich → flat. */
+  direction: "up" | "down" | "flat";
+  changes: number;
+}
+
+/** Antwort von GET /api/macro/dollar-reserve-share. available false → reason, nie ein Ersatz-0. */
+export interface DollarReserveShareResponse {
+  source: "IMF COFER";
+  available: boolean;
+  latestPeriod?: string;
+  latestPct?: number;
+  quarters?: number;
+  reason?: string;
+  trend: DollarReserveShareTrend | null;
+  trendReason: string | null;
+}
+
 const PERIOD_RE = /^\d{4}-Q[1-4]$/;
 
 /** Alle Beobachtungen der USD-Anteil-Reihe (Quartal) aus einer SDMX-StructureSpecificData-Antwort. */
@@ -62,5 +114,64 @@ export function dollarReserveShareReading(series: QuarterPoint[]): DollarReserve
     available: true, latestPeriod: latest.period, latestPct: latest.value, yoyPp: y1,
     change5yPp: typeof y5 === "string" ? null : y5, ...(typeof y5 === "string" ? { change5yReason: y5 } : {}),
     quarters: s.length, series: s, source: "IMF COFER",
+  };
+}
+
+function nextQuarter(period: string): string | null {
+  const year = Number(period.slice(0, 4));
+  const quarter = Number(period.slice(6));
+  if (!Number.isInteger(year) || quarter < 1 || quarter > 4) return null;
+  return quarter === 4 ? `${year + 1}-Q1` : `${year}-Q${quarter + 1}`;
+}
+
+function medianOf(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Trend = Perzentil der letzten Quartalsänderung in der verfügbaren Historie.
+ * Richtung nur relativ zum Median dieser Änderungen. Lücken zwischen Quartalen
+ * zählen nicht als Änderung. Zu wenig Folgequartale → null mit Grund, nie 0.
+ */
+export function dollarReserveShareTrend(series: QuarterPoint[]): { trend: DollarReserveShareTrend | null; reason: string | null } {
+  const byPeriod = new Map<string, QuarterPoint>();
+  for (const point of series) {
+    if (point && PERIOD_RE.test(point.period) && Number.isFinite(point.value)) byPeriod.set(point.period, { period: point.period, value: point.value });
+  }
+  const ordered = Array.from(byPeriod.values()).sort((a, b) => a.period.localeCompare(b.period));
+  const changes: { pp: number; previousPeriod: string }[] = [];
+  for (let i = 1; i < ordered.length; i++) {
+    if (nextQuarter(ordered[i - 1].period) === ordered[i].period) {
+      changes.push({ pp: ordered[i].value - ordered[i - 1].value, previousPeriod: ordered[i - 1].period });
+    }
+  }
+  if (changes.length === 0) {
+    return { trend: null, reason: "IMF COFER: keine aufeinanderfolgenden Quartale für den Trend" };
+  }
+  const steps = changes.map(change => change.pp);
+  const latest = changes[changes.length - 1];
+  const medianChangePp = medianOf(steps);
+  let below = 0;
+  let equal = 0;
+  for (const step of steps) {
+    if (step < latest.pp) below += 1;
+    else if (step === latest.pp) equal += 1;
+  }
+  const mean = steps.reduce((sum, step) => sum + step, 0) / steps.length;
+  const variance = steps.reduce((sum, step) => sum + (step - mean) ** 2, 0) / steps.length;
+  const sd = Math.sqrt(variance);
+  return {
+    trend: {
+      latestChangePp: latest.pp,
+      previousPeriod: latest.previousPeriod,
+      percentile: ((below + 0.5 * equal) / steps.length) * 100,
+      medianChangePp,
+      zScore: sd === 0 ? null : (latest.pp - mean) / sd,
+      direction: latest.pp > medianChangePp ? "up" : latest.pp < medianChangePp ? "down" : "flat",
+      changes: steps.length,
+    },
+    reason: null,
   };
 }

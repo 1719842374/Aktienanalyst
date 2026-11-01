@@ -509,4 +509,5 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 16. POST /api/catalyst-event — S17 „Event hinzufügen“ (§4b Stufe 1), isoliertes Modul.
   const { registerCatalystEventRoute } = await import("./catalyst-event-route");
   registerCatalystEventRoute(app);
+  const { registerDollarReserveShareRoute } = await import("./dollar-reserve-share-route"); registerDollarReserveShareRoute(app);
 }
