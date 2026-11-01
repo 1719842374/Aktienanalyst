@@ -52,7 +52,23 @@ async function run(deps: any, opts: Record<string, unknown> = {}) {
   assert.equal(sector.status, 200);
   assert.equal(sector.json.layer, "sector");
   assert.equal(sector.json.coverage.withData, 0);
-  assert.equal((await t.get("?layer=gold")).status, 400);
+  const gold = await t.get("?layer=gold");
+  assert.equal(gold.status, 200);
+  assert.equal(gold.json.layer, "gold");
+  assert.equal(gold.json.coverage.withData, 0);
+  const nem = gold.json.goldCompanies.find((c: any) => c.symbol === "NEM");
+  assert.equal(typeof nem.aiscUsdPerOz, "number");
+  assert.ok(nem.aiscUsdPerOz > 0);
+  assert.equal(nem.productionOz, null);
+  assert.equal(gold.json.goldCompanies.find((c: any) => c.symbol === "GOLD").aiscUsdPerOz, null);
+  assert.match(gold.json.countries.find((c: any) => c.iso2 === "AU").note, /^n\/a — /);
+  assert.equal(gold.json.countries.length, 9);
+  const vc = await t.get("?layer=valuechain");
+  assert.equal(vc.status, 200);
+  assert.equal(vc.json.countries.length, 0);
+  assert.match(vc.json.note, /^n\/a — /);
+  assert.equal(vc.json.chains.find((c: any) => c.key === "semiconductors").href, "#/valuechain?industry=semiconductors");
+  assert.equal((await t.get("?layer=nope")).status, 400);
   t.close();
 }
 // 2) mit Daten: nur US hat Firmen, DE Screener-Fehler, Rest leer
@@ -64,6 +80,7 @@ async function run(deps: any, opts: Record<string, unknown> = {}) {
       return iso === "US" ? [{ symbol: "X", name: "X Corp", sector: "Technology", marketCap: 1e12 }, { symbol: "Y", name: "Y Inc", sector: "Energy", marketCap: 5e11 }] : [];
     },
     capexYears: async (s: string) => s === "X" ? { latest: { capexUsd: 2e10, fiscalYear: "2025", reportedCurrency: "USD" }, prevCapexUsd: 1e10 } : { latest: null, prevCapexUsd: null },
+    geoSegments: async (s: string) => s === "X" ? [{ name: "United States", percentage: 70, revenue: 100 }, { name: "Europe", percentage: 30, revenue: 40 }] : [],
   });
   const r = await t.get("");
   assert.equal(r.status, 200);
@@ -72,6 +89,10 @@ async function run(deps: any, opts: Record<string, unknown> = {}) {
   assert.equal(us.capexUsd, 2e10); assert.equal(us.yoyPct, 100);
   assert.equal(us.dominantSector, "Technology");
   assert.equal(us.companies[0].yoyPct, 100); assert.equal(us.companies[1].capexUsd, null);
+  assert.equal(us.companies[0].geoSegments[0].iso2, "US");
+  assert.equal(us.companies[0].geoSegments[1].iso2, null);
+  assert.match(us.companies[0].geoSegments[1].note, /^n\/a — /);
+  assert.equal(us.capexUsd, 2e10);
   const sector = await t.get("?layer=sector");
   assert.equal(sector.status, 200);
   assert.equal(sector.json.countries.find((c: any) => c.iso2 === "US").dominantSector, "Technology");
@@ -220,6 +241,14 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
     releaseRebuild();
     process.chdir(root);
   }
+}
+
+{
+  const { matchGeoSegmentIso2, mapGeoSegmentRows } = await import("../shared/geo-map");
+  assert.equal(matchGeoSegmentIso2("Taiwan"), "TW");
+  assert.equal(matchGeoSegmentIso2("North America"), null);
+  assert.equal(mapGeoSegmentRows([]).lines, null);
+  assert.match(mapGeoSegmentRows([]).note || "", /^n\/a — /);
 }
 
 console.log("test-researcher-geo-map: OK");
