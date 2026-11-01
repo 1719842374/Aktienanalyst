@@ -12,6 +12,7 @@ import worldUrl from "world-atlas/countries-110m.json?url";
 import { AlertTriangle, Globe2, Loader2, RefreshCw, X } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { naReasonFromError, readApiJson } from "@shared/read-api-json";
+import { MinerMapPanel } from "@/components/researcher/MinerMapPanel";
 import {
   GEO_MAP_CLIENT_TIMEOUT_MS,
   GEO_MAP_PENDING_RETRY_LIMIT,
@@ -399,6 +400,7 @@ export function GeoMapPanel() {
           </div>
         </div>
       )}
+      {layer === "miner" && <MinerMapPanel />}
       {capexData && <div className="text-[10px] text-foreground/40 leading-relaxed">Quelle: {capexData.source}. {capexData.attribution}</div>}
       {minerData && <div className="text-[10px] text-foreground/40 leading-relaxed">Quelle: {minerData.source}. {minerData.attribution}</div>}
     </div>
