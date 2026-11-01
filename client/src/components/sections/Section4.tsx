@@ -4,6 +4,7 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { calculateWACC, marketBetaForDcf, sectorImpliedBetaFromAnalysis } from "../../lib/calculations";
 import { formatPercentNoSign, formatNumber } from "../../lib/formatters";
 import { useMemo } from "react";
+import { DividendYieldSpanPanel } from "./DividendYieldContext";
 
 interface Props { data: StockAnalysis }
 
@@ -214,6 +215,8 @@ export function Section4({ data }: Props) {
         )}
         <RechenWeg title="PEG Rechenweg" steps={pegCalc.steps} />
       </div>
+
+      <DividendYieldSpanPanel data={data} />
     </SectionCard>
   );
 }
