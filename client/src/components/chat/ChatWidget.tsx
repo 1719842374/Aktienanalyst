@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { ArrowLeft, Crosshair, Loader2, Maximize2, MessageCircle, Minimize2, Minus, Send, Sparkles, X } from "lucide-react";
 import { chatSectionKey, chatSectionName, chatSectionTag, type ChatContext, type ChatSectionItem } from "@shared/chat-context";
 import { useDashboardChat } from "@/hooks/useDashboardChat";
+import { ChatMarkdown } from "./ChatMarkdown";
 import {
   chatWindowStorageKey, clampChatWindow, moveChatWindow, parseChatWindow, resizeChatWindow, serializeChatWindow,
   type ChatWindowState, type ResizeEdge,
@@ -175,8 +176,8 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
             )}
             {entries.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[88%] rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${m.role === "user" ? "bg-primary text-primary-foreground" : m.error ? "bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400" : "bg-muted"}`} data-testid={m.role === "user" ? "chat-msg-user" : "chat-msg-assistant"}>
-                  {m.content}
+                <div className={`max-w-[88%] min-w-0 rounded-lg px-2.5 py-1.5 break-words ${m.role === "assistant" && !m.error ? "" : "whitespace-pre-wrap"} ${m.role === "user" ? "bg-primary text-primary-foreground" : m.error ? "bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400" : "bg-muted"}`} data-testid={m.role === "user" ? "chat-msg-user" : "chat-msg-assistant"}>
+                  {m.role === "assistant" && !m.error ? <ChatMarkdown content={m.content} /> : m.content}
                   {m.sectionRefs && m.sectionRefs.length > 0 && onJumpToSection && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {m.sectionRefs.map(id => (
