@@ -22,6 +22,7 @@ import {
   Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { apiRequest } from "@/lib/queryClient";
+import { useSectorPeDisplay } from "@/lib/useSectorPeDisplay";
 
 type Valuation = "Teuer" | "Angemessen" | "Attraktiv" | "n.v.";
 type CyclePhase = "Frühzyklus" | "Hochkonjunktur" | "Spätkonjunktur" | "Abschwung";
@@ -580,6 +581,12 @@ function SectorRadarRing({ sectors }: { sectors: RingSectorDatum[] }) {
 
 export function SectorRotationPanel() {
   const [data, setData] = useState<SectorRotationPayload | null>(null);
+  const sectorPe = useSectorPeDisplay();
+  const peById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of sectorPe.data?.sectors ?? []) map.set(row.id, row.text);
+    return map;
+  }, [sectorPe.data]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -834,7 +841,16 @@ export function SectorRotationPanel() {
                   <td className="px-3 py-3 font-medium text-foreground/90">{s.label}</td>
                   <td className="px-3 py-3 font-mono text-foreground/60">{s.etf}</td>
                   <td className="px-3 py-3 tabular-nums">{s.risk}</td>
-                  <td className={`px-3 py-3 ${VAL_CLASS[s.valuation] || ""}`}>{s.valuation}</td>
+                  <td className={`px-3 py-3 ${VAL_CLASS[s.valuation] || ""}`}>
+                    <div>{s.valuation}</div>
+                    <div className="mt-0.5 max-w-[14rem] whitespace-normal text-[10px] font-normal text-foreground/60" data-testid={`sector-pe-${s.id}`}>
+                      {sectorPe.isLoading
+                        ? "Sektor-KGV wird geladen …"
+                        : sectorPe.isError
+                          ? "n/a — Sektor-KGV nicht geladen"
+                          : (peById.get(s.id) ?? "n/a — kein Sektor-KGV in der Antwort")}
+                    </div>
+                  </td>
                   <td className="px-3 py-3"><AttrCell row={s} /></td>
                   <td className="px-3 py-3 tabular-nums">{fmtPct(s.return6M)}</td>
                   <td className="px-3 py-3 tabular-nums">{s.phaseFit}</td>

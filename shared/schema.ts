@@ -1137,3 +1137,17 @@ export interface BtcLiquidityResponse {
   fetchedAt: string;
   sources: { walcl: string; bills: string; otherMarketable: string; dgs10: string };
 }
+
+// ─── Earnings Yield / ROIC 5Y (Anzeige, Sektion 12) ─────────────────────────
+// GET /api/chart/earnings-yield/:symbol und GET /api/chart/roic/:symbol.
+// Kein Score, kein Rating. Fehlende Punkte: value null + note, nie 0.
+export type {
+  FundamentalPoint,
+  EarningsYieldResponse,
+  RoicSeriesResponse,
+  FundJoinPoint,
+} from "./earnings-yield-roic";
+
+// ─── Sektor-KGV (Anzeige, Researcher) ────────────────────────────────────────
+// GET /api/researcher/sector-pe. Getrennt von pe/pe10y der Sektorrotation.
+export type { SectorPeDisplay, SectorPeResponse } from "./sector-pe-display";
