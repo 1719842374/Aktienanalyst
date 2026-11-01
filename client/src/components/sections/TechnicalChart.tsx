@@ -1239,7 +1239,7 @@ function ConeEndLabels({
 
 /** Gemessene Boxen: Kegel-Labels weichen Dividenden-Text aus, Abstand = Fehlbetrag aus Höhe und Pixelabstand. */
 function measureConeLabelShift(root: HTMLElement, prev: Record<string, number>): Record<string, number> | null {
-  const coneNodes = [...root.querySelectorAll<SVGTextElement>("[data-testid^='cone-label-']")];
+  const coneNodes = Array.from(root.querySelectorAll<SVGTextElement>("[data-testid^='cone-label-']"));
   if (coneNodes.length === 0) return Object.keys(prev).length ? {} : null;
   const boxes: LabelBox[] = [];
   const current = new Map<string, number>();
