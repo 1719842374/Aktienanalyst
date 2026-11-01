@@ -1,13 +1,17 @@
 /**
  * GET /api/chart/earnings-yield/:symbol und GET /api/chart/roic/:symbol.
  * Nur Anzeige. analyze-route wird nicht berührt. Fehlendes = n/a, nie 0.
+ * .DE (Xetra) kommt von Yahoo, ohne FMP-Call. Andere Ticker: FMP, bei 402 oder leerer Serie Yahoo.
  * 6h-Memory-Cache nur bei mindestens einem belastbaren Punkt.
  */
 import type { Express, Request, Response } from "express";
 import type { EarningsYieldResponse, FundamentalPoint, RoicSeriesResponse } from "../shared/schema";
 import { earningsYieldPct, finiteNumber } from "../shared/earnings-yield-roic";
+import type { ReportedSeries } from "../shared/yahoo-fundamental-series";
 import { extractRoicPercentFromRow } from "./news-peers";
 import { fmpEnterpriseValues, fmpIncomeStatement, fmpKeyMetrics } from "./fmp";
+import { loadYahooFundamentalBundle, type YahooSeriesBundle } from "./yahoo-fundamental-fallback";
+import { isGermanXetraTicker } from "./yahoo-fetcher";
 
 export const FUNDAMENTAL_CACHE_MS = 6 * 60 * 60 * 1000;
 const SERIES_LIMIT = 6;
@@ -18,12 +22,15 @@ export interface FundamentalDeps {
   income: (symbol: string, limit: number) => Promise<unknown>;
   enterpriseValues: (symbol: string, limit: number) => Promise<unknown>;
   keyMetrics: (symbol: string, limit: number) => Promise<unknown>;
+  /** Kostenlose Ersatzquelle bei FMP 402 oder leerer Serie. */
+  yahooBundle?: (symbol: string, years: number) => Promise<YahooSeriesBundle>;
 }
 
 const defaultDeps: FundamentalDeps = {
   income: (symbol, limit) => fmpIncomeStatement(symbol, limit),
   enterpriseValues: (symbol, limit) => fmpEnterpriseValues(symbol, limit),
   keyMetrics: (symbol, limit) => fmpKeyMetrics(symbol, limit),
+  yahooBundle: (symbol, years) => loadYahooFundamentalBundle(symbol, years),
 };
 
 let eyCache = new Map<string, { at: number; body: EarningsYieldResponse }>();
@@ -131,35 +138,129 @@ function errorNote(err: unknown): string {
   return `n/a — Abruf fehlgeschlagen: ${msg.slice(0, 160)}`;
 }
 
+function hasValue(points: FundamentalPoint[]): boolean {
+  return points.some(p => p.value != null && Number.isFinite(p.value));
+}
+
+async function captureCall(run: () => Promise<unknown>): Promise<{ raw: unknown; error: string | null }> {
+  try {
+    return { raw: await run(), error: null };
+  } catch (err) {
+    return { raw: [], error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function joinNotes(a: string | null, b: string | null): string | null {
+  const parts = [a, b].filter((n): n is string => !!n);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+async function yahooSeries(symbol: string, deps: FundamentalDeps): Promise<YahooSeriesBundle> {
+  const load = deps.yahooBundle ?? defaultDeps.yahooBundle;
+  if (!load) {
+    const empty: ReportedSeries = { points: [], source: "Yahoo", note: "n/a — Yahoo nicht verfügbar" };
+    return { earningsYield: empty, roic: empty };
+  }
+  return load(symbol, SERIES_LIMIT);
+}
+
+async function earningsYieldFromYahoo(symbol: string, deps: FundamentalDeps, now: number): Promise<EarningsYieldResponse> {
+  const yahoo = await yahooSeries(symbol, deps);
+  const series = yahoo.earningsYield;
+  const body: EarningsYieldResponse = {
+    symbol,
+    points: series.points,
+    source: series.source,
+    note: series.note,
+  };
+  if (hasValue(body.points)) eyCache.set(symbol, { at: now, body });
+  return body;
+}
+
+async function roicFromYahoo(symbol: string, deps: FundamentalDeps, now: number): Promise<RoicSeriesResponse> {
+  const yahoo = await yahooSeries(symbol, deps);
+  const series = yahoo.roic;
+  const body: RoicSeriesResponse = {
+    symbol,
+    points: series.points,
+    source: series.source,
+    note: series.note,
+  };
+  if (hasValue(body.points)) roicCache.set(symbol, { at: now, body });
+  return body;
+}
+
 export async function loadEarningsYield(symbol: string, deps: FundamentalDeps = defaultDeps, now = Date.now()): Promise<EarningsYieldResponse> {
   const hit = eyCache.get(symbol);
   if (hit && now - hit.at < FUNDAMENTAL_CACHE_MS) return hit.body;
+  if (isGermanXetraTicker(symbol)) {
+    try {
+      return await earningsYieldFromYahoo(symbol, deps, now);
+    } catch (err) {
+      return { symbol, points: [], source: "Yahoo", note: errorNote(err) };
+    }
+  }
+  const fmpSource = "FMP income-statement + enterprise-values";
   try {
     const [income, ev, metrics] = await Promise.all([
-      deps.income(symbol, SERIES_LIMIT).catch(() => []),
-      deps.enterpriseValues(symbol, SERIES_LIMIT).catch(() => []),
-      deps.keyMetrics(symbol, SERIES_LIMIT).catch(() => []),
+      captureCall(() => deps.income(symbol, SERIES_LIMIT)),
+      captureCall(() => deps.enterpriseValues(symbol, SERIES_LIMIT)),
+      captureCall(() => deps.keyMetrics(symbol, SERIES_LIMIT)),
     ]);
-    const built = buildEarningsYieldPoints(income, ev, metrics);
-    const body: EarningsYieldResponse = { symbol, points: built.points, source: "FMP income-statement + enterprise-values", note: built.note };
-    if (built.points.some(p => p.value != null)) eyCache.set(symbol, { at: now, body });
+    const built = buildEarningsYieldPoints(income.raw, ev.raw, metrics.raw);
+    if (hasValue(built.points)) {
+      const body: EarningsYieldResponse = { symbol, points: built.points, source: fmpSource, note: built.note };
+      eyCache.set(symbol, { at: now, body });
+      return body;
+    }
+    const fmpNote = income.error ? errorNote(new Error(income.error)) : built.note;
+    const yahoo = await yahooSeries(symbol, deps);
+    const series = yahoo.earningsYield;
+    const body: EarningsYieldResponse = {
+      symbol,
+      points: series.points,
+      source: hasValue(series.points) ? series.source : fmpSource,
+      note: hasValue(series.points) ? series.note : joinNotes(fmpNote, series.note),
+    };
+    if (hasValue(body.points)) eyCache.set(symbol, { at: now, body });
     return body;
   } catch (err) {
-    return { symbol, points: [], source: "FMP income-statement + enterprise-values", note: errorNote(err) };
+    return { symbol, points: [], source: fmpSource, note: errorNote(err) };
   }
 }
 
 export async function loadRoicSeries(symbol: string, deps: FundamentalDeps = defaultDeps, now = Date.now()): Promise<RoicSeriesResponse> {
   const hit = roicCache.get(symbol);
   if (hit && now - hit.at < FUNDAMENTAL_CACHE_MS) return hit.body;
+  if (isGermanXetraTicker(symbol)) {
+    try {
+      return await roicFromYahoo(symbol, deps, now);
+    } catch (err) {
+      return { symbol, points: [], source: "Yahoo", note: errorNote(err) };
+    }
+  }
+  const fmpSource = "FMP key-metrics";
   try {
-    const metrics = await deps.keyMetrics(symbol, SERIES_LIMIT);
-    const built = buildRoicPoints(metrics);
-    const body: RoicSeriesResponse = { symbol, points: built.points, source: "FMP key-metrics", note: built.note };
-    if (built.points.some(p => p.value != null)) roicCache.set(symbol, { at: now, body });
+    const metrics = await captureCall(() => deps.keyMetrics(symbol, SERIES_LIMIT));
+    const built = buildRoicPoints(metrics.raw);
+    if (hasValue(built.points)) {
+      const body: RoicSeriesResponse = { symbol, points: built.points, source: fmpSource, note: built.note };
+      roicCache.set(symbol, { at: now, body });
+      return body;
+    }
+    const fmpNote = metrics.error ? errorNote(new Error(metrics.error)) : built.note;
+    const yahoo = await yahooSeries(symbol, deps);
+    const series = yahoo.roic;
+    const body: RoicSeriesResponse = {
+      symbol,
+      points: series.points,
+      source: hasValue(series.points) ? series.source : fmpSource,
+      note: hasValue(series.points) ? series.note : joinNotes(fmpNote, series.note),
+    };
+    if (hasValue(body.points)) roicCache.set(symbol, { at: now, body });
     return body;
   } catch (err) {
-    return { symbol, points: [], source: "FMP key-metrics", note: errorNote(err) };
+    return { symbol, points: [], source: fmpSource, note: errorNote(err) };
   }
 }
 

@@ -307,7 +307,7 @@ Philip hat am 18.10. entschieden: **Makro-Gewichte darf die KI wählen (JA).** D
 | F10-30 | Z.244–247 | Anzeige: Zusammenfassung, Flag, Zeitstempel | `GoldNewsCard.tsx:80–88` („Stand …“, „Letzter guter Stand …“) | ✅ | Keiner |
 | F10-31 | Z.256–260 | Score aus den Layern aggregieren | Layer-Score wird berechnet und nur als „Δ GIS“ gezeigt (`server/gold-routes.ts:859`, `GoldAdaptiveLayersCard.tsx:43`); der GIS selbst bleibt unverändert | 🟡 | GIS umschalten = Score-Änderung → **braucht Philip** |
 | F10-32 | Z.272 | Volumendaten zuverlässig anbinden | `server/gold-routes.ts:11` `volumeReadingsAreReal`, Volumen im Chart (`GoldPriceChart.tsx:81`). SHA `575d788` (#214) | ✅ | Keiner |
-| F10-33 | Z.274 | Backtest der MA-Kreuz-Signale auf Gold | 0 Treffer in `server/backtest*` | ❌ | Autonom |
+| F10-33 | Z.274 | Backtest der MA-Kreuz-Signale auf Gold | `server/gold-backtest-cross.ts`, `GET /api/gold/backtest-cross`, Karte `GoldCrossBacktestCard.tsx`. SHA `8362b797` (#401) | ✅ | Keiner |
 | F10-34 | Z.275 | Käufe der Zentralbanken (Europa/global) per LLM | 0 Treffer in `server/gold-news.ts` | ❌ | Autonom (kleiner LLM-Zusatz zur News-Sektion) |
 | F10-35 | Z.151–152, 269–270 | Doku: AISC-Linie und Kapitulationszone stehen noch als „Offen“ | Code erledigt (#254), Text in Future_10 veraltet | ❌ | Nur Doku-Nachzug (Philip will Doku-PRs nur auf Ansage) |
 

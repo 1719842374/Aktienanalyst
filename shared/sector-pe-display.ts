@@ -3,6 +3,7 @@
  * Harmonisches Mittel über Holdings-Gewichte; 10J-Schnitt nur, wenn die Datums-Spanne
  * die benannte Historie SECTOR_PE_HISTORY_YEARS deckt. Fehlendes bleibt n/a, nie 0.
  */
+import { YAHOO_QS_TRAILING_PE_SOURCE } from "./yahoo-fundamental-series";
 
 /** Definition der Kennzahl PE-10J, nicht eine Score-Schwelle. */
 export const SECTOR_PE_HISTORY_YEARS = 10;
@@ -18,7 +19,9 @@ export interface SectorPeDisplay {
   /** Fertiger Zellentext, inklusive n/a-Grund. */
   text: string;
   note: string | null;
-  source: "holdings-harmonic" | "etf-ratios" | "n/a";
+  source: "holdings-harmonic" | "etf-ratios" | "yahoo-trailing-pe" | "n/a";
+  /** Menschenlesbarer Quellenname. null, wenn keine Quelle einen Wert geliefert hat. */
+  sourceLabel: string | null;
   coverage: number | null;
 }
 
@@ -125,6 +128,23 @@ export function formatSectorPeText(current: number | null, avg10y: number | null
   return `${formatPeNumber(current)} (10J Ø ${avgText})`;
 }
 
+function sourceLabelFor(source: SectorPeDisplay["source"], override: string | null | undefined): string | null {
+  switch (source) {
+    case "holdings-harmonic":
+      return "FMP etf/holdings + ratios";
+    case "etf-ratios":
+      return "FMP ratios";
+    case "yahoo-trailing-pe":
+      return override ?? YAHOO_QS_TRAILING_PE_SOURCE;
+    case "n/a":
+      return null;
+    default: {
+      const unreachable: never = source;
+      return unreachable;
+    }
+  }
+}
+
 export function composeSectorPeDisplay(args: {
   id: string;
   etf: string;
@@ -132,17 +152,24 @@ export function composeSectorPeDisplay(args: {
   holdings: HoldingWeight[] | null;
   etfHistory: { date: string; pe: number | null }[] | null;
   holdingsNote: string | null;
+  /** Gesetzt, wenn die ETF-Historie nicht aus FMP-Ratios stammt. */
+  historyOrigin?: "etf-ratios" | "yahoo-trailing-pe";
+  sourceLabel?: string | null;
 }): SectorPeDisplay {
   const history = etfPeHistory(args.etfHistory ?? []);
   const harmonic = args.holdings && args.holdings.length > 0 ? weightedHarmonicPe(args.holdings) : null;
   const current = harmonic?.value ?? history.current;
-  const source: SectorPeDisplay["source"] = harmonic?.value != null ? "holdings-harmonic" : history.current != null ? "etf-ratios" : "n/a";
+  const source: SectorPeDisplay["source"] = harmonic?.value != null
+    ? "holdings-harmonic"
+    : history.current != null
+      ? (args.historyOrigin ?? "etf-ratios")
+      : "n/a";
   const holdingsReason = harmonic?.value != null ? harmonic.note : (harmonic?.note ?? args.holdingsNote);
   const historyReason = history.avg10y == null ? history.note : null;
   const note = [holdingsReason, historyReason].filter((n): n is string => !!n).join(" · ") || null;
   let text = formatSectorPeText(current, history.avg10y, historyReason);
   if (source === "holdings-harmonic" && harmonic?.note) text = `${text} · ${harmonic.note}`;
-  if (source === "etf-ratios" && holdingsReason) text = `${text} · ${holdingsReason}`;
+  if ((source === "etf-ratios" || source === "yahoo-trailing-pe") && holdingsReason) text = `${text} · ${holdingsReason}`;
   if (current == null && history.avg10y == null && note) text = note;
   return {
     id: args.id,
@@ -153,6 +180,7 @@ export function composeSectorPeDisplay(args: {
     text,
     note,
     source,
+    sourceLabel: sourceLabelFor(source, args.sourceLabel),
     coverage: harmonic?.coverage ?? null,
   };
 }

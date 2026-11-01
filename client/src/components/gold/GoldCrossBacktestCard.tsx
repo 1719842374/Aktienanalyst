@@ -1,42 +1,13 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-
-/** Antwort von GET /api/gold/backtest-cross. Nur Anzeige, kein Score. */
-export interface GoldCrossHorizonView {
-  name: string;
-  sessions: number;
-  observations: number;
-  hitRate: number | null;
-  meanForwardReturn: number | null;
-  medianForwardReturn: number | null;
-  unconditionalMean: number | null;
-  unconditionalObservations: number;
-  zScore: number | null;
-  percentile: number | null;
-}
-
-export interface GoldCrossSideView {
-  events: number;
-  lastDate: string | null;
-  dates: string[];
-  horizons: GoldCrossHorizonView[];
-}
-
-export interface GoldCrossBacktestView {
-  available: boolean;
-  symbol: string;
-  source: string;
-  from: string | null;
-  to: string | null;
-  bars: number;
-  fastWindow: number;
-  slowWindow: number;
-  inScore: false;
-  unavailableReason: string | null;
-  golden: GoldCrossSideView;
-  death: GoldCrossSideView;
-}
+import {
+  goldCrossBacktestHttpFailure,
+  goldCrossBacktestTransportFailure,
+  type GoldCrossBacktest,
+  type GoldCrossHorizonResult,
+  type GoldCrossSideResult,
+} from "@shared/gold-backtest-cross";
 
 const HORIZON_LABELS: Record<string, string> = {
   oneMonth: "1 Monat",
@@ -44,7 +15,7 @@ const HORIZON_LABELS: Record<string, string> = {
   oneYear: "1 Jahr",
 };
 
-function horizonLabel(row: GoldCrossHorizonView): string {
+function horizonLabel(row: GoldCrossHorizonResult): string {
   return HORIZON_LABELS[row.name] ?? row.name;
 }
 
@@ -81,7 +52,7 @@ function dateText(iso: string | null): string {
   return `${day}.${month}.${year}`;
 }
 
-function SideBlock({ title, side, testId }: { title: string; side: GoldCrossSideView; testId: string }) {
+function SideBlock({ title, side, testId }: { title: string; side: GoldCrossSideResult; testId: string }) {
   return (
     <div data-testid={testId}>
       <div className="text-[11px] font-medium text-foreground">
@@ -105,7 +76,7 @@ function SideBlock({ title, side, testId }: { title: string; side: GoldCrossSide
   );
 }
 
-export function GoldCrossBacktestView({ data }: { data: GoldCrossBacktestView | null | undefined }) {
+export function GoldCrossBacktestView({ data }: { data: GoldCrossBacktest | null | undefined }) {
   const ready = data?.available === true;
   return (
     <section className="bg-card border border-card-border rounded-lg px-4 py-2.5" data-testid="gold-cross-backtest">
@@ -136,15 +107,16 @@ export function GoldCrossBacktestView({ data }: { data: GoldCrossBacktestView | 
 }
 
 export function GoldCrossBacktestCard() {
-  const { data } = useQuery<GoldCrossBacktestView | null>({
+  const { data } = useQuery<GoldCrossBacktest>({
     queryKey: ["/api/gold/backtest-cross"],
     queryFn: async () => {
       try {
         const res = await apiRequest("GET", "/api/gold/backtest-cross");
-        if (!res.ok) return null;
-        return await res.json() as GoldCrossBacktestView;
-      } catch {
-        return null;
+        if (!res.ok) return goldCrossBacktestHttpFailure(res.status, await res.text());
+        return await res.json() as GoldCrossBacktest;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return goldCrossBacktestTransportFailure(message);
       }
     },
     staleTime: 5 * 60 * 1000,

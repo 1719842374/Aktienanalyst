@@ -4,6 +4,7 @@
  * GET /api/researcher/geo-map?layer=capex|sector|miner|gold|valuechain
  *
  * Capex und Sektor teilen sich eine Aggregation (FMP Cashflow, Firmensitz).
+ * layer=sector behält dominantSector und setzt die Perzentil-Ampel (projectSectorLayer).
  * Der Kaltstart ist seriell und dauert auf Prod ~58 s. Damit ein Gateway-Timeout
  * nicht HTML statt JSON an den Client gibt: Cache mit benanntem TTL und
  * Stale-While-Revalidate, Antwortbudget, Aufwärmen nach dem Boot.
@@ -13,7 +14,7 @@ import type { Express, Response } from "express";
 import * as fs from "fs";
 import * as path from "path";
 import { diskResearcherGetWithTtl, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
-import { buildGeoMapCapex, defaultGeoMapDeps, GEO_MAP_CACHE_TAB, type GeoMapDeps } from "./researcher-geo-map";
+import { buildGeoMapCapex, capexPayloadPrimaryListings, defaultGeoMapDeps, GEO_MAP_CACHE_TAB, type GeoMapDeps } from "./researcher-geo-map";
 import { buildMinerMapBody, pipelineFromMiner, type MinerMapResponse } from "@shared/miner-map";
 import {
   GEO_MAP_CACHE_TTL_MS,
@@ -23,7 +24,10 @@ import {
   MINER_LOCATION_NOTE,
   MINER_NAMES_UNSOURCED,
   dominantSectorOf,
+  projectSectorLayer,
   type GeoMapMinerNetwork,
+  type GeoMapResponse,
+  type GeoMapSectorResponse,
   type GeoMapMinerRegion,
   type GeoMapMinerResponse,
 } from "@shared/geo-map";
@@ -120,8 +124,15 @@ function withDominant(data: any, layer: "capex" | "sector") {
   };
 }
 
+/** Capex bleibt withDominant. Sektor hängt die Ampel an und lässt dominantSector stehen. */
+function presentLayer(data: any, layer: "capex" | "sector"): GeoMapResponse | GeoMapSectorResponse {
+  const base = withDominant(data, layer);
+  if (layer === "sector") return projectSectorLayer(base);
+  return base;
+}
+
 function present(stored: Stored, layer: "capex" | "sector") {
-  const body = withDominant(stored.payload, layer);
+  const body = presentLayer(stored.payload, layer);
   if (!stored.fresh) body._stale = true;
   else delete body._stale;
   return body;
@@ -298,7 +309,9 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
 
   function readCapex(nowMs: number): Stored | null {
     const hit = readNamed(CAPEX_FILE(), CAPEX_DISK, nowMs);
-    if (hit && !capexPayloadCarriesGeoSegments(hit.payload)) {
+    // Altbestand ohne geoSegments, oder ein Fremdlisting zum Firmensitz (NEO-CDR).
+    // Die Prüfung ist rein. Ein Neubau schreibt das Primärlisting, der nächste Read bleibt Treffer.
+    if (hit && (!capexPayloadCarriesGeoSegments(hit.payload) || !capexPayloadPrimaryListings(hit.payload))) {
       deleteNamed(CAPEX_FILE(), CAPEX_DISK);
       return null;
     }
@@ -342,8 +355,11 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
     }
     try {
       const result = await withinBudget(startBuild(), responseBudgetMs);
-      if (result === "budget") return res.json(pendingCapex(layer, now()));
-      return res.json(withDominant(result, layer));
+      if (result === "budget") {
+        const pending = pendingCapex(layer, now());
+        return res.json(layer === "sector" ? projectSectorLayer(pending) : pending);
+      }
+      return res.json(presentLayer(result, layer));
     } catch (err: any) {
       console.error("[RESEARCHER/geo-map] failed:", err?.message);
       res.status(500).json({ error: err?.message || "geo-map failed" });
