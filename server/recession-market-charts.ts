@@ -15,6 +15,8 @@ import {
   fmpRatiosTtm,
   isFmpAvailable,
 } from "./fmp";
+import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
+import { fetchFredCsv, fredCsvObservations } from "./fred-csv";
 import { fetchFredVolWithYahooFallback, fetchVstoxxVol } from "./recession-markets";
 import { macd1269, rsiWilder } from "../shared/tech-rsi";
 import {
@@ -29,6 +31,7 @@ import {
   epsPrintFromRatioQuarter,
   epsPrintFromRow,
   finraLeverage,
+  marginDebtRatio,
   instrumentCanPriceEps,
   leverageForMarket,
   localVolMaxima,
@@ -46,6 +49,7 @@ import {
   valuationLabelFor,
   type ChartBar,
   type LeverageStrip,
+  type MarginRatioBlock,
   type MarketChart,
   type MarketFactpack,
   type MarketsResponse,
@@ -224,10 +228,52 @@ export async function fetchFinraMarginDebit(): Promise<{ date: string; debitMill
   return parseFinraMarginSheetXml(xml.toString("utf8"));
 }
 
+async function fredLevels(
+  seriesId: string,
+  scale: number,
+): Promise<{ points: { date: string; value: number }[]; reason: string | null }> {
+  const csv = await fetchFredCsv(seriesId, SERIES_FLOOR);
+  if (csv == null) return { points: [], reason: `FRED ${seriesId} nicht erreichbar` };
+  const points = fredCsvObservations(csv).flatMap((obs) => {
+    const value = obs.value * scale;
+    if (!Number.isFinite(value) || value <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(obs.date)) return [];
+    return [{ date: obs.date, value }];
+  });
+  if (!points.length) return { points: [], reason: `FRED ${seriesId} ohne Werte` };
+  return { points, reason: null };
+}
+
+/** Same FINRA points as the debit card. Denominator is the existing Wilshire scale, else FRED GDP. */
+async function loadMarginRatio(points: { date: string; debitMillions: number }[]): Promise<MarginRatioBlock> {
+  const asOf = new Date().toISOString().slice(0, 10);
+  const [cap, gdp] = await Promise.all([
+    fredLevels("WILL5000PR", WILSHIRE_DOLLARS_PER_POINT_BN),
+    fredLevels("GDP", 1),
+  ]);
+  const block = marginDebtRatio(points, cap.points, gdp.points, asOf);
+  if (block.basis != null) return block;
+  const why = [cap.reason, gdp.reason].filter((item): item is string => !!item).join("; ");
+  return { ...block, reason: why || block.reason };
+}
+
 async function loadLeverage(window: MarketWindow): Promise<{ strip: LeverageStrip | null; note: string | null }> {
   try {
     const points = await fetchFinraMarginDebit();
-    const strip = finraLeverage(points, window);
+    let ratio: MarginRatioBlock | null = null;
+    if (points.length >= 13) {
+      try {
+        ratio = await loadMarginRatio(points);
+      } catch {
+        ratio = {
+          basis: null,
+          reason: "Nenner nicht lesbar",
+          denominator: "",
+          latest: null,
+          points: [],
+        };
+      }
+    }
+    const strip = finraLeverage(points, window, ratio);
     if (!strip) return { strip: null, note: "FINRA Margin Debit nicht lieferbar" };
     return { strip, note: null };
   } catch {
@@ -658,7 +704,7 @@ export async function tryHandleRecessionMarketCharts(req: Request, res: Response
     return true;
   }
 
-  const key = `v3:${window}`;
+  const key = `v4:${window}`;
   const cached = cacheGet(bundleCache, key);
   if (cached) {
     res.json(cached);

@@ -17,6 +17,7 @@ import {
   type RecessionTaRegion,
   type RecessionTaResponse,
 } from "@shared/recession-ta";
+import { useFinraMarginRatio } from "@/hooks/useFinraMarginRatio";
 import { bannerProbabilities, recessionTaAsStock } from "@/lib/recessionTaModel";
 import type { IndicatorResult, SubgroupResult } from "./recessionDashboardShared";
 import { getProbColor } from "./recessionDashboardShared";
@@ -64,6 +65,7 @@ export function RecessionTaSection({
 }) {
   const [region, setRegion] = useState<RecessionTaRegion>("US");
   const [on, setOn] = useState<Record<OverlayKey, boolean>>({ vol: true, curve: true, spread: false, buffett: false });
+  const [marginOn, setMarginOn] = useState(false);
   const book = RECESSION_TA_BOOKS[region];
 
   const ta = useQuery({
@@ -85,6 +87,24 @@ export function RecessionTaSection({
       return (await res.json()) as BuffettPayload;
     },
   });
+  const marginQ = useFinraMarginRatio(marginOn && region === "US");
+  const marginBlock = marginQ.data?.leverage?.marginRatio ?? null;
+  const marginStatus = useMemo(() => {
+    if (!marginOn) return null;
+    if (region !== "US") return "Margin Debt: n/a — FINRA nur USA, kein EU-/Asien-Klon";
+    if (marginQ.isLoading) return "Margin Debt: wird geladen …";
+    if (marginQ.isError) {
+      const msg = marginQ.error instanceof Error ? marginQ.error.message : "Abruf fehlgeschlagen";
+      return `Margin Debt: n/a — ${msg}`;
+    }
+    const lev = marginQ.data?.leverage;
+    if (!lev) return `Margin Debt: n/a — ${marginQ.data?.leverageNote || "FINRA Margin Debit nicht lieferbar"}`;
+    if (!marginBlock || marginBlock.reason || !marginBlock.latest || marginBlock.points.length === 0) {
+      return `Margin Debt: n/a — ${marginBlock?.reason || "keine Ratio"}`;
+    }
+    const last = marginBlock.latest;
+    return `Margin Debt (z): ${last.z.toFixed(2)} · Ratio ${last.ratioPct.toFixed(2)} % · Perzentil ${last.percentile.toFixed(0)} · ${marginBlock.denominator} · ${last.date} · Quelle FINRA · kein Score`;
+  }, [marginOn, region, marginQ.isLoading, marginQ.isError, marginQ.error, marginQ.data, marginBlock]);
 
   const stock = useMemo(() => (ta.data ? recessionTaAsStock(ta.data) : null), [ta.data]);
   const seriesById = useMemo(() => {
@@ -183,6 +203,20 @@ export function RecessionTaSection({
           </button>
         );
       })}
+      <button
+        type="button"
+        disabled={region !== "US"}
+        aria-pressed={marginOn && region === "US"}
+        data-testid="button-ta-margin"
+        title={region !== "US"
+          ? "Margin Debt: n/a — FINRA nur USA, kein EU-/Asien-Klon"
+          : "FINRA Margin Debt / Marktkapitalisierung, sonst BIP. Achse ist der z-Score der eigenen Historie, keine feste Schwelle. Kein Score."}
+        onClick={() => setMarginOn((v) => !v)}
+        className={chipClass(marginOn && region === "US", "border-lime-500 text-lime-500", region !== "US")}
+      >
+        {marginOn && region === "US" ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+        Margin Debt
+      </button>
     </>
   );
 
@@ -205,6 +239,32 @@ export function RecessionTaSection({
       if (on[k] && s) push(k, s.points, maxAgeFor(s.frequency), s.frequency === "monthly", s.unit, `| ${s.source}`);
     }
     if (on.buffett && buffettPoints.length) push("buffett", buffettPoints, 400, true, "%", "| Marktwert / BIP");
+    if (marginOn && marginStatus) {
+      out.push(
+        <div key="margin-status" className="mt-1 text-[10px] text-muted-foreground break-words" data-testid="margin-debt-overlay-status">
+          {marginStatus}
+        </div>,
+      );
+    }
+    if (marginOn && region === "US" && marginBlock && !marginBlock.reason && marginBlock.points.length > 0) {
+      const prints = marginBlock.points.map((p) => ({ date: p.date, value: p.z }));
+      const vals = asOfJoin(dates, prints, maxAgeFor("monthly"));
+      if (vals.some((v) => v != null)) {
+        out.push(
+          <MacroPane
+            key="margin"
+            testId="chart-ta-margin"
+            title="Margin Debt (z)"
+            hint={`| ${marginBlock.denominator} · Stufe, keine Interpolation · keine feste Schwelle`}
+            data={dates.map((d, i) => ({ date: d, margin: vals[i] }))}
+            lines={[{ key: "margin", name: "Margin Debt z", color: "#84cc16", step: true }]}
+            refLines={[]}
+            tickFormatter={tickFormatter}
+            formatDateFull={formatDateFull}
+          />,
+        );
+      }
+    }
     return out;
   };
 
@@ -225,7 +285,7 @@ export function RecessionTaSection({
       data={stock}
       sectionNumber={number}
       title="Technische Analyse"
-      subtitle={`Rezessions-Signale – ${book.label} (${book.etf}) · MA / MACD / RSI / VIX / Zinskurve / Spread`}
+      subtitle={`Rezessions-Signale – ${book.label} (${book.etf}) · MA / MACD / RSI / VIX / Zinskurve / Spread / Margin Debt`}
       headerSlot={header}
       extraChips={chips}
       extraPanes={panes}
