@@ -15,6 +15,8 @@ import { catalystDisplayName } from "../../../../shared/catalyst-event";
 import { buildConflictMatrix, conflictInputsFromAnalysis, isEtfOrFund } from "../../lib/conflictMatrix";
 import { ConflictMatrixPanel } from "./ConflictMatrixPanel";
 import { safeCompanyDcfWaccPct, waccSuffix } from "../../../../shared/valuation-signal";
+import { useDividendRange } from "../../lib/useDividendRange";
+import { dividendSummaryNote } from "../../../../shared/dividend-valuation";
 
 interface Props { data: StockAnalysis; sharedMonteCarlo?: GBMMonteCarloResult | null }
 
@@ -129,6 +131,8 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
   }, [data, sharedMonteCarlo]);
   // Genau eines von beiden ist immer gesetzt (localMC wird nur bei fehlendem sharedMonteCarlo berechnet)
   const mcResult = (sharedMonteCarlo ?? localMC)!;
+  // F1-18: Kurzhinweis nur bei auffälliger Dividendenrendite — reine Anzeige.
+  const divNote = dividendSummaryNote(useDividendRange(data));
 
   return (
     <SectionCard number={20} title="ZUSAMMENFASSUNGSTABELLE">
@@ -240,6 +244,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
             <SummaryRow label="Moat" value={data.moatRating} note={data.moatRating === "Wide" ? "Strong" : data.moatRating === "Narrow" ? "Moderate" : "Weak"} />
             <SummaryRow label="Analyst PT Median" value={formatTarget(data.analystPT.median, data.currency)} note={ptUpside == null ? "upside n/a" : `${ptUpside >= 0 ? "+" : ""}${formatNumber(ptUpside, 1)}% upside`} />
             <SummaryRow label="WACC (CAPM)" value={formatPercentNoSign(conservativeDCF.wacc)} note={`Re=${formatPercentNoSign(conservativeDCF.costOfEquity)}, β=${formatNumber(data.beta5Y, 2)}`} />
+            {divNote && <SummaryRow label="Dividendenrendite" value="Hinweis" note={divNote} />}
             <tr className="bg-primary/5">
               <td className="py-2 px-2 font-semibold">Conservative DCF (FCFF)</td>
               <td className="py-2 px-2 text-right font-mono tabular-nums font-bold">{formatCurrency(conservativeDCF.perShare, 2, dcfCcy)}</td>

@@ -4,10 +4,16 @@ import type { StockAnalysis } from "../../../../shared/schema";
 import { calculateWACC, marketBetaForDcf, sectorImpliedBetaFromAnalysis } from "../../lib/calculations";
 import { formatPercentNoSign, formatNumber } from "../../lib/formatters";
 import { useMemo } from "react";
+import { useDividendKpi } from "@/lib/useDividendHistory";
+import { useDividendRange } from "@/lib/useDividendRange";
+import { DIVIDEND_ATTRACTIVE_PCT } from "@shared/dividend-valuation";
 
 interface Props { data: StockAnalysis }
 
 export function Section4({ data }: Props) {
+  // F1-17: Dividendenrendite vs. eigene Historie — reine Anzeige, kein Score-/Rating-Einfluss.
+  const divKpi = useDividendKpi(data);
+  const divRange = useDividendRange(data);
   const sp = data.sectorProfile;
   const rfr = 4.2;
   const mrp = 5.5;
@@ -213,6 +219,18 @@ export function Section4({ data }: Props) {
           </div>
         )}
         <RechenWeg title="PEG Rechenweg" steps={pegCalc.steps} />
+      </div>
+
+      {/* F1-17 (Future_1 §11.1): Dividendenrendite vs. Sektor und historische Spanne — nur Anzeige */}
+      <div className="rounded-md border border-border/50 p-3" data-testid="dividend-valuation">
+        <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Dividendenrendite</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          <div><div className="text-[10px] text-muted-foreground">Aktuell</div><div className={`font-mono font-bold ${divRange && divRange.current >= DIVIDEND_ATTRACTIVE_PCT ? "text-teal-500" : ""}`}>{divKpi?.value ?? "n/a"}</div><div className="text-[10px] text-muted-foreground">{divKpi?.sub ?? "keine Dividende"}</div></div>
+          <div><div className="text-[10px] text-muted-foreground">Spanne (TTM)</div><div className="font-mono">{divRange ? `${divRange.min.toFixed(2)}–${divRange.max.toFixed(2)}%` : "n/a"}</div><div className="text-[10px] text-muted-foreground">{divRange ? `${divRange.fromDate} – ${divRange.toDate}` : "keine Historie"}</div></div>
+          <div><div className="text-[10px] text-muted-foreground">Median / Perzentil</div><div className="font-mono">{divRange ? `${divRange.median.toFixed(2)}% · P${divRange.percentile}` : "n/a"}</div></div>
+          <div><div className="text-[10px] text-muted-foreground">vs. Sektor</div><div className="font-mono">n/a</div><div className="text-[10px] text-muted-foreground">keine Peer-Dividendendaten</div></div>
+        </div>
+        <div className="text-[10px] text-muted-foreground mt-1.5">Nur Anzeige — fließt nicht in Score oder Rating ein. Band ≥ {DIVIDEND_ATTRACTIVE_PCT} % im TA-Chart markiert.</div>
       </div>
     </SectionCard>
   );
