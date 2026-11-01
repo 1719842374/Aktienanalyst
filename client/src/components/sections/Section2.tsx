@@ -7,6 +7,7 @@ import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber, s
 import { useMemo } from "react";
 import { catalystDisplayName, formatSignedPct } from "../../../../shared/catalyst-event";
 import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from "../news/SentimentNewsList";
+import { SegmentSupplementView } from "./SegmentSupplementView";
 
 interface Props { data: StockAnalysis }
 
@@ -262,6 +263,10 @@ export function Section2({ data }: Props) {
               </div>
             </div>
           )
+        )}
+
+        {data.revenueSegments && data.revenueSegments.length > 0 && (
+          <SegmentSupplementView ticker={data.ticker} segments={data.revenueSegments} />
         )}
 
         {/* Geographic Segments. The server already removed name+revenue and

@@ -61,4 +61,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // POST /api/chat (KI-Chatbot, WORK_DASHBOARD_FEATURES §4/§4c; nur Kontext lesen, kein Score)
   const { registerChatRoute } = await import("./chat-route");
   registerChatRoute(app);
+  const { registerFinancialHistoryRoute } = await import("./financial-history-route");
+  registerFinancialHistoryRoute(app);
+  const { registerSegmentSupplementRoute } = await import("./segment-supplement-route");
+  registerSegmentSupplementRoute(app);
 }

@@ -5,6 +5,7 @@ import { useDividendKpi } from "@/lib/useDividendHistory";
 import { currencySymbol, statementCurrency } from "@/lib/formatters";
 import { isYahooOnly } from "@shared/data-source";
 import { YahooNoValuationNotice } from "../YahooNoValuationCard";
+import { AnnualFinancials } from "./AnnualFinancials";
 
 interface Props { data: StockAnalysis }
 
@@ -147,6 +148,8 @@ export function FinancialStatements({ data }: Props) {
           <WaterfallBar label="FCF" value={cf.fcfMargin} maxVal={80} color="bg-cyan-500/60" />
         </div>
       </div>
+
+      <AnnualFinancials data={data} />
     </SectionCard>
   );
 }
@@ -184,6 +187,7 @@ function YahooFinancialStatements({ data, eps, divKpi }: { data: StockAnalysis; 
         ))}
       </div>
       <div className="text-[10px] text-muted-foreground">Margen-Wasserfall: n/a</div>
+      <AnnualFinancials data={data} />
     </SectionCard>
   );
 }

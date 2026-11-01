@@ -5,6 +5,7 @@ import { calculateWACC, marketBetaForDcf, sectorImpliedBetaFromAnalysis } from "
 import { formatPercentNoSign, formatNumber } from "../../lib/formatters";
 import { useMemo } from "react";
 import { DividendYieldSpanPanel } from "./DividendYieldContext";
+import { WaccRoicBadge } from "./WaccRoicBadge";
 
 interface Props { data: StockAnalysis }
 
@@ -179,6 +180,8 @@ export function Section4({ data }: Props) {
           })}
         </div>
       </div>
+
+      <WaccRoicBadge roicPct={data.peerComparison?.subject?.roic ?? null} waccPct={waccResults[1]?.wacc ?? null} />
 
       {/* PEG Calculation — Inputs = Ergebnis (Trailing) */}
       <div>
