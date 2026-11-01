@@ -13,7 +13,7 @@ import type { Express, Response } from "express";
 import * as fs from "fs";
 import * as path from "path";
 import { diskResearcherGetWithTtl, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
-import { buildGeoMapCapex, defaultGeoMapDeps, GEO_MAP_CACHE_TAB, type GeoMapDeps } from "./researcher-geo-map";
+import { buildGeoMapCapex, capexPayloadPrimaryListings, defaultGeoMapDeps, GEO_MAP_CACHE_TAB, type GeoMapDeps } from "./researcher-geo-map";
 import { buildMinerMapBody, pipelineFromMiner, type MinerMapResponse } from "@shared/miner-map";
 import {
   GEO_MAP_CACHE_TTL_MS,
@@ -298,7 +298,9 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
 
   function readCapex(nowMs: number): Stored | null {
     const hit = readNamed(CAPEX_FILE(), CAPEX_DISK, nowMs);
-    if (hit && !capexPayloadCarriesGeoSegments(hit.payload)) {
+    // Altbestand ohne geoSegments, oder ein Fremdlisting zum Firmensitz (NEO-CDR).
+    // Die Prüfung ist rein. Ein Neubau schreibt das Primärlisting, der nächste Read bleibt Treffer.
+    if (hit && (!capexPayloadCarriesGeoSegments(hit.payload) || !capexPayloadPrimaryListings(hit.payload))) {
       deleteNamed(CAPEX_FILE(), CAPEX_DISK);
       return null;
     }
