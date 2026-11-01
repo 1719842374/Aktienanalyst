@@ -80,6 +80,15 @@ export interface ChatRequestBody {
   messages: ChatMessage[];
 }
 
+/** Faktart, die das Budget gekürzt oder entfernt hat. */
+export type ChatTrimKind = "notes" | "facts" | "rationale" | "wachstumsthese";
+
+export interface ChatContextTrimEntry {
+  kind: ChatTrimKind;
+  /** Zeichen, die bei dieser Faktart gekürzt oder gelöscht wurden. */
+  removedChars: number;
+}
+
 export interface ChatResponseBody {
   ok: boolean;
   answer: string | null;
@@ -89,6 +98,8 @@ export interface ChatResponseBody {
   /** "ok" | "no-key" | "timeout" | "llm-error" | "invalid" */
   status: "ok" | "no-key" | "timeout" | "llm-error" | "invalid";
   error: string | null;
+  /** Fehlt, wenn nichts gekürzt wurde. Sonst je Faktart die entfernten Zeichen. */
+  contextTrimmed?: ChatContextTrimEntry[];
 }
 
 /** Zielgröße des Chat-Kontexts (JSON). Die Server-Decke bleibt `CHAT_LIMITS.maxContextChars`. */
@@ -538,6 +549,71 @@ export function enrichChatContext(
   return fitChatContextBudget({ ...ctx, sections, notes: notes.slice(0, CHAT_LIMITS.maxNotes) });
 }
 
+const CHAT_TRIM_LABEL: Record<ChatTrimKind, string> = {
+  notes: "Notizen",
+  facts: "Fakten",
+  rationale: "Rationale",
+  wachstumsthese: "Wachstumsthese",
+};
+
+function chatTrimChars(ctx: ChatContext): Record<ChatTrimKind, number> {
+  const out: Record<ChatTrimKind, number> = { notes: 0, facts: 0, rationale: 0, wachstumsthese: 0 };
+  for (const n of ctx.notes ?? []) if (typeof n === "string") out.notes += n.length;
+  for (const g of ctx.gates ?? []) if (typeof g?.rationale === "string") out.rationale += g.rationale.length;
+  for (const s of ctx.sections ?? []) for (const [k, v] of Object.entries(s.facts ?? {})) {
+    if (typeof v !== "string") continue;
+    if (k === "wachstumsthese") out.wachstumsthese += v.length;
+    else out.facts += v.length;
+  }
+  return out;
+}
+
+/** Differenz der Textlängen. `undefined`, wenn nichts gekürzt oder gelöscht wurde. */
+export function chatContextTrimReport(before: ChatContext, after: ChatContext): ChatContextTrimEntry[] | undefined {
+  const a = chatTrimChars(before);
+  const b = chatTrimChars(after);
+  const kinds: ChatTrimKind[] = ["notes", "facts", "rationale", "wachstumsthese"];
+  const entries = kinds.flatMap(kind => {
+    const removedChars = a[kind] - b[kind];
+    return removedChars > 0 ? [{ kind, removedChars }] : [];
+  });
+  return entries.length ? entries : undefined;
+}
+
+const trimByContext = new WeakMap<ChatContext, ChatContextTrimEntry[]>();
+
+/** Kürzung, die `fitChatContextBudget` an diesem Kontext-Objekt hinterlegt hat. */
+export function chatContextTrimOf(ctx: ChatContext | null | undefined): ChatContextTrimEntry[] | undefined {
+  if (!ctx) return undefined;
+  const found = trimByContext.get(ctx);
+  return found?.length ? found : undefined;
+}
+
+export function mergeChatContextTrim(
+  a: ChatContextTrimEntry[] | undefined,
+  b: ChatContextTrimEntry[] | undefined,
+): ChatContextTrimEntry[] | undefined {
+  const sums = new Map<ChatTrimKind, number>();
+  for (const e of [...(a ?? []), ...(b ?? [])]) sums.set(e.kind, (sums.get(e.kind) ?? 0) + e.removedChars);
+  const kinds: ChatTrimKind[] = ["notes", "facts", "rationale", "wachstumsthese"];
+  const entries = kinds.flatMap(kind => {
+    const removedChars = sums.get(kind) ?? 0;
+    return removedChars > 0 ? [{ kind, removedChars }] : [];
+  });
+  return entries.length ? entries : undefined;
+}
+
+function groupedInt(n: number): string {
+  return String(Math.abs(Math.trunc(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+/** Hinweiszeile, z. B. „Kontext gekürzt: Notizen −2.140 Zeichen“. `null`, wenn nichts gekürzt wurde. */
+export function formatChatContextTrim(entries: ChatContextTrimEntry[] | undefined): string | null {
+  if (!entries?.length) return null;
+  const parts = entries.map(e => `${CHAT_TRIM_LABEL[e.kind]} −${groupedInt(e.removedChars)} Zeichen`);
+  return `Kontext gekürzt: ${parts.join(", ")}`;
+}
+
 function clipTo(text: string, max: number): string {
   if (text.length <= max) return text;
   if (max <= 1) return "…";
@@ -624,5 +700,7 @@ export function fitChatContextBudget(ctx: ChatContext, budget: number = CHAT_CON
     if (!keys.length) break;
     delete big.facts[keys[keys.length - 1]];
   }
+  const report = chatContextTrimReport(ctx, out);
+  if (report) trimByContext.set(out, report);
   return out;
 }

@@ -17,11 +17,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import express from "express";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   buildStockChatContext, enrichChatContext, CHAT_LIMITS, CHAT_CONTEXT_BUDGET, CHAT_FACT_PRIORITY,
-  chatFactAllowedChars, chatFactWeight,
+  chatContextTrimOf, chatFactAllowedChars, chatFactWeight, formatChatContextTrim,
   type ChatRequestBody,
 } from "../shared/chat-context";
+import { ChatWidget } from "../client/src/components/chat/ChatWidget";
 import { buildChatPrompt, handleChat, registerChatRoute, validateChatRequest } from "../server/chat-route";
 
 let n = 0;
@@ -76,7 +79,8 @@ async function main() {
   assert.equal(ctx.sections[2]?.id, 3);
   assert.equal(ctx.sections[2]?.label, "Investmentthese");
   assert.equal(thesis, repeat("W", 1200));
-  ok("Client behält die 1200-Zeichen-Wachstumsthese (Sektion 3, Index 2)");
+  assert.equal(chatContextTrimOf(ctx), undefined);
+  ok("Client behält die 1200-Zeichen-Wachstumsthese, ohne Kürzung kein Flag");
   assert.ok(JSON.stringify(ctx).length <= CHAT_CONTEXT_BUDGET);
   ok(`Kontext ${JSON.stringify(ctx).length} ≤ Budget ${CHAT_CONTEXT_BUDGET}`);
 
@@ -94,7 +98,8 @@ async function main() {
   assert.deepEqual(handled.body.sectionRefs, []);
   assert.equal(handled.body.model, null);
   assert.equal(typeof handled.body.error, "string");
-  ok("handleChat bricht nicht ab (200 no-key, Response-Shape unverändert)");
+  assert.equal(handled.body.contextTrimmed, undefined);
+  ok("handleChat bricht nicht ab; ohne Kürzung fehlt contextTrimmed");
 
   const overField = structuredClone(ctx);
   overField.gates = [{ id: "g1", active: true, cap: 70, severity: "high", rationale: repeat("R", CHAT_LIMITS.maxRationaleChars + 80) }];
@@ -103,8 +108,9 @@ async function main() {
   if (soft.ok) {
     assert.equal(soft.body.context.gates[0].rationale.length, CHAT_LIMITS.maxRationaleChars);
     assert.equal(soft.body.context.sections[2].facts.wachstumsthese, repeat("W", 1200));
+    assert.deepEqual(soft.contextTrimmed, [{ kind: "rationale", removedChars: 80 }]);
   }
-  ok("Überlänge wird auf allowedChars gekürzt, nicht mit 400 abgelehnt");
+  ok("Überlänge wird auf allowedChars gekürzt und als contextTrimmed gemeldet");
 
   const bulky = structuredClone(ctx);
   const noteLen = 5_000;
@@ -121,8 +127,20 @@ async function main() {
     assert.equal(out.gates[0].rationale, repeat("R", rationaleLen));
     assert.ok(out.notes.every(note => note.length < noteLen));
     assert.ok(out.notes.length > 0);
+    const noteCut = bulky.notes.reduce((sum, note) => sum + note.length, 0) - out.notes.reduce((sum, note) => sum + note.length, 0);
+    assert.ok(noteCut > 0);
+    assert.deepEqual(trimmed.contextTrimmed, [{ kind: "notes", removedChars: noteCut }]);
+    assert.equal(formatChatContextTrim([{ kind: "notes", removedChars: 2140 }]), "Kontext gekürzt: Notizen −2.140 Zeichen");
+    assert.equal(formatChatContextTrim(undefined), null);
+    assert.equal(formatChatContextTrim([]), null);
   }
-  ok("Over-Budget: Notes proportional gekürzt, These und Rationale behalten, nicht abgelehnt");
+  ok("Over-Budget: Notes proportional gekürzt, Flag nennt die entfernten Zeichen");
+
+  const clientFitted = enrichChatContext(bulky, null, { gatesSectionId: 20 });
+  const clientReport = chatContextTrimOf(clientFitted);
+  assert.ok(clientReport?.some(e => e.kind === "notes" && e.removedChars > 0));
+  assert.equal(formatChatContextTrim(clientReport)?.startsWith("Kontext gekürzt:"), true);
+  ok("Client-Pfad enrichChatContext meldet dieselbe Kürzung");
 
   let seen = "";
   const llm = await handleChat(requestOf(bulky, 3), {
@@ -135,6 +153,7 @@ async function main() {
   assert.deepEqual(llm.body.sectionRefs, [3]);
   assert.ok(seen.includes(repeat("W", 1200)));
   assert.ok(!seen.includes(repeat("N", noteLen)));
+  assert.ok(llm.body.contextTrimmed?.some(e => e.kind === "notes" && e.removedChars > 0));
   assert.ok(buildChatPrompt(trimmed.ok ? trimmed.body : body).includes(repeat("W", 1200)));
   ok("LLM-Prompt enthält die 1200-Zeichen-These und nicht die ungekürzten Notes");
 
@@ -144,6 +163,15 @@ async function main() {
   const srv = app.listen(0);
   const port = (srv.address() as AddressInfo).port;
   try {
+    const plain = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const plainJson = await plain.json();
+    assert.equal(plain.status, 200);
+    assert.equal("contextTrimmed" in plainJson, false);
+    ok("POST /api/chat ohne Kürzung: kein contextTrimmed");
     const res = await fetch(`http://127.0.0.1:${port}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -155,7 +183,8 @@ async function main() {
     assert.equal(j.ok, false);
     assert.equal(j.answer, null);
     assert.ok(Array.isArray(j.sectionRefs));
-    ok("POST /api/chat: Over-Budget-Payload wird nicht mit HTTP 400 abgelehnt");
+    assert.ok(j.contextTrimmed?.some((e: { kind: string; removedChars: number }) => e.kind === "notes" && e.removedChars > 0));
+    ok("POST /api/chat: Over-Budget wird gekürzt, contextTrimmed nennt die Notes, kein HTTP 400");
   } finally {
     srv.close();
   }
@@ -169,6 +198,29 @@ async function main() {
   assert.ok(route.includes("z.string().max(CHAT_LIMITS.maxNoteChars)"));
   assert.ok(!/\.max\(\s*(400|1000|1200)\s*\)/.test(route));
   ok("Zod-Limits kommen aus CHAT_LIMITS, abgeleitet vom Budget; keine feste 400/1000/1200");
+
+  const widget = readFileSync("client/src/components/chat/ChatWidget.tsx", "utf8");
+  const hook = readFileSync("client/src/hooks/useDashboardChat.ts", "utf8");
+  assert.ok(widget.includes('data-testid="chat-context-trimmed"'));
+  assert.ok(widget.includes("formatChatContextTrim"));
+  assert.ok(widget.includes("chatContextTrimOf(context)"));
+  assert.ok(widget.includes("{trimHint &&"));
+  assert.ok(hook.includes("body?.contextTrimmed"));
+  ok("ChatWidget zeigt den Hinweis nur bei Kürzung; der Hook liest contextTrimmed aus der Response");
+
+  const win = { x: 24, y: 24, w: 360, h: 520, open: true, minimized: false, maximized: false };
+  (globalThis as any).window = {
+    innerWidth: 1440, innerHeight: 900,
+    localStorage: { getItem: () => JSON.stringify(win), setItem() {}, removeItem() {} },
+    addEventListener() {}, removeEventListener() {},
+  };
+  const hint = formatChatContextTrim(clientReport);
+  const html = renderToStaticMarkup(React.createElement(ChatWidget, { dashboard: "trim-hint", context: clientFitted, sections: [{ id: 3, label: "Investmentthese" }] }));
+  assert.ok(hint && html.includes(hint), html.slice(html.indexOf("chat-context-trimmed") - 20, html.indexOf("chat-context-trimmed") + 180));
+  assert.ok(html.includes('data-testid="chat-context-trimmed"'));
+  const plainHtml = renderToStaticMarkup(React.createElement(ChatWidget, { dashboard: "trim-plain", context: ctx, sections: [{ id: 3, label: "Investmentthese" }] }));
+  assert.equal(plainHtml.includes("chat-context-trimmed"), false);
+  ok("Hinweis steht im Widget, wenn gekürzt wurde, und fehlt ohne Kürzung");
 
   console.log(`\n${n} Checks grün.`);
 }

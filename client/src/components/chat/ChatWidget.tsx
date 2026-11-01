@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowLeft, Crosshair, Loader2, Maximize2, MessageCircle, Minimize2, Minus, Send, Sparkles, X } from "lucide-react";
-import { chatSectionKey, chatSectionName, chatSectionTag, type ChatContext, type ChatSectionItem } from "@shared/chat-context";
+import { chatContextTrimOf, chatSectionKey, chatSectionName, chatSectionTag, formatChatContextTrim, mergeChatContextTrim, type ChatContext, type ChatSectionItem } from "@shared/chat-context";
 import { useDashboardChat } from "@/hooks/useDashboardChat";
 import {
   chatWindowStorageKey, clampChatWindow, moveChatWindow, parseChatWindow, resizeChatWindow, serializeChatWindow,
@@ -48,7 +48,8 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
     setBoundKey(s ? chatSectionKey(s) : null);
   }, [sections]);
   const [input, setInput] = useState("");
-  const { entries, pending, send, reset } = useDashboardChat(context, sectionId);
+  const { entries, pending, send, reset, contextTrimmed } = useDashboardChat(context, sectionId);
+  const trimHint = formatChatContextTrim(mergeChatContextTrim(chatContextTrimOf(context), contextTrimmed));
   const listRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ mode: "move" | ResizeEdge; sx: number; sy: number; start: ChatWindowState } | null>(null);
 
@@ -206,6 +207,9 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
               <Send className="w-3.5 h-3.5" />
             </button>
           </form>
+          {trimHint && (
+            <div className="shrink-0 px-2 pt-1 text-[10px] leading-snug text-muted-foreground" data-testid="chat-context-trimmed">{trimHint}</div>
+          )}
           <div className="shrink-0 px-2 pb-1 text-[9px] text-muted-foreground/70">KI-Antworten nur auf Basis der geladenen Daten · keine Anlageberatung · ändert keine Scores</div>
         </>
       )}
