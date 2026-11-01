@@ -15,6 +15,8 @@ import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { attachEarningsToPoints, type EarningsMarker } from "@shared/earnings-markers";
 import { useDividendHistory } from "@/lib/useDividendHistory";
 import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
 import { currencySymbol } from "@/lib/formatters";
@@ -28,6 +30,15 @@ import {
   CONE_PARAMS, CONE_STYLE, attachConeSeries, coneDomainValues, conePlotScale, scenarioConeFromAnalysis, separateLabelYs,
   type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
+
+/**
+ * Peer-Linien werden in diesem Chart nicht gezeichnet.
+ * Schnittstelle dafür ist PR #380 (Chip `button-fund-peer`, ein Ticker,
+ * Modus `price` | `roic`): Kurs als Median-Index auf dataKey `_peerPx`
+ * (yAxisId `price`), ROIC auf dataKey `_peerRoic` (yAxisId `fund`),
+ * Hooks `usePeerPriceBars` und `useRoicSeries`.
+ * Keine zweite Peer-Linie in diesem Chart.
+ */
 
 /** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
 export interface TaPaneContext {
@@ -226,6 +237,19 @@ export function TechnicalChart({
   // Szenario-Kegel: nur Anzeige. Default aus, Reset je Ticker — aus = keine Serie und keine Achsenänderung.
   const [showCone, setShowCone] = useState(false);
   useEffect(() => { setShowCone(false); }, [data.ticker]);
+  // Earnings Beat/Miss: nur Anzeige, Default aus. Der Szenario-Kegel bleibt unverändert.
+  const [showEarnings, setShowEarnings] = useState(false);
+  useEffect(() => { setShowEarnings(false); }, [data.ticker]);
+  const earningsQuery = useQuery({
+    queryKey: ["earnings-markers", data.ticker],
+    enabled: showEarnings,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/earnings-markers/${encodeURIComponent(data.ticker)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<{ markers: EarningsMarker[]; beatRateLabel: string; note: string | null }>;
+    },
+  });
+  const earningsMarkers = showEarnings ? earningsQuery.data?.markers ?? null : null;
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -692,6 +716,14 @@ export function TechnicalChart({
               {showReal10y ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               {REAL10Y_OVERLAY.label}
             </button>
+            <button type="button" onClick={() => setShowEarnings(v => !v)} data-testid="button-earnings" aria-pressed={showEarnings}
+              title="Earnings Beat/Miss auf dem Kurs. Nur Anzeige, kein Score."
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showEarnings ? "border-emerald-500 text-emerald-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showEarnings ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Earnings
+            </button>
             <button type="button" onClick={() => setShowCone(v => !v)} data-testid="button-scenario-cone" aria-pressed={showCone}
               aria-label="Szenario-Kegel"
               title="Szenario-Kegel ab dem letzten Close. Nur Anzeige, kein Score. Standard aus."
@@ -866,6 +898,7 @@ export function TechnicalChart({
                 real10y={real10yOverlay}
                 ccy={ccy}
                 cone={scenarioCone}
+                earnings={earningsMarkers}
               />
             </div>
             {narrow && showVolume && (
@@ -904,6 +937,7 @@ export function TechnicalChart({
               count={visibleKursCount}
               ccy={ccy}
               cone={scenarioCone}
+              earnings={earningsMarkers}
               widthScale={coneScale}
               alignedPoints={aAligned}
               testId="chart-band-a"
@@ -988,6 +1022,13 @@ export function TechnicalChart({
         </div>
       )}
 
+      {showEarnings && showKursA && !chartEmpty && (
+        <div className="mt-1 text-[10px] text-muted-foreground break-words" data-testid="earnings-overlay-status">
+          {earningsQuery.isLoading && "Earnings: werden geladen …"}
+          {earningsQuery.isError && "Earnings: n/a — Abruf fehlgeschlagen"}
+          {earningsQuery.data && <>{earningsQuery.data.beatRateLabel}{earningsQuery.data.note ? ` · ${earningsQuery.data.note}` : ""} · Grün Beat, Rot Miss, Grau Inline · kein Score</>}
+        </div>
+      )}
       {showDividend && showKursA && !chartEmpty && (
         <DividendOverlayStatus
           series={dividendOverlay}
@@ -1305,7 +1346,7 @@ function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
   onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy = "$",
-  cone = null,
+  cone = null, earnings = null,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1333,6 +1374,8 @@ function PricePane({
   ccy?: string;
   /** Szenario-Kegel. null = Chart-Daten und Preisdomäne unverändert. */
   cone?: ScenarioCone | null;
+  /** Beat/Miss-Marker. null = keine Punkte, Kegel-Daten bleiben die Referenz. */
+  earnings?: EarningsMarker[] | null;
 }) {
   const narrow = useIsNarrow();
   const conePrices = cone ? coneDomainValues(cone) : undefined;
@@ -1341,6 +1384,7 @@ function PricePane({
     const base = withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend), credit), t10y), real10y);
     return cone ? attachConeSeries(base, cone) : base;
   }, [points, dividend, credit, t10y, real10y, cone]);
+  const plotted = useMemo(() => attachEarningsToPoints(chartData, earnings), [chartData, earnings]);
   const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
@@ -1366,7 +1410,7 @@ function PricePane({
     <div ref={plotRef} className="h-full w-full">
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
-        data={chartData}
+        data={plotted}
         margin={dense ? { top: 2, right: rightAxis ? 0 : 10, left: 0, bottom: 0 } : { top: 5, right: rightAxis ? 0 : 10, left: 0, bottom: 5 }}
         onClick={onPlotClick}
       >
@@ -1462,6 +1506,17 @@ function PricePane({
               {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
               {real10y && <Real10YTooltipRow p={dp as WindowPoint & Real10YFields} />}
               {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} ccy={ccy} />}
+              {(() => {
+                const earn = dp as unknown as { _earnKind?: string; _earnRev?: number | null; _earnEps?: number | null };
+                if (!earn._earnKind) return null;
+                return (
+                  <div className="mt-1 border-t border-border pt-1">
+                    Earnings {earn._earnKind}
+                    {" · "}Umsatz {earn._earnRev == null ? "n/a" : `${earn._earnRev.toFixed(1)} %`}
+                    {" · "}EPS {earn._earnEps == null ? "n/a" : `${earn._earnEps.toFixed(1)} %`}
+                  </div>
+                );
+              })()}
               {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
@@ -1512,6 +1567,23 @@ function PricePane({
           </>
         )}
         <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+        {earnings && (
+          <Line
+            yAxisId="price"
+            type="monotone"
+            dataKey="_earn"
+            name="Earnings"
+            stroke="none"
+            legendType="none"
+            isAnimationActive={false}
+            dot={(props: any) => {
+              const kind = props?.payload?._earnKind as string | undefined;
+              if (!kind || props.cx == null || props.cy == null) return <g key={props.key} />;
+              const fill = kind === "beat" ? "#22c55e" : kind === "miss" ? "#ef4444" : "#94a3b8";
+              return <circle key={props.key} cx={props.cx} cy={props.cy} r={3.5} fill={fill} stroke="none" />;
+            }}
+          />
+        )}
         {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
           <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={1.5} dot={false} strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined} connectNulls isAnimationActive={false} />
         ))}
@@ -1750,7 +1822,7 @@ function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
   testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy,
-  cone = null, widthScale = 1, alignedPoints,
+  cone = null, earnings = null, widthScale = 1, alignedPoints,
 }: {
   label: string;
   labelClassName: string;
@@ -1781,6 +1853,7 @@ function BandStack({
   real10y?: Real10YOverlayPoint[] | null;
   ccy?: string;
   cone?: ScenarioCone | null;
+  earnings?: EarningsMarker[] | null;
   widthScale?: number;
   alignedPoints?: WindowPoint[];
 }) {
@@ -1821,6 +1894,7 @@ function BandStack({
               real10y={real10y}
               ccy={ccy}
               cone={cone}
+              earnings={earnings}
             />
           )}
         </div>
