@@ -58,6 +58,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // GET /api/gold-silver-ratio (JOB 17, nur Anzeige auf /gold, kein Score)
   const { registerGoldSilverRatioRoute } = await import("./gold-silver-ratio");
   registerGoldSilverRatioRoute(app);
+  // GET /api/gold-bond-ratio (FW-17, GC=F / TLT, nur Anzeige auf /gold, kein Score)
+  const { registerGoldBondRatioRoute } = await import("./gold-bond-ratio");
+  registerGoldBondRatioRoute(app);
   // POST /api/chat (KI-Chatbot, WORK_DASHBOARD_FEATURES §4/§4c; nur Kontext lesen, kein Score)
   const { registerChatRoute } = await import("./chat-route");
   registerChatRoute(app);
