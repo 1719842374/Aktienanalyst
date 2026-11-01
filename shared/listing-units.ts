@@ -167,16 +167,20 @@ export function listingFxWarning(currency: unknown): string | null {
 
 // ─── DCF-FX (Philip 18.10.2026 17:20 „ja fixen alles in dollar … also umrechnen“) ────────────────────────────
 /**
- * Nicht-USD-Listings (EUR, CAD, GBp/GBP …): FMP rechnet die Statements/Estimates schon nach USD um
+ * Nicht-USD-Listings in einer Major-Währung (EUR, CAD, …): FMP rechnet die Statements/Estimates schon nach USD um
  * (fmp.ts convertFmpRowsToUsd), Kurs, Market Cap, Historie und Kursziel kamen aber in Listing-Währung.
  * Gemischt ergab das z. B. RY.TO „DCF 89,93 Dollar vs. Kurs 280,01 CAD“. Hier wird die MARKTSEITE in einem
- * Schritt nach USD gebracht (Minor Units zuerst ÷ factor), die Statements bleiben USD. Danach ist jede Zahl USD.
+ * Schritt nach USD gebracht, die Statements bleiben USD. Danach ist jede Zahl USD.
+ * Minor-Unit-Listings (GBp, ZAc, ILA) bleiben in der Major-Währung (#244): Kurs ÷ factor, Statements
+ * USD → Major mit demselben Live-FX. Nicht weiter nach USD — sonst steht .L auf „Dollar“
+ * (SHEL.L live 01.11.2026: 4036.5 GBp → 54.06 USD, Entry „40,17 Dollar“ statt Pfund).
  *
- * - Preisfelder (Quote/Profile/OHLCV, Quote-EPS): × rate / factor. Cap-Felder (FMP liefert sie schon in der
- *   Major-Einheit): × rate. Kursziel: Minor-Unit-Plausibilisierung (priceTargetToListingUnit), dann × rate.
- * - Historie mit EINEM aktuellen Kurs umgerechnet (konstanter Faktor): RSL, MA-Kreuze, RSI bleiben identisch.
+ * - Major-Währung (EUR, CAD, …): Preisfelder × rate. Cap-Felder (schon Major) × rate. Historie mit demselben
+ *   Faktor, damit RSL, MA-Kreuze und RSI identisch bleiben.
+ * - Minor Unit (GBp, ZAc, ILA): nicht × rate nach USD. FMP-Shape über normalizeMinorUnitListing (÷ factor,
+ *   Statements USD → Major mit dem Live-FX). Yahoo-Bars sind schon Major, nur der Quote-Kurs wird ÷ factor.
  * - USD-Listing → Eingabe unverändert zurück (bit-gleich). Ohne gültigen FX-Kurs → keine Umrechnung:
- *   Minor Units wie bisher (#244, normalizeMinorUnitListing), Major-Währung bleibt stehen, nur markiert.
+ *   Minor Units wie bisher (#244), Major-Währung bleibt stehen, nur markiert.
  */
 export interface ListingFx {
   /** Listing-Währung der Quelle, z. B. "CAD", "EUR", "GBp". */
@@ -238,7 +242,20 @@ export function normalizeListingToUsd<T extends MinorUnitInput>(
     // Yahoo-Shape mit Minor Unit ohne FX: nur Kurs/EPS in die Major-Einheit (Bars sind es schon), Währung = Major.
     return convertListing(data, { rate: 1, factor, kBars: 1, currency: major, listingFx, mu: true });
   }
-  return convertListing(data, { rate: fx, factor, kBars: opts.barsInMajor ? fx : fx / factor, currency: "USD", listingFx: { from: code, major, factor, rate: fx, converted: true }, mu: !!mu });
+  // Minor Unit mit FX: in der Major-Währung bleiben (GBp → GBP), nicht nach USD. FX-Kurs kommt vom Aufrufer
+  // (getFxRateToUsd / Yahoo), kein fester Faktor. Yahoo-Bars sind schon Major (barsInMajor) → nur der Quote-Kurs ÷ factor.
+  if (mu) {
+    if (!opts.barsInMajor) return normalizeMinorUnitListing(data, fx, statementFields);
+    const kept = convertListing(data, { rate: 1, factor, kBars: 1, currency: major, listingFx: { from: code, major, factor, rate: null, converted: false }, mu: true });
+    // _listingFx.converted false würde der Disk-Cache bei jedem Lesen verwerfen und Section1 „FX fehlt“ zeigen.
+    // Die Währung steht auf dem Profil (GBP). Es fehlt kein Kurs.
+    if (kept.profile && typeof kept.profile === "object") {
+      const { _listingFx: _drop, ...profile } = kept.profile as any;
+      kept.profile = profile;
+    }
+    return kept;
+  }
+  return convertListing(data, { rate: fx, factor, kBars: opts.barsInMajor ? fx : fx / factor, currency: "USD", listingFx: { from: code, major, factor, rate: fx, converted: true }, mu: false });
 }
 
 function convertListing<T extends MinorUnitInput>(data: T, c: { rate: number; factor: number; kBars: number; currency: string; listingFx: ListingFx; mu: boolean }): T {
