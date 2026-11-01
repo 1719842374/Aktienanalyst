@@ -110,6 +110,11 @@ export interface GeoMapCountry extends GeoMapCountryDef {
   sectorShares: { sector: string; pct: number }[];
   /** Sektor mit dem höchsten Capex-Anteil, „n/a“ zählt nicht. null = keins erfasst. */
   dominantSector: string | null;
+  /**
+   * Nur die Sektor-Antwort setzt das (projectSectorLayer). Die Capex-Antwort lässt es weg.
+   * dominantSector bleibt daneben der Rohname, auch bei Gleichstand.
+   */
+  sectorAmpel?: SectorAmpel;
   note?: string;
 }
 
@@ -311,6 +316,241 @@ export const SECTOR_COLORS: Record<string, string> = {
 export function sectorColor(sector: string | null | undefined): string {
   if (!sector || sector === "n/a") return GEO_SCALE_COLORS.na;
   return SECTOR_COLORS[sector] ?? GEO_SCALE_COLORS.na;
+}
+
+/**
+ * Sektor-Ampel (Offen_WORK_CAPEX_SECTOR_MAP §2, Offen_WORK_RESEARCHER_CAPEX_MAP §2).
+ * Dominanz = capexShareWeight × Capex-Anteil der Firmen mit Firmensitz im Land.
+ * Ampel = Perzentil dieser Dominanz unter den Ländern mit eindeutigem Sektor
+ * (oberes/unteres Terzil), nicht eine feste Prozent-Schwelle. Kein Score.
+ * Umsatz-Geosegmente fließen nicht ein. Die Kartenfarbe bleibt sectorColor, die Legende sectorLegendShares.
+ */
+export const SECTOR_LAYER_PARAMS = {
+  /** Gewicht des Capex-Anteils (Prozentpunkte) an der Dominanz. Einzige belegte Quelle. */
+  capexShareWeight: 1,
+  /** Grün ab dem oberen Terzil der Peer-Perzentile. */
+  greenPct: 2 / 3,
+  /** Rot bis einschließlich des unteren Terzils. */
+  redPct: 1 / 3,
+  /**
+   * Unter dieser Stichprobe ist ein Terzil nicht belastbar → Ampel neutral.
+   * 3 ist das kleinste n, bei dem drei Bänder unterscheidbar sind.
+   */
+  minCountries: 3,
+  /** Tie-Gewicht im Mid-Rank der Ampel. Dieselbe Zahl wie MIDRANK_TIE_WEIGHT, eigener Parameter. */
+  midRankTieWeight: 0.5,
+} as const;
+
+export type SectorBand = "green" | "yellow" | "red" | "neutral";
+
+/** Palette der Ampel, mindestens 8 FMP-Sektoren. Nicht die Kartenfüllung (die bleibt SECTOR_COLORS). */
+export const SECTOR_CANON: readonly { id: string; label: string; color: string }[] = [
+  { id: "technology", label: "Technology", color: "#8b5cf6" },
+  { id: "communication", label: "Communication Services", color: "#f43f5e" },
+  { id: "consumer-cyclical", label: "Consumer Cyclical", color: "#f97316" },
+  { id: "consumer-defensive", label: "Consumer Defensive", color: "#eab308" },
+  { id: "industrials", label: "Industrials", color: "#3b82f6" },
+  { id: "financials", label: "Financial Services", color: "#14b8a6" },
+  { id: "healthcare", label: "Healthcare", color: "#22c55e" },
+  { id: "energy", label: "Energy", color: "#84cc16" },
+  { id: "materials", label: "Basic Materials", color: "#d946ef" },
+  { id: "utilities", label: "Utilities", color: "#06b6d4" },
+  { id: "real-estate", label: "Real Estate", color: "#fb7185" },
+];
+
+const SECTOR_OTHER_COLOR = "#94a3b8";
+
+const SECTOR_MATCHERS: readonly { id: string; test: (name: string) => boolean }[] = [
+  { id: "consumer-cyclical", test: s => /consumer cyclical|consumer discretionary|\bautos?\b/i.test(s) },
+  { id: "consumer-defensive", test: s => /consumer defensive|consumer staples/i.test(s) },
+  { id: "communication", test: s => /communication/i.test(s) },
+  { id: "technology", test: s => /technolog|semiconductor|software/i.test(s) },
+  { id: "financials", test: s => /financial/i.test(s) },
+  { id: "healthcare", test: s => /health care|healthcare|biotech|pharma/i.test(s) },
+  { id: "industrials", test: s => /industrial/i.test(s) },
+  { id: "energy", test: s => /^energy$/i.test(s) || /energy/i.test(s) },
+  { id: "materials", test: s => /basic materials|materials|mining/i.test(s) },
+  { id: "utilities", test: s => /utilit/i.test(s) },
+  { id: "real-estate", test: s => /real estate/i.test(s) },
+];
+
+export interface SectorAmpel {
+  dominantSectorId: string | null;
+  dominantSector: string | null;
+  dominantColor: string | null;
+  /** Capex-Anteil des dominanten Sektors in %. null = keine eindeutige Dominanz. */
+  dominantSharePct: number | null;
+  /** Mid-Rank-Perzentil der Dominanz unter den Ländern mit eindeutigem Sektor. */
+  sharePercentile: number | null;
+  /** Sample-z (n−1) der Dominanz. null = Stichprobe < 2 oder keine Streuung. */
+  shareZ: number | null;
+  shareBand: SectorBand;
+  /** Gesetzt, wenn Dominanz oder Ampel nicht belegbar ist. Beginnt mit „n/a —“. */
+  sectorNote: string | null;
+}
+
+export interface SectorLayerInfo {
+  params: typeof SECTOR_LAYER_PARAMS;
+  /** Länder mit eindeutigem dominantem Sektor. */
+  peerN: number;
+  peerMedianSharePct: number | null;
+  legend: { id: string; label: string; color: string; countries: number }[];
+}
+
+export interface GeoMapSectorCountry extends GeoMapCountry {
+  sectorAmpel: SectorAmpel;
+}
+
+export interface GeoMapSectorResponse extends GeoMapResponse {
+  layer: "sector";
+  sectorLayer: SectorLayerInfo;
+  countries: GeoMapSectorCountry[];
+}
+
+function canonById(id: string): { id: string; label: string; color: string } | undefined {
+  return SECTOR_CANON.find(s => s.id === id);
+}
+
+/** Roh-Sektorname → Ampel-Palette. Unbekannt bleibt beim Roh-Namen. sectorColor bleibt davon getrennt. */
+export function matchSector(raw: string | null | undefined): { id: string; label: string; color: string } | null {
+  const name = (raw ?? "").trim();
+  if (!name || name.toLowerCase() === "n/a") return null;
+  const hit = SECTOR_MATCHERS.find(m => m.test(name));
+  if (hit) {
+    const canon = canonById(hit.id);
+    if (canon) return canon;
+  }
+  return { id: `other:${name.toLowerCase()}`, label: name, color: SECTOR_OTHER_COLOR };
+}
+
+function naNote(reason: string): string {
+  return reason.startsWith("n/a") ? reason : `n/a — ${reason}`;
+}
+
+function dominanceOf(shares: { sector: string; pct: number }[]): { dominant: { id: string; label: string; color: string; pct: number } | null; note: string | null } {
+  const real = shares.filter(s => s.pct > 0 && matchSector(s.sector));
+  if (real.length === 0) return { dominant: null, note: naNote("kein Sektor-Capex erfasst") };
+  const weight = SECTOR_LAYER_PARAMS.capexShareWeight;
+  const scored = real.map(s => {
+    const matched = matchSector(s.sector)!;
+    return { ...matched, pct: s.pct, score: weight * s.pct };
+  }).sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
+  const top = scored[0];
+  const tied = scored.filter(s => s.score === top.score);
+  if (tied.length > 1) {
+    return { dominant: null, note: naNote(`Gleichstand ${tied.map(t => t.label).join(" / ")}`) };
+  }
+  return { dominant: { id: top.id, label: top.label, color: top.color, pct: top.pct }, note: null };
+}
+
+/** Mid-Rank der Ampel. Liest SECTOR_LAYER_PARAMS.midRankTieWeight, nicht MIDRANK_TIE_WEIGHT. */
+function sectorSharePercentile(value: number, population: readonly number[]): number {
+  let less = 0;
+  let equal = 0;
+  for (const v of population) {
+    if (v < value) less += 1;
+    else if (v === value) equal += 1;
+  }
+  return (less + SECTOR_LAYER_PARAMS.midRankTieWeight * equal) / population.length;
+}
+
+function sampleZ(values: readonly number[]): Array<number | null> {
+  if (values.length < 2) return values.map(() => null);
+  const mean = values.reduce((s, v) => s + v, 0) / values.length;
+  const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1);
+  const sd = Math.sqrt(variance);
+  if (!(sd > 0)) return values.map(() => null);
+  return values.map(v => (v - mean) / sd);
+}
+
+function peerMedian(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid];
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function bandFor(percentile: number | null, peerN: number): SectorBand {
+  if (percentile == null || peerN < SECTOR_LAYER_PARAMS.minCountries) return "neutral";
+  if (percentile >= SECTOR_LAYER_PARAMS.greenPct) return "green";
+  if (percentile <= SECTOR_LAYER_PARAMS.redPct) return "red";
+  return "yellow";
+}
+
+/**
+ * Sektor-Ansicht über einer Capex-Antwort. Reine Funktion: Eingabe wird nicht verändert.
+ * Capex-Zahlen und dominantSector bleiben Feld für Feld. Die Ampel ist ein Zusatzobjekt.
+ */
+export function projectSectorLayer(base: GeoMapResponse): GeoMapSectorResponse {
+  const draft = base.countries.map(c => {
+    if (c.status !== "ok") {
+      const reason = c.note || "Keine Capex-Daten verfügbar";
+      const ampel: SectorAmpel = {
+        dominantSectorId: null, dominantSector: null, dominantColor: null,
+        dominantSharePct: null, sharePercentile: null, shareZ: null,
+        shareBand: "neutral", sectorNote: naNote(reason),
+      };
+      return { country: c, dominantPct: null as number | null, ampel };
+    }
+    const dom = dominanceOf(c.sectorShares);
+    const ampel: SectorAmpel = {
+      dominantSectorId: dom.dominant?.id ?? null,
+      dominantSector: dom.dominant?.label ?? null,
+      dominantColor: dom.dominant?.color ?? null,
+      dominantSharePct: dom.dominant?.pct ?? null,
+      sharePercentile: null,
+      shareZ: null,
+      shareBand: "neutral",
+      sectorNote: dom.note,
+    };
+    return { country: c, dominantPct: dom.dominant?.pct ?? null, ampel };
+  });
+
+  const peerValues = draft.map(d => d.dominantPct).filter((v): v is number => v != null);
+  const peerN = peerValues.length;
+  const zs = sampleZ(peerValues);
+  let zCursor = 0;
+  for (const d of draft) {
+    if (d.dominantPct == null) continue;
+    const z = zs[zCursor++] ?? null;
+    d.ampel.shareZ = z;
+    if (peerN < SECTOR_LAYER_PARAMS.minCountries) {
+      d.ampel.sharePercentile = null;
+      d.ampel.shareBand = "neutral";
+      d.ampel.sectorNote = naNote(`Ampel nicht belastbar (${peerN} Länder mit Dominanz, mindestens ${SECTOR_LAYER_PARAMS.minCountries})`);
+    } else {
+      const pct = sectorSharePercentile(d.dominantPct, peerValues);
+      d.ampel.sharePercentile = pct;
+      d.ampel.shareBand = bandFor(pct, peerN);
+    }
+  }
+
+  const legendMap = new Map<string, { id: string; label: string; color: string; countries: number }>();
+  for (const d of draft) {
+    const id = d.ampel.dominantSectorId;
+    if (!id) continue;
+    const row = legendMap.get(id) ?? {
+      id,
+      label: d.ampel.dominantSector || id,
+      color: d.ampel.dominantColor || SECTOR_OTHER_COLOR,
+      countries: 0,
+    };
+    row.countries += 1;
+    legendMap.set(id, row);
+  }
+
+  return {
+    ...base,
+    layer: "sector",
+    sectorLayer: {
+      params: SECTOR_LAYER_PARAMS,
+      peerN,
+      peerMedianSharePct: peerMedian(peerValues),
+      legend: Array.from(legendMap.values()).sort((a, b) => b.countries - a.countries || a.label.localeCompare(b.label)),
+    },
+    countries: draft.map(d => ({ ...d.country, sectorAmpel: d.ampel })),
+  };
 }
 
 /**

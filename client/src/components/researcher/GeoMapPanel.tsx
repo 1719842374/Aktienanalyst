@@ -4,6 +4,8 @@
  * Miner-Layer: derselbe Pfad mit layer=miner (Netz aus btc-miner.ts).
  * Gold und Wertschöpfung: layer=gold|valuechain.
  * Größe und Farbe der Hotspots kommen aus dem Perzentil der geladenen Verteilung.
+ * Sektor-Layer: Füllung = sectorColor(dominantSector), Legende = sectorLegendShares.
+ * Rand und Karte = Perzentil-Ampel (shareBand, Terzile aus SECTOR_LAYER_PARAMS).
  * HTML und Zeitüberschreitung werden zu n/a mit Grund, nie zu einer Parser-Meldung.
  * Nur Anzeige, kein Score.
  */
@@ -28,6 +30,8 @@ import {
   type GeoMapCountry,
   type GeoMapMinerResponse,
   type GeoMapResponse,
+  type GeoMapSectorResponse,
+  type SectorBand,
 } from "@shared/geo-map";
 import { goldCountryHasProduction, type GoldMapCountry, type GoldMapResponse, type ValueChainMapResponse } from "@shared/geo-map-layers";
 
@@ -46,6 +50,30 @@ const LAYERS: { id: LayerId; label: string; available: boolean; hint?: string }[
 function isMiner(d: MapPayload): d is GeoMapMinerResponse {
   return d.layer === "miner";
 }
+
+function isSectorOverlay(d: MapPayload): d is GeoMapSectorResponse {
+  return d.layer === "sector" && "sectorLayer" in d;
+}
+
+const BAND_LABEL: Record<SectorBand, string> = {
+  green: "oberes Terzil",
+  yellow: "Mitte",
+  red: "unteres Terzil",
+  neutral: "neutral",
+};
+const BAND_CLASS: Record<SectorBand, string> = {
+  green: "text-emerald-300",
+  yellow: "text-amber-300",
+  red: "text-rose-300",
+  neutral: "text-foreground/50",
+};
+const BAND_STROKE: Record<SectorBand, string> = {
+  green: "#10b981",
+  yellow: "#f59e0b",
+  red: "#f43f5e",
+  neutral: "#64748b",
+};
+const BAND_ORDER: readonly SectorBand[] = ["green", "yellow", "red", "neutral"];
 
 function fmtBn(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "n/a";
@@ -125,6 +153,7 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
   }, [data, load]);
 
   const capexData = data && (data.layer === "capex" || data.layer === "sector") ? data : null;
+  const sectorOverlay = data && isSectorOverlay(data) ? data : null;
   const minerData = data && isMiner(data) ? data : null;
   const goldData = data && data.layer === "gold" ? data : null;
   const chainData = data && data.layer === "valuechain" ? data : null;
@@ -187,6 +216,11 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
     if (layer === "sector") return sectorColor(c.dominantSector);
     if (metric === "yoy") return colorForPercentile(yoyPercentiles.get(c.iso2) ?? null, "yoy");
     return colorForPercentile(capexPercentiles.get(c.iso2) ?? null, "capex");
+  };
+  const bubbleStroke = (c: GeoMapCountry) => {
+    if (c.iso2 === selected) return "#fff";
+    if (layer === "sector") return BAND_STROKE[c.sectorAmpel?.shareBand ?? "neutral"];
+    return "rgba(15,23,42,0.6)";
   };
 
   return (
@@ -291,16 +325,18 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
               {capexData.countries.map(c => (
                 <Marker key={c.iso2} coordinates={[c.lon, c.lat]} onClick={() => setSelected(c.iso2)}>
                   <circle r={radius(c)} fill={fill(c)} fillOpacity={c.status === "ok" ? 0.85 : 0.35}
-                    stroke={c.iso2 === selected ? "#fff" : "rgba(15,23,42,0.6)"} strokeWidth={c.iso2 === selected ? 1.5 : 0.6}
+                    stroke={bubbleStroke(c)} strokeWidth={c.iso2 === selected || layer === "sector" ? 1.5 : 0.6}
                     style={{ cursor: "pointer" }} data-testid={`geo-bubble-${c.iso2}`}>
-                    <title>{`${c.name}: ${fmtBn(c.capexUsd)} · YoY ${fmtPct(c.yoyPct)}${c.dominantSector ? ` · ${c.dominantSector}` : ""}`}</title>
+                    <title>{layer === "sector"
+                      ? `${c.name}: ${c.dominantSector ?? c.sectorAmpel?.dominantSector ?? "n/a"}${c.sectorAmpel?.dominantSharePct != null ? ` ${c.sectorAmpel.dominantSharePct.toFixed(0)} %` : ""} · ${c.sectorAmpel?.sectorNote ?? BAND_LABEL[c.sectorAmpel?.shareBand ?? "neutral"]}`
+                      : `${c.name}: ${fmtBn(c.capexUsd)} · YoY ${fmtPct(c.yoyPct)}${c.dominantSector ? ` · ${c.dominantSector}` : ""}`}</title>
                   </circle>
                 </Marker>
               ))}
             </ComposableMap>
             <div className="px-2 pb-1.5 text-[10px] text-foreground/40 flex flex-wrap gap-x-3 gap-y-1">
               {layer === "sector" ? (
-                <span>Farbe = dominanter Sektor nach Capex-Anteil. Größe = Perzentil des Capex. Grau = n/a.</span>
+                <span>Farbe = dominanter Sektor nach Capex-Anteil. Größe = Perzentil des Capex. Rand = Ampel (Terzil der Dominanz). Grau = n/a.</span>
               ) : metric === "yoy" ? (
                 <span>Farbe und Größe = Perzentil des YoY in dieser Auswahl (niedrig → hoch). Grau = n/a.</span>
               ) : (
@@ -314,6 +350,15 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
                   <span key={item.sector} className="inline-flex items-center gap-1 text-[10px] text-foreground/70" data-testid={`geo-legend-${item.sector}`}>
                     <span className="w-2 h-2 rounded-full" style={{ background: sectorColor(item.sector) }} />
                     {item.sector} {item.pct.toFixed(1)} %
+                  </span>
+                ))}
+              </div>
+            )}
+            {layer === "sector" && (
+              <div className="px-2 pb-2 flex flex-wrap gap-2" data-testid="geo-sector-ampel-legend">
+                {BAND_ORDER.map(band => (
+                  <span key={band} className="inline-flex items-center gap-1 text-[10px] text-foreground/70">
+                    <span className="w-2 h-2 rounded-full border-2" style={{ borderColor: BAND_STROKE[band] }} /> {BAND_LABEL[band]}
                   </span>
                 ))}
               </div>
@@ -337,6 +382,28 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
                     {onOpenSectorOpportunity && (
                       <button type="button" onClick={onOpenSectorOpportunity} className="ml-2 text-violet-300 hover:underline" data-testid="button-geo-open-sectors">Sector Opportunity</button>
                     )}
+                  </div>
+                )}
+                {layer === "sector" && sel.sectorAmpel && (
+                  <div className="rounded border border-border/30 p-1.5 space-y-0.5" data-testid={`geo-sector-ampel-${sel.iso2}`} data-sector-band={sel.sectorAmpel.shareBand}>
+                    <div className="text-foreground/45 text-[10px]">Ampel der Dominanz</div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate">{sel.sectorAmpel.dominantSector ?? "n/a"}</span>
+                      <span className="font-mono">{sel.sectorAmpel.dominantSharePct != null ? `${sel.sectorAmpel.dominantSharePct.toFixed(0)} %` : "n/a"}</span>
+                    </div>
+                    <div className={`text-[10px] ${BAND_CLASS[sel.sectorAmpel.shareBand]}`}>
+                      Ampel {BAND_LABEL[sel.sectorAmpel.shareBand]}
+                      {sel.sectorAmpel.sharePercentile != null ? ` · Perzentil ${Math.round(sel.sectorAmpel.sharePercentile * 100)} %` : ""}
+                      {sel.sectorAmpel.shareZ != null
+                        ? ` · z ${sel.sectorAmpel.shareZ.toFixed(2)}`
+                        : sel.sectorAmpel.dominantSharePct != null ? " · z n/a — keine Streuung oder zu wenige Länder" : ""}
+                    </div>
+                    {sectorOverlay && (
+                      <div className="text-[10px] text-foreground/45">
+                        Median der Dominanz {sectorOverlay.sectorLayer.peerMedianSharePct != null ? `${sectorOverlay.sectorLayer.peerMedianSharePct.toFixed(1)} %` : "n/a — keine Dominanz"} · n={sectorOverlay.sectorLayer.peerN}
+                      </div>
+                    )}
+                    {sel.sectorAmpel.sectorNote && <div className="text-foreground/55 italic">{sel.sectorAmpel.sectorNote}</div>}
                   </div>
                 )}
                 {sel.note && <div className="text-foreground/45 italic" data-testid={`geo-note-${sel.iso2}`}>{sel.note}</div>}
@@ -380,7 +447,9 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
                   <button key={c.iso2} type="button" onClick={() => setSelected(c.iso2)}
                     className="w-full flex items-center justify-between px-1.5 py-1 rounded hover:bg-muted/40" data-testid={`geo-rank-${c.iso2}`}>
                     <span className="text-foreground/75 text-left">{i + 1}. {c.name}{layer === "sector" && c.dominantSector ? ` · ${c.dominantSector}` : ""}</span>
-                    <span className="font-mono shrink-0 ml-2">{fmtBn(c.capexUsd)} <span className="text-foreground/45">{fmtPct(c.yoyPct)}</span></span>
+                    <span className="font-mono shrink-0 ml-2">{fmtBn(c.capexUsd)} <span className="text-foreground/45">{fmtPct(c.yoyPct)}</span>
+                      {layer === "sector" && c.sectorAmpel ? <span className={BAND_CLASS[c.sectorAmpel.shareBand]}>{c.sectorAmpel.dominantSharePct != null ? ` ${c.sectorAmpel.dominantSharePct.toFixed(0)}%` : " n/a"}</span> : null}
+                    </span>
                   </button>
                 ))}
               </div>
