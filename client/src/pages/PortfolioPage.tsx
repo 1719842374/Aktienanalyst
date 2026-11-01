@@ -30,7 +30,8 @@ import { ArrowLeft, Info, Menu, X, SlidersHorizontal, BarChart3, Table2, LayoutD
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SectionCard } from "@/components/SectionCard";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { invalidateCrossModuleQueries, useCrossModuleHandler } from "@/lib/crossModuleRefresh";
 import type { StockAnalysis } from "../../../shared/schema";
 import {
   makePosition, loadPositionsFromStorage, savePositionsToStorage,
@@ -241,10 +242,34 @@ export default function PortfolioPage() {
     setPositions(prev => prev.filter(p => p.id !== id));
   }
 
-  function handleRefreshAllAnalyses() {
+  function handleRefreshAllAnalyses(): Promise<void> {
     const tickers = Array.from(new Set(positions.map(p => p.ticker.toUpperCase()).filter(Boolean)));
-    tickers.forEach(t => fetchAnalysisForTicker(t, true));
+    return Promise.all(tickers.map((ticker) => fetchAnalysisForTicker(ticker, true))).then(() => undefined);
   }
+
+  const refreshOhlcv = useCallback(async () => {
+    const openLongs = positions
+      .filter(p => p.status === "open" && p.side === "long")
+      .map(p => p.ticker.toUpperCase())
+      .filter(Boolean);
+    const bench = (policy.benchmark || "SPY").trim().toUpperCase() || "SPY";
+    const tickers = Array.from(new Set([bench, ...openLongs])).slice(0, 12);
+    if (tickers.length === 0) return;
+    const from = timeframeCutoffIso(timeframe);
+    const res = await apiRequest(
+      "GET",
+      `/api/ohlcv?tickers=${encodeURIComponent(tickers.join(","))}&from=${encodeURIComponent(from)}`,
+    );
+    if (!res.ok) return;
+    const body = await res.json();
+    setHistoricalPricesByTickerLong(body.bars || {});
+    setOhlcvMetaByTicker(body.meta || {});
+  }, [positions, policy.benchmark, timeframe]);
+
+  useCrossModuleHandler("portfolio", async () => {
+    await handleRefreshAllAnalyses();
+    await refreshOhlcv();
+  });
 
   function handleTakeoverFromAnalysis(id: string) {
     const position = positions.find(p => p.id === id);
@@ -372,7 +397,14 @@ export default function PortfolioPage() {
             Positions-Tracker + Sharpe/Kelly/CAPM — reine Berechnungslogik, keine Order-Ausführung
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleRefreshAllAnalyses} className="gap-1.5 shrink-0">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => { void invalidateCrossModuleQueries(queryClient); }}
+          className="gap-1.5 shrink-0"
+          title="Aktualisiert Analyse, Researcher und Portfolio gemeinsam über die API. Kann Credits verbrauchen. Keine Score-Änderung."
+          data-testid="button-cross-module-refresh"
+        >
           <RefreshCw className="w-3.5 h-3.5" /> Alle aktualisieren
         </Button>
       </header>

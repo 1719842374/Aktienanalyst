@@ -19,6 +19,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerLiquidityRoute(app);
   const { registerLiquidityBriefingRoute } = await import("./liquidity-briefing-route");
   registerLiquidityBriefingRoute(app);
+  // GET /api/researcher/fiscal-programs (FW-34, Discovery → Fiscal-Bridge, nur Anzeige, kein Score)
+  const { registerFiscalDiscoveryRoute } = await import("./fiscal-discovery-route");
+  registerFiscalDiscoveryRoute(app);
   const { registerValueChainRoutes } = await import("./valuechain-routes");
   registerValueChainRoutes(app);
   const { registerRecessionMarketRoutes } = await import("./recession-markets");
