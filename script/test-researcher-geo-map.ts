@@ -186,6 +186,38 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
   t.close();
 }
 
+// 6b) Zählung und Blasenradius aus sites (decorateMinerSites). regions bleibt der leere Länderanteil.
+{
+  const { MINER_MAP_SITES, decorateMinerSites } = await import("../shared/miner-map");
+  const decorated = decorateMinerSites(MINER_MAP_SITES);
+  const t = await run(
+    { hasKey: () => false, screenCountry: async () => [], capexYears: async () => ({ latest: null, prevCapexUsd: null }) },
+    { minerNetwork: async () => ({ hashrateEH: 600, hashpriceBtcPerThDay: 0.00005, breakevenUsd: 40000, source: "fixture", note: null }) },
+  );
+  const r = await t.get("?layer=miner");
+  assert.equal(r.status, 200);
+  assert.equal(r.json.regions.length, 0);
+  assert.equal(r.json.sites.length, decorated.length);
+  assert.ok(r.json.sites.length > r.json.regions.length);
+  for (const site of decorated) {
+    const got = r.json.sites.find((row: { id: string }) => row.id === site.id);
+    assert.ok(got, site.id);
+    assert.equal(got.bubble.radiusPx, site.bubble.radiusPx, `${site.id} radius`);
+  }
+  assert.match(r.json.countryShareNote, /^n\/a — /);
+  const standortLine = panel.match(/\{[^}\n]+\} Standorte/);
+  assert.ok(standortLine, "Zählzeile Standorte fehlt");
+  assert.match(standortLine[0], /minerSites\.length/);
+  assert.doesNotMatch(standortLine[0], /regions/);
+  assert.match(panel, /minerSites\.map/);
+  assert.doesNotMatch(panel, /minerData\.regions\.map/);
+  assert.match(panel, /function minerBubbleRadius/);
+  assert.match(panel, /bubble\?\.radiusPx/);
+  assert.doesNotMatch(panel, /MINER_MAP_RADIUS/);
+  assert.match(panel, /countryShareNote/);
+  t.close();
+}
+
 // 7) Kaltstart über dem Budget: JSON mit n/a, nicht hängen und nicht HTML
 {
   const { mkdtempSync } = await import("node:fs");

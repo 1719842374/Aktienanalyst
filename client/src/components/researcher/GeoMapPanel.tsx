@@ -1,7 +1,7 @@
 /**
  * GeoMapPanel — Offen_WORK_CAPEX_SECTOR_MAP.md und Offen_WORK_RESEARCHER_CAPEX_MAP.md.
  * Capex- und Sektor-Layer: GET /api/researcher/geo-map?layer=capex|sector.
- * Miner-Layer: derselbe Pfad mit layer=miner (Netz aus btc-miner.ts).
+ * Miner-Layer: derselbe Pfad mit layer=miner. Zählung und Blasen aus sites, Länderanteil bleibt n/a.
  * Gold und Wertschöpfung: layer=gold|valuechain.
  * Größe und Farbe der Hotspots kommen aus dem Perzentil der geladenen Verteilung.
  * Sektor-Layer: Füllung = sectorColor(dominantSector), Legende = sectorLegendShares.
@@ -35,6 +35,7 @@ import {
   type SectorBand,
 } from "@shared/geo-map";
 import { goldCountryHasProduction, type GoldMapCountry, type GoldMapResponse, type ValueChainMapResponse } from "@shared/geo-map-layers";
+import { type MinerMapBubble, type MinerMapSite } from "@shared/miner-map";
 
 type Metric = "capex" | "yoy";
 type LayerId = "capex" | "sector" | "miner" | "gold" | "valuechain";
@@ -48,7 +49,19 @@ const LAYERS: { id: LayerId; label: string; available: boolean; hint?: string }[
   { id: "valuechain", label: "Wertschöpfungskette", available: true },
 ];
 
-function isMiner(d: MapPayload): d is GeoMapMinerResponse {
+type MinerLayerSite = MinerMapSite & { bubble: MinerMapBubble };
+type MinerLayerData = GeoMapMinerResponse & {
+  sites?: MinerLayerSite[];
+  countryShareNote?: string;
+};
+
+/** Radius nur aus decorateMinerSites. null bleibt ohne Blase, kein Ersatzwert. */
+function minerBubbleRadius(site: MinerLayerSite): number | null {
+  const radiusPx = site.bubble?.radiusPx;
+  return typeof radiusPx === "number" && Number.isFinite(radiusPx) ? radiusPx : null;
+}
+
+function isMiner(d: MapPayload): d is MinerLayerData {
   return d.layer === "miner";
 }
 
@@ -158,13 +171,8 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
   const minerData = data && isMiner(data) ? data : null;
   const goldData = data && data.layer === "gold" ? data : null;
   const chainData = data && data.layer === "valuechain" ? data : null;
-  const minerSharePercentiles = useMemo(() => {
-    const values = (minerData?.regions || []).map(r => r.hashrateSharePct);
-    const pcts = metricPercentiles(values);
-    const m = new Map<string, number | null>();
-    (minerData?.regions || []).forEach((r, i) => m.set(r.id, pcts[i] ?? null));
-    return m;
-  }, [minerData]);
+  const minerSites = minerData?.sites ?? [];
+  const minerSel = minerSites.find(s => s.id === selected) ?? null;
 
   const capexPercentiles = useMemo(() => {
     const values = (capexData?.countries || []).map(c => (c.status === "ok" ? c.capexUsd : null));
@@ -231,7 +239,7 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
           <div className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
             <Globe2 className="w-3.5 h-3.5 text-violet-400" /> Capex-Weltkarte
             <span className="font-normal text-[10px] text-foreground/45" data-testid="geo-attribution">
-              · {layer === "miner" ? "Miner-Netz, keine Farms" : layer === "gold" ? "AISC je Firma, nicht je Land" : layer === "valuechain" ? "Katalog ohne Länderkette" : "nach Firmensitz"}
+              · {layer === "miner" ? "Filing-Standorte, Länderanteil n/a" : layer === "gold" ? "AISC je Firma, nicht je Land" : layer === "valuechain" ? "Katalog ohne Länderkette" : "nach Firmensitz"}
             </span>
           </div>
           {capexData && (
@@ -253,7 +261,7 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
           )}
           {minerData && (
             <div className="text-[11px] text-foreground/50 mt-0.5">
-              {minerData.regions.length} Standorte · Stand {new Date(minerData.asOf).toLocaleDateString("de-DE")}
+              {minerSites.length} Standorte · Stand {new Date(minerData.asOf).toLocaleDateString("de-DE")}
               {minerData.pending ? " · Aufbau" : minerData._stale ? " · Cache veraltet" : minerData._cached ? " · Cache" : ""}
             </div>
           )}
@@ -523,22 +531,32 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
                   <Geography key={geo.rsmKey} geography={geo} fill="rgba(148,163,184,0.12)" stroke="rgba(148,163,184,0.25)" strokeWidth={0.4} className="outline-none" />
                 ))}
               </Geographies>
-              {minerData.regions.map(r => {
-                const pct = minerSharePercentiles.get(r.id) ?? null;
+              {minerSites.map(site => {
+                const radiusPx = minerBubbleRadius(site);
+                if (radiusPx == null) return null;
+                const mw = site.capacityMw ? `${site.capacityMw.value} MW` : (site.bubble.note ?? "n/a");
                 return (
-                  <Marker key={r.id} coordinates={[r.lon, r.lat]} onClick={() => setSelected(r.id)}>
-                    <circle r={radiusForPercentile(pct)} fill={colorForPercentile(pct, "capex")} fillOpacity={0.85}
-                      data-testid={`geo-miner-${r.id}`}>
-                      <title>{`${r.name}: ${r.hashrateSharePct == null ? "n/a" : `${r.hashrateSharePct}%`}`}</title>
+                  <Marker key={site.id} coordinates={[site.lon, site.lat]} onClick={() => setSelected(site.id)}>
+                    <circle r={radiusPx} fill={site.bubble.color} fillOpacity={0.85}
+                      stroke={site.id === selected ? "#fff" : "rgba(15,23,42,0.6)"}
+                      strokeWidth={site.id === selected ? 1.5 : 0.6}
+                      style={{ cursor: "pointer" }}
+                      data-testid={`geo-miner-${site.id}`}>
+                      <title>{`${site.name}: ${mw}`}</title>
                     </circle>
                   </Marker>
                 );
               })}
             </ComposableMap>
-            <div className="px-2 pb-1.5 text-[10px] text-foreground/40">Keine Farm-Marker, solange die Standortquelle n/a ist.</div>
+            <div className="px-2 pb-1.5 text-[10px] text-foreground/40">Blasenradius aus den Standortdaten. Länder-Hashrate-Anteil bleibt n/a, bis CBECI oder IR-Daten angebunden sind.</div>
           </div>
           <div className="rounded-md border border-border/30 bg-background/40 p-2.5 text-[11px] space-y-2" data-testid="geo-side-panel">
-            <div className="text-foreground/70 leading-relaxed" data-testid="geo-miner-note">{minerData.locationNote || MINER_LOCATION_NOTE}</div>
+            <div className="text-foreground/70 leading-relaxed" data-testid="geo-miner-note">{minerData.countryShareNote || minerData.locationNote || MINER_LOCATION_NOTE}</div>
+            {minerSel && (
+              <div className="text-foreground/80" data-testid="geo-miner-site">
+                {minerSel.name}: {minerSel.capacityMw ? `${minerSel.capacityMw.value} MW` : (minerSel.bubble.note ?? "n/a — keine MW")}
+              </div>
+            )}
             {minerData.regions.find(r => r.id === selected) && (
               <div className="text-foreground/80">
                 {minerData.regions.find(r => r.id === selected)?.name}: {fmtPct(minerData.regions.find(r => r.id === selected)?.hashrateSharePct ?? null)}
