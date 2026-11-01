@@ -14,7 +14,8 @@ import {
   type RegionScorers,
 } from "../server/recession-regions";
 import {
-  ASIA_PEER_WEIGHT,
+  ASIA_GDP_USD,
+  asiaGdpWeights,
   blendWeighted,
   bookProbability,
   catalogProbability,
@@ -88,7 +89,21 @@ const volHistory = months("2023-01", 36, index => (index === 35 ? 80 : 18));
 
 console.log("\n=== §2 Asien = Japan + China (ASHR), Anzeige ===");
 {
-  check("Peer-Gewichte sind benannt, JP 1 und CN 1", ASIA_PEER_WEIGHT.JP === 1 && ASIA_PEER_WEIGHT.CN === 1);
+  const named = asiaGdpWeights({
+    jp: { gdpUsd: 4, source: `FRED ${ASIA_GDP_USD.JP} 2025` },
+    cn: { gdpUsd: 16, source: `FRED ${ASIA_GDP_USD.CN} 2025` },
+  });
+  check("BIP-Serien sind benannt, kein festes 1/1", ASIA_GDP_USD.JP === "MKTGDPJPA646NWDB" && ASIA_GDP_USD.CN === "MKTGDPCNA646NWDB" && named.jp.weight === 0.2 && named.cn.weight === 0.8);
+  const missing = asiaGdpWeights({
+    jp: { gdpUsd: 4, source: `FRED ${ASIA_GDP_USD.JP} 2025` },
+    cn: { gdpUsd: null, source: `n/a — FRED ${ASIA_GDP_USD.CN} leer` },
+  });
+  check("fehlendes China-BIP ist n/a, Japan wird auf 1 normiert", missing.cn.weight == null && missing.jp.weight === 1 && missing.text.includes("n/a") && missing.text.includes("normiert"));
+  const none = asiaGdpWeights({
+    jp: { gdpUsd: null, source: `n/a — FRED ${ASIA_GDP_USD.JP} leer` },
+    cn: { gdpUsd: 0, source: `n/a — FRED ${ASIA_GDP_USD.CN} leer` },
+  });
+  check("0 ist kein BIP-Anteil", none.jp.weight == null && none.cn.weight == null && none.text.includes("n/a"));
   const empty = asiaOf();
   check("Label ist Asien", empty.label === "Asien", empty.label);
   check("Gewicht der Region bleibt 0.10", empty.weight === 0.1);
@@ -106,7 +121,7 @@ console.log("\n=== §2 Asien = Japan + China (ASHR), Anzeige ===");
     chinaPe?.value,
   );
   check("Japan-JNVI bleibt geschlossen", empty.slots.find(slot => slot.name === "JNVI")?.available === false);
-  check("Hinweis nennt ASHR und ^TPX", (empty.note ?? "").includes("ASHR") && (empty.note ?? "").includes("^TPX"), empty.note);
+  check("Hinweis nennt ASHR, ^TPX und n/a ohne festes 1/1", (empty.note ?? "").includes("ASHR") && (empty.note ?? "").includes("^TPX") && (empty.note ?? "").includes("n/a") && !(empty.note ?? "").includes("1/1"), empty.note);
 
   const quiet = score();
   const withChina = score({ cnVolPoints: volHistory, cnVolSource: "Yahoo ASHR, realisierte Vol 20T annualisiert" });
@@ -120,14 +135,7 @@ console.log("\n=== §2 Asien = Japan + China (ASHR), Anzeige ===");
   check("Handlung bleibt auf den US-Büchern", withChina.actionUsesUsBooks === true);
   check("Regionsgewichte bleiben 0.70 / 0.20 / 0.10", withChina.weights.US === 0.7 && withChina.weights.EZ === 0.2 && withChina.weights.JP === 0.1);
 
-  const jpSlots = asia.slots.filter(slot => !slot.name.includes("China"));
-  const cnSlots = asia.slots.filter(slot => slot.name.includes("China"));
-  const peerCorr = blendWeighted([
-    { weight: ASIA_PEER_WEIGHT.JP, probability: catalogProbability(jpSlots, "correction") },
-    { weight: ASIA_PEER_WEIGHT.CN, probability: catalogProbability(cnSlots, "correction") },
-  ]);
-  check("Korrektur-P ist die Peer-Mischung", asia.correctionProbability === peerCorr, `${asia.correctionProbability} vs ${peerCorr}`);
-  check("ohne China-Rezession bleibt die Rezessions-P die Japan-P", asia.recessionProbability === catalogProbability(jpSlots, "recession"));
+  check("ohne BIP bleibt die Katalog-P n/a, der Vol-Slot bleibt gewertet", asia.correctionProbability == null && scoredVol.available, String(asia.correctionProbability));
   const view = regionGaugeView(withChina, "JP")!;
   check("Gauge liest die aggregierte P", view.label === "Asien" && view.correctionProbability === asia.correctionProbability);
   check("Top-Treiber enthalten die China-Vol", view.topDrivers.some(slot => slot.name === "Vol China (ASHR)"));
@@ -137,24 +145,47 @@ console.log("\n=== §2 Asien = Japan + China (ASHR), Anzeige ===");
   check("kurze ASHR-Historie bleibt n/a und zählt nicht", !shortVol.available && shortVol.maxWeighted === 0 && shortVol.value.startsWith("n/a —"), shortVol.value);
   check("kurze Historie ändert die leere Korrektur-P nicht", short.correctionProbability == null);
 
-  const both = score({
+  const gdpPrints = {
     jpPe: 28,
     jpPeSource: "FMP ^TPX PE TTM",
     cnVolPoints: volHistory,
     cnVolSource: "Yahoo ASHR, realisierte Vol 20T annualisiert",
-  });
+    ezPe: 28,
+    ezPeSource: "FMP ^STOXX PE TTM",
+    jpGdpUsd: 4,
+    cnGdpUsd: 16,
+    jpGdpSource: `FRED ${ASIA_GDP_USD.JP} 2025`,
+    cnGdpSource: `FRED ${ASIA_GDP_USD.CN} 2025`,
+  };
+  const both = score(gdpPrints);
   const bothAsia = both.regions.find(region => region.id === "JP")!;
   const bothJp = bothAsia.slots.filter(slot => !slot.name.includes("China"));
   const bothCn = bothAsia.slots.filter(slot => slot.name.includes("China"));
+  const weights = asiaGdpWeights({
+    jp: { gdpUsd: 4, source: gdpPrints.jpGdpSource },
+    cn: { gdpUsd: 16, source: gdpPrints.cnGdpSource },
+  });
   const bothPeer = blendWeighted([
-    { weight: ASIA_PEER_WEIGHT.JP, probability: catalogProbability(bothJp, "correction") },
-    { weight: ASIA_PEER_WEIGHT.CN, probability: catalogProbability(bothCn, "correction") },
+    { weight: weights.jp.weight ?? Number.NaN, probability: catalogProbability(bothJp, "correction") },
+    { weight: weights.cn.weight ?? Number.NaN, probability: catalogProbability(bothCn, "correction") },
+  ]);
+  const equalPeer = blendWeighted([
+    { weight: 1, probability: catalogProbability(bothJp, "correction") },
+    { weight: 1, probability: catalogProbability(bothCn, "correction") },
   ]);
   check(
-    "^TPX-KGV und ASHR-Vol mischen sich als Peers, nicht als Zeilensumme",
-    bothAsia.correctionProbability === bothPeer && bothAsia.correctionProbability !== catalogProbability(bothAsia.slots, "correction"),
-    `${bothAsia.correctionProbability} vs ${bothPeer} vs ${catalogProbability(bothAsia.slots, "correction")}`,
+    "BIP-Anteil mischt ^TPX und ASHR, nicht 1/1 und nicht die Zeilensumme",
+    bothAsia.correctionProbability === bothPeer && bothPeer !== equalPeer && bothAsia.correctionProbability !== catalogProbability(bothAsia.slots, "correction"),
+    `${bothAsia.correctionProbability} vs ${bothPeer} vs gleich ${equalPeer}`,
   );
+  const equalBlend = blendWeighted([
+    { weight: 0.7, probability: 35 },
+    { weight: 0.2, probability: both.regions.find(r => r.id === "EZ")!.correctionProbability },
+    { weight: 0.1, probability: equalPeer },
+  ]);
+  console.log(`  ℹ️  Vorher/Nachher Korrektur: Asien ${equalPeer} → ${bothAsia.correctionProbability}; Blend ${equalBlend} → ${both.blendedCorrection12m}`);
+  console.log(`  ℹ️  US-Slots ${both.regions.find(r => r.id === "US")!.slots.length}, EZ-Korr ${both.regions.find(r => r.id === "EZ")!.correctionProbability}`);
+  check("US-Katalog und EZ-Korrektur bleiben bei der BIP-Mischung", both.regions.find(r => r.id === "US")!.slots.length === 0 && both.regions.find(r => r.id === "EZ")!.correctionProbability === catalogProbability(both.regions.find(r => r.id === "EZ")!.slots, "correction"));
   const tpx = bothAsia.slots.find(slot => slot.name === "TOPIX/CAPE JP")!;
   check("^TPX-Quelle bleibt am Japan-Slot", tpx.available && tpx.source === "FMP ^TPX PE TTM" && tpx.rawScore === capeReading(28).rawScore);
 
@@ -173,6 +204,17 @@ console.log("\n=== §2 Asien = Japan + China (ASHR), Anzeige ===");
     ]),
   );
   check("bookProbability bleibt die bestehende Rundung", bookProbability(0, 12.6) === 50);
+  check("Notiz nennt den BIP-Anteil", (bothAsia.note ?? "").includes("BIP-Anteil") && (bothAsia.note ?? "").includes("20,0 %") && (bothAsia.note ?? "").includes("80,0 %"), bothAsia.note);
+  const onlyJp = score({ ...gdpPrints, cnGdpUsd: null, cnGdpSource: `n/a — FRED ${ASIA_GDP_USD.CN} leer` });
+  const onlyAsia = onlyJp.regions.find(region => region.id === "JP")!;
+  check(
+    "fehlendes China-BIP lässt die China-Vol aus der P, Japan bleibt",
+    onlyAsia.correctionProbability === catalogProbability(onlyAsia.slots.filter(slot => !slot.name.includes("China")), "correction")
+      && (onlyAsia.note ?? "").includes("Gewicht China n/a")
+      && (onlyAsia.note ?? "").includes("normiert"),
+    `${onlyAsia.correctionProbability} ${onlyAsia.note}`,
+  );
+  check("EZ-P ändert sich durch das fehlende China-BIP nicht", onlyJp.regions.find(r => r.id === "EZ")!.correctionProbability === both.regions.find(r => r.id === "EZ")!.correctionProbability);
 }
 
 console.log("\n=== ^TPX und ASHR-KGV: echter Druck oder n/a — Grund ===");

@@ -6,10 +6,14 @@
 
 export const REGION_WEIGHT = { US: 0.7, EZ: 0.2, JP: 0.1 } as const;
 /**
- * Asia catalog peers. Philip 01.11.2026: the market beside Japan is China via ASHR.
- * blendWeighted drops a peer whose book is entirely n/a.
+ * Nominal GDP, current US$, World Bank via FRED.
+ * CN is the series the Buffett anchor already uses. JP is the same series for Japan.
+ * The peer weight is the latest print's share. A missing print is n/a, not a stand-in number.
  */
-export const ASIA_PEER_WEIGHT = { JP: 1, CN: 1 } as const;
+export const ASIA_GDP_USD = {
+  JP: "MKTGDPJPA646NWDB",
+  CN: "MKTGDPCNA646NWDB",
+} as const;
 /** s(z) raw is already on the −4…+4 scale. Same max the curve slot uses. */
 export const SERIES_STRESS_MAX = 4;
 /** 20-session realized vol, same window as the ASHR market chart. */
@@ -77,6 +81,72 @@ export function bookProbability(net: number, max: number): number | null {
   const raw = 50 + (net / max) * 50;
   const clamped = Math.max(5, Math.min(95, raw));
   return Math.round(clamped / 5) * 5;
+}
+
+export interface AsiaSideWeight {
+  series: string;
+  gdpUsd: number | null;
+  /** null = n/a. A lone survivor is 1 after the missing side is dropped. */
+  weight: number | null;
+  reason: string;
+}
+
+export interface AsiaGdpWeights {
+  jp: AsiaSideWeight;
+  cn: AsiaSideWeight;
+  text: string;
+}
+
+function positiveGdp(value: number | null): number | null {
+  return value != null && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function shareText(percent: number): string {
+  return `${(percent * 100).toFixed(1).replace(".", ",")} %`;
+}
+
+/**
+ * Japan/China blend weights from the two GDP prints.
+ * Both present: share of the sum. One missing: that side stays n/a and the other is 1.
+ * Both missing: both weights stay n/a. Never a fixed 1/1.
+ */
+export function asiaGdpWeights(input: {
+  jp: { gdpUsd: number | null; source: string };
+  cn: { gdpUsd: number | null; source: string };
+}): AsiaGdpWeights {
+  const jpGdp = positiveGdp(input.jp.gdpUsd);
+  const cnGdp = positiveGdp(input.cn.gdpUsd);
+  const jpReason = input.jp.source;
+  const cnReason = input.cn.source;
+  if (jpGdp != null && cnGdp != null) {
+    const sum = jpGdp + cnGdp;
+    const jp = jpGdp / sum;
+    const cn = cnGdp / sum;
+    return {
+      jp: { series: ASIA_GDP_USD.JP, gdpUsd: jpGdp, weight: jp, reason: jpReason },
+      cn: { series: ASIA_GDP_USD.CN, gdpUsd: cnGdp, weight: cn, reason: cnReason },
+      text: `BIP-Anteil US-$: Japan ${shareText(jp)} (${jpReason}), China ${shareText(cn)} (${cnReason}).`,
+    };
+  }
+  if (jpGdp != null) {
+    return {
+      jp: { series: ASIA_GDP_USD.JP, gdpUsd: jpGdp, weight: 1, reason: jpReason },
+      cn: { series: ASIA_GDP_USD.CN, gdpUsd: null, weight: null, reason: cnReason },
+      text: `Gewicht China n/a — ${cnReason}. Japan neu normiert auf 100 %.`,
+    };
+  }
+  if (cnGdp != null) {
+    return {
+      jp: { series: ASIA_GDP_USD.JP, gdpUsd: null, weight: null, reason: jpReason },
+      cn: { series: ASIA_GDP_USD.CN, gdpUsd: cnGdp, weight: 1, reason: cnReason },
+      text: `Gewicht Japan n/a — ${jpReason}. China neu normiert auf 100 %.`,
+    };
+  }
+  return {
+    jp: { series: ASIA_GDP_USD.JP, gdpUsd: null, weight: null, reason: jpReason },
+    cn: { series: ASIA_GDP_USD.CN, gdpUsd: null, weight: null, reason: cnReason },
+    text: `Gewicht Japan n/a — ${jpReason}. Gewicht China n/a — ${cnReason}.`,
+  };
 }
 
 export function blendWeighted(parts: Array<{ weight: number; probability: number | null }>): number | null {
