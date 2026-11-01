@@ -9,8 +9,8 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import { CHAT_CONTEXT_BUDGET, CHAT_LIMITS } from "../shared/chat-context";
-import { CHAT_HISTORY_SESSION_CHAR_BUDGET, CHAT_HISTORY_THREADS_PER_SESSION, CHAT_SESSION_HEADER, chatThreadTitle, clipChatMessages, mergeChatThreads, newChatId } from "../shared/chat-history";
-import { CHAT_HISTORY_SESSION_CAP, CHAT_HISTORY_TTL_MS, deleteChatThread, listChatThreads, putChatThread, registerChatHistoryRoute, resetChatHistoryStore } from "../server/chat-history-route";
+import { CHAT_HISTORY_IDLE_MINUTES, CHAT_HISTORY_MEMORY_BUDGET_CHARS, CHAT_HISTORY_SESSION_CHAR_BUDGET, CHAT_HISTORY_THREADS_PER_SESSION, CHAT_HISTORY_TTL_MS, CHAT_SESSION_HEADER, chatThreadTitle, clipChatMessages, mergeChatThreads, newChatId } from "../shared/chat-history";
+import { CHAT_HISTORY_SESSION_CAP, deleteChatThread, listChatThreads, putChatThread, registerChatHistoryRoute, resetChatHistoryStore } from "../server/chat-history-route";
 import { CHAT_RATE_LIMIT } from "../server/chat-route";
 
 let n = 0;
@@ -97,9 +97,12 @@ async function main() {
 
   assert.equal(CHAT_HISTORY_THREADS_PER_SESSION, CHAT_LIMITS.maxMessages);
   assert.equal(CHAT_HISTORY_SESSION_CHAR_BUDGET, CHAT_CONTEXT_BUDGET);
-  assert.equal(CHAT_HISTORY_SESSION_CAP, CHAT_RATE_LIMIT.max);
-  assert.equal(CHAT_HISTORY_TTL_MS, CHAT_RATE_LIMIT.windowMs * CHAT_HISTORY_THREADS_PER_SESSION);
-  ok("Grenzen hängen am Prompt-Budget, an maxMessages und am Rate-Limit");
+  assert.equal(CHAT_HISTORY_IDLE_MINUTES, 60);
+  assert.equal(CHAT_HISTORY_TTL_MS, CHAT_HISTORY_IDLE_MINUTES * 60 * 1000);
+  assert.equal(CHAT_HISTORY_MEMORY_BUDGET_CHARS, CHAT_HISTORY_IDLE_MINUTES * CHAT_HISTORY_SESSION_CHAR_BUDGET);
+  assert.equal(CHAT_HISTORY_SESSION_CAP, Math.floor(CHAT_HISTORY_MEMORY_BUDGET_CHARS / CHAT_HISTORY_SESSION_CHAR_BUDGET));
+  assert.ok(CHAT_HISTORY_SESSION_CAP > CHAT_RATE_LIMIT.max);
+  ok("Session-Cap ist Speicherbudget / 36k, TTL ist 60 Minuten, das Rate-Limit ist keines von beiden");
 
   resetChatHistoryStore();
   const t0 = 1_700_000_000_000;
@@ -141,6 +144,17 @@ async function main() {
   assert.equal(listChatThreads("sess-cap-1", undefined, undefined, t0 + CHAT_HISTORY_SESSION_CAP + 6).length, 1);
   assert.equal(listChatThreads("sess-cap-2", undefined, undefined, t0 + CHAT_HISTORY_SESSION_CAP + 7).length, 0);
   ok("Session-Limit verdrängt die am längsten nicht benutzte Session");
+
+  resetChatHistoryStore();
+  for (let i = 0; i < CHAT_HISTORY_SESSION_CAP; i++) {
+    putChatThread(`sess-ok-${i}`, { id: `thread-ok-${i}`, dashboard: "stock", entity: "SAP", title: String(i), updatedAt: "", messages: [{ role: "user", content: `aktiv ${i}` }] }, t0 + i);
+  }
+  const stillActive = t0 + CHAT_HISTORY_SESSION_CAP + 1;
+  for (let i = 0; i < CHAT_HISTORY_SESSION_CAP; i++) {
+    assert.equal(listChatThreads(`sess-ok-${i}`, undefined, undefined, stillActive + i).length, 1, `sess-ok-${i}`);
+  }
+  assert.equal(listChatThreads("sess-ok-20", undefined, undefined, stillActive + CHAT_HISTORY_SESSION_CAP).length, 1);
+  ok("Unter dem Budget wird keine aktive Session verdrängt");
 
   resetChatHistoryStore();
   putChatThread("sess-ttl", { id: "thread-ttl", dashboard: "gold", entity: null, title: "alt", updatedAt: "", messages: [{ role: "user", content: "läuft ab" }] }, t0);

@@ -4,26 +4,25 @@
  */
 import type { Express, Request, Response } from "express";
 import {
-  CHAT_HISTORY_SESSION_CHAR_BUDGET, CHAT_HISTORY_THREADS_PER_SESSION, CHAT_SESSION_HEADER,
+  CHAT_HISTORY_MEMORY_BUDGET_CHARS, CHAT_HISTORY_SESSION_CHAR_BUDGET, CHAT_HISTORY_THREADS_PER_SESSION,
+  CHAT_HISTORY_TTL_MS, CHAT_SESSION_HEADER,
   chatThreadTitle, clipChatMessages, isChatDashboard, isChatSessionId,
   type ChatThread,
 } from "../shared/chat-history";
 import type { ChatMessage } from "../shared/chat-context";
-import { CHAT_RATE_LIMIT } from "./chat-route";
 
 /**
- * Sessions im Prozess. Dieselbe Obergrenze wie `CHAT_RATE_LIMIT.max`:
- * mehr Schreiber lässt die Chat-Route in einem Fenster je Schlüssel nicht durch,
- * der Verlaufs-Cache muss nicht größer sein.
+ * Sessions, die bei voller Zeichen-Cap in `CHAT_HISTORY_MEMORY_BUDGET_CHARS` passen:
+ * floor(Speicherbudget / 36 000). Das Rate-Limit zählt Anfragen pro IP und Minute,
+ * nicht Sessions, und setzt diesen Cap nicht. Verdrängt wird nur die am längsten
+ * inaktive Session, und erst wenn der Cap überschritten ist.
  */
-export const CHAT_HISTORY_SESSION_CAP = CHAT_RATE_LIMIT.max;
+export const CHAT_HISTORY_SESSION_CAP = Math.max(
+  1,
+  Math.floor(CHAT_HISTORY_MEMORY_BUDGET_CHARS / CHAT_HISTORY_SESSION_CHAR_BUDGET),
+);
 
-/**
- * Ablauf ab dem letzten Zugriff (Lesen oder Schreiben).
- * Ein Rate-Fenster je Nachricht, die der Prompt behält:
- * `CHAT_RATE_LIMIT.windowMs * CHAT_HISTORY_THREADS_PER_SESSION`.
- */
-export const CHAT_HISTORY_TTL_MS = CHAT_RATE_LIMIT.windowMs * CHAT_HISTORY_THREADS_PER_SESSION;
+export { CHAT_HISTORY_TTL_MS };
 
 interface Slot {
   thread: ChatThread;

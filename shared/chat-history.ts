@@ -23,6 +23,25 @@ export const CHAT_HISTORY_THREADS_PER_SESSION = CHAT_LIMITS.maxMessages;
  */
 export const CHAT_HISTORY_SESSION_CHAR_BUDGET = CHAT_CONTEXT_BUDGET;
 
+/**
+ * Inaktivität, nach der ein unbenutzter Verlauf verfällt.
+ * 60 Minuten decken eine übliche Pause ab (anderer Tab, kurzes Gespräch).
+ * Die früheren 12 Minuten haben den Chat mitten in dieser Pause gelöscht.
+ */
+export const CHAT_HISTORY_IDLE_MINUTES = 60;
+const MS_PER_MINUTE = 60 * 1000;
+export const CHAT_HISTORY_TTL_MS = CHAT_HISTORY_IDLE_MINUTES * MS_PER_MINUTE;
+
+/**
+ * Prozessweiter Textspeicher aller Sessions, in Zeichen.
+ * Eine volle Session je Minute der Inaktivitätsfrist: wer innerhalb dieser Pause
+ * dazukommt, hat noch einen vollen Kontext frei. Der Session-Cap ist
+ * floor(dieses Budget / CHAT_HISTORY_SESSION_CHAR_BUDGET) und liegt damit bei 60.
+ * Das Chat-Rate-Limit zählt Anfragen pro IP und Minute und ist keine Session-Zahl.
+ */
+export const CHAT_HISTORY_MEMORY_BUDGET_CHARS =
+  CHAT_HISTORY_IDLE_MINUTES * CHAT_HISTORY_SESSION_CHAR_BUDGET;
+
 const SESSION_ID = /^[A-Za-z0-9_-]{8,80}$/;
 
 export interface ChatThread {
