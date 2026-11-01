@@ -105,6 +105,11 @@ function shareText(percent: number): string {
   return `${(percent * 100).toFixed(1).replace(".", ",")} %`;
 }
 
+/** Sources already start with „n/a —“. The weight sentence must not add it again. */
+function reasonOnce(source: string): string {
+  return source.replace(/^n\/a —\s*/, "");
+}
+
 /**
  * Japan/China blend weights from the two GDP prints.
  * Both present: share of the sum. One missing: that side stays n/a and the other is 1.
@@ -132,20 +137,20 @@ export function asiaGdpWeights(input: {
     return {
       jp: { series: ASIA_GDP_USD.JP, gdpUsd: jpGdp, weight: 1, reason: jpReason },
       cn: { series: ASIA_GDP_USD.CN, gdpUsd: null, weight: null, reason: cnReason },
-      text: `Gewicht China n/a — ${cnReason}. Japan neu normiert auf 100 %.`,
+      text: `Gewicht China n/a — ${reasonOnce(cnReason)}. Japan neu normiert auf 100 %.`,
     };
   }
   if (cnGdp != null) {
     return {
       jp: { series: ASIA_GDP_USD.JP, gdpUsd: null, weight: null, reason: jpReason },
       cn: { series: ASIA_GDP_USD.CN, gdpUsd: cnGdp, weight: 1, reason: cnReason },
-      text: `Gewicht Japan n/a — ${jpReason}. China neu normiert auf 100 %.`,
+      text: `Gewicht Japan n/a — ${reasonOnce(jpReason)}. China neu normiert auf 100 %.`,
     };
   }
   return {
     jp: { series: ASIA_GDP_USD.JP, gdpUsd: null, weight: null, reason: jpReason },
     cn: { series: ASIA_GDP_USD.CN, gdpUsd: null, weight: null, reason: cnReason },
-    text: `Gewicht Japan n/a — ${jpReason}. Gewicht China n/a — ${cnReason}.`,
+    text: `Gewicht Japan n/a — ${reasonOnce(jpReason)}. Gewicht China n/a — ${reasonOnce(cnReason)}.`,
   };
 }
 

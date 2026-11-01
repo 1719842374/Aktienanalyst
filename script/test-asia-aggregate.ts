@@ -98,12 +98,17 @@ console.log("\n=== §2 Asien = Japan + China (ASHR), Anzeige ===");
     jp: { gdpUsd: 4, source: `FRED ${ASIA_GDP_USD.JP} 2025` },
     cn: { gdpUsd: null, source: `n/a — FRED ${ASIA_GDP_USD.CN} leer` },
   });
-  check("fehlendes China-BIP ist n/a, Japan wird auf 1 normiert", missing.cn.weight == null && missing.jp.weight === 1 && missing.text.includes("n/a") && missing.text.includes("normiert"));
+  check("fehlendes China-BIP ist n/a, Japan wird auf 1 normiert", missing.cn.weight == null && missing.jp.weight === 1 && missing.text.includes("Gewicht China n/a — FRED") && !missing.text.includes("n/a — n/a") && missing.text.includes("normiert"), missing.text);
   const none = asiaGdpWeights({
     jp: { gdpUsd: null, source: `n/a — FRED ${ASIA_GDP_USD.JP} leer` },
     cn: { gdpUsd: 0, source: `n/a — FRED ${ASIA_GDP_USD.CN} leer` },
   });
-  check("0 ist kein BIP-Anteil", none.jp.weight == null && none.cn.weight == null && none.text.includes("n/a"));
+  check("0 ist kein BIP-Anteil", none.jp.weight == null && none.cn.weight == null && none.text.includes("Gewicht Japan n/a — FRED") && none.text.includes("Gewicht China n/a — FRED") && !none.text.includes("n/a — n/a"), none.text);
+  const onlyCn = asiaGdpWeights({
+    jp: { gdpUsd: null, source: `n/a — FRED ${ASIA_GDP_USD.JP} leer` },
+    cn: { gdpUsd: 16, source: `FRED ${ASIA_GDP_USD.CN} 2025` },
+  });
+  check("fehlendes Japan-BIP ist einmal n/a, China wird auf 1 normiert", onlyCn.jp.weight == null && onlyCn.cn.weight === 1 && onlyCn.text.startsWith("Gewicht Japan n/a — FRED") && !onlyCn.text.includes("n/a — n/a") && onlyCn.text.includes("normiert"), onlyCn.text);
   const empty = asiaOf();
   check("Label ist Asien", empty.label === "Asien", empty.label);
   check("Gewicht der Region bleibt 0.10", empty.weight === 0.1);
