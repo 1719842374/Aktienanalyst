@@ -146,6 +146,11 @@ app.get("/api/health", (_req: Request, res: Response) => {
     },
     () => {
       log(`serving on port ${port}`);
+      // Capex-Karte: der Kaltstart ist ein serieller FMP-Lauf (~1 min). Aufwärmen erst nach listen,
+      // damit /api/health nicht wartet und ein Gateway-Timeout kein HTML statt JSON an den Client gibt.
+      import("./researcher-geo-map-route")
+        .then(m => m.warmGeoMapCache())
+        .catch(err => console.error("[geo-map] warmup failed:", err?.message));
     },
   );
 })();

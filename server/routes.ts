@@ -521,4 +521,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 19. Chat-Verlauf im Prozess-Speicher, pro Session. Kein Supabase, kein Score.
   const { registerChatHistoryRoute } = await import("./chat-history-route");
   registerChatHistoryRoute(app);
+
+  // 20. GET /api/credit-fundamentals/:ticker — F1-20/F1-21, FMP-Ratios, nur Anzeige, kein Score, kein CRV.
+  const { registerCreditFundamentalsRoute } = await import("./credit-fundamentals-route");
+  registerCreditFundamentalsRoute(app);
 }

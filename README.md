@@ -942,8 +942,6 @@ Vorlage: [`.env.example`](./.env.example). Die echte `.env` ist git-ignoriert �
 
 [MIT License](./LICENSE). Siehe auch [Financial Disclaimer](./DISCLAIMER.md) — dieses Tool ist für Bildungszwecke und ersetzt keine Anlageberatung.
 
-Dieses Projekt wurde mit [Perplexity Computer](https://www.perplexity.ai/computer) erstellt.
-
 ---
 
-*Erstellt von Philip Diaz Rohr · Powered by Perplexity Computer*
+*Erstellt von Philip Diaz Rohr*
