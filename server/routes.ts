@@ -517,4 +517,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 18. GET /api/credit-fundamentals/:ticker — F1-20/F1-21, FMP-Ratios, nur Anzeige, kein Score, kein CRV.
   const { registerCreditFundamentalsRoute } = await import("./credit-fundamentals-route");
   registerCreditFundamentalsRoute(app);
+  // Gewinnwachstum / Growth Gap, nur Anzeige auf #/recession. Kein Score.
+  const { registerEarningsGrowthRoute } = await import("./recession-earnings-growth-route");
+  registerEarningsGrowthRoute(app);
 }
