@@ -11,6 +11,8 @@ import { companyDcfWaccPct, safeCompanyDcfWaccPct, waccSuffix } from '../shared/
 import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from '../shared/data-source';
 import { fazitEntryForExport, type FazitEntryExport } from '../shared/fazit-entry';
 import { currencySymbol, statementCurrency, formatCurrency } from '../shared/currency-format';
+// Gleiche Basis-Auswahl wie die UI (CatalystsSection/Section2/Section6/SummarySection via Re-Export in client/src/lib/calculations.ts).
+import { selectCatalystBase } from '../shared/catalyst-base';
 
 /** " (WACC x.xx%)" next to g* — omitted when beta5Y/marketCap/totalDebt are missing so the PDF never prints "WACC NaN%". */
 export function pdfWaccSuffix(d: any): string {
@@ -19,12 +21,12 @@ export function pdfWaccSuffix(d: any): string {
 
 // ===== Formatting helpers =====
 function f(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? v.toFixed(d) : "—"; }
-function fB(v: number | null | undefined): string {
+function fB(v: number | null | undefined, sym = "$"): string {
   if (v == null || isNaN(v)) return "—";
-  if (Math.abs(v) >= 1e12) return `$${(v/1e12).toFixed(1)}T`;
-  if (Math.abs(v) >= 1e9) return `$${(v/1e9).toFixed(1)}B`;
-  if (Math.abs(v) >= 1e6) return `$${(v/1e6).toFixed(0)}M`;
-  return `$${v.toFixed(0)}`;
+  if (Math.abs(v) >= 1e12) return `${sym}${(v/1e12).toFixed(1)}T`;
+  if (Math.abs(v) >= 1e9) return `${sym}${(v/1e9).toFixed(1)}B`;
+  if (Math.abs(v) >= 1e6) return `${sym}${(v/1e6).toFixed(0)}M`;
+  return `${sym}${v.toFixed(0)}`;
 }
 function pct(v: number | null | undefined, d = 1): string { return v != null && isFinite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(d)}%` : "—"; }
 function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -134,6 +136,28 @@ export function pdfMaxEntryRow(fe: FazitEntryExport | null): string {
     ? `<div class="row" data-testid="pdf-max-entry"><span class="row-label">Max-Entry (CRV 3:1)</span><span class="row-val">${esc(fe.label)}</span></div>
 <div class="para" style="font-size:7px;color:#7a8296">Gleicher Wert wie das Fazit (S17): (Entscheidungsbasis + 2 × Worst Case) / 3.</div>`
     : `<div class="row" data-testid="pdf-max-entry"><span class="row-label">Max-Entry (CRV 3:1)</span><span class="row-val">n/a — Fazit-Wert nicht berechenbar</span></div>`;
+}
+
+/** S5: negativer DCF-Szenariowert → n/a mit Grund. Grund wie API/UI: data.dcfNaReason (#326), sonst UI-Bedingung fcfTTM < 0 („Negativer FCF“, Section5). */
+export function pdfDcfNa(data: any, v: number): string | null {
+  if (!(typeof v === 'number' && Number.isFinite(v) && v < 0)) return null;
+  const reason = data?.dcfNaReason || (Number(data?.fcfTTM) < 0 ? 'negativer FCF' : 'negativer DCF-Wert');
+  return `n/a — ${reason}`;
+}
+
+/**
+ * S5 „Katalysatoren-adj. Zielwert“ wie S17 in der UI (CatalystsSection.tsx): Entscheidungsbasis des Fazits
+ * (fazitEntryForExport.fairValue = bias.decisionPerShare bzw. konservatives FCFF-DCF) → selectCatalystBase → × (1 + Σ GB).
+ * Währung wie UI: DCF-Basis → Statement-Währung, Fallback Analyst-PT/Kurs → Listing-Währung. null → n/a.
+ */
+export function pdfCatalystTarget(data: any, fe: FazitEntryExport | null, totalGB: number): { target: number; base: number; baseLabel: string; label: string } | null {
+  if (!fe || !Number.isFinite(fe.fairValue) || !Number.isFinite(data?.currentPrice)) return null;
+  const info = selectCatalystBase(fe.fairValue, totalGB, data.currentPrice, data.analystPT?.median || 0);
+  const ccy = info.source === 'dcf' ? fe.currency : data.currency;
+  const target = info.base * (1 + totalGB / 100);
+  if (!Number.isFinite(target)) return null;
+  const baseLabel = info.source === 'dcf' ? 'Fazit-Entscheidungsbasis' : info.source === 'analyst-pt' ? 'Analyst PT' : 'Kurs';
+  return { target, base: info.base, baseLabel, label: formatCurrency(target, 2, ccy) + ` (${baseLabel} ${formatCurrency(info.base, 2, ccy)} × (1 + ${f(totalGB,2)}%))` };
 }
 
 // ===== Normalize data (fill computed fields the frontend calculates) =====
@@ -360,6 +384,9 @@ ${imgs.map(im => `<div class="sub" style="break-after:avoid">${esc(im.label)}</d
 export async function generateAnalysisHTML(rawData: any, sectionImages: PdfSectionImage[] = []): Promise<string> {
   if (isYahooOnly(rawData)) return generateYahooOnlyHTML(rawData).replace('</body></html>', `${sectionImagesHtml(sectionImages)}</body></html>`);
   const data = normalizeData(rawData);
+  // Dieselbe Quelle wie der PDF-Kopf (data.currency) und Entry/DCF: Listing-Symbol cL, Statement-Symbol cS.
+  const cL = currencySymbol(data.currency);
+  const cS = currencySymbol(statementCurrency(data));
   const sp = data.sectorProfile;
   const wS = sp?.waccScenarios;
   const g = data.epsGrowth5Y || 5;
@@ -382,6 +409,8 @@ export async function generateAnalysisHTML(rawData: any, sectionImages: PdfSecti
   const konsFV = wS ? dcfCalc(data, wS.kons, g * 0.7) : 0;
   const baseFV = wS ? dcfCalc(data, wS.avg, g) : 0;
   const optFV = wS ? dcfCalc(data, wS.opt, g * 1.2) : 0;
+  // S5 Kat.-Ziel aus derselben Quelle wie UI-S17 (Fazit-Entscheidungsbasis), nicht aus dem PDF-eigenen dcfCalc.
+  const catTarget = pdfCatalystTarget(data, fazitEntry, fazit.totalGB);
 
   // CRITICAL: 'UNATTRAKTIV' and 'STARK UNATTRAKTIV' must be RED, not green
   const verdictColor = (fazit.verdict === 'ATTRAKTIV' || fazit.verdict === 'LEICHT ATTRAKTIV') ? '#22c55e' : fazit.verdict === 'NEUTRAL' ? '#eab308' : '#ef4444';
@@ -439,13 +468,13 @@ ${narrative.execSummary ? `
 <!-- S1: DATENAKTUALITÄT -->
 <div class="sec-header"><span>1 &nbsp; DATENAKTUALITÄT & PLAUSIBILITÄT</span></div>
 <table>
-<tr><td class="row-label">Kurs</td><td class="row-val">$${data.currentPrice?.toFixed(2)||'—'}</td><td class="row-label">Market Cap</td><td class="row-val">${fB(data.marketCap)}</td></tr>
+<tr><td class="row-label">Kurs</td><td class="row-val">${cL}${data.currentPrice?.toFixed(2)||'—'}</td><td class="row-label">Market Cap</td><td class="row-val">${fB(data.marketCap, cL)}</td></tr>
 <tr><td class="row-label">P/E (TTM)</td><td class="row-val">${f(data.peRatio)}</td><td class="row-label">Forward P/E</td><td class="row-val">${f(data.forwardPE)}</td></tr>
 <tr><td class="row-label">PEG</td><td class="row-val">${f(data.pegRatio,2)}</td><td class="row-label">EV/EBITDA</td><td class="row-val">${f(data.evEbitda)}</td></tr>
-<tr><td class="row-label">Beta (5Y)</td><td class="row-val">${f(data.beta5Y,2)}</td><td class="row-label">FCF TTM</td><td class="row-val">${fB(data.fcfTTM)}</td></tr>
+<tr><td class="row-label">Beta (5Y)</td><td class="row-val">${f(data.beta5Y,2)}</td><td class="row-label">FCF TTM</td><td class="row-val">${fB(data.fcfTTM, cS)}</td></tr>
 <tr><td class="row-label">FCF Margin</td><td class="row-val">${f(data.fcfMargin)}%</td><td class="row-label">EPS Growth 5Y</td><td class="row-val">${f(data.epsGrowth5Y)}%</td></tr>
 </table>
-<div class="row"><span class="row-label">Analysten-Konsens</span><span class="row-val">Median $${data.analystPT?.median?.toFixed(2)||'—'} | High $${data.analystPT?.high?.toFixed(2)||'—'} | Low $${data.analystPT?.low?.toFixed(2)||'—'} | Upside ${pct(ptUp)}</span></div>
+<div class="row"><span class="row-label">Analysten-Konsens</span><span class="row-val">Median ${cL}${data.analystPT?.median?.toFixed(2)||'—'} | High ${cL}${data.analystPT?.high?.toFixed(2)||'—'} | Low ${cL}${data.analystPT?.low?.toFixed(2)||'—'} | Upside ${pct(ptUp)}</span></div>
 
 <!-- S2: INVESTMENTTHESE -->
 <div class="sec-header"><span>2 &nbsp; INVESTMENTTHESE & KATALYSATOREN</span></div>
@@ -454,7 +483,7 @@ ${data.description ? `<div class="sub">Unternehmensbeschreibung</div><div class=
 <div class="para">${esc(data.growthThesis || '')}</div>
 <div class="row"><span class="row-label">Peter Lynch</span><span class="row-val">${data.catalystReasoning?.lynchClassification || '—'}</span></div>
 <div class="row"><span class="row-label">Moat</span><span class="row-val">${data.moatRating || '—'}</span></div>
-<div class="row"><span class="row-label">FCF Strength</span><span class="row-val">${f(data.fcfMargin)}% Margin · ${fB(data.fcfTTM)} TTM</span></div>
+<div class="row"><span class="row-label">FCF Strength</span><span class="row-val">${f(data.fcfMargin)}% Margin · ${fB(data.fcfTTM, cS)} TTM</span></div>
 <div class="row"><span class="row-label">Gov. Exposure</span><span class="row-val">${data.governmentExposure || 0}%</span></div>
 
 ${data.catalysts?.length ? `
@@ -500,19 +529,17 @@ ${wS ? `<table><tr><th>Szenario</th><th>WACC</th><th>Kommentar</th></tr>
 <!-- S5: DCF -->
 <div class="sec-header"><span>5 &nbsp; DCF-MODELL (FCFF, WACC via CAPM, Gordon Growth)</span></div>
 <table>
-<tr><td class="row-label">Revenue</td><td class="row-val">${fB(data.revenue)}</td><td class="row-label">Gross Margin</td><td class="row-val">${f(inc.grossMargin)}%</td></tr>
-<tr><td class="row-label">EBIT</td><td class="row-val">${fB(data.operatingIncome)}</td><td class="row-label">EBIT-Margin</td><td class="row-val">${f(inc.operatingMargin)}%</td></tr>
-<tr><td class="row-label">EBITDA</td><td class="row-val">${fB(data.ebitda)}</td><td class="row-label">Net Margin</td><td class="row-val">${f(inc.netMargin)}%</td></tr>
-<tr><td class="row-label">FCF TTM</td><td class="row-val">${fB(data.fcfTTM)}</td><td class="row-label">Net Debt</td><td class="row-val">${fB(nd)}</td></tr>
+<tr><td class="row-label">Revenue</td><td class="row-val">${fB(data.revenue, cS)}</td><td class="row-label">Gross Margin</td><td class="row-val">${f(inc.grossMargin)}%</td></tr>
+<tr><td class="row-label">EBIT</td><td class="row-val">${fB(data.operatingIncome, cS)}</td><td class="row-label">EBIT-Margin</td><td class="row-val">${f(inc.operatingMargin)}%</td></tr>
+<tr><td class="row-label">EBITDA</td><td class="row-val">${fB(data.ebitda, cS)}</td><td class="row-label">Net Margin</td><td class="row-val">${f(inc.netMargin)}%</td></tr>
+<tr><td class="row-label">FCF TTM</td><td class="row-val">${fB(data.fcfTTM, cS)}</td><td class="row-label">Net Debt</td><td class="row-val">${fB(nd, cS)}</td></tr>
 </table>
 ${wS ? `<div class="sub">DCF-Szenarien (5Y → Gordon Growth Terminal Value)</div>
 <table><tr><th>Szenario</th><th>WACC</th><th>Wachstum</th><th>Fair Value/Aktie</th><th>vs. Kurs</th></tr>
-<tr><td>Konservativ</td><td>${wS.kons}%</td><td>${f(g*0.7)}%</td><td>$${f(konsFV,2)}</td><td>${pct(data.currentPrice ? (konsFV/data.currentPrice-1)*100 : null)}</td></tr>
-<tr><td>Base Case</td><td>${wS.avg}%</td><td>${f(g)}%</td><td>$${f(baseFV,2)}</td><td>${pct(data.currentPrice ? (baseFV/data.currentPrice-1)*100 : null)}</td></tr>
-<tr><td>Optimistisch</td><td>${wS.opt}%</td><td>${f(g*1.2)}%</td><td>$${f(optFV,2)}</td><td>${pct(data.currentPrice ? (optFV/data.currentPrice-1)*100 : null)}</td></tr>
+${([['Konservativ', wS.kons, g*0.7, konsFV], ['Base Case', wS.avg, g, baseFV], ['Optimistisch', wS.opt, g*1.2, optFV]] as Array<[string, number, number, number]>).map(([n, w, gr, fv]) => { const na = pdfDcfNa(data, fv); return `<tr data-testid="pdf-s5-scen"><td>${n}</td><td>${w}%</td><td>${f(gr)}%</td><td>${na ? esc(na) : `${cS}${f(fv,2)}`}</td><td>${na ? 'n/a' : pct(data.currentPrice ? (fv/data.currentPrice-1)*100 : null)}</td></tr>`; }).join('\n')}
 </table>
-<div class="row"><span class="row-label">Katalysatoren-adj. Zielwert</span><span class="row-val">$${f(konsFV * (1 + fazit.totalGB/100), 2)} (Kons. DCF × (1 + ${f(fazit.totalGB,1)}%))</span></div>
-<div class="row"><span class="row-label">DCF vs Kurs</span><span class="row-val">${pct(data.currentPrice ? (konsFV/data.currentPrice-1)*100 : null)} ${data.currentPrice && konsFV < data.currentPrice * 0.9 ? '→ Überbewertet' : data.currentPrice && konsFV > data.currentPrice * 1.1 ? '→ Unterbewertet' : '→ Fair'}</span></div>` : ''}
+<div class="row" data-testid="pdf-s5-cat-target"><span class="row-label">Katalysatoren-adj. Zielwert</span><span class="row-val">${catTarget ? esc(catTarget.label) : 'n/a — Fazit-Wert nicht berechenbar'}</span></div>
+<div class="row" data-testid="pdf-s5-dcf-vs-kurs"><span class="row-label">DCF vs Kurs</span><span class="row-val">${pdfDcfNa(data, konsFV) ? esc(pdfDcfNa(data, konsFV)!) : `${pct(data.currentPrice ? (konsFV/data.currentPrice-1)*100 : null)} ${data.currentPrice && konsFV < data.currentPrice * 0.9 ? '→ Überbewertet' : data.currentPrice && konsFV > data.currentPrice * 1.1 ? '→ Unterbewertet' : '→ Fair'}`}</span></div>` : ''}
 
 <!-- S6: CRV -->
 <div class="sec-header"><span>6 &nbsp; RISIKOADJUSTIERTES CRV</span></div>
@@ -541,7 +568,7 @@ ${data.risks.map((r: any) => `<tr><td>${esc(r.name)}</td><td>${r.category}</td><
 <div class="sec-header"><span>9 &nbsp; RSL-MOMENTUM</span></div>
 ${data.rsl?.value ? `
 <div class="row"><span class="row-label">RSL-Wert</span><span class="row-val">${f(data.rsl.value,2)}</span></div>
-<div class="row"><span class="row-label">26-Wochen-Durchschnitt</span><span class="row-val">$${data.rsl.avg26w?.toFixed(2)||'—'}</span></div>
+<div class="row"><span class="row-label">26-Wochen-Durchschnitt</span><span class="row-val">${cL}${data.rsl.avg26w?.toFixed(2)||'—'}</span></div>
 <div class="row"><span class="row-label">Bewertung</span><span class="row-val">${data.rsl.value > 110 ? 'Strong' : data.rsl.value > 105 ? 'Neutral' : 'Weak — DCF Growth -5-10%'}</span></div>
 ` : '<div class="para">RSL-Daten nicht verfügbar.</div>'}
 
@@ -549,8 +576,8 @@ ${data.rsl?.value ? `
 <div class="sec-header"><span>10 &nbsp; TECHNISCHE ANALYSE</span></div>
 <table>
 <tr><th>Bedingung</th><th>Status</th><th>Wert</th></tr>
-<tr><td>Kurs > MA200</td><td>${data.technicals?.priceAboveMA200 ? '<span class="pos">JA ✓</span>' : '<span class="neg">NEIN ✗</span>'}</td><td>${data.technicals?.ma200 ? '$'+f(data.technicals.ma200,2) : '—'}</td></tr>
-<tr><td>MA50 > MA200</td><td>${data.technicals?.ma50AboveMA200 ? '<span class="pos">JA ✓</span>' : '<span class="neg">NEIN ✗</span>'}</td><td>${data.technicals?.ma50 ? '$'+f(data.technicals.ma50,2) : '—'}</td></tr>
+<tr><td>Kurs > MA200</td><td>${data.technicals?.priceAboveMA200 ? '<span class="pos">JA ✓</span>' : '<span class="neg">NEIN ✗</span>'}</td><td>${data.technicals?.ma200 ? cL+f(data.technicals.ma200,2) : '—'}</td></tr>
+<tr><td>MA50 > MA200</td><td>${data.technicals?.ma50AboveMA200 ? '<span class="pos">JA ✓</span>' : '<span class="neg">NEIN ✗</span>'}</td><td>${data.technicals?.ma50 ? cL+f(data.technicals.ma50,2) : '—'}</td></tr>
 <tr><td>MACD > 0</td><td>${data.technicals?.macdAboveZero ? '<span class="pos">JA ✓</span>' : '<span class="neg">NEIN ✗</span>'}</td><td>${data.technicals?.macdValue != null ? f(data.technicals.macdValue,4) : '—'}</td></tr>
 <tr><td>MACD steigend</td><td>${data.technicals?.macdRising ? '<span class="pos">JA ✓</span>' : '<span class="neg">NEIN ✗</span>'}</td><td>${data.technicals?.macdSignal != null ? f(data.technicals.macdSignal,4) : '—'}</td></tr>
 </table>
@@ -609,9 +636,9 @@ ${(() => {
   <line x1="${padL}" y1="${padT+cH}" x2="${padL+cW}" y2="${padT+cH}" stroke="#1e2a42" stroke-width="0.5"/>
   ${[0,0.25,0.5,0.75,1].map(frac => `<line x1="${padL}" y1="${(padT + cH * (1-frac)).toFixed(1)}" x2="${padL+cW}" y2="${(padT + cH * (1-frac)).toFixed(1)}" stroke="#1a2540" stroke-width="0.3"/>`).join('')}
   <!-- Y-axis labels -->
-  <text x="${padL-3}" y="${padT+5}" fill="#5a6580" font-size="7" text-anchor="end">$${Math.round(cMax)}</text>
-  <text x="${padL-3}" y="${padT+cH/2+3}" fill="#5a6580" font-size="7" text-anchor="end">$${Math.round((cMax+cMin)/2)}</text>
-  <text x="${padL-3}" y="${padT+cH}" fill="#5a6580" font-size="7" text-anchor="end">$${Math.round(cMin)}</text>
+  <text x="${padL-3}" y="${padT+5}" fill="#5a6580" font-size="7" text-anchor="end">${cL}${Math.round(cMax)}</text>
+  <text x="${padL-3}" y="${padT+cH/2+3}" fill="#5a6580" font-size="7" text-anchor="end">${cL}${Math.round((cMax+cMin)/2)}</text>
+  <text x="${padL-3}" y="${padT+cH}" fill="#5a6580" font-size="7" text-anchor="end">${cL}${Math.round(cMin)}</text>
   <!-- X-axis labels -->
   <text x="${padL}" y="${svgH-5}" fill="#5a6580" font-size="7">${firstDate}</text>
   <text x="${padL+cW/2}" y="${svgH-5}" fill="#5a6580" font-size="7" text-anchor="middle">${midDate}</text>
@@ -681,15 +708,15 @@ ${data.risks.map((r: any, i: number) => `<tr><td>D${i+1}</td><td>${esc(r.name)}<
 <!-- S16: MONTE CARLO -->
 <div class="sec-header"><span>16 &nbsp; MONTE CARLO SIMULATION (GBM)</span></div>
 ${data.monteCarloResults?.mean ? `<table>
-<tr><td class="row-label">Mean</td><td class="row-val">$${f(data.monteCarloResults.mean,2)}</td><td class="row-label">Median</td><td class="row-val">$${f(data.monteCarloResults.median,2)}</td></tr>
-<tr><td class="row-label">P10 (Bearish)</td><td class="row-val">$${f(data.monteCarloResults.p10,2)}</td><td class="row-label">P90 (Bullish)</td><td class="row-val">$${f(data.monteCarloResults.p90,2)}</td></tr>
+<tr><td class="row-label">Mean</td><td class="row-val">${cL}${f(data.monteCarloResults.mean,2)}</td><td class="row-label">Median</td><td class="row-val">${cL}${f(data.monteCarloResults.median,2)}</td></tr>
+<tr><td class="row-label">P10 (Bearish)</td><td class="row-val">${cL}${f(data.monteCarloResults.p10,2)}</td><td class="row-label">P90 (Bullish)</td><td class="row-val">${cL}${f(data.monteCarloResults.p90,2)}</td></tr>
 <tr><td class="row-label">P(Verlust)</td><td class="row-val">${f(data.monteCarloResults.probLoss)}%</td><td class="row-label">P(≥20% Verlust)</td><td class="row-val">${f(data.monteCarloResults.probLoss20)}%</td></tr>
 </table>` : '<div class="para">Monte Carlo Ergebnisse nicht verfügbar.</div>'}
 
 <!-- S17: ZUSAMMENFASSUNG & FAZIT -->
 <div class="sec-header"><span>17 &nbsp; ZUSAMMENFASSUNG & FAZIT</span></div>
 <table>
-<tr><td class="row-label">Kurs</td><td class="row-val">$${data.currentPrice?.toFixed(2)||'—'}</td><td class="row-label">P/E</td><td class="row-val">${f(data.peRatio)}</td></tr>
+<tr><td class="row-label">Kurs</td><td class="row-val">${cL}${data.currentPrice?.toFixed(2)||'—'}</td><td class="row-label">P/E</td><td class="row-val">${f(data.peRatio)}</td></tr>
 <tr><td class="row-label">PEG</td><td class="row-val">${f(data.pegRatio,2)}</td><td class="row-label">EV/EBITDA</td><td class="row-val">${f(data.evEbitda)}</td></tr>
 <tr><td class="row-label">FCF Margin</td><td class="row-val">${f(data.fcfMargin)}%</td><td class="row-label">Moat</td><td class="row-val">${data.moatRating||'—'}</td></tr>
 <tr><td class="row-label">Kaufsignal</td><td class="row-val">${fazit.allBuy ? 'JA ✓' : 'NEIN ✗'}</td><td class="row-label">Kat. Upside</td><td class="row-val">+${f(fazit.totalGB,2)}%</td></tr>

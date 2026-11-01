@@ -8,13 +8,13 @@ import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { RECESSION_FALLBACK_DATA } from "@/lib/recessionFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection";
 import { BuffettRatioPanel } from "@/components/recession/BuffettRatioPanel";
 import { DollarReserveShareCard } from "@/components/recession/DollarReserveShareCard";
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
+import { InventoryDemandGapCard } from "@/components/recession/InventoryDemandGapCard";
 import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
@@ -205,8 +205,8 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
       <SectionCard number={nr.quellen} title="Quellenliste">
         <SourcesList sources={data.sources} />
       </SectionCard>
+      <InventoryDemandGapCard number={nr.lager} />
       <div className="pb-4">
-        <PerplexityAttribution />
       </div>
     </div>
   );

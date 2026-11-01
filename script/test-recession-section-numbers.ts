@@ -38,6 +38,7 @@ const TITLE: Record<string, RegExp> = {
   bewertung: /Aktuelle Bewertung/, nyfed: /NY Fed/, regeln: /Scoring-Regeln/, zonen: /Scoring-Zonen/, indikatoren: /Indikatoren-Tabelle/,
   untergruppen: /Score-Übersicht/, prozent: /Prozentschätzungen/, regionen: /Regionale Kataloge/, rsi: /RSI/, markt: /Märkte|Markt/,
   ta: /Technische Analyse/, buffett: /Buffett/, summary: /Zusammenfassung/, fazit: /Fazit/, quellen: /Quellenliste/,
+  lager: /Lager\/Nachfrage/,
 };
 
 let n = 0, fail = 0;
@@ -71,5 +72,27 @@ for (const hasRegions of [false, true]) for (const hasFazit of [false, true]) {
   }
   check(`${tag}: TA direkt nach Marktcharts, vor Buffett`, keys.indexOf("ta") === keys.indexOf("markt") + 1 && keys.indexOf("buffett") === keys.indexOf("ta") + 1);
 }
+const { InventoryDemandGapCard } = await import("../client/src/components/recession/InventoryDemandGapCard");
+const sources = { isratio: "FRED ISRATIO" as const, orders: "FRED DGORDER" as const, shipments: "FRED AMDMVS" as const };
+const cardHtml = (data?: unknown) => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (data !== undefined) client.setQueryData(["inventory-gap"], data);
+  const el = React.createElement(InventoryDemandGapCard, { number: 16 });
+  return renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, el));
+};
+const downHtml = cardHtml({
+  isratio: { available: false, reason: "ISRATIO: FRED nicht erreichbar" },
+  orderShipmentGap: { available: false, reason: "DGORDER: FRED nicht erreichbar" },
+  gapWindow: { available: false, reason: "DGORDER: FRED nicht erreichbar" },
+  sources,
+});
+check("Fehlerfall: Karte zeigt „FRED nicht erreichbar“, keine Kennzahl", downHtml.includes("FRED nicht erreichbar") && !downHtml.includes("inventory-gap-isratio") && !downHtml.includes("inventory-gap-orders") && !downHtml.includes("Pp"));
+const upHtml = cardHtml({
+  isratio: { available: true, latestDate: "2026-09-01", latest: 1.42, median10y: 1.35, mean10y: 1.36, std10y: 0.04, z: 1.5, percentile: 91.2, deviationFromMedian: 0.07, months: 120, windowStart: "2016-09-01" },
+  orderShipmentGap: { available: true, latestDate: "2026-08-01", dgorderLatest: 110, dgorderYearAgo: 100, amdmvsLatest: 104, amdmvsYearAgo: 100, dgorderYoyPct: 10, amdmvsYoyPct: 6.8, gapPp: 3.2 },
+  gapWindow: { available: true, latestDate: "2026-08-01", gapPp: 3.2, z: 0.8, percentile: 77, median: 1.1, months: 120, windowStart: "2016-08-01" },
+  sources,
+});
+check("Karte zeigt ISRATIO-Perzentil und Order-Shipment-Gap mit Datum", upHtml.includes("91,2") && upHtml.includes("+3,2 Pp") && upHtml.includes("01.09.2026") && upHtml.includes("01.08.2026"));
 console.log(`\n${n - fail}/${n} Checks grün`);
 process.exit(fail ? 1 : 0);

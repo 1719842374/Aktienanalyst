@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { fmpDividends, fmpProfile, getFxRateToUsd } from "./fmp";
-import { currencyFromTickerSuffix, dividendsToMajor, dividendsToUsd, minorUnitInfo } from "../shared/listing-units";
+import { currencyFromTickerSuffix, dividendsToMajor, dividendsToUsd, isMinorUnitListingTicker, minorUnitInfo } from "../shared/listing-units";
 import { fetchYahooFxToUsd } from "./yahoo-fetcher";
 import {
   parseFmpDividends,
@@ -18,7 +18,7 @@ import {
 
 const CACHE_MS = 12 * 60 * 60 * 1000;
 // v2 (#244): .L amounts are now converted pence → GBP; old v1 entries (pence) must not be served.
-const CACHE_VERSION = "v3"; // v3: DCF-FX – Nicht-USD-Dividenden in USD (wie der Kurs)
+const CACHE_VERSION = "v4"; // v4: .L/.JO/.TA bleiben in der Major-Einheit (Kurs ist GBP, nicht USD)
 const cacheKey = (t: string) => `${CACHE_VERSION}:${t}`;
 const cache = new Map<string, { at: number; body: DividendHistoryResponse }>();
 const TICKER_RE = /^[A-Z0-9.\-^=]{1,15}$/;
@@ -76,6 +76,8 @@ export async function loadDividendHistory(
 ): Promise<DividendHistoryResponse> {
   const res = await loadDividendHistoryListing(ticker, deps);
   if (!deps.fxToUsd || res.events.length === 0) return res;
+  // Minor-Unit-Listing: Beträge sind schon Major (Pence → GBP). Der Kurs bleibt dort — nicht nach USD.
+  if (isMinorUnitListingTicker(ticker)) return res;
   // Währung der Beträge: Quelle → Listing-Währung (FMP-Profil) → Börsen-Suffix. Minor Units sind hier schon Major.
   let cur: string | null = res.currency ?? null;
   if (!cur && ticker.includes(".")) {

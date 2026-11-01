@@ -1,8 +1,9 @@
 /**
  * F9-04 — Lager/Nachfrage-Lücke (Spec: Offen_FUTURE_SOLL_IST_DETAIL.md Z.258, Quelle Z.28).
  * Reine Rechenlogik, kein Netz, kein Score:
- *  1. ISRATIO (Total Business Inventories/Sales Ratio, FRED) — z-Wert des letzten Werts gegen die
- *     Historie der letzten 10 Jahre (Mittel/Std) plus Abstand zum 10J-Median.
+ *  1. ISRATIO (Total Business Inventories/Sales Ratio, FRED) — z-Wert und empirisches Perzentil
+ *     des letzten Werts gegen die Historie der letzten 10 Jahre (Mittel/Std) plus Abstand zum 10J-Median.
+ *     Die YoY-Lücke wird über dasselbe Fenster als z-Score und Perzentil bewertet. Keine festen Schwellen.
  *  2. YoY-Lücke Aufträge vs. Auslieferungen: DGORDER-YoY minus AMDMVS-YoY (Prozentpunkte).
  *     YoY über den gleichen Monat des Vorjahres (Datum-Match, kein Index-Raten).
  * Zu wenig Historie / fehlende Werte → value null + reason (n/a), nie 0.
@@ -13,7 +14,12 @@ export type NaReading = { available: false; reason: string };
 
 export type IsratioReading =
   | { available: true; latestDate: string; latest: number; median10y: number; mean10y: number; std10y: number;
-      z: number; deviationFromMedian: number; months: number; windowStart: string }
+      z: number; percentile: number; deviationFromMedian: number; months: number; windowStart: string }
+  | NaReading;
+
+/** z-Score und Perzentil der YoY-Lücke über dasselbe Fenster wie ISRATIO. Keine festen Schwellen. */
+export type GapWindowReading =
+  | { available: true; latestDate: string; gapPp: number; z: number; percentile: number; median: number; months: number; windowStart: string }
   | NaReading;
 
 export type OrderShipmentGapReading =
@@ -24,12 +30,34 @@ export type OrderShipmentGapReading =
 export interface InventoryDemandGap {
   isratio: IsratioReading;
   orderShipmentGap: OrderShipmentGapReading;
+  /** Bewertung der Lücke als z-Score/Perzentil über ISRATIO_WINDOW_YEARS. */
+  gapWindow: GapWindowReading;
   sources: { isratio: "FRED ISRATIO"; orders: "FRED DGORDER"; shipments: "FRED AMDMVS" };
 }
 
 /** Mindestens 5 Jahre Monatswerte im 10J-Fenster, sonst n/a. */
 export const ISRATIO_MIN_MONTHS = 60;
 export const ISRATIO_WINDOW_YEARS = 10;
+
+/**
+ * Fenster, Mindestlänge und Cache. Keine Bewertungsschwellen.
+ * Herkunft: Modul c474c621 (F9-04) plus Philip 01.11.2026 12:36 (z-Score/Perzentil, TTL als Parameter).
+ * windowYears / minMonths = ISRATIO_WINDOW_YEARS / ISRATIO_MIN_MONTHS.
+ * minStd = bisheriger Guard „Streuung ist 0“ (1e-12).
+ * sampleDof = 1 → Stichproben-Std (n−1), wie isratioReading seit c474c621.
+ * percentScale = Perzentilskala, keine Schwelle.
+ * fetchBufferYears = „+1 Jahr Puffer“ aus server/inventory-demand-gap.ts (Veröffentlichungsverzug und YoY-Vorjahr).
+ * cacheTtlMs = 6 h, wie server/recession-ta-route.ts (monatliche FRED-Reihen).
+ */
+export const INVENTORY_DEMAND_GAP_PARAMS = {
+  windowYears: ISRATIO_WINDOW_YEARS,
+  minMonths: ISRATIO_MIN_MONTHS,
+  minStd: 1e-12,
+  sampleDof: 1,
+  percentScale: 100,
+  fetchBufferYears: 1,
+  cacheTtlMs: 6 * 60 * 60 * 1000,
+} as const;
 
 function clean(obs: SeriesPoint[]): SeriesPoint[] {
   return obs.filter(o => typeof o.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(o.date) && Number.isFinite(o.value))
@@ -42,6 +70,18 @@ function median(xs: number[]): number {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+/** Anteil der Fensterwerte ≤ letzter Wert, in Prozent. Kein Schwellen-Label. */
+function empiricalPercentile(vals: number[], latest: number): number {
+  let le = 0;
+  for (const v of vals) if (v <= latest) le++;
+  return (le / vals.length) * INVENTORY_DEMAND_GAP_PARAMS.percentScale;
+}
+
+function sampleStd(vals: number[], mean: number): number {
+  const dof = vals.length - INVENTORY_DEMAND_GAP_PARAMS.sampleDof;
+  return Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / dof);
+}
+
 function shiftYears(date: string, years: number): string {
   return `${String(Number(date.slice(0, 4)) + years).padStart(4, "0")}${date.slice(4)}`;
 }
@@ -50,18 +90,19 @@ export function isratioReading(obs: SeriesPoint[]): IsratioReading {
   const c = clean(obs);
   if (c.length === 0) return { available: false, reason: "ISRATIO: keine gültigen Beobachtungen" };
   const last = c[c.length - 1];
-  const windowStart = shiftYears(last.date, -ISRATIO_WINDOW_YEARS);
+  const windowStart = shiftYears(last.date, -INVENTORY_DEMAND_GAP_PARAMS.windowYears);
   const win = c.filter(o => o.date > windowStart);
-  if (win.length < ISRATIO_MIN_MONTHS) {
-    return { available: false, reason: `ISRATIO: zu wenig Historie (${win.length} Monate im 10J-Fenster, mindestens ${ISRATIO_MIN_MONTHS})` };
+  if (win.length < INVENTORY_DEMAND_GAP_PARAMS.minMonths) {
+    return { available: false, reason: `ISRATIO: zu wenig Historie (${win.length} Monate im 10J-Fenster, mindestens ${INVENTORY_DEMAND_GAP_PARAMS.minMonths})` };
   }
   const vals = win.map(o => o.value);
   const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
-  const std = Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / (vals.length - 1));
-  if (!(std > 1e-12)) return { available: false, reason: "ISRATIO: Streuung im 10J-Fenster ist 0, z-Wert nicht definiert" };
+  const std = sampleStd(vals, mean);
+  if (!(std > INVENTORY_DEMAND_GAP_PARAMS.minStd)) return { available: false, reason: "ISRATIO: Streuung im 10J-Fenster ist 0, z-Wert nicht definiert" };
   const med = median(vals);
   return { available: true, latestDate: last.date, latest: last.value, median10y: med, mean10y: mean, std10y: std,
-    z: (last.value - mean) / std, deviationFromMedian: last.value - med, months: win.length, windowStart };
+    z: (last.value - mean) / std, percentile: empiricalPercentile(vals, last.value),
+    deviationFromMedian: last.value - med, months: win.length, windowStart };
 }
 
 function yoy(c: SeriesPoint[], date: string): { latest: number; yearAgo: number; pct: number } | string {
@@ -88,10 +129,41 @@ export function orderShipmentGapReading(dgorder: SeriesPoint[], amdmvs: SeriesPo
     amdmvsYearAgo: ay.yearAgo, dgorderYoyPct: dy.pct, amdmvsYoyPct: ay.pct, gapPp: dy.pct - ay.pct };
 }
 
+/** Historische YoY-Lücken, bewertet als z-Score und Perzentil über ISRATIO_WINDOW_YEARS. */
+export function gapWindowReading(dgorder: SeriesPoint[], amdmvs: SeriesPoint[]): GapWindowReading {
+  const d = clean(dgorder), a = clean(amdmvs);
+  if (d.length === 0) return { available: false, reason: "DGORDER: keine gültigen Beobachtungen" };
+  if (a.length === 0) return { available: false, reason: "AMDMVS: keine gültigen Beobachtungen" };
+  const aDates = new Set(a.map(o => o.date));
+  const gaps: { date: string; gapPp: number }[] = [];
+  for (const o of d) {
+    if (!aDates.has(o.date)) continue;
+    const dy = yoy(d, o.date), ay = yoy(a, o.date);
+    if (typeof dy === "string" || typeof ay === "string") continue;
+    gaps.push({ date: o.date, gapPp: dy.pct - ay.pct });
+  }
+  if (gaps.length === 0) return { available: false, reason: "DGORDER/AMDMVS: keine YoY-Lücke im Fenster" };
+  const last = gaps[gaps.length - 1];
+  const windowStart = shiftYears(last.date, -INVENTORY_DEMAND_GAP_PARAMS.windowYears);
+  const win = gaps.filter(g => g.date > windowStart);
+  if (win.length < INVENTORY_DEMAND_GAP_PARAMS.minMonths) {
+    return { available: false, reason: `Lücke: zu wenig Historie (${win.length} Monate im ${INVENTORY_DEMAND_GAP_PARAMS.windowYears}J-Fenster, mindestens ${INVENTORY_DEMAND_GAP_PARAMS.minMonths})` };
+  }
+  const vals = win.map(g => g.gapPp);
+  const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+  const std = sampleStd(vals, mean);
+  if (!(std > INVENTORY_DEMAND_GAP_PARAMS.minStd)) return { available: false, reason: "Lücke: Streuung im Fenster ist 0, z-Wert nicht definiert" };
+  return {
+    available: true, latestDate: last.date, gapPp: last.gapPp, z: (last.gapPp - mean) / std,
+    percentile: empiricalPercentile(vals, last.gapPp), median: median(vals), months: win.length, windowStart,
+  };
+}
+
 export function computeInventoryDemandGap(isratio: SeriesPoint[], dgorder: SeriesPoint[], amdmvs: SeriesPoint[]): InventoryDemandGap {
   return {
     isratio: isratioReading(isratio),
     orderShipmentGap: orderShipmentGapReading(dgorder, amdmvs),
+    gapWindow: gapWindowReading(dgorder, amdmvs),
     sources: { isratio: "FRED ISRATIO", orders: "FRED DGORDER", shipments: "FRED AMDMVS" },
   };
 }

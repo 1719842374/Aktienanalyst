@@ -30,8 +30,9 @@ export function registerRegulatoryRisksRoute(app: Express): void {
   app.get("/api/regulatory/cached/:ticker", (req: Request, res: Response) => {
     const ticker = String(req.params.ticker || "");
     const data = readPersistedAssessment(ticker);
+    // Cache-Miss ist der Normalfall (PESTEL-KI noch nicht gelaufen) — kein Fehler.
     if (!data) {
-      res.status(404).json({ error: "no cached regulatory assessment", ticker: ticker.toUpperCase() });
+      res.status(200).json({ cached: false, ticker: ticker.toUpperCase() });
       return;
     }
     res.json(data);

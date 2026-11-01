@@ -55,7 +55,11 @@ await check("Ohne Fazit-Wert: Server-Satz bleibt (kein Erfinden)", () => {
   assert.ok(typeof h === "string");
 });
 await check("Score-/Server-Dateien unverändert (exec-summary, attach, analyze-route, fazit-signal, bias-fixes, fazit-entry, schema)", () => {
-  execSync(`git diff --quiet 9aff468d48969dcdff72263ff1b24ef232b9d170 -- server/exec-summary.ts server/exec-summary-attach.ts server/analyze-route.ts client/src/lib/fazit-signal.ts shared/bias-fixes.ts shared/fazit-entry.ts shared/schema.ts`);
+  // Basis: aktueller main-Stand nach #326 (c256ec9c und später), nicht die feste Vor-#326-Basis 9aff468d.
+  // Gegen 9aff468d weichen nur die freigegebenen #326-Zeilen in analyze-route.ts und schema.ts ab.
+  const mb = execSync("git merge-base HEAD origin/main").toString().trim();
+  execSync(`git merge-base --is-ancestor c256ec9c4815a5041421781843aabe2bcf42889e ${mb}`);
+  execSync(`git diff --quiet ${mb} -- server/exec-summary.ts server/exec-summary-attach.ts server/analyze-route.ts client/src/lib/fazit-signal.ts shared/bias-fixes.ts shared/fazit-entry.ts shared/schema.ts`);
 });
 console.log(`\n${pass}/${pass + fail} passed`);
 process.exit(fail ? 1 : 0);
