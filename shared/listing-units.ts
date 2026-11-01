@@ -30,7 +30,7 @@ const QUOTE_PRICE_FIELDS = ["price", "open", "dayHigh", "dayLow", "yearHigh", "y
 const PROFILE_PRICE_FIELDS = ["price", "changes", "change"];
 const BAR_FIELDS = ["open", "high", "low", "close", "adjClose", "vwap", "change"];
 
-function scaleFields<T extends Record<string, any>>(row: T, fields: string[], mul: number): T {
+function scaleFields<T extends Record<string, any>>(row: T, fields: readonly string[], mul: number): T {
   if (!row || typeof row !== "object") return row;
   const out: any = { ...row };
   for (const f of fields) if (typeof out[f] === "number" && Number.isFinite(out[f])) out[f] = out[f] * mul;

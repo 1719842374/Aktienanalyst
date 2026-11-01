@@ -72,14 +72,19 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 type Mode = "controls" | "fmp" | "yahoo";
 let mode: Mode = "controls";
 
-function shelBars(pence: boolean) {
+/**
+ * Yahoo-Historie steigt von 55 % auf den Schlusskurs. Flache Bars liegen auf der
+ * Gleichheitskante (MA50 exakt = MA200, RSL exakt 100); nach ÷100 kippt `>` bzw. `rsl < 100`
+ * am Rundungsfehler. Der Trend hält MA50 ~12 % über MA200 und RSL ~110, auf beiden Einheiten.
+ */
+function shelSeries(end: number, trend: boolean) {
+  const n = 320;
   const day = 86400;
   const now = Math.floor(Date.now() / 1000);
-  const n = 320;
-  const px = pence ? PENCE : POUNDS;
+  const start = trend ? end * 0.55 : end;
   return {
     ts: Array.from({ length: n }, (_, i) => now - (n - i) * day),
-    px,
+    closes: Array.from({ length: n }, (_, i) => start + (end - start) * (i / (n - 1))),
   };
 }
 
@@ -97,7 +102,7 @@ function fmpMock(pathname: string, sym: string, qs: URLSearchParams): Response {
     if (pathname === "/cash-flow-statement") return json([0, 1, 2].map(i => ({ date: `${2025 - i}-12-31`, reportedCurrency: "USD", operatingCashFlow: 40e9, capitalExpenditure: -18e9, freeCashFlow: FCF_USD * Math.pow(0.97, i) })));
     if (pathname === "/balance-sheet-statement") return json([0, 1].map(i => ({ date: `${2025 - i}-12-31`, reportedCurrency: "USD", totalDebt: 104e9, cashAndCashEquivalents: 30e9, totalStockholdersEquity: 180e9, totalAssets: 400e9, totalCurrentAssets: 90e9, totalCurrentLiabilities: 70e9 })));
     if (pathname === "/historical-price-eod/full") {
-      const { ts } = shelBars(true);
+      const { ts } = shelSeries(PENCE, false);
       return json(ts.slice().reverse().map(t => ({ date: new Date(t * 1000).toISOString().slice(0, 10), open: PENCE, high: PENCE, low: PENCE, close: PENCE, volume: 1e6 })));
     }
     if (pathname === "/ratios") return json([{ priceToEarningsRatio: 11.93, returnOnEquity: 0.1, priceToBookRatio: 1.2, enterpriseValueMultiple: 5, dividendYield: 0.039 }]);
@@ -146,8 +151,8 @@ globalThis.fetch = (async (input: any, init?: any) => {
     if (url.includes("quoteSummary")) {
       return json({ quoteSummary: { result: [{ price: { regularMarketPrice: { raw: PENCE }, marketCap: { raw: MCAP }, currency: "GBp", longName: "Shell plc", exchangeName: "LSE" }, summaryDetail: { trailingPE: { raw: 11.65 } }, defaultKeyStatistics: { trailingEps: { raw: 3.38 } } }] } });
     }
-    const { ts, px } = shelBars(true);
-    return json({ chart: { result: [{ meta: { currency: "GBp", longName: "Shell plc", exchangeName: "LSE", regularMarketPrice: px }, timestamp: ts, indicators: { quote: [{ open: ts.map(() => px), high: ts.map(() => px), low: ts.map(() => px), close: ts.map(() => px), volume: ts.map(() => 1) }] } }] } });
+    const { ts, closes } = shelSeries(PENCE, true);
+    return json({ chart: { result: [{ meta: { currency: "GBp", longName: "Shell plc", exchangeName: "LSE", regularMarketPrice: PENCE }, timestamp: ts, indicators: { quote: [{ open: closes, high: closes, low: closes, close: closes, volume: ts.map(() => 1) }] } }] } });
   }
   return new Response("not found", { status: 404 });
 }) as typeof fetch;
@@ -212,8 +217,14 @@ function reportShel(label: string, body: any) {
   const yhR = reportShel("Yahoo", yh.body);
   check("Yahoo: kein USD-DCF neben GBP-Kurs (yahooOnly → n/a, nicht eine USD-Zahl)", yh.body?.dcfFairValue == null, String(yh.body?.dcfFairValue));
   check("Yahoo: Route ohne biasFix (yahooOnly, keine Statements)", yhR.routeScore == null, String(yhR.routeScore));
-  check("Yahoo: Entry £17.06", yhR.entry?.label === "£17.06", yhR.entry?.label ?? "null");
-  check("Yahoo: overallScore 0.213000 über buildBiasDecision (dieselbe Formel)", yhR.score === 0.21300000000000008, String(yhR.score));
+  check("Yahoo: Entry in GBP", yhR.entry?.currency === "GBP" && yhR.entry.label.startsWith("£"), yhR.entry?.label ?? "null");
+  const ma50 = yh.body?.technicalIndicators?.currentStatus?.ma50Value;
+  const ma200 = yh.body?.technicalIndicators?.currentStatus?.ma200Value;
+  check("Yahoo: MA50 klar über MA200 (nicht die Gleichheitskante)", typeof ma50 === "number" && typeof ma200 === "number" && ma50 > ma200 && (ma50 - ma200) / ma200 > 0.05, `${ma50} / ${ma200}`);
+  // Trend-Fixture, nicht die flache Serie. Toleranz fängt Rest-Rundung, nicht einen Death-Cross-Kipp.
+  const YAHOO_OVERALL_SCORE = 0.713;
+  const YAHOO_OVERALL_SCORE_TOL = 1e-6;
+  check("Yahoo: overallScore über buildBiasDecision innerhalb YAHOO_OVERALL_SCORE_TOL", typeof yhR.score === "number" && Math.abs(yhR.score - YAHOO_OVERALL_SCORE) <= YAHOO_OVERALL_SCORE_TOL, String(yhR.score));
 
   server.close();
   console.log(`\n${total - failed}/${total} Checks grün.`);
