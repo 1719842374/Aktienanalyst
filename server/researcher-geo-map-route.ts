@@ -34,6 +34,7 @@ import {
 import { buildGoldMapLayer, buildValueChainMapLayer } from "@shared/geo-map-layers";
 import { tickerAliasGroupsFromCompanies } from "@shared/gold-aisc";
 import { loadGoldAiscSeries } from "./gold-aisc";
+import { loadGoldMapProduction } from "./gold-mine-production";
 import { ALL_INDUSTRIES } from "./valuechain-catalog";
 
 const cacheDir = () => path.join(process.cwd(), ".cache", "researcher");
@@ -396,7 +397,7 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
     const layer = String(req.query?.layer ?? "capex");
     if (layer === "gold") {
       const gold = goldLayerInput();
-      return res.json(buildGoldMapLayer(new Date(now()).toISOString(), gold.points, gold.aliases));
+      return res.json(buildGoldMapLayer(new Date(now()).toISOString(), gold.points, gold.aliases, loadGoldMapProduction()));
     }
     if (layer === "valuechain") return res.json(buildValueChainMapLayer(new Date(now()).toISOString(), ALL_INDUSTRIES));
     if (layer !== "capex" && layer !== "sector" && layer !== "miner") {

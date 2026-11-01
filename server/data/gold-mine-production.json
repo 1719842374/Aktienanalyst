@@ -1,0 +1,216 @@
+{
+  "_comment": "USGS Mineral Commodity Summaries 2025, World Production table, commodity Gold, type mine production gold content. Public domain (https://doi.org/10.5066/P13XCP3R). Volumes are metric tons as published, including the rounded world total and the Other Countries aggregate. Country shares are not stored. A blank cell stays null and is not filled from another year. ISO codes join the row to the world atlas; they are not a production threshold.",
+  "source": "USGS Mineral Commodity Summaries 2025, World Production — Gold, mine production, gold content",
+  "sourceUrl": "https://www.sciencebase.gov/catalog/item/6798fd34d34ea8c18376e8ee",
+  "citation": "U.S. Geological Survey, 2025, Mineral Commodity Summaries 2025 data release: U.S. Geological Survey data release, https://doi.org/10.5066/P13XCP3R.",
+  "retrievedAt": "2026-11-01",
+  "commodity": "Gold",
+  "productionType": "mine production, gold content",
+  "unit": "metric tons",
+  "rows": [
+    {
+      "country": "United States",
+      "iso2": "US",
+      "isoNum": "840",
+      "role": "country",
+      "tonnes": {
+        "2023": 170,
+        "2024": 160
+      }
+    },
+    {
+      "country": "Australia",
+      "iso2": "AU",
+      "isoNum": "036",
+      "role": "country",
+      "tonnes": {
+        "2023": 296,
+        "2024": 290
+      }
+    },
+    {
+      "country": "Brazil",
+      "iso2": "BR",
+      "isoNum": "076",
+      "role": "country",
+      "tonnes": {
+        "2023": 71,
+        "2024": 70
+      }
+    },
+    {
+      "country": "Burkina Faso",
+      "iso2": "BF",
+      "isoNum": "854",
+      "role": "country",
+      "tonnes": {
+        "2023": 57,
+        "2024": 60
+      }
+    },
+    {
+      "country": "Canada",
+      "iso2": "CA",
+      "isoNum": "124",
+      "role": "country",
+      "tonnes": {
+        "2023": 198,
+        "2024": 200
+      }
+    },
+    {
+      "country": "China",
+      "iso2": "CN",
+      "isoNum": "156",
+      "role": "country",
+      "tonnes": {
+        "2023": 375,
+        "2024": 380
+      }
+    },
+    {
+      "country": "Colombia",
+      "iso2": "CO",
+      "isoNum": "170",
+      "role": "country",
+      "tonnes": {
+        "2023": 61,
+        "2024": 60
+      }
+    },
+    {
+      "country": "Ghana",
+      "iso2": "GH",
+      "isoNum": "288",
+      "role": "country",
+      "tonnes": {
+        "2023": 126,
+        "2024": 130
+      }
+    },
+    {
+      "country": "Indonesia",
+      "iso2": "ID",
+      "isoNum": "360",
+      "role": "country",
+      "tonnes": {
+        "2023": 100,
+        "2024": 100
+      },
+      "prodNotes": "estimated 2023"
+    },
+    {
+      "country": "Kazakhstan",
+      "iso2": "KZ",
+      "isoNum": "398",
+      "role": "country",
+      "tonnes": {
+        "2023": 133,
+        "2024": 130
+      }
+    },
+    {
+      "country": "Mali",
+      "iso2": "ML",
+      "isoNum": "466",
+      "role": "country",
+      "tonnes": {
+        "2023": 67,
+        "2024": 70
+      },
+      "prodNotes": "estimated 2023"
+    },
+    {
+      "country": "Mexico",
+      "iso2": "MX",
+      "isoNum": "484",
+      "role": "country",
+      "tonnes": {
+        "2023": 127,
+        "2024": 130
+      }
+    },
+    {
+      "country": "Peru",
+      "iso2": "PE",
+      "isoNum": "604",
+      "role": "country",
+      "tonnes": {
+        "2023": 100,
+        "2024": 100
+      }
+    },
+    {
+      "country": "Russia",
+      "iso2": "RU",
+      "isoNum": "643",
+      "role": "country",
+      "tonnes": {
+        "2023": 313,
+        "2024": 310
+      }
+    },
+    {
+      "country": "South Africa",
+      "iso2": "ZA",
+      "isoNum": "710",
+      "role": "country",
+      "tonnes": {
+        "2023": 104,
+        "2024": 100
+      }
+    },
+    {
+      "country": "Tanzania",
+      "iso2": "TZ",
+      "isoNum": "834",
+      "role": "country",
+      "tonnes": {
+        "2023": 55,
+        "2024": 60
+      }
+    },
+    {
+      "country": "Uzbekistan",
+      "iso2": "UZ",
+      "isoNum": "860",
+      "role": "country",
+      "tonnes": {
+        "2023": 120,
+        "2024": 120
+      }
+    },
+    {
+      "country": "Other Countries",
+      "iso2": null,
+      "isoNum": null,
+      "role": "aggregate",
+      "tonnes": {
+        "2023": 777,
+        "2024": 780
+      }
+    },
+    {
+      "country": "World total (rounded)",
+      "iso2": null,
+      "isoNum": null,
+      "role": "world",
+      "tonnes": {
+        "2023": 3250,
+        "2024": 3300
+      }
+    }
+  ],
+  "yearColumns": [
+    {
+      "year": "2023",
+      "field": "PROD_2023",
+      "estimated": false
+    },
+    {
+      "year": "2024",
+      "field": "PROD_EST_ 2024",
+      "estimated": true
+    }
+  ]
+}
