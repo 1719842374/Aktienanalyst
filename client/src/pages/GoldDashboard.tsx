@@ -7,7 +7,6 @@ import { apiRequest } from "@/lib/queryClient";
 import type { GoldAnalysis } from "../../../shared/gold-schema";
 import { GOLD_FALLBACK_DATA } from "@/lib/goldFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { GoldPriceSection } from "@/components/gold/GoldPriceSection";
 import { GoldIndicatorsSection } from "@/components/gold/GoldIndicatorsSection";
 import { GoldFairValueSection } from "@/components/gold/GoldFairValueSection";
@@ -184,7 +183,6 @@ export default function GoldDashboard() {
           </nav>
 
           <div className="px-3 py-3 border-t border-border mt-2">
-            <PerplexityAttribution />
           </div>
         </aside>
 
