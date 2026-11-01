@@ -117,12 +117,32 @@ export const CHAT_SYSTEM_PROMPT = [
   "Was-wäre-wenn-Fragen beantwortest du nur qualitativ als Gedankenexperiment; du änderst keine Scores, Gates oder Bewertungen und gibst keine neuen Score-Werte aus.",
   "Jede Sektion kann ein Feld \"auffaelligkeiten\" haben: mögliche Schwächen oder Auffälligkeiten, abgeleitet nur aus vorhandenen Daten, Flags und Gates. Nenne sie, wenn nach Schwächen, Risiken oder Auffälligkeiten einer Sektion gefragt wird, und erkläre sie mit den Zahlen der Sektion; erfinde keine weiteren.",
   "Du machst keine Änderungsvorschläge an Parametern und keine Overrides.",
+  "Liegt im Nutzerprompt eine AUFGABE für die ganze Analyse, halte ihre Blockreihenfolge ein. PESTEL nur, wenn pestelStark=ja. Thesis immer als dominante Klasse, ohne Wachstumsschwelle.",
   "Keine Anlageberatung. Antworte nur mit gültigem JSON: {\"answer\": string, \"sectionRefs\": number[]}.",
+].join(" ");
+
+/** Ganze Analyse: kohärentes Bild, keine Sektionsliste. WORK_KI_CHAT_SCHEMA + SCHEMA_UPDATE. */
+export const CHAT_BIG_PICTURE_TASK = [
+  "Ordne die Daten zu einem Bild. Liste nicht Sektion für Sektion auf.",
+  "Blöcke in dieser Reihenfolge, jeder Block nur aus dem KONTEXT:",
+  "1. Wachstumstreiber: größtes Segment und das, was der letzte Earnings Call als Treiber nennt. Steht earningsCallHinweis, nenne den Grund und erfinde keinen Call.",
+  "2. Financials: was die Kennzahlen in S4 zeigen.",
+  "3. Moat / Ökosystem: Burggraben und Bindung aus S13. Peers nur, wenn sie im Kontext stehen.",
+  "4. PESTEL: nur wenn pestelStark=ja. Sonst diesen Block weglassen.",
+  "5. Technical: Momentum aus S11/S12 (RSL, Cross). Fehlende Client-Werte als n/a mit dem genannten Grund.",
+  "6. Bewertung: was der Preis impliziert (DCF, g*, Ampel). Keine neue Score-Zahl.",
+  "7. Management: Delivery und Kapitalallokation aus S19 inklusive kiAntwort, falls vorhanden. Fehlt der Score: n/a mit Grund.",
+  "8. Thesis: immer die dominante Klasse (thesisDominanteKlasse, größter Anteil). Keine Wachstumsschwelle. Fehlt die Klasse: n/a — Thesis-Klassen nicht geladen.",
+  "9. Fazit: zwei bis vier Sätze.",
+  "News aus newsTop einordnen, nicht nur aufzählen. newsPositiv und newsNegativ nur verwenden, wenn sie keine n/a-Zeile sind.",
+  "Analysten: Buy/Hold/Sell aus S1. Narrative Thesen nur, wenn analystenThesen keine n/a-Zeile ist. Beat/Miss aus beatMiss, wenn das keine n/a-Zeile ist; sonst nur, was die Earnings-Zusammenfassung dazu sagt. Steht es dort nicht: n/a.",
+  "Steht kiAntwort in einer Sektion, beziehe dich darauf. Fehlt sie, wurde die KI-Analyse dieser Sektion nicht ausgeführt.",
 ].join(" ");
 
 export function buildChatPrompt(body: ChatRequestBody): string {
   const history = body.messages.map(m => `${m.role === "user" ? "Nutzer" : "Assistent"}: ${m.content}`).join("\n");
-  return `KONTEXT:\n${formatContextForPrompt(body.context, body.sectionId)}\n\nVERLAUF:\n${history}\n\nAntworte auf die letzte Nutzer-Nachricht.`;
+  const task = body.sectionId == null ? `\n\nAUFGABE (ganze Analyse):\n${CHAT_BIG_PICTURE_TASK}` : "";
+  return `KONTEXT:\n${formatContextForPrompt(body.context, body.sectionId)}\n\nVERLAUF:\n${history}${task}\n\nAntworte auf die letzte Nutzer-Nachricht.`;
 }
 
 const TIMEOUT = Symbol("chat-timeout");

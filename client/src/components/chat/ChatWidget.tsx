@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowLeft, Crosshair, Loader2, Maximize2, MessageCircle, Minimize2, Minus, Send, Sparkles, X } from "lucide-react";
 import { chatContextTrimOf, chatSectionKey, chatSectionName, chatSectionTag, formatChatContextTrim, mergeChatContextTrim, type ChatContext, type ChatSectionItem } from "@shared/chat-context";
+import type { EarningsCallBrief } from "@shared/chat-earnings";
 import { useDashboardChat } from "@/hooks/useDashboardChat";
 import { ChatMarkdown } from "./ChatMarkdown";
 import {
@@ -26,6 +27,8 @@ export interface ChatWidgetProps {
   onJumpToSection?: (id: number) => void;
   /** Beispiel-Fragen für den Startbildschirm. */
   suggestions?: string[];
+  /** Letzter Earnings Call, dieselbe Antwort wie im Chat-Kontext. */
+  earningsBrief?: EarningsCallBrief | null;
 }
 
 function viewport() {
@@ -36,7 +39,7 @@ function readStored(key: string): string | null {
   try { return window.localStorage.getItem(key); } catch { return null; }
 }
 
-export function ChatWidget({ dashboard, context, sections, getActiveSectionId, onJumpToSection, suggestions = [] }: ChatWidgetProps) {
+export function ChatWidget({ dashboard, context, sections, getActiveSectionId, onJumpToSection, suggestions = [], earningsBrief }: ChatWidgetProps) {
   const storageKey = chatWindowStorageKey(dashboard);
   const [win, setWin] = useState<ChatWindowState>(() => { const { vw, vh } = viewport(); return parseChatWindow(readStored(storageKey), vw, vh); });
   // Bindung über den stabilen Schlüssel: verschiebt sich die Nummerierung (Rezession: Regionen
@@ -154,6 +157,21 @@ export function ChatWidget({ dashboard, context, sections, getActiveSectionId, o
               </button>
             )}
           </div>
+
+          {earningsBrief !== undefined && (
+            <div className="shrink-0 max-h-28 overflow-y-auto break-words border-b border-border/60 px-3 py-2 text-[11px] leading-relaxed" data-testid="chat-earnings-brief">
+              <div className="font-medium text-foreground">Letzter Earnings Call{earningsBrief?.date ? ` · ${earningsBrief.date}` : ""}{earningsBrief?.year != null && earningsBrief.quarter != null ? ` · FY${earningsBrief.year} Q${earningsBrief.quarter}` : ""}</div>
+              <p className="mt-1 text-muted-foreground">
+                {earningsBrief?.summary
+                  ?? earningsBrief?.excerpt
+                  ?? earningsBrief?.reason
+                  ?? "n/a — Earnings-Call noch nicht geladen"}
+              </p>
+              {earningsBrief?.summary && earningsBrief.reason && (
+                <p className="mt-1 text-muted-foreground/80">{earningsBrief.reason}</p>
+              )}
+            </div>
+          )}
 
           <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-2 text-xs" data-testid="chat-messages">
             {entries.length === 0 && (

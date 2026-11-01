@@ -11,6 +11,7 @@ import {
   Sparkles, Loader2,
 } from "lucide-react";
 import { apiRequest } from "../../lib/queryClient";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 
 interface Props {
   data: StockAnalysis;
@@ -215,6 +216,17 @@ export function Section8({ data, useLLM = false }: Props) {
       setLlmLoading(false);
     }
   }
+
+  const kiLines = risks.flatMap(r => {
+    const ex = r.explanation;
+    if (!ex) return [];
+    const bits = [ex.kontext, ex.gewichtungsBegrundung, ex.bewertungsAuswirkung, ex.mitigation, ex.gesamtEinschaetzung]
+      .map(part => (typeof part === "string" ? part.trim() : ""))
+      .filter(part => part.length > 0);
+    if (ex.unterschaetzt) bits.push("Unterschätzt");
+    return bits.length ? [`${r.name}: ${bits.join(" ")}`] : [];
+  });
+  usePublishChatSection("stock", "10", hasKIAnalysis && kiLines.length ? { kiAntwort: kiLines.join(" | ") } : null);
 
   return (
     <SectionCard number={10} title="INVERSION – RISIKOEINPREISUNG">
