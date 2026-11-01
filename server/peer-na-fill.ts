@@ -3,8 +3,8 @@
  *
  * OpenRouter may only name missing peer tickers. Every multiple, growth
  * rate, ROIC and market cap is loaded from FMP for that ticker. A ticker
- * FMP does not return is not given invented numbers. Fail-closed: if fewer
- * than the missing slots come back with FMP data, nothing is applied.
+ * FMP does not return is not given invented numbers. Partial-apply wie die
+ * Relative Bewertung: jede FMP-Zeile bleibt, 422 nur wenn nichts brauchbar ist.
  * Does not write the analysis cache and does not change the score.
  */
 
@@ -16,7 +16,6 @@ import {
   PEER_NA_INCOMPLETE_ERROR,
   PEER_NA_NOTE,
   normalizePeerTicker,
-  peerFillClosesGap,
   peerRowHasFmpData,
   peersNeeded,
   validatePeerNaTickers,
@@ -223,7 +222,7 @@ export async function requestPeerNaFills(
   }
 
   const suggested = validatePeerNaTickers(ticker, existing, llm.data).slice(0, needed + PEER_NA_ALTERNATES);
-  if (suggested.length < needed) {
+  if (suggested.length === 0) {
     return { ok: false, status: 422, error: PEER_NA_INCOMPLETE_ERROR, code: "INCOMPLETE_FILL" };
   }
 
@@ -241,7 +240,7 @@ export async function requestPeerNaFills(
     fills.push(row);
     if (fills.length === needed) break;
   }
-  if (!peerFillClosesGap(fills, existing.length)) {
+  if (fills.length === 0) {
     return { ok: false, status: 422, error: PEER_NA_INCOMPLETE_ERROR, code: "INCOMPLETE_FILL" };
   }
 

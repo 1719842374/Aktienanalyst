@@ -50,6 +50,7 @@ import {
   type Gate,
 } from "./scoring-gates";
 import type { Catalyst } from "../shared/schema";
+import { peerRevenueGrowthDeltaPp } from "../shared/peer-growth-delta";
 
 // ─── qualityScore-Mapping (dokumentierte Uebersetzungstabelle) ─────────────────
 // Basis: financialStatements.health (5 Stufen, bereits produktiv berechnet aus
@@ -204,22 +205,7 @@ export function deriveGateInputs(ctx: AnalysisScoringContext): GateInputs & {
   // Ausreisser und die in der Finanzanalyse uebliche Wahl fuer Peer-
   // Vergleiche — ersetzt den arithmetischen Mittelwert, keine Ticker-
   // spezifische Sonderbehandlung.
-  let relativeGrowthDeltaYoYPp: number | null = null;
-  const peerVals = (ctx.peerRevenueGrowths ?? []).filter(
-    (v): v is number => typeof v === "number" && isFinite(v)
-  );
-  if (
-    peerVals.length >= 2 &&
-    typeof ctx.subjectRevenueGrowth === "number" &&
-    isFinite(ctx.subjectRevenueGrowth)
-  ) {
-    const sorted = [...peerVals].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    const peerMedian = sorted.length % 2 === 0
-      ? (sorted[mid - 1] + sorted[mid]) / 2
-      : sorted[mid];
-    relativeGrowthDeltaYoYPp = +(ctx.subjectRevenueGrowth - peerMedian).toFixed(2);
-  }
+  const relativeGrowthDeltaYoYPp = peerRevenueGrowthDeltaPp(ctx.subjectRevenueGrowth, ctx.peerRevenueGrowths);
 
   // Inventory YoY-%-Delta — null wenn kein Inventory berichtet (Services/Software).
   let inventoryDaysDeltaYoYPct: number | null = null;
@@ -296,6 +282,64 @@ export function buildScoringForAnalysis(params: {
     gateInputs,
   });
 
+  return scoringFromPipeline(result, qualityScore, trendMultiplier, gateInputs, realizedGrowthMethod, realizedGrowthQuartersUsed);
+}
+
+/** Dieselbe Pipeline wie buildScoringForAnalysis, nur das Peer-Delta und das Peer-Gate dürfen sich ändern. */
+export function scoringWithPeerDelta(args: {
+  scoring: AnalysisScoringResult;
+  catalysts: Catalyst[];
+  price: number;
+  asOfDate: string;
+  relativeGrowthDeltaYoYPp: number | null;
+  relativeScoreApplies: boolean;
+}): AnalysisScoringResult {
+  const previousApplies = args.scoring.gateInputs.relativeScoreApplies !== false;
+  if (
+    args.scoring.gateInputs.relativeGrowthDeltaYoYPp === args.relativeGrowthDeltaYoYPp
+    && previousApplies === args.relativeScoreApplies
+  ) return args.scoring;
+
+  const stored = args.scoring.gateInputs;
+  const found = args.scoring.gates.find(gate => gate.id === "REGULATORY_EXPOSURE");
+  const regulatory: Gate | null = found
+    ? { id: found.id, active: found.active, cap: found.cap, severity: found.severity === "hard" ? "hard" : "warn", rationale: found.rationale }
+    : null;
+  const gateInputs: GateInputs = {
+    impliedGrowthPercent: stored.impliedGrowthPercent,
+    realizedGrowth8QPercent: stored.realizedGrowth8QPercent,
+    marginDeltaYoYPp: stored.marginDeltaYoYPp,
+    relativeGrowthDeltaYoYPp: args.relativeGrowthDeltaYoYPp,
+    relativeScoreApplies: args.relativeScoreApplies,
+    inventoryDaysDeltaYoYPct: stored.inventoryDaysDeltaYoYPct,
+    regulatoryGate: regulatory,
+  };
+  const result = runScoringPipeline({
+    qualityScore: args.scoring.qualityScore,
+    trendMultiplier: args.scoring.trendMultiplier,
+    catalysts: args.catalysts,
+    asOfDate: args.asOfDate,
+    price: args.price,
+    gateInputs,
+  });
+  return scoringFromPipeline(
+    result,
+    args.scoring.qualityScore,
+    args.scoring.trendMultiplier,
+    gateInputs,
+    stored.realizedGrowthMethod,
+    stored.realizedGrowthQuartersUsed,
+  );
+}
+
+function scoringFromPipeline(
+  result: ScoringPipelineResult,
+  qualityScore: number,
+  trendMultiplier: number,
+  gateInputs: GateInputs,
+  realizedGrowthMethod: string,
+  realizedGrowthQuartersUsed: number,
+): AnalysisScoringResult {
   // Vollstaendige Gate-Liste (auch inaktive) fuer UI-Transparenz — activeGates
   // allein zeigt nicht, WARUM ein Gate nicht gegriffen hat.
   const allGates = result.gatesBeforeFiscal.map(g => {

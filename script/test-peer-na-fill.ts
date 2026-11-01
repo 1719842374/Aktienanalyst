@@ -106,10 +106,9 @@ console.log("\n=== Fail-closed und FMP-Zahlen ===");
     },
   });
   check("FMP sieht die KI-Ticker, nicht die Modellzahlen", JSON.stringify(fmpTickers) === JSON.stringify(["LLY", "NOPE"]), JSON.stringify(fmpTickers));
-  check("ein FMP-Treffer bei zwei fehlenden Zeilen ist unvollständig", !mixed.ok);
-  if (!mixed.ok) {
-    check("INCOMPLETE_FILL ohne Teilübernahme", mixed.status === 422 && mixed.code === "INCOMPLETE_FILL" && mixed.error === PEER_NA_INCOMPLETE_ERROR);
-    check("keine fills im Fehler", !("fills" in mixed));
+  check("ein FMP-Treffer bei zwei fehlenden Zeilen wird übernommen", mixed.ok === true);
+  if (mixed.ok) {
+    check("nur die FMP-Zeile, keine erfundenen Zahlen", mixed.fills.length === 1 && mixed.fills[0].ticker === "LLY" && mixed.fills[0].pe === 22.4, JSON.stringify(mixed.fills));
   }
 
   const ok = await requestPeerNaFills({

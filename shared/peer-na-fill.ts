@@ -110,3 +110,23 @@ export function validatePeerNaTickers(
   }
   return out;
 }
+
+/**
+ * Wie die Relative Bewertung (TAM Partial-Apply): jede FMP-gestützte neue Zeile bleibt sichtbar.
+ * Ein leeres oder abgelehntes Ergebnis hat immer einen Fehlertext.
+ */
+export function peerKiRowsFromBody(args: {
+  httpOk: boolean;
+  body: { fills?: PeerNaFill[] | null; error?: string | null } | null;
+  existing: readonly string[];
+}): { rows: PeerNaFill[]; error: string | null } {
+  const known = new Set(args.existing.map(ticker => ticker.toUpperCase()));
+  const fills = Array.isArray(args.body?.fills) ? args.body.fills : [];
+  const rows = fills.filter(row => {
+    const ticker = typeof row?.ticker === "string" ? row.ticker.toUpperCase() : "";
+    return !!ticker && !known.has(ticker) && row.suggestedBy === "ki" && peerRowHasFmpData(row);
+  });
+  if (rows.length > 0 && args.httpOk) return { rows, error: null };
+  const fromBody = typeof args.body?.error === "string" && args.body.error.trim() ? args.body.error.trim() : null;
+  return { rows: [], error: fromBody || PEER_NA_INCOMPLETE_ERROR };
+}
