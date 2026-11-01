@@ -121,3 +121,35 @@
 
 *Erweitert am 18.10.2026 – Capex + Sektor + Bitcoin-Miner mit konkreten Daten und Fakten.  
 Repo: https://github.com/1719842374/Aktienanalyst*
+
+---
+
+## 4. Gold-Mining-Layer — Soll-Ist
+
+Datei bleibt `Offen_`. Kein Umbenennen auf `Fertig_`.
+
+**Implementierung:** `ab70d24b068e030ae6f21aa4402ee6ed9c03bc5c`  
+**Basis davor:** `c5f300e0b55530aada1f5cd04df013cdb2a61ba3` (Prod-Befund auch auf `a930d2e9`)
+
+### Soll
+- Layer Gold Mining auf `#/researcher` (Tab Capex & Fiscal) zeichnet Länder-Bubbles.
+- Größe und Farbe = Perzentil des Anteils am Weltvolumen.
+- Anteil = Fördermenge des Landes / Weltzeile derselben Quelle. Keine feste Prozent-Schwelle, keine Magic Number, die kleine Produzenten ausblendet.
+- Fehlt die Quelle, das Weltvolumen oder eine Koordinate: beschriftetes n/a. Keine Auffüllung aus einem anderen Jahr, keine Summe als Ersatz-Weltzeile, keine erfundene Position.
+- Firmen-AISC bleibt ein Firmenwert. Unzen je Firma werden nicht geschätzt.
+- Kein Env, keine bezahlte Quelle.
+
+### Ist vorher
+`GET https://aktienanalyst.onrender.com/api/researcher/geo-map?layer=gold` lieferte `countries: []`, `coverage: {withData: 0, total: 0}` und  
+`n/a — keine Produktions-Unzen und kein Länderanteil in gold-aisc.json und den Gold-Routen`.  
+Gleiche Leere bei 1440 px und 375 px, weil die Antwort keine Länder enthielt.
+
+Kette: `GeoMapPanel.tsx` (`apiRequest` → `GET /api/researcher/geo-map?layer=gold`) → `registerGeoMapRoute` → `goldLayerInput` / `loadGoldAiscSeries` → `buildGoldMapLayer`.  
+`server/data/gold-aisc.json` enthält nur AISC in USD/oz (NEM, B, AEM). `gold-routes.ts` hat keine Länderförderung. `buildGoldMapLayer` hat `goldCountriesFromFacts([])` fest aufgerufen. Der leere Schritt ist der Builder, weil die bis dahin gelesene Quelle weder Unzen je Land noch einen Länderanteil enthält.
+
+### Ist nachher
+Quelle: USGS Mineral Commodity Summaries 2025, World Production, Gold, mine production, gold content (Public Domain, DOI 10.5066/P13XCP3R), gebündelt in `server/data/gold-mine-production.json`.  
+Jüngstes Jahr mit positiver Weltzeile: 2024, in der Quelle als Schätzung gekennzeichnet. Weltzeile 3300 metric tons. China 380/3300.  
+17 Länder-Bubbles, darunter Burkina Faso, Tansania und Kolumbien. „Other Countries“ (780/3300) ist keine Bubble. Die Differenz 50 t zwischen ausgewiesenen Zeilen (3250) und der gerundeten Weltzeile (3300) wird nicht verteilt.  
+Firmenzeilen: AISC weiter aus `gold-aisc.json`, `productionOz` bleibt null.  
+Koordinaten: Flächenschwerpunkt aus `world-atlas` countries-110m. Fehlt ein Land im Atlas, keine Ersatzkoordinate.
