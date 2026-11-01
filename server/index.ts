@@ -106,6 +106,9 @@ app.get("/api/health", (_req: Request, res: Response) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+  // Unknown /api/* → JSON 404 (must stay after all API routes, before the static/SPA fallback)
+  const { registerApiNotFound } = await import("./api-not-found");
+  registerApiNotFound(app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

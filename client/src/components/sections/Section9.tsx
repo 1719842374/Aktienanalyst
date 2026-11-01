@@ -1,8 +1,10 @@
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { calculateRSL, RSL_MOMENTUM_MALUS_PCT, LYNCH_DCF_DEFAULTS } from "../../lib/calculations";
-import { formatNumber, getRSLColor, getRSLBgColor } from "../../lib/formatters";
+import { formatNumber, formatCurrency, getRSLColor, getRSLBgColor } from "../../lib/formatters";
 import { useMemo } from "react";
+import { usePublishChatSection } from "@/lib/chatSectionData";
+import { isYahooOnly, YAHOO_NO_VALUATION_NOTICE } from "../../../../shared/data-source";
 
 interface Props { data: StockAnalysis }
 
@@ -27,10 +29,12 @@ export function Section9({ data }: Props) {
     : true; // keine bekannte Klasse → bisheriges (klassen-agnostisches) Verhalten
   const rslWeak = !(rsl > 105);
   const malusActive = rslWeak && malusAllowedForClass;
+  // C1 (#252): Yahoo-Daten → kein DCF (Sektion 5 = n/a), also auch keine DCF-Wachstumsanpassung anzeigen.
+  const yahooOnly = isYahooOnly(data);
 
   // RSL < 105 → DCF growth adjustment is now actually applied in calculateFCFFDCF (see RSL_MOMENTUM_MALUS_PCT),
   // aber NUR wenn die Lynch-Klasse den Malus erlaubt (applyRslMalus).
-  const growthAdj = rsl > 110 ? "+0% (strong momentum)" :
+  const growthAdj = yahooOnly ? `n/a (${YAHOO_NO_VALUATION_NOTICE})` : rsl > 110 ? "+0% (strong momentum)" :
     rsl > 105 ? "+0% (neutral)" :
     malusActive
       ? `-${RSL_MOMENTUM_MALUS_PCT}% (aktiv im DCF-Modell — siehe Sektion 5 Rechenweg)`
@@ -42,10 +46,18 @@ export function Section9({ data }: Props) {
   const gaugeMax = 130;
   const gaugePos = Math.max(0, Math.min(100, ((rsl - gaugeMin) / (gaugeMax - gaugeMin)) * 100));
 
+  // PR 3 (Chat-Kontext): genau die angezeigten RSL-Werte veröffentlichen — keine eigene Rechnung.
+  usePublishChatSection("stock", "11", {
+    rsl: rsl != null && Number.isFinite(rsl) ? Math.round(rsl * 100) / 100 : null, rslZone,
+    schnitt26W: Number.isFinite(avg26w) ? Math.round(avg26w * 100) / 100 : null, zyklusKlasse: sp?.cycleClass ?? null,
+    dcfWachstumsAnpassung: growthAdj, malusAktiv: !yahooOnly && malusActive,
+    _auffaelligkeiten: !yahooOnly && rslWeak ? (malusActive ? `RSL < 105: DCF-Wachstum −${RSL_MOMENTUM_MALUS_PCT}%` : `RSL < 105, Malus durch Lynch-Klasse ausgesetzt`) : null,
+  });
+
   return (
     <SectionCard number={11} title="RSL-MOMENTUM (Levy RSL)">
       {/* RSL < 105 Warning */}
-      {rslWeak && malusActive && (
+      {!yahooOnly && rslWeak && malusActive && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
           <span className="text-amber-500 text-lg">⚠</span>
           <div>
@@ -57,7 +69,7 @@ export function Section9({ data }: Props) {
           </div>
         </div>
       )}
-      {rslWeak && !malusActive && (
+      {!yahooOnly && rslWeak && !malusActive && (
         <div className="bg-muted/30 border border-border/50 rounded-lg p-3 flex items-start gap-2">
           <span className="text-muted-foreground text-lg">ℹ</span>
           <div>
@@ -110,11 +122,11 @@ export function Section9({ data }: Props) {
               <tbody className="divide-y divide-border/50">
                 <tr>
                   <td className="py-1.5 px-2 text-muted-foreground">Current Price</td>
-                  <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium">${formatNumber(data.currentPrice)}</td>
+                  <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium">{formatCurrency(data.currentPrice, 2, data.currency)}</td>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-2 text-muted-foreground">26-Week Average</td>
-                  <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium">${formatNumber(avg26w)}</td>
+                  <td className="py-1.5 px-2 text-right font-mono tabular-nums font-medium">{formatCurrency(avg26w, 2, data.currency)}</td>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-2 text-muted-foreground">RSL = (Price / Avg) × 100</td>

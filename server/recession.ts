@@ -17,10 +17,19 @@ import {
 import { fetchBridge, shockGeopoliticsSection, type RecessionBridge } from "./recession-bridge";
 import { driverFazitSections, loadDriverAssessment, type DriverView } from "./recession-drivers";
 import { diskBriefingUpdatedAt } from "./disk-cache";
+import {
+  acceptGoogleTrendsFetch,
+  freshGoogleTrends,
+  parseSerpApiGoogleTrends,
+  parseSerpApiTrendPoints,
+  readGoogleTrendsCache,
+  writeGoogleTrendsCache,
+} from "./cache/google-trends-cache";
 import { sOfZ } from "./fiscal-frontend-math";
 import { emptyRegionalPrints, fetchRegionalPrints, scoreRegionalCatalogs, usSlotsFromIndicators } from "./recession-regions";
 import { isStale, type RegionalCatalogs } from "../shared/recession-regions";
 import { WILSHIRE_DOLLARS_PER_POINT_BN } from "./buffett-route";
+import { BAA10Y_SERIES_ID, fredCsvUrl, latestFredCsvValue } from "./fred-csv";
 
 // ============================================================
 // Generic Data Helpers
@@ -43,18 +52,9 @@ function fetchUrl(url: string, timeoutMs = 20000, headers: Record<string, string
   }
 }
 
-/** Generic FRED CSV fetcher — returns latest value or NaN */
+/** Generic FRED CSV fetcher — returns latest value or NaN. Parse-Kern geteilt mit dem Credit-Overlay (server/fred-csv.ts). */
 function getLatestFredValue(seriesId: string): number {
-  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}&cosd=${getDateNMonthsAgo(24)}`;
-  const csv = fetchUrl(url);
-  if (!csv || csv.includes("<html") || csv.includes("<!DOCTYPE")) return NaN;
-  const lines = csv.trim().split("\n").slice(1);
-  const validLines = lines.filter(l => {
-    const val = l.split(",")[1]?.trim();
-    return val && val !== "." && !isNaN(parseFloat(val));
-  });
-  if (validLines.length === 0) return NaN;
-  return parseFloat(validLines[validLines.length - 1].split(",")[1].trim());
+  return latestFredCsvValue(fetchUrl(fredCsvUrl(seriesId, getDateNMonthsAgo(24))));
 }
 
 /** Generic FRED CSV fetcher — returns all observations */
@@ -188,6 +188,10 @@ export interface IndicatorResult {
   available?: boolean;
   /** Crypto Fear & Greed and the single VIX substitute are a flag, not a second CNN score. */
   proxy?: boolean;
+  /** Hours since the Google Trends print was stored. Other slots leave this unset. */
+  ageHours?: number;
+  /** True when the Google Trends print is over 24h. The zone weight stays ×1.7. */
+  isStale?: boolean;
 }
 
 // ============================================================
@@ -338,7 +342,7 @@ function scoreM2(): IndicatorResult {
 
 // 6. Credit Spreads (BAA - 10Y Treasury)
 function scoreCreditSpreads(): IndicatorResult {
-  let val = getLatestFredValue("BAA10Y");
+  let val = getLatestFredValue(BAA10Y_SERIES_ID);
   // Fallback
   if (isNaN(val)) {
     const baa = getLatestFredValue("BAA");
@@ -497,49 +501,54 @@ export function finraMarginPoints(buf: Buffer): { date: string; debitMillions: n
 }
 
 // 11. Google Trends "Recession"
+// One cache: server/cache/google-trends-cache.ts. No second store, no extra route.
+// A miss inside 48h is scored with the last print. Older than that, the slot closes.
 function scoreGoogleTrends(): IndicatorResult {
-  let trendValue = NaN;
-  let source = "Google Trends";
-
-  // Primary: SerpApi Google Trends (requires SERPAPI_KEY). Without a key we
-  // leave trendValue as NaN → indicator reports N/A (never a faked default).
   const serpKey = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || "";
-  if (serpKey) {
-    try {
-      const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
-      const raw = fetchUrl(url, 12000);
-      if (raw && !raw.includes("<html")) {
-        const parsed = JSON.parse(raw);
-        const timeline = parsed?.interest_over_time?.timeline_data;
-        if (Array.isArray(timeline) && timeline.length > 0) {
-          const values: number[] = [];
-          for (const point of timeline) {
-            const v = point?.values?.[0]?.extracted_value ?? point?.values?.[0]?.value;
-            const num = typeof v === "number" ? v : parseFloat(v);
-            if (!isNaN(num)) values.push(num);
-          }
-          if (values.length > 0) {
-            const avg = Math.round((values.reduce((s, n) => s + n, 0) / values.length) * 10) / 10;
-            const latest = values[values.length - 1];
-            const peak = Math.max(...values);
-            trendValue = avg;
-            source = `Google Trends via SerpApi (7d Ø=${avg}, Latest=${latest}, Peak=${peak})`;
-            console.log(`  Google Trends (SerpApi): avg=${avg}, latest=${latest}, peak=${peak}`);
-          }
-        }
-      }
-    } catch (err: any) {
-      console.log(`  Google Trends SerpApi failed: ${err?.message?.substring(0, 200)}`);
-    }
-  } else {
+  if (!serpKey) {
     console.log("  Google Trends: SERPAPI_KEY not set — reporting N/A");
+    return googleReading(null);
   }
 
-  return googleReading(Number.isFinite(trendValue) ? trendValue : null, source);
+  const now = Date.now();
+  const cached = readGoogleTrendsCache();
+  const fresh = freshGoogleTrends(cached, now);
+  if (fresh) {
+    console.log(`  Google Trends cache hit (age=${fresh.ageHours}h)`);
+    return googleReading(fresh.value, fresh.source, fresh);
+  }
+
+  let fetched: { value: number; source: string; points?: { date: string; value: number }[] } | null = null;
+  try {
+    const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
+    const raw = fetchUrl(url, 12000);
+    const parsed = parseSerpApiGoogleTrends(raw);
+    if (parsed) {
+      const points = parseSerpApiTrendPoints(raw) ?? undefined;
+      fetched = { value: parsed.value, source: parsed.source, ...(points?.length ? { points } : {}) };
+      console.log(`  Google Trends (SerpApi): avg=${parsed.value}, latest=${parsed.latest}, peak=${parsed.peak}`);
+    }
+  } catch (err: any) {
+    console.log(`  Google Trends SerpApi failed: ${err?.message?.substring(0, 200)}`);
+  }
+
+  const decided = acceptGoogleTrendsFetch(fetched, cached, now);
+  if (decided.store) writeGoogleTrendsCache(decided.store);
+  if (decided.value == null) {
+    console.log("  Google Trends: no value within 48h — reporting N/A");
+    return googleReading(null);
+  }
+  if (!fetched) {
+    console.log(`  Google Trends last good (age=${decided.ageHours}h stale=${decided.isStale})`);
+  }
+  return googleReading(decided.value, decided.source, {
+    ageHours: decided.ageHours ?? 0,
+    isStale: decided.isStale,
+  });
 }
 
 // One crowd leg: live CNN, otherwise a single VIX proxy. Crypto is only the proxy flag.
-function scoreCrowdLeg(vix: number): IndicatorResult {
+function scoreCrowdLeg(vix: number, vixSource = "FRED VIXCLS"): IndicatorResult {
   let cnn: number | null = null;
   try {
     const json = fetchUrl(
@@ -558,7 +567,7 @@ function scoreCrowdLeg(vix: number): IndicatorResult {
   } catch (err: any) {
     console.log(`  CNN F&G primary failed: ${err?.message?.substring(0, 100)}`);
   }
-  return crowdReading(cnn, Number.isFinite(vix) ? vix : null, false);
+  return crowdReading(cnn, Number.isFinite(vix) ? vix : null, false, vixSource);
 }
 
 function scoreWei(): IndicatorResult {
@@ -1235,7 +1244,11 @@ export function marginDebtReading(points: { date: string; debitMillions: number 
   };
 }
 
-export function googleReading(trend: number | null, source = "Google Trends"): IndicatorResult {
+export function googleReading(
+  trend: number | null,
+  source = "Google Trends",
+  freshness?: { ageHours: number; isStale: boolean },
+): IndicatorResult {
   const base = {
     name: "Google Trends \"Recession\"",
     group: "correction" as const,
@@ -1257,15 +1270,32 @@ export function googleReading(trend: number | null, source = "Google Trends"): I
     weightedScore: Math.round(rawScore * 1.7 * 10) / 10,
     maxWeighted: 11.9,
     zone,
+    ...(freshness ? { ageHours: freshness.ageHours, isStale: freshness.isStale } : {}),
   };
 }
 
-export function vixReading(vix: number): IndicatorResult {
+const VIX_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=10d&interval=1d";
+
+/**
+ * VIX level for the score. FRED VIXCLS stays first. Yahoo ^VIX is read only when the
+ * FRED print is not finite (Future_2 / Offen_FUTURE_SOLL_IST PR 5). Both empty → NaN, slot stays closed.
+ */
+export function resolveVixLevel(
+  fredValue: number,
+  yahooPayload: () => unknown,
+): { value: number; source: string } {
+  if (Number.isFinite(fredValue)) return { value: fredValue, source: "FRED VIXCLS" };
+  const close = latestYahooChartClose(yahooPayload());
+  if (close) return { value: close.value, source: `Yahoo ^VIX ${close.date} (Fallback, FRED VIXCLS leer)` };
+  return { value: NaN, source: "FRED VIXCLS" };
+}
+
+export function vixReading(vix: number, source = "FRED VIXCLS"): IndicatorResult {
   const base = {
     name: "VIX",
     group: "correction" as const,
     subgroup: "sentiment",
-    source: "FRED VIXCLS",
+    source,
     description: "CBOE Volatility Index (Angstbarometer)",
   };
   if (!Number.isFinite(vix)) return closedIndicator(base);
@@ -1285,7 +1315,12 @@ export function vixReading(vix: number): IndicatorResult {
   };
 }
 
-export function crowdReading(cnn: number | null, vix: number | null, cnnIsProxy: boolean): IndicatorResult {
+export function crowdReading(
+  cnn: number | null,
+  vix: number | null,
+  cnnIsProxy: boolean,
+  vixSource = "FRED VIXCLS",
+): IndicatorResult {
   const cnnOk = cnn != null && Number.isFinite(cnn) && !cnnIsProxy;
   if (cnnOk) {
     const fgValue = cnn as number;
@@ -1326,7 +1361,7 @@ export function crowdReading(cnn: number | null, vix: number | null, cnnIsProxy:
       weightedScore: rawScore,
       maxWeighted: 4,
       zone,
-      source: "FRED VIXCLS",
+      source: vixSource,
       description: "Ein Crowd-Bein als VIX-Proxy. Nicht AAII, Put/Call und Investors Intelligence zugleich.",
       proxy: true,
     };
@@ -1386,7 +1421,11 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
   const usSahm = scoreSahm();
   const regionalPromise = fetchRegionalPrints().catch(() => null);
 
-  const vixValue = getLatestFredValue("VIXCLS");
+  const vix = resolveVixLevel(
+    getLatestFredValue("VIXCLS"),
+    () => readJson(fetchUrl(VIX_YAHOO_CHART, 20000, { "User-Agent": "Mozilla/5.0" })),
+  );
+  const vixValue = vix.value;
   const indicators: IndicatorResult[] = await Promise.all([
     Promise.resolve(usSahm.indicator),
     scoreYieldCurve(),
@@ -1399,8 +1438,8 @@ export async function runRecessionAnalysis(): Promise<RecessionAnalysis> {
     scoreCAPE(),
     scoreMarginDebt(),
     scoreGoogleTrends(),
-    vixReading(vixValue),
-    scoreCrowdLeg(vixValue),
+    vixReading(vixValue, vix.source),
+    scoreCrowdLeg(vixValue, vix.source),
     scoreWei(),
   ]);
 

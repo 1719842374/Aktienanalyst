@@ -1,0 +1,13 @@
+{
+  "blockchain": "https://api.blockchain.info/charts/market-price?timespan=all&format=json&cors=true @ 2026-10-18T20:28:28.582Z",
+  "fng": "https://api.alternative.me/fng/?limit=0&format=json @ 2026-10-18T20:28:29.502Z",
+  "hashrate": "https://mempool.space/api/v1/mining/hashrate/all @ 2026-10-18T20:28:29.978Z",
+  "FEDFUNDS": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2015-01-01 @ 2026-10-18T20:28:31.179Z",
+  "DEXUSEU": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DEXUSEU&cosd=2015-01-01 @ 2026-10-18T20:28:32.744Z",
+  "WALCL": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL&cosd=2002-12-01 @ 2026-10-18T20:28:33.363Z",
+  "DGS10": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=2015-01-01 @ 2026-10-18T20:28:33.910Z",
+  "BOGZ1FL313161110Q": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BOGZ1FL313161110Q&cosd=1990-01-01 @ 2026-10-18T20:28:34.518Z",
+  "BOGZ1FL313161275Q": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BOGZ1FL313161275Q&cosd=1990-01-01 @ 2026-10-18T20:28:35.115Z",
+  "fiscalFrontend": "buildFiscalFrontendResponse() @ 2026-10-18T20:28:35.155Z",
+  "today": "2026-10-18"
+}

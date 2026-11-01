@@ -163,6 +163,13 @@ export async function fmpHistoricalPrices(symbol: string, from?: string, to?: st
   return data?.historical || [];
 }
 
+/** GET /stable/dividends?symbol=AAPL — dividend history (newest-first). Throws on HTTP errors so the caller can fall back. */
+export async function fmpDividends(symbol: string): Promise<any[]> {
+  const data = await fmpFetch(`/dividends`, { symbol });
+  if (Array.isArray(data)) return data;
+  return data?.historical || [];
+}
+
 export async function fmpAnalystEstimates(symbol: string, limit = 5) {
   // GET /stable/analyst-estimates?symbol=AAPL&period=annual&limit=5
   return fmpFetch(`/analyst-estimates`, { symbol, limit: String(limit), period: "annual" });
@@ -751,7 +758,7 @@ export async function getFxRateToUsd(currency: string): Promise<number> {
 // Converts the numeric financial-statement fields of a FMP income/cashflow/balance-sheet
 // row from its reportedCurrency into USD. EPS-like per-share fields and aggregate
 // currency fields are converted; ratios, percentages, share counts and dates are left as-is.
-const FX_CONVERTIBLE_FIELDS = new Set([
+export const FX_CONVERTIBLE_FIELDS = new Set([
   "revenue", "costOfRevenue", "grossProfit", "operatingIncome", "netIncome", "ebit", "ebitda",
   "eps", "epsDiluted", "operatingExpenses", "researchAndDevelopmentExpenses",
   // /stable/analyst-estimates response fields for foreign-currency filers

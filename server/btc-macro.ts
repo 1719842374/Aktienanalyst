@@ -184,3 +184,17 @@ export async function fetchBTCMacroHistory(startDate: string, endDate = toDateKe
     latestM2Absolute,
   };
 }
+
+/**
+ * Nur DFII10 für das Real10Y-Overlay der Aktien-TA (#267). fetchBTCMacroHistory lädt DFII10 und M2SL in einem
+ * Promise.all; scheitert M2SL, wird dort die ganze Antwort 502. Die Aktien-TA braucht M2 nicht, deshalb dieser
+ * eigene Abruf mit demselben Fetcher und derselben Zuordnung wie oben (real10yByDate, latestReal10y).
+ * fetchBTCMacroHistory und damit der BTC-Chart bleiben unverändert.
+ */
+export async function fetchReal10YHistory(startDate: string): Promise<Pick<BTCMacroHistory, "real10yByDate" | "latestReal10y">> {
+  const real10y = await fetchFREDSeriesHistory("DFII10", startDate);
+  return {
+    real10yByDate: Object.fromEntries(real10y.map(point => [point.date, point.value])),
+    latestReal10y: real10y.length > 0 ? real10y[real10y.length - 1] : null,
+  };
+}

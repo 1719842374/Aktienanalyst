@@ -8,9 +8,19 @@ import type {
   GoldCycleAssessment,
   GoldPricePoint,
 } from "../shared/gold-schema";
-import { execSync } from "child_process";
+import { scoreGoldAdaptive, volumeReadingsAreReal } from "./gold-adaptive-score";
+import { goldNewsScoreFlag, getGoldNewsImpact } from "./gold-news";
+import { yahooFetch } from "./history-fallback";
+import { execSync, execFile } from "child_process";
 import { fmpQuote, fmpHistoricalPrices } from "./fmp";
+import { computeM2YoyFromCsv } from "./gold-m2-yoy";
 import { runRealYieldGoldModel, runMultiFactorGoldModel } from "./gold-realyield-model";
+import { enrichGoldChartSeries } from "./gold-chart-series";
+import { createFredHistoryMemo } from "./gold-fred-memo";
+import { analyzeGoldHistoryPlan, parseFredLatest, prefetchHistories, prefetchedFetcher, tail5 } from "./gold-fred-prefetch";
+import { createGoldResponseCache, GOLD_ANALYSIS_CACHE_TTL_MS, GOLD_ANALYSIS_PARTIAL_TTL_MS } from "./gold-response-cache";
+import { buildGoldChartHistoryPoints, createChartHistoryCache, fetchFmpChunks, historyWindows, mergeGoldRows, parseChartHistoryRange, pickLongerSource, seriesCoverage, trimChartHistory } from "./gold-chart-history";
+import { loadGoldAiscSeries } from "./gold-aisc";
 
 function parseNumber(s: string | undefined | null): number {
   if (!s) return 0;
@@ -53,17 +63,35 @@ function fetchFREDSeries(seriesId: string): { value: number; date: string } | nu
       encoding: "utf-8",
       timeout: 15000,
     });
-    const lines = csv.trim().split("\n").filter(l => l && !l.startsWith("DATE") && !l.includes("DATE"));
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const parts = lines[i].split(",");
-      if (parts.length >= 2 && parts[1] !== "." && parts[1] !== "") {
-        return { date: parts[0], value: parseFloat(parts[1]) };
-      }
-    }
-    return null;
+    return parseFredLatest(csv);
   } catch {
     return null;
   }
+}
+
+/**
+ * JOB 11: nicht blockierende Variante von fetchFREDSeries. Die Pipeline `curl | tail -5` endete mit
+ * dem Status von tail (0), auch wenn curl scheiterte: dann zaehlt hier ebenfalls, was curl ausgab.
+ * Nur ein Timeout (execSync warf) liefert null.
+ */
+export function fetchFREDSeriesAsync(seriesId: string): Promise<{ value: number; date: string } | null> {
+  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}`;
+  return new Promise(resolve => {
+    execFile("curl", ["-sL", url], { encoding: "utf-8", timeout: 15000, maxBuffer: 10 * 1024 * 1024 }, (err: any, stdout) => {
+      if (err && (err.killed || err.signal)) return resolve(null);
+      try { resolve(parseFredLatest(tail5(String(stdout ?? "")))); } catch { resolve(null); }
+    });
+  });
+}
+
+/** JOB 11: M2-YoY-CSV (limit=14) nicht blockierend; wirft wie execSync bei Fehler/Timeout. */
+function fetchM2YoyCsvAsync(m2Url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("curl", ["-s", "--max-time", "8", m2Url], { encoding: "utf-8", timeout: 9000 }, (err, stdout) => {
+      if (err) return reject(err);
+      resolve(String(stdout));
+    });
+  });
 }
 
 // === Fetch FRED historical series (fuer Dual-Axis Gold-vs-Real10Y-Chart) ===
@@ -84,20 +112,44 @@ function fetchFREDSeriesHistory(
       timeout: 20000,
       maxBuffer: 10 * 1024 * 1024,
     });
-    const lines = csv.trim().split("\n").filter(l => l && !l.startsWith("DATE") && !l.includes("observation_date"));
-    const out: Array<{ date: string; value: number }> = [];
-    for (const line of lines) {
-      const parts = line.split(",");
-      if (parts.length >= 2 && parts[1] !== "." && parts[1].trim() !== "") {
-        const value = parseFloat(parts[1]);
-        if (isFinite(value)) out.push({ date: parts[0], value });
-      }
-    }
-    return out;
+    return parseFredHistoryCsv(csv);
   } catch {
     return [];
   }
 }
+
+/** CSV-Parser von fetchFREDSeriesHistory (unveraenderte Logik), geteilt mit der Async-Variante. */
+export function parseFredHistoryCsv(csv: string): Array<{ date: string; value: number }> {
+  const lines = csv.trim().split("\n").filter(l => l && !l.startsWith("DATE") && !l.includes("observation_date"));
+  const out: Array<{ date: string; value: number }> = [];
+  for (const line of lines) {
+    const parts = line.split(",");
+    if (parts.length >= 2 && parts[1] !== "." && parts[1].trim() !== "") {
+      const value = parseFloat(parts[1]);
+      if (isFinite(value)) out.push({ date: parts[0], value });
+    }
+  }
+  return out;
+}
+
+/**
+ * Nicht blockierende Variante fuer /api/gold-chart-history. execSync haelt den Event-Loop fuer
+ * jede FRED-Serie an (auf Render mehrere Sekunden je Serie): parallele Anfragen wie
+ * /api/analyze-gold warteten die ganze Zeit, und der Proxy konnte beim Kaltstart in einen 502 laufen.
+ * Fehler/Timeout -> [] wie bei der Sync-Variante.
+ */
+export function fetchFREDSeriesHistoryAsync(seriesId: string, startDate: string): Promise<Array<{ date: string; value: number }>> {
+  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}&cosd=${startDate}`;
+  return new Promise(resolve => {
+    execFile("curl", ["-sL", url], { encoding: "utf-8", timeout: 20000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+      if (err) return resolve([]);
+      try { resolve(parseFredHistoryCsv(String(stdout))); } catch { resolve([]); }
+    });
+  });
+}
+
+/** Gold-Chart-Historie: ab hier alle FRED-Reihen voll laden (vor jedem Gold-Datum), parallel zu FMP/Yahoo. */
+export const GOLD_HISTORY_FRED_FLOOR = "1959-01-01";
 
 // === RSI Calculation ===
 function calculateRSI(prices: number[], period: number = 14): number {
@@ -241,7 +293,35 @@ function getTechnicalScore(rsi: number, deviationPct: number): { score: -1 | 0 |
 }
 
 export function registerGoldRoutes(server: Server, app: Express) {
-  app.get("/api/analyze-gold", async (_req, res) => {
+  // JOB 15: Antwort-Cache (10 min) mit Dedupe paralleler Anfragen. Die Berechnung selbst
+  // (buildGoldAnalysis) ist unverändert; ein Cache-Treffer liefert exakt dieselbe Antwort.
+  // ?fresh=1 umgeht den Cache. Header X-Gold-Cache: miss|hit|shared|bypass, X-Gold-Timing: Phasen in ms.
+  const analysisCache = createGoldResponseCache<{ analysis: GoldAnalysis; timing: string }>(
+    GOLD_ANALYSIS_CACHE_TTL_MS,
+    Date.now,
+    // JOB 16: Teilausfall (interne Ersatzwerte) nur 2 min cachen.
+    value => (value.analysis.partial ? GOLD_ANALYSIS_PARTIAL_TTL_MS : GOLD_ANALYSIS_CACHE_TTL_MS),
+  );
+  app.get("/api/analyze-gold", async (req, res) => {
+    try {
+      const t0 = Date.now();
+      const { value, status, ageMs } = await analysisCache.get(() => buildGoldAnalysis(), { bypass: req.query.fresh === "1" });
+      res.setHeader("X-Gold-Cache", status);
+      res.setHeader("X-Gold-Cache-Age", String(Math.round(ageMs / 1000)));
+      res.setHeader("X-Gold-Timing", value.timing);
+      console.log(`[GOLD] Cache ${status} (Alter ${Math.round(ageMs / 1000)} s) in ${Date.now() - t0} ms`);
+      res.json(value.analysis);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Gold analysis failed" });
+    }
+  });
+
+  const buildGoldAnalysis = async (): Promise<{ analysis: GoldAnalysis; timing: string }> => {
+    const tStart = Date.now();
+    const timing: string[] = [];
+    const mark = (label: string) => timing.push(`${label}=${Date.now() - tStart}`);
+    // JOB 16: interne Ersatzwerte (Teilausfall FMP/FRED) sammeln -> partial:true + kurzer Cache.
+    const partialReasons: string[] = [];
     try {
       console.log("[GOLD] Starting gold analysis...");
       const now = new Date();
@@ -251,6 +331,20 @@ export function registerGoldRoutes(server: Server, app: Express) {
       // oder ALL zeigte der Chart schlicht keine Daten vor "heute − 2 Jahre",
       // unabhaengig vom Button. 10 Jahre analog zur Aktien-TA (yearAgo(10)).
       const startDate = new Date(Date.now() - 10 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+      // Future_10 §9. Läuft parallel zu den Sync-FRED-Abrufen. Ohne Key bleibt das Flag null.
+      const goldNewsPromise = getGoldNewsImpact().catch((err: any) => {
+        console.warn(`[GOLD] News-Abruf fehlgeschlagen: ${err?.message?.substring(0, 150)}`);
+        return null;
+      });
+
+      // JOB 11: alle FRED-Abrufe dieses Requests sofort parallel und nicht blockierend starten
+      // (vorher synchron nacheinander). Werte und Memo-Semantik (#223) bleiben gleich.
+      const m2Start = new Date(new Date(startDate).getTime() - 400 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+      const fredLatestPromise = Promise.all(["T10YIE", "DFII10", "M2SL", "CPIAUCSL"].map(id => fetchFREDSeriesAsync(id)));
+      const fredHistoryPromise = prefetchHistories(analyzeGoldHistoryPlan(startDate, m2Start), fetchFREDSeriesHistoryAsync);
+      const m2YoyUrl = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=M2SL&vintage_date=${new Date().toISOString().split('T')[0]}&limit=14&sort_order=desc`;
+      const m2YoyCsvPromise = fetchM2YoyCsvAsync(m2YoyUrl);
+      m2YoyCsvPromise.catch(() => {}); // Fehler wird unten im try/catch wie vorher behandelt
 
       // === Parallel data fetching (FMP + FRED) ===
       const [goldQuoteResult, goldOHLCVResult, dxyQuoteResult] = await Promise.all([
@@ -261,21 +355,23 @@ export function registerGoldRoutes(server: Server, app: Express) {
         // 3. DXY (FMP)
         fmpQuote("DX-Y.NYB"),
       ]);
+      mark("fmp");
 
       // Also fetch FRED data for more precise indicators (letzter Wert je Serie)
-      const [fredBreakeven, fredRealRate, fredM2, fredCPI] = await Promise.all([
-        Promise.resolve(fetchFREDSeries("T10YIE")),
-        Promise.resolve(fetchFREDSeries("DFII10")),
-        Promise.resolve(fetchFREDSeries("M2SL")),
-        Promise.resolve(fetchFREDSeries("CPIAUCSL")),
-      ]);
+      const [fredBreakeven, fredRealRate, fredM2, fredCPI] = await fredLatestPromise;
+      mark("fredLatest");
 
       // WORK_TEIL7_SCORING.md §7.8.3: "Chart: Gold (links) vs Real10Y (rechts)" —
       // bisher komplett fehlend, obwohl server/gold-realyield-model.ts (§7.8.8/9)
       // das Modell bereits enthaelt. Das Modell wurde aber nie an diese Route
       // angebunden. Real10Y-Historie ueber denselben Zeitraum wie der Gold-Chart,
       // damit beide Achsen dieselbe Zeitspanne (bis zu 10Y) abdecken.
-      const real10yHistory = fetchFREDSeriesHistory("DFII10", startDate);
+      // Ein Memo je Request: jede FRED-Historie wird nur einmal geladen und an
+      // Chart-Overlays, Multi-Faktor-Modell und adaptive Schicht weitergereicht.
+      const fredFetcher = prefetchedFetcher(await fredHistoryPromise, fetchFREDSeriesHistory);
+      mark("fredHist");
+      const fredHistory = createFredHistoryMemo(fredFetcher);
+      const real10yHistory = fredHistory.get("DFII10", startDate);
       console.log(`[GOLD] Real10Y (DFII10) history points: ${real10yHistory.length}`);
 
       // === Parse gold quote ===
@@ -284,6 +380,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       let yearHigh = 0;
       let yearLow = 0;
 
+      if (!goldQuoteResult) partialReasons.push("FMP-Quote GCUSD fehlt");
       if (goldQuoteResult) {
         spotPrice = parseNumber(String(goldQuoteResult.price));
         changePercent = parseFloat(String(goldQuoteResult.changePercentage ?? goldQuoteResult.changesPercentage ?? 0)) || 0;
@@ -294,6 +391,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       // Fallback: if no price from quote, try from OHLCV
       let historicalPrices: GoldPricePoint[] = [];
       let closePrices: number[] = [];
+      const fmpVolumes: { date: string; volume: number }[] = [];
 
       // FMP historical-price-eod/full returns { symbol, historical:[...] } or a bare array.
       const ohlcvRows: any[] = Array.isArray(goldOHLCVResult)
@@ -308,10 +406,13 @@ export function registerGoldRoutes(server: Server, app: Express) {
           if (/\d{4}-\d{2}-\d{2}/.test(dateStr) && isFinite(close) && close > 0) {
             closePrices.push(close);
             historicalPrices.push({ date: dateStr, close });
+            const volumeRaw = parseFloat(String(row.volume ?? row.Volume ?? ""));
+            if (Number.isFinite(volumeRaw)) fmpVolumes.push({ date: dateStr, volume: volumeRaw });
           }
         }
       }
 
+      if (ohlcvRows.length === 0) partialReasons.push("FMP-Historie GCUSD leer");
       // If no spot price from quotes, use last OHLCV close
       if (spotPrice === 0 && closePrices.length > 0) {
         spotPrice = closePrices[closePrices.length - 1];
@@ -320,6 +421,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       // Fallback if still no price - use a reasonable estimate
       if (spotPrice === 0) {
         spotPrice = 4500; // current gold price level (Mar 2026)
+        partialReasons.push("Spot-Preis Ersatzwert 4500");
         console.log("[GOLD] Warning: using fallback gold price");
       }
 
@@ -347,12 +449,31 @@ export function registerGoldRoutes(server: Server, app: Express) {
       // EINE gemeinsame Achse zeichnen kann. FRED liefert nur Handelstage —
       // Map statt direktem Index-Join, da Gold- und FRED-Kalender leicht
       // abweichen koennen (unterschiedliche Feiertage US vs. Rohstoffmarkt).
+      if (real10yHistory.length === 0) partialReasons.push("FRED DFII10-Historie leer");
       if (real10yHistory.length > 0) {
         const real10yByDate = new Map(real10yHistory.map(r => [r.date, r.value]));
         historicalPrices = historicalPrices.map(p => {
           const r = real10yByDate.get(p.date);
           return r != null ? { ...p, real10y: r } : p;
         });
+      }
+
+      // Future_10 §4/§7: Makro-Overlays (M2 YoY, DXY, T10YIE, WALCL) und Volumen
+      // fuer den Gold-Chart im BTC-Design. Nur echte FRED-/FMP-Werte, keine
+      // Defaults. M2SL braucht 13 Monate Vorlauf fuer die erste YoY-Rate.
+      try {
+        historicalPrices = enrichGoldChartSeries(historicalPrices, {
+          dxy: fredHistory.get("DTWEXBGS", startDate),
+          t10yie: fredHistory.get("T10YIE", startDate),
+          walcl: fredHistory.get("WALCL", startDate),
+          m2: fredHistory.get("M2SL", m2Start),
+          volumes: ohlcvRows.map(row => ({
+            date: String(row.date || "").slice(0, 10),
+            volume: parseFloat(String(row.volume ?? "")),
+          })),
+        });
+      } catch (seriesErr: any) {
+        console.warn(`[GOLD] Chart-Overlays fehlgeschlagen: ${seriesErr?.message?.substring(0, 150)}`);
       }
 
       // Punkt 2 (HOCH-Ticket 05.08.2026): gold-realyield-model.ts produktiv
@@ -394,8 +515,8 @@ export function registerGoldRoutes(server: Server, app: Express) {
       try {
         if (historicalPrices.length > 0 && real10yHistory.length >= 5) {
           const [dxyHistory, walclHistory] = await Promise.all([
-            Promise.resolve(fetchFREDSeriesHistory("DTWEXBGS", startDate)),
-            Promise.resolve(fetchFREDSeriesHistory("WALCL", startDate)),
+            Promise.resolve(fredHistory.get("DTWEXBGS", startDate)),
+            Promise.resolve(fredHistory.get("WALCL", startDate)),
           ]);
           console.log(`[GOLD] Multi-Faktor: DTWEXBGS-Punkte=${dxyHistory.length}, WALCL-Punkte=${walclHistory.length}`);
           if (dxyHistory.length > 0 && walclHistory.length > 0) {
@@ -421,12 +542,14 @@ export function registerGoldRoutes(server: Server, app: Express) {
         const v = parseNumber(String(dxyQuoteResult.price));
         if (v > 0) dxyValue = v;
       }
+      if (dxyValue === 100 && !(dxyQuoteResult?.price != null && parseNumber(String(dxyQuoteResult.price)) > 0)) partialReasons.push("FMP-Quote DXY fehlt (Ersatz 100)");
 
       // === Parse FRED indicators with plausibility validation ===
       // Layer 3 fix: clamp values to realistic ranges to prevent garbage data propagating
       const clamp = (v: number | undefined, fallback: number, min: number, max: number) => {
         if (v === undefined || v === null || !isFinite(v) || v < min || v > max) {
           console.warn(`[GOLD-FRED] Implausible value ${v} for indicator (range ${min}-${max}), using fallback ${fallback}`);
+          partialReasons.push(`FRED-Wert fehlt/unplausibel (Ersatz ${fallback})`);
           return fallback;
         }
         return v;
@@ -438,26 +561,30 @@ export function registerGoldRoutes(server: Server, app: Express) {
       // FRED M2SL returns level in billions USD. We fetch 13 observations
       // (current + 12 months ago) to compute a proper YoY rate.
       let m2YoY = 4.88; // fallback: Feb 2026 YCharts estimate
+      let m2YoyComputed = false;
       try {
-        const m2Url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=M2SL&vintage_date=${new Date().toISOString().split('T')[0]}&limit=14&sort_order=desc`;
-        const m2Csv = execSync(`curl -s --max-time 8 '${m2Url}'`, { encoding: 'utf-8', timeout: 9000 });
-        const m2Lines = m2Csv.trim().split('\n').filter(l => l && !l.startsWith('DATE'));
-        if (m2Lines.length >= 13) {
-          const newest = parseFloat(m2Lines[0].split(',')[1]);
-          const yearAgo = parseFloat(m2Lines[12].split(',')[1]);
-          if (newest > 0 && yearAgo > 0 && isFinite(newest / yearAgo)) {
-            m2YoY = ((newest / yearAgo) - 1) * 100;
-            console.log(`[GOLD] M2 YoY computed: ${m2YoY.toFixed(2)}% (${m2Lines[0].split(',')[0]} vs ${m2Lines[12].split(',')[0]})`);
-          }
+        // JOB 19: nach Datum (letzte Beobachtung vs. 12 Monate früher), unabhängig von Sortierung/Kopf
+        const m2 = computeM2YoyFromCsv(await m2YoyCsvPromise);
+        mark("m2yoy");
+        if (m2) {
+          m2YoY = m2.yoy;
+          m2YoyComputed = true;
+          console.log(`[GOLD] M2 YoY computed: ${m2YoY.toFixed(2)}% (${m2.date} vs ${m2.yearAgoDate})`);
+        } else {
+          console.warn(`[GOLD] M2 YoY: keine auswertbare M2SL-Reihe — using fallback ${m2YoY}%`);
         }
       } catch (m2Err: any) {
         console.warn(`[GOLD] M2 YoY FRED fetch failed: ${m2Err?.message?.substring(0, 100)} — using fallback ${m2YoY}%`);
       }
 
+      // M2-YoY: Ersatzwert, wenn die FRED-CSV nicht ausgewertet werden konnte
+      if (!m2YoyComputed) partialReasons.push("FRED M2SL-YoY fehlt (Ersatz 4.88 %)");
       // === CPI for Fair Value — FRED CPIAUCSL (primary), fallback to last known ===
       let cpiToday = 326.785; // BLS Feb 2026 CPI index (fallback)
       if (fredCPI?.value != null && fredCPI.value > 100 && fredCPI.value < 500) {
         cpiToday = fredCPI.value;
+      } else {
+        partialReasons.push("FRED CPIAUCSL fehlt (Ersatz 326.785)");
       }
 
       // === GPR (Geopolitical Risk) ===
@@ -612,6 +739,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         `(${ind.score > 0 ? "+" : ""}${ind.score} × ${ind.weight.toFixed(2)})`
       ).join(" + ") + ` = ${gis.toFixed(2)}`;
 
+      const gisRounded = Math.round(gis * 100) / 100;
       console.log(`[GOLD] GIS = ${gis.toFixed(3)}`);
 
       // === Fair Value (10 steps) ===
@@ -678,6 +806,64 @@ export function registerGoldRoutes(server: Server, app: Express) {
             : `Negativer GIS (${gis.toFixed(2)}). Kurzfristiger Gegenwind dominiert.`,
       };
 
+      // Future_10 §2–§3, §8, §10. GIS, OLS, Multi-Faktor, Monte Carlo und getTechnicalScore bleiben.
+      // AISC hat keine Quelle — die Supply-Dimension wird N/A, nicht 0.
+      let adaptiveScore: import("../shared/gold-schema").GoldAdaptiveScore | null = null;
+      let goldNews: import("../shared/gold-schema").GoldNewsImpact | null = null;
+      try {
+        goldNews = await goldNewsPromise;
+        mark("news");
+        let volumePoints: { date: string; volume: number }[] | null = null;
+        let volumeSource: string | null = null;
+        if (volumeReadingsAreReal(fmpVolumes.map(point => point.volume))) {
+          volumePoints = fmpVolumes;
+          volumeSource = "FMP GCUSD";
+        } else {
+          try {
+            const bars = await yahooFetch("GC=F", startDate, endDate);
+            mark("yahooVol");
+            const yahooVolumes = bars.map(bar => ({ date: bar.date, volume: bar.volume }));
+            if (volumeReadingsAreReal(yahooVolumes.map(point => point.volume))) {
+              volumePoints = yahooVolumes;
+              volumeSource = "Yahoo GC=F";
+            } else {
+              console.log("[GOLD] Volumen N/A: FMP GCUSD und Yahoo GC=F ohne echte positive Prints");
+            }
+          } catch (volErr: any) {
+            console.warn(`[GOLD] Yahoo-Volumen fehlgeschlagen: ${volErr?.message?.substring(0, 150)}`);
+          }
+        }
+        adaptiveScore = scoreGoldAdaptive({
+          closes: historicalPrices.map(point => ({ date: point.date, close: point.close })),
+          volumes: volumePoints,
+          volumeSource,
+          real10Y: real10yHistory,
+          fedFunds: fredHistory.get("FEDFUNDS", startDate),
+          m2: fredHistory.get("M2SL", startDate),
+          walcl: fredHistory.get("WALCL", startDate),
+          tga: fredHistory.get("WTREGEN", startDate),
+          rrpBillions: fredHistory.get("RRPONTSYD", startDate),
+          breakeven: fredHistory.get("T10YIE", startDate),
+          dxy: fredHistory.get("DTWEXBGS", startDate),
+          aisc: null,
+          regime: realYieldModel?.regime?.regime ?? null,
+          newsFlag: goldNewsScoreFlag(goldNews, Date.now()), // lastGood > 24 h zählt nicht (#241)
+          gis: gisRounded,
+          now: now.toISOString(),
+        });
+        console.log(`[GOLD] Adaptiver Score=${adaptiveScore.score == null ? "N/A" : adaptiveScore.score.toFixed(2)}, Volumen=${volumeSource ?? "N/A"}, News-Flag=${goldNews?.flag ?? "N/A"}`);
+      } catch (adaptiveErr: any) {
+        console.warn(`[GOLD] Adaptive Schicht fehlgeschlagen: ${adaptiveErr?.message?.substring(0, 180)}`);
+      }
+
+      const scoreDelta = adaptiveScore?.scoreDelta ?? null;
+      const technicalSignals = adaptiveScore?.technicalSignals ?? [];
+      const gates = [
+        ...(realYieldModel?.gates ?? []),
+        ...(multiFactorModel?.gate ? [multiFactorModel.gate] : []),
+        ...(adaptiveScore?.gates ?? []),
+      ];
+
       // === Summary Table ===
       const sentiment: "Bullish" | "Neutral" | "Bearish" = gis >= 0.30 ? "Bullish" : gis >= 0 ? "Neutral" : "Bearish";
       const summaryTable = [
@@ -686,6 +872,8 @@ export function registerGoldRoutes(server: Server, app: Express) {
         { metric: "Abweichung 200-DMA", value: `${deviationFromMA200 >= 0 ? "+" : ""}${deviationFromMA200.toFixed(1)}%` },
         { metric: "RSI (14)", value: rsi14.toFixed(1) },
         { metric: "GIS (Gold Indicator Score)", value: gis.toFixed(2) },
+        { metric: "Adaptiver Layer-Score", value: adaptiveScore?.score == null ? "N/A" : adaptiveScore.score.toFixed(2) },
+        { metric: "Score-Delta (adaptiv − GIS)", value: scoreDelta == null ? "N/A" : `${scoreDelta >= 0 ? "+" : ""}${scoreDelta.toFixed(2)}` },
         { metric: "Sentiment", value: sentiment },
         { metric: "Fair Value (adj.)", value: `$${fvAdj.toFixed(0)}` },
         { metric: "30d Volatilität (ann.)", value: `${(sigma * 100).toFixed(1)}%` },
@@ -729,7 +917,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         deviationFromMA200,
         plausibilityChecks,
         indicators,
-        gis: Math.round(gis * 100) / 100,
+        gis: gisRounded,
         gisCalculation,
         fairValue,
         monteCarlo3M: mc3M,
@@ -757,13 +945,97 @@ export function registerGoldRoutes(server: Server, app: Express) {
         rsi14,
         realYieldModel,
         multiFactorModel,
+        adaptiveScore,
+        goldNews,
+        scoreDelta,
+        gates,
+        technicalSignals,
+        // Future_10 §5 (B1): Quartals-AISC nur für die Chart-Linie. Fließt nicht in GIS/Score (aisc: null oben bleibt, B2).
+        aiscLine: loadGoldAiscSeries(),
+        // JOB 16: nur bei Teilausfall gesetzt; vollständige Antworten behalten exakt ihre Bytes.
+        ...(partialReasons.length > 0 ? { partial: true as const, partialReasons } : {}),
       };
 
+      console.log(`[GOLD] FRED-Historien: ${fredHistory.fetches} Abrufe fuer ${fredHistory.requests} Anfragen (${fredFetcher.served()} parallel vorab, ${fredFetcher.fallbacks()} synchron nachgeladen)`);
       console.log(`[GOLD] Analysis complete: $${spotPrice}, GIS=${gis.toFixed(2)}, Sentiment=${sentiment}`);
-      res.json(analysis);
+      mark("total");
+      console.log(`[GOLD] Timing (ms ab Start): ${timing.join(" ")}`);
+      return { analysis, timing: timing.join(" ") };
     } catch (error: any) {
       console.error("[GOLD] Error:", error?.message);
-      res.status(500).json({ error: error?.message || "Gold analysis failed" });
+      throw error;
+    }
+  };
+
+  // Gold-Chart (Section 2) 10Y/Max: lange Chart-Historie, nur auf Anforderung (lazy im Client).
+  // Reine Chart-Daten — /api/analyze-gold, Scores und Gates bleiben unberuehrt.
+  // Vollstaendig 6 h, unvollstaendig (FMP-Fehler mitten in der Reihe) max. 10 min; parallele
+  // erste Anfragen teilen einen Ladevorgang (In-Flight-Sperre).
+  class NoGoldHistoryError extends Error {}
+  const chartHistory = createChartHistoryCache(async () => {
+    const t0 = Date.now();
+    const endDate = new Date().toISOString().split("T")[0];
+    // FRED nicht blockierend und parallel zu FMP/Yahoo starten (je Serie ein Abruf, wie #223),
+    // ab GOLD_HISTORY_FRED_FLOOR — deckt jedes Gold-Startdatum inkl. 13 Monate M2-Vorlauf ab.
+    const fredKeys = ["DFII10", "DTWEXBGS", "T10YIE", "WALCL", "M2SL"] as const;
+    const fredPromise = Promise.all(fredKeys.map(id => fetchFREDSeriesHistoryAsync(id, GOLD_HISTORY_FRED_FLOOR)));
+    // FMP: max. 5000 Zeilen je Abruf -> 15-Jahres-Fenster rueckwaerts, Stopp beim ersten leeren Fenster.
+    const fmp = await fetchFmpChunks(historyWindows(endDate, 60, 15), (from, to) => fmpHistoricalPrices("GCUSD", from, to));
+    if (fmp.failedWindow) {
+      console.warn(`[GOLD-HIST] FMP ${fmp.failedWindow.from}..${fmp.failedWindow.to} fehlgeschlagen: ${fmp.failedWindow.error} — Historie unvollstaendig`);
+    }
+    const fmpRows = mergeGoldRows(fmp.chunks);
+    let yahooRows: ReturnType<typeof mergeGoldRows> = [];
+    try {
+      const bars = await yahooFetch("GC=F", "1970-01-01", endDate);
+      yahooRows = mergeGoldRows([bars.map(b => ({ date: b.date, close: b.close, volume: b.volume }))]);
+    } catch (e: any) {
+      console.warn(`[GOLD-HIST] Yahoo GC=F fehlgeschlagen: ${e?.message?.substring(0, 120)}`);
+    }
+    const picked = pickLongerSource(fmpRows, yahooRows);
+    if (picked.rows.length === 0) throw new NoGoldHistoryError("Keine Gold-Historie von FMP oder Yahoo");
+    const start = picked.rows[0].date;
+    const [real10y, dxy, t10yie, walcl, m2] = await fredPromise;
+    // Overlays erst ab dem ersten Gold-Datum (M2 mit 400 Tagen Vorlauf fuer die erste YoY-Rate) — wie vorher.
+    const m2Start = new Date(new Date(start).getTime() - 400 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const from = (rows: Array<{ date: string; value: number }>, d: string) => rows.filter(r => r.date >= d);
+    const points = buildGoldChartHistoryPoints(picked.rows, {
+      real10y: from(real10y, start),
+      dxy: from(dxy, start),
+      t10yie: from(t10yie, start),
+      walcl: from(walcl, start),
+      m2: from(m2, m2Start),
+    });
+    const fredFetches = fredKeys.length;
+    // Unvollstaendig nur, wenn die gezeigte Reihe FMP ist und FMP mittendrin abbrach.
+    const incomplete = !!fmp.failedWindow && picked.source === "FMP GCUSD";
+    const body = {
+      generatedAt: new Date().toISOString(),
+      source: picked.source,
+      incomplete,
+      // FMP-Fehler, auch wenn Yahoo gezeigt wird: Quellwahl kann sich nach Erholung aendern -> nur 10 min.
+      shortCache: !!fmp.failedWindow,
+      incompleteReason: incomplete
+        ? `FMP-Block ${fmp.failedWindow!.from}–${fmp.failedWindow!.to} fehlgeschlagen; Historie endet früher als verfügbar`
+        : null,
+      sourceDepth: {
+        fmp: fmpRows.length ? { from: fmpRows[0].date, to: fmpRows[fmpRows.length - 1].date, count: fmpRows.length, failedWindow: fmp.failedWindow } : (fmp.failedWindow ? { failedWindow: fmp.failedWindow } : null),
+        yahoo: yahooRows.length ? { from: yahooRows[0].date, to: yahooRows[yahooRows.length - 1].date, count: yahooRows.length } : null,
+      },
+      coverage: seriesCoverage(points),
+      points,
+    };
+    console.log(`[GOLD-HIST] ${picked.source}${incomplete ? " (UNVOLLSTAENDIG)" : ""}: ${points.length} Punkte ab ${start}, FMP ${fmpRows.length}, Yahoo ${yahooRows.length}, FRED ${fredFetches} Abrufe (async), ${Date.now() - t0} ms`);
+    return body;
+  });
+  // ?range=10Y -> Fenster + 300 Punkte Vorlauf (statt immer der vollen ~1,3 MB); ohne/unbekannt = Max.
+  app.get("/api/gold-chart-history", async (req, res) => {
+    try {
+      res.json(trimChartHistory(await chartHistory.get(), parseChartHistoryRange(req.query.range)));
+    } catch (error: any) {
+      if (error instanceof NoGoldHistoryError) return res.status(502).json({ error: error.message });
+      console.error("[GOLD-HIST] Error:", error?.message);
+      res.status(500).json({ error: error?.message || "Gold chart history failed" });
     }
   });
 }

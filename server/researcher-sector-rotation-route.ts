@@ -6,7 +6,12 @@ import type { Express } from "express";
 import * as fs from "fs";
 import * as path from "path";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
-import { fetchSectorRotationLive, SECTOR_ROTATION_CACHE_TAB } from "./sector-rotation";
+import {
+  fetchSectorRotationLive,
+  SECTOR_ROTATION_CACHE_TAB,
+  attachSectorAttrBands,
+  attractivenessFromSnapshot,
+} from "./sector-rotation";
 
 const CACHE_DIR = path.join(process.cwd(), ".cache", "researcher");
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -49,6 +54,24 @@ function readCache(tab: string, params: string): any | null {
   return null;
 }
 
+/** Letzter Snapshot unabhängig von der 6h-TTL — Quelle für Δ-Pfeile. */
+function readLastSnapshot(tab: string, params: string): any | null {
+  try {
+    const file = path.join(CACHE_DIR, `${safeKey(tab)}__${safeKey(params)}.json`);
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf-8"));
+  } catch { /* Datei optional */ }
+  try { return diskResearcherGet(researcherDiskKey(tab, params)); } catch { return null; }
+}
+
+function ensureAttrBands(cached: any): any {
+  const sectors = cached?.sectors;
+  if (!Array.isArray(sectors) || sectors.length === 0) return cached;
+  if (sectors.every((s: { attrBand?: string }) => typeof s?.attrBand === "string")) return cached;
+  // Alter Cache ohne Ampel-Felder: Perzentil aus den gespeicherten Zahlen,
+  // kein Vergleich mit sich selbst (das würde Δ = 0 und falsche Pfeile erzeugen).
+  return attachSectorAttrBands(cached, null);
+}
+
 function writeCache(tab: string, params: string, data: any): void {
   const payload = { ...data, _cachedAt: new Date().toISOString() };
   try {
@@ -63,6 +86,8 @@ export function registerSectorRotationRoute(app: Express): void {
     const q = req.query || {};
     const force = q.refresh === "1" || q.force === "1" || q.force === "true" || q.refresh === "true";
     const cacheParams = "global";
+    // Vor dem Löschen lesen, sonst gibt es keinen Vorwert für die Δ-Pfeile.
+    const previousSnapshot = readLastSnapshot(SECTOR_ROTATION_CACHE_TAB, cacheParams);
     if (force) {
       deleteCache(SECTOR_ROTATION_CACHE_TAB, cacheParams);
       console.log("[RESEARCHER/sector-rotation] cache invalidated (refresh/force)");
@@ -71,14 +96,15 @@ export function registerSectorRotationRoute(app: Express): void {
       const cached = readCache(SECTOR_ROTATION_CACHE_TAB, cacheParams);
       if (cached) {
         console.log(`[RESEARCHER/sector-rotation] cache HIT age=${cached._cacheAge}min`);
-        return res.json(cached);
+        return res.json(ensureAttrBands(cached));
       }
     }
     console.log("[RESEARCHER/sector-rotation] building");
     try {
       const result = await fetchSectorRotationLive();
-      writeCache(SECTOR_ROTATION_CACHE_TAB, cacheParams, result);
-      res.json(result);
+      const enriched = attachSectorAttrBands(result, attractivenessFromSnapshot(previousSnapshot));
+      writeCache(SECTOR_ROTATION_CACHE_TAB, cacheParams, enriched);
+      res.json(enriched);
     } catch (err: any) {
       const message = err?.message || "sector-rotation failed";
       console.error("[RESEARCHER/sector-rotation] failed:", message);

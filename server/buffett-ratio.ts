@@ -200,6 +200,8 @@ export interface TrendPoint {
   minus2: number;
   premiumPct: number;
   zScore: number;
+  /** Proxy-Symbol (z. B. VTI, ^DWCF), wenn der Punkt fortgeschrieben ist; fehlt sonst. */
+  proxy?: string;
 }
 
 const YEAR_MS = 365.25 * 24 * 60 * 60 * 1000;
@@ -280,6 +282,51 @@ export function fitLogTrend(points: RatioObs[]): TrendModel | null {
     slopePerYear,
     sigmaPct: Math.sqrt(sse / (n - 2)),
   };
+}
+
+export interface CloseBar {
+  date: string;
+  close: number;
+  /** gesetzt, wenn der Schluss per Proxy-Rendite fortgeschrieben wurde */
+  proxy?: true;
+}
+
+/** Fortschreibung höchstens 30 Kalendertage nach dem letzten Primärschluss; danach endet die Linie. */
+export const ROLL_FORWARD_MAX_DAYS = 30;
+
+/**
+ * Schreibt die Primärreihe bis zur letzten Proxy-Sitzung fort.
+ * Der letzte Primärschluss wird mit der Proxy-Rendite ab dem letzten
+ * Proxy-Schluss an oder vor diesem Tag skaliert. Tage ohne Proxy-Schluss,
+ * also Wochenenden, bleiben leer.
+ */
+export function rollClosesForward(primary: CloseBar[], proxy: CloseBar[], maxDays = ROLL_FORWARD_MAX_DAYS): CloseBar[] {
+  const base = primary
+    .filter(bar => Number.isFinite(bar.close) && bar.close > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const tail = proxy
+    .filter(bar => Number.isFinite(bar.close) && bar.close > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (base.length === 0 || tail.length === 0) return base;
+  const last = base[base.length - 1];
+  let anchor: CloseBar | null = null;
+  for (const bar of tail) {
+    if (bar.date <= last.date) anchor = bar;
+    else break;
+  }
+  if (!anchor) return base;
+  const scaleFrom = anchor;
+  const limit = Date.parse(`${last.date}T00:00:00Z`) + maxDays * 86_400_000;
+  const extra = tail.filter(bar => bar.date > last.date && Date.parse(`${bar.date}T00:00:00Z`) <= limit);
+  if (extra.length === 0) return base;
+  return [
+    ...base,
+    ...extra.map(bar => ({
+      date: bar.date,
+      close: last.close * (bar.close / scaleFrom.close),
+      proxy: true as const,
+    })),
+  ];
 }
 
 export function applyTrend(model: TrendModel, points: RatioObs[]): TrendPoint[] {

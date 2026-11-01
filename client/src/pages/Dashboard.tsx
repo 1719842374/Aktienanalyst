@@ -1,13 +1,38 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import {
+  analyzePostBody,
+  hasPeerOverrideLists,
+  normalizeStoredOverrides,
+  readLastTicker,
+  readOverrides,
+  safeLocalStorage,
+  shouldRestoreLastTicker,
+  writeLastTicker,
+  writeOverrides,
+  type PeerOverrideLists,
+} from "@shared/peer-override-persist";
+import {
+  PEER_OVERRIDES_REJECTED,
+  clampPeerOverrides,
+  discardRejectedOverrides,
+  isPeerOverrideRejection,
+  peerResetNoticeAfterSuccess,
+  peerResetNoticeFor,
+  type PeerResetNotice,
+  sameOverrides,
+} from "@/lib/peerOverrideLimits";
 import type { StockAnalysis } from "../../../shared/schema";
 import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "@/lib/calculations";
 import { TickerSearch } from "@/components/TickerSearch";
+import { formatCurrency } from "@/lib/formatters";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
 import { ExecSummaryCard } from "@/components/ExecSummaryCard";
+import { YahooNoValuationCard } from "@/components/YahooNoValuationCard";
+import { isYahooOnly } from "@shared/data-source";
+import { isEtfOrFund } from "@shared/conflict-matrix";
 import { Section1 } from "@/components/sections/Section1";
 import { Section2 } from "@/components/sections/Section2";
 import { FinancialStatements } from "@/components/sections/FinancialStatements";
@@ -27,6 +52,12 @@ import { TechnicalChart } from "@/components/sections/TechnicalChart";
 import { MoatPorterSection } from "@/components/sections/MoatPorterSection";
 import { PestelSection } from "@/components/sections/PestelSection";
 import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelationsSection";
+import { ChatWidget } from "@/components/chat/ChatWidget";
+import { visibleTopOf } from "@/lib/activeSection";
+import { deliverPdfOnGesture, needsGestureHandoff } from "@/lib/pdfDelivery";
+import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
+import { withFazitEntryChatFacts } from "@shared/fazit-entry";
+import { useChatSectionData } from "@/lib/chatSectionData";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
@@ -82,8 +113,14 @@ export default function Dashboard() {
   const [, navigate] = useLocation();
   const mainRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  // PDF-Export läuft ~30–60 s (Sektionsaufnahme + Server-Render): sichtbarer Zustand statt scheinbar nichts.
+  const [pdfBusy, setPdfBusy] = useState(false);
+  // iOS: fertiges PDF wartet auf eine frische Geste („PDF öffnen/teilen“), weil die Klick-Activation nach ~1 min abgelaufen ist.
+  const [pdfReady, setPdfReady] = useState<{ blob: Blob; filename: string; download: (b: Blob, f: string) => void } | null>(null);
 
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number; isPending?: boolean } | null>(null);
+  // #258: Hinweis nach automatischem Verwerfen abgelehnter Peer-Overrides (400).
+  const [peerResetNotice, setPeerResetNotice] = useState<PeerResetNotice>(null);
   const [serverReady, setServerReady] = useState<boolean | null>(null); // null=checking, true=ready, false=down
 
   const [financeQuotaOk, setFinanceQuotaOk] = useState<boolean | null>(null);
@@ -134,16 +171,33 @@ export default function Dashboard() {
 
   // Tagged mutate: assigns a fresh reqId on every kick-off so onSuccess can
   // reject stale responses. Use this everywhere instead of mutation.mutate().
-  const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean; peerOverrides?: { add: string[]; remove: string[] } }) => {
+  const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean; peerOverrides?: { add: string[]; remove: string[] }; peerResetRecovery?: boolean }) => {
+    const storage = safeLocalStorage();
+    const explicit = args.peerOverrides;
+    const loaded: PeerOverrideLists = explicit
+      ? normalizeStoredOverrides(explicit)
+      : (storage ? readOverrides(storage, args.ticker) : { add: [], remove: [] });
+    // #258 FAIL 5: harter Deckel 8 je Liste (Server-zod .max(8)), auch für Altbestände aus localStorage.
+    const resolved: PeerOverrideLists = clampPeerOverrides(loaded);
+    if (storage) {
+      if (explicit || !sameOverrides(loaded, resolved)) writeOverrides(storage, args.ticker, resolved);
+      writeLastTicker(storage, args.ticker);
+    }
+    // Befund B (dod-258): der analysierte Ticker ist der aktuelle -- auch beim Deep-Link
+    // (?ticker=) und beim Wiederherstellen nach Reload, die nicht über onSearch laufen.
+    // Ohne das blieb currentTickerRef leer, und Peer-Add/-Remove/Reset (Section7) sowie
+    // Refresh/KI-Toggle lösten keinen Request aus. Ref sofort, State für Renderpfade.
+    currentTickerRef.current = args.ticker;
+    setCurrentTicker(args.ticker);
     requestIdRef.current += 1;
     const reqId = requestIdRef.current;
-    analyzeMutationRef.current.mutate({ ...args, reqId });
+    analyzeMutationRef.current.mutate({ ticker: args.ticker, llm: args.llm, force: args.force, peerOverrides: resolved, reqId, peerResetRecovery: args.peerResetRecovery });
   }, []);
   // Forward-decl ref so startAnalyze can reference the mutation before it's declared
   const analyzeMutationRef = useRef<any>(null);
 
   const analyzeMutation = useMutation({
-    mutationFn: async ({ ticker, llm, force, peerOverrides }: { ticker: string; llm: boolean; force?: boolean; reqId?: number; peerOverrides?: { add: string[]; remove: string[] } }) => {
+    mutationFn: async ({ ticker, llm, force, peerOverrides }: { ticker: string; llm: boolean; force?: boolean; reqId?: number; peerOverrides?: { add: string[]; remove: string[] }; peerResetRecovery?: boolean }) => {
       const maxRetries = 5;
       let lastError: Error | null = null;
 
@@ -153,10 +207,16 @@ export default function Dashboard() {
           // On last attempt: always use force=false to hit cache if available
           // This prevents blank screen when server is warming up but cache has data
           const useForce = attempt < maxRetries ? (force === true) : false;
-          const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: useForce, ...(peerOverrides && (peerOverrides.add.length > 0 || peerOverrides.remove.length > 0) ? { peerOverrides } : {}) });
+          const res = await apiRequest("POST", "/api/analyze", analyzePostBody({ ticker, useLLM: llm, force: useForce, peerOverrides }));
           if (!res.ok) {
             const errJson = await res.json().catch(() => ({}));
             const errMsg = errJson?.error || errJson?.message || `HTTP ${res.status}`;
+            // #258 FAIL 5: 400 auf Overrides (z.B. zod "Array must contain at most 8 element(s)")
+            // ist nicht transient -- keine Retries; onError verwirft die Overrides und lädt neu.
+            if (isPeerOverrideRejection(res.status, peerOverrides)) {
+              setRetryInfo(null);
+              throw Object.assign(new Error(errMsg), { errorCode: PEER_OVERRIDES_REJECTED, details: errJson?.details });
+            }
             // 429 / RATE_LIMITED: surface immediately, no retries
             if (res.status === 429 || errJson?.errorCode === 'RATE_LIMITED') {
               console.warn(`[Analyze] Rate-limit erkannt — keine Retries`);
@@ -177,7 +237,7 @@ export default function Dashboard() {
               console.log(`[Analyze] _pending — warte 30s dann poll ${poll}/3`);
               setRetryInfo({ attempt: poll, maxRetries: 3, isPending: true });
               await new Promise(r => setTimeout(r, 30000));
-              const pollRes = await apiRequest("POST", "/api/analyze", { ticker, useLLM: llm, force: false });
+              const pollRes = await apiRequest("POST", "/api/analyze", analyzePostBody({ ticker, useLLM: llm, force: false, peerOverrides }));
               if (!pollRes.ok) {
                 console.log(`[Analyze] Poll ${poll}/3: HTTP ${pollRes.status}`);
                 continue;
@@ -236,6 +296,7 @@ export default function Dashboard() {
           if (err?.errorCode === 'RATE_LIMITED' || msg.includes("RATE_LIMITED") || msg.includes("Tagesquota")) {
             throw err;
           }
+          if (err?.errorCode === PEER_OVERRIDES_REJECTED) throw err;
           console.warn(`[Analyze] Versuch ${attempt}/${maxRetries} fehlgeschlagen: ${msg.substring(0, 100)}`);
           if (attempt < maxRetries) {
             // Network retry backoff (short) — no cold-start warmup needed anymore.
@@ -257,6 +318,8 @@ export default function Dashboard() {
         return;
       }
       setData(result);
+      // #258: Reset-Hinweis überlebt nur den Neu-Lauf nach dem Verwerfen, die nächste Analyse räumt ihn ab.
+      setPeerResetNotice((cur) => peerResetNoticeAfterSuccess(cur, variables));
       setFinanceQuotaOk(true); // Clear any quota warning on success
       const prev = dataRef.current;
       if (!result.llmMode || !prev || prev.companyName !== result.companyName) {
@@ -273,6 +336,15 @@ export default function Dashboard() {
       // Only clear data for RATE_LIMITED (needs explicit empty state for quota warning UI).
       // For all other errors: old data > blank screen.
       const ec = (err as any)?.errorCode;
+      // #258 FAIL 5: Overrides vom Server abgelehnt → gespeicherte Overrides verwerfen und
+      // die Analyse ohne Overrides neu laden. Kein Loop: ohne Overrides greift isPeerOverrideRejection nicht.
+      if (ec === PEER_OVERRIDES_REJECTED && variables?.ticker) {
+        console.warn(`[Analyze] Peer-Overrides für ${variables.ticker} vom Server abgelehnt (400) — verworfen, lade ohne Overrides neu`);
+        const cleared = discardRejectedOverrides(safeLocalStorage(), variables.ticker);
+        setPeerResetNotice({ ticker: variables.ticker });
+        startAnalyze({ ticker: variables.ticker, llm: !!variables.llm, force: false, peerOverrides: cleared, peerResetRecovery: true });
+        return;
+      }
       if (ec !== 'RATE_LIMITED' && dataRef.current) {
         console.log('[Analyze] Error but keeping previous data visible');
         setRetryInfo(null);
@@ -302,8 +374,13 @@ export default function Dashboard() {
     const hashParams = hashQueryIdx >= 0 ? new URLSearchParams(window.location.hash.slice(hashQueryIdx + 1)) : null;
     const searchParams = new URLSearchParams(window.location.search);
     const deepLinkTicker = (hashParams?.get("ticker") ?? searchParams.get("ticker"))?.trim().toUpperCase();
-    if (deepLinkTicker) {
-      startAnalyze({ ticker: deepLinkTicker, llm: useLLMRef.current, force: false });
+    const storage = safeLocalStorage();
+    const tickerToOpen = shouldRestoreLastTicker({
+      urlTicker: deepLinkTicker,
+      lastTicker: storage ? readLastTicker(storage) : null,
+    });
+    if (tickerToOpen) {
+      startAnalyze({ ticker: tickerToOpen, llm: useLLMRef.current, force: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -318,6 +395,24 @@ export default function Dashboard() {
 
   const setSectionRef = useCallback((id: number) => (el: HTMLDivElement | null) => {
     sectionRefs.current[id] = el;
+  }, []);
+
+  // KI-Chatbot (WORK_DASHBOARD_FEATURES §4): Kontext-Provider der Aktien-Analyse. Nur Lesen, kein Score-Einfluss.
+  // PR 3: angezeigte Client-Werte (DCF/CRV/RSL/Monte Carlo) + Auffälligkeiten je Sektion.
+  const chatLive = useChatSectionData("stock");
+  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withFazitEntryChatFacts(buildStockChatContext(data), data), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive]);
+  const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
+  // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
+  const getActiveSectionId = useCallback((): number | null => {
+    const top = visibleTopOf(mainRef.current); // sichtbare Oberkante: Main- ODER Window-Scroll
+    let best: number | null = null;
+    for (const { id } of SECTIONS) {
+      const el = sectionRefs.current[id];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.bottom > top + 40) { best = id; break; }
+    }
+    return best;
   }, []);
 
   return (
@@ -357,26 +452,41 @@ export default function Dashboard() {
             <span className="font-mono tabular-nums font-bold text-primary shrink-0">{data.ticker}</span>
             <span className="text-muted-foreground truncate">{data.companyName}</span>
             <span className="text-muted-foreground shrink-0">•</span>
-            <span className="font-mono tabular-nums font-semibold shrink-0">${data.currentPrice.toFixed(2)}</span>
+            <span className="font-mono tabular-nums font-semibold shrink-0" data-testid="header-price">{formatCurrency(data.currentPrice, 2, data.currency)}</span>
           </div>
         )}
 
         {/* justify-end on an overflow container clips the start unreachably; w-max + ml-auto keeps it scrollable. */}
         <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide" data-testid="header-nav-strip">
           <div className="flex w-max ml-auto items-center gap-2 sm:gap-3">
-          {/* PDF Export */}
-          {data && (
+          {/* PDF Export — not for ETFs/funds (not part of the stock dashboard) */}
+          {data && !isEtfOrFund(data) && (
             <button
               onClick={async () => {
-                const { exportAnalysisPdf } = await import('../lib/exportPdf');
-                exportAnalysisPdf(data);
+                if (pdfBusy) return;
+                setPdfBusy(true);
+                setPdfReady(null);
+                try {
+                  const { exportAnalysisPdf, triggerDownload } = await import('../lib/exportPdf');
+                  // iOS: Die Klick-Activation ist nach dem 54–75-s-Export abgelaufen, deshalb kein Auto-Download, sondern Übergabe an den
+                  // Knopf „PDF öffnen/teilen“ (frische Geste). Desktop/Android: triggerDownload wie bisher.
+                  const deliver = (blob: Blob, filename: string) => needsGestureHandoff(navigator as any) ? setPdfReady({ blob, filename, download: triggerDownload }) : triggerDownload(blob, filename);
+                  // Alle gerenderten Sektionen (inkl. S3) als Bild ins PDF; Fehler meldet exportAnalysisPdf sichtbar.
+                  await exportAnalysisPdf(data, Object.entries(sectionRefs.current).map(([id, el]) => ({ id: Number(id), el })), deliver);
+                } catch (err: any) {
+                  alert(`PDF-Export fehlgeschlagen: ${err?.message || err}`);
+                } finally {
+                  setPdfBusy(false);
+                }
               }}
+              disabled={pdfBusy}
+              aria-busy={pdfBusy}
               className="h-8 px-2 text-[11px] font-medium rounded-md text-foreground/40 border border-border/50 hover:bg-muted/50 hover:text-foreground/60 transition-all flex items-center gap-1"
               title="Analyse als PDF exportieren"
               data-testid="button-pdf-export"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              <span className="hidden sm:inline">PDF</span>
+              <span className="hidden sm:inline">{pdfBusy ? 'PDF wird erstellt…' : 'PDF'}</span>
             </button>
           )}
           {/* KI-Katalysatoren Toggle */}
@@ -494,7 +604,7 @@ export default function Dashboard() {
               <button
                 key={s.id}
                 onClick={() => scrollToSection(s.id)}
-                disabled={!data}
+                disabled={!data || isEtfOrFund(data)}
                 className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-xs text-sidebar-foreground enabled:hover:bg-muted/50 disabled:opacity-[0.55] disabled:cursor-not-allowed transition-colors text-left group"
                 data-testid={`nav-section-${s.id}`}
               >
@@ -506,7 +616,6 @@ export default function Dashboard() {
           </nav>
 
           <div className="px-3 py-3 border-t border-border mt-2">
-            <PerplexityAttribution />
           </div>
         </aside>
 
@@ -521,7 +630,7 @@ export default function Dashboard() {
         {/* Main Content */}
         <main
           ref={mainRef}
-          className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar"
+          className="flex-1 min-w-0 overflow-y-auto overscroll-contain custom-scrollbar pb-16 sm:pb-0"
           data-testid="main-content"
         >
           {analyzeMutation.isError && !data && !analyzeMutation.isPending &&
@@ -538,6 +647,13 @@ export default function Dashboard() {
           ) : !data && analyzeMutation.isPending ? (
             // No previous data — show full loading screen
             <LoadingScreen ticker={analyzeMutation.variables?.ticker || currentTickerRef.current || ""} retryInfo={retryInfo} />
+          ) : data && isEtfOrFund(data) ? (
+            // ETF / Index / Fonds (FMP isEtf/isFund): no stock analysis here — no score, DCF, matrix, sections.
+            <div className="max-w-5xl mx-auto p-3 sm:p-4">
+              <div className="rounded-lg border border-border/60 bg-muted/20 p-4 text-sm break-words" data-testid="etf-not-supported">
+                <div className="font-semibold">{data.ticker}: ETF/Index – nicht im Aktien-Dashboard</div>
+              </div>
+            </div>
           ) : data ? (
             // data exists — show sections even while re-analyzing (optimistic: keep old content visible)
             <div className="relative max-w-5xl mx-auto p-3 sm:p-4 space-y-3">
@@ -553,25 +669,25 @@ export default function Dashboard() {
                   single component crash (e.g. .slice on undefined) can no longer
                   unmount the entire dashboard and leave the user with a black
                   screen. Without this, one bad field → whole app unmounts. */}
-              <div ref={setSectionRef(1)}><ExecSummaryCard data={data} /></div>
+              <div ref={setSectionRef(1)}>{isYahooOnly(data) ? <YahooNoValuationCard number={1} title="Executive Summary" data={data} /> : <ExecSummaryCard data={data} sharedMonteCarlo={sharedMonteCarlo} />}</div>
               <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} onThesisScore={(score) => {
                 setData(prev => prev && prev.thesisStrengthScore !== score ? { ...prev, thesisStrengthScore: score } : prev);
               }} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese"><Section2 data={data} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese">{isYahooOnly(data) ? <YahooNoValuationCard number={3} title="INVESTMENTTHESE & KATALYSATOREN" data={data} /> : <Section2 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(4)}><SectionErrorBoundary sectionId={4} sectionLabel="Financial Statements"><FinancialStatements data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(5)}><SectionErrorBoundary sectionId={5} sectionLabel="Zyklusanalyse"><Section3 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung"><Section4 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="DCF-Modell"><Section5 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="CRV"><Section6 data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion"><Section8 data={data} useLLM={useLLM} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung">{isYahooOnly(data) ? <YahooNoValuationCard number={6} title="BEWERTUNGSKENNZAHLEN" data={data} /> : <Section4 data={data} />}</SectionErrorBoundary></div>
+              <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="DCF-Modell">{isYahooOnly(data) ? <YahooNoValuationCard number={7} title="DCF-MODELL (FCFF)" data={data} /> : <Section5 data={data} />}</SectionErrorBoundary></div>
+              <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="CRV">{isYahooOnly(data) ? <YahooNoValuationCard number={8} title="RISIKOADJUSTIERTES CRV" data={data} /> : <Section6 data={data} />}</SectionErrorBoundary></div>
+              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerResetNotice={peerResetNoticeFor(peerResetNotice, data.ticker)?.ticker ?? null} onDismissPeerResetNotice={() => setPeerResetNotice(null)} peerBusy={analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides)} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion">{isYahooOnly(data) ? <YahooNoValuationCard number={10} title="INVERSION – RISIKOEINPREISUNG" data={data} /> : <Section8 data={data} useLLM={useLLM} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(13)}><SectionErrorBoundary sectionId={13} sectionLabel="Moat / Porter"><MoatPorterSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(14)}><SectionErrorBoundary sectionId={14} sectionLabel="PESTEL"><PestelSection data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(15)}><SectionErrorBoundary sectionId={15} sectionLabel="Makro-Korr."><MacroCorrelationsSection data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(16)}><SectionErrorBoundary sectionId={16} sectionLabel="Reverse DCF"><ReverseDCFSection data={data} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(17)}><SectionErrorBoundary sectionId={17} sectionLabel="Katalysatoren"><CatalystsSection
+              <div ref={setSectionRef(16)}><SectionErrorBoundary sectionId={16} sectionLabel="Reverse DCF">{isYahooOnly(data) ? <YahooNoValuationCard number={16} title="REVERSE DCF" data={data} /> : <ReverseDCFSection data={data} />}</SectionErrorBoundary></div>
+              <div ref={setSectionRef(17)}><SectionErrorBoundary sectionId={17} sectionLabel="Katalysatoren">{isYahooOnly(data) ? <YahooNoValuationCard number={17} title="KURSANSTIEG-KATALYSATOREN (Anti-Bias)" data={data} /> : <CatalystsSection
                 data={data}
                 onCatalystsEnriched={(enriched, growthThesis, growthThesisGeneratedAt, execSummary) => {
                   // Auftrag 08.08.2026 ("These direkt nach KI-Enrich aktualisieren"):
@@ -592,12 +708,16 @@ export default function Dashboard() {
                     ...(execSummary ? { execSummary } : {}),
                   } : prev);
                 }}
-              /></SectionErrorBoundary></div>
+                onUserEvent={(cat) => {
+                  // S17 „Event hinzufügen“ (§4b Stufe 1): additiv an die bestehende Liste, nur Session-State.
+                  setData(prev => prev ? { ...prev, catalysts: [...(prev.catalysts ?? []), cat] } : prev);
+                }}
+              />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(18)}><SectionErrorBoundary sectionId={18} sectionLabel="Monte Carlo"><MonteCarloSection data={data} sharedResult={sharedMonteCarlo} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(19)}><SectionErrorBoundary sectionId={19} sectionLabel="Management-Score"><ManagementScoreSection data={data} onScore={(score) => {
+              <div ref={setSectionRef(19)}><SectionErrorBoundary sectionId={19} sectionLabel="Management-Score">{isYahooOnly(data) ? <YahooNoValuationCard number={19} title="MANAGEMENT-EXECUTION-SCORE" data={data} /> : <ManagementScoreSection data={data} onScore={(score) => {
                 setData(prev => prev && prev.managementScore !== score ? { ...prev, managementScore: score } : prev);
-              }} /></SectionErrorBoundary></div>
-              <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Zusammenfassung"><SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} /></SectionErrorBoundary></div>
+              }} />}</SectionErrorBoundary></div>
+              <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Zusammenfassung">{isYahooOnly(data) ? <YahooNoValuationCard number={20} title="ZUSAMMENFASSUNGSTABELLE" data={data} /> : <SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} />}</SectionErrorBoundary></div>
               <div className="pb-8" />
             </div>
           ) : (
@@ -610,6 +730,49 @@ export default function Dashboard() {
           )}
         </main>
       </div>
+      {/* < 640 px ist das Button-Label versteckt: eigener Status-Hinweis während des Exports (Desktop: Button-Text wie bisher). */}
+      {pdfBusy && <PdfBusyBanner />}
+      {pdfReady && (
+        <div className="fixed bottom-20 left-3 right-3 sm:left-auto sm:right-4 sm:w-80 z-50 rounded-lg border border-primary/40 bg-card shadow-lg p-3 text-xs flex items-center gap-2" role="status" data-testid="pdf-ready-banner">
+          <span className="flex-1 min-w-0 truncate">PDF fertig: {pdfReady.filename}</span>
+          <button
+            onClick={() => {
+              // Synchron im Tap (keine awaits davor): frische User-Activation für navigator.share / Download.
+              deliverPdfOnGesture(pdfReady.blob, pdfReady.filename, navigator as any, pdfReady.download);
+              setPdfReady(null);
+            }}
+            className="h-8 px-3 rounded-md bg-primary text-primary-foreground font-medium shrink-0"
+            data-testid="button-pdf-open-share"
+          >
+            PDF öffnen/teilen
+          </button>
+          <button onClick={() => setPdfReady(null)} className="p-1 text-muted-foreground shrink-0" aria-label="Schließen" data-testid="button-pdf-ready-close"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+      <ChatWidget
+        dashboard="stock"
+        context={chatContext}
+        sections={chatSections}
+        getActiveSectionId={getActiveSectionId}
+        onJumpToSection={scrollToSection}
+        suggestions={["Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?"]}
+      />
+    </div>
+  );
+}
+
+/** Status während des PDF-Exports, nur < 640 px (dort zeigt der Header-Button nur ein Icon). Sekundenzähler als Fortschritt. */
+function PdfBusyBanner() {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    const t0 = Date.now();
+    const id = setInterval(() => setSec(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="sm:hidden fixed top-[5.75rem] left-3 right-3 z-50 rounded-lg border border-primary/40 bg-card/95 backdrop-blur shadow-lg px-3 py-2 text-xs flex items-center gap-2" role="status" aria-live="polite" data-testid="pdf-export-status-mobile">
+      <div className="w-3 h-3 rounded-full border-2 border-primary border-t-transparent animate-spin shrink-0" />
+      <span className="flex-1">PDF wird erstellt… {sec} s <span className="text-muted-foreground">(dauert ca. 1 Min.)</span></span>
     </div>
   );
 }

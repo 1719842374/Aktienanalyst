@@ -6,14 +6,19 @@ import {
   allocateProgramToFcf, capOverlays, forwardDcfWithFiscal,
   type FiscalProgramForFcf,
 } from "../../lib/calculations";
-import { formatNumber, formatPercentNoSign } from "../../lib/formatters";
+import { formatNumber, formatPercentNoSign, currencySymbol, statementCurrency } from "../../lib/formatters";
 import { useMemo } from "react";
+import { isEtfOrFund, ETF_RDCF_NOTE } from "../../../../shared/conflict-matrix";
 
 interface Props { data: StockAnalysis }
 
 export function ReverseDCFSection({ data }: Props) {
   const netDebt = data.totalDebt - data.cashEquivalents;
   const sp = data.sectorProfile;
+  // JOB 23: Kurs/Marktwert in Listing-Währung (data.currency), Statement-Werte (FCF, Net Debt, DCF-FV) in statementCurrency.
+  // Nur Anzeige — die Rechnung (EV = Kurs × Aktien + Net Debt) bleibt unverändert.
+  const pxSym = currencySymbol(data.currency);
+  const stSym = currencySymbol(statementCurrency(data));
 
   // WACC: identisch mit Section 17 (SummarySection) — CAPM-WACC des DCF-Modells
   // via buildDefaultDCFParams, damit g* in Sektion 14 und 17 übereinstimmt.
@@ -114,6 +119,16 @@ export function ReverseDCFSection({ data }: Props) {
     return { base, withFiscal, programCount: fiscalCatalysts.length };
   }, [data.catalysts, data.fcfTTM, data.fcfHaircut, data.sharesOutstanding, sp, dcfWacc, netDebt]);
 
+  if (isEtfOrFund(data)) {
+    return (
+      <SectionCard number={16} title="REVERSE DCF">
+        <div className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">Implied Perpetual Growth Rate g*</div>
+        <div className="text-3xl font-bold font-mono text-muted-foreground" data-testid="reverse-dcf-etf-na">n/a</div>
+        <div className="text-xs text-muted-foreground mt-1">{ETF_RDCF_NOTE}: ein ETF/Fonds hat keinen eigenen Free Cash Flow, das eingepreiste Wachstum g* ist fachlich nicht definiert.</div>
+      </SectionCard>
+    );
+  }
+
   return (
     <SectionCard number={16} title="REVERSE DCF">
       {result.rating === "unrealistic" && (
@@ -135,6 +150,7 @@ export function ReverseDCFSection({ data }: Props) {
           <div className={`text-3xl font-bold font-mono tabular-nums ${ratingColor}`}>
             {formatPercentNoSign(result.impliedGrowth)}
           </div>
+          <div className="text-[10px] text-muted-foreground font-mono" data-testid="reverse-dcf-wacc">WACC {Number.isFinite(dcfWacc) ? formatPercentNoSign(dcfWacc) : "—"} (Unternehmens-WACC, wie Sektion 5)</div>
           <div className={`inline-block mt-2 px-2.5 py-1 rounded-md text-xs font-semibold border ${ratingBg} ${ratingColor}`}>
             {ratingLabel}
           </div>
@@ -193,11 +209,11 @@ export function ReverseDCFSection({ data }: Props) {
           <div className="grid grid-cols-2 gap-3 pt-1">
             <div>
               <div className="text-[10px] text-muted-foreground">FV (base)</div>
-              <div className="font-mono tabular-nums text-base font-semibold">${formatNumber(fiscalOverlayView.base.fairValuePerShare)}</div>
+              <div className="font-mono tabular-nums text-base font-semibold">{stSym}{formatNumber(fiscalOverlayView.base.fairValuePerShare)}</div>
             </div>
             <div>
               <div className="text-[10px] text-muted-foreground">FV (fiscal-adjusted)</div>
-              <div className="font-mono tabular-nums text-base font-semibold text-emerald-500">${formatNumber(fiscalOverlayView.withFiscal.fairValuePerShare)}</div>
+              <div className="font-mono tabular-nums text-base font-semibold text-emerald-500">{stSym}{formatNumber(fiscalOverlayView.withFiscal.fairValuePerShare)}</div>
             </div>
           </div>
           <div className="text-[10px] text-muted-foreground pt-1">
@@ -208,11 +224,11 @@ export function ReverseDCFSection({ data }: Props) {
 
       <RechenWeg title="Reverse DCF Rechenweg" steps={[
         `EV = Price × Shares + Net Debt`,
-        `EV = $${formatNumber(data.currentPrice)} × ${formatNumber(data.sharesOutstanding / 1e9, 2)}B + $${formatNumber(netDebt / 1e9, 2)}B`,
-        `EV = $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
-        ...(data.fcfHaircut ? [`FCF (nach ${data.fcfHaircut}% Haircut) = $${formatNumber(data.fcfTTM * (1 - (data.fcfHaircut ?? 0) / 100) / 1e9, 2)}B`] : []),
-        `WACC = ${formatPercentNoSign(dcfWacc)} (CAPM-WACC des DCF-Modells, Sektion 5 — identisch mit Sektion 17)`,
-        `g* = WACC - FCF/EV = ${formatPercentNoSign(dcfWacc)} - $${formatNumber(data.fcfTTM * (1 - (data.fcfHaircut ?? 0) / 100) / 1e9, 2)}B / $${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
+        `EV = ${pxSym}${formatNumber(data.currentPrice)} × ${formatNumber(data.sharesOutstanding / 1e9, 2)}B + ${stSym}${formatNumber(netDebt / 1e9, 2)}B`,
+        `EV = ${pxSym}${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
+        ...(data.fcfHaircut ? [`FCF (nach ${data.fcfHaircut}% Haircut) = ${stSym}${formatNumber(data.fcfTTM * (1 - (data.fcfHaircut ?? 0) / 100) / 1e9, 2)}B`] : []),
+        `WACC = ${Number.isFinite(dcfWacc) ? formatPercentNoSign(dcfWacc) : "—"} (CAPM-WACC des DCF-Modells, Sektion 5 — identisch mit Sektion 17)`,
+        `g* = WACC - FCF/EV = ${formatPercentNoSign(dcfWacc)} - ${stSym}${formatNumber(data.fcfTTM * (1 - (data.fcfHaircut ?? 0) / 100) / 1e9, 2)}B / ${pxSym}${formatNumber((data.currentPrice * data.sharesOutstanding + netDebt) / 1e9, 2)}B`,
         `g* = ${formatPercentNoSign(result.impliedGrowth)}`,
         `Referenzwachstum = max(Sektor g1 ${formatPercentNoSign(sp.growthAssumptions?.g1 ?? 0)}, EPS-5J ${formatPercentNoSign(data.epsGrowth5Y ?? 0)}, 3%) = ${formatPercentNoSign(result.referenceGrowth)}`,
         `Rating: g* ${result.rating === "unrealistic" ? ">" : result.rating === "sportlich" ? ">" : "≤"} ${result.rating === "unrealistic" ? "1,5×" : result.rating === "sportlich" ? "1×" : "1×"} Referenz → ${ratingLabel}`,

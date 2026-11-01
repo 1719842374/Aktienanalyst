@@ -6,8 +6,9 @@ import {
   sectorImpliedBetaFromAnalysis, betaForDcfSource, dcfBetaDivergedFromMarket,
   type DcfBetaSource, type FCFFDCFParams, type FCFFDCFResult
 } from "../../lib/calculations";
-import { formatCurrency, formatNumber, formatPercentNoSign } from "../../lib/formatters";
+import { currencySymbol, formatCurrency, formatNumber, formatPercentNoSign, statementCurrency } from "../../lib/formatters";
 import { useMemo, useState, useCallback, useEffect } from "react";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import { Settings2, RotateCcw, ChevronDown, ChevronUp, AlertTriangle, Lock, Unlock } from "lucide-react";
 
 interface Props { data: StockAnalysis }
@@ -34,6 +35,43 @@ function InputField({ label, value, onChange, suffix = "%", min, max, step = 0.5
       </div>
     </div>
   );
+}
+
+/** Geschäftsmodell-Warnungen (unverändert aus der bisherigen IIFE extrahiert; Anzeige byte-gleich). */
+export function businessModelWarnings(data: StockAnalysis): string[] {
+  const warnings: string[] = [];
+  const ind = data.industry.toLowerCase();
+  const sect = data.sector.toLowerCase();
+  const desc = data.description.toLowerCase();
+  if (ind.includes('drug') || ind.includes('pharma') || ind.includes('biotechnology')) {
+    warnings.push('Preisregulierungsrisiko: IRA/Medicaid-Rabatte, Medicare-Preisverhandlungen können Margen um 10-30% drücken.');
+    if (desc.includes('patent') || desc.includes('biosimilar') || desc.includes('generic')) {
+      warnings.push('Patent-Cliff-Risiko: Generika/Biosimilar-Konkurrenz bei Patentablauf.');
+    }
+  }
+  const hasSoftwareCore = ind.includes('software') || ind.includes('saas') ||
+    desc.includes('cloud computing') || desc.includes('cloud platform') || desc.includes('cloud services') ||
+    desc.includes('software-as-a-service') || (desc.includes('subscription') && sect.includes('tech'));
+  if (hasSoftwareCore) {
+    warnings.push('KI-Disruption: AI-Agenten können Software-Margen durch Automatisierung und Commoditisierung erodieren.');
+  }
+  if ((sect.includes('consumer') && (sect.includes('cycl') || sect.includes('discr'))) &&
+      (ind.includes('luxury') || ind.includes('fashion') || ind.includes('apparel'))) {
+    warnings.push('Zyklisches Konsumrisiko: Luxusgüter-Nachfrage stark abhängig von China-Konjunktur, Vermögenseffekten und Konsumsentiment.');
+  }
+  if (data.fcfTTM < 0) {
+    warnings.push('Negativer FCF: Geschäftsmodell generiert aktuell keinen freien Cashflow — DCF-Projektion basiert auf Margenverbesserungs-Annahme.');
+  }
+  if (data.ebitda > 0 && data.revenue > 0) {
+    const ebitMargin = (data.ebitda / data.revenue) * 100;
+    if (ebitMargin > 30 && data.sectorProfile.growthAssumptions.g1 < 8) {
+      warnings.push(`Hohe EBIT-Marge (${ebitMargin.toFixed(0)}%) bei niedrigem Wachstum — Margenerhalt nicht gesichert bei Wettbewerbsdruck.`);
+    }
+  }
+  if (data.governmentExposure > 20) {
+    warnings.push(`Staatsabhängigkeit ${data.governmentExposure}%: Regulatorische Preisänderungen können DCF-Annahmen entwerten.`);
+  }
+  return warnings;
 }
 
 export function Section5({ data }: Props) {
@@ -168,6 +206,42 @@ export function Section5({ data }: Props) {
     { name: "Macro-Stress", result: stressResult, color: "border-red-500/20 bg-red-500/5" },
   ];
 
+  const bmWarnings = businessModelWarnings(data);
+  // PR 3 (Chat-Kontext): genau die angezeigten Werte veröffentlichen — keine eigene Rechnung.
+  const fin = (v: number) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  const pctVsPrice = (fv: number) => (Number.isFinite(fv) && data.currentPrice > 0 ? +((fv / data.currentPrice - 1) * 100).toFixed(1) : null);
+  // Bewertungsurteil nur aus den angezeigten Vergleichen (grün/rot je Szenario, Warnbox) — keine neue Rechnung.
+  const dcfVerdict = !(data.currentPrice > 0) || !Number.isFinite(mainResult.perShare) ? null
+    : mainResult.perShare < data.currentPrice
+      ? `Überbewertung laut S7: Conservative-FV ${fin(mainResult.perShare)} < Kurs ${fin(data.currentPrice)} (${pctVsPrice(mainResult.perShare)}%)${invertedBelowPrice ? `, Risk-adj. DCF ${fin(riskAdjDCF)} < Kurs (Warnbox)` : ""}`
+      : `Unterbewertung laut S7: Conservative-FV ${fin(mainResult.perShare)} > Kurs ${fin(data.currentPrice)} (+${pctVsPrice(mainResult.perShare)}%)${invertedBelowPrice ? `, aber Risk-adj. DCF ${fin(riskAdjDCF)} < Kurs (Warnbox)` : ""}`;
+  usePublishChatSection("stock", "7", {
+    fairValue_konservativ: fin(mainResult.perShare), fairValue_optimistisch: fin(optResult.perShare),
+    fairValue_makroStress: fin(stressResult.perShare), fairValue_riskAdjInverted: fin(riskAdjDCF),
+    fairValue_safetyMargin30: fin(safetyMarginDCF), dcfWaehrung: statementCurrency(data) ?? null,
+    waccPct: fin(mainResult.wacc), eigenkapitalkostenPct: fin(mainResult.costOfEquity), betaDCF: fin(params.beta),
+    tvAnteilEVPct: mainResult.enterpriseValue > 0 ? fin((mainResult.pvTerminal / mainResult.enterpriseValue) * 100) : null,
+    ebitMargePct: fin(params.ebitMargin), terminalGPct: fin(params.terminalG),
+    wachstumP1Pct: fin(params.revenueGrowthP1), wachstumP2Pct: fin(params.revenueGrowthP2),
+    parameterAngepasst: isModified, betaModus: betaMode,
+    // Wie angezeigt: Szenario-WACC und Abweichung zum Kurs ((FV/Kurs − 1) · 100, eine Nachkommastelle).
+    kurs: fin(data.currentPrice), kursWaehrung: data.currency ?? null,
+    waccOptimistischPct: fin(optResult.wacc), waccMakroStressPct: fin(stressResult.wacc),
+    vsKurs_konservativPct: pctVsPrice(mainResult.perShare), vsKurs_optimistischPct: pctVsPrice(optResult.perShare),
+    vsKurs_makroStressPct: pctVsPrice(stressResult.perShare),
+    bewertungsurteil: dcfVerdict,
+    geschaeftsmodellWarnungen: bmWarnings.length ? bmWarnings.join(" | ") : null,
+    warnbox: invertedBelowPrice
+      ? `AUTOMATISCHE WARNUNG: Inverted DCF < aktueller Kurs — Risk-adj. DCF (${formatCurrency(riskAdjDCF, 2, statementCurrency(data))}) liegt unter dem aktuellen Kurs (${formatCurrency(data.currentPrice, 2, data.currency)}). Anti-Bias-Protokoll: Symmetrische Downside-Betrachtung notwendig.`
+      : null,
+    _auffaelligkeiten: [
+      invertedBelowPrice ? "Risk-adj. DCF liegt unter dem aktuellen Kurs (Inverted-DCF-Warnung)" : "",
+      waccWasCapped ? `WACC-Sanity-Cap aktiv (CAPM ${rawWaccCalc.toFixed(2)}% → ${mainResult.wacc.toFixed(2)}%)` : "",
+      betaDivergedFromMarket ? "DCF-Beta weicht vom Markt-Beta ab" : "",
+      isModified ? "Parameter vom Nutzer angepasst (custom)" : "",
+    ].filter(Boolean).join("; ") || null,
+  });
+
   return (
     <SectionCard number={7} title="DCF-MODELL (FCFF)">
       {/* Inverted DCF Warning */}
@@ -177,7 +251,7 @@ export function Section5({ data }: Props) {
           <div>
             <div className="text-xs font-bold text-red-500">AUTOMATISCHE WARNUNG: Inverted DCF &lt; aktueller Kurs</div>
             <div className="text-[11px] text-red-400 mt-0.5">
-              Risk-adj. DCF ({formatCurrency(riskAdjDCF)}) liegt unter dem aktuellen Kurs ({formatCurrency(data.currentPrice)}). Anti-Bias-Protokoll: Symmetrische Downside-Betrachtung notwendig.
+              Risk-adj. DCF ({formatCurrency(riskAdjDCF, 2, statementCurrency(data))}) liegt unter dem aktuellen Kurs ({formatCurrency(data.currentPrice, 2, data.currency)}). Anti-Bias-Protokoll: Symmetrische Downside-Betrachtung notwendig.
             </div>
           </div>
         </div>
@@ -437,38 +511,7 @@ export function Section5({ data }: Props) {
 
       {/* Business Model Integrity Warning */}
       {(() => {
-        const warnings: string[] = [];
-        const ind = data.industry.toLowerCase();
-        const sect = data.sector.toLowerCase();
-        const desc = data.description.toLowerCase();
-        if (ind.includes('drug') || ind.includes('pharma') || ind.includes('biotechnology')) {
-          warnings.push('Preisregulierungsrisiko: IRA/Medicaid-Rabatte, Medicare-Preisverhandlungen können Margen um 10-30% drücken.');
-          if (desc.includes('patent') || desc.includes('biosimilar') || desc.includes('generic')) {
-            warnings.push('Patent-Cliff-Risiko: Generika/Biosimilar-Konkurrenz bei Patentablauf.');
-          }
-        }
-        const hasSoftwareCore = ind.includes('software') || ind.includes('saas') ||
-          desc.includes('cloud computing') || desc.includes('cloud platform') || desc.includes('cloud services') ||
-          desc.includes('software-as-a-service') || (desc.includes('subscription') && sect.includes('tech'));
-        if (hasSoftwareCore) {
-          warnings.push('KI-Disruption: AI-Agenten können Software-Margen durch Automatisierung und Commoditisierung erodieren.');
-        }
-        if ((sect.includes('consumer') && (sect.includes('cycl') || sect.includes('discr'))) &&
-            (ind.includes('luxury') || ind.includes('fashion') || ind.includes('apparel'))) {
-          warnings.push('Zyklisches Konsumrisiko: Luxusgüter-Nachfrage stark abhängig von China-Konjunktur, Vermögenseffekten und Konsumsentiment.');
-        }
-        if (data.fcfTTM < 0) {
-          warnings.push('Negativer FCF: Geschäftsmodell generiert aktuell keinen freien Cashflow — DCF-Projektion basiert auf Margenverbesserungs-Annahme.');
-        }
-        if (data.ebitda > 0 && data.revenue > 0) {
-          const ebitMargin = (data.ebitda / data.revenue) * 100;
-          if (ebitMargin > 30 && data.sectorProfile.growthAssumptions.g1 < 8) {
-            warnings.push(`Hohe EBIT-Marge (${ebitMargin.toFixed(0)}%) bei niedrigem Wachstum — Margenerhalt nicht gesichert bei Wettbewerbsdruck.`);
-          }
-        }
-        if (data.governmentExposure > 20) {
-          warnings.push(`Staatsabhängigkeit ${data.governmentExposure}%: Regulatorische Preisänderungen können DCF-Annahmen entwerten.`);
-        }
+        const warnings = bmWarnings;
         if (warnings.length === 0) return null;
         return (
           <div className="rounded-lg border-2 border-amber-500/30 bg-amber-500/5 p-3">
@@ -503,15 +546,15 @@ export function Section5({ data }: Props) {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">PV(FCFF)</span>
-                <span className="font-mono tabular-nums">{formatCurrency(result.pvExplicit)}</span>
+                <span className="font-mono tabular-nums">{formatCurrency(result.pvExplicit, 2, statementCurrency(data))}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">PV(TV)</span>
-                <span className="font-mono tabular-nums">{formatCurrency(result.pvTerminal)}</span>
+                <span className="font-mono tabular-nums">{formatCurrency(result.pvTerminal, 2, statementCurrency(data))}</span>
               </div>
               <div className="flex justify-between pt-1 border-t border-border/50">
                 <span className="font-medium">Fair Value</span>
-                <span className="font-mono tabular-nums font-bold text-sm">{formatCurrency(result.perShare)}</span>
+                <span className="font-mono tabular-nums font-bold text-sm">{formatCurrency(result.perShare, 2, statementCurrency(data))}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">vs. Current</span>
@@ -528,12 +571,12 @@ export function Section5({ data }: Props) {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-muted/30 rounded-md p-3 border border-border/50">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider">30% Safety Margin DCF</div>
-          <div className="text-base font-bold font-mono tabular-nums mt-1">{formatCurrency(safetyMarginDCF)}</div>
+          <div className="text-base font-bold font-mono tabular-nums mt-1">{formatCurrency(safetyMarginDCF, 2, statementCurrency(data))}</div>
           <div className="text-[10px] text-muted-foreground mt-0.5">= Conservative DCF × 0.70</div>
         </div>
         <div className={`rounded-md p-3 border ${invertedBelowPrice ? "bg-red-500/10 border-red-500/20" : "bg-muted/30 border-border/50"}`}>
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Risk-Adj. DCF (Inverted)</div>
-          <div className="text-base font-bold font-mono tabular-nums mt-1">{formatCurrency(riskAdjDCF)}</div>
+          <div className="text-base font-bold font-mono tabular-nums mt-1">{formatCurrency(riskAdjDCF, 2, statementCurrency(data))}</div>
           {invertedBelowPrice && (
             <div className="text-[10px] text-red-500 mt-0.5">⚠ Below current price — WARNUNG</div>
           )}
@@ -577,14 +620,14 @@ export function Section5({ data }: Props) {
                 {mainResult.yearlyProjections.map((p) => (
                   <tr key={p.year} className={`border-b border-border/30 ${p.year === 6 ? "border-t border-primary/30" : ""}`}>
                     <td className="py-1 px-1 font-mono font-medium">Y{p.year}</td>
-                    <td className="py-1 px-1 text-right font-mono tabular-nums">{fmtB(p.revenue)}</td>
-                    <td className="py-1 px-1 text-right font-mono tabular-nums">{fmtB(p.ebit)}</td>
-                    <td className="py-1 px-1 text-right font-mono tabular-nums">{fmtB(p.nopat)}</td>
-                    <td className="py-1 px-1 text-right font-mono tabular-nums text-emerald-500">{fmtB(p.da)}</td>
-                    <td className="py-1 px-1 text-right font-mono tabular-nums text-red-400">{fmtB(p.capex)}</td>
-                    <td className="py-1 px-1 text-right font-mono tabular-nums text-red-400">{fmtB(p.deltaWC)}</td>
-                    <td className="py-1 px-1 text-right font-mono tabular-nums font-medium">{fmtB(p.fcff)}</td>
-                    <td className="py-1 px-1 text-right font-mono tabular-nums text-primary">{fmtB(p.pvFCFF)}</td>
+                    <td className="py-1 px-1 text-right font-mono tabular-nums">{fmtB(p.revenue, statementCurrency(data))}</td>
+                    <td className="py-1 px-1 text-right font-mono tabular-nums">{fmtB(p.ebit, statementCurrency(data))}</td>
+                    <td className="py-1 px-1 text-right font-mono tabular-nums">{fmtB(p.nopat, statementCurrency(data))}</td>
+                    <td className="py-1 px-1 text-right font-mono tabular-nums text-emerald-500">{fmtB(p.da, statementCurrency(data))}</td>
+                    <td className="py-1 px-1 text-right font-mono tabular-nums text-red-400">{fmtB(p.capex, statementCurrency(data))}</td>
+                    <td className="py-1 px-1 text-right font-mono tabular-nums text-red-400">{fmtB(p.deltaWC, statementCurrency(data))}</td>
+                    <td className="py-1 px-1 text-right font-mono tabular-nums font-medium">{fmtB(p.fcff, statementCurrency(data))}</td>
+                    <td className="py-1 px-1 text-right font-mono tabular-nums text-primary">{fmtB(p.pvFCFF, statementCurrency(data))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -622,7 +665,7 @@ export function Section5({ data }: Props) {
                           isAbove ? "text-emerald-500 bg-emerald-500/5" : "text-red-500 bg-red-500/5"
                         }`}
                       >
-                        {formatCurrency(val)}
+                        {formatCurrency(val, 2, statementCurrency(data))}
                       </td>
                     );
                   })}
@@ -648,9 +691,11 @@ export function Section5({ data }: Props) {
   );
 }
 
-function fmtB(n: number): string {
-  if (Math.abs(n) >= 1e12) return `$${(n / 1e12).toFixed(1)}T`;
-  if (Math.abs(n) >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
-  if (Math.abs(n) >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
-  return `$${n.toFixed(0)}`;
+/** JOB 23: Statement-Aggregate in Statement-Währung (statementCurrency), nicht fest "$". */
+function fmtB(n: number, ccy?: string | null): string {
+  const s = currencySymbol(ccy);
+  if (Math.abs(n) >= 1e12) return `${s}${(n / 1e12).toFixed(1)}T`;
+  if (Math.abs(n) >= 1e9) return `${s}${(n / 1e9).toFixed(1)}B`;
+  if (Math.abs(n) >= 1e6) return `${s}${(n / 1e6).toFixed(0)}M`;
+  return `${s}${n.toFixed(0)}`;
 }

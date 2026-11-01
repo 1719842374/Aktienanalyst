@@ -3,8 +3,10 @@ import { RechenWeg } from "../RechenWeg";
 import type { StockAnalysis, RevenueSegment } from "../../../../shared/schema";
 import { calculateFCFFDCF, buildDefaultDCFParams, calculateCatalystUpside, selectCatalystBase } from "../../lib/calculations";
 import { buildBiasDecision } from "../../../../shared/bias-fixes";
-import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber } from "../../lib/formatters";
+import { formatPercentNoSign, formatNumber, formatCurrency, formatLargeNumber, statementCurrency } from "../../lib/formatters";
 import { useMemo } from "react";
+import { catalystDisplayName, formatSignedPct } from "../../../../shared/catalyst-event";
+import { NewsHeader, SentimentNewsList, newsBoxClass, newsSentimentCounts } from "../news/SentimentNewsList";
 
 interface Props { data: StockAnalysis }
 
@@ -83,78 +85,12 @@ export function Section2({ data }: Props) {
         </div>
 
         {/* === Aktuelle Nachrichten mit Sentiment === */}
-        {data.newsItems && data.newsItems.length > 0 && (() => {
-          const bullish = data.newsItems.filter(n => n.sentiment === 'bullish').length;
-          const bearish = data.newsItems.filter(n => n.sentiment === 'bearish').length;
-          const neutral = data.newsItems.length - bullish - bearish;
-          const avgScore = data.newsItems.reduce((s, n) => s + (n.sentimentScore || 0), 0) / data.newsItems.length;
-          const overallSentiment = avgScore > 0.15 ? 'bullish' : avgScore < -0.15 ? 'bearish' : 'neutral';
-          const sentimentColor = overallSentiment === 'bullish' ? 'text-emerald-400' : overallSentiment === 'bearish' ? 'text-red-400' : 'text-foreground/50';
-          const sentimentBg = overallSentiment === 'bullish' ? 'bg-emerald-500/10 border-emerald-500/20' : overallSentiment === 'bearish' ? 'bg-red-500/10 border-red-500/20' : 'bg-card/50 border-border/50';
-
-          return (
-          <div className={`rounded-lg border p-3 mb-3 ${sentimentBg}`}>
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-sm">📰</span>
-                <span className="text-sm font-semibold text-foreground">Aktuelle Nachrichten</span>
-                <span className="text-xs text-foreground/50">({data.newsItems.length})</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {bullish > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">▲ {bullish} bullish</span>}
-                {bearish > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">▼ {bearish} bearish</span>}
-                {neutral > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/5 text-foreground/40">● {neutral} neutral</span>}
-              </div>
-            </div>
-            <div className="space-y-1">
-              {data.newsItems.map((news, idx) => {
-                const sc = news.sentiment;
-                const dotColor = sc === 'bullish' ? 'bg-emerald-400' : sc === 'bearish' ? 'bg-red-400' : 'bg-foreground/30';
-                const textColor = sc === 'bullish' ? 'text-emerald-300/90' : sc === 'bearish' ? 'text-red-300/90' : 'text-foreground/70';
-                const scoreStr = news.sentimentScore != null ? (news.sentimentScore > 0 ? `+${(news.sentimentScore * 100).toFixed(0)}` : `${(news.sentimentScore * 100).toFixed(0)}`) : '';
-
-                return (
-                <a
-                  key={idx}
-                  href={news.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="group flex items-start gap-2 rounded-md p-1.5 hover:bg-muted/50 transition-colors cursor-pointer"
-                >
-                  <span className={`shrink-0 mt-1 w-2 h-2 rounded-full ${dotColor}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-xs leading-snug line-clamp-2 group-hover:text-primary transition-colors ${textColor}`}>
-                      {news.title}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                      <span className="text-[10px] text-foreground/40">{news.source}</span>
-                      {(news as any).lang && (
-                        <span className={`text-[8px] px-1 py-px rounded font-semibold uppercase ${(news as any).lang === 'de' ? 'bg-amber-500/15 text-amber-400' : 'bg-blue-500/15 text-blue-400'}`}>
-                          {(news as any).lang}
-                        </span>
-                      )}
-                      <span className="text-[10px] text-foreground/30">·</span>
-                      <span className="text-[10px] text-foreground/40">{news.relativeTime}</span>
-                      {scoreStr && (
-                        <span className={`text-[9px] px-1 py-px rounded font-mono ${sc === 'bullish' ? 'bg-emerald-500/15 text-emerald-400' : sc === 'bearish' ? 'bg-red-500/15 text-red-400' : 'bg-foreground/5 text-foreground/40'}`}>
-                          {scoreStr}
-                        </span>
-                      )}
-                      {news.matchedCatalyst && (
-                        <span className="text-[9px] px-1.5 py-px rounded bg-primary/10 text-primary/70 truncate max-w-[140px]" title={news.matchedCatalyst}>
-                          → K{(news.matchedCatalystIdx ?? 0) + 1}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <span className="shrink-0 text-foreground/20 group-hover:text-primary text-xs mt-0.5">↗</span>
-                </a>
-              );
-              })}
-            </div>
+        {data.newsItems && data.newsItems.length > 0 && (
+          <div className={`rounded-lg border p-3 mb-3 ${newsBoxClass(newsSentimentCounts(data.newsItems).overall)}`}>
+            <NewsHeader title="Aktuelle Nachrichten" items={data.newsItems} />
+            <SentimentNewsList items={data.newsItems} />
           </div>
-          );
-        })()}
+        )}
 
         {/* Peter Lynch Classification */}
         {(() => {
@@ -415,7 +351,7 @@ export function Section2({ data }: Props) {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <MiniCard label="Moat Assessment" value={data.moatRating} badge />
-          <MiniCard label="FCF Strength" value={data.fcfAvailable === false ? "n/a" : `${formatPercentNoSign(data.fcfMargin)} margin • ${formatLargeNumber(data.fcfTTM)} TTM`} />
+          <MiniCard label="FCF Strength" value={data.fcfAvailable === false ? "n/a" : `${formatPercentNoSign(data.fcfMargin)} margin • ${formatLargeNumber(data.fcfTTM, statementCurrency(data))} TTM`} />
         </div>
         {data.alternativesMetricsNote && (
           <p className="text-[10px] text-muted-foreground leading-snug" data-testid="alternatives-metrics-note">
@@ -533,7 +469,7 @@ export function Section2({ data }: Props) {
                   <td className="py-1.5 px-2">
                     <div className="flex items-center gap-1.5">
                       {sentIcon && <span className={`text-[10px] ${sentColor}`} title={`News: ${c.newsSentiment} (${c.newsCount} Meldung${(c.newsCount||0) > 1 ? 'en' : ''})`}>{sentIcon}</span>}
-                      <span className="font-medium">{c.name}</span>
+                      <span className="font-medium">{catalystDisplayName(c)}</span>
                       {c.newsCount && c.newsCount > 0 && (
                         <span className={`text-[9px] px-1 py-px rounded ${sentColor} ${c.newsSentiment === 'bullish' ? 'bg-emerald-500/15' : c.newsSentiment === 'bearish' ? 'bg-red-500/15' : c.newsSentiment === 'mixed' ? 'bg-amber-500/15' : 'bg-foreground/5'}`}>
                           {c.newsCount}📰
@@ -576,9 +512,9 @@ export function Section2({ data }: Props) {
                       )}
                     </div>
                   </td>
-                  <td className="py-1.5 px-1 text-right font-mono tabular-nums text-emerald-500">+{formatNumber(c.bruttoUpside, 1)}%</td>
+                  <td className={`py-1.5 px-1 text-right font-mono tabular-nums ${c.bruttoUpside < 0 ? "text-red-500" : "text-emerald-500"}`}>{formatSignedPct(c.bruttoUpside, 1)}</td>
                   <td className="py-1.5 px-1 text-right font-mono tabular-nums">{c.einpreisungsgrad}%</td>
-                  <td className="py-1.5 px-1 text-right font-mono tabular-nums text-emerald-500">+{formatNumber(c.nettoUpside, 2)}%</td>
+                  <td className={`py-1.5 px-1 text-right font-mono tabular-nums ${c.nettoUpside < 0 ? "text-red-500" : "text-emerald-500"}`}>{formatSignedPct(c.nettoUpside, 2)}</td>
                   <td className="py-1.5 px-2 text-right font-mono tabular-nums font-semibold">{formatNumber(c.gb, 2)}%</td>
                 </tr>
               );
@@ -603,7 +539,7 @@ export function Section2({ data }: Props) {
             <>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">Conservative DCF (base, WACC {baseDCF.wacc.toFixed(1)}%)</span>
-                <span className="font-mono tabular-nums font-semibold">{formatCurrency(baseDCF.perShare)}</span>
+                <span className="font-mono tabular-nums font-semibold">{formatCurrency(baseDCF.perShare, 2, statementCurrency(data))}</span>
               </div>
               <div className="flex items-center justify-between text-xs mt-1">
                 <span className="text-muted-foreground">
@@ -611,11 +547,11 @@ export function Section2({ data }: Props) {
                   {catalystBaseFallback && <span className="text-amber-500 ml-1">⚠</span>}
                 </span>
                 <span className={`font-mono tabular-nums font-semibold ${isBelowKurs ? 'text-red-500' : 'text-primary'}`}>
-                  {formatCurrency(adjustedTarget)}
+                  {formatCurrency(adjustedTarget, 2, catalystBaseFallback ? data.currency : statementCurrency(data))}
                 </span>
               </div>
               <div className={`flex items-center justify-between text-[10px] mt-0.5 ${isBelowKurs ? 'text-red-500' : 'text-emerald-500'}`}>
-                <span>vs. Kurs ({formatCurrency(data.currentPrice)})</span>
+                <span>vs. Kurs ({formatCurrency(data.currentPrice, 2, data.currency)})</span>
                 <span className="font-mono font-medium">{catVsKurs >= 0 ? '+' : ''}{formatNumber(catVsKurs, 1)}%</span>
               </div>
             </>

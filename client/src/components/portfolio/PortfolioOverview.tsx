@@ -1,7 +1,7 @@
 /**
  * PortfolioOverview — KPI-Zeile + Pie + Performance (4 Serien + BTC-style Toggles).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PieChart, Pie, Cell, Tooltip as PieTooltip, ResponsiveContainer } from "recharts";
 import { Target, Award, PiggyBank, AlertTriangle, TrendingUp, Gauge } from "lucide-react";
 import {
@@ -9,6 +9,8 @@ import {
   rebasePerformanceSeries, timeframeCutoffIso,
   type PortfolioPosition, type PerformanceTimeframe,
 } from "@/lib/portfolio/positions";
+import { apiRequest } from "@/lib/queryClient";
+import { ampelWarmupFromIso } from "@/lib/comboBands";
 import { computeMarketWeights } from "@/lib/portfolio/engine";
 import { openLongTradeBook } from "@/lib/portfolio/compareTargetActual";
 import { computeCapmExpectedReturn } from "@/lib/portfolio/capmExpectedReturn";
@@ -85,6 +87,43 @@ export default function PortfolioOverview({
 
   const rawSeries = useMemo(() => computePortfolioPerformanceSeries(directionFiltered, historicalPricesByTicker), [directionFiltered, historicalPricesByTicker]);
   const series = useMemo(() => rebasePerformanceSeries(rawSeries, timeframeCutoffIso(timeframe)), [rawSeries, timeframe]);
+
+  // Ampel-Warmup: gleiche Route /api/ohlcv → server/ohlcv-route.ts → fmpHistoricalPrices,
+  // nur mit früherem `from`, damit MA200 am Fensteranfang steht. Ersetzt die Chart-Serie nicht.
+  const ampelTickerKey = useMemo(() => directionFiltered
+    .filter(p => p.status === "open" && p.ticker)
+    .map(p => p.ticker.toUpperCase())
+    .sort()
+    .slice(0, 12)
+    .join(","), [directionFiltered]);
+  const [ampelPrices, setAmpelPrices] = useState<Record<string, Array<{ date: string; close: number }> | undefined> | null>(null);
+  useEffect(() => {
+    if (!ampelTickerKey) {
+      setAmpelPrices(null);
+      return;
+    }
+    const from = ampelWarmupFromIso(timeframeCutoffIso(timeframe));
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", `/api/ohlcv?tickers=${encodeURIComponent(ampelTickerKey)}&from=${encodeURIComponent(from)}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled) setAmpelPrices(data.bars || {});
+      } catch {
+        /* ohne Warmup färbt die Ampel die sichtbare Serie */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ampelTickerKey, timeframe]);
+  const ampelSourceSeries = useMemo(() => {
+    if (!ampelPrices) return undefined;
+    const merged: Record<string, Array<{ date: string; close: number }> | undefined> = { ...historicalPricesByTicker };
+    for (const [ticker, bars] of Object.entries(ampelPrices)) {
+      if (bars && bars.length) merged[ticker] = bars;
+    }
+    return computePortfolioPerformanceSeries(directionFiltered, merged);
+  }, [ampelPrices, historicalPricesByTicker, directionFiltered]);
   const sollBars = timeframe === "2Y" ? 480 : timeframe === "1Y" ? 240 : 120;
   const histBadge = useMemo(() => {
     const openLong = directionFiltered.filter(p => p.status === "open" && p.side === "long");
@@ -250,6 +289,7 @@ export default function PortfolioOverview({
           timeframe={timeframe}
           benchmarkTicker={benchmarkTicker}
           benchmarkHistoricalPrices={benchmarkHistoricalPrices}
+          ampelSourceSeries={ampelSourceSeries}
         />
       </div>
 

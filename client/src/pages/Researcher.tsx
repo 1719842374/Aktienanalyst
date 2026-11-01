@@ -14,6 +14,7 @@ import { RegionalStocksStrip } from "@/components/researcher/RegionalStocksStrip
 import { SectorsPanel } from "@/components/researcher/SectorsPanel";
 import { ScreenerPanel } from "@/components/researcher/ScreenerPanel";
 import { CapexPanel } from "@/components/researcher/CapexPanel";
+import { GeoMapPanel } from "@/components/researcher/GeoMapPanel";
 
 type Region = "US" | "EU" | "ASIA";
 type Tab = "macro" | "sectors" | "screener" | "capex";
@@ -335,6 +336,8 @@ export default function Researcher() {
             <span>{error}</span>
           </div>
         )}
+
+        {activeTab === "capex" && <GeoMapPanel />}
 
         {!currentData && !loadingForCurrentView && !error && activeTab !== "sectors" && (
           <EmptyState />

@@ -10,6 +10,7 @@
  * Finance-Connector. Lazy: fetcht selbstständig beim Mount (1h-Cache im Backend).
  */
 import { useEffect, useMemo, useState } from "react";
+import { usePublishChatSection } from "@/lib/chatSectionData";
 import { SectionCard } from "@/components/SectionCard";
 import { apiRequest } from "@/lib/queryClient";
 import { formatCurrency } from "@/lib/formatters";
@@ -251,6 +252,21 @@ export function Section13Miner({
   const hashpriceNow = minerData
     ? calcHashpriceUsd({ btcPrice: data.btcPrice, hashrateEHs: minerData.currentHashrateEH })
     : 0;
+
+  // PR 3 (Chat-Kontext): angezeigte Miner-Werte veröffentlichen (bereits geladen über useMinerData).
+  const m2 = (v: number | null | undefined) => (v != null && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  usePublishChatSection("btc", "13", minerData && latest ? {
+    zone: latest.zone, zonenScore: m2(latest.score), hashrateEH: m2(minerData.currentHashrateEH),
+    breakevenUSD: m2(breakevenNow), hashpriceUSD: m2(hashpriceNow), puellMultiple: m2(minerData.puellMultiple),
+    kapitulation: minerData.inCapitulation, hashRibbonKaufsignal: minerData.crossoverSignal,
+    difficultyKompression: m2(minerData.difficultyRibbonCompression), kapitulationAufgeloest: capitulationDone,
+    stand: minerData.lastUpdated ?? null, quelle: minerData.hashrateSource ?? null, zeitraum: timeRange,
+    _auffaelligkeiten: [
+      ...latest.flags,
+      minerData.inCapitulation ? "Miner-Kapitulation aktiv" : "",
+      Number.isFinite(data.btcPrice) && data.btcPrice < breakevenNow ? "Spot unter Breakeven" : "",
+    ].filter(Boolean).join("; ") || null,
+  } : null);
 
   // ── Render ──
   if (loading) {
