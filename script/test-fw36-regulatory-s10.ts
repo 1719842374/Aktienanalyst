@@ -28,12 +28,27 @@ const wrap = (el: any) => renderToStaticMarkup(React.createElement(Router, { ssr
   check("Titel Regulatorische Risiken + Ticker", s10.includes(`Regulatorische Risiken aus Regulatory-Matrix (${shel.ticker})`));
   check("Hinweis: nicht in Total Expected Damage/Score", s10.includes("nicht in Total Expected Damage, Risk-Adjusted Target oder Score eingerechnet"));
   check("Political/Legal/Badge/Gate aus dem Cache sichtbar", ["UK Windfall Tax", "EU-Methanverordnung", "CBAM", "Gate Cap 6"].every(t => s10.includes(t)));
+  check("voller Cache zeigt nicht die n/a-Zeile", !s10.includes("keine PESTEL-Regulatorik im Cache"));
+  const na = "n/a — keine PESTEL-Regulatorik im Cache";
   const empty = wrap(React.createElement(RegulatoryPestelRisks as any, { data: shel, variant: "risk-inversion" }));
-  check("ohne Cache → nichts gerendert (kein leerer Rahmen)", empty === "");
+  check("Cache-Miss → Zeile n/a — keine PESTEL-Regulatorik im Cache", empty.includes(na) && !empty.includes("Regulatorische Risiken aus Regulatory-Matrix"));
+  const emptyLists = wrap(React.createElement(RegulatoryPestelRisks as any, {
+    data: shel,
+    variant: "risk-inversion",
+    initialCached: { pestelRisks: { political: [], legal: [], badgeOnly: [] }, gate: null },
+  }));
+  check("leeres Ergebnis → dieselbe n/a-Zeile", emptyLists.includes(na));
 
   console.log("PESTEL-Variante unverändert");
   const pestel = wrap(React.createElement(RegulatoryPestelRisks as any, { data: shel, initialCached: cached }));
-  check("PESTEL-Titel unverändert, kein S10-Hinweis/testid", pestel.includes(`PESTEL-Risks aus Regulatory-Matrix (${shel.ticker})`) && !pestel.includes("s10-regulatory-risks") && !pestel.includes("nicht in Total Expected Damage"));
+  check("PESTEL-Titel unverändert, kein S10-Hinweis/testid", pestel.includes(`PESTEL-Risks aus Regulatory-Matrix (${shel.ticker})`) && !pestel.includes("s10-regulatory-risks") && !pestel.includes("nicht in Total Expected Damage") && !pestel.includes(na));
+  const pestelMiss = wrap(React.createElement(RegulatoryPestelRisks as any, { data: shel }));
+  check("PESTEL Cache-Miss bleibt null", pestelMiss === "");
+  const pestelEmpty = wrap(React.createElement(RegulatoryPestelRisks as any, {
+    data: shel,
+    initialCached: { pestelRisks: { political: [], legal: [], badgeOnly: [] }, gate: null },
+  }));
+  check("PESTEL leeres Ergebnis bleibt null", pestelEmpty === "");
 
   console.log("Sektion 10 verdrahtet, Rechnung unberührt");
   const src = readFileSync("client/src/components/sections/Section8.tsx", "utf8");
@@ -44,7 +59,7 @@ const wrap = (el: any) => renderToStaticMarkup(React.createElement(Router, { ssr
   const a = wrap(React.createElement(Section8 as any, { data: shel }));
   const b = wrap(React.createElement(Section8 as any, { data: structuredClone(shel) }));
   let ok = true; try { assert.deepEqual(a, b); } catch { ok = false; }
-  check("Section8 rendert deterministisch; ohne Cache kein Regulatory-Block (Zahlen identisch zu vorher)", ok && !a.includes("s10-regulatory-risks") && a.includes("Total Expected Damage"));
+  check("Section8 ohne Cache zeigt die n/a-Zeile, keine Cache-Daten; Total Expected Damage bleibt", ok && a.includes("n/a — keine PESTEL-Regulatorik im Cache") && !a.includes("UK Windfall") && a.includes("Total Expected Damage"));
 
   if (failed) { console.error(`\n${failed} Fehler`); process.exit(1); }
   console.log("\nalle Checks grün");

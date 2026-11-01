@@ -1,3 +1,4 @@
+import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Scale } from "lucide-react";
 import { apiRequest } from "../../lib/queryClient";
@@ -20,6 +21,8 @@ interface Cached {
  * (Moat, PESTEL und Sektion 10).
  * variant "risk-inversion" (FW-36): dieselben Daten in Sektion 10, reine Anzeige — fließt nicht in
  * Total Expected Damage, Risk-Adjusted Target, Score oder Rating. initialCached nur für SSR-Tests.
+ * Cache-Miss und leeres Ergebnis: risk-inversion zeigt „n/a — keine PESTEL-Regulatorik im Cache“.
+ * Die PESTEL-Variante rendert dann weiter null. Der Query liefert in beiden Fällen null.
  */
 export function RegulatoryPestelRisks({ data, variant = "pestel", initialCached = null }: {
   data: StockAnalysis;
@@ -43,7 +46,14 @@ export function RegulatoryPestelRisks({ data, variant = "pestel", initialCached 
   const empty =
     !risks ||
     (risks.political.length === 0 && risks.legal.length === 0 && risks.badgeOnly.length === 0);
-  if (empty && !cached?.gate) return null;
+  if (empty && !cached?.gate) {
+    if (!inS10) return null;
+    return (
+      <div className="text-[11px] text-muted-foreground" data-testid="s10-regulatory-risks">
+        n/a — keine PESTEL-Regulatorik im Cache
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border border-border/50 p-3 space-y-2" data-testid={inS10 ? "s10-regulatory-risks" : undefined}>
