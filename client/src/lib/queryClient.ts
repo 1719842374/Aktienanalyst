@@ -53,13 +53,16 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
   timeoutMs = 90000,
+  headers?: Record<string, string>,
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const h: Record<string, string> = { ...(headers ?? {}) };
+  if (data) h["Content-Type"] = "application/json";
   try {
     const res = await fetch(`${API_BASE}${url}`, {
       method,
-      headers: data ? { "Content-Type": "application/json" } : {},
+      headers: h,
       body: data ? JSON.stringify(data) : undefined,
       signal: controller.signal,
     });

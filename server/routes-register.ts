@@ -63,4 +63,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerChatRoute(app);
   const { registerPodcastTranscriptRoute } = await import("./podcast-transcript-route");
   registerPodcastTranscriptRoute(app);
+  const { registerAttraktivNotifyRoute } = await import("./attraktiv-notify-route");
+  registerAttraktivNotifyRoute(app);
 }

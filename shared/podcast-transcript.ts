@@ -9,6 +9,12 @@ export const PODCAST_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Obergrenze, darüber n/a statt stiller Kürzung. */
 export const PODCAST_TEXT_MAX_CHARS = 20_000;
 
+/**
+ * Schlüssel des Markt-Skripts aus der Pipeline (#387).
+ * Die Pipeline hat keinen Einzeltitel. Dashboard und Cache lesen dieselbe Zeichenkette.
+ */
+export const PODCAST_MARKET_SYMBOL = "MARKT";
+
 export function podcastCacheKey(symbol: string): string {
   return `podcast_transcript__${symbol}`;
 }

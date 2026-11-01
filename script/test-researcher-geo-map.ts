@@ -26,17 +26,18 @@ const agg = aggregateCountry(def, [
 assert.equal(agg.status, "ok");
 assert.equal(agg.capexUsd, 40);
 assert.equal(agg.yoyPct, 50); // 30 vs 20, B ohne Vorjahr ausgeschlossen
+assert.equal(agg.dominantSector, "Technology");
 assert.deepEqual(agg.sectorShares, [{ sector: "Technology", pct: 75 }, { sector: "Energy", pct: 25 }]);
 assert.equal(agg.companies[2].symbol, "C"); // n/a ganz unten, nicht entfernt
 const none = aggregateCountry(def, [], new Map());
-assert.equal(none.status, "n/a"); assert.equal(none.capexUsd, null);
+assert.equal(none.status, "n/a"); assert.equal(none.capexUsd, null); assert.equal(none.dominantSector, null);
 
-async function run(deps: any) {
+async function run(deps: any, opts: Record<string, unknown> = {}) {
   const app = express();
-  registerGeoMapRoute(app, deps, { useCache: false });
+  registerGeoMapRoute(app, deps, { useCache: false, ...opts });
   const server = app.listen(0);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/researcher/geo-map`;
-  const get = async (q: string) => { const r = await fetch(base + q); return { status: r.status, json: await r.json() }; };
+  const get = async (q: string) => { const r = await fetch(base + q); return { status: r.status, json: await r.json(), type: r.headers.get("content-type") || "" }; };
   return { get, close: () => server.close() };
 }
 
@@ -46,8 +47,12 @@ async function run(deps: any) {
   const r = await t.get("?layer=capex");
   assert.equal(r.status, 200);
   assert.equal(r.json.coverage.withData, 0);
-  assert.ok(r.json.countries.every((c: any) => c.status === "n/a" && c.capexUsd === null));
-  assert.equal((await t.get("?layer=sector")).status, 400);
+  assert.ok(r.json.countries.every((c: any) => c.status === "n/a" && c.capexUsd === null && c.dominantSector === null));
+  const sector = await t.get("?layer=sector");
+  assert.equal(sector.status, 200);
+  assert.equal(sector.json.layer, "sector");
+  assert.equal(sector.json.coverage.withData, 0);
+  assert.equal((await t.get("?layer=gold")).status, 400);
   t.close();
 }
 // 2) mit Daten: nur US hat Firmen, DE Screener-Fehler, Rest leer
@@ -65,7 +70,11 @@ async function run(deps: any) {
   assert.equal(r.json.coverage.withData, 1);
   const us = r.json.countries.find((c: any) => c.iso2 === "US");
   assert.equal(us.capexUsd, 2e10); assert.equal(us.yoyPct, 100);
+  assert.equal(us.dominantSector, "Technology");
   assert.equal(us.companies[0].yoyPct, 100); assert.equal(us.companies[1].capexUsd, null);
+  const sector = await t.get("?layer=sector");
+  assert.equal(sector.status, 200);
+  assert.equal(sector.json.countries.find((c: any) => c.iso2 === "US").dominantSector, "Technology");
   const de = r.json.countries.find((c: any) => c.iso2 === "DE");
   assert.equal(de.status, "n/a"); assert.match(de.note, /429/);
   t.close();
@@ -73,4 +82,144 @@ async function run(deps: any) {
 // 3) Kein Score-Pfad berührt
 const route = readFileSync("server/researcher-geo-map.ts", "utf8");
 assert.doesNotMatch(route, /analyze-route|scoring|computeScore/);
+const routeHttp = readFileSync("server/researcher-geo-map-route.ts", "utf8");
+assert.match(routeHttp, /GEO_MAP_CACHE_TTL_MS/);
+assert.match(routeHttp, /GEO_MAP_STALE_WHILE_REVALIDATE_MS/);
+assert.match(routeHttp, /warmGeoMapCache/);
+assert.doesNotMatch(routeHttp, /analyze-route/);
+assert.match(readFileSync("server/index.ts", "utf8"), /warmGeoMapCache\(\)/);
+const panel = readFileSync("client/src/components/researcher/GeoMapPanel.tsx", "utf8");
+assert.match(panel, /readApiJson/);
+assert.match(panel, /GEO_MAP_CLIENT_TIMEOUT_MS/);
+assert.doesNotMatch(panel, /yoyColor/);
+
+const pin = JSON.parse(readFileSync("script/fixtures/prod-analyze-dcf-2026-10-25.json", "utf8")).expectOldHead;
+assert.equal(Number(pin.VWAGY.overallScore).toFixed(6), "4.735718");
+assert.equal(Number(pin.SAP.overallScore).toFixed(6), "5.174758");
+assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
+
+// 4) Perzentil steuert Größe und Farbe, nicht eine feste YoY-Schwelle
+{
+  const { metricPercentiles, radiusForPercentile, colorForPercentile, GEO_BUBBLE_GEOMETRY, GEO_SCALE_COLORS } = await import("../shared/geo-map");
+  const pcts = metricPercentiles([10, 30, 20, null]);
+  assert.ok(pcts[1]! > pcts[2]! && pcts[2]! > pcts[0]!, "höheres Capex → höheres Perzentil");
+  assert.equal(pcts[3], null);
+  assert.equal(radiusForPercentile(null), GEO_BUBBLE_GEOMETRY.minPx);
+  assert.equal(radiusForPercentile(0), GEO_BUBBLE_GEOMETRY.minPx);
+  assert.equal(radiusForPercentile(1), GEO_BUBBLE_GEOMETRY.maxPx);
+  assert.ok(radiusForPercentile(pcts[1]!) > radiusForPercentile(pcts[0]!));
+  assert.notEqual(colorForPercentile(0, "yoy"), colorForPercentile(1, "yoy"));
+  assert.equal(colorForPercentile(null, "capex"), GEO_SCALE_COLORS.na);
+  // +5 und +50 liegen in einer Zwei-Stichprobe an den Enden, nicht beide über einer +10-Schwelle.
+  const ends = metricPercentiles([5, 50]);
+  assert.ok(ends[0]! < ends[1]!);
+}
+
+// 5) HTML und Timeout werden zu n/a, nie zur Parser-Meldung
+{
+  const { readApiJson, naReasonFromError } = await import("../shared/read-api-json");
+  const html = await readApiJson(new Response("<!DOCTYPE html><html></html>", { headers: { "content-type": "text/html; charset=utf-8" } }));
+  assert.equal(html.ok, false);
+  if (!html.ok) {
+    assert.match(html.reason, /^n\/a —/);
+    assert.doesNotMatch(html.reason, /Unexpected token/);
+  }
+  const json = await readApiJson(new Response(JSON.stringify({ layer: "capex" }), { headers: { "content-type": "application/json" } }));
+  assert.equal(json.ok, true);
+  assert.match(naReasonFromError(new Error("Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON")), /^n\/a —/);
+  assert.match(naReasonFromError(new Error("Timeout: Server hat nicht innerhalb von 20s geantwortet")), /Zeitüberschreitung/);
+}
+
+// 6) Miner-Layer: Netzwerte aus der Injizierung, Standorte n/a, kein erfundener Anteil
+{
+  const t = await run(
+    { hasKey: () => false, screenCountry: async () => [], capexYears: async () => ({ latest: null, prevCapexUsd: null }) },
+    {
+      minerNetwork: async () => ({ hashrateEH: 600, hashpriceBtcPerThDay: 0.00005, breakevenUsd: 40000, source: "fixture", note: null }),
+      minerRegions: async () => [],
+    },
+  );
+  const r = await t.get("?layer=miner");
+  assert.equal(r.status, 200);
+  assert.match(r.type, /json/);
+  assert.equal(r.json.regions.length, 0);
+  assert.match(r.json.locationNote, /n\/a/);
+  assert.match(r.json.locationNote, /recaptcha/);
+  assert.equal(r.json.network.hashrateEH, 600);
+  assert.equal(r.json.namedOperators[0].hashrateEH, null);
+  assert.equal(r.json.namedOperators[0].powerMw, null);
+  assert.ok(r.json.namedOperators.length >= 7);
+  t.close();
+}
+
+// 7) Kaltstart über dem Budget: JSON mit n/a, nicht hängen und nicht HTML
+{
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = process.cwd();
+  let release: () => void = () => {};
+  const gate = new Promise<void>(r => { release = r; });
+  process.chdir(mkdtempSync(join(tmpdir(), "geo-map-budget-")));
+  try {
+    const t = await run({
+      hasKey: () => true,
+      screenCountry: async () => { await gate; return []; },
+      capexYears: async () => ({ latest: null, prevCapexUsd: null }),
+    }, { useCache: true, responseBudgetMs: 80 });
+    const started = Date.now();
+    const r = await t.get("?layer=capex");
+    assert.ok(Date.now() - started < 2000, "Antwortbudget darf den Request nicht bis zum Gateway halten");
+    assert.equal(r.status, 200);
+    assert.match(r.type, /json/);
+    assert.equal(r.json.pending, true);
+    assert.match(r.json.countries[0].note, /n\/a/);
+    assert.equal(r.json.countries[0].capexUsd, null);
+    release();
+    t.close();
+  } finally {
+    release();
+    process.chdir(root);
+  }
+}
+
+// 8) Stale-While-Revalidate: veralteter Cache kommt sofort, Neubau läuft daneben
+{
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = process.cwd();
+  process.chdir(mkdtempSync(join(tmpdir(), "geo-map-swr-")));
+  let clock = Date.parse("2026-11-01T00:00:00Z");
+  let blockRebuild = false;
+  let releaseRebuild: () => void = () => {};
+  const rebuildGate = new Promise<void>(r => { releaseRebuild = r; });
+  try {
+    const t = await run({
+      hasKey: () => true,
+      screenCountry: async (iso: string) => {
+        if (blockRebuild && iso === "US") await rebuildGate;
+        return iso === "US" ? [{ symbol: "X", name: "X Corp", sector: "Technology", marketCap: 1e12 }] : [];
+      },
+      capexYears: async () => ({ latest: { capexUsd: 1e10, fiscalYear: "2025", reportedCurrency: "USD" }, prevCapexUsd: 5e9 }),
+    }, { useCache: true, now: () => clock, responseBudgetMs: 2000 });
+    const first = await t.get("?layer=capex");
+    assert.equal(first.json.coverage.withData, 1);
+    assert.equal(first.json._stale, undefined);
+    clock += 48 * 60 * 60 * 1000;
+    blockRebuild = true;
+    const started = Date.now();
+    const stale = await t.get("?layer=capex");
+    assert.ok(Date.now() - started < 1000, "veralteter Cache darf nicht auf den Neubau warten");
+    assert.equal(stale.status, 200);
+    assert.equal(stale.json._stale, true);
+    assert.equal(stale.json.countries.find((c: any) => c.iso2 === "US").capexUsd, 1e10);
+    releaseRebuild();
+    t.close();
+  } finally {
+    releaseRebuild();
+    process.chdir(root);
+  }
+}
+
 console.log("test-researcher-geo-map: OK");

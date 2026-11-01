@@ -1047,3 +1047,16 @@ export async function fmpHistoricalMarketCap(symbol: string, from?: string, to?:
     return Array.isArray(data) ? data : [];
   } catch { return []; }
 }
+
+/** GET /stable/earning-call-transcript-dates?symbol= — fiscalYear, quarter, date. Wirft bei fehlendem Key. */
+export async function fmpEarningCallTranscriptDates(symbol: string): Promise<any[]> {
+  const data = await fmpFetch(`/earning-call-transcript-dates`, { symbol });
+  return Array.isArray(data) ? data : [];
+}
+
+/** GET /stable/earning-call-transcript?symbol=&year=&quarter= — content des letzten Calls. Wirft bei fehlendem Key. */
+export async function fmpEarningCallTranscript(symbol: string, year: number, quarter: number): Promise<any | null> {
+  const data = await fmpFetch(`/earning-call-transcript`, { symbol, year: String(year), quarter: String(quarter) });
+  if (Array.isArray(data)) return data[0] ?? null;
+  return data && typeof data === "object" ? data : null;
+}

@@ -56,9 +56,11 @@ import { ChatWidget } from "@/components/chat/ChatWidget";
 import { PodcastTranscript } from "@/components/podcast/PodcastTranscript";
 import { visibleTopOf } from "@/lib/activeSection";
 import { deliverPdfOnGesture, needsGestureHandoff } from "@/lib/pdfDelivery";
-import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
+import { buildStockChatContext, enrichChatContext, withEarningsBriefFacts } from "@shared/chat-context";
 import { withFazitEntryChatFacts } from "@shared/fazit-entry";
 import { useChatSectionData } from "@/lib/chatSectionData";
+import { useEarningsBrief } from "@/hooks/useEarningsBrief";
+import { PODCAST_MARKET_SYMBOL } from "@shared/podcast-transcript";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
@@ -401,7 +403,8 @@ export default function Dashboard() {
   // KI-Chatbot (WORK_DASHBOARD_FEATURES §4): Kontext-Provider der Aktien-Analyse. Nur Lesen, kein Score-Einfluss.
   // PR 3: angezeigte Client-Werte (DCF/CRV/RSL/Monte Carlo) + Auffälligkeiten je Sektion.
   const chatLive = useChatSectionData("stock");
-  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withFazitEntryChatFacts(buildStockChatContext(data), data), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive]);
+  const earningsBrief = useEarningsBrief(data && !isEtfOrFund(data) ? data.ticker : null);
+  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withEarningsBriefFacts(withFazitEntryChatFacts(buildStockChatContext(data), data), earningsBrief), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive, earningsBrief]);
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
   const getActiveSectionId = useCallback((): number | null => {
@@ -719,7 +722,7 @@ export default function Dashboard() {
                 setData(prev => prev && prev.managementScore !== score ? { ...prev, managementScore: score } : prev);
               }} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Zusammenfassung">{isYahooOnly(data) ? <YahooNoValuationCard number={20} title="ZUSAMMENFASSUNGSTABELLE" data={data} /> : <SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} />}</SectionErrorBoundary></div>
-              <PodcastTranscript symbol={data.ticker} />
+              <PodcastTranscript symbol={PODCAST_MARKET_SYMBOL} />
               <div className="pb-8" />
             </div>
           ) : (
@@ -757,7 +760,8 @@ export default function Dashboard() {
         sections={chatSections}
         getActiveSectionId={getActiveSectionId}
         onJumpToSection={scrollToSection}
-        suggestions={["Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?", "Gliedere Catalysts, Assumptions und Risks."]}
+        suggestions={["Gib das Big Picture: Treiber, Wettbewerb, Makro, Fazit.", "Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?", "Gliedere Catalysts, Assumptions und Risks."]}
+        earningsBrief={data && !isEtfOrFund(data) ? earningsBrief : undefined}
       />
     </div>
   );

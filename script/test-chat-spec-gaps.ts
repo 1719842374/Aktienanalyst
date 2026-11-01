@@ -1,32 +1,43 @@
 /**
- * Chat-Verlauf, Narrative, Podcast-Cache. Kein Supabase.
+ * Narrative, AI-Terms, Podcast-Cache. Der Chat-Verlauf kommt nur aus #384
+ * (useChatHistory, sessionStorage, /api/chat/history). Kein localStorage-Budget.
  *   npx tsx --tsconfig script/tsconfig.jsx.json script/test-chat-spec-gaps.ts
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-const { pushChatSession, CHAT_SESSION_CHAR_BUDGET } = await import("../shared/chat-sessions.ts");
+import { existsSync, readFileSync } from "node:fs";
 const { readPodcastTranscript, writePodcastTranscript } = await import("../server/podcast-transcript-route.ts");
+const { PODCAST_MARKET_SYMBOL } = await import("../shared/podcast-transcript.ts");
 
-const kept = pushChatSession([], { id: "1", title: "a", savedAt: "2026-01-01", turns: [{ role: "user", content: "hallo" }] });
-assert.equal(kept.length, 1);
-assert.ok(CHAT_SESSION_CHAR_BUDGET > 0);
+assert.equal(existsSync("shared/chat-sessions.ts"), false);
+const widget = readFileSync("client/src/components/chat/ChatWidget.tsx", "utf8");
+assert.doesNotMatch(widget, /chat-sessions|CHAT_SESSION_CHAR_BUDGET/);
+assert.match(widget, /useChatHistory/);
+assert.match(widget, /chat-ai-terms/);
+assert.match(widget, /KI-generiert, keine Anlageberatung/);
+assert.match(widget, /data-testid="chat-history"/);
+const hook = readFileSync("client/src/hooks/useChatHistory.ts", "utf8");
+assert.match(hook, /sessionStorage/);
+assert.match(hook, /\/api\/chat\/history/);
+const prompt = readFileSync("server/chat-route.ts", "utf8");
+assert.match(prompt, /Catalysts, Assumptions und Risks/);
+assert.match(prompt, /keine Änderungsvorschläge/);
+assert.match(prompt, /CHAT_BIG_PICTURE_TASK/);
+const dash = readFileSync("client/src/pages/Dashboard.tsx", "utf8");
+assert.match(dash, /PodcastTranscript/);
+assert.match(dash, /PODCAST_MARKET_SYMBOL/);
+assert.match(dash, /useEarningsBrief/);
+assert.match(dash, /Gib das Big Picture/);
+
 const mem = new Map<string, { data: unknown; storedAt: number }>();
 const deps = {
   read: (key: string) => mem.get(key) ?? null,
   write: (key: string, data: unknown) => { mem.set(key, { data, storedAt: Date.now() }); },
 };
-assert.match(readPodcastTranscript("MSFT", deps).reason ?? "", /n\/a/);
-const saved = writePodcastTranscript("MSFT", "Absatz eins.\n\nAbsatz zwei.", deps);
-assert.equal(readPodcastTranscript("MSFT", deps).text, saved.text);
-assert.equal(writePodcastTranscript("MSFT", "x".repeat(20_001), deps).text, null);
-
-const prompt = readFileSync("server/chat-route.ts", "utf8");
-assert.match(prompt, /Catalysts, Assumptions und Risks/);
-assert.match(prompt, /keine Änderungsvorschläge/);
-const widget = readFileSync("client/src/components/chat/ChatWidget.tsx", "utf8");
-assert.match(widget, /chat-ai-terms/);
-assert.match(widget, /chat-history/);
-assert.match(readFileSync("client/src/pages/Dashboard.tsx", "utf8"), /PodcastTranscript/);
+assert.equal(PODCAST_MARKET_SYMBOL, "MARKT");
+assert.match(readPodcastTranscript(PODCAST_MARKET_SYMBOL, deps).reason ?? "", /n\/a/);
+const saved = writePodcastTranscript(PODCAST_MARKET_SYMBOL, "Absatz eins.\n\nAbsatz zwei.", deps);
+assert.equal(readPodcastTranscript(PODCAST_MARKET_SYMBOL, deps).text, saved.text);
+assert.equal(writePodcastTranscript(PODCAST_MARKET_SYMBOL, "x".repeat(20_001), deps).text, null);
 
 const pin = JSON.parse(readFileSync("script/fixtures/prod-analyze-dcf-2026-10-25.json", "utf8")).expectOldHead;
 assert.equal(Number(pin.VWAGY.overallScore).toFixed(6), "4.735718");

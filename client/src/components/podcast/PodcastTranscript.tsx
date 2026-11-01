@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { paragraphsOf, type PodcastTranscript } from "@shared/podcast-transcript";
+import { paragraphsOf, PODCAST_MARKET_SYMBOL, type PodcastTranscript } from "@shared/podcast-transcript";
 
 /**
  * Economist-Lesetext für ein lokal gecachtes Transkript.
@@ -22,7 +22,7 @@ export function PodcastTranscript({ symbol }: { symbol: string }) {
     <section className="min-w-0 max-w-prose rounded-lg border border-border bg-card/40 px-4 py-3" data-testid="podcast-transcript">
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded border border-border px-1.5 py-0.5 text-[9px] tracking-wider" data-testid="podcast-narrated-badge">AI NARRATED</span>
-        <span className="text-[10px] text-muted-foreground">Lokaler Cache · {symbol}</span>
+        <span className="text-[10px] text-muted-foreground">{symbol === PODCAST_MARKET_SYMBOL ? "Lokaler Cache · Markt-Skript der Pipeline" : `Lokaler Cache · ${symbol}`}</span>
       </div>
       <div className="mt-2 text-[11px] text-muted-foreground" data-testid="podcast-player">n/a — keine Audiodatei im lokalen Cache</div>
       {q.isLoading && <p className="mt-3 text-sm text-muted-foreground">Transkript wird gelesen …</p>}
