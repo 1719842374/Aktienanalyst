@@ -1,6 +1,7 @@
 /**
- * Offen_WORK_BUFFETT_ASIA_10Y §1 — Buffett-Karte im Aktien-Dashboard (unter Sektion 12).
- * Echte BuffettMacroCard (react-dom + fake-dom) → fetch /api/analyze-recession/buffett (gemockt) → Wert, σ, Zone / n/a.
+ * WORK_REMOVE_BUFFETT_STOCK — Buffett-Karte nicht mehr im Aktien-Dashboard (Sektion 12).
+ * Komponente bleibt: echte BuffettMacroCard (react-dom + fake-dom) → fetch /api/analyze-recession/buffett (gemockt) → Wert, σ, Zone / n/a.
+ * Rezession (#/recession) behält BuffettRatioPanel und GET /api/analyze-recession/buffett.
  * Score-Beweis: buildBiasDecision MSFT/SPY mit/ohne Buffett-Daten deepEqual.
  * Ausführen: npx tsx --tsconfig script/tsconfig.jsx.json script/test-buffett-stock-card.ts
  */
@@ -80,10 +81,16 @@ async function main() {
     console.log(`     ${name}: ohne ${b0.overallScore.toFixed(4)} ${b0.overallRating} · mit Buffett OK / n/a / Zone identisch (deepEqual)`);
   }
   const dash = readFileSync("client/src/pages/Dashboard.tsx", "utf8");
-  assert.ok(dash.includes("<TechnicalChart data={data} /><BuffettMacroCard /></SectionErrorBoundary>"), "Karte in Sektion 12, ohne Prop an data");
+  assert.ok(!dash.includes("BuffettMacroCard"), "Aktien-Dashboard importiert und mountet BuffettMacroCard nicht");
+  assert.ok(dash.includes("<TechnicalChart data={data} /></SectionErrorBoundary>"), "Sektion 12 zeigt nur TechnicalChart");
   const card = readFileSync("client/src/components/sections/BuffettMacroCard.tsx", "utf8");
+  assert.ok(card.includes('fetch("/api/analyze-recession/buffett?region=US")'), "Komponente und Route-Aufruf bleiben");
   assert.ok(!/setData|onThesisScore|overallScore/.test(card), "Karte schreibt nichts zurück");
-  ok("Score: MSFT/SPY mit/ohne Buffett deepEqual; Karte liest nur, schreibt nicht in data");
+  const recession = readFileSync("client/src/pages/RecessionDashboard.tsx", "utf8");
+  assert.ok(recession.includes("<BuffettRatioPanel />"), "Rezessions-Dashboard behält das Buffett-Panel");
+  const route = readFileSync("server/buffett-route.ts", "utf8");
+  assert.ok(route.includes('app.get("/api/analyze-recession/buffett"'), "Buffett-Route bleibt");
+  ok("Score: MSFT/SPY mit/ohne Buffett deepEqual; Aktien-Sektion 12 ohne Karte; Komponente, Panel und Route bleiben");
   console.log(`\n${n} Checks grün`);
   process.exit(0);
 }
