@@ -304,7 +304,7 @@ export interface GoldAnalysis {
   scoreDelta?: number | null;
   /** Real-Yield-Gates, Multi-Faktor-Gate, Policy-Mismatch und Death Cross. */
   gates?: GoldModelGate[];
-  /** RSI, MA200, MA-Spread, MACD, Volumen. Gleich `adaptiveScore.technicalSignals`. */
+  /** RSI, MA200, MA-Spread, MACD, Volumen, Bollinger, ATR. Gleich `adaptiveScore.technicalSignals`. */
   technicalSignals?: GoldAdaptiveSignal[];
   /** Future_10 §5 (B1): Quartals-AISC NEM/B/AEM für die gestufte Chart-Linie. Nur Anzeige, kein Score.
    * null, wenn server/data/gold-aisc.json fehlt oder ungültig ist; fehlt bei älteren Antworten. */

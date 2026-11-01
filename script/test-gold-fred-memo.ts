@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import { createFredHistoryMemo, sliceLikeCosd, type FredHistoryPoint } from "../server/gold-fred-memo";
 import { analyzeGoldHistoryPlan, prefetchHistories, prefetchedFetcher, tail5, parseFredLatest } from "../server/gold-fred-prefetch";
+import { FISCAL_SERIES_ID } from "../server/gold-adaptive-score";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail?: string) {
@@ -42,6 +43,7 @@ const FULL: Record<string, FredHistoryPoint[]> = {
   FEDFUNDS: series("monthly", "2010-01-01", "2026-09-01", 0.1),
   WTREGEN: series("weekly", "2010-01-06", "2026-10-08", 700_000),
   RRPONTSYD: series("daily", "2010-01-01", "2026-10-09", 300),
+  [FISCAL_SERIES_ID]: series("monthly", "2010-01-01", "2026-09-01", -120000),
 };
 let directCalls = 0;
 function fred(id: string, start: string): FredHistoryPoint[] {
@@ -60,6 +62,7 @@ const ROUTE_CALLS: Array<[string, string]> = [
   ["DTWEXBGS", startDate], ["WALCL", startDate],
   ["FEDFUNDS", startDate], ["M2SL", startDate], ["WALCL", startDate], ["WTREGEN", startDate],
   ["RRPONTSYD", startDate], ["T10YIE", startDate], ["DTWEXBGS", startDate],
+  [FISCAL_SERIES_ID, startDate],
 ];
 
 console.log("\nRoute-Reihenfolge: direkt vs. Memo");
@@ -74,9 +77,9 @@ console.log("\nRoute-Reihenfolge: direkt vs. Memo");
   ROUTE_CALLS.forEach(([id, s], i) => {
     if (JSON.stringify(before[i]) !== JSON.stringify(after[i])) check(`${id}@${s} gleich`, false);
   });
-  check(`vorher ${beforeCalls} Abrufe`, beforeCalls === 14, String(beforeCalls));
-  check(`nachher 8 Abrufe (jede Serie einmal)`, directCalls === 8 && memo.fetches === 8, `${directCalls}/${memo.fetches}`);
-  check("14 Anfragen gezaehlt", memo.requests === 14);
+  check(`vorher ${beforeCalls} Abrufe`, beforeCalls === 15, String(beforeCalls));
+  check(`nachher 9 Abrufe (jede Serie einmal)`, directCalls === 9 && memo.fetches === 9, `${directCalls}/${memo.fetches}`);
+  check("15 Anfragen gezaehlt", memo.requests === 15);
   // Ein Aufrufer, der seine Kopie veraendert, darf andere nicht treffen.
   after[1][0].value = -999;
   check("Kopien sind unabhaengig", memo.get("DTWEXBGS", startDate)[0].value !== -999);
@@ -127,8 +130,8 @@ console.log("\nJOB 11: paralleler Prefetch, gleiche Memo-Semantik");
   const f = prefetchedFetcher(pre, () => { throw new Error("darf nicht synchron nachladen"); });
   const memo = createFredHistoryMemo(f);
   const after = ROUTE_CALLS.map(([id, s]) => memo.get(id, s));
-  check("alle 14 Aufrufer byte-gleich", JSON.stringify(before) === JSON.stringify(after));
-  check("8 Abrufe, alle parallel vorab, 0 synchron", directCalls === 8 && f.served() === 8 && f.fallbacks() === 0, `${directCalls}/${f.served()}/${f.fallbacks()}`);
+  check("alle 15 Aufrufer byte-gleich", JSON.stringify(before) === JSON.stringify(after));
+  check("9 Abrufe, alle parallel vorab, 0 synchron", directCalls === 9 && f.served() === 9 && f.fallbacks() === 0, `${directCalls}/${f.served()}/${f.fallbacks()}`);
   // leerer Vorab-Abruf -> naechster Aufrufer laedt wie bisher erneut (synchron)
   let sync = 0;
   const pre2 = await prefetchHistories([["WALCL", startDate]], async () => { throw new Error("FRED down"); });

@@ -992,7 +992,9 @@ export interface Treasury10YOverlayPoint {
 // ─── Gold-AISC-Linie (Future_10 §5, Ticket B1, additiv) ─────────────────────────
 // Quartals-AISC der großen Goldproduzenten aus server/data/gold-aisc.json, über
 // GET /api/analyze-gold als `aiscLine` an den Gold-Chart (GoldPriceChart.tsx).
-// Nur Anzeige: GIS, getTechnicalScore und `aisc: null` in gold-routes.ts bleiben (B2).
+// Chart-Linie nur Anzeige. Die Zusatzschicht bekommt die Quartale ab availableFrom
+// (aiscStepsForAdaptive), nicht ab dem sourceDate einer Sammelveröffentlichung.
+// GIS und getTechnicalScore bleiben ohne AISC.
 
 /** NEM = Newmont, B = Barrick (vormals GOLD), AEM = Agnico Eagle. */
 export type GoldAiscCompanyCode = "NEM" | "B" | "AEM";
@@ -1031,7 +1033,8 @@ export interface GoldAiscSeries {
   /** Mittelwert der belegten Firmenwerte je Quartal */
   method: "mean";
   minCompanies: number;
-  lagDays: number;
+  /** Median von sourceDate − periodEnd der Meldungen, in Tagen. null, wenn keine Meldung datiert ist. */
+  lagDays: number | null;
   /** Stresszone: Preis < AISC × stressLow (Stress) bzw. < AISC × stressHigh (Vorwarnung) */
   stressLow: number;
   stressHigh: number;
@@ -1042,7 +1045,7 @@ export interface GoldAiscSeries {
   gaps: string[];
   retrievedAt: string;
   source: "server/data/gold-aisc.json";
-  /** Kein Score-Effekt in B1. */
+  /** Die Chart-Reihe selbst ist kein GIS-Summand. */
   inScore: false;
 }
 

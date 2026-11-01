@@ -73,6 +73,8 @@ if (m2GrowthZ > 1) baseWeights.liquidity *= 1.15;
 effectiveWeight = baseWeight * (0.7 + strength * 0.6);
 ```
 
+**Aktuell nicht datengetrieben.** Die Basisgewichte, darunter Policy **1,3**, und die Stärke-Formel `effectiveWeight = base × (0,7 + Stärke × 0,6)` sind feste Parameter. Sie werden nicht aus Median, Perzentil oder z-Score abgeleitet. Eine Änderung braucht Philip.
+
 ---
 
 ## 4. Technische Analyse (analog BTC) – detailliert
@@ -141,6 +143,7 @@ Der Chart-Chip „Breakeven“ zeigt aktuell die **Inflationserwartung** (FRED T
 | **Plot** | Gestufte Linie auf der **Preisachse** (USD/oz), nicht auf der %-Achse |
 | **Stresszone** | Preis < AISC × 1.10–1.15 als markierter Bereich (Kapitulations-/Stresszone) |
 | **Fehlende Quartale** | n/a, nichts wird geschätzt oder interpoliert |
+| **Berichtsverzug** | Median von sourceDate − periodEnd der vorhandenen Meldungen. Kann der Verzug nicht aus den Daten abgeleitet werden, ist er **aktuell nicht datengetrieben**: kein fester Ersatz (weder 60 noch 0), die Stufe bleibt n/a |
 | **Optional** | Mittelwert oder Median der drei Produzenten als eine Linie; Einzelwerte als Tooltip |
 
 **Hinweis:** World Gold Council (gold.org/goldhub/data/aisc-gold) bietet globale Aggregate (Metals Focus). Für eine stabile, quelloffene Lösung im Repo sind die Unternehmensberichte vorzuziehen.

@@ -1,5 +1,5 @@
 {
-  "_comment": "Future_10 §5 (Ticket B1): Quartals-AISC (USD/oz, by-product) von Newmont, Barrick, Agnico Eagle. Jeder Wert aus dem offiziellen Quartalsbericht (SEC-Exhibit), sourceDate = SEC-Einreichungsdatum. Nichts geschätzt oder interpoliert: fehlt ein Quartal, fehlt der Eintrag. Neue Quartale per Daten-PR anhängen. Nur Chart-Anzeige, kein Score (B2). Lookahead: 15 von 30 Werten (alle 2024er NEM/B/AEM aus Vorjahresspalten, NEM 2025-Q1–Q3 aus dem Release vom 19.02.2026) sind nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung (je Wert in note).",
+  "_comment": "Future_10 §5 (Ticket B1): Quartals-AISC (USD/oz, by-product) von Newmont, Barrick, Agnico Eagle. Jeder Wert aus dem offiziellen Quartalsbericht (SEC-Exhibit), sourceDate = SEC-Einreichungsdatum. Nichts geschätzt oder interpoliert: fehlt ein Quartal, fehlt der Eintrag. Neue Quartale per Daten-PR anhängen. Chart-Linie bleibt ohne GIS. Die Zusatzschicht datiert jede Stufe auf availableFrom (Quartalsende + Berichtsverzug), nicht auf das sourceDate einer späteren Sammelveröffentlichung. Lookahead: 15 von 30 Werten (alle 2024er NEM/B/AEM aus Vorjahresspalten, NEM 2025-Q1–Q3 aus dem Release vom 19.02.2026) sind nicht point-in-time, nur Anzeige; B2 braucht PIT oder Kennzeichnung (je Wert in note).",
   "unit": "USD/oz",
   "basis": "by-product",
   "retrievedAt": "2026-10-18",

@@ -1,5 +1,5 @@
 import React from "react";
-import type { GoldAnalysis } from "../../../../shared/gold-schema";
+import type { GoldAdaptiveSignal, GoldAnalysis } from "../../../../shared/gold-schema";
 
 function num(value: number | null | undefined, digits = 2): string {
   if (value == null || !Number.isFinite(value)) return "N/A";
@@ -10,6 +10,13 @@ function num(value: number | null | undefined, digits = 2): string {
 function plain(value: number | null | undefined, digits = 2): string {
   if (value == null || !Number.isFinite(value)) return "N/A";
   return value.toFixed(digits);
+}
+
+function signalText(signal: GoldAdaptiveSignal): string {
+  if (signal.available) return signal.detail;
+  const raw = signal.detail.includes(":") ? signal.detail.slice(signal.detail.indexOf(":") + 1).trim() : signal.detail;
+  const reason = raw.replace(/^n\/a\s*[—-]\s*/i, "");
+  return `n/a — ${reason}`;
 }
 
 export function GoldAdaptiveLayersCard({ data }: { data: Pick<GoldAnalysis, "adaptiveScore"> }) {
@@ -37,7 +44,8 @@ export function GoldAdaptiveLayersCard({ data }: { data: Pick<GoldAnalysis, "ada
       <div className="px-4 pb-4 pt-3 space-y-3">
         <p className="text-[11px] text-muted-foreground leading-relaxed">
           GIS bleibt der bestehende Indikator-Score. Diese Schicht gewichtet Real Yield, Policy, Liquidität, Inflation, Angebot, Technik und Makro mit Stärke.
-          Fehlt eine Quelle, steht N/A. Das News-Flag ist ein Hinweis und kein Summand.
+          AISC-Marge, Fiskaldefizit, Volumen-Trend, Bollinger und ATR stehen nur hier.
+          Fehlt eine Quelle, steht n/a — Grund. Das News-Flag ist ein Hinweis und kein Summand.
         </p>
         <div className="text-[11px] font-mono text-muted-foreground" data-testid="gold-score-delta">
           Δ GIS {num(score?.scoreDelta)}
@@ -57,12 +65,18 @@ export function GoldAdaptiveLayersCard({ data }: { data: Pick<GoldAnalysis, "ada
               <tbody>
                 {score.layers.map(layer => (
                   <tr key={layer.id} className="border-b border-border/50 align-top" data-testid={`gold-adaptive-layer-${layer.id}`}>
-                    <td className="py-2 pr-2">
+                    <td className="py-2 pr-2 min-w-0">
                       <div className="font-medium text-foreground">{layer.label}</div>
                       <div className="text-[10px] text-muted-foreground mt-0.5">
                         Basis {plain(layer.baseWeight, 1)} × Habitat {plain(layer.habitatMultiplier, 2)}
                       </div>
-                      <div className="text-[10px] text-muted-foreground hidden sm:block mt-0.5">{layer.detail}</div>
+                      <ul className="mt-1 space-y-0.5" data-testid={`gold-adaptive-signals-${layer.id}`}>
+                        {layer.signals.map(signal => (
+                          <li key={signal.id} data-testid={`gold-adaptive-signal-${signal.id}`} className="text-[10px] text-muted-foreground break-words leading-snug">
+                            {signalText(signal)}
+                          </li>
+                        ))}
+                      </ul>
                     </td>
                     <td className="py-2 text-right font-mono tabular-nums">{plain(layer.effectiveWeight)}</td>
                     <td className="py-2 text-right font-mono tabular-nums">{plain(layer.strength)}</td>

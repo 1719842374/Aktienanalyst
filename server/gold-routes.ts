@@ -8,7 +8,7 @@ import type {
   GoldCycleAssessment,
   GoldPricePoint,
 } from "../shared/gold-schema";
-import { scoreGoldAdaptive, volumeReadingsAreReal } from "./gold-adaptive-score";
+import { FISCAL_SERIES_ID, aiscStepsForAdaptive, scoreGoldAdaptive, volumeReadingsAreReal } from "./gold-adaptive-score";
 import { goldNewsScoreFlag, getGoldNewsImpact } from "./gold-news";
 import { yahooFetch } from "./history-fallback";
 import { execSync, execFile } from "child_process";
@@ -392,6 +392,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       let historicalPrices: GoldPricePoint[] = [];
       let closePrices: number[] = [];
       const fmpVolumes: { date: string; volume: number }[] = [];
+      const rangeBars: { date: string; high: number; low: number }[] = [];
 
       // FMP historical-price-eod/full returns { symbol, historical:[...] } or a bare array.
       const ohlcvRows: any[] = Array.isArray(goldOHLCVResult)
@@ -408,6 +409,11 @@ export function registerGoldRoutes(server: Server, app: Express) {
             historicalPrices.push({ date: dateStr, close });
             const volumeRaw = parseFloat(String(row.volume ?? row.Volume ?? ""));
             if (Number.isFinite(volumeRaw)) fmpVolumes.push({ date: dateStr, volume: volumeRaw });
+            const high = parseFloat(String(row.high ?? row.High ?? ""));
+            const low = parseFloat(String(row.low ?? row.Low ?? ""));
+            if (Number.isFinite(high) && Number.isFinite(low) && low > 0 && high >= low) {
+              rangeBars.push({ date: dateStr, high, low });
+            }
           }
         }
       }
@@ -807,7 +813,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
       };
 
       // Future_10 §2–§3, §8, §10. GIS, OLS, Multi-Faktor, Monte Carlo und getTechnicalScore bleiben.
-      // AISC hat keine Quelle — die Supply-Dimension wird N/A, nicht 0.
+      // F10-20/24: Quartals-AISC und Fiskaldefizit nur in dieser Schicht. Fehlt die Quelle, bleibt das Signal n/a.
       let adaptiveScore: import("../shared/gold-schema").GoldAdaptiveScore | null = null;
       let goldNews: import("../shared/gold-schema").GoldNewsImpact | null = null;
       try {
@@ -845,7 +851,9 @@ export function registerGoldRoutes(server: Server, app: Express) {
           rrpBillions: fredHistory.get("RRPONTSYD", startDate),
           breakeven: fredHistory.get("T10YIE", startDate),
           dxy: fredHistory.get("DTWEXBGS", startDate),
-          aisc: null,
+          aisc: aiscStepsForAdaptive(loadGoldAiscSeries()),
+          ranges: rangeBars.length > 0 ? rangeBars : null,
+          fiscal: fredHistory.get(FISCAL_SERIES_ID, startDate),
           regime: realYieldModel?.regime?.regime ?? null,
           newsFlag: goldNewsScoreFlag(goldNews, Date.now()), // lastGood > 24 h zählt nicht (#241)
           gis: gisRounded,
@@ -950,7 +958,7 @@ export function registerGoldRoutes(server: Server, app: Express) {
         scoreDelta,
         gates,
         technicalSignals,
-        // Future_10 §5 (B1): Quartals-AISC nur für die Chart-Linie. Fließt nicht in GIS/Score (aisc: null oben bleibt, B2).
+        // Future_10 §5: Quartals-AISC für die Chart-Linie. Dieselbe Datei speist oben nur die Zusatzschicht, nicht den GIS.
         aiscLine: loadGoldAiscSeries(),
         // JOB 16: nur bei Teilausfall gesetzt; vollständige Antworten behalten exakt ihre Bytes.
         ...(partialReasons.length > 0 ? { partial: true as const, partialReasons } : {}),
