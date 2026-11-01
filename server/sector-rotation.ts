@@ -9,9 +9,12 @@ import {
   metricsFromBars,
 } from "./sector-rotation-math";
 import { computeSectorRotation, type RecessionLike, type SectorRotationResult } from "./sector-rotation-score";
+import { sectorAttrBands, type SectorAttrInput } from "../shared/sector-attr-band";
 
 export * from "./sector-rotation-math";
 export * from "./sector-rotation-score";
+export { ATTR_PARAMS, sectorAttrBands } from "../shared/sector-attr-band";
+export type { AttrBand, AttrTrend, SectorAttrAnnotation } from "../shared/sector-attr-band";
 
 function numOrNull(v: unknown): number | null {
   if (typeof v === "number" && isFinite(v) && v > 0) return v;
@@ -116,4 +119,52 @@ export async function fetchSectorRotationLive(): Promise<SectorRotationResult> {
   const asOf = dates.length > 0 ? dates[dates.length - 1] : to;
 
   return computeSectorRotation({ asOf, recession, sectors: perSector });
+}
+
+function finiteAttractiveness(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Vorwerte aus dem letzten Cache-Snapshot (Datei bzw. diskResearcher, auch wenn
+ * der TTL-Hit schon abgelaufen ist). null = kein Snapshot → Pfeile „kein Vorwert“.
+ * Liest nur attractiveness, verändert sie nicht.
+ */
+export function attractivenessFromSnapshot(
+  snapshot: { sectors?: Array<{ id?: string; attractiveness?: unknown }> } | null | undefined,
+): SectorAttrInput[] | null {
+  const sectors = snapshot?.sectors;
+  if (!Array.isArray(sectors) || sectors.length === 0) return null;
+  return sectors.map(s => ({
+    id: String(s?.id ?? ""),
+    attractiveness: finiteAttractiveness(s?.attractiveness),
+  }));
+}
+
+/**
+ * Hängt attrPercentile / attrBand / attrTrend / attrDelta an. Die bestehende
+ * attractiveness-Zahl bleibt Feld für Feld dieselbe.
+ */
+export function attachSectorAttrBands<T extends { sectors: Array<{ id: string; attractiveness: number }> }>(
+  result: T,
+  previous: readonly SectorAttrInput[] | null | undefined,
+): T {
+  const ann = sectorAttrBands(
+    result.sectors.map(s => ({ id: s.id, attractiveness: finiteAttractiveness(s.attractiveness) })),
+    previous,
+  );
+  const byId = new Map(ann.map(a => [a.id, a]));
+  return {
+    ...result,
+    sectors: result.sectors.map(s => {
+      const a = byId.get(s.id);
+      return {
+        ...s,
+        attrPercentile: a?.attrPercentile ?? null,
+        attrBand: a?.attrBand ?? "neutral",
+        attrTrend: a?.attrTrend ?? "none",
+        attrDelta: a?.attrDelta ?? null,
+      };
+    }),
+  };
 }
