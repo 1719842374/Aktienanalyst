@@ -115,6 +115,9 @@ export interface PeerCompany {
   /** Peer-Variante A: Forward-KGV (Kurs / EPS-Konsens nächstes GJ, shared/peer-forward-pe.ts). null = nicht verfügbar
    *  oder Währung nicht sicher → Ansicht fällt auf pe (trailing) zurück. Nur Ansicht/Filter, nicht score-wirksam. */
   forwardPe?: number | null;
+  /** F1-17: Dividendenrendite in % aus der bereits geladenen FMP-Ratios-Zeile (normalizeDividendYieldPct).
+   *  null = Feld fehlt (nicht 0). 0 = keine Dividende. Nur Anzeige in Sektion 6, nicht score-wirksam. */
+  dividendYield?: number | null;
 }
 
 export type WarningSeverity = 'critical' | 'warning' | 'info';
@@ -166,6 +169,8 @@ export interface PeerComparison {
     pb: number | null;
     epsGrowth: number | null;
     sectorName: string;
+    /** F1-17: Median-Dividendenrendite des Sektors in %. Damodaran-Profil liefert das heute nicht → UI „n/a — Grund“. Nicht score-wirksam. */
+    dividendYield?: number | null;
   };
   // EPS history for chart
   epsHistory?: EpsDataPoint[]; // Subject's historical + estimated EPS

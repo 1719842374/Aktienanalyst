@@ -15,6 +15,7 @@ import { catalystDisplayName } from "../../../../shared/catalyst-event";
 import { buildConflictMatrix, conflictInputsFromAnalysis, isEtfOrFund } from "../../lib/conflictMatrix";
 import { ConflictMatrixPanel } from "./ConflictMatrixPanel";
 import { safeCompanyDcfWaccPct, waccSuffix } from "../../../../shared/valuation-signal";
+import { DividendNotableHint } from "./DividendYieldContext";
 
 interface Props { data: StockAnalysis; sharedMonteCarlo?: GBMMonteCarloResult | null }
 
@@ -132,6 +133,7 @@ export function SummarySection({ data, sharedMonteCarlo }: Props) {
 
   return (
     <SectionCard number={20} title="ZUSAMMENFASSUNGSTABELLE">
+      <DividendNotableHint data={data} />
       {/* DCF Upside/Downside Visual */}
       <div>
         <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">DCF Szenarien — Upside / Downside (FCFF)</h3>
