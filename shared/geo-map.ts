@@ -206,6 +206,12 @@ export function dominantSectorOf(sectorShares: { sector: string; pct: number }[]
 }
 
 /**
+ * Nachkommastellen der Karten-Legende. Ein positiver Rest, der dabei auf 0 fällt,
+ * wird nicht gezeigt. 0 ist diese Anzeige, keine zusätzliche Schwelle.
+ */
+export const SECTOR_LEGEND_FRACTION_DIGITS = 1;
+
+/**
  * Legende: Anteil je Sektor am erfassten Capex. Dieselben sectorShares, aus denen
  * die Länderfarbe (dominanter Sektor) kommt. Länder ohne Capex zählen nicht.
  */
@@ -226,7 +232,8 @@ export function sectorLegendShares(
   }
   if (!(total > 0)) return [];
   return Array.from(by.entries())
-    .map(([sector, value]) => ({ sector, pct: +((value / total) * 100).toFixed(1) }))
+    .map(([sector, value]) => ({ sector, pct: +((value / total) * 100).toFixed(SECTOR_LEGEND_FRACTION_DIGITS) }))
+    .filter(row => row.pct > 0)
     .sort((a, b) => b.pct - a.pct || a.sector.localeCompare(b.sector, "de"));
 }
 

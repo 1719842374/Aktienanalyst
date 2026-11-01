@@ -25,6 +25,7 @@ import {
   colorForPercentile,
   metricPercentiles,
   radiusForPercentile,
+  SECTOR_LEGEND_FRACTION_DIGITS,
   sectorColor,
   sectorLegendShares,
   type GeoMapCountry,
@@ -349,7 +350,7 @@ export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportuni
                 {sectorLegend.map(item => (
                   <span key={item.sector} className="inline-flex items-center gap-1 text-[10px] text-foreground/70" data-testid={`geo-legend-${item.sector}`}>
                     <span className="w-2 h-2 rounded-full" style={{ background: sectorColor(item.sector) }} />
-                    {item.sector} {item.pct.toFixed(1)} %
+                    {item.sector} {item.pct.toFixed(SECTOR_LEGEND_FRACTION_DIGITS)} %
                   </span>
                 ))}
               </div>
