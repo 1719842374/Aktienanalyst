@@ -19,6 +19,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerLiquidityRoute(app);
   const { registerLiquidityBriefingRoute } = await import("./liquidity-briefing-route");
   registerLiquidityBriefingRoute(app);
+  // GET /api/researcher/fiscal-programs (FW-34, Discovery → Fiscal-Bridge, nur Anzeige, kein Score)
+  const { registerFiscalDiscoveryRoute } = await import("./fiscal-discovery-route");
+  registerFiscalDiscoveryRoute(app);
   const { registerValueChainRoutes } = await import("./valuechain-routes");
   registerValueChainRoutes(app);
   const { registerRecessionMarketRoutes } = await import("./recession-markets");
@@ -61,6 +64,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // POST /api/chat (KI-Chatbot, WORK_DASHBOARD_FEATURES §4/§4c; nur Kontext lesen, kein Score)
   const { registerChatRoute } = await import("./chat-route");
   registerChatRoute(app);
+  // POST /api/podcast/brief — Key Driver und Skript, kein Score.
+  const { registerPodcastRoute } = await import("./podcast-route");
+  registerPodcastRoute(app);
+  const { registerPodcastTranscriptRoute } = await import("./podcast-transcript-route");
+  registerPodcastTranscriptRoute(app);
   const { registerAttraktivNotifyRoute } = await import("./attraktiv-notify-route");
   registerAttraktivNotifyRoute(app);
 }

@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { CrossModuleRefreshButton } from "@/components/CrossModuleRefresh";
+import { forceAnalyzeOnce, invalidateCrossModuleQueries, registerAnalyzeRefresh, useCrossModuleHandler } from "@/lib/crossModuleRefresh";
 import {
   analyzePostBody,
   hasPeerOverrideLists,
@@ -53,11 +55,14 @@ import { MoatPorterSection } from "@/components/sections/MoatPorterSection";
 import { PestelSection } from "@/components/sections/PestelSection";
 import { MacroCorrelationsSection } from "@/components/sections/MacroCorrelationsSection";
 import { ChatWidget } from "@/components/chat/ChatWidget";
+import { PodcastTranscript } from "@/components/podcast/PodcastTranscript";
 import { visibleTopOf } from "@/lib/activeSection";
 import { deliverPdfOnGesture, needsGestureHandoff } from "@/lib/pdfDelivery";
-import { buildStockChatContext, enrichChatContext } from "@shared/chat-context";
+import { buildStockChatContext, enrichChatContext, withEarningsBriefFacts } from "@shared/chat-context";
 import { withFazitEntryChatFacts } from "@shared/fazit-entry";
 import { useChatSectionData } from "@/lib/chatSectionData";
+import { useEarningsBrief } from "@/hooks/useEarningsBrief";
+import { PODCAST_MARKET_SYMBOL } from "@shared/podcast-transcript";
 import {
   Sun, Moon, BarChart3, TrendingUp, Shield, Calculator,
   LineChart, Target, Scale, AlertTriangle, Activity,
@@ -191,7 +196,7 @@ export default function Dashboard() {
     setCurrentTicker(args.ticker);
     requestIdRef.current += 1;
     const reqId = requestIdRef.current;
-    analyzeMutationRef.current.mutate({ ticker: args.ticker, llm: args.llm, force: args.force, peerOverrides: resolved, reqId, peerResetRecovery: args.peerResetRecovery });
+    return analyzeMutationRef.current.mutateAsync({ ticker: args.ticker, llm: args.llm, force: args.force, peerOverrides: resolved, reqId, peerResetRecovery: args.peerResetRecovery });
   }, []);
   // Forward-decl ref so startAnalyze can reference the mutation before it's declared
   const analyzeMutationRef = useRef<any>(null);
@@ -355,6 +360,19 @@ export default function Dashboard() {
   // Wire the mutation to its ref so startAnalyze() can call it.
   analyzeMutationRef.current = analyzeMutation;
 
+  // FW-05: gemeinsamer Refresh. Der Handler nutzt denselben force-Analyze
+  // wie der bisherige Section-1-Knopf; invalidateQueries stößt zusätzlich
+  // Researcher und Portfolio an.
+  useCrossModuleHandler("analyze", async () => {
+    const ticker = currentTickerRef.current;
+    if (!ticker) return;
+    await forceAnalyzeOnce(ticker, "analyze", () => startAnalyze({ ticker, llm: useLLMRef.current, force: true }));
+  });
+  useEffect(() => registerAnalyzeRefresh({
+    ticker: () => currentTickerRef.current,
+    run: (ticker) => startAnalyze({ ticker, llm: useLLMRef.current, force: true }),
+  }), [startAnalyze]);
+
   // Auftrag 10.08.2026 ("Portfolio UX", Teil A): Deep-Link von der Portfolio-
   // Seite (/#/?ticker=XXX) zur Aktienanalyse dieses Tickers. NEUER, isolierter
   // Effect -- laeuft nur einmal beim Mount, ruft ausschliesslich die
@@ -400,7 +418,8 @@ export default function Dashboard() {
   // KI-Chatbot (WORK_DASHBOARD_FEATURES §4): Kontext-Provider der Aktien-Analyse. Nur Lesen, kein Score-Einfluss.
   // PR 3: angezeigte Client-Werte (DCF/CRV/RSL/Monte Carlo) + Auffälligkeiten je Sektion.
   const chatLive = useChatSectionData("stock");
-  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withFazitEntryChatFacts(buildStockChatContext(data), data), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive]);
+  const earningsBrief = useEarningsBrief(data && !isEtfOrFund(data) ? data.ticker : null);
+  const chatContext = useMemo(() => (data && !isEtfOrFund(data) ? enrichChatContext(withEarningsBriefFacts(withFazitEntryChatFacts(buildStockChatContext(data), data), earningsBrief), chatLive, { gatesSectionId: 20 }) : null), [data, chatLive, earningsBrief]);
   const chatSections = useMemo(() => SECTIONS.map(({ id, label }) => ({ id, label })), []);
   // Sektionsbindung: oberste im Hauptbereich sichtbare Sektion.
   const getActiveSectionId = useCallback((): number | null => {
@@ -459,6 +478,7 @@ export default function Dashboard() {
         {/* justify-end on an overflow container clips the start unreachably; w-max + ml-auto keeps it scrollable. */}
         <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide" data-testid="header-nav-strip">
           <div className="flex w-max ml-auto items-center gap-2 sm:gap-3">
+          <CrossModuleRefreshButton className="h-8 px-2 text-[11px] font-medium rounded-md text-foreground/70 border border-border/50 hover:bg-muted/50 transition-colors flex items-center gap-1 shrink-0" label="Refresh" />
           {/* PDF Export — not for ETFs/funds (not part of the stock dashboard) */}
           {data && !isEtfOrFund(data) && (
             <button
@@ -670,7 +690,7 @@ export default function Dashboard() {
                   unmount the entire dashboard and leave the user with a black
                   screen. Without this, one bad field → whole app unmounts. */}
               <div ref={setSectionRef(1)}>{isYahooOnly(data) ? <YahooNoValuationCard number={1} title="Executive Summary" data={data} /> : <ExecSummaryCard data={data} sharedMonteCarlo={sharedMonteCarlo} />}</div>
-              <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true }); }} onThesisScore={(score) => {
+              <div ref={setSectionRef(2)}><SectionErrorBoundary sectionId={2} sectionLabel="Datenaktualität"><Section1 data={data} onRefresh={() => { void invalidateCrossModuleQueries(queryClient); }} onThesisScore={(score) => {
                 setData(prev => prev && prev.thesisStrengthScore !== score ? { ...prev, thesisStrengthScore: score } : prev);
               }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(3)}><SectionErrorBoundary sectionId={3} sectionLabel="Investmentthese">{isYahooOnly(data) ? <YahooNoValuationCard number={3} title="INVESTMENTTHESE & KATALYSATOREN" data={data} /> : <Section2 data={data} />}</SectionErrorBoundary></div>
@@ -718,6 +738,7 @@ export default function Dashboard() {
                 setData(prev => prev && prev.managementScore !== score ? { ...prev, managementScore: score } : prev);
               }} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(20)}><SectionErrorBoundary sectionId={20} sectionLabel="Zusammenfassung">{isYahooOnly(data) ? <YahooNoValuationCard number={20} title="ZUSAMMENFASSUNGSTABELLE" data={data} /> : <SummarySection data={data} sharedMonteCarlo={sharedMonteCarlo} />}</SectionErrorBoundary></div>
+              <PodcastTranscript symbol={PODCAST_MARKET_SYMBOL} />
               <div className="pb-8" />
             </div>
           ) : (
@@ -755,7 +776,8 @@ export default function Dashboard() {
         sections={chatSections}
         getActiveSectionId={getActiveSectionId}
         onJumpToSection={scrollToSection}
-        suggestions={["Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?"]}
+        suggestions={["Gib das Big Picture: Treiber, Wettbewerb, Makro, Fazit.", "Fasse die Analyse in 5 Punkten zusammen", "Welche Scoring-Gates sind aktiv und warum?", "Was passiert, wenn das Wachstum 5 Prozentpunkte niedriger ausfällt?", "Gliedere Catalysts, Assumptions und Risks."]}
+        earningsBrief={data && !isEtfOrFund(data) ? earningsBrief : undefined}
       />
     </div>
   );

@@ -10,6 +10,7 @@
  */
 import type { StockAnalysis } from "./schema";
 import { sumUpsideGb } from "./bias-fixes";
+import type { EarningsCallBrief } from "./chat-earnings";
 
 export type ChatDashboard = "stock" | "btc" | "gold" | "recession";
 export const CHAT_DASHBOARDS: readonly ChatDashboard[] = ["stock", "btc", "gold", "recession"];
@@ -106,6 +107,32 @@ export interface ChatResponseBody {
 export const CHAT_CONTEXT_BUDGET = 36_000;
 
 /**
+ * WORK_KI_CHAT_BIG_PICTURE: so viele Schlagzeilen stehen im Prompt („News: Top 5“).
+ * Fenster, kein Score-Schwellenwert.
+ */
+export const CHAT_NEWS_HEADLINE_COUNT = 5;
+
+/** Schema-Stufe „Hoch“ ist die starke / rote Exposure. Kein numerischer Cutoff. */
+export const PESTEL_STRONG_RATING = "Hoch" as const;
+
+export function pestelIsStrong(p: { overallExposure?: string | null; factors?: Array<{ exposureRating?: string | null }> | null } | null | undefined): boolean {
+  if (!p) return false;
+  if (p.overallExposure === PESTEL_STRONG_RATING) return true;
+  return (p.factors ?? []).some(f => f?.exposureRating === PESTEL_STRONG_RATING);
+}
+
+/** Dominante Thesis-Klasse = größter Anteil. Keine Wachstumsschwelle. */
+export function dominantThesisClass(shares: Record<string, number> | null | undefined): { name: string; share: number } | null {
+  if (!shares) return null;
+  let best: { name: string; share: number } | null = null;
+  for (const [name, share] of Object.entries(shares)) {
+    if (typeof share !== "number" || !Number.isFinite(share)) continue;
+    if (!best || share > best.share) best = { name, share };
+  }
+  return best;
+}
+
+/**
  * Relative Priorität beim Behalten von Text: Wachstumsthese > Rationale > Notes.
  * Das sind Ränge, keine Zeichenzahl. Gewicht = Rang / Summe.
  * allowedChars = floor(CHAT_CONTEXT_BUDGET * Gewicht).
@@ -173,6 +200,43 @@ export const STOCK_SECTION_LABELS: Record<number, string> = {
   19: "Management-Score", 20: "Zusammenfassung",
 };
 
+function newsTitles(items: unknown, tone?: "bullish" | "bearish"): string[] {
+  if (!Array.isArray(items)) return [];
+  const titles: string[] = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as { title?: unknown; sentiment?: unknown; source?: unknown };
+    if (typeof rec.title !== "string" || !rec.title.trim()) continue;
+    if (tone && rec.sentiment !== tone) continue;
+    const source = typeof rec.source === "string" && rec.source.trim() ? `, ${rec.source.trim()}` : "";
+    const label = tone === "bullish" ? "positiv" : tone === "bearish" ? "negativ" : (rec.sentiment === "bullish" ? "positiv" : rec.sentiment === "bearish" ? "negativ" : rec.sentiment === "neutral" ? "neutral" : "Stimmung n/a");
+    titles.push(tone ? rec.title.trim() : `${rec.title.trim()} (${label}${source})`);
+  }
+  return titles;
+}
+
+function newsFact(items: unknown, tone?: "bullish" | "bearish"): string | null {
+  const titles = newsTitles(items, tone).slice(0, CHAT_NEWS_HEADLINE_COUNT);
+  return titles.length ? str(titles.join(" | ")) : null;
+}
+
+function catalystKiText(catalysts: unknown[]): string | null {
+  const parts: string[] = [];
+  for (const c of catalysts) {
+    if (!c || typeof c !== "object") continue;
+    const rec = c as { name?: unknown; deepDive?: Record<string, unknown> | null };
+    const dive = rec.deepDive;
+    if (!dive || typeof dive !== "object") continue;
+    const bits = ["unternehmenskontext", "posHerleitung", "bewertungsauswirkung", "marktumfeld", "risiken"]
+      .map(k => dive[k])
+      .filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+    if (!bits.length) continue;
+    const name = typeof rec.name === "string" && rec.name.trim() ? rec.name.trim() : "Katalysator";
+    parts.push(`${name}: ${bits.join(" ")}`);
+  }
+  return parts.length ? str(parts.join(" | ")) : null;
+}
+
 /**
  * Aktien-Provider: baut aus der geladenen Analyse (Antwort von POST /api/analyze) den Chat-Kontext
  * für alle 20 Sektionen + Scoring-Gates. Reine Funktion, mutiert `data` nicht.
@@ -183,6 +247,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
   const ti = d.technicalIndicators?.currentStatus;
   const sc = d.scoring;
   const catalysts = Array.isArray(d.catalysts) ? d.catalysts : [];
+  const kiCatalysts = catalystKiText(catalysts);
   const risks = Array.isArray(d.risks) ? d.risks : [];
   const lastPrice = Array.isArray(d.historicalPrices) && d.historicalPrices.length ? d.historicalPrices[d.historicalPrices.length - 1] : null;
 
@@ -208,6 +273,11 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
       wachstumsthese: str(d.growthThesis), strukturelleTrends: list(d.structuralTrends),
       lynchKlasse: str(d.lynchClass), moatRating: str(d.moatRating),
       warumInteressant: str(d.catalystReasoning?.whyInteresting),
+      newsTop: newsFact(d.newsItems) ?? "n/a — keine News in der geladenen Analyse",
+      newsPositiv: newsFact(d.newsItems, "bullish") ?? (newsTitles(d.newsItems).length ? "n/a — keine positive Schlagzeile in den geladenen News" : "n/a — keine News in der geladenen Analyse"),
+      newsNegativ: newsFact(d.newsItems, "bearish") ?? (newsTitles(d.newsItems).length ? "n/a — keine negative Schlagzeile in den geladenen News" : "n/a — keine News in der geladenen Analyse"),
+      analystenThesen: "n/a — keine narrativen Analysten-Thesen in den geladenen Daten, nur Buy/Hold/Sell in S1",
+      beatMiss: "n/a — Beat/Miss liegt nicht in der geladenen Analyse",
     }),
     s(4, {
       umsatz: num(d.revenue, 0), ebitda: num(d.ebitda, 0), operatingIncome: num(d.operatingIncome, 0),
@@ -264,6 +334,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
       gesamtExposure: str(d.pestelAnalysis?.overallExposure), geopolitikScore: num(d.pestelAnalysis?.geopoliticalScore, 0),
       makroZusammenfassung: str(d.pestelAnalysis?.macroSummary), zinsAusblick: str(d.pestelAnalysis?.interestRateOutlook),
       kategorien: list((d.pestelAnalysis?.factors ?? []).map((f: any) => `${f.categoryDE ?? f.category}: ${f.exposureRating}`)),
+      pestelStark: d.pestelAnalysis ? (pestelIsStrong(d.pestelAnalysis) ? "ja" : "nein") : "n/a — keine PESTEL-Analyse geladen",
     }),
     s(15, {
       makroSensitivitaet: str(d.macroCorrelations?.overallMacroSensitivity), kernaussage: str(d.macroCorrelations?.keyInsight),
@@ -273,6 +344,7 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
     s(17, {
       quelle: str(d.catalystsSource), kiModus: typeof d.llmMode === "boolean" ? d.llmMode : null,
       katalysatoren: list(catalysts.map((c: any) => `${c.name} (PoS ${num(c.pos, 0) ?? "n/a"}%, netto ${num(c.nettoUpside, 1) ?? "n/a"}%, GB ${num(c.gb, 2) ?? "n/a"})`), 8),
+      ...(kiCatalysts ? { kiAntwort: kiCatalysts } : {}),
     }),
     s(18, {
       hinweis: "Monte Carlo (GBM, 10.000 Pfade) wird im Client berechnet",
@@ -302,6 +374,25 @@ export function buildStockChatContext(data: StockAnalysis): ChatContext {
     sections,
     gates,
     notes,
+  };
+}
+
+/** Earnings-Call in S3 (Investmentthese). `null` = Abruf läuft noch. Mutiert `ctx` nicht. Null-Felder werden weggelassen; der Grund steht in `earningsCallHinweis`. */
+export function withEarningsBriefFacts(ctx: ChatContext, brief: EarningsCallBrief | null): ChatContext {
+  const quarter = brief && brief.year != null && brief.quarter != null ? `FY${brief.year} Q${brief.quarter}` : null;
+  const facts: Record<string, ChatFactValue> = {};
+  if (brief?.date) facts.earningsCallDatum = brief.date;
+  if (quarter) facts.earningsCallQuartal = quarter;
+  if (brief?.summary) facts.earningsCallZusammenfassung = brief.summary;
+  if (brief?.excerpt) facts.earningsCallAuszug = brief.excerpt;
+  if (brief?.source) facts.earningsCallQuelle = brief.source;
+  const hinweis = brief?.summary
+    ? (brief.excerptTruncated ? "Auszug am Chat-Budget gekürzt" : null)
+    : (brief?.reason ?? "n/a — Earnings-Call noch nicht geladen");
+  if (hinweis) facts.earningsCallHinweis = hinweis;
+  return {
+    ...ctx,
+    sections: ctx.sections.map(s => (s.id === 3 ? { ...s, facts: { ...s.facts, ...facts } } : s)),
   };
 }
 
@@ -372,9 +463,29 @@ export function buildBtcChatContext(data: any): ChatContext {
 
 /** Labels/IDs identisch mit SECTIONS in client/src/pages/GoldDashboard.tsx (News = 100). */
 export const GOLD_SECTION_LABELS: Record<number, string> = {
-  1: "Preis & Status", 100: "Gold-News", 2: "Preis-Chart", 3: "Indikatoren", 4: "Fair Value", 5: "Monte Carlo",
+  1: "Preis & Status", 100: "Gold-News", 2: "Preis-Chart", 9: "Miner-Breakeven", 3: "Indikatoren", 4: "Fair Value", 5: "Monte Carlo",
   6: "Preisschätzung", 7: "Zyklus", 8: "Zusammenfassung",
 };
+
+/** Dieselben Zahlen wie Sektion 9. Fehlendes Feld = Offline-Fallback, null = n/a. */
+function goldMinerFacts(zone: any): Record<string, ChatFactValue> {
+  if (zone === undefined) return { hinweis: "AISC n/a — Offline-Daten, keine Minendaten in dieser Antwort" };
+  if (zone == null) return { hinweis: "n/a" };
+  const latest = zone.latest;
+  const days = num(zone.thresholds?.obs, 0);
+  if (!latest || zone.naReason) return { hinweis: zone.naReason ? `n/a — ${zone.naReason}` : "n/a", tage: days };
+  return {
+    zone: str(latest.zone),
+    multiple: num(latest.multiple, 2),
+    aiscUsd: num(latest.aisc, 0),
+    margeUsd: num(latest.marginUsd, 0),
+    margePct: num(typeof latest.marginPct === "number" ? latest.marginPct * 100 : null, 1),
+    score: num(latest.score, 0),
+    quartal: str(latest.quarter),
+    tage: days,
+    inScore: false,
+  };
+}
 
 export function buildGoldChatContext(data: any): ChatContext {
   const d = data ?? {};
@@ -385,6 +496,7 @@ export function buildGoldChatContext(data: any): ChatContext {
     sec(1, L[1], { kursUSD: num(d.spotPrice), aenderungPct: num(d.changePercent), jahresHoch: num(d.yearHigh), jahresTief: num(d.yearLow), ma200: num(d.ma200), abweichungMA200Pct: num(d.deviationFromMA200, 1), stand: str(d.priceTimestamp), teilausfall: d.partial === true ? (list(d.partialReasons) ?? "ja") : null }),
     sec(100, L[100], { newsFlag: d.goldNews ? num(d.goldNews.flag, 2) : null, newsZusammenfassung: str(d.goldNews?.summary, 600), hinweis: d.goldNews ? null : "News-Abruf lief nicht (n/a)" }),
     sec(2, L[2], { rsi14: num(d.rsi14, 1), historiePunkte: Array.isArray(d.historicalPrices) ? d.historicalPrices.length : null, technikSignale: list((d.technicalSignals ?? []).map((s: any) => `${s.id}: ${s.available === false ? "n/a" : `Richtung ${s.direction ?? "n/a"}`}${s.detail ? ` (${s.detail})` : ""}`), 6) }),
+    sec(9, L[9], goldMinerFacts(d.aiscZone)),
     sec(3, L[3], { indikatoren: list((d.indicators ?? []).map((i: any) => `${i.name}: ${i.value} (Score ${i.score}, Gewicht ${num(i.weight * 100, 1) ?? "n/a"}%)`), 10), gis: num(d.gis, 4), adaptiverScore: num(ad?.score, 3), scoreDelta: num(d.scoreDelta ?? ad?.scoreDelta, 3) }),
     sec(4, L[4], { fvBasis: num(fv?.fvBasis, 0), fvAdj: num(fv?.fvAdj, 0), praemie: num(fv?.premium, 2), support1: num(fv?.support1, 0), resistance1: num(fv?.resistance1, 0), realzinsModellFV: num(ry?.fairValue?.fairValue, 0), realzinsRegime: str(ry?.regime?.regime) }),
     sec(5, L[5], { mc3M: mc(d.monteCarlo3M), mc6M: mc(d.monteCarlo6M), mc12M: mc(d.monteCarlo12M) }),

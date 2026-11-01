@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import { buildStockChatContext, CHAT_LIMITS, STOCK_SECTION_LABELS, type ChatRequestBody } from "../shared/chat-context";
+import { OPENROUTER_NO_KEY_MESSAGE } from "../shared/openrouter-no-key";
 import { buildChatPrompt, CHAT_SYSTEM_PROMPT, handleChat, registerChatRoute, validateChatRequest, chatRateLimited, CHAT_RATE_LIMIT } from "../server/chat-route";
 
 let n = 0;
@@ -52,7 +53,7 @@ async function main() {
 
   let called = 0;
   const noKey = await handleChat(body, { llmAvailable: () => false, llm: async () => { called++; return null; } });
-  assert.equal(noKey.body.status, "no-key"); assert.equal(noKey.body.answer, null); assert.equal(called, 0); ok("kein Key → no-key, keine Antwort, kein LLM-Call");
+  assert.equal(noKey.body.status, "no-key"); assert.equal(noKey.body.answer, null); assert.equal(noKey.body.error, OPENROUTER_NO_KEY_MESSAGE); assert.equal(called, 0); ok("kein Key → no-key, keine Antwort, kein LLM-Call");
   const good = await handleChat(body, { llmAvailable: () => true, llm: async () => ({ data: { answer: "Antwort", sectionRefs: [7, 99, 7, "x"] }, modelUsed: "m" }) });
   assert.equal(good.body.status, "ok"); assert.equal(good.body.answer, "Antwort"); assert.deepEqual(good.body.sectionRefs, [7]); ok("ok-Antwort, sectionRefs auf bekannte Sektionen gefiltert");
   const nul = await handleChat(body, { llmAvailable: () => true, llm: async () => null });

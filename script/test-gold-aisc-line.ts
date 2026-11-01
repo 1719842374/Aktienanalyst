@@ -135,19 +135,25 @@ console.log("\nServer-Loader + Verdrahtung");
   process.chdir(cwd);
   check("loadGoldAiscSeries() aus fremdem cwd liefert 10 Quartale", !!fromTmp && fromTmp.quarters.length === 10 && fromTmp.quarters.at(-1)!.aisc === 1649);
   const routes = readFileSync(path.join(root, "server/gold-routes.ts"), "utf8");
-  check("gold-routes liefert aiscLine aus dem Loader", /aiscLine:\s*loadGoldAiscSeries\(\)/.test(routes));
+  check("gold-routes liefert aiscLine aus dem Loader", /const aiscSeries = loadGoldAiscSeries\(\)/.test(routes) && /aiscLine: aiscSeries/.test(routes));
+  check("aiscZone neben der Linie, Fehler wird null", /buildGoldMinerZone\(historicalPrices, aiscSeries\)/.test(routes) && /\[GOLD-MINER-ZONE\]/.test(routes));
   check("supplySignal-Platzhalter `aisc: null` unverändert (B2)", /aisc:\s*null/.test(routes));
   check("getTechnicalScore vorhanden", /function getTechnicalScore\(/.test(routes));
-  const gisBlock = routes.slice(routes.indexOf("indicators"), routes.indexOf("aiscLine"));
-  check("AISC fließt nicht in Indikatoren/GIS", !/loadGoldAiscSeries|aiscLine/.test(gisBlock));
+  // Schnitt endet vor der Response-Zeile: die Reihe wird einmal geladen, nachdem GIS und
+  // scoreGoldAdaptive schon stehen. Der Loader darf nicht in den Indikatorblock rutschen.
+  const gisBlock = routes.slice(routes.indexOf("indicators"), routes.indexOf("const aiscSeries"));
+  check("AISC fließt nicht in Indikatoren/GIS", gisBlock.length > 0 && !/loadGoldAiscSeries|aiscLine|buildGoldMinerZone/.test(gisBlock));
   const analyze = readFileSync(path.join(root, "server/analyze-route.ts"), "utf8");
   check("analyze-route.ts kennt AISC nicht", !/gold-aisc|aiscLine/.test(analyze));
   const schema = readFileSync(path.join(root, "shared/gold-schema.ts"), "utf8");
   check("GoldAnalysis.aiscLine typisiert", /aiscLine\?:\s*GoldAiscSeries \| null/.test(schema));
   const chart = readFileSync(path.join(root, "client/src/components/gold/GoldPriceChart.tsx"), "utf8");
   check("Chip heißt „Inflations-BE (T10YIE)“", chart.includes('label: "Inflations-BE (T10YIE)"') && !/label: "Breakeven"/.test(chart));
-  check("Chart zeichnet stepAfter-AISC", /type="stepAfter" dataKey="aisc"/.test(chart));
-  check("Status-Zeile vorhanden", chart.includes('data-testid="gold-aisc-status"'));
+  // AISC ist nicht mehr die gestufte Linie im TA-Chart (Philip 17:48): eigene Sektion 9.
+  check("AISC nicht mehr im Preischart", !/dataKey="aisc"|toggle-gold-aisc|gold-aisc-status|gold-aisc-offline/.test(chart));
+  check("Link auf Abschnitt 9", chart.includes('data-testid="gold-aisc-link-s9"') && chart.includes("Abschnitt 9 Miner-Breakeven"));
+  check("Preisachse zieht AISC nicht mehr ein", !/aiscStressHigh|d\.aisc/.test(chart));
+  check("#374 QE/QT, Gold/WALCL und RSI bleiben im Chart", ["toggle-gold-qe-qt", "toggle-gold-walcl-ratio", "gold-walcl-ratio-chart", "gold-qe-qt-status", "goldQeQtView", "gold-rsi-relative"].every(token => chart.includes(token)));
 }
 
 console.log("\nOhne aiscLine (Offline-Fallback): sichtbarer Hinweis statt stillem Verschwinden");
@@ -186,14 +192,13 @@ export { renderToStaticMarkup } from "react-dom/server";`,
   const base = { ...mod.GOLD_FALLBACK_DATA, historicalPrices: prices };
   check("Fallback ohne Preise: Chart rendert „Keine Preisdaten“ (unverändert)", render(mod.GOLD_FALLBACK_DATA).includes("Keine Preisdaten"));
   const offline = render(base);
-  const chip = /data-testid="gold-aisc-offline"[^>]*>([^<]*)</.exec(offline)?.[1];
-  const status = /data-testid="gold-aisc-status"[^>]*>(?:<span[^>]*><\/span>)?([^<]*)</.exec(offline)?.[1];
-  check("Chip zeigt „AISC n/a (Offline-Daten)“", chip === "AISC n/a (Offline-Daten)", chip);
-  check("Statuszeile zeigt „AISC n/a (Offline-Daten)…“", !!status && status.startsWith("AISC n/a (Offline-Daten)"), status);
-  check("kein AISC-Toggle offline", !offline.includes('data-testid="toggle-gold-aisc"'));
+  const hasLink = (html: string) => html.includes('data-testid="gold-aisc-link-s9"') && html.includes("Abschnitt 9 Miner-Breakeven");
+  const noOverlay = (html: string) => !html.includes('data-testid="toggle-gold-aisc"') && !html.includes('data-testid="gold-aisc-status"') && !html.includes('dataKey="aisc"');
+  check("mit Preisen: Link auf Abschnitt 9, kein AISC-Overlay", hasLink(offline) && noOverlay(offline));
   const online = render({ ...base, aiscLine: series });
-  check("mit aiscLine: kein Offline-Hinweis", !online.includes("Offline-Daten"));
-  check("mit aiscLine: Toggle + Statuszeile „AISC Ø 2026-Q2 (3 Minen): $1,649“", online.includes('data-testid="toggle-gold-aisc"') && online.includes("AISC Ø 2026-Q2 (3 Minen): $1,649"));
+  check("mit aiscLine bleibt der TA-Chart ohne AISC-Linie", hasLink(online) && noOverlay(online) && !online.includes("AISC Ø 2026-Q2"));
+  check("RSI-Pane bleibt sichtbar", online.includes('data-testid="gold-rsi-relative"'));
+  check("#374-Pfade bleiben im Render (Toggle oder n/a)", (online.includes('data-testid="toggle-gold-qe-qt"') || online.includes('data-testid="gold-qe-qt-na"')) && (online.includes('data-testid="toggle-gold-walcl-ratio"') || online.includes('data-testid="gold-walcl-ratio-na"')));
 }
 
 console.log(failed === 0 ? "\nAlle AISC-Tests grün." : `\n${failed} Test(s) fehlgeschlagen.`);

@@ -29,6 +29,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { callLLMJson } from "./llm-openrouter";
 import { diskResearcherGet, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
+import { syncFiscalProgramsFromDiscovery } from "./fiscal-bridge";
 import { fetchMacroSnapshot } from "./fmp-macro";
 import {
   briefingSchema,
@@ -1272,6 +1273,20 @@ async function buildDailyBriefing(): Promise<DailyBriefingResult> {
 // Express Routes
 // ============================================================
 
+/** FW-34: Capex-Discovery in die Fiscal-Bridge schreiben. Antwort-JSON bleibt unverändert. */
+function syncCapexDiscovery(payload: { asOf?: unknown; programmes?: unknown } | null | undefined, region: string): void {
+  try {
+    const programmes = Array.isArray(payload?.programmes) ? payload.programmes : [];
+    const asOf = typeof payload?.asOf === "string" ? payload.asOf : new Date().toISOString();
+    const stats = syncFiscalProgramsFromDiscovery({ region, asOf, programmes });
+    if (stats.saved > 0 || stats.invalidated > 0) {
+      console.log(`[RESEARCHER/capex] fiscal-bridge discovery region=${region} saved=${stats.saved} invalidated=${stats.invalidated} skipped=${stats.skipped}`);
+    }
+  } catch (err: any) {
+    console.warn(`[RESEARCHER/capex] fiscal-bridge sync failed: ${err?.message?.substring(0, 120)}`);
+  }
+}
+
 export function registerResearcherRoutes(app: Express) {
   // Tab 1: Country Macro Pulse
   // === Researcher Route Helper ===
@@ -1424,6 +1439,7 @@ export function registerResearcherRoutes(app: Express) {
       return res.status(400).json({ error: "Invalid region. Use US, EU, or ASIA." });
     }
     const writeCapexCacheIfRich = (r: any) => {
+      syncCapexDiscovery(r, region);
       const hasContent = r?.headline &&
         ((r?.sectorExposure?.length || 0) >= 2 || (r?.programmes?.length || 0) >= 2);
       if (hasContent) writeResearcherCache("capex", region, r);
@@ -1433,6 +1449,7 @@ export function registerResearcherRoutes(app: Express) {
       const cached = readResearcherCache("capex", region);
       if (cached && !isStaleCache(cached) && !capexCacheIsThin(cached)) {
         console.log(`[RESEARCHER/capex] cache HIT region=${region} age=${cached._cacheAge}min`);
+        syncCapexDiscovery(cached, region);
         return res.json(cached);
       }
       // Duenner Cache-Eintrag (< CAPEX_MIN_PROGRAMMES) UND noch kein Selbstheilungs-
@@ -1447,8 +1464,10 @@ export function registerResearcherRoutes(app: Express) {
           if (!capexCacheIsThin(fresh)) return res.json(fresh);
           // Selbstheilung ebenfalls duenn (z.B. LLM weiterhin schwach) — lieber den
           // alten, aber vollstaendigeren Cache-Stand behalten als ihn zu ueberschreiben.
+          syncCapexDiscovery(cached, region);
           return res.json(cached);
         } catch {
+          syncCapexDiscovery(cached, region);
           return res.json(cached);
         }
       }
@@ -1456,10 +1475,12 @@ export function registerResearcherRoutes(app: Express) {
         buildCapexFiscal(region)
           .then(r => writeCapexCacheIfRich(r))
           .catch(() => {});
+        syncCapexDiscovery(cached, region);
         return res.json({ ...cached, _staleRefreshing: true });
       }
       if (cached && capexCacheIsThin(cached)) {
         // duenn, aber Cooldown noch aktiv — Stand ausliefern, kein weiterer teurer Call
+        syncCapexDiscovery(cached, region);
         return res.json(cached);
       }
     }

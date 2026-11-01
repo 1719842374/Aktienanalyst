@@ -1076,6 +1076,55 @@ export interface GoldAiscSeries {
   inScore: false;
 }
 
+// ─── Gold Miner-Breakeven (Spot vs. AISC), nur Anzeige ───────────────────────
+// Adaptive Perzentil-Zonen aus der eigenen Multiple-Historie. Kein GIS, kein
+// adaptiver Score. Euphorie (P90) ist ein Typ-Slot; ob sie klassifiziert wird,
+// entscheidet Philip — die Rechnung setzt euph nicht.
+
+/** capitulation · transition · profitable sind aktiv. euphoria ist reserviert, nicht vergeben. */
+export type GoldMinerZoneName = "capitulation" | "transition" | "profitable" | "euphoria";
+
+export interface GoldMinerZonePoint {
+  date: string;
+  spot: number;
+  aisc: number | null;
+  multiple: number | null;
+  marginPct: number | null;
+  zone: GoldMinerZoneName | null;
+}
+
+export interface GoldMinerZone {
+  /** ausgedünnt ≤ 800 */
+  points: GoldMinerZonePoint[];
+  segments: { x1: string; x2: string; zone: GoldMinerZoneName }[];
+  thresholds: {
+    pLowRank: 20;
+    pHighRank: 50;
+    pEuphRank: 90;
+    low: number | null;
+    high: number | null;
+    /** null, solange die Euphorie-Zone (P90) nicht freigegeben ist. */
+    euph: number | null;
+    obs: number;
+    since: string | null;
+  };
+  latest: {
+    date: string;
+    spot: number;
+    aisc: number;
+    quarter: string;
+    multiple: number;
+    marginUsd: number;
+    marginPct: number;
+    score: number;
+    zone: GoldMinerZoneName;
+    perCompany: { company: GoldAiscCompanyCode; aisc: number }[];
+  } | null;
+  /** z. B. "Historie < 120 Handelstage" */
+  naReason: string | null;
+  inScore: false;
+}
+
 // ─── BTC-Liquiditätsblock (C1/C2, Philip-Freigabe 18.10.2026) ─────────────────
 // GET /api/analyze-btc/liquidity. Drei freie FRED-Reihen: Fed-Bilanz (WALCL),
 // T-Bill-Anteil an den marktfähigen Treasuries (Z.1, BOGZ1FL313161110Q /
