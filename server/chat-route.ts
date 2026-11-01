@@ -11,7 +11,7 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import {
-  CHAT_DASHBOARDS, CHAT_LIMITS,
+  CHAT_DASHBOARDS, CHAT_LIMITS, fitChatContextBudget,
   type ChatContext, type ChatRequestBody, type ChatResponseBody,
 } from "../shared/chat-context";
 
@@ -46,9 +46,9 @@ export const chatRequestSchema = z.object({
     })).max(CHAT_LIMITS.maxSections),
     gates: z.array(z.object({
       id: z.string().max(60), active: z.boolean(), cap: z.number().finite().nullable(),
-      severity: z.string().max(30), rationale: z.string().max(CHAT_LIMITS.maxFactValueChars),
+      severity: z.string().max(30), rationale: z.string().max(CHAT_LIMITS.maxRationaleChars),
     })).max(CHAT_LIMITS.maxGates),
-    notes: z.array(z.string().max(CHAT_LIMITS.maxFactValueChars)).max(CHAT_LIMITS.maxNotes),
+    notes: z.array(z.string().max(CHAT_LIMITS.maxNoteChars)).max(CHAT_LIMITS.maxNotes),
   }),
   messages: z.array(z.object({
     role: z.enum(["user", "assistant"]),
@@ -60,9 +60,20 @@ function reply(status: ChatResponseBody["status"], extra: Partial<ChatResponseBo
   return { ok: status === "ok", answer: null, sectionRefs: [], model: null, status, error: null, ...extra };
 }
 
+/** Kürzt Fakt-Text, Rationale und Notes auf das gemeinsame Budget, bevor Zod prüft. */
+function softenChatRequest(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const body = raw as { context?: unknown };
+  const ctx = body.context;
+  if (!ctx || typeof ctx !== "object") return raw;
+  const c = ctx as { sections?: unknown; gates?: unknown; notes?: unknown };
+  if (!Array.isArray(c.sections) || !Array.isArray(c.gates) || !Array.isArray(c.notes)) return raw;
+  return { ...body, context: fitChatContextBudget(ctx as ChatContext) };
+}
+
 /** Prüft Form, Grenzen und Konsistenz. Liefert entweder den Body oder einen Fehlertext. */
 export function validateChatRequest(raw: unknown): { ok: true; body: ChatRequestBody } | { ok: false; error: string } {
-  const parsed = chatRequestSchema.safeParse(raw);
+  const parsed = chatRequestSchema.safeParse(softenChatRequest(raw));
   if (!parsed.success) {
     const first = parsed.error.issues[0];
     return { ok: false, error: `Ungültige Anfrage: ${first?.path.join(".") || "body"} ${first?.message ?? ""}`.trim().slice(0, 200) };
