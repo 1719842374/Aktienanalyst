@@ -4,13 +4,14 @@
  *
  * Quelle: FMP company-screener (country=ISO2, nach Market Cap) → Top-N Firmen je Land,
  * dann FMP cash-flow-statement (FY) → capitalExpenditure, FX → USD (convertFmpRowsToUsd).
- * Zuordnung nach Firmensitz (FMP liefert geografische Segmente nur für Umsatz, nicht Capex).
+ * Zuordnung des Capex nach Firmensitz. Umsatz-Geosegmente (FMP revenue-geographic-segmentation)
+ * hängen zusätzlich an der Firma, ohne den Capex auf andere Länder umzulegen.
  * Fehlende Daten → status "n/a", nie geschätzt.
  */
-import { fmpCashFlow, convertFmpRowsToUsd } from "./fmp";
+import { fmpCashFlow, convertFmpRowsToUsd, fmpGeoSegments } from "./fmp";
 import { trackFmpCall } from "./analyze-helpers";
 import {
-  GEO_MAP_COUNTRIES, aggregateCountry,
+  GEO_MAP_COUNTRIES, aggregateCountry, mapGeoSegmentRows,
   type GeoMapCompany, type GeoMapCountryDef, type GeoMapResponse,
 } from "@shared/geo-map";
 
@@ -21,9 +22,13 @@ const MIN_MARKET_CAP = 2_000_000_000;
 export interface ScreenerCompany { symbol: string; name: string; sector: string | null; marketCap: number }
 export interface CapexYears { latest: { capexUsd: number; fiscalYear: string | null; reportedCurrency: string | null } | null; prevCapexUsd: number | null }
 
+export interface GeoSegmentInput { name: string; percentage: number | null; revenue: number | null }
+
 export interface GeoMapDeps {
   screenCountry: (iso2: string, limit: number) => Promise<ScreenerCompany[]>;
   capexYears: (symbol: string) => Promise<CapexYears>;
+  /** Fehlt die Funktion, bleibt das Feld „nicht abgefragt“. Leeres Array = FMP ohne Zeilen. */
+  geoSegments?: (symbol: string) => Promise<GeoSegmentInput[]>;
   hasKey: () => boolean;
 }
 
@@ -69,9 +74,19 @@ async function capexYearsFmp(symbol: string): Promise<CapexYears> {
   };
 }
 
+async function geoSegmentsFmp(symbol: string): Promise<GeoSegmentInput[]> {
+  const rows = await fmpGeoSegments(symbol);
+  return rows.map(r => ({
+    name: r.name,
+    percentage: typeof r.percentage === "number" && Number.isFinite(r.percentage) ? r.percentage : null,
+    revenue: typeof r.revenue === "number" && Number.isFinite(r.revenue) ? r.revenue : null,
+  }));
+}
+
 export const defaultGeoMapDeps: GeoMapDeps = {
   screenCountry: screenCountryFmp,
   capexYears: capexYearsFmp,
+  geoSegments: geoSegmentsFmp,
   hasKey: () => !!process.env.FMP_API_KEY,
 };
 
@@ -87,10 +102,23 @@ async function buildCountry(def: GeoMapCountryDef, deps: GeoMapDeps) {
     try { cy = await deps.capexYears(s.symbol); } catch { /* n/a */ }
     const yoy = cy.latest && cy.prevCapexUsd ? +(((cy.latest.capexUsd / cy.prevCapexUsd) - 1) * 100).toFixed(1) : null;
     if (cy.latest && cy.prevCapexUsd) prev.set(s.symbol, cy.prevCapexUsd);
+    let geoSegments: GeoMapCompany["geoSegments"] = null;
+    let geoSegmentsNote: string | null = "n/a — Geosegmente nicht abgefragt";
+    if (deps.geoSegments) {
+      try {
+        const mapped = mapGeoSegmentRows(await deps.geoSegments(s.symbol));
+        geoSegments = mapped.lines;
+        geoSegmentsNote = mapped.note;
+      } catch (e: any) {
+        geoSegments = null;
+        geoSegmentsNote = `n/a — Geosegmente nicht lesbar (${e?.message || "Fehler"})`;
+      }
+    }
     companies.push({
       symbol: s.symbol, name: s.name, sector: s.sector,
       capexUsd: cy.latest?.capexUsd ?? null, fiscalYear: cy.latest?.fiscalYear ?? null,
       yoyPct: yoy, reportedCurrency: cy.latest?.reportedCurrency ?? null,
+      geoSegments, geoSegmentsNote,
     });
   }
   return aggregateCountry(def, companies, prev);
@@ -107,7 +135,7 @@ export async function buildGeoMapCapex(deps: GeoMapDeps = defaultGeoMapDeps, now
     layer: "capex",
     asOf: now.toISOString(),
     source: "FMP company-screener + cash-flow-statement (FY, capitalExpenditure), FX → USD",
-    attribution: `Zuordnung nach Firmensitz: Summe der Top-${GEO_MAP_TOP_N} börsennotierten Firmen je Land (nach Market Cap, ≥ 2 Mrd USD). Kein volkswirtschaftlicher Gesamt-Capex.`,
+    attribution: `Zuordnung nach Firmensitz: Summe der Top-${GEO_MAP_TOP_N} börsennotierten Firmen je Land (nach Market Cap, ≥ 2 Mrd USD). Kein volkswirtschaftlicher Gesamt-Capex. Umsatz-Geosegmente hängen an der Firma und verteilen den Capex nicht um.`,
     coverage: { withData: countries.filter(c => c.status === "ok").length, total: countries.length },
     countries,
   };

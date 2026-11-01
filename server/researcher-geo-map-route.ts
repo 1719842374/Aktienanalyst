@@ -1,7 +1,7 @@
 /**
  * Additive Route (Offen_WORK_CAPEX_SECTOR_MAP.md + Offen_WORK_RESEARCHER_CAPEX_MAP.md).
  * Mounted from routes-register.ts, researcher.ts bleibt unberührt.
- * GET /api/researcher/geo-map?layer=capex|sector|miner
+ * GET /api/researcher/geo-map?layer=capex|sector|miner|gold|valuechain
  *
  * Capex und Sektor teilen sich eine Aggregation (FMP Cashflow, Firmensitz).
  * Der Kaltstart ist seriell und dauert auf Prod ~58 s. Damit ein Gateway-Timeout
@@ -26,6 +26,9 @@ import {
   type GeoMapMinerRegion,
   type GeoMapMinerResponse,
 } from "@shared/geo-map";
+import { buildGoldMapLayer, buildValueChainMapLayer } from "@shared/geo-map-layers";
+import { loadGoldAiscSeries } from "./gold-aisc";
+import { ALL_INDUSTRIES } from "./valuechain-catalog";
 
 const cacheDir = () => path.join(process.cwd(), ".cache", "researcher");
 const PARAMS = "global";
@@ -192,6 +195,18 @@ function minerBody(nowMs: number, regions: GeoMapMinerRegion[], network: GeoMapM
   };
 }
 
+function goldAiscPoints() {
+  const series = loadGoldAiscSeries();
+  if (!series) return null;
+  const points: { code: string; quarter: string; aisc: number }[] = [];
+  for (const q of series.quarters) {
+    for (const v of q.values) {
+      if (v && typeof v.aisc === "number" && Number.isFinite(v.aisc)) points.push({ code: String(v.company), quarter: q.quarter, aisc: v.aisc });
+    }
+  }
+  return points;
+}
+
 let warmImpl: () => void = () => {};
 
 /** Nach dem Listen aufrufen. Baut die Capex-Karte im Hintergrund, wenn der Cache fehlt oder veraltet ist. */
@@ -311,8 +326,10 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
 
   app.get("/api/researcher/geo-map", async (req, res) => {
     const layer = String(req.query?.layer ?? "capex");
+    if (layer === "gold") return res.json(buildGoldMapLayer(new Date(now()).toISOString(), goldAiscPoints()));
+    if (layer === "valuechain") return res.json(buildValueChainMapLayer(new Date(now()).toISOString(), ALL_INDUSTRIES));
     if (layer !== "capex" && layer !== "sector" && layer !== "miner") {
-      return res.status(400).json({ error: `layer=${layer} nicht verfügbar (capex, sector, miner)` });
+      return res.status(400).json({ error: `layer=${layer} nicht verfügbar (capex, sector, miner, gold, valuechain)` });
     }
     if (layer === "miner") return sendMiner(res);
     const force = req.query?.refresh === "1" || req.query?.refresh === "true";
