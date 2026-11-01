@@ -1,3 +1,5 @@
+import { FMP_ADR_MAP } from "../server/fmp-adr-map";
+
 /**
  * Minor-unit listings (LSE ".L" quotes in pence "GBp"/"GBX", JSE "ZAc", TASE "ILA").
  *
@@ -343,4 +345,46 @@ export function dividendsToUsd<E extends { amount: number }>(events: E[], majorC
 export function scaleBarsToUsd<B extends Record<string, any>>(bars: B[], fx: ListingFx | null | undefined): B[] {
   if (!fx || !fx.converted || typeof fx.rate !== "number" || !(fx.rate > 0) || !Array.isArray(bars)) return bars;
   return bars.map(b => scaleFields(b, BAR_FIELDS, fx.rate as number));
+}
+
+/**
+ * Symbole desselben Emittenten. Kein Vergleich der Rohstrings:
+ * - Steht das Listing in FMP_ADR_MAP, zählen nur die gemappten ADR- und Heimatbörsen-Symbole
+ *   (SAP.DE → SAP, VOW3.DE → VWAPY/VWAGY, nicht die abgeschnittene Wurzel VOW3).
+ * - Sonst ist bei einem Suffix aus SUFFIX_CURRENCY das Yahoo→FMP-Symbol die Wurzel (SHEL.L → SHEL).
+ */
+export function listingIdentitySymbols(ticker: unknown): string[] {
+  if (typeof ticker !== "string") return [];
+  const t = ticker.trim().toUpperCase();
+  if (!t) return [];
+  const out: string[] = [];
+  const add = (s: string) => {
+    const u = s.trim().toUpperCase();
+    if (u && !out.includes(u)) out.push(u);
+  };
+  add(t);
+  const homes = Object.keys(FMP_ADR_MAP);
+  let inAdrMap = false;
+  for (let i = 0; i < homes.length; i++) {
+    const cands = FMP_ADR_MAP[homes[i]] ?? [];
+    if (homes[i].toUpperCase() === t) {
+      inAdrMap = true;
+      for (let j = 0; j < cands.length; j++) add(cands[j].symbol);
+    }
+    for (let j = 0; j < cands.length; j++) {
+      if (cands[j].symbol.toUpperCase() === t) add(homes[i]);
+    }
+  }
+  const suffix = /^([A-Z0-9][A-Z0-9-]*)\.([A-Z]+)$/.exec(t);
+  if (suffix && !inAdrMap && Object.prototype.hasOwnProperty.call(SUFFIX_CURRENCY, suffix[2])) add(suffix[1]);
+  return out;
+}
+
+/** true, wenn sich die Listing-Identitäten schneiden (SHEL.L/SHEL, SAP.DE/SAP, VOW3.DE/VWAPY). */
+export function sameListingIssuer(a: unknown, b: unknown): boolean {
+  const left = listingIdentitySymbols(a);
+  const right = listingIdentitySymbols(b);
+  if (left.length === 0 || right.length === 0) return false;
+  for (let i = 0; i < left.length; i++) if (right.includes(left[i])) return true;
+  return false;
 }

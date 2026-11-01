@@ -14,6 +14,10 @@ import {
   parseCreditRatioRows,
 } from "../shared/credit";
 import { fmpRatios } from "./fmp";
+import { sameListingIssuer } from "../shared/listing-units";
+
+/** Nutzertext, wenn die bestehende FMP-Quelle nicht konfiguriert ist. Kein Env-Name. */
+export const CREDIT_SOURCE_UNAVAILABLE = "Kreditdaten-Quelle nicht verfügbar";
 
 const CACHE_MS = 12 * 60 * 60 * 1000;
 
@@ -31,6 +35,7 @@ function naReading(reason: string): CreditMetricReading {
 
 function errorText(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
+  if (/FMP_API_KEY|API_KEY|FMP_NOT_CONFIGURED/i.test(msg)) return CREDIT_SOURCE_UNAVAILABLE;
   return msg.slice(0, 160);
 }
 
@@ -43,7 +48,7 @@ export function cleanCreditPeers(peers: readonly string[] | undefined, self: str
   const out: string[] = [];
   for (const raw of peers ?? []) {
     const ticker = normalizeCreditTicker(raw);
-    if (!ticker || ticker === self || out.includes(ticker)) continue;
+    if (!ticker || sameListingIssuer(ticker, self) || out.some(have => sameListingIssuer(have, ticker))) continue;
     out.push(ticker);
     if (out.length >= CREDIT_STANCE_PARAMS.maxPeers) break;
   }

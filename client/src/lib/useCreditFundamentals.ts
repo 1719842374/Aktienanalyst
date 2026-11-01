@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { CreditFundamentalsResponse } from "@shared/schema";
 import { CREDIT_TICKER_RE } from "@shared/credit";
+import { sameListingIssuer } from "@shared/listing-units";
 import { getQueryFn } from "./queryClient";
 
 /** Query-Pfad für GET /api/credit-fundamentals/:ticker. Peers sortiert, damit der Cache stabil bleibt. */
@@ -10,7 +11,7 @@ export function creditFundamentalsQueryKey(ticker: string, peers: readonly strin
   const list: string[] = [];
   for (const raw of peers) {
     const peer = raw.trim().toUpperCase();
-    if (!CREDIT_TICKER_RE.test(peer) || peer === self || seen.has(peer)) continue;
+    if (!CREDIT_TICKER_RE.test(peer) || sameListingIssuer(peer, self) || seen.has(peer)) continue;
     seen.add(peer);
     list.push(peer);
   }

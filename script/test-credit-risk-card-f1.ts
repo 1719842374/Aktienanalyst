@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import express from "express";
 import type { AddressInfo } from "node:net";
 import { buildBiasDecision } from "../shared/bias-fixes";
+import { sameListingIssuer } from "../shared/listing-units";
 import {
   CREDIT_STANCE_PARAMS,
   creditLevelReading,
@@ -95,6 +96,7 @@ check("Anzeige echte 0", formatCreditMetric({ ...zeroCov.debtToEquity, percentil
 const line = pestelCreditLine(levelHigh);
 check("PESTEL-Zeile nennt BAA10Y, Perzentil und Einstufung", line.includes("BAA10Y") && line.includes("angespannt") && /Perzentil/.test(line) && line.includes("10.00%"), line);
 check("PESTEL-Zeile ohne Score und ohne CRV-Wirkung", /kein Score/i.test(line) && /kein CRV/i.test(line) && !/CDS\s*[:=]/.test(line), line);
+check("kein CDS steht kleingeschrieben mitten im Satz", line.includes("kein CDS") && !line.includes("Kein CDS"), line);
 const lineNa = pestelCreditLine(levelEmpty);
 check("PESTEL ohne Daten: n/a — Grund", lineNa.startsWith("Kreditrisiko") && lineNa.includes("n/a —") && !/0\.00%/.test(lineNa), lineNa);
 
@@ -127,7 +129,7 @@ const failLoad = await loadCreditFundamentals("SAP.DE", {
     throw new Error("FMP_API_KEY not set");
   },
 });
-check("FMP fehlt: beide Kennzahlen n/a mit Grund, Werte null", failLoad.debtToEquity.value == null && failLoad.interestCoverage.value == null && /FMP_API_KEY/.test(failLoad.debtToEquity.unavailable ?? "") && failLoad.note != null, failLoad.debtToEquity.unavailable ?? "");
+check("ohne Key: nutzerlesbarer Grund, kein Env-Name", failLoad.debtToEquity.value == null && failLoad.interestCoverage.value == null && failLoad.debtToEquity.unavailable === "Kreditdaten-Quelle nicht verfügbar" && failLoad.note === "Kreditdaten-Quelle nicht verfügbar" && !/FMP_API_KEY|API_KEY|process\.env/i.test(`${failLoad.debtToEquity.unavailable} ${failLoad.interestCoverage.unavailable} ${failLoad.note}`), `${failLoad.debtToEquity.unavailable} | ${failLoad.note}`);
 const again = await loadCreditFundamentals("SAP.DE", {
   fetchRatios: async () => {
     fetches2++;
@@ -135,6 +137,29 @@ const again = await loadCreditFundamentals("SAP.DE", {
   },
 });
 check("Fehler werden nicht gecacht", fetches2 === 2 && again.debtToEquity.value == null, String(fetches2));
+
+check("SHEL.L und SHEL sind derselbe Emittent (Yahoo→FMP, Suffix L)", sameListingIssuer("SHEL.L", "SHEL") && sameListingIssuer("SHEL", "SHEL.L"));
+check("SAP.DE und SAP sind derselbe Emittent (ADR/Heimatbörse)", sameListingIssuer("SAP.DE", "SAP") && sameListingIssuer("SAP", "SAP.DE"));
+check("VOW3.DE schließt VWAPY und VWAGY aus, nicht über den nackten String", sameListingIssuer("VOW3.DE", "VWAPY") && sameListingIssuer("VOW3.DE", "VWAGY") && sameListingIssuer("VWAGY", "VOW3.DE") && !sameListingIssuer("VOW3.DE", "VOW3"));
+check("fremde Emittenten bleiben Peer", !sameListingIssuer("SHEL.L", "BP.L") && !sameListingIssuer("SHEL.L", "TTE") && !sameListingIssuer("SAP.DE", "ORCL"));
+let shelCalls: string[] = [];
+const shel = await loadCreditFundamentals("SHEL.L", {
+  peers: ["SHEL", "BP.L", "TTE", "SHEL.L"],
+  fetchRatios: async (symbol) => {
+    shelCalls.push(symbol);
+    return [{ date: "2024-12-31", debtEquityRatio: symbol === "SHEL.L" ? 0.3 : 0.8, interestCoverage: 10 }];
+  },
+});
+check("SHEL.L lädt SHEL nicht als Peer", shelCalls.join(",") === "SHEL.L,BP.L,TTE" && shel.debtToEquity.value === 0.3, shelCalls.join(","));
+let sapCalls: string[] = [];
+await loadCreditFundamentals("SAP.DE", {
+  peers: ["SAP", "ORCL"],
+  fetchRatios: async (symbol) => {
+    sapCalls.push(symbol);
+    return [{ date: "2024-12-31", debtEquityRatio: 0.5, interestCoverage: 12 }];
+  },
+});
+check("SAP.DE lädt SAP nicht als Peer", sapCalls.includes("SAP.DE") && !sapCalls.includes("SAP") && sapCalls.includes("ORCL"), sapCalls.join(","));
 
 resetCreditFundamentalsCache();
 const app = express();

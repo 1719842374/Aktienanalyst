@@ -314,7 +314,7 @@ export function formatCreditMetric(reading: { value: number | null; unavailable:
 
 /** Eine Textzeile für PESTEL Economic. Kommt aus dem BAA10Y-Stand, nicht aus einer festen Spread-Schwelle. */
 export function pestelCreditLine(reading: CreditLevelReading): string {
-  const tail = "Kein CDS, kein Score, kein CRV.";
+  const tail = "kein CDS, kein Score, kein CRV.";
   if (reading.value == null || !Number.isFinite(reading.value)) {
     const reason = (reading.unavailable ?? "FRED BAA10Y nicht erreichbar").replace(/^n\/a\s*—\s*/i, "").trim();
     return `Kreditrisiko (Markt-Spread Baa, FRED BAA10Y): n/a — ${reason}. ${tail}`;
