@@ -542,21 +542,19 @@ function supplySignal(
 }
 
 /**
- * Quartals-AISC für die Zusatzschicht, point-in-time: eine Stufe gilt ab dem spätesten
- * sourceDate der Firmen, die den Mittelwert tragen. availableFrom der Chart-Linie kann
- * davor liegen (Lookahead in der Datei) und wird hier nicht benutzt. GIS liest das nicht.
+ * Quartals-AISC für die Zusatzschicht. Jede Stufe gilt ab `availableFrom`
+ * (Quartalsende + Berichtsverzug), nicht ab dem sourceDate einer späteren
+ * Sammelveröffentlichung. Liegen zwei Quartale auf demselben Tag, bleibt das
+ * spätere. GIS liest das nicht.
  */
 export function aiscStepsForAdaptive(series: GoldAiscSeries | null | undefined): { date: string; aisc: number }[] | null {
   if (!series) return null;
   const dated: { date: string; aisc: number; quarter: string }[] = [];
   for (const quarter of series.quarters) {
     if (quarter.aisc == null || !(quarter.aisc > 0)) continue;
-    const sourceDates = (quarter.values ?? [])
-      .map(value => String(value?.sourceDate ?? "").slice(0, 10))
-      .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date));
-    if (sourceDates.length < series.minCompanies) continue;
-    const knownFrom = sourceDates.reduce((later, date) => date > later ? date : later);
-    dated.push({ date: knownFrom, aisc: quarter.aisc, quarter: quarter.quarter });
+    const date = String(quarter.availableFrom ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    dated.push({ date, aisc: quarter.aisc, quarter: quarter.quarter });
   }
   if (dated.length === 0) return null;
   dated.sort((a, b) => a.quarter.localeCompare(b.quarter) || a.date.localeCompare(b.date));
@@ -787,12 +785,15 @@ function bollingerSignal(closes: number[]): GoldAdaptiveSignal {
   }
   const current = positions[positions.length - 1];
   const z = adaptiveZ(current, positions.slice(0, -1));
+  const signalZ = z == null ? null : -z;
+  const side = current < 0 ? "unterhalb" : "oberhalb";
+  const meaning = signalZ == null ? "" : signalZ > 0 ? "bullisch" : signalZ < 0 ? "bärisch" : "neutral";
   return fromZ(
     "technical.bollinger",
     "Bollinger",
-    z == null ? null : -z,
+    signalZ,
     "n/a — Bollinger ohne Streuung",
-    `Fenster ${BOLLINGER_WINDOW}, Lage ${current.toFixed(2)} σ, oberhalb der eigenen Historie = bärisch`,
+    `Fenster ${BOLLINGER_WINDOW}, Lage ${current.toFixed(2)} σ (${side} des Mittels) = ${meaning}`,
   );
 }
 

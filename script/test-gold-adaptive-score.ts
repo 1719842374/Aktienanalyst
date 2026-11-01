@@ -391,7 +391,9 @@ console.log("\nF10 Bollinger, ATR, Fiskal, AISC — nur die Zusatzschicht");
   const highBand = signal(scoreGoldAdaptive(baseInput({ closes: stretched })), "technical", "technical.bollinger");
   const lowBand = signal(scoreGoldAdaptive(baseInput({ closes: dropped })), "technical", "technical.bollinger");
   check("Bollinger über der eigenen Historie ist bärisch", highBand?.available === true && (highBand?.direction ?? 0) < 0, highBand?.detail);
+  check("Bollinger-Text oberhalb passt zur bärischen Richtung", (highBand?.detail ?? "").includes("oberhalb des Mittels) = bärisch") && !(highBand?.detail ?? "").includes("unterhalb"));
   check("Bollinger unter der eigenen Historie ist bullisch", lowBand?.available === true && (lowBand?.direction ?? 0) > 0, lowBand?.detail);
+  check("Bollinger-Text unterhalb passt zur bullischen Richtung", (lowBand?.detail ?? "").includes("unterhalb des Mittels) = bullisch") && !(lowBand?.detail ?? "").includes("oberhalb"));
   check("Bollinger-Detail nennt das Fenster", (highBand?.detail ?? "").includes(String(BOLLINGER_WINDOW)));
   const ranges = calm.map((point, i) => {
     const width = i < 360 ? 0.004 : 0.05;
@@ -418,10 +420,10 @@ console.log("\nF10 Bollinger, ATR, Fiskal, AISC — nur die Zusatzschicht");
   check("Perzentil braucht Historie", percentileRank(5, [1, 2, 3]) === null);
   check("höchstes Wachstum liegt über dem Median", (percentileRank(100, Array.from({ length: 40 }, (_, i) => i)) ?? 0) > 0.9);
 
-  const quarter = (name: string, aisc: number | null, sourceDates: string[]): GoldAiscQuarterStep => ({
+  const quarter = (name: string, aisc: number | null, sourceDates: string[], availableFrom: string): GoldAiscQuarterStep => ({
     quarter: name,
     periodEnd: "2024-03-31",
-    availableFrom: "2024-05-30",
+    availableFrom,
     aisc,
     count: sourceDates.length,
     values: sourceDates.map((sourceDate, index) => ({
@@ -447,11 +449,11 @@ console.log("\nF10 Bollinger, ATR, Fiskal, AISC — nur die Zusatzschicht");
       AEM: { name: "Agnico Eagle", ticker: "AEM", metric: "AISC" },
     },
     quarters: [
-      quarter("2024-Q1", null, []),
-      quarter("2024-Q2", 1400, ["2024-08-01"]),
-      quarter("2024-Q3", 1500, ["2024-08-15", "2024-11-01"]),
-      quarter("2024-Q4", 1550, ["2024-11-01", "2025-02-20"]),
-      quarter("2025-Q1", 1600, ["2025-02-20", "2025-02-20"]),
+      quarter("2024-Q1", null, [], "2024-05-30"),
+      quarter("2024-Q2", 1400, ["2026-02-19"], "2024-08-29"),
+      quarter("2024-Q3", 1500, ["2026-02-19", "2026-02-19"], "2024-11-29"),
+      quarter("2024-Q4", 1550, ["2026-02-19", "2026-02-19"], "2025-03-01"),
+      quarter("2025-Q1", 1600, ["2026-02-19", "2026-02-19"], "2025-05-30"),
     ],
     gaps: [],
     retrievedAt: "2026-10-18",
@@ -459,10 +461,13 @@ console.log("\nF10 Bollinger, ATR, Fiskal, AISC — nur die Zusatzschicht");
     inScore: false,
   };
   const steps = aiscStepsForAdaptive(series);
-  check("n/a-Quartal und einzelne Quelle fallen weg", JSON.stringify(steps) === JSON.stringify([
-    { date: "2024-11-01", aisc: 1500 },
-    { date: "2025-02-20", aisc: 1600 },
+  check("Stufen folgen availableFrom, nicht dem Scrape-Datum", JSON.stringify(steps) === JSON.stringify([
+    { date: "2024-08-29", aisc: 1400 },
+    { date: "2024-11-29", aisc: 1500 },
+    { date: "2025-03-01", aisc: 1550 },
+    { date: "2025-05-30", aisc: 1600 },
   ]), JSON.stringify(steps));
+  check("n/a-Quartal fällt weg", steps?.every(step => step.date !== "2024-05-30"));
   check("fehlende Datei bleibt null", aiscStepsForAdaptive(null) === null);
   const closes = Array.from({ length: 80 }, (_, i) => ({ date: day(i), close: 1600 + i * 4 }));
   const supplied = signal(scoreGoldAdaptive(baseInput({
@@ -471,8 +476,10 @@ console.log("\nF10 Bollinger, ATR, Fiskal, AISC — nur die Zusatzschicht");
   })), "supply", "supply.aisc");
   check("Quartals-AISC mit genug Schlüssen ist verfügbar", supplied?.available === true, supplied?.detail);
   check("weitere Marge ist bullisch", (supplied?.direction ?? 0) > 0, String(supplied?.direction));
-  const loaded = aiscStepsForAdaptive(loadGoldAiscSeries());
-  check("Repo-Datei liefert positive PIT-Stufen", loaded != null && loaded.length > 0 && loaded.every(step => step.aisc > 0 && /^\d{4}-\d{2}-\d{2}$/.test(step.date)), JSON.stringify(loaded));
+  const loadedSeries = loadGoldAiscSeries();
+  const loaded = aiscStepsForAdaptive(loadedSeries);
+  check("Repo-Datei liefert positive Stufen", loaded != null && loaded.length > 0 && loaded.every(step => step.aisc > 0 && /^\d{4}-\d{2}-\d{2}$/.test(step.date)), JSON.stringify(loaded));
+  check("Repo-Stufen sind availableFrom, nicht 2026-02-19", loaded != null && loadedSeries != null && loaded.every(step => loadedSeries.quarters.some(q => q.availableFrom === step.date && q.aisc === step.aisc)) && loaded.some(step => step.date.startsWith("2024")) && !loaded.every(step => step.date === "2026-02-19"), JSON.stringify(loaded));
 
   const gis = 0.42;
   const before = scoreGoldAdaptive(baseInput({ gis, closes: calm }));

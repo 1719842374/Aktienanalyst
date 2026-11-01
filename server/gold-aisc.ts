@@ -5,7 +5,7 @@
  * -> Response-Feld `aiscLine` (GET /api/analyze-gold) -> GoldDashboard useQuery -> GoldPriceChart.
  *
  * Chart-Linie. GIS und getTechnicalScore bleiben ohne AISC.
- * Die Zusatzschicht liest dieselben Quartale über aiscStepsForAdaptive (point-in-time, sourceDate).
+ * Die Zusatzschicht liest dieselben Quartale über aiscStepsForAdaptive ab availableFrom, nicht ab dem sourceDate einer Sammelveröffentlichung.
  * Ungültige oder fehlende Datei: null (Chart zeigt „AISC n/a“), nie Ersatzwerte.
  *
  * Prod: Die JSON-Datei wird importiert, esbuild bündelt sie in dist/index.cjs. Damit hängt die Linie
