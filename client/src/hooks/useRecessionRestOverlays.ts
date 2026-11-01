@@ -46,3 +46,22 @@ export function useRecessionCapeOverlay(enabled: boolean) {
     staleTime: 12 * 60 * 60 * 1000,
   });
 }
+
+/** FRED-Reihe über GET /api/analyze-recession/fred-history (server/fred-csv.ts). Nur bei eingeschaltetem Chip. */
+export interface FredHistoryBody {
+  seriesId: string;
+  source: string;
+  points: { date: string; value: number }[];
+  note: string | null;
+}
+
+export function useRecessionFredHistory(series: "T10Y2Y", enabled: boolean) {
+  const path = `/api/analyze-recession/fred-history?series=${series}`;
+  return useQuery<FredHistoryBody | null>({
+    queryKey: [path],
+    queryFn: getQueryFn<FredHistoryBody | null>({ on401: "throw" }),
+    enabled,
+    // server/recession-fred-history-route.ts FRED_HISTORY_CACHE_HOURS.
+    staleTime: 12 * 60 * 60 * 1000,
+  });
+}

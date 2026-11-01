@@ -52,6 +52,13 @@ const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { sta
   if (url.includes("/api/analyze-recession/markets")) return json(fx.markets);
   if (url.includes("/api/credit-spread/market")) return json(fx.credit);
   if (url.includes("/api/analyze-btc/real10y-history")) return json(fx.real10y);
+  if (url.includes("/api/analyze-recession/fred-history")) {
+    if (mode === "fail") return new Response("upstream", { status: 503 });
+    if (mode === "empty") return json({ seriesId: "T10Y2Y", source: "FRED T10Y2Y (US)", points: [], note: "FRED nicht erreichbar oder leer" });
+    const series = url.includes("series=M2SL") ? "M2SL" : "T10Y2Y";
+    const source = series === "M2SL" ? "FRED M2SL YoY (US)" : "FRED T10Y2Y (US)";
+    return json({ seriesId: series, source, points: seriesOn(series === "M2SL" ? 21 : 5, i => series === "M2SL" ? 2 + i * 0.15 : -0.4 + i * 0.03), note: null });
+  }
   if (url.includes("/api/analyze-recession/cape")) {
     if (mode === "fail") return new Response("upstream", { status: 503 });
     if (mode === "empty") return json({ source: "Multpl Shiller PE (US)", sourceUrl: "https://www.multpl.com/shiller-pe/table/by-month", points: [], note: "Multpl nicht erreichbar oder leer" });
@@ -209,6 +216,44 @@ async function main() {
     await click(findByTestId(r.c, "toggle-recession-cape"));
     const a = findByTestId(r.c, "recession-cape-status")?.textContent ?? "";
     check(`CAPE ${m}: n/a ohne aktuelle z-Zahl`, a.includes(": n/a") && !/aktuell /.test(a), a);
+    await act(async () => { r.root.unmount(); });
+  }
+
+  console.log("4) Zinskurve T10Y2Y über fred-csv");
+  mode = "ok";
+  let fredMod: any = null;
+  try { fredMod = await import("../server/recession-fred-history-route.ts"); }
+  catch (e: any) { check("fred-history-Route lädt", false, e?.message ?? String(e)); }
+  if (fredMod) {
+    const { fredCsvObservations } = await import("../server/fred-csv.ts");
+    const csv = "DATE,T10Y2Y\n2024-01-02,-0.20\n2024-01-03,.\n2024-01-04,0.15\n";
+    const obs = fredCsvObservations(csv);
+    check("Parser wirft '.' weg", obs.length === 2 && obs[1].value === 0.15, JSON.stringify(obs));
+    const body = await fredMod.loadFredHistory("T10Y2Y", async () => csv);
+    check("Route reicht fred-csv-Beobachtungen durch", body.points.length === 2 && body.points[0].date === "2024-01-02" && body.source.includes("T10Y2Y"), JSON.stringify(body));
+    const denied = await fredMod.loadFredHistory("DGS10", async () => csv);
+    check("nur T10Y2Y, kein zweites FRED-Produkt", denied.points.length === 0 && /nicht/.test(denied.note ?? ""), JSON.stringify(denied));
+  }
+
+  calls.length = 0;
+  const curveMount = await mount();
+  await click(findByTestId(curveMount.c, "toggle-recession-curve"));
+  const curveLast = seriesOn(5, i => -0.4 + i * 0.03).at(-1)!;
+  const sCurve = findByTestId(curveMount.c, "recession-curve-status")?.textContent ?? "";
+  check("Schalter Zinskurve", findByTestId(curveMount.c, "toggle-recession-curve")?.textContent === "Zinskurve");
+  check("ein Abruf series=T10Y2Y", calls.filter(u => u.includes("/api/analyze-recession/fred-history?series=T10Y2Y")).length === 1, calls.filter(u => u.includes("fred-history")).join(","));
+  check("Status: T10Y2Y, US, Datum, kein Score", sCurve.includes("T10Y2Y") && sCurve.includes("US") && sCurve.includes(curveLast.date) && sCurve.includes("kein Score-Einfluss"), sCurve);
+  await click(findByTestId(curveMount.c, "tab-vgk"));
+  await click(findByTestId(curveMount.c, "tab-ashr"));
+  const sCurveAs = findByTestId(curveMount.c, "recession-curve-status")?.textContent ?? "";
+  check("Kurve auf EU/Asien bleibt T10Y2Y (US) mit Datum", sCurveAs.includes("T10Y2Y") && sCurveAs.includes("US") && sCurveAs.includes(curveLast.date), sCurveAs);
+  await act(async () => { curveMount.root.unmount(); });
+  for (const m of ["fail", "empty"] as const) {
+    mode = m;
+    const r = await mount();
+    await click(findByTestId(r.c, "toggle-recession-curve"));
+    const a = findByTestId(r.c, "recession-curve-status")?.textContent ?? "";
+    check(`Kurve ${m}: n/a ohne aktuelle z-Zahl`, a.includes(": n/a") && !/aktuell /.test(a), a);
     await act(async () => { r.root.unmount(); });
   }
 

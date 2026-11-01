@@ -160,7 +160,7 @@ export const CAPE_PARAMS = {
   maxValue: 80,
 } as const;
 
-export type RestOverlayId = "buffett" | "cape";
+export type RestOverlayId = "buffett" | "cape" | "curve";
 
 export interface RestOverlaySpec {
   id: RestOverlayId;
@@ -206,6 +206,20 @@ export const REST_OVERLAYS: Record<RestOverlayId, RestOverlaySpec> = {
     frequency: "monthly",
     rawUnit: "PE",
     dash: "6 3",
+  },
+  curve: {
+    id: "curve",
+    chip: "Zinskurve",
+    label: "Zinskurve",
+    color: "#22d3ee",
+    onClass: "border-cyan-500 text-cyan-500",
+    testId: "toggle-recession-curve",
+    statusTestId: "recession-curve-status",
+    field: "_zCurve",
+    axisId: "zCurve",
+    frequency: "daily",
+    rawUnit: "pp",
+    dash: "3 2",
   },
 };
 

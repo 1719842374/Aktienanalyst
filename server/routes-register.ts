@@ -30,6 +30,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // GET /api/analyze-recession/cape (F1-45, Multpl Shiller PE, nur Anzeige, kein Score)
   const { registerCapeRoute } = await import("./recession-cape-route");
   registerCapeRoute(app);
+  // GET /api/analyze-recession/fred-history (F1-45, FRED über fred-csv, nur Anzeige, kein Score)
+  const { registerFredHistoryRoute } = await import("./recession-fred-history-route");
+  registerFredHistoryRoute(app);
   const { registerThesisLabRoutes } = await import("./thesis-lab-routes");
   registerThesisLabRoutes(app);
   const { registerDividendRoute } = await import("./dividend-route");
