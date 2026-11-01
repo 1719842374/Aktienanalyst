@@ -7,6 +7,7 @@ import {
   CartesianGrid, Customized, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { TradeBalanceResponse } from "@shared/trade-balance";
+import { globalizationAdjustedPct, PHI_CACHE_MS, PHI_US_ONLY_REASON, type BuffettPhiBody } from "@shared/buffett-phi";
 import { axisTicks, lastPointLabel, proxySuffix, tickLabel, type BuffettRangeId } from "./buffettChartScale";
 
 type RegionId = "US" | "EU" | "CN";
@@ -26,6 +27,8 @@ interface TrendPoint {
   proxy?: string;
   /** F1-74: „etf“, wenn der Punkt aus einem ETF-Kurs geschätzt ist (EU/CN) */
   proxyKind?: "etf";
+  /** F1-40: Marktwert × (1 − φ) / BIP, nur wenn φ für die USA vorliegt. */
+  adjustedRatio?: number | null;
 }
 
 interface BuffettPayload {
@@ -69,6 +72,31 @@ export function tradeBalanceLine(
   return `${label}: ${pctDe(t.pct)} — 12 Monate ${monthDe(t.from)} bis ${monthDe(t.asOf)}, ${t.ttmBn.toFixed(0).replace("-", "−")} Mrd. $ ÷ BIP ${t.gdpBn.toFixed(0)} Mrd. $ (Quartal ab ${t.gdpDate})${ago} · nur Anzeige, kein Score`;
 }
 
+/**
+ * F1-36/F1-40: globalisierungsbereinigte Quote. φ kommt von /api/analyze-recession/buffett-phi.
+ * EU/CN und fehlende Schätzung: n/a mit Grund. Fallback trägt das Wort „Fallback“ und φ = 0,40.
+ * Nur Anzeige, kein Score.
+ */
+export function buffettPhiLine(
+  region: RegionId,
+  state: { data: BuffettPhiBody | null | undefined; loading: boolean; error: unknown },
+  latestRatio: number | null,
+): string {
+  const label = "Globalisierungsbereinigt";
+  if (region !== "US") return `${label}: n/a — ${PHI_US_ONLY_REASON}`;
+  if (state.loading) return `${label}: wird geladen …`;
+  if (state.error && !state.data) return `${label}: n/a — ${errorReason(state.error)}`;
+  const data = state.data;
+  if (!data || data.phi == null) return `${label}: n/a — ${data?.reason ?? "keine Schätzung"}`;
+  const adjusted = latestRatio != null ? globalizationAdjustedPct(latestRatio, data.phi) : null;
+  const phiTxt = data.phi.toFixed(2).replace(".", ",");
+  const adjTxt = adjusted == null ? "n/a" : `${adjusted.toFixed(1).replace(".", ",")} %`;
+  const origin = data.fallback
+    ? `φ = ${phiTxt} — ${data.reason ?? "Fallback — LLM nicht verfügbar"}`
+    : `LLM φ = ${phiTxt}${data.model ? ` (${data.model})` : ""}${data.fromCache ? ", gecacht" : ""}`;
+  return `${label}: ${adjTxt} — Marktwert × (1 − φ) / BIP, ${origin}. Aktuelles φ auf der ganzen Reihe (keine historische φ-Reihe). Handelsbilanz-Faktor α: n/a — kein aus den Daten abgeleitetes Gewicht. Reservewährungs-Faktor β: n/a — kein aus den Daten abgeleitetes Gewicht. nur Anzeige, kein Score`;
+}
+
 /** F1-34: Grund aus dem 502-Body sichtbar machen, nicht nur im eingeklappten Detail. */
 function errorReason(error: unknown): string {
   const message = String((error as { message?: unknown } | null)?.message ?? "").trim();
@@ -97,6 +125,7 @@ const MONTHS = [
 ];
 
 const RATIO = "#1473fc";
+const ADJUSTED = "#6d28d9";
 const TREND = "#7a7a7a";
 const PLUS_1 = "#f47c12";
 const PLUS_2 = "#d12b3e";
@@ -117,12 +146,13 @@ function sliceWindow(points: TrendPoint[], range: RangeId): TrendPoint[] {
 
 function yDomain(rows: TrendPoint[], range: RangeId, fallback = false): [number, number] {
   const ratios = rows.map(row => row.ratio);
+  const adjusted = rows.map(row => typeof row.adjustedRatio === "number" ? row.adjustedRatio : Number.NaN).filter(value => Number.isFinite(value));
   const maxRatio = Math.max(...ratios);
-  const minRatio = Math.min(...ratios);
+  const minRatio = Math.min(...ratios, ...(adjusted.length > 0 ? adjusted : []));
   // F1-31: nur beim FRED-Ersatz (Financial Accounts, über 250 %) die Obergrenze in 50er-Schritten erweitern; Wilshire-Achse unverändert.
   if (range === "Max" && maxRatio >= 180) return [0, fallback ? Math.max(250, Math.ceil(maxRatio / 50) * 50) : 250];
   const near = rows
-    .flatMap(row => [row.ratio, row.plus1, row.plus2, row.trend, row.minus1, row.minus2])
+    .flatMap(row => [row.ratio, row.plus1, row.plus2, row.trend, row.minus1, row.minus2].concat(typeof row.adjustedRatio === "number" && Number.isFinite(row.adjustedRatio) ? [row.adjustedRatio] : []))
     .filter(value => value >= minRatio - 25 && value <= maxRatio + 25);
   const min = Math.min(...near);
   const max = Math.max(...near);
@@ -362,6 +392,18 @@ export function BuffettRatioPanel() {
     },
   });
 
+  // F1-36/F1-37: φ nur für die USA. Eigene queryFn wie die Handelsbilanz, damit der Grund im Body bleibt.
+  const phiQuery = useQuery({
+    queryKey: ["recession-buffett-phi", "US"],
+    enabled: region === "US",
+    staleTime: PHI_CACHE_MS,
+    queryFn: async () => {
+      const res = await fetch("/api/analyze-recession/buffett-phi?region=US");
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      return await res.json() as BuffettPhiBody;
+    },
+  });
+
   const all = query.data?.points ?? [];
 
   // PR 3 (Chat-Kontext): letzter angezeigter Punkt aus der bestehenden Query — keine neue Abfrage.
@@ -378,9 +420,11 @@ export function BuffettRatioPanel() {
       query.data.benchmark ? `Schätzung ab Anker ${query.data.benchmark.anchorDate}` : "",
     ].filter(Boolean).join("; ") || null,
   } : null);
+  const phi = region === "US" && phiQuery.data?.phi != null ? phiQuery.data.phi : null;
   const chart = sliceWindow(all, range).map(point => ({
     ...point,
     t: Date.parse(`${point.date}T00:00:00Z`),
+    adjustedRatio: phi != null ? globalizationAdjustedPct(point.ratio, phi) : null,
   }));
   const domain = chart.length > 0 ? yDomain(chart, range, !!query.data?.fallback) : [0, 250] as [number, number];
   const ticks = axisTicks(chart, range, wide);
@@ -525,6 +569,9 @@ export function BuffettRatioPanel() {
                   <Line type="linear" dataKey="minus1" name="− 1 Std.-Abw." stroke={MINUS_1} dot={false} strokeWidth={1.5} strokeDasharray="6 4" isAnimationActive={false} />
                   <Line type="linear" dataKey="minus2" name="− 2 Std.-Abw." stroke={MINUS_2} dot={false} strokeWidth={1.5} strokeDasharray="6 4" isAnimationActive={false} />
                   <Line type="linear" dataKey="ratio" name="Marktwert zum BIP" stroke={RATIO} dot={false} strokeWidth={1.8} isAnimationActive={false} />
+                  {phi != null && (
+                    <Line type="linear" dataKey="adjustedRatio" name="Globalisierungsbereinigt" stroke={ADJUSTED} dot={false} strokeWidth={1.6} strokeDasharray="4 3" isAnimationActive={false} />
+                  )}
                   <Customized component={(overlay: { xAxisMap?: Record<string, AxisMap>; yAxisMap?: Record<string, AxisMap> }) => (
                     <ChartOverlay {...overlay} rows={chart} range={range} wide={wide} />
                   )} />
@@ -537,6 +584,13 @@ export function BuffettRatioPanel() {
               In diesem Fenster liegt kein Verlauf.
             </p>
           )}
+          <p className="text-[11px] leading-snug break-words text-muted-foreground" data-testid="text-buffett-phi">
+            {buffettPhiLine(
+              region,
+              { data: phiQuery.data, loading: phiQuery.isPending && !phiQuery.data, error: phiQuery.error },
+              chart.length > 0 ? chart[chart.length - 1].ratio : null,
+            )}
+          </p>
           <p className="text-[11px] leading-snug text-muted-foreground" data-testid="text-buffett-trade-balance">
             {tradeBalanceLine(region, { data: tradeQuery.data, loading: tradeQuery.isLoading, error: tradeQuery.error })}
           </p>
