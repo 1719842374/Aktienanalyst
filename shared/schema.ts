@@ -16,6 +16,9 @@ export const analyzeRequestSchema = z.object({
     add: z.array(z.string().min(1).max(20)).max(8).optional().default([]),
     remove: z.array(z.string().min(1).max(20)).max(8).optional().default([]),
   }).optional(),
+  // Score-Ergänzungen (Moat-Rivalitäts-Dämpfung, Hybrid-Klassen, Earnings Yield, Accruals).
+  // Default aus: fehlt das Feld, bleibt der Score exakt wie bisher.
+  scoringAdditions: z.boolean().optional().default(false),
 });
 
 export type AnalyzeRequest = z.infer<typeof analyzeRequestSchema>;
@@ -484,6 +487,11 @@ export interface StockAnalysis {
   pegRatio: number;
   peg?: number | null;
   lynchClass?: string;      // 'slow_grower' | 'stalwart' | 'fast_grower' | 'cyclical' | 'turnaround' | 'asset_play'
+  /**
+   * WORK_SECTORAL_MOAT_DAMPING / WORK_HYBRID_CLASSIFICATION / WORK_SCORING_ADDITIONS_MSFT.
+   * Nur true schaltet die Score-Ergänzungen an. Fehlt das Feld, bleibt der Score unverändert.
+   */
+  scoringAdditions?: boolean;
   lynchPEGBasis?: string;   // Erklärung welche Methode verwendet wurde
   evEbitda: number;
   beta5Y: number;

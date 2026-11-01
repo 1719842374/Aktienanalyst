@@ -519,7 +519,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       // selbst wenn der Aufrufer explizit einen frischen Re-Fetch verlangte.
       // Betraf jeden Client-Request und jeden Cron-Precache-Call mit
       // force=true, nicht nur diese Verifikation.
-      const { ticker, useLLM = false, force: forceRefresh = false, peerOverrides } = parsed.data;
+      const { ticker, useLLM = false, force: forceRefresh = false, peerOverrides, scoringAdditions = false } = parsed.data;
+      // Flag liegt NICHT im Cache-Key. Ein Treffer bekommt ihn erst auf der Kopie vor applyBiasFix,
+      // sonst würde ein Flag-AN-Lauf den Flag-AUS-Cache überschreiben.
       const upperTicker = ticker.toUpperCase();
 
       // Auftrag 09.08.2026 / gehaertet 10.08.2026 ("Peer-Add/Remove zuverlaessig"):
@@ -552,7 +554,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
         }
         if (cacheHit) {
           console.log(`[ANALYZE] Cache hit for ${upperTicker}`);
-          return res.json(cached!.result);
+          const hit = cached!.result;
+          if (!scoringAdditions || hit.scoringAdditions === true) return res.json(hit);
+          return res.json(applyBiasFix({ ...hit, scoringAdditions: true }));
         }
         // RAM-Miss: 7-Tage-Disk (gleicher Key). KI-Blöcke bleiben, kurze HP wird einmal nachgeladen.
         const diskHit = diskCacheGet(cacheKey);
@@ -597,7 +601,8 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
             usedLLM: !!(served.llmMode ?? served._useLLM ?? useLLM),
           });
           console.log(`[ANALYZE] Disk cache hit for ${upperTicker} (age=${_cacheAge}min)`);
-          return res.json(served);
+          if (!scoringAdditions || served.scoringAdditions === true) return res.json(served);
+          return res.json(applyBiasFix({ ...served, scoringAdditions: true }));
         }
       }
 
@@ -2386,6 +2391,7 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
       }
 
       if (!yahooOnly) {
+        if (scoringAdditions) (analysis as { scoringAdditions?: boolean }).scoringAdditions = true;
         applyBiasFix(analysis);
         attachExecSummary(analysis);
       }

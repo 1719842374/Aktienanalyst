@@ -273,6 +273,13 @@ export function Section1({ data, onRefresh, onThesisScore }: Props) {
                         data.lynchClass === "turnaround" ? "bg-purple-500/15 text-purple-400" :
                         "bg-muted text-muted-foreground"}`}>{data.lynchClass === "cyclical" ? "Zykliker" : data.lynchClass === "fast_grower" ? "Fast Grower" : data.lynchClass === "slow_grower" ? "Slow Grower" : data.lynchClass === "turnaround" ? "Turnaround" : data.lynchClass === "stalwart" ? "Stalwart" : data.lynchClass}</span>
                   )}
+                  {data.scoringAdditions === true && data.biasFix?.scoringAdditions?.hybrid && (
+                    <span className="ml-2 text-[9px] text-muted-foreground" data-testid="hybrid-classification" title={data.biasFix.scoringAdditions.hybrid.reason ?? undefined}>
+                      {data.biasFix.scoringAdditions.hybrid.available && data.biasFix.scoringAdditions.hybrid.label
+                        ? `Anteile: ${data.biasFix.scoringAdditions.hybrid.shares.map(s => `${s.label} ${(s.share * 100).toFixed(0)} %`).join(" · ")}`
+                        : data.biasFix.scoringAdditions.hybrid.reason}
+                    </span>
+                  )}
                 </td>
               </tr>
               <Row label="EV/EBITDA" value={yNum(data.evEbitda, 1)} />
