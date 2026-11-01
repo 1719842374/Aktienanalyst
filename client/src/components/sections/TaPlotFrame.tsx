@@ -12,12 +12,20 @@ export function TaPlotScroll({
   minWidth,
   children,
   testId = "ta-plot-scroll",
+  widthScale = 1,
 }: {
   minWidth?: number;
   children: ReactNode;
   testId?: string;
+  /**
+   * 1 = bisherige Breite (Chart pixelgleich).
+   * >1 verlängert die Fläche proportional zu zusätzlichen Kategorien (Szenario-Kegel),
+   * damit die Historie nicht auf die Viewport-Breite gestaucht wird.
+   */
+  widthScale?: number;
 }) {
-  const width = minWidth ? `max(100%, ${minWidth}px)` : "100%";
+  const base = minWidth ? `max(100%, ${minWidth}px)` : "100%";
+  const width = widthScale > 1 ? `calc(${base} * ${widthScale})` : base;
   return (
     <div
       className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-1 sm:pb-0"
@@ -25,7 +33,11 @@ export function TaPlotScroll({
       data-testid={testId}
       data-min-width={minWidth ?? undefined}
     >
-      <div data-testid={`${testId}-inner`} style={{ width, minWidth: minWidth || undefined }}>
+      <div
+        data-testid={`${testId}-inner`}
+        data-width-scale={widthScale > 1 ? widthScale : undefined}
+        style={{ width, minWidth: minWidth || undefined }}
+      >
         {children}
       </div>
     </div>

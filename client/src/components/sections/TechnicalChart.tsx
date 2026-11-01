@@ -1,9 +1,9 @@
-import { useState, useMemo, useCallback, useEffect, type ReactNode } from "react";
+import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import type { StockAnalysis, TradingSignal } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import {
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis,
-  Tooltip, ReferenceLine, ReferenceArea, Area, CartesianGrid,
+  Tooltip, ReferenceLine, ReferenceArea, ReferenceDot, Customized, Area, CartesianGrid,
 } from "recharts";
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
@@ -24,6 +24,10 @@ import { useMarketTreasury10Y } from "@/lib/useMarketTreasury10Y";
 import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, type Treasury10YOverlayPoint, type Treasury10YResponse } from "@shared/treasury10y";
 import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
+import {
+  CONE_PARAMS, CONE_STYLE, attachConeSeries, coneDomainValues, conePlotScale, scenarioConeFromAnalysis, separateLabelYs,
+  type ConePlotFields, type LabelBox, type ScenarioCone,
+} from "@/lib/scenarioCone";
 
 /** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
 export interface TaPaneContext {
@@ -120,7 +124,7 @@ function maProbeAttrs(points: WindowPoint[]): Record<string, string> {
 }
 
 /** Eigene Y je Band: Close + gerade sichtbare MAs/BB. Keine gemeinsame Absolute-Y. */
-function priceDomain(points: WindowPoint[], visible: Set<MAKey>, showBB: boolean): [number, number] {
+function priceDomain(points: WindowPoint[], visible: Set<MAKey>, showBB: boolean, extra?: readonly number[]): [number, number] {
   let min = Infinity;
   let max = -Infinity;
   for (const d of points) {
@@ -138,6 +142,14 @@ function priceDomain(points: WindowPoint[], visible: Set<MAKey>, showBB: boolean
     if (showBB && d.bbUpper != null && d.bbUpper > hi) hi = d.bbUpper;
     if (lo < min) min = lo;
     if (hi > max) max = hi;
+  }
+  if (extra) {
+    for (const v of extra) {
+      if (v != null && isFinite(v)) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
   }
   if (!isFinite(min) || !isFinite(max)) return [0, 1];
   const pad = min === max ? (Math.abs(min) * 0.05 || 1) : (max - min) * 0.05;
@@ -211,6 +223,9 @@ export function TechnicalChart({
   // Startdatum = ältester Kurstag der Historie (stabil je Ticker → ein Abruf, unabhängig vom Fenster).
   const real10yStart = useMemo(() => oldestOhlcvDate(ohlcv), [ohlcv]);
   const real10yQuery = useMarketReal10Y(real10yStart, showReal10y);
+  // Szenario-Kegel: nur Anzeige. Default aus, Reset je Ticker — aus = keine Serie und keine Achsenänderung.
+  const [showCone, setShowCone] = useState(false);
+  useEffect(() => { setShowCone(false); }, [data.ticker]);
 
   const handleChartClick = useCallback((e: any) => {
     if (!measureMode || !e?.activePayload?.[0]) return;
@@ -307,6 +322,15 @@ export function TechnicalChart({
   // Indikatoren einmal auf der vollen Historie, je Band nur ausgeschnitten — nicht auf dem Slice neu rechnen.
   const fullSeries = useMemo(() => buildFullSeries(ohlcv), [ohlcv]);
   const aBuilt = useMemo(() => buildWindowSeries(fullSeries, aBars), [fullSeries, aBars]);
+  const scenarioCone = useMemo(() => {
+    if (!showCone) return null;
+    const last = aBuilt.points[aBuilt.points.length - 1];
+    if (!last || !Number.isFinite(last.close) || last.close <= 0) return null;
+    return scenarioConeFromAnalysis(data, { date: last.date, close: last.close });
+  }, [showCone, data, aBuilt.points]);
+  const coneForward = scenarioCone ? Math.max(0, scenarioCone.points.length - 1) : 0;
+  const coneScale = conePlotScale(aBuilt.points.length, coneForward);
+  const aAligned = useMemo(() => padConeCategories(aBuilt.points, scenarioCone), [aBuilt.points, scenarioCone]);
   const bBuilt = useMemo(() => buildWindowSeries(fullSeries, bBars), [fullSeries, bBars]);
   const cBuilt = useMemo(() => buildWindowSeries(fullSeries, cBars), [fullSeries, cBars]);
   const visibleKursCount = (showKursA ? 1 : 0) + (showKursB ? 1 : 0) + (showKursC ? 1 : 0);
@@ -668,6 +692,15 @@ export function TechnicalChart({
               {showReal10y ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
               {REAL10Y_OVERLAY.label}
             </button>
+            <button type="button" onClick={() => setShowCone(v => !v)} data-testid="button-scenario-cone" aria-pressed={showCone}
+              aria-label="Szenario-Kegel"
+              title="Szenario-Kegel ab dem letzten Close. Nur Anzeige, kein Score. Standard aus."
+              className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
+                showCone ? "border-slate-400 text-slate-300" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
+              }`}>
+              {showCone ? <Eye className="w-2.5 h-2.5"/> : <EyeOff className="w-2.5 h-2.5"/>}
+              Szenario-Kegel
+            </button>
             <button type="button" onClick={() => { setMeasureMode(v => !v); setMeasurePoints([]); }}
               className={`inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-[11px] transition-colors sm:min-h-7 sm:text-[10px] ${
                 measureMode ? "border-amber-500 bg-amber-500/10 text-amber-500" : "border-border text-muted-foreground opacity-50 hover:opacity-80"
@@ -808,7 +841,7 @@ export function TechnicalChart({
       ) : singleALayout && chartEmpty ? (
         <div className="text-center text-muted-foreground text-xs py-8" data-testid="hint-window-empty">{EMPTY_WINDOW_HINT}</div>
       ) : singleALayout ? (
-        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll">
+        <TaPlotScroll minWidth={stockPlotMinWidth} testId="chart-price-scroll" widthScale={coneScale}>
           <div className="w-full">
             <div className={`${priceBandClass(1)} w-full shrink-0 ${measureMode?'cursor-crosshair':''}`} data-testid="chart-price-ma" {...maProbeAttrs(aBuilt.points)}>
               <PricePane
@@ -832,17 +865,18 @@ export function TechnicalChart({
                 t10y={t10yOverlay}
                 real10y={real10yOverlay}
                 ccy={ccy}
+                cone={scenarioCone}
               />
             </div>
             {narrow && showVolume && (
-              <TaVolumeBand data={aBuilt.points} leftAxisWidth={52} marginRight={10} />
+              <TaVolumeBand data={aAligned} leftAxisWidth={52} marginRight={10} />
             )}
-            {extraPanes?.({ points: aBuilt.points, tickFormatter: formatDate, formatDateFull })}
+            {extraPanes?.({ points: aAligned, tickFormatter: formatDate, formatDateFull })}
             {showMacd && (
-              <MacdPane points={aBuilt.points} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-macd" title="MACD(12,26,9)" hint="= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal" />
+              <MacdPane points={aAligned} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-macd" title="MACD(12,26,9)" hint="= EMA₁₂ - EMA₂₆ | Signal = EMA₉(MACD) | Histogram = MACD - Signal" />
             )}
             {showRsi && (
-              <RsiPane points={aBuilt.points} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-rsi" title="RSI(14)" hint="| <30 überverkauft · >70 überkauft" />
+              <RsiPane points={aAligned} tickFormatter={formatDate} formatDateFull={formatDateFull} compact={false} testId="chart-rsi" title="RSI(14)" hint="| <30 überverkauft · >70 überkauft" />
             )}
           </div>
         </TaPlotScroll>
@@ -869,6 +903,9 @@ export function TechnicalChart({
               showRsi={showRsi}
               count={visibleKursCount}
               ccy={ccy}
+              cone={scenarioCone}
+              widthScale={coneScale}
+              alignedPoints={aAligned}
               testId="chart-band-a"
               macdTestId="chart-macd"
               rsiTestId="chart-rsi"
@@ -929,6 +966,25 @@ export function TechnicalChart({
               rsiTestId="chart-rsi-c"
             />
           )}
+        </div>
+      )}
+
+      {showCone && scenarioCone && (
+        <div
+          className="mt-1 text-[10px] text-muted-foreground break-words"
+          data-testid="scenario-cone-status"
+          data-anchor={scenarioCone.anchorPrice}
+          data-anchor-date={scenarioCone.anchorDate}
+          data-sigma={scenarioCone.sigmaDaily ?? ""}
+          data-horizon={scenarioCone.horizonDays}
+          data-short={scenarioCone.shortHistory ? "1" : "0"}
+        >
+          Szenario-Kegel ab letztem Close <span className="font-mono">{ccy}{scenarioCone.anchorPrice.toFixed(2)}</span>
+          {" "}({scenarioCone.anchorDate}) · Horizont {scenarioCone.horizonDays} Handelstage
+          {scenarioCone.sigmaDaily != null && <> · σ daily <span className="font-mono">{scenarioCone.sigmaDaily.toFixed(4)}</span></>}
+          {scenarioCone.shortHistory && <> · Vola-Fenster kürzer als {CONE_PARAMS.volWindowDays} Tage</>}
+          {" "}· {scenarioCone.markers.map(m => `${m.name} ${m.price != null ? `${ccy}${m.price.toFixed(2)}` : "n/a"} · ${m.posText}`).join(" · ")}
+          {" "}· nur Anzeige, kein Score
         </div>
       )}
 
@@ -1102,10 +1158,154 @@ function WindowDates({
   );
 }
 
+function padConeCategories(points: WindowPoint[], cone: ScenarioCone | null): WindowPoint[] {
+  if (!cone || cone.points.length < 2) return points;
+  const tail: WindowPoint[] = [];
+  for (let i = 1; i < cone.points.length; i++) {
+    tail.push({
+      date: cone.points[i].date,
+      close: Number.NaN,
+      volume: 0,
+      _volNorm: 0,
+      _volUp: false,
+      _signals: null,
+    });
+  }
+  return points.concat(tail);
+}
+
+const CONE_TIP_KEYS = new Set(["coneP10", "coneP50", "coneP90", "coneBull", "coneBase", "coneBear"]);
+
+function markerFill(id: string): string {
+  if (id === "bull") return CONE_STYLE.bull;
+  if (id === "base") return CONE_STYLE.base;
+  return CONE_STYLE.bear;
+}
+
+type ChartAxis = {
+  scale?: (value: number | string) => number;
+  niceTicks?: number[];
+  tick?: { fontSize?: number } | boolean;
+};
+
+/**
+ * Kegel-Labels am Horizont-Ende. Stehen sie sich oder dem Dividenden-Label
+ * „4 % attraktiv“ zu nahe, verschiebt separateLabelYs sie um den Fehlbetrag
+ * aus Label-Höhe und Pixelabstand. Der Punkt bleibt auf dem Kurs.
+ */
+function ConeEndLabels({
+  xAxisMap,
+  yAxisMap,
+  cone,
+  priceFontPx,
+  labelShift,
+}: {
+  xAxisMap?: Record<string, ChartAxis>;
+  yAxisMap?: Record<string, ChartAxis>;
+  cone: ScenarioCone;
+  priceFontPx: number;
+  labelShift: Record<string, number>;
+}) {
+  const xAxis = xAxisMap ? Object.values(xAxisMap)[0] : undefined;
+  const priceAxis = yAxisMap?.price;
+  const end = cone.points[cone.points.length - 1];
+  if (!xAxis?.scale || !priceAxis?.scale || !end || !(priceFontPx > 0)) return null;
+  const dotX = xAxis.scale(end.date);
+  if (!Number.isFinite(dotX)) return null;
+  const markers = cone.markers.filter(m => m.price != null && Number.isFinite(m.price));
+  return (
+    <g data-testid="cone-marker-labels">
+      {markers.map(m => {
+        const anchorY = priceAxis.scale!(m.price as number);
+        if (!Number.isFinite(anchorY)) return null;
+        return (
+          <text
+            key={m.id}
+            data-testid={`cone-label-${m.id}`}
+            x={dotX - priceFontPx}
+            y={anchorY + (labelShift[m.id] ?? 0)}
+            textAnchor="end"
+            dominantBaseline="middle"
+            fontSize={priceFontPx}
+            fill={markerFill(m.id)}
+          >
+            {m.name} · {m.posText}
+          </text>
+        );
+      })}
+    </g>
+  );
+}
+
+/** Gemessene Boxen: Kegel-Labels weichen Dividenden-Text aus, Abstand = Fehlbetrag aus Höhe und Pixelabstand. */
+function measureConeLabelShift(root: HTMLElement, prev: Record<string, number>): Record<string, number> | null {
+  const coneNodes = Array.from(root.querySelectorAll<SVGTextElement>("[data-testid^='cone-label-']"));
+  if (coneNodes.length === 0) return Object.keys(prev).length ? {} : null;
+  const boxes: LabelBox[] = [];
+  const current = new Map<string, number>();
+  for (const n of coneNodes) {
+    const b = n.getBoundingClientRect();
+    if (!(b.height > 0) || !(b.width > 0)) continue;
+    const id = (n.getAttribute("data-testid") || "").replace("cone-label-", "");
+    const yPx = b.y + b.height / 2;
+    current.set(id, yPx);
+    boxes.push({ id, xPx: b.x, widthPx: b.width, yPx, heightPx: b.height });
+  }
+  let fixedN = 0;
+  root.querySelectorAll("text").forEach(n => {
+    if (n.getAttribute("data-testid")?.startsWith("cone-label-")) return;
+    const b = n.getBoundingClientRect();
+    if (!(b.height > 0) || !(b.width > 0)) return;
+    const hits = boxes.some(c => c.xPx < b.x + b.width && b.x < c.xPx + c.widthPx);
+    if (!hits) return;
+    boxes.push({
+      id: `fixed-${fixedN++}`,
+      xPx: b.x,
+      widthPx: b.width,
+      yPx: b.y + b.height / 2,
+      heightPx: b.height,
+      fixed: true,
+    });
+  });
+  const placed = separateLabelYs(boxes);
+  const next: Record<string, number> = {};
+  let changed = false;
+  const pixel = 1 / (typeof window !== "undefined" && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1);
+  for (const p of placed) {
+    if (p.id.startsWith("fixed-")) continue;
+    const now = current.get(p.id);
+    if (now == null) continue;
+    const delta = p.yPx - now;
+    next[p.id] = (prev[p.id] ?? 0) + delta;
+    if (Math.abs(delta) > pixel) changed = true;
+  }
+  return changed ? next : null;
+}
+
+function ConeTooltipRows({ p, ccy }: { p: ConePlotFields; ccy: string }) {
+  if (p.coneP50 == null && p.coneBull == null && p.coneBase == null && p.coneBear == null) return null;
+  const row = (color: string, name: string, value: number | null | undefined) => (
+    value != null && Number.isFinite(value)
+      ? <div key={name} className="flex justify-between gap-3"><span style={{ color }}>{name}</span><span className="font-mono">{ccy}{value.toFixed(2)}</span></div>
+      : null
+  );
+  return (
+    <>
+      {row(CONE_STYLE.band, "Kegel P10", p.coneP10)}
+      {row(CONE_STYLE.band, "Kegel P50", p.coneP50)}
+      {row(CONE_STYLE.band, "Kegel P90", p.coneP90)}
+      {typeof p.coneBullLabel === "string" && <div style={{ color: CONE_STYLE.bull }}>{p.coneBullLabel}</div>}
+      {typeof p.coneBaseLabel === "string" && <div style={{ color: CONE_STYLE.base }}>{p.coneBaseLabel}</div>}
+      {typeof p.coneBearLabel === "string" && <div style={{ color: CONE_STYLE.bear }}>{p.coneBearLabel}</div>}
+    </>
+  );
+}
+
 function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
   onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy = "$",
+  cone = null,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1131,10 +1331,16 @@ function PricePane({
   real10y?: Real10YOverlayPoint[] | null;
   /** JOB 22: Kurs-Symbol (Listing-Währung). */
   ccy?: string;
+  /** Szenario-Kegel. null = Chart-Daten und Preisdomäne unverändert. */
+  cone?: ScenarioCone | null;
 }) {
   const narrow = useIsNarrow();
-  const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger);
-  const chartData = useMemo(() => withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend), credit), t10y), real10y), [points, dividend, credit, t10y, real10y]);
+  const conePrices = cone ? coneDomainValues(cone) : undefined;
+  const [yMin, yMax] = priceDomain(points, visibleMAs, showBollinger, conePrices);
+  const chartData = useMemo(() => {
+    const base = withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend), credit), t10y), real10y);
+    return cone ? attachConeSeries(base, cone) : base;
+  }, [points, dividend, credit, t10y, real10y, cone]);
   const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
@@ -1144,8 +1350,20 @@ function PricePane({
   // F1-14: Band ab 4 % auf der Dividendenachse (nur Anzeige). Achse wird dafür nicht gestreckt.
   const divBand = dividend ? attractiveYieldBand(divAxisMax) : null;
   const tick = axisTick(narrow, dense ? 8 : 9, "var(--muted-foreground)");
-  const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(points.length / (dense ? 5 : 8))));
+  const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(chartData.length / (dense ? 5 : 8))));
+  const plotRef = useRef<HTMLDivElement>(null);
+  const [labelShift, setLabelShift] = useState<Record<string, number>>({});
+  useLayoutEffect(() => {
+    const root = plotRef.current;
+    if (!root || !cone) {
+      setLabelShift(prev => Object.keys(prev).length ? {} : prev);
+      return;
+    }
+    const next = measureConeLabelShift(root, labelShift);
+    if (next) setLabelShift(next);
+  }, [cone, dividend, divBand, narrow, dense, chartData, yMin, yMax, labelShift]);
   return (
+    <div ref={plotRef} className="h-full w-full">
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
         data={chartData}
@@ -1227,7 +1445,9 @@ function PricePane({
           return (
             <div className="bg-card border border-border rounded-lg p-2 shadow-lg text-[10px] min-w-[160px]">
               <div className="font-semibold mb-1">{formatDateFull(dp.date)}</div>
-              <div className="flex justify-between gap-3"><span style={{ color: closeStroke }}>{closeName}</span><span className="font-mono">{ccy}{dp.close.toFixed(2)}</span></div>
+              {dp.close != null && Number.isFinite(dp.close) && (
+                <div className="flex justify-between gap-3"><span style={{ color: closeStroke }}>{closeName}</span><span className="font-mono">{ccy}{dp.close.toFixed(2)}</span></div>
+              )}
               {showVolume && dp.volume > 0 && <div className="flex justify-between gap-3"><span className="text-sky-400">Volumen</span><span className="font-mono">{(dp.volume / 1e6).toFixed(2)}M</span></div>}
               {showBollinger && dp.bbUpper != null && (
                 <>
@@ -1241,7 +1461,8 @@ function PricePane({
               {credit && <CreditTooltipRows p={dp as WindowPoint & CreditFields} label={creditLabel} formatDateFull={formatDateFull} />}
               {t10y && <Treasury10YTooltipRows p={dp as WindowPoint & Treasury10YFields} formatDateFull={formatDateFull} />}
               {real10y && <Real10YTooltipRow p={dp as WindowPoint & Real10YFields} />}
-              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey)).map((p: any) => (
+              {cone && <ConeTooltipRows p={dp as WindowPoint & ConePlotFields} ccy={ccy} />}
+              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
                   <span className="font-mono">{ccy}{Number(p.value).toFixed(2)}</span>
@@ -1264,6 +1485,32 @@ function PricePane({
             }}
           />
         )}
+        {cone && (
+          <>
+            <Line yAxisId="price" type="monotone" dataKey="coneP90" name="Kegel P90" stroke={CONE_STYLE.band} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneP10" name="Kegel P10" stroke={CONE_STYLE.band} strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            <Line yAxisId="price" type="monotone" dataKey="coneP50" name="Kegel P50" stroke={CONE_STYLE.band} strokeWidth={1} strokeDasharray="4 3" dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+            {cone.markers.map((m) => m.price == null ? null : (
+              <ReferenceDot
+                key={m.id}
+                yAxisId="price"
+                x={cone.points[cone.points.length - 1]?.date}
+                y={m.price}
+                r={3.5}
+                fill={markerFill(m.id)}
+                stroke="var(--card)"
+              />
+            ))}
+            <Customized component={(overlay: { xAxisMap?: Record<string, ChartAxis>; yAxisMap?: Record<string, ChartAxis> }) => (
+              <ConeEndLabels
+                {...overlay}
+                cone={cone}
+                priceFontPx={typeof tick.fontSize === "number" ? tick.fontSize : 0}
+                labelShift={labelShift}
+              />
+            )} />
+          </>
+        )}
         <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} isAnimationActive={false} />
         {MA_LINES.map(ma => visibleMAs.has(ma.key) && (
           <Line key={ma.key} yAxisId="price" type="monotone" dataKey={ma.key} name={ma.label} stroke={ma.color} strokeWidth={1.5} dot={false} strokeDasharray={ma.key.startsWith("ema") ? "4 2" : undefined} connectNulls isAnimationActive={false} />
@@ -1279,7 +1526,7 @@ function PricePane({
           <>
             <ReferenceArea yAxisId="div" y1={divBand.y1} y2={divBand.y2} fill={DIV_ATTRACTIVE_FILL} ifOverflow="hidden" />
             <ReferenceLine yAxisId="div" y={DIV_ATTRACTIVE_YIELD_PCT} stroke={DIV_ATTRACTIVE_STROKE} strokeDasharray="4 3" strokeWidth={0.8} opacity={0.8}
-              label={narrow || dense ? undefined : { value: `${DIV_ATTRACTIVE_YIELD_PCT} % attraktiv`, position: "insideTopRight", fontSize: 8, fill: DIV_ATTRACTIVE_STROKE }} />
+              label={narrow || dense ? undefined : { value: `${DIV_ATTRACTIVE_YIELD_PCT} % attraktiv`, position: "insideTopRight", fontSize: DIV_ATTRACTIVE_LABEL_PX, fill: DIV_ATTRACTIVE_STROKE }} />
           </>
         )}
         {dividend && (
@@ -1333,6 +1580,7 @@ function PricePane({
         )}
       </ComposedChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -1502,6 +1750,7 @@ function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
   testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy,
+  cone = null, widthScale = 1, alignedPoints,
 }: {
   label: string;
   labelClassName: string;
@@ -1531,12 +1780,16 @@ function BandStack({
   t10y?: Treasury10YOverlayPoint[] | null;
   real10y?: Real10YOverlayPoint[] | null;
   ccy?: string;
+  cone?: ScenarioCone | null;
+  widthScale?: number;
+  alignedPoints?: WindowPoint[];
 }) {
   const narrow = useIsNarrow();
   const empty = series.points.length === 0;
   const compact = count > 1;
+  const aligned = alignedPoints ?? series.points;
   return (
-    <TaPlotScroll minWidth={taChartMinWidth(52, 0, 10)} testId={`${testId}-scroll`}>
+    <TaPlotScroll minWidth={taChartMinWidth(52, 0, 10)} testId={`${testId}-scroll`} widthScale={widthScale}>
     <div className="w-full" data-testid={testId} {...maProbeAttrs(series.points)}>
       <div className={`${priceBandClass(count)} flex shrink-0 flex-col overflow-hidden ${measureMode ? "cursor-crosshair" : ""}`}>
         <div className={`shrink-0 text-[10px] font-medium leading-none ${labelClassName}`} style={labelColor ? { color: labelColor } : undefined}>{label}</div>
@@ -1567,18 +1820,19 @@ function BandStack({
               t10y={t10y}
               real10y={real10y}
               ccy={ccy}
+              cone={cone}
             />
           )}
         </div>
       </div>
       {narrow && showVolume && !empty && (
-        <TaVolumeBand data={series.points} leftAxisWidth={52} marginRight={10} />
+        <TaVolumeBand data={aligned} leftAxisWidth={52} marginRight={10} />
       )}
       {!empty && showMacd && (
-        <MacdPane points={series.points} tickFormatter={tickFormatter} formatDateFull={formatDateFull} compact={compact} testId={macdTestId} title={`${label} · MACD(12,26,9)`} />
+        <MacdPane points={aligned} tickFormatter={tickFormatter} formatDateFull={formatDateFull} compact={compact} testId={macdTestId} title={`${label} · MACD(12,26,9)`} />
       )}
       {!empty && showRsi && (
-        <RsiPane points={series.points} tickFormatter={tickFormatter} formatDateFull={formatDateFull} compact={compact} testId={rsiTestId} title={`${label} · RSI(14)`} />
+        <RsiPane points={aligned} tickFormatter={tickFormatter} formatDateFull={formatDateFull} compact={compact} testId={rsiTestId} title={`${label} · RSI(14)`} />
       )}
     </div>
     </TaPlotScroll>
@@ -1607,6 +1861,8 @@ const DIV_AXIS_W = 36;
 /** F1-14: Band „Yield ≥ 4 % attraktiv“ — grün, sehr transparent, damit Kurs und andere Overlays lesbar bleiben. */
 const DIV_ATTRACTIVE_FILL = "rgba(34,197,94,0.07)";
 const DIV_ATTRACTIVE_STROKE = "#22c55e";
+/** Schriftgröße des F1-14-Labels. Dieselbe Zeilenhöhe geht in die Kegel-Kollision ein. */
+const DIV_ATTRACTIVE_LABEL_PX = 8;
 
 type DividendFields = {
   _divYield?: number | null;

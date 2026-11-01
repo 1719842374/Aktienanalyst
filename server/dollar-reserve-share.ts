@@ -1,7 +1,7 @@
 /**
  * F1-39 — Server-Abruf Dollar-Anteil an den Weltreserven. Kette: IMF SDMX 2.1 (COFER, Reihe
  * G001.AFXRA.CI_USD.SHRO_PT.Q) → fetchCoferXml → parseCoferUsdShare → dollarReserveShareReading
- * (shared/dollar-reserve-share.ts). Kein Key, gratis. Noch nicht an Route/UI angebunden.
+ * (shared/dollar-reserve-share.ts). Kein Key, gratis. Route: GET /api/macro/dollar-reserve-share.
  * Nicht erreichbar → n/a mit Grund, nie 0.
  */
 import { COFER_SERIES_KEY, dollarReserveShareReading, parseCoferUsdShare, type DollarReserveShareReading } from "../shared/dollar-reserve-share";

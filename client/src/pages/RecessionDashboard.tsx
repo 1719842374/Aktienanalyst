@@ -11,8 +11,10 @@ import { useTheme } from "@/components/ThemeProvider";
 import { SectionCard } from "@/components/SectionCard";
 import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection";
 import { BuffettRatioPanel } from "@/components/recession/BuffettRatioPanel";
+import { DollarReserveShareCard } from "@/components/recession/DollarReserveShareCard";
 import { SahmRegions } from "@/components/recession/SahmRegions";
 import { RecessionMarketChartsSection } from "@/components/recession/RecessionMarketChartsSection";
+import { InventoryDemandGapCard } from "@/components/recession/InventoryDemandGapCard";
 import { RecessionTaSection } from "@/components/recession/RecessionTaSection";
 import { useLocation } from "wouter";
 import { Sun, Moon, AlertTriangle, ArrowLeft } from "lucide-react";
@@ -190,6 +192,7 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
       <RecessionTaSection number={nr.ta} subgroups={data.subgroups} topDrivers={data.topDrivers} indicators={data.indicators} />
       <SectionCard number={nr.buffett} title="Buffett-Indikator: Marktwert zum BIP">
         <BuffettRatioPanel />
+        <DollarReserveShareCard />
       </SectionCard>
       <SectionCard number={nr.summary} title="Zusammenfassung & Top-3 Treiber">
         <Summary data={data} />
@@ -202,6 +205,7 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
       <SectionCard number={nr.quellen} title="Quellenliste">
         <SourcesList sources={data.sources} />
       </SectionCard>
+      <InventoryDemandGapCard number={nr.lager} />
       <div className="pb-4">
       </div>
     </div>
