@@ -4,39 +4,145 @@
  */
 import type { Express, Request, Response } from "express";
 import {
-  CHAT_SESSION_HEADER, chatThreadTitle, clipChatMessages, isChatDashboard, isChatSessionId,
+  CHAT_HISTORY_SESSION_CHAR_BUDGET, CHAT_HISTORY_THREADS_PER_SESSION, CHAT_SESSION_HEADER,
+  chatThreadTitle, clipChatMessages, isChatDashboard, isChatSessionId,
   type ChatThread,
 } from "../shared/chat-history";
 import type { ChatMessage } from "../shared/chat-context";
+import { CHAT_RATE_LIMIT } from "./chat-route";
 
-const sessions = new Map<string, Map<string, ChatThread>>();
+/**
+ * Sessions im Prozess. Dieselbe Obergrenze wie `CHAT_RATE_LIMIT.max`:
+ * mehr Schreiber lässt die Chat-Route in einem Fenster je Schlüssel nicht durch,
+ * der Verlaufs-Cache muss nicht größer sein.
+ */
+export const CHAT_HISTORY_SESSION_CAP = CHAT_RATE_LIMIT.max;
+
+/**
+ * Ablauf ab dem letzten Zugriff (Lesen oder Schreiben).
+ * Ein Rate-Fenster je Nachricht, die der Prompt behält:
+ * `CHAT_RATE_LIMIT.windowMs * CHAT_HISTORY_THREADS_PER_SESSION`.
+ */
+export const CHAT_HISTORY_TTL_MS = CHAT_RATE_LIMIT.windowMs * CHAT_HISTORY_THREADS_PER_SESSION;
+
+interface Slot {
+  thread: ChatThread;
+  touchedAt: number;
+}
+
+interface SessionBag {
+  touchedAt: number;
+  threads: Map<string, Slot>;
+}
+
+const sessions = new Map<string, SessionBag>();
 
 export function resetChatHistoryStore(): void {
   sessions.clear();
 }
 
-function bag(sessionId: string): Map<string, ChatThread> {
-  let found = sessions.get(sessionId);
-  if (!found) { found = new Map(); sessions.set(sessionId, found); }
-  return found;
+function promoteSession(sessionId: string, now: number): SessionBag {
+  const existing = sessions.get(sessionId);
+  if (existing) sessions.delete(sessionId);
+  const bag: SessionBag = existing ?? { touchedAt: now, threads: new Map() };
+  bag.touchedAt = now;
+  sessions.set(sessionId, bag);
+  return bag;
 }
 
-export function listChatThreads(sessionId: string, dashboard?: string, entity?: string): ChatThread[] {
-  const all: ChatThread[] = [];
-  sessions.get(sessionId)?.forEach(thread => all.push(thread));
-  return all
-    .filter(t => (dashboard == null || t.dashboard === dashboard) && (entity == null || entity === "" || t.entity === entity))
-    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+function threadChars(bag: SessionBag): number {
+  let n = 0;
+  bag.threads.forEach(slot => { slot.thread.messages.forEach(m => { n += m.content.length; }); });
+  return n;
 }
 
-export function putChatThread(sessionId: string, thread: ChatThread): ChatThread {
-  const stored: ChatThread = { ...thread, updatedAt: new Date().toISOString() };
-  bag(sessionId).set(stored.id, stored);
+function dropOldestThread(bag: SessionBag, keepId: string): boolean {
+  let drop: string | undefined;
+  bag.threads.forEach((_, id) => { if (drop === undefined && id !== keepId) drop = id; });
+  if (drop === undefined) return false;
+  bag.threads.delete(drop);
+  return true;
+}
+
+/** Stückzahl und Zeichenbudget. Der gerade geschriebene Thread bleibt. Ältester Zugriff zuerst. */
+function evictThreads(bag: SessionBag, keepId: string): void {
+  const over = () => bag.threads.size > CHAT_HISTORY_THREADS_PER_SESSION || threadChars(bag) > CHAT_HISTORY_SESSION_CHAR_BUDGET;
+  while (over()) {
+    if (!dropOldestThread(bag, keepId)) break;
+  }
+}
+
+function evictSessions(): void {
+  while (sessions.size > CHAT_HISTORY_SESSION_CAP) {
+    let oldest: string | undefined;
+    sessions.forEach((_, id) => { if (oldest === undefined) oldest = id; });
+    if (oldest === undefined) break;
+    sessions.delete(oldest);
+  }
+}
+
+function dropExpired(now: number): void {
+  const deadSessions: string[] = [];
+  sessions.forEach((bag, id) => {
+    if (now - bag.touchedAt >= CHAT_HISTORY_TTL_MS) { deadSessions.push(id); return; }
+    const deadThreads: string[] = [];
+    bag.threads.forEach((slot, threadId) => {
+      if (now - slot.touchedAt >= CHAT_HISTORY_TTL_MS) deadThreads.push(threadId);
+    });
+    deadThreads.forEach(threadId => bag.threads.delete(threadId));
+    if (bag.threads.size === 0) deadSessions.push(id);
+  });
+  deadSessions.forEach(id => sessions.delete(id));
+}
+
+function sweep(now: number): void {
+  dropExpired(now);
+  evictSessions();
+}
+
+export function listChatThreads(sessionId: string, dashboard?: string, entity?: string, now = Date.now()): ChatThread[] {
+  sweep(now);
+  const bag = sessions.get(sessionId);
+  if (!bag) return [];
+  promoteSession(sessionId, now);
+  const matched: ChatThread[] = [];
+  const refresh: string[] = [];
+  bag.threads.forEach(slot => {
+    const t = slot.thread;
+    const sameDash = dashboard == null || t.dashboard === dashboard;
+    const sameEntity = entity == null || entity === "" || t.entity === entity;
+    if (sameDash && sameEntity) { matched.push(t); refresh.push(t.id); }
+  });
+  // Gelesene Threads nach hinten, Reihenfolge untereinander bleibt. Das setzt ihre TTL neu.
+  refresh.forEach(id => {
+    const slot = bag.threads.get(id);
+    if (!slot) return;
+    bag.threads.delete(id);
+    slot.touchedAt = now;
+    bag.threads.set(id, slot);
+  });
+  return matched.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+}
+
+export function putChatThread(sessionId: string, thread: ChatThread, now = Date.now()): ChatThread {
+  sweep(now);
+  const bag = promoteSession(sessionId, now);
+  const stored: ChatThread = { ...thread, updatedAt: new Date(now).toISOString() };
+  bag.threads.delete(stored.id);
+  bag.threads.set(stored.id, { thread: stored, touchedAt: now });
+  evictThreads(bag, stored.id);
+  evictSessions();
   return stored;
 }
 
-export function deleteChatThread(sessionId: string, id: string): boolean {
-  return sessions.get(sessionId)?.delete(id) ?? false;
+export function deleteChatThread(sessionId: string, id: string, now = Date.now()): boolean {
+  sweep(now);
+  const bag = sessions.get(sessionId);
+  if (!bag) return false;
+  const removed = bag.threads.delete(id);
+  if (bag.threads.size === 0) sessions.delete(sessionId);
+  else promoteSession(sessionId, now);
+  return removed;
 }
 
 function sessionOf(req: Request): string | null {

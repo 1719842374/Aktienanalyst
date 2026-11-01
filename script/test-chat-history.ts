@@ -8,9 +8,10 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import express from "express";
-import { CHAT_LIMITS } from "../shared/chat-context";
-import { CHAT_SESSION_HEADER, chatThreadTitle, clipChatMessages, mergeChatThreads, newChatId } from "../shared/chat-history";
-import { deleteChatThread, listChatThreads, putChatThread, registerChatHistoryRoute, resetChatHistoryStore } from "../server/chat-history-route";
+import { CHAT_CONTEXT_BUDGET, CHAT_LIMITS } from "../shared/chat-context";
+import { CHAT_HISTORY_SESSION_CHAR_BUDGET, CHAT_HISTORY_THREADS_PER_SESSION, CHAT_SESSION_HEADER, chatThreadTitle, clipChatMessages, mergeChatThreads, newChatId } from "../shared/chat-history";
+import { CHAT_HISTORY_SESSION_CAP, CHAT_HISTORY_TTL_MS, deleteChatThread, listChatThreads, putChatThread, registerChatHistoryRoute, resetChatHistoryStore } from "../server/chat-history-route";
+import { CHAT_RATE_LIMIT } from "../server/chat-route";
 
 let n = 0;
 const ok = (name: string) => { n++; console.log(`  ✅ ${name}`); };
@@ -93,6 +94,62 @@ async function main() {
   } finally {
     srv.close();
   }
+
+  assert.equal(CHAT_HISTORY_THREADS_PER_SESSION, CHAT_LIMITS.maxMessages);
+  assert.equal(CHAT_HISTORY_SESSION_CHAR_BUDGET, CHAT_CONTEXT_BUDGET);
+  assert.equal(CHAT_HISTORY_SESSION_CAP, CHAT_RATE_LIMIT.max);
+  assert.equal(CHAT_HISTORY_TTL_MS, CHAT_RATE_LIMIT.windowMs * CHAT_HISTORY_THREADS_PER_SESSION);
+  ok("Grenzen hängen am Prompt-Budget, an maxMessages und am Rate-Limit");
+
+  resetChatHistoryStore();
+  const t0 = 1_700_000_000_000;
+  const full = "x".repeat(CHAT_LIMITS.maxMessageChars);
+  const heavy = Array.from({ length: CHAT_LIMITS.maxMessages }, () => ({ role: "user" as const, content: full }));
+  putChatThread("sess-chars1", { id: "thread-heavy-a", dashboard: "stock", entity: "SAP", title: "a", updatedAt: "", messages: heavy }, t0);
+  putChatThread("sess-chars1", { id: "thread-heavy-b", dashboard: "stock", entity: "SAP", title: "b", updatedAt: "", messages: heavy }, t0 + 1);
+  const heavyLeft = listChatThreads("sess-chars1", undefined, undefined, t0 + 2);
+  assert.equal(heavyLeft.length, 1);
+  assert.equal(heavyLeft[0].id, "thread-heavy-b");
+  assert.ok(heavyLeft[0].messages.reduce((sum, m) => sum + m.content.length, 0) <= CHAT_HISTORY_SESSION_CHAR_BUDGET);
+  ok("Zeichen über dem Kontext-Budget verdrängen den älteren Thread");
+
+  resetChatHistoryStore();
+  for (let i = 0; i < CHAT_HISTORY_THREADS_PER_SESSION + 1; i++) {
+    putChatThread("sess-count1", { id: `thread-c${i}`, dashboard: "stock", entity: "MSFT", title: String(i), updatedAt: "", messages: [{ role: "user", content: `kurz ${i}` }] }, t0 + i);
+  }
+  const counted = listChatThreads("sess-count1", undefined, undefined, t0 + CHAT_HISTORY_THREADS_PER_SESSION + 2);
+  assert.equal(counted.length, CHAT_HISTORY_THREADS_PER_SESSION);
+  assert.equal(counted.some(t => t.id === "thread-c0"), false);
+  assert.equal(counted.some(t => t.id === `thread-c${CHAT_HISTORY_THREADS_PER_SESSION}`), true);
+  putChatThread("sess-count1", { id: "thread-c1", dashboard: "stock", entity: "MSFT", title: "berührt", updatedAt: "", messages: [{ role: "user", content: "noch da" }] }, t0 + 100);
+  for (let i = 0; i < CHAT_HISTORY_THREADS_PER_SESSION - 1; i++) {
+    putChatThread("sess-count1", { id: `thread-n${i}`, dashboard: "stock", entity: "MSFT", title: `n${i}`, updatedAt: "", messages: [{ role: "user", content: `neu ${i}` }] }, t0 + 101 + i);
+  }
+  const touched = listChatThreads("sess-count1", undefined, undefined, t0 + 200);
+  assert.equal(touched.some(t => t.id === "thread-c1"), true);
+  assert.equal(touched.some(t => t.id === "thread-c2"), false);
+  ok("Thread-Limit verdrängt den am längsten nicht benutzten Chat, ein erneutes Schreiben bleibt");
+
+  resetChatHistoryStore();
+  for (let i = 0; i < CHAT_HISTORY_SESSION_CAP + 1; i++) {
+    putChatThread(`sess-cap-${i}`, { id: `thread-s${i}`, dashboard: "btc", entity: null, title: String(i), updatedAt: "", messages: [{ role: "user", content: `s${i}` }] }, t0 + i);
+  }
+  assert.equal(listChatThreads("sess-cap-0", undefined, undefined, t0 + CHAT_HISTORY_SESSION_CAP + 2).length, 0);
+  assert.equal(listChatThreads(`sess-cap-${CHAT_HISTORY_SESSION_CAP}`, undefined, undefined, t0 + CHAT_HISTORY_SESSION_CAP + 3).length, 1);
+  listChatThreads("sess-cap-1", undefined, undefined, t0 + CHAT_HISTORY_SESSION_CAP + 4);
+  putChatThread("sess-cap-extra", { id: "thread-extra", dashboard: "btc", entity: null, title: "extra", updatedAt: "", messages: [{ role: "user", content: "extra" }] }, t0 + CHAT_HISTORY_SESSION_CAP + 5);
+  assert.equal(listChatThreads("sess-cap-1", undefined, undefined, t0 + CHAT_HISTORY_SESSION_CAP + 6).length, 1);
+  assert.equal(listChatThreads("sess-cap-2", undefined, undefined, t0 + CHAT_HISTORY_SESSION_CAP + 7).length, 0);
+  ok("Session-Limit verdrängt die am längsten nicht benutzte Session");
+
+  resetChatHistoryStore();
+  putChatThread("sess-ttl", { id: "thread-ttl", dashboard: "gold", entity: null, title: "alt", updatedAt: "", messages: [{ role: "user", content: "läuft ab" }] }, t0);
+  assert.equal(listChatThreads("sess-ttl", undefined, undefined, t0 + CHAT_HISTORY_TTL_MS).length, 0);
+  putChatThread("sess-ttl", { id: "thread-ttl", dashboard: "gold", entity: null, title: "alt", updatedAt: "", messages: [{ role: "user", content: "läuft ab" }] }, t0);
+  const seen = t0 + CHAT_HISTORY_TTL_MS - 1;
+  assert.equal(listChatThreads("sess-ttl", undefined, undefined, seen).length, 1);
+  assert.equal(listChatThreads("sess-ttl", undefined, undefined, seen + CHAT_HISTORY_TTL_MS).length, 0);
+  ok("Ohne Zugriff läuft der Verlauf nach der TTL ab; Lesen setzt sie neu");
 
   console.log(`chat history: ${n} checks ok`);
   process.exitCode = 0;

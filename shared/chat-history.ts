@@ -3,12 +3,25 @@
  * Kein Supabase, kein Score. Reine Typen und Zusammenführung.
  * Der Server hält denselben Verlauf im Speicher, der Client zusätzlich in sessionStorage.
  */
-import { CHAT_DASHBOARDS, CHAT_LIMITS, type ChatDashboard, type ChatMessage } from "./chat-context";
+import { CHAT_CONTEXT_BUDGET, CHAT_DASHBOARDS, CHAT_LIMITS, type ChatDashboard, type ChatMessage } from "./chat-context";
 
 export const CHAT_SESSION_HEADER = "x-chat-session";
 
 /** Sichtbare Länge einer Verlaufs-Zeile. Anzeige, kein Schwellenwert. */
 export const CHAT_THREAD_TITLE_CHARS = 80;
+
+/**
+ * Threads je Session. Dieselbe Grenze wie die Nachrichten im Live-Prompt
+ * (`CHAT_LIMITS.maxMessages`): der Cache hält nicht mehr Chats, als der Prompt Nachrichten behält.
+ */
+export const CHAT_HISTORY_THREADS_PER_SESSION = CHAT_LIMITS.maxMessages;
+
+/**
+ * Zeichen je Session für Nachrichtentexte. Dieselbe Decke wie der Live-Kontext
+ * (`CHAT_CONTEXT_BUDGET`). Kurze Chats lassen mehr Threads zu, volle Threads
+ * (maxMessages × maxMessageChars) verdrängen früher als das Stückzahl-Limit.
+ */
+export const CHAT_HISTORY_SESSION_CHAR_BUDGET = CHAT_CONTEXT_BUDGET;
 
 const SESSION_ID = /^[A-Za-z0-9_-]{8,80}$/;
 
