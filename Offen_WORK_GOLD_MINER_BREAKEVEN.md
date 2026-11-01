@@ -28,12 +28,14 @@ Ist-SHA vor dieser Arbeit: main `d9b70685bc20e782e2268619e807fe0ae6e0b72a`.
 | # | Soll | Ist auf main `d9b70685` | Nach Prompt 1 | Status |
 |---|---|---|---|---|
 | S1 | AISC nicht im Preischart | Overlay + Chip `toggle-gold-aisc` in `GoldPriceChart.tsx` | unverändert (Prompt 4) | ❌ |
-| S2 | eigener Block „Spot vs. Miner-Breakeven (AISC)“ mit Zonen-Bändern | fehlt | fehlt (Prompt 3) | ❌ |
-| S3 | Karten Multiple / AISC Ø NEM/B/AEM / Marge / Kapitulations-Score | Multiple nur im Tooltip | fehlt (Prompt 3) | ❌ |
+| S2 | eigener Block „Spot vs. Miner-Breakeven (AISC)“ mit Zonen-Bändern | fehlt | `GoldMinerBreakevenSection` als Sektion 9 direkt nach dem Preis-Chart. Drei Zeit-Bänder, Spot und AISC auf eigener Achse. | ✅ |
+| S3 | Karten Multiple / AISC Ø NEM/B/AEM / Marge / Kapitulations-Score | Multiple nur im Tooltip | Vier Karten aus `aiscZone.latest`. Chat-Kontext Sektion 9 trägt dieselben Zahlen. | ✅ |
 | S4 | RSI eigenes Pane | `GoldPriceChart.tsx` RSI(14) eigenes Pane | unverändert | ✅ |
-| S5 | Schwellen adaptiv (Perzentil der eigenen Historie) | feste 1,10/1,15 in `shared/gold-aisc.ts` | `shared/gold-miner-zone.ts`: P20/P50 expanding window, keine 1,10/1,15. Die festen Stressfaktoren im Overlay-Modul bleiben bis Prompt 4 liegen (nicht gelöscht). | 🟡 |
+| S5 | Schwellen adaptiv (Perzentil der eigenen Historie) | feste 1,10/1,15 in `shared/gold-aisc.ts` | Sektion 9 klassifiziert über P20/P50 plus Spot&lt;AISC. Die Overlay-Faktoren 1,10/1,15 bleiben im Modul, bis Prompt 4 das Overlay aus dem TA-Chart nimmt. | 🟡 |
+| Skala | Eigene $/oz-Achse nur für Spot und AISC (nicht bei 0, kein Aufschlag ×1,15). Multiple und Marge je eigene Achse. | TA-`yDomain` zieht das Minimum auf die AISC-Stufe und das Maximum mindestens auf AISC×1,15, solange das Overlay an ist | `goldMinerPriceDomain`: Padding 6 % um Spot und AISC. Beispiel Spot 1.100 / AISC 1.000 endet unter 1.150. | 🟡 |
+| Rechnung | Wie BTC: eine Kostenlinie gegen den Spot, Verhältnis Spot/Kosten, drei Zeit-Zonen (Kapitulation, Übergang, Profitabel). Gold-Schwellen aus der eigenen Multiple-Historie, nicht die BTC-Punktetabelle und nicht ×1,10/×1,15. | Overlay: `goldAiscStress` mit festen 1,10/1,15 auf der Preisachse | 1,12× ist im Overlay „Vorwarnung“, in der Sektion Kapitulation, wenn die eigene P20 darüber liegt. `multiple = spot/aisc`, `marginUsd = spot−aisc`. | 🟡 |
 | S6 | Datenkette server-seitig, Response-Feld `aiscZone` | `aiscLine` vorhanden, `aiscZone` fehlt | `GET /api/analyze-gold` setzt `aiscZone: buildGoldMinerZone(historicalPrices, aiscSeries)` neben `aiscLine`. `aisc: null` an `scoreGoldAdaptive` unverändert. Fallback ohne Feld. | ✅ |
-| S7 | States Offline/n/a/375/1440 | Overlay-Chips; Block fehlt | fehlt (Prompt 3) | ❌ |
+| S7 | States Offline/n/a/375/1440 | Overlay-Chips; Block fehlt | Offline ohne `aiscZone`, n/a mit `naReason`, Karten 2/4 Spalten, Charts 220/170/150 unter 640 px. | ✅ |
 | S8 | BTC unverändert | Section 13, `minerMetrics.ts` | nicht angefasst | ✅ |
 | S9 | #374 QE/QT-Bänder + Gold/WALCL bleiben | vorhanden seit `d9b70685` | nicht angefasst | ✅ |
 

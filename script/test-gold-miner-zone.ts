@@ -6,9 +6,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { buildGoldAiscSeries, type GoldAiscFile } from "../shared/gold-aisc";
 import type { GoldAiscCompanyCode, GoldAiscSeries, GoldAiscValue } from "../shared/schema";
+import { goldAiscStress } from "../shared/gold-aisc";
 import {
   GOLD_MINER_ZONE_MIN_OBS,
   buildGoldMinerZone,
+  goldMinerPriceDomain,
   percentileRank,
   percentileValue,
 } from "../shared/gold-miner-zone";
@@ -213,6 +215,29 @@ console.log("\nechte gold-aisc.json");
   check("importiert nur goldAiscStepAt aus gold-aisc", /import \{ goldAiscStepAt \} from "\.\/gold-aisc"/.test(src));
   check("keine festen 1,10/1,15-Multiple-Schwellen", !/1\.10|1\.15/.test(src));
   check("zieht minerMetrics nicht ein", !/minerMetrics|classifyMinerZone/.test(src));
+}
+
+console.log("\nSkala und Rechnung analog BTC, nicht das TA-Overlay");
+{
+  const domain = goldMinerPriceDomain([
+    { spot: 1100, aisc: 1000 },
+    { spot: 1100, aisc: 1000 },
+  ]);
+  check("Preisachse enthält Spot und AISC", !!domain && domain[0] < 1000 && domain[1] > 1100, domain ? domain.join("…") : "null");
+  check("Achse nicht bei 0 verankert", !!domain && domain[0] > 900, domain ? String(domain[0]) : "");
+  check("kein Platz für das Overlay-Band AISC×1,15", !!domain && domain[1] < 1000 * 1.15, domain ? String(domain[1]) : "");
+  const wide = goldMinerPriceDomain([{ spot: 3899, aisc: 1649 }]);
+  check("2,4×-Abstand bleibt auf einer Achse lesbar", !!wide && wide[0] < 1649 && wide[1] > 3899 && wide[0] > 1400, wide ? wide.map(v => v.toFixed(0)).join("…") : "");
+
+  const dates = businessDays("2024-01-02", 201);
+  const series = seriesAt(1000, dates[0]);
+  const built = buildGoldMinerZone(dates.map((date, i) => ({ date, close: i === dates.length - 1 ? 1120 : 2000 })), series)!;
+  const last = built.latest!;
+  check("Multiple = Spot/AISC, Marge = Spot−AISC",
+    Math.abs(last.multiple - last.spot / last.aisc) < 1e-9 && last.marginUsd === last.spot - last.aisc);
+  check("Overlay würde 1,12× als Vorwarnung ×1,15 werten", goldAiscStress(1120, 1000) === "watch");
+  check("Sektion wertet 1,12× nach der eigenen Historie, nicht nach ×1,15", last.zone === "capitulation" && last.multiple < (built.thresholds.low ?? 0));
+  check("drei Zonen, keine Euphorie", built.points.every(p => p.zone !== "euphoria") && built.thresholds.euph == null);
 }
 
 console.log("\nScore-Pins (VOW3 / SAP / MSFT)");

@@ -273,3 +273,26 @@ export function buildGoldMinerZone(
     inScore: false,
   };
 }
+
+/**
+ * Eigene $/oz-Skala für Spot und AISC, analog zur BTC-Miner-Achse (Spot und
+ * Breakeven auf einer Preisachse, nicht bei 0 verankert).
+ * Kein Aufschlag ×1,10/×1,15: die Stressbänder des TA-Overlays bleiben draußen.
+ */
+export function goldMinerPriceDomain(points: readonly { spot: number; aisc: number | null }[]): [number, number] | null {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const point of points) {
+    if (typeof point.spot === "number" && Number.isFinite(point.spot) && point.spot > 0) {
+      min = Math.min(min, point.spot);
+      max = Math.max(max, point.spot);
+    }
+    if (typeof point.aisc === "number" && Number.isFinite(point.aisc) && point.aisc > 0) {
+      min = Math.min(min, point.aisc);
+      max = Math.max(max, point.aisc);
+    }
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= 0) return null;
+  const pad = Math.max((max - min) * 0.06, max * 0.02);
+  return [min - pad, max + pad];
+}

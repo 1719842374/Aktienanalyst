@@ -372,9 +372,29 @@ export function buildBtcChatContext(data: any): ChatContext {
 
 /** Labels/IDs identisch mit SECTIONS in client/src/pages/GoldDashboard.tsx (News = 100). */
 export const GOLD_SECTION_LABELS: Record<number, string> = {
-  1: "Preis & Status", 100: "Gold-News", 2: "Preis-Chart", 3: "Indikatoren", 4: "Fair Value", 5: "Monte Carlo",
+  1: "Preis & Status", 100: "Gold-News", 2: "Preis-Chart", 9: "Miner-Breakeven", 3: "Indikatoren", 4: "Fair Value", 5: "Monte Carlo",
   6: "Preisschätzung", 7: "Zyklus", 8: "Zusammenfassung",
 };
+
+/** Dieselben Zahlen wie Sektion 9. Fehlendes Feld = Offline-Fallback, null = n/a. */
+function goldMinerFacts(zone: any): Record<string, ChatFactValue> {
+  if (zone === undefined) return { hinweis: "AISC n/a — Offline-Daten, keine Minendaten in dieser Antwort" };
+  if (zone == null) return { hinweis: "n/a" };
+  const latest = zone.latest;
+  const days = num(zone.thresholds?.obs, 0);
+  if (!latest || zone.naReason) return { hinweis: zone.naReason ? `n/a — ${zone.naReason}` : "n/a", tage: days };
+  return {
+    zone: str(latest.zone),
+    multiple: num(latest.multiple, 2),
+    aiscUsd: num(latest.aisc, 0),
+    margeUsd: num(latest.marginUsd, 0),
+    margePct: num(typeof latest.marginPct === "number" ? latest.marginPct * 100 : null, 1),
+    score: num(latest.score, 0),
+    quartal: str(latest.quarter),
+    tage: days,
+    inScore: false,
+  };
+}
 
 export function buildGoldChatContext(data: any): ChatContext {
   const d = data ?? {};
@@ -385,6 +405,7 @@ export function buildGoldChatContext(data: any): ChatContext {
     sec(1, L[1], { kursUSD: num(d.spotPrice), aenderungPct: num(d.changePercent), jahresHoch: num(d.yearHigh), jahresTief: num(d.yearLow), ma200: num(d.ma200), abweichungMA200Pct: num(d.deviationFromMA200, 1), stand: str(d.priceTimestamp), teilausfall: d.partial === true ? (list(d.partialReasons) ?? "ja") : null }),
     sec(100, L[100], { newsFlag: d.goldNews ? num(d.goldNews.flag, 2) : null, newsZusammenfassung: str(d.goldNews?.summary, 600), hinweis: d.goldNews ? null : "News-Abruf lief nicht (n/a)" }),
     sec(2, L[2], { rsi14: num(d.rsi14, 1), historiePunkte: Array.isArray(d.historicalPrices) ? d.historicalPrices.length : null, technikSignale: list((d.technicalSignals ?? []).map((s: any) => `${s.id}: ${s.available === false ? "n/a" : `Richtung ${s.direction ?? "n/a"}`}${s.detail ? ` (${s.detail})` : ""}`), 6) }),
+    sec(9, L[9], goldMinerFacts(d.aiscZone)),
     sec(3, L[3], { indikatoren: list((d.indicators ?? []).map((i: any) => `${i.name}: ${i.value} (Score ${i.score}, Gewicht ${num(i.weight * 100, 1) ?? "n/a"}%)`), 10), gis: num(d.gis, 4), adaptiverScore: num(ad?.score, 3), scoreDelta: num(d.scoreDelta ?? ad?.scoreDelta, 3) }),
     sec(4, L[4], { fvBasis: num(fv?.fvBasis, 0), fvAdj: num(fv?.fvAdj, 0), praemie: num(fv?.premium, 2), support1: num(fv?.support1, 0), resistance1: num(fv?.resistance1, 0), realzinsModellFV: num(ry?.fairValue?.fairValue, 0), realzinsRegime: str(ry?.regime?.regime) }),
     sec(5, L[5], { mc3M: mc(d.monteCarlo3M), mc6M: mc(d.monteCarlo6M), mc12M: mc(d.monteCarlo12M) }),
