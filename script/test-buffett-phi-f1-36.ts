@@ -1,6 +1,6 @@
 /**
  * F1-36 / F1-37 / F1-40: φ (Auslandsumsatz-Anteil) per callLLMJson, Cache,
- * Fallback 0,40 als benannter Parameter, globalisierungsbereinigte Quote als
+ * Fallback aus letztem Cache, sonst Median der Historie, sonst n/a. Globalisierungsbereinigte Quote als
  * Kennzahl und zweite Linie im BuffettRatioPanel (#/recession). Kein Score.
  *
  * Datenfluss: BuffettRatioPanel → useQuery-fetch /api/analyze-recession/buffett-phi
@@ -23,8 +23,16 @@ const { doc } = installFakeDom();
 
 async function main() {
   const shared = await import("../shared/buffett-phi");
-  assert.equal(shared.PHI_FALLBACK, 0.4);
-  assert.equal(shared.globalizationAdjustedPct(200, shared.PHI_FALLBACK), 120);
+  const phiSrc = readFileSync("shared/buffett-phi.ts", "utf8") + readFileSync("server/buffett-phi-route.ts", "utf8");
+  assert.ok(!/PHI_FALLBACK\s*=/.test(phiSrc) && !/=\s*0\.40\b/.test(phiSrc), "kein festes φ 0,40");
+  assert.equal(shared.derivePhiFallback(0.52, [0.28, 0.36, 0.52]).kind, "cache");
+  assert.equal(shared.derivePhiFallback(0.52, [0.28, 0.36, 0.52]).phi, 0.52);
+  assert.equal(shared.derivePhiFallback(null, [0.28, 0.36, 0.52]).phi, 0.36);
+  assert.equal(shared.derivePhiFallback(null, [0.28, 0.36, 0.52]).kind, "median");
+  assert.equal(shared.medianOfPhi([0.25, 0.5]), 0.375);
+  assert.equal(shared.derivePhiFallback(null, []).kind, "none");
+  assert.equal(shared.derivePhiFallback(null, []).phi, null);
+  assert.equal(shared.globalizationAdjustedPct(200, 0.4), 120);
   assert.equal(shared.globalizationAdjustedPct(244.6, 0.42), 141.9);
   assert.equal(shared.globalizationAdjustedPct(Number.NaN, 0.4), null);
   assert.equal(shared.globalizationAdjustedPct(200, Number.NaN), null);
@@ -53,7 +61,7 @@ async function main() {
   assert.equal(body.fallback, false);
   assert.equal(body.fromCache, false);
   assert.equal(body.model, "test-model");
-  assert.equal(body.fallbackPhi, shared.PHI_FALLBACK);
+  assert.equal(body.fallbackPhi, null);
   assert.ok(Math.abs((body.domesticShare ?? NaN) - 0.58) < 1e-12);
   assert.equal(calls.length, 1);
   assert.ok(String((calls[0] as { prompt: string }).prompt).includes("außerhalb der USA"));
@@ -64,34 +72,60 @@ async function main() {
   assert.equal(calls.length, 1, "gültiger LLM-Wert bleibt eine Woche im Cache");
   route.setBuffettPhiLlmForTests({ available: true, call: async () => null });
   body = await route.resolveUsForeignShare(t0 + shared.PHI_CACHE_MS + 1);
-  assert.equal(body.source, "cache");
+  assert.equal(body.fallback, true);
   assert.equal(body.phi, 0.42);
-  assert.ok(body.reason && body.reason.includes("letzter gültiger"));
+  assert.match(body.reason ?? "", /Fallback/);
+  assert.match(body.reason ?? "", /letzter gültiger/);
+  const step = shared.PHI_CACHE_MS + 1;
+  const series = [0.28, 0.36, 0.52];
+  let stepIndex = 0;
+  route.resetBuffettPhiCache();
+  route.setBuffettPhiLlmForTests({
+    available: true,
+    call: async () => ({ data: { phi: series[stepIndex++] }, modelUsed: "test-model" }),
+  });
+  for (let i = 0; i < series.length; i++) {
+    body = await route.resolveUsForeignShare(t0 + i * step);
+    assert.equal(body.phi, series[i]);
+    assert.equal(body.fallback, false);
+  }
+  route.setBuffettPhiLlmForTests({ available: true, call: async () => null });
+  body = await route.resolveUsForeignShare(t0 + series.length * step);
+  assert.equal(body.phi, 0.52);
+  assert.equal(body.fallback, true);
+  assert.match(body.reason ?? "", /letzter gültiger/);
+  route.dropBuffettPhiLastCacheForTests();
+  body = await route.resolveUsForeignShare(t0 + (series.length + 1) * step);
+  assert.equal(body.phi, 0.36);
+  assert.equal(body.fallback, true);
+  assert.match(body.reason ?? "", /Fallback/);
+  assert.match(body.reason ?? "", /Median/);
   route.resetBuffettPhiCache();
   body = await route.resolveUsForeignShare(t0);
-  assert.equal(body.source, "fallback");
-  assert.equal(body.fallback, true);
-  assert.equal(body.phi, shared.PHI_FALLBACK);
-  assert.match(body.reason ?? "", /Fallback/);
-  assert.equal(body.model, null);
+  assert.equal(body.phi, null);
+  assert.equal(body.fallback, false);
+  assert.match(body.reason ?? "", /kein φ verfügbar/);
+  assert.notEqual(body.phi, 0.4);
   route.setBuffettPhiLlmForTests({
     available: true,
     call: async () => ({ data: { phi: 0.9 }, modelUsed: "test-model" }),
   });
   body = await route.resolveUsForeignShare(t0);
-  assert.equal(body.fallback, true);
-  assert.equal(body.phi, shared.PHI_FALLBACK);
+  assert.equal(body.phi, null);
   assert.match(body.reason ?? "", /außerhalb/);
+  assert.match(body.reason ?? "", /kein φ verfügbar/);
   route.setBuffettPhiLlmForTests({ available: false, call: async () => { throw new Error("nicht rufen"); } });
   body = await route.resolveUsForeignShare(t0 + 5);
-  assert.equal(body.fallback, true);
+  assert.equal(body.phi, null);
   assert.match(body.reason ?? "", /nicht verfügbar/);
+  assert.match(body.reason ?? "", /kein φ verfügbar/);
   const eu = route.phiBodyForRegion("EU");
   assert.equal(eu.phi, null);
   assert.equal(eu.domesticShare, null);
   assert.equal(eu.fallback, false);
+  assert.equal(eu.fallbackPhi, null);
   assert.match(eu.reason ?? "", /nur für die USA/);
-  ok("LLM φ = 0,42 mit Cache; abgelaufener Cache bleibt letzter gültiger Wert; sonst Fallback 0,40 markiert; EU ohne Zahl");
+  ok("LLM φ = 0,42; Fallback = letzter Cache, sonst Median 0,36, sonst n/a ohne feste Zahl; EU ohne Zahl");
 
   // ── Route + Buffett-Antwort ohne neue Felder ──
   const express = (await import("express")).default;
@@ -135,13 +169,14 @@ async function main() {
   route.resetBuffettPhiCache();
   route.setBuffettPhiLlmForTests({ available: false, call: async () => null });
   const fbJson = await (await realFetch(`${base}/api/analyze-recession/buffett-phi?region=US`)).json() as any;
-  assert.equal(fbJson.fallback, true);
-  assert.equal(fbJson.phi, 0.4);
-  assert.match(fbJson.reason, /Fallback/);
+  assert.equal(fbJson.fallback, false);
+  assert.equal(fbJson.phi, null);
+  assert.match(fbJson.reason, /kein φ verfügbar/);
+  assert.ok(!/0[,.]40/.test(JSON.stringify(fbJson)), "keine feste 0,40 in der Antwort");
   const bu = await (await realFetch(`${base}/api/analyze-recession/buffett?region=US`)).json() as any;
   assert.ok(!("phi" in bu) && !("adjustedRatio" in bu) && !("domesticShare" in bu), "Buffett-Antwort ohne φ-Felder");
   assert.equal(typeof bu.latest.ratio, "number");
-  ok(`Route: LLM 0,42 dann Cache; EU phi null; XX 400; ohne LLM Fallback; Buffett-Quote ${bu.latest.ratio} % unverändert ohne φ-Felder`);
+  ok(`Route: LLM 0,42 dann Cache; EU phi null; XX 400; ohne Historie n/a; Buffett-Quote ${bu.latest.ratio} % unverändert ohne φ-Felder`);
 
   // ── UI ──
   const { createRoot } = await import("react-dom/client");
@@ -156,10 +191,17 @@ async function main() {
   assert.ok(llmLine.includes("LLM φ = 0,42") && llmLine.includes("kein Score") && llmLine.includes("n/a — kein aus den Daten abgeleitetes Gewicht"), llmLine);
   assert.ok(!llmLine.includes("Fallback"), llmLine);
   const fbLine = buffettPhiLine("US", { data: fbJson, loading: false, error: null }, bu.latest.ratio);
-  assert.ok(fbLine.includes("Fallback") && fbLine.includes("0,40") && !fbLine.includes("LLM φ"), fbLine);
+  assert.equal(fbLine, "Globalisierungsbereinigt: n/a — kein φ verfügbar — LLM nicht verfügbar");
+  assert.ok(!fbLine.includes("0,40") && !fbLine.includes("LLM φ"), fbLine);
+  const medianLine = buffettPhiLine("US", {
+    data: { ...phiJson, phi: 0.36, fallback: true, fallbackPhi: 0.36, source: "fallback", fromCache: false, reason: "Fallback — Median aus 3 gespeicherten φ-Schätzungen — LLM lieferte kein JSON", model: null },
+    loading: false,
+    error: null,
+  }, bu.latest.ratio);
+  assert.ok(medianLine.includes("Fallback") && medianLine.includes("0,36") && medianLine.includes("Median") && !medianLine.includes("LLM φ"), medianLine);
   const naLine = buffettPhiLine("US", { data: euJson, loading: false, error: null }, bu.latest.ratio);
   assert.ok(naLine.includes("n/a —") && !/\d+,\d %/.test(naLine.split("n/a —")[0] + naLine), naLine);
-  ok("Kennzahl: LLM-Prozent, Fallback 0,40 mit dem Wort Fallback, EU und leere Schätzung als n/a");
+  ok("Kennzahl: LLM-Prozent, Median als Fallback markiert, ohne Historie n/a — kein φ verfügbar");
 
   route.resetBuffettPhiCache();
   route.setBuffettPhiLlmForTests({ available: true, call: llm });
@@ -188,11 +230,12 @@ async function main() {
 
   route.resetBuffettPhiCache();
   route.setBuffettPhiLlmForTests({ available: false, call: async () => null });
-  m = await mount(c => line(c).includes("Fallback"));
-  assert.ok(line(m.c).includes("Fallback") && line(m.c).includes("0,40"), line(m.c));
-  assert.ok(!line(m.c).includes("LLM φ"), line(m.c));
+  m = await mount(c => line(c).includes("kein φ verfügbar"));
+  assert.equal(line(m.c), "Globalisierungsbereinigt: n/a — kein φ verfügbar — LLM nicht verfügbar");
+  assert.ok(!line(m.c).includes("0,40"), line(m.c));
+  assert.ok(panelSrc.includes("{phi != null && ("), "ohne φ keine zweite Linie");
   await m.done();
-  ok("UI Fallback: „Fallback“ und 0,40, nicht als LLM-Schätzung");
+  ok("UI ohne Historie: „n/a — kein φ verfügbar“, keine feste Zahl, zweite Linie nur bei φ");
 
   // ── nicht in der Aktienanalyse, nicht im Score ──
   const card = readFileSync("client/src/components/sections/BuffettMacroCard.tsx", "utf8");
@@ -201,7 +244,7 @@ async function main() {
   const recession = readFileSync("server/recession.ts", "utf8");
   assert.ok(!card.includes("buffett-phi") && !dash.includes("buffett-phi"));
   assert.ok(!analyze.includes("buffett-phi") && !analyze.includes("globalizationAdjustedPct"));
-  assert.ok(!recession.includes("buffett-phi") && !recession.includes("PHI_FALLBACK"));
+  assert.ok(!recession.includes("buffett-phi") && !recession.includes("PHI_FALLBACK") && !recession.includes("derivePhiFallback"));
   const { buffettReading, probabilityFromNet, anchoredRecessionProbability, scoredTotals } = await import("../server/recession");
   assert.equal(buffettReading(230).rawScore, 8);
   assert.equal(buffettReading(230).weightedScore, 16);

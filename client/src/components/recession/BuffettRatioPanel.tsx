@@ -74,7 +74,7 @@ export function tradeBalanceLine(
 
 /**
  * F1-36/F1-40: globalisierungsbereinigte Quote. φ kommt von /api/analyze-recession/buffett-phi.
- * EU/CN und fehlende Schätzung: n/a mit Grund. Fallback trägt das Wort „Fallback“ und φ = 0,40.
+ * EU/CN und fehlende Schätzung: n/a mit Grund. Ein gesetzter Fallback trägt das Wort „Fallback“.
  * Nur Anzeige, kein Score.
  */
 export function buffettPhiLine(
@@ -92,7 +92,7 @@ export function buffettPhiLine(
   const phiTxt = data.phi.toFixed(2).replace(".", ",");
   const adjTxt = adjusted == null ? "n/a" : `${adjusted.toFixed(1).replace(".", ",")} %`;
   const origin = data.fallback
-    ? `φ = ${phiTxt} — ${data.reason ?? "Fallback — LLM nicht verfügbar"}`
+    ? `Fallback φ = ${phiTxt} — ${data.reason ?? "kein frischer LLM-Wert"}`
     : `LLM φ = ${phiTxt}${data.model ? ` (${data.model})` : ""}${data.fromCache ? ", gecacht" : ""}`;
   return `${label}: ${adjTxt} — Marktwert × (1 − φ) / BIP, ${origin}. Aktuelles φ auf der ganzen Reihe (keine historische φ-Reihe). Handelsbilanz-Faktor α: n/a — kein aus den Daten abgeleitetes Gewicht. Reservewährungs-Faktor β: n/a — kein aus den Daten abgeleitetes Gewicht. nur Anzeige, kein Score`;
 }
