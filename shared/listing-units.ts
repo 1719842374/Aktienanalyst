@@ -82,15 +82,23 @@ export function normalizeMinorUnitListing<T extends MinorUnitInput>(data: T, maj
   const scaledBars = Array.isArray(rows) ? rows.map((r: any) => scaleFields(r, BAR_FIELDS, k)) : rows;
   const ohlcv = Array.isArray(data.ohlcv) ? scaledBars : data.ohlcv?.historical ? { ...data.ohlcv, historical: scaledBars } : data.ohlcv;
   const fields = Array.from(statementFields);
-  const toMajor = (arr: any[]) => (Array.isArray(arr) ? arr : []).map(r => {
-    // Rows are USD here: either reported in USD, or converted by convertFmpRowsToUsd.
-    const cur = r?._fxConverted ? "USD" : r?.reportedCurrency;
-    if (cur && cur !== "USD") return r;
-    return { ...scaleFields(r, fields, 1 / fx), reportedCurrency: mu.major, _fxToListing: { from: "USD", to: mu.major, rate: 1 / fx } };
-  });
+  const toMajor = (arr: any[]) => usdRowsToMajor(arr, fields, fx, mu.major);
   const financials = { income: toMajor(data.financials?.income), cashflow: toMajor(data.financials?.cashflow), balanceSheet: toMajor(data.financials?.balanceSheet) };
   const analyst = { ...data.analyst, estimates: toMajor(data.analyst?.estimates), priceTarget: priceTargetToListingUnit(data.analyst?.priceTarget, quote?.price ?? profile?.price, mu.factor) };
   return { ...data, quote, profile, ohlcv, financials, analyst };
+}
+
+/**
+ * Statement-/Schätzungszeilen, die in USD liegen (reportedCurrency USD oder schon
+ * `_fxConverted`), in die Major-Einheit. Andere Währungen bleiben stehen. `fx` ist
+ * major→USD aus der Quelle (Aufrufer), kein fester Kurs.
+ */
+function usdRowsToMajor(arr: any[] | undefined, fields: readonly string[], fx: number, major: string): any[] {
+  return (Array.isArray(arr) ? arr : []).map(r => {
+    const cur = r?._fxConverted ? "USD" : r?.reportedCurrency;
+    if (cur && cur !== "USD") return r;
+    return { ...scaleFields(r, fields, 1 / fx), reportedCurrency: major, _fxToListing: { from: "USD", to: major, rate: 1 / fx } };
+  });
 }
 
 /**
@@ -177,8 +185,9 @@ export function listingFxWarning(currency: unknown): string | null {
  *
  * - Major-Währung (EUR, CAD, …): Preisfelder × rate. Cap-Felder (schon Major) × rate. Historie mit demselben
  *   Faktor, damit RSL, MA-Kreuze und RSI identisch bleiben.
- * - Minor Unit (GBp, ZAc, ILA): nicht × rate nach USD. FMP-Shape über normalizeMinorUnitListing (÷ factor,
- *   Statements USD → Major mit dem Live-FX). Yahoo-Bars sind schon Major, nur der Quote-Kurs wird ÷ factor.
+ * - Minor Unit (GBp, ZAc, ILA): nicht × rate nach USD. Kurs ÷ factor (Yahoo-Bars sind schon Major).
+ *   Statements und Schätzungen, die in USD liegen, gehen mit demselben Live-FX in die Major-Einheit,
+ *   auch auf dem Yahoo-Shape (barsInMajor). Sonst stünde ein GBP-Kurs neben einer USD-Bilanz.
  * - USD-Listing → Eingabe unverändert zurück (bit-gleich). Ohne gültigen FX-Kurs → keine Umrechnung:
  *   Minor Units wie bisher (#244), Major-Währung bleibt stehen, nur markiert.
  */
@@ -244,6 +253,7 @@ export function normalizeListingToUsd<T extends MinorUnitInput>(
   }
   // Minor Unit mit FX: in der Major-Währung bleiben (GBp → GBP), nicht nach USD. FX-Kurs kommt vom Aufrufer
   // (getFxRateToUsd / Yahoo), kein fester Faktor. Yahoo-Bars sind schon Major (barsInMajor) → nur der Quote-Kurs ÷ factor.
+  // Statements auf diesem Shape sind weiterhin USD und werden mit demselben FX in die Major-Einheit geholt.
   if (mu) {
     if (!opts.barsInMajor) return normalizeMinorUnitListing(data, fx, statementFields);
     const kept = convertListing(data, { rate: 1, factor, kBars: 1, currency: major, listingFx: { from: code, major, factor, rate: null, converted: false }, mu: true });
@@ -253,7 +263,16 @@ export function normalizeListingToUsd<T extends MinorUnitInput>(
       const { _listingFx: _drop, ...profile } = kept.profile as any;
       kept.profile = profile;
     }
-    return kept;
+    const fields = Array.from(statementFields);
+    const financials = {
+      income: usdRowsToMajor(kept.financials?.income, fields, fx, major),
+      cashflow: usdRowsToMajor(kept.financials?.cashflow, fields, fx, major),
+      balanceSheet: usdRowsToMajor(kept.financials?.balanceSheet, fields, fx, major),
+    };
+    const analyst = kept.analyst
+      ? { ...kept.analyst, estimates: usdRowsToMajor(kept.analyst.estimates, fields, fx, major) }
+      : kept.analyst;
+    return { ...kept, financials, analyst };
   }
   return convertListing(data, { rate: fx, factor, kBars: opts.barsInMajor ? fx : fx / factor, currency: "USD", listingFx: { from: code, major, factor, rate: fx, converted: true }, mu: false });
 }
