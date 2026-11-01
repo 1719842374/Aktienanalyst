@@ -15,6 +15,7 @@ import { SectorsPanel } from "@/components/researcher/SectorsPanel";
 import { ScreenerPanel } from "@/components/researcher/ScreenerPanel";
 import { CapexPanel } from "@/components/researcher/CapexPanel";
 import { GeoMapPanel } from "@/components/researcher/GeoMapPanel";
+import { UNDERVALUED_SCREEN_PRESET } from "@shared/custom-screen";
 
 type Region = "US" | "EU" | "ASIA";
 type Tab = "macro" | "sectors" | "screener" | "capex";
@@ -59,6 +60,13 @@ export default function Researcher() {
   const [briefingData, setBriefingData] = useState<any>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingError, setBriefingError] = useState<string | null>(null);
+  const [screenMin, setScreenMin] = useState(String(UNDERVALUED_SCREEN_PRESET.marketCapMin));
+  const [screenMax, setScreenMax] = useState(String(UNDERVALUED_SCREEN_PRESET.marketCapMax));
+  const [screenPe, setScreenPe] = useState(String(UNDERVALUED_SCREEN_PRESET.peMax));
+  const [screenGrowth, setScreenGrowth] = useState(String(UNDERVALUED_SCREEN_PRESET.revenueGrowthMin));
+  const [screenIndustry, setScreenIndustry] = useState("");
+  const screenRef = useRef({ screenMin, screenMax, screenPe, screenGrowth });
+  screenRef.current = { screenMin, screenMax, screenPe, screenGrowth };
 
   async function runBriefing(force = false) {
     setBriefingOpen(true);
@@ -88,10 +96,19 @@ export default function Researcher() {
     mutationFn: async ({ tab, force, region: mutRegion }: { tab: Tab; force?: boolean; region: Region }) => {
       const body: any = { region: mutRegion, force: !!force };
       if (tab === "screener") {
-        body.marketCapMin = 1000;
-        body.marketCapMax = 500000;
-        body.peMax = 30;
-        body.revenueGrowthMin = 5;
+        const s = screenRef.current;
+        const numOrOmit = (raw: string) => {
+          const n = Number(raw);
+          return raw.trim() !== "" && Number.isFinite(n) ? n : undefined;
+        };
+        const marketCapMin = numOrOmit(s.screenMin);
+        const marketCapMax = numOrOmit(s.screenMax);
+        const peMax = numOrOmit(s.screenPe);
+        const revenueGrowthMin = numOrOmit(s.screenGrowth);
+        if (marketCapMin != null) body.marketCapMin = marketCapMin;
+        if (marketCapMax != null) body.marketCapMax = marketCapMax;
+        if (peMax != null) body.peMax = peMax;
+        if (revenueGrowthMin != null) body.revenueGrowthMin = revenueGrowthMin;
       }
       const MAX_RETRIES = 3;
       let lastErr: any = null;
@@ -359,7 +376,31 @@ export default function Researcher() {
             <MacroPanel data={currentData} region={region} showIndex={false} />
           )}
           {activeTab === "sectors" && <SectorsPanel data={currentData} region={region} />}
-          {currentData && activeTab === "screener" && <ScreenerPanel data={currentData} region={region} />}
+          {activeTab === "screener" && (
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 min-w-0" data-testid="custom-screen-form">
+              <ScreenField label="MCap min, Mio." value={screenMin} onChange={setScreenMin} testId="screen-mcap-min" />
+              <ScreenField label="MCap max, Mio." value={screenMax} onChange={setScreenMax} testId="screen-mcap-max" />
+              <ScreenField label="KGV max" value={screenPe} onChange={setScreenPe} testId="screen-pe-max" />
+              <ScreenField label="Umsatzwachstum min %" value={screenGrowth} onChange={setScreenGrowth} testId="screen-growth-min" />
+              <ScreenField label="Industrie enthält" value={screenIndustry} onChange={setScreenIndustry} testId="screen-industry" />
+              <div className="text-[10px] text-muted-foreground col-span-2 sm:col-span-3 lg:col-span-1">
+                ROIC: n/a — Kandidat hat kein ROIC. Land: die Region des Laufs. Forward P/E: n/a — nur trailing KGV.
+              </div>
+            </div>
+          )}
+          {currentData && activeTab === "screener" && (
+            <ScreenerPanel
+              data={{
+                ...currentData,
+                candidates: (currentData.candidates ?? []).filter((c: { industry?: string; sector?: string }) => {
+                  const q = screenIndustry.trim().toLowerCase();
+                  if (!q) return true;
+                  return `${c.industry ?? ""} ${c.sector ?? ""}`.toLowerCase().includes(q);
+                }),
+              }}
+              region={region}
+            />
+          )}
           {currentData && activeTab === "capex" && <CapexPanel data={currentData} region={region} />}
           {loadingForCurrentView && currentData && (
             <div className="absolute top-0 left-0 right-0 flex justify-center pointer-events-none">
@@ -623,5 +664,19 @@ function EmptyState() {
         </div>
       </div>
     </div>
+  );
+}
+
+function ScreenField({ label, value, onChange, testId }: { label: string; value: string; onChange: (v: string) => void; testId: string }) {
+  return (
+    <label className="min-w-0 text-[10px] text-foreground/60">
+      {label}
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="mt-0.5 h-9 w-full min-w-0 rounded border border-border bg-background px-2 text-xs text-foreground sm:h-7"
+        data-testid={testId}
+      />
+    </label>
   );
 }
