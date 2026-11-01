@@ -8,7 +8,6 @@ import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { RECESSION_FALLBACK_DATA } from "@/lib/recessionFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { RecessionRsiSection } from "@/components/recession/RecessionRsiSection";
 import { BuffettRatioPanel } from "@/components/recession/BuffettRatioPanel";
@@ -204,7 +203,6 @@ export function RecessionSectionsBody({ data, regions }: { data: RecessionAnalys
         <SourcesList sources={data.sources} />
       </SectionCard>
       <div className="pb-4">
-        <PerplexityAttribution />
       </div>
     </div>
   );

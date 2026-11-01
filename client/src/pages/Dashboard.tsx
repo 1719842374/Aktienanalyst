@@ -28,7 +28,6 @@ import { gbmMonteCarlo, calculateGBMParams, type GBMMonteCarloResult } from "@/l
 import { TickerSearch } from "@/components/TickerSearch";
 import { formatCurrency } from "@/lib/formatters";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
 import { ExecSummaryCard } from "@/components/ExecSummaryCard";
 import { YahooNoValuationCard } from "@/components/YahooNoValuationCard";
@@ -618,7 +617,6 @@ export default function Dashboard() {
           </nav>
 
           <div className="px-3 py-3 border-t border-border mt-2">
-            <PerplexityAttribution />
           </div>
         </aside>
 

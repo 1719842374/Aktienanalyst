@@ -7,7 +7,6 @@ import { useMutation } from "@tanstack/react-query";
 import { analyzeBTC } from "@/lib/btcAnalysis";
 import { BTC_FALLBACK_DATA } from "@/lib/btcFallbackData";
 import { useTheme } from "@/components/ThemeProvider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { SectionCard } from "@/components/SectionCard";
 import { Section13Miner, useMinerData } from "@/components/sections/Section13Miner";
 import { StablecoinLiquidityPanel } from "@/components/btc/StablecoinLiquidityPanel";
@@ -2868,7 +2867,6 @@ export default function BTCDashboard() {
             ))}
           </nav>
           <div className="px-3 py-3 border-t border-border mt-2">
-            <PerplexityAttribution />
           </div>
         </aside>
 
