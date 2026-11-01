@@ -16,6 +16,7 @@ import { TaPlotScroll, TaVolumeBand } from "./TaPlotFrame";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, EyeOff, Ruler, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
+import { AMPEL_STROKE, ampelBadge as fourConditionBadge, paintAmpelClose, type AmpelTone } from "@shared/ta-ampel";
 import { useDividendHistory } from "@/lib/useDividendHistory";
 import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, DIVIDEND_YIELD_FORMULA, dividendSourceCaption, peerDividendYieldOnDates, type DividendHistoryResponse, type DividendOverlaySeries, type PeerDividendYieldPoint } from "@shared/dividends";
 import { chartListingPrice, formatChartPrice } from "@/lib/chartListingPrice";
@@ -497,6 +498,9 @@ export function TechnicalChart({
     : buyScore === 3 ? "bg-yellow-400/10 border-yellow-400/30"
     : buyScore >= 1  ? "bg-amber-500/10 border-amber-500/30"
     : "bg-red-500/10 border-red-500/30";
+  const chartAmpel = (cs.ma200Value == null || cs.ma50Value == null || cs.macdValue == null)
+    ? { tone: "na" as const, text: "n/a — MA oder MACD fehlt" }
+    : fourConditionBadge(buyScore);
   const scoreLabel = buyScore === 4 ? "Alle Kaufbedingungen erfüllt"
     : buyScore === 3 ? "3 / 4 Bedingungen – fast kaufbereit"
     : buyScore === 2 ? "2 / 4 Bedingungen – neutrales Umfeld"
@@ -1122,6 +1126,7 @@ export function TechnicalChart({
                 cone={scenarioCone}
                 fund={fundOverlay}
                 phases={phaseByDateMap}
+                ampel={chartAmpel}
               />
             </div>
             {narrow && showVolume && (
@@ -1161,6 +1166,7 @@ export function TechnicalChart({
               ccy={ccy}
               priceFactor={priceFactor}
               cone={scenarioCone}
+              ampel={chartAmpel}
               widthScale={CONE_VIEWPORT_SCALE}
               scrollToEnd={showCone}
               alignedPoints={aAligned}
@@ -1751,7 +1757,7 @@ function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showAmpel = false, dense,
   onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, ccy = "$",
-  priceFactor = 1, cone = null, fund = null, phases = null,
+  priceFactor = 1, cone = null, fund = null, phases = null, ampel = null,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1790,6 +1796,8 @@ function PricePane({
   fund?: FundJoinPoint[] | null;
   /** Phasenfarbe der Kurslinie. null = eine Farbe, wie bisher. */
   phases?: Map<string, TaPhase | null> | null;
+  /** Ampel der vier Protokoll-Bedingungen. null = kein Label. */
+  ampel?: { tone: AmpelTone | "na"; text: string } | null;
 }) {
   const narrow = useIsNarrow();
   const conePrices = cone ? coneDomainValues(cone) : undefined;
@@ -1800,11 +1808,12 @@ function PricePane({
     const base = withFundOverlay(withReal10YOverlay(withTreasury10YOverlay(withCreditOverlay(withDividendOverlay(points, dividend, peerDividend), credit), t10y), real10y), fund);
     return cone ? attachConeSeries(base, cone) : base;
   }, [points, dividend, peerDividend, credit, t10y, real10y, cone, fund]);
-  const painted = useMemo(
-    () => (showAmpel && phases ? paintPhaseRows(chartData, phases) : null),
-    [chartData, phases, showAmpel],
+  const fourPainted = useMemo(() => paintAmpelClose(chartData), [chartData]);
+  const phasePainted = useMemo(
+    () => (showAmpel && phases ? paintPhaseRows(fourPainted, phases) : null),
+    [fourPainted, phases, showAmpel],
   );
-  const plotData = painted ?? chartData;
+  const plotData = phasePainted ?? fourPainted;
   const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
@@ -1830,7 +1839,18 @@ function PricePane({
     if (next) setLabelShift(next);
   }, [cone, dividend, divBand, narrow, dense, chartData, yMin, yMax, labelShift]);
   return (
-    <div ref={plotRef} className="h-full w-full">
+    <div ref={plotRef} className="relative h-full w-full">
+    {ampel && (
+      <div
+        className={`pointer-events-none absolute right-2 top-1 z-10 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${
+          ampel.tone === "green" ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-500"
+          : ampel.tone === "yellow" ? "border-yellow-400/40 bg-yellow-400/15 text-yellow-500"
+          : ampel.tone === "red" ? "border-red-500/40 bg-red-500/15 text-red-500"
+          : "border-border bg-muted/80 text-muted-foreground"
+        }`}
+        data-testid="chart-ampel-label"
+      >{ampel.text}</div>
+    )}
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
         data={plotData}
@@ -2023,7 +2043,10 @@ function PricePane({
           </>
         )}
         <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.75} dot={false} connectNulls isAnimationActive={false} />
-        {painted && (
+        <Line yAxisId="price" type="monotone" dataKey="_closeGreen" stroke={AMPEL_STROKE.green} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+        <Line yAxisId="price" type="monotone" dataKey="_closeYellow" stroke={AMPEL_STROKE.yellow} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+        <Line yAxisId="price" type="monotone" dataKey="_closeRed" stroke={AMPEL_STROKE.red} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+        {phasePainted && (
           <>
             <Line yAxisId="price" type="monotone" dataKey="_phA" name="ATTRAKTIV" stroke={TA_PHASE_STROKE.ATTRAKTIV} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
             <Line yAxisId="price" type="monotone" dataKey="_phN" name="NEUTRAL" stroke={TA_PHASE_STROKE.NEUTRAL} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
@@ -2308,7 +2331,7 @@ function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showAmpel = false, showMacd, showRsi, count,
   testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, peerDividend = null, peerDividendSource = null, credit, creditLabel, t10y, real10y, fund, ccy,
-  priceFactor = 1, cone = null, widthScale = 1, scrollToEnd = false, alignedPoints, phases = null, overlay = null,
+  priceFactor = 1, cone = null, ampel = null, widthScale = 1, scrollToEnd = false, alignedPoints, phases = null, overlay = null,
 }: {
   label: string;
   labelClassName: string;
@@ -2344,6 +2367,7 @@ function BandStack({
   ccy?: string;
   priceFactor?: number;
   cone?: ScenarioCone | null;
+  ampel?: { tone: AmpelTone | "na"; text: string } | null;
   widthScale?: number;
   scrollToEnd?: boolean;
   alignedPoints?: WindowPoint[];
@@ -2393,6 +2417,7 @@ function BandStack({
               cone={cone}
               phases={phases}
               showAmpel={showAmpel}
+              ampel={ampel}
             />
           )}
         </div>
