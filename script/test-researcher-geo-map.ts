@@ -52,7 +52,30 @@ async function run(deps: any, opts: Record<string, unknown> = {}) {
   assert.equal(sector.status, 200);
   assert.equal(sector.json.layer, "sector");
   assert.equal(sector.json.coverage.withData, 0);
-  assert.equal((await t.get("?layer=gold")).status, 400);
+  const gold = await t.get("?layer=gold");
+  assert.equal(gold.status, 200);
+  assert.equal(gold.json.layer, "gold");
+  assert.equal(gold.json.coverage.withData, 0);
+  const nem = gold.json.goldCompanies.find((c: any) => c.symbol === "NEM");
+  assert.equal(typeof nem.aiscUsdPerOz, "number");
+  assert.ok(nem.aiscUsdPerOz > 0);
+  assert.equal(nem.productionOz, null);
+  const aiscFile = JSON.parse(readFileSync("server/data/gold-aisc.json", "utf8"));
+  assert.ok(Array.isArray(aiscFile.companies.B.aliases) && aiscFile.companies.B.aliases.includes("GOLD"), "Barrick-Alias steht in der Datei, nicht als Einzelfall im UI");
+  const bRows = aiscFile.values.filter((v: any) => v.company === "B").sort((a: any, b: any) => String(a.quarter).localeCompare(String(b.quarter)));
+  const barrick = gold.json.goldCompanies.find((c: any) => c.symbol === "GOLD");
+  assert.equal(barrick.aiscUsdPerOz, bRows[bRows.length - 1].aisc);
+  assert.equal(barrick.productionOz, null);
+  assert.doesNotMatch(barrick.note, /nicht als GOLD/);
+  assert.equal(gold.json.countries.length, 0);
+  assert.equal(gold.json.coverage.total, 0);
+  assert.match(gold.json.note, /^n\/a — /);
+  const vc = await t.get("?layer=valuechain");
+  assert.equal(vc.status, 200);
+  assert.equal(vc.json.countries.length, 0);
+  assert.match(vc.json.note, /^n\/a — /);
+  assert.equal(vc.json.chains.find((c: any) => c.key === "semiconductors").href, "#/valuechain?industry=semiconductors");
+  assert.equal((await t.get("?layer=nope")).status, 400);
   t.close();
 }
 // 2) mit Daten: nur US hat Firmen, DE Screener-Fehler, Rest leer
@@ -64,6 +87,7 @@ async function run(deps: any, opts: Record<string, unknown> = {}) {
       return iso === "US" ? [{ symbol: "X", name: "X Corp", sector: "Technology", marketCap: 1e12 }, { symbol: "Y", name: "Y Inc", sector: "Energy", marketCap: 5e11 }] : [];
     },
     capexYears: async (s: string) => s === "X" ? { latest: { capexUsd: 2e10, fiscalYear: "2025", reportedCurrency: "USD" }, prevCapexUsd: 1e10 } : { latest: null, prevCapexUsd: null },
+    geoSegments: async (s: string) => s === "X" ? [{ name: "United States", percentage: 70, revenue: 100 }, { name: "Europe", percentage: 30, revenue: 40 }] : [],
   });
   const r = await t.get("");
   assert.equal(r.status, 200);
@@ -72,6 +96,10 @@ async function run(deps: any, opts: Record<string, unknown> = {}) {
   assert.equal(us.capexUsd, 2e10); assert.equal(us.yoyPct, 100);
   assert.equal(us.dominantSector, "Technology");
   assert.equal(us.companies[0].yoyPct, 100); assert.equal(us.companies[1].capexUsd, null);
+  assert.equal(us.companies[0].geoSegments[0].iso2, "US");
+  assert.equal(us.companies[0].geoSegments[1].iso2, null);
+  assert.match(us.companies[0].geoSegments[1].note, /^n\/a — /);
+  assert.equal(us.capexUsd, 2e10);
   const sector = await t.get("?layer=sector");
   assert.equal(sector.status, 200);
   assert.equal(sector.json.countries.find((c: any) => c.iso2 === "US").dominantSector, "Technology");
@@ -92,6 +120,12 @@ const panel = readFileSync("client/src/components/researcher/GeoMapPanel.tsx", "
 assert.match(panel, /readApiJson/);
 assert.match(panel, /GEO_MAP_CLIENT_TIMEOUT_MS/);
 assert.doesNotMatch(panel, /yoyColor/);
+assert.doesNotMatch(panel, /symbol === "GOLD"/);
+assert.doesNotMatch(readFileSync("shared/geo-map-layers.ts", "utf8"), /symbol === "GOLD"/);
+assert.match(panel, /sectorLegendShares/);
+assert.match(panel, /geo-legend-/);
+assert.match(panel, /goldCountryHasProduction/);
+assert.match(panel, /geo-gold-na/);
 
 const pin = JSON.parse(readFileSync("script/fixtures/prod-analyze-dcf-2026-10-25.json", "utf8")).expectOldHead;
 assert.equal(Number(pin.VWAGY.overallScore).toFixed(6), "4.735718");
@@ -218,6 +252,209 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
     t.close();
   } finally {
     releaseRebuild();
+    process.chdir(root);
+  }
+}
+
+{
+  const { matchGeoSegmentIso2, mapGeoSegmentRows, sectorLegendShares } = await import("../shared/geo-map");
+  assert.equal(matchGeoSegmentIso2("Taiwan"), "TW");
+  assert.equal(matchGeoSegmentIso2("North America"), null);
+  assert.equal(mapGeoSegmentRows([]).lines, null);
+  assert.match(mapGeoSegmentRows([]).note || "", /^n\/a — /);
+  const legend = sectorLegendShares([
+    { status: "ok", capexUsd: 40, sectorShares: [{ sector: "Technology", pct: 75 }, { sector: "Energy", pct: 25 }] },
+    { status: "ok", capexUsd: 60, sectorShares: [{ sector: "Technology", pct: 50 }, { sector: "Industrials", pct: 50 }] },
+    { status: "n/a", capexUsd: null, sectorShares: [{ sector: "Energy", pct: 100 }] },
+  ]);
+  assert.deepEqual(legend, [
+    { sector: "Technology", pct: 60 },
+    { sector: "Industrials", pct: 30 },
+    { sector: "Energy", pct: 10 },
+  ]);
+  // Real Estate 0 % im Land und ein Rest, der auf 0,0 % rundet, fehlen in der Legende.
+  const hiddenZero = sectorLegendShares([
+    { status: "ok", capexUsd: 1e12, sectorShares: [{ sector: "Technology", pct: 100 }, { sector: "Real Estate", pct: 0 }] },
+    { status: "ok", capexUsd: 1e6, sectorShares: [{ sector: "Real Estate", pct: 100 }] },
+  ]);
+  assert.deepEqual(hiddenZero.map(row => row.sector), ["Technology"]);
+  assert.ok(hiddenZero.every(row => row.pct > 0));
+}
+
+{
+  const { lookupAliasCodes, tickerAliasGroupsFromCompanies } = await import("../shared/gold-aisc");
+  const groups = tickerAliasGroupsFromCompanies({
+    B: { ticker: "B", aliases: ["GOLD", "ABX"] },
+    NEM: { ticker: "NEM" },
+  });
+  assert.deepEqual(lookupAliasCodes("GOLD", groups).codes.sort(), ["ABX", "B", "GOLD"]);
+  assert.equal(lookupAliasCodes("GOLD", groups).ambiguous, false);
+  assert.deepEqual(lookupAliasCodes("NEM", groups).codes, ["NEM"]);
+  const clash = tickerAliasGroupsFromCompanies({
+    B: { ticker: "B", aliases: ["GOLD"] },
+    X: { ticker: "X", aliases: ["GOLD"] },
+  });
+  assert.equal(lookupAliasCodes("GOLD", clash).ambiguous, true);
+  const { goldCountriesFromFacts, goldCountryHasProduction } = await import("../shared/geo-map-layers");
+  assert.equal(goldCountryHasProduction({ productionOz: null, countrySharePct: null }), false);
+  assert.equal(goldCountryHasProduction({ productionOz: 0, countrySharePct: null }), false);
+  const kept = goldCountriesFromFacts([
+    { iso2: "AU", isoNum: "036", name: "Australien", lat: -25, lon: 134, productionOz: null, countrySharePct: null },
+    { iso2: "CA", isoNum: "124", name: "Kanada", lat: 56, lon: -106, productionOz: 1_000_000, countrySharePct: 12 },
+  ]);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].iso2, "CA");
+  assert.equal(kept[0].productionOz, 1_000_000);
+  assert.equal(kept[0].countrySharePct, 12);
+}
+
+{
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { diskResearcherDelete } = await import("../server/disk-cache");
+  const { capexPayloadCarriesGeoSegments } = await import("../server/researcher-geo-map-route");
+  assert.equal(capexPayloadCarriesGeoSegments({ countries: [{ companies: [{ symbol: "X" }] }] }), false);
+  assert.equal(capexPayloadCarriesGeoSegments({ countries: [{ companies: [{ symbol: "X", geoSegments: null }] }] }), true);
+  const root = process.cwd();
+  const dir = mkdtempSync(join(tmpdir(), "geo-map-seg-"));
+  process.chdir(dir);
+  diskResearcherDelete("geo-map-capex__global");
+  try {
+    const cacheDir = join(dir, ".cache", "researcher");
+    mkdirSync(cacheDir, { recursive: true });
+    const stale = {
+      layer: "capex",
+      asOf: new Date().toISOString(),
+      source: "alt",
+      attribution: "alt",
+      coverage: { withData: 1, total: 25 },
+      countries: [{
+        iso2: "US", isoNum: "840", name: "USA", lat: 39, lon: -98,
+        status: "ok", capexUsd: 1, yoyPct: null,
+        companies: [{ symbol: "OLD", name: "Old", sector: "Technology", capexUsd: 1, fiscalYear: "2024", yoyPct: null, reportedCurrency: "USD" }],
+        sectorShares: [{ sector: "Technology", pct: 100 }],
+        dominantSector: "Technology",
+      }],
+      _cachedAt: new Date().toISOString(),
+    };
+    writeFileSync(join(cacheDir, "geo-map-capex__global.json"), JSON.stringify(stale));
+    const t = await run({
+      hasKey: () => true,
+      screenCountry: async (iso: string) => iso === "US" ? [{ symbol: "X", name: "X Corp", sector: "Technology", marketCap: 1e12 }] : [],
+      capexYears: async () => ({ latest: { capexUsd: 5, fiscalYear: "2025", reportedCurrency: "USD" }, prevCapexUsd: null }),
+      geoSegments: async () => [{ name: "United States", percentage: 80, revenue: 10 }],
+    }, { useCache: true, responseBudgetMs: 5000 });
+    const r = await t.get("?layer=capex");
+    assert.equal(r.status, 200);
+    const us = r.json.countries.find((c: any) => c.iso2 === "US");
+    assert.notEqual(us.companies[0].symbol, "OLD");
+    assert.equal(us.companies[0].geoSegments[0].iso2, "US");
+    assert.ok(r.json.countries.every((c: any) => (c.companies || []).every((co: any) => Object.prototype.hasOwnProperty.call(co, "geoSegments"))));
+    t.close();
+  } finally {
+    diskResearcherDelete("geo-map-capex__global");
+    process.chdir(root);
+  }
+}
+
+// 9) Primärlisting: NEO-CDR (Cboe Canada) verliert gegen die Heimatbörse, auch bei höherem oder gleichem Cap.
+{
+  const { selectPrimaryListings } = await import("../server/researcher-geo-map");
+  const us = [
+    { symbol: "AMZN.NE", name: "Amazon.com, Inc.", sector: "Consumer Cyclical", marketCap: 2.6e12, exchangeShortName: "NEO", exchange: "Cboe Canada", currency: "CAD", country: "US" },
+    { symbol: "AMZN", name: "Amazon.com, Inc.", sector: "Consumer Cyclical", marketCap: 2.6e12, exchangeShortName: "NASDAQ", exchange: "NASDAQ", currency: "USD", country: "US" },
+    { symbol: "MSFT.NE", name: "Microsoft Corporation", sector: "Technology", marketCap: 3.9e12, exchangeShortName: "NEO", exchange: "Cboe Canada", currency: "USD", country: "US" },
+    { symbol: "MSFT", name: "Microsoft Corporation", sector: "Technology", marketCap: 3.2e12, exchangeShortName: "NASDAQ", exchange: "NASDAQ", currency: "USD", country: "US" },
+    { symbol: "GOOG.NE", name: "Alphabet Inc.", sector: "Communication Services", marketCap: 2.1e12, exchangeShortName: "NEO", currency: "CAD", country: "US" },
+    { symbol: "GOOG", name: "Alphabet Inc.", sector: "Communication Services", marketCap: 2.0e12, exchangeShortName: "NASDAQ", currency: "USD", country: "US" },
+  ];
+  const picked = selectPrimaryListings(us, "US", 6).map((r: { symbol: string }) => r.symbol);
+  assert.deepEqual(picked, ["MSFT", "AMZN", "GOOG"]);
+  // Screener liefert nur das CDR: Stamm-Ticker der US-Heimatbörse, ohne zweiten FMP-Call.
+  const onlyCdr = selectPrimaryListings([
+    { symbol: "AMZN.NE", name: "Amazon.com, Inc.", sector: "Consumer Cyclical", marketCap: 2e12, exchangeShortName: "NEO", currency: "CAD" },
+    { symbol: "MSFT.NE", name: "Microsoft Corporation", sector: "Technology", marketCap: 3e12, exchangeShortName: "NEO", currency: "CAD" },
+    { symbol: "GOOG.NE", name: "Alphabet Inc.", sector: "Communication Services", marketCap: 1e12, exchangeShortName: "NEO", currency: "CAD" },
+  ], "US", 6).map((r: { symbol: string }) => r.symbol);
+  assert.deepEqual(onlyCdr, ["MSFT", "AMZN", "GOOG"]);
+  // Heimatbörse DE schlägt die NYSE-Zeile, auch wenn die ADR-Cap höher ist.
+  const de = selectPrimaryListings([
+    { symbol: "SAP", name: "SAP SE", sector: "Technology", marketCap: 3e11, exchangeShortName: "NYSE", currency: "USD", country: "DE" },
+    { symbol: "SAP.DE", name: "SAP SE", sector: "Technology", marketCap: 2.5e11, exchangeShortName: "XETRA", currency: "EUR", country: "DE" },
+  ], "DE", 6);
+  assert.equal(de[0].symbol, "SAP.DE");
+  // NEO ist für einen kanadischen Emittenten die passende Börse und bleibt.
+  const ca = selectPrimaryListings([
+    { symbol: "NRTH.NE", name: "Northwind Ltd.", sector: "Technology", marketCap: 1e11, exchangeShortName: "NEO", currency: "CAD", country: "CA" },
+  ], "CA", 6);
+  assert.equal(ca[0].symbol, "NRTH.NE");
+  const { capexPayloadPrimaryListings } = await import("../server/researcher-geo-map");
+  const country = (iso2: string, symbol: string) => ({ iso2, companies: [{ symbol, geoSegments: null }] });
+  assert.equal(capexPayloadPrimaryListings({ countries: [country("US", "AMZN.NE"), country("US", "MSFT.NE"), country("US", "GOOG.NE")] }), false);
+  assert.equal(capexPayloadPrimaryListings({ countries: [country("US", "AMZN"), country("US", "MSFT"), country("US", "GOOG"), country("DE", "SAP.DE"), country("CA", "NRTH.NE")] }), true);
+  assert.doesNotMatch(readFileSync("server/researcher-geo-map.ts", "utf8"), /["']AMZN|["']MSFT|["']GOOG/);
+}
+
+// 10) Frischer Cache mit NEO-CDR wird verworfen. Der Neubau läuft einmal, der zweite Read ist ein Treffer.
+{
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { diskResearcherDelete } = await import("../server/disk-cache");
+  const root = process.cwd();
+  const dir = mkdtempSync(join(tmpdir(), "geo-map-neo-"));
+  process.chdir(dir);
+  diskResearcherDelete("geo-map-capex__global");
+  let screenCalls = 0;
+  try {
+    const cacheDir = join(dir, ".cache", "researcher");
+    mkdirSync(cacheDir, { recursive: true });
+    const firm = (symbol: string, name: string) => ({
+      symbol, name, sector: "Technology", capexUsd: 1e9, fiscalYear: "2025", yoyPct: null, reportedCurrency: "USD", geoSegments: [],
+    });
+    const stale = {
+      layer: "capex",
+      asOf: new Date().toISOString(),
+      source: "alt",
+      attribution: "alt",
+      coverage: { withData: 1, total: 25 },
+      countries: [{
+        iso2: "US", isoNum: "840", name: "USA", lat: 39, lon: -98,
+        status: "ok", capexUsd: 3e9, yoyPct: null,
+        companies: [firm("AMZN.NE", "Amazon.com, Inc."), firm("MSFT.NE", "Microsoft Corporation"), firm("GOOG.NE", "Alphabet Inc.")],
+        sectorShares: [{ sector: "Technology", pct: 100 }],
+        dominantSector: "Technology",
+      }],
+      _cachedAt: new Date().toISOString(),
+    };
+    writeFileSync(join(cacheDir, "geo-map-capex__global.json"), JSON.stringify(stale));
+    const t = await run({
+      hasKey: () => true,
+      screenCountry: async (iso: string) => {
+        screenCalls += 1;
+        if (iso !== "US") return [];
+        return [
+          { symbol: "AMZN", name: "Amazon.com, Inc.", sector: "Consumer Cyclical", marketCap: 2e12 },
+          { symbol: "MSFT", name: "Microsoft Corporation", sector: "Technology", marketCap: 3e12 },
+          { symbol: "GOOG", name: "Alphabet Inc.", sector: "Communication Services", marketCap: 1e12 },
+        ];
+      },
+      capexYears: async () => ({ latest: { capexUsd: 1e9, fiscalYear: "2025", reportedCurrency: "USD" }, prevCapexUsd: null }),
+      geoSegments: async () => [],
+    }, { useCache: true, responseBudgetMs: 5000 });
+    const first = await t.get("?layer=capex");
+    const symbols = first.json.countries.find((c: { iso2: string }) => c.iso2 === "US").companies.map((c: { symbol: string }) => c.symbol);
+    assert.deepEqual(symbols, ["AMZN", "MSFT", "GOOG"]);
+    const built = screenCalls;
+    assert.ok(built > 0, "falscher Cache muss einmal neu gebaut werden");
+    const second = await t.get("?layer=capex");
+    assert.equal(screenCalls, built, "zweiter Read darf keinen weiteren Screener-Lauf starten");
+    assert.equal(second.json._cached, true);
+    assert.deepEqual(second.json.countries.find((c: { iso2: string }) => c.iso2 === "US").companies.map((c: { symbol: string }) => c.symbol), ["AMZN", "MSFT", "GOOG"]);
+    t.close();
+  } finally {
+    diskResearcherDelete("geo-map-capex__global");
     process.chdir(root);
   }
 }

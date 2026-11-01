@@ -80,6 +80,19 @@ export interface GeoMapCompany {
   yoyPct: number | null;
   /** Originalwährung des Abschlusses (vor FX) */
   reportedCurrency: string | null;
+  /** Umsatz-Geosegmente von FMP. null = keine Zeilen. Capex bleibt beim Firmensitz. */
+  geoSegments?: GeoSegmentLine[] | null;
+  geoSegmentsNote?: string | null;
+}
+
+export interface GeoSegmentLine {
+  name: string;
+  /** Anteil am berichteten Segmentumsatz in %. null = nicht belegt. */
+  pct: number | null;
+  revenueUsd: number | null;
+  /** Karten-Land, nur bei eindeutigem Namen. null = nicht zuordenbar. */
+  iso2: string | null;
+  note: string | null;
 }
 
 export interface GeoMapCountry extends GeoMapCountryDef {
@@ -88,11 +101,20 @@ export interface GeoMapCountry extends GeoMapCountryDef {
   capexUsd: number | null;
   /** YoY der Summe, nur über Firmen mit beiden Jahren; null = n/a */
   yoyPct: number | null;
+  /** Mid-Rank des Capex unter Ländern mit Capex. null = Stichprobe zu klein oder kein Wert. */
+  capexPercentile?: number | null;
+  /** Mid-Rank des YoY unter Ländern mit YoY. */
+  yoyPercentile?: number | null;
   companies: GeoMapCompany[];
   /** Sektor-Anteil am erfassten Capex in % (Summe = 100) */
   sectorShares: { sector: string; pct: number }[];
   /** Sektor mit dem höchsten Capex-Anteil, „n/a“ zählt nicht. null = keins erfasst. */
   dominantSector: string | null;
+  /**
+   * Nur die Sektor-Antwort setzt das (projectSectorLayer). Die Capex-Antwort lässt es weg.
+   * dominantSector bleibt daneben der Rohname, auch bei Gleichstand.
+   */
+  sectorAmpel?: SectorAmpel;
   note?: string;
 }
 
@@ -183,6 +205,38 @@ export function dominantSectorOf(sectorShares: { sector: string; pct: number }[]
   return top?.sector ?? null;
 }
 
+/**
+ * Nachkommastellen der Karten-Legende. Ein positiver Rest, der dabei auf 0 fällt,
+ * wird nicht gezeigt. 0 ist diese Anzeige, keine zusätzliche Schwelle.
+ */
+export const SECTOR_LEGEND_FRACTION_DIGITS = 1;
+
+/**
+ * Legende: Anteil je Sektor am erfassten Capex. Dieselben sectorShares, aus denen
+ * die Länderfarbe (dominanter Sektor) kommt. Länder ohne Capex zählen nicht.
+ */
+export function sectorLegendShares(
+  countries: readonly { status: string; capexUsd: number | null; sectorShares: readonly { sector: string; pct: number }[] }[],
+): { sector: string; pct: number }[] {
+  let total = 0;
+  const by = new Map<string, number>();
+  for (const country of countries) {
+    if (country.status !== "ok" || country.capexUsd == null || !(country.capexUsd > 0)) continue;
+    for (const share of country.sectorShares) {
+      if (!share.sector || share.sector === "n/a" || !(typeof share.pct === "number" && Number.isFinite(share.pct) && share.pct > 0)) continue;
+      const part = country.capexUsd * (share.pct / 100);
+      if (!(part > 0)) continue;
+      by.set(share.sector, (by.get(share.sector) ?? 0) + part);
+      total += part;
+    }
+  }
+  if (!(total > 0)) return [];
+  return Array.from(by.entries())
+    .map(([sector, value]) => ({ sector, pct: +((value / total) * 100).toFixed(SECTOR_LEGEND_FRACTION_DIGITS) }))
+    .filter(row => row.pct > 0)
+    .sort((a, b) => b.pct - a.pct || a.sector.localeCompare(b.sector, "de"));
+}
+
 /** Mid-Rank (#{v < x} + 0.5 · #{v = x}) / n. Gleiche Konvention wie die Sektor-Ampel. */
 const MIDRANK_TIE_WEIGHT = 0.5;
 
@@ -269,4 +323,305 @@ export const SECTOR_COLORS: Record<string, string> = {
 export function sectorColor(sector: string | null | undefined): string {
   if (!sector || sector === "n/a") return GEO_SCALE_COLORS.na;
   return SECTOR_COLORS[sector] ?? GEO_SCALE_COLORS.na;
+}
+
+/**
+ * Sektor-Ampel (Offen_WORK_CAPEX_SECTOR_MAP §2, Offen_WORK_RESEARCHER_CAPEX_MAP §2).
+ * Dominanz = capexShareWeight × Capex-Anteil der Firmen mit Firmensitz im Land.
+ * Ampel = Perzentil dieser Dominanz unter den Ländern mit eindeutigem Sektor
+ * (oberes/unteres Terzil), nicht eine feste Prozent-Schwelle. Kein Score.
+ * Umsatz-Geosegmente fließen nicht ein. Die Kartenfarbe bleibt sectorColor, die Legende sectorLegendShares.
+ */
+export const SECTOR_LAYER_PARAMS = {
+  /** Gewicht des Capex-Anteils (Prozentpunkte) an der Dominanz. Einzige belegte Quelle. */
+  capexShareWeight: 1,
+  /** Grün ab dem oberen Terzil der Peer-Perzentile. */
+  greenPct: 2 / 3,
+  /** Rot bis einschließlich des unteren Terzils. */
+  redPct: 1 / 3,
+  /**
+   * Unter dieser Stichprobe ist ein Terzil nicht belastbar → Ampel neutral.
+   * 3 ist das kleinste n, bei dem drei Bänder unterscheidbar sind.
+   */
+  minCountries: 3,
+  /** Tie-Gewicht im Mid-Rank der Ampel. Dieselbe Zahl wie MIDRANK_TIE_WEIGHT, eigener Parameter. */
+  midRankTieWeight: 0.5,
+} as const;
+
+export type SectorBand = "green" | "yellow" | "red" | "neutral";
+
+/** Palette der Ampel, mindestens 8 FMP-Sektoren. Nicht die Kartenfüllung (die bleibt SECTOR_COLORS). */
+export const SECTOR_CANON: readonly { id: string; label: string; color: string }[] = [
+  { id: "technology", label: "Technology", color: "#8b5cf6" },
+  { id: "communication", label: "Communication Services", color: "#f43f5e" },
+  { id: "consumer-cyclical", label: "Consumer Cyclical", color: "#f97316" },
+  { id: "consumer-defensive", label: "Consumer Defensive", color: "#eab308" },
+  { id: "industrials", label: "Industrials", color: "#3b82f6" },
+  { id: "financials", label: "Financial Services", color: "#14b8a6" },
+  { id: "healthcare", label: "Healthcare", color: "#22c55e" },
+  { id: "energy", label: "Energy", color: "#84cc16" },
+  { id: "materials", label: "Basic Materials", color: "#d946ef" },
+  { id: "utilities", label: "Utilities", color: "#06b6d4" },
+  { id: "real-estate", label: "Real Estate", color: "#fb7185" },
+];
+
+const SECTOR_OTHER_COLOR = "#94a3b8";
+
+const SECTOR_MATCHERS: readonly { id: string; test: (name: string) => boolean }[] = [
+  { id: "consumer-cyclical", test: s => /consumer cyclical|consumer discretionary|\bautos?\b/i.test(s) },
+  { id: "consumer-defensive", test: s => /consumer defensive|consumer staples/i.test(s) },
+  { id: "communication", test: s => /communication/i.test(s) },
+  { id: "technology", test: s => /technolog|semiconductor|software/i.test(s) },
+  { id: "financials", test: s => /financial/i.test(s) },
+  { id: "healthcare", test: s => /health care|healthcare|biotech|pharma/i.test(s) },
+  { id: "industrials", test: s => /industrial/i.test(s) },
+  { id: "energy", test: s => /^energy$/i.test(s) || /energy/i.test(s) },
+  { id: "materials", test: s => /basic materials|materials|mining/i.test(s) },
+  { id: "utilities", test: s => /utilit/i.test(s) },
+  { id: "real-estate", test: s => /real estate/i.test(s) },
+];
+
+export interface SectorAmpel {
+  dominantSectorId: string | null;
+  dominantSector: string | null;
+  dominantColor: string | null;
+  /** Capex-Anteil des dominanten Sektors in %. null = keine eindeutige Dominanz. */
+  dominantSharePct: number | null;
+  /** Mid-Rank-Perzentil der Dominanz unter den Ländern mit eindeutigem Sektor. */
+  sharePercentile: number | null;
+  /** Sample-z (n−1) der Dominanz. null = Stichprobe < 2 oder keine Streuung. */
+  shareZ: number | null;
+  shareBand: SectorBand;
+  /** Gesetzt, wenn Dominanz oder Ampel nicht belegbar ist. Beginnt mit „n/a —“. */
+  sectorNote: string | null;
+}
+
+export interface SectorLayerInfo {
+  params: typeof SECTOR_LAYER_PARAMS;
+  /** Länder mit eindeutigem dominantem Sektor. */
+  peerN: number;
+  peerMedianSharePct: number | null;
+  legend: { id: string; label: string; color: string; countries: number }[];
+}
+
+export interface GeoMapSectorCountry extends GeoMapCountry {
+  sectorAmpel: SectorAmpel;
+}
+
+export interface GeoMapSectorResponse extends GeoMapResponse {
+  layer: "sector";
+  sectorLayer: SectorLayerInfo;
+  countries: GeoMapSectorCountry[];
+}
+
+function canonById(id: string): { id: string; label: string; color: string } | undefined {
+  return SECTOR_CANON.find(s => s.id === id);
+}
+
+/** Roh-Sektorname → Ampel-Palette. Unbekannt bleibt beim Roh-Namen. sectorColor bleibt davon getrennt. */
+export function matchSector(raw: string | null | undefined): { id: string; label: string; color: string } | null {
+  const name = (raw ?? "").trim();
+  if (!name || name.toLowerCase() === "n/a") return null;
+  const hit = SECTOR_MATCHERS.find(m => m.test(name));
+  if (hit) {
+    const canon = canonById(hit.id);
+    if (canon) return canon;
+  }
+  return { id: `other:${name.toLowerCase()}`, label: name, color: SECTOR_OTHER_COLOR };
+}
+
+function naNote(reason: string): string {
+  return reason.startsWith("n/a") ? reason : `n/a — ${reason}`;
+}
+
+function dominanceOf(shares: { sector: string; pct: number }[]): { dominant: { id: string; label: string; color: string; pct: number } | null; note: string | null } {
+  const real = shares.filter(s => s.pct > 0 && matchSector(s.sector));
+  if (real.length === 0) return { dominant: null, note: naNote("kein Sektor-Capex erfasst") };
+  const weight = SECTOR_LAYER_PARAMS.capexShareWeight;
+  const scored = real.map(s => {
+    const matched = matchSector(s.sector)!;
+    return { ...matched, pct: s.pct, score: weight * s.pct };
+  }).sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
+  const top = scored[0];
+  const tied = scored.filter(s => s.score === top.score);
+  if (tied.length > 1) {
+    return { dominant: null, note: naNote(`Gleichstand ${tied.map(t => t.label).join(" / ")}`) };
+  }
+  return { dominant: { id: top.id, label: top.label, color: top.color, pct: top.pct }, note: null };
+}
+
+/** Mid-Rank der Ampel. Liest SECTOR_LAYER_PARAMS.midRankTieWeight, nicht MIDRANK_TIE_WEIGHT. */
+function sectorSharePercentile(value: number, population: readonly number[]): number {
+  let less = 0;
+  let equal = 0;
+  for (const v of population) {
+    if (v < value) less += 1;
+    else if (v === value) equal += 1;
+  }
+  return (less + SECTOR_LAYER_PARAMS.midRankTieWeight * equal) / population.length;
+}
+
+function sampleZ(values: readonly number[]): Array<number | null> {
+  if (values.length < 2) return values.map(() => null);
+  const mean = values.reduce((s, v) => s + v, 0) / values.length;
+  const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1);
+  const sd = Math.sqrt(variance);
+  if (!(sd > 0)) return values.map(() => null);
+  return values.map(v => (v - mean) / sd);
+}
+
+function peerMedian(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid];
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function bandFor(percentile: number | null, peerN: number): SectorBand {
+  if (percentile == null || peerN < SECTOR_LAYER_PARAMS.minCountries) return "neutral";
+  if (percentile >= SECTOR_LAYER_PARAMS.greenPct) return "green";
+  if (percentile <= SECTOR_LAYER_PARAMS.redPct) return "red";
+  return "yellow";
+}
+
+/**
+ * Sektor-Ansicht über einer Capex-Antwort. Reine Funktion: Eingabe wird nicht verändert.
+ * Capex-Zahlen und dominantSector bleiben Feld für Feld. Die Ampel ist ein Zusatzobjekt.
+ */
+export function projectSectorLayer(base: GeoMapResponse): GeoMapSectorResponse {
+  const draft = base.countries.map(c => {
+    if (c.status !== "ok") {
+      const reason = c.note || "Keine Capex-Daten verfügbar";
+      const ampel: SectorAmpel = {
+        dominantSectorId: null, dominantSector: null, dominantColor: null,
+        dominantSharePct: null, sharePercentile: null, shareZ: null,
+        shareBand: "neutral", sectorNote: naNote(reason),
+      };
+      return { country: c, dominantPct: null as number | null, ampel };
+    }
+    const dom = dominanceOf(c.sectorShares);
+    const ampel: SectorAmpel = {
+      dominantSectorId: dom.dominant?.id ?? null,
+      dominantSector: dom.dominant?.label ?? null,
+      dominantColor: dom.dominant?.color ?? null,
+      dominantSharePct: dom.dominant?.pct ?? null,
+      sharePercentile: null,
+      shareZ: null,
+      shareBand: "neutral",
+      sectorNote: dom.note,
+    };
+    return { country: c, dominantPct: dom.dominant?.pct ?? null, ampel };
+  });
+
+  const peerValues = draft.map(d => d.dominantPct).filter((v): v is number => v != null);
+  const peerN = peerValues.length;
+  const zs = sampleZ(peerValues);
+  let zCursor = 0;
+  for (const d of draft) {
+    if (d.dominantPct == null) continue;
+    const z = zs[zCursor++] ?? null;
+    d.ampel.shareZ = z;
+    if (peerN < SECTOR_LAYER_PARAMS.minCountries) {
+      d.ampel.sharePercentile = null;
+      d.ampel.shareBand = "neutral";
+      d.ampel.sectorNote = naNote(`Ampel nicht belastbar (${peerN} Länder mit Dominanz, mindestens ${SECTOR_LAYER_PARAMS.minCountries})`);
+    } else {
+      const pct = sectorSharePercentile(d.dominantPct, peerValues);
+      d.ampel.sharePercentile = pct;
+      d.ampel.shareBand = bandFor(pct, peerN);
+    }
+  }
+
+  const legendMap = new Map<string, { id: string; label: string; color: string; countries: number }>();
+  for (const d of draft) {
+    const id = d.ampel.dominantSectorId;
+    if (!id) continue;
+    const row = legendMap.get(id) ?? {
+      id,
+      label: d.ampel.dominantSector || id,
+      color: d.ampel.dominantColor || SECTOR_OTHER_COLOR,
+      countries: 0,
+    };
+    row.countries += 1;
+    legendMap.set(id, row);
+  }
+
+  return {
+    ...base,
+    layer: "sector",
+    sectorLayer: {
+      params: SECTOR_LAYER_PARAMS,
+      peerN,
+      peerMedianSharePct: peerMedian(peerValues),
+      legend: Array.from(legendMap.values()).sort((a, b) => b.countries - a.countries || a.label.localeCompare(b.label)),
+    },
+    countries: draft.map(d => ({ ...d.country, sectorAmpel: d.ampel })),
+  };
+}
+
+/**
+ * FMP-Segmentname → ISO2 der Karte. Nur exakter Name, kein Teilstring
+ * (damit „North America“ nicht zu US wird). Unbekannt → null.
+ */
+export const GEO_SEGMENT_ALIASES: readonly { iso2: string; names: readonly string[] }[] = [
+  { iso2: "US", names: ["united states", "united states of america", "usa", "u.s.", "u.s.a."] },
+  { iso2: "CA", names: ["canada", "kanada"] },
+  { iso2: "MX", names: ["mexico", "mexiko"] },
+  { iso2: "BR", names: ["brazil", "brasilien"] },
+  { iso2: "CL", names: ["chile"] },
+  { iso2: "GB", names: ["united kingdom", "uk", "u.k.", "great britain", "britain", "vereinigtes königreich"] },
+  { iso2: "DE", names: ["germany", "deutschland"] },
+  { iso2: "FR", names: ["france", "frankreich"] },
+  { iso2: "NL", names: ["netherlands", "niederlande", "holland"] },
+  { iso2: "CH", names: ["switzerland", "schweiz"] },
+  { iso2: "IT", names: ["italy", "italien"] },
+  { iso2: "ES", names: ["spain", "spanien"] },
+  { iso2: "SE", names: ["sweden", "schweden"] },
+  { iso2: "DK", names: ["denmark", "dänemark"] },
+  { iso2: "NO", names: ["norway", "norwegen"] },
+  { iso2: "SA", names: ["saudi arabia", "saudi-arabien"] },
+  { iso2: "ZA", names: ["south africa", "südafrika"] },
+  { iso2: "IN", names: ["india", "indien"] },
+  { iso2: "CN", names: ["china", "mainland china", "peoples republic of china", "people's republic of china"] },
+  { iso2: "HK", names: ["hong kong", "hongkong"] },
+  { iso2: "TW", names: ["taiwan"] },
+  { iso2: "KR", names: ["south korea", "republic of korea", "südkorea"] },
+  { iso2: "JP", names: ["japan"] },
+  { iso2: "SG", names: ["singapore", "singapur"] },
+  { iso2: "AU", names: ["australia", "australien"] },
+];
+
+function normSegmentName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function matchGeoSegmentIso2(name: string): string | null {
+  const n = normSegmentName(name);
+  if (!n) return null;
+  for (const row of GEO_SEGMENT_ALIASES) {
+    if (row.names.some(alias => normSegmentName(alias) === n)) return row.iso2;
+  }
+  return null;
+}
+
+export function mapGeoSegmentRows(rows: readonly { name: string; percentage?: number | null; revenue?: number | null }[] | null | undefined): { lines: GeoSegmentLine[] | null; note: string | null } {
+  if (!rows || rows.length === 0) return { lines: null, note: "n/a — FMP lieferte keine Geosegmente" };
+  const lines: GeoSegmentLine[] = [];
+  for (const row of rows) {
+    const name = String(row?.name ?? "").trim();
+    if (!name) continue;
+    const pct = typeof row.percentage === "number" && Number.isFinite(row.percentage) ? row.percentage : null;
+    const revenueUsd = typeof row.revenue === "number" && Number.isFinite(row.revenue) && row.revenue > 0 ? row.revenue : null;
+    const iso2 = matchGeoSegmentIso2(name);
+    lines.push({
+      name,
+      pct,
+      revenueUsd,
+      iso2,
+      note: iso2 ? null : "n/a — Segment keinem Karten-Land zugeordnet",
+    });
+  }
+  if (lines.length === 0) return { lines: null, note: "n/a — FMP lieferte keine Geosegmente" };
+  return { lines, note: null };
 }

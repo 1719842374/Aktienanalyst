@@ -10,6 +10,7 @@
  * Module map:
  *  /api/analyze, /api/fmp-budget   → server/analyze-route.ts
  *  /api/btc-miner                  → server/btc-miner.ts (GET + POST)
+ *  /api/btc/miner-map              → server/miner-map.ts (GET, nur Anzeige)
  *  /api/analyze-btc/macro-history  → server/btc-routes.ts
  *  /api/analyze-gold               → server/gold-routes.ts
  *
@@ -79,6 +80,7 @@ import { registerOhlcvRoute } from "./ohlcv-route";
 import { registerGoldRoutes } from "./gold-routes";
 import { registerBTCRoutes } from "./btc-routes";
 import { fetchMinerData, minerUnavailableBody } from "./btc-miner";
+import { buildMinerMap } from "./miner-map";
 import { fmpSearchTicker, fmpIncomeStatement, fmpCashFlow, fmpBalanceSheet, fmpPeers, fmpQuote, fmpRatios, fmpAnalystEstimates } from "./fmp";
 import { assessRegulatoryExposure } from "./regulatory";
 import { computeManagementScoreForTicker } from "./management-score";
@@ -86,6 +88,8 @@ import { deriveStatementTrends, identifyNewSegment, computeOldSegmentsGrowth } f
 import { computeThesisStrength, relativeZ, sectorReferenceFallback, computeMaterialSegmentGrowth, mapGrowthProfile, LYNCH_TO_STYLE, robustSectorGrowth } from "./thesis-strength";
 import { fetchSecRpo } from "./sec-segments";
 import { filterAndSelectPeers } from "./news-peers";
+import { PEER_SET_MIN } from "../shared/peer-material";
+import { PEER_RATING_EXTENSIONS, selectExtendedPeerSet } from "../shared/peer-rating-extensions";
 import { registerResearcherRoutes } from "./researcher";
 import { registerRecessionRoutes } from "./recession";
 import { registerRegressionScanRoutes } from "./regression-scan";
@@ -158,6 +162,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(minerData);
     } catch (err: any) {
       console.error("[POST /api/btc-miner]", err?.message?.substring(0, 200));
+      res.status(500).json({ error: err?.message || "Internal error" });
+    }
+  });
+
+  // 3c. GET /api/btc/miner-map — Standort-Layer (Filings) plus Live-Kontext aus
+  //     fetchMinerData. Nur Anzeige, kein Score. Fehlende Pipeline bleibt n/a.
+  app.get("/api/btc/miner-map", async (_req, res) => {
+    try {
+      res.json(await buildMinerMap());
+    } catch (err: any) {
+      console.error("[GET /api/btc/miner-map]", err?.message?.substring(0, 200));
       res.status(500).json({ error: err?.message || "Internal error" });
     }
   });
@@ -368,7 +383,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const vectorFields: Array<[string, number | null]> = [["revenueCagr3to5y",revenueCagr3to5y],["earningsVolatility",earningsVolatility],["fcfMarginTrend",fcfMarginTrend],["leverageTrend",leverageTrend],["marginInflectionStrength",marginInflectionStrength],["growthGap",gStar != null && realizedGrowth != null ? gStar-realizedGrowth : null]];
       vectorFields.forEach(([name,value])=>{if(value==null)missingFeatures.push(name);});
       const rawPeerTickers = Array.isArray(rawPeers) ? rawPeers.map((p:any)=>String(p?.symbol ?? p ?? "")).filter(Boolean) : [];
-      const peers = await filterAndSelectPeers(ticker, String(b.sector ?? ""), String(b.industry ?? ""), rawPeerTickers, 5).catch(()=>[]);
+      const basePeers = await filterAndSelectPeers(ticker, String(b.sector ?? ""), String(b.industry ?? ""), rawPeerTickers, 5).catch(()=>[]);
+      // Industry-Fallback und Thesis-Peer-Set sind rating-wirksam. Default AUS:
+      // selectExtendedPeerSet gibt dann dieselbe Listenreferenz zurück. Keine Tickerliste,
+      // keine Änderung an analyze-route. Kandidaten kämen nur bei Flag AN dazu.
+      const peerExtension = selectExtendedPeerSet({
+        enabled: PEER_RATING_EXTENSIONS.thesisPeerSet || PEER_RATING_EXTENSIONS.industryFallback,
+        baseTickers: basePeers,
+        subject: {
+          ticker,
+          sector: String(b.sector ?? ""),
+          industry: String(b.industry ?? ""),
+          marketCap: number(b.marketCap),
+          pe: number(b.peTTM),
+        },
+        candidates: [],
+        sameIndustry: () => false,
+        minCount: PEER_SET_MIN,
+      });
+      const peers = peerExtension.tickers;
       const peerStatements = await Promise.all(peers.map(async p => {
         const [i,c,bs,ratios] = await Promise.all([fmpIncomeStatement(p,3).catch(()=>[]),fmpCashFlow(p,3).catch(()=>[]),fmpBalanceSheet(p,3).catch(()=>[]),fmpRatios(p,1).catch(()=>[])]);
         const it=deriveStatementTrends({incomeRows:i,cashflowRows:c,balanceRows:bs}); const r0=number(i[0]?.revenue),r1=number(i[1]?.revenue);
@@ -525,4 +558,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 20. GET /api/credit-fundamentals/:ticker — F1-20/F1-21, FMP-Ratios, nur Anzeige, kein Score, kein CRV.
   const { registerCreditFundamentalsRoute } = await import("./credit-fundamentals-route");
   registerCreditFundamentalsRoute(app);
+
+  // 19. Earnings Yield + ROIC 5Y (Anzeige, Sektion 12). Kein Score.
+  const { registerEarningsYieldRoicRoutes } = await import("./earnings-yield-roic-route");
+  registerEarningsYieldRoicRoutes(app);
+
+  // 20. Sektor-KGV (Anzeige). Getrennt vom Score-Pfad der Sektorrotation.
+  const { registerSectorPeRoute } = await import("./sector-pe-route");
+  registerSectorPeRoute(app);
+
+  // 21. GET /api/gold/backtest-cross — F10-33, MA-Cross-Backtest auf Yahoo GC=F, nur Anzeige, kein Score.
+  (await import("./gold-backtest-cross")).registerGoldBacktestCrossRoute(app);
 }

@@ -135,11 +135,14 @@ console.log("\nServer-Loader + Verdrahtung");
   process.chdir(cwd);
   check("loadGoldAiscSeries() aus fremdem cwd liefert 10 Quartale", !!fromTmp && fromTmp.quarters.length === 10 && fromTmp.quarters.at(-1)!.aisc === 1649);
   const routes = readFileSync(path.join(root, "server/gold-routes.ts"), "utf8");
-  check("gold-routes liefert aiscLine aus dem Loader", /aiscLine:\s*loadGoldAiscSeries\(\)/.test(routes));
+  check("gold-routes liefert aiscLine aus dem Loader", /const aiscSeries = loadGoldAiscSeries\(\)/.test(routes) && /aiscLine: aiscSeries/.test(routes));
+  check("aiscZone neben der Linie, Fehler wird null", /buildGoldMinerZone\(historicalPrices, aiscSeries\)/.test(routes) && /\[GOLD-MINER-ZONE\]/.test(routes));
   check("supplySignal-Platzhalter `aisc: null` unverändert (B2)", /aisc:\s*null/.test(routes));
   check("getTechnicalScore vorhanden", /function getTechnicalScore\(/.test(routes));
-  const gisBlock = routes.slice(routes.indexOf("indicators"), routes.indexOf("aiscLine"));
-  check("AISC fließt nicht in Indikatoren/GIS", !/loadGoldAiscSeries|aiscLine/.test(gisBlock));
+  // Schnitt endet vor der Response-Zeile: die Reihe wird einmal geladen, nachdem GIS und
+  // scoreGoldAdaptive schon stehen. Der Loader darf nicht in den Indikatorblock rutschen.
+  const gisBlock = routes.slice(routes.indexOf("indicators"), routes.indexOf("const aiscSeries"));
+  check("AISC fließt nicht in Indikatoren/GIS", gisBlock.length > 0 && !/loadGoldAiscSeries|aiscLine|buildGoldMinerZone/.test(gisBlock));
   const analyze = readFileSync(path.join(root, "server/analyze-route.ts"), "utf8");
   check("analyze-route.ts kennt AISC nicht", !/gold-aisc|aiscLine/.test(analyze));
   const schema = readFileSync(path.join(root, "shared/gold-schema.ts"), "utf8");

@@ -17,7 +17,9 @@ import { GoldAdaptiveLayersCard } from "@/components/gold/GoldAdaptiveLayersCard
 import { GoldAdaptiveGatesCard } from "@/components/gold/GoldAdaptiveGatesCard";
 import { GoldNewsCard } from "@/components/gold/GoldNewsCard";
 import { GoldPriceChart } from "@/components/gold/GoldPriceChart";
+import { GoldMinerBreakevenSection } from "@/components/gold/GoldMinerBreakevenSection";
 import { GoldSilverRatioRow } from "@/components/gold/GoldSilverRatioRow";
+import { GoldCrossBacktestCard } from "@/components/gold/GoldCrossBacktestCard";
 import {
   Sun, Moon, TrendingUp, BarChart3, Calculator,
   Dice6, Activity, Table2, Menu, X, LineChart, Target,
@@ -31,6 +33,7 @@ const SECTIONS: { id: number; label: string; icon: typeof TrendingUp; badge?: st
   { id: 1, label: "Preis & Status", icon: TrendingUp },
   { id: 100, label: "Gold-News", icon: Newspaper, badge: "📰" },
   { id: 2, label: "Preis-Chart", icon: LineChart },
+  { id: 9, label: "Miner-Breakeven", icon: Scale },
   { id: 3, label: "Indikatoren", icon: BarChart3 },
   { id: 4, label: "Fair Value", icon: Calculator },
   { id: 5, label: "Monte Carlo", icon: Dice6 },
@@ -220,7 +223,8 @@ export default function GoldDashboard() {
               <div ref={setSectionRef(1)} className="space-y-3"><GoldPriceSection data={data} /><GoldSilverRatioRow /></div>
               {/* JOB 14: Gold-News an zweiter Stelle, im Stil der Aktien-News */}
               <div ref={setSectionRef(NEWS_SECTION_ID)}><GoldNewsCard data={data} /></div>
-              <div ref={setSectionRef(2)}><GoldPriceChart data={data} /></div>
+              <div ref={setSectionRef(2)} className="space-y-3"><GoldPriceChart data={data} /><GoldCrossBacktestCard /></div>
+              <div ref={setSectionRef(9)}><GoldMinerBreakevenSection data={data} /></div>
               <div ref={setSectionRef(3)}><GoldIndicatorsSection data={data} /></div>
               <div ref={setSectionRef(4)}><GoldFairValueSection data={data} /></div>
               <div ref={setSectionRef(5)}><GoldMonteCarloSection data={data} /></div>

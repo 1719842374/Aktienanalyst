@@ -1,9 +1,10 @@
 /**
  * Additive Route (Offen_WORK_CAPEX_SECTOR_MAP.md + Offen_WORK_RESEARCHER_CAPEX_MAP.md).
  * Mounted from routes-register.ts, researcher.ts bleibt unberührt.
- * GET /api/researcher/geo-map?layer=capex|sector|miner
+ * GET /api/researcher/geo-map?layer=capex|sector|miner|gold|valuechain
  *
  * Capex und Sektor teilen sich eine Aggregation (FMP Cashflow, Firmensitz).
+ * layer=sector behält dominantSector und setzt die Perzentil-Ampel (projectSectorLayer).
  * Der Kaltstart ist seriell und dauert auf Prod ~58 s. Damit ein Gateway-Timeout
  * nicht HTML statt JSON an den Client gibt: Cache mit benanntem TTL und
  * Stale-While-Revalidate, Antwortbudget, Aufwärmen nach dem Boot.
@@ -13,7 +14,8 @@ import type { Express, Response } from "express";
 import * as fs from "fs";
 import * as path from "path";
 import { diskResearcherGetWithTtl, diskResearcherSet, diskResearcherDelete } from "./disk-cache";
-import { buildGeoMapCapex, defaultGeoMapDeps, GEO_MAP_CACHE_TAB, type GeoMapDeps } from "./researcher-geo-map";
+import { buildGeoMapCapex, capexPayloadPrimaryListings, defaultGeoMapDeps, GEO_MAP_CACHE_TAB, type GeoMapDeps } from "./researcher-geo-map";
+import { buildMinerMapBody, pipelineFromMiner, type MinerMapResponse } from "@shared/miner-map";
 import {
   GEO_MAP_CACHE_TTL_MS,
   GEO_MAP_COUNTRIES,
@@ -22,10 +24,17 @@ import {
   MINER_LOCATION_NOTE,
   MINER_NAMES_UNSOURCED,
   dominantSectorOf,
+  projectSectorLayer,
   type GeoMapMinerNetwork,
+  type GeoMapResponse,
+  type GeoMapSectorResponse,
   type GeoMapMinerRegion,
   type GeoMapMinerResponse,
 } from "@shared/geo-map";
+import { buildGoldMapLayer, buildValueChainMapLayer } from "@shared/geo-map-layers";
+import { tickerAliasGroupsFromCompanies } from "@shared/gold-aisc";
+import { loadGoldAiscSeries } from "./gold-aisc";
+import { ALL_INDUSTRIES } from "./valuechain-catalog";
 
 const cacheDir = () => path.join(process.cwd(), ".cache", "researcher");
 const PARAMS = "global";
@@ -46,6 +55,8 @@ export interface GeoMapRouteOpts {
   responseBudgetMs?: number;
   minerNetwork?: () => Promise<GeoMapMinerNetwork>;
   minerRegions?: () => Promise<GeoMapMinerRegion[]>;
+  /** Zusatz aus dem Filing-Katalog. Ersetzt regions, locationNote und namedOperators nicht. */
+  buildMinerMap?: () => Promise<MinerMapResponse>;
 }
 
 function classify(parsed: any, nowMs: number): Stored | "expired" | null {
@@ -113,8 +124,15 @@ function withDominant(data: any, layer: "capex" | "sector") {
   };
 }
 
+/** Capex bleibt withDominant. Sektor hängt die Ampel an und lässt dominantSector stehen. */
+function presentLayer(data: any, layer: "capex" | "sector"): GeoMapResponse | GeoMapSectorResponse {
+  const base = withDominant(data, layer);
+  if (layer === "sector") return projectSectorLayer(base);
+  return base;
+}
+
 function present(stored: Stored, layer: "capex" | "sector") {
-  const body = withDominant(stored.payload, layer);
+  const body = presentLayer(stored.payload, layer);
   if (!stored.fresh) body._stale = true;
   else delete body._stale;
   return body;
@@ -177,6 +195,28 @@ async function defaultMinerNetwork(): Promise<GeoMapMinerNetwork> {
   }
 }
 
+function filingForNetwork(network: GeoMapMinerNetwork, asOf: string): MinerMapResponse {
+  const missing = network.hashrateEH == null && network.hashpriceBtcPerThDay == null && network.breakevenUsd == null;
+  const reason = missing ? (network.note?.replace(/^n\/a — /, "") || "Miner-Pipeline ohne Daten") : null;
+  return buildMinerMapBody(pipelineFromMiner({
+    currentHashrateEH: network.hashrateEH,
+    hashprice: network.hashpriceBtcPerThDay,
+    breakevenPrice: network.breakevenUsd,
+    hashrateSource: network.source,
+    lastUpdated: asOf,
+  }, reason), asOf);
+}
+
+function withFiling(body: GeoMapMinerResponse, filing: MinerMapResponse) {
+  return {
+    ...body,
+    sites: filing.sites,
+    pipeline: filing.pipeline,
+    gaps: filing.gaps,
+    countryShareNote: filing.countryShareNote,
+  };
+}
+
 function minerBody(nowMs: number, regions: GeoMapMinerRegion[], network: GeoMapMinerNetwork, extra: Partial<GeoMapMinerResponse> = {}): GeoMapMinerResponse {
   return {
     layer: "miner",
@@ -190,6 +230,34 @@ function minerBody(nowMs: number, regions: GeoMapMinerRegion[], network: GeoMapM
     pending: false,
     ...extra,
   };
+}
+
+/** Frischer Bau setzt geoSegments an jeder Firma. Ein älterer Cache ohne das Feld ist kein Treffer. */
+export function capexPayloadCarriesGeoSegments(payload: unknown): boolean {
+  const countries = (payload as { countries?: unknown } | null)?.countries;
+  if (!Array.isArray(countries)) return false;
+  for (const country of countries) {
+    const companies = (country as { companies?: unknown } | null)?.companies;
+    if (!Array.isArray(companies)) return false;
+    for (const company of companies) {
+      if (!company || typeof company !== "object" || !Object.prototype.hasOwnProperty.call(company, "geoSegments")) return false;
+    }
+  }
+  return true;
+}
+
+function goldLayerInput(): { points: { code: string; quarter: string; aisc: number }[] | null; aliases: ReturnType<typeof tickerAliasGroupsFromCompanies> } {
+  const series = loadGoldAiscSeries();
+  if (!series) return { points: null, aliases: [] };
+  const points: { code: string; quarter: string; aisc: number }[] = [];
+  for (const quarter of series.quarters) {
+    for (const value of quarter.values) {
+      if (value && typeof value.aisc === "number" && Number.isFinite(value.aisc)) {
+        points.push({ code: String(value.company), quarter: quarter.quarter, aisc: value.aisc });
+      }
+    }
+  }
+  return { points, aliases: tickerAliasGroupsFromCompanies(series.companies) };
 }
 
 let warmImpl: () => void = () => {};
@@ -239,12 +307,23 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
     return minerInflight;
   }
 
+  function readCapex(nowMs: number): Stored | null {
+    const hit = readNamed(CAPEX_FILE(), CAPEX_DISK, nowMs);
+    // Altbestand ohne geoSegments, oder ein Fremdlisting zum Firmensitz (NEO-CDR).
+    // Die Prüfung ist rein. Ein Neubau schreibt das Primärlisting, der nächste Read bleibt Treffer.
+    if (hit && (!capexPayloadCarriesGeoSegments(hit.payload) || !capexPayloadPrimaryListings(hit.payload))) {
+      deleteNamed(CAPEX_FILE(), CAPEX_DISK);
+      return null;
+    }
+    return hit;
+  }
+
   warmImpl = () => {
     if (!deps.hasKey()) {
       console.log("[geo-map] warmup skipped: FMP nicht konfiguriert");
       return;
     }
-    const hit = useCache ? readNamed(CAPEX_FILE(), CAPEX_DISK, now()) : null;
+    const hit = useCache ? readCapex(now()) : null;
     if (hit?.fresh) {
       console.log("[geo-map] warmup skipped: cache fresh");
       return;
@@ -258,7 +337,7 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
     const t = now();
     if (useCache && force) {
       if (lastRefreshAt != null && t - lastRefreshAt < refreshMinIntervalMs) {
-        const cached = readNamed(CAPEX_FILE(), CAPEX_DISK, t);
+        const cached = readCapex(t);
         if (cached) return res.json({ ...present(cached, layer), _refreshThrottled: true });
         force = false;
       } else {
@@ -267,7 +346,7 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
       }
     }
     if (useCache && !force) {
-      const cached = readNamed(CAPEX_FILE(), CAPEX_DISK, t);
+      const cached = readCapex(t);
       if (cached?.fresh) return res.json(present(cached, layer));
       if (cached && !cached.fresh) {
         startBuild().catch(err => console.error("[geo-map] revalidate failed:", err?.message));
@@ -276,8 +355,11 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
     }
     try {
       const result = await withinBudget(startBuild(), responseBudgetMs);
-      if (result === "budget") return res.json(pendingCapex(layer, now()));
-      return res.json(withDominant(result, layer));
+      if (result === "budget") {
+        const pending = pendingCapex(layer, now());
+        return res.json(layer === "sector" ? projectSectorLayer(pending) : pending);
+      }
+      return res.json(presentLayer(result, layer));
     } catch (err: any) {
       console.error("[RESEARCHER/geo-map] failed:", err?.message);
       res.status(500).json({ error: err?.message || "geo-map failed" });
@@ -294,15 +376,16 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
     const cached = useCache ? readNamed(fileFor(MINER_TAB), MINER_DISK, t) : null;
     const cachedNet: GeoMapMinerNetwork | null = cached?.payload?.network ?? null;
     if (cached?.fresh && cachedNet) {
-      return res.json(minerBody(t, regions, cachedNet, { _cached: true }));
+      return res.json(withFiling(minerBody(t, regions, cachedNet, { _cached: true }), filingForNetwork(cachedNet, new Date(t).toISOString())));
     }
     try {
       const result = await withinBudget(startMiner(), responseBudgetMs);
       if (result === "budget") {
-        if (cachedNet) return res.json(minerBody(t, regions, cachedNet, { _stale: true, _cached: true }));
-        return res.json(minerBody(t, regions, { ...EMPTY_NETWORK, note: "n/a — Netzwerkzahlen werden noch geladen" }, { pending: true }));
+        if (cachedNet) return res.json(withFiling(minerBody(t, regions, cachedNet, { _stale: true, _cached: true }), filingForNetwork(cachedNet, new Date(t).toISOString())));
+        const pendingNet = { ...EMPTY_NETWORK, note: "n/a — Netzwerkzahlen werden noch geladen" };
+        return res.json(withFiling(minerBody(t, regions, pendingNet, { pending: true }), filingForNetwork(pendingNet, new Date(t).toISOString())));
       }
-      return res.json(minerBody(t, regions, result));
+      return res.json(withFiling(minerBody(t, regions, result), filingForNetwork(result, new Date(t).toISOString())));
     } catch (err: any) {
       console.error("[RESEARCHER/geo-map] miner failed:", err?.message);
       res.status(500).json({ error: err?.message || "geo-map miner failed" });
@@ -311,8 +394,34 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
 
   app.get("/api/researcher/geo-map", async (req, res) => {
     const layer = String(req.query?.layer ?? "capex");
+    if (layer === "gold") {
+      const gold = goldLayerInput();
+      return res.json(buildGoldMapLayer(new Date(now()).toISOString(), gold.points, gold.aliases));
+    }
+    if (layer === "valuechain") return res.json(buildValueChainMapLayer(new Date(now()).toISOString(), ALL_INDUSTRIES));
     if (layer !== "capex" && layer !== "sector" && layer !== "miner") {
-      return res.status(400).json({ error: `layer=${layer} nicht verfügbar (capex, sector, miner)` });
+      return res.status(400).json({ error: `layer=${layer} nicht verfügbar (capex, sector, miner, gold, valuechain)` });
+    }
+    if (layer === "miner" && opts.buildMinerMap) {
+      try {
+        const filing = await opts.buildMinerMap();
+        const t = now();
+        let regions: GeoMapMinerRegion[] = [];
+        try { regions = await minerRegions(); } catch { regions = []; }
+        if (!Array.isArray(regions)) regions = [];
+        const net = filing.pipeline;
+        const network: GeoMapMinerNetwork = {
+          hashrateEH: net?.networkHashrateEH ?? null,
+          hashpriceBtcPerThDay: net?.hashpriceBtcPerThDay ?? null,
+          breakevenUsd: net?.breakevenUsd ?? null,
+          source: net?.hashrateSource ?? null,
+          note: net?.unavailableNote ?? null,
+        };
+        return res.json(withFiling(minerBody(t, regions, network), filing));
+      } catch (err: any) {
+        console.error("[RESEARCHER/geo-map miner] failed:", err?.message);
+        return res.status(500).json({ error: err?.message || "miner-map failed" });
+      }
     }
     if (layer === "miner") return sendMiner(res);
     const force = req.query?.refresh === "1" || req.query?.refresh === "true";

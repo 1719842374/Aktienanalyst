@@ -627,6 +627,19 @@ export async function fmpKeyMetrics(symbol: string, limit = 5) {
   return fmpFetch(`/key-metrics`, { symbol, limit: String(limit) });
 }
 
+export async function fmpEnterpriseValues(symbol: string, limit = 5) {
+  // GET /stable/enterprise-values?symbol=AAPL&limit=5 — gleiche FMP-Quelle, kein neuer Anbieter.
+  return fmpFetch(`/enterprise-values`, { symbol, limit: String(limit) });
+}
+
+export async function fmpEtfHoldings(symbol: string) {
+  // GET /stable/etf/holdings?symbol=XLK — gleiche FMP-Quelle, kein neuer Anbieter.
+  const data = await fmpFetch(`/etf/holdings`, { symbol });
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.holdings)) return data.holdings;
+  return [];
+}
+
 export async function fmpBatchQuote(symbols: string[]) {
   if (symbols.length === 0) return [];
   // /stable has no comma-separated batch quote — fetch each symbol in parallel.

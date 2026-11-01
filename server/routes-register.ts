@@ -12,13 +12,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerRegulatoryRisksRoute(app);
   const { registerSectorRotationRoute } = await import("./researcher-sector-rotation-route");
   registerSectorRotationRoute(app);
-  // GET /api/researcher/geo-map?layer=capex (Offen_WORK_CAPEX_SECTOR_MAP Slice 1, nur Anzeige, kein Score)
+  // GET /api/researcher/geo-map?layer=capex|sector|miner|gold|valuechain (SWR und Miner-Netz aus #397)
   const { registerGeoMapRoute } = await import("./researcher-geo-map-route");
   registerGeoMapRoute(app);
   const { registerLiquidityRoute } = await import("./researcher-liquidity-route");
   registerLiquidityRoute(app);
   const { registerLiquidityBriefingRoute } = await import("./liquidity-briefing-route");
   registerLiquidityBriefingRoute(app);
+  // GET /api/researcher/fiscal-programs (FW-34, Discovery → Fiscal-Bridge, nur Anzeige, kein Score)
+  const { registerFiscalDiscoveryRoute } = await import("./fiscal-discovery-route");
+  registerFiscalDiscoveryRoute(app);
   const { registerValueChainRoutes } = await import("./valuechain-routes");
   registerValueChainRoutes(app);
   const { registerRecessionMarketRoutes } = await import("./recession-markets");

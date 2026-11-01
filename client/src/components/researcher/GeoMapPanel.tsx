@@ -1,8 +1,11 @@
 /**
  * GeoMapPanel — Offen_WORK_CAPEX_SECTOR_MAP.md und Offen_WORK_RESEARCHER_CAPEX_MAP.md.
  * Capex- und Sektor-Layer: GET /api/researcher/geo-map?layer=capex|sector.
- * Miner-Layer: derselbe Pfad mit layer=miner. Gold bleibt Vorschlag.
+ * Miner-Layer: derselbe Pfad mit layer=miner (Netz aus btc-miner.ts).
+ * Gold und Wertschöpfung: layer=gold|valuechain.
  * Größe und Farbe der Hotspots kommen aus dem Perzentil der geladenen Verteilung.
+ * Sektor-Layer: Füllung = sectorColor(dominantSector), Legende = sectorLegendShares.
+ * Rand und Karte = Perzentil-Ampel (shareBand, Terzile aus SECTOR_LAYER_PARAMS).
  * HTML und Zeitüberschreitung werden zu n/a mit Grund, nie zu einer Parser-Meldung.
  * Nur Anzeige, kein Score.
  */
@@ -12,6 +15,7 @@ import worldUrl from "world-atlas/countries-110m.json?url";
 import { AlertTriangle, Globe2, Loader2, RefreshCw, X } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { naReasonFromError, readApiJson } from "@shared/read-api-json";
+import { MinerMapPanel } from "@/components/researcher/MinerMapPanel";
 import {
   GEO_MAP_CLIENT_TIMEOUT_MS,
   GEO_MAP_PENDING_RETRY_LIMIT,
@@ -21,26 +25,56 @@ import {
   colorForPercentile,
   metricPercentiles,
   radiusForPercentile,
+  SECTOR_LEGEND_FRACTION_DIGITS,
   sectorColor,
+  sectorLegendShares,
   type GeoMapCountry,
   type GeoMapMinerResponse,
   type GeoMapResponse,
+  type GeoMapSectorResponse,
+  type SectorBand,
 } from "@shared/geo-map";
+import { goldCountryHasProduction, type GoldMapCountry, type GoldMapResponse, type ValueChainMapResponse } from "@shared/geo-map-layers";
 
 type Metric = "capex" | "yoy";
-type LayerId = "capex" | "sector" | "miner";
-type MapPayload = GeoMapResponse | GeoMapMinerResponse;
+type LayerId = "capex" | "sector" | "miner" | "gold" | "valuechain";
+type MapPayload = GeoMapResponse | GeoMapMinerResponse | GoldMapResponse | ValueChainMapResponse;
 
-const LAYERS: { id: LayerId | "gold"; label: string; available: boolean; hint?: string }[] = [
+const LAYERS: { id: LayerId; label: string; available: boolean; hint?: string }[] = [
   { id: "capex", label: "Capex", available: true },
   { id: "sector", label: "Sektor-Exposure", available: true },
   { id: "miner", label: "BTC-Miner", available: true },
-  { id: "gold", label: "Gold-Minen", available: false, hint: "Vorschlag" },
+  { id: "gold", label: "Gold Mining", available: true },
+  { id: "valuechain", label: "Wertschöpfungskette", available: true },
 ];
 
 function isMiner(d: MapPayload): d is GeoMapMinerResponse {
   return d.layer === "miner";
 }
+
+function isSectorOverlay(d: MapPayload): d is GeoMapSectorResponse {
+  return d.layer === "sector" && "sectorLayer" in d;
+}
+
+const BAND_LABEL: Record<SectorBand, string> = {
+  green: "oberes Terzil",
+  yellow: "Mitte",
+  red: "unteres Terzil",
+  neutral: "neutral",
+};
+const BAND_CLASS: Record<SectorBand, string> = {
+  green: "text-emerald-300",
+  yellow: "text-amber-300",
+  red: "text-rose-300",
+  neutral: "text-foreground/50",
+};
+const BAND_STROKE: Record<SectorBand, string> = {
+  green: "#10b981",
+  yellow: "#f59e0b",
+  red: "#f43f5e",
+  neutral: "#64748b",
+};
+const BAND_ORDER: readonly SectorBand[] = ["green", "yellow", "red", "neutral"];
 
 function fmtBn(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "n/a";
@@ -55,8 +89,14 @@ function fmtNum(v: number | null | undefined, digits: number, unit: string): str
   if (v == null || !Number.isFinite(v)) return "n/a";
   return `${v.toFixed(digits)} ${unit}`;
 }
+function goldBubbleTitle(c: GoldMapCountry): string {
+  const bits: string[] = [];
+  if (typeof c.countrySharePct === "number" && c.countrySharePct > 0) bits.push(`${c.countrySharePct} %`);
+  if (typeof c.productionOz === "number" && c.productionOz > 0) bits.push(`${c.productionOz} oz`);
+  return bits.length > 0 ? `${c.name}: ${bits.join(" · ")}` : c.name;
+}
 
-export function GeoMapPanel() {
+export function GeoMapPanel({ onOpenSectorOpportunity }: { onOpenSectorOpportunity?: () => void } = {}) {
   const [data, setData] = useState<MapPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -113,8 +153,11 @@ export function GeoMapPanel() {
     return () => clearTimeout(timer);
   }, [data, load]);
 
-  const capexData = data && !isMiner(data) ? data : null;
+  const capexData = data && (data.layer === "capex" || data.layer === "sector") ? data : null;
+  const sectorOverlay = data && isSectorOverlay(data) ? data : null;
   const minerData = data && isMiner(data) ? data : null;
+  const goldData = data && data.layer === "gold" ? data : null;
+  const chainData = data && data.layer === "valuechain" ? data : null;
   const minerSharePercentiles = useMemo(() => {
     const values = (minerData?.regions || []).map(r => r.hashrateSharePct);
     const pcts = metricPercentiles(values);
@@ -147,11 +190,22 @@ export function GeoMapPanel() {
     const value = (c: GeoMapCountry) => (layer === "capex" && metric === "yoy" ? c.yoyPct : c.capexUsd);
     return rows.sort((a, b) => (value(b) ?? -Infinity) - (value(a) ?? -Infinity));
   }, [capexData, layer, metric]);
-  const sectorsPresent = useMemo(() => {
-    const names = new Set<string>();
-    for (const c of capexData?.countries || []) if (c.dominantSector) names.add(c.dominantSector);
-    return Array.from(names).sort((a, b) => a.localeCompare(b, "de"));
-  }, [capexData]);
+  const sectorLegend = useMemo(() => sectorLegendShares(capexData?.countries || []), [capexData]);
+  const goldBubbles = useMemo(
+    () => (goldData?.countries ?? []).filter(goldCountryHasProduction),
+    [goldData],
+  );
+  const goldPercentiles = useMemo(() => {
+    const values = goldBubbles.map(c => (
+      typeof c.countrySharePct === "number" && c.countrySharePct > 0 ? c.countrySharePct
+      : typeof c.productionOz === "number" && c.productionOz > 0 ? c.productionOz
+      : null
+    ));
+    const pcts = metricPercentiles(values);
+    const m = new Map<string, number | null>();
+    goldBubbles.forEach((c, i) => m.set(c.iso2, pcts[i] ?? null));
+    return m;
+  }, [goldBubbles]);
   const sel = capexData?.countries.find(c => c.iso2 === selected) || null;
 
   const sizePercentile = (c: GeoMapCountry) => (
@@ -164,6 +218,11 @@ export function GeoMapPanel() {
     if (metric === "yoy") return colorForPercentile(yoyPercentiles.get(c.iso2) ?? null, "yoy");
     return colorForPercentile(capexPercentiles.get(c.iso2) ?? null, "capex");
   };
+  const bubbleStroke = (c: GeoMapCountry) => {
+    if (c.iso2 === selected) return "#fff";
+    if (layer === "sector") return BAND_STROKE[c.sectorAmpel?.shareBand ?? "neutral"];
+    return "rgba(15,23,42,0.6)";
+  };
 
   return (
     <div className="mb-4 rounded-lg border border-border/30 bg-muted/20 p-3 space-y-3" data-testid="geo-map-panel">
@@ -172,7 +231,7 @@ export function GeoMapPanel() {
           <div className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
             <Globe2 className="w-3.5 h-3.5 text-violet-400" /> Capex-Weltkarte
             <span className="font-normal text-[10px] text-foreground/45" data-testid="geo-attribution">
-              · {layer === "miner" ? "Miner-Netz, keine Farms" : "nach Firmensitz"}
+              · {layer === "miner" ? "Miner-Netz, keine Farms" : layer === "gold" ? "AISC je Firma, nicht je Land" : layer === "valuechain" ? "Katalog ohne Länderkette" : "nach Firmensitz"}
             </span>
           </div>
           {capexData && (
@@ -180,6 +239,17 @@ export function GeoMapPanel() {
               {capexData.coverage.withData}/{capexData.coverage.total} Länder mit Daten · Stand {new Date(capexData.asOf).toLocaleDateString("de-DE")}
               {capexData.pending ? " · Aufbau" : capexData._stale ? " · Cache veraltet" : capexData._cached ? " · Cache" : ""}
             </div>
+          )}
+          {goldData && (
+            <div className="text-[11px] text-foreground/50 mt-0.5">
+              {goldData.coverage.total > 0
+                ? `${goldData.coverage.withData}/${goldData.coverage.total} Länder mit Produktionsanteil · `
+                : ""}
+              Stand {new Date(goldData.asOf).toLocaleDateString("de-DE")}
+            </div>
+          )}
+          {chainData && (
+            <div className="text-[11px] text-foreground/50 mt-0.5">Stand {new Date(chainData.asOf).toLocaleDateString("de-DE")}</div>
           )}
           {minerData && (
             <div className="text-[11px] text-foreground/50 mt-0.5">
@@ -256,16 +326,18 @@ export function GeoMapPanel() {
               {capexData.countries.map(c => (
                 <Marker key={c.iso2} coordinates={[c.lon, c.lat]} onClick={() => setSelected(c.iso2)}>
                   <circle r={radius(c)} fill={fill(c)} fillOpacity={c.status === "ok" ? 0.85 : 0.35}
-                    stroke={c.iso2 === selected ? "#fff" : "rgba(15,23,42,0.6)"} strokeWidth={c.iso2 === selected ? 1.5 : 0.6}
+                    stroke={bubbleStroke(c)} strokeWidth={c.iso2 === selected || layer === "sector" ? 1.5 : 0.6}
                     style={{ cursor: "pointer" }} data-testid={`geo-bubble-${c.iso2}`}>
-                    <title>{`${c.name}: ${fmtBn(c.capexUsd)} · YoY ${fmtPct(c.yoyPct)}${c.dominantSector ? ` · ${c.dominantSector}` : ""}`}</title>
+                    <title>{layer === "sector"
+                      ? `${c.name}: ${c.dominantSector ?? c.sectorAmpel?.dominantSector ?? "n/a"}${c.sectorAmpel?.dominantSharePct != null ? ` ${c.sectorAmpel.dominantSharePct.toFixed(0)} %` : ""} · ${c.sectorAmpel?.sectorNote ?? BAND_LABEL[c.sectorAmpel?.shareBand ?? "neutral"]}`
+                      : `${c.name}: ${fmtBn(c.capexUsd)} · YoY ${fmtPct(c.yoyPct)}${c.dominantSector ? ` · ${c.dominantSector}` : ""}`}</title>
                   </circle>
                 </Marker>
               ))}
             </ComposableMap>
             <div className="px-2 pb-1.5 text-[10px] text-foreground/40 flex flex-wrap gap-x-3 gap-y-1">
               {layer === "sector" ? (
-                <span>Farbe = dominanter Sektor nach Capex-Anteil. Größe = Perzentil des Capex. Grau = n/a.</span>
+                <span>Farbe = dominanter Sektor nach Capex-Anteil. Größe = Perzentil des Capex. Rand = Ampel (Terzil der Dominanz). Grau = n/a.</span>
               ) : metric === "yoy" ? (
                 <span>Farbe und Größe = Perzentil des YoY in dieser Auswahl (niedrig → hoch). Grau = n/a.</span>
               ) : (
@@ -274,10 +346,20 @@ export function GeoMapPanel() {
             </div>
             {layer === "sector" && (
               <div className="px-2 pb-2 flex flex-wrap gap-1" data-testid="geo-sector-legend">
-                {sectorsPresent.length === 0 && <span className="text-[10px] text-foreground/45">n/a — keine Sektoren in der Auswahl</span>}
-                {sectorsPresent.map(name => (
-                  <span key={name} className="inline-flex items-center gap-1 text-[10px] text-foreground/70">
-                    <span className="w-2 h-2 rounded-full" style={{ background: sectorColor(name) }} /> {name}
+                {sectorLegend.length === 0 && <span className="text-[10px] text-foreground/45">n/a — keine Sektoren in der Auswahl</span>}
+                {sectorLegend.map(item => (
+                  <span key={item.sector} className="inline-flex items-center gap-1 text-[10px] text-foreground/70" data-testid={`geo-legend-${item.sector}`}>
+                    <span className="w-2 h-2 rounded-full" style={{ background: sectorColor(item.sector) }} />
+                    {item.sector} {item.pct.toFixed(SECTOR_LEGEND_FRACTION_DIGITS)} %
+                  </span>
+                ))}
+              </div>
+            )}
+            {layer === "sector" && (
+              <div className="px-2 pb-2 flex flex-wrap gap-2" data-testid="geo-sector-ampel-legend">
+                {BAND_ORDER.map(band => (
+                  <span key={band} className="inline-flex items-center gap-1 text-[10px] text-foreground/70">
+                    <span className="w-2 h-2 rounded-full border-2" style={{ borderColor: BAND_STROKE[band] }} /> {BAND_LABEL[band]}
                   </span>
                 ))}
               </div>
@@ -296,7 +378,34 @@ export function GeoMapPanel() {
                   <div><div className="text-foreground/45 text-[10px]">YoY</div><div className="font-mono">{fmtPct(sel.yoyPct)}</div></div>
                 </div>
                 {layer === "sector" && (
-                  <div className="text-foreground/70">Dominanter Sektor: {sel.dominantSector ?? "n/a"}</div>
+                  <div className="text-foreground/70">
+                    Dominanter Sektor: {sel.dominantSector ?? "n/a"}
+                    {onOpenSectorOpportunity && (
+                      <button type="button" onClick={onOpenSectorOpportunity} className="ml-2 text-violet-300 hover:underline" data-testid="button-geo-open-sectors">Sector Opportunity</button>
+                    )}
+                  </div>
+                )}
+                {layer === "sector" && sel.sectorAmpel && (
+                  <div className="rounded border border-border/30 p-1.5 space-y-0.5" data-testid={`geo-sector-ampel-${sel.iso2}`} data-sector-band={sel.sectorAmpel.shareBand}>
+                    <div className="text-foreground/45 text-[10px]">Ampel der Dominanz</div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate">{sel.sectorAmpel.dominantSector ?? "n/a"}</span>
+                      <span className="font-mono">{sel.sectorAmpel.dominantSharePct != null ? `${sel.sectorAmpel.dominantSharePct.toFixed(0)} %` : "n/a"}</span>
+                    </div>
+                    <div className={`text-[10px] ${BAND_CLASS[sel.sectorAmpel.shareBand]}`}>
+                      Ampel {BAND_LABEL[sel.sectorAmpel.shareBand]}
+                      {sel.sectorAmpel.sharePercentile != null ? ` · Perzentil ${Math.round(sel.sectorAmpel.sharePercentile * 100)} %` : ""}
+                      {sel.sectorAmpel.shareZ != null
+                        ? ` · z ${sel.sectorAmpel.shareZ.toFixed(2)}`
+                        : sel.sectorAmpel.dominantSharePct != null ? " · z n/a — keine Streuung oder zu wenige Länder" : ""}
+                    </div>
+                    {sectorOverlay && (
+                      <div className="text-[10px] text-foreground/45">
+                        Median der Dominanz {sectorOverlay.sectorLayer.peerMedianSharePct != null ? `${sectorOverlay.sectorLayer.peerMedianSharePct.toFixed(1)} %` : "n/a — keine Dominanz"} · n={sectorOverlay.sectorLayer.peerN}
+                      </div>
+                    )}
+                    {sel.sectorAmpel.sectorNote && <div className="text-foreground/55 italic">{sel.sectorAmpel.sectorNote}</div>}
+                  </div>
                 )}
                 {sel.note && <div className="text-foreground/45 italic" data-testid={`geo-note-${sel.iso2}`}>{sel.note}</div>}
                 {sel.companies.length > 0 && (
@@ -305,7 +414,12 @@ export function GeoMapPanel() {
                     <tbody>
                       {sel.companies.map(co => (
                         <tr key={co.symbol} className="border-t border-border/20">
-                          <td className="py-1"><div className="font-mono text-foreground/80">{co.symbol}</div><div className="text-[10px] text-foreground/45 truncate max-w-[150px]">{co.name}{co.sector ? ` · ${co.sector}` : ""}</div></td>
+                          <td className="py-1"><a href={`#/?ticker=${encodeURIComponent(co.symbol)}`} className="font-mono text-violet-300 hover:underline" data-testid={`geo-link-${co.symbol}`}>{co.symbol}</a><div className="text-[10px] text-foreground/45 truncate max-w-[150px]">{co.name}{co.sector ? ` · ${co.sector}` : ""}</div>
+                            {co.geoSegmentsNote && <div className="text-[10px] text-foreground/45 italic">{co.geoSegmentsNote}</div>}
+                            {co.geoSegments?.map(g => (
+                              <div key={g.name} className="text-[10px] text-foreground/60" data-testid={`geo-segment-${co.symbol}-${g.iso2 || "na"}`}>{g.name}{g.pct != null ? ` ${g.pct.toFixed(0)} %` : " n/a"}{g.iso2 ? ` → ${g.iso2}` : ""}{g.note ? ` · ${g.note}` : ""}</div>
+                            ))}
+                          </td>
                           <td className="text-right font-mono">{fmtBn(co.capexUsd)}{co.fiscalYear ? <div className="text-[9px] text-foreground/40">GJ {co.fiscalYear}</div> : null}</td>
                           <td className="text-right font-mono">{fmtPct(co.yoyPct)}</td>
                         </tr>
@@ -334,12 +448,69 @@ export function GeoMapPanel() {
                   <button key={c.iso2} type="button" onClick={() => setSelected(c.iso2)}
                     className="w-full flex items-center justify-between px-1.5 py-1 rounded hover:bg-muted/40" data-testid={`geo-rank-${c.iso2}`}>
                     <span className="text-foreground/75 text-left">{i + 1}. {c.name}{layer === "sector" && c.dominantSector ? ` · ${c.dominantSector}` : ""}</span>
-                    <span className="font-mono shrink-0 ml-2">{fmtBn(c.capexUsd)} <span className="text-foreground/45">{fmtPct(c.yoyPct)}</span></span>
+                    <span className="font-mono shrink-0 ml-2">{fmtBn(c.capexUsd)} <span className="text-foreground/45">{fmtPct(c.yoyPct)}</span>
+                      {layer === "sector" && c.sectorAmpel ? <span className={BAND_CLASS[c.sectorAmpel.shareBand]}>{c.sectorAmpel.dominantSharePct != null ? ` ${c.sectorAmpel.dominantSharePct.toFixed(0)}%` : " n/a"}</span> : null}
+                    </span>
                   </button>
                 ))}
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {goldData && (
+        <div className="rounded-md border border-border/30 bg-background/40 p-2.5 text-[11px] space-y-1" data-testid="geo-gold-panel">
+          {goldBubbles.length === 0 && (
+            <div className="text-foreground/55 italic" data-testid="geo-gold-na">{goldData.note || "n/a — keine Produktions-Unzen und kein Länderanteil"}</div>
+          )}
+          {goldBubbles.length > 0 && (
+            <div className="rounded-md border border-border/30 bg-background/40 overflow-hidden">
+              <ComposableMap projection="geoEqualEarth" projectionConfig={{ scale: 160 }} width={800} height={400} style={{ width: "100%", height: "auto" }}>
+                <Geographies geography={worldUrl}>
+                  {({ geographies }) => geographies.map(geo => (
+                    <Geography key={geo.rsmKey} geography={geo} fill="rgba(148,163,184,0.12)" stroke="rgba(148,163,184,0.25)" strokeWidth={0.4} className="outline-none" />
+                  ))}
+                </Geographies>
+                {goldBubbles.map(c => {
+                  const pct = goldPercentiles.get(c.iso2) ?? null;
+                  return (
+                    <Marker key={c.iso2} coordinates={[c.lon, c.lat]}>
+                      <circle r={radiusForPercentile(pct)} fill={colorForPercentile(pct, "capex")} fillOpacity={0.85}
+                        data-testid={`geo-gold-bubble-${c.iso2}`}>
+                        <title>{goldBubbleTitle(c)}</title>
+                      </circle>
+                    </Marker>
+                  );
+                })}
+              </ComposableMap>
+            </div>
+          )}
+          {goldData.goldCompanies.map(co => (
+            <div key={co.symbol} className="border-t border-border/20 py-1" data-testid={`geo-gold-${co.symbol}`}>
+              <div className="flex justify-between gap-2">
+                <a href={`#/?ticker=${encodeURIComponent(co.symbol)}`} className="font-mono text-violet-300 hover:underline">{co.symbol}</a>
+                <span className="font-mono">{co.aiscUsdPerOz != null ? `${co.aiscUsdPerOz} USD/oz${co.aiscQuarter ? ` · ${co.aiscQuarter}` : ""}` : "AISC n/a"}</span>
+              </div>
+              <div className="text-[10px] text-foreground/45">{co.name} · Produktion n/a</div>
+              {co.note && <div className="text-[10px] text-foreground/55 italic">{co.note}</div>}
+            </div>
+          ))}
+          <a href="#/gold" className="inline-block text-violet-300 underline" data-testid="geo-gold-dashboard">Gold-Dashboard</a>
+          <div className="text-[10px] text-foreground/40">{goldData.attribution}</div>
+        </div>
+      )}
+
+      {chainData && (
+        <div className="rounded-md border border-border/30 bg-background/40 p-2.5 text-[11px] space-y-1" data-testid="geo-valuechain-panel">
+          <div className="text-foreground/55 italic">{chainData.note}</div>
+          {chainData.chains.map(ch => (
+            <div key={ch.key}>
+              <a href={ch.href} className="text-violet-300 hover:underline" data-testid={`geo-valuechain-${ch.key}`}>{ch.label}</a>
+              <div className="text-[10px] text-foreground/45">{ch.placementNote}</div>
+            </div>
+          ))}
+          <div className="text-[10px] text-foreground/40">{chainData.attribution}</div>
         </div>
       )}
 
@@ -399,6 +570,7 @@ export function GeoMapPanel() {
           </div>
         </div>
       )}
+      {layer === "miner" && <MinerMapPanel />}
       {capexData && <div className="text-[10px] text-foreground/40 leading-relaxed">Quelle: {capexData.source}. {capexData.attribution}</div>}
       {minerData && <div className="text-[10px] text-foreground/40 leading-relaxed">Quelle: {minerData.source}. {minerData.attribution}</div>}
     </div>
