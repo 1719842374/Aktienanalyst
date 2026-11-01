@@ -24,11 +24,19 @@ export interface PodcastProbeResult {
   modelUsed: string | null;
 }
 
+/** Ergebnis des Transkript-Caches. stored bleibt false, wenn der Text abgelehnt wurde. */
+export interface PodcastCacheWrite {
+  stored: boolean;
+  reason: string | null;
+}
+
 export async function runPodcastProbe(deps: {
   collect: () => Promise<PodcastCollected>;
   llm: (prompt: string) => Promise<{ data: unknown; modelUsed?: string } | null>;
   audio: PodcastAudioAdapter;
   today: string;
+  /** Schreibt spokenScript in den lokalen Transkript-Cache. Ohne Schreiber bleibt der Schritt n/a. */
+  remember?: (text: string) => PodcastCacheWrite;
 }): Promise<PodcastProbeResult> {
   const progress: PodcastProgressStep[] = [];
   const collected = await deps.collect();
@@ -70,11 +78,21 @@ export async function runPodcastProbe(deps: {
     detail: llmDetail,
   });
 
-  const audio = await deps.audio.synthesize(parsed.script?.spokenScript ?? "");
+  const spoken = parsed.script?.spokenScript ?? "";
+  const audio = await deps.audio.synthesize(spoken);
   progress.push({
     step: "audio",
     status: audio.status,
     detail: audio.status === "ok" ? "Audio liegt vor" : "kein dokumentierter Sprach-Endpoint",
+  });
+
+  const remembered = spoken.trim()
+    ? (deps.remember?.(spoken) ?? { stored: false, reason: "n/a — Pipeline ohne Cache-Schreiber" })
+    : { stored: false, reason: "n/a — kein Skript zum Speichern" };
+  progress.push({
+    step: "cache",
+    status: remembered.stored ? "ok" : "n/a",
+    detail: remembered.stored ? "Transkript im lokalen Cache" : (remembered.reason ?? "n/a — nicht gespeichert"),
   });
 
   return {

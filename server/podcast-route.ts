@@ -8,6 +8,8 @@ import { CURSOR_VOICE_AUDIO_REASON, CursorVoiceAudioAdapter } from "./podcast-au
 import { callLLMJson } from "./llm-openrouter";
 import { runPodcastProbe } from "./podcast-pipeline";
 import { collectPodcastInputs, defaultPodcastDeps } from "./podcast-sources";
+import { writePodcastTranscript } from "./podcast-transcript-route";
+import { PODCAST_MARKET_SYMBOL } from "../shared/podcast-transcript";
 
 export const PODCAST_LLM_MAX_TOKENS = 2800;
 export const PODCAST_LLM_TEMPERATURE = 0.3;
@@ -69,6 +71,10 @@ export function registerPodcastRoute(app: Express): void {
         llm: (prompt) => callPodcastLlm(prompt, { invoke: (opts) => callLLMJson(opts) }),
         audio: new CursorVoiceAudioAdapter(),
         today: new Date().toISOString().slice(0, 10),
+        remember: (text) => {
+          const saved = writePodcastTranscript(PODCAST_MARKET_SYMBOL, text);
+          return { stored: saved.text != null, reason: saved.reason };
+        },
       });
       res.status(200).json(result);
     } catch (err) {
