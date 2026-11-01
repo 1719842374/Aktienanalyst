@@ -272,6 +272,13 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
     { sector: "Industrials", pct: 30 },
     { sector: "Energy", pct: 10 },
   ]);
+  // Real Estate 0 % im Land und ein Rest, der auf 0,0 % rundet, fehlen in der Legende.
+  const hiddenZero = sectorLegendShares([
+    { status: "ok", capexUsd: 1e12, sectorShares: [{ sector: "Technology", pct: 100 }, { sector: "Real Estate", pct: 0 }] },
+    { status: "ok", capexUsd: 1e6, sectorShares: [{ sector: "Real Estate", pct: 100 }] },
+  ]);
+  assert.deepEqual(hiddenZero.map(row => row.sector), ["Technology"]);
+  assert.ok(hiddenZero.every(row => row.pct > 0));
 }
 
 {
