@@ -200,6 +200,31 @@ export function dominantSectorOf(sectorShares: { sector: string; pct: number }[]
   return top?.sector ?? null;
 }
 
+/**
+ * Legende: Anteil je Sektor am erfassten Capex. Dieselben sectorShares, aus denen
+ * die Länderfarbe (dominanter Sektor) kommt. Länder ohne Capex zählen nicht.
+ */
+export function sectorLegendShares(
+  countries: readonly { status: string; capexUsd: number | null; sectorShares: readonly { sector: string; pct: number }[] }[],
+): { sector: string; pct: number }[] {
+  let total = 0;
+  const by = new Map<string, number>();
+  for (const country of countries) {
+    if (country.status !== "ok" || country.capexUsd == null || !(country.capexUsd > 0)) continue;
+    for (const share of country.sectorShares) {
+      if (!share.sector || share.sector === "n/a" || !(typeof share.pct === "number" && Number.isFinite(share.pct) && share.pct > 0)) continue;
+      const part = country.capexUsd * (share.pct / 100);
+      if (!(part > 0)) continue;
+      by.set(share.sector, (by.get(share.sector) ?? 0) + part);
+      total += part;
+    }
+  }
+  if (!(total > 0)) return [];
+  return Array.from(by.entries())
+    .map(([sector, value]) => ({ sector, pct: +((value / total) * 100).toFixed(1) }))
+    .sort((a, b) => b.pct - a.pct || a.sector.localeCompare(b.sector, "de"));
+}
+
 /** Mid-Rank (#{v < x} + 0.5 · #{v = x}) / n. Gleiche Konvention wie die Sektor-Ampel. */
 const MIDRANK_TIE_WEIGHT = 0.5;
 

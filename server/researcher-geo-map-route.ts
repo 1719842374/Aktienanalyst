@@ -27,6 +27,7 @@ import {
   type GeoMapMinerResponse,
 } from "@shared/geo-map";
 import { buildGoldMapLayer, buildValueChainMapLayer } from "@shared/geo-map-layers";
+import { tickerAliasGroupsFromCompanies } from "@shared/gold-aisc";
 import { loadGoldAiscSeries } from "./gold-aisc";
 import { ALL_INDUSTRIES } from "./valuechain-catalog";
 
@@ -195,16 +196,32 @@ function minerBody(nowMs: number, regions: GeoMapMinerRegion[], network: GeoMapM
   };
 }
 
-function goldAiscPoints() {
-  const series = loadGoldAiscSeries();
-  if (!series) return null;
-  const points: { code: string; quarter: string; aisc: number }[] = [];
-  for (const q of series.quarters) {
-    for (const v of q.values) {
-      if (v && typeof v.aisc === "number" && Number.isFinite(v.aisc)) points.push({ code: String(v.company), quarter: q.quarter, aisc: v.aisc });
+/** Frischer Bau setzt geoSegments an jeder Firma. Ein älterer Cache ohne das Feld ist kein Treffer. */
+export function capexPayloadCarriesGeoSegments(payload: unknown): boolean {
+  const countries = (payload as { countries?: unknown } | null)?.countries;
+  if (!Array.isArray(countries)) return false;
+  for (const country of countries) {
+    const companies = (country as { companies?: unknown } | null)?.companies;
+    if (!Array.isArray(companies)) return false;
+    for (const company of companies) {
+      if (!company || typeof company !== "object" || !Object.prototype.hasOwnProperty.call(company, "geoSegments")) return false;
     }
   }
-  return points;
+  return true;
+}
+
+function goldLayerInput(): { points: { code: string; quarter: string; aisc: number }[] | null; aliases: ReturnType<typeof tickerAliasGroupsFromCompanies> } {
+  const series = loadGoldAiscSeries();
+  if (!series) return { points: null, aliases: [] };
+  const points: { code: string; quarter: string; aisc: number }[] = [];
+  for (const quarter of series.quarters) {
+    for (const value of quarter.values) {
+      if (value && typeof value.aisc === "number" && Number.isFinite(value.aisc)) {
+        points.push({ code: String(value.company), quarter: quarter.quarter, aisc: value.aisc });
+      }
+    }
+  }
+  return { points, aliases: tickerAliasGroupsFromCompanies(series.companies) };
 }
 
 let warmImpl: () => void = () => {};
@@ -254,12 +271,21 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
     return minerInflight;
   }
 
+  function readCapex(nowMs: number): Stored | null {
+    const hit = readNamed(CAPEX_FILE(), CAPEX_DISK, nowMs);
+    if (hit && !capexPayloadCarriesGeoSegments(hit.payload)) {
+      deleteNamed(CAPEX_FILE(), CAPEX_DISK);
+      return null;
+    }
+    return hit;
+  }
+
   warmImpl = () => {
     if (!deps.hasKey()) {
       console.log("[geo-map] warmup skipped: FMP nicht konfiguriert");
       return;
     }
-    const hit = useCache ? readNamed(CAPEX_FILE(), CAPEX_DISK, now()) : null;
+    const hit = useCache ? readCapex(now()) : null;
     if (hit?.fresh) {
       console.log("[geo-map] warmup skipped: cache fresh");
       return;
@@ -273,7 +299,7 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
     const t = now();
     if (useCache && force) {
       if (lastRefreshAt != null && t - lastRefreshAt < refreshMinIntervalMs) {
-        const cached = readNamed(CAPEX_FILE(), CAPEX_DISK, t);
+        const cached = readCapex(t);
         if (cached) return res.json({ ...present(cached, layer), _refreshThrottled: true });
         force = false;
       } else {
@@ -282,7 +308,7 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
       }
     }
     if (useCache && !force) {
-      const cached = readNamed(CAPEX_FILE(), CAPEX_DISK, t);
+      const cached = readCapex(t);
       if (cached?.fresh) return res.json(present(cached, layer));
       if (cached && !cached.fresh) {
         startBuild().catch(err => console.error("[geo-map] revalidate failed:", err?.message));
@@ -326,7 +352,10 @@ export function registerGeoMapRoute(app: Express, deps: GeoMapDeps = defaultGeoM
 
   app.get("/api/researcher/geo-map", async (req, res) => {
     const layer = String(req.query?.layer ?? "capex");
-    if (layer === "gold") return res.json(buildGoldMapLayer(new Date(now()).toISOString(), goldAiscPoints()));
+    if (layer === "gold") {
+      const gold = goldLayerInput();
+      return res.json(buildGoldMapLayer(new Date(now()).toISOString(), gold.points, gold.aliases));
+    }
     if (layer === "valuechain") return res.json(buildValueChainMapLayer(new Date(now()).toISOString(), ALL_INDUSTRIES));
     if (layer !== "capex" && layer !== "sector" && layer !== "miner") {
       return res.status(400).json({ error: `layer=${layer} nicht verfügbar (capex, sector, miner, gold, valuechain)` });

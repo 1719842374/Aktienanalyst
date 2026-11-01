@@ -60,9 +60,16 @@ async function run(deps: any, opts: Record<string, unknown> = {}) {
   assert.equal(typeof nem.aiscUsdPerOz, "number");
   assert.ok(nem.aiscUsdPerOz > 0);
   assert.equal(nem.productionOz, null);
-  assert.equal(gold.json.goldCompanies.find((c: any) => c.symbol === "GOLD").aiscUsdPerOz, null);
-  assert.match(gold.json.countries.find((c: any) => c.iso2 === "AU").note, /^n\/a — /);
-  assert.equal(gold.json.countries.length, 9);
+  const aiscFile = JSON.parse(readFileSync("server/data/gold-aisc.json", "utf8"));
+  assert.ok(Array.isArray(aiscFile.companies.B.aliases) && aiscFile.companies.B.aliases.includes("GOLD"), "Barrick-Alias steht in der Datei, nicht als Einzelfall im UI");
+  const bRows = aiscFile.values.filter((v: any) => v.company === "B").sort((a: any, b: any) => String(a.quarter).localeCompare(String(b.quarter)));
+  const barrick = gold.json.goldCompanies.find((c: any) => c.symbol === "GOLD");
+  assert.equal(barrick.aiscUsdPerOz, bRows[bRows.length - 1].aisc);
+  assert.equal(barrick.productionOz, null);
+  assert.doesNotMatch(barrick.note, /nicht als GOLD/);
+  assert.equal(gold.json.countries.length, 0);
+  assert.equal(gold.json.coverage.total, 0);
+  assert.match(gold.json.note, /^n\/a — /);
   const vc = await t.get("?layer=valuechain");
   assert.equal(vc.status, 200);
   assert.equal(vc.json.countries.length, 0);
@@ -113,6 +120,12 @@ const panel = readFileSync("client/src/components/researcher/GeoMapPanel.tsx", "
 assert.match(panel, /readApiJson/);
 assert.match(panel, /GEO_MAP_CLIENT_TIMEOUT_MS/);
 assert.doesNotMatch(panel, /yoyColor/);
+assert.doesNotMatch(panel, /symbol === "GOLD"/);
+assert.doesNotMatch(readFileSync("shared/geo-map-layers.ts", "utf8"), /symbol === "GOLD"/);
+assert.match(panel, /sectorLegendShares/);
+assert.match(panel, /geo-legend-/);
+assert.match(panel, /goldCountryHasProduction/);
+assert.match(panel, /geo-gold-na/);
 
 const pin = JSON.parse(readFileSync("script/fixtures/prod-analyze-dcf-2026-10-25.json", "utf8")).expectOldHead;
 assert.equal(Number(pin.VWAGY.overallScore).toFixed(6), "4.735718");
@@ -244,11 +257,98 @@ assert.equal(Number(pin.MSFT.overallScore).toFixed(6), "4.058138");
 }
 
 {
-  const { matchGeoSegmentIso2, mapGeoSegmentRows } = await import("../shared/geo-map");
+  const { matchGeoSegmentIso2, mapGeoSegmentRows, sectorLegendShares } = await import("../shared/geo-map");
   assert.equal(matchGeoSegmentIso2("Taiwan"), "TW");
   assert.equal(matchGeoSegmentIso2("North America"), null);
   assert.equal(mapGeoSegmentRows([]).lines, null);
   assert.match(mapGeoSegmentRows([]).note || "", /^n\/a — /);
+  const legend = sectorLegendShares([
+    { status: "ok", capexUsd: 40, sectorShares: [{ sector: "Technology", pct: 75 }, { sector: "Energy", pct: 25 }] },
+    { status: "ok", capexUsd: 60, sectorShares: [{ sector: "Technology", pct: 50 }, { sector: "Industrials", pct: 50 }] },
+    { status: "n/a", capexUsd: null, sectorShares: [{ sector: "Energy", pct: 100 }] },
+  ]);
+  assert.deepEqual(legend, [
+    { sector: "Technology", pct: 60 },
+    { sector: "Industrials", pct: 30 },
+    { sector: "Energy", pct: 10 },
+  ]);
+}
+
+{
+  const { lookupAliasCodes, tickerAliasGroupsFromCompanies } = await import("../shared/gold-aisc");
+  const groups = tickerAliasGroupsFromCompanies({
+    B: { ticker: "B", aliases: ["GOLD", "ABX"] },
+    NEM: { ticker: "NEM" },
+  });
+  assert.deepEqual(lookupAliasCodes("GOLD", groups).codes.sort(), ["ABX", "B", "GOLD"]);
+  assert.equal(lookupAliasCodes("GOLD", groups).ambiguous, false);
+  assert.deepEqual(lookupAliasCodes("NEM", groups).codes, ["NEM"]);
+  const clash = tickerAliasGroupsFromCompanies({
+    B: { ticker: "B", aliases: ["GOLD"] },
+    X: { ticker: "X", aliases: ["GOLD"] },
+  });
+  assert.equal(lookupAliasCodes("GOLD", clash).ambiguous, true);
+  const { goldCountriesFromFacts, goldCountryHasProduction } = await import("../shared/geo-map-layers");
+  assert.equal(goldCountryHasProduction({ productionOz: null, countrySharePct: null }), false);
+  assert.equal(goldCountryHasProduction({ productionOz: 0, countrySharePct: null }), false);
+  const kept = goldCountriesFromFacts([
+    { iso2: "AU", isoNum: "036", name: "Australien", lat: -25, lon: 134, productionOz: null, countrySharePct: null },
+    { iso2: "CA", isoNum: "124", name: "Kanada", lat: 56, lon: -106, productionOz: 1_000_000, countrySharePct: 12 },
+  ]);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].iso2, "CA");
+  assert.equal(kept[0].productionOz, 1_000_000);
+  assert.equal(kept[0].countrySharePct, 12);
+}
+
+{
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { diskResearcherDelete } = await import("../server/disk-cache");
+  const { capexPayloadCarriesGeoSegments } = await import("../server/researcher-geo-map-route");
+  assert.equal(capexPayloadCarriesGeoSegments({ countries: [{ companies: [{ symbol: "X" }] }] }), false);
+  assert.equal(capexPayloadCarriesGeoSegments({ countries: [{ companies: [{ symbol: "X", geoSegments: null }] }] }), true);
+  const root = process.cwd();
+  const dir = mkdtempSync(join(tmpdir(), "geo-map-seg-"));
+  process.chdir(dir);
+  diskResearcherDelete("geo-map-capex__global");
+  try {
+    const cacheDir = join(dir, ".cache", "researcher");
+    mkdirSync(cacheDir, { recursive: true });
+    const stale = {
+      layer: "capex",
+      asOf: new Date().toISOString(),
+      source: "alt",
+      attribution: "alt",
+      coverage: { withData: 1, total: 25 },
+      countries: [{
+        iso2: "US", isoNum: "840", name: "USA", lat: 39, lon: -98,
+        status: "ok", capexUsd: 1, yoyPct: null,
+        companies: [{ symbol: "OLD", name: "Old", sector: "Technology", capexUsd: 1, fiscalYear: "2024", yoyPct: null, reportedCurrency: "USD" }],
+        sectorShares: [{ sector: "Technology", pct: 100 }],
+        dominantSector: "Technology",
+      }],
+      _cachedAt: new Date().toISOString(),
+    };
+    writeFileSync(join(cacheDir, "geo-map-capex__global.json"), JSON.stringify(stale));
+    const t = await run({
+      hasKey: () => true,
+      screenCountry: async (iso: string) => iso === "US" ? [{ symbol: "X", name: "X Corp", sector: "Technology", marketCap: 1e12 }] : [],
+      capexYears: async () => ({ latest: { capexUsd: 5, fiscalYear: "2025", reportedCurrency: "USD" }, prevCapexUsd: null }),
+      geoSegments: async () => [{ name: "United States", percentage: 80, revenue: 10 }],
+    }, { useCache: true, responseBudgetMs: 5000 });
+    const r = await t.get("?layer=capex");
+    assert.equal(r.status, 200);
+    const us = r.json.countries.find((c: any) => c.iso2 === "US");
+    assert.notEqual(us.companies[0].symbol, "OLD");
+    assert.equal(us.companies[0].geoSegments[0].iso2, "US");
+    assert.ok(r.json.countries.every((c: any) => (c.companies || []).every((co: any) => Object.prototype.hasOwnProperty.call(co, "geoSegments"))));
+    t.close();
+  } finally {
+    diskResearcherDelete("geo-map-capex__global");
+    process.chdir(root);
+  }
 }
 
 console.log("test-researcher-geo-map: OK");

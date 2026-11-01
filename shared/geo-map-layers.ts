@@ -4,23 +4,57 @@
  * Kein Score, keine geschätzten Unzen.
  */
 import type { GeoMapCountry } from "./geo-map";
+import { lookupAliasCodes, type TickerAliasGroup } from "./gold-aisc";
 
 export const GOLD_LAYER_SYMBOLS = ["NEM", "GOLD", "AEM", "KGC", "WPM", "FNV"] as const;
 
-/** AISC-Datei führt diese Kürzel. GOLD ist nicht dabei (Barrick steht dort als B). */
-export const GOLD_AISC_CODES = ["NEM", "AEM"] as const;
+export interface GoldCountryFact {
+  iso2: string;
+  isoNum: string;
+  name: string;
+  lat: number;
+  lon: number;
+  productionOz: number | null;
+  countrySharePct: number | null;
+}
 
-export const GOLD_LAYER_REGIONS: readonly { iso2: string; isoNum: string; name: string; lat: number; lon: number }[] = [
-  { iso2: "AU", isoNum: "036", name: "Australien", lat: -25, lon: 134 },
-  { iso2: "ZA", isoNum: "710", name: "Südafrika", lat: -29, lon: 24 },
-  { iso2: "CN", isoNum: "156", name: "China", lat: 35, lon: 104 },
-  { iso2: "RU", isoNum: "643", name: "Russland", lat: 61, lon: 105 },
-  { iso2: "CA", isoNum: "124", name: "Kanada", lat: 56, lon: -106 },
-  { iso2: "US", isoNum: "840", name: "USA", lat: 39, lon: -98 },
-  { iso2: "GH", isoNum: "288", name: "Ghana", lat: 8, lon: -1 },
-  { iso2: "PE", isoNum: "604", name: "Peru", lat: -9, lon: -75 },
-  { iso2: "MX", isoNum: "484", name: "Mexiko", lat: 23, lon: -102 },
-];
+export interface GoldMapCountry extends GeoMapCountry {
+  productionOz: number | null;
+  countrySharePct: number | null;
+}
+
+/** Bubble nur bei belegter Produktion oder belegtem Länderanteil. Null und 0 zählen nicht. */
+export function goldCountryHasProduction(fact: { productionOz?: number | null; countrySharePct?: number | null }): boolean {
+  const oz = fact.productionOz;
+  const share = fact.countrySharePct;
+  return (typeof oz === "number" && Number.isFinite(oz) && oz > 0)
+    || (typeof share === "number" && Number.isFinite(share) && share > 0);
+}
+
+export function goldCountriesFromFacts(facts: readonly GoldCountryFact[]): GoldMapCountry[] {
+  const out: GoldMapCountry[] = [];
+  for (const fact of facts) {
+    if (!goldCountryHasProduction(fact)) continue;
+    const productionOz = typeof fact.productionOz === "number" && Number.isFinite(fact.productionOz) && fact.productionOz > 0 ? fact.productionOz : null;
+    const countrySharePct = typeof fact.countrySharePct === "number" && Number.isFinite(fact.countrySharePct) && fact.countrySharePct > 0 ? fact.countrySharePct : null;
+    out.push({
+      iso2: fact.iso2,
+      isoNum: fact.isoNum,
+      name: fact.name,
+      lat: fact.lat,
+      lon: fact.lon,
+      status: "ok",
+      capexUsd: null,
+      yoyPct: null,
+      companies: [],
+      sectorShares: [],
+      dominantSector: null,
+      productionOz,
+      countrySharePct,
+    });
+  }
+  return out;
+}
 
 const GOLD_NAMES: Record<(typeof GOLD_LAYER_SYMBOLS)[number], string> = {
   NEM: "Newmont",
@@ -47,8 +81,10 @@ export interface GoldMapResponse {
   source: string;
   attribution: string;
   coverage: { withData: number; total: number };
-  countries: GeoMapCountry[];
+  countries: GoldMapCountry[];
   goldCompanies: GoldMapCompanyRow[];
+  /** Gesetzter Grund, wenn keine Länder-Bubble existiert. */
+  note: string | null;
   pending?: boolean;
   _cached?: boolean;
   _cacheAge?: number;
@@ -61,26 +97,34 @@ export interface AiscPoint {
 }
 
 const NO_OZ = "n/a — gold-aisc.json und gold-routes enthalten keine Produktions-Unzen";
-const NO_COUNTRY_OZ = "n/a — keine Produktions-Unzen je Land, Bubble nicht nach Anteil skaliert";
+const NO_COUNTRY = "n/a — keine Produktions-Unzen und kein Länderanteil in gold-aisc.json und den Gold-Routen";
 
-function latestAisc(points: readonly AiscPoint[], code: string): { quarter: string; aisc: number } | null {
-  const rows = points.filter(p => p.code === code && Number.isFinite(p.aisc) && p.aisc > 0 && p.quarter);
+function latestAisc(points: readonly AiscPoint[], codes: readonly string[]): { quarter: string; aisc: number } | null {
+  const want = new Set(codes.map(code => code.toUpperCase()));
+  const rows = points.filter(p => want.has(p.code.toUpperCase()) && Number.isFinite(p.aisc) && p.aisc > 0 && p.quarter);
   if (rows.length === 0) return null;
   rows.sort((a, b) => a.quarter.localeCompare(b.quarter));
   return rows[rows.length - 1];
 }
 
-/** Gold-Layer aus bereits gelesenen AISC-Punkten. points === null → Datei nicht lesbar. */
-export function buildGoldMapLayer(asOf: string, points: readonly AiscPoint[] | null): GoldMapResponse {
+/**
+ * Gold-Layer aus bereits gelesenen AISC-Punkten. points === null → Datei nicht lesbar.
+ * aliasGroups kommt aus companies[].aliases der AISC-Datei.
+ * Länder-Fakten gibt es in dieser Quelle nicht: leere Liste, keine gesetzten Länder.
+ */
+export function buildGoldMapLayer(
+  asOf: string,
+  points: readonly AiscPoint[] | null,
+  aliasGroups: readonly TickerAliasGroup[] = [],
+): GoldMapResponse {
   const fileMissing = points == null;
   const goldCompanies: GoldMapCompanyRow[] = GOLD_LAYER_SYMBOLS.map(symbol => {
-    const known = (GOLD_AISC_CODES as readonly string[]).includes(symbol);
-    const hit = !fileMissing && known ? latestAisc(points, symbol) : null;
-    let note: string | null = null;
+    const resolved = lookupAliasCodes(symbol, aliasGroups);
+    const hit = !fileMissing && !resolved.ambiguous ? latestAisc(points, resolved.codes) : null;
+    let note: string;
     if (fileMissing) note = "n/a — gold-aisc.json nicht lesbar";
-    else if (symbol === "GOLD") note = "n/a — AISC-Datei führt Barrick als B, nicht als GOLD. " + NO_OZ;
-    else if (!known) note = "n/a — kein AISC-Eintrag in gold-aisc.json. " + NO_OZ;
-    else if (!hit) note = "n/a — kein AISC-Quartal für " + symbol + ". " + NO_OZ;
+    else if (resolved.ambiguous) note = "n/a — Ticker-Alias mehrdeutig. " + NO_OZ;
+    else if (!hit) note = `n/a — kein AISC-Eintrag für ${symbol}. ` + NO_OZ;
     else note = NO_OZ;
     return {
       symbol,
@@ -91,24 +135,16 @@ export function buildGoldMapLayer(asOf: string, points: readonly AiscPoint[] | n
       note,
     };
   });
-  const countries: GeoMapCountry[] = GOLD_LAYER_REGIONS.map(def => ({
-    ...def,
-    status: "n/a",
-    capexUsd: null,
-    yoyPct: null,
-    companies: [],
-    sectorShares: [],
-    dominantSector: null,
-    note: NO_COUNTRY_OZ,
-  }));
+  const countries = goldCountriesFromFacts([]);
   return {
     layer: "gold",
     asOf,
-    source: "server/data/gold-aisc.json über loadGoldAiscSeries (NEM, AEM). Kein FMP-Produktionsfeld.",
-    attribution: "AISC ist Firmenwert, nicht einem Land zugeordnet. Produktions-Unzen fehlen in den Gold-Quellen.",
-    coverage: { withData: 0, total: countries.length },
+    source: "server/data/gold-aisc.json über loadGoldAiscSeries. Ticker-Aliase stehen in der Datei.",
+    attribution: "AISC ist ein Firmenwert. Produktions-Unzen und Länderanteile fehlen in den Gold-Quellen, deshalb keine Länder-Bubbles.",
+    coverage: { withData: countries.filter(c => c.status === "ok").length, total: countries.length },
     countries,
     goldCompanies,
+    note: countries.length === 0 ? NO_COUNTRY : null,
   };
 }
 
