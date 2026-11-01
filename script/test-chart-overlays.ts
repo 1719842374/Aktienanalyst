@@ -48,11 +48,14 @@ const ready = conditionCount(row, 0.1);
 assert.equal(ready.complete, true);
 assert.equal(ready.met, TA_PROTOCOL_SIZE);
 const painted = paintAmpelClose([
+  { close: 8, ma200: 10, ma50: 9, macd: -0.4 },
   { close: 8, ma200: 10, ma50: 9, macd: -0.2 },
   row,
 ]);
-assert.equal(painted[0]._ampel, "red");
-assert.equal(painted[1]._closeGreen, 12);
+assert.equal(painted[0]._ampel, null);
+assert.equal(painted[1]._ampel, "red");
+assert.equal(painted[1]._closeRed, 8);
+assert.equal(painted[2]._closeGreen, 12);
 assert.equal(painted[0]._closeGreen, null);
 assert.match(ui, /Keine zweite Peer-Linie/);
 assert.match(ui, /button-fund-peer/);
