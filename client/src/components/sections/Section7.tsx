@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SectionCard } from "../SectionCard";
 import type { StockAnalysis } from "../../../../shared/schema";
 import { TAM_NA_SHARE_WARN, applicableTamNaFills, countKiFilledCells, countScopeRestNa, deriveOutperforming, deriveTamShare, factTamCagr, factTamSize, hasPositiveSegmentRevenue, kiFillMetaLine, type TamNaFill, type TamNaSegmentRef } from "../../../../shared/tam-na-fill";
-import { PEER_NA_INCOMPLETE_ERROR, PEER_NA_NOTE, peerFillClosesGap, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
+import { PEER_NA_NOTE, peerKiRowsFromBody, peersNeeded, type PeerNaFill } from "../../../../shared/peer-na-fill";
+import { peerCallSamples, peerLoadingLabel, peerTimeoutFromSamples, recordPeerCallMs } from "../../../../shared/peer-latency";
 import { formatNumber } from "../../lib/formatters";
 import { isYahooOnly } from "../../../../shared/data-source";
 import { apiRequest } from "../../lib/queryClient";
@@ -18,9 +19,12 @@ interface Props {
   /** #258: Ticker, dessen Peer-Overrides nach einem 400 verworfen wurden (Hinweis), sonst null. */
   peerResetNotice?: string | null;
   onDismissPeerResetNotice?: () => void;
+  peerAddNotice?: string | null;
+  peerAddError?: string | null;
+  peerLoadingHint?: string;
 }
 
-export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerResetNotice = null, onDismissPeerResetNotice }: Props) {
+export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerResetNotice = null, onDismissPeerResetNotice, peerAddNotice = null, peerAddError = null, peerLoadingHint }: Props) {
   // Use TTM sector avg for TTM stock P/E, and forward sector avg for forward stock P/E
   // Fallback: if backend didn't ship sectorAvgForwardPE (older cached payloads), fall back to TTM to avoid NaN
   const sectorFwdPE = data.sectorAvgForwardPE > 0 ? data.sectorAvgForwardPE : data.sectorAvgPE;
@@ -166,6 +170,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
     setPeerKiLoading(true);
     setPeerKiError(null);
     const existingPeers = (data.peerComparison?.peers ?? []).map((p) => p.ticker);
+    const started = Date.now();
     try {
       const res = await apiRequest("POST", `/api/analyze/${encodeURIComponent(data.ticker)}/peer-na-fill`, {
         companyName: data.companyName,
@@ -174,23 +179,19 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
         description: data.description,
         existingPeers,
         relativeApplies: data.peerSet?.relativeApplies ?? null,
-      });
+      }, peerTimeoutFromSamples(peerCallSamples()));
       let json: { fills?: PeerNaFill[]; error?: string; note?: string } | null = null;
       try { json = await res.json(); } catch { json = null; }
+      recordPeerCallMs(Date.now() - started);
       if (requestId !== peerKiRequest.current) return;
-      const fills = Array.isArray(json?.fills) ? json.fills : [];
-      if (!res.ok || fills.length === 0 || !peerFillClosesGap(fills, existingPeers.length)) {
-        setPeerKiError(json?.error || PEER_NA_INCOMPLETE_ERROR);
+      const parsed = peerKiRowsFromBody({ httpOk: res.ok, body: json, existing: existingPeers });
+      if (parsed.error || parsed.rows.length === 0) {
+        setPeerKiError(parsed.error || "KI-Schätzung fehlgeschlagen. Tabelle unverändert.");
         return;
       }
-      const known = new Set(existingPeers.map((t) => t.toUpperCase()));
-      const next = fills.filter((row) => row?.ticker && !known.has(row.ticker.toUpperCase()) && row.suggestedBy === "ki");
-      if (!peerFillClosesGap(next, existingPeers.length)) {
-        setPeerKiError(PEER_NA_INCOMPLETE_ERROR);
-        return;
-      }
-      setPeerKiFills(next.slice(0, peerGap));
+      setPeerKiFills(parsed.rows);
     } catch (err: unknown) {
+      recordPeerCallMs(Date.now() - started);
       if (requestId !== peerKiRequest.current) return;
       const msg = err instanceof Error ? err.message : "";
       setPeerKiError(msg || "KI-Schätzung fehlgeschlagen. Tabelle unverändert.");
@@ -699,7 +700,7 @@ export function Section7({ data, onPeerOverridesChange, peerBusy = false, peerRe
           {/* #258 FAIL 3: mit Override-Callback immer rendern, auch bei peerComparison null / 0 Peers,
               damit Eingabefeld und „Standard wiederherstellen“ (Empty-State in PeerComparison) erreichbar sind. */}
           {(!!onPeerOverridesChange || (data.peerComparison && data.peerComparison.peers.length > 0) || (peerKiFills && peerKiFills.length > 0)) && (
-            <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} peerBusy={peerBusy} />
+            <PeerComparison data={data} onOverridesChange={onPeerOverridesChange} kiPeers={peerKiFills ?? []} peerBusy={peerBusy} peerAddNotice={peerAddNotice} peerAddError={peerAddError} peerLoadingHint={peerLoadingHint ?? peerLoadingLabel(peerCallSamples())} />
           )}
         </div>
       )}

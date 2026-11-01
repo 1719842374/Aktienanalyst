@@ -4,6 +4,7 @@ import type { PeerNaFill } from "@shared/peer-na-fill";
 import { ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from "lucide-react";
 import { PEER_VIEW_TABS, filterPeersForView, peerIndustryLabel, viewAverage, peForView, PEER_GICS_NA_TEXT, type PeerViewTab, type PeerPeBasis, type PeerIndustryBasis } from "@/lib/peerViewFilter";
 import { PEER_RESET_NOTICE_TEXT, addListFull, removeListFull } from "@/lib/peerOverrideLimits";
+import { classifyPeerAdd } from "@shared/peer-identity";
 
 function fmt(v: number | null | undefined, decimals = 1): string {
   if (v == null || isNaN(v) || !isFinite(v)) return "—";
@@ -65,18 +66,22 @@ export function missingAddedPeers(activeAdd: readonly string[], peers: ReadonlyA
 // Auftrag 09.08.2026 ("Peer-Liste nachziehbar"): onOverridesChange ist optional
 // -- Aufrufer ohne den Callback (falls je vorhanden) sehen weiterhin nur die
 // reine Tabelle, keine Verhaltensaenderung. Additiv, kein Ersatz bestehender Props.
-export default function PeerComparison({ data, onOverridesChange, kiPeers = [], peerBusy = false }: {
+export default function PeerComparison({ data, onOverridesChange, kiPeers = [], peerBusy = false, peerAddNotice = null, peerAddError = null, peerLoadingHint = "Peer wird geladen…" }: {
   data: StockAnalysis;
   onOverridesChange?: (overrides: { add: string[]; remove: string[] }) => void;
-  /** Session-only KI names. FMP metrics stay on the side list, not in the scored table. */
+  /** Session-only KI names. Kennzahlen von FMP, in derselben Tabelle, nicht score-wirksam. */
   kiPeers?: PeerNaFill[];
-  /** True while the parent re-runs /api/analyze with the new peer overrides. */
+  /** True while the new peer row is loading. */
   peerBusy?: boolean;
+  peerAddNotice?: string | null;
+  peerAddError?: string | null;
+  peerLoadingHint?: string;
 }) {
   const pc = data.peerComparison;
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [addInput, setAddInput] = useState("");
+  const [localNotice, setLocalNotice] = useState<string | null>(null);
   // PR B Peer-Selection: Filter-Tabs sind reine Ansicht (Server-Ø, Score, PDF = volles Set).
   const [viewTab, setViewTab] = useState<PeerViewTab>("all");
   // Peer-Varianten A/B (umschaltbar, reine Ansicht): A = KGV-Basis, B = Industrie-Basis.
@@ -91,6 +96,8 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
   const activeRemove = data.activePeerOverrides?.remove ?? [];
 
   const visiblePeers: PeerCompany[] = pc?.peers ?? [];
+  const scoredTickers = new Set(visiblePeers.map(p => p.ticker.toUpperCase()));
+  const sideKi = kiPeers.filter(row => !scoredTickers.has(row.ticker.toUpperCase()));
   const visibleCapReached = peerCapReached(visiblePeers);
   // #258 FAIL 5: harter Deckel auf die Add-Liste (Server-zod max. 8), zählt auch nicht übernommene Ticker.
   const addCapReached = addListFull(activeAdd);
@@ -120,11 +127,21 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
 
   const handleAddTicker = () => {
     if (!onOverridesChange) return;
-    const t = addInput.trim().toUpperCase();
-    if (!t || t === data.ticker) return;
-    if (activeAdd.includes(t)) return;
+    const decision = classifyPeerAdd({
+      raw: addInput,
+      subject: data.ticker,
+      peers: visiblePeers.map(peer => peer.ticker),
+      activeAdd,
+    });
+    if (decision.kind === "empty") return;
+    if (!decision.request) {
+      setLocalNotice(decision.notice);
+      setAddInput("");
+      return;
+    }
+    setLocalNotice(null);
     if (capReached) return; // Ticket: max. 8 sichtbare Peers, max. 8 Einträge in der Add-Liste
-    onOverridesChange({ add: [...activeAdd, t], remove: activeRemove.filter(r => r !== t) });
+    onOverridesChange({ add: [...activeAdd, decision.ticker], remove: activeRemove.filter(r => r !== decision.ticker) });
     setAddInput("");
   };
 
@@ -145,7 +162,7 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
   const overrideControls = onOverridesChange ? (
     <PeerOverrideControls
       addInput={addInput}
-      setAddInput={setAddInput}
+      setAddInput={(value) => { setAddInput(value); setLocalNotice(null); }}
       onAdd={handleAddTicker}
       onReset={handleResetDefaults}
       hasOverrides={activeAdd.length > 0 || activeRemove.length > 0}
@@ -153,6 +170,9 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
       visibleCapReached={visibleCapReached}
       addCapReached={addCapReached}
       peerBusy={peerBusy}
+      peerLoadingHint={peerLoadingHint}
+      notice={localNotice || peerAddNotice}
+      error={peerAddError}
       notAdopted={peerBusy ? [] : notAdopted}
       onDropAdd={handleDropAdd}
     />
@@ -167,14 +187,14 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
           </div>
         )}
         {overrideControls}
-        <KiSideList peers={kiPeers} />
+        {sideKi.length > 0 && (
+          <KiRowsInSection peers={sideKi} />
+        )}
       </div>
     );
   }
 
   const { subject, peers, peerAvg, sectorMedian } = pc;
-  const scoredTickers = new Set(peers.map((p) => p.ticker.toUpperCase()));
-  const sideKi = kiPeers.filter((row) => !scoredTickers.has(row.ticker.toUpperCase()));
 
   const handleRemove = (ticker: string) => {
     if (!onOverridesChange) return;
@@ -412,7 +432,11 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
               </tr>
             ))}
 
-            {sortedPeers.length === 0 && (
+            {sideKi.map(peer => (
+              <KiPeerRow key={peer.ticker} peer={peer} cols={cols} trailingCell={!!onOverridesChange} />
+            ))}
+
+            {sortedPeers.length === 0 && sideKi.length === 0 && (
               <tr data-testid="peer-view-empty">
                 <td colSpan={cols.length + 2 + (onOverridesChange ? 1 : 0)} className="py-2 px-1.5 text-[10px] text-foreground/40">
                   Keine Peers in dieser Ansicht (fehlende Daten zählen als n/a)
@@ -494,12 +518,11 @@ export default function PeerComparison({ data, onOverridesChange, kiPeers = [], 
         })}
       </div>
 
-      <KiSideList peers={sideKi} />
     </div>
   );
 }
 
-export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, hasOverrides, capReached, visibleCapReached = capReached, addCapReached = false, peerBusy, notAdopted, onDropAdd }: {
+export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, hasOverrides, capReached, visibleCapReached = capReached, addCapReached = false, peerBusy, peerLoadingHint = "Peer wird geladen…", notice = null, error = null, notAdopted, onDropAdd }: {
   addInput: string;
   setAddInput: (v: string) => void;
   onAdd: () => void;
@@ -509,6 +532,9 @@ export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, ha
   visibleCapReached?: boolean;
   addCapReached?: boolean;
   peerBusy: boolean;
+  peerLoadingHint?: string;
+  notice?: string | null;
+  error?: string | null;
   notAdopted: string[];
   onDropAdd?: (ticker: string) => void;
 }) {
@@ -518,7 +544,7 @@ export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, ha
         <input
           type="text"
           value={addInput}
-          onChange={e => setAddInput(e.target.value)}
+          onChange={e => { setAddInput(e.target.value); }}
           onKeyDown={e => { if (e.key === "Enter") onAdd(); }}
           placeholder="Ticker hinzufügen (z.B. LLY)"
           className="text-[11px] bg-muted/30 border border-border/50 rounded-md px-2 py-1 w-40 focus:outline-none focus:ring-1 focus:ring-primary/40"
@@ -537,7 +563,7 @@ export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, ha
         {peerBusy && (
           <span className="text-[10px] text-primary flex items-center gap-1" data-testid="peer-add-loading" role="status">
             <Loader2 className="w-3 h-3 animate-spin" />
-            Peer wird geladen…
+            {peerLoadingHint}
           </span>
         )}
         <button
@@ -556,6 +582,12 @@ export function PeerOverrideControls({ addInput, setAddInput, onAdd, onReset, ha
           <span className="text-[10px] text-amber-400/70" data-testid="peer-add-cap-reached">Max. 8 Hinzufügungen erreicht — nicht übernommene entfernen oder Standard wiederherstellen</span>
         )}
       </div>
+      {notice && (
+        <div className="text-[10px] text-amber-500" role="status" data-testid="peer-add-notice">{notice}</div>
+      )}
+      {error && (
+        <div className="text-[10px] text-red-500" role="alert" data-testid="peer-add-error">{error}</div>
+      )}
       {notAdopted.length > 0 && (
         <div
           className="text-[10px] text-amber-400/80"
@@ -660,13 +692,10 @@ const KI_ONLY_COLS: PeerCol[] = [
   { key: "roic5Y", label: "ROIC 5Y Ø", lowerIsBetter: false, decimals: 1, suffix: "%" },
 ];
 
-function KiSideList({ peers }: { peers: PeerNaFill[] }) {
+function KiRowsInSection({ peers }: { peers: PeerNaFill[] }) {
   if (peers.length === 0) return null;
   return (
-    <div className="space-y-1" data-testid="peer-ki-side-list">
-      <div className="text-[10px] text-violet-700 dark:text-violet-300">
-        KI-Namen · nicht in der Peer-Tabelle · Kennzahlen von FMP
-      </div>
+    <div data-testid="peer-ki-in-section">
       <KiOnlyPeerTable peers={peers} />
     </div>
   );

@@ -102,6 +102,8 @@ import {
 } from "./llm-openrouter";
 import { requestTamNaFills } from "./tam-na-fill";
 import { requestPeerNaFills } from "./peer-na-fill";
+import { appendPeerFromCachedAnalysis } from "./peer-incremental";
+import { peerIdentityKeys } from "../shared/peer-identity";
 
 import {
   isFmpAvailable,
@@ -2714,9 +2716,9 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
 
   // ── POST /api/analyze/:ticker/peer-na-fill ───────────────────
   // OpenRouter names missing peer tickers only. Kennzahlen come from FMP.
-  // A ticker without FMP data is not filled with invented numbers. Success
-  // only when enough FMP-backed rows close the gap to 3; otherwise 422
-  // INCOMPLETE_FILL and no overlay. Does not write the cache or the score.
+  // A ticker without FMP data is not filled with invented numbers. Partial-apply
+  // wie TAM: jede FMP-Zeile bleibt, 422 nur wenn nichts brauchbar ist.
+  // Does not write the cache or the score.
   app.post("/api/analyze/:ticker/peer-na-fill", async (req: Request, res: Response) => {
     try {
       const rawTicker = req.params.ticker;
@@ -2745,6 +2747,51 @@ export function registerAnalyzeRoute(server: Server, app: Express): void {
     } catch (err: any) {
       console.error(`[/api/analyze/peer-na-fill] ${err?.message?.substring(0, 300)}`);
       return res.status(500).json({ error: err?.message ?? "Internal server error" });
+    }
+  });
+
+  // Peer hinzufügen: nur der neue Ticker, aus der bereits gecachten Analyse.
+  // Duplikat und Hauptticker antworten ohne FMP. Fehler sind immer ein Text.
+  app.post("/api/analyze/:ticker/peer-append", async (req: Request, res: Response) => {
+    try {
+      const rawTicker = req.params.ticker;
+      const ticker = ((Array.isArray(rawTicker) ? rawTicker[0] : rawTicker) ?? "").trim().toUpperCase();
+      const add = String(req.body?.add ?? "").trim().toUpperCase();
+      const useLLM = req.body?.useLLM === true;
+      if (!ticker || !add) return res.status(400).json({ ok: false, error: "Ticker fehlt" });
+      const overrides = normalizePeerOverrides(req.body?.peerOverrides);
+      const addKeys = new Set(peerIdentityKeys(add));
+      const prevAdd = overrides.add.filter(symbol => !peerIdentityKeys(symbol).some(key => addKeys.has(key)));
+      const cacheKey = buildAnalyzeCacheKey(ticker, useLLM, prevAdd, overrides.remove);
+      let base: StockAnalysis | null = null;
+      const cached = analysisCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) base = cached.result;
+      if (!base) {
+        const diskHit = diskCacheGet(cacheKey) as (StockAnalysis & Record<string, unknown>) | null;
+        if (diskHit) {
+          const { _cached, _cacheAge, _cacheDate, _diskCache, _schemaVersion, _needsOhlcv, ...rest } = diskHit;
+          void _cached; void _cacheAge; void _cacheDate; void _diskCache; void _schemaVersion; void _needsOhlcv;
+          base = rest as StockAnalysis;
+        }
+      }
+      if (!base) {
+        return res.status(409).json({ ok: false, error: "Analyse nicht im Cache — Peer nicht nachgeladen. Bitte die Aktie erneut öffnen." });
+      }
+      const result = await appendPeerFromCachedAnalysis({
+        analysis: base,
+        addTicker: add,
+        peerOverrides: overrides,
+      }, { fetchPeerComparisonFromTickers });
+      if (!result.ok) return res.status(502).json(result);
+      if (result.adopted || result.reason) {
+        const nextKey = buildAnalyzeCacheKey(ticker, useLLM, overrides.add, overrides.remove);
+        analysisCache.set(nextKey, { result: result.analysis, timestamp: Date.now(), usedLLM: useLLM });
+        diskCacheSet(nextKey, result.analysis);
+      }
+      return res.json(result);
+    } catch (err: any) {
+      console.error(`[/api/analyze/peer-append] ${err?.message?.substring(0, 300)}`);
+      return res.status(500).json({ ok: false, error: err?.message || "Peer konnte nicht geladen werden." });
     }
   });
 }

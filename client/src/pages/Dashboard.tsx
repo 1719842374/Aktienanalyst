@@ -13,6 +13,7 @@ import {
   writeOverrides,
   type PeerOverrideLists,
 } from "@shared/peer-override-persist";
+import { peerCallSamples, peerLoadingLabel, peerTimeoutFromSamples, recordPeerCallMs } from "@shared/peer-latency";
 import {
   PEER_OVERRIDES_REJECTED,
   clampPeerOverrides,
@@ -123,6 +124,10 @@ export default function Dashboard() {
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxRetries: number; isPending?: boolean } | null>(null);
   // #258: Hinweis nach automatischem Verwerfen abgelehnter Peer-Overrides (400).
   const [peerResetNotice, setPeerResetNotice] = useState<PeerResetNotice>(null);
+  const [peerAppendPending, setPeerAppendPending] = useState(false);
+  const [peerAddNotice, setPeerAddNotice] = useState<string | null>(null);
+  const [peerAddError, setPeerAddError] = useState<string | null>(null);
+  const [peerLatencies, setPeerLatencies] = useState<number[]>([]);
   const [serverReady, setServerReady] = useState<boolean | null>(null); // null=checking, true=ready, false=down
 
   const [financeQuotaOk, setFinanceQuotaOk] = useState<boolean | null>(null);
@@ -174,6 +179,8 @@ export default function Dashboard() {
   // Tagged mutate: assigns a fresh reqId on every kick-off so onSuccess can
   // reject stale responses. Use this everywhere instead of mutation.mutate().
   const startAnalyze = useCallback((args: { ticker: string; llm: boolean; force?: boolean; peerOverrides?: { add: string[]; remove: string[] }; peerResetRecovery?: boolean }) => {
+    setPeerAddNotice(null);
+    setPeerAddError(null);
     const storage = safeLocalStorage();
     const explicit = args.peerOverrides;
     const loaded: PeerOverrideLists = explicit
@@ -356,6 +363,48 @@ export default function Dashboard() {
 
   // Wire the mutation to its ref so startAnalyze() can call it.
   analyzeMutationRef.current = analyzeMutation;
+
+  const notePeerCall = (started: number) => {
+    recordPeerCallMs(Date.now() - started);
+    setPeerLatencies(peerCallSamples().slice());
+  };
+
+  // Nur der neue Peer. Duplikat/Hauptticker bleiben im Kind und lösen das hier nicht aus.
+  const appendPeer = useCallback(async (addTicker: string, peerOverrides: PeerOverrideLists) => {
+    const ticker = currentTickerRef.current;
+    if (!ticker) return;
+    const started = Date.now();
+    setPeerAppendPending(true);
+    setPeerAddError(null);
+    setPeerAddNotice(null);
+    const storage = safeLocalStorage();
+    try {
+      const res = await apiRequest("POST", `/api/analyze/${encodeURIComponent(ticker)}/peer-append`, {
+        add: addTicker,
+        useLLM: useLLMRef.current,
+        peerOverrides,
+      }, peerTimeoutFromSamples(peerCallSamples()));
+      const json = await res.json().catch(() => null) as { ok?: boolean; error?: string; notice?: string | null; reason?: string | null; adopted?: boolean; analysis?: StockAnalysis } | null;
+      notePeerCall(started);
+      if (!res.ok || !json || json.ok === false || !json.analysis) {
+        setPeerAddError(json?.error || "Peer konnte nicht geladen werden.");
+        return;
+      }
+      if (json.notice) setPeerAddNotice(json.notice);
+      if (json.adopted === false && json.reason) setPeerAddError(json.reason);
+      setData(json.analysis);
+      if (storage) {
+        writeOverrides(storage, ticker, normalizeStoredOverrides(json.analysis.activePeerOverrides));
+        writeLastTicker(storage, ticker);
+      }
+    } catch (err: unknown) {
+      notePeerCall(started);
+      const msg = err instanceof Error ? err.message : "";
+      setPeerAddError(msg || "Peer konnte nicht geladen werden.");
+    } finally {
+      setPeerAppendPending(false);
+    }
+  }, []);
 
   // Auftrag 10.08.2026 ("Portfolio UX", Teil A): Deep-Link von der Portfolio-
   // Seite (/#/?ticker=XXX) zur Aktienanalyse dieses Tickers. NEUER, isolierter
@@ -682,7 +731,17 @@ export default function Dashboard() {
               <div ref={setSectionRef(6)}><SectionErrorBoundary sectionId={6} sectionLabel="Bewertung">{isYahooOnly(data) ? <YahooNoValuationCard number={6} title="BEWERTUNGSKENNZAHLEN" data={data} /> : <Section4 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(7)}><SectionErrorBoundary sectionId={7} sectionLabel="DCF-Modell">{isYahooOnly(data) ? <YahooNoValuationCard number={7} title="DCF-MODELL (FCFF)" data={data} /> : <Section5 data={data} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(8)}><SectionErrorBoundary sectionId={8} sectionLabel="CRV">{isYahooOnly(data) ? <YahooNoValuationCard number={8} title="RISIKOADJUSTIERTES CRV" data={data} /> : <Section6 data={data} />}</SectionErrorBoundary></div>
-              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerResetNotice={peerResetNoticeFor(peerResetNotice, data.ticker)?.ticker ?? null} onDismissPeerResetNotice={() => setPeerResetNotice(null)} peerBusy={analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides)} onPeerOverridesChange={(overrides) => { if (currentTickerRef.current) startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides }); }} /></SectionErrorBoundary></div>
+              <div ref={setSectionRef(9)}><SectionErrorBoundary sectionId={9} sectionLabel="Rel. Bewertung"><Section7 data={data} peerResetNotice={peerResetNoticeFor(peerResetNotice, data.ticker)?.ticker ?? null} onDismissPeerResetNotice={() => setPeerResetNotice(null)} peerBusy={peerAppendPending || (analyzeMutation.isPending && hasPeerOverrideLists(analyzeMutation.variables?.peerOverrides))} peerAddNotice={peerAddNotice} peerAddError={peerAddError} peerLoadingHint={peerLoadingLabel(peerLatencies)} onPeerOverridesChange={(overrides) => {
+                if (!currentTickerRef.current) return;
+                const prev = dataRef.current?.activePeerOverrides ?? { add: [], remove: [] };
+                const added = overrides.add.filter(ticker => !prev.add.includes(ticker));
+                const removeSame = overrides.remove.length === prev.remove.length && overrides.remove.every(ticker => prev.remove.includes(ticker));
+                const onlyAdd = added.length === 1 && removeSame && prev.add.every(ticker => overrides.add.includes(ticker));
+                if (onlyAdd) { void appendPeer(added[0], overrides); return; }
+                setPeerAddNotice(null);
+                setPeerAddError(null);
+                startAnalyze({ ticker: currentTickerRef.current, llm: useLLMRef.current, force: true, peerOverrides: overrides });
+              }} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(10)}><SectionErrorBoundary sectionId={10} sectionLabel="Risikoinversion">{isYahooOnly(data) ? <YahooNoValuationCard number={10} title="INVERSION – RISIKOEINPREISUNG" data={data} /> : <Section8 data={data} useLLM={useLLM} />}</SectionErrorBoundary></div>
               <div ref={setSectionRef(11)}><SectionErrorBoundary sectionId={11} sectionLabel="RSL-Momentum"><Section9 data={data} /></SectionErrorBoundary></div>
               <div ref={setSectionRef(12)}><SectionErrorBoundary sectionId={12} sectionLabel="Tech. Analyse"><TechnicalChart data={data} /><BuffettMacroCard /></SectionErrorBoundary></div>

@@ -8,6 +8,7 @@ import type { Catalyst } from "../shared/schema";
 import { btcMediaSiteQuery, filterBtcNewsItems } from "../shared/btc-source-policy";
 import { fmpBatchQuote, fmpRatios, fmpKeyMetrics, fmpProfile, fmpAnalystEstimates } from "./fmp";
 import { peerForwardPe } from "../shared/peer-forward-pe";
+import { peerAvgFromPeers } from "../shared/peer-metrics";
 import { applyKeywordSentimentToNews } from "./news-sentiment";
 import { diskResearcherGetWithTtl, diskResearcherSet } from "./disk-cache";
 
@@ -430,10 +431,6 @@ export async function fetchPeerComparisonFromTickers(
     // F is already capped (5, or 8 after +/- overrides). peerAvg uses that set.
     const validPeers = peers.filter(p => p.pe !== null || p.ps !== null || p.pb !== null);
     if (validPeers.length === 0) return null;
-    const avg = (arr: (number | null)[], lo = -1000, hi = 1000): number | null => {
-      const valid = arr.filter((v): v is number => v !== null && !isNaN(v) && isFinite(v) && v > lo && v < hi);
-      return valid.length > 0 ? +(valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(2) : null;
-    };
     const ps = revenue > 0 && marketCap > 0 ? +(marketCap / revenue).toFixed(1) : null;
     const subject = {
       ticker, name: ticker,
@@ -450,16 +447,7 @@ export async function fetchPeerComparisonFromTickers(
       roic5Y: subjectRoic?.roic5YPercent ?? null,
       roic5YYearsUsed: subjectRoic?.roic5YYearsUsed ?? 0,
     };
-    const peerAvg = {
-      pe: avg(validPeers.map(p => p.pe), 0, 500),
-      peg: avg(validPeers.map(p => p.peg), 0, 20),
-      ps: avg(validPeers.map(p => p.ps), 0, 100),
-      pb: avg(validPeers.map(p => p.pb).map(v => v && v > 0 ? v : null), 0, 200),
-      epsGrowth1Y: avg(validPeers.map(p => p.epsGrowth1Y), -100, 300),
-      epsGrowth5Y: avg(validPeers.map(p => p.epsGrowth5Y), -100, 300),
-      roic: avg(validPeers.map(p => sanitizeRoic(p.roic))),
-      roic5Y: avg(validPeers.map(p => sanitizeRoic(p.roic5Y))),
-    };
+    const peerAvg = peerAvgFromPeers(peers);
     return { subject, peers: validPeers, peerAvg };
   } catch (err: any) {
     console.error(`[PEERS-FMP] Failed for ${ticker}: ${err?.message?.substring(0, 150)}`);

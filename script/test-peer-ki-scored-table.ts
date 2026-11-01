@@ -130,20 +130,15 @@ try {
     check("gescorte Tabelle ist markiert", scored.includes('data-testid="peer-scored-table"'));
     check("FMP-Peers SNY und PFE stehen in der gescorten Tabelle", scored.includes("SNY") && scored.includes("PFE"));
     check("Ø Peers bleibt in der gescorten Tabelle", scored.includes("Ø Peers"));
-    check(
-      "KI-Ticker LLY steht nicht in der gescorten Tabelle",
-      !scored.includes("LLY") && !scored.includes("row-peer-ki-LLY"),
-      scored.includes("LLY") ? "LLY im gescorten Tabellen-HTML" : "gescorte Tabelle fehlt",
-    );
-    check("KI-Zeile steht in der Seitenliste", html.includes('data-testid="peer-ki-side-list"') && html.includes('data-testid="row-peer-ki-LLY"'));
-    check("Seitenliste liegt außerhalb der gescorten Tabelle", !scored.includes("peer-ki-side-list"));
-    check("KI-Badge bleibt an der Seitenliste", html.includes('data-testid="badge-peer-ki-LLY"'));
+    check("KI-Ticker LLY steht in derselben Tabelle wie Ø Peers", scored.includes("LLY") && scored.includes('data-testid="row-peer-ki-LLY"'));
+    check("keine separate Seitenliste unter der Sektion", !html.includes('data-testid="peer-ki-side-list"'));
+    check("KI-Badge bleibt an der Zeile", html.includes('data-testid="badge-peer-ki-LLY"'));
 
     const onlyKi = renderPeer(analysis([]), [kiRow("LLY")]);
     check("ohne FMP-Peers gibt es keine gescorte Tabelle", scoredTable(onlyKi) === "");
     check(
-      "fehlender Rivale bleibt nur in der Seitenliste",
-      onlyKi.includes('data-testid="peer-ki-side-list"') && onlyKi.includes('data-testid="row-peer-ki-LLY"'),
+      "fehlender Rivale bleibt in der Peer-Sektion",
+      onlyKi.includes('data-testid="peer-ki-in-section"') && onlyKi.includes('data-testid="row-peer-ki-LLY"'),
     );
   }
 

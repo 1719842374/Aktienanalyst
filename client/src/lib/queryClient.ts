@@ -52,22 +52,22 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
-  timeoutMs = 90000,
+  timeoutMs: number | null = 90000,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = timeoutMs == null ? null : setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${API_BASE}${url}`, {
       method,
       headers: data ? { "Content-Type": "application/json" } : {},
       body: data ? JSON.stringify(data) : undefined,
-      signal: controller.signal,
+      signal: timer ? controller.signal : undefined,
     });
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     return res;
   } catch (err: any) {
-    clearTimeout(timer);
-    if (err?.name === 'AbortError') throw new Error(`Timeout: Server hat nicht innerhalb von ${Math.round(timeoutMs / 1000)}s geantwortet`);
+    if (timer) clearTimeout(timer);
+    if (err?.name === 'AbortError') throw new Error(`Timeout: Server hat nicht innerhalb von ${Math.round((timeoutMs ?? 0) / 1000)}s geantwortet`);
     throw err;
   }
 }
