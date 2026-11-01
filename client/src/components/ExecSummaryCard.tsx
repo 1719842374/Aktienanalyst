@@ -12,6 +12,7 @@ import { buildBiasDecision } from "../../../shared/bias-fixes";
 import { usePublishChatSection } from "@/lib/chatSectionData";
 import type { GBMMonteCarloResult } from "@/lib/calculations";
 import { execLageFromFazit } from "@/lib/execLageFromFazit";
+import { DividendNotableHint } from "@/components/sections/DividendYieldContext";
 
 export type ExecSummaryView = {
   headline?: string;
@@ -98,6 +99,7 @@ export function ExecSummaryCard({ data, sharedMonteCarlo }: {
   return (
     <SectionCard number={1} title="Executive Summary" defaultOpen>
       <div className="space-y-3 text-sm" data-testid="exec-summary-card">
+        <DividendNotableHint data={data} />
         <div className={`rounded-md border px-3 py-2 flex items-center justify-between gap-2 ${fazit.ratingBg}`}>
           {/* Ampel = Fazit-Signal-Score (buildFazitSignal, identisch S20-Fazit / Kasten unten).
               Nicht bias.overallRating: der Gesamtscore haengt an spaet nachgeladenen
