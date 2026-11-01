@@ -1,9 +1,9 @@
-import { useState, useMemo, useCallback, useEffect, type ReactNode } from "react";
+import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import type { StockAnalysis, TradingSignal } from "../../../../shared/schema";
 import { SectionCard } from "../SectionCard";
 import {
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis,
-  Tooltip, ReferenceLine, ReferenceArea, ReferenceDot, Area, CartesianGrid,
+  Tooltip, ReferenceLine, ReferenceArea, ReferenceDot, Customized, Area, CartesianGrid,
 } from "recharts";
 import { useIsNarrow } from "@/hooks/use-mobile";
 import { TA_OSC_MIN_PX, axisTick, narrowPriceTicks, taChartMinWidth, xAxisIntervalProps } from "@/lib/taChartScale";
@@ -25,8 +25,8 @@ import { treasury10YOverlaySeries, treasury10YWindowChange, TREASURY10Y_LABEL, t
 import { useMarketReal10Y } from "@/lib/useMarketReal10Y";
 import { REAL10Y_OVERLAY, formatReal10yTick, formatReal10yValue, real10yDomain, type Real10YMacroHistory } from "@/lib/real10yOverlay";
 import {
-  CONE_PARAMS, CONE_STYLE, attachConeSeries, coneDomainValues, conePlotScale, scenarioConeFromAnalysis,
-  type ConePlotFields, type ScenarioCone,
+  CONE_PARAMS, CONE_STYLE, attachConeSeries, coneDomainValues, conePlotScale, scenarioConeFromAnalysis, separateLabelYs,
+  type ConePlotFields, type LabelBox, type ScenarioCone,
 } from "@/lib/scenarioCone";
 
 /** Rendering context handed to `extraPanes` — same X data as MACD/RSI (WORK_RECESSION_TA_CHART). */
@@ -1176,6 +1176,112 @@ function padConeCategories(points: WindowPoint[], cone: ScenarioCone | null): Wi
 
 const CONE_TIP_KEYS = new Set(["coneP10", "coneP50", "coneP90", "coneBull", "coneBase", "coneBear"]);
 
+function markerFill(id: string): string {
+  if (id === "bull") return CONE_STYLE.bull;
+  if (id === "base") return CONE_STYLE.base;
+  return CONE_STYLE.bear;
+}
+
+type ChartAxis = {
+  scale?: (value: number | string) => number;
+  niceTicks?: number[];
+  tick?: { fontSize?: number } | boolean;
+};
+
+/**
+ * Kegel-Labels am Horizont-Ende. Stehen sie sich oder dem Dividenden-Label
+ * „4 % attraktiv“ zu nahe, verschiebt separateLabelYs sie um den Fehlbetrag
+ * aus Label-Höhe und Pixelabstand. Der Punkt bleibt auf dem Kurs.
+ */
+function ConeEndLabels({
+  xAxisMap,
+  yAxisMap,
+  cone,
+  priceFontPx,
+  labelShift,
+}: {
+  xAxisMap?: Record<string, ChartAxis>;
+  yAxisMap?: Record<string, ChartAxis>;
+  cone: ScenarioCone;
+  priceFontPx: number;
+  labelShift: Record<string, number>;
+}) {
+  const xAxis = xAxisMap ? Object.values(xAxisMap)[0] : undefined;
+  const priceAxis = yAxisMap?.price;
+  const end = cone.points[cone.points.length - 1];
+  if (!xAxis?.scale || !priceAxis?.scale || !end || !(priceFontPx > 0)) return null;
+  const dotX = xAxis.scale(end.date);
+  if (!Number.isFinite(dotX)) return null;
+  const markers = cone.markers.filter(m => m.price != null && Number.isFinite(m.price));
+  return (
+    <g data-testid="cone-marker-labels">
+      {markers.map(m => {
+        const anchorY = priceAxis.scale!(m.price as number);
+        if (!Number.isFinite(anchorY)) return null;
+        return (
+          <text
+            key={m.id}
+            data-testid={`cone-label-${m.id}`}
+            x={dotX - priceFontPx}
+            y={anchorY + (labelShift[m.id] ?? 0)}
+            textAnchor="end"
+            dominantBaseline="middle"
+            fontSize={priceFontPx}
+            fill={markerFill(m.id)}
+          >
+            {m.name} · {m.posText}
+          </text>
+        );
+      })}
+    </g>
+  );
+}
+
+/** Gemessene Boxen: Kegel-Labels weichen Dividenden-Text aus, Abstand = Fehlbetrag aus Höhe und Pixelabstand. */
+function measureConeLabelShift(root: HTMLElement, prev: Record<string, number>): Record<string, number> | null {
+  const coneNodes = [...root.querySelectorAll<SVGTextElement>("[data-testid^='cone-label-']")];
+  if (coneNodes.length === 0) return Object.keys(prev).length ? {} : null;
+  const boxes: LabelBox[] = [];
+  const current = new Map<string, number>();
+  for (const n of coneNodes) {
+    const b = n.getBoundingClientRect();
+    if (!(b.height > 0) || !(b.width > 0)) continue;
+    const id = (n.getAttribute("data-testid") || "").replace("cone-label-", "");
+    const yPx = b.y + b.height / 2;
+    current.set(id, yPx);
+    boxes.push({ id, xPx: b.x, widthPx: b.width, yPx, heightPx: b.height });
+  }
+  let fixedN = 0;
+  root.querySelectorAll("text").forEach(n => {
+    if (n.getAttribute("data-testid")?.startsWith("cone-label-")) return;
+    const b = n.getBoundingClientRect();
+    if (!(b.height > 0) || !(b.width > 0)) return;
+    const hits = boxes.some(c => c.xPx < b.x + b.width && b.x < c.xPx + c.widthPx);
+    if (!hits) return;
+    boxes.push({
+      id: `fixed-${fixedN++}`,
+      xPx: b.x,
+      widthPx: b.width,
+      yPx: b.y + b.height / 2,
+      heightPx: b.height,
+      fixed: true,
+    });
+  });
+  const placed = separateLabelYs(boxes);
+  const next: Record<string, number> = {};
+  let changed = false;
+  const pixel = 1 / (typeof window !== "undefined" && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1);
+  for (const p of placed) {
+    if (p.id.startsWith("fixed-")) continue;
+    const now = current.get(p.id);
+    if (now == null) continue;
+    const delta = p.yPx - now;
+    next[p.id] = (prev[p.id] ?? 0) + delta;
+    if (Math.abs(delta) > pixel) changed = true;
+  }
+  return changed ? next : null;
+}
+
 function ConeTooltipRows({ p, ccy }: { p: ConePlotFields; ccy: string }) {
   if (p.coneP50 == null && p.coneBull == null && p.coneBase == null && p.coneBear == null) return null;
   const row = (color: string, name: string, value: number | null | undefined) => (
@@ -1245,7 +1351,19 @@ function PricePane({
   const divBand = dividend ? attractiveYieldBand(divAxisMax) : null;
   const tick = axisTick(narrow, dense ? 8 : 9, "var(--muted-foreground)");
   const xInterval = xAxisIntervalProps(narrow, Math.max(0, Math.floor(chartData.length / (dense ? 5 : 8))));
+  const plotRef = useRef<HTMLDivElement>(null);
+  const [labelShift, setLabelShift] = useState<Record<string, number>>({});
+  useLayoutEffect(() => {
+    const root = plotRef.current;
+    if (!root || !cone) {
+      setLabelShift(prev => Object.keys(prev).length ? {} : prev);
+      return;
+    }
+    const next = measureConeLabelShift(root, labelShift);
+    if (next) setLabelShift(next);
+  }, [cone, dividend, divBand, narrow, dense, chartData, yMin, yMax, labelShift]);
   return (
+    <div ref={plotRef} className="h-full w-full">
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
         data={chartData}
@@ -1379,16 +1497,18 @@ function PricePane({
                 x={cone.points[cone.points.length - 1]?.date}
                 y={m.price}
                 r={3.5}
-                fill={m.id === "bull" ? CONE_STYLE.bull : m.id === "base" ? CONE_STYLE.base : CONE_STYLE.bear}
+                fill={markerFill(m.id)}
                 stroke="var(--card)"
-                label={{
-                  value: `${m.name} · ${m.posText}`,
-                  position: m.id === "bull" ? "top" : m.id === "bear" ? "bottom" : "left",
-                  fontSize: 9,
-                  fill: m.id === "bull" ? CONE_STYLE.bull : m.id === "base" ? CONE_STYLE.base : CONE_STYLE.bear,
-                }}
               />
             ))}
+            <Customized component={(overlay: { xAxisMap?: Record<string, ChartAxis>; yAxisMap?: Record<string, ChartAxis> }) => (
+              <ConeEndLabels
+                {...overlay}
+                cone={cone}
+                priceFontPx={typeof tick.fontSize === "number" ? tick.fontSize : 0}
+                labelShift={labelShift}
+              />
+            )} />
           </>
         )}
         <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} isAnimationActive={false} />
@@ -1406,7 +1526,7 @@ function PricePane({
           <>
             <ReferenceArea yAxisId="div" y1={divBand.y1} y2={divBand.y2} fill={DIV_ATTRACTIVE_FILL} ifOverflow="hidden" />
             <ReferenceLine yAxisId="div" y={DIV_ATTRACTIVE_YIELD_PCT} stroke={DIV_ATTRACTIVE_STROKE} strokeDasharray="4 3" strokeWidth={0.8} opacity={0.8}
-              label={narrow || dense ? undefined : { value: `${DIV_ATTRACTIVE_YIELD_PCT} % attraktiv`, position: "insideTopRight", fontSize: 8, fill: DIV_ATTRACTIVE_STROKE }} />
+              label={narrow || dense ? undefined : { value: `${DIV_ATTRACTIVE_YIELD_PCT} % attraktiv`, position: "insideTopRight", fontSize: DIV_ATTRACTIVE_LABEL_PX, fill: DIV_ATTRACTIVE_STROKE }} />
           </>
         )}
         {dividend && (
@@ -1460,6 +1580,7 @@ function PricePane({
         )}
       </ComposedChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -1740,6 +1861,8 @@ const DIV_AXIS_W = 36;
 /** F1-14: Band „Yield ≥ 4 % attraktiv“ — grün, sehr transparent, damit Kurs und andere Overlays lesbar bleiben. */
 const DIV_ATTRACTIVE_FILL = "rgba(34,197,94,0.07)";
 const DIV_ATTRACTIVE_STROKE = "#22c55e";
+/** Schriftgröße des F1-14-Labels. Dieselbe Zeilenhöhe geht in die Kegel-Kollision ein. */
+const DIV_ATTRACTIVE_LABEL_PX = 8;
 
 type DividendFields = {
   _divYield?: number | null;

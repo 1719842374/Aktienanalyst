@@ -11,8 +11,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   CONE_PARAMS, POS_NA, addTradingDays, attachConeSeries, bandZ, buildScenarioCone,
-  coneBandPrice, coneDomainValues, conePlotScale, horizonTradingDays,
-  realizedSigmaDaily, scenarioConeFromAnalysis, type ScenarioConeInput,
+  coneBandPrice, coneDomainValues, conePlotScale, horizonTradingDays, separateLabelYs,
+  realizedSigmaDaily, scenarioConeFromAnalysis, type LabelBox, type ScenarioConeInput,
 } from "../client/src/lib/scenarioCone";
 
 const read = (p: string) => readFileSync(p, "utf8");
@@ -277,6 +277,49 @@ for (const [ticker, file] of [["SAP.DE", "script/fixtures/yahoo-chart-SAP.DE.jso
   assert.ok(cone.markers.every(m => m.posText === POS_NA));
 }
 
+// Tester-FAIL #359 (NVO, 1440 px): Labels weichen nur um den Fehlbetrag aus Höhe und Pixelabstand aus.
+function assertSeparated(items: LabelBox[]) {
+  const placed = new Map(separateLabelYs(items).map(p => [p.id, p.yPx]));
+  const out = items.map(b => ({ ...b, yPx: placed.get(b.id) ?? b.yPx }));
+  for (const b of items) if (b.fixed) assert.equal(placed.get(b.id), b.yPx, `${b.id} bleibt`);
+  for (let i = 0; i < out.length; i++) {
+    for (let j = i + 1; j < out.length; j++) {
+      const a = out[i], b = out[j];
+      const xHit = a.xPx < b.xPx + b.widthPx && b.xPx < a.xPx + a.widthPx;
+      if (!xHit) continue;
+      const required = (a.heightPx + b.heightPx) / 2;
+      assert.ok(Math.abs(a.yPx - b.yPx) + 1e-9 >= required, `${a.id}/${b.id}: ${a.yPx} vs ${b.yPx}, nötig ${required}`);
+    }
+  }
+}
+assertSeparated([
+  { id: "bull", xPx: 0, widthPx: 80, yPx: 100, heightPx: 10 },
+  { id: "base", xPx: 10, widthPx: 80, yPx: 100, heightPx: 10 },
+  { id: "bear", xPx: 20, widthPx: 80, yPx: 100, heightPx: 10 },
+]);
+{
+  const far = [
+    { id: "bull", xPx: 0, widthPx: 40, yPx: 0, heightPx: 10 },
+    { id: "base", xPx: 0, widthPx: 40, yPx: 40, heightPx: 10 },
+  ];
+  const placed = separateLabelYs(far);
+  assert.equal(placed.find(p => p.id === "bull")!.yPx, 0);
+  assert.equal(placed.find(p => p.id === "base")!.yPx, 40);
+}
+{
+  const sideBySide = [
+    { id: "bull", xPx: 0, widthPx: 10, yPx: 50, heightPx: 10 },
+    { id: "div-attractive", xPx: 100, widthPx: 10, yPx: 50, heightPx: 8, fixed: true },
+  ];
+  assert.equal(separateLabelYs(sideBySide).find(p => p.id === "bull")!.yPx, 50);
+}
+assertSeparated([
+  { id: "div-attractive", xPx: 700, widthPx: 90, yPx: 120, heightPx: 8, fixed: true },
+  { id: "bull", xPx: 640, widthPx: 110, yPx: 118, heightPx: 9 },
+  { id: "base", xPx: 640, widthPx: 110, yPx: 120, heightPx: 9 },
+  { id: "bear", xPx: 640, widthPx: 110, yPx: 122, heightPx: 9 },
+]);
+
 // Score-Baseline. Der Kegel importiert keine Score-Pipeline; die Zahlen sind der alte Head.
 {
   const fix = json("script/fixtures/prod-analyze-dcf-2026-10-25.json");
@@ -295,6 +338,8 @@ for (const [ticker, file] of [["SAP.DE", "script/fixtures/yahoo-chart-SAP.DE.jso
   assert.match(ui, /data-testid="button-dividend"/);
   assert.match(ui, /widthScale=\{coneScale\}/);
   assert.match(ui, /\{cone && \(/);
+  assert.match(ui, /separateLabelYs/);
+  assert.match(ui, /data-testid=\{`cone-label-\$\{m\.id\}`\}/);
   assert.match(ui, /return cone \? attachConeSeries\(base, cone\) : base/);
   assert.match(ui, /const divBand = dividend \? attractiveYieldBand\(divAxisMax\) : null/);
   assert.match(ui, /\{dividend && divBand && \(/);

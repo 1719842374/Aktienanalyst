@@ -419,3 +419,54 @@ export function conePlotScale(historyCount: number, forwardCount: number): numbe
   if (!(historyCount > 0) || !(forwardCount > 0)) return 1;
   return (historyCount + forwardCount) / historyCount;
 }
+
+/** Ein Label in Pixeln. yPx ist die Mitte, x wächst nach rechts, y nach unten. */
+export interface LabelBox {
+  id: string;
+  xPx: number;
+  widthPx: number;
+  yPx: number;
+  /** Höhe der Schrift (em). Daraus ergibt sich der nötige Abstand, nicht aus einem festen Pixelwert. */
+  heightPx: number;
+  /** true = bleibt liegen (Dividenden-Label). Kegel-Labels weichen aus. */
+  fixed?: boolean;
+}
+
+function boxesOverlapX(a: LabelBox, b: LabelBox): boolean {
+  return a.xPx < b.xPx + b.widthPx && b.xPx < a.xPx + a.widthPx;
+}
+
+/**
+ * Tester-FAIL #359: Kegel- und Dividenden-Labels überlappen bei 1440 px.
+ * Liegen zwei Boxen horizontal übereinander und ist der Pixelabstand ihrer
+ * Mitten kleiner als die halbe Summe ihrer Höhen, rückt das untere Label
+ * um genau diesen Fehlbetrag nach unten. Ist das untere fest (Dividende),
+ * rückt das obere um denselben Fehlbetrag nach oben. Kein zusätzlicher Rand.
+ */
+export function separateLabelYs(items: readonly LabelBox[]): { id: string; yPx: number }[] {
+  const placed = items
+    .filter(it => Number.isFinite(it.xPx) && Number.isFinite(it.widthPx) && it.widthPx > 0
+      && Number.isFinite(it.yPx) && Number.isFinite(it.heightPx) && it.heightPx > 0)
+    .map(it => ({ ...it }));
+  const steps = placed.length * placed.length;
+  for (let step = 0; step < steps; step++) {
+    placed.sort((a, b) => a.yPx - b.yPx || a.id.localeCompare(b.id));
+    let moved = false;
+    for (let i = 0; i < placed.length - 1; i++) {
+      const a = placed[i];
+      const b = placed[i + 1];
+      if (!boxesOverlapX(a, b)) continue;
+      const required = (a.heightPx + b.heightPx) / 2;
+      const dist = b.yPx - a.yPx;
+      if (dist >= required) continue;
+      const deficit = required - dist;
+      if (!b.fixed) b.yPx += deficit;
+      else if (!a.fixed) a.yPx -= deficit;
+      else continue;
+      moved = true;
+      break;
+    }
+    if (!moved) break;
+  }
+  return placed.map(p => ({ id: p.id, yPx: p.yPx }));
+}
