@@ -16,6 +16,8 @@ export interface GoogleTrendsCacheEntry {
   value: number;
   timestamp: number;
   source: string;
+  /** Tagespunkte der SerpApi-Timeline, nur für die Anzeige. Der Score nutzt weiter `value`. */
+  points?: { date: string; value: number }[];
 }
 
 export interface GoogleTrendsFreshness {
@@ -47,11 +49,22 @@ export function resetGoogleTrendsCache(): void {
 }
 
 export function readGoogleTrendsCache(): GoogleTrendsCacheEntry | null {
-  return memory ? { ...memory } : null;
+  if (!memory) return null;
+  return {
+    value: memory.value,
+    timestamp: memory.timestamp,
+    source: memory.source,
+    ...(memory.points?.length ? { points: memory.points.map(p => ({ date: p.date, value: p.value })) } : {}),
+  };
 }
 
 export function writeGoogleTrendsCache(entry: GoogleTrendsCacheEntry): void {
-  memory = { value: entry.value, timestamp: entry.timestamp, source: entry.source };
+  memory = {
+    value: entry.value,
+    timestamp: entry.timestamp,
+    source: entry.source,
+    ...(entry.points?.length ? { points: entry.points.map(p => ({ date: p.date, value: p.value })) } : {}),
+  };
 }
 
 export function googleTrendsFreshness(ageMs: number): GoogleTrendsFreshness {
@@ -79,7 +92,7 @@ export function freshGoogleTrends(entry: GoogleTrendsCacheEntry | null, now: num
  * The previous entry is returned unchanged when it is still inside 48h.
  */
 export function acceptGoogleTrendsFetch(
-  fetched: { value: number; source: string } | null,
+  fetched: { value: number; source: string; points?: { date: string; value: number }[] } | null,
   cached: GoogleTrendsCacheEntry | null,
   now: number,
 ): AcceptedGoogleTrends {
@@ -89,7 +102,12 @@ export function acceptGoogleTrendsFetch(
       source: fetched.source,
       ageHours: 0,
       isStale: false,
-      store: { value: fetched.value, source: fetched.source, timestamp: now },
+      store: {
+        value: fetched.value,
+        source: fetched.source,
+        timestamp: now,
+        ...(fetched.points?.length ? { points: fetched.points } : {}),
+      },
     };
   }
   if (cached) {
@@ -152,4 +170,36 @@ export function parseSerpApiGoogleTrends(raw: string): ParsedSerpApiTrends | nul
     peak,
     source: `Google Trends via SerpApi (7d Ø=${avg}, Latest=${latest}, Peak=${peak})`,
   };
+}
+
+function trendPointDate(point: { timestamp?: unknown; date?: unknown } | null): string | null {
+  const ts = typeof point?.timestamp === "number" ? point.timestamp : Number(point?.timestamp);
+  if (Number.isFinite(ts) && ts > 1_000_000_000) return new Date(ts * 1000).toISOString().slice(0, 10);
+  const text = typeof point?.date === "string" ? point.date.trim() : "";
+  const match = text.match(/^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})$/);
+  if (!match) return null;
+  const months: Record<string, string> = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" };
+  const month = months[match[1]];
+  const day = Number(match[2]);
+  if (!month || day < 1 || day > 31) return null;
+  return `${match[3]}-${month}-${String(day).padStart(2, "0")}`;
+}
+
+/** Dieselbe Timeline wie der 7d-Ø, mit Datum. Ein Body ohne Druck ist null. Der Score-Wert ändert sich nicht. */
+export function parseSerpApiTrendPoints(raw: string): { date: string; value: number }[] | null {
+  if (!parseSerpApiGoogleTrends(raw)) return null;
+  let parsed: { interest_over_time?: { timeline_data?: unknown } };
+  try { parsed = JSON.parse(raw) as typeof parsed; } catch { return null; }
+  const timeline = parsed.interest_over_time?.timeline_data;
+  if (!Array.isArray(timeline)) return null;
+  const out: { date: string; value: number }[] = [];
+  for (const point of timeline) {
+    const row = point as { timestamp?: unknown; date?: unknown; values?: Array<{ extracted_value?: unknown; value?: unknown }> } | null;
+    const cell = row?.values?.[0];
+    const num = finitePoint(cell?.extracted_value ?? cell?.value);
+    const date = trendPointDate(row);
+    if (num == null || !date) continue;
+    out.push({ date, value: num });
+  }
+  return out.length ? out : null;
 }

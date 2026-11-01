@@ -21,6 +21,7 @@ import {
   acceptGoogleTrendsFetch,
   freshGoogleTrends,
   parseSerpApiGoogleTrends,
+  parseSerpApiTrendPoints,
   readGoogleTrendsCache,
   writeGoogleTrendsCache,
 } from "./cache/google-trends-cache";
@@ -517,12 +518,14 @@ function scoreGoogleTrends(): IndicatorResult {
     return googleReading(fresh.value, fresh.source, fresh);
   }
 
-  let fetched: { value: number; source: string } | null = null;
+  let fetched: { value: number; source: string; points?: { date: string; value: number }[] } | null = null;
   try {
     const url = `https://serpapi.com/search.json?engine=google_trends&q=Recession&geo=US&date=now%207-d&data_type=TIMESERIES&api_key=${encodeURIComponent(serpKey)}`;
-    const parsed = parseSerpApiGoogleTrends(fetchUrl(url, 12000));
+    const raw = fetchUrl(url, 12000);
+    const parsed = parseSerpApiGoogleTrends(raw);
     if (parsed) {
-      fetched = { value: parsed.value, source: parsed.source };
+      const points = parseSerpApiTrendPoints(raw) ?? undefined;
+      fetched = { value: parsed.value, source: parsed.source, ...(points?.length ? { points } : {}) };
       console.log(`  Google Trends (SerpApi): avg=${parsed.value}, latest=${parsed.latest}, peak=${parsed.peak}`);
     }
   } catch (err: any) {
