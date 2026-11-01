@@ -565,6 +565,132 @@ export function marginYoYAndZ(levels: number[]): { yoyPct: number | null; z5y: n
   return { yoyPct, z5y: (yoyPct - mean) / sd };
 }
 
+export interface DatedLevel {
+  date: string;
+  value: number;
+}
+
+/**
+ * Denominator older than this is not used.
+ * Same 18-month window as the Buffett live gate in server/recession.ts.
+ */
+export const MARGIN_DENOM_MAX_AGE_MONTHS = 18;
+
+export const marginRatioPointSchema = z.object({
+  date: z.string(),
+  ratioPct: z.number(),
+  z: z.number(),
+  percentile: z.number(),
+});
+
+export const marginRatioSchema = z.object({
+  /** marketCap wins. gdp is only used when market cap is missing or stale. */
+  basis: z.enum(["marketCap", "gdp"]).nullable(),
+  /** Set when the ratio or its z cannot be formed. Never a numeric stand-in. */
+  reason: z.string().nullable(),
+  denominator: z.string(),
+  latest: marginRatioPointSchema.nullable(),
+  points: z.array(marginRatioPointSchema),
+});
+
+export type MarginRatioBlock = z.infer<typeof marginRatioSchema>;
+
+function shiftMonths(iso: string, months: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  dt.setUTCMonth(dt.getUTCMonth() - months);
+  return dt.toISOString().slice(0, 10);
+}
+
+function positiveAsc(levels: readonly DatedLevel[]): DatedLevel[] {
+  return levels
+    .filter((p) => Number.isFinite(p.value) && p.value > 0 && /^\d{4}-\d{2}-\d{2}$/.test(p.date))
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function denomFresh(levels: readonly DatedLevel[], asOf: string): boolean {
+  if (!levels.length) return false;
+  return levels[levels.length - 1].date >= shiftMonths(asOf, MARGIN_DENOM_MAX_AGE_MONTHS);
+}
+
+/** Last positive print on or before `date`. Holds the step. Does not blend two prints. */
+function lastOnOrBefore(levels: readonly DatedLevel[], date: string): number | null {
+  let last: number | null = null;
+  for (const p of levels) {
+    if (p.date > date) break;
+    last = p.value;
+  }
+  return last;
+}
+
+/**
+ * FINRA debit (millions) / market cap (billions), else / GDP (billions).
+ * Each month keeps the last denominator on or before that month.
+ * The axis values are the sample z and the percentile of that ratio against
+ * the ratio's own history. Fewer than two distinct ratios → empty points and a reason.
+ */
+export function marginDebtRatio(
+  debit: readonly { date: string; debitMillions: number }[],
+  marketCapBn: readonly DatedLevel[],
+  gdpBn: readonly DatedLevel[],
+  asOf: string,
+): MarginRatioBlock {
+  const cap = positiveAsc(marketCapBn);
+  const gdp = positiveAsc(gdpBn);
+  const capOk = denomFresh(cap, asOf);
+  const gdpOk = denomFresh(gdp, asOf);
+  if (!capOk && !gdpOk) {
+    const reason = !cap.length && !gdp.length
+      ? "Marktkapitalisierung und BIP nicht verfügbar"
+      : "Marktkapitalisierung und BIP älter als 18 Monate";
+    return { basis: null, reason, denominator: "", latest: null, points: [] };
+  }
+  const basis = capOk ? "marketCap" : "gdp";
+  const levels = basis === "marketCap" ? cap : gdp;
+  const denominator = basis === "marketCap"
+    ? "Marktkapitalisierung (FRED WILL5000PR × 1,05 Mrd. $ je Punkt)"
+    : "BIP (FRED GDP, Mrd. $); Marktkapitalisierung nicht verfügbar";
+  const raw: { date: string; ratioPct: number }[] = [];
+  const sorted = debit.slice().sort((a, b) => a.date.localeCompare(b.date));
+  for (const p of sorted) {
+    if (!(p.debitMillions > 0) || !Number.isFinite(p.debitMillions)) continue;
+    const denom = lastOnOrBefore(levels, p.date);
+    if (denom == null || !(denom > 0)) continue;
+    const ratioPct = (p.debitMillions / 1000) / denom * 100;
+    if (!Number.isFinite(ratioPct) || !(ratioPct > 0)) continue;
+    raw.push({ date: p.date, ratioPct });
+  }
+  if (raw.length < 2) {
+    return {
+      basis,
+      reason: raw.length === 0
+        ? "kein Monat mit Nenner am oder vor dem FINRA-Datum"
+        : "weniger als zwei Ratio-Werte, kein z-Score",
+      denominator,
+      latest: null,
+      points: [],
+    };
+  }
+  const mean = raw.reduce((sum, p) => sum + p.ratioPct, 0) / raw.length;
+  const variance = raw.reduce((sum, p) => sum + (p.ratioPct - mean) ** 2, 0) / (raw.length - 1);
+  const sd = Math.sqrt(variance);
+  if (!(sd > 0)) {
+    return { basis, reason: "Reihe konstant, kein z-Score", denominator, latest: null, points: [] };
+  }
+  const points = raw.flatMap((p) => {
+    const z = roundTo((p.ratioPct - mean) / sd, 4);
+    const ratioPct = roundTo(p.ratioPct, 4);
+    const percentile = roundTo((raw.filter((o) => o.ratioPct <= p.ratioPct).length / raw.length) * 100, 2);
+    if (z == null || ratioPct == null || percentile == null) return [];
+    return [{ date: p.date, ratioPct, z, percentile }];
+  });
+  if (points.length < 2) {
+    return { basis, reason: "z-Score nicht berechenbar", denominator, latest: null, points: [] };
+  }
+  return { basis, reason: null, denominator, latest: points[points.length - 1], points };
+}
+
 export const leverageSchema = z.object({
   seriesId: z.literal("FINRA_MARGIN_DEBIT"),
   unit: z.literal("Mrd. $"),
@@ -574,6 +700,8 @@ export const leverageSchema = z.object({
   z5y: z.number().nullable(),
   high: z.boolean(),
   points: z.array(z.object({ date: z.string(), billions: z.number() })),
+  /** Ratio z-series. null when the debit strip was built without a denominator pass. */
+  marginRatio: marginRatioSchema.nullable(),
 });
 
 export type LeverageStrip = z.infer<typeof leverageSchema>;
@@ -585,7 +713,11 @@ export function marginPointsForWindow(pointsAsc: MarginPoint[], window: MarketWi
   return floored.slice(-WINDOW_MONTHS[window]);
 }
 
-export function finraLeverage(pointsAsc: MarginPoint[], window: MarketWindow = "5Y"): LeverageStrip | null {
+export function finraLeverage(
+  pointsAsc: MarginPoint[],
+  window: MarketWindow = "5Y",
+  marginRatio: MarginRatioBlock | null = null,
+): LeverageStrip | null {
   if (pointsAsc.length < 13) return null;
   const levels = pointsAsc.map((p) => p.debitMillions);
   const raw = marginYoYAndZ(levels);
@@ -606,6 +738,7 @@ export function finraLeverage(pointsAsc: MarginPoint[], window: MarketWindow = "
     z5y: roundTo(raw.z5y, 2),
     high: raw.z5y != null && raw.z5y > 1,
     points,
+    marginRatio,
   };
 }
 
