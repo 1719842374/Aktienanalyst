@@ -233,9 +233,18 @@ async function main() {
 
   // ── UI ──
   const { doc } = installFakeDom();
+  // 5xx außerhalb der Route: getQueryFn wirft `${status}: ${body}`. Die Karte darf den Body nicht zeigen.
+  let gateway: { status: number; body: string; contentType?: string } | null = null;
   (globalThis as any).fetch = async (input: any, init?: RequestInit) => {
     const url = String(input);
-    if (url === "/api/macro/dollar-reserve-share") return realFetch(base + url, init);
+    if (url === "/api/macro/dollar-reserve-share") {
+      if (gateway) {
+        const headers: Record<string, string> = {};
+        if (gateway.contentType) headers["content-type"] = gateway.contentType;
+        return new Response(gateway.body, { status: gateway.status, headers });
+      }
+      return realFetch(base + url, init);
+    }
     throw new Error(`unerwarteter Abruf ${url}`);
   };
   const { createRoot } = await import("react-dom/client");
@@ -282,6 +291,34 @@ async function main() {
   assert.equal(findByTestId(m.c, "text-dollar-reserve-share-value"), null);
   await m.done();
   ok("UI Fehler: n/a mit Grund, kein Prozentwert");
+
+  async function mountGateway(status: number, body: string, contentType?: string) {
+    gateway = { status, body, contentType };
+    const mounted = await mount(c => /Datenquelle nicht erreichbar/.test(textOf(findByTestId(c, "text-dollar-reserve-share-error"))));
+    const text = textOf(findByTestId(mounted.c, "text-dollar-reserve-share-error"));
+    assert.equal(text, `n/a — Datenquelle nicht erreichbar (HTTP ${status})`);
+    assert.equal(findByTestId(mounted.c, "text-dollar-reserve-share-value"), null);
+    await mounted.done();
+    gateway = null;
+    return text;
+  }
+  {
+    const html = "<html><body><h1>502 Bad Gateway</h1></body></html>";
+    const text = await mountGateway(502, html, "text/html");
+    assert.ok(!text.includes("<html") && !text.includes("Bad Gateway"), text);
+    ok("UI 502 HTML: nur HTTP-Status, kein Body");
+  }
+  {
+    const json = "{\"error\":\"internal\",\"detail\":\"boom\"}";
+    const text = await mountGateway(500, json, "application/json");
+    assert.ok(!text.includes("internal") && !text.includes("{"), text);
+    ok("UI 500 JSON: nur HTTP-Status, kein Body");
+  }
+  {
+    const text = await mountGateway(503, "");
+    assert.ok(!/:\s*$/.test(text) && !text.includes("Service Unavailable"), text);
+    ok("UI 503 leer: nur HTTP-Status");
+  }
 
   const page = readFileSync("client/src/pages/RecessionDashboard.tsx", "utf8");
   assert.ok(page.includes("DollarReserveShareCard"), "Karte hängt am Rezessions-Dashboard (Z.461 Buffett)");

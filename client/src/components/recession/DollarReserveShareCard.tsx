@@ -20,6 +20,19 @@ function formatPct(value: number): string {
   return `${formatFixed(value)} %`;
 }
 
+/**
+ * 5xx außerhalb der Route: der Default-Fetcher wirft `${status}: ${body}`.
+ * Nur die führenden Ziffern sind der HTTP-Status. Der Body bleibt unsichtbar.
+ * Ohne führende Ziffern kein Status in der Zeile.
+ */
+function gatewayErrorText(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  const status = /^(\d+)/.exec(message)?.[1];
+  return status
+    ? `n/a — Datenquelle nicht erreichbar (HTTP ${status})`
+    : "n/a — Datenquelle nicht erreichbar";
+}
+
 export function DollarReserveShareCard() {
   const query = useQuery<DollarReserveShareResponse | null>({
     queryKey: ["/api/macro/dollar-reserve-share"],
@@ -38,7 +51,7 @@ export function DollarReserveShareCard() {
         <p className="text-[11px] text-muted-foreground">wird geladen …</p>
       ) : query.isError ? (
         <p className="text-[11px] leading-snug text-muted-foreground" data-testid="text-dollar-reserve-share-error">
-          n/a — {String((query.error as Error)?.message ?? "Datenquelle nicht erreichbar")}
+          {gatewayErrorText(query.error)}
         </p>
       ) : !data ? (
         <p className="text-[11px] leading-snug text-muted-foreground" data-testid="text-dollar-reserve-share-error">
