@@ -3,12 +3,16 @@ import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { CROSS_MODULE_QUERY_KEYS } from "@shared/cross-module-refresh";
 import { queryClient } from "@/lib/queryClient";
+import { refreshErrorLine } from "@shared/cross-module-refresh";
 import {
   CROSS_MODULE_INITIAL_UPDATED_AT,
+  EMPTY_REFRESH_ERRORS,
+  getRefreshErrors,
   invalidateCrossModuleQueries,
   isCrossModulePending,
   runCrossModuleSlot,
   subscribeCrossModulePending,
+  subscribeRefreshErrors,
   type CrossModuleRefreshResult,
 } from "@/lib/crossModuleRefresh";
 
@@ -58,16 +62,29 @@ export function CrossModuleRefreshButton({
 }) {
   const pending = useSyncExternalStore(subscribeCrossModulePending, isCrossModulePending, () => false);
   return (
-    <button
-      type="button"
-      data-testid={testId}
-      title="Aktualisiert Analyse, Researcher und Portfolio gemeinsam über die API. Kann Credits verbrauchen. Keine Score-Änderung."
-      disabled={pending}
-      onClick={() => { void invalidateCrossModuleQueries(queryClient); }}
-      className={className}
-    >
-      <RefreshCw className={`w-3.5 h-3.5 ${pending ? "animate-spin" : ""}`} />
-      <span>{pending ? "Aktualisiere…" : label}</span>
-    </button>
+    <div className="flex flex-col items-end gap-0.5 shrink-0">
+      <button
+        type="button"
+        data-testid={testId}
+        title="Aktualisiert Analyse, Researcher und Portfolio gemeinsam über die API. Kann Credits verbrauchen. Keine Score-Änderung."
+        disabled={pending}
+        onClick={() => { void invalidateCrossModuleQueries(queryClient); }}
+        className={className}
+      >
+        <RefreshCw className={`w-3.5 h-3.5 ${pending ? "animate-spin" : ""}`} />
+        <span>{pending ? "Aktualisiere…" : label}</span>
+      </button>
+      <CrossModuleRefreshNotice />
+    </div>
+  );
+}
+
+export function CrossModuleRefreshNotice() {
+  const errors = useSyncExternalStore(subscribeRefreshErrors, getRefreshErrors, () => EMPTY_REFRESH_ERRORS);
+  if (errors.length === 0) return null;
+  return (
+    <p role="alert" data-testid="cross-module-refresh-error" className="text-[10px] leading-snug text-rose-400 max-w-[18rem] text-right">
+      {refreshErrorLine(errors)}
+    </p>
   );
 }

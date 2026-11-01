@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CrossModuleRefreshButton } from "@/components/CrossModuleRefresh";
-import { invalidateCrossModuleQueries, useCrossModuleHandler } from "@/lib/crossModuleRefresh";
+import { forceAnalyzeOnce, invalidateCrossModuleQueries, registerAnalyzeRefresh, useCrossModuleHandler } from "@/lib/crossModuleRefresh";
 import {
   analyzePostBody,
   hasPeerOverrideLists,
@@ -363,8 +363,12 @@ export default function Dashboard() {
   useCrossModuleHandler("analyze", async () => {
     const ticker = currentTickerRef.current;
     if (!ticker) return;
-    await startAnalyze({ ticker, llm: useLLMRef.current, force: true });
+    await forceAnalyzeOnce(ticker, "analyze", () => startAnalyze({ ticker, llm: useLLMRef.current, force: true }));
   });
+  useEffect(() => registerAnalyzeRefresh({
+    ticker: () => currentTickerRef.current,
+    run: (ticker) => startAnalyze({ ticker, llm: useLLMRef.current, force: true }),
+  }), [startAnalyze]);
 
   // Auftrag 10.08.2026 ("Portfolio UX", Teil A): Deep-Link von der Portfolio-
   // Seite (/#/?ticker=XXX) zur Aktienanalyse dieses Tickers. NEUER, isolierter

@@ -9,9 +9,13 @@ import { useEffect, useRef } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import {
   CROSS_MODULE_QUERY_KEYS,
+  createForceAnalyzeGate,
   crossModuleQueryKeyList,
+  refreshErrorLine,
   type CrossModuleSlot,
+  type RefreshModuleError,
 } from "@shared/cross-module-refresh";
+import { toast } from "@/hooks/use-toast";
 import {
   analyzePostBody,
   readLastTicker,
@@ -42,6 +46,24 @@ let armed = false;
 let pending = false;
 let inFlight: Promise<void> | null = null;
 const pendingListeners = new Set<() => void>();
+export const EMPTY_REFRESH_ERRORS: RefreshModuleError[] = [];
+let refreshErrors: RefreshModuleError[] = EMPTY_REFRESH_ERRORS;
+const errorListeners = new Set<() => void>();
+let forceGate = createForceAnalyzeGate();
+let activeToast: { dismiss: () => void } | null = null;
+
+type AnalyzeRefreshAdapter = {
+  ticker: () => string;
+  run: (ticker: string) => Promise<unknown>;
+};
+
+type PortfolioRefreshAdapter = {
+  tickers: () => string[];
+  fetchTicker: (ticker: string) => Promise<void>;
+};
+
+let analyzeRefresh: AnalyzeRefreshAdapter | null = null;
+let portfolioRefresh: PortfolioRefreshAdapter | null = null;
 
 function setPending(next: boolean): void {
   pending = next;
@@ -55,6 +77,65 @@ export function subscribeCrossModulePending(listener: () => void): () => void {
 
 export function isCrossModulePending(): boolean {
   return pending;
+}
+
+export function subscribeRefreshErrors(listener: () => void): () => void {
+  errorListeners.add(listener);
+  return () => errorListeners.delete(listener);
+}
+
+export function getRefreshErrors(): RefreshModuleError[] {
+  return refreshErrors;
+}
+
+export function registerAnalyzeRefresh(adapter: AnalyzeRefreshAdapter): () => void {
+  analyzeRefresh = adapter;
+  return () => {
+    if (analyzeRefresh === adapter) analyzeRefresh = null;
+  };
+}
+
+export function registerPortfolioRefresh(adapter: PortfolioRefreshAdapter): () => void {
+  portfolioRefresh = adapter;
+  return () => {
+    if (portfolioRefresh === adapter) portfolioRefresh = null;
+  };
+}
+
+function notifyErrors(): void {
+  errorListeners.forEach((listener) => listener());
+}
+
+function clearRefreshErrors(): void {
+  refreshErrors = EMPTY_REFRESH_ERRORS;
+  notifyErrors();
+  activeToast?.dismiss();
+  activeToast = null;
+}
+
+export function reportRefreshError(module: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  refreshErrors = [...refreshErrors, { module, message }];
+  notifyErrors();
+  activeToast?.dismiss();
+  activeToast = toast({
+    title: "Refresh fehlgeschlagen",
+    description: refreshErrorLine(refreshErrors),
+    variant: "destructive",
+  });
+}
+
+/** Fängt einen 500 (oder jeden anderen Fehler) und zeigt Modul + Text. Der übrige Refresh läuft weiter. */
+export async function guardModule(module: string, fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    reportRefreshError(module, err);
+  }
+}
+
+export function forceAnalyzeOnce(ticker: string, module: string, job: () => Promise<unknown>): Promise<void> {
+  return forceGate.once(ticker, () => guardModule(module, job));
 }
 
 export function registerCrossModuleHandler(slot: CrossModuleSlot, handler: RefreshHandler): () => void {
@@ -96,12 +177,65 @@ function readResearcherScope(): { tab: ResearcherTab; region: ResearcherRegion }
   }
 }
 
-async function readJson(res: Response, label: string): Promise<unknown> {
+async function readJson(res: Response): Promise<unknown> {
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${label} ${res.status}: ${text.slice(0, 180)}`);
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
   }
   return res.json();
+}
+
+async function postAnalyze(ticker: string): Promise<void> {
+  const storage = safeLocalStorage();
+  const peerOverrides = clampPeerOverrides(storage ? readOverrides(storage, ticker) : { add: [], remove: [] });
+  const res = await apiRequest("POST", "/api/analyze", analyzePostBody({
+    ticker,
+    useLLM: false,
+    force: true,
+    peerOverrides,
+  }), 120000);
+  await readJson(res);
+}
+
+function analyzeTarget(): string {
+  const fromPage = analyzeRefresh?.ticker().trim().toUpperCase() ?? "";
+  if (fromPage) return fromPage;
+  const storage = safeLocalStorage();
+  return storage ? (readLastTicker(storage) ?? "").trim().toUpperCase() : "";
+}
+
+function portfolioTargets(): string[] {
+  if (portfolioRefresh) {
+    return portfolioRefresh.tickers().map((ticker) => ticker.trim().toUpperCase()).filter(Boolean);
+  }
+  return loadPositionsFromStorage().map((position) => position.ticker.trim().toUpperCase()).filter(Boolean);
+}
+
+function moduleAndJob(ticker: string, analyzeTicker: string): { module: string; job: () => Promise<void> } {
+  const analyzeAdapter = analyzeRefresh;
+  const pageTicker = analyzeAdapter?.ticker().trim().toUpperCase() ?? "";
+  if (analyzeAdapter && pageTicker === ticker) {
+    return { module: "analyze", job: async () => { await analyzeAdapter.run(ticker); } };
+  }
+  const portfolioAdapter = portfolioRefresh;
+  const held = portfolioAdapter?.tickers().map((item) => item.trim().toUpperCase()) ?? [];
+  if (portfolioAdapter && held.includes(ticker)) {
+    return { module: "Portfolio", job: () => portfolioAdapter.fetchTicker(ticker) };
+  }
+  const module = ticker === analyzeTicker ? "analyze" : "Portfolio";
+  return { module, job: () => postAnalyze(ticker) };
+}
+
+/** Vor den parallelen Query-Funktionen: ein Claim pro Ticker. Der erste Claim gewinnt. */
+function seedForceAnalyzes(): void {
+  const analyzeTicker = analyzeTarget();
+  const tickers = new Set<string>();
+  if (analyzeTicker) tickers.add(analyzeTicker);
+  for (const ticker of portfolioTargets()) tickers.add(ticker);
+  Array.from(tickers).forEach((ticker) => {
+    const planned = moduleAndJob(ticker, analyzeTicker);
+    void forceAnalyzeOnce(ticker, planned.module, planned.job);
+  });
 }
 
 async function postResearcher(tab: ResearcherTab, region: ResearcherRegion, force: boolean): Promise<unknown> {
@@ -120,48 +254,45 @@ async function postResearcher(tab: ResearcherTab, region: ResearcherRegion, forc
     body.revenueGrowthMin = 5;
   }
   const res = await apiRequest("POST", `/api/researcher/${tab}`, body, 120000);
-  return readJson(res, `researcher/${tab}`);
+  return readJson(res);
 }
 
 async function refreshAnalyzeViaApi(): Promise<void> {
-  const storage = safeLocalStorage();
-  const ticker = storage ? readLastTicker(storage) : null;
+  const ticker = analyzeTarget();
   if (!ticker) return;
-  const peerOverrides = clampPeerOverrides(storage ? readOverrides(storage, ticker) : { add: [], remove: [] });
-  const res = await apiRequest("POST", "/api/analyze", analyzePostBody({
-    ticker,
-    useLLM: false,
-    force: true,
-    peerOverrides,
-  }), 120000);
-  await readJson(res, "analyze");
+  const planned = moduleAndJob(ticker, ticker);
+  await forceAnalyzeOnce(ticker, planned.module, planned.job);
 }
 
 async function refreshResearcherViaApi(): Promise<void> {
   const scope = readResearcherScope();
-  await postResearcher(scope.tab, scope.region, true);
-  if (scope.tab !== "capex") await postResearcher("capex", scope.region, true);
-  const fiscal = await apiRequest("GET", "/api/researcher/fiscal-programs");
-  await readJson(fiscal, "fiscal-programs");
+  await guardModule(scope.tab, () => postResearcher(scope.tab, scope.region, true));
+  if (scope.tab !== "capex") await guardModule("capex", () => postResearcher("capex", scope.region, true));
+  await guardModule("fiscal", async () => {
+    const fiscal = await apiRequest("GET", "/api/researcher/fiscal-programs");
+    await readJson(fiscal);
+  });
 }
 
 async function refreshPortfolioViaApi(): Promise<void> {
-  const positions = loadPositionsFromStorage();
-  const policy = loadPolicyFromStorage();
-  const tickers = Array.from(new Set(positions.map((position) => position.ticker.toUpperCase()).filter(Boolean)));
-  await Promise.all(tickers.map(async (ticker) => {
-    const res = await apiRequest("POST", "/api/analyze", { ticker, useLLM: false, force: true }, 120000);
-    await readJson(res, "analyze");
+  const tickers = portfolioTargets();
+  const analyzeTicker = analyzeTarget();
+  await Promise.all(tickers.map((ticker) => {
+    const planned = moduleAndJob(ticker, analyzeTicker);
+    return forceAnalyzeOnce(ticker, planned.module, planned.job);
   }));
-  const benchmark = (policy.benchmark || "SPY").trim().toUpperCase() || "SPY";
-  const ohlcvTickers = Array.from(new Set([benchmark, ...tickers])).slice(0, 12);
-  if (ohlcvTickers.length === 0) return;
-  const from = timeframeCutoffIso("1Y");
-  const res = await apiRequest(
-    "GET",
-    `/api/ohlcv?tickers=${encodeURIComponent(ohlcvTickers.join(","))}&from=${encodeURIComponent(from)}`,
-  );
-  await readJson(res, "ohlcv");
+  await guardModule("Portfolio", async () => {
+    const policy = loadPolicyFromStorage();
+    const benchmark = (policy.benchmark || "SPY").trim().toUpperCase() || "SPY";
+    const ohlcvTickers = Array.from(new Set([benchmark, ...tickers])).slice(0, 12);
+    if (ohlcvTickers.length === 0) return;
+    const from = timeframeCutoffIso("1Y");
+    const res = await apiRequest(
+      "GET",
+      `/api/ohlcv?tickers=${encodeURIComponent(ohlcvTickers.join(","))}&from=${encodeURIComponent(from)}`,
+    );
+    await readJson(res);
+  });
 }
 
 export async function runCrossModuleSlot(slot: CrossModuleSlot): Promise<CrossModuleRefreshResult> {
@@ -192,6 +323,9 @@ export function invalidateCrossModuleQueries(client: QueryClient): Promise<void>
   if (inFlight) return inFlight;
   armed = true;
   setPending(true);
+  clearRefreshErrors();
+  forceGate = createForceAnalyzeGate();
+  seedForceAnalyzes();
   inFlight = Promise.all(
     crossModuleQueryKeyList().map((queryKey) => client.invalidateQueries({ queryKey: [...queryKey] })),
   ).then(() => undefined).finally(() => {

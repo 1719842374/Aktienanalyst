@@ -3,7 +3,8 @@ import { useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CrossModuleRefreshButton } from "@/components/CrossModuleRefresh";
-import { invalidateCrossModuleQueries, useCrossModuleHandler, writeResearcherScope } from "@/lib/crossModuleRefresh";
+import { guardModule, invalidateCrossModuleQueries, useCrossModuleHandler, writeResearcherScope } from "@/lib/crossModuleRefresh";
+import { CrossModuleRefreshNotice } from "@/components/CrossModuleRefresh";
 import {
   ArrowLeft, Globe2, TrendingUp, Search, Landmark, RefreshCw,
   Loader2, ShieldCheck, AlertTriangle, Sparkles, ChevronRight,
@@ -107,6 +108,10 @@ export default function Researcher() {
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
           const res = await apiRequest("POST", `/api/researcher/${tab}`, body);
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+          }
           const json = await res.json();
           if (json?.__error) throw new Error(json.errorMessage || "Analyse fehlgeschlagen");
           return json;
@@ -146,19 +151,27 @@ export default function Researcher() {
   useCrossModuleHandler("researcher", async () => {
     const tab = activeTabRef.current;
     const reg = regionRef.current;
-    await mutation.mutateAsync({ tab, force: true, region: reg });
+    await guardModule(tab, () => mutation.mutateAsync({ tab, force: true, region: reg }));
     if (tab !== "capex") {
-      const res = await apiRequest("POST", "/api/researcher/capex", { region: reg, force: true }, 120000);
-      if (res.ok) {
+      await guardModule("capex", async () => {
+        const res = await apiRequest("POST", "/api/researcher/capex", { region: reg, force: true }, 120000);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+        }
         const json = await res.json();
         setData((prev) => ({ ...prev, [`capex_${reg}`]: json }));
-      }
+      });
     }
-    const fiscalRes = await apiRequest("GET", "/api/researcher/fiscal-programs");
-    if (fiscalRes.ok) {
-      const body = await fiscalRes.json();
+    await guardModule("fiscal", async () => {
+      const fiscalRes = await apiRequest("GET", "/api/researcher/fiscal-programs");
+      if (!fiscalRes.ok) {
+        const text = await fiscalRes.text();
+          throw new Error(`HTTP ${fiscalRes.status}: ${text.slice(0, 180)}`);
+        }
+        const body = await fiscalRes.json();
       setFiscalBridgeCount(typeof body?.count === "number" ? body.count : null);
-    }
+    });
   });
 
   const cacheKey = `${activeTab}_${region}`;
@@ -327,7 +340,8 @@ export default function Researcher() {
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
             {!currentData && !loadingForCurrentView && (
               <button
                 onClick={() => runAnalysis(false)}
@@ -356,6 +370,8 @@ export default function Researcher() {
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Analysiere…
               </div>
             )}
+            </div>
+            <CrossModuleRefreshNotice />
           </div>
         </div>
 

@@ -31,7 +31,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SectionCard } from "@/components/SectionCard";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { invalidateCrossModuleQueries, useCrossModuleHandler } from "@/lib/crossModuleRefresh";
+import { forceAnalyzeOnce, guardModule, invalidateCrossModuleQueries, registerPortfolioRefresh, useCrossModuleHandler } from "@/lib/crossModuleRefresh";
+import { CrossModuleRefreshNotice } from "@/components/CrossModuleRefresh";
 import type { StockAnalysis } from "../../../shared/schema";
 import {
   makePosition, loadPositionsFromStorage, savePositionsToStorage,
@@ -242,9 +243,25 @@ export default function PortfolioPage() {
     setPositions(prev => prev.filter(p => p.id !== id));
   }
 
-  function handleRefreshAllAnalyses(): Promise<void> {
-    const tickers = Array.from(new Set(positions.map(p => p.ticker.toUpperCase()).filter(Boolean)));
-    return Promise.all(tickers.map((ticker) => fetchAnalysisForTicker(ticker, true))).then(() => undefined);
+  const fetchAnalysisForRefresh = useCallback(async (ticker: string) => {
+    const upper = ticker.toUpperCase();
+    fetchedTickersRef.current.add(upper);
+    setLoadingTickers(prev => new Set(prev).add(upper));
+    try {
+      const res = await apiRequest("POST", "/api/analyze", { ticker: upper, useLLM: false, force: true }, 120000);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+      }
+      const data: StockAnalysis = await res.json();
+      setAnalysisByTicker(prev => ({ ...prev, [upper]: data }));
+    } finally {
+      setLoadingTickers(prev => { const next = new Set(prev); next.delete(upper); return next; });
+    }
+  }, []);
+
+  function portfolioTickers(): string[] {
+    return Array.from(new Set(positions.map(p => p.ticker.toUpperCase()).filter(Boolean)));
   }
 
   const refreshOhlcv = useCallback(async () => {
@@ -260,16 +277,24 @@ export default function PortfolioPage() {
       "GET",
       `/api/ohlcv?tickers=${encodeURIComponent(tickers.join(","))}&from=${encodeURIComponent(from)}`,
     );
-    if (!res.ok) return;
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+    }
     const body = await res.json();
     setHistoricalPricesByTickerLong(body.bars || {});
     setOhlcvMetaByTicker(body.meta || {});
   }, [positions, policy.benchmark, timeframe]);
 
   useCrossModuleHandler("portfolio", async () => {
-    await handleRefreshAllAnalyses();
-    await refreshOhlcv();
+    const tickers = portfolioTickers();
+    await Promise.all(tickers.map((ticker) => forceAnalyzeOnce(ticker, "Portfolio", () => fetchAnalysisForRefresh(ticker))));
+    await guardModule("Portfolio", () => refreshOhlcv());
   });
+  useEffect(() => registerPortfolioRefresh({
+    tickers: portfolioTickers,
+    fetchTicker: fetchAnalysisForRefresh,
+  }), [positions, fetchAnalysisForRefresh]);
 
   function handleTakeoverFromAnalysis(id: string) {
     const position = positions.find(p => p.id === id);
@@ -407,6 +432,7 @@ export default function PortfolioPage() {
         >
           <RefreshCw className="w-3.5 h-3.5" /> Alle aktualisieren
         </Button>
+        <CrossModuleRefreshNotice />
       </header>
 
       <div className="flex flex-1 overflow-hidden">

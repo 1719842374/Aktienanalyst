@@ -14,7 +14,7 @@ import {
   fiscalProgramFromDiscovery,
   type FiscalProgram,
 } from "../server/fiscal-bridge";
-import { CROSS_MODULE_QUERY_KEYS, crossModuleQueryKeyList } from "../shared/cross-module-refresh";
+import { CROSS_MODULE_QUERY_KEYS, createForceAnalyzeGate, crossModuleQueryKeyList, refreshErrorLine } from "../shared/cross-module-refresh";
 
 const AS_OF = "2026-06-01T00:00:00.000Z";
 
@@ -48,6 +48,38 @@ console.log("\nFW-05 Query-Keys");
   check("Dashboard-Refresh invalidiert", dashboard.includes("invalidateCrossModuleQueries"));
   check("Researcher-Refresh invalidiert", researcher.includes("invalidateCrossModuleQueries"));
   check("Portfolio-Refresh invalidiert", portfolio.includes("invalidateCrossModuleQueries"));
+}
+
+console.log("\nEin force-Call pro Ticker und sichtbare Modul-Fehler");
+{
+  const gate = createForceAnalyzeGate();
+  let calls = 0;
+  const job = async () => {
+    calls += 1;
+    throw new Error("HTTP 500: analyze down");
+  };
+  const first = gate.once("MSFT", job);
+  const second = gate.once("msft", job);
+  const settled = await Promise.allSettled([first, second]);
+  check("MSFT nur ein force-Call", calls === 1, String(calls));
+  check("zweiter Aufruf hängt am selben Fehler", settled[0]?.status === "rejected" && settled[1]?.status === "rejected");
+  const line = refreshErrorLine([
+    { module: "analyze", message: "HTTP 500: analyze down" },
+    { module: "macro", message: "HTTP 500: macro down" },
+    { module: "capex", message: "HTTP 500: capex down" },
+    { module: "fiscal", message: "HTTP 500: fiscal down" },
+    { module: "Portfolio", message: "HTTP 500: portfolio down" },
+  ]);
+  check("Fehlerzeile nennt analyze", line.includes("analyze: HTTP 500"));
+  check("Fehlerzeile nennt macro", line.includes("macro: HTTP 500"));
+  check("Fehlerzeile nennt capex", line.includes("capex: HTTP 500"));
+  check("Fehlerzeile nennt fiscal", line.includes("fiscal: HTTP 500"));
+  check("Fehlerzeile nennt Portfolio", line.includes("Portfolio: HTTP 500"));
+  const client = readFileSync("client/src/lib/crossModuleRefresh.ts", "utf8");
+  check("Client meldet Refresh-Fehler", client.includes("reportRefreshError"));
+  check("Client dedupliziert force", client.includes("forceAnalyzeOnce"));
+  check("Researcher zeigt 500", readFileSync("client/src/pages/Researcher.tsx", "utf8").includes('guardModule("capex"') && readFileSync("client/src/pages/Researcher.tsx", "utf8").includes('guardModule("fiscal"'));
+  check("Portfolio-Refresh wirft HTTP-Status", readFileSync("client/src/pages/PortfolioPage.tsx", "utf8").includes("fetchAnalysisForRefresh"));
 }
 
 console.log("\nFW-34 Discovery → Fiscal-Bridge, ohne Zahlen aus Freitext");
