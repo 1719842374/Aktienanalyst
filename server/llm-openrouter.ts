@@ -58,7 +58,7 @@ const MODEL_FALLBACK_CHAIN = [
 async function callWithFallback(
   client: OpenAI,
   params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'model'>,
-  opts?: { online?: boolean },
+  opts?: { online?: boolean; signal?: AbortSignal },
 ): Promise<{ text: string; modelUsed: string; usage?: any }> {
   const override = process.env.OPENROUTER_MODEL;
   const chain = override ? [override] : MODEL_FALLBACK_CHAIN;
@@ -70,7 +70,7 @@ async function callWithFallback(
         const completion = await (client.chat.completions.create as any)({
           ...params,
           model: modelId,
-        });
+        }, opts?.signal ? { signal: opts.signal } : undefined);
         const text = completion.choices?.[0]?.message?.content?.trim() || '';
         if (!text) { lastErr = new Error('Empty response'); continue; }
         return { text, modelUsed: modelId, usage: completion.usage };
@@ -807,6 +807,8 @@ export async function callLLMJson(opts: {
   systemPrompt?: string;
   /** OpenRouter-Websuche nur fuer diesen Abruf. Andere Aufrufer bleiben offline. */
   online?: boolean;
+  /** Bricht den HTTP-Call ab. Andere Aufrufer lassen das weg. */
+  signal?: AbortSignal;
 }): Promise<{ data: any; modelUsed: string; promptTokens?: number; completionTokens?: number } | null> {
   const client = getClient();
   if (!client) return null;
@@ -819,7 +821,7 @@ export async function callLLMJson(opts: {
       temperature: opts.temperature ?? 0.4,
       messages,
       response_format: { type: "json_object" } as any,
-    }, { online: opts.online });
+    }, { online: opts.online, signal: opts.signal });
     if (!text) return null;
     let jsonStr = text.trim();
     if (jsonStr.startsWith("```")) {

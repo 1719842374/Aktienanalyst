@@ -2,7 +2,8 @@
  * KI-Chatbot (WORK_DASHBOARD_FEATURES_2026-10.md §4/§4c): Client-Hook.
  * DATENFLUSS: Dashboard-Provider (z.B. buildStockChatContext) → useDashboardChat → apiRequest
  * POST /api/chat → server/chat-route.ts handleChat → callLLMJson (OpenRouter).
- * Der Verlauf lebt nur im Speicher dieses Widgets; keine Secrets im Client.
+ * Der Verlauf dieses Fensters liegt im State. useChatHistory schreibt ihn zusätzlich
+ * in den Session-Cache (sessionStorage und /api/chat/history). Keine Secrets im Client.
  */
 import { useCallback, useRef, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
@@ -48,5 +49,11 @@ export function useDashboardChat(context: ChatContext | null, sectionId: number 
   }, [context, sectionId, entries, pending]);
 
   const reset = useCallback(() => { reqRef.current++; setEntries([]); setPending(false); setContextTrimmed(undefined); }, []);
-  return { entries, pending, send, reset, contextTrimmed };
+  const load = useCallback((next: ChatEntry[]) => {
+    reqRef.current++;
+    setEntries(next);
+    setPending(false);
+    setContextTrimmed(undefined);
+  }, []);
+  return { entries, pending, send, reset, load, contextTrimmed };
 }

@@ -37,6 +37,10 @@
 
 ## 3. KI-generierte Antworten sichtbar machen
 
+**Status:** offen.  
+**Soll:** §3, KI-Antworten pro Sektion.  
+**Ist:** offen. Im Code nur die Catalyst-kiAntwort (`shared/chat-context.ts:347`). Eine echte KI-Antwort der übrigen Sektionen ist live nicht bewiesen, deshalb bleiben `WORK_KI_CHAT_ERROR`, `WORK_KI_CHAT_LIMIT_ALL` und `WORK_KI_CHAT_SCHEMA_UPDATE` ohne `Fertig_`-Prefix. `WORK_PODCAST_PIPELINE` 7.1 und 7.2 sind nicht erfüllt.
+
 Wenn der lila Button (KI-Analyse) gedrückt wird, soll der Chat alle KI-generierten Antworten der Sektionen sehen.
 
 | Was | Wie |
