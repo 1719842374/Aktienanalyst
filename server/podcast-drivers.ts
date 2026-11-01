@@ -48,34 +48,44 @@ export interface RankedDriver {
 }
 
 /**
- * Gewichte und Fenster. Gleiche Gewichte, damit kein Kanal vorab wichtiger ist.
- * zScale und changeScale stauchen die Beträge auf 0…1, sonst dominiert die
- * Einheit der Änderungsrate den z-Score.
+ * Nur Schwellen, die sich nicht aus der Reihe selbst ergeben.
+ * minHistoryForZ / minHistoryForPercentile: Sample-Varianz und ein Rang
+ * innerhalb einer Verteilung brauchen eine Stichprobe. Acht Punkte sind die
+ * kleinste Größe, bei der ein einzelner Historienpunkt unter einem Siebtel
+ * der Stichprobe bleibt. Darunter ist der z-Score n/a, nicht ein Ersatzwert.
+ * minHistoryForChange: eine Änderung braucht zwei Punkte.
+ * zScale: der z-Score ist schon in Sigmas der eigenen Reihe. Die Stauchung
+ * bezieht sich auf ein Sigma. Eine zweite Volatilität würde dieselbe Reihe
+ * doppelt zählen.
+ * sigmaFloor: darunter ist die Streuung numerischer Staub, der z-Score wäre
+ * nicht mehr die Reihe.
+ * Gewichte, maxDrivers und changeScale stehen hier nicht. Die leitet
+ * rankPodcastDrivers aus den Scores und aus der eigenen Änderungshistorie ab.
  */
 export const PODCAST_DRIVER_PARAMS = {
   minHistoryForZ: 8,
   minHistoryForPercentile: 8,
   minHistoryForChange: 2,
-  weights: {
-    zScore: 1,
-    percentileDeviation: 1,
-    changeRate: 1,
-  },
-  maxDrivers: 5,
   zScale: 1,
-  changeScale: 0.05,
   sigmaFloor: 1e-12,
 };
+
+export interface PodcastDriverWeights {
+  zScore: number;
+  percentileDeviation: number;
+  changeRate: number;
+}
 
 export interface PodcastDriverParams {
   minHistoryForZ: number;
   minHistoryForPercentile: number;
   minHistoryForChange: number;
-  weights: { zScore: number; percentileDeviation: number; changeRate: number };
-  maxDrivers: number;
   zScale: number;
-  changeScale: number;
   sigmaFloor: number;
+  /** Nur ein Override. Fehlt er, kommen die Gewichte aus der Stichprobengröße. */
+  weights?: PodcastDriverWeights;
+  /** Nur ein Override. Fehlt er, schneidet der Ellbogen der Relevanz. */
+  maxDrivers?: number;
 }
 
 function cleanPoints(points: PodcastPoint[]): PodcastPoint[] {
@@ -130,6 +140,55 @@ function channelOf(series: PodcastSeriesInput): string {
   return series.channels.filter(Boolean).join("+") || "reihe";
 }
 
+/**
+ * Typische absolute Änderungsrate der Reihe, ohne den letzten Schritt.
+ * Median, damit ein einzelner Sprung in der Historie die Skala nicht setzt.
+ * Ein Median von 0 oder keine vorherige Änderung: null, kein Ersatzwert.
+ */
+export function changeScaleFromSeries(values: number[]): { scale: number | null; sample: number } {
+  const changes: number[] = [];
+  for (let i = 1; i < values.length - 1; i++) {
+    const previous = values[i - 1];
+    const current = values[i];
+    if (!Number.isFinite(previous) || !Number.isFinite(current) || previous === 0) continue;
+    const rate = Math.abs((current - previous) / previous);
+    if (Number.isFinite(rate)) changes.push(rate);
+  }
+  if (!changes.length) return { scale: null, sample: 0 };
+  const sorted = changes.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1]! + sorted[mid]!) / 2;
+  if (!(median > 0)) return { scale: null, sample: changes.length };
+  return { scale: median, sample: changes.length };
+}
+
+/**
+ * Wie viele der absteigend sortierten Scores bleiben.
+ * Mindestens drei Scores, sonst gibt es keinen zweiten Abstand und keinen Ellbogen.
+ * Bei einem positiven größten Abstand: Schnitt hinter diesem Ellbogen.
+ * Sind alle Abstände 0, gibt es keine Stufe. Dann bleiben Scores über dem Median.
+ * Liegt keiner darüber, bleiben alle, weil ein Schnitt ohne Stufe willkürlich wäre.
+ */
+export function driverKeepCount(scores: number[]): { count: number; method: "ellbogen" | "median" | "alle" } {
+  if (scores.length < 3) return { count: scores.length, method: "alle" };
+  const sorted = scores.slice().sort((a, b) => b - a);
+  let bestGap = 0;
+  let elbowAt = 0;
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const gap = sorted[i]! - sorted[i + 1]!;
+    if (gap > bestGap) {
+      bestGap = gap;
+      elbowAt = i;
+    }
+  }
+  if (bestGap > 0) return { count: elbowAt + 1, method: "ellbogen" };
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+  const above = sorted.filter(score => score > median).length;
+  if (above > 0) return { count: above, method: "median" };
+  return { count: sorted.length, method: "alle" };
+}
+
 export function rankPodcastDrivers(
   input: PodcastSeriesInput[],
   params: PodcastDriverParams = PODCAST_DRIVER_PARAMS,
@@ -163,19 +222,27 @@ export function rankPodcastDrivers(
     const change = points.length >= params.minHistoryForChange
       ? changeAgainstPrevious(latest.value, previous.value)
       : null;
+    const volatility = changeScaleFromSeries(points.map(point => point.value));
+
+    const override = params.weights;
+    const zWeight = z == null ? 0 : (override ? override.zScore : history.length);
+    const percentileWeight = percentile == null ? 0 : (override ? override.percentileDeviation : points.length);
+    const changeWeight = change == null || volatility.scale == null
+      ? 0
+      : (override ? override.changeRate : volatility.sample);
 
     const parts: Array<{ weight: number; score: number }> = [];
-    if (z != null && params.weights.zScore > 0) {
-      parts.push({ weight: params.weights.zScore, score: squash(Math.abs(z), params.zScale) });
+    if (z != null && zWeight > 0) {
+      parts.push({ weight: zWeight, score: squash(Math.abs(z), params.zScale) });
     }
-    if (percentile != null && params.weights.percentileDeviation > 0) {
+    if (percentile != null && percentileWeight > 0) {
       parts.push({
-        weight: params.weights.percentileDeviation,
+        weight: percentileWeight,
         score: Math.abs(percentile - 0.5) * 2,
       });
     }
-    if (change != null && params.weights.changeRate > 0) {
-      parts.push({ weight: params.weights.changeRate, score: squash(Math.abs(change), params.changeScale) });
+    if (change != null && volatility.scale != null && changeWeight > 0) {
+      parts.push({ weight: changeWeight, score: squash(Math.abs(change), volatility.scale) });
     }
 
     const weightSum = parts.reduce((sum, part) => sum + part.weight, 0);
@@ -195,8 +262,10 @@ export function rankPodcastDrivers(
     else reason.push(`z-Score n/a — Historie ${points.length} Punkte, braucht ${params.minHistoryForZ}`);
     if (percentile != null) reason.push(`Perzentil ${formatNum(percentile * 100)} der eigenen Historie`);
     else reason.push(`Perzentil n/a — Historie ${points.length} Punkte, braucht ${params.minHistoryForPercentile}`);
-    if (change != null) reason.push(`Änderungsrate ${formatNum(change * 100)} Prozent gegen den vorherigen Punkt`);
-    else if (previous.value === 0) reason.push("Änderungsrate n/a — Vorwert ist 0");
+    if (change != null && volatility.scale != null) {
+      reason.push(`Änderungsrate ${formatNum(change * 100)} Prozent gegen den vorherigen Punkt, Skala Median ${formatNum(volatility.scale * 100)} Prozent aus ${volatility.sample} früheren Änderungen`);
+    } else if (previous.value === 0) reason.push("Änderungsrate n/a — Vorwert ist 0");
+    else if (change != null) reason.push("Änderungsrate n/a — eigene Volatilität nicht bestimmbar");
     else reason.push("Änderungsrate n/a — Vorwert fehlt");
     reason.push(`Quelle: ${series.source}`);
 
@@ -217,12 +286,21 @@ export function rankPodcastDrivers(
   }
 
   drivers.sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
-  const kept = drivers.slice(0, Math.max(0, params.maxDrivers));
+  const adaptive = driverKeepCount(drivers.map(driver => driver.relevance));
+  const cap = params.maxDrivers != null
+    ? Math.min(adaptive.count, Math.max(0, params.maxDrivers))
+    : adaptive.count;
+  const kept = drivers.slice(0, cap);
+  const cutReason = adaptive.method === "ellbogen"
+    ? "gemessen, unter dem Ellbogen der Relevanz"
+    : adaptive.method === "median"
+      ? "gemessen, nicht über dem Median der Relevanz"
+      : "gemessen, hinter dem benannten Override";
   for (const extra of drivers.slice(kept.length)) {
     skipped.push({
       channel: extra.channels.join("+") || "reihe",
       label: extra.label,
-      status: `gemessen, nicht unter den ersten ${params.maxDrivers}`,
+      status: params.maxDrivers != null && adaptive.count > params.maxDrivers ? "gemessen, hinter dem benannten Override" : cutReason,
     });
   }
   kept.forEach((driver, index) => { driver.rank = index + 1; });

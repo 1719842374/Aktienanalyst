@@ -7,12 +7,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { PODCAST_DRIVER_PARAMS, rankPodcastDrivers, type PodcastSeriesInput } from "../server/podcast-drivers";
+import { PODCAST_DRIVER_PARAMS, changeScaleFromSeries, rankPodcastDrivers, type PodcastSeriesInput } from "../server/podcast-drivers";
 import { PODCAST_STRUCTURE, podcastStructurePrinciples } from "../server/podcast-structure";
 import { buildPodcastPrompt, podcastScriptFromLlm } from "../server/podcast-prompt";
 import { CURSOR_VOICE_AUDIO_REASON, CursorVoiceAudioAdapter } from "../server/podcast-audio";
 import { EARNINGS_BRIEF_UNAVAILABLE, collectPodcastInputs } from "../server/podcast-sources";
 import { runPodcastProbe } from "../server/podcast-pipeline";
+import { callPodcastLlm } from "../server/podcast-route";
 import { PodcastProbePanel } from "../client/src/components/researcher/PodcastProbePanel";
 
 let n = 0;
@@ -92,8 +93,31 @@ async function main() {
     weights: { zScore: 0, percentileDeviation: 0, changeRate: 1 },
   });
   assert.equal(weightsOff.drivers.length > 0, true);
-  assert.equal(PODCAST_DRIVER_PARAMS.weights.zScore > 0, true);
-  ok("Gewichte sind benannte Parameter und lassen sich je Komponente abschalten");
+  assert.equal("weights" in PODCAST_DRIVER_PARAMS, false);
+  assert.equal("maxDrivers" in PODCAST_DRIVER_PARAMS, false);
+  assert.equal("changeScale" in PODCAST_DRIVER_PARAMS, false);
+  const loud = series({
+    id: "LOUD",
+    points: Array.from({ length: 12 }, (_, i) => ({
+      date: `2023-${String(i + 1).padStart(2, "0")}-15`,
+      value: i === 11 ? 50 : 1 + (i % 3) * 0.05,
+    })),
+  });
+  const mild = (id: string, bump: number) => series({
+    id,
+    points: Array.from({ length: 12 }, (_, i) => ({
+      date: `2023-${String(i + 1).padStart(2, "0")}-15`,
+      value: i === 11 ? 1.2 + bump : 1 + (i % 3) * 0.2,
+    })),
+  });
+  const elbow = rankPodcastDrivers([loud, mild("M1", 0.01), mild("M2", 0.02), mild("M3", 0.03)]);
+  assert.equal(elbow.drivers[0]?.id, "LOUD");
+  assert.ok(elbow.drivers.length < 4);
+  assert.match(elbow.skipped.map(item => item.status).join(" "), /Ellbogen|Median/);
+  const quietScale = changeScaleFromSeries([1, 1.01, 1.02, 1.03, 1.2]);
+  const wildScale = changeScaleFromSeries([1, 1.4, 0.8, 1.5, 1.2]);
+  assert.ok(quietScale.scale != null && wildScale.scale != null && quietScale.scale < wildScale.scale);
+  ok("Gewichte und changeScale kommen aus der Reihe, die Treiberzahl aus dem Ellbogen");
 
   const collected = await collectPodcastInputs({
     fredCsv: async (id) => {
@@ -131,10 +155,11 @@ async function main() {
   assert.match(emptyEtf.status, /^n\/a —/);
   ok("Sammler übernimmt vorhandene Kataloge, Earnings-Brief und leere ETF bleiben n/a");
 
+  const rankedCollected = rankPodcastDrivers(collected.series);
   const prompt = buildPodcastPrompt({
     today: "2026-11-01",
-    drivers: rankPodcastDrivers(collected.series).drivers,
-    gaps: collected.gaps,
+    drivers: rankedCollected.drivers,
+    gaps: [...collected.gaps, ...rankedCollected.skipped],
     notes: collected.notes,
   });
   assert.match(prompt, /JSON:/);
@@ -173,6 +198,25 @@ async function main() {
   assert.match(audio.reason, /n\/a —/);
   assert.match(audio.reason, /Sprachausgabe/);
   ok("Cursor Voice bleibt ein Adapter ohne erfundene API");
+
+  let sawAbort = false;
+  const timed = await callPodcastLlm("Skript", {
+    timeoutMs: 40,
+    invoke: (opts) => new Promise(resolve => {
+      opts.signal.addEventListener("abort", () => {
+        sawAbort = true;
+        resolve(null);
+      });
+    }),
+  });
+  assert.equal(sawAbort, true);
+  assert.match(timed?.modelUsed ?? "", /^n\/a — OpenRouter-Timeout/);
+  const fast = await callPodcastLlm("Skript", {
+    timeoutMs: 500,
+    invoke: async () => ({ data: { title: "ok" }, modelUsed: "mock" }),
+  });
+  assert.equal(fast?.modelUsed, "mock");
+  ok("OpenRouter-Call bricht über AbortController ab, danach n/a");
 
   const pinPath = new URL("./fixtures/prod-analyze-dcf-2026-10-25.json", import.meta.url);
   const before = JSON.parse(readFileSync(pinPath, "utf8")).expectOldHead;

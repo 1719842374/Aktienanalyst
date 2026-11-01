@@ -2,6 +2,7 @@
  * Anzeige der Podcast-Probe. Fehlendes bleibt „n/a — Grund“.
  * Der Block bricht um, damit 375 und 1440 nicht seitlich überlaufen.
  */
+import React from "react";
 import type { PodcastProbeResult } from "../../../../server/podcast-pipeline";
 
 export const PODCAST_REQUEST_TIMEOUT_MS = 120_000;

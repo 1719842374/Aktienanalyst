@@ -60,10 +60,14 @@ export async function runPodcastProbe(deps: {
     llm = { data: null, modelUsed: `n/a — ${message}` };
   }
   const parsed = podcastScriptFromLlm(llm?.data ?? null);
+  const timeoutReason = typeof llm?.modelUsed === "string" && llm.modelUsed.startsWith("n/a —")
+    ? llm.modelUsed
+    : null;
+  const llmDetail = parsed.status === "ok" ? (llm?.modelUsed ?? "ok") : (timeoutReason ?? parsed.reason);
   progress.push({
     step: "llm",
-    status: parsed.status,
-    detail: parsed.status === "ok" ? (llm?.modelUsed ?? "ok") : parsed.reason,
+    status: parsed.status === "ok" ? "ok" : "n/a",
+    detail: llmDetail,
   });
 
   const audio = await deps.audio.synthesize(parsed.script?.spokenScript ?? "");
@@ -78,7 +82,7 @@ export async function runPodcastProbe(deps: {
     gaps,
     notes: collected.notes,
     script: parsed.script,
-    scriptStatus: parsed.status === "ok" ? "ok" : parsed.reason,
+    scriptStatus: parsed.status === "ok" ? "ok" : llmDetail,
     audio,
     progress,
     modelUsed: llm?.modelUsed ?? null,
