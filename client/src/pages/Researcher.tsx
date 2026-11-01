@@ -5,8 +5,10 @@ import { apiRequest } from "@/lib/queryClient";
 import {
   ArrowLeft, Globe2, TrendingUp, Search, Landmark, RefreshCw,
   Loader2, ShieldCheck, AlertTriangle, Sparkles, ChevronRight,
-  Zap, ArrowUp, ArrowDown, Minus, Flame, Activity, ListPlus
+  Zap, ArrowUp, ArrowDown, Minus, Flame, Activity, ListPlus, Mic
 } from "lucide-react";
+import { PodcastProbePanel, PODCAST_REQUEST_TIMEOUT_MS } from "@/components/researcher/PodcastProbePanel";
+import type { PodcastProbeResult } from "../../../server/podcast-pipeline";
 import { TickerAddButtons, bulkAddToWatchlist } from "@/components/portfolio/TickerAddButtons";
 import { MacroPanel } from "@/components/researcher/MacroPanel";
 import { LiquidityBriefingPanel } from "@/components/researcher/LiquidityBriefingPanel";
@@ -59,6 +61,28 @@ export default function Researcher() {
   const [briefingData, setBriefingData] = useState<any>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingError, setBriefingError] = useState<string | null>(null);
+  const [podcastPhase, setPodcastPhase] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [podcastResult, setPodcastResult] = useState<PodcastProbeResult | null>(null);
+  const [podcastError, setPodcastError] = useState<string | null>(null);
+
+  async function runPodcast() {
+    setPodcastPhase("loading");
+    setPodcastError(null);
+    try {
+      const res = await apiRequest("POST", "/api/podcast/brief", {}, PODCAST_REQUEST_TIMEOUT_MS);
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body || typeof body !== "object") {
+        setPodcastPhase("error");
+        setPodcastError(`n/a — Podcast-Abruf HTTP ${res.status}`);
+        return;
+      }
+      setPodcastResult(body as PodcastProbeResult);
+      setPodcastPhase("done");
+    } catch (err: unknown) {
+      setPodcastPhase("error");
+      setPodcastError(err instanceof Error ? err.message : "n/a — Podcast-Abruf fehlgeschlagen");
+    }
+  }
 
   async function runBriefing(force = false) {
     setBriefingOpen(true);
@@ -206,6 +230,15 @@ export default function Researcher() {
               <Flame className="w-3 h-3" />
               <span className="hidden xs:inline sm:inline">Briefing</span>
             </button>
+            <button
+              onClick={() => { void runPodcast(); }}
+              className="h-8 px-2 sm:px-2.5 text-[11px] font-medium text-violet-300 hover:bg-violet-500/10 rounded-md transition-colors flex items-center gap-1.5 border border-violet-400/30 shrink-0"
+              title="Key Driver für Börse, Wirtschaft und Finanzen, danach ein Podcast-Skript"
+              data-testid="button-podcast"
+            >
+              <Mic className="w-3 h-3" />
+              <span className="hidden sm:inline">Podcast</span>
+            </button>
             <div className="hidden sm:flex items-center gap-1 bg-muted/30 rounded-md p-0.5 shrink-0">
               {REGION_OPTIONS.map(r => (
                 <button
@@ -259,7 +292,12 @@ export default function Researcher() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto p-3 sm:p-4">
+      <main className="max-w-6xl mx-auto p-3 sm:p-4 min-w-0 overflow-x-hidden">
+        {podcastPhase !== "idle" && (
+          <div className="mb-4 min-w-0">
+            <PodcastProbePanel state={{ phase: podcastPhase, result: podcastResult, error: podcastError }} />
+          </div>
+        )}
         {activeTab === "macro" && (
           <div className="mb-4 space-y-4">
             <LiquidityBriefingPanel />
