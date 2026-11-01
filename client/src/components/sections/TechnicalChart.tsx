@@ -17,6 +17,7 @@ import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { attachEarningsToPoints, type EarningsMarker } from "@shared/earnings-markers";
+import { AMPEL_STROKE, ampelBadge, paintAmpelClose, type AmpelTone } from "@shared/ta-ampel";
 import { useDividendHistory } from "@/lib/useDividendHistory";
 import { dividendOverlaySeries, dividendCurrencyCheck, dividendMarkerLines, attractiveYieldBand, isAttractiveDividendYield, DIV_ATTRACTIVE_YIELD_PCT, type DividendHistoryResponse, type DividendOverlaySeries } from "@shared/dividends";
 import { currencySymbol } from "@/lib/formatters";
@@ -444,6 +445,9 @@ export function TechnicalChart({
     : buyScore === 3 ? "bg-yellow-400/10 border-yellow-400/30"
     : buyScore >= 1  ? "bg-amber-500/10 border-amber-500/30"
     : "bg-red-500/10 border-red-500/30";
+  const chartAmpel = (cs.ma200Value == null || cs.ma50Value == null || cs.macdValue == null)
+    ? { tone: "na" as const, text: "n/a — MA oder MACD fehlt" }
+    : ampelBadge(buyScore);
   const scoreLabel = buyScore === 4 ? "Alle Kaufbedingungen erfüllt"
     : buyScore === 3 ? "3 / 4 Bedingungen – fast kaufbereit"
     : buyScore === 2 ? "2 / 4 Bedingungen – neutrales Umfeld"
@@ -899,6 +903,7 @@ export function TechnicalChart({
                 ccy={ccy}
                 cone={scenarioCone}
                 earnings={earningsMarkers}
+                ampel={chartAmpel}
               />
             </div>
             {narrow && showVolume && (
@@ -938,6 +943,7 @@ export function TechnicalChart({
               ccy={ccy}
               cone={scenarioCone}
               earnings={earningsMarkers}
+              ampel={chartAmpel}
               widthScale={coneScale}
               alignedPoints={aAligned}
               testId="chart-band-a"
@@ -1346,7 +1352,7 @@ function PricePane({
   points, signals, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, dense,
   onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy = "$",
-  cone = null, earnings = null,
+  cone = null, earnings = null, ampel = null,
 }: {
   points: WindowPoint[];
   signals: TradingSignal[];
@@ -1376,6 +1382,8 @@ function PricePane({
   cone?: ScenarioCone | null;
   /** Beat/Miss-Marker. null = keine Punkte, Kegel-Daten bleiben die Referenz. */
   earnings?: EarningsMarker[] | null;
+  /** Ampel der vier Protokoll-Bedingungen. null = kein Label. */
+  ampel?: { tone: AmpelTone | "na"; text: string } | null;
 }) {
   const narrow = useIsNarrow();
   const conePrices = cone ? coneDomainValues(cone) : undefined;
@@ -1385,6 +1393,7 @@ function PricePane({
     return cone ? attachConeSeries(base, cone) : base;
   }, [points, dividend, credit, t10y, real10y, cone]);
   const plotted = useMemo(() => attachEarningsToPoints(chartData, earnings), [chartData, earnings]);
+  const painted = useMemo(() => paintAmpelClose(plotted), [plotted]);
   const real10yAxisDomain = useMemo(() => real10yDomain(real10y ? real10y.map(p => p.real10y) : []), [real10y]);
   const creditMax = credit ? Math.max(0, ...credit.map(p => p.spreadPct ?? 0)) : 0;
   const t10yMax = t10y ? Math.max(0, ...t10y.map(p => p.yieldPct ?? 0)) : 0;
@@ -1407,10 +1416,21 @@ function PricePane({
     if (next) setLabelShift(next);
   }, [cone, dividend, divBand, narrow, dense, chartData, yMin, yMax, labelShift]);
   return (
-    <div ref={plotRef} className="h-full w-full">
+    <div ref={plotRef} className="relative h-full w-full">
+    {ampel && (
+      <div
+        className={`pointer-events-none absolute right-2 top-1 z-10 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${
+          ampel.tone === "green" ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-500"
+          : ampel.tone === "yellow" ? "border-yellow-400/40 bg-yellow-400/15 text-yellow-500"
+          : ampel.tone === "red" ? "border-red-500/40 bg-red-500/15 text-red-500"
+          : "border-border bg-muted/80 text-muted-foreground"
+        }`}
+        data-testid="chart-ampel-label"
+      >{ampel.text}</div>
+    )}
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart
-        data={plotted}
+        data={painted}
         margin={dense ? { top: 2, right: rightAxis ? 0 : 10, left: 0, bottom: 0 } : { top: 5, right: rightAxis ? 0 : 10, left: 0, bottom: 5 }}
         onClick={onPlotClick}
       >
@@ -1517,7 +1537,7 @@ function PricePane({
                   </div>
                 );
               })()}
-              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
+              {payload.filter((p: any) => p.yAxisId === "price" && !["close", "bbUpper", "bbMid", "bbLower", "_closeGreen", "_closeYellow", "_closeRed", "_earn"].includes(p.dataKey) && !CONE_TIP_KEYS.has(p.dataKey)).map((p: any) => (
                 <div key={p.dataKey} className="flex justify-between gap-3">
                   <span style={{ color: p.color }}>{p.name}</span>
                   <span className="font-mono">{ccy}{Number(p.value).toFixed(2)}</span>
@@ -1567,6 +1587,9 @@ function PricePane({
           </>
         )}
         <Line yAxisId="price" type="monotone" dataKey="close" name={closeName} stroke={closeStroke} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+        <Line yAxisId="price" type="monotone" dataKey="_closeGreen" stroke={AMPEL_STROKE.green} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+        <Line yAxisId="price" type="monotone" dataKey="_closeYellow" stroke={AMPEL_STROKE.yellow} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
+        <Line yAxisId="price" type="monotone" dataKey="_closeRed" stroke={AMPEL_STROKE.red} strokeWidth={2.25} dot={false} connectNulls={false} isAnimationActive={false} legendType="none" />
         {earnings && (
           <Line
             yAxisId="price"
@@ -1822,7 +1845,7 @@ function BandStack({
   label, labelClassName, labelColor, series, closeStroke, closeName, tickFormatter, formatDateFull,
   visibleMAs, showVolume, showBollinger, showSignals, showMacd, showRsi, count,
   testId, macdTestId, rsiTestId, measureMode, onPlotClick, measurePoints, measurement, dividend, credit, creditLabel, t10y, real10y, ccy,
-  cone = null, earnings = null, widthScale = 1, alignedPoints,
+  cone = null, earnings = null, ampel = null, widthScale = 1, alignedPoints,
 }: {
   label: string;
   labelClassName: string;
@@ -1854,6 +1877,7 @@ function BandStack({
   ccy?: string;
   cone?: ScenarioCone | null;
   earnings?: EarningsMarker[] | null;
+  ampel?: { tone: AmpelTone | "na"; text: string } | null;
   widthScale?: number;
   alignedPoints?: WindowPoint[];
 }) {
@@ -1895,6 +1919,7 @@ function BandStack({
               ccy={ccy}
               cone={cone}
               earnings={earnings}
+              ampel={ampel}
             />
           )}
         </div>
