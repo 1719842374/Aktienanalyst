@@ -1,7 +1,7 @@
 # Soll-Ist im Detail: alle 11 Future-Dateien gegen main `29fdf1d5`
 
 **Stand:** 18.10.2026, ca. 23:20 Uhr Berlin (MESZ, UTC+2); Basis 22:45 Uhr
-**Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs. **Nachzug auf `main` = `29fdf1d5e19cc458005469098701d8190d1d374d` (#266, über #264 `4dd43ab8`):** nur die Zeilen zu #264, #265, #266, #267 und die Zählung, geprüft über die öffentliche GitHub-API und Raw-Dateien, ohne Klon. Alle übrigen Zeilen sind unverändert Stand `35ead515`. **Nachzug `09750838` (#320, 25.10.2026):** F1-71/F1-74, dazu F1-30/F1-31/F1-34 (#274 `99a06d1b`, gegen den Code auf `09750838` belegt) und die Zählung. **Nachzug 01.11.2026, Tip `3baef0e5` (#356, Tester-Prod Bundle `index-r5nMqZmy.js`, von Stabschef; SHAs per GitHub-API):** F1-14 (Schwelle), F1-39, F1-45, F9-04 und die Zählung. Kein App-Code in diesem Nachzug.
+**Geprüfter Code:** `main` = `35ead515c4c4380e8a194b9e3f4d6195fa0ec399` (#263, 10J-Treasury-Overlay). Eigener Klon in `/workspace/soll-ist-35ead515`, nur gelesen. Nichts geändert, nichts gepusht, keine PRs. **Nachzug auf `main` = `29fdf1d5e19cc458005469098701d8190d1d374d` (#266, über #264 `4dd43ab8`):** nur die Zeilen zu #264, #265, #266, #267 und die Zählung, geprüft über die öffentliche GitHub-API und Raw-Dateien, ohne Klon. Alle übrigen Zeilen sind unverändert Stand `35ead515`. **Nachzug `09750838` (#320, 25.10.2026):** F1-71/F1-74, dazu F1-30/F1-31/F1-34 (#274 `99a06d1b`, gegen den Code auf `09750838` belegt) und die Zählung. **Nachzug 01.11.2026, Tip `3baef0e5` (#356, Tester-Prod Bundle `index-r5nMqZmy.js`, von Stabschef; SHAs per GitHub-API):** F1-14 (Schwelle), F1-45, F9-04 und die Zählung. F1-39 ✅ auf Tip `aa0b6f2a` (#354, Bundle `index-84vk90H1.js`). Kein App-Code in diesem Nachzug.
 **Erstellt von:** Grok Bot (Executor im Auftrag von Stabschef)
 
 ## Wie diese Liste entstanden ist
@@ -101,7 +101,7 @@ Themen: FMP-Fehler 402 mit Yahoo-Ersatz, Dividendenrendite, Kreditrisiko, Buffet
 | F1-36 | Z.438–453, 494 | Globalisierungsbereinigter Buffett (Auslandsumsatz-Anteil φ, nicht fest codiert) | `server/buffett-ratio.ts:83–105` `buildBuffettSeries` rechnet `foreignShare`, wird aber nur in `script/test-buffett-ratio.ts` aufgerufen, nicht in der Route | ❌ | Erst als **Zusatzkennzahl** autonom. In den Score-Slot nur mit Philip |
 | F1-37 | Z.459, 464–473 | φ über LLM-Call schätzen, Fallback klar markiert | 0 Treffer in `buffett-*.ts` | ❌ | Mit F1-36, LLM-Kosten gering; Fallback 0,40 markieren |
 | F1-38 | Z.460 | Handelsbilanz/BIP (FRED `BOPGSTB`) | BOPGSTB/GDP, BuffettRatioPanel → trade-balance-route → shared/trade-balance | ✅ `730c12ab` | Keiner |
-| F1-39 | Z.461 | Dollar-Anteil an Weltreserven (IMF COFER) | Modul auf main #346 `38217e61`: `shared/dollar-reserve-share.ts`, `server/dollar-reserve-share.ts` (IMF COFER). Route, UI und Schema importieren das Modul auf main nicht. Draft #354 (Head `8af6be3276605005ba249030cd15ee14127f6fbb`, offen, nicht gemergt) baut Route und UI. Fix läuft | ❌ | Nicht als erledigt zählen, solange #354 nicht auf main liegt |
+| F1-39 | Z.461 | Dollar-Anteil an Weltreserven (IMF COFER) | ✅ #354 `aa0b6f2abed2c582d66e0ec71b85ba353481d346` (GitHub-API `merge_commit_sha`). Doublecheck GO, Tester Prod-PASS, Bundle `index-84vk90H1.js` (von Stabschef). Kette auf diesem SHA: `DollarReserveShareCard.tsx:36` → `RecessionDashboard.tsx:14` Import, `:195` `<DollarReserveShareCard />` → `GET /api/macro/dollar-reserve-share` (`server/dollar-reserve-share-route.ts:61`, Registrierung `server/routes.ts:515`) → `server/dollar-reserve-share.ts:24` `fetchDollarReserveShare` → `shared/dollar-reserve-share.ts:15` `COFER_SERIES_KEY` (IMF COFER, Kommentar `:3`). Modul-Vorläufer #346 `38217e61`. Dateien des Merges: `DollarReserveShareCard.tsx` (+81), `RecessionDashboard.tsx` (+2), `server/dollar-reserve-share-route.ts` (+77), `server/dollar-reserve-share.ts` (+1/−1), `server/routes.ts` (+1), `shared/dollar-reserve-share.ts` (+111), Test `script/test-dollar-reserve-share-route-ui.ts` (+367) | ✅ `aa0b6f2a` | Keiner |
 | F1-40 | Z.496 | Optional: bereinigter Buffett als zweiter Chart / Kennzahl | 0 Treffer | ❌ | Mit F1-36 |
 | F1-41 | Z.512, 550 | Eine Sektion „Technische Analyse – Rezession & Korrektur“ | Weiter getrennt: Sektion 9 `RecessionRsiSection`, Sektion 10 `RecessionMarketChartsSection`, Sektion 11 Buffett (`client/src/pages/RecessionDashboard.tsx:135–139`) | 🟡 | Autonom (groß). Erst Datenpunkte F1-58/F1-66 stabil |
 | F1-42 | Z.551 | Ein Backend-Endpunkt für SPY/VGK + VIX + Buffett + Kurve + Credit | `server/recession-markets.ts` liefert Preis/Vol je Region; Buffett eigener Endpunkt `/api/analyze-recession/buffett` | ❌ | Mit F1-41 |
@@ -255,7 +255,7 @@ Philip hat am 18.10. entschieden: **Makro-Gewichte darf die KI wählen (JA).** D
 | F9-01 | Z.12 | Adaptive Signale (z-Score / Perzentil über 15–20 Jahre) | im Rezessionspfad nur Margin Debt z 5 Jahre (`server/recession.ts:1226`) | ❌ | Autonom (freigegeben), als Zusatzobjekt |
 | F9-02 | Z.26 | Gewinnwachstum vs. Trend (S&P-EPS YoY) | 0 Treffer | ❌ | Autonom; Quelle Multpl/FMP |
 | F9-03 | Z.27 | Realized Growth Gap (Überraschungsquote, Prognose-Revisionen) | 0 Treffer im Makropfad (nur Aktien-Factpack `server/factpack-validate.ts:244`) | ❌ | Autonom; Datenquelle klären |
-| F9-04 | Z.28 | Lager/Nachfrage-Lücke (Inventory-to-Sales, DGORDER vs. Shipments) | #357 `3f59edcb308798a0a428c69a434ff0c9a93dcf7f` PASS (Tester-Prod). Kette: `InventoryDemandGapCard.tsx` (+106) → `RecessionDashboard.tsx` (+2) → `GET /api/macro/inventory-demand-gap` (`server/inventory-demand-gap-route.ts` +55, `server/routes.ts` +3) → `server/inventory-demand-gap.ts` (+13/−8) → `shared/inventory-demand-gap.ts` (+81/−9) → FRED ISRATIO, DGORDER, AMDMVS. Modul-Vorläufer #343 `c474c621`, Test-Nachzug #345 `540d2a64`. Chat: `shared/chat-context.ts` (+3/−1), Schlüssel `lager` nur mit Hinweis `SELF_LOADED`, ohne die Zahlen. DGORDER-YoY-Slot in `server/recession.ts:332–334` bleibt daneben. Doublecheck Post-Merge ausstehend | ✅ (Soft) | Soft: Chat-Kontext ohne Werte. Doublecheck Post-Merge ausstehend |
+| F9-04 | Z.28 | Lager/Nachfrage-Lücke (Inventory-to-Sales, DGORDER vs. Shipments) | #357 `3f59edcb308798a0a428c69a434ff0c9a93dcf7f` PASS (Tester-Prod). Kette: `InventoryDemandGapCard.tsx` (+106) → `RecessionDashboard.tsx` (+2) → `GET /api/macro/inventory-demand-gap` (`server/inventory-demand-gap-route.ts` +55, `server/routes.ts` +3) → `server/inventory-demand-gap.ts` (+13/−8) → `shared/inventory-demand-gap.ts` (+81/−9) → FRED ISRATIO, DGORDER, AMDMVS. Modul-Vorläufer #343 `c474c621`, Test-Nachzug #345 `540d2a64`. Chat: `shared/chat-context.ts` (+3/−1), Schlüssel `lager` nur mit Hinweis `SELF_LOADED`, ohne die Zahlen. DGORDER-YoY-Slot in `server/recession.ts:332–334` bleibt daneben. Doublecheck Post-Merge GO Soft, Tester Prod-PASS (von Stabschef) | ✅ (Soft) | Soft: Chat-Kontext ohne Werte. Doublecheck Post-Merge GO Soft, Tester Prod-PASS (von Stabschef) |
 | F9-05 | Z.29–35 | Sahm, Zinskurve, BAA10Y, Margin Debt, VIX, Buffett, CAPE als Signale | alle als Slots vorhanden (`server/recession.ts`) | ✅ | Keiner (nur in den Layer übernehmen) |
 | F9-06 | Z.36 | Realzins DFII10 im Makro-Layer | DFII10 nur in Gold/BTC/Liquidität (`server/liquidity-briefing-catalog.ts:179`), nicht im Rezessionspfad | ❌ | Autonom |
 | F9-07 | Z.37 | Konzentration: Cap-Weight-RSL minus Equal-Weight-RSL | 0 Treffer | ❌ | Autonom (SPY gegen RSP aus vorhandenen Kursen) |
@@ -373,19 +373,19 @@ Nicht gezählt (ℹ️, Konzept- und Content-Ideen ohne Bau-Auftrag): Z.215 Einl
 
 | Status | Zeilen | davon Wiederholung (mit „=“ markiert) | eigene Punkte |
 |---|---:|---:|---:|
-| ✅ erledigt | 116 | 1 | 115 |
+| ✅ erledigt | 117 | 1 | 116 |
 | 🟡 teilweise | 33 | 3 | 30 |
-| ❌ fehlt | 68 | 6 | 62 |
+| ❌ fehlt | 67 | 6 | 61 |
 | ⛔ blockiert | 16 | 2 | 14 |
 | **Summe** | **233** | **12** | **221** |
 
-Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 103 erledigte Bau-Punkte. Nachzug 01.11.2026: F1-14 ❌→✅, F1-45 🟡→✅, F9-04 ❌→✅ (Soft).
+Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die Datei verlangt keinen Bau). Ohne Future_6 bleiben 104 erledigte Bau-Punkte. Nachzug 01.11.2026: F1-14 ❌→✅, F1-39 ❌→✅ (`aa0b6f2a`), F1-45 🟡→✅, F9-04 ❌→✅ (Soft).
 
 ### Je Datei
 
 | Datei | ✅ | 🟡 | ❌ | ⛔ | Summe |
 |---|---:|---:|---:|---:|---:|
-| Future_1_Work.md | 40 | 11 | 17 | 6 | 74 |
+| Future_1_Work.md | 41 | 11 | 16 | 6 | 74 |
 | Future_2_NA_Fixes_Research.md | 4 | 3 | 3 | 0 | 10 |
 | Future_3_SerpApi_Rate_Limits.md | 4 | 0 | 3 | 2 | 9 |
 | Future_4_Google_Trends_Conflict_and_Fixes.md | 4 | 0 | 4 | 2 | 10 |
@@ -396,7 +396,7 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | Future_9_Adaptive_Macro_Framework_Complete.md | 2 | 0 | 16 | 0 | 18 |
 | Future_10_Gold_Adaptive_Scoring_Framework.md | 24 | 4 | 7 | 0 | 35 |
 | Future_Work.md | 15 | 14 | 10 | 6 | 45 |
-| **Summe** | **116** | **33** | **68** | **16** | **233** |
+| **Summe** | **117** | **33** | **67** | **16** | **233** |
 
 ### In Arbeit (laufend, mit PR-Nummer)
 
@@ -408,11 +408,11 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 | F7-01, F8-04, F8-05 Buffett/CAPE-Perzentil als Zusatzzeile | – | **#220**, **#219** (Drafts seit 11.10.) | Ersetzen der Zonen braucht Philip |
 | (nicht aus Future-Dateien) Real10Y aus BTC in Sektion 12 | Grok Bot | **#267** (Draft, Head `c224e2c9`) | Philip 18.10.; offen |
 | (nicht aus Future-Dateien) DCF-Währung alles in USD | – | **#261** (Draft) | wartet auf Philip |
-| F1-39 Route und UI | – | **#354** (Draft, Head `8af6be32`, nicht gemergt) | Fix läuft. Modul #346 `38217e61` ist auf main. Status bleibt ❌ |
+| F1-39 Route und UI | – | **#354** gemergt `aa0b6f2a` | 🟢 Tester Prod-PASS, Bundle `index-84vk90H1.js` (von Stabschef). Doublecheck GO. Z.104 ✅. Dateiname bleibt `Offen_` |
 | (nicht aus Future-Dateien) Peer-Duplikat | – | **#353** (Draft, Head `7e3e6612`, nicht gemergt) | HOLD bis Philip |
 | (nicht aus Future-Dateien) Szenario-Kegel | – | **#359** (Draft, Head `426a7621`, nicht gemergt) | Tester-Prod ❌ FAIL, NVO Label-Overlap |
-| F9-04 Route, UI, Chat | – | **#357** gemergt `3f59edcb` | ✅ (Soft). Doublecheck Post-Merge ausstehend. Chat-Kontext ohne Werte |
-| Regulatory-Cache-Miss 200 statt 404 | – | **#356** gemergt `3baef0e5` | 🟢. Doublecheck Post-Merge ausstehend |
+| F9-04 Route, UI, Chat | – | **#357** gemergt `3f59edcb` | 🟢 Soft. Doublecheck Post-Merge GO Soft, Tester Prod-PASS (von Stabschef). Chat-Kontext ohne Werte |
+| Regulatory-Cache-Miss 200 statt 404 | – | **#356** gemergt `3baef0e5` | 🟢. Doublecheck Post-Merge GO, Tester Prod-PASS (von Stabschef) |
 
 ---
 
@@ -422,7 +422,7 @@ Hinweis: Die 13 ✅ aus Future_6 sind eine Prüfung der Doku gegen den Code (die
 
 Reihenfolge nach Nutzen und Aufwand (S = klein, M = mittel, L = groß).
 
-1. **Makro-Layer mit KI-Gewichten (Future_9)** – F9-09, F9-12, F9-13, F9-16, F9-17 (L). Philip hat am 18.10. JA gesagt. Heute 0 Code im Rezessionspfad für diese Gewichte. Erst als Zusatzobjekt mit Anzeige der angepassten Gewichte und Prüfung an 2000/2008/2022, erst danach die Live-P umschalten. Datenreihen F9-02/06/07/08 (FRED/FMP, kostenlos) gehören dazu. Nachtrag 01.11.2026: F9-04 ist nicht mehr „0 Code“ und nicht mehr „Route und UI fehlen“. Route, UI und Chat liegen auf main (#357 `3f59edcb`, ✅ Soft). Soft: Chat-Kontext ohne Werte. Doublecheck Post-Merge ausstehend.
+1. **Makro-Layer mit KI-Gewichten (Future_9)** – F9-09, F9-12, F9-13, F9-16, F9-17 (L). Philip hat am 18.10. JA gesagt. Heute 0 Code im Rezessionspfad für diese Gewichte. Erst als Zusatzobjekt mit Anzeige der angepassten Gewichte und Prüfung an 2000/2008/2022, erst danach die Live-P umschalten. Datenreihen F9-02/06/07/08 (FRED/FMP, kostenlos) gehören dazu. Nachtrag 01.11.2026: F9-04 ist nicht mehr „0 Code“ und nicht mehr „Route und UI fehlen“. Route, UI und Chat liegen auf main (#357 `3f59edcb`, ✅ Soft). Soft: Chat-Kontext ohne Werte. Doublecheck Post-Merge GO Soft, Tester Prod-PASS (von Stabschef).
 2. **Buffett robust machen** – F1-34 Fehlergrund statt generischem 502, F1-30 zweiter Versuch, F1-31 FRED-Marktwert als Ersatz (S). ✅ `99a06d1b` (#274), Nachzug #323 `cee85b81`.
 3. **VIX im Rezessions-Chart mit Yahoo-Ersatz** – F1-66 (S). Der Score hat ihn schon (#210). Chart-Teil ✅ `35037f92` (#296); Retry ✅ `2e360ca9` (#325). Erledigt.
 4. **Credit-Risiko-Karte in Sektion 10 (Risikoinversion)** – F1-21 mit F1-20 (Verschuldung, Zinsdeckung aus FMP) und F1-24 (PESTEL-Zeile) (M). Basis ist der Markt-Spread BAA10Y; kein CDS, kein Score.
@@ -433,7 +433,7 @@ Reihenfolge nach Nutzen und Aufwand (S = klein, M = mittel, L = groß).
 9. **SPY-Fundamentals und Analystenschätzungen mit Yahoo-Ersatz** – F1-67, F1-68 (S). Erst nach #264, weil dasselbe Crumb-Problem gilt.
 10. **Google Trends: Retry mit Backoff** – F3-04 (S).
 11. **Gold-Zusatzschicht ergänzen** – F10-20 AISC-Marge (Quartalswerte an die Schicht, nicht an den GIS), F10-24 Fiskaldefizit, F10-08 Volumen-Trend, F10-33 Backtest der Kreuze, F10-34 Zentralbankkäufe, F10-12/13 Bollinger/ATR (S–M).
-12. **Bereinigter Buffett als Zusatzkennzahl** – F1-36 bis F1-40 (M), ohne den Score-Slot.
+12. **Bereinigter Buffett als Zusatzkennzahl** – F1-36, F1-37, F1-40 (M), ohne den Score-Slot. F1-38 bleibt ✅ `730c12ab`. F1-39 ✅ #354 `aa0b6f2a` (Z.104).
 13. **Kleinere Lücken** – F1-63 TOPIX über Yahoo, F1-56 ECB-Ersatz EZ-Kurve, FW-09 BTC-Fiscal als Overlay, FW-31 Sektorrotation im Rezessions-Dashboard, FW-36 Regulatory in Sektion 10, FW-38 Peer-Autocomplete, FW-16/17 GDX/GLD und Gold/Bond.
 14. **Große Blöcke ohne jeden Code** – FW-01 Deutsch/Englisch, FW-04 Kostolany-Rad, FW-27 Bilanzen-Screener, FW-05 gemeinsamer Refresh über Analyse/Researcher/Portfolio.
 15. **Nur Doku** – F10-35 (Future_10 nennt erledigte AISC-Punkte noch „Offen“), F6-01/F6-07 (Doku an Code angleichen), F5-06 (6 h oder 24 h).
